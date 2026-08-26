@@ -14,6 +14,7 @@ static int posix_read_file(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur
 static int posix_write_file(VM *vm) { if(vm_cur_sp(vm)<1)return 0; Value data=vm_cur_stack(vm)[vm_cur_sp(vm)], path=vm_cur_stack(vm)[vm_cur_sp(vm)-1]; FILE *f=fopen(path.sval?path.sval:"","wb"); int ok=0; if(f){fputs(data.sval?data.sval:"",f); fclose(f); ok=1;} vm_cur_set_sp(vm,vm_cur_sp(vm)-2); push_int(vm,ok); return 1; }
 static int posix_input(VM *vm) { if(vm_cur_sp(vm)>=0) pop(vm); char b[1024]; if(fgets(b,sizeof b,stdin)){size_t n=strlen(b); if(n&&b[n-1]=='\n')b[n-1]=0; push_string(vm,b);} else push_string(vm,""); return 1; }
 static int posix_env(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; char b[4096]; int r=im_platform_getenv(v.sval?v.sval:"",b,sizeof b); pop(vm); push_string(vm,r==0?b:""); return 1; }
+static int posix_capability(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; int ok=im_platform_has_capability(v.sval?v.sval:""); pop(vm); push_bool(vm,ok); return 1; }
 static int posix_mkdir(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; int ok=im_platform_mkdirs(v.sval?v.sval:"")==0; pop(vm); push_bool(vm,ok); return 1; }
 static int posix_list_dir(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; ImDir *d=im_dir_open(v.sval?v.sval:""); pop(vm); if(!d){push_string(vm,"");return 1;} char n[512], all[4096]; all[0]=0; int first=1, isdir=0; while(im_dir_next_ex(d,n,sizeof n,&isdir)>0){ if(!first) strncat(all,"\n",sizeof all-strlen(all)-1); strncat(all,n,sizeof all-strlen(all)-1); first=0; } im_dir_close(d); push_string(vm,all); return 1; }
 
@@ -32,6 +33,7 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "env", posix_env);
     vm_register_builtin(vm, "mkdir", posix_mkdir);
     vm_register_builtin(vm, "list_dir", posix_list_dir);
+    vm_register_builtin(vm, "has_capability", posix_capability);
 }
 
 void record_load_from_file(VM *vm, const char *path) { (void)vm; (void)path; }

@@ -198,6 +198,8 @@ stage main {
 
 POSIX 核心构建额外提供以下跨平台基础函数：`read_file(path)` 返回文件文本，`write_file(path, content)` 返回布尔成功值，`input(prompt)` 读取一行标准输入，`time_ms()` 返回单调毫秒计数，`sleep_ms(ms)` 暂停当前任务。文件路径仍受宿主工作目录和沙箱策略约束。
 
+目录与能力查询：`mkdir(path)` 创建目录树并返回布尔值，`list_dir(path)` 返回目录项名称（按换行分隔），`env(name)` 读取环境变量，`has_capability(name)` 查询当前平台能力。能力名称由 PAL 定义，未知能力返回 `false`。
+
 ## 13. 命令行
 
 ~~~text

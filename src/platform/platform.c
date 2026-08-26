@@ -140,3 +140,13 @@ int im_platform_getenv(const char *name, char *buffer, size_t capacity) {
     size_t n = strlen(value); if (n >= capacity) return -1;
     memcpy(buffer, value, n + 1); return 0;
 }
+
+int im_platform_has_capability(const char *name) {
+    if (!name || !*name) return 0;
+#ifdef _WIN32
+    if (strcmp(name, "native_dll") == 0 || strcmp(name, "gui") == 0) return 1;
+#else
+    if (strcmp(name, "posix_fs") == 0 || strcmp(name, "threads") == 0 || strcmp(name, "fiber") == 0) return 1;
+#endif
+    return 0;
+}

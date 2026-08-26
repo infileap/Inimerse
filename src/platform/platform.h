@@ -17,6 +17,7 @@ void im_platform_sleep_ms(unsigned int milliseconds);
 int im_platform_mkdirs(const char *path);
 int im_platform_executable_path(char *buffer, size_t capacity);
 int im_platform_getenv(const char *name, char *buffer, size_t capacity);
+int im_platform_has_capability(const char *name);
 int im_platform_path_join(char *buffer, size_t capacity, const char *base, const char *part);
 
 #ifdef __cplusplus
