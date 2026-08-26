@@ -35,7 +35,15 @@ $(TARGET): $(OBJS)
 clean:
 	rm -f $(OBJS) $(TARGET)
 
-.PHONY: all clean
+.PHONY: all clean linux check
+
+linux: clean all
+
+check:
+	 if command -v node >/dev/null 2>&1; then node tools/regression.js; else echo "node not installed; skipping protocol regression"; fi
+	 $(MAKE) linux
+	 ./inimerse --version
+	 ./inimerse where
 
 platform-probe:
 	$(CC) $(CFLAGS) -o platform_probe src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/platform_probe.c
