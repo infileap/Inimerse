@@ -18,6 +18,7 @@ SRCS += src/mod/mod.c
 else
 SRCS += src/runtime/runtime_posix.c
 SRCS += src/mod/mod_posix.c
+SRCS += src/platform/posix_stubs.c
 endif
 
 OBJS = $(SRCS:.c=.o)
