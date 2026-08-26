@@ -13,6 +13,7 @@
 - [ ] 将 runtime 的 HTTP、串口、键鼠和系统调用内置函数迁移到 PAL（当前 Linux 使用明确的空实现基线）。
 - [x] POSIX 核心提供文件读写、输入、单调时钟和休眠基础函数。
 - [x] POSIX 核心提供目录创建、目录枚举和平台能力查询函数。
+- [x] 增加 `capabilities` CLI 与 CI 冒烟检查，平台缺失能力可审计。
 - [x] Linux 核心 VM 可独立链接并运行（`make`、`inimerse --version`、`inimerse where`）；平台专用模块暂以能力错误桩隔离。
 - [ ] 为 Fiber、线程、锁和进程补齐 POSIX 后端及不可用能力错误码。
 - [ ] 完成 Windows、Linux、WebAssembly 构建矩阵。

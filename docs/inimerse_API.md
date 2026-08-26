@@ -207,6 +207,7 @@ inimerse                启动 REPL
 inimerse run file.im   执行脚本
 inimerse build project 构建项目或 imjar
 inimerse --help        查看选项
+inimerse capabilities  列出当前平台能力
 ~~~
 
 ## 14. UPP 本地协议参考

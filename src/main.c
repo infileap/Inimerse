@@ -511,6 +511,11 @@ int main(int argc, char **argv) {
         free(self_path);
         return 0;
     }
+    if (argc >= 2 && strcmp(argv[1], "capabilities") == 0) {
+        const char *caps[] = { "threads", "fiber", "posix_fs", "native_dll", "gui", NULL };
+        for (int i = 0; caps[i]; i++) if (im_platform_has_capability(caps[i])) puts(caps[i]);
+        return 0;
+    }
 
     /* P1 multi-size: per-monitor DPI awareness (Win10+), fallback to system DPI */
  #ifdef _WIN32
