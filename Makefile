@@ -35,7 +35,7 @@ $(TARGET): $(OBJS)
 clean:
 	rm -f $(OBJS) $(TARGET)
 
-.PHONY: all clean linux check
+.PHONY: all clean linux check wasm
 
 linux: clean all
 
@@ -44,6 +44,11 @@ check:
 	 $(MAKE) linux
 	 ./inimerse --version
 	 ./inimerse where
+
+wasm:
+	 @if command -v emcc >/dev/null 2>&1; then echo "WASM toolchain detected: $$(emcc --version | head -1)"; echo "WASM target wiring pending host import table"; \
+	 elif command -v clang >/dev/null 2>&1 && clang --target=wasm32-wasi --version >/dev/null 2>&1; then echo "WASI clang detected"; echo "WASM target wiring pending host import table"; \
+	 else echo "WASM toolchain not found. Install emscripten or wasi-sdk."; exit 2; fi
 
 platform-probe:
 	$(CC) $(CFLAGS) -o platform_probe src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/platform_probe.c

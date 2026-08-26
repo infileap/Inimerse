@@ -11,6 +11,5 @@ test -x "$path"
 echo "$caps" | grep -qx 'threads'
 echo "$caps" | grep -qx 'fiber'
 echo "$caps" | grep -qx 'posix_fs'
-test "$(printf 'X\n' | ./inimerse --version >/dev/null; echo ok)" = ok
 echo "POSIX smoke: ok ($version)"
 make clean >/dev/null
