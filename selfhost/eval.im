@@ -1,0 +1,407 @@
+# eval.im — inimerse 树遍历求值器(自举解释器第三部分)
+# 输入:parser 的 AST;输出:执行结果
+# 值直接用宿主值(int/float/string/bool/array/dict/nil)
+# 控制流:用全局 _ret/_ret_val 标志模拟 return/break(宿主无异常)
+
+_ret = 0        # 0=正常 1=return 2=break
+_ret_val = nil
+_globals = nil  # 全局环境 [dict, nil],由 run_program 初始化
+_gdecl = []     # 当前函数的 global 声明列表
+_loaded = []    # 已加载文件(import 去重)
+
+# ---------- 数组包含 ----------
+func contains_str(arr, v) {
+    for x in arr {
+        if x == v { return true }
+    }
+    return false
+}
+
+# ---------- 真值(与宿主一致:仅 bool/int 参与,其余 false) ----------
+func truthy(v) {
+    # 与宿主一致:仅 false/nil/0/0.0 为假,其余(字符串/数组/字典/非零数字)为真
+    if v == true { return true }
+    if v == false { return false }
+    if v == nil { return false }
+    if v == 0 { return false }
+    if v == 0.0 { return false }
+    return true
+}
+
+# ---------- 类型与字符串化 ----------
+func to_str(v) {
+    tp = type(v)
+    if tp == "string" { return v }
+    if tp == "int" or tp == "float" { return str(v) }
+    if tp == "nil" { return "nil" }
+    if tp == "bool" {
+        if v { return "true" }
+        return "false"
+    }
+    if tp == "array" {
+        buf = "["
+        n = len(v)
+        i = 0
+        while i < n {
+            if i > 0 { buf = buf + ", " }
+            buf = buf + to_str(v[i])
+            i = i + 1
+        }
+        return buf + "]"
+    }
+    if tp == "dict" {
+        buf = "{"
+        ks = keys(v)
+        n = len(ks)
+        i = 0
+        while i < n {
+            if i > 0 { buf = buf + ", " }
+            k = ks[i]
+            buf = buf + to_str(k) + ": " + to_str(v[k])
+            i = i + 1
+        }
+        return buf + "}"
+    }
+    return "?"
+}
+
+# ---------- 环境(作用域链: [局部dict, 父env]) ----------
+func env_get(env, name) {
+    cur = env
+    while !(cur == nil) {
+        d = cur[0]
+        if has(d, name) {
+            return d[name]
+        }
+        cur = cur[1]
+    }
+    return nil
+}
+
+func env_set(env, name, val) {
+    global _gdecl, _globals
+    if contains_str(_gdecl, name) {
+        _globals[0][name] = val
+        return
+    }
+    env[0][name] = val
+}
+
+# ---------- 二元运算 ----------
+func binop(op, l, r) {
+    if op == "+" { return l + r }
+    if op == "<" { return l < r }
+    if op == "==" { return l == r }
+    if op == "*" { return l * r }
+    if op == "-" { return l - r }
+    if op == ">" { return l > r }
+    if op == "!=" { return !(l == r) }
+    if op == "/" { return l / r }
+    if op == "%" { return l % r }
+    if op == "<=" { return l <= r }
+    if op == ">=" { return l >= r }
+    return nil
+}
+
+# ---------- 表达式 ----------
+func eval_expr(e, env) {
+    t = e["t"]
+    if t == "ident" { return env_get(env, e["v"]) }
+    if t == "num" or t == "str" or t == "bool" { return e["v"] }
+    if t == "float" { return e["v"] }
+    if t == "bin" {
+        op = e["op"]
+        if op == "and" {
+            l = eval_expr(e["l"], env)
+            if !truthy(l) { return false }
+            return truthy(eval_expr(e["r"], env))
+        }
+        if op == "or" {
+            l = eval_expr(e["l"], env)
+            if truthy(l) { return true }
+            return truthy(eval_expr(e["r"], env))
+        }
+        l = eval_expr(e["l"], env)
+        r = eval_expr(e["r"], env)
+        return binop(op, l, r)
+    }
+    if t == "call" {
+        callee = e["f"]
+        if callee["t"] == "ident" {
+            name = callee["v"]
+            f = env_get(env, name)
+            if f == nil or f["t"] != "func" {
+                args = []
+                for a in e["args"] {
+                    push(args, eval_expr(a, env))
+                }
+                return call_builtin(name, args)
+            }
+        }
+        f = eval_expr(callee, env)
+        args = []
+        for a in e["args"] {
+            push(args, eval_expr(a, env))
+        }
+        return call_func(f, args, env)
+    }
+    if t == "index" {
+        o = eval_expr(e["o"], env)
+        i = eval_expr(e["i"], env)
+        return o[i]
+    }
+    if t == "un" {
+        v = eval_expr(e["e"], env)
+        if e["op"] == "!" { return !truthy(v) }
+        return 0 - v
+    }
+    if t == "list" {
+        items = []
+        for it in e["items"] {
+            push(items, eval_expr(it, env))
+        }
+        return items
+    }
+    if t == "dict" {
+        d = {}
+        n = len(e["items"])
+        i = 0
+        while i < n {
+            key = eval_expr(e["items"][i], env)
+            val = eval_expr(e["items"][i + 1], env)
+            d[key] = val
+            i = i + 2
+        }
+        return d
+    }
+    if t == "nil" { return nil }
+    return nil
+}
+
+# ---------- 控制流 ----------
+func exec_body(body, env) {
+    for s in body {
+        eval_stmt(s, env)
+        if _ret != 0 {
+            break
+        }
+    }
+}
+
+func call_func(f, args, env) {
+    global _ret, _ret_val, _gdecl
+    if f == nil or f["t"] != "func" {
+        return nil
+    }
+    saved_ret = _ret
+    saved_val = _ret_val
+    saved_gdecl = _gdecl
+    _ret = 0
+    _ret_val = nil
+    _gdecl = []
+    local = {}
+    nenv = [local, env]
+    n = len(f["p"])
+    i = 0
+    while i < n {
+        local[f["p"][i]] = args[i]
+        i = i + 1
+    }
+    exec_body(f["b"], nenv)
+    r = _ret_val
+    if _ret != 1 {
+        r = nil
+    }
+    _ret = saved_ret
+    _ret_val = saved_val
+    _gdecl = saved_gdecl
+    return r
+}
+
+func eval_stmt(s, env) {
+    global _ret, _ret_val
+    t = s["t"]
+    if t == "assign" {
+        env_set(env, s["n"], eval_expr(s["v"], env))
+    } elif t == "expr" {
+        eval_expr(s["v"], env)
+    } elif t == "say" {
+        say to_str(eval_expr(s["v"], env))
+    } elif t == "if" {
+        c = eval_expr(s["c"], env)
+        if truthy(c) {
+            exec_body(s["a"], env)
+        } else {
+            exec_body(s["b"], env)
+        }
+    } elif t == "while" {
+        while truthy(eval_expr(s["c"], env)) {
+            exec_body(s["b"], env)
+            if _ret == 2 {
+                _ret = 0
+                break
+            }
+            if _ret == 1 {
+                break
+            }
+        }
+    } elif t == "forarr" {
+        arr = eval_expr(s["e"], env)
+        i = 0
+        while i < len(arr) {
+            env_set(env, s["v"], arr[i])
+            exec_body(s["b"], env)
+            if _ret == 2 {
+                _ret = 0
+                break
+            }
+            if _ret == 1 {
+                break
+            }
+            i = i + 1
+        }
+    } elif t == "forrange" {
+        st = eval_expr(s["s"], env)
+        en = eval_expr(s["e"], env)
+        i = st
+        while i < en {
+            env_set(env, s["v"], i)
+            exec_body(s["b"], env)
+            if _ret == 2 {
+                _ret = 0
+                break
+            }
+            if _ret == 1 {
+                break
+            }
+            i = i + 1
+        }
+    } elif t == "return" {
+        _ret = 1
+        _ret_val = eval_expr(s["v"], env)
+    } elif t == "break" {
+        _ret = 2
+    } elif t == "assignidx" {
+        o = eval_expr(s["o"], env)
+        i = eval_expr(s["i"], env)
+        o[i] = eval_expr(s["v"], env)
+    } elif t == "func" {
+        env_set(env, s["n"], s)
+    } elif t == "global" {
+        for n in s["names"] {
+            if !contains_str(_gdecl, n) {
+                push(_gdecl, n)
+            }
+        }
+    } elif t == "import" {
+        # 展开阶段已处理,此处忽略
+    }
+}
+
+# ---------- 内置函数(映射到宿主内置) ----------
+func call_builtin(name, args) {
+    if name == "args" { return args() }
+    if name == "http_get" { return http_get(args[0]) }
+    if name == "http_post" { return http_post(args[0], args[1]) }
+    if name == "exec" { return exec(args[0]) }
+    if name == "serial_open" { return serial_open(args[0], args[1]) }
+    if name == "serial_write" { return serial_write(args[0], args[1]) }
+    if name == "serial_read" { return serial_read(args[0], args[1]) }
+    if name == "serial_close" { return serial_close(args[0]) }
+    if name == "key_press" { return key_press(args[0]) }
+    if name == "mouse_move" { return mouse_move(args[0], args[1]) }
+    if name == "mouse_click" { return mouse_click(args[0]) }
+    if name == "len" { return len(args[0]) }
+    if name == "str" { return to_str(args[0]) }
+    if name == "push" {
+        push(args[0], args[1])
+        return nil
+    }
+    if name == "type" { return type(args[0]) }
+    if name == "has" { return has(args[0], args[1]) }
+    if name == "int" { return int(args[0]) }
+    if name == "float" { return float(args[0]) }
+    if name == "chr" { return chr(args[0]) }
+    if name == "ord" { return ord(args[0]) }
+    if name == "substr" { return substr(args[0], args[1], args[2]) }
+    if name == "join" {
+        if len(args) > 1 {
+            return join(args[0], args[1])
+        }
+        return join(args[0])
+    }
+    if name == "split" { return split(args[0], args[1]) }
+    if name == "chars" { return chars(args[0]) }
+    if name == "pop" { return pop(args[0]) }
+    if name == "keys" { return keys(args[0]) }
+    if name == "remove" {
+        remove(args[0], args[1])
+        return nil
+    }
+    if name == "bool" { return truthy(args[0]) }
+    if name == "read_file" { return read_file(args[0]) }
+    if name == "write_file" { return write_file(args[0], args[1]) }
+    if name == "input" { return input("") }
+    if name == "sqrt" { return sqrt(args[0]) }
+    if name == "random" { return random() }
+    return nil
+}
+
+# ---------- 多文件 import(模拟宿主:展开时递归加载并去重) ----------
+func dir_of(path) {
+    n = len(path)
+    i = n - 1
+    while i >= 0 and path[i] != "/" and path[i] != chr(92) {
+        i = i - 1
+    }
+    if i < 0 { return "" }
+    return substr(path, 0, i + 1)
+}
+
+func join_path(dir, rel) {
+    if dir == "" { return rel }
+    return dir + rel
+}
+
+func expand_imports(stmts, path) {
+    global _loaded
+    dir = dir_of(path)
+    out = []
+    for s in stmts {
+        if s["t"] == "import" {
+            full = join_path(dir, s["p"])
+            if !contains_str(_loaded, full) {
+                push(_loaded, full)
+                sub = parse_file(full)
+                for x in sub {
+                    push(out, x)
+                }
+            }
+        } else {
+            push(out, s)
+        }
+    }
+    return out
+}
+
+func parse_file(path) {
+    src = read_file(path)
+    tokens = lex(src)
+    stmts = parse(tokens)
+    return expand_imports(stmts, path)
+}
+
+# ---------- 顶层入口 ----------
+func run_program(stmts) {
+    global _globals
+    g = {}
+    _globals = [g, nil]
+    exec_body(stmts, _globals)
+}
+
+func run_file(path) {
+    global _loaded
+    _loaded = []
+    stmts = parse_file(path)
+    run_program(stmts)
+}

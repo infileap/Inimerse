@@ -1,0 +1,85 @@
+# CPU: 8 threads sharing one global (lock contention)
+global n
+n = 0
+thread s0 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s0 done"
+}
+start s0
+thread s1 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s1 done"
+}
+start s1
+thread s2 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s2 done"
+}
+start s2
+thread s3 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s3 done"
+}
+start s3
+thread s4 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s4 done"
+}
+start s4
+thread s5 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s5 done"
+}
+start s5
+thread s6 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s6 done"
+}
+start s6
+thread s7 {
+    global n
+    k = 0
+    while k < 2000000 {
+        n = n + 1
+        k = k + 1
+    }
+    say "s7 done"
+}
+start s7
+wait 10
+say "n=" + n

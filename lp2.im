@@ -1,0 +1,7 @@
+a.b = 1
+a.c = 2
+lp = list_params()
+say size(lp)
+say lp[0]
+say lp[1]
+say "done"

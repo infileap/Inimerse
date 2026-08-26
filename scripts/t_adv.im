@@ -1,0 +1,35 @@
+using thread
+ready = false
+sum = 0
+thread producer: {
+    wait 1
+    lock m {
+        sum = sum + 100
+        ready = true
+    }
+    say "producer done"
+}
+thread consumer: {
+    wait until ready
+    say "consumer sees ready, sum=" + str(sum)
+}
+thread messenger: {
+    recv msg, 10
+    say "messenger got: " + str(msg)
+    recv msg2, 3
+    say "messenger got2: " + str(msg2)
+}
+main {
+    start producer
+    start consumer
+    start messenger
+    wait 2
+    send messenger "hello"
+    wait 1
+    send messenger 42
+    join producer, 5
+    join consumer, 8
+    join messenger, 5
+    say "all done"
+}
+stop all

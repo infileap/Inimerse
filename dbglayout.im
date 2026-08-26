@@ -1,0 +1,12 @@
+gui_stage(900, 640)
+gui_set_font("SimSun", 17, 4210752)
+gui_debug_layout(1)
+gui_panel(30, 30, 300, 100, "测试面板", 15790320, 2255242)
+gui_text_a("居中的文本", 40, 60, 280, 1)
+gui_text("普通文本", 200, 300)
+while true {
+    gui_clear_shapes()
+    gui_panel(30, 30, 300, 100, "测试面板", 15790320, 2255242)
+    gui_text_a("居中的文本", 40, 60, 280, 1)
+    wait 0.03
+}

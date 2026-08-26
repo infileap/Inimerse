@@ -1,0 +1,4 @@
+say player.max_hp
+say player.speed
+say level.name
+say "done"

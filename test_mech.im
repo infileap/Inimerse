@@ -1,0 +1,21 @@
+done = 0
+thread dbg2 {
+    global done
+    dbg_wait_boundary()
+    say "b1"
+    dbg_resume(1)
+    dbg_wait_boundary()
+    say "b2"
+    dbg_resume(1)
+    dbg_wait_boundary()
+    say "b3"
+    dbg_resume(0)
+    done = 1
+}
+dbg_set_active(1)
+start dbg2
+dbg_pause_now()
+while done == 0 {
+    wait 0.01
+}
+say "ALL_DONE"

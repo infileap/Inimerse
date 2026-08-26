@@ -1,0 +1,7 @@
+window(640, 480, "My Inimerse App")
+say "HELLO GUI WORLD"
+say "THIS TEXT IS ON THE WINDOW"
+show_image("star.png", 100, 100)
+say "IMAGE DRAWN"
+gui_wait()
+stop all

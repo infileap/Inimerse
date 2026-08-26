@@ -1,0 +1,30 @@
+# bare try edge cases
+# in function
+func f() {
+    try {
+        throw "func-err"
+    }
+    return 42
+}
+say f()
+# nested bare try in catch handler
+try {
+    throw "outer"
+} catch (e) {
+    say "caught: " + e
+    try {
+        throw "inner-ignored"
+    }
+    say "inner done"
+}
+# bare try in while loop
+i = 0
+while i < 3 {
+    try {
+        if i == 1 { throw "loop-err" }
+    }
+    i = i + 1
+}
+say i
+# exceptions still propagate out of bare try's scope if NOT thrown inside
+say "edge-ok"

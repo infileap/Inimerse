@@ -1,0 +1,8 @@
+a = "x" + "y" + "z"
+debug_break()
+b = a + "1" + "2" + "3"
+debug_break()
+c = 1 + 2 + 3
+say a
+say b
+say c

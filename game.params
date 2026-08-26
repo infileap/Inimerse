@@ -1,0 +1,4 @@
+# game.params - test params
+player.max_hp = 300      # max hp
+player.speed = 9.9 # speed
+level.name = "cave"      # level name

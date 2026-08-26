@@ -1,0 +1,4 @@
+main {
+    a = 11461
+    write_file("D:/_t7.txt", "A=" + str(a) + " R=" + str(port_check(a)) + " P=" + str(port_pid(a)))
+}

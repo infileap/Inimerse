@@ -1,0 +1,10 @@
+# truthy_test.im
+if "abc" { say "t1" } else { say "f1" }
+if "" { say "t2" } else { say "f2" }
+if [] { say "t3" } else { say "f3" }
+if [1,2] { say "t4" } else { say "f4" }
+if 5 { say "t5" } else { say "f5" }
+if 0 { say "t6" } else { say "f6" }
+if {"a":1} { say "t7" } else { say "f7" }
+say "done"
+stop all

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Infiverse 聊天</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { height:100%; overflow:hidden; font-family:system-ui,"Microsoft YaHei",sans-serif; background:#0e1220; color:#e6edf3; }
+#app { display:flex; height:100vh; }
+#side { width:240px; min-width:240px; background:#151b2c; border-right:1px solid #232c42; display:flex; flex-direction:column; }
+#sideHead { padding:14px; border-bottom:1px solid #1f2838; display:flex; justify-content:space-between; align-items:center; }
+#sideHead h1 { font-size:15px; color:#7fd4ff; }
+#sideHead button { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px; }
+#flist { flex:1; overflow-y:auto; }
+.f { display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; border-bottom:1px solid #1a2134; }
+.f:hover { background:#1d2638; }
+.f.active { background:#22304f; }
+.f .av { width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; color:#fff; flex-shrink:0; }
+.f .nm { flex:1; min-width:0; }
+.f .nm .n { font-size:13px; }
+.f .nm .s { font-size:11px; color:#7d8aa5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.f .ai { font-size:10px; background:#7c3aed; color:#fff; padding:1px 6px; border-radius:8px; }
+#main { flex:1; display:flex; flex-direction:column; }
+#chatHead { padding:12px 16px; border-bottom:1px solid #1f2838; font-size:14px; font-weight:600; }
+#chatBox { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:8px; }
+.m { max-width:70%; padding:8px 12px; border-radius:10px; font-size:13px; line-height:1.5; word-break:break-word; }
+.m.me { align-self:flex-end; background:#2563eb; color:#fff; }
+.m.other { align-self:flex-start; background:#1d2337; border:1px solid #2a3350; }
+.m .tm { font-size:10px; color:#7d8aa5; margin-top:3px; text-align:right; }
+#inputRow { display:flex; gap:8px; padding:12px; border-top:1px solid #1f2838; }
+#chatText { flex:1; background:#151b2c; color:#e6edf3; border:1px solid #2a3350; border-radius:8px; padding:10px; font-size:13px; outline:none; }
+#sendBtn { background:#2563eb; color:#fff; border:none; border-radius:8px; padding:0 20px; cursor:pointer; font-size:13px; }
+#addBox { display:none; padding:10px 14px; border-bottom:1px solid #1f2838; background:#101625; }
+#addBox input { background:#151b2c; border:1px solid #2a3350; border-radius:6px; padding:7px; color:#e6edf3; margin:3px 0; width:100%; font-size:12px; }
+#addBox button { background:#1f7a4d; color:#fff; border:none; border-radius:6px; padding:6px; width:100%; cursor:pointer; font-size:12px; margin-top:4px; }
+.empty { color:#5d6b84; font-size:13px; padding:30px; text-align:center; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <div id="sideHead"><h1>&#128172; 聊天</h1><button onclick="toggleAdd()">+ 好友</button></div>
+    <div id="addBox">
+      <input id="fName" placeholder="名字">
+      <input id="fId" placeholder="ID (u_...) 或 节点IP:u_id">
+      <button onclick="addFriend()">添加</button>
+    </div>
+    <div id="flist"></div>
+  </div>
+  <div id="main">
+    <div id="chatHead">选择一个好友开始聊天</div>
+    <div id="chatBox"><div class="empty">从左侧选择好友,或添加新好友</div></div>
+    <div id="inputRow" style="display:none">
+      <input id="chatText" placeholder="输入消息,回车发送">
+      <button id="sendBtn" onclick="sendChat()">发送</button>
+    </div>
+  </div>
+</div>
+<script>
+var cur = '', curName = '', lastCount = -1;
+function $(id){ return document.getElementById(id); }
+function esc(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function toggleAdd(){ var b = $('addBox'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; }
+function addFriend(){
+  var id = $('fId').value.trim(), nm = $('fName').value.trim();
+  if (!id) return;
+  var node = '';
+  if (id.indexOf('@') > 0) { var sp = id.split('@'); id = sp[0]; node = sp[1]; }
+  fetch('/api/friend?name=' + encodeURIComponent(nm || id) + '&id=' + encodeURIComponent(id) + (node ? '&node=' + encodeURIComponent(node) : '')).then(function(r){ return r.json(); }).then(function(){ $('fId').value=''; $('fName').value=''; loadList(); });
+}
+function loadList(){
+  Promise.all([fetch('/api/friends').then(function(r){ return r.json(); }).catch(function(){ return {friends:[]}; }),
+               fetch('/api/ai').then(function(r){ return r.json(); }).catch(function(){ return {ais:[]}; })])
+    .then(function(res){
+      var fs = res[0].friends || [], ais = res[1].ais || [];
+      var h = '';
+      fs.forEach(function(f){
+        var isAI = f.is_ai === 1 || f.is_ai === true;
+        var av = (f.name || '?').charAt(0);
+        h += '<div class="f' + (cur === f.id ? ' active' : '') + '" onclick="openChat(\'' + f.id + '\',\'' + esc(f.name) + '\')">'
+           + '<div class="av" style="background:' + (isAI ? '#7c3aed' : '#2b7fff') + '">' + esc(av) + '</div>'
+           + '<div class="nm"><div class="n">' + esc(f.name) + (isAI ? ' <span class="ai">AI</span>' : '') + '</div><div class="s">' + esc(f.id) + '</div></div></div>';
+      });
+      ais.forEach(function(a){
+        var h2 = '<div class="f' + (cur === a.id ? ' active' : '') + '" onclick="openChat(\'' + a.id + '\',\'' + esc(a.name) + '\')">'
+           + '<div class="av" style="background:#7c3aed">' + esc((a.name || '?').charAt(0)) + '</div>'
+           + '<div class="nm"><div class="n">' + esc(a.name) + ' <span class="ai">AI</span></div><div class="s">' + esc(a.id) + '</div></div></div>';
+        h += h2;
+      });
+      $('flist').innerHTML = h || '<div class="empty">暂无好友</div>';
+    });
+}
+function openChat(id, name){
+  cur = id; curName = name; lastCount = -1;
+  $('chatHead').textContent = '与 ' + name + ' 聊天';
+  $('inputRow').style.display = 'flex';
+  loadChat();
+  loadList();
+}
+function loadChat(){
+  if (!cur) return;
+  fetch('/api/chat?peer=' + encodeURIComponent(cur)).then(function(r){ return r.json(); }).then(function(j){
+    var msgs = j.msgs || [];
+    if (msgs.length === lastCount && $('chatBox').innerHTML !== '') return;
+    lastCount = msgs.length;
+    var h = '';
+    msgs.forEach(function(m){
+      var mine = m.from === 'me';
+      h += '<div class="m ' + (mine ? 'me' : 'other') + '">' + esc(m.text)
+         + '<div class="tm">' + new Date((m.ts || 0) * 1000).toLocaleString() + '</div></div>';
+    });
+    $('chatBox').innerHTML = h || '<div class="empty">还没有消息</div>';
+    $('chatBox').scrollTop = $('chatBox').scrollHeight;
+  }).catch(function(){});
+}
+function sendChat(){
+  var t = $('chatText').value.trim();
+  if (!t || !cur) return;
+  fetch('/api/chat?peer=' + encodeURIComponent(cur) + '&text=' + encodeURIComponent(t), {method:'POST'}).then(function(r){ return r.json(); }).then(function(){
+    $('chatText').value = '';
+    lastCount = -1;
+    loadChat();
+  });
+}
+$('chatText').addEventListener('keydown', function(e){ if (e.key === 'Enter') sendChat(); });
+setInterval(function(){ if (cur) loadChat(); }, 2500);
+loadList();
+</script>
+</body>
+</html>

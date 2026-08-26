@@ -1,0 +1,28 @@
+i = 0
+s = 0
+while i < 3000000 {
+    s = s + i
+    i = i + 1
+}
+say s
+f = 0.0
+j = 0
+while j < 3000000 {
+    f = f + 0.5
+    j = j + 1
+}
+say f
+a = []
+k = 0
+while k < 300000 {
+    push(a, k)
+    k = k + 1
+}
+say len(a)
+t = 0
+m = 0
+while m < 2000000 {
+    t = t + m % 7
+    m = m + 1
+}
+say t

@@ -1,0 +1,10 @@
+n = 0
+while n < 1000 {
+    entity_spawn((n % 100) * 10.0, (n / 100) * 10.0, 1)
+    n = n + 1
+}
+h1 = entity_at(500, 50)
+say "at(500,50)=" + h1
+h2 = entity_at(30, 30)
+say "at(30,30)=" + h2
+say "S3_DONE"

@@ -1,0 +1,26 @@
+# ============ Inimerse v1.0.0 "Infinity" - RELEASE ============
+# 2026-08-15  build: computed-goto dispatch fixed, thread-say fixed, release packaging
+## 1. FIXED (legacy): thread-body say crash (0xC0000005)
+- root cause chain: thread say -> gui_say builtin -> gui_target -> EnterCriticalSection(&G.lock)
+  where G.lock was NEVER initialized in non-GUI mode -> ntdll crash
+- fixes:
+  * gui_target: early-return NULL when !G.stageCreated (no GUI context)
+  * builtin_gui_say: falls back to thread-safe console output (vm_value_to_string + WriteFile)
+  * all engine threads now created via _beginthreadex (proper msvcrt TLS) instead of CreateThread
+  * value_to_string scalar formatting rewritten without msvcrt snprintf (vts_int/vts_double),
+    so worker threads never touch msvcrt formatters
+- verified: thread say int/float/string all work (t_say.im), services green
+## 2. FIXED: computed-goto dispatch table relocation (gcc16 MinGW PE)
+- symptom: any build could jump into .idata and crash (rip=0x366824-style fixed RVA),
+  layout-sensitive - O2/O1/-fno-pie all affected depending on code shape
+- fix: dispatch_raw[] (label addresses) kept function-local, runtime base-adjust once
+  (entries <16MB are RVAs -> add GetModuleHandle base); reliable across builds
+- bench: ~505ms (vs 440ms historical best, but now stable; -fno-jump-tables fallback 705ms)
+## 3. debug console: #run new-variable persistence
+- vm_debug_exec now merges injected program's global_names into vm->globals and raises
+  globalCount, so later injections can reference previously injected variables
+## 4. release packaging
+- version name: v1.0.0 "Infinity" (set/comprehension/labels/debug era)
+- installers rebuilt: D:\InimerseSetup.exe (Inno, 2.7MB), D:\InimerseSetup_nsis.exe (NSIS, 1.3MB)
+- UPX: bridge/app optional (failed this run - skipped; ENGINE NEVER UPX)
+- services restarted: 4 engines + 4 bridges + 1 app, 8 ports, logs clean

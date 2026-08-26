@@ -1,0 +1,11 @@
+# bare try with debugger attached: [try-ignore] stderr line + @ignored slot
+dbg_set_active(1)
+try {
+    throw "swallowed-err"
+}
+say "still running"
+dbg_set_active(0)
+try {
+    throw "not-recorded?"
+}
+say "done2"

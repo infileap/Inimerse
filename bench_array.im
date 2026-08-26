@@ -1,0 +1,15 @@
+# L1 小型数组内联 bench (加长版)
+t0 = 0
+i = 0
+while i < 800000 {
+    a = []
+    j = 0
+    while j < 8 {
+        push(a, j)
+        j = j + 1
+    }
+    t0 = t0 + a[7]
+    i = i + 1
+}
+say t0
+say "ARRAY_BENCH_DONE"

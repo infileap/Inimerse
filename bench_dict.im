@@ -1,0 +1,28 @@
+# dict bench v2: precomputed key array, fair for old/new
+n = 5000
+keys = []
+i = 0
+while i < n {
+    push(keys, "key" + i)
+    i = i + 1
+}
+d = {}
+i = 0
+while i < n {
+    d[keys[i]] = i
+    i = i + 1
+}
+s = 0
+i = 0
+while i < 1000000 {
+    s = s + d[keys[i % n]]
+    i = i + 1
+}
+say s
+i = 0
+while i < 200000 {
+    d[keys[i % n]] = i
+    i = i + 1
+}
+say d[keys[123]]
+say "bench-done"

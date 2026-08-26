@@ -1,0 +1,6 @@
+import "../lexer.im"
+import "../parser.im"
+import "../eval.im"
+name = "inimerse"
+say "n=" + str(name)
+stop all

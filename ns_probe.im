@@ -1,0 +1,9 @@
+# import-as probe
+import "nsmod.im" as m
+say "m.getx() -> " + m.getx()
+try {
+    say "m.x -> " + m.x
+} catch (e) {
+    say "m.x failed: " + e
+}
+say "NS_PROBE_DONE"

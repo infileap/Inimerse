@@ -1,0 +1,26 @@
+done = 0
+thread dbg2 {
+    global done
+    dbg_wait_boundary()
+    say "b1 ip=" + str(dbg_ip())
+    dbg_resume(1)
+    dbg_wait_boundary()
+    say "b2 ip=" + str(dbg_ip())
+    dbg_resume(1)
+    dbg_wait_boundary()
+    say "b3 ip=" + str(dbg_ip())
+    dbg_resume(0)
+    done = 1
+}
+dbg_set_active(1)
+start dbg2
+dbg_pause_now()
+i = 0
+while i < 100 {
+    i = i + 1
+}
+say "MAIN_END i=" + i
+while done == 0 {
+    i = i + 1
+}
+say "ALL_DONE"

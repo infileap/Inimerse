@@ -1,0 +1,6 @@
+a = entity_spawn(100, 200, 1)
+say "a.x=" + entity_get(a, "x")
+say "a.y=" + entity_get(a, "y")
+say "a.kind=" + entity_get(a, "kind")
+say "a.hp=" + entity_get(a, "hp")
+say "GET_DONE"

@@ -1,0 +1,3 @@
+main {
+    write_file("D:/_t6.txt", "PID=" + str(port_pid(11461)))
+}

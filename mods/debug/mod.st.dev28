@@ -1,0 +1,5 @@
+{
+ "name": "debug",
+ "version": "1.0",
+ "native_lib": "debug_mod.dll"
+}

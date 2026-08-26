@@ -1,0 +1,55 @@
+# dict open-addressing tests (ASCII only)
+d = {"a": 1, "b": 2, "c": 3}
+say d["a"]
+say d["b"]
+say d["c"]
+# update existing
+d["b"] = 99
+say d["b"]
+# add new keys (hash table grows past initial build)
+i = 0
+while i < 2000 {
+    d["k" + i] = i * 2
+    i = i + 1
+}
+say d["k0"]
+say d["k1999"]
+say d["k1000"]
+say len(d)
+# string keys equality (content-based, non-interned at runtime)
+k = "b"
+say d[k]
+# int/float cross-type keys (float key -> hash lookup)
+e = {}
+e[1] = "one"
+say e[1.0]
+e[2.0] = "two"
+say e[2.0]
+e[1.0] = "ONE"
+say e[1.0]
+# has()
+say has(d, "a")
+say has(d, "zzz")
+# remove()
+say remove(d, "a")
+say has(d, "a")
+say len(d)
+# re-add after remove
+d["a"] = 100
+say d["a"]
+# many removes (rebuild path)
+j = 0
+while j < 500 {
+    remove(d, "k" + j)
+    j = j + 1
+}
+say len(d)
+say has(d, "k0")
+say has(d, "k1500")
+say d["k1500"]
+say d["b"]
+# remove last pair
+say remove(d, "c")
+say has(d, "c")
+say len(d)
+say "dict-ok"

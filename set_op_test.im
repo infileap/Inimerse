@@ -1,0 +1,40 @@
+# set algebra tests (M1)
+a = 1,2,3
+b = 3,4,5
+u = a + b
+say 5 in u
+say 1 in u
+say 6 in u
+say size(u)
+i = a * b
+say 3 in i
+say 2 in i
+d = a - b
+say 1 in d
+say 3 in d
+say size(d)
+nz = N * Z[0~5]
+say 3 in nz
+say 6 in nz
+say 2 in nz
+nz2 = N * Z(0~5]
+say 0 in nz2
+say 5 in nz2
+say 1 in nz2
+nd = N - Z+
+say nd
+say 1 in nd
+say N == N
+say a == b
+c = 1,2,3
+say a == c
+nu = N + Float1
+say 7 in nu
+say 1.5 in nu
+say size(a)
+say sum(a)
+say sum(1,2,3,4)
+l = list(a)
+say 2 in l
+say size(l)
+say list(a)

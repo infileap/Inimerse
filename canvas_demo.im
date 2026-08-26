@@ -1,0 +1,89 @@
+# canvas_demo.im - 零素材程序化美术演示（无任何图像文件）
+# 内容：16x16 像素画角色(canvas) + value噪声地形 + 圆(circle) + HUD
+# 资源上限：声明小内存/显存，验证低配置可运行
+declare { mem 64MB, vram 16MB, time 10s }
+
+gui_stage(480, 320)
+
+# ---- 1) 代码画 16x16 像素角色（gui_canvas + gui_px）----
+hero = gui_canvas(16, 16)
+if hero >= 0 {
+    gui_canvas_clear(hero, 0x111122)
+    y = 0
+    while y < 4 {
+        x = 4
+        while x < 12 {
+            gui_px(hero, x, y, 0x7A4A24)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    y = 4
+    while y < 9 {
+        x = 3
+        while x < 13 {
+            gui_px(hero, x, y, 0xFFD9A0)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    gui_px(hero, 5, 6, 0x000000)
+    gui_px(hero, 10, 6, 0x000000)
+    y = 9
+    while y < 14 {
+        x = 4
+        while x < 12 {
+            gui_px(hero, x, y, 0x2266CC)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    y = 14
+    while y < 16 {
+        x = 5
+        while x < 7 {
+            gui_px(hero, x, y, 0x334455)
+            x = x + 1
+        }
+        x = 9
+        while x < 11 {
+            gui_px(hero, x, y, 0x334455)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    ok = gui_canvas_sprite(hero, "hero")
+    say "hero sprite: " + ok
+}
+
+# ---- 2) 噪声地形（noise2d -> 色带矩形）----
+i = 0
+while i < 480 {
+    h = noise2d(i * 0.05, 0.0, 7)
+    hgt = int(h * 120)
+    col = 0x228B22
+    if h < 0.45 {
+        col = 0x1E90FF
+    } elif h > 0.7 {
+        col = 0x8B7355
+    } elif h > 0.55 {
+        col = 0x6B8E23
+    }
+    gui_rect(i, 320 - hgt, 2, hgt, col)
+    i = i + 2
+}
+
+# ---- 3) 圆（gui_circle）----
+gui_circle(420, 60, 28, 0xFFCC33)
+gui_circle(420, 60, 20, 0xFFE066)
+gui_circle(80, 60, 12, 0xFFFFFF)
+
+# ---- 4) 角色放到场景上（im2d 世界坐标）----
+im2d_init(480, 320, 60)
+im2d_draw_sprite("hero", 120, 230)
+im2d_draw_sprite("hero", 200, 230)
+
+# ---- 5) HUD（资源读数）----
+gui_text(10, 10, "零素材演示: canvas角色+噪声地形+圆")
+gui_text(10, 30, "vram=" + int(gui_vram_used() / 1024) + "KB")
+say "canvas-demo-ok vram=" + int(gui_vram_used() / 1024)

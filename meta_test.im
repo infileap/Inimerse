@@ -1,0 +1,49 @@
+# meta/final/match/case tests (2026-08-14, ASCII only)
+final pi = 3
+say pi
+a = 42
+say a.type
+say 5 in a.range
+say 3000000000.0 in a.range
+say a.int
+a = 3.7
+say a.type
+say a.toint
+say a
+b = 8
+b->float
+say b
+say b.type
+s = "123"
+say s.int
+say s.toint
+say s
+say match("user@example.com", "^[\w.+-]+@[\w-]+\.[\w.-]+$")
+say "user@example.com".match("^[\w.+-]+@[\w-]+\.[\w.-]+$")
+say "user@example.com" match "^[\w.+-]+@[\w-]+\.[\w.-]+$"
+say match("not-an-email", "^[\w.+-]+@[\w-]+\.[\w.-]+$")
+v = 2
+case v {
+    in [1,2,3]: say "small"
+    else: say "big"
+}
+email = "a@b.com"
+case email {
+    match "^[\w.+-]+@[\w-]+\.[\w.-]+$": say "valid"
+    else: say "invalid"
+}
+n = 50
+case n {
+    in Z[1~100]: say "in range"
+    else: say "out"
+}
+w = 5
+case w {
+    [1,2,3]: say "one two three"
+    else: say "other"
+}
+g be 0,1,2,3:0
+say g in g.range
+say g.range
+say type(g)
+say "done"

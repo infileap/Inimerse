@@ -1,0 +1,16 @@
+evens = { x in N[1~20] | x % 2 == 0 }
+say 4 in evens
+say 5 in evens
+say size(evens)
+say min evens
+say max evens
+small = { x in N[1~10] | x > 5 }
+say size(small)
+say 6 in small
+say 5 in small
+big = { x in N[1~1000] | x % 3 == 0 }
+say size(big)
+say 999 in big
+say 1000 in big
+inf = { x in N | x > 10 }
+say inf

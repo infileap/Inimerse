@@ -1,0 +1,23 @@
+tmp = 999
+count = 0
+func f(n) {
+    global count
+    secret = n * 2      # 新变量 → 函数局部
+    count = count + 1   # 全局已存在 → 写全局
+    return secret
+}
+say "f(5)=" + str(f(5))
+say "tmp=" + str(tmp)
+say "count=" + str(count)
+# 函数局部 secret 在主程序不可见（未定义的全局 → nil）
+say "secret is nil: " + str(secret == nil)
+# 函数内 for 循环局部
+func sum_range(n) {
+    s = 0
+    for i in range(0, n) {
+        s = s + i
+    }
+    return s
+}
+say "sum_range(100)=" + str(sum_range(100))
+say "local-test done"

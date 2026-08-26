@@ -1,0 +1,4 @@
+s = 1,2,3,4,5
+say list(s)
+say len(list(s))
+say "done"

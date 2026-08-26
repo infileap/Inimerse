@@ -1,0 +1,813 @@
+# ==================== compiler.im:自举编译器 ====================
+# 用 inimerse 写的编译器:AST -> 宿主字节码数据 -> vm_exec 执行
+# 用法:inimerse selfhost/compiler.im <target.im>
+import "lexer.im"
+import "parser.im"
+
+# ---------- opcode ----------
+OP_MOV = 0
+OP_LOADK_INT = 1
+OP_LOADK_FLOAT = 2
+OP_LOADK_STRING = 3
+OP_LOADK_BOOL = 4
+OP_ADD = 5
+OP_SUB = 6
+OP_MUL = 7
+OP_DIV = 8
+OP_NEG = 9
+OP_EQ = 10
+OP_NEQ = 11
+OP_LT = 12
+OP_GT = 13
+OP_LE = 14
+OP_GE = 15
+OP_AND = 16
+OP_OR = 17
+OP_NOT = 18
+OP_NEW_ARRAY = 19
+OP_INDEX_GET = 20
+OP_INDEX_SET = 21
+OP_LOAD_GLOBAL = 22
+OP_STORE_GLOBAL = 23
+OP_JUMP = 24
+OP_JUMP_IF_FALSE = 25
+OP_JUMP_IF_TRUE = 26
+OP_CALL_BUILTIN = 27
+OP_PUSH_REG = 28
+OP_POP_REG = 29
+OP_SAY = 30
+OP_WAIT = 31
+OP_STOP = 32
+OP_HALT = 33
+OP_CALL_FUNC = 34
+OP_RETURN = 35
+OP_IS_NIL = 36
+OP_NEW_DICT = 45
+OP_EQK = 46
+OP_NEQK = 47
+OP_WAIT = 31
+OP_THREAD_START = 37
+OP_THREAD_CTRL = 38
+OP_THREAD_JOIN = 39
+OP_THREAD_WAIT = 40
+OP_THREAD_STATE = 41
+OP_LOCK = 42
+OP_SEND = 43
+OP_RECV = 44
+
+
+# ---------- 编译状态 ----------
+g_globals = {}
+g_funcs = []
+    g_func_idx = {}
+    g_gdecl = []
+    mctx = {"code": [], "strings": [], "floats": [], "locs": {}, "next_reg": 1, "local_peak": 1, "is_func": false}
+g_gdecl = []
+g_breaks = []
+g_tc = 0
+g_tc = 0
+g_loaded = []
+g_thread_idx = {}
+g_mutex = {}
+
+func dir_of(path) {
+    n = len(path)
+    i = n - 1
+    while i >= 0 and path[i] != "/" and path[i] != chr(92) {
+        i = i - 1
+    }
+    if i < 0 { return "" }
+    return substr(path, 0, i + 1)
+}
+
+func join_path(dir, rel) {
+    return dir + rel
+}
+
+func expand_imports(stmts, path) {
+    global g_loaded
+    dir = dir_of(path)
+    out = []
+    for s in stmts {
+        if s["t"] == "import" {
+            full = join_path(dir, s["p"])
+            if !contains_str(g_loaded, full) {
+                push(g_loaded, full)
+                sub = parse_file(full)
+                for x in sub {
+                    push(out, x)
+                }
+            }
+        } else {
+            push(out, s)
+        }
+    }
+    return out
+}
+
+func parse_file(path) {
+    src = read_file(path)
+    if len(src) == 0 { return [] }
+    tokens = lex(src)
+    stmts = parse(tokens)
+    return expand_imports(stmts, path)
+}
+
+func truthy(v) {
+    if v == true { return true }
+    return false
+}
+
+func contains_str(arr, s) {
+    for x in arr {
+        if x == s { return true }
+    }
+    return false
+}
+
+func temp_local(ctx) {
+    global g_tc
+    n = "__t" + str(g_tc)
+    g_tc = g_tc + 1
+    return alloc_local(ctx, n)
+}
+
+func emit(ctx, op, r1, r2, r3) {
+    push(ctx["code"], [op, r1, r2, r3])
+}
+
+func add_str(ctx, s) {
+    i = len(ctx["strings"])
+    push(ctx["strings"], s)
+    return i
+}
+
+func add_float(ctx, f) {
+    i = len(ctx["floats"])
+    push(ctx["floats"], f)
+    return i
+}
+
+func alloc_reg(ctx) {
+    if ctx["next_reg"] < ctx["local_peak"] {
+        ctx["next_reg"] = ctx["local_peak"]
+    }
+    r = ctx["next_reg"]
+    ctx["next_reg"] = r + 1
+    return r
+}
+
+func release_temps(ctx) {
+    ctx["next_reg"] = ctx["local_peak"]
+}
+
+func alloc_local(ctx, name) {
+    if !has(ctx["locs"], name) {
+        ctx["locs"][name] = ctx["local_peak"]
+        ctx["local_peak"] = ctx["local_peak"] + 1
+    }
+    return ctx["locs"][name]
+}
+
+func lookup_local(ctx, name) {
+    if has(ctx["locs"], name) { return ctx["locs"][name] }
+    return -1
+}
+
+func global_idx(name) {
+    global g_globals
+    if !has(g_globals, name) {
+        g_globals[name] = len(g_globals)
+    }
+    return g_globals[name]
+}
+
+func is_gdecl(name) {
+    return contains_str(g_gdecl, name)
+}
+func thread_idx(name) {
+    global g_thread_idx
+    if has(g_thread_idx, name) { return g_thread_idx[name] }
+    if name == "all" { return -1 }
+    if name == "this" { return -2 }
+    return -1
+}
+func mutex_idx(name) {
+    global g_mutex
+    if !has(g_mutex, name) { g_mutex[name] = len(g_mutex) }
+    return g_mutex[name]
+}
+
+
+# ---------- 表达式 ----------
+func compile_expr(ctx, e) {
+    t = e["t"]
+    if t == "num" {
+        r = alloc_reg(ctx)
+        emit(ctx, OP_LOADK_INT, r, int(e["v"]), 0)
+        return r
+    }
+    if t == "float" {
+        r = alloc_reg(ctx)
+        emit(ctx, OP_LOADK_FLOAT, r, add_float(ctx, e["v"]), 0)
+        return r
+    }
+    if t == "str" {
+        r = alloc_reg(ctx)
+        emit(ctx, OP_LOADK_STRING, r, add_str(ctx, e["v"]), 0)
+        return r
+    }
+ if t == "bool" {
+ r = alloc_reg(ctx)
+ if truthy(e["v"]) {
+ emit(ctx, OP_LOADK_BOOL, r, 1, 0)
+ } else {
+ emit(ctx, OP_LOADK_BOOL, r, 0, 0)
+ }
+ return r
+ }
+ if t == "nil" {
+ r = alloc_reg(ctx)
+ emit(ctx, OP_LOAD_GLOBAL, r, global_idx("__nil__"), 0)
+ return r
+ }
+ if t == "ident" {
+ name = e["v"]
+ lr = lookup_local(ctx, name)
+ if lr >= 0 { return lr }
+ r = alloc_reg(ctx)
+ emit(ctx, OP_LOAD_GLOBAL, r, global_idx(name), 0)
+ return r
+ }
+    if t == "un" {
+        v = compile_expr(ctx, e["e"])
+        r = alloc_reg(ctx)
+        if e["op"] == "!" {
+            emit(ctx, OP_NOT, r, v, 0)
+        } else {
+            emit(ctx, OP_NEG, r, v, 0)
+        }
+        return r
+    }
+    if t == "bin" {
+        op = e["op"]
+        if op == "and" or op == "or" {
+            left = compile_expr(ctx, e["l"])
+            result = left
+            jpos = len(ctx["code"])
+            if op == "and" {
+                emit(ctx, OP_JUMP_IF_FALSE, result, 0, 0)
+            } else {
+                emit(ctx, OP_JUMP_IF_TRUE, result, 0, 0)
+            }
+            right = compile_expr(ctx, e["r"])
+            emit(ctx, OP_MOV, result, right, 0)
+            end = len(ctx["code"])
+            ctx["code"][jpos][2] = end
+            return result
+        }
+        if op == "==" or op == "!=" {
+            if e["r"]["t"] == "str" {
+                lr = compile_expr(ctx, e["l"])
+                sidx = add_str(ctx, e["r"]["v"])
+                r = alloc_reg(ctx)
+                if op == "==" { emit(ctx, OP_EQK, r, lr, sidx) }
+                else { emit(ctx, OP_NEQK, r, lr, sidx) }
+                return r
+            }
+            if e["l"]["t"] == "str" {
+                lr = compile_expr(ctx, e["r"])
+                sidx = add_str(ctx, e["l"]["v"])
+                r = alloc_reg(ctx)
+                if op == "==" { emit(ctx, OP_EQK, r, lr, sidx) }
+                else { emit(ctx, OP_NEQK, r, lr, sidx) }
+                return r
+            }
+        }
+        l = compile_expr(ctx, e["l"])
+        rv = compile_expr(ctx, e["r"])
+        r = alloc_reg(ctx)
+        if op == "+" { emit(ctx, OP_ADD, r, l, rv) }
+        elif op == "-" { emit(ctx, OP_SUB, r, l, rv) }
+        elif op == "*" { emit(ctx, OP_MUL, r, l, rv) }
+        elif op == "/" { emit(ctx, OP_DIV, r, l, rv) }
+        elif op == "==" { emit(ctx, OP_EQ, r, l, rv) }
+        elif op == "!=" { emit(ctx, OP_NEQ, r, l, rv) }
+        elif op == "<" { emit(ctx, OP_LT, r, l, rv) }
+        elif op == ">" { emit(ctx, OP_GT, r, l, rv) }
+        elif op == "<=" { emit(ctx, OP_LE, r, l, rv) }
+        elif op == ">=" { emit(ctx, OP_GE, r, l, rv) }
+        return r
+    }
+    if t == "index" {
+        o = compile_expr(ctx, e["o"])
+        i = compile_expr(ctx, e["i"])
+        r = alloc_reg(ctx)
+        emit(ctx, OP_INDEX_GET, r, o, i)
+        return r
+    }
+    if t == "member" {
+        if e["o"]["t"] == "ident" {
+            tidx = thread_idx(e["o"]["v"])
+            prop = -1
+            if e["m"] == "running" { prop = 0 }
+            if e["m"] == "paused" { prop = 1 }
+            if e["m"] == "stopped" { prop = 2 }
+            if e["m"] == "finished" { prop = 3 }
+            if prop >= 0 and tidx >= 0 {
+                r = alloc_reg(ctx)
+                emit(ctx, OP_THREAD_STATE, r, tidx, prop)
+                return r
+            }
+        }
+        r = alloc_reg(ctx)
+        emit(ctx, OP_LOADK_BOOL, r, 0, 0)
+        return r
+    }
+
+    if t == "list" {
+        for it in e["items"] {
+            r = compile_expr(ctx, it)
+            emit(ctx, OP_PUSH_REG, r, 0, 0)
+        }
+        rr = alloc_reg(ctx)
+        emit(ctx, OP_NEW_ARRAY, rr, 0, len(e["items"]))
+        return rr
+    }
+    if t == "dict" {
+        for it in e["items"] {
+            r = compile_expr(ctx, it)
+            emit(ctx, OP_PUSH_REG, r, 0, 0)
+        }
+        rr = alloc_reg(ctx)
+        emit(ctx, OP_NEW_DICT, rr, 0, int(len(e["items"]) / 2))
+        return rr
+    }
+    if t == "call" {
+        callee = e["f"]
+        if callee["t"] == "ident" {
+            name = callee["v"]
+            argn = len(e["args"])
+            for a in e["args"] {
+                r = compile_expr(ctx, a)
+                emit(ctx, OP_PUSH_REG, r, 0, 0)
+            }
+            r = alloc_reg(ctx)
+            if has(g_func_idx, name) {
+                emit(ctx, OP_CALL_FUNC, g_func_idx[name], r, argn)
+            } else {
+                emit(ctx, OP_CALL_BUILTIN, r, add_str(ctx, name), argn)
+            }
+            return r
+        }
+        # 复杂 callee:暂不支持,返回 nil
+        r = alloc_reg(ctx)
+        emit(ctx, OP_LOAD_GLOBAL, r, global_idx("__nil__"), 0)
+        return r
+    }
+    # 未知类型:返回 nil
+    r = alloc_reg(ctx)
+    emit(ctx, OP_LOAD_GLOBAL, r, global_idx("__nil__"), 0)
+    return r
+}
+
+# ---------- 语句 ----------
+func compile_index_set_chain(ctx, target, last_idx_expr, value) {
+    idxs = []
+    cur = target
+    while cur["t"] == "index" {
+        push(idxs, cur["i"])
+        cur = cur["o"]
+    }
+    rev = []
+    n = len(idxs)
+    for k in range(0, n) {
+        push(rev, idxs[n - 1 - k])
+    }
+    arr = compile_expr(ctx, cur)
+    for i in range(0, len(rev)) {
+        idx = compile_expr(ctx, rev[i])
+        tmp = alloc_reg(ctx)
+        emit(ctx, OP_INDEX_GET, tmp, arr, idx)
+        isn = alloc_reg(ctx)
+        emit(ctx, OP_IS_NIL, isn, tmp, 0)
+        jf = len(ctx["code"])
+        emit(ctx, OP_JUMP_IF_FALSE, isn, 0, 0)
+        emit(ctx, OP_NEW_ARRAY, tmp, 0, 0)
+        emit(ctx, OP_INDEX_SET, arr, idx, tmp)
+        ctx["code"][jf][2] = len(ctx["code"])
+        arr = tmp
+    }
+    last_idx = compile_expr(ctx, last_idx_expr)
+    val = compile_expr(ctx, value)
+    emit(ctx, OP_INDEX_SET, arr, last_idx, val)
+}
+
+func compile_stmt(ctx, s) {
+    global g_breaks, g_tc
+    t = s["t"]
+    if t == "assign" {
+        name = s["n"]
+        v = compile_expr(ctx, s["v"])
+        lr = lookup_local(ctx, name)
+        if lr >= 0 {
+            emit(ctx, OP_MOV, lr, v, 0)
+        } elif ctx["is_func"] and !is_gdecl(name) {
+            lr = alloc_local(ctx, name)
+            emit(ctx, OP_MOV, lr, v, 0)
+        } else {
+            emit(ctx, OP_STORE_GLOBAL, global_idx(name), v, 0)
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "assignidx" {
+        if s["o"]["t"] == "index" {
+            compile_index_set_chain(ctx, s["o"], s["i"], s["v"])
+        } else {
+            o = compile_expr(ctx, s["o"])
+            i = compile_expr(ctx, s["i"])
+            v = compile_expr(ctx, s["v"])
+            emit(ctx, OP_INDEX_SET, o, i, v)
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "expr" {
+        compile_expr(ctx, s["v"])
+        release_temps(ctx)
+        return
+    }
+    if t == "say" {
+        v = compile_expr(ctx, s["v"])
+        emit(ctx, OP_SAY, v, 0, 0)
+        release_temps(ctx)
+        return
+    }
+    if t == "if" {
+        c = compile_expr(ctx, s["c"])
+        jf_pos = len(ctx["code"])
+        emit(ctx, OP_JUMP_IF_FALSE, c, 0, 0)
+        for st in s["a"] { compile_stmt(ctx, st) }
+        if len(s["b"]) > 0 {
+            j_pos = len(ctx["code"])
+            emit(ctx, OP_JUMP, 0, 0, 0)
+            else_pos = len(ctx["code"])
+            ctx["code"][jf_pos][2] = else_pos
+            for st in s["b"] { compile_stmt(ctx, st) }
+            ctx["code"][j_pos][2] = len(ctx["code"])
+        } else {
+            ctx["code"][jf_pos][2] = len(ctx["code"])
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "while" {
+        lp = len(ctx["code"])
+        c = compile_expr(ctx, s["c"])
+        jf_pos = len(ctx["code"])
+        emit(ctx, OP_JUMP_IF_FALSE, c, 0, 0)
+        push(g_breaks, [])
+        for st in s["b"] { compile_stmt(ctx, st) }
+        emit(ctx, OP_JUMP, 0, lp, 0)
+        end_pos = len(ctx["code"])
+        ctx["code"][jf_pos][2] = end_pos
+        bs = pop(g_breaks)
+        for bp in bs {
+            ctx["code"][bp][2] = end_pos
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "forarr" {
+        tmp = compile_expr(ctx, s["e"])
+        arr = temp_local(ctx)
+        emit(ctx, OP_MOV, arr, tmp, 0)
+        emit(ctx, OP_PUSH_REG, arr, 0, 0)
+        n = temp_local(ctx)
+        emit(ctx, OP_CALL_BUILTIN, n, add_str(ctx, "len"), 1)
+        i = temp_local(ctx)
+        emit(ctx, OP_LOADK_INT, i, 0, 0)
+        lp = len(ctx["code"])
+        t1 = alloc_reg(ctx)
+        emit(ctx, OP_LT, t1, i, n)
+        jf_pos = len(ctx["code"])
+        emit(ctx, OP_JUMP_IF_FALSE, t1, 0, 0)
+        v = alloc_reg(ctx)
+        emit(ctx, OP_INDEX_GET, v, arr, i)
+        lv = alloc_local(ctx, s["v"])
+        emit(ctx, OP_MOV, lv, v, 0)
+        push(g_breaks, [])
+        for st in s["b"] { compile_stmt(ctx, st) }
+        t2 = alloc_reg(ctx)
+        emit(ctx, OP_LOADK_INT, t2, 1, 0)
+        emit(ctx, OP_ADD, i, i, t2)
+        emit(ctx, OP_JUMP, 0, lp, 0)
+        end_pos = len(ctx["code"])
+        ctx["code"][jf_pos][2] = end_pos
+        bs = pop(g_breaks)
+        for bp in bs {
+            ctx["code"][bp][2] = end_pos
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "forrange" {
+        t0 = compile_expr(ctx, s["s"])
+        st0 = temp_local(ctx)
+        emit(ctx, OP_MOV, st0, t0, 0)
+        t1 = compile_expr(ctx, s["e"])
+        en0 = temp_local(ctx)
+        emit(ctx, OP_MOV, en0, t1, 0)
+        stp = temp_local(ctx)
+        if s["st"]["t"] == "nil" {
+            emit(ctx, OP_LOADK_INT, stp, 1, 0)
+        } else {
+            stv = compile_expr(ctx, s["st"])
+            emit(ctx, OP_MOV, stp, stv, 0)
+        }
+        neg = false
+        if s["st"]["t"] == "num" and int(s["st"]["v"]) < 0 { neg = true }
+        if s["st"]["t"] == "un" and s["st"]["op"] == "-" and s["st"]["e"]["t"] == "num" { neg = true }
+        i = alloc_local(ctx, s["v"])
+        emit(ctx, OP_MOV, i, st0, 0)
+        lp = len(ctx["code"])
+        t2 = alloc_reg(ctx)
+        if neg {
+            emit(ctx, OP_GT, t2, i, en0)
+        } else {
+            emit(ctx, OP_LT, t2, i, en0)
+        }
+        jf_pos = len(ctx["code"])
+        emit(ctx, OP_JUMP_IF_FALSE, t2, 0, 0)
+        push(g_breaks, [])
+        for st in s["b"] { compile_stmt(ctx, st) }
+        t3 = alloc_reg(ctx)
+        emit(ctx, OP_MOV, t3, stp, 0)
+        emit(ctx, OP_ADD, i, i, t3)
+        emit(ctx, OP_JUMP, 0, lp, 0)
+        end_pos = len(ctx["code"])
+        ctx["code"][jf_pos][2] = end_pos
+        bs = pop(g_breaks)
+        for bp in bs {
+            ctx["code"][bp][2] = end_pos
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "return" {
+        if s["v"]["t"] == "nil" {
+            emit(ctx, OP_RETURN, 0, 0, 0)
+        } else {
+            r = compile_expr(ctx, s["v"])
+            emit(ctx, OP_RETURN, r, 0, 0)
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "break" {
+        pos = len(ctx["code"])
+        emit(ctx, OP_JUMP, pos, 0, 0)
+        if len(g_breaks) > 0 {
+            push(g_breaks[len(g_breaks) - 1], pos)
+        }
+        return
+    }
+    if t == "global" {
+        for n in s["names"] {
+            if !contains_str(g_gdecl, n) {
+                push(g_gdecl, n)
+            }
+        }
+        return
+    }
+    if t == "main" {
+        for st in s["b"] { compile_stmt(ctx, st) }
+        return
+    }
+
+    if t == "thread" {
+        return
+    }
+    if t == "start" {
+        tidx = thread_idx(s["n"])
+        for a in s["a"] {
+            r = compile_expr(ctx, a)
+            emit(ctx, OP_PUSH_REG, r, 0, 0)
+        }
+        r = alloc_reg(ctx)
+        emit(ctx, OP_THREAD_START, tidx, r, len(s["a"]))
+        release_temps(ctx)
+        return
+    }
+    if t == "tctrl" {
+        tidx = thread_idx(s["n"])
+        emit(ctx, OP_THREAD_CTRL, tidx, s["op"], 0)
+        return
+    }
+    if t == "join" {
+        tidx = thread_idx(s["n"])
+        tr = -1
+        if s["timeout"]["t"] != "nil" { tr = compile_expr(ctx, s["timeout"]) }
+        emit(ctx, OP_THREAD_JOIN, tidx, tr, 0)
+        release_temps(ctx)
+        return
+    }
+    if t == "twait" {
+        tidx = thread_idx(s["n"])
+        if s["mode"] == 0 {
+            sr = compile_expr(ctx, s["s"])
+            emit(ctx, OP_THREAD_WAIT, tidx, sr, 0)
+        } else {
+            tr = -1
+            if s["timeout"]["t"] != "nil" { tr = compile_expr(ctx, s["timeout"]) }
+            t_reg = alloc_reg(ctx)
+            if tr >= 0 {
+                hundred = alloc_reg(ctx)
+                emit(ctx, OP_LOADK_INT, hundred, 100, 0)
+                emit(ctx, OP_MUL, t_reg, tr, hundred)
+            } else {
+                emit(ctx, OP_LOADK_INT, t_reg, 100, 0)
+            }
+            loop = len(ctx["code"])
+            cond = compile_expr(ctx, s["c"])
+            jtrue = len(ctx["code"])
+            emit(ctx, OP_JUMP_IF_TRUE, cond, 0, 0)
+            dec = alloc_reg(ctx)
+            emit(ctx, OP_LOADK_INT, dec, 1, 0)
+            emit(ctx, OP_SUB, t_reg, t_reg, dec)
+            isn = alloc_reg(ctx)
+            emit(ctx, OP_IS_NIL, isn, t_reg, 0)
+            jout = len(ctx["code"])
+            emit(ctx, OP_JUMP_IF_TRUE, isn, 0, 0)
+            emit(ctx, OP_JUMP, 0, loop, 0)
+            wake = len(ctx["code"])
+            ctx["code"][jtrue][2] = wake
+            if jout >= 0 { ctx["code"][jout][2] = wake }
+            emit(ctx, OP_THREAD_CTRL, tidx, 2, 0)
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "lock" {
+        midx = mutex_idx(s["n"])
+        if s["b"] == 2 {
+            emit(ctx, OP_LOCK, midx, 1, 0)
+        } elif s["b"] == 1 {
+            emit(ctx, OP_LOCK, midx, 0, 0)
+            for st in s["body"] { compile_stmt(ctx, st) }
+            emit(ctx, OP_LOCK, midx, 1, 0)
+        } else {
+            emit(ctx, OP_LOCK, midx, 0, 0)
+        }
+        return
+    }
+    if t == "send" {
+        tidx = thread_idx(s["n"])
+        r = compile_expr(ctx, s["m"])
+        emit(ctx, OP_SEND, tidx, r, 0)
+        release_temps(ctx)
+        return
+    }
+    if t == "recv" {
+        tr = -1
+        if s["timeout"]["t"] != "nil" { tr = compile_expr(ctx, s["timeout"]) }
+        r = alloc_reg(ctx)
+        emit(ctx, OP_RECV, r, tr, 0)
+        lr = lookup_local(ctx, s["v"])
+        if lr >= 0 {
+            emit(ctx, OP_MOV, lr, r, 0)
+        } elif ctx["is_func"] and !is_gdecl(s["v"]) {
+            lr = alloc_local(ctx, s["v"])
+            emit(ctx, OP_MOV, lr, r, 0)
+        } else {
+            emit(ctx, OP_STORE_GLOBAL, global_idx(s["v"]), r, 0)
+        }
+        release_temps(ctx)
+        return
+    }
+    if t == "wait" {
+        dr = compile_expr(ctx, s["d"])
+        emit(ctx, OP_WAIT, dr, 0, 0)
+        release_temps(ctx)
+        return
+    }
+    if t == "waituntil" {
+        loop = len(ctx["code"])
+        cond = compile_expr(ctx, s["c"])
+        jtrue = len(ctx["code"])
+        emit(ctx, OP_JUMP_IF_TRUE, cond, 0, 0)
+        one = alloc_reg(ctx)
+        emit(ctx, OP_LOADK_INT, one, 1, 0)
+        emit(ctx, OP_WAIT, one, 0, 0)
+        emit(ctx, OP_JUMP, 0, loop, 0)
+        ctx["code"][jtrue][2] = len(ctx["code"])
+        release_temps(ctx)
+        return
+    }
+    if t == "using" {
+        return
+    }
+
+    if t == "func" {
+        # 函数体单独编译,主程序不发射指令
+        return
+    }
+    if t == "import" {
+        # 多文件暂不支持(单文件编译)
+        return
+    }
+}
+
+# ---------- 程序编译 ----------
+func compile_program(stmts) {
+    global g_funcs, g_func_idx, g_gdecl, g_threads, g_thread_idx
+    g_funcs = []
+    g_func_idx = {}
+    g_threads = []
+    g_thread_idx = {}
+    for s in stmts {
+        if s["t"] == "func" {
+            g_func_idx[s["n"]] = len(g_funcs)
+            push(g_funcs, {"n": s["n"], "a": len(s["p"]), "p": s["p"], "b": s["b"]})
+        }
+    }
+    for s in stmts {
+        if s["t"] == "thread" {
+            g_thread_idx[s["n"]] = len(g_threads)
+            push(g_threads, {"n": s["n"], "a": len(s["p"]), "p": s["p"], "b": s["b"]})
+        }
+    }
+    g_gdecl = []
+    mctx = {"code": [], "strings": [], "floats": [], "locs": {}, "next_reg": 1, "local_peak": 1, "is_func": false}
+    for s in stmts {
+        compile_stmt(mctx, s)
+    }
+    emit(mctx, OP_HALT, 0, 0, 0)
+    for f in g_funcs {
+        g_gdecl = []
+        fctx = {"code": [], "strings": [], "floats": [], "locs": {}, "next_reg": 1, "local_peak": 1, "is_func": true}
+        for i in range(0, len(f["p"])) {
+            alloc_local(fctx, f["p"][i])
+        }
+        for s in f["b"] {
+            compile_stmt(fctx, s)
+        }
+        f["code"] = fctx["code"]
+        f["strings"] = fctx["strings"]
+        f["floats"] = fctx["floats"]
+    }
+    for th in g_threads {
+        g_gdecl = []
+        tctx = {"code": [], "strings": [], "floats": [], "locs": {}, "next_reg": 1, "local_peak": 1, "is_func": true}
+        for i in range(0, len(th["p"])) {
+            alloc_local(tctx, th["p"][i])
+        }
+        for s in th["b"] {
+            compile_stmt(tctx, s)
+        }
+        emit(tctx, OP_HALT, 0, 0, 0)
+        th["code"] = tctx["code"]
+        th["strings"] = tctx["strings"]
+        th["floats"] = tctx["floats"]
+    }
+    return {"code": mctx["code"], "strings": mctx["strings"], "floats": mctx["floats"], "funcs": g_funcs, "threads": g_threads}
+}
+
+# ---------- 入口 ----------
+clargs = args()
+
+if clargs[0] == "--dump" {
+    stmts2 = parse_file(clargs[1])
+    d = compile_program(stmts2)
+    say "main:"
+    for ins in d["code"] { say join(ins, ",") }
+    for f in d["funcs"] {
+        say "func:" + f["n"] + ":" + str(f["a"])
+        for ins in f["code"] { say join(ins, ",") }
+    }
+    for th in d["threads"] {
+        say "thread:" + th["n"] + ":" + str(th["a"])
+        for ins in th["code"] { say join(ins, ",") }
+    }
+    stop all
+}
+
+if len(clargs) < 1 {
+    say "用法: inimerse selfhost/compiler.im <script.im>"
+    stop all
+}
+if clargs[0] == "compiler.im" and len(clargs) > 1 {
+    tgt = clargs[1]
+} else {
+    tgt = clargs[0]
+}
+src = read_file(tgt)
+if len(src) == 0 {
+    say "无法读取文件: " + tgt
+    stop all
+}
+stmts = parse_file(tgt)
+data = compile_program(stmts)
+vm_exec(data)
+stop all

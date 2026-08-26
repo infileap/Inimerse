@@ -1,0 +1,401 @@
+# block_edit.im - 语块整体替换工具 (blocks: A:{...})
+# 用法: inimerse.exe block_edit.im <cmd> <file> [args...]
+#   list <file>                    列出所有语块 (名称/起止行/行数)
+#   extract <file> <name> [out]    导出语块(含骨架)到 out(默认输出)
+#   replace <file> <name> <newfile>用 newfile 内容整体替换语块体(保留 name: 和配对 })
+#   strip <file> <name>            删除整个语块
+#   strip_marked <file> <prefix>   删除所有名称以 prefix 开头的语块 (发布版清理)
+#   rename <file> <old> <new>      重命名语块并同步 to/break 引用
+# 说明: 语块标签编译期零开销; 替换 = 替换内联代码段, start/end 自动重算
+# 注意: 函数参数一律 p 前缀, 避免与顶层全局同名 (语言参数查找细节)
+
+global ARGS, FILE, LINES, N, BN, BS, BE
+
+func code_view(pl) {
+    out = ""
+    in_str = false
+    i = 0
+    while i < len(pl) {
+        c = substr(pl, i, 1)
+        if in_str {
+            if c == "\"" {
+                in_str = false
+            }
+            out = out + " "
+        } else {
+            if c == "#" {
+                break
+            }
+            if c == "\"" {
+                in_str = true
+                out = out + " "
+            } else {
+                out = out + c
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+func has_brace(ps) {
+    i = 0
+    while i < len(ps) {
+        if substr(ps, i, 1) == "{" {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+func is_ident_char(pc, pfirst) {
+    if pc >= "a" and pc <= "z" { return true }
+    if pc >= "A" and pc <= "Z" { return true }
+    if pc >= "0" and pc <= "9" {
+        if pfirst {
+            return false
+        }
+        return true
+    }
+    if pc == "_" { return true }
+    return false
+}
+
+func is_valid_ident(pn) {
+    if len(pn) == 0 {
+        return false
+    }
+    i = 0
+    while i < len(pn) {
+        if is_ident_char(substr(pn, i, 1), i == 0) == false {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+func parse_blocks() {
+    global BN, BS, BE, LINES, N
+    BN = []
+    BS = []
+    BE = []
+    i = 0
+    while i < N {
+        cv = code_view(LINES[i])
+        ci = 0
+        found = false
+        cname = ""
+        while ci < len(cv) {
+            if substr(cv, ci, 1) == ":" {
+                cname = substr(cv, 0, ci)
+                if is_valid_ident(cname) {
+                    found = true
+                }
+                ci = 999999
+            }
+            ci = ci + 1
+        }
+        if found {
+            rest = substr(cv, len(cname) + 1, 999999)
+            brace_line = -1
+            if has_brace(rest) {
+                brace_line = i
+            } else {
+                if i + 1 < N {
+                    if has_brace(code_view(LINES[i + 1])) {
+                        brace_line = i + 1
+                    }
+                }
+            }
+            if brace_line >= 0 {
+                depth = 0
+                j = brace_line
+                end = -1
+                while j < N {
+                    cvj = code_view(LINES[j])
+                    k = 0
+                    while k < len(cvj) {
+                        ch = substr(cvj, k, 1)
+                        if ch == "{" {
+                            depth = depth + 1
+                        }
+                        if ch == "}" {
+                            depth = depth - 1
+                            if depth == 0 {
+                                end = j
+                                k = 999999
+                            }
+                        }
+                        k = k + 1
+                    }
+                    if end >= 0 {
+                        j = 999999
+                    } else {
+                        j = j + 1
+                    }
+                }
+                if end >= 0 {
+                    push(BN, cname)
+                    push(BS, i)
+                    push(BE, end)
+                    i = end
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+func find_block(pname) {
+    global BN
+    i = 0
+    while i < len(BN) {
+        if BN[i] == pname {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+func cmd_list() {
+    global BN, BS, BE
+    parse_blocks()
+    say "blocks: " + str(len(BN))
+    i = 0
+    while i < len(BN) {
+        cnt = BE[i] - BS[i] + 1
+        say "  " + BN[i] + "  lines " + str(BS[i] + 1) + ".." + str(BE[i] + 1)
+        i = i + 1
+    }
+}
+
+func cmd_extract(pname, pout) {
+    global LINES, BN, BS, BE, G_NAME, G_OUT
+    G_NAME = pname
+    G_OUT = pout
+    parse_blocks()
+    bi = find_block(G_NAME)
+    if bi < 0 {
+        say "error: block " + G_NAME + " not found"
+        return
+    }
+    txt = ""
+    i = BS[bi]
+    while i <= BE[bi] {
+        txt = txt + LINES[i]
+        if i < BE[bi] {
+            txt = txt + "\n"
+        }
+        i = i + 1
+    }
+    if G_OUT != "" {
+        write_file(G_OUT, txt)
+        say "extracted " + G_NAME + " -> " + G_OUT
+    } else {
+        say txt
+    }
+}
+
+func cmd_replace(pname, pnew) {
+    global LINES, BN, BS, BE, G_NAME, G_NEW
+    G_NAME = pname
+    G_NEW = pnew
+    newtxt = read_file(G_NEW)
+    if newtxt == "" {
+        say "error: cannot read " + G_NEW
+        return
+    }
+    parse_blocks()
+    bi = find_block(G_NAME)
+    if bi < 0 {
+        say "error: block " + G_NAME + " not found"
+        return
+    }
+    nlines = split(newtxt, "\n")
+    blines = []
+    i = 0
+    while i < len(nlines) {
+        if nlines[i] != "" {
+            push(blines, nlines[i])
+        }
+        i = i + 1
+    }
+    out = []
+    i = 0
+    while i < BS[bi] {
+        push(out, LINES[i])
+        i = i + 1
+    }
+    push(out, LINES[BS[bi]])
+    if has_brace(code_view(LINES[BS[bi]])) == false {
+        push(out, LINES[BS[bi] + 1])
+    }
+    i = 0
+    while i < len(blines) {
+        push(out, blines[i])
+        i = i + 1
+    }
+    push(out, LINES[BE[bi]])
+    i = BE[bi] + 1
+    while i < len(LINES) {
+        push(out, LINES[i])
+        i = i + 1
+    }
+    write_file(FILE, join(out, "\n"))
+    say "replaced block " + G_NAME + " from " + G_NEW
+}
+
+func cmd_strip(pname) {
+    global LINES, BN, BS, BE, G_NAME
+    G_NAME = pname
+    parse_blocks()
+    bi = find_block(G_NAME)
+    if bi < 0 {
+        say "error: block " + G_NAME + " not found"
+        return
+    }
+    out = []
+    i = 0
+    while i < BS[bi] {
+        push(out, LINES[i])
+        i = i + 1
+    }
+    i = BE[bi] + 1
+    while i < len(LINES) {
+        push(out, LINES[i])
+        i = i + 1
+    }
+    write_file(FILE, join(out, "\n"))
+    say "stripped block " + G_NAME
+}
+
+func cmd_strip_marked(pprefix) {
+    global BN, BS, BE, G_PREFIX
+    G_PREFIX = pprefix
+    parse_blocks()
+    removed = 0
+    i = len(BN) - 1
+    while i >= 0 {
+        if match(BN[i], "^" + G_PREFIX) {
+            cmd_strip(BN[i])
+            removed = removed + 1
+            parse_blocks()
+        }
+        i = i - 1
+    }
+    say "stripped " + str(removed) + " block(s) with prefix " + G_PREFIX
+}
+
+func str_replace(ps, pold, pnewname) {
+    out = ""
+    i = 0
+    while i < len(ps) {
+        if substr(ps, i, len(pold)) == pold {
+            out = out + pnewname
+            i = i + len(pold)
+        } else {
+            out = out + substr(ps, i, 1)
+            i = i + 1
+        }
+    }
+    return out
+}
+
+func rename_refs(pold, pnewname) {
+    global LINES, BN, BS, BE
+    out = []
+    i = 0
+    while i < len(LINES) {
+        pline = LINES[i]
+        is_head = false
+        j = 0
+        while j < len(BN) {
+            if i == BS[j] {
+                is_head = true
+            }
+            j = j + 1
+        }
+        if is_head == false {
+            pline = str_replace(pline, pold, pnewname)
+        }
+        push(out, pline)
+        i = i + 1
+    }
+    LINES = out
+    N = len(LINES)
+}
+
+func cmd_rename(pold, pnewname) {
+    global BN, BS, BE, LINES, N, G_OLD, G_NEWN
+    G_OLD = pold
+    G_NEWN = pnewname
+    parse_blocks()
+    bi = find_block(G_OLD)
+    if bi < 0 {
+        say "error: block " + G_OLD + " not found"
+        return
+    }
+    rename_refs(G_OLD, G_NEWN)
+    LINES[BS[bi]] = str_replace(LINES[BS[bi]], G_OLD, G_NEWN)
+    write_file(FILE, join(LINES, "\n"))
+    say "renamed block " + G_OLD + " -> " + G_NEWN + " (refs updated)"
+}
+
+ARGS = args()
+if len(ARGS) < 2 {
+    say "usage: inimerse.exe block_edit.im <cmd> <file> [args...]"
+    return
+}
+CMD = ARGS[0]
+FILE = ARGS[1]
+RAW = read_file(FILE)
+if RAW == "" {
+    say "error: cannot read " + FILE
+    return
+}
+LINES = split(RAW, "\n")
+N = len(LINES)
+if CMD == "list" {
+    cmd_list()
+}
+elif CMD == "extract" {
+    pname = ""
+    pout = ""
+    if len(ARGS) >= 3 { pname = ARGS[2] }
+    if len(ARGS) >= 4 { pout = ARGS[3] }
+    cmd_extract(pname, pout)
+}
+elif CMD == "replace" {
+    if len(ARGS) >= 4 {
+        cmd_replace(ARGS[2], ARGS[3])
+    } else {
+        say "usage: block_edit replace <file> <name> <newfile>"
+    }
+}
+elif CMD == "strip" {
+    if len(ARGS) >= 3 {
+        cmd_strip(ARGS[2])
+    } else {
+        say "usage: block_edit strip <file> <name>"
+    }
+}
+elif CMD == "strip_marked" {
+    if len(ARGS) >= 3 {
+        cmd_strip_marked(ARGS[2])
+    } else {
+        say "usage: block_edit strip_marked <file> <prefix>"
+    }
+}
+elif CMD == "rename" {
+    if len(ARGS) >= 4 {
+        cmd_rename(ARGS[2], ARGS[3])
+    } else {
+        say "usage: block_edit rename <file> <old> <new>"
+    }
+}
+else {
+    say "unknown command: " + CMD
+}

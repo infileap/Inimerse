@@ -1,0 +1,34 @@
+# ============ §12.3 .imjar / .vverse source 自动更新（多源 + min_version） ============
+# 2026-08-15 14:00
+#
+## manifest 扩展（verse_pack 写入 + 校验）
+- "version": "1.2.3"        —— 模组语义化版本（字符串；兼容旧 int）
+- "min_version": "0.9.0"    —— 适用 infiverse 最低引擎版本标签（用户需求）
+- "sources": ["uri1", ...]  —— 多更新源（顺序 failover）
+- 引擎版本常量 INFIVERSE_VERSION（common.h，当前 "0.9.0"）
+
+## 新 API
+- verse_pack(dir, out, refMode, version, min_version, src1, src2, ...)
+  —— meta 在 r_popn 之前读取（教训：popn 后参数已弹栈，曾导致 min_version/sources 丢失）
+- verse_update(id [, src1, src2, ...])
+  —— 多源自动更新：参数源优先，否则用本地 verse.manifest 保存的 sources
+  —— 每源：下载(local/http) -> id 匹配 -> min_version 检查 -> 版本比较(verse_ver_cmp) -> sha256/crc 校验 -> 解包
+  —— .imjar 源：STORE zip 解包（verse_zip_extract，与 main.c .imjar 运行同布局）-> 读 verse.manifest -> 校验 -> 覆盖安装
+  —— 返回 1=已更新 / 0=无更新或失败（stderr 有每源原因）
+
+## verse_open 强化
+- 重构：verse_fetch / verse_parse_meta / verse_verify / verse_unpack（open 与 update 共用）
+- open 时校验 min_version（引擎过旧拒绝运行）
+- 解包后保存 verse.manifest 到 universe/<id>/（供后续 update）
+
+## 验证（t_update.im）
+- pack1 meta 正确（version/min_version/sources 均在）
+- open1 解包+保存 manifest
+- 多源 failover：源1 版本不新 -> 源2（2.0.0）-> updated ✓
+- min_version 标签：3.0.0/min_version 99.0.0 -> "needs infiverse >= 99.0.0 (current 0.9.0) - skipped" ✓
+- 参数源覆盖本地 sources ✓；无更新时返回 0 ✓
+
+## 边界/后续
+- .imjar 远程（http）源暂仅 local（zip 读取需先下载到本地临时）
+- 启动自动检查更新（脚本层：服务 main.im 启动时调 verse_update(id) 即可）
+- 版本比较为"段数字"式（非完整 semver：无预发布/构建号）

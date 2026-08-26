@@ -1,0 +1,108 @@
+# lexer.im — inimerse 词法分析器(自举解释器第一部分)
+# Token = {"k": "id"|"num"|"str"|"op"|"eof", "v": 文本, "line": 行号}
+# 注意:
+#   1. 本语言字符串不做转义,引号内原样保留;"\n" 是字面反斜杠+n,
+#      真实控制字符用 chr() 生成
+#   2. 支持 # 行注释和 #[...] 块注释
+#   3. 无 continue,用 elif 链组织互斥分支
+
+func is_digit(c) {
+    return c >= "0" and c <= "9"
+}
+
+func is_alpha(c) {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+
+func is_alnum(c) {
+    return is_digit(c) or is_alpha(c)
+}
+
+# 运算符表:多字符在前(优先匹配)
+ops = ["==", "!=", "<=", ">=", "..", "->",
+       "+", "-", "*", "/", "%", "<", ">", "=", "!",
+       "(", ")", "{", "}", "[", "]", ",", ";", ":", "."]
+
+func lex(src) {
+    tokens = []
+    pos = 0
+    line = 1
+    n = len(src)
+    nl = chr(10)
+    tab = chr(9)
+    cr = chr(13)
+    quote = chr(34)
+    while pos < n {
+        c = src[pos]
+        if c == nl {
+            line = line + 1
+            pos = pos + 1
+        } elif c == " " or c == tab or c == cr {
+            pos = pos + 1
+        } elif c == "#" {
+            # 注释
+            if pos + 1 < n and src[pos + 1] == "[" {
+                # 块注释 #[...] 支持嵌套
+                depth = 1
+                pos = pos + 2
+                while pos < n and depth > 0 {
+                    if src[pos] == "[" {
+                        depth = depth + 1
+                    } elif src[pos] == "]" {
+                        depth = depth - 1
+                    } elif src[pos] == nl {
+                        line = line + 1
+                    }
+                    pos = pos + 1
+                }
+            } else {
+                # 行注释:到行尾
+                while pos < n and src[pos] != nl {
+                    pos = pos + 1
+                }
+            }
+        } elif is_alpha(c) {
+            # 标识符 / 关键字
+            bpos = pos
+            while pos < n and is_alnum(src[pos]) {
+                pos = pos + 1
+            }
+            push(tokens, {"k": "id", "v": substr(src, bpos, pos - bpos), "line": line})
+        } elif is_digit(c) {
+            # 数字
+            bpos = pos
+            while pos < n and (is_digit(src[pos]) or src[pos] == ".") {
+                pos = pos + 1
+            }
+            push(tokens, {"k": "num", "v": substr(src, bpos, pos - bpos), "line": line})
+        } elif c == quote {
+            # 字符串(不做转义,原样保留)
+            pos = pos + 1
+            bpos = pos
+            while pos < n and src[pos] != quote {
+                pos = pos + 1
+            }
+            push(tokens, {"k": "str", "v": substr(src, bpos, pos - bpos), "line": line})
+            if pos < n {
+                pos = pos + 1
+            }
+        } else {
+            # 运算符(多字符优先)
+            matched = 0
+            for op in ops {
+                if substr(src, pos, len(op)) == op {
+                    push(tokens, {"k": "op", "v": op, "line": line})
+                    pos = pos + len(op)
+                    matched = 1
+                    break
+                }
+            }
+            if matched == 0 {
+                say "lexer error: 无法识别的字符 [" + c + "] 第 " + str(line) + " 行"
+                break
+            }
+        }
+    }
+    push(tokens, {"k": "eof", "v": "", "line": line})
+    return tokens
+}

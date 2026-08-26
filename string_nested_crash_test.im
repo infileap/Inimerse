@@ -1,0 +1,4 @@
+inner = { "exit": 0, "out": "ok" }
+outer = { "task": inner }
+outer["result"] = { "exit": 0, "out": "ok" }
+say "NESTED_DICT_OK"

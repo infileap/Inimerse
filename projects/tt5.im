@@ -1,0 +1,4 @@
+l = list(N[1~5])
+say l
+say len(l)
+say 3 in l

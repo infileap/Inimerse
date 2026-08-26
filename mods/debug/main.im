@@ -1,0 +1,57 @@
+# debug.im - Inimerse script debugger (replaces debug_mod.dll)
+# used by: inimerse.exe debug <script.im>
+# spliced in front of the user script by the engine; commands:
+#   s/step        single step
+#   c/cont        continue (free run; type any command anytime to pause again)
+#   p             print current ip
+#   dis           disassemble 12 instructions at current ip
+#   v/var         print all globals
+#   q/quit        detach debugger (program runs to completion)
+# EOF on stdin (piped/file input exhausted) auto-releases the program.
+
+running = true
+
+thread dbgmain {
+    global running, cmd
+    dbg_wait_boundary()
+    while running {
+        cmd = input("")
+        if cmd == "" {
+            dbg_resume(0)
+            running = false
+        }
+        elif cmd == "s" or cmd == "step" {
+            dbg_resume(1)
+        }
+        elif cmd == "c" or cmd == "cont" or cmd == "continue" {
+            dbg_resume(0)
+        }
+        elif cmd == "p" or cmd == "ip" {
+            say "[dbg] ip=" + str(dbg_ip())
+            dbg_resume(1)
+        }
+        elif cmd == "dis" or cmd == "d" or match(cmd, "^dis ") {
+            say dbg_disasm(dbg_ip(), 12)
+            dbg_resume(1)
+        }
+        elif cmd == "v" or cmd == "var" {
+            dbg_var("all")
+            dbg_resume(1)
+        }
+        elif cmd == "q" or cmd == "quit" or cmd == "exit" {
+            dbg_resume(0)
+            running = false
+        }
+        else {
+            say "[dbg] ? (s/c/p/dis/v/q)"
+            dbg_resume(1)
+        }
+        if running and cmd != "c" and cmd != "cont" and cmd != "continue" {
+            dbg_wait_boundary()
+        }
+    }
+}
+
+dbg_set_active(1)
+start dbgmain
+dbg_pause_now()

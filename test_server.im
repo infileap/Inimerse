@@ -1,0 +1,9 @@
+main {
+    write_file("D:/_server_test.txt",
+        "PORTS:\n" + server_ports() +
+        "\nIP:" + lan_ip() +
+        "\nCHECK11461:" + str(port_check(11461)) +
+        "\nPID11461:" + str(port_pid(11461)) +
+        "\nCHECK9999:" + str(port_check(9999)) +
+        "\nROOMS:\n" + server_rooms())
+}

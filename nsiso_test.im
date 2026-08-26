@@ -1,0 +1,5 @@
+import "nsiso1.im" as m1
+import "nsiso2.im" as m2
+say "m1.x=" + m1.x + " m1.f()=" + m1.f()
+say "m2.x=" + m2.x + " m2.f()=" + m2.f()
+say "ISO_DONE"

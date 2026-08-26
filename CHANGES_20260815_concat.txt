@@ -1,0 +1,47 @@
+# ============ Inimerse L2 字符串拼接预分配 ============
+# 2026-08-15 10:30  build: OP_CONCAT chain flattening (ROADMAP L2 next item)
+#
+## 1. NEW: OP_CONCAT (链式字符串拼接预分配)
+- bytecode.h: 枚举末尾追加 OP_CONCAT（ABI 安全，旧 opcode 编号不变）
+- compiler.c: TOK_PLUS 时收集左结合链（a+b+c+...，>=3 操作数）发射 OP_CONCAT；
+  右子树仍嵌套 ADD（保持左结合求值顺序，浮点/整数/集合语义与逐段 ADD 完全一致）；
+  链过长(>68)自动回退普通 OP_ADD；临时寄存器复用/释放逻辑与原有 ADD 路径一致
+- vm.c L_CONCAT: 快路径（全部操作数为字符串）一次 malloc + 一次拷贝；
+  通用路径按 L_ADD 逐段语义左折叠（集合并/字符串/整数/浮点混合链行为不变），
+  中间缓冲区由 fold 自管（acc_fold_owned 标志，只释放 fold 自分配缓冲，
+  首操作数缓冲区归属寄存器不动，避免双重释放）
+- debug_mod.c: 反汇编器新增 CONCAT 显示
+
+## 2. 关键坑：debug DLL 的导入模块名匹配（0xC0000005 根因）
+- debug_mod.dll 的导入表引用生成 inimerse.lib 时的 exe 输出名。
+  若用 build_new.ps1（-o inimerse_new.exe）生成 lib，DLL 导入表写 "inimerse_new.exe"；
+  部署为 inimerse.exe（或任何其他名字）时导入绑定失败 -> 在导入 thunk 处
+  0xC0000005（rip=RVA 0x36e98e，未重定位绝对跳）。
+- 修复：最终产品用 build.ps1 直接构建为 inimerse.exe（lib 名字随之正确），
+  再重链 debug_mod.dll；DLL 与 exe 必须同名匹配。
+- 验证：inimerse.exe + mini.im / concat_test 均 exit=0；
+  名字不匹配的拷贝（zzz_test.exe 等）稳定崩溃 -> 改名即好，实锤。
+
+## 3. bench（服务停止、debug 模组绕过，与历史口径一致）
+- bench_concat1（固定 6 段链 30 万次）: 旧 186-277ms -> 新 115-120ms（约 2x）
+- bench_concat2（增长 4 段链 2 万次）: 旧 1942-2217ms -> 新 590-619ms（约 3.5x）
+- bench.im（11M 运算）: 旧 368-372ms -> 新 339-345ms（无回归）
+- 注意：concat 结果 ival 保持 stale（与原 L_ADD 一致），避免 STORE_GLOBAL
+  对每次唯一的新字符串做 intern（fnv1a 全串哈希 O(n^2)）；代价是 concat 缓冲
+  与历史一样泄漏（原设计如此，未改动）
+
+## 4. 正确性
+- concat_test.im OK1-OK13（变量链/字面量链/增长链/数字链/浮点链/括号/条件上下文/
+  数组存储/空串/10段链/集合链）
+- concat_test2.im OK14-OK15（调用结果作为链操作数 str()）
+- 回归: set/exc/arr/meta/params/label/thread/t_say/sync/m_chk/lp3/sv_test 全过
+- smoke2.im 为匿名函数(func)语法不支持，parse 报错退出（与本次改动无关）
+
+## 5. 部署
+- inimerse.exe（480768，10:28 构建）+ inimerse.lib 重建 + debug_mod.dll 重链（57344）
+- 服务已重启：4 引擎 + 4 桥 + 1 应用，8 端口 LISTENING，日志干净
+- 旧引擎备份: inimerse_old_20260815_preconcat.exe
+
+## 遗留
+- forever{...}break 与分帧 wait 交互异常（P0，用 while 规避）——未动
+- concat 缓冲泄漏（继承历史行为）——如后续做内存治理，需引入真引用计数

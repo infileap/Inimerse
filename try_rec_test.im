@@ -1,0 +1,14 @@
+# bare try: recording + swallow tests
+x = 1
+try {
+    throw "boom"
+    x = 999
+}
+say "x=" + x
+# record via dbg_var (simulate debugger inspection)
+y = 0
+try {
+    throw "second-err"
+}
+say "y=" + y
+say "after"

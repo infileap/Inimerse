@@ -1,0 +1,19 @@
+# string concat chain bench
+# part 1: fixed 6-part chain (malloc count dominated)
+i = 0
+n = 0
+while i < 300000 {
+    s = "aa" + "bb" + "cc" + "dd" + "ee" + "ff"
+    n = n + len(s)
+    i = i + 1
+}
+say n
+# part 2: growing 4-part chain (copy volume)
+s2 = ""
+k = 0
+while k < 20000 {
+    s2 = s2 + "ab" + "cd" + "ef"
+    k = k + 1
+}
+say len(s2)
+say "BENCH_CONCAT_DONE"

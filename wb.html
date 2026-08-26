@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Infiverse 工作台</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { height:100%; overflow:hidden; font-family:Consolas,monospace,"Microsoft YaHei"; background:#0e1220; color:#e6edf3; font-size:13px; }
+#top { height:44px; display:flex; align-items:center; gap:10px; padding:0 12px; background:#151b2c; border-bottom:1px solid #232c42; }
+#top select, #top button { background:#1d2337; color:#e6edf3; border:1px solid #2a3350; border-radius:6px; padding:6px 10px; font-size:12px; }
+#top button { background:#2563eb; border:none; cursor:pointer; }
+#top .st { margin-left:auto; font-size:11px; color:#7d8aa5; }
+#body { display:flex; height:calc(100vh - 44px); }
+#tree { width:230px; min-width:230px; background:#131927; border-right:1px solid #232c42; overflow-y:auto; padding:8px 0; }
+.ti { padding:6px 14px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#aeb9cd; }
+.ti:hover { background:#1d2638; color:#fff; }
+.ti.dir { color:#7fd4ff; font-weight:600; }
+.ti.sel { background:#2563eb; color:#fff; }
+#editorBox { flex:1; display:flex; flex-direction:column; }
+#editorBar { height:34px; display:flex; align-items:center; padding:0 12px; background:#111625; border-bottom:1px solid #232c42; font-size:12px; color:#7d8aa5; }
+#editorBar button { background:#1f7a4d; color:#fff; border:none; border-radius:6px; padding:5px 14px; cursor:pointer; margin-left:10px; font-size:12px; }
+#code { flex:1; width:100%; background:#0e1220; color:#e6edf3; border:none; outline:none; padding:12px; font-family:Consolas,monospace; font-size:13px; line-height:1.55; resize:none; tab-size:4; }
+</style>
+</head>
+<body>
+<div id="top">
+  <span style="font-weight:bold;color:#7fd4ff">&#128193; 工作台</span>
+  <select id="projSel"></select>
+  <button onclick="loadTree()">打开项目</button>
+  <span class="st" id="st"></span>
+</div>
+<div id="body">
+  <div id="tree"></div>
+  <div id="editorBox">
+    <div id="editorBar"><span id="curPath">未打开文件</span><button onclick="saveFile()">保存</button></div>
+    <textarea id="code" placeholder="选择左侧文件开始编辑..."></textarea>
+  </div>
+</div>
+<script>
+var curPath = '';
+function $(id){ return document.getElementById(id); }
+function esc(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function loadProjs(){
+  fetch('/projects').then(function(r){ return r.json(); }).then(function(list){
+    var sel = $('projSel');
+    sel.innerHTML = '';
+    (list || []).forEach(function(p){ var o = document.createElement('option'); o.value = p; o.text = p; sel.add(o); });
+    if (sel.options.length === 0) { var o = document.createElement('option'); o.value = 'demo'; o.text = 'demo'; sel.add(o); }
+    loadTree();
+  }).catch(function(){ loadTree(); });
+}
+function loadTree(){
+  var proj = $('projSel').value;
+  $('tree').innerHTML = '<div class="ti">加载中...</div>';
+  fetch('/api/projtree?proj=' + encodeURIComponent(proj)).then(function(r){ return r.json(); }).then(function(j){
+    var files = j.files || [];
+    var h = '';
+    files.forEach(function(f){
+      var isDir = f.p.charAt(f.p.length - 1) === '/';
+      h += '<div class="ti ' + (isDir ? 'dir' : '') + '" onclick="openFile(\'' + esc(f.p) + '\')">' + esc(f.p) + (isDir ? '/' : '') + '</div>';
+    });
+    $('tree').innerHTML = h || '<div class="ti" style="color:#5d6b84">(空项目)</div>';
+  }).catch(function(){ $('tree').innerHTML = '<div class="ti">加载失败</div>'; });
+}
+function openFile(p){
+  if (p.charAt(p.length - 1) === '/') return;
+  curPath = p;
+  $('curPath').textContent = p;
+  $('st').textContent = '加载中...';
+  fetch('/api/projfile?proj=' + encodeURIComponent($('projSel').value) + '&path=' + encodeURIComponent(p)).then(function(r){ return r.json(); }).then(function(j){
+    if (j.err) { $('st').textContent = '错误: ' + j.err; return; }
+    $('code').value = j.content || '';
+    $('st').textContent = (j.size || 0) + ' 字节';
+  }).catch(function(){ $('st').textContent = '加载失败'; });
+}
+function saveFile(){
+  if (!curPath) return;
+  $('st').textContent = '保存中...';
+  fetch('/api/projfile?proj=' + encodeURIComponent($('projSel').value) + '&path=' + encodeURIComponent(curPath) + '&content=' + encodeURIComponent($('code').value), {method:'POST'})
+    .then(function(r){ return r.json(); }).then(function(j){
+      $('st').textContent = j.ok ? '已保存 ' + new Date().toLocaleTimeString() : ('失败: ' + (j.err || ''));
+    }).catch(function(){ $('st').textContent = '保存失败'; });
+}
+document.addEventListener('keydown', function(e){
+  if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveFile(); }
+});
+loadProjs();
+</script>
+</body>
+</html>

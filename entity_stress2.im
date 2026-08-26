@@ -1,0 +1,36 @@
+# entity_stress2.im - 大量精灵压力基准（共享纹理，验证动态精灵表 128->动态）
+declare { mem 128MB, vram 128MB, time 30s }
+gui_stage(480, 320)
+say "STAGE1_CREATE"
+n = 0
+ok = 0
+while n < 400 {
+    r = gui_sprite("m" + n, "monster8.bmp")
+    if r == 1 {
+        ok = ok + 1
+    } else {
+        say "sprite fail at " + n
+    }
+    n = n + 1
+}
+say "created=" + ok
+i = 0
+while i < ok {
+    m = "m" + i
+    gui_goto(m, (i % 20) * 24 + 12, (i / 20) * 24 + 12)
+    i = i + 1
+}
+say "STAGE2_MOVE"
+t = 0
+while t < 60 {
+    i = 0
+    while i < ok {
+        m = "m" + i
+        gui_move(m, 1)
+        i = i + 1
+    }
+    t = t + 1
+}
+say "STAGE3_DONE"
+wait 1
+say "STRESS_DONE"

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Infiverse 桌面</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { height:100%; overflow:hidden; font-family:system-ui,"Microsoft YaHei",sans-serif; background:#0d1117; color:#e6edf3; }
+#app { display:flex; height:100vh; }
+/* ---- left sidebar (like instant messengers) ---- */
+#side { width:232px; min-width:232px; background:#141a26; border-right:1px solid #232c3d; display:flex; flex-direction:column; }
+#me { display:flex; align-items:center; gap:10px; padding:16px 14px; border-bottom:1px solid #1f2838; }
+#avatar { width:42px; height:42px; border-radius:10px; background:linear-gradient(135deg,#2b7fff,#5ee7a0); display:flex; align-items:center; justify-content:center; font-size:22px; color:#fff; }
+#meInfo { min-width:0; }
+#myName { font-size:14px; font-weight:600; color:#f0f4fa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#myId { font-size:11px; color:#7d8aa5; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#nav { flex:1; padding:10px 8px; overflow-y:auto; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:11px 12px; margin-bottom:4px; border-radius:8px; color:#b8c3d6; font-size:14px; cursor:pointer; transition:background .12s; }
+.nav-item:hover { background:#1d2638; color:#e6edf3; }
+.nav-item.active { background:#2563eb; color:#fff; }
+.nav-item .ico { width:22px; text-align:center; font-size:16px; }
+#sideFoot { padding:12px 14px; border-top:1px solid #1f2838; font-size:11px; color:#5d6b84; }
+#sideFoot .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#3ddc84; margin-right:6px; vertical-align:middle; }
+/* ---- content ---- */
+#main { flex:1; display:flex; flex-direction:column; background:#0d1117; }
+#status { height:30px; min-height:30px; background:#101623; border-bottom:1px solid #1f2838; display:flex; align-items:center; padding:0 14px; font-size:12px; color:#8b98b2; gap:16px; }
+#status .ok { color:#3ddc84; }
+#status button { background:none; border:none; color:#8b98b2; cursor:pointer; font-size:12px; padding:0 4px; }
+#frameBox { flex:1; }
+#frameBox iframe { width:100%; height:100%; border:0; background:#0d1117; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <div id="me">
+      <div id="avatar">?</div>
+      <div id="meInfo"><div id="myName">加载中...</div><div id="myId">-</div></div>
+    </div>
+    <div id="nav">
+      <div class="nav-item active" data-u="home"><span class="ico">&#128100;</span>个人主页</div>
+      <div class="nav-item" data-u="chat"><span class="ico">&#128172;</span>聊天</div>
+      <div class="nav-item" data-u="netplay"><span class="ico">&#128225;</span>联机</div>
+      <div class="nav-item" data-u="forge"><span class="ico">&#128295;</span>Forge</div>
+      <div class="nav-item" data-u="wb"><span class="ico">&#128193;</span>工作台</div>
+    </div>
+    <div id="sideFoot"><span class="dot"></span>服务运行中</div>
+  </div>
+  <div id="main">
+    <div id="status"><span class="ok">&#9679; Infiverse</span><span id="ip">-</span><button id="copyIpBtn" onclick="copyIp()" title="6IP">=�</button></div>
+    <div id="frameBox"><iframe id="f" src="/home"></iframe></div>
+  </div>
+</div>
+<script>
+var pages = { home:'/home', chat:'/chat', netplay:'/netplay', forge:'/forge', wb:'/wb' };
+function setPage(u){
+  var f = document.getElementById('f');
+  f.src = pages[u] || '/home';
+  document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.toggle('active', n.getAttribute('data-u') === u); });
+}
+document.querySelectorAll('.nav-item').forEach(function(n){
+  n.addEventListener('click', function(){ setPage(n.getAttribute('data-u')); });
+});
+fetch('/ip').then(function(r){ return r.text(); }).then(function(t){
+  document.getElementById('ip').textContent = t.trim();
+}).catch(function(){});
+fetch('/api/me').then(function(r){ return r.json(); }).then(function(j){
+  if(j && j.name){ document.getElementById('myName').textContent = j.name; document.getElementById('myId').textContent = j.id || ''; document.getElementById('avatar').textContent = (j.avatar || j.name || '?').charAt(0); }
+}).catch(function(){});
+
+function copyIp(){
+  var t = (document.getElementById('ip').textContent || '').trim();
+  if (!t) return;
+  var ok = function(){ var o = document.getElementById('copyIpBtn'); if (o) o.textContent = '\u2713'; setTimeout(function(){ if (o) o.textContent = '\uD83D\uDCCB'; }, 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t).then(ok); }
+  else { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }
+}
+</script>
+</body>
+</html>

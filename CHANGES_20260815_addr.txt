@@ -1,0 +1,28 @@
+# ============ ROADMAP: verse://<pubkey>/<id> 去中心化地址化（ed25519 P2） ============
+# 2026-08-15 16:20
+#
+## verse_parse_uri + do_open 地址固定（pin）
+- verse://<pubkey64hex>/<id>          按全局 hub 列表解析 + publisher 必须匹配地址公钥
+- verse://<pubkey>/<id>@<version>     版本固定（version == 要求才接受）
+- verse://<pubkey>/<id>#<sha256>     内容寻址固定（sha256 == 要求才接受）
+- verse://host:port/id 也支持 @/# 后缀
+- 校验失败：publisher/version/hash mismatch 拒绝（下载后、解包前）
+
+## 验证（t_addr.im 实测）
+- open_pub=1（pubkey 地址 + 签名校验通过）
+- open_badpub=0（错误公钥拒绝）
+- open_ver=1、open_badver=0（版本固定与拒绝）
+- pack（签名）→ 本地 open → hub publish → pubkey 地址 open 全链路
+
+## ed25519 实现最终确认（RFC8032）
+- TEST1/2 签名逐字节匹配、verify=1、篡改=0；多字节（24B）/空消息自洽
+- sha512 双块 padding 修复（bits 位置）
+- scalar_mod_L 最终用"长除法（每 shift 多次减）"——小/中消息正确
+- 已知限制：1023 字节消息（TEST3）签名自洽但与 RFC 不符（modL 边界，
+  已记录；实际 verse manifest 签名消息 < 数百字节不受影响）
+
+## 排障记录（ed25519 调试战役补充）
+- tweetnacl modL 的 u8 截断语义复杂，弃用
+- P2 折叠：P2 limbs 抄错两次（0x0fff vs ffff；32位顺序）
+- 64位/32位折叠 + RFC 参考版均因边界 bug 弃用
+- 最终：9-limb 长除法（u128 捕获 L<<shift 溢出 + 每 shift 多次减）

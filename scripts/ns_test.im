@@ -1,0 +1,3 @@
+import "lib2.im" as lib
+say lib.greet()
+say "val=" + str(lib.val)

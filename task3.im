@@ -1,0 +1,9 @@
+# task + wait（让出唤醒）
+task tw {
+    say "tw start"
+    wait 0.05
+    say "tw after wait"
+}
+start tw
+join tw
+say "TASK3_DONE"

@@ -1,0 +1,15 @@
+n = 0
+while n < 10000 {
+    entity_spawn((n % 100) * 10.0, (n / 100) * 10.0, 1)
+    n = n + 1
+}
+i = 0
+while i < 10000 {
+    entity_set(i, "vx", 0.5)
+    entity_set(i, "vy", 0.25)
+    i = i + 1
+}
+say "set done"
+nb = entity_neighbors(500, 500, 30)
+say "nb=" + len(nb)
+say "S7_DONE"

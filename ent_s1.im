@@ -1,0 +1,8 @@
+n = 0
+while n < 1000 {
+    entity_spawn((n % 100) * 10.0, (n / 100) * 10.0, 1)
+    n = n + 1
+}
+nb = entity_neighbors(500, 500, 30)
+say "nb=" + len(nb)
+say "S1_DONE"

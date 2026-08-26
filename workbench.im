@@ -1,0 +1,245 @@
+# workbench.im v7 - Infiverse 工作台 (视觉升级版)
+gui_stage(900, 640)
+gui_set_font("SimSun", 17, 4210752)
+
+log_box = gui_log(180, 425, 700, 170, "日志")
+proj_input = gui_input(90, 50, 240, 26, "")
+
+cur_dir = "."
+sel = -1
+cur_file = ""
+ops = 0
+last_mouse = 0
+stamp = 0
+file_top = 0
+
+c_dark = 3355443
+c_panel = 15790320
+c_accent = 2263842
+c_text = 4210752
+c_line = 12632256
+
+func log_add(s) {
+    global stamp
+    stamp = stamp + 1
+    gui_log(log_box, "[" + str(stamp) + "] " + s)
+}
+
+func load_files() {
+    d = io_list_dir(cur_dir)
+    if len(d) < 1 {
+        return []
+    }
+    r = []
+    parts = split(d, chr(10))
+    i = 0
+    while i < len(parts) {
+        push(r, parts[i])
+        i = i + 1
+    }
+    return r
+}
+
+func full_path(n) {
+    if cur_dir == "." {
+        return n
+    }
+    return cur_dir + chr(92) + n
+}
+
+func view_file(n) {
+    t = read_file(full_path(n))
+    gui_edit_set(edit_box, t)
+}
+
+func save_file() {
+    if cur_file == "" {
+        log_add("[save] 未打开文件")
+        return
+    }
+    t = gui_edit_text(edit_box)
+    r = write_file(full_path(cur_file), t)
+    log_add("[save] " + cur_file + " => " + str(r))
+}
+
+func run_sel() {
+    if sel < 0 or cur_file == "" {
+        log_add("[run] 未选中文件, 请先点击文件列表")
+        return
+    }
+    r = exec_async2("cmd /c start inimerse.exe " + cur_file, "run")
+    log_add("[run] 已启动 " + cur_file + " (pid " + str(r) + ")")
+}
+
+func new_project() {
+    name = gui_input_text(proj_input)
+    if len(name) < 1 {
+        log_add("[proj] 请先在项目名输入框填写名称")
+        return
+    }
+    dir = "projects" + chr(92) + name
+    if file_exists(full_path(dir + chr(92) + "main.im")) {
+        log_add("[proj] 已存在 " + dir)
+        return
+    }
+    mkdir(dir)
+    r1 = copy_file("templates" + chr(92) + "main.tpl", dir + chr(92) + "main.im")
+    r2 = copy_file("templates" + chr(92) + "net.tpl", dir + chr(92) + "net.im")
+    r3 = copy_file("templates" + chr(92) + "manifest.tpl", dir + chr(92) + "manifest.json")
+    r4 = copy_file("templates" + chr(92) + "README.tpl", dir + chr(92) + "README.md")
+    log_add("[proj] 已创建 " + dir + " (模板 " + str(r1) + str(r2) + str(r3) + str(r4) + ")")
+    cur_dir = dir
+    sel = -1
+    cur_file = ""
+    files = load_files()
+}
+
+func open_folder() {
+    p = gui_open_folder("选择项目文件夹")
+    if len(p) > 0 {
+        cur_dir = p
+        files = load_files()
+        sel = -1
+        cur_file = ""
+        log_add("[dir] 已打开 " + p)
+    }
+}
+
+func btn_hit(i) {
+    mx = mouse_x()
+    my = mouse_y()
+    if mx >= 20 and mx <= 150 and my >= btn_y[i] and my <= btn_y[i] + 30 {
+        return 1
+    }
+    return 0
+}
+
+func file_hit(i) {
+    mx = mouse_x()
+    my = mouse_y()
+    idx = i + file_top
+    if idx < len(files) and mx >= 180 and mx <= 890 and my >= 74 + i * 24 and my <= 74 + i * 24 + 20 {
+        return 1
+    }
+    return 0
+}
+
+btn_y = [90, 140, 190, 240, 290, 340, 390, 440, 485]
+btn_txt = ["新建项目", "打开文件夹", "联机", "打开", "下载", "运行", "刷新", "保存", "返回根"]
+
+edit_box = gui_edit(405, 74, 470, 330, "")
+files = load_files()
+log_add("[workbench] 就绪, 目录 " + cur_dir + ", 文件 " + str(len(files)) + " 个")
+log_add("[proj] 上方输入框填项目名, 点[新建项目]生成模板")
+log_add("[lobby] 点[联机]打开联机大厅; 文件列表可滚轮滚动")
+
+while true {
+    md = mouse_down()
+    wd = gui_wheel()
+    if wd != 0 {
+        if wd > 0 {
+            file_top = file_top - 3
+        } else {
+            file_top = file_top + 3
+        }
+        max_top = len(files) - 15
+        if max_top < 0 {
+            max_top = 0
+        }
+        if file_top < 0 {
+            file_top = 0
+        }
+        if file_top > max_top {
+            file_top = max_top
+        }
+    }
+    if md == 1 and last_mouse == 0 {
+        if btn_hit(0) {
+            new_project()
+            ops = ops + 1
+        }
+        if btn_hit(1) {
+            open_folder()
+            ops = ops + 1
+        }
+        if btn_hit(2) {
+            r2 = exec_async2("cmd /c start inimerse.exe lobby_online.im", "lobby")
+            ops = ops + 1
+            log_add("[lobby] 联机大厅已打开 (" + str(r2) + ")")
+        }
+        if btn_hit(3) {
+            r = verse_open("verse://local/" + cur_dir + ".vverse")
+            ops = ops + 1
+            log_add("[open] 打开 ret=" + str(r))
+        }
+        if btn_hit(4) {
+            r = verse_open("verse://local/" + cur_dir + ".vverse")
+            ops = ops + 1
+            log_add("[fetch] ret=" + str(r))
+        }
+        if btn_hit(5) {
+            run_sel()
+        }
+        if btn_hit(6) {
+            files = load_files()
+            ops = ops + 1
+            log_add("[refresh] 文件数 " + str(len(files)))
+        }
+        if btn_hit(7) {
+            save_file()
+            ops = ops + 1
+        }
+        if btn_hit(8) {
+            cur_dir = "."
+            files = load_files()
+            sel = -1
+            cur_file = ""
+            ops = ops + 1
+            log_add("[dir] 已返回根目录")
+        }
+        i = 0
+        while i < 15 {
+            if file_hit(i) {
+                idx = i + file_top
+                sel = idx
+                view_file(files[idx])
+                cur_file = files[idx]
+                ops = ops + 1
+                log_add("[view] " + full_path(files[idx]))
+            }
+            i = i + 1
+        }
+    }
+    last_mouse = md
+    gui_clear_shapes()
+    gui_shadow(10, 10, 880, 620, 8421504)
+    gui_round_rect(8, 8, 880, 620, 16777215, 8)
+    gui_gradient(8, 8, 880, 44, 3355443, 5592405, 1)
+    gui_text("Infiverse 工作台 v7", 330, 18)
+    gui_text("项目名:", 20, 54)
+    gui_text("目录: " + cur_dir, 350, 54)
+    gui_round_rect(160, 70, 720, 350, 15790320, 6)
+    gui_text("编辑区(可改, 点保存写回):", 405, 48)
+    i = 0
+    while i < len(btn_txt) {
+        gui_round_rect(18, btn_y[i], 140, 30, 2263842, 6)
+        gui_text(btn_txt[i], 40, btn_y[i] + 8)
+        i = i + 1
+    }
+    gui_text("日志:", 180, 400)
+    i = 0
+    while i < 15 {
+        idx = i + file_top
+        if idx < len(files) {
+            marker = ""
+            if idx == sel {
+                marker = "> "
+            }
+            gui_text(marker + files[idx], 180, 74 + i * 24)
+        }
+        i = i + 1
+    }
+    gui_text("状态: 操作数 " + str(ops) + " | 文件 " + str(len(files)) + " | 目录 " + cur_dir, 20, 600)
+    proc_prune()
+    wait 0.05
+}

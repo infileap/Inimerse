@@ -1,0 +1,40 @@
+# Infiverse update 2026-08-14 (perf + exceptions + .inim reuse)
+
+## 1. Errors now throw (catchable via try/catch)
+- new helper vm_throw_msg(vm, msg) (vm.h export, wraps vm_throw; interns the message)
+- array NEGATIVE-index WRITE -> "index out of range" (was silently ignored)
+- integer division by zero (1/0) -> "division by zero"; float /0.0 keeps IEEE inf/nan
+- modulo by zero (x % 0) -> "division by zero" (was silently 0)
+- builtin round("abc",2) -> "round: expected number"
+- builtin list(123) -> "list: expected set" (non-enumerable set still returns nil,
+  comprehension logic depends on it)
+- builtin sum(set-with-strings) -> "sum: non-numeric element"
+  (sum(1,2,3,4) multi-arg stack-top semantics preserved)
+- COMPAT: out-of-range array READ stays nil (service scripts main.im/demo rely on it);
+  string negative indexing s[-1] and auto-grow a[10]=x unchanged
+
+## 2. .inim startup path reuse (main.c)
+- new unified loader load_and_run(vm, path): .inim -> bytecode_read_file, .im ->
+  parse+compile; then vm_load_bytecode + vm_run
+- used by REPL :run, normal CLI path and --gui path (headless init hoisted before
+  loader in --gui branch) - removes 3 duplicated code copies
+- verified: run <script> args passing (args(0) -> hello), buildc -> .inim run
+
+## 3. Performance (bench.im 11M ops: 1177ms -> ~440ms, -62%)
+- single-thread lock-free fast path: vm->active_threads == 1 (main thread only,
+  incremented before CreateThread so no race) skips VM_LOCK in:
+  L_STORE_GLOBAL / L_LOAD_GLOBAL / vm_array_push / vm_array_push_n / vm_array_get /
+  vm_array_set / vm_intern (multi-thread keeps CRITICAL_SECTION)
+- vm_array_push_n: batch build for array/dict literals (one lock + one growth)
+- headless_send_frame: WSAEWOULDBLOCK/WSAEINTR/WSAENOBUFS no longer treated as
+  disconnect - slow clients just drop the frame (was closing socket + stalling)
+- dispatch table already optimal (MOV/LOADK/ADD first), untouched
+
+## 4. Tests (all pass)
+- err_test.im (new): neg-write/div0/mod0/round/list/sum throws + nil-read compat
+- inf_set_test / set_test / set_op_test / exc_test / set_comp_test regression OK
+- bench.im: 506/443/437ms (was 1177-1311ms)
+- services restarted: 4 engines + 4 bridges + 1 app, all 8 ports LISTENING,
+  engine logs clean (debug_mod.dll rebuilt against new inimerse.lib)
+
+Backup dir: D:/backup/inimerse_20260814_1930

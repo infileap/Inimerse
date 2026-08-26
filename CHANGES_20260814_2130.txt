@@ -1,0 +1,26 @@
+# CHANGES - 2026-08-14 labels/continue/restart/debug-console
+## 1. continue keyword
+- lexer/parser/compiler: continue in while/for(arr+range)/repeat/do-until/wait-until
+- compiler tracks per-loop continue targets (cont_list) patched to increment/recheck point
+- FIX (pre-existing): repeat's r_cnt register could be clobbered by body -> protect_reg
+## 2. restart thread
+- THREAD_OP_RESTART(4): running -> stop old + fresh instance from ip0; not-started/finished -> start
+- syntax: restart thread1 (also restart this)
+## 3. label blocks (íW)
+- A: { ... } / A: stmt / A: while/if/case ... {} (statement-position ident ':' is label)
+- to A (same-thread jump to label start), break A (jump to label end)
+- thread1 to A: jump-request (target thread consumes at checkpoint; not-started -> start at label)
+- compile-time labels per unit (main/func/thread bodies isolated); OP_THREAD_GOTO + VmThread.jump_req
+- Bytecode.labels table (memory + not serialized)
+## 4. debug console (debug_mod.dll + engine exports)
+- vm_debug_exec (inject #run code; pre-registers existing globals so indices match)
+- vm_debug_jump (to A main / thread1 to A), vm_debug_var (all/value/type/scope), vm_debug_threads
+- interactive(): #run code, run code, to A, thr to A, var <mode>, #thread
+- Bytecode.global_names table (.inim format v2 -> v3) so #var shows real names
+## 5. chat cmd: /login <pwd> (player_lvl 0->1/3, demo pwds player123/infiverse2026) in both main.im
+## 6. bugfixes
+- dispatch_table was shifted (L_THREAD_GOTO inserted mid-table) -> MOD and later opcodes misrouted
+- Parser struct uninitialized (no_infix_match garbage) -> Parser zero-init
+- FIX(pre-existing): thread-body say crashes (ntdll) - NOT fixed (pre-existing, out of scope)
+## tests
+label_test/thread_test/t_rpt*/t_mod/t_lbl* pass; full regression green; .inim v3 works

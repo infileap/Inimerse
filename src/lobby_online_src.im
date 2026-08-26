@@ -1,0 +1,91 @@
+# lobby_online.im - Infiverse 联机大厅 (MC-style server list)
+gui_stage(900, 640)
+gui_set_font("SimSun", 17, 4210752)
+
+log_room = gui_log_p(150, 150, 700, 320, "服务器列表 (verse://)")
+btn_create = gui_button_p(80, 520, 190, 44, "[创建房间]")
+btn_refresh = gui_button_p(310, 520, 190, 44, "[刷新列表]")
+btn_join = gui_button_p(540, 520, 190, 44, "[加入服务器]")
+btn_back = gui_button_p(770, 520, 150, 44, "[返回]")
+inp_addr = gui_input_p(150, 590, 700, 36, "")
+gui_text_a_p("创建房间后自动复制链接; 加入请粘贴 verse:// 地址", 0, 568, 1000, 1)
+
+stamp = 0
+
+func log_add(s) {
+    global stamp
+    stamp = stamp + 1
+    gui_log(log_room, "[" + str(stamp) + "] " + s)
+}
+
+func refresh_list() {
+    ports = [18080, 18081, 18082, 8080]
+    i = 0
+    n = 0
+    while i < len(ports) {
+        url = "http://127.0.0.1:" + str(ports[i]) + "/hub"
+        b = http_get(url)
+        if len(b) > 2 {
+            log_add("发现服务器: 端口 " + str(ports[i]) + " 房间 " + b)
+            n = n + 1
+        }
+        i = i + 1
+    }
+    if n < 1 {
+        log_add("未发现本机服务器, 请先 [创建房间]")
+    }
+}
+
+func create_room() {
+    r1 = verse_pack(".", "universe/room.vverse")
+    port = verse_listen(18080)
+    r2 = verse_open("verse://local/universe/room.vverse")
+    link = "verse://127.0.0.1:" + str(port) + "/room"
+    cr = clipboard_set(link)
+    log_add("room created: " + link + " (copied " + str(cr) + ") pack=" + str(r1) + " launch=" + str(r2))
+    refresh_list()
+}
+
+func join_server() {
+    addr = gui_input_text(inp_addr)
+    if len(addr) < 3 {
+        log_add("请输入 verse://地址")
+        return
+    }
+    if substr(addr, 0, 8) != "verse://" {
+        addr = "verse://" + addr
+    }
+    r = verse_open(addr)
+    log_add("加入 " + addr + " => " + str(r))
+    gui_input_set(inp_addr, "")
+}
+
+last_mouse = 0
+gui_input_focus(inp_addr)
+log_add("联机大厅就绪")
+refresh_list()
+
+while true {
+    md = mouse_down()
+    if md == 1 and last_mouse == 0 {
+        if gui_button_clicked(btn_create) == 1 {
+            create_room()
+        }
+        if gui_button_clicked(btn_refresh) == 1 {
+            refresh_list()
+        }
+        if gui_button_clicked(btn_join) == 1 {
+            join_server()
+        }
+        if gui_button_clicked(btn_back) == 1 {
+            proc_kill_tag("verse")
+            stop all
+        }
+    }
+    last_mouse = md
+    gui_text_a_p("Infiverse 联机大厅", 0, 30, 1000, 1)
+    gui_text_a_p("创建房间 = 打包+开服+自动复制链接; 加入 = 下载并运行", 0, 60, 1000, 1)
+    gui_text("地址: " + gui_input_text(inp_addr), 175, 596)
+    proc_prune()
+    wait 0.05
+}

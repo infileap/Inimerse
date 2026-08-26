@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "inimerse": {
+      "command": "node",
+      "args": [
+        "D:/inimerse_stable/tools/mcp_server.js"
+      ],
+      "env": {
+        "INIMERSE_EXE": "D:/inimerse_stable/inimerse.exe"
+      }
+    }
+  }
+}

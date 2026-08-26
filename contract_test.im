@@ -1,0 +1,180 @@
+# contract_test.im - API/SPI conformance suite (契约测试)
+# usage: inimerse.exe --time-limit 60 contract_test.im
+# exit0 + "contract: N passed" = API 契约全部满足; 任一失败 -> throw -> exit1
+# 每次引擎 API 变更必须跑本套件（回归门槛）
+
+spi_meta("contract_test", 1, "io,net,verse,ai,dbg,proc")
+pass = 0
+
+func check(cond, desc) {
+    global pass
+    if cond {
+        pass = pass + 1
+    } else {
+        throw "CONTRACT FAIL: " + desc
+    }
+}
+
+# ---------- 1. 数字与溢出 ----------
+x = 2147483647
+check(x + 1 == 2147483648.0, "int overflow -> float promote")
+check(x * 3 == 6442450941.0, "int mul overflow -> float")
+check(0 - 2147483647 - 1 == -2147483648, "int stays exact in range")
+check(1 / 4 == 0.25, "int division is float")
+check(7 % 3 == 1, "modulo")
+check(2.5 * 2 == 5.0, "float arithmetic")
+check(1 == 1.0, "int/float cross equality")
+
+# ---------- 2. 字面量 ----------
+check(1e6 == 1000000.0, "scientific literal 1e6")
+check(0x1F == 31, "hex literal")
+check(3e2 == 300.0, "scientific 3e2")
+check("x" + "y" + "z" == "xyz", "literal concat folding")
+
+# ---------- 3. 字符串 ----------
+s = " Hello,World "
+check(trim(s) == "Hello,World", "trim")
+check(startswith(s, " "), "startswith")
+check(endswith(s, " "), "endswith")
+check(index(s, "World") == 7, "index")
+check(upper("aBc") == "ABC", "upper")
+check(lower("AbC") == "abc", "lower")
+check(replace(s, "World", "IM") == " Hello,IM ", "replace")
+check(len("abcd") == 4, "len bytes")
+check("v=" + 42 == "v=42", "concat auto int")
+check("b=" + true == "b=true", "concat auto bool")
+
+# ---------- 4. 数组 ----------
+a = []
+push(a, 1)
+push(a, 2)
+push(a, 3)
+check(len(a) == 3, "array len")
+check(a[0] == 1, "array index")
+check(pop(a) == 3, "pop")
+n = 0
+for v in a {
+    n = n + v
+}
+check(n == 3, "for-in array")
+
+# ---------- 5. 字典 ----------
+d = {"name": "ada", "age": 30}
+check(d["name"] == "ada", "dict literal")
+check(has(d, "age"), "has")
+check(len(d) == 2, "dict len")
+remove(d, "age")
+check(len(d) == 1, "dict remove")
+d[1.0] = "one"
+check(d[1] == 1.0, "dict positional int key of pair1")
+check(keys(d)[0] == "name", "keys")
+
+# ---------- 6. 集合与区间 ----------
+s1 = 1, 2, 3, Z[4~10]
+check(5 in s1, "set membership")
+check(-1 in Z, "integer set Z")
+check(0 in N, "natural set N")
+check(3.141 in Float3(2, 9], "builtin set interval Float3(2,9]")
+check(min Z[1~5] == 1, "min")
+check(max Z[1~5] == 5, "max")
+check(list(Z[1~3])[0] == 1, "list set")
+
+# ---------- 7. 异常 ----------
+caught = false
+try {
+    throw "boom"
+} catch (e) {
+    caught = (e == "boom")
+}
+check(caught, "try/catch")
+ignored = false
+try {
+    throw "swallowed"
+}
+ignored = true
+check(ignored, "bare try swallow")
+
+# ---------- 8. 函数与作用域 ----------
+g = 0
+func inc() {
+    global g
+    g = g + 1
+}
+inc()
+inc()
+check(g == 2, "global in func")
+func add2(a, b) { return a + b }
+check(add2(3, 4) == 7, "func return")
+
+# ---------- 9. 类型转换 ----------
+check(int(3.9) == 3, "int()")
+check(int("42") == 42, "int(str)")
+check(str2int("42") == 42, "str2int")
+check(str2int("abc") == 0, "str2int invalid -> 0")
+check(float(2) == 2.0, "float()")
+check(str(7) == "7", "str()")
+check(sqrt(16.0) == 4.0, "sqrt")
+check(round(2.675, 2) == 2.68, "round")
+
+# ---------- 10. match 与 case ----------
+check(match("abc123", "^[a-z]+[0-9]+$"), "match regex")
+k = 7
+got = ""
+case k {
+    <5: { got = "small" }
+    in Z[5~10]: { got = "mid" }
+    else: { got = "big" }
+}
+check(got == "mid", "case in interval")
+
+# ---------- 11. 控制流 ----------
+i = 0
+while i < 5 {
+    i = i + 1
+}
+check(i == 5, "while")
+n = 0
+repeat 3 {
+    n = n + 1
+}
+check(n == 3, "repeat")
+n2 = 0
+do {
+    n2 = n2 + 1
+} until n2 == 4
+check(n2 == 4, "do-until")
+
+# ---------- 12. json ----------
+j = json_serialize({"k": 1})
+check(json_parse(j)["k"] == 1, "json roundtrip")
+
+# ---------- 13. 随机确定性 ----------
+r1 = random() % 100
+check(r1 >= 0 and r1 < 100, "random range")
+
+# ---------- 14. SPI 能力 ----------
+check(spi_caps() != 0, "spi_caps declared")
+check(spi_has("json_parse"), "spi_has core")
+check(spi_has("net_send"), "spi_has net declared")
+
+# ---------- 15. 噪声与画布（零素材基础） ----------
+check(noise2d(1.5, 2.5, 7) == noise2d(1.5, 2.5, 7), "noise deterministic")
+check(noise2d(1.5, 2.5, 7) >= 0 and noise2d(1.5, 2.5, 7) <= 1, "noise range")
+c = gui_canvas(8, 8)
+check(c >= 0, "canvas create")
+gui_px(c, 0, 0, 0xFFFFFF)
+check(gui_vram_used() > 0, "vram accounting")
+
+# ---------- 16. 资源限制 ----------
+fok = false
+try {
+    gui_frame_interval(16)
+    fok = true
+} catch (e) {
+    fok = false
+}
+check(fok, "frame interval API exists")
+
+# ---------- 汇总 ----------
+say "contract: " + str(pass) + " passed"
+say "contract: all passed"

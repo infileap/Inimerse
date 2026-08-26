@@ -1,0 +1,2 @@
+x = read_file("tests/prog1num.im")
+say "len=" + str(len(x))

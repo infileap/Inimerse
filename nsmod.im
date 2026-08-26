@@ -1,0 +1,6 @@
+# nsmod: module with a global and a function
+x = 42
+func getx() {
+    return x
+}
+say "nsmod loaded"

@@ -1,0 +1,40 @@
+# restart thread + thread to A tests
+global i, j
+i = 0
+j = 0
+thread worker {
+    global i
+    i = 0
+    while i < 2000000 {
+        i = i + 1 }
+    i = -1
+}
+start worker
+wait 0.1
+pause worker
+say i
+restart worker
+wait 0.05
+pause worker
+say i
+kill worker
+say "restart done"
+
+thread jumpy {
+    global j
+    A: j = 0
+    while j < 1000000 {
+        j = j + 1 }
+    j = -1
+}
+start jumpy
+wait 0.05
+pause jumpy
+say j
+jumpy to A
+resume jumpy
+wait 0.02
+pause jumpy
+say j
+kill jumpy
+say "jump done"

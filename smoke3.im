@@ -1,0 +1,7 @@
+a = 10 % 3
+b = 0x1F
+c = 0xFF
+s = "ok"
+s = s + str(a) + ":" + str(b) + ":" + str(c)
+write_file("D:\\inimerse_stable\\_smoke3.txt", s)
+stop all

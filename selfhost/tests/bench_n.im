@@ -1,0 +1,14 @@
+# bench_n.im
+func sum_loop(n) {
+    s = 0
+    i = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    return s
+}
+say "s100=" + str(sum_loop(100))
+say "s1000=" + str(sum_loop(1000))
+say "done"
+stop all

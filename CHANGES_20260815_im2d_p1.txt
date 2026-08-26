@@ -1,0 +1,30 @@
+# ============ Inimerse2D P1（GDI 适配）+ 传输抽象 + 帧流精灵 ============
+# 2026-08-15 13:00
+#
+## Inimerse2D P1（GDI 后端适配版）
+### 1) 位图素材缓存（sha256/路径去重 + 引用计数）
+- gui_mod.c: BmpCache（64 项，路径键）；load_bmp_cached() 查表复用 HBITMAP
+  （同一素材多精灵共享一次 WIC 解码）；bmp_release() 引用计数，refs==0 才 DeleteObject
+- sprite_set_costume 改用缓存（原每切 costume 重新解码）
+- 与 verse 素材缓存（universe/_cache sha256）同一去重理念，未来帧流素材引用可衔接
+### 2) 精灵可见性裁剪
+- render_loop 绘制循环：屏幕外精灵（px+w<0 || py+h<0 || px>W || py>H）跳过，
+  减少无效 BitBlt/AlphaBlend
+### 3) headless 帧流精灵支持（热联机服务器推送）
+- gui_headless_stream 帧 JSON 新增 "sp" 数组：
+  {"n":名字,"x","y","w","h","c":costume路径}（素材按路径引用，客户端缓存解析）
+- 验证：连服务 11490 端口读取帧，含 "sp" 数组（SP_STREAM_OK）
+- 帧协议 v1 文档：docs/protocol_v1.md（文本/形状/控件/精灵 + 输入上行 + 传输后端表）
+
+## 传输抽象（三模式联机）
+- 文档化统一语义 send_frame / poll_input / open_uri；TCP(现役)/HTTP(现役)/
+  WebSocket/UDP/IPFS(预留)；关键帧=每帧全量（天然断线重连）
+- 冷联机链路已通（verse_open + ref://sha256）
+
+## 远程调试安全（文档化）
+- 未来远程 attach 必须 --debug-token + 只读 + safe_mode；注入入口已受 safe_mode 保护
+- 详见 docs/protocol_v1.md §4
+
+## 验证
+- 服务 4+4+1 8 端口健康；帧流 sp 数组在线验证通过
+- 回归：concat/set/bench 等此前全过（gui_mod 改动不影响无窗口运行）

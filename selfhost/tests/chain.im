@@ -1,0 +1,14 @@
+func g1() { return 1 }
+func g2() { return g1() }
+func g3() { return g2() }
+func g4() { return g3() }
+func g5() { return g4() }
+func g6() { return g5() }
+func g7() { return g6() }
+func g8() { return g7() }
+func g9() { return g8() }
+func g10() { return g9() }
+func g11() { return g10() }
+func g12() { return g11() }
+say "g12=" + str(g12())
+stop all

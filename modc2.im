@@ -1,0 +1,4 @@
+const PI = 2.71
+func getpi2() {
+    return PI
+}

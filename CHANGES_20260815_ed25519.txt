@@ -1,0 +1,31 @@
+# ============ ROADMAP P1: ed25519 去中心化身份（verse 签名） ============
+# 2026-08-15 15:00
+#
+## 纯 C ed25519（src/common/ed25519.{h,c}，零依赖，约 450 行）
+- SHA-512 内置；4x64 位字段运算（__int128）；投影坐标点运算；
+  scalar mod L 用 tweetnacl 式字节归约
+- RFC8032 向量验证：TEST1 pubkey/sig 完全匹配、verify=1、篡改=0；
+  TEST2（msg=0x72）签名匹配
+- 调试教训（坑）：L 常数 limbs 错位、D 常数错（-121665/121666 用程序算）、
+  sqrt(-1) 字节序、fe_sub/fadd 补码每步+1、fe_mul 进位丢失（改 32 位拆分）、
+  取负应为 (X,T)、sub_L 补码错误——全部修复
+
+## API（verse_dist_mod）
+- verse_identity_new()      -> [pubkey-hex, seed-hex]（保存 universe/identity.seed）
+- verse_identity_pubkey()   -> 当前身份公钥 hex
+- verse_sign(data)          -> 签名 hex（128）
+- verse_verify(data, sig, pub) -> 0/1（注意参数顺序：data 在前）
+- verse_pack 自动签名：有身份时 manifest 加
+  "publisher":"<pubkey>","signature":"<sighex>"（对 files b64 拼接签名）
+- verse_open/verse_update 校验：有 publisher/signature 的包强制 ed25519 验签，
+  失败拒绝（"signature mismatch - package rejected"）
+
+## 验证（t_ed2.im + t_tamper.im）
+- identity_new 生成密钥对 ✓
+- verse_sign/verse_verify（verify_ok=1、篡改=0）✓
+- pack 签名入 manifest ✓；open_signed=1（签名校验通过）✓
+- 篡改包：hash mismatch 拒绝（open_tampered=0）✓
+
+## 后续（P2）
+- verse://<pubkey>/<id> 地址形式（hub 按 pubkey 校验发布者）
+- 公钥指纹/短地址、DHT 路由

@@ -1,0 +1,3 @@
+import "modmid.im" as mid
+say "mid.getsub -> " + mid.getsub()
+say "C4_DONE"

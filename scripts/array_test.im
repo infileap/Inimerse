@@ -1,0 +1,37 @@
+say "=== 否运算测试 ==="
+say !true
+say !false
+say !0
+say !5
+say !!5
+say !(1 == 2)
+
+say "=== 数组测试 ==="
+a = [1, 2, 3]
+say len(a)
+say a[0]
+a[1] = 99
+say a
+a[3] = 7
+say a
+push(a, 100)
+say len(a)
+say a
+x = pop(a)
+say x
+say a
+b = ["hello", "world"]
+say b
+say b[0]
+c = [1, [2, 3], 4]
+say c
+array d
+push(d, 7)
+say d
+if !(len(a) == 0) {
+  say "array not empty"
+}
+if len(a) > 2 and a[0] == 1 {
+  say "and works"
+}
+stop all

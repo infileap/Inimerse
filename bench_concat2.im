@@ -1,0 +1,9 @@
+# part 2 only: growing 4-part chain
+s2 = ""
+k = 0
+while k < 20000 {
+    s2 = s2 + "ab" + "cd" + "ef"
+    k = k + 1
+}
+say len(s2)
+say "P2_DONE"

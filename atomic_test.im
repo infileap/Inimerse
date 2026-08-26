@@ -1,0 +1,82 @@
+# 原子操作验证：atomic_set/add/get + 8线程共享计数器（旧版 n=n+1 丢 75%）
+atomic_set("n", 0)
+atomic_add("n", 5)
+say "n1=" + atomic_get("n")          # 期望 5
+say "n2=" + atomic_add("n", 3)       # 期望 8（返回新值）
+say "n3=" + atomic_get("n")          # 期望 8
+
+# 8 线程各 200 万次 atomic_add("n",1) —— 期望精确 1600 万（旧 n=n+1 只有 395 万）
+thread w0 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w1 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w2 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w3 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w4 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w5 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w6 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+thread w7 {
+    k = 0
+    while k < 2000000 {
+        atomic_add("n", 1)
+        k = k + 1
+    }
+}
+start w0
+start w1
+start w2
+start w3
+start w4
+start w5
+start w6
+start w7
+join w0
+join w1
+join w2
+join w3
+join w4
+join w5
+join w6
+join w7
+say "n_final=" + atomic_get("n")     # 期望 8 + 16000000 = 16000008
+say "ATOMIC_TEST_DONE"

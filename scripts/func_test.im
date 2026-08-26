@@ -1,0 +1,66 @@
+# 自定义函数测试
+func add(a, b) {
+    return a + b
+}
+func say_hello() {
+    say "hello from func"
+}
+func max(a, b) {
+    if a > b { return a }
+    return b
+}
+func fact(n) {
+    if n <= 1 { return 1 }
+    return n * fact(n - 1)
+}
+func sum(arr) {
+    total = 0
+    for x in arr { total = total + x }
+    return total
+}
+func fib(n) {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+say "=== 基本调用 ==="
+say add(3, 4)
+say add(1, add(2, 3))
+say_hello()
+
+say "=== 提前返回 ==="
+say max(7, 5)
+say max(3, 9)
+
+say "=== 递归 ==="
+say fact(5)
+say fib(10)
+
+say "=== 数组参数 ==="
+say sum([1, 2, 3, 4, 5])
+
+say "=== 函数内循环(局部变量) ==="
+func sum_range(n) {
+    t = 0
+    for i in range(1, n + 1) { t = t + i }
+    return t
+}
+say sum_range(10)
+
+say "=== 无返回值 ==="
+x = say_hello()
+say "returned:"
+say x
+
+say "=== 字符串函数 ==="
+func greet(name) {
+    return "hi, " + name
+}
+say greet("inimerse")
+
+say "=== 嵌套调用 + 字符串 ==="
+func shout(s) {
+    return s + "!!!"
+}
+say shout(greet("world"))
+stop all

@@ -1,0 +1,5 @@
+# utils.im - 测试用 .im 模块
+say "[mod] utils loaded"
+mod_init_time = 42
+mod_greet = "hello from utils"
+say "[mod] self-check init=" + str(mod_init_time)

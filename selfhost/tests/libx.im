@@ -1,0 +1,7 @@
+func triple(n) {
+    return n * 3
+}
+greeting = "from libx"
+func lib_greet() {
+    return "hello " + greeting
+}

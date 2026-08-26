@@ -1,0 +1,8 @@
+import "modt.im" as t
+say "t.gettype -> " + t.gettype()
+try {
+    say "t.type -> " + t.type
+} catch (e) {
+    say "t.type failed: " + e
+}
+say "C5_DONE"

@@ -1,0 +1,2 @@
+func greet() { return "hello from lib2" }
+val = 42

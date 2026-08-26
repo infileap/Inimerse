@@ -1,0 +1,12 @@
+load_params("game.params")
+say player.max_hp
+say player.speed
+say level.name
+lp = list_params()
+say "count=" + str(size(lp))
+say lp[0]
+say lp[1]
+say lp[2]
+player.speed = 9.9
+save_params("game.params", "player.speed")
+say "saved"

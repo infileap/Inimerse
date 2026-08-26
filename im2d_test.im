@@ -1,0 +1,43 @@
+# Inimerse2D platformer demo (P0)
+im2d_init(16)
+px = 100
+py = 150
+vy = 0
+im2d_camera(0, 0, 1)
+
+func on_load() {
+    say "im2d: on_load"
+    gui_sprite("assets/hero.png", "player")
+    im2d_goto_scene("play")
+}
+func scene_play() {
+    say "im2d: scene=play"
+}
+func on_update(dt) {
+    global px, py, vy
+    if key("left") {
+        px = px - 5
+    }
+    if key("right") {
+        px = px + 5
+    }
+    if key("space") and py >= 250 {
+        vy = -11
+    }
+    vy = vy + 0.6
+    py = py + vy
+    if py >= 250 {
+        py = 250
+        vy = 0
+    }
+    im2d_camera(px - 400, py - 250, 1)
+    im2d_draw_sprite("player", px, py)
+}
+func on_render() {
+    gui_clear_shapes()
+    im2d_draw_rect(0, 250, 800, 350, 0x50A050)
+    im2d_draw_rect(0, 0, 800, 250, 0x78B4FF)
+}
+while true {
+    wait 0.016
+}

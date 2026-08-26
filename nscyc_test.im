@@ -1,0 +1,2 @@
+import "nscyc_a.im" as a
+say "never"

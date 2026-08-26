@@ -1,0 +1,18 @@
+# node_task state machine regression
+import "node_task.im" as nt
+
+n1 = nt.node_task_init()
+n2 = nt.node_task_init()
+nt.node_task_define("once", "D:/inimerse_stable/t_nt_child.im", 1000)
+first = nt.node_task_claim("once")
+second = nt.node_task_claim("once")
+if n1 == n2 && first != "" && second == "" && nt.node_task_status("once") == "running" {
+  nt.node_task_submit("once", 0, "ok")
+}
+bad = nt.node_task_define("", "", 0)
+empty = nt.node_task_run("", 0)
+if bad == 0 && empty["exit"] == -1 && nt.node_task_status("once") == "done" {
+  say "NODE_TASK_STATE_OK"
+} else {
+  say "NODE_TASK_STATE_FAIL"
+}

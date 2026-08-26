@@ -1,0 +1,5 @@
+load_params("params")
+say player.max_hp
+load_params("params")
+say player.max_hp
+say "done"

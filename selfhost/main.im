@@ -1,0 +1,11 @@
+import "lexer.im"
+import "parser.im"
+import "eval.im"
+# 用法:inimerse selfhost/main.im <script.im>
+clargs = args()
+if len(clargs) < 1 {
+    say "用法: inimerse selfhost/main.im <script.im>"
+    stop all
+}
+run_file(clargs[0])
+stop all

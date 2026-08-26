@@ -1,0 +1,201 @@
+/* isolate_mod.c - isolated subprocess execution (P2: unsigned-module process isolation)
+ *
+ * isolate_run(script, timeout_ms) -> dict { exit:int, out:string, timedout:int }
+ *
+ *   Spawns a fresh inimerse.exe child running `script` with a hard sandbox:
+ *     --safe          dangerous builtins (io/net/process/code-injection) blocked
+ *     --low-config    64MB mem / 32MB vram / 10s time caps
+ *     --time-limit N  VM execution deadline (seconds)
+ *   Child stdout+stderr are captured through a pipe (64KB cap).
+ *   Timeout terminates the child; the parent process is fully isolated from
+ *   child crashes (process boundary) - this is the safety base for node computing.
+ *
+ * Registered as a dangerous builtin (CAP_PROC): safe-mode parents cannot call it.
+ */
+#ifdef _WIN32
+#include "vm.h"
+#include "platform/platform.h"
+#include <windows.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define ISO_OUT_CAP 65536
+#define ISO_READ_CHUNK 4096
+#define ISO_DEFAULT_TIMEOUT_MS 5000
+
+typedef struct {
+    HANDLE hRead;
+    char *buf;
+    int len, cap;
+} IsoCtx;
+
+static DWORD WINAPI iso_read_thread(LPVOID arg) {
+    IsoCtx *c = (IsoCtx *)arg;
+    char tmp[ISO_READ_CHUNK];
+    DWORD rd;
+    for (;;) {
+        if (!ReadFile(c->hRead, tmp, sizeof tmp, &rd, NULL) || rd == 0) break;
+        if (c->len + (int)rd + 1 > c->cap) {
+            int nc = c->cap ? c->cap * 2 : ISO_READ_CHUNK;
+            if (nc > ISO_OUT_CAP) nc = ISO_OUT_CAP;
+            char *nb = (char *)realloc(c->buf, (size_t)nc);
+            if (!nb) break;
+            c->buf = nb;
+            c->cap = nc;
+        }
+        int take = (int)rd;
+        if (c->len + take + 1 > c->cap) take = c->cap - c->len - 1;
+        if (take > 0) { memcpy(c->buf + c->len, tmp, (size_t)take); c->len += take; }
+        if (take < (int)rd) break; /* output cap reached: stop collecting */
+    }
+    return 0;
+}
+
+/* arg helpers (io-style: r_arg(0) = last arg) */
+static Value iso_arg(VM *vm, int i) { return vm_cur_stack(vm)[vm_cur_sp(vm) - i]; }
+static void iso_popn(VM *vm, int n) {
+    while (n-- > 0 && vm_cur_sp(vm) >= 0) {
+        Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+        if (v.type == VAL_STRING && v.ival != 1 && v.sval) free(v.sval);
+        vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    }
+}
+static void iso_push(VM *vm, Value v) {
+    if (vm_cur_sp(vm) < 1023) {
+        vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
+        vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
+    }
+}
+static void iso_push_int(VM *vm, int n) {
+    Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
+    iso_push(vm, v);
+}
+static void iso_push_str(VM *vm, const char *s) {
+    Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = strdup(s ? s : "");
+    iso_push(vm, v);
+}
+
+/* push dict {exit, out, timedout} */
+static void iso_push_result(VM *vm, long exit_code, const char *out, int timedout) {
+    int aidx = vm_array_new(vm);
+    if (aidx < 0) { iso_push_int(vm, -999); return; }
+    Value k, val;
+    k.type = VAL_STRING; k.ival = 0; k.fval = 0; k.sval = strdup("exit");
+    val.type = VAL_INT; val.ival = (int)exit_code; val.fval = 0; val.sval = NULL;
+    vm_dict_set(vm, aidx, &k, &val);
+    free(k.sval);
+    k.sval = strdup("out");
+    val.type = VAL_STRING; val.ival = 0; val.fval = 0; val.sval = strdup(out ? out : "");
+    vm_dict_set(vm, aidx, &k, &val);
+    free(k.sval);
+    free(val.sval);
+    k.sval = strdup("timedout");
+    val.type = VAL_INT; val.ival = timedout; val.fval = 0; val.sval = NULL;
+    vm_dict_set(vm, aidx, &k, &val);
+    free(k.sval);
+    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1; dv.fval = 0; dv.sval = NULL;
+    iso_push(vm, dv);
+}
+
+static int fn_isolate_run(VM *vm) {
+    int sp0 = vm_cur_sp(vm);
+    const char *script = "";
+    double timeout_ms = ISO_DEFAULT_TIMEOUT_MS;
+    /* r_arg(0) = top of stack = LAST argument (io-style): isolate_run(script, timeout_ms) */
+    if (sp0 >= 0) {
+        Value a = iso_arg(vm, 0);
+        if (a.type == VAL_INT) timeout_ms = (double)a.ival;
+        else if (a.type == VAL_FLOAT) timeout_ms = a.fval;
+    }
+    if (sp0 >= 1) {
+        Value s = iso_arg(vm, 1);
+        if (s.type == VAL_STRING && s.sval) script = s.sval;
+    }
+    if (timeout_ms < 100) timeout_ms = 100;
+    iso_popn(vm, (sp0 >= 1) ? 2 : 1);
+
+    char exe[1024];
+    if (im_platform_executable_path(exe, sizeof exe) < 0 || !exe[0]) {
+        iso_push_result(vm, -2, "isolate_run: cannot resolve exe path", 0);
+        return 0;
+    }
+
+    int tsec = (int)(timeout_ms / 1000.0) + 1;
+    if (tsec < 1) tsec = 1;
+    char cmd[8192];
+    snprintf(cmd, sizeof cmd, "\"%s\" --safe --low-config --time-limit %d \"%s\"", exe, tsec, script);
+
+    HANDLE hRead = NULL, hWrite = NULL;
+    SECURITY_ATTRIBUTES sa;
+    memset(&sa, 0, sizeof sa);
+    sa.nLength = sizeof sa;
+    sa.bInheritHandle = TRUE;
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
+        iso_push_result(vm, -2, "isolate_run: CreatePipe failed", 0);
+        return 0;
+    }
+    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0); /* read end not inherited */
+
+    /* stdin: NUL device so the child never reads parent input */
+    HANDLE hNull = CreateFileA("NUL", GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof si);
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = hWrite;
+    si.hStdError = hWrite;
+    si.hStdInput = (hNull != INVALID_HANDLE_VALUE) ? hNull : GetStdHandle(STD_INPUT_HANDLE);
+    memset(&pi, 0, sizeof pi);
+    char *cmdCopy = _strdup(cmd);
+    BOOL ok = CreateProcessA(NULL, cmdCopy, NULL, NULL, TRUE,
+                             CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                             NULL, NULL, &si, &pi);
+    free(cmdCopy);
+    if (hNull != INVALID_HANDLE_VALUE) CloseHandle(hNull);
+    CloseHandle(hWrite); /* parent keeps only the read end */
+    if (!ok) {
+        CloseHandle(hRead);
+        iso_push_result(vm, -2, "isolate_run: cannot spawn child process", 0);
+        return 0;
+    }
+
+    IsoCtx ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.hRead = hRead;
+    HANDLE hThread = CreateThread(NULL, 0, iso_read_thread, &ctx, 0, NULL);
+
+    DWORD wait = WaitForSingleObject(pi.hProcess, (DWORD)timeout_ms);
+    int timedout = (wait == WAIT_TIMEOUT) ? 1 : 0;
+    if (timedout) {
+        TerminateProcess(pi.hProcess, 9);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    /* wait for the reader thread first: it exits on pipe EOF once the child is dead.
+       Closing hRead while the reader may still be blocked in ReadFile is undefined
+       behavior and caused occasional heap corruption (0xC0000374). */
+    if (hThread) WaitForSingleObject(hThread, 5000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(hRead);
+    if (hThread) CloseHandle(hThread);
+
+    iso_push_result(vm, (long)exitCode, ctx.buf ? ctx.buf : "", timedout);
+    free(ctx.buf);
+    return 0;
+}
+
+static int b_isolate_run(VM *vm) { return fn_isolate_run(vm); }
+
+void isolate_mod_register(VM *vm) {
+    vm_register_builtin_full(vm, "isolate_run", b_isolate_run, 1 | CAP_PROC, 0);
+}
+#else
+#include "vm.h"
+void isolate_mod_register(VM *vm) { (void)vm; }
+#endif

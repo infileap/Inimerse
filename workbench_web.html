@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inimerse 工作台</title>
+<style>
+:root{--bg:#151821;--panel:#1e2430;--panel2:#262e3d;--border:#33405a;--text:#dbe4f0;--muted:#7a8ba3;--accent:#4da3ff;--ok:#3ddc84;--err:#ff6b6b;--mono:ui-monospace,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border)}
+header h1{font-size:16px;font-weight:600;letter-spacing:.5px}
+.dot{width:10px;height:10px;border-radius:50%;background:#555;display:inline-block}
+.dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.dot.off{background:var(--err)}
+#apiAddr{margin-left:auto;color:var(--muted);font-size:12px}
+#layout{display:flex;flex:1;min-height:0}
+#sidebar{width:220px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+#sidebar h2{padding:10px 14px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+#projList{flex:1;overflow-y:auto;padding:4px 8px}
+.proj{padding:8px 12px;border-radius:6px;cursor:pointer;color:var(--text);margin-bottom:2px;display:flex;align-items:center;gap:8px}
+.proj:hover{background:var(--panel2)}
+.proj.active{background:var(--accent);color:#fff}
+.proj .ico{font-size:16px}
+#sideActions{padding:10px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border)}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#fileBar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--panel2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+#fileBar .fname{font-family:var(--mono);font-size:13px;color:var(--accent)}
+#fileBar input{background:#111827;border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:5px;font-size:13px;flex:1;min-width:120px}
+#editor{flex:1;display:flex;min-height:0}
+#editor textarea{flex:1;resize:none;border:0;outline:0;background:#0d1117;color:#c9d4e5;font:13px/1.6 var(--mono);padding:14px 16px;tab-size:4;white-space:pre}
+#statusBar{display:flex;gap:10px;padding:6px 14px;background:var(--panel);border-top:1px solid var(--border);font-size:12px;color:var(--muted);align-items:center;flex-wrap:wrap}
+#dirtyMark{color:var(--err);display:none}
+#toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#1a2230;border:1px solid var(--border);padding:9px 20px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:99}
+#toast.show{opacity:1}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:7px 14px;border-radius:6px;cursor:pointer;font-size:13px;transition:all .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#6cb6ff}
+.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.spacer{flex:1}
+#newProj{display:none;gap:8px;margin-top:4px}
+#newProj input{flex:1;background:#111827;border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>◈ Inimerse 工作台</h1>
+  <span id="statusDot" class="dot off"></span>
+  <span id="statusText">连接中…</span>
+  <span id="apiAddr" style="margin-left:auto;color:var(--muted);font-size:12px"></span><button id="diagBtn" onclick="diagNow()" style="background:#2a3b56;color:#dbe4f0;border:1px solid #4da3ff;border-radius:6px;padding:2px 10px;font-size:12px;cursor:pointer">诊断</button><input id="apiInput" placeholder="API地址" style="width:180px;background:#111827;border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px" title="引擎API地址,如 http://192.168.x.x:11470/api">
+</header>
+<div id="layout">
+  <aside id="sidebar">
+    <h2>项目</h2>
+    <div id="projList"></div>
+    <div id="sideActions">
+      <button class="btn" onclick="toggleNew()">＋ 新建项目</button>
+      <div id="newProj">
+        <input id="npName" placeholder="项目名(英文)">
+        <button class="btn primary" onclick="createProject()">创建</button>
+      </div>
+      <button class="btn" onclick="loadProjects()">↻ 刷新列表</button>
+    </div>
+  </aside>
+  <main id="main">
+    <div id="fileBar">
+      <span id="curFile" class="fname">未选择项目</span>
+      <input id="savePath" placeholder="文件路径(相对 projects/, 如 demo/main.im)">
+      <button class="btn primary" onclick="saveFile()">💾 保存</button>
+      <button class="btn" onclick="runProject()">▶ 运行</button>
+    </div>
+    <div id="editor"><textarea id="code" spellcheck="false" placeholder="选择左侧项目开始编辑…"></textarea></div>
+    <div id="statusBar">
+      <span id="statMsg">就绪</span>
+      <span id="dirtyMark">● 未保存</span>
+      <span class="spacer"></span>
+      <span id="statLen">0 字符</span>
+    </div>
+  </main>
+</div>
+<div id="toast"></div>
+
+<script>
+var PG_VER = 'v11'; try { if (localStorage.getItem('pg_ver') && localStorage.getItem('pg_ver') !== PG_VER) { localStorage.setItem('pg_ver', PG_VER); location.reload(); } else { localStorage.setItem('pg_ver', PG_VER); } } catch (e) {}
+
+var API_PORT = 11470;
+try { var ip2 = localStorage.getItem('im_api'); if (ip2) { var m2 = ip2.match(/:(\d+)\/api/); if (m2) API_PORT = +m2[1]; } } catch (e2) {}
+var API_SCAN = [11470,11471,11472,11473,11474,11475,11476,11477,11478,11479,11480,11481,11482,11483,11484,11485];
+var _wscan = 0;
+function apiBase(){ return 'http://' + (location.hostname || '127.0.0.1') + ':' + API_PORT + '/api'; }
+const API_BASE = apiBase();
+let currentProj = null;
+let dirty = false;
+function setDirty(v){ dirty=!!v; var e=document.getElementById('dirtyMark'); if(e)e.style.display=dirty?'inline':'none'; }
+
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = ok ? 'var(--ok)' : 'var(--err)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+function stat(msg) { document.getElementById('statMsg').textContent = msg; }
+
+async function apiGet(path) {
+  const r = await fetch(API_BASE + path, {cache:'no-store'});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function apiPost(path, body) {
+  const r = await fetch(API_BASE + path, {method:'POST', body:body||'', headers:{'Content-Type':'text/plain'}});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function ping() {
+  try {
+    const j = await apiGet('/projects');
+    document.getElementById('statusDot').className = 'dot on';
+    document.getElementById('statusText').textContent = '\u5f15\u64ce\u5728\u7ebf';
+    document.getElementById('statusText').style.color = 'var(--ok)';
+    return true;
+  } catch(e) {
+    document.getElementById('statusDot').className = 'dot off';
+    document.getElementById('statusText').textContent = '\u5f15\u64ce\u79bb\u7ebf(\u5148\u8fd0\u884c web_play.bat)';
+    document.getElementById('statusText').style.color = 'var(--err)';
+    return false;
+  }
+}
+
+async function loadProjects() {
+  try {
+    const list = await apiGet('/projects');
+    const el = document.getElementById('projList');
+    el.innerHTML = '';
+    if (!list.length) { el.innerHTML = '<div style="padding:12px;color:var(--muted)">(no project yet)</div>'; return; }
+    list.forEach(name => {
+      const d = document.createElement('div');
+      d.className = 'proj' + (name === currentProj ? ' active' : '');
+      d.innerHTML = '<span class="ico">\u25B8</span>' + name;
+      d.onclick = (ev) => openProject(name, ev);
+      el.appendChild(d);
+    });
+  } catch(e) {
+    if (_wscan < 16) {
+      API_PORT = API_SCAN[_wscan++];
+      try { localStorage.removeItem('im_api'); } catch (e3) {}
+      setTimeout(loadProjects, 500);
+    } else {
+      toast('load failed: ' + e.message, false);
+    }
+  }
+}
+async function openProject(name, ev) {
+  currentProj = name;
+  document.querySelectorAll('.proj').forEach(p => p.classList.remove('active'));
+  if (ev && ev.target) { var row = ev.target.closest('.proj'); if (row) row.classList.add('active'); }
+  document.getElementById('curFile').textContent = name + ' / main.im';
+  document.getElementById('savePath').value = 'projects/' + name + '/main.im';
+  try {
+    const r2 = await fetch(apiBase() + '/file?p=' + encodeURIComponent('projects/' + name + '/main.im'));
+    const j = r2.ok ? await r2.text() : '';
+    document.getElementById('code').value = j || '';
+    setDirty(false);
+    stat('\u5df2\u6253\u5f00 ' + name);
+    updateLen();
+  } catch(e) { toast('\u6253\u5f00\u5931\u8d25: ' + e.message, false); }
+}
+
+async function saveFile() {
+  const path = document.getElementById('savePath').value.trim();
+  if (!path) { toast('\u8bf7\u8f93\u5165\u6587\u4ef6\u8def\u5f84', false); return; }
+  const content = document.getElementById('code').value;
+  try {
+    const fullP = (path.indexOf('projects/') === 0) ? path : 'projects/' + path;
+    const j = await apiPost('/save?p=' + encodeURIComponent(fullP), content);
+    if (j.ok) { setDirty(false); toast('\u5df2\u4fdd\u5b58 ' + path); stat('\u5df2\u4fdd\u5b58 ' + path); }
+    else toast('\u4fdd\u5b58\u5931\u8d25', false);
+  } catch(e) { toast('\u4fdd\u5b58\u5931\u8d25: ' + e.message, false); }
+}
+
+async function runProject() {
+  const path = document.getElementById('savePath').value.trim();
+  if (!path) { toast('\u8bf7\u5148\u9009\u62e9\u9879\u76ee', false); return; }
+  try {
+    const fullR = (path.indexOf('projects/') === 0) ? path : 'projects/' + path;
+    const j = await apiPost('/run?p=' + encodeURIComponent(fullR), 'x');
+    if (j.pid > 0) toast('\u5df2\u542f\u52a8\u6e38\u620f (pid ' + j.pid + ')');
+    else toast('\u542f\u52a8\u5931\u8d25', false);
+  } catch(e) { toast('\u8fd0\u884c\u5931\u8d25: ' + e.message, false); }
+}
+
+function toggleNew() {
+  const d = document.getElementById('newProj');
+  d.style.display = d.style.display === 'flex' ? 'none' : 'flex';
+}
+
+async function createProject() {
+  const name = document.getElementById('npName').value.trim();
+  if (!name) { toast('\u8bf7\u8f93\u5165\u9879\u76ee\u540d', false); return; }
+  const tpl = 'gui_stage(900, 640)\n# ' + name + ' project\ngui_text("Hello ' + name + '", 100, 100)\nwait 10\n';
+  try {
+    const j = await apiPost('/save?p=' + encodeURIComponent('projects/' + name + '/main.im'), tpl);
+    if (j.ok) { toast('\u9879\u76ee ' + name + ' \u5df2\u521b\u5efa'); document.getElementById('npName').value=''; toggleNew(); loadProjects(); openProject(name); }
+    else toast('\u521b\u5efa\u5931\u8d25', false);
+  } catch(e) { toast('\u521b\u5efa\u5931\u8d25: ' + e.message, false); }
+}
+
+function updateLen() {
+  const n = document.getElementById('code').value.length;
+  document.getElementById('statLen').textContent = n + ' \u5b57\u7b26';
+}
+document.getElementById('code').addEventListener('input', function(){ updateLen(); setDirty(true); });
+document.getElementById('code').addEventListener('keydown', function(e){
+  if (e.key === 'Tab') { e.preventDefault(); var s=this.selectionStart, end=this.selectionEnd; this.value=this.value.slice(0,s)+'    '+this.value.slice(end); this.selectionStart=this.selectionEnd=s+4; setDirty(true); updateLen(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runProject(); }
+});
+window.addEventListener('beforeunload', function(e){ if (dirty) { e.preventDefault(); e.returnValue=''; } });
+document.getElementById('apiInput').addEventListener('change', e => {
+    const v = e.target.value.trim();
+    if (v) { localStorage.setItem('im_api', v); location.reload(); }
+  });
+  document.getElementById('apiInput').value = API_BASE;
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveFile(); }
+});
+
+/* init */
+function boot() {
+  document.getElementById('apiAddr').textContent = 'API ' + API_PORT;
+  var tries = 0;
+  (function tryLoad(){
+    ping().then(function(ok){ loadProjects(); if (!ok && tries < 5) { tries++; setTimeout(tryLoad, 1500); } });
+  })();
+  setInterval(() => ping(), 8000);
+}
+boot();
+
+// ---- diag ----
+window.__errs = [];
+window.addEventListener('error', function(e){ window.__errs.push(e.message); });
+var diagBusy = false;
+function diagNow() {
+  if (diagBusy) return; diagBusy = true;
+  var b = document.getElementById('diagBtn'); if (b) b.textContent = '...';
+  var info = 'VER:' + (window.PG_VER||'?') + '\n' +
+    'API:' + (window.API_PORT||'?') + '\n' +
+    'LS:' + JSON.stringify({im_api: localStorage.getItem('im_api'), forgePort: localStorage.getItem('forgePort')}) + '\n' +
+    'JSERR:' + (window.__errs.join(' | ') || 'none') + '\n' +
+    'SEL:' + (document.getElementById('projSel') ? document.getElementById('projSel').innerHTML.slice(0,100) : 'none');
+  fetch('/diag?info=' + encodeURIComponent(info))
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;right:16px;bottom:16px;width:420px;max-height:70vh;overflow:auto;background:#0d1117;border:1px solid #4da3ff;border-radius:8px;padding:12px;z-index:9999;white-space:pre-wrap;font-size:12px';
+      d.innerHTML = '<div style="font-weight:bold;margin-bottom:8px;color:#4da3ff">AI Report</div><div>' + t.replace(/</g,'&lt;') + '</div>' +
+        '<button onclick="this.parentNode.remove()" style="margin-top:8px;background:#2a3b56;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer">Close</button>';
+      document.body.appendChild(d);
+      if (b) b.textContent = 'D'; diagBusy = false;
+    })
+    .catch(function(e){ alert('diag fail: ' + e.message); if (b) b.textContent = 'D'; diagBusy = false; });
+}
+</script>
+</body>
+</html>

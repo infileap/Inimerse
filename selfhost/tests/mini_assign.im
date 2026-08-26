@@ -1,0 +1,6 @@
+import "../lexer.im"
+import "../parser.im"
+import "../eval.im"
+x = 5
+say "x=" + str(x)
+stop all

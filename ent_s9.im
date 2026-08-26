@@ -1,0 +1,10 @@
+gui_stage(480, 320)
+n = 0
+while n < 500 {
+    entity_spawn((n % 50) * 9.0 + 15, (n / 50) * 9.0 + 15, 1)
+    n = n + 1
+}
+entity_render(0x4488CC, 6)
+say "render done"
+wait 0.05
+say "S9_DONE"

@@ -1,0 +1,20 @@
+# 模块内各类符号（全部应带 adv. 前缀隔离）
+const LIMIT = 10
+q be N : 5
+func getq() {
+    return q
+}
+x = 100
+func getx2() {
+    return x
+}
+thread tw {
+    global q
+    say "tw_q=" + q
+}
+func start_worker() {
+    start tw
+}
+L1: {
+    say "label_ok"
+}

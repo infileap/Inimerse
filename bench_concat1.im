@@ -1,0 +1,10 @@
+# part 1 only: fixed 6-part chain
+i = 0
+n = 0
+while i < 300000 {
+    s = "aa" + "bb" + "cc" + "dd" + "ee" + "ff"
+    n = n + len(s)
+    i = i + 1
+}
+say n
+say "P1_DONE"

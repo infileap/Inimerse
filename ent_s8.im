@@ -1,0 +1,6 @@
+a = entity_spawn(500, 500, 1)
+say "spawned id=" + a
+nb = entity_neighbors(500, 500, 30)
+say "nb=" + len(nb)
+say "x=" + entity_get(a, "x")
+say "S8_DONE"

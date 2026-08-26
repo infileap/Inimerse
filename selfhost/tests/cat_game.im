@@ -1,0 +1,53 @@
+# Cat Adventure: Scratch 风格 2D 网游(测试脚本)
+stage 800, 600
+background "bg.bmp"
+
+sprite Cat, "cat.bmp"
+sprite Gem, "gem.bmp"
+sprite Monster, "monster.bmp"
+
+score = 0
+lives = 3
+
+when flag {
+    text "Score:0  Lives:3" at 10, 10
+}
+
+on Cat {
+    goto 400, 520
+    box 5, 5, 40, 40
+    say "Catch gems! Avoid monsters!"
+    forever {
+        if key("left")  { move Cat, -6 }
+        if key("right") { move Cat,  6 }
+        if touch(Gem) {
+            score = score + 10
+            goto Gem, rand(50,750), rand(50,300)
+            say "Score:" + str(score)
+        }
+        if touch(Monster) {
+            lives = lives - 1
+            say "Lives:" + str(lives)
+            goto Monster, rand(50,750), 50
+            if lives <= 0 {
+                say "Game Over! Score:" + str(score)
+                stop all
+            }
+        }
+        wait 0.03
+    }
+}
+
+on Gem {
+    goto rand(50,750), rand(50,300)
+}
+
+on Monster {
+    goto rand(50,750), 50
+    repeat 3 { clone }
+    forever {
+        point_to Cat
+        move 2
+        wait 0.03
+    }
+}

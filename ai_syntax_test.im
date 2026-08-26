@@ -1,0 +1,28 @@
+# AI-friendly syntax regression test.
+# Covers the fn alias and trailing commas in common multiline forms.
+
+fn add(a, b,) {
+    return a + b
+}
+
+values = [
+    1,
+    2,
+    3,
+]
+
+config = {
+    "name": "demo",
+    "count": 3,
+}
+
+total = add(
+    values[0],
+    values[1],
+)
+
+if total == 3 and config["count"] == 3 {
+    say "AI_SYNTAX_OK"
+} else {
+    say "AI_SYNTAX_FAIL"
+}

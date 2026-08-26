@@ -1,0 +1,8 @@
+a.b = 1
+a.c = 2
+lp = list_params()
+say "n=" + str(size(lp))
+say "e0=" + lp[0]
+say "t0=" + type(lp[0])
+say "e1=" + lp[1]
+say "done"

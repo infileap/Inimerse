@@ -1,0 +1,48 @@
+# ============ 代码注入安全 + 遗留项全清理 ============
+# 2026-08-15 12:15
+#
+## 1. 注入安全（核心：运行时拦截 + 危险 builtin 标记）
+- vm.h: builtins[] 加 flags（bit0=危险）；VM 加 safe_mode；新 vm_register_builtin_safe()
+- L_CALL_BUILTIN: safe_mode 下危险 builtin 拦截，vm_throw_msg（可 try/catch 捕获）
+- 危险清单（已全部改注册）: exec / read_file / write_file / proc_kill / proc_kill_tag /
+  proc_prune / vm_exec / load_params / save_params / build / net_* / server_* / port_kill /
+  verse_* / friend_* / chat_* / profile_set / save / load / ai_ask / ai_text / ai_vision /
+  ai_models / ai_chat
+- vm_debug_exec: 注入代码长度上限 256KB
+- CLI: --safe 进入受限模式（注入/脚本在同一 VM，自动继承）
+- 验证: 普通模式全放行；safe 模式 exec/read_file/write_file/vm_exec 全拦截且可捕获
+- 未来远程调试必须 safe_mode + token（本次无远程接口，文档记录）
+
+## 2. 遗留③ 修复: 调试 ip 显示
+- vm_init 未清零新增字段（dbg_*/safe_mode/mod_bcs 垃圾值 -> wait_boundary 假返回）-> 已补初始化 + memset(globals)
+- vm->ip 改 volatile（跨线程读旧值，同 step_mode 问题）
+- L_WAIT: step_mode 下单步时 wait 原子执行（分帧 ip-- 回退态干扰调试显示）
+- 验证: t_wait3 b1 ip=12 正确；短脚本(<256条)不再假返回
+
+## 3. 遗留④ 修复: cmd < file 重定向 input() EOF
+- 根因: main() 的 system("chcp 936 > nul") 子进程 cmd 继承 stdin 文件句柄并移动文件指针
+- 修复: system("chcp 936 > nul < nul") 隔离 stdin
+- 验证: got:[hello] got2:[world]
+
+## 4. 遗留② 解决: 编译器 builtin 表两处维护
+- 核实: 编译器 builtin 表仅 window（line1381 lookup_builtin）使用，EXPR_CALL 一律
+  CALL_BUILTIN 按名字运行时查找 -> 新增 builtin 无需维护表
+- 已从表移除 dbg_* / stdin_ready（验证 dbg_ip 等仍工作）
+
+## 5. 遗留⑥: mod.st script 字段（通用 .im 模块，初始化型）
+- mod.c: mod.st 支持 "script": "main.im" -> vm_exec_script_file 启动早期执行
+- vm_exec_script_file: bytecode 挂 vm->mod_bcs（VM 生命周期），持久化全局名（base_gc 基线修复）
+- 已知限制（记录）: vm_run 结束时 stop_all 杀线程 -> 只适合初始化型模块（长驻线程用拼接方案）；
+  模块全局跨会话不可读（预注册方案引发索引污染已撤销——普通脚本全局从0开始，
+  mod 全局在 23+ 槽位读不到）-> P2 模块系统需解决
+- 验证: mods/utils 模块启动执行（[mod] utils loaded），服务正常
+
+## 6. 其他
+- vm_debug_exec / load_and_run_source 等持久化逻辑保持（名字持久化，值天然保留）
+- debug_mod.dll 已重链（vm.h 结构变更）；mod.st 未恢复（.im 调试器默认，DLL 保留考古）
+- 调试器 dis 支持 "dis N"（match(cmd, "^dis ")）
+
+## 验证汇总
+- debug concat_test: ip=49->53->57, CONCAT_DONE（.im 调试器无回归）
+- safe: exec/read_file/write_blocked + DONE
+- concat/set/params 回归通过；服务 4+4+1 8端口 日志干净

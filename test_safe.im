@@ -1,0 +1,20 @@
+# 注入安全测试: 普通模式 vs safe 模式
+try {
+    r = exec("echo hi")
+    say "exec_ok:" + r
+} catch (e) {
+    say "exec_blocked"
+}
+try {
+    f = read_file("block_test.im")
+    say "read_ok:" + len(f)
+} catch (e) {
+    say "read_blocked"
+}
+try {
+    write_file("_safetest.txt", "x")
+    say "write_ok"
+} catch (e) {
+    say "write_blocked"
+}
+say "DONE"

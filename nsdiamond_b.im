@@ -1,0 +1,4 @@
+import "nsdiamond_a.im" as a
+func fb() {
+    return a.fa() + 1
+}

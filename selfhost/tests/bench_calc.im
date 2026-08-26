@@ -1,0 +1,25 @@
+# bench_calc.im
+func fib(n) {
+    if n < 2 { return n }
+    return fib(n-1) + fib(n-2)
+}
+func sum_loop(n) {
+    s = 0
+    i = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    return s
+}
+arr = []
+i = 0
+while i < 200 {
+    push(arr, i * 2)
+    i = i + 1
+}
+say "fib20=" + str(fib(20))
+say "sum100k=" + str(sum_loop(100000))
+say "arr199=" + str(arr[199])
+say "len=" + str(len(arr))
+stop all

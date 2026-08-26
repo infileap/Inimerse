@@ -1,0 +1,4 @@
+say N[1~5]
+say list(N[1~5])
+l = list(N[1~5])
+say l

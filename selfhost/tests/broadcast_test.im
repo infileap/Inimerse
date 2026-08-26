@@ -1,0 +1,31 @@
+stage 600, 400
+sprite Ball, "gem.bmp"
+msg_count = 0
+
+when flag {
+    text "msg:" + str(msg_count) at 10, 10
+}
+
+on Ball {
+    goto 300, 200
+    forever {
+        wait 0.05
+    }
+}
+
+when "tick" {
+    msg_count = msg_count + 1
+    text "msg:" + str(msg_count) at 10, 10
+}
+
+when flag {
+    i = 0
+    forever {
+        i = i + 1
+        if i >= 50 {
+            broadcast "tick"
+            i = 0
+        }
+        wait 0.1
+    }
+}

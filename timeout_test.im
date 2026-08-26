@@ -1,0 +1,13 @@
+# timeout_test.im - control: same script WITHOUT endless, should be killed by watchdog
+main {
+    start plain_loop
+    while true {
+        wait 0.2
+    }
+}
+
+thread plain_loop() {
+    while true {
+        wait 0.2
+    }
+}

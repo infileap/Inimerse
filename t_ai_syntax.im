@@ -1,0 +1,13 @@
+# AI 适配语法测试：print / && / || / null
+print "p1=" + 1
+print("p2")
+a = true
+b = false
+c = a && b
+d = a || b
+say "and=" + c
+say "or=" + d
+e = null
+say "null=" + e
+if e == nil { say "null_is_nil" }
+say "DONE"

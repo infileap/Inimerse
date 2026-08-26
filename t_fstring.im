@@ -1,0 +1,6 @@
+name = "world"
+n = 42
+s = $"hello {name}, n={n}"
+say s
+print $"j={n}"
+say "DONE"

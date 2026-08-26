@@ -1,0 +1,22 @@
+using thread
+thread consumer:() {
+ cn =0
+ i =0
+ while i <5 {
+ recv v
+ cn = cn +1
+ i = i +1
+ }
+}
+main {
+ start consumer()
+ i =0
+ while i <5 {
+ send consumer i
+ i = i +1
+ }
+ join consumer
+ say "consumer got messages"
+}
+say "main exit"
+stop all

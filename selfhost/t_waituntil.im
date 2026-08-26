@@ -1,0 +1,17 @@
+using thread
+g =0
+thread producer:() {
+ global g
+ i =0
+ while i <100000 {
+ g = g +1
+ i = i +1
+ }
+}
+main {
+ start producer()
+ producer.wait until g >100, 10
+ say "waited g=" + str(g)
+ join producer
+}
+stop all

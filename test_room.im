@@ -1,0 +1,13 @@
+# test_room.im - full server room flow: create -> join(ok) -> join(wrong) -> status -> stop
+main {
+    r = server_start("demo", "secret123")
+    write_file("D:/_room.txt", "ROOM=" + str(r))
+    wait 3
+    u = server_join(r, "secret123")
+    w = server_join(r, "wrongpass")
+    st = server_status(r)
+    rooms = server_rooms()
+    write_file("D:/_room2.txt", "JOIN_OK=" + u + "\nJOIN_BAD=" + w + "\nSTATUS=" + st + "\nROOMS=" + rooms)
+    server_stop(r)
+    write_file("D:/_room3.txt", "STOPPED=1")
+}

@@ -1,0 +1,1 @@
+load_params("bad.params")

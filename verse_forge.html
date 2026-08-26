@@ -1,0 +1,431 @@
+
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verse Forge</title>
+<style>
+:root{--bg:#12151f;--panel:#1a1f2e;--panel2:#222940;--border:#2f3a55;--text:#dbe4f0;--muted:#8494ad;--accent:#5ab0ff;--ok:#3ddc84}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif;min-height:100vh}
+header{background:var(--panel);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
+header h1{font-size:18px}
+#projSel{background:#111827;border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px}
+#tabs{display:flex;gap:2px;background:var(--panel);border-bottom:1px solid var(--border);padding:0 12px;overflow-x:auto;position:sticky;top:53px;z-index:9}
+  .tab{flex:1;text-align:center}
+.tab{padding:10px 16px;cursor:pointer;color:var(--muted);font-size:13px;border-bottom:2px solid transparent;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+#body{padding:20px;max-width:900px;margin:0 auto}
+.panel{display:none}
+.panel.on{display:block}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:14px}
+  .card{min-height:280px}
+.card h3{font-size:14px;margin-bottom:12px;color:var(--accent)}
+.row{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.row label{min-width:110px;color:var(--muted);font-size:13px}
+.row input[type=number],.row input[type=text],.row select{background:#111827;border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px;font-size:13px}
+.row input[type=range]{flex:1;min-width:120px;accent-color:var(--accent)}
+.val{color:var(--accent);font-size:12px;min-width:40px}
+.switch{position:relative;width:44px;height:24px;background:#333;border-radius:12px;cursor:pointer;transition:.2s}
+.switch.on{background:var(--accent)}
+.switch::after{content:'';position:absolute;width:20px;height:20px;background:#fff;border-radius:50%;top:2px;left:2px;transition:.2s}
+.switch.on::after{left:22px}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 20px;border-radius:7px;cursor:pointer;font-size:14px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+#actions{display:flex;gap:10px;justify-content:center;padding:20px;position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 40%);z-index:8}
+#toast{position:fixed;top:16px;right:16px;background:var(--panel2);border:1px solid var(--border);padding:10px 18px;border-radius:8px;opacity:0;transition:.3s;z-index:99;pointer-events:none}
+#toast.show{opacity:1;pointer-events:auto}
+.hint{color:var(--muted);font-size:12px;margin-top:4px}
+
+
+@media (max-width:640px){
+  header{flex-wrap:wrap;padding:8px 10px;gap:6px}
+  header h1{font-size:15px;width:100%;margin-bottom:4px}
+  #projSel{width:100%;font-size:13px}
+  #netinfo{width:100%;flex-wrap:wrap;justify-content:flex-start;font-size:11px}
+  #portBox{max-width:70px;font-size:11px}
+  #netinfo button{font-size:11px;padding:3px 6px}
+  #tabs{top:0;padding:0 4px}
+  .tab{padding:8px 10px;font-size:11px}
+  #body{padding:10px;max-width:100%}
+  .card{padding:12px 10px;border-radius:8px}
+  .card h3{font-size:13px}
+  .row{flex-wrap:wrap;gap:6px}
+  .row label{min-width:0;width:100%;font-size:12px}
+  .row input[type=range]{flex:1 1 100%;min-width:0}
+  .row input[type=number],.row select{max-width:100%}
+  #actions{flex-wrap:wrap;padding:12px 10px}
+  #actions .btn{flex:1 1 44%;font-size:13px;padding:8px 10px}
+  #toast{left:8px;right:8px;top:6px;font-size:12px}
+  .hint{font-size:11px}
+}
+
+@media (max-width:640px){.row[style*="nowrap"]{flex-wrap:wrap}.row[style*="nowrap"] .btn{flex:1 1 44%}}</style>
+</head>
+<body>
+<header>
+  <h1>⚒ Verse Forge</h1>
+  <select id="projSel"></select>
+  <button onclick="loadProjects()" style="margin-left:8px;padding:4px 12px;border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:6px;cursor:pointer">Refresh</button>
+  <span style="color:var(--muted);font-size:12px" id="projHint"></span>
+  <span id="netinfo" style="margin-left:auto;display:flex;align-items:center;gap:6px;font:12px monospace;color:var(--muted)">
+    本机 <b id="ipShow" style="color:var(--accent)">127.0.0.1</b>
+    <input id="portBox" type="number" value="11470" min="1024" max="65535" style="width:78px;background:#111827;border:1px solid var(--border);color:var(--text);padding:2px 5px;border-radius:4px;font:12px monospace">
+    <button id="applyPort" onclick="applyPortNow()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;border-radius:4px;cursor:pointer">应用</button>
+    <button id="copyip" onclick="copyAddr()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;border-radius:4px;cursor:pointer">复制</button>
+    <button id="diagBtn" onclick="diagNow()" style="background:#2a3b56;color:#dbe4f0;border:1px solid #4da3ff;border-radius:6px;padding:2px 8px;font-size:12px;cursor:pointer">诊断</button>
+    <button id="multiHint" onclick="spawnNow()" style="background:#2563eb;color:#fff;border:none;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:12px">多开</button>
+  </span></header>
+<div id="tabs">
+  <div class="tab on" data-p="1" onclick="showPanel(1)">① 时空</div>
+  <div class="tab" data-p="2" onclick="showPanel(2)">② 法则</div>
+  <div class="tab" data-p="3" onclick="showPanel(3)">③ 化身</div>
+  <div class="tab" data-p="4" onclick="showPanel(4)">④ 生态</div>
+  <div class="tab" data-p="5" onclick="showPanel(5)">⑤ 社会</div>
+  <div class="tab" data-p="6" onclick="showPanel(6)">⑥ 视觉</div>
+  <div class="tab" data-p="7" onclick="showPanel(7)">⑦ 导出</div>
+  <div class="tab" data-p="8" onclick="showPanel(8)">⑧ 因果</div>
+  <div class="tab" data-p="9" onclick="showPanel(9)">⑨ 蓝图</div>
+  <div class="tab" data-p="10" onclick="showPanel(10)">⑩ 心智</div>
+  <div class="tab" data-p="11" onclick="showPanel(11)">⑪ 沙盒</div>
+</div>
+<div id="body">
+  <!-- ① 时空 -->
+  <div class="panel on" id="p1">
+    <div class="card"><h3>世界尺寸</h3>
+      <div class="row"><label>宽度</label><input type="number" id="worldW" min="400" max="2400" step="100" value="900" oninput="showVal(this,'worldWv')"><span class="val" id="worldWv">900</span></div>
+      <div class="row"><label>高度</label><input type="number" id="worldH" min="400" max="1600" step="100" value="640" oninput="showVal(this,'worldHv')"><span class="val" id="worldHv">640</span></div>
+      <div class="row"><label>时间流速</label><input type="range" id="worldSpeed" min="1" max="20" value="10" oninput="showVal(this,'worldSpeedv')"><span class="val" id="worldSpeedv">1.0x</span><span class="hint">倍率(影响生成/移动节奏)</span></div>
+    </div>
+    <h3 style="margin-top:14px">区块生成</h3>
+      <div class="row"><label>分块粒度</label><input type="number" id="worldChunk" value="8" min="4" max="32" oninput="showVal(this,'worldChunkv')"><span class="val" id="worldChunkv">8</span><span class="hint">世界分块,越大越多内容</span></div>
+    </div>
+  <!-- ② 法则 -->
+  <div class="panel" id="p2">
+    <div class="card"><h3>物理法则</h3>
+      <div class="row"><label>流星速度</label><input type="range" id="phyMeteor" min="2" max="12" value="4" oninput="showVal(this,'phyMeteorv')"><span class="val" id="phyMeteorv">4</span></div>
+      <div class="row"><label>重力系数</label><input type="range" id="phyGravity" min="1" max="10" value="5" oninput="showVal(this,'phyGravityv')"><span class="val" id="phyGravityv">5</span></div>
+      <div class="row"><label>碰撞半径</label><input type="range" id="phyCollide" min="5" max="25" value="12" oninput="showVal(this,'phyCollidev')"><span class="val" id="phyCollidev">12</span></div>
+    </div>
+  </div>
+  <!-- ③ 化身 -->
+  <div class="panel" id="p3">
+    <div class="card"><h3>玩家化身</h3>
+      <div class="row"><label>移动速度</label><input type="range" id="avSpeed" min="2" max="20" value="8" oninput="showVal(this,'avSpeedv')"><span class="val" id="avSpeedv">8</span></div>
+      <div class="row"><label>生命值</label><input type="range" id="avLife" min="1" max="10" value="3" oninput="showVal(this,'avLifev')"><span class="val" id="avLifev">3</span></div>
+      <div class="row"><label>受伤闪避窗口</label><input type="range" id="avIinv" min="0" max="10" value="3" oninput="showVal(this,'avIinvv')"><span class="val" id="avIinvv">3</span><span class="hint">帧(暂留)</span></div>
+    </div>
+  </div>
+  <!-- ④ 生态 -->
+  <div class="panel" id="p4">
+    <div class="card"><h3>星域生态</h3>
+      <div class="row"><label>星空数量</label><input type="range" id="ecoStars" min="5" max="60" value="20" oninput="showVal(this,'ecoStarsv')"><span class="val" id="ecoStarsv">20</span></div>
+      <div class="row"><label>流星上限</label><input type="range" id="ecoMeteorMax" min="5" max="30" value="16" oninput="showVal(this,'ecoMeteorMaxv')"><span class="val" id="ecoMeteorMaxv">16</span></div>
+    </div>
+  </div>
+  <!-- ⑤ 社会 -->
+  <div class="panel" id="p5">
+    <div class="card"><h3>频道/社会</h3>
+      <div class="row"><label>频道数</label><input type="number" id="socChannels" value="2" min="1" max="8" oninput="showVal(this,'socChannelsv')"><span class="val" id="socChannelsv">2</span></div>
+      <div class="row"><label>消息保留</label><input type="range" id="socMsgs" min="10" max="120" value="60" oninput="showVal(this,'socMsgsv')"><span class="val" id="socMsgsv">60</span></div>
+    </div>
+  </div>
+  <!-- ⑥ 视觉 -->
+  <div class="panel" id="p6">
+    <div class="card"><h3>主题</h3>
+      <div class="row"><label>配色主题</label><select id="visTheme"><option value="dark">深空</option><option value="light">晨曦</option><option value="ocean">海洋</option><option value="lava">熔岩</option></select></div>
+      <div class="row"><label>文字大小</label><input type="range" id="visFont" min="12" max="24" value="17" oninput="showVal(this,'visFontv')"><span class="val" id="visFontv">17</span></div>
+    </div>
+  </div>
+  <!-- ⑦ 导出 -->
+  <div class="panel" id="p7">
+    <div class="card"><h3>导出</h3>
+      <div class="row"><label>目标</label><select id="expTarget"><option value="run">立即运行</option><option value="pack">打包 vverse</option><option value="both">打包+运行</option></select></div>
+      <div class="hint">生成配置 → 应用世界 → 打包/运行</div>
+      <div class="row" style="flex-wrap:nowrap"><label>PROJECT FILES</label>
+        <button class="btn" style="flex:1" onclick="downloadProj('main.im')">[main.im]</button>
+        <button class="btn" style="flex:1" onclick="downloadProj('verse_config.json')">[config]</button>
+        <button class="btn primary" style="flex:1" onclick="downloadProjAll()">[Download All]</button>
+      </div>
+      <div class="hint">Save project files locally (via engine API)</div></div>
+    </div>
+  </div>
+  <!-- ⑧ 因果 -->
+  <div class="panel" id="p8">
+    <div class="card"><h3>因果映射(broadcast/signal)</h3>
+      <div class="row"><label>事件总线</label><div id="swCausal" class="switch" onclick="this.classList.toggle('on')"></div><span class="hint">启用 broadcast/signal 事件</span></div>
+      <div class="row"><label>信号延迟</label><input type="range" id="causalDelay" min="0" max="20" value="3" oninput="showVal(this,'causalDelayv')"><span class="val" id="causalDelayv">3</span><span class="hint">帧(预留)</span></div>
+    </div>
+  </div>
+  <!-- ⑨ 蓝图 -->
+  <div class="panel" id="p9">
+    <div class="card"><h3>蓝图(世界生成器)</h3>
+      <div class="row"><label>生成步骤</label><input type="number" id="blueSteps" value="3" min="1" max="10" oninput="showVal(this,'blueStepsv')"><span class="val" id="blueStepsv">3</span></div>
+      <div class="hint">分步生成:地形→生态→建筑(预留)</div>
+    </div>
+  </div>
+  <!-- ⑩ 心智 -->
+  <div class="panel" id="p10">
+    <div class="card"><h3>AI 心智</h3>
+      <div class="row"><label>NPC 对话</label><div id="swAi" class="switch" onclick="this.classList.toggle('on')"></div><span class="hint">启用本地 AI NPC(ai_text)</span></div>
+      <div class="row"><label>对话频率</label><input type="range" id="aiFreq" min="1" max="60" value="15" oninput="showVal(this,'aiFreqv')"><span class="val" id="aiFreqv">15</span><span class="hint">秒/次</span></div>
+    </div>
+  </div>
+  <!-- ⑪ 沙盒 -->
+  <div class="panel" id="p11">
+    <div class="card"><h3>测试沙盒</h3>
+      <div class="row"><label>当前配置</label><span style="color:var(--muted)">生成后点下方"应用并试玩"即可测试</span></div>
+      <div class="hint">试玩会在新窗口启动配置后的世界</div>
+    </div>
+  </div>
+</div>
+<div id="actions">
+  <button class="btn" onclick="saveConfig()">💾 保存配置</button>
+  <button class="btn primary" onclick="applyAndRun()">▶ 应用并试玩</button>
+</div>
+<div id="toast"></div>
+<script>
+var PG_VER = 'v11'; try { if (localStorage.getItem('pg_ver') && localStorage.getItem('pg_ver') !== PG_VER) { localStorage.setItem('pg_ver', PG_VER); location.reload(); } else { localStorage.setItem('pg_ver', PG_VER); } } catch (e) {}
+
+// v8 - 2026-08-10 multi-open hardened
+if (typeof spawnNow !== 'function') { try { location.href = location.pathname + '?v=8&forced=1'; } catch(e){} }
+
+// global helper functions (inline onclick)
+let API_PORT = 11470;
+var API_SCAN = [11470,11471,11472,11473,11474,11475,11476,11477,11478,11479,11480,11481,11482,11483,11484,11485];
+let curIP = '127.0.0.1';
+try { var fp = localStorage.getItem('forgePort'); if (fp) API_PORT = +fp; } catch(e){}
+function apiBase() {
+  var proto = location.protocol === 'file:' ? 'http://127.0.0.1:' : 'http://' + (location.hostname || '127.0.0.1') + ':';
+  return proto + API_PORT + '/api';
+}
+function refreshIP() {
+  try { fetch('/ip', {cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
+    var ip = (t||'').trim(); if (ip && ip !== '127.0.0.1') { curIP = ip; var e = document.getElementById('ipShow'); if (e) e.textContent = ip; }
+  }).catch(function(){}); } catch(e){}
+}
+function applyPortNow() {
+  var el = document.getElementById('portBox');
+  var p = +(el ? el.value : 0) || 11470;
+  if (p < 1024 || p > 65535) { toast('\u7aef\u53e3\u9700\u5728 1024-65535', false); return; }
+  API_PORT = p; try { localStorage.setItem('forgePort', p); } catch(e){}
+  probeNow(true);
+}
+function probeNow(silent) {
+  /* try configured port, then scan 11470-11485, pick the first live engine */
+  var order = [API_PORT];
+  for (var k = 0; k < API_SCAN.length; k++) { var v = API_SCAN[k]; if (order.indexOf(v) < 0) order.push(v); }
+  var found = null, tried = 0;
+  function next() {
+    if (found || tried >= order.length) {
+      if (found) {
+        API_PORT = found;
+        try { localStorage.setItem('forgePort', found); } catch(e){}
+        var eb = document.getElementById('portBox'); if (eb) eb.value = found;
+        toast('\u5df2\u8fde\u63a5\u5f15\u64ce API \u7aef\u53e3: ' + found, true);
+        loadProjects();
+      } else {
+        toast((silent ? '' : '\u672a\u627e\u5230\u5f15\u64ce, \u8bf7\u5148\u542f\u52a8 web_play') , false);
+      }
+      return;
+    }
+    var port = order[tried++];
+    fetch('http://' + curIP + ':' + port + '/api/projects', { cache: 'no-store' })
+      .then(function(r){ if (r.ok) { found = port; next(); } else next(); })
+      .catch(function(){ next(); });
+  }
+  next();
+}
+function copyAddr() {
+  var addr = 'http://' + curIP + ':' + API_PORT;
+  var done = function(){ toast('\u5df2\u590d\u5236: ' + addr, true); };
+  var fb = function(){ var ta = document.createElement('textarea'); ta.value = addr; ta.style.position='fixed'; ta.style.left='-9999px'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch(e){ toast('\u590d\u5236\u5931\u8d25', false); } ta.remove(); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(addr).then(done).catch(fb);
+  else fb();
+}
+function spawnNow() {
+  var btn = document.getElementById('multiHint');
+  if (btn) { btn.disabled = true; btn.textContent = '\u542f\u52a8\u4e2d...'; }
+  try {
+    fetch(location.origin + '/spawn', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+      if (btn) { btn.disabled = false; btn.textContent = '\u591a\u5f00'; }
+      if (j && j.url) { toast('\u7b2c2\u4e2a\u5b9e\u4f8b\u5df2\u542f\u52a8: ' + j.url, true); setTimeout(function(){ window.open(j.url, '_blank'); }, 600); }
+      else toast('\u591a\u5f00\u5931\u8d25: ' + (j && j.error || '\u672a\u77e5'), false);
+    }).catch(function(e){ if (btn) { btn.disabled = false; btn.textContent = '\u591a\u5f00'; } toast('\u591a\u5f00\u5931\u8d25: ' + e.message, false); });
+  } catch(e) { if (btn) { btn.disabled = false; btn.textContent = '\u591a\u5f00'; } toast('\u591a\u5f00\u5931\u8d25', false); }
+}
+refreshIP();
+// --- \u4ee5\u4e0b\u539f\u6765\u7684 Forge \u903b\u8f91 ---
+var API = '';
+let curProj = 'demo';
+function showVal(el, id) {
+  document.getElementById(id).textContent = el.type === 'range' && id.includes('worldSpeed') ? (el.value / 10).toFixed(1) + 'x' : el.value;
+}
+function showPanel(n) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', +t.dataset.p === n));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p' + n));
+}
+function toast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = ok ? 'var(--ok)' : 'var(--err)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+function collectConfig() {
+  return {
+    world: { w: +document.getElementById('worldW').value, h: +document.getElementById('worldH').value,
+             speed: document.getElementById('worldSpeed').value / 10, chunk: +document.getElementById('worldChunk').value },
+    physics: { meteor: +document.getElementById('phyMeteor').value, gravity: +document.getElementById('phyGravity').value,
+               collide: +document.getElementById('phyCollide').value },
+    avatar: { speed: +document.getElementById('avSpeed').value, life: +document.getElementById('avLife').value,
+              invuln: +document.getElementById('avIinv').value },
+    ecology: { stars: +document.getElementById('ecoStars').value, meteorMax: +document.getElementById('ecoMeteorMax').value },
+    society: { channels: +document.getElementById('socChannels').value, msgs: +document.getElementById('socMsgs').value },
+    visual: { theme: document.getElementById('visTheme').value, font: +document.getElementById('visFont').value },
+    causal: { enabled: document.getElementById('swCausal').classList.contains('on'), delay: +document.getElementById('causalDelay').value },
+    blueprint: { steps: +document.getElementById('blueSteps').value },
+    ai: { enabled: document.getElementById('swAi').classList.contains('on'), freq: +document.getElementById('aiFreq').value }
+  };
+}
+async function saveConfig() {
+  const cfg = collectConfig();
+  try {
+    const r = await fetch(apiBase() + '/forge?p=' + curProj, { method: 'POST', body: JSON.stringify(cfg) });
+    const j = await r.json();
+    toast(j.ok ? '\u914d\u7f6e\u5df2\u4fdd\u5b58' : '\u4fdd\u5b58\u5931\u8d25', j.ok);
+  } catch (e) { toast('\u4fdd\u5b58\u5931\u8d25: ' + e.message, false); }
+}
+async function applyAndRun() {
+  const cfg = collectConfig();
+  try {
+    const r = await fetch(apiBase() + '/genworld?p=' + curProj, { method: 'POST', body: JSON.stringify(cfg) });
+    const j = await r.json();
+    if (!j.ok) { toast('\u751f\u6210\u5931\u8d25', false); return; }
+    const isPhone = (window.innerWidth < 820) || (navigator.maxTouchPoints > 0);
+    if (isPhone) {
+      /* phone: start a headless game instance via the bridge, then open the play page */
+      try {
+        const sp = await fetch('/spawn?p=projects/' + curProj + '/main.im&port=11490');
+        const sj = await sp.json();
+        toast('\u5df2\u542f\u52a8\u624b\u673a\u6e38\u620f', true);
+        if (sj.url) { var u = sj.url.replace(/127\.0\.0\.1/g, location.hostname); setTimeout(function(){ location.href = u; }, 900); }
+      } catch (e2) { toast('\u624b\u673a\u542f\u52a8\u5931\u8d25: ' + e2.message, false); }
+      return;
+    }
+    const r2 = await fetch(apiBase() + '/run?p=projects/' + curProj + '/main.im', { method: 'POST', body: 'x' });
+    const j2 = await r2.json();
+    toast(j2.pid > 0 ? '\u5df2\u542f\u52a8\u4e16\u754c ' + curProj + ' (pid ' + j2.pid + ')' : '\u542f\u52a8\u5931\u8d25', j2.pid > 0);
+  } catch (e) { toast('\u5e94\u7528\u5931\u8d25: ' + e.message, false); }
+}
+function downloadProj(fn) {
+  if (!curProj) { toast('\u8bf7\u5148\u9009\u62e9\u9879\u76ee', false); return; }
+  fetch(apiBase() + '/file?p=projects/' + curProj + '/' + fn, { cache: 'no-store' })
+    .then(function(r){ return r.text(); })
+    .then(function(txt){
+      var blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fn;
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+      toast('\u5df2\u4e0b\u8f7d ' + fn, true);
+    }).catch(function(e){ toast('\u4e0b\u8f7d\u5931\u8d25: ' + e.message, false); });
+}
+function downloadProjAll() {
+  if (!curProj) { toast('\u8bf7\u5148\u9009\u62e9\u9879\u76ee', false); return; }
+  downloadProj('main.im');
+  setTimeout(function(){ downloadProj('verse_config.json'); }, 600);
+}
+let lpTry = 0;
+let lpTimer = null;
+async function loadProjects() {
+  try {
+    if (lpTry > 6) return;
+    if (typeof window._scanIdx !== 'number') window._scanIdx = 0;
+    const j = await fetch(apiBase() + '/projects', {cache:'no-store'}).then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+    lpTry = 99;
+    if (window._scanIdx > 0) {
+      try { localStorage.setItem('forgePort', String(API_PORT)); } catch (e2) {}
+    }
+    const sel = document.getElementById('projSel');
+    sel.innerHTML = '';
+    j.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+    if (j.length) { curProj = j[0]; sel.value = curProj; }
+    sel.onchange = () => { curProj = sel.value; loadConfig(); };
+    var pb = document.getElementById('portBox'); if (pb) pb.value = API_PORT;
+    document.getElementById('projHint').textContent = '\u5f53\u524d\u9879\u76ee: ' + curProj;
+  } catch (e) {
+    lpTry = (lpTry||0) + 1;
+    if (lpTry <= 6) {
+      var idx = window._scanIdx || 0;
+      if (idx < 16) {
+        API_PORT = API_SCAN[idx];
+        window._scanIdx = idx + 1;
+        try { localStorage.removeItem('forgePort'); } catch (e3) {}
+      }
+      clearTimeout(lpTimer); lpTimer = setTimeout(loadProjects, 600);
+    }
+    else toast('load failed: ' + e.message, false);
+  }
+}
+async function loadConfig() {
+  try {
+    const j = await fetch(apiBase() + '/forge?p=' + curProj).then(r => r.json());
+    if (j.world) {
+      document.getElementById('worldW').value = j.world.w || 900;
+      document.getElementById('worldH').value = j.world.h || 640;
+      if (j.world.speed) { document.getElementById('worldSpeed').value = j.world.speed * 10; }
+      if (j.world.chunk) document.getElementById('worldChunk').value = j.world.chunk;
+      if (j.physics) {
+        if (j.physics.meteor) document.getElementById('phyMeteor').value = j.physics.meteor;
+        if (j.physics.gravity) document.getElementById('phyGravity').value = j.physics.gravity;
+        if (j.physics.collide) document.getElementById('phyCollide').value = j.physics.collide;
+      }
+      if (j.avatar) {
+        if (j.avatar.speed) document.getElementById('avSpeed').value = j.avatar.speed;
+        if (j.avatar.life) document.getElementById('avLife').value = j.avatar.life;
+      }
+      if (j.ecology) {
+        if (j.ecology.stars) document.getElementById('ecoStars').value = j.ecology.stars;
+        if (j.ecology.meteorMax) document.getElementById('ecoMeteorMax').value = j.ecology.meteorMax;
+      }
+      ['worldW','worldH','worldChunk','phyMeteor','phyGravity','phyCollide','avSpeed','avLife','ecoStars','ecoMeteorMax'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) showVal(el, id + 'v');
+      });
+    }
+  } catch (e) {}
+}
+loadProjects();
+
+var diagBusy2 = false;
+window.__errs2 = [];
+window.addEventListener('error', function(e){ window.__errs2.push(e.message); });
+function diagNow() {
+  if (diagBusy2) return; diagBusy2 = true;
+  var b = document.getElementById('diagBtn'); if (b) b.textContent = 'DIAGNING...';
+  var info = 'H,:FORGE ' + (window.PG_VER||'?') + '\n' +
+    'API PORT: ' + (window.API_PORT||'?') + '\n' +
+    'localStorage: ' + JSON.stringify({forgePort: localStorage.getItem('forgePort')}) + '\n' +
+    'JS ERR: ' + (window.__errs2.join(' | ') || '?') + '\n' +
+    'page-issue: ' + (document.getElementById('projSel') ? document.getElementById('projSel').innerHTML.slice(0,100) : '?') + '\n' +
+    'curProj: ' + (typeof curProj !== 'undefined' ? curProj : '?');
+  fetch('/diag?info=' + encodeURIComponent(info))
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;right:16px;bottom:16px;width:420px;max-height:70vh;overflow:auto;background:#0d1117;border:1px solid #4da3ff;border-radius:8px;padding:12px;z-index:9999;white-space:pre-wrap;font-size:12px';
+      d.innerHTML = '<div style="font-weight:bold;margin-bottom:8px;color:#4da3ff">AI DIAG REPORT</div><div>' + t.replace(/</g,'&lt;') + '</div>' +
+        '<button onclick="this.parentNode.remove()" style="margin-top:8px;background:#2a3b56;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer">Close</button>';
+      document.body.appendChild(d);
+      if (b) b.textContent = 'Diag'; diagBusy2 = false;
+    })
+    .catch(function(e){ alert('diag fail: ' + e.message); if (b) b.textContent = 'Diag'; diagBusy2 = false; });
+}
+</script>
+</body>
+</html>

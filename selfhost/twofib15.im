@@ -1,0 +1,6 @@
+# twofib15.im
+import "lexer.im"
+import "parser.im"
+import "eval.im"
+run_file("tests/fib15.im")
+stop all

@@ -1,0 +1,8 @@
+say "x" + "y" + "z" + "w"
+s2 = "x" + "y" + "z" + "w"
+say s2
+say len(s2)
+say "a" + "b" + "c" + "d" + "e" + "f" + "g" + "h" + "i" + "j"
+s6 = "a" + "b" + "c" + "d" + "e" + "f" + "g" + "h" + "i" + "j"
+say len(s6)
+say s6 == "abcdefghij"

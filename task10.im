@@ -1,0 +1,4 @@
+k = 0
+while k < 3 { yield
+    k = k + 1 }
+say "TASK10_DONE"

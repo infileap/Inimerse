@@ -1,0 +1,33 @@
+# 容量上限提升验证（MAX_CANVAS 32->256 / MAX_TEXTS 128->1024 / MAX_BROADCAST 64->512 / MAX_CTRLS 16->128）
+# 1) canvas：旧版第 33 个创建失败，现应 256 个全成功
+gui_stage(480, 320)
+n = 0
+ok = 0
+while n < 256 {
+    c = gui_canvas(8, 8)
+    if c >= 0 {
+        ok = ok + 1
+    }
+    n = n + 1
+}
+say "canvas_ok=" + ok
+# 2) 广播：发 600 条（旧 64 条环形，现 512 环形窗口）
+i = 0
+while i < 600 {
+    gui_broadcast("msg" + i)
+    i = i + 1
+}
+say "broadcast_done=" + i
+# 3) 控件：创建 100 个按钮（旧 16 个上限；gui_button 返回递增 id，成功即 id>0）
+j = 0
+b = 0
+while j < 100 {
+    r = gui_button("B" + j, 10, 10 + j * 2, 60, 18)
+    if r > 0 {
+        b = b + 1
+    }
+    j = j + 1
+}
+say "buttons=" + b
+wait0.2
+say "CAP_TEST_DONE"

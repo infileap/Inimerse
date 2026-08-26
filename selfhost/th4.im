@@ -1,0 +1,30 @@
+using thread
+g =0
+thread inc1:(k) {
+ global g
+ i =0
+ while i < k {
+ lock lk {
+ g = g +1
+ }
+ i = i +1
+ }
+}
+thread inc2:(k) {
+ global g
+ i =0
+ while i < k {
+ lock lk {
+ g = g +1
+ }
+ i = i +1
+ }
+}
+main {
+ start inc1(50)
+ start inc2(50)
+ join inc1
+ join inc2
+ say "g=" + str(g)
+}
+stop all

@@ -1,0 +1,13 @@
+thread t1 {
+    say 123
+}
+start t1
+join t1
+say "num done"
+thread t2 {
+    say "hello thread"
+}
+start t2
+join t2
+say "str done"
+say "done"

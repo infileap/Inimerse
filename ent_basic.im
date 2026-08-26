@@ -1,0 +1,19 @@
+# entity system basics
+a = entity_spawn(100, 200, 1)
+b = entity_spawn(300, 400, 2)
+say "spawned " + a + "," + b
+say "count " + entity_count()
+entity_set(a, "hp", 50)
+entity_set(b, "vx", 3.5)
+say "a.hp=" + entity_get(a, "hp")
+say "b.vx=" + entity_get(b, "vx")
+say "b.x=" + entity_get(b, "x")
+r = entity_kill(a)
+say "kill a=" + r + " count=" + entity_count()
+c = entity_spawn(500, 600, 3)
+say "respawn c=" + c + " count=" + entity_count()
+hit = entity_at(500, 600)
+say "at(500,600)=" + hit
+entity_clear()
+say "after clear count=" + entity_count()
+say "ENT_BASIC_DONE"

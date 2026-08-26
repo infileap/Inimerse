@@ -1,0 +1,4 @@
+type = 7
+func gettype() {
+    return type
+}

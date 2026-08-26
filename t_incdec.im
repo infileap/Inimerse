@@ -1,0 +1,41 @@
+# A2: x++ / x-- (仅简单变量)
+n = 0
+while n < 5 {
+    n++
+}
+say "n=" + n                    # 5
+
+n--
+say "n2=" + n                   # 4
+
+k = 0
+while k < 3 {
+    k++
+    say "k=" + k                # 1 2 3
+}
+
+# 与 += 混合
+m = 10
+m++
+m += 5
+say "m=" + m                    # 16
+
+# 全局变量(线程内)递增: 需在线程体内 global 声明（引擎既有语义）
+g = 0
+thread w0 {
+    global g
+    g++
+    g++
+}
+start w0
+join w0
+say "g=" + g                    # 2
+
+# 函数内局部
+func bump(x) {
+    x++
+    return x
+}
+say "bump=" + bump(7)           # 8
+
+say "A2_DONE"

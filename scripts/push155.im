@@ -1,0 +1,8 @@
+big2 = []
+m = 0
+while m < 155 {
+    push(big2, 2)
+    m = m + 1
+}
+say "host l=" + str(len(big2)) + " m=" + str(m)
+stop all

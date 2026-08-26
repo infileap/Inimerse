@@ -1,0 +1,37 @@
+# ============ 语块整体替换工具 (block_edit.im) ============
+# 2026-08-15 11:40
+#
+## 性能结论 (先答用户问)
+- 语块标签 A:{} 编译期零开销: STMT_LABEL 只记录 start_off/end_off (label 表),
+  块体直接内联编译, 不产生任何运行时指令/包装
+- to A / break A: 各 1 条 OP_JUMP (编译期补丁偏移, 与循环跳转同价)
+- thread to A: OP_THREAD_GOTO (运行时 jump_req)
+- 结论: 语块标记不影响性能, 不需要"一键去除"编译命令;
+  但"发布版一键清理调试语块"有真实需求 -> 工具 strip_marked 支持
+- 替换语块 = 替换内联代码段, 编译时 start/end 自动重算, to/break 引用无需改
+  (除非重命名, rename 命令会同步引用)
+
+## 工具功能
+inimerse.exe block_edit.im <cmd> <file> [args...]
+- list: 列出所有语块 (含嵌套, 自动匹配配对 })
+- extract: 导出语块 (含骨架)
+- replace: 用新文件内容整体替换语块体 (保留 name: 行和配对 })
+- strip: 删除整个语块
+- strip_marked: 删除所有 name 以 prefix 开头的语块 (如 _dbg_ 前缀, 发布版清理)
+- rename: 重命名语块并同步所有 to/break 引用 (str_replace 逐行)
+
+## 实现要点 (纯 .im, 引擎自己写工具)
+- code_view(): 去 # 注释与字符串内容 (防 { } : 干扰括号/标签匹配)
+- 括号深度匹配: 从 { 起计数到配对 }, 支持嵌套语块/循环/函数
+- split() 去空段 -> 行尾引用替换不能用 split/join, 改手写 str_replace
+- 语言注意点: 函数参数在 builtin/函数调用后会被污染(引擎既有行为),
+  命令函数开头把参数复制到全局 (G_ 前缀) 再使用
+- 保留字陷阱: text/body/new/out? 等 (text/new 实证) 勿用作变量/参数;
+  not 关键字不支持函数调用操作数 (用 == false)
+- 顶层全局变量与函数参数同名会被全局覆盖 (参数查找细节) -> 参数统一 p 前缀
+
+## 验证 (bt6 全链)
+- list: 3 块 (含嵌套 while/字符串/注释陷阱) ✓
+- rename B1->MAIN_BLOCK: 引用同步, 运行无 unknown label ✓
+- strip_marked _dbg_: 1 块删除, blocks 3->2 ✓
+- replace: 新内容生效 (运行输出验证) ✓

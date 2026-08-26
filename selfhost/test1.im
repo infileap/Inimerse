@@ -1,0 +1,29 @@
+x =40
+y =2
+say "x+y=" + str(x + y)
+if x >10 {
+ say "big"
+} else {
+ say "small"
+}
+i =0
+while i <3 {
+ say "loop" + str(i)
+ i = i +1
+}
+func add(a, b) {
+ return a + b
+}
+say "add=" + str(add(3,4))
+arr = [10,20,30]
+s =0
+for v in arr {
+ s = s + v
+}
+say "sum=" + str(s)
+for i in range(0,3) {
+ say "s" + str(i) + "=" + str(arr[i])
+}
+d = {"a": 7}
+say "d=" + str(d["a"])
+stop all

@@ -1,0 +1,21 @@
+# utils.im - 通用工具插件（可 import 使用）
+func clamp(v, lo, hi) {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+func lerp(a, b, t) {
+    return a + (b - a) * t
+}
+func between(v, lo, hi) {
+    return v >= lo && v <= hi
+}
+func range_list(n) {
+    a = []
+    i = 0
+    while i < n {
+        push(a, i)
+        i = i + 1
+    }
+    return a
+}

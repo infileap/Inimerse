@@ -1,0 +1,13 @@
+# endless_test.im - verify the "endless" label beats the 120s(here 3s) watchdog
+main endless {
+    start endless_loop
+    while true {
+        wait 0.2
+    }
+}
+
+thread endless endless_loop() {
+    while true {
+        wait 0.2
+    }
+}

@@ -1,0 +1,42 @@
+# ============ §12.2 公网↔去中心化 IP 关联 / 稳定去中心化服务器 ============
+# 2026-08-15 14:40
+#
+## 公网 IP 关联
+- verse_public_ip() —— 本机主 IP（gethostname+getaddrinfo，跳过 127./169.254.；
+  公网 IP 需路由器端口映射或后续 hub 回声探测——已文档化）
+- verse://host:port/id —— 显式 hub 地址（公网 IP 直连）
+- verse://<id>（裸 id）—— 通过全局 hub 列表解析（去中心化地址，多 hub 顺序 failover）
+
+## 稳定去中心化服务器（hub 联邦）
+- verse_hub_add(uri) / verse_hub_remove(uri) / verse_hubs()
+  —— 全局 hub 列表，持久化 universe/hubs.json（多源容灾基础）
+- verse_hub_ping(uri) —— 健康检查，返回延迟 ms（0=不可达）
+- verse_publish(id, hub) —— 把本地安装的 verse（verse.manifest）POST 上传到 hub
+- verse_listen(port) —— 引擎即 hub 节点，新增路由：
+  - GET /ping             -> pong（健康）
+  - GET /v/<id>           -> .vverse（查找 universe/<id>/<id>.vverse、
+    home/<id>.vverse、universe/_hub/<id>.vverse 三处）
+  - GET /hub              -> 已安装 verse 列表
+  - POST /publish?id=<id> -> 保存到 universe/_hub/<id>.vverse（发布面）
+- 多 hub 冗余 = 稳定：verse_update/verse_open 已支持多源 failover（12.3）
+
+## 验证（t_fed.im 一体化：listen+fetch 同进程）
+- listen=11560、ping_ms=31（健康检查）
+- publish=1（hub 收到并存 universe/_hub/vtest.vverse）
+- hubman=3（/hub 列表 JSON 下载成功——引擎 winhttp 正常）
+- hub_open=1（verse://127.0.0.1:11560/vtest 下载→sha256 校验→解包→启动 全通）
+- 裸 id：verse://vtest -> "resolve vtest via hub 127.0.0.1:11560" -> open=1
+
+## 排障教训（本次 5 个坑）
+1. verse_listen 只收端口参数（verse_listen("name",port) 会把字符串当端口）
+2. /v/ 加载需加 universe/_hub 回退（publish 存储目录）
+3. url 构造重复：http://%s/v/%s 的 %s 传了 rest（含 id）-> /vtest/v/vtest
+   —— 需先把 host:port 与 id 拆开
+4. PowerShell 写入 C 代码：strchr(rest, 39) 的 39 是单引号不是 '/'（47）
+5. 命令行 PowerShell 行首 + 被当一元运算符 -> 复杂修改一律用 .ps1 脚本文件
+
+## 边界/后续
+- hub 鉴权（公网 publish 需 token——当前无鉴权，限可信网络）
+- hub 回声公网 IP 探测（连已知 hub 拿"看到的来源 IP"）
+- hub 间同步/镜像（verse_publish 到多个 hub 即可冗余）
+- 去中心化身份（ed25519 签名 verse://<pubkey>/<id>）——P1

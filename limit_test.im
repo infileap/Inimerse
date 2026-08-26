@@ -1,0 +1,10 @@
+# limit_test.im - 资源上限强制测试（验证低配置下的拦截与功能）
+# 1) 显存上限：2MB 上限下创建 4MB 画布 -> 必须被 limit_abort 拦下
+# 2) 内存上限：1MB 上限下大量动态字符串 -> 必须被拦下
+# 3) 通过部分（未超限路径）正常完成
+
+say "== limit test: vram cap =="
+declare { vram 2MB }
+say "vram limit set: " + gui_vram_limit(0)
+c = gui_canvas(1024, 1024)      # 4MB > 2MB -> abort（应打印 [resource limit] vram ...）
+say "canvas created: " + c      # 不应执行到这里

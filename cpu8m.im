@@ -1,0 +1,91 @@
+# cpu8m.im - 8线程各写自己的全局（分片锁并行验证，join 等待）
+g0 = 0
+thread w0 {
+    global g0
+    n = 0
+    while n < 2000000 {
+        g0 = g0 + 1
+        n = n + 1
+    }
+}
+g1 = 0
+thread w1 {
+    global g1
+    n = 0
+    while n < 2000000 {
+        g1 = g1 + 1
+        n = n + 1
+    }
+}
+g2 = 0
+thread w2 {
+    global g2
+    n = 0
+    while n < 2000000 {
+        g2 = g2 + 1
+        n = n + 1
+    }
+}
+g3 = 0
+thread w3 {
+    global g3
+    n = 0
+    while n < 2000000 {
+        g3 = g3 + 1
+        n = n + 1
+    }
+}
+g4 = 0
+thread w4 {
+    global g4
+    n = 0
+    while n < 2000000 {
+        g4 = g4 + 1
+        n = n + 1
+    }
+}
+g5 = 0
+thread w5 {
+    global g5
+    n = 0
+    while n < 2000000 {
+        g5 = g5 + 1
+        n = n + 1
+    }
+}
+g6 = 0
+thread w6 {
+    global g6
+    n = 0
+    while n < 2000000 {
+        g6 = g6 + 1
+        n = n + 1
+    }
+}
+g7 = 0
+thread w7 {
+    global g7
+    n = 0
+    while n < 2000000 {
+        g7 = g7 + 1
+        n = n + 1
+    }
+}
+start w0
+start w1
+start w2
+start w3
+start w4
+start w5
+start w6
+start w7
+join w0
+join w1
+join w2
+join w3
+join w4
+join w5
+join w6
+join w7
+say "SUM8M=" + (g0 + g1 + g2 + g3 + g4 + g5 + g6 + g7)
+say "DONE8M"

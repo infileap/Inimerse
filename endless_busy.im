@@ -1,0 +1,7 @@
+# endless_busy.im - busy loop: endless must survive the 3s watchdog
+main endless {
+    while true {}
+}
+thread endless worker() {
+    while true {}
+}

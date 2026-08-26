@@ -1,0 +1,11 @@
+a = 1,2,3
+say a
+say 5 in a
+say N
+say 5 in N
+say Z[4~10]
+say 5 in Z[4~10]
+say min Z[4~10]
+b = Z[4~10]
+say b
+say 4 in b

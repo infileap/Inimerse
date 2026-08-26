@@ -1,0 +1,27 @@
+# =====================================================================
+# 中文文件操作规范 (一劳永逸, 防止乱码)
+# =====================================================================
+# 1. 文件编码约定
+#    - 文档/脚本(md/im/tpl): GBK(936)
+#    - 新内容源文件:          UTF-8
+# 2. 唯一允许的读写方式
+#    PowerShell + .NET 显式编码 (禁止 Node readFileSync/writeFileSync 拼接!)
+#    . D:\inimerse_stable\tools\enc_utils.ps1
+#    读:  $s = ReadGbk  "文件路径"
+#    写:  WriteGbk "文件路径" $s
+#    追加: AppendGbk "文件路径" $s
+#    校验: Test-GbkClean "文件路径"   # 0 = 无坏字节
+#          Test-GbkText  "文件路径"   # 0 = 无替换字符
+# 3. 新增章节的标准流程
+#    a) 用 write_file 写 UTF-8 草稿  (中文正常)
+#    b) PowerShell: $add = ReadUtf8 "草稿"; AppendGbk "目标GBK文件" $add
+#    c) 校验: Test-GbkClean + Test-GbkText = 0
+#    d) 同步到安装目录
+# 4. 禁止事项
+#    - 禁止 Node 对 GBK 文件做 latin1+utf8 混合读写
+#    - 禁止 write_file 直接覆盖 GBK 中文文件(会按 UTF-8 写入)
+#    - 禁止 PowerShell 命令内联中文字面量(user_exec 会转 UTF-8)
+# 5. 工具位置
+#    D:\inimerse_stable\tools\enc_utils.ps1
+#    C:\Users\Lenovo\Infiverse\tools\enc_utils.ps1
+# =====================================================================

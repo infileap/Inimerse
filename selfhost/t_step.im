@@ -1,0 +1,10 @@
+i = 0
+i = 0
+for i in range(0, 10, 2) {
+ say "i=" + str(i)
+}
+for j in range(5, 0, -1) {
+ say "j=" + str(j)
+}
+say "done"
+stop all

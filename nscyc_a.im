@@ -1,0 +1,4 @@
+import "nscyc_b.im" as b
+func fa() {
+    return 1
+}

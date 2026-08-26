@@ -1,0 +1,154 @@
+# verse_kernel.im v3 - Infiverse 宇宙内核(应用开发框架)
+# 模块:法则/世界/伪随机/实体系统/感知/事件总线/资产/传送门/多宇宙
+# 依赖 C 模组:infiverse_mod(世界/传送门/邻近) + record(资产/存档)
+
+# ================= 法则 =================
+func law(name) { return verse_law_get(name) }
+func law_set(name, v) {
+    verse_law_set(name, v)
+    return v
+}
+
+# ================= 世界 =================
+func world_block(x, y) { return verse_block_get(x, y, 0, 0) }
+func world_set(x, y, t) {
+    verse_block_set(x, y, 0, 0, t)
+    return t
+}
+func world_blocks() { return verse_block_count() }
+
+# ================= 伪随机(LCG,跨平台稳定) =================
+rand_state = 12345
+func mod_n(a, b) {
+    q = int(a / b)
+    return a - q * b
+}
+func rand_int(lo, hi) {
+    global rand_state
+    big = rand_state * 1103515245 + 12345
+    rand_state = mod_n(big, 2147483648)
+    return lo + mod_n(rand_state, hi - lo + 1)
+}
+
+# ================= 实体系统 =================
+record entities = {}
+entity_seq = 0
+func new_entity(kind, x, y, hp) {
+    global entity_seq
+    entity_seq = entity_seq + 1
+    id = kind + str(entity_seq)
+    e = {"kind": kind, "x": x, "y": y, "hp": hp, "level": 1, "data": {}}
+    entities[id] = e
+    verse_entity_put(id, x, y)
+    return id
+}
+func entity_move(id, dx, dy) {
+    if has(entities, id) {
+        e = entities[id]
+        e["x"] = e["x"] + dx
+        e["y"] = e["y"] + dy
+        entities[id] = e
+        verse_entity_put(id, e["x"], e["y"])
+    }
+    return 1
+}
+func entity_get(id, key) {
+    if has(entities, id) {
+        e = entities[id]
+        if has(e, key) { return e[key] }
+        if has(e["data"], key) { return e["data"][key] }
+    }
+    return nil
+}
+func entity_set(id, key, v) {
+    if has(entities, id) {
+        e = entities[id]
+        e[key] = v
+        entities[id] = e
+    }
+    return v
+}
+func entity_teleport(id, x, y) {
+    if has(entities, id) {
+        e = entities[id]
+        e["x"] = x
+        e["y"] = y
+        entities[id] = e
+        verse_entity_put(id, x, y)
+    }
+    return 1
+}
+func entity_damage(id, n) {
+    if has(entities, id) {
+        e = entities[id]
+        e["hp"] = e["hp"] - n
+        entities[id] = e
+        return e["hp"]
+    }
+    return 0
+}
+func entity_pos(id) {
+    if has(entities, id) {
+        return {"x": entities[id]["x"], "y": entities[id]["y"]}
+    }
+    return {"x": 0, "y": 0}
+}
+
+# ================= 感知 =================
+func see_nearby(id, r) {
+    p = entity_pos(id)
+    return verse_nearby(p["x"], p["y"], r)
+}
+
+# ================= 事件总线(Conduit 风格) =================
+record events = []
+func emit(ev, data) {
+    push(events, {"type": ev, "data": data})
+    return len(events)
+}
+func poll_events() {
+    out = []
+    while len(events) > 0 {
+        e = events[0]
+        remove(events, 0)
+        push(out, e)
+    }
+    return out
+}
+
+# ================= 资产(record 同步 + 累加) =================
+record assets = {}
+func add_asset(name, n) {
+    if has(assets, name) {
+        assets[name] = assets[name] + n
+    } else {
+        assets[name] = n
+    }
+    return assets[name]
+}
+func get_asset(name) {
+    if has(assets, name) { return assets[name] }
+    return 0
+}
+
+# ================= 传送门 =================
+func dial_portal(pwd) {
+    p = verse_portal_get(pwd)
+    if p != nil {
+        return {"x": p["x"], "y": p["y"]}
+    }
+    return nil
+}
+
+# ================= 多宇宙(化身存档) =================
+record avatar_store = {}
+func enter_verse(vid, x, y) {
+    global avatar_store
+    verse_use(int(vid))
+    if has(avatar_store, vid) {
+        return avatar_store[vid]
+    }
+    a = {"world": int(vid), "x": x, "y": y, "level": 1}
+    avatar_store[vid] = a
+    return a
+}

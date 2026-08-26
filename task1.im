@@ -1,0 +1,12 @@
+# task 基本：定义 + start + yield + 完成
+task ta {
+    i = 0
+    while i < 5 {
+        yield
+        i = i + 1
+    }
+    say "ta done " + i
+}
+start ta
+join ta
+say "TASK1_DONE"

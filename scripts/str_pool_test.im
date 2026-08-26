@@ -1,0 +1,30 @@
+# str_pool_test.im 字符串池共享回归
+s = "hello world"
+say "chars=" + str(len(chars(s)))
+say "ord=" + str(ord("A"))
+say "chr=" + chr(66)
+say "substr=" + substr(s, 0, 5)
+say "join=" + join(["a", "b", "c"], "-")
+say "split=" + str(len(split("x,y,z", ",")))
+d = {"k1": "v1", "k2": "v2"}
+say "dkey=" + d["k1"]
+arr = []
+push(arr, "item")
+push(arr, s)
+say "arr0=" + arr[0]
+say "arr1=" + arr[1]
+p = pop(arr)
+say "popped=" + p
+say "len_after=" + str(len(arr))
+x = "same"
+y = "same"
+say "cmp=" + str(x == y)
+say "concat=" + s + "!"
+g = "global_str"
+func f() {
+    global g
+    return g
+}
+say "fglobal=" + f()
+say "done"
+stop all

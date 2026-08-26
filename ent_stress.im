@@ -1,0 +1,27 @@
+# 10000 entities: spawn + batch update + neighbors query
+n = 0
+while n < 10000 {
+    entity_spawn((n % 100) * 10.0, (n / 100) * 10.0, 1)
+    n = n + 1
+}
+say "spawned=" + entity_count()
+# batch update: move all by velocity (simple AI), then query neighbors
+i = 0
+while i < 10000 {
+    entity_set(i, "vx", 0.5)
+    entity_set(i, "vy", 0.25)
+    i = i + 1
+}
+# neighbor query near (500, 500) radius 30 -> expect ~9 entities (grid is 10px cells)
+nb = entity_neighbors(500, 500, 30)
+say "neighbors(500,500,30)=" + len(nb)
+# a few queries to exercise grid rebuild + O(1) lookup
+k = 0
+total = 0
+while k < 100 {
+    nb2 = entity_neighbors(250.0, 250.0, 25)
+    total = total + len(nb2)
+    k = k + 1
+}
+say "avg_nb=" + (total / 100)
+say "ENT_STRESS_DONE"

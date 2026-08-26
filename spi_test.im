@@ -1,0 +1,11 @@
+# L1 SPI capability test
+say "caps default: " + str(spi_caps())
+spi_meta("test_mod", 1, "io")
+say "caps after meta: " + str(spi_caps())
+say "has read_file: " + str(spi_has("read_file"))
+say "has net_send: " + str(spi_has("net_send"))
+try { net_send("127.0.0.1", 1, "x") } catch (e) { say "blocked: " + e }
+ms = spi_mods()
+say "mods len: " + str(len(ms))
+say "mod id: " + ms[0]["id"]
+say "spi-ok"

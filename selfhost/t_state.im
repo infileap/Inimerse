@@ -1,0 +1,16 @@
+using thread
+thread worker:() {
+ i =0
+ while i <1000 {
+ i = i +1
+ }
+}
+main {
+ start worker()
+ s = worker.running
+ say "running=" + str(s)
+ join worker
+ f = worker.finished
+ say "finished=" + str(f)
+}
+stop all

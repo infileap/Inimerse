@@ -1,0 +1,39 @@
+say "=== dict 测试 ==="
+d = {"name": "inimerse", "ver": 1, "ok": true}
+say d
+say d["name"]
+say d["ver"]
+d["extra"] = 42
+say d
+say len(d)
+say has(d, "name")
+say has(d, "nope")
+for k in keys(d) {
+  say k + "=" + str(d[k])
+}
+remove(d, "ver")
+say d
+
+say "=== 字符串字符操作 ==="
+s = "hello"
+say s[0]
+say s[1]
+say s[-1]
+say chars(s)
+say len(chars(s))
+say ord("A")
+say chr(65)
+say "abc" < "abd"
+say "a" < "b"
+
+say "=== 嵌套结构(AST模拟) ==="
+node = {"type": "BINARY", "op": "+", "left": {"type": "NUM", "v": 1}, "right": {"type": "NUM", "v": 2}}
+say node["type"]
+say node["left"]["v"]
+say node["right"]["v"]
+
+say "=== for x in dict 遍历键 ==="
+for k in d {
+  say "key=" + k
+}
+stop all

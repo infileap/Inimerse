@@ -1,0 +1,41 @@
+# Infiverse update 2026-08-14 (final / meta props / match regex / case upgrade)
+
+## 1. final keyword
+- `final x = expr` - compile-time read-only global (same mechanism as const:
+  comp_const_mark; any later assignment -> compile error
+  "cannot assign to const/final 'x'").
+
+## 2. Meta properties (compiler expands to builtin calls)
+- a.type    -> type(a): "int"/"float"/"string"/"bool"/"array"/"dict"/"set";
+  uninitialized (nil) -> null (push_nil); VAL_SET added to builtin_type
+- a.range   -> range(a, gidx): be-bound global -> returns the be set;
+  int -> Z[-2147483648~2147483647]; float -> R; set -> itself; else nil
+  (gidx passed so runtime can look up vm->be_bound; new builtin range)
+- a.int / a.float / a.str / a.bool -> pure conversion, a unchanged
+- a.toint / a.tofloat / a.tostr / a.tobool -> in-place: a = conv(a); value = a
+  (requires variable; local (function) and global both supported)
+- a->int / a->float / a->str / a->bool -> in-place cast (same as toXXX)
+- member names accept type keywords (a.int etc.) and "match"
+
+## 3. match regular expression
+- match(str, pattern) builtin + a.match(pattern) method + a match b infix
+- tiny self-contained regex engine in runtime.c: . * + ? [...] [^...] ^ $
+  | () \d \D \w \W \s \S + escapes (backtracking; greedy quantifiers)
+- email example: match("user@example.com","^[\w.+-]+@[\w-]+\.[\w.-]+$") == true
+- known limitation: alternation inside a group followed by a quantifier
+  does not backtrack across group branches ((h|he|hel)+o won't match "hello")
+
+## 4. case statement upgrade
+- `case x { in S : ... }` membership/subset (OP_IN)
+- `case x { match "regex" : ... }` regex match
+- single pattern that is an array/set literal ([1,2,3], 1,2,3, {x in..})
+  automatically uses `in` semantics (multi-value lists keep ==)
+
+## 5. Tests (all pass)
+- meta_test.im (final/type/range/int/toint/->/match x3 forms/case in+match+auto-in)
+- re_test.im (regex engine unit cases)
+- bad_final.im (compile error check)
+- regression: inf_set/set_test/set_op/exc/set_comp/err/room/bench all green
+- services restarted: 4 engines + 4 bridges + 1 app, 8 ports listening,
+  logs clean; debug_mod.dll rebuilt against new inimerse.lib
+- backup: D:/backup/inimerse_20260814_1955

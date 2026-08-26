@@ -1,0 +1,6 @@
+func h1() { return 1 }
+func h2() { return h1() }
+func h3() { return h2() }
+x = h3()
+say "x=" + str(x)
+stop all

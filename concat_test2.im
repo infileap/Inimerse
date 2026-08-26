@@ -1,0 +1,9 @@
+a = 5
+b = "x"
+s = b + str(a) + ":" + "y"
+say s
+if s == "x5:y" { say "OK14" } else { say "FAIL14" }
+d = str(123) + str(456) + str(789)
+say d
+if d == "123456789" { say "OK15" } else { say "FAIL15" }
+say "CONCAT2_DONE"

@@ -1,0 +1,32 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { createDecoder, encode, hello, negotiate, validateManifest, heartbeat, start, stop, log, crash, incompatible, generateManifest } = require('./upp_reference');
+const path = require('node:path');
+
+const manifest = { id: 'demo', name: 'Demo Verse', version: '1.0.0', engine: 'inimerse >= 1.0', entry: 'main.im' };
+const host = hello('host', manifest, ['heartbeat', 'shutdown']);
+const verse = hello('verse', manifest, ['heartbeat']);
+const welcome = negotiate(host, verse);
+assert.deepEqual(welcome.payload.capabilities, ['heartbeat']);
+
+const seen = [];
+const decoder = createDecoder(msg => seen.push(msg));
+const wire = encode(host) + encode(verse);
+decoder.push(wire.slice(0, 7));
+decoder.push(wire.slice(7));
+decoder.end();
+assert.equal(seen.length, 2);
+assert.throws(() => validateManifest({ ...manifest, id: 'bad id' }), /invalid characters/);
+assert.throws(() => negotiate(host, host), /different roles/);
+assert.equal(heartbeat(3, 100).payload.seq, 3);
+assert.deepEqual(start('main.im', ['--safe']).payload.args, ['--safe']);
+assert.equal(stop().payload.reason, 'requested');
+assert.equal(log('warn', 'slow peer').payload.level, 'warn');
+assert.equal(crash('panic', 2).payload.exitCode, 2);
+assert.equal(incompatible(2, 1).payload.required, 2);
+assert.throws(() => heartbeat(-1), /sequence/);
+assert.throws(() => log('trace', 'x'), /level/);
+const generated = generateManifest(path.join(__dirname, '..', 'projects', 'demo'));
+assert.equal(generated.id, 'demo');
+assert.ok(generated.files['manifest.json']);
+console.log('UPP reference tests: ok');

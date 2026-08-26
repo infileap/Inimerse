@@ -1,0 +1,49 @@
+# stress_mem.im - memory churn + leak probe
+# declare mem 48MB safety net; watch usage()["mem"] growth across repeated phases
+declare { mem 48MB, time 30s }
+
+func phase(n) {
+    # strings
+    i = 0
+    while i < n {
+        s = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" + str(i)
+        i = i + 1
+    }
+    # arrays
+    i = 0
+    while i < n {
+        a = []
+        j = 0
+        while j < 50 {
+            push(a, j)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    # dicts
+    i = 0
+    while i < n {
+        d = {}
+        j = 0
+        while j < 30 {
+            d["k" + str(j)] = j
+            j = j + 1
+        }
+        i = i + 1
+    }
+    # sets
+    i = 0
+    while i < n {
+        z = Z[1~20]
+        i = i + 1
+    }
+}
+
+p0 = usage()["mem"]
+phase(200)
+p1 = usage()["mem"]
+phase(200)
+p2 = usage()["mem"]
+phase(200)
+p3 = usage()["mem"]
+say "stress_mem: p0=" + str(p0) + " p1=" + str(p1) + " p2=" + str(p2) + " p3=" + str(p3)

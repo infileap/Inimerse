@@ -1,0 +1,520 @@
+# parser.im — inimerse 语法分析器(自举解释器第二部分)
+# 输入:lexer 的 tokens;输出:AST 语句数组
+# Token = {"k":"id"|"num"|"str"|"op"|"eof", "v":文本, "line":行}
+# AST 节点用 dict:{"t":类型, ...字段}
+
+# ---------- 辅助 ----------
+func contains(arr, v) {
+    for x in arr {
+        if x == v {
+            return true
+        }
+    }
+    return false
+}
+
+func is_kw(t, kw) {
+    return t["k"] == "id" and t["v"] == kw
+}
+
+func is_op(t, op) {
+    return t["k"] == "op" and t["v"] == op
+}
+
+# ---------- Parser 状态 ----------
+func make_parser(tokens) {
+    p = {}
+    p["toks"] = tokens
+    p["pos"] = 0
+    return p
+}
+
+func pk(p) { return p["toks"][p["pos"]] }
+func adv(p) { p["pos"] = p["pos"] + 1 }
+func peek2(p) { return p["toks"][p["pos"] + 1] }
+func check_kw(p, kw) { return is_kw(pk(p), kw) }
+func eat(p, kw) {
+    if check_kw(p, kw) {
+        adv(p)
+        return true
+    }
+    return false
+}
+func eat_op(p, op) {
+    if is_op(pk(p), op) {
+        adv(p)
+        return true
+    }
+    return false
+}
+func expect(p, kw) {
+    t = pk(p)
+    if is_kw(t, kw) {
+        adv(p)
+        return true
+    }
+    say "parse error: 期望 " + kw + " 但得到 [" + t["v"] + "] 第" + str(t["line"]) + "行"
+    return false
+}
+func expect_op(p, op) {
+    t = pk(p)
+    if is_op(t, op) {
+        adv(p)
+        return true
+    }
+    say "parse error: 期望 " + op + " 但得到 [" + t["v"] + "] 第" + str(t["line"]) + "行"
+    return false
+}
+func expect_ident(p) {
+    t = pk(p)
+    if t["k"] == "id" {
+        adv(p)
+        return t["v"]
+    }
+    say "parse error: 期望标识符但得到 [" + t["v"] + "] 第" + str(t["line"]) + "行"
+    return ""
+}
+
+# ---------- 表达式(优先级从低到高) ----------
+func parse_expr(p) { return parse_or(p) }
+
+func parse_or(p) {
+    e = parse_and(p)
+    while check_kw(p, "or") {
+        adv(p)
+        r = parse_and(p)
+        e = {"t": "bin", "op": "or", "l": e, "r": r}
+    }
+    return e
+}
+
+func parse_and(p) {
+    e = parse_cmp(p)
+    while check_kw(p, "and") {
+        adv(p)
+        r = parse_cmp(p)
+        e = {"t": "bin", "op": "and", "l": e, "r": r}
+    }
+    return e
+}
+
+cmp_ops = ["==", "!=", "<", ">", "<=", ">="]
+
+func parse_cmp(p) {
+    e = parse_add(p)
+    t = pk(p)
+    while t["k"] == "op" and contains(cmp_ops, t["v"]) {
+        op = t["v"]
+        adv(p)
+        r = parse_add(p)
+        e = {"t": "bin", "op": op, "l": e, "r": r}
+        t = pk(p)
+    }
+    return e
+}
+
+func parse_add(p) {
+    e = parse_mul(p)
+    t = pk(p)
+    while t["k"] == "op" and (t["v"] == "+" or t["v"] == "-") {
+        op = t["v"]
+        adv(p)
+        r = parse_mul(p)
+        e = {"t": "bin", "op": op, "l": e, "r": r}
+        t = pk(p)
+    }
+    return e
+}
+
+func parse_mul(p) {
+    e = parse_unary(p)
+    t = pk(p)
+    while t["k"] == "op" and (t["v"] == "*" or t["v"] == "/" or t["v"] == "%") {
+        op = t["v"]
+        adv(p)
+        r = parse_unary(p)
+        e = {"t": "bin", "op": op, "l": e, "r": r}
+        t = pk(p)
+    }
+    return e
+}
+
+func parse_unary(p) {
+    t = pk(p)
+    if t["k"] == "op" and (t["v"] == "!" or t["v"] == "-") {
+        op = t["v"]
+        adv(p)
+        e = parse_unary(p)
+        return {"t": "un", "op": op, "e": e}
+    }
+    return parse_postfix(p)
+}
+
+func parse_postfix(p) {
+    e = parse_atom(p)
+    t = pk(p)
+    while t["k"] == "op" and (t["v"] == "[" or t["v"] == "(" or t["v"] == ".") {
+        if t["v"] == "." {
+            adv(p)
+            m = expect_ident(p)
+            e = {"t": "member", "o": e, "m": m}
+        } elif t["v"] == "[" {
+            adv(p)
+            idx = parse_expr(p)
+            expect_op(p, "]")
+            e = {"t": "index", "o": e, "i": idx}
+        } else {
+            adv(p)
+            args = []
+            if !is_op(pk(p), ")") {
+                push(args, parse_expr(p))
+                while eat_op(p, ",") {
+                    if is_op(pk(p), ")") { break }
+                    push(args, parse_expr(p))
+                }
+            }
+            expect_op(p, ")")
+            e = {"t": "call", "f": e, "args": args}
+        }
+        t = pk(p)
+    }
+    return e
+}
+
+func parse_atom(p) {
+    t = pk(p)
+    if t["k"] == "num" {
+        adv(p)
+        if contains(t["v"], ".") {
+            return {"t": "float", "v": float(t["v"])}
+        }
+        return {"t": "num", "v": int(t["v"])}
+    }
+    if t["k"] == "str" {
+        adv(p)
+        return {"t": "str", "v": t["v"]}
+    }
+    if is_kw(t, "true") {
+        adv(p)
+        return {"t": "bool", "v": true}
+    }
+    if is_kw(t, "false") {
+        adv(p)
+        return {"t": "bool", "v": false}
+    }
+    if is_kw(t, "nil") {
+        adv(p)
+        return {"t": "nil"}
+    }
+    if t["k"] == "id" {
+        adv(p)
+        return {"t": "ident", "v": t["v"]}
+    }
+    if is_op(t, "(") {
+        adv(p)
+        e = parse_expr(p)
+        expect_op(p, ")")
+        return e
+    }
+    if is_op(t, "[") {
+        adv(p)
+        items = []
+        if !is_op(pk(p), "]") {
+            push(items, parse_expr(p))
+            while eat_op(p, ",") {
+                if is_op(pk(p), "]") { break }
+                push(items, parse_expr(p))
+            }
+        }
+        expect_op(p, "]")
+        return {"t": "list", "items": items}
+    }
+    if is_op(t, "{") {
+        adv(p)
+        ditems = []
+        if !is_op(pk(p), "}") {
+            while true {
+                key = parse_expr(p)
+                expect_op(p, ":")
+                val = parse_expr(p)
+                push(ditems, key)
+                push(ditems, val)
+                if !eat_op(p, ",") {
+                    break
+                }
+                if is_op(pk(p), "}") { break }
+            }
+        }
+        expect_op(p, "}")
+        return {"t": "dict", "items": ditems}
+    }
+    say "parse error: 无法解析表达式 [" + t["v"] + "] pos=" + str(p["pos"]) + "/" + str(len(p["toks"])) + " 第" + str(t["line"]) + "行"
+    return {"t": "nil"}
+}
+
+# ---------- 语句 ----------
+func parse_block(p) {
+    stmts = []
+    expect_op(p, "{")
+    while !is_op(pk(p), "}") {
+        if pk(p)["k"] == "eof" {
+            say "parse error: 块未闭合"
+            break
+        }
+        push(stmts, parse_stmt(p))
+    }
+    expect_op(p, "}")
+    return stmts
+}
+
+func parse_elif_chain(p) {
+    # 已消费 elif:解析条件+块,尾部可再接 elif/else
+    cond = parse_expr(p)
+    a = parse_block(p)
+    b = []
+    if eat(p, "elif") {
+        push(b, parse_elif_chain(p))
+    } elif eat(p, "else") {
+        b = parse_block(p)
+    }
+    return {"t": "if", "c": cond, "a": a, "b": b}
+}
+
+func parse_stmt(p) {
+    t = pk(p)
+    if is_kw(t, "if") {
+        adv(p)
+        cond = parse_expr(p)
+        a = parse_block(p)
+        b = []
+        if eat(p, "elif") {
+            push(b, parse_elif_chain(p))
+        } elif eat(p, "else") {
+            b = parse_block(p)
+        }
+        return {"t": "if", "c": cond, "a": a, "b": b}
+    }
+    if is_kw(t, "while") {
+        adv(p)
+        cond = parse_expr(p)
+        b = parse_block(p)
+        return {"t": "while", "c": cond, "b": b}
+    }
+    if is_kw(t, "for") {
+        adv(p)
+        var = expect_ident(p)
+        expect(p, "in")
+        nxt = pk(p)
+        nxt2 = peek2(p)
+        if is_kw(nxt, "range") and is_op(nxt2, "(") {
+            adv(p)
+            adv(p)
+            s = parse_expr(p)
+            expect_op(p, ",")
+            e = parse_expr(p)
+            st = {"t": "nil"}
+            if eat_op(p, ",") { st = parse_expr(p) }
+            expect_op(p, ")")
+            b = parse_block(p)
+            return {"t": "forrange", "v": var, "s": s, "e": e, "st": st, "b": b}
+        }
+        e = parse_expr(p)
+        b = parse_block(p)
+        return {"t": "forarr", "v": var, "e": e, "b": b}
+    }
+    if is_kw(t, "func") or is_kw(t, "fn") {
+        adv(p)
+        name = expect_ident(p)
+        expect_op(p, "(")
+        params = []
+        if !is_op(pk(p), ")") {
+            push(params, expect_ident(p))
+            while eat_op(p, ",") {
+                if is_op(pk(p), ")") { break }
+                push(params, expect_ident(p))
+            }
+        }
+        expect_op(p, ")")
+        b = parse_block(p)
+        return {"t": "func", "n": name, "p": params, "b": b}
+    }
+    if is_kw(t, "main") {
+        adv(p)
+        b = parse_block(p)
+        return {"t": "main", "b": b}
+    }
+
+    if is_kw(t, "return") {
+        adv(p)
+        if is_op(pk(p), "}") {
+            return {"t": "return", "v": {"t": "nil"}}
+        }
+        return {"t": "return", "v": parse_expr(p)}
+    }
+    if is_kw(t, "break") {
+        adv(p)
+        return {"t": "break"}
+    }
+    if is_kw(t, "say") {
+        adv(p)
+        return {"t": "say", "v": parse_expr(p)}
+    }
+    if is_kw(t, "import") {
+        adv(p)
+        if pk(p)["k"] == "str" {
+            path = pk(p)["v"]
+            adv(p)
+            return {"t": "import", "p": path}
+        }
+        say "parse error: import 需要字符串路径 第" + str(t["line"]) + "行"
+        return {"t": "nil"}
+    }
+    if is_kw(t, "global") {
+        adv(p)
+        names = []
+        push(names, expect_ident(p))
+        while eat_op(p, ",") {
+            push(names, expect_ident(p))
+        }
+        return {"t": "global", "names": names}
+    }
+    if is_kw(t, "thread") {
+        adv(p)
+        name = expect_ident(p)
+        eat_op(p, ":")
+        params = []
+        if eat_op(p, "(") {
+            if !is_op(pk(p), ")") {
+                push(params, expect_ident(p))
+                while eat_op(p, ",") {
+                    push(params, expect_ident(p))
+                }
+            }
+            expect_op(p, ")")
+        }
+        eat_op(p, ":")
+        b = parse_block(p)
+        return {"t": "thread", "n": name, "p": params, "b": b}
+    }
+    if is_kw(t, "start") {
+        adv(p)
+        name = expect_ident(p)
+        args = []
+        if eat_op(p, "(") {
+            if !is_op(pk(p), ")") {
+                push(args, parse_expr(p))
+                while eat_op(p, ",") {
+                    push(args, parse_expr(p))
+                }
+            }
+            expect_op(p, ")")
+        }
+        return {"t": "start", "n": name, "a": args}
+    }
+    if is_kw(t, "pause") or is_kw(t, "resume") or is_kw(t, "kill") {
+        op = 1
+        if t["v"] == "resume" { op = 2 }
+        if t["v"] == "kill" { op = 3 }
+        adv(p)
+        name = expect_ident(p)
+        return {"t": "tctrl", "op": op, "n": name}
+    }
+    if is_kw(t, "stop") {
+        adv(p)
+        name = expect_ident(p)
+        return {"t": "tctrl", "op": 0, "n": name}
+    }
+    if is_kw(t, "join") {
+        adv(p)
+        name = expect_ident(p)
+        timeout = {"t": "nil"}
+        if eat_op(p, ",") { timeout = parse_expr(p) }
+        return {"t": "join", "n": name, "timeout": timeout}
+    }
+    if is_kw(t, "lock") or is_kw(t, "unlock") {
+        is_unlock = (t["v"] == "unlock")
+        adv(p)
+        name = expect_ident(p)
+        if is_unlock {
+            return {"t": "lock", "n": name, "b": 2}
+        }
+        if is_op(pk(p), "{") {
+            body = parse_block(p)
+            return {"t": "lock", "n": name, "b": 1, "body": body}
+        }
+        return {"t": "lock", "n": name, "b": 0}
+    }
+    if is_kw(t, "send") {
+        adv(p)
+        name = expect_ident(p)
+        eat_op(p, ",")
+        msg = parse_expr(p)
+        return {"t": "send", "n": name, "m": msg}
+    }
+    if is_kw(t, "recv") {
+        adv(p)
+        var = expect_ident(p)
+        timeout = {"t": "nil"}
+        if eat_op(p, ",") { timeout = parse_expr(p) }
+        return {"t": "recv", "v": var, "timeout": timeout}
+    }
+    if is_kw(t, "wait") {
+        adv(p)
+        if eat(p, "until") {
+            cond = parse_expr(p)
+            return {"t": "waituntil", "c": cond}
+        }
+        dur = parse_expr(p)
+        return {"t": "wait", "d": dur}
+    }
+    if is_kw(t, "using") {
+        adv(p)
+        mod = expect_ident(p)
+        return {"t": "using", "m": mod}
+    }
+    if pk(p)["k"] == "id" and p["toks"][p["pos"] + 1]["k"] == "op" and p["toks"][p["pos"] + 1]["v"] == "." {
+        nxt3 = p["toks"][p["pos"] + 2]
+        if is_kw(nxt3, "wait") {
+            name = expect_ident(p)
+            adv(p)
+            adv(p)
+            if eat(p, "until") {
+                cond = parse_expr(p)
+                tov = {"t": "nil"}
+                if eat_op(p, ",") { tov = parse_expr(p) }
+                return {"t": "twait", "n": name, "mode": 1, "c": cond, "timeout": tov}
+            }
+            sec = parse_expr(p)
+            return {"t": "twait", "n": name, "mode": 0, "s": sec}
+        }
+    }
+
+    # 赋值 / 表达式语句
+    e = parse_expr(p)
+    if is_op(pk(p), "=") {
+        adv(p)
+        v = parse_expr(p)
+        if e["t"] == "ident" {
+            return {"t": "assign", "n": e["v"], "v": v}
+        }
+        if e["t"] == "index" {
+            return {"t": "assignidx", "o": e["o"], "i": e["i"], "v": v}
+        }
+        say "parse error: 赋值目标无效 第" + str(t["line"]) + "行"
+    }
+    return {"t": "expr", "v": e}
+}
+
+# ---------- 顶层 ----------
+func parse(tokens) {
+ p = make_parser(tokens)
+ stmts = []
+ while !(pk(p)["k"] == "eof") {
+ old = p["pos"]
+ push(stmts, parse_stmt(p))
+ if p["pos"] == old {
+ adv(p)
+ }
+ }
+ return stmts
+}

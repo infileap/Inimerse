@@ -1,0 +1,5 @@
+import "../lexer.im"
+import "../parser.im"
+import "../eval.im"
+say "two ok"
+stop all

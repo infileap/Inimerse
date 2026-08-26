@@ -1,0 +1,8 @@
+r = key_press("__no_such_key__")
+say "invalid_key_returns=" + str(r)
+r2 = key_press("a")
+say "valid_key_returns=" + str(r2)
+mouse_move(10, 10)
+say "mouse_moved=1"
+say "done"
+stop all

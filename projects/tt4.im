@@ -1,0 +1,4 @@
+e = {x in N[1~5] | x > 2}
+say size(e)
+say 3 in e
+say 2 in e

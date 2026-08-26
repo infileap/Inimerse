@@ -1,0 +1,52 @@
+# entity.im - 实体模板(继承/多态)与实例
+# 用法:
+#   基模板: Entity = {"__type__": "entity", "hp": 100, "strength": 10}
+#   继承:   Player = entity_extend(Entity, {"__type__": "player", "level": 1})
+#   实例:   p1 = entity_new(Player)
+#   读属性: entity_get(p1, "hp")     # 沿链查找:实例 -> 自身模板 -> __base__ 链
+#   写属性: entity_set(p1, "hp", 80) # 只写实例(与其他实例隔离)
+#   多态:   entity_get(p1, "__type__") 按类型分发行为
+__entity_seq = 0
+
+# 字典合并:子模板 = 基模板属性 + 覆写(浅拷贝,值类型足够)
+func merge_dict(base, extra) {
+    r = {}
+    for k in keys(base) { r[k] = base[k] }
+    for k in keys(extra) { r[k] = extra[k] }
+    return r
+}
+
+# 继承:返回新模板(带 __base__ 链)
+func entity_extend(base, extra) {
+    t = merge_dict(base, extra)
+    t["__base__"] = base
+    return t
+}
+
+# 实例化:深拷贝模板 + 唯一 id + 类型标记
+func entity_new(template) {
+    global __entity_seq
+    __entity_seq = __entity_seq + 1
+    e = json_parse(json_serialize(template))
+    e["__id__"] = __entity_seq
+    return e
+}
+
+# 沿链查找属性(实例 -> 模板 -> __base__ 链)
+func entity_get(e, name) {
+    cur = e
+    while true {
+        if has(cur, name) { return cur[name] }
+        if has(cur, "__base__") {
+            cur = cur["__base__"]
+        } else {
+            return nil
+        }
+    }
+}
+
+# 写实例属性(仅实例层,不影响模板/其他实例)
+func entity_set(e, name, value) {
+    e[name] = value
+    return value
+}

@@ -1,0 +1,3 @@
+main {
+    write_file("D:/_t3.txt", server_ports())
+}

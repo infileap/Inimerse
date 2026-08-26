@@ -1,0 +1,467 @@
+/* verse_dist_mod.c - VDP: Verse Distribution Protocol
+ * Distribute verses (games/worlds) like URLs.
+ *
+ * URI format:  verse://<hub>[:port]/<verse-id>[?law=...]
+ *              verse://local/<package-file>            (offline test)
+ *
+ * Verse package (.vverse) = JSON document:
+ *   { "id": "...", "name": "...", "author": "...", "version": 1,
+ *     "files": { "<name>": "<base64>", ... },
+ *     "hash": "<crc32 of json body>" }
+ *
+ * API (arg order: first = r_arg(argc-1), last = r_arg(0)):
+ *   verse_open(uri)            download/read -> verify -> unpack -> launch game
+ *   verse_pack(dir, outfile)   pack a folder into a .vverse package
+ *   verse_share(id, hub)       -> "verse://hub/id" shareable link
+ *   verse_hub_list(url)        -> verse manifest array from hub
+ *   verse_list()               -> locally installed verses (universe/)
+ *   verse_remove(id)           uninstall
+ *
+ * Launch model: a verse is a self-contained game dir (main.im + assets);
+ * opening it spawns a fresh inimerse process like opening a URL.
+ */
+#include "vm.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <windows.h>
+#include <winhttp.h>
+
+extern Value json_parse_value_text(VM *vm, const char *s, int *ok);
+
+/* ---------- arg helpers (io-style; r_arg(0) = LAST arg) ---------- */
+static Value r_arg(VM *vm, int i) { return vm_cur_stack(vm)[vm_cur_sp(vm) - i]; }
+static const char *r_str(VM *vm, int i) {
+    Value v = r_arg(vm, i);
+    return (v.type == VAL_STRING && v.sval) ? v.sval : "";
+}
+static void r_popn(VM *vm, int n) {
+    while (n-- > 0 && vm_cur_sp(vm) >= 0) {
+        Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+        if (v.type == VAL_STRING && v.ival != 1 && v.sval) free(v.sval);
+        vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    }
+}
+static void r_push(VM *vm, Value v) {
+    if (vm_cur_sp(vm) < 1023) {
+        vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
+        vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
+    }
+}
+static void r_push_int(VM *vm, int n) {
+    Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
+    r_push(vm, v);
+}
+static void r_push_str(VM *vm, const char *s) {
+    Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = (char*)s;
+    r_push(vm, v);
+}
+static void r_push_nil(VM *vm) {
+    Value v; v.type = VAL_NIL; v.ival = 0; v.fval = 0; v.sval = NULL;
+    r_push(vm, v);
+}
+
+/* ---------- base64 ---------- */
+static const char B64C[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static char *b64_encode(const unsigned char *in, int len) {
+    char *out = malloc((size_t)(len / 3 + 1) * 4 + 8);
+    int o = 0;
+    for (int i = 0; i < len; i += 3) {
+        int n = len - i; unsigned v = in[i] << 16;
+        if (n > 1) v |= in[i + 1] << 8;
+        if (n > 2) v |= in[i + 2];
+        out[o++] = B64C[(v >> 18) & 63];
+        out[o++] = B64C[(v >> 12) & 63];
+        out[o++] = (n > 1) ? B64C[(v >> 6) & 63] : '=';
+        out[o++] = (n > 2) ? B64C[v & 63] : '=';
+    }
+    out[o] = 0;
+    return out;
+}
+static int b64_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+static unsigned char *b64_decode(const char *in, int *out_len) {
+    int len = (int)strlen(in);
+    unsigned char *out = malloc((size_t)len * 3 / 4 + 4);
+    int o = 0, buf = 0, bits = 0;
+    for (int i = 0; i < len; i++) {
+        if (in[i] == '=' || in[i] == '\n' || in[i] == '\r') continue;
+        int v = b64_val(in[i]);
+        if (v < 0) continue;
+        buf = (buf << 6) | v; bits += 6;
+        if (bits >= 8) { bits -= 8; out[o++] = (unsigned char)((buf >> bits) & 0xFF); }
+    }
+    *out_len = o;
+    return out;
+}
+
+/* ---------- crc32 ---------- */
+static unsigned int crc32_buf(const unsigned char *d, int len) {
+    unsigned int c = 0xFFFFFFFF;
+    for (int i = 0; i < len; i++) {
+        c ^= d[i];
+        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & -(c & 1));
+    }
+    return c ^ 0xFFFFFFFF;
+}
+
+/* ---------- http GET (sync, full body, binary-safe) ---------- */
+static char *http_get_body(const char *url, int *out_len) {
+    *out_len = 0;
+    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) return NULL;
+    const char *host = url + (strncmp(url, "https://", 8) == 0 ? 8 : 7);
+    const char *path = strchr(host, '/');
+    char hostbuf[256];
+    if (path) {
+        int hl = (int)(path - host); if (hl > 255) hl = 255;
+        memcpy(hostbuf, host, hl); hostbuf[hl] = 0;
+    } else {
+        snprintf(hostbuf, sizeof hostbuf, "%s", host);
+        path = "/";
+    }
+    /* strip port for WinHttpConnect */
+    char hostname[256]; int port = 80;
+    snprintf(hostname, sizeof hostname, "%s", hostbuf);
+    char *colon = strchr(hostname, ':');
+    if (colon) { *colon = 0; port = atoi(colon + 1); }
+    BOOL https = (strncmp(url, "https://", 8) == 0);
+
+    HINTERNET h = WinHttpOpen(L"Inimerse-VDP/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
+    if (!h) return NULL;
+    wchar_t wh[256], wp[1024];
+    MultiByteToWideChar(CP_ACP, 0, hostname, -1, wh, 256);
+    MultiByteToWideChar(CP_ACP, 0, path, -1, wp, 1024);
+    HINTERNET c = WinHttpConnect(h, wh, (INTERNET_PORT)port, 0);
+    if (!c) { WinHttpCloseHandle(h); return NULL; }
+    HINTERNET r = WinHttpOpenRequest(c, L"GET", wp, NULL, NULL, NULL,
+                                     https ? WINHTTP_FLAG_SECURE : 0);
+    if (!r) { WinHttpCloseHandle(c); WinHttpCloseHandle(h); return NULL; }
+    char *body = NULL; int blen = 0, bcap = 0;
+    if (WinHttpSendRequest(r, NULL, 0, NULL, 0, 0, 0) &&
+        WinHttpReceiveResponse(r, NULL)) {
+        DWORD avail = 0;
+        while (WinHttpQueryDataAvailable(r, &avail) && avail > 0) {
+            if (blen + (int)avail + 1 > bcap) {
+                bcap = (bcap == 0 ? 65536 : bcap * 2);
+                while (bcap < blen + (int)avail + 1) bcap *= 2;
+                body = realloc(body, (size_t)bcap);
+            }
+            DWORD rd = 0;
+            WinHttpReadData(r, body + blen, avail, &rd);
+            blen += (int)rd;
+        }
+    }
+    WinHttpCloseHandle(r); WinHttpCloseHandle(c); WinHttpCloseHandle(h);
+    if (body) body[blen] = 0;
+    *out_len = blen;
+    return body;
+}
+
+/* ---------- verse home dir ---------- */
+static char self_dir[1024] = {0};
+static const char *home_dir(void) {
+    if (self_dir[0]) return self_dir;
+    GetModuleFileNameA(NULL, self_dir, sizeof self_dir - 1);
+    char *s = strrchr(self_dir, '\\');
+    if (s) *s = 0;
+    return self_dir;
+}
+static void mk_universe_dir(const char *id) {
+    char p[1200];
+    snprintf(p, sizeof p, "%s\\universe", home_dir());
+    CreateDirectoryA(p, NULL);
+    snprintf(p, sizeof p, "%s\\universe\\%s", home_dir(), id);
+    CreateDirectoryA(p, NULL);
+}
+static char *read_file_buf(const char *path, int *len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    char *b = malloc((size_t)n + 1);
+    fread(b, 1, (size_t)n, f); b[n] = 0; fclose(f);
+    *len = (int)n;
+    return b;
+}
+
+/* ---------- verse_open(uri): download/verify/unpack/launch ---------- */
+static int do_open(VM *vm, const char *uri) {
+    char *pkg_json = NULL; int pkg_len = 0;
+    if (strncmp(uri, "verse://local/", 14) == 0) {
+        pkg_json = read_file_buf(uri + 14, &pkg_len);
+        if (!pkg_json) { fprintf(stderr, "[VDP] package not found: %s\n", uri + 14); return 0; }
+    } else if (strncmp(uri, "verse://", 8) == 0) {
+        /* verse://host:port/id -> http://host:port/v/id */
+        const char *rest = uri + 8;
+        char url[1200];
+        snprintf(url, sizeof url, "http://%s/v/%s", rest, strchr(rest, '/') ? strchr(rest, '/') + 1 : rest);
+        /* handle empty id */
+        if (strchr(rest, '/') == NULL) { fprintf(stderr, "[VDP] bad uri\n"); return 0; }
+        pkg_json = http_get_body(url, &pkg_len);
+        if (!pkg_json) { fprintf(stderr, "[VDP] download failed: %s\n", url); return 0; }
+    } else {
+        fprintf(stderr, "[VDP] unsupported uri\n");
+        return 0;
+    }
+
+    int ok = 0;
+    Value pkg = json_parse_value_text(vm, pkg_json, &ok);
+    if (!ok || pkg.type != VAL_DICT) { fprintf(stderr, "[VDP] bad package json\n"); free(pkg_json); return 0; }
+    ArrayObj *a = vm_pool_slot(vm, pkg.ival - 1);
+    if (!a) { free(pkg_json); return 0; }
+
+    /* verify hash: crc32 of concatenated file b64 payloads */
+    char *b64all = malloc(16384); int ballen = 0, bacap = 16384;
+    const char *hash = NULL; const char *id = NULL; const char *mainf = "main.im";
+    for (int i = 0; i + 1 < a->count; i += 2) {
+        Value *k = &a->items[i], *v = &a->items[i + 1];
+        if (k->type == VAL_STRING && v->type == VAL_STRING) {
+            if (strcmp(k->sval, "hash") == 0) hash = v->sval;
+            else if (strcmp(k->sval, "id") == 0) id = v->sval;
+            else if (strcmp(k->sval, "main") == 0) mainf = v->sval;
+        }
+    }
+    if (!id) { fprintf(stderr, "[VDP] package missing id\n"); free(pkg_json); return 0; }
+    for (int i = 0; i + 1 < a->count; i += 2) {
+        Value *k = &a->items[i], *v = &a->items[i + 1];
+        if (k->type == VAL_STRING && v->type == VAL_DICT &&
+            (strcmp(k->sval, "files") == 0 || strcmp(k->sval, "file") == 0)) {
+            ArrayObj *fa = vm_pool_slot(vm, v->ival - 1);
+            if (!fa) continue;
+            for (int j = 0; j + 1 < fa->count; j += 2) {
+                Value *fv = &fa->items[j + 1];
+                if (fv->type != VAL_STRING) continue;
+                int nl = (int)strlen(fv->sval);
+                if (ballen + nl + 1 > bacap) {
+                    bacap *= 2; b64all = realloc(b64all, (size_t)bacap);
+                }
+                memcpy(b64all + ballen, fv->sval, (size_t)nl); ballen += nl;
+            }
+        }
+    }
+    unsigned int crc = crc32_buf((unsigned char*)b64all, ballen);
+    char crcbuf[16];
+    snprintf(crcbuf, sizeof crcbuf, "%08x", crc);
+    if (hash && strcmp(hash, crcbuf) != 0) {
+        fprintf(stderr, "[VDP] hash mismatch (got %s, want %s) - package corrupted\n", crcbuf, hash);
+        free(b64all); free(pkg_json);
+        return 0;
+    }
+    free(b64all);
+
+    /* unpack: files{name: b64} -> universe/<id>/<name> */
+    mk_universe_dir(id);
+    char base[1200];
+    snprintf(base, sizeof base, "%s\\universe\\%s\\", home_dir(), id);
+    int any = 0;
+    for (int i = 0; i + 1 < a->count; i += 2) {
+        Value *k = &a->items[i], *v = &a->items[i + 1];
+        if (k->type == VAL_STRING && v->type == VAL_DICT &&
+            (strcmp(k->sval, "files") == 0 || strcmp(k->sval, "file") == 0)) {
+            /* files is a dict: iterate its slots */
+            ArrayObj *fa = vm_pool_slot(vm, v->ival - 1);
+            if (!fa) continue;
+            for (int j = 0; j + 1 < fa->count; j += 2) {
+                Value *fk = &fa->items[j], *fv = &fa->items[j + 1];
+                if (fk->type != VAL_STRING || fv->type != VAL_STRING) continue;
+                /* skip path separators for safety */
+                if (strchr(fk->sval, '\\') || strchr(fk->sval, '/') || strstr(fk->sval, "..")) continue;
+                int dlen = 0;
+                unsigned char *data = b64_decode(fv->sval, &dlen);
+                if (!data) continue;
+                char fp[1400];
+                snprintf(fp, sizeof fp, "%s%s", base, fk->sval);
+                FILE *f = fopen(fp, "wb");
+                if (f) { fwrite(data, 1, (size_t)dlen, f); fclose(f); any = 1; }
+                free(data);
+            }
+        }
+    }
+    free(pkg_json);
+    if (!any) { fprintf(stderr, "[VDP] package has no files\n"); return 0; }
+
+    /* launch: inimerse.exe universe/<id>/main.im (like opening a URL) */
+    char cmd[1600];
+    snprintf(cmd, sizeof cmd, "\"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, mainf);
+    STARTUPINFOA si; PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof si); si.cb = sizeof si;
+    memset(&pi, 0, sizeof pi);
+    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return 1;
+    }
+    fprintf(stderr, "[VDP] launch failed: %s\n", cmd);
+    return 0;
+}
+
+static int b_verse_open(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    r_popn(vm, argc);
+    r_push_int(vm, do_open(vm, uri));
+    free(uri);
+    return 1;
+}
+
+/* ---------- verse_pack(dir, out): pack folder -> .vverse ---------- */
+static int b_verse_pack(VM *vm) {
+    int argc = vm->cur_argc;
+    char *out = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *dir = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    r_popn(vm, argc);
+    /* gather files (dir\*.*) */
+    char pat[1200];
+    snprintf(pat, sizeof pat, "%s\\*.*", dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE hf = FindFirstFileA(pat, &fd);
+    if (hf == INVALID_HANDLE_VALUE) { r_push_int(vm, 0); return 1; }
+    /* build files dict json manually to avoid dependency on VM during scan */
+    char *files_json = malloc(65536); int fp = 0, fcap = 65536;
+    char *b64all = malloc(65536); int ballen = 0, bacap = 65536;
+    strcpy(files_json, "\"files\":{");
+    fp = (int)strlen(files_json);
+    int first = 1;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (strstr(fd.cFileName, ".vverse")) continue;
+        char fpath[1300];
+        snprintf(fpath, sizeof fpath, "%s\\%s", dir, fd.cFileName);
+        int blen = 0;
+        char *raw = read_file_buf(fpath, &blen);
+        if (!raw) continue;
+        char *b64 = b64_encode((unsigned char*)raw, blen);
+        int need = (int)strlen(fd.cFileName) + (int)strlen(b64) + 24;
+        if (fp + need > fcap) {
+            fcap *= 2; files_json = realloc(files_json, (size_t)fcap);
+        }
+        int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"%s\"", first ? "" : ",", fd.cFileName, b64);
+        fp += n;
+        first = 0;
+        if (ballen + (int)strlen(b64) + 1 > bacap) {
+            bacap *= 2; b64all = realloc(b64all, (size_t)bacap);
+        }
+        memcpy(b64all + ballen, b64, strlen(b64)); ballen += (int)strlen(b64);
+        free(b64); free(raw);
+    } while (FindNextFileA(hf, &fd));
+    FindClose(hf);
+    if (fp + 8 > fcap) { fcap += 16; files_json = realloc(files_json, (size_t)fcap); }
+    strcpy(files_json + fp, "}"); fp += 2;
+
+    /* assemble package json (hash = crc32 of concatenated file b64s) */
+    unsigned int crc = crc32_buf((unsigned char*)b64all, ballen);
+    free(b64all);
+    char crcbuf[16]; snprintf(crcbuf, sizeof crcbuf, "%08x", crc);
+    char *pkg = malloc(fcap + 512);
+    int pn = snprintf(pkg, fcap + 512, "{\"id\":\"%s\",\"version\":1,\"main\":\"main.im\",%s,\"hash\":\"%s\"}",
+                      strrchr(dir, '/') ? strrchr(dir, '/') + 1 : (strrchr(dir, '\\') ? strrchr(dir, '\\') + 1 : dir), files_json, crcbuf);
+    (void)pn;
+    free(files_json);
+
+    FILE *f = fopen(out, "wb");
+    if (f) { fwrite(pkg, 1, strlen(pkg), f); fclose(f); }
+    free(pkg);
+    if (f) { r_push_str(vm, _strdup(out)); }
+    else { r_push_str(vm, _strdup("")); }
+    free(out);
+    free(dir);
+    return 1;
+}
+
+/* ---------- verse_share(id, hub) -> link ---------- */
+static int b_verse_share(VM *vm) {
+    int argc = vm->cur_argc;
+    char *hub = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *id = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    r_popn(vm, argc);
+    static char link[1200];
+    snprintf(link, sizeof link, "verse://%s/%s", hub, id);
+    r_push_str(vm, link);
+    free(hub);
+    free(id);
+    return 1;
+}
+
+/* ---------- verse_hub_list(url) -> manifest array ---------- */
+static int b_verse_hub_list(VM *vm) {
+    int argc = vm->cur_argc;
+    char *url = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    r_popn(vm, argc);
+    int len = 0;
+    char *body = http_get_body(url, &len);
+    free(url);
+    if (!body) { r_push_nil(vm); return 1; }
+    int ok = 0;
+    Value v = json_parse_value_text(vm, body, &ok);
+    free(body);
+    if (!ok) { r_push_nil(vm); return 1; }
+    r_push(vm, v);
+    return 1;
+}
+
+/* ---------- verse_list() / verse_remove(id) ---------- */
+static int b_verse_list(VM *vm) {
+    r_popn(vm, vm->cur_argc);
+    int aidx = vm_array_new(vm);
+    if (aidx < 0) { r_push_nil(vm); return 1; }
+    char pat[1200];
+    snprintf(pat, sizeof pat, "%s\\universe\\*", home_dir());
+    WIN32_FIND_DATAA fd;
+    HANDLE hf = FindFirstFileA(pat, &fd);
+    if (hf != INVALID_HANDLE_VALUE) {
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (strcmp(fd.cFileName, ".") != 0 && strcmp(fd.cFileName, "..") != 0) {
+                    const char *s = vm_intern(vm, fd.cFileName);
+                    Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = (char*)(s ? s : fd.cFileName);
+                    vm_array_push(vm, aidx, &v);
+                }
+            }
+        } while (FindNextFileA(hf, &fd));
+        FindClose(hf);
+    }
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    r_push(vm, a);
+    return 1;
+}
+
+static int b_verse_remove(VM *vm) {
+    int argc = vm->cur_argc;
+    char *id = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    r_popn(vm, argc);
+    char path[1200];
+    snprintf(path, sizeof path, "%s\\universe\\%s", home_dir(), id);
+    /* simple recursive delete via SHFileOperation or manual */
+    WIN32_FIND_DATAA fd;
+    char pat[1300];
+    snprintf(pat, sizeof pat, "%s\\*", path);
+    HANDLE hf = FindFirstFileA(pat, &fd);
+    if (hf == INVALID_HANDLE_VALUE) { r_push_int(vm, 0); return 1; }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        char fp[1400];
+        snprintf(fp, sizeof fp, "%s\\%s", path, fd.cFileName);
+        DeleteFileA(fp);
+    } while (FindNextFileA(hf, &fd));
+    FindClose(hf);
+    RemoveDirectoryA(path);
+    free(id);
+    r_push_int(vm, 1);
+    return 1;
+}
+
+/* ---------- register ---------- */
+void verse_dist_mod_register(VM *vm) {
+    vm_register_builtin(vm, "verse_open", b_verse_open);
+    vm_register_builtin(vm, "verse_pack", b_verse_pack);
+    vm_register_builtin(vm, "verse_share", b_verse_share);
+    vm_register_builtin(vm, "verse_hub_list", b_verse_hub_list);
+    vm_register_builtin(vm, "verse_list", b_verse_list);
+    vm_register_builtin(vm, "verse_remove", b_verse_remove);
+    printf("[verse_dist mod] VDP loaded (verse://<hub>/<id>)\n");
+}

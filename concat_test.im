@@ -1,0 +1,37 @@
+# L2 string concat chain tests (ASCII only)
+a = "hello"
+b = "world"
+c = "!"
+s = a + b + c
+say s
+if s == "helloworld!" { say "OK1" } else { say "FAIL1" }
+s2 = "x" + "y" + "z" + "w"
+if s2 == "xyzw" { say "OK2" } else { say "FAIL2" }
+s4 = ""
+i = 0
+while i < 1000 {
+    s4 = s4 + "ab" + "cd"
+    i = i + 1
+}
+if len(s4) == 4000 { say "OK3" } else { say "FAIL3 len=" + len(s4) }
+r = 1 + 2 + 3 + 4
+if r == 10 { say "OK4" } else { say "FAIL4 r=" + r }
+f = 1.5 + 2.5 + 3.5
+if f == 7.5 { say "OK5" } else { say "FAIL5 f=" + f }
+s5 = a + (b + c)
+if s5 == "helloworld!" { say "OK6" } else { say "FAIL6" }
+if a + b + c == "helloworld!" { say "OK7" } else { say "FAIL7" }
+arr = ["", "", ""]
+arr[0] = a + b + c
+if arr[0] == "helloworld!" { say "OK8" } else { say "FAIL8" }
+e = "" + "" + ""
+if e == "" { say "OK9" } else { say "FAIL9" }
+s6 = "a" + "b" + "c" + "d" + "e" + "f" + "g" + "h" + "i" + "j"
+if s6 == "abcdefghij" { say "OK10" } else { say "FAIL10" }
+sx = 1,2,3
+sy = 3,4,5
+sz = sx + sy + sx
+if 5 in sz { say "OK11" } else { say "FAIL11" }
+if 1 in sz { say "OK12" } else { say "FAIL12" }
+if 9 in sz { say "FAIL13" } else { say "OK13" }
+say "CONCAT_DONE"

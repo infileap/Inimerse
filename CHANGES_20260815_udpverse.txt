@@ -1,0 +1,17 @@
+# ============ ROADMAP 多网络协议：UDP 接线（verse 源） ============
+# 2026-08-15 16:45
+#
+## hub 双栈（HTTP + UDP 同端口）
+- verse_listen(port) 同时开 UDP socket（后台线程响应 "GET /v/<id>" 请求）
+- 响应复用 http_resp（含 _hub 回退）；单数据报（<60KB，局域网/回环）
+
+## 客户端源
+- verse://udp://host:port/<id>：UDP 请求-响应拉取 .vverse（3s 超时、非阻塞）
+- verse_fetch 新分支；与 HTTP/local/hub 列表并存
+
+## 验证（t_uv.im 一体化实测）
+pack → open_local=1 → listen=11561（HTTP+UDP）→ publish=1 → open_udp=1（UDP 拉取→校验→解包）
+
+## 说明
+- UDP 单包 <60KB（.vverse manifest 场景足够）；大包走 HTTP/TCP
+- 多协议传输抽象：HTTP ✓ TCP ✓ UDP ✓（verse 源 + net_mod 通用原语）

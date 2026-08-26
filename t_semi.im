@@ -1,0 +1,40 @@
+# A1: 分号容忍（分号=显式语句终止符）
+x = 5;
+say "x1=" + x                  # 5
+
+x = 5;
++ 3;                           # 分号终止: +3 是独立无效果语句, x 仍为 5
+say "x2=" + x                  # 5 (验证分号=强制换行, 不等同于换行空格合并)
+
+y = 1;
+say "y=" + y                   # 1
+z = 1;;; z = z + 1;            # 连续分号也容忍
+say "z=" + z                   # 2
+
+say "a"; say "b"; say "c";     # 一行多条语句
+
+if x > 0 { say "if-body"; };
+say "after-if"                 # 块后分号
+
+n = 0;
+while n < 3 {
+    n = n + 1;
+    say "n=" + n;
+}
+say "n-final=" + n             # 3
+
+# task 内 yield; 合法
+task tw {
+    yield;
+    say "yielded";
+}
+start tw;
+join tw;
+
+# case 分支内分号
+k = 2
+case k {
+    1: say "case-one";
+    2: say "case-two";
+}
+say "A1_DONE"

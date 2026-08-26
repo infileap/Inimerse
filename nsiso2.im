@@ -1,0 +1,4 @@
+x = 2
+func f() {
+    return x
+}

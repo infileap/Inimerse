@@ -1,0 +1,18 @@
+# ============ forever{...}break 与分帧 wait 交互修复 ============
+# 2026-08-15 12:45
+#
+## 根因（compiler.c STMT_GUI forever 分支）
+- forever 编译为 while(true)：LOADK_BOOL true / JUMP_IF_FALSE / body / JUMP start
+- 裸 `break`（无标签）编译为 JUMP 0 并 push 到 break_list，
+  但 forever 分支只 free(breaks) 从未补丁目标 -> break 跳转到偏移 0
+  -> 字节码从头执行 -> 与分帧 wait（t->ip-- 回退）组合时表现为
+  "break 后 ip 回 0 / 卡死"（handoff 记录用 while 规避的 P0 遗留）
+## 修复
+- forever 分支：body 编译后 emit JUMP start，取 end = count，
+  JUMP_IF_FALSE 补丁到 end，break_list 全部补丁到 end（与 while 一致）
+- 附带修复：此前一次替换误截断 release_temps（构建失败，已恢复）
+## 验证
+- forever + break（无 wait）：F2_END i=3 F2_DONE（原卡死 timeout）
+- forever + break + wait0.01：F_END i=3 BREAK_OK W_END j=3 DONE
+- 回归：label/set/thread/bench/concat/safe 全过
+- 服务 4+4+1 8 端口健康

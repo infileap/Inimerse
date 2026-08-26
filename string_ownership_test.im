@@ -1,0 +1,21 @@
+# String ownership and nested dictionary regression coverage
+inner = { "name": "alpha", "copy": "alpha" + "-beta" }
+outer = { "inner": inner, "direct": "alpha", "again": inner["name"] }
+outer["mirror"] = outer["inner"]
+v1 = outer["inner"]["name"]
+v2 = outer["again"]
+same = (v1 == v2)
+arr = [ "alpha", "alpha" + "-beta", outer["direct"] ]
+arr2 = [ arr[0], arr[1], outer["inner"] ]
+d = { "x": "self" }
+d["x"] = d["x"]
+arr[0] = arr[0]
+push(arr, arr[1])
+s0 = "  Hello World "
+s1 = str(s0)
+cs = chars(s0)
+if same && d["x"] == "self" && arr[0] == "alpha" && arr[3] == "alpha-beta" && arr2[1] == "alpha-beta" && arr2[2]["copy"] == "alpha-beta" && s1 == s0 && ord("A") == 65 && index(s0, "World") == 8 && replace(s0, "World", "IM") == "  Hello IM " && startswith(s0, "  ") && endswith(s0, " ") && len(cs) == 14 {
+  say "STRING_OWNERSHIP_OK"
+} else {
+  say "STRING_OWNERSHIP_FAIL"
+}

@@ -1,0 +1,6 @@
+x = 7
+try {
+    throw "leaked-secret"
+}
+dbg_var("value")
+say "after"

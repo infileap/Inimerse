@@ -1,0 +1,170 @@
+# sync.im v2 - record 网络同步 + 一键开服(多客户端宇宙服务器)
+# 服务器权威 + 版本 CAS + merge:sum + 心跳;单客户端(客户)可复用旧 sync_poll
+# 用法:
+#   服务器: verse_host(port)  开启宇宙服务器;每帧 verse_host_poll()
+#   客户端: sync_client(host,port) 连接;每帧 sync_poll()
+
+sync_sock = -1
+sync_listen = -1
+sync_buf = ""
+sync_last = {}
+clients = {}            # sock(str) -> {"buf": 收包缓冲}
+heartbeat = 0
+
+# ---------------- 客户端(单连接) ----------------
+func sync_client(host, port) {
+    global sync_sock
+    sync_sock = net_connect(host, port)
+    return sync_sock
+}
+
+func sync_poll() {
+    global sync_buf, sync_last
+    dirty = record_dirty()
+    for name in dirty {
+        m = record_get(name)
+        if m["merge"] == 1 {
+            cur = record_value(name)
+            if has(sync_last, name) { delta = cur - sync_last[name] } else { delta = cur }
+            if delta != 0 {
+                net_send(sync_sock, json_serialize({"op":"sum","name":name,"delta":delta,"version":m["version"]}) + "\n")
+            }
+            sync_last[name] = cur
+        } else {
+            net_send(sync_sock, json_serialize({"op":"set","name":name,"value":record_value(name),"version":m["version"]}) + "\n")
+        }
+    }
+    if sync_sock > 0 {
+        d = net_recv(sync_sock, 65536)
+        if d != "" {
+            sync_buf = sync_consume(sync_sock, sync_buf, d)
+        }
+    }
+}
+
+# ---------------- 服务器(多客户端) ----------------
+func verse_host(port) {
+    global sync_listen
+    sync_listen = net_listen(port)
+    return sync_listen
+}
+
+func verse_host_poll() {
+    global clients, sync_last, heartbeat
+    # 接受新连接
+    c = net_accept(sync_listen)
+    while c > 0 {
+        if !has(clients, str(c)) {
+            clients[str(c)] = {"buf": ""}
+            snap = record_snapshot()
+            names = keys(snap)
+            for nm in names {
+                net_send(c, json_serialize({"op":"set","name":nm,"value":snap[nm],"version":0}) + "\n")
+            }
+            emit_server("player_join", {"sock": c})
+        }
+        c = net_accept(sync_listen)
+    }
+    # 心跳(每 2 秒广播)
+    heartbeat = heartbeat + 1
+    if heartbeat >= 20 {
+        heartbeat = 0
+        cks = keys(clients)
+        for ck in cks {
+            net_send(int(ck), json_serialize({"op":"ping","t":timer()}) + "\n")
+        }
+    }
+    # 轮询各客户端
+    cks = keys(clients)
+    for ck in cks {
+        s = int(ck)
+        if net_status(s) <= 0 {
+            remove(clients, ck)
+            net_close(s)
+            emit_server("player_left", {"sock": s})
+            continue
+        }
+        d = net_recv(s, 65536)
+        if d != "" {
+            cl = clients[ck]
+            cl["buf"] = sync_consume(s, cl["buf"], d)
+            clients[ck] = cl
+        }
+    }
+}
+
+# 消息处理(共用:按行切分,处理 set/sum/ack)
+func sync_consume(sock, buf, d) {
+    tmp = buf + d
+    has_tail = false
+    if len(tmp) >= 2 and substr(tmp, len(tmp) - 2, 2) == "\n" { has_tail = true }
+    parts = split(tmp, "\n")
+    n = len(parts)
+    i = 0
+    while i < n - 1 {
+        msg = parts[i]
+        if len(msg) > 0 {
+            m = json_parse(msg)
+            op = m["op"]
+            if op == "set" {
+                v = record_get(m["name"])["version"]
+                if m["version"] == v {
+                    record_set_value(m["name"], m["value"])
+                    net_send(sock, json_serialize({"op":"ack","name":m["name"],"version":record_get(m["name"])["version"]}) + "\n")
+                } else {
+                    net_send(sock, json_serialize({"op":"sync","name":m["name"],"value":record_value(m["name"])}) + "\n")
+                }
+            }
+            if op == "sum" {
+                record_set_value(m["name"], record_value(m["name"]) + m["delta"])
+                net_send(sock, json_serialize({"op":"ack","name":m["name"],"version":record_get(m["name"])["version"]}) + "\n")
+            }
+            if op == "ack" {
+                record_mark_clean(m["name"])
+                record_set_value(m["name"], record_value(m["name"]))
+            }
+            if op == "sync" {
+                record_set_value(m["name"], m["value"])
+            }
+        }
+        i = i + 1
+    }
+    if has_tail {
+        if n - 1 >= 0 and len(parts[n - 1]) > 0 {
+            m = json_parse(parts[n - 1])
+            op = m["op"]
+            if op == "set" {
+                v = record_get(m["name"])["version"]
+                if m["version"] == v {
+                    record_set_value(m["name"], m["value"])
+                    net_send(sock, json_serialize({"op":"ack","name":m["name"],"version":record_get(m["name"])["version"]}) + "\n")
+                } else {
+                    net_send(sock, json_serialize({"op":"sync","name":m["name"],"value":record_value(m["name"])}) + "\n")
+                }
+            }
+            if op == "sum" {
+                record_set_value(m["name"], record_value(m["name"]) + m["delta"])
+                net_send(sock, json_serialize({"op":"ack","name":m["name"],"version":record_get(m["name"])["version"]}) + "\n")
+            }
+            if op == "ack" {
+                record_mark_clean(m["name"])
+                record_set_value(m["name"], record_value(m["name"]))
+            }
+            if op == "sync" {
+                record_set_value(m["name"], m["value"])
+            }
+        }
+        return ""
+    }
+    return parts[n - 1]
+}
+
+# 服务器事件队列(供监控/工作台读取)
+server_events = []
+func emit_server(ev, data) {
+    push(server_events, {"type": ev, "data": data})
+    return len(server_events)
+}
+func server_online() {
+    return len(keys(clients))
+}

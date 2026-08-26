@@ -1,0 +1,6 @@
+sp = split("a,b,c,d", ",")
+say "split len=" + len(sp)
+say "first=" + sp[0]
+ch = chars("abc")
+say "chars len=" + len(ch)
+say "S10_DONE"

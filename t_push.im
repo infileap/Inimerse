@@ -1,0 +1,7 @@
+arr = []
+arr.push("a.b")
+arr.push("a.c")
+say arr[0]
+say arr[1]
+say size(arr)
+say "done"

@@ -1,0 +1,25 @@
+# ============ L1 小型数组内联 + ROADMAP 新需求登记 ============
+# 2026-08-15 12:25
+#
+## L1 小型数组内联（ROADMAP §11 L1 下一项）✅
+- vm.h: ArrayObj 加 Value inline_buf[ARRAY_INLINE_CAP=8]；ARRAY_INLINE_CAP 宏
+- vm.c: array_ensure 重写——need<=8 且 cap<=8 时 items 指向 inline_buf（零堆分配，
+  cap 直接设 need 不倍增）；首次堆增长（need>8）时 malloc + memcpy 迁出内嵌数据；
+  后续倍增 realloc
+- vm_free: 数组清理条件化——cap>8 才 free(items)（inline 数组随结构体释放）
+- 所有 items 访问点（push/set/get/pop/remove/index_of/dict/显示）无需改动
+  （items 指针统一指向 inline 或堆）
+- 注意: VM 结构膨胀（4096×128B inline 池 ≈512KB，arrays 池内嵌 VM 结构——
+  服务引擎栈上 VM，已通过服务重启验证无栈溢出）
+- bench（加长 80 万次小数组建+push×8）: old 961ms / new 846ms（~12%↑）
+- 回归: arr/set/params/exc/bench/concat 全过；服务 4+4+1 8 端口健康
+
+## ROADMAP.md 更新
+- §11 L1 小型数组内联 标 ✅
+- 新增 §12 待开发登记（2026-08-15 用户需求）:
+  12.1 多平台/多显示尺寸适配（先 Windows 全屏+常见尺寸，逻辑坐标/视口分离、
+       DPI 感知、全屏 API 抽象、输入抽象层）
+  12.2 公网 IP 与去中心化 IP 关联（verse 地址↔公网端点映射、多 hub 冗余
+       failover、心跳墓碑、P2 DHT）
+  12.3 .imjar 模组 source 自动更新（manifest.source 字段、版本比较、
+       SHA256 校验原子替换、回滚、ed25519 签名 P1）

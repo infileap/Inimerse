@@ -1,0 +1,10 @@
+say "hello"  # print 别名
+i = 0; j = 0
+while i < 3 {
+    j = j + 1
+    i = i + 1
+}
+k = 0 or 1
+say $"j={j} k={k}"
+# 这是 // 注释
+say "DONE"

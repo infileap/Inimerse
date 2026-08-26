@@ -1,0 +1,31 @@
+task t1 {
+    k = 0
+    while k < 3 {
+        yield
+        k = k + 1
+    }
+    say "t1 k=" + k
+}
+task t2 {
+    k = 0
+    while k < 3 {
+        yield
+        k = k + 1
+    }
+    say "t2 k=" + k
+}
+task t3 {
+    k = 0
+    while k < 3 {
+        yield
+        k = k + 1
+    }
+    say "t3 k=" + k
+}
+start t1
+start t2
+start t3
+join t1
+join t2
+join t3
+say "TASK2_DONE"

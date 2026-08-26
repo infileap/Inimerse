@@ -1,0 +1,409 @@
+# === Verse Forge generated ===
+# world 900x640 player=8 meteor=4 life=3 stars=20
+gui_stage(900, 640)
+# ============================================================
+# Infiverse 项目模板 - 空间站大厅 + 小游戏
+# 层级: lobby(游戏大厅) / game(小游戏,临时层级)
+# 频道: 层级频道(消息按层级隔离,跨层级不可见)
+# 指令: /help /play /back /say <文字> /who /clear
+# ============================================================
+gui_title("Infiverse 空间站")
+gui_set_font("SimSun", 17, 4210752)
+
+# ---------- 全局状态 ----------
+lvl = "lobby"          # 当前层级
+player = "访客"        # 玩家名
+stamp = 0              # 消息序号
+
+# 频道消息(每层一个队列)
+lobby_msgs = []
+game_msgs = []
+MAX_MSG = 60
+
+# 小游戏状态
+gx = 450
+gy = 530
+score = 0
+life = 3
+mxs = []
+mys = []
+msp = []
+spawn_tick = 0
+game_over = 0
+tick_n = 0
+msg_at = 0
+msg_pinned = 0
+high_score = 0
+
+# 大厅星空(固定位置, 避免每帧随机闪烁)
+stars_x = []
+stars_y = []
+star_n = 20
+
+# ---------- 控件 ----------
+log_lobby = gui_log_p(100, 140, 800, 400, "== 大厅频道 ==")
+log_game = gui_log_p(22, 620, 400, 260, "== 游戏频道 ==")
+cmd_input = gui_input_p(100, 875, 800, 48)
+gui_input_set(cmd_input, "")
+gui_input_focus(cmd_input)
+btn_play = gui_button_p(133, 730, 244, 42, "[进入游戏]")
+btn_help = gui_button_p(378, 730, 244, 42, "[帮助]")
+btn_exit = gui_button_p(623, 730, 244, 42, "[退出]")
+btn_back = gui_button_p(667, 940, 311, 42, "[返回大厅]")
+btn_again = gui_button_p(350, 500, 300, 48, "[再玩一次]")
+gui_log_show(log_game, 0)
+gui_button_show(btn_back, 0)
+gui_button_show(btn_again, 0)
+
+# ---------- 随机数 ----------
+func rand_int(a, b) {
+    return rand(a, b)
+}
+
+# 生成固定星空(一次)
+func make_stars() {
+    i = 0
+    while i < star_n {
+        push(stars_x, rand_int(30, 870))
+        push(stars_y, rand_int(470, 545))
+        i = i + 1
+    }
+}
+
+# ---------- 频道函数 ----------
+func push_msg(list, who, msg) {
+    global stamp
+    if len(list) > MAX_MSG {
+        remove(list, 0)
+    }
+    stamp = stamp + 1
+    push(list, "[" + str(stamp) + "] " + who + " > " + msg)
+}
+func refresh_lobby() {
+    gui_log_clear(log_lobby)
+    i = 0
+    while i < len(lobby_msgs) {
+        gui_log(log_lobby, lobby_msgs[i])
+        i = i + 1
+    }
+}
+func refresh_game() {
+    gui_log_clear(log_game)
+    i = 0
+    while i < len(game_msgs) {
+        gui_log(log_game, game_msgs[i])
+        i = i + 1
+    }
+}
+func lobby_say(who, msg) {
+    push_msg(lobby_msgs, who, msg)
+    refresh_lobby()
+}
+func game_say(who, msg) {
+    global msg_at, tick_n
+    push_msg(game_msgs, who, msg)
+    refresh_game()
+    msg_at = tick_n
+}
+func sys_say(chn, msg) {
+    if chn == "lobby" {
+        lobby_say("[系统]", msg)
+    } else {
+        game_say("[系统]", msg)
+    }
+}
+
+# ---------- 指令 ----------
+# ---- chat cmd system: case+match + permission ----
+player_lvl = 0
+cmd_perm = {"play":0, "back":0, "who":0, "clear":1, "tp":2, "give":2}
+func try_cmd(name, args) {
+    global player_lvl, gx, gy, lobby_msgs, game_msgs
+    need = cmd_perm[name]
+    if player_lvl < need {
+        sys_say(lvl, "perm denied: /" + name + " need lvl " + str(need))
+        return
+    }
+    if name == "play" {
+        enter_game()
+    } elif name == "back" {
+        back_lobby()
+    } elif name == "who" {
+        if lvl == "lobby" {
+            sys_say(lvl, "lobby players: " + player + " + " + str(rand_int(1, 3)) + " guest")
+        } else {
+            sys_say(lvl, "game players: " + player)
+        }
+    } elif name == "clear" {
+        if lvl == "lobby" {
+            lobby_msgs = []
+            refresh_lobby()
+        } else {
+            game_msgs = []
+            refresh_game()
+        }
+        sys_say(lvl, "channel cleared")
+    } elif name == "tp" {
+        x = int(args[1])
+        y = int(args[2])
+        gx = x
+        gy = y
+        sys_say(lvl, "tp -> (" + str(x) + "," + str(y) + ")")
+    } elif name == "give" {
+        sys_say(lvl, "got " + args[1] + " x" + str(int(args[2])))
+    } elif name == "login" {
+        if args[1] == "infiverse2026" {
+            player_lvl = 3
+            sys_say(lvl, "admin level 3 granted")
+        } elif args[1] == "player123" {
+            player_lvl = 1
+            sys_say(lvl, "player level 1 granted")
+        } else {
+            sys_say(lvl, "wrong password")
+        }
+    } else {
+        sys_say(lvl, "unknown cmd, /help")
+    }
+}
+func handle_cmd(msg) {
+    if len(msg) < 1 {
+        return }
+    if substr(msg, 0, 1) != "/" {
+        if lvl == "lobby" {
+            lobby_say(player, msg)
+        } else {
+            game_say(player, msg)
+        }
+        return
+    }
+    cmd = substr(msg, 1, len(msg) - 1)
+    case cmd {
+        match "^help$": sys_say(lvl, "cmds: /play /back /who /clear /tp x y /give item n")
+        match "^play$": try_cmd("play", [])
+        match "^back$": try_cmd("back", [])
+        match "^who$": try_cmd("who", [])
+        match "^clear$": try_cmd("clear", [])
+        match "^tp +-?[0-9]+ +-?[0-9]+$": try_cmd("tp", split(cmd, " "))
+        match "^login +[a-zA-Z0-9_]+$": try_cmd("login", split(cmd, " "))
+        match "^give +[a-z]+ +[0-9]+$": try_cmd("give", split(cmd, " "))
+        else: sys_say(lvl, "unknown cmd, /help")
+    }
+}
+
+
+# ---------- 层级切换 ----------
+func enter_game() {
+    global lvl, score, life, game_over, gx, spawn_tick, mxs, mys, msp, high_score, tick_n, msg_at, msg_pinned
+    hs = read_file("D:\\inimerse_save.txt")
+    if len(hs) > 0 {
+        high_score = str2int(hs)
+    } else {
+        high_score = 0 }
+    lvl = "game"
+    score = 0
+    life = 3
+    game_over = 0
+    gx = 450
+    spawn_tick = 0
+    tick_n = 0
+    msg_at = 0
+    msg_pinned = 0
+    gui_log_show(log_lobby, 0)
+    mxs = []
+    mys = []
+    msp = []
+    game_say("[系统]", player + " 创建临时层级 [game] 并进入")
+    sys_say("game", "频道已切换: 游戏频道")
+    gui_input_set(cmd_input, "")
+    gui_input_show(cmd_input, 0)
+    gui_button_show(btn_play, 0)
+    gui_button_show(btn_help, 0)
+    gui_button_show(btn_exit, 0)
+    gui_button_show(btn_back, 1)
+    gui_log_show(log_game, 1)
+}
+func back_lobby() {
+    global lvl, game_msgs
+    lvl = "lobby"
+    game_msgs = []
+    refresh_game()
+    lobby_say("[系统]", player + " 销毁临时层级 [game], 返回大厅")
+    gui_input_set(cmd_input, "")
+    gui_input_show(cmd_input, 1)
+    gui_button_show(btn_play, 1)
+    gui_button_show(btn_help, 1)
+    gui_button_show(btn_again, 0)
+    gui_log_show(log_lobby, 1)
+    gui_button_show(btn_exit, 1)
+    gui_button_show(btn_back, 0)
+    gui_log_show(log_game, 0)
+}
+
+# ---------- 小游戏 ----------
+func spawn_meteor() {
+    global mxs, mys, msp, tick_n
+    if len(mxs) > 16 {
+        return }
+    w = gui_w()
+    r1 = rand_int(30, w - 30)
+    diff = tick_n / 300
+    r2 = rand_int(4, 10 + diff * 3)
+    push(mxs, r1)
+    push(mys, 0)
+    push(msp, r2)
+}
+func game_tick() {
+    global spawn_tick, mxs, mys, msp, life, game_over, score, tick_n
+    spawn_tick = spawn_tick + 1
+    score = score + 1
+    diff = tick_n / 300
+    gap = 10 - diff
+    if gap < 4 {
+        gap = 4 }
+    if spawn_tick >= gap and 0 == 1 {
+        spawn_tick = 0
+        spawn_meteor()
+    }
+    nmx = []
+    nmy = []
+    nsp = []
+    i = 0
+    while i < len(mxs) {
+        mx = mxs[i]
+        spd = msp[i]
+        my = mys[i] + spd
+        if my >= gy - 10 and my <= gy + 10 and mx >= gx - 10 and mx <= gx + 10 {
+            life = life - 1
+        } else {
+            gh = gui_h()
+            if my < gh - 40 {
+                push(nmx, mx)
+                push(nmy, my)
+                push(nsp, spd)
+            }
+        }
+        i = i + 1
+    }
+    mxs = nmx
+    mys = nmy
+    msp = nsp
+    if life < 1 {
+        global high_score
+        game_over = 1
+        if score > high_score {
+            high_score = score
+            write_file("D:\\inimerse_save.txt", str(high_score))
+        }
+        game_say("[系统]", "游戏结束! 得分 " + str(score) + " 最高 " + str(high_score) + ", 点 [再玩一次] 或 [返回大厅]")
+        gui_button_show(btn_again, 1)
+    }
+}
+
+# ---------- 绘制 ----------
+func draw_lobby() {
+    gui_clear_text()
+    gui_clear_shapes()
+    gui_text_a_p("Infiverse 空间站", 0, 18, 1000, 1)
+    gui_text_a_p("欢迎来到空间站大厅, 输入 /help 查看指令", 0, 46, 1000, 1)
+    gui_text_a_p("玩家: " + player + "   层级: lobby   频道: 大厅", 0, 420, 1000, 1)
+    gui_text_a_p("聊天: 输入文字回车发言", 0, 520, 1000, 1)
+    i = 0
+    while i < star_n {
+        gui_text("*", stars_x[i], stars_y[i])
+        i = i + 1
+    }
+}
+func draw_game() {
+    gui_clear_text()
+    gui_clear_shapes()
+    i = 0
+    while i < len(mxs) {
+        mx = mxs[i]
+        my = mys[i]
+        gui_text("*", mx, my)
+        i = i + 1
+    }
+    gui_text("X", gx, gy)
+
+    gui_text("L:" + str(key("left")) + " R:" + str(key("right")) + " T:" + str(tick_n), 30, 30)
+    s = "得分: " + str(score) + "  生命: " + str(life)
+    gui_text_a_p(s, 0, 890, 1000, 1)
+    if game_over == 1 {
+        gui_text_a_p("!! 游戏结束 !! 得分 " + str(score) + "  最高 " + str(high_score), 0, 400, 1000, 1)
+        gui_text_a_p("点击下方按钮返回大厅", 0, 460, 1000, 1)
+    }
+}
+
+# ---------- 主循环 ----------
+make_stars()
+sys_say("lobby", "空间站已启动, 输入 /help 查看指令")
+
+while true {
+    tick_n = tick_n + 1
+    if lvl == "game" {
+        if key("m") == 1 {
+            if msg_pinned == 0 {
+                msg_pinned = 1
+                gui_log_show(log_game, 1)
+            } else {
+                msg_pinned = 0
+                gui_log_show(log_game, 0)
+            }
+            wait 0.2
+        }
+        if msg_pinned == 0 {
+            if tick_n - msg_at < 100 {
+                gui_log_show(log_game, 1)
+            } else {
+                gui_log_show(log_game, 0)
+            }
+        }
+    }
+    if lvl == "game" and game_over == 0 {
+        if key("left") == 1 {
+            gx = gx - 6
+            if gx < 30 {
+                gx = 30 }
+        }
+        if key("right") == 1 {
+            gw = gui_w()
+            gx = gx + 6
+            if gx > gw - 30 {
+                gx = gw - 30 }
+        }
+        game_tick()
+    }
+    if gui_input_submitted(cmd_input) == 1 {
+        cmd = gui_input_text(cmd_input)
+        gui_input_set(cmd_input, "")
+        handle_cmd(cmd)
+    }
+    if lvl == "lobby" {
+        if gui_button_clicked(btn_play) == 1 {
+            enter_game()
+        }
+        if gui_button_clicked(btn_help) == 1 {
+            handle_cmd("/help")
+        }
+        if gui_button_clicked(btn_exit) == 1 {
+            stop all
+        }
+    } else {
+        if gui_button_clicked(btn_back) == 1 {
+            back_lobby()
+        }
+        if gui_button_clicked(btn_again) == 1 {
+            gui_button_show(btn_again, 0)
+            enter_game()
+        }
+    }
+    if lvl == "lobby" {
+        draw_lobby()
+    } else {
+        draw_game()
+    }
+    wait 0.005
+}
+# === Forge overrides ===
+life = 3
+stars_n = 20

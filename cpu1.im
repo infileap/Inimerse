@@ -1,0 +1,6 @@
+# CPU baseline: single-thread pure compute
+i = 0
+while i < 300000000 {
+    i = i + 1
+}
+say "done i=" + i

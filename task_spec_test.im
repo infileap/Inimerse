@@ -1,0 +1,57 @@
+# task 特化验证：stop / restart / single / state / send 唤醒
+# 1) 基础：start + 完成
+task tw1 {
+    i = 0
+    while i < 1000 {
+        i = i + 1
+    }
+    say "tw1_done i=" + i
+}
+start tw1
+join tw1
+say "tw1_state_finished=" + thread_state(tw1, "finished")   # 期望 true
+
+# 2) single 语义：tw1 已 finished，重复 start 应可再跑（single 只在 running 时忽略）
+#    再验证 running 时重复 start 被忽略：用 tw2 循环任务
+task tw2 {
+    j = 0
+    while j < 200000 {
+        j = j + 1
+    }
+}
+start tw2
+say "tw2_running=" + thread_state(tw2, "running")           # 期望 true
+start tw2                                                   # 应打印 already running 并忽略
+start tw2
+join tw2
+say "tw2_done"
+
+# 3) stop：tw3 无限循环任务
+task tw3 {
+    k = 0
+    while 1 {
+        k = k + 1
+    }
+}
+start tw3
+say "tw3_running=" + thread_state(tw3, "running")
+stop tw3
+wait0.05
+say "tw3_stopped=" + thread_state(tw3, "stopped")
+
+# 4) restart：tw3 重启
+restart tw3
+wait0.05
+say "tw3_running2=" + thread_state(tw3, "running")
+stop tw3
+wait0.05
+
+# 5) send 唤醒：task 阻塞 recv，主线程 send 后应快速返回（不用等超时）
+task tw4 {
+    recv m, 5
+    say "tw4_got=" + m
+}
+start tw4
+send tw4 "hello"
+join tw4
+say "TASK_SPEC_DONE"

@@ -1,0 +1,95 @@
+# chat cmd system test (mock gui, mirrors main.im logic)
+lvl = "lobby"
+player = "tester"
+lobby_msgs = []
+game_msgs = []
+gx = 450
+gy = 300
+player_lvl = 0
+cmd_perm = {"play":0, "back":0, "who":0, "clear":1, "tp":2, "give":2}
+func sys_say(chn, msg) { say "[" + chn + "] " + msg }
+func lobby_say(who, msg) { say "lobby " + who + " > " + msg }
+func game_say(who, msg) { say "game " + who + " > " + msg }
+func enter_game() { say "enter_game called" }
+func back_lobby() { say "back_lobby called" }
+func refresh_lobby() { say "refresh_lobby" }
+func refresh_game() { say "refresh_game" }
+func try_cmd(name, args) {
+    global player_lvl, gx, gy, lobby_msgs, game_msgs
+    need = cmd_perm[name]
+    if player_lvl < need {
+        sys_say(lvl, "perm denied: /" + name + " need lvl " + str(need))
+        return
+    }
+    if name == "play" {
+        enter_game()
+    } elif name == "back" {
+        back_lobby()
+    } elif name == "who" {
+        if lvl == "lobby" {
+            sys_say(lvl, "lobby players: " + player + " + " + str(rand_int(1, 3)) + " guest")
+        } else {
+            sys_say(lvl, "game players: " + player)
+        }
+    } elif name == "clear" {
+        if lvl == "lobby" {
+            lobby_msgs = []
+            refresh_lobby()
+        } else {
+            game_msgs = []
+            refresh_game()
+        }
+        sys_say(lvl, "channel cleared")
+    } elif name == "tp" {
+        x = int(args[1])
+        y = int(args[2])
+        gx = x
+        gy = y
+        sys_say(lvl, "tp -> (" + str(x) + "," + str(y) + ")")
+    } elif name == "give" {
+        sys_say(lvl, "got " + args[1] + " x" + str(int(args[2])))
+    } else {
+        sys_say(lvl, "unknown cmd, /help")
+    }
+}
+func handle_cmd(msg) {
+    if len(msg) < 1 {
+        return }
+    if substr(msg, 0, 1) != "/" {
+        if lvl == "lobby" {
+            lobby_say(player, msg)
+        } else {
+            game_say(player, msg)
+        }
+        return
+    }
+    cmd = substr(msg, 1, len(msg) - 1)
+    case cmd {
+        match "^help$": sys_say(lvl, "cmds: /play /back /who /clear /tp x y /give item n")
+        match "^play$": try_cmd("play", [])
+        match "^back$": try_cmd("back", [])
+        match "^who$": try_cmd("who", [])
+        match "^clear$": try_cmd("clear", [])
+        match "^tp +-?[0-9]+ +-?[0-9]+$": try_cmd("tp", split(cmd, " "))
+        match "^give +[a-z]+ +[0-9]+$": try_cmd("give", split(cmd, " "))
+        else: sys_say(lvl, "unknown cmd, /help")
+    }
+}
+# ---- tests ----
+handle_cmd("/help")
+handle_cmd("/play")
+handle_cmd("/tp 5 10")
+say "gx=" + str(gx)
+player_lvl = 2
+handle_cmd("/tp 5 10")
+say "gx=" + str(gx)
+handle_cmd("/tp -3 -7")
+say "gx=" + str(gx)
+handle_cmd("/give sword 3")
+handle_cmd("/clear")
+handle_cmd("/unknown")
+handle_cmd("hello world")
+handle_cmd("/tp 5")
+handle_cmd("/tp a b")
+handle_cmd("/who")
+say "done"

@@ -1,0 +1,7 @@
+import "../lexer.im"
+import "../parser.im"
+import "../eval.im"
+# 解释器三件套被解释执行,再运行目标程序(两层解释)
+run_file("tests/prog1.im")
+run_file("tests/prog2.im")
+stop all

@@ -1,0 +1,7 @@
+using thread
+msg mq
+main {
+ recv v, 1
+ say "v=" + str(v)
+}
+stop all

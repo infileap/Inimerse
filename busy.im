@@ -1,0 +1,4 @@
+# busy.im - control: no endless, busy loop must be killed by 3s watchdog
+main {
+    while true {}
+}

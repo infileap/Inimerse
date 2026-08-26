@@ -1,0 +1,2 @@
+say "speed=" + speed
+say "PARAM2_DONE"

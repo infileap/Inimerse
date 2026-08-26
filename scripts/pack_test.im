@@ -1,0 +1,16 @@
+using thread
+import "utils.im"
+thread counter_thread: {
+    repeat 5 {
+        say "count tick"
+        wait 0.2
+    }
+    say "counter done"
+}
+main {
+    say "add=" + str(add(2, 3))
+    start counter_thread
+    join counter_thread, 5
+    say "pack done"
+}
+stop all

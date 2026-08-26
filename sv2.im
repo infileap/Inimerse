@@ -1,0 +1,3 @@
+x.a = 99
+save_params("sv2.params", "x.a")
+say "saved2"

@@ -1,0 +1,7 @@
+alpha = 1
+beta = 2
+gamma = 3
+say "speed=" + speed
+say "title=" + title
+say "alpha=" + alpha
+say "PARAM_DONE"

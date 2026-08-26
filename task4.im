@@ -1,0 +1,15 @@
+# task 内函数调用（帧栈）+ 全局
+g = 0
+func bump() {
+    global g
+    g = g + 1
+    return g
+}
+task tf {
+    r = bump()
+    r = bump()
+    say "tf r=" + r
+}
+start tf
+join tf
+say "TASK4_DONE"

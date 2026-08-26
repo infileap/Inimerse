@@ -1,0 +1,5 @@
+import "modc1.im" as c1
+import "modc2.im" as c2
+say "c1.getpi1 -> " + c1.getpi1()
+say "c2.getpi2 -> " + c2.getpi2()
+say "C2_DONE"

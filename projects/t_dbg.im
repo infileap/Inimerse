@@ -1,0 +1,7 @@
+nz = N * Z[0~5]
+say nz
+say 3 in nz
+u2 = N + Z[0~5]
+say u2
+say 3 in u2
+say 7 in u2

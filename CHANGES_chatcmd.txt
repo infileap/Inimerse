@@ -1,0 +1,17 @@
+# CHANGES - 2026-08-14 chat command system + case match fix
+## 1. main.im / demo main.im: chat command system (case+match + permission)
+- handle_cmd rewritten: /-prefix detection -> case+match dispatch -> try_cmd() permission gate
+- cmd_perm table: play/back/who=0, clear=1, tp/give=2; player_lvl default 0 (guest)
+- try_cmd: checks player_lvl >= need, then executes (enter_game/back_lobby/who/clear/tp/give)
+- demo commands: /tp x y (teleport, sets gx/gy), /give item n
+- non-command messages still go to lobby_say/game_say chat channels
+## 2. parser fix (case + match)
+- BUG: single-statement case-branch body followed by another 'match' branch failed to parse
+  ("case action expression runs into ':'") because body expression ate 'match' as infix op
+- FIX: Parser.no_infix_match flag - disabled while parsing case-branch bodies
+  (match infix still works elsewhere; use match() call inside case bodies if needed)
+- parser.h: Parser struct + int no_infix_match (appended, ABI-safe)
+## 3. tests
+- test_cmd.im (new): full chat-command flow incl. permission denial, /tp, /give, unknown, chat passthrough
+- t_casematch.im: case+match minimal
+- engine rebuilt, debug_mod.dll relinked, services restarted (4+4+1, 8 ports)

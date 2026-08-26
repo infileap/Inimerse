@@ -1,0 +1,18 @@
+# ============ ROADMAP 多网络协议：UDP 传输后端 ============
+# 2026-08-15 15:40
+#
+## net_mod.c 新增 UDP（后台接收线程 + 环形队列，通用传输原语）
+- udp_bind(port)            -> 实际绑定端口（0=临时端口；0=失败）
+- udp_send(port, host, dstport, data) -> 1/0（sendto）
+- udp_recv(port[, timeout_ms]) -> [data, fromhost, fromport] 或 nil（最多8 socket，队列256×2048）
+- udp_close(port)           -> 1（停线程+关 socket）
+- 全部 safe 注册（网络类）
+
+## 验证（t_udp.im 回环）
+p1/p2 临时端口绑定、send=1、got=hello-udp from=127.0.0.1（后台线程入队）、
+双向回复、超时返回 nil、udp_close 全通
+
+## 用途（后续接线）
+- 热联机低延迟帧流（UDP 替代 TCP 推送）
+- P2P 节点发现/去中心化 hub（UDP 广播 + verse://udp:// 源）
+- 游戏控制通道

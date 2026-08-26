@@ -1,0 +1,30 @@
+# ============ P0 素材 ref://sha256 + manifest SHA256 ============
+# 2026-08-15 12:35
+#
+## 新增 src/common/sha256.{h,c}（标准 SHA-256，零依赖，~150 行）
+- sha256_init/update/final + 一次性 digest/hex API
+- 加入 build.ps1 / build_new.ps1 编译列表（多平台/更新校验复用）
+
+## verse_dist_mod.c
+### manifest 强校验（P0 = SHA256，crc32 兼容保留）
+- verse_pack 生成 "sha256"（内嵌文件 base64 拼接的 SHA256）；crc32 "hash" 保留
+- verse_open 校验：有 sha256 字段则强校验（篡改拒绝验证通过）；
+  crc32 仍校验（兼容旧包）
+### ref://sha256 内容寻址（素材复用第一层）
+- 共享缓存 universe/_cache/<sha256hex>（home_dir 下，pack/open 自动填充）
+- verse_pack(dir, out, refMode)：refMode=1 时缓存已有内容 -> 输出
+  "ref://sha256:<hex>" 替代 base64（包显著缩小；同包先内嵌后引用自洽）
+- verse_open 解包：ref 文件从缓存读取 + 内容哈希自校验（文件名即摘要）；
+  内嵌文件解包同时写入缓存（供后续包引用）
+- 安全性：路径分隔符/.. 检查保留（ref 名与内嵌名同样检查）
+
+## 验证
+- pack1 内嵌+sha256 -> open1 解包+缓存填充（universe/_cache 2 文件）
+- pack2(refMode=1) 输出全 ref://sha256（data.txt/main.im）
+- open ref 包：从缓存解包成功，data.txt 内容正确
+- 篡改 manifest sha256 -> [VDP] sha256 mismatch ... package corrupted，open 拒绝
+- 部署：服务 4+4+1 8 端口健康；ROADMAP §5 P0 标 ✅
+
+## 已知边界
+- ref 文件不参与 manifest sha256（内容由缓存自校验保证）
+- 缓存随 home_dir（exe 目录）；未来 12.2 公网/多 hub 场景缓存同步待设计

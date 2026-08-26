@@ -1,0 +1,39 @@
+# A3: for i in a..b / a..b..step 区间糖（复用 TOK_RANGE）
+sum = 0
+for i in 0..10 {
+    sum = sum + i
+}
+say "sum10=" + sum                # 45
+
+s2 = 0
+for i in 0..10..2 {
+    s2 = s2 + i
+}
+say "step2=" + s2                 # 0+2+4+6+8 = 20
+
+s3 = 0
+for i in 10..0..-1 {
+    s3 = s3 + i
+}
+say "stepneg=" + s3               # 10+9+...+1 = 55
+
+s4 = 0
+for i in -3..3 {
+    s4 = s4 + i
+}
+say "negstart=" + s4              # 排他端点: -3..2 和 = -3
+
+# 回归: 旧形式仍可用
+s5 = 0
+for i in range(0, 5) {
+    s5 = s5 + i
+}
+say "rangeold=" + s5              # 10
+
+s6 = 0
+for v in [1, 2, 3, 4] {
+    s6 = s6 + v
+}
+say "arr=" + s6                   # 10
+
+say "A3_DONE"

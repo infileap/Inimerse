@@ -1,0 +1,62 @@
+# error-to-exception tests (2026-08-14, ASCII only)
+# NOTE: out-of-range READ stays nil (compat); NEGATIVE write / div0 / %0 / builtin args throw
+a = [10, 20, 30]
+say a[1]
+say a[5]
+say a[-1]
+try {
+    a[-1] = 99
+    say "should not print"
+} catch (e) {
+    say "set neg caught"
+    say e
+}
+a[10] = 100
+say size(a)
+try {
+    say 1 / 0
+    say "should not print"
+} catch (e) {
+    say "div0 caught"
+    say e
+}
+try {
+    say 7 % 0
+    say "should not print"
+} catch (e) {
+    say "mod0 caught"
+    say e
+}
+say 1.0 / 0.0
+try {
+    say round("abc", 2)
+    say "should not print"
+} catch (e) {
+    say "round caught"
+    say e
+}
+try {
+    say list(123)
+    say "should not print"
+} catch (e) {
+    say "list caught"
+    say e
+}
+sx = "a","b"
+try {
+    say sum(sx)
+    say "should not print"
+} catch (e) {
+    say "sum caught"
+    say e
+}
+say sum(1,2,3,4)
+s = "hello"
+say s[-1]
+try {
+    x = 5 / 0
+    say "should not print"
+} catch (e) {
+    say "caught div"
+}
+say "done"

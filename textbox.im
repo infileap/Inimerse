@@ -1,0 +1,92 @@
+# textbox.im - 文本输入状态机(纯逻辑,不依赖窗口)
+# 用法:
+#   import "textbox.im"
+#   每帧调用(keys 为当前按键状态字典,如 {"a": true, "shift": false, ...}):
+#     r = textbox_update(keys)
+#     r["text"]    当前输入文本
+#     r["confirm"] 本帧是否回车确认(true 时读取文本后已自动清空)
+#   GUI 集成示例:
+#     keys = {"shift": key("shift"), "backspace": key("backspace"), "enter": key("enter")}
+#     for c in CHAR_KEYS { keys[c] = key(c) }
+#     r = textbox_update(keys)
+#     text r["text"] at 100, 100
+
+CHAR_KEYS = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", " ", ".", "-", "_"]
+prev_keys = {}
+input_text = ""
+
+func textbox_reset() {
+    global input_text
+    prev_keys = {}
+    input_text = ""
+}
+
+func textbox_update(keys) {
+    global input_text
+    result = {"text": input_text, "confirm": false}
+    for c in CHAR_KEYS {
+        cur = false
+        if has(keys, c) {
+            cur = keys[c]
+        }
+        prev = false
+        if has(prev_keys, c) {
+            prev = prev_keys[c]
+        }
+        if cur and !prev {
+            ch = c
+            if c != " " {
+                sh = false
+                if has(keys, "shift") {
+                    sh = keys["shift"]
+                }
+                if sh and ord(c) >= ord("a") and ord(c) <= ord("z") {
+                    ch = chr(ord(c) - 32)
+                }
+            }
+            input_text = input_text + ch
+        }
+        if cur {
+            prev_keys[c] = true
+        } else {
+            prev_keys[c] = false
+        }
+    }
+    bs = false
+    if has(keys, "backspace") {
+        bs = keys["backspace"]
+    }
+    prev_bs = false
+    if has(prev_keys, "backspace") {
+        prev_bs = prev_keys["backspace"]
+    }
+    if bs and !prev_bs {
+        if len(input_text) > 0 {
+            input_text = substr(input_text, 0, len(input_text) - 1)
+        }
+    }
+    if bs {
+        prev_keys["backspace"] = true
+    } else {
+        prev_keys["backspace"] = false
+    }
+    en = false
+    if has(keys, "enter") {
+        en = keys["enter"]
+    }
+    prev_en = false
+    if has(prev_keys, "enter") {
+        prev_en = prev_keys["enter"]
+    }
+    if en and !prev_en {
+        result["confirm"] = true
+        input_text = ""
+    }
+    if en {
+        prev_keys["enter"] = true
+    } else {
+        prev_keys["enter"] = false
+    }
+    result["text"] = input_text
+    return result
+}

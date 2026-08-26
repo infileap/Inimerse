@@ -1,0 +1,4 @@
+import "nscyc_a.im" as a
+func fb() {
+    return 2
+}

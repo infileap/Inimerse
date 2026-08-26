@@ -1,0 +1,3 @@
+main {
+    write_file("D:/_t5.txt", "CHECK=" + str(port_check(11461)))
+}

@@ -1,0 +1,35 @@
+using thread
+counter = 0
+thread worker: {
+    while true {
+        counter = counter + 1
+        wait 0.1
+    }
+}
+thread pinger(n): {
+    repeat n {
+        say "ping"
+        wait 0.2
+    }
+    say "pinger done"
+}
+main {
+    start worker
+    start pinger(3)
+    wait 1
+    say "counter=" + str(counter)
+    pause worker
+    say "paused, counter=" + str(counter)
+    wait 1
+    say "still " + str(counter)
+    resume worker
+    wait 1
+    say "resumed, counter=" + str(counter)
+    join pinger, 5
+    say "pinger finished=" + str(pinger.finished)
+    stop worker
+    join worker, 3
+    say "worker stopped=" + str(worker.stopped)
+    say "done"
+}
+stop all

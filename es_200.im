@@ -1,0 +1,29 @@
+# entity_stress3: 200 sprites (shared texture)
+declare { mem 256MB, vram 256MB, time 60s }
+gui_stage(480, 320)
+n = 0
+ok = 0
+while n < 200 {
+    r = gui_sprite("m" + n, "monster8.bmp")
+    if r == 1 { ok = ok + 1 } else { say "fail@" + n }
+    n = n + 1
+}
+say "created=200 actual=" + ok
+i = 0
+while i < ok {
+    gui_goto("m" + i, (i % 20) * 24 + 12, (i / 20) * 24 + 12)
+    i = i + 1
+}
+say "MOVE_START"
+t = 0
+while t < 60 {
+    i = 0
+    while i < ok {
+        gui_move("m" + i, 1)
+        i = i + 1
+    }
+    t = t + 1
+}
+say "MOVE_END"
+wait 1
+say "DONE_200"

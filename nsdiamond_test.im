@@ -1,0 +1,5 @@
+import "nsdiamond_b.im" as b
+import "nsdiamond_c.im" as c
+say "b.fb()=" + b.fb()
+say "c.fc()=" + c.fc()
+say "DIAMOND_DONE"

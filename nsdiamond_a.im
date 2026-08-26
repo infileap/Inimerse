@@ -1,0 +1,4 @@
+da = 41
+func fa() {
+    return da
+}

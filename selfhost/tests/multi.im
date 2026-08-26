@@ -1,0 +1,9 @@
+import "libx.im"
+say "triple=" + str(triple(7))
+say lib_greet()
+say "greeting=" + greeting
+func use_lib(x) {
+    return triple(x) + 1
+}
+say "use=" + str(use_lib(10))
+stop all

@@ -1,0 +1,3 @@
+player.test = 5
+say player.test
+say "done"

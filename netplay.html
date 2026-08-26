@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inimerse 联机器</title>
+<style>
+body{background:#161a2b;color:#e8e8f0;font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:0}
+#bar{background:#22274a;padding:10px 16px;font-size:14px;color:#8fd0ff;display:flex;justify-content:space-between}
+#bar b{color:#ffd75e}
+.wrap{max-width:520px;margin:24px auto;padding:0 16px}
+.card{background:#1e2340;border:1px solid #313a66;border-radius:10px;padding:18px;margin-bottom:20px}
+.card h2{margin:0 0 14px;font-size:17px;color:#ffd75e;border-bottom:1px solid #313a66;padding-bottom:8px}
+label{display:block;font-size:13px;color:#9aa3c7;margin:10px 0 4px}
+select,input{width:100%;box-sizing:border-box;background:#12162a;color:#eee;border:1px solid #3a4470;border-radius:6px;padding:9px;font-size:15px}
+button{width:100%;background:#3d6ef0;color:#fff;border:0;border-radius:6px;padding:11px;font-size:15px;margin-top:14px;cursor:pointer}
+button:active{background:#2b54c8}
+.res{margin-top:12px;padding:10px;border-radius:6px;background:#12162a;font-size:14px;white-space:pre-wrap;word-break:break-all}
+.res.ok{border:1px solid #2e8b57}
+.res.err{border:1px solid #b04040}
+#cres a,#jres a{color:#8fd0ff}
+.small{font-size:12px;color:#7a83a5;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="bar"><span>联机器 <b>g16</b></span></div>
+<div class="wrap">
+
+  <div class="card">
+    <h2>创建服务器</h2>
+    <label>选择项目</label>
+    <select id="proj"></select>
+    <label>服务器密码</label>
+    <input id="cpass" type="text" placeholder="加入者需要输入此密码" autocomplete="off">
+    <button id="cbtn" onclick="createSrv()">创建服务器</button>
+    <div class="small">创建后自动分配房间号，可 <b>自动存档</b>（项目脚本内调用 autosave(N)）</div>
+    <div id="cres" class="res" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>加入服务器</h2>
+    <label>房间号</label>
+    <input id="room" type="text" placeholder="例如 11510" inputmode="numeric">
+    <label>密码</label>
+    <input id="jpass" type="password" placeholder="服务器密码">
+    <button id="jbtn" onclick="joinSrv()">加入服务器</button>
+    <div id="jres" class="res" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>我的房间</h2>
+    <div class="small">仅本机可查看</div>
+    <div id="rooms" class="res" style="display:none"></div>
+    <button onclick="loadRooms()">刷新</button>
+      <div class="card">
+    <h2>在线节点</h2>
+    <div id="nodelist"></div>
+    <button onclick="loadNodes()">刷新</button>
+  </div>
+</div>
+
+</div>
+<script>
+var LAN_IP = "127.0.0.1";
+function $(id){ return document.getElementById(id); }
+function show(el, ok, txt){
+  el.style.display = "block";
+  el.className = "res " + (ok ? "ok" : "err");
+  el.textContent = txt;
+}
+function loadProjects(){
+  fetch("/projects").then(function(r){ return r.json(); }).then(function(list){
+    var sel = $("proj");
+    if(!list || !list.length){ var o=document.createElement("option"); o.text="demo"; sel.add(o); return; }
+    list.forEach(function(p){ var o=document.createElement("option"); o.value=p; o.text=p; sel.add(o); });
+  }).catch(function(){});
+}
+function createSrv(){
+  var proj = $("proj").value || "demo";
+  var pass = $("cpass").value || "";
+  var btn = $("cbtn"); btn.disabled = true; btn.textContent = "创建中...";
+  fetch("/server/create?project=" + encodeURIComponent(proj) + "&pass=" + encodeURIComponent(pass))
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      btn.disabled = false; btn.textContent = "创建服务器";
+      if(j.error){ show($("cres"), false, "创建失败：" + j.error); return; }
+      show($("cres"), true,
+        "房间号：" + j.room + "\n密码：" + (pass || "(无)") +
+        "\n游戏地址：" + j.url +
+        "\n\n复制房间号和密码发给朋友，即可加入。");
+    })
+    .catch(function(e){ btn.disabled=false; btn.textContent="创建服务器"; show($("cres"), false, "请求失败：" + e); });
+}
+function joinSrv(){
+  var room = $("room").value.trim();
+  var pass = $("jpass").value || "";
+  var btn = $("jbtn"); btn.disabled = true; btn.textContent = "连接中...";
+  fetch("/server/join?room=" + encodeURIComponent(room) + "&pass=" + encodeURIComponent(pass))
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      btn.disabled = false; btn.textContent = "加入服务器";
+      if(j.error){ show($("jres"), false, j.error); return; }
+      show($("jres"), true, "连接成功，正在进入游戏...");
+      setTimeout(function(){ window.location.href = j.url; }, 600);
+    })
+    .catch(function(e){ btn.disabled=false; btn.textContent="加入服务器"; show($("jres"), false, "请求失败：" + e); });
+}
+function loadRooms(){
+  var el = $("rooms");
+  fetch("/server/rooms").then(function(r){ return r.json(); }).then(function(j){
+    if(j.local_only){ show(el, false, "房间信息仅限本机查看"); return; }
+    var list = j.rooms || [];
+    if(!list.length){ show(el, false, "暂无房间（去创建，或通过 Forge 试玩）"); return; }
+    var txt = "";
+    list.forEach(function(r){
+      txt += "房间 " + r.room + "  端口 " + r.port + "  密码 " + (r.pass || "(无)") + "  项目 " + r.project + "  " + (r.online ? "在线" : "离线") + "\n";
+    });
+    show(el, true, txt);
+  }).catch(function(e){ show(el, false, "请求失败：" + e); });
+}
+fetch("/ip").then(function(r){ return r.text(); }).then(function(ip){ if(ip && ip.length<40) LAN_IP = ip; $("ip").textContent = "本机IP " + ip; }).catch(function(){});
+loadProjects();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+n = 0
+while n < 10000 {
+    entity_spawn((n % 100) * 10.0, (n / 100) * 10.0, 1)
+    n = n + 1
+}
+say "spawned=" + entity_count()
+say "S6_DONE"

@@ -1,0 +1,7 @@
+import "sync.im"
+record gold = 0, store: "server"
+verse_host(9910)
+while true {
+    verse_host_poll()
+    wait 0.1
+}

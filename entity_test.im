@@ -1,0 +1,46 @@
+# entity integration with hash dict (run entity.im logic inline, simplified)
+__entity_seq = 0
+func merge_dict(base, extra) {
+    r = {}
+    for k in keys(base) { r[k] = base[k] }
+    for k in keys(extra) { r[k] = extra[k] }
+    return r
+}
+func entity_extend(base, extra) {
+    t = merge_dict(base, extra)
+    t["__base__"] = base
+    return t
+}
+func entity_new(template) {
+    global __entity_seq
+    __entity_seq = __entity_seq + 1
+    e = json_parse(json_serialize(template))
+    e["__id__"] = __entity_seq
+    return e
+}
+func entity_get(e, name) {
+    cur = e
+    while true {
+        if has(cur, name) { return cur[name] }
+        if has(cur, "__base__") {
+            cur = cur["__base__"]
+        } else {
+            return nil
+        }
+    }
+}
+Entity = {"__type__": "entity", "hp": 100, "strength": 10}
+Player = entity_extend(Entity, {"__type__": "player", "level": 1})
+p1 = entity_new(Player)
+say p1["__id__"]
+say entity_get(p1, "hp")
+say entity_get(p1, "level")
+say entity_get(p1, "strength")
+entity_set(p1, "hp", 80)
+say entity_get(p1, "hp")
+say entity_get(Entity, "hp")
+p2 = entity_new(Player)
+say p2["__id__"]
+say entity_get(p2, "hp")
+say len(keys(Player))
+say "entity-ok"

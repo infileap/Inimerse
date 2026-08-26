@@ -1,0 +1,25 @@
+# block_edit test - 注释里有 { 花括号也不影响
+a = 1
+B1: {
+    b = 2
+    say "string with : colon and { brace"
+    c = 3
+}
+d = 4
+_dbg_: {
+    say "debug only"
+    say "url: http://x" # 注释里的 : 和 { 应忽略
+}
+e = 5
+LOOP: {
+    i = 0
+    while i < 3 {
+        i = i + 1
+    }
+    if i > 2 {
+        break LOOP
+    }
+}
+f = 6
+to B1
+g = 7

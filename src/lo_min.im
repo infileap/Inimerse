@@ -1,0 +1,8 @@
+gui_stage(900, 640)
+gui_set_font("SimSun", 17, 4210752)
+log_room = gui_log_p(150, 150, 700, 320, "rooms")
+btn = gui_button_p(80, 520, 190, 44, "[create]")
+gui_text_a_p("lobby test", 0, 30, 1000, 1)
+while true {
+    wait 0.05
+}

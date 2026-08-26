@@ -1,0 +1,10 @@
+say "HELLO GUI"
+say "THIS IS A TEST"
+wait 1
+say "SECOND LINE"
+wait 1
+say "THIRD LINE"
+wait 1
+say "PRESS ANY KEY TO EXIT"
+input("> ")
+stop all

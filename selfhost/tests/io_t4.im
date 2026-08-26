@@ -1,0 +1,5 @@
+out = exec("echo hi")
+say "A=[" + str(out) + "]"
+out2 = exec("ver")
+say "B=[" + str(out2) + "]"
+stop all

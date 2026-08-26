@@ -1,0 +1,10 @@
+task t6 {
+    k = 0
+    while k < 3 {
+        yield
+    }
+    say "t6 ok"
+}
+start t6
+join t6
+say "TASK6_DONE"

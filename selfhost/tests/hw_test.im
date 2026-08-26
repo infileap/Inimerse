@@ -1,0 +1,9 @@
+out = exec("echo hello from inimerse")
+say "exec=[" + str(out) + "]"
+h = serial_open("COM1", 9600)
+say "serial_handle=" + str(h)
+r = http_get("http://example.com")
+say "http_len=" + str(len(r))
+say "http_head=[" + substr(r, 0, 30) + "]"
+say "done"
+stop all

@@ -1,0 +1,7 @@
+# fib15.im
+func fib(x) {
+    if x < 2 { return x }
+    return fib(x-1) + fib(x-2)
+}
+say "fib15=" + str(fib(15))
+stop all

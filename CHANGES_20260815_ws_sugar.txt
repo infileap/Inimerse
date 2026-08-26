@@ -1,0 +1,17 @@
+# ============ WebSocket 后端 + 语法糖 ============
+# 2026-08-15 17:10
+#
+## WebSocket (RFC6455) 服务端核心（verse_dist_mod，hub 升级）
+- ws_sha1（手写 SHA-1，abc 向量验证）/ ws_b64 / ws_handshake / ws_read_frame / ws_send_text
+- hub 的 HTTP 请求含 "Upgrade: websocket" → 101 握手 → 帧循环（echo）
+- 验证：RFC 固定 key 的 Sec-WebSocket-Accept 精确匹配 s3pPLMBiTxaQ9kYGzzhZRbK+xOo=；掩码帧 echo 正确
+- 踩坑：key 偏移 +17 -> +18（跳过冒号）
+
+## 语法糖：字符串拼接自动类型转换
+- L_ADD / L_CONCAT 字符串分支：非字符串操作数（int/float/bool）用 value_to_string 自动转
+- "a=" + 42 + " b=" + 3.14 -> "a=42 b=3.14"；"x"+1+2.5+"y" -> "x12.5y"；bool -> "true"/"false"
+- 兼容：concat_test 回归 14 OK
+
+## 多网络协议最终状态
+HTTP ✅ TCP ✅ UDP ✅ WebSocket ✅（服务端核心；帧流推送接线下一步）
+IPFS ⬜（CID=SHA256 设计就绪）

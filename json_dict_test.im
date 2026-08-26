@@ -1,0 +1,18 @@
+# json dict roundtrip
+d = {"name": "inimerse", "ver": 2, "tags": ["a", "b"]}
+s = json_serialize(d)
+say s
+d2 = json_parse(s)
+say d2["name"]
+say d2["ver"]
+say len(d2)
+say d2["tags"][0]
+say d2["tags"][1]
+# iteration over dict keys (positional)
+i = 0
+while i < len(d2) {
+    k = d2[i]
+    say k
+    i = i + 1
+}
+say "json-ok"

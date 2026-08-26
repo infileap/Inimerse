@@ -1,0 +1,20 @@
+# restart 最小复现：无限循环 task + stop/restart 反复
+task wr {
+    k = 0
+    while 1 {
+        k = k + 1
+    }
+}
+i = 0
+while i < 20 {
+    start wr
+    wait0.02
+    stop wr
+    wait0.02
+    restart wr
+    wait0.02
+    stop wr
+    wait0.02
+    i = i + 1
+}
+say "RESTART_STRESS_DONE"

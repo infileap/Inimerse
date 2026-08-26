@@ -1,0 +1,60 @@
+# node_task.im - 节点众包任务脚本库 (Step1)
+# 依赖: isolate_run (P2 进程隔离, 沙箱子进程执行第三方脚本)
+# 用法: import "node_task.im" as nt
+#   nt.node_task_init()                     -> 节点id
+#   nt.node_task_define(id, script, ms)     -> 注册任务
+#   nt.node_task_claim(id)                  -> 领取任务(返回script路径)
+#   nt.node_task_run(script, ms)            -> 隔离执行 -> {exit,out,timedout}
+#   nt.node_task_submit(id, exit, out)      -> 上报结果
+#   nt.node_task_status(id)                 -> ready/running/done/failed/""
+
+__nt_tasks = {}
+__nt_seq = 0
+__nt_node = ""
+
+func node_task_init() {
+  if __nt_node != "" { return __nt_node }
+  __nt_seq = __nt_seq + 1
+  __nt_node = "node-" + __nt_seq
+  return __nt_node
+}
+
+func node_task_define(task_id, script, timeout_ms) {
+  if task_id == "" || script == "" { return 0 }
+  if timeout_ms <= 0 { timeout_ms = 1000 }
+  d = { "script": script, "timeout": timeout_ms, "status": "ready", "result": nil, "exit": 0, "out": "", "node": "" }
+  __nt_tasks[task_id] = d
+  return 1
+}
+
+func node_task_claim(task_id) {
+  t = __nt_tasks[task_id]
+  if t == nil { return "" }
+  if __nt_node == "" { node_task_init() }
+  if t["status"] != "ready" { return "" }
+  t["status"] = "running"
+  t["node"] = __nt_node
+  return t["script"]
+}
+
+func node_task_run(script, timeout_ms) {
+  if script == "" { return { "exit": -1, "out": "invalid task script", "timedout": 0 } }
+  if timeout_ms <= 0 { timeout_ms = 1000 }
+  return isolate_run(script, timeout_ms)
+}
+
+func node_task_submit(task_id, exit_code, out) {
+  t = __nt_tasks[task_id]
+  if t == nil { return 0 }
+  if t["status"] != "running" { return 0 }
+  if exit_code == 0 { t["status"] = "done" } else { t["status"] = "failed" }
+  t["exit"] = exit_code
+  t["out"] = out
+  return 1
+}
+
+func node_task_status(task_id) {
+  t = __nt_tasks[task_id]
+  if t == nil { return "" }
+  return t["status"]
+}

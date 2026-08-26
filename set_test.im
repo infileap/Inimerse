@@ -1,0 +1,54 @@
+# set feature test (ASCII only; z uses GBK bytes)
+a = 1,2,3,Z[4~10]
+say 5 in a
+say 0 in a
+say min a
+say max a
+say 5 in N
+say -1 in N
+say min N
+say max N
+b = Z(4~6]
+say 4 in b
+say 5 in b
+say min b
+say max b
+say a in Z
+say N in Z
+say Z+ in N
+say Z in N
+say 1.5 in Float1
+say 1 in Float1
+say 1 in float1
+c = Float2(3~10)
+say min c
+say max c
+say 3.01 in c
+say 3 in c
+gamemode be 0,1,2,3:0
+say gamemode
+try {
+    gamemode = 5
+    say "should not print"
+} catch (e) {
+    say "be caught"
+    say e
+}
+gamemode = 2
+say gamemode
+s2 = "Chinese","PE",0
+say "Chinese" in s2
+say "JP" in s2
+e = ¿Õ
+say e
+
+# round + compact storage
+x = 0.1 + 0.2
+say round(x,2)
+say round(x,2) in Float1
+say round(x,2) in float2
+say round(123,-1)
+say round(1.005,2)
+say min a
+say max a
+say 3 in a

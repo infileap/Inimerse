@@ -1,0 +1,3 @@
+main {
+    write_file("D:/_t2.txt", "hello")
+}

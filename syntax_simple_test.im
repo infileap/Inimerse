@@ -1,0 +1,35 @@
+# 语法简化验证：if/while/for/repeat 单语句无花括号 + 悬挂 else
+a = 5
+if a > 1 say "if_ok"
+if a < 1 say "no" else say "else_ok"
+# while 单语句：用函数副作用做条件，body 只有 say（验证单语句）
+wi = 0
+func wstep() {
+    wi = wi + 1
+    return wi < 4
+}
+while wstep() say "w" + wi
+# repeat 单语句
+r = 0
+repeat 3 say "r" + r
+r = r + 1
+# for 单语句
+for j in 0..2 say "f" + j
+# 悬挂 else：绑定最近 if
+if a > 100 if a > 50 say "inner" else say "outer_binds_inner"
+# 块与单语句混用
+if a > 1 {
+    say "block_ok"
+} else {
+    say "block_no"
+}
+# 嵌套：单语句 if 在 while 块内
+k = 0
+while k < 4 {
+    if k == 2 say "k_two"
+    k = k + 1
+}
+# 单语句 if 返回值风格（表达式在条件里）
+n = 3
+if n == 3 say "n_three" else say "n_no"
+say "SYNTAX_SIMPLE_DONE"

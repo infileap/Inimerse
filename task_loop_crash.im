@@ -1,0 +1,6 @@
+# 漏洞复现: task 重复 start/join 循环 → 0xC0000005 (概率性, 10-20次)
+task tt { atomic_add("g", 1) }
+i = 0
+while i < 30 { start tt; join tt; i++ }
+say "g=" + atomic_get("g")
+say "DONE"

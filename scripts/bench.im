@@ -1,0 +1,10 @@
+func fib(n) {
+    if n < 2 { return n }
+    return fib(n-1) + fib(n-2)
+}
+say "fib(30)=" + str(fib(30))
+total = 0
+for i in range(0, 500000) {
+    total = total + i
+}
+say "sum=" + str(total)

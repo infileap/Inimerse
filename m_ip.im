@@ -1,0 +1,3 @@
+main {
+    write_file("D:/_t4.txt", "IP=" + lan_ip())
+}

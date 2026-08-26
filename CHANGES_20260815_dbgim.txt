@@ -1,0 +1,63 @@
+# ============ Inimerse 底层控制 + .im 调试器（取代 debug_mod.dll 第一步） ============
+# 2026-08-15 11:20  build: script-level debugger (dbg_* builtins) + debug.im
+#
+## 1. 底层控制下沉（VM 核心，ABI 尾部追加）
+- vm.h: VM 追加 dbg_active/dbg_pause/dbg_at_boundary/dbg_boundary_count
+  （volatile，调试器线程跨线程控制）+ mod_bcs/mod_bc_count（mod 脚本 bytecode 持有）
+- vm.c 主循环 step 边界: C 钩子(debug_hook)优先；否则 dbg_active 时停车
+  （at_boundary=1, pause=1, count++，忙等调试器 resume；15s 看门狗自动放行，
+  故障调试器永不卡死 VM）；恢复后 fast_left=2 保证至少执行一条指令
+- vm.h: step_mode 改 volatile（调试器线程写、主线程读——非 volatile 时编译器
+  缓存导致 resume 后主线程不触发边界，这是单步不推进的根因之一）
+- 新 builtin（vm_debug_builtins_register，main.c 注册）:
+  dbg_set_active/dbg_active/dbg_wait_boundary/dbg_resume(step)/dbg_pause_now/
+  dbg_break/dbg_ip/dbg_disasm/dbg_var/dbg_exec（复用 vm_debug_var/exec）
+- io_mod: stdin_ready()（_kbhit + PeekNamedPipe）；input() 已有
+- compiler.c builtin 名表追加 dbg_* 与 stdin_ready（两处维护的隐患，见遗留）
+- vm_exec_script_file(): mod 脚本一次性执行（bytecode 挂 VM 生命周期；
+  注意 vm_run 结束会 stop_all 杀线程，只适合初始化脚本，长驻线程用拼接方案）
+
+## 2. 调试器 .im 化（架构决策：线程化调试器 + 源码拼接）
+- 方案对比: A=bytecode 合并（钩子函数需在被调试 bc 内，工程大）;
+  B=线程化调试器（独立线程 + 全局标志通信）——选 B
+- 关键: vm_run 结束时 stop_all 会杀所有线程 → mod 会话启动的调试器线程活不到
+  用户会话 → 改为 main() debug 命令把 mods/debug/main.im 源码拼接到用户脚本
+  前面一起编译（线程生命周期完全正常，且普通运行零加载）
+- mods/debug/main.im: 线程内循环 等边界→input 命令→resume；命令 s/c/p/dis/v/q；
+  EOF(stdin 管道/文件耗尽) 自动 resume 放行；q 脱离调试程序跑完
+- main() debug 命令: 有 C 调试器(DLL)优先旧路径；否则拼接 .im 调试器
+  （过渡期双轨，DLL 移除后自动切换）
+
+## 3. 踩坑记录（都实锤过）
+- fgets 的 msvcrt 缓冲会预读管道数据 → PeekNamedPipe 检测不到 → stdin_ready
+  假阴性 → 调试器轮询死锁 → 改用 input() 直读 + EOF 放行
+- wait_boundary 返回过早读旧 vm->ip → 停车计数 dbg_boundary_count 区分新旧
+  边界（首次已停直接返回，后续等 count 变化）
+- step_mode 非 volatile → 跨线程失效（见上）
+- 主线程边界忙等必须加看门狗（调试器故障不卡死 VM）
+- cmd < file 重定向下 input() 读到 EOF（findstr 读同一文件正常、PowerShell
+  管道正常；疑似 msvcrt/cmd 文件句柄交互，未定位，测试用 PowerShell 管道）
+
+## 4. 事故教训（重要）
+- main.c 是 GBK 编码！用 ReadAllText/WriteAllText(UTF8) 修改会毁掉全部中文
+  （字节 19969→75760）。已从 D:\backup\inimerse_20260815_perf3\main.c 恢复，
+  损坏件留 main.c.corrupt_20260815。以后改 main.c 必须 GetEncoding(936) 读写。
+  其他中文源文件（compiler.c/io_mod.c 等）同理——统一 GBK 安全操作。
+- PowerShell 代码执行工具不支持多行大括号块（静默失败），脚本用单行/行数组
+- user_exec 每次调用从 D:\inimerse 开始（Set-Location 不跨调用持久）
+
+## 5. 验证
+- test_mech2.im: 单步 12→14→16（机制测试，保留）
+- debug concat_test.im: p=49 → s → p=53 → s → p=57 → c 跑完，0.2s 无 watchdog
+- dis/v/q 正常；普通运行 concat_test/set_test 回归通过
+- 部署版双路径: mod.st 指向 DLL 时 C 调试器；绕过时 .im 调试器自动启用
+- 服务已重启: 4 引擎 + 4 桥 + 1 应用，8 端口 LISTENING，日志干净
+- debug_mod.dll 已重链（vm.h 结构变更必须）
+
+## 遗留（P1/P2）
+- .im 调试器功能少于 C 版（断点/寄存器/bt/单步细化待补；dbg_exec 已备）
+- cmd < 文件重定向 EOF 怪癖
+- wait 指令后主线程 ip 回 0（既有问题，影响 ip 显示，不影响停车）
+- 编译器 builtin 名表与运行时注册表两处维护（建议未来合并/自动同步）
+- vm_exec_script_file 的通用 .im 模块系统（mod.st script 字段）未做——当前
+  调试器走拼接方案；通用模块系统 P2（需解决线程生命周期 + 函数持久化）

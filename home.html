@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Infiverse 个人主页</title>
+<style>
+body { background:#141828; color:#e8ecf4; font-family:system-ui,"Microsoft YaHei",sans-serif; margin:0; padding:12px; }
+.card { background:#1d2337; border:1px solid #2c3550; border-radius:10px; padding:14px; margin-bottom:12px; }
+h2 { margin:0 0 10px; font-size:15px; color:#7fd4ff; }
+label { font-size:12px; color:#9aa7bd; }
+input, button { background:#12182a; color:#e8ecf4; border:1px solid #2c3550; border-radius:6px; padding:7px; margin:4px 0; font-size:14px; width:100%; box-sizing:border-box; }
+button { background:#1f7a4d; border:none; cursor:pointer; font-weight:bold; }
+#bar { background:#000; color:#7fd4ff; padding:6px 10px; font-size:12px; margin-bottom:10px; }
+.friend { display:flex; justify-content:space-between; align-items:center; padding:8px 6px; border-bottom:1px solid #232b42; }
+.friend .nm { font-size:13px; }
+.friend .del { color:#e05d5d; cursor:pointer; font-size:12px; }
+.small { font-size:11px; color:#8a97ad; }
+.profile-head { display:flex; gap:12px; align-items:center; margin-bottom:10px; }
+#avatarPreview { width:52px; height:52px; border-radius:50%; background:#12182a; border:1px solid #3a4668; display:grid; place-items:center; font-size:28px; }
+.notice { min-height:16px; color:#8fe0b0; font-size:12px; margin-top:6px; }
+@media (min-width:700px) { body { max-width:760px; margin:auto; padding:24px; } .card { padding:18px; } }
+</style>
+</head>
+<body>
+<div id="bar">Infiverse 个人中心 g17</div>
+
+<div class="card">
+  <h2>个人主页</h2>
+  <div class="profile-head"><div id="avatarPreview">🙂</div><div class="small">头像预览 · UID 与账号关联状态</div></div>
+  <label>ID(不可修改)</label><div style="display:flex;gap:6px"><input id="myId" readonly><button style="width:auto;white-space:nowrap" onclick="copyUid()">复制 UID</button></div>
+  <label>名字</label><input id="myName">
+  <label>简介</label><input id="myBio">
+  <label>头像(emoji)</label><input id="myAvatar">
+  <button onclick="saveMe()">保存资料</button>
+  <div id="notice" class="notice" role="status" aria-live="polite"></div>
+</div>
+
+<div class="card">
+  <h2>好友管理</h2>
+  <div id="friendList"></div>
+  <div style="display:flex;gap:6px">
+    <input id="fName" placeholder="名字" style="flex:1">
+    <input id="fId" placeholder="ID (u_...) 或 节点IP@u_id" style="flex:1.5">
+  </div>
+  <button onclick="addFriend()">添加好友</button>
+  <div class="small" style="margin-top:6px">聊天请到左侧"聊天"页</div>
+</div>
+
+<script>
+function $(id){ return document.getElementById(id); }
+function esc(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function notice(s){ $('notice').textContent=s||''; }
+function preview(){ var v=$('myAvatar').value.trim(); $('avatarPreview').textContent=v||'🙂'; }
+function copyUid(){ var v=$('myId').value; if(!v)return; if(navigator.clipboard) navigator.clipboard.writeText(v).then(function(){notice('UID copied');}); }
+function loadMe(){
+  fetch('/api/me').then(function(r){ return r.json(); }).then(function(j){
+    $('myId').value = j.id || '';
+    $('myName').value = j.name || '';
+    $('myBio').value = j.bio || '';
+    $('myAvatar').value = j.avatar || '';
+    preview();
+  }).catch(function(){});
+}
+function saveMe(){
+  notice('Saving...');
+  fetch('/api/profile?name=' + encodeURIComponent($('myName').value) + '&bio=' + encodeURIComponent($('myBio').value) + '&avatar=' + encodeURIComponent($('myAvatar').value))
+    .then(function(r){ return r.json(); }).then(function(){ notice('Saved'); loadMe(); }).catch(function(){ notice('Save failed'); });
+}
+function loadFriends(){
+  fetch('/api/friends').then(function(r){ return r.json(); }).then(function(j){
+    var fs = j.friends || [];
+    var h = '';
+    fs.forEach(function(f){
+      var ai = f.is_ai === 1 || f.is_ai === true;
+      h += '<div class="friend"><span class="nm">' + esc(f.name) + (ai ? ' <span class="small" style="color:#a78bfa">[AI]</span>' : '') + ' <span class="small">' + esc(f.id) + (f.node ? ' @' + esc(f.node) : '') + '</span></span><button class="del" data-id="' + esc(f.id) + '" style="width:auto;background:none;padding:2px 4px">删除</button></div>';
+    });
+    $('friendList').innerHTML = h || '<div class="small">No friends</div>';
+    $('friendList').querySelectorAll('.del').forEach(function(b){ b.onclick=function(){ delFriend(b.getAttribute('data-id')); }; });
+  }).catch(function(){ $('friendList').innerHTML='<div class="small">Failed to load friends</div>'; });
+}
+function addFriend(){
+  var id = $('fId').value.trim();
+  var nm = $('fName').value.trim();
+  if (!id) return;
+  var node = '';
+  if (id.indexOf('@') > 0) { var sp = id.split('@'); id = sp[0]; node = sp[1]; }
+  fetch('/api/friend?name=' + encodeURIComponent(nm || id) + '&id=' + encodeURIComponent(id) + (node ? '&node=' + encodeURIComponent(node) : ''))
+    .then(function(r){ return r.json(); }).then(function(){ $('fName').value=''; $('fId').value=''; loadFriends(); }).catch(function(){ notice('Add friend failed'); });
+}
+function delFriend(id){
+  fetch('/api/friend/del?id=' + encodeURIComponent(id)).then(function(r){ return r.json(); }).then(function(){ loadFriends(); }).catch(function(){ notice('Delete friend failed'); });
+}
+$('myAvatar').addEventListener('input', preview);
+loadMe();
+loadFriends();
+</script>
+</body>
+</html>

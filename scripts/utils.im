@@ -1,0 +1,9 @@
+func add(a, b) { return a + b }
+func double(x) { return x * 2 }
+count = 100
+thread t1: {
+    repeat 3 {
+        say "t1 tick"
+        wait 0.3
+    }
+}

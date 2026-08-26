@@ -1,0 +1,25 @@
+# bare try test (ASCII only)
+x = 1
+try {
+    throw "boom"
+    x = 999
+}
+say "after try x="
+say x
+y = 0
+try {
+    throw 42
+}
+say "after second y="
+say y
+# nested: bare try inside normal try
+try {
+    try {
+        throw "inner"
+    }
+    say "inner swallowed"
+} catch (e) {
+    say "outer caught: "
+    say e
+}
+say "done"

@@ -1,0 +1,9 @@
+# smoke2.im
+a = 10 % 3
+b = 0x1F
+s = "ok"
+s = s + str(a) + ":" + str(b)
+write_file("D:\\inimerse_stable\\_smoke2.txt", s)
+f = func(x) { if x <= 1 { return 1 } return x * f(x - 1) }
+write_file("D:\\inimerse_stable\\_smoke2b.txt", "fact=" + str(f(6)))
+stop all

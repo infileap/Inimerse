@@ -1,0 +1,11 @@
+import "nsadv_mod.im" as adv
+say "adv.getq -> " + adv.getq()
+say "adv.LIMIT -> " + adv.LIMIT
+say "adv.x -> " + adv.x
+adv.x = 200
+say "adv.x after write -> " + adv.x
+adv.q = 7
+say "adv.q -> " + adv.q
+adv.start_worker()
+wait 0.05
+say "ADV_DONE"

@@ -1,0 +1,7 @@
+using gui
+say "BUILD TEST START"
+window(320, 240, "Build Test")
+say "WINDOW OPENED - PRESS X TO CLOSE"
+gui_wait()
+say "BUILD TEST DONE"
+stop all

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infiverse — Inimerse 桌面应用</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<!-- VS Code 式左侧活动栏：8 模块 -->
+<nav id="activitybar" class="activitybar">
+  <div class="brand-mark" aria-label="Infiverse">I</div>
+  <button class="ab-item active" data-mod="home" title="主页">🏠</button>
+  <button class="ab-item" data-mod="chat" title="聊天">💬</button>
+  <button class="ab-item" data-mod="browse" title="资源与联机">🌐</button>
+  <button class="ab-item" data-mod="workbench" title="工作台">⚙️</button>
+  <button class="ab-item" data-mod="inimerse" title="Inimerse 管理">🧩</button>
+  <button class="ab-item" data-mod="toolbox" title="工具箱">🛠️</button>
+  <button class="ab-item" data-mod="plugins" title="插件库">🧲</button>
+  <button class="ab-item" data-mod="settings" title="设置">⚡</button>
+  <div class="ab-spacer"></div>
+  <button id="theme-toggle" class="ab-item" title="切换主题">🌓</button>
+</nav>
+
+<!-- 侧边栏（模块相关面板） -->
+<aside id="sidebar" class="sidebar">
+  <div id="sidebar-content"><!-- 由 app.js 按模块渲染 --></div>
+</aside>
+
+<!-- 主视图 -->
+<main id="view" class="view">
+  <header class="view-header">
+    <span id="view-title">主页</span>
+    <span id="view-sub" class="view-sub"></span>
+  </header>
+  <div id="view-content"><!-- 模块内容 --></div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

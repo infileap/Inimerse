@@ -1,0 +1,6 @@
+try {
+    throw "x"
+} catch (e) {
+    say "caught"
+}
+say "ok"

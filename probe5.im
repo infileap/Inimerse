@@ -1,0 +1,11 @@
+h = 7
+i = 8
+thread t2 {
+    global h
+    global i
+    say "t2h=" + h
+    say "t2i=" + i
+}
+start t2
+wait 0.05
+say "DONE5"

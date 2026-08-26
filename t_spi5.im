@@ -1,0 +1,14 @@
+__spi_data = 0
+count = 0
+task on_tick {
+  global __spi_data
+  atomic_add("count", 1)
+  say "tick:" + __spi_data
+}
+r = spi_on("tick", "on_tick")
+f1 = spi_emit("tick", 42)
+f2 = spi_emit("tick", "hello")
+f3 = spi_emit("nop", 0)
+say "r=" + r + " f1=" + f1 + " f2=" + f2 + " f3=" + f3
+say "count=" + atomic_get("count")
+say "DONE"

@@ -1,0 +1,27 @@
+# 节点众包测试: 定义 -> 领取 -> 隔离执行 -> 上报 -> 状态
+import "node_task.im" as nt
+
+say "node=" + nt.node_task_init()
+
+nt.node_task_define("t1", "D:/inimerse_stable/t_nt_child.im", 5000)
+nt.node_task_define("t2", "D:/inimerse_stable/t_nt_child_loop.im", 2000)
+say "st0=" + nt.node_task_status("t1")
+
+s1 = nt.node_task_claim("t1")
+say "claimed=" + s1
+
+r1 = nt.node_task_run(s1, 5000)
+say "r1exit=" + r1["exit"]
+nt.node_task_submit("t1", r1["exit"], r1["out"])
+say "st1=" + nt.node_task_status("t1")
+say "out1=" + r1["out"]
+
+# 死循环任务: 超时 kill
+s2 = nt.node_task_claim("t2")
+r2 = nt.node_task_run(s2, 2000)
+say "r2to=" + r2["timedout"]
+nt.node_task_submit("t2", r2["exit"], r2["out"])
+say "st2=" + nt.node_task_status("t2")
+
+say "st_missing=" + nt.node_task_status("nope")
+say "DONE"

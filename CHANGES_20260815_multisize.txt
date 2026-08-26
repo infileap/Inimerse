@@ -1,0 +1,35 @@
+# ============ §12.1 多平台/多显示尺寸适配（Windows 起步） ============
+# 2026-08-15 13:20
+#
+## 实现（先 Windows 全屏 + 常见尺寸）
+### 1) DPI 感知（main.c）
+- SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)（Win10+，动态获取），
+  回退 SetProcessDPIAware —— 高 DPI 下窗口不模糊
+### 2) 新 builtin（gui_mod.c）
+- gui_fullscreen(1/0)：无边框全屏切换（保存/恢复窗口矩形+样式，SetWindowPos 铺满屏幕）
+- gui_window_size(w, h)：运行时改窗口尺寸（常见尺寸由脚本传：1280x720/1920x1080/1366x768/1600x900/2560x1440）
+- gui_display_size() -> [sw, sh]：屏幕分辨率
+- gui_viewport(lw, lh)：逻辑视口（0=关闭）——游戏逻辑坐标固定，任意窗口/全屏尺寸正确显示
+### 3) 逻辑视口实现（GDI 后端，StretchBlt 方案）
+- G 结构加 winW/winH（物理客户端尺寸）+ vpW/vpH（逻辑视口）
+- gui_sync_size：G.W/G.H = 逻辑尺寸（viewport 启用时），winW/winH = 物理；
+  后备缓冲 memBM 按逻辑尺寸创建
+- 呈现：StretchBlt(物理) <- memBM(逻辑)（HALFTONE 已移除，1:1 时无损；
+  非等比缩放由用户脚本用 viewport 控制）
+- 鼠标输入：wndproc 4 个鼠标 case（DOWN/MOVE/UP/DBLCLK）物理坐标 -> 逻辑坐标
+  （MAKELPARAM 换算），控件命中/精灵点击自动对齐
+- 帧流：G.W/G.H 为逻辑尺寸，sp/形状按逻辑坐标输出（客户端自行按视口缩放）
+### 4) 调试过程教训
+- "崩溃"实为测试脚本用了未注册的 gui_window（正确 API 是 window）-> create_stage
+  未执行 -> G.lock 未初始化 -> gui_rect 的 EnterCriticalSection 崩溃（原有脆弱性，
+  非本次改动引入）
+- 曾尝试 SetWorldTransform（GM_ADVANCED）方案 -> 同样表现为崩溃，弃用改 StretchBlt
+  （更简单可靠：memBM 逻辑尺寸 + 呈现时拉伸）
+## 验证
+- gui_display_size -> [1920,1200]；viewport 800x600 + 矩形/文本缩放正确；
+  fullscreen 进出正常；window_size 1024x768 正常；无崩溃
+- 回归 concat/bench 全过；服务 4+4+1 8 端口健康
+## 边界/后续（ROADMAP §12.1 继续项）
+- 手机/平板/嵌入式：渲染后端抽象（SurfaceView/Web Fullscreen/KMS）+ 触控输入抽象
+- 逻辑视口非等比拉伸策略（letterbox 等比居中）
+- 全屏 API 抽象（本次为 Win32 无边框实现）

@@ -1,0 +1,5 @@
+import "../lexer.im"
+import "../parser.im"
+import "../eval.im"
+run_file("tests/prog1min.im")
+stop all

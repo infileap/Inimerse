@@ -1,0 +1,16 @@
+using thread
+thread t: {
+    repeat 20 {
+        say "tick"
+        wait 0.2
+    }
+    say "t end"
+}
+main {
+    start t
+    wait 1
+    t.wait 2
+    join t, 15
+    say "done"
+}
+stop all

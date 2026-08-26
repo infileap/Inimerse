@@ -1,0 +1,47 @@
+# Build outputs and native artifacts
+*.exe
+*.dll
+*.pdb
+*.lib
+*.exp
+*.obj
+*.o
+target/
+Infiverse_standard/src-tauri/target/
+
+# Runtime and personal data
+userdata/
+Infiverse_standard/userdata/
+!userdata/
+!Infiverse_standard/userdata/
+!userdata/.gitkeep
+!Infiverse_standard/userdata/.gitkeep
+**/messages/
+**/wv2data/
+*.bin
+*.seed
+
+# Logs, caches and temporary probes
+*.log
+*.tmp
+*.bak
+*.old
+*.cache
+_wv2sdk/
+app/*WebView2/
+app/wv2data/
+
+# Local/editor files
+.vs/
+.vscode/
+*.user
+*.suo
+desktop.ini
+
+# Local OAuth/config secrets
+oauth_*.json
+oauth_*.bin
+*.secret
+.env
+.env.*
+!.env.example

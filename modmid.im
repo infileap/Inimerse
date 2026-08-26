@@ -1,0 +1,4 @@
+import "modsub.im" as sub
+func getsub() {
+    return sub.gety()
+}

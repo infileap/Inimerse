@@ -1,0 +1,13 @@
+using thread
+thread spin: {
+    while true {
+        x = x + 1
+    }
+}
+main {
+    start spin
+    wait 3
+    say "spin finished=" + str(spin.finished)
+    say "main alive"
+}
+stop all

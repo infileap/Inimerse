@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Inimerse Web Player</title>
+<style>
+  body { margin:0; background:#111; display:flex; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; }
+  #wrap { position:relative; }
+  canvas { background:#000; border:1px solid #333; box-shadow:0 0 30px rgba(0,0,0,.8); }
+  #status { position:fixed; top:8px; left:12px; color:#8f8; font:12px monospace; }
+  #help { position:fixed; bottom:8px; left:12px; color:#666; font:11px monospace; }
+  input[type=number] { width:70px; background:#222; color:#8f8; border:1px solid #444; padding:3px 6px; font:12px monospace; }
+  button { background:#282; color:#fff; border:0; padding:4px 12px; cursor:pointer; font:12px sans-serif; border-radius:3px; }
+  button:hover { background:#3a3; }
+</style>
+</head>
+<body>
+<div id="status">offline</div>
+<div id="help">方向键/空格/字母=按键; 鼠标=点击/拖动</div>
+<div id="wrap">
+  <canvas id="cv" width="900" height="640"></canvas>
+</div>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const status = document.getElementById('status');
+let ws = null, port = 11461, autoReconnect = true;
+
+function color(c) {
+  const v = (c & 0xFFFFFF) >>> 0;
+  return '#' + v.toString(16).padStart(6, '0');
+}
+
+function connect() {
+  ws = new WebSocket('ws://127.0.0.1:' + port);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { status.textContent = 'connected :' + port; status.style.color = '#8f8'; };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') { draw(ev.data); return; }
+    const buf = new Uint8Array(ev.data);
+    draw(new TextDecoder().decode(buf));
+  };
+  ws.onclose = () => { status.textContent = 'disconnected (reconnecting...)'; status.style.color = '#f88'; if (autoReconnect) setTimeout(connect, 1000); };
+  ws.onerror = () => { try { ws.close(); } catch(e) {} };
+}
+
+/* parse concatenated JSON frames */
+function draw(stream) {
+  let i = 0;
+  while (i < stream.length) {
+    const next = stream.indexOf('}{', i);
+    const end = next >= 0 ? next + 1 : stream.length;
+    try {
+      const f = JSON.parse(stream.slice(i, end));
+      render(f);
+    } catch(e) {}
+    i = end;
+  }
+}
+
+function render(f) {
+  if (f.w && f.h) { cv.width = f.w; cv.height = f.h; }
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  /* shapes */
+  (f.r || []).forEach(sh => {
+    const c = color(sh.c);
+    switch (sh.t) {
+      case 0: ctx.fillStyle = c; ctx.fillRect(sh.x, sh.y, sh.w, sh.h); break;
+      case 1: ctx.strokeStyle = c; ctx.lineWidth = 1; ctx.strokeRect(sh.x, sh.y, sh.w, sh.h); break;
+      case 2: ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.lineTo(sh.x + sh.w, sh.y); ctx.stroke(); break;
+      case 3: ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(sh.x, sh.y); ctx.lineTo(sh.x, sh.y + sh.h); ctx.stroke(); break;
+      case 4: ctx.fillStyle = c; ctx.font = '14px SimSun, sans-serif'; ctx.textAlign = sh.a === 1 ? 'center' : sh.a === 2 ? 'right' : 'left';
+              ctx.fillText(sh.s || '', sh.a === 1 ? sh.x + sh.w / 2 : sh.a === 2 ? sh.x + sh.w : sh.x, sh.y + 13); break;
+      case 5: ctx.fillStyle = c; ctx.fillRect(sh.x, sh.y, sh.w, sh.h);
+              ctx.strokeStyle = color(sh.c || 0); ctx.strokeRect(sh.x, sh.y, sh.w, sh.h); break;
+      default: ctx.strokeStyle = c; ctx.strokeRect(sh.x, sh.y, sh.w, sh.h);
+    }
+  });
+  /* texts */
+  (f.t || []).forEach(t => {
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px SimSun, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(t.s, t.x, t.y + 13);
+  });
+  /* controls: simple boxes */
+  (f.c || []).forEach(ctl => {
+    ctx.strokeStyle = 'rgba(120,160,255,.7)';
+    ctx.strokeRect(ctl.x, ctl.y, ctl.w, ctl.h);
+    if (ctl.t === 4) { /* button */ ctx.fillStyle = 'rgba(120,160,255,.15)'; ctx.fillRect(ctl.x, ctl.y, ctl.w, ctl.h); }
+    if (ctl.s) { ctx.fillStyle = '#cde'; ctx.font = '12px SimSun'; ctx.fillText(ctl.s.slice(0, 20), ctl.x + 4, ctl.y + 15); }
+  });
+}
+
+/* input */
+const KEYMAP = { ' ': 'space', 'Enter': 'enter', 'Tab': 'tab', 'Escape': 'esc',
+  'Backspace': 'backspace', 'Delete': 'delete', 'Shift': 'shift', 'Control': 'ctrl',
+  'Alt': 'alt', 'Home': 'home', 'End': 'end', 'ArrowLeft': 'left', 'ArrowRight': 'right',
+  'ArrowUp': 'up', 'ArrowDown': 'down', 'F1':'f1','F2':'f2','F3':'f3','F4':'f4','F5':'f5',
+  'F6':'f6','F7':'f7','F8':'f8','F9':'f9','F10':'f10','F11':'f11','F12':'f12' };
+function keyName(e) {
+  if (KEYMAP[e.key]) return KEYMAP[e.key];
+  if (e.key && e.key.length === 1 && /[a-zA-Z]/.test(e.key)) return e.key.toLowerCase();
+  return null;
+}
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+window.addEventListener('keydown', e => {
+  const k = keyName(e); if (!k) return;
+  if (k === 'tab') e.preventDefault();
+  send({ key: k, down: 1 });
+});
+window.addEventListener('keyup', e => {
+  const k = keyName(e); if (!k) return;
+  send({ key: k, down: 0 });
+});
+cv.addEventListener('mousedown', e => { e.preventDefault(); send({ mouse: { x: e.offsetX, y: e.offsetY, btn: 1 } }); });
+cv.addEventListener('mouseup', e => { send({ mouse: { x: e.offsetX, y: e.offsetY, btn: 0 } }); });
+cv.addEventListener('mousemove', e => { if (e.buttons & 1) send({ mouse: { x: e.offsetX, y: e.offsetY, btn: 1 } }); });
+
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+say "nt-child-ok"
+say "sum=" + (1 + 2)
