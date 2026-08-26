@@ -244,6 +244,7 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 - [优化路线pro.md](../future/优化路线pro.md)
 - [Inim OS总纲.md](../future/Inim%20OS总纲.md)
 - [Inim OS特性.md](../future/Inim%20OS特性.md)
+- [WASM.md](WASM.md)
 
 ## 16. 兼容性与性能建议
 

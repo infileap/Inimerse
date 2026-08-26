@@ -17,6 +17,7 @@
 - [x] Linux 核心 VM 可独立链接并运行（`make`、`inimerse --version`、`inimerse where`）；平台专用模块暂以能力错误桩隔离。
 - [ ] 为 Fiber、线程、锁和进程补齐 POSIX 后端及不可用能力错误码。
 - [ ] 完成 Windows、Linux、WebAssembly 构建矩阵。
+- [ ] WASM 核心目标：先完成 `wasm32-wasi` 编译，再接入浏览器宿主导入表（边界说明见 `docs/WASM.md`）。
 - [ ] 为 `isolate_mod` 增加跨平台输出捕获、超时和资源限制。
 
 ## P1：UPP/CRP 多人连接
