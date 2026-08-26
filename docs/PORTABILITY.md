@@ -101,3 +101,13 @@ cc -std=c11 -Isrc src/platform/platform.c src/platform/platform_probe.c -o platf
 ```
 
 探针通过后，再逐步把 VM 的时钟、休眠和路径调用迁移到该接口。
+## Linux/WSL 验收
+
+WSL2 Ubuntu 环境可从仓库根目录执行：
+
+```bash
+make -j2
+./tools/posix_smoke.sh
+```
+
+GitHub Actions 的 `linux-build.yml` 会在 Ubuntu 24.04 上重复协议回归、POSIX 构建及 `--version`/`where` 冒烟检查。当前 POSIX 构建对尚未迁移的网络、键鼠和原生动态库能力返回明确的能力不可用结果。

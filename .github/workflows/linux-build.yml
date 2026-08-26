@@ -1,0 +1,27 @@
+name: Linux build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux-core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Protocol regression
+        run: node tools/regression.js
+      - name: Build POSIX core
+        run: make -j2
+      - name: Smoke test
+        run: |
+          ./inimerse --version
+          ./inimerse where
+      - name: Clean generated binary
+        if: always()
+        run: make clean
+
