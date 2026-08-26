@@ -11,6 +11,7 @@
 - [x] 建立 ABI 兼容性测试；旧版（缺省 `abi`，按 v1 处理）模组保持兼容。
 - [ ] 将 `net_mod` / `server_mod` 的 TCP、HTTP、WebSocket 后端统一迁移到 PAL。
 - [ ] 将 runtime 的 HTTP、串口、键鼠和系统调用内置函数迁移到 PAL（当前 Linux 使用明确的空实现基线）。
+- [x] POSIX 核心提供文件读写、输入、单调时钟和休眠基础函数。
 - [x] Linux 核心 VM 可独立链接并运行（`make`、`inimerse --version`、`inimerse where`）；平台专用模块暂以能力错误桩隔离。
 - [ ] 为 Fiber、线程、锁和进程补齐 POSIX 后端及不可用能力错误码。
 - [ ] 完成 Windows、Linux、WebAssembly 构建矩阵。

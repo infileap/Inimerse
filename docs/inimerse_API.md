@@ -196,6 +196,8 @@ stage main {
 
 稳定函数签名见 API_REFERENCE.md 和 API_BUILTIN_TABLE.md。平台能力应通过 src/platform 的 PAL 接口访问。
 
+POSIX 核心构建额外提供以下跨平台基础函数：`read_file(path)` 返回文件文本，`write_file(path, content)` 返回布尔成功值，`input(prompt)` 读取一行标准输入，`time_ms()` 返回单调毫秒计数，`sleep_ms(ms)` 暂停当前任务。文件路径仍受宿主工作目录和沙箱策略约束。
+
 ## 13. 命令行
 
 ~~~text
