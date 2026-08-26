@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11 -I src -I src/parser -I src/compiler -I src/vm -I src/runtime -I src/mod -I src/common -I src/lexer
+CFLAGS = -D_GNU_SOURCE -D_stricmp=strcasecmp -Wall -Wextra -std=c11 -I src -I src/parser -I src/compiler -I src/vm -I src/runtime -I src/mod -I src/common -I src/lexer
 LDFLAGS = -lm
 
 SRCS = src/main.c \

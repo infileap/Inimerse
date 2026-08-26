@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <strings.h>
+#endif
 #include <ctype.h>
 
 /* AI-era structured errors (--err-json): LLM-friendly {error,line,col,expect,got,fix} */

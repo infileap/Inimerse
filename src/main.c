@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 extern int build_project_impl(void *vm, const char *cfgPath, int mode, const char *outExe);
@@ -13,11 +14,11 @@ extern int build_project_impl(void *vm, const char *cfgPath, int mode, const cha
 
 #ifdef _WIN32
 #include <windows.h>
+#endif
 #include "headless_server.h"
 #include "isolate_mod.h"
 #include "desugar_mod.h"
 #include "lint_mod.h"
-#endif
 
 #include "parser.h"
 #include "compiler.h"
@@ -328,6 +329,7 @@ char *inim_load_text(const char *path) {
         memmove(buf, buf + 3, rd - 3 + 1);
         rd -= 3;
     }
+    #ifdef _WIN32
     if (rd > 0 && !inim_utf8_valid((const unsigned char*)buf, (int)rd)) {
         int wlen = MultiByteToWideChar(936, 0, buf, (int)rd, NULL, 0);
         if (wlen > 0) {
@@ -349,6 +351,7 @@ char *inim_load_text(const char *path) {
             }
         }
     }
+    #endif
     return buf;
 }
 
@@ -407,15 +410,16 @@ static void repl(VM *vm) {
     }
 }
 
-/* �?Windows 璺緞涓殑 '/' 缁熶竴锟?'\' */
+/* �?Windows 璺緞涓殑 '/' 缁熶竴锟?'\' */
 static void normalize_path(char *p) {
-    while (*p) {
-        if (*p == '/') *p = '\\';
-        p++;
-    }
+#ifdef _WIN32
+    while (*p) { if (*p == '/') *p = '\\'; p++; }
+#else
+    (void)p;
+#endif
 }
 
-/* 鍘绘帀璺緞涓殑鎵╁睍鍚嶏紙�?"a.im" -> "a"锛夛紝缁撴灉鍐欏�?out */
+/* 鍘绘帀璺緞涓殑鎵╁睍鍚嶏紙�?"a.im" -> "a"锛夛紝缁撴灉鍐欏�?out */
 static void strip_ext_into(char *out, size_t out_sz, const char *path) {
     strncpy(out, path, out_sz - 1);
     out[out_sz - 1] = '\0';
@@ -424,21 +428,25 @@ static void strip_ext_into(char *out, size_t out_sz, const char *path) {
         *dot = '\0';
 }
 
-/* 鑾峰彇鑴氭湰鐨勭粷瀵硅矾寰勶紙malloc锛岃皟鐢拷?free�?*/
+/* 鑾峰彇鑴氭湰鐨勭粷瀵硅矾寰勶紙malloc锛岃皟鐢拷?free�?*/
 static char *make_abs_path(const char *path) {
-    char *abs = malloc(MAX_PATH);
-    if (!abs) return NULL;
-    char *rp = _fullpath(abs, path, MAX_PATH);
-    if (!rp) { free(abs); return NULL; }
-    normalize_path(abs);
-    return abs;
+#ifdef _WIN32
+    char *abs = malloc(MAX_PATH); if (!abs) return NULL;
+    if (!_fullpath(abs, path, MAX_PATH)) { free(abs); return NULL; }
+    normalize_path(abs); return abs;
+#else
+    return realpath(path, NULL);
+#endif
 }
 
-/* 灏嗗伐浣滅洰褰曞垏鎹㈠埌鑴氭湰鎵€鍦ㄧ洰褰曪紙杩斿洖鑴氭湰缁濆璺緞锛宮alloc�?*/
+/* 灏嗗伐浣滅洰褰曞垏鎹㈠埌鑴氭湰鎵€鍦ㄧ洰褰曪紙杩斿洖鑴氭湰缁濆璺緞锛宮alloc�?*/
 static char *chdir_to_script_dir(const char *script) {
     char *abs = make_abs_path(script);
     if (!abs) return NULL;
-    char *slash = strrchr(abs, '\\');
+    char *slash = strrchr(abs, '/');
+#ifdef _WIN32
+    if (!slash) slash = strrchr(abs, '\\');
+#endif
     if (slash) {
         *slash = '\0';
         _chdir(abs);
@@ -447,8 +455,11 @@ static char *chdir_to_script_dir(const char *script) {
     return abs;
 }
 
-/* �?exe 涓噴鏀惧祵鍏ョ殑妯＄粍鍒颁复鏃剁洰褰曞苟鍔犺浇 */
+/* �?exe 涓噴鏀惧祵鍏ョ殑妯＄粍鍒颁复鏃剁洰褰曞苟鍔犺浇 */
 static void load_embedded_mods_impl(VM *vm) {
+#ifndef _WIN32
+    (void)vm; return;
+#else
     char *self = get_self_path();
     if (!self) return;
 
@@ -473,11 +484,15 @@ static void load_embedded_mods_impl(VM *vm) {
         mod_load_all(vm, mods_dir);
     }
     free(self);
+#endif
 }
 
 int main(int argc, char **argv) {
 
+
+#ifdef _WIN32
     SetUnhandledExceptionFilter(inimerse_crash_handler);
+#endif
 
     if (argc >= 2 && (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)) {
         printf("inimerse %s\n", INFIVERSE_VERSION);
@@ -498,6 +513,7 @@ int main(int argc, char **argv) {
     }
 
     /* P1 multi-size: per-monitor DPI awareness (Win10+), fallback to system DPI */
+ #ifdef _WIN32
     {
         typedef BOOL (WINAPI *SDPAC)(void*);
         HMODULE hu = GetModuleHandleA("user32.dll");
@@ -506,7 +522,8 @@ int main(int argc, char **argv) {
             if (fn) fn((void*)-4); /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */ /* TMP-DPI-DISABLED */
             else SetProcessDPIAware();
         }
-    }    /* 妫€�?--gui 妯″紡 */
+    }
+#endif    /* platform DPI setup */
     int gui_mode = 0;
     int safe_mode = 0;
     int headless_mode = 0;
@@ -517,7 +534,7 @@ int headless_http_port = 11470;
         for (int i = 1; i < argc - 1; i++) argv[i] = argv[i + 1];
         argc--;
     }
-    /* 妫€�?--time-limit N锛堝叏灞€閫夐」锛屽崟浣嶇锛岄粯�?20锛涘繀椤诲�?--gui 涔嬪悗鎴栦箣鍓嶅潎鍙級 */
+    /* 妫€�?--time-limit N锛堝叏灞€閫夐」锛屽崟浣嶇锛岄粯�?20锛涘繀椤诲�?--gui 涔嬪悗鎴栦箣鍓嶅潎鍙級 */
         if (argc >= 2 && strcmp(argv[1], "--headless") == 0) {
         headless_mode = 1;
         gui_mode = 1;
@@ -555,9 +572,11 @@ unsigned long timeout_ms = 0;
     }
 
     if (gui_mode) {
-        /* 闅愯棌鎺у埗鍙扮獥�?*/
+        /* 闅愯棌鎺у埗鍙扮獥�?*/
+ #ifdef _WIN32
         HWND console = GetConsoleWindow();
         if (console) ShowWindow(console, SW_HIDE);
+#endif
     }
 
 #ifdef _WIN32
@@ -579,7 +598,7 @@ unsigned long timeout_ms = 0;
         return print_changelog();
 #endif
 
-    /* 鏃犲弬鏁帮細鍏堝皾璇曞唴宓屽瓧鑺傜爜锛堟墦鍖呭悗�?exe锛夛紝鍚﹀垯杩涘叆 REPL */        /* leading flags: repeatable and order-independent (--safe / --err-json) */
+    /* 鏃犲弬鏁帮細鍏堝皾璇曞唴宓屽瓧鑺傜爜锛堟墦鍖呭悗�?exe锛夛紝鍚﹀垯杩涘叆 REPL */        /* leading flags: repeatable and order-independent (--safe / --err-json) */
     for (;;) {
         if (argc >= 2 && strcmp(argv[1], "--err-json") == 0) g_err_json = 1;
         if (argc >= 3 && strcmp(argv[1], "--desugar") == 0) {
@@ -668,7 +687,7 @@ ai_mod_register(&vm);
 
     if (gui_mode) {
         /* --gui 妯″紡锛氶殣钘忔帶鍒跺彴鍚庢寜鏅€氭柟寮忚繍琛岃剼鏈紝
-           window()/show_image()/gui_wait() �?gui 妯＄粍鎻愪緵锛堜富绾跨▼浜嬩欢寰幆�?*/
+           window()/show_image()/gui_wait() �?gui 妯＄粍鎻愪緵锛堜富绾跨▼浜嬩欢寰幆�?*/
         const char *script_arg = argv[1];
         if (!script_arg) { fprintf(stderr, "(? %s --gui <script.im>\n", argv[0]); return 1; }
         char *abs = chdir_to_script_dir(script_arg);
@@ -718,7 +737,7 @@ ai_mod_register(&vm);
     }
 
     if (strcmp(cmd, "build") == 0) {
-        if (argc < 3) { fprintf(stderr, "鐢ㄦ�? %s build <input.im> [output.exe]\n", argv[0]); return 1; }
+        if (argc < 3) { fprintf(stderr, "鐢ㄦ�? %s build <input.im> [output.exe]\n", argv[0]); return 1; }
         if (!vm.build_script) { fprintf(stderr, "鎵撳寘鍔熻兘鏈畨瑁咃紝璇峰姞锟?build 妯＄粍銆俓n"); return 1; }
         const char *input = argv[2];
         {
@@ -736,7 +755,7 @@ ai_mod_register(&vm);
         if (argc >= 4) {
             output = argv[3];
         } else {
-            /* 鑷姩杈撳嚭鍚嶏細鑴氭湰鍚岀洰褰曘€佸悓�?.exe */
+            /* 鑷姩杈撳嚭鍚嶏細鑴氭湰鍚岀洰褰曘€佸悓�?.exe */
             char *abs_in = make_abs_path(input);
             if (abs_in) {
                 strip_ext_into(auto_out, sizeof(auto_out), abs_in);
