@@ -5,6 +5,8 @@
 
 ## P0：协议与稳定性
 
+> WSL2/Ubuntu 已纳入验收环境。2026-08-27 首次 `make` 检查发现 `src/main.c` 仍含 Windows 编码转换、路径、临时目录、DPI 和控制台 API；需先完成源码 UTF-8 统一，再逐项迁移到 PAL。
+
 - [x] 发布稳定 ABI v1：manifest 支持 `abi` 声明并在宿主协商时拒绝不兼容版本。
 - [x] 建立 ABI 兼容性测试；旧版（缺省 `abi`，按 v1 处理）模组保持兼容。
 - [ ] 将 `net_mod` / `server_mod` 的 TCP、HTTP、WebSocket 后端统一迁移到 PAL。
