@@ -35,6 +35,8 @@ function validateManifest(manifest) {
   if (m.capabilities !== undefined && (!Array.isArray(m.capabilities) || m.capabilities.some(x => typeof x !== 'string'))) {
     throw new Error('manifest.capabilities must be an array of strings');
   }
+  if (m.abi !== undefined && (!Number.isInteger(m.abi) || m.abi < 1)) throw new Error('manifest.abi must be a positive integer');
+  if (m.abiRange !== undefined && (typeof m.abiRange !== 'string' || !/^\d+(?:\.\.\d+)?$/.test(m.abiRange))) throw new Error('manifest.abiRange must be N or N..M');
   return Object.freeze({ ...m });
 }
 
@@ -88,6 +90,8 @@ function negotiate(local, remote) {
   if (a.role === b.role) throw new Error('UPP peers must use different roles');
   const av = new Set(a.capabilities || []);
   const capabilities = (b.capabilities || []).filter(x => av.has(x)).sort();
+  const abiA = a.manifest?.abi || 1, abiB = b.manifest?.abi || 1;
+  if (abiA !== abiB) throw new Error(`incompatible ABI versions: ${abiA} vs ${abiB}`);
   return frame('welcome', { protocol: VERSION, peerRole: b.role, capabilities });
 }
 
@@ -170,6 +174,7 @@ function generateManifest(root, options = {}) {
     version: options.version || raw.version || '0.1.0',
     engine: options.engine || raw.engine || 'inimerse',
     entry: options.entry || raw.entry || raw.main || 'main.im',
+    abi: options.abi || raw.abi || 1,
     capabilities: options.capabilities || raw.capabilities || [],
     interfaces: options.interfaces || raw.interfaces || [],
     files,

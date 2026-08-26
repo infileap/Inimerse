@@ -18,6 +18,7 @@ decoder.end();
 assert.equal(seen.length, 2);
 assert.throws(() => validateManifest({ ...manifest, id: 'bad id' }), /invalid characters/);
 assert.throws(() => negotiate(host, host), /different roles/);
+assert.throws(() => negotiate({ ...host, payload: { ...host.payload, manifest: { ...manifest, abi: 1 } } }, { ...verse, payload: { ...verse.payload, manifest: { ...manifest, abi: 2 } } }), /incompatible ABI/);
 assert.equal(heartbeat(3, 100).payload.seq, 3);
 assert.deepEqual(start('main.im', ['--safe']).payload.args, ['--safe']);
 assert.equal(stop().payload.reason, 'requested');
