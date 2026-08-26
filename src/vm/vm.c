@@ -56,6 +56,13 @@ void vm_cur_set_sp(VM *vm, int sp) { (void)vm; if (g_cur_thread) g_cur_thread->s
 
 #else
 #include <unistd.h>
+#include <stdint.h>
+#define __stdcall
+typedef uint32_t DWORD; typedef unsigned long long ULONGLONG; typedef long LONG;
+static inline LONG InterlockedIncrement(volatile LONG *p) { return __sync_add_and_fetch(p, 1); }
+static inline LONG InterlockedDecrement(volatile LONG *p) { return __sync_sub_and_fetch(p, 1); }
+static inline LONG InterlockedExchangeAdd(volatile LONG *p, LONG v) { return __sync_fetch_and_add(p, v); }
+#define WaitForSingleObject(h, ms) ((void)(h), (void)(ms), 0)
 static _Thread_local VmThread *g_cur_thread = NULL;
 VmThread *vm_get_cur_thread(void) { return g_cur_thread; }
 void vm_set_cur_thread(VmThread *t) { g_cur_thread = t; }
