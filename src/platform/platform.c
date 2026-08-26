@@ -133,3 +133,10 @@ int im_platform_executable_path(char *buffer, size_t capacity) {
     return (int)n;
 #endif
 }
+
+int im_platform_getenv(const char *name, char *buffer, size_t capacity) {
+    if (!name || !*name || !buffer || capacity == 0) return -1;
+    const char *value = getenv(name); if (!value) return 1;
+    size_t n = strlen(value); if (n >= capacity) return -1;
+    memcpy(buffer, value, n + 1); return 0;
+}
