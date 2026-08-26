@@ -58,7 +58,11 @@ void vm_cur_set_sp(VM *vm, int sp) { (void)vm; if (g_cur_thread) g_cur_thread->s
 #include <unistd.h>
 #include <stdint.h>
 #define __stdcall
-typedef uint32_t DWORD; typedef unsigned long long ULONGLONG; typedef long LONG;
+typedef unsigned int MMRESULT; static inline MMRESULT timeBeginPeriod(unsigned int x) { (void)x; return 0; }
+typedef uint32_t DWORD; typedef unsigned long long ULONGLONG; typedef long LONG; typedef void *LPVOID; typedef void *HANDLE;
+#define STD_OUTPUT_HANDLE 1
+static inline HANDLE GetStdHandle(int x) { (void)x; return NULL; }
+static inline int WriteFile(HANDLE h, const void *b, DWORD n, DWORD *w, void *o) { (void)h; (void)o; *w=(DWORD)fwrite(b,1,n,stdout); return 1; }
 static inline LONG InterlockedIncrement(volatile LONG *p) { return __sync_add_and_fetch(p, 1); }
 static inline LONG InterlockedDecrement(volatile LONG *p) { return __sync_sub_and_fetch(p, 1); }
 static inline LONG InterlockedExchangeAdd(volatile LONG *p, LONG v) { return __sync_fetch_and_add(p, v); }
@@ -3895,7 +3899,7 @@ void *task_scheduler_entry(void *arg) {
         sched_fiber = ConvertThreadToFiber(NULL);
         if (!sched_fiber && att < 9) Sleep(10);
     }
-    if (!sched_fiber) { vm->sched_running = 0; return 1; }
+    if (!sched_fiber) { vm->sched_running = 0; return NULL; }
     for (int i = 0; i < VM_MAX_TASKS; i++)
         if (vm->tasks[i]) vm->tasks[i]->fiber_sched = sched_fiber;
     while (vm->sched_running) {

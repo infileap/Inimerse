@@ -3,15 +3,22 @@ CFLAGS = -D_GNU_SOURCE -D_stricmp=strcasecmp -Wall -Wextra -std=c11 -I src -I sr
 LDFLAGS = -lm
 
 SRCS = src/main.c \
-       src/platform/platform.c src/platform/dir.c \
+       src/platform/platform.c src/platform/dir.c src/platform/thread.c src/platform/fiber.c \
        src/common/common.c \
        src/lexer/lexer.c \
        src/parser/parser.c \
        src/compiler/bytecode.c \
        src/compiler/compiler.c \
        src/vm/vm.c \
-       src/runtime/runtime.c \
-       src/mod/mod.c
+       
+
+ifeq ($(OS),Windows_NT)
+SRCS += src/runtime/runtime.c
+SRCS += src/mod/mod.c
+else
+SRCS += src/runtime/runtime_posix.c
+SRCS += src/mod/mod_posix.c
+endif
 
 OBJS = $(SRCS:.c=.o)
 TARGET = inimerse
