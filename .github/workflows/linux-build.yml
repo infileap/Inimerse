@@ -15,12 +15,8 @@ jobs:
           node-version: 20
       - name: Protocol regression
         run: node tools/regression.js
-      - name: Build POSIX core
-        run: make -j2
-      - name: Smoke test
-        run: |
-          ./inimerse --version
-          ./inimerse where
+      - name: Build and run POSIX checks
+        run: make -j2 check
       - name: Clean generated binary
         if: always()
         run: make clean
