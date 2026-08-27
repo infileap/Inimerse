@@ -6,6 +6,7 @@
 
 0.3.0 版本待实现内容详见 [ROADMAP_0.3.0.md](ROADMAP_0.3.0.md)。
 v0.4–v0.6 分层规划详见 [ROADMAP_0.4-0.6.md](ROADMAP_0.4-0.6.md)。
+集合化类型系统延期至 v3.1，详见 [ROADMAP_3.1.md](ROADMAP_3.1.md)。
 
 ## 愿景映射
 
