@@ -105,7 +105,17 @@ static int server_stop(VM *vm) {
 }
 static int server_rooms(VM *vm) {
     vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); paths_init(); DIR *d = opendir(g_rooms); char buf[2048] = ""; size_t used = 0; struct dirent *e;
-    if (d) while ((e = readdir(d)) && used < sizeof buf - 64) { int room = 0; if (sscanf(e->d_name, "%d.txt", &room) != 1 || room <= 0) continue; char *p = room_field(room, "project"); used += (size_t)snprintf(buf + used, sizeof buf - used, "%d:%s:0\n", room, p ? p : "?"); free(p); } if (d) closedir(d); push_string(vm, buf); return 1;
+    if (d) {
+        while ((e = readdir(d)) && used < sizeof buf - 64) {
+            int room = 0;
+            if (sscanf(e->d_name, "%d.txt", &room) != 1 || room <= 0) continue;
+            char *p = room_field(room, "project");
+            used += (size_t)snprintf(buf + used, sizeof buf - used, "%d:%s:0\n", room, p ? p : "?");
+            free(p);
+        }
+        closedir(d);
+    }
+    push_string(vm, buf); return 1;
 }
 
 void server_mod_register(VM *vm) {
