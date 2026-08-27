@@ -20,6 +20,7 @@ LDFLAGS += -ldl
 SRCS += src/runtime/runtime_posix.c
 SRCS += src/mod/mod_posix.c
 SRCS += src/mod/net_mod_posix.c
+SRCS += src/mod/server_mod_posix.c
 SRCS += src/platform/socket.c
 SRCS += src/platform/process.c
 SRCS += src/isolate_mod.c
