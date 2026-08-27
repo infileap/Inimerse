@@ -125,6 +125,15 @@ int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity) {
     return (int)recv(socket->fd, buffer, capacity, 0);
 #endif
 }
+int im_socket_peek(ImSocket *socket) {
+    if (!socket) return -1;
+    char byte;
+#ifdef _WIN32
+    return recv((SOCKET)socket->fd, &byte, 1, MSG_PEEK);
+#else
+    return (int)recv(socket->fd, &byte, 1, MSG_PEEK);
+#endif
+}
 int im_socket_set_nonblocking(ImSocket *socket, int enabled) {
     if (!socket) return -1;
 #ifdef _WIN32

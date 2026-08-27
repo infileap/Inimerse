@@ -17,7 +17,7 @@ static int net_listen(VM *vm) { int port = numarg(vm, 0); popn(vm); ImSocket *s 
 static int net_accept(VM *vm) { ImSocket *s = get(vm, 0); popn(vm); ImSocket *c = s ? im_socket_accept(s) : NULL; if (!c) { push_int(vm, -1); return 1; } im_socket_set_nonblocking(c, 1); push_int(vm, put(c)); return 1; }
 static int net_send(VM *vm) { ImSocket *s = get(vm, 1); const char *data = strarg(vm, 0); popn(vm); if (!s) { push_int(vm, -1); return 1; } int n = im_socket_send(s, data, strlen(data)); if (n < 0 && im_socket_would_block()) n = 0; push_int(vm, n); return 1; }
 static int net_recv(VM *vm) { ImSocket *s = get(vm, 1); int cap = numarg(vm, 0); if (cap < 1) cap = 1024; if (cap > 65536) cap = 65536; popn(vm); char *buf = calloc(1, (size_t)cap + 1); int n = s ? im_socket_recv(s, buf, (size_t)cap) : -1; if (n <= 0) buf[0] = 0; else buf[n] = 0; push_string(vm, buf); free(buf); return 1; }
-static int net_status(VM *vm) { ImSocket *s = get(vm, 0); popn(vm); if (!s) { push_int(vm, 0); return 1; } char c; int n = im_socket_recv(s, &c, 1); if (n > 0) { push_int(vm, 1); return 1; } push_int(vm, n < 0 && im_socket_would_block()); return 1; }
+static int net_status(VM *vm) { ImSocket *s = get(vm, 0); popn(vm); if (!s) { push_int(vm, 0); return 1; } int n = im_socket_peek(s); if (n > 0) { push_int(vm, 1); return 1; } push_int(vm, n < 0 && im_socket_would_block()); return 1; }
 static int net_close(VM *vm) { int id = numarg(vm, 0); popn(vm); if (id <= 0 || id > NET_MAX || !g_net[id - 1]) { push_int(vm, 0); return 1; } im_socket_close(g_net[id - 1]); g_net[id - 1] = NULL; push_int(vm, 1); return 1; }
 
 void net_mod_register(VM *vm) {
