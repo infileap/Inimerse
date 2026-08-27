@@ -46,9 +46,7 @@ check:
 	 ./inimerse where
 
 wasm:
-	 @if command -v emcc >/dev/null 2>&1; then echo "WASM toolchain detected: $$(emcc --version | head -1)"; echo "WASM target wiring pending host import table"; \
-	 elif command -v clang >/dev/null 2>&1 && clang --target=wasm32-wasi --version >/dev/null 2>&1; then echo "WASI clang detected"; echo "WASM target wiring pending host import table"; \
-	 else echo "WASM toolchain not found. Install emscripten or wasi-sdk."; exit 2; fi
+	 @node tools/wasm_check.js
 
 platform-probe:
 	$(CC) $(CFLAGS) -o platform_probe src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/platform_probe.c

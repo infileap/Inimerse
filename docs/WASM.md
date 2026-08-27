@@ -4,7 +4,7 @@ Inimerse 的 VM、词法/语法分析器、编译器和纯语言 runtime 可作�
 
 当前仓库已完成能力分层，但尚未提交正式 WASI/浏览器构建产物。实现 WASM 目标时应保持：
 
-运行 `make wasm` 可检查本机是否安装 Emscripten 或 WASI clang；工具链缺失时命令以状态码 2 退出，不会伪造构建成功。
+运行 `make wasm`（内部调用 `tools/wasm_check.js`）可检查本机是否安装 Emscripten 或 WASI clang，并输出 JSON 状态；工具链缺失时命令以状态码 2 退出，不会伪造构建成功。
 
 - 核心字节码和集合语义不依赖操作系统。
 - 缺失能力通过 `has_capability` 返回 `false`，调用时给出可操作错误。
