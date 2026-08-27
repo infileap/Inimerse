@@ -55,9 +55,12 @@ static int server_lan_ip(VM *vm) {
 }
 
 static int server_start(VM *vm) {
-    const char *pass = vm_cur_stack(vm)[vm_cur_sp(vm) - 0].sval;
-    const char *project = vm_cur_stack(vm)[vm_cur_sp(vm) - 1].sval;
-    while (vm->cur_argc-- > 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    int argc = vm->cur_argc; int sp = vm_cur_sp(vm);
+    Value pass_v = argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
+    Value project_v = argc > 1 ? vm_cur_stack(vm)[sp - 1] : (Value){0};
+    const char *pass = pass_v.type == VAL_STRING ? pass_v.sval : "";
+    const char *project = project_v.type == VAL_STRING ? project_v.sval : "";
+    vm_cur_set_sp(vm, sp - argc);
     if (!valid_name(project)) { push_int(vm, 0); return 1; }
     paths_init(); char mainfile[1200]; snprintf(mainfile, sizeof mainfile, "%s/%s/main.im", g_projects, project);
     FILE *chk = fopen(mainfile, "rb"); if (!chk) { push_int(vm, -1); return 1; } fclose(chk);
@@ -68,19 +71,25 @@ static int server_start(VM *vm) {
     fprintf(f, "project=%s\npass=%s\nengine_pid=0\n", project, pass ? pass : ""); fclose(f); push_int(vm, room); return 1;
 }
 static int server_join(VM *vm) {
-    const char *pass = vm_cur_stack(vm)[vm_cur_sp(vm) - 0].sval; int room = vm_cur_stack(vm)[vm_cur_sp(vm) - 1].ival;
-    while (vm->cur_argc-- > 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    int argc = vm->cur_argc; int sp = vm_cur_sp(vm);
+    Value pass_v = argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
+    Value room_v = argc > 1 ? vm_cur_stack(vm)[sp - 1] : (Value){0};
+    const char *pass = pass_v.type == VAL_STRING ? pass_v.sval : "";
+    int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival;
+    vm_cur_set_sp(vm, sp - argc);
     char *saved = room_field(room, "pass"); if (!saved) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
     if (strcmp(saved, pass ? pass : "")) { free(saved); push_string(vm, "WRONG_PASSWORD"); return 1; } free(saved);
     char ip[64] = "127.0.0.1"; char url[128]; snprintf(url, sizeof url, "http://%s:%d/", ip, room + 1); push_string(vm, url); return 1;
 }
 static int server_status(VM *vm) {
-    int room = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc);
+    int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
+    int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc);
     char *project = room_field(room, "project"); if (!project) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
     char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, 0, 0, room + 1); free(project); push_string(vm, buf); return 1;
 }
 static int server_stop(VM *vm) {
-    int room = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); char path[1200]; room_path(room, path, sizeof path); push_int(vm, remove(path) == 0); return 1;
+    int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
+    int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc); char path[1200]; room_path(room, path, sizeof path); push_int(vm, remove(path) == 0); return 1;
 }
 static int server_rooms(VM *vm) {
     vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); paths_init(); DIR *d = opendir(g_rooms); char buf[2048] = ""; size_t used = 0; struct dirent *e;
