@@ -8,6 +8,9 @@ function validate(root, options = {}) {
   for (const f of required) if (!fs.existsSync(path.join(base, f))) throw new Error(`missing ${f}`);
   const manifest = JSON.parse(fs.readFileSync(path.join(base, 'manifest.json'), 'utf8'));
   for (const k of ['id', 'version', 'entry']) if (typeof manifest[k] !== 'string' || !manifest[k]) throw new Error(`manifest.${k} is required`);
+  const entry = path.resolve(base, manifest.entry);
+  if (entry !== base && !entry.startsWith(base + path.sep)) throw new Error('manifest.entry escapes package');
+  if (!fs.existsSync(entry) || !fs.statSync(entry).isFile()) throw new Error(`manifest.entry not found: ${manifest.entry}`);
   const files = {};
   const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a,b)=>a.name.localeCompare(b.name))) { if (e.name === 'signatures') continue; const f=path.join(d,e.name); if(e.isDirectory()) walk(f); else files[path.relative(base,f).split(path.sep).join('/')] = crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } };
   walk(base);

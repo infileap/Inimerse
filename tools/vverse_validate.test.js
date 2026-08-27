@@ -4,6 +4,9 @@ const fs = require('node:fs'); const os = require('node:os'); const path = requi
 const { validate, writeSignature } = require('./vverse_validate');
 const d = fs.mkdtempSync(path.join(os.tmpdir(), 'vverse-')); fs.mkdirSync(path.join(d, 'assets')); fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify({ id:'demo', version:'1.0.0', entry:'main.im' })); fs.writeFileSync(path.join(d, 'blueprint.json'), '{}'); fs.writeFileSync(path.join(d, 'main.im'), 'say "ok"');
 const r = validate(d); assert.equal(r.valid, true); assert.ok(r.files['blueprint.json']); assert.ok(r.files['main.im']);
+fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify({ id:'demo', version:'1.0.0', entry:'../escape.im' }));
+assert.throws(() => validate(d), /escapes package/);
+fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify({ id:'demo', version:'1.0.0', entry:'main.im' }));
 writeSignature(d);
 const signed = validate(d, { requireSignature: true, requireCompleteSignature: true }); assert.equal(signed.signature['main.im'], r.files['main.im']);
 fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify({ id:'changed', version:'1.0.0', entry:'main.im' }));
