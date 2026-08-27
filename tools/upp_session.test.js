@@ -6,8 +6,10 @@ const manifest = { id:'demo', name:'Demo', version:'1.0.0', engine:'inimerse', e
 const s = new UppSession('host', manifest);
 s.acceptHello(hello('client', manifest, ['heartbeat']));
 assert.equal(s.apply(start('main.im')), STATES.RUNNING);
-s.apply(heartbeat(1)); assert.equal(s.snapshot().lastHeartbeat, 1);
+s.apply(heartbeat(1, 123)); assert.equal(s.snapshot().lastHeartbeat, 1); assert.equal(s.snapshot().lastHeartbeatAt, 123);
+assert.equal(s.apply(start('main.im')), STATES.RUNNING);
 assert.throws(() => s.apply(heartbeat(0)), /out of order/);
 assert.equal(s.apply(crash('boom')), STATES.CRASHED);
 assert.throws(() => s.apply(start('main.im')), /cannot start/);
+assert.equal(s.reset(), STATES.IDLE); assert.equal(s.snapshot().error, null); assert.throws(() => new UppSession('bad', manifest), /invalid role/);
 console.log('UPP session tests: ok');

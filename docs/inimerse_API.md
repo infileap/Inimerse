@@ -283,6 +283,8 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 
 多目标输出参考实现位于 `tools/say_reference.js`：`createRouter(streams).say(target,text,meta)` 支持 `console/log/chat/ui/world/character/dialogue/system/file/json/ai`，`OutputStream` 提供队列上限、背压和关闭语义；`desugarSay` 将 `say@chat "..."` 转换为 `say_target("chat", "...")`。
 
+`UppSession` 提供状态快照、心跳序号与时间戳、重复启动幂等处理，以及 `reset()` 重置到 idle 状态；非法角色会在构造时拒绝。
+
 中继提供 `POST /revoke`，请求体为 `{ "token": "..." }`。客户端可调用 `CrpClient.revoke(token)`；撤销后令牌立即失效，后续 `SIGNAL` 请求返回 403。
 
 Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /package/<id>` 下载包，`GET /packages?q=` 返回可过滤清单，`POST /package/fork` 从已有包创建分叉；客户端对应 `publishPackage`、`listPackages`、`forkPackage` 与 `downloadPackage(id, {hash, maxBytes, cache})`。下载端会校验大小和可选 SHA-256 摘要，并提供有上限的进程内缓存；可用 `hasCachedPackage`、`cachedPackage`、`cacheStats`、`clearPackageCache` 管理缓存。
