@@ -16,6 +16,7 @@ ifeq ($(OS),Windows_NT)
 SRCS += src/runtime/runtime.c
 SRCS += src/mod/mod.c
 else
+LDFLAGS += -ldl
 SRCS += src/runtime/runtime_posix.c
 SRCS += src/mod/mod_posix.c
 SRCS += src/platform/process.c
