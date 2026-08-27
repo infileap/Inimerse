@@ -287,6 +287,8 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 
 Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /package/<id>` 下载包，`GET /packages` 返回清单，`POST /package/fork` 从已有包创建分叉；客户端对应 `publishPackage`、`listPackages`、`forkPackage` 与 `downloadPackage(id, {hash, maxBytes, cache})`。下载端会校验大小和可选 SHA-256 摘要，并提供有上限的进程内缓存。
 
+CRP Relay 还提供 `/ws` WebSocket 升级端点。客户端发送 JSON 文本帧（至少包含 `verse` 与 `event`）后，中继会转发给同一中继上的其他连接；支持 ping/pong 与关闭帧，异常 JSON 会被丢弃。
+
 ## 16. 兼容性与性能建议
 
 使用 UTF-8、显式括号和明确类型；避免依赖目录遍历顺序及操作系统路径格式。大量集合查询应复用集合对象，避免循环中重复构造区间。并发任务之间优先传递消息而非共享可变状态；IO 和网络调用应放在独立任务中。
