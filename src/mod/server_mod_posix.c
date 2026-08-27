@@ -7,6 +7,25 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
+static char g_rooms[1024], g_projects[1024];
+static void paths_init(void) {
+    if (g_rooms[0]) return;
+    snprintf(g_rooms, sizeof g_rooms, "%s", getenv("INIMERSE_ROOMS_DIR") ? getenv("INIMERSE_ROOMS_DIR") : "./rooms");
+    snprintf(g_projects, sizeof g_projects, "%s", getenv("INIMERSE_PROJECTS_DIR") ? getenv("INIMERSE_PROJECTS_DIR") : "./projects");
+    mkdir(g_rooms, 0755);
+}
+static int valid_name(const char *s) { return s && *s && strcmp(s, ".") && strcmp(s, "..") && !strstr(s, "..") && !strchr(s, '/') && !strchr(s, '\\') && !strchr(s, ':'); }
+static void room_path(int room, char *out, size_t cap) { paths_init(); snprintf(out, cap, "%s/%d.txt", g_rooms, room); }
+static char *room_field(int room, const char *key) {
+    char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "rb"); if (!f) return NULL;
+    char line[512]; size_t n = strlen(key); char *v = NULL;
+    while (fgets(line, sizeof line, f)) if (!strncmp(line, key, n) && line[n] == '=') { line[strcspn(line, "\r\n")] = 0; v = strdup(line + n + 1); break; }
+    fclose(f); return v;
+}
 
 static int unsupported(VM *vm) {
     int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
@@ -35,15 +54,48 @@ static int server_lan_ip(VM *vm) {
     freeifaddrs(list); push_string(vm, out); return 1;
 }
 
+static int server_start(VM *vm) {
+    const char *pass = vm_cur_stack(vm)[vm_cur_sp(vm) - 0].sval;
+    const char *project = vm_cur_stack(vm)[vm_cur_sp(vm) - 1].sval;
+    while (vm->cur_argc-- > 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    if (!valid_name(project)) { push_int(vm, 0); return 1; }
+    paths_init(); char mainfile[1200]; snprintf(mainfile, sizeof mainfile, "%s/%s/main.im", g_projects, project);
+    FILE *chk = fopen(mainfile, "rb"); if (!chk) { push_int(vm, -1); return 1; } fclose(chk);
+    int room = 11510; for (; room < 11700; room += 10) { char p[1200]; room_path(room, p, sizeof p); if (access(p, F_OK) != 0) break; }
+    if (room >= 11700) { push_int(vm, 0); return 1; }
+    char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "wb");
+    if (!f) { push_int(vm, 0); return 1; }
+    fprintf(f, "project=%s\npass=%s\nengine_pid=0\n", project, pass ? pass : ""); fclose(f); push_int(vm, room); return 1;
+}
+static int server_join(VM *vm) {
+    const char *pass = vm_cur_stack(vm)[vm_cur_sp(vm) - 0].sval; int room = vm_cur_stack(vm)[vm_cur_sp(vm) - 1].ival;
+    while (vm->cur_argc-- > 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    char *saved = room_field(room, "pass"); if (!saved) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
+    if (strcmp(saved, pass ? pass : "")) { free(saved); push_string(vm, "WRONG_PASSWORD"); return 1; } free(saved);
+    char ip[64] = "127.0.0.1"; char url[128]; snprintf(url, sizeof url, "http://%s:%d/", ip, room + 1); push_string(vm, url); return 1;
+}
+static int server_status(VM *vm) {
+    int room = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc);
+    char *project = room_field(room, "project"); if (!project) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
+    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, 0, 0, room + 1); free(project); push_string(vm, buf); return 1;
+}
+static int server_stop(VM *vm) {
+    int room = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); char path[1200]; room_path(room, path, sizeof path); push_int(vm, remove(path) == 0); return 1;
+}
+static int server_rooms(VM *vm) {
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); paths_init(); DIR *d = opendir(g_rooms); char buf[2048] = ""; size_t used = 0; struct dirent *e;
+    if (d) while ((e = readdir(d)) && used < sizeof buf - 64) { int room = 0; if (sscanf(e->d_name, "%d.txt", &room) != 1 || room <= 0) continue; char *p = room_field(room, "project"); used += (size_t)snprintf(buf + used, sizeof buf - used, "%d:%s:0\n", room, p ? p : "?"); free(p); } if (d) closedir(d); push_string(vm, buf); return 1;
+}
+
 void server_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "server_ports", unsupported, 1 | CAP_NET, 0);
     vm_register_builtin_full(vm, "port_check", server_port_check, 1 | CAP_NET, 0);
     vm_register_builtin_full(vm, "port_pid", unavailable_bool, 1 | CAP_NET, 0);
     vm_register_builtin_full(vm, "port_kill", unavailable_bool, 1 | CAP_NET | CAP_PROC, 0);
     vm_register_builtin_full(vm, "lan_ip", server_lan_ip, 1 | CAP_NET, 0);
-    vm_register_builtin_full(vm, "server_start", unsupported, 1 | CAP_NET | CAP_PROC, 0);
-    vm_register_builtin_full(vm, "server_join", unsupported, 1 | CAP_NET, 0);
-    vm_register_builtin_full(vm, "server_status", unsupported, 1 | CAP_NET, 0);
-    vm_register_builtin_full(vm, "server_stop", unavailable_bool, 1 | CAP_NET | CAP_PROC, 0);
-    vm_register_builtin_full(vm, "server_rooms", unsupported, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "server_start", server_start, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "server_join", server_join, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "server_status", server_status, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "server_stop", server_stop, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "server_rooms", server_rooms, 1 | CAP_NET, 0);
 }

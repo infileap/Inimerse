@@ -25,6 +25,8 @@ void im_socket_shutdown(void) { WSACleanup(); }
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/select.h>
+#include <sys/time.h>
 static int socket_valid(int fd) { return fd >= 0; }
 int im_socket_init(void) { return 0; }
 void im_socket_shutdown(void) {}
@@ -81,15 +83,42 @@ ImSocket *im_socket_listen(const char *host, uint16_t port, int backlog) {
     return wrap_socket(fd);
 }
 
-ImSocket *im_socket_connect(const char *host, uint16_t port) {
+ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout_ms) {
     struct sockaddr_storage addr; socklen_t addr_len;
     if (resolve_addr(host, port, &addr, &addr_len, 0) != 0) return NULL;
+    if (timeout_ms <= 0) timeout_ms = 2000;
 #ifdef _WIN32
     SOCKET fd = socket(addr.ss_family, SOCK_STREAM, IPPROTO_TCP); if (fd == INVALID_SOCKET) return NULL;
+    u_long mode = 1;
+    if (ioctlsocket(fd, FIONBIO, &mode) != 0) { closesocket(fd); return NULL; }
 #else
     int fd = socket(addr.ss_family, SOCK_STREAM, 0); if (fd < 0) return NULL;
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) { close(fd); return NULL; }
 #endif
-    if (connect(fd, (struct sockaddr *)&addr, addr_len) != 0) {
+    int rc = connect(fd, (struct sockaddr *)&addr, addr_len);
+    int connected = (rc == 0);
+    if (!connected) {
+#ifdef _WIN32
+        int err = WSAGetLastError();
+        if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS) { closesocket(fd); return NULL; }
+#else
+        if (errno != EINPROGRESS) { close(fd); return NULL; }
+#endif
+        fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
+        struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
+        rc = select((int)fd + 1, NULL, &wfds, NULL, &tv);
+        if (rc > 0 && FD_ISSET(fd, &wfds)) {
+            int so_error = 0; socklen_t so_len = sizeof(so_error);
+#ifdef _WIN32
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&so_error, &so_len);
+#else
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_len);
+#endif
+            connected = (so_error == 0);
+        }
+    }
+    if (!connected) {
 #ifdef _WIN32
         closesocket(fd);
 #else
@@ -97,7 +126,16 @@ ImSocket *im_socket_connect(const char *host, uint16_t port) {
 #endif
         return NULL;
     }
+#ifdef _WIN32
+    mode = 0; ioctlsocket(fd, FIONBIO, &mode);
+#else
+    fcntl(fd, F_SETFL, flags);
+#endif
     return wrap_socket(fd);
+}
+
+ImSocket *im_socket_connect(const char *host, uint16_t port) {
+    return im_socket_connect_timeout(host, port, 2000);
 }
 
 ImSocket *im_socket_accept(ImSocket *listener) {
