@@ -63,6 +63,7 @@
 - CI 构建矩阵新增独立 WASI 探针任务，native 与 `wasm32-wasi` 均有自动验收。
 - `make check` 纳入平台、Fiber、进程超时和 TCP 回环探针，跨平台 PAL 回归自动执行。
 - Linux CI 已改为执行完整 `make check`，native 构建与全部 PAL 探针统一门禁。
+- CRP Hub 清单支持关键词过滤，客户端缓存提供查询、统计、清理和容量上限行为。
 
 ### 已完成增量（2026-08-27）
 
