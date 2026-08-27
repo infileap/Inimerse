@@ -1,4 +1,6 @@
 #include "vm.h"
+#include "../platform/process.h"
+#include "../platform/platform.h"
 #include <string.h>
 #include <stdio.h>
 #include <arpa/inet.h>
@@ -12,6 +14,7 @@
 #include <sys/stat.h>
 
 static char g_rooms[1024], g_projects[1024];
+static ImProcess *g_room_proc[32];
 static void paths_init(void) {
     if (g_rooms[0]) return;
     snprintf(g_rooms, sizeof g_rooms, "%s", getenv("INIMERSE_ROOMS_DIR") ? getenv("INIMERSE_ROOMS_DIR") : "./rooms");
@@ -20,6 +23,7 @@ static void paths_init(void) {
 }
 static int valid_name(const char *s) { return s && *s && strcmp(s, ".") && strcmp(s, "..") && !strstr(s, "..") && !strchr(s, '/') && !strchr(s, '\\') && !strchr(s, ':'); }
 static void room_path(int room, char *out, size_t cap) { paths_init(); snprintf(out, cap, "%s/%d.txt", g_rooms, room); }
+static int room_slot(int room) { return room >= 11510 && room < 11700 && ((room - 11510) % 10) == 0 ? (room - 11510) / 10 : -1; }
 static char *room_field(int room, const char *key) {
     char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "rb"); if (!f) return NULL;
     char line[512]; size_t n = strlen(key); char *v = NULL;
@@ -66,9 +70,14 @@ static int server_start(VM *vm) {
     FILE *chk = fopen(mainfile, "rb"); if (!chk) { push_int(vm, -1); return 1; } fclose(chk);
     int room = 11510; for (; room < 11700; room += 10) { char p[1200]; room_path(room, p, sizeof p); if (access(p, F_OK) != 0) break; }
     if (room >= 11700) { push_int(vm, 0); return 1; }
+    char exe[1024] = "inimerse"; if (im_platform_executable_path(exe, sizeof exe) < 0) snprintf(exe, sizeof exe, "inimerse");
+    char cmd[3200]; snprintf(cmd, sizeof cmd, "\"%s\" --headless --port %d --http-port %d --time-limit 0 \"%s\"", exe, room, room + 10, mainfile);
+    int slot = room_slot(room); ImProcess *proc = im_process_spawn(cmd, 0);
+    if (!proc) { push_int(vm, 0); return 1; }
     char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "wb");
-    if (!f) { push_int(vm, 0); return 1; }
-    fprintf(f, "project=%s\npass=%s\nengine_pid=0\n", project, pass ? pass : ""); fclose(f); push_int(vm, room); return 1;
+    if (!f) { im_process_kill(proc); im_process_close(proc); return (push_int(vm, 0), 1); }
+    if (slot >= 0) g_room_proc[slot] = proc;
+    fprintf(f, "project=%s\npass=%s\nengine_pid=%llu\n", project, pass ? pass : "", (unsigned long long)im_process_pid(proc)); fclose(f); push_int(vm, room); return 1;
 }
 static int server_join(VM *vm) {
     int argc = vm->cur_argc; int sp = vm_cur_sp(vm);
@@ -85,11 +94,14 @@ static int server_status(VM *vm) {
     int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
     int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc);
     char *project = room_field(room, "project"); if (!project) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
-    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, 0, 0, room + 1); free(project); push_string(vm, buf); return 1;
+    int slot = room_slot(room); int alive = slot >= 0 && g_room_proc[slot] ? im_process_alive(g_room_proc[slot]) : 0;
+    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, alive, 0, room + 1); free(project); push_string(vm, buf); return 1;
 }
 static int server_stop(VM *vm) {
     int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
-    int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc); char path[1200]; room_path(room, path, sizeof path); push_int(vm, remove(path) == 0); return 1;
+    int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc);
+    int slot = room_slot(room); if (slot >= 0 && g_room_proc[slot]) { im_process_kill(g_room_proc[slot]); im_process_close(g_room_proc[slot]); g_room_proc[slot] = NULL; }
+    char path[1200]; room_path(room, path, sizeof path); push_int(vm, remove(path) == 0); return 1;
 }
 static int server_rooms(VM *vm) {
     vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); paths_init(); DIR *d = opendir(g_rooms); char buf[2048] = ""; size_t used = 0; struct dirent *e;
