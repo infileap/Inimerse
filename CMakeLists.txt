@@ -3,7 +3,9 @@ project(inimerse LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-option(INIMERSE_BUILD_ENGINE "Build the full VM engine" ${WIN32})
+# The VM now has a functional POSIX backend; build the portable engine by
+# default on every supported host. Platform-specific modules remain gated.
+option(INIMERSE_BUILD_ENGINE "Build the full VM engine" ON)
 
 add_library(inimerse_platform STATIC src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/process.c src/platform/socket.c src/platform/dir.c)
 target_include_directories(inimerse_platform PUBLIC src)
