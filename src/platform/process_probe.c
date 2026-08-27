@@ -22,6 +22,14 @@ int main(void) {
     int timed = im_process_wait_kill(q, 20); if (timed != 1) return 6;
     if (im_process_exit_code(q) < 0) return 7;
     im_process_close(q);
+ #ifdef _WIN32
+    const char *bad = "cmd /c exit 7";
+ #else
+    const char *bad = "sh -c 'exit 7'";
+ #endif
+    ImProcess *b = im_process_spawn(bad, 0); if (!b) return 8;
+    if (im_process_wait(b, 3000) != 0 || im_process_exit_code(b) != 7) return 9;
+    im_process_close(b);
     puts("process probe: ok");
     return 0;
 }

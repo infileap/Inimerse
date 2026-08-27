@@ -16,6 +16,8 @@ int main(void) {
     if (im_socket_peek(accepted) <= 0) return 11;
     char buf[8] = {0}; if (im_socket_recv(accepted, buf, sizeof(buf)) != 4) return 8;
     if (memcmp(buf, msg, 4) != 0) return 9;
+    if (im_socket_peek(NULL) >= 0) return 12;
+    if (im_socket_send(NULL, msg, 4) >= 0) return 13;
     im_socket_close(client); im_socket_close(accepted);
     im_socket_close(listener); im_socket_shutdown(); puts("socket probe: ok"); return 0;
 }
