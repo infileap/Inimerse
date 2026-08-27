@@ -35,6 +35,10 @@ if(NOT WIN32)
   target_link_libraries(fiber_probe PRIVATE Threads::Threads)
 endif()
 add_executable(process_probe src/platform/process.c src/platform/process_probe.c)
+if(NOT WIN32)
+  add_executable(crp_session_probe src/platform/crp_session.c src/platform/crp_session_probe.c)
+  add_test(NAME crp_session_probe COMMAND crp_session_probe)
+endif()
 add_executable(socket_probe src/platform/socket.c src/platform/socket_probe.c)
 if(WIN32)
   target_link_libraries(socket_probe PRIVATE ws2_32)
@@ -54,6 +58,7 @@ set_tests_properties(platform_probe fiber_probe process_probe socket_probe
   PROPERTIES TIMEOUT 10 LABELS "platform;smoke")
 if(NOT WIN32)
   set_tests_properties(http_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;http")
+  set_tests_properties(crp_session_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;crp")
 endif()
 find_program(INIMERSE_NODE node)
 if(INIMERSE_NODE)
@@ -85,7 +90,7 @@ if(INIMERSE_BUILD_ENGINE)
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
-      src/platform/posix_stubs.c src/platform/http_posix.c src/platform/websocket.c src/desugar_mod.c src/lint_mod.c)
+      src/platform/posix_stubs.c src/platform/http_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
