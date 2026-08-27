@@ -9,6 +9,10 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 static ImSocket *g_http_listener;
 static pthread_t g_http_thread;
@@ -23,6 +27,26 @@ static void token_register(const char *token) { if (g_token_count < 128) snprint
 static void token_revoke(const char *token) { if (!token_revoked(token) && g_revoked_count < 128) snprintf(g_revoked[g_revoked_count++], sizeof g_revoked[0], "%s", token); }
 
 static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
+static void ensure_dir(const char *path) {
+#ifdef _WIN32
+    _mkdir(path);
+#else
+    mkdir(path, 0755);
+#endif
+}
+static int b64val(char c) { if (c >= 'A' && c <= 'Z') return c - 'A'; if (c >= 'a' && c <= 'z') return c - 'a' + 26; if (c >= '0' && c <= '9') return c - '0' + 52; return c == '+' ? 62 : c == '/' ? 63 : -1; }
+static size_t b64decode(const char *s, unsigned char *out, size_t cap) {
+    size_t n = 0; int val = 0, bits = -8; int invalid = 0;
+    for (; *s; ++s) {
+        if (*s == '=') break;
+        int x = b64val(*s); if (x < 0) { invalid = 1; continue; }
+        val = (val << 6) | x; bits += 6;
+        if (bits >= 0) { if (n >= cap) return 0; out[n++] = (unsigned char)((val >> bits) & 255); bits -= 8; }
+    }
+    return invalid || bits > -2 ? 0 : n;
+}
+static const char *json_value(const char *json, const char *name, char *out, size_t cap) { char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return NULL; p = strchr(p + strlen(key), ':'); if (!p) return NULL; while (*++p == ' ' || *p == '\t') {} if (*p != '"') return NULL; ++p; size_t i = 0; while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++; out[i] = 0; return *p == '"' ? out : NULL; }
+static int write_atomic(const char *path, const unsigned char *data, size_t len) { char tmp[1500]; snprintf(tmp, sizeof tmp, "%s.tmp.%lu", path, (unsigned long)getpid()); FILE *f = fopen(tmp, "wb"); if (!f) return 0; int ok = fwrite(data, 1, len, f) == len; if (fclose(f) != 0) ok = 0; if (ok) ok = rename(tmp, path) == 0; if (!ok) remove(tmp); return ok; }
 static size_t hub_body(const char *request, char *body, size_t cap, int *status) {
     const char *root = getenv("INIMERSE_HUB_DIR"); if (!root || !*root) root = "./universe";
     if (strstr(request, "GET /packages") == request) {
@@ -35,6 +59,22 @@ static size_t hub_body(const char *request, char *body, size_t cap, int *status)
         if (!safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_id\"}\n"); }
         char path[1400]; snprintf(path, sizeof path, "%s/%s.vverse", root, id); FILE *f = fopen(path, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"not_found\"}\n"); }
         size_t n = fread(body, 1, cap, f); fclose(f); *status = 200; return n;
+    }
+    if (strstr(request, "POST /package/fork") == request) {
+        char source[128], id[128]; if (!json_value(request, "source", source, sizeof source) || !json_value(request, "id", id, sizeof id) || !safe_id(source) || !safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"source_and_id_required\"}\n"); }
+        char src[1400], dst[1400]; snprintf(src, sizeof src, "%s/%s.vverse", root, source); snprintf(dst, sizeof dst, "%s/%s.vverse", root, id); FILE *f = fopen(src, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"source_not_found\"}\n"); }
+        unsigned char data[65536]; size_t len = fread(data, 1, sizeof data, f); fclose(f); if (!write_atomic(dst, data, len)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"write_failed\"}\n"); }
+        *status = 201; return (size_t)snprintf(body, cap, "{\"id\":\"%s\",\"forkOf\":\"%s\",\"size\":%zu}\n", id, source, len);
+    }
+    if (strstr(request, "POST /package") == request) {
+        char id[128], encoded[65536]; if (!json_value(request, "id", id, sizeof id) || !json_value(request, "data", encoded, sizeof encoded) || !safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"id_and_data_required\"}\n"); }
+        unsigned char data[49152]; size_t len = b64decode(encoded, data, sizeof data); if (!len) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_data\"}\n"); }
+        char path[1400]; snprintf(path, sizeof path, "%s/%s.vverse", root, id); ensure_dir(root); if (!write_atomic(path, data, len)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"write_failed\"}\n"); }
+        *status = 201; return (size_t)snprintf(body, cap, "{\"id\":\"%s\",\"size\":%zu}\n", id, len);
+    }
+    if (strstr(request, "DELETE /package/") == request) {
+        p = strstr(request, "/package/") + 9; char id[128]; size_t i = 0; while (p[i] && p[i] != ' ' && i + 1 < sizeof id) { id[i] = p[i]; ++i; } id[i] = 0; if (!safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_id\"}\n"); }
+        char path[1400]; snprintf(path, sizeof path, "%s/%s.vverse", root, id); *status = remove(path) == 0 ? 200 : 404; return (size_t)snprintf(body, cap, *status == 200 ? "{\"deleted\":true}\n" : "{\"error\":\"not_found\"}\n");
     }
     return 0;
 }
@@ -56,7 +96,7 @@ static void *http_loop(void *unused) {
         ImSocket *client = im_socket_accept(g_http_listener);
         if (!client) { struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL); continue; }
         (void)im_socket_set_nonblocking(client, 0);
-        char req[2048]; int n = im_socket_recv(client, req, sizeof(req) - 1);
+        char req[65536]; int n = im_socket_recv(client, req, sizeof(req) - 1);
         if (n < 0) { im_socket_close(client); continue; }
         req[n > 0 ? n : 0] = 0;
         if (n > 0 && strstr(req, "GET /ws") && strstr(req, "Upgrade: websocket")) {
@@ -107,7 +147,7 @@ static void *http_loop(void *unused) {
             body = portalbuf;
         }
         if (revoke) { if (!request_token[0]) { status = 400; body = "{\"error\":\"token_required\"}\n"; } else { token_revoke(request_token); body = "{\"revoked\":true}\n"; } }
-        size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 400 ? "400 Bad Request" : (status == 404 || !ok) ? "404 Not Found" : "200 OK";
+        size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 201 ? "201 Created" : status == 400 ? "400 Bad Request" : status == 403 ? "403 Forbidden" : (status == 404 || !ok) ? "404 Not Found" : "200 OK";
         const char *content_type = (hub && strstr(req, "GET /package/") == req) ? "application/octet-stream" : "application/json";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", status_text, content_type, body_len);
         for (int sent = 0; len > 0 && sent < len;) {
