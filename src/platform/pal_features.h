@@ -1,9 +1,7 @@
-#ifndef INIMERSE_PLATFORM_FEATURES_H
-#define INIMERSE_PLATFORM_FEATURES_H
+#ifndef INIMERSE_PLATFORM_PAL_FEATURES_H
+#define INIMERSE_PLATFORM_PAL_FEATURES_H
 
-/* Compile-time capability flags.  Modules must use these instead of testing
- * a compiler/OS macro directly so a future backend can advertise capabilities
- * independently of its operating system. */
+/* Compile-time capability flags. */
 #if defined(_WIN32)
 #define IM_PLATFORM_WINDOWS 1
 #define IM_HAS_GUI 1

@@ -6,7 +6,7 @@
  * functionality belongs in modules. */
 #include <stddef.h>
 #include <stdint.h>
-#include "features.h"
+#include "pal_features.h"
 
 #ifdef __cplusplus
 extern "C" {
