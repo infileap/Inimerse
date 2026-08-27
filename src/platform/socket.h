@@ -15,6 +15,7 @@ int im_socket_send(ImSocket *socket, const void *data, size_t length);
 int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity);
 int im_socket_set_nonblocking(ImSocket *socket, int enabled);
 int im_socket_last_error(void);
+int im_socket_would_block(void);
 int im_socket_local_port(ImSocket *socket);
 void im_socket_close(ImSocket *socket);
 

@@ -140,6 +140,13 @@ int im_socket_last_error(void) {
     return errno;
 #endif
 }
+int im_socket_would_block(void) {
+#ifdef _WIN32
+    int e = WSAGetLastError(); return e == WSAEWOULDBLOCK || e == WSAEINPROGRESS;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
 int im_socket_local_port(ImSocket *socket) {
     if (!socket) return -1;
     struct sockaddr_storage addr; socklen_t len = sizeof(addr);
