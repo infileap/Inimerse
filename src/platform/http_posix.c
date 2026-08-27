@@ -8,10 +8,12 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <time.h>
 
 static ImSocket *g_http_listener;
 static pthread_t g_http_thread;
 static volatile int g_http_running;
+static unsigned long g_token_counter;
 
 static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
 static size_t hub_body(const char *request, char *body, size_t cap, int *status) {
@@ -77,12 +79,21 @@ static void *http_loop(void *unused) {
         int find = n > 0 && strstr(req, "GET /find") != NULL;
         int signal = n > 0 && strstr(req, "POST /signal") != NULL;
         int revoke = n > 0 && strstr(req, "POST /revoke") != NULL;
+        int register_route = n > 0 && strstr(req, "POST /register") != NULL;
+        int portal = n > 0 && strstr(req, "POST /portal") != NULL;
         int status = 200; char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
-        int ok = health || find || signal || revoke || hub;
+        int ok = health || find || signal || revoke || register_route || portal || hub;
         const char *body = health ? "{\"ok\":true,\"service\":\"inimerse\"}\n" :
             find ? "{\"verses\":[]}\n" :
             signal ? "{\"ok\":true,\"accepted\":true}\n" :
             revoke ? "{\"ok\":true,\"revoked\":true}\n" : hub ? hubbuf : "{\"error\":\"not_found\"}\n";
+        char portalbuf[256];
+        if (register_route) body = "{\"ok\":true}\n";
+        if (portal) {
+            unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
+            snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu}\n", seed, (unsigned long)time(NULL) + 300);
+            body = portalbuf;
+        }
         size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 400 ? "400 Bad Request" : (status == 404 || !ok) ? "404 Not Found" : "200 OK";
         const char *content_type = (hub && strstr(req, "GET /package/") == req) ? "application/octet-stream" : "application/json";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", status_text, content_type, body_len);
