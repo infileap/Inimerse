@@ -18,6 +18,7 @@ function unpack(input, destination) {
   const obj = JSON.parse(zlib.gunzipSync(fs.readFileSync(input), { to: 'string' }));
   if (obj.format !== 'vverse-1' || !obj.files || typeof obj.files !== 'object') throw new Error('invalid vverse package');
   const base = path.resolve(destination); fs.mkdirSync(base, { recursive: true });
+  for (const dir of ['laws', 'assets', 'mods', 'signatures']) fs.mkdirSync(path.join(base, dir), { recursive: true });
   for (const [name, encoded] of Object.entries(obj.files)) {
     const target = path.resolve(base, name); if (target !== base && !target.startsWith(base + path.sep)) throw new Error(`path escapes package: ${name}`);
     fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, Buffer.from(encoded, 'base64'));
