@@ -1,13 +1,45 @@
 #include "socket.h"
 #include "websocket.h"
+#include "crp_session.h"
 #include <pthread.h>
 #include <time.h>
 #include <stdio.h>
 #include <string.h>
+#include <dirent.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 
 static ImSocket *g_http_listener;
 static pthread_t g_http_thread;
 static volatile int g_http_running;
+
+static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
+static size_t hub_body(const char *request, char *body, size_t cap, int *status) {
+    const char *root = getenv("INIMERSE_HUB_DIR"); if (!root || !*root) root = "./universe";
+    if (strstr(request, "GET /packages") == request) {
+        DIR *d = opendir(root); size_t used = 0; body[used++] = '[';
+        if (d) { struct dirent *e; int first = 1; while ((e = readdir(d)) && used + 80 < cap) { const char *dot = strstr(e->d_name, ".vverse"); if (!dot || dot[7]) continue; used += (size_t)snprintf(body + used, cap - used, "%s\"%.*s\"", first ? "" : ",", (int)(dot - e->d_name), e->d_name); first = 0; } closedir(d); }
+        if (used + 2 < cap) { body[used++] = ']'; body[used] = 0; } *status = 200; return used;
+    }
+    const char *p = strstr(request, "GET /package/"); if (p == request) {
+        p += 13; char id[128]; size_t i = 0; while (p[i] && p[i] != ' ' && p[i] != '?' && i + 1 < sizeof id) { id[i] = p[i]; ++i; } id[i] = 0;
+        if (!safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_id\"}\n"); }
+        char path[1400]; snprintf(path, sizeof path, "%s/%s.vverse", root, id); FILE *f = fopen(path, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"not_found\"}\n"); }
+        size_t n = fread(body, 1, cap, f); fclose(f); *status = 200; return n;
+    }
+    return 0;
+}
+
+static int json_field_string(const char *json, const char *name, char *out, size_t cap) {
+    char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return 0;
+    p = strchr(p + strlen(key), ':'); if (!p) return 0; while (*++p == ' ' || *p == '\t') {}
+    if (*p != '"') return 0; ++p; size_t i = 0; while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++; out[i] = 0; return *p == '"';
+}
+static int json_field_u64(const char *json, const char *name, uint64_t *out) {
+    char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return 0;
+    p = strchr(p + strlen(key), ':'); if (!p) return 0; while (*++p == ' ' || *p == '\t') {}
+    uint64_t v = 0; int digits = 0; while (*p >= '0' && *p <= '9') { v = v * 10 + (unsigned)(*p++ - '0'); digits = 1; } if (digits) *out = v; return digits;
+}
 
 static void *http_loop(void *unused) {
     (void)unused;
@@ -20,10 +52,21 @@ static void *http_loop(void *unused) {
         req[n > 0 ? n : 0] = 0;
         if (n > 0 && strstr(req, "GET /ws") && strstr(req, "Upgrade: websocket")) {
             if (im_ws_accept(client, req, (size_t)n) == 0) {
+                ImCrpSession session; im_crp_session_init(&session, 1);
                 char frame[65536];
                 for (;;) {
                     int flen = im_ws_read_text(client, frame, sizeof frame);
                     if (flen <= 0) break;
+                    char type[32]; uint64_t seq = 0;
+                    if (json_field_string(frame, "type", type, sizeof type)) {
+                        (void)json_field_u64(frame, "seq", &seq);
+                        int state_rc = im_crp_session_apply(&session, type, seq, 0, NULL);
+                        if (state_rc < 0) {
+                            const char *err = "{\"error\":\"invalid_session_transition\"}";
+                            (void)im_ws_send_text(client, err, strlen(err));
+                            continue;
+                        }
+                    }
                     if (im_ws_send_text(client, frame, (size_t)flen) != 0) break;
                 }
             }
@@ -34,17 +77,21 @@ static void *http_loop(void *unused) {
         int find = n > 0 && strstr(req, "GET /find") != NULL;
         int signal = n > 0 && strstr(req, "POST /signal") != NULL;
         int revoke = n > 0 && strstr(req, "POST /revoke") != NULL;
-        int ok = health || find || signal || revoke;
+        int status = 200; char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
+        int ok = health || find || signal || revoke || hub;
         const char *body = health ? "{\"ok\":true,\"service\":\"inimerse\"}\n" :
             find ? "{\"verses\":[]}\n" :
             signal ? "{\"ok\":true,\"accepted\":true}\n" :
-            revoke ? "{\"ok\":true,\"revoked\":true}\n" : "{\"error\":\"not_found\"}\n";
-        char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", ok ? "200 OK" : "404 Not Found", strlen(body), body);
+            revoke ? "{\"ok\":true,\"revoked\":true}\n" : hub ? hubbuf : "{\"error\":\"not_found\"}\n";
+        size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 400 ? "400 Bad Request" : (status == 404 || !ok) ? "404 Not Found" : "200 OK";
+        const char *content_type = (hub && strstr(req, "GET /package/") == req) ? "application/octet-stream" : "application/json";
+        char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", status_text, content_type, body_len);
         for (int sent = 0; len > 0 && sent < len;) {
             int nout = im_socket_send(client, out + sent, (size_t)(len - sent));
             if (nout <= 0) break;
             sent += nout;
         }
+        for (size_t sent = 0; sent < body_len;) { int nout = im_socket_send(client, body + sent, body_len - sent); if (nout <= 0) break; sent += (size_t)nout; }
         im_socket_close(client);
     }
     return NULL;
