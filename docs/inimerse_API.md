@@ -291,6 +291,8 @@ CRP Relay 还提供 `/ws` WebSocket 升级端点。客户端发送 JSON 文本�
 
 PAL 网络接口位于 `src/platform/socket.h`：`im_socket_listen/connect/accept/send/recv` 提供 TCP 基础操作，`im_socket_set_nonblocking` 设置非阻塞模式，`im_socket_local_port` 查询监听端口，`im_socket_last_error` 返回平台错误码。Windows 与 POSIX 后端使用同一组函数签名；`socket_probe` 会执行本地回环收发验证。
 
+进程 PAL 的 `im_process_wait_kill(process, timeout_ms)` 在超时后终止子进程并返回 `1`，正常完成返回 `0`，错误返回 `-1`；用于隔离任务的统一超时策略。
+
 ## 16. 兼容性与性能建议
 
 使用 UTF-8、显式括号和明确类型；避免依赖目录遍历顺序及操作系统路径格式。大量集合查询应复用集合对象，避免循环中重复构造区间。并发任务之间优先传递消息而非共享可变状态；IO 和网络调用应放在独立任务中。
