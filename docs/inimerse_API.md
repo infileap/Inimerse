@@ -283,6 +283,8 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 
 中继提供 `POST /revoke`，请求体为 `{ "token": "..." }`。客户端可调用 `CrpClient.revoke(token)`；撤销后令牌立即失效，后续 `SIGNAL` 请求返回 403。
 
+Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /package/<id>` 下载包；客户端对应 `publishPackage(id, bytes)` 与 `downloadPackage(id)`。
+
 ## 16. 兼容性与性能建议
 
 使用 UTF-8、显式括号和明确类型；避免依赖目录遍历顺序及操作系统路径格式。大量集合查询应复用集合对象，避免循环中重复构造区间。并发任务之间优先传递消息而非共享可变状态；IO 和网络调用应放在独立任务中。
