@@ -9,6 +9,7 @@ function pack(root, output) {
   const base = path.resolve(root); writeSignature(base); const checked = validate(base, { strictStructure: true, requireSignature: true, requireCompleteSignature: true });
   const entries = {};
   for (const name of Object.keys(checked.files).sort()) entries[name] = fs.readFileSync(path.join(base, name)).toString('base64');
+  entries['signatures/sha256.json'] = fs.readFileSync(path.join(base, 'signatures', 'sha256.json')).toString('base64');
   const raw = JSON.stringify({ format: 'vverse-1', files: entries });
   fs.writeFileSync(output, zlib.gzipSync(raw, { mtime: 0 }));
   return { output, bytes: fs.statSync(output).size, files: Object.keys(entries).length };
