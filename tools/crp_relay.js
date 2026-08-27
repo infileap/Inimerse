@@ -83,7 +83,21 @@ function createRelay(options = {}) {
     const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`); wsClients.add(socket);
     let buf = Buffer.alloc(0);
-    socket.on('data', chunk => { buf = Buffer.concat([buf, chunk]); });
+    socket.on('data', chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      while (buf.length >= 2) {
+        const first = buf[0], second = buf[1], masked = !!(second & 0x80); let n = second & 127; let head = 2;
+        if (n === 126) { if (buf.length < 4) break; n = buf.readUInt16BE(2); head = 4; }
+        else if (n === 127) { if (buf.length < 10) break; n = Number(buf.readBigUInt64BE(2)); head = 10; }
+        if (masked) head += 4; const total = head + n; if (buf.length < total) break;
+        const key = masked ? buf.subarray(head - 4, head) : null; const payload = Buffer.from(buf.subarray(head, total)); buf = buf.subarray(total);
+        if (key) for (let i = 0; i < payload.length; i++) payload[i] ^= key[i % 4];
+        const opcode = first & 15; if (opcode === 8) { socket.end(); break; }
+        if (opcode === 9) { socket.write(Buffer.from([0x8a, 0])); continue; }
+        if (opcode !== 1) continue;
+        try { const msg = JSON.parse(payload.toString()); if (!msg.verse || !msg.event) continue; const out = Buffer.from(JSON.stringify(msg)); const frame = out.length < 126 ? Buffer.concat([Buffer.from([0x81, out.length]), out]) : Buffer.concat([Buffer.from([0x81, 126, out.length >> 8, out.length & 255]), out]); for (const peer of wsClients) if (peer !== socket && !peer.destroyed) peer.write(frame); } catch {}
+      }
+    });
     socket.on('close', () => wsClients.delete(socket)); socket.on('error', () => wsClients.delete(socket));
   });
   return { server, verses, packages, checkToken, revoked, wsClients };
