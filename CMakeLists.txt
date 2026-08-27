@@ -48,7 +48,8 @@ if(INIMERSE_BUILD_ENGINE)
       src/mod/ai_mod.c mods/build/build_mod.c)
   else()
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
-      src/mod/mod_posix.c src/platform/process.c src/isolate_mod.c
+      src/mod/mod_posix.c src/mod/net_mod_posix.c src/platform/socket.c
+      src/platform/process.c src/isolate_mod.c
       src/platform/posix_stubs.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
