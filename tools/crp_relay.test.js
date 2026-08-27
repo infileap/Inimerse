@@ -12,6 +12,8 @@ server.listen(0, async () => {
     assert.equal(portal.peer, 'p1');
     assert.equal((await post('/signal', { verse: 'demo', peer: 'p1', event: 'join', token: portal.token, data: {} })).status, 202);
     assert.equal((await post('/signal', { verse: 'demo', peer: 'bad', event: 'join', token: portal.token, data: {} })).status, 403);
+    assert.equal((await post('/revoke', { token: portal.token })).revoked, true);
+    assert.equal((await post('/signal', { verse: 'demo', peer: 'p1', event: 'join', token: portal.token, data: {} })).status, 403);
     const stored = await post('/content', { data: 'hello' });
     assert.equal(stored.status, 201);
     const got = await (await fetch(base + '/content/' + stored.hash)).text();

@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 function createRelay(options = {}) {
   const verses = new Map();
   const content = new Map();
+  const revoked = new Set();
   const maxContent = options.maxContentBytes || 8 * 1024 * 1024;
   const secret = options.secret || crypto.randomBytes(32).toString('hex');
   const makeToken = (verse, peer, capabilities = ['signal']) => { const exp = Date.now() + (options.tokenTtlMs || 5 * 60 * 1000); const body = Buffer.from(JSON.stringify({ verse, peer, capabilities, exp })).toString('base64url'); const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url'); return `${body}.${sig}`; };
@@ -30,8 +31,12 @@ function createRelay(options = {}) {
       if (req.method === 'POST' && req.url === '/signal') {
         const p = await read(req); if (!p.verse || !p.event) return json(res, 400, { error: 'verse and event are required' });
         if (!verses.has(p.verse)) return json(res, 404, { error: 'verse not found' });
-        if (p.token && !checkToken(p.token, p.verse, p.peer || '', 'signal')) return json(res, 403, { error: 'invalid capability token' });
+        if (p.token && (revoked.has(String(p.token)) || !checkToken(p.token, p.verse, p.peer || '', 'signal'))) return json(res, 403, { error: 'invalid capability token' });
         return json(res, 202, { accepted: true, verse: p.verse, event: p.event });
+      }
+      if (req.method === 'POST' && req.url === '/revoke') {
+        const p = await read(req); if (!p.token) return json(res, 400, { error: 'token is required' });
+        revoked.add(String(p.token)); return json(res, 200, { revoked: true });
       }
       if (req.method === 'POST' && req.url === '/content') {
         const p = await read(req); if (typeof p.data !== 'string') return json(res, 400, { error: 'data must be a string' });
@@ -48,7 +53,7 @@ function createRelay(options = {}) {
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, 400, { error: e.message }); }
   });
-  return { server, verses, checkToken };
+  return { server, verses, checkToken, revoked };
 }
 
 if (require.main === module) createRelay().server.listen(Number(process.env.CRP_PORT || 8787), () => console.log('CRP relay listening'));
