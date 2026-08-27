@@ -26,6 +26,7 @@ SRCS += src/platform/socket.c
 SRCS += src/platform/process.c
 SRCS += src/isolate_mod.c
 SRCS += src/platform/posix_stubs.c
+SRCS += src/platform/http_posix.c
 endif
 
 OBJS = $(SRCS:.c=.o)
@@ -34,7 +35,7 @@ TARGET = inimerse
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(if $(filter Windows_NT,$(OS)),,-pthread)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<

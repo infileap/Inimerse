@@ -43,8 +43,16 @@ add_test(NAME platform_probe COMMAND platform_probe)
 add_test(NAME fiber_probe COMMAND fiber_probe)
 add_test(NAME process_probe COMMAND process_probe)
 add_test(NAME socket_probe COMMAND socket_probe)
+if(NOT WIN32)
+  add_executable(http_probe src/platform/socket.c src/platform/http_posix.c src/platform/http_probe.c)
+  target_link_libraries(http_probe PRIVATE Threads::Threads)
+  add_test(NAME http_probe COMMAND http_probe)
+endif()
 set_tests_properties(platform_probe fiber_probe process_probe socket_probe
   PROPERTIES TIMEOUT 10 LABELS "platform;smoke")
+if(NOT WIN32)
+  set_tests_properties(http_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;http")
+endif()
 find_program(INIMERSE_NODE node)
 if(INIMERSE_NODE)
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
@@ -75,7 +83,7 @@ if(INIMERSE_BUILD_ENGINE)
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
-      src/platform/posix_stubs.c)
+      src/platform/posix_stubs.c src/platform/http_posix.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm

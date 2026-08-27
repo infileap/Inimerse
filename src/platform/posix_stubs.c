@@ -12,5 +12,4 @@ int build_project_impl(void *vm, const char *cfg, int mode, const char *out) { (
 int lint_check(const char *path, char *out, int cap) { (void)path; if (out && cap > 0) snprintf(out, (size_t)cap, "lint is unavailable on this POSIX build"); return -1; }
 int headless_init(int port) { (void)port; unsupported("headless"); return 0; }
 void headless_start_thread(void) { }
-int verse_http_start(int port) { (void)port; unsupported("verse_http"); return 0; }
 int desugar_file(const char *in, const char *out) { (void)in; (void)out; unsupported("desugar"); return -1; }
