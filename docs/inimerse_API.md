@@ -213,6 +213,13 @@ inimerse capabilities  列出当前平台能力
 ## 14. UPP 本地协议参考
 ### `.vverse` 包校验
 
+打包工具 `tools/vverse_pack.js` 提供确定性 gzip 包格式（`.vvpkg`），并在解包时执行路径安全和签名完整性校验：
+
+```bash
+node tools/vverse_pack.js pack demo.vverse demo.vvpkg
+node tools/vverse_pack.js unpack demo.vvpkg restored.vverse
+```
+
 `tools/vverse_validate.js` 校验包根目录的 `manifest.json`、`blueprint.json` 及 manifest 的 `id`、`version`、`entry` 字段，并返回所有非 `signatures/` 文件的 SHA-256 摘要：
 
 ```bash
