@@ -58,6 +58,7 @@
 ### 本轮新增
 
 - UPP 会话状态机：启动、心跳序号、停止、崩溃和 ABI 不兼容状态均可恢复/审计（`tools/upp_session.js`）。
+- 多目标 `say`/`OutputStream` 参考实现与 `say@target` 去糖映射（`tools/say_reference.js`）。
 
 ### 已完成增量（2026-08-27）
 

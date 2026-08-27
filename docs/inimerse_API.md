@@ -281,6 +281,8 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 
 ## CRP 令牌撤销
 
+多目标输出参考实现位于 `tools/say_reference.js`：`createRouter(streams).say(target,text,meta)` 支持 `console/log/chat/ui/world/character/dialogue/system/file/json/ai`，`OutputStream` 提供队列上限、背压和关闭语义；`desugarSay` 将 `say@chat "..."` 转换为 `say_target("chat", "...")`。
+
 中继提供 `POST /revoke`，请求体为 `{ "token": "..." }`。客户端可调用 `CrpClient.revoke(token)`；撤销后令牌立即失效，后续 `SIGNAL` 请求返回 403。
 
 Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /package/<id>` 下载包；客户端对应 `publishPackage(id, bytes)` 与 `downloadPackage(id)`。
