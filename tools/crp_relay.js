@@ -69,6 +69,10 @@ function createRelay(options = {}) {
         const id = String(p.id); content.set(`pkg:${id}`, bytes); packages.set(id, { id, hash: source.hash, size: source.size, updated: Date.now(), forkOf: source.id });
         return json(res, 201, { id, hash: source.hash, forkOf: source.id });
       }
+      if (req.method === 'DELETE' && req.url.startsWith('/package/')) {
+        const id = decodeURIComponent(req.url.slice('/package/'.length)); if (!packages.has(id)) return json(res, 404, { error: 'package not found' });
+        packages.delete(id); content.delete(`pkg:${id}`); return json(res, 200, { deleted: true, id });
+      }
       if (req.method === 'GET' && req.url.startsWith('/package/')) {
         const id = decodeURIComponent(req.url.slice('/package/'.length)); const bytes = content.get(`pkg:${id}`);
         if (!bytes) return json(res, 404, { error: 'package not found' });

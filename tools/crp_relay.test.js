@@ -27,6 +27,8 @@ server.listen(0, async () => {
     assert.equal((await (await fetch(base + '/package/demo')).text()), 'pkg');
     assert.equal((await (await fetch(base + '/packages?q=demo')).json()).items.length, 1);
     assert.equal((await post('/package/fork', { source: 'demo', id: 'demo-fork' })).status, 201);
+    assert.equal((await fetch(base + '/package/demo-fork', { method: 'DELETE' })).status, 200);
+    assert.equal((await fetch(base + '/package/demo-fork')).status, 404);
     console.log('CRP relay tests: ok');
   } finally { server.close(); }
 });

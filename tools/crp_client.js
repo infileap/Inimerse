@@ -35,6 +35,7 @@ class CrpClient {
   cacheStats() { return { entries: this.packageCache.size, bytes: this.cacheBytes, maxBytes: this.maxCacheBytes }; }
   clearPackageCache() { this.packageCache.clear(); this.cacheBytes = 0; }
   forkPackage(source, id, signal) { return this.request('/package/fork', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source, id }) }, signal); }
+  deletePackage(id, signal) { this.packageCache.delete(String(id)); return this.request('/package/' + encodeURIComponent(id), { method: 'DELETE' }, signal); }
   async downloadPackage(id, options = {}, signal) {
     if (typeof options === 'string') options = { hash: options };
     const maxBytes = options.maxBytes ?? 64 * 1024 * 1024;
