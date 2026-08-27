@@ -46,9 +46,10 @@ add_test(NAME socket_probe COMMAND socket_probe)
 set_tests_properties(platform_probe fiber_probe process_probe socket_probe
   PROPERTIES TIMEOUT 10 LABELS "platform;smoke")
 find_program(INIMERSE_NODE node)
-  if(INIMERSE_NODE)
+if(INIMERSE_NODE)
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
-  set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TIMEOUT 30 LABELS "protocol;regression")
 endif()
 
 # The full engine is intentionally enabled only after the VM's thread/fiber

@@ -11,6 +11,7 @@
 - POSIX TCP `net_mod` 基础 API，包含非消费式连接状态检查。
 - POSIX 原生模组 `dlopen/dlsym` 加载。
 - CPack TGZ、ZIP、DEB Linux 包及 GitHub Actions 发布上传。
+- CTest 自动执行平台探针和 Node 协议回归，并对测试设置超时与标签。
 - UPP/CRP、`.vverse` 校验/打包和多目标 say 的参考实现与回归测试。
 
 ## 进行中
