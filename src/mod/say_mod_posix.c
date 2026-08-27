@@ -16,6 +16,17 @@ static int say_world(VM *vm) { return say_prefixed(vm, "world"); }
 static int say_character(VM *vm) { return say_prefixed(vm, "character"); }
 static int say_dialogue(VM *vm) { return say_prefixed(vm, "dialogue"); }
 static int say_system(VM *vm) { return say_prefixed(vm, "system"); }
+static int say_network(VM *vm) { return say_prefixed(vm, "network"); }
+static int say_target(VM *vm) {
+    const char *text = vm->cur_argc > 1 ? sarg(vm, 0) : (vm->cur_argc ? sarg(vm, 0) : "");
+    const char *target = vm->cur_argc > 1 ? sarg(vm, 1) : "console";
+    drop(vm);
+    if (!strcmp(target, "console")) { puts(text); fflush(stdout); }
+    else if (!strcmp(target, "log")) { fprintf(stderr, "[info] %s\n", text); fflush(stderr); }
+    else if (!strcmp(target, "json")) { printf("%s\n", text); fflush(stdout); }
+    else { printf("[%s] %s\n", target, text); fflush(stdout); }
+    return 0;
+}
 static int say_file(VM *vm) {
     const char *path = vm->cur_argc > 1 ? sarg(vm, 0) : "";
     const char *msg = vm->cur_argc > 1 ? sarg(vm, 1) : (vm->cur_argc ? sarg(vm, 0) : "");
@@ -57,7 +68,11 @@ void say_mod_register(VM *vm) {
     vm_register_builtin(vm, "say.character", say_character);
     vm_register_builtin(vm, "say.dialogue", say_dialogue);
     vm_register_builtin(vm, "say.system", say_system);
+    vm_register_builtin(vm, "say_network", say_network);
+    vm_register_builtin(vm, "say.network", say_network);
     vm_register_builtin(vm, "say.file", say_file);
+    vm_register_builtin(vm, "say_target", say_target);
+    vm_register_builtin(vm, "gui_say", say_console);
     vm_register_builtin(vm, "say_ai", say_ai);
     vm_register_builtin(vm, "say_ai_observe", say_ai_observe);
     vm_register_builtin(vm, "say_ai_trace", say_ai_trace);
