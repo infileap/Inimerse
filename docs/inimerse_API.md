@@ -225,6 +225,12 @@ node tools/vverse_validate.js path/to/demo.vverse
 node tools/vverse_validate.js demo.vverse --require-signature --require-complete-signature
 ```
 
+发布前可使用 `--write-signature` 自动创建或更新摘要文件：
+
+```bash
+node tools/vverse_validate.js demo.vverse --write-signature
+```
+
 
 `tools/upp_reference.js` 提供无传输依赖的 JSONL 协议实现，可承载于标准输入输出、TCP 或测试回环。每帧包含 `upp: 1`、`type` 和 `payload`，单帧上限为 1 MiB。
 
