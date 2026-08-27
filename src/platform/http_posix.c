@@ -13,13 +13,18 @@ static void *http_loop(void *unused) {
     while (g_http_running) {
         ImSocket *client = im_socket_accept(g_http_listener);
         if (!client) { struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL); continue; }
+        (void)im_socket_set_nonblocking(client, 0);
         char req[2048]; int n = im_socket_recv(client, req, sizeof(req) - 1);
         if (n < 0) { im_socket_close(client); continue; }
         req[n > 0 ? n : 0] = 0;
         int ok = n > 0 && strstr(req, "GET /health") != NULL;
         const char *body = ok ? "{\"ok\":true,\"service\":\"inimerse\"}\n" : "{\"error\":\"not_found\"}\n";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", ok ? "200 OK" : "404 Not Found", strlen(body), body);
-        if (len > 0) (void)im_socket_send(client, out, (size_t)len);
+        for (int sent = 0; len > 0 && sent < len;) {
+            int nout = im_socket_send(client, out + sent, (size_t)(len - sent));
+            if (nout <= 0) break;
+            sent += nout;
+        }
         im_socket_close(client);
     }
     return NULL;
