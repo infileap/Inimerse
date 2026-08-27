@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(inimerse LANGUAGES C)
+enable_testing()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -26,6 +27,10 @@ add_executable(socket_probe src/platform/socket.c src/platform/socket_probe.c)
 if(WIN32)
   target_link_libraries(socket_probe PRIVATE ws2_32)
 endif()
+add_test(NAME platform_probe COMMAND platform_probe)
+add_test(NAME fiber_probe COMMAND fiber_probe)
+add_test(NAME process_probe COMMAND process_probe)
+add_test(NAME socket_probe COMMAND socket_probe)
 
 # The full engine is intentionally enabled only after the VM's thread/fiber
 # backend is ported.  Keeping this gate explicit prevents a misleading build
