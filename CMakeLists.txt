@@ -29,24 +29,34 @@ endif()
 # backend is ported.  Keeping this gate explicit prevents a misleading build
 # that silently omits platform modules on POSIX systems.
 if(INIMERSE_BUILD_ENGINE)
-  if(NOT WIN32)
-    message(FATAL_ERROR "INIMERSE_BUILD_ENGINE currently requires a completed POSIX VM backend; use -DINIMERSE_BUILD_ENGINE=OFF")
-  endif()
-  add_executable(inimerse
+  set(INIMERSE_ENGINE_SOURCES
     src/main.c src/platform/platform.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
-    src/vm/vm.c src/runtime/runtime.c src/child_proc.c
-    src/headless_server.c src/isolate_mod.c src/desugar_mod.c src/lint_mod.c
-    src/mod/mod.c src/mod/gui_mod.c src/mod/io_mod.c src/mod/net_mod.c
-    src/mod/json_mod.c src/mod/record_mod.c src/mod/infiverse_mod.c
-    src/mod/verse_dist_mod.c src/mod/server_mod.c src/mod/identity_mod.c
-    src/mod/social_mod.c src/mod/ai_mod.c mods/build/build_mod.c)
+    src/vm/vm.c)
+  if(WIN32)
+    list(APPEND INIMERSE_ENGINE_SOURCES
+      src/runtime/runtime.c src/child_proc.c src/headless_server.c
+      src/isolate_mod.c src/desugar_mod.c src/lint_mod.c src/mod/mod.c
+      src/mod/gui_mod.c src/mod/io_mod.c src/mod/net_mod.c src/mod/json_mod.c
+      src/mod/record_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
+      src/mod/server_mod.c src/mod/identity_mod.c src/mod/social_mod.c
+      src/mod/ai_mod.c mods/build/build_mod.c)
+  else()
+    list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
+      src/mod/mod_posix.c src/platform/process.c src/isolate_mod.c
+      src/platform/posix_stubs.c)
+  endif()
+  add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
     src/runtime src/mod src/common src/lexer)
-  target_link_libraries(inimerse PRIVATE m winhttp crypt32 gdi32 winmm msimg32
-    windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+  if(WIN32)
+    target_link_libraries(inimerse PRIVATE m winhttp crypt32 gdi32 winmm msimg32
+      windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+  else()
+    target_link_libraries(inimerse PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
+  endif()
 else()
   message(STATUS "Building portable platform probes only; platform-specific VM modules remain disabled")
 endif()
