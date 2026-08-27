@@ -28,7 +28,15 @@ class CrpClient {
   signal(verse, event, data = {}, signal) { return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, event, data }) }, signal); }
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
   publishPackage(id, bytes, signal) { const data = Buffer.from(bytes).toString('base64'); return this.request('/package', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, data }) }, signal); }
-  async downloadPackage(id, signal) { const res = await fetch(this.baseUrl + '/package/' + encodeURIComponent(id), { signal }); if (!res.ok) throw new Error(`package HTTP ${res.status}`); return Buffer.from(await res.arrayBuffer()); }
+  async downloadPackage(id, options = {}, signal) {
+    if (typeof options === 'string') options = { hash: options };
+    const maxBytes = options.maxBytes ?? 64 * 1024 * 1024;
+    const res = await fetch(this.baseUrl + '/package/' + encodeURIComponent(id), { signal }); if (!res.ok) throw new Error(`package HTTP ${res.status}`);
+    const length = Number(res.headers.get('content-length') || 0); if (length > maxBytes) throw new Error('package too large');
+    const data = Buffer.from(await res.arrayBuffer()); if (data.length > maxBytes) throw new Error('package too large');
+    if (options.hash) { const got = crypto.createHash('sha256').update(data).digest('hex'); if (got !== options.hash) throw new Error('package hash mismatch'); }
+    return data;
+  }
   async fetchContent(hash, sources = [this.baseUrl], signal) {
     if (!/^[a-f0-9]{64}$/.test(hash)) throw new TypeError('invalid SHA-256 hash');
     let last;
