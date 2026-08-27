@@ -23,6 +23,8 @@ void im_socket_shutdown(void) { WSACleanup(); }
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 static int socket_valid(int fd) { return fd >= 0; }
 int im_socket_init(void) { return 0; }
 void im_socket_shutdown(void) {}
@@ -121,6 +123,21 @@ int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity) {
     return recv((SOCKET)socket->fd, (char *)buffer, (int)capacity, 0);
 #else
     return (int)recv(socket->fd, buffer, capacity, 0);
+#endif
+}
+int im_socket_set_nonblocking(ImSocket *socket, int enabled) {
+    if (!socket) return -1;
+#ifdef _WIN32
+    u_long mode = enabled ? 1 : 0; return ioctlsocket((SOCKET)socket->fd, FIONBIO, &mode) == 0 ? 0 : -1;
+#else
+    int flags = fcntl(socket->fd, F_GETFL, 0); if (flags < 0) return -1; return fcntl(socket->fd, F_SETFL, enabled ? flags | O_NONBLOCK : flags & ~O_NONBLOCK);
+#endif
+}
+int im_socket_last_error(void) {
+#ifdef _WIN32
+    return WSAGetLastError();
+#else
+    return errno;
 #endif
 }
 void im_socket_close(ImSocket *socket) {
