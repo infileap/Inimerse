@@ -6,6 +6,7 @@ function createRelay(options = {}) {
   const verses = new Map();
   const content = new Map();
   const revoked = new Set();
+  const maxRevoked = options.maxRevokedTokens || 10000;
   const maxContent = options.maxContentBytes || 8 * 1024 * 1024;
   const secret = options.secret || crypto.randomBytes(32).toString('hex');
   const makeToken = (verse, peer, capabilities = ['signal']) => { const exp = Date.now() + (options.tokenTtlMs || 5 * 60 * 1000); const body = Buffer.from(JSON.stringify({ verse, peer, capabilities, exp })).toString('base64url'); const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url'); return `${body}.${sig}`; };
@@ -36,7 +37,9 @@ function createRelay(options = {}) {
       }
       if (req.method === 'POST' && req.url === '/revoke') {
         const p = await read(req); if (!p.token) return json(res, 400, { error: 'token is required' });
-        revoked.add(String(p.token)); return json(res, 200, { revoked: true });
+        const token = String(p.token); revoked.add(token);
+        while (revoked.size > maxRevoked) revoked.delete(revoked.values().next().value);
+        return json(res, 200, { revoked: true });
       }
       if (req.method === 'POST' && req.url === '/content') {
         const p = await read(req); if (typeof p.data !== 'string') return json(res, 400, { error: 'data must be a string' });

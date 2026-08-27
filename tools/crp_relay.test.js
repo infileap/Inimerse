@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { createRelay } = require('./crp_relay');
-const { server } = createRelay({ ttlMs: 1000 });
+const { server, revoked } = createRelay({ ttlMs: 1000, maxRevokedTokens: 1 });
 server.listen(0, async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (u, body) => fetch(base + u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json().then(j => ({ status: r.status, ...j })));
@@ -13,6 +13,9 @@ server.listen(0, async () => {
     assert.equal((await post('/signal', { verse: 'demo', peer: 'p1', event: 'join', token: portal.token, data: {} })).status, 202);
     assert.equal((await post('/signal', { verse: 'demo', peer: 'bad', event: 'join', token: portal.token, data: {} })).status, 403);
     assert.equal((await post('/revoke', { token: portal.token })).revoked, true);
+    const portal2 = await post('/portal', { verse: 'demo', peer: 'p2' });
+    await post('/revoke', { token: portal2.token });
+    assert.equal(revoked.size, 1);
     assert.equal((await post('/signal', { verse: 'demo', peer: 'p1', event: 'join', token: portal.token, data: {} })).status, 403);
     const stored = await post('/content', { data: 'hello' });
     assert.equal(stored.status, 201);
