@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 project(inimerse LANGUAGES C)
 enable_testing()
 
+set(CPACK_PACKAGE_NAME "inimerse")
+set(CPACK_PACKAGE_VENDOR "Infileap")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Portable Inimerse VM")
+set(CPACK_PACKAGE_VERSION "0.3.0")
+set(CPACK_GENERATOR "TGZ")
+include(CPack)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 # The VM now has a functional POSIX backend; build the portable engine by
