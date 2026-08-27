@@ -29,6 +29,7 @@ uint64_t im_process_pid(const ImProcess *p) { return p ? p->pid : 0; }
 int im_process_alive(ImProcess *p) { DWORD code = 0; return p && p->handle && GetExitCodeProcess((HANDLE)p->handle, &code) && code == STILL_ACTIVE; }
 int im_process_wait(ImProcess *p, unsigned int timeout_ms) { return p && p->handle && WaitForSingleObject((HANDLE)p->handle, timeout_ms) == WAIT_OBJECT_0 ? 0 : -1; }
 int im_process_kill(ImProcess *p) { return p && p->handle && TerminateProcess((HANDLE)p->handle, 1) ? 0 : -1; }
+int im_process_exit_code(ImProcess *p) { DWORD code = STILL_ACTIVE; return p && p->handle && GetExitCodeProcess((HANDLE)p->handle, &code) && code != STILL_ACTIVE ? (int)code : -1; }
 void im_process_close(ImProcess *p) { if (!p) return; if (p->handle) CloseHandle((HANDLE)p->handle); free(p); }
 #else
 #include <signal.h>
@@ -56,5 +57,6 @@ int im_process_wait(ImProcess *p, unsigned int timeout_ms) {
     return 0;
 }
 int im_process_kill(ImProcess *p) { return p && !p->finished && kill((pid_t)p->pid, SIGKILL) == 0 ? 0 : -1; }
+int im_process_exit_code(ImProcess *p) { if (!p) return -1; if (!p->finished) (void)im_process_alive(p); if (!p->finished) return -1; return WIFEXITED(p->status) ? WEXITSTATUS(p->status) : 128 + WTERMSIG(p->status); }
 void im_process_close(ImProcess *p) { free(p); }
 #endif
