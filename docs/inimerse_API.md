@@ -289,6 +289,8 @@ Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /
 
 CRP Relay 还提供 `/ws` WebSocket 升级端点。客户端发送 JSON 文本帧（至少包含 `verse` 与 `event`）后，中继会转发给同一中继上的其他连接；支持 ping/pong 与关闭帧，异常 JSON 会被丢弃。
 
+PAL 网络接口位于 `src/platform/socket.h`：`im_socket_listen/connect/accept/send/recv` 提供 TCP 基础操作，`im_socket_set_nonblocking` 设置非阻塞模式，`im_socket_last_error` 返回平台错误码。Windows 与 POSIX 后端使用同一组函数签名。
+
 ## 16. 兼容性与性能建议
 
 使用 UTF-8、显式括号和明确类型；避免依赖目录遍历顺序及操作系统路径格式。大量集合查询应复用集合对象，避免循环中重复构造区间。并发任务之间优先传递消息而非共享可变状态；IO 和网络调用应放在独立任务中。
