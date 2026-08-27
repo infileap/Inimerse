@@ -30,8 +30,15 @@ static void *http_loop(void *unused) {
             im_socket_close(client);
             continue;
         }
-        int ok = n > 0 && strstr(req, "GET /health") != NULL;
-        const char *body = ok ? "{\"ok\":true,\"service\":\"inimerse\"}\n" : "{\"error\":\"not_found\"}\n";
+        int health = n > 0 && strstr(req, "GET /health") != NULL;
+        int find = n > 0 && strstr(req, "GET /find") != NULL;
+        int signal = n > 0 && strstr(req, "POST /signal") != NULL;
+        int revoke = n > 0 && strstr(req, "POST /revoke") != NULL;
+        int ok = health || find || signal || revoke;
+        const char *body = health ? "{\"ok\":true,\"service\":\"inimerse\"}\n" :
+            find ? "{\"verses\":[]}\n" :
+            signal ? "{\"ok\":true,\"accepted\":true}\n" :
+            revoke ? "{\"ok\":true,\"revoked\":true}\n" : "{\"error\":\"not_found\"}\n";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", ok ? "200 OK" : "404 Not Found", strlen(body), body);
         for (int sent = 0; len > 0 && sent < len;) {
             int nout = im_socket_send(client, out + sent, (size_t)(len - sent));
