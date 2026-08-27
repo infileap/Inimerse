@@ -27,6 +27,8 @@ class CrpClient {
   portal(verse, peer, signal) { return this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer }) }, signal); }
   signal(verse, event, data = {}, signal) { return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, event, data }) }, signal); }
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
+  publishPackage(id, bytes, signal) { const data = Buffer.from(bytes).toString('base64'); return this.request('/package', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, data }) }, signal); }
+  async downloadPackage(id, signal) { const res = await fetch(this.baseUrl + '/package/' + encodeURIComponent(id), { signal }); if (!res.ok) throw new Error(`package HTTP ${res.status}`); return Buffer.from(await res.arrayBuffer()); }
   async fetchContent(hash, sources = [this.baseUrl], signal) {
     if (!/^[a-f0-9]{64}$/.test(hash)) throw new TypeError('invalid SHA-256 hash');
     let last;

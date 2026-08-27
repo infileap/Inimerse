@@ -53,6 +53,17 @@ function createRelay(options = {}) {
         const bytes = content.get(hash); if (!bytes) return json(res, 404, { error: 'content not found' });
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': bytes.length }); return res.end(bytes);
       }
+      if (req.method === 'POST' && req.url === '/package') {
+        const p = await read(req); if (!p.id || typeof p.data !== 'string') return json(res, 400, { error: 'id and data are required' });
+        const bytes = Buffer.from(p.data, 'base64'); if (bytes.length > maxContent) return json(res, 413, { error: 'package too large' });
+        const hash = crypto.createHash('sha256').update(bytes).digest('hex'); content.set(`pkg:${p.id}`, bytes);
+        return json(res, 201, { id: String(p.id), hash, size: bytes.length });
+      }
+      if (req.method === 'GET' && req.url.startsWith('/package/')) {
+        const id = decodeURIComponent(req.url.slice('/package/'.length)); const bytes = content.get(`pkg:${id}`);
+        if (!bytes) return json(res, 404, { error: 'package not found' });
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': bytes.length }); return res.end(bytes);
+      }
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, 400, { error: e.message }); }
   });

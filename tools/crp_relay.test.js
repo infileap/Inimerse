@@ -23,6 +23,8 @@ server.listen(0, async () => {
     assert.equal(got, 'hello');
     assert.equal((await post('/content', { data: 'hello', hash: '0'.repeat(64) })).status, 400);
     assert.equal((await post('/portal', { verse: 'missing', peer: 'p1' })).status, 404);
+    const pkg = await post('/package', { id: 'demo', data: Buffer.from('pkg').toString('base64') }); assert.equal(pkg.status, 201);
+    assert.equal((await (await fetch(base + '/package/demo')).text()), 'pkg');
     console.log('CRP relay tests: ok');
   } finally { server.close(); }
 });
