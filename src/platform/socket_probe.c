@@ -8,7 +8,7 @@ int main(void) {
     if (!listener) { im_socket_shutdown(); return 2; }
     int port = im_socket_local_port(listener); if (port <= 0) return 3;
     if (im_socket_set_nonblocking(listener, 1) != 0) return 4;
-    (void)im_socket_accept(listener); (void)im_socket_would_block();
+    (void)im_socket_accept(listener); if (!im_socket_would_block()) return 10;
     ImSocket *client = im_socket_connect("127.0.0.1", (uint16_t)port); if (!client) return 5;
     ImSocket *accepted = NULL; for (int i = 0; i < 100 && !accepted; i++) { accepted = im_socket_accept(listener); }
     if (!accepted) return 6;
