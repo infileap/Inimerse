@@ -25,3 +25,16 @@ jobs:
         if: always()
         run: make clean
 
+  wasm-probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install WASI toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang lld wasi-libc
+      - name: Build WASI probe
+        run: make wasm
+      - name: Verify WebAssembly artifact
+        run: file tools/wasm_probe.wasm | grep -qi 'WebAssembly'

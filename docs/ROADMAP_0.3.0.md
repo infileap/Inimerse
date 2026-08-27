@@ -60,6 +60,7 @@
 - UPP 会话状态机：启动、心跳序号、停止、崩溃和 ABI 不兼容状态均可恢复/审计（`tools/upp_session.js`）。
 - 多目标 `say`/`OutputStream` 参考实现与 `say@target` 去糖映射（`tools/say_reference.js`）。
 - WASI 工具链实际产物探针：`make wasm` 编译并验证 `wasm32-wasi` 模块（完整 VM/WASI 导入表仍待后续）。
+- CI 构建矩阵新增独立 WASI 探针任务，native 与 `wasm32-wasi` 均有自动验收。
 
 ### 已完成增量（2026-08-27）
 
