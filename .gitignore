@@ -27,6 +27,7 @@ Infiverse_standard/userdata/
 *.bak
 *.old
 *.cache
+tools/*.wasm
 _wv2sdk/
 app/*WebView2/
 app/wv2data/
