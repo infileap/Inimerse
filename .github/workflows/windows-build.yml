@@ -1,0 +1,20 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows-core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Protocol regression
+        run: node tools/regression.js
+      - name: Build Windows core
+        shell: pwsh
+        run: ./build.ps1
