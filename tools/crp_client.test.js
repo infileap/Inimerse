@@ -12,6 +12,7 @@ server.listen(0, async () => {
     assert.equal((await c.portal('demo', 'peer')).peer, 'peer');
     assert.equal((await c.signal('demo', 'join')).accepted, true);
     const published = await c.publishPackage('demo', Buffer.from('pkg')); assert.equal((await c.downloadPackage('demo', { hash: published.hash })).toString(), 'pkg');
+    assert.equal((await c.listPackages()).items.length, 1); await c.forkPackage('demo', 'forked'); assert.equal((await c.downloadPackage('forked')).toString(), 'pkg');
     await assert.rejects(() => c.downloadPackage('demo', { hash: '0'.repeat(64) }), /hash mismatch/);
     const dataRes = await fetch(base + '/content', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: 'multi-source' }) }).then(r => r.json());
     const bytes = await c.fetchContent(dataRes.hash, [base + '-missing', base]);

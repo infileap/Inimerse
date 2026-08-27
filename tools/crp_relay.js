@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 function createRelay(options = {}) {
   const verses = new Map();
   const content = new Map();
+  const packages = new Map();
   const revoked = new Set();
   const maxRevoked = options.maxRevokedTokens || 10000;
   const maxContent = options.maxContentBytes || 8 * 1024 * 1024;
@@ -56,8 +57,16 @@ function createRelay(options = {}) {
       if (req.method === 'POST' && req.url === '/package') {
         const p = await read(req); if (!p.id || typeof p.data !== 'string') return json(res, 400, { error: 'id and data are required' });
         const bytes = Buffer.from(p.data, 'base64'); if (bytes.length > maxContent) return json(res, 413, { error: 'package too large' });
-        const hash = crypto.createHash('sha256').update(bytes).digest('hex'); content.set(`pkg:${p.id}`, bytes);
-        return json(res, 201, { id: String(p.id), hash, size: bytes.length });
+        const id = String(p.id); const hash = crypto.createHash('sha256').update(bytes).digest('hex'); content.set(`pkg:${id}`, bytes);
+        packages.set(id, { id, hash, size: bytes.length, updated: Date.now(), forkOf: p.forkOf || null });
+        return json(res, 201, { id, hash, size: bytes.length });
+      }
+      if (req.method === 'GET' && req.url === '/packages') return json(res, 200, { items: [...packages.values()].sort((a, b) => b.updated - a.updated) });
+      if (req.method === 'POST' && req.url === '/package/fork') {
+        const p = await read(req); if (!p.source || !p.id) return json(res, 400, { error: 'source and id are required' });
+        const source = packages.get(String(p.source)); const bytes = content.get(`pkg:${p.source}`); if (!source || !bytes) return json(res, 404, { error: 'source package not found' });
+        const id = String(p.id); content.set(`pkg:${id}`, bytes); packages.set(id, { id, hash: source.hash, size: source.size, updated: Date.now(), forkOf: source.id });
+        return json(res, 201, { id, hash: source.hash, forkOf: source.id });
       }
       if (req.method === 'GET' && req.url.startsWith('/package/')) {
         const id = decodeURIComponent(req.url.slice('/package/'.length)); const bytes = content.get(`pkg:${id}`);
@@ -67,7 +76,7 @@ function createRelay(options = {}) {
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, 400, { error: e.message }); }
   });
-  return { server, verses, checkToken, revoked };
+  return { server, verses, packages, checkToken, revoked };
 }
 
 if (require.main === module) createRelay().server.listen(Number(process.env.CRP_PORT || 8787), () => console.log('CRP relay listening'));

@@ -6,6 +6,7 @@ class CrpClient {
     this.baseUrl = String(baseUrl).replace(/\/$/, '');
     this.retries = options.retries ?? 3;
     this.backoffMs = options.backoffMs ?? 100;
+    this.packageCache = new Map(); this.maxCacheBytes = options.maxCacheBytes ?? 128 * 1024 * 1024; this.cacheBytes = 0;
   }
   async request(path, init = {}, signal) {
     let last;
@@ -28,13 +29,17 @@ class CrpClient {
   signal(verse, event, data = {}, signal) { return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, event, data }) }, signal); }
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
   publishPackage(id, bytes, signal) { const data = Buffer.from(bytes).toString('base64'); return this.request('/package', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, data }) }, signal); }
+  listPackages(signal) { return this.request('/packages', {}, signal); }
+  forkPackage(source, id, signal) { return this.request('/package/fork', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source, id }) }, signal); }
   async downloadPackage(id, options = {}, signal) {
     if (typeof options === 'string') options = { hash: options };
     const maxBytes = options.maxBytes ?? 64 * 1024 * 1024;
+    if (options.cache !== false && this.packageCache.has(String(id))) { const cached = this.packageCache.get(String(id)); if (options.hash && crypto.createHash('sha256').update(cached).digest('hex') !== options.hash) throw new Error('package hash mismatch'); return cached; }
     const res = await fetch(this.baseUrl + '/package/' + encodeURIComponent(id), { signal }); if (!res.ok) throw new Error(`package HTTP ${res.status}`);
     const length = Number(res.headers.get('content-length') || 0); if (length > maxBytes) throw new Error('package too large');
     const data = Buffer.from(await res.arrayBuffer()); if (data.length > maxBytes) throw new Error('package too large');
     if (options.hash) { const got = crypto.createHash('sha256').update(data).digest('hex'); if (got !== options.hash) throw new Error('package hash mismatch'); }
+    if (options.cache !== false && data.length <= this.maxCacheBytes) { while (this.cacheBytes + data.length > this.maxCacheBytes && this.packageCache.size) { const first = this.packageCache.keys().next().value; this.cacheBytes -= this.packageCache.get(first).length; this.packageCache.delete(first); } this.packageCache.set(String(id), data); this.cacheBytes += data.length; }
     return data;
   }
   async fetchContent(hash, sources = [this.baseUrl], signal) {
