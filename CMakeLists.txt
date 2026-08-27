@@ -32,7 +32,8 @@ endif()
 # that silently omits platform modules on POSIX systems.
 if(INIMERSE_BUILD_ENGINE)
   set(INIMERSE_ENGINE_SOURCES
-    src/main.c src/platform/platform.c
+    src/main.c src/platform/platform.c src/platform/thread.c src/platform/fiber.c
+    src/platform/dir.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
@@ -53,6 +54,9 @@ if(INIMERSE_BUILD_ENGINE)
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
     src/runtime src/mod src/common src/lexer)
+  if(NOT WIN32)
+    target_compile_definitions(inimerse PRIVATE _GNU_SOURCE _stricmp=strcasecmp)
+  endif()
   if(WIN32)
     target_link_libraries(inimerse PRIVATE m winhttp crypt32 gdi32 winmm msimg32
       windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
