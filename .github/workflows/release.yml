@@ -26,6 +26,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          body_path: docs/RELEASE_0.2.0.md
           files: D:/Infiverse_release/InfiverseSetup.exe
-

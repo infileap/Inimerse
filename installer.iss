@@ -3,7 +3,7 @@
 [Setup]
 AppId={{A8A1D2C7-4A1B-4E80-9E13-8F2B3A5D6C11}
 AppName=Infiverse
-AppVersion=0.2.0
+AppVersion=0.2.1
 AppPublisher=Infiverse
 DefaultDirName={autopf}\Infiverse
 DefaultGroupName=Infiverse

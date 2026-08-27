@@ -3899,7 +3899,7 @@ void *task_scheduler_entry(void *arg) {
         sched_fiber = ConvertThreadToFiber(NULL);
         if (!sched_fiber && att < 9) Sleep(10);
     }
-    if (!sched_fiber) { vm->sched_running = 0; return NULL; }
+    if (!sched_fiber) { vm->sched_running = 0; return 0; }
     for (int i = 0; i < VM_MAX_TASKS; i++)
         if (vm->tasks[i]) vm->tasks[i]->fiber_sched = sched_fiber;
     while (vm->sched_running) {
