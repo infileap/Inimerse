@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <ctype.h>
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -27,6 +28,11 @@ static void token_register(const char *token) { if (g_token_count < 128) snprint
 static void token_revoke(const char *token) { if (!token_revoked(token) && g_revoked_count < 128) snprintf(g_revoked[g_revoked_count++], sizeof g_revoked[0], "%s", token); }
 
 static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
+static const char *find_ci(const char *haystack, const char *needle) {
+    size_t n = strlen(needle); if (!n) return haystack;
+    for (const char *p = haystack; *p; ++p) { size_t i = 0; while (i < n && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) ++i; if (i == n) return p; }
+    return NULL;
+}
 static void ensure_dir(const char *path) {
 #ifdef _WIN32
     _mkdir(path);
@@ -99,11 +105,24 @@ static void *http_loop(void *unused) {
         ImSocket *client = im_socket_accept(g_http_listener);
         if (!client) { struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL); continue; }
         (void)im_socket_set_nonblocking(client, 0);
-        char req[65536]; int n = im_socket_recv(client, req, sizeof(req) - 1);
-        if (n < 0) { im_socket_close(client); continue; }
-        if (n >= (int)sizeof(req) - 1) { im_socket_close(client); continue; }
-        req[n > 0 ? n : 0] = 0;
-        if (n > 0 && strstr(req, "GET /ws") && strstr(req, "Upgrade: websocket")) {
+        char req[65536]; int n = 0, header_end = -1, content_len = 0;
+        for (;;) {
+            int k = im_socket_recv(client, req + n, sizeof(req) - 1 - (size_t)n);
+            if (k <= 0) break;
+            n += k; req[n] = 0;
+            char *end = strstr(req, "\r\n\r\n");
+            if (end && header_end < 0) {
+                header_end = (int)(end - req) + 4;
+                const char *cl = find_ci(req, "Content-Length:");
+                if (cl && cl < end) content_len = atoi(cl + 15);
+                if (content_len < 0 || content_len > (int)sizeof(req) - header_end - 1) { n = -1; break; }
+            }
+            if (header_end >= 0 && n >= header_end + content_len) break;
+            if (n >= (int)sizeof(req) - 1) { n = -1; break; }
+        }
+        if (n <= 0) { im_socket_close(client); continue; }
+        req[n] = 0;
+        if (n > 0 && strstr(req, "GET /ws") && find_ci(req, "Upgrade: websocket")) {
             if (im_ws_accept(client, req, (size_t)n) == 0) {
                 ImCrpSession session; im_crp_session_init(&session, 1);
                 char frame[65536];
