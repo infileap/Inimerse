@@ -451,7 +451,11 @@ static char *chdir_to_script_dir(const char *script) {
     if (slash) {
         *slash = '\0';
         _chdir(abs);
+#ifdef _WIN32
         *slash = '\\';
+#else
+        *slash = '/';
+#endif
     }
     return abs;
 }
