@@ -1,5 +1,8 @@
 # build.ps1 - build Inimerse from the repository directory and deploy to %USERPROFILE%\Infiverse
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
+if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+    throw "gcc not found. Install MinGW-w64 or add gcc to PATH."
+}
 $repo = (Resolve-Path $PSScriptRoot).Path
 $src = Join-Path $repo "src"
 $incs = @("-I$src", "-I$src\parser", "-I$src\compiler", "-I$src\vm", "-I$src\runtime", "-I$src\mod", "-I$src\common", "-I$src\lexer")

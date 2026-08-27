@@ -64,6 +64,7 @@
 - `make check` 纳入平台、Fiber、进程超时和 TCP 回环探针，跨平台 PAL 回归自动执行。
 - Linux CI 已改为执行完整 `make check`，native 构建与全部 PAL 探针统一门禁。
 - 新增 Windows push/PR 构建 CI，运行协议回归和 `build.ps1`，形成 Windows/Linux/WASI 三路门禁。
+- Windows 构建脚本改为严格失败模式，并在编译前检查 GCC，避免错误构建被误报为成功。
 - CRP Hub 清单支持关键词过滤，客户端缓存提供查询、统计、清理和容量上限行为。
 
 ### 已完成增量（2026-08-27）
