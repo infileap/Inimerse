@@ -1,4 +1,5 @@
 #include "socket.h"
+#include "websocket.h"
 #include <pthread.h>
 #include <time.h>
 #include <stdio.h>
@@ -17,6 +18,18 @@ static void *http_loop(void *unused) {
         char req[2048]; int n = im_socket_recv(client, req, sizeof(req) - 1);
         if (n < 0) { im_socket_close(client); continue; }
         req[n > 0 ? n : 0] = 0;
+        if (n > 0 && strstr(req, "GET /ws") && strstr(req, "Upgrade: websocket")) {
+            if (im_ws_accept(client, req, (size_t)n) == 0) {
+                char frame[65536];
+                for (;;) {
+                    int flen = im_ws_read_text(client, frame, sizeof frame);
+                    if (flen <= 0) break;
+                    if (im_ws_send_text(client, frame, (size_t)flen) != 0) break;
+                }
+            }
+            im_socket_close(client);
+            continue;
+        }
         int ok = n > 0 && strstr(req, "GET /health") != NULL;
         const char *body = ok ? "{\"ok\":true,\"service\":\"inimerse\"}\n" : "{\"error\":\"not_found\"}\n";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", ok ? "200 OK" : "404 Not Found", strlen(body), body);
