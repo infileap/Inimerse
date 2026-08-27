@@ -231,6 +231,25 @@ static void iso_push_result(VM *vm, int exit_code, const char *out, int timedout
     v.type = VAL_DICT; v.ival = aidx + 1; v.sval = NULL; iso_push(vm, v);
 }
 
+/* Quote an argument for /bin/sh without allowing path characters to escape. */
+static int iso_shell_quote(char *dst, size_t cap, const char *src) {
+    size_t n = 0;
+    if (!dst || cap < 3) return -1;
+    dst[n++] = '\'';
+    for (const unsigned char *p = (const unsigned char *)(src ? src : ""); *p; ++p) {
+        if (*p == '\'') {
+            if (n + 4 >= cap) return -1;
+            dst[n++] = '\''; dst[n++] = '\\'; dst[n++] = '\''; dst[n++] = '\'';
+        } else {
+            if (n + 1 >= cap) return -1;
+            dst[n++] = (char)*p;
+        }
+    }
+    if (n + 2 > cap) return -1;
+    dst[n++] = '\''; dst[n] = 0;
+    return 0;
+}
+
 static int fn_isolate_run(VM *vm) {
     int sp = vm_cur_sp(vm); const char *script = ""; int timeout = ISO_DEFAULT_TIMEOUT_MS;
     if (sp >= 0) { Value v = iso_arg(vm, 0); if (v.type == VAL_INT) timeout = v.ival; else if (v.type == VAL_FLOAT) timeout = (int)v.fval; }
@@ -243,7 +262,9 @@ static int fn_isolate_run(VM *vm) {
     if (pid < 0) { close(pipefd[0]); close(pipefd[1]); iso_push_result(vm, -2, "isolate_run: fork failed", 0); return 0; }
     if (pid == 0) {
         dup2(pipefd[1], STDOUT_FILENO); dup2(pipefd[1], STDERR_FILENO); close(pipefd[0]); close(pipefd[1]);
-        char cmd[8192]; snprintf(cmd, sizeof cmd, "'%s' --safe --low-config --time-limit %d '%s'", exe, timeout / 1000 + 1, script);
+        char qexe[2048], qscript[8192], cmd[12288];
+        if (iso_shell_quote(qexe, sizeof qexe, exe) != 0 || iso_shell_quote(qscript, sizeof qscript, script) != 0) _exit(126);
+        snprintf(cmd, sizeof cmd, "%s --safe --low-config --time-limit %d %s", qexe, timeout / 1000 + 1, qscript);
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL); _exit(127);
     }
     close(pipefd[1]); fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
