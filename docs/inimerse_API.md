@@ -289,7 +289,7 @@ Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /
 
 CRP Relay 还提供 `/ws` WebSocket 升级端点。客户端发送 JSON 文本帧（至少包含 `verse` 与 `event`）后，中继会转发给同一中继上的其他连接；支持 ping/pong 与关闭帧，异常 JSON 会被丢弃。
 
-PAL 网络接口位于 `src/platform/socket.h`：`im_socket_listen/connect/accept/send/recv` 提供 TCP 基础操作，`im_socket_set_nonblocking` 设置非阻塞模式，`im_socket_last_error` 返回平台错误码。Windows 与 POSIX 后端使用同一组函数签名。
+PAL 网络接口位于 `src/platform/socket.h`：`im_socket_listen/connect/accept/send/recv` 提供 TCP 基础操作，`im_socket_set_nonblocking` 设置非阻塞模式，`im_socket_local_port` 查询监听端口，`im_socket_last_error` 返回平台错误码。Windows 与 POSIX 后端使用同一组函数签名；`socket_probe` 会执行本地回环收发验证。
 
 ## 16. 兼容性与性能建议
 
