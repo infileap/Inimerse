@@ -5,6 +5,7 @@
 > 本路线图根据 `docs/愿景.md` 重构，描述可验证的工程交付物，而不是抽象宣传目标。API 以 `docs/API_REFERENCE.md` 为准。
 
 0.3.0 版本待实现内容详见 [ROADMAP_0.3.0.md](ROADMAP_0.3.0.md)。
+v0.4–v0.6 分层规划详见 [ROADMAP_0.4-0.6.md](ROADMAP_0.4-0.6.md)。
 
 ## 愿景映射
 
