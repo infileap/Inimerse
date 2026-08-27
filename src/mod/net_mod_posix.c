@@ -24,6 +24,7 @@ static int net_recv(VM *vm) {
     if (cap > 65536) cap = 65536;
     popn(vm);
     char *buf = calloc(1, (size_t)cap + 1);
+    if (!buf) { push_string(vm, ""); return 1; }
     int n = s ? im_socket_recv(s, buf, (size_t)cap) : -1;
     if (n <= 0) buf[0] = 0; else buf[n] = 0;
     push_string(vm, buf); free(buf); return 1;
