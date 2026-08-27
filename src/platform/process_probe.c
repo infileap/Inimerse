@@ -10,7 +10,7 @@ int main(void) {
     ImProcess *p = im_process_spawn(cmd, 0);
     if (!p) return 2;
     printf("process_pid=%llu\n", (unsigned long long)im_process_pid(p));
-    if (im_process_wait(p, 3000) != 0) return 3;
+    if (im_process_wait_kill(p, 3000) != 0) return 3;
     if (im_process_alive(p)) return 4;
     im_process_close(p);
     puts("process probe: ok");
