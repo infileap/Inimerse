@@ -57,6 +57,8 @@
 
 ### 本轮新增
 
+- 有限集合整数元素改为有序数组 + 二分查找，降低高频 `in` 查询成本；插入保持确定性顺序。
+
 - UPP 会话状态机：启动、心跳序号、停止、崩溃和 ABI 不兼容状态均可恢复/审计（`tools/upp_session.js`）。
 - 多目标 `say`/`OutputStream` 参考实现与 `say@target` 去糖映射（`tools/say_reference.js`）。
 - WASI 工具链实际产物探针：`make wasm` 编译并验证 `wasm32-wasi` 模块（完整 VM/WASI 导入表仍待后续）。
