@@ -140,6 +140,17 @@ int im_socket_last_error(void) {
     return errno;
 #endif
 }
+int im_socket_local_port(ImSocket *socket) {
+    if (!socket) return -1; struct sockaddr_storage addr; socklen_t len = sizeof(addr);
+#ifdef _WIN32
+    if (getsockname((SOCKET)socket->fd, (struct sockaddr *)&addr, &len) != 0) return -1;
+#else
+    if (getsockname(socket->fd, (struct sockaddr *)&addr, &len) != 0) return -1;
+#endif
+    if (addr.ss_family == AF_INET) return (int)ntohs(((struct sockaddr_in *)&addr)->sin_port);
+    if (addr.ss_family == AF_INET6) return (int)ntohs(((struct sockaddr_in6 *)&addr)->sin6_port);
+    return -1;
+}
 void im_socket_close(ImSocket *socket) {
     if (!socket) return;
 #ifdef _WIN32
