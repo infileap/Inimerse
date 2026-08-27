@@ -90,9 +90,10 @@ function negotiate(local, remote) {
   if (a.role === b.role) throw new Error('UPP peers must use different roles');
   const av = new Set(a.capabilities || []);
   const capabilities = (b.capabilities || []).filter(x => av.has(x)).sort();
-  const abiA = a.manifest?.abi || 1, abiB = b.manifest?.abi || 1;
-  if (abiA !== abiB) throw new Error(`incompatible ABI versions: ${abiA} vs ${abiB}`);
-  return frame('welcome', { protocol: VERSION, peerRole: b.role, capabilities });
+  const range = m => { const v=m?.abi || 1, r=m?.abiRange || String(v), [lo,hi]=(r.includes('..')?r:`${r}..${r}`).split('..').map(Number); return {lo,hi}; };
+  const ra=range(a.manifest), rb=range(b.manifest), abi=Math.max(ra.lo,rb.lo);
+  if (abi > Math.min(ra.hi,rb.hi)) throw new Error(`incompatible ABI ranges: ${a.manifest?.abiRange || ra.lo} vs ${b.manifest?.abiRange || rb.lo}`);
+  return frame('welcome', { protocol: VERSION, peerRole: b.role, capabilities, abi });
 }
 
 function control(type, payload = {}, id = '') {

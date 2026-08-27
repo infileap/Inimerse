@@ -9,6 +9,7 @@
 
 - [x] 发布稳定 ABI v1：manifest 支持 `abi` 声明并在宿主协商时拒绝不兼容版本。
 - [x] 建立 ABI 兼容性测试；旧版（缺省 `abi`，按 v1 处理）模组保持兼容。
+- [x] 支持 manifest `abiRange: "N..M"` 范围协商，并在 welcome 返回选定 ABI。
 - [ ] 将 `net_mod` / `server_mod` 的 TCP、HTTP、WebSocket 后端统一迁移到 PAL。
 - [ ] 将 runtime 的 HTTP、串口、键鼠和系统调用内置函数迁移到 PAL（当前 Linux 使用明确的空实现基线）。
 - [x] POSIX 核心提供文件读写、输入、单调时钟和休眠基础函数。
