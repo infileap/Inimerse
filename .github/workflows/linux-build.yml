@@ -17,6 +17,20 @@ jobs:
         run: node tools/regression.js
       - name: Build and run POSIX checks
         run: make -j2 check
+      - name: CMake build, tests, and package
+        run: |
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON
+          cmake --build build -j2
+          ctest --test-dir build --output-on-failure
+          cmake --build build --target package
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: inimerse-linux-packages
+          path: |
+            build/inimerse-0.3.0-Linux-*.tar.gz
+            build/inimerse-0.3.0-Linux-*.zip
+            build/inimerse-0.3.0-Linux-*.deb
       - name: Clean generated binary
         if: always()
         run: make clean

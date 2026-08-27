@@ -5,6 +5,31 @@ on:
     tags: ['v*']
 
 jobs:
+  linux-release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build, test, and package
+        run: |
+          node tools/regression.js
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON
+          cmake --build build -j2
+          ctest --test-dir build --output-on-failure
+          cmake --build build --target package
+      - name: Publish Linux packages
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: |
+            build/inimerse-*.tar.gz
+            build/inimerse-*.zip
+            build/inimerse-*.deb
+
   windows-release:
     runs-on: windows-latest
     permissions:
