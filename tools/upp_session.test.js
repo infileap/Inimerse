@@ -1,0 +1,13 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { UppSession, STATES } = require('./upp_session');
+const { hello, start, heartbeat, crash } = require('./upp_reference');
+const manifest = { id:'demo', name:'Demo', version:'1.0.0', engine:'inimerse', entry:'main.im', abi:1 };
+const s = new UppSession('host', manifest);
+s.acceptHello(hello('client', manifest, ['heartbeat']));
+assert.equal(s.apply(start('main.im')), STATES.RUNNING);
+s.apply(heartbeat(1)); assert.equal(s.snapshot().lastHeartbeat, 1);
+assert.throws(() => s.apply(heartbeat(0)), /out of order/);
+assert.equal(s.apply(crash('boom')), STATES.CRASHED);
+assert.throws(() => s.apply(start('main.im')), /cannot start/);
+console.log('UPP session tests: ok');
