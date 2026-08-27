@@ -30,6 +30,10 @@ class CrpClient {
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
   publishPackage(id, bytes, signal) { const data = Buffer.from(bytes).toString('base64'); return this.request('/package', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, data }) }, signal); }
   listPackages(signal) { return this.request('/packages', {}, signal); }
+  cachedPackage(id) { return this.packageCache.get(String(id)) || null; }
+  hasCachedPackage(id) { return this.packageCache.has(String(id)); }
+  cacheStats() { return { entries: this.packageCache.size, bytes: this.cacheBytes, maxBytes: this.maxCacheBytes }; }
+  clearPackageCache() { this.packageCache.clear(); this.cacheBytes = 0; }
   forkPackage(source, id, signal) { return this.request('/package/fork', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source, id }) }, signal); }
   async downloadPackage(id, options = {}, signal) {
     if (typeof options === 'string') options = { hash: options };

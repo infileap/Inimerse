@@ -62,7 +62,7 @@ function createRelay(options = {}) {
         packages.set(id, { id, hash, size: bytes.length, updated: Date.now(), forkOf: p.forkOf || null });
         return json(res, 201, { id, hash, size: bytes.length });
       }
-      if (req.method === 'GET' && req.url === '/packages') return json(res, 200, { items: [...packages.values()].sort((a, b) => b.updated - a.updated) });
+      if (req.method === 'GET' && req.url.startsWith('/packages')) { const q = new URL(req.url, 'http://localhost').searchParams.get('q') || ''; const items = [...packages.values()].filter(x => !q || x.id.includes(q)).sort((a, b) => b.updated - a.updated); return json(res, 200, { items }); }
       if (req.method === 'POST' && req.url === '/package/fork') {
         const p = await read(req); if (!p.source || !p.id) return json(res, 400, { error: 'source and id are required' });
         const source = packages.get(String(p.source)); const bytes = content.get(`pkg:${p.source}`); if (!source || !bytes) return json(res, 404, { error: 'source package not found' });

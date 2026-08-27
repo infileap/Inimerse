@@ -285,7 +285,7 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 
 中继提供 `POST /revoke`，请求体为 `{ "token": "..." }`。客户端可调用 `CrpClient.revoke(token)`；撤销后令牌立即失效，后续 `SIGNAL` 请求返回 403。
 
-Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /package/<id>` 下载包，`GET /packages` 返回清单，`POST /package/fork` 从已有包创建分叉；客户端对应 `publishPackage`、`listPackages`、`forkPackage` 与 `downloadPackage(id, {hash, maxBytes, cache})`。下载端会校验大小和可选 SHA-256 摘要，并提供有上限的进程内缓存。
+Hub 包分发：`POST /package` 接收 `{id,data}`（Base64 `.vvpkg`），`GET /package/<id>` 下载包，`GET /packages?q=` 返回可过滤清单，`POST /package/fork` 从已有包创建分叉；客户端对应 `publishPackage`、`listPackages`、`forkPackage` 与 `downloadPackage(id, {hash, maxBytes, cache})`。下载端会校验大小和可选 SHA-256 摘要，并提供有上限的进程内缓存；可用 `hasCachedPackage`、`cachedPackage`、`cacheStats`、`clearPackageCache` 管理缓存。
 
 CRP Relay 还提供 `/ws` WebSocket 升级端点。客户端发送 JSON 文本帧（至少包含 `verse` 与 `event`）后，中继会转发给同一中继上的其他连接；支持 ping/pong 与关闭帧，异常 JSON 会被丢弃。
 
