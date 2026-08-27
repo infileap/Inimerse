@@ -44,6 +44,12 @@ check:
 	 $(MAKE) linux
 	 ./inimerse --version
 	 ./inimerse where
+	 $(MAKE) platform-probe fiber-probe process-probe socket-probe
+	 ./platform_probe
+	 ./fiber_probe
+	 ./process_probe
+	 ./socket_probe
+	 rm -f platform_probe fiber_probe process_probe socket_probe
 
 wasm:
 	 @node tools/wasm_check.js

@@ -61,6 +61,7 @@
 - 多目标 `say`/`OutputStream` 参考实现与 `say@target` 去糖映射（`tools/say_reference.js`）。
 - WASI 工具链实际产物探针：`make wasm` 编译并验证 `wasm32-wasi` 模块（完整 VM/WASI 导入表仍待后续）。
 - CI 构建矩阵新增独立 WASI 探针任务，native 与 `wasm32-wasi` 均有自动验收。
+- `make check` 纳入平台、Fiber、进程超时和 TCP 回环探针，跨平台 PAL 回归自动执行。
 
 ### 已完成增量（2026-08-27）
 
