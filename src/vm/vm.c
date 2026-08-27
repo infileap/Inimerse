@@ -1163,8 +1163,9 @@ static void vm_set_add(VM *vm, int idx, Value *v) {
     SetObj *s = vm_set_slot(vm, idx);
     if (!s || s->kind != 0) return;
     if (v->type == VAL_INT) {
-        for (int i = 0; i < s->iCount; i++)
-            if (s->i64[i] == v->ival) return;
+        int lo = 0, hi = s->iCount;
+        while (lo < hi) { int mid = lo + (hi - lo) / 2; if (s->i64[mid] < v->ival) lo = mid + 1; else hi = mid; }
+        if (lo < s->iCount && s->i64[lo] == v->ival) return;
         if (s->iCount >= s->iCap) {
             int nc = s->iCap == 0 ? 8 : s->iCap * 2;
             long long *ni = realloc(s->i64, (size_t)nc * sizeof(long long));
@@ -1172,7 +1173,8 @@ static void vm_set_add(VM *vm, int idx, Value *v) {
             s->i64 = ni;
             s->iCap = nc;
         }
-        s->i64[s->iCount++] = v->ival;
+        memmove(s->i64 + lo + 1, s->i64 + lo, (size_t)(s->iCount - lo) * sizeof(long long));
+        s->i64[lo] = v->ival; s->iCount++;
         return;
     }
     for (int i = 0; i < s->count; i++)
@@ -1295,8 +1297,9 @@ static int set_contains(VM *vm, int sidx, const Value *x) {
     if (!s) return 0;
     if (s->kind == 0) {
         if (x->type == VAL_INT) {
-            for (int i = 0; i < s->iCount; i++)
-                if (s->i64[i] == x->ival) return 1;
+            int lo = 0, hi = s->iCount;
+            while (lo < hi) { int mid = lo + (hi - lo) / 2; if (s->i64[mid] < x->ival) lo = mid + 1; else hi = mid; }
+            if (lo < s->iCount && s->i64[lo] == x->ival) return 1;
         }
         for (int i = 0; i < s->count; i++)
             if (val_eq(&s->items[i], x)) return 1;
