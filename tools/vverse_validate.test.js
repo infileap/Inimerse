@@ -1,0 +1,12 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+const { validate } = require('./vverse_validate');
+const d = fs.mkdtempSync(path.join(os.tmpdir(), 'vverse-')); fs.mkdirSync(path.join(d, 'assets')); fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify({ id:'demo', version:'1.0.0', entry:'main.im' })); fs.writeFileSync(path.join(d, 'blueprint.json'), '{}'); fs.writeFileSync(path.join(d, 'main.im'), 'say "ok"');
+const r = validate(d); assert.equal(r.valid, true); assert.ok(r.files['blueprint.json']); assert.ok(r.files['main.im']);
+fs.mkdirSync(path.join(d, 'signatures')); fs.writeFileSync(path.join(d, 'signatures', 'sha256.json'), JSON.stringify(r.files));
+const signed = validate(d, { requireSignature: true, requireCompleteSignature: true }); assert.equal(signed.signature['main.im'], r.files['main.im']);
+fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify({ id:'changed', version:'1.0.0', entry:'main.im' }));
+assert.throws(() => validate(d, { requireSignature: true }), /digest mismatch/);
+fs.unlinkSync(path.join(d, 'blueprint.json')); assert.throws(() => validate(d), /blueprint/);
+console.log('vverse validation tests: ok');

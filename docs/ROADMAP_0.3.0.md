@@ -32,6 +32,7 @@
 ## P1：Verse 分发与工作台
 
 - [ ] `.vverse` 标准包：`manifest.json`、`laws/`、`blueprint.json`、`assets/`、`mods/`、`signatures/`。
+- [x] `.vverse` 包结构校验与文件 SHA-256 摘要（`tools/vverse_validate.js`）。
 - [ ] 打包签名、哈希校验、依赖检查和只读预览。
 - [ ] Hub 清单上传、下载、分叉与本地缓存。
 - [ ] 桌面工作台支持创建、打开、运行、分享、下载和启动 Verse。
@@ -53,6 +54,12 @@
 - [ ] AI 分析流与玩家可见流隔离，并禁止隐藏思维链进入玩家流。
 
 ## 0.3.0 验收标准
+
+### 已完成增量（2026-08-27）
+
+- `.vverse` 目录结构与 manifest/blueprint 必填字段校验。
+- 递归 SHA-256 摘要生成；可选 `signatures/sha256.json` 完整性校验。
+- CLI 支持 `--require-signature` 与 `--require-complete-signature`，安装前可拒绝篡改或未签名文件。
 
 1. Windows 与 Linux 均可完成干净构建，平台能力缺失时返回明确错误。
 2. 本地 UPP/CRP 回环、WebSocket 连接、断线重连和签名校验测试全部通过。

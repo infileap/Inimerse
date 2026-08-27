@@ -211,6 +211,20 @@ inimerse capabilities  列出当前平台能力
 ~~~
 
 ## 14. UPP 本地协议参考
+### `.vverse` 包校验
+
+`tools/vverse_validate.js` 校验包根目录的 `manifest.json`、`blueprint.json` 及 manifest 的 `id`、`version`、`entry` 字段，并返回所有非 `signatures/` 文件的 SHA-256 摘要：
+
+```bash
+node tools/vverse_validate.js path/to/demo.vverse
+```
+
+若包包含 `signatures/sha256.json`（键为相对路径、值为 SHA-256），校验器会自动验证摘要。发布或安装流程可强制要求签名并覆盖全部文件：
+
+```bash
+node tools/vverse_validate.js demo.vverse --require-signature --require-complete-signature
+```
+
 
 `tools/upp_reference.js` 提供无传输依赖的 JSONL 协议实现，可承载于标准输入输出、TCP 或测试回环。每帧包含 `upp: 1`、`type` 和 `payload`，单帧上限为 1 MiB。
 
