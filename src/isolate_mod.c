@@ -197,5 +197,66 @@ void isolate_mod_register(VM *vm) {
 }
 #else
 #include "vm.h"
-void isolate_mod_register(VM *vm) { (void)vm; }
+#include "platform/platform.h"
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/select.h>
+#include <signal.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define ISO_OUT_CAP 65536
+#define ISO_DEFAULT_TIMEOUT_MS 5000
+
+static Value iso_arg(VM *vm, int i) { return vm_cur_stack(vm)[vm_cur_sp(vm) - i]; }
+static void iso_popn(VM *vm, int n) {
+    while (n-- > 0 && vm_cur_sp(vm) >= 0) {
+        Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+        if (v.type == VAL_STRING && v.ival != 1 && v.sval) free(v.sval);
+        vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    }
+}
+static void iso_push(VM *vm, Value v) {
+    if (vm_cur_sp(vm) < 1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = v; }
+}
+static void iso_push_result(VM *vm, int exit_code, const char *out, int timedout) {
+    int aidx = vm_array_new(vm); if (aidx < 0) return;
+    Value k, v; k.type = VAL_STRING; k.ival = 0; k.fval = 0; v.sval = NULL;
+    k.sval = strdup("exit"); v.type = VAL_INT; v.ival = exit_code; vm_dict_set(vm, aidx, &k, &v); free(k.sval);
+    k.sval = strdup("out"); v.type = VAL_STRING; v.sval = strdup(out ? out : ""); vm_dict_set(vm, aidx, &k, &v); free(k.sval); free(v.sval);
+    k.sval = strdup("timedout"); v.type = VAL_INT; v.ival = timedout; v.sval = NULL; vm_dict_set(vm, aidx, &k, &v); free(k.sval);
+    v.type = VAL_DICT; v.ival = aidx + 1; v.sval = NULL; iso_push(vm, v);
+}
+
+static int fn_isolate_run(VM *vm) {
+    int sp = vm_cur_sp(vm); const char *script = ""; int timeout = ISO_DEFAULT_TIMEOUT_MS;
+    if (sp >= 0) { Value v = iso_arg(vm, 0); if (v.type == VAL_INT) timeout = v.ival; else if (v.type == VAL_FLOAT) timeout = (int)v.fval; }
+    if (sp >= 1) { Value v = iso_arg(vm, 1); if (v.type == VAL_STRING && v.sval) script = v.sval; }
+    if (timeout < 100) timeout = 100;
+    iso_popn(vm, sp >= 1 ? 2 : 1);
+    char exe[1024]; if (im_platform_executable_path(exe, sizeof exe) != 0 || !exe[0]) { iso_push_result(vm, -2, "isolate_run: cannot resolve exe path", 0); return 0; }
+    int pipefd[2]; if (pipe(pipefd) != 0) { iso_push_result(vm, -2, "isolate_run: pipe failed", 0); return 0; }
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); iso_push_result(vm, -2, "isolate_run: fork failed", 0); return 0; }
+    if (pid == 0) {
+        dup2(pipefd[1], STDOUT_FILENO); dup2(pipefd[1], STDERR_FILENO); close(pipefd[0]); close(pipefd[1]);
+        char cmd[8192]; snprintf(cmd, sizeof cmd, "'%s' --safe --low-config --time-limit %d '%s'", exe, timeout / 1000 + 1, script);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL); _exit(127);
+    }
+    close(pipefd[1]); fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    char *buf = (char *)calloc(1, ISO_OUT_CAP + 1); int len = 0, done = 0, timedout = 0, status = 0; uint64_t start = im_platform_now_ms();
+    while (!done) {
+        char tmp[4096]; ssize_t n = read(pipefd[0], tmp, sizeof tmp);
+        if (n > 0) { int take = n > ISO_OUT_CAP - len ? ISO_OUT_CAP - len : (int)n; if (take > 0) { memcpy(buf + len, tmp, (size_t)take); len += take; buf[len] = 0; } }
+        pid_t wr = waitpid(pid, &status, WNOHANG); if (wr == pid) { done = 1; if (len >= ISO_OUT_CAP) { /* drain is unnecessary after child exit */ } }
+        if (!done && im_platform_now_ms() - start >= (uint64_t)timeout) { kill(pid, SIGKILL); waitpid(pid, &status, 0); timedout = 1; done = 1; }
+        if (!done) { fd_set rf; FD_ZERO(&rf); FD_SET(pipefd[0], &rf); struct timeval tv = {0, 10000}; select(pipefd[0] + 1, &rf, NULL, NULL, &tv); }
+    }
+    close(pipefd[0]); int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status); iso_push_result(vm, code, buf, timedout); free(buf); return 0;
+}
+static int b_isolate_run(VM *vm) { return fn_isolate_run(vm); }
+void isolate_mod_register(VM *vm) { vm_register_builtin_full(vm, "isolate_run", b_isolate_run, 1 | CAP_PROC, 0); }
 #endif

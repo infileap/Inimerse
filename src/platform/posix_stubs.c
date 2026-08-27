@@ -7,7 +7,7 @@ STUB_REG(gui_mod_register) STUB_REG(build_mod_register) STUB_REG(io_mod_register
 STUB_REG(net_mod_register) STUB_REG(json_mod_register) STUB_REG(infiverse_mod_register)
 STUB_REG(verse_dist_mod_register) STUB_REG(server_mod_register) STUB_REG(identity_mod_register)
 STUB_REG(social_mod_register) STUB_REG(ai_mod_register) STUB_REG(record_mod_register)
-STUB_REG(isolate_mod_register) STUB_REG(lint_mod_register)
+STUB_REG(lint_mod_register)
 int build_project_impl(void *vm, const char *cfg, int mode, const char *out) { (void)vm;(void)cfg;(void)mode;(void)out; unsupported("build"); return -1; }
 int lint_check(const char *path, char *out, int cap) { (void)path; if (out && cap > 0) snprintf(out, (size_t)cap, "lint is unavailable on this POSIX build"); return -1; }
 int headless_init(int port) { (void)port; unsupported("headless"); return 0; }
