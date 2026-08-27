@@ -48,12 +48,14 @@ ImProcess *im_process_spawn(const char *command, int new_console) {
 }
 uint64_t im_process_pid(const ImProcess *p) { return p ? p->pid : 0; }
 int im_process_alive(ImProcess *p) {
-    if (!p || p->finished) return 0; int status = 0; pid_t r = waitpid((pid_t)p->pid, &status, WNOHANG);
+    if (!p || p->finished) return 0;
+    int status = 0; pid_t r = waitpid((pid_t)p->pid, &status, WNOHANG);
     if (r == (pid_t)p->pid) { p->status = status; p->finished = 1; return 0; }
     return r == 0;
 }
 int im_process_wait(ImProcess *p, unsigned int timeout_ms) {
-    if (!p) return -1; unsigned int elapsed = 0;
+    if (!p) return -1;
+    unsigned int elapsed = 0;
     while (im_process_alive(p)) { if (elapsed >= timeout_ms) return -1; struct timespec ts={0,10000000L}; nanosleep(&ts,NULL); elapsed += 10; }
     return 0;
 }

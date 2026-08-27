@@ -141,7 +141,8 @@ int im_socket_last_error(void) {
 #endif
 }
 int im_socket_local_port(ImSocket *socket) {
-    if (!socket) return -1; struct sockaddr_storage addr; socklen_t len = sizeof(addr);
+    if (!socket) return -1;
+    struct sockaddr_storage addr; socklen_t len = sizeof(addr);
 #ifdef _WIN32
     if (getsockname((SOCKET)socket->fd, (struct sockaddr *)&addr, &len) != 0) return -1;
 #else
