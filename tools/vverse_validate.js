@@ -6,8 +6,10 @@ const crypto = require('node:crypto');
 function validate(root, options = {}) {
   const base = path.resolve(root); const required = ['manifest.json', 'blueprint.json'];
   for (const f of required) if (!fs.existsSync(path.join(base, f))) throw new Error(`missing ${f}`);
+  if (options.strictStructure) for (const dir of ['laws', 'assets', 'mods', 'signatures']) if (!fs.existsSync(path.join(base, dir)) || !fs.statSync(path.join(base, dir)).isDirectory()) throw new Error(`missing directory: ${dir}`);
   const manifest = JSON.parse(fs.readFileSync(path.join(base, 'manifest.json'), 'utf8'));
   for (const k of ['id', 'version', 'entry']) if (typeof manifest[k] !== 'string' || !manifest[k]) throw new Error(`manifest.${k} is required`);
+  if (manifest.dependencies !== undefined && (!manifest.dependencies || typeof manifest.dependencies !== 'object' || Array.isArray(manifest.dependencies))) throw new Error('manifest.dependencies must be an object');
   const entry = path.resolve(base, manifest.entry);
   if (entry !== base && !entry.startsWith(base + path.sep)) throw new Error('manifest.entry escapes package');
   if (!fs.existsSync(entry) || !fs.statSync(entry).isFile()) throw new Error(`manifest.entry not found: ${manifest.entry}`);
@@ -50,6 +52,7 @@ if (require.main === module) {
     console.log(JSON.stringify(validate(root, {
       requireSignature: args.includes('--require-signature'),
       requireCompleteSignature: args.includes('--require-complete-signature')
+      , strictStructure: args.includes('--strict')
     }), null, 2));
   } catch (e) { console.error(`vverse: ${e.message}`); process.exit(1); }
 }
