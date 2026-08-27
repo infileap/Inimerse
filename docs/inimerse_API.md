@@ -225,6 +225,12 @@ node tools/vverse_validate.js path/to/demo.vverse
 node tools/vverse_validate.js demo.vverse --require-signature --require-complete-signature
 ```
 
+规范发布包可追加 `--strict`，要求存在 `laws/`、`assets/`、`mods/`、`signatures/` 四个目录，并校验 `manifest.dependencies` 为对象：
+
+```bash
+node tools/vverse_validate.js demo.vverse --strict --require-signature
+```
+
 发布前可使用 `--write-signature` 自动创建或更新摘要文件：
 
 ```bash
