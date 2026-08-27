@@ -27,6 +27,7 @@ SRCS += src/platform/process.c
 SRCS += src/isolate_mod.c
 SRCS += src/platform/posix_stubs.c
 SRCS += src/platform/http_posix.c
+SRCS += src/platform/websocket.c
 SRCS += src/desugar_mod.c
 SRCS += src/lint_mod.c
 endif

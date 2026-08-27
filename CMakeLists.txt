@@ -83,7 +83,7 @@ if(INIMERSE_BUILD_ENGINE)
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
-      src/platform/posix_stubs.c src/platform/http_posix.c src/desugar_mod.c src/lint_mod.c)
+      src/platform/posix_stubs.c src/platform/http_posix.c src/platform/websocket.c src/desugar_mod.c src/lint_mod.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
