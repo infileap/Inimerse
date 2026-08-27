@@ -82,7 +82,10 @@ static size_t hub_body(const char *request, char *body, size_t cap, int *status)
 static int json_field_string(const char *json, const char *name, char *out, size_t cap) {
     char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return 0;
     p = strchr(p + strlen(key), ':'); if (!p) return 0; while (*++p == ' ' || *p == '\t') {}
-    if (*p != '"') return 0; ++p; size_t i = 0; while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++; out[i] = 0; return *p == '"';
+    if (*p != '"') return 0;
+    ++p; size_t i = 0;
+    while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++;
+    out[i] = 0; return *p == '"';
 }
 static int json_field_u64(const char *json, const char *name, uint64_t *out) {
     char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return 0;
@@ -98,6 +101,7 @@ static void *http_loop(void *unused) {
         (void)im_socket_set_nonblocking(client, 0);
         char req[65536]; int n = im_socket_recv(client, req, sizeof(req) - 1);
         if (n < 0) { im_socket_close(client); continue; }
+        if (n >= (int)sizeof(req) - 1) { im_socket_close(client); continue; }
         req[n > 0 ? n : 0] = 0;
         if (n > 0 && strstr(req, "GET /ws") && strstr(req, "Upgrade: websocket")) {
             if (im_ws_accept(client, req, (size_t)n) == 0) {
