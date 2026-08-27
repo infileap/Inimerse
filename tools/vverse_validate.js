@@ -28,14 +28,26 @@ function validate(root, options = {}) {
   return { manifest, files, signature, valid: true };
 }
 
+function writeSignature(root) {
+  const base = path.resolve(root);
+  const result = validate(base);
+  const dir = path.join(base, 'signatures');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'sha256.json'), JSON.stringify(result.files, null, 2) + '\n');
+  return result.files;
+}
+
 if (require.main === module) {
   try {
     const args = process.argv.slice(2);
     const root = args.find(a => !a.startsWith('--')) || '.';
+    if (args.includes('--write-signature')) {
+      writeSignature(root);
+    }
     console.log(JSON.stringify(validate(root, {
       requireSignature: args.includes('--require-signature'),
       requireCompleteSignature: args.includes('--require-complete-signature')
     }), null, 2));
   } catch (e) { console.error(`vverse: ${e.message}`); process.exit(1); }
 }
-module.exports = { validate };
+module.exports = { validate, writeSignature };
