@@ -24,6 +24,19 @@ static int say_file(VM *vm) {
     FILE *f = fopen(path, "ab"); if (!f) { push_int(vm, 0); return 1; }
     fprintf(f, "%s\n", msg); fclose(f); push_int(vm, 1); return 1;
 }
+static int say_ai_event(VM *vm, const char *kind) {
+    const char *payload = vm->cur_argc ? sarg(vm, 0) : "null";
+    drop(vm);
+    int is_json = payload[0] == '{' || payload[0] == '[' || strcmp(payload, "null") == 0 || strcmp(payload, "true") == 0 || strcmp(payload, "false") == 0;
+    printf("{\"source\":\"ai\",\"event\":\"%s\",\"payload\":", kind);
+    if (is_json) printf("%s", payload); else { putchar('"'); for (const unsigned char *p = (const unsigned char *)payload; *p; ++p) { if (*p == '"' || *p == '\\') putchar('\\'); putchar(*p); } putchar('"'); }
+    printf("}\n");
+    fflush(stdout); return 0;
+}
+static int say_ai(VM *vm) { return say_ai_event(vm, "event"); }
+static int say_ai_observe(VM *vm) { return say_ai_event(vm, "observe"); }
+static int say_ai_trace(VM *vm) { return say_ai_event(vm, "trace"); }
+static int say_ai_feedback(VM *vm) { return say_ai_event(vm, "feedback"); }
 void say_mod_register(VM *vm) {
     vm_register_builtin(vm, "say.console", say_console);
     vm_register_builtin(vm, "say.log", say_log);
@@ -45,4 +58,12 @@ void say_mod_register(VM *vm) {
     vm_register_builtin(vm, "say.dialogue", say_dialogue);
     vm_register_builtin(vm, "say.system", say_system);
     vm_register_builtin(vm, "say.file", say_file);
+    vm_register_builtin(vm, "say_ai", say_ai);
+    vm_register_builtin(vm, "say_ai_observe", say_ai_observe);
+    vm_register_builtin(vm, "say_ai_trace", say_ai_trace);
+    vm_register_builtin(vm, "say_ai_feedback", say_ai_feedback);
+    vm_register_builtin(vm, "say.ai", say_ai);
+    vm_register_builtin(vm, "say.ai_observe", say_ai_observe);
+    vm_register_builtin(vm, "say.ai_trace", say_ai_trace);
+    vm_register_builtin(vm, "say.ai_feedback", say_ai_feedback);
 }
