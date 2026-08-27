@@ -1,6 +1,7 @@
 'use strict';
 const http = require('node:http');
 const crypto = require('node:crypto');
+const wsClients = new Set();
 
 function createRelay(options = {}) {
   const verses = new Map();
@@ -76,7 +77,16 @@ function createRelay(options = {}) {
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, 400, { error: e.message }); }
   });
-  return { server, verses, packages, checkToken, revoked };
+  server.on('upgrade', (req, socket) => {
+    if (req.url !== '/ws') return socket.destroy();
+    const key = req.headers['sec-websocket-key']; if (!key) return socket.destroy();
+    const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`); wsClients.add(socket);
+    let buf = Buffer.alloc(0);
+    socket.on('data', chunk => { buf = Buffer.concat([buf, chunk]); });
+    socket.on('close', () => wsClients.delete(socket)); socket.on('error', () => wsClients.delete(socket));
+  });
+  return { server, verses, packages, checkToken, revoked, wsClients };
 }
 
 if (require.main === module) createRelay().server.listen(Number(process.env.CRP_PORT || 8787), () => console.log('CRP relay listening'));
