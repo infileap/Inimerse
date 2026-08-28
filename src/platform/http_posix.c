@@ -143,6 +143,17 @@ static void *http_loop(void *unused) {
         if (n <= 0) { im_socket_close(client); continue; }
         req[n] = 0;
         if (n > 0 && strstr(req, "GET /ws") && find_ci(req, "Upgrade: websocket")) {
+            /* Authentication is opt-in for backwards compatibility; deployments can
+             * require a portal-issued token with CRP_REQUIRE_AUTH=1. */
+            const char *auth_required = getenv("CRP_REQUIRE_AUTH");
+            if (auth_required && strcmp(auth_required, "1") == 0) {
+                char ws_token[64] = ""; const char *q = strstr(req, "token=");
+                if (q) { q += 6; size_t j = 0; while (q[j] && q[j] != '&' && q[j] != ' ' && j + 1 < sizeof ws_token) { ws_token[j] = q[j]; j++; } ws_token[j] = 0; }
+                if (!token_known(ws_token) || token_revoked(ws_token)) {
+                    const char *deny = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    (void)im_socket_send(client, deny, strlen(deny)); im_socket_close(client); continue;
+                }
+            }
             if (im_ws_accept(client, req, (size_t)n) == 0) {
                 ImCrpSession session; im_crp_session_init(&session, 1);
                 pthread_mutex_lock(&g_ws_lock); int slot = -1; for (int i = 0; i < 32; ++i) if (!g_ws_clients[i]) { g_ws_clients[i] = client; slot = i; break; } pthread_mutex_unlock(&g_ws_lock);
