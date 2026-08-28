@@ -23,6 +23,10 @@ fn app_root() -> PathBuf {
         .map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 fn user_data(name: &str) -> PathBuf { app_root().join("userdata").join(name) }
+fn engine_root() -> PathBuf {
+    if let Ok(root) = std::env::var("INIMERSE_ROOT") { let p = PathBuf::from(root); if p.is_dir() { return p; } }
+    app_root().parent().map(PathBuf::from).unwrap_or_else(app_root)
+}
 
 fn detect_engine() -> String {
     if let Ok(p) = std::env::var("INIMERSE_ENGINE") { if !p.trim().is_empty() && fs::metadata(p.trim()).is_ok() { return p.trim().to_string(); } }
@@ -177,7 +181,7 @@ fn tool_desugar(path: String) -> String {
 #[tauri::command]
 fn backup_list() -> serde_json::Value {
     let mut arr: Vec<String> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir("D:/backup") {
+    if let Ok(rd) = std::fs::read_dir(user_data("backups")) {
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().to_string();
             if n.starts_with("inimerse_") { arr.push(n); }
@@ -419,21 +423,24 @@ fn update_engine() -> bool {
             };
         }
         step!("== 一键更新开始 ==");
-        step!("1/5 git pull (D:/inimerse_stable)");
-        if fs::metadata("D:/inimerse_stable/.git").is_ok() {
-            let _ = run_cmd("git", &["-C", "D:/inimerse_stable", "pull"], &mut out);
+        let root = engine_root(); let root_s = root.to_string_lossy().into_owned();
+        step!("1/5 git pull");
+        if root.join(".git").is_dir() {
+            let _ = run_cmd("git", &["-C", &root_s, "pull"], &mut out);
         } else {
             out.push_str("[warn] 非 git 仓库，跳过 git pull（直接本地构建）\n");
         }
         step!("2/5 构建引擎 build.ps1");
-        let _ = run_cmd("powershell", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:/inimerse_stable/build.ps1"], &mut out);
+        let build = root.join("build.ps1"); let build_s = build.to_string_lossy().into_owned();
+        if build.is_file() { let _ = run_cmd("powershell", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", &build_s], &mut out); }
         step!("3/5 备份旧引擎");
         let stamp = chrono_now().replace([':', ' ', '-'], "");
-        let backup_dir = format!("D:/backup/inimerse_{}_auto", stamp);
+        let backup_dir = user_data(&format!("backups/inimerse_{}_auto", stamp));
         let _ = fs::create_dir_all(&backup_dir);
-        if fs::metadata("D:/inimerse_stable/inimerse.exe").is_ok() {
-            let _ = fs::copy("D:/inimerse_stable/inimerse.exe", format!("{}/inimerse.exe", backup_dir));
-            out.push_str(&format!("备份到 {}\n", backup_dir));
+        let engine = detect_engine();
+        if fs::metadata(&engine).is_ok() {
+            let _ = fs::copy(&engine, backup_dir.join(if cfg!(windows) { "inimerse.exe" } else { "inimerse" }));
+            out.push_str(&format!("备份到 {}\n", backup_dir.to_string_lossy()));
         }
         step!("4/5 部署（build.ps1 已部署到 %USERPROFILE%/Infiverse）");
         step!("5/5 完成。运行中的服务需重启才能使用新引擎。");
