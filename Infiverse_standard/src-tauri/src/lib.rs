@@ -3,9 +3,11 @@ use std::fs;
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 static OAUTH_RESULT: std::sync::OnceLock<Arc<Mutex<String>>> = std::sync::OnceLock::new();
 fn oauth_result() -> Arc<Mutex<String>> { OAUTH_RESULT.get_or_init(|| Arc::new(Mutex::new(String::new()))).clone() }
 static WORKBENCH_PID: std::sync::OnceLock<Arc<Mutex<Option<u32>>>> = std::sync::OnceLock::new();
+static WORKBENCH_STOPPED: AtomicBool = AtomicBool::new(false);
 fn workbench_pid() -> Arc<Mutex<Option<u32>>> { WORKBENCH_PID.get_or_init(|| Arc::new(Mutex::new(None))).clone() }
 
 fn app_root() -> PathBuf {
@@ -114,6 +116,7 @@ fn package_remove(name: String) -> serde_json::Value {
 #[tauri::command]
 fn repair_scan() -> serde_json::Value {
     let engine = detect_engine();
+    WORKBENCH_STOPPED.store(false, Ordering::SeqCst);
     let checks = vec![
         ("engine", "当前引擎", fs::metadata(&engine).map(|m| m.len()).unwrap_or(0) > 100_000),
         ("userdata", "用户数据目录", app_root().join("userdata").is_dir()),
@@ -885,12 +888,13 @@ fn workbench_run(file: String) -> serde_json::Value {
             let pid = child.id();
             if let Ok(mut slot) = workbench_pid().lock() { *slot = Some(pid); }
             let result = child.wait_with_output();
+            let stopped = WORKBENCH_STOPPED.load(Ordering::SeqCst);
             if let Ok(mut slot) = workbench_pid().lock() { *slot = None; }
             match result {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout).chars().take(8000).collect::<String>();
                     let stderr = String::from_utf8_lossy(&out.stderr).chars().take(8000).collect::<String>();
-                    serde_json::json!({ "ok": out.status.success(), "code": out.status.code().unwrap_or(-1), "stdout": stdout, "stderr": stderr })
+                    serde_json::json!({ "ok": out.status.success(), "stopped": stopped, "code": out.status.code().unwrap_or(-1), "stdout": stdout, "stderr": stderr })
                 }
                 Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
             }
@@ -903,6 +907,7 @@ fn workbench_run(file: String) -> serde_json::Value {
 fn workbench_stop() -> serde_json::Value {
     let pid = workbench_pid().lock().ok().and_then(|g| *g);
     let Some(pid) = pid else { return serde_json::json!({ "ok": false, "error": "No workbench task is running" }); };
+    WORKBENCH_STOPPED.store(true, Ordering::SeqCst);
     let ok = if cfg!(windows) {
         std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().map(|s| s.success()).unwrap_or(false)
     } else {
@@ -952,7 +957,6 @@ fn workbench_apply(file: String, items: serde_json::Value) -> serde_json::Value 
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 static VERSE_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn handle_verse(mut s: TcpStream) -> std::io::Result<()> {
