@@ -70,7 +70,6 @@ static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
         }
         /* word-boundary helpers */
         int prev_is_word = (d > 0) && (isalnum((unsigned char)dst[d - 1]) || dst[d - 1] == '_');
-        int next_is_word = isalnum((unsigned char)p[5]) || p[5] == '_';
         /* print -> say */
         if (!prev_is_word && strncmp(p, "print", 5) == 0 && (p[5] == ' ' || p[5] == '\t' || p[5] == '(')) {
             ds_emit(dst, &d, cap, "say");

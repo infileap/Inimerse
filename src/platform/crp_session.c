@@ -12,7 +12,9 @@ int im_crp_session_apply(ImCrpSession *s, const char *type, uint64_t seq, uint64
     return 1;
 }
 int im_crp_session_auth(const char *provided, const char *expected) {
-    if (!provided || !expected) return 0; size_t a = strlen(provided), b = strlen(expected), n = a > b ? a : b; unsigned char diff = (unsigned char)(a ^ b);
+    if (!provided || !expected) return 0;
+    size_t a = strlen(provided), b = strlen(expected), n = a > b ? a : b;
+    unsigned char diff = (unsigned char)(a ^ b);
     for (size_t i = 0; i < n; ++i) diff |= (unsigned char)(i < a ? provided[i] : 0) ^ (unsigned char)(i < b ? expected[i] : 0);
     return diff == 0;
 }
