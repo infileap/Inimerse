@@ -774,6 +774,13 @@ fn clear_userdata_cache() -> serde_json::Value {
     serde_json::json!({ "removed": removed })
 }
 
+#[tauri::command]
+fn userdata_cache_stats() -> serde_json::Value {
+    let dir = app_root().join("userdata"); let mut files = 0usize; let mut bytes = 0u64;
+    if let Ok(rd) = fs::read_dir(&dir) { for e in rd.flatten() { if let Ok(m) = fs::metadata(e.path()) { if m.is_file() { files += 1; bytes += m.len(); } } } }
+    serde_json::json!({"files": files, "bytes": bytes, "path": dir})
+}
+
 fn parse_declares(src: &str) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     let mut rest = src;
@@ -1154,6 +1161,7 @@ pub fn run() {
             plugin_install,
             plugin_toggle,
             clear_userdata_cache
+            ,userdata_cache_stats
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
