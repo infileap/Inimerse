@@ -145,6 +145,23 @@ fn verse_remove_package(id: String) -> serde_json::Value {
 }
 
 #[tauri::command]
+fn verse_run_uri(uri: String) -> serde_json::Value {
+    let prefix = "verse://local/";
+    if !uri.starts_with(prefix) { return serde_json::json!({"ok": false, "error": "only verse://local URIs are supported"}); }
+    let rel = &uri[prefix.len()..];
+    if rel.is_empty() || rel.contains("..") || rel.contains('\\') || rel.contains('/') { return serde_json::json!({"ok": false, "error": "invalid local package path"}); }
+    let pkg = app_root().join("projects").join(rel);
+    if pkg.extension().and_then(|x| x.to_str()) != Some("vverse") || !pkg.is_file() { return serde_json::json!({"ok": false, "error": "package not found"}); }
+    let script = user_data(".verse_launch.im");
+    let _ = fs::create_dir_all(app_root().join("userdata"));
+    let source = format!("verse_open(\"{}\")\n", uri.replace('"', ""));
+    if let Err(e) = fs::write(&script, source) { return serde_json::json!({"ok": false, "error": e.to_string()}); }
+    let result = std::process::Command::new(detect_engine()).args(["--safe", "--time-limit", "10", &script.to_string_lossy()]).output();
+    let _ = fs::remove_file(&script);
+    match result { Ok(o) => serde_json::json!({"ok": o.status.success(), "code": o.status.code().unwrap_or(-1), "stdout": String::from_utf8_lossy(&o.stdout), "stderr": String::from_utf8_lossy(&o.stderr)}), Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}) }
+}
+
+#[tauri::command]
 fn package_remove(name: String) -> serde_json::Value {
     if name.contains('/') || name.contains('\\') || name.contains("..") { return serde_json::json!({ "ok": false, "error": "Invalid package name" }); }
     let p=app_root().join("plugins").join(&name);
@@ -1111,6 +1128,7 @@ pub fn run() {
             verse_package_preview,
             verse_install_package,
             verse_remove_package,
+            verse_run_uri,
             package_remove,
             repair_scan,
             workbench_read,
