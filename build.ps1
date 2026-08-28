@@ -10,7 +10,7 @@ $files = @(
     "$src\main.c", "$src\platform\platform.c", "$src\platform\thread.c", "$src\platform\fiber.c", "$src\platform\process.c", "$src\platform\socket.c", "$src\platform\dir.c", "$src\common\common.c", "$src\common\sha256.c", "$src\common\ed25519.c", "$src\lexer\lexer.c", "$src\parser\parser.c",
     "$src\compiler\bytecode.c", "$src\compiler\compiler.c", "$src\vm\vm.c", "$src\runtime\runtime.c",
     "$src\child_proc.c", "$src\headless_server.c", "$src\isolate_mod.c", "$src\desugar_mod.c", "$src\lint_mod.c", "$src\mod\mod.c", "$src\mod\gui_mod.c", "$src\mod\io_mod.c", "$src\mod\net_mod.c",
-    "$src\mod\json_mod.c", "$src\mod\record_mod.c", "$src\mod\infiverse_mod.c", "$src\mod\verse_dist_mod.c", "$src\mod\server_mod.c", "$src\mod\identity_mod.c", "$src\mod\social_mod.c", "$src\mod\ai_mod.c",
+    "$src\mod\json_mod.c", "$src\mod\record_mod.c", "$src\mod\infiverse_mod.c", "$src\mod\verse_dist_mod.c", "$src\mod\server_mod.c", "$src\mod\identity_mod.c", "$src\mod\social_mod.c", "$src\mod\ai_mod.c", "$src\mod\say_mod_windows.c",
     (Join-Path $repo "mods\build\build_mod.c")
 )
 $libs = @("-lm", "-lwinhttp", "-lcrypt32", "-lgdi32", "-lwinmm", "-lmsimg32", "-lwindowscodecs", "-lole32", "-lws2_32", "-lcomdlg32", "-lshell32", "-lshlwapi", "-liphlpapi")

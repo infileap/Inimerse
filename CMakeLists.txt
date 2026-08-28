@@ -89,6 +89,7 @@ if(INIMERSE_BUILD_ENGINE)
       src/mod/record_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
       src/mod/server_mod.c src/mod/identity_mod.c src/mod/social_mod.c
       src/mod/ai_mod.c mods/build/build_mod.c)
+    list(APPEND INIMERSE_ENGINE_SOURCES src/mod/say_mod_windows.c)
   else()
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/platform/socket.c
