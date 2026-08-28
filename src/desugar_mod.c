@@ -21,6 +21,7 @@
 static void ds_emit(char *dst, int *d, int cap, const char *s) {
     while (*s && *d < cap - 1) dst[(*d)++] = *s++;
 }
+static void ds_emit_char(char *dst, int *d, int cap, char c) { if (*d < cap - 1) dst[(*d)++] = c; }
 
 static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
     int d = 0;
@@ -29,6 +30,7 @@ static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
     char q = 0;
     int last_code_semi = -1;   /* dst index of last code-region ';' */
     int line_code_start = -1;  /* first non-space code char in dst */
+    int say_wrap = 0;
     /* unless condition { ... } -> if !(condition) { ... } */
     {
         const char *u = src; while (*u == ' ' || *u == '\t') u++;
@@ -70,6 +72,13 @@ static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
         }
         /* word-boundary helpers */
         int prev_is_word = (d > 0) && (isalnum((unsigned char)dst[d - 1]) || dst[d - 1] == '_');
+        /* say@target expr -> say_target("target", expr) */
+        if (!prev_is_word && strncmp(p, "say@", 4) == 0) {
+            const char *t = p + 4; size_t tn = 0; while (isalnum((unsigned char)t[tn]) || t[tn] == '_') tn++;
+            if (tn > 0 && tn < 32 && (t[tn] == ' ' || t[tn] == '\t')) {
+                ds_emit(dst, &d, cap, "say_target(\""); for (size_t i = 0; i < tn; ++i) ds_emit_char(dst, &d, cap, t[i]); ds_emit(dst, &d, cap, "\", "); p = t + tn; while (*p == ' ' || *p == '\t') p++; say_wrap = 1; continue;
+            }
+        }
         /* print -> say */
         if (!prev_is_word && strncmp(p, "print", 5) == 0 && (p[5] == ' ' || p[5] == '\t' || p[5] == '(')) {
             ds_emit(dst, &d, cap, "say");
@@ -128,6 +137,7 @@ static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
             d--;
         }
     }
+    if (say_wrap) ds_emit(dst, &d, cap, ")");
     dst[d] = 0;
 }
 
