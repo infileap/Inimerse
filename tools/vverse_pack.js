@@ -30,7 +30,15 @@ function unpack(input, destination) {
 function preview(input) {
   const obj = JSON.parse(zlib.gunzipSync(fs.readFileSync(input), { to: 'string' }));
   if (obj.format !== 'vverse-1' || !obj.files || typeof obj.files !== 'object') throw new Error('invalid vverse package');
-  return { format: obj.format, files: Object.keys(obj.files).sort(), bytes: fs.statSync(input).size, readOnly: true };
+  if (!obj.files['manifest.json'] || !obj.files['blueprint.json'] || !obj.files['signatures/sha256.json']) throw new Error('package missing required metadata');
+  const sig = JSON.parse(Buffer.from(obj.files['signatures/sha256.json'], 'base64').toString('utf8'));
+  for (const [name, digest] of Object.entries(sig)) {
+    if (name.startsWith('signatures/')) continue;
+    if (!obj.files[name]) throw new Error(`signed file missing: ${name}`);
+    const actual = crypto.createHash('sha256').update(Buffer.from(obj.files[name], 'base64')).digest('hex');
+    if (actual !== digest) throw new Error(`digest mismatch: ${name}`);
+  }
+  return { format: obj.format, files: Object.keys(obj.files).sort(), bytes: fs.statSync(input).size, signed: true, readOnly: true };
 }
 
 if (require.main === module) {
