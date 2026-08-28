@@ -976,6 +976,7 @@ fn workbench_stop() -> serde_json::Value {
 }
 
 #[tauri::command]
+#[allow(unused_assignments)]
 fn workbench_apply(file: String, items: serde_json::Value) -> serde_json::Value {
     let mut ok = false;
     let mut msg = String::new();
