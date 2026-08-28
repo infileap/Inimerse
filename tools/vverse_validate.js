@@ -10,6 +10,9 @@ function validate(root, options = {}) {
   const manifest = JSON.parse(fs.readFileSync(path.join(base, 'manifest.json'), 'utf8'));
   for (const k of ['id', 'version', 'entry']) if (typeof manifest[k] !== 'string' || !manifest[k]) throw new Error(`manifest.${k} is required`);
   if (manifest.dependencies !== undefined && (!manifest.dependencies || typeof manifest.dependencies !== 'object' || Array.isArray(manifest.dependencies))) throw new Error('manifest.dependencies must be an object');
+  if (manifest.dependencies) for (const [id, range] of Object.entries(manifest.dependencies)) {
+    if (!/^[A-Za-z0-9._-]+$/.test(id) || typeof range !== 'string' || !range.trim()) throw new Error(`invalid dependency: ${id}`);
+  }
   const entry = path.resolve(base, manifest.entry);
   if (entry !== base && !entry.startsWith(base + path.sep)) throw new Error('manifest.entry escapes package');
   if (!fs.existsSync(entry) || !fs.statSync(entry).isFile()) throw new Error(`manifest.entry not found: ${manifest.entry}`);

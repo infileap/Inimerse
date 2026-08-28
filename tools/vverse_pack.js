@@ -27,8 +27,14 @@ function unpack(input, destination) {
   return validate(base, { strictStructure: true, requireSignature: true, requireCompleteSignature: true });
 }
 
+function preview(input) {
+  const obj = JSON.parse(zlib.gunzipSync(fs.readFileSync(input), { to: 'string' }));
+  if (obj.format !== 'vverse-1' || !obj.files || typeof obj.files !== 'object') throw new Error('invalid vverse package');
+  return { format: obj.format, files: Object.keys(obj.files).sort(), bytes: fs.statSync(input).size, readOnly: true };
+}
+
 if (require.main === module) {
-  try { const [cmd, a, b] = process.argv.slice(2); if (cmd === 'pack') console.log(JSON.stringify(pack(a, b || `${a}.vvpkg`))); else if (cmd === 'unpack') console.log(JSON.stringify(unpack(a, b))); else throw new Error('usage: pack <dir> [file] | unpack <file> <dir>'); }
+  try { const [cmd, a, b] = process.argv.slice(2); if (cmd === 'pack') console.log(JSON.stringify(pack(a, b || `${a}.vvpkg`))); else if (cmd === 'unpack') console.log(JSON.stringify(unpack(a, b))); else if (cmd === 'preview') console.log(JSON.stringify(preview(a))); else throw new Error('usage: pack <dir> [file] | unpack <file> <dir> | preview <file>'); }
   catch (e) { console.error(`vverse pack: ${e.message}`); process.exit(1); }
 }
-module.exports = { pack, unpack };
+module.exports = { pack, unpack, preview };
