@@ -641,7 +641,7 @@ fn read_changes() -> String {
     let root = app_root();
     let files = [root.join("docs/CHANGES.txt"), root.join("CHANGES.txt"), root.join("ROADMAP.md")];
     for f in files {
-        if fs::metadata(f).is_ok() {
+        if fs::metadata(&f).is_ok() {
             if let Ok(s) = fs::read_to_string(f) { return s; }
         }
     }
