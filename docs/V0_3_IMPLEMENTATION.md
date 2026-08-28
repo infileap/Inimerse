@@ -40,3 +40,5 @@ node tools/regression.js
 make check
 cargo check --manifest-path Infiverse_standard/src-tauri/Cargo.toml
 ```
+
+当前 Node 回归套件包含 10 项测试，覆盖 UPP/CRP、`.vverse`、Hub 缓存和多目标 `say`。
