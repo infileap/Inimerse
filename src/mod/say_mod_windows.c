@@ -15,6 +15,7 @@ static int say_target(VM *vm) {
 TARGET_FN(say_log, "log") TARGET_FN(say_chat, "chat") TARGET_FN(say_ui, "ui") TARGET_FN(say_world, "world")
 TARGET_FN(say_character, "character") TARGET_FN(say_dialogue, "dialogue") TARGET_FN(say_system, "system")
 TARGET_FN(say_json, "json") TARGET_FN(say_ai, "ai") TARGET_FN(say_network, "network")
+TARGET_FN(say_ai_observe, "ai.observe") TARGET_FN(say_ai_trace, "ai.trace") TARGET_FN(say_ai_feedback, "ai.feedback")
 static int say_file(VM *vm) {
     const char *msg = arg(vm); const char *path = (vm->cur_argc > 1 && vm_cur_sp(vm) >= 1) ? (vm_cur_stack(vm)[vm_cur_sp(vm)-1].sval ?: "") : "";
     int safe = path[0] && !strstr(path, "..") && !strchr(path, ':') && !strchr(path, '\\') && !strchr(path, '/');
@@ -34,6 +35,9 @@ void say_mod_register(VM *vm) {
     vm_register_builtin(vm, "say.system", say_system); vm_register_builtin(vm, "say_system", say_system);
     vm_register_builtin(vm, "say.json", say_json); vm_register_builtin(vm, "say_json", say_json);
     vm_register_builtin(vm, "say.ai", say_ai); vm_register_builtin(vm, "say_ai", say_ai);
+    vm_register_builtin(vm, "say.ai_observe", say_ai_observe); vm_register_builtin(vm, "say_ai_observe", say_ai_observe);
+    vm_register_builtin(vm, "say.ai_trace", say_ai_trace); vm_register_builtin(vm, "say_ai_trace", say_ai_trace);
+    vm_register_builtin(vm, "say.ai_feedback", say_ai_feedback); vm_register_builtin(vm, "say_ai_feedback", say_ai_feedback);
     vm_register_builtin(vm, "say.network", say_network); vm_register_builtin(vm, "say_network", say_network);
     vm_register_builtin(vm, "say.file", say_file); vm_register_builtin(vm, "say_file", say_file);
 }
