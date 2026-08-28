@@ -19,12 +19,13 @@ fn app_root() -> PathBuf {
         return source_root;
     }
     /* Debug executable is <root>/src-tauri/target/debug/app.exe. */
-    exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent())
+    exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()).and_then(|p| p.parent())
         .map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 fn user_data(name: &str) -> PathBuf { app_root().join("userdata").join(name) }
 
 fn detect_engine() -> String {
+    if let Ok(p) = std::env::var("INIMERSE_ENGINE") { if !p.trim().is_empty() && fs::metadata(p.trim()).is_ok() { return p.trim().to_string(); } }
     if let Ok(sel) = fs::read_to_string(user_data("default_engine.txt")) {
         let p = sel.trim(); if !p.is_empty() && fs::metadata(p).is_ok() { return p.to_string(); }
     }
