@@ -18,6 +18,8 @@
 static ImSocket *g_http_listener;
 static pthread_t g_http_thread;
 static volatile int g_http_running;
+static ImSocket *g_ws_clients[32];
+static pthread_mutex_t g_ws_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long g_token_counter;
 static char g_tokens[128][64];
 static char g_revoked[128][64];
@@ -127,6 +129,8 @@ static void *http_loop(void *unused) {
         if (n > 0 && strstr(req, "GET /ws") && find_ci(req, "Upgrade: websocket")) {
             if (im_ws_accept(client, req, (size_t)n) == 0) {
                 ImCrpSession session; im_crp_session_init(&session, 1);
+                pthread_mutex_lock(&g_ws_lock); int slot = -1; for (int i = 0; i < 32; ++i) if (!g_ws_clients[i]) { g_ws_clients[i] = client; slot = i; break; } pthread_mutex_unlock(&g_ws_lock);
+                if (slot < 0) { im_ws_send_text(client, "{\"error\":\"too_many_connections\"}", 34); im_socket_close(client); continue; }
                 char frame[65536];
                 for (;;) {
                     int flen = im_ws_read_text(client, frame, sizeof frame);
@@ -141,8 +145,12 @@ static void *http_loop(void *unused) {
                             continue;
                         }
                     }
-                    if (im_ws_send_text(client, frame, (size_t)flen) != 0) break;
+                    int broadcast_ok = 1; pthread_mutex_lock(&g_ws_lock);
+                    for (int i = 0; i < 32; ++i) if (g_ws_clients[i] && g_ws_clients[i] != client) if (im_ws_send_text(g_ws_clients[i], frame, (size_t)flen) != 0) broadcast_ok = 0;
+                    pthread_mutex_unlock(&g_ws_lock);
+                    if (!broadcast_ok) break;
                 }
+                pthread_mutex_lock(&g_ws_lock); if (slot >= 0 && g_ws_clients[slot] == client) g_ws_clients[slot] = NULL; pthread_mutex_unlock(&g_ws_lock);
             }
             im_socket_close(client);
             continue;
