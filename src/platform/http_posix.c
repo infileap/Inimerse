@@ -1,6 +1,7 @@
 #include "socket.h"
 #include "websocket.h"
 #include "crp_session.h"
+#include "../common/sha256.h"
 #include <pthread.h>
 #include <time.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ static void token_register(const char *token) { if (g_token_count < 128) snprint
 static void token_revoke(const char *token) { if (!token_revoked(token) && g_revoked_count < 128) snprintf(g_revoked[g_revoked_count++], sizeof g_revoked[0], "%s", token); }
 
 static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
+static int valid_hash(const char *h) { if (!h || strlen(h) != 64) return 0; for (int i = 0; i < 64; ++i) if (!((h[i] >= '0' && h[i] <= '9') || (h[i] >= 'a' && h[i] <= 'f'))) return 0; return 1; }
 static const char *find_ci(const char *haystack, const char *needle) {
     size_t n = strlen(needle); if (!n) return haystack;
     for (const char *p = haystack; *p; ++p) { size_t i = 0; while (i < n && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) ++i; if (i == n) return p; }
@@ -57,8 +59,22 @@ static size_t b64decode(const char *s, unsigned char *out, size_t cap) {
 }
 static const char *json_value(const char *json, const char *name, char *out, size_t cap) { char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return NULL; p = strchr(p + strlen(key), ':'); if (!p) return NULL; while (*++p == ' ' || *p == '\t') {} if (*p != '"') return NULL; ++p; size_t i = 0; while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++; out[i] = 0; return *p == '"' ? out : NULL; }
 static int write_atomic(const char *path, const unsigned char *data, size_t len) { char tmp[1500]; snprintf(tmp, sizeof tmp, "%s.tmp.%lu", path, (unsigned long)getpid()); FILE *f = fopen(tmp, "wb"); if (!f) return 0; int ok = fwrite(data, 1, len, f) == len; if (fclose(f) != 0) ok = 0; if (ok) ok = rename(tmp, path) == 0; if (!ok) remove(tmp); return ok; }
+static const char *json_value(const char *json, const char *name, char *out, size_t cap);
 static size_t hub_body(const char *request, char *body, size_t cap, int *status) {
     const char *root = getenv("INIMERSE_HUB_DIR"); if (!root || !*root) root = "./universe";
+    if (strstr(request, "POST /content") == request) {
+        char encoded[65536]; if (!json_value(request, "data", encoded, sizeof encoded)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"data_required\"}\n"); }
+        unsigned char data[49152]; size_t len = b64decode(encoded, data, sizeof data); if (!len) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_data\"}\n"); }
+        char hash[65]; sha256_hex(data, len, hash); char path[1400]; snprintf(path, sizeof path, "%s/content-%s", root, hash); ensure_dir(root);
+        if (!write_atomic(path, data, len)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"write_failed\"}\n"); }
+        *status = 201; return (size_t)snprintf(body, cap, "{\"hash\":\"%s\",\"size\":%zu,\"uri\":\"ref://sha256:%s\"}\n", hash, len, hash);
+    }
+    const char *content = strstr(request, "GET /content/"); if (content == request) {
+        content += 13; char hash[65]; size_t i = 0; while (content[i] && content[i] != ' ' && i < 64) { hash[i] = content[i]; ++i; } hash[i] = 0;
+        if (!valid_hash(hash)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_hash\"}\n"); }
+        char path[1400]; snprintf(path, sizeof path, "%s/content-%s", root, hash); FILE *f = fopen(path, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"content_not_found\"}\n"); }
+        size_t len = fread(body, 1, cap, f); fclose(f); unsigned char got[32]; sha256_digest(body, len, got); char check[65]; sha256_hex_of_digest(got, check); if (strcmp(check, hash)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"content_corrupt\"}\n"); } *status = 200; return len;
+    }
     if (strstr(request, "GET /packages") == request) {
         DIR *d = opendir(root); size_t used = 0; body[used++] = '[';
         if (d) { struct dirent *e; int first = 1; while ((e = readdir(d)) && used + 80 < cap) { const char *dot = strstr(e->d_name, ".vverse"); if (!dot || dot[7]) continue; used += (size_t)snprintf(body + used, cap - used, "%s\"%.*s\"", first ? "" : ",", (int)(dot - e->d_name), e->d_name); first = 0; } closedir(d); }
@@ -195,7 +211,7 @@ static void *http_loop(void *unused) {
         }
         if (revoke) { if (!request_token[0]) { status = 400; body = "{\"error\":\"token_required\"}\n"; } else { token_revoke(request_token); body = "{\"revoked\":true}\n"; } }
         size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 201 ? "201 Created" : status == 400 ? "400 Bad Request" : status == 403 ? "403 Forbidden" : (status == 404 || !ok) ? "404 Not Found" : "200 OK";
-        const char *content_type = (hub && strstr(req, "GET /package/") == req) ? "application/octet-stream" : "application/json";
+        const char *content_type = (hub && (strstr(req, "GET /package/") == req || strstr(req, "GET /content/") == req)) ? "application/octet-stream" : "application/json";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", status_text, content_type, body_len);
         for (int sent = 0; len > 0 && sent < len;) {
             int nout = im_socket_send(client, out + sent, (size_t)(len - sent));
