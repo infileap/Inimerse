@@ -70,6 +70,20 @@ if(INIMERSE_NODE)
     TIMEOUT 30 LABELS "protocol;regression")
 endif()
 
+find_program(INIMERSE_CLANG clang)
+if(INIMERSE_CLANG AND NOT WIN32)
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/wasm_probe.wasm
+    COMMAND ${INIMERSE_CLANG} --target=wasm32-wasi -nostdlib -Wl,--no-entry
+      -Wl,--export=inimerse_probe -Wl,--export=inimerse_abi_version
+      -Wl,--export=inimerse_capabilities ${CMAKE_SOURCE_DIR}/tools/wasm_probe.c
+      -o ${CMAKE_BINARY_DIR}/wasm_probe.wasm
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/wasm_probe.c)
+  add_custom_target(wasm_probe DEPENDS ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+  add_test(NAME wasm_probe COMMAND ${CMAKE_COMMAND} -E compare_files
+    ${CMAKE_BINARY_DIR}/wasm_probe.wasm ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+  set_tests_properties(wasm_probe PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
+endif()
+
 # The full engine is intentionally enabled only after the VM's thread/fiber
 # backend is ported.  Keeping this gate explicit prevents a misleading build
 # that silently omits platform modules on POSIX systems.
