@@ -4,7 +4,7 @@ class CrpWebSocketClient {
   async connect() {
     this.closed = false; this.attempt = 0;
     while (!this.closed) {
-      try { await new Promise((resolve, reject) => { const ws = new WebSocket(this.url); this.socket = ws; ws.addEventListener('open', () => { this.attempt = 0; while (this.queue.length) ws.send(this.queue.shift()); resolve(); }, { once: true }); ws.addEventListener('message', e => this.onMessage(e.data)); ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')), { once: true }); }); return this; }
+      try { await new Promise((resolve, reject) => { const ws = new WebSocket(this.url); this.socket = ws; ws.addEventListener('open', () => { this.attempt = 0; while (this.queue.length) ws.send(this.queue.shift()); resolve(); }, { once: true }); ws.addEventListener('message', e => this.onMessage(e.data)); ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')), { once: true }); ws.addEventListener('close', () => { if (!this.closed) { this.attempt = 0; this.connect().catch(() => {}); } }); }); return this; }
       catch (e) { if (this.closed || this.attempt++ >= this.retries) throw e; await new Promise(r => setTimeout(r, this.backoffMs * 2 ** (this.attempt - 1))); }
     }
     return this;
