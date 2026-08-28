@@ -24,5 +24,6 @@ int main(void) {
     if (!request(port, "GET", "/package/demo", NULL, out, sizeof out) || !strstr(out, "pkg")) return 5;
     if (!request(port, "POST", "/package/fork", "{\"source\":\"demo\",\"id\":\"fork\"}", out, sizeof out) || !strstr(out, "201 Created")) return 6;
     if (!request(port, "DELETE", "/package/fork", NULL, out, sizeof out) || !strstr(out, "200 OK")) return 7;
+    if (!request(port, "POST", "/content", "{\"data\":\"aGVsbG8=\"}", out, sizeof out) || !strstr(out, "201 Created")) return 8;
     verse_http_stop(); puts("hub probe: ok"); return 0;
 }
