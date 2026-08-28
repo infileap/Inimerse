@@ -47,3 +47,4 @@ cmake --build build --target package
 - Windows 与 POSIX 的多目标 `say`、文件输出及 AI 结构化事件接口已对齐。
 
 - Native say@target desugar regression probe is part of make check.
+- Hub client CRUD、内容寻址缓存、容量淘汰、原子写入与请求超时/重试已完成。
