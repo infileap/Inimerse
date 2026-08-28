@@ -79,8 +79,9 @@ if(INIMERSE_CLANG AND NOT WIN32)
       -o ${CMAKE_BINARY_DIR}/wasm_probe.wasm
     DEPENDS ${CMAKE_SOURCE_DIR}/tools/wasm_probe.c)
   add_custom_target(wasm_probe DEPENDS ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
-  add_test(NAME wasm_probe COMMAND ${CMAKE_COMMAND} -E compare_files
-    ${CMAKE_BINARY_DIR}/wasm_probe.wasm ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+  if(INIMERSE_NODE)
+    add_test(NAME wasm_probe COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/wasm_probe_check.js ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+  endif()
   set_tests_properties(wasm_probe PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
 endif()
 
