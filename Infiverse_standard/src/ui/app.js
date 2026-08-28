@@ -187,7 +187,7 @@ function renderWorkbenchIDE() {
 }
 async function bindWorkbenchIDE() {
   const files = await invoke('workbench_load');
-  const list = $('#wb-ide-files'), panel = $('#wb-ide-panel'), code = $('#wb-code'), save = $('#wb-save'), run = $('#wb-run'), state = $('#wb-state'), output = $('#wb-output');
+  const list = $('#wb-ide-files'), panel = $('#wb-ide-panel'), code = $('#wb-code'), save = $('#wb-save'), run = $('#wb-run'), stop = $('#wb-stop'), state = $('#wb-state'), output = $('#wb-output');
   const find = $('#wb-find'), replace = $('#wb-replace'), findNext = $('#wb-find-next'), replaceAll = $('#wb-replace-all');
   if (!list || !panel || !code || !save || !run) return;
   if (!files || !files.length) { const root = await invoke('workbench_root'); list.innerHTML = '<div class="muted">未找到 .im 文件<br><br>扫描目录：<br>' + escapeHtml(root || 'unknown') + '/plugins<br>' + escapeHtml(root || 'unknown') + '/projects</div>'; return; }
@@ -202,7 +202,7 @@ async function bindWorkbenchIDE() {
   const openFile = async (f, el) => {
     const r = await invoke('workbench_read', { file: f.file });
     if (!r || !r.ok) { setState('读取失败：' + ((r && r.error) || 'unknown')); return; }
-    currentFile = f; code.value = r.content || ''; code.disabled = false; save.disabled = false; run.disabled = false; [find, replace, findNext, replaceAll].forEach(x => { if (x) x.disabled = false; });
+    currentFile = f; code.value = r.content || ''; code.disabled = false; save.disabled = false; run.disabled = false; if (stop) stop.disabled = true; [find, replace, findNext, replaceAll].forEach(x => { if (x) x.disabled = false; });
     $('#wb-file-title').textContent = f.file.replace(/.*[\\/]/, '');
     list.querySelectorAll('[data-wb-ide]').forEach(x => x.classList.remove('active')); el.classList.add('active'); setDirty(false); renderParams(f);
   };
@@ -214,6 +214,9 @@ async function bindWorkbenchIDE() {
   code.addEventListener('keydown', e => { if (e.key === 'Tab') { e.preventDefault(); const a=code.selectionStart,b=code.selectionEnd; code.setRangeText('    ',a,b,'end'); setDirty(true); } if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save.click(); } });
   save.addEventListener('click', async () => { if (!currentFile) return; const r = await invoke('workbench_save', { file: currentFile.file, content: code.value }); if (r && r.ok) setDirty(false); else setState('保存失败：' + ((r && r.error) || 'unknown')); });
   run.addEventListener('click', async () => { if (!currentFile || run.disabled) return; if (dirty) await save.click(); run.disabled = true; save.disabled = true; output.classList.remove('hidden'); output.textContent = '运行中…'; const r = await invoke('workbench_run', { file: currentFile.file }); const text = r ? ((r.stdout || '') + (r.stderr ? '\n' + r.stderr : '')) : ''; output.textContent = text || (r && r.error) || '无输出'; setState(r && r.ok ? '运行完成' : '运行失败（查看输出）'); run.disabled = false; save.disabled = false; if (r && !r.ok) { const m = text.match(/(?:line|行)\s*[:#]?\s*(\d+)/i); if (m) { const line = Number(m[1]); const lines = code.value.split('\n'); let pos = 0; for (let i = 0; i < line - 1 && i < lines.length; i++) pos += lines[i].length + 1; code.focus(); code.setSelectionRange(pos, pos + (lines[line - 1] || '').length); } } });
+  run.addEventListener('click', () => { const b = $('#wb-stop'); if (b) b.disabled = false; });
+  const stopButton = $('#wb-stop');
+  if (stopButton) stopButton.addEventListener('click', async () => { stopButton.disabled = true; const r = await invoke('workbench_stop'); setState(r && r.ok ? '正在停止…' : ((r && r.error) || '停止失败')); });
   const create = $('#wb-new');
   if (create) create.addEventListener('click', async () => { const name = ($('#wb-new-name').value || '').trim(); const r = await invoke('workbench_create_project', { name }); if (r && r.ok) switchModule('workbench'); else setState('创建失败：' + ((r && r.error) || 'unknown')); });
   const ai = $('#wb-ai'), aiOut = $('#wb-ai-out'), aiApply = $('#wb-ai-apply');

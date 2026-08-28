@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 static OAUTH_RESULT: std::sync::OnceLock<Arc<Mutex<String>>> = std::sync::OnceLock::new();
 fn oauth_result() -> Arc<Mutex<String>> { OAUTH_RESULT.get_or_init(|| Arc::new(Mutex::new(String::new()))).clone() }
+static WORKBENCH_PID: std::sync::OnceLock<Arc<Mutex<Option<u32>>>> = std::sync::OnceLock::new();
+fn workbench_pid() -> Arc<Mutex<Option<u32>>> { WORKBENCH_PID.get_or_init(|| Arc::new(Mutex::new(None))).clone() }
 
 fn app_root() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
@@ -873,16 +875,40 @@ fn workbench_save(file: String, content: String) -> serde_json::Value {
 #[tauri::command]
 fn workbench_run(file: String) -> serde_json::Value {
     if !is_workspace_file(&file) { return serde_json::json!({ "ok": false, "error": "File is outside the workspace" }); }
+    if workbench_pid().lock().ok().and_then(|g| *g).is_some() {
+        return serde_json::json!({ "ok": false, "error": "A workbench task is already running" });
+    }
     let engine = detect_engine();
     match std::process::Command::new(engine)
-        .args(["--err-json", "--safe", "--time-limit", "10", &file]).output() {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).chars().take(8000).collect::<String>();
-            let stderr = String::from_utf8_lossy(&out.stderr).chars().take(8000).collect::<String>();
-            serde_json::json!({ "ok": out.status.success(), "code": out.status.code().unwrap_or(-1), "stdout": stdout, "stderr": stderr })
+        .args(["--err-json", "--safe", "--time-limit", "10", &file]).spawn() {
+        Ok(child) => {
+            let pid = child.id();
+            if let Ok(mut slot) = workbench_pid().lock() { *slot = Some(pid); }
+            let result = child.wait_with_output();
+            if let Ok(mut slot) = workbench_pid().lock() { *slot = None; }
+            match result {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout).chars().take(8000).collect::<String>();
+                    let stderr = String::from_utf8_lossy(&out.stderr).chars().take(8000).collect::<String>();
+                    serde_json::json!({ "ok": out.status.success(), "code": out.status.code().unwrap_or(-1), "stdout": stdout, "stderr": stderr })
+                }
+                Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+            }
         }
         Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
     }
+}
+
+#[tauri::command]
+fn workbench_stop() -> serde_json::Value {
+    let pid = workbench_pid().lock().ok().and_then(|g| *g);
+    let Some(pid) = pid else { return serde_json::json!({ "ok": false, "error": "No workbench task is running" }); };
+    let ok = if cfg!(windows) {
+        std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().map(|s| s.success()).unwrap_or(false)
+    } else {
+        std::process::Command::new("kill").args(["-TERM", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+    };
+    serde_json::json!({ "ok": ok, "pid": pid })
 }
 
 #[tauri::command]
@@ -1043,6 +1069,7 @@ pub fn run() {
             workbench_read,
             workbench_save,
             workbench_run,
+            workbench_stop,
             workbench_apply,
             verse_start,
             verse_send,
