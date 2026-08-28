@@ -121,7 +121,7 @@ fn repair_scan() -> serde_json::Value {
 #[tauri::command]
 fn tool_files() -> serde_json::Value {
     let mut arr: Vec<String> = Vec::new();
-    let dirs = [app_root(), app_root().join("projects"), PathBuf::from("D:/inimerse_stable")];
+    let dirs = [app_root(), app_root().join("projects")];
     for d in dirs {
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
@@ -290,7 +290,7 @@ fn get_local_ip() -> Vec<String> {
 fn get_engine_info() -> serde_json::Value {
     let local = app_root().join("inimerse.exe");
     let mut path = if local.exists() { local.to_string_lossy().into_owned() } else { String::new() };
-    if path.is_empty() { for p in ["D:/inimerse_stable/inimerse.exe", "C:/Users/Lenovo/Infiverse/inimerse.exe"] { if fs::metadata(p).is_ok() { path = p.to_string(); break; } } }
+    if path.is_empty() { path = detect_engine(); }
     let size = if !path.is_empty() {
         fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
     } else {
@@ -638,11 +638,8 @@ fn inimerse_where() -> serde_json::Value {
 
 #[tauri::command]
 fn read_changes() -> String {
-    let files = [
-        "D:/inimerse_stable/docs/CHANGES.txt",
-        "D:/inimerse_stable/CHANGES.txt",
-        "D:/inimerse_stable/ROADMAP.md",
-    ];
+    let root = app_root();
+    let files = [root.join("docs/CHANGES.txt"), root.join("CHANGES.txt"), root.join("ROADMAP.md")];
     for f in files {
         if fs::metadata(f).is_ok() {
             if let Ok(s) = fs::read_to_string(f) { return s; }
