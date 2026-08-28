@@ -10,6 +10,6 @@ class HubClient {
   async publish(id, data) { if (!/^[A-Za-z0-9._-]+$/.test(String(id))) throw new Error('invalid package id'); const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data); if (bytes.length > 49152) throw new Error('package exceeds Hub limit (49152 bytes)'); const r = await this.request('/package', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ id, data: bytes.toString('base64') }) }); return r.json(); }
   async remove(id) { const r = await this.request('/package/' + encodeURIComponent(id), { method: 'DELETE' }); return r.json(); }
   cacheEntries() { if (!this.cacheDir || !fs.existsSync(this.cacheDir)) return []; return fs.readdirSync(this.cacheDir).filter(n => n.endsWith('.vverse')); }
-  clearCache() { let removed = 0; for (const name of this.cacheEntries()) { try { fs.unlinkSync(path.join(this.cacheDir, name)); removed++; } catch (_) {} } return removed; }
+  clearCache() { if (!this.cacheDir || !fs.existsSync(this.cacheDir)) return 0; let removed = 0; for (const name of fs.readdirSync(this.cacheDir)) { if (!name.endsWith('.vverse') && !name.includes('.vverse.tmp-')) continue; try { fs.unlinkSync(path.join(this.cacheDir, name)); removed++; } catch (_) {} } return removed; }
 }
 module.exports = { HubClient };
