@@ -138,6 +138,13 @@ fn verse_install_package(file: String) -> serde_json::Value {
 }
 
 #[tauri::command]
+fn verse_remove_package(id: String) -> serde_json::Value {
+    if id.is_empty() || id.contains("..") || id.contains('/') || id.contains('\\') { return serde_json::json!({"ok": false, "error": "invalid package id"}); }
+    let target = app_root().join("projects").join(format!("{}.vverse", id));
+    match fs::remove_file(&target) { Ok(()) => serde_json::json!({"ok": true}), Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({"ok": false, "error": "package not found"}), Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}) }
+}
+
+#[tauri::command]
 fn package_remove(name: String) -> serde_json::Value {
     if name.contains('/') || name.contains('\\') || name.contains("..") { return serde_json::json!({ "ok": false, "error": "Invalid package name" }); }
     let p=app_root().join("plugins").join(&name);
@@ -1103,6 +1110,7 @@ pub fn run() {
             verse_local_packages,
             verse_package_preview,
             verse_install_package,
+            verse_remove_package,
             package_remove,
             repair_scan,
             workbench_read,
