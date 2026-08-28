@@ -38,6 +38,9 @@ function preview(input) {
     const actual = crypto.createHash('sha256').update(Buffer.from(obj.files[name], 'base64')).digest('hex');
     if (actual !== digest) throw new Error(`digest mismatch: ${name}`);
   }
+  for (const name of Object.keys(obj.files)) {
+    if (name !== 'signatures/sha256.json' && !(name in sig)) throw new Error(`unsigned file: ${name}`);
+  }
   return { format: obj.format, files: Object.keys(obj.files).sort(), bytes: fs.statSync(input).size, signed: true, readOnly: true };
 }
 
