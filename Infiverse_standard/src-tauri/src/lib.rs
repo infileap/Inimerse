@@ -690,8 +690,9 @@ fn plugin_toggle(name: String) -> bool {
 #[tauri::command]
 fn clear_userdata_cache() -> serde_json::Value {
     let mut removed = 0usize;
-    for dir in ["D:/Infiverse_standard/userdata", "D:/inimerse_stable/userdata"] {
-        if let Ok(rd) = fs::read_dir(dir) {
+    let dirs = [app_root().join("userdata"), PathBuf::from("D:/inimerse_stable/userdata")];
+    for dir in dirs {
+        if let Ok(rd) = fs::read_dir(&dir) {
             for e in rd.flatten() {
                 let p = e.path();
                 let n = e.file_name().to_string_lossy().to_string();
