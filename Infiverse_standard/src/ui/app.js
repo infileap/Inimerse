@@ -260,6 +260,8 @@ function renderBrowse() {
   <button class="btn" data-go="workbench">→ 去工作台</button>`;
 }
 function bindBrowse() {
+  const packagePanel = document.createElement('div'); packagePanel.className = 'card'; packagePanel.innerHTML = '<h3>本地 Verse 包</h3><div class="muted">加载中…</div>'; const view = $('#view-content'); if (view) view.prepend(packagePanel);
+  invoke('verse_local_packages').then(pkgs => { const items = Array.isArray(pkgs) ? pkgs : []; packagePanel.innerHTML = '<h3>本地 Verse 包</h3>' + (items.length ? items.map(p => '<div class="step"><span>' + escapeHtml(p.id || '') + '</span><span class="muted">' + String(p.size || 0) + ' bytes</span><button class="btn" data-vp-preview="' + escapeHtml(p.path || '') + '">预览</button><button class="btn danger" data-vp-remove="' + escapeHtml(p.id || '') + '">删除</button></div>').join('') : '<div class="muted">暂无本地包</div>'); packagePanel.querySelectorAll('[data-vp-preview]').forEach(b => b.addEventListener('click', async () => { const r = await invoke('verse_package_preview', { file: b.dataset.vpPreview }); alert(r && r.ok ? ('包大小：' + r.size + ' bytes') : ((r && r.error) || '预览失败')); })); packagePanel.querySelectorAll('[data-vp-remove]').forEach(b => b.addEventListener('click', async () => { const r = await invoke('verse_remove_package', { id: b.dataset.vpRemove }); if (r && r.ok) bindBrowse(); else alert((r && r.error) || '删除失败'); })); }).catch(() => { packagePanel.innerHTML = '<h3>本地 Verse 包</h3><div class="muted">加载失败</div>'; });
   document.querySelectorAll('[data-browse]').forEach(btn => btn.addEventListener('click', async () => {
     const name = btn.dataset.browse;
     const item = BROWSE.find(b => b.name === name);
