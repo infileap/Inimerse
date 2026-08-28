@@ -45,3 +45,5 @@ cmake --build build --target package
 - CRP WebSocket 支持可选 portal token 认证（`CRP_REQUIRE_AUTH=1`）及并发安全重连。
 - `.vverse` 支持只读预览、依赖声明校验和桌面端递归发现。
 - Windows 与 POSIX 的多目标 `say`、文件输出及 AI 结构化事件接口已对齐。
+
+- Native say@target desugar regression probe is part of make check.
