@@ -138,7 +138,11 @@ static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
             d--;
         }
     }
-    if (say_wrap) ds_emit(dst, &d, cap, ")");
+    if (say_wrap) {
+        int e = d; while (e > 0 && (dst[e - 1] == '\n' || dst[e - 1] == '\r' || dst[e - 1] == ' ' || dst[e - 1] == '\t')) e--;
+        if (e < d && d < cap - 1) memmove(dst + e + 1, dst + e, (size_t)(d - e));
+        if (e < cap - 1) { dst[e] = ')'; d++; }
+    }
     dst[d] = 0;
 }
 

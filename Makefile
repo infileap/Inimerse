@@ -57,6 +57,7 @@ check:
 	 $(MAKE) linux
 	 ./inimerse --version
 	 ./inimerse where
+	 bash tools/desugar_probe.sh ./inimerse
 	 $(MAKE) platform-probe fiber-probe process-probe socket-probe
 	 ./platform_probe
 	 ./fiber_probe
