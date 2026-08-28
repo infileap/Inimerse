@@ -38,3 +38,10 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 cmake --build build --target package
 ```
+
+## 本轮增量（2026-08-28）
+
+- 工作台运行任务支持跨平台停止与明确的 `stopped` 状态。
+- CRP WebSocket 支持可选 portal token 认证（`CRP_REQUIRE_AUTH=1`）及并发安全重连。
+- `.vverse` 支持只读预览、依赖声明校验和桌面端递归发现。
+- Windows 与 POSIX 的多目标 `say`、文件输出及 AI 结构化事件接口已对齐。
