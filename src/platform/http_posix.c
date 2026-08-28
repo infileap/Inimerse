@@ -22,6 +22,8 @@ static unsigned long g_token_counter;
 static char g_tokens[128][64];
 static char g_revoked[128][64];
 static int g_token_count, g_revoked_count;
+static char g_verses[128][128];
+static int g_verse_count;
 static int token_known(const char *token) { if (!token || !*token) return 0; for (int i = 0; i < g_token_count; ++i) if (!strcmp(g_tokens[i], token)) return 1; return 0; }
 static int token_revoked(const char *token) { for (int i = 0; i < g_revoked_count; ++i) if (!strcmp(g_revoked[i], token)) return 1; return 0; }
 static void token_register(const char *token) { if (g_token_count < 128) snprintf(g_tokens[g_token_count++], sizeof g_tokens[0], "%s", token); }
@@ -157,12 +159,25 @@ static void *http_loop(void *unused) {
         if (signal && (!token_known(request_token) || token_revoked(request_token))) { signal = 0; status = 403; }
         char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
         int ok = health || find || signal || revoke || register_route || portal || hub;
+        char findbuf[4096];
+        if (find) {
+            size_t used = 0; used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "{\"items\":[");
+            for (int i = 0; i < g_verse_count && used + 160 < sizeof findbuf; ++i) used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "%s{\"id\":\"%s\",\"endpoint\":\"local\"}", i ? "," : "", g_verses[i]);
+            snprintf(findbuf + used, sizeof findbuf - used, "]}\n");
+        }
         const char *body = health ? "{\"ok\":true,\"service\":\"inimerse\"}\n" :
-            find ? "{\"verses\":[]}\n" :
+            find ? findbuf :
             signal ? "{\"ok\":true,\"accepted\":true}\n" :
             revoke ? "{\"ok\":true,\"revoked\":true}\n" : hub ? hubbuf : "{\"error\":\"not_found\"}\n";
         char portalbuf[256];
-        if (register_route) body = "{\"ok\":true}\n";
+        if (register_route) {
+            char vid[128];
+            if (json_field_string(req, "id", vid, sizeof vid) && safe_id(vid)) {
+                int seen = 0; for (int i = 0; i < g_verse_count; ++i) if (!strcmp(g_verses[i], vid)) seen = 1;
+                if (!seen && g_verse_count < 128) snprintf(g_verses[g_verse_count++], sizeof g_verses[0], "%s", vid);
+                body = "{\"ok\":true}\n";
+            } else { status = 400; body = "{\"error\":\"id_required\"}\n"; }
+        }
         if (portal) {
             unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
             snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu}\n", seed, (unsigned long)time(NULL) + 300);
