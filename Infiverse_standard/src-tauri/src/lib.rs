@@ -31,13 +31,13 @@ fn detect_engine() -> String {
     }
     let local = app_root().join("inimerse.exe");
     if local.exists() { return local.to_string_lossy().into_owned(); }
-    for c in ["D:/inimerse_stable/inimerse.exe", "C:/Users/Lenovo/Infiverse/inimerse.exe"] { if std::fs::metadata(c).is_ok() { return c.to_string(); } }
+    if let Ok(c) = std::env::var("INIMERSE_ENGINE") { if fs::metadata(&c).is_ok() { return c; } }
     "inimerse.exe".to_string()
 }
 
 fn engine_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for root in [app_root(), PathBuf::from("D:/inimerse_stable"), PathBuf::from("C:/Users/Lenovo/Infiverse")] {
+    for root in [app_root()] {
         let direct = root.join("inimerse.exe"); if direct.exists() { out.push(direct); }
         for sub in ["engines", "versions"] {
             let dir = root.join(sub);
@@ -162,9 +162,10 @@ fn tool_stats(path: String) -> serde_json::Value {
 
 #[tauri::command]
 fn tool_desugar(path: String) -> String {
-    let out = "D:/Infiverse_standard/userdata/desugar_out.im";
+    let out = user_data("desugar_out.im");
     let engine = detect_engine();
-    if let Ok(o) = std::process::Command::new(&engine).args(["--desugar", &path, out]).output() {
+    let out_s = out.to_string_lossy().into_owned();
+    if let Ok(o) = std::process::Command::new(&engine).args(["--desugar", &path, &out_s]).output() {
         if o.status.success() {
             return std::fs::read_to_string(out).unwrap_or_default();
         }
@@ -190,7 +191,7 @@ fn backup_list() -> serde_json::Value {
 #[tauri::command]
 fn plugin_list() -> serde_json::Value {
     let mut arr = Vec::new();
-    let dirs = [app_root().join("plugins"), app_root().join("src"), app_root().join("projects"), PathBuf::from("D:/inimerse_stable/mods")];
+    let dirs = [app_root().join("plugins"), app_root().join("src"), app_root().join("projects"), app_root().join("mods")];
     for d in dirs {
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
@@ -206,13 +207,13 @@ fn plugin_list() -> serde_json::Value {
 
 #[tauri::command]
 fn verse_save_node(friend_id: String, node: String) -> bool {
-    if let Ok(s) = std::fs::read_to_string("D:/inimerse_stable/userdata/friends.json") {
+    if let Ok(s) = std::fs::read_to_string(user_data("friends.json")) {
         if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&s) {
             if let Some(fs) = v["friends"].as_array_mut() {
                 for f in fs {
                     if f["id"].as_str() == Some(&friend_id) {
                         f["node"] = serde_json::Value::String(node.clone());
-                        return std::fs::write("D:/inimerse_stable/userdata/friends.json", serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok();
+                        return std::fs::write(user_data("friends.json"), serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok();
                     }
                 }
             }
@@ -239,7 +240,7 @@ fn get_identity() -> Identity {
         ..Default::default()
     };
     let local = user_data("profile.json");
-    let candidates = [local, PathBuf::from("D:/inimerse_stable/userdata/profile.json"), PathBuf::from("C:/Users/Lenovo/Infiverse/userdata/profile.json")];
+    let candidates = [local, user_data("profile.json")];
     for p in candidates {
         if let Ok(s) = fs::read_to_string(&p) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
@@ -510,7 +511,7 @@ fn chat_load(session: String) -> String {
 #[tauri::command]
 fn friends_list() -> serde_json::Value {
     let mut arr: Vec<serde_json::Value> = Vec::new();
-    if let Ok(s) = std::fs::read_to_string("D:/inimerse_stable/userdata/friends.json") {
+    if let Ok(s) = std::fs::read_to_string(user_data("friends.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
             if let Some(fs) = v["friends"].as_array() {
                 for f in fs {
@@ -553,7 +554,7 @@ fn browse_download(name: String) -> serde_json::Value {
         "示例项目·平台跳跃" => ("platform", PLATFORM_IM),
         _ => return serde_json::json!({ "name": name, "state": "未知项目", "out": "" }),
     };
-    let base = format!("D:/Infiverse_standard/projects/{}", dir);
+    let base = app_root().join("projects").join(&dir).to_string_lossy().into_owned();
     let _ = std::fs::create_dir_all(&base);
     let _ = std::fs::write(format!("{}/main.im", base), im);
     let _ = std::fs::write(format!("{}/README.md", base), format!("# {}（桌面应用下载）\n\n隔离校验通过即视为可运行。\n", name));
@@ -612,7 +613,7 @@ fn get_public_ip() -> String {
 fn inimerse_where() -> serde_json::Value {
     let mut found: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let candidates = [app_root().join("inimerse.exe"), PathBuf::from("D:/inimerse_stable/inimerse.exe"), PathBuf::from("C:/Users/Lenovo/Infiverse/inimerse.exe")];
+    let candidates = [app_root().join("inimerse.exe")];
     for c in candidates {
         if fs::metadata(&c).is_ok() {
             let path = c.to_string_lossy().into_owned();
@@ -690,7 +691,7 @@ fn plugin_toggle(name: String) -> bool {
 #[tauri::command]
 fn clear_userdata_cache() -> serde_json::Value {
     let mut removed = 0usize;
-    let dirs = [app_root().join("userdata"), PathBuf::from("D:/inimerse_stable/userdata")];
+    let dirs = [app_root().join("userdata")];
     for dir in dirs {
         if let Ok(rd) = fs::read_dir(&dir) {
             for e in rd.flatten() {
@@ -944,7 +945,7 @@ fn handle_verse(mut s: TcpStream) -> std::io::Result<()> {
         let text = v["text"].as_str().unwrap_or("").to_string();
         let ts = v["ts"].as_i64().unwrap_or(0);
         if !from.is_empty() && !text.is_empty() {
-            let path = format!("D:/inimerse_stable/userdata/messages/{}.json", from);
+            let path = user_data(&format!("messages/{}.json", from));
             let mut arr: Vec<serde_json::Value> = Vec::new();
             if let Ok(ex) = std::fs::read_to_string(&path) {
                 if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&ex) {
@@ -977,7 +978,7 @@ fn verse_start() -> bool {
 #[tauri::command]
 fn verse_send(addr: String, text: String) -> serde_json::Value {
     let mut from = String::new();
-    if let Ok(s) = std::fs::read_to_string("D:/inimerse_stable/userdata/profile.json") {
+    if let Ok(s) = std::fs::read_to_string(user_data("profile.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
             from = v["id"].as_str().unwrap_or("").to_string();
         }
