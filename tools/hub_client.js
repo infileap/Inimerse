@@ -8,6 +8,7 @@ class HubClient {
   _evictCache() { if (!this.maxCacheBytes) return; const entries = this.cacheEntries().map(name => { const p = path.join(this.cacheDir, name); const s = fs.statSync(p); return { p, size: s.size, time: s.mtimeMs }; }).sort((a, b) => a.time - b.time); let total = entries.reduce((n, e) => n + e.size, 0); for (const e of entries) { if (total <= this.maxCacheBytes) break; try { fs.unlinkSync(e.p); total -= e.size; } catch (_) {} } }
   async fork(id, newId) { const r = await this.request('/package/fork', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ source: id, id: newId }) }); return r.json(); }
   async publish(id, data) { if (!/^[A-Za-z0-9._-]+$/.test(String(id))) throw new Error('invalid package id'); const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data); const r = await this.request('/package', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ id, data: bytes.toString('base64') }) }); return r.json(); }
+  async remove(id) { const r = await this.request('/package/' + encodeURIComponent(id), { method: 'DELETE' }); return r.json(); }
   cacheEntries() { if (!this.cacheDir || !fs.existsSync(this.cacheDir)) return []; return fs.readdirSync(this.cacheDir).filter(n => n.endsWith('.vverse')); }
   clearCache() { let removed = 0; for (const name of this.cacheEntries()) { try { fs.unlinkSync(path.join(this.cacheDir, name)); removed++; } catch (_) {} } return removed; }
 }
