@@ -106,6 +106,29 @@ fn component_set(id: String, installed: bool) -> serde_json::Value {
 fn package_list() -> serde_json::Value { plugin_list() }
 
 #[tauri::command]
+fn verse_local_packages() -> serde_json::Value {
+    let root = app_root().join("projects");
+    let mut out = Vec::new();
+    if let Ok(rd) = fs::read_dir(&root) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("vverse") {
+                if let Ok(m) = fs::metadata(&p) { out.push(serde_json::json!({"id": p.file_stem().and_then(|x| x.to_str()).unwrap_or(""), "path": p, "size": m.len()})); }
+            }
+        }
+    }
+    serde_json::Value::Array(out)
+}
+
+#[tauri::command]
+fn verse_package_preview(file: String) -> serde_json::Value {
+    let Ok(root) = app_root().canonicalize() else { return serde_json::json!({"ok": false, "error": "workspace unavailable"}); };
+    let Ok(path) = std::path::Path::new(&file).canonicalize() else { return serde_json::json!({"ok": false, "error": "package not found"}); };
+    if !path.starts_with(&root) || path.extension().and_then(|x| x.to_str()) != Some("vverse") { return serde_json::json!({"ok": false, "error": "package outside workspace"}); }
+    match fs::metadata(&path) { Ok(m) => serde_json::json!({"ok": true, "path": path, "size": m.len(), "readOnly": true}), Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}) }
+}
+
+#[tauri::command]
 fn package_remove(name: String) -> serde_json::Value {
     if name.contains('/') || name.contains('\\') || name.contains("..") { return serde_json::json!({ "ok": false, "error": "Invalid package name" }); }
     let p=app_root().join("plugins").join(&name);
@@ -1068,6 +1091,8 @@ pub fn run() {
             components_list,
             component_set,
             package_list,
+            verse_local_packages,
+            verse_package_preview,
             package_remove,
             repair_scan,
             workbench_read,
