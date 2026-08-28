@@ -663,21 +663,21 @@ fn read_changes() -> String {
 
 #[tauri::command]
 fn plugin_install(path: String) -> serde_json::Value {
-    let dir = "D:/Infiverse_standard/plugins";
-    let _ = fs::create_dir_all(dir);
+    let dir = app_root().join("plugins");
+    let _ = fs::create_dir_all(&dir);
     let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "plugin.im".into());
-    let dst = format!("{}/{}", dir, name);
+    let dst = dir.join(&name);
     match fs::copy(&path, &dst) {
-        Ok(_) => serde_json::json!({ "ok": true, "name": name, "dst": dst }),
+        Ok(_) => serde_json::json!({ "ok": true, "name": name, "dst": dst.to_string_lossy() }),
         Err(e) => serde_json::json!({ "ok": false, "err": e.to_string() }),
     }
 }
 
 #[tauri::command]
 fn plugin_toggle(name: String) -> bool {
-    let dir = "D:/Infiverse_standard/plugins";
-    let base = format!("{}/{}", dir, name);
-    let dis = format!("{}/{}.disabled", dir, name);
+    let dir = app_root().join("plugins");
+    let base = dir.join(&name);
+    let dis = dir.join(format!("{}.disabled", name));
     if fs::metadata(&dis).is_ok() {
         return fs::rename(&dis, &base).is_ok();
     }
