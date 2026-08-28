@@ -134,6 +134,7 @@ static void *http_loop(void *unused) {
                 char frame[65536];
                 for (;;) {
                     int flen = im_ws_read_text(client, frame, sizeof frame);
+                    if (flen == -2) { (void)im_ws_send_pong(client, NULL, 0); continue; }
                     if (flen <= 0) break;
                     char type[32]; uint64_t seq = 0;
                     if (json_field_string(frame, "type", type, sizeof type)) {
