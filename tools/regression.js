@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const { spawnSync } = require('node:child_process');
-const tests = ['upp_reference.test.js', 'upp_session.test.js', 'crp_reference.test.js', 'crp_relay.test.js', 'crp_client.test.js', 'crp_ws_client.test.js', 'vverse_validate.test.js', 'vverse_pack.test.js', 'say_reference.test.js'];
+const tests = ['upp_reference.test.js', 'upp_session.test.js', 'crp_reference.test.js', 'crp_relay.test.js', 'crp_client.test.js', 'crp_ws_client.test.js', 'vverse_validate.test.js', 'vverse_pack.test.js', 'hub_client.test.js', 'say_reference.test.js'];
 for (const test of tests) {
   const r = spawnSync(process.execPath, [require('node:path').join(__dirname, test)], { encoding: 'utf8' });
   process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || '');
