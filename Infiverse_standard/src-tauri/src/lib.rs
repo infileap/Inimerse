@@ -149,9 +149,12 @@ fn verse_run_uri(uri: String) -> serde_json::Value {
     let prefix = "verse://local/";
     if !uri.starts_with(prefix) { return serde_json::json!({"ok": false, "error": "only verse://local URIs are supported"}); }
     let rel = &uri[prefix.len()..];
-    if rel.is_empty() || rel.contains("..") || rel.contains('\\') || rel.contains('/') { return serde_json::json!({"ok": false, "error": "invalid local package path"}); }
-    let pkg = app_root().join("projects").join(rel);
-    if pkg.extension().and_then(|x| x.to_str()) != Some("vverse") || !pkg.is_file() { return serde_json::json!({"ok": false, "error": "package not found"}); }
+    if rel.is_empty() || rel.contains("..") || rel.contains('\\') { return serde_json::json!({"ok": false, "error": "invalid local package path"}); }
+    let projects = app_root().join("projects");
+    let pkg = projects.join(rel);
+    let Ok(canonical) = pkg.canonicalize() else { return serde_json::json!({"ok": false, "error": "package not found"}); };
+    if !canonical.starts_with(&projects) { return serde_json::json!({"ok": false, "error": "package outside workspace"}); }
+    if canonical.extension().and_then(|x| x.to_str()) != Some("vverse") || !canonical.is_file() { return serde_json::json!({"ok": false, "error": "package not found"}); }
     let script = user_data(".verse_launch.im");
     let _ = fs::create_dir_all(app_root().join("userdata"));
     let source = format!("verse_open(\"{}\")\n", uri.replace('"', ""));
