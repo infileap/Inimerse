@@ -109,14 +109,12 @@ fn package_list() -> serde_json::Value { plugin_list() }
 fn verse_local_packages() -> serde_json::Value {
     let root = app_root().join("projects");
     let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir(&root) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("vverse") {
-                if let Ok(m) = fs::metadata(&p) { out.push(serde_json::json!({"id": p.file_stem().and_then(|x| x.to_str()).unwrap_or(""), "path": p, "size": m.len()})); }
-            }
-        }
+    fn walk(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
+        let Ok(rd) = fs::read_dir(dir) else { return; };
+        for e in rd.flatten() { let p = e.path(); if p.is_dir() { walk(&p, out); } else if p.extension().and_then(|x| x.to_str()) == Some("vverse") { if let Ok(m) = fs::metadata(&p) { out.push(serde_json::json!({"id": p.file_stem().and_then(|x| x.to_str()).unwrap_or(""), "path": p, "size": m.len()})); } } }
     }
+    walk(&root, &mut out);
+    out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     serde_json::Value::Array(out)
 }
 
