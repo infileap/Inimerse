@@ -788,10 +788,12 @@ function renderSettings() {
   </div>
   <div class="card"><h3>🧹 清除缓存</h3>
     <div class="step"><span class="dot">🗑️</span><div><button class="btn danger" id="set-clear">清除本地缓存（聊天记录/脱糖输出）</button>
-      <span id="set-clear-msg" class="muted"></span></div></div>
+      <span id="set-cache-stats" class="muted">Cache stats loading…</span> <span id="set-clear-msg" class="muted"></span></div></div>
   </div>`;
 }
 function bindSettings() {
+  const stats = $('#set-cache-stats');
+  if (stats) invoke('userdata_cache_stats').then(r => { stats.textContent = r ? ('Cache: ' + (r.files || 0) + ' files, ' + (((r.bytes || 0) / 1024).toFixed(1)) + ' KB') : 'Cache stats unavailable'; }).catch(() => { stats.textContent = 'Cache stats unavailable'; });
   const lang = $('#set-lang');
   if (lang) lang.value = localStorage.getItem('lang') || 'zh';
   if (lang) lang.addEventListener('change', () => localStorage.setItem('lang', lang.value));
