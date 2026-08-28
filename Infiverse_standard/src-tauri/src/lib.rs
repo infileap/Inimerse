@@ -127,6 +127,17 @@ fn verse_package_preview(file: String) -> serde_json::Value {
 }
 
 #[tauri::command]
+fn verse_install_package(file: String) -> serde_json::Value {
+    let Ok(path) = std::path::Path::new(&file).canonicalize() else { return serde_json::json!({"ok": false, "error": "package not found"}); };
+    if path.extension().and_then(|x| x.to_str()) != Some("vverse") { return serde_json::json!({"ok": false, "error": "expected .vverse package"}); }
+    let id = path.file_stem().and_then(|x| x.to_str()).unwrap_or("package");
+    if id.is_empty() || id.contains("..") || id.contains('/') || id.contains('\\') { return serde_json::json!({"ok": false, "error": "invalid package id"}); }
+    let target_dir = app_root().join("projects"); let _ = fs::create_dir_all(&target_dir);
+    let target = target_dir.join(format!("{}.vverse", id));
+    match fs::copy(&path, &target) { Ok(bytes) => serde_json::json!({"ok": true, "path": target, "bytes": bytes}), Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}) }
+}
+
+#[tauri::command]
 fn package_remove(name: String) -> serde_json::Value {
     if name.contains('/') || name.contains('\\') || name.contains("..") { return serde_json::json!({ "ok": false, "error": "Invalid package name" }); }
     let p=app_root().join("plugins").join(&name);
@@ -1091,6 +1102,7 @@ pub fn run() {
             package_list,
             verse_local_packages,
             verse_package_preview,
+            verse_install_package,
             package_remove,
             repair_scan,
             workbench_read,
