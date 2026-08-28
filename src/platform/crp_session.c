@@ -4,7 +4,7 @@
 void im_crp_session_init(ImCrpSession *s, int abi) { if (!s) return; memset(s, 0, sizeof *s); s->state = IM_CRP_IDLE; s->abi = abi; }
 int im_crp_session_apply(ImCrpSession *s, const char *type, uint64_t seq, uint64_t timestamp, const char *error) {
     if (!s || !type) return -1;
-    if (!strcmp(type, "heartbeat")) { if (seq < s->heartbeat) return -2; s->heartbeat = seq; s->last_timestamp = timestamp; return 0; }
+    if (!strcmp(type, "heartbeat")) { if (seq < s->heartbeat) return -2; if (timestamp && s->last_timestamp && timestamp < s->last_timestamp) return -4; s->heartbeat = seq; s->last_timestamp = timestamp; return 0; }
     if (!strcmp(type, "start")) { if (s->state == IM_CRP_CRASHED || s->state == IM_CRP_INCOMPATIBLE) return -3; s->state = IM_CRP_RUNNING; return 0; }
     if (!strcmp(type, "stop")) { s->state = IM_CRP_STOPPED; return 0; }
     if (!strcmp(type, "crash")) { s->state = IM_CRP_CRASHED; snprintf(s->error, sizeof s->error, "%s", error && *error ? error : "unknown crash"); return 0; }
