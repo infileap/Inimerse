@@ -15,6 +15,13 @@ static int say_target(VM *vm) {
 TARGET_FN(say_log, "log") TARGET_FN(say_chat, "chat") TARGET_FN(say_ui, "ui") TARGET_FN(say_world, "world")
 TARGET_FN(say_character, "character") TARGET_FN(say_dialogue, "dialogue") TARGET_FN(say_system, "system")
 TARGET_FN(say_json, "json") TARGET_FN(say_ai, "ai") TARGET_FN(say_network, "network")
+static int say_file(VM *vm) {
+    const char *msg = arg(vm); const char *path = (vm->cur_argc > 1 && vm_cur_sp(vm) >= 1) ? (vm_cur_stack(vm)[vm_cur_sp(vm)-1].sval ?: "") : "";
+    int safe = path[0] && !strstr(path, "..") && !strchr(path, ':') && !strchr(path, '\\') && !strchr(path, '/');
+    drop(vm); if (!safe) { push_int(vm, 0); return 1; }
+    FILE *f = fopen(path, "ab"); if (!f) { push_int(vm, 0); return 1; }
+    fprintf(f, "%s\n", msg); fclose(f); push_int(vm, 1); return 1;
+}
 void say_mod_register(VM *vm) {
     vm_register_builtin(vm, "say.console", say_console); vm_register_builtin(vm, "say_console", say_console);
     vm_register_builtin(vm, "say_target", say_target); vm_register_builtin(vm, "gui_say", say_console);
@@ -28,4 +35,5 @@ void say_mod_register(VM *vm) {
     vm_register_builtin(vm, "say.json", say_json); vm_register_builtin(vm, "say_json", say_json);
     vm_register_builtin(vm, "say.ai", say_ai); vm_register_builtin(vm, "say_ai", say_ai);
     vm_register_builtin(vm, "say.network", say_network); vm_register_builtin(vm, "say_network", say_network);
+    vm_register_builtin(vm, "say.file", say_file); vm_register_builtin(vm, "say_file", say_file);
 }
