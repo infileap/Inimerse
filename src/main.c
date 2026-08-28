@@ -224,10 +224,21 @@ static int zip_extract_all(const char *zipPath, const char *outDir) {
         uint32_t dataOff = lho + 30 + lnl + lel;
         if (dataOff + csize > (uint32_t)fsz) continue;
         char outPath[1024];
-        snprintf(outPath, sizeof outPath, "%s\\%s", outDir, name);
+        snprintf(outPath, sizeof outPath, "%s/%s", outDir, name);
+#ifdef _WIN32
         for (char *p = outPath; *p; p++) if (*p == '/') *p = '\\';
         char *slash = strrchr(outPath, '\\');
-        if (slash) { *slash = 0; jar_mkdir_p(outPath); *slash = '\\'; }
+#else
+        char *slash = strrchr(outPath, '/');
+#endif
+        if (slash) {
+            *slash = 0; jar_mkdir_p(outPath);
+#ifdef _WIN32
+            *slash = '\\';
+#else
+            *slash = '/';
+#endif
+        }
         FILE *w = fopen(outPath, "wb");
         if (!w) continue;
         fwrite(buf + dataOff, 1, csize, w);
@@ -517,7 +528,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc >= 2 && strcmp(argv[1], "capabilities") == 0) {
-        const char *caps[] = { "threads", "fiber", "posix_fs", "native_dll", "gui", NULL };
+    const char *caps[] = { "threads", "fiber", "process", "socket", "posix_fs", "native_dll", "gui", NULL };
         for (int i = 0; caps[i]; i++) if (im_platform_has_capability(caps[i])) puts(caps[i]);
         return 0;
     }
