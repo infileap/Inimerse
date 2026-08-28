@@ -15,9 +15,13 @@ static int say_target(VM *vm) {
 static int say_log(VM *vm) { const char *msg = arg(vm); const char *level = "info"; if (vm->cur_argc > 1 && vm_cur_sp(vm) >= 1) { Value v = vm_cur_stack(vm)[vm_cur_sp(vm)-1]; if (v.type == VAL_STRING && v.sval) level = v.sval; } drop(vm); fprintf(stderr, "[%s] %s\n", level, msg); fflush(stderr); return 0; }
 TARGET_FN(say_chat, "chat") TARGET_FN(say_ui, "ui") TARGET_FN(say_world, "world")
 TARGET_FN(say_character, "character") TARGET_FN(say_dialogue, "dialogue") TARGET_FN(say_system, "system")
+TARGET_FN(say_network, "network")
 static int say_json(VM *vm) { const char *s = arg(vm); drop(vm); puts(s); fflush(stdout); return 0; }
-TARGET_FN(say_ai, "ai") TARGET_FN(say_network, "network")
-TARGET_FN(say_ai_observe, "ai.observe") TARGET_FN(say_ai_trace, "ai.trace") TARGET_FN(say_ai_feedback, "ai.feedback")
+static int say_ai_event(VM *vm, const char *kind) { const char *s = arg(vm); drop(vm); printf("{\"source\":\"ai\",\"event\":\"%s\",\"payload\":\"", kind); for (const unsigned char *p=(const unsigned char *)s; *p; ++p) { if (*p=='\\' || *p=='\"') putchar('\\'); putchar(*p); } puts("\"}"); fflush(stdout); return 0; }
+static int say_ai(VM *vm) { return say_ai_event(vm, "event"); }
+static int say_ai_observe(VM *vm) { return say_ai_event(vm, "observe"); }
+static int say_ai_trace(VM *vm) { return say_ai_event(vm, "trace"); }
+static int say_ai_feedback(VM *vm) { return say_ai_event(vm, "feedback"); }
 static int say_file(VM *vm) {
     const char *msg = arg(vm); const char *path = (vm->cur_argc > 1 && vm_cur_sp(vm) >= 1) ? (vm_cur_stack(vm)[vm_cur_sp(vm)-1].sval ?: "") : "";
     int safe = path[0] && !strstr(path, "..") && !strchr(path, ':') && !strchr(path, '\\') && !strchr(path, '/');
