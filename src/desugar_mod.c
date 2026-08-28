@@ -120,6 +120,7 @@ static void desugar_line(const char *src, char *dst, int cap, int *in_block) {
             }
         }
         if (p[0] == ';') {
+            if (say_wrap) { ds_emit(dst, &d, cap, ")"); say_wrap = 0; }
             dst[d++] = *p++;
             last_code_semi = d - 1;
             if (line_code_start < 0) line_code_start = d;
