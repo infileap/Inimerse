@@ -29,8 +29,8 @@ fn detect_engine() -> String {
     if let Ok(sel) = fs::read_to_string(user_data("default_engine.txt")) {
         let p = sel.trim(); if !p.is_empty() && fs::metadata(p).is_ok() { return p.to_string(); }
     }
-    let local = app_root().join("inimerse.exe");
-    if local.exists() { return local.to_string_lossy().into_owned(); }
+    let local_names = if cfg!(windows) { ["inimerse.exe", "inimerse"] } else { ["inimerse", "inimerse.exe"] };
+    for name in local_names { let local = app_root().join(name); if local.exists() { return local.to_string_lossy().into_owned(); } }
     if let Ok(c) = std::env::var("INIMERSE_ENGINE") { if fs::metadata(&c).is_ok() { return c; } }
     "inimerse.exe".to_string()
 }
@@ -38,10 +38,10 @@ fn detect_engine() -> String {
 fn engine_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     for root in [app_root()] {
-        let direct = root.join("inimerse.exe"); if direct.exists() { out.push(direct); }
+        for name in ["inimerse", "inimerse.exe"] { let direct = root.join(name); if direct.exists() { out.push(direct); } }
         for sub in ["engines", "versions"] {
             let dir = root.join(sub);
-            if let Ok(rd) = fs::read_dir(dir) { for e in rd.flatten() { let p=e.path().join("inimerse.exe"); if p.exists() { out.push(p); } } }
+            if let Ok(rd) = fs::read_dir(dir) { for e in rd.flatten() { for name in ["inimerse", "inimerse.exe"] { let p=e.path().join(name); if p.exists() { out.push(p); } } } }
         }
     }
     out.sort(); out.dedup(); out
