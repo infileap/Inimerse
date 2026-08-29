@@ -17,6 +17,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 struct ImMutex {
@@ -127,10 +130,17 @@ int im_platform_executable_path(char *buffer, size_t capacity) {
     DWORD n = GetModuleFileNameA(NULL, buffer, (DWORD)capacity);
     return (n > 0 && n < capacity) ? (int)n : -1;
 #else
+#ifdef __APPLE__
+    uint32_t size = (uint32_t)capacity;
+    if (_NSGetExecutablePath(buffer, &size) != 0 || size >= capacity) return -1;
+    buffer[size] = '\0';
+    return (int)size;
+#else
     ssize_t n = readlink("/proc/self/exe", buffer, capacity - 1);
     if (n < 0 || (size_t)n >= capacity) return -1;
     buffer[n] = '\0';
     return (int)n;
+#endif
 #endif
 }
 
