@@ -163,6 +163,36 @@ static int fn_isolate_run(VM *vm) {
         return 0;
     }
 
+    /* Put the child in a kill-on-close Job Object.  TerminateProcess only
+       covers the immediate VM process; a malicious/buggy module could leave
+       descendants alive.  The job gives Windows the same process-tree
+       isolation semantics as the POSIX fork boundary. */
+    HANDLE hJob = CreateJobObjectA(NULL, NULL);
+    if (!hJob) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 2000);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread); CloseHandle(hRead);
+        iso_push_result(vm, -2, "isolate_run: CreateJobObject failed", 0);
+        return 0;
+    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+    memset(&limits, 0, sizeof limits);
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    /* Keep the hard cap aligned with --low-config.  Failure to set the limit
+       is non-fatal on older Windows versions, while assignment remains safe. */
+    limits.ProcessMemoryLimit = (SIZE_T)64 * 1024 * 1024;
+    limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+    SetInformationJobObject(hJob, JobObjectExtendedLimitInformation,
+                            &limits, sizeof limits);
+    if (!AssignProcessToJobObject(hJob, pi.hProcess)) {
+        CloseHandle(hJob);
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 2000);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread); CloseHandle(hRead);
+        iso_push_result(vm, -2, "isolate_run: AssignProcessToJobObject failed", 0);
+        return 0;
+    }
+
     IsoCtx ctx;
     memset(&ctx, 0, sizeof ctx);
     ctx.hRead = hRead;
@@ -171,7 +201,7 @@ static int fn_isolate_run(VM *vm) {
     DWORD wait = WaitForSingleObject(pi.hProcess, (DWORD)timeout_ms);
     int timedout = (wait == WAIT_TIMEOUT) ? 1 : 0;
     if (timedout) {
-        TerminateProcess(pi.hProcess, 9);
+        TerminateJobObject(hJob, 9);
         WaitForSingleObject(pi.hProcess, 5000);
     }
     DWORD exitCode = 1;
@@ -184,6 +214,7 @@ static int fn_isolate_run(VM *vm) {
     CloseHandle(pi.hThread);
     CloseHandle(hRead);
     if (hThread) CloseHandle(hThread);
+    CloseHandle(hJob); /* kill-on-close also cleans any descendant handles */
 
     iso_push_result(vm, (long)exitCode, ctx.buf ? ctx.buf : "", timedout);
     free(ctx.buf);
