@@ -24,6 +24,13 @@ static void paths_init(void) {
 static int valid_name(const char *s) { return s && *s && strcmp(s, ".") && strcmp(s, "..") && !strstr(s, "..") && !strchr(s, '/') && !strchr(s, '\\') && !strchr(s, ':'); }
 static void room_path(int room, char *out, size_t cap) { paths_init(); snprintf(out, cap, "%s/%d.txt", g_rooms, room); }
 static int room_slot(int room) { return room >= 11510 && room < 11700 && ((room - 11510) % 10) == 0 ? (room - 11510) / 10 : -1; }
+static int local_port_open(int port) {
+    if (port < 1 || port > 65535) return 0;
+    int fd = socket(AF_INET, SOCK_STREAM, 0); if (fd < 0) return 0;
+    struct sockaddr_in sa; memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK); sa.sin_port = htons((uint16_t)port);
+    int ok = connect(fd, (struct sockaddr *)&sa, sizeof sa) == 0; close(fd); return ok;
+}
 static char *room_field(int room, const char *key) {
     char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "rb"); if (!f) return NULL;
     char line[512]; size_t n = strlen(key); char *v = NULL;
@@ -101,16 +108,21 @@ static int server_join(VM *vm) {
     const char *pass = pass_v.type == VAL_STRING ? pass_v.sval : "";
     int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival;
     vm_cur_set_sp(vm, sp - argc);
+    int slot = room_slot(room);
+    if (slot < 0 || !g_room_proc[slot] || !im_process_alive(g_room_proc[slot]) || !local_port_open(room + 1)) {
+        push_string(vm, "ROOM_NOT_FOUND"); return 1;
+    }
     char *saved = room_field(room, "pass"); if (!saved) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
     if (strcmp(saved, pass ? pass : "")) { free(saved); push_string(vm, "WRONG_PASSWORD"); return 1; } free(saved);
-    char ip[64] = "127.0.0.1"; char url[128]; snprintf(url, sizeof url, "http://%s:%d/", ip, room + 1); push_string(vm, url); return 1;
+    char ip[64] = "127.0.0.1";
+    char url[128]; snprintf(url, sizeof url, "http://%s:%d/", ip, room + 1); push_string(vm, url); return 1;
 }
 static int server_status(VM *vm) {
     int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
     int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc);
     char *project = room_field(room, "project"); if (!project) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
     int slot = room_slot(room); int alive = slot >= 0 && g_room_proc[slot] ? im_process_alive(g_room_proc[slot]) : 0;
-    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, alive, 0, room + 1); free(project); push_string(vm, buf); return 1;
+    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, alive, alive && local_port_open(room + 1), room + 1); free(project); push_string(vm, buf); return 1;
 }
 static int server_stop(VM *vm) {
     int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
