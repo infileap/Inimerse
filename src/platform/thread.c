@@ -32,6 +32,12 @@ int im_thread_join(void *handle, unsigned int timeout_ms) {
     return WaitForSingleObject((HANDLE)handle, timeout_ms) == WAIT_OBJECT_0 ? 0 : -1;
 }
 
+int im_thread_detach(void *handle) {
+    if (!handle) return -1;
+    int rc = CloseHandle((HANDLE)handle) ? 0 : -1;
+    return rc;
+}
+
 void im_thread_close(void *handle) {
     if (handle) CloseHandle((HANDLE)handle);
 }
@@ -80,6 +86,14 @@ int im_thread_join(void *handle, unsigned int timeout_ms) {
     if (rc != 0) return rc;
     free(thread);
     return 0;
+}
+
+int im_thread_detach(void *handle) {
+    if (!handle) return -1;
+    pthread_t *thread = (pthread_t *)handle;
+    int rc = pthread_detach(*thread);
+    free(thread);
+    return rc;
 }
 
 void im_thread_close(void *handle) {

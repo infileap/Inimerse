@@ -12,6 +12,8 @@ typedef void *(*ImThreadProc)(void *arg);
  * owns the handle and is responsible for joining/closing it. */
 void *im_thread_start(ImThreadProc proc, void *arg);
 int im_thread_join(void *handle, unsigned int timeout_ms);
+/* Detaches a thread and releases its opaque handle without waiting. */
+int im_thread_detach(void *handle);
 void im_thread_close(void *handle);
 
 #endif

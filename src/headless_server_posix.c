@@ -97,5 +97,5 @@ int headless_poll_input(char *buf, int cap) {
     im_mutex_unlock(g_hl_lock); return 0;
 }
 static void *headless_loop(void *arg) { (void)arg; while (g_hl_enabled) { headless_accept(); im_platform_sleep_ms(50); } return NULL; }
-void headless_start_thread(void) { void *h = im_thread_start(headless_loop, NULL); if (h) { /* detached loop owns no resources */ } }
+void headless_start_thread(void) { void *h = im_thread_start(headless_loop, NULL); if (h) (void)im_thread_detach(h); }
 #endif
