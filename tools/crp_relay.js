@@ -5,6 +5,7 @@ const wsClients = new Set();
 
 function createRelay(options = {}) {
   const verses = new Map();
+  const friends = new Map();
   const content = new Map();
   const packages = new Map();
   const revoked = new Set();
@@ -26,6 +27,16 @@ function createRelay(options = {}) {
         const q = new URL(req.url, 'http://localhost').searchParams.get('q') || '';
         const result = [...verses.values()].filter(v => !q || String(v.id).includes(q) || String(v.name || '').toLowerCase().includes(q.toLowerCase())).map(({ updated, ...v }) => v);
         return json(res, 200, { items: result });
+      }
+      if (req.method === 'POST' && req.url === '/friends') {
+        const p = await read(req); if (!p.id || !p.verse) return json(res, 400, { error: 'id and verse are required' });
+        const id = String(p.id); friends.set(id, { id, verse: String(p.verse), name: String(p.name || id), endpoint: String(p.endpoint || ''), updated: Date.now() });
+        return json(res, 200, { ok: true, id });
+      }
+      if (req.method === 'GET' && req.url.startsWith('/friends')) {
+        const q = new URL(req.url, 'http://localhost').searchParams.get('verse') || '';
+        const items = [...friends.values()].filter(f => !q || f.verse === q).map(({ updated, ...f }) => f);
+        return json(res, 200, { items });
       }
       if (req.method === 'POST' && req.url === '/portal') {
         const p = await read(req); if (!verses.has(p.verse) || !p.peer) return json(res, 404, { error: 'verse not found' });
@@ -104,7 +115,7 @@ function createRelay(options = {}) {
     });
     socket.on('close', () => wsClients.delete(socket)); socket.on('error', () => wsClients.delete(socket));
   });
-  return { server, verses, packages, checkToken, revoked, wsClients };
+  return { server, verses, friends, packages, checkToken, revoked, wsClients };
 }
 
 if (require.main === module) createRelay().server.listen(Number(process.env.CRP_PORT || 8787), () => console.log('CRP relay listening'));

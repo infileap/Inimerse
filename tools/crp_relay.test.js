@@ -8,7 +8,9 @@ server.listen(0, async () => {
   try {
     assert.equal((await post('/register', { id: 'demo', name: 'Demo', endpoint: 'local' })).ok, true);
     assert.equal((await (await fetch(base + '/find?q=dem')).json()).items.length, 1);
-    const portal = await post('/portal', { verse: 'demo', peer: 'p1' });
+    assert.equal((await post('/friends', { id: 'p1', verse: 'demo', endpoint: 'ws://local', name: 'Peer' })).ok, true);
+    assert.equal((await (await fetch(base + '/friends?verse=demo')).json()).items[0].id, 'p1');
+  const portal = await post('/portal', { verse: 'demo', peer: 'p1' });
     assert.equal(portal.peer, 'p1');
     assert.equal((await post('/signal', { verse: 'demo', peer: 'p1', event: 'join', token: portal.token, data: {} })).status, 202);
     assert.equal((await post('/signal', { verse: 'demo', peer: 'bad', event: 'join', token: portal.token, data: {} })).status, 403);

@@ -25,6 +25,8 @@ class CrpClient {
     throw last;
   }
   find(query = '', signal) { return this.request(`/find?q=${encodeURIComponent(query)}`, {}, signal); }
+  registerFriend(id, verse, endpoint = '', name = '', signal) { return this.request('/friends', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, verse, endpoint, name }) }, signal); }
+  listFriends(verse = '', signal) { return this.request('/friends' + (verse ? `?verse=${encodeURIComponent(verse)}` : ''), {}, signal); }
   portal(verse, peer, signal) { return this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer }) }, signal); }
   signal(verse, event, data = {}, signal) { return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, event, data }) }, signal); }
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
