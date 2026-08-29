@@ -12,10 +12,15 @@ def main():
         root = Path(td) / 'app'; run('init', str(root), '--name', 'demo/app')
         (root / 'src' / 'main.im').write_text('say("ok")\n', encoding='utf-8')
         pkg = Path(td) / 'demo.inim'; run('pack', str(root), '-o', str(pkg))
+        dep_root = Path(td) / 'dep'; run('init', str(dep_root), '--name', 'other/lib')
+        dep_pkg = Path(td) / 'other.inim'; run('pack', str(dep_root), '-o', str(dep_pkg))
+        run('add', '--package', str(dep_pkg), '-p', str(root))
         target = Path(td) / 'target'; target.mkdir(); run('install', str(pkg), '-t', str(target))
         lock = json.loads((target / 'lock.json').read_text(encoding='utf-8'))
         assert lock['packages']['demo/app']['version'] == '0.1.0'
         assert (target / '.inim-cache' / 'demo' / 'app' / '0.1.0' / 'src' / 'main.im').is_file()
+        run('install', '-t', str(root))
+        assert (root / '.inim-cache' / 'other' / 'lib' / '0.1.0').is_dir()
         run('add', 'other/lib', '>=1.0.0 <2.0.0', '-p', str(root))
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
         assert manifest['dependencies']['other/lib'] == '>=1.0.0 <2.0.0'

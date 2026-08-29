@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Inim V0.4 package manager (offline-first minimal implementation)."""
-import argparse, hashlib, json, zipfile, subprocess
+import argparse, hashlib, json, os, zipfile, subprocess
 from pathlib import Path
 
 def sha256(path):
@@ -48,7 +48,18 @@ def safe_extract(z, target):
     z.extractall(base)
 
 def cmd_install(args):
-    pkg = Path(args.package); target = Path(args.target or '.')
+    target = Path(args.target or '.')
+    if not args.package:
+        manifest = load_manifest(target); deps = manifest.get('dependencies', {})
+        if not deps: print('nothing to install'); return
+        for name, spec in deps.items():
+            if not isinstance(spec, dict) or not spec.get('path'):
+                raise SystemExit(f'inim: dependency {name} requires a local path in V0.4')
+            dep = (target / spec['path']).resolve()
+            if not dep.is_file(): raise SystemExit(f'inim: dependency package not found: {dep}')
+            cmd_install(argparse.Namespace(package=str(dep), target=str(target)))
+        return
+    pkg = Path(args.package)
     if not pkg.is_file(): raise SystemExit(f'inim: package not found: {pkg}')
     with zipfile.ZipFile(pkg) as z:
         try: m = json.loads(z.read('manifest.json').decode('utf-8'))
@@ -103,7 +114,7 @@ def main():
     ap = argparse.ArgumentParser(prog='inim'); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
     p = sp.add_parser('pack'); p.add_argument('path', nargs='?', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_pack)
-    p = sp.add_parser('install'); p.add_argument('package'); p.add_argument('-t', '--target', default='.'); p.set_defaults(fn=cmd_install)
+    p = sp.add_parser('install'); p.add_argument('package', nargs='?'); p.add_argument('-t', '--target', default='.'); p.set_defaults(fn=cmd_install)
     p = sp.add_parser('add'); p.add_argument('name', nargs='?'); p.add_argument('version', nargs='?'); p.add_argument('--package'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_add)
     p = sp.add_parser('remove'); p.add_argument('name'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_remove)
     p = sp.add_parser('run'); p.add_argument('args', nargs='*'); p.add_argument('-p', '--path', default='.'); p.add_argument('--engine'); p.set_defaults(fn=cmd_run)
