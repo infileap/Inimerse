@@ -996,6 +996,33 @@ fn workbench_save(file: String, content: String) -> serde_json::Value {
     }
 }
 
+fn workbench_diagnostics(file: &str, stderr: &str) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    for line in stderr.lines() {
+        let lower = line.to_ascii_lowercase();
+        let mut line_no = None;
+        let mut col_no = 1u64;
+        if let Some(pos) = lower.find("line ") {
+            let digits: String = lower[pos + 5..].chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digits.is_empty() { line_no = digits.parse::<u64>().ok(); }
+        }
+        if line_no.is_none() {
+            let bytes = lower.as_bytes();
+            for i in 0..bytes.len() {
+                if bytes[i] == b':' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                    let d: String = lower[i + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if let Ok(n) = d.parse::<u64>() { if n > 0 { line_no = Some(n); break; } }
+                }
+            }
+        }
+        if let Some(n) = line_no {
+            let msg = line.trim();
+            out.push(serde_json::json!({"file": file, "line": n, "column": col_no, "message": msg, "severity": "error"}));
+        }
+    }
+    out
+}
+
 #[tauri::command]
 fn workbench_run(file: String) -> serde_json::Value {
     if !is_workspace_file(&file) { return serde_json::json!({ "ok": false, "error": "File is outside the workspace" }); }
@@ -1015,7 +1042,8 @@ fn workbench_run(file: String) -> serde_json::Value {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout).chars().take(8000).collect::<String>();
                     let stderr = String::from_utf8_lossy(&out.stderr).chars().take(8000).collect::<String>();
-                    serde_json::json!({ "ok": out.status.success(), "stopped": stopped, "code": out.status.code().unwrap_or(-1), "stdout": stdout, "stderr": stderr })
+                    let diagnostics = workbench_diagnostics(&file, &stderr);
+                    serde_json::json!({ "ok": out.status.success(), "stopped": stopped, "code": out.status.code().unwrap_or(-1), "stdout": stdout, "stderr": stderr, "diagnostics": diagnostics })
                 }
                 Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
             }
