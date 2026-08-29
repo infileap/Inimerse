@@ -609,6 +609,10 @@ unsigned long timeout_ms = 0;
     SetConsoleCP(65001);
 #endif
 
+    /* Windows packaged builds resolve bundled DLL/assets beside the EXE.
+       POSIX keeps the caller's working directory so relative script paths
+       (and the benchmark harness) behave as expected. */
+#ifdef _WIN32
     char *self = get_self_path();
     if (self) {
         char *p = strrchr(self, '\\');
@@ -616,6 +620,7 @@ unsigned long timeout_ms = 0;
         if (p) { *p = '\0'; _chdir(self); }
         free(self);
     }
+#endif
 
 #ifdef _WIN32
     if (argc >= 2 && strcmp(argv[1], "changelog") == 0)
