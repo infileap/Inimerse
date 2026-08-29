@@ -78,7 +78,9 @@ if(INIMERSE_CLANG AND NOT WIN32)
       -Wl,--export=inimerse_capabilities ${CMAKE_SOURCE_DIR}/tools/wasm_probe.c
       -o ${CMAKE_BINARY_DIR}/wasm_probe.wasm
     DEPENDS ${CMAKE_SOURCE_DIR}/tools/wasm_probe.c)
-  add_custom_target(wasm_probe DEPENDS ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+  # Build the artifact as part of the default build so a plain
+  # `cmake --build && ctest` cannot register a test for a missing file.
+  add_custom_target(wasm_probe ALL DEPENDS ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
   if(INIMERSE_NODE)
     add_test(NAME wasm_probe COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/wasm_probe_check.js ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
   endif()

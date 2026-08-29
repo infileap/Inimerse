@@ -22,14 +22,26 @@ static volatile int g_http_running;
 static ImSocket *g_ws_clients[32];
 static pthread_mutex_t g_ws_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long g_token_counter;
-static char g_tokens[128][64];
+typedef struct { char value[64]; time_t expires; } ImToken;
+static ImToken g_tokens[128];
 static char g_revoked[128][64];
 static int g_token_count, g_revoked_count;
 static char g_verses[128][128];
 static int g_verse_count;
-static int token_known(const char *token) { if (!token || !*token) return 0; for (int i = 0; i < g_token_count; ++i) if (!strcmp(g_tokens[i], token)) return 1; return 0; }
+static int token_known(const char *token) {
+    if (!token || !*token) return 0;
+    time_t now = time(NULL);
+    for (int i = 0; i < g_token_count; ++i)
+        if (!strcmp(g_tokens[i].value, token) && g_tokens[i].expires > now) return 1;
+    return 0;
+}
 static int token_revoked(const char *token) { for (int i = 0; i < g_revoked_count; ++i) if (!strcmp(g_revoked[i], token)) return 1; return 0; }
-static void token_register(const char *token) { if (g_token_count < 128) snprintf(g_tokens[g_token_count++], sizeof g_tokens[0], "%s", token); }
+static void token_register(const char *token, time_t expires) {
+    if (g_token_count >= 128 || !token || !*token) return;
+    snprintf(g_tokens[g_token_count].value, sizeof g_tokens[0].value, "%s", token);
+    g_tokens[g_token_count].expires = expires;
+    g_token_count++;
+}
 static void token_revoke(const char *token) { if (!token_revoked(token) && g_revoked_count < 128) snprintf(g_revoked[g_revoked_count++], sizeof g_revoked[0], "%s", token); }
 
 static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
@@ -217,8 +229,11 @@ static void *http_loop(void *unused) {
         }
         if (portal) {
             unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
-            snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu}\n", seed, (unsigned long)time(NULL) + 300);
-            char issued[64]; snprintf(issued, sizeof issued, "posix-%lx", seed); token_register(issued);
+            time_t now = time(NULL); unsigned long ttl = 300;
+            const char *ttl_env = getenv("CRP_TOKEN_TTL");
+            if (ttl_env && *ttl_env) { char *end = NULL; unsigned long v = strtoul(ttl_env, &end, 10); if (end != ttl_env && v > 0 && v <= 86400) ttl = v; }
+            snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu}\n", seed, (unsigned long)now + ttl);
+            char issued[64]; snprintf(issued, sizeof issued, "posix-%lx", seed); token_register(issued, now + (time_t)ttl);
             body = portalbuf;
         }
         if (revoke) { if (!request_token[0]) { status = 400; body = "{\"error\":\"token_required\"}\n"; } else { token_revoke(request_token); body = "{\"revoked\":true}\n"; } }
