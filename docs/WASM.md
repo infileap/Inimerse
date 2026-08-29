@@ -14,3 +14,9 @@ Inimerse 的 VM、词法/语法分析器、编译器和纯语言 runtime 可作�
 - 使用固定 ABI 导入表传递时间、随机数、文件和网络能力。
 
 验收目标：`wasm32-wasi` 可构建 VM 核心，浏览器宿主可运行 `.im` 脚本并通过 JS 流提供 IO。
+# Browser host adapter
+
+`tools/wasm_host.js` provides `InimerseWasmHost`. It injects only explicitly
+provided imports, validates Inimerse ABI v1, and exposes `probe()` and
+`capabilities()`. Filesystem, network, and DOM access are never implicit.
+Run `node tools/wasm_host.test.js tools/wasm_probe.wasm` after `make wasm`.

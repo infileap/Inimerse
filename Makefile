@@ -69,6 +69,9 @@ wasm:
 	 @node tools/wasm_check.js
 	 @if command -v clang >/dev/null 2>&1 && clang --target=wasm32-wasi -nostdlib -Wl,--no-entry -Wl,--export=inimerse_probe -Wl,--export=inimerse_abi_version -Wl,--export=inimerse_capabilities tools/wasm_probe.c -o tools/wasm_probe.wasm; then file tools/wasm_probe.wasm; else echo "WASI probe build failed"; exit 1; fi
 
+wasm-host-check: wasm
+	@node tools/wasm_host.test.js tools/wasm_probe.wasm
+
 platform-probe:
 	$(CC) $(CFLAGS) -o platform_probe src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/platform_probe.c
 
