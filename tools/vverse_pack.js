@@ -41,7 +41,7 @@ function preview(input) {
     if (actual !== digest) throw new Error(`digest mismatch: ${name}`);
   }
   for (const name of Object.keys(obj.files)) {
-    if (name !== 'signatures/sha256.json' && !(name in sig)) throw new Error(`unsigned file: ${name}`);
+    if (name !== 'signatures/sha256.json' && name !== 'signatures/ed25519.json' && !(name in sig)) throw new Error(`unsigned file: ${name}`);
   }
   if (obj.files['signatures/ed25519.json']) {
     const ed = JSON.parse(Buffer.from(obj.files['signatures/ed25519.json'], 'base64').toString('utf8'));
