@@ -34,11 +34,11 @@ void im_fiber_destroy(ImFiber *fiber) { if (!fiber) return; if (fiber->handle) D
 #include <ucontext.h>
 #include <stdint.h>
 #include <stdlib.h>
-struct ImFiber { ucontext_t ctx; void *stack; size_t stack_size; ImFiberProc proc; void *arg; };
+struct ImFiber { ucontext_t ctx; void *stack; size_t stack_size; ImFiberProc proc; void *arg; struct ImFiber *parent; };
 static _Thread_local ImFiber *current_fiber;
 static void im_fiber_trampoline(uintptr_t raw) {
     ImFiber *fiber = (ImFiber *)raw;
-    current_fiber = fiber; fiber->proc(fiber->arg);
+    current_fiber = fiber; fiber->proc(fiber->arg); current_fiber = fiber->parent;
 }
 ImFiber *im_fiber_convert_current(void) {
     ImFiber *fiber = (ImFiber *)calloc(1, sizeof(*fiber));
@@ -52,7 +52,12 @@ ImFiber *im_fiber_create(size_t stack_size, ImFiberProc proc, void *arg) {
     fiber->stack = malloc(fiber->stack_size);
     if (!fiber->stack || getcontext(&fiber->ctx) != 0) { free(fiber->stack); free(fiber); return NULL; }
     fiber->ctx.uc_stack.ss_sp = fiber->stack; fiber->ctx.uc_stack.ss_size = fiber->stack_size;
-    fiber->ctx.uc_link = NULL; makecontext(&fiber->ctx, (void (*)(void))im_fiber_trampoline, 1, (uintptr_t)fiber);
+    /* Returning from a fiber must resume its creator, never terminate the
+     * hosting thread.  The previous NULL link made a completed fiber unsafe
+     * outside the probe's cooperative switch pattern. */
+    fiber->parent = current_fiber;
+    fiber->ctx.uc_link = current_fiber ? &current_fiber->ctx : NULL;
+    makecontext(&fiber->ctx, (void (*)(void))im_fiber_trampoline, 1, (uintptr_t)fiber);
     return fiber;
 }
 void im_fiber_switch(ImFiber *target) {
