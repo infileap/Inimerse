@@ -38,7 +38,6 @@ static char *room_field(int room, const char *key) {
     fclose(f); return v;
 }
 
-static int unavailable_bool(VM *vm) { int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, 0); return 1; }
 static int server_ports(VM *vm) {
     vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); char buf[4096] = ""; size_t used = 0;
     for (int room = 11510; room < 11700; room += 10) {
