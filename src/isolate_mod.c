@@ -235,6 +235,7 @@ void isolate_mod_register(VM *vm) {
 #include <signal.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -292,6 +293,10 @@ static int fn_isolate_run(VM *vm) {
     pid_t pid = fork();
     if (pid < 0) { close(pipefd[0]); close(pipefd[1]); iso_push_result(vm, -2, "isolate_run: fork failed", 0); return 0; }
     if (pid == 0) {
+        struct rlimit mem_limit = { 64UL * 1024UL * 1024UL, 64UL * 1024UL * 1024UL };
+        (void)setrlimit(RLIMIT_AS, &mem_limit);
+        struct rlimit cpu_limit = { (rlim_t)(timeout / 1000 + 2), (rlim_t)(timeout / 1000 + 2) };
+        (void)setrlimit(RLIMIT_CPU, &cpu_limit);
         dup2(pipefd[1], STDOUT_FILENO); dup2(pipefd[1], STDERR_FILENO); close(pipefd[0]); close(pipefd[1]);
         char qexe[2048], qscript[8192], cmd[12288];
         if (iso_shell_quote(qexe, sizeof qexe, exe) != 0 || iso_shell_quote(qscript, sizeof qscript, script) != 0) _exit(126);
