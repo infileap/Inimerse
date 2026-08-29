@@ -47,6 +47,12 @@ static int posix_http_req(VM *vm, int post) {
 }
 static int posix_http_get(VM *vm) { return posix_http_req(vm, 0); }
 static int posix_http_post(VM *vm) { return posix_http_req(vm, 1); }
+/* Hardware/UI operations keep the same names on POSIX.  Until a host grants
+ * the corresponding PAL capability they fail deterministically instead of
+ * becoming unknown builtins (which makes portable scripts diagnosable). */
+static int posix_unsupported(VM *vm) {
+    int n = vm_cur_sp(vm) + 1; if (n > 0) vm_cur_set_sp(vm, -1); push_int(vm, -1); return 1;
+}
 
 /* POSIX baseline: platform-specific runtime builtins are intentionally
  * unavailable until their PAL backends are implemented. Core VM and
@@ -65,6 +71,13 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "list_dir", posix_list_dir);
     vm_register_builtin(vm, "http_get", posix_http_get);
     vm_register_builtin(vm, "http_post", posix_http_post);
+    vm_register_builtin(vm, "serial_open", posix_unsupported);
+    vm_register_builtin(vm, "serial_write", posix_unsupported);
+    vm_register_builtin(vm, "serial_read", posix_unsupported);
+    vm_register_builtin(vm, "serial_close", posix_unsupported);
+    vm_register_builtin(vm, "key_press", posix_unsupported);
+    vm_register_builtin(vm, "mouse_move", posix_unsupported);
+    vm_register_builtin(vm, "mouse_click", posix_unsupported);
     vm_register_builtin(vm, "has_capability", posix_capability);
 }
 
