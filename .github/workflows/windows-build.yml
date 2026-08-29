@@ -18,3 +18,9 @@ jobs:
       - name: Build Windows core
         shell: pwsh
         run: ./build.ps1
+      - name: CMake build and tests
+        shell: pwsh
+        run: |
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON
+          cmake --build build --config Release --parallel 2
+          ctest --test-dir build -C Release --output-on-failure

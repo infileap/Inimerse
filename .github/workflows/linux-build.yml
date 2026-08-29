@@ -48,3 +48,5 @@ jobs:
         run: make wasm
       - name: Verify WebAssembly artifact
         run: file tools/wasm_probe.wasm | grep -qi 'WebAssembly'
+      - name: Verify browser host boundary
+        run: node tools/wasm_host.test.js tools/wasm_probe.wasm
