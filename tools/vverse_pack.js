@@ -10,6 +10,8 @@ function pack(root, output) {
   const entries = {};
   for (const name of Object.keys(checked.files).sort()) entries[name] = fs.readFileSync(path.join(base, name)).toString('base64');
   entries['signatures/sha256.json'] = fs.readFileSync(path.join(base, 'signatures', 'sha256.json')).toString('base64');
+  const edPath = path.join(base, 'signatures', 'ed25519.json');
+  if (fs.existsSync(edPath)) entries['signatures/ed25519.json'] = fs.readFileSync(edPath).toString('base64');
   const raw = JSON.stringify({ format: 'vverse-1', files: entries });
   fs.writeFileSync(output, zlib.gzipSync(raw, { mtime: 0 }));
   return { output, bytes: fs.statSync(output).size, files: Object.keys(entries).length };
@@ -40,6 +42,13 @@ function preview(input) {
   }
   for (const name of Object.keys(obj.files)) {
     if (name !== 'signatures/sha256.json' && !(name in sig)) throw new Error(`unsigned file: ${name}`);
+  }
+  if (obj.files['signatures/ed25519.json']) {
+    const ed = JSON.parse(Buffer.from(obj.files['signatures/ed25519.json'], 'base64').toString('utf8'));
+    if (ed.algorithm !== 'ed25519' || typeof ed.publicKey !== 'string' || typeof ed.signature !== 'string') throw new Error('invalid ed25519 signature');
+    const ordered = {}; for (const name of Object.keys(sig).filter(n => !n.startsWith('signatures/')).sort()) ordered[name] = sig[name];
+    const key = crypto.createPublicKey({ key: Buffer.from(ed.publicKey, 'base64'), format: 'der', type: 'spki' });
+    if (!crypto.verify(null, Buffer.from(JSON.stringify(ordered), 'utf8'), key, Buffer.from(ed.signature, 'base64'))) throw new Error('ed25519 signature verification failed');
   }
   return { format: obj.format, files: Object.keys(obj.files).sort(), bytes: fs.statSync(input).size, signed: true, readOnly: true };
 }

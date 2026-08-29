@@ -33,6 +33,17 @@ function validate(root, options = {}) {
   } else if (options.requireSignature) {
     throw new Error('missing signatures/sha256.json');
   }
+  const edPath = path.join(base, 'signatures', 'ed25519.json');
+  if (fs.existsSync(edPath)) {
+    const ed = JSON.parse(fs.readFileSync(edPath, 'utf8'));
+    if (ed.algorithm !== 'ed25519' || typeof ed.publicKey !== 'string' || typeof ed.signature !== 'string') throw new Error('invalid ed25519 signature');
+    const key = options.trustedPublicKey
+      ? crypto.createPublicKey(fs.readFileSync(options.trustedPublicKey))
+      : crypto.createPublicKey({ key: Buffer.from(ed.publicKey, 'base64'), format: 'der', type: 'spki' });
+    if (key.asymmetricKeyType !== 'ed25519' || !crypto.verify(null, signaturePayload(files), key, Buffer.from(ed.signature, 'base64'))) throw new Error('ed25519 signature verification failed');
+  } else if (options.requirePublicSignature) {
+    throw new Error('missing signatures/ed25519.json');
+  }
   return { manifest, files, signature, valid: true };
 }
 
@@ -45,6 +56,25 @@ function writeSignature(root) {
   return result.files;
 }
 
+function signaturePayload(files) {
+  const ordered = {};
+  for (const name of Object.keys(files).sort()) ordered[name] = files[name];
+  return Buffer.from(JSON.stringify(ordered), 'utf8');
+}
+
+function writeEd25519Signature(root, privateKeyPath) {
+  const base = path.resolve(root);
+  const files = writeSignature(base);
+  const privateKey = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
+  if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('signing key must be Ed25519');
+  const publicKey = crypto.createPublicKey(privateKey);
+  const signature = crypto.sign(null, signaturePayload(files), privateKey);
+  const out = { algorithm: 'ed25519', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'), signature: signature.toString('base64') };
+  const dir = path.join(base, 'signatures'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'ed25519.json'), JSON.stringify(out, null, 2) + '\n');
+  return out;
+}
+
 if (require.main === module) {
   try {
     const args = process.argv.slice(2);
@@ -52,11 +82,14 @@ if (require.main === module) {
     if (args.includes('--write-signature')) {
       writeSignature(root);
     }
+    if (args.includes('--sign-key')) writeEd25519Signature(root, args[args.indexOf('--sign-key') + 1]);
     console.log(JSON.stringify(validate(root, {
       requireSignature: args.includes('--require-signature'),
-      requireCompleteSignature: args.includes('--require-complete-signature')
-      , strictStructure: args.includes('--strict')
+      requireCompleteSignature: args.includes('--require-complete-signature'),
+      requirePublicSignature: args.includes('--require-public-signature'),
+      trustedPublicKey: args.includes('--trust-key') ? args[args.indexOf('--trust-key') + 1] : undefined,
+      strictStructure: args.includes('--strict')
     }), null, 2));
   } catch (e) { console.error(`vverse: ${e.message}`); process.exit(1); }
 }
-module.exports = { validate, writeSignature };
+module.exports = { validate, writeSignature, writeEd25519Signature };
