@@ -1047,6 +1047,19 @@ fn workbench_diagnostics(file: &str, stderr: &str) -> Vec<serde_json::Value> {
     out
 }
 
+#[cfg(test)]
+mod workbench_tests {
+    use super::workbench_diagnostics;
+
+    #[test]
+    fn parses_toolchain_location_and_column() {
+        let d = workbench_diagnostics("src/main.im", "src/main.im:12:7: error: unexpected token");
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0]["line"], 12);
+        assert_eq!(d[0]["column"], 7);
+    }
+}
+
 #[tauri::command]
 fn workbench_run(file: String) -> serde_json::Value {
     if !is_workspace_file(&file) { return serde_json::json!({ "ok": false, "error": "File is outside the workspace" }); }
