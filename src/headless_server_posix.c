@@ -7,14 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 #define HL_MAX_CLIENTS 8
 #define HL_INPUT_CAP 16384
 static ImSocket *g_hl_sock;
 static ImSocket *g_hl_clients[HL_MAX_CLIENTS];
 static char g_hl_inputs[HL_MAX_CLIENTS][HL_INPUT_CAP];
-static int g_hl_input_lens[HL_MAX_CLIENTS], g_hl_count, g_hl_last_ci = -1, g_hl_enabled;
-static volatile unsigned g_hl_generation;
+static int g_hl_input_lens[HL_MAX_CLIENTS], g_hl_count, g_hl_last_ci = -1;
+static _Atomic int g_hl_enabled;
+static _Atomic unsigned g_hl_generation;
 static ImMutex *g_hl_lock;
 
 static void remove_client(int i) {
