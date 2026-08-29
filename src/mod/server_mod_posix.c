@@ -152,7 +152,9 @@ static int server_rooms(VM *vm) {
             int room = 0;
             if (sscanf(e->d_name, "%d.txt", &room) != 1 || room <= 0) continue;
             char *p = room_field(room, "project");
-            used += (size_t)snprintf(buf + used, sizeof buf - used, "%d:%s:0\n", room, p ? p : "?");
+            int slot = room_slot(room);
+            int alive = slot >= 0 && g_room_proc[slot] && im_process_alive(g_room_proc[slot]);
+            used += (size_t)snprintf(buf + used, sizeof buf - used, "%d:%s:%d\n", room, p ? p : "?", alive);
             free(p);
         }
         closedir(d);
