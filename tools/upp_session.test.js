@@ -7,6 +7,7 @@ const s = new UppSession('host', manifest);
 s.acceptHello(hello('client', manifest, ['heartbeat']));
 assert.equal(s.apply(start('main.im')), STATES.RUNNING);
 s.apply(heartbeat(1, 123)); assert.equal(s.snapshot().lastHeartbeat, 1); assert.equal(s.snapshot().lastHeartbeatAt, 123);
+assert.equal(s.isHeartbeatStale(1000, 500), true); assert.equal(s.isHeartbeatStale(500, 500), false);
 assert.equal(s.apply(start('main.im')), STATES.RUNNING);
 assert.throws(() => s.apply(heartbeat(0)), /out of order/);
 assert.equal(s.apply(crash('boom')), STATES.CRASHED);

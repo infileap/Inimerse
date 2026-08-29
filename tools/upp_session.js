@@ -19,6 +19,7 @@ class UppSession {
     return this.state;
   }
   reset() { this.state = STATES.IDLE; this.error = null; this.lastHeartbeat = 0; this.lastHeartbeatAt = 0; return this.state; }
+  isHeartbeatStale(now = Date.now(), timeoutMs = 15000) { return this.lastHeartbeatAt > 0 && now - this.lastHeartbeatAt > timeoutMs; }
   snapshot() { return Object.freeze({ role: this.role, state: this.state, abi: this.abi, lastHeartbeat: this.lastHeartbeat, lastHeartbeatAt: this.lastHeartbeatAt, error: this.error }); }
 }
 
