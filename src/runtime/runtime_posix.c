@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdio.h>
 #include "../platform/platform.h"
 #include "../platform/dir.h"
 
@@ -17,6 +18,35 @@ static int posix_env(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack
 static int posix_capability(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; int ok=im_platform_has_capability(v.sval?v.sval:""); pop(vm); push_bool(vm,ok); return 1; }
 static int posix_mkdir(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; int ok=im_platform_mkdirs(v.sval?v.sval:"")==0; pop(vm); push_bool(vm,ok); return 1; }
 static int posix_list_dir(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; ImDir *d=im_dir_open(v.sval?v.sval:""); pop(vm); if(!d){push_string(vm,"");return 1;} char n[512], all[4096]; all[0]=0; int first=1, isdir=0; while(im_dir_next_ex(d,n,sizeof n,&isdir)>0){ if(!first) strncat(all,"\n",sizeof all-strlen(all)-1); strncat(all,n,sizeof all-strlen(all)-1); first=0; } im_dir_close(d); push_string(vm,all); return 1; }
+
+static int posix_shell_quote(char *dst, size_t cap, const char *src) {
+    size_t n = 0; if (!dst || cap < 3) return -1; dst[n++] = '\'';
+    for (const unsigned char *p = (const unsigned char *)(src ? src : ""); *p; ++p) {
+        if (*p == '\'') { if (n + 4 >= cap) return -1; dst[n++]='\''; dst[n++]='\\'; dst[n++]='\''; dst[n++]='\''; }
+        else { if (n + 1 >= cap) return -1; dst[n++] = (char)*p; }
+    }
+    if (n + 2 > cap) return -1;
+    dst[n++] = '\'';
+    dst[n] = 0;
+    return 0;
+}
+static int posix_http_req(VM *vm, int post) {
+    int need = post ? 1 : 0; if (vm_cur_sp(vm) < need) return 0;
+    Value uv = vm_cur_stack(vm)[vm_cur_sp(vm) - need];
+    Value dv = post ? vm_cur_stack(vm)[vm_cur_sp(vm)] : uv;
+    char qu[4096], qd[65536], cmd[72000];
+    if (posix_shell_quote(qu, sizeof qu, uv.sval ? uv.sval : "") != 0 ||
+        (post && posix_shell_quote(qd, sizeof qd, dv.sval ? dv.sval : "") != 0)) {
+        vm_cur_set_sp(vm, vm_cur_sp(vm) - (post ? 2 : 1)); push_string(vm, ""); return 1;
+    }
+    if (post) snprintf(cmd, sizeof cmd, "curl -fsSL --max-time 15 -X POST --data %s %s", qd, qu);
+    else snprintf(cmd, sizeof cmd, "curl -fsSL --max-time 15 %s", qu);
+    FILE *f = popen(cmd, "r"); char out[65536] = {0}; size_t total = 0;
+    if (f) { while (total < sizeof(out) - 1) { size_t n = fread(out + total, 1, sizeof(out) - 1 - total, f); total += n; if (!n) break; } pclose(f); }
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - (post ? 2 : 1)); push_string(vm, out); return 1;
+}
+static int posix_http_get(VM *vm) { return posix_http_req(vm, 0); }
+static int posix_http_post(VM *vm) { return posix_http_req(vm, 1); }
 
 /* POSIX baseline: platform-specific runtime builtins are intentionally
  * unavailable until their PAL backends are implemented. Core VM and
@@ -33,6 +63,8 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "env", posix_env);
     vm_register_builtin(vm, "mkdir", posix_mkdir);
     vm_register_builtin(vm, "list_dir", posix_list_dir);
+    vm_register_builtin(vm, "http_get", posix_http_get);
+    vm_register_builtin(vm, "http_post", posix_http_post);
     vm_register_builtin(vm, "has_capability", posix_capability);
 }
 
