@@ -1,6 +1,7 @@
 #include "mod.h"
 #include "../vm/vm.h"
 #include <string.h>
+#include <stdio.h>
 
 static Value key(const char *s) { Value v = { VAL_STRING, 0, 0, (char*)s }; return v; }
 static Value make_result(VM *vm, int is_ok, const Value *payload) {
@@ -31,8 +32,16 @@ static int result_unwrap_or(VM *vm) {
     Value out = (ok.type == VAL_BOOL && ok.ival) ? vm_dict_get(vm, r.ival - 1, &kv) : fallback;
     vm_cur_set_sp(vm, vm_cur_sp(vm)+1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out; return 1;
 }
+static int result_unwrap(VM *vm) {
+    if (vm_cur_sp(vm) < 0) { push_nil(vm); return 1; }
+    Value r = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); Value ko = key("ok"), kv = key("value"), ke = key("error");
+    Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ko) : (Value){VAL_BOOL, 0, 0, NULL};
+    if (ok.type == VAL_BOOL && ok.ival) { Value out = vm_dict_get(vm, r.ival - 1, &kv); vm_cur_set_sp(vm, vm_cur_sp(vm)+1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out; }
+    else { Value e = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ke) : (Value){VAL_STRING, 0, 0, "unwrap of non-Result"}; char msg[256]; snprintf(msg, sizeof msg, "Result unwrap failed: %s", e.sval ? e.sval : "error"); vm_throw_msg(vm, msg); push_nil(vm); }
+    return 1;
+}
 
 void result_mod_register(VM *vm) {
     vm_register_builtin(vm, "ok", result_make_ok); vm_register_builtin(vm, "err", result_make_err);
-    vm_register_builtin(vm, "is_ok", result_is_ok); vm_register_builtin(vm, "unwrap_or", result_unwrap_or);
+    vm_register_builtin(vm, "is_ok", result_is_ok); vm_register_builtin(vm, "unwrap_or", result_unwrap_or); vm_register_builtin(vm, "unwrap", result_unwrap);
 }
