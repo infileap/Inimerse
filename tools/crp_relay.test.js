@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { createRelay } = require('./crp_relay');
-const { server, revoked } = createRelay({ ttlMs: 1000, maxRevokedTokens: 1 });
+const { server, revoked } = createRelay({ ttlMs: 1000, tokenTtlMs: 1000, maxRevokedTokens: 1 });
 server.listen(0, async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (u, body) => fetch(base + u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json().then(j => ({ status: r.status, ...j })));
@@ -10,8 +10,9 @@ server.listen(0, async () => {
     assert.equal((await (await fetch(base + '/find?q=dem')).json()).items.length, 1);
     assert.equal((await post('/friends', { id: 'p1', verse: 'demo', endpoint: 'ws://local', name: 'Peer' })).ok, true);
     assert.equal((await (await fetch(base + '/friends?verse=demo')).json()).items[0].id, 'p1');
-  const portal = await post('/portal', { verse: 'demo', peer: 'p1' });
+    const portal = await post('/portal', { verse: 'demo', peer: 'p1' });
     assert.equal(portal.peer, 'p1');
+    assert.ok(portal.expires > Date.now() && portal.expires <= Date.now() + 1100);
     assert.equal((await post('/session/resume', { verse: 'demo', peer: 'p1', token: portal.token, seq: 4 })).lastSeq, 4);
     assert.equal((await post('/session/resume', { verse: 'demo', peer: 'p1', token: portal.token, seq: 3 })).status, 409);
     assert.equal((await post('/signal', { verse: 'demo', peer: 'p1', event: 'join', token: portal.token, data: {} })).status, 202);
