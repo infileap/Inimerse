@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Inim V0.4 package manager (offline-first minimal implementation)."""
-import argparse, hashlib, json, zipfile
+import argparse, hashlib, json, zipfile, subprocess
 from pathlib import Path
 
 def sha256(path):
@@ -82,12 +82,31 @@ def cmd_list(args):
     data = json.loads(lock.read_text(encoding='utf-8'))
     for n, p in sorted(data.get('packages', {}).items()): print(f"{n}@{p.get('version', '?')}  {p.get('sha256', '')}")
 
+def cmd_remove(args):
+    root = Path(args.path); lock = root / 'lock.json'
+    if not lock.exists(): return
+    data = json.loads(lock.read_text(encoding='utf-8')); item = data.get('packages', {}).pop(args.name, None)
+    if item and item.get('path'):
+        cache = Path(item['path'])
+        if cache.exists() and (root / '.inim-cache') in cache.parents: import shutil; shutil.rmtree(cache)
+    lock.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    print(f'removed {args.name}')
+
+def cmd_run(args):
+    root = Path(args.path).resolve(); m = load_manifest(root); entry = (root / m['entry']).resolve()
+    if root not in entry.parents and entry != root: raise SystemExit('inim: entry escapes project root')
+    if not entry.is_file(): raise SystemExit(f'inim: entry not found: {entry}')
+    engine = args.engine or os.environ.get('INIMERSE_EXE', 'inimerse')
+    raise SystemExit(subprocess.call([engine, str(entry), *args.args]))
+
 def main():
     ap = argparse.ArgumentParser(prog='inim'); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
     p = sp.add_parser('pack'); p.add_argument('path', nargs='?', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_pack)
     p = sp.add_parser('install'); p.add_argument('package'); p.add_argument('-t', '--target', default='.'); p.set_defaults(fn=cmd_install)
     p = sp.add_parser('add'); p.add_argument('name', nargs='?'); p.add_argument('version', nargs='?'); p.add_argument('--package'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_add)
+    p = sp.add_parser('remove'); p.add_argument('name'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_remove)
+    p = sp.add_parser('run'); p.add_argument('args', nargs='*'); p.add_argument('-p', '--path', default='.'); p.add_argument('--engine'); p.set_defaults(fn=cmd_run)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()
