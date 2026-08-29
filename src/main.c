@@ -25,6 +25,9 @@ extern int build_project_impl(void *vm, const char *cfgPath, int mode, const cha
 #include "vm.h"
 #include "platform/platform.h"
 
+/* V0.4 sectioned parameter loader (falls back to legacy .im params). */
+int vm_params_load_v2_or_legacy(VM *vm, const char *path);
+
 void gui_mod_register(VM *vm);
 void build_mod_register(VM *vm);
 void io_mod_register(VM *vm);
@@ -268,7 +271,7 @@ static int load_and_run(VM *vm, const char *path) {
     /* params first: their globals get stable indices before the main bytecode loads */
     {
         FILE *pf = fopen(params_path, "rb");
-        if (pf) { fclose(pf); vm_params_load(vm, params_path); }
+        if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); }
     }
         vm_load_bytecode(vm, bc);
         vm_run(vm);
@@ -283,7 +286,7 @@ static int load_and_run(VM *vm, const char *path) {
     /* params first: their globals get stable indices, then main compile pre-registers them */
     {
         FILE *pf = fopen(params_path, "rb");
-        if (pf) { fclose(pf); vm_params_load(vm, params_path); }
+        if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); }
     }
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);
@@ -383,7 +386,7 @@ static int load_and_run_source(VM *vm, const char *src, const char *display) {
     /* params first: their globals get stable indices, then main compile pre-registers them */
     {
         FILE *pf = fopen(params_path, "rb");
-        if (pf) { fclose(pf); vm_params_load(vm, params_path); }
+        if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); }
     }
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);

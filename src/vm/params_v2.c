@@ -36,3 +36,21 @@ int vm_params_v2_lower_into(const char *text, char *out, size_t out_cap) {
     size_t n = strlen(tmp); if (n + 1 > out_cap) { free(tmp); return 0; }
     memcpy(out, tmp, n + 1); free(tmp); return 1;
 }
+
+int vm_params_load_v2_or_legacy(VM *vm, const char *path) {
+    if (!vm || !path) return -1;
+    FILE *f = fopen(path, "rb"); if (!f) return vm_params_load(vm, path);
+    fseek(f, 0, SEEK_END); long n = ftell(f); rewind(f);
+    if (n <= 0 || n > (1 << 20)) { fclose(f); return vm_params_load(vm, path); }
+    char *src = (char*)malloc((size_t)n + 1); if (!src) { fclose(f); return -1; }
+    size_t got = fread(src, 1, (size_t)n, f); fclose(f); src[got] = 0;
+    char *lowered = vm_params_v2_lower(src); free(src);
+    if (!lowered) return vm_params_load(vm, path);
+    size_t plen = strlen(path); char *tmp = (char*)malloc(plen + 16);
+    if (!tmp) { free(lowered); return -1; }
+    snprintf(tmp, plen + 16, "%s.v2.tmp", path);
+    FILE *w = fopen(tmp, "wb"); if (!w) { free(tmp); free(lowered); return -1; }
+    fwrite(lowered, 1, strlen(lowered), w); fclose(w); free(lowered);
+    int rc = vm_params_load(vm, tmp);
+    remove(tmp); free(tmp); return rc;
+}
