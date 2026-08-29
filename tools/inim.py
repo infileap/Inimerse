@@ -61,6 +61,21 @@ def cmd_install(args):
     lock.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     print(f"installed {m['name']}@{m['version']} -> {dest}")
 
+def cmd_add(args):
+    root = Path(args.path); manifest = load_manifest(root)
+    dep_name = args.name
+    if args.package:
+        pkg = Path(args.package).resolve()
+        if not pkg.is_file(): raise SystemExit(f'inim: package not found: {pkg}')
+        with zipfile.ZipFile(pkg) as z: dep = json.loads(z.read('manifest.json').decode('utf-8'))
+        dep_name = dep.get('name'); spec = {'version': dep.get('version', '0.0.0'), 'path': os.path.relpath(pkg, root)}
+    else:
+        if not dep_name or not args.version: raise SystemExit('inim: add requires NAME VERSION or a .inim package')
+        spec = args.version
+    manifest.setdefault('dependencies', {})[dep_name] = spec
+    (root / 'manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    print(f'added {dep_name}: {spec}')
+
 def cmd_list(args):
     lock = Path(args.path) / 'lock.json'
     if not lock.exists(): return
@@ -72,6 +87,7 @@ def main():
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
     p = sp.add_parser('pack'); p.add_argument('path', nargs='?', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_pack)
     p = sp.add_parser('install'); p.add_argument('package'); p.add_argument('-t', '--target', default='.'); p.set_defaults(fn=cmd_install)
+    p = sp.add_parser('add'); p.add_argument('name', nargs='?'); p.add_argument('version', nargs='?'); p.add_argument('--package'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_add)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()
