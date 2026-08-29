@@ -11,20 +11,22 @@ ImVfs *im_vfs_create(void) { return (ImVfs*)calloc(1, sizeof(ImVfs)); }
 void im_vfs_destroy(ImVfs *vfs) { free(vfs); }
 
 int im_vfs_normalize(const char *path, char *out, size_t cap) {
-    if (!path || !out || cap < 2 || path[0] == '\0') return -1;
-    size_t w = 0; int dot = 0;
-    for (const char *p = path; *p; p++) {
-        char c = *p == '\\' ? '/' : *p;
-        if (c == '/' && w && out[w-1] == '/') continue;
-        if (c == '.' && (p == path || p[-1] == '/')) { dot = 1; continue; }
-        if (dot) { if (c == '/' && w && out[w-1] == '.') { out[--w] = '\0'; dot = 0; continue; } dot = 0; }
-        if (w + 1 >= cap) return -1;
-        out[w++] = c;
+    if (!path || !out || cap < 2 || !path[0]) return -1;
+    char tmp[1024]; size_t n = strlen(path); if (n >= sizeof(tmp)) return -1;
+    for (size_t i = 0; i <= n; i++) tmp[i] = path[i] == '\\' ? '/' : path[i];
+    size_t w = 0; char *save = NULL;
+    for (char *part = strtok_r(tmp, "/", &save); part; part = strtok_r(NULL, "/", &save)) {
+        if (!strcmp(part, ".") || !*part) continue;
+        if (!strcmp(part, "..")) {
+            /* A VFS path may never escape its mount prefix. */
+            if (w == 0 || !strchr(out, '/')) return -1;
+            while (w > 0 && out[w-1] != '/') w--; if (w > 0) w--;
+            continue;
+        }
+        size_t m = strlen(part); if (w && w + 1 + m >= cap) return -1; if (!w && m >= cap) return -1;
+        if (w) out[w++] = '/'; memcpy(out + w, part, m); w += m;
     }
-    while (w > 1 && out[w-1] == '/') w--;
-    out[w] = '\0';
-    if (strstr(out, "../") || (w >= 2 && strcmp(out + w - 2, "..") == 0)) return -1;
-    return 0;
+    out[w] = '\0'; return w ? 0 : -1;
 }
 
 int im_vfs_mount_os(ImVfs *vfs, const char *prefix, const char *root) {
