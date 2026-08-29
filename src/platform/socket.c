@@ -158,7 +158,12 @@ int im_socket_send(ImSocket *socket, const void *data, size_t length) {
 #ifdef _WIN32
     return send((SOCKET)socket->fd, (const char *)data, (int)length, 0);
 #else
-    int n; do { n = (int)send(socket->fd, data, length, 0); } while (n < 0 && errno == EINTR);
+    int n;
+    int send_flags = 0;
+#ifdef MSG_NOSIGNAL
+    send_flags |= MSG_NOSIGNAL;
+#endif
+    do { n = (int)send(socket->fd, data, length, send_flags); } while (n < 0 && errno == EINTR);
     return n;
 #endif
 }
