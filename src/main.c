@@ -23,6 +23,7 @@ extern int build_project_impl(void *vm, const char *cfgPath, int mode, const cha
 #include "parser.h"
 #include "compiler.h"
 #include "vm.h"
+#include "../src/vm/jit_mode.h"
 #include "platform/platform.h"
 
 /* V0.4 sectioned parameter loader (falls back to legacy .im params). */
@@ -552,11 +553,21 @@ int main(int argc, char **argv) {
     int safe_mode = 0;
     int headless_mode = 0;
     int headless_port = 11440;
+    int jit_mode = IM_JIT_OFF;
 int headless_http_port = 11470;
     if (argc >= 2 && strcmp(argv[1], "--gui") == 0) {
         gui_mode = 1;
         for (int i = 1; i < argc - 1; i++) argv[i] = argv[i + 1];
         argc--;
+    }
+    if (argc >= 2 && (strcmp(argv[1], "--jit") == 0 || strncmp(argv[1], "--jit=", 6) == 0)) {
+        const char *jit_arg = strcmp(argv[1], "--jit") == 0 ? (argc >= 3 ? argv[2] : NULL) : argv[1] + 6;
+        jit_mode = im_jit_mode_parse(jit_arg);
+        if (jit_mode < 0) { fprintf(stderr, "error: --jit expects off|template|optimized\n"); return 2; }
+        im_jit_mode = jit_mode;
+        int delta = strcmp(argv[1], "--jit") == 0 ? 2 : 1;
+        for (int i = 1; i < argc - delta; i++) argv[i] = argv[i + delta];
+        argc -= delta;
     }
     /* 妫€�?--time-limit N锛堝叏灞€閫夐」锛屽崟浣嶇锛岄粯�?20锛涘繀椤诲�?--gui 涔嬪悗鎴栦箣鍓嶅潎鍙級 */
         if (argc >= 2 && strcmp(argv[1], "--headless") == 0) {
