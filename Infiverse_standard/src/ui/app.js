@@ -48,7 +48,18 @@ const $ = (s) => document.querySelector(s);
 async function invoke(cmd, args) {
   const t = window.__TAURI__;
   if (t && t.core) {
-    try { return await t.core.invoke(cmd, args || {}); }
+    try {
+      const result = await t.core.invoke(cmd, args || {});
+      if (cmd === 'workbench_run' && result && Array.isArray(result.diagnostics)) {
+        const old = document.querySelector('[data-wb-diagnostics]'); if (old) old.remove();
+        if (result.diagnostics.length) {
+          const box = document.createElement('pre'); box.dataset.wbDiagnostics = '1'; box.className = 'code wb-diagnostics';
+          box.textContent = result.diagnostics.map(d => `${d.file || ''}:${d.line || 1}:${d.column || 1} ${d.message || ''}`).join('\n');
+          const out = document.querySelector('#wb-output'); if (out && out.parentElement) out.parentElement.appendChild(box);
+        }
+      }
+      return result;
+    }
     catch (e) { console.error('invoke ' + cmd + ' failed:', e); return null; }
   }
   return null; // 浏览器预览模式：返回 null，保持占位数据
