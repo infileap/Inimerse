@@ -16,6 +16,7 @@ function createRelay(options = {}) {
   const secret = options.secret || crypto.randomBytes(32).toString('hex');
   const makeToken = (verse, peer, capabilities = ['signal']) => { const exp = Date.now() + (options.tokenTtlMs || 5 * 60 * 1000); const body = Buffer.from(JSON.stringify({ verse, peer, capabilities, exp })).toString('base64url'); const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url'); return `${body}.${sig}`; };
   const checkToken = (token, verse, peer, capability) => { try { const [body, sig] = String(token).split('.'); const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url'); if (!body || !sig || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false; const p = JSON.parse(Buffer.from(body, 'base64url')); return p.verse === verse && p.peer === peer && p.exp > Date.now() && p.capabilities.includes(capability); } catch { return false; } };
+  const tokenTtlMs = options.tokenTtlMs || 5 * 60 * 1000;
   const ttl = options.ttlMs || 10 * 60 * 1000;
   const registryTtlMs = options.registryTtlMs || 30 * 60 * 1000;
   const pruneRegistry = () => {
@@ -50,7 +51,7 @@ function createRelay(options = {}) {
       }
       if (req.method === 'POST' && req.url === '/portal') {
         const p = await read(req); if (!verses.has(p.verse) || !p.peer) return json(res, 404, { error: 'verse not found' });
-        const token = makeToken(p.verse, p.peer); return json(res, 200, { token, verse: p.verse, peer: p.peer, expires: Date.now() + ttl });
+        const token = makeToken(p.verse, p.peer); return json(res, 200, { token, verse: p.verse, peer: p.peer, expires: Date.now() + tokenTtlMs });
       }
       if (req.method === 'POST' && req.url === '/signal') {
         const p = await read(req); if (!p.verse || !p.event) return json(res, 400, { error: 'verse and event are required' });
