@@ -81,6 +81,19 @@ static int server_lan_ip(VM *vm) {
     freeifaddrs(list); push_string(vm, out); return 1;
 }
 
+static void server_lan_ip_text(char *out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = 0;
+    struct ifaddrs *list = NULL;
+    if (getifaddrs(&list) != 0) return;
+    for (struct ifaddrs *it = list; it; it = it->ifa_next) {
+        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET || !(it->ifa_flags & IFF_UP) || (it->ifa_flags & IFF_LOOPBACK)) continue;
+        struct sockaddr_in *sa = (struct sockaddr_in *)it->ifa_addr;
+        if (inet_ntop(AF_INET, &sa->sin_addr, out, cap)) break;
+    }
+    freeifaddrs(list);
+}
+
 static int server_start(VM *vm) {
     int argc = vm->cur_argc; int sp = vm_cur_sp(vm);
     Value pass_v = argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
@@ -115,7 +128,7 @@ static int server_join(VM *vm) {
     }
     char *saved = room_field(room, "pass"); if (!saved) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
     if (strcmp(saved, pass ? pass : "")) { free(saved); push_string(vm, "WRONG_PASSWORD"); return 1; } free(saved);
-    char ip[64] = "127.0.0.1";
+    char ip[64] = ""; server_lan_ip_text(ip, sizeof ip); if (!ip[0]) snprintf(ip, sizeof ip, "127.0.0.1");
     char url[128]; snprintf(url, sizeof url, "http://%s:%d/", ip, room + 1); push_string(vm, url); return 1;
 }
 static int server_status(VM *vm) {
@@ -123,7 +136,8 @@ static int server_status(VM *vm) {
     int room = room_v.type == VAL_FLOAT ? (int)room_v.fval : room_v.ival; vm_cur_set_sp(vm, sp - vm->cur_argc);
     char *project = room_field(room, "project"); if (!project) { push_string(vm, "ROOM_NOT_FOUND"); return 1; }
     int slot = room_slot(room); int alive = slot >= 0 && g_room_proc[slot] ? im_process_alive(g_room_proc[slot]) : 0;
-    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://127.0.0.1:%d/", room, project, alive, alive && local_port_open(room + 1), room + 1); free(project); push_string(vm, buf); return 1;
+    char ip[64] = ""; server_lan_ip_text(ip, sizeof ip); if (!ip[0]) snprintf(ip, sizeof ip, "127.0.0.1");
+    char buf[512]; snprintf(buf, sizeof buf, "%d|%s|%d|%d|http://%s:%d/", room, project, alive, alive && local_port_open(room + 1), ip, room + 1); free(project); push_string(vm, buf); return 1;
 }
 static int server_stop(VM *vm) {
     int sp = vm_cur_sp(vm); Value room_v = vm->cur_argc > 0 ? vm_cur_stack(vm)[sp] : (Value){0};
