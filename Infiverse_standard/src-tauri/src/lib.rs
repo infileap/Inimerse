@@ -1008,7 +1008,7 @@ fn workbench_diagnostics(file: &str, stderr: &str) -> Vec<serde_json::Value> {
     for line in stderr.lines() {
         let lower = line.to_ascii_lowercase();
         let mut line_no = None;
-        let col_no = 1u64;
+        let mut col_no = 1u64;
         if let Some(pos) = lower.find("line ") {
             let digits: String = lower[pos + 5..].chars().take_while(|c| c.is_ascii_digit()).collect();
             if !digits.is_empty() { line_no = digits.parse::<u64>().ok(); }
@@ -1018,8 +1018,25 @@ fn workbench_diagnostics(file: &str, stderr: &str) -> Vec<serde_json::Value> {
             for i in 0..bytes.len() {
                 if bytes[i] == b':' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
                     let d: String = lower[i + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
-                    if let Ok(n) = d.parse::<u64>() { if n > 0 { line_no = Some(n); break; } }
+                    if let Ok(n) = d.parse::<u64>() {
+                        if n == 0 { continue; }
+                        line_no = Some(n);
+                        // GCC/Clang diagnostics use path:line:column:message.
+                        let end = i + 1 + d.len();
+                        if end < bytes.len() && bytes[end] == b':' {
+                            let rest = &lower[end + 1..];
+                            let col: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                            if let Ok(c) = col.parse::<u64>() { if c > 0 { col_no = c; } }
+                        }
+                        break;
+                    }
                 }
+            }
+        }
+        if line_no.is_some() && col_no == 1 {
+            if let Some(pos) = lower.find("column ") {
+                let digits: String = lower[pos + 7..].chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(c) = digits.parse::<u64>() { if c > 0 { col_no = c; } }
             }
         }
         if let Some(n) = line_no {
