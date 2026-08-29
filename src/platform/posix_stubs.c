@@ -9,5 +9,3 @@ STUB_REG(verse_dist_mod_register) STUB_REG(identity_mod_register)
 STUB_REG(social_mod_register) STUB_REG(ai_mod_register) STUB_REG(record_mod_register)
 int build_project_impl(void *vm, const char *cfg, int mode, const char *out) { (void)vm;(void)cfg;(void)mode;(void)out; unsupported("build"); return -1; }
 /* lint_check and desugar_file are provided by their portable implementations. */
-int headless_init(int port) { (void)port; unsupported("headless"); return 0; }
-void headless_start_thread(void) { }
