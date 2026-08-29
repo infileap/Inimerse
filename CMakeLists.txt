@@ -29,6 +29,8 @@ endif()
 
 add_executable(platform_probe src/platform/platform_probe.c)
 target_link_libraries(platform_probe PRIVATE inimerse_platform)
+add_executable(vfs_probe src/platform/vfs_probe.c)
+target_link_libraries(vfs_probe PRIVATE inimerse_platform)
 
 add_executable(fiber_probe src/platform/fiber.c src/platform/fiber_probe.c)
 if(NOT WIN32)
