@@ -652,6 +652,49 @@ fn browse_download(name: String) -> serde_json::Value {
     serde_json::json!({ "name": name, "state": if ok { "已下载" } else { "校验失败" }, "out": out, "dir": base })
 }
 
+/* Download a Hub package into the workspace only after an explicit SHA-256
+ * check.  curl is used as the small, already-available transport on both
+ * Windows and POSIX; no URL or package name is passed through a shell. */
+#[tauri::command]
+fn hub_download_install(base_url: String, id: String, expected_hash: String) -> serde_json::Value {
+    let valid_id = !id.is_empty() && id.len() <= 120 && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    let base = base_url.trim_end_matches('/');
+    let valid_url = (base.starts_with("https://") || base.starts_with("http://")) && !base.chars().any(|c| c.is_whitespace() || c == '"' || c == '\\');
+    let hash = expected_hash.trim().to_ascii_lowercase();
+    let valid_hash = hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit());
+    if !valid_id || !valid_url || !valid_hash { return serde_json::json!({"ok": false, "error": "invalid Hub URL, package id, or SHA-256"}); }
+    let projects = app_root().join("projects");
+    if fs::create_dir_all(&projects).is_err() { return serde_json::json!({"ok": false, "error": "cannot create projects directory"}); }
+    let target = projects.join(format!("{}.vverse", id));
+    let temp = projects.join(format!(".{}.vverse.download-{}", id, std::process::id()));
+    let url = format!("{}/package/{}", base, id);
+    let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let fetch = std::process::Command::new(curl).args(["-fsSL", "--max-time", "30", &url, "-o"]).arg(&temp).output();
+    if fetch.is_err() || !fetch.as_ref().map(|o| o.status.success()).unwrap_or(false) {
+        let _ = fs::remove_file(&temp);
+        return serde_json::json!({"ok": false, "error": "Hub download failed"});
+    }
+    let actual = if cfg!(windows) {
+        std::process::Command::new("certutil").args(["-hashfile"]).arg(&temp).arg("SHA256").output().ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.lines().find(|l| l.trim().len() == 64).map(|l| l.trim().to_ascii_lowercase()))
+    } else {
+        std::process::Command::new("sha256sum").arg(&temp).output().ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.split_whitespace().next().map(|v| v.to_ascii_lowercase()))
+    };
+    if actual.as_deref() != Some(hash.as_str()) {
+        let _ = fs::remove_file(&temp);
+        return serde_json::json!({"ok": false, "error": "Hub package digest mismatch", "expected": hash, "actual": actual});
+    }
+    if fs::rename(&temp, &target).is_err() {
+        let _ = fs::remove_file(&temp);
+        return serde_json::json!({"ok": false, "error": "cannot install package"});
+    }
+    let size = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+    serde_json::json!({"ok": true, "id": id, "path": target, "size": size, "sha256": hash})
+}
+
 #[tauri::command]
 fn verse_ping(addr: String) -> serde_json::Value {
     use std::net::{TcpStream, ToSocketAddrs};
@@ -1118,6 +1161,7 @@ pub fn run() {
             friends_list,
             browse_list,
             browse_download,
+            hub_download_install,
             verse_ping,
             get_public_ip,
             workbench_load,
