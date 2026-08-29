@@ -12,6 +12,8 @@
 
 性能基线工具：`python tools/v04_bench.py <script.im> -e <inimerse> -n 5`，可用 `--json` 输出供 CI 比较；在 JIT 后端接入前先固定解释器基线。
 
+当前 `simple.im` 在 WSL/POSIX 解释器基线约为 196 ms/次（3 次样本，机器相关，仅作相对比较）。
+
 ### 运行时与 JIT
 
 - 热点计数器、基准套件和性能回归门禁。
