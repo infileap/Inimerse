@@ -43,7 +43,8 @@ ImProcess *im_process_spawn(const char *command, int new_console) {
     pid_t pid = fork();
     if (pid < 0) return NULL;
     if (pid == 0) { execl("/bin/sh", "sh", "-c", command, (char *)NULL); _exit(127); }
-    ImProcess *p = (ImProcess *)calloc(1, sizeof(*p)); if (!p) { kill(pid, SIGKILL); return NULL; }
+    ImProcess *p = (ImProcess *)calloc(1, sizeof(*p));
+    if (!p) { kill(pid, SIGKILL); (void)waitpid(pid, NULL, 0); return NULL; }
     p->pid = (uint64_t)pid; return p;
 }
 uint64_t im_process_pid(const ImProcess *p) { return p ? p->pid : 0; }
