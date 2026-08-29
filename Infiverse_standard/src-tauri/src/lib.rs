@@ -1001,7 +1001,7 @@ fn workbench_diagnostics(file: &str, stderr: &str) -> Vec<serde_json::Value> {
     for line in stderr.lines() {
         let lower = line.to_ascii_lowercase();
         let mut line_no = None;
-        let mut col_no = 1u64;
+        let col_no = 1u64;
         if let Some(pos) = lower.find("line ") {
             let digits: String = lower[pos + 5..].chars().take_while(|c| c.is_ascii_digit()).collect();
             if !digits.is_empty() { line_no = digits.parse::<u64>().ok(); }
