@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Inim V0.4 package manager (offline-first minimal implementation)."""
-import argparse, hashlib, json, os, zipfile, subprocess
+import argparse, hashlib, json, os, re, zipfile, subprocess
 from pathlib import Path
 
 def sha256(path):
@@ -16,6 +16,8 @@ def load_manifest(root):
     except Exception as e: raise SystemExit(f'inim: invalid manifest: {e}')
     for k in ('name', 'version', 'entry'):
         if not isinstance(m.get(k), str) or not m[k]: raise SystemExit(f'inim: manifest requires {k}')
+    if not re.fullmatch(r'(?:0|[1-9]\d*)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', m['version']):
+        raise SystemExit(f"inim: invalid semver version: {m['version']}")
     return m
 
 def cmd_init(args):

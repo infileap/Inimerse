@@ -42,7 +42,7 @@ JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off
 - 本地缓存、内容寻址、依赖冲突解释和离线安装。
 - `.vverse` 与普通库包统一索引格式；签名验证默认开启，可显式配置信任源。
 
-当前实现入口：`python tools/inim.py` 已提供离线 `init`、`pack`、`install`、`list`、`add`、`remove`、`run`、`publish` 闭环。`.inim` 是 ZIP 容器，包含 `manifest.json`；安装写入 `.inim-cache/` 和 `lock.json`，支持本地路径依赖并拒绝路径穿越。`publish` 生成包和 `index.json`（含 SHA-256、版本与引擎约束）。SemVer 解析、签名和远程 registry 仍待后续迭代。
+当前实现入口：`python tools/inim.py` 已提供离线 `init`、`pack`、`install`、`list`、`add`、`remove`、`run`、`publish` 闭环。`.inim` 是 ZIP 容器，包含 `manifest.json`；安装写入 `.inim-cache/` 和 `lock.json`，支持本地路径依赖并拒绝路径穿越。`publish` 生成包和 `index.json`（含 SHA-256、SemVer 版本与引擎约束）。签名和远程 registry 仍待后续迭代。
 
 验收：从空目录安装一个带依赖的示例项目；断网可从缓存复现；篡改包、ABI 不兼容包和恶意路径均被拒绝。
 
