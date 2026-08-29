@@ -10,7 +10,9 @@ class CrpClient {
   }
   async request(path, init = {}, signal) {
     let last;
-    for (let attempt = 0; attempt <= this.retries; attempt++) {
+    const method = String(init.method || 'GET').toUpperCase();
+    const attempts = method === 'GET' || method === 'HEAD' ? this.retries : 0;
+    for (let attempt = 0; attempt <= attempts; attempt++) {
       try {
         const res = await fetch(this.baseUrl + path, { ...init, signal });
         const body = await res.json();
@@ -18,7 +20,7 @@ class CrpClient {
         return body;
       } catch (e) {
         last = e;
-        if (signal?.aborted || attempt === this.retries) throw last;
+        if (signal?.aborted || attempt === attempts) throw last;
         await new Promise((resolve, reject) => { const t = setTimeout(resolve, this.backoffMs * 2 ** attempt); signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason || e); }, { once: true }); });
       }
     }
