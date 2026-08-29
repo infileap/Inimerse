@@ -50,6 +50,21 @@ static int posix_http_req(VM *vm, int post) {
 }
 static int posix_http_get(VM *vm) { return posix_http_req(vm, 0); }
 static int posix_http_post(VM *vm) { return posix_http_req(vm, 1); }
+static int posix_exec(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    const char *cmd = v.type == VAL_STRING && v.sval ? v.sval : "";
+    FILE *f = popen(cmd, "r");
+    char out[65536] = {0}; size_t total = 0;
+    if (f) {
+        while (total < sizeof(out) - 1) {
+            size_t n = fread(out + total, 1, sizeof(out) - 1 - total, f);
+            total += n; if (!n) break;
+        }
+        pclose(f);
+    }
+    pop(vm); push_string(vm, out); return 1;
+}
 /* Hardware/UI operations keep the same names on POSIX.  Until a host grants
  * the corresponding PAL capability they fail deterministically instead of
  * becoming unknown builtins (which makes portable scripts diagnosable). */
@@ -109,6 +124,7 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "list_dir", posix_list_dir);
     vm_register_builtin(vm, "http_get", posix_http_get);
     vm_register_builtin(vm, "http_post", posix_http_post);
+    vm_register_builtin_full(vm, "exec", posix_exec, 1 | CAP_PROC, 0);
     vm_register_builtin(vm, "serial_open", posix_serial_open);
     vm_register_builtin(vm, "serial_write", posix_serial_write);
     vm_register_builtin(vm, "serial_read", posix_serial_read);
