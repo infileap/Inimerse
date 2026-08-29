@@ -12,6 +12,7 @@ function createRelay(options = {}) {
   const revoked = new Set();
   const maxRevoked = options.maxRevokedTokens || 10000;
   const maxContent = options.maxContentBytes || 8 * 1024 * 1024;
+  const requireWsAuth = options.requireWsAuth === true;
   const secret = options.secret || crypto.randomBytes(32).toString('hex');
   const makeToken = (verse, peer, capabilities = ['signal']) => { const exp = Date.now() + (options.tokenTtlMs || 5 * 60 * 1000); const body = Buffer.from(JSON.stringify({ verse, peer, capabilities, exp })).toString('base64url'); const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url'); return `${body}.${sig}`; };
   const checkToken = (token, verse, peer, capability) => { try { const [body, sig] = String(token).split('.'); const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url'); if (!body || !sig || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false; const p = JSON.parse(Buffer.from(body, 'base64url')); return p.verse === verse && p.peer === peer && p.exp > Date.now() && p.capabilities.includes(capability); } catch { return false; } };
@@ -101,7 +102,14 @@ function createRelay(options = {}) {
     } catch (e) { json(res, 400, { error: e.message }); }
   });
   server.on('upgrade', (req, socket) => {
-    if (req.url !== '/ws') return socket.destroy();
+    let parsed; try { parsed = new URL(req.url || '', 'http://localhost'); } catch { return socket.destroy(); }
+    if (parsed.pathname !== '/ws') return socket.destroy();
+    if (requireWsAuth) {
+      const token = parsed.searchParams.get('token') || '';
+      const verse = parsed.searchParams.get('verse') || '';
+      const peer = parsed.searchParams.get('peer') || '';
+      if (!verses.has(verse) || revoked.has(token) || !checkToken(token, verse, peer, 'signal')) return socket.destroy();
+    }
     const key = req.headers['sec-websocket-key']; if (!key) return socket.destroy();
     const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`); wsClients.add(socket);
