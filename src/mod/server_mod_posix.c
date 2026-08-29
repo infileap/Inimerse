@@ -19,7 +19,9 @@ static void paths_init(void) {
     if (g_rooms[0]) return;
     snprintf(g_rooms, sizeof g_rooms, "%s", getenv("INIMERSE_ROOMS_DIR") ? getenv("INIMERSE_ROOMS_DIR") : "./rooms");
     snprintf(g_projects, sizeof g_projects, "%s", getenv("INIMERSE_PROJECTS_DIR") ? getenv("INIMERSE_PROJECTS_DIR") : "./projects");
-    mkdir(g_rooms, 0755);
+    /* Environment overrides may point to nested directories; create the
+     * complete path through the portable PAL rather than a single mkdir. */
+    (void)im_platform_mkdirs(g_rooms);
 }
 static int valid_name(const char *s) { return s && *s && strcmp(s, ".") && strcmp(s, "..") && !strstr(s, "..") && !strchr(s, '/') && !strchr(s, '\\') && !strchr(s, ':'); }
 static void room_path(int room, char *out, size_t cap) { paths_init(); snprintf(out, cap, "%s/%d.txt", g_rooms, room); }
