@@ -10,6 +10,8 @@
 
 实施状态（当前）：参数 v2、VFS 基础和 `inim` 离线包闭环已进入 `main`；集合/Result/Eidos、JIT 和发行渠道仍未完成。
 
+性能基线工具：`python tools/v04_bench.py <script.im> -e <inimerse> -n 5`，可用 `--json` 输出供 CI 比较；在 JIT 后端接入前先固定解释器基线。
+
 ### 运行时与 JIT
 
 - 热点计数器、基准套件和性能回归门禁。
