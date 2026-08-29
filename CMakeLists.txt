@@ -20,7 +20,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # default on every supported host. Platform-specific modules remain gated.
 option(INIMERSE_BUILD_ENGINE "Build the full VM engine" ON)
 
-add_library(inimerse_platform STATIC src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/process.c src/platform/socket.c src/platform/dir.c)
+add_library(inimerse_platform STATIC src/platform/platform.c src/platform/thread.c src/platform/fiber.c src/platform/process.c src/platform/socket.c src/platform/dir.c src/platform/vfs.c)
 target_include_directories(inimerse_platform PUBLIC src)
 if(NOT WIN32)
   find_package(Threads REQUIRED)
