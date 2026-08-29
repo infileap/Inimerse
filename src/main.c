@@ -30,6 +30,7 @@ extern int build_project_impl(void *vm, const char *cfgPath, int mode, const cha
 int vm_params_load_v2_or_legacy(VM *vm, const char *path);
 
 void gui_mod_register(VM *vm);
+void result_mod_register(VM *vm);
 void build_mod_register(VM *vm);
 void io_mod_register(VM *vm);
 void net_mod_register(VM *vm);
@@ -669,6 +670,7 @@ if (argc == 1) {
     lint_mod_register(&vm);
     vm_debug_builtins_register(&vm);
     gui_mod_register(&vm);
+    result_mod_register(&vm);
     io_mod_register(&vm);
     net_mod_register(&vm);
     json_mod_register(&vm);

@@ -124,14 +124,14 @@ if(INIMERSE_BUILD_ENGINE)
       src/mod/gui_mod.c src/mod/io_mod.c src/mod/net_mod.c src/mod/json_mod.c
       src/mod/record_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
       src/mod/server_mod.c src/mod/identity_mod.c src/mod/social_mod.c
-      src/mod/ai_mod.c mods/build/build_mod.c)
+      src/mod/ai_mod.c src/mod/result_mod.c mods/build/build_mod.c)
     list(APPEND INIMERSE_ENGINE_SOURCES src/mod/say_mod_windows.c src/mod/say_stream.c)
   else()
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/mod/say_stream.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
       src/platform/posix_stubs.c src/platform/http_posix.c src/platform/http_client.c src/platform/serial_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c
-      src/headless_server_posix.c)
+      src/headless_server_posix.c src/mod/result_mod.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm

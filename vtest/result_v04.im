@@ -1,0 +1,6 @@
+r = ok(42)
+say is_ok(r)
+say unwrap_or(r, 0)
+e = err("bad")
+say is_ok(e)
+say unwrap_or(e, 99)
