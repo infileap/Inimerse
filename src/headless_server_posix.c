@@ -14,6 +14,7 @@ static ImSocket *g_hl_sock;
 static ImSocket *g_hl_clients[HL_MAX_CLIENTS];
 static char g_hl_inputs[HL_MAX_CLIENTS][HL_INPUT_CAP];
 static int g_hl_input_lens[HL_MAX_CLIENTS], g_hl_count, g_hl_last_ci = -1, g_hl_enabled;
+static volatile unsigned g_hl_generation;
 static ImMutex *g_hl_lock;
 
 static void remove_client(int i) {
@@ -33,17 +34,19 @@ int headless_init(int port) {
     g_hl_sock = im_socket_listen(NULL, (uint16_t)port, 4);
     if (!g_hl_sock) return 0;
     im_socket_set_nonblocking(g_hl_sock, 1);
-    g_hl_lock = im_mutex_new(); g_hl_count = 0; g_hl_last_ci = -1; g_hl_enabled = g_hl_lock != NULL;
+    /* The accept loop is detached, so keep the lock alive across stop and
+     * restart; freeing it while the loop unwinds would be a use-after-free. */
+    if (!g_hl_lock) g_hl_lock = im_mutex_new();
+    ++g_hl_generation; g_hl_count = 0; g_hl_last_ci = -1; g_hl_enabled = g_hl_lock != NULL;
     if (!g_hl_enabled) { im_socket_close(g_hl_sock); g_hl_sock = NULL; }
     return g_hl_enabled;
 }
 
 void headless_shutdown(void) {
     if (!g_hl_enabled) return;
-    im_mutex_lock(g_hl_lock); g_hl_enabled = 0;
+    im_mutex_lock(g_hl_lock); g_hl_enabled = 0; ++g_hl_generation;
     for (int i = 0; i < g_hl_count; ++i) im_socket_close(g_hl_clients[i]);
     g_hl_count = 0; im_socket_close(g_hl_sock); g_hl_sock = NULL; im_mutex_unlock(g_hl_lock);
-    im_mutex_free(g_hl_lock); g_hl_lock = NULL;
 }
 int headless_enabled(void) { return g_hl_enabled; }
 
@@ -96,6 +99,10 @@ int headless_poll_input(char *buf, int cap) {
     }
     im_mutex_unlock(g_hl_lock); return 0;
 }
-static void *headless_loop(void *arg) { (void)arg; while (g_hl_enabled) { headless_accept(); im_platform_sleep_ms(50); } return NULL; }
+static void *headless_loop(void *arg) {
+    (void)arg; unsigned generation = g_hl_generation;
+    while (g_hl_enabled && generation == g_hl_generation) { headless_accept(); im_platform_sleep_ms(50); }
+    return NULL;
+}
 void headless_start_thread(void) { void *h = im_thread_start(headless_loop, NULL); if (h) (void)im_thread_detach(h); }
 #endif
