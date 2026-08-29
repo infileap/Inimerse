@@ -263,6 +263,26 @@ function renderBrowse() {
   <button class="btn" data-go="workbench">→ 去工作台</button>`;
 }
 function bindBrowse() {
+  if (!$('#hub-install')) {
+    const host = $('#view-content');
+    if (host) {
+      const card = document.createElement('div'); card.className = 'card';
+      card.innerHTML = '<h3>Hub 包安装</h3><div class="muted">输入 Hub 地址、包 ID 和 SHA-256，校验后安装到本地 projects。</div><input id="hub-url" class="code" style="width:260px" placeholder="https://hub.example/api"><input id="hub-id" class="code" style="width:150px" placeholder="package-id"><input id="hub-hash" class="code" style="width:300px" placeholder="SHA-256 (64 hex)"><button class="btn primary" id="hub-install">下载并安装</button> <span id="hub-msg" class="muted"></span>';
+      host.prepend(card);
+    }
+  }
+  const hubInstall = $('#hub-install');
+  if (hubInstall) hubInstall.addEventListener('click', async () => {
+    const url = ($('#hub-url') && $('#hub-url').value || '').trim();
+    const id = ($('#hub-id') && $('#hub-id').value || '').trim();
+    const hash = ($('#hub-hash') && $('#hub-hash').value || '').trim();
+    const msg = $('#hub-msg'); hubInstall.disabled = true;
+    if (msg) msg.textContent = '下载中…';
+    const r = await invoke('hub_download_install', { baseUrl: url, id, expectedHash: hash });
+    if (msg) msg.textContent = r && r.ok ? '✅ 安装完成 (' + r.size + ' bytes)' : '❌ ' + ((r && r.error) || '失败');
+    hubInstall.disabled = false;
+    if (r && r.ok) bindBrowse();
+  });
   const runTimer = setInterval(() => { document.querySelectorAll('[data-vp-remove]').forEach(row => { if (row.parentElement && !row.parentElement.querySelector('[data-vp-run]')) { const b = document.createElement('button'); b.className = 'btn primary'; b.textContent = '启动'; b.dataset.vpRun = row.dataset.vpRemove; b.addEventListener('click', async () => { const r = await invoke('verse_run_uri', { uri: 'verse://local/' + b.dataset.vpRun + '.vverse' }); alert(r && r.ok ? '已启动' : ((r && r.error) || '启动失败')); }); row.parentElement.insertBefore(b, row); } }); if (document.querySelector('[data-vp-run]')) clearInterval(runTimer); }, 200);
   const packagePanel = document.createElement('div'); packagePanel.className = 'card'; packagePanel.innerHTML = '<h3>本地 Verse 包</h3><div class="muted">加载中…</div>'; const view = $('#view-content'); if (view) view.prepend(packagePanel);
   invoke('verse_local_packages').then(pkgs => { const items = Array.isArray(pkgs) ? pkgs : []; packagePanel.innerHTML = '<h3>本地 Verse 包</h3>' + (items.length ? items.map(p => '<div class="step"><span>' + escapeHtml(p.id || '') + '</span><span class="muted">' + String(p.size || 0) + ' bytes</span><button class="btn" data-vp-preview="' + escapeHtml(p.path || '') + '">预览</button><button class="btn danger" data-vp-remove="' + escapeHtml(p.id || '') + '">删除</button></div>').join('') : '<div class="muted">暂无本地包</div>'); packagePanel.querySelectorAll('[data-vp-preview]').forEach(b => b.addEventListener('click', async () => { const r = await invoke('verse_package_preview', { file: b.dataset.vpPreview }); alert(r && r.ok ? ('包大小：' + r.size + ' bytes') : ((r && r.error) || '预览失败')); })); packagePanel.querySelectorAll('[data-vp-remove]').forEach(b => b.addEventListener('click', async () => { const r = await invoke('verse_remove_package', { id: b.dataset.vpRemove }); if (r && r.ok) bindBrowse(); else alert((r && r.error) || '删除失败'); })); }).catch(() => { packagePanel.innerHTML = '<h3>本地 Verse 包</h3><div class="muted">加载失败</div>'; });
