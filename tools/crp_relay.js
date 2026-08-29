@@ -7,6 +7,7 @@ function createRelay(options = {}) {
   const verses = new Map();
   const friends = new Map();
   const sessions = new Map();
+  const sessionEvents = new Map();
   const content = new Map();
   const packages = new Map();
   const revoked = new Set();
@@ -49,6 +50,16 @@ function createRelay(options = {}) {
         const items = [...friends.values()].filter(f => !q || f.verse === q).map(({ updated, ...f }) => f);
         return json(res, 200, { items });
       }
+      if (req.method === 'POST' && (req.url === '/route' || req.url === '/nat/candidate')) {
+        const p = await read(req); if (!p.id || !p.endpoint) return json(res, 400, { error: 'id and endpoint are required' });
+        const id = String(p.id); friends.set(id, { id, verse: String(p.verse || ''), name: String(p.name || id), endpoint: String(p.endpoint), updated: Date.now() }); return json(res, 200, { ok: true, id, endpoint: String(p.endpoint) });
+      }
+      if (req.method === 'GET' && req.url.startsWith('/route/')) {
+        const id = decodeURIComponent(req.url.slice('/route/'.length)); const f = friends.get(id); if (!f) return json(res, 404, { error: 'route not found' }); return json(res, 200, { id, endpoint: f.endpoint });
+      }
+      if (req.method === 'GET' && req.url.startsWith('/nat/candidates')) {
+        pruneRegistry(); return json(res, 200, { candidates: [...friends.values()].filter(f => f.endpoint).map(f => ({ id: f.id, endpoint: f.endpoint })) });
+      }
       if (req.method === 'POST' && req.url === '/portal') {
         const p = await read(req); if (!verses.has(p.verse) || !p.peer) return json(res, 404, { error: 'verse not found' });
         const token = makeToken(p.verse, p.peer); return json(res, 200, { token, verse: p.verse, peer: p.peer, expires: Date.now() + tokenTtlMs });
@@ -57,14 +68,20 @@ function createRelay(options = {}) {
         const p = await read(req); if (!p.verse || !p.event) return json(res, 400, { error: 'verse and event are required' });
         if (!verses.has(p.verse)) return json(res, 404, { error: 'verse not found' });
         if (p.token && (revoked.has(String(p.token)) || !checkToken(p.token, p.verse, p.peer || '', 'signal'))) return json(res, 403, { error: 'invalid capability token' });
-        return json(res, 202, { accepted: true, verse: p.verse, event: p.event });
+        const key = `${p.verse}\0${p.peer || ''}`; const seq = Number.isSafeInteger(p.seq) && p.seq >= 0 ? p.seq : ((sessions.get(key) || 0) + 1); sessions.set(key, seq);
+        const events = sessionEvents.get(key) || []; events.push({ seq, event: p.event, data: p.data || {} }); while (events.length > 64) events.shift(); sessionEvents.set(key, events);
+        return json(res, 202, { accepted: true, verse: p.verse, event: p.event, seq });
       }
       if (req.method === 'POST' && req.url === '/session/resume') {
         const p = await read(req); if (!p.verse || !p.peer || !p.token) return json(res, 400, { error: 'verse, peer and token are required' });
         if (!verses.has(String(p.verse)) || !checkToken(p.token, String(p.verse), String(p.peer), 'signal') || revoked.has(String(p.token))) return json(res, 403, { error: 'invalid capability token' });
         const key = `${p.verse}\0${p.peer}`; const seq = Number.isSafeInteger(p.seq) && p.seq >= 0 ? p.seq : 0; const prev = sessions.get(key) || 0;
-        if (seq < prev) return json(res, 409, { error: 'session sequence out of order', lastSeq: prev });
-        sessions.set(key, seq); return json(res, 200, { resumed: true, verse: p.verse, peer: p.peer, lastSeq: seq });
+        if (seq < prev && !p.replay) return json(res, 409, { error: 'session sequence out of order', lastSeq: prev });
+        if (seq > prev) sessions.set(key, seq); const replay = (sessionEvents.get(key) || []).filter(e => e.seq > seq); return json(res, 200, { resumed: true, verse: p.verse, peer: p.peer, lastSeq: Math.max(prev, seq), replay });
+      }
+      if (req.method === 'POST' && req.url === '/session/stop') {
+        const p = await read(req); if (!p.verse || !p.peer || !p.token || !checkToken(p.token, String(p.verse), String(p.peer), 'signal')) return json(res, 403, { error: 'invalid capability token' });
+        const key = `${p.verse}\0${p.peer}`; sessions.set(key, sessions.get(key) || 0); return json(res, 200, { stopped: true, verse: p.verse, peer: p.peer });
       }
       if (req.method === 'POST' && req.url === '/revoke') {
         const p = await read(req); if (!p.token) return json(res, 400, { error: 'token is required' });

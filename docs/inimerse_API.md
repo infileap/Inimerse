@@ -283,7 +283,21 @@ CRP 阶段 2A 的本地参考实现位于 `tools/crp_reference.js`，提供 `FIN
 
 多目标输出参考实现位于 `tools/say_reference.js`：`createRouter(streams).say(target,text,meta)` 支持 `console/log/chat/ui/world/character/dialogue/system/file/json/ai`，`OutputStream` 提供队列上限、背压和关闭语义；`desugarSay` 将 `say@chat "..."` 转换为 `say_target("chat", "...")`。
 
+原生 VM 同样注册 `output_stream_open/write/close`（以及 `say_stream_*` 别名）。`open` 可选接受目标、队列上限、格式和优先级四个参数；`output_stream_cancel(id)` 取消后续写入，`output_stream_status(id)` 返回 `1`（活动）、`-1`（已取消）或 `0`（无效）。写入仍为同步、有界操作，达到上限时返回 `0`，成功返回 `1`。
+
+`output_stream_flush(id)` 清除已记录的传输错误并确认流仍可写；`output_stream_last_error(id)` 返回 `"backpressure"`、`"cancelled"`、`"invalid"` 或空字符串，便于宿主将传输失败传播给上层。
+
+异步兼容入口 `output_stream_enqueue(id,text)`/`output_stream_write_async` 将消息放入固定 16 项队列；调用 `flush` 按 FIFO 顺序发送，队列满时返回 `0` 并报告 `backpressure`。
+
+`write`/`enqueue` 可接受第三个 JSON 元数据参数；目标为 `ai` 时必须包含 `{"source":"ai"}`，否则返回失败并报告 `ai_boundary`。
+
 `UppSession` 提供状态快照、心跳序号与时间戳、重复启动幂等处理，以及 `reset()` 重置到 idle 状态；非法角色会在构造时拒绝。
+
+`CrpClient.portal()` 会缓存返回的 capability token 与 peer，后续 `signal()`/`resumeSession()` 自动携带作用域信息；也可通过构造选项 `token`、`peer` 预置会话凭据。
+
+会话生命周期还提供 `CrpClient.stopSession(verse, peer, token)`，对应原生与 relay 的认证 `POST /session/stop`；停止后可再次通过 `resumeSession` 恢复并请求 replay。
+
+原生 HTTP 同时接受 `POST /session/start`（等价于带 token 的 resume）与 `POST /session/heartbeat`（带 token、Verse/peer 与 seq 的 signal），便于非 JS 宿主直接驱动生命周期。
 
 中继提供 `POST /revoke`，请求体为 `{ "token": "..." }`。客户端可调用 `CrpClient.revoke(token)`；撤销后令牌立即失效，后续 `SIGNAL` 请求返回 403。
 

@@ -60,20 +60,20 @@ if(NOT WIN32)
   add_test(NAME headless_probe COMMAND headless_probe)
 endif()
 if(NOT WIN32)
-  add_executable(http_probe src/platform/socket.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/platform/http_probe.c)
+  add_executable(http_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/platform/http_client.c src/platform/http_probe.c)
   target_link_libraries(http_probe PRIVATE Threads::Threads)
   add_test(NAME http_probe COMMAND http_probe)
-  add_executable(hub_probe src/platform/socket.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/platform/hub_probe.c)
+  add_executable(hub_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/platform/http_client.c src/platform/hub_probe.c)
   target_link_libraries(hub_probe PRIVATE Threads::Threads)
   add_test(NAME hub_probe COMMAND hub_probe)
-  add_executable(websocket_probe src/platform/socket.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/platform/websocket_probe.c)
+  add_executable(websocket_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/platform/http_client.c src/platform/websocket_probe.c)
   target_link_libraries(websocket_probe PRIVATE Threads::Threads)
 endif()
 set_tests_properties(platform_probe fiber_probe process_probe socket_probe thread_probe dir_probe
-  PROPERTIES TIMEOUT 10 LABELS "platform;smoke")
+  PROPERTIES TIMEOUT 10 LABELS "platform;smoke" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 if(NOT WIN32)
   set_tests_properties(headless_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;headless")
-  set_tests_properties(http_probe hub_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;http")
+  set_tests_properties(http_probe hub_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;http" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   set_tests_properties(crp_session_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;crp")
 endif()
 find_program(INIMERSE_NODE node)
@@ -120,12 +120,12 @@ if(INIMERSE_BUILD_ENGINE)
       src/mod/record_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
       src/mod/server_mod.c src/mod/identity_mod.c src/mod/social_mod.c
       src/mod/ai_mod.c mods/build/build_mod.c)
-    list(APPEND INIMERSE_ENGINE_SOURCES src/mod/say_mod_windows.c)
+    list(APPEND INIMERSE_ENGINE_SOURCES src/mod/say_mod_windows.c src/mod/say_stream.c)
   else()
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
-      src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/platform/socket.c
+      src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/mod/say_stream.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
-      src/platform/posix_stubs.c src/platform/http_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c
+      src/platform/posix_stubs.c src/platform/http_posix.c src/platform/http_client.c src/platform/serial_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c
       src/headless_server_posix.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})

@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "say_stream.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -30,6 +31,7 @@ static int say_file(VM *vm) {
     fprintf(f, "%s\n", msg); fclose(f); push_int(vm, 1); return 1;
 }
 void say_mod_register(VM *vm) {
+    say_stream_register(vm);
     vm_register_builtin(vm, "say.console", say_console); vm_register_builtin(vm, "say_console", say_console);
     vm_register_builtin(vm, "say_target", say_target); vm_register_builtin(vm, "gui_say", say_console);
     vm_register_builtin(vm, "say.log", say_log); vm_register_builtin(vm, "say_log", say_log);

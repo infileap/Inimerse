@@ -36,6 +36,7 @@ void im_process_close(ImProcess *p) { if (!p) return; if (p->handle) CloseHandle
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <time.h>
 ImProcess *im_process_spawn(const char *command, int new_console) {
@@ -65,4 +66,22 @@ int im_process_wait_kill(ImProcess *p, unsigned int timeout_ms) { if (!p) return
 int im_process_kill(ImProcess *p) { return p && !p->finished && kill((pid_t)p->pid, SIGKILL) == 0 ? 0 : -1; }
 int im_process_exit_code(ImProcess *p) { if (!p) return -1; if (!p->finished) (void)im_process_alive(p); if (!p->finished) return -1; return WIFEXITED(p->status) ? WEXITSTATUS(p->status) : 128 + WTERMSIG(p->status); }
 void im_process_close(ImProcess *p) { free(p); }
+int im_process_capture(const char *command, char *output, size_t capacity, unsigned int timeout_ms) {
+    if (!command || !*command || !output || capacity < 1) return -1;
+    output[0] = 0;
+    int pipefd[2]; if (pipe(pipefd) != 0) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+    if (pid == 0) { close(pipefd[0]); dup2(pipefd[1], STDOUT_FILENO); dup2(pipefd[1], STDERR_FILENO); close(pipefd[1]); execl("/bin/sh", "sh", "-c", command, (char *)NULL); _exit(127); }
+    close(pipefd[1]); fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    size_t used = 0; unsigned int elapsed = 0; int status = -1, done = 0;
+    while (elapsed < timeout_ms || timeout_ms == 0) {
+        char buf[1024]; ssize_t n; while ((n = read(pipefd[0], buf, sizeof buf)) > 0) { size_t take = (size_t)n < capacity - 1 - used ? (size_t)n : capacity - 1 - used; if (take) { memcpy(output + used, buf, take); used += take; output[used] = 0; } }
+        pid_t r = waitpid(pid, &status, WNOHANG); if (r == pid) { done = 1; break; }
+        struct timespec ts = {0, 10000000L}; nanosleep(&ts, NULL); elapsed += 10;
+    }
+    if (!done) { kill(pid, SIGKILL); (void)waitpid(pid, &status, 0); close(pipefd[0]); return -2; }
+    for (;;) { char buf[1024]; ssize_t n = read(pipefd[0], buf, sizeof buf); if (n <= 0) break; size_t take = (size_t)n < capacity - 1 - used ? (size_t)n : capacity - 1 - used; if (take) { memcpy(output + used, buf, take); used += take; output[used] = 0; } }
+    close(pipefd[0]); return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
 #endif

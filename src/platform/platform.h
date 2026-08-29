@@ -19,6 +19,9 @@ int im_platform_executable_path(char *buffer, size_t capacity);
 int im_platform_getenv(const char *name, char *buffer, size_t capacity);
 int im_platform_has_capability(const char *name);
 int im_platform_path_join(char *buffer, size_t capacity, const char *base, const char *part);
+int im_platform_lan_ip(char *buffer, size_t capacity);
+int im_platform_read_file(const char *path, char *buffer, size_t capacity);
+int im_platform_write_file(const char *path, const char *data, size_t length);
 
 #ifdef __cplusplus
 }

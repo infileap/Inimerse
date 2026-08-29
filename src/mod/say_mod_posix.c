@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "say_stream.h"
 #include <stdio.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +50,7 @@ static int say_ai_observe(VM *vm) { return say_ai_event(vm, "observe"); }
 static int say_ai_trace(VM *vm) { return say_ai_event(vm, "trace"); }
 static int say_ai_feedback(VM *vm) { return say_ai_event(vm, "feedback"); }
 void say_mod_register(VM *vm) {
+    say_stream_register(vm);
     vm_register_builtin(vm, "say.console", say_console);
     vm_register_builtin(vm, "say.log", say_log);
     vm_register_builtin(vm, "say.json", say_json);

@@ -1,5 +1,10 @@
-#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#if !defined(_WIN32)
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#endif
 #endif
 #include "platform.h"
 #include "sync.h"
@@ -17,6 +22,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#include <net/if.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -163,4 +171,27 @@ int im_platform_has_capability(const char *name) {
         strcmp(name, "socket") == 0) return 1;
 #endif
     return 0;
+}
+
+int im_platform_lan_ip(char *buffer, size_t capacity) {
+    if (!buffer || capacity < 1) return -1; buffer[0] = 0;
+#ifdef _WIN32
+    return -1;
+#else
+    struct ifaddrs *list = NULL; if (getifaddrs(&list) != 0) return -1;
+    for (struct ifaddrs *it = list; it; it = it->ifa_next) {
+        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET || !(it->ifa_flags & IFF_UP) || (it->ifa_flags & IFF_LOOPBACK)) continue;
+        if (inet_ntop(AF_INET, &((struct sockaddr_in *)it->ifa_addr)->sin_addr, buffer, capacity)) { freeifaddrs(list); return 0; }
+    }
+    freeifaddrs(list); return -1;
+#endif
+}
+
+int im_platform_read_file(const char *path, char *buffer, size_t capacity) {
+    if (!path || !buffer || capacity < 1) return -1; FILE *f = fopen(path, "rb"); if (!f) return -1;
+    size_t n = fread(buffer, 1, capacity - 1, f); int ok = ferror(f) ? -1 : (int)n; buffer[n] = 0; fclose(f); return ok;
+}
+int im_platform_write_file(const char *path, const char *data, size_t length) {
+    if (!path || (!data && length)) return -1; FILE *f = fopen(path, "wb"); if (!f) return -1;
+    size_t n = fwrite(data, 1, length, f); int ok = (n == length && fclose(f) == 0) ? 0 : -1; if (ok) return 0; return -1;
 }

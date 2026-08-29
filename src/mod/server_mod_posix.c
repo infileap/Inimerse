@@ -1,16 +1,12 @@
 #include "vm.h"
 #include "../platform/process.h"
 #include "../platform/platform.h"
+#include "../platform/socket.h"
+#include "../platform/dir.h"
 #include <string.h>
 #include <stdio.h>
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <dirent.h>
 #include <sys/stat.h>
 
 static char g_rooms[1024], g_projects[1024];
@@ -28,16 +24,11 @@ static void room_path(int room, char *out, size_t cap) { paths_init(); snprintf(
 static int room_slot(int room) { return room >= 11510 && room < 11700 && ((room - 11510) % 10) == 0 ? (room - 11510) / 10 : -1; }
 static int local_port_open(int port) {
     if (port < 1 || port > 65535) return 0;
-    int fd = socket(AF_INET, SOCK_STREAM, 0); if (fd < 0) return 0;
-    struct sockaddr_in sa; memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK); sa.sin_port = htons((uint16_t)port);
-    int ok = connect(fd, (struct sockaddr *)&sa, sizeof sa) == 0; close(fd); return ok;
+    return im_socket_port_open("127.0.0.1", (uint16_t)port, 250);
 }
 static char *room_field(int room, const char *key) {
-    char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "rb"); if (!f) return NULL;
-    char line[512]; size_t n = strlen(key); char *v = NULL;
-    while (fgets(line, sizeof line, f)) if (!strncmp(line, key, n) && line[n] == '=') { line[strcspn(line, "\r\n")] = 0; v = strdup(line + n + 1); break; }
-    fclose(f); return v;
+    char path[1200], content[2048]; room_path(room, path, sizeof path); if (im_platform_read_file(path, content, sizeof content) < 0) return NULL;
+    char line[512]; size_t n = strlen(key); char *cursor = content; while (cursor && *cursor) { char *next = strchr(cursor, '\n'); size_t len = next ? (size_t)(next - cursor) : strlen(cursor); if (len >= sizeof line) len = sizeof line - 1; memcpy(line, cursor, len); line[len] = 0; if (len > n && !strncmp(line, key, n) && line[n] == '=') return strdup(line + n + 1); cursor = next ? next + 1 : NULL; } return NULL;
 }
 
 static int server_ports(VM *vm) {
@@ -64,34 +55,18 @@ static int server_port_check(VM *vm) {
     int port = vm_cur_sp(vm) >= 0 ? vm_cur_stack(vm)[vm_cur_sp(vm)].ival : 0;
     int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
     if (port < 1 || port > 65535) { push_int(vm, 0); return 1; }
-    int fd = socket(AF_INET, SOCK_STREAM, 0); if (fd < 0) { push_int(vm, 0); return 1; }
-    int yes = 1; setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
-    struct sockaddr_in sa; memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET; sa.sin_addr.s_addr = htonl(INADDR_ANY); sa.sin_port = htons((uint16_t)port);
-    int ok = bind(fd, (struct sockaddr *)&sa, sizeof sa) == 0; close(fd); push_int(vm, ok); return 1;
+    push_int(vm, im_socket_port_available(NULL, (uint16_t)port));
+    return 1;
 }
 static int server_lan_ip(VM *vm) {
     int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
-    struct ifaddrs *list = NULL; if (getifaddrs(&list) != 0) { push_string(vm, ""); return 1; }
-    char out[INET_ADDRSTRLEN] = "";
-    for (struct ifaddrs *it = list; it; it = it->ifa_next) {
-        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET || !(it->ifa_flags & IFF_UP) || (it->ifa_flags & IFF_LOOPBACK)) continue;
-        struct sockaddr_in *sa = (struct sockaddr_in *)it->ifa_addr;
-        if (inet_ntop(AF_INET, &sa->sin_addr, out, sizeof out)) break;
-    }
-    freeifaddrs(list); push_string(vm, out); return 1;
+    char out[64] = ""; (void)im_platform_lan_ip(out, sizeof out); push_string(vm, out); return 1;
 }
 
 static void server_lan_ip_text(char *out, size_t cap) {
     if (!out || cap == 0) return;
     out[0] = 0;
-    struct ifaddrs *list = NULL;
-    if (getifaddrs(&list) != 0) return;
-    for (struct ifaddrs *it = list; it; it = it->ifa_next) {
-        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET || !(it->ifa_flags & IFF_UP) || (it->ifa_flags & IFF_LOOPBACK)) continue;
-        struct sockaddr_in *sa = (struct sockaddr_in *)it->ifa_addr;
-        if (inet_ntop(AF_INET, &sa->sin_addr, out, cap)) break;
-    }
-    freeifaddrs(list);
+    (void)im_platform_lan_ip(out, cap);
 }
 
 static int server_start(VM *vm) {
@@ -103,17 +78,17 @@ static int server_start(VM *vm) {
     vm_cur_set_sp(vm, sp - argc);
     if (!valid_name(project)) { push_int(vm, 0); return 1; }
     paths_init(); char mainfile[1200]; snprintf(mainfile, sizeof mainfile, "%s/%s/main.im", g_projects, project);
-    FILE *chk = fopen(mainfile, "rb"); if (!chk) { push_int(vm, -1); return 1; } fclose(chk);
-    int room = 11510; for (; room < 11700; room += 10) { char p[1200]; room_path(room, p, sizeof p); if (access(p, F_OK) != 0) break; }
+    char probe[2]; if (im_platform_read_file(mainfile, probe, sizeof probe) < 0) { push_int(vm, -1); return 1; }
+    int room = 11510; for (; room < 11700; room += 10) { char p[1200], data[2]; room_path(room, p, sizeof p); if (im_platform_read_file(p, data, sizeof data) < 0) break; }
     if (room >= 11700) { push_int(vm, 0); return 1; }
     char exe[1024] = "inimerse"; if (im_platform_executable_path(exe, sizeof exe) < 0) snprintf(exe, sizeof exe, "inimerse");
     char cmd[3200]; snprintf(cmd, sizeof cmd, "\"%s\" --headless --port %d --http-port %d --time-limit 0 \"%s\"", exe, room, room + 10, mainfile);
     int slot = room_slot(room); ImProcess *proc = im_process_spawn(cmd, 0);
     if (!proc) { push_int(vm, 0); return 1; }
-    char path[1200]; room_path(room, path, sizeof path); FILE *f = fopen(path, "wb");
-    if (!f) { im_process_kill(proc); im_process_close(proc); return (push_int(vm, 0), 1); }
+    char path[1200], metadata[1800]; room_path(room, path, sizeof path); int mlen = snprintf(metadata, sizeof metadata, "project=%s\npass=%s\nengine_pid=%llu\n", project, pass ? pass : "", (unsigned long long)im_process_pid(proc));
+    if (mlen < 0 || im_platform_write_file(path, metadata, (size_t)mlen) != 0) { im_process_kill(proc); im_process_close(proc); return (push_int(vm, 0), 1); }
     if (slot >= 0) g_room_proc[slot] = proc;
-    fprintf(f, "project=%s\npass=%s\nengine_pid=%llu\n", project, pass ? pass : "", (unsigned long long)im_process_pid(proc)); fclose(f); push_int(vm, room); return 1;
+    push_int(vm, room); return 1;
 }
 static int server_join(VM *vm) {
     int argc = vm->cur_argc; int sp = vm_cur_sp(vm);
@@ -146,18 +121,18 @@ static int server_stop(VM *vm) {
     char path[1200]; room_path(room, path, sizeof path); push_int(vm, remove(path) == 0); return 1;
 }
 static int server_rooms(VM *vm) {
-    vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); paths_init(); DIR *d = opendir(g_rooms); char buf[2048] = ""; size_t used = 0; struct dirent *e;
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); paths_init(); ImDir *d = im_dir_open(g_rooms); char buf[2048] = ""; size_t used = 0; char entry[256]; int isdir = 0;
     if (d) {
-        while ((e = readdir(d)) && used < sizeof buf - 64) {
+        while (im_dir_next_ex(d, entry, sizeof entry, &isdir) > 0 && used < sizeof buf - 64) {
             int room = 0;
-            if (sscanf(e->d_name, "%d.txt", &room) != 1 || room <= 0) continue;
+            if (isdir || sscanf(entry, "%d.txt", &room) != 1 || room <= 0) continue;
             char *p = room_field(room, "project");
             int slot = room_slot(room);
             int alive = slot >= 0 && g_room_proc[slot] && im_process_alive(g_room_proc[slot]);
             used += (size_t)snprintf(buf + used, sizeof buf - used, "%d:%s:%d\n", room, p ? p : "?", alive);
             free(p);
         }
-        closedir(d);
+        im_dir_close(d);
     }
     push_string(vm, buf); return 1;
 }

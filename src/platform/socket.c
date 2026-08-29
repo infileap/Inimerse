@@ -238,6 +238,18 @@ int im_socket_local_port(ImSocket *socket) {
     if (addr.ss_family == AF_INET6) return (int)ntohs(((struct sockaddr_in6 *)&addr)->sin6_port);
     return -1;
 }
+int im_socket_port_open(const char *host, uint16_t port, int timeout_ms) {
+    ImSocket *s = im_socket_connect_timeout(host, port, timeout_ms);
+    if (!s) return 0;
+    im_socket_close(s);
+    return 1;
+}
+int im_socket_port_available(const char *host, uint16_t port) {
+    ImSocket *s = im_socket_listen(host, port, 1);
+    if (!s) return 0;
+    im_socket_close(s);
+    return 1;
+}
 void im_socket_close(ImSocket *socket) {
     if (!socket) return;
 #ifdef _WIN32

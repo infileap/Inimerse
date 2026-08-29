@@ -1090,6 +1090,20 @@ fn workbench_run(file: String) -> serde_json::Value {
 }
 
 #[tauri::command]
+fn workbench_check(file: String, content: String) -> serde_json::Value {
+    if !is_workspace_file(&file) { return serde_json::json!({"ok": false, "error": "File is outside the workspace"}); }
+    let temp = user_data(".workbench_check.im");
+    if let Some(parent) = temp.parent() { let _ = fs::create_dir_all(parent); }
+    if fs::write(&temp, content).is_err() { return serde_json::json!({"ok": false, "error": "cannot create check file"}); }
+    let result = std::process::Command::new(detect_engine()).args(["--lint", &temp.to_string_lossy()]).output();
+    let _ = fs::remove_file(&temp);
+    match result {
+        Ok(out) => { let stderr = String::from_utf8_lossy(&out.stderr).to_string(); let stdout = String::from_utf8_lossy(&out.stdout).to_string(); let mut d = workbench_diagnostics(&file, &stderr); if d.is_empty() { d = workbench_diagnostics(&file, &stdout); } serde_json::json!({"ok": out.status.success(), "diagnostics": d}) }
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string(), "diagnostics": []}),
+    }
+}
+
+#[tauri::command]
 fn workbench_stop() -> serde_json::Value {
     let pid = workbench_pid().lock().ok().and_then(|g| *g);
     let Some(pid) = pid else { return serde_json::json!({ "ok": false, "error": "No workbench task is running" }); };
@@ -1267,6 +1281,7 @@ pub fn run() {
             workbench_read,
             workbench_save,
             workbench_run,
+            workbench_check,
             workbench_stop,
             workbench_apply,
             verse_start,

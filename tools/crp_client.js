@@ -6,6 +6,7 @@ class CrpClient {
     this.baseUrl = String(baseUrl).replace(/\/$/, '');
     this.retries = options.retries ?? 3;
     this.backoffMs = options.backoffMs ?? 100;
+    this.token = options.token || ''; this.peer = options.peer || ''; this.nextSeq = Number.isSafeInteger(options.seq) ? options.seq : 0;
     this.packageCache = new Map(); this.maxCacheBytes = options.maxCacheBytes ?? 128 * 1024 * 1024; this.cacheBytes = 0;
   }
   async request(path, init = {}, signal) {
@@ -29,9 +30,16 @@ class CrpClient {
   find(query = '', signal) { return this.request(`/find?q=${encodeURIComponent(query)}`, {}, signal); }
   registerFriend(id, verse, endpoint = '', name = '', signal) { return this.request('/friends', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, verse, endpoint, name }) }, signal); }
   listFriends(verse = '', signal) { return this.request('/friends' + (verse ? `?verse=${encodeURIComponent(verse)}` : ''), {}, signal); }
-  portal(verse, peer, signal) { return this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer }) }, signal); }
-  signal(verse, event, data = {}, signal) { return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, event, data }) }, signal); }
-  resumeSession(verse, peer, token, seq = 0, signal) { return this.request('/session/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer, token, seq }) }, signal); }
+  registerRoute(id, endpoint, verse = '', signal) { return this.request('/route', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, endpoint, verse }) }, signal); }
+  resolveRoute(id, signal) { return this.request('/route/' + encodeURIComponent(id), {}, signal); }
+  registerCandidate(id, endpoint, verse = '', signal) { return this.request('/nat/candidate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, endpoint, verse }) }, signal); }
+  listCandidates(signal) { return this.request('/nat/candidates', {}, signal); }
+  async portal(verse, peer, signal) { this.peer = peer || this.peer; const result = await this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer }) }, signal); if (result && result.token) this.token = result.token; return result; }
+  signal(verse, event, data = {}, signal) { const peer = data.peer || this.peer; const seq = Number.isSafeInteger(data.seq) ? data.seq : ++this.nextSeq; return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer, event, data, seq, token: this.token }) }, signal); }
+  async resumeSession(verse, peer, token, seq = 0, signal) { this.peer = peer || this.peer; this.token = token || this.token; this.nextSeq = Math.max(this.nextSeq, seq); return this.request('/session/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer: this.peer, token: this.token, seq, replay: true }) }, signal); }
+  stopSession(verse, peer = this.peer, token = this.token, signal) { return this.request('/session/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer, token }) }, signal); }
+  startSession(verse, peer = this.peer, token = this.token, signal) { return this.resumeSession(verse, peer, token, this.nextSeq, signal); }
+  heartbeat(verse, seq = this.nextSeq, signal) { return this.signal(verse, 'heartbeat', { seq }, signal); }
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
   publishPackage(id, bytes, signal) { const data = Buffer.from(bytes).toString('base64'); return this.request('/package', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, data }) }, signal); }
   listPackages(signal) { return this.request('/packages', {}, signal); }

@@ -192,7 +192,7 @@ async function bindWorkbench() {
 function renderWorkbenchIDE() {
   return `<div class="workbench-layout">
     <aside class="card wb-files"><h3>📁 项目文件</h3><div class="row" style="margin-bottom:10px"><input id="wb-new-name" placeholder="new_project" style="width:100%;padding:7px"><button class="btn" id="wb-new">新建</button></div><div id="wb-ide-files"><div class="muted">加载中…</div></div></aside>
-    <section class="card wb-editor"><div class="wb-toolbar"><div><h3 id="wb-file-title">未选择文件</h3><span id="wb-state" class="muted">选择一个 .im 文件开始编辑</span></div><div class="row"><button class="btn" id="wb-save" disabled>保存</button><button class="btn primary" id="wb-run" disabled>运行</button></div></div><div class="row wb-find"><input id="wb-find" class="code" placeholder="查找" disabled><input id="wb-replace" class="code" placeholder="替换为" disabled><button class="btn" id="wb-find-next" disabled>查找下一个</button><button class="btn" id="wb-replace-all" disabled>全部替换</button></div><textarea id="wb-code" spellcheck="false" placeholder="选择左侧文件开始编辑…" disabled></textarea><pre id="wb-output" class="code hidden"></pre></section>
+    <section class="card wb-editor"><div class="wb-toolbar"><div><h3 id="wb-file-title">未选择文件</h3><span id="wb-state" class="muted">选择一个 .im 文件开始编辑</span></div><div class="row"><button class="btn" id="wb-save" disabled>保存</button><button class="btn primary" id="wb-run" disabled>运行</button><button class="btn danger" id="wb-stop" disabled>停止</button></div></div><div class="row wb-find"><input id="wb-find" class="code" placeholder="查找" disabled><input id="wb-replace" class="code" placeholder="替换为" disabled><button class="btn" id="wb-find-next" disabled>查找下一个</button><button class="btn" id="wb-replace-all" disabled>全部替换</button></div><textarea id="wb-code" spellcheck="false" placeholder="选择左侧文件开始编辑…" disabled></textarea><pre id="wb-output" class="code hidden"></pre></section>
     <aside class="card wb-params"><h3>🧮 declare 参数</h3><div id="wb-ide-panel"><div class="muted">选择文件后显示可变参数</div></div><hr class="wb-rule"><h3>✦ AI 编程</h3><textarea id="wb-ai-prompt" rows="4" placeholder="描述要生成或修复的代码…"></textarea><button class="btn primary" id="wb-ai">生成建议</button><button class="btn" id="wb-ai-apply" disabled>应用到编辑器</button><pre id="wb-ai-out" class="code hidden"></pre></aside>
   </div>`;
 }
@@ -221,7 +221,20 @@ async function bindWorkbenchIDE() {
     list.querySelectorAll('[data-wb-ide]').forEach(x => x.classList.remove('active')); el.classList.add('active'); setDirty(false); renderParams(f);
   };
   list.querySelectorAll('[data-wb-ide]').forEach(el => el.addEventListener('click', () => openFile(files[parseInt(el.dataset.wbIde)], el)));
-  code.addEventListener('input', () => setDirty(true));
+  let checkTimer = null;
+  code.addEventListener('input', () => {
+    setDirty(true); if (checkTimer) clearTimeout(checkTimer);
+    checkTimer = setTimeout(async () => {
+      if (!currentFile) return;
+      const r = await invoke('workbench_check', { file: currentFile.file, content: code.value });
+      const old = document.querySelector('[data-wb-diagnostics]'); if (old) old.remove();
+      if (r && Array.isArray(r.diagnostics) && r.diagnostics.length) {
+        const box = document.createElement('pre'); box.dataset.wbDiagnostics = '1'; box.className = 'code wb-diagnostics';
+        box.textContent = r.diagnostics.map(d => `${d.file || ''}:${d.line || 1}:${d.column || 1} ${d.message || ''}`).join('\n');
+        output.parentElement.appendChild(box);
+      }
+    }, 450);
+  });
   if (findNext) findNext.addEventListener('click', () => { const q = find.value; if (!q) return; const i = code.value.indexOf(q, code.selectionEnd || 0); const j = i < 0 ? code.value.indexOf(q) : i; if (j >= 0) { code.focus(); code.setSelectionRange(j, j + q.length); } });
   if (replaceAll) replaceAll.addEventListener('click', () => { const q = find.value; if (!q) return; const before = code.value; code.value = before.split(q).join(replace.value || ''); if (code.value !== before) setDirty(true); });
   code.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && find) { e.preventDefault(); find.focus(); find.select(); } });
@@ -278,7 +291,7 @@ function bindBrowse() {
     const host = $('#view-content');
     if (host) {
       const card = document.createElement('div'); card.className = 'card';
-      card.innerHTML = '<h3>Hub 包安装</h3><div class="muted">输入 Hub 地址、包 ID 和 SHA-256，校验后安装到本地 projects。</div><input id="hub-url" class="code" style="width:260px" placeholder="https://hub.example/api"><input id="hub-id" class="code" style="width:150px" placeholder="package-id"><input id="hub-hash" class="code" style="width:300px" placeholder="SHA-256 (64 hex)"><button class="btn primary" id="hub-install">下载并安装</button> <span id="hub-msg" class="muted"></span>';
+      card.innerHTML = '<h3>Hub 包安装</h3><div class="muted">输入 Hub 地址、包 ID 和 SHA-256，校验后安装到本地 projects。</div><input id="hub-url" class="code" style="width:260px" placeholder="https://hub.example/api"><input id="hub-id" class="code" style="width:150px" placeholder="package-id"><input id="hub-hash" class="code" style="width:300px" placeholder="SHA-256 (64 hex)"><button class="btn primary" id="hub-install">下载并安装</button><button class="btn" id="hub-install-run">下载并启动</button> <span id="hub-msg" class="muted"></span>';
       host.prepend(card);
     }
   }
@@ -293,6 +306,17 @@ function bindBrowse() {
     if (msg) msg.textContent = r && r.ok ? '✅ 安装完成 (' + r.size + ' bytes)' : '❌ ' + ((r && r.error) || '失败');
     hubInstall.disabled = false;
     if (r && r.ok) bindBrowse();
+  });
+  const hubRun = $('#hub-install-run');
+  if (hubRun) hubRun.addEventListener('click', async () => {
+    const url = ($('#hub-url') && $('#hub-url').value || '').trim();
+    const id = ($('#hub-id') && $('#hub-id').value || '').trim();
+    const hash = ($('#hub-hash') && $('#hub-hash').value || '').trim();
+    const msg = $('#hub-msg'); hubRun.disabled = true;
+    const r = await invoke('hub_download_install_run', { baseUrl: url, id, expectedHash: hash });
+    if (msg) msg.textContent = r && r.ok ? '已安装并启动' : '✗ ' + ((r && (r.error || (r.launch && r.launch.error))) || '启动失败');
+    hubRun.disabled = false;
+    if (r && r.installed && r.installed.ok) bindBrowse();
   });
   const runTimer = setInterval(() => { document.querySelectorAll('[data-vp-remove]').forEach(row => { if (row.parentElement && !row.parentElement.querySelector('[data-vp-run]')) { const b = document.createElement('button'); b.className = 'btn primary'; b.textContent = '启动'; b.dataset.vpRun = row.dataset.vpRemove; b.addEventListener('click', async () => { const r = await invoke('verse_run_uri', { uri: 'verse://local/' + b.dataset.vpRun + '.vverse' }); alert(r && r.ok ? '已启动' : ((r && r.error) || '启动失败')); }); row.parentElement.insertBefore(b, row); } }); if (document.querySelector('[data-vp-run]')) clearInterval(runTimer); }, 200);
   const packagePanel = document.createElement('div'); packagePanel.className = 'card'; packagePanel.innerHTML = '<h3>本地 Verse 包</h3><div class="muted">加载中…</div>'; const view = $('#view-content'); if (view) view.prepend(packagePanel);

@@ -9,8 +9,17 @@ server.listen(0, async () => {
     await fetch(base + '/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'demo', endpoint: 'local' }) });
     const c = new CrpClient(base, { retries: 2, backoffMs: 1 });
     assert.equal((await c.find('demo')).items.length, 1);
+    assert.equal((await c.registerRoute('peer-route', '127.0.0.1:9000', 'demo')).ok, true);
+    assert.equal((await c.resolveRoute('peer-route')).endpoint, '127.0.0.1:9000');
+    assert.equal((await c.registerCandidate('peer-nat', '10.0.0.2:4000', 'demo')).ok, true);
+    assert.equal((await c.listCandidates()).candidates.some(x => x.id === 'peer-nat'), true);
     assert.equal((await c.portal('demo', 'peer')).peer, 'peer');
     assert.equal((await c.signal('demo', 'join')).accepted, true);
+    assert.equal((await c.signal('demo', 'ready')).seq, 2);
+    assert.equal((await c.resumeSession('demo', 'peer', c.token, 0)).replay.length, 2);
+    assert.equal((await c.stopSession('demo')).stopped, true);
+    assert.equal((await c.startSession('demo')).resumed, true);
+    assert.equal((await c.heartbeat('demo', 3)).accepted, true);
     const published = await c.publishPackage('demo', Buffer.from('pkg')); assert.equal((await c.downloadPackage('demo', { hash: published.hash })).toString(), 'pkg');
     assert.equal(c.hasCachedPackage('demo'), true); assert.equal(c.cachedPackage('demo').toString(), 'pkg'); assert.equal(c.cacheStats().entries, 1); c.clearPackageCache(); assert.equal(c.cacheStats().entries, 0);
     const limited = new CrpClient(base, { maxCacheBytes: 2 }); await limited.downloadPackage('demo'); assert.equal(limited.cacheStats().bytes, 0);

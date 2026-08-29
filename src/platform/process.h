@@ -2,6 +2,7 @@
 #define INIMERSE_PLATFORM_PROCESS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct ImProcess ImProcess;
 
@@ -13,5 +14,7 @@ int im_process_wait_kill(ImProcess *process, unsigned int timeout_ms);
 int im_process_kill(ImProcess *process);
 int im_process_exit_code(ImProcess *process);
 void im_process_close(ImProcess *process);
+/* Execute a command with bounded output capture (POSIX PAL). */
+int im_process_capture(const char *command, char *output, size_t capacity, unsigned int timeout_ms);
 
 #endif

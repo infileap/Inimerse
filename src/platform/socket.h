@@ -21,6 +21,9 @@ int im_socket_set_nonblocking(ImSocket *socket, int enabled);
 int im_socket_last_error(void);
 int im_socket_would_block(void);
 int im_socket_local_port(ImSocket *socket);
+/* Convenience probes used by servers without exposing native descriptors. */
+int im_socket_port_open(const char *host, uint16_t port, int timeout_ms);
+int im_socket_port_available(const char *host, uint16_t port);
 void im_socket_close(ImSocket *socket);
 
 #endif

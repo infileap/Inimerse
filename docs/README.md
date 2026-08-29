@@ -5,6 +5,7 @@
 - [v0.3 交付状态](ROADMAP_0.3_STATUS.md)
 - [v0.3 待实现路线](ROADMAP_0.3.0.md)
 - [总体路线图](ROADMAP.md)
+- [GitHub 发布操作集](GITHUB_RELEASE_PLAYBOOK.md)
 
 ## 平台与 API
 
