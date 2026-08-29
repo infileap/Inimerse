@@ -21,6 +21,8 @@ int main(void) {
     if (!verse_http_start(port)) return 2;
     if (!request(port, "POST", "/package", "{\"id\":\"demo\",\"data\":\"cGtn\"}", out, sizeof out) || !strstr(out, "201 Created")) return 3;
     if (!request(port, "GET", "/packages", NULL, out, sizeof out) || !strstr(out, "demo")) return 4;
+    if (!request(port, "GET", "/packages?q=demo", NULL, out, sizeof out) || !strstr(out, "demo")) return 41;
+    if (!request(port, "GET", "/packages?q=missing", NULL, out, sizeof out) || !strstr(out, "[]")) return 42;
     if (!request(port, "GET", "/package/demo", NULL, out, sizeof out) || !strstr(out, "pkg")) return 5;
     if (!request(port, "POST", "/package/fork", "{\"source\":\"demo\",\"id\":\"fork\"}", out, sizeof out) || !strstr(out, "201 Created")) return 6;
     if (!request(port, "DELETE", "/package/fork", NULL, out, sizeof out) || !strstr(out, "200 OK")) return 7;
