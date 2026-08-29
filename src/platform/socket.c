@@ -149,7 +149,8 @@ ImSocket *im_socket_accept(ImSocket *listener) {
 #ifdef _WIN32
     SOCKET fd = accept((SOCKET)listener->fd, NULL, NULL);
 #else
-    int fd = accept(listener->fd, NULL, NULL);
+    int fd;
+    do { fd = accept(listener->fd, NULL, NULL); } while (fd < 0 && errno == EINTR);
 #endif
     return wrap_socket(fd);
 }
