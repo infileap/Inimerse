@@ -111,7 +111,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/common/common.c src/common/sha256.c src/common/ed25519.c
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
-    src/vm/vm.c)
+    src/vm/vm.c src/vm/params_v2.c)
   if(WIN32)
     list(APPEND INIMERSE_ENGINE_SOURCES
       src/runtime/runtime.c src/child_proc.c src/headless_server.c
