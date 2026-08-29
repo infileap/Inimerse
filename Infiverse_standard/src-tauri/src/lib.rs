@@ -940,7 +940,14 @@ fn oauth_open(url: String) -> serde_json::Value {
     if !(url.starts_with("https://github.com/") || url.starts_with("https://passport.bilibili.com/oauth2/authorize")) {
         return serde_json::json!({ "ok": false, "error": "Unsupported authorization URL" });
     }
-    match std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn() {
+    let result = if cfg!(windows) {
+        std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&url).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(&url).spawn()
+    };
+    match result {
         Ok(_) => serde_json::json!({ "ok": true }),
         Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
     }
