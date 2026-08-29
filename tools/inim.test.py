@@ -24,6 +24,9 @@ def main():
         run('add', 'other/lib', '>=1.0.0 <2.0.0', '-p', str(root))
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
         assert manifest['dependencies']['other/lib'] == '>=1.0.0 <2.0.0'
+        run('publish', '-p', str(root), '-o', str(Path(td) / 'dist'))
+        index = json.loads((Path(td) / 'dist' / 'index.json').read_text(encoding='utf-8'))
+        assert index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')
         run('remove', 'demo/app', '-p', str(target))
         assert not (target / '.inim-cache' / 'demo' / 'app' / '0.1.0').exists()
         bad = Path(td) / 'bad.inim'

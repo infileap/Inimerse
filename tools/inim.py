@@ -110,6 +110,16 @@ def cmd_run(args):
     engine = args.engine or os.environ.get('INIMERSE_EXE', 'inimerse')
     raise SystemExit(subprocess.call([engine, str(entry), *args.args]))
 
+def cmd_publish(args):
+    root = Path(args.path).resolve(); m = load_manifest(root)
+    outdir = Path(args.output or (root / 'dist')); outdir.mkdir(parents=True, exist_ok=True)
+    pkg = outdir / f"{m['name'].replace('/', '-')}-{m['version']}.inim"
+    cmd_pack(argparse.Namespace(path=str(root), output=str(pkg)))
+    index = outdir / 'index.json'; data = json.loads(index.read_text(encoding='utf-8')) if index.exists() else {'index_version': 1, 'packages': {}}
+    data.setdefault('index_version', 1); data.setdefault('packages', {}).setdefault(m['name'], {})[m['version']] = {'file': pkg.name, 'sha256': sha256(pkg), 'engine': m.get('engine', '')}
+    index.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    print(f"published {m['name']}@{m['version']} -> {pkg}")
+
 def main():
     ap = argparse.ArgumentParser(prog='inim'); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
@@ -118,6 +128,7 @@ def main():
     p = sp.add_parser('add'); p.add_argument('name', nargs='?'); p.add_argument('version', nargs='?'); p.add_argument('--package'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_add)
     p = sp.add_parser('remove'); p.add_argument('name'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_remove)
     p = sp.add_parser('run'); p.add_argument('args', nargs='*'); p.add_argument('-p', '--path', default='.'); p.add_argument('--engine'); p.set_defaults(fn=cmd_run)
+    p = sp.add_parser('publish'); p.add_argument('-p', '--path', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_publish)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()
