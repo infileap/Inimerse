@@ -107,7 +107,13 @@ ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout
 #endif
         fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
         struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
-        rc = select((int)fd + 1, NULL, &wfds, NULL, &tv);
+        do {
+            rc = select((int)fd + 1, NULL, &wfds, NULL, &tv);
+#ifndef _WIN32
+        } while (rc < 0 && errno == EINTR);
+#else
+        } while (0);
+#endif
         if (rc > 0 && FD_ISSET(fd, &wfds)) {
             int so_error = 0; socklen_t so_len = sizeof(so_error);
 #ifdef _WIN32
