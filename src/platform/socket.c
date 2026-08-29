@@ -27,10 +27,21 @@ void im_socket_shutdown(void) { WSACleanup(); }
 #include <errno.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <time.h>
 static int socket_valid(int fd) { return fd >= 0; }
 int im_socket_init(void) { return 0; }
 void im_socket_shutdown(void) {}
 #endif
+
+static uint64_t socket_now_ms(void) {
+#ifdef _WIN32
+    return (uint64_t)GetTickCount64();
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000u);
+#endif
+}
 
 static ImSocket *wrap_socket(
 #ifdef _WIN32
@@ -105,16 +116,22 @@ ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout
 #else
         if (errno != EINPROGRESS) { close(fd); return NULL; }
 #endif
-        fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
-        struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
+        uint64_t deadline = socket_now_ms() + (uint64_t)timeout_ms;
+        int ready = 0;
         do {
+            uint64_t now = socket_now_ms();
+            if (now >= deadline) { rc = 0; break; }
+            uint64_t remain = deadline - now;
+            fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
+            struct timeval tv = { (long)(remain / 1000u), (long)(remain % 1000u) * 1000L };
             rc = select((int)fd + 1, NULL, &wfds, NULL, &tv);
+            ready = rc > 0 && FD_ISSET(fd, &wfds);
 #ifndef _WIN32
         } while (rc < 0 && errno == EINTR);
 #else
         } while (0);
 #endif
-        if (rc > 0 && FD_ISSET(fd, &wfds)) {
+        if (rc > 0 && ready) {
             int so_error = 0; socklen_t so_len = sizeof(so_error);
 #ifdef _WIN32
             getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&so_error, &so_len);
