@@ -65,3 +65,61 @@ profiles:
 6. **兼容迁移**：提供 `params convert old.params --to yaml` 与反向导出；旧语法继续作为稳定 ABI，不允许 YAML 功能反向改变普通 `.params` 的求值语义。
 
 该设计能获得 YAML 的层级与工具生态，同时保留当前参数文件“无副作用、可审计、启动前确定”的特性。
+
+## 面向 Infiverse 生态的整合包组合（提案）
+
+DeepSeek 分享讨论了以内容寻址 RID 管理资源、让同一资源出现在多个整合包中，以及“分化/逆分化”演化链。`.param` 适合描述“本项目如何选择这些资源”，不应把包文件本身复制进配置。建议在 v0.4 先加入一个受限的组合声明层，v3.1 再与虚拟文件系统和集合类型统一：
+
+```text
+# project.param（提案语法，当前版本不会解析）
+bundle "bettergui" = [
+  package "bettergui" version ">=1.4,<2.0",
+  rid "sha256:8f3a..."
+]
+bundle "game-2d" = [
+  include "bettergui",
+  package "renderer-2d" version "~2.1",
+  resource "rid:sha256:ab12..." as "assets/ui/theme"
+]
+profile "server" = {
+  use "game-2d"
+  disable "bettergui/editor"
+}
+```
+
+### 组合模型
+
+- **资源层**：每个 `.im`、skill、插件、图片或数据文件拥有不可变 `rid = sha256(content)`；RID 相同即同一资源，不因所在整合包或别名不同而重复占用磁盘。
+- **包层**：包声明名称、版本、ABI、平台、依赖和导出符号；包只引用资源 RID，可独立更新。
+- **组合层**：`bundle` 是有序依赖图，不是复制目录。解析器先展开组合，再做 RID 去重、版本求交和冲突报告。
+- **项目层**：`.param` 只保存选择的 bundle、profile、开关和参数覆盖；解析结果应生成锁文件（例如 `.param.lock`），记录确切版本、RID、签名和来源 Hub。
+- **挂载层**：`resource ... as` 只建立逻辑路径映射。一个 RID 可挂载到多个路径，写入时必须拒绝同一逻辑路径的不同 RID，除非显式 `override` 并通过优先级规则。
+
+### 解析与更新规则
+
+1. 读取 `default` profile，再按命令行选择的 profile 深度覆盖；`disable` 优先于依赖自动启用。
+2. 依赖图按包 ID 拓扑排序；同一包多个版本只有在 semver 范围交集非空时合并，否则报出完整依赖链。
+3. RID 内容先校验 SHA-256，再校验签名、ABI 和平台能力；任何失败都在提交新锁文件前回滚。
+4. 更新包时只替换受影响 RID；引用该 RID 的所有 bundle 自动看到新内容，但锁文件必须显式刷新，避免不可重复构建。
+5. 删除资源前检查反向引用；仍被任一锁文件或缓存索引引用时只做垃圾标记，不直接删除。
+
+### 与现有 `.params` 的兼容边界
+
+当前 `.params` 继续只接受赋值，例如 `render.scale = 1.0`。组合声明建议使用独立 `.param.yaml` 或未来的 `bundle` 专用清单，避免把依赖解析、网络访问和签名验证偷偷引入启动参数求值。兼容加载器可按以下优先级读取：
+
+```text
+project.param.lock  >  project.param.yaml  >  params.params  >  内置默认值
+```
+
+其中 `.param.lock` 只读、可提交版本控制；未锁定的远程包在严格/发布模式下应拒绝运行。这样既支持“一键导入整合包”，又保留参数文件的快速覆盖和离线可审计性。
+
+### 建议的 CLI 与诊断
+
+```text
+inim bundle resolve project.param.yaml --lock project.param.lock
+inim bundle graph --profile game-2d
+inim bundle verify project.param.lock --offline
+inim bundle gc --dry-run
+```
+
+诊断至少显示：冲突键、依赖链、RID、签名者、缓存命中/下载、最终逻辑挂载路径。AI 可生成组合建议，但只能写入候选清单，不能绕过锁文件、签名或权限检查。
