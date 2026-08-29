@@ -31,12 +31,27 @@ static char *room_field(int room, const char *key) {
     fclose(f); return v;
 }
 
-static int unsupported(VM *vm) {
-    int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
-    push_string(vm, "UNSUPPORTED: server_mod backend is not available on this POSIX build");
-    return 1;
-}
 static int unavailable_bool(VM *vm) { int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, 0); return 1; }
+static int server_ports(VM *vm) {
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); char buf[4096] = ""; size_t used = 0;
+    for (int room = 11510; room < 11700; room += 10) {
+        int slot = room_slot(room); int alive = slot >= 0 && g_room_proc[slot] && im_process_alive(g_room_proc[slot]);
+        used += (size_t)snprintf(buf + used, sizeof buf - used, "%d|%s|%llu\n", room, alive ? "LISTENING" : "DOWN", alive && g_room_proc[slot] ? (unsigned long long)im_process_pid(g_room_proc[slot]) : 0ULL);
+        if (used >= sizeof buf - 80) break;
+    }
+    push_string(vm, buf); return 1;
+}
+static int port_pid(VM *vm) {
+    int port = vm_cur_sp(vm) >= 0 ? vm_cur_stack(vm)[vm_cur_sp(vm)].ival : 0; vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc);
+    int room = (port % 10 == 0) ? port : port - 1; int slot = room_slot(room);
+    push_int(vm, slot >= 0 && g_room_proc[slot] && im_process_alive(g_room_proc[slot]) ? (int)im_process_pid(g_room_proc[slot]) : 0); return 1;
+}
+static int port_kill(VM *vm) {
+    int port = vm_cur_sp(vm) >= 0 ? vm_cur_stack(vm)[vm_cur_sp(vm)].ival : 0; vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc);
+    int room = (port % 10 == 0) ? port : port - 1; int slot = room_slot(room); int ok = 0;
+    if (slot >= 0 && g_room_proc[slot]) { ok = im_process_kill(g_room_proc[slot]) == 0; im_process_close(g_room_proc[slot]); g_room_proc[slot] = NULL; }
+    push_int(vm, ok); return 1;
+}
 static int server_port_check(VM *vm) {
     int port = vm_cur_sp(vm) >= 0 ? vm_cur_stack(vm)[vm_cur_sp(vm)].ival : 0;
     int n = vm->cur_argc; while (n-- > 0 && vm_cur_sp(vm) >= 0) vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
@@ -119,10 +134,10 @@ static int server_rooms(VM *vm) {
 }
 
 void server_mod_register(VM *vm) {
-    vm_register_builtin_full(vm, "server_ports", unsupported, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "server_ports", server_ports, 1 | CAP_NET, 0);
     vm_register_builtin_full(vm, "port_check", server_port_check, 1 | CAP_NET, 0);
-    vm_register_builtin_full(vm, "port_pid", unavailable_bool, 1 | CAP_NET, 0);
-    vm_register_builtin_full(vm, "port_kill", unavailable_bool, 1 | CAP_NET | CAP_PROC, 0);
+    vm_register_builtin_full(vm, "port_pid", port_pid, 1 | CAP_NET, 0);
+    vm_register_builtin_full(vm, "port_kill", port_kill, 1 | CAP_NET | CAP_PROC, 0);
     vm_register_builtin_full(vm, "lan_ip", server_lan_ip, 1 | CAP_NET, 0);
     vm_register_builtin_full(vm, "server_start", server_start, 1 | CAP_NET, 0);
     vm_register_builtin_full(vm, "server_join", server_join, 1 | CAP_NET, 0);
