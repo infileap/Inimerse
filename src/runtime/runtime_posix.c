@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <termios.h>
 #include <string.h>
 #include <stdio.h>
 #include "../platform/platform.h"
@@ -53,6 +56,41 @@ static int posix_http_post(VM *vm) { return posix_http_req(vm, 1); }
 static int posix_unsupported(VM *vm) {
     int n = vm_cur_sp(vm) + 1; if (n > 0) vm_cur_set_sp(vm, -1); push_int(vm, -1); return 1;
 }
+static speed_t posix_baud(int baud) {
+    switch (baud) { case 1200:return B1200; case 2400:return B2400; case 4800:return B4800; case 19200:return B19200; case 38400:return B38400; case 57600:return B57600; case 115200:return B115200; default:return B9600; }
+}
+static int posix_serial_open(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value bv = vm_cur_stack(vm)[vm_cur_sp(vm)], pv = vm_cur_stack(vm)[vm_cur_sp(vm)-1];
+    const char *path = pv.sval ? pv.sval : ""; int baud = bv.type == VAL_INT ? bv.ival : 9600;
+    int fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
+    if (fd < 0) { push_int(vm, -1); return 1; }
+    struct termios tio;
+    if (tcgetattr(fd, &tio) != 0) { close(fd); push_int(vm, -1); return 1; }
+    cfmakeraw(&tio); speed_t sp = posix_baud(baud); cfsetispeed(&tio, sp); cfsetospeed(&tio, sp);
+    tio.c_cflag |= (CLOCAL | CREAD); tio.c_cc[VMIN] = 0; tio.c_cc[VTIME] = 1;
+    if (tcsetattr(fd, TCSANOW, &tio) != 0) { close(fd); push_int(vm, -1); return 1; }
+    push_int(vm, fd); return 1;
+}
+static int posix_serial_write(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value hv=vm_cur_stack(vm)[vm_cur_sp(vm)-1], dv=vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int n = (hv.type == VAL_INT && dv.type == VAL_STRING && dv.sval) ? (int)write(hv.ival, dv.sval, strlen(dv.sval)) : -1;
+    vm_cur_set_sp(vm, vm_cur_sp(vm)-2); push_int(vm, n < 0 ? -1 : n); return 1;
+}
+static int posix_serial_read(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value hv=vm_cur_stack(vm)[vm_cur_sp(vm)-1], nv=vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int cap = nv.type == VAL_INT ? nv.ival : 256; if (cap < 1) cap = 1; if (cap > 65536) cap = 65536;
+    char *buf = (char*)malloc((size_t)cap + 1); ssize_t n = (hv.type == VAL_INT) ? read(hv.ival, buf, (size_t)cap) : -1;
+    if (n < 0) n = 0;
+    buf[n] = 0; vm_cur_set_sp(vm, vm_cur_sp(vm)-2); push_string(vm, buf); free(buf); return 1;
+}
+static int posix_serial_close(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value hv=vm_cur_stack(vm)[vm_cur_sp(vm)]; int ok = hv.type == VAL_INT && close(hv.ival) == 0; pop(vm); push_int(vm, ok ? 1 : 0); return 1;
+}
 
 /* POSIX baseline: platform-specific runtime builtins are intentionally
  * unavailable until their PAL backends are implemented. Core VM and
@@ -71,10 +109,10 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "list_dir", posix_list_dir);
     vm_register_builtin(vm, "http_get", posix_http_get);
     vm_register_builtin(vm, "http_post", posix_http_post);
-    vm_register_builtin(vm, "serial_open", posix_unsupported);
-    vm_register_builtin(vm, "serial_write", posix_unsupported);
-    vm_register_builtin(vm, "serial_read", posix_unsupported);
-    vm_register_builtin(vm, "serial_close", posix_unsupported);
+    vm_register_builtin(vm, "serial_open", posix_serial_open);
+    vm_register_builtin(vm, "serial_write", posix_serial_write);
+    vm_register_builtin(vm, "serial_read", posix_serial_read);
+    vm_register_builtin(vm, "serial_close", posix_serial_close);
     vm_register_builtin(vm, "key_press", posix_unsupported);
     vm_register_builtin(vm, "mouse_move", posix_unsupported);
     vm_register_builtin(vm, "mouse_click", posix_unsupported);
