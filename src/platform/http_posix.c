@@ -76,8 +76,9 @@ static size_t hub_body(const char *request, char *body, size_t cap, int *status)
         size_t len = fread(body, 1, cap, f); fclose(f); unsigned char got[32]; sha256_digest(body, len, got); char check[65]; sha256_hex_of_digest(got, check); if (strcmp(check, hash)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"content_corrupt\"}\n"); } *status = 200; return len;
     }
     if (strstr(request, "GET /packages") == request) {
+        char query[128] = ""; const char *qp = strstr(request, "?q="); if (qp) { qp += 3; size_t qi = 0; while (qp[qi] && qp[qi] != ' ' && qp[qi] != '&' && qi + 1 < sizeof query) { query[qi] = qp[qi]; qi++; } query[qi] = 0; }
         DIR *d = opendir(root); size_t used = 0; body[used++] = '[';
-        if (d) { struct dirent *e; int first = 1; while ((e = readdir(d)) && used + 80 < cap) { const char *dot = strstr(e->d_name, ".vverse"); if (!dot || dot[7]) continue; used += (size_t)snprintf(body + used, cap - used, "%s\"%.*s\"", first ? "" : ",", (int)(dot - e->d_name), e->d_name); first = 0; } closedir(d); }
+        if (d) { struct dirent *e; int first = 1; while ((e = readdir(d)) && used + 80 < cap) { const char *dot = strstr(e->d_name, ".vverse"); if (!dot || dot[7]) continue; char id[128]; snprintf(id, sizeof id, "%.*s", (int)(dot - e->d_name), e->d_name); if (*query && !strstr(id, query)) continue; used += (size_t)snprintf(body + used, cap - used, "%s\"%s\"", first ? "" : ",", id); first = 0; } closedir(d); }
         if (used + 2 < cap) { body[used++] = ']'; body[used] = 0; } *status = 200; return used;
     }
     const char *p = strstr(request, "GET /package/"); if (p == request) {
