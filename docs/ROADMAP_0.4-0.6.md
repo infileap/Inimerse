@@ -12,7 +12,7 @@
 
 性能基线工具：`python tools/v04_bench.py <script.im> -e <inimerse> -n 5`，可用 `--json` 输出供 CI 比较；在 JIT 后端接入前先固定解释器基线。
 
-JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off 模式安全回退解释器，待后续接入机器码后端）。
+JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off 模式安全回退解释器，待后续接入机器码后端）；`jit_mode_probe` 锁定模式解析契约。
 
 当前 `simple.im` 在 WSL/POSIX 解释器基线约为 196 ms/次（3 次样本，机器相关，仅作相对比较）。
 
