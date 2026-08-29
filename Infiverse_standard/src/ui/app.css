@@ -96,6 +96,7 @@ th { color: var(--muted); font-weight: 500; }
 .wb-toolbar h3 { margin:0 0 2px; font-family:ui-monospace,Consolas,monospace; }
 .wb-editor { display:flex; flex-direction:column; }
 #wb-code { width:100%; flex:1; min-height:360px; resize:vertical; padding:14px; font:13px/1.6 ui-monospace,Consolas,monospace; tab-size:4; background:var(--code-bg); }
+.wb-line-info { align-self:flex-end; color:var(--muted); font:12px ui-monospace,Consolas,monospace; margin:4px 8px 0; }
 #wb-output { margin:12px 0 0; max-height:190px; overflow:auto; white-space:pre-wrap; }
 .wb-rule { border:0; border-top:1px solid var(--border); margin:18px 0; }
 #wb-ai-prompt { width:100%; resize:vertical; padding:9px; margin-bottom:8px; font:13px/1.5 system-ui,sans-serif; }

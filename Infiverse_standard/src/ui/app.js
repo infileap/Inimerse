@@ -189,6 +189,9 @@ async function bindWorkbenchIDE() {
   const files = await invoke('workbench_load');
   const list = $('#wb-ide-files'), panel = $('#wb-ide-panel'), code = $('#wb-code'), save = $('#wb-save'), run = $('#wb-run'), stop = $('#wb-stop'), state = $('#wb-state'), output = $('#wb-output');
   const find = $('#wb-find'), replace = $('#wb-replace'), findNext = $('#wb-find-next'), replaceAll = $('#wb-replace-all');
+  const lineInfo = document.createElement('div'); lineInfo.className = 'wb-line-info'; lineInfo.textContent = '行 1'; if (code && code.parentElement) code.parentElement.insertBefore(lineInfo, code);
+  const updateLineInfo = () => { if (!lineInfo || !code) return; const line = code.value.slice(0, code.selectionStart || 0).split('\n').length; lineInfo.textContent = '行 ' + line; };
+  code.addEventListener('click', updateLineInfo); code.addEventListener('keyup', updateLineInfo); code.addEventListener('input', updateLineInfo);
   if (!list || !panel || !code || !save || !run) return;
   if (!files || !files.length) { const root = await invoke('workbench_root'); list.innerHTML = '<div class="muted">未找到 .im 文件<br><br>扫描目录：<br>' + escapeHtml(root || 'unknown') + '/plugins<br>' + escapeHtml(root || 'unknown') + '/projects</div>'; return; }
   list.innerHTML = files.map((f, i) => `<div class="sb-item" data-wb-ide="${i}">${escapeHtml(f.file.replace(/.*[\\/]/, ''))}<span class="muted"> (${(f.declares || []).length})</span></div>`).join('');
