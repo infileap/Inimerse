@@ -51,6 +51,7 @@ int im_process_alive(ImProcess *p) {
     if (!p || p->finished) return 0;
     int status = 0; pid_t r = waitpid((pid_t)p->pid, &status, WNOHANG);
     if (r == (pid_t)p->pid) { p->status = status; p->finished = 1; return 0; }
+    if (r < 0 && errno == EINTR) return 1;
     return r == 0;
 }
 int im_process_wait(ImProcess *p, unsigned int timeout_ms) {
