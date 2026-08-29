@@ -696,6 +696,18 @@ fn hub_download_install(base_url: String, id: String, expected_hash: String) -> 
 }
 
 #[tauri::command]
+fn hub_download_install_run(base_url: String, id: String, expected_hash: String) -> serde_json::Value {
+    let installed = hub_download_install(base_url, id.clone(), expected_hash);
+    if !installed["ok"].as_bool().unwrap_or(false) { return installed; }
+    let launched = verse_run_uri(format!("verse://local/{}.vverse", id));
+    serde_json::json!({
+        "ok": launched["ok"].as_bool().unwrap_or(false),
+        "installed": installed,
+        "launch": launched
+    })
+}
+
+#[tauri::command]
 fn verse_ping(addr: String) -> serde_json::Value {
     use std::net::{TcpStream, ToSocketAddrs};
     use std::time::{Duration, Instant};
@@ -1162,6 +1174,7 @@ pub fn run() {
             browse_list,
             browse_download,
             hub_download_install,
+            hub_download_install_run,
             verse_ping,
             get_public_ip,
             workbench_load,
