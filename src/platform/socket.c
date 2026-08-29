@@ -152,7 +152,8 @@ int im_socket_send(ImSocket *socket, const void *data, size_t length) {
 #ifdef _WIN32
     return send((SOCKET)socket->fd, (const char *)data, (int)length, 0);
 #else
-    return (int)send(socket->fd, data, length, 0);
+    int n; do { n = (int)send(socket->fd, data, length, 0); } while (n < 0 && errno == EINTR);
+    return n;
 #endif
 }
 int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity) {
@@ -160,7 +161,8 @@ int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity) {
 #ifdef _WIN32
     return recv((SOCKET)socket->fd, (char *)buffer, (int)capacity, 0);
 #else
-    return (int)recv(socket->fd, buffer, capacity, 0);
+    int n; do { n = (int)recv(socket->fd, buffer, capacity, 0); } while (n < 0 && errno == EINTR);
+    return n;
 #endif
 }
 int im_socket_peek(ImSocket *socket) {
@@ -169,7 +171,8 @@ int im_socket_peek(ImSocket *socket) {
 #ifdef _WIN32
     return recv((SOCKET)socket->fd, &byte, 1, MSG_PEEK);
 #else
-    return (int)recv(socket->fd, &byte, 1, MSG_PEEK);
+    int n; do { n = (int)recv(socket->fd, &byte, 1, MSG_PEEK); } while (n < 0 && errno == EINTR);
+    return n;
 #endif
 }
 int im_socket_set_nonblocking(ImSocket *socket, int enabled) {
