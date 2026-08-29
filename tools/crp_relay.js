@@ -17,6 +17,12 @@ function createRelay(options = {}) {
   const makeToken = (verse, peer, capabilities = ['signal']) => { const exp = Date.now() + (options.tokenTtlMs || 5 * 60 * 1000); const body = Buffer.from(JSON.stringify({ verse, peer, capabilities, exp })).toString('base64url'); const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url'); return `${body}.${sig}`; };
   const checkToken = (token, verse, peer, capability) => { try { const [body, sig] = String(token).split('.'); const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url'); if (!body || !sig || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false; const p = JSON.parse(Buffer.from(body, 'base64url')); return p.verse === verse && p.peer === peer && p.exp > Date.now() && p.capabilities.includes(capability); } catch { return false; } };
   const ttl = options.ttlMs || 10 * 60 * 1000;
+  const registryTtlMs = options.registryTtlMs || 30 * 60 * 1000;
+  const pruneRegistry = () => {
+    const cutoff = Date.now() - registryTtlMs;
+    for (const [id, v] of verses) if ((v.updated || 0) < cutoff) verses.delete(id);
+    for (const [id, v] of friends) if ((v.updated || 0) < cutoff) friends.delete(id);
+  };
   const json = (res, code, value) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
   const read = req => new Promise((resolve, reject) => { let b = ''; req.on('data', c => { b += c; if (b.length > 1024 * 1024) reject(new Error('payload too large')); }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { reject(new Error('invalid JSON')); } }); req.on('error', reject); });
   const server = http.createServer(async (req, res) => {
@@ -26,6 +32,7 @@ function createRelay(options = {}) {
         verses.set(String(p.id), { ...p, updated: Date.now() }); return json(res, 200, { ok: true });
       }
       if (req.method === 'GET' && req.url.startsWith('/find')) {
+        pruneRegistry();
         const q = new URL(req.url, 'http://localhost').searchParams.get('q') || '';
         const result = [...verses.values()].filter(v => !q || String(v.id).includes(q) || String(v.name || '').toLowerCase().includes(q.toLowerCase())).map(({ updated, ...v }) => v);
         return json(res, 200, { items: result });
@@ -36,6 +43,7 @@ function createRelay(options = {}) {
         return json(res, 200, { ok: true, id });
       }
       if (req.method === 'GET' && req.url.startsWith('/friends')) {
+        pruneRegistry();
         const q = new URL(req.url, 'http://localhost').searchParams.get('verse') || '';
         const items = [...friends.values()].filter(f => !q || f.verse === q).map(({ updated, ...f }) => f);
         return json(res, 200, { items });
