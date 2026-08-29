@@ -59,14 +59,15 @@ check:
 	 ./inimerse --version
 	 ./inimerse where
 	 bash tools/desugar_probe.sh ./inimerse
-	 $(MAKE) platform-probe fiber-probe process-probe socket-probe thread-probe headless-probe
+	 $(MAKE) platform-probe fiber-probe process-probe socket-probe thread-probe headless-probe dir-probe
 	 ./platform_probe
 	 ./fiber_probe
 	 ./process_probe
 	 ./socket_probe
 	 ./thread_probe
 	 ./headless_probe
-	 rm -f platform_probe fiber_probe process_probe socket_probe thread_probe headless_probe
+	 ./dir_probe
+	 rm -f platform_probe fiber_probe process_probe socket_probe thread_probe headless_probe dir_probe
 
 wasm:
 	 @node tools/wasm_check.js
@@ -92,5 +93,8 @@ thread-probe:
 
 headless-probe:
 	$(CC) $(CFLAGS) -o headless_probe src/headless_server_posix.c src/headless_server_probe.c src/platform/socket.c src/platform/platform.c src/platform/thread.c -pthread
+
+dir-probe:
+	$(CC) $(CFLAGS) -o dir_probe src/platform/dir.c src/platform/dir_probe.c
 
 .PHONY: platform-probe fiber-probe process-probe socket-probe thread-probe

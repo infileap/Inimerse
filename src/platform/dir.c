@@ -11,8 +11,15 @@ int im_dir_next_ex(ImDir *d,char *name,size_t cap,int *isdir){ if(!d||!name||!ca
 int im_dir_next(ImDir *d,char *name,size_t cap){return im_dir_next_ex(d,name,cap,NULL);} void im_dir_close(ImDir *d){if(!d)return;if(d->handle!=INVALID_HANDLE_VALUE)FindClose(d->handle);free(d);}
 #else
 #include <dirent.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 struct ImDir { DIR *handle; };
 ImDir *im_dir_open(const char *path){ImDir*d=(ImDir*)calloc(1,sizeof*d);if(!d)return NULL;d->handle=opendir(path?path:".");if(!d->handle){free(d);return NULL;}return d;}
-int im_dir_next_ex(ImDir*d,char*name,size_t cap,int*isdir){struct dirent*e;if(!d||!name||!cap)return 0;while((e=readdir(d->handle))){if(strcmp(e->d_name,".")&&strcmp(e->d_name,"..")){strncpy(name,e->d_name,cap-1);name[cap-1]=0;if(isdir)*isdir=0;return 1;}}return 0;}
+int im_dir_next_ex(ImDir*d,char*name,size_t cap,int*isdir){struct dirent*e;if(!d||!name||!cap)return 0;while((e=readdir(d->handle))){if(strcmp(e->d_name,".")&&strcmp(e->d_name,"..")){strncpy(name,e->d_name,cap-1);name[cap-1]=0;if(isdir){int dir=0;
+#ifdef DT_DIR
+dir = e->d_type == DT_DIR;
+if (e->d_type == DT_UNKNOWN) { struct stat st; if (fstatat(dirfd(d->handle), e->d_name, &st, 0) == 0) dir = S_ISDIR(st.st_mode); }
+#endif
+*isdir=dir;}return 1;}}return 0;}
 int im_dir_next(ImDir*d,char*n,size_t c){return im_dir_next_ex(d,n,c,NULL);}void im_dir_close(ImDir*d){if(!d)return;if(d->handle)closedir(d->handle);free(d);}
 #endif
