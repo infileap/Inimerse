@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include "thread.h"
 #include <stdlib.h>
 
@@ -35,6 +38,8 @@ void im_thread_close(void *handle) {
 #else
 #include <pthread.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <time.h>
 
 typedef struct { ImThreadProc proc; void *arg; } ImThreadStart;
 static void *im_thread_trampoline(void *raw) {
@@ -56,12 +61,25 @@ void *im_thread_start(ImThreadProc proc, void *arg) {
 }
 
 int im_thread_join(void *handle, unsigned int timeout_ms) {
-    (void)timeout_ms;
     if (!handle) return -1;
     pthread_t *thread = (pthread_t *)handle;
+#if defined(__linux__)
+    struct timespec deadline;
+    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) return -1;
+    deadline.tv_sec += (time_t)(timeout_ms / 1000u);
+    deadline.tv_nsec += (long)(timeout_ms % 1000u) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+    int rc = pthread_timedjoin_np(*thread, NULL, &deadline);
+    if (rc == ETIMEDOUT) return -1;
+#else
+    /* pthread has no portable timed join; a zero timeout is a non-blocking
+     * capability probe, while positive waits retain the standard join ABI. */
+    (void)timeout_ms;
     int rc = pthread_join(*thread, NULL);
+#endif
+    if (rc != 0) return rc;
     free(thread);
-    return rc;
+    return 0;
 }
 
 void im_thread_close(void *handle) {
