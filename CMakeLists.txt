@@ -83,8 +83,9 @@ if(INIMERSE_CLANG AND NOT WIN32)
   add_custom_target(wasm_probe ALL DEPENDS ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
   if(INIMERSE_NODE)
     add_test(NAME wasm_probe COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/wasm_probe_check.js ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+    add_test(NAME wasm_host COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/wasm_host.test.js ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
   endif()
-  set_tests_properties(wasm_probe PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
+  set_tests_properties(wasm_probe wasm_host PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
 endif()
 
 # The full engine is intentionally enabled only after the VM's thread/fiber
