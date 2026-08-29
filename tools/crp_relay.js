@@ -6,6 +6,7 @@ const wsClients = new Set();
 function createRelay(options = {}) {
   const verses = new Map();
   const friends = new Map();
+  const sessions = new Map();
   const content = new Map();
   const packages = new Map();
   const revoked = new Set();
@@ -47,6 +48,13 @@ function createRelay(options = {}) {
         if (!verses.has(p.verse)) return json(res, 404, { error: 'verse not found' });
         if (p.token && (revoked.has(String(p.token)) || !checkToken(p.token, p.verse, p.peer || '', 'signal'))) return json(res, 403, { error: 'invalid capability token' });
         return json(res, 202, { accepted: true, verse: p.verse, event: p.event });
+      }
+      if (req.method === 'POST' && req.url === '/session/resume') {
+        const p = await read(req); if (!p.verse || !p.peer || !p.token) return json(res, 400, { error: 'verse, peer and token are required' });
+        if (!verses.has(String(p.verse)) || !checkToken(p.token, String(p.verse), String(p.peer), 'signal') || revoked.has(String(p.token))) return json(res, 403, { error: 'invalid capability token' });
+        const key = `${p.verse}\0${p.peer}`; const seq = Number.isSafeInteger(p.seq) && p.seq >= 0 ? p.seq : 0; const prev = sessions.get(key) || 0;
+        if (seq < prev) return json(res, 409, { error: 'session sequence out of order', lastSeq: prev });
+        sessions.set(key, seq); return json(res, 200, { resumed: true, verse: p.verse, peer: p.peer, lastSeq: seq });
       }
       if (req.method === 'POST' && req.url === '/revoke') {
         const p = await read(req); if (!p.token) return json(res, 400, { error: 'token is required' });
@@ -115,7 +123,7 @@ function createRelay(options = {}) {
     });
     socket.on('close', () => wsClients.delete(socket)); socket.on('error', () => wsClients.delete(socket));
   });
-  return { server, verses, friends, packages, checkToken, revoked, wsClients };
+  return { server, verses, friends, sessions, packages, checkToken, revoked, wsClients };
 }
 
 if (require.main === module) createRelay().server.listen(Number(process.env.CRP_PORT || 8787), () => console.log('CRP relay listening'));

@@ -29,6 +29,7 @@ class CrpClient {
   listFriends(verse = '', signal) { return this.request('/friends' + (verse ? `?verse=${encodeURIComponent(verse)}` : ''), {}, signal); }
   portal(verse, peer, signal) { return this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer }) }, signal); }
   signal(verse, event, data = {}, signal) { return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, event, data }) }, signal); }
+  resumeSession(verse, peer, token, seq = 0, signal) { return this.request('/session/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer, token, seq }) }, signal); }
   revoke(token, signal) { return this.request('/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) }, signal); }
   publishPackage(id, bytes, signal) { const data = Buffer.from(bytes).toString('base64'); return this.request('/package', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, data }) }, signal); }
   listPackages(signal) { return this.request('/packages', {}, signal); }
