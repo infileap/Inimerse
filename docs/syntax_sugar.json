@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "version": "0.4",
+  "categories": {
+    "inner": [
+      {"name": "semicolon_tolerance", "implemented": true},
+      {"name": "range_literal", "implemented": true},
+      {"name": "increment_decrement", "syntax": ["++", "--"], "implemented": true},
+      {"name": "f_string", "implemented": true},
+      {"name": "trailing_comma", "implemented": true}
+    ],
+    "planned_inner": [
+      {"name": "pipeline", "syntax": "|>", "implemented": false},
+      {"name": "result_propagation", "syntax": "?", "implemented": false},
+      {"name": "lambda", "syntax": "x -> expr", "implemented": false},
+      {"name": "function_composition", "syntax": ">>", "implemented": false},
+      {"name": "collection_comprehension", "implemented": false}
+    ],
+    "outer": [
+      {"name": "function_alias", "from": "fn", "to": "func", "implemented": true},
+      {"name": "print_alias", "from": "print", "to": "say", "implemented": true},
+      {"name": "boolean_aliases", "from": ["&&", "||"], "to": ["and", "or"], "implemented": true},
+      {"name": "line_comment_alias", "from": "//", "to": "#", "implemented": true},
+      {"name": "unless", "implemented": true},
+      {"name": "say_target", "syntax": "say@target", "implemented": true},
+      {"name": "custom_translator_forms", "implemented": true}
+    ]
+  }
+}
