@@ -21,6 +21,8 @@ def main():
         assert (target / '.inim-cache' / 'demo' / 'app' / '0.1.0' / 'src' / 'main.im').is_file()
         run('install', '-t', str(root))
         assert (root / '.inim-cache' / 'other' / 'lib' / '0.1.0').is_dir()
+        dep_spec = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))['dependencies']['other/lib']
+        assert dep_spec['sha256']
         run('add', 'other/lib', '>=0.1.0 <1.0.0', '-p', str(root))
         run('doctor', str(root))
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))

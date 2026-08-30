@@ -59,6 +59,7 @@ def cmd_install(args):
                 raise SystemExit(f'inim: dependency {name} requires a local path in V0.4')
             dep = (target / spec['path']).resolve()
             if not dep.is_file(): raise SystemExit(f'inim: dependency package not found: {dep}')
+            if spec.get('sha256') and sha256(dep) != spec['sha256']: raise SystemExit(f'inim: dependency hash mismatch: {name}')
             cmd_install(argparse.Namespace(package=str(dep), target=str(target)))
         return
     pkg = Path(args.package)
@@ -82,7 +83,7 @@ def cmd_add(args):
         pkg = Path(args.package).resolve()
         if not pkg.is_file(): raise SystemExit(f'inim: package not found: {pkg}')
         with zipfile.ZipFile(pkg) as z: dep = json.loads(z.read('manifest.json').decode('utf-8'))
-        dep_name = dep.get('name'); spec = {'version': dep.get('version', '0.0.0'), 'path': os.path.relpath(pkg, root)}
+        dep_name = dep.get('name'); spec = {'version': dep.get('version', '0.0.0'), 'path': os.path.relpath(pkg, root), 'sha256': sha256(pkg)}
     else:
         if not dep_name or not args.version: raise SystemExit('inim: add requires NAME VERSION or a .inim package')
         spec = args.version
