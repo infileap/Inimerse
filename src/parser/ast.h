@@ -86,7 +86,7 @@ typedef enum {
     STMT_THREAD_CTRL, STMT_JOIN, STMT_THREAD_WAIT,
     STMT_LOCK, STMT_SEND, STMT_RECV,
     STMT_GUI,
-    STMT_DECLARE, STMT_CASE,
+    STMT_DECLARE, STMT_CASE, STMT_TYPE,
     STMT_RECORD,
     STMT_WITH,
  STMT_CONST,
@@ -169,6 +169,7 @@ struct Stmt {
         int count;
     } tagStmt;
     struct { StringView name; Expr *set; Expr *init; } beStmt;
+    struct { StringView name; Expr *set; } typeStmt;
     struct { Stmt **body; int bodyCount; StringView varName; Stmt **handler; int handlerCount; } tryStmt;
     struct { Expr *expr; } throwStmt;
     };

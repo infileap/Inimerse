@@ -1057,6 +1057,17 @@ static Stmt *parse_record_stmt(Parser *p) {
     return stmt;
 }
 
+static Stmt *parse_type_stmt(Parser *p) {
+    advance(p); /* type */
+    Stmt *s = (Stmt *)calloc(1, sizeof(*s));
+    s->type = STMT_TYPE;
+    Token name = consume(p, TOK_IDENT, "type name");
+    s->typeStmt.name = name.text;
+    consume(p, TOK_EQ, "'='");
+    s->typeStmt.set = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);
+    return s;
+}
+
 /* with scope: "entity", store: "both" { stmts } */
 static Stmt *parse_with_tags_stmt(Parser *p) {
     advance(p); /* TOK_WITH */
@@ -1109,6 +1120,7 @@ static Stmt *parse_stmt(Parser *p) {
     /* resource declaration: declare { ... } */
     if (t.type == TOK_DECLARE) return parse_declare(p);
     if (t.type == TOK_CASE) return parse_case(p);
+    if (t.type == TOK_TYPE) return parse_type_stmt(p);
     if (t.type == TOK_RECORD) return parse_record_stmt(p);
     if (t.type == TOK_CONST || t.type == TOK_FINAL) return parse_const_stmt(p);
     if (t.type == TOK_TAG) return parse_tag_stmt(p);

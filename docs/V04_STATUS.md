@@ -13,7 +13,8 @@
 | Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；独立 C API，尚未接入用户 `type` 声明 |
-| 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；parser/compiler 接入待完成 |
+| 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；基础 parser/compiler 接入已完成 |
+| `type Name = 集合表达式` 基础语法 | 已实现 | `type_collection_runtime`；当前编译为命名集合全局值，复杂类型元数据仍待完善 |
 | 预设业务/VM 错误集合目录 | 部分实现 | `error_types_probe`；核心 VM 除零/越界/约束失败已迁移，其他模块错误待完成 |
 | `|>` 管道 | 已实现 | `pipeline_runtime` |
 | 非捕获 lambda 与函数值调用 | 已实现 | `lambda_runtime`；闭包捕获仍未实现 |

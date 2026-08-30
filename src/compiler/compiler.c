@@ -1679,6 +1679,15 @@ case STMT_WITH: {
             emit(comp->curBC, OP_YIELD, 0, 0, 0);
             break;
 
+        case STMT_TYPE: {
+            char tname[256];
+            snprintf(tname, sizeof(tname), "%.*s", (int)stmt->typeStmt.name.length, stmt->typeStmt.name.start);
+            int g = register_global(comp, tname);
+            int setReg = compile_expr(comp, stmt->typeStmt.set);
+            emit(comp->curBC, OP_STORE_GLOBAL, g, setReg, 0);
+            release_temps(comp);
+            break;
+        }
         case STMT_BE: {
             char bname[256];
             snprintf(bname, sizeof(bname), "%.*s", (int)stmt->beStmt.name.length, stmt->beStmt.name.start);

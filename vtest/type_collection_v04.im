@@ -1,0 +1,4 @@
+# Named types are collection-valued globals and can be reused by be.
+type Byte = [0~255]
+x be Byte: 42
+say x
