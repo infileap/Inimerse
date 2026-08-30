@@ -1,2 +1,8 @@
 value = ok(42)?
 say value
+try {
+  bad = err("failure")?
+  say "unreachable"
+} catch (ex) {
+  say "caught"
+}
