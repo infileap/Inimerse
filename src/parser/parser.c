@@ -575,7 +575,31 @@ static Expr *parse_logic_or(Parser *p) {
     return e;
 }
 
-static Expr *parse_expr(Parser *p) { return parse_logic_or(p); }
+/* Pipeline is core syntax: `value |> fn(a)` lowers to `fn(value, a)`. */
+static Expr *parse_expr(Parser *p) {
+    Expr *left = parse_logic_or(p);
+    while (match(p, TOK_PIPELINE)) {
+        Expr *right = parse_logic_or(p);
+        Expr *call;
+        if (right->type == EXPR_CALL) {
+            call = right;
+            call->call.args = realloc(call->call.args, (size_t)(call->call.argCount + 1) * sizeof(Expr*));
+            memmove(call->call.args + 1, call->call.args,
+                    (size_t)call->call.argCount * sizeof(Expr*));
+            call->call.args[0] = left;
+            call->call.argCount++;
+        } else {
+            call = malloc(sizeof(Expr));
+            call->type = EXPR_CALL;
+            call->call.callee = right;
+            call->call.args = malloc(sizeof(Expr*));
+            call->call.args[0] = left;
+            call->call.argCount = 1;
+        }
+        left = call;
+    }
+    return left;
+}
 
 static Tag *parse_with_clause(Parser *p, int *count) {
     *count = 0; Tag *tags = NULL;
