@@ -36,6 +36,10 @@ add_executable(jit_mode_probe src/vm/jit_mode_probe.c src/vm/jit_mode.c)
 target_include_directories(jit_mode_probe PRIVATE src/vm)
 add_test(NAME jit_mode_probe COMMAND jit_mode_probe)
 
+add_executable(typeset_probe src/types/typeset.c src/types/typeset_probe.c)
+target_include_directories(typeset_probe PRIVATE src/types)
+add_test(NAME typeset_probe COMMAND typeset_probe)
+
 add_executable(fiber_probe src/platform/fiber.c src/platform/fiber_probe.c)
 if(NOT WIN32)
   target_link_libraries(fiber_probe PRIVATE Threads::Threads)

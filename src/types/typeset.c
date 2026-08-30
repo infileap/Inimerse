@@ -1,0 +1,132 @@
+#include "typeset.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+struct ImTypeSet {
+    ImTypeSetKind kind;
+    ImTypeValueKind value_kind;
+    ImTypeValue *values;
+    size_t value_count;
+    int64_t lo, hi;
+    bool lo_inclusive, hi_inclusive;
+    struct ImTypeSet *left;
+    struct ImTypeSet *right;
+};
+
+static ImTypeSet *alloc_set(ImTypeSetKind kind) {
+    ImTypeSet *set = (ImTypeSet *)calloc(1, sizeof(*set));
+    if (set) set->kind = kind;
+    return set;
+}
+
+ImTypeSet *im_typeset_empty(void) { return alloc_set(IM_TYPESET_EMPTY); }
+ImTypeSet *im_typeset_any(void) { return alloc_set(IM_TYPESET_ANY); }
+
+ImTypeSet *im_typeset_enum(ImTypeValueKind kind, const ImTypeValue *values, size_t count) {
+    ImTypeSet *set = alloc_set(IM_TYPESET_ENUM);
+    if (!set) return NULL;
+    set->value_kind = kind;
+    if (count != 0) {
+        set->values = (ImTypeValue *)malloc(count * sizeof(*set->values));
+        if (!set->values) { free(set); return NULL; }
+        memcpy(set->values, values, count * sizeof(*set->values));
+        set->value_count = count;
+    }
+    return set;
+}
+
+ImTypeSet *im_typeset_int_interval(int64_t lo, int64_t hi, bool lo_inclusive, bool hi_inclusive) {
+    ImTypeSet *set = alloc_set(IM_TYPESET_INT_INTERVAL);
+    if (!set) return NULL;
+    set->value_kind = IM_TYPE_INT;
+    set->lo = lo; set->hi = hi;
+    set->lo_inclusive = lo_inclusive; set->hi_inclusive = hi_inclusive;
+    return set;
+}
+
+static ImTypeSet *combine(ImTypeSetKind kind, const ImTypeSet *left, const ImTypeSet *right) {
+    ImTypeSet *set = alloc_set(kind);
+    if (!set) return NULL;
+    set->left = (ImTypeSet *)left;
+    set->right = (ImTypeSet *)right;
+    return set;
+}
+
+ImTypeSet *im_typeset_union(const ImTypeSet *left, const ImTypeSet *right) {
+    if (!left || !right) return NULL;
+    if (left->kind == IM_TYPESET_ANY || right->kind == IM_TYPESET_ANY) return im_typeset_any();
+    if (left->kind == IM_TYPESET_EMPTY) return (ImTypeSet *)right;
+    if (right->kind == IM_TYPESET_EMPTY) return (ImTypeSet *)left;
+    return combine(IM_TYPESET_UNION, left, right);
+}
+
+ImTypeSet *im_typeset_intersection(const ImTypeSet *left, const ImTypeSet *right) {
+    if (!left || !right) return NULL;
+    if (left->kind == IM_TYPESET_EMPTY || right->kind == IM_TYPESET_EMPTY) return im_typeset_empty();
+    if (left->kind == IM_TYPESET_ANY) return (ImTypeSet *)right;
+    if (right->kind == IM_TYPESET_ANY) return (ImTypeSet *)left;
+    return combine(IM_TYPESET_INTERSECTION, left, right);
+}
+
+void im_typeset_free(ImTypeSet *set) {
+    if (!set) return;
+    /* Union/intersection operands are borrowed; callers retain their ownership. */
+    free(set->values);
+    free(set);
+}
+
+static bool value_equal(const ImTypeValue *a, const ImTypeValue *b) {
+    if (!a || !b || a->kind != b->kind) return false;
+    switch (a->kind) {
+    case IM_TYPE_NIL: return true;
+    case IM_TYPE_BOOL: return a->boolean == b->boolean;
+    case IM_TYPE_INT: return a->integer == b->integer;
+    case IM_TYPE_FLOAT: return a->real == b->real;
+    case IM_TYPE_STRING: return a->string && b->string && strcmp(a->string, b->string) == 0;
+    }
+    return false;
+}
+
+bool im_typeset_contains(const ImTypeSet *set, const ImTypeValue *value) {
+    if (!set || !value) return false;
+    switch (set->kind) {
+    case IM_TYPESET_EMPTY: return false;
+    case IM_TYPESET_ANY: return true;
+    case IM_TYPESET_ENUM:
+        for (size_t i = 0; i < set->value_count; ++i)
+            if (value_equal(&set->values[i], value)) return true;
+        return false;
+    case IM_TYPESET_INT_INTERVAL: {
+        if (value->kind != IM_TYPE_INT) return false;
+        bool lower = set->lo_inclusive ? value->integer >= set->lo : value->integer > set->lo;
+        bool upper = set->hi_inclusive ? value->integer <= set->hi : value->integer < set->hi;
+        return lower && upper;
+    }
+    case IM_TYPESET_UNION:
+        return im_typeset_contains(set->left, value) || im_typeset_contains(set->right, value);
+    case IM_TYPESET_INTERSECTION:
+        return im_typeset_contains(set->left, value) && im_typeset_contains(set->right, value);
+    }
+    return false;
+}
+
+bool im_typeset_subset(const ImTypeSet *left, const ImTypeSet *right) {
+    if (!left || !right) return false;
+    if (left->kind == IM_TYPESET_EMPTY || right->kind == IM_TYPESET_ANY) return true;
+    if (right->kind == IM_TYPESET_EMPTY) return left->kind == IM_TYPESET_EMPTY;
+    if (left->kind == IM_TYPESET_ENUM) {
+        for (size_t i = 0; i < left->value_count; ++i)
+            if (!im_typeset_contains(right, &left->values[i])) return false;
+        return true;
+    }
+    if (left->kind == IM_TYPESET_UNION)
+        return im_typeset_subset(left->left, right) && im_typeset_subset(left->right, right);
+    if (left->kind == IM_TYPESET_INTERSECTION)
+        return im_typeset_subset(left->left, right) || im_typeset_subset(left->right, right);
+    return false;
+}
+
+ImTypeSetKind im_typeset_kind(const ImTypeSet *set) {
+    return set ? set->kind : IM_TYPESET_EMPTY;
+}
