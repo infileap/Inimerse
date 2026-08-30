@@ -12,7 +12,7 @@
       {"name": "result_propagation", "syntax": "?", "implemented": false},
       {"name": "lambda", "syntax": "x -> expr", "implemented": false},
       {"name": "function_composition", "syntax": ">>", "implemented": false},
-      {"name": "collection_comprehension", "implemented": false}
+      {"name": "collection_comprehension", "implemented": true}
     ],
     "outer": [
       {"name": "function_alias", "from": "fn", "to": "func", "implemented": true},

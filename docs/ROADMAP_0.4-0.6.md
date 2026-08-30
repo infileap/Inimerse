@@ -8,7 +8,7 @@
 
 > 集合化类型系统（谓词集合、类型即集合、集合映射）不属于 v0.4，统一延期至 v3.1；v0.4 仅维护现有基础集合的兼容性。
 
-实施状态（当前）：参数 v2、VFS 基础和 `inim` 离线包闭环已进入 `main`；集合/Result/Eidos、JIT 和发行渠道仍未完成。
+实施状态（当前）：参数 v2、VFS 基础、集合推导、Result 运行时和 `inim` 离线包闭环已进入 `main`；Result 传播语法、Eidos、JIT 和发行渠道仍未完成。
 
 Result 运行时原语已加入：`ok(value)`、`err(error)`、`is_ok(result)`、`unwrap_or(result, fallback)`、`unwrap(result)`；`unwrap` 在错误值上触发 VM 异常。第一版以字典值表示，语法糖 `?` 和编译器穷尽检查仍待实现。
 
