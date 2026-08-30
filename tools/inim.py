@@ -67,6 +67,7 @@ def cmd_install(args):
         try: m = json.loads(z.read('manifest.json').decode('utf-8'))
         except Exception as e: raise SystemExit(f'inim: invalid package manifest: {e}')
         if not isinstance(m.get('name'), str) or not isinstance(m.get('version'), str): raise SystemExit('inim: manifest missing name/version')
+        if not engine_ok(m.get('engine')): raise SystemExit(f"inim: package requires engine {m.get('engine')}")
         dest = target / '.inim-cache' / m['name'] / m['version']; dest.mkdir(parents=True, exist_ok=True)
         safe_extract(z, dest)
     lock = target / 'lock.json'; data = json.loads(lock.read_text(encoding='utf-8')) if lock.exists() else {'lock_version': 1, 'packages': {}}
@@ -138,6 +139,14 @@ def cmd_verify(args):
 def ver_tuple(v):
     m = re.match(r'^(\d+)\.(\d+)\.(\d+)', v or '')
     return tuple(map(int, m.groups())) if m else None
+
+def engine_ok(spec):
+    current = ver_tuple(os.environ.get('INIMERSE_ENGINE_VERSION', '0.4.0'))
+    for token in str(spec or '').split():
+        if token.startswith('>='):
+            required = ver_tuple(token[2:])
+            if required and (not current or current < required): return False
+    return True
 
 def satisfies(version, spec):
     v = ver_tuple(version)

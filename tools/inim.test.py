@@ -1,4 +1,4 @@
-import json, subprocess, sys, tempfile, zipfile
+import json, os, subprocess, sys, tempfile, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -34,6 +34,10 @@ def main():
         assert index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')
         run('verify', str(Path(td) / 'dist'))
         run('update', '-p', str(root), '-r', str(Path(td) / 'dist'))
+        prev_engine = os.environ.get('INIMERSE_ENGINE_VERSION'); os.environ['INIMERSE_ENGINE_VERSION'] = '0.3.0'
+        assert subprocess.run(CLI + ['install', str(dep_pkg), '-t', str(target)]).returncode != 0
+        if prev_engine is None: os.environ.pop('INIMERSE_ENGINE_VERSION', None)
+        else: os.environ['INIMERSE_ENGINE_VERSION'] = prev_engine
         (Path(td) / 'dist' / index['packages']['demo/app']['0.1.0']['file']).write_bytes(b'tampered')
         assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
         run('remove', 'demo/app', '-p', str(target))
