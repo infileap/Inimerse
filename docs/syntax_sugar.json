@@ -7,9 +7,7 @@
       {"name": "range_literal", "implemented": true},
       {"name": "increment_decrement", "syntax": ["++", "--"], "implemented": true},
       {"name": "f_string", "implemented": true},
-      {"name": "trailing_comma", "implemented": true}
-    ],
-    "planned_inner": [
+      {"name": "trailing_comma", "implemented": true},
       {"name": "pipeline", "syntax": "|>", "implemented": false},
       {"name": "result_propagation", "syntax": "?", "implemented": false},
       {"name": "lambda", "syntax": "x -> expr", "implemented": false},

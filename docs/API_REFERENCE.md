@@ -31,7 +31,7 @@ for i in 0..10 { say i }
 unless ready { say "not ready" }
 ```
 
-语法糖分为两层：内糖由核心前端直接处理（区间、分号容忍、`++/--`、尾逗号、f-string）；外糖由脱糖层处理（`fn`、`print`、`&&/||`、`//`、`unless`、`say@target`）。V0.4 规划的函数式内糖包括 `|>`、`?`、lambda、`>>` 和集合推导，详见 [SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)。
+语法糖分为两层：内糖由核心前端直接处理（区间、分号容忍、`++/--`、尾逗号、f-string）；外糖由脱糖层处理（`fn`、`print`、`&&/||`、`//`、`unless`、`say@target`）。V0.4 已确定的函数式内糖包括 `|>`、`?`、lambda、`>>` 和集合推导（其中部分仍待 parser/compiler 实现），详见 [SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)。
 数组/字典不可用 `+` 拼接，应使用 `push` 或显式构造。
 
 ## 3. 核心内置函数
