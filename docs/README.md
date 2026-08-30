@@ -11,6 +11,7 @@
 - [V0.4 数值模型草案](NUMERIC_MODEL_V04.md)
 - [集合变换性能审计](COLLECTION_PERF_AUDIT.md)
 - [V0.4 状态矩阵](V04_STATUS.md)
+- [发布产物验证](RELEASE_VERIFY.md)
 
 ## 平台与 API
 
