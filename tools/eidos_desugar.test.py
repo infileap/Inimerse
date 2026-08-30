@@ -7,6 +7,9 @@ def main():
     assert '"eidos ed"' in out
     assert '// eidos' in out
     assert 'record = 1' in out
+    composed = translate('h = f >> g\n# f >> g\nmsg = "f >> g"\n')
+    assert 'h = (x -> g(f(x)))' in composed
+    assert '# f >> g' in composed and '"f >> g"' in composed
     print('eidos desugar: ok')
 
 if __name__ == '__main__': main()

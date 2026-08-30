@@ -39,6 +39,7 @@
 - `say@target expr` → `say_target("target", expr)`
 - `eidos` / `ed` → `record`（由 `tools/eidos_desugar.py` 转换）
 - 用户自定义别名和迁移器产生的其他语言习惯表达
+- 简单函数名组合 `f >> g`（脱糖为 `x -> g(f(x))`；核心 `>>` 尚未接入）
 
 `inimerse --desugar` 是外糖的显式转换工具；外糖不应要求 VM 增加专用 opcode。
 
