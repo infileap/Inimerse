@@ -22,6 +22,12 @@ jobs:
           cmake --build build -j2
           ctest --test-dir build --output-on-failure
           cmake --build build --target package
+          find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
+          if [ -d "packaging/winget/infileap.inimerse/$VERSION" ]; then
+            python3 tools/release_verify.py build --version "$VERSION" --winget-dir "packaging/winget/infileap.inimerse/$VERSION"
+          else
+            python3 tools/release_verify.py build --version "$VERSION"
+          fi
       - name: Publish Linux packages
         uses: softprops/action-gh-release@v2
         with:
@@ -30,10 +36,6 @@ jobs:
             build/inimerse-*.tar.gz
             build/inimerse-*.zip
             build/inimerse-*.deb
-
-      - name: Generate SHA-256 manifest
-        shell: bash
-        run: find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
 
       - name: Upload SHA-256 manifest
         uses: softprops/action-gh-release@v2
