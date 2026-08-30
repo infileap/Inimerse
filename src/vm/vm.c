@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "../types/error_types.h"
 #include "../parser/parser.h"
 #include "../compiler/compiler.h"
 #include "../compiler/bytecode.h"
@@ -1875,6 +1876,15 @@ void vm_throw_msg(VM *vm, const char *msg) {
     err.ival = 1;
     err.fval = 0;
     vm_throw(vm, t, &err);
+}
+
+
+void vm_throw_kind(VM *vm, const char *kind) {
+    if (!kind || !im_error_kind_lookup(kind)) {
+        vm_throw_msg(vm, kind ? kind : "uncaught_exception");
+        return;
+    }
+    vm_throw_msg(vm, kind);
 }
 
 #define CHECK_INTERVAL 256 /* fast-path checks every N instructions */

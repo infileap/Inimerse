@@ -347,6 +347,8 @@ void vm_trigger_hook(VM *vm, const char *hook_name);
 void vm_set_user_data(VM *vm, void *data);
 void *vm_get_user_data(VM *vm);
 void vm_throw_msg(VM *vm, const char *msg);
+/* Throw a canonical member of one of the preset error sets. */
+void vm_throw_kind(VM *vm, const char *kind);
 void vm_global_grow(VM *vm, int need);
 void vm_global_clone(VM *vm); /* swap globals for a deep-name/shallow-value copy (nested vm_exec) */
 int vm_set_new(VM *vm);

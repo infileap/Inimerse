@@ -129,6 +129,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/main.c src/platform/platform.c src/platform/thread.c src/platform/fiber.c
     src/platform/dir.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
+    src/types/typeset.c src/types/error_types.c
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c)
