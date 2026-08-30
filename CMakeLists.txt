@@ -42,6 +42,9 @@ add_test(NAME typeset_probe COMMAND typeset_probe)
 add_executable(error_types_probe src/types/typeset.c src/types/error_types.c src/types/error_types_probe.c)
 target_include_directories(error_types_probe PRIVATE src/types)
 add_test(NAME error_types_probe COMMAND error_types_probe)
+add_executable(type_registry_probe src/types/typeset.c src/types/registry.c src/types/registry_probe.c)
+target_include_directories(type_registry_probe PRIVATE src/types)
+add_test(NAME type_registry_probe COMMAND type_registry_probe)
 
 add_executable(fiber_probe src/platform/fiber.c src/platform/fiber_probe.c)
 if(NOT WIN32)
@@ -129,7 +132,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/main.c src/platform/platform.c src/platform/thread.c src/platform/fiber.c
     src/platform/dir.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
-    src/types/typeset.c src/types/error_types.c
+    src/types/typeset.c src/types/error_types.c src/types/registry.c
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c)
