@@ -1,0 +1,10 @@
+PackageIdentifier: infileap.Inimerse
+PackageVersion: 0.4.0
+PackageLocale: en-US
+Publisher: Infileap
+PackageName: Inimerse
+PackageUrl: https://github.com/infileap/Inimerse
+License: MIT
+ShortDescription: Inimerse language runtime and development platform
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
