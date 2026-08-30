@@ -1,0 +1,22 @@
+# Winget manifest template for Inimerse. Update version and installer SHA256
+# when the corresponding GitHub Release is published.
+PackageIdentifier: infileap.Inimerse
+PackageVersion: 0.4.0
+PackageLocale: en-US
+Publisher: Infileap
+PackageName: Inimerse
+PackageUrl: https://github.com/infileap/Inimerse
+License: MIT
+ShortDescription: Inimerse language runtime and development platform
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
+---
+PackageIdentifier: infileap.Inimerse
+PackageVersion: 0.4.0
+InstallerType: inno
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/infileap/Inimerse/releases/download/v0.4.0/InimerseSetup-0.4.0.exe
+    InstallerSha256: REPLACE_WITH_RELEASE_SHA256
+ManifestType: installer
+ManifestVersion: 1.6.0
