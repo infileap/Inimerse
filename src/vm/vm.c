@@ -2622,7 +2622,7 @@ static void vm_execute_thread(VmThread *t) {
         L_DIV: {
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_INT && b->type == VAL_INT && b->ival == 0) {
-                vm_throw_msg(vm, "division by zero");
+                vm_throw_kind(vm, "division_by_zero");
                 R = t->reg + t->base;
                 continue;
             }
@@ -2833,7 +2833,7 @@ static void vm_execute_thread(VmThread *t) {
             if (obj->type == VAL_ARRAY) {
                 int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);
                 if (i < 0) {
-                    vm_throw_msg(vm, "index out of range");
+                    vm_throw_kind(vm, "index_out_of_range");
                     R = t->reg + t->base;
                     continue;
                 }
@@ -2883,7 +2883,7 @@ static void vm_execute_thread(VmThread *t) {
                 int bidx = vm->be_bound[idx] - 1;
                 if (!set_contains(vm, bidx, &newv)) {
                     if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
-                    vm_throw_msg(vm, "be: value out of range");
+                    vm_throw_kind(vm, "type_mismatch");
                     R = t->reg + t->base;
                     continue;
                 }
@@ -3299,7 +3299,7 @@ L_CALL_FUNC: {
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_INT && b->type == VAL_INT) {
                 if (b->ival == 0) {
-                    vm_throw_msg(vm, "division by zero");
+                    vm_throw_kind(vm, "division_by_zero");
                     R = t->reg + t->base;
                     continue;
                 }
@@ -3309,7 +3309,7 @@ L_CALL_FUNC: {
             }
             int bi = (int)val_as_double(b);
             if (bi == 0) {
-                vm_throw_msg(vm, "division by zero");
+                vm_throw_kind(vm, "division_by_zero");
                 R = t->reg + t->base;
                 continue;
             }
