@@ -28,9 +28,9 @@ jobs:
         with:
           name: inimerse-linux-packages
           path: |
-            build/inimerse-0.3.0-Linux-*.tar.gz
-            build/inimerse-0.3.0-Linux-*.zip
-            build/inimerse-0.3.0-Linux-*.deb
+            build/inimerse-*-Linux-*.tar.gz
+            build/inimerse-*-Linux-*.zip
+            build/inimerse-*-Linux-*.deb
       - name: Clean generated binary
         if: always()
         run: make clean
