@@ -22,6 +22,7 @@
 - lambda、闭包和函数值表示；
 - `>>` 函数组合（依赖函数值）；
 - `?` 的函数级 Err 自动返回与栈展开；
+- `case try` Result 分支语法与 `finally`；
 - Eidos class/instance/method 对象模型；
 - 真正模板/类型特化 JIT；
 - 远程 registry、签名验证、Winget/Linux 官方提交。

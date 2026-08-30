@@ -30,6 +30,8 @@
 | `|>` 管道 | 已实现 | 内糖 |
 | Result：`ok`、`err`、`is_ok`、`unwrap`、`unwrap_or` | 已实现 | 核心运行时 |
 | `expr?` | 部分实现 | 内糖；当前等价于 `unwrap(expr)`，函数帧级 Err 返回未完成 |
+| `try { ... } catch (...) { ... }` | 已实现 | 基础异常帧与 `throw`；不含 `finally` |
+| `case try expr { ... }` | 设计中 | Result 分支匹配语法尚未接入 parser/compiler |
 | `x -> expr`、`>>`、闭包、部分应用 | 设计中 | 已确定为内糖，函数值运行时尚未接入 |
 | `fn`、`print`、`&&`/`||`、`//`、`unless`、`eidos`/`ed` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
 | `?.`、`??`、链式比较、后缀 `if/unless` | 设计中 | 尚无核心 parser/compiler 支持 |
