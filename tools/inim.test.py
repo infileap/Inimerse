@@ -22,6 +22,7 @@ def main():
         run('install', '-t', str(root))
         assert (root / '.inim-cache' / 'other' / 'lib' / '0.1.0').is_dir()
         run('add', 'other/lib', '>=0.1.0 <1.0.0', '-p', str(root))
+        run('doctor', str(root))
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
         assert manifest['dependencies']['other/lib'] == '>=0.1.0 <1.0.0'
         (root / 'manifest.json').write_text(json.dumps({**manifest, 'version': 'bad'}, indent=2), encoding='utf-8')

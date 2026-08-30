@@ -162,6 +162,19 @@ def cmd_update(args):
         cmd_install(argparse.Namespace(package=str(pkg), target=str(root))); changed += 1
     print(f'updated {changed} package(s)')
 
+def cmd_doctor(args):
+    root = Path(args.path).resolve(); m = load_manifest(root); entry = (root / m['entry']).resolve()
+    if root not in entry.parents and entry != root: raise SystemExit('inim: manifest entry escapes project root')
+    if not entry.is_file(): raise SystemExit(f'inim: entry not found: {m["entry"]}')
+    lock = root / 'lock.json'
+    if lock.exists():
+        try: data = json.loads(lock.read_text(encoding='utf-8'))
+        except Exception as e: raise SystemExit(f'inim: invalid lock.json: {e}')
+        if data.get('lock_version') != 1 or not isinstance(data.get('packages', {}), dict): raise SystemExit('inim: unsupported lock.json format')
+    for name, spec in m.get('dependencies', {}).items():
+        if not isinstance(name, str) or not name or not isinstance(spec, (str, dict)): raise SystemExit(f'inim: invalid dependency declaration: {name}')
+    print(f"doctor: ok ({m['name']}@{m['version']})")
+
 def main():
     ap = argparse.ArgumentParser(prog='inim'); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
@@ -173,6 +186,7 @@ def main():
     p = sp.add_parser('publish'); p.add_argument('-p', '--path', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_publish)
     p = sp.add_parser('verify'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_verify)
     p = sp.add_parser('update'); p.add_argument('-p', '--path', default='.'); p.add_argument('-r', '--registry', default='dist'); p.set_defaults(fn=cmd_update)
+    p = sp.add_parser('doctor'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_doctor)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()
