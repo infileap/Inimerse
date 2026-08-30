@@ -1,5 +1,7 @@
-# 内置函数总表（由源码自动生成，共 370 个）
-# 内置函数总表（自动生成，共 370 个）
+# 内置函数总表（源码快照）
+
+本表列出当前构建注册的内置名称；状态与弃用说明见 [API_CATALOG.md](API_CATALOG.md)。
+名称清单会随模组构建选项变化，不能单独视为每个平台都可用。
 ## runtime 模组（59）
 `sqrt` `round` `int` `float` `str` `bool` `len` `size` `list` `sum` `push` `pop` `join` `split` `chars` `ord` `chr` `keys` `has` `remove` `substr` `replace` `startswith` `endswith` `trim` `upper` `lower` `index` `type` `args` `vm_exec` `usage` `match` `range` `load_params` `save_params` `list_params` `spi_meta` `spi_on` `spi_emit` `mod_limit` `mod_usage` `spi_caps` `spi_has` `spi_mods` `gc_auto` `gc_now` `atomic_add` `atomic_get` `atomic_set` `entity_spawn` `entity_kill` `entity_set` `entity_get` `entity_count` `entity_clear` `entity_neighbors` `entity_at` `gc_stats`
 

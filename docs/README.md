@@ -3,7 +3,7 @@
 ## 当前版本
 
 - [v0.3 交付状态](ROADMAP_0.3_STATUS.md)
-- [v0.3 待实现路线](ROADMAP_0.3.0.md)
+- [V0.4 状态矩阵](V04_STATUS.md)
 - [总体路线图](ROADMAP.md)
 - [GitHub 发布操作集](GITHUB_RELEASE_PLAYBOOK.md)
 - [内糖与外糖规范](SYNTAX_SUGAR.md)
@@ -18,6 +18,7 @@
 - [跨平台说明](PORTABILITY.md)
 - [WASM/WASI 说明](WASM.md)
 - [API 参考](API_REFERENCE.md)
+- [API 大全（状态索引）](API_CATALOG.md)
 - [内置 API 表](API_BUILTIN_TABLE.md)
 
 ## 后续版本

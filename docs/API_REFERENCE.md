@@ -1,5 +1,7 @@
 # Inimerse API 参考
 
+> API 状态总览请先看 [API 大全](API_CATALOG.md)。本页保留运行时与语言细节。
+
 > 本文档描述当前源码中可调用的接口（2026-08-26）。未来设计以 `future/` 为准，
 > 尚未实现的 Eidos、VFS 或 Inim OS 能力不属于现有 API。
 
@@ -89,5 +91,5 @@ AI 接口：`ai_config`、`ai_register`、`ai_list`、`ai_chat`、`ai_params`、
 
 ## 8. 相关文档
 
-[API_BUILTIN_TABLE.md](API_BUILTIN_TABLE.md) · [inimerse_API.md](inimerse_API.md) ·
+[API_CATALOG.md](API_CATALOG.md) · [API_BUILTIN_TABLE.md](API_BUILTIN_TABLE.md) ·
 [PORTABILITY.md](PORTABILITY.md) · `future/` 下的五份设计文档。

@@ -10,7 +10,7 @@ SRCS = src/main.c \
        src/parser/parser.c \
        src/compiler/bytecode.c \
        src/compiler/compiler.c \
-       src/vm/vm.c \
+       src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c src/mod/result_mod.c \
        
 
 ifeq ($(OS),Windows_NT)
