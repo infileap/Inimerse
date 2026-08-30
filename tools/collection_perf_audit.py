@@ -5,7 +5,7 @@ The harness measures the same scenarios under each VM/JIT mode. It intentionally
 discards program output and records only process timing; semantic correctness is
 covered by the language regression tests.
 """
-import argparse, json, statistics, subprocess, tempfile, time
+import argparse, json, statistics, subprocess, tempfile, time, shutil
 from pathlib import Path
 
 SCENARIOS = {
@@ -15,15 +15,28 @@ SCENARIOS = {
 
 def measure(engine, mode, script, iterations):
     samples = []
+    rss_samples = []
+    time_bin = shutil.which("/usr/bin/time") or shutil.which("time")
     for _ in range(iterations):
         start = time.perf_counter()
-        proc = subprocess.run([engine, "--jit", mode, str(script)],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        cmd = [engine, "--jit", mode, str(script)]
+        if time_bin and time_bin.endswith("/time"):
+            cmd = [time_bin, "-f", "%M", *cmd]
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         samples.append((time.perf_counter() - start) * 1000.0)
         if proc.returncode:
             raise RuntimeError(proc.stderr.decode(errors="replace"))
-    return {"mean_ms": statistics.mean(samples), "min_ms": min(samples),
-            "max_ms": max(samples), "stdev_ms": statistics.stdev(samples) if len(samples) > 1 else 0.0}
+        if time_bin and time_bin.endswith("/time"):
+            try:
+                rss_samples.append(int(proc.stderr.decode().strip().splitlines()[-1]))
+            except (ValueError, IndexError):
+                pass
+    result = {"mean_ms": statistics.mean(samples), "min_ms": min(samples),
+              "max_ms": max(samples), "stdev_ms": statistics.stdev(samples) if len(samples) > 1 else 0.0}
+    if rss_samples:
+        result["peak_rss_kb_max"] = max(rss_samples)
+        result["peak_rss_kb_mean"] = statistics.mean(rss_samples)
+    return result
 
 def main():
     ap = argparse.ArgumentParser()
@@ -52,8 +65,9 @@ def main():
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         for row in results:
+            memory = f", rss {row['peak_rss_kb_max']} KiB" if "peak_rss_kb_max" in row else ""
             print(f"{row['scenario']:24} {row['jit']:9} {row['mean_ms']:9.3f} ms "
-                  f"(min {row['min_ms']:.3f}, max {row['max_ms']:.3f})")
+                  f"(min {row['min_ms']:.3f}, max {row['max_ms']:.3f}{memory})")
 
 if __name__ == "__main__":
     main()
