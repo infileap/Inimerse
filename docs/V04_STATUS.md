@@ -13,13 +13,14 @@
 | Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | `|>` 管道 | 已实现 | `pipeline_runtime` |
+| 非捕获 lambda 与函数值调用 | 已实现 | `lambda_runtime`；闭包捕获仍未实现 |
 | 浮点字符串精度保护 | 已实现 17 位往返输出（`str` 与 VM 通用格式化） | `float_precision_runtime` |
 | JIT 开关 | 已实现，后端回退解释器 | `jit_mode_probe` |
 | HTTP 探针稳定性 | 已加入启动/端口重试 | 连续 5 次 `http_probe` 通过 |
 
 ## V0.4 仍需开发
 
-- lambda、闭包和函数值表示；
+- 闭包捕获和完整函数值生命周期管理；
 - `>>` 函数组合（依赖函数值）；
 - `?` 的函数级 Err 自动返回与栈展开；
 - `case try` Result 分支语法与 `finally`；

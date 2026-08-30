@@ -40,7 +40,8 @@ typedef enum {
     EXPR_INDEX, EXPR_LIST, EXPR_DICT, EXPR_TAG_ACCESS,
     EXPR_SETLIT, EXPR_SETINTERVAL,
     EXPR_SETCOMP,
-    EXPR_ARROW_CAST
+    EXPR_ARROW_CAST,
+    EXPR_LAMBDA
 } ExprType;
 
 struct Expr {
@@ -63,6 +64,7 @@ struct Expr {
     struct { Expr *set; StringView varName; Expr *cond; } setcomp;
         struct { Expr **items; int count; } setlit;
         struct { StringView base; Expr *lo; Expr *hi; int loInc; int hiInc; } setinterval;
+        struct { StringView *params; int paramCount; Expr *body; } lambda;
     };
 };
 

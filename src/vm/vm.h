@@ -19,7 +19,7 @@ static inline void LeaveCriticalSection(CRITICAL_SECTION *m) { pthread_mutex_unl
 typedef struct VM VM;
 typedef struct VmThread VmThread;
 
-enum ValueType { VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_OBJECT, VAL_NIL, VAL_ARRAY, VAL_DICT, VAL_SET };
+enum ValueType { VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_OBJECT, VAL_NIL, VAL_ARRAY, VAL_DICT, VAL_SET, VAL_FUNCTION };
 
 typedef struct {
     int type; int ival; double fval; char *sval;

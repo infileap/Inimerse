@@ -2185,6 +2185,7 @@ static void vm_execute_thread(VmThread *t) {
     const long long exec_limit = 50000000000LL;
     DWORD exec_t0 = GetTickCount64();
     long long exec_count = 0;
+    int call_fidx_override = -1;
 
         t->running = true;
     t->exc_depth = 0;
@@ -2347,6 +2348,8 @@ static void vm_execute_thread(VmThread *t) {
         case OP_HALT: goto L_HALT;
         case OP_YIELD: goto L_YIELD;
         case OP_CALL_FUNC: goto L_CALL_FUNC;
+        case OP_MAKE_FUNC: goto L_MAKE_FUNC;
+        case OP_CALL_VALUE: goto L_CALL_VALUE;
         case OP_RETURN: goto L_RETURN;
         case OP_IS_NIL: goto L_IS_NIL;
         case OP_THREAD_START: goto L_THREAD_START;
@@ -3113,8 +3116,15 @@ static void vm_execute_thread(VmThread *t) {
             if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
             continue;
         }
+L_MAKE_FUNC: {
+            R[ins.r1].type = VAL_FUNCTION; R[ins.r1].ival = ins.r2; R[ins.r1].fval = 0; R[ins.r1].sval = NULL; continue;
+        }
+L_CALL_VALUE: {
+            if (R[ins.r1].type != VAL_FUNCTION) { fprintf(stderr, "error: value is not callable\n"); t->running = false; vm->last_error = 1; continue; }
+            call_fidx_override = R[ins.r1].ival; goto L_CALL_FUNC;
+        }
 L_CALL_FUNC: {
-            int fidx = ins.r1, res = ins.r2, argc = ins.r3;
+            int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;
             if (fidx >= 0 && fidx < root->func_count && root->func_names[fidx] && strncmp(root->func_names[fidx], "h", 1) == 0)
             if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {
                 fprintf(stderr, "閿欒�? 鏃犳晥鍑芥暟绱㈠�?%d\n", fidx);

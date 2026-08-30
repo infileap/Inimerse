@@ -5,6 +5,7 @@
 #include <string.h>
 
 static int next_register = 1;
+static int lambda_counter = 0;
 static int reg_peak = 0;
 static int alloc_reg(void) { if (next_register >= 1024) { fprintf(stderr, "\n[error] registers overflow (>=1024), abort compile.\n"); exit(1); } if (next_register > reg_peak) reg_peak = next_register; return next_register++; }
 static void reset_regs(void) { next_register = 1; reg_peak = 0; }
@@ -754,6 +755,15 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             return result;
         }
         case EXPR_CALL: {
+            if (expr->call.callee->type == EXPR_IDENT) {
+                char cn[256]; snprintf(cn, sizeof cn, "%.*s", (int)expr->call.callee->identName.length, expr->call.callee->identName.start);
+                if (lookup_func(comp, cn) < 0 && (lookup_local(comp, cn) >= 0 || lookup_global_idx(comp, cn) >= 0)) {
+                    int w0 = next_register; int callee = compile_expr(comp, expr->call.callee);
+                    for (int i = 0; i < expr->call.argCount; i++) { int ar = compile_expr(comp, expr->call.args[i]); emit(comp->curBC, OP_PUSH_REG, ar, 0, 0); }
+                    release_to(comp, w0); int out = alloc_reg(); emit(comp->curBC, OP_CALL_VALUE, callee, out, expr->call.argCount);
+                    comp->last_temp = 1; return out;
+                }
+            }
             if (expr->call.callee->type == EXPR_IDENT || expr->call.callee->type == EXPR_MEMBER) {
                 char fname[256];
                 if (expr->call.callee->type == EXPR_IDENT) {
@@ -1007,8 +1017,21 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             }
             return -1;
         }
-        case EXPR_ARROW_CAST: {
-            /* in-place cast: a->int / a->float / a->str / a->bool (same as a.toXXX) */
+        case EXPR_LAMBDA: {
+            char lname[64]; snprintf(lname, sizeof lname, "__lambda_%d", lambda_counter++);
+            int fidx = register_func(comp, lname);
+            Bytecode *saved_bc = comp->curBC; int saved_fn = comp->in_function;
+            int saved_locals = comp->localCount, saved_gdecl = comp->gdeclCount;
+            int saved_peak = comp->local_peak, saved_next = next_register, saved_reg_peak = reg_peak;
+            Bytecode *fbc = malloc(sizeof(*fbc)); bytecode_init(fbc);
+            comp->curBC = fbc; comp->in_function = 1; comp->localCount = 0; comp->gdeclCount = 0; comp->local_peak = 0; reset_regs();
+            for (int i = 0; i < expr->lambda.paramCount; i++) { char pn[256]; snprintf(pn, sizeof pn, "%.*s", (int)expr->lambda.params[i].length, expr->lambda.params[i].start); alloc_local(comp, pn); }
+            int rr = compile_expr(comp, expr->lambda.body); emit(fbc, OP_RETURN, rr, 0, 0); resolve_labels(comp);
+            comp->mainBC->funcs[fidx] = fbc; comp->mainBC->func_argc[fidx] = expr->lambda.paramCount;
+            comp->curBC = saved_bc; comp->in_function = saved_fn; comp->localCount = saved_locals; comp->gdeclCount = saved_gdecl; comp->local_peak = saved_peak; next_register = saved_next; reg_peak = saved_reg_peak;
+            int out = alloc_reg(); emit(comp->curBC, OP_MAKE_FUNC, out, fidx, 0); comp->last_temp = 1; return out;
+        }
+        case EXPR_ARROW_CAST: {            /* in-place cast: a->int / a->float / a->str / a->bool (same as a.toXXX) */
             if (expr->arrowCast.object->type != EXPR_IDENT) {
                 fprintf(stderr, "Error: '->' cast requires a variable\n");
                 exit(1);

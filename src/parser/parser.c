@@ -587,8 +587,30 @@ static Expr *parse_logic_or(Parser *p) {
     return e;
 }
 
-/* Pipeline is core syntax: `value |> fn(a)` lowers to `fn(value, a)`. */
+/* Core lambda syntax: x -> expr and (a,b) -> expr. */
+static Expr *parse_lambda_prefix(Parser *p) {
+    Token t = peek(p), n = peek_next(p);
+    if (t.type == TOK_IDENT && n.type == TOK_ARROW) {
+        advance(p); advance(p); Expr *e = calloc(1, sizeof(*e)); e->type = EXPR_LAMBDA;
+        e->lambda.params = malloc(sizeof(StringView)); e->lambda.params[0] = t.text;
+        e->lambda.paramCount = 1; e->lambda.body = parse_expr(p); return e;
+    }
+    if (t.type == TOK_LPAREN && n.type == TOK_IDENT) {
+        Token q = peek_next_next(p);
+        if (q.type == TOK_ARROW || q.type == TOK_COMMA) {
+            advance(p); StringView *ps = NULL; int count = 0;
+            do { Token pn = consume(p, TOK_IDENT, "lambda parameter"); ps = realloc(ps, (size_t)(count + 1) * sizeof(*ps)); ps[count++] = pn.text; } while (match(p, TOK_COMMA));
+            consume(p, TOK_RPAREN, "')'");
+            if (!match(p, TOK_ARROW)) { free(ps); return NULL; }
+            Expr *e = calloc(1, sizeof(*e)); e->type = EXPR_LAMBDA; e->lambda.params = ps;
+            e->lambda.paramCount = count; e->lambda.body = parse_expr(p); return e;
+        }
+    }
+    return NULL;
+}
 static Expr *parse_expr(Parser *p) {
+    Expr *lambda = parse_lambda_prefix(p);
+    if (lambda) return lambda;
     Expr *left = parse_logic_or(p);
     while (match(p, TOK_PIPELINE)) {
         Expr *right = parse_logic_or(p);

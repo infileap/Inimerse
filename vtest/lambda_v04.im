@@ -1,0 +1,5 @@
+# V0.4 lambda smoke test
+double = x -> x * 2
+say double(21)
+sum2 = (a, b) -> a + b
+say sum2(2, 3)
