@@ -19,7 +19,10 @@ def measure(engine, mode, script, iterations):
     time_bin = shutil.which("/usr/bin/time") or shutil.which("time")
     for _ in range(iterations):
         start = time.perf_counter()
-        cmd = [engine, "--jit", mode, str(script)]
+        # The CLI accepts the mode as an equals-form option.  Passing it as a
+        # separate positional argument makes the engine interpret ``--jit`` as
+        # the script path on older builds.
+        cmd = [engine, f"--jit={mode}", str(script)]
         if time_bin and time_bin.endswith("/time"):
             cmd = [time_bin, "-f", "%M", *cmd]
         proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
