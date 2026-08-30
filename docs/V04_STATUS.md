@@ -13,7 +13,7 @@
 | Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | `|>` 管道 | 已实现 | `pipeline_runtime` |
-| 浮点字符串精度保护 | 已实现 17 位往返输出 | `float_precision_runtime` |
+| 浮点字符串精度保护 | 已实现 17 位往返输出（`str` 与 VM 通用格式化） | `float_precision_runtime` |
 | JIT 开关 | 已实现，后端回退解释器 | `jit_mode_probe` |
 | HTTP 探针稳定性 | 已加入启动/端口重试 | 连续 5 次 `http_probe` 通过 |
 
@@ -33,4 +33,4 @@
 1. 全量 Bug 排查：构建、CTest、语言/协议/包回归和跨平台 CI，失败项必须有修复记录；
 2. 集合变换性能审计：固定规模和构建配置，比较 JIT 模式耗时、峰值内存、结果哈希并设回归阈值。
 
-当前最近一次全量预审计为 19/20 首次通过；`http_probe` 已修复启动竞态并连续重跑通过，仍需在最终冻结后再跑完整门禁。
+当前最近一次全量预审计为 20/20 通过；`http_probe` 已修复启动竞态并连续重跑通过，仍需在最终冻结后再跑完整门禁。
