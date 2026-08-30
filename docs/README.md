@@ -6,6 +6,7 @@
 - [v0.3 待实现路线](ROADMAP_0.3.0.md)
 - [总体路线图](ROADMAP.md)
 - [GitHub 发布操作集](GITHUB_RELEASE_PLAYBOOK.md)
+- [内糖与外糖规范](SYNTAX_SUGAR.md)
 
 ## 平台与 API
 
