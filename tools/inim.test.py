@@ -30,6 +30,9 @@ def main():
         run('publish', '-p', str(root), '-o', str(Path(td) / 'dist'))
         index = json.loads((Path(td) / 'dist' / 'index.json').read_text(encoding='utf-8'))
         assert index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')
+        run('verify', str(Path(td) / 'dist'))
+        (Path(td) / 'dist' / index['packages']['demo/app']['0.1.0']['file']).write_bytes(b'tampered')
+        assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
         run('remove', 'demo/app', '-p', str(target))
         assert not (target / '.inim-cache' / 'demo' / 'app' / '0.1.0').exists()
         bad = Path(td) / 'bad.inim'

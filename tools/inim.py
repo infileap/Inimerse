@@ -122,6 +122,19 @@ def cmd_publish(args):
     index.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     print(f"published {m['name']}@{m['version']} -> {pkg}")
 
+def cmd_verify(args):
+    root = Path(args.path).resolve(); index = root / 'index.json'
+    if not index.is_file(): raise SystemExit(f'inim: missing index.json in {root}')
+    data = json.loads(index.read_text(encoding='utf-8')); checked = 0
+    for name, versions in data.get('packages', {}).items():
+        for version, item in versions.items():
+            pkg = root / item.get('file', '')
+            if not pkg.is_file(): raise SystemExit(f'inim: missing package {name}@{version}: {pkg.name}')
+            actual = sha256(pkg)
+            if actual != item.get('sha256'): raise SystemExit(f'inim: hash mismatch {name}@{version}')
+            checked += 1
+    print(f'verified {checked} package(s)')
+
 def main():
     ap = argparse.ArgumentParser(prog='inim'); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
@@ -131,6 +144,7 @@ def main():
     p = sp.add_parser('remove'); p.add_argument('name'); p.add_argument('-p', '--path', default='.'); p.set_defaults(fn=cmd_remove)
     p = sp.add_parser('run'); p.add_argument('args', nargs='*'); p.add_argument('-p', '--path', default='.'); p.add_argument('--engine'); p.set_defaults(fn=cmd_run)
     p = sp.add_parser('publish'); p.add_argument('-p', '--path', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_publish)
+    p = sp.add_parser('verify'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_verify)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()
