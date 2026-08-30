@@ -17,7 +17,8 @@ jobs:
       - name: Build, test, and package
         run: |
           node tools/regression.js
-          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON
+          VERSION="${GITHUB_REF_NAME#v}"
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
           ctest --test-dir build --output-on-failure
           cmake --build build --target package
