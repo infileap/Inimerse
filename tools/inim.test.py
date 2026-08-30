@@ -21,16 +21,18 @@ def main():
         assert (target / '.inim-cache' / 'demo' / 'app' / '0.1.0' / 'src' / 'main.im').is_file()
         run('install', '-t', str(root))
         assert (root / '.inim-cache' / 'other' / 'lib' / '0.1.0').is_dir()
-        run('add', 'other/lib', '>=1.0.0 <2.0.0', '-p', str(root))
+        run('add', 'other/lib', '>=0.1.0 <1.0.0', '-p', str(root))
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
-        assert manifest['dependencies']['other/lib'] == '>=1.0.0 <2.0.0'
+        assert manifest['dependencies']['other/lib'] == '>=0.1.0 <1.0.0'
         (root / 'manifest.json').write_text(json.dumps({**manifest, 'version': 'bad'}, indent=2), encoding='utf-8')
         assert subprocess.run(CLI + ['pack', str(root), '-o', str(Path(td) / 'bad.inim')]).returncode != 0
         (root / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+        run('publish', '-p', str(dep_root), '-o', str(Path(td) / 'dist'))
         run('publish', '-p', str(root), '-o', str(Path(td) / 'dist'))
         index = json.loads((Path(td) / 'dist' / 'index.json').read_text(encoding='utf-8'))
         assert index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')
         run('verify', str(Path(td) / 'dist'))
+        run('update', '-p', str(root), '-r', str(Path(td) / 'dist'))
         (Path(td) / 'dist' / index['packages']['demo/app']['0.1.0']['file']).write_bytes(b'tampered')
         assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
         run('remove', 'demo/app', '-p', str(target))

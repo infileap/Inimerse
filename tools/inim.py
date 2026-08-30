@@ -135,6 +135,33 @@ def cmd_verify(args):
             checked += 1
     print(f'verified {checked} package(s)')
 
+def ver_tuple(v):
+    m = re.match(r'^(\d+)\.(\d+)\.(\d+)', v or '')
+    return tuple(map(int, m.groups())) if m else None
+
+def satisfies(version, spec):
+    v = ver_tuple(version)
+    if not v: return False
+    for token in str(spec or '').split():
+        op = '>=' if token.startswith('>=') else '<=' if token.startswith('<=') else '>' if token.startswith('>') else '<' if token.startswith('<') else '='
+        rhs = token[len(op):] if op != '=' else token
+        r = ver_tuple(rhs)
+        if not r: continue
+        if op == '>=' and not v >= r or op == '<=' and not v <= r or op == '>' and not v > r or op == '<' and not v < r or op == '=' and not v == r: return False
+    return True
+
+def cmd_update(args):
+    root = Path(args.path).resolve(); manifest = load_manifest(root); index_path = Path(args.registry).resolve() / 'index.json'
+    if not index_path.is_file(): raise SystemExit(f'inim: missing registry index: {index_path}')
+    index = json.loads(index_path.read_text(encoding='utf-8')); changed = 0
+    for name, spec in manifest.get('dependencies', {}).items():
+        if isinstance(spec, dict): spec = spec.get('version', '')
+        versions = index.get('packages', {}).get(name, {}); choices = [v for v in versions if satisfies(v, spec)]
+        if not choices: raise SystemExit(f'inim: no registry version satisfies {name}: {spec}')
+        chosen = max(choices, key=ver_tuple); item = versions[chosen]; pkg = index_path.parent / item['file']
+        cmd_install(argparse.Namespace(package=str(pkg), target=str(root))); changed += 1
+    print(f'updated {changed} package(s)')
+
 def main():
     ap = argparse.ArgumentParser(prog='inim'); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('init'); p.add_argument('path', nargs='?', default='.'); p.add_argument('--name'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_init)
@@ -145,6 +172,7 @@ def main():
     p = sp.add_parser('run'); p.add_argument('args', nargs='*'); p.add_argument('-p', '--path', default='.'); p.add_argument('--engine'); p.set_defaults(fn=cmd_run)
     p = sp.add_parser('publish'); p.add_argument('-p', '--path', default='.'); p.add_argument('-o', '--output'); p.set_defaults(fn=cmd_publish)
     p = sp.add_parser('verify'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_verify)
+    p = sp.add_parser('update'); p.add_argument('-p', '--path', default='.'); p.add_argument('-r', '--registry', default='dist'); p.set_defaults(fn=cmd_update)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()
