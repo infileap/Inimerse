@@ -9,6 +9,18 @@
 int verse_http_start(int port);
 void verse_http_stop(void);
 
+static int pal_health(int port, char *body, size_t cap, int *status) {
+    char url[96];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/health", port);
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (im_http_request("GET", url, NULL, body, cap, status) == 0 &&
+            *status == 200 && strstr(body, "\"ok\":true")) return 1;
+        struct timespec ts = {0, 20000000L};
+        nanosleep(&ts, NULL);
+    }
+    return 0;
+}
+
 static int query(int port, const char *request, const char *expect) {
     for (int attempt = 0; attempt < 10; ++attempt) {
         ImSocket *client = im_socket_connect_timeout("127.0.0.1", (uint16_t)port, 500);
@@ -35,13 +47,18 @@ static int request_body(int port, const char *request, char *out, size_t cap) {
 int main(void) {
     /* Spread probes across the ephemeral range so parallel CI jobs and quick
        reruns do not collide with a recently-closing listener. */
-    const int port = 20000 + (int)(((unsigned long)getpid() * 37UL + (unsigned long)time(NULL)) % 20000UL);
+    int port = 20000 + (int)(((unsigned long)getpid() * 37UL + (unsigned long)time(NULL)) % 20000UL);
     setenv("INIMERSE_STATE_FILE", "/tmp/inimerse_http_probe_state", 1);
     remove("/tmp/inimerse_http_probe_state");
     setenv("CRP_TOKEN_TTL", "1", 1);
-    if (!verse_http_start(port)) return 2;
-    char pal_body[512], pal_url[96]; int pal_status = 0; snprintf(pal_url, sizeof pal_url, "http://127.0.0.1:%d/health", port);
-    if (im_http_request("GET", pal_url, NULL, pal_body, sizeof pal_body, &pal_status) != 0 || pal_status != 200 || !strstr(pal_body, "\"ok\":true")) { verse_http_stop(); return 8; }
+    int started = 0;
+    for (int attempt = 0; attempt < 12 && !started; ++attempt) {
+        started = verse_http_start(port);
+        if (!started) port = 20000 + ((port - 20000 + 7919) % 20000);
+    }
+    if (!started) return 2;
+    char pal_body[512]; int pal_status = 0;
+    if (!pal_health(port, pal_body, sizeof pal_body, &pal_status)) { verse_http_stop(); return 8; }
     const char *request = "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     if (!query(port, request, "\"ok\":true")) { verse_http_stop(); return 3; }
     const char *find = "GET /find?q=x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
