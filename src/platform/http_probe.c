@@ -33,7 +33,9 @@ static int request_body(int port, const char *request, char *out, size_t cap) {
     return -1;
 }
 int main(void) {
-    const int port = 19000 + ((int)getpid() % 1000);
+    /* Spread probes across the ephemeral range so parallel CI jobs and quick
+       reruns do not collide with a recently-closing listener. */
+    const int port = 20000 + (int)(((unsigned long)getpid() * 37UL + (unsigned long)time(NULL)) % 20000UL);
     setenv("INIMERSE_STATE_FILE", "/tmp/inimerse_http_probe_state", 1);
     remove("/tmp/inimerse_http_probe_state");
     setenv("CRP_TOKEN_TTL", "1", 1);
