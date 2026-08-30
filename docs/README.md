@@ -8,6 +8,7 @@
 - [GitHub 发布操作集](GITHUB_RELEASE_PLAYBOOK.md)
 - [内糖与外糖规范](SYNTAX_SUGAR.md)
 - [语法糖机器清单](syntax_sugar.json)
+- [V0.4 数值模型草案](NUMERIC_MODEL_V04.md)
 
 ## 平台与 API
 
