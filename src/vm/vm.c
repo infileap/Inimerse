@@ -628,7 +628,7 @@ static void vts_double(char *buf, int bufsz, double dv) {
         return;
     }
     if (dv >= 1e15 || dv <= -1e15) {                     /* huge: scientific, no int64 cast overflow */
-        snprintf(buf, bufsz, "%.6g", dv);
+        snprintf(buf, bufsz, "%.17g", dv);
         return;
     }
     long long ip = (long long)dv;
