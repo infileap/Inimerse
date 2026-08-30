@@ -887,6 +887,7 @@ static Stmt *parse_case(Parser *p) {
     advance(p); /* TOK_CASE */
     Stmt *stmt = malloc(sizeof(Stmt));
     stmt->type = STMT_CASE;
+    stmt->caseStmt.isTry = match(p, TOK_TRY) ? 1 : 0;
     stmt->caseStmt.subject = parse_expr(p);
     stmt->caseStmt.branches = NULL;
     stmt->caseStmt.branchCount = 0;

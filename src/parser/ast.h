@@ -145,6 +145,7 @@ struct Stmt {
             Expr *subject;
             CaseBranch *branches;
             int branchCount;
+            int isTry;
         } caseStmt;
     struct {
         char *name;

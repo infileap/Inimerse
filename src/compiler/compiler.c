@@ -1185,7 +1185,35 @@ case STMT_WITH: {
                 CaseBranch *br = &stmt->caseStmt.branches[bi];
                 int *body_jumps = NULL; int body_jcount = 0;
                 int *skip_jumps = NULL; int skip_count = 0;
-                if (br->mode == 0) {
+                if (stmt->caseStmt.isTry && br->mode == 0 && br->patternCount == 1) {
+                    Expr *pattern = br->patterns[0];
+                    int is_err = 0;
+                    int is_result_branch = 0;
+                    if (pattern->type == EXPR_IDENT) {
+                        if (pattern->identName.length == 2 && strncmp(pattern->identName.start, "ok", 2) == 0) is_result_branch = 1;
+                        if (pattern->identName.length == 3 && strncmp(pattern->identName.start, "err", 3) == 0) { is_result_branch = 1; is_err = 1; }
+                    } else if (pattern->type == EXPR_CALL && pattern->call.callee && pattern->call.callee->type == EXPR_IDENT) {
+                        if (pattern->call.callee->identName.length == 2 && strncmp(pattern->call.callee->identName.start, "ok", 2) == 0) is_result_branch = 1;
+                        if (pattern->call.callee->identName.length == 3 && strncmp(pattern->call.callee->identName.start, "err", 3) == 0) { is_result_branch = 1; is_err = 1; }
+                    }
+                    if (is_result_branch) {
+                        emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
+                        int check = alloc_reg();
+                        int bi = lookup_builtin(comp, "is_ok");
+                        emit(comp->curBC, OP_CALL_BUILTIN, check, bi, 1);
+                        int cond = check;
+                        if (is_err) { cond = alloc_reg(); emit(comp->curBC, OP_NOT, cond, check, 0); }
+                        int jt = comp->curBC->count;
+                        emit(comp->curBC, OP_JUMP_IF_TRUE, cond, 0, 0);
+                        add_break(&body_jumps, &body_jcount, jt);
+                    } else {
+                        for (int pi = 0; pi < br->patternCount; pi++) {
+                            int pat = compile_expr(comp, br->patterns[pi]);
+                            int tmp = alloc_reg(); emit(comp->curBC, OP_EQ, tmp, subj, pat);
+                            int jt = comp->curBC->count; emit(comp->curBC, OP_JUMP_IF_TRUE, tmp, 0, 0); add_break(&body_jumps, &body_jcount, jt);
+                        }
+                    }
+                } else if (br->mode == 0) {
                     /* value list: any pattern == subject -> body; single list/set/comprehension literal -> in semantics */
                     if (br->patternCount == 1 && (br->patterns[0]->type == EXPR_LIST ||
                         br->patterns[0]->type == EXPR_SETLIT || br->patterns[0]->type == EXPR_SETCOMP)) {
