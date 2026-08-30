@@ -1,0 +1,2 @@
+value = ok(42)?
+say value

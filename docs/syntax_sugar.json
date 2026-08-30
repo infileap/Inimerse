@@ -9,7 +9,7 @@
       {"name": "f_string", "implemented": true},
       {"name": "trailing_comma", "implemented": true},
       {"name": "pipeline", "syntax": "|>", "implemented": true},
-      {"name": "result_propagation", "syntax": "?", "implemented": false},
+      {"name": "result_propagation", "syntax": "?", "implemented": true, "semantics": "unwrap postfix (function-level propagation follows)"},
       {"name": "lambda", "syntax": "x -> expr", "implemented": false},
       {"name": "function_composition", "syntax": ">>", "implemented": false},
       {"name": "collection_comprehension", "implemented": true}
