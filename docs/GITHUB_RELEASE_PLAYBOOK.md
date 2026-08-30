@@ -23,7 +23,7 @@ git status --short
 git diff --check
 
 # Linux 构建（Windows 主机通过 WSL）
-wsl.exe -d Ubuntu-26.04 -- bash -lc "cd /mnt/d/inimerse_stable && cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON && cmake --build build -j2 && ctest --test-dir build --output-on-failure && cmake --build build --target package"
+wsl.exe -d Ubuntu-26.04 -- bash -lc "cd /mnt/d/inimerse_stable && cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=$version && cmake --build build -j2 && ctest --test-dir build --output-on-failure && cmake --build build --target package"
 ```
 
 工作树中若有未提交的预期变更，应先提交并推送；不要在发布过程中使用 `git reset --hard` 或清理用户文件。
