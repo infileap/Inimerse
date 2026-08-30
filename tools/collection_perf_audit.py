@@ -5,7 +5,7 @@ The harness measures the same scenarios under each VM/JIT mode. It intentionally
 discards program output and records only process timing; semantic correctness is
 covered by the language regression tests.
 """
-import argparse, json, statistics, subprocess, tempfile, time, shutil
+import argparse, hashlib, json, statistics, subprocess, tempfile, time, shutil
 from pathlib import Path
 
 SCENARIOS = {
@@ -25,10 +25,11 @@ def measure(engine, mode, script, iterations):
         cmd = [engine, f"--jit={mode}", str(script)]
         if time_bin and time_bin.endswith("/time"):
             cmd = [time_bin, "-f", "%M", *cmd]
-        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         samples.append((time.perf_counter() - start) * 1000.0)
         if proc.returncode:
             raise RuntimeError(proc.stderr.decode(errors="replace"))
+        result_hash = hashlib.sha256(proc.stdout).hexdigest()
         if time_bin and time_bin.endswith("/time"):
             try:
                 rss_samples.append(int(proc.stderr.decode().strip().splitlines()[-1]))
@@ -39,6 +40,7 @@ def measure(engine, mode, script, iterations):
     if rss_samples:
         result["peak_rss_kb_max"] = max(rss_samples)
         result["peak_rss_kb_mean"] = statistics.mean(rss_samples)
+    result["result_sha256"] = result_hash
     return result
 
 def main():
