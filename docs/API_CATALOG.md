@@ -29,6 +29,8 @@
 | 集合筛选推导 `{x in S \| p}` | 已实现 | 内糖；一般映射式仍在扩展 |
 | `|>` 管道 | 已实现 | 内糖 |
 | Result：`ok`、`err`、`is_ok`、`unwrap`、`unwrap_or` | 已实现 | 核心运行时 |
+| `TypeSet` 集合类型内核 | 已实现 | `src/types/typeset.*`；支持枚举、整数区间、并集、交集、成员与子集查询 |
+| 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，VM 抛错迁移待完成 |
 | `expr?` | 部分实现 | 内糖；当前等价于 `unwrap(expr)`，函数帧级 Err 返回未完成 |
 | `try { ... } catch (...) { ... }` | 已实现 | 基础异常帧与 `throw`；不含 `finally` |
 | `case try expr { ... }` | 设计中 | Result 分支匹配语法尚未接入 parser/compiler |

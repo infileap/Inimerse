@@ -12,6 +12,8 @@
 | Result 原语 | 已实现 | `result_runtime` |
 | Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
+| TypeSet 集合类型内核 | 已实现 | `typeset_probe`；独立 C API，尚未接入用户 `type` 声明 |
+| 预设业务/VM 错误集合目录 | 部分实现 | `error_types_probe`；VM 字符串错误迁移待完成 |
 | `|>` 管道 | 已实现 | `pipeline_runtime` |
 | 非捕获 lambda 与函数值调用 | 已实现 | `lambda_runtime`；闭包捕获仍未实现 |
 | 浮点字符串精度保护 | 已实现 17 位往返输出（`str` 与 VM 通用格式化） | `float_precision_runtime` |
