@@ -271,7 +271,7 @@ static Expr *parse_primary(Parser *p) {
         if (peek(p).type != TOK_RBRACE) {
             do {
                 Expr *key = parse_expr(p);
-                consume(p, TOK_COLON, "':'");
+        consume(p, TOK_COLON, "':'");
                 Expr *val = parse_expr(p);
                 e->dict.items = realloc(e->dict.items, (e->dict.count*2+2)*sizeof(Expr*));
                 e->dict.items[e->dict.count*2] = key;
@@ -925,6 +925,8 @@ static Stmt *parse_case(Parser *p) {
                 break;
             }
         }
+        br->guard = NULL;
+        if (match(p, TOK_PIPE)) br->guard = parse_expr(p);
         consume(p, TOK_COLON, "':'");
         if (peek(p).type == TOK_LBRACE) {
             br->body = parse_block(p, &br->bodyCount);

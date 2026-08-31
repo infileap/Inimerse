@@ -1185,6 +1185,7 @@ case STMT_WITH: {
                 CaseBranch *br = &stmt->caseStmt.branches[bi];
                 int *body_jumps = NULL; int body_jcount = 0;
                 int *skip_jumps = NULL; int skip_count = 0;
+                int *guard_skips = NULL; int guard_skip_count = 0;
                 int result_bind = -1;
                 const char *result_field = NULL;
                 if (stmt->caseStmt.isTry && br->mode == 0 && br->patternCount == 1) {
@@ -1223,7 +1224,11 @@ case STMT_WITH: {
                     }
                 } else if (br->mode == 0) {
                     /* value list: any pattern == subject -> body; single list/set/comprehension literal -> in semantics */
-                    if (br->patternCount == 1 && (br->patterns[0]->type == EXPR_LIST ||
+                    if (br->guard && br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT) {
+                        int jt = comp->curBC->count;
+                        emit(comp->curBC, OP_JUMP, 0, 0, 0);
+                        add_break(&body_jumps, &body_jcount, jt);
+                    } else if (br->patternCount == 1 && (br->patterns[0]->type == EXPR_LIST ||
                         br->patterns[0]->type == EXPR_SETLIT || br->patterns[0]->type == EXPR_SETCOMP)) {
                         int pat = compile_expr(comp, br->patterns[0]);
                         int tmp = alloc_reg();
@@ -1289,7 +1294,28 @@ case STMT_WITH: {
                     emit(comp->curBC, OP_JUMP, 0, 0, 0);
                     add_break(&skip_jumps, &skip_count, js);
                 }
-                int body_start = comp->curBC->count;
+                int body_start;
+                int guard_true = -1;
+                if (br->guard) {
+                    int guard_start = comp->curBC->count;
+                    for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = guard_start;
+                    if (br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT) {
+                        char gn[256];
+                        snprintf(gn, sizeof(gn), "%.*s", (int)br->patterns[0]->identName.length, br->patterns[0]->identName.start);
+                        int gg = register_global(comp, gn);
+                        emit(comp->curBC, OP_STORE_GLOBAL, gg, subj, 0);
+                    }
+                    int gr = compile_expr(comp, br->guard);
+                    guard_true = comp->curBC->count;
+                    emit(comp->curBC, OP_JUMP_IF_TRUE, gr, 0, 0);
+                    int guard_false = comp->curBC->count;
+                    emit(comp->curBC, OP_JUMP, 0, 0, 0);
+                    add_break(&guard_skips, &guard_skip_count, guard_false);
+                    body_start = comp->curBC->count;
+                } else {
+                    body_start = comp->curBC->count;
+                }
+                if (br->guard && guard_true >= 0) comp->curBC->code[guard_true].r2 = body_start;
                 if (result_bind >= 0 && result_field) {
                     int value = alloc_reg();
                     emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
@@ -1301,11 +1327,15 @@ case STMT_WITH: {
                 int je = comp->curBC->count;
                 emit(comp->curBC, OP_JUMP, 0, 0, 0);
                 add_break(&end_jumps, &end_count, je);
-                for (int i = 0; i < body_jcount; i++)
-                    comp->curBC->code[body_jumps[i]].r2 = body_start;
+                if (!br->guard) {
+                    for (int i = 0; i < body_jcount; i++)
+                        comp->curBC->code[body_jumps[i]].r2 = body_start;
+                }
                 for (int i = 0; i < skip_count; i++)
                     comp->curBC->code[skip_jumps[i]].r2 = comp->curBC->count; /* next branch */
-                free(body_jumps); free(skip_jumps);
+                for (int i = 0; i < guard_skip_count; i++)
+                    comp->curBC->code[guard_skips[i]].r2 = comp->curBC->count;
+                free(body_jumps); free(skip_jumps); free(guard_skips);
                 release_temps(comp);
             }
             for (int i = 0; i < end_count; i++)

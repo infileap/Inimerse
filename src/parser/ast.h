@@ -22,6 +22,7 @@ typedef struct {
     int patternCount;
     Expr *cmpExpr;            /* mode=1 */
     Expr *matchExpr;          /* mode=4: regex pattern */
+    Expr *guard;              /* optional `|` predicate */
     Stmt **body;
     int bodyCount;
 } CaseBranch;

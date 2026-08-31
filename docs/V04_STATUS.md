@@ -11,7 +11,7 @@
 | `inim` 离线包闭环 | 已实现 | `inim_regression` |
 | Result 原语 | 已实现 | `result_runtime` |
 | Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
-| `case try` 基础 Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别与 `ok(v)`/`err(e)` 载荷绑定，集合守卫待完善 |
+| `case try` 基础 Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别、载荷绑定与基础 `|` 守卫，集合成员守卫待完善 |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；独立 C API，尚未接入用户 `type` 声明 |
 | 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；基础 parser/compiler 接入已完成 |

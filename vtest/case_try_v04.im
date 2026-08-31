@@ -11,3 +11,8 @@ case try e {
     ok(v): say "bad"
     err(reason): say reason
 }
+case 5 {
+    n | n > 10: say "bad-guard"
+    n | n > 0: say "guard-ok"
+    _: say "guard-fail"
+}
