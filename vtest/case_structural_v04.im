@@ -1,8 +1,13 @@
 config = {"kind": "not_found", "retry": 1}
+envelope = {"error": {"kind": "not_found"}}
 case config {
     {"kind": "permission_denied"}: say "bad"
     {"kind": "not_found"}: say "record-hit"
     _: say "other"
+}
+case envelope {
+    {"error": {"kind": "not_found"}}: say "nested-hit"
+    _: say "nested-other"
 }
 case config {
     {"kind": k, "retry": retries}: say k + ":" + retries

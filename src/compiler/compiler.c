@@ -1238,6 +1238,27 @@ case STMT_WITH: {
                             int got = alloc_reg();
                             emit(comp->curBC, OP_INDEX_GET, got, subj, key);
                             Expr *field_pattern = objpat->dict.items[di * 2 + 1];
+                            if (field_pattern->type == EXPR_DICT) {
+                                for (int ni = 0; ni < field_pattern->dict.count; ni++) {
+                                    int nkey = compile_expr(comp, field_pattern->dict.items[ni * 2]);
+                                    emit(comp->curBC, OP_PUSH_REG, got, 0, 0);
+                                    emit(comp->curBC, OP_PUSH_REG, nkey, 0, 0);
+                                    int nhas = alloc_reg();
+                                    emit(comp->curBC, OP_CALL_BUILTIN, nhas, bytecode_add_string(comp->curBC, "dict_has"), 2);
+                                    int jnhas = comp->curBC->count;
+                                    emit(comp->curBC, OP_JUMP_IF_FALSE, nhas, 0, 0);
+                                    add_break(&guard_skips, &guard_skip_count, jnhas);
+                                    int nGot = alloc_reg();
+                                    emit(comp->curBC, OP_INDEX_GET, nGot, got, nkey);
+                                    int nExpected = compile_expr(comp, field_pattern->dict.items[ni * 2 + 1]);
+                                    int nEq = alloc_reg();
+                                    emit(comp->curBC, OP_EQ, nEq, nGot, nExpected);
+                                    int jn = comp->curBC->count;
+                                    emit(comp->curBC, OP_JUMP_IF_FALSE, nEq, 0, 0);
+                                    add_break(&guard_skips, &guard_skip_count, jn);
+                                }
+                                continue;
+                            }
                             if (field_pattern->type == EXPR_IDENT &&
                                 !(field_pattern->identName.length == 1 && field_pattern->identName.start[0] == '_')) {
                                 char field_name[256];

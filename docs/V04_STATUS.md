@@ -15,7 +15,7 @@
 | Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
 | `case try` 基础 Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别、载荷绑定与 `e in E` 集合守卫，结构模式与穷尽检查待完善 |
 | `case` 类型/集合模式 | 部分实现 | `case_collection_patterns_runtime`；支持 `in` 命名类型、区间和集合，结构模式待完善 |
-| `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、一层绑定和严格字段存在性，嵌套待完善 |
+| `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、一层绑定、严格字段存在性和一层嵌套 |
 | `case` 通配模式 | 已实现 | `case_collection_patterns_runtime`；`_` 在前序分支未命中时兜底 |
 | case 覆盖/不可达诊断 | 部分实现 | `--lint` 可报告 wildcard/else 后的分支及缺少兜底；有限集合穷尽性待完善 |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
