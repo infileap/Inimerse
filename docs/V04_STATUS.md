@@ -1,5 +1,7 @@
 # V0.4 状态矩阵
 
+最近一次 WSL 全量 CTest（2026-08-31）：29/29 通过，包含 `typeset_probe`、`error_types_probe`、`type_registry_probe`、`case_try_runtime`、`case_collection_patterns_runtime` 和 `case_structural_runtime`。
+
 更新时间：2026-08-30
 
 ## 已进入主线并有回归证据
