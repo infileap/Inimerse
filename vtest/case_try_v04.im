@@ -16,3 +16,10 @@ case 5 {
     n | n > 0: say "guard-ok"
     _: say "guard-fail"
 }
+type FileError = "not_found", "permission_denied"
+ferr = err("not_found")
+case try ferr {
+    err(e) | e in FileError: say "file-error"
+    err(e): say "other-error"
+    ok(v): say "bad-ok"
+}

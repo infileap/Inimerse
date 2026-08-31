@@ -1299,6 +1299,12 @@ case STMT_WITH: {
                 if (br->guard) {
                     int guard_start = comp->curBC->count;
                     for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = guard_start;
+                    if (result_bind >= 0 && result_field) {
+                        int value = alloc_reg();
+                        emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
+                        emit(comp->curBC, OP_CALL_BUILTIN, value, bytecode_add_string(comp->curBC, result_field), 1);
+                        emit(comp->curBC, OP_STORE_GLOBAL, result_bind, value, 0);
+                    }
                     if (br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT) {
                         char gn[256];
                         snprintf(gn, sizeof(gn), "%.*s", (int)br->patterns[0]->identName.length, br->patterns[0]->identName.start);
@@ -1316,7 +1322,7 @@ case STMT_WITH: {
                     body_start = comp->curBC->count;
                 }
                 if (br->guard && guard_true >= 0) comp->curBC->code[guard_true].r2 = body_start;
-                if (result_bind >= 0 && result_field) {
+                if (!br->guard && result_bind >= 0 && result_field) {
                     int value = alloc_reg();
                     emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
                     emit(comp->curBC, OP_CALL_BUILTIN, value, bytecode_add_string(comp->curBC, result_field), 1);
