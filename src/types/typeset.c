@@ -76,6 +76,13 @@ ImTypeSet *im_typeset_difference(const ImTypeSet *left, const ImTypeSet *right) 
     return combine(IM_TYPESET_DIFFERENCE, left, right);
 }
 
+ImTypeSet *im_typeset_complement(const ImTypeSet *set) {
+    if (!set) return NULL;
+    if (set->kind == IM_TYPESET_ANY) return im_typeset_empty();
+    if (set->kind == IM_TYPESET_EMPTY) return im_typeset_any();
+    return combine(IM_TYPESET_COMPLEMENT, set, NULL);
+}
+
 void im_typeset_free(ImTypeSet *set) {
     if (!set) return;
     /* Union/intersection operands are borrowed; callers retain their ownership. */
@@ -116,6 +123,8 @@ bool im_typeset_contains(const ImTypeSet *set, const ImTypeValue *value) {
         return im_typeset_contains(set->left, value) && im_typeset_contains(set->right, value);
     case IM_TYPESET_DIFFERENCE:
         return im_typeset_contains(set->left, value) && !im_typeset_contains(set->right, value);
+    case IM_TYPESET_COMPLEMENT:
+        return !im_typeset_contains(set->left, value);
     }
     return false;
 }

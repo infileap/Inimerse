@@ -28,7 +28,8 @@ typedef enum {
     IM_TYPESET_INT_INTERVAL,
     IM_TYPESET_UNION,
     IM_TYPESET_INTERSECTION,
-    IM_TYPESET_DIFFERENCE
+    IM_TYPESET_DIFFERENCE,
+    IM_TYPESET_COMPLEMENT
 } ImTypeSetKind;
 
 typedef struct ImTypeSet ImTypeSet;
@@ -40,6 +41,7 @@ ImTypeSet *im_typeset_int_interval(int64_t lo, int64_t hi, bool lo_inclusive, bo
 ImTypeSet *im_typeset_union(const ImTypeSet *left, const ImTypeSet *right);
 ImTypeSet *im_typeset_intersection(const ImTypeSet *left, const ImTypeSet *right);
 ImTypeSet *im_typeset_difference(const ImTypeSet *left, const ImTypeSet *right);
+ImTypeSet *im_typeset_complement(const ImTypeSet *set);
 void im_typeset_free(ImTypeSet *set);
 
 bool im_typeset_contains(const ImTypeSet *set, const ImTypeValue *value);
