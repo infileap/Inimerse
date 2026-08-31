@@ -1,0 +1,9 @@
+type Positive = [1~100]
+case 42 {
+    in Positive: say "positive-type"
+    _: say "other"
+}
+case -1 {
+    in [0~10]: say "bad-range"
+    _: say "range-other"
+}
