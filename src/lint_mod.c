@@ -81,6 +81,8 @@ static int lint_scan(const char *path, LintBuf *lb) {
     int block_depth = 0;          /* brace depth (cleaned lines only) */
     int in_loop = 0;              /* currently inside a loop block */
     int loop_brace = -1;          /* brace depth at loop open */
+    int case_brace = -1;
+    int case_wildcard_line = 0;
     char prev_clean[4096] = "";
     while (fgets(raw, sizeof raw, f)) {
         ln++;
@@ -96,6 +98,21 @@ static int lint_scan(const char *path, LintBuf *lb) {
         /* update loop context: count braces first */
         int opens = 0, closes = 0;
         for (const char *b = s; *b; b++) { if (*b == '{') opens++; if (*b == '}') closes++; }
+        if (strncmp(s, "case ", 5) == 0 && strchr(s, '{')) {
+            case_brace = block_depth;
+            case_wildcard_line = 0;
+        } else if (case_brace >= 0 && block_depth == case_brace + 1) {
+            if ((s[0] == '_' && s[1] == ':' ) || strncmp(s, "else:", 5) == 0)
+                case_wildcard_line = ln;
+            else if (case_wildcard_line && strchr(s, ':')) {
+                lint_add(lb, ln, "WARN",
+                    "case branch is unreachable: wildcard '_'/'else' appears before this branch");
+            }
+        }
+        if (case_brace >= 0 && closes > 0 && block_depth - closes <= case_brace) {
+            case_brace = -1;
+            case_wildcard_line = 0;
+        }
         if (closes > 0 && in_loop && block_depth - closes < loop_brace) in_loop = 0;
 
         /* rule: task/thread defined inside a block */
