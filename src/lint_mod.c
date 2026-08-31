@@ -83,6 +83,7 @@ static int lint_scan(const char *path, LintBuf *lb) {
     int loop_brace = -1;          /* brace depth at loop open */
     int case_brace = -1;
     int case_wildcard_line = 0;
+    int case_start_line = 0;
     char prev_clean[4096] = "";
     while (fgets(raw, sizeof raw, f)) {
         ln++;
@@ -101,6 +102,7 @@ static int lint_scan(const char *path, LintBuf *lb) {
         if (strncmp(s, "case ", 5) == 0 && strchr(s, '{')) {
             case_brace = block_depth;
             case_wildcard_line = 0;
+            case_start_line = ln;
         } else if (case_brace >= 0 && block_depth == case_brace + 1) {
             if ((s[0] == '_' && s[1] == ':' ) || strncmp(s, "else:", 5) == 0)
                 case_wildcard_line = ln;
@@ -110,8 +112,12 @@ static int lint_scan(const char *path, LintBuf *lb) {
             }
         }
         if (case_brace >= 0 && closes > 0 && block_depth - closes <= case_brace) {
+            if (!case_wildcard_line)
+                lint_add(lb, case_start_line, "WARN",
+                    "case has no wildcard '_'/'else' branch; exhaustive coverage cannot be proven for open or infinite sets");
             case_brace = -1;
             case_wildcard_line = 0;
+            case_start_line = 0;
         }
         if (closes > 0 && in_loop && block_depth - closes < loop_brace) in_loop = 0;
 
