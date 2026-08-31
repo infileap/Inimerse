@@ -17,6 +17,8 @@ int main(void) {
     ImTypeSet *positive = im_typeset_int_interval(0, INT64_MAX, false, true);
     ImTypeSet *safe_positive = im_typeset_intersection(byte, positive);
     ImTypeSet *combined = im_typeset_union(enum_set, byte);
+    ImTypeSet *zero_set = im_typeset_enum(IM_TYPE_INT, values, 1);
+    ImTypeSet *without_zero = im_typeset_difference(byte, zero_set);
 
     assert(im_typeset_contains(enum_set, &one));
     assert(!im_typeset_contains(enum_set, &four));
@@ -25,9 +27,13 @@ int main(void) {
     assert(!im_typeset_contains(safe_positive, &(ImTypeValue){.kind = IM_TYPE_INT, .integer = 0}));
     assert(!im_typeset_contains(byte, &text));
     assert(im_typeset_contains(combined, &four));
+    assert(im_typeset_contains(without_zero, &four));
+    assert(!im_typeset_contains(without_zero, &(ImTypeValue){.kind = IM_TYPE_INT, .integer = 0}));
     assert(im_typeset_subset(enum_set, byte));
 
     im_typeset_free(combined);
+    im_typeset_free(without_zero);
+    im_typeset_free(zero_set);
     im_typeset_free(safe_positive);
     im_typeset_free(positive);
     im_typeset_free(byte);
