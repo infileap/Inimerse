@@ -1224,7 +1224,31 @@ case STMT_WITH: {
                     }
                 } else if (br->mode == 0) {
                     /* value list: any pattern == subject -> body; single list/set/comprehension literal -> in semantics */
-                    if (br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT &&
+                    if (br->patternCount == 1 && br->patterns[0]->type == EXPR_DICT) {
+                        Expr *objpat = br->patterns[0];
+                        for (int di = 0; di < objpat->dict.count; di++) {
+                            int key = compile_expr(comp, objpat->dict.items[di * 2]);
+                            int got = alloc_reg();
+                            emit(comp->curBC, OP_INDEX_GET, got, subj, key);
+                            Expr *field_pattern = objpat->dict.items[di * 2 + 1];
+                            if (field_pattern->type == EXPR_IDENT &&
+                                !(field_pattern->identName.length == 1 && field_pattern->identName.start[0] == '_')) {
+                                char field_name[256];
+                                snprintf(field_name, sizeof(field_name), "%.*s", (int)field_pattern->identName.length, field_pattern->identName.start);
+                                emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, field_name), got, 0);
+                                continue;
+                            }
+                            int expected = compile_expr(comp, field_pattern);
+                            int eq = alloc_reg();
+                            emit(comp->curBC, OP_EQ, eq, got, expected);
+                            int jf = comp->curBC->count;
+                            emit(comp->curBC, OP_JUMP_IF_FALSE, eq, 0, 0);
+                            add_break(&guard_skips, &guard_skip_count, jf);
+                        }
+                        int jt = comp->curBC->count;
+                        emit(comp->curBC, OP_JUMP, 0, 0, 0);
+                        add_break(&body_jumps, &body_jcount, jt);
+                    } else if (br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT &&
                         ((br->patterns[0]->identName.length == 1 && br->patterns[0]->identName.start[0] == '_') || br->guard)) {
                         int jt = comp->curBC->count;
                         emit(comp->curBC, OP_JUMP, 0, 0, 0);

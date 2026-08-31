@@ -1,0 +1,9 @@
+config = {"kind": "not_found", "retry": 1}
+case config {
+    {"kind": "permission_denied"}: say "bad"
+    {"kind": "not_found"}: say "record-hit"
+    _: say "other"
+}
+case config {
+    {"kind": k, "retry": retries}: say k + ":" + retries
+}
