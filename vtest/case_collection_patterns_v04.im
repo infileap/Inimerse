@@ -7,3 +7,7 @@ case 7 {
     in [0~10]: say "range-hit"
     _: say "range-other"
 }
+case 999 {
+    in Positive: say "bad-positive"
+    _: say "wildcard-hit"
+}

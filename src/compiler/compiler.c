@@ -1224,7 +1224,8 @@ case STMT_WITH: {
                     }
                 } else if (br->mode == 0) {
                     /* value list: any pattern == subject -> body; single list/set/comprehension literal -> in semantics */
-                    if (br->guard && br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT) {
+                    if (br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT &&
+                        ((br->patterns[0]->identName.length == 1 && br->patterns[0]->identName.start[0] == '_') || br->guard)) {
                         int jt = comp->curBC->count;
                         emit(comp->curBC, OP_JUMP, 0, 0, 0);
                         add_break(&body_jumps, &body_jcount, jt);
