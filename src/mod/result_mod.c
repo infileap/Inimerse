@@ -53,10 +53,19 @@ static int result_field(VM *vm, int want_error) {
 }
 static int result_value(VM *vm) { return result_field(vm, 0); }
 static int result_error(VM *vm) { return result_field(vm, 1); }
+static int result_dict_has(VM *vm) {
+    if (vm_cur_sp(vm) < 1) { push_bool(vm, false); return 1; }
+    Value keyv = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value obj = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
+    push_bool(vm, obj.type == VAL_DICT && vm_dict_has(vm, obj.ival - 1, &keyv));
+    return 1;
+}
 
 void result_mod_register(VM *vm) {
     vm_register_builtin(vm, "ok", result_make_ok); vm_register_builtin(vm, "err", result_make_err);
     vm_register_builtin(vm, "is_ok", result_is_ok); vm_register_builtin(vm, "unwrap_or", result_unwrap_or); vm_register_builtin(vm, "unwrap", result_unwrap);
     vm_register_builtin(vm, "result_value", result_value);
     vm_register_builtin(vm, "result_error", result_error);
+    vm_register_builtin(vm, "dict_has", result_dict_has);
 }

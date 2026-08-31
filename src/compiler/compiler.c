@@ -1228,6 +1228,13 @@ case STMT_WITH: {
                         Expr *objpat = br->patterns[0];
                         for (int di = 0; di < objpat->dict.count; di++) {
                             int key = compile_expr(comp, objpat->dict.items[di * 2]);
+                            emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
+                            emit(comp->curBC, OP_PUSH_REG, key, 0, 0);
+                            int has = alloc_reg();
+                            emit(comp->curBC, OP_CALL_BUILTIN, has, bytecode_add_string(comp->curBC, "dict_has"), 2);
+                            int jhas = comp->curBC->count;
+                            emit(comp->curBC, OP_JUMP_IF_FALSE, has, 0, 0);
+                            add_break(&guard_skips, &guard_skip_count, jhas);
                             int got = alloc_reg();
                             emit(comp->curBC, OP_INDEX_GET, got, subj, key);
                             Expr *field_pattern = objpat->dict.items[di * 2 + 1];

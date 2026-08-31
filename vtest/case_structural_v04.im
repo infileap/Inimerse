@@ -7,3 +7,7 @@ case config {
 case config {
     {"kind": k, "retry": retries}: say k + ":" + retries
 }
+case config {
+    {"missing": value}: say "bad-missing"
+    _: say "missing-safe"
+}

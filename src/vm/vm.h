@@ -294,6 +294,7 @@ Value vm_array_pop(VM *vm, int idx);
 int  vm_array_len(VM *vm, int idx);
 int vm_set_to_array(VM *vm, int sidx);
 Value vm_dict_get(VM *vm, int aidx, const Value *key);
+bool vm_dict_has(VM *vm, int aidx, const Value *key);
 void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val);
 bool vm_dict_remove(VM *vm, int aidx, const Value *key);
 VmThread *vm_get_cur_thread(void);

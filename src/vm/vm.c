@@ -554,6 +554,18 @@ Value vm_dict_get(VM *vm, int aidx, const Value *key) {
     return out;
 }
 
+bool vm_dict_has(VM *vm, int aidx, const Value *key) {
+    if (aidx < 0 || aidx >= vm->arrayCount || !key) return false;
+    VM_LOCK(vm);
+    ArrayObj *a = vm_pool_slot(vm, aidx);
+    DictHash *h = dict_hash_ensure(vm, aidx);
+    if (!h) { VM_UNLOCK(vm); return false; }
+    if (!h->slots && a->count > 0) dict_hash_build(vm, aidx);
+    bool found = h->slots && dict_hash_find(h, a, key, dict_hash_key(key)) >= 0;
+    VM_UNLOCK(vm);
+    return found;
+}
+
 void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val) {
     if (aidx < 0 || aidx >= vm->arrayCount) return;
     /* Clone inputs before any array growth or destination release. This covers
