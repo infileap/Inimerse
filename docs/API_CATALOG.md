@@ -35,7 +35,7 @@
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |
 | `expr?` | 部分实现 | 内糖；当前等价于 `unwrap(expr)`，函数帧级 Err 返回未完成 |
 | `try { ... } catch (...) { ... }` | 已实现 | 基础异常帧与 `throw`；不含 `finally` |
-| `case try expr { ok: ...; err: ... }` | 部分实现 | 原生 Result 成功/错误分支已接入；构造器载荷绑定与错误集合守卫待完善 |
+| `case try expr { ok(v): ...; err(e): ... }` | 部分实现 | 原生 Result 分支和载荷绑定已接入；错误集合守卫待完善 |
 | `x -> expr`、`(a,b) -> expr` | 已实现 | 内糖；当前支持非捕获 lambda 与函数值调用 |
 | `>>`（简单函数名形式） | 部分实现 | 外糖脱糖器可转换为 lambda；核心 parser 尚未原生支持 |
 | 闭包捕获、部分应用 | 设计中 | 依赖后续函数值环境完善 |

@@ -1185,6 +1185,8 @@ case STMT_WITH: {
                 CaseBranch *br = &stmt->caseStmt.branches[bi];
                 int *body_jumps = NULL; int body_jcount = 0;
                 int *skip_jumps = NULL; int skip_count = 0;
+                int result_bind = -1;
+                const char *result_field = NULL;
                 if (stmt->caseStmt.isTry && br->mode == 0 && br->patternCount == 1) {
                     Expr *pattern = br->patterns[0];
                     int is_err = 0;
@@ -1195,11 +1197,17 @@ case STMT_WITH: {
                     } else if (pattern->type == EXPR_CALL && pattern->call.callee && pattern->call.callee->type == EXPR_IDENT) {
                         if (pattern->call.callee->identName.length == 2 && strncmp(pattern->call.callee->identName.start, "ok", 2) == 0) is_result_branch = 1;
                         if (pattern->call.callee->identName.length == 3 && strncmp(pattern->call.callee->identName.start, "err", 3) == 0) { is_result_branch = 1; is_err = 1; }
+                        if (is_result_branch && pattern->call.argCount == 1 && pattern->call.args[0]->type == EXPR_IDENT) {
+                            char bn[256];
+                            snprintf(bn, sizeof(bn), "%.*s", (int)pattern->call.args[0]->identName.length, pattern->call.args[0]->identName.start);
+                            result_bind = register_global(comp, bn);
+                            result_field = is_err ? "result_error" : "result_value";
+                        }
                     }
                     if (is_result_branch) {
                         emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
                         int check = alloc_reg();
-                        int bi = lookup_builtin(comp, "is_ok");
+                        int bi = bytecode_add_string(comp->curBC, "is_ok");
                         emit(comp->curBC, OP_CALL_BUILTIN, check, bi, 1);
                         int cond = check;
                         if (is_err) { cond = alloc_reg(); emit(comp->curBC, OP_NOT, cond, check, 0); }
@@ -1282,6 +1290,12 @@ case STMT_WITH: {
                     add_break(&skip_jumps, &skip_count, js);
                 }
                 int body_start = comp->curBC->count;
+                if (result_bind >= 0 && result_field) {
+                    int value = alloc_reg();
+                    emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
+                    emit(comp->curBC, OP_CALL_BUILTIN, value, bytecode_add_string(comp->curBC, result_field), 1);
+                    emit(comp->curBC, OP_STORE_GLOBAL, result_bind, value, 0);
+                }
                 for (int i = 0; i < br->bodyCount; i++)
                     compile_stmt(comp, br->body[i], break_list, break_count_ptr);
                 int je = comp->curBC->count;

@@ -715,6 +715,7 @@ ai_mod_register(&vm);
     lint_mod_register(&vm);
     vm_debug_builtins_register(&vm);
     gui_mod_register(&vm);
+    result_mod_register(&vm);
     io_mod_register(&vm);
     net_mod_register(&vm);
     json_mod_register(&vm);

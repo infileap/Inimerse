@@ -40,8 +40,23 @@ static int result_unwrap(VM *vm) {
     else { Value e = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ke) : (Value){VAL_STRING, 0, 0, "unwrap of non-Result"}; char msg[256]; snprintf(msg, sizeof msg, "Result unwrap failed: %s", e.sval ? e.sval : "error"); vm_throw_msg(vm, msg); push_nil(vm); }
     return 1;
 }
+static int result_field(VM *vm, int want_error) {
+    if (vm_cur_sp(vm) < 0) { push_nil(vm); return 1; }
+    Value r = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm);
+    Value k_ok = key("ok"), k_field = key(want_error ? "error" : "value");
+    Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k_ok) : (Value){VAL_BOOL, 0, 0, NULL};
+    int is_ok = ok.type == VAL_BOOL && ok.ival != 0;
+    if ((want_error && is_ok) || (!want_error && !is_ok)) { push_nil(vm); return 1; }
+    Value out = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k_field) : (Value){VAL_NIL, 0, 0, NULL};
+    vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
+    return 1;
+}
+static int result_value(VM *vm) { return result_field(vm, 0); }
+static int result_error(VM *vm) { return result_field(vm, 1); }
 
 void result_mod_register(VM *vm) {
     vm_register_builtin(vm, "ok", result_make_ok); vm_register_builtin(vm, "err", result_make_err);
     vm_register_builtin(vm, "is_ok", result_is_ok); vm_register_builtin(vm, "unwrap_or", result_unwrap_or); vm_register_builtin(vm, "unwrap", result_unwrap);
+    vm_register_builtin(vm, "result_value", result_value);
+    vm_register_builtin(vm, "result_error", result_error);
 }

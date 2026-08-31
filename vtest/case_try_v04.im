@@ -1,12 +1,13 @@
 # Native Result branch dispatch.
 r = ok(42)
 case try r {
-    ok: say "ok"
+    ok(v): say v
     err: say "err"
     _: say "other"
 }
 e = err("failure")
+say result_error(e)
 case try e {
-    ok: say "bad"
-    err: say "caught"
+    ok(v): say "bad"
+    err(reason): say reason
 }
