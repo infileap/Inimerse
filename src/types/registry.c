@@ -60,3 +60,8 @@ const ImTypeSet *im_type_registry_lookup(const ImTypeRegistry *registry, const c
 size_t im_type_registry_count(const ImTypeRegistry *registry) {
     return registry ? registry->count : 0;
 }
+
+ImEnum *im_type_registry_enum(const ImTypeRegistry *registry, const char *name) {
+    const ImTypeSet *set = im_type_registry_lookup(registry, name);
+    return set ? im_enum_from_finite_set(name, set) : NULL;
+}

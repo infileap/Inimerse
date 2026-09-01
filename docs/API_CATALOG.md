@@ -34,6 +34,7 @@
 | 预设错误枚举描述符 | 已实现 | `im_error_domain_enum`；将 File/Parse/VM 错误域以统一 `ImEnum` 提供名称↔编码映射 |
 | TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；枚举并集、交集、差集可直接生成紧凑枚举，支持字符串/整数/浮点/布尔/nil 成员 |
 | 枚举 case 穷尽检查 | 已实现 | `im_enum_is_exhaustive` / `im_enum_missing`；可返回缺失成员名并支持重复分支 |
+| 命名类型枚举查询 | 已实现 | `im_type_registry_enum`；从注册的有限 TypeSet 生成枚举描述符 |
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |

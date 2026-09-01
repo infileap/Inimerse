@@ -45,7 +45,7 @@ add_test(NAME enum_probe COMMAND enum_probe)
 add_executable(error_types_probe src/types/typeset.c src/types/enum.c src/types/error_types.c src/types/error_types_probe.c)
 target_include_directories(error_types_probe PRIVATE src/types)
 add_test(NAME error_types_probe COMMAND error_types_probe)
-add_executable(type_registry_probe src/types/typeset.c src/types/registry.c src/types/registry_probe.c)
+add_executable(type_registry_probe src/types/typeset.c src/types/enum.c src/types/registry.c src/types/registry_probe.c)
 target_include_directories(type_registry_probe PRIVATE src/types)
 add_test(NAME type_registry_probe COMMAND type_registry_probe)
 
