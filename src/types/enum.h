@@ -23,6 +23,7 @@ const char *im_enum_type_name(const ImEnum *enumeration);
 size_t im_enum_count(const ImEnum *enumeration);
 ImEnumWidth im_enum_width(const ImEnum *enumeration);
 size_t im_enum_width_bytes(const ImEnum *enumeration);
+uint32_t im_enum_code_limit(const ImEnum *enumeration);
 bool im_enum_encode(const ImEnum *enumeration, const char *name, uint32_t *code_out);
 const char *im_enum_decode(const ImEnum *enumeration, uint32_t code);
 bool im_enum_contains(const ImEnum *enumeration, const char *name);

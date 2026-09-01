@@ -95,6 +95,10 @@ size_t im_enum_width_bytes(const ImEnum *e) {
     if (!e) return 0;
     return e->width == IM_ENUM_U8 ? 1 : (e->width == IM_ENUM_U16 ? 2 : sizeof(uint32_t));
 }
+uint32_t im_enum_code_limit(const ImEnum *e) {
+    if (!e) return 0;
+    return e->width == IM_ENUM_U8 ? UINT8_MAX : (e->width == IM_ENUM_U16 ? UINT16_MAX : UINT32_MAX);
+}
 
 bool im_enum_encode(const ImEnum *e, const char *name, uint32_t *out) {
     if (!e || !name || !out) return false;
