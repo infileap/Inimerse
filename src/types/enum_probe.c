@@ -22,8 +22,6 @@ int main(void) {
     assert(im_enum_missing(e, covered, 2, missing, 3) == 1 && strcmp(missing[0], "running") == 0);
     const char *all[] = {"idle", "running", "stopped", "idle"};
     assert(im_enum_is_exhaustive(e, all, 4));
-    im_enum_free(e);
-
     /* Width selection is defined by representable member codes. */
     const size_t sizes[] = {256, 257, 65536, 65537};
     const ImEnumWidth widths[] = {IM_ENUM_U8, IM_ENUM_U16, IM_ENUM_U16, IM_ENUM_BOXED};
@@ -54,6 +52,16 @@ int main(void) {
     ImEnum *e3 = im_enum_create("OtherState", m, 3);
     assert(e3 && im_enum_fingerprint(e3) != fingerprint);
     im_enum_free(e3);
+    const char *extended_members[] = {"idle", "running", "stopped", "paused"};
+    ImEnum *extended = im_enum_create("ThreadState", extended_members, 4);
+    assert(extended && im_enum_compatible_append(e, extended));
+    im_enum_free(extended);
+    const char *reordered_members[] = {"running", "idle", "stopped"};
+    ImEnum *reordered = im_enum_create("ThreadState", reordered_members, 3);
+    assert(reordered && !im_enum_compatible_append(e, reordered));
+    assert(im_enum_fingerprint(reordered) != fingerprint);
+    im_enum_free(reordered);
+    im_enum_free(e);
 
     ImTypeValue tv[] = {{.kind = IM_TYPE_STRING, .string = "cold"},
                         {.kind = IM_TYPE_STRING, .string = "hot"}};
