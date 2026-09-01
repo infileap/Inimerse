@@ -1,4 +1,5 @@
 #include "enum.h"
+#include "typeset.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,6 +37,21 @@ ImEnum *im_enum_create(const char *type_name, const char *const *members, size_t
                 if (strcmp(e->members[j], e->members[i]) == 0) { im_enum_free(e); return NULL; }
         }
     }
+    return e;
+}
+
+ImEnum *im_enum_from_typeset(const char *type_name, const ImTypeSet *set) {
+    if (!set || im_typeset_kind(set) != IM_TYPESET_ENUM) return NULL;
+    size_t n = im_typeset_enum_count(set);
+    const char **names = n ? (const char **)calloc(n, sizeof(*names)) : NULL;
+    if (n && !names) return NULL;
+    for (size_t i = 0; i < n; ++i) {
+        const ImTypeValue *v = im_typeset_enum_value(set, i);
+        if (!v || v->kind != IM_TYPE_STRING) { free(names); return NULL; }
+        names[i] = v->string;
+    }
+    ImEnum *e = im_enum_create(type_name, names, n);
+    free(names);
     return e;
 }
 

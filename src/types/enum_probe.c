@@ -1,4 +1,5 @@
 #include "enum.h"
+#include "typeset.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,14 @@ int main(void) {
 
     const char *duplicate[] = {"same", "same"};
     assert(!im_enum_create("Duplicate", duplicate, 2));
+
+    ImTypeValue tv[] = {{.kind = IM_TYPE_STRING, .string = "cold"},
+                        {.kind = IM_TYPE_STRING, .string = "hot"}};
+    ImTypeSet *set = im_typeset_enum(IM_TYPE_STRING, tv, 2);
+    ImEnum *from_set = im_enum_from_typeset("Temperature", set);
+    assert(from_set && im_enum_contains(from_set, "hot"));
+    im_enum_free(from_set);
+    im_typeset_free(set);
     puts("enum_probe: ok");
     return 0;
 }

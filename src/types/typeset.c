@@ -175,3 +175,11 @@ bool im_typeset_intersects(const ImTypeSet *left, const ImTypeSet *right) {
 ImTypeSetKind im_typeset_kind(const ImTypeSet *set) {
     return set ? set->kind : IM_TYPESET_EMPTY;
 }
+
+size_t im_typeset_enum_count(const ImTypeSet *set) {
+    return set && set->kind == IM_TYPESET_ENUM ? set->value_count : 0;
+}
+
+const ImTypeValue *im_typeset_enum_value(const ImTypeSet *set, size_t index) {
+    return set && set->kind == IM_TYPESET_ENUM && index < set->value_count ? &set->values[index] : NULL;
+}

@@ -7,6 +7,7 @@
 
 /* Runtime descriptor for any finite collection of symbolic members. */
 typedef struct ImEnum ImEnum;
+typedef struct ImTypeSet ImTypeSet;
 
 typedef enum {
     IM_ENUM_U8 = 1,
@@ -15,6 +16,7 @@ typedef enum {
 } ImEnumWidth;
 
 ImEnum *im_enum_create(const char *type_name, const char *const *members, size_t count);
+ImEnum *im_enum_from_typeset(const char *type_name, const ImTypeSet *set);
 void im_enum_free(ImEnum *enumeration);
 const char *im_enum_type_name(const ImEnum *enumeration);
 size_t im_enum_count(const ImEnum *enumeration);

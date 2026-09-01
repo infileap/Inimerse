@@ -48,5 +48,7 @@ bool im_typeset_contains(const ImTypeSet *set, const ImTypeValue *value);
 bool im_typeset_subset(const ImTypeSet *left, const ImTypeSet *right);
 bool im_typeset_intersects(const ImTypeSet *left, const ImTypeSet *right);
 ImTypeSetKind im_typeset_kind(const ImTypeSet *set);
+size_t im_typeset_enum_count(const ImTypeSet *set);
+const ImTypeValue *im_typeset_enum_value(const ImTypeSet *set, size_t index);
 
 #endif
