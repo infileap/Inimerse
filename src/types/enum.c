@@ -101,6 +101,20 @@ bool im_enum_encode(const ImEnum *e, const char *name, uint32_t *out) {
 const char *im_enum_decode(const ImEnum *e, uint32_t code) { return e && code < e->count ? e->members[code] : NULL; }
 bool im_enum_contains(const ImEnum *e, const char *name) { uint32_t ignored; return im_enum_encode(e, name, &ignored); }
 
+uint64_t im_enum_fingerprint(const ImEnum *e) {
+    if (!e) return 0;
+    uint64_t h = UINT64_C(1469598103934665603);
+    const unsigned char *p = (const unsigned char *)e->type_name;
+    for (; *p; ++p) { h ^= *p; h *= UINT64_C(1099511628211); }
+    h ^= 0xff; h *= UINT64_C(1099511628211);
+    for (size_t i = 0; i < e->count; ++i) {
+        p = (const unsigned char *)e->members[i];
+        for (; *p; ++p) { h ^= *p; h *= UINT64_C(1099511628211); }
+        h ^= 0xff; h *= UINT64_C(1099511628211);
+    }
+    return h;
+}
+
 size_t im_enum_missing(const ImEnum *e, const char *const *covered, size_t covered_count,
                        const char **missing, size_t capacity) {
     if (!e) return 0;

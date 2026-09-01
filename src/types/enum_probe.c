@@ -9,6 +9,8 @@ int main(void) {
     const char *m[] = {"idle", "running", "stopped"};
     ImEnum *e = im_enum_create("ThreadState", m, 3);
     assert(e && im_enum_width(e) == IM_ENUM_U8);
+    uint64_t fingerprint = im_enum_fingerprint(e);
+    assert(fingerprint != 0);
     uint32_t code = 99;
     assert(im_enum_encode(e, "running", &code) && code == 1);
     assert(im_enum_decode(e, code) && im_enum_contains(e, "idle"));
@@ -46,6 +48,9 @@ int main(void) {
 
     const char *duplicate[] = {"same", "same"};
     assert(!im_enum_create("Duplicate", duplicate, 2));
+    ImEnum *e2 = im_enum_create("ThreadState", m, 3);
+    assert(e2 && im_enum_fingerprint(e2) == fingerprint);
+    im_enum_free(e2);
 
     ImTypeValue tv[] = {{.kind = IM_TYPE_STRING, .string = "cold"},
                         {.kind = IM_TYPE_STRING, .string = "hot"}};
