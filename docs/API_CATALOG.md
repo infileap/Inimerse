@@ -32,7 +32,7 @@
 | `TypeSet` 集合类型内核 | 已实现 | `src/types/typeset.*`；支持枚举、整数区间、并/交/差/补集、成员/子集/相交查询 |
 | 有限集合枚举描述符 | 已实现 | `src/types/enum.*`；自动选择 8/16 位宽度，名称↔编码双向查询、未知成员拒绝、重复成员拒绝；可作为错误/线程/游戏状态等通用有限集合表示 |
 | 预设错误枚举描述符 | 已实现 | `im_error_domain_enum`；将 File/Parse/VM 错误域以统一 `ImEnum` 提供名称↔编码映射 |
-| TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；枚举并集、交集、差集可直接生成紧凑枚举 |
+| TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；枚举并集、交集、差集可直接生成紧凑枚举，支持字符串/整数/布尔/nil 成员 |
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |

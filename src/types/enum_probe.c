@@ -62,6 +62,12 @@ int main(void) {
     assert(diff_enum && im_enum_count(diff_enum) == 1 && im_enum_contains(diff_enum, "a"));
     im_enum_free(diff_enum);
     im_typeset_free(sd); im_typeset_free(su); im_typeset_free(sa); im_typeset_free(sb);
+
+    ImTypeValue iv[] = {{.kind = IM_TYPE_INT, .integer = -1}, {.kind = IM_TYPE_INT, .integer = 7}};
+    ImTypeSet *is = im_typeset_enum(IM_TYPE_INT, iv, 2);
+    ImEnum *ie = im_enum_from_finite_set("Code", is);
+    assert(ie && im_enum_contains(ie, "-1") && im_enum_contains(ie, "7"));
+    im_enum_free(ie); im_typeset_free(is);
     puts("enum_probe: ok");
     return 0;
 }

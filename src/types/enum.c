@@ -2,6 +2,7 @@
 #include "typeset.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 struct ImEnum {
     char *type_name;
@@ -47,7 +48,8 @@ ImEnum *im_enum_from_typeset(const char *type_name, const ImTypeSet *set) {
     if (n && !names) return NULL;
     for (size_t i = 0; i < n; ++i) {
         const ImTypeValue *v = im_typeset_enum_value(set, i);
-        if (!v || v->kind != IM_TYPE_STRING) { free(names); return NULL; }
+        if (!v) { free(names); return NULL; }
+        if (v->kind != IM_TYPE_STRING) { free(names); return NULL; }
         names[i] = v->string;
     }
     ImEnum *e = im_enum_create(type_name, names, n);
@@ -58,7 +60,23 @@ ImEnum *im_enum_from_typeset(const char *type_name, const ImTypeSet *set) {
 ImEnum *im_enum_from_finite_set(const char *type_name, const ImTypeSet *set) {
     ImTypeSet *materialized = im_typeset_materialize_enum(set);
     if (!materialized) return NULL;
-    ImEnum *e = im_enum_from_typeset(type_name, materialized);
+    size_t n = im_typeset_enum_count(materialized);
+    const char **names = n ? (const char **)calloc(n, sizeof(*names)) : NULL;
+    char (*owned)[64] = n ? (char (*)[64])calloc(n, sizeof(*owned)) : NULL;
+    if ((n && !names) || (n && !owned)) { free(names); free(owned); im_typeset_free(materialized); return NULL; }
+    for (size_t i = 0; i < n; ++i) {
+        const ImTypeValue *v = im_typeset_enum_value(materialized, i);
+        if (!v) { free(names); free(owned); im_typeset_free(materialized); return NULL; }
+        switch (v->kind) {
+            case IM_TYPE_STRING: names[i] = v->string; break;
+            case IM_TYPE_INT: snprintf(owned[i], sizeof(owned[i]), "%lld", (long long)v->integer); names[i] = owned[i]; break;
+            case IM_TYPE_BOOL: snprintf(owned[i], sizeof(owned[i]), "%s", v->boolean ? "true" : "false"); names[i] = owned[i]; break;
+            case IM_TYPE_NIL: snprintf(owned[i], sizeof(owned[i]), "nil"); names[i] = owned[i]; break;
+            default: free(names); free(owned); im_typeset_free(materialized); return NULL;
+        }
+    }
+    ImEnum *e = im_enum_create(type_name, names, n);
+    free(names); free(owned);
     im_typeset_free(materialized);
     return e;
 }
