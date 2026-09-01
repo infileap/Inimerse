@@ -46,6 +46,7 @@ void im_typeset_free(ImTypeSet *set);
 
 bool im_typeset_contains(const ImTypeSet *set, const ImTypeValue *value);
 bool im_typeset_subset(const ImTypeSet *left, const ImTypeSet *right);
+bool im_typeset_intersects(const ImTypeSet *left, const ImTypeSet *right);
 ImTypeSetKind im_typeset_kind(const ImTypeSet *set);
 
 #endif

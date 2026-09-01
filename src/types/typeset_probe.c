@@ -20,6 +20,7 @@ int main(void) {
     ImTypeSet *zero_set = im_typeset_enum(IM_TYPE_INT, values, 1);
     ImTypeSet *without_zero = im_typeset_difference(byte, zero_set);
     ImTypeSet *not_enum = im_typeset_complement(enum_set);
+    ImTypeSet *far = im_typeset_int_interval(10, 20, true, true);
 
     assert(im_typeset_contains(enum_set, &one));
     assert(!im_typeset_contains(enum_set, &four));
@@ -33,11 +34,14 @@ int main(void) {
     assert(!im_typeset_contains(not_enum, &one));
     assert(im_typeset_contains(not_enum, &four));
     assert(im_typeset_subset(enum_set, byte));
+    assert(im_typeset_intersects(enum_set, byte));
+    assert(!im_typeset_intersects(enum_set, far));
 
     im_typeset_free(combined);
     im_typeset_free(without_zero);
     im_typeset_free(zero_set);
     im_typeset_free(not_enum);
+    im_typeset_free(far);
     im_typeset_free(safe_positive);
     im_typeset_free(positive);
     im_typeset_free(byte);

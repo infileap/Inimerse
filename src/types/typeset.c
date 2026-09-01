@@ -145,6 +145,33 @@ bool im_typeset_subset(const ImTypeSet *left, const ImTypeSet *right) {
     return false;
 }
 
+bool im_typeset_intersects(const ImTypeSet *left, const ImTypeSet *right) {
+    if (!left || !right || left->kind == IM_TYPESET_EMPTY || right->kind == IM_TYPESET_EMPTY) return false;
+    if (left->kind == IM_TYPESET_ANY || right->kind == IM_TYPESET_ANY) return true;
+    if (left->kind == IM_TYPESET_ENUM) {
+        for (size_t i = 0; i < left->value_count; ++i)
+            if (im_typeset_contains(right, &left->values[i])) return true;
+        return false;
+    }
+    if (right->kind == IM_TYPESET_ENUM) return im_typeset_intersects(right, left);
+    if (left->kind == IM_TYPESET_UNION || left->kind == IM_TYPESET_DIFFERENCE)
+        return im_typeset_intersects(left->left, right) ||
+               (left->kind == IM_TYPESET_UNION && im_typeset_intersects(left->right, right));
+    if (right->kind == IM_TYPESET_UNION || right->kind == IM_TYPESET_DIFFERENCE)
+        return im_typeset_intersects(right, left);
+    if (left->kind == IM_TYPESET_INTERSECTION)
+        return im_typeset_intersects(left->left, right) && im_typeset_intersects(left->right, right);
+    if (right->kind == IM_TYPESET_INTERSECTION)
+        return im_typeset_intersects(right, left);
+    if (left->kind == IM_TYPESET_COMPLEMENT) return !im_typeset_subset(right, left->left);
+    if (right->kind == IM_TYPESET_COMPLEMENT) return !im_typeset_subset(left, right->left);
+    if (left->kind == IM_TYPESET_INT_INTERVAL && right->kind == IM_TYPESET_INT_INTERVAL) {
+        if (left->hi < right->lo || right->hi < left->lo) return false;
+        return true;
+    }
+    return false;
+}
+
 ImTypeSetKind im_typeset_kind(const ImTypeSet *set) {
     return set ? set->kind : IM_TYPESET_EMPTY;
 }
