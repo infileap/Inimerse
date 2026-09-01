@@ -21,6 +21,7 @@
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；支持并/交/差/补集和相交查询，独立 C API，尚未接入复杂类型元数据 |
 | TypeSet 基数元数 | 已实现 | `typeset_probe` 验证枚举、区间和无限集标记 |
+| 开闭整数区间基数 | 已实现 | `typeset_probe` 覆盖开、半开区间的精确基数 |
 | 有限集合自动枚举 | 已实现 | `enum_probe`；边界 256/257/65536/65537 均有测试；保留符号名双向映射并拒绝重复或未知成员 |
 | 预设错误与枚举统一 | 已实现 | `error_types_probe` 验证 `im_error_domain_enum`；错误集合可直接用于枚举编码与 case 匹配 |
 | 有限 TypeSet 运算枚举化 | 已实现 | `enum_probe` 覆盖枚举并集/差集、数值成员类型前缀及编码可逆性 |

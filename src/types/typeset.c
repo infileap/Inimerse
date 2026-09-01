@@ -186,11 +186,12 @@ size_t im_typeset_cardinality(const ImTypeSet *set) {
         case IM_TYPESET_ENUM: return set->value_count;
         case IM_TYPESET_ANY: return SIZE_MAX;
         case IM_TYPESET_INT_INTERVAL:
-            if (set->lo_inclusive && set->hi_inclusive && set->hi >= set->lo) {
-                uint64_t span = (uint64_t)set->hi - (uint64_t)set->lo;
-                return span < SIZE_MAX ? (size_t)(span + 1) : SIZE_MAX;
+            {
+                __int128 lo = (__int128)set->lo + (set->lo_inclusive ? 0 : 1);
+                __int128 hi = (__int128)set->hi - (set->hi_inclusive ? 0 : 1);
+                if (hi < lo || hi - lo + 1 > (__int128)SIZE_MAX) return (hi < lo) ? 0 : SIZE_MAX;
+                return (size_t)(hi - lo + 1);
             }
-            return SIZE_MAX;
         case IM_TYPESET_UNION: {
             ImTypeSet *m = im_typeset_materialize_enum(set);
             if (!m) return SIZE_MAX;
