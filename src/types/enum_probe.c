@@ -9,11 +9,22 @@ int main(void) {
     const char *m[] = {"idle", "running", "stopped"};
     ImEnum *e = im_enum_create("ThreadState", m, 3);
     assert(e && im_enum_width(e) == IM_ENUM_U8);
+    assert(im_enum_width_bytes(e) == 1);
+    assert(im_enum_code_limit(e) == UINT8_MAX);
     uint64_t fingerprint = im_enum_fingerprint(e);
     assert(fingerprint != 0);
     uint32_t code = 99;
     assert(im_enum_encode(e, "running", &code) && code == 1);
     assert(im_enum_decode(e, code) && im_enum_contains(e, "idle"));
+    char qualified[64];
+    assert(im_enum_qualified_member(e, code, qualified, sizeof(qualified)) && strcmp(qualified, "ThreadState.running") == 0);
+    uint32_t parsed = 99;
+    assert(im_enum_parse_qualified(e, qualified, &parsed) && parsed == code);
+    assert(!im_enum_parse_qualified(e, "Other.running", &parsed));
+    char tiny[8];
+    assert(!im_enum_qualified_member(e, code, tiny, sizeof(tiny)));
+    assert(!im_enum_qualified_member(e, 999, qualified, sizeof(qualified)));
+    assert(!im_enum_parse_qualified(e, NULL, &parsed));
     assert(!im_enum_encode(e, "missing", &code));
     assert(!im_enum_decode(e, 99));
     const char *covered[] = {"idle", "stopped"};
@@ -36,6 +47,8 @@ int main(void) {
         }
         ImEnum *large = im_enum_create("Boundary", (const char *const *)names, n);
         assert(large && im_enum_width(large) == widths[si]);
+        assert(im_enum_width_bytes(large) == (widths[si] == IM_ENUM_U8 ? 1 : (widths[si] == IM_ENUM_U16 ? 2 : 4)));
+        assert(im_enum_code_limit(large) == (widths[si] == IM_ENUM_U8 ? UINT8_MAX : (widths[si] == IM_ENUM_U16 ? UINT16_MAX : UINT32_MAX)));
         uint32_t last = 0;
         assert(im_enum_encode(large, names[n - 1], &last) && last == n - 1);
         assert(strcmp(im_enum_decode(large, last), names[n - 1]) == 0);
