@@ -30,9 +30,9 @@ int main(void) {
         char **names = (char **)calloc(n, sizeof(*names));
         assert(names);
         for (size_t i = 0; i < n; ++i) {
-            names[i] = (char *)malloc(24);
+            names[i] = (char *)malloc(32);
             assert(names[i]);
-            snprintf(names[i], 24, "member_%zu", i);
+            snprintf(names[i], 32, "member_%zu", i);
         }
         ImEnum *large = im_enum_create("Boundary", (const char *const *)names, n);
         assert(large && im_enum_width(large) == widths[si]);
@@ -80,6 +80,15 @@ int main(void) {
     ImEnum *fe = im_enum_from_finite_set("Constants", fs);
     assert(fe && im_enum_contains(fe, "float:0.10000000000000001") && im_enum_contains(fe, "float:3.1415926535897931"));
     im_enum_free(fe); im_typeset_free(fs);
+
+    ImTypeValue mixed_a[] = {{.kind = IM_TYPE_INT, .integer = 1}};
+    ImTypeValue mixed_b[] = {{.kind = IM_TYPE_STRING, .string = "one"}};
+    ImTypeSet *ma = im_typeset_enum(IM_TYPE_INT, mixed_a, 1);
+    ImTypeSet *mb = im_typeset_enum(IM_TYPE_STRING, mixed_b, 1);
+    ImTypeSet *mu = im_typeset_union(ma, mb);
+    ImEnum *me = im_enum_from_finite_set("Mixed", mu);
+    assert(me && im_enum_count(me) == 2 && im_enum_contains(me, "int:1") && im_enum_contains(me, "one"));
+    im_enum_free(me); im_typeset_free(mu); im_typeset_free(ma); im_typeset_free(mb);
     puts("enum_probe: ok");
     return 0;
 }

@@ -190,7 +190,7 @@ ImTypeSet *im_typeset_materialize_enum(const ImTypeSet *set) {
     if (set->kind != IM_TYPESET_UNION && set->kind != IM_TYPESET_INTERSECTION && set->kind != IM_TYPESET_DIFFERENCE) return NULL;
     ImTypeSet *left = im_typeset_materialize_enum(set->left);
     ImTypeSet *right = im_typeset_materialize_enum(set->right);
-    if (!left || !right || left->value_kind != right->value_kind) { im_typeset_free(left); im_typeset_free(right); return NULL; }
+    if (!left || !right) { im_typeset_free(left); im_typeset_free(right); return NULL; }
     size_t cap = left->value_count + right->value_count;
     ImTypeValue *vals = cap ? (ImTypeValue *)calloc(cap, sizeof(*vals)) : NULL;
     if (cap && !vals) { im_typeset_free(left); im_typeset_free(right); return NULL; }
@@ -205,6 +205,7 @@ ImTypeSet *im_typeset_materialize_enum(const ImTypeSet *set) {
             if (!im_typeset_contains(left, &right->values[i])) vals[n++] = right->values[i];
         }
     }
+    /* A union may contain heterogeneous scalar values; retain each value's kind. */
     ImTypeSet *out = im_typeset_enum(left->value_kind, vals, n);
     free(vals); im_typeset_free(left); im_typeset_free(right);
     return out;
