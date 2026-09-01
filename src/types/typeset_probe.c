@@ -38,6 +38,12 @@ int main(void) {
     assert(!im_typeset_intersects(enum_set, far));
     assert(im_typeset_cardinality(enum_set) == 3);
     assert(im_typeset_cardinality(byte) == 256);
+    ImTypeValue extra = {.kind = IM_TYPE_INT, .integer = 9};
+    ImTypeSet *extra_set = im_typeset_enum(IM_TYPE_INT, &extra, 1);
+    ImTypeSet *finite_union = im_typeset_union(enum_set, extra_set);
+    assert(im_typeset_cardinality(finite_union) == 4);
+    im_typeset_free(finite_union);
+    im_typeset_free(extra_set);
     ImTypeSet *any_set = im_typeset_any();
     assert(im_typeset_cardinality(any_set) == SIZE_MAX);
     im_typeset_free(any_set);

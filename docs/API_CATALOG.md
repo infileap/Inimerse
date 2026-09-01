@@ -30,7 +30,7 @@
 | `|>` 管道 | 已实现 | 内糖 |
 | Result：`ok`、`err`、`is_ok`、`unwrap`、`unwrap_or` | 已实现 | 核心运行时 |
 | `TypeSet` 集合类型内核 | 已实现 | `src/types/typeset.*`；支持枚举、整数区间、并/交/差/补集、成员/子集/相交查询 |
-| TypeSet 基数查询 | 已实现 | `im_typeset_cardinality`；有限枚举/闭区间返回精确成员数，无限或未知返回 `SIZE_MAX` |
+| TypeSet 基数查询 | 已实现 | `im_typeset_cardinality`；有限枚举/闭区间及可精确物化的并/交/差集返回成员数，无限或未知返回 `SIZE_MAX` |
 | 有限集合枚举描述符 | 已实现 | `src/types/enum.*`；自动选择 8/16 位宽度，名称↔编码双向查询、未知成员拒绝、重复成员拒绝；可作为错误/线程/游戏状态等通用有限集合表示 |
 | 预设错误枚举描述符 | 已实现 | `im_error_domain_enum`；将 File/Parse/VM 错误域以统一 `ImEnum` 提供名称↔编码映射 |
 | TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；支持混合标量有限集及字符串/整数/浮点/布尔/nil，非字符串使用类型前缀避免冲突 |

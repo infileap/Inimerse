@@ -176,6 +176,9 @@ ImTypeSetKind im_typeset_kind(const ImTypeSet *set) {
     return set ? set->kind : IM_TYPESET_EMPTY;
 }
 
+/* Forward declaration: used by exact-cardinality queries on finite expressions. */
+ImTypeSet *im_typeset_materialize_enum(const ImTypeSet *set);
+
 size_t im_typeset_cardinality(const ImTypeSet *set) {
     if (!set) return 0;
     switch (set->kind) {
@@ -189,11 +192,20 @@ size_t im_typeset_cardinality(const ImTypeSet *set) {
             }
             return SIZE_MAX;
         case IM_TYPESET_UNION: {
-            size_t a = im_typeset_cardinality(set->left), b = im_typeset_cardinality(set->right);
-            return (a == SIZE_MAX || b == SIZE_MAX || a > SIZE_MAX - b) ? SIZE_MAX : a + b;
+            ImTypeSet *m = im_typeset_materialize_enum(set);
+            if (!m) return SIZE_MAX;
+            size_t n = m->value_count;
+            im_typeset_free(m);
+            return n;
         }
         case IM_TYPESET_INTERSECTION:
-        case IM_TYPESET_DIFFERENCE: return im_typeset_cardinality(set->left);
+        case IM_TYPESET_DIFFERENCE: {
+            ImTypeSet *m = im_typeset_materialize_enum(set);
+            if (!m) return SIZE_MAX;
+            size_t n = m->value_count;
+            im_typeset_free(m);
+            return n;
+        }
         case IM_TYPESET_COMPLEMENT: return SIZE_MAX;
     }
     return SIZE_MAX;
