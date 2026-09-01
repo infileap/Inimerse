@@ -7,6 +7,8 @@
 static int next_register = 1;
 static int lambda_counter = 0;
 static int reg_peak = 0;
+static const char **lambda_outer_names = NULL;
+static int lambda_outer_count = 0;
 static int alloc_reg(void) { if (next_register >= 1024) { fprintf(stderr, "\n[error] registers overflow (>=1024), abort compile.\n"); exit(1); } if (next_register > reg_peak) reg_peak = next_register; return next_register++; }
 static void reset_regs(void) { next_register = 1; reg_peak = 0; }
 
@@ -497,7 +499,12 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             char name[256];
             snprintf(name, sizeof(name), "%.*s", (int)expr->identName.length, expr->identName.start);
             int local = lookup_local(comp, name);
-            if (local >= 0) { comp->last_temp = 0; return local; }  /* 灞€閮ㄥ彉閲忥細鎸佷箙瀵勫瓨鍣紝涓嶅彲瑕嗙洊 */
+            if (local >= 0) { comp->last_temp = 0; return local; }
+            for (int oi = 0; oi < lambda_outer_count; ++oi)
+                if (strcmp(lambda_outer_names[oi], name) == 0) {
+                    fprintf(stderr, "[error] lambda captures outer local '%s'; closure capture is not implemented yet\n", name);
+                    exit(1);
+                }
             int r = alloc_reg();
             int g_idx = lookup_global_idx(comp, name);  /* 璇诲彇涓嶅垱寤哄叏灞€锛氭湭瀹氫箟 -> -1 -> NIL */
             emit(comp->curBC, OP_LOAD_GLOBAL, r, g_idx, 0);
@@ -1022,6 +1029,10 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             int fidx = register_func(comp, lname);
             Bytecode *saved_bc = comp->curBC; int saved_fn = comp->in_function;
             int saved_locals = comp->localCount, saved_gdecl = comp->gdeclCount;
+            const char **saved_outer_names = lambda_outer_names; int saved_outer_count = lambda_outer_count;
+            const char *outer_names[1024]; int outer_count = 0;
+            for (int oi = 0; oi < saved_locals && oi < 1024; ++oi) outer_names[outer_count++] = comp->locals[oi].name;
+            lambda_outer_names = outer_names; lambda_outer_count = outer_count;
             int saved_peak = comp->local_peak, saved_next = next_register, saved_reg_peak = reg_peak;
             Bytecode *fbc = malloc(sizeof(*fbc)); bytecode_init(fbc);
             comp->curBC = fbc; comp->in_function = 1; comp->localCount = 0; comp->gdeclCount = 0; comp->local_peak = 0; reset_regs();
@@ -1029,6 +1040,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             int rr = compile_expr(comp, expr->lambda.body); emit(fbc, OP_RETURN, rr, 0, 0); resolve_labels(comp);
             comp->mainBC->funcs[fidx] = fbc; comp->mainBC->func_argc[fidx] = expr->lambda.paramCount;
             comp->curBC = saved_bc; comp->in_function = saved_fn; comp->localCount = saved_locals; comp->gdeclCount = saved_gdecl; comp->local_peak = saved_peak; next_register = saved_next; reg_peak = saved_reg_peak;
+            lambda_outer_names = saved_outer_names; lambda_outer_count = saved_outer_count;
             int out = alloc_reg(); emit(comp->curBC, OP_MAKE_FUNC, out, fidx, 0); comp->last_temp = 1; return out;
         }
         case EXPR_ARROW_CAST: {            /* in-place cast: a->int / a->float / a->str / a->bool (same as a.toXXX) */
