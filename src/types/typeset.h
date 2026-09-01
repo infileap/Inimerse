@@ -50,5 +50,7 @@ bool im_typeset_intersects(const ImTypeSet *left, const ImTypeSet *right);
 ImTypeSetKind im_typeset_kind(const ImTypeSet *set);
 size_t im_typeset_enum_count(const ImTypeSet *set);
 const ImTypeValue *im_typeset_enum_value(const ImTypeSet *set, size_t index);
+/* Materialize a finite set expression as an enum; returns NULL for non-finite sets. */
+ImTypeSet *im_typeset_materialize_enum(const ImTypeSet *set);
 
 #endif

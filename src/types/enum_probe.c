@@ -48,6 +48,20 @@ int main(void) {
     assert(from_set && im_enum_contains(from_set, "hot"));
     im_enum_free(from_set);
     im_typeset_free(set);
+
+    ImTypeValue av[] = {{.kind = IM_TYPE_STRING, .string = "a"}, {.kind = IM_TYPE_STRING, .string = "b"}};
+    ImTypeValue bv[] = {{.kind = IM_TYPE_STRING, .string = "b"}, {.kind = IM_TYPE_STRING, .string = "c"}};
+    ImTypeSet *sa = im_typeset_enum(IM_TYPE_STRING, av, 2);
+    ImTypeSet *sb = im_typeset_enum(IM_TYPE_STRING, bv, 2);
+    ImTypeSet *su = im_typeset_union(sa, sb);
+    ImEnum *union_enum = im_enum_from_finite_set("Letters", su);
+    assert(union_enum && im_enum_count(union_enum) == 3 && im_enum_contains(union_enum, "c"));
+    im_enum_free(union_enum);
+    ImTypeSet *sd = im_typeset_difference(su, sb);
+    ImEnum *diff_enum = im_enum_from_finite_set("OnlyA", sd);
+    assert(diff_enum && im_enum_count(diff_enum) == 1 && im_enum_contains(diff_enum, "a"));
+    im_enum_free(diff_enum);
+    im_typeset_free(sd); im_typeset_free(su); im_typeset_free(sa); im_typeset_free(sb);
     puts("enum_probe: ok");
     return 0;
 }

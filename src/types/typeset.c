@@ -183,3 +183,29 @@ size_t im_typeset_enum_count(const ImTypeSet *set) {
 const ImTypeValue *im_typeset_enum_value(const ImTypeSet *set, size_t index) {
     return set && set->kind == IM_TYPESET_ENUM && index < set->value_count ? &set->values[index] : NULL;
 }
+
+ImTypeSet *im_typeset_materialize_enum(const ImTypeSet *set) {
+    if (!set) return NULL;
+    if (set->kind == IM_TYPESET_ENUM) return im_typeset_enum(set->value_kind, set->values, set->value_count);
+    if (set->kind != IM_TYPESET_UNION && set->kind != IM_TYPESET_INTERSECTION && set->kind != IM_TYPESET_DIFFERENCE) return NULL;
+    ImTypeSet *left = im_typeset_materialize_enum(set->left);
+    ImTypeSet *right = im_typeset_materialize_enum(set->right);
+    if (!left || !right || left->value_kind != right->value_kind) { im_typeset_free(left); im_typeset_free(right); return NULL; }
+    size_t cap = left->value_count + right->value_count;
+    ImTypeValue *vals = cap ? (ImTypeValue *)calloc(cap, sizeof(*vals)) : NULL;
+    if (cap && !vals) { im_typeset_free(left); im_typeset_free(right); return NULL; }
+    size_t n = 0;
+    for (size_t i = 0; i < left->value_count; ++i) {
+        bool keep = set->kind != IM_TYPESET_INTERSECTION || im_typeset_contains(right, &left->values[i]);
+        if (set->kind == IM_TYPESET_DIFFERENCE) keep = !im_typeset_contains(right, &left->values[i]);
+        if (keep) vals[n++] = left->values[i];
+    }
+    if (set->kind == IM_TYPESET_UNION) {
+        for (size_t i = 0; i < right->value_count; ++i) {
+            if (!im_typeset_contains(left, &right->values[i])) vals[n++] = right->values[i];
+        }
+    }
+    ImTypeSet *out = im_typeset_enum(left->value_kind, vals, n);
+    free(vals); im_typeset_free(left); im_typeset_free(right);
+    return out;
+}

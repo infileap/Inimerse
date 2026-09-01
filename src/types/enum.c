@@ -55,6 +55,14 @@ ImEnum *im_enum_from_typeset(const char *type_name, const ImTypeSet *set) {
     return e;
 }
 
+ImEnum *im_enum_from_finite_set(const char *type_name, const ImTypeSet *set) {
+    ImTypeSet *materialized = im_typeset_materialize_enum(set);
+    if (!materialized) return NULL;
+    ImEnum *e = im_enum_from_typeset(type_name, materialized);
+    im_typeset_free(materialized);
+    return e;
+}
+
 void im_enum_free(ImEnum *e) {
     if (!e) return;
     for (size_t i = 0; i < e->count; ++i) free(e->members[i]);
