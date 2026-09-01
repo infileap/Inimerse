@@ -176,6 +176,29 @@ ImTypeSetKind im_typeset_kind(const ImTypeSet *set) {
     return set ? set->kind : IM_TYPESET_EMPTY;
 }
 
+size_t im_typeset_cardinality(const ImTypeSet *set) {
+    if (!set) return 0;
+    switch (set->kind) {
+        case IM_TYPESET_EMPTY: return 0;
+        case IM_TYPESET_ENUM: return set->value_count;
+        case IM_TYPESET_ANY: return SIZE_MAX;
+        case IM_TYPESET_INT_INTERVAL:
+            if (set->lo_inclusive && set->hi_inclusive && set->hi >= set->lo) {
+                uint64_t span = (uint64_t)set->hi - (uint64_t)set->lo;
+                return span < SIZE_MAX ? (size_t)(span + 1) : SIZE_MAX;
+            }
+            return SIZE_MAX;
+        case IM_TYPESET_UNION: {
+            size_t a = im_typeset_cardinality(set->left), b = im_typeset_cardinality(set->right);
+            return (a == SIZE_MAX || b == SIZE_MAX || a > SIZE_MAX - b) ? SIZE_MAX : a + b;
+        }
+        case IM_TYPESET_INTERSECTION:
+        case IM_TYPESET_DIFFERENCE: return im_typeset_cardinality(set->left);
+        case IM_TYPESET_COMPLEMENT: return SIZE_MAX;
+    }
+    return SIZE_MAX;
+}
+
 size_t im_typeset_enum_count(const ImTypeSet *set) {
     return set && set->kind == IM_TYPESET_ENUM ? set->value_count : 0;
 }

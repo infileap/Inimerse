@@ -48,6 +48,8 @@ bool im_typeset_contains(const ImTypeSet *set, const ImTypeValue *value);
 bool im_typeset_subset(const ImTypeSet *left, const ImTypeSet *right);
 bool im_typeset_intersects(const ImTypeSet *left, const ImTypeSet *right);
 ImTypeSetKind im_typeset_kind(const ImTypeSet *set);
+/* Exact cardinality for provably finite sets; SIZE_MAX means infinite/unknown. */
+size_t im_typeset_cardinality(const ImTypeSet *set);
 size_t im_typeset_enum_count(const ImTypeSet *set);
 const ImTypeValue *im_typeset_enum_value(const ImTypeSet *set, size_t index);
 /* Materialize a finite set expression as an enum; returns NULL for non-finite sets. */

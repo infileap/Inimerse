@@ -36,6 +36,11 @@ int main(void) {
     assert(im_typeset_subset(enum_set, byte));
     assert(im_typeset_intersects(enum_set, byte));
     assert(!im_typeset_intersects(enum_set, far));
+    assert(im_typeset_cardinality(enum_set) == 3);
+    assert(im_typeset_cardinality(byte) == 256);
+    ImTypeSet *any_set = im_typeset_any();
+    assert(im_typeset_cardinality(any_set) == SIZE_MAX);
+    im_typeset_free(any_set);
 
     im_typeset_free(combined);
     im_typeset_free(without_zero);
