@@ -91,6 +91,10 @@ void im_enum_free(ImEnum *e) {
 const char *im_enum_type_name(const ImEnum *e) { return e ? e->type_name : NULL; }
 size_t im_enum_count(const ImEnum *e) { return e ? e->count : 0; }
 ImEnumWidth im_enum_width(const ImEnum *e) { return e ? e->width : IM_ENUM_BOXED; }
+size_t im_enum_width_bytes(const ImEnum *e) {
+    if (!e) return 0;
+    return e->width == IM_ENUM_U8 ? 1 : (e->width == IM_ENUM_U16 ? 2 : sizeof(uint32_t));
+}
 
 bool im_enum_encode(const ImEnum *e, const char *name, uint32_t *out) {
     if (!e || !name || !out) return false;
