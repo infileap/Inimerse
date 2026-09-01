@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include "typeset.h"
+#include "enum.h"
 
 typedef enum {
     IM_ERROR_DOMAIN_FILE = 0,
@@ -19,10 +20,14 @@ typedef struct {
     int code;
 } ImErrorKind;
 
+const char *im_error_domain_name(ImErrorDomain domain);
+
 const ImErrorKind *im_error_kind_lookup(const char *name);
 const ImErrorKind *im_error_kind_at(size_t index);
 size_t im_error_kind_count(void);
 int im_error_kind_in_domain(const ImErrorKind *kind, ImErrorDomain domain);
 ImTypeSet *im_error_domain_set(ImErrorDomain domain);
+/* Symbolic finite-enum descriptor for a preset error domain. */
+ImEnum *im_error_domain_enum(ImErrorDomain domain);
 
 #endif

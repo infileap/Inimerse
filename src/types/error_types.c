@@ -23,6 +23,18 @@ static const ImErrorKind g_errors[] = {
     {"instruction_limit", IM_ERROR_DOMAIN_RUNTIME_VM, 2302}
 };
 
+const char *im_error_domain_name(ImErrorDomain domain) {
+    switch (domain) {
+        case IM_ERROR_DOMAIN_FILE: return "FileError";
+        case IM_ERROR_DOMAIN_PARSE: return "ParseError";
+        case IM_ERROR_DOMAIN_ARITHMETIC_VM: return "ArithmeticVMError";
+        case IM_ERROR_DOMAIN_MEMORY_VM: return "MemoryVMError";
+        case IM_ERROR_DOMAIN_TYPE_VM: return "TypeVMError";
+        case IM_ERROR_DOMAIN_RUNTIME_VM: return "RuntimeVMError";
+        default: return "Error";
+    }
+}
+
 const ImErrorKind *im_error_kind_lookup(const char *name) {
     if (!name) return NULL;
     for (size_t i = 0; i < sizeof(g_errors) / sizeof(g_errors[0]); ++i)
@@ -56,4 +68,18 @@ ImTypeSet *im_error_domain_set(ImErrorDomain domain) {
     ImTypeSet *set = im_typeset_enum(IM_TYPE_STRING, values, count);
     free(values);
     return set;
+}
+
+ImEnum *im_error_domain_enum(ImErrorDomain domain) {
+    size_t count = 0;
+    for (size_t i = 0; i < im_error_kind_count(); ++i)
+        if (g_errors[i].domain == domain) ++count;
+    const char **names = count ? (const char **)malloc(count * sizeof(*names)) : NULL;
+    if (count && !names) return NULL;
+    size_t j = 0;
+    for (size_t i = 0; i < im_error_kind_count(); ++i)
+        if (g_errors[i].domain == domain) names[j++] = g_errors[i].name;
+    ImEnum *result = im_enum_create(im_error_domain_name(domain), names, count);
+    free(names);
+    return result;
 }
