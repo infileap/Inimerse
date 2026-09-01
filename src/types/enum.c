@@ -100,3 +100,20 @@ bool im_enum_encode(const ImEnum *e, const char *name, uint32_t *out) {
 
 const char *im_enum_decode(const ImEnum *e, uint32_t code) { return e && code < e->count ? e->members[code] : NULL; }
 bool im_enum_contains(const ImEnum *e, const char *name) { uint32_t ignored; return im_enum_encode(e, name, &ignored); }
+
+size_t im_enum_missing(const ImEnum *e, const char *const *covered, size_t covered_count,
+                       const char **missing, size_t capacity) {
+    if (!e) return 0;
+    size_t n = 0;
+    for (size_t i = 0; i < e->count; ++i) {
+        bool found = false;
+        for (size_t j = 0; j < covered_count; ++j)
+            if (covered && covered[j] && strcmp(e->members[i], covered[j]) == 0) { found = true; break; }
+        if (!found) { if (missing && n < capacity) missing[n] = e->members[i]; ++n; }
+    }
+    return n;
+}
+
+bool im_enum_is_exhaustive(const ImEnum *e, const char *const *covered, size_t covered_count) {
+    return im_enum_missing(e, covered, covered_count, NULL, 0) == 0;
+}

@@ -14,6 +14,12 @@ int main(void) {
     assert(im_enum_decode(e, code) && im_enum_contains(e, "idle"));
     assert(!im_enum_encode(e, "missing", &code));
     assert(!im_enum_decode(e, 99));
+    const char *covered[] = {"idle", "stopped"};
+    const char *missing[3] = {0};
+    assert(!im_enum_is_exhaustive(e, covered, 2));
+    assert(im_enum_missing(e, covered, 2, missing, 3) == 1 && strcmp(missing[0], "running") == 0);
+    const char *all[] = {"idle", "running", "stopped", "idle"};
+    assert(im_enum_is_exhaustive(e, all, 4));
     im_enum_free(e);
 
     /* Width selection is defined by representable member codes. */
