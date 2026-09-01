@@ -37,6 +37,7 @@
 | 枚举 case 穷尽检查 | 已实现 | `im_enum_is_exhaustive` / `im_enum_missing`；可返回缺失成员名并支持重复分支 |
 | 枚举描述符指纹 | 已实现 | `im_enum_fingerprint`；为类型名与有序成员生成稳定 FNV-1a 64 位指纹，用于序列化和 ABI 校验 |
 | 枚举版本兼容性 | 已实现 | `im_enum_compatible_append`；仅允许末尾追加成员，确保旧编码稳定 |
+| 枚举规范标识 | 已实现 | `im_enum_qualified_member` / `im_enum_parse_qualified`；在 `Type.Member` 和数字编码之间双向转换 |
 | 命名类型枚举查询 | 已实现 | `im_type_registry_enum`；从注册的有限 TypeSet 生成枚举描述符 |
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
