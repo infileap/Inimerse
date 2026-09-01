@@ -115,6 +115,13 @@ uint64_t im_enum_fingerprint(const ImEnum *e) {
     return h;
 }
 
+bool im_enum_compatible_append(const ImEnum *old_e, const ImEnum *new_e) {
+    if (!old_e || !new_e || strcmp(old_e->type_name, new_e->type_name) != 0 || new_e->count < old_e->count) return false;
+    for (size_t i = 0; i < old_e->count; ++i)
+        if (strcmp(old_e->members[i], new_e->members[i]) != 0) return false;
+    return true;
+}
+
 size_t im_enum_missing(const ImEnum *e, const char *const *covered, size_t covered_count,
                        const char **missing, size_t capacity) {
     if (!e) return 0;

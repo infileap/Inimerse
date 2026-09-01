@@ -26,6 +26,7 @@ bool im_enum_encode(const ImEnum *enumeration, const char *name, uint32_t *code_
 const char *im_enum_decode(const ImEnum *enumeration, uint32_t code);
 bool im_enum_contains(const ImEnum *enumeration, const char *name);
 uint64_t im_enum_fingerprint(const ImEnum *enumeration);
+bool im_enum_compatible_append(const ImEnum *old_enum, const ImEnum *new_enum);
 bool im_enum_is_exhaustive(const ImEnum *enumeration, const char *const *covered, size_t covered_count);
 size_t im_enum_missing(const ImEnum *enumeration, const char *const *covered, size_t covered_count,
                        const char **missing_out, size_t missing_capacity);

@@ -36,6 +36,7 @@
 | TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；支持混合标量有限集及字符串/整数/浮点/布尔/nil，非字符串使用类型前缀避免冲突 |
 | 枚举 case 穷尽检查 | 已实现 | `im_enum_is_exhaustive` / `im_enum_missing`；可返回缺失成员名并支持重复分支 |
 | 枚举描述符指纹 | 已实现 | `im_enum_fingerprint`；为类型名与有序成员生成稳定 FNV-1a 64 位指纹，用于序列化和 ABI 校验 |
+| 枚举版本兼容性 | 已实现 | `im_enum_compatible_append`；仅允许末尾追加成员，确保旧编码稳定 |
 | 命名类型枚举查询 | 已实现 | `im_type_registry_enum`；从注册的有限 TypeSet 生成枚举描述符 |
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
