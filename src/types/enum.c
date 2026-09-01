@@ -112,6 +112,12 @@ int im_enum_qualified_member(const ImEnum *e, uint32_t code, char *out, size_t c
     int n = snprintf(out, capacity, "%s.%s", e->type_name, e->members[code]);
     return n >= 0 && (size_t)n < capacity;
 }
+bool im_enum_parse_qualified(const ImEnum *e, const char *qualified, uint32_t *out) {
+    if (!e || !qualified || !out) return false;
+    size_t prefix = strlen(e->type_name);
+    if (strncmp(qualified, e->type_name, prefix) != 0 || qualified[prefix] != '.') return false;
+    return im_enum_encode(e, qualified + prefix + 1, out);
+}
 bool im_enum_contains(const ImEnum *e, const char *name) { uint32_t ignored; return im_enum_encode(e, name, &ignored); }
 
 uint64_t im_enum_fingerprint(const ImEnum *e) {
