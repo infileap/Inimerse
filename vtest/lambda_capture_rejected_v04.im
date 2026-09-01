@@ -1,0 +1,6 @@
+# Until closure environments land, outer-local captures must be rejected.
+func make_adder(base) {
+    return x -> x + base
+}
+add = make_adder(2)
+say add(3)
