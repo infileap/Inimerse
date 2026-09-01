@@ -1,0 +1,26 @@
+#ifndef INIMERSE_ENUM_H
+#define INIMERSE_ENUM_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/* Runtime descriptor for any finite collection of symbolic members. */
+typedef struct ImEnum ImEnum;
+
+typedef enum {
+    IM_ENUM_U8 = 1,
+    IM_ENUM_U16 = 2,
+    IM_ENUM_BOXED = 0
+} ImEnumWidth;
+
+ImEnum *im_enum_create(const char *type_name, const char *const *members, size_t count);
+void im_enum_free(ImEnum *enumeration);
+const char *im_enum_type_name(const ImEnum *enumeration);
+size_t im_enum_count(const ImEnum *enumeration);
+ImEnumWidth im_enum_width(const ImEnum *enumeration);
+bool im_enum_encode(const ImEnum *enumeration, const char *name, uint32_t *code_out);
+const char *im_enum_decode(const ImEnum *enumeration, uint32_t code);
+bool im_enum_contains(const ImEnum *enumeration, const char *name);
+
+#endif
