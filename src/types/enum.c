@@ -107,6 +107,11 @@ bool im_enum_encode(const ImEnum *e, const char *name, uint32_t *out) {
 }
 
 const char *im_enum_decode(const ImEnum *e, uint32_t code) { return e && code < e->count ? e->members[code] : NULL; }
+int im_enum_qualified_member(const ImEnum *e, uint32_t code, char *out, size_t capacity) {
+    if (!e || !out || capacity == 0 || code >= e->count) return 0;
+    int n = snprintf(out, capacity, "%s.%s", e->type_name, e->members[code]);
+    return n >= 0 && (size_t)n < capacity;
+}
 bool im_enum_contains(const ImEnum *e, const char *name) { uint32_t ignored; return im_enum_encode(e, name, &ignored); }
 
 uint64_t im_enum_fingerprint(const ImEnum *e) {

@@ -26,6 +26,7 @@ size_t im_enum_width_bytes(const ImEnum *enumeration);
 uint32_t im_enum_code_limit(const ImEnum *enumeration);
 bool im_enum_encode(const ImEnum *enumeration, const char *name, uint32_t *code_out);
 const char *im_enum_decode(const ImEnum *enumeration, uint32_t code);
+int im_enum_qualified_member(const ImEnum *enumeration, uint32_t code, char *out, size_t capacity);
 bool im_enum_contains(const ImEnum *enumeration, const char *name);
 uint64_t im_enum_fingerprint(const ImEnum *enumeration);
 bool im_enum_compatible_append(const ImEnum *old_enum, const ImEnum *new_enum);
