@@ -51,6 +51,9 @@ int main(void) {
     ImEnum *e2 = im_enum_create("ThreadState", m, 3);
     assert(e2 && im_enum_fingerprint(e2) == fingerprint);
     im_enum_free(e2);
+    ImEnum *e3 = im_enum_create("OtherState", m, 3);
+    assert(e3 && im_enum_fingerprint(e3) != fingerprint);
+    im_enum_free(e3);
 
     ImTypeValue tv[] = {{.kind = IM_TYPE_STRING, .string = "cold"},
                         {.kind = IM_TYPE_STRING, .string = "hot"}};
