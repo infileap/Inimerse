@@ -6,6 +6,7 @@ struct ImClosureEnv {
     size_t refs;
     Value *values;
 };
+struct ImClosureFunction { int function_index; size_t refs; ImClosureEnv *env; };
 
 ImClosureEnv *im_closure_env_new(size_t slots) {
     ImClosureEnv *e = (ImClosureEnv *)calloc(1, sizeof(*e));
@@ -21,3 +22,16 @@ void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { free(e
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
 int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; e->values[i] = *v; return 1; }
 const Value *im_closure_env_get(const ImClosureEnv *e, size_t i) { return e && i < e->slots ? &e->values[i] : NULL; }
+
+ImClosureFunction *im_closure_function_new(int index, ImClosureEnv *env) {
+    if (index < 0) return NULL;
+    ImClosureFunction *fn = (ImClosureFunction *)calloc(1, sizeof(*fn));
+    if (!fn) return NULL;
+    fn->function_index = index; fn->refs = 1; fn->env = env;
+    if (env) im_closure_env_retain(env);
+    return fn;
+}
+void im_closure_function_retain(ImClosureFunction *fn) { if (fn) ++fn->refs; }
+void im_closure_function_release(ImClosureFunction *fn) { if (fn && --fn->refs == 0) { im_closure_env_release(fn->env); free(fn); } }
+int im_closure_function_index(const ImClosureFunction *fn) { return fn ? fn->function_index : -1; }
+ImClosureEnv *im_closure_function_env(const ImClosureFunction *fn) { return fn ? fn->env : NULL; }
