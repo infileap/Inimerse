@@ -69,10 +69,10 @@ ImEnum *im_enum_from_finite_set(const char *type_name, const ImTypeSet *set) {
         if (!v) { free(names); free(owned); im_typeset_free(materialized); return NULL; }
         switch (v->kind) {
             case IM_TYPE_STRING: names[i] = v->string; break;
-            case IM_TYPE_INT: snprintf(owned[i], sizeof(owned[i]), "%lld", (long long)v->integer); names[i] = owned[i]; break;
-            case IM_TYPE_BOOL: snprintf(owned[i], sizeof(owned[i]), "%s", v->boolean ? "true" : "false"); names[i] = owned[i]; break;
-            case IM_TYPE_NIL: snprintf(owned[i], sizeof(owned[i]), "nil"); names[i] = owned[i]; break;
-            case IM_TYPE_FLOAT: snprintf(owned[i], sizeof(owned[i]), "%.17g", v->real); names[i] = owned[i]; break;
+            case IM_TYPE_INT: snprintf(owned[i], sizeof(owned[i]), "int:%lld", (long long)v->integer); names[i] = owned[i]; break;
+            case IM_TYPE_BOOL: snprintf(owned[i], sizeof(owned[i]), "bool:%s", v->boolean ? "true" : "false"); names[i] = owned[i]; break;
+            case IM_TYPE_NIL: snprintf(owned[i], sizeof(owned[i]), "nil:nil"); names[i] = owned[i]; break;
+            case IM_TYPE_FLOAT: snprintf(owned[i], sizeof(owned[i]), "float:%.17g", v->real); names[i] = owned[i]; break;
             default: free(names); free(owned); im_typeset_free(materialized); return NULL;
         }
     }

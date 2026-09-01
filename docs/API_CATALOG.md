@@ -32,7 +32,7 @@
 | `TypeSet` 集合类型内核 | 已实现 | `src/types/typeset.*`；支持枚举、整数区间、并/交/差/补集、成员/子集/相交查询 |
 | 有限集合枚举描述符 | 已实现 | `src/types/enum.*`；自动选择 8/16 位宽度，名称↔编码双向查询、未知成员拒绝、重复成员拒绝；可作为错误/线程/游戏状态等通用有限集合表示 |
 | 预设错误枚举描述符 | 已实现 | `im_error_domain_enum`；将 File/Parse/VM 错误域以统一 `ImEnum` 提供名称↔编码映射 |
-| TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；枚举并集、交集、差集可直接生成紧凑枚举，支持字符串/整数/浮点/布尔/nil 成员 |
+| TypeSet 有限集物化 | 已实现 | `im_typeset_materialize_enum` / `im_enum_from_finite_set`；支持字符串/整数/浮点/布尔/nil，非字符串使用 `int:`/`float:`/`bool:`/`nil:` 类型前缀避免名称冲突 |
 | 枚举 case 穷尽检查 | 已实现 | `im_enum_is_exhaustive` / `im_enum_missing`；可返回缺失成员名并支持重复分支 |
 | 命名类型枚举查询 | 已实现 | `im_type_registry_enum`；从注册的有限 TypeSet 生成枚举描述符 |
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |

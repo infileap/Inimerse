@@ -72,13 +72,13 @@ int main(void) {
     ImTypeValue iv[] = {{.kind = IM_TYPE_INT, .integer = -1}, {.kind = IM_TYPE_INT, .integer = 7}};
     ImTypeSet *is = im_typeset_enum(IM_TYPE_INT, iv, 2);
     ImEnum *ie = im_enum_from_finite_set("Code", is);
-    assert(ie && im_enum_contains(ie, "-1") && im_enum_contains(ie, "7"));
+    assert(ie && im_enum_contains(ie, "int:-1") && im_enum_contains(ie, "int:7"));
     im_enum_free(ie); im_typeset_free(is);
 
     ImTypeValue fv[] = {{.kind = IM_TYPE_FLOAT, .real = 0.1}, {.kind = IM_TYPE_FLOAT, .real = 3.141592653589793}};
     ImTypeSet *fs = im_typeset_enum(IM_TYPE_FLOAT, fv, 2);
     ImEnum *fe = im_enum_from_finite_set("Constants", fs);
-    assert(fe && im_enum_contains(fe, "0.10000000000000001") && im_enum_contains(fe, "3.1415926535897931"));
+    assert(fe && im_enum_contains(fe, "float:0.10000000000000001") && im_enum_contains(fe, "float:3.1415926535897931"));
     im_enum_free(fe); im_typeset_free(fs);
     puts("enum_probe: ok");
     return 0;

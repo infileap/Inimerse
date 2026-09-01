@@ -22,7 +22,7 @@
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；支持并/交/差/补集和相交查询，独立 C API，尚未接入复杂类型元数据 |
 | 有限集合自动枚举 | 已实现 | `enum_probe`；边界 256/257/65536/65537 均有测试；保留符号名双向映射并拒绝重复或未知成员 |
 | 预设错误与枚举统一 | 已实现 | `error_types_probe` 验证 `im_error_domain_enum`；错误集合可直接用于枚举编码与 case 匹配 |
-| 有限 TypeSet 运算枚举化 | 已实现 | `enum_probe` 覆盖枚举并集/差集以及整数/浮点成员的符号化 |
+| 有限 TypeSet 运算枚举化 | 已实现 | `enum_probe` 覆盖枚举并集/差集、数值成员类型前缀及编码可逆性 |
 | 枚举 case 穷尽性 API | 已实现 | `enum_probe` 验证缺失成员报告、重复分支不影响穷尽性 |
 | 命名 TypeSet 枚举化 | 已实现 | `type_registry_probe` 验证注册类型到枚举的转换 |
 | 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；基础 parser/compiler 接入已完成 |
