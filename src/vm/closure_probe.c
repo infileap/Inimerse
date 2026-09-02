@@ -34,6 +34,11 @@ int main(void) {
     im_closure_function_retain(fn); im_closure_function_release(fn); im_closure_function_release(fn);
     assert(!im_closure_function_new(-1, NULL));
     assert(!im_closure_env_clone(NULL));
+    ImClosureEnv *empty = im_closure_env_new(0);
+    assert(empty && im_closure_env_size(empty) == 0);
+    assert(!im_closure_env_copy_slot(empty, 0, e, 0));
+    im_closure_env_clear(empty);
+    im_closure_env_release(empty);
     ImClosureEnv *shared = im_closure_env_new(1);
     thrd_t t1, t2;
     assert(shared && thrd_create(&t1, churn, shared) == thrd_success && thrd_create(&t2, churn, shared) == thrd_success);

@@ -40,6 +40,7 @@
 | 枚举规范标识 | 已实现 | `im_enum_qualified_member` / `im_enum_parse_qualified`；在 `Type.Member` 和数字编码之间双向转换 |
 | 闭包环境基础 | 部分实现 | `src/vm/closure.*`；环境与函数对象支持引用计数，`im_closure_env_clone` 提供按值捕获基础，VM 捕获指令与 GC 根追踪待完成 |
 | 闭包环境槽复制 | 部分实现 | `im_closure_env_copy_slot`；安全复制单槽并对字符串执行深复制 |
+| 闭包环境并发约束 | 部分实现 | retain/release 为原子操作；槽读写需由 VM 调度器或外部锁保护 |
 | 命名类型枚举查询 | 已实现 | `im_type_registry_enum`；从注册的有限 TypeSet 生成枚举描述符 |
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
