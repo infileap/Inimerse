@@ -37,6 +37,10 @@ void im_closure_env_retain(ImClosureEnv *e) { if (e) ++e->refs; }
 void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { for (size_t i = 0; i < e->slots; ++i) if (e->values[i].type == VAL_STRING) free(e->values[i].sval); free(e->values); free(e); } }
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
 int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; if (e->values[i].type == VAL_STRING) free(e->values[i].sval); e->values[i] = *v; if (v->type == VAL_STRING && v->sval) { size_t n = strlen(v->sval) + 1; e->values[i].sval = (char *)malloc(n); if (!e->values[i].sval) { e->values[i].type = VAL_NIL; return 0; } memcpy(e->values[i].sval, v->sval, n); } return 1; }
+int im_closure_env_copy_slot(ImClosureEnv *dst, size_t di, const ImClosureEnv *src, size_t si) {
+    const Value *v = im_closure_env_get(src, si);
+    return v ? im_closure_env_set(dst, di, v) : 0;
+}
 void im_closure_env_clear(ImClosureEnv *e) {
     if (!e) return;
     for (size_t i = 0; i < e->slots; ++i) {

@@ -11,6 +11,10 @@ int main(void) {
     ImClosureEnv *copy = im_closure_env_clone(e);
     assert(copy && im_closure_env_get(copy, 0)->ival == 42 && copy != e);
     assert(im_closure_env_get(copy, 1)->sval && im_closure_env_get(copy, 1)->sval != im_closure_env_get(e, 1)->sval);
+    ImClosureEnv *slot_copy = im_closure_env_new(1);
+    assert(slot_copy && im_closure_env_copy_slot(slot_copy, 0, e, 1));
+    assert(im_closure_env_get(slot_copy, 0)->sval && im_closure_env_get(slot_copy, 0)->sval != im_closure_env_get(e, 1)->sval);
+    im_closure_env_release(slot_copy);
     im_closure_env_release(copy);
     im_closure_env_clear(e);
     assert(im_closure_env_get(e, 0)->type == VAL_NIL);
