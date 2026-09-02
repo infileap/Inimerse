@@ -94,6 +94,13 @@ int bytecode_add_capture(Bytecode *bc, const char *name) {
     return bc->capture_count++;
 }
 
+int bytecode_capture_index(const Bytecode *bc, const char *name) {
+    if (!bc || !name) return -1;
+    for (int i = 0; i < bc->capture_count; ++i)
+        if (strcmp(bc->capture_names[i], name) == 0) return i;
+    return -1;
+}
+
 /* ---------- ƫ��������� ---------- */
 int bytecode_current_offset(Bytecode *bc) {
     return bc->count;

@@ -8,6 +8,8 @@ int main(void) {
     assert(bytecode_add_capture(&bc, "base") == 0);
     assert(bytecode_add_capture(&bc, "offset") == 1);
     assert(bytecode_add_capture(&bc, "base") == 0);
+    assert(bytecode_capture_index(&bc, "offset") == 1);
+    assert(bytecode_capture_index(&bc, "missing") == -1);
     assert(bc.capture_count == 2);
     assert(strcmp(bc.capture_names[0], "base") == 0);
     assert(strcmp(bc.capture_names[1], "offset") == 0);
