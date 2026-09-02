@@ -104,6 +104,9 @@ typedef struct Bytecode {
     LabelEntry *labels;   /* label table (name->offset) for thread-goto / debug (memory-only) */
     char **global_names;     /* global variable names (index-aligned with VM globals) */
     int global_name_count;
+    /* Closure metadata: names are ordered capture slots for this function. */
+    char **capture_names;
+    int capture_count;
     int label_count;                /* main-thread labels (memory-only, appended) */
 } Bytecode;
 
@@ -112,6 +115,7 @@ void bytecode_add(Bytecode *bc, OpCode op, int r1, int r2, int r3);
 void bytecode_add_try(Bytecode *bc, int start_off, int end_off, int catch_off, int var_idx, int ignore);
 int  bytecode_add_string(Bytecode *bc, const char *str);
 int  bytecode_add_float(Bytecode *bc, double val);
+int  bytecode_add_capture(Bytecode *bc, const char *name);
 int  bytecode_current_offset(Bytecode *bc);
 void bytecode_patch(Bytecode *bc, int offset, int r2);
 void bytecode_free(Bytecode *bc);

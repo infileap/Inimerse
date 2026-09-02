@@ -30,6 +30,8 @@ void bytecode_init(Bytecode *bc) {
     bc->try_cap = 0;
     bc->global_names = NULL;
     bc->global_name_count = 0;
+    bc->capture_names = NULL;
+    bc->capture_count = 0;
     for (int i = 0; i < 32; i++) {
         bc->threads[i] = NULL;
         bc->thread_argc[i] = 0;
@@ -80,6 +82,16 @@ int bytecode_add_float(Bytecode *bc, double val) {
     return bc->float_count++;
 }
 
+int bytecode_add_capture(Bytecode *bc, const char *name) {
+    if (!bc || !name || !*name || bc->capture_count >= 1024) return -1;
+    char **grown = (char **)realloc(bc->capture_names, (size_t)(bc->capture_count + 1) * sizeof(*grown));
+    if (!grown) return -1;
+    bc->capture_names = grown;
+    bc->capture_names[bc->capture_count] = strdup(name);
+    if (!bc->capture_names[bc->capture_count]) return -1;
+    return bc->capture_count++;
+}
+
 /* ---------- ƫ��������� ---------- */
 int bytecode_current_offset(Bytecode *bc) {
     return bc->count;
@@ -128,6 +140,8 @@ void bytecode_free(Bytecode *bc) {
     bc->thread_count = 0;
     free(bc->try_entries);
     if (bc->global_names) { for (int i = 0; i < bc->global_name_count; i++) free(bc->global_names[i]); free(bc->global_names); bc->global_names = NULL; }
+    if (bc->capture_names) { for (int i = 0; i < bc->capture_count; i++) free(bc->capture_names[i]); free(bc->capture_names); bc->capture_names = NULL; }
+    bc->capture_count = 0;
     bc->try_entries = NULL;
     bc->try_count = bc->try_cap = 0;
 }
