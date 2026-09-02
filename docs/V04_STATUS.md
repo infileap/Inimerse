@@ -33,6 +33,7 @@
 | 枚举规范标识双向转换 | 已实现 | `enum_probe` 验证 `Type.Member` 生成与反解析 |
 | 闭包环境与函数对象基础 | 部分实现 | `closure_probe` 验证环境槽、引用计数和函数索引；尚未接入 `Value` 与 VM 执行 |
 | 闭包按值捕获基础 | 部分实现 | `closure_probe` 验证环境复制；尚未接入 `Value` 与 VM 执行 |
+| 闭包环境槽复制 | 部分实现 | `closure_probe` 验证单槽复制与字符串所有权独立性 |
 | 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；基础 parser/compiler 接入已完成 |
 | `type Name = 集合表达式` 基础语法 | 已实现 | `type_collection_runtime`；当前编译为命名集合全局值，复杂类型元数据仍待完善 |
 | 预设业务/VM 错误集合目录 | 部分实现 | `error_types_probe`；核心 VM 除零/越界/约束失败已迁移，其他模块错误待完成 |
