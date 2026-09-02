@@ -1,5 +1,12 @@
 #include "closure.h"
 #include <assert.h>
+#include <threads.h>
+
+static int churn(void *arg) {
+    ImClosureEnv *env = (ImClosureEnv *)arg;
+    for (int i = 0; i < 10000; ++i) { im_closure_env_retain(env); im_closure_env_release(env); }
+    return 0;
+}
 
 int main(void) {
     ImClosureEnv *e = im_closure_env_new(2);
@@ -27,5 +34,10 @@ int main(void) {
     im_closure_function_retain(fn); im_closure_function_release(fn); im_closure_function_release(fn);
     assert(!im_closure_function_new(-1, NULL));
     assert(!im_closure_env_clone(NULL));
+    ImClosureEnv *shared = im_closure_env_new(1);
+    thrd_t t1, t2;
+    assert(shared && thrd_create(&t1, churn, shared) == thrd_success && thrd_create(&t2, churn, shared) == thrd_success);
+    thrd_join(t1, NULL); thrd_join(t2, NULL);
+    im_closure_env_release(shared);
     return 0;
 }

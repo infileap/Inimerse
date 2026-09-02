@@ -1,13 +1,14 @@
 #include "closure.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 
 struct ImClosureEnv {
     size_t slots;
-    size_t refs;
+    atomic_size_t refs;
     Value *values;
 };
-struct ImClosureFunction { int function_index; size_t refs; ImClosureEnv *env; };
+struct ImClosureFunction { int function_index; atomic_size_t refs; ImClosureEnv *env; };
 
 ImClosureEnv *im_closure_env_new(size_t slots) {
     ImClosureEnv *e = (ImClosureEnv *)calloc(1, sizeof(*e));
@@ -33,8 +34,8 @@ ImClosureEnv *im_closure_env_clone(const ImClosureEnv *source) {
     }
     return copy;
 }
-void im_closure_env_retain(ImClosureEnv *e) { if (e) ++e->refs; }
-void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { for (size_t i = 0; i < e->slots; ++i) if (e->values[i].type == VAL_STRING) free(e->values[i].sval); free(e->values); free(e); } }
+void im_closure_env_retain(ImClosureEnv *e) { if (e) atomic_fetch_add_explicit(&e->refs, 1, memory_order_relaxed); }
+void im_closure_env_release(ImClosureEnv *e) { if (e && atomic_fetch_sub_explicit(&e->refs, 1, memory_order_acq_rel) == 1) { for (size_t i = 0; i < e->slots; ++i) if (e->values[i].type == VAL_STRING) free(e->values[i].sval); free(e->values); free(e); } }
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
 int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; if (e->values[i].type == VAL_STRING) free(e->values[i].sval); e->values[i] = *v; if (v->type == VAL_STRING && v->sval) { size_t n = strlen(v->sval) + 1; e->values[i].sval = (char *)malloc(n); if (!e->values[i].sval) { e->values[i].type = VAL_NIL; return 0; } memcpy(e->values[i].sval, v->sval, n); } return 1; }
 int im_closure_env_copy_slot(ImClosureEnv *dst, size_t di, const ImClosureEnv *src, size_t si) {
@@ -58,7 +59,7 @@ ImClosureFunction *im_closure_function_new(int index, ImClosureEnv *env) {
     if (env) im_closure_env_retain(env);
     return fn;
 }
-void im_closure_function_retain(ImClosureFunction *fn) { if (fn) ++fn->refs; }
-void im_closure_function_release(ImClosureFunction *fn) { if (fn && --fn->refs == 0) { im_closure_env_release(fn->env); free(fn); } }
+void im_closure_function_retain(ImClosureFunction *fn) { if (fn) atomic_fetch_add_explicit(&fn->refs, 1, memory_order_relaxed); }
+void im_closure_function_release(ImClosureFunction *fn) { if (fn && atomic_fetch_sub_explicit(&fn->refs, 1, memory_order_acq_rel) == 1) { im_closure_env_release(fn->env); free(fn); } }
 int im_closure_function_index(const ImClosureFunction *fn) { return fn ? fn->function_index : -1; }
 ImClosureEnv *im_closure_function_env(const ImClosureFunction *fn) { return fn ? fn->env : NULL; }
