@@ -1,5 +1,6 @@
 #include "closure.h"
 #include <stdlib.h>
+#include <string.h>
 
 struct ImClosureEnv {
     size_t slots;
@@ -21,16 +22,25 @@ ImClosureEnv *im_closure_env_clone(const ImClosureEnv *source) {
     if (!source) return NULL;
     ImClosureEnv *copy = im_closure_env_new(source->slots);
     if (!copy) return NULL;
-    for (size_t i = 0; i < source->slots; ++i) copy->values[i] = source->values[i];
+    for (size_t i = 0; i < source->slots; ++i) {
+        copy->values[i] = source->values[i];
+        if (source->values[i].type == VAL_STRING && source->values[i].sval) {
+            size_t n = strlen(source->values[i].sval) + 1;
+            copy->values[i].sval = (char *)malloc(n);
+            if (!copy->values[i].sval) { im_closure_env_release(copy); return NULL; }
+            memcpy(copy->values[i].sval, source->values[i].sval, n);
+        }
+    }
     return copy;
 }
 void im_closure_env_retain(ImClosureEnv *e) { if (e) ++e->refs; }
-void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { free(e->values); free(e); } }
+void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { for (size_t i = 0; i < e->slots; ++i) if (e->values[i].type == VAL_STRING) free(e->values[i].sval); free(e->values); free(e); } }
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
-int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; e->values[i] = *v; return 1; }
+int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; if (e->values[i].type == VAL_STRING) free(e->values[i].sval); e->values[i] = *v; if (v->type == VAL_STRING && v->sval) { size_t n = strlen(v->sval) + 1; e->values[i].sval = (char *)malloc(n); if (!e->values[i].sval) { e->values[i].type = VAL_NIL; return 0; } memcpy(e->values[i].sval, v->sval, n); } return 1; }
 void im_closure_env_clear(ImClosureEnv *e) {
     if (!e) return;
     for (size_t i = 0; i < e->slots; ++i) {
+        if (e->values[i].type == VAL_STRING) free(e->values[i].sval);
         e->values[i].type = VAL_NIL; e->values[i].ival = 0; e->values[i].fval = 0; e->values[i].sval = NULL;
     }
 }

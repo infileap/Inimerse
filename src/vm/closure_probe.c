@@ -6,8 +6,11 @@ int main(void) {
     assert(e && im_closure_env_size(e) == 2);
     Value v = {.type = VAL_INT, .ival = 42};
     assert(im_closure_env_set(e, 0, &v) && im_closure_env_get(e, 0)->ival == 42);
+    Value text = {.type = VAL_STRING, .sval = "captured"};
+    assert(im_closure_env_set(e, 1, &text));
     ImClosureEnv *copy = im_closure_env_clone(e);
     assert(copy && im_closure_env_get(copy, 0)->ival == 42 && copy != e);
+    assert(im_closure_env_get(copy, 1)->sval && im_closure_env_get(copy, 1)->sval != im_closure_env_get(e, 1)->sval);
     im_closure_env_release(copy);
     im_closure_env_clear(e);
     assert(im_closure_env_get(e, 0)->type == VAL_NIL);
