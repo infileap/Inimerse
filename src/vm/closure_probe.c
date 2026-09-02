@@ -9,6 +9,8 @@ int main(void) {
     ImClosureEnv *copy = im_closure_env_clone(e);
     assert(copy && im_closure_env_get(copy, 0)->ival == 42 && copy != e);
     im_closure_env_release(copy);
+    im_closure_env_clear(e);
+    assert(im_closure_env_get(e, 0)->type == VAL_NIL);
     assert(!im_closure_env_set(e, 2, &v) && !im_closure_env_get(e, 2));
     im_closure_env_retain(e); im_closure_env_release(e); im_closure_env_release(e);
     ImClosureEnv *captured = im_closure_env_new(1);
