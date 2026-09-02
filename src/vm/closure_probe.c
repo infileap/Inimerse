@@ -11,6 +11,7 @@ static int churn(void *arg) {
 int main(void) {
     ImClosureEnv *e = im_closure_env_new(2);
     assert(e && im_closure_env_size(e) == 2);
+    assert(im_closure_env_refs(e) == 1);
     Value v = {.type = VAL_INT, .ival = 42};
     assert(im_closure_env_set(e, 0, &v) && im_closure_env_get(e, 0)->ival == 42);
     Value text = {.type = VAL_STRING, .sval = "captured"};
@@ -30,7 +31,9 @@ int main(void) {
     ImClosureEnv *captured = im_closure_env_new(1);
     ImClosureFunction *fn = im_closure_function_new(7, captured);
     assert(fn && im_closure_function_index(fn) == 7 && im_closure_function_env(fn) == captured);
+    assert(im_closure_env_refs(captured) == 2);
     im_closure_env_release(captured);
+    assert(im_closure_env_refs(im_closure_function_env(fn)) == 1);
     im_closure_function_retain(fn); im_closure_function_release(fn); im_closure_function_release(fn);
     assert(!im_closure_function_new(-1, NULL));
     assert(!im_closure_env_clone(NULL));
