@@ -7,6 +7,7 @@
 typedef struct ImClosureEnv ImClosureEnv;
 typedef struct ImClosureFunction ImClosureFunction;
 ImClosureEnv *im_closure_env_new(size_t slots);
+ImClosureEnv *im_closure_env_clone(const ImClosureEnv *source);
 void im_closure_env_retain(ImClosureEnv *env);
 void im_closure_env_release(ImClosureEnv *env);
 size_t im_closure_env_size(const ImClosureEnv *env);

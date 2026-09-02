@@ -17,6 +17,13 @@ ImClosureEnv *im_closure_env_new(size_t slots) {
     for (size_t i = 0; i < slots; ++i) e->values[i].type = VAL_NIL;
     return e;
 }
+ImClosureEnv *im_closure_env_clone(const ImClosureEnv *source) {
+    if (!source) return NULL;
+    ImClosureEnv *copy = im_closure_env_new(source->slots);
+    if (!copy) return NULL;
+    for (size_t i = 0; i < source->slots; ++i) copy->values[i] = source->values[i];
+    return copy;
+}
 void im_closure_env_retain(ImClosureEnv *e) { if (e) ++e->refs; }
 void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { free(e->values); free(e); } }
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
