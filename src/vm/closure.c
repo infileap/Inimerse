@@ -28,6 +28,12 @@ void im_closure_env_retain(ImClosureEnv *e) { if (e) ++e->refs; }
 void im_closure_env_release(ImClosureEnv *e) { if (e && --e->refs == 0) { free(e->values); free(e); } }
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
 int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; e->values[i] = *v; return 1; }
+void im_closure_env_clear(ImClosureEnv *e) {
+    if (!e) return;
+    for (size_t i = 0; i < e->slots; ++i) {
+        e->values[i].type = VAL_NIL; e->values[i].ival = 0; e->values[i].fval = 0; e->values[i].sval = NULL;
+    }
+}
 const Value *im_closure_env_get(const ImClosureEnv *e, size_t i) { return e && i < e->slots ? &e->values[i] : NULL; }
 
 ImClosureFunction *im_closure_function_new(int index, ImClosureEnv *env) {
