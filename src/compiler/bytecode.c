@@ -84,6 +84,8 @@ int bytecode_add_float(Bytecode *bc, double val) {
 
 int bytecode_add_capture(Bytecode *bc, const char *name) {
     if (!bc || !name || !*name || bc->capture_count >= 1024) return -1;
+    for (int i = 0; i < bc->capture_count; ++i)
+        if (strcmp(bc->capture_names[i], name) == 0) return i;
     char **grown = (char **)realloc(bc->capture_names, (size_t)(bc->capture_count + 1) * sizeof(*grown));
     if (!grown) return -1;
     bc->capture_names = grown;
