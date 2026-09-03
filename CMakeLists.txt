@@ -143,6 +143,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/platform/dir.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
     src/types/typeset.c src/types/enum.c src/types/error_types.c src/types/registry.c
+    src/vm/closure.c
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c)
@@ -192,8 +193,8 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME case_structural_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_structural_v04.im)
   set_tests_properties(case_structural_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME lambda_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/lambda_v04.im)
-  add_test(NAME lambda_capture_rejected COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/lambda_capture_rejected_v04.im)
-  set_tests_properties(lambda_capture_rejected PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME lambda_capture_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/lambda_capture_rejected_v04.im)
+  set_tests_properties(lambda_capture_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional")
   set_tests_properties(lambda_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional")
   add_test(NAME float_precision_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/float_precision_v04.im)
   set_tests_properties(float_precision_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;numeric")

@@ -3,6 +3,7 @@
 #include "../parser/parser.h"
 #include "../compiler/compiler.h"
 #include "../compiler/bytecode.h"
+#include "closure.h"
 #include "../platform/platform.h"
 #include "../platform/thread.h"
 #include "../platform/fiber.h"
@@ -955,7 +956,7 @@ void vm_free(VM *vm) {
         if (tk->fiber_self) { DeleteFiber(tk->fiber_self); tk->fiber_self = NULL; }
         free(tk->exc_stack);
         free(tk->reg);
-        free(tk->frame_code); free(tk->frame_ip); free(tk->frame_base); free(tk->frame_res); free(tk->frame_sp);
+        free(tk->frame_code); free(tk->frame_ip); free(tk->frame_base); free(tk->frame_res); free(tk->frame_sp); free(tk->frame_env);
         for (int _mj = 0; _mj < tk->msg_cap; _mj++) { Value _mv = tk->msg_q[_mj]; if (_mv.type == VAL_STRING && _mv.ival != 1 && _mv.sval) free(_mv.sval); }
         free(tk->msg_q);
         if (tk->msg_lock) { im_mutex_free((ImMutex*)tk->msg_lock); }
@@ -2372,6 +2373,8 @@ static void vm_execute_thread(VmThread *t) {
         case OP_CALL_FUNC: goto L_CALL_FUNC;
         case OP_MAKE_FUNC: goto L_MAKE_FUNC;
         case OP_CALL_VALUE: goto L_CALL_VALUE;
+        case OP_LOAD_CAPTURE: goto L_LOAD_CAPTURE;
+        case OP_STORE_CAPTURE: goto L_STORE_CAPTURE;
         case OP_RETURN: goto L_RETURN;
         case OP_IS_NIL: goto L_IS_NIL;
         case OP_THREAD_START: goto L_THREAD_START;
@@ -3138,8 +3141,21 @@ static void vm_execute_thread(VmThread *t) {
             if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
             continue;
         }
+L_LOAD_CAPTURE: {
+            if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) { R[ins.r1].type = VAL_NIL; R[ins.r1].ival = 0; R[ins.r1].fval = 0; R[ins.r1].sval = NULL; R[ins.r1].ptr = NULL; continue; }
+            R[ins.r1] = *im_closure_env_get(t->closure_env, (size_t)ins.r2); continue;
+        }
+L_STORE_CAPTURE: {
+            if (t->closure_env && ins.r2 >= 0 && (size_t)ins.r2 < im_closure_env_size(t->closure_env)) im_closure_env_set(t->closure_env, (size_t)ins.r2, &R[ins.r1]);
+            continue;
+        }
 L_MAKE_FUNC: {
-            R[ins.r1].type = VAL_FUNCTION; R[ins.r1].ival = ins.r2; R[ins.r1].fval = 0; R[ins.r1].sval = NULL; continue;
+            ImClosureEnv *env = im_closure_env_new((size_t)ins.r3);
+            if (!env) { t->running = false; vm->last_error = 1; continue; }
+            for (int ci = ins.r3 - 1; ci >= 0; --ci) { if (t->sp < 0 || !im_closure_env_set(env, (size_t)ci, &t->stack[t->sp--])) { im_closure_env_release(env); t->running = false; vm->last_error = 1; continue; } }
+            ImClosureFunction *fn = im_closure_function_new(ins.r2, env); im_closure_env_release(env);
+            if (!fn) { t->running = false; vm->last_error = 1; continue; }
+            R[ins.r1].type = VAL_FUNCTION; R[ins.r1].ival = ins.r2; R[ins.r1].fval = 0; R[ins.r1].sval = NULL; R[ins.r1].ptr = fn; continue;
         }
 L_CALL_VALUE: {
             if (R[ins.r1].type != VAL_FUNCTION) { fprintf(stderr, "error: value is not callable\n"); t->running = false; vm->last_error = 1; continue; }
@@ -3171,6 +3187,8 @@ L_CALL_FUNC: {
             t->frame_ip[t->frame_count] = t->ip;
             t->frame_base[t->frame_count] = t->base;
             t->frame_res[t->frame_count] = res;
+            t->frame_env[t->frame_count] = t->closure_env;
+            if (t->closure_env) im_closure_env_retain(t->closure_env);
             t->frame_count++;
             t->base += FRAME_REGS;
             Value *FR = t->reg + t->base;
@@ -3183,6 +3201,9 @@ L_CALL_FUNC: {
             t->frame_sp[t->frame_count - 1] = t->sp;   /* save sp AFTER popping args */
             
             t->code = root->funcs[fidx];
+            if (t->closure_env) im_closure_env_release(t->closure_env);
+            t->closure_env = (ins.op == OP_CALL_VALUE) ? im_closure_function_env(im_closure_from_value(&R[ins.r1])) : NULL;
+            if (t->closure_env) im_closure_env_retain(t->closure_env);
             R = FR;
             t->ip = 0;
             continue;
@@ -3197,6 +3218,9 @@ L_CALL_FUNC: {
                 t->code = t->frame_code[t->frame_count];
                 t->ip = t->frame_ip[t->frame_count];
                 t->base = t->frame_base[t->frame_count];
+                if (t->closure_env) im_closure_env_release(t->closure_env);
+                t->closure_env = t->frame_env[t->frame_count];
+                if (t->closure_env) im_closure_env_retain(t->closure_env);
                 Value *OR = t->reg + t->base;
                 R = OR;
                 while (t->exc_depth > 0 && t->exc_stack[t->exc_depth - 1].frame_count >= t->frame_count) t->exc_depth--;
@@ -3557,7 +3581,7 @@ L_CALL_FUNC: {
             nt->frame_ip = calloc(nt->frame_cap, sizeof(int));
             nt->frame_base = calloc(nt->frame_cap, sizeof(int));
             nt->frame_res = calloc(nt->frame_cap, sizeof(int));
-            nt->frame_sp = calloc(nt->frame_cap, sizeof(int));
+            nt->frame_sp = calloc(nt->frame_cap, sizeof(int)); nt->frame_env = calloc(nt->frame_cap, sizeof(void*));
             nt->exc_stack = NULL;
             nt->exc_depth = 0;
             nt->exc_cap = 0;
@@ -3622,7 +3646,7 @@ L_CALL_FUNC: {
                         nt->frame_ip = calloc(nt->frame_cap, sizeof(int));
                         nt->frame_base = calloc(nt->frame_cap, sizeof(int));
                         nt->frame_res = calloc(nt->frame_cap, sizeof(int));
-                        nt->frame_sp = calloc(nt->frame_cap, sizeof(int)); nt->exc_stack = NULL; nt->exc_depth = 0; nt->jump_req = -1;
+                        nt->frame_sp = calloc(nt->frame_cap, sizeof(int)); nt->frame_env = calloc(nt->frame_cap, sizeof(void*)); nt->exc_stack = NULL; nt->exc_depth = 0; nt->jump_req = -1;
                         ImMutex *ml2 = im_mutex_new(); nt->msg_lock = ml2;
                         VM_LOCK(vm); vm->threads[tidx] = nt; VM_UNLOCK(vm);
                         InterlockedIncrement(&vm->active_threads);
@@ -3665,7 +3689,7 @@ L_CALL_FUNC: {
                 nt->frame_ip = calloc(nt->frame_cap, sizeof(int));
                 nt->frame_base = calloc(nt->frame_cap, sizeof(int));
                 nt->frame_res = calloc(nt->frame_cap, sizeof(int));
-                nt->frame_sp = calloc(nt->frame_cap, sizeof(int)); nt->exc_stack = NULL; nt->exc_depth = 0; nt->jump_req = -1;
+                nt->frame_sp = calloc(nt->frame_cap, sizeof(int)); nt->frame_env = calloc(nt->frame_cap, sizeof(void*)); nt->exc_stack = NULL; nt->exc_depth = 0; nt->jump_req = -1;
                 ImMutex *ml2 = im_mutex_new(); nt->msg_lock = ml2;
                 VM_LOCK(vm); vm->threads[tidx] = nt; VM_UNLOCK(vm);
                 InterlockedIncrement(&vm->active_threads);
@@ -3868,7 +3892,7 @@ VmThread *vm_os_thread_start(VM *vm, Bytecode *root, int tidx, VmThread *t, int 
     nt->frame_ip = calloc(nt->frame_cap, sizeof(int));
     nt->frame_base = calloc(nt->frame_cap, sizeof(int));
     nt->frame_res = calloc(nt->frame_cap, sizeof(int));
-    nt->frame_sp = calloc(nt->frame_cap, sizeof(int));
+    nt->frame_sp = calloc(nt->frame_cap, sizeof(int)); nt->frame_env = calloc(nt->frame_cap, sizeof(void*));
     nt->exc_stack = NULL; nt->exc_depth = 0; nt->exc_cap = 0;
     nt->jump_req = -1;
     ImMutex *ml = im_mutex_new();
@@ -3905,7 +3929,7 @@ VmThread *vm_task_create(VM *vm, Bytecode *root, int tidx, VmThread *t, int argc
     nt2->frame_ip = calloc(nt2->frame_cap, sizeof(int));
     nt2->frame_base = calloc(nt2->frame_cap, sizeof(int));
     nt2->frame_res = calloc(nt2->frame_cap, sizeof(int));
-    nt2->frame_sp = calloc(nt2->frame_cap, sizeof(int));
+    nt2->frame_sp = calloc(nt2->frame_cap, sizeof(int)); nt2->frame_env = calloc(nt2->frame_cap, sizeof(void*));
     nt2->is_task = 1;
     nt2->budget = VM_TASK_BUDGET;
     nt2->blocked = 0;
@@ -3965,7 +3989,7 @@ void *task_scheduler_entry(void *arg) {
                 VM_UNLOCK(vm);
                 free(dead->exc_stack);
                 free(dead->reg);
-                free(dead->frame_code); free(dead->frame_ip); free(dead->frame_base); free(dead->frame_res); free(dead->frame_sp);
+                free(dead->frame_code); free(dead->frame_ip); free(dead->frame_base); free(dead->frame_res); free(dead->frame_sp); free(dead->frame_env);
                 for (int _mj = 0; _mj < dead->msg_cap; _mj++) { Value _mv = dead->msg_q[_mj]; if (_mv.type == VAL_STRING && _mv.ival != 1 && _mv.sval) free(_mv.sval); }
                 free(dead->msg_q);
                 if (dead->msg_lock) { im_mutex_free((ImMutex*)dead->msg_lock); }
@@ -4076,7 +4100,7 @@ void vm_run(VM *vm) {
     main_t.frame_ip = calloc(main_t.frame_cap, sizeof(int));
     main_t.frame_base = calloc(main_t.frame_cap, sizeof(int));
     main_t.frame_res = calloc(main_t.frame_cap, sizeof(int));
-    main_t.frame_sp = calloc(main_t.frame_cap, sizeof(int));
+    main_t.frame_sp = calloc(main_t.frame_cap, sizeof(int)); main_t.frame_env = calloc(main_t.frame_cap, sizeof(void*));
 
     vm_execute_thread(&main_t);
 
@@ -4091,7 +4115,7 @@ void vm_run(VM *vm) {
             if (tt->flags & THREAD_FLAG_DAEMON) continue;  /* daemon: still running, OS reclaims */
             free(tt->exc_stack);
             free(tt->reg);
-            free(tt->frame_code); free(tt->frame_ip); free(tt->frame_base); free(tt->frame_res); free(tt->frame_sp);
+            free(tt->frame_code); free(tt->frame_ip); free(tt->frame_base); free(tt->frame_res); free(tt->frame_sp); free(tt->frame_env);
             for (int _mj=0; _mj<tt->msg_cap; _mj++) { Value _mv=tt->msg_q[_mj]; if (_mv.type==VAL_STRING && _mv.ival!=1 && _mv.sval) free(_mv.sval); } free(tt->msg_q);
             if (tt->msg_lock) {
                 im_mutex_free((ImMutex*)tt->msg_lock);
@@ -4102,7 +4126,7 @@ void vm_run(VM *vm) {
     }
     free(main_t.exc_stack);
     free(main_t.reg);
-    free(main_t.frame_code); free(main_t.frame_ip); free(main_t.frame_base); free(main_t.frame_res); free(main_t.frame_sp);
+    free(main_t.frame_code); free(main_t.frame_ip); free(main_t.frame_base); free(main_t.frame_res); free(main_t.frame_sp); free(main_t.frame_env);
     record_save_to_file(vm, vm->record_save_path ? vm->record_save_path : "save.dat");
 }
 

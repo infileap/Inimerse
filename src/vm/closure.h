@@ -21,5 +21,6 @@ void im_closure_function_retain(ImClosureFunction *fn);
 void im_closure_function_release(ImClosureFunction *fn);
 int im_closure_function_index(const ImClosureFunction *fn);
 ImClosureEnv *im_closure_function_env(const ImClosureFunction *fn);
+ImClosureFunction *im_closure_from_value(const Value *value);
 
 #endif

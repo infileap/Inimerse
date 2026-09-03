@@ -64,3 +64,6 @@ void im_closure_function_retain(ImClosureFunction *fn) { if (fn) atomic_fetch_ad
 void im_closure_function_release(ImClosureFunction *fn) { if (fn && atomic_fetch_sub_explicit(&fn->refs, 1, memory_order_acq_rel) == 1) { im_closure_env_release(fn->env); free(fn); } }
 int im_closure_function_index(const ImClosureFunction *fn) { return fn ? fn->function_index : -1; }
 ImClosureEnv *im_closure_function_env(const ImClosureFunction *fn) { return fn ? fn->env : NULL; }
+ImClosureFunction *im_closure_from_value(const Value *value) {
+    return value && value->type == VAL_FUNCTION ? (ImClosureFunction *)value->ptr : NULL;
+}

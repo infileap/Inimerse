@@ -1,4 +1,4 @@
-# Until closure environments land, outer-local captures must be rejected.
+# A closure captures its enclosing parameter by value and remains callable after return.
 func make_adder(base) {
     return x -> x + base
 }

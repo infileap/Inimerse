@@ -49,7 +49,8 @@ typedef enum {
     OP_THREAD_GOTO,
     OP_CONCAT,       /* concat chain: r1 = left-assoc fold(+) of R[r2 .. r2+r3-1] (single alloc fast path) */
     OP_YIELD,        /* yield: task cooperatively hands control back to the scheduler */
-    OP_MAKE_FUNC, OP_CALL_VALUE
+    OP_MAKE_FUNC, OP_CALL_VALUE,
+    OP_LOAD_CAPTURE, OP_STORE_CAPTURE
 } OpCode;
 
 /* ---------- register instruction (fixed size) ---------- */

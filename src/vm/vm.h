@@ -22,7 +22,7 @@ typedef struct VmThread VmThread;
 enum ValueType { VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_OBJECT, VAL_NIL, VAL_ARRAY, VAL_DICT, VAL_SET, VAL_FUNCTION };
 
 typedef struct {
-    int type; int ival; double fval; char *sval;
+    int type; int ival; double fval; char *sval; void *ptr;
 } Value;
 
 /* set interval component: builtin set nameIdx intersected with [lo,hi] (inc flags); +/-1e308 = unbounded */
@@ -83,6 +83,7 @@ struct VmThread {
     int *frame_base;
     int *frame_res;
     int *frame_sp;   /* save sp at call for correct return */
+    struct ImClosureEnv **frame_env;
     int frame_count;
     /* task (virtual thread, Fiber-driven) fields */
     bool is_task;
@@ -91,6 +92,7 @@ struct VmThread {
     int budget;             /* instr budget, yield when <=0 */
     bool blocked;           /* blocked on wait/recv: scheduler skips until wake */
     int base;
+    struct ImClosureEnv *closure_env;
     volatile bool running;
     volatile bool paused;
     volatile bool stop_flag;
