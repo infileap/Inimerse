@@ -42,7 +42,8 @@ typedef enum {
     EXPR_SETLIT, EXPR_SETINTERVAL,
     EXPR_SETCOMP,
     EXPR_ARROW_CAST,
-    EXPR_LAMBDA
+    EXPR_LAMBDA,
+    EXPR_PROPAGATE
 } ExprType;
 
 struct Expr {
@@ -66,6 +67,7 @@ struct Expr {
         struct { Expr **items; int count; } setlit;
         struct { StringView base; Expr *lo; Expr *hi; int loInc; int hiInc; } setinterval;
         struct { StringView *params; int paramCount; Expr *body; } lambda;
+        struct { Expr *value; } propagate;
     };
 };
 

@@ -38,7 +38,7 @@
 | 枚举描述符指纹 | 已实现 | `im_enum_fingerprint`；为类型名与有序成员生成稳定 FNV-1a 64 位指纹，用于序列化和 ABI 校验 |
 | 枚举版本兼容性 | 已实现 | `im_enum_compatible_append`；仅允许末尾追加成员，确保旧编码稳定 |
 | 枚举规范标识 | 已实现 | `im_enum_qualified_member` / `im_enum_parse_qualified`；在 `Type.Member` 和数字编码之间双向转换 |
-| 闭包环境基础 | 部分实现 | `src/vm/closure.*`；环境与函数对象支持引用计数，`im_closure_env_clone` 提供按值捕获基础，VM 捕获指令与 GC 根追踪待完成 |
+| 闭包环境基础 | 部分实现 | `src/vm/closure.*`；环境与函数对象支持引用计数，VM 已接入捕获指令；统一 Value/GC 生命周期仍待完成 |
 | 闭包环境槽复制 | 部分实现 | `im_closure_env_copy_slot`；安全复制单槽并对字符串执行深复制 |
 | 闭包环境并发约束 | 部分实现 | retain/release 为原子操作；槽读写需由 VM 调度器或外部锁保护 |
 | 闭包环境引用计数查询 | 部分实现 | `im_closure_env_refs`；原子读取环境当前持有者数 |
@@ -46,7 +46,7 @@
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |
-| `expr?` | 部分实现 | 内糖；当前等价于 `unwrap(expr)`，函数帧级 Err 返回未完成 |
+| `expr?` | 已实现基础传播 | 内糖；顶层使用 `unwrap`，函数体内 Err 直接返回，`result_propagation_runtime` 覆盖 Ok/Err |
 | `try { ... } catch (...) { ... }` | 已实现 | 基础异常帧与 `throw`；不含 `finally` |
 | `case try expr { ok(v): ...; err(e) | e in E: ... }` | 部分实现 | 原生 Result 分支、载荷绑定和错误集合成员守卫已接入；结构模式与穷尽检查待完善 |
 | `case value { n | predicate: ... }` | 部分实现 | 基础标识符守卫已接入；结构模式与复合集合守卫待完善 |
@@ -57,7 +57,7 @@
 | `--lint` case 覆盖诊断 | 部分实现 | 检测 `_`/`else` 后不可达分支，并提示缺少兜底分支；完整有限集合穷尽性分析待完善 |
 | `x -> expr`、`(a,b) -> expr` | 已实现 | 内糖；当前支持非捕获 lambda 与函数值调用 |
 | `>>`（简单函数名形式） | 已实现 | 核心 lexer/parser 将 `f >> g` 生成可调用组合闭包，`composition_runtime` 回归通过 |
-| 闭包捕获、部分应用 | 设计中 | 依赖后续函数值环境完善 |
+| 闭包捕获、部分应用 | 部分实现 | 外层参数捕获与调用已实现；完整 GC 生命周期及通用部分应用仍待完善 |
 | `fn`、`print`、`&&`/`||`、`//`、`unless`、`eidos`/`ed` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
 | `?.`、`??`、链式比较、后缀 `if/unless` | 设计中 | 尚无核心 parser/compiler 支持 |
 

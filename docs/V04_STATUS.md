@@ -12,7 +12,7 @@
 | 虚拟文件系统 | 基础能力已实现 | `vfs_probe` |
 | `inim` 离线包闭环 | 已实现 | `inim_regression` |
 | Result 原语 | 已实现 | `result_runtime` |
-| Result `?` | 已实现 unwrap postfix 语义 | `result_question_runtime` |
+| Result `?` | 已实现顶层 unwrap 与函数级 Err 传播 | `result_question_runtime`、`result_propagation_runtime` |
 | `case try` 基础 Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别、载荷绑定与 `e in E` 集合守卫，结构模式与穷尽检查待完善 |
 | `case` 类型/集合模式 | 部分实现 | `case_collection_patterns_runtime`；支持 `in` 命名类型、区间和集合，结构模式待完善 |
 | `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、一层绑定、严格字段存在性和一层嵌套 |
@@ -48,7 +48,7 @@
 
 - 闭包捕获和完整函数值生命周期管理；
 - `>>` 函数组合（简单函数值形式已实现，复杂高阶组合仍待扩展）；
-- `?` 的函数级 Err 自动返回与栈展开；
+- `?` 的跨线程/异步栈展开与 finally 交互；基础函数级 Err 自动返回已实现；
 - `case try` Result 分支语法与 `finally`；
 - Eidos class/instance/method 对象模型；
 - 真正模板/类型特化 JIT；

@@ -471,15 +471,10 @@ static Expr *parse_postfix(Parser *p) {
         else if (t.type == TOK_LBRACKET) { advance(p); Expr *index = parse_expr(p); consume(p, TOK_RBRACKET, "']'"); Expr *idx = malloc(sizeof(Expr)); idx->type = EXPR_INDEX; idx->index.object = e; idx->index.index = index; e = idx; }
         else if (t.type == TOK_QUESTION) {
             advance(p);
-            Expr *call = malloc(sizeof(Expr));
-            call->type = EXPR_CALL;
-            call->call.callee = malloc(sizeof(Expr));
-            call->call.callee->type = EXPR_IDENT;
-            call->call.callee->identName = sv_from_cstr("unwrap");
-            call->call.args = malloc(sizeof(Expr*));
-            call->call.args[0] = e;
-            call->call.argCount = 1;
-            e = call;
+            Expr *prop = calloc(1, sizeof(*prop));
+            prop->type = EXPR_PROPAGATE;
+            prop->propagate.value = e;
+            e = prop;
         }
         else if (t.type == TOK_ARROW) {
             advance(p);

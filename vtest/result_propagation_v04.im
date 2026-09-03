@@ -1,0 +1,8 @@
+# Function-level ? propagates Err and unwraps Ok.
+func pass_ok() { return ok(7)? }
+func pass_err() { return err("inner")? }
+ok_value = pass_ok()
+err_value = pass_err()
+say is_ok(ok_value)
+say is_ok(err_value)
+say result_error(err_value)

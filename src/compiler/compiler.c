@@ -1054,6 +1054,18 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             }
             emit(comp->curBC, OP_MAKE_FUNC, out, fidx, fbc->capture_count); comp->last_temp = 1; return out;
         }
+        case EXPR_PROPAGATE: {
+            int value = compile_expr(comp, expr->propagate.value);
+            if (!comp->in_function) {
+                return emit_builtin_call(comp, "unwrap", value, 1);
+            }
+            int ok = emit_builtin_call(comp, "is_ok", value, 1);
+            int skip = comp->curBC->count; emit(comp->curBC, OP_JUMP_IF_TRUE, ok, 0, 0);
+            emit(comp->curBC, OP_RETURN, value, 0, 0);
+            comp->curBC->code[skip].r2 = comp->curBC->count;
+            int unwrapped = emit_builtin_call(comp, "result_value", value, 1);
+            comp->last_temp = 1; return unwrapped;
+        }
         case EXPR_ARROW_CAST: {            /* in-place cast: a->int / a->float / a->str / a->bool (same as a.toXXX) */
             if (expr->arrowCast.object->type != EXPR_IDENT) {
                 fprintf(stderr, "Error: '->' cast requires a variable\n");
