@@ -612,6 +612,14 @@ static Expr *parse_expr(Parser *p) {
     Expr *lambda = parse_lambda_prefix(p);
     if (lambda) return lambda;
     Expr *left = parse_logic_or(p);
+    while (match(p, TOK_COMPOSE)) {
+        Expr *right = parse_logic_or(p);
+        Expr *arg = calloc(1, sizeof(*arg)); arg->type = EXPR_IDENT; arg->identName = sv_from_cstr("__compose_arg");
+        Expr *inner = calloc(1, sizeof(*inner)); inner->type = EXPR_CALL; inner->call.callee = left; inner->call.args = malloc(sizeof(Expr *)); inner->call.args[0] = arg; inner->call.argCount = 1;
+        Expr *outer = calloc(1, sizeof(*outer)); outer->type = EXPR_CALL; outer->call.callee = right; outer->call.args = malloc(sizeof(Expr *)); outer->call.args[0] = inner; outer->call.argCount = 1;
+        Expr *composed = calloc(1, sizeof(*composed)); composed->type = EXPR_LAMBDA; composed->lambda.params = malloc(sizeof(StringView)); composed->lambda.params[0] = sv_from_cstr("__compose_arg"); composed->lambda.paramCount = 1; composed->lambda.body = outer;
+        left = composed;
+    }
     while (match(p, TOK_PIPELINE)) {
         Expr *right = parse_logic_or(p);
         Expr *call;

@@ -39,7 +39,7 @@
 | `type Name = 集合表达式` 基础语法 | 已实现 | `type_collection_runtime`；当前编译为命名集合全局值，复杂类型元数据仍待完善 |
 | 预设业务/VM 错误集合目录 | 部分实现 | `error_types_probe`；核心 VM 除零/越界/约束失败已迁移，其他模块错误待完成 |
 | `|>` 管道 | 已实现 | `pipeline_runtime` |
-| 非捕获 lambda 与函数值调用 | 已实现 | `lambda_runtime`；闭包捕获仍未实现 |
+| 非捕获 lambda 与函数值调用 | 已实现 | `lambda_runtime`；捕获闭包另有 `lambda_capture_runtime` 回归 |
 | 浮点字符串精度保护 | 已实现 17 位往返输出（`str` 与 VM 通用格式化） | `float_precision_runtime` |
 | JIT 开关 | 已实现，后端回退解释器 | `jit_mode_probe` |
 | HTTP 探针稳定性 | 已加入启动/端口重试 | 连续 5 次 `http_probe` 通过 |
@@ -47,7 +47,7 @@
 ## V0.4 仍需开发
 
 - 闭包捕获和完整函数值生命周期管理；
-- `>>` 函数组合（依赖函数值）；
+- `>>` 函数组合（简单函数值形式已实现，复杂高阶组合仍待扩展）；
 - `?` 的函数级 Err 自动返回与栈展开；
 - `case try` Result 分支语法与 `finally`；
 - Eidos class/instance/method 对象模型；

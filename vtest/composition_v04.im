@@ -1,0 +1,5 @@
+# V0.4 function composition: (f >> g)(x) == g(f(x))
+func inc(x) { return x + 1 }
+func twice(x) { return x * 2 }
+double_inc = inc >> twice
+say double_inc(3)
