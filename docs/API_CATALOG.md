@@ -59,7 +59,8 @@
 | `>>`（简单函数名形式） | 已实现 | 核心 lexer/parser 将 `f >> g` 生成可调用组合闭包，`composition_runtime` 回归通过 |
 | 闭包捕获、部分应用 | 部分实现 | 外层参数捕获与调用已实现；完整 GC 生命周期及通用部分应用仍待完善 |
 | `fn`、`print`、`&&`/`||`、`//`、`unless`、`eidos`/`ed` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
-| `?.`、`??`、链式比较、后缀 `if/unless` | 设计中 | 尚无核心 parser/compiler 支持 |
+| `??` 空值合并 | 已实现基础语义 | 内糖；nil 时取右值，否则保留左值；`null_coalesce_runtime` 覆盖 |
+| `?.`、链式比较、后缀 `if/unless` | 设计中 | 尚无核心 parser/compiler 支持 |
 
 ## 内置函数模组
 

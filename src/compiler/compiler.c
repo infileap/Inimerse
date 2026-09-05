@@ -601,6 +601,19 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             return r;
         }
         case EXPR_BINARY: {
+            if (expr->binary.op == TOK_QUESTION) {
+                int left = compile_expr(comp, expr->binary.left);
+                int result = left;
+                int nil = alloc_reg();
+                emit(comp->curBC, OP_IS_NIL, nil, left, 0);
+                int keep = comp->curBC->count;
+                emit(comp->curBC, OP_JUMP_IF_FALSE, nil, 0, 0);
+                int right = compile_expr(comp, expr->binary.right);
+                emit(comp->curBC, OP_MOV, result, right, 0);
+                comp->curBC->code[keep].r2 = comp->curBC->count;
+                comp->last_temp = 1;
+                return result;
+            }
             if (expr->binary.op == TOK_AND || expr->binary.op == TOK_OR) {
                 int left = compile_expr(comp, expr->binary.left);
                 int l_temp = comp->last_temp;

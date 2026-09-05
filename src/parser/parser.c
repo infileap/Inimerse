@@ -469,6 +469,11 @@ static Expr *parse_postfix(Parser *p) {
             e = mem;
         }
         else if (t.type == TOK_LBRACKET) { advance(p); Expr *index = parse_expr(p); consume(p, TOK_RBRACKET, "']'"); Expr *idx = malloc(sizeof(Expr)); idx->type = EXPR_INDEX; idx->index.object = e; idx->index.index = index; e = idx; }
+        else if (t.type == TOK_QUESTION && peek_next(p).type == TOK_QUESTION) {
+            /* `??` is an infix nil-coalescing operator; leave both tokens
+               for parse_expr while a single `?` remains Result propagation. */
+            break;
+        }
         else if (t.type == TOK_QUESTION) {
             advance(p);
             Expr *prop = calloc(1, sizeof(*prop));
@@ -582,6 +587,18 @@ static Expr *parse_logic_or(Parser *p) {
     return e;
 }
 
+static Expr *parse_coalesce(Parser *p) {
+    Expr *e = parse_logic_or(p);
+    while (peek(p).type == TOK_QUESTION && peek_next(p).type == TOK_QUESTION) {
+        advance(p); advance(p);
+        Expr *right = parse_logic_or(p);
+        Expr *bin = malloc(sizeof(Expr));
+        bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = TOK_QUESTION; bin->binary.right = right;
+        e = bin;
+    }
+    return e;
+}
+
 /* Core lambda syntax: x -> expr and (a,b) -> expr. */
 static Expr *parse_lambda_prefix(Parser *p) {
     Token t = peek(p), n = peek_next(p);
@@ -606,7 +623,7 @@ static Expr *parse_lambda_prefix(Parser *p) {
 static Expr *parse_expr(Parser *p) {
     Expr *lambda = parse_lambda_prefix(p);
     if (lambda) return lambda;
-    Expr *left = parse_logic_or(p);
+    Expr *left = parse_coalesce(p);
     while (match(p, TOK_COMPOSE)) {
         Expr *right = parse_logic_or(p);
         Expr *arg = calloc(1, sizeof(*arg)); arg->type = EXPR_IDENT; arg->identName = sv_from_cstr("__compose_arg");
