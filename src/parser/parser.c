@@ -1588,7 +1588,23 @@ static Stmt *parse_simple_stmt(Parser *p) {
     else if (t.type == TOK_CURSOR) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_CURSOR; stmt->cursorStmt.imagePath = parse_expr(p); return stmt; }
     else if (t.type == TOK_INCLUDE) { advance(p); Token file = consume(p, TOK_STRING, "file path"); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_INCLUDE; stmt->includeStmt.filename = file.text; return stmt; }
     else if (t.type == TOK_DELETE) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_DELETE; stmt->deleteStmt.target = parse_expr(p); return stmt; }
-    else if (t.type == TOK_SAY) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_SAY; stmt->sayStmt.message = parse_expr(p); return stmt; }
+    else if (t.type == TOK_SAY) {
+        advance(p);
+        Stmt *say = calloc(1, sizeof(*say)); say->type = STMT_SAY; say->sayStmt.message = parse_expr(p);
+        if (peek(p).type == TOK_IF || peek(p).type == TOK_UNLESS) {
+            int invert = (peek(p).type == TOK_UNLESS); advance(p);
+            Expr *condition = parse_expr(p);
+            if (invert) {
+                Expr *neg = calloc(1, sizeof(*neg)); neg->type = EXPR_UNARY;
+                neg->unary.op = TOK_NOT; neg->unary.operand = condition; condition = neg;
+            }
+            Stmt *stmt = calloc(1, sizeof(*stmt)); stmt->type = STMT_IF;
+            stmt->ifStmt.condition = condition; stmt->ifStmt.thenBody = malloc(sizeof(*stmt->ifStmt.thenBody));
+            stmt->ifStmt.thenBody[0] = say; stmt->ifStmt.thenCount = 1;
+            return stmt;
+        }
+        return say;
+    }
     else if (t.type == TOK_STOP) {
         advance(p);
         if (match(p, TOK_ALL)) { Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_STOP; stmt->stopStmt.stopAll = true; return stmt; }
