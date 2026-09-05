@@ -9,9 +9,14 @@ import argparse, hashlib, json, statistics, subprocess, tempfile, time, shutil
 from pathlib import Path
 
 SCENARIOS = {
-    "comprehension_filter": "source = [{items}]\nselected = {{ x in source | x > 0 }}\nsay len(selected)\n",
-    "set_to_list": "source = [{items}]\nselected = {{ x in source | x > 0 }}\nout = list(selected)\nsay len(out)\n",
+    "comprehension_filter": "selected = { x in source | x > 0 }\nsay len(selected)\n",
+    "set_to_list": "selected = { x in source | x > 0 }\nout = list(selected)\nsay len(out)\n",
 }
+
+def make_source(size, body):
+    """Build input with statements so large audits avoid literal register pressure."""
+    setup = "source = []\n" + "".join("push(source, %d)\n" % i for i in range(max(1, size)))
+    return setup + body
 
 def measure(engine, mode, script, iterations):
     samples = []
@@ -53,13 +58,12 @@ def main():
     args = ap.parse_args()
     if args.size < 1 or args.iterations < 1:
         ap.error("--size and --iterations must be positive")
-    items = ", ".join(str(i - args.size // 2) for i in range(args.size))
     with tempfile.TemporaryDirectory(prefix="inimerse-collection-audit-") as td:
         root = Path(td)
         results = []
         for name, template in SCENARIOS.items():
             script = root / (name + ".im")
-            script.write_text(template.format(items=items), encoding="utf-8")
+            script.write_text(make_source(args.size, template), encoding="utf-8")
             for mode in args.modes:
                 row = {"scenario": name, "jit": mode, "size": args.size,
                        "iterations": args.iterations}
