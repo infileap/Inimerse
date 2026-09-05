@@ -1,0 +1,4 @@
+func mark_true() { say "if-true" }
+func mark_false() { say "not-printed" }
+mark_true() if true
+mark_false() unless true

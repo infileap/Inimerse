@@ -1552,6 +1552,21 @@ static Stmt *parse_stmt(Parser *p) {
             if (peek(p).type == TOK_LPAREN) { tagCount = parse_record_tags(p, &tags, 1); }
             stmt->assignStmt.target = expr; stmt->assignStmt.value = val; stmt->assignStmt.tags = tags; stmt->assignStmt.tagCount = tagCount; return stmt;
         }
+        if (peek(p).type == TOK_IF || peek(p).type == TOK_UNLESS) {
+            int invert = (peek(p).type == TOK_UNLESS);
+            advance(p);
+            Expr *condition = parse_expr(p);
+            if (invert) {
+                Expr *neg = calloc(1, sizeof(*neg)); neg->type = EXPR_UNARY;
+                neg->unary.op = TOK_NOT; neg->unary.operand = condition; condition = neg;
+            }
+            Stmt *body = calloc(1, sizeof(*body)); body->type = STMT_EXPR; body->exprStmt.expr = expr;
+            Stmt *stmt = calloc(1, sizeof(*stmt)); stmt->type = STMT_IF;
+            stmt->ifStmt.condition = condition; stmt->ifStmt.thenBody = malloc(sizeof(*stmt->ifStmt.thenBody));
+            stmt->ifStmt.thenBody[0] = body; stmt->ifStmt.thenCount = 1;
+            stmt->ifStmt.elseBody = NULL; stmt->ifStmt.elseCount = 0;
+            return stmt;
+        }
         Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_EXPR; stmt->exprStmt.expr = expr; return stmt;
     }
 }
