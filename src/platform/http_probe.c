@@ -26,8 +26,17 @@ static int query(int port, const char *request, const char *expect) {
         ImSocket *client = im_socket_connect_timeout("127.0.0.1", (uint16_t)port, 500);
         if (!client) { struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL); continue; }
         int sent = im_socket_send(client, request, strlen(request));
-        char response[512] = {0}; int n = sent > 0 ? im_socket_recv(client, response, sizeof response - 1) : -1;
-        im_socket_close(client); if (n > 0 && strstr(response, expect) != NULL) return 1;
+        char response[512] = {0}; int total = 0;
+        if (sent > 0) {
+            while (total < (int)sizeof(response) - 1) {
+                int n = im_socket_recv(client, response + total, sizeof(response) - 1 - (size_t)total);
+                if (n <= 0) break;
+                total += n;
+                response[total] = 0;
+                if (strstr(response, expect) != NULL) break;
+            }
+        }
+        im_socket_close(client); if (total > 0 && strstr(response, expect) != NULL) return 1;
         struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL);
     }
     return 0;
@@ -37,9 +46,17 @@ static int request_body(int port, const char *request, char *out, size_t cap) {
         ImSocket *client = im_socket_connect_timeout("127.0.0.1", (uint16_t)port, 500);
         if (!client) { struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL); continue; }
         int sent = im_socket_send(client, request, strlen(request));
-        int n = sent > 0 ? im_socket_recv(client, out, cap - 1) : -1;
+        int total = 0;
+        if (sent > 0) {
+            while ((size_t)total < cap - 1) {
+                int n = im_socket_recv(client, out + total, cap - 1 - (size_t)total);
+                if (n <= 0) break;
+                total += n;
+                out[total] = 0;
+            }
+        }
         im_socket_close(client);
-        if (n > 0) { out[n] = 0; return n; }
+        if (total > 0) { out[total] = 0; return total; }
         struct timespec ts = {0, 20000000L}; nanosleep(&ts, NULL);
     }
     return -1;
