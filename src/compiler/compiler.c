@@ -1257,7 +1257,43 @@ case STMT_WITH: {
                         emit(comp->curBC, OP_JUMP_IF_FALSE, cond, 0, 0);
                         add_break(&guard_skips, &guard_skip_count, kind_false);
                         if (pattern->type == EXPR_CALL && pattern->call.argCount == 1 &&
-                            pattern->call.args[0]->type != EXPR_IDENT) {
+                            pattern->call.args[0]->type == EXPR_DICT) {
+                            /* Structural payload pattern, e.g.
+                               err({"kind": "not_found"}). */
+                            int payload = alloc_reg();
+                            emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
+                            emit(comp->curBC, OP_CALL_BUILTIN, payload,
+                                 bytecode_add_string(comp->curBC, is_err ? "result_error" : "result_value"), 1);
+                            Expr *objpat = pattern->call.args[0];
+                            for (int di = 0; di < objpat->dict.count; di++) {
+                                int key = compile_expr(comp, objpat->dict.items[di * 2]);
+                                emit(comp->curBC, OP_PUSH_REG, payload, 0, 0);
+                                emit(comp->curBC, OP_PUSH_REG, key, 0, 0);
+                                int has = alloc_reg();
+                                emit(comp->curBC, OP_CALL_BUILTIN, has,
+                                     bytecode_add_string(comp->curBC, "dict_has"), 2);
+                                int jhas = comp->curBC->count;
+                                emit(comp->curBC, OP_JUMP_IF_FALSE, has, 0, 0);
+                                add_break(&guard_skips, &guard_skip_count, jhas);
+                                int got = alloc_reg();
+                                emit(comp->curBC, OP_INDEX_GET, got, payload, key);
+                                Expr *field = objpat->dict.items[di * 2 + 1];
+                                if (field->type == EXPR_IDENT &&
+                                    !(field->identName.length == 1 && field->identName.start[0] == '_')) {
+                                    char name[256];
+                                    snprintf(name, sizeof(name), "%.*s", (int)field->identName.length, field->identName.start);
+                                    emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), got, 0);
+                                } else {
+                                    int expected = compile_expr(comp, field);
+                                    int same = alloc_reg();
+                                    emit(comp->curBC, OP_EQ, same, got, expected);
+                                    int field_false = comp->curBC->count;
+                                    emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
+                                    add_break(&guard_skips, &guard_skip_count, field_false);
+                                }
+                            }
+                        } else if (pattern->type == EXPR_CALL && pattern->call.argCount == 1 &&
+                                   pattern->call.args[0]->type != EXPR_IDENT) {
                             int actual = alloc_reg();
                             emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
                             emit(comp->curBC, OP_CALL_BUILTIN, actual,

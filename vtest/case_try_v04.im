@@ -34,3 +34,9 @@ case try r {
     ok(42): say "ok-literal-hit"
     _: say "ok-literal-miss"
 }
+structured = err({"kind": "not_found", "code": 404})
+case try structured {
+    err({"kind": "permission_denied"}): say "bad-structural"
+    err({"kind": "not_found", "code": 404}): say "structural-hit"
+    _: say "structural-miss"
+}
