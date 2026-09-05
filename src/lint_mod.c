@@ -24,6 +24,31 @@ typedef struct {
     char lines[LINT_MAX_WARN][200];
 } LintBuf;
 
+typedef struct {
+    char name[64];
+    char members[32][96];
+    int count;
+} LintFiniteType;
+
+static int lint_extract_quoted(const char *s, char out[][96], int cap) {
+    int n = 0;
+    while (*s && n < cap) {
+        if (*s != '"' && *s != '\'') { s++; continue; }
+        char q = *s++;
+        int k = 0;
+        while (*s && *s != q && k < 95) out[n][k++] = *s++;
+        out[n][k] = 0;
+        if (*s == q) s++;
+        if (k > 0) n++;
+    }
+    return n;
+}
+
+static LintFiniteType *lint_find_type(LintFiniteType *types, int count, const char *name) {
+    for (int i = 0; i < count; i++) if (strcmp(types[i].name, name) == 0) return &types[i];
+    return NULL;
+}
+
 /* strip strings and comments from a line (stateful across lines for #[...]) */
 static void lint_strip(char *dst, const char *src, int *in_block) {
     int d = 0;
@@ -84,6 +109,12 @@ static int lint_scan(const char *path, LintBuf *lb) {
     int case_brace = -1;
     int case_wildcard_line = 0;
     int case_start_line = 0;
+    char case_subject[64] = "";
+    LintFiniteType *case_type = NULL;
+    char case_covered[32][96];
+    int case_covered_count = 0;
+    LintFiniteType types[32];
+    int type_count = 0;
     char prev_clean[4096] = "";
     while (fgets(raw, sizeof raw, f)) {
         ln++;
@@ -96,6 +127,22 @@ static int lint_scan(const char *path, LintBuf *lb) {
         while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r' || s[len - 1] == ' ' || s[len - 1] == '\t')) s[--len] = 0;
         if (!*s) { strcpy(prev_clean, s); continue; }
 
+        /* Register finite string types for conservative case exhaustiveness. */
+        if (strncmp(s, "type ", 5) == 0 && type_count < 32) {
+            char tn[64] = "";
+            if (sscanf(s + 5, "%63s", tn) == 1) {
+                char *eq = strchr(tn, '=');
+                if (eq) *eq = 0;
+                const char *raw_eq = strchr(raw, '=');
+                int nmem = raw_eq ? lint_extract_quoted(raw_eq + 1, types[type_count].members, 32) : 0;
+                if (nmem > 0) {
+                    snprintf(types[type_count].name, sizeof types[type_count].name, "%s", tn);
+                    types[type_count].count = nmem;
+                    type_count++;
+                }
+            }
+        }
+
         /* update loop context: count braces first */
         int opens = 0, closes = 0;
         for (const char *b = s; *b; b++) { if (*b == '{') opens++; if (*b == '}') closes++; }
@@ -103,21 +150,73 @@ static int lint_scan(const char *path, LintBuf *lb) {
             case_brace = block_depth;
             case_wildcard_line = 0;
             case_start_line = ln;
+            case_covered_count = 0;
+            case_subject[0] = 0;
+            case_type = NULL;
+            char subject[64] = "";
+            if (sscanf(s + 5, "%63s", subject) == 1) {
+                char *brace = strchr(subject, '{');
+                if (brace) *brace = 0;
+                snprintf(case_subject, sizeof case_subject, "%s", subject);
+                /* A variable is associated with a finite type when declared
+                   as `x be Type` earlier in the same file. */
+                FILE *decl = fopen(path, "rb");
+                if (decl) {
+                    char dl[4096];
+                    while (fgets(dl, sizeof dl, decl)) {
+                        char dn[64], dt[64];
+                        if (sscanf(dl, "%63s be %63s", dn, dt) == 2 && strcmp(dn, case_subject) == 0) {
+                            char *nl = strpbrk(dt, "\r\n;{}"); if (nl) *nl = 0;
+                            case_type = lint_find_type(types, type_count, dt);
+                            break;
+                        }
+                    }
+                    fclose(decl);
+                }
+            }
         } else if (case_brace >= 0 && block_depth == case_brace + 1) {
             if ((s[0] == '_' && s[1] == ':' ) || strncmp(s, "else:", 5) == 0)
                 case_wildcard_line = ln;
             else if (case_wildcard_line && strchr(s, ':')) {
                 lint_add(lb, ln, "WARN",
                     "case branch is unreachable: wildcard '_'/'else' appears before this branch");
+            } else if (case_type && case_covered_count < 32) {
+                char found_members[32][96];
+                int n = lint_extract_quoted(raw, found_members, 32);
+                for (int i = 0; i < n && case_covered_count < 32; i++) {
+                    int seen = 0;
+                    for (int j = 0; j < case_covered_count; j++)
+                        if (strcmp(case_covered[j], found_members[i]) == 0) seen = 1;
+                    if (!seen) snprintf(case_covered[case_covered_count++], 96, "%s", found_members[i]);
+                }
             }
         }
         if (case_brace >= 0 && closes > 0 && block_depth - closes <= case_brace) {
-            if (!case_wildcard_line)
+            if (!case_wildcard_line && !case_type)
                 lint_add(lb, case_start_line, "WARN",
                     "case has no wildcard '_'/'else' branch; exhaustive coverage cannot be proven for open or infinite sets");
+            if (case_type && !case_wildcard_line) {
+                char missing[160] = "";
+                for (int i = 0; i < case_type->count; i++) {
+                    int found = 0;
+                    for (int j = 0; j < case_covered_count; j++)
+                        if (strcmp(case_type->members[i], case_covered[j]) == 0) found = 1;
+                    if (!found) {
+                        if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1);
+                        strncat(missing, case_type->members[i], sizeof(missing) - strlen(missing) - 1);
+                    }
+                }
+                if (missing[0]) {
+                    char msg[180];
+                    snprintf(msg, sizeof msg, "finite case type '%s' is missing members: %s", case_type->name, missing);
+                    lint_add(lb, case_start_line, "WARN", msg);
+                }
+            }
             case_brace = -1;
             case_wildcard_line = 0;
             case_start_line = 0;
+            case_type = NULL;
+            case_subject[0] = 0;
         }
         if (closes > 0 && in_loop && block_depth - closes < loop_brace) in_loop = 0;
 

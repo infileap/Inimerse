@@ -17,7 +17,7 @@
 | `case` 类型/集合模式 | 部分实现 | `case_collection_patterns_runtime`；支持 `in` 命名类型、区间和集合，结构模式待完善 |
 | `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、一层绑定、严格字段存在性和一层嵌套 |
 | `case` 通配模式 | 已实现 | `case_collection_patterns_runtime`；`_` 在前序分支未命中时兜底 |
-| case 覆盖/不可达诊断 | 部分实现 | `--lint` 可报告 wildcard/else 后的分支及缺少兜底；有限集合穷尽性待完善 |
+| case 覆盖/不可达诊断 | 部分实现 | `--lint` 可报告 wildcard/else 后的分支，并对可识别有限字符串集合报告具体缺失成员；复杂集合穷尽性待完善 |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；支持并/交/差/补集和相交查询，独立 C API，尚未接入复杂类型元数据 |
 | TypeSet 基数元数 | 已实现 | `typeset_probe` 验证枚举、区间和无限集标记 |
