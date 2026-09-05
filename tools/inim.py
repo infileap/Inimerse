@@ -9,6 +9,18 @@ def sha256(path):
         for b in iter(lambda: f.read(1024 * 1024), b''): h.update(b)
     return h.hexdigest()
 
+def valid_package_name(name):
+    if not isinstance(name, str) or not name or name.startswith(('/', '\\')):
+        return False
+    parts = name.replace('\\', '/').split('/')
+    return all(p not in ('', '.', '..') for p in parts) and all(re.fullmatch(r'[A-Za-z0-9._-]+', p) for p in parts)
+
+def package_path(root, relative):
+    base = Path(root).resolve(); candidate = (base / str(relative)).resolve()
+    if candidate != base and base not in candidate.parents:
+        raise SystemExit(f'inim: unsafe package index path: {relative}')
+    return candidate
+
 def load_manifest(root):
     p = Path(root) / 'manifest.json'
     if not p.is_file(): raise SystemExit(f'inim: missing {p}')
@@ -67,7 +79,8 @@ def cmd_install(args):
     with zipfile.ZipFile(pkg) as z:
         try: m = json.loads(z.read('manifest.json').decode('utf-8'))
         except Exception as e: raise SystemExit(f'inim: invalid package manifest: {e}')
-        if not isinstance(m.get('name'), str) or not isinstance(m.get('version'), str): raise SystemExit('inim: manifest missing name/version')
+        if not valid_package_name(m.get('name')) or not isinstance(m.get('version'), str): raise SystemExit('inim: invalid package name/version')
+        if not re.fullmatch(r'(?:0|[1-9]\d*)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', m['version']): raise SystemExit('inim: invalid package version')
         if not engine_ok(m.get('engine')): raise SystemExit(f"inim: package requires engine {m.get('engine')}")
         dest = target / '.inim-cache' / m['name'] / m['version']; dest.mkdir(parents=True, exist_ok=True)
         safe_extract(z, dest)
@@ -83,6 +96,7 @@ def cmd_add(args):
         pkg = Path(args.package).resolve()
         if not pkg.is_file(): raise SystemExit(f'inim: package not found: {pkg}')
         with zipfile.ZipFile(pkg) as z: dep = json.loads(z.read('manifest.json').decode('utf-8'))
+        if not valid_package_name(dep.get('name')): raise SystemExit('inim: invalid dependency package name')
         dep_name = dep.get('name'); spec = {'version': dep.get('version', '0.0.0'), 'path': os.path.relpath(pkg, root), 'sha256': sha256(pkg)}
     else:
         if not dep_name or not args.version: raise SystemExit('inim: add requires NAME VERSION or a .inim package')
@@ -130,7 +144,9 @@ def cmd_verify(args):
     data = json.loads(index.read_text(encoding='utf-8')); checked = 0
     for name, versions in data.get('packages', {}).items():
         for version, item in versions.items():
-            pkg = root / item.get('file', '')
+            if not isinstance(item, dict) or item.get('file', '') == '':
+                raise SystemExit(f'inim: invalid index entry {name}@{version}')
+            pkg = package_path(root, item.get('file', ''))
             if not pkg.is_file(): raise SystemExit(f'inim: missing package {name}@{version}: {pkg.name}')
             actual = sha256(pkg)
             if actual != item.get('sha256'): raise SystemExit(f'inim: hash mismatch {name}@{version}')

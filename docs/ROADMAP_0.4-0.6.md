@@ -46,7 +46,7 @@ JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off
 
 Winget 模板位于 `packaging/winget/`；正式提交需在 V0.4 Release 生成后填入真实 SHA-256 并拆分为 Winget 三文件 manifest。
 
-当前实现入口：`python tools/inim.py` 已提供离线 `init`、`pack`、`install`、`list`、`add`、`remove`、`run`、`publish` 闭环。`.inim` 是 ZIP 容器，包含 `manifest.json`；安装写入 `.inim-cache/` 和 `lock.json`，支持本地路径依赖并拒绝路径穿越。`publish` 生成包和 `index.json`（含 SHA-256、SemVer 版本与引擎约束）。签名和远程 registry 仍待后续迭代。
+当前实现入口：`python tools/inim.py` 已提供离线 `init`、`pack`、`install`、`list`、`add`、`remove`、`run`、`publish`、`verify`、`update`、`doctor` 闭环。`.inim` 是 ZIP 容器，包含 `manifest.json`；安装写入 `.inim-cache/` 和 `lock.json`，支持本地路径依赖并拒绝包名、index 路径和 ZIP 路径穿越。`publish` 生成包和 `index.json`（含 SHA-256、SemVer 版本与引擎约束）。签名和远程 registry 仍待后续迭代。
 
 验收：从空目录安装一个带依赖的示例项目；断网可从缓存复现；篡改包、ABI 不兼容包和恶意路径均被拒绝。
 

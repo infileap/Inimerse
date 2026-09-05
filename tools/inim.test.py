@@ -42,6 +42,9 @@ def main():
         else: os.environ['INIMERSE_ENGINE_VERSION'] = prev_engine
         (Path(td) / 'dist' / index['packages']['demo/app']['0.1.0']['file']).write_bytes(b'tampered')
         assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
+        malicious_index = {'index_version': 1, 'packages': {'evil': {'1.0.0': {'file': '../outside.inim', 'sha256': '0' * 64}}}}
+        (Path(td) / 'dist' / 'index.json').write_text(json.dumps(malicious_index), encoding='utf-8')
+        assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
         run('remove', 'demo/app', '-p', str(target))
         assert not (target / '.inim-cache' / 'demo' / 'app' / '0.1.0').exists()
         bad = Path(td) / 'bad.inim'
@@ -49,6 +52,10 @@ def main():
             z.writestr('manifest.json', '{"name":"bad","version":"1.0.0"}')
             z.writestr('../escape.txt', 'no')
         assert subprocess.run(CLI + ['install', str(bad), '-t', str(target)]).returncode != 0
+        bad_name = Path(td) / 'bad-name.inim'
+        with zipfile.ZipFile(bad_name, 'w') as z:
+            z.writestr('manifest.json', '{"name":"../escape","version":"1.0.0"}')
+        assert subprocess.run(CLI + ['install', str(bad_name), '-t', str(target)]).returncode != 0
     print('inim tests: ok')
 
 if __name__ == '__main__': main()
