@@ -10,7 +10,7 @@
 
 实施状态（当前）：参数 v2、VFS 基础、集合推导、`|>` 管道、Result 运行时和 `inim` 离线包闭环已进入 `main`；Result 传播语法、Eidos、JIT 和发行渠道仍未完成。
 
-Result 运行时原语已加入：`ok(value)`、`err(error)`、`is_ok(result)`、`unwrap_or(result, fallback)`、`unwrap(result)`；`unwrap` 在错误值上触发 VM 异常。第一版以字典值表示，语法糖 `?` 和编译器穷尽检查仍待实现。
+Result 运行时原语已加入：`ok(value)`、`err(error)`、`is_ok(result)`、`unwrap_or(result, fallback)`、`unwrap(result)`；`unwrap` 在错误值上触发 VM 异常。第一版以字典值表示，函数级 `?` 传播、原生 `case try` 分支和枚举穷尽性 API 已实现，跨异步边界传播与编译器自动穷尽诊断仍待完善。
 
 性能基线工具：`python tools/v04_bench.py <script.im> -e <inimerse> -n 5`，可用 `--json` 输出供 CI 比较；在 JIT 后端接入前先固定解释器基线。
 
