@@ -21,6 +21,7 @@ def make_source(size, body):
 def measure(engine, mode, script, iterations):
     samples = []
     rss_samples = []
+    hashes = []
     time_bin = shutil.which("/usr/bin/time") or shutil.which("time")
     for _ in range(iterations):
         start = time.perf_counter()
@@ -35,6 +36,7 @@ def measure(engine, mode, script, iterations):
         if proc.returncode:
             raise RuntimeError(proc.stderr.decode(errors="replace"))
         result_hash = hashlib.sha256(proc.stdout).hexdigest()
+        hashes.append(result_hash)
         if time_bin and time_bin.endswith("/time"):
             try:
                 rss_samples.append(int(proc.stderr.decode().strip().splitlines()[-1]))
@@ -45,7 +47,9 @@ def measure(engine, mode, script, iterations):
     if rss_samples:
         result["peak_rss_kb_max"] = max(rss_samples)
         result["peak_rss_kb_mean"] = statistics.mean(rss_samples)
-    result["result_sha256"] = result_hash
+    if len(set(hashes)) != 1:
+        raise RuntimeError(f"non-deterministic output hashes: {sorted(set(hashes))}")
+    result["result_sha256"] = hashes[0]
     return result
 
 def main():
