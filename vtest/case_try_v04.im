@@ -35,8 +35,13 @@ case try r {
     _: say "ok-literal-miss"
 }
 structured = err({"kind": "not_found", "code": 404})
+structured_deep = err({"outer": {"inner": {"code": 404}}})
 case try structured {
     err({"kind": "permission_denied"}): say "bad-structural"
     err({"kind": "not_found", "code": 404}): say "structural-hit"
     _: say "structural-miss"
+}
+case try structured_deep {
+    err({"outer": {"inner": {"code": 404}}}): say "deep-structural-hit"
+    _: say "deep-structural-miss"
 }

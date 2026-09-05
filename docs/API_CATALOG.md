@@ -48,7 +48,7 @@
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |
 | `expr?` | 已实现基础传播 | 内糖；顶层使用 `unwrap`，函数体内 Err 直接返回，`result_propagation_runtime` 覆盖 Ok/Err |
 | `try { ... } catch (...) { ... } finally { ... }` | 已实现基础语义 | finally 在正常及已捕获路径执行；无 catch 时 finally 完成后重新抛出异常；`try_finally_runtime` 覆盖 |
-| `case try expr { ok(v): ...; err(e) | e in E: ... }` | 部分实现 | 原生 Result 分支、载荷绑定、`ok/err` 字面量/字典结构载荷匹配和错误集合成员守卫已接入；深层结构模式与穷尽检查待完善 |
+| `case try expr { ok(v): ...; err(e) | e in E: ... }` | 部分实现 | 原生 Result 分支、载荷绑定、`ok/err` 字面量/递归字典结构载荷匹配和错误集合成员守卫已接入；穷尽检查待完善 |
 | `case value { n | predicate: ... }` | 部分实现 | 基础标识符守卫已接入；结构模式与复合集合守卫待完善 |
 | `case value { in TypeOrSet: ... }` | 部分实现 | 基础类型/区间/集合成员模式已接入；结构类型模式与穷尽检查待完善 |
 | `case value { {"field": pattern}: ... }` | 部分实现 | 字典字段字面量匹配、绑定、严格字段存在性和递归嵌套已接入；Eidos/数组解构待完善 |
