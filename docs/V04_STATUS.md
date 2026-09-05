@@ -19,6 +19,7 @@
 | 后缀 `if/unless` | 已实现基础语义 | `postfix_condition_runtime` 覆盖正向与取反条件 |
 | 块式 `unless` | 已实现基础语义 | `postfix_condition_runtime` 覆盖条件成立与不成立路径 |
 | `case try` Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别、载荷绑定、字面量与递归字典结构载荷匹配、`e in E` 集合守卫；穷尽检查待完善 |
+| `case` 多条件 guard | 已实现基础语义 | 逗号条件编译为短路合取，`case_try_runtime` 覆盖 |
 | `case` 类型/集合模式 | 部分实现 | `case_collection_patterns_runtime`；支持 `in` 命名类型、区间和集合，结构模式待完善 |
 | `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、绑定、严格字段存在性和递归嵌套；Eidos/数组解构待完善 |
 | `case` 通配模式 | 已实现 | `case_collection_patterns_runtime`；`_` 在前序分支未命中时兜底 |

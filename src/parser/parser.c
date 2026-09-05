@@ -975,7 +975,15 @@ static Stmt *parse_case(Parser *p) {
             br->alias = consume(p, TOK_IDENT, "alias name").text;
             br->hasAlias = true;
         }
-        if (match(p, TOK_PIPE)) br->guard = parse_expr(p);
+        if (match(p, TOK_PIPE)) {
+            br->guard = parse_expr(p);
+            while (match(p, TOK_COMMA)) {
+                Expr *right = parse_expr(p);
+                Expr *both = calloc(1, sizeof(*both)); both->type = EXPR_BINARY;
+                both->binary.left = br->guard; both->binary.op = TOK_AND; both->binary.right = right;
+                br->guard = both;
+            }
+        }
         consume(p, TOK_COLON, "':'");
         if (peek(p).type == TOK_LBRACE) {
             br->body = parse_block(p, &br->bodyCount);

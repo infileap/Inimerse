@@ -16,6 +16,10 @@ case 5 {
     n | n > 0: say "guard-ok"
     _: say "guard-fail"
 }
+case 6 {
+    n | n > 0, n % 2 == 0: say "guard-two"
+    _: say "guard-two-miss"
+}
 type FileError = "not_found", "permission_denied"
 ferr = err("not_found")
 case try ferr {
