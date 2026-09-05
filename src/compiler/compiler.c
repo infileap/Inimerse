@@ -1929,6 +1929,14 @@ case STMT_WITH: {
                 snprintf(vname, sizeof(vname), "%.*s", (int)stmt->tryStmt.varName.length, stmt->tryStmt.varName.start);
                 varIdx = register_global(comp, vname);
             }
+            /* A finally-only try must preserve an exception while its cleanup
+               runs, then rethrow it.  The VM already stores caught values in
+               var_idx, so use a private global slot for this path. */
+            int finally_error_idx = -1;
+            if (stmt->tryStmt.handlerCount == 0 && stmt->tryStmt.finallyCount > 0) {
+                finally_error_idx = register_global(comp, "__inimerse_finally_error");
+                varIdx = finally_error_idx;
+            }
             int tstart = comp->curBC->count;
             emit(comp->curBC, OP_TRY_START, 0, varIdx, 0);
             for (int i = 0; i < stmt->tryStmt.bodyCount; i++)
@@ -1943,6 +1951,14 @@ case STMT_WITH: {
             comp->curBC->code[tjo].r2 = comp->curBC->count;
             for (int i = 0; i < stmt->tryStmt.finallyCount; i++)
                 compile_stmt(comp, stmt->tryStmt.finallyBody[i], break_list, break_count_ptr);
+            if (finally_error_idx >= 0) {
+                int rethrow = alloc_reg();
+                emit(comp->curBC, OP_LOAD_GLOBAL, rethrow, finally_error_idx, 0);
+                emit(comp->curBC, OP_THROW, rethrow, 0, 0);
+                /* Normal completion must skip both the cleanup exception
+                   rethrow and the exception-only finally entry. */
+                comp->curBC->code[tjo].r2 = comp->curBC->count;
+            }
             /* bare try (no catch): mark ignore=1 so the VM records swallowed exceptions into the debug slot */
             bytecode_add_try(comp->curBC, tstart, tend, tcatch, varIdx, stmt->tryStmt.handlerCount == 0 ? 1 : 0);
             release_temps(comp);

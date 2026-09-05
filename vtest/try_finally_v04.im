@@ -8,6 +8,17 @@ try {
     flag = flag + 100
 }
 say flag
+flag = 0
+try {
+    try {
+        throw "rethrow-me"
+    } finally {
+        flag = flag + 100
+    }
+} catch (e) {
+    say flag
+    say e
+}
 try {
     throw "boom"
 } catch (e) {

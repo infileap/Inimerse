@@ -49,7 +49,7 @@
 - 闭包捕获和完整函数值生命周期管理；
 - `>>` 函数组合（简单函数值形式已实现，复杂高阶组合仍待扩展）；
 - `?` 的跨线程/异步栈展开与 finally 交互；基础函数级 Err 自动返回已实现；
-- `case try` Result 结构分支与未捕获异常 finally 重抛语义；
+- `case try` Result 结构分支与完整穷尽检查；
 - Eidos class/instance/method 对象模型；
 - 真正模板/类型特化 JIT；
 - 远程 registry、签名验证、Winget/Linux 官方提交。
