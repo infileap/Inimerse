@@ -1,0 +1,6 @@
+obj = {"name": "inimerse"}
+present = obj?.name
+say present
+
+missing = nil?.name
+say missing

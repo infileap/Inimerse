@@ -57,7 +57,7 @@ struct Expr {
         struct { Expr *left; InimerseTokenType op; Expr *right; } binary;
         struct { InimerseTokenType op; Expr *operand; } unary;
         struct { Expr *callee; Expr **args; int argCount; } call;
-        struct { Expr *object; StringView member; } member;
+        struct { Expr *object; StringView member; bool safe; } member;
         struct { Expr *object; Expr *index; } index;
         struct { Expr **items; int count; } list;
         struct { Expr **items; int count; } dict;  /* 交替存储 key/value，count 为键值对个数 */

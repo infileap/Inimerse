@@ -947,6 +947,23 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             return r;
         }
         case EXPR_MEMBER: {
+            if (expr->member.safe) {
+                int object = compile_expr(comp, expr->member.object);
+                int result = alloc_reg();
+                int isnil = alloc_reg();
+                emit(comp->curBC, OP_IS_NIL, isnil, object, 0);
+                int skip = comp->curBC->count;
+                emit(comp->curBC, OP_JUMP_IF_TRUE, isnil, 0, 0);
+                int key = alloc_reg();
+                int key_idx = bytecode_add_string(comp->curBC, expr->member.member.start);
+                emit(comp->curBC, OP_LOADK_STRING, key, key_idx, 0);
+                int value = alloc_reg();
+                emit(comp->curBC, OP_INDEX_GET, value, object, key);
+                emit(comp->curBC, OP_MOV, result, value, 0);
+                comp->curBC->code[skip].r2 = comp->curBC->count;
+                comp->last_temp = 1;
+                return result;
+            }
             /* 鍛藉悕绌洪棿浼樺厛锛歛.b.c 涓?a 鈭?褰撳墠妯″潡鍙鍛藉悕绌洪棿 鈫?缂栬瘧鏈熻В鏋愪负甯﹀墠缂€鍏ㄥ眬
                锛堟斁鍦?meta 灞炴€т箣鍓嶏紝閬垮厤妯″潡鍏ㄥ眬鍚?type/range/int 绛夎鍔寔锛?*/
             char nsfull[512];

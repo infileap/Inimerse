@@ -445,6 +445,13 @@ static Expr *parse_postfix(Parser *p) {
             StringView base = e->identName;
             e = parse_set_interval(p, base);
         }
+        else if (t.type == TOK_QUESTION && peek_next(p).type == TOK_DOT) {
+            advance(p); advance(p);
+            Token name = consume(p, TOK_IDENT, "identifier");
+            Expr *mem = calloc(1, sizeof(*mem));
+            mem->type = EXPR_MEMBER; mem->member.object = e; mem->member.member = name.text; mem->member.safe = true;
+            e = mem;
+        }
         else if (t.type == TOK_DOT) {
             advance(p);
             Token name;
