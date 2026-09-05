@@ -55,6 +55,7 @@
 | `dict_has(dict, key)` | 已实现 | 结构模式使用的字段存在性查询 |
 | `case value { _: ... }` | 已实现 | 原生通配模式，作为前序分支均未命中时的兜底 |
 | `--lint` case 覆盖诊断 | 部分实现 | 检测 `_`/`else` 后不可达分支；对可识别的有限字符串集合报告具体缺失成员，开放/无限集合仍建议显式兜底 |
+| `case ... as name` whole-value alias | 已实现基础语义 | 命中分支入口绑定完整 subject；`case_alias_runtime` 覆盖 |
 | `x -> expr`、`(a,b) -> expr` | 已实现 | 内糖；当前支持非捕获 lambda 与函数值调用 |
 | `>>`（简单函数名形式） | 已实现 | 核心 lexer/parser 将 `f >> g` 生成可调用组合闭包，`composition_runtime` 回归通过 |
 | 闭包捕获、部分应用 | 部分实现 | 外层参数捕获与调用已实现；完整 GC 生命周期及通用部分应用仍待完善 |

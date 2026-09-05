@@ -1537,6 +1537,12 @@ case STMT_WITH: {
                 } else {
                     body_start = comp->curBC->count;
                 }
+                if (br->hasAlias) {
+                    char alias[256];
+                    snprintf(alias, sizeof(alias), "%.*s", (int)br->alias.length, br->alias.start);
+                    emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, alias), subj, 0);
+                    body_start = comp->curBC->count;
+                }
                 if (br->guard && guard_true >= 0) comp->curBC->code[guard_true].r2 = body_start;
                 if (!br->guard && result_bind >= 0 && result_field) {
                     int value = alloc_reg();

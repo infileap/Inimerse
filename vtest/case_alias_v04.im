@@ -1,0 +1,5 @@
+value = 42
+case value {
+    42 as whole: say whole
+    _: say "miss"
+}

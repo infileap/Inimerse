@@ -23,6 +23,8 @@ typedef struct {
     Expr *cmpExpr;            /* mode=1 */
     Expr *matchExpr;          /* mode=4: regex pattern */
     Expr *guard;              /* optional `|` predicate */
+    StringView alias;         /* optional `pattern as name` whole-value binding */
+    bool hasAlias;
     Stmt **body;
     int bodyCount;
 } CaseBranch;

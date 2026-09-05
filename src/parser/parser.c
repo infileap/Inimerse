@@ -971,6 +971,10 @@ static Stmt *parse_case(Parser *p) {
             }
         }
         br->guard = NULL;
+        if (match(p, TOK_AS)) {
+            br->alias = consume(p, TOK_IDENT, "alias name").text;
+            br->hasAlias = true;
+        }
         if (match(p, TOK_PIPE)) br->guard = parse_expr(p);
         consume(p, TOK_COLON, "':'");
         if (peek(p).type == TOK_LBRACE) {
