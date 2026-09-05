@@ -109,6 +109,9 @@ static int lint_scan(const char *path, LintBuf *lb) {
     int case_brace = -1;
     int case_wildcard_line = 0;
     int case_start_line = 0;
+    int case_is_try = 0;
+    int case_has_ok = 0;
+    int case_has_err = 0;
     char case_subject[64] = "";
     LintFiniteType *case_type = NULL;
     char case_covered[32][96];
@@ -150,6 +153,9 @@ static int lint_scan(const char *path, LintBuf *lb) {
             case_brace = block_depth;
             case_wildcard_line = 0;
             case_start_line = ln;
+            case_is_try = (strncmp(s + 5, "try ", 4) == 0);
+            case_has_ok = 0;
+            case_has_err = 0;
             case_covered_count = 0;
             case_subject[0] = 0;
             case_type = NULL;
@@ -177,6 +183,10 @@ static int lint_scan(const char *path, LintBuf *lb) {
         } else if (case_brace >= 0 && block_depth == case_brace + 1) {
             if ((s[0] == '_' && s[1] == ':' ) || strncmp(s, "else:", 5) == 0)
                 case_wildcard_line = ln;
+            else if (case_is_try) {
+                if (strncmp(s, "ok", 2) == 0 && (s[2] == ':' || s[2] == '(')) case_has_ok = 1;
+                if (strncmp(s, "err", 3) == 0 && (s[3] == ':' || s[3] == '(')) case_has_err = 1;
+            }
             else if (case_wildcard_line && strchr(s, ':')) {
                 lint_add(lb, ln, "WARN",
                     "case branch is unreachable: wildcard '_'/'else' appears before this branch");
@@ -195,6 +205,16 @@ static int lint_scan(const char *path, LintBuf *lb) {
             if (!case_wildcard_line && !case_type)
                 lint_add(lb, case_start_line, "WARN",
                     "case has no wildcard '_'/'else' branch; exhaustive coverage cannot be proven for open or infinite sets");
+            if (case_is_try && !case_wildcard_line && (!case_has_ok || !case_has_err)) {
+                char missing[32] = "";
+                if (!case_has_ok) strncat(missing, "ok", sizeof(missing) - strlen(missing) - 1);
+                if (!case_has_err) {
+                    if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1);
+                    strncat(missing, "err", sizeof(missing) - strlen(missing) - 1);
+                }
+                char msg[128]; snprintf(msg, sizeof msg, "case try is missing Result branch(es): %s", missing);
+                lint_add(lb, case_start_line, "WARN", msg);
+            }
             if (case_type && !case_wildcard_line) {
                 char missing[160] = "";
                 for (int i = 0; i < case_type->count; i++) {
@@ -217,6 +237,8 @@ static int lint_scan(const char *path, LintBuf *lb) {
             case_start_line = 0;
             case_type = NULL;
             case_subject[0] = 0;
+            case_is_try = 0;
+            case_has_ok = case_has_err = 0;
         }
         if (closes > 0 && in_loop && block_depth - closes < loop_brace) in_loop = 0;
 
