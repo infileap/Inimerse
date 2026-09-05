@@ -1175,6 +1175,42 @@ static void compile_index_set_chain(Compiler *comp, Expr *target, Expr *value) {
     free(idxs);
 }
 
+/* Emit recursive dictionary structure checks for case patterns.  Each field
+   must exist; identifier fields bind the extracted value, while nested
+   dictionaries recurse on the extracted child. */
+static void compile_case_dict_pattern(Compiler *comp, int actual, Expr *pattern,
+                                      int **guard_skips, int *guard_skip_count) {
+    if (!pattern || pattern->type != EXPR_DICT) return;
+    for (int di = 0; di < pattern->dict.count; di++) {
+        int key = compile_expr(comp, pattern->dict.items[di * 2]);
+        emit(comp->curBC, OP_PUSH_REG, actual, 0, 0);
+        emit(comp->curBC, OP_PUSH_REG, key, 0, 0);
+        int has = alloc_reg();
+        emit(comp->curBC, OP_CALL_BUILTIN, has, bytecode_add_string(comp->curBC, "dict_has"), 2);
+        int jhas = comp->curBC->count;
+        emit(comp->curBC, OP_JUMP_IF_FALSE, has, 0, 0);
+        add_break(guard_skips, guard_skip_count, jhas);
+        int got = alloc_reg();
+        emit(comp->curBC, OP_INDEX_GET, got, actual, key);
+        Expr *field = pattern->dict.items[di * 2 + 1];
+        if (field->type == EXPR_DICT) {
+            compile_case_dict_pattern(comp, got, field, guard_skips, guard_skip_count);
+        } else if (field->type == EXPR_IDENT &&
+                   !(field->identName.length == 1 && field->identName.start[0] == '_')) {
+            char name[256];
+            snprintf(name, sizeof(name), "%.*s", (int)field->identName.length, field->identName.start);
+            emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), got, 0);
+        } else {
+            int expected = compile_expr(comp, field);
+            int same = alloc_reg();
+            emit(comp->curBC, OP_EQ, same, got, expected);
+            int jf = comp->curBC->count;
+            emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
+            add_break(guard_skips, guard_skip_count, jf);
+        }
+    }
+}
+
 /* ---------- 璇彞缂栬瘧 ---------- */
 static void compile_stmt(Compiler *comp, Stmt *stmt, int **break_list, int *break_count_ptr) {
     if (!stmt) return;
@@ -1398,12 +1434,17 @@ case STMT_WITH: {
                                     add_break(&guard_skips, &guard_skip_count, jnhas);
                                     int nGot = alloc_reg();
                                     emit(comp->curBC, OP_INDEX_GET, nGot, got, nkey);
-                                    int nExpected = compile_expr(comp, field_pattern->dict.items[ni * 2 + 1]);
-                                    int nEq = alloc_reg();
-                                    emit(comp->curBC, OP_EQ, nEq, nGot, nExpected);
-                                    int jn = comp->curBC->count;
-                                    emit(comp->curBC, OP_JUMP_IF_FALSE, nEq, 0, 0);
-                                    add_break(&guard_skips, &guard_skip_count, jn);
+                                    Expr *nested = field_pattern->dict.items[ni * 2 + 1];
+                                    if (nested->type == EXPR_DICT) {
+                                        compile_case_dict_pattern(comp, nGot, nested, &guard_skips, &guard_skip_count);
+                                    } else {
+                                        int nExpected = compile_expr(comp, nested);
+                                        int nEq = alloc_reg();
+                                        emit(comp->curBC, OP_EQ, nEq, nGot, nExpected);
+                                        int jn = comp->curBC->count;
+                                        emit(comp->curBC, OP_JUMP_IF_FALSE, nEq, 0, 0);
+                                        add_break(&guard_skips, &guard_skip_count, jn);
+                                    }
                                 }
                                 continue;
                             }

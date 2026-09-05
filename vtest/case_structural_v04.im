@@ -1,5 +1,6 @@
 config = {"kind": "not_found", "retry": 1}
 envelope = {"error": {"kind": "not_found"}}
+deep = {"outer": {"inner": {"code": 404}}}
 case config {
     {"kind": "permission_denied"}: say "bad"
     {"kind": "not_found"}: say "record-hit"
@@ -8,6 +9,10 @@ case config {
 case envelope {
     {"error": {"kind": "not_found"}}: say "nested-hit"
     _: say "nested-other"
+}
+case deep {
+    {"outer": {"inner": {"code": 404}}}: say "deep-hit"
+    _: say "deep-other"
 }
 case config {
     {"kind": k, "retry": retries}: say k + ":" + retries
