@@ -64,6 +64,7 @@
 | `?.` 安全成员访问 | 已实现基础语义 | 内糖；nil 时短路返回 nil，字典对象按字段键读取；`optional_member_runtime` 覆盖 |
 | 链式比较 | 已实现基础语义 | 内糖；相邻操作数单次求值并短路；`chained_comparison_runtime` 覆盖 |
 | 后缀 `if/unless` | 已实现基础语义 | 内糖；表达式语句可后缀条件执行；`postfix_condition_runtime` 覆盖 |
+| 块式 `unless condition { ... }` | 已实现基础语义 | 内糖；编译为取反条件的 `if`，支持 `else/elif` 链 |
 
 ## 内置函数模组
 

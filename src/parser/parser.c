@@ -1297,6 +1297,17 @@ static Stmt *parse_stmt(Parser *p) {
         return stmt;
     }
 
+    if (t.type == TOK_UNLESS) {
+        advance(p);
+        Stmt *stmt = calloc(1, sizeof(*stmt)); stmt->type = STMT_IF;
+        Expr *condition = parse_expr(p);
+        Expr *neg = calloc(1, sizeof(*neg)); neg->type = EXPR_UNARY;
+        neg->unary.op = TOK_NOT; neg->unary.operand = condition;
+        stmt->ifStmt.condition = neg;
+        stmt->ifStmt.thenBody = parse_body(p, &stmt->ifStmt.thenCount);
+        parse_if_tail(p, stmt);
+        return stmt;
+    }
     if (t.type == TOK_IF) {
         advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_IF;
         stmt->ifStmt.condition = parse_expr(p);

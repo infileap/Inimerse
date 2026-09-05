@@ -4,3 +4,5 @@ mark_true() if true
 mark_false() unless true
 say "say-if" if true
 say "say-unless" unless true
+unless false { say "unless-block" }
+unless true { say "not-printed" }
