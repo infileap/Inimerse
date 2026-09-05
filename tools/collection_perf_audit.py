@@ -15,7 +15,7 @@ SCENARIOS = {
 
 def make_source(size, body):
     """Build input with statements so large audits avoid literal register pressure."""
-    setup = "source = []\n" + "".join("push(source, %d)\n" % i for i in range(max(1, size)))
+    setup = "source = []\nrepeat %d {\n    push(source, 1)\n}\n" % max(1, size)
     return setup + body
 
 def measure(engine, mode, script, iterations):
