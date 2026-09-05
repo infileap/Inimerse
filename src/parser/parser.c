@@ -159,11 +159,11 @@ static Expr *parse_fstring(Parser *p, StringView text) {
     return acc;
 }
 
-/* ----- 表达式解�?----- */
+/* ----- 表达式解�?----- */
 static Expr *parse_primary(Parser *p) {
     Token t = peek(p);
 
-    /* 关键字后�?'(' 视为函数调用 */
+    /* 关键字后�?'(' 视为函数调用 */
     if (t.type == TOK_INT || t.type == TOK_FLOAT || t.type == TOK_STR || t.type == TOK_BOOL ||
         t.type == TOK_WINDOW || t.type == TOK_SHOW || t.type == TOK_HIDE ||
         t.type == TOK_NEW || t.type == TOK_DELETE || t.type == TOK_CURSOR ||
@@ -651,7 +651,7 @@ static Tag *parse_with_clause(Parser *p, int *count) {
 
 static Stmt *parse_simple_stmt(Parser *p);
 
-/* 解析限定名：ident �?ident.ident（返�?StringView，多层时指向 malloc 缓冲�?*/
+/* 解析限定名：ident �?ident.ident（返�?StringView，多层时指向 malloc 缓冲�?*/
 static StringView parse_qualified_name(Parser *p) {
     Token first = consume(p, TOK_IDENT, "name");
     if (match(p, TOK_DOT)) {
@@ -668,7 +668,7 @@ static StringView parse_qualified_name(Parser *p) {
 }
 
 /* 尝试解析线程等待语句：worker.wait 10 / worker.wait until cond[, timeout] /
-   u.worker.wait ...（失败时恢复 lexer 并返�?NULL�?*/
+   u.worker.wait ...（失败时恢复 lexer 并返�?NULL�?*/
 static Stmt *try_parse_thread_wait(Parser *p) {
     Lexer saved = p->lex;
     Token a = consume(p, TOK_IDENT, "name");
@@ -741,7 +741,7 @@ static Stmt **parse_body(Parser *p, int *count) {
     return arr;
 }
 
-/* if 语句尾部：elif / else 链（elif 等价�?else + 嵌套 if，支持任意长度链�?*/
+/* if 语句尾部：elif / else 链（elif 等价�?else + 嵌套 if，支持任意长度链�?*/
 static void parse_if_tail(Parser *p, Stmt *stmt) {
     if (match(p, TOK_ELIF)) {
         Stmt *nested = malloc(sizeof(Stmt));
@@ -1141,7 +1141,7 @@ static Stmt *parse_stmt(Parser *p) {
     if (t.type == TOK_TAG) return parse_tag_stmt(p);
     if (t.type == TOK_WITH) return parse_with_tags_stmt(p);
 
-    /* Scratch 风格 GUI 语句(show/hide 无字符串参数时也走这�? */
+    /* Scratch 风格 GUI 语句(show/hide 无字符串参数时也走这�? */
     if (t.type == TOK_STAGE || t.type == TOK_BACKGROUND || t.type == TOK_SPRITE ||
         t.type == TOK_GOTO || t.type == TOK_MOVE || t.type == TOK_BOX ||
         t.type == TOK_COSTUME || t.type == TOK_FACE || t.type == TOK_TURN ||
@@ -1158,7 +1158,7 @@ static Stmt *parse_stmt(Parser *p) {
         return parse_gui_stmt(p);
     }
 
-    /* 图形关键字后�?'(' 时按函数调用处理 */
+    /* 图形关键字后�?'(' 时按函数调用处理 */
     if (t.type == TOK_WINDOW || t.type == TOK_SHOW || t.type == TOK_HIDE ||
         t.type == TOK_NEW || t.type == TOK_DELETE || t.type == TOK_CURSOR) {
         Token next = peek_next(p);
@@ -1278,7 +1278,7 @@ static Stmt *parse_stmt(Parser *p) {
             consume(p, TOK_RPAREN, "')'");
             stmt->forStmt.iterExpr = NULL;
         } else {
-            /* for x in <数组表达�? */
+            /* for x in <数组表达�? */
             Token t1 = peek(p);
             Token t2 = peek_next(p);
             bool is_range_sugar = (t2.type == TOK_RANGE);
@@ -1393,7 +1393,7 @@ static Stmt *parse_stmt(Parser *p) {
             advance(p);
         }
         stmt->threadDef.name = consume(p, TOK_IDENT, "thread name").text;
-        match(p, TOK_COLON); /* 可选冒�? thread name: {} */
+        match(p, TOK_COLON); /* 可选冒�? thread name: {} */
         stmt->threadDef.params = NULL; stmt->threadDef.paramCount = 0;
         if (match(p, TOK_LPAREN)) {
             if (peek(p).type != TOK_RPAREN) {
@@ -1406,7 +1406,7 @@ static Stmt *parse_stmt(Parser *p) {
             }
             consume(p, TOK_RPAREN, "')'");
         }
-        match(p, TOK_COLON); /* 参数后可选冒�? thread name(n): {} */
+        match(p, TOK_COLON); /* 参数后可选冒�? thread name(n): {} */
         stmt->threadDef.body = parse_block(p, &stmt->threadDef.bodyCount);
         return stmt;
     }
@@ -1435,7 +1435,7 @@ static Stmt *parse_stmt(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_JOIN && peek_next(p).type != TOK_LPAREN) {
-        /* 线程 join 语句（join(...) 是内置函数，走表达式分支�?*/
+        /* 线程 join 语句（join(...) 是内置函数，走表达式分支�?*/
         advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_JOIN;
         stmt->joinStmt.name = parse_qualified_name(p);
         stmt->joinStmt.timeout = NULL;
@@ -1558,12 +1558,12 @@ Program *parse_program(const char *source) {
     return prog;
 }
 
-/* ==================== 多文�?import/include 支持 ==================== */
-/* 单文件解析：import/include 语句原样保留�?AST 中，由编译器（compiler.c�?   在编译期递归解析（命名空间前缀�?+ 去重 + 环检测）�?   旧实现（拼接+rename_stmt）已废弃：AST 字符串改写穷举必漏，且无法支�?   嵌套命名空间 / 模块�?const-record-be / meta 属性名�?*/
+/* ==================== 多文�?import/include 支持 ==================== */
+/* 单文件解析：import/include 语句原样保留�?AST 中，由编译器（compiler.c�?   在编译期递归解析（命名空间前缀�?+ 去重 + 环检测）�?   旧实现（拼接+rename_stmt）已废弃：AST 字符串改写穷举必漏，且无法支�?   嵌套命名空间 / 模块�?const-record-be / meta 属性名�?*/
 Program *parse_program_file(const char *path) {
     char *src = inim_load_text(path);
     if (!src) return NULL;
     Program *prog = parse_program(src);
-    /* �?free(src)：AST �?StringView 名字指向源码缓冲区，需保持到编译完�?       （泄漏量=脚本大小，每文件一次，可接受） */
+    /* �?free(src)：AST �?StringView 名字指向源码缓冲区，需保持到编译完�?       （泄漏量=脚本大小，每文件一次，可接受） */
     return prog;
 }

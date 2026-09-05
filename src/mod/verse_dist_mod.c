@@ -1181,7 +1181,7 @@ static int b_verse_share(VM *vm) {
     char *hub = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
     char *id = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
     r_popn(vm, argc);
-    /* 鍔ㄦ€佸垎锟? 閬垮�?static 缂撳啿琚悗缁皟鐢ㄨ�?閾炬帴鍙兘琚繚锟?澶嶅埗鍒板壀璐存�? */
+    /* 鍔ㄦ€佸垎锟? 閬垮�?static 缂撳啿琚悗缁皟鐢ㄨ�?閾炬帴鍙兘琚繚锟?澶嶅埗鍒板壀璐存�? */
     char *link = malloc(1200);
     snprintf(link, 1200, "verse://%s/%s", hub, id);
     push_string(vm, link);

@@ -18,7 +18,7 @@
 #include "platform/platform.h"
 #include "platform/dir.h"
 
-/* 剥离 exe 尾部已附加的数据（旧字节�?+ 旧模组块），返回剥离�?exe 的字节数，失败返�?-1 */
+/* 剥离 exe 尾部已附加的数据（旧字节�?+ 旧模组块），返回剥离�?exe 的字节数，失败返�?-1 */
 static long strip_tail_data(const char *exePath) {
     FILE *f = fopen(exePath, "rb");
     if (!f) return -1;
@@ -26,16 +26,16 @@ static long strip_tail_data(const char *exePath) {
     long size = ftell(f);
     if (size < 12) { fclose(f); return -1; }
 
-    /* 尝试识别尾部模组块：magic(4) + offset(4) + total_len(4)，位于文件末�?*/
+    /* 尝试识别尾部模组块：magic(4) + offset(4) + total_len(4)，位于文件末�?*/
     uint32_t magic = 0, offset = 0, total_len = 0;
     if (fseek(f, -12, SEEK_END) == 0) {
-        /* 注意写入顺序�?magic, offset, total_len，读取顺序必须一�?*/
+        /* 注意写入顺序�?magic, offset, total_len，读取顺序必须一�?*/
         if (fread(&magic, 4, 1, f) == 1 &&
             fread(&offset, 4, 1, f) == 1 &&
             fread(&total_len, 4, 1, f) == 1) {
             if (magic == 0x1BC0FEED && total_len >= 12 &&
                 (long)offset >= 0 && (long)offset + (long)total_len <= size) {
-                /* 模组块之前可能还有字节码�?[BC_MAGIC][bc_offset]，需一并剥�?*/
+                /* 模组块之前可能还有字节码�?[BC_MAGIC][bc_offset]，需一并剥�?*/
                 if ((long)offset >= 8) {
                     uint32_t bc_magic2 = 0, bc_offset2 = 0;
                     if (fseek(f, (long)offset - 8, SEEK_SET) == 0 &&
@@ -44,16 +44,16 @@ static long strip_tail_data(const char *exePath) {
                         bc_magic2 == 0x1BC0FFEE && (long)bc_offset2 >= 0 &&
                         (long)bc_offset2 < (long)offset) {
                         fclose(f);
-                        return bc_offset2; /* 字节码块之前就是干净�?exe */
+                        return bc_offset2; /* 字节码块之前就是干净�?exe */
                     }
                 }
                 fclose(f);
-                return offset; /* 只有模组块，模组块之前就是干净�?exe */
+                return offset; /* 只有模组块，模组块之前就是干净�?exe */
             }
         }
     }
 
-    /* 尝试识别尾部字节码块�?.. magic(4) + offset(4) */
+    /* 尝试识别尾部字节码块�?.. magic(4) + offset(4) */
     uint32_t bc_magic = 0, bc_offset = 0;
     if (fseek(f, -8, SEEK_END) == 0) {
         if (fread(&bc_magic, 4, 1, f) == 1 &&
@@ -69,7 +69,7 @@ static long strip_tail_data(const char *exePath) {
     return size; /* 没有附加数据，整个文件就是干净 exe */
 }
 
-/* 将源 exe 复制�?dst，只保留�?clean_size 字节（剥离尾部附加数据） */
+/* 将源 exe 复制�?dst，只保留�?clean_size 字节（剥离尾部附加数据） */
 static int copy_clean_exe(const char *srcPath, const char *dstPath, long clean_size) {
     FILE *src = fopen(srcPath, "rb");
     if (!src) return -1;
@@ -89,7 +89,7 @@ static int copy_clean_exe(const char *srcPath, const char *dstPath, long clean_s
     return 0;
 }
 
-/* 去掉路径中的扩展名（�?"a.im" -> "a"�?*/
+/* 去掉路径中的扩展名（�?"a.im" -> "a"�?*/
 static void strip_ext(char *out, size_t out_sz, const char *path) {
     strncpy(out, path, out_sz - 1);
     out[out_sz - 1] = '\0';
@@ -98,14 +98,14 @@ static void strip_ext(char *out, size_t out_sz, const char *path) {
         *dot = '\0';
 }
 
-/* ============ ICO 图标嵌入（UpdateResource�?============ */
-/* 把已构造好�?ICO 字节嵌入 exe（RT_GROUP_ICON + RT_ICON），成功返回 0 */
+/* ============ ICO 图标嵌入（UpdateResource�?============ */
+/* 把已构造好�?ICO 字节嵌入 exe（RT_GROUP_ICON + RT_ICON），成功返回 0 */
 static int embed_ico_data(const char *exePath, const uint8_t *icoData, size_t icoSize) {
     if (icoSize < 22) return -1;
     unsigned count = icoData[4] | (icoData[5] << 8);
     if (count == 0 || count > 64) return -1;
 
-    /* 构�?GRPICONDIR�? + 14*N 字节�?*/
+    /* 构�?GRPICONDIR�? + 14*N 字节�?*/
     uint8_t group[6 + 14 * 64];
     int gi = 0;
     group[gi++] = 0; group[gi++] = 0;          /* reserved */
@@ -144,7 +144,7 @@ static int embed_ico_data(const char *exePath, const uint8_t *icoData, size_t ic
     return 0;
 }
 
-/* �?.ico 文件嵌入 exe，成功返�?0 */
+/* �?.ico 文件嵌入 exe，成功返�?0 */
 static int embed_icon(const char *exePath, const char *icoPath) {
     FILE *f = fopen(icoPath, "rb");
     if (!f) return -1;
@@ -160,11 +160,11 @@ static int embed_icon(const char *exePath, const char *icoPath) {
     return rc;
 }
 
-/* ============ PNG/JPG 图标支持（WIC 解码 -> 构�?ICO -> 嵌入�?============ */
+/* ============ PNG/JPG 图标支持（WIC 解码 -> 构�?ICO -> 嵌入�?============ */
 #include <wincodec.h>
 #include <ole2.h>
 
-/* WIC 解码任意图片（PNG/JPG/GIF）为 32bppBGRA 像素，超�?256 自动等比缩小，成功返�?0 */
+/* WIC 解码任意图片（PNG/JPG/GIF）为 32bppBGRA 像素，超�?256 自动等比缩小，成功返�?0 */
 static int wic_decode_image(const char *path, unsigned *outW, unsigned *outH, uint8_t **outPixels) {
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     HRESULT hr;
@@ -187,7 +187,7 @@ static int wic_decode_image(const char *path, unsigned *outW, unsigned *outH, ui
     hr = fac->lpVtbl->CreateFormatConverter(fac, &fc);
     if (FAILED(hr) || !fc) { frame->lpVtbl->Release(frame); dec->lpVtbl->Release(dec); fac->lpVtbl->Release(fac); return -1; }
 
-    /* 超过 256 时用 BitmapScaler 等比缩小（ICO 图标常用尺寸 <=256�?*/
+    /* 超过 256 时用 BitmapScaler 等比缩小（ICO 图标常用尺寸 <=256�?*/
     UINT tw = w, th = h;
     IWICBitmapScaler *sc = NULL;
     if (w > 256 || h > 256) {
@@ -219,14 +219,14 @@ static int wic_decode_image(const char *path, unsigned *outW, unsigned *outH, ui
     return 0;
 }
 
-/* PNG/JPG 图标: WIC 解码 -> 构�?ICO 字节(单图�?32bpp) -> 嵌入 */
+/* PNG/JPG 图标: WIC 解码 -> 构�?ICO 字节(单图�?32bpp) -> 嵌入 */
 static int embed_png_icon(const char *exePath, const char *imgPath) {
     unsigned w = 0, h = 0;
     uint8_t *px = NULL;
     if (wic_decode_image(imgPath, &w, &h, &px) != 0) return -1;
     if (w > 255) w = 255;
     if (h > 255) h = 255;
-    /* 构�?ICO: ICONDIR(6) + ICONDIRENTRY(16) + BITMAPINFOHEADER(40) + BGRA像素(翻转) + AND掩码 */
+    /* 构�?ICO: ICONDIR(6) + ICONDIRENTRY(16) + BITMAPINFOHEADER(40) + BGRA像素(翻转) + AND掩码 */
     uint32_t maskBytes = ((w + 31) / 32) * 4 * h;
     uint32_t imgBytes = 40 + (uint32_t)w * h * 4 + maskBytes;
     uint32_t total = 22 + imgBytes;
@@ -250,19 +250,19 @@ static int embed_png_icon(const char *exePath, const char *imgPath) {
     bmh[8] = (uint8_t)((h * 2) & 0xFF); bmh[9] = (uint8_t)(((h * 2) >> 8) & 0xFF); bmh[10] = 0; bmh[11] = 0;
     bmh[12] = 1; bmh[13] = 0;   /* planes */
     bmh[14] = 32; bmh[15] = 0;  /* bpp */
-    /* 像素: WIC 自上而下, ICO/BMP 需自下而上, 翻转�?*/
+    /* 像素: WIC 自上而下, ICO/BMP 需自下而上, 翻转�?*/
     uint8_t *dst = ico + 22 + 40;
     for (unsigned y = 0; y < h; y++) {
         memcpy(dst + (h - 1 - y) * w * 4, px + y * w * 4, (size_t)w * 4);
     }
     free(px);
-    /* AND 掩码: �?calloc(0), 无需填充 */
+    /* AND 掩码: �?calloc(0), 无需填充 */
     int rc = embed_ico_data(exePath, ico, total);
     free(ico);
     return rc;
 }
 
-/* 按扩展名分派: .ico 直接嵌入; .png/.jpg/.jpeg/.gif/.bmp �?WIC �?ICO */
+/* 按扩展名分派: .ico 直接嵌入; .png/.jpg/.jpeg/.gif/.bmp �?WIC �?ICO */
 static int embed_icon_any(const char *exePath, const char *iconPath) {
     const char *dot = strrchr(iconPath, '.');
     if (dot && (strcmp(dot, ".png") == 0 || strcmp(dot, ".jpg") == 0 ||
@@ -278,23 +278,23 @@ static int append_bc_and_mods(const char *selfPath, Bytecode *bc,
     long clean = strip_tail_data(selfPath);
     if (clean < 0) return -1;
 
-    /* 使用两个不同的临时文件，避免 bytecode_append_to_exe �?目标时截断源文件 */
+    /* 使用两个不同的临时文件，避免 bytecode_append_to_exe �?目标时截断源文件 */
     char tmp_clean[2048], tmp_bc[2048];
     snprintf(tmp_clean, sizeof(tmp_clean), "%s.clean.tmp", outputExe);
     snprintf(tmp_bc, sizeof(tmp_bc), "%s.bc.tmp", outputExe);
 
     if (copy_clean_exe(selfPath, tmp_clean, clean) != 0) return -1;
 
-    /* 先嵌图标（UpdateResource 重建 exe，尾部数据会丢失，必须在此阶段做�?*/
+    /* 先嵌图标（UpdateResource 重建 exe，尾部数据会丢失，必须在此阶段做�?*/
     if (icon && icon[0]) {
         if (embed_icon_any(tmp_clean, icon) != 0) {
             remove(tmp_clean);
-            printf("图标嵌入失败�?s）\n", icon);
+            printf("图标嵌入失败�?s）\n", icon);
             return -3;
         }
     }
 
-    /* 先嵌字节码：�?tmp_clean -> 目标 tmp_bc */
+    /* 先嵌字节码：�?tmp_clean -> 目标 tmp_bc */
     if (bytecode_append_to_exe(tmp_clean, bc, tmp_bc) != 0) {
         remove(tmp_clean);
         return -1;
@@ -303,7 +303,7 @@ static int append_bc_and_mods(const char *selfPath, Bytecode *bc,
 
     int mod_result = 0;
     if (modNames && modNames[0]) {
-        /* 再嵌模组资源（此�?tmp_bc 尾部已有字节码块，模组块追加在最后） */
+        /* 再嵌模组资源（此�?tmp_bc 尾部已有字节码块，模组块追加在最后） */
         mod_result = bytecode_append_mods_to_exe(tmp_bc, modsDir, modNames, outputExe);
         if (mod_result != 0) {
             remove(tmp_bc);
@@ -325,7 +325,7 @@ static int append_bc_and_mods(const char *selfPath, Bytecode *bc,
     return 0;
 }
 
-/* 打包核心：读取脚�?�?import) -> 解析 -> 编译 -> 嵌入字节码与 using 模组；可选嵌入图�?*/
+/* 打包核心：读取脚�?�?import) -> 解析 -> 编译 -> 嵌入字节码与 using 模组；可选嵌入图�?*/
 static int build_script_impl2(VM *vm, const char *input, const char *output, const char *icon) {
     Program *prog = NULL;
     Compiler *comp = NULL;
@@ -353,7 +353,7 @@ static int build_script_impl2(VM *vm, const char *input, const char *output, con
     char self_path[2048];
     GetModuleFileName(NULL, self_path, sizeof(self_path));
 
-    /* mods 目录：exe 所在目录下�?mods（先去掉 exe 文件名） */
+    /* mods 目录：exe 所在目录下�?mods（先去掉 exe 文件名） */
     char exe_dir[2048];
     snprintf(exe_dir, sizeof(exe_dir), "%s", self_path);
     char *slash = strrchr(exe_dir, '\\');
@@ -368,27 +368,27 @@ static int build_script_impl2(VM *vm, const char *input, const char *output, con
     if (modNames) free(modNames);
 
     if (rc == 0) {
-        printf("打包完成 �?%s\n", output);
+        printf("打包完成 �?%s\n", output);
         if (modNames && modNames[0])
-            printf("已嵌入模�? %s\n", modNames);
+            printf("已嵌入模�? %s\n", modNames);
         if (icon && icon[0])
-            printf("已嵌入图�? %s\n", icon);
+            printf("已嵌入图�? %s\n", icon);
     } else if (rc == -2) {
-        printf("打包失败: 未找�?using 的模组目录（%s\\%s）\n", mods_dir, modNames ? modNames : "");
+        printf("打包失败: 未找�?using 的模组目录（%s\\%s）\n", mods_dir, modNames ? modNames : "");
     } else if (rc == -3) {
         printf("打包失败: 图标嵌入失败\n");
     } else {
-        printf("打包失败 (错误�?%d)\n", rc);
+        printf("打包失败 (错误�?%d)\n", rc);
     }
     return rc == 0;
 }
 
-/* 旧接口：与之前一致（仅嵌字节码，不含模组�?*/
+/* 旧接口：与之前一致（仅嵌字节码，不含模组�?*/
 static void build_script_impl(VM *vm, const char *input, const char *output) {
     build_script_impl2(vm, input, output, NULL);
 }
 
-/* 语言�?build(input, output[, icon]) 内置函数 */
+/* 语言�?build(input, output[, icon]) 内置函数 */
 static int builtin_build(VM *vm) {
     int argc = vm_cur_sp(vm) + 1;
     if (argc < 2) {

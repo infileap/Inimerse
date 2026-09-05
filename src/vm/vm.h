@@ -48,7 +48,7 @@ typedef struct {
 
 /* 锟竭筹拷执锟斤拷锟斤拷锟斤拷锟侥ｏ拷每锟斤拷 OS 锟竭程讹拷锟斤拷一锟捷ｏ拷 */
 #define VM_MAX_THREADS 32
-#define VM_THREAD_REG_COUNT (2048 * 1024) /* 2048 ??锟斤�?1024 锟侥达拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟??锟节诧拷莨锟斤拷锟饺★拷~45,512帧锟斤拷锟斤拷锟斤拷 */
+#define VM_THREAD_REG_COUNT (2048 * 1024) /* 2048 ??锟斤�?1024 锟侥达拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟??锟节诧拷莨锟斤拷锟饺★拷~45,512帧锟斤拷锟斤拷锟斤拷 */
 #define VM_MAX_FRAMES 2048
 #define VM_MAX_TASKS 2048          /* virtual threads (Fiber-driven, no OS thread) */
 #define VM_TASK_REG_COUNT 8192     /* task register file (192KB, ~48MB for OS threads) */
@@ -103,7 +103,7 @@ struct VmThread {
                /* 锟竭程讹拷锟斤拷锟斤拷锟斤拷??1=锟斤拷锟竭程ｏ拷 */
     void *os_handle;        /* Windows 锟竭程撅拷锟?*/
     unsigned long long wake_at;  /* 锟斤拷时锟街革拷时锟戒（GetTickCount64??*/
-    /* 锟斤拷息锟斤拷锟叫ｏ拷锟斤拷锟轿ｏ拷锟街凤拷锟斤拷锟筋拷锟斤�??*/
+    /* 锟斤拷息锟斤拷锟叫ｏ拷锟斤拷锟轿ｏ拷锟街凤拷锟斤拷锟筋拷锟斤�??*/
     Value *msg_q; int msg_head; int msg_tail; int msg_cap;
     void *msg_lock;         /* CRITICAL_SECTION* */
     int flags;              /* THREAD_FLAG_* labels (endless/daemon/restart/single, appended) */
@@ -143,7 +143,7 @@ struct StrPool;
 
 typedef struct { char *name; Value val; } GlobalSlot;
 
-/* 绌洪棿缃戞牸妗讹細姣忔《涓€涓姩�?id 鏁扮粍锛堣閬块摼琛ㄦ《鎮�?鎴愮幆锛?*/
+/* 绌洪棿缃戞牸妗讹細姣忔《涓€涓姩�?id 鏁扮粍锛堣閬块摼琛ㄦ《鎮�?鎴愮幆锛?*/
 typedef struct { int *ids; int count; int cap; } EntBucket;
 struct VM {
     Bytecode *code; volatile int ip; Value stack[1024]; int sp;
@@ -159,28 +159,28 @@ struct VM {
     /* GUI 支锟斤拷 */
     void (*print_hook)(const char *text);
     void (*gui_run)(VM *vm, const char *script_path);
-    /* 锟斤拷锟?exe 锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷嵌锟斤拷锟侥ｏ拷�??main 锟斤拷锟斤拷??*/
+    /* 锟斤拷锟?exe 锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷嵌锟斤拷锟侥ｏ拷�??main 锟斤拷锟斤拷??*/
     void (*load_embedded_mods)(VM *vm);
-    /* 锟斤拷锟斤拷兀锟阶凤拷锟斤拷诮峁癸拷锟侥┪诧拷锟斤拷锟斤拷锟斤拷锟斤拷�??DLL 锟斤拷锟街讹拷偏锟狡硷拷锟捷ｏ拷 */
-    /* 锟斤拷锟斤拷/锟街碉拷兀锟絛ict 锟斤拷锟斤拷�?key/value锟斤拷锟斤拷锟斤拷锟斤拷锟姐够锟斤拷锟皆筹拷锟斤�?AST 锟饺革拷锟接结构锟斤�?*/
+    /* 锟斤拷锟斤拷兀锟阶凤拷锟斤拷诮峁癸拷锟侥┪诧拷锟斤拷锟斤拷锟斤拷锟斤拷�??DLL 锟斤拷锟街讹拷偏锟狡硷拷锟捷ｏ拷 */
+    /* 锟斤拷锟斤拷/锟街碉拷兀锟絛ict 锟斤拷锟斤拷�?key/value锟斤拷锟斤拷锟斤拷锟斤拷锟姐够锟斤拷锟皆筹拷锟斤�?AST 锟饺革拷锟接结构锟斤�?*/
     ArrayObj arrays[4096];
     int arrayCount;
     /* 锟竭程ｏ拷同锟斤拷追锟斤拷锟斤拷末尾??*/
-    struct VmThread *threads[VM_MAX_THREADS];   /* 锟筋动锟竭筹拷实锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤�??*/
-    struct VmThread *tasks[VM_MAX_TASKS]; /* Z�?Fiber	
+    struct VmThread *threads[VM_MAX_THREADS];   /* 锟筋动锟竭筹拷实锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤�??*/
+    struct VmThread *tasks[VM_MAX_TASKS]; /* Z�?Fiber	
 ` OS ??*/
     /* entity system (SoA + spatial grid) */
     float *ent_x, *ent_y, *ent_vx, *ent_vy;
     int *ent_hp, *ent_kind;
     int ent_cap, ent_count;
-/* 绌洪棿缃戞牸妗讹細姣忔《涓€涓姩�?id 鏁扮粍锛堣閬块摼琛ㄦ《鎮�?鎴愮幆锛?*/
+/* 绌洪棿缃戞牸妗讹細姣忔《涓€涓姩�?id 鏁扮粍锛堣閬块摼琛ㄦ《鎮�?鎴愮幆锛?*/
 EntBucket *ent_buckets;
     int *ent_free;
     int ent_free_head;
     int ent_grid_dirty;
     int task_count;
     volatile bool sched_running;
-    void *sched_thread;               /* �?OS ?�?*/
+    void *sched_thread;               /* �?OS ?�?*/
     void *global_lock;
     void *global_locks[16];          /* 鍒嗙墖閿侊紙鍏ㄥ眬妲借闂儹鐐癸級锛岃VM_GSHARD */      /* CRITICAL_SECTION*锟斤拷锟斤拷??globals/arrays */
     void *mutexes[256];      /* CRITICAL_SECTION* 锟斤拷锟斤拷??*/
@@ -188,12 +188,12 @@ EntBucket *ent_buckets;
     /* 锟斤拷锟斤拷锟叫诧拷锟斤拷锟斤拷args() 锟斤拷锟矫猴拷锟斤拷使锟矫ｏ拷argv[0] 锟角脚憋拷路锟斤拷之锟斤拷牡锟揭伙拷锟斤拷锟斤拷锟斤拷锟?*/
     int argc;
     char **argv;
-    /* 锟斤拷锟斤拷囟锟教拷锟斤拷荩锟阶凤拷锟斤拷锟侥┪诧拷锟斤拷锟斤拷志锟斤�??DLL 锟街讹拷偏锟狡硷拷锟斤拷??*/
+    /* 锟斤拷锟斤拷囟锟教拷锟斤拷荩锟阶凤拷锟斤拷锟侥┪诧拷锟斤拷锟斤拷志锟斤�??DLL 锟街讹拷偏锟狡硷拷锟斤拷??*/
     ArrayObj *arrays_big;   /* 锟斤拷锟斤拷??>= 4096 锟侥讹拷??*/
     int bigCap;             /* arrays_big 锟斤拷锟斤拷 */
     /* 锟街凤拷锟斤拷锟斤拷(interning):VAL_STRING ??ival==1 锟斤拷示锟斤拷锟街凤拷锟斤拷(锟斤拷锟斤拷锟斤拷锟斤拷锟酵放★拷锟斤拷指锟斤拷冉锟? */
     struct StrPool *str_pool;
-    int cur_argc;  /* 锟斤拷前锟斤拷锟矫碉拷锟矫的诧拷锟斤拷锟斤拷??锟斤拷锟矫碉拷锟斤拷??锟斤拷锟解弹锟斤拷锟斤拷�?? */
+    int cur_argc;  /* 锟斤拷前锟斤拷锟矫碉拷锟矫的诧拷锟斤拷锟斤拷??锟斤拷锟矫碉拷锟斤拷??锟斤拷锟解弹锟斤拷锟斤拷�?? */
     /* 执锟斤拷时锟斤拷锟斤拷锟斤拷(ms),0=锟斤拷锟斤拷????main 锟斤拷锟斤拷 --time-limit 锟斤拷锟斤拷 */
     unsigned long exec_timeout_ms;
     /* debug hook: instruction-boundary callback (debug mod) */
@@ -218,9 +218,9 @@ EntBucket *ent_buckets;
     char *record_save_path;
     unsigned long long record_autosave_interval; /* ms,0 = off */
     unsigned long long record_last_autosave;
-    /* GUI 锟斤拷息锟矫癸拷锟斤�? GUI 模式锟斤�?wait 锟节硷拷也锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷�?(gui_mod 锟节达拷锟斤拷锟斤拷台时锟斤拷锟斤拷) */
+    /* GUI 锟斤拷息锟矫癸拷锟斤�? GUI 模式锟斤�?wait 锟节硷拷也锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷�?(gui_mod 锟节达拷锟斤拷锟斤拷台时锟斤拷锟斤拷) */
     int (*gui_pump)(void);
-    /* 执锟斤拷锟斤拷始时锟斤拷(ms): 锟斤拷锟斤拷锟矫猴拷锟斤拷锟斤拷�?--time-limit / declare time */
+    /* 执锟斤拷锟斤拷始时锟斤拷(ms): 锟斤拷锟斤拷锟矫猴拷锟斤拷锟斤拷�?--time-limit / declare time */
     unsigned long long exec_start_ms;
     /* set support (appended last, ABI-safe) */
     SetObj *sets;
@@ -315,9 +315,9 @@ bool val_eq(const Value *a, const Value *b);
 
 #endif
 
-/* 鍒嗙墖閿侊細鍏ㄥ眬妲借闂儹鐐癸紙L_LOAD_GLOBAL / L_STORE_GLOBAL / L_BE / vm_throw锛夈�?
+/* 鍒嗙墖閿侊細鍏ㄥ眬妲借闂儹鐐癸紙L_LOAD_GLOBAL / L_STORE_GLOBAL / L_BE / vm_throw锛夈�?
    鎸夊叏灞€绱㈠紩鍝堝笇鍒?16 鎶婇攣鈥斺€斾笉鍚屽彉閲忓苟琛岋紝鍚屽彉閲忎覆琛屻€?
-   global_lock锛堝垎鐗?涔嬪鐨勫崟閿侊級浠嶇敤浜庢暟缁?瀛楀吀/闆嗗�?瀛楃涓叉睜绛夐€氱敤涓寸晫鍖恒�?*/
+   global_lock锛堝垎鐗?涔嬪鐨勫崟閿侊級浠嶇敤浜庢暟缁?瀛楀吀/闆嗗�?瀛楃涓叉睜绛夐€氱敤涓寸晫鍖恒�?*/
 #define VM_GLOBAL_SHARDS 16
 #define VM_GSHARD(vm, idx) ((ImMutex*)((vm)->global_locks[((idx) & (VM_GLOBAL_SHARDS - 1))]))
 

@@ -29,7 +29,7 @@ static const char *builtin_set_name(int bi);
 #include <mmsystem.h>
 #define sleep_ms(ms) Sleep(ms)
 
-/* 锟竭程诧拷锟斤拷锟诫�??lexer.h ??ThreadOp 一锟铰ｏ拷 */
+/* 锟竭程诧拷锟斤拷锟诫�??lexer.h ??ThreadOp 一锟铰ｏ拷 */
 #ifndef THREAD_OP_STOP
 #define THREAD_OP_STOP 0
 #define THREAD_OP_PAUSE 1
@@ -193,8 +193,8 @@ void value_free(Value *v) {
     }
 }
 /* ========== 锟街凤拷锟斤拷锟斤拷(interning) ==========
- * VAL_STRING ??ival==1 锟斤拷示锟斤拷锟街凤拷锟斤拷:锟斤拷锟斤拷指锟诫、锟斤拷锟斤拷锟酵放★拷锟斤拷指锟斤拷冉�??
- * 锟截伙拷??LOADK_STRING / LOAD_GLOBAL / STORE_GLOBAL / dict_get / builtin 锟斤�??
+ * VAL_STRING ??ival==1 锟斤拷示锟斤拷锟街凤拷锟斤拷:锟斤拷锟斤拷指锟诫、锟斤拷锟斤拷锟酵放★拷锟斤拷指锟斤拷冉�??
+ * 锟截伙拷??LOADK_STRING / LOAD_GLOBAL / STORE_GLOBAL / dict_get / builtin 锟斤�??
  */
 struct StrPool { char **slots; int count; int cap; int mask; };
 
@@ -227,7 +227,7 @@ const char *vm_intern(VM *vm, const char *s) {
     if (!p) return NULL;
     int need_lock = (vm->active_threads > 1);
     if (need_lock) VM_LOCK(vm);
-    if (p->count >= VM_STR_POOL_LIMIT) { if (need_lock) VM_UNLOCK(vm); return NULL; }  /* 锟斤拷锟斤拷:锟斤拷锟矫凤拷锟斤拷锟斤�?strdup */
+    if (p->count >= VM_STR_POOL_LIMIT) { if (need_lock) VM_UNLOCK(vm); return NULL; }  /* 锟斤拷锟斤拷:锟斤拷锟矫凤拷锟斤拷锟斤�?strdup */
     if (p->count * 2 >= p->cap) strpool_grow(vm, p);
     int i = (int)(fnv1a(s) & p->mask);
     while (p->slots[i]) {
@@ -418,7 +418,7 @@ int vm_array_len(VM *vm, int idx) {
     return n;
 }
 
-/* ---------- 锟街碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟截ｏ拷锟斤拷锟斤拷�??key/value??---------- */
+/* ---------- 锟街碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟截ｏ拷锟斤拷锟斤拷�??key/value??---------- */
 /* ---------- dict: parallel key/value array + open-addressing hash index (L1, O(1) get/set) ---------- */
 
 /* key hash, consistent with val_eq(): int/float cross-type equality must collide */
@@ -751,9 +751,9 @@ extern void record_save_to_file(VM *vm, const char *path);
 /* grow the globals + be_bound arrays to fit index `need` (0-based); zero-fills new slots.
    Must be called with VM_LOCK held while other threads may be running (L_STORE_GLOBAL / L_BE / vm_throw). */
 void vm_global_grow(VM *vm, int need) {
-    /* 鎵╁绉诲姩 globals 鏁扮粍鎸囬拡锛岄』鐙崰鍏ㄩ儴 16 鎶婂垎鐗囬攣�?
+    /* 鎵╁绉诲姩 globals 鏁扮粍鎸囬拡锛岄』鐙崰鍏ㄩ儴 16 鎶婂垎鐗囬攣�?
        璋冪敤鏂瑰繀椤诲厛閲婃斁鑷繁鐨勫垎鐗囷紙閬垮厤浜ゅ弶绛夊緟姝婚攣锛夛紝grow 鍚庨噸鍙栥€?
-       global_locks[0] 鍒ょ┖锛歷m_init 鏃╂湡锛堥攣鍒濆鍖栧墠锛夎皟鐢ㄦ椂淇濇寔鏃犻攣�?*/
+       global_locks[0] 鍒ょ┖锛歷m_init 鏃╂湡锛堥攣鍒濆鍖栧墠锛夎皟鐢ㄦ椂淇濇寔鏃犻攣�?*/
     if (need < 0) need = 0;
     if (need < vm->globalCap) return;
     if (vm->active_threads > 1 && vm->global_locks[0]) {
@@ -833,7 +833,7 @@ void vm_init(VM *vm) {
     vm->bigCap = 0;
     vm->str_pool = NULL;
     vm->debug_hook = NULL;
-    vm->gui_pump = NULL;          /* 锟斤�?gui_mod 锟节达拷锟斤拷锟斤拷台锟斤拷锟斤拷锟斤拷; 未锟斤拷=锟斤�?GUI 锟斤拷锟斤拷 */
+    vm->gui_pump = NULL;          /* 锟斤�?gui_mod 锟节达拷锟斤拷锟斤拷台锟斤拷锟斤拷锟斤拷; 未锟斤拷=锟斤�?GUI 锟斤拷锟斤拷 */
     vm->exec_start_ms = 0;
     vm->exec_timeout_ms = 120000;
     /* declare resource limits (0 = unlimited) */
@@ -933,7 +933,7 @@ void vm_load_bytecode(VM *vm, Bytecode *bc) {
         }
         if (bc->global_name_count > vm->globalCount) vm->globalCount = bc->global_name_count;
     }
-    /* 锟斤拷锟皆凤拷锟斤拷锟街凤拷锟斤拷锟斤拷锟斤�?intern 锟斤拷锟芥（锟斤拷锟竭程碉拷锟斤�?锟斤拷锟斤拷锟斤拷锟斤拷只锟斤拷??*/
+    /* 锟斤拷锟皆凤拷锟斤拷锟街凤拷锟斤拷锟斤拷锟斤�?intern 锟斤拷锟芥（锟斤拷锟竭程碉拷锟斤�?锟斤拷锟斤拷锟斤拷锟斤拷只锟斤拷??*/
     if (bc->str_interned == NULL && bc->string_count > 0)
         bc->str_interned = calloc(bc->string_count, sizeof(char*));
 }
@@ -1051,7 +1051,7 @@ void vm_free(VM *vm) {
         }
     }
     vm->mutex_count = 0;
-    /* 锟街凤拷锟斤拷锟斤拷锟斤拷锟斤拷�??锟斤拷锟街凤拷锟斤拷锟斤拷锟斤拷值锟斤拷??值锟酵凤拷时锟斤拷锟斤拷锟斤拷锟街凤拷锟斤拷) */
+    /* 锟街凤拷锟斤拷锟斤拷锟斤拷锟斤拷�??锟斤拷锟街凤拷锟斤拷锟斤拷锟斤拷值锟斤拷??值锟酵凤拷时锟斤拷锟斤拷锟斤拷锟街凤拷锟斤拷) */
     if (vm->str_pool) {
         for (int i = 0; i < vm->str_pool->cap; i++)
             if (vm->str_pool->slots[i]) free(vm->str_pool->slots[i]);
@@ -2200,11 +2200,11 @@ static void vm_execute_thread(VmThread *t) {
     VM *vm = t->vm;
     Value *R = t->R;
     enum { FRAME_REGS = VM_FRAME_REGS };
-    /* 锟斤拷锟街斤拷锟诫（锟斤拷锟斤拷锟津，猴拷全锟斤拷锟斤拷锟斤�??锟竭程憋拷锟斤拷 */
+    /* 锟斤拷锟街斤拷锟诫（锟斤拷锟斤拷锟津，猴拷全锟斤拷锟斤拷锟斤�??锟竭程憋拷锟斤拷 */
     Bytecode *root = vm->code;
 
-    /* 锟斤拷锟斤拷循锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟睫ｏ拷默锟斤拷120锟诫�??--time-limit 锟斤拷锟斤拷?? 指锟斤拷锟斤拷锟斤拷??00锟节ｏ拷双锟斤拷锟斤�??
-     * 锟皆举斤拷锟斤拷锟斤拷指锟斤拷锟斤拷远锟斤拷锟斤拷原锟斤拷执锟叫ｏ拷每锟斤拷锟斤拷汀�?0~100锟斤拷锟斤拷锟斤拷指锟斤拷锟斤拷锟睫伙拷锟斤拷锟剿达拷锟斤拷�?     * 锟斤拷循锟斤拷锟斤拷时锟斤拷锟斤拷锟睫讹拷锟阶ｏ拷锟斤拷时锟斤拷锟剿筹拷??*/
+    /* 锟斤拷锟斤拷循锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟睫ｏ拷默锟斤拷120锟诫�??--time-limit 锟斤拷锟斤拷?? 指锟斤拷锟斤拷锟斤拷??00锟节ｏ拷双锟斤拷锟斤�??
+     * 锟皆举斤拷锟斤拷锟斤拷指锟斤拷锟斤拷远锟斤拷锟斤拷原锟斤拷执锟叫ｏ拷每锟斤拷锟斤拷汀�?0~100锟斤拷锟斤拷锟斤拷指锟斤拷锟斤拷锟睫伙拷锟斤拷锟剿达拷锟斤拷�?     * 锟斤拷循锟斤拷锟斤拷时锟斤拷锟斤拷锟睫讹拷锟阶ｏ拷锟斤拷时锟斤拷锟剿筹拷??*/
     const long long exec_limit = 50000000000LL;
     DWORD exec_t0 = GetTickCount64();
     long long exec_count = 0;
@@ -2752,7 +2752,7 @@ static void vm_execute_thread(VmThread *t) {
                 continue;
             }
             int n = ins.r3;
-            /* 元锟斤拷锟斤拷锟斤拷 PUSH_REG 压栈锟斤拷栈锟斤拷锟斤拷锟斤拷锟揭伙拷锟皆拷兀锟斤拷锟斤拷锟剿筹拷锟斤拷占�?*/
+            /* 元锟斤拷锟斤拷锟斤拷 PUSH_REG 压栈锟斤拷栈锟斤拷锟斤拷锟斤拷锟揭伙拷锟皆拷兀锟斤拷锟斤拷锟剿筹拷锟斤拷占�?*/
             if (n > 0 && t->sp >= n - 1) {
                 int base = t->sp - (n - 1);
                 vm_array_push_n(vm, aidx, &t->stack[base], n);
@@ -3062,9 +3062,9 @@ static void vm_execute_thread(VmThread *t) {
                 sleep_ms(ms);
                 ms = 0;
             } else if (vm->gui_pump && ms > 0) {
-                /* GUI 模式: 锟斤拷片锟饺达拷锟斤拷锟饺达拷锟节硷拷锟斤拷锟竭筹拷也锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷�?锟斤拷锟津窗匡拷锟斤拷锟斤拷应锟斤拷
+                /* GUI 模式: 锟斤拷片锟饺达拷锟斤拷锟饺达拷锟节硷拷锟斤拷锟竭筹拷也锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷�?锟斤拷锟津窗匡拷锟斤拷锟斤拷应锟斤拷
                    锟斤拷锟斤拷/X锟斤拷钮失效), 同时锟斤拷锟街达拷锟绞憋拷锟斤拷锟斤拷锟?--time-limit / declare time),
-                   锟斤拷锟?GUI wait 循锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街革拷畹硷拷鲁锟绞憋拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷�?*/
+                   锟斤拷锟?GUI wait 循锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街革拷畹硷拷鲁锟绞憋拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷�?*/
                 ULONGLONG end = GetTickCount64() + (ULONGLONG)ms;
                                     if (t->wait_end == 0) t->wait_end = GetTickCount64() + (ULONGLONG)ms;
                     ULONGLONG now = GetTickCount64();
@@ -3135,7 +3135,7 @@ static void vm_execute_thread(VmThread *t) {
             t->running = false;
             continue;
 
-        /* ---------- 锟皆讹拷锟藉函锟斤拷锟斤�??---------- */
+        /* ---------- 锟皆讹拷锟藉函锟斤拷锟斤�??---------- */
                 L_YIELD: {
             /* task: cooperatively hand control back to the scheduler (non-task: no-op) */
             if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
@@ -3165,19 +3165,19 @@ L_CALL_FUNC: {
             int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;
             if (fidx >= 0 && fidx < root->func_count && root->func_names[fidx] && strncmp(root->func_names[fidx], "h", 1) == 0)
             if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {
-                fprintf(stderr, "閿欒�? 鏃犳晥鍑芥暟绱㈠�?%d\n", fidx);
+                fprintf(stderr, "閿欒�? 鏃犳晥鍑芥暟绱㈠�?%d\n", fidx);
                 t->running = false;
                 vm->last_error = 1;
                 continue;
             }
             if (t->sp + 1 < argc) {
-                fprintf(stderr, "閿欒�? 鍙傛暟鏍堟孩鍑篭n");
+                fprintf(stderr, "閿欒�? 鍙傛暟鏍堟孩鍑篭n");
                 t->running = false;
                 vm->last_error = 1;
                 continue;
             }
             if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap) {
-                fprintf(stderr, "閿欒�? 绾跨▼甯ф爤婧㈠嚭锛堣秴杩?%d 甯э級\n", VM_MAX_FRAMES);
+                fprintf(stderr, "閿欒�? 绾跨▼甯ф爤婧㈠嚭锛堣秴杩?%d 甯э級\n", VM_MAX_FRAMES);
                 t->running = false;
                 vm->last_error = 1;
                 continue;
@@ -3515,7 +3515,7 @@ L_CALL_FUNC: {
         L_THREAD_START: {
             int tidx = ins.r1, res = ins.r2, argc = ins.r3;
             if (tidx < 0 || tidx >= root->thread_count || root->threads[tidx] == NULL) {
-                fprintf(stderr, "閿欒�? 鏃犳晥绾跨▼绱㈠�?%d\n", tidx);
+                fprintf(stderr, "閿欒�? 鏃犳晥绾跨▼绱㈠�?%d\n", tidx);
                 t->running = false;
                 continue;
             }
@@ -3728,7 +3728,7 @@ L_CALL_FUNC: {
             continue;
         }
         L_THREAD_WAIT: {
-            /* worker.wait N锟斤拷锟斤拷停目锟斤拷锟斤拷??N 锟诫（锟斤拷时锟皆讹拷锟街革�??*/
+            /* worker.wait N锟斤拷锟斤拷停目锟斤拷锟斤拷??N 锟诫（锟斤拷时锟皆讹拷锟街革�??*/
             int tidx = ins.r1;
             VmThread *wtt = (tidx >= 0 && tidx < VM_MAX_THREADS) ? vm->threads[tidx] : NULL;
             if (!wtt) { for (int _ti = 0; _ti < vm->task_count; _ti++) if (vm->tasks[_ti] && vm->tasks[_ti]->tidx == tidx) { wtt = vm->tasks[_ti]; break; } }

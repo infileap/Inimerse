@@ -1643,7 +1643,7 @@ static int builtin_gc_now(VM *vm) { /* gc_now(): collect at next safe point (imm
     push_int(vm, 1);
     return 1;
 }
-/* ---------- 鍘熷瓙鎿嶄綔锛堝叏灞�?int 鍘熷瓙璇?鏀?鍐欙紱涓?LOAD/STORE_GLOBAL 鍚屽垎鐗囬攣浜掓枼锛?---------- */
+/* ---------- 鍘熷瓙鎿嶄綔锛堝叏灞�?int 鍘熷瓙璇?鏀?鍐欙紱涓?LOAD/STORE_GLOBAL 鍚屽垎鐗囬攣浜掓枼锛?---------- */
 static int builtin_atomic_add(VM *vm) {
     int argc = vm_cur_sp(vm) + 1;
     if (argc < 2) return 0;
