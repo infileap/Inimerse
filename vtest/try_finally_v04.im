@@ -1,0 +1,18 @@
+# finally runs on both normal and caught-exception paths.
+flag = 0
+try {
+    flag = flag + 1
+} catch (e) {
+    flag = flag + 10
+} finally {
+    flag = flag + 100
+}
+say flag
+try {
+    throw "boom"
+} catch (e) {
+    flag = flag + 10
+} finally {
+    flag = flag + 1000
+}
+say flag

@@ -1091,6 +1091,7 @@ static Stmt *parse_try(Parser *p) {
     s->tryStmt.body = NULL; s->tryStmt.bodyCount = 0;
     s->tryStmt.handler = NULL; s->tryStmt.handlerCount = 0;
     s->tryStmt.varName.start = NULL; s->tryStmt.varName.length = 0;
+    s->tryStmt.finallyBody = NULL; s->tryStmt.finallyCount = 0;
     consume(p, TOK_LBRACE, "'{'");
     while (peek(p).type != TOK_RBRACE && peek(p).type != TOK_EOF) {
         s->tryStmt.body = realloc(s->tryStmt.body, (s->tryStmt.bodyCount + 1) * sizeof(Stmt*));
@@ -1107,6 +1108,14 @@ static Stmt *parse_try(Parser *p) {
         while (peek(p).type != TOK_RBRACE && peek(p).type != TOK_EOF) {
             s->tryStmt.handler = realloc(s->tryStmt.handler, (s->tryStmt.handlerCount + 1) * sizeof(Stmt*));
             s->tryStmt.handler[s->tryStmt.handlerCount++] = parse_stmt(p);
+        }
+        consume(p, TOK_RBRACE, "'}'");
+    }
+    if (match(p, TOK_FINAL)) {
+        consume(p, TOK_LBRACE, "'{'");
+        while (peek(p).type != TOK_RBRACE && peek(p).type != TOK_EOF) {
+            s->tryStmt.finallyBody = realloc(s->tryStmt.finallyBody, (s->tryStmt.finallyCount + 1) * sizeof(Stmt*));
+            s->tryStmt.finallyBody[s->tryStmt.finallyCount++] = parse_stmt(p);
         }
         consume(p, TOK_RBRACE, "'}'");
     }

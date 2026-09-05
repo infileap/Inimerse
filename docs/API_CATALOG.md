@@ -47,7 +47,7 @@
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |
 | `expr?` | 已实现基础传播 | 内糖；顶层使用 `unwrap`，函数体内 Err 直接返回，`result_propagation_runtime` 覆盖 Ok/Err |
-| `try { ... } catch (...) { ... }` | 已实现 | 基础异常帧与 `throw`；不含 `finally` |
+| `try { ... } catch (...) { ... } finally { ... }` | 已实现基础语义 | finally 在正常及已捕获异常路径执行；`try_finally_runtime` 覆盖 |
 | `case try expr { ok(v): ...; err(e) | e in E: ... }` | 部分实现 | 原生 Result 分支、载荷绑定和错误集合成员守卫已接入；结构模式与穷尽检查待完善 |
 | `case value { n | predicate: ... }` | 部分实现 | 基础标识符守卫已接入；结构模式与复合集合守卫待完善 |
 | `case value { in TypeOrSet: ... }` | 部分实现 | 基础类型/区间/集合成员模式已接入；结构类型模式与穷尽检查待完善 |

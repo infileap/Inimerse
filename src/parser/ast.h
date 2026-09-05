@@ -174,7 +174,7 @@ struct Stmt {
     } tagStmt;
     struct { StringView name; Expr *set; Expr *init; } beStmt;
     struct { StringView name; Expr *set; } typeStmt;
-    struct { Stmt **body; int bodyCount; StringView varName; Stmt **handler; int handlerCount; } tryStmt;
+    struct { Stmt **body; int bodyCount; StringView varName; Stmt **handler; int handlerCount; Stmt **finallyBody; int finallyCount; } tryStmt;
     struct { Expr *expr; } throwStmt;
     };
 };

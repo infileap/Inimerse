@@ -1883,6 +1883,8 @@ case STMT_WITH: {
             for (int i = 0; i < stmt->tryStmt.handlerCount; i++)
                 compile_stmt(comp, stmt->tryStmt.handler[i], break_list, break_count_ptr);
             comp->curBC->code[tjo].r2 = comp->curBC->count;
+            for (int i = 0; i < stmt->tryStmt.finallyCount; i++)
+                compile_stmt(comp, stmt->tryStmt.finallyBody[i], break_list, break_count_ptr);
             /* bare try (no catch): mark ignore=1 so the VM records swallowed exceptions into the debug slot */
             bytecode_add_try(comp->curBC, tstart, tend, tcatch, varIdx, stmt->tryStmt.handlerCount == 0 ? 1 : 0);
             release_temps(comp);
