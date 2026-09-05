@@ -1247,8 +1247,30 @@ case STMT_WITH: {
                         emit(comp->curBC, OP_CALL_BUILTIN, check, bi, 1);
                         int cond = check;
                         if (is_err) { cond = alloc_reg(); emit(comp->curBC, OP_NOT, cond, check, 0); }
+
+                        /* Result constructor patterns must constrain both the
+                           variant and its payload.  A bare ok/err pattern
+                           accepts any payload; ok(x)/err(x) binds it, while a
+                           non-binding pattern (for example err("not_found"))
+                           compares the extracted payload. */
+                        int kind_false = comp->curBC->count;
+                        emit(comp->curBC, OP_JUMP_IF_FALSE, cond, 0, 0);
+                        add_break(&guard_skips, &guard_skip_count, kind_false);
+                        if (pattern->type == EXPR_CALL && pattern->call.argCount == 1 &&
+                            pattern->call.args[0]->type != EXPR_IDENT) {
+                            int actual = alloc_reg();
+                            emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
+                            emit(comp->curBC, OP_CALL_BUILTIN, actual,
+                                 bytecode_add_string(comp->curBC, is_err ? "result_error" : "result_value"), 1);
+                            int expected = compile_expr(comp, pattern->call.args[0]);
+                            int same = alloc_reg();
+                            emit(comp->curBC, OP_EQ, same, actual, expected);
+                            int payload_false = comp->curBC->count;
+                            emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
+                            add_break(&guard_skips, &guard_skip_count, payload_false);
+                        }
                         int jt = comp->curBC->count;
-                        emit(comp->curBC, OP_JUMP_IF_TRUE, cond, 0, 0);
+                        emit(comp->curBC, OP_JUMP, 0, 0, 0);
                         add_break(&body_jumps, &body_jcount, jt);
                     } else {
                         for (int pi = 0; pi < br->patternCount; pi++) {

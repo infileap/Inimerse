@@ -23,3 +23,14 @@ case try ferr {
     err(e): say "other-error"
     ok(v): say "bad-ok"
 }
+specific = err("permission_denied")
+case try specific {
+    err("not_found"): say "bad-specific"
+    err("permission_denied"): say "specific-hit"
+    _: say "specific-miss"
+}
+case try r {
+    ok(7): say "bad-ok-literal"
+    ok(42): say "ok-literal-hit"
+    _: say "ok-literal-miss"
+}
