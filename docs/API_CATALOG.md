@@ -61,7 +61,8 @@
 | `fn`、`print`、`&&`/`||`、`//`、`unless`、`eidos`/`ed` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
 | `??` 空值合并 | 已实现基础语义 | 内糖；nil 时取右值，否则保留左值；`null_coalesce_runtime` 覆盖 |
 | `?.` 安全成员访问 | 已实现基础语义 | 内糖；nil 时短路返回 nil，字典对象按字段键读取；`optional_member_runtime` 覆盖 |
-| 链式比较、后缀 `if/unless` | 设计中 | 尚无核心 parser/compiler 支持 |
+| 链式比较 | 已实现基础语义 | 内糖；相邻操作数单次求值并短路；`chained_comparison_runtime` 覆盖 |
+| 后缀 `if/unless` | 设计中 | 尚无核心 parser/compiler 支持 |
 
 ## 内置函数模组
 

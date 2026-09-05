@@ -1,0 +1,5 @@
+inside = 50
+if 0 <= inside < 100 { say "inside" }
+
+outside = 120
+if 0 <= outside < 100 { say "bad" }

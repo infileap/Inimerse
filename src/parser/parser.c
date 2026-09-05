@@ -553,10 +553,24 @@ static Expr *parse_add_sub(Parser *p) {
 
 static Expr *parse_comparison(Parser *p) {
     Expr *e = parse_add_sub(p);
+    Expr **operands = NULL;
+    InimerseTokenType *ops = NULL;
+    int count = 0;
     while (peek(p).type == TOK_EQEQ || peek(p).type == TOK_NEQ || peek(p).type == TOK_LT || peek(p).type == TOK_GT ||
            peek(p).type == TOK_IN || peek(p).type == TOK_LE || peek(p).type == TOK_GE ||
            (!p->no_infix_match && peek(p).type == TOK_MATCH)) {
         Token op = peek(p); advance(p); Expr *right = parse_add_sub(p);
+        if (op.type == TOK_LT || op.type == TOK_GT || op.type == TOK_LE || op.type == TOK_GE) {
+            if (count == 0) {
+                operands = malloc(2 * sizeof(*operands)); ops = malloc(sizeof(*ops));
+                operands[0] = e; operands[1] = right; ops[0] = op.type; count = 2;
+            } else {
+                operands = realloc(operands, (size_t)(count + 1) * sizeof(*operands));
+                ops = realloc(ops, (size_t)count * sizeof(*ops));
+                operands[count++] = right; ops[count - 2] = op.type;
+            }
+            continue;
+        }
         if (op.type == TOK_MATCH) {
             /* a match b -> match(a, b) builtin call */
             Expr *call = malloc(sizeof(Expr));
@@ -572,6 +586,10 @@ static Expr *parse_comparison(Parser *p) {
         } else {
             Expr *bin = malloc(sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
         }
+    }
+    if (count > 0) {
+        Expr *chain = calloc(1, sizeof(*chain)); chain->type = EXPR_CHAIN_COMPARE;
+        chain->chain.operands = operands; chain->chain.ops = ops; chain->chain.count = count; e = chain;
     }
     return e;
 }

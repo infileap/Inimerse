@@ -777,6 +777,31 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             comp->last_temp = 1;
             return result;
         }
+        case EXPR_CHAIN_COMPARE: {
+            int prev = compile_expr(comp, expr->chain.operands[0]);
+            int result = alloc_reg();
+            int *jumps = calloc((size_t)(expr->chain.count - 1), sizeof(*jumps));
+            for (int i = 1; i < expr->chain.count; i++) {
+                int right = compile_expr(comp, expr->chain.operands[i]);
+                int cmp = alloc_reg();
+                OpCode cop = OP_LT;
+                switch (expr->chain.ops[i - 1]) {
+                    case TOK_LT: cop = OP_LT; break; case TOK_GT: cop = OP_GT; break;
+                    case TOK_LE: cop = OP_LE; break; case TOK_GE: cop = OP_GE; break;
+                    default: cop = OP_LT; break;
+                }
+                emit(comp->curBC, cop, cmp, prev, right);
+                if (i == 1) emit(comp->curBC, OP_MOV, result, cmp, 0);
+                else emit(comp->curBC, OP_AND, result, result, cmp);
+                if (i < expr->chain.count - 1) {
+                    jumps[i - 1] = comp->curBC->count;
+                    emit(comp->curBC, OP_JUMP_IF_FALSE, result, 0, 0);
+                }
+                prev = right;
+            }
+            for (int i = 0; i < expr->chain.count - 2; i++) comp->curBC->code[jumps[i]].r2 = comp->curBC->count;
+            free(jumps); comp->last_temp = 1; return result;
+        }
         case EXPR_CALL: {
             if (expr->call.callee->type == EXPR_IDENT) {
                 char cn[256]; snprintf(cn, sizeof cn, "%.*s", (int)expr->call.callee->identName.length, expr->call.callee->identName.start);
