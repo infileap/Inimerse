@@ -3,3 +3,7 @@ case values {
     [first, second]: say first + second
     _: say "array-miss"
 }
+case values {
+    [_, second]: say second
+    _: say "wildcard-miss"
+}

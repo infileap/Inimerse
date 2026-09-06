@@ -1235,7 +1235,9 @@ static void compile_case_list_pattern(Compiler *comp, int actual, Expr *pattern,
         int index = alloc_reg(); emit(comp->curBC, OP_LOADK_INT, index, i, 0);
         int got = alloc_reg(); emit(comp->curBC, OP_INDEX_GET, got, actual, index);
         Expr *field = pattern->list.items[i];
-        if (field->type == EXPR_IDENT && !(field->identName.length == 1 && field->identName.start[0] == '_')) {
+        if (field->type == EXPR_IDENT && field->identName.length == 1 && field->identName.start[0] == '_') {
+            continue;
+        } else if (field->type == EXPR_IDENT) {
             char name[256]; snprintf(name, sizeof(name), "%.*s", (int)field->identName.length, field->identName.start);
             emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), got, 0);
         } else {
