@@ -55,6 +55,29 @@ static int posix_core_float(VM *vm) {
     else n = v->fval;
     pop(vm); push_float(vm, n); return 1;
 }
+
+static int posix_core_list(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    if (v.type == VAL_ARRAY) { pop(vm); vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = v; return 1; }
+    int idx = (v.type == VAL_SET) ? vm_set_to_array(vm, v.ival) : -1;
+    pop(vm);
+    if (idx < 0) { push_nil(vm); return 1; }
+    Value out = { VAL_ARRAY, idx + 1, 0, NULL };
+    vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
+    return 1;
+}
+
+static int posix_core_sum(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; double total = 0; int ok = 1, all_int = 1;
+    if (v.type == VAL_ARRAY && v.ival > 0 && v.ival - 1 < vm->arrayCount) {
+        ArrayObj *a = vm_pool_slot(vm, v.ival - 1);
+        for (int i = 0; i < a->count; i++) { if (a->items[i].type != VAL_INT && a->items[i].type != VAL_FLOAT) { ok = 0; break; } if (a->items[i].type == VAL_FLOAT) all_int = 0; total += val_as_double(&a->items[i]); }
+    } else ok = 0;
+    pop(vm); if (!ok) { push_nil(vm); return 1; }
+    if (all_int) push_int(vm, (int64_t)total); else push_float(vm, total); return 1;
+}
 #include "../platform/dir.h"
 #include "../platform/http_client.h"
 #include "../platform/serial.h"
@@ -155,6 +178,8 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "bool", posix_core_bool);
     vm_register_builtin(vm, "int", posix_core_int);
     vm_register_builtin(vm, "float", posix_core_float);
+    vm_register_builtin(vm, "list", posix_core_list);
+    vm_register_builtin(vm, "sum", posix_core_sum);
 }
 
 void record_load_from_file(VM *vm, const char *path) { (void)vm; (void)path; }
