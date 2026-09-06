@@ -5,6 +5,56 @@
 #include <string.h>
 #include <stdio.h>
 #include "../platform/platform.h"
+
+static int posix_core_len(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int n = 0;
+    if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
+    else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
+    else if (v->type == VAL_INT) n = (int)v->ival;
+    pop(vm); push_int(vm, n); return 1;
+}
+
+static int posix_core_size(VM *vm) { return posix_core_len(vm); }
+
+static int posix_core_str(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    char buf[1024];
+    if (v->type == VAL_INT) snprintf(buf, sizeof buf, "%d", v->ival);
+    else if (v->type == VAL_FLOAT) snprintf(buf, sizeof buf, "%.17g", v->fval);
+    else if (v->type == VAL_BOOL) snprintf(buf, sizeof buf, "%s", v->ival ? "true" : "false");
+    else if (v->type == VAL_STRING) { char *s = strdup(v->sval ? v->sval : ""); pop(vm); push_string(vm, s); free(s); return 1; }
+    else vm_value_to_string(vm, v, buf, sizeof buf);
+    pop(vm); push_string(vm, buf); return 1;
+}
+
+static int posix_core_bool(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int truth = v->type == VAL_BOOL ? v->ival != 0 : v->type == VAL_INT ? v->ival != 0 :
+                v->type == VAL_FLOAT ? v->fval != 0.0 : v->type == VAL_STRING ? (v->sval && *v->sval) : v->type != VAL_NIL;
+    pop(vm); push_bool(vm, truth); return 1;
+}
+
+static int posix_core_int(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)]; int64_t n = 0;
+    if (v->type == VAL_STRING) n = strtoll(v->sval ? v->sval : "0", NULL, 10);
+    else if (v->type == VAL_FLOAT) n = (int64_t)v->fval;
+    else n = v->ival;
+    pop(vm); push_int(vm, n); return 1;
+}
+
+static int posix_core_float(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)]; double n = 0.0;
+    if (v->type == VAL_STRING) n = strtod(v->sval ? v->sval : "0", NULL);
+    else if (v->type == VAL_INT) n = (double)v->ival;
+    else n = v->fval;
+    pop(vm); push_float(vm, n); return 1;
+}
 #include "../platform/dir.h"
 #include "../platform/http_client.h"
 #include "../platform/serial.h"
@@ -99,6 +149,12 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "mouse_move", posix_unsupported);
     vm_register_builtin(vm, "mouse_click", posix_unsupported);
     vm_register_builtin(vm, "has_capability", posix_capability);
+    vm_register_builtin(vm, "len", posix_core_len);
+    vm_register_builtin(vm, "size", posix_core_size);
+    vm_register_builtin(vm, "str", posix_core_str);
+    vm_register_builtin(vm, "bool", posix_core_bool);
+    vm_register_builtin(vm, "int", posix_core_int);
+    vm_register_builtin(vm, "float", posix_core_float);
 }
 
 void record_load_from_file(VM *vm, const char *path) { (void)vm; (void)path; }

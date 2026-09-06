@@ -24,7 +24,7 @@
 | `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、绑定、严格字段存在性和递归嵌套；Eidos/数组解构待完善 |
 | `case` 通配模式 | 已实现 | `case_collection_patterns_runtime`；`_` 在前序分支未命中时兜底 |
 | `case` `as` 全值别名 | 已实现基础语义 | `case_alias_runtime` 验证命中后绑定完整 subject |
-| `case` 定长数组解构 | 已实现基础语义 | `case_array_runtime` 验证长度检查、元素绑定和 `_` 通配元素 |
+| `case` 定长数组解构 | 已实现基础语义 | `case_array_runtime` 现在有输出断言，验证长度检查、元素绑定和 `_` 通配元素确实命中 |
 | case 覆盖/不可达诊断 | 部分实现 | `--lint` 可报告 wildcard/else 后的分支，并对可识别有限字符串集合报告具体缺失成员；复杂集合穷尽性待完善 |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；支持并/交/差/补集和相交查询，独立 C API，尚未接入复杂类型元数据 |
@@ -54,7 +54,7 @@
 
 ## V0.4 仍需开发
 
-- POSIX 核心运行时内置与 Windows 保持一致：拆分 `runtime.c` 中的平台依赖，恢复 `len`、`size`、`str` 等通用 API，并增加跨平台行为回归；
+- POSIX 核心运行时内置与 Windows 保持一致：已恢复 `len`、`size`、`str`、`bool`、`int`、`float` 子集；仍需拆分 `runtime.c` 中的平台依赖并完成其余 API 的跨平台行为回归；
 - 闭包捕获和完整函数值生命周期管理；
 - `>>` 函数组合（简单函数值形式已实现，复杂高阶组合仍待扩展）；
 - `?` 的跨线程/异步栈展开与 finally 交互；基础函数级 Err 自动返回已实现；
