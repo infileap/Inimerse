@@ -11,6 +11,11 @@ static int posix_core_len(VM *vm) {
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
     int n = 0;
     if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
+    else if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
+        SetObj *s = &vm->sets[v->ival];
+        if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
+        else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }
+    }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
     else if (v->type == VAL_INT) n = (int)v->ival;
     pop(vm); push_int(vm, n); return 1;
