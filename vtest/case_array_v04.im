@@ -1,0 +1,5 @@
+values = [10, 20]
+case values {
+    [first, second]: say first + second
+    _: say "array-miss"
+}

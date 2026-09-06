@@ -1211,6 +1211,42 @@ static void compile_case_dict_pattern(Compiler *comp, int actual, Expr *pattern,
     }
 }
 
+static int case_list_has_binding(Expr *pattern) {
+    if (!pattern || pattern->type != EXPR_LIST) return 0;
+    for (int i = 0; i < pattern->list.count; i++)
+        if (pattern->list.items[i]->type == EXPR_IDENT &&
+            !(pattern->list.items[i]->identName.length == 1 && pattern->list.items[i]->identName.start[0] == '_')) return 1;
+    return 0;
+}
+
+static void compile_case_list_pattern(Compiler *comp, int actual, Expr *pattern,
+                                      int **guard_skips, int *guard_skip_count) {
+    int len = alloc_reg();
+    emit(comp->curBC, OP_PUSH_REG, actual, 0, 0);
+    emit(comp->curBC, OP_CALL_BUILTIN, len, bytecode_add_string(comp->curBC, "len"), 1);
+    int expected_len = alloc_reg();
+    emit(comp->curBC, OP_LOADK_INT, expected_len, pattern->list.count, 0);
+    int same_len = alloc_reg();
+    emit(comp->curBC, OP_EQ, same_len, len, expected_len);
+    int jlen = comp->curBC->count;
+    emit(comp->curBC, OP_JUMP_IF_FALSE, same_len, 0, 0);
+    add_break(guard_skips, guard_skip_count, jlen);
+    for (int i = 0; i < pattern->list.count; i++) {
+        int index = alloc_reg(); emit(comp->curBC, OP_LOADK_INT, index, i, 0);
+        int got = alloc_reg(); emit(comp->curBC, OP_INDEX_GET, got, actual, index);
+        Expr *field = pattern->list.items[i];
+        if (field->type == EXPR_IDENT && !(field->identName.length == 1 && field->identName.start[0] == '_')) {
+            char name[256]; snprintf(name, sizeof(name), "%.*s", (int)field->identName.length, field->identName.start);
+            emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), got, 0);
+        } else {
+            int want = compile_expr(comp, field), same = alloc_reg();
+            emit(comp->curBC, OP_EQ, same, got, want);
+            int jf = comp->curBC->count; emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
+            add_break(guard_skips, guard_skip_count, jf);
+        }
+    }
+}
+
 /* ---------- 璇彞缂栬瘧 ---------- */
 static void compile_stmt(Compiler *comp, Stmt *stmt, int **break_list, int *break_count_ptr) {
     if (!stmt) return;
@@ -1441,6 +1477,11 @@ case STMT_WITH: {
                         add_break(&body_jumps, &body_jcount, jt);
                     } else if (br->patternCount == 1 && br->patterns[0]->type == EXPR_IDENT &&
                         ((br->patterns[0]->identName.length == 1 && br->patterns[0]->identName.start[0] == '_') || br->guard)) {
+                        int jt = comp->curBC->count;
+                        emit(comp->curBC, OP_JUMP, 0, 0, 0);
+                        add_break(&body_jumps, &body_jcount, jt);
+                    } else if (br->patternCount == 1 && case_list_has_binding(br->patterns[0])) {
+                        compile_case_list_pattern(comp, subj, br->patterns[0], &guard_skips, &guard_skip_count);
                         int jt = comp->curBC->count;
                         emit(comp->curBC, OP_JUMP, 0, 0, 0);
                         add_break(&body_jumps, &body_jcount, jt);
