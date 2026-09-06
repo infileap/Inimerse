@@ -83,6 +83,43 @@ static int posix_core_sum(VM *vm) {
     pop(vm); if (!ok) { push_nil(vm); return 1; }
     if (all_int) push_int(vm, (int64_t)total); else push_float(vm, total); return 1;
 }
+
+static int posix_core_push(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value item = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value arr = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    if (arr.type == VAL_ARRAY && arr.ival > 0 && arr.ival - 1 < vm->arrayCount)
+        vm_array_push(vm, arr.ival - 1, &item);
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - 2); push_int(vm, 1); return 1;
+}
+
+static int posix_core_pop(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value arr = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    if (arr.type != VAL_ARRAY || arr.ival <= 0 || arr.ival - 1 >= vm->arrayCount) { pop(vm); push_nil(vm); return 1; }
+    Value out = vm_array_pop(vm, arr.ival - 1); pop(vm);
+    if (out.type == VAL_INT) push_int(vm, out.ival);
+    else if (out.type == VAL_FLOAT) push_float(vm, out.fval);
+    else if (out.type == VAL_BOOL) push_bool(vm, out.ival != 0);
+    else if (out.type == VAL_STRING) { push_string(vm, out.sval ? out.sval : ""); if (out.ival != 1) free(out.sval); }
+    else if (out.type == VAL_ARRAY) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out; }
+    else push_nil(vm);
+    return 1;
+}
+
+static int posix_core_join(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value last = vm_cur_stack(vm)[vm_cur_sp(vm)], arr;
+    const char *sep = "";
+    if (last.type == VAL_STRING && vm_cur_sp(vm) >= 1) { sep = last.sval ? last.sval : ""; arr = vm_cur_stack(vm)[vm_cur_sp(vm) - 1]; vm_cur_set_sp(vm, vm_cur_sp(vm) - 2); }
+    else { arr = last; pop(vm); }
+    if (arr.type != VAL_ARRAY || arr.ival <= 0 || arr.ival - 1 >= vm->arrayCount) { push_string(vm, ""); return 1; }
+    ArrayObj *a = vm_pool_slot(vm, arr.ival - 1); size_t cap = 1;
+    for (int i = 0; i < a->count; i++) cap += 256 + strlen(sep);
+    char *buf = (char *)calloc(cap, 1); if (!buf) { push_string(vm, ""); return 1; }
+    for (int i = 0; i < a->count; i++) { char part[256]; if (i) strcat(buf, sep); vm_value_to_string(vm, &a->items[i], part, sizeof part); strcat(buf, part); }
+    push_string(vm, buf); free(buf); return 1;
+}
 #include "../platform/dir.h"
 #include "../platform/http_client.h"
 #include "../platform/serial.h"
@@ -185,6 +222,9 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "float", posix_core_float);
     vm_register_builtin(vm, "list", posix_core_list);
     vm_register_builtin(vm, "sum", posix_core_sum);
+    vm_register_builtin(vm, "push", posix_core_push);
+    vm_register_builtin(vm, "pop", posix_core_pop);
+    vm_register_builtin(vm, "join", posix_core_join);
 }
 
 void record_load_from_file(VM *vm, const char *path) { (void)vm; (void)path; }

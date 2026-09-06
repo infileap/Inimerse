@@ -1,0 +1,5 @@
+values = [1, 2]
+push(values, 3)
+say len(values)
+say pop(values)
+say join(values, ",")
