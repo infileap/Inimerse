@@ -10,6 +10,9 @@ int main(void) {
     assert(im_error_kind_in_domain(division, IM_ERROR_DOMAIN_ARITHMETIC_VM));
     assert(im_error_kind_in_domain(missing, IM_ERROR_DOMAIN_FILE));
     assert(im_error_kind_count() >= 10);
+    assert(im_error_kind_lookup("stack_overflow"));
+    assert(im_error_kind_lookup("capability_denied"));
+    assert(im_error_kind_in_domain(im_error_kind_lookup("io_error"), IM_ERROR_DOMAIN_FILE));
 
     ImTypeSet *file = im_error_domain_set(IM_ERROR_DOMAIN_FILE);
     ImTypeValue not_found = {.kind = IM_TYPE_STRING, .string = "not_found"};

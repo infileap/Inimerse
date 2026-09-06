@@ -8,6 +8,7 @@ static const ImErrorKind g_errors[] = {
     {"permission_denied", IM_ERROR_DOMAIN_FILE, 1002},
     {"disk_full", IM_ERROR_DOMAIN_FILE, 1003},
     {"invalid_path", IM_ERROR_DOMAIN_FILE, 1004},
+    {"io_error", IM_ERROR_DOMAIN_FILE, 1005},
     {"invalid_format", IM_ERROR_DOMAIN_PARSE, 1101},
     {"unexpected_token", IM_ERROR_DOMAIN_PARSE, 1102},
     {"division_by_zero", IM_ERROR_DOMAIN_ARITHMETIC_VM, 2001},
@@ -16,11 +17,17 @@ static const ImErrorKind g_errors[] = {
     {"index_out_of_range", IM_ERROR_DOMAIN_MEMORY_VM, 2101},
     {"allocation_failed", IM_ERROR_DOMAIN_MEMORY_VM, 2102},
     {"invalid_reference", IM_ERROR_DOMAIN_MEMORY_VM, 2103},
+    {"stack_overflow", IM_ERROR_DOMAIN_MEMORY_VM, 2104},
     {"value_not_callable", IM_ERROR_DOMAIN_TYPE_VM, 2201},
     {"type_mismatch", IM_ERROR_DOMAIN_TYPE_VM, 2202},
     {"invalid_conversion", IM_ERROR_DOMAIN_TYPE_VM, 2203},
     {"uncaught_exception", IM_ERROR_DOMAIN_RUNTIME_VM, 2301},
-    {"instruction_limit", IM_ERROR_DOMAIN_RUNTIME_VM, 2302}
+    {"instruction_limit", IM_ERROR_DOMAIN_RUNTIME_VM, 2302},
+    {"invalid_opcode", IM_ERROR_DOMAIN_RUNTIME_VM, 2303},
+    {"timeout", IM_ERROR_DOMAIN_RUNTIME_VM, 2304},
+    {"deadlock", IM_ERROR_DOMAIN_RUNTIME_VM, 2305},
+    {"cancelled", IM_ERROR_DOMAIN_RUNTIME_VM, 2306},
+    {"capability_denied", IM_ERROR_DOMAIN_RUNTIME_VM, 2307}
 };
 
 const char *im_error_domain_name(ImErrorDomain domain) {

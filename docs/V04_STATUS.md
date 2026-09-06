@@ -45,7 +45,7 @@
 | 闭包环境引用计数 | 部分实现 | `closure_probe` 验证原子 retain/release 与引用查询 |
 | 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；基础 parser/compiler 接入已完成 |
 | `type Name = 集合表达式` 基础语法 | 已实现 | `type_collection_runtime`；当前编译为命名集合全局值，复杂类型元数据仍待完善 |
-| 预设业务/VM 错误集合目录 | 部分实现 | `error_types_probe`；核心 VM 除零/越界/约束失败已迁移，其他模块错误待完成 |
+| 预设业务/VM 错误集合目录 | 已实现目录，运行时映射持续补充 | `error_types_probe`；文件、解析、算术/内存/类型/运行时 VM 错误均有稳定名称、数值码和集合/枚举视图；具体模块抛出点按平台持续迁移 |
 | `|>` 管道 | 已实现 | `pipeline_runtime` |
 | 非捕获 lambda 与函数值调用 | 已实现 | `lambda_runtime`；捕获闭包另有 `lambda_capture_runtime` 回归 |
 | 浮点字符串精度保护 | 已实现 17 位往返输出（`str` 与 VM 通用格式化） | `float_precision_runtime` |
