@@ -4,12 +4,12 @@
     "engine": "inimerse >= 1.0",
     "entry": "main.im",
     "layers": {
-        "lobby": "ÓÎÏ·´óÌü(²ã¼¶ÆµµÀ: lobby)",
-        "game": "Ğ¡ÓÎÏ·(ÁÙÊ±²ã¼¶, ½øÈëÊ±´´½¨, ·µ»ØÊ±Ïú»Ù)"
+        "lobby": "æ¸¸æˆå¤§å…(å±‚çº§é¢‘é“: lobby)",
+        "game": "å°æ¸¸æˆ(ä¸´æ—¶å±‚çº§, è¿›å…¥æ—¶åˆ›å»º, è¿”å›æ—¶é”€æ¯)"
     },
     "network": {
         "hub": "hub.example.com:8080",
-        "channel_model": "layer-based (Ã¿¸ö²ã¼¶Ò»¸öÆµµÀ)"
+        "channel_model": "layer-based (æ¯ä¸ªå±‚çº§ä¸€ä¸ªé¢‘é“)"
     },
     "assets": [],
     "scripts": ["main.im", "net.im"]

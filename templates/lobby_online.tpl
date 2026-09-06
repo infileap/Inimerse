@@ -1,14 +1,14 @@
-# lobby_online.im - Infiverse Áª»ú´óÌü (MC-style server list)
+# lobby_online.im - Infiverse è”æœºå¤§å… (MC-style server list)
 gui_stage(900, 640)
 gui_set_font("SimSun", 17, 4210752)
 
-log_room = gui_log_p(150, 150, 700, 320, "·şÎñÆ÷ÁĞ±í (verse://)")
-btn_create = gui_button_p(80, 520, 190, 44, "[´´½¨·¿¼ä]")
-btn_refresh = gui_button_p(310, 520, 190, 44, "[Ë¢ĞÂÁĞ±í]")
-btn_join = gui_button_p(540, 520, 190, 44, "[¼ÓÈë·şÎñÆ÷]")
-btn_back = gui_button_p(770, 520, 150, 44, "[·µ»Ø]")
+log_room = gui_log_p(150, 150, 700, 320, "æœåŠ¡å™¨åˆ—è¡¨ (verse://)")
+btn_create = gui_button_p(80, 520, 190, 44, "[åˆ›å»ºæˆ¿é—´]")
+btn_refresh = gui_button_p(310, 520, 190, 44, "[åˆ·æ–°åˆ—è¡¨]")
+btn_join = gui_button_p(540, 520, 190, 44, "[åŠ å…¥æœåŠ¡å™¨]")
+btn_back = gui_button_p(770, 520, 150, 44, "[è¿”å›]")
 inp_addr = gui_input_p(150, 590, 700, 36, "")
-gui_text_a_p("´´½¨·¿¼äºó×Ô¶¯¸´ÖÆÁ´½Ó; ¼ÓÈëÇëÕ³Ìù verse:// µØÖ·", 0, 568, 1000, 1)
+gui_text_a_p("åˆ›å»ºæˆ¿é—´åè‡ªåŠ¨å¤åˆ¶é“¾æ¥; åŠ å…¥è¯·ç²˜è´´ verse:// åœ°å€", 0, 568, 1000, 1)
 
 stamp = 0
 
@@ -26,13 +26,13 @@ func refresh_list() {
         url = "http://127.0.0.1:" + str(ports[i]) + "/hub"
         b = http_get(url)
         if len(b) > 2 {
-            log_add("·¢ÏÖ·şÎñÆ÷: ¶Ë¿Ú " + str(ports[i]) + " ·¿¼ä " + b)
+            log_add("å‘ç°æœåŠ¡å™¨: ç«¯å£ " + str(ports[i]) + " æˆ¿é—´ " + b)
             n = n + 1
         }
         i = i + 1
     }
     if n < 1 {
-        log_add("Î´·¢ÏÖ±¾»ú·şÎñÆ÷, ÇëÏÈ [´´½¨·¿¼ä]")
+        log_add("æœªå‘ç°æœ¬æœºæœåŠ¡å™¨, è¯·å…ˆ [åˆ›å»ºæˆ¿é—´]")
     }
 }
 
@@ -49,20 +49,20 @@ func create_room() {
 func join_server() {
     addr = gui_input_text(inp_addr)
     if len(addr) < 3 {
-        log_add("ÇëÊäÈë verse://µØÖ·")
+        log_add("è¯·è¾“å…¥ verse://åœ°å€")
         return
     }
     if substr(addr, 0, 8) != "verse://" {
         addr = "verse://" + addr
     }
     r = verse_open(addr)
-    log_add("¼ÓÈë " + addr + " => " + str(r))
+    log_add("åŠ å…¥ " + addr + " => " + str(r))
     gui_input_set(inp_addr, "")
 }
 
 last_mouse = 0
 gui_input_focus(inp_addr)
-log_add("Áª»ú´óÌü¾ÍĞ÷")
+log_add("è”æœºå¤§å…å°±ç»ª")
 refresh_list()
 
 while true {
@@ -83,9 +83,9 @@ while true {
         }
     }
     last_mouse = md
-    gui_text_a_p("Infiverse Áª»ú´óÌü", 0, 30, 1000, 1)
-    gui_text_a_p("´´½¨·¿¼ä = ´ò°ü+¿ª·ş+×Ô¶¯¸´ÖÆÁ´½Ó; ¼ÓÈë = ÏÂÔØ²¢ÔËĞĞ", 0, 60, 1000, 1)
-    gui_text("µØÖ·: " + gui_input_text(inp_addr), 175, 596)
+    gui_text_a_p("Infiverse è”æœºå¤§å…", 0, 30, 1000, 1)
+    gui_text_a_p("åˆ›å»ºæˆ¿é—´ = æ‰“åŒ…+å¼€æœ+è‡ªåŠ¨å¤åˆ¶é“¾æ¥; åŠ å…¥ = ä¸‹è½½å¹¶è¿è¡Œ", 0, 60, 1000, 1)
+    gui_text("åœ°Ö·: " + gui_input_text(inp_addr), 175, 596)
     proc_prune()
     wait 0.05
 }

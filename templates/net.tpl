@@ -1,15 +1,15 @@
 # ============================================================
-# net.im - Infiverse ÏîÄ¿ÍøÂçÉè¶¨
-# Ê¹ÓÃ·½Ê½: import "net.im" ºóµ÷ÓÃ net_* º¯Êı
-# ÆµµÀÄ£ĞÍ: Ã¿¸ö²ã¼¶(layer)Ò»¸öÆµµÀ, ÏûÏ¢°´²ã¼¶¸ôÀë
+# net.im - Infiverse é¡¹ç›®ç½‘ç»œè®¾å®š
+# ä½¿ç”¨æ–¹å¼: import "net.im" åè°ƒç”¨ net_* å‡½æ•°
+# é¢‘é“æ¨¡å‹: æ¯ä¸ªå±‚çº§(layer)ä¸€ä¸ªé¢‘é“, æ¶ˆæ¯æŒ‰å±‚çº§éš”ç¦»
 # ============================================================
 
-# ---- ·şÎñÆ÷Éè¶¨ ----
+# ---- æœåŠ¡å™¨è®¾å®š ----
 SERVER_HOST = "hub.example.com"
 SERVER_PORT = 8080
 SERVER_ID = "verse://" + SERVER_HOST + ":" + str(SERVER_PORT)
 
-# ---- ±¾µØÆµµÀ±í(²ã¼¶ -> ÆµµÀ) ----
+# ---- æœ¬åœ°é¢‘é“è¡¨(å±‚çº§ -> é¢‘é“) ----
 channels = []
 func channel_of(layer_name) {
     i = 0
@@ -23,27 +23,27 @@ func channel_of(layer_name) {
     return "verse://" + SERVER_HOST + ":" + str(SERVER_PORT) + "/ch/" + layer_name
 }
 
-# ---- ·¢ÑÔµ½²ã¼¶ÆµµÀ ----
+# ---- å‘è¨€åˆ°å±‚çº§é¢‘é“ ----
 func channel_say(layer_name, who, text) {
     ch = channel_of(layer_name)
     net_send(ch, who + "> " + text)
 }
 
-# ---- ¼àÌıµ±Ç°²ã¼¶ÆµµÀ ----
+# ---- ç›‘å¬å½“å‰å±‚çº§é¢‘é“ ----
 func channel_listen(layer_name) {
     ch = channel_of(layer_name)
     return net_recv(ch)
 }
 
-# ---- ¹ã²¥µ½ËùÓĞÆµµÀ(ÏµÍ³¹«¸æ) ----
+# ---- å¹¿æ’­åˆ°æ‰€æœ‰é¢‘é“(ç³»ç»Ÿå…¬å‘Š) ----
 func channel_broadcast(text) {
     i = 0
     while i < len(channels) {
         parts = split(channels[i], "|")
-        net_send(parts[1], "[¹«¸æ] " + text)
+        net_send(parts[1], "[å…¬å‘Š] " + text)
         i = i + 1
     }
 }
 
-# ---- ²âÊÔ ----
-say "net.im loaded: " + SERVER_ID + " ÆµµÀÊ¾Àı: " + channel_of("lobby")
+# ---- æµ‹è¯• ----
+say "net.im loaded: " + SERVER_ID + " é¢‘é“ç¤ºä¾‹: " + channel_of("lobby")

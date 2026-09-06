@@ -1,24 +1,24 @@
 # ============================================================
-# Infiverse ÏîÄ¿Ä£°å - ¿Õ¼äÕ¾´óÌü + Ğ¡ÓÎÏ·
-# ²ã¼¶: lobby(ÓÎÏ·´óÌü) / game(Ğ¡ÓÎÏ·,ÁÙÊ±²ã¼¶)
-# ÆµµÀ: ²ã¼¶ÆµµÀ(ÏûÏ¢°´²ã¼¶¸ôÀë,¿ç²ã¼¶²»¿É¼û)
-# Ö¸Áî: /help /play /back /say <ÎÄ×Ö> /who /clear
+# Infiverse é¡¹ç›®æ¨¡æ¿ - ç©ºé—´ç«™å¤§å… + å°æ¸¸æˆ
+# å±‚çº§: lobby(æ¸¸æˆå¤§å…) / game(å°æ¸¸æˆ,ä¸´æ—¶å±‚çº§)
+# é¢‘é“: å±‚çº§é¢‘é“(æ¶ˆæ¯æŒ‰å±‚çº§éš”ç¦»,è·¨å±‚çº§ä¸å¯è§)
+# æŒ‡ä»¤: /help /play /back /say <æ–‡å­—> /who /clear
 # ============================================================
 gui_stage(900, 640)
-gui_title("Infiverse ¿Õ¼äÕ¾")
+gui_title("Infiverse ç©ºé—´ç«™")
 gui_set_font("SimSun", 17, 4210752)
 
-# ---------- È«¾Ö×´Ì¬ ----------
-lvl = "lobby"          # µ±Ç°²ã¼¶
-player = "·Ã¿Í"        # Íæ¼ÒÃû
-stamp = 0              # ÏûÏ¢ĞòºÅ
+# ---------- å…¨å±€çŠ¶æ€ ----------
+lvl = "lobby"          # å½“å‰å±‚çº§
+player = "è®¿å®¢"        # ç©å®¶å
+stamp = 0              # æ¶ˆæ¯åºå·
 
-# ÆµµÀÏûÏ¢(Ã¿²ãÒ»¸ö¶ÓÁĞ)
+# é¢‘é“æ¶ˆæ¯(æ¯å±‚ä¸€ä¸ªé˜Ÿåˆ—)
 lobby_msgs = []
 game_msgs = []
 MAX_MSG = 60
 
-# Ğ¡ÓÎÏ·×´Ì¬
+# å°æ¸¸æˆçŠ¶æ€
 gx = 450
 gy = 530
 score = 0
@@ -33,32 +33,32 @@ msg_at = 0
 msg_pinned = 0
 high_score = 0
 
-# ´óÌüĞÇ¿Õ(¹Ì¶¨Î»ÖÃ, ±ÜÃâÃ¿Ö¡Ëæ»úÉÁË¸)
+# å¤§å…æ˜Ÿç©º(å›ºå®šä½ç½®, é¿å…æ¯å¸§éšæœºé—ªçƒ)
 stars_x = []
 stars_y = []
 star_n = 20
 
-# ---------- ¿Ø¼ş ----------
-log_lobby = gui_log_p(100, 140, 800, 400, "== ´óÌüÆµµÀ ==")
-log_game = gui_log_p(22, 620, 400, 260, "== ÓÎÏ·ÆµµÀ ==")
+# ---------- æ§ä»¶ ----------
+log_lobby = gui_log_p(100, 140, 800, 400, "== å¤§å…é¢‘é“ ==")
+log_game = gui_log_p(22, 620, 400, 260, "== æ¸¸æˆé¢‘é“ ==")
 cmd_input = gui_input_p(100, 875, 800, 48)
 gui_input_set(cmd_input, "")
 gui_input_focus(cmd_input)
-btn_play = gui_button_p(133, 730, 244, 42, "[½øÈëÓÎÏ·]")
-btn_help = gui_button_p(378, 730, 244, 42, "[°ïÖú]")
-btn_exit = gui_button_p(623, 730, 244, 42, "[ÍË³ö]")
-btn_back = gui_button_p(667, 940, 311, 42, "[·µ»Ø´óÌü]")
-btn_again = gui_button_p(350, 500, 300, 48, "[ÔÙÍæÒ»´Î]")
+btn_play = gui_button_p(133, 730, 244, 42, "[è¿›å…¥æ¸¸æˆ]")
+btn_help = gui_button_p(378, 730, 244, 42, "[å¸®åŠ©]")
+btn_exit = gui_button_p(623, 730, 244, 42, "[é€€å‡º]")
+btn_back = gui_button_p(667, 940, 311, 42, "[è¿”å›å¤§å…]")
+btn_again = gui_button_p(350, 500, 300, 48, "[å†ç©ä¸€æ¬¡]")
 gui_log_show(log_game, 0)
 gui_button_show(btn_back, 0)
 gui_button_show(btn_again, 0)
 
-# ---------- Ëæ»úÊı ----------
+# ---------- éšæœºæ•° ----------
 func rand_int(a, b) {
     return rand(a, b)
 }
 
-# Éú³É¹Ì¶¨ĞÇ¿Õ(Ò»´Î)
+# ç”Ÿæˆå›ºå®šæ˜Ÿç©º(ä¸€æ¬¡)
 func make_stars() {
     i = 0
     while i < star_n {
@@ -68,7 +68,7 @@ func make_stars() {
     }
 }
 
-# ---------- ÆµµÀº¯Êı ----------
+# ---------- é¢‘é“å‡½æ•° ----------
 func push_msg(list, who, msg) {
     global stamp
     if len(list) > MAX_MSG {
@@ -105,19 +105,19 @@ func game_say(who, msg) {
 }
 func sys_say(chn, msg) {
     if chn == "lobby" {
-        lobby_say("[ÏµÍ³]", msg)
+        lobby_say("[ç³»ç»Ÿ]", msg)
     } else {
-        game_say("[ÏµÍ³]", msg)
+        game_say("[ç³»ç»Ÿ]", msg)
     }
 }
 
-# ---------- Ö¸Áî ----------
+# ---------- æŒ‡ä»¤ ----------
 func handle_cmd(msg) {
     if len(msg) < 1 {
         return }
     if substr(msg, 0, 1) == "/" {
         if msg == "/help" {
-            t = "Ö¸Áî: /play ½øÓÎÏ· /back »Ø´óÌü /who Íæ¼Ò /clear ÇåÆÁ"
+            t = "æŒ‡ä»¤: /play è¿›æ¸¸æˆ /back å›å¤§å… /who ç©å®¶ /clear æ¸…å±"
             sys_say(lvl, t)
         } elif msg == "/play" {
             enter_game()
@@ -125,9 +125,9 @@ func handle_cmd(msg) {
             back_lobby()
         } elif msg == "/who" {
             if lvl == "lobby" {
-                sys_say(lvl, "´óÌüÍæ¼Ò: " + player + " + " + str(rand_int(1, 3)) + " Î»ÔÚÏß·Ã¿Í")
+                sys_say(lvl, "å¤§å…ç©å®¶: " + player + " + " + str(rand_int(1, 3)) + " ä½åœ¨çº¿è®¿å®¢")
             } else {
-                sys_say(lvl, "ÓÎÏ·²ãÍæ¼Ò: " + player)
+                sys_say(lvl, "æ¸¸æˆå±‚ç©å®¶: " + player)
             }
         } elif msg == "/clear" {
             global lobby_msgs, game_msgs
@@ -138,9 +138,9 @@ func handle_cmd(msg) {
                 game_msgs = []
                 refresh_game()
             }
-            sys_say(lvl, "ÆµµÀÒÑÇå¿Õ")
+            sys_say(lvl, "é¢‘é“å·²æ¸…ç©º")
         } else {
-            sys_say(lvl, "Î´ÖªÖ¸Áî, /help ²é¿´°ïÖú")
+            sys_say(lvl, "æœªçŸ¥æŒ‡ä»¤, /help æŸ¥çœ‹å¸®åŠ©")
         }
     } else {
         if lvl == "lobby" {
@@ -151,7 +151,7 @@ func handle_cmd(msg) {
     }
 }
 
-# ---------- ²ã¼¶ÇĞ»» ----------
+# ---------- å±‚çº§åˆ‡æ¢ ----------
 func enter_game() {
     global lvl, score, life, game_over, gx, spawn_tick, mxs, mys, msp, high_score, tick_n, msg_at, msg_pinned
     hs = read_file("D:\\inimerse_save.txt")
@@ -172,8 +172,8 @@ func enter_game() {
     mxs = []
     mys = []
     msp = []
-    game_say("[ÏµÍ³]", player + " ´´½¨ÁÙÊ±²ã¼¶ [game] ²¢½øÈë")
-    sys_say("game", "ÆµµÀÒÑÇĞ»»: ÓÎÏ·ÆµµÀ")
+    game_say("[ç³»ç»Ÿ]", player + " åˆ›å»ºä¸´æ—¶å±‚çº§ [game] å¹¶è¿›å…¥")
+    sys_say("game", "é¢‘é“å·²åˆ‡æ¢: æ¸¸æˆé¢‘é“")
     gui_input_set(cmd_input, "")
     gui_input_show(cmd_input, 0)
     gui_button_show(btn_play, 0)
@@ -187,7 +187,7 @@ func back_lobby() {
     lvl = "lobby"
     game_msgs = []
     refresh_game()
-    lobby_say("[ÏµÍ³]", player + " Ïú»ÙÁÙÊ±²ã¼¶ [game], ·µ»Ø´óÌü")
+    lobby_say("[ç³»ç»Ÿ]", player + " é”€æ¯ä¸´æ—¶å±‚çº§ [game], è¿”å›å¤§å…")
     gui_input_set(cmd_input, "")
     gui_input_show(cmd_input, 1)
     gui_button_show(btn_play, 1)
@@ -199,7 +199,7 @@ func back_lobby() {
     gui_log_show(log_game, 0)
 }
 
-# ---------- Ğ¡ÓÎÏ· ----------
+# ---------- å°æ¸¸æˆ ----------
 func spawn_meteor() {
     global mxs, mys, msp, tick_n
     if len(mxs) > 16 {
@@ -254,19 +254,19 @@ func game_tick() {
             high_score = score
             write_file("D:\\inimerse_save.txt", str(high_score))
         }
-        game_say("[ÏµÍ³]", "ÓÎÏ·½áÊø! µÃ·Ö " + str(score) + " ×î¸ß " + str(high_score) + ", µã [ÔÙÍæÒ»´Î] »ò [·µ»Ø´óÌü]")
+        game_say("[ç³»ç»Ÿ]", "æ¸¸æˆç»“æŸ! å¾—åˆ† " + str(score) + " æœ€é«˜ " + str(high_score) + ", ç‚¹ [å†ç©ä¸€æ¬¡] æˆ– [è¿”å›å¤§å…]")
         gui_button_show(btn_again, 1)
     }
 }
 
-# ---------- »æÖÆ ----------
+# ---------- ç»˜åˆ¶ ----------
 func draw_lobby() {
     gui_clear_text()
     gui_clear_shapes()
-    gui_text_a_p("Infiverse ¿Õ¼äÕ¾", 0, 18, 1000, 1)
-    gui_text_a_p("»¶Ó­À´µ½¿Õ¼äÕ¾´óÌü, ÊäÈë /help ²é¿´Ö¸Áî", 0, 46, 1000, 1)
-    gui_text_a_p("Íæ¼Ò: " + player + "   ²ã¼¶: lobby   ÆµµÀ: ´óÌü", 0, 420, 1000, 1)
-    gui_text_a_p("ÁÄÌì: ÊäÈëÎÄ×Ö»Ø³µ·¢ÑÔ", 0, 520, 1000, 1)
+    gui_text_a_p("Infiverse ç©ºé—´ç«™", 0, 18, 1000, 1)
+    gui_text_a_p("æ¬¢è¿æ¥åˆ°ç©ºé—´ç«™å¤§å…, è¾“å…¥ /help æŸ¥çœ‹æŒ‡ä»¤", 0, 46, 1000, 1)
+    gui_text_a_p("ç©å®¶: " + player + "   å±‚çº§: lobby   é¢‘é“: å¤§å…", 0, 420, 1000, 1)
+    gui_text_a_p("èŠå¤©: è¾“å…¥æ–‡å­—å›è½¦å‘è¨€", 0, 520, 1000, 1)
     i = 0
     while i < star_n {
         gui_text("*", stars_x[i], stars_y[i])
@@ -284,17 +284,17 @@ func draw_game() {
         i = i + 1
     }
     gui_text("X", gx, gy)
-    s = "µÃ·Ö: " + str(score) + "  ÉúÃü: " + str(life)
+    s = "å¾—åˆ†: " + str(score) + "  ç”Ÿå‘½: " + str(life)
     gui_text_a_p(s, 0, 890, 1000, 1)
     if game_over == 1 {
-        gui_text_a_p("!! ÓÎÏ·½áÊø !! µÃ·Ö " + str(score) + "  ×î¸ß " + str(high_score), 0, 400, 1000, 1)
-        gui_text_a_p("µã»÷ÏÂ·½°´Å¥·µ»Ø´óÌü", 0, 460, 1000, 1)
+        gui_text_a_p("!! æ¸¸æˆç»“æŸ !! å¾—åˆ† " + str(score) + "  æœ€é«˜ " + str(high_score), 0, 400, 1000, 1)
+        gui_text_a_p("ç‚¹å‡»ä¸‹æ–¹æŒ‰é’®è¿”å›å¤§å…", 0, 460, 1000, 1)
     }
 }
 
-# ---------- Ö÷Ñ­»· ----------
+# ---------- ä¸»å¾ªç¯ ----------
 make_stars()
-sys_say("lobby", "¿Õ¼äÕ¾ÒÑÆô¶¯, ÊäÈë /help ²é¿´Ö¸Áî")
+sys_say("lobby", "ç©ºé—´ç«™å·²å¯åŠ¨, è¾“å…¥ /help æŸ¥çœ‹æŒ‡ä»¤")
 
 while true {
     tick_n = tick_n + 1
