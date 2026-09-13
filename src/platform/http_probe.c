@@ -12,10 +12,13 @@ void verse_http_stop(void);
 static int pal_health(int port, char *body, size_t cap, int *status) {
     char url[96];
     snprintf(url, sizeof url, "http://127.0.0.1:%d/health", port);
-    for (int attempt = 0; attempt < 20; ++attempt) {
+    /* Hosted CI runners can be slow to schedule the listener thread after
+       verse_http_start returns. Keep the probe deterministic without making
+       normal failures wait indefinitely. */
+    for (int attempt = 0; attempt < 100; ++attempt) {
         if (im_http_request("GET", url, NULL, body, cap, status) == 0 &&
             *status == 200 && strstr(body, "\"ok\":true")) return 1;
-        struct timespec ts = {0, 20000000L};
+        struct timespec ts = {0, 50000000L};
         nanosleep(&ts, NULL);
     }
     return 0;
