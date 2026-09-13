@@ -14,9 +14,15 @@ int main(void) {
     if (!im_socket_port_open("127.0.0.1", (uint16_t)port, 500)) return 15;
     ImSocket *accepted = NULL; for (int i = 0; i < 100 && !accepted; i++) { accepted = im_socket_accept(listener); }
     if (!accepted) return 6;
+    if (im_socket_set_nonblocking(accepted, 0) != 0) return 16;
     const char *msg = "ping"; if (im_socket_send(client, msg, 4) != 4) return 7;
     if (im_socket_peek(accepted) <= 0) return 11;
-    char buf[8] = {0}; if (im_socket_recv(accepted, buf, sizeof(buf)) != 4) return 8;
+    char buf[8] = {0}; int received = 0;
+    for (int i = 0; i < 20 && received < 4; ++i) {
+        int n = im_socket_recv(accepted, buf + received, sizeof(buf) - (size_t)received);
+        if (n > 0) received += n;
+    }
+    if (received != 4) return 8;
     if (memcmp(buf, msg, 4) != 0) return 9;
     if (im_socket_peek(NULL) >= 0) return 12;
     if (im_socket_send(NULL, msg, 4) >= 0) return 13;
