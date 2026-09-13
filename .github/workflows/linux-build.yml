@@ -23,6 +23,16 @@ jobs:
         run: |
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.0
           cmake --build build -j2
+          for probe in platform_probe fiber_probe process_probe socket_probe thread_probe dir_probe headless_probe hub_probe; do
+            if probe_output="$(./build/${probe} 2>&1)"; then
+              :
+            else
+              probe_rc=$?
+              compact_probe_output="${probe_output//$'\n'/ | }"
+              echo "::error title=${probe} failed::rc=${probe_rc}; ${compact_probe_output:0:900}"
+              exit 1
+            fi
+          done
           # http_probe is covered by local CTest; hosted runners intermittently
           # fail its threaded loopback scheduling and must not block packages.
           ctest --test-dir build --output-on-failure -E '^http_probe$'
