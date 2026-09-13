@@ -1066,9 +1066,11 @@ static int builtin_match(VM *vm) {
 
 static int builtin_range(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
-    Value *gi = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
-    int gidx = (gi->type == VAL_INT) ? gi->ival : -1;
+    /* Copy both arguments before pop(): the stack slots may be released or
+       reused while the builtin constructs the result set. */
+    Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    int gidx = (gi.type == VAL_INT) ? gi.ival : -1;
     pop(vm); pop(vm);
     /* be-bound global: return the be set */
     if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
@@ -1079,12 +1081,12 @@ static int builtin_range(VM *vm) {
             return 1;
         }
     }
-    if (v->type == VAL_SET) {
-        Value sv = *v;
+    if (v.type == VAL_SET) {
+        Value sv = v;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
         return 1;
     }
-    if (v->type == VAL_INT) {
+    if (v.type == VAL_INT) {
         int sidx = vm_set_new(vm);
         if (sidx < 0) { push_nil(vm); return 1; }
         SetObj *s = &vm->sets[sidx];
@@ -1095,7 +1097,7 @@ static int builtin_range(VM *vm) {
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
         return 1;
     }
-    if (v->type == VAL_FLOAT) {
+    if (v.type == VAL_FLOAT) {
         int sidx = vm_set_new(vm);
         if (sidx < 0) { push_nil(vm); return 1; }
         SetObj *s = &vm->sets[sidx];

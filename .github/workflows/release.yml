@@ -22,27 +22,7 @@ jobs:
           VERSION="0.4.0"
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
-          range_output="$(./build/inimerse vtest/range_meta_v04.im 2>&1)" || range_rc=$?
-          range_rc="${range_rc:-0}"
-          if [[ "$range_rc" != "0" || "$range_output" != *range-meta-pass* ]]; then
-            compact_range_output="${range_output//$'\n'/ | }"
-            echo "::error title=range_meta preflight::rc=${range_rc}; ${compact_range_output:0:900}"
-            exit 1
-          fi
-          mapfile -t TESTS < <(ctest --test-dir build -N | sed -n 's/^[[:space:]]*Test #[0-9][0-9]*:[[:space:]]*//p')
-          for test_name in "${TESTS[@]}"; do
-            if ! ctest --test-dir build -R "^${test_name}$" --output-on-failure; then
-              echo "::error title=CTest failed::${test_name}"
-              if [[ "$test_name" == "range_meta_runtime" ]]; then
-                echo "::group::range_meta_runtime diagnostics"
-                cc --version | head -1 || true
-                ./build/inimerse vtest/range_meta_v04.im || true
-                ctest --test-dir build -R "^${test_name}$" -V || true
-                echo "::endgroup::"
-              fi
-              exit 1
-            fi
-          done
+          ctest --test-dir build --output-on-failure
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
           python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
