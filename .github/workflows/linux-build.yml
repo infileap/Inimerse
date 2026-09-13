@@ -23,6 +23,11 @@ jobs:
         run: |
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.0
           cmake --build build -j2
+          if ! http_output="$(./build/http_probe 2>&1)"; then
+            compact_http_output="${http_output//$'\n'/ | }"
+            echo "::error title=http_probe diagnostics::${compact_http_output:0:900}"
+            exit 1
+          fi
           ctest --test-dir build --output-on-failure
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS

@@ -96,7 +96,12 @@ int main(void) {
     }
     if (!started) return 2;
     char pal_body[512]; int pal_status = 0;
-    if (!pal_health(port, pal_body, sizeof pal_body, &pal_status)) { verse_http_stop(); return 8; }
+    if (!pal_health(port, pal_body, sizeof pal_body, &pal_status)) {
+        fprintf(stderr, "health probe failed on 127.0.0.1:%d (status=%d, body=%s)\n",
+                port, pal_status, pal_body);
+        verse_http_stop();
+        return 8;
+    }
     const char *request = "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     if (!query(port, request, "\"ok\":true")) { verse_http_stop(); return 3; }
     const char *find = "GET /find?q=x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
