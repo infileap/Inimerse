@@ -23,7 +23,10 @@ jobs:
         run: |
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.0
           cmake --build build -j2
-          ctest --test-dir build --output-on-failure
+          ./build/http_probe
+          # http_probe is executed directly above; hosted runners have shown
+          # a CTest-only scheduling race for this threaded loopback probe.
+          ctest --test-dir build --output-on-failure -E '^http_probe$'
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
           python3 tools/release_verify.py build --version 0.4.0 --require-wasm --require-deb-python3
