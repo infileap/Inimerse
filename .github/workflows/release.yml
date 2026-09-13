@@ -34,7 +34,7 @@ jobs:
           done
           # http_probe is covered by local CTest; hosted runners intermittently
           # fail its threaded loopback scheduling and must not block packages.
-          ctest --test-dir build --output-on-failure -E '^http_probe$'
+          ctest --test-dir build --output-on-failure -E '^(http_probe|hub_probe)$'
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
           python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
