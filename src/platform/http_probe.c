@@ -21,6 +21,37 @@ static int pal_health(int port, char *body, size_t cap, int *status) {
         struct timespec ts = {0, 50000000L};
         nanosleep(&ts, NULL);
     }
+    /*
+     * Keep the probe useful on hosted runners whose socket resolver can fail
+     * transiently even though the listener is reachable on loopback.
+     */
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        ImSocket *client = im_socket_connect_timeout("127.0.0.1", (uint16_t)port, 500);
+        if (client) {
+            const char *request = "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+            if (im_socket_send(client, request, strlen(request)) > 0) {
+                char response[512] = {0};
+                int total = 0;
+                while (total < (int)sizeof(response) - 1) {
+                    int n = im_socket_recv(client, response + total,
+                                           sizeof(response) - 1 - (size_t)total);
+                    if (n <= 0) break;
+                    total += n;
+                    response[total] = 0;
+                }
+                im_socket_close(client);
+                if (strstr(response, "200 OK") && strstr(response, "\"ok\":true")) {
+                    if (status) *status = 200;
+                    snprintf(body, cap, "%s", response);
+                    return 1;
+                }
+            } else {
+                im_socket_close(client);
+            }
+        }
+        struct timespec ts = {0, 50000000L};
+        nanosleep(&ts, NULL);
+    }
     return 0;
 }
 
