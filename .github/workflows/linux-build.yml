@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install WASI toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang lld wasi-libc
       - name: Protocol regression
         run: node tools/regression.js
       - name: Build and run POSIX checks
