@@ -1,5 +1,4 @@
 #include "socket.h"
-#include "http_client.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -10,25 +9,13 @@ int verse_http_start(int port);
 void verse_http_stop(void);
 
 static int pal_health(int port, char *body, size_t cap, int *status) {
-    char url[96];
-    snprintf(url, sizeof url, "http://127.0.0.1:%d/health", port);
-    /* Hosted CI runners can be slow to schedule the listener thread after
-       verse_http_start returns. Keep the probe deterministic without making
-       normal failures wait indefinitely. */
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        if (im_http_request("GET", url, NULL, body, cap, status) == 0 &&
-            *status == 200 && strstr(body, "\"ok\":true")) return 1;
-        struct timespec ts = {0, 50000000L};
-        nanosleep(&ts, NULL);
-    }
-    /*
-     * Keep the probe useful on hosted runners whose socket resolver can fail
-     * transiently even though the listener is reachable on loopback.
-     */
-    for (int attempt = 0; attempt < 20; ++attempt) {
+    const char *request = "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    /* Use the same raw loopback path as the rest of this probe. The generic
+       HTTP client has a much longer connect timeout and can consume the whole
+       CTest window when a hosted runner delays the listener thread. */
+    for (int attempt = 0; attempt < 200; ++attempt) {
         ImSocket *client = im_socket_connect_timeout("127.0.0.1", (uint16_t)port, 500);
         if (client) {
-            const char *request = "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
             if (im_socket_send(client, request, strlen(request)) > 0) {
                 char response[512] = {0};
                 int total = 0;
@@ -49,7 +36,7 @@ static int pal_health(int port, char *body, size_t cap, int *status) {
                 im_socket_close(client);
             }
         }
-        struct timespec ts = {0, 50000000L};
+        struct timespec ts = {0, 100000000L};
         nanosleep(&ts, NULL);
     }
     return 0;

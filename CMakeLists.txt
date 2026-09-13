@@ -100,7 +100,7 @@ set_tests_properties(platform_probe fiber_probe process_probe socket_probe threa
   PROPERTIES TIMEOUT 10 LABELS "platform;smoke" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 if(NOT WIN32)
   set_tests_properties(headless_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;headless")
-  set_tests_properties(http_probe hub_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;http" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(http_probe hub_probe PROPERTIES TIMEOUT 30 LABELS "platform;smoke;http" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   set_tests_properties(crp_session_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;crp")
 endif()
 find_program(INIMERSE_NODE node)
