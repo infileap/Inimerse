@@ -1,6 +1,6 @@
 # Inimerse API 大全（V0.4）
 
-更新时间：2026-08-30。本文是公开 API 的状态索引；具体签名以源码和回归测试为准。
+更新时间：2026-09-13。本文是公开 API 的状态索引；具体签名以源码和回归测试为准。
 
 状态含义：
 
@@ -38,7 +38,7 @@
 | 枚举描述符指纹 | 已实现 | `im_enum_fingerprint`；为类型名与有序成员生成稳定 FNV-1a 64 位指纹，用于序列化和 ABI 校验 |
 | 枚举版本兼容性 | 已实现 | `im_enum_compatible_append`；仅允许末尾追加成员，确保旧编码稳定 |
 | 枚举规范标识 | 已实现 | `im_enum_qualified_member` / `im_enum_parse_qualified`；在 `Type.Member` 和数字编码之间双向转换 |
-| 闭包环境基础 | 部分实现 | `src/vm/closure.*`；环境与函数对象支持引用计数，VM 已接入捕获指令；统一 Value/GC 生命周期仍待完成 |
+| 闭包环境基础 | 已实现（基础） | `src/vm/closure.*`；环境与函数对象支持引用计数，VM 已接入捕获指令、容器/全局持有、跨线程消息、调用帧、异常展开及线程重启清理；GC 会沿函数值和活动闭包环境保留池对象 |
 | 闭包环境槽复制 | 部分实现 | `im_closure_env_copy_slot`；安全复制单槽并对字符串执行深复制 |
 | 闭包环境并发约束 | 部分实现 | retain/release 为原子操作；槽读写需由 VM 调度器或外部锁保护 |
 | 闭包环境引用计数查询 | 部分实现 | `im_closure_env_refs`；原子读取环境当前持有者数 |
@@ -46,22 +46,26 @@
 | 命名 TypeSet 注册表 | 已实现 | `src/types/registry.*`；支持定义、覆盖、查询和生命周期管理；基础 `type` 语法已接入 |
 | `type Name = 集合表达式` | 已实现（基础） | 编译为命名集合全局值；支持 `x be Name` 复用现有 `OP_BE` 校验，复杂谓词类型仍待完善 |
 | 预设错误类型目录 | 部分实现 | `src/types/error_types.*`；File/Parse/ArithmeticVM/MemoryVM/TypeVM/RuntimeVM 集合已注册，核心 VM 除零/越界/约束失败已使用 canonical kind |
-| `expr?` | 已实现基础传播 | 内糖；顶层使用 `unwrap`，函数体内 Err 直接返回，`result_propagation_runtime` 覆盖 Ok/Err |
-| `try { ... } catch (...) { ... } finally { ... }` | 已实现基础语义 | finally 在正常及已捕获路径执行；无 catch 时 finally 完成后重新抛出异常；`try_finally_runtime` 覆盖 |
-| `case try expr { ok(v): ...; err(e) | e in E: ... }` | 部分实现 | 原生 Result 分支、载荷绑定、`ok/err` 字面量/递归字典结构载荷匹配和错误集合成员守卫已接入；穷尽检查待完善 |
+| `expr?` | 已实现基础传播 | 内糖；顶层使用 `unwrap`，函数体内 Err 直接返回并先执行活跃 `finally`；线程完成值可由 `thread_result(name)` 转为 Result 后继续传播，`result_propagation_runtime`、`result_finally_propagation_runtime` 与 `thread_result_runtime` 覆盖 Ok/Err |
+| `thread_result(name)` | 已实现基础语义 | `join` 后读取命名 OS thread/task 的完成值；普通返回值包装为 `ok`，显式 Result 保持不变，未捕获线程异常转为 `err` |
+| `thread_await(name[, timeout])` | 已实现基础语义 | 自动等待命名 OS thread/task 完成并返回 Result；支持秒级超时，超时或缺失线程返回 `err`，不改变 `thread_result` 的非阻塞读取语义 |
+| `thread_release(name)` | 已实现基础语义 | 回收已完成的 OS thread/task 及其完成值；task 槽位由 scheduler 安全复用；运行中实例不会被释放 |
+| `try { ... } catch (...) { ... } finally { ... }` | 已实现基础语义 | finally 在正常及已捕获路径执行；无 catch 时 finally 完成后重新抛出异常；cleanup 中 `break/continue/goto` 在需要传播的路径上给出编译错误；`try_finally_runtime` 与 `finally_*_diagnostic` 覆盖 |
+| `case try expr { ok(v): ...; err(e) | e in E: ... }` | 部分实现 | 原生 Result 分支、载荷绑定、`ok/err` 字面量/递归数组与字典结构载荷匹配和错误集合成员守卫已接入；已知有限错误集合的完整守卫可证明穷尽，部分覆盖仍由 `--lint` 报告缺失成员，开放错误域仍需无守卫变体或 `_` 兜底 |
 | `case` 多条件 guard `n | p, q` | 已实现基础语义 | 逗号条件按短路合取编译；`case_try_runtime` 覆盖 |
 | `case value { n | predicate: ... }` | 部分实现 | 基础标识符守卫已接入；结构模式与复合集合守卫待完善 |
-| `case value { in TypeOrSet: ... }` | 部分实现 | 基础类型/区间/集合成员模式已接入；结构类型模式与穷尽检查待完善 |
-| `case value { {"field": pattern}: ... }` | 部分实现 | 字典字段字面量匹配、绑定、严格字段存在性和递归嵌套已接入；Eidos/数组解构待完善 |
+| `case value { in TypeOrSet: ... }` | 部分实现 | 基础类型/区间/集合成员模式已接入；有限命名集合的完整覆盖和后续不可达分支由 `--lint` 诊断，结构类型模式与更复杂穷尽检查待完善 |
+| `case value { {"field": pattern}: ... }` | 部分实现 | 字典字段字面量匹配、绑定、严格字段存在性和字典/数组递归嵌套已接入；Eidos 解构待完善 |
 | `dict_has(dict, key)` | 已实现 | 结构模式使用的字段存在性查询 |
 | `case value { _: ... }` | 已实现 | 原生通配模式，作为前序分支均未命中时的兜底 |
 | `--lint` case 覆盖诊断 | 部分实现 | 检测 `_`/`else` 后不可达分支；对可识别的有限字符串集合报告具体缺失成员，开放/无限集合仍建议显式兜底 |
 | `case ... as name` whole-value alias | 已实现基础语义 | 命中分支入口绑定完整 subject；`case_alias_runtime` 覆盖 |
-| `case` 定长数组解构 `[a, b]` | 已实现基础语义 | 列表含绑定标识符时进行长度/索引匹配，支持 `_` 通配元素；`case_array_runtime` 覆盖 |
-| `x -> expr`、`(a,b) -> expr` | 已实现 | 内糖；当前支持非捕获 lambda 与函数值调用 |
-| `>>`（简单函数名形式） | 已实现 | 核心 lexer/parser 将 `f >> g` 生成可调用组合闭包，`composition_runtime` 回归通过 |
-| 闭包捕获、部分应用 | 部分实现 | 外层参数捕获与调用已实现；完整 GC 生命周期及通用部分应用仍待完善 |
-| `fn`、`print`、`&&`/`||`、`//`、`unless`、`eidos`/`ed` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
+| `case` 定长数组解构 `[a, b]` | 已实现基础语义 | 含绑定或嵌套结构时进行长度/索引匹配，支持 `_` 通配元素和递归字典/数组模式；`case_array_runtime`、`case_nested_patterns_runtime` 覆盖 |
+| `x -> expr`、`(a,b) -> expr`、`(x) -> expr` | 已实现 | 内糖；支持括号 lambda、非捕获/捕获闭包与函数值调用 |
+| `>>`（命名函数与括号 lambda） | 已实现基础高阶路径 | lexer/parser 将 `f >> g` 生成可调用组合闭包；支持 `(x) -> expr`（及组合体内 lambda），由 `composition_runtime` 回归覆盖 |
+| 闭包捕获、部分应用 | 部分实现 | 外层参数、嵌套转发捕获与调用已实现；闭包环境的池对象 GC 根遍历已实现，通用部分应用仍待完善 |
+| `fn`、`print`、`&&`/`||`、`//`、`unless` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
+| `eidos`/`ed` 可执行子集 | 部分实现 | `tools/eidos_desugar.py` 转换为工厂函数、字典实例和闭包方法；支持字段默认值、构造参数、无参/有参及单行方法、单继承、覆盖和有限 `super.method(...)`；不支持 mixin、可见性、热修改或自动无参调用 |
 | `??` 空值合并 | 已实现基础语义 | 内糖；nil 时取右值，否则保留左值；`null_coalesce_runtime` 覆盖 |
 | `?.` 安全成员访问 | 已实现基础语义 | 内糖；nil 时短路返回 nil，字典对象按字段键读取；`optional_member_runtime` 覆盖 |
 | 链式比较 | 已实现基础语义 | 内糖；相邻操作数单次求值并短路；`chained_comparison_runtime` 覆盖 |
@@ -97,9 +101,9 @@
 
 | API | 状态 | 说明 |
 |---|---|---|
-| `inim` 离线包管理器 | 已实现 | 安装、卸载、列表、更新、发布、SHA-256 校验；拒绝恶意包名、index 路径穿越和 ZIP 路径穿越 |
+| `inim` 包管理器 | 已实现（离线/本地/HTTP registry） | 安装、卸载、列表、更新、发布、SHA-256 校验；归档按 SHA-256 缓存并支持 `install --offline`；`keygen`/`publish --signing-key`/`verify --require-signature --trusted-key` 对 registry 索引和包元数据提供 Ed25519 签名验证；HTTP registry 限制包 URL 同源且不允许路径逃逸，拒绝恶意包名、index 路径穿越和 ZIP 路径穿越 |
 | VFS 基础接口 | 部分实现 | `src/platform/vfs.*`；尚未承诺完整挂载/权限模型 |
-| 远程 registry、签名验证、官方 Winget/Linux 提交 | 设计中 | 不属于当前发行版保证范围 |
+| 远程 registry、官方 Winget/Linux 提交 | 设计中 | 当前仅交付离线/本地 registry 与受信公钥 Ed25519 验证，远程传输和官方渠道仍待实现 |
 
 ## 明确弃用项
 
@@ -112,6 +116,6 @@
 
 ## 尚未提供的设计 API
 
-Eidos class/instance/method、所有权/借用、Actor/`parallel`、任意精度 `BigInt`/`Q`/`Dec`/`BigFloat`、真正模板/类型特化 JIT、跨 Verse 可逆计算与传送门，均只在 `future/` 或路线图中描述，当前版本不可调用。
+Eidos 完整 class/instance/method 对象模型（mixin、可见性、热修改、不变量、原生对象布局等）、所有权/借用、Actor/`parallel`、任意精度 `BigInt`/`Q`/`Dec`/`BigFloat`、真正模板/类型特化 JIT、跨 Verse 可逆计算与传送门，均只在 `future/` 或路线图中描述；当前仅提供 API 目录中列出的 Eidos 外糖子集。
 
 相关文档：[API_REFERENCE.md](API_REFERENCE.md)、[SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)、[V04_STATUS.md](V04_STATUS.md)、[NUMERIC_MODEL_V04.md](NUMERIC_MODEL_V04.md)。

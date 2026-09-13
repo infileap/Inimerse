@@ -56,5 +56,9 @@ char *inim_load_text(const char *path);
 
 
 #endif /* COMMON_H */
-/* 12.3: minimum engine version tag checked by verse packages */
-#define INFIVERSE_VERSION "0.9.0"
+/* The release build injects this from CMake/CPack so CLI and package versions
+ * cannot drift. Keep a source-tree fallback for non-CMake consumers. */
+#ifndef INIMERSE_VERSION_STRING
+#define INIMERSE_VERSION_STRING "0.4.0"
+#endif
+#define INFIVERSE_VERSION INIMERSE_VERSION_STRING

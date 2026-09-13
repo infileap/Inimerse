@@ -43,23 +43,19 @@ static const char *r_str(VM *vm, int i) {
 }
 static void r_popn(VM *vm, int n) {
     while (n-- > 0 && vm_cur_sp(vm) >= 0) {
-        Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
-        if (v.type == VAL_STRING && v.ival != 1 && v.sval) free(v.sval);
+        value_free(&vm_cur_stack(vm)[vm_cur_sp(vm)]);
         vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
     }
 }
 static void r_push(VM *vm, Value v) {
-    if (vm_cur_sp(vm) < 1023) {
-        vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
-        vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
-    }
+    if (!vm_push_value(vm, &v)) value_free(&v);
 }
 static void r_push_int(VM *vm, int n) {
     Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
     r_push(vm, v);
 }
 static void r_push_str(VM *vm, const char *s) {
-    Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = (char*)s;
+    Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = (char*)s;
     r_push(vm, v);
 }
 static void r_push_nil(VM *vm) {
@@ -396,9 +392,9 @@ static int b_verse_identity_new(VM *vm) {
     char pubhex[65];
     identity_pubkey(pubhex);
     int aidx = vm_array_new(vm);
-    Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = _strdup(pubhex);
+    Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = _strdup(pubhex);
     vm_array_push(vm, aidx, &v);
-    v.sval = _strdup(hex);
+    v.ival = 0; v.sval = _strdup(hex);
     vm_array_push(vm, aidx, &v);
     Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1; rv.fval = 0; rv.sval = NULL;
     r_push(vm, rv);
@@ -412,11 +408,12 @@ static int b_verse_identity_pubkey(VM *vm) {
 }
 static int b_verse_sign(VM *vm) {
     int argc = vm->cur_argc;
-    const char *data = r_str(vm, argc - 1);
+    char *data = _strdup(r_str(vm, argc - 1));
+    if (!data) data = _strdup("");
     r_popn(vm, argc);
     int len = 0;
     char *seed = read_file_buf(identity_seed_path(), &len);
-    if (!seed || len < 64) { free(seed); r_push_str(vm, _strdup("")); return 1; }
+    if (!seed || len < 64) { free(seed); free(data); r_push_str(vm, _strdup("")); return 1; }
     unsigned char seedb[32], sig[64];
     for (int i = 0; i < 32; i++) {
         int hi = seed[i*2] >= 'a' ? seed[i*2]-'a'+10 : seed[i*2]-'0';
@@ -425,6 +422,7 @@ static int b_verse_sign(VM *vm) {
     }
     ed25519_sign(seedb, (const unsigned char*)data, strlen(data), sig);
     free(seed);
+    free(data);
     static const char *hx = "0123456789abcdef";
     char hex[129];
     for (int i = 0; i < 64; i++) { hex[i*2] = hx[sig[i] >> 4]; hex[i*2+1] = hx[sig[i] & 15]; }
@@ -434,11 +432,14 @@ static int b_verse_sign(VM *vm) {
 }
 static int b_verse_verify(VM *vm) {
     int argc = vm->cur_argc;
-    const char *data = r_str(vm, argc - 1);
-    const char *sighex = r_str(vm, argc - 2);
-    const char *pubhex = r_str(vm, argc - 3);
+    char *data = _strdup(r_str(vm, argc - 1));
+    char *sighex = _strdup(r_str(vm, argc - 2));
+    char *pubhex = _strdup(r_str(vm, argc - 3));
+    if (!data) data = _strdup("");
+    if (!sighex) sighex = _strdup("");
+    if (!pubhex) pubhex = _strdup("");
     r_popn(vm, argc);
-    if (strlen(pubhex) != 64 || strlen(sighex) != 128) { r_push_int(vm, 0); return 1; }
+    if (strlen(pubhex) != 64 || strlen(sighex) != 128) { free(data); free(sighex); free(pubhex); r_push_int(vm, 0); return 1; }
     unsigned char pub[32], sig[64];
     for (int i = 0; i < 32; i++) {
         int hi = pubhex[i*2] >= 'a' ? pubhex[i*2]-'a'+10 : pubhex[i*2]-'0';
@@ -450,7 +451,9 @@ static int b_verse_verify(VM *vm) {
         int lo = sighex[i*2+1] >= 'a' ? sighex[i*2+1]-'a'+10 : sighex[i*2+1]-'0';
         sig[i] = (unsigned char)((hi << 4) | lo);
     }
-    r_push_int(vm, ed25519_verify(pub, (const unsigned char*)data, strlen(data), sig));
+    int ok = ed25519_verify(pub, (const unsigned char*)data, strlen(data), sig);
+    free(data); free(sighex); free(pubhex);
+    r_push_int(vm, ok);
     return 1;
 }
 

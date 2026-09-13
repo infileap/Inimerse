@@ -2,8 +2,8 @@
 
 > API 状态总览请先看 [API 大全](API_CATALOG.md)。本页保留运行时与语言细节。
 
-> 本文档描述当前源码中可调用的接口（2026-08-26）。未来设计以 `future/` 为准，
-> 尚未实现的 Eidos、VFS 或 Inim OS 能力不属于现有 API。
+> 本文档描述当前源码中可调用的接口（2026-09-13）。未来设计以 `future/` 为准，
+> 尚未实现的 Eidos 完整对象模型、VFS 或 Inim OS 能力不属于现有 API。
 
 ## 1. 运行引擎
 
@@ -33,7 +33,7 @@ for i in 0..10 { say i }
 unless ready { say "not ready" }
 ```
 
-语法糖分为两层：内糖由核心前端直接处理（区间、分号容忍、`++/--`、尾逗号、f-string、`|>`、Result `?`、集合推导、lambda、简单 `>>`）；外糖由脱糖层处理（`fn`、`print`、`&&/||`、`//`、`unless`、`say@target`）。复杂高阶组合与闭包生命周期仍在 V0.4 扩展，详见 [SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)。
+语法糖分为两层：内糖由核心前端直接处理（区间、分号容忍、`++/--`、尾逗号、f-string、`|>`、Result `?`、集合推导、lambda、简单 `>>`）；外糖由脱糖层处理（`fn`、`print`、`&&/||`、`//`、`unless`、`say@target` 和 Eidos 可执行子集）。Eidos 子集详见 [SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)。
 数组/字典不可用 `+` 拼接，应使用 `push` 或显式构造。
 
 ## 3. 核心内置函数
@@ -58,7 +58,14 @@ unless ready { say "not ready" }
 
 - `task` 是 Fiber 协作任务；`thread` 是操作系统线程。
 - `start/join/stop/pause/resume/restart/kill` 管理生命周期。
+- `thread_result(name)` 在 `join` 后返回线程完成值的 `Result`；普通返回值包装为 `ok`，
+  显式 `ok/err` 保持不变，未捕获线程异常转换为 `err`，可继续使用 `?`。
+- `thread_await(name[, timeout_seconds])` 自动等待命名 OS thread/task 完成并返回同样的
+  `Result`；超时、缺失线程和当前线程自等待返回 `err`，完成后的普通返回值包装为 `ok`。
+- `thread_release(name)` 回收已完成的线程或 task；释放后 `thread_result(name)` 返回错误，
+  同名 task 可重新启动。运行中的实例不会被强制释放。
 - `send target value` / `recv name` 提供任务消息队列。
+- `install --offline` 按 `lock.json` 和 `.inim-cache/archives/` 中的 SHA-256 归档离线重放依赖。
 - `atomic_set/get/add` 提供原子全局访问。
 - `mod_limit(mem_mb, vram_mb, time_s)`、`mod_usage()` 提供模组配额。
 
@@ -87,7 +94,7 @@ AI 接口：`ai_config`、`ai_register`、`ai_list`、`ai_chat`、`ai_params`、
 1. `.inim` 暂不携带命令行参数元数据。
 2. `mod_limit` 尚未完整统计 VRAM、指令数及字符串拼接。
 3. Fiber 调度器在主线程长时间休眠时可能暂停，建议用 `join` 驱动。
-4. Eidos、VFS、Shell、热修改、跨 Verse 变换和多目标 `say` 仍是 `future/` 设计，尚未冻结。
+4. Eidos 完整 class/instance/method 对象模型、VFS 完整挂载/权限模型、Shell、热修改、跨 Verse 变换和多目标 `say` 仍是 `future/` 设计，尚未冻结；当前 Eidos 仅支持外糖可执行子集。
 
 ## 8. 相关文档
 

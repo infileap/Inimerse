@@ -1,0 +1,15 @@
+# Metadata members must lower to the core builtins, even when the object is
+# an identifier visible to namespace resolution.
+a = 42
+g be 0,1,2,3:0
+if match(a.type, "^int$") {
+    if 5 in a.range {
+        if !(3000000000.0 in a.range) {
+            if match(g.type, "^int$") {
+                if g in g.range {
+                    say "range-" + "meta-pass"
+                } else { say "range-" + "meta-fail" }
+            } else { say "range-" + "meta-fail" }
+        } else { say "range-" + "meta-fail" }
+    } else { say "range-" + "meta-fail" }
+} else { say "range-" + "meta-fail" }

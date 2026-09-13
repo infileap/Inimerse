@@ -1,0 +1,17 @@
+values = [{"kind": "ok", "data": [11, {"code": 42}]}, "tail"]
+
+case values {
+    [{"kind": "ok", "data": [first, {"code": code}]}, tail]: say first + code
+    _: say "nested-pattern-miss"
+}
+
+case values {
+    [{"kind": "bad", "data": [_, {"code": 41}]}, _]: say "wrong-pattern"
+    _: say "nested-fallback-ok"
+}
+
+nested_literal = [[1, 2]]
+case nested_literal {
+    [[1, 2]]: say "nested-literal-ok"
+    _: say "nested-literal-miss"
+}

@@ -1,0 +1,15 @@
+type FileError = "not_found", "permission_denied"
+type AppError = FileError
+e = err("not_found")
+
+case try e {
+    ok(v): say v
+    err(reason) | reason in AppError: say reason
+}
+
+type ParseError = "invalid_syntax"
+type CombinedError = FileError + ParseError
+case try e {
+    ok(v): say v
+    err(reason) | reason in CombinedError: say reason
+}

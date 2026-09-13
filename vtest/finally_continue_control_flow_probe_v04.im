@@ -1,0 +1,13 @@
+func return_then_continue_in_finally() {
+    i = 0
+    while i < 2 {
+        try {
+            return 8
+        } finally {
+            continue
+        }
+    }
+    return 10
+}
+
+say return_then_continue_in_finally()

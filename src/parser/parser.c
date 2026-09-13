@@ -52,6 +52,15 @@ static Token peek_next_next(Parser *p) {
     return tok;
 }
 
+static Token peek_next_next_next(Parser *p) {
+    Lexer saved = p->lex;
+    lexer_next(&p->lex);
+    lexer_next(&p->lex);
+    Token tok = lexer_next(&p->lex);
+    p->lex = saved;
+    return tok;
+}
+
 static void parse_error_expected(Parser *p, const char *expected, Token got) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%.*s", (int)got.text.length, got.text.start);
@@ -228,6 +237,50 @@ static Expr *parse_primary(Parser *p) {
     }
     if (t.type == TOK_LPAREN || t.type == TOK_LBRACKET) {
         if (looks_like_bare_interval(p)) return parse_bare_interval(p);
+    }
+    if (t.type == TOK_LPAREN && peek_next(p).type == TOK_RPAREN &&
+        peek_next_next(p).type == TOK_ARROW) {
+        advance(p);
+        consume(p, TOK_RPAREN, "')'");
+        consume(p, TOK_ARROW, "'->'");
+        Expr *e = calloc(1, sizeof(*e));
+        e->type = EXPR_LAMBDA;
+        e->lambda.params = NULL;
+        e->lambda.paramCount = 0;
+        e->lambda.body = parse_expr(p);
+        return e;
+    }
+    /* Parenthesized single-parameter lambda: `(x -> expr)` is needed when a
+       lambda participates in a larger expression such as `(x -> x + 1) >> f`.
+       The top-level lambda prefix handles the unparenthesized form, while
+       this lookahead keeps the ordinary parenthesized expression path intact.
+    */
+    if (t.type == TOK_LPAREN && peek_next(p).type == TOK_IDENT && peek_next_next(p).type == TOK_ARROW) {
+        advance(p);
+        Token pn = consume(p, TOK_IDENT, "lambda parameter");
+        consume(p, TOK_ARROW, "'->'");
+        Expr *e = calloc(1, sizeof(*e));
+        e->type = EXPR_LAMBDA;
+        e->lambda.params = malloc(sizeof(StringView));
+        e->lambda.params[0] = pn.text;
+        e->lambda.paramCount = 1;
+        e->lambda.body = parse_expr(p);
+        consume(p, TOK_RPAREN, "')'");
+        return e;
+    }
+    if (t.type == TOK_LPAREN && peek_next(p).type == TOK_IDENT &&
+        peek_next_next(p).type == TOK_RPAREN && peek_next_next_next(p).type == TOK_ARROW) {
+        advance(p);
+        Token pn = consume(p, TOK_IDENT, "lambda parameter");
+        consume(p, TOK_RPAREN, "')'");
+        consume(p, TOK_ARROW, "'->'");
+        Expr *e = calloc(1, sizeof(*e));
+        e->type = EXPR_LAMBDA;
+        e->lambda.params = malloc(sizeof(StringView));
+        e->lambda.params[0] = pn.text;
+        e->lambda.paramCount = 1;
+        e->lambda.body = parse_expr(p);
+        return e;
     }
     if (t.type == TOK_LPAREN) {
         advance(p);
@@ -447,7 +500,14 @@ static Expr *parse_postfix(Parser *p) {
         }
         else if (t.type == TOK_QUESTION && peek_next(p).type == TOK_DOT) {
             advance(p); advance(p);
-            Token name = consume(p, TOK_IDENT, "identifier");
+            Token name;
+            if (peek(p).type == TOK_TYPE) {
+                advance(p);
+                name.type = TOK_TYPE;
+                name.text = sv_from_cstr("type");
+            } else {
+                name = consume(p, TOK_IDENT, "identifier");
+            }
             Expr *mem = calloc(1, sizeof(*mem));
             mem->type = EXPR_MEMBER; mem->member.object = e; mem->member.member = name.text; mem->member.safe = true;
             e = mem;
@@ -458,12 +518,13 @@ static Expr *parse_postfix(Parser *p) {
             int nt = peek(p).type;
             if (nt == TOK_IDENT) {
                 name = consume(p, TOK_IDENT, "identifier");
-            } else if (nt == TOK_INT || nt == TOK_FLOAT || nt == TOK_STR || nt == TOK_BOOL || nt == TOK_MATCH) {
+            } else if (nt == TOK_INT || nt == TOK_FLOAT || nt == TOK_STR || nt == TOK_BOOL || nt == TOK_MATCH || nt == TOK_TYPE) {
                 advance(p);
                 name.type = nt;
                 if (nt == TOK_INT) name.text = sv_from_cstr("int");
                 else if (nt == TOK_FLOAT) name.text = sv_from_cstr("float");
                 else if (nt == TOK_STR) name.text = sv_from_cstr("str");
+                else if (nt == TOK_TYPE) name.text = sv_from_cstr("type");
                 else if (nt == TOK_BOOL) name.text = sv_from_cstr("bool");
                 else name.text = sv_from_cstr("match");
             } else {
@@ -634,7 +695,7 @@ static Expr *parse_lambda_prefix(Parser *p) {
     }
     if (t.type == TOK_LPAREN && n.type == TOK_IDENT) {
         Token q = peek_next_next(p);
-        if (q.type == TOK_ARROW || q.type == TOK_COMMA) {
+        if (q.type == TOK_COMMA) {
             advance(p); StringView *ps = NULL; int count = 0;
             do { Token pn = consume(p, TOK_IDENT, "lambda parameter"); ps = realloc(ps, (size_t)(count + 1) * sizeof(*ps)); ps[count++] = pn.text; } while (match(p, TOK_COMMA));
             consume(p, TOK_RPAREN, "')'");

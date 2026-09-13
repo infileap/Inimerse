@@ -1,0 +1,7 @@
+# Nested closures must forward captures from the enclosing closure.
+func make_nested(base) {
+    return y -> x -> x + y + base
+}
+outer = make_nested(2)
+inner = outer(3)
+say inner(4)

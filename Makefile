@@ -6,11 +6,13 @@ SRCS = src/main.c \
        src/platform/platform.c src/platform/dir.c src/platform/thread.c src/platform/fiber.c \
        src/common/common.c \
        src/common/sha256.c \
+       src/common/ed25519.c \
        src/lexer/lexer.c \
        src/parser/parser.c \
        src/compiler/bytecode.c \
        src/compiler/compiler.c \
-       src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c src/mod/result_mod.c \
+       src/types/typeset.c src/types/enum.c src/types/error_types.c src/types/registry.c \
+       src/vm/vm.c src/vm/closure.c src/vm/params_v2.c src/vm/jit_mode.c src/mod/result_mod.c \
        
 
 ifeq ($(OS),Windows_NT)
@@ -54,7 +56,9 @@ clean:
 
 .PHONY: all clean linux check wasm
 
-linux: clean all
+linux:
+	$(MAKE) clean
+	$(MAKE) all
 
 check:
 	 if command -v node >/dev/null 2>&1; then node tools/regression.js; else echo "node not installed; skipping protocol regression"; fi

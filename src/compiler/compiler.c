@@ -52,6 +52,25 @@ static void compile_stmt(Compiler *comp, Stmt *stmt, int **break_list, int *brea
 static int  compile_expr(Compiler *comp, Expr *expr);
 static void emit(Bytecode *bc, OpCode op, int r1, int r2, int r3);
 
+static void compile_active_finally(Compiler *comp) {
+    int saved_compiling_finally = comp->compiling_finally;
+    int saved_finally_depth = comp->finally_depth;
+    comp->compiling_finally = 1;
+    for (int i = saved_finally_depth - 1; i >= 0; --i) {
+        /*
+         * The cleanup currently being inlined is already active.  Exclude
+         * it while compiling its body so `finally { return ... }` does not
+         * recursively inline itself; returns from this body still run the
+         * enclosing cleanup levels.
+         */
+        comp->finally_depth = i;
+        for (int j = 0; j < comp->finally_stack[i].count; ++j)
+            compile_stmt(comp, comp->finally_stack[i].body[j], NULL, NULL);
+    }
+    comp->finally_depth = saved_finally_depth;
+    comp->compiling_finally = saved_compiling_finally;
+}
+
 /* ---- record helpers (compiler) ---- */
 static int comp_record_is_reg(Compiler *comp, int gidx) {
     return (gidx >=0 && gidx < comp->record_flags_cap && comp->record_flags[gidx]);
@@ -343,6 +362,7 @@ static void compile_func_body(Compiler *comp, Stmt *stmt) {
     comp->localCount = 0;
     comp->gdeclCount = 0;
     comp->local_peak = 0;
+    comp->finally_depth = 0;
     reset_regs();
     /* 鍙傛暟缁戝畾涓哄眬閮ㄥ彉閲忥紙瀵勫瓨锟?1..argc锟?*/
     for (int i = 0; i < stmt->funcDef.paramCount; i++) {
@@ -381,6 +401,7 @@ static void compile_thread_body(Compiler *comp, Stmt *stmt) {
     comp->localCount = 0;
     comp->gdeclCount = 0;
     comp->local_peak = 0;
+    comp->finally_depth = 0;
     reset_regs();
     /* 鍙傛暟缁戝畾涓哄眬閮ㄥ彉閲忥紙瀵勫瓨锟?1..argc锟?*/
     for (int i = 0; i < stmt->threadDef.paramCount; i++) {
@@ -803,6 +824,23 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             free(jumps); comp->last_temp = 1; return result;
         }
         case EXPR_CALL: {
+            /* A lambda expression can itself be the callee, as in
+             * `(x -> x + 1)(3)` or the lambda-generated body of `>>`.
+             * Compile it to a function value and dispatch through the same
+             * OP_CALL_VALUE path used by named function variables. */
+            if (expr->call.callee->type == EXPR_LAMBDA) {
+                int w0 = next_register;
+                int callee = compile_expr(comp, expr->call.callee);
+                for (int i = 0; i < expr->call.argCount; i++) {
+                    int ar = compile_expr(comp, expr->call.args[i]);
+                    emit(comp->curBC, OP_PUSH_REG, ar, 0, 0);
+                }
+                release_to(comp, w0);
+                int out = alloc_reg();
+                emit(comp->curBC, OP_CALL_VALUE, callee, out, expr->call.argCount);
+                comp->last_temp = 1;
+                return out;
+            }
             if (expr->call.callee->type == EXPR_IDENT) {
                 char cn[256]; snprintf(cn, sizeof cn, "%.*s", (int)expr->call.callee->identName.length, expr->call.callee->identName.start);
                 if (lookup_func(comp, cn) < 0 && (lookup_local(comp, cn) >= 0 || lookup_global_idx(comp, cn) >= 0)) {
@@ -811,6 +849,21 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                     release_to(comp, w0); int out = alloc_reg(); emit(comp->curBC, OP_CALL_VALUE, callee, out, expr->call.argCount);
                     comp->last_temp = 1; return out;
                 }
+            }
+            /* Any expression that yields a function value (for example
+             * `dict["handler"](x)` or `array[i](x)`) uses value dispatch. */
+            if (expr->call.callee->type != EXPR_IDENT && expr->call.callee->type != EXPR_MEMBER) {
+                int w0 = next_register;
+                int callee = compile_expr(comp, expr->call.callee);
+                for (int i = 0; i < expr->call.argCount; i++) {
+                    int ar = compile_expr(comp, expr->call.args[i]);
+                    emit(comp->curBC, OP_PUSH_REG, ar, 0, 0);
+                }
+                release_to(comp, w0);
+                int out = alloc_reg();
+                emit(comp->curBC, OP_CALL_VALUE, callee, out, expr->call.argCount);
+                comp->last_temp = 1;
+                return out;
             }
             if (expr->call.callee->type == EXPR_IDENT || expr->call.callee->type == EXPR_MEMBER) {
                 char fname[256];
@@ -992,7 +1045,21 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             /* 鍛藉悕绌洪棿浼樺厛锛歛.b.c 涓?a 鈭?褰撳墠妯″潡鍙鍛藉悕绌洪棿 鈫?缂栬瘧鏈熻В鏋愪负甯﹀墠缂€鍏ㄥ眬
                锛堟斁鍦?meta 灞炴€т箣鍓嶏紝閬垮厤妯″潡鍏ㄥ眬鍚?type/range/int 绛夎鍔寔锛?*/
             char nsfull[512];
-            if (ns_flatten(comp, expr, nsfull, sizeof(nsfull))) {
+            /* Reserved metadata members must reach their builtin lowering;
+               otherwise `x.range`/`x.type` is mistaken for a dotted global
+               namespace and silently resolves to an unrelated nil global. */
+            int metadata_member = 0;
+            if (expr->member.member.length > 0) {
+                const char *mn = expr->member.member.start;
+                size_t ml = expr->member.member.length;
+                metadata_member = (ml == 4 && strncmp(mn, "type", 4) == 0) ||
+                                  (ml == 5 && strncmp(mn, "range", 5) == 0) ||
+                                  (ml == 3 && strncmp(mn, "int", 3) == 0) ||
+                                  (ml == 5 && strncmp(mn, "float", 5) == 0) ||
+                                  (ml == 3 && strncmp(mn, "str", 3) == 0) ||
+                                  (ml == 4 && strncmp(mn, "bool", 4) == 0);
+            }
+            if (!metadata_member && ns_flatten(comp, expr, nsfull, sizeof(nsfull))) {
                 int g = register_global(comp, nsfull);   /* 鍐呴儴鍔?cur_ns 鍓嶇紑 */
                 int r = alloc_reg();
                 emit(comp->curBC, OP_LOAD_GLOBAL, r, g, 0);
@@ -1087,23 +1154,57 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             int fidx = register_func(comp, lname);
             Bytecode *saved_bc = comp->curBC; int saved_fn = comp->in_function;
             int saved_locals = comp->localCount, saved_gdecl = comp->gdeclCount;
+            int saved_finally_depth = comp->finally_depth;
             struct { char *name; int reg; } saved_local_table[1024];
             memcpy(saved_local_table, comp->locals, sizeof(saved_local_table));
             const char **saved_outer_names = lambda_outer_names; int saved_outer_count = lambda_outer_count;
             const char *outer_names[1024]; int outer_count = 0;
             for (int oi = 0; oi < saved_locals && oi < 1024; ++oi) outer_names[outer_count++] = comp->locals[oi].name;
+            /* Preserve capture candidates inherited from the enclosing
+             * lambda/function while compiling another nested lambda. */
+            for (int oi = 0; oi < saved_outer_count && outer_count < 1024; ++oi) {
+                const char *cn = saved_outer_names[oi];
+                int duplicate = 0;
+                for (int oj = 0; oj < outer_count; ++oj)
+                    if (strcmp(outer_names[oj], cn) == 0) { duplicate = 1; break; }
+                if (!duplicate) outer_names[outer_count++] = cn;
+            }
+            /* A nested lambda can also capture a value that the enclosing
+             * lambda already captured.  Expose those environment slots as
+             * capture candidates so the inner function gets a transitive
+             * capture instead of silently resolving the name as a global. */
+            if (saved_bc) {
+                for (int ci = 0; ci < saved_bc->capture_count && outer_count < 1024; ++ci) {
+                    const char *cn = saved_bc->capture_names[ci];
+                    int duplicate = 0;
+                    for (int oi = 0; oi < outer_count; ++oi)
+                        if (strcmp(outer_names[oi], cn) == 0) { duplicate = 1; break; }
+                    if (!duplicate) outer_names[outer_count++] = cn;
+                }
+            }
             lambda_outer_names = outer_names; lambda_outer_count = outer_count;
+            comp->finally_depth = 0;
             int saved_peak = comp->local_peak, saved_next = next_register, saved_reg_peak = reg_peak;
             Bytecode *fbc = malloc(sizeof(*fbc)); bytecode_init(fbc);
             comp->curBC = fbc; comp->in_function = 1; comp->localCount = 0; comp->gdeclCount = 0; comp->local_peak = 0; reset_regs();
             for (int i = 0; i < expr->lambda.paramCount; i++) { char pn[256]; snprintf(pn, sizeof pn, "%.*s", (int)expr->lambda.params[i].length, expr->lambda.params[i].start); alloc_local(comp, pn); }
             int rr = compile_expr(comp, expr->lambda.body); emit(fbc, OP_RETURN, rr, 0, 0); resolve_labels(comp);
             comp->mainBC->funcs[fidx] = fbc; comp->mainBC->func_argc[fidx] = expr->lambda.paramCount;
-            comp->curBC = saved_bc; comp->in_function = saved_fn; memcpy(comp->locals, saved_local_table, sizeof(saved_local_table)); comp->localCount = saved_locals; comp->gdeclCount = saved_gdecl; comp->local_peak = saved_peak; next_register = saved_next; reg_peak = saved_reg_peak;
+            comp->curBC = saved_bc; comp->in_function = saved_fn; memcpy(comp->locals, saved_local_table, sizeof(saved_local_table)); comp->localCount = saved_locals; comp->gdeclCount = saved_gdecl; comp->local_peak = saved_peak; next_register = saved_next; reg_peak = saved_reg_peak; comp->finally_depth = saved_finally_depth;
             lambda_outer_names = saved_outer_names; lambda_outer_count = saved_outer_count;
             int out = alloc_reg();
             for (int ci = 0; ci < fbc->capture_count; ++ci) {
                 int cr = lookup_local(comp, fbc->capture_names[ci]);
+                if (cr < 0) {
+                    /* Register a transitive capture on the enclosing
+                     * bytecode as well; this lets the enclosing lambda carry
+                     * the value from its own parent environment. */
+                    int parent_capture = bytecode_add_capture(comp->curBC, fbc->capture_names[ci]);
+                    if (parent_capture >= 0) {
+                        cr = alloc_reg();
+                        emit(comp->curBC, OP_LOAD_CAPTURE, cr, parent_capture, 0);
+                    }
+                }
                 if (cr < 0) { fprintf(stderr, "[error] missing closure capture '%s'\n", fbc->capture_names[ci]); exit(1); }
                 emit(comp->curBC, OP_PUSH_REG, cr, 0, 0);
             }
@@ -1114,8 +1215,10 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             if (!comp->in_function) {
                 return emit_builtin_call(comp, "unwrap", value, 1);
             }
+            protect_reg(comp, value);
             int ok = emit_builtin_call(comp, "is_ok", value, 1);
             int skip = comp->curBC->count; emit(comp->curBC, OP_JUMP_IF_TRUE, ok, 0, 0);
+            compile_active_finally(comp);
             emit(comp->curBC, OP_RETURN, value, 0, 0);
             comp->curBC->code[skip].r2 = comp->curBC->count;
             int unwrapped = emit_builtin_call(comp, "result_value", value, 1);
@@ -1175,9 +1278,12 @@ static void compile_index_set_chain(Compiler *comp, Expr *target, Expr *value) {
     free(idxs);
 }
 
+static void compile_case_pattern(Compiler *comp, int actual, Expr *pattern,
+                                 int **guard_skips, int *guard_skip_count);
+
 /* Emit recursive dictionary structure checks for case patterns.  Each field
    must exist; identifier fields bind the extracted value, while nested
-   dictionaries recurse on the extracted child. */
+   patterns recurse on the extracted child. */
 static void compile_case_dict_pattern(Compiler *comp, int actual, Expr *pattern,
                                       int **guard_skips, int *guard_skip_count) {
     if (!pattern || pattern->type != EXPR_DICT) return;
@@ -1193,21 +1299,7 @@ static void compile_case_dict_pattern(Compiler *comp, int actual, Expr *pattern,
         int got = alloc_reg();
         emit(comp->curBC, OP_INDEX_GET, got, actual, key);
         Expr *field = pattern->dict.items[di * 2 + 1];
-        if (field->type == EXPR_DICT) {
-            compile_case_dict_pattern(comp, got, field, guard_skips, guard_skip_count);
-        } else if (field->type == EXPR_IDENT &&
-                   !(field->identName.length == 1 && field->identName.start[0] == '_')) {
-            char name[256];
-            snprintf(name, sizeof(name), "%.*s", (int)field->identName.length, field->identName.start);
-            emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), got, 0);
-        } else {
-            int expected = compile_expr(comp, field);
-            int same = alloc_reg();
-            emit(comp->curBC, OP_EQ, same, got, expected);
-            int jf = comp->curBC->count;
-            emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
-            add_break(guard_skips, guard_skip_count, jf);
-        }
+        compile_case_pattern(comp, got, field, guard_skips, guard_skip_count);
     }
 }
 
@@ -1216,6 +1308,16 @@ static int case_list_has_binding(Expr *pattern) {
     for (int i = 0; i < pattern->list.count; i++)
         if (pattern->list.items[i]->type == EXPR_IDENT &&
             !(pattern->list.items[i]->identName.length == 1 && pattern->list.items[i]->identName.start[0] == '_')) return 1;
+    return 0;
+}
+
+static int case_list_has_nested_structure(Expr *pattern) {
+    if (!pattern || pattern->type != EXPR_LIST) return 0;
+    for (int i = 0; i < pattern->list.count; i++) {
+        Expr *item = pattern->list.items[i];
+        if (item->type == EXPR_DICT) return 1;
+        if (item->type == EXPR_LIST) return 1;
+    }
     return 0;
 }
 
@@ -1235,18 +1337,34 @@ static void compile_case_list_pattern(Compiler *comp, int actual, Expr *pattern,
         int index = alloc_reg(); emit(comp->curBC, OP_LOADK_INT, index, i, 0);
         int got = alloc_reg(); emit(comp->curBC, OP_INDEX_GET, got, actual, index);
         Expr *field = pattern->list.items[i];
-        if (field->type == EXPR_IDENT && field->identName.length == 1 && field->identName.start[0] == '_') {
-            continue;
-        } else if (field->type == EXPR_IDENT) {
-            char name[256]; snprintf(name, sizeof(name), "%.*s", (int)field->identName.length, field->identName.start);
-            emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), got, 0);
-        } else {
-            int want = compile_expr(comp, field), same = alloc_reg();
-            emit(comp->curBC, OP_EQ, same, got, want);
-            int jf = comp->curBC->count; emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
-            add_break(guard_skips, guard_skip_count, jf);
-        }
+        compile_case_pattern(comp, got, field, guard_skips, guard_skip_count);
     }
+}
+
+static void compile_case_pattern(Compiler *comp, int actual, Expr *pattern,
+                                 int **guard_skips, int *guard_skip_count) {
+    if (!pattern) return;
+    if (pattern->type == EXPR_DICT) {
+        compile_case_dict_pattern(comp, actual, pattern, guard_skips, guard_skip_count);
+        return;
+    }
+    if (pattern->type == EXPR_LIST) {
+        compile_case_list_pattern(comp, actual, pattern, guard_skips, guard_skip_count);
+        return;
+    }
+    if (pattern->type == EXPR_IDENT) {
+        if (pattern->identName.length == 1 && pattern->identName.start[0] == '_') return;
+        char name[256];
+        snprintf(name, sizeof(name), "%.*s", (int)pattern->identName.length, pattern->identName.start);
+        emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), actual, 0);
+        return;
+    }
+    int expected = compile_expr(comp, pattern);
+    int same = alloc_reg();
+    emit(comp->curBC, OP_EQ, same, actual, expected);
+    int jf = comp->curBC->count;
+    emit(comp->curBC, OP_JUMP_IF_FALSE, same, 0, 0);
+    add_break(guard_skips, guard_skip_count, jf);
 }
 
 /* ---------- 璇彞缂栬瘧 ---------- */
@@ -1362,7 +1480,10 @@ case STMT_WITH: {
                     } else if (pattern->type == EXPR_CALL && pattern->call.callee && pattern->call.callee->type == EXPR_IDENT) {
                         if (pattern->call.callee->identName.length == 2 && strncmp(pattern->call.callee->identName.start, "ok", 2) == 0) is_result_branch = 1;
                         if (pattern->call.callee->identName.length == 3 && strncmp(pattern->call.callee->identName.start, "err", 3) == 0) { is_result_branch = 1; is_err = 1; }
-                        if (is_result_branch && pattern->call.argCount == 1 && pattern->call.args[0]->type == EXPR_IDENT) {
+                        if (is_result_branch && pattern->call.argCount == 1 &&
+                            pattern->call.args[0]->type == EXPR_IDENT &&
+                            !(pattern->call.args[0]->identName.length == 1 &&
+                              pattern->call.args[0]->identName.start[0] == '_')) {
                             char bn[256];
                             snprintf(bn, sizeof(bn), "%.*s", (int)pattern->call.args[0]->identName.length, pattern->call.args[0]->identName.start);
                             result_bind = register_global(comp, bn);
@@ -1386,15 +1507,19 @@ case STMT_WITH: {
                         emit(comp->curBC, OP_JUMP_IF_FALSE, cond, 0, 0);
                         add_break(&guard_skips, &guard_skip_count, kind_false);
                         if (pattern->type == EXPR_CALL && pattern->call.argCount == 1 &&
-                            pattern->call.args[0]->type == EXPR_DICT) {
-                            /* Structural payload pattern, e.g.
-                               err({"kind": "not_found"}). */
+                            (pattern->call.args[0]->type == EXPR_DICT ||
+                             (pattern->call.args[0]->type == EXPR_LIST &&
+                              (case_list_has_binding(pattern->call.args[0]) ||
+                               case_list_has_nested_structure(pattern->call.args[0]))))) {
+                            /* Recursive structural payload pattern, e.g.
+                               err({"kind": "not_found"}) or
+                               err([code, {"detail": value}]). */
                             int payload = alloc_reg();
                             emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
                             emit(comp->curBC, OP_CALL_BUILTIN, payload,
                                  bytecode_add_string(comp->curBC, is_err ? "result_error" : "result_value"), 1);
-                            compile_case_dict_pattern(comp, payload, pattern->call.args[0],
-                                                      &guard_skips, &guard_skip_count);
+                            compile_case_pattern(comp, payload, pattern->call.args[0],
+                                                 &guard_skips, &guard_skip_count);
                         } else if (pattern->type == EXPR_CALL && pattern->call.argCount == 1 &&
                                    pattern->call.args[0]->type != EXPR_IDENT) {
                             int actual = alloc_reg();
@@ -1482,7 +1607,9 @@ case STMT_WITH: {
                         int jt = comp->curBC->count;
                         emit(comp->curBC, OP_JUMP, 0, 0, 0);
                         add_break(&body_jumps, &body_jcount, jt);
-                    } else if (br->patternCount == 1 && case_list_has_binding(br->patterns[0])) {
+                    } else if (br->patternCount == 1 && br->patterns[0]->type == EXPR_LIST &&
+                               (case_list_has_binding(br->patterns[0]) ||
+                                case_list_has_nested_structure(br->patterns[0]))) {
                         compile_case_list_pattern(comp, subj, br->patterns[0], &guard_skips, &guard_skip_count);
                         int jt = comp->curBC->count;
                         emit(comp->curBC, OP_JUMP, 0, 0, 0);
@@ -2058,6 +2185,13 @@ case STMT_WITH: {
             }
             int tstart = comp->curBC->count;
             emit(comp->curBC, OP_TRY_START, 0, varIdx, 0);
+            if (comp->finally_depth >= (int)(sizeof(comp->finally_stack) / sizeof(comp->finally_stack[0]))) {
+                fprintf(stderr, "[error] finally nesting limit exceeded\n");
+                exit(1);
+            }
+            comp->finally_stack[comp->finally_depth].body = stmt->tryStmt.finallyBody;
+            comp->finally_stack[comp->finally_depth].count = stmt->tryStmt.finallyCount;
+            comp->finally_depth++;
             for (int i = 0; i < stmt->tryStmt.bodyCount; i++)
                 compile_stmt(comp, stmt->tryStmt.body[i], break_list, break_count_ptr);
             int tend = comp->curBC->count;
@@ -2067,6 +2201,7 @@ case STMT_WITH: {
             int tcatch = comp->curBC->count;
             for (int i = 0; i < stmt->tryStmt.handlerCount; i++)
                 compile_stmt(comp, stmt->tryStmt.handler[i], break_list, break_count_ptr);
+            comp->finally_depth--;
             comp->curBC->code[tjo].r2 = comp->curBC->count;
             for (int i = 0; i < stmt->tryStmt.finallyCount; i++)
                 compile_stmt(comp, stmt->tryStmt.finallyBody[i], break_list, break_count_ptr);
@@ -2525,6 +2660,10 @@ case STMT_ASSIGN: {
         }
 
         case STMT_BREAK: {
+            if (comp->compiling_finally) {
+                fprintf(stderr, "[error] break is not allowed in finally cleanup reached by return/Result propagation\n");
+                exit(1);
+            }
             if (stmt->breakStmt.label) {
                 /* break A: jump to label end (patched later) */
                 int pos = comp->curBC->count;
@@ -2543,6 +2682,10 @@ case STMT_ASSIGN: {
         }
 
         case STMT_CONTINUE: {
+            if (comp->compiling_finally) {
+                fprintf(stderr, "[error] continue is not allowed in finally cleanup reached by return/Result propagation\n");
+                exit(1);
+            }
             if (comp->cont_list) {
                 int pos = comp->curBC->count;
                 emit(comp->curBC, OP_JUMP, 0, 0, 0);
@@ -2571,6 +2714,10 @@ case STMT_ASSIGN: {
         }
 
         case STMT_GOTO_LABEL: {
+            if (comp->compiling_finally) {
+                fprintf(stderr, "[error] goto is not allowed in finally cleanup reached by return/Result propagation\n");
+                exit(1);
+            }
             int pos = comp->curBC->count;
             char lfull[512];
             ns_full(comp, stmt->gotoStmt.label, lfull, sizeof(lfull));
@@ -2614,8 +2761,11 @@ case STMT_ASSIGN: {
         case STMT_RETURN: {
             if (stmt->returnStmt.value) {
                 int r = compile_expr(comp, stmt->returnStmt.value);
+                protect_reg(comp, r);
+                compile_active_finally(comp);
                 emit(comp->curBC, OP_RETURN, r, 0, 0);
             } else {
+                compile_active_finally(comp);
                 emit(comp->curBC, OP_RETURN, 0, 0, 0);
             }
             release_temps(comp);
@@ -2672,6 +2822,12 @@ Compiler *compiler_new(void) {
     comp->builtins[comp->builtinCount++].name = strdup("push");
     comp->builtins[comp->builtinCount++].name = strdup("pop");
     comp->builtins[comp->builtinCount++].name = strdup("join");
+    comp->builtins[comp->builtinCount++].name = strdup("thread_result");
+    comp->builtins[comp->builtinCount++].name = strdup("thread_await");
+    comp->builtins[comp->builtinCount++].name = strdup("thread_release");
+    comp->builtins[comp->builtinCount++].name = strdup("gc_auto");
+    comp->builtins[comp->builtinCount++].name = strdup("gc_now");
+    comp->builtins[comp->builtinCount++].name = strdup("gc_stats");
     comp->builtins[comp->builtinCount++].name = strdup("split");
     comp->builtins[comp->builtinCount++].name = strdup("build");
     comp->builtins[comp->builtinCount++].name = strdup("window");

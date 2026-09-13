@@ -8,14 +8,20 @@ static ImSocket *g_net[NET_MAX];
 static Value arg(VM *vm, int i) { return vm_cur_stack(vm)[vm_cur_sp(vm) - i]; }
 static const char *strarg(VM *vm, int i) { Value v = arg(vm, i); return v.type == VAL_STRING && v.sval ? v.sval : ""; }
 static int numarg(VM *vm, int i) { Value v = arg(vm, i); return v.type == VAL_FLOAT ? (int)v.fval : v.ival; }
-static void popn(VM *vm) { vm_cur_set_sp(vm, vm_cur_sp(vm) - vm->cur_argc); }
+static void popn(VM *vm) {
+    Value *st = vm_cur_stack(vm);
+    int sp = vm_cur_sp(vm), n = vm->cur_argc;
+    if (n > sp + 1) n = sp + 1;
+    for (int i = 0; i < n; i++) value_free(&st[sp - i]);
+    vm_cur_set_sp(vm, sp - n);
+}
 static int put(ImSocket *s) { for (int i = 0; i < NET_MAX; ++i) if (!g_net[i]) { g_net[i] = s; return i + 1; } im_socket_close(s); return -1; }
 static ImSocket *get(VM *vm, int i) { int id = numarg(vm, i); return id > 0 && id <= NET_MAX ? g_net[id - 1] : NULL; }
 
-static int net_connect(VM *vm) { const char *host = strarg(vm, 1); int port = numarg(vm, 0); popn(vm); ImSocket *s = im_socket_connect_timeout(host, (uint16_t)port, 2000); if (!s) { push_int(vm, -1); return 1; } im_socket_set_nonblocking(s, 1); push_int(vm, put(s)); return 1; }
+static int net_connect(VM *vm) { char *host = strdup(strarg(vm, 1)); if (!host) host = strdup(""); int port = numarg(vm, 0); popn(vm); ImSocket *s = im_socket_connect_timeout(host, (uint16_t)port, 2000); free(host); if (!s) { push_int(vm, -1); return 1; } im_socket_set_nonblocking(s, 1); push_int(vm, put(s)); return 1; }
 static int net_listen(VM *vm) { int port = numarg(vm, 0); popn(vm); ImSocket *s = im_socket_listen(NULL, (uint16_t)port, 16); if (!s) { push_int(vm, -1); return 1; } im_socket_set_nonblocking(s, 1); push_int(vm, put(s)); return 1; }
 static int net_accept(VM *vm) { ImSocket *s = get(vm, 0); popn(vm); ImSocket *c = s ? im_socket_accept(s) : NULL; if (!c) { push_int(vm, -1); return 1; } im_socket_set_nonblocking(c, 1); push_int(vm, put(c)); return 1; }
-static int net_send(VM *vm) { ImSocket *s = get(vm, 1); const char *data = strarg(vm, 0); popn(vm); if (!s) { push_int(vm, -1); return 1; } int n = im_socket_send(s, data, strlen(data)); if (n < 0 && im_socket_would_block()) n = 0; push_int(vm, n); return 1; }
+static int net_send(VM *vm) { ImSocket *s = get(vm, 1); char *data = strdup(strarg(vm, 0)); if (!data) data = strdup(""); popn(vm); if (!s) { free(data); push_int(vm, -1); return 1; } int n = im_socket_send(s, data, strlen(data)); free(data); if (n < 0 && im_socket_would_block()) n = 0; push_int(vm, n); return 1; }
 static int net_recv(VM *vm) {
     int argc = vm->cur_argc;
     ImSocket *s = argc > 1 ? get(vm, 1) : get(vm, 0);

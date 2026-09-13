@@ -8,9 +8,9 @@
 
 > 集合化类型系统（谓词集合、类型即集合、集合映射）不属于 v0.4，统一延期至 v3.1；v0.4 仅维护现有基础集合的兼容性。
 
-实施状态（当前）：参数 v2、VFS 基础、集合推导、`|>` 管道、Result 运行时和 `inim` 离线包闭环已进入 `main`；Result 传播语法、Eidos、JIT 和发行渠道仍未完成。
+实施状态（当前）：参数 v2、VFS 基础、集合推导、`|>` 管道、Result 运行时、Result 传播语法、Eidos 外糖可执行子集和 `inim` 离线包闭环已进入 `main`；Eidos 完整对象模型、真正 JIT、跨异步 Result 传播、完整穷尽证明和发行渠道仍未完成。
 
-Result 运行时原语已加入：`ok(value)`、`err(error)`、`is_ok(result)`、`unwrap_or(result, fallback)`、`unwrap(result)`；`unwrap` 在错误值上触发 VM 异常。第一版以字典值表示，函数级 `?` 传播、原生 `case try` 分支和枚举穷尽性 API 已实现，跨异步边界传播与编译器自动穷尽诊断仍待完善。
+Result 运行时原语已加入：`ok(value)`、`err(error)`、`is_ok(result)`、`unwrap_or(result, fallback)`、`unwrap(result)`、`thread_result(name)`、`thread_await(name[, timeout])`；`unwrap` 在错误值上触发 VM 异常。第一版以字典值表示，函数级 `?` 传播会执行活跃 `finally`，`thread_await` 可等待 OS thread/task 并将完成值直接转入同一 Result 通道；原生 `case try` 分支和枚举穷尽性 API 已实现。跨线程取消传播、异步栈展开与跨错误域的完整穷尽证明仍待完善，`--lint` 已能对可识别有限错误成员给出缺失项诊断。
 
 性能基线工具：`python tools/v04_bench.py <script.im> -e <inimerse> -n 5`，可用 `--json` 输出供 CI 比较；在 JIT 后端接入前先固定解释器基线。
 
@@ -30,6 +30,8 @@ JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off
 
 ### Eidos 面向对象化
 
+- V0.4 已交付外糖可执行子集：`eidos`/`ed` 定义转换为工厂函数、字典实例和闭包方法；支持字段默认值、构造参数、无参/有参方法、单行方法、`init` 自动调用、单继承、方法覆盖和有限 `super.method(...)`。
+- 子集明确不包含 mixin、可见性、sealed/frozen/invariant、热修改或自动无括号方法调用；脱糖器对 mixin 输入直接报错。完整 class/instance 对象布局、方法解析和热修改规则仍未完成。
 - `class`、实例、构造器、方法、继承/组合和接口契约。
 - `get/set`、Mixin、sealed/frozen/invariant 的语义草案与运行时检查。
 - 明确 `this`、可见性、方法解析顺序、循环继承错误和热更新失效规则。
@@ -46,7 +48,7 @@ JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off
 
 Winget 模板位于 `packaging/winget/`；正式提交需在 V0.4 Release 生成后填入真实 SHA-256 并拆分为 Winget 三文件 manifest。
 
-当前实现入口：`python tools/inim.py` 已提供离线 `init`、`pack`、`install`、`list`、`add`、`remove`、`run`、`publish`、`verify`、`update`、`doctor` 闭环。`.inim` 是 ZIP 容器，包含 `manifest.json`；安装写入 `.inim-cache/` 和 `lock.json`，支持本地路径依赖并拒绝包名、index 路径和 ZIP 路径穿越。`publish` 生成包和 `index.json`（含 SHA-256、SemVer 版本与引擎约束）。签名和远程 registry 仍待后续迭代。
+当前实现入口：`python tools/inim.py` 已提供离线 `init`、`pack`、`install`、`list`、`add`、`remove`、`run`、`publish`、`verify`、`update`、`doctor`、`keygen` 闭环。`.inim` 是 ZIP 容器，包含 `manifest.json`；安装写入 `.inim-cache/` 和 `lock.json`，并将归档按 SHA-256 保存到 `.inim-cache/archives/`，`install --offline` 可从锁文件和内容寻址缓存重放依赖。支持本地路径依赖并拒绝包名、index 路径和 ZIP 路径穿越。`publish --signing-key` 对 registry 索引和包元数据生成 Ed25519 签名，`verify --require-signature --trusted-key` 和签名 registry 更新路径会校验受信公钥；`update` 支持 HTTP(S) registry，并限制包 URL 同源，拒绝明文和编码后的路径逃逸。远程 registry 的认证和镜像策略仍待后续迭代。
 
 验收：从空目录安装一个带依赖的示例项目；断网可从缓存复现；篡改包、ABI 不兼容包和恶意路径均被拒绝。
 
@@ -59,13 +61,25 @@ Winget 模板位于 `packaging/winget/`；正式提交需在 V0.4 Release 生成
 
 这两项属于发布前置条件，不替代功能实现，也不提前标记为已完成。
 
-预审计记录（2026-08-30）：修复 HTTP 启动竞态并加入发布验证回归后，WSL CMake 构建及完整 CTest 21/21 通过。后续扩展至 36/36，并完成规模 10000 的集合性能基线；这些结果仍需在功能冻结后按发布配置重跑，不能替代最终门禁。
+预审计记录（2026-08-30 至 2026-09-13）：修复 HTTP 启动竞态并加入发布验证回归后，WSL 已有 44/44 通过记录；当前本地构建新增 POSIX 元数据/API、嵌套闭包、函数值异常/跨线程生命周期、线程/闭包环境 GC 根保持、有限错误类型别名/并集 lint、递归数组/字典模式、Result 嵌套载荷、`thread_await`、Eidos 单继承/有限 `super` 和版本一致性回归后，完整 CTest 为 66/66 通过。网络探针在当前环境曾因监听权限（EPERM）无法替代 WSL 验证；这些结果仍需在功能冻结后按发布配置重跑，不能替代最终门禁。
 
 ## v0.5：编译化、底层接口与跨语言迁移
 
 目标：提供稳定的编译产物和可控的 FFI，使现有项目能够渐进式迁移。
 
 ### v0.5 新增优先事项
+
+#### 9/2、9/5 方案筛选结果
+
+以下项目作为 v0.5 的待实现目标纳入计划。它们均能复用当前 VM、集合运行时或已有工具链；分享页内容因外部页面在构建环境中不可稳定读取，仅将与仓库现有设计一致的部分列入，不把未验证的设想当作交付承诺。
+
+- **编译器闭环优先**：先冻结词法/语法 AST、字节码格式、错误诊断和文件接口，再开展自举；JIT、跨语言迁移和完整 Eidos 优化不得成为自举前置依赖。
+- **统一约束模型**：继续沿用 `|` 表示集合/模式约束、`:` 表示 `case` 分支；`case try` 保持原生 `Result(T, E)` 分解，错误值和类型集合共享成员检查，但不把业务错误误当作 VM 异常。
+- **有限集合枚举化**：任意可证明有限集合自动获得枚举描述符；按成员数选择 `uint8`、`uint16` 或通用编码，源码符号、名称↔编码映射、未知成员拒绝和跨版本序列化规则必须稳定。该机制优先服务错误集合、状态机和配置选项，不扩展为 v0.5 的完整集合理论实现。
+- **参数与虚拟文件系统稳定化**：将 `.param` 解析、类型约束、默认值和诊断纳入编译器测试；VFS 先提供路径规范化、沙箱边界、内存/宿主后端和可重放测试夹具，再考虑 OS 级挂载。
+- **函数式内糖收敛**：把已确定的 `|>`、单行函数、lambda/部分应用和 `case` 表达式作为原生 AST 能力；外糖别名由脱糖层处理，避免运行时分支和多套语义。
+
+暂不列入 v0.5 完成交付：完整谓词类型系统、任意集合的静态证明器、全量跨语言自动迁移、独立 Inim OS 内核和未经基准验证的“零成本”性能承诺。这些项目保留在 v0.6/v3.1 研究线。
 
 #### 统一循环语法
 
@@ -87,6 +101,15 @@ Winget 模板位于 `packaging/winget/`；正式提交需在 V0.4 Release 生成
 - 第一阶段允许自举编译器调用宿主编译器生成后端；第二阶段要求自举产物能够重新编译自身，并对生成字节码做规范化哈希比较。
 - 每次发布构建三份可追踪产物：宿主编译版本（bootstrap）、自举一次版本（stage1）和自举二次版本（stage2）。记录编译耗时、产物大小、启动时间、代表性基准耗时、峰值内存及结果哈希。
 - 验收：stage1/stage2 可重复构建且规范化字节码一致；与宿主版本运行结果一致；性能差距以基线报告呈现，默认阈值为运行耗时不超过宿主版本 1.20 倍、峰值内存不超过 1.30 倍，超出则阻断发布并给出分析。
+
+**执行顺序约束**：自举工作在 v0.5 编译器前端、字节码/ABI 版本和文件读写接口完成后重新启动。先以宿主编译器生成 bootstrap，再由 Inimerse 编译器生成 stage1，最后由 stage1 重新生成 stage2；每轮固定源码、编译参数和依赖锁文件。对比报告必须同时包含：
+
+1. 编译耗时、启动耗时、峰值内存和生成物大小；
+2. 规范化字节码哈希、运行结果哈希和诊断输出差异；
+3. 代表性集合变换、`case try`、VFS 和编译器自身基准的中位数/P95；
+4. 自编译版本相对宿主编译版本的比值、回归阈值和超阈值原因。
+
+报告写入 `docs/SELFHOST_BENCHMARK.md`，并作为发布门禁的一部分；没有 stage2 可重复性和对比数据时，不宣称“已完成自举”。
 
 ### 编译器与底层接口
 

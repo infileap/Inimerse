@@ -1,8 +1,8 @@
-name: Release Infiverse
+name: Release Inimerse 0.4.0
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v0.4.0']
 
 jobs:
   linux-release:
@@ -17,50 +17,26 @@ jobs:
       - name: Build, test, and package
         run: |
           node tools/regression.js
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="0.4.0"
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
           ctest --test-dir build --output-on-failure
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
-          if [ -d "packaging/winget/infileap.inimerse/$VERSION" ]; then
-            python3 tools/release_verify.py build --version "$VERSION" --winget-dir "packaging/winget/infileap.inimerse/$VERSION"
-          else
-            python3 tools/release_verify.py build --version "$VERSION"
-          fi
+          python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
+          {
+            cat docs/RELEASE_0.4.0.md
+            printf '\n## SHA-256\n\n```text\n'
+            cat build/SHA256SUMS
+            printf '```\n'
+          } > build/RELEASE_NOTES.md
       - name: Publish Linux packages
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
+          body_path: build/RELEASE_NOTES.md
           files: |
             build/inimerse-*.tar.gz
             build/inimerse-*.zip
             build/inimerse-*.deb
-
-      - name: Upload SHA-256 manifest
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/SHA256SUMS
-
-  windows-release:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Run regression tests
-        run: node tools/regression.js
-      - name: Build engine and desktop app
-        shell: pwsh
-        run: ./build.ps1
-      - name: Build installer
-        shell: pwsh
-        run: ./build_installer.ps1
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: D:/Infiverse_release/InfiverseSetup.exe
+            build/SHA256SUMS

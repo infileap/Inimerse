@@ -1,0 +1,31 @@
+flag = 0
+
+func override_return() {
+    global flag
+    try {
+        return 7
+    } finally {
+        flag = flag + 1
+        return 8
+    }
+}
+
+func nested_override_return() {
+    global flag
+    try {
+        try {
+            return 10
+        } finally {
+            flag = flag + 10
+            return 11
+        }
+    } finally {
+        flag = flag + 100
+        return 12
+    }
+}
+
+say override_return()
+say flag
+say nested_override_return()
+say flag

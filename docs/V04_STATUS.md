@@ -1,8 +1,14 @@
 # V0.4 状态矩阵
 
-最近一次 WSL 全量 CTest（2026-08-31）：29/29 通过，包含 `typeset_probe`、`error_types_probe`、`type_registry_probe`、`case_try_runtime`、`case_collection_patterns_runtime` 和 `case_structural_runtime`。
+最近一次本地 CMake/CTest（2026-09-13）：66/66 通过，包含版本一致性、函数值容器、异常展开、跨线程消息与 Result 完成值、线程完成值和闭包环境 GC 根保持、重启清理、`thread_await` 自动等待/超时、`case` 递归数组/字典模式、`case try` lint（含有限类型别名/并集）、`finally` 控制流诊断、Eidos 单继承/有限 `super` 运行时和浮点精度回归。网络/协议探针也在本次运行中通过。
 
-更新时间：2026-08-30
+更新时间：2026-09-13
+
+## 发布决策
+
+V0.4 冻结为 0.4.0“可移植脚本运行时与离线包生态”版本。发布内容和明确非目标见
+[RELEASE_0.4.0.md](RELEASE_0.4.0.md)；完整 Eidos、真正 JIT、Infiverse/CRP
+和 Inim OS 桌面系统不作为本版本完成条件。
 
 ## 已进入主线并有回归证据
 
@@ -10,22 +16,22 @@
 |---|---|---|
 | 参数格式 v2 | 已实现 | `vtest/params_v2.params`、loader 回归 |
 | 虚拟文件系统 | 基础能力已实现 | `vfs_probe` |
-| `inim` 离线包闭环 | 已实现 | `inim_regression` |
+| `inim` 包管理闭环 | 已实现（离线/本地/HTTP registry，含内容寻址缓存、索引和包签名验证） | `inim_regression`；`keygen`、签名发布、受信公钥校验、HTTP 更新、`install --offline` 缓存重放、路径逃逸和篡改拒绝均有覆盖 |
 | Result 原语 | 已实现 | `result_runtime` |
-| Result `?` | 已实现顶层 unwrap 与函数级 Err 传播 | `result_question_runtime`、`result_propagation_runtime` |
+| Result `?` | 已实现顶层 unwrap、函数级 Err 传播、线程完成值转 Result 及 finally 清理；`thread_await` 提供等待并转 Result 的异步边界；cleanup 中 `break/continue/goto` 有明确编译诊断 | `result_question_runtime`、`result_propagation_runtime`、`result_finally_propagation_runtime`、`thread_result_runtime`、`thread_await_runtime`、`finally_*_diagnostic` |
 | `??` 空值合并 | 已实现基础语义 | `null_coalesce_runtime` 覆盖 nil 与非 nil 分支 |
 | `?.` 安全成员访问 | 已实现基础语义 | `optional_member_runtime` 覆盖字典字段与 nil 短路 |
 | 链式比较 | 已实现基础语义 | `chained_comparison_runtime` 覆盖区间内与区间外分支 |
 | 后缀 `if/unless` | 已实现基础语义 | `postfix_condition_runtime` 覆盖正向与取反条件 |
 | 块式 `unless` | 已实现基础语义 | `postfix_condition_runtime` 覆盖条件成立与不成立路径 |
-| `case try` Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别、载荷绑定、字面量与递归字典结构载荷匹配、`e in E` 集合守卫；穷尽检查待完善 |
+| `case try` Result 分支 | 部分实现 | `case_try_runtime`；支持 `ok`/`err` 判别、载荷绑定、字面量与递归数组/字典结构载荷匹配、`e in E` 集合守卫；已知有限错误集合的完整守卫可证明穷尽，`--lint` 对部分成员覆盖提示具体缺失项，开放错误路径仍需无守卫 `err` 或 `_` |
 | `case` 多条件 guard | 已实现基础语义 | 逗号条件编译为短路合取，`case_try_runtime` 覆盖 |
-| `case` 类型/集合模式 | 部分实现 | `case_collection_patterns_runtime`；支持 `in` 命名类型、区间和集合，结构模式待完善 |
-| `case` 字典结构模式 | 部分实现 | `case_structural_runtime`；支持字段字面量匹配、绑定、严格字段存在性和递归嵌套；Eidos/数组解构待完善 |
+| `case` 类型/集合模式 | 部分实现 | `case_collection_patterns_runtime`、`lint_case_membership_runtime`；支持 `in` 命名类型、区间和集合，有限命名集合的完整覆盖/后续不可达分支可诊断，复杂结构穷尽性待完善 |
+| `case` 字典结构模式 | 部分实现 | `case_structural_runtime`、`case_nested_patterns_runtime`；支持字段字面量匹配、绑定、严格字段存在性，以及字典/数组递归嵌套；Eidos 解构待完善 |
 | `case` 通配模式 | 已实现 | `case_collection_patterns_runtime`；`_` 在前序分支未命中时兜底 |
 | `case` `as` 全值别名 | 已实现基础语义 | `case_alias_runtime` 验证命中后绑定完整 subject |
-| `case` 定长数组解构 | 已实现基础语义 | `case_array_runtime` 现在有输出断言，验证长度检查、元素绑定和 `_` 通配元素确实命中 |
-| case 覆盖/不可达诊断 | 部分实现 | `--lint` 可报告 wildcard/else 后的分支，并对可识别有限字符串集合报告具体缺失成员；复杂集合穷尽性待完善 |
+| `case` 定长数组解构 | 已实现基础语义 | `case_array_runtime`、`case_nested_patterns_runtime` 验证长度检查、元素绑定、`_` 通配元素和字典/数组递归嵌套 |
+| case 覆盖/不可达诊断 | 部分实现 | `--lint` 可报告 wildcard/else 或有限命名集合完整覆盖后的分支，对可识别有限字符串集合和 `case try` 错误成员报告具体缺失项；复杂集合穷尽性待完善 |
 | 集合推导 | 已实现筛选式 | `collection_comprehension_runtime` |
 | TypeSet 集合类型内核 | 已实现 | `typeset_probe`；支持并/交/差/补集和相交查询，独立 C API，尚未接入复杂类型元数据 |
 | TypeSet 基数元数 | 已实现 | `typeset_probe` 验证枚举、区间和无限集标记 |
@@ -39,8 +45,11 @@
 | 枚举指纹校验 | 已实现 | 相同类型名与成员顺序生成相同 64 位指纹 |
 | 枚举版本兼容性 | 已实现 | 测试仅追加成员保持兼容，重排则拒绝 |
 | 枚举规范标识双向转换 | 已实现 | `enum_probe` 验证 `Type.Member` 生成与反解析 |
-| 闭包环境与函数对象基础 | 部分实现 | `closure_probe` 验证环境槽、引用计数和函数索引；已接入 `Value`/VM 调用，完整值生命周期仍待完善（需统一寄存器/容器所有权转移） |
-| 闭包按值捕获基础 | 已实现最小执行路径 | `lambda_capture_runtime` 验证返回闭包捕获外层参数并调用；嵌套/完整 GC 生命周期仍待完善 |
+| 闭包环境与函数对象基础 | 已实现基础生命周期 | `closure_probe` 验证环境槽、引用计数和函数索引；`VAL_FUNCTION` 已接入寄存器、数组、字典、全局、消息队列、调用帧及线程重启/销毁路径，GC 会遍历活动闭包环境中的池对象 |
+| 闭包按值捕获基础 | 已实现嵌套转发路径 | `lambda_capture_runtime` 与 `lambda_nested_runtime` 验证返回闭包捕获外层参数、嵌套闭包转发捕获并调用；`function_value_lifetime_runtime` 覆盖容器持有、异常跨帧展开；`function_thread_lifetime_runtime` 覆盖消息传递和重启清理 |
+| Eidos 外糖可执行子集 | 已实现基础子集 | `eidos_desugar_runtime`、`eidos_runtime`；支持字段默认值、构造参数、无参/有参及单行闭包方法、单继承、方法覆盖和有限 `super.method(...)`；mixin、可见性、热修改、不变量和自动无参调用仍不支持 |
+| 线程完成值回收 | 已实现基础语义 | `thread_result_runtime`；`thread_release(name)` 回收已完成实例，task 槽位可安全复用，运行中实例拒绝回收 |
+| GC 控制与线程完成值根保持 | 已实现基础语义 | `gc_runtime`；`gc_auto`/`gc_now`/`gc_stats` 可用，已完成 thread/task 的 `result/error` 在释放前作为 GC 根 |
 | 闭包环境槽复制 | 部分实现 | `closure_probe` 验证单槽复制与字符串所有权独立性 |
 | 闭包环境引用计数 | 部分实现 | `closure_probe` 验证原子 retain/release 与引用查询 |
 | 命名 TypeSet 注册表 | 已实现 | `type_registry_probe`；基础 parser/compiler 接入已完成 |
@@ -52,24 +61,22 @@
 | JIT 开关 | 已实现，后端回退解释器 | `jit_mode_probe` |
 | HTTP 探针稳定性 | 已加入启动/端口重试 | 连续 5 次 `http_probe` 通过 |
 
-## V0.4 仍需开发
+## 0.4.1+ 后续工作
 
-- POSIX 核心运行时内置与 Windows 保持一致：已恢复 `len`、`size`、`str`、`bool`、`int`、`float` 子集；仍需拆分 `runtime.c` 中的平台依赖并完成其余 API 的跨平台行为回归；
-- 闭包捕获和完整函数值生命周期管理；
-- `>>` 函数组合（简单函数值形式已实现，复杂高阶组合仍待扩展）；
-- `?` 的跨线程/异步栈展开与 finally 交互；基础函数级 Err 自动返回已实现；
-- `case try` Result 结构分支与完整穷尽检查；
-- Eidos class/instance/method 对象模型；
+- POSIX 其他平台 API 的跨平台行为回归，以及更多宿主差异的统一处理；
+- 更复杂的部分应用、闭包资源边界和完整生命周期证明；
+- 跨线程取消传播、异步栈自动展开和更复杂的 `finally` 交互；
+- `case try` 的跨错误域完整穷尽证明，以及更复杂结构模式诊断；
+- 完整 Eidos class/instance/method 对象模型，包括 mixin、可见性、热修改、不变量和原生对象布局；
 - 真正模板/类型特化 JIT；
-- 远程 registry、签名验证、Winget/Linux 官方提交。
+- 远程 registry 运营、Winget/Linux 官方提交和更多平台发行资产。
 
-## 下一轮实施顺序
+## 后续实施顺序
 
-1. 先引入可调用的函数值/闭包对象（必要的 GC 所有权和 `OP_CALL_VALUE`），再实现 lambda；
-2. 在函数值之上实现 `>>`，并用组合等价性回归锁定求值顺序；
-3. 将函数级 `?` 扩展到跨线程/异步栈，并补充更复杂的 `finally` 交互；
-4. 再推进 Eidos 对象布局与 JIT 特化，避免在运行时表示尚未稳定时重复返工；
-5. 最后冻结数值 ABI、包签名和发行清单，执行发布门禁。
+1. 将函数级 `?` 扩展到跨线程/异步栈，并补充更复杂的 `finally` 交互；
+2. 完善 `case try` 的 Result 穷尽检查和复杂结构模式诊断；
+3. 在外糖子集稳定后推进完整 Eidos 对象布局与 JIT 特化，避免在运行时表示尚未稳定时重复返工；
+4. 在新功能冻结后更新数值 ABI、包签名和发行清单，执行对应版本发布门禁。
 
 ## 发布门禁
 
@@ -78,4 +85,4 @@
 1. 全量 Bug 排查：构建、CTest、语言/协议/包回归和跨平台 CI，失败项必须有修复记录；
 2. 集合变换性能审计：固定规模和构建配置，比较 JIT 模式耗时、峰值内存、结果哈希并设回归阈值。
 
-当前最近一次全量 CTest 为 36/36 通过（包含 `release_verify_regression`、Result/case/lambda/集合回归）；集合性能审计已完成规模 10000、三模式、三次重复的可复现基线，最终冻结后仍需按同一构建配置重跑并比较阈值。
+当前最近一次可执行的本地回归为完整 66/66 通过（包含版本一致性、`release_verify_regression`、Result/case/lambda/闭包线程生命周期、线程完成值及闭包环境 GC 根保持、`thread_await` 自动等待/超时、递归数组/字典模式、Eidos 单继承/有限 `super` 运行时、`case try` lint、`finally` 控制流诊断、集合及 POSIX API 回归，以及网络/协议探针）。另有 `make -j2 check` 通过，包含 10 项 UPP/CRP/VDP 协议回归和 POSIX 探针。集合性能审计已完成规模 10000、三模式、三次重复的可复现基线，最终冻结后仍需按同一构建配置重跑并比较阈值。

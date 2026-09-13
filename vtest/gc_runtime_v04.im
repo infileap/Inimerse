@@ -1,0 +1,42 @@
+# Opt-in pool GC must reclaim unreachable arrays without collecting roots.
+thread gc_payload {
+    return [7, 8, 9]
+}
+
+func make_capture() {
+    captured = [21, 22, 23]
+    closure = () -> len(captured)
+    gc_now()
+    return closure
+}
+
+gc_auto(1)
+root = [1, 2, 3]
+captured_fn = make_capture()
+start gc_payload
+join gc_payload
+i = 0
+while i < 128 {
+    transient = [i, i + 1, i + 2]
+    transient = nil
+    i++
+}
+gc_now()
+stats = gc_stats()
+say "gc-ran"
+say gc_stats()
+say stats
+say stats["runs"]
+say stats["runs"] > 0
+say "gc-stats-ok"
+payload = thread_result("gc_payload")
+say "thread-result-alive"
+say len(result_value(payload))
+say "closure-capture-alive"
+say captured_fn()
+thread_release("gc_payload")
+say "root-alive"
+say len(root)
+root = nil
+gc_now()
+say "gc-done"

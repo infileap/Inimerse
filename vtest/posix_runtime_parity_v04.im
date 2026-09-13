@@ -1,0 +1,29 @@
+atomic_set("posix_counter", 4)
+ok = atomic_add("posix_counter", 3) == 7
+ok = ok and atomic_get("posix_counter") == 7
+
+entity_clear()
+first = entity_spawn(10, 20, 3)
+ok = ok and entity_count() == 1
+ok = ok and entity_get(first, "kind") == 3
+ok = ok and entity_set(first, "x", 12)
+ok = ok and entity_get(first, "x") == 12
+near = entity_neighbors(12, 20, 2)
+ok = ok and len(near) == 1 and entity_at(12, 20) == first
+ok = ok and entity_kill(first) == 1 and entity_count() == 1
+
+u = usage()
+ok = ok and has(u, "mem") and has(u, "threads")
+ok = ok and mod_limit(0, 0, 0) == 1
+mu = mod_usage()
+ok = ok and has(mu, "mem") and has(mu, "time")
+
+spi_meta("posix-parity", 4, "io")
+ok = ok and spi_caps() == 256
+ok = ok and spi_has("atomic_get") == 1
+ok = ok and spi_has("vm_exec") == 0
+mods = spi_mods()
+ok = ok and len(mods) >= 1
+ok = ok and load_params("missing.params") == -1
+
+if ok { say "posix-runtime-parity-ok" } else { say "posix-runtime-parity-fail" }

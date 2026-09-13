@@ -36,18 +36,25 @@ static void net_ensure(void) {
 static Value net_arg(VM *vm, int i) { return vm_cur_stack(vm)[vm_cur_sp(vm) - i]; }
 static const char *net_arg_str(VM *vm, int i) { Value v = net_arg(vm, i); return (v.type == VAL_STRING && v.sval) ? v.sval : ""; }
 static double net_arg_num(VM *vm, int i) { Value v = net_arg(vm, i); if (v.type == VAL_INT) return (double)v.ival; if (v.type == VAL_FLOAT) return v.fval; return 0.0; }
-static void net_popn(VM *vm, int n) { vm_cur_set_sp(vm, vm_cur_sp(vm) - n); }
+static void net_popn(VM *vm, int n) {
+    Value *st = vm_cur_stack(vm);
+    int sp = vm_cur_sp(vm);
+    if (n > sp + 1) n = sp + 1;
+    for (int i = 0; i < n; i++) value_free(&st[sp - i]);
+    vm_cur_set_sp(vm, sp - n);
+}
 
 static SOCKET net_sock(VM *vm, int i) { return (SOCKET)(intptr_t)(int)net_arg_num(vm, i); }
 
 /* net_connect(host, port) -> sock or -1; connect with 2s timeout, socket left non-blocking */
 static int builtin_net_connect(VM *vm) {
-    const char *host = net_arg_str(vm, 1);
+    char *host = _strdup(net_arg_str(vm, 1));
+    if (!host) host = _strdup("");
     int port = (int)net_arg_num(vm, 0);
     net_popn(vm, vm->cur_argc);
     net_ensure();
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == INVALID_SOCKET) { push_int(vm, -1); return 1; }
+    if (s == INVALID_SOCKET) { free(host); push_int(vm, -1); return 1; }
     u_long mode = 1;
     ioctlsocket(s, FIONBIO, &mode);
     struct sockaddr_in sa;
@@ -57,7 +64,7 @@ static int builtin_net_connect(VM *vm) {
     sa.sin_addr.s_addr = inet_addr(host);
     if (sa.sin_addr.s_addr == INADDR_NONE) {
         struct hostent *he = gethostbyname(host);
-        if (!he) { closesocket(s); push_int(vm, -1); return 1; }
+        if (!he) { closesocket(s); free(host); push_int(vm, -1); return 1; }
         memcpy(&sa.sin_addr, he->h_addr, he->h_length);
     }
     int rc = connect(s, (struct sockaddr *)&sa, sizeof(sa));
@@ -66,11 +73,12 @@ static int builtin_net_connect(VM *vm) {
         fd_set wf; FD_ZERO(&wf); FD_SET(s, &wf);
         struct timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
         rc = select(0, NULL, &wf, NULL, &tv);
-        if (rc <= 0) { closesocket(s); push_int(vm, -1); return 1; }
+        if (rc <= 0) { closesocket(s); free(host); push_int(vm, -1); return 1; }
         int err = 0; int elen = sizeof(err);
         getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&err, &elen);
-        if (err != 0) { closesocket(s); push_int(vm, -1); return 1; }
+        if (err != 0) { closesocket(s); free(host); push_int(vm, -1); return 1; }
     }
+    free(host);
     push_int(vm, (int)s);
     return 1;
 }
@@ -112,10 +120,12 @@ static int builtin_net_accept(VM *vm) {
 /* net_send(sock, data) -> bytes sent (0 = retry later, -1 = error) */
 static int builtin_net_send(VM *vm) {
     SOCKET s = net_sock(vm, 1);
-    const char *data = net_arg_str(vm, 0);
+    char *data = _strdup(net_arg_str(vm, 0));
+    if (!data) data = _strdup("");
     net_popn(vm, vm->cur_argc);
     int n = send(s, data, (int)strlen(data), 0);
     if (n == SOCKET_ERROR) n = (WSAGetLastError() == WSAEWOULDBLOCK) ? 0 : -1;
+    free(data);
     push_int(vm, n);
     return 1;
 }
@@ -232,12 +242,14 @@ static int builtin_udp_bind(VM *vm) {
 }
 static int builtin_udp_send(VM *vm) {
     int port = (int)net_arg_num(vm, 3);      /* local socket port */
-    const char *host = net_arg_str(vm, 2);   /* destination host */
+    char *host = _strdup(net_arg_str(vm, 2));   /* destination host */
     int dstport = (int)net_arg_num(vm, 1);   /* destination port */
-    const char *data = net_arg_str(vm, 0);
+    char *data = _strdup(net_arg_str(vm, 0));
+    if (!host) host = _strdup("");
+    if (!data) data = _strdup("");
     net_popn(vm, vm->cur_argc);
     UdpSock *u = udp_find(port);
-    if (!u) { push_int(vm, 0); return 1; }
+    if (!u) { free(host); free(data); push_int(vm, 0); return 1; }
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
@@ -245,10 +257,11 @@ static int builtin_udp_send(VM *vm) {
     sa.sin_addr.s_addr = inet_addr(host);
     if (sa.sin_addr.s_addr == INADDR_NONE) {
         struct hostent *he = gethostbyname(host);
-        if (!he) { push_int(vm, 0); return 1; }
+        if (!he) { free(host); free(data); push_int(vm, 0); return 1; }
         memcpy(&sa.sin_addr, he->h_addr, he->h_length);
     }
     int n = sendto(u->s, data, (int)strlen(data), 0, (struct sockaddr*)&sa, sizeof(sa));
+    free(host); free(data);
     push_int(vm, n == SOCKET_ERROR ? 0 : 1);
     return 1;
 }

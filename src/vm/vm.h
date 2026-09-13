@@ -100,6 +100,12 @@ struct VmThread {
     volatile long gc_parked;  /* parked at a GC safe point (stop-the-world) */
     bool is_main;
     int tidx;
+    /* Completion values remain owned by the thread until thread_release(). */
+    Value result;
+    Value error;
+    volatile bool result_ready;
+    volatile bool error_ready;
+    volatile bool release_requested;
                /* 锟竭程讹拷锟斤拷锟斤拷锟斤拷??1=锟斤拷锟竭程ｏ拷 */
     void *os_handle;        /* Windows 锟竭程撅拷锟?*/
     unsigned long long wake_at;  /* 锟斤拷时锟街革拷时锟戒（GetTickCount64??*/
@@ -269,6 +275,7 @@ EntBucket *ent_buckets;
     unsigned char *gc_amark; int gc_amark_cap;   /* per-array-slot mark bits */
     unsigned char *gc_smark; int gc_smark_cap;   /* per-set-slot mark bits */
     int *gc_work; int gc_work_count, gc_work_cap; /* mark work stack */
+    struct ImClosureEnv **gc_emark; int gc_emark_count, gc_emark_cap; /* visited closure environments */
     int gc_runs; int gc_freed;            /* bitmap/VRAM byte cap, 0 = unlimited (forced via --limit-vram / declare vram) */
 
     /* L1 modular SPI (appended last, ABI-safe) */
@@ -300,10 +307,23 @@ bool vm_dict_has(VM *vm, int aidx, const Value *key);
 void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val);
 bool vm_dict_remove(VM *vm, int aidx, const Value *key);
 VmThread *vm_get_cur_thread(void);
+/* Copy a finished named thread's completion payload.  Returns 1 for a
+   successful completion, 2 for an uncaught thread error, and 0 when the
+   thread is missing or has not finished. */
+int vm_thread_completion(VM *vm, const char *name, Value *out);
+/* Wait for a named OS thread/task to finish. timeout_ms < 0 means no
+   deadline. Returns 1 when finished, 0 on timeout/missing/self. */
+int vm_thread_wait(VM *vm, const char *name, long long timeout_ms);
+/* Request reclamation of a finished named thread/task. Returns 1 when a
+   finished instance was found, 0 when the name is missing or still running. */
+int vm_thread_release(VM *vm, const char *name);
 typedef struct SpiSub { char *event; int tidx; } SpiSub;
 VmThread *vm_task_create(VM *vm, Bytecode *root, int tidx, VmThread *t, int argc);
 VmThread *vm_os_thread_start(VM *vm, Bytecode *root, int tidx, VmThread *t, int argc);
 void value_free(Value *v);
+void vm_value_assign(Value *dst, const Value *src);
+void vm_value_move(Value *dst, Value *src);
+int vm_push_value(VM *vm, Value *src);
 void vm_set_cur_thread(VmThread *t);
 double val_as_double(const Value *v);
 bool val_eq(const Value *a, const Value *b);
@@ -353,7 +373,7 @@ void vm_throw_msg(VM *vm, const char *msg);
 /* Throw a canonical member of one of the preset error sets. */
 void vm_throw_kind(VM *vm, const char *kind);
 void vm_global_grow(VM *vm, int need);
-void vm_global_clone(VM *vm); /* swap globals for a deep-name/shallow-value copy (nested vm_exec) */
+void vm_global_clone(VM *vm); /* swap globals for an owned copy (nested vm_exec) */
 int vm_set_new(VM *vm);
 void gc_collect(VM *vm); /* mark-sweep pool GC (opt-in, gc_auto/--gc) */
 void vm_register_builtin_full(VM *vm, const char *name, BuiltinFunc func, int flags, int since);

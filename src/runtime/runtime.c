@@ -191,15 +191,7 @@ static int builtin_pop(VM *vm) {
         if (a >= 0 && a < vm->arrayCount) {
             Value popped = vm_array_pop(vm, a);
             pop(vm);
-            if (popped.type == VAL_STRING) {
-                push_string(vm, popped.sval);
-                if (popped.ival != 1) free(popped.sval);
-            }
-            else if (popped.type == VAL_INT) push_int(vm, popped.ival);
-            else if (popped.type == VAL_FLOAT) push_float(vm, popped.fval);
-            else if (popped.type == VAL_BOOL) push_bool(vm, popped.ival != 0);
-            else if (popped.type == VAL_ARRAY) { push_nil(vm); vm_cur_stack(vm)[vm_cur_sp(vm)] = popped; popped.sval = NULL; }
-            else push_nil(vm);
+            if (!vm_push_value(vm, &popped)) value_free(&popped);
             return 1;
         }
     }
@@ -394,6 +386,7 @@ static int builtin_remove(VM *vm) {
                 value_free(&ar->items[idx]);
                 for (int j = idx; j < ar->count - 1; j++) ar->items[j] = ar->items[j + 1];
                 ar->count--;
+                ar->items[ar->count] = (Value){ VAL_NIL, 0, 0, NULL, NULL };
                 removed = 1;
             }
             VM_UNLOCK(vm);
@@ -876,9 +869,7 @@ static int builtin_vm_exec(VM *vm) {
     int saved_be_cap = vm->be_bound_cap;
     VmThread *saved_t = vm_get_cur_thread();
     Bytecode *saved_code = vm->code;
-    vm->globals = NULL; vm->globalCount = 0; vm->globalCap = 0;
-    vm->be_bound = NULL; vm->be_bound_cap = 0;
-    vm_global_clone(vm);   /* independent copy of the current table (names copied, values shared via pool refs) */
+    vm_global_clone(vm);   /* swaps in an independent copy and leaves saved_globals untouched */
     vm_load_bytecode(vm, bc);
     vm_run(vm);
     vm_set_cur_thread(saved_t);
@@ -1346,6 +1337,7 @@ static int builtin_spi_emit(VM *vm) {
     Value data = vm_cur_stack(vm)[vm_cur_sp(vm)];
     Value ev = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     const char *event = (ev.type == VAL_STRING && ev.sval) ? ev.sval : "";
+    char *event_name = strdup(event);
     Value arg;
     if (data.type == VAL_STRING) {
         const char *si = vm_intern(vm, data.sval ? data.sval : "");
@@ -1353,12 +1345,15 @@ static int builtin_spi_emit(VM *vm) {
     } else arg = data;
     /* publish to global __spi_data (task callbacks read it) */
     for (int gi = 0; gi < vm->globalCount; gi++) {
-        if (strcmp(vm->globals[gi].name, "__spi_data") == 0) { vm->globals[gi].val = arg; break; }
+        if (vm->globals[gi].name && strcmp(vm->globals[gi].name, "__spi_data") == 0) {
+            vm_value_assign(&vm->globals[gi].val, &arg);
+            break;
+        }
     }
     VmThread *t = vm_get_cur_thread();
     int fired = 0;
     for (int i = 0; i < vm->spi_sub_count; i++) {
-        if (strcmp(vm->spi_subs[i].event, event) != 0) continue;
+        if (strcmp(vm->spi_subs[i].event, event_name ? event_name : "") != 0) continue;
         VmThread *nt = vm_os_thread_start(vm, vm->code, vm->spi_subs[i].tidx, t, 0);
         if (nt) {
             /* synchronous dispatch on an OS thread (no Fiber scheduler dependency):
@@ -1367,9 +1362,10 @@ static int builtin_spi_emit(VM *vm) {
             fired++;
         }
     }
+    free(event_name);
+    value_free(&vm_cur_stack(vm)[sp0]);
+    value_free(&vm_cur_stack(vm)[sp0 - 1]);
     vm_cur_set_sp(vm, sp0 - 2);
-    if (data.type == VAL_STRING && data.ival != 1 && data.sval) free(data.sval);
-    if (ev.type == VAL_STRING && ev.ival != 1 && ev.sval) free(ev.sval);
     push_int(vm, fired);
     return 1;
 }

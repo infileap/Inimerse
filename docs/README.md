@@ -6,11 +6,12 @@
 - [V0.4 状态矩阵](V04_STATUS.md)
 - [总体路线图](ROADMAP.md)
 - [GitHub 发布操作集](GITHUB_RELEASE_PLAYBOOK.md)
+- [0.4.0 发布范围](RELEASE_0.4.0.md)
+- [0.4.0 构建与发布经验](BUILD_RELEASE_LESSONS_0.4.0.md)
 - [内糖与外糖规范](SYNTAX_SUGAR.md)
 - [语法糖机器清单](syntax_sugar.json)
 - [V0.4 数值模型草案](NUMERIC_MODEL_V04.md)
 - [集合变换性能审计](COLLECTION_PERF_AUDIT.md)
-- [V0.4 状态矩阵](V04_STATUS.md)
 - [发布产物验证](RELEASE_VERIFY.md)
 
 ## 平台与 API

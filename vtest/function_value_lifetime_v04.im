@@ -1,0 +1,39 @@
+# Function values retain their closure while held by arrays and dictionaries.
+func make_adder(base) {
+    return x -> x + base
+}
+
+f = make_adder(5)
+handlers = [f]
+from_array = handlers[0]
+say from_array(2)
+
+table = {"handler": f}
+from_dict = table["handler"]
+say from_dict(3)
+
+table["handler"] = x -> x * 2
+say table["handler"](4)
+remove(table, "handler")
+say from_array(1)
+
+# Runtime and Result helpers must preserve function ownership when returning
+# a value from a container or Result payload.
+popped_handlers = [x -> x + 10]
+popped_fn = pop(popped_handlers)
+say popped_fn(2)
+result_fn = unwrap(ok(x -> x + 3))
+say result_fn(4)
+
+# Exceptions crossing a closure call must unwind the closure environment once.
+func make_failure(message) {
+    return ignored -> unwrap(err(message))
+}
+
+failure = make_failure("closure-error")
+try {
+    failure(0)
+} catch (caught) {
+    say caught
+    say "closure-throw-caught"
+}

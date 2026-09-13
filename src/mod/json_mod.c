@@ -19,7 +19,12 @@
 
 static Value json_arg(VM *vm, int i) { return vm_cur_stack(vm)[vm_cur_sp(vm) - i]; }
 static const char *json_arg_str(VM *vm, int i) { Value v = json_arg(vm, i); return (v.type == VAL_STRING && v.sval) ? v.sval : ""; }
-static void json_popn(VM *vm, int n) { vm_cur_set_sp(vm, vm_cur_sp(vm) - n); }
+static void json_popn(VM *vm, int n) {
+    while (n-- > 0 && vm_cur_sp(vm) >= 0) {
+        value_free(&vm_cur_stack(vm)[vm_cur_sp(vm)]);
+        vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    }
+}
 
 /* ---- serialize ---- */
 
@@ -113,7 +118,9 @@ static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz) {
 }
 
 static int builtin_json_serialize(VM *vm) {
-    Value v = json_arg(vm, 0);
+    Value arg = json_arg(vm, 0);
+    Value v = { VAL_NIL, 0, 0, NULL, NULL };
+    vm_value_assign(&v, &arg);
     json_popn(vm, vm->cur_argc);
     char *buf = malloc(1 << 20); /* 1MB cap */
     int pos = 0;
@@ -121,6 +128,7 @@ static int builtin_json_serialize(VM *vm) {
     buf[pos] = '\0';
     push_string(vm, buf);
     free(buf);
+    value_free(&v);
     return 1;
 }
 
@@ -258,10 +266,7 @@ static int builtin_json_parse(VM *vm) {
     json_popn(vm, vm->cur_argc);
     int i = 0, ok = 1;
     Value v = json_parse_value(vm, s, &i, &ok);
-    if (vm_cur_sp(vm) < 1023) {
-        vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
-        vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
-    }
+    if (!vm_push_value(vm, &v)) value_free(&v);
     return 1;
 }
 

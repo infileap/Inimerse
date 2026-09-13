@@ -1,0 +1,20 @@
+# The linter must distinguish whole-variant coverage from a guarded finite
+# error subset and report the exact members left uncovered.
+type FileError = "not_found", "permission_denied", "disk_full"
+e = err("not_found")
+
+case try e {
+    ok(v): say v
+    err(reason) | reason in FileError: say reason
+}
+
+case try e {
+    ok(v): say v
+    err(reason) | reason in FileError: say reason
+    err(reason): say reason
+}
+
+case try e {
+    ok(v): say v
+    err("not_found"): say "partial"
+}

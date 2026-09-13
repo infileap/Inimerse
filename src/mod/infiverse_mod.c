@@ -310,16 +310,12 @@ static const char *r_str(VM *vm, int i) {
 }
 static void r_popn(VM *vm, int n) {
     while (n-- > 0 && vm_cur_sp(vm) >= 0) {
-        Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
-        if (v.type == VAL_STRING && v.ival != 1 && v.sval) free(v.sval);
+        value_free(&vm_cur_stack(vm)[vm_cur_sp(vm)]);
         vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
     }
 }
 static void r_push(VM *vm, Value v) {
-    if (vm_cur_sp(vm) < 1023) {
-        vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
-        vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
-    }
+    if (!vm_push_value(vm, &v)) value_free(&v);
 }
 static void r_push_int(VM *vm, int n) {
     Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
@@ -487,13 +483,14 @@ static int b_verse_portal_set(VM *vm) {
     int ly = (int)r_num(vm, argc - 4);
     int y = (int)r_num(vm, argc - 3);
     int x = (int)r_num(vm, argc - 2);
-    const char *pwd = r_str(vm, argc - 1);
+    char *pwd = _strdup(r_str(vm, argc - 1));
+    if (!pwd) pwd = _strdup("");
     r_popn(vm, argc);
     VerseWorld *w = vw();
     for (int i = 0; i < w->portal_count; i++) {
         if (strcmp(w->portals[i].pwd, pwd) == 0) {
             w->portals[i].x = x; w->portals[i].y = y; w->portals[i].ly = ly;
-            r_push_int(vm, 1); return 1;
+            free(pwd); r_push_int(vm, 1); return 1;
         }
     }
     if (w->portal_count >= w->portal_cap) {
@@ -503,21 +500,24 @@ static int b_verse_portal_set(VM *vm) {
     Portal *p = &w->portals[w->portal_count++];
     snprintf(p->pwd, sizeof p->pwd, "%s", pwd);
     p->x = x; p->y = y; p->ly = ly;
+    free(pwd);
     r_push_int(vm, 1);
     return 1;
 }
 
 static int b_verse_portal_get(VM *vm) {
     int argc = vm->cur_argc;
-    const char *pwd = r_str(vm, argc - 1);
+    char *pwd = _strdup(r_str(vm, argc - 1));
+    if (!pwd) pwd = _strdup("");
     r_popn(vm, argc);
     VerseWorld *w = vw();
     for (int i = 0; i < w->portal_count; i++) {
         if (strcmp(w->portals[i].pwd, pwd) == 0) {
             r_push_cell(vm, w->portals[i].x, w->portals[i].y, w->portals[i].ly);
-            return 1;
+            free(pwd); return 1;
         }
     }
+    free(pwd);
     r_push_nil(vm);
     return 1;
 }
@@ -526,7 +526,8 @@ static int b_verse_entity_put(VM *vm) {
     int argc = vm->cur_argc;
     int y = (int)r_num(vm, argc - 3);
     int x = (int)r_num(vm, argc - 2);
-    const char *id = r_str(vm, argc - 1);
+    char *id = _strdup(r_str(vm, argc - 1));
+    if (!id) id = _strdup("");
     r_popn(vm, argc);
     VerseWorld *w = vw();
     /* world border (law coord_limit, default +-2^25): reject beyond it
@@ -536,13 +537,13 @@ static int b_verse_entity_put(VM *vm) {
         if (strcmp(w->laws[i].name, "coord_limit") == 0) lim = w->laws[i].val;
     if (lim > 0 && ((double)x > lim || (double)x < -lim || (double)y > lim || (double)y < -lim)) {
         fprintf(stderr, "[verse] entity '%s' at (%d,%d) beyond world border +-%g - rejected\n", id, x, y, lim);
-        r_push_int(vm, 0); return 1;
+        free(id); r_push_int(vm, 0); return 1;
     }
     w->grid_dirty = 1;
     for (int i = 0; i < w->ent_count; i++) {
         if (strcmp(w->ents[i].id, id) == 0) {
             w->ents[i].x = x; w->ents[i].y = y;
-            r_push_int(vm, 1); return 1;
+            free(id); r_push_int(vm, 1); return 1;
         }
     }
     if (w->ent_count >= w->ent_cap) {
@@ -552,22 +553,25 @@ static int b_verse_entity_put(VM *vm) {
     EntityPos *e = &w->ents[w->ent_count++];
     snprintf(e->id, sizeof e->id, "%s", id);
     e->x = x; e->y = y;
+    free(id);
     r_push_int(vm, 1);
     return 1;
 }
 
 static int b_verse_entity_remove(VM *vm) {
     int argc = vm->cur_argc;
-    const char *id = r_str(vm, argc - 1);
+    char *id = _strdup(r_str(vm, argc - 1));
+    if (!id) id = _strdup("");
     r_popn(vm, argc);
     VerseWorld *w = vw();
     for (int i = 0; i < w->ent_count; i++) {
         if (strcmp(w->ents[i].id, id) == 0) {
             w->ents[i] = w->ents[w->ent_count - 1];
             w->ent_count--;
-            r_push_int(vm, 1); return 1;
+            free(id); r_push_int(vm, 1); return 1;
         }
     }
+    free(id);
     r_push_int(vm, 0);
     return 1;
 }
@@ -601,13 +605,14 @@ static int b_verse_nearby(VM *vm) {
 static int b_verse_law_set(VM *vm) {
     int argc = vm->cur_argc;
     double val = r_num(vm, argc - 2);
-    const char *name = r_str(vm, argc - 1);
+    char *name = _strdup(r_str(vm, argc - 1));
+    if (!name) name = _strdup("");
     r_popn(vm, argc);
     VerseWorld *w = vw();
     for (int i = 0; i < w->law_count; i++) {
         if (strcmp(w->laws[i].name, name) == 0) {
             w->laws[i].val = val;
-            r_push_int(vm, 1); return 1;
+            free(name); r_push_int(vm, 1); return 1;
         }
     }
     if (w->law_count >= w->law_cap) {
@@ -617,22 +622,25 @@ static int b_verse_law_set(VM *vm) {
     Law *l = &w->laws[w->law_count++];
     snprintf(l->name, sizeof l->name, "%s", name);
     l->val = val;
+    free(name);
     r_push_int(vm, 1);
     return 1;
 }
 
 static int b_verse_law_get(VM *vm) {
     int argc = vm->cur_argc;
-    const char *name = r_str(vm, argc - 1);
+    char *name = _strdup(r_str(vm, argc - 1));
+    if (!name) name = _strdup("");
     r_popn(vm, argc);
     VerseWorld *w = vw();
     for (int i = 0; i < w->law_count; i++) {
         if (strcmp(w->laws[i].name, name) == 0) {
             Value v; v.type = VAL_FLOAT; v.fval = w->laws[i].val; v.ival = 0; v.sval = NULL;
             r_push(vm, v);
-            return 1;
+            free(name); return 1;
         }
     }
+    free(name);
     r_push_int(vm, 0);
     return 1;
 }
@@ -670,25 +678,30 @@ static int b_verse_snapshot(VM *vm) {
 /* ---------- biome builtins ---------- */
 static int b_verse_biome_add(VM *vm) {   /* verse_biome_add(name, level, parent) -> id or -1 */
     int argc = vm->cur_argc;
-    const char *name = r_str(vm, argc - 1);
+    char *name = _strdup(r_str(vm, argc - 1));
+    if (!name) name = _strdup("");
     int level = (int)r_num(vm, argc - 2);
     int parent = (int)r_num(vm, argc - 3);
     r_popn(vm, argc);
     VerseWorld *w = vw();
-    if (w->biome_count >= 256 || biome_find(w, name) >= 0) { r_push_int(vm, -1); return 1; }
+    if (w->biome_count >= 256 || biome_find(w, name) >= 0) { free(name); r_push_int(vm, -1); return 1; }
     if (level < 0 || level > 8) level = 0;
     if (parent < -1 || parent >= w->biome_count) parent = -1;
     Biome *b = &w->biomes[w->biome_count];
     snprintf(b->name, sizeof b->name, "%s", name);
     b->level = level; b->parent = parent; b->palette_count = 0;
+    free(name);
     r_push_int(vm, w->biome_count++);
     return 1;
 }
 static int b_verse_biome_id(VM *vm) {   /* verse_biome_id(name) -> id or -1 */
     int argc = vm->cur_argc;
-    const char *name = r_str(vm, argc - 1);
+    char *name = _strdup(r_str(vm, argc - 1));
+    if (!name) name = _strdup("");
     r_popn(vm, argc);
-    r_push_int(vm, biome_find(vw(), name));
+    int id = biome_find(vw(), name);
+    free(name);
+    r_push_int(vm, id);
     return 1;
 }
 static int b_verse_biome_name(VM *vm) {  /* verse_biome_name(id) -> name or nil */

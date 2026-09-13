@@ -22,6 +22,7 @@
 static SetObj *vm_set_slot(VM *vm, int idx);
 int vm_set_new(VM *vm);
 static const char *builtin_set_name(int bi);
+static void value_assign(Value *dst, const Value *src);
 
 #ifdef _WIN32
 #include <windows.h>
@@ -52,6 +53,98 @@ static _Thread_local VmThread *g_cur_thread = NULL;
 VmThread *vm_get_cur_thread(void) { return g_cur_thread; }
 void vm_set_cur_thread(VmThread *t) { g_cur_thread = t; }
 
+int vm_thread_completion(VM *vm, const char *name, Value *out) {
+    if (!vm || !vm->code || !name || !out) return 0;
+    VmThread *found = NULL;
+    VM_LOCK(vm);
+    for (int i = 0; i < VM_MAX_THREADS; ++i) {
+        VmThread *candidate = vm->threads[i];
+        if (!candidate || candidate->tidx < 0 ||
+            candidate->tidx >= vm->code->thread_count ||
+            !vm->code->thread_names[candidate->tidx]) continue;
+        if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+            found = candidate;
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < vm->task_count; ++i) {
+            VmThread *candidate = vm->tasks[i];
+            if (!candidate || candidate->tidx < 0 ||
+                candidate->tidx >= vm->code->thread_count ||
+                !vm->code->thread_names[candidate->tidx]) continue;
+            if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+                found = candidate;
+            }
+        }
+    }
+    if (!found || !found->finished) {
+        VM_UNLOCK(vm);
+        return 0;
+    }
+    if (found->error_ready) {
+        value_assign(out, &found->error);
+        VM_UNLOCK(vm);
+        return 2;
+    }
+    if (found->result_ready) value_assign(out, &found->result);
+    else {
+        Value nil = { VAL_NIL, 0, 0, NULL, NULL };
+        value_assign(out, &nil);
+    }
+    VM_UNLOCK(vm);
+    return 1;
+}
+
+int vm_thread_wait(VM *vm, const char *name, long long timeout_ms) {
+    if (!vm || !vm->code || !name || !name[0]) return 0;
+    VmThread *found = NULL;
+    VM_LOCK(vm);
+    for (int i = 0; i < VM_MAX_THREADS; ++i) {
+        VmThread *candidate = vm->threads[i];
+        if (!candidate || candidate->tidx < 0 ||
+            candidate->tidx >= vm->code->thread_count ||
+            !vm->code->thread_names[candidate->tidx]) continue;
+        if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+            found = candidate;
+            break;
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < vm->task_count; ++i) {
+            VmThread *candidate = vm->tasks[i];
+            if (!candidate || candidate->tidx < 0 ||
+                candidate->tidx >= vm->code->thread_count ||
+                !vm->code->thread_names[candidate->tidx]) continue;
+            if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+                found = candidate;
+                break;
+            }
+        }
+    }
+    VM_UNLOCK(vm);
+    if (!found || found == vm_get_cur_thread()) return 0;
+    if (found->finished) return 1;
+
+    if (!found->is_task && found->os_handle) {
+        unsigned int wait_ms = timeout_ms < 0 ? 0xFFFFFFFFu :
+                               timeout_ms > 0xFFFFFFFFLL ? 0xFFFFFFFFu :
+                               (unsigned int)timeout_ms;
+        if (im_thread_join(found->os_handle, wait_ms) != 0) return 0;
+        im_thread_close(found->os_handle);
+        found->os_handle = NULL;
+        return found->finished ? 1 : 0;
+    }
+
+    unsigned long long deadline = 0;
+    if (timeout_ms >= 0)
+        deadline = GetTickCount64() + (unsigned long long)timeout_ms;
+    while (!found->finished) {
+        if (timeout_ms >= 0 && GetTickCount64() >= deadline) return 0;
+        Sleep(1);
+    }
+    return 1;
+}
+
 int vm_cur_sp(VM *vm) { (void)vm; return g_cur_thread ? g_cur_thread->sp : -1; }
 Value *vm_cur_stack(VM *vm) { (void)vm; return g_cur_thread ? g_cur_thread->stack : NULL; }
 void vm_cur_set_sp(VM *vm, int sp) { (void)vm; if (g_cur_thread) g_cur_thread->sp = sp; }
@@ -72,6 +165,97 @@ static inline LONG InterlockedExchangeAdd(volatile LONG *p, LONG v) { return __s
 static _Thread_local VmThread *g_cur_thread = NULL;
 VmThread *vm_get_cur_thread(void) { return g_cur_thread; }
 void vm_set_cur_thread(VmThread *t) { g_cur_thread = t; }
+int vm_thread_completion(VM *vm, const char *name, Value *out) {
+    if (!vm || !vm->code || !name || !out) return 0;
+    VmThread *found = NULL;
+    VM_LOCK(vm);
+    for (int i = 0; i < VM_MAX_THREADS; ++i) {
+        VmThread *candidate = vm->threads[i];
+        if (!candidate || candidate->tidx < 0 ||
+            candidate->tidx >= vm->code->thread_count ||
+            !vm->code->thread_names[candidate->tidx]) continue;
+        if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+            found = candidate;
+            break;
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < vm->task_count; ++i) {
+            VmThread *candidate = vm->tasks[i];
+            if (!candidate || candidate->tidx < 0 ||
+                candidate->tidx >= vm->code->thread_count ||
+                !vm->code->thread_names[candidate->tidx]) continue;
+            if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+                found = candidate;
+            }
+        }
+    }
+    if (!found || !found->finished) {
+        VM_UNLOCK(vm);
+        return 0;
+    }
+    if (found->error_ready) {
+        value_assign(out, &found->error);
+        VM_UNLOCK(vm);
+        return 2;
+    }
+    if (found->result_ready) value_assign(out, &found->result);
+    else {
+        Value nil = { VAL_NIL, 0, 0, NULL, NULL };
+        value_assign(out, &nil);
+    }
+    VM_UNLOCK(vm);
+    return 1;
+}
+
+int vm_thread_wait(VM *vm, const char *name, long long timeout_ms) {
+    if (!vm || !vm->code || !name || !name[0]) return 0;
+    VmThread *found = NULL;
+    VM_LOCK(vm);
+    for (int i = 0; i < VM_MAX_THREADS; ++i) {
+        VmThread *candidate = vm->threads[i];
+        if (!candidate || candidate->tidx < 0 ||
+            candidate->tidx >= vm->code->thread_count ||
+            !vm->code->thread_names[candidate->tidx]) continue;
+        if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+            found = candidate;
+            break;
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < vm->task_count; ++i) {
+            VmThread *candidate = vm->tasks[i];
+            if (!candidate || candidate->tidx < 0 ||
+                candidate->tidx >= vm->code->thread_count ||
+                !vm->code->thread_names[candidate->tidx]) continue;
+            if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+                found = candidate;
+                break;
+            }
+        }
+    }
+    VM_UNLOCK(vm);
+    if (!found || found == vm_get_cur_thread()) return 0;
+    if (found->finished) return 1;
+    if (!found->is_task && found->os_handle) {
+        unsigned int wait_ms = timeout_ms < 0 ? 0xFFFFFFFFu :
+                               timeout_ms > 0xFFFFFFFFLL ? 0xFFFFFFFFu :
+                               (unsigned int)timeout_ms;
+        if (im_thread_join(found->os_handle, wait_ms) != 0) return 0;
+        im_thread_close(found->os_handle);
+        found->os_handle = NULL;
+        return found->finished ? 1 : 0;
+    }
+    unsigned long long deadline = 0;
+    if (timeout_ms >= 0)
+        deadline = im_platform_now_ms() + (unsigned long long)timeout_ms;
+    while (!found->finished) {
+        if (timeout_ms >= 0 && im_platform_now_ms() >= deadline) return 0;
+        im_platform_sleep_ms(1);
+    }
+    return 1;
+}
+
 int vm_cur_sp(VM *vm) { (void)vm; return g_cur_thread ? g_cur_thread->sp : -1; }
 Value *vm_cur_stack(VM *vm) { (void)vm; return g_cur_thread ? g_cur_thread->stack : NULL; }
 void vm_cur_set_sp(VM *vm, int sp) { (void)vm; if (g_cur_thread) g_cur_thread->sp = sp; }
@@ -105,6 +289,7 @@ bool val_eq(const Value *a, const Value *b) {
         if (a->type == VAL_NIL)    return true;
         if (a->type == VAL_ARRAY)  return a->ival == b->ival;  /* 同一锟斤拷锟斤拷锟斤拷锟??*/
         if (a->type == VAL_DICT)   return a->ival == b->ival;
+        if (a->type == VAL_FUNCTION) return a->ptr == b->ptr;
     }
     /* int ??float 锟斤拷值锟饺较ｏ拷锟斤拷锟洁不同锟斤拷锟斤拷一锟缴诧拷锟斤拷龋锟斤拷薷锟斤拷锟??锟街碉拷??nil 锟饺较碉拷锟斤拷锟叫ｏ拷 */
     if ((a->type == VAL_INT || a->type == VAL_FLOAT) &&
@@ -170,9 +355,7 @@ void push_nil(VM *vm) {
 
 void pop(VM *vm) {
     if (g_cur_thread->sp >= 0) {
-        if (g_cur_thread->stack[g_cur_thread->sp].type == VAL_STRING &&
-            g_cur_thread->stack[g_cur_thread->sp].ival != 1)
-            free(g_cur_thread->stack[g_cur_thread->sp].sval);
+        value_free(&g_cur_thread->stack[g_cur_thread->sp]);
         g_cur_thread->sp--;
     }
 }
@@ -182,14 +365,203 @@ static void value_copy(Value *dst, const Value *src) {
     *dst = *src;
     if (src->type == VAL_STRING && src->sval && src->ival != 1)
         dst->sval = strdup(src->sval);
+    else if (src->type == VAL_FUNCTION && src->ptr)
+        im_closure_function_retain((ImClosureFunction *)src->ptr);
+}
+
+/* Replace a register/global slot with an owned copy while releasing the old
+ * function/string payload.  Primitive and pool-backed values remain cheap. */
+static void value_assign(Value *dst, const Value *src) {
+    if (!dst || !src || dst == src) return;
+    Value tmp = { VAL_NIL, 0, 0, NULL, NULL };
+    value_copy(&tmp, src);
+    value_free(dst);
+    *dst = tmp;
+}
+
+static void value_move(Value *dst, Value *src) {
+    if (!dst || !src || dst == src) return;
+    value_free(dst);
+    *dst = *src;
+    src->type = VAL_NIL; src->ival = 0; src->fval = 0; src->sval = NULL; src->ptr = NULL;
+}
+
+static void value_set(Value *dst, int type, int ival, double fval, char *sval, void *ptr) {
+    if (!dst) return;
+    value_free(dst);
+    dst->type = type;
+    dst->ival = ival;
+    dst->fval = fval;
+    dst->sval = sval;
+    dst->ptr = ptr;
 }
 
 void limit_abort(VM *vm, const char *what, double used, double limit);
 
 void value_free(Value *v) {
+    if (!v) return;
     if (v->type == VAL_STRING && v->sval && v->ival != 1) {
         free(v->sval);
-        v->sval = NULL;
+    }
+    if (v->type == VAL_FUNCTION && v->ptr) {
+        im_closure_function_release((ImClosureFunction *)v->ptr);
+    }
+    v->type = VAL_NIL;
+    v->ival = 0;
+    v->fval = 0;
+    v->sval = NULL;
+    v->ptr = NULL;
+}
+
+void vm_value_assign(Value *dst, const Value *src) {
+    value_assign(dst, src);
+}
+
+void vm_value_move(Value *dst, Value *src) {
+    value_move(dst, src);
+}
+
+int vm_push_value(VM *vm, Value *src) {
+    (void)vm;
+    if (!src || !g_cur_thread || g_cur_thread->sp >= 1023) return 0;
+    g_cur_thread->sp++;
+    value_move(&g_cur_thread->stack[g_cur_thread->sp], src);
+    return 1;
+}
+
+static void value_release_values(Value *values, size_t count) {
+    if (!values) return;
+    for (size_t i = 0; i < count; ++i) value_free(&values[i]);
+}
+
+static void vm_thread_release_values(VmThread *t) {
+    if (!t) return;
+    value_release_values(t->reg, t->reg_cap > 0 ? (size_t)t->reg_cap : 0);
+    value_release_values(t->stack, t->sp >= 0 ? (size_t)(t->sp + 1) : 0);
+    value_free(&t->result);
+    value_free(&t->error);
+    t->result_ready = false;
+    t->error_ready = false;
+    if (t->closure_env) {
+        im_closure_env_release(t->closure_env);
+        t->closure_env = NULL;
+    }
+    if (t->frame_env) {
+        for (int i = 0; i < t->frame_cap; ++i) {
+            if (t->frame_env[i]) im_closure_env_release(t->frame_env[i]);
+            t->frame_env[i] = NULL;
+        }
+    }
+}
+
+static void vm_thread_reset_values(VmThread *t) {
+    if (!t) return;
+    vm_thread_release_values(t);
+    if (t->reg && t->reg_cap > 0)
+        memset(t->reg, 0, (size_t)t->reg_cap * sizeof(Value));
+    memset(t->stack, 0, sizeof(t->stack));
+    ImMutex *msg_lock = (ImMutex *)t->msg_lock;
+    if (msg_lock) im_mutex_lock(msg_lock);
+    if (t->msg_q) {
+        for (int i = 0; i < t->msg_cap; ++i) value_free(&t->msg_q[i]);
+    }
+    t->msg_head = 0;
+    t->msg_tail = 0;
+    if (msg_lock) im_mutex_unlock(msg_lock);
+}
+
+static void vm_thread_dispose(VmThread *t, bool delete_fiber) {
+    if (!t) return;
+    if (delete_fiber && t->fiber_self) {
+        DeleteFiber(t->fiber_self);
+        t->fiber_self = NULL;
+    }
+    free(t->exc_stack);
+    vm_thread_release_values(t);
+    free(t->reg);
+    free(t->frame_code);
+    free(t->frame_ip);
+    free(t->frame_base);
+    free(t->frame_res);
+    free(t->frame_sp);
+    free(t->frame_env);
+    for (int i = 0; i < t->msg_cap; ++i) value_free(&t->msg_q[i]);
+    free(t->msg_q);
+    if (t->msg_lock) im_mutex_free((ImMutex *)t->msg_lock);
+    free(t);
+}
+
+int vm_thread_release(VM *vm, const char *name) {
+    if (!vm || !vm->code || !name || !name[0]) return 0;
+    VmThread *found = NULL;
+    int thread_slot = -1;
+    int task_slot = -1;
+    VM_LOCK(vm);
+    for (int i = 0; i < VM_MAX_THREADS; ++i) {
+        VmThread *candidate = vm->threads[i];
+        if (!candidate || candidate->tidx < 0 ||
+            candidate->tidx >= vm->code->thread_count ||
+            !vm->code->thread_names[candidate->tidx]) continue;
+        if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+            found = candidate;
+            thread_slot = i;
+            break;
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < vm->task_count; ++i) {
+            VmThread *candidate = vm->tasks[i];
+            if (!candidate || candidate->tidx < 0 ||
+                candidate->tidx >= vm->code->thread_count ||
+                !vm->code->thread_names[candidate->tidx]) continue;
+            if (strcmp(vm->code->thread_names[candidate->tidx], name) == 0) {
+                found = candidate;
+                task_slot = i;
+                break;
+            }
+        }
+    }
+    if (!found || !found->finished) {
+        VM_UNLOCK(vm);
+        return 0;
+    }
+    if (task_slot >= 0) {
+        /* The scheduler owns task fibers and performs the actual free after
+           observing this flag.  Keeping the table entry until then avoids a
+           use-after-free in its scan. */
+        found->release_requested = true;
+        VM_UNLOCK(vm);
+        unsigned long long deadline = GetTickCount64() + 3000;
+        while (GetTickCount64() < deadline) {
+            VM_LOCK(vm);
+            bool gone = vm->tasks[task_slot] != found;
+            VM_UNLOCK(vm);
+            if (gone) return 1;
+            Sleep(1);
+        }
+        return 0;
+    }
+    vm->threads[thread_slot] = NULL;
+    VM_UNLOCK(vm);
+
+    if (found->os_handle) {
+        im_thread_join(found->os_handle, 3000);
+        im_thread_close(found->os_handle);
+        found->os_handle = NULL;
+    }
+    vm_thread_dispose(found, false);
+    return 1;
+}
+
+static void vm_thread_unwind_frames(VmThread *t, int target_count) {
+    if (!t) return;
+    if (target_count < 0) target_count = 0;
+    while (t->frame_count > target_count) {
+        int slot = t->frame_count - 1;
+        if (t->closure_env) im_closure_env_release(t->closure_env);
+        t->closure_env = t->frame_env ? t->frame_env[slot] : NULL;
+        if (t->frame_env) t->frame_env[slot] = NULL;
+        t->frame_count = slot;
     }
 }
 /* ========== 锟街凤拷锟斤拷锟斤拷(interning) ==========
@@ -451,6 +823,7 @@ static unsigned dict_hash_key(const Value *k) {
         case VAL_ARRAY:
         case VAL_DICT:
         case VAL_SET:   return (unsigned)k->ival * 2654435761u;
+        case VAL_FUNCTION: return (unsigned)(uintptr_t)k->ptr * 2654435761u;
         default:        return 0;
     }
 }
@@ -585,7 +958,7 @@ void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val) {
     if (i >= 0) {
         value_free(&a->items[i + 1]);
         a->items[i + 1] = val_copy;
-        val_copy.type = VAL_NIL; val_copy.sval = NULL;
+        val_copy.type = VAL_NIL; val_copy.ival = 0; val_copy.fval = 0; val_copy.sval = NULL; val_copy.ptr = NULL;
     } else {
         int pair_idx = a->count;
         vm_array_push(vm, aidx, &key_copy);
@@ -614,6 +987,10 @@ bool vm_dict_remove(VM *vm, int aidx, const Value *key) {
         a->items[k + 1] = a->items[k + 3];
     }
     a->count -= 2;
+    /* The pair shift transfers ownership into the earlier slots.  Clear the
+       two stale tail slots without releasing them a second time. */
+    a->items[a->count] = (Value){ VAL_NIL, 0, 0, NULL, NULL };
+    a->items[a->count + 1] = (Value){ VAL_NIL, 0, 0, NULL, NULL };
     vm->used_mem -= 2.0 * (double)sizeof(Value);
     if (vm->used_mem < 0.0) vm->used_mem = 0.0;
     if (a->count > 0) dict_hash_build(vm, aidx);
@@ -723,6 +1100,7 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
         }
         snprintf(buf + used, bufsz - used, "}");
     }
+    else if (v->type == VAL_FUNCTION) snprintf(buf, bufsz, "<function>");
     else snprintf(buf, bufsz, "<unknown>");
 }
 
@@ -780,7 +1158,8 @@ void vm_global_grow(VM *vm, int need) {
     }
 }
 
-/* swap the VM globals for an independent copy of the current table (names strdup'd, values shallow-copied so pool refs stay shared).
+/* Swap the VM globals for an independent copy of the current table.  Names and
+   owned strings are copied; closure functions retain their shared payload.
    Used by nested vm_exec runs so the outer table is untouched. Caller frees the old table after the nested run. */
 void vm_global_clone(VM *vm) {
     GlobalSlot *src = vm->globals;
@@ -791,7 +1170,8 @@ void vm_global_clone(VM *vm) {
     vm->be_bound = NULL; vm->be_bound_cap = 0;
     vm_global_grow(vm, sc - 1);
     for (int i = 0; i < sc; i++) {
-        vm->globals[i] = src[i];
+        vm->globals[i].val.type = VAL_NIL;
+        value_copy(&vm->globals[i].val, &src[i].val);
         vm->globals[i].name = src[i].name ? strdup(src[i].name) : NULL;
     }
     for (int i = 0; i < sbcap && i < vm->globalCap; i++) vm->be_bound[i] = sbe[i];
@@ -808,6 +1188,7 @@ void vm_init(VM *vm) {
     vm->gc_amark = NULL; vm->gc_amark_cap = 0;
     vm->gc_smark = NULL; vm->gc_smark_cap = 0;
     vm->gc_work = NULL; vm->gc_work_count = 0; vm->gc_work_cap = 0;
+    vm->gc_emark = NULL; vm->gc_emark_count = 0; vm->gc_emark_cap = 0;
     vm->gc_runs = 0; vm->gc_freed = 0;
 
     MMRESULT tr = timeBeginPeriod(1); /* 1ms timer resolution */
@@ -955,9 +1336,10 @@ void vm_free(VM *vm) {
         if (!tk) continue;
         if (tk->fiber_self) { DeleteFiber(tk->fiber_self); tk->fiber_self = NULL; }
         free(tk->exc_stack);
+        vm_thread_release_values(tk);
         free(tk->reg);
         free(tk->frame_code); free(tk->frame_ip); free(tk->frame_base); free(tk->frame_res); free(tk->frame_sp); free(tk->frame_env);
-        for (int _mj = 0; _mj < tk->msg_cap; _mj++) { Value _mv = tk->msg_q[_mj]; if (_mv.type == VAL_STRING && _mv.ival != 1 && _mv.sval) free(_mv.sval); }
+        for (int _mj = 0; _mj < tk->msg_cap; _mj++) value_free(&tk->msg_q[_mj]);
         free(tk->msg_q);
         if (tk->msg_lock) { im_mutex_free((ImMutex*)tk->msg_lock); }
         free(tk);
@@ -1009,25 +1391,28 @@ void vm_free(VM *vm) {
     /* 锟竭筹拷锟斤拷锟斤拷锟斤拷锟斤拷 */
     for (int i = 0; i < VM_MAX_THREADS; i++) {
         if (vm->threads[i]) {
-            free(vm->threads[i]->reg);
-            for (int _mi=0; _mi<vm->threads[i]->msg_cap; _mi++) { Value _mv=vm->threads[i]->msg_q[_mi]; if (_mv.type==VAL_STRING && _mv.ival!=1 && _mv.sval) free(_mv.sval); } free(vm->threads[i]->msg_q);
-            if (vm->threads[i]->msg_lock) {
-                im_mutex_free((ImMutex*)vm->threads[i]->msg_lock);
-                free(vm->threads[i]->msg_lock);
+            VmThread *thread = vm->threads[i];
+            vm_thread_release_values(thread);
+            free(thread->exc_stack);
+            free(thread->frame_code); free(thread->frame_ip); free(thread->frame_base);
+            free(thread->frame_res); free(thread->frame_sp); free(thread->frame_env);
+            free(thread->reg);
+            for (int _mi = 0; _mi < thread->msg_cap; _mi++) value_free(&thread->msg_q[_mi]);
+            free(thread->msg_q);
+            if (thread->msg_lock) {
+                im_mutex_free((ImMutex*)thread->msg_lock);
             }
-            free(vm->threads[i]);
+            free(thread);
             vm->threads[i] = NULL;
         }
     }
     if (vm->global_lock) {
         im_mutex_free((ImMutex*)vm->global_lock);
-        free(vm->global_lock);
         vm->global_lock = NULL;
     }
     for (int _si = 0; _si < VM_GLOBAL_SHARDS; _si++) {
         if (vm->global_locks[_si]) {
             im_mutex_free((ImMutex*)vm->global_locks[_si]);
-            free(vm->global_locks[_si]);
             vm->global_locks[_si] = NULL;
         }
     }
@@ -1038,6 +1423,13 @@ void vm_free(VM *vm) {
         vm->dict_hashes = NULL;
         vm->dict_hashes_cap = 0;
     }
+    free(vm->gc_amark);
+    free(vm->gc_smark);
+    free(vm->gc_work);
+    free(vm->gc_emark);
+    vm->gc_amark = NULL; vm->gc_smark = NULL; vm->gc_work = NULL; vm->gc_emark = NULL;
+    vm->gc_amark_cap = vm->gc_smark_cap = vm->gc_work_cap = 0;
+    vm->gc_emark_count = vm->gc_emark_cap = 0;
     /* mod-script bytecodes kept alive for mod threads */
     for (int i = 0; i < vm->mod_bc_count; i++) {
         if (vm->mod_bcs[i]) { bytecode_free(vm->mod_bcs[i]); free(vm->mod_bcs[i]); vm->mod_bcs[i] = NULL; }
@@ -1046,7 +1438,6 @@ void vm_free(VM *vm) {
     for (int i = 0; i < vm->mutex_count; i++) {
         if (vm->mutexes[i]) {
             im_mutex_free((ImMutex*)vm->mutexes[i]);
-            free(vm->mutexes[i]);
             vm->mutexes[i] = NULL;
         }
     }
@@ -1200,10 +1591,15 @@ static void vm_set_add(VM *vm, int idx, Value *v) {
         s->items = ni;
         s->cap = nc;
     }
-    Value c = *v;
+    Value c = { VAL_NIL, 0, 0, NULL, NULL };
+    value_copy(&c, v);
     if (c.type == VAL_STRING) {
         const char *np = vm_intern(vm, c.sval ? c.sval : "");
-        if (np) { c.sval = (char*)np; c.ival = 1; }
+        if (np) {
+            if (c.ival != 1 && c.sval) free(c.sval);
+            c.sval = (char*)np;
+            c.ival = 1;
+        }
     }
     s->items[s->count++] = c;
 }
@@ -1808,11 +2204,12 @@ static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
 static void vm_throw(VM *vm, VmThread *t, Value *err) {
     if (t->exc_depth > 0) {
         ExcFrame *f = &t->exc_stack[t->exc_depth - 1];
+        for (int i = t->sp; i > f->sp && i >= 0; --i) value_free(&t->stack[i]);
+        vm_thread_unwind_frames(t, f->frame_count);
         t->code = f->code;
         t->ip = f->ip;
         t->sp = f->sp;
         t->base = f->base;
-        t->frame_count = f->frame_count;
         if (f->var_idx >= 0) {
             im_mutex_lock((ImMutex*)VM_GSHARD(vm, f->var_idx));
             im_mutex_unlock((ImMutex*)VM_GSHARD(vm, f->var_idx));
@@ -1825,11 +2222,11 @@ static void vm_throw(VM *vm, VmThread *t, Value *err) {
                 }
                 vm->globalCount = f->var_idx + 1;
             }
-            value_free(&vm->globals[f->var_idx].val);
-            vm->globals[f->var_idx].val = *err;
-            if (err->type == VAL_STRING && err->sval && err->ival != 1) {
-                const char *np = vm_intern(vm, err->sval);
-                if (np) { vm->globals[f->var_idx].val.sval = (char*)np; vm->globals[f->var_idx].val.ival = 1; }
+            value_assign(&vm->globals[f->var_idx].val, err);
+            Value *stored = &vm->globals[f->var_idx].val;
+            if (stored->type == VAL_STRING && stored->sval && stored->ival != 1) {
+                const char *np = vm_intern(vm, stored->sval);
+                if (np) { free(stored->sval); stored->sval = (char*)np; stored->ival = 1; }
             }
             im_mutex_unlock((ImMutex*)VM_GSHARD(vm, f->var_idx));
         } else if (f->ignore) {
@@ -1866,7 +2263,9 @@ static void vm_throw(VM *vm, VmThread *t, Value *err) {
         for (int fi = t->frame_count - 1; fi >= 0; fi--)
             fprintf(stderr, "%s%d", (fi < t->frame_count - 1) ? "," : "", t->frame_ip[fi]);
         fprintf(stderr, "]}\n");
-        vm->last_error = 1;
+        value_assign(&t->error, err);
+        t->error_ready = true;
+        if (t->is_main) vm->last_error = 1;
         t->running = false;
         return;
     }
@@ -1876,7 +2275,9 @@ static void vm_throw(VM *vm, VmThread *t, Value *err) {
     for (int fi = t->frame_count - 1; fi >= 0; fi--)
         fprintf(stderr, " -> ip=%d", t->frame_ip[fi]);
     fprintf(stderr, "\n");
-    vm->last_error = 1;
+    value_assign(&t->error, err);
+    t->error_ready = true;
+    if (t->is_main) vm->last_error = 1;
     t->running = false;
 }
 
@@ -1914,7 +2315,10 @@ static int vm_call_func_at(VM *vm, VmThread *t, int fidx, int argc, Value *argv)
     t->frame_count++;
     t->base += VM_FRAME_REGS;
     Value *FR = t->reg + t->base;
-    for (int k = 0; k < argc; k++) FR[k + 1] = argv[k];
+    int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;
+    for (int k = 0; k < param_slots; k++)
+        value_set(&FR[k + 1], VAL_NIL, 0, 0, NULL, NULL);
+    for (int k = 0; k < argc; k++) value_assign(&FR[k + 1], &argv[k]);
     t->frame_sp[t->frame_count - 1] = t->sp;
     t->code = root->funcs[fidx];
     t->ip = 0;
@@ -1989,8 +2393,33 @@ static void gc_ensure_mark(VM *vm, int cap, int is_array) {
         *mk = n; *mkcap = nc;
     }
 }
+static void gc_mark_value(VM *vm, const Value *val);
+
+static void gc_mark_env(VM *vm, ImClosureEnv *env) {
+    if (!env) return;
+    for (int i = 0; i < vm->gc_emark_count; ++i)
+        if (vm->gc_emark[i] == env) return;
+    if (vm->gc_emark_count >= vm->gc_emark_cap) {
+        int nc = vm->gc_emark_cap ? vm->gc_emark_cap * 2 : 64;
+        ImClosureEnv **n = realloc(vm->gc_emark, (size_t)nc * sizeof(*n));
+        if (!n) return;
+        vm->gc_emark = n;
+        vm->gc_emark_cap = nc;
+    }
+    vm->gc_emark[vm->gc_emark_count++] = env;
+    for (size_t i = 0; i < im_closure_env_size(env); ++i) {
+        const Value *captured = im_closure_env_get(env, i);
+        if (captured) gc_mark_value(vm, captured);
+    }
+}
+
 static void gc_mark_value(VM *vm, const Value *val) {
     int idx, isa;
+    if (val->type == VAL_FUNCTION) {
+        ImClosureFunction *fn = im_closure_from_value(val);
+        gc_mark_env(vm, im_closure_function_env(fn));
+        return;
+    }
     if (val->type == VAL_ARRAY || val->type == VAL_DICT) { idx = val->ival - 1; isa = 1; }
     else if (val->type == VAL_SET) { idx = val->ival - 1; isa = 0; }
     else return;
@@ -2012,26 +2441,52 @@ static void gc_mark_value(VM *vm, const Value *val) {
 static void gc_mark(VM *vm) {
     /* globals */
     for (int i = 0; i < vm->globalCount; i++) gc_mark_value(vm, &vm->globals[i].val);
-    /* every thread: builtin arg stack + live register file */
+    /* The main script thread is a stack object and is intentionally not
+       stored in vm->threads[].  It is still a GC root while the script runs. */
+    if (vm->main_thread) {
+        VmThread *mt = vm->main_thread;
+        gc_mark_env(vm, mt->closure_env);
+        for (int k = 0; k < mt->frame_count; ++k)
+            if (mt->frame_env) gc_mark_env(vm, mt->frame_env[k]);
+        int msp = mt->sp; if (msp < 0) msp = 0; if (msp > 1023) msp = 1023;
+        for (int k = 0; k <= msp; ++k) gc_mark_value(vm, &mt->stack[k]);
+        int mregEnd = mt->base + VM_FRAME_REGS;
+        if (mregEnd > mt->reg_cap) mregEnd = mt->reg_cap;
+        for (int k = 0; k < mregEnd; ++k) gc_mark_value(vm, &mt->reg[k]);
+    }
+    /* every thread: builtin arg stack + live register file.  Completion
+       values remain roots until thread_release() disposes the instance. */
     for (int i = 0; i < VM_MAX_THREADS; i++) {
         VmThread *tt = vm->threads[i];
         if (!tt) continue;
+        gc_mark_env(vm, tt->closure_env);
+        for (int k = 0; k < tt->frame_count; ++k)
+            if (tt->frame_env) gc_mark_env(vm, tt->frame_env[k]);
         int sp = tt->sp; if (sp < 0) sp = 0; if (sp > 1023) sp = 1023;
         for (int k = 0; k <= sp; k++) gc_mark_value(vm, &tt->stack[k]);
         int regEnd = tt->base + VM_FRAME_REGS;
         if (regEnd > tt->reg_cap) regEnd = tt->reg_cap;
         for (int k = 0; k < regEnd; k++) gc_mark_value(vm, &tt->reg[k]);
+        if (tt->result_ready) gc_mark_value(vm, &tt->result);
+        if (tt->error_ready) gc_mark_value(vm, &tt->error);
     }
     /* task (virtual thread) roots: all tasks are parked at switch points during GC */
     for (int i = 0; i < vm->task_count; i++) {
         VmThread *tk = vm->tasks[i];
-        if (!tk || tk->finished) continue;
-        int tsp = tk->sp; if (tsp < 0) tsp = 0; if (tsp > 1023) tsp = 1023;
-        for (int k = 0; k <= tsp; k++) gc_mark_value(vm, &tk->stack[k]);
-        int tregEnd = tk->base + VM_FRAME_REGS;
-        if (tregEnd > tk->reg_cap) tregEnd = tk->reg_cap;
-        for (int k = 0; k < tregEnd; k++) gc_mark_value(vm, &tk->reg[k]);
-        for (int k = 0; k < tk->msg_cap; k++) { Value _mv = tk->msg_q[k]; gc_mark_value(vm, &_mv); }
+        if (!tk) continue;
+        gc_mark_env(vm, tk->closure_env);
+        for (int k = 0; k < tk->frame_count; ++k)
+            if (tk->frame_env) gc_mark_env(vm, tk->frame_env[k]);
+        if (!tk->finished) {
+            int tsp = tk->sp; if (tsp < 0) tsp = 0; if (tsp > 1023) tsp = 1023;
+            for (int k = 0; k <= tsp; k++) gc_mark_value(vm, &tk->stack[k]);
+            int tregEnd = tk->base + VM_FRAME_REGS;
+            if (tregEnd > tk->reg_cap) tregEnd = tk->reg_cap;
+            for (int k = 0; k < tregEnd; k++) gc_mark_value(vm, &tk->reg[k]);
+            for (int k = 0; k < tk->msg_cap; k++) { Value _mv = tk->msg_q[k]; gc_mark_value(vm, &_mv); }
+        }
+        if (tk->result_ready) gc_mark_value(vm, &tk->result);
+        if (tk->error_ready) gc_mark_value(vm, &tk->error);
     }
     /* C-side holders */
     if (vm->record_loaded_dict > 0) gc_mark_value(vm, &(Value){ .type = VAL_DICT, .ival = vm->record_loaded_dict, .fval = 0, .sval = NULL });
@@ -2122,9 +2577,11 @@ static void gc_sweep(VM *vm) {
     if (vm->gc_amark && vm->gc_amark_cap) memset(vm->gc_amark, 0, (size_t)vm->gc_amark_cap);
     if (vm->gc_smark && vm->gc_smark_cap) memset(vm->gc_smark, 0, (size_t)vm->gc_smark_cap);
     vm->gc_work_count = 0;
+    vm->gc_emark_count = 0;
 }
 void gc_collect(VM *vm) {
     if (!vm->gc_enabled) return;
+    vm->gc_emark_count = 0;
     gc_ensure_mark(vm, vm->arrayCount + 1, 1);
     gc_ensure_mark(vm, vm->setCount + 1, 0);
     gc_mark(vm);
@@ -2410,15 +2867,13 @@ static void vm_execute_thread(VmThread *t) {
 
         /* ---------- 锟斤拷锟斤拷锟狡讹拷 ---------- */
         L_MOV:
-            R[ins.r1] = R[ins.r2];
+            value_assign(&R[ins.r1], &R[ins.r2]);
             continue;
         L_LOADK_INT:
-            R[ins.r1].type = VAL_INT;
-            R[ins.r1].ival = ins.r2;
+            { Value v = { VAL_INT, ins.r2, 0, NULL, NULL }; value_assign(&R[ins.r1], &v); }
             continue;
         L_LOADK_FLOAT:
-            R[ins.r1].type = VAL_FLOAT;
-            R[ins.r1].fval = t->code->float_pool[ins.r2];
+            { Value v = { VAL_FLOAT, 0, t->code->float_pool[ins.r2], NULL, NULL }; value_assign(&R[ins.r1], &v); }
             continue;
         L_LOADK_STRING: {
             int sidx = ins.r2;
@@ -2432,14 +2887,13 @@ static void vm_execute_thread(VmThread *t) {
             } else {
                 s = vm_intern(vm, t->code->string_pool[sidx]);
             }
-            R[ins.r1].type = VAL_STRING;
-            R[ins.r1].ival = (s != NULL) ? 1 : 0;  /* 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷通锟街凤拷锟斤拷 */
-            R[ins.r1].sval = (char*)(s ? s : strdup(t->code->string_pool[sidx]));
+            Value v = { VAL_STRING, (s != NULL) ? 1 : 0, 0,
+                        (char *)(s ? s : t->code->string_pool[sidx]), NULL };
+            value_assign(&R[ins.r1], &v);
             continue;
         }
         L_LOADK_BOOL:
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = ins.r2 ? 1 : 0;
+            { Value v = { VAL_BOOL, ins.r2 ? 1 : 0, 0, NULL, NULL }; value_assign(&R[ins.r1], &v); }
             continue;
 
         /* ---------- 锟斤拷锟斤拷 ---------- */
@@ -2450,11 +2904,12 @@ static void vm_execute_thread(VmThread *t) {
                 exit(1);
             }
             if (a->type == VAL_SET || b->type == VAL_SET) {
+                int n = -1;
                 if (a->type == VAL_SET && b->type == VAL_SET) {
-                    int n = set_union(vm, a->ival, b->ival);
-                    if (n < 0) { R[ins.r1].type = VAL_NIL; }
-                    else { R[ins.r1].type = VAL_SET; R[ins.r1].ival = n; }
-                } else { R[ins.r1].type = VAL_NIL; }
+                    n = set_union(vm, a->ival, b->ival);
+                }
+                if (n < 0) value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
+                else value_set(&R[ins.r1], VAL_SET, n, 0, NULL, NULL);
                 continue;
             }
             if (a->type == VAL_STRING || b->type == VAL_STRING) {
@@ -2464,21 +2919,19 @@ static void vm_execute_thread(VmThread *t) {
  else { value_to_string(vm, b, sbuf3, sizeof sbuf3, 0); sb = sbuf3; }
                 size_t la = strlen(sa), lb = strlen(sb);
                 char *nb = malloc(la + lb + 1);
-                if (!nb) { R[ins.r1].type = VAL_STRING; R[ins.r1].ival = 0; R[ins.r1].sval = strdup(""); }
-                else { memcpy(nb, sa, la); memcpy(nb+la, sb, lb); nb[la+lb] = 0; R[ins.r1].type = VAL_STRING; R[ins.r1].ival = 0; R[ins.r1].sval = nb; }
+                if (!nb) nb = strdup("");
+                else { memcpy(nb, sa, la); memcpy(nb+la, sb, lb); nb[la+lb] = 0; }
+                value_set(&R[ins.r1], VAL_STRING, 0, 0, nb, NULL);
             } else if (a->type == VAL_INT && b->type == VAL_INT) {
                 int64_t r64 = (int64_t)a->ival + (int64_t)b->ival;
                 if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                    R[ins.r1].type = VAL_FLOAT;
-                    R[ins.r1].fval = (double)r64;
+                    value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r64, NULL, NULL);
                 } else {
-                    R[ins.r1].type = VAL_INT;
-                    R[ins.r1].ival = (int)r64;
+                    value_set(&R[ins.r1], VAL_INT, (int)r64, 0, NULL, NULL);
                 }
             } else {
                 double da = val_as_double(a), db = val_as_double(b);
-                R[ins.r1].type = VAL_FLOAT;
-                R[ins.r1].fval = da + db;
+                value_set(&R[ins.r1], VAL_FLOAT, 0, da + db, NULL, NULL);
             }
             continue;
         }
@@ -2488,8 +2941,8 @@ static void vm_execute_thread(VmThread *t) {
                Results are always marked heap-owned (ival=0), so later stack/global
                transfers cannot mistake a fresh concat buffer for an interned string. */
             int first = ins.r2, count = ins.r3, rres = ins.r1;
-            if (count <= 0) { R[rres].type = VAL_NIL; R[rres].ival = 0; R[rres].fval = 0; R[rres].sval = NULL; continue; }
-            if (count == 1) { R[rres] = R[first]; continue; }
+            if (count <= 0) { value_set(&R[rres], VAL_NIL, 0, 0, NULL, NULL); continue; }
+            if (count == 1) { value_assign(&R[rres], &R[first]); continue; }
             /* trap: array/dict operands in a + chain silently lose data (arr + [x]); reject */
             for (int _ci = 0; _ci < count; _ci++) {
                 int _vt = R[first + _ci].type;
@@ -2511,7 +2964,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 if (all_str) {
                     char *nb = malloc(total + 1);
-                    if (!nb) { R[rres].type = VAL_STRING; R[rres].ival = 0; R[rres].sval = strdup(""); continue; }
+                    if (!nb) { value_set(&R[rres], VAL_STRING, 0, 0, strdup(""), NULL); continue; }
                     size_t off = 0;
                     for (int i = 0; i < count; i++) {
                         const char *s = R[first + i].sval ? R[first + i].sval : "";
@@ -2520,9 +2973,8 @@ static void vm_execute_thread(VmThread *t) {
                         off += l;
                     }
                     nb[total] = 0;
-                    R[rres].type = VAL_STRING;
-                    R[rres].sval = nb;
-                    continue;  /* ival intentionally left stale (see header note) */
+                    value_set(&R[rres], VAL_STRING, 0, 0, nb, NULL);
+                    continue;
                 }
             }
             /* general path: left-assoc fold, identical semantics to repeated OP_ADD.
@@ -2578,59 +3030,55 @@ static void vm_execute_thread(VmThread *t) {
                     }
                 }
                 if (acc.type == VAL_STRING) acc.ival = 0;
-                R[rres] = acc;
+                value_move(&R[rres], &acc);
             }
             continue;
         }
         L_SUB: {
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_SET || b->type == VAL_SET) {
+                int n = -1;
                 if (a->type == VAL_SET && b->type == VAL_SET) {
-                    int n = set_diff(vm, a->ival, b->ival);
-                    if (n < 0) { R[ins.r1].type = VAL_NIL; }
-                    else { R[ins.r1].type = VAL_SET; R[ins.r1].ival = n; }
-                } else { R[ins.r1].type = VAL_NIL; }
+                    n = set_diff(vm, a->ival, b->ival);
+                }
+                if (n < 0) value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
+                else value_set(&R[ins.r1], VAL_SET, n, 0, NULL, NULL);
                 continue;
             }
             if (a->type == VAL_INT && b->type == VAL_INT) {
                 int64_t r64 = (int64_t)a->ival - (int64_t)b->ival;
                 if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                    R[ins.r1].type = VAL_FLOAT;
-                    R[ins.r1].fval = (double)r64;
+                    value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r64, NULL, NULL);
                 } else {
-                    R[ins.r1].type = VAL_INT;
-                    R[ins.r1].ival = (int)r64;
+                    value_set(&R[ins.r1], VAL_INT, (int)r64, 0, NULL, NULL);
                 }
             } else {
                 double res = val_as_double(a) - val_as_double(b);
-                R[ins.r1].type = VAL_FLOAT;
-                R[ins.r1].fval = res;
+                value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             }
             continue;
         }
         L_MUL: {
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_SET || b->type == VAL_SET) {
+                int n = -1;
                 if (a->type == VAL_SET && b->type == VAL_SET) {
-                    int n = set_intersect(vm, a->ival, b->ival);
-                    if (n < 0) { R[ins.r1].type = VAL_NIL; }
-                    else { R[ins.r1].type = VAL_SET; R[ins.r1].ival = n; }
-                } else { R[ins.r1].type = VAL_NIL; }
+                    n = set_intersect(vm, a->ival, b->ival);
+                }
+                if (n < 0) value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
+                else value_set(&R[ins.r1], VAL_SET, n, 0, NULL, NULL);
                 continue;
             }
             if (a->type == VAL_INT && b->type == VAL_INT) {
                 int64_t r64 = (int64_t)a->ival * (int64_t)b->ival;
                 if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                    R[ins.r1].type = VAL_FLOAT;
-                    R[ins.r1].fval = (double)r64;
+                    value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r64, NULL, NULL);
                 } else {
-                    R[ins.r1].type = VAL_INT;
-                    R[ins.r1].ival = (int)r64;
+                    value_set(&R[ins.r1], VAL_INT, (int)r64, 0, NULL, NULL);
                 }
             } else {
                 double res = val_as_double(a) * val_as_double(b);
-                R[ins.r1].type = VAL_FLOAT;
-                R[ins.r1].fval = res;
+                value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             }
             continue;
         }
@@ -2642,23 +3090,21 @@ static void vm_execute_thread(VmThread *t) {
                 continue;
             }
             double res = val_as_double(a) / val_as_double(b);
-            R[ins.r1].type = VAL_FLOAT;
-            R[ins.r1].fval = res;
+            value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             continue;
         }
         L_NEG: {
             Value *v = &R[ins.r2];
             if (v->type == VAL_INT) {
                 if (v->ival == -2147483647 - 1) {
-                    R[ins.r1].type = VAL_FLOAT;
-                    R[ins.r1].fval = 2147483648.0;
+                    value_set(&R[ins.r1], VAL_FLOAT, 0, 2147483648.0, NULL, NULL);
                 } else {
-                    R[ins.r1].type = VAL_INT;
-                    R[ins.r1].ival = -v->ival;
+                    int neg = -v->ival;
+                    value_set(&R[ins.r1], VAL_INT, neg, 0, NULL, NULL);
                 }
             } else {
-                R[ins.r1].type = VAL_FLOAT;
-                R[ins.r1].fval = -val_as_double(v);
+                double neg = -val_as_double(v);
+                value_set(&R[ins.r1], VAL_FLOAT, 0, neg, NULL, NULL);
             }
             continue;
         }
@@ -2670,8 +3116,7 @@ static void vm_execute_thread(VmThread *t) {
             if (R[ins.r2].type == VAL_SET && R[ins.r3].type == VAL_SET)
                 eqres = set_equal(vm, R[ins.r2].ival, R[ins.r3].ival);
             else eqres = val_eq(&R[ins.r2], &R[ins.r3]) ? 1 : 0;
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = eqres;
+            value_set(&R[ins.r1], VAL_BOOL, eqres, 0, NULL, NULL);
             continue;
         }
         L_NEQ: {
@@ -2679,32 +3124,27 @@ static void vm_execute_thread(VmThread *t) {
             if (R[ins.r2].type == VAL_SET && R[ins.r3].type == VAL_SET)
                 eq = set_equal(vm, R[ins.r2].ival, R[ins.r3].ival);
             else eq = val_eq(&R[ins.r2], &R[ins.r3]) ? 1 : 0;
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = !eq ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, !eq ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_LT: {
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (c < 0) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (c < 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_GT: {
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (c > 0) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (c > 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_LE: {
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (c <= 0) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (c <= 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_GE: {
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (c >= 0) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (c >= 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
 
@@ -2713,16 +3153,14 @@ static void vm_execute_thread(VmThread *t) {
             Value va = R[ins.r2], vb = R[ins.r3];
             int a = (va.type == VAL_BOOL) ? (va.ival != 0) : (va.type == VAL_INT) ? (va.ival != 0) : (va.type == VAL_FLOAT) ? (va.fval != 0.0) : (va.type == VAL_NIL) ? 0 : 1;
             int b = (vb.type == VAL_BOOL) ? (vb.ival != 0) : (vb.type == VAL_INT) ? (vb.ival != 0) : (vb.type == VAL_FLOAT) ? (vb.fval != 0.0) : (vb.type == VAL_NIL) ? 0 : 1;
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (a && b) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (a && b) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_OR: {
             Value va = R[ins.r2], vb = R[ins.r3];
             int a = (va.type == VAL_BOOL) ? (va.ival != 0) : (va.type == VAL_INT) ? (va.ival != 0) : (va.type == VAL_FLOAT) ? (va.fval != 0.0) : (va.type == VAL_NIL) ? 0 : 1;
             int b = (vb.type == VAL_BOOL) ? (vb.ival != 0) : (vb.type == VAL_INT) ? (vb.ival != 0) : (vb.type == VAL_FLOAT) ? (vb.fval != 0.0) : (vb.type == VAL_NIL) ? 0 : 1;
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (a || b) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (a || b) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_NOT: {
@@ -2731,8 +3169,7 @@ static void vm_execute_thread(VmThread *t) {
                         (v->type == VAL_INT)  ? (v->ival != 0) :
                         (v->type == VAL_FLOAT) ? (v->fval != 0.0) :
                         (v->type == VAL_NIL)  ? 0 : 1; /* 锟斤拷锟斤拷锟斤拷锟斤拷(锟街凤拷??锟斤拷锟斤拷/锟街碉拷)为锟斤拷,??JUMP_IF_FALSE 一??*/
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = truth ? 0 : 1;
+            value_set(&R[ins.r1], VAL_BOOL, truth ? 0 : 1, 0, NULL, NULL);
             continue;
         }
 
@@ -2744,11 +3181,11 @@ static void vm_execute_thread(VmThread *t) {
                 int n = ins.r3;
                 for (int i = 0; i < n; i++) {
                     if (t->sp >= 0) {
-                        if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1) free(t->stack[t->sp].sval);
+                        value_free(&t->stack[t->sp]);
                         t->sp--;
                     }
                 }
-                R[ins.r1].type = VAL_NIL;
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
                 continue;
             }
             int n = ins.r3;
@@ -2758,13 +3195,11 @@ static void vm_execute_thread(VmThread *t) {
                 vm_array_push_n(vm, aidx, &t->stack[base], n);
                 /* 锟斤拷栈锟斤拷锟酵凤拷压栈时锟斤拷锟狡碉拷锟街凤拷锟斤拷??*/
                 for (int i = 0; i < n; i++) {
-                    if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                        free(t->stack[t->sp].sval);
+                    value_free(&t->stack[t->sp]);
                     t->sp--;
                 }
             }
-            R[ins.r1].type = VAL_ARRAY;
-            R[ins.r1].ival = aidx + 1;
+            value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL);
             continue;
         }
         L_NEW_DICT: {
@@ -2774,12 +3209,11 @@ static void vm_execute_thread(VmThread *t) {
                 int n = ins.r3;
                 for (int i = 0; i < 2 * n; i++) {
                     if (t->sp >= 0) {
-                        if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                            free(t->stack[t->sp].sval);
+                        value_free(&t->stack[t->sp]);
                         t->sp--;
                     }
                 }
-                R[ins.r1].type = VAL_NIL;
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
                 continue;
             }
             int n = ins.r3;
@@ -2788,13 +3222,11 @@ static void vm_execute_thread(VmThread *t) {
                 int base = t->sp - (2 * n - 1);
                 vm_array_push_n(vm, aidx, &t->stack[base], 2 * n);
                 for (int i = 0; i < 2 * n; i++) {
-                    if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                        free(t->stack[t->sp].sval);
+                    value_free(&t->stack[t->sp]);
                     t->sp--;
                 }
             }
-            R[ins.r1].type = VAL_DICT;
-            R[ins.r1].ival = aidx + 1;
+            value_set(&R[ins.r1], VAL_DICT, aidx + 1, 0, NULL, NULL);
             continue;
         }
         L_INDEX_GET: {
@@ -2802,7 +3234,7 @@ static void vm_execute_thread(VmThread *t) {
             Value *idxv = &R[ins.r3];
             if (obj->type == VAL_ARRAY) {
                 int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);
-                R[ins.r1] = vm_array_get(vm, obj->ival - 1, i); /* out-of-range read stays nil (compat) */
+                { Value got = vm_array_get(vm, obj->ival - 1, i); value_move(&R[ins.r1], &got); } /* out-of-range read stays nil (compat) */
             } else if (obj->type == VAL_DICT) {
                 int aidx = obj->ival - 1;
                 if (idxv->type == VAL_INT) {
@@ -2818,9 +3250,9 @@ static void vm_execute_thread(VmThread *t) {
                         }
                     }
                     VM_UNLOCK(vm);
-                    R[ins.r1] = v;
+                value_move(&R[ins.r1], &v);
                 } else {
-                    R[ins.r1] = vm_dict_get(vm, aidx, idxv);
+            { Value got = vm_dict_get(vm, aidx, idxv); value_move(&R[ins.r1], &got); }
                 }
             } else if (obj->type == VAL_STRING) {
                 /* 锟街凤拷锟斤拷锟斤拷锟街斤拷锟斤拷锟斤拷 s[i] ??锟斤拷锟街凤拷锟街凤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷尾锟斤拷锟斤拷 */
@@ -2830,14 +3262,12 @@ static void vm_execute_thread(VmThread *t) {
                 if (i < 0) i = len + i;
                 if (i >= 0 && i < len) {
                     char buf[2] = { s[i], '\0' };
-                    R[ins.r1].type = VAL_STRING;
-                    R[ins.r1].sval = strdup(buf);
-                    R[ins.r1].ival = 0; R[ins.r1].fval = 0;
+                    value_set(&R[ins.r1], VAL_STRING, 0, 0, strdup(buf), NULL);
                 } else {
-                    R[ins.r1].type = VAL_NIL; R[ins.r1].ival = 0; R[ins.r1].fval = 0; R[ins.r1].sval = NULL;
+                    value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
                 }
             } else {
-                R[ins.r1].type = VAL_NIL; R[ins.r1].ival = 0; R[ins.r1].fval = 0; R[ins.r1].sval = NULL;
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
             }
             continue;
         }
@@ -2865,13 +3295,13 @@ static void vm_execute_thread(VmThread *t) {
             int need_lock = (vm->active_threads > 1);
             if (need_lock) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
             if (idx >= 0 && idx < vm->globalCount) {
-                R[ins.r1] = vm->globals[idx].val;
+                value_assign(&R[ins.r1], &vm->globals[idx].val);
                 if (R[ins.r1].type == VAL_STRING && R[ins.r1].sval && R[ins.r1].ival != 1) {
                     const char *np = vm_intern(vm, R[ins.r1].sval);
-                    if (np) { R[ins.r1].sval = (char*)np; R[ins.r1].ival = 1; }
+                    if (np) { free(R[ins.r1].sval); R[ins.r1].sval = (char*)np; R[ins.r1].ival = 1; }
                 }
             } else {
-                R[ins.r1].type = VAL_NIL;
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
             }
             if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
             continue;
@@ -2893,19 +3323,21 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 vm->globalCount = idx + 1;
             }
-            Value newv = R[src_reg];
+            Value newv = { VAL_NIL, 0, 0, NULL, NULL };
+            value_copy(&newv, &R[src_reg]);
             if (idx >= 0 && vm->be_bound[idx] > 0) {
                 int bidx = vm->be_bound[idx] - 1;
                 if (!set_contains(vm, bidx, &newv)) {
                     if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
                     vm_throw_kind(vm, "type_mismatch");
                     R = t->reg + t->base;
+                    value_free(&newv);
                     continue;
                 }
             }
             if (newv.type == VAL_STRING && newv.sval && newv.ival != 1) {
                 const char *np = vm_intern(vm, newv.sval);
-                if (np) { newv.sval = (char*)np; newv.ival = 1; }
+                if (np) { free(newv.sval); newv.sval = (char*)np; newv.ival = 1; }
             }
             value_free(&vm->globals[idx].val);
             vm->globals[idx].val = newv;
@@ -2954,19 +3386,26 @@ static void vm_execute_thread(VmThread *t) {
                 case VAL_ARRAY: {
                     if (t->sp >= 1023) continue;
                     t->sp++;
-                    t->stack[t->sp] = *v; /* 浅锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷??VM 锟斤拷锟斤拷??*/
+                    t->stack[t->sp] = *v; /* pool-backed handle */
                     break;
                 }
                 case VAL_DICT: {
                     if (t->sp >= 1023) continue;
                     t->sp++;
-                    t->stack[t->sp] = *v; /* 浅锟斤拷锟斤拷锟斤拷锟街碉拷??VM 锟斤拷锟斤拷??*/
+                    t->stack[t->sp] = *v; /* pool-backed handle */
                     break;
                 }
                 case VAL_SET: {
                     if (t->sp >= 1023) continue;
                     t->sp++;
-                    t->stack[t->sp] = *v; /* shallow copy, set object lives in the vm set pool */
+                    t->stack[t->sp] = *v; /* pool-backed handle */
+                    break;
+                }
+                case VAL_FUNCTION: {
+                    if (t->sp >= 1023) continue;
+                    t->sp++;
+                    t->stack[t->sp] = *v;
+                    if (v->ptr) im_closure_function_retain((ImClosureFunction *)v->ptr);
                     break;
                 }
                 default: push_nil(vm);
@@ -2975,7 +3414,7 @@ static void vm_execute_thread(VmThread *t) {
         }
         L_POP_REG: {
             if (t->sp >= 0) {
-                R[ins.r1] = t->stack[t->sp];
+                value_move(&R[ins.r1], &t->stack[t->sp]);
                 t->sp--;
             }
             continue;
@@ -2986,6 +3425,8 @@ static void vm_execute_thread(VmThread *t) {
             /* r2 = 锟斤拷锟斤拷锟斤拷锟斤拷锟街凤拷锟斤拷锟截碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街诧拷锟揭ｏ拷锟斤拷锟斤拷注锟斤拷顺锟斤拷影锟斤拷??*/
             const char *name = (ins.r2 >= 0 && ins.r2 < t->code->string_count)
                                ? t->code->string_pool[ins.r2] : NULL;
+            Bytecode *caller_code = t->code;
+            int caller_base = t->base;
             if (name) {
                 int nidx = ins.r2;
                 if (t->code->str_interned && nidx >= 0 && nidx < t->code->string_count) {
@@ -3021,8 +3462,12 @@ static void vm_execute_thread(VmThread *t) {
                     }
                 }
             }
+            if (t->code != caller_code || t->base != caller_base) {
+                R = t->reg + t->base;
+                continue;
+            }
             if (t->sp >= 0) {
-                R[ins.r1] = t->stack[t->sp];
+                value_move(&R[ins.r1], &t->stack[t->sp]);
                 t->sp--;
             }
             continue;
@@ -3141,9 +3586,12 @@ static void vm_execute_thread(VmThread *t) {
             if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
             continue;
         }
-L_LOAD_CAPTURE: {
-            if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) { R[ins.r1].type = VAL_NIL; R[ins.r1].ival = 0; R[ins.r1].fval = 0; R[ins.r1].sval = NULL; R[ins.r1].ptr = NULL; continue; }
-            R[ins.r1] = *im_closure_env_get(t->closure_env, (size_t)ins.r2); continue;
+        L_LOAD_CAPTURE: {
+            if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) {
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
+                continue;
+            }
+            value_assign(&R[ins.r1], im_closure_env_get(t->closure_env, (size_t)ins.r2)); continue;
         }
 L_STORE_CAPTURE: {
             if (t->closure_env && ins.r2 >= 0 && (size_t)ins.r2 < im_closure_env_size(t->closure_env)) im_closure_env_set(t->closure_env, (size_t)ins.r2, &R[ins.r1]);
@@ -3152,10 +3600,18 @@ L_STORE_CAPTURE: {
 L_MAKE_FUNC: {
             ImClosureEnv *env = im_closure_env_new((size_t)ins.r3);
             if (!env) { t->running = false; vm->last_error = 1; continue; }
-            for (int ci = ins.r3 - 1; ci >= 0; --ci) { if (t->sp < 0 || !im_closure_env_set(env, (size_t)ci, &t->stack[t->sp--])) { im_closure_env_release(env); t->running = false; vm->last_error = 1; continue; } }
+            for (int ci = ins.r3 - 1; ci >= 0; --ci) {
+                if (t->sp < 0) { im_closure_env_release(env); t->running = false; vm->last_error = 1; break; }
+                Value *captured = &t->stack[t->sp--];
+                int ok = im_closure_env_set(env, (size_t)ci, captured);
+                value_free(captured);
+                if (!ok) { im_closure_env_release(env); t->running = false; vm->last_error = 1; break; }
+            }
+            if (!t->running) continue;
             ImClosureFunction *fn = im_closure_function_new(ins.r2, env); im_closure_env_release(env);
             if (!fn) { t->running = false; vm->last_error = 1; continue; }
-            R[ins.r1].type = VAL_FUNCTION; R[ins.r1].ival = ins.r2; R[ins.r1].fval = 0; R[ins.r1].sval = NULL; R[ins.r1].ptr = fn; continue;
+            value_set(&R[ins.r1], VAL_FUNCTION, ins.r2, 0, NULL, fn);
+            continue;
         }
 L_CALL_VALUE: {
             if (R[ins.r1].type != VAL_FUNCTION) { fprintf(stderr, "error: value is not callable\n"); t->running = false; vm->last_error = 1; continue; }
@@ -3192,9 +3648,12 @@ L_CALL_FUNC: {
             t->frame_count++;
             t->base += FRAME_REGS;
             Value *FR = t->reg + t->base;
+            int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;
+            for (int i = 0; i < param_slots; i++)
+                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);
             /* 锟斤拷锟斤拷锟斤拷锟斤拷权锟斤拷栈转锟狡ｏ拷锟姐拷锟斤拷锟斤拷锟斤拷栈锟斤拷锟斤拷锟斤拷锟揭伙拷锟斤拷锟??*/
             for (int i = argc - 1; i >= 0; i--) {
-                FR[i + 1] = t->stack[t->sp];
+                value_move(&FR[i + 1], &t->stack[t->sp]);
                 t->sp--;
             }
             /* frame_sp uses the same pre-increment frame slot as the other frame metadata. */
@@ -3220,23 +3679,27 @@ L_CALL_FUNC: {
                 t->base = t->frame_base[t->frame_count];
                 if (t->closure_env) im_closure_env_release(t->closure_env);
                 t->closure_env = t->frame_env[t->frame_count];
-                if (t->closure_env) im_closure_env_retain(t->closure_env);
+                /* Transfer the frame's retained environment reference back to
+                 * the caller.  The slot must be cleared so thread teardown does
+                 * not release the same reference a second time. */
+                t->frame_env[t->frame_count] = NULL;
                 Value *OR = t->reg + t->base;
                 R = OR;
                 while (t->exc_depth > 0 && t->exc_stack[t->exc_depth - 1].frame_count >= t->frame_count) t->exc_depth--;
                 int cres = t->frame_res[t->frame_count];
-                if (cres >= 0 && cres < FRAME_REGS) {
-                    OR[cres] = ret;  /* 浅锟斤拷锟斤拷锟斤拷锟街凤拷锟斤拷锟斤拷锟斤拷梅锟斤拷锟斤拷锟斤拷锟街★拷址锟斤拷锟斤拷锟斤拷头牛锟街革拷氡ｏ拷锟斤拷锟斤拷??*/
-                }
+                if (cres >= 0 && cres < FRAME_REGS) value_assign(&OR[cres], &ret);
             } else {
+                /* A thread body has no caller frame. Preserve its value for
+                   thread_result() instead of dropping it at the root. */
+                value_assign(&t->result, &ret);
+                t->result_ready = true;
                 t->running = false;
             }
             continue;
         }
 
         L_IS_NIL: {
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = (R[ins.r2].type == VAL_NIL) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, (R[ins.r2].type == VAL_NIL) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_EQK: {
@@ -3252,8 +3715,7 @@ L_CALL_FUNC: {
             sv.type = VAL_STRING; sv.ival = (s != NULL) ? 1 : 0; sv.fval = 0;
             sv.sval = (char*)(s ? s : (t->code->string_pool[sidx] ? t->code->string_pool[sidx] : ""));
             Value opv = R[ins.r2];  /* 锟饺革拷锟狡诧拷锟斤拷锟斤拷锟斤拷r1 ??r2 锟斤拷锟斤拷同为 result 锟侥达拷??*/
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = val_eq(&opv, &sv) ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_NEQK: {
@@ -3269,8 +3731,7 @@ L_CALL_FUNC: {
             sv.type = VAL_STRING; sv.ival = (s != NULL) ? 1 : 0; sv.fval = 0;
             sv.sval = (char*)(s ? s : (t->code->string_pool[sidx] ? t->code->string_pool[sidx] : ""));
             Value opv = R[ins.r2];  /* 锟饺革拷锟狡诧拷锟斤拷锟斤拷 */
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = val_eq(&opv, &sv) ? 0 : 1;
+            value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 0 : 1, 0, NULL, NULL);
             continue;
         }
 
@@ -3314,15 +3775,18 @@ L_CALL_FUNC: {
                 vm->record_meta[gidx].scope = (meta >>2) &3;
                 vm->record_meta[gidx].merge = (meta >>4) &1;
     if (vm->record_loaded_dict >0 && nm) {
-                    Value found; found.type = VAL_NIL; found.ival =0; found.fval =0; found.sval = NULL;
+                    Value found; found.type = VAL_NIL; found.ival =0; found.fval =0; found.sval = NULL; found.ptr = NULL;
                     ArrayObj *ld = vm_pool_slot(vm, vm->record_loaded_dict -1);
                     if (ld) {
                         for (int i =0; i +1 < ld->count; i +=2) {
                             Value *k = &ld->items[i];
-                            if (k->type == VAL_STRING && k->sval && strcmp(k->sval, nm) ==0) { found = ld->items[i+1]; break; }
+                            if (k->type == VAL_STRING && k->sval && strcmp(k->sval, nm) ==0) {
+                                value_copy(&found, &ld->items[i+1]);
+                                break;
+                            }
                         }
                     }
-                    if (found.type != VAL_NIL) { VM_UNLOCK(vm); value_copy(&R[ins.r3], &found); }
+                    if (found.type != VAL_NIL) { VM_UNLOCK(vm); value_move(&R[ins.r3], &found); }
                     else VM_UNLOCK(vm);
                 } else { VM_UNLOCK(vm); }
             }
@@ -3339,8 +3803,7 @@ L_CALL_FUNC: {
                     R = t->reg + t->base;
                     continue;
                 }
-                R[ins.r1].type = VAL_INT;
-                R[ins.r1].ival = a->ival % b->ival;
+                value_set(&R[ins.r1], VAL_INT, a->ival % b->ival, 0, NULL, NULL);
                 continue;
             }
             int bi = (int)val_as_double(b);
@@ -3350,8 +3813,7 @@ L_CALL_FUNC: {
                 continue;
             }
             double da = val_as_double(a);
-            R[ins.r1].type = VAL_INT;
-            R[ins.r1].ival = (int)da % bi;
+            value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);
             continue;
         }
         L_NEW_SET: {
@@ -3359,11 +3821,10 @@ L_CALL_FUNC: {
             int sidx = vm_set_new(vm);
             if (sidx < 0) {
                 for (int i = 0; i < n && t->sp >= 0; i++) {
-                    if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                        free(t->stack[t->sp].sval);
+                    value_free(&t->stack[t->sp]);
                     t->sp--;
                 }
-                R[ins.r1].type = VAL_NIL;
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
                 continue;
             }
             if (n > 0 && t->sp >= n - 1) {
@@ -3377,19 +3838,17 @@ L_CALL_FUNC: {
                     }
                 }
                 for (int i = 0; i < n; i++) {
-                    if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                        free(t->stack[t->sp].sval);
+                    value_free(&t->stack[t->sp]);
                     t->sp--;
                 }
             }
-            R[ins.r1].type = VAL_SET;
-            R[ins.r1].ival = sidx;
+            value_set(&R[ins.r1], VAL_SET, sidx, 0, NULL, NULL);
             continue;
         }
         L_SET_INTERVAL: {
-            if (t->sp < 1) { R[ins.r1].type = VAL_NIL; continue; }
-            double hi = val_as_double(&t->stack[t->sp]); t->sp--;
-            double lo = val_as_double(&t->stack[t->sp]); t->sp--;
+            if (t->sp < 1) { value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL); continue; }
+            double hi = val_as_double(&t->stack[t->sp]); value_free(&t->stack[t->sp]); t->sp--;
+            double lo = val_as_double(&t->stack[t->sp]); value_free(&t->stack[t->sp]); t->sp--;
             int nameFlags = ins.r2;
             int nameIdx = nameFlags & 0xFFFFFF;
             int flags = (nameFlags >> 24) & 0xFF;
@@ -3397,7 +3856,7 @@ L_CALL_FUNC: {
             if (nameIdx >= 0 && nameIdx < t->code->string_count) sname = t->code->string_pool[nameIdx];
             int bi = builtin_set_index(sname);
             int sidx = vm_set_new(vm);
-            if (sidx < 0) { R[ins.r1].type = VAL_NIL; continue; }
+            if (sidx < 0) { value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL); continue; }
             SetObj *s = vm_set_slot(vm, sidx);
             s->kind = 2;
             s->nameIdx = bi;
@@ -3405,15 +3864,13 @@ L_CALL_FUNC: {
             s->hi = hi;
             s->loInc = (flags & 1) ? 1 : 0;
             s->hiInc = (flags & 2) ? 1 : 0;
-            R[ins.r1].type = VAL_SET;
-            R[ins.r1].ival = sidx;
+            value_set(&R[ins.r1], VAL_SET, sidx, 0, NULL, NULL);
             continue;
         }
         L_IN: {
             Value la = R[ins.r2], rb = R[ins.r3];
             int res = set_contains_or_subset(vm, &la, &rb) ? 1 : 0;
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = res;
+            value_set(&R[ins.r1], VAL_BOOL, res, 0, NULL, NULL);
             continue;
         }
         L_MIN: {
@@ -3457,14 +3914,15 @@ L_CALL_FUNC: {
                     R = t->reg + t->base;
                     continue;
                 } else {
-                    vm->globals[g].val = init;
-                    if (init.type == VAL_STRING && init.sval && init.ival != 1) {
-                        const char *np = vm_intern(vm, init.sval);
-                        if (np) { vm->globals[g].val.sval = (char*)np; vm->globals[g].val.ival = 1; }
+                    value_assign(&vm->globals[g].val, &init);
+                    Value *stored = &vm->globals[g].val;
+                    if (stored->type == VAL_STRING && stored->sval && stored->ival != 1) {
+                        const char *np = vm_intern(vm, stored->sval);
+                        if (np) { free(stored->sval); stored->sval = (char*)np; stored->ival = 1; }
                     }
                 }
             } else {
-                vm->globals[g].val.type = VAL_NIL; /* uninitialized */
+                value_set(&vm->globals[g].val, VAL_NIL, 0, 0, NULL, NULL); /* uninitialized */
             }
             im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
             continue;
@@ -3525,19 +3983,19 @@ L_CALL_FUNC: {
                 /* single: duplicate start silently ignored */
                 while (argc-- > 0) {
                     if (t->sp >= 0) {
-                        if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                            free(t->stack[t->sp].sval);
+                        value_free(&t->stack[t->sp]);
                         t->sp--;
                     }
                 }
                 continue;
             }
             /* 锟斤拷锟斤拷锟竭筹拷执锟斤拷锟斤拷锟斤拷??*/
+            if (vm->threads[tidx] != NULL && vm->threads[tidx]->finished)
+                vm_thread_release(vm, root->thread_names[tidx]);
             if (vm->limit_threads > 0 && vm->active_threads >= vm->limit_threads) {
                 while (argc-- > 0) {
                     if (t->sp >= 0) {
-                        if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1)
-                            free(t->stack[t->sp].sval);
+                        value_free(&t->stack[t->sp]);
                         t->sp--;
                     }
                 }
@@ -3552,17 +4010,16 @@ L_CALL_FUNC: {
                 if (dup) {
                     if (!(root->thread_flags[tidx] & THREAD_FLAG_SINGLE))
                         fprintf(stderr, "task %s already running\n", root->thread_names[tidx]);
-                    while (argc-- > 0) { if (t->sp >= 0) { if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1) free(t->stack[t->sp].sval); t->sp--; } }
-                    R[res].type = VAL_INT; R[res].ival = 0;
+                    while (argc-- > 0) { if (t->sp >= 0) { value_free(&t->stack[t->sp]); t->sp--; } }
+                    value_set(&R[res], VAL_INT, 0, 0, NULL, NULL);
                     continue;
                 }
                 if (vm_task_create(vm, root, tidx, t, argc) == NULL) {
                     fprintf(stderr, "task limit %d exceeded (%s)\n", VM_MAX_TASKS, root->thread_names[tidx]);
-                    while (argc-- > 0) { if (t->sp >= 0) { if (t->stack[t->sp].type == VAL_STRING && t->stack[t->sp].ival != 1) free(t->stack[t->sp].sval); t->sp--; } }
+                    while (argc-- > 0) { if (t->sp >= 0) { value_free(&t->stack[t->sp]); t->sp--; } }
                     continue;
                 }
-                R[res].type = VAL_INT;
-                R[res].ival = 0;
+                value_set(&R[res], VAL_INT, 0, 0, NULL, NULL);
                 continue;
             }
             VmThread *nt = calloc(1, sizeof(VmThread));
@@ -3590,7 +4047,7 @@ L_CALL_FUNC: {
             nt->msg_lock = ml;
             /* 锟斤拷锟斤拷锟斤拷锟斤拷权锟斤拷栈转锟狡ｏ拷锟姐拷锟斤拷锟斤拷锟斤拷栈锟斤拷锟斤拷锟斤拷锟揭伙拷锟斤拷锟??*/
             for (int i = argc - 1; i >= 0; i--) {
-                nt->R[i + 1] = t->stack[t->sp];
+                value_move(&nt->R[i + 1], &t->stack[t->sp]);
                 t->sp--;
             }
             VM_LOCK(vm);
@@ -3598,8 +4055,7 @@ L_CALL_FUNC: {
             VM_UNLOCK(vm);
             InterlockedIncrement(&vm->active_threads);
             nt->os_handle = im_thread_start((ImThreadProc)thread_entry, nt);
-            R[res].type = VAL_INT;
-            R[res].ival = 0;
+            value_set(&R[res], VAL_INT, 0, 0, NULL, NULL);
             continue;
         }
         L_THREAD_CTRL: {
@@ -3760,8 +4216,7 @@ L_CALL_FUNC: {
                 case 3: val = tt->finished; break;                                    /* finished */
                 }
             }
-            R[ins.r1].type = VAL_BOOL;
-            R[ins.r1].ival = val ? 1 : 0;
+            value_set(&R[ins.r1], VAL_BOOL, val ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_LOCK: {
@@ -3791,15 +4246,15 @@ L_CALL_FUNC: {
                 im_mutex_lock(ml);
                 if (tt->msg_cap == 0) {
                     tt->msg_cap = 8;
-                    tt->msg_q = malloc(tt->msg_cap * sizeof(Value));
+                    tt->msg_q = calloc((size_t)tt->msg_cap, sizeof(Value));
                     tt->msg_head = tt->msg_tail = 0;
                 }
                 if ((tt->msg_tail + 1) % tt->msg_cap == tt->msg_head) {
                     int newcap = tt->msg_cap * 2;
-                    Value *nq = malloc(newcap * sizeof(Value));
+                    Value *nq = calloc((size_t)newcap, sizeof(Value));
                     int n = 0;
-                    while (tt->msg_head != tt->msg_tail) {
-                        nq[n++] = tt->msg_q[tt->msg_head];
+                while (tt->msg_head != tt->msg_tail) {
+                        value_move(&nq[n++], &tt->msg_q[tt->msg_head]);
                         tt->msg_head = (tt->msg_head + 1) % tt->msg_cap;
                     }
                     free(tt->msg_q);
@@ -3808,8 +4263,8 @@ L_CALL_FUNC: {
                     tt->msg_head = 0;
                     tt->msg_tail = n;
                 }
-                Value v = R[ins.r2];
-                if (v.type == VAL_STRING && v.sval) { v.sval = strdup(v.sval); v.ival = 0; }
+                Value v = { VAL_NIL, 0, 0, NULL, NULL };
+                value_copy(&v, &R[ins.r2]);
                 tt->msg_q[tt->msg_tail] = v;
                 tt->msg_tail = (tt->msg_tail + 1) % tt->msg_cap;
                 im_mutex_unlock(ml);
@@ -3830,7 +4285,7 @@ L_CALL_FUNC: {
                     int found = 0;
                     im_mutex_lock(ml);
                     if (t->msg_head != t->msg_tail) {
-                        out = t->msg_q[t->msg_head];
+                        value_move(&out, &t->msg_q[t->msg_head]);
                         t->msg_head = (t->msg_head + 1) % t->msg_cap;
                         found = 1;
                     }
@@ -3848,7 +4303,7 @@ L_CALL_FUNC: {
                     Sleep(1);
                 }
             }
-            R[res] = out;
+            value_move(&R[res], &out);
             continue;
         }
     }
@@ -3856,16 +4311,25 @@ L_CALL_FUNC: {
 
 /* ---------- 锟竭程癸拷锟斤拷 ---------- */
 /* ================= task scheduler (virtual threads on Fibers) ================= */
+static void vm_thread_finish_default(VmThread *t) {
+    if (!t || t->result_ready || t->error_ready) return;
+    Value nil = { VAL_NIL, 0, 0, NULL, NULL };
+    value_assign(&t->result, &nil);
+    t->result_ready = true;
+}
+
 static void __stdcall task_fiber_entry(LPVOID arg) {
     VmThread *t = (VmThread*)arg;
     for (;;) {
         vm_execute_thread(t);
         if (!(t->flags & THREAD_FLAG_RESTART)) break;
         if (t->stop_flag) break;
+        vm_thread_reset_values(t);
         t->ip = 0; t->sp = -1; t->base = 0; t->frame_count = 0;
-        t->paused = false; t->stop_flag = false;
+        t->paused = false;
         t->wake_at = 0; t->blocked = 0; t->budget = VM_TASK_BUDGET;
     }
+    vm_thread_finish_default(t);
     t->finished = 1;
     t->running = 0;
     if (t->fiber_sched) SwitchToFiber(t->fiber_sched);
@@ -3875,6 +4339,8 @@ static void __stdcall task_fiber_entry(LPVOID arg) {
 VmThread *vm_os_thread_start(VM *vm, Bytecode *root, int tidx, VmThread *t, int argc) {
     if (tidx < 0 || tidx >= root->thread_count || root->threads[tidx] == NULL) return NULL;
     if (vm->threads[tidx] != NULL && !vm->threads[tidx]->finished) return NULL;
+    if (vm->threads[tidx] != NULL && vm->threads[tidx]->finished)
+        vm_thread_release(vm, root->thread_names[tidx]);
     if (vm->limit_threads > 0 && vm->active_threads >= vm->limit_threads) return NULL;
     VmThread *nt = calloc(1, sizeof(VmThread));
     nt->vm = vm;
@@ -3898,7 +4364,7 @@ VmThread *vm_os_thread_start(VM *vm, Bytecode *root, int tidx, VmThread *t, int 
     ImMutex *ml = im_mutex_new();
     nt->msg_lock = ml;
     /* is_task stays 0: wait/yield/recv use OS-thread (Sleep) paths, no Fiber dependency */
-    for (int i = argc - 1; i >= 0; i--) { nt->R[i + 1] = t->stack[t->sp]; t->sp--; }
+    for (int i = argc - 1; i >= 0; i--) { value_move(&nt->R[i + 1], &t->stack[t->sp]); t->sp--; }
     VM_LOCK(vm);
     vm->threads[tidx] = nt;
     VM_UNLOCK(vm);
@@ -3938,7 +4404,7 @@ VmThread *vm_task_create(VM *vm, Bytecode *root, int tidx, VmThread *t, int argc
     nt2->jump_req = -1;
     ImMutex *ml2 = im_mutex_new();
     nt2->msg_lock = ml2;
-    for (int i = argc - 1; i >= 0; i--) { nt2->R[i + 1] = t->stack[t->sp]; t->sp--; }
+    for (int i = argc - 1; i >= 0; i--) { value_move(&nt2->R[i + 1], &t->stack[t->sp]); t->sp--; }
     VM_LOCK(vm);
     vm->tasks[slot] = nt2;
     if (slot >= vm->task_count) vm->task_count = slot + 1;
@@ -3966,7 +4432,18 @@ void *task_scheduler_entry(void *arg) {
         int progressed = 0;
         for (int i = 0; i < vm->task_count; i++) {
             VmThread *tk = vm->tasks[i];
-            if (!tk || tk->finished || !tk->running) continue;
+            if (!tk) continue;
+            if (tk->finished) {
+                if (tk->fiber_self) { DeleteFiber(tk->fiber_self); tk->fiber_self = NULL; }
+                if (tk->release_requested) {
+                    VM_LOCK(vm);
+                    if (vm->tasks[i] == tk) vm->tasks[i] = NULL;
+                    VM_UNLOCK(vm);
+                    vm_thread_dispose(tk, false);
+                }
+                continue;
+            }
+            if (!tk->running) continue;
             if (tk->paused) { tk->blocked = 1; continue; }
             if (tk->blocked) {
                 if (tk->wake_at && now >= tk->wake_at) { tk->blocked = 0; tk->wake_at = 0; }
@@ -3980,20 +4457,15 @@ void *task_scheduler_entry(void *arg) {
                     SwitchToFiber(tk->fiber_self);
             progressed = 1;
             if (tk->finished) {
-                /* scheduler owns finished-task reclamation: delete fiber, detach slot (VM_LOCK), free heap.
-                   main thread only reuses fully-empty slots -> no use-after-free race in start/join loops */
+                /* Keep the completion record addressable until
+                   thread_release() requests reclamation. */
                 if (tk->fiber_self) { DeleteFiber(tk->fiber_self); tk->fiber_self = NULL; }
-                VmThread *dead = tk;
-                VM_LOCK(vm);
-                vm->tasks[i] = NULL;
-                VM_UNLOCK(vm);
-                free(dead->exc_stack);
-                free(dead->reg);
-                free(dead->frame_code); free(dead->frame_ip); free(dead->frame_base); free(dead->frame_res); free(dead->frame_sp); free(dead->frame_env);
-                for (int _mj = 0; _mj < dead->msg_cap; _mj++) { Value _mv = dead->msg_q[_mj]; if (_mv.type == VAL_STRING && _mv.ival != 1 && _mv.sval) free(_mv.sval); }
-                free(dead->msg_q);
-                if (dead->msg_lock) { im_mutex_free((ImMutex*)dead->msg_lock); }
-                free(dead);
+                if (tk->release_requested) {
+                    VM_LOCK(vm);
+                    if (vm->tasks[i] == tk) vm->tasks[i] = NULL;
+                    VM_UNLOCK(vm);
+                    vm_thread_dispose(tk, false);
+                }
             }
         }
         if (vm->gc_pending || vm->gc_stop) {
@@ -4028,18 +4500,16 @@ void *thread_entry(void *arg) {
         if (!(t->flags & THREAD_FLAG_RESTART)) break;   /* no restart label: exit */
         if (t->stop_flag) break;                        /* explicit kill/stop: no restart */
         /* restart: fully rewind thread state and run again */
+        vm_thread_reset_values(t);
         t->ip = 0;
         t->sp = -1;
         t->base = 0;
         t->frame_count = 0;
         t->paused = false;
-        t->stop_flag = false;
         t->wake_at = 0;
-        t->msg_head = 0;
-        t->msg_tail = 0;
-        memset(t->reg, 0, VM_THREAD_REG_COUNT * sizeof(Value));
         Sleep(100); /* debounce */
     }
+    vm_thread_finish_default(t);
     t->finished = true;
     t->running = false;
     if (!t->is_main && t->vm && t->vm->active_threads > 0)
@@ -4114,17 +4584,18 @@ void vm_run(VM *vm) {
             vm->threads[i] = NULL;
             if (tt->flags & THREAD_FLAG_DAEMON) continue;  /* daemon: still running, OS reclaims */
             free(tt->exc_stack);
+            vm_thread_release_values(tt);
             free(tt->reg);
             free(tt->frame_code); free(tt->frame_ip); free(tt->frame_base); free(tt->frame_res); free(tt->frame_sp); free(tt->frame_env);
-            for (int _mj=0; _mj<tt->msg_cap; _mj++) { Value _mv=tt->msg_q[_mj]; if (_mv.type==VAL_STRING && _mv.ival!=1 && _mv.sval) free(_mv.sval); } free(tt->msg_q);
+            for (int _mj=0; _mj<tt->msg_cap; _mj++) value_free(&tt->msg_q[_mj]); free(tt->msg_q);
             if (tt->msg_lock) {
                 im_mutex_free((ImMutex*)tt->msg_lock);
-                free(tt->msg_lock);
             }
             free(tt);
         }
     }
     free(main_t.exc_stack);
+    vm_thread_release_values(&main_t);
     free(main_t.reg);
     free(main_t.frame_code); free(main_t.frame_ip); free(main_t.frame_base); free(main_t.frame_res); free(main_t.frame_sp); free(main_t.frame_env);
     record_save_to_file(vm, vm->record_save_path ? vm->record_save_path : "save.dat");
@@ -4326,12 +4797,14 @@ int vm_exec_script_file(VM *vm, const char *path) {
     fclose(f);
     text[rd] = '\0';
     Program *prog = parse_program(text);
-    free(text);
-    if (!prog) { fprintf(stderr, "[mod] parse error in '%s'\n", path); return -1; }
+    if (!prog) { free(text); fprintf(stderr, "[mod] parse error in '%s'\n", path); return -1; }
     Compiler *comp = compiler_new();
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);
     compiler_compile(comp, prog);
+    /* The parser stores source slices in the AST; keep the source buffer alive
+       through compilation (and release it only after all slices are consumed). */
+    free(text);
     Bytecode *bc = compiler_get_main_bytecode(comp);
     if (!bc) { compiler_free(comp); return -1; }
     if (vm->mod_bc_count >= 8) { compiler_free(comp); return -1; }

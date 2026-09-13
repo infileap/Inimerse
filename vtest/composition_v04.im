@@ -3,3 +3,5 @@ func inc(x) { return x + 1 }
 func twice(x) { return x * 2 }
 double_inc = inc >> twice
 say double_inc(3)
+lambda_composed = ((x) -> x + 1) >> ((x) -> x * 2)
+say lambda_composed(3)

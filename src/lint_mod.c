@@ -30,6 +30,13 @@ typedef struct {
     int count;
 } LintFiniteType;
 
+typedef struct {
+    char variant[8];
+    char type_name[64];
+    char member[96];
+    int complete;
+} LintResultCoverage;
+
 static int lint_extract_quoted(const char *s, char out[][96], int cap) {
     int n = 0;
     while (*s && n < cap) {
@@ -47,6 +54,100 @@ static int lint_extract_quoted(const char *s, char out[][96], int cap) {
 static LintFiniteType *lint_find_type(LintFiniteType *types, int count, const char *name) {
     for (int i = 0; i < count; i++) if (strcmp(types[i].name, name) == 0) return &types[i];
     return NULL;
+}
+
+static LintFiniteType *lint_find_unique_type_for_member(LintFiniteType *types, int count,
+                                                        const char *member) {
+    LintFiniteType *found = NULL;
+    if (!member || !*member) return NULL;
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < types[i].count; j++) {
+            if (strcmp(types[i].members[j], member) != 0) continue;
+            if (found) return NULL; /* ambiguous: stay conservative */
+            found = &types[i];
+            break;
+        }
+    }
+    return found;
+}
+
+static int lint_extract_case_try_coverage(const char *s, const char *raw,
+                                          char *variant, size_t variant_cap,
+                                          char *type_name, size_t type_cap,
+                                          char *member, size_t member_cap) {
+    const char *p = s;
+    member[0] = 0;
+    if (strncmp(p, "ok", 2) == 0 && (p[2] == ':' || p[2] == '(' || p[2] == ' ')) {
+        snprintf(variant, variant_cap, "ok");
+        p += 2;
+    } else if (strncmp(p, "err", 3) == 0 && (p[3] == ':' || p[3] == '(' || p[3] == ' ')) {
+        snprintf(variant, variant_cap, "err");
+        p += 3;
+    } else {
+        return 0;
+    }
+    const char *in = strstr(p, " in ");
+    if (!in) {
+        /*
+         * A literal err("member") covers one error member, not the whole
+         * Result.err variant.  The cleaned line has strings removed, so
+         * recover only quoted text before the branch colon from the raw line;
+         * strings in the action must not be mistaken for the pattern.
+         */
+        if (strcmp(variant, "err") == 0 && raw) {
+            const char *start = strstr(raw, "err");
+            const char *colon = start ? strchr(start, ':') : NULL;
+            if (start && colon) {
+                const char *q = start;
+                while (q < colon && *q != '"' && *q != '\'') q++;
+                if (q < colon) {
+                    char quote = *q++;
+                    size_t n = 0;
+                    while (q < colon && *q != quote && n + 1 < member_cap)
+                        member[n++] = *q++;
+                    member[n] = 0;
+                    if (n > 0 && *q == quote) return 3;
+                }
+            }
+        }
+        return 1;
+    }
+    in += 4;
+    size_t n = 0;
+    while (in[n] && in[n] != ':' && in[n] != '|' && in[n] != ' ' && in[n] != '\t' && n + 1 < type_cap) n++;
+    memcpy(type_name, in, n);
+    type_name[n] = 0;
+    return 2;
+}
+
+static void lint_add_member(char members[][96], int *count, const char *member) {
+    if (!member || !*member || *count >= 32) return;
+    for (int i = 0; i < *count; i++)
+        if (strcmp(members[i], member) == 0) return;
+    snprintf(members[(*count)++], 96, "%s", member);
+}
+
+static int lint_collect_type_refs(const char *rhs, LintFiniteType *types, int type_count,
+                                  char members[][96], int *member_count) {
+    int refs = 0;
+    const char *p = rhs;
+    while (*p) {
+        while (*p && !(isalnum((unsigned char)*p) || *p == '_')) p++;
+        if (!*p) break;
+        char name[64];
+        size_t n = 0;
+        while ((isalnum((unsigned char)p[n]) || p[n] == '_') && n + 1 < sizeof name) n++;
+        memcpy(name, p, n);
+        name[n] = 0;
+        LintFiniteType *source = lint_find_type(types, type_count, name);
+        if (source) {
+            refs++;
+            for (int i = 0; i < source->count; i++)
+                lint_add_member(members, member_count, source->members[i]);
+        }
+        p += n;
+    }
+    return refs;
 }
 
 /* strip strings and comments from a line (stateful across lines for #[...]) */
@@ -108,10 +209,17 @@ static int lint_scan(const char *path, LintBuf *lb) {
     int loop_brace = -1;          /* brace depth at loop open */
     int case_brace = -1;
     int case_wildcard_line = 0;
+    int case_complete_line = 0;
     int case_start_line = 0;
     int case_is_try = 0;
-    int case_has_ok = 0;
-    int case_has_err = 0;
+    int case_try_ok_open = 0;
+    int case_try_err_open = 0;
+    int case_try_err_complete = 0;
+    LintResultCoverage case_try_coverage[32];
+    int case_try_coverage_count = 0;
+    char case_try_err_members[32][96];
+    int case_try_err_member_count = 0;
+    LintFiniteType *case_try_err_type = NULL;
     char case_subject[64] = "";
     LintFiniteType *case_type = NULL;
     char case_covered[32][96];
@@ -138,7 +246,13 @@ static int lint_scan(const char *path, LintBuf *lb) {
                 if (eq) *eq = 0;
                 const char *raw_eq = strchr(raw, '=');
                 int nmem = raw_eq ? lint_extract_quoted(raw_eq + 1, types[type_count].members, 32) : 0;
-                if (nmem > 0) {
+                int refmem = 0;
+                const char *clean_eq = strchr(s, '=');
+                if (nmem == 0 && clean_eq) {
+                    refmem = lint_collect_type_refs(clean_eq + 1, types, type_count,
+                                                    types[type_count].members, &nmem);
+                }
+                if (nmem > 0 || refmem > 0) {
                     snprintf(types[type_count].name, sizeof types[type_count].name, "%s", tn);
                     types[type_count].count = nmem;
                     type_count++;
@@ -152,10 +266,17 @@ static int lint_scan(const char *path, LintBuf *lb) {
         if (strncmp(s, "case ", 5) == 0 && strchr(s, '{')) {
             case_brace = block_depth;
             case_wildcard_line = 0;
+            case_complete_line = 0;
             case_start_line = ln;
             case_is_try = (strncmp(s + 5, "try ", 4) == 0);
-            case_has_ok = 0;
-            case_has_err = 0;
+            case_try_ok_open = 0;
+            case_try_err_open = 0;
+            case_try_err_complete = 0;
+            memset(case_try_coverage, 0, sizeof case_try_coverage);
+            case_try_coverage_count = 0;
+            memset(case_try_err_members, 0, sizeof case_try_err_members);
+            case_try_err_member_count = 0;
+            case_try_err_type = NULL;
             case_covered_count = 0;
             case_subject[0] = 0;
             case_type = NULL;
@@ -180,17 +301,73 @@ static int lint_scan(const char *path, LintBuf *lb) {
                     fclose(decl);
                 }
             }
-        } else if (case_brace >= 0 && block_depth == case_brace + 1) {
+        } else if (case_brace >= 0 && block_depth == case_brace + 1 && *s != '}') {
             if ((s[0] == '_' && s[1] == ':' ) || strncmp(s, "else:", 5) == 0)
                 case_wildcard_line = ln;
             else if (case_is_try) {
-                if (strncmp(s, "ok", 2) == 0 && (s[2] == ':' || s[2] == '(')) case_has_ok = 1;
-                if (strncmp(s, "err", 3) == 0 && (s[3] == ':' || s[3] == '(')) case_has_err = 1;
+                char variant[8] = "", type_name[64] = "", member[96] = "";
+                int coverage = lint_extract_case_try_coverage(s, raw, variant, sizeof variant,
+                                                               type_name, sizeof type_name,
+                                                               member, sizeof member);
+                if (coverage > 0) {
+                    if (coverage == 1) {
+                        if (strcmp(variant, "ok") == 0) case_try_ok_open = 1;
+                        if (strcmp(variant, "err") == 0) case_try_err_open = 1;
+                    } else if (case_try_coverage_count < 32) {
+                        LintResultCoverage *rc = &case_try_coverage[case_try_coverage_count++];
+                        snprintf(rc->variant, sizeof rc->variant, "%s", variant);
+                        snprintf(rc->type_name, sizeof rc->type_name, "%s", type_name);
+                        snprintf(rc->member, sizeof rc->member, "%s", member);
+                        rc->complete = 0;
+                        if (strcmp(variant, "err") == 0) {
+                            if (type_name[0]) {
+                                LintFiniteType *guard_type = lint_find_type(types, type_count, type_name);
+                                if (guard_type) {
+                                    case_try_err_type = guard_type;
+                                    for (int mi = 0; mi < guard_type->count; mi++)
+                                        lint_add_member(case_try_err_members, &case_try_err_member_count,
+                                                        guard_type->members[mi]);
+                                }
+                            } else if (member[0]) {
+                                lint_add_member(case_try_err_members, &case_try_err_member_count, member);
+                                if (!case_try_err_type) {
+                                    case_try_err_type = lint_find_unique_type_for_member(
+                                        types, type_count, member);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else if (case_complete_line) {
+                lint_add(lb, ln, "WARN",
+                    "case branch is unreachable: a finite-set membership branch already covers the subject");
             }
             else if (case_wildcard_line && strchr(s, ':')) {
                 lint_add(lb, ln, "WARN",
                     "case branch is unreachable: wildcard '_'/'else' appears before this branch");
-            } else if (case_type && case_covered_count < 32) {
+            }
+            else if (strncmp(s, "in ", 3) == 0) {
+                char type_name[64] = "";
+                const char *p = s + 3;
+                size_t n = 0;
+                while (p[n] && p[n] != ':' && p[n] != ' ' &&
+                       p[n] != '\t' && n + 1 < sizeof type_name) n++;
+                memcpy(type_name, p, n);
+                type_name[n] = 0;
+                const char *tail = p + n;
+                while (*tail == ' ' || *tail == '\t') tail++;
+                LintFiniteType *membership_type =
+                    lint_find_type(types, type_count, type_name);
+                if (membership_type && *tail == ':') {
+                    case_type = membership_type;
+                    for (int mi = 0; mi < membership_type->count; mi++)
+                        lint_add_member(case_covered, &case_covered_count,
+                                        membership_type->members[mi]);
+                    case_complete_line = ln;
+                }
+            }
+            else if (case_type && case_covered_count < 32) {
                 char found_members[32][96];
                 int n = lint_extract_quoted(raw, found_members, 32);
                 for (int i = 0; i < n && case_covered_count < 32; i++) {
@@ -202,18 +379,79 @@ static int lint_scan(const char *path, LintBuf *lb) {
             }
         }
         if (case_brace >= 0 && closes > 0 && block_depth - closes <= case_brace) {
-            if (!case_wildcard_line && !case_type)
+            if (case_try_err_open) case_try_err_complete = 1;
+            if (!case_try_err_open && case_try_err_type) {
+                int all_members = 1;
+                for (int mi = 0; mi < case_try_err_type->count; mi++) {
+                    int found = 0;
+                    for (int ci = 0; ci < case_try_err_member_count; ci++) {
+                        if (strcmp(case_try_err_type->members[mi], case_try_err_members[ci]) == 0) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        all_members = 0;
+                        break;
+                    }
+                }
+                case_try_err_complete = all_members;
+            }
+            if (!case_wildcard_line && !case_type &&
+                (!case_is_try || !case_try_ok_open || !case_try_err_complete))
                 lint_add(lb, case_start_line, "WARN",
                     "case has no wildcard '_'/'else' branch; exhaustive coverage cannot be proven for open or infinite sets");
-            if (case_is_try && !case_wildcard_line && (!case_has_ok || !case_has_err)) {
+            if (case_is_try && !case_wildcard_line &&
+                (!case_try_ok_open || (!case_try_err_open && !case_try_err_complete))) {
                 char missing[32] = "";
-                if (!case_has_ok) strncat(missing, "ok", sizeof(missing) - strlen(missing) - 1);
-                if (!case_has_err) {
+                if (!case_try_ok_open) strncat(missing, "ok", sizeof(missing) - strlen(missing) - 1);
+                if (!case_try_err_open) {
                     if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1);
                     strncat(missing, "err", sizeof(missing) - strlen(missing) - 1);
                 }
-                char msg[128]; snprintf(msg, sizeof msg, "case try is missing Result branch(es): %s", missing);
+                char msg[320];
+                snprintf(msg, sizeof msg, "case try is missing Result branch(es): %s", missing);
                 lint_add(lb, case_start_line, "WARN", msg);
+            }
+            if (case_is_try && !case_wildcard_line) {
+                for (int ri = 0; ri < case_try_coverage_count; ri++) {
+                    LintResultCoverage *rc = &case_try_coverage[ri];
+                    int open = strcmp(rc->variant, "ok") == 0 ? case_try_ok_open : case_try_err_open;
+                    if (strcmp(rc->variant, "err") == 0 && case_try_err_complete) continue;
+                    if (open) continue;
+                    char msg[320];
+                    if (rc->type_name[0]) {
+                        snprintf(msg, sizeof msg,
+                            "case try guarded %s coverage via '%s' does not prove complete %s coverage; add %s(...) or '_'",
+                            rc->variant, rc->type_name, rc->variant, rc->variant);
+                    } else {
+                        snprintf(msg, sizeof msg,
+                            "case try guarded %s coverage does not prove complete %s coverage; add %s(...) or '_'",
+                            rc->variant, rc->variant, rc->variant);
+                    }
+                    lint_add(lb, case_start_line, "WARN", msg);
+                }
+                if (!case_try_err_open && !case_try_err_complete && case_try_err_type) {
+                    char missing[160] = "";
+                    for (int mi = 0; mi < case_try_err_type->count; mi++) {
+                        int found = 0;
+                        for (int ci = 0; ci < case_try_err_member_count; ci++)
+                            if (strcmp(case_try_err_type->members[mi], case_try_err_members[ci]) == 0)
+                                found = 1;
+                        if (!found) {
+                            if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1);
+                            strncat(missing, case_try_err_type->members[mi],
+                                    sizeof(missing) - strlen(missing) - 1);
+                        }
+                    }
+                    if (missing[0]) {
+                        char msg[320];
+                        snprintf(msg, sizeof msg,
+                                 "case try finite err type '%s' is missing members: %s",
+                                 case_try_err_type->name, missing);
+                        lint_add(lb, case_start_line, "WARN", msg);
+                    }
+                }
             }
             if (case_type && !case_wildcard_line) {
                 char missing[160] = "";
@@ -227,18 +465,23 @@ static int lint_scan(const char *path, LintBuf *lb) {
                     }
                 }
                 if (missing[0]) {
-                    char msg[180];
+                    char msg[320];
                     snprintf(msg, sizeof msg, "finite case type '%s' is missing members: %s", case_type->name, missing);
                     lint_add(lb, case_start_line, "WARN", msg);
                 }
             }
             case_brace = -1;
             case_wildcard_line = 0;
+            case_complete_line = 0;
             case_start_line = 0;
             case_type = NULL;
             case_subject[0] = 0;
             case_is_try = 0;
-            case_has_ok = case_has_err = 0;
+            case_try_ok_open = case_try_err_open = 0;
+            case_try_err_complete = 0;
+            case_try_coverage_count = 0;
+            case_try_err_member_count = 0;
+            case_try_err_type = NULL;
         }
         if (closes > 0 && in_loop && block_depth - closes < loop_brace) in_loop = 0;
 
@@ -331,15 +574,20 @@ int lint_check(const char *path, char *out, int cap) {
 
 /* builtin: lint_check(script_path) -> int warnings count (also prints) */
 static int builtin_lint_check(VM *vm) {
-    const char *path = "";
+    char *path = NULL;
     if (vm_cur_sp(vm) >= 0) {
         Value a = vm_cur_stack(vm)[vm_cur_sp(vm)];
-        if (a.type == VAL_STRING && a.sval) path = a.sval;
+        if (a.type == VAL_STRING && a.sval) path = strdup(a.sval);
     }
-    vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    if (!path) path = strdup("");
+    if (vm_cur_sp(vm) >= 0) {
+        value_free(&vm_cur_stack(vm)[vm_cur_sp(vm)]);
+        vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+    }
     char buf[8192];
     int n = lint_check(path, buf, sizeof buf);
     if (n > 0) fprintf(stderr, "%s", buf);
+    free(path);
     Value v; v.type = VAL_INT; v.ival = n < 0 ? -1 : n; v.fval = 0; v.sval = NULL;
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
     vm_cur_stack(vm)[vm_cur_sp(vm)] = v;

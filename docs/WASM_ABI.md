@@ -2,7 +2,7 @@
 
 The `tools/wasm_probe.c` artifact exports three host-negotiation functions:
 
-- `inimerse_probe()` returns `0x0300` (v0.3 probe marker).
+- `inimerse_probe()` returns `0x0400` (v0.4 probe marker).
 - `inimerse_abi_version()` returns `1` (stable ABI revision).
 - `inimerse_capabilities()` returns a capability bitmask; zero means no host capabilities are required.
 

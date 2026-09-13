@@ -1,0 +1,69 @@
+flag = 0
+func propagate() {
+    global flag
+    try {
+        return err("propagated")?
+    } finally {
+        say "finally-ran"
+        flag = flag + 1
+    }
+}
+r = propagate()
+say flag
+say is_ok(r)
+say result_error(r)
+
+func normal_return() {
+    global flag
+    try {
+        return 7
+    } finally {
+        flag = flag + 10
+    }
+}
+say normal_return()
+say flag
+
+func catch_return() {
+    global flag
+    try {
+        throw "caught-for-return"
+    } catch (e) {
+        return 11
+    } finally {
+        flag = flag + 100
+    }
+}
+say catch_return()
+say flag
+
+func nested_return() {
+    global flag
+    try {
+        try {
+            return 13
+        } finally {
+            flag = flag + 1000
+        }
+    } finally {
+        flag = flag + 10000
+    }
+}
+say nested_return()
+say flag
+
+func finally_throw() {
+    global flag
+    try {
+        throw "inner"
+    } finally {
+        flag = flag + 100000
+        throw "cleanup"
+    }
+}
+try {
+    finally_throw()
+} catch (e) {
+    say e
+    say flag
+}

@@ -1,0 +1,12 @@
+func goto_in_finally() {
+    try {
+        return 1
+    } finally {
+        to cleanup_done
+    }
+    cleanup_done: {
+        return 2
+    }
+}
+
+say goto_in_finally()

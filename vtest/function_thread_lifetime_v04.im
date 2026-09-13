@@ -1,0 +1,24 @@
+# Function values keep their closure while crossing a thread message queue.
+thread receiver {
+    recv handler, 2
+    say str(handler(4))
+}
+
+queued = x -> x + 5
+start receiver
+send receiver queued
+join receiver
+
+# A naturally finishing restart thread must release functions held in its
+# register file before beginning the next iteration.
+runs = 0
+thread restart recycler {
+    local_fn = x -> x + 1
+    atomic_add("runs", local_fn(0))
+}
+
+start recycler
+wait 0.35
+kill recycler
+join recycler
+say "function-thread-lifetime-ok"

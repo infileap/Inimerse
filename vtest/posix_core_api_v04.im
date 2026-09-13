@@ -1,0 +1,18 @@
+# Portable string and dictionary helpers must be available on POSIX as on the
+# host runtime.
+s = "  Hello World "
+d = {"a": 1, "b": 2}
+parts = split("a,b,c", ",")
+chars_v = chars("abc")
+ok = len(parts) == 3 and parts[1] == "b"
+ok = ok and len(chars_v) == 3 and ord("A") == 65 and chr(66) == "B"
+ok = ok and trim(s) == "Hello World" and upper("ab") == "AB" and lower("XY") == "xy"
+ok = ok and round(2.675, 2) == 2.68
+ok = ok and match("user@example.com", "^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$")
+ok = ok and startswith(s, "  ") and endswith(s, " ") and index(s, "World") == 8
+ok = ok and substr(s, 2, 5) == "Hello" and replace(s, "World", "Inim") == "  Hello Inim "
+ok = ok and len(keys(d)) == 2 and size(d) == 2 and has(d, "a")
+ok = ok and sum([1, 2, 3]) == 6 and len(split("", ",")) == 0
+ok = ok and len(split("a b", "")) == 2 and split("a b", "")[1] == "b"
+ok = ok and remove(d, "a") and !has(d, "a")
+if ok { say "posix-core-api-ok" } else { say "posix-core-api-fail" }

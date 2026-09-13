@@ -10,8 +10,8 @@
       {"name": "trailing_comma", "implemented": true},
       {"name": "pipeline", "syntax": "|>", "implemented": true},
       {"name": "result_propagation", "syntax": "?", "implemented": true, "semantics": "unwrap postfix (function-level propagation follows)"},
-      {"name": "lambda", "syntax": "x -> expr", "implemented": false},
-      {"name": "function_composition", "syntax": ">>", "implemented": false},
+      {"name": "lambda", "syntax": "x -> expr", "implemented": true},
+      {"name": "function_composition", "syntax": ">>", "implemented": true},
       {"name": "collection_comprehension", "implemented": true}
     ],
     "outer": [

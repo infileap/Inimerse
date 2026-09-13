@@ -26,23 +26,25 @@ static double r_arg_num(VM *vm, int i) { Value v = r_arg(vm, i); return (v.type 
 static const char *r_arg_str(VM *vm, int i) { Value v = r_arg(vm, i); return (v.type == VAL_STRING && v.sval) ? v.sval : ""; }
 static void r_popn(VM *vm, int n) {
     while (n-- >0 && vm_cur_sp(vm) >=0) {
-        Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
-        if (v.type == VAL_STRING && v.ival !=1 && v.sval) free(v.sval);
+        value_free(&vm_cur_stack(vm)[vm_cur_sp(vm)]);
         vm_cur_set_sp(vm, vm_cur_sp(vm) -1);
     }
 }
-static void r_push(VM *vm, Value v) { if (vm_cur_sp(vm) <1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) +1); vm_cur_stack(vm)[vm_cur_sp(vm)] = v; } }
+static void r_push(VM *vm, Value v) {
+    if (!vm_push_value(vm, &v)) value_free(&v);
+}
+static void r_push_copy(VM *vm, const Value *v) {
+    if (!v || vm_cur_sp(vm) >= 1023) return;
+    vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
+    Value *dst = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    dst->type = VAL_NIL; dst->ival = 0; dst->fval = 0; dst->sval = NULL; dst->ptr = NULL;
+    vm_value_assign(dst, v);
+}
 static void r_push_int(VM *vm, int n) { Value v; v.type = VAL_INT; v.ival = n; v.fval =0; v.sval = NULL; r_push(vm, v); }
 static void r_push_nil(VM *vm) { Value v; v.type = VAL_NIL; v.ival =0; v.fval =0; v.sval = NULL; r_push(vm, v); }
 
-static void r_copy_value(Value *dst, const Value *src) {
-    *dst = *src;
-    if (src->type == VAL_STRING && src->sval && src->ival !=1) dst->sval = strdup(src->sval);
-}
-static void r_free_value(Value *v) {
-    if (v->type == VAL_STRING && v->ival !=1 && v->sval) free(v->sval);
-    v->type = VAL_NIL; v->sval = NULL;
-}
+static void r_copy_value(Value *dst, const Value *src) { vm_value_assign(dst, src); }
+static void r_free_value(Value *v) { value_free(v); }
 
 /* find record global index by name; -1 if not a record var */
 static int record_find_idx(VM *vm, const char *name) {
@@ -126,11 +128,12 @@ static int builtin_tag_register(VM *vm) {
 }
 static int builtin_tagged(VM *vm) {
     const char *name = r_arg_str(vm, 0);
+    char *name_copy = strdup(name ? name : "");
     r_popn(vm, vm->cur_argc);
     int out = vm_array_new(vm);
     if (out >= 0) {
         for (int t = 0; t < g_tag_n; t++) {
-            if (strcmp(g_tag_name[t], name) == 0) {
+            if (strcmp(g_tag_name[t], name_copy ? name_copy : "") == 0) {
                 for (int i = 0; i < g_tag_count[t]; i++) {
                     Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = g_tag_items[t][i];
                     vm_array_push(vm, out, &v);
@@ -139,15 +142,18 @@ static int builtin_tagged(VM *vm) {
             }
         }
     }
+    free(name_copy);
     Value arrv; arrv.type = VAL_ARRAY; arrv.ival = out + 1; arrv.fval = 0; arrv.sval = NULL;
     r_push(vm, arrv);
     return 1;
 }
 static int builtin_tag_count(VM *vm) {
     const char *name = r_arg_str(vm, 0);
+    char *name_copy = strdup(name ? name : "");
     r_popn(vm, vm->cur_argc);
     int c = 0;
-    for (int t = 0; t < g_tag_n; t++) if (strcmp(g_tag_name[t], name) == 0) { c = g_tag_count[t]; break; }
+    for (int t = 0; t < g_tag_n; t++) if (strcmp(g_tag_name[t], name_copy ? name_copy : "") == 0) { c = g_tag_count[t]; break; }
+    free(name_copy);
     r_push_int(vm, c);
     return 1;
 }
@@ -163,17 +169,21 @@ static int builtin_autosave(VM *vm) {
 
 static int builtin_save(VM *vm) {
     const char *path = vm->cur_argc >0 ? r_arg_str(vm, vm->cur_argc -1) : (vm->record_save_path ? vm->record_save_path : "save.dat");
+    char *path_copy = strdup(path ? path : "save.dat");
     r_popn(vm, vm->cur_argc);
-    record_save_to_file(vm, path);
+    record_save_to_file(vm, path_copy ? path_copy : "save.dat");
+    free(path_copy);
     r_push_int(vm,1);
     return 1;
 }
 
 static int builtin_load(VM *vm) {
     const char *path = vm->cur_argc >0 ? r_arg_str(vm, vm->cur_argc -1) : (vm->record_save_path ? vm->record_save_path : "save.dat");
+    char *path_copy = strdup(path ? path : "save.dat");
     r_popn(vm, vm->cur_argc);
     /* load into already-declared record globals */
-    FILE *f = fopen(path, "rb");
+    FILE *f = fopen(path_copy ? path_copy : "save.dat", "rb");
+    free(path_copy);
     if (!f) { r_push_int(vm,0); return 1; }
     fseek(f,0,SEEK_END); long len = ftell(f); fseek(f,0,SEEK_SET);
     if (len <=0 || len > (1<<20)) { fclose(f); r_push_int(vm,0); return 1; }
@@ -223,8 +233,10 @@ static int builtin_record_dirty(VM *vm) {
 
 static int builtin_record_mark_clean(VM *vm) {
     const char *name = vm->cur_argc >0 ? r_arg_str(vm, vm->cur_argc -1) : "";
+    char *name_copy = strdup(name ? name : "");
     r_popn(vm, vm->cur_argc);
-    int idx = record_find_idx(vm, name);
+    int idx = record_find_idx(vm, name_copy ? name_copy : "");
+    free(name_copy);
     if (idx >=0 && idx < vm->record_meta_count) vm->record_meta[idx].dirty =0;
     r_push_int(vm, idx >=0 ? 1 : 0);
     return 1;
@@ -232,18 +244,24 @@ static int builtin_record_mark_clean(VM *vm) {
 
 static int builtin_record_value(VM *vm) {
     const char *name = vm->cur_argc >0 ? r_arg_str(vm, vm->cur_argc -1) : "";
+    char *name_copy = strdup(name ? name : "");
     r_popn(vm, vm->cur_argc);
-    int idx = record_find_idx(vm, name);
-    if (idx >=0 && idx < vm->globalCount) { r_push(vm, vm->globals[idx].val); }
+    int idx = record_find_idx(vm, name_copy ? name_copy : "");
+    free(name_copy);
+    if (idx >=0 && idx < vm->globalCount) { r_push_copy(vm, &vm->globals[idx].val); }
     else r_push_nil(vm);
     return 1;
 }
 
 static int builtin_record_set_value(VM *vm) {
     const char *name = vm->cur_argc >1 ? r_arg_str(vm, vm->cur_argc -1) : "";
-    Value v = vm->cur_argc >0 ? r_arg(vm, vm->cur_argc -2) : r_arg(vm,0);
+    char *name_copy = strdup(name ? name : "");
+    Value v; v.type = VAL_NIL; v.ival =0; v.fval =0; v.sval = NULL; v.ptr = NULL;
+    Value arg = vm->cur_argc >0 ? r_arg(vm, vm->cur_argc -2) : r_arg(vm,0);
+    vm_value_assign(&v, &arg);
     r_popn(vm, vm->cur_argc);
-    int idx = record_find_idx(vm, name);
+    int idx = record_find_idx(vm, name_copy ? name_copy : "");
+    free(name_copy);
     if (idx >=0 && idx < vm->globalCount) {
         VM_LOCK(vm);
         r_free_value(&vm->globals[idx].val);
@@ -253,15 +271,18 @@ static int builtin_record_set_value(VM *vm) {
             vm->record_meta[idx].version++;
         }
         VM_UNLOCK(vm);
+        value_free(&v);
         r_push_int(vm,1);
-    } else r_push_int(vm,0);
+    } else { value_free(&v); r_push_int(vm,0); }
     return 1;
 }
 
 static int builtin_record_get(VM *vm) {
     const char *name = vm->cur_argc >0 ? r_arg_str(vm, vm->cur_argc -1) : "";
+    char *name_copy = strdup(name ? name : "");
     r_popn(vm, vm->cur_argc);
-    int idx = record_find_idx(vm, name);
+    int idx = record_find_idx(vm, name_copy ? name_copy : "");
+    free(name_copy);
     if (idx <0) { r_push_nil(vm); return 1; }
     int aidx = vm_array_new(vm);
     if (aidx <0) { r_push_nil(vm); return 1; }

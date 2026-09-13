@@ -1,0 +1,83 @@
+# Finished thread and task values are exposed as Result values.
+thread plain_worker {
+    return 11
+}
+
+thread ok_worker {
+    return ok(7)
+}
+
+thread err_worker {
+    throw "worker-failed"
+}
+
+task task_worker {
+    return ok(9)
+}
+
+task live_worker {
+    wait 0.2
+    return 13
+}
+
+start plain_worker
+start ok_worker
+start err_worker
+start task_worker
+join plain_worker
+join ok_worker
+join err_worker
+join task_worker
+
+plain_result = thread_result("plain_worker")
+ok_result = thread_result("ok_worker")
+err_result = thread_result("err_worker")
+task_result = thread_result("task_worker")
+
+say is_ok(plain_result)
+say result_value(plain_result)
+say is_ok(ok_result)
+say result_value(ok_result)
+say is_ok(err_result)
+say result_error(err_result)
+say is_ok(task_result)
+say result_value(task_result)
+
+func consume_ok() {
+    return thread_result("ok_worker")?
+}
+
+say consume_ok()
+
+func consume_err() {
+    return thread_result("err_worker")?
+}
+
+propagated_error = consume_err()
+say is_ok(propagated_error)
+say result_error(propagated_error)
+
+# Completed instances can be explicitly reclaimed and restarted.
+say "release-plain"
+say thread_release("plain_worker")
+say "released-result-is-err"
+say is_ok(thread_result("plain_worker"))
+start plain_worker
+join plain_worker
+plain_again = thread_result("plain_worker")
+say "restarted-plain"
+say result_value(plain_again)
+say "release-task"
+say thread_release("task_worker")
+start task_worker
+join task_worker
+task_again = thread_result("task_worker")
+say "restarted-task"
+say result_value(task_again)
+say thread_release("task_worker")
+say "release-running"
+start live_worker
+say thread_release("live_worker")
+join live_worker
+say "release-finished"
+say thread_release("live_worker")

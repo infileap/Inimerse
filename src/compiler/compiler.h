@@ -61,6 +61,12 @@ typedef struct Compiler {
     int labelCount;
     LabelPatch *patches;
     int patchCount;
+    struct {
+        Stmt **body;
+        int count;
+    } finally_stack[64];
+    int finally_depth;
+    int compiling_finally;
 
     /* import/include 编译期解析（命名空间前缀栈，取代 parser 拼接+rename） */
     char cur_ns[512];      /* 当前命名空间前缀："m." / "outer.s."；"" = 根 */

@@ -1,4 +1,4 @@
-import json, os, subprocess, sys, tempfile, zipfile
+import functools, http.server, json, os, subprocess, sys, tempfile, threading, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -35,6 +35,68 @@ def main():
         index = json.loads((Path(td) / 'dist' / 'index.json').read_text(encoding='utf-8'))
         assert index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')
         run('verify', str(Path(td) / 'dist'))
+        key = Path(td) / 'registry-key.pem'
+        public = Path(td) / 'registry-key.pub.pem'
+        run('keygen', '-o', str(key), '--public-output', str(public))
+        signed_dist = Path(td) / 'signed-dist'
+        run('publish', '-p', str(dep_root), '-o', str(signed_dist), '--signing-key', str(key))
+        run('publish', '-p', str(root), '-o', str(signed_dist), '--signing-key', str(key))
+        signed_index = json.loads((signed_dist / 'index.json').read_text(encoding='utf-8'))
+        signed_item = signed_index['packages']['demo/app']['0.1.0']
+        assert signed_item['signature']['algorithm'] == 'ed25519'
+        assert signed_index['signature']['algorithm'] == 'ed25519'
+        run('verify', str(signed_dist), '--require-signature', '--trusted-key', str(public))
+        run('update', '-p', str(root), '-r', str(signed_dist),
+            '--require-signature', '--trusted-key', str(public))
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(signed_dist))
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            run('update', '-p', str(root), '-r',
+                f'http://127.0.0.1:{server.server_port}',
+                '--require-signature', '--trusted-key', str(public))
+            remote_index = json.loads((signed_dist / 'index.json').read_text(encoding='utf-8'))
+            remote_index['packages']['other/lib']['0.1.0']['file'] = '../outside.inim'
+            remote_index.pop('signature', None)
+            (signed_dist / 'index.json').write_text(json.dumps(remote_index), encoding='utf-8')
+            escaped = subprocess.run(
+                CLI + ['update', '-p', str(root), '-r',
+                       f'http://127.0.0.1:{server.server_port}'],
+                capture_output=True, text=True
+            )
+            assert escaped.returncode != 0
+            assert 'package URL escapes registry' in escaped.stderr
+            remote_index['packages']['other/lib']['0.1.0']['file'] = '%2e%2e/outside.inim'
+            (signed_dist / 'index.json').write_text(json.dumps(remote_index), encoding='utf-8')
+            encoded_escape = subprocess.run(
+                CLI + ['update', '-p', str(root), '-r',
+                       f'http://127.0.0.1:{server.server_port}'],
+                capture_output=True, text=True
+            )
+            assert encoded_escape.returncode != 0
+            assert 'package URL escapes registry' in encoded_escape.stderr
+        finally:
+            (signed_dist / 'index.json').write_text(json.dumps(signed_index), encoding='utf-8')
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        # The remote archive is content-addressed in the project cache, so
+        # dependency installation remains reproducible after the registry is
+        # unavailable.
+        run('install', '-t', str(root), '--offline')
+        cached_archives = list((root / '.inim-cache' / 'archives').glob('*.inim'))
+        assert cached_archives
+        other_key = Path(td) / 'other-key.pem'
+        other_public = Path(td) / 'other-key.pub.pem'
+        run('keygen', '-o', str(other_key), '--public-output', str(other_public))
+        assert subprocess.run(
+            CLI + ['verify', str(signed_dist), '--require-signature', '--trusted-key', str(other_public)],
+            capture_output=True, text=True
+        ).returncode != 0
+        signed_item['signature']['signature'] = 'A' * 88
+        (signed_dist / 'index.json').write_text(json.dumps(signed_index), encoding='utf-8')
+        assert subprocess.run(CLI + ['verify', str(signed_dist)]).returncode != 0
         run('update', '-p', str(root), '-r', str(Path(td) / 'dist'))
         prev_engine = os.environ.get('INIMERSE_ENGINE_VERSION'); os.environ['INIMERSE_ENGINE_VERSION'] = '0.3.0'
         assert subprocess.run(CLI + ['install', str(dep_pkg), '-t', str(target)]).returncode != 0

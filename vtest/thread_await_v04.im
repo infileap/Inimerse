@@ -1,0 +1,40 @@
+thread delayed_worker {
+    wait 0.05
+    return 12
+}
+
+task delayed_task {
+    wait 0.05
+    return ok(21)
+}
+
+thread failing_worker {
+    wait 0.02
+    throw "await-failed"
+}
+
+task slow_task {
+    wait 0.2
+    return 33
+}
+
+start delayed_worker
+start delayed_task
+start failing_worker
+start slow_task
+
+os_result = thread_await("delayed_worker")
+task_result = thread_await("delayed_task")
+fail_result = thread_await("failing_worker")
+timeout_result = thread_await("slow_task", 0.01)
+
+all_ok = is_ok(os_result) and result_value(os_result) == 12
+all_ok = all_ok and is_ok(task_result) and result_value(task_result) == 21
+all_ok = all_ok and !is_ok(fail_result) and result_error(fail_result) == "await-failed"
+all_ok = all_ok and !is_ok(timeout_result)
+
+join slow_task
+late_result = thread_result("slow_task")
+all_ok = all_ok and is_ok(late_result) and result_value(late_result) == 33
+
+if all_ok { say "thread-await-ok" } else { say "thread-await-fail" }

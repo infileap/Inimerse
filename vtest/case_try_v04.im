@@ -49,3 +49,8 @@ case try structured_deep {
     err({"outer": {"inner": {"code": 404}}}): say "deep-structural-hit"
     _: say "deep-structural-miss"
 }
+result_nested = err([11, {"code": 42}])
+case try result_nested {
+    err([first, {"code": code}]): say "nested-result-hit"
+    _: say "nested-result-miss"
+}

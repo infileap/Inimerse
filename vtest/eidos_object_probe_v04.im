@@ -1,0 +1,10 @@
+func make_counter(seed) {
+    obj = {"value": seed}
+    obj["get"] = (ignored -> obj["value"])
+    obj["inc"] = (n -> obj["value"] + n)
+    return obj
+}
+
+counter = make_counter(4)
+say counter["get"](0)
+say counter["inc"](3)

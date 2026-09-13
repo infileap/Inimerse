@@ -19,10 +19,12 @@ jobs:
         run: make -j2 check
       - name: CMake build, tests, and package
         run: |
-          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.0
           cmake --build build -j2
           ctest --test-dir build --output-on-failure
           cmake --build build --target package
+          find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
+          python3 tools/release_verify.py build --version 0.4.0 --require-wasm --require-deb-python3
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
