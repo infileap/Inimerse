@@ -40,6 +40,13 @@ jobs:
               :
             else
               test_rc=$?
+              if [ "$test_name" = "range_meta_runtime" ]; then
+                echo "::group::range_meta_runtime diagnostics"
+                cc --version || true
+                ./build/inimerse vtest/range_meta_v04.im || true
+                ctest --test-dir build -R "^range_meta_runtime$" -V || true
+                echo "::endgroup::"
+              fi
               echo "::error title=CTest failed::${test_name} (rc=${test_rc})"
               exit 1
             fi
