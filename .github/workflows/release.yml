@@ -20,6 +20,7 @@ jobs:
         run: |
           node tools/regression.js
           VERSION="0.4.0"
+          rm -rf build
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
           for probe in platform_probe fiber_probe process_probe socket_probe thread_probe dir_probe headless_probe hub_probe; do

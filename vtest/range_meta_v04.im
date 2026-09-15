@@ -1,12 +1,12 @@
 # Metadata members must lower to the core builtins, even when the object is
 # an identifier visible to namespace resolution.
-a = 42
-g be 0,1,2,3:0
-if match(a.type, "^int$") {
-    if 5 in a.range {
-        if !(3000000000.0 in a.range) {
-            if match(g.type, "^int$") {
-                if g in g.range {
+range_meta_value = 42
+range_meta_global be 0,1,2,3:0
+if match(range_meta_value.type, "^int$") {
+    if 5 in range_meta_value.range {
+        if !(3000000000.0 in range_meta_value.range) {
+            if match(range_meta_global.type, "^int$") {
+                if range_meta_global in range_meta_global.range {
                     say "range-" + "meta-pass"
                 } else { say "range-meta-fail:g-membership" }
             } else { say "range-meta-fail:g-type" }
