@@ -43,8 +43,14 @@ jobs:
               if [ "$test_name" = "range_meta_runtime" ]; then
                 echo "::group::range_meta_runtime diagnostics"
                 cc --version || true
-                ./build/inimerse vtest/range_meta_v04.im || true
-                ctest --test-dir build -R "^range_meta_runtime$" -V || true
+                range_output="$(./build/inimerse vtest/range_meta_v04.im 2>&1)" || range_rc=$?
+                range_rc="${range_rc:-0}"
+                compact_range_output="${range_output//$'\n'/ | }"
+                echo "::error title=range_meta direct::rc=${range_rc}; ${compact_range_output:0:900}"
+                ctest_output="$(ctest --test-dir build -R "^range_meta_runtime$" -V 2>&1)" || ctest_rc=$?
+                ctest_rc="${ctest_rc:-0}"
+                compact_ctest_output="${ctest_output//$'\n'/ | }"
+                echo "::error title=range_meta ctest::rc=${ctest_rc}; ${compact_ctest_output:0:900}"
                 echo "::endgroup::"
               fi
               echo "::error title=CTest failed::${test_name} (rc=${test_rc})"
