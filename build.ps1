@@ -21,8 +21,11 @@ $buildExit = $LASTEXITCODE
 $buildOut | Select-String -Pattern "error|warning" | Select-Object -First 20
 if ($buildExit -eq 0) {
     Write-Host "BUILD OK"
-    Copy-Item (Join-Path $repo "inimerse.exe") (Join-Path $env:USERPROFILE "Infiverse\inimerse.exe") -Force
-    Write-Host "deployed to $env:USERPROFILE\Infiverse\inimerse.exe"
+    $deployDir = Join-Path $env:USERPROFILE "Infiverse"
+    New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
+    $deployPath = Join-Path $deployDir "inimerse.exe"
+    Copy-Item (Join-Path $repo "inimerse.exe") $deployPath -Force
+    Write-Host "deployed to $deployPath"
 } else {
     Write-Host "BUILD FAILED: $LASTEXITCODE"
     exit 1
