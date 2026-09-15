@@ -196,8 +196,11 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(collection_core_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection" PASS_REGULAR_EXPRESSION "1,2")
   add_test(NAME type_collection_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/type_collection_v04.im)
   set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection")
-  add_test(NAME range_meta_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/range_meta_v04.im)
-  set_tests_properties(range_meta_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;metadata" PASS_REGULAR_EXPRESSION "range-meta-pass")
+  file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/range_meta_sandbox)
+  add_test(NAME range_meta_runtime
+    COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_BINARY_DIR}/range_meta_sandbox
+      $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/range_meta_v04.im)
+  set_tests_properties(range_meta_runtime PROPERTIES TIMEOUT 15 LABELS "language;types;metadata" PASS_REGULAR_EXPRESSION "range-meta-pass")
   add_test(NAME posix_core_api_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
   set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings" PASS_REGULAR_EXPRESSION "posix-core-api-ok" FAIL_REGULAR_EXPRESSION "posix-core-api-fail")
   add_test(NAME posix_runtime_parity COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_runtime_parity_v04.im)
