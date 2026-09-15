@@ -8,8 +8,8 @@ if match(a.type, "^int$") {
             if match(g.type, "^int$") {
                 if g in g.range {
                     say "range-" + "meta-pass"
-                } else { say "range-" + "meta-fail" }
-            } else { say "range-" + "meta-fail" }
-        } else { say "range-" + "meta-fail" }
-    } else { say "range-" + "meta-fail" }
-} else { say "range-" + "meta-fail" }
+                } else { say "range-meta-fail:g-membership" }
+            } else { say "range-meta-fail:g-type" }
+        } else { say "range-meta-fail:large-int-bound" }
+    } else { say "range-meta-fail:int-membership" }
+} else { say "range-meta-fail:a-type" }
