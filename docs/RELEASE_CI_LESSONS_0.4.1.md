@@ -7,6 +7,12 @@ image did not expose a MinGW compiler on `PATH`. Installing MSYS2 alone is not
 enough, and hard-coding `C:\msys64` is unreliable because `setup-msys2` can
 install under a runner temporary directory.
 
+After GCC was available, the legacy PowerShell source list still failed at
+link time because it had drifted from CMake and omitted newer VM, type, result,
+process, socket, and speech-stream sources. The full CMake build also exposed a
+probe that used POSIX C11 threads directly instead of the project's portable
+thread abstraction.
+
 ## Permanent Windows pattern
 
 - Install the exact UCRT64 GCC package with `msys2/setup-msys2`.
@@ -14,12 +20,22 @@ install under a runner temporary directory.
   `build.ps1` as `MSYS2_LOCATION`.
 - Let `build.ps1` discover GCC from that location first, then try standard
   local UCRT64 and MINGW64 paths for developer machines.
+- Make `build.ps1` configure and build the CMake target with Ninja instead of
+  maintaining a second source and library list. CMake is the canonical Windows
+  build graph.
+- Reuse that same build directory for CTest in CI instead of compiling the
+  engine a second time with a different generator.
 - Create `%USERPROFILE%\Infiverse` before copying the executable.
 - Preserve complete compiler output on failure while keeping successful CI
   logs compact.
 
 This avoids depending on the hosted image's preinstalled tools, installation
-directory, or deprecated MINGW64 environment.
+directory, deprecated MINGW64 environment, or a duplicate source list that
+silently drifts as the runtime grows.
+
+GitHub-hosted runners also warned when Node 20 actions were forced onto the new
+runtime. Keep `actions/checkout` and `actions/setup-node` on their current
+Node 24 major versions rather than relying on compatibility shims.
 
 ## Test isolation
 

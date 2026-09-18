@@ -1,11 +1,19 @@
 #include "closure.h"
+#include "../platform/thread.h"
 #include <assert.h>
-#include <threads.h>
 
-static int churn(void *arg) {
+#ifdef _WIN32
+static unsigned __stdcall churn(void *arg) {
+#else
+static void *churn(void *arg) {
+#endif
     ImClosureEnv *env = (ImClosureEnv *)arg;
     for (int i = 0; i < 10000; ++i) { im_closure_env_retain(env); im_closure_env_release(env); }
+#ifdef _WIN32
     return 0;
+#else
+    return NULL;
+#endif
 }
 
 int main(void) {
@@ -43,9 +51,11 @@ int main(void) {
     im_closure_env_clear(empty);
     im_closure_env_release(empty);
     ImClosureEnv *shared = im_closure_env_new(1);
-    thrd_t t1, t2;
-    assert(shared && thrd_create(&t1, churn, shared) == thrd_success && thrd_create(&t2, churn, shared) == thrd_success);
-    thrd_join(t1, NULL); thrd_join(t2, NULL);
+    void *t1 = shared ? im_thread_start(churn, shared) : NULL;
+    void *t2 = shared ? im_thread_start(churn, shared) : NULL;
+    assert(t1 && t2);
+    assert(im_thread_join(t1, 5000) == 0 && im_thread_join(t2, 5000) == 0);
+    im_thread_close(t1); im_thread_close(t2);
     im_closure_env_release(shared);
     return 0;
 }

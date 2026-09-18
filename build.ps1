@@ -19,30 +19,47 @@ $gccCommand = Get-Command gcc
 Write-Host "Using GCC: $($gccCommand.Source)"
 & gcc --version | Select-Object -First 1
 $repo = (Resolve-Path $PSScriptRoot).Path
-$src = Join-Path $repo "src"
-$incs = @("-I$src", "-I$src\parser", "-I$src\compiler", "-I$src\vm", "-I$src\runtime", "-I$src\mod", "-I$src\common", "-I$src\lexer")
-$files = @(
-    "$src\main.c", "$src\platform\platform.c", "$src\platform\thread.c", "$src\platform\fiber.c", "$src\platform\process.c", "$src\platform\socket.c", "$src\platform\dir.c", "$src\common\common.c", "$src\common\sha256.c", "$src\common\ed25519.c", "$src\lexer\lexer.c", "$src\parser\parser.c",
-    "$src\compiler\bytecode.c", "$src\compiler\compiler.c", "$src\vm\vm.c", "$src\runtime\runtime.c",
-    "$src\child_proc.c", "$src\headless_server.c", "$src\isolate_mod.c", "$src\desugar_mod.c", "$src\lint_mod.c", "$src\mod\mod.c", "$src\mod\gui_mod.c", "$src\mod\io_mod.c", "$src\mod\net_mod.c",
-    "$src\mod\json_mod.c", "$src\mod\record_mod.c", "$src\mod\infiverse_mod.c", "$src\mod\verse_dist_mod.c", "$src\mod\server_mod.c", "$src\mod\identity_mod.c", "$src\mod\social_mod.c", "$src\mod\ai_mod.c", "$src\mod\say_mod_windows.c",
-    (Join-Path $repo "mods\build\build_mod.c")
-)
-$libs = @("-lm", "-lwinhttp", "-lcrypt32", "-lgdi32", "-lwinmm", "-lmsimg32", "-lwindowscodecs", "-lole32", "-lws2_32", "-lcomdlg32", "-lshell32", "-lshlwapi", "-liphlpapi")
-$exePath = Join-Path $repo "inimerse.exe"
-$libPath = Join-Path $repo "inimerse.lib"
-$buildOut = & gcc -O2 -s -std=c11 "-Wl,--export-all-symbols" "-Wl,--out-implib=$libPath" @incs -o $exePath @files @libs 2>&1
-$buildExit = $LASTEXITCODE
-if ($buildExit -eq 0) {
-    $buildOut | Select-String -Pattern "error|warning" | Select-Object -First 20
-    Write-Host "BUILD OK"
-    $deployDir = Join-Path $env:USERPROFILE "Infiverse"
-    New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
-    $deployPath = Join-Path $deployDir "inimerse.exe"
-    Copy-Item (Join-Path $repo "inimerse.exe") $deployPath -Force
-    Write-Host "deployed to $deployPath"
-} else {
-    Write-Host "BUILD FAILED: $buildExit"
-    $buildOut | ForEach-Object { Write-Host $_ }
-    exit 1
+
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+    throw "cmake not found. Install CMake or add it to PATH."
 }
+if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+    throw "ninja not found. Install Ninja or add it to PATH."
+}
+
+$buildDir = Join-Path $repo "build-windows-gcc"
+if (Test-Path $buildDir) {
+    Remove-Item -Recurse -Force $buildDir
+}
+
+& cmake -S $repo -B $buildDir -G Ninja `
+    "-DCMAKE_BUILD_TYPE=Release" `
+    "-DCMAKE_C_COMPILER=$($gccCommand.Source)" `
+    "-DINIMERSE_BUILD_ENGINE=ON"
+if ($LASTEXITCODE -ne 0) {
+    throw "CMake configure failed with exit code $LASTEXITCODE."
+}
+
+& cmake --build $buildDir --parallel 2
+if ($LASTEXITCODE -ne 0) {
+    throw "CMake build failed with exit code $LASTEXITCODE."
+}
+
+$builtExe = Join-Path $buildDir "inimerse.exe"
+if (-not (Test-Path $builtExe)) {
+    throw "CMake build succeeded but $builtExe was not created."
+}
+
+$exePath = Join-Path $repo "inimerse.exe"
+Copy-Item $builtExe $exePath -Force
+$importLib = Join-Path $buildDir "libinimerse.dll.a"
+if (Test-Path $importLib) {
+    Copy-Item $importLib (Join-Path $repo "inimerse.lib") -Force
+}
+
+$deployDir = Join-Path $env:USERPROFILE "Infiverse"
+New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
+$deployPath = Join-Path $deployDir "inimerse.exe"
+Copy-Item $exePath $deployPath -Force
+Write-Host "BUILD OK"
+Write-Host "deployed to $deployPath"

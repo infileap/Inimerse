@@ -11,6 +11,11 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
 - Made CI CMake builds start from a clean build directory.
 - Fixed Windows CI setup so the legacy `build.ps1` path has a MinGW toolchain
   available on GitHub hosted runners.
+- Made `build.ps1` use CMake as the single canonical Windows source list,
+  preventing linker failures when new runtime modules are added.
+- Made the closure concurrency probe use the project's portable thread layer,
+  so the full probe set builds with MinGW as well as POSIX toolchains.
+- Updated GitHub's checkout and Node setup actions to their Node 24 releases.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.
 

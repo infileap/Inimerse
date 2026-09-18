@@ -40,8 +40,11 @@ add_executable(bytecode_capture_probe src/compiler/bytecode.c src/compiler/bytec
 target_include_directories(bytecode_capture_probe PRIVATE src src/compiler src/common)
 target_link_libraries(bytecode_capture_probe PRIVATE inimerse_platform)
 add_test(NAME bytecode_capture_probe COMMAND bytecode_capture_probe)
-add_executable(closure_probe src/vm/closure.c src/vm/closure_probe.c)
+add_executable(closure_probe src/vm/closure.c src/vm/closure_probe.c src/platform/thread.c)
 target_include_directories(closure_probe PRIVATE src/vm src src/compiler src/common)
+if(NOT WIN32)
+  target_link_libraries(closure_probe PRIVATE Threads::Threads)
+endif()
 add_test(NAME closure_probe COMMAND closure_probe)
 
 add_executable(typeset_probe src/types/typeset.c src/types/typeset_probe.c)
@@ -152,6 +155,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c)
   if(WIN32)
     list(APPEND INIMERSE_ENGINE_SOURCES
+      src/platform/process.c src/platform/socket.c
       src/runtime/runtime.c src/child_proc.c src/headless_server.c
       src/isolate_mod.c src/desugar_mod.c src/lint_mod.c src/mod/mod.c
       src/mod/gui_mod.c src/mod/io_mod.c src/mod/net_mod.c src/mod/json_mod.c
