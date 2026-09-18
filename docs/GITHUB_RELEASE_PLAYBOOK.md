@@ -1,10 +1,10 @@
 # GitHub 发布操作集（infileap/inimerse）
 
-本文件是 Inimerse 的持久化发布手册。切换对话后，先读取本文件，再执行发布操作。默认发布仓库为 `infileap/inimerse`，默认目标分支为 `main`。0.4.0 的 CI 发布 workflow 只响应 `v0.4.0` tag。
+本文件是 Inimerse 的持久化发布手册。切换对话后，先读取本文件，再执行发布操作。默认发布仓库为 `infileap/inimerse`，默认目标分支为 `main`。0.4.1 的 CI 发布 workflow 只响应 `v0.4.1` tag。
 
 ## 当前授权与默认值
 
-用户已授权执行完整远程发布流程：提交变更、推送 `main`、创建并发布 GitHub Release、上传构建产物。默认版本为 `0.4.0`（标签 `v0.4.0`），Release 类型为正式版，说明使用本手册第 4 节模板，产物为已通过门禁的 Linux `tar.gz`、`zip` 和 `deb` 三种包。Windows 安装器和 Winget 暂不属于 0.4.0 发布资产。除非用户另行指定，不需要再次询问这些选项；不要索取或记录 GitHub Token。
+用户已授权执行完整远程发布流程：提交变更、推送 `main`、创建并发布 GitHub Release、上传构建产物。默认版本为 `0.4.1`（标签 `v0.4.1`），Release 类型为正式版，说明使用本手册第 4 节模板，产物为已通过门禁的 Linux `tar.gz`、`zip` 和 `deb` 三种包。Windows 安装器和 Winget 暂不属于 0.4.1 发布资产。除非用户另行指定，不需要再次询问这些选项；不要索取或记录 GitHub Token。
 
 ## 1. 发布前门禁
 
@@ -13,7 +13,7 @@
 ```powershell
 $ErrorActionPreference = 'Stop'
 $repo = 'infileap/inimerse'
-$version = '0.4.0'       # 每次发布只修改这一处
+$version = '0.4.1'       # 每次发布只修改这一处
 $tag = "v$version"
 
 gh auth status
@@ -64,10 +64,10 @@ git ls-remote --tags origin $tag
 
 ## 4. 创建 GitHub Release 并上传产物
 
-使用仓库中的 0.4.0 发布范围说明，并显式上传三个安装包和 `SHA256SUMS`：
+使用仓库中的 0.4.1 发布说明，并显式上传三个安装包和 `SHA256SUMS`：
 
 ```powershell
-$notes = Get-Content -LiteralPath "docs/RELEASE_0.4.0.md" -Raw
+$notes = Get-Content -LiteralPath "docs/RELEASE_0.4.1.md" -Raw
 $notes += "`n## SHA-256`n`n````text`n"
 $notes += (Get-Content -LiteralPath "build/SHA256SUMS" -Raw)
 $notes += "````n"
@@ -101,7 +101,7 @@ git status --short
 
 每次发布完成后，在对话或提交说明中记录：
 
-1. 版本号和标签（例如 `0.4.0 / v0.4.0`）。
+1. 版本号和标签（例如 `0.4.1 / v0.4.1`）。
 2. CTest 结果和构建平台。
 3. 三个 asset 文件名及 SHA-256。
 4. GitHub Release URL。

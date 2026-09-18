@@ -43,4 +43,4 @@ Runtime data is stored in `userdata/` and is intentionally not tracked. OAuth cl
 ## License
 
 See [LICENSE](LICENSE).
-当前发布基线：**0.4.0**。本版本范围和明确非目标见 [docs/RELEASE_0.4.0.md](docs/RELEASE_0.4.0.md)，API 状态总览见 [docs/API_CATALOG.md](docs/API_CATALOG.md)。
+当前发布基线：**0.4.1**。本版本范围和修复项见 [docs/RELEASE_0.4.1.md](docs/RELEASE_0.4.1.md)，API 状态总览见 [docs/API_CATALOG.md](docs/API_CATALOG.md)。

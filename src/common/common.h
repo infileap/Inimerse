@@ -59,6 +59,6 @@ char *inim_load_text(const char *path);
 /* The release build injects this from CMake/CPack so CLI and package versions
  * cannot drift. Keep a source-tree fallback for non-CMake consumers. */
 #ifndef INIMERSE_VERSION_STRING
-#define INIMERSE_VERSION_STRING "0.4.0"
+#define INIMERSE_VERSION_STRING "0.4.1"
 #endif
 #define INFIVERSE_VERSION INIMERSE_VERSION_STRING

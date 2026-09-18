@@ -1,8 +1,8 @@
-name: Release Inimerse 0.4.0
+name: Release Inimerse 0.4.1
 
 on:
   push:
-    tags: ['v0.4.0']
+    tags: ['v0.4.1']
 
 jobs:
   linux-release:
@@ -19,7 +19,7 @@ jobs:
       - name: Build, test, and package
         run: |
           node tools/regression.js
-          VERSION="0.4.0"
+          VERSION="0.4.1"
           rm -rf build
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
@@ -62,7 +62,7 @@ jobs:
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
           python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
           {
-            cat docs/RELEASE_0.4.0.md
+            cat docs/RELEASE_0.4.1.md
             printf '\n## SHA-256\n\n```text\n'
             cat build/SHA256SUMS
             printf '```\n'

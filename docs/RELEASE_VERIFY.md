@@ -3,16 +3,16 @@
 使用 `tools/release_verify.py` 在上传 GitHub Release 前检查 Linux 发行物：
 
 ```bash
-python3 tools/release_verify.py build-local --version 0.4.0 \
+python3 tools/release_verify.py build-local --version 0.4.1 \
   --require-wasm --require-deb-python3
 ```
 
 只有生成真实 Windows 安装器并把实际 SHA-256 写入 Winget manifest 后，才追加：
 
 ```bash
-python3 tools/release_verify.py build-local --version 0.4.0 \
+python3 tools/release_verify.py build-local --version 0.4.1 \
   --require-wasm --require-deb-python3 \
-  --winget-dir packaging/winget/infileap.inimerse/0.4.0
+  --winget-dir packaging/winget/infileap.inimerse/0.4.1
 ```
 
 检查项：

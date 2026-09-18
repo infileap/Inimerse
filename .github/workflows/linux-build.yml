@@ -22,7 +22,7 @@ jobs:
       - name: CMake build, tests, and package
         run: |
           rm -rf build
-          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.0
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.1
           cmake --build build -j2
           for probe in platform_probe fiber_probe process_probe socket_probe thread_probe dir_probe headless_probe hub_probe; do
             if probe_output="$(./build/${probe} 2>&1)"; then
@@ -61,7 +61,7 @@ jobs:
           done
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
-          python3 tools/release_verify.py build --version 0.4.0 --require-wasm --require-deb-python3
+          python3 tools/release_verify.py build --version 0.4.1 --require-wasm --require-deb-python3
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
