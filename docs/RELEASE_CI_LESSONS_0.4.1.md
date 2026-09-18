@@ -47,6 +47,8 @@ ambient parameter files cannot affect a core language test.
 CI removes the CMake build directory before configuration. When a hosted test
 fails, the workflow emits both the direct command result and verbose CTest
 output as annotations before any test is excluded or runtime behavior changes.
+Windows CTest also writes JUnit XML and converts each failed test into a named
+GitHub annotation, so diagnosis does not depend on authenticated log access.
 
 ## Release gate
 

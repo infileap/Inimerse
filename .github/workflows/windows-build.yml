@@ -32,4 +32,15 @@ jobs:
       - name: CMake tests
         shell: pwsh
         run: |
-          ctest --test-dir build-windows-gcc --output-on-failure
+          $report = Join-Path $PWD "build-windows-gcc\ctest-results.xml"
+          ctest --test-dir build-windows-gcc --output-on-failure --output-junit $report
+          $ctestExit = $LASTEXITCODE
+          if ($ctestExit -ne 0 -and (Test-Path $report)) {
+            [xml]$results = Get-Content -LiteralPath $report -Raw
+            foreach ($test in $results.SelectNodes("//testcase[failure or error]")) {
+              $details = ($test.InnerText -replace "[\r\n]+", " | ").Trim()
+              if ($details.Length -gt 900) { $details = $details.Substring(0, 900) }
+              Write-Host "::error title=CTest failed::$($test.name): $details"
+            }
+          }
+          exit $ctestExit
