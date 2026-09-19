@@ -74,14 +74,19 @@ use it explicitly. Test isolation should be expressed in the command line, not
 only by relying on an empty working directory.
 
 The Windows runtime has a separate `runtime.c` implementation, so Linux
-coverage alone does not validate its collection and metadata builtins. The
-Windows gate caught missing `len(set)` support, an anchored literal matching
-edge case, and a process probe command that relied on shell redirection even
-though `CreateProcess` does not invoke a shell. Windows thread tests also need
-to avoid assuming that a newly created worker has already reached its receive
-instruction. Use an explicit ready signal, such as an atomic flag plus bounded
-polling, before sending a cross-thread message. Fixed sleeps are host-speed
-assumptions, not synchronization.
+coverage alone does not validate its collection, string, and metadata builtins.
+The Windows gate caught missing `len(set)` support, empty-separator `split`
+drift, an anchored literal matching edge case, and a process probe command that
+relied on shell redirection even though `CreateProcess` does not invoke a shell.
+Windows thread tests also need to avoid assuming that a newly created worker has
+already reached its receive instruction. If a message queue is the contract
+under test, use an explicit ready signal plus an ordered queue handshake before
+sending the value under test. Fixed sleeps are host-speed assumptions, not
+synchronization.
+Do not assert core thread behavior through `say` inside a thread body: threaded
+`say` is lowered through `gui_say`, which brings GUI/output semantics into a
+core runtime gate. Return the value from the worker and assert it from the main
+thread with `thread_result()` when the contract is function/message lifetime.
 
 `--no-mods` must not mean "skip every C module registration." Some C modules
 provide core builtins that the compiler already treats as always available,
@@ -102,11 +107,18 @@ function index; their closure payload has ownership. Copying a `VAL_FUNCTION`
 for asynchronous delivery should clone the closure function/environment rather
 than only sharing a retained pointer. That makes the queued value independent
 from the sender register cleanup path and avoids Windows-only lifetime races.
+When invoking a function value, use the closure object's function index as the
+canonical target. The `Value` metadata is useful for compatibility, but the
+closure object is the owner of the callable identity and captured environment.
+Message queues are also runtime roots. If task queues are marked during GC,
+OS thread queues need the same treatment; otherwise a value can be copied
+correctly into the queue and still lose closure-owned data before the receiver
+executes it.
 
-Metadata type tests should assert the type result directly (`x.type == "int"`)
-instead of routing a simple equality through regex. Regex behavior is covered
-by the portable API test; metadata lowering should fail only when metadata
-lowering is wrong.
+Do not make one release gate prove two unrelated contracts. Regex behavior is
+covered by the portable API test. Range metadata tests should focus on
+`range(value)` behavior; type/member lowering needs its own focused diagnostic
+instead of being mixed into the range gate.
 
 When a Windows-only failure also prints module load banners, first decide
 whether the test is exercising core runtime behavior or module integration.

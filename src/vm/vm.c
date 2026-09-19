@@ -2479,6 +2479,7 @@ static void gc_mark(VM *vm) {
         int regEnd = tt->base + VM_FRAME_REGS;
         if (regEnd > tt->reg_cap) regEnd = tt->reg_cap;
         for (int k = 0; k < regEnd; k++) gc_mark_value(vm, &tt->reg[k]);
+        for (int k = 0; k < tt->msg_cap; k++) gc_mark_value(vm, &tt->msg_q[k]);
         if (tt->result_ready) gc_mark_value(vm, &tt->result);
         if (tt->error_ready) gc_mark_value(vm, &tt->error);
     }
@@ -3627,7 +3628,8 @@ L_MAKE_FUNC: {
         }
 L_CALL_VALUE: {
             if (R[ins.r1].type != VAL_FUNCTION) { fprintf(stderr, "error: value is not callable\n"); t->running = false; vm->last_error = 1; continue; }
-            call_fidx_override = R[ins.r1].ival; goto L_CALL_FUNC;
+            call_fidx_override = im_closure_function_index(im_closure_from_value(&R[ins.r1]));
+            goto L_CALL_FUNC;
         }
 L_CALL_FUNC: {
             int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;

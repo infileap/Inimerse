@@ -1,11 +1,17 @@
 # Function values keep their closure while crossing a thread message queue.
 thread receiver {
     atomic_set("receiver_ready", 1)
-    recv handler, 2
-    say str(handler(4))
+    recv receiver_go
+    recv handler
+    return handler(4)
 }
 
-queued = x -> x + 5
+func make_queued() {
+    offset = 5
+    return x -> x + offset
+}
+
+queued = make_queued()
 atomic_set("receiver_ready", 0)
 start receiver
 ready_spins = 0
@@ -13,8 +19,10 @@ while atomic_get("receiver_ready") == 0 and ready_spins < 200 {
     wait 0.01
     ready_spins = ready_spins + 1
 }
+send receiver "go"
 send receiver queued
 join receiver
+say result_value(thread_result("receiver"))
 
 # A naturally finishing restart thread must release functions held in its
 # register file before beginning the next iteration.
