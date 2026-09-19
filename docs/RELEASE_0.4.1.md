@@ -22,6 +22,8 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
   Result dictionaries while worker threads were still active.
 - Made `--no-mods` a working runtime flag so core tests can opt out of ambient
   project modules explicitly.
+- Brought Windows runtime collection metadata, process probing, and thread
+  message timing behavior in line with the shared CTest suite.
 - Declared the Python cryptography dependency required by signed Inim packages.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.

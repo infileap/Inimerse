@@ -71,6 +71,15 @@ The `--no-mods` flag is now an actual runtime option and thread-focused tests
 use it explicitly. Test isolation should be expressed in the command line, not
 only by relying on an empty working directory.
 
+The Windows runtime has a separate `runtime.c` implementation, so Linux
+coverage alone does not validate its collection and metadata builtins. The
+Windows gate caught missing `len(set)` support, an anchored literal matching
+edge case, and a process probe command that relied on shell redirection even
+though `CreateProcess` does not invoke a shell. Windows thread tests also need
+to avoid assuming that a newly created worker has already reached its receive
+instruction; a short synchronization wait makes the message-queue contract
+explicit without weakening the behavior being tested.
+
 ## Release gate
 
 A release is complete only after all of these checks pass:

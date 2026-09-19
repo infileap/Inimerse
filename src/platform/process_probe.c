@@ -13,9 +13,9 @@ int main(void) {
     if (im_process_wait_kill(p, 3000) != 0) return 3;
     if (im_process_alive(p)) return 4;
     im_process_close(p);
- #ifdef _WIN32
-    const char *slow = "ping 127.0.0.1 -n 4 >nul";
- #else
+#ifdef _WIN32
+    const char *slow = "cmd /c ping 127.0.0.1 -n 4 >nul";
+#else
     const char *slow = "sleep 2";
  #endif
     ImProcess *q = im_process_spawn(slow, 0); if (!q) return 5;

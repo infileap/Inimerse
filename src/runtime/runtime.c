@@ -72,7 +72,13 @@ static int builtin_len(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
     int n = 0;
-    if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
+    if (v->type == VAL_SET) {
+        if (v->ival >= 0 && v->ival < vm->setCount) {
+            SetObj *s = &vm->sets[v->ival];
+            if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
+        }
+    }
+    else if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
     else if (v->type == VAL_DICT) {
         int a = v->ival - 1;
         if (a >= 0 && a < vm->arrayCount) n = vm_pool_slot(vm, a)->count / 2;
@@ -1041,6 +1047,17 @@ static const char *re_seq(const char *re, const char *s) {
 
 static int regex_match(const char *pattern, const char *s) {
     if (!pattern || !s) return 0;
+    size_t plen = strlen(pattern);
+    if (plen >= 2 && pattern[0] == '^' && pattern[plen - 1] == '$') {
+        int literal = 1;
+        for (size_t i = 1; i + 1 < plen; ++i) {
+            if (strchr(".[]()|*+?\\", pattern[i])) { literal = 0; break; }
+        }
+        if (literal) {
+            size_t slen = strlen(s);
+            return slen == plen - 2 && strncmp(s, pattern + 1, plen - 2) == 0;
+        }
+    }
     if (pattern[0] == '^') return re_seq(pattern + 1, s) != NULL;
     for (const char *t = s; ; t++) {
         if (re_seq(pattern, t)) return 1;

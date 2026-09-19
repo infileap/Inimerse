@@ -6,6 +6,7 @@ thread receiver {
 
 queued = x -> x + 5
 start receiver
+wait 0.05
 send receiver queued
 join receiver
 
