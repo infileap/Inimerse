@@ -961,8 +961,17 @@ void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val) {
         val_copy.type = VAL_NIL; val_copy.ival = 0; val_copy.fval = 0; val_copy.sval = NULL; val_copy.ptr = NULL;
     } else {
         int pair_idx = a->count;
-        vm_array_push(vm, aidx, &key_copy);
-        vm_array_push(vm, aidx, &val_copy);
+        if (!array_ensure(vm, aidx, a->count + 2)) {
+            value_free(&key_copy);
+            value_free(&val_copy);
+            VM_UNLOCK(vm);
+            return;
+        }
+        a->items[a->count++] = key_copy;
+        key_copy.type = VAL_NIL; key_copy.ival = 0; key_copy.fval = 0; key_copy.sval = NULL; key_copy.ptr = NULL;
+        a->items[a->count++] = val_copy;
+        val_copy.type = VAL_NIL; val_copy.ival = 0; val_copy.fval = 0; val_copy.sval = NULL; val_copy.ptr = NULL;
+        vm->used_mem += 2.0 * (double)sizeof(Value);
         if (!h->slots) dict_hash_build(vm, aidx);  /* first pair(s): table now includes them */
         else dict_hash_insert(h, a, pair_idx, hk);
     }

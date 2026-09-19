@@ -49,6 +49,27 @@ fails, the workflow emits both the direct command result and verbose CTest
 output as annotations before any test is excluded or runtime behavior changes.
 Windows CTest also writes JUnit XML and converts each failed test into a named
 GitHub annotation, so diagnosis does not depend on authenticated log access.
+Platform-specific tests must be registered or disabled explicitly; a test named
+`posix_runtime_parity` is not a Windows release gate. Cross-platform tests run
+from CMake-created sandboxes when project modules or parameter files are not
+part of the behavior under test.
+
+Thread result/await tests also use a clean sandbox. Loading unrelated project
+modules made the full suite intermittently hit the old 15-second timeout even
+though the same test completed in under a second when run alone.
+
+The durable thread-await fix was not a timeout change. `thread_await()` builds
+Result dictionaries while worker threads may still be active. `vm_dict_set()`
+already held the VM global lock, but its insert path called `vm_array_push()`,
+which tried to take the same non-recursive lock again whenever
+`active_threads > 1`. That self-deadlocked intermittently after the failing
+worker recorded its error. Code that runs under `VM_LOCK` must not call helpers
+that conditionally acquire `VM_LOCK`; append directly or split the helper into
+locked/unlocked variants.
+
+The `--no-mods` flag is now an actual runtime option and thread-focused tests
+use it explicitly. Test isolation should be expressed in the command line, not
+only by relying on an empty working directory.
 
 ## Release gate
 

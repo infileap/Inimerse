@@ -16,6 +16,13 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
 - Made the closure concurrency probe use the project's portable thread layer,
   so the full probe set builds with MinGW as well as POSIX toolchains.
 - Updated GitHub's checkout and Node setup actions to their Node 24 releases.
+- Fixed Windows collection conversion/join lifetime bugs exposed by the shared
+  cross-platform CTest suite.
+- Fixed an intermittent VM deadlock when thread result/await code created
+  Result dictionaries while worker threads were still active.
+- Made `--no-mods` a working runtime flag so core tests can opt out of ambient
+  project modules explicitly.
+- Declared the Python cryptography dependency required by signed Inim packages.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.
 

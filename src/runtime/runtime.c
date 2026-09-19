@@ -114,18 +114,18 @@ static int builtin_size(VM *vm) {
 
 static int builtin_list(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
-    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int r = -1;
-    if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
-        r = vm_set_to_array(vm, v->ival);
-    } else {
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    if (v.type == VAL_ARRAY) {
         pop(vm);
-        vm_throw_msg(vm, "list: expected set");
+        vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
+        vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
         return 1;
     }
+    int r = (v.type == VAL_SET && v.ival >= 0 && v.ival < vm->setCount)
+        ? vm_set_to_array(vm, v.ival) : -1;
     pop(vm);
     if (r < 0) push_nil(vm);
-    else { push_nil(vm); vm_cur_stack(vm)[vm_cur_sp(vm)].type = VAL_ARRAY; vm_cur_stack(vm)[vm_cur_sp(vm)].ival = r; }
+    else { push_nil(vm); vm_cur_stack(vm)[vm_cur_sp(vm)].type = VAL_ARRAY; vm_cur_stack(vm)[vm_cur_sp(vm)].ival = r + 1; }
     return 1;
 }
 
@@ -203,14 +203,14 @@ static int builtin_pop(VM *vm) {
 /* join(arr) / join(arr, sep)：数组元素连接为字符??*/
 static int builtin_join(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
-    Value *last = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value last = vm_cur_stack(vm)[vm_cur_sp(vm)];
     char *sep = NULL;
-    Value *arrv = NULL;
-    if (last->type == VAL_STRING && vm_cur_sp(vm) >= 1 && vm_cur_stack(vm)[vm_cur_sp(vm)-1].type == VAL_ARRAY) {
-        sep = strdup(last->sval ? last->sval : "");
-        arrv = &vm_cur_stack(vm)[vm_cur_sp(vm)-1];
+    Value arrv = { VAL_NIL, 0, 0, NULL, NULL };
+    if (last.type == VAL_STRING && vm_cur_sp(vm) >= 1 && vm_cur_stack(vm)[vm_cur_sp(vm)-1].type == VAL_ARRAY) {
+        sep = strdup(last.sval ? last.sval : "");
+        arrv = vm_cur_stack(vm)[vm_cur_sp(vm)-1];
         pop(vm); pop(vm);
-    } else if (last->type == VAL_ARRAY) {
+    } else if (last.type == VAL_ARRAY) {
         sep = strdup("");
         arrv = last;
         pop(vm);
@@ -219,7 +219,7 @@ static int builtin_join(VM *vm) {
         push_string(vm, "");
         return 1;
     }
-    int a = arrv->ival - 1;
+    int a = arrv.ival - 1;
     int n = (a >= 0 && a < vm->arrayCount) ? vm_pool_slot(vm, a)->count : 0;
     size_t total = 1;
     for (int i = 0; i < n; i++) {

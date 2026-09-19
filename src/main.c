@@ -552,6 +552,7 @@ int main(int argc, char **argv) {
 #endif    /* platform DPI setup */
     int gui_mode = 0;
     int safe_mode = 0;
+    int load_mods = 1;
     int headless_mode = 0;
     int headless_port = 11440;
     int jit_mode = IM_JIT_OFF;
@@ -646,6 +647,7 @@ unsigned long timeout_ms = 0;
             return desugar_file(argv[2], argc >= 4 ? argv[3] : NULL);
         }
         else if (argc >= 2 && strcmp(argv[1], "--safe") == 0) safe_mode = 1;
+        else if (argc >= 2 && strcmp(argv[1], "--no-mods") == 0) load_mods = 0;
         else if (argc >= 2 && strcmp(argv[1], "--lint") == 0) g_lint = 1;
         else if (argc >= 3 && strcmp(argv[1], "--limit-mem") == 0) { g_lim_mem = atof(argv[2]); }
         else if (argc >= 3 && strcmp(argv[1], "--limit-vram") == 0) { g_lim_vram = atof(argv[2]); }
@@ -698,7 +700,7 @@ ai_mod_register(&vm);
         }
         free(exe_path);
 
-        mod_load_all(&vm, "mods");
+        if (load_mods) mod_load_all(&vm, "mods");
         repl(&vm);
         return 0;
     }
@@ -728,7 +730,7 @@ social_mod_register(&vm);
 ai_mod_register(&vm);
     record_mod_register(&vm);
     build_mod_register(&vm);
-    mod_load_all(&vm, "mods");
+    if (load_mods) mod_load_all(&vm, "mods");
 
     if (gui_mode) {
         /* --gui 妯″紡锛氶殣钘忔帶鍒跺彴鍚庢寜鏅€氭柟寮忚繍琛岃剼鏈紝
