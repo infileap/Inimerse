@@ -203,10 +203,10 @@ if(INIMERSE_BUILD_ENGINE)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/range_meta_sandbox)
   add_test(NAME range_meta_runtime
     COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_BINARY_DIR}/range_meta_sandbox
-      $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/range_meta_v04.im)
+      $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/range_meta_v04.im)
   set_tests_properties(range_meta_runtime PROPERTIES TIMEOUT 15 LABELS "language;types;metadata" PASS_REGULAR_EXPRESSION "range-meta-pass")
-  add_test(NAME posix_core_api_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
-  set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings" PASS_REGULAR_EXPRESSION "posix-core-api-ok" FAIL_REGULAR_EXPRESSION "posix-core-api-fail")
+  add_test(NAME posix_core_api_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
+  set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings" PASS_REGULAR_EXPRESSION "posix-core-api-ok")
   add_test(NAME posix_runtime_parity COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_runtime_parity_v04.im)
   if(NOT WIN32)
     set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")

@@ -39,10 +39,12 @@ Node 24 major versions rather than relying on compatibility shims.
 
 ## Test isolation
 
-`range_meta_runtime` previously used a failure regex that matched source
-literals printed in the runtime diagnostic string table. It now relies on a
-positive pass marker and runs in a CMake-created sandbox so project modules and
-ambient parameter files cannot affect a core language test.
+`range_meta_runtime` and `posix_core_api_runtime` previously used or carried
+failure strings that could be echoed by the runtime diagnostic string table.
+CTest failure regexes must not match literals that are present in the test
+source itself. Core language tests now rely on positive pass markers and run
+with `--no-mods` so project modules and ambient parameter files cannot affect
+runtime parity checks.
 
 CI removes the CMake build directory before configuration. When a hosted test
 fails, the workflow emits both the direct command result and verbose CTest
@@ -77,8 +79,15 @@ Windows gate caught missing `len(set)` support, an anchored literal matching
 edge case, and a process probe command that relied on shell redirection even
 though `CreateProcess` does not invoke a shell. Windows thread tests also need
 to avoid assuming that a newly created worker has already reached its receive
-instruction; a short synchronization wait makes the message-queue contract
-explicit without weakening the behavior being tested.
+instruction. Use an explicit ready signal, such as an atomic flag plus bounded
+polling, before sending a cross-thread message. Fixed sleeps are host-speed
+assumptions, not synchronization.
+
+When a Windows-only failure also prints module load banners, first decide
+whether the test is exercising core runtime behavior or module integration.
+For core behavior, add `--no-mods` and keep the same pass marker. This does not
+weaken the gate; it removes unrelated startup side effects so the shared CTest
+suite validates the VM, compiler, and runtime contract directly.
 
 ## Release gate
 

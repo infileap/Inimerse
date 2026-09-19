@@ -24,6 +24,11 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
   project modules explicitly.
 - Brought Windows runtime collection metadata, process probing, and thread
   message timing behavior in line with the shared CTest suite.
+- Isolated core metadata and portable API tests with `--no-mods`, and made
+  portable API failures report precise stage markers without tripping CTest on
+  diagnostic string-table output.
+- Replaced the function-message thread lifetime test's fixed startup sleep
+  with an explicit ready handshake.
 - Declared the Python cryptography dependency required by signed Inim packages.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.

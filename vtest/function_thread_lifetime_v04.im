@@ -1,12 +1,18 @@
 # Function values keep their closure while crossing a thread message queue.
 thread receiver {
+    atomic_set("receiver_ready", 1)
     recv handler, 2
     say str(handler(4))
 }
 
 queued = x -> x + 5
+atomic_set("receiver_ready", 0)
 start receiver
-wait 0.05
+ready_spins = 0
+while atomic_get("receiver_ready") == 0 and ready_spins < 200 {
+    wait 0.01
+    ready_spins = ready_spins + 1
+}
 send receiver queued
 join receiver
 

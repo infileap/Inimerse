@@ -4,15 +4,16 @@ s = "  Hello World "
 d = {"a": 1, "b": 2}
 parts = split("a,b,c", ",")
 chars_v = chars("abc")
-ok = len(parts) == 3 and parts[1] == "b"
-ok = ok and len(chars_v) == 3 and ord("A") == 65 and chr(66) == "B"
-ok = ok and trim(s) == "Hello World" and upper("ab") == "AB" and lower("XY") == "xy"
-ok = ok and round(2.675, 2) == 2.68
-ok = ok and match("user@example.com", "^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$")
-ok = ok and startswith(s, "  ") and endswith(s, " ") and index(s, "World") == 8
-ok = ok and substr(s, 2, 5) == "Hello" and replace(s, "World", "Inim") == "  Hello Inim "
-ok = ok and len(keys(d)) == 2 and size(d) == 2 and has(d, "a")
-ok = ok and sum([1, 2, 3]) == 6 and len(split("", ",")) == 0
-ok = ok and len(split("a b", "")) == 2 and split("a b", "")[1] == "b"
-ok = ok and remove(d, "a") and !has(d, "a")
-if ok { say "posix-core-api-ok" } else { say "posix-core-api-fail" }
+ok = 1
+if !(len(parts) == 3 and parts[1] == "b") { ok = 0; say "pcapi-bad-split" }
+if !(len(chars_v) == 3 and ord("A") == 65 and chr(66) == "B") { ok = 0; say "pcapi-bad-chars" }
+if !(trim(s) == "Hello World" and upper("ab") == "AB" and lower("XY") == "xy") { ok = 0; say "pcapi-bad-case" }
+if !(round(2.675, 2) == 2.68) { ok = 0; say "pcapi-bad-round" }
+if !(match("user@example.com", "^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$")) { ok = 0; say "pcapi-bad-match" }
+if !(startswith(s, "  ") and endswith(s, " ") and index(s, "World") == 8) { ok = 0; say "pcapi-bad-search" }
+if !(substr(s, 2, 5) == "Hello" and replace(s, "World", "Inim") == "  Hello Inim ") { ok = 0; say "pcapi-bad-slice" }
+if !(len(keys(d)) == 2 and size(d) == 2 and has(d, "a")) { ok = 0; say "pcapi-bad-dict" }
+if !(sum([1, 2, 3]) == 6 and len(split("", ",")) == 0) { ok = 0; say "pcapi-bad-aggregate" }
+if !(len(split("a b", "")) == 2 and split("a b", "")[1] == "b") { ok = 0; say "pcapi-bad-blank-separator" }
+if !(remove(d, "a") and !has(d, "a")) { ok = 0; say "pcapi-bad-remove" }
+if ok { say "posix-core-api-ok" } else { say "posix-core-api-bad" }
