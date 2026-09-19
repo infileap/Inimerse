@@ -508,6 +508,29 @@ static void load_embedded_mods_impl(VM *vm) {
 #endif
 }
 
+static void register_core_modules(VM *vm) {
+    isolate_mod_register(vm);
+    lint_mod_register(vm);
+    vm_debug_builtins_register(vm);
+    gui_mod_register(vm);
+    result_mod_register(vm);
+    io_mod_register(vm);
+    net_mod_register(vm);
+    json_mod_register(vm);
+    server_mod_register(vm);
+    say_mod_register(vm);
+    identity_mod_register(vm);
+    social_mod_register(vm);
+    ai_mod_register(vm);
+    record_mod_register(vm);
+}
+
+static void register_world_modules(VM *vm) {
+    infiverse_mod_register(vm);
+    verse_dist_mod_register(vm);
+    build_mod_register(vm);
+}
+
 int main(int argc, char **argv) {
 
 
@@ -668,23 +691,8 @@ if (argc == 1) {
     if (g_gc_on) { vm.gc_enabled =1; if (vm.gc_threshold <=0) vm.gc_threshold =2.0 *1024.0 *1024.0; }
         vm.safe_mode = safe_mode;
         runtime_register_builtins(&vm);
-    isolate_mod_register(&vm);
-    lint_mod_register(&vm);
-    vm_debug_builtins_register(&vm);
-    gui_mod_register(&vm);
-    result_mod_register(&vm);
-    io_mod_register(&vm);
-    net_mod_register(&vm);
-    json_mod_register(&vm);
-    infiverse_mod_register(&vm);
-    verse_dist_mod_register(&vm);
-    server_mod_register(&vm);
-    say_mod_register(&vm);
-identity_mod_register(&vm);
-social_mod_register(&vm);
-ai_mod_register(&vm);
-    record_mod_register(&vm);
-    build_mod_register(&vm);
+        register_core_modules(&vm);
+        if (load_mods) register_world_modules(&vm);
         vm.load_embedded_mods = load_embedded_mods_impl;
 
         char *exe_path = get_self_path();
@@ -713,23 +721,8 @@ ai_mod_register(&vm);
     vm.safe_mode = safe_mode;
     if (timeout_set) vm.exec_timeout_ms = timeout_ms;  /* 0 = unlimited */
     runtime_register_builtins(&vm);
-    isolate_mod_register(&vm);
-    lint_mod_register(&vm);
-    vm_debug_builtins_register(&vm);
-    gui_mod_register(&vm);
-    result_mod_register(&vm);
-    io_mod_register(&vm);
-    net_mod_register(&vm);
-    json_mod_register(&vm);
-    infiverse_mod_register(&vm);
-    verse_dist_mod_register(&vm);
-    server_mod_register(&vm);
-    say_mod_register(&vm);
-identity_mod_register(&vm);
-social_mod_register(&vm);
-ai_mod_register(&vm);
-    record_mod_register(&vm);
-    build_mod_register(&vm);
+    register_core_modules(&vm);
+    if (load_mods) register_world_modules(&vm);
     if (load_mods) mod_load_all(&vm, "mods");
 
     if (gui_mode) {

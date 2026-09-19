@@ -83,6 +83,20 @@ instruction. Use an explicit ready signal, such as an atomic flag plus bounded
 polling, before sending a cross-thread message. Fixed sleeps are host-speed
 assumptions, not synchronization.
 
+`--no-mods` must not mean "skip every C module registration." Some C modules
+provide core builtins that the compiler already treats as always available,
+including thread result helpers and runtime support used by threaded tests.
+The durable split is: always register core C modules, skip world/packaging
+modules (`infiverse`, `verse_dist`, `build`) and disk-loaded `mods/` for core
+tests. That removes startup banners and namespace side effects without changing
+VM initialization semantics.
+
+Windows `atomic_get()` and `atomic_set()` must use the same real atomic
+read/write semantics as POSIX. A mutex-protected ordinary read can still leave
+the test depending on implementation details around thread visibility; use
+`InterlockedCompareExchange(..., 0, 0)` for reads and `InterlockedExchange()`
+for writes.
+
 When a Windows-only failure also prints module load banners, first decide
 whether the test is exercising core runtime behavior or module integration.
 For core behavior, add `--no-mods` and keep the same pass marker. This does not

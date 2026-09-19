@@ -29,6 +29,10 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
   diagnostic string-table output.
 - Replaced the function-message thread lifetime test's fixed startup sleep
   with an explicit ready handshake.
+- Split `--no-mods` so core C modules still register while world, VDP,
+  packaging, and disk-loaded modules stay out of core runtime tests.
+- Made Windows `atomic_get`/`atomic_set` use interlocked operations for
+  cross-thread visibility.
 - Declared the Python cryptography dependency required by signed Inim packages.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.

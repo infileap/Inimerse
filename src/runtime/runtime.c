@@ -1705,7 +1705,9 @@ static int builtin_atomic_get(VM *vm) {
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
     if (idx < 0) { push_int(vm, 0); return 1; }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
-    int v = (vm->globals[idx].val.type == VAL_INT) ? vm->globals[idx].val.ival : 0;
+    int v = (vm->globals[idx].val.type == VAL_INT)
+        ? (int)InterlockedCompareExchange((volatile LONG*)&vm->globals[idx].val.ival, 0, 0)
+        : 0;
     if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
     push_int(vm, v);
     return 1;
@@ -1737,7 +1739,8 @@ static int builtin_atomic_set(VM *vm) {
         VM_UNLOCK(vm);
     }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
-    vm->globals[idx].val.type = VAL_INT; vm->globals[idx].val.ival = (int)val;
+    vm->globals[idx].val.type = VAL_INT;
+    InterlockedExchange((volatile LONG*)&vm->globals[idx].val.ival, (LONG)val);
     vm->globals[idx].val.fval = 0; vm->globals[idx].val.sval = NULL;
     if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
     push_int(vm, (int)val);
