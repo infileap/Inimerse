@@ -97,6 +97,17 @@ the test depending on implementation details around thread visibility; use
 `InterlockedCompareExchange(..., 0, 0)` for reads and `InterlockedExchange()`
 for writes.
 
+Function values crossing a thread message queue are not just integers plus a
+function index; their closure payload has ownership. Copying a `VAL_FUNCTION`
+for asynchronous delivery should clone the closure function/environment rather
+than only sharing a retained pointer. That makes the queued value independent
+from the sender register cleanup path and avoids Windows-only lifetime races.
+
+Metadata type tests should assert the type result directly (`x.type == "int"`)
+instead of routing a simple equality through regex. Regex behavior is covered
+by the portable API test; metadata lowering should fail only when metadata
+lowering is wrong.
+
 When a Windows-only failure also prints module load banners, first decide
 whether the test is exercising core runtime behavior or module integration.
 For core behavior, add `--no-mods` and keep the same pass marker. This does not

@@ -17,6 +17,7 @@ int im_closure_env_copy_slot(ImClosureEnv *dst, size_t dst_index, const ImClosur
 void im_closure_env_clear(ImClosureEnv *env);
 const Value *im_closure_env_get(const ImClosureEnv *env, size_t index);
 ImClosureFunction *im_closure_function_new(int function_index, ImClosureEnv *env);
+ImClosureFunction *im_closure_function_clone(const ImClosureFunction *fn);
 void im_closure_function_retain(ImClosureFunction *fn);
 void im_closure_function_release(ImClosureFunction *fn);
 int im_closure_function_index(const ImClosureFunction *fn);

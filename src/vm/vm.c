@@ -365,8 +365,11 @@ static void value_copy(Value *dst, const Value *src) {
     *dst = *src;
     if (src->type == VAL_STRING && src->sval && src->ival != 1)
         dst->sval = strdup(src->sval);
-    else if (src->type == VAL_FUNCTION && src->ptr)
-        im_closure_function_retain((ImClosureFunction *)src->ptr);
+    else if (src->type == VAL_FUNCTION && src->ptr) {
+        ImClosureFunction *copy = im_closure_function_clone((ImClosureFunction *)src->ptr);
+        if (copy) dst->ptr = copy;
+        else im_closure_function_retain((ImClosureFunction *)src->ptr);
+    }
 }
 
 /* Replace a register/global slot with an owned copy while releasing the old

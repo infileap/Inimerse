@@ -33,6 +33,10 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
   packaging, and disk-loaded modules stay out of core runtime tests.
 - Made Windows `atomic_get`/`atomic_set` use interlocked operations for
   cross-thread visibility.
+- Made copied function values clone their closure payload so queued
+  cross-thread function messages do not depend on sender lifetime.
+- Kept range metadata type checks focused on metadata lowering by using direct
+  type equality.
 - Declared the Python cryptography dependency required by signed Inim packages.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.

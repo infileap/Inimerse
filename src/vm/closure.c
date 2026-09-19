@@ -76,6 +76,14 @@ ImClosureFunction *im_closure_function_new(int index, ImClosureEnv *env) {
     if (env) im_closure_env_retain(env);
     return fn;
 }
+ImClosureFunction *im_closure_function_clone(const ImClosureFunction *fn) {
+    if (!fn) return NULL;
+    ImClosureEnv *env = fn->env ? im_closure_env_clone(fn->env) : NULL;
+    if (fn->env && !env) return NULL;
+    ImClosureFunction *copy = im_closure_function_new(fn->function_index, env);
+    if (env) im_closure_env_release(env);
+    return copy;
+}
 void im_closure_function_retain(ImClosureFunction *fn) { if (fn) atomic_fetch_add_explicit(&fn->refs, 1, memory_order_relaxed); }
 void im_closure_function_release(ImClosureFunction *fn) { if (fn && atomic_fetch_sub_explicit(&fn->refs, 1, memory_order_acq_rel) == 1) { im_closure_env_release(fn->env); free(fn); } }
 int im_closure_function_index(const ImClosureFunction *fn) { return fn ? fn->function_index : -1; }
