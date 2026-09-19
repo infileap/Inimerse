@@ -1,7 +1,8 @@
 # Function values keep their closure while crossing a thread message queue.
 thread receiver {
     atomic_set("receiver_ready", 1)
-    recv handler, 2
+    recv receiver_go
+    recv handler
     say str(handler(4))
 }
 
@@ -13,6 +14,7 @@ while atomic_get("receiver_ready") == 0 and ready_spins < 200 {
     wait 0.01
     ready_spins = ready_spins + 1
 }
+send receiver "go"
 send receiver queued
 join receiver
 

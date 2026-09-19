@@ -27,16 +27,21 @@ Inimerse 0.4.1 is a patch release for the 0.4 portable runtime line.
 - Isolated core metadata and portable API tests with `--no-mods`, and made
   portable API failures report precise stage markers without tripping CTest on
   diagnostic string-table output.
-- Replaced the function-message thread lifetime test's fixed startup sleep
-  with an explicit ready handshake.
+- Replaced the function-message thread lifetime test's fixed startup sleep with
+  an explicit ready signal and queue handshake before sending the function
+  value.
 - Split `--no-mods` so core C modules still register while world, VDP,
   packaging, and disk-loaded modules stay out of core runtime tests.
 - Made Windows `atomic_get`/`atomic_set` use interlocked operations for
   cross-thread visibility.
+- Fixed Windows `split` handling for an empty separator so it matches the
+  portable runtime's whitespace split behavior.
 - Made copied function values clone their closure payload so queued
   cross-thread function messages do not depend on sender lifetime.
-- Kept range metadata type checks focused on metadata lowering by using direct
-  type equality.
+- Marked OS thread message queues as GC roots so queued function values remain
+  callable until the receiver consumes them.
+- Kept range metadata checks focused on the `range(value)` runtime behavior,
+  with regex coverage handled by the portable API test.
 - Declared the Python cryptography dependency required by signed Inim packages.
 - Made `build.ps1` create the local deployment directory before copying the
   Windows executable.

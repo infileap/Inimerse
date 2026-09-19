@@ -258,7 +258,11 @@ static int builtin_split(VM *vm) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { free(sep); free(str); push_nil(vm); return 1; }
 
-    if (!*sep) sep[0] = ' ';
+    if (!*sep) {
+        free(sep);
+        sep = strdup(" ");
+        if (!sep) { free(str); push_nil(vm); return 1; }
+    }
     size_t slen = strlen(sep);
     const char *p = str;
     while (*p) {

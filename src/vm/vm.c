@@ -2479,6 +2479,7 @@ static void gc_mark(VM *vm) {
         int regEnd = tt->base + VM_FRAME_REGS;
         if (regEnd > tt->reg_cap) regEnd = tt->reg_cap;
         for (int k = 0; k < regEnd; k++) gc_mark_value(vm, &tt->reg[k]);
+        for (int k = 0; k < tt->msg_cap; k++) gc_mark_value(vm, &tt->msg_q[k]);
         if (tt->result_ready) gc_mark_value(vm, &tt->result);
         if (tt->error_ready) gc_mark_value(vm, &tt->error);
     }
