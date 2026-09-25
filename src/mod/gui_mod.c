@@ -3969,7 +3969,7 @@ static void gui_headless_stream(void) {
     /* P1: sprite metadata for hot-join clients (asset by costume path) */
     hl_appendf(hbuf, &hp, (int)sizeof hbuf, "],\"sp\":[");
     int spFirst = 1;
-    for (int si = 0; si < G.spriteCount && hp < (int)sizeof hbuf - 8192; si++) { 
+    for (int si = 0; si < G.spriteCount && hp < (int)sizeof hbuf - 8192; si++) {
         GuiSprite *sp = &G.sprites[si];
         if (!sp->alive || !sp->visible || !sp->bm) continue;
         if (!spFirst) hl_appendf(hbuf, &hp, (int)sizeof hbuf, ",");

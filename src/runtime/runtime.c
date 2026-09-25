@@ -79,7 +79,7 @@ static int builtin_len(VM *vm) {
         }
     }
     else if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
-    else if (v->type == VAL_DICT) {
+    else if (v->type == VAL_DICT || v->type == VAL_OBJECT) {
         int a = v->ival - 1;
         if (a >= 0 && a < vm->arrayCount) n = vm_pool_slot(vm, a)->count / 2;
     }
@@ -109,7 +109,7 @@ static int builtin_size(VM *vm) {
         }
     }
     else if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
-    else if (v->type == VAL_DICT) { int a = v->ival - 1; if (a >= 0 && a < vm->arrayCount) n = vm_pool_slot(vm, a)->count / 2; }
+    else if (v->type == VAL_DICT || v->type == VAL_OBJECT) { int a = v->ival - 1; if (a >= 0 && a < vm->arrayCount) n = vm_pool_slot(vm, a)->count / 2; }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
     else if (v->type == VAL_INT) n = v->ival;
     else if (v->type == VAL_FLOAT) n = (int)v->fval;
@@ -336,7 +336,7 @@ static int builtin_keys(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
     int aidx = -1;
-    if (v->type == VAL_DICT) aidx = v->ival - 1;
+    if (v->type == VAL_DICT || v->type == VAL_OBJECT) aidx = v->ival - 1;
     pop(vm);
     int out = vm_array_new(vm);
     if (out < 0) { push_nil(vm); return 1; }
@@ -361,7 +361,7 @@ static int builtin_has(VM *vm) {
     Value key = vm_cur_stack(vm)[vm_cur_sp(vm)];
     Value *dv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     int found = 0;
-    if (dv->type == VAL_DICT) {
+    if (dv->type == VAL_DICT || dv->type == VAL_OBJECT) {
         int a = dv->ival - 1;
         if (a >= 0 && a < vm->arrayCount) {
             VM_LOCK(vm);
@@ -383,7 +383,7 @@ static int builtin_remove(VM *vm) {
     Value key = vm_cur_stack(vm)[vm_cur_sp(vm)];
     Value *dv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     int removed = 0;
-    if (dv->type == VAL_DICT) {
+    if (dv->type == VAL_DICT || dv->type == VAL_OBJECT) {
         int a = dv->ival - 1;
         if (a >= 0 && a < vm->arrayCount) removed = vm_dict_remove(vm, a, &key) ? 1 : 0;
     } else if (dv->type == VAL_ARRAY) {
@@ -533,6 +533,7 @@ static int builtin_type(VM *vm) {
         case VAL_NIL: pop(vm); push_nil(vm); return 1; /* uninitialized -> null */
         case VAL_ARRAY: n = "array"; break;
         case VAL_DICT: n = "dict"; break;
+        case VAL_OBJECT: n = v->sval && v->sval[0] ? v->sval : "object"; break;
         case VAL_SET: n = "set"; break;
         default: n = "unknown"; break;
     }

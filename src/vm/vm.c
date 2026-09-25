@@ -289,6 +289,7 @@ bool val_eq(const Value *a, const Value *b) {
         if (a->type == VAL_NIL)    return true;
         if (a->type == VAL_ARRAY)  return a->ival == b->ival;  /* 同一锟斤拷锟斤拷锟斤拷锟??*/
         if (a->type == VAL_DICT)   return a->ival == b->ival;
+        if (a->type == VAL_OBJECT) return a->ival == b->ival;
         if (a->type == VAL_FUNCTION) return a->ptr == b->ptr;
     }
     /* int ??float 锟斤拷值锟饺较ｏ拷锟斤拷锟洁不同锟斤拷锟斤拷一锟缴诧拷锟斤拷龋锟斤拷薷锟斤拷锟??锟街碉拷??nil 锟饺较碉拷锟斤拷锟叫ｏ拷 */
@@ -1112,12 +1113,45 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
         }
         snprintf(buf + used, bufsz - used, "}");
     }
+    else if (v->type == VAL_OBJECT)
+        snprintf(buf, bufsz, "<%s>", v->sval && v->sval[0] ? v->sval : "object");
     else if (v->type == VAL_FUNCTION) snprintf(buf, bufsz, "<function>");
     else snprintf(buf, bufsz, "<unknown>");
 }
 
 void vm_value_to_string(VM *vm, const Value *v, char *buf, int bufsz) {
     value_to_string(vm, v, buf, bufsz, 0);
+}
+
+static int builtin_eidos_new(VM *vm) {
+    int argc = vm->cur_argc;
+    int sp = vm_cur_sp(vm);
+    if (argc != 1 || sp < argc - 1 ||
+        vm_cur_stack(vm)[sp].type != VAL_STRING ||
+        !vm_cur_stack(vm)[sp].sval || !vm_cur_stack(vm)[sp].sval[0]) {
+        for (int i = 0; i < argc && vm_cur_sp(vm) >= 0; i++) pop(vm);
+        push_nil(vm);
+        return 1;
+    }
+
+    const char *class_name = vm_intern(vm, vm_cur_stack(vm)[sp].sval);
+    int fields_idx = vm_array_new(vm);
+    for (int i = 0; i < argc; i++) pop(vm);
+    if (fields_idx < 0 || !class_name) {
+        push_nil(vm);
+        return 1;
+    }
+
+    Value object = {
+        .type = VAL_OBJECT,
+        .ival = fields_idx + 1,
+        .sval = (char *)class_name
+    };
+    if (!vm_push_value(vm, &object)) {
+        value_free(&object);
+        push_nil(vm);
+    }
+    return 1;
 }
 
 /* resource-limit abort: stop all threads and exit (no locks; flags only) */
@@ -1312,6 +1346,7 @@ void vm_init(VM *vm) {
     vm->last_error = 0;
     vm->mod_caps = -1; /* unrestricted by default (platform) */
     vm->modCount = 0;
+    vm_register_builtin(vm, "__eidos_new", builtin_eidos_new);
 }
 
 void vm_load_bytecode(VM *vm, Bytecode *bc) {
@@ -2432,7 +2467,7 @@ static void gc_mark_value(VM *vm, const Value *val) {
         gc_mark_env(vm, im_closure_function_env(fn));
         return;
     }
-    if (val->type == VAL_ARRAY || val->type == VAL_DICT) { idx = val->ival - 1; isa = 1; }
+    if (val->type == VAL_ARRAY || val->type == VAL_DICT || val->type == VAL_OBJECT) { idx = val->ival - 1; isa = 1; }
     else if (val->type == VAL_SET) { idx = val->ival - 1; isa = 0; }
     else return;
     if (idx < 0) return;
@@ -3248,6 +3283,9 @@ static void vm_execute_thread(VmThread *t) {
             if (obj->type == VAL_ARRAY) {
                 int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);
                 { Value got = vm_array_get(vm, obj->ival - 1, i); value_move(&R[ins.r1], &got); } /* out-of-range read stays nil (compat) */
+            } else if (obj->type == VAL_OBJECT) {
+                Value got = vm_dict_get(vm, obj->ival - 1, idxv);
+                value_move(&R[ins.r1], &got);
             } else if (obj->type == VAL_DICT) {
                 int aidx = obj->ival - 1;
                 if (idxv->type == VAL_INT) {
@@ -3296,7 +3334,7 @@ static void vm_execute_thread(VmThread *t) {
                     continue;
                 }
                 vm_array_set(vm, obj->ival - 1, i, valv);
-            } else if (obj->type == VAL_DICT) {
+            } else if (obj->type == VAL_DICT || obj->type == VAL_OBJECT) {
                 vm_dict_set(vm, obj->ival - 1, idxv, valv);
             }
             continue;
@@ -3406,6 +3444,12 @@ static void vm_execute_thread(VmThread *t) {
                     if (t->sp >= 1023) continue;
                     t->sp++;
                     t->stack[t->sp] = *v; /* pool-backed handle */
+                    break;
+                }
+                case VAL_OBJECT: {
+                    if (t->sp >= 1023) continue;
+                    t->sp++;
+                    t->stack[t->sp] = *v; /* pool-backed handle + interned class name */
                     break;
                 }
                 case VAL_SET: {
@@ -4750,6 +4794,7 @@ void vm_debug_var(VM *vm, const char *mode) {
             case VAL_BOOL: t = "bool"; break;
             case VAL_ARRAY: t = "array"; break;
             case VAL_DICT: t = "dict"; break;
+            case VAL_OBJECT: t = vm->globals[i].val.sval ? vm->globals[i].val.sval : "object"; break;
             case VAL_SET: t = "set"; break;
             default: break;
         }

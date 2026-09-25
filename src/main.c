@@ -369,6 +369,11 @@ char *inim_load_text(const char *path) {
         }
     }
     #endif
+    char *desugared = desugar_source(buf);
+    if (desugared) {
+        free(buf);
+        return desugared;
+    }
     return buf;
 }
 

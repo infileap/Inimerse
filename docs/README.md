@@ -10,6 +10,8 @@
 - [0.4.0 构建与发布经验](BUILD_RELEASE_LESSONS_0.4.0.md)
 - [0.4.1 发布说明](RELEASE_0.4.1.md)
 - [0.4.1 CI 与发布经验](RELEASE_CI_LESSONS_0.4.1.md)
+- [0.4.2 发布说明](RELEASE_0.4.2.md)
+- [0.4.2 构建经验](BUILD_RELEASE_LESSONS_0.4.2.md)
 - [内糖与外糖规范](SYNTAX_SUGAR.md)
 - [语法糖机器清单](syntax_sugar.json)
 - [V0.4 数值模型草案](NUMERIC_MODEL_V04.md)

@@ -2,7 +2,7 @@
 
 > API 状态总览请先看 [API 大全](API_CATALOG.md)。本页保留运行时与语言细节。
 
-> 本文档描述当前源码中可调用的接口（2026-09-13）。未来设计以 `future/` 为准，
+> 本文档描述当前源码中可调用的接口（2026-09-24）。未来设计以 `future/` 为准，
 > 尚未实现的 Eidos 完整对象模型、VFS 或 Inim OS 能力不属于现有 API。
 
 ## 1. 运行引擎
@@ -33,7 +33,7 @@ for i in 0..10 { say i }
 unless ready { say "not ready" }
 ```
 
-语法糖分为两层：内糖由核心前端直接处理（区间、分号容忍、`++/--`、尾逗号、f-string、`|>`、Result `?`、集合推导、lambda、简单 `>>`）；外糖由脱糖层处理（`fn`、`print`、`&&/||`、`//`、`unless`、`say@target` 和 Eidos 可执行子集）。Eidos 子集详见 [SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)。
+语法糖分为两层：内糖由核心前端直接处理（区间、分号容忍、`++/--`、尾逗号、f-string、`|>`、Result `?`、集合推导、lambda、简单 `>>`）；外糖由脱糖层处理（`fn`、`print`、`&&/||`、`//`、`unless`、`say@target` 和 Eidos 可执行子集）。v0.4.2 起 Eidos 子集接入 C 引擎原生加载路径，不再要求 Python 预处理。Eidos 子集详见 [SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)。
 数组/字典不可用 `+` 拼接，应使用 `push` 或显式构造。
 
 ## 3. 核心内置函数
@@ -94,7 +94,7 @@ AI 接口：`ai_config`、`ai_register`、`ai_list`、`ai_chat`、`ai_params`、
 1. `.inim` 暂不携带命令行参数元数据。
 2. `mod_limit` 尚未完整统计 VRAM、指令数及字符串拼接。
 3. Fiber 调度器在主线程长时间休眠时可能暂停，建议用 `join` 驱动。
-4. Eidos 完整 class/instance/method 对象模型、VFS 完整挂载/权限模型、Shell、热修改、跨 Verse 变换和多目标 `say` 仍是 `future/` 设计，尚未冻结；当前 Eidos 仅支持外糖可执行子集。
+4. Eidos 完整 class/instance/method 对象模型、VFS 完整挂载/权限模型、Shell、热修改、跨 Verse 变换和多目标 `say` 仍是 `future/` 设计，尚未冻结；当前 Eidos 仅支持原生外糖可执行子集，`invariant` 检查限于构造完成和外部点号/属性赋值后。
 
 ## 8. 相关文档
 

@@ -1,6 +1,6 @@
 # Inimerse API 大全（V0.4）
 
-更新时间：2026-09-13。本文是公开 API 的状态索引；具体签名以源码和回归测试为准。
+更新时间：2026-09-24。本文是公开 API 的状态索引；具体签名以源码和回归测试为准。
 
 状态含义：
 
@@ -65,7 +65,7 @@
 | `>>`（命名函数与括号 lambda） | 已实现基础高阶路径 | lexer/parser 将 `f >> g` 生成可调用组合闭包；支持 `(x) -> expr`（及组合体内 lambda），由 `composition_runtime` 回归覆盖 |
 | 闭包捕获、部分应用 | 部分实现 | 外层参数、嵌套转发捕获与调用已实现；闭包环境的池对象 GC 根遍历已实现，通用部分应用仍待完善 |
 | `fn`、`print`、`&&`/`||`、`//`、`unless` | 部分实现 | 外糖，由脱糖器转换；不是 VM 原生语义 |
-| `eidos`/`ed` 可执行子集 | 部分实现 | `tools/eidos_desugar.py` 转换为工厂函数、字典实例和闭包方法；支持字段默认值、构造参数、无参/有参及单行方法、单继承、覆盖和有限 `super.method(...)`；不支持 mixin、可见性、热修改或自动无参调用 |
+| `eidos`/`ed` 可执行子集 | 已实现原生前端子集 | v0.4.2 起由 C 引擎 `desugar_source` 在加载和 `--desugar` 路径转换为工厂函数、字典实例和闭包方法；支持字段默认值、构造参数、无参/有参及单行方法、`init`/`on_spawn` 自动调用、`this`/`self` 当前实例别名、单继承、多个父类/mixin、覆盖、有限 `super.method(...)`、点号成员访问、无参方法省略 `()`、getter/setter、构造/外部赋值后的 `invariant` 检查和基础运算符重载；完整对象 ABI、可见性和热修改仍待实现 |
 | `??` 空值合并 | 已实现基础语义 | 内糖；nil 时取右值，否则保留左值；`null_coalesce_runtime` 覆盖 |
 | `?.` 安全成员访问 | 已实现基础语义 | 内糖；nil 时短路返回 nil，字典对象按字段键读取；`optional_member_runtime` 覆盖 |
 | 链式比较 | 已实现基础语义 | 内糖；相邻操作数单次求值并短路；`chained_comparison_runtime` 覆盖 |
@@ -116,6 +116,6 @@
 
 ## 尚未提供的设计 API
 
-Eidos 完整 class/instance/method 对象模型（mixin、可见性、热修改、不变量、原生对象布局等）、所有权/借用、Actor/`parallel`、任意精度 `BigInt`/`Q`/`Dec`/`BigFloat`、真正模板/类型特化 JIT、跨 Verse 可逆计算与传送门，均只在 `future/` 或路线图中描述；当前仅提供 API 目录中列出的 Eidos 外糖子集。
+Eidos 完整 class/instance/method 对象模型（mixin、可见性、热修改、不变量、原生对象布局等）、所有权/借用、Actor/`parallel`、任意精度 `BigInt`/`Q`/`Dec`/`BigFloat`、真正模板/类型特化 JIT、跨 Verse 可逆计算与传送门，均只在 `future/` 或路线图中描述；当前仅提供 API 目录中列出的 Eidos 原生外糖子集。
 
 相关文档：[API_REFERENCE.md](API_REFERENCE.md)、[SYNTAX_SUGAR.md](SYNTAX_SUGAR.md)、[V04_STATUS.md](V04_STATUS.md)、[NUMERIC_MODEL_V04.md](NUMERIC_MODEL_V04.md)。

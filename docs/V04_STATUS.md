@@ -1,8 +1,8 @@
 # V0.4 状态矩阵
 
-最近一次本地 CMake/CTest（2026-09-13）：66/66 通过，包含版本一致性、函数值容器、异常展开、跨线程消息与 Result 完成值、线程完成值和闭包环境 GC 根保持、重启清理、`thread_await` 自动等待/超时、`case` 递归数组/字典模式、`case try` lint（含有限类型别名/并集）、`finally` 控制流诊断、Eidos 单继承/有限 `super` 运行时和浮点精度回归。网络/协议探针也在本次运行中通过。
+最近一次本地 CMake/CTest（2026-09-24）：68/68 通过，包含版本一致性、包管理回归、release verify 回归、协议/HTTP/WASM/POSIX 探针、Result/case/lambda/闭包线程生命周期、线程完成值、`thread_await`、Eidos 原生 `--desugar`、raw `.im` 直接运行、单继承/多个父类/mixin、点号字段、getter/setter、`this`/`self`、`on_spawn`、构造/外部赋值后 `invariant` 检查、基础运算符重载、无参闭包方法和浮点精度回归。
 
-更新时间：2026-09-13
+更新时间：2026-09-24
 
 ## 发布决策
 
@@ -47,7 +47,7 @@ V0.4 冻结为 0.4.0“可移植脚本运行时与离线包生态”版本。发
 | 枚举规范标识双向转换 | 已实现 | `enum_probe` 验证 `Type.Member` 生成与反解析 |
 | 闭包环境与函数对象基础 | 已实现基础生命周期 | `closure_probe` 验证环境槽、引用计数和函数索引；`VAL_FUNCTION` 已接入寄存器、数组、字典、全局、消息队列、调用帧及线程重启/销毁路径，GC 会遍历活动闭包环境中的池对象 |
 | 闭包按值捕获基础 | 已实现嵌套转发路径 | `lambda_capture_runtime` 与 `lambda_nested_runtime` 验证返回闭包捕获外层参数、嵌套闭包转发捕获并调用；`function_value_lifetime_runtime` 覆盖容器持有、异常跨帧展开；`function_thread_lifetime_runtime` 覆盖消息传递和重启清理 |
-| Eidos 外糖可执行子集 | 已实现基础子集 | `eidos_desugar_runtime`、`eidos_runtime`；支持字段默认值、构造参数、无参/有参及单行闭包方法、单继承、方法覆盖和有限 `super.method(...)`；mixin、可见性、热修改、不变量和自动无参调用仍不支持 |
+| Eidos 原生外糖可执行子集 | 已实现原生前端子集 + 对象值过渡层 | `eidos_desugar_runtime`、`eidos_native_desugar_runtime`、`eidos_native_file_runtime`、`eidos_runtime`；raw `.im` 加载和 `--desugar` 共用 C 端转换；工厂通过 `VAL_OBJECT` 携带类名和实例句柄，字段暂存 VM pool，方法仍由闭包承载；支持字段默认值、构造参数、无参/有参及单行闭包方法、`init`/`on_spawn` 自动调用、`this`/`self` 当前实例别名、单继承、多个父类/mixin、方法覆盖、有限 `super.method(...)`、点号成员访问、无参方法省略 `()`、getter/setter、构造/外部赋值后 `invariant` 检查、已知实例的基础运算符重载及对象 `type/str/len/has`；完整 class descriptor、属性偏移/vtable、可见性和热修改仍不支持 |
 | 线程完成值回收 | 已实现基础语义 | `thread_result_runtime`；`thread_release(name)` 回收已完成实例，task 槽位可安全复用，运行中实例拒绝回收 |
 | GC 控制与线程完成值根保持 | 已实现基础语义 | `gc_runtime`；`gc_auto`/`gc_now`/`gc_stats` 可用，已完成 thread/task 的 `result/error` 在释放前作为 GC 根 |
 | 闭包环境槽复制 | 部分实现 | `closure_probe` 验证单槽复制与字符串所有权独立性 |
@@ -61,13 +61,13 @@ V0.4 冻结为 0.4.0“可移植脚本运行时与离线包生态”版本。发
 | JIT 开关 | 已实现，后端回退解释器 | `jit_mode_probe` |
 | HTTP 探针稳定性 | 已加入启动/端口重试 | 连续 5 次 `http_probe` 通过 |
 
-## 0.4.1+ 后续工作
+## 0.4.2+ 后续工作
 
 - POSIX 其他平台 API 的跨平台行为回归，以及更多宿主差异的统一处理；
 - 更复杂的部分应用、闭包资源边界和完整生命周期证明；
 - 跨线程取消传播、异步栈自动展开和更复杂的 `finally` 交互；
 - `case try` 的跨错误域完整穷尽证明，以及更复杂结构模式诊断；
-- 完整 Eidos class/instance/method 对象模型，包括 mixin、可见性、热修改、不变量和原生对象布局；
+- 完整 Eidos class/instance/method 对象模型，包括可见性、热修改、方法内部全自动不变量检查和原生对象布局；
 - 真正模板/类型特化 JIT；
 - 远程 registry 运营、Winget/Linux 官方提交和更多平台发行资产。
 
@@ -85,4 +85,4 @@ V0.4 冻结为 0.4.0“可移植脚本运行时与离线包生态”版本。发
 1. 全量 Bug 排查：构建、CTest、语言/协议/包回归和跨平台 CI，失败项必须有修复记录；
 2. 集合变换性能审计：固定规模和构建配置，比较 JIT 模式耗时、峰值内存、结果哈希并设回归阈值。
 
-当前最近一次可执行的本地回归为完整 66/66 通过（包含版本一致性、`release_verify_regression`、Result/case/lambda/闭包线程生命周期、线程完成值及闭包环境 GC 根保持、`thread_await` 自动等待/超时、递归数组/字典模式、Eidos 单继承/有限 `super` 运行时、`case try` lint、`finally` 控制流诊断、集合及 POSIX API 回归，以及网络/协议探针）。另有 `make -j2 check` 通过，包含 10 项 UPP/CRP/VDP 协议回归和 POSIX 探针。集合性能审计已完成规模 10000、三模式、三次重复的可复现基线，最终冻结后仍需按同一构建配置重跑并比较阈值。
+当前最近一次可执行的本地回归为完整 68/68 通过（包含版本一致性、`release_verify_regression`、Result/case/lambda/闭包线程生命周期、线程完成值及闭包环境 GC 根保持、`thread_await` 自动等待/超时、递归数组/字典模式、Eidos 原生 `--desugar`、raw `.im` 直接运行、Eidos 单继承/有限 `super` 运行时、`case try` lint、`finally` 控制流诊断、集合及 POSIX API 回归，以及网络/协议探针）。另有历史 `make -j2 check` 通过记录，包含 10 项 UPP/CRP/VDP 协议回归和 POSIX 探针。集合性能审计已完成规模 10000、三模式、三次重复的可复现基线，最终冻结后仍需按同一构建配置重跑并比较阈值。

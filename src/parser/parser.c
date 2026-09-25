@@ -176,7 +176,8 @@ static Expr *parse_primary(Parser *p) {
     if (t.type == TOK_INT || t.type == TOK_FLOAT || t.type == TOK_STR || t.type == TOK_BOOL ||
         t.type == TOK_WINDOW || t.type == TOK_SHOW || t.type == TOK_HIDE ||
         t.type == TOK_NEW || t.type == TOK_DELETE || t.type == TOK_CURSOR ||
-        t.type == TOK_JOIN || t.type == TOK_SIZE || t.type == TOK_MATCH) {
+        t.type == TOK_JOIN || t.type == TOK_SIZE || t.type == TOK_MATCH ||
+        t.type == TOK_TYPE) {
         Token next = peek_next(p);
         if (next.type == TOK_LPAREN) {
             const char *fname = "";
@@ -193,6 +194,7 @@ static Expr *parse_primary(Parser *p) {
             else if (t.type == TOK_JOIN) fname = "join";
             else if (t.type == TOK_SIZE) fname = "size";
             else if (t.type == TOK_MATCH) fname = "match";
+            else if (t.type == TOK_TYPE) fname = "type";
             advance(p);
             Expr *e = malloc(sizeof(Expr));
             e->type = EXPR_IDENT;

@@ -8,7 +8,7 @@
 
 > 集合化类型系统（谓词集合、类型即集合、集合映射）不属于 v0.4，统一延期至 v3.1；v0.4 仅维护现有基础集合的兼容性。
 
-实施状态（当前）：参数 v2、VFS 基础、集合推导、`|>` 管道、Result 运行时、Result 传播语法、Eidos 外糖可执行子集和 `inim` 离线包闭环已进入 `main`；Eidos 完整对象模型、真正 JIT、跨异步 Result 传播、完整穷尽证明和发行渠道仍未完成。
+实施状态（当前）：参数 v2、VFS 基础、集合推导、`|>` 管道、Result 运行时、Result 传播语法、Eidos 原生外糖可执行子集和 `inim` 离线包闭环已进入 `main`；Eidos 完整对象模型、真正 JIT、跨异步 Result 传播、完整穷尽证明和发行渠道仍未完成。
 
 Result 运行时原语已加入：`ok(value)`、`err(error)`、`is_ok(result)`、`unwrap_or(result, fallback)`、`unwrap(result)`、`thread_result(name)`、`thread_await(name[, timeout])`；`unwrap` 在错误值上触发 VM 异常。第一版以字典值表示，函数级 `?` 传播会执行活跃 `finally`，`thread_await` 可等待 OS thread/task 并将完成值直接转入同一 Result 通道；原生 `case try` 分支和枚举穷尽性 API 已实现。跨线程取消传播、异步栈展开与跨错误域的完整穷尽证明仍待完善，`--lint` 已能对可识别有限错误成员给出缺失项诊断。
 
@@ -30,10 +30,10 @@ JIT 策略开关已预留：`--jit=off|template|optimized`（当前两种非 off
 
 ### Eidos 面向对象化
 
-- V0.4 已交付外糖可执行子集：`eidos`/`ed` 定义转换为工厂函数、字典实例和闭包方法；支持字段默认值、构造参数、无参/有参方法、单行方法、`init` 自动调用、单继承、方法覆盖和有限 `super.method(...)`。
-- 子集明确不包含 mixin、可见性、sealed/frozen/invariant、热修改或自动无括号方法调用；脱糖器对 mixin 输入直接报错。完整 class/instance 对象布局、方法解析和热修改规则仍未完成。
+- V0.4.2 已将外糖可执行子集接入 C 引擎原生 desugar 前端：`eidos`/`ed` 定义转换为工厂函数、`VAL_OBJECT` 实例和闭包方法；对象以类名和 VM pool 句柄承载，字段暂提供字典形状的兼容视图，普通 `.im` 文件可直接运行；支持字段默认值、构造参数、无参/有参方法、单行方法、`init` 自动调用、单继承、多个父类/mixin、方法覆盖、有限 `super.method(...)`、点号成员访问、无参方法省略 `()` 和 getter/setter。
+- 子集仍不包含可见性、sealed/frozen、热修改或完整对象 ABI；基础运算符重载仅对静态已知 Eidos 实例的直接二元表达式生效，`invariant` 只在构造完成和外部点号/属性赋值后检查。完整 class/instance 对象布局、动态方法解析、方法内部全自动不变量检查和热修改规则仍未完成。
 - `class`、实例、构造器、方法、继承/组合和接口契约。
-- `get/set`、Mixin、sealed/frozen/invariant 的语义草案与运行时检查。
+- sealed/frozen、完整 invariant、热修改和原生对象布局的语义草案与运行时检查。
 - 明确 `this`、可见性、方法解析顺序、循环继承错误和热更新失效规则。
 - 编译器错误包含源文件、行列号和可操作修复建议。
 

@@ -18,7 +18,7 @@ static int posix_core_len(VM *vm) {
         if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
         else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }
     }
-    else if (v->type == VAL_DICT && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
+    else if ((v->type == VAL_DICT || v->type == VAL_OBJECT) && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count / 2 : 0;
     }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
@@ -43,7 +43,7 @@ static int posix_core_size(VM *vm) {
         }
     } else if (v->type == VAL_ARRAY && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count : 0;
-    } else if (v->type == VAL_DICT && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
+    } else if ((v->type == VAL_DICT || v->type == VAL_OBJECT) && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count / 2 : 0;
     } else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
     else if (v->type == VAL_INT) n = (int)v->ival;
@@ -171,6 +171,7 @@ static int posix_core_type(VM *vm) {
         case VAL_BOOL: name = "bool"; break;
         case VAL_ARRAY: name = "array"; break;
         case VAL_DICT: name = "dict"; break;
+        case VAL_OBJECT: name = v->sval && v->sval[0] ? v->sval : "object"; break;
         case VAL_SET: name = "set"; break;
         case VAL_NIL: pop(vm); push_nil(vm); return 1;
         default: name = "unknown"; break;
@@ -362,7 +363,7 @@ static int posix_core_chr(VM *vm) {
 static int posix_core_keys(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int didx = v.type == VAL_DICT ? v.ival - 1 : -1;
+    int didx = (v.type == VAL_DICT || v.type == VAL_OBJECT) ? v.ival - 1 : -1;
     pop(vm);
     int aidx = vm_array_new(vm);
     if (aidx < 0) { push_nil(vm); return 1; }
@@ -380,7 +381,7 @@ static int posix_core_has(VM *vm) {
     Value key = vm_cur_stack(vm)[vm_cur_sp(vm)];
     Value dict = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     int found = 0;
-    if (dict.type == VAL_DICT && dict.ival > 0 && dict.ival - 1 < vm->arrayCount) {
+    if ((dict.type == VAL_DICT || dict.type == VAL_OBJECT) && dict.ival > 0 && dict.ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, dict.ival - 1);
         for (int i = 0; a && i + 1 < a->count; i += 2)
             if (val_eq(&a->items[i], &key)) { found = 1; break; }
@@ -393,7 +394,7 @@ static int posix_core_remove(VM *vm) {
     Value key = vm_cur_stack(vm)[vm_cur_sp(vm)];
     Value obj = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     int removed = 0;
-    if (obj.type == VAL_DICT && obj.ival > 0 && obj.ival - 1 < vm->arrayCount) {
+    if ((obj.type == VAL_DICT || obj.type == VAL_OBJECT) && obj.ival > 0 && obj.ival - 1 < vm->arrayCount) {
         removed = vm_dict_remove(vm, obj.ival - 1, &key) ? 1 : 0;
     } else if (obj.type == VAL_ARRAY && key.type == VAL_INT && obj.ival > 0 && obj.ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, obj.ival - 1);
