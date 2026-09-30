@@ -1,0 +1,13 @@
+# Benchmark: case try / pattern dispatch — v0.5 selfhost suite
+hits = 0
+i = 0
+while i < 1500 {
+    r = ok(i)
+    case try r {
+        ok(v) | v % 3 == 0: hits = hits + 1
+        ok(v): hits = hits + 2
+        err(reason): say "unexpected"
+    }
+    i = i + 1
+}
+say "case-try: " + str(hits)

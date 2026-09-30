@@ -1244,7 +1244,18 @@ static Stmt *parse_throw(Parser *p) {
     return s;
 }
 
+static Stmt *parse_stmt_impl(Parser *p);
+
+/* parse_stmt: records the source line of the statement's first token for the
+   debug line table (--debug-info sidecar). */
 static Stmt *parse_stmt(Parser *p) {
+    int line = p->lex.line;
+    Stmt *s = parse_stmt_impl(p);
+    if (s) s->line = line;
+    return s;
+}
+
+static Stmt *parse_stmt_impl(Parser *p) {
     Token t = peek(p);
 
     /* resource declaration: declare { ... } */

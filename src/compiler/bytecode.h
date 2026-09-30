@@ -51,7 +51,14 @@ typedef enum {
     OP_YIELD,        /* yield: task cooperatively hands control back to the scheduler */
     OP_MAKE_FUNC, OP_CALL_VALUE,
     OP_LOAD_CAPTURE, OP_STORE_CAPTURE
-} OpCode;
+ } OpCode;
+
+/* ---------- versioning ---------- */
+/* .inim container: 8-byte header "INIMBC" + format version byte (bytecode.h
+   magic[6], checked in bytecode_read_file) + bytecode stream. */
+#define INIM_BYTECODE_MAGIC  "INIMBC"
+#define INIM_BYTECODE_VERSION 3   /* format version written/checked today */
+#define INIM_ABI_VERSION      2   /* infiverse.mv1/abi target (validated by --abi-version) */
 
 /* ---------- register instruction (fixed size) ---------- */
 typedef struct {
@@ -109,6 +116,10 @@ typedef struct Bytecode {
     char **capture_names;
     int capture_count;
     int label_count;                /* main-thread labels (memory-only, appended) */
+    /* debug line table (memory-only; serialized to the --debug-info sidecar) */
+    int cur_line;                   /* current source line, set before each statement */
+    struct DbgLineEntry { int off; int line; } *dbg_lines; /* appended last (ABI-safe) */
+    int dbg_count, dbg_cap;
 } Bytecode;
 
 void bytecode_init(Bytecode *bc);
@@ -128,6 +139,8 @@ Bytecode *bytecode_read(FILE *f);
 int  bytecode_write_file(const char *path, Bytecode *bc);   /* .inim with magic+version */
 Bytecode *bytecode_read_file(const char *path);              /* .inim (NULL if bad/old version) */
 int  bytecode_append_to_exe(const char *exePath, Bytecode *bc, const char *outputExe);
+Bytecode *bytecode_read_file_compat(const char *path, int expected_byte_version, int expected_abi_version);
+int  bytecode_check_compatible(const char *path, int expected_byte_version, int expected_abi_version);
 Bytecode *bytecode_load_from_exe(const char *exePath);
 
 /* embed mod resources into exe tail */

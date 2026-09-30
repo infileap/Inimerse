@@ -296,6 +296,33 @@ def cmd_add(args):
     (root / 'manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     print(f'added {dep_name}: {spec}')
 
+
+def cmd_bootstrap(args):
+    root = Path(args.path)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / 'src').mkdir(exist_ok=True)
+    m = {'name': root.name, 'version': '0.1.0', 'engine': '>=0.4.0', 'entry': 'src/main.im', 'dependencies': {}}
+    p = root / 'manifest.json'
+    if p.exists():
+        print(f'inim: manifest.json exists at {p}, skipping')
+    else:
+        p.write_text(json.dumps(m, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+        print(f'Created {p}')
+    lock_path = root / 'lock.json'
+    if lock_path.exists():
+        print(f'inim: lock.json exists at {lock_path}, skipping')
+    else:
+        lock_path.write_text(json.dumps({'lock_version': 1, 'packages': {}}, indent=2) + '\n', encoding='utf-8')
+        print(f'Created {lock_path}')
+    entry = root / m['entry']
+    if not entry.exists():
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text('# Bootstrap entry point\n', encoding='utf-8')
+        print(f'Created {entry}')
+    print(f'Bootstrapped project at {root}')
+
+    print(f'Bootstrapped project at {root}')
+
 def cmd_list(args):
     lock = Path(args.path) / 'lock.json'
     if not lock.exists(): return
@@ -493,5 +520,6 @@ def main():
     p = sp.add_parser('update'); p.add_argument('-p', '--path', default='.'); p.add_argument('-r', '--registry', default='dist'); p.add_argument('--require-signature', action='store_true'); p.add_argument('--trusted-key'); p.set_defaults(fn=cmd_update)
     p = sp.add_parser('doctor'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_doctor)
     p = sp.add_parser('list'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_list)
+    p = sp.add_parser('bootstrap'); p.add_argument('path', nargs='?', default='.'); p.set_defaults(fn=cmd_bootstrap)
     args = ap.parse_args(); args.fn(args)
 if __name__ == '__main__': main()

@@ -16,6 +16,9 @@ typedef struct {
 typedef struct { char *name; int start_off; int end_off; } LabelDef;
 typedef struct { int jump_pos; char *label; int kind; } LabelPatch; /* kind 0=to(start) 1=break(end) 2=thread-goto */
 
+/* compilation target channel (v0.5 roadmap §2.3; only HOST is stable) */
+typedef enum { TARGET_HOST = 0, TARGET_WASM = 1, TARGET_AOT = 2 } CompileTarget;
+
 typedef struct Compiler {
     Bytecode *mainBC;
     Bytecode *curBC;            /* 褰撳墠鍙戝皠鐩爣锛堜富绋嬪簭鎴栧嚱鏁颁綋鎴栫嚎绋嬩綋锛?*/
@@ -78,6 +81,13 @@ typedef struct Compiler {
     int import_count;
     int import_cap;
     int import_depth;      /* 递归深度防护 */
+    /* compilation target + ABI version (v0.5 roadmap §1.1/§2.3; appended last) */
+    CompileTarget target;
+    int abi_version;       /* requested ABI version, -1 = toolchain default */
+    /* resolved import file paths for incremental-build dependency tracking
+       (v0.5 roadmap §1.2; appended last) */
+    char **dep_paths;
+    int dep_count, dep_cap;
 } Compiler;
 
 Compiler *compiler_new(void);

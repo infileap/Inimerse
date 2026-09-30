@@ -1,0 +1,12 @@
+# Example: exposing Inimerse functions to Java (roadmap §3.2).
+#
+# Pipeline:
+#   1. Define the interface once:      see examples/interface.def
+#   2. Generate the JNI bridge:        python3 tools/bindgen.py interface.def --language java --out InimerseNative.java
+#   3. Java exceptions <-> Inimerse errors: the generated wrapper throws
+#      InimerseException when an Inimerse `error` crosses the boundary
+#      (error conversion tested in tools/bindgen.test.py).
+#
+# func add(a, b) { return a + b }
+# -> Java: InimerseNative.add(40, 2) == 42
+say "see tools/bindgen.py --language java and tools/bindgen.test.py"

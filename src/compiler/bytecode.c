@@ -1,5 +1,6 @@
 #include "bytecode.h"
 #include "platform/platform.h"
+#include "../compilation/deps.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -18,6 +19,10 @@ void bytecode_init(Bytecode *bc) {
     bc->float_pool = NULL;
     bc->float_count = 0;
     bc->func_count = 0;
+    bc->cur_line = 0;
+    bc->dbg_lines = NULL;
+    bc->dbg_count = 0;
+    bc->dbg_cap = 0;
     for (int i = 0; i < 64; i++) {
         bc->funcs[i] = NULL;
         bc->func_argc[i] = 0;
@@ -113,6 +118,9 @@ void bytecode_patch(Bytecode *bc, int offset, int r2) {
 
 /* ---------- �ͷ� ---------- */
 void bytecode_free(Bytecode *bc) {
+    free(bc->dbg_lines);
+    bc->dbg_lines = NULL;
+    bc->dbg_count = bc->dbg_cap = 0;
     free(bc->code);
     bc->code = NULL;
     for (int i = 0; i < bc->string_count; i++)
@@ -322,11 +330,13 @@ fail:
     return NULL;
 }
 
-/* .inim file format: 8-byte magic "INIMBC" + format version + bytecode_write stream */
+/* .inim file format: 8-byte magic "INIMBC"+version + bytecode_write stream.
+   An optional dependency trailer (src/compilation/deps.c) may follow the
+   stream; bytecode_read_file streams via fread and ignores trailing bytes. */
 int bytecode_write_file(const char *path, Bytecode *bc) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
-    const char magic[8] = { 'I','N','I','M','B','C',3,0 };
+    char magic[8] = { 'I','N','I','M','B','C',(char)INIM_BYTECODE_VERSION,0 };
     fwrite(magic, 1, 8, f);
     bytecode_write(bc, f);
     fclose(f);
@@ -337,9 +347,8 @@ Bytecode *bytecode_read_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
     char magic[8];
-    if (fread(magic, 1, 8, f) != 8 || magic[0] != 'I' || magic[1] != 'N' ||
-        magic[2] != 'I' || magic[3] != 'M' || magic[4] != 'B' || magic[5] != 'C' ||
-        magic[6] != 3) {
+    if (fread(magic, 1, 8, f) != 8 || memcmp(magic, INIM_BYTECODE_MAGIC, 6) != 0 ||
+        magic[6] != (char)INIM_BYTECODE_VERSION) {
         fclose(f);
         return NULL;
     }
@@ -350,6 +359,7 @@ Bytecode *bytecode_read_file(const char *path) {
 
 /* ========== EXE Ƕ�루β������������֮ǰ���ݣ� ========== */
 #define TAIL_MAGIC 0x1BC0FFEE
+#define BC_MAGIC 0x1BC0FFDB
 #define MODS_MAGIC 0x1BC0FEED
 
 static int read_tail_header(FILE *f, uint32_t *magic, uint32_t *offset, uint32_t *total_len);
@@ -695,4 +705,35 @@ int bytecode_release_mods(const char *exePath, const char *destDir) {
 
     free(buf);
     return released;
+}
+
+/* ========== versioning utilities ==========
+   The .inim container header is "INIMBC" + format version byte (see
+   bytecode_write_file).  ABI version lives in the dependency trailer
+   (src/compilation/deps.c), not in the container header. */
+Bytecode *bytecode_read_file_compat(const char *path, int expected_byte_version, int expected_abi_version) {
+    if (!bytecode_check_compatible(path, expected_byte_version, expected_abi_version)) return NULL;
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 8, SEEK_SET); /* skip container header */
+    Bytecode *bc = bytecode_read(f);
+    fclose(f);
+    return bc;
+}
+
+int bytecode_check_compatible(const char *path, int expected_byte_version, int expected_abi_version) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    char magic[8];
+    if (fread(magic, 1, 8, f) != 8) { fclose(f); return 0; }
+    fclose(f);
+    if (memcmp(magic, INIM_BYTECODE_MAGIC, 6) != 0) return 0;
+    if (expected_byte_version >= 0 && magic[6] != (char)expected_byte_version) return 0;
+    if (expected_abi_version >= 0) {
+        DepEntry *deps = NULL; int ndeps = 0, abi = 0;
+        if (deps_read(path, &deps, &ndeps, &abi) != 0) return 0; /* no trailer: ABI unknown */
+        deps_free(deps, ndeps);
+        if (abi != expected_abi_version) return 0;
+    }
+    return 1;
 }

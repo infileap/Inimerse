@@ -3,6 +3,7 @@
 #include "../parser/parser.h"
 #include "../compiler/compiler.h"
 #include "../compiler/bytecode.h"
+#include "../compilation/profiler.h"
 #include "closure.h"
 #include "../platform/platform.h"
 #include "../platform/thread.h"
@@ -3679,9 +3680,11 @@ L_CALL_FUNC: {
             if (t->closure_env) im_closure_env_retain(t->closure_env);
             R = FR;
             t->ip = 0;
+            if (vm->prof_enabled) prof_record_call(vm, t->frame_count, root->func_names[fidx]);
             continue;
         }
         L_RETURN: {
+            if (vm->prof_enabled) prof_record_return(vm, t->frame_count);
             Value ret;
             if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];
             else { ret.type = VAL_NIL; ret.ival = 0; ret.fval = 0; ret.sval = NULL; }

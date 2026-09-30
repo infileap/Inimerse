@@ -5,11 +5,14 @@ extern int build_project_impl(void *vm, const char *cfgPath, int mode, const cha
 #include <string.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
+#define _chmod _chmod
 #else
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
 #define _chdir chdir
+#define _chmod chmod
 #endif
 
 #ifdef _WIN32
@@ -47,6 +50,11 @@ void record_mod_register(VM *vm);
 #include "mod.h"
 #include "bytecode.h"
 #include "common.h"
+#include "compilation/profiler.h"
+#include "compilation/debug_info.h"
+#include "compilation/wasm_backend.h"
+#include "compilation/deps.h"
+#include "compilation/checksum.h"
 
 
 /* forced resource caps (--limit-mem/--limit-vram MB, --limit-time s, --low-config preset) */
@@ -166,7 +174,11 @@ static void usage(const char *prog) {
     printf("Inimerse command line\n\n");
     printf("Usage:\n");
     printf("  %s <script.im>\n", prog);
-    printf("  %s run <script.im>\n", prog);
+    printf("  %s run <script.im|script.inim> [args...]\n", prog);
+    printf("  %s compile <input.im> [output.inim]   [--incremental|--force|--symbols] [--abi-version N] [--reproducible] [--debug-info]\n", prog);
+    printf("  %s buildc <input.im> [output.inim]    (alias of compile)\n", prog);
+    printf("  %s symbols <input.im> [output.symbols]\n", prog);
+    printf("  %s profile <script.im> [output.prof]\n", prog);
     printf("  %s debug <script.im>\n", prog);
     printf("  %s build <script.im> [output.exe]\n", prog);
     printf("  %s where                    print the active engine path\n", prog);
@@ -446,6 +458,38 @@ static void strip_ext_into(char *out, size_t out_sz, const char *path) {
 }
 
 /* 鑾峰彇鑴氭湰鐨勭粷瀵硅矾寰勶紙malloc锛岃皟鐢拷?free�?*/
+/* Loose absolute path: works for paths that do not exist yet (compile outputs). */
+static char *make_abs_path_loose(const char *path) {
+#ifdef _WIN32
+    char *abs = malloc(MAX_PATH); if (!abs) return NULL;
+    if (!_fullpath(abs, path, MAX_PATH)) { free(abs); return NULL; }
+    normalize_path(abs); return abs;
+#else
+    char *abs = realpath(path, NULL);
+    if (abs) return abs;
+    char tmp[2048];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    char *slash = strrchr(tmp, '/');
+    if (!slash) { /* bare name in the current directory (which always exists) */
+        char *cwd_abs = realpath(".", NULL);
+        if (!cwd_abs) return NULL;
+        size_t need = strlen(cwd_abs) + strlen(tmp) + 2;
+        char *out = malloc(need);
+        snprintf(out, need, "%s/%s", cwd_abs, tmp);
+        free(cwd_abs);
+        return out;
+    }
+    *slash = '\0';
+    char *dir_abs = realpath(tmp[0] ? tmp : "/", NULL);
+    if (!dir_abs) return NULL;
+    size_t need = strlen(dir_abs) + strlen(slash + 1) + 2;
+    char *out = malloc(need);
+    snprintf(out, need, "%s/%s", dir_abs, slash + 1);
+    free(dir_abs);
+    return out;
+#endif
+}
+
 static char *make_abs_path(const char *path) {
 #ifdef _WIN32
     char *abs = malloc(MAX_PATH); if (!abs) return NULL;
@@ -529,6 +573,196 @@ static void register_world_modules(VM *vm) {
     infiverse_mod_register(vm);
     verse_dist_mod_register(vm);
     build_mod_register(vm);
+}
+
+/* ---------- compile/buildc/profile/symbols CLI helpers (v0.5 roadmap) ---------- */
+
+/* Export a readable symbol table from compiled bytecode (functions, threads,
+ * globals) — `inimerse symbols` / `compile --symbols`. */
+static int main_write_symbols(Bytecode *bc, const char *input, const char *output,
+                              int abi_version, const char *abi_target) {
+    FILE *fp = fopen(output, "w");
+    if (!fp) { fprintf(stderr, "error: cannot write '%s'\n", output); return 1; }
+    fprintf(fp, "Inimerse Script Symbol Table\n");
+    fprintf(fp, "Script: %s\n", input);
+    fprintf(fp, "Bytecode Format: INIMBC/%d\n", INIM_BYTECODE_VERSION);
+    fprintf(fp, "ABI Version: %d\n", abi_version >= 0 ? abi_version : INIM_ABI_VERSION);
+    fprintf(fp, "Target: %s\n", abi_target);
+    fprintf(fp, "Global Functions:\n");
+    for (int i = 0; i < bc->func_count; i++)
+        if (bc->func_names[i]) fprintf(fp, "  %s\n", bc->func_names[i]);
+    fprintf(fp, "Threads:\n");
+    for (int i = 0; i < bc->thread_count; i++)
+        if (bc->thread_names[i]) fprintf(fp, "  %s\n", bc->thread_names[i]);
+    fprintf(fp, "Globals:\n");
+    for (int i = 0; i < bc->global_name_count; i++)
+        if (bc->global_names[i]) fprintf(fp, "  %s\n", bc->global_names[i]);
+    fclose(fp);
+    return 0;
+}
+
+/* Write <output>.build.json: toolchain identity, options and the SHA-256 of
+ * every dependency plus the resulting bytecode (reproducible-build record). */
+static void main_write_build_record(const char *output, int abi_version, const char *abi_target) {
+    char rec_path[2048];
+    snprintf(rec_path, sizeof(rec_path), "%s.build.json", output);
+    DepEntry *deps = NULL; int ndeps = 0, dep_abi = 0;
+    deps_read(output, &deps, &ndeps, &dep_abi);
+    char bc_sum[65];
+    inim_file_sha256(output, bc_sum);
+    FILE *fp = fopen(rec_path, "w");
+    if (!fp) { deps_free(deps, ndeps); return; }
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"record_version\": 1,\n");
+    fprintf(fp, "  \"engine\": \"inimerse %s\",\n", INFIVERSE_VERSION);
+    fprintf(fp, "  \"bytecode_format\": \"INIMBC/%d\",\n", INIM_BYTECODE_VERSION);
+    fprintf(fp, "  \"abi_version\": %d,\n", abi_version >= 0 ? abi_version : INIM_ABI_VERSION);
+    fprintf(fp, "  \"target\": \"%s\",\n", abi_target);
+    fprintf(fp, "  \"bytecode_sha256\": \"%s\",\n", bc_sum);
+    fprintf(fp, "  \"dependencies\": [\n");
+    for (int i = 0; i < ndeps; i++)
+        fprintf(fp, "    {\"path\": \"%s\", \"sha256\": \"%s\"}%s\n",
+                deps[i].path, deps[i].sha_hex, i + 1 < ndeps ? "," : "");
+    fprintf(fp, "  ]\n}\n");
+    fclose(fp);
+    deps_free(deps, ndeps);
+}
+
+/* AOT packaging (experimental channel, roadmap §2.3): copy the engine
+   executable and append the compiled bytecode — the result self-executes via
+   bytecode_load_from_exe.  The optimizing AOT backend remains future work. */
+static int main_aot_package(const char *input, const char *output) {
+    Program *prog = parse_program_file(input);
+    if (!prog) { fprintf(stderr, "error: cannot read script '%s'\n", input); return 1; }
+    Compiler *comp = compiler_new();
+    comp->abi_version = INIM_ABI_VERSION;
+    comp->target = TARGET_AOT;
+    compiler_compile(comp, prog);
+    Bytecode *bc = compiler_get_main_bytecode(comp);
+    char *self = get_self_path();
+    if (!self) { fprintf(stderr, "error: cannot locate the engine executable\n"); compiler_free(comp); return 1; }
+    int rc = bytecode_append_to_exe(self, bc, output);
+    free(self);
+    compiler_free(comp);
+    if (rc != 0) { fprintf(stderr, "error: AOT packaging failed for '%s'\n", output); return 1; }
+#ifndef _WIN32
+    chmod(output, 0755);
+#else
+    _chmod(output, 0755);
+#endif
+    return 0;
+}
+
+/* Shared pipeline behind `buildc` and `compile`: parse + compile to .inim
+ * bytecode, record a dependency trailer (main source + every resolved import,
+ * SHA-256 each), optional symbol table export, and with --incremental skip
+ * the rebuild when all recorded dependencies still match. */
+static int main_compile_cmd(const char *input, const char *output,
+                            int abi_version, const char *abi_target,
+                            int emit_symbols, int incremental, int force,
+                            int reproducible, int debug_info) {
+    if (abi_version >= 0 && abi_version != INIM_ABI_VERSION) {
+        fprintf(stderr, "error: ABI version mismatch: requested %d, toolchain provides %d (see --abi-version)\n",
+                abi_version, INIM_ABI_VERSION);
+        return 2;
+    }
+    int is_wasm = (strcmp(abi_target, "wasm") == 0 || strcmp(abi_target, "wasm32") == 0);
+
+    if (incremental && !is_wasm && !force) {
+        DepEntry *deps = NULL; int ndeps = 0, dep_abi = 0;
+        if (deps_read(output, &deps, &ndeps, &dep_abi) == 0 && ndeps > 0) {
+            int stale = 0;
+            for (int i = 0; i < ndeps; i++) {
+                char abs[2048], sum[65];
+                deps_entry_abs_path(&deps[i], output, abs, sizeof(abs));
+                if (inim_file_sha256(abs, sum) != 0 ||
+                    strncmp(sum, deps[i].sha_hex, 64) != 0) { stale = 1; break; }
+            }
+            if (!stale) {
+                printf("up to date: %s\n", output);
+                if (reproducible) {
+                    main_write_build_record(output, abi_version, abi_target);
+                    char sum[65]; inim_file_sha256(output, sum);
+                    printf("reproducible: ok (%s)\n", sum);
+                }
+                deps_free(deps, ndeps);
+                return 0;
+            }
+        }
+        deps_free(deps, ndeps);
+    }
+
+    Program *prog = parse_program_file(input);
+    if (!prog) { fprintf(stderr, "error: cannot read script '%s'\n", input); return 1; }
+
+    if (is_wasm) {
+        /* WebAssembly MVP output: numeric subset, equivalence-validated
+           against the interpreter by tools/wasm_backend.test.py */
+        if (wasm_compile_program(prog, output) != 0) {
+            fprintf(stderr, "error: %s\n", wasm_backend_last_error());
+            return 1;
+        }
+        printf("compiled: %s -> %s (wasm MVP subset)\n", input, output);
+        return 0;
+    }
+
+    Compiler *comp = compiler_new();
+    comp->abi_version = (abi_version >= 0) ? abi_version : INIM_ABI_VERSION;
+    comp->target = TARGET_HOST;
+    compiler_compile(comp, prog);
+    Bytecode *bc = compiler_get_main_bytecode(comp);
+    int rc = bytecode_write_file(output, bc);
+    if (rc != 0) { fprintf(stderr, "error: write '%s' failed\n", output); compiler_free(comp); return 1; }
+
+    /* dependency trailer: paths relative to the output file's directory so
+       identical project layouts hash identically on any host (reproducible) */
+    {
+        char out_dir[2048];
+        deps_bc_dirname(output, out_dir, sizeof(out_dir));
+        DepEntry *deps = (DepEntry*)malloc((comp->dep_count + 1) * sizeof(DepEntry));
+        int n = 0;
+        char *abs_main = make_abs_path_loose(input);
+        char rel[2048];
+        if (abs_main && inim_file_sha256(abs_main, deps[0].sha_hex) == 0) {
+            deps_relative_path(out_dir, abs_main, rel, sizeof(rel));
+            deps[0].path = strdup(rel); n = 1;
+        }
+        free(abs_main);
+        for (int i = 0; i < comp->dep_count && n < comp->dep_count + 1; i++) {
+            char *abs = make_abs_path_loose(comp->dep_paths[i]);
+            if (abs && inim_file_sha256(abs, deps[n].sha_hex) == 0) {
+                deps_relative_path(out_dir, abs, rel, sizeof(rel));
+                deps[n++].path = strdup(rel);
+            }
+            free(abs);
+        }
+        deps_write_trailer(output, deps, n, comp->abi_version);
+        deps_free(deps, n);
+    }
+
+    if (emit_symbols) {
+        char sym_out[2048];
+        snprintf(sym_out, sizeof(sym_out), "%s.symbols", output);
+        if (main_write_symbols(bc, input, sym_out, abi_version, abi_target) == 0)
+            printf("symbols: %s\n", sym_out);
+    }
+
+    if (debug_info) {
+        if (debug_write_sidecar(comp, input, output) == 0) {
+            printf("debug-info: %s.dbg %s.debug_line\n", output, output);
+        } else {
+            fprintf(stderr, "error: cannot write debug sidecar for '%s'\n", output);
+        }
+    }
+
+    compiler_free(comp);
+    if (reproducible) {
+        main_write_build_record(output, abi_version, abi_target);
+        char sum[65]; inim_file_sha256(output, sum);
+        printf("reproducible: ok (%s)\n", sum);
+    }
+    printf("compiled: %s -> %s\n", input, output);
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -682,6 +916,41 @@ unsigned long timeout_ms = 0;
         for (int i = 1; i < argc - delta; i++) argv[i] = argv[i + delta];
         argc -= delta;
     }
+
+    /* ABI version and compilation target options (global flags, consumed by
+       compile/buildc/run/profile commands). Options may sit before or after
+       the subcommand word (--abi-version N buildc a.im / buildc a.im -f). */
+    int abi_version = -1;
+    const char *abi_target = "host";
+    int aot_mode = 0;
+    int profile_mode = 0;
+    int emit_symbols = 0;
+    int incremental_mode = 0;
+    int force_build = 0;
+    int reproducible_mode = 0;
+    int debug_info_mode = 0;
+    for (;;) {
+        int base = (argc >= 2 && (strcmp(argv[1], "buildc") == 0 || strcmp(argv[1], "compile") == 0 ||
+                                  strcmp(argv[1], "run") == 0 || strcmp(argv[1], "profile") == 0 ||
+                                  strcmp(argv[1], "symbols") == 0)) ? 2 : 1;
+        if (base >= argc) break;
+        const char *o = argv[base];
+        const char *v = (base + 1 < argc) ? argv[base + 1] : NULL;
+        int delta = 0;
+        if (v && strcmp(o, "--abi-version") == 0) { abi_version = atoi(v); delta = 2; }
+        else if (v && strcmp(o, "--abi-target") == 0) { abi_target = v; delta = 2; }
+        else if (strcmp(o, "--aot") == 0) { aot_mode = 1; delta = 1; }
+        else if (strcmp(o, "--profile") == 0) { profile_mode = 1; delta = 1; }
+        else if (strcmp(o, "--symbols") == 0) { emit_symbols = 1; delta = 1; }
+        else if (strcmp(o, "--incremental") == 0) { incremental_mode = 1; delta = 1; }
+        else if (strcmp(o, "--reproducible") == 0) { reproducible_mode = 1; delta = 1; }
+        else if (strcmp(o, "--debug-info") == 0) { debug_info_mode = 1; delta = 1; }
+        else if (strcmp(o, "--force") == 0 || strcmp(o, "-f") == 0) { force_build = 1; delta = 1; }
+        else break;
+        for (int i = base; i < argc - delta; i++) argv[i] = argv[i + delta];
+        argc -= delta;
+    }
+
 if (argc == 1) {
         VM vm; vm_init(&vm);
     if (g_lim_mem > 0) vm.limit_mem = g_lim_mem * 1024.0 * 1024.0;
@@ -689,7 +958,6 @@ if (argc == 1) {
     if (g_lim_time > 0) vm.limit_time = g_lim_time;
     vm.safe_mode = safe_mode;
     if (g_gc_on) { vm.gc_enabled =1; if (vm.gc_threshold <=0) vm.gc_threshold =2.0 *1024.0 *1024.0; }
-        vm.safe_mode = safe_mode;
         runtime_register_builtins(&vm);
         register_core_modules(&vm);
         if (load_mods) register_world_modules(&vm);
@@ -811,48 +1079,145 @@ if (argc == 1) {
         return 0;
     }
 
-    if (strcmp(cmd, "buildc") == 0) {
-        if (argc < 3) { fprintf(stderr, "usage: %s buildc <input.im> [output.inim]\n", argv[0]); return 1; }
+    /* buildc command: compile .im to .inim bytecode (legacy name, same pipeline
+       as `compile`; supports --incremental/--force/--symbols) */
+    if (strcmp(cmd, "buildc") == 0 || strcmp(cmd, "compile") == 0) {
+        if (argc < 3) { fprintf(stderr, "usage: %s %s <input.im> [output.inim] [--incremental|--force|--symbols]\n", argv[0], cmd); return 1; }
         const char *input = argv[2];
+        /* imports resolve against the main script's directory: pin cwd there
+           for the whole compile so emitted paths stay location-independent */
+        /* --aot: package as a native executable (engine copy + embedded
+           bytecode, self-executing).  The optimizing AOT backend remains
+           experimental (roadmap §2.3). */
+        if (aot_mode) {
+            char aot_out[2048];
+            char *abs_in_aot = make_abs_path_loose(input);
+            if (!abs_in_aot) abs_in_aot = strdup(input);
+            char *abs_script_aot = chdir_to_script_dir(input);
+            if (argc >= 4) {
+                char *expl = make_abs_path_loose(argv[3]);
+                snprintf(aot_out, sizeof(aot_out), "%s", expl ? expl : argv[3]);
+                free(expl);
+            } else {
+                snprintf(aot_out, sizeof(aot_out), "%s.exe", abs_in_aot);
+            }
+            int rc_aot = main_aot_package(abs_script_aot ? abs_script_aot : abs_in_aot, aot_out);
+            if (rc_aot == 0) printf("aot: %s -> %s\n", input, aot_out);
+            free(abs_in_aot);
+            free(abs_script_aot);
+            return rc_aot;
+        }
+        char *abs_in = make_abs_path_loose(input);
+        if (!abs_in) abs_in = strdup(input);
+        char *abs_out = (argc >= 4) ? make_abs_path_loose(argv[3]) : NULL; /* resolve before chdir */
+        char *abs_script = chdir_to_script_dir(input);
+        const char *output = NULL;
+        char auto_out[2048];
+        if (abs_out) {
+            output = abs_out;
+        } else {
+            strip_ext_into(auto_out, sizeof(auto_out), abs_in);
+            strncat(auto_out,
+                    (strcmp(abi_target, "wasm") == 0 || strcmp(abi_target, "wasm32") == 0) ? ".wasm" : ".inim",
+                    sizeof(auto_out) - strlen(auto_out) - 1);
+            output = auto_out;
+        }
+        int rc = main_compile_cmd(abs_script ? abs_script : abs_in, output, abi_version, abi_target,
+                                  emit_symbols, incremental_mode, force_build, reproducible_mode,
+                                  debug_info_mode);
+        free(abs_in);
+        free(abs_out);
+        free(abs_script);
+        return rc;
+    }
+
+    /* run command: unified runtime executor (interpreted; AOT/wasm backends
+       are not in the stable channel yet and fail explicitly) */
+    if (strcmp(cmd, "run") == 0) {
+        if (argc < 3) { fprintf(stderr, "usage: %s run <script.im|script.inim> [args...]\n", argv[0]); return 1; }
+        if (aot_mode) {
+            fprintf(stderr, "error: `run --aot` is not supported; produce an executable with `compile --aot` first\n");
+            return 2;
+        }
+        if (strcmp(abi_target, "wasm") == 0 || strcmp(abi_target, "wasm32") == 0) {
+            fprintf(stderr, "error: wasm backend is not in the stable channel yet (v0.5 roadmap); run interpreted instead\n");
+            return 2;
+        }
+        const char *script = argv[2];
+        vm.argc = argc - 3;
+        vm.argv = argv + 3;
+        if (timeout_set) vm.exec_timeout_ms = timeout_ms;
+        char *abs_script = chdir_to_script_dir(script);
+        const char *read_path = abs_script ? abs_script : script;
+        int rc_run = load_and_run(&vm, read_path);
+        free(abs_script);
+        return rc_run;
+    }
+
+    /* profile command: run with the function-level profiler, write <out>.prof */
+    if (strcmp(cmd, "profile") == 0) {
+        if (argc < 3) { fprintf(stderr, "usage: %s profile <script.im> [output.prof]\n", argv[0]); return 1; }
+        const char *script = argv[2];
         const char *output = NULL;
         char auto_out[2048];
         if (argc >= 4) {
             output = argv[3];
         } else {
-            char *abs_in = make_abs_path(input);
-            if (abs_in) {
-                strip_ext_into(auto_out, sizeof(auto_out), abs_in);
-                free(abs_in);
-            } else {
-                strncpy(auto_out, input, sizeof(auto_out) - 1);
-                auto_out[sizeof(auto_out) - 1] = '\0';
-            }
-            strncat(auto_out, ".inim", sizeof(auto_out) - strlen(auto_out) - 1);
+            snprintf(auto_out, sizeof(auto_out), "%s.prof", script);
             output = auto_out;
         }
-        Program *prog = parse_program_file(input);
-        if (!prog) { fprintf(stderr, "error: cannot read script '%s'\n", input); return 1; }
+        vm.argc = argc - 3;
+        vm.argv = argv + 3;
+        if (timeout_set) vm.exec_timeout_ms = timeout_ms;
+        prof_enable(&vm);
+        char *abs_script = chdir_to_script_dir(script);
+        const char *read_path = abs_script ? abs_script : script;
+        int rc_run = load_and_run(&vm, read_path);
+        free(abs_script);
+        prof_finish(&vm, output);
+        return rc_run;
+    }
+
+    /* symbols command: export the symbol table of a compiled script */
+    if (strcmp(cmd, "symbols") == 0) {
+        if (argc < 3) { fprintf(stderr, "usage: %s symbols <input.im> [output.symbols]\n", argv[0]); return 1; }
+        const char *input = argv[2];
+        char auto_out[2048];
+        char *abs_in = make_abs_path_loose(input);
+        if (!abs_in) abs_in = strdup(input);
+        if (argc >= 4) {
+            char *expl = make_abs_path_loose(argv[3]);
+            snprintf(auto_out, sizeof(auto_out), "%s", expl ? expl : argv[3]);
+            free(expl);
+        } else {
+            snprintf(auto_out, sizeof(auto_out), "%s.symbols", abs_in); /* resolved before chdir */
+        }
+        const char *output = auto_out;
+        char *abs_script = chdir_to_script_dir(input); /* imports resolve against script dir */
+        Program *prog = parse_program_file(abs_script ? abs_script : abs_in);
+        if (!prog) { fprintf(stderr, "error: cannot read script '%s'\n", input); free(abs_in); free(abs_script); return 1; }
         Compiler *comp = compiler_new();
+        comp->abi_version = (abi_version >= 0) ? abi_version : INIM_ABI_VERSION;
+        comp->target = TARGET_HOST;
         compiler_compile(comp, prog);
         Bytecode *bc = compiler_get_main_bytecode(comp);
-        int rc = bytecode_write_file(output, bc);
+        int rc = main_write_symbols(bc, input, output, abi_version, abi_target);
+        if (rc == 0) printf("exported: %s -> %s\n", input, output);
         compiler_free(comp);
-        if (rc != 0) { fprintf(stderr, "error: write '%s' failed\n", output); return 1; }
-        printf("compiled: %s -> %s\n", input, output);
-        return 0;
+        free(abs_in);
+        free(abs_script);
+        return rc;
     }
-    const char *script = (strcmp(cmd, "run") == 0) ? argv[2] : argv[1];
+
+    /* default: run the script directly (right-click open); `run` handled above */
+    const char *script = argv[1];
     if (!script) { usage(argv[0]); return 1; }
 
     /* command-line args passed to script (args() builtin); anything after the script path */
-    int script_idx = (strcmp(cmd, "run") == 0) ? 2 : 1;
-
-    vm.argc = argc - script_idx - 1;
-    vm.argv = argv + script_idx + 1;
+    vm.argc = argc - 2;
+    vm.argv = argv + 2;
     if (timeout_ms > 0) vm.exec_timeout_ms = timeout_ms;
 
-    /* fix right-click open: chdir to script dir, read by absolute path */
-    /* .inim: precompiled bytecode - skip lexer/parser/compiler entirely (unified loader) */
     if (g_lint) {
         char lb[16384];
         int ln = lint_check(script, lb, sizeof lb);

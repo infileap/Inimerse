@@ -282,6 +282,10 @@ EntBucket *ent_buckets;
     int mod_caps; /* -1 = unrestricted (platform/C mods); else declared capability bitmask */
     int modCount;
     struct { char id[48]; int version; int api_min; int caps; } mods[32];
+
+    /* function profiler, src/compilation/profiler.c (appended last, ABI-safe) */
+    int prof_enabled;   /* 1 = interpreter feeds prof_record_call/return */
+    void *prof_state;   /* opaque ProfState* owned by the profiler module */
 };
 
 typedef struct DictSlot { int pair_idx; unsigned hash; } DictSlot;

@@ -28,7 +28,7 @@ static void sha256_block(Sha256Ctx *c, const uint8_t *p) {
         w[i] = ((uint32_t)p[i * 4] << 24) | ((uint32_t)p[i * 4 + 1] << 16) |
                ((uint32_t)p[i * 4 + 2] << 8) | (uint32_t)p[i * 4 + 3];
     for (int i = 16; i < 64; i++)
-        w[i] = SIG1(w[i - 2]) + w[i - 7] + SIG0(w[i - 15]) + w[i - 14];
+        w[i] = SIG1(w[i - 2]) + w[i - 7] + SIG0(w[i - 15]) + w[i - 16]; /* FIPS 180-4: w[i-16] */
     uint32_t a = c->h[0], b = c->h[1], e2 = c->h[2], d = c->h[3];
     uint32_t e = c->h[4], f = c->h[5], g = c->h[6], h = c->h[7];
     for (int i = 0; i < 64; i++) {

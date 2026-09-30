@@ -1,6 +1,10 @@
 #include "bytecode.h"
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define BC_MAGIC 0x1BC0FFDB
 
 int main(void) {
     Bytecode bc;

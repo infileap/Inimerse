@@ -1,0 +1,13 @@
+// Cross-language interface used by examples/java_bridge.im and
+// examples/python_bridge.im — one definition drives all three bindings:
+//   python3 tools/bindgen.py interface.def --language c      --out build/c/inimerse_native.h
+//   python3 tools/bindgen.py interface.def --language java   --out build/java/InimerseNative.java
+//   python3 tools/bindgen.py interface.def --language python --out build/py/inimerse_native.py
+interface inimerse_native {
+    /// Adds two integers.
+    fn add(a: i32, b: i32) -> i32
+    /// Greets a caller.
+    fn greet(name: string) -> string
+    /// Error-conversion probe (C int / Java exception / Python raise).
+    fn fail(code: i32) -> error
+}

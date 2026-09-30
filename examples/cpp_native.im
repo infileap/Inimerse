@@ -1,0 +1,17 @@
+# Example: calling C code through the generated wrapper (roadmap §3.1).
+#
+# Pipeline:
+#   1. Scan a C header:        python3 tools/cpp_scan.py mylib.h --emit-idl mylib.def
+#   2. Generate bindings:      python3 tools/bindgen.py mylib.def --language c --out mylib_wrap.h
+#   3. Implement the wrapper against your library, build a shared object
+#      (native modules require the capability sandbox, roadmap §2.2).
+#   4. Call it from Inimerse through a `native` module declaration:
+#
+# native mylib {
+#     fn add(a: i32, b: i32) -> i32
+# }
+#
+# Functions whose signatures are not convertible (function pointers,
+# pointer-to-scalar, structs by value) are reported as manual adaptation
+# points by cpp_scan instead of being silently wrapped.
+say "see tools/cpp_scan.py --help and docs/ROADMAP_0.5-0.6.md §3.1"

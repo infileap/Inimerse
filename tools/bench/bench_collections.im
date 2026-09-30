@@ -1,0 +1,30 @@
+# Benchmark: collection transforms (push/dict/len) — v0.5 selfhost suite
+items = []
+i = 0
+while i < 2000 {
+    push(items, i * 2)
+    i = i + 1
+}
+total = 0
+i = 0
+while i < len(items) {
+    total = total + items[i]
+    i = i + 1
+}
+dicts = []
+i = 0
+while i < 300 {
+    d = {"k": i, "v": total}
+    push(dicts, d)
+    i = i + 1
+}
+found = 0
+i = 0
+while i < len(dicts) {
+    e = dicts[i]
+    if e["k"] % 7 == 0 {
+        found = found + 1
+    }
+    i = i + 1
+}
+say "collections: " + str(total) + " " + str(found) + " " + str(len(items))

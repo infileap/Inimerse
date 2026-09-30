@@ -440,6 +440,16 @@ static void emit(Bytecode *bc, OpCode op, int r1, int r2, int r3) {
     bc->code[bc->count].r1 = r1;
     bc->code[bc->count].r2 = r2;
     bc->code[bc->count].r3 = r3;
+    /* debug line table: record instruction offset at every source-line change */
+    if (bc->cur_line > 0 && (bc->dbg_count == 0 || bc->dbg_lines[bc->dbg_count - 1].line != bc->cur_line)) {
+        if (bc->dbg_count == bc->dbg_cap) {
+            bc->dbg_cap = bc->dbg_cap ? bc->dbg_cap * 2 : 32;
+            bc->dbg_lines = realloc(bc->dbg_lines, bc->dbg_cap * sizeof(struct DbgLineEntry));
+        }
+        bc->dbg_lines[bc->dbg_count].off = bc->count;
+        bc->dbg_lines[bc->dbg_count].line = bc->cur_line;
+        bc->dbg_count++;
+    }
     bc->count++;
 }
 
@@ -745,7 +755,8 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                             free(fbuf);
                             int fr = alloc_reg();
                             emit(comp->curBC, OP_LOADK_STRING, fr, fidx, 0);
-                            comp->last_temp = 1;                            return fr;
+                            comp->last_temp = 1;
+                            return fr;
                         }
                         int first = -1, l_temp = 0, w_after_first = -1;
                         for (int i = 0; i < nops; i++) {
@@ -1370,6 +1381,7 @@ static void compile_case_pattern(Compiler *comp, int actual, Expr *pattern,
 /* ---------- 璇彞缂栬瘧 ---------- */
 static void compile_stmt(Compiler *comp, Stmt *stmt, int **break_list, int *break_count_ptr) {
     if (!stmt) return;
+    if (stmt->line > 0) comp->curBC->cur_line = stmt->line;
     switch (stmt->type) {
         case STMT_DECLARE: {
             /* resource declaration -> OP_DECLARE instructions (r1=kind, r2=float_pool idx) */
@@ -2783,6 +2795,8 @@ Compiler *compiler_new(void) {
     comp->mainBC = malloc(sizeof(Bytecode));
     bytecode_init(comp->mainBC);
     comp->curBC = comp->mainBC;
+    comp->target = TARGET_HOST;
+    comp->abi_version = -1;
     comp->globals = NULL; comp->globalCount = 0; comp->globalCap = 0;
     /* preset builtin set globals (must match vm.c vm_init order: N Z Z+ Z- Float1..9 float1..9 kong) */
     {
@@ -2856,6 +2870,8 @@ void compiler_free(Compiler *comp) {
     free(comp->ns_visible);
     for (int i = 0; i < comp->import_count; i++) free(comp->imports[i].key);
     free(comp->imports);
+    for (int i = 0; i < comp->dep_count; i++) free(comp->dep_paths[i]);
+    free(comp->dep_paths);
     free(comp);
 }
 
@@ -2951,6 +2967,12 @@ static void collect_decls(Compiler *comp, Program *prog) {
             comp->imports[entry_idx].state = 0;
             comp->imports[entry_idx].prog = NULL;
             comp->import_count++;
+            /* record the resolved path for incremental-build dependency tracking */
+            if (comp->dep_count == comp->dep_cap) {
+                comp->dep_cap = comp->dep_cap ? comp->dep_cap * 2 : 8;
+                comp->dep_paths = realloc(comp->dep_paths, comp->dep_cap * sizeof(char*));
+            }
+            comp->dep_paths[comp->dep_count++] = strdup(full);
             char *src = inim_load_text(full);
             if (!src) {
                 fprintf(stderr, "閿欒: 鏃犳硶璇诲彇鏂囦欢 '%s'\n", full);

@@ -1,0 +1,31 @@
+# Benchmark: compiler self workload — many functions/branches to compile
+func f0(x) { return x + 0 }
+func f1(x) { return f0(x) + 1 }
+func f2(x) { return f1(x) + 2 }
+func f3(x) { return f2(x) + 3 }
+func f4(x) { return f3(x) + 4 }
+func f5(x) { return f4(x) + 5 }
+func f6(x) { return f5(x) + 6 }
+func f7(x) { return f6(x) + 7 }
+func f8(x) { return f7(x) + 8 }
+func f9(x) { return f8(x) + 9 }
+func classify(n) {
+    case try ok(n) {
+        ok(v) | v % 15 == 0: return "fizzbuzz"
+        ok(v) | v % 3 == 0: return "fizz"
+        ok(v) | v % 5 == 0: return "buzz"
+        ok(v): return str(v)
+        err: return "err"
+    }
+    return "unreachable"
+}
+acc = 0
+i = 0
+while i < 400 {
+    acc = acc + f9(i)
+    if classify(i) == "fizz" {
+        acc = acc + 1
+    }
+    i = i + 1
+}
+say "selfhost: " + str(acc)

@@ -51,3 +51,7 @@ oauth_*.bin
 .env
 .env.*
 !.env.example
+
+# Local session artifacts
+.zcode/
+codex-reconnect-fix/

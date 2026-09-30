@@ -106,6 +106,7 @@ typedef enum {
 
 struct Stmt {
     StmtType type;
+    int line;        /* source line (filled by parse_stmt wrapper, for debug info) */
     union {
         struct { StringView modName; } usingStmt;
         struct { Expr *width; Expr *height; Expr *title; } windowStmt;

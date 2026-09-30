@@ -1,22 +1,14 @@
-# Inimerse 文档索引
+# Inimerse Documentation
 
-## 当前版本
+## Version Documentation
 
-- [v0.3 交付状态](ROADMAP_0.3_STATUS.md)
-- [V0.4 状态矩阵](V04_STATUS.md)
-- [总体路线图](ROADMAP.md)
-- [GitHub 发布操作集](GITHUB_RELEASE_PLAYBOOK.md)
-- [0.4.0 发布范围](RELEASE_0.4.0.md)
-- [0.4.0 构建与发布经验](BUILD_RELEASE_LESSONS_0.4.0.md)
-- [0.4.1 发布说明](RELEASE_0.4.1.md)
-- [0.4.1 CI 与发布经验](RELEASE_CI_LESSONS_0.4.1.md)
-- [内糖与外糖规范](SYNTAX_SUGAR.md)
-- [语法糖机器清单](syntax_sugar.json)
-- [V0.4 数值模型草案](NUMERIC_MODEL_V04.md)
-- [集合变换性能审计](COLLECTION_PERF_AUDIT.md)
-- [发布产物验证](RELEASE_VERIFY.md)
+- [RELEASE_0.5.0.md](RELEASE_0.5.0.md)
+- [CHANGELOG_0.5.0.md](CHANGELOG_0.5.0.md)
+- [v0.5–v0.6 路线图（含实施状态）](ROADMAP_0.5-0.6.md)
+- [脚本编译指南](inimerse_compile_guide.md)
+- [自举基准报告](SELFHOST_BENCHMARK.md)（`python3 tools/selfhost_bench.py --write-docs` 重新生成）
 
-## 平台与 API
+## Platform and API
 
 - [跨平台说明](PORTABILITY.md)
 - [WASM/WASI 说明](WASM.md)
@@ -24,11 +16,11 @@
 - [API 大全（状态索引）](API_CATALOG.md)
 - [内置 API 表](API_BUILTIN_TABLE.md)
 
-## 后续版本
+## Future Versions
 
 - [v3.1 集合化类型系统](ROADMAP_3.1.md)
 - [前沿能力分层路线](ROADMAP_FRONTIER.md)
 
-## 约定
+## Conventions
 
 `future/` 保存研究性愿景和设计草案；已经进入交付承诺的内容必须同步到对应版本路线图，并补充可重复的构建或测试命令。

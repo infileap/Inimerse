@@ -1,0 +1,11 @@
+# Benchmark: VFS file I/O round-trips — v0.5 selfhost suite
+write_file("bench_vfs.tmp", "0123456789abcdef")
+acc = 0
+i = 0
+while i < 400 {
+    write_file("bench_vfs.tmp", "payload-" + str(i))
+    data = read_file("bench_vfs.tmp")
+    acc = acc + len(data)
+    i = i + 1
+}
+say "vfs: " + str(acc)

@@ -1,0 +1,10 @@
+# Example: exposing typed Python functions to Inimerse (roadmap §3.3).
+#
+# Pipeline:
+#   1. Scan a typed Python module:  python3 tools/python_scan.py pymod.py --emit-idl pymod.def
+#      (untyped / async / decorated functions are reported as manual points)
+#   2. Generate bindings:           python3 tools/bindgen.py pymod.def --language python
+#      or scan the module for the migration report:
+#      python3 tools/migrate_report.py pymod.py -o report.md
+#   3. Untyped dynamic parts are NEVER silently wrapped.
+say "see tools/python_scan.py --help and tools/migrate_report.py"

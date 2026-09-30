@@ -706,7 +706,7 @@ static int verse_do_update(VM *vm, const char *id, char **srcs, int nsrcs) {
     snprintf(mp, sizeof mp, "%s\\universe\\%s\\verse.manifest", home_dir(), id);
     int llen = 0;
     char *local = read_file_buf(mp, &llen);
-    char localVer[64] = "0.0.0";
+    char localVer[64] = "0.5.0";
     char **localSrcs = NULL; int nlocalSrcs = 0;
     if (local) {
         int ok = 0;
