@@ -5,6 +5,11 @@
 #include "../common/sha256.h"
 #include <pthread.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -18,6 +23,36 @@
 
 static ImSocket *g_http_listener;
 static pthread_t g_http_thread;
+static size_t hub_body(const char *request, char *body, size_t cap, int *status);
+
+/* UDP hub on the same port: `GET /v/<id>` -> package body (matches the
+   Windows embedded hub and verse_dist's verse_udp_fetch). */
+static int g_udp_fd = -1;
+static pthread_t g_udp_thread;
+static volatile int g_udp_running = 0;
+
+static void *udp_loop(void *unused) {
+    (void)unused;
+    char buf[65536];
+    while (g_udp_running) {
+        struct sockaddr_in from;
+        socklen_t flen = sizeof from;
+        ssize_t n = recvfrom(g_udp_fd, buf, sizeof buf - 1, 0, (struct sockaddr *)&from, &flen);
+        if (n <= 0) { struct timespec ts = { 0, 2000000L }; nanosleep(&ts, NULL); continue; }
+        buf[n] = 0;
+        if (strncmp(buf, "GET /v/", 7) != 0) continue;
+        char reqline[768];
+        size_t rl = strcspn(buf, "\r\n");
+        if (rl >= sizeof reqline) rl = sizeof reqline - 1;
+        memcpy(reqline, buf, rl); reqline[rl] = 0;
+        int status = 0;
+        char body[60001];
+        size_t blen = hub_body(reqline, body, sizeof body, &status);
+        if (blen > 0 && blen < 60000)
+            (void)sendto(g_udp_fd, body, blen, 0, (struct sockaddr *)&from, flen);
+    }
+    return NULL;
+}
 static volatile int g_http_running;
 static ImSocket *g_ws_clients[32];
 static pthread_mutex_t g_ws_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -175,6 +210,18 @@ static size_t hub_body(const char *request, char *body, size_t cap, int *status)
         ImDir *d = im_dir_open(root); size_t used = 0; body[used++] = '[';
         if (d) { char entry[256]; int isdir = 0, first = 1; while (im_dir_next_ex(d, entry, sizeof entry, &isdir) > 0 && used + 80 < cap) { if (isdir) continue; const char *dot = strstr(entry, ".vverse"); if (!dot || dot[7]) continue; char id[128]; snprintf(id, sizeof id, "%.*s", (int)(dot - entry), entry); if (*query && !strstr(id, query)) continue; used += (size_t)snprintf(body + used, cap - used, "%s\"%s\"", first ? "" : ",", id); first = 0; } im_dir_close(d); }
         if (used + 2 < cap) { body[used++] = ']'; body[used] = 0; } *status = 200; return used;
+    }
+    /* GET /v/<id>: the path verse_dist's verse_fetch uses (and the Windows
+       embedded hub serves); alias of /package/<id> so both hubs agree. */
+    const char *vpath = strstr(request, "GET /v/"); if (vpath == request) {
+        vpath += 7; char vid[128]; size_t vi = 0;
+        while (vpath[vi] && vpath[vi] != ' ' && vpath[vi] != '?' && vi + 1 < sizeof vid) { vid[vi] = vpath[vi]; ++vi; }
+        vid[vi] = 0;
+        if (!safe_id(vid)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_id\"}\n"); }
+        char vfile[1400]; snprintf(vfile, sizeof vfile, "%s/%s.vverse", root, vid);
+        FILE *vf = fopen(vfile, "rb");
+        if (!vf) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"not_found\"}\n"); }
+        size_t vn = fread(body, 1, cap, vf); fclose(vf); *status = 200; return vn;
     }
     const char *p = strstr(request, "GET /package/"); if (p == request) {
         p += 13; char id[128]; size_t i = 0; while (p[i] && p[i] != ' ' && p[i] != '?' && i + 1 < sizeof id) { id[i] = p[i]; ++i; } id[i] = 0;
@@ -536,10 +583,36 @@ int verse_http_start(int port) {
     if (!g_http_listener || im_socket_set_nonblocking(g_http_listener, 1) != 0) { if (g_http_listener) im_socket_close(g_http_listener); g_http_listener = NULL; im_socket_shutdown(); return 0; }
     g_http_running = 1;
     if (pthread_create(&g_http_thread, NULL, http_loop, NULL) != 0) { g_http_running = 0; im_socket_close(g_http_listener); g_http_listener = NULL; im_socket_shutdown(); return 0; }
+    /* UDP hub shares the port; failure degrades to TCP-only, never silently
+       pretends UDP works */
+    g_udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (g_udp_fd >= 0) {
+        struct sockaddr_in ua;
+        memset(&ua, 0, sizeof ua);
+        ua.sin_family = AF_INET;
+        ua.sin_port = htons((unsigned short)port);
+        ua.sin_addr.s_addr = htonl(INADDR_ANY);
+        int uyes = 1;
+        (void)setsockopt(g_udp_fd, SOL_SOCKET, SO_REUSEADDR, &uyes, sizeof uyes);
+        if (bind(g_udp_fd, (struct sockaddr *)&ua, sizeof ua) == 0) {
+            /* non-blocking + poll: closing an fd another thread blocks on is
+               not a reliable wakeup on POSIX, so the loop checks a flag */
+            int fl = fcntl(g_udp_fd, F_GETFL, 0);
+            (void)fcntl(g_udp_fd, F_SETFL, fl | O_NONBLOCK);
+            g_udp_running = 1;
+            if (pthread_create(&g_udp_thread, NULL, udp_loop, NULL) != 0) g_udp_running = 0;
+        }
+        if (!g_udp_running) { close(g_udp_fd); g_udp_fd = -1; }
+    }
     return 1;
 }
 
 void verse_http_stop(void) {
+    if (g_udp_running) {
+        g_udp_running = 0;                  /* the loop polls this flag */
+        pthread_join(g_udp_thread, NULL);
+        if (g_udp_fd >= 0) { close(g_udp_fd); g_udp_fd = -1; }
+    }
     if (!g_http_running) return;
     g_http_running = 0;
     pthread_join(g_http_thread, NULL);

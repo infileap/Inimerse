@@ -2027,23 +2027,58 @@ static int b_verse_stop(VM *vm) {
     return 1;
 }
 #else
-/* POSIX: embedded verse HTTP/UDP hub server not ported yet — degrade
-   gracefully (pack/sign/verify/update flows above remain fully usable) */
+/* POSIX embedded hub: TCP + UDP package distribution lives in
+   platform/http_posix.c (verse_http_start/stop); this file provides the
+   script-facing commands and the UDP client transport. */
+int verse_http_start(int port);
+void verse_http_stop(void);
+
+/* UDP hub client: send `GET /v/<id>` and collect the package body (3s cap,
+   matching the Windows implementation's deadline). */
 static char *verse_udp_fetch(const char *host, int port, const char *id, int *out_len) {
-    (void)host; (void)port; (void)id;
     *out_len = 0;
-    fprintf(stderr, "[VDP] udp:// hub transport is Windows-only in this build; use verse://http hubs\n");
-    return NULL;
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return NULL;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((unsigned short)port);
+    if (inet_pton(AF_INET, host, &sa.sin_addr) != 1) {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) { close(fd); return NULL; }
+        sa.sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
+        freeaddrinfo(res);
+    }
+    char req[600];
+    int rl = snprintf(req, sizeof req, "GET /v/%s", id);
+    (void)sendto(fd, req, (size_t)rl, 0, (struct sockaddr *)&sa, sizeof sa);
+    struct timeval tv = { 3, 0 };
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    char *buf = (char *)malloc(65536);
+    ssize_t got = recvfrom(fd, buf, 65535, 0, NULL, NULL);
+    close(fd);
+    if (got <= 0) { free(buf); return NULL; }
+    buf[got] = 0;
+    *out_len = (int)got;
+    return buf;
 }
-/* verse_http_start/stop are provided by platform/http_posix.c on POSIX */
+
 static int b_verse_listen(VM *vm) {
-    (void)vm;
-    fprintf(stderr, "[VDP] verse_listen is Windows-only in this build\n");
-    r_push_int(vm, 0);
+    int argc = vm->cur_argc;
+    Value pv = r_arg(vm, argc - 1);
+    int port = (pv.type == VAL_INT) ? pv.ival : (int)pv.fval;
+    r_popn(vm, argc);
+    int rc = verse_http_start(port);
+    r_push_int(vm, rc ? port : 0);
     return 1;
 }
+
 static int b_verse_stop(VM *vm) {
     r_popn(vm, vm->cur_argc);
+    verse_http_stop();
     r_push_int(vm, 1);
     return 1;
 }

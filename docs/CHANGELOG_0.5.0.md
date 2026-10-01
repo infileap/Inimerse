@@ -118,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Debug info: `--debug-info` writes a text line-table sidecar + STABS-style symbols + a DWARF 5 line-number program (`<out>.debug_line`)
 - POSIX parity for the Infiverse runtime: infiverse (Verse/Layer/Block/Portal), record (declarative saves) and verse_dist (.vverse pack/sign/verify/update, hub registry, HTTP fetch) now build and run on POSIX instead of being stubs; Windows-only parts (embedded hub server, child_proc launch) degrade explicitly
 - CRP session convergence (M2): handshake + capability negotiation (explicit version rejection), leases (begin/touch/expiry), message sequencing (accept/duplicate/gap) and resume planning; websocket sessions negotiate `?ver=&caps=`, drop duplicates, answer gaps with `resume_required`+`last_applied`, and disconnect on lease expiry
+- POSIX embedded hub: verse_listen starts real TCP+UDP package distribution (shared port), verse_udp_fetch is a native UDP client, and the hub gained the `GET /v/<id>` route so the Windows hub dialect and verse_fetch agree end to end
 - M1xM2 bridge: `/session/resume` replays retained events (`complete:true`) and answers `snapshot_required` with oldest/latest seq when the request predates the window (no silently partial replay); websocket events feed the same durable window
 - Fixed a server concurrency defect: websocket clients now get one thread each (a long-lived ws connection previously blocked the accept loop, so a second client or /health could never connect)
 - Replay closure (M1): `replay_mod.c` — named deterministic random streams, logical clock, JSONL event log with chained sha256 envelopes (idempotency keys, §24.5 classified errors), canonical state hashing, chain verification with tamper detection; also un-stubbed `json_mod` on POSIX
@@ -125,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Channel performance comparison: `tools/perf_compare.py` (measured, startup-calibrated; results in SELFHOST_BENCHMARK.md)
 - Wasm MVP backend: `compile --abi-target wasm` emits standalone WebAssembly MVP binaries for the numeric subset (boxed slots in linear memory, fixed `env.*` import table, ABI probe exports); interpreter equivalence verified by `tools/wasm_backend.test.py` (13 cases incl. recursive fib), host runner `tools/wasm_run.js`; unsupported constructs rejected at compile time
 - Self-host benchmark suite: `tools/selfhost_bench.py` + `docs/SELFHOST_BENCHMARK.md` (collections / case-try / VFS / compiler workloads, median + P95, 20% regression gate)
-- New tests: `cli_incremental_regression`, `selfhost_benchmark`, `bindgen_regression`, `wasm_backend_regression`, `scan_tools_regression`, `replay_closure_regression`, `crp_session_flow_regression` (CTest)
+- New tests: `cli_incremental_regression`, `selfhost_benchmark`, `bindgen_regression`, `wasm_backend_regression`, `scan_tools_regression`, `replay_closure_regression`, `crp_session_flow_regression`, `hub_dist_regression` (CTest)
 
 ### Fixed
 
