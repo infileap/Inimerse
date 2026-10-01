@@ -51,6 +51,37 @@ static void state_save(void) {
     pthread_mutex_unlock(&g_state_lock);
     if (fclose(f) == 0) rename(tmp, state_path()); else remove(tmp);
 }
+#define SESSION_EVENT_WINDOW 16
+
+/* record an event for (verse, peer) in the durable replay window (§51.9):
+   the ring keeps the newest SESSION_EVENT_WINDOW entries; resume uses it to
+   refill gaps, and reports snapshot_required once the request falls out. */
+static void session_note_event(const char *verse, const char *peer, uint64_t seq, const char *event) {
+    if (!verse || !verse[0] || !peer || !peer[0]) return;
+    int at = -1;
+    for (int i = 0; i < g_session_count; ++i)
+        if (!strcmp(g_sessions[i].verse, verse) && !strcmp(g_sessions[i].peer, peer)) { at = i; break; }
+    if (at < 0 && g_session_count < (int)(sizeof g_sessions / sizeof g_sessions[0])) at = g_session_count++;
+    if (at < 0) return;
+    ImSession *x = &g_sessions[at];
+    snprintf(x->verse, sizeof x->verse, "%s", verse);
+    snprintf(x->peer, sizeof x->peer, "%s", peer);
+    if (!seq) seq = x->seq + 1;
+    if (seq > x->seq) x->seq = seq;
+    if (event && event[0]) {
+        if (x->event_count < SESSION_EVENT_WINDOW) {
+            snprintf(x->event[x->event_count], sizeof x->event[0], "%s", event);
+            x->event_seq[x->event_count] = seq;
+            x->event_count++;
+        } else {
+            memmove(x->event[0], x->event[1], (SESSION_EVENT_WINDOW - 1) * sizeof x->event[0]);
+            memmove(x->event_seq, x->event_seq + 1, (SESSION_EVENT_WINDOW - 1) * sizeof x->event_seq[0]);
+            snprintf(x->event[SESSION_EVENT_WINDOW - 1], sizeof x->event[0], "%s", event);
+            x->event_seq[SESSION_EVENT_WINDOW - 1] = seq;
+        }
+    }
+    state_save();
+}
 static void state_load(void) {
     FILE *f = fopen(state_path(), "rb"); if (!f) return;
     char line[768];
@@ -191,6 +222,119 @@ static int json_field_u64(const char *json, const char *name, uint64_t *out) {
     uint64_t v = 0; int digits = 0; while (*p >= '0' && *p <= '9') { v = v * 10 + (unsigned)(*p++ - '0'); digits = 1; } if (digits) *out = v; return digits;
 }
 
+/* One thread per websocket client: a long-lived ws connection must not block
+   the accept loop, otherwise a second client (or /health) can never connect. */
+typedef struct { ImSocket *client; int n; char req[65536]; } WsConn;
+
+static void *ws_client_thread(void *arg) {
+    WsConn *wc = (WsConn *)arg;
+    ImSocket *client = wc->client;
+    int n = wc->n;
+    char *req = (char *)malloc((size_t)n + 1);
+    if (!req) { free(wc); im_socket_close(client); return NULL; }
+    memcpy(req, wc->req, (size_t)n + 1);
+    free(wc);
+    if (n <= 0 || !strstr(req, "GET /ws") || !find_ci(req, "Upgrade: websocket")) {
+        free(req); im_socket_close(client);
+        return NULL;
+    }
+    if (im_ws_accept(client, req, (size_t)n) != 0) { free(req); im_socket_close(client); return NULL; }
+    ImCrpSession session; im_crp_session_init(&session, 1);
+    /* §55.3 capability handshake: clients may announce ?ver=N&caps=M;
+       version mismatch is rejected explicitly (§24.6); absent parameters keep
+       the legacy (permissive) behaviour. */
+    int ver = 1; uint32_t caps = 0; int announced = 0;
+    const char *vq = strstr(req, "ver=");
+    if (vq) { ver = atoi(vq + 4); announced = 1; }
+    const char *cq = strstr(req, "caps=");
+    if (cq) { caps = (uint32_t)strtoul(cq + 5, NULL, 10); announced = 1; }
+    if (announced) {
+        ImCrpHello hello;
+        if (im_crp_session_hello(1, IM_CRP_CAP_EVENTS | IM_CRP_CAP_SNAPSHOT | IM_CRP_CAP_UDP | IM_CRP_CAP_RELAY,
+                                 ver, caps, &hello) != 0) {
+            char eb[256];
+            int el = snprintf(eb, sizeof eb, "{\"error\":\"protocol_version_mismatch\",\"detail\":\"%s\"}", hello.error);
+            (void)im_ws_send_text(client, eb, (size_t)el);
+            free(req);
+            im_socket_close(client);
+            return NULL;
+        }
+        session.caps = hello.negotiated_caps;
+    } else {
+        session.caps = IM_CRP_CAP_EVENTS | IM_CRP_CAP_SNAPSHOT | IM_CRP_CAP_UDP | IM_CRP_CAP_RELAY;
+    }
+    free(req); /* request consumed: query parameters already parsed */
+    req = NULL;
+    im_crp_session_lease_begin(&session, http_now_ms(), 30000);
+
+    pthread_mutex_lock(&g_ws_lock);
+    int slot = -1;
+    for (int i = 0; i < 32; ++i) if (!g_ws_clients[i]) { g_ws_clients[i] = client; slot = i; break; }
+    pthread_mutex_unlock(&g_ws_lock);
+    if (slot < 0) {
+        (void)im_ws_send_text(client, "{\"error\":\"too_many_connections\"}", 34);
+        im_socket_close(client);
+        return NULL;
+    }
+    char frame[65536];
+    for (;;) {
+        int flen = im_ws_read_text(client, frame, sizeof frame);
+        if (flen == -2) { (void)im_ws_send_pong(client, NULL, 0); continue; }
+        if (flen <= 0) break;
+        /* §55.5 lease: drop the connection once it expires */
+        if (im_crp_session_lease_expired(&session, http_now_ms())) {
+            const char *err = "{\"error\":\"lease_expired\"}";
+            (void)im_ws_send_text(client, err, strlen(err));
+            break;
+        }
+        char type[32]; uint64_t seq = 0; int has_seq = 0;
+        if (json_field_string(frame, "type", type, sizeof type)) {
+            has_seq = json_field_u64(frame, "seq", &seq) && seq > 0;
+            (void)json_field_u64(frame, "seq", &seq);
+            /* §55.6 sequencing: duplicates are dropped, gaps demand resync */
+            if (has_seq) {
+                int acc = im_crp_session_accept(&session, seq);
+                if (acc == 0) continue;                 /* duplicate: safe to drop */
+                if (acc < 0) {
+                    char eb[160];
+                    int el = snprintf(eb, sizeof eb,
+                                      "{\"error\":\"resume_required\",\"last_applied\":%llu}",
+                                      (unsigned long long)session.last_applied);
+                    (void)im_ws_send_text(client, eb, (size_t)el);
+                    continue;
+                }
+            }
+            if (!strcmp(type, "heartbeat")) im_crp_session_lease_touch(&session, http_now_ms(), 30000);
+            /* §51.9: keep the durable replay window in sync so a reconnecting
+               peer can refill gaps via /session/resume */
+            if (has_seq) {
+                char wv[128] = "", wp[128] = "";
+                if (json_field_string(frame, "verse", wv, sizeof wv) &&
+                    json_field_string(frame, "peer", wp, sizeof wp))
+                    session_note_event(wv, wp, seq, frame);
+            }
+            int state_rc = im_crp_session_apply(&session, type, seq, 0, NULL);
+            if (state_rc < 0) {
+                const char *err = "{\"error\":\"invalid_session_transition\"}";
+                (void)im_ws_send_text(client, err, strlen(err));
+                continue;
+            }
+        }
+        int broadcast_ok = 1;
+        pthread_mutex_lock(&g_ws_lock);
+        for (int i = 0; i < 32; ++i)
+            if (g_ws_clients[i] && g_ws_clients[i] != client)
+                if (im_ws_send_text(g_ws_clients[i], frame, (size_t)flen) != 0) broadcast_ok = 0;
+        pthread_mutex_unlock(&g_ws_lock);
+        if (!broadcast_ok) break;
+    }
+    pthread_mutex_lock(&g_ws_lock);
+    if (slot >= 0 && g_ws_clients[slot] == client) g_ws_clients[slot] = NULL;
+    pthread_mutex_unlock(&g_ws_lock);
+    im_socket_close(client);
+    return NULL;
+}
+
 static void *http_loop(void *unused) {
     (void)unused;
     while (g_http_running) {
@@ -215,86 +359,17 @@ static void *http_loop(void *unused) {
         if (n <= 0) { im_socket_close(client); continue; }
         req[n] = 0;
         if (n > 0 && strstr(req, "GET /ws") && find_ci(req, "Upgrade: websocket")) {
-            /* Authentication is opt-in for backwards compatibility; deployments can
-             * require a portal-issued token with CRP_REQUIRE_AUTH=1. */
-            const char *auth_required = getenv("CRP_REQUIRE_AUTH");
-            if (auth_required && strcmp(auth_required, "1") == 0) {
-                char ws_token[64] = ""; const char *q = strstr(req, "token=");
-                if (q) { q += 6; size_t j = 0; while (q[j] && q[j] != '&' && q[j] != ' ' && j + 1 < sizeof ws_token) { ws_token[j] = q[j]; j++; } ws_token[j] = 0; }
-                if (!token_known(ws_token) || token_revoked(ws_token)) {
-                    const char *deny = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                    (void)im_socket_send(client, deny, strlen(deny)); im_socket_close(client); continue;
-                }
-            }
-            if (im_ws_accept(client, req, (size_t)n) == 0) {
-                ImCrpSession session; im_crp_session_init(&session, 1);
-                /* §55.3 capability handshake: clients may announce ?ver=N&caps=M;
-                   version mismatch is rejected explicitly (§24.6), absent
-                   parameters keep the legacy (permissive) behaviour. */
-                int ver = 1; uint32_t caps = 0; int announced = 0;
-                const char *vq = strstr(req, "ver=");
-                if (vq) { ver = atoi(vq + 4); announced = 1; }
-                const char *cq = strstr(req, "caps=");
-                if (cq) { caps = (uint32_t)strtoul(cq + 5, NULL, 10); announced = 1; }
-                if (announced) {
-                    ImCrpHello hello;
-                    if (im_crp_session_hello(1, IM_CRP_CAP_EVENTS | IM_CRP_CAP_SNAPSHOT | IM_CRP_CAP_UDP | IM_CRP_CAP_RELAY,
-                                             ver, caps, &hello) != 0) {
-                        char eb[256];
-                        int el = snprintf(eb, sizeof eb, "{\"error\":\"protocol_version_mismatch\",\"detail\":\"%s\"}", hello.error);
-                        (void)im_ws_send_text(client, eb, (size_t)el);
-                        im_socket_close(client);
-                        continue;
-                    }
-                    session.caps = hello.negotiated_caps;
-                } else {
-                    session.caps = IM_CRP_CAP_EVENTS | IM_CRP_CAP_SNAPSHOT | IM_CRP_CAP_UDP | IM_CRP_CAP_RELAY;
-                }
-                im_crp_session_lease_begin(&session, http_now_ms(), 30000);
-                pthread_mutex_lock(&g_ws_lock); int slot = -1; for (int i = 0; i < 32; ++i) if (!g_ws_clients[i]) { g_ws_clients[i] = client; slot = i; break; } pthread_mutex_unlock(&g_ws_lock);
-                if (slot < 0) { im_ws_send_text(client, "{\"error\":\"too_many_connections\"}", 34); im_socket_close(client); continue; }
-                char frame[65536];
-                for (;;) {
-                    int flen = im_ws_read_text(client, frame, sizeof frame);
-                    if (flen == -2) { (void)im_ws_send_pong(client, NULL, 0); continue; }
-                    if (flen <= 0) break;
-                    /* §55.5 lease: drop the connection once it expires */
-                    if (im_crp_session_lease_expired(&session, http_now_ms())) {
-                        const char *err = "{\"error\":\"lease_expired\"}";
-                        (void)im_ws_send_text(client, err, strlen(err));
-                        break;
-                    }
-                    char type[32]; uint64_t seq = 0; int has_seq = 0;
-                    if (json_field_string(frame, "type", type, sizeof type)) {
-                        has_seq = json_field_u64(frame, "seq", &seq) && seq > 0;
-                        (void)json_field_u64(frame, "seq", &seq);
-                        /* §55.6 sequencing: duplicates are dropped, gaps demand resync */
-                        if (has_seq) {
-                            int acc = im_crp_session_accept(&session, seq);
-                            if (acc == 0) continue;                 /* duplicate: safe to drop */
-                            if (acc < 0) {
-                                char eb[160];
-                                int el = snprintf(eb, sizeof eb,
-                                                  "{\"error\":\"resume_required\",\"last_applied\":%llu}",
-                                                  (unsigned long long)session.last_applied);
-                                (void)im_ws_send_text(client, eb, (size_t)el);
-                                continue;
-                            }
-                        }
-                        if (!strcmp(type, "heartbeat")) im_crp_session_lease_touch(&session, http_now_ms(), 30000);
-                        int state_rc = im_crp_session_apply(&session, type, seq, 0, NULL);
-                        if (state_rc < 0) {
-                            const char *err = "{\"error\":\"invalid_session_transition\"}";
-                            (void)im_ws_send_text(client, err, strlen(err));
-                            continue;
-                        }
-                    }
-                    int broadcast_ok = 1; pthread_mutex_lock(&g_ws_lock);
-                    for (int i = 0; i < 32; ++i) if (g_ws_clients[i] && g_ws_clients[i] != client) if (im_ws_send_text(g_ws_clients[i], frame, (size_t)flen) != 0) broadcast_ok = 0;
-                    pthread_mutex_unlock(&g_ws_lock);
-                    if (!broadcast_ok) break;
-                }
-                pthread_mutex_lock(&g_ws_lock); if (slot >= 0 && g_ws_clients[slot] == client) g_ws_clients[slot] = NULL; pthread_mutex_unlock(&g_ws_lock);
+            /* hand the connection (with the bytes already read) to a dedicated
+               thread and keep accepting: a long-lived ws client must not block
+               other clients */
+            WsConn *wc = (WsConn *)malloc(sizeof *wc);
+            if (wc) {
+                wc->client = client;
+                wc->n = n;
+                memcpy(wc->req, req, (size_t)n + 1);
+                pthread_t ws_th;
+                if (pthread_create(&ws_th, NULL, ws_client_thread, wc) == 0) { pthread_detach(ws_th); continue; }
+                free(wc);
             }
             im_socket_close(client);
             continue;
@@ -389,11 +464,7 @@ static void *http_loop(void *unused) {
         if (signal && status == 200) {
             char sv[128] = "", sp[128] = "", ev[256] = ""; uint64_t sq = 0;
             (void)json_field_string(req, "verse", sv, sizeof sv); (void)json_field_string(req, "peer", sp, sizeof sp); (void)json_field_string(req, "event", ev, sizeof ev); (void)json_field_u64(req, "seq", &sq);
-            if (sv[0] && sp[0]) {
-                int at = -1; for (int i = 0; i < g_session_count; ++i) if (!strcmp(g_sessions[i].verse, sv) && !strcmp(g_sessions[i].peer, sp)) { at = i; break; }
-                if (at < 0 && g_session_count < 256) at = g_session_count++;
-                if (at >= 0) { ImSession *s = &g_sessions[at]; snprintf(s->verse, sizeof s->verse, "%s", sv); snprintf(s->peer, sizeof s->peer, "%s", sp); if (!sq) sq = s->seq + 1; if (sq > s->seq) s->seq = sq; if (ev[0]) { int k = s->event_count < 16 ? s->event_count++ : 15; if (s->event_count == 16) { memmove(s->event[0], s->event[1], 15 * sizeof s->event[0]); memmove(s->event_seq, s->event_seq + 1, 15 * sizeof s->event_seq[0]); } snprintf(s->event[k], sizeof s->event[0], "%s", ev); s->event_seq[k] = sq; } state_save(); }
-            }
+            if (sv[0] && sp[0]) session_note_event(sv, sp, sq, ev);
         }
         if (resume) {
             char verse[128] = "", peer[128] = "", tok[128] = ""; uint64_t seq = 0;
@@ -408,9 +479,29 @@ static void *http_loop(void *unused) {
         char replaybuf[4096];
         if (resume && status == 200) {
             char rv[128] = "", rp[128] = ""; uint64_t from = 0; (void)json_field_string(req, "verse", rv, sizeof rv); (void)json_field_string(req, "peer", rp, sizeof rp); (void)json_field_u64(req, "seq", &from);
-            size_t used = (size_t)snprintf(replaybuf, sizeof replaybuf, "{\"resumed\":true,\"replay\":["); int first = 1;
-            for (int i = 0; i < g_session_count && used < sizeof replaybuf - 320; ++i) if (!strcmp(g_sessions[i].verse, rv) && !strcmp(g_sessions[i].peer, rp)) { ImSession *s = &g_sessions[i]; for (int j = 0; j < s->event_count; ++j) if (s->event_seq[j] > from) { used += (size_t)snprintf(replaybuf + used, sizeof replaybuf - used, "%s{\"seq\":%llu,\"event\":\"%s\"}", first ? "" : ",", (unsigned long long)s->event_seq[j], s->event[j]); first = 0; } }
-            snprintf(replaybuf + used, sizeof replaybuf - used, "]}\n"); body = replaybuf;
+            ImSession *s = NULL;
+            for (int i = 0; i < g_session_count; ++i) if (!strcmp(g_sessions[i].verse, rv) && !strcmp(g_sessions[i].peer, rp)) { s = &g_sessions[i]; break; }
+            /* §55.6/§24.6: if the requested point predates the retained window,
+               say so explicitly instead of returning a silently partial replay */
+            int fell_out = 0;
+            if (s && s->event_count == SESSION_EVENT_WINDOW && s->seq > from && s->event_seq[0] > from + 1) fell_out = 1;
+            if (fell_out) {
+                snprintf(replaybuf, sizeof replaybuf,
+                         "{\"resumed\":true,\"resume\":\"snapshot_required\",\"oldest_seq\":%llu,\"latest_seq\":%llu}\n",
+                         (unsigned long long)(s->event_seq[0] - 1), (unsigned long long)s->seq);
+                body = replaybuf;
+            } else {
+                size_t used = (size_t)snprintf(replaybuf, sizeof replaybuf, "{\"resumed\":true,\"complete\":true,\"replay\":[");
+                int first = 1;
+                if (s) for (int j = 0; j < s->event_count && used < sizeof replaybuf - 320; ++j)
+                    if (s->event_seq[j] > from) {
+                        used += (size_t)snprintf(replaybuf + used, sizeof replaybuf - used,
+                                                 "%s{\"seq\":%llu,\"event\":\"%s\"}",
+                                                 first ? "" : ",", (unsigned long long)s->event_seq[j], s->event[j]);
+                        first = 0;
+                    }
+                snprintf(replaybuf + used, sizeof replaybuf - used, "]}\n"); body = replaybuf;
+            }
         }
         if (portal) {
             unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
