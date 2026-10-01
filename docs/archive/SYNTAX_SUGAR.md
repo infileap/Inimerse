@@ -1,4 +1,7 @@
 # Inimerse 内糖与外糖规范（V0.4 草案）
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：本文件第 18 行称「`?.`、`??`（…当前仍是设计项）」——**已过时**。两者均已实现，证据 `vtest/null_coalesce_v04.im`、`vtest/optional_member_v04.im` 与 CTest `null_coalesce_runtime`、`optional_member_runtime`；且 `fn`/`print`/`&&`/`||`/`//`/`unless` 属**内糖**而非纯外糖。
+
 
 ## 定义
 

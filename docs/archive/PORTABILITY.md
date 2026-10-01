@@ -1,4 +1,7 @@
 # 跨平台边界
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：本文件声称的「Makefile 门禁包含 `*_probe`」**已过时**——根 `Makefile` 只有一个 `bytecode_capture_probe` 目标（335 字节）；各 `*_probe` 现由 `CMakeLists.txt` 的 `add_test` 承载。
+
 
 Inimerse 将核心 VM 与操作系统能力分离。`src/platform/` 提供稳定的 C 接口，模块通过能力声明使用它们；模块不应散落 `_WIN32` 判断。
 

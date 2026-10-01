@@ -1,5 +1,5 @@
 # Inimerse AI Tooling
-> **核对提示（2026-08-16）**：本文件为设计/规范文档，实现状态可能已变化；权威总览以 docs/API_REFERENCE.md 为准。
+> **核对提示**：本文件为设计/规范文档，实现状态可能已变化；权威总览以 [docs/API.md](../docs/API.md) 为准，状态与版本裁定见 [docs/STATUS.md](../docs/STATUS.md)。
 
 
 Two ways for an LLM agent to execute and fix Inimerse code safely.
@@ -39,7 +39,7 @@ The engine binary can be overridden with `INIMERSE_EXE`.
 
 ## Typical agent loop
 
-1. Write `.im` code from SPEC_FOR_AI.md (see `docs/SPEC_FOR_AI.md`).
+1. Write `.im` code following the language reference in [docs/API.md](../docs/API.md).
 2. `run_im` it.
 3. Read the structured `error` → patch the code.
 4. Repeat until `exit_code == 0` and stdout matches expectations.

@@ -1,5 +1,12 @@
 # Inimerse / Infiverse 版本路线图（v0.5–v0.6）
 
+> ⚠️ **已归档 — v0.6 段的「已完成」标记已全部废止，不代表当前状态。**
+> 现状、路线图与逐条裁定见 [../STATUS.md](../STATUS.md) §3.2（11 行废止表）；完整废止清单见 [README.md](README.md) 第一节。
+>
+> 本文件两处必须注意的缺陷：
+> 1. **v0.6 的 §1（Inim OS）、§2（Infiverse 内核）、§3（2D 引擎）、§4（标准库）全部小节都被标注「已完成」**，实测为设计未实现或部分实现。仓库中 `window::`/`audio::`/`device::`/`net::`/`scene::`/`tilemap::`/`camera::`/`collision::`/`log::` 等命名空间**零命中**，无 `inim` CLI，无 `infiverse.protocol.v1/` RFC 目录。
+> 2. **第 163–238 行与第 239–303 行是两套重复的 v0.6 §1/§2 小节**，前者带「已完成」标记、后者不带。
+
 本文细化 `future/infiverse-inim-os-summary.md` 中的愿景，将其拆分为可交付、可测试的版本目标。v0.4 提供的运行时能力、Eidos 对象模型、包管理器和 VFS 是 v0.5 的前置条件。
 
 ## 版本定位

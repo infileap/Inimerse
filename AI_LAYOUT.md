@@ -1,5 +1,5 @@
 # Inimerse AI 排版助手 - 使用说明
-> **核对提示（2026-08-16）**：本文件为设计/规范文档，实现状态可能已变化；权威总览以 docs/API_REFERENCE.md 为准。
+> **核对提示**：本文件为设计/规范文档，实现状态可能已变化；权威总览以 [docs/API.md](docs/API.md) 为准，状态与版本裁定见 [docs/STATUS.md](docs/STATUS.md)。
 
 
 ## 概述

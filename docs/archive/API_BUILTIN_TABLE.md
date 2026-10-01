@@ -1,4 +1,7 @@
 # 内置函数总表（源码快照）
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：本表与源码存在至少 6 处差异（gui 重复计数、verse_dist/identity 漏列、thread_* 归属、3 个模组未收录、runtime 平台差异）。以 [`docs/API.md`](../API.md) §5 为准。
+
 
 本表列出当前构建注册的内置名称；状态与弃用说明见 [API_CATALOG.md](API_CATALOG.md)。
 名称清单会随模组构建选项变化，不能单独视为每个平台都可用。

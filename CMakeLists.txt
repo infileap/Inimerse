@@ -36,6 +36,40 @@ target_link_libraries(vfs_probe PRIVATE inimerse_platform)
 add_executable(jit_mode_probe src/vm/jit_mode_probe.c src/vm/jit_mode.c)
 target_include_directories(jit_mode_probe PRIVATE src/vm)
 add_test(NAME jit_mode_probe COMMAND jit_mode_probe)
+# P1 increment 1: Layer event log / commit contract (canonical JSON, state_hash,
+# durable-flush barrier, RECOVERY_REQUIRED, idempotency).
+add_executable(verse_eventlog_probe
+  src/verse/eventlog_probe.c src/verse/eventlog.c src/common/sha256.c)
+target_include_directories(verse_eventlog_probe PRIVATE src/verse src/common)
+add_test(NAME verse_eventlog_probe COMMAND verse_eventlog_probe)
+# P1 increment 2: authoritative Layer (verse_id + manifest, commit, idempotency,
+# undo, snapshot, deterministic replay).
+add_executable(verse_layer_probe
+  src/verse/layer_probe.c src/verse/layer.c src/verse/eventlog.c
+  src/verse/json_min.c src/common/sha256.c)
+target_include_directories(verse_layer_probe PRIVATE src/verse src/common)
+add_test(NAME verse_layer_probe COMMAND verse_layer_probe)
+# P1 increment 3: Layer session protocol (hello/version+capability negotiation,
+# client-authority refusal, drain barrier) and the inim-server process boundary.
+set(VL_CORE_SOURCES
+  src/verse/eventlog.c src/verse/json_min.c src/verse/layer.c
+  src/verse/protocol.c src/common/sha256.c)
+add_executable(verse_protocol_probe src/verse/protocol_probe.c ${VL_CORE_SOURCES})
+target_include_directories(verse_protocol_probe PRIVATE src/verse src/common)
+add_test(NAME verse_protocol_probe COMMAND verse_protocol_probe)
+add_executable(inim-server src/verse/server.c ${VL_CORE_SOURCES})
+target_include_directories(inim-server PRIVATE src/verse src/common)
+add_executable(inim-client src/verse/client.c)
+add_test(NAME verse_closed_loop
+  COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
+          python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_closed_loop.test.py
+          $<TARGET_FILE:inim-client>)
+# Ed25519 sign/verify round-trip probe.  Existing suites only sign a handful of
+# times each, so the 1/32 carry-propagation defect in ed25519_sign (fixed in
+# src/common/ed25519.c) went unnoticed; this signs 2000 deterministic messages.
+add_executable(ed25519_probe src/common/ed25519_probe.c src/common/ed25519.c)
+target_include_directories(ed25519_probe PRIVATE src/common)
+add_test(NAME ed25519_probe COMMAND ed25519_probe)
 add_executable(bytecode_capture_probe src/compiler/bytecode.c src/compilation/deps.c src/compiler/bytecode_capture_probe.c)
 target_include_directories(bytecode_capture_probe PRIVATE src src/compiler src/common)
 target_link_libraries(bytecode_capture_probe PRIVATE inimerse_platform)
@@ -142,6 +176,14 @@ if(INIMERSE_NODE)
   set_tests_properties(reconnect_generation_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   add_test(NAME economy_domain_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/economy_domain.test.py)
   set_tests_properties(economy_domain_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
+  add_test(NAME economy_migration_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/economy_migration.test.py)
+  # KNOWN DEFECT, deliberately not green-by-omission: this test asserts the behaviour
+  # /economy/import CLAIMS (re-derive the ledger chain from the package) and that
+  # behaviour is not implemented -- see docs/STATUS.md "§43.5 迁移导入：已证伪".
+  # WILL_FAIL keeps the release gate honest instead of hiding the failure, and it
+  # flips to an unmissable "unexpectedly passed" failure the moment someone fixes
+  # the importer, which is the signal to delete this marker.
+  set_tests_properties(economy_migration_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression;known-defect" WILL_FAIL TRUE)
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
   set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 30 LABELS "protocol;regression")

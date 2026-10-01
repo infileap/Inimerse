@@ -171,27 +171,56 @@ static void sha512_block(u64 h[8], const unsigned char *in) {
     }
     h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
 }
-void sha512_buf(const unsigned char *data, size_t len, unsigned char out[64]) {
-    u64 h[8] = {0x6a09e667f3bcc908ULL,0xbb67ae8584caa73bULL,0x3c6ef372fe94f82bULL,
-                0xa54ff53a5f1d36f1ULL,0x510e527fade682d1ULL,0x9b05688c2b3e6c1fULL,
-                0x1f83d9abfb41bd6bULL,0x5be0cd19137e2179ULL};
-    u64 total = (u64)len;
-    while (len >= 128) { sha512_block(h, data); data += 128; len -= 128; }
-    unsigned char buf[256];
-    size_t rem = len;
-    memcpy(buf, data, rem);
-    buf[rem] = 0x80;
-    size_t padlen = (rem + 17 <= 128) ? 128 - rem - 1 - 8 : 256 - rem - 1 - 8;
-    memset(buf + rem + 1, 0, padlen);
-    u64 bits = total * 8;
-    size_t total_rem = rem + 1 + padlen + 8;
-    int bits_at = (total_rem > 128) ? 256 - 8 : 128 - 8;
-    for (int i = 0; i < 8; i++) buf[bits_at + i] = (unsigned char)(bits >> (56 - 8*i));
-    sha512_block(h, buf);
-    if (total_rem > 128) sha512_block(h, buf + 128);
+static const u64 SHA512_IV[8] = {
+    0x6a09e667f3bcc908ULL,0xbb67ae8584caa73bULL,0x3c6ef372fe94f82bULL,
+    0xa54ff53a5f1d36f1ULL,0x510e527fade682d1ULL,0x9b05688c2b3e6c1fULL,
+    0x1f83d9abfb41bd6bULL,0x5be0cd19137e2179ULL};
+
+void sha512_init(Sha512Ctx *c) {
+    for (int i = 0; i < 8; i++) c->h[i] = SHA512_IV[i];
+    c->total = 0;
+    c->buflen = 0;
+}
+
+void sha512_update(Sha512Ctx *c, const void *data, size_t len) {
+    const unsigned char *p = (const unsigned char *)data;
+    c->total += (u64)len;
+    if (c->buflen) {
+        size_t need = 128 - c->buflen;
+        size_t take = (len < need) ? len : need;
+        memcpy(c->buf + c->buflen, p, take);
+        c->buflen += take; p += take; len -= take;
+        if (c->buflen == 128) { sha512_block(c->h, c->buf); c->buflen = 0; }
+    }
+    while (len >= 128) { sha512_block(c->h, p); p += 128; len -= 128; }
+    if (len) { memcpy(c->buf, p, len); c->buflen = len; }
+}
+
+void sha512_final(Sha512Ctx *c, unsigned char out[64]) {
+    u64 bits = c->total * 8;
+    size_t rem = c->buflen;
+    c->buf[rem++] = 0x80;
+    if (rem > 112) {                       /* no room for the 16-byte length */
+        memset(c->buf + rem, 0, 128 - rem);
+        sha512_block(c->h, c->buf);
+        rem = 0;
+    }
+    memset(c->buf + rem, 0, 112 - rem);    /* zero the rest of the padding */
+    memset(c->buf + 112, 0, 8);            /* high half of the 128-bit length */
+    /* the length is 128-bit big-endian: bits 112..119 stay zero (a byte count
+       would have to exceed 2^61 to reach them), the low 64 bits go at 120 */
+    for (int i = 0; i < 8; i++) c->buf[120 + i] = (unsigned char)(bits >> (56 - 8*i));
+    sha512_block(c->h, c->buf);
     for (int i = 0; i < 8; i++)
         for (int j = 0; j < 8; j++)
-            out[i*8+j] = (unsigned char)(h[i] >> (56 - 8*j));
+            out[i*8+j] = (unsigned char)(c->h[i] >> (56 - 8*j));
+}
+
+void sha512_buf(const unsigned char *data, size_t len, unsigned char out[64]) {
+    Sha512Ctx c;
+    sha512_init(&c);
+    sha512_update(&c, data, len);
+    sha512_final(&c, out);
 }
 
 /* ---------- scalar helpers ---------- */
@@ -371,11 +400,11 @@ void ed25519_sign(const unsigned char seed[32], const unsigned char *msg, size_t
     /* r = SHA512(prefix || msg) mod L */
     u64 rbuf[8]; unsigned char rb[64];
     {
-        unsigned char inp[128 + 8192];
-        memcpy(inp, h + 32, 32);
-        size_t off = 32;
-        for (size_t i = 0; i < msglen && off < sizeof inp; i++) inp[off++] = msg[i];
-        sha512_buf(inp, off, rb);
+        Sha512Ctx c;
+        sha512_init(&c);
+        sha512_update(&c, h + 32, 32);
+        if (msglen) sha512_update(&c, msg, msglen);
+        sha512_final(&c, rb);
     }
     memcpy(rbuf, rb, 64);
     scalar_mod_L(rbuf);
@@ -385,12 +414,12 @@ void ed25519_sign(const unsigned char seed[32], const unsigned char *msg, size_t
     /* k = SHA512(R || A || M) mod L */
     u64 kk[8]; unsigned char kb[64];
     {
-        unsigned char inp[128 + 8192];
-        size_t off = 0;
-        for (size_t i = 0; i < 32 && off < sizeof inp; i++) inp[off++] = rEnc[i];
-        for (size_t i = 0; i < 32 && off < sizeof inp; i++) inp[off++] = pub[i];
-        for (size_t i = 0; i < msglen && off < sizeof inp; i++) inp[off++] = msg[i];
-        sha512_buf(inp, off, kb);
+        Sha512Ctx c;
+        sha512_init(&c);
+        sha512_update(&c, rEnc, 32);
+        sha512_update(&c, pub, 32);
+        if (msglen) sha512_update(&c, msg, msglen);
+        sha512_final(&c, kb);
     }
     memcpy(kk, kb, 64);
     scalar_mod_L(kk);
@@ -415,7 +444,14 @@ void ed25519_sign(const unsigned char seed[32], const unsigned char *msg, size_t
         }
         u64 s[8]; memcpy(s, t, sizeof t);
         u128 c = 0;
-        for (int i = 0; i < 4; i++) { c += (u128)s[i] + rbuf[i]; s[i] = (u64)c; c >>= 64; }
+        /* Add r into the full 8-limb sum.  Looping only over the low four
+           limbs silently DROPS the carry out of limb 3: whenever t_low + r
+           overflows 256 bits -- probability ~L/2^257 = 1/32 -- the sum came
+           out short by exactly 2^256, so scalar_mod_L then produced
+           S = S_correct + (16L - 2^256) and the signature was invalid.
+           t + r < 2^506 + 2^252 < 2^512, so the carry out of limb 7 is
+           genuinely zero and may be discarded. */
+        for (int i = 0; i < 8; i++) { c += (u128)s[i] + rbuf[i]; s[i] = (u64)c; c >>= 64; }
         scalar_mod_L(s);
         memcpy(sig + 32, s, 32);
     }
@@ -426,12 +462,12 @@ int ed25519_verify(const unsigned char pub[32], const unsigned char *msg, size_t
     ep base; ep_set_base(&base);
     u64 kk[8]; unsigned char kb[64];
     {
-        unsigned char inp[128 + 8192];
-        size_t off = 0;
-        for (size_t i = 0; i < 32 && off < sizeof inp; i++) inp[off++] = sig[i];
-        for (size_t i = 0; i < 32 && off < sizeof inp; i++) inp[off++] = pub[i];
-        for (size_t i = 0; i < msglen && off < sizeof inp; i++) inp[off++] = msg[i];
-        sha512_buf(inp, off, kb);
+        Sha512Ctx c;
+        sha512_init(&c);
+        sha512_update(&c, sig, 32);
+        sha512_update(&c, pub, 32);
+        if (msglen) sha512_update(&c, msg, msglen);
+        sha512_final(&c, kb);
     }
     memcpy(kk, kb, 64);
     scalar_mod_L(kk);

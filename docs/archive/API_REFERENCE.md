@@ -1,4 +1,7 @@
 # Inimerse API 参考
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：本文件把 `--no-gui` 列为常用选项，但 `src/main.c` 中**不存在该选项**。
+
 
 > API 状态总览请先看 [API 大全](API_CATALOG.md)。本页保留运行时与语言细节。
 

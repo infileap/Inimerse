@@ -1,4 +1,7 @@
 # WebAssembly 构建边界
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：本文件描述的 `make wasm` 目标**不存在**（根 `Makefile` 只有一个目标）。工具链探测脚本 `tools/wasm_check.js` 确实存在。
+
 
 Inimerse 的 VM、词法/语法分析器、编译器和纯语言 runtime 可作为 WASM 核心；文件系统、线程、网络、GUI、进程和原生插件由宿主通过 PAL/导入函数提供。
 

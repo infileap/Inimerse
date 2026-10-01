@@ -1,4 +1,7 @@
 # V0.4 数值模型草案
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：数值塔 `Number = Z ∪ Q ∪ D ∪ F` **未实现**（`src/` 中无 `bigint`/`rational`/`decimal`/`BigFloat` 实现）。全文应作**设计意图**阅读。
+
 
 ## 现状
 

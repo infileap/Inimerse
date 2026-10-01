@@ -1,4 +1,7 @@
 # Inimerse `.param` / `.params` 参数与生态组合规范
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：`.param` 项目清单格式与配套 CLI（`inim bundle` / `inim params`）在仓库中**零实现证据**；已实现的只有 `.params` 分节格式。
+
 
 本文区分两类文件：
 

@@ -1,4 +1,7 @@
 # Inimerse Script Compilation Guide
+> ⚠️ **已归档（2026-10-01）**：本文件已被 [`docs/API.md`](../API.md) / [`docs/STATUS.md`](../STATUS.md) 取代，仅作历史记录保留，结论可能已过时。
+> **本次核对到的失效点**：本文件抄录的 `INIMERSE_ENGINE_SOURCES` 列表与 `src/main.c` 行号**已过时**；其探针清单中的 `websocket_probe` 并不是一个 CTest。当前列表见 `CMakeLists.txt:175-202`。
+
 
 ## Overview
 

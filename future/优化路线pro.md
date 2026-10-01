@@ -1,5 +1,12 @@
 # Inimerse 极致优化计划书（完整版）
 
+> **文档性质**：性能优化**设计文档**，描述计划而非现状。
+> 当前性能事实只以 [`docs/archive/SELFHOST_BENCHMARK.md`](../docs/archive/SELFHOST_BENCHMARK.md) 为准；状态与路线图见 [`docs/STATUS.md`](../docs/STATUS.md) §3.1、§5。
+>
+> **必须知道的现状**（截至 2026-10-01）：
+> - 第 4 节「JIT 编译器」**尚未实现**。`--jit=template|optimized` 是**空开关**：`src/main.c:826,828` 解析并写入 `im_jit_mode`，而该变量在 `src/` 中**再无任何读取点**，不影响执行；唯一相关测试 `jit_mode_probe` 只验证参数解析。
+> - 优化型 AOT（原生代码生成）**未实现**。现有 `--aot` 是**打包**通道，复用同一个 C 解释器，实测 **1.09x**，不是加速手段。
+
 ## 目录
 
 1. 总纲与目标

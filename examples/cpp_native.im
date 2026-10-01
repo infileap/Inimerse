@@ -14,4 +14,4 @@
 # Functions whose signatures are not convertible (function pointers,
 # pointer-to-scalar, structs by value) are reported as manual adaptation
 # points by cpp_scan instead of being silently wrapped.
-say "see tools/cpp_scan.py --help and docs/ROADMAP_0.5-0.6.md §3.1"
+say "see tools/cpp_scan.py --help and docs/archive/ROADMAP_0.5-0.6.md §3.1"

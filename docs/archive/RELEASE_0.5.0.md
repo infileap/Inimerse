@@ -1,5 +1,14 @@
 # Inimerse 0.5.0 Release Notes
 
+> ⚠️ **已归档 — 本文件含已废止声明，不代表当前状态。**
+> 当前状态与版本裁定见 [../STATUS.md](../STATUS.md) §3.1；完整废止清单见 [README.md](README.md) 第一节。
+>
+> 已废止的声明：
+> - 「AOT compilation … outperform the interpreter by **at least 2x**」→ 实测 **1.09x**（AOT 是打包通道，复用同一个 C 解释器，不自生成原生代码）。
+> - 「WebAssembly output … **SIMD optimizations and WebAssembly GC**」→ `src/compilation/wasm_backend.h:10` 原文：`SIMD/GC/heaps are future work.`
+> - Python 扩展桥 `inimerse_extension.c` / `PyInit_inimerse()`、Java 桥 `InimerseBridge.java` → 仓库中不存在。
+> - 发布产物 `.whl` / `.jar` / `inimerse-aot` / `libinimerse.so` → 仓库中不存在。
+
 Inimerse 0.5.0 is a major feature release that introduces the self-hosted compiler infrastructure and stable Native ABI, establishing Inimerse as a foundation for cross-language integration and compilation pipelines.
 
 ## Features
