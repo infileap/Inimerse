@@ -256,16 +256,25 @@ static char *http_post_body(const char *url, const char *postdata, int *out_len)
 static char self_dir[1024] = {0};
 static const char *home_dir(void) {
     if (self_dir[0]) return self_dir;
+    /* explicit override first (deployment profiles, tests, read-only bins) */
+    const char *env = getenv("INIMERSE_HOME");
+    if (env && *env) {
+        snprintf(self_dir, sizeof self_dir, "%s", env);
+        return self_dir;
+    }
     if (im_platform_executable_path(self_dir, sizeof self_dir) < 0) self_dir[0] = 0;
-    char *s = strrchr(self_dir, '\\');
+    /* strip the executable name: POSIX uses '/', Windows may use either */
+    char *s = strrchr(self_dir, '/');
+    char *b = strrchr(self_dir, '\\');
+    if (b && (!s || b > s)) s = b;
     if (s) *s = 0;
     return self_dir;
 }
 static void mk_universe_dir(const char *id) {
     char p[1200];
-    snprintf(p, sizeof p, "%s\\universe", home_dir());
+    snprintf(p, sizeof p, "%s/universe", home_dir());
     im_platform_mkdirs(p);
-    snprintf(p, sizeof p, "%s\\universe\\%s", home_dir(), id);
+    snprintf(p, sizeof p, "%s/universe/%s", home_dir(), id);
     im_platform_mkdirs(p);
 }
 
@@ -273,7 +282,7 @@ static void mk_universe_dir(const char *id) {
 static char *read_file_buf(const char *path, int *len);  /* defined below */
 static const char *cache_dir(void) {
     static char p[1400];
-    snprintf(p, sizeof p, "%s\\universe\\_cache", home_dir());
+    snprintf(p, sizeof p, "%s/universe/_cache", home_dir());
     return p;
 }
 static void mk_cache_dir(void) {
@@ -281,7 +290,7 @@ static void mk_cache_dir(void) {
 }
 static int cache_has(const char *hex) {
     char fp[1500];
-    snprintf(fp, sizeof fp, "%s\\%s", cache_dir(), hex);
+    snprintf(fp, sizeof fp, "%s/%s", cache_dir(), hex);
     FILE *f = fopen(fp, "rb");
     if (f) { fclose(f); return 1; }
     return 0;
@@ -289,13 +298,13 @@ static int cache_has(const char *hex) {
 static void cache_put(const char *hex, const unsigned char *data, int len) {
     mk_cache_dir();
     char fp[1500];
-    snprintf(fp, sizeof fp, "%s\\%s", cache_dir(), hex);
+    snprintf(fp, sizeof fp, "%s/%s", cache_dir(), hex);
     FILE *f = fopen(fp, "wb");
     if (f) { fwrite(data, 1, (size_t)len, f); fclose(f); }
 }
 static unsigned char *cache_get(const char *hex, int *len) {
     char fp[1500];
-    snprintf(fp, sizeof fp, "%s\\%s", cache_dir(), hex);
+    snprintf(fp, sizeof fp, "%s/%s", cache_dir(), hex);
     return read_file_buf(fp, len);
 }
 static char *read_file_buf(const char *path, int *len) {
@@ -368,10 +377,15 @@ static int verse_zip_extract(const char *zipPath, const char *outDir) {
         uint32_t dataOff = lho + 30 + lnl + lel;
         if (dataOff + csize > (uint32_t)fsz) continue;
         char outPath[1024];
-        snprintf(outPath, sizeof outPath, "%s\\%s", outDir, name);
+        snprintf(outPath, sizeof outPath, "%s/%s", outDir, name);
+#ifdef _WIN32
         for (char *p = outPath; *p; p++) if (*p == '/') *p = '\\';
-        char *slash = strrchr(outPath, '\\');
-        if (slash) { *slash = 0; verse_jar_mkdir_p(outPath); *slash = '\\'; }
+#endif
+        char *slash = strrchr(outPath, '/');
+#ifdef _WIN32
+        { char *bs = strrchr(outPath, '\\'); if (bs && (!slash || bs > slash)) slash = bs; }
+#endif
+        if (slash) { char sep = *slash; *slash = 0; verse_jar_mkdir_p(outPath); *slash = sep; }
         FILE *w = fopen(outPath, "wb");
         if (!w) continue;
         fwrite(buf + dataOff, 1, csize, w);
@@ -386,7 +400,7 @@ static int verse_zip_extract(const char *zipPath, const char *outDir) {
 #include "ed25519.h"
 static const char *identity_seed_path(void) {
     static char p[1400];
-    snprintf(p, sizeof p, "%s\\universe\\identity.seed", home_dir());
+    snprintf(p, sizeof p, "%s/universe/identity.seed", home_dir());
     return p;
 }
 static int identity_pubkey(char pubhex[65]) {
@@ -422,6 +436,11 @@ static int b_verse_identity_new(VM *vm) {
     char hex[65];
     for (int i = 0; i < 32; i++) { hex[i*2] = hx[seed[i] >> 4]; hex[i*2+1] = hx[seed[i] & 15]; }
     hex[64] = 0;
+    {   /* the identity lives under <home>/universe: create it on first use */
+        char idir[1400];
+        snprintf(idir, sizeof idir, "%s/universe", home_dir());
+        (void)im_platform_mkdirs(idir);
+    }
     FILE *f = fopen(identity_seed_path(), "wb");
     if (f) { fwrite(hex, 1, 64, f); fclose(f); }
     char pubhex[65];
@@ -500,7 +519,7 @@ static void hubs_load(void) {
     if (g_hub_count >= 0) return;
     g_hub_count = 0;
     char hp[1200];
-    snprintf(hp, sizeof hp, "%s\\universe\\hubs.json", home_dir());
+    snprintf(hp, sizeof hp, "%s/universe/hubs.json", home_dir());
     int len = 0;
     char *j = read_file_buf(hp, &len);
     if (j) {
@@ -523,7 +542,7 @@ static void hubs_load(void) {
 }
 static void hubs_save(void) {
     char hp[1200];
-    snprintf(hp, sizeof hp, "%s\\universe\\hubs.json", home_dir());
+    snprintf(hp, sizeof hp, "%s/universe/hubs.json", home_dir());
     FILE *f = fopen(hp, "wb");
     if (!f) return;
     fputs("[", f);
@@ -666,7 +685,7 @@ static int verse_unpack(VM *vm, Value pkg, const char *id, const char *mainf, co
     if (!a) return 0;
     mk_universe_dir(id);
     char base[1200];
-    snprintf(base, sizeof base, "%s\\universe\\%s\\", home_dir(), id);
+    snprintf(base, sizeof base, "%s/universe/%s/", home_dir(), id);
     int any = 0;
     for (int i = 0; i + 1 < a->count; i += 2) {
         Value *k = &a->items[i], *v = &a->items[i + 1];
@@ -738,7 +757,7 @@ static char **verse_parse_sources(VM *vm, Value pkg, int *out_n) {
    manifest), verify sha256, compare versions, honor min_version; unpack newest. */
 static int verse_do_update(VM *vm, const char *id, char **srcs, int nsrcs) {
     char mp[1400];
-    snprintf(mp, sizeof mp, "%s\\universe\\%s\\verse.manifest", home_dir(), id);
+    snprintf(mp, sizeof mp, "%s/universe/%s/verse.manifest", home_dir(), id);
     int llen = 0;
     char *local = read_file_buf(mp, &llen);
     char localVer[64] = "0.5.0";
@@ -773,10 +792,10 @@ static int verse_do_update(VM *vm, const char *id, char **srcs, int nsrcs) {
                 continue;
             }
             char tmp[1200];
-            snprintf(tmp, sizeof tmp, "%s\\_upd_tmp", home_dir());
+            snprintf(tmp, sizeof tmp, "%s/_upd_tmp", home_dir());
             verse_zip_extract(src + 14, tmp);
             char mp2[1400];
-            snprintf(mp2, sizeof mp2, "%s\\verse.manifest", tmp);
+            snprintf(mp2, sizeof mp2, "%s/verse.manifest", tmp);
             pkg = read_file_buf(mp2, &plen);
             tmpdir = _strdup(tmp);
             if (!pkg) { fprintf(stderr, "[VDP] .imjar has no verse.manifest\n"); continue; }
@@ -804,7 +823,7 @@ static int verse_do_update(VM *vm, const char *id, char **srcs, int nsrcs) {
         if (tmpdir) {
             mk_universe_dir(id);
             char base[1200];
-            snprintf(base, sizeof base, "%s\\universe\\%s\\", home_dir(), id);
+            snprintf(base, sizeof base, "%s/universe/%s/", home_dir(), id);
             ImDir *dir = im_dir_open(tmpdir);
             char entry[1024]; int entry_is_dir = 0;
             if (dir) {
@@ -812,7 +831,7 @@ static int verse_do_update(VM *vm, const char *id, char **srcs, int nsrcs) {
                     if (entry_is_dir) continue;
                     if (strstr(entry, "manifest") && strcmp(entry, "verse.manifest") != 0) continue;
                     char sf[1400], df[1400];
-                    snprintf(sf, sizeof sf, "%s\\%s", tmpdir, entry);
+                    snprintf(sf, sizeof sf, "%s/%s", tmpdir, entry);
                     snprintf(df, sizeof df, "%s%s", base, entry);
                     int slen = 0; char *raw = read_file_buf(sf, &slen);
                     if (raw) { FILE *w = fopen(df, "wb"); if (w) { fwrite(raw, 1, (size_t)slen, w); fclose(w); } free(raw); }
@@ -952,7 +971,7 @@ static int b_verse_publish(VM *vm) {
     char *hub = _strdup(argc >= 2 ? (r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "") : "");
     r_popn(vm, argc);
     char mp[1400];
-    snprintf(mp, sizeof mp, "%s\\universe\\%s\\verse.manifest", home_dir(), id);
+    snprintf(mp, sizeof mp, "%s/universe/%s/verse.manifest", home_dir(), id);
     int len = 0;
     char *m = read_file_buf(mp, &len);
     if (!m) {
@@ -1059,7 +1078,7 @@ static int do_open(VM *vm, const char *uri) {
     free(pkg_json);
     char base[1200];
 #ifdef _WIN32
-    snprintf(base, sizeof base, "%s\\universe\\%s\\", home_dir(), m.id);
+    snprintf(base, sizeof base, "%s/universe/%s\\", home_dir(), m.id);
     char cmd[1600];
     snprintf(cmd, sizeof cmd, "cmd /c start \"\" \"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, m.mainf);
     DWORD cpid = child_proc_spawn(cmd, "verse", 0);
@@ -1287,7 +1306,7 @@ static int b_verse_list(VM *vm) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { r_push_nil(vm); return 1; }
     char universe[1200];
-    snprintf(universe, sizeof universe, "%s\\universe", home_dir());
+    snprintf(universe, sizeof universe, "%s/universe", home_dir());
     ImDir *dir = im_dir_open(universe);
     char name[1024]; int is_dir = 0;
     if (dir) {
@@ -1310,7 +1329,7 @@ static int b_verse_remove(VM *vm) {
     char *id = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
     r_popn(vm, argc);
     char path[1200];
-    snprintf(path, sizeof path, "%s\\universe\\%s", home_dir(), id);
+    snprintf(path, sizeof path, "%s/universe/%s", home_dir(), id);
     /* simple recursive delete via SHFileOperation or manual */
     ImDir *dir = im_dir_open(path);
     char name[1024]; int is_dir = 0;
@@ -1401,7 +1420,7 @@ static char *http_resp(const char *req_path, int *out_len) {
             *dst = 0;
         }
         char fp[1200];
-        snprintf(fp, sizeof fp, "%s\\%s", home_dir(), rel[0] ? rel : "projects");
+        snprintf(fp, sizeof fp, "%s/%s", home_dir(), rel[0] ? rel : "projects");
         FILE *f = fopen(fp, "rb");
         if (!f) { *out_len = 0; char *b = malloc(1); b[0] = 0; return b; }
         fseek(f, 0, SEEK_END); long len = ftell(f); fseek(f, 0, SEEK_SET);
@@ -1438,7 +1457,7 @@ static char *http_resp(const char *req_path, int *out_len) {
         char *body = malloc(8192);
         int n = 0;
         n += snprintf(body + n, 8192 - n, "[");
-        char universe[1200]; snprintf(universe, sizeof universe, "%s\\universe", home_dir());
+        char universe[1200]; snprintf(universe, sizeof universe, "%s/universe", home_dir());
         ImDir *dir = im_dir_open(universe); char name[1024]; int is_dir = 0; int first = 1;
         if (dir) {
             while (im_dir_next_ex(dir, name, sizeof name, &is_dir)) {
@@ -1455,14 +1474,14 @@ static char *http_resp(const char *req_path, int *out_len) {
     char *slash = strchr((char*)id, ' ');
     if (slash) *slash = 0;
     char fp[1600];
-    snprintf(fp, sizeof fp, "%s\\universe\\%s\\%s.vverse", home_dir(), id, id);
+    snprintf(fp, sizeof fp, "%s/universe/%s\\%s.vverse", home_dir(), id, id);
     FILE *f = fopen(fp, "rb");
     if (!f) {
-        snprintf(fp, sizeof fp, "%s\\%s.vverse", home_dir(), id);
+        snprintf(fp, sizeof fp, "%s/%s.vverse", home_dir(), id);
         f = fopen(fp, "rb");
     }
         if (!f) {
-            snprintf(fp, sizeof fp, "%s\\universe\\_hub\\%s.vverse", home_dir(), id);
+            snprintf(fp, sizeof fp, "%s/universe/_hub\\%s.vverse", home_dir(), id);
             f = fopen(fp, "rb");
         }
 
@@ -1666,10 +1685,10 @@ static DWORD WINAPI http_server_thread(LPVOID arg) {
                 }
                 for (char *fp2 = pid; *fp2; fp2++) if (*fp2 == 47 || *fp2 == 92) *fp2 = 95;
                 char hubdir[1200];
-                snprintf(hubdir, sizeof hubdir, "%s\\universe\\_hub", home_dir());
+                snprintf(hubdir, sizeof hubdir, "%s/universe/_hub", home_dir());
                 im_platform_mkdirs(hubdir);
                 char hfp[1400];
-                snprintf(hfp, sizeof hfp, "%s\\%s.vverse", hubdir, pid);
+                snprintf(hfp, sizeof hfp, "%s/%s.vverse", hubdir, pid);
                 FILE *hf = fopen(hfp, "wb");
                 int pok = 0;
                 if (hf) {
@@ -1695,7 +1714,7 @@ static DWORD WINAPI http_server_thread(LPVOID arg) {
                 }
                 if (strncmp(path, "/api/save", 9) == 0) {
                     char fp[1200];
-                    snprintf(fp, sizeof fp, "%s\\%s", home_dir(), rel[0] ? rel : "x.im");
+                    snprintf(fp, sizeof fp, "%s/%s", home_dir(), rel[0] ? rel : "x.im");
                     for (char *fp2 = fp; *fp2; fp2++) if (*fp2 == '/') *fp2 = '\\';
                     /* ensure dir exists */
                     char dir[1200]; snprintf(dir, sizeof dir, "%s", fp);
@@ -1830,7 +1849,7 @@ static DWORD WINAPI http_server_thread(LPVOID arg) {
                 } else if (strncmp(path, "/api/run", 8) == 0) {
                     /* launch inimerse.exe with the project main.im. ?mode=headless -> no window (phone plays in browser) */
                     char fp[1200];
-                    snprintf(fp, sizeof fp, "%s\\%s", home_dir(), rel[0] ? rel : "x.im");
+                    snprintf(fp, sizeof fp, "%s/%s", home_dir(), rel[0] ? rel : "x.im");
                     for (char *fp2 = fp; *fp2; fp2++) if (*fp2 == '/') *fp2 = '\\';
                     char exe[1200]; snprintf(exe, sizeof exe, "%s\\inimerse.exe", home_dir());
                     char cmd[2400];

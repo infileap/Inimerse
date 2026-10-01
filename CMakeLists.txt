@@ -132,6 +132,8 @@ if(INIMERSE_NODE)
   set_tests_properties(crp_session_flow_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "protocol;regression")
   add_test(NAME hub_dist_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/hub_dist.test.py)
   set_tests_properties(hub_dist_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "protocol;regression")
+  add_test(NAME verse_pack_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/verse_pack.test.py)
+  set_tests_properties(verse_pack_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "protocol;regression")
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
   set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 30 LABELS "protocol;regression")
