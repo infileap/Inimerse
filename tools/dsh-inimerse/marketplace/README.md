@@ -24,7 +24,11 @@ were run to verify them.
   validator (`validateRegistry` from `dsh-m/lib/core/registry.js`) with zero
   errors.
 - The local preview registry was served through dsh-m's CLI and listed
-  correctly (`来源：本地文件源 · 共 24 条`).
+  correctly (`来源：本地文件源 · 共 24 条`; `Inimerse Bridge (dsh-inimerse)· 工具 · npm`).
+- `registry.json` here is **regenerated from upstream `HEAD`** (`f18fc81`),
+  not from the copy bundled with the installed dsh-m: the bundled snapshot was
+  already stale (its `dsh-skins` description stopped at `0.2.0-rc.1`, upstream
+  says `0.2.0-rc.1/rc.2`). `diff` against upstream is exactly one added entry.
 
 ## Why the listing is not live yet
 
@@ -57,10 +61,10 @@ plain `npm publish` is equivalent once you are logged in to npmjs.
 ## Step 2 — get the entry into the curated list
 
 `registry.json` upstream is hand-curated; a listing is a pull request to
-`iasiv5/dsh-m` that appends `entry.json` to its `registry.json`. Its CI checks
-are strict schema, npm package + GitHub repo existence, duplicate ids, and URL
-reachability — so **step 1 must land first**, and the `icon` / `homepage` URLs
-only resolve once this plugin is pushed to the repository's `main` branch.
+`iasiv5/dsh-m` that appends `entry.json` to its `registry.json`. **Step 1 must
+land first**: upstream CI (`.github/workflows/registry.yml` →
+`scripts/validate-registry.mjs`) fetches
+`https://registry.npmjs.org/<npm>/latest` and fails the build if it 404s.
 
 The entry deliberately uses Chinese display text and tags because dsh-m renders
 the curated list Chinese-first (every existing entry does the same):
@@ -69,16 +73,47 @@ the curated list Chinese-first (every existing entry does the same):
 {
   "id": "dsh-inimerse",
   "name": "Inimerse Bridge",
+  "description": "DSH 里的 Inimerse 引擎接口：构建、测试、运行 .im 脚本、驱动 Verse 层。已适配 0.2.0-rc.2，详见仓库。",
   "category": "tools",
+  "tags": ["引擎", "构建", "测试", "Verse"],
+  "verified": ["0.2.0-rc.2"],
   "source": "npm",
   "npm": "dsh-inimerse",
   "github": "infileap/Inimerse",
-  "verified": ["0.2.0-rc.2"]
+  "homepage": "https://github.com/infileap/Inimerse/tree/main/tools/dsh-inimerse",
+  "icon": "https://raw.githubusercontent.com/infileap/Inimerse/main/tools/dsh-inimerse/icon.svg"
 }
 ```
 
 `verified` records the DSH runtime versions this plugin was actually tested
 against — declarative, never a gate for installation.
+
+### What upstream CI actually enforces
+
+Read from `scripts/validate-registry.mjs` (141 lines) in `iasiv5/dsh-m`:
+
+**Hard failures** — schema via dsh-m's own `validateRegistry`; duplicate `id`s;
+the `npm` package must exist on npmjs; the `github` repo must exist; every
+`homepage` and `icon` URL must answer a `HEAD` request (200 or 405, 2 attempts).
+
+**Soft warnings** (`docs/registry-copy-guide.md`; they do not fail the build,
+but the PR reviewer asks for a reason per warning) — description over
+**60 full-width units** (CJK glyph = 1, ASCII = 0.5; the card clamps at two
+lines); a tag starting with `需`/`推荐`/`require`; a full-width-parenthesised
+compatibility tail `（…适配/需/依赖/推荐…）`; and, for any description
+containing `适配`, every `0.x.y(-rc.N)` version it names must appear in
+`verified`.
+
+The first draft of this entry failed the width rule at **62.5 units**. The
+current description is **49.5**, keeps the §4 compatibility sentence
+(`已适配 0.2.0-rc.2，详见仓库。`), and trims tags to the guide's ≤4 budget —
+the `0.2.0-rc.2` it names is present in `verified`, so the version-subset
+warning stays silent.
+
+Key order follows the upstream house style
+(`id, name, description, category, tags, verified, source, npm, github,
+homepage`) so the patch is a byte-minimal append; `icon` sits last because no
+existing entry uses it yet.
 
 ## Preview locally without waiting for the PR
 

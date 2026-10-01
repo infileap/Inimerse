@@ -27,7 +27,7 @@
     {
       "id": "dsh-skins",
       "name": "DSH Skins",
-      "description": "DSH Web 皮肤插件：多套品牌皮肤侧栏热切换，一键回到官方界面。已适配 0.1.7-rc.2 与 0.2.0-rc.1，详见仓库。",
+      "description": "DSH Web 皮肤插件：多套品牌皮肤侧栏热切换，一键回到官方界面。已适配 0.1.7-rc.2 与 0.2.0-rc.1/rc.2，详见仓库。",
       "category": "ui",
       "tags": [
         "皮肤",
@@ -37,7 +37,8 @@
       "verified": [
         "0.1.2-rc.1",
         "0.1.7-rc.2",
-        "0.2.0-rc.1"
+        "0.2.0-rc.1",
+        "0.2.0-rc.2"
       ],
       "source": "npm",
       "npm": "@iasiv5/dsh-skins",
@@ -390,23 +391,22 @@
     {
       "id": "dsh-inimerse",
       "name": "Inimerse Bridge",
-      "description": "把 Inimerse 引擎与 Infiverse 栈接进 agent 会话：构建、测试、运行 .im 脚本、驱动 Verse 层，全部作为 DSH 工具，不复制引擎逻辑。",
+      "description": "DSH 里的 Inimerse 引擎接口：构建、测试、运行 .im 脚本、驱动 Verse 层。已适配 0.2.0-rc.2，详见仓库。",
       "category": "tools",
       "tags": [
         "引擎",
         "构建",
         "测试",
-        ".im 脚本",
         "Verse"
+      ],
+      "verified": [
+        "0.2.0-rc.2"
       ],
       "source": "npm",
       "npm": "dsh-inimerse",
       "github": "infileap/Inimerse",
       "homepage": "https://github.com/infileap/Inimerse/tree/main/tools/dsh-inimerse",
-      "icon": "https://raw.githubusercontent.com/infileap/Inimerse/main/tools/dsh-inimerse/icon.svg",
-      "verified": [
-        "0.2.0-rc.2"
-      ]
+      "icon": "https://raw.githubusercontent.com/infileap/Inimerse/main/tools/dsh-inimerse/icon.svg"
     }
   ]
 }
