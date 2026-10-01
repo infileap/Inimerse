@@ -4,7 +4,7 @@
 #
 #   tools/gate.sh              full gate: configure + build + all suites
 #   tools/gate.sh --fast       skip configure/build, reuse the existing build/
-#   tools/gate.sh --only links run a single stage (build|ctest|economy|plugin|links)
+#   tools/gate.sh --only links run a single stage (build|ctest|economy|node|plugin|links)
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #
 # Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
@@ -87,6 +87,16 @@ stage_economy() {
   python3 "$REPO_ROOT/tools/economy_migration.test.py"
 }
 
+stage_node() {
+  # The UPP / CRP / .vverse JS suites.  They passed for months while nothing
+  # invoked them (ctest registers only Python suites), so a regression in the
+  # reference protocol code could not have failed any gate.  Now it can.
+  if ! command -v node >/dev/null 2>&1; then
+    echo "node not found -- cannot run the JS protocol suites"; return 1
+  fi
+  node "$REPO_ROOT/tools/node_suites/run_all.js"
+}
+
 stage_plugin() {
   # The DSH bridge plugin: offline checks plus a live round trip through the
   # real inim-server / inim-client binaries.
@@ -103,6 +113,7 @@ stage_links() {
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect 85/85)" ctest stage_ctest
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
+run_stage "node protocol suites (expect 11/11)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
 run_stage "docs relative links" links stage_links
 

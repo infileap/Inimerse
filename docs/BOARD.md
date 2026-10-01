@@ -43,7 +43,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 
 ## 3. 门禁（`tools/gate.sh`）
 
-合入 main 前必须全绿。五个阶段，任一失败即整体失败：
+合入 main 前必须全绿。六个阶段，任一失败即整体失败：
 
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
@@ -51,12 +51,13 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 | ctest | `ctest --test-dir build --output-on-failure -j4` | **85 / 85 通过**，无 `WILL_FAIL` 记账项 |
 | economy | `python3 tools/economy_migration.test.py` | `economy migration: ok`（**39 / 39**） |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` | **55 / 55** |
-| links | `python3 tools/check_links.py` | **0 broken**（当前 66 个 md / 209 条链接 / 203 条本地链接） |
+| node | `node tools/node_suites/run_all.js` | **11 / 11**（`tools/` 下每个可独立运行的 JS 套件；`crp_session_flow.test.js` 需活跃 hub，由 CTest 的 `crp_session_flow_regression` 驱动，不在此列） |
+| links | `python3 tools/check_links.py` | **0 broken**（当前 66 个 md / 211 条链接 / 205 条本地链接） |
 
 ```bash
 tools/gate.sh                # 全量
 tools/gate.sh --fast         # 跳过 configure，复用已有 build/
-tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|plugin|links
+tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plugin|links
 ```
 
 **门禁数字变了就必须同时改这张表和 [STATUS.md](STATUS.md) §1 的基线行**，否则下一个会话会拿旧数字当验收线。
@@ -81,15 +82,29 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|plugin|l
 | 状态 | slug | 任务 | 冲突域（别人别碰） | 验收判据 | 认领 |
 | --- | --- | --- | --- | --- | --- |
 | 阻塞 | `marketplace-watch` | 上架 dsh-m：npm 包已发布，PR [iasiv5/dsh-m#1](https://github.com/iasiv5/dsh-m/pull/1) 等待维护者点 *Approve and run* | `tools/dsh-inimerse/marketplace/` | PR 合并后 `node scripts/validate-registry.mjs` 全绿 | 协调者 |
-| 未认领 | `verse-upp` | UPP 本地参考协议与 Verse manifest | `tools/upp_reference*`、`src/verse/` | `node tools/upp_reference.test.js` 全过 + 新增契约测试 | — |
-| 未认领 | `verse-crp` | CRP `FIND` / `PORTAL` 回环与签名校验 | `tools/crp_reference*`、`src/verse/` | `node tools/crp_reference.test.js` 全过 + 回环有真实进程证据 | — |
-| 未认领 | `vverse-pack` | `.vverse` 打包、预览、下载与启动 | `tools/vverse_*`、`vtest/` | `node tools/vverse_validate.test.js` 全过 + 打包产物可被客户端启动 | — |
+| 未认领 | `upp-in-engine` | UPP 目前只有 **JS 参考实现**（`tools/upp_reference.js` + `upp_session.js`，29 条断言）；引擎侧没有对应状态机 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | — |
+| 未认领 | `crp-in-engine` | CRP 的 `FIND` / `PORTAL` 回环签名校验同样只在 JS 参考实现里；引擎侧无实现 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎实现能通过 `tools/crp_relay.test.js` 的等价场景，且有真实两进程证据 | — |
+| 未认领 | `vverse-produce` | `.vverse` **打包器**（`tools/vverse_pack.js`）只在 JS 侧；引擎不会产出 `.vverse` | `src/`、`vtest/` | 引擎产出的 `.vverse` 能通过 `tools/vverse_validate.js` 校验并被 `inim-server` 装载 | — |
+| 未认领 | `ws-client-coverage` | `tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用） | `tools/crp_ws_client*`、`tools/upp_session*` | 连接/重连/排队各自有断言；两个套件至少被一份文档引用 | — |
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
 | 未认领 | `repo-hygiene` | 仓库根残留清理（24 个 `CHANGES_*.txt`、`_t_bisect.im`、`CMakeLists.txt.bak`、`nst2.inim`、`params*`、`vtest_signed.vverse`、若干 `*.html`） | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩应有的文件 | — |
 | 未认领 | `docs-audit` | 文档口径复查：README 基线数字、四标记词汇一致性、`archive/` 引用 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken + 抽查每处数字有出处 | — |
 
-> 路线图 1–5 来自 [STATUS.md](STATUS.md) §9.2 末尾「路线图上的下一步」，**已立项**；
+> **2026-08 修订说明（重要）。** 上一版把 `verse-upp` / `verse-crp` / `vverse-pack` 三行写成
+> 「未认领」，验收判据是「`node tools/<x>.test.js` 全过」——**这是错的**：那八个套件当时
+> 就已存在并且全部通过（合计 92 条断言）。照原样派活，会话一到手就会发现判据早已满足，
+> 然后合理地把它标成「已完成」——**板子会自己骗自己**。
+>
+> 真正缺的不是测试，是**引擎侧实现**：UPP/CRP 的状态机与 `.vverse` 打包器至今只存在于
+> `tools/*.js` 参考实现里（共 706 行），引擎没有对应代码，所以「测试全过」证明的是参考
+> 实现自洽，不是引擎具备该能力。上表四行已按这个真实缺口重写。
+>
+> 同时补上一项**当时无法发现的**问题：这 8 个套件当时**没有任何门禁调用它们**
+> （`CMakeLists.txt` 只注册 Python 套件），也就是说参考实现发生回归不会让任何门禁变红。
+> 已加 `tools/node_suites/run_all.js` 为门禁第四阶段修复，见 §3。
+
+> 其余任务来自 [STATUS.md](STATUS.md) §9.2 末尾「路线图上的下一步」，**已立项**；
 > 具体接口定义见 [API.md](API.md) 与 `future/` 下的设计草案，不要在会话里重新发明。
 
 ## 6. 已结项（不要再重开）
