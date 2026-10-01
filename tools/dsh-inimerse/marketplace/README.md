@@ -50,9 +50,17 @@ dist.shasum = '9038702626b5501c2908f743f31ccd6fef047aa5'
 license = 'MIT'
 ```
 
-The only remaining step is the upstream PR, which needs the fork
-`infileap/dsh-m` — it does not exist yet, and `git push` cannot create a
-repository.
+The published tarball was re-downloaded from the registry and compared against
+this working copy: shasum `9038702626b5501c2908f743f31ccd6fef047aa5`, and all 8
+files (`index.js`, `package.json`, `README.md`, `cordis.patch.yml`, `icon.svg`,
+`locale/{en,zh}.json`, `LICENSE`) are byte-identical to `tools/dsh-inimerse/`.
+
+The upstream PR is open: **[iasiv5/dsh-m#1](https://github.com/iasiv5/dsh-m/pull/1)**,
+head branch `infileap/dsh-m:add-dsh-inimerse` at commit `67a16c9`. Its `Registry
+check` run sits in `action_required` with **zero jobs executed** — GitHub's
+first-time-contributor gate, which needs a maintainer to click *Approve and run*.
+Nothing is failing; the run simply has not been allowed to start yet. The same
+sha passes the validator locally (see below).
 
 ### Why the entry carries no `icon`
 
@@ -128,30 +136,40 @@ in its own test suite:
 
 Without the second hunk `npm test` fails even when the validator passes.
 
-A branch carrying both changes is prepared at
+A branch carrying both changes was prepared at
 `/home/sakiko/inimerse/.dshm-pr` (clone of upstream `f18fc81`, branch
 `add-dsh-inimerse`, commit `67a16c9`; the clone is listed in
-`.git/info/exclude` so it stays out of `git status`). `git diff f18fc81` there
-is exactly `registry.json | 19 +` and `tests/registry.test.mjs | 2 +-`.
+`.git/info/exclude` so it stays out of `git status`) and pushed to the fork
+`infileap/dsh-m`. `git diff f18fc81` there is exactly `registry.json | 19 +` and
+`tests/registry.test.mjs | 2 +-`.
 
 It reproduces upstream CI locally:
 
 - `npm ci` → `npm run build` → `[dsh-m] build ok: lib/host.js + lib/client.js`.
-- `node scripts/validate-registry.mjs` → for `dsh-inimerse` the npm, GitHub and
-  homepage checks all pass. Run unauthenticated it eventually reports
-  `✗ … GitHub API 限额用尽（设置 GITHUB_TOKEN 可解）` for the tail of the list,
-  because the whole script shares one unauthenticated budget and upstream CI
-  supplies `secrets.GITHUB_TOKEN`. `infileap/Inimerse` was confirmed **public**
-  independently (`api.github.com` → `200`, `private: false`, default branch
-  `main`).
+- `node scripts/validate-registry.mjs` → **`registry 校验通过`**, exit `0`: all 24
+  entries pass, including `✓ [dsh-inimerse] npm 包存在` /
+  `✓ GitHub 仓库存在：infileap/Inimerse` / `✓ homepage 可达`. To see that, the run
+  must not share an exhausted anonymous rate budget — before the reset it
+  reported `✗ … GitHub API 限额用尽（设置 GITHUB_TOKEN 可解）` for the tail of the
+  list, because the script uses one unauthenticated budget and upstream CI
+  supplies `secrets.GITHUB_TOKEN`.
 - `npm test` → the only failures are two pre-existing, environment-dependent
   cases in `tests/run-command-error-digest.test.mjs` (`leader close… 实际
   112ms`); they reproduce identically on pristine `f18fc81` and never read
   `registry.json`.
 
-Pushing needs a fork: `infileap/dsh-m` does not exist, and `git push` does not
-create repositories — so the fork is a click on GitHub, after which the branch
-only has to be pushed and the PR opened.
+The fork `infileap/dsh-m` was created from the upstream UI, and the branch was
+pushed with the same SSH key the engine repo uses:
+
+```bash
+git -C /home/sakiko/inimerse/.dshm-pr remote add fork git@github.com:infileap/dsh-m.git
+GIT_SSH_COMMAND="ssh -F /dev/null -i $HOME/.ssh/id_ed25519_github -o IdentitiesOnly=yes" \
+  git -C /home/sakiko/inimerse/.dshm-pr push fork add-dsh-inimerse
+```
+
+then the PR was opened from
+`https://github.com/iasiv5/dsh-m/compare/main...infileap:add-dsh-inimerse?expand=1`.
+`git push` cannot create a repository, so the fork has to come from the UI first.
 
 The entry deliberately uses Chinese display text and tags because dsh-m renders
 the curated list Chinese-first (every existing entry does the same):

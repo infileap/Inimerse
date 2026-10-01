@@ -57,14 +57,22 @@ Body:
 ## How this branch was prepared
 
 `/home/sakiko/inimerse/.dshm-pr` — clone of upstream `f18fc81`, branch
-`add-dsh-inimerse`, commit `67a16c9`.
+`add-dsh-inimerse`, commit `67a16c9`, pushed to `infileap/dsh-m`.
 
 ```console
 $ git -C /home/sakiko/inimerse/.dshm-pr diff --stat f18fc81
  registry.json           | 19 +++++++++++++++++++
  tests/registry.test.mjs |  2 +-
  2 files changed, 20 insertions(+), 1 deletion(-)
+
+$ cd /home/sakiko/inimerse/.dshm-pr && node scripts/validate-registry.mjs
+…
+✓ [dsh-inimerse] npm 包存在：dsh-inimerse
+✓ [dsh-inimerse] GitHub 仓库存在：infileap/Inimerse
+✓ [dsh-inimerse] homepage 可达
+registry 校验通过
 ```
 
-Push it to a fork of `iasiv5/dsh-m` and open the PR. The fork `infileap/dsh-m`
-does not exist yet, and `git push` cannot create a repository.
+Opened as `iasiv5/dsh-m#1`. The `Registry check` run is `action_required` with
+zero jobs — GitHub's first-time-contributor gate, waiting on a maintainer's
+*Approve and run*.
