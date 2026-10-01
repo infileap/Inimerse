@@ -4,6 +4,7 @@
 #include "crp_session.h"
 #include "../common/sha256.h"
 #include "../common/ed25519.h"
+#include "http_client.h"
 #include <pthread.h>
 #include <time.h>
 #include <sys/socket.h>
@@ -78,7 +79,28 @@ typedef struct {
     uint64_t expires_at_ms;
     uint64_t observed_at_ms;
     int superseded;        /* replaced by a newer advertisement from the same node */
+    int health;            /* 0 unknown, 1 up, 2 down (§55.5: never schedule blind) */
+    uint64_t last_seen_ms;
 } ImNodeAd;
+
+/* Session authority record (§55.5 stable session object): who currently owns
+   authoritative writes for (verse, peer), at which generation, and whether it
+   has been frozen for a handoff. */
+typedef struct {
+    char verse[128], peer[128];
+    char authority[65];      /* node_id (or "local") */
+    int generation;
+    int frozen;              /* source frozen: read-only during handoff */
+    char checkpoint[65];     /* last verified state/snapshot hash */
+    uint64_t updated_ms;
+} ImAuthority;
+#define IM_AUTH_MAX 128
+static ImAuthority g_auths[IM_AUTH_MAX];
+static int g_auth_count;
+
+/* the node table is written by the HTTP threads and read/updated by the
+   background health probe, so it needs its own lock */
+static pthread_mutex_t g_node_lock = PTHREAD_MUTEX_INITIALIZER;
 #define IM_NODE_MAX 128
 static ImNodeAd g_nodes[IM_NODE_MAX];
 static int g_node_count;
@@ -275,6 +297,20 @@ static int json_field_string(const char *json, const char *name, char *out, size
     while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++;
     out[i] = 0; return *p == '"';
 }
+/* read a URL query parameter (?name=value or &name=value) from a raw request */
+static int query_param(const char *req, const char *name, char *out, size_t cap) {
+    char pat[64];
+    snprintf(pat, sizeof pat, "%s=", name);
+    const char *p = strstr(req, pat);
+    if (!p) return 0;
+    if (p != req && p[-1] != '?' && p[-1] != '&') return 0;  /* must start a parameter */
+    p += strlen(pat);
+    size_t i = 0;
+    while (p[i] && p[i] != ' ' && p[i] != '&' && p[i] != '\r' && i + 1 < cap) { out[i] = p[i]; i++; }
+    out[i] = 0;
+    return i > 0;
+}
+
 /* hex helpers for node signatures (§55.2) */
 static int http_hex_decode(const char *hex, unsigned char *out, int out_cap) {
     int n = 0;
@@ -285,6 +321,108 @@ static int http_hex_decode(const char *hex, unsigned char *out, int out_cap) {
         out[n++] = (unsigned char)((hi << 4) | lo);
     }
     return n;
+}
+
+/* ---------- §55.5 helpers: health, authority records, event tail ---------- */
+static uint64_t http_now_ms(void);
+
+/* Background health probe: a request handler must never perform a blocking
+   probe (a hub probing its own endpoint would deadlock the accept loop), so
+   /node/discover and /node/schedule only read cached observations. */
+static pthread_t g_probe_thread;
+static volatile int g_probe_running = 0;
+static volatile int g_probe_now = 0;   /* a new claim asks for an immediate round */
+
+static void *node_probe_loop(void *unused) {
+    (void)unused;
+    while (g_probe_running) {
+        char endpoints[IM_NODE_MAX][256];
+        int n = 0;
+        pthread_mutex_lock(&g_node_lock);
+        for (int i = 0; i < g_node_count && n < IM_NODE_MAX; ++i)
+            snprintf(endpoints[n++], 256, "%s", g_nodes[i].endpoint);
+        pthread_mutex_unlock(&g_node_lock);
+        for (int i = 0; i < n; ++i) {
+            int up = 0;
+            uint64_t seen = 0;
+            if (endpoints[i][0]) {
+                char url[512], buf[256];
+                int status = 0;
+                if (strncmp(endpoints[i], "http://", 7) != 0 && strncmp(endpoints[i], "https://", 8) != 0)
+                    snprintf(url, sizeof url, "http://%s/ping", endpoints[i]);
+                else
+                    snprintf(url, sizeof url, "%s/ping", endpoints[i]);
+                if (im_http_request("GET", url, NULL, buf, sizeof buf, &status) == 0 && status == 200 && strstr(buf, "pong")) {
+                    up = 1;
+                    seen = http_now_ms();
+                }
+            }
+            pthread_mutex_lock(&g_node_lock);
+            for (int j = 0; j < g_node_count; ++j)
+                if (!strcmp(g_nodes[j].endpoint, endpoints[i])) {
+                    g_nodes[j].health = up ? 1 : 2;
+                    if (up) g_nodes[j].last_seen_ms = seen;
+                }
+            pthread_mutex_unlock(&g_node_lock);
+        }
+        /* sleep in slices so a fresh advertisement is observed promptly */
+        for (int slice = 0; slice < 10 && g_probe_running && !g_probe_now; slice++) {
+            struct timespec ts = { 0, 100000000L };
+            nanosleep(&ts, NULL);
+        }
+        g_probe_now = 0;
+    }
+    return NULL;
+}
+static uint64_t http_now_ms(void);
+
+
+/* probe a declared endpoint with GET /ping; a reachable port is not health */
+static void hub_probe_node(ImNodeAd *nd) {
+    if (!nd->endpoint[0]) { nd->health = 0; return; }
+    char url[512];
+    if (strncmp(nd->endpoint, "http://", 7) != 0 && strncmp(nd->endpoint, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/ping", nd->endpoint);
+    else
+        snprintf(url, sizeof url, "%s/ping", nd->endpoint);
+    char buf[256];
+    int status = 0;
+    if (im_http_request("GET", url, NULL, buf, sizeof buf, &status) == 0 && status == 200 && strstr(buf, "pong")) {
+        nd->health = 1;
+        nd->last_seen_ms = http_now_ms();
+    } else {
+        nd->health = 2;   /* down: schedulers must stop assigning authority */
+    }
+}
+
+static ImAuthority *auth_find(const char *verse, const char *peer) {
+    for (int i = 0; i < g_auth_count; ++i)
+        if (!strcmp(g_auths[i].verse, verse) && !strcmp(g_auths[i].peer, peer)) return &g_auths[i];
+    return NULL;
+}
+
+static ImAuthority *auth_get_or_create(const char *verse, const char *peer) {
+    ImAuthority *a = auth_find(verse, peer);
+    if (a) return a;
+    if (g_auth_count >= IM_AUTH_MAX) return NULL;
+    a = &g_auths[g_auth_count++];
+    memset(a, 0, sizeof *a);
+    snprintf(a->verse, sizeof a->verse, "%s", verse);
+    snprintf(a->peer, sizeof a->peer, "%s", peer);
+    snprintf(a->authority, sizeof a->authority, "%s", "local");
+    a->generation = 1;
+    a->updated_ms = http_now_ms();
+    return a;
+}
+
+/* hash of the retained event tail for (verse, peer): the value a handoff
+   target must reproduce before it may take authority (§55.5 target_verify) */
+static void session_event_tail_hash(const char *verse, const char *peer, char out[65]) {
+    const char *tail = "";
+    for (int i = 0; i < g_session_count; ++i)
+        if (!strcmp(g_sessions[i].verse, verse) && !strcmp(g_sessions[i].peer, peer) && g_sessions[i].event_count > 0)
+            tail = g_sessions[i].event[g_sessions[i].event_count - 1];
+    sha256_hex(tail, strlen(tail), out);
 }
 
 /* verify a node advertisement: node_id is the signing public key */
@@ -479,6 +617,10 @@ static void *http_loop(void *unused) {
         int nat_get = n > 0 && strstr(req, "GET /nat/candidates") != NULL;
         int node_advertise = n > 0 && strstr(req, "POST /node/advertise") != NULL;
         int node_discover = n > 0 && strstr(req, "GET /node/discover") != NULL;
+        int node_schedule = n > 0 && strstr(req, "GET /node/schedule") != NULL;
+        int node_handoff = n > 0 && strstr(req, "POST /node/handoff") != NULL;
+        int auth_post = n > 0 && strstr(req, "POST /session/authority") != NULL;
+        int auth_get = n > 0 && strstr(req, "GET /session/authority") != NULL;
         int portal = n > 0 && strstr(req, "POST /portal") != NULL;
         int status = 200;
         char request_token[64] = "";
@@ -487,7 +629,7 @@ static void *http_loop(void *unused) {
         (void)json_field_string(req, "verse", signal_verse, sizeof signal_verse); (void)json_field_string(req, "peer", signal_peer, sizeof signal_peer);
         if (signal && !token_allows(request_token, signal_verse, signal_peer)) { signal = 0; status = 403; }
         char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
-        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover;
+        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get;
         char findbuf[4096];
         if (find) {
             size_t used = 0; used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "{\"items\":[");
@@ -551,8 +693,8 @@ static void *http_loop(void *unused) {
                 status = 400; body = "{\"error\":\"expired_advertisement\"}\n";
             } else if (!http_node_verify(node_id, payload, signature)) {
                 /* visible refusal: a directory never accepts what it cannot verify */
-                fprintf(stderr, "[hub] node advertisement rejected: invalid signature (node %.16s..., payload %zu bytes)\n",
-                        node_id, strlen(payload));
+                fprintf(stderr, "[hub] node advertisement rejected: invalid signature (node %.16s..., payload %.60s, sig %.16s, lens %zu/%zu)\n",
+                        node_id, payload, signature, strlen(node_id), strlen(signature));
                 status = 400; body = "{\"error\":\"invalid_signature\"}\n";
             } else {
                 int at = -1;
@@ -573,6 +715,8 @@ static void *http_loop(void *unused) {
                     snprintf(nd->caps, sizeof nd->caps, "%s", caps);
                     nd->expires_at_ms = expires_at;
                     nd->observed_at_ms = now;
+                    nd->health = 0;      /* observed, not assumed */
+                    g_probe_now = 1;     /* probe the new claim right away */
                     snprintf(nodebuf, sizeof nodebuf,
                              "{\"ok\":true,\"node_id\":\"%s\",\"expires_at\":%llu,\"source\":\"directory\"}\n",
                              node_id, (unsigned long long)expires_at);
@@ -587,6 +731,7 @@ static void *http_loop(void *unused) {
             for (int i = 0; i < g_node_count && used < sizeof nodebuf - 640; ++i) {
                 ImNodeAd *nd = &g_nodes[i];
                 if (nd->expires_at_ms != 0 && nd->expires_at_ms <= now) { expired++; continue; }
+                /* health comes from the background probe (cached observation) */
                 char ev[17];
                 char digest[65];
                 sha256_hex(nd->signature, strlen(nd->signature), digest);
@@ -595,16 +740,142 @@ static void *http_loop(void *unused) {
                                          "%s{\"node_id\":\"%s\",\"endpoint\":\"%s\",\"caps\":\"%s\","
                                          "\"payload\":\"%s\",\"signature\":\"%s\","
                                          "\"source\":\"directory\",\"observed_at\":%llu,\"expires_at\":%llu,"
-                                         "\"evidence_ref\":\"sha256:%s\",\"superseded\":%d}",
+                                         "\"evidence_ref\":\"sha256:%s\",\"superseded\":%d,"
+                                         "\"health\":\"%s\",\"last_seen_ms\":%llu}",
                                          first ? "" : ",", nd->node_id, nd->endpoint, nd->caps,
                                          nd->payload, nd->signature,
                                          (unsigned long long)nd->observed_at_ms,
-                                         (unsigned long long)nd->expires_at_ms, ev, nd->superseded);
+                                         (unsigned long long)nd->expires_at_ms, ev, nd->superseded,
+                                         nd->health == 1 ? "up" : nd->health == 2 ? "down" : "unknown",
+                                         (unsigned long long)nd->last_seen_ms);
                 first = 0;
             }
             /* filtered-out entries are reported, never dropped silently */
             snprintf(nodebuf + used, sizeof nodebuf - used, "],\"expired\":%d}\n", expired);
             body = nodebuf;
+        }
+        if (node_schedule) {
+            /* §55.5: schedulers only see nodes that are both fresh and healthy;
+               what was excluded is reported, never silently dropped */
+            char want[128] = "";
+            (void)query_param(req, "caps", want, sizeof want);
+            uint64_t now = http_now_ms();
+            size_t used = (size_t)snprintf(nodebuf, sizeof nodebuf, "{\"nodes\":[");
+            int first = 1, unhealthy = 0, expired = 0, nocaps = 0, emitted = 0;
+            for (int i = 0; i < g_node_count && used < sizeof nodebuf - 640; ++i) {
+                ImNodeAd *nd = &g_nodes[i];
+                if (nd->expires_at_ms != 0 && nd->expires_at_ms <= now) { expired++; continue; }
+                if (nd->health != 1) { unhealthy++; continue; }
+                if (want[0] && !strstr(nd->caps, want)) { nocaps++; continue; }
+                emitted++;
+                used += (size_t)snprintf(nodebuf + used, sizeof nodebuf - used,
+                                         "%s{\"node_id\":\"%s\",\"endpoint\":\"%s\",\"caps\":\"%s\","
+                                         "\"health\":\"up\",\"last_seen_ms\":%llu,\"expires_at\":%llu}",
+                                         first ? "" : ",", nd->node_id, nd->endpoint, nd->caps,
+                                         (unsigned long long)nd->last_seen_ms, (unsigned long long)nd->expires_at_ms);
+                first = 0;
+            }
+            snprintf(nodebuf + used, sizeof nodebuf - used,
+                     "],\"count\":%d,\"excluded\":{\"unhealthy\":%d,\"expired\":%d,\"missing_caps\":%d}}\n",
+                     emitted, unhealthy, expired, nocaps);
+            body = nodebuf;
+        }
+        if (auth_post) {
+            char verse[128] = "", peer[128] = "", authority[128] = "";
+            (void)json_field_string(req, "verse", verse, sizeof verse);
+            (void)json_field_string(req, "peer", peer, sizeof peer);
+            (void)json_field_string(req, "authority", authority, sizeof authority);
+            if (!verse[0] || !peer[0] || !authority[0]) {
+                status = 400; body = "{\"error\":\"verse_peer_authority_required\"}\n";
+            } else {
+                ImAuthority *a = auth_get_or_create(verse, peer);
+                if (!a) { status = 507; body = "{\"error\":\"authority_registry_full\"}\n"; }
+                else {
+                    snprintf(a->authority, sizeof a->authority, "%s", authority);
+                    a->frozen = 0;
+                    a->updated_ms = http_now_ms();
+                    snprintf(nodebuf, sizeof nodebuf,
+                             "{\"ok\":true,\"authority\":\"%s\",\"generation\":%d}\n", a->authority, a->generation);
+                    body = nodebuf;
+                }
+            }
+        }
+        if (auth_get) {
+            char verse[128] = "", peer[128] = "";
+            (void)query_param(req, "verse", verse, sizeof verse);
+            (void)query_param(req, "peer", peer, sizeof peer);
+            ImAuthority *a = auth_find(verse, peer);
+            char tail[65];
+            session_event_tail_hash(verse, peer, tail);
+            if (!a) {
+                snprintf(nodebuf, sizeof nodebuf,
+                         "{\"authority\":\"none\",\"generation\":0,\"frozen\":0,\"event_tail\":\"%s\"}\n", tail);
+            } else {
+                snprintf(nodebuf, sizeof nodebuf,
+                         "{\"authority\":\"%s\",\"generation\":%d,\"frozen\":%d,\"checkpoint\":\"%s\",\"event_tail\":\"%s\",\"updated_ms\":%llu}\n",
+                         a->authority, a->generation, a->frozen, a->checkpoint, tail,
+                         (unsigned long long)a->updated_ms);
+            }
+            body = nodebuf;
+        }
+        if (node_handoff) {
+            /* §55.5 minimal handoff: prepare -> verify target -> transfer lease.
+               Verification failures keep the source authority (never a silent
+               split-brain switch). */
+            char verse[128] = "", peer[128] = "", from[128] = "", to[128] = "";
+            char snap[65] = "", tail[65] = "", rules[32] = "";
+            (void)json_field_string(req, "verse", verse, sizeof verse);
+            (void)json_field_string(req, "peer", peer, sizeof peer);
+            (void)json_field_string(req, "from_authority", from, sizeof from);
+            (void)json_field_string(req, "to_authority", to, sizeof to);
+            (void)json_field_string(req, "snapshot_hash", snap, sizeof snap);
+            (void)json_field_string(req, "event_tail_hash", tail, sizeof tail);
+            (void)json_field_string(req, "rules_version", rules, sizeof rules);
+            ImAuthority *a = auth_get_or_create(verse, peer);
+            char real_tail[65];
+            session_event_tail_hash(verse, peer, real_tail);
+            ImNodeAd *target = NULL;
+            for (int i = 0; i < g_node_count; ++i)
+                if (!strcmp(g_nodes[i].node_id, to)) { target = &g_nodes[i]; break; }
+            if (!verse[0] || !peer[0] || !to[0] || !snap[0]) {
+                status = 400; body = "{\"error\":\"verse_peer_target_snapshot_required\"}\n";
+            } else if (!a) {
+                status = 507; body = "{\"error\":\"authority_registry_full\"}\n";
+            } else if (from[0] && strcmp(from, a->authority) != 0) {
+                status = 409; body = "{\"error\":\"not_current_authority\"}\n";
+            } else if (!target) {
+                status = 404; body = "{\"error\":\"target_unknown\"}\n";
+            } else {
+                if (target->health != 1) {
+                    status = 503; body = "{\"error\":\"target_unhealthy\"}\n";
+                } else if (a->checkpoint[0] && strcmp(a->checkpoint, snap) != 0) {
+                    /* the provided state cannot reproduce what the source committed */
+                    status = 409;
+                    snprintf(nodebuf, sizeof nodebuf,
+                             "{\"error\":\"checkpoint_mismatch\",\"expected\":\"%s\",\"authority\":\"%s\"}\n",
+                             a->checkpoint, a->authority);
+                    body = nodebuf;
+                } else if (strcmp(tail, real_tail) != 0) {
+                    status = 409;
+                    snprintf(nodebuf, sizeof nodebuf,
+                             "{\"error\":\"event_tail_mismatch\",\"expected\":\"%s\",\"authority\":\"%s\"}\n",
+                             real_tail, a->authority);
+                    body = nodebuf;
+                } else {
+                    if (!a->checkpoint[0]) snprintf(a->checkpoint, sizeof a->checkpoint, "%s", snap);
+                    snprintf(a->authority, sizeof a->authority, "%s", to);
+                    a->generation++;
+                    a->frozen = 0;
+                    a->updated_ms = http_now_ms();
+                    fprintf(stderr, "[hub] handoff %s/%s: authority -> %s (generation %d)\n",
+                            verse, peer, to, a->generation);
+                    snprintf(nodebuf, sizeof nodebuf,
+                             "{\"ok\":true,\"authority\":\"%s\",\"generation\":%d,\"source_frozen\":true,"
+                             "\"checkpoint\":\"%s\",\"rules_version\":\"%s\"}\n",
+                             a->authority, a->generation, a->checkpoint, rules[0] ? rules : "1");
+                    body = nodebuf;
+                }
+            }
         }
         char portalbuf[512];
         if (register_route) {
@@ -681,7 +952,12 @@ static void *http_loop(void *unused) {
             body = portalbuf;
         }
         if (revoke) { if (!request_token[0]) { status = 400; body = "{\"error\":\"token_required\"}\n"; } else { token_revoke(request_token); body = "{\"revoked\":true}\n"; } }
-        size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 201 ? "201 Created" : status == 400 ? "400 Bad Request" : status == 403 ? "403 Forbidden" : status == 409 ? "409 Conflict" : status == 507 ? "507 Insufficient Storage" : (status == 404 || !ok) ? "404 Not Found" : "200 OK";
+        size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 201 ? "201 Created" : status == 400 ? "400 Bad Request"
+            : status == 403 ? "403 Forbidden" : status == 404 ? "404 Not Found"
+            : status == 409 ? "409 Conflict" : status == 500 ? "500 Internal Server Error"
+            : status == 503 ? "503 Service Unavailable" : status == 507 ? "507 Insufficient Storage"
+            : status == 405 ? "405 Method Not Allowed" : status == 413 ? "413 Payload Too Large"
+            : !ok ? "404 Not Found" : "200 OK";
         const char *content_type = (hub && (strstr(req, "GET /package/") == req || strstr(req, "GET /content/") == req)) ? "application/octet-stream" : "application/json";
         char out[512]; int len = snprintf(out, sizeof out, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", status_text, content_type, body_len);
         for (int sent = 0; len > 0 && sent < len;) {
@@ -720,6 +996,10 @@ int verse_http_start(int port) {
             (void)fcntl(g_udp_fd, F_SETFL, fl | O_NONBLOCK);
             g_udp_running = 1;
             if (pthread_create(&g_udp_thread, NULL, udp_loop, NULL) != 0) g_udp_running = 0;
+            if (!g_probe_running) {
+                g_probe_running = 1;
+                if (pthread_create(&g_probe_thread, NULL, node_probe_loop, NULL) != 0) g_probe_running = 0;
+            }
         }
         if (!g_udp_running) { close(g_udp_fd); g_udp_fd = -1; }
     }
@@ -727,6 +1007,10 @@ int verse_http_start(int port) {
 }
 
 void verse_http_stop(void) {
+    if (g_probe_running) {
+        g_probe_running = 0;
+        pthread_join(g_probe_thread, NULL);
+    }
     if (g_udp_running) {
         g_udp_running = 0;                  /* the loop polls this flag */
         pthread_join(g_udp_thread, NULL);

@@ -136,6 +136,8 @@ if(INIMERSE_NODE)
   set_tests_properties(verse_pack_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "protocol;regression")
   add_test(NAME node_discovery_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/node_discovery.test.py)
   set_tests_properties(node_discovery_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
+  add_test(NAME lease_handoff_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/lease_handoff.test.py)
+  set_tests_properties(lease_handoff_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
   set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 30 LABELS "protocol;regression")

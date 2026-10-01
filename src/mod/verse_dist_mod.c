@@ -2107,6 +2107,125 @@ static int b_verse_stop(VM *vm) {
 #endif /* _WIN32 embedded server */
 
 
+/* helpers shared with the §55.2 advertisement code below */
+static int vd_json_str(const char *json, const char *key, char *out, size_t cap);
+static void rp_set_entry(VM *vm, int aidx, const char *key, Value val);
+
+/* ---------- §55.5 scheduling, authority and handoff ---------- */
+
+/* Scheduler view: only fresh + healthy nodes (what was excluded is reported). */
+static int b_verse_node_schedule(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *want = argc >= 2 ? _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "") : _strdup("");
+    r_popn(vm, argc);
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/node/schedule%s%s", uri, want[0] ? "?caps=" : "", want);
+    else
+        snprintf(url, sizeof url, "%s/node/schedule%s%s", uri, want[0] ? "?caps=" : "", want);
+    int len = 0;
+    char *body = http_get_body(url, &len);
+    int aidx = vm_array_new(vm);
+    int count = 0;
+    if (body) {
+        const char *p = body;
+        while ((p = strstr(p, "\"node_id\"")) != NULL) {
+            char node_id[128] = "", endpoint[256] = "", caps[128] = "", health[32] = "";
+            (void)vd_json_str(p, "node_id", node_id, sizeof node_id);
+            (void)vd_json_str(p, "endpoint", endpoint, sizeof endpoint);
+            (void)vd_json_str(p, "caps", caps, sizeof caps);
+            (void)vd_json_str(p, "health", health, sizeof health);
+            int entry = vm_array_new(vm);
+            Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL;
+            kv.ival = 0; kv.sval = node_id;   rp_set_entry(vm, entry, "node_id", kv);
+            kv.sval = endpoint;               rp_set_entry(vm, entry, "endpoint", kv);
+            kv.sval = caps;                   rp_set_entry(vm, entry, "caps", kv);
+            kv.sval = health;                 rp_set_entry(vm, entry, "health", kv);
+            Value ev; ev.type = VAL_DICT; ev.ival = entry + 1; ev.fval = 0; ev.sval = NULL; ev.ptr = NULL;
+            vm_array_push(vm, aidx, &ev);
+            count++;
+            p += 9;
+        }
+        free(body);
+    }
+    int out = vm_array_new(vm);
+    Value nv; nv.type = VAL_INT; nv.ival = count; nv.fval = 0; nv.sval = NULL; nv.ptr = NULL;
+    rp_set_entry(vm, out, "count", nv);
+    Value arr; arr.type = VAL_ARRAY; arr.ival = aidx + 1; arr.fval = 0; arr.sval = NULL; arr.ptr = NULL;
+    rp_set_entry(vm, out, "nodes", arr);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(want);
+    return 1;
+}
+
+/* Read the stable session authority record (§55.5 stable session object). */
+static int b_verse_session_authority(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *verse = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *peer = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    r_popn(vm, argc);
+    char url[1400];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/session/authority?verse=%s&peer=%s", uri, verse, peer);
+    else
+        snprintf(url, sizeof url, "%s/session/authority?verse=%s&peer=%s", uri, verse, peer);
+    int len = 0;
+    char *body = http_get_body(url, &len);
+    char authority[128] = "none", tail[65] = "", frozen[8] = "0";
+    int generation = 0;
+    if (body) {
+        (void)vd_json_str(body, "authority", authority, sizeof authority);
+        (void)vd_json_str(body, "event_tail", tail, sizeof tail);
+        const char *g = strstr(body, "\"generation\"");
+        if (g) { const char *c = strchr(g, ':'); if (c) generation = atoi(c + 1); }
+        const char *fz = strstr(body, "\"frozen\"");
+        if (fz) { const char *c = strchr(fz, ':'); if (c) snprintf(frozen, sizeof frozen, "%d", atoi(c + 1)); }
+        free(body);
+    }
+    int out = vm_array_new(vm);
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    kv.sval = authority;  rp_set_entry(vm, out, "authority", kv);
+    kv.sval = tail;       rp_set_entry(vm, out, "event_tail", kv);
+    kv.sval = frozen;     rp_set_entry(vm, out, "frozen", kv);
+    Value iv; iv.type = VAL_INT; iv.ival = generation; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
+    rp_set_entry(vm, out, "generation", iv);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(verse); free(peer);
+    return 1;
+}
+
+/* Request a handoff to a healthy target; the hub verifies the checkpoint and
+   event tail before transferring authority (§55.5). */
+static int b_verse_node_handoff(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *verse = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *peer = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    char *to = _strdup(r_str(vm, argc - 4) ? r_str(vm, argc - 4) : "");
+    char *snap = _strdup(r_str(vm, argc - 5) ? r_str(vm, argc - 5) : "");
+    char *tail = _strdup(r_str(vm, argc - 6) ? r_str(vm, argc - 6) : "");
+    r_popn(vm, argc);
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/node/handoff", uri);
+    else
+        snprintf(url, sizeof url, "%s/node/handoff", uri);
+    char body[2048];
+    snprintf(body, sizeof body,
+             "{\"verse\":\"%s\",\"peer\":\"%s\",\"to_authority\":\"%s\",\"snapshot_hash\":\"%s\",\"event_tail_hash\":\"%s\"}",
+             verse, peer, to, snap, tail);
+    int len = 0;
+    char *resp = http_post_body(url, body, &len);
+    int ok = (resp && strstr(resp, "\"ok\":true") != NULL);
+    free(resp); free(uri); free(verse); free(peer); free(to); free(snap); free(tail);
+    r_push_int(vm, ok ? 1 : 0);
+    return 1;
+}
+
 /* ---------- §55.2 node advertisements ---------- */
 /* hex -> bytes; returns 1 when exactly want bytes were decoded */
 static int hex_decode_len(const char *hex, unsigned char *out, int want) {
@@ -2257,7 +2376,10 @@ void verse_dist_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "verse_hub_list", b_verse_hub_list, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_update", b_verse_update, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_hub_add", b_verse_hub_add, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_hub_remove", b_verse_hub_remove, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_hubs", b_verse_hubs, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_hub_ping", b_verse_hub_ping, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_node_advertise", b_verse_node_advertise, 1|CAP_VERSE|CAP_NET, 0);
-    vm_register_builtin_full(vm, "verse_node_discover", b_verse_node_discover, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_public_ip", b_verse_public_ip, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_publish", b_verse_publish, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_node_discover", b_verse_node_discover, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_node_schedule", b_verse_node_schedule, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_session_authority", b_verse_session_authority, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_node_handoff", b_verse_node_handoff, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_public_ip", b_verse_public_ip, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_publish", b_verse_publish, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_identity_new", b_verse_identity_new, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_identity_pubkey", b_verse_identity_pubkey, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_sign", b_verse_sign, 1|CAP_VERSE, 0);
