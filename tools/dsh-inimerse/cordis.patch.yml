@@ -1,0 +1,22 @@
+# dsh-inimerse bundle patch.
+#
+# Arms the Inimerse / Infiverse harness bridge: five tools (inim_status,
+# inim_build, inim_test, inim_run, inim_verse) that let a session drive the
+# engine directly instead of rebuilding shell pipelines each time.
+#
+# The plugin intentionally declares no Config schema — a Host-only bundle that
+# imports nothing cannot validate one — so every key below is read defensively
+# and falls back to a default. Accepted keys:
+#
+#   repoRoot    checkout the tools operate on        (default /home/sakiko/inimerse)
+#   buildDir    CMake build directory                (default <repoRoot>/build)
+#   serverBin   inim-server binary                   (default <buildDir>/inim-server)
+#   jobs        parallel job count, 0 = all cores    (default 0)
+#   timeoutMs   default wall-clock limit per call    (default 120000)
+#   env         extra environment for child processes (default {})
+#
+- insert:
+    - id: dsh-inimerse
+      name: 'dsh-inimerse'
+      config:
+        repoRoot: /home/sakiko/inimerse

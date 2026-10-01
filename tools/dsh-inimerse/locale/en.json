@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Inimerse / Infiverse Bridge",
+    "description": "Drives the Inimerse engine as a harness capability: project status, CMake build, CTest runs, .im script execution, and Verse layer operations over the real client/server protocol."
+  }
+}

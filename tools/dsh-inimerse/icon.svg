@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Inimerse">
+  <rect width="64" height="64" rx="12" fill="#12161d"/>
+  <path d="M18 44V20h6l16 24V20h6v24h-6L24 20v24z" fill="#7dd3fc"/>
+  <circle cx="46" cy="18" r="4" fill="#facc15"/>
+</svg>

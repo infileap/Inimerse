@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Inimerse / Infiverse 引擎桥",
+    "description": "把 Inimerse 引擎接进 harness：项目状态、CMake 构建、CTest 测试、.im 脚本执行，以及通过真实客户端/服务端协议操作 Verse 层。"
+  }
+}
