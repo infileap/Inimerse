@@ -41,27 +41,50 @@ dsh-m's registry v1 schema only accepts `source: "npm"` or `source: "github"`,
 and a GitHub-source entry installs the **repository root** as the package —
 which for this repository is the engine, not the plugin. dsh-m explicitly
 skips monorepo subpackages without an npm package. So the only workable
-source is **npm**, and this machine has no npmjs.org credentials:
+source is **npm**.
+
+An npmjs.org token now exists in `~/.npmrc` and authenticates correctly
+(`npm whoami --registry=https://registry.npmjs.org/` → `infileap`), but it
+cannot publish:
 
 ```console
-$ npm whoami
-npm error code ENEEDAUTH
-$ cat ~/.npmrc
-registry=https://registry.npmmirror.com/     # read-only mirror, no token
+$ npm publish --registry=https://registry.npmjs.org/ --access public
+npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
+npm error code E403
+npm error 403 403 Forbidden - PUT https://registry.npmjs.org/dsh-inimerse
+npm error Two-factor authentication or granular access token with bypass 2fa
+npm error enabled is required to publish packages.
 ```
 
-The name `dsh-inimerse` is currently free on npmjs (`404` from the registry API).
+The token is therefore either a **Classic "Publish"** token or a **Granular**
+token without *Bypass 2FA*. Either of these works instead:
 
-## Step 1 — publish to npm (needs your credentials)
+- **Classic Token → Automation** (bypasses 2FA by design), or
+- **Granular Access Token** with **Bypass 2FA** checked, *Read and write*
+  permission, *All packages*.
+
+Do **not** try `npm login`: on this machine npm 12.0.2's web-login flow polls
+`/-/v1/done` for ~30 s, gets a `404` when the browser grant is not completed,
+falls back to `web login not supported, trying couch`, and then dies with
+`Exit handler never called!` at the `Username:` prompt (non-interactive TTY).
+The debug log is unambiguous about that sequence.
+
+The name `dsh-inimerse` is still free on npmjs (`404` from the registry API) —
+the 403 above published nothing.
+
+## Step 1 — publish to npm
+
+With a token that can publish (see above):
 
 ```bash
-npm login --registry=https://registry.npmjs.org/
 cd tools/dsh-inimerse
 npm publish --registry=https://registry.npmjs.org/ --access public
 ```
 
 `publishConfig` already pins `registry.npmjs.org` and `access: public`, so the
-plain `npm publish` is equivalent once you are logged in to npmjs.
+plain `npm publish` is equivalent. `--dry-run` is green today: 8 files,
+`14.9 kB` packed / `51.3 kB` unpacked, shasum
+`9038702626b5501c2908f743f31ccd6fef047aa5`.
 
 ## Step 2 — get the entry into the curated list
 
@@ -70,6 +93,39 @@ plain `npm publish` is equivalent once you are logged in to npmjs.
 land first**: upstream CI (`.github/workflows/registry.yml` →
 `scripts/validate-registry.mjs`) fetches
 `https://registry.npmjs.org/<npm>/latest` and fails the build if it 404s.
+
+The PR is **two** files, not one — upstream also pins the curated-list length
+in its own test suite:
+
+| File | Change |
+| --- | --- |
+| `registry.json` | append the entry (byte-minimal, 20 lines) |
+| `tests/registry.test.mjs` | `parsed.registry.plugins.length` `23` → `24` |
+
+Without the second hunk `npm test` fails even when the validator passes.
+
+A branch carrying both changes is prepared and verified at
+`/home/sakiko/inimerse/.dshm-pr` (clone of upstream `f18fc81`, branch
+`add-dsh-inimerse`, commit `1f13859`; the clone is listed in
+`.git/info/exclude` so it stays out of `git status`). It reproduces upstream CI
+locally:
+
+- `npm ci` → `npm run build` → `[dsh-m] build ok: lib/host.js + lib/client.js`.
+- `node scripts/validate-registry.mjs` → every check green for all 23 existing
+  entries; the run then stops at
+  `✗ [dsh-inimerse] npm 查询 dsh-inimerse → HTTP 404`, which is exactly the
+  check step 1 unblocks. This entry's `github` / `homepage` / `icon` checks sit
+  behind the same `try` block and so are re-verified on the next run;
+  `infileap/Inimerse` is confirmed **public** (`api.github.com` → `200`,
+  `private: false`, default branch `main`) and `icon.svg` is on `main`.
+- `npm test` → the only failures are two pre-existing, environment-dependent
+  cases in `tests/run-command-error-digest.test.mjs` (`leader close… 实际
+  112ms`); they reproduce identically on pristine `f18fc81` and never read
+  `registry.json`.
+
+Pushing needs a fork: `infileap/dsh-m` does not exist, and `git push` does not
+create repositories — so the fork is a click on GitHub, after which the branch
+only has to be pushed and the PR opened.
 
 The entry deliberately uses Chinese display text and tags because dsh-m renders
 the curated list Chinese-first (every existing entry does the same):
