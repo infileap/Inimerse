@@ -3,6 +3,7 @@
 #include "websocket.h"
 #include "crp_session.h"
 #include "../common/sha256.h"
+#include "../common/ed25519.h"
 #include <pthread.h>
 #include <time.h>
 #include <sys/socket.h>
@@ -63,6 +64,24 @@ static char g_revoked[128][64];
 static int g_token_count, g_revoked_count;
 static char g_verses[128][128];
 static int g_verse_count;
+
+/* Node advertisements (§55.2): signed, expiring capability declarations.
+   node_id *is* the ed25519 public key that must verify the payload, so a
+   directory can never invent a node it cannot sign for.  Directory data is
+   TTL-scoped and in-memory: nodes re-advertise after a restart. */
+typedef struct {
+    char node_id[65];      /* ed25519 public key hex */
+    char payload[512];     /* canonical signed text: endpoint + capabilities */
+    char signature[129];   /* hex signature over payload */
+    char endpoint[256];
+    char caps[128];
+    uint64_t expires_at_ms;
+    uint64_t observed_at_ms;
+    int superseded;        /* replaced by a newer advertisement from the same node */
+} ImNodeAd;
+#define IM_NODE_MAX 128
+static ImNodeAd g_nodes[IM_NODE_MAX];
+static int g_node_count;
 typedef struct { char id[128], verse[128], name[128], endpoint[256]; } ImFriend;
 typedef struct { char verse[128], peer[128]; uint64_t seq; int stopped; char event[16][256]; uint64_t event_seq[16]; int event_count; } ImSession;
 static ImFriend g_friends[256]; static int g_friend_count;
@@ -256,6 +275,27 @@ static int json_field_string(const char *json, const char *name, char *out, size
     while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++;
     out[i] = 0; return *p == '"';
 }
+/* hex helpers for node signatures (§55.2) */
+static int http_hex_decode(const char *hex, unsigned char *out, int out_cap) {
+    int n = 0;
+    for (int i = 0; hex[i] && hex[i + 1] && n < out_cap; i += 2) {
+        int hi = hex[i] >= 'a' ? hex[i] - 'a' + 10 : hex[i] >= 'A' ? hex[i] - 'A' + 10 : hex[i] - '0';
+        int lo = hex[i + 1] >= 'a' ? hex[i + 1] - 'a' + 10 : hex[i + 1] >= 'A' ? hex[i + 1] - 'A' + 10 : hex[i + 1] - '0';
+        if (hi < 0 || hi > 15 || lo < 0 || lo > 15) return -1;
+        out[n++] = (unsigned char)((hi << 4) | lo);
+    }
+    return n;
+}
+
+/* verify a node advertisement: node_id is the signing public key */
+static int http_node_verify(const char *node_id, const char *payload, const char *signature) {
+    if (!node_id || strlen(node_id) != 64 || !signature || strlen(signature) != 128 || !payload) return 0;
+    unsigned char pub[32], sig[64];
+    if (http_hex_decode(node_id, pub, 32) != 32) return 0;
+    if (http_hex_decode(signature, sig, 64) != 64) return 0;
+    return ed25519_verify(pub, (const unsigned char *)payload, strlen(payload), sig) ? 1 : 0;
+}
+
 /* ms clock for lease bookkeeping (§55.5) */
 static uint64_t http_now_ms(void) {
     struct timespec ts;
@@ -422,6 +462,8 @@ static void *http_loop(void *unused) {
             continue;
         }
         int health = n > 0 && strstr(req, "GET /health") != NULL;
+        /* lightweight reachability probe used by verse_hub_ping */
+        int ping = n > 0 && strstr(req, "GET /ping") != NULL;
         int find = n > 0 && strstr(req, "GET /find") != NULL;
         int friends_get = n > 0 && strstr(req, "GET /friends") != NULL;
         int friends_post = n > 0 && strstr(req, "POST /friends") != NULL;
@@ -435,6 +477,8 @@ static void *http_loop(void *unused) {
         int route_post = n > 0 && (strstr(req, "POST /route") != NULL || strstr(req, "POST /nat/candidate") != NULL);
         int route_get = n > 0 && strstr(req, "GET /route/") != NULL;
         int nat_get = n > 0 && strstr(req, "GET /nat/candidates") != NULL;
+        int node_advertise = n > 0 && strstr(req, "POST /node/advertise") != NULL;
+        int node_discover = n > 0 && strstr(req, "GET /node/discover") != NULL;
         int portal = n > 0 && strstr(req, "POST /portal") != NULL;
         int status = 200;
         char request_token[64] = "";
@@ -443,7 +487,7 @@ static void *http_loop(void *unused) {
         (void)json_field_string(req, "verse", signal_verse, sizeof signal_verse); (void)json_field_string(req, "peer", signal_peer, sizeof signal_peer);
         if (signal && !token_allows(request_token, signal_verse, signal_peer)) { signal = 0; status = 403; }
         char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
-        int ok = health || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub;
+        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover;
         char findbuf[4096];
         if (find) {
             size_t used = 0; used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "{\"items\":[");
@@ -465,6 +509,7 @@ static void *http_loop(void *unused) {
             find ? findbuf :
             friends_get ? friendsbuf :
             friends_post ? "{\"ok\":true}\n" :
+            ping ? "pong\n" :
             resume ? "{\"resumed\":true}\n" :
             session_stop ? "{\"stopped\":true}\n" :
             signal ? "{\"ok\":true,\"accepted\":true}\n" :
@@ -486,6 +531,80 @@ static void *http_loop(void *unused) {
             size_t used = (size_t)snprintf(natbuf, sizeof natbuf, "{\"candidates\":["); int first = 1;
             for (int i = 0; i < g_friend_count && used < sizeof natbuf - 320; ++i) if (g_friends[i].endpoint[0]) used += (size_t)snprintf(natbuf + used, sizeof natbuf - used, "%s{\"id\":\"%s\",\"endpoint\":\"%s\"}", first ? "" : ",", g_friends[i].id, g_friends[i].endpoint), first = 0;
             snprintf(natbuf + used, sizeof natbuf - used, "]}\n"); body = natbuf;
+        }
+        /* ---- §55.2 node advertisements: signed + expiring claims ---- */
+        char nodebuf[8192];
+        if (node_advertise) {
+            char node_id[128] = "", payload[512] = "", signature[160] = "", endpoint[256] = "", caps[128] = "";
+            uint64_t expires_at = 0;
+            (void)json_field_string(req, "node_id", node_id, sizeof node_id);
+            (void)json_field_string(req, "payload", payload, sizeof payload);
+            (void)json_field_string(req, "signature", signature, sizeof signature);
+            (void)json_field_string(req, "endpoint", endpoint, sizeof endpoint);
+            (void)json_field_string(req, "caps", caps, sizeof caps);
+            (void)json_field_u64(req, "expires_at", &expires_at);
+            uint64_t now = http_now_ms();
+            if (!node_id[0] || !payload[0] || !signature[0]) {
+                status = 400; body = "{\"error\":\"node_id_payload_signature_required\"}\n";
+            } else if (expires_at != 0 && expires_at <= now) {
+                /* expiring claims cannot be merged silently (§55.2) */
+                status = 400; body = "{\"error\":\"expired_advertisement\"}\n";
+            } else if (!http_node_verify(node_id, payload, signature)) {
+                /* visible refusal: a directory never accepts what it cannot verify */
+                fprintf(stderr, "[hub] node advertisement rejected: invalid signature (node %.16s..., payload %zu bytes)\n",
+                        node_id, strlen(payload));
+                status = 400; body = "{\"error\":\"invalid_signature\"}\n";
+            } else {
+                int at = -1;
+                for (int i = 0; i < g_node_count; ++i)
+                    if (!strcmp(g_nodes[i].node_id, node_id)) { at = i; break; }
+                if (at < 0) {
+                    if (g_node_count < IM_NODE_MAX) at = g_node_count++;
+                    else { status = 507; body = "{\"error\":\"node_registry_full\"}\n"; }
+                } else {
+                    g_nodes[at].superseded = 1;   /* replaced by the newer claim */
+                }
+                if (at >= 0) {
+                    ImNodeAd *nd = &g_nodes[at];
+                    snprintf(nd->node_id, sizeof nd->node_id, "%s", node_id);
+                    snprintf(nd->payload, sizeof nd->payload, "%s", payload);
+                    snprintf(nd->signature, sizeof nd->signature, "%s", signature);
+                    snprintf(nd->endpoint, sizeof nd->endpoint, "%s", endpoint);
+                    snprintf(nd->caps, sizeof nd->caps, "%s", caps);
+                    nd->expires_at_ms = expires_at;
+                    nd->observed_at_ms = now;
+                    snprintf(nodebuf, sizeof nodebuf,
+                             "{\"ok\":true,\"node_id\":\"%s\",\"expires_at\":%llu,\"source\":\"directory\"}\n",
+                             node_id, (unsigned long long)expires_at);
+                    body = nodebuf;
+                }
+            }
+        }
+        if (node_discover) {
+            uint64_t now = http_now_ms();
+            size_t used = (size_t)snprintf(nodebuf, sizeof nodebuf, "{\"nodes\":[");
+            int first = 1, expired = 0;
+            for (int i = 0; i < g_node_count && used < sizeof nodebuf - 640; ++i) {
+                ImNodeAd *nd = &g_nodes[i];
+                if (nd->expires_at_ms != 0 && nd->expires_at_ms <= now) { expired++; continue; }
+                char ev[17];
+                char digest[65];
+                sha256_hex(nd->signature, strlen(nd->signature), digest);
+                snprintf(ev, sizeof ev, "%.16s", digest);
+                used += (size_t)snprintf(nodebuf + used, sizeof nodebuf - used,
+                                         "%s{\"node_id\":\"%s\",\"endpoint\":\"%s\",\"caps\":\"%s\","
+                                         "\"payload\":\"%s\",\"signature\":\"%s\","
+                                         "\"source\":\"directory\",\"observed_at\":%llu,\"expires_at\":%llu,"
+                                         "\"evidence_ref\":\"sha256:%s\",\"superseded\":%d}",
+                                         first ? "" : ",", nd->node_id, nd->endpoint, nd->caps,
+                                         nd->payload, nd->signature,
+                                         (unsigned long long)nd->observed_at_ms,
+                                         (unsigned long long)nd->expires_at_ms, ev, nd->superseded);
+                first = 0;
+            }
+            /* filtered-out entries are reported, never dropped silently */
+            snprintf(nodebuf + used, sizeof nodebuf - used, "],\"expired\":%d}\n", expired);
+            body = nodebuf;
         }
         char portalbuf[512];
         if (register_route) {
