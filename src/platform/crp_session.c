@@ -1,4 +1,5 @@
 #include "crp_session.h"
+#include "../common/sha256.h"
 #include <string.h>
 #include <stdio.h>
 void im_crp_session_init(ImCrpSession *s, int abi) { if (!s) return; memset(s, 0, sizeof *s); s->state = IM_CRP_IDLE; s->abi = abi; }
@@ -168,8 +169,10 @@ int im_crp_session_reattach_plan(const ImCrpSession *s, uint64_t generation,
     return 0;
 }
 
-/* idempotency keys: a linear list of the recent keys in this session */
-typedef struct { char key[96]; int applied; } ImIdemSlot;
+/* idempotency keys: a linear list of recent keys, stored as SHA-256 digests
+   (canonical request texts outgrow any small inline buffer, and a truncated
+   key would silently defeat replay detection) */
+typedef struct { char key[65]; int applied; } ImIdemSlot;
 static ImIdemSlot *idem_slots(ImCrpSession *s) {
     /* the slots live in a side table keyed by the session pointer to keep
        ImCrpSession layout stable for existing callers */
@@ -182,23 +185,36 @@ static ImIdemSlot *idem_slots(ImCrpSession *s) {
     return g_idem[n_idem++].slots;
 }
 
+static void idem_digest(const char *key, char out[65]) {
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, key, strlen(key));
+    uint8_t digest[32];
+    sha256_final(&ctx, digest);
+    sha256_hex_of_digest(digest, out);
+}
+
 int im_crp_session_idem_begin(ImCrpSession *s, const char *key) {
     if (!s || !key || !key[0]) return 1;   /* no key: caller must treat as always-new */
+    char dg[65];
+    idem_digest(key, dg);
     ImIdemSlot *slots = idem_slots(s);
     for (int i = 0; i < IM_CRP_IDEM_SLOTS; ++i)
-        if (slots[i].applied && strcmp(slots[i].key, key) == 0) return 0;   /* replay */
+        if (slots[i].applied && strcmp(slots[i].key, dg) == 0) return 0;   /* replay */
     for (int i = 0; i < IM_CRP_IDEM_SLOTS; ++i)
-        if (!slots[i].applied) { snprintf(slots[i].key, sizeof slots[i].key, "%s", key); slots[i].applied = 0; return 1; }
+        if (!slots[i].applied) { snprintf(slots[i].key, sizeof slots[i].key, "%s", dg); slots[i].applied = 0; return 1; }
     /* table full: replace the first slot (bounded memory beats unbounded growth) */
-    snprintf(slots[0].key, sizeof slots[0].key, "%s", key);
+    snprintf(slots[0].key, sizeof slots[0].key, "%s", dg);
     slots[0].applied = 0;
     return 1;
 }
 
 int im_crp_session_idem_end(ImCrpSession *s, const char *key, int applied) {
     if (!s || !key || !key[0]) return -1;
+    char dg[65];
+    idem_digest(key, dg);
     ImIdemSlot *slots = idem_slots(s);
     for (int i = 0; i < IM_CRP_IDEM_SLOTS; ++i)
-        if (strcmp(slots[i].key, key) == 0) { slots[i].applied = applied ? 1 : 0; return 0; }
+        if (strcmp(slots[i].key, dg) == 0) { slots[i].applied = applied ? 1 : 0; return 0; }
     return -1;
 }

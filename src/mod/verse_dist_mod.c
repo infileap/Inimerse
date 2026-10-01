@@ -2111,6 +2111,216 @@ static int b_verse_stop(VM *vm) {
 static int vd_json_str(const char *json, const char *key, char *out, size_t cap);
 static void rp_set_entry(VM *vm, int aidx, const char *key, Value val);
 
+/* ---------- §43 economy domains, settlement and audit ---------- */
+
+/* Declare a currency domain; the definition is signed with the local identity
+   (which becomes the issuer). */
+static int b_verse_econ_domain(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *domain = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *kind = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "utility");
+    char *denom = _strdup(r_str(vm, argc - 4) ? r_str(vm, argc - 4) : "unit");
+    char *transfer = _strdup(r_str(vm, argc - 5) ? r_str(vm, argc - 5) : "domain-only");
+    r_popn(vm, argc);
+    char issuer[65] = "";
+    if (!identity_pubkey(issuer)) { free(uri); free(domain); free(kind); free(denom); free(transfer); r_push_str(vm, _strdup("")); return 1; }
+    char canon[1024];
+    snprintf(canon, sizeof canon, "%s|%s|%s|%s|%s|%s", domain, issuer, kind, "", denom, transfer);
+    char sig[129] = "";
+    {
+        int slen = 0;
+        char *seed = read_file_buf(identity_seed_path(), &slen);
+        if (seed && slen >= 64) {
+            unsigned char seedb[32], sigb[64];
+            for (int si = 0; si < 32; si++) {
+                int hi = seed[si*2] >= 'a' ? seed[si*2]-'a'+10 : seed[si*2]-'0';
+                int lo = seed[si*2+1] >= 'a' ? seed[si*2+1]-'a'+10 : seed[si*2+1]-'0';
+                seedb[si] = (unsigned char)((hi << 4) | lo);
+            }
+            ed25519_sign(seedb, (const unsigned char *)canon, strlen(canon), sigb);
+            static const char *hx = "0123456789abcdef";
+            for (int si = 0; si < 64; si++) { sig[si*2] = hx[sigb[si] >> 4]; sig[si*2+1] = hx[sigb[si] & 15]; }
+            sig[128] = 0;
+        }
+        free(seed);
+    }
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/economy/domain", uri);
+    else
+        snprintf(url, sizeof url, "%s/economy/domain", uri);
+    char body[2048];
+    snprintf(body, sizeof body,
+             "{\"domain_id\":\"%s\",\"issuer\":\"%s\",\"value_kind\":\"%s\","
+             "\"supply_rule\":\"\",\"denomination\":\"%s\",\"transfer_policy\":\"%s\",\"signature\":\"%s\"}",
+             domain, issuer, kind, denom, transfer, sig);
+    int len = 0;
+    char *resp = http_post_body(url, body, &len);
+    char cid[65] = "";
+    if (resp) { (void)vd_json_str(resp, "currency_id", cid, sizeof cid); free(resp); }
+    Value s; s.type = VAL_STRING; s.ival = 0; s.fval = 0; s.ptr = NULL; s.sval = strdup(cid);
+    r_push(vm, s);
+    free(uri); free(domain); free(kind); free(denom); free(transfer);
+    return 1;
+}
+
+/* Settle (transfer) within one domain, with an idempotency key. */
+static int b_verse_econ_settle(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *cid = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *from = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    char *to = _strdup(r_str(vm, argc - 4) ? r_str(vm, argc - 4) : "");
+    char *amt = _strdup(r_str(vm, argc - 5) ? r_str(vm, argc - 5) : "0");
+    char *key = _strdup(r_str(vm, argc - 6) ? r_str(vm, argc - 6) : "");
+    r_popn(vm, argc);
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/economy/settle", uri);
+    else
+        snprintf(url, sizeof url, "%s/economy/settle", uri);
+    char body[2048];
+    snprintf(body, sizeof body,
+             "{\"currency_id\":\"%s\",\"from\":\"%s\",\"to\":\"%s\",\"amount\":%s,\"idempotency_key\":\"%s\"}",
+             cid, from, to, amt, key);
+    int len = 0;
+    char *resp = http_post_body(url, body, &len);
+    char status[32] = "error", reason[64] = "";
+    int balance_to = 0, version_to = 0, event_seq = 0;
+    if (resp) {
+        (void)vd_json_str(resp, "status", status, sizeof status);
+        (void)vd_json_str(resp, "error", reason, sizeof reason);
+        const char *bt = strstr(resp, "\"balance_to\"");
+        if (bt) { const char *c = strchr(bt, ':'); if (c) balance_to = atoi(c + 1); }
+        const char *vt = strstr(resp, "\"version_to\"");
+        if (vt) { const char *c = strchr(vt, ':'); if (c) version_to = atoi(c + 1); }
+        const char *es = strstr(resp, "\"event_seq\"");
+        if (es) { const char *c = strchr(es, ':'); if (c) event_seq = atoi(c + 1); }
+        free(resp);
+    }
+    int out = vm_array_new(vm);
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    kv.sval = status;    rp_set_entry(vm, out, "status", kv);
+    kv.sval = reason;    rp_set_entry(vm, out, "reason", kv);
+    Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
+    iv.ival = balance_to; rp_set_entry(vm, out, "balance_to", iv);
+    iv.ival = version_to; rp_set_entry(vm, out, "version_to", iv);
+    iv.ival = event_seq;  rp_set_entry(vm, out, "event_seq", iv);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(cid); free(from); free(to); free(amt); free(key);
+    return 1;
+}
+
+/* Mint is an auditable event and must be signed by the currency issuer. */
+static int b_verse_econ_mint(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *cid = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *to = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    char *amt = _strdup(r_str(vm, argc - 4) ? r_str(vm, argc - 4) : "0");
+    char *key = _strdup(r_str(vm, argc - 5) ? r_str(vm, argc - 5) : "");
+    r_popn(vm, argc);
+    char canon[768], sig[129] = "";
+    snprintf(canon, sizeof canon, "mint|%s|%s|%s|%s", cid, to, amt, key);
+    {
+        int slen = 0;
+        char *seed = read_file_buf(identity_seed_path(), &slen);
+        if (seed && slen >= 64) {
+            unsigned char seedb[32], sigb[64];
+            for (int si = 0; si < 32; si++) {
+                int hi = seed[si*2] >= 'a' ? seed[si*2]-'a'+10 : seed[si*2]-'0';
+                int lo = seed[si*2+1] >= 'a' ? seed[si*2+1]-'a'+10 : seed[si*2+1]-'0';
+                seedb[si] = (unsigned char)((hi << 4) | lo);
+            }
+            ed25519_sign(seedb, (const unsigned char *)canon, strlen(canon), sigb);
+            static const char *hx = "0123456789abcdef";
+            for (int si = 0; si < 64; si++) { sig[si*2] = hx[sigb[si] >> 4]; sig[si*2+1] = hx[sigb[si] & 15]; }
+            sig[128] = 0;
+        }
+        free(seed);
+    }
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/economy/mint", uri);
+    else
+        snprintf(url, sizeof url, "%s/economy/mint", uri);
+    char body[2048];
+    snprintf(body, sizeof body,
+             "{\"currency_id\":\"%s\",\"to\":\"%s\",\"amount\":%s,\"idempotency_key\":\"%s\",\"signature\":\"%s\"}",
+             cid, to, amt, key, sig);
+    int len = 0;
+    char *resp = http_post_body(url, body, &len);
+    int ok = (resp && strstr(resp, "\"status\":\"settled\"") != NULL);
+    free(resp);
+    r_push_int(vm, ok ? 1 : 0);
+    free(uri); free(cid); free(to); free(amt); free(key);
+    return 1;
+}
+
+/* Balance and audit views. */
+static int b_verse_econ_balance(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *cid = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *account = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    r_popn(vm, argc);
+    char url[1400];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/economy/balance?currency_id=%s&account=%s", uri, cid, account);
+    else
+        snprintf(url, sizeof url, "%s/economy/balance?currency_id=%s&account=%s", uri, cid, account);
+    int len = 0;
+    char *body = http_get_body(url, &len);
+    int amount = 0, version = 0;
+    if (body) {
+        const char *a = strstr(body, "\"amount\"");
+        if (a) { const char *c = strchr(a, ':'); if (c) amount = atoi(c + 1); }
+        const char *v = strstr(body, "\"version\"");
+        if (v) { const char *c = strchr(v, ':'); if (c) version = atoi(c + 1); }
+        free(body);
+    }
+    int out = vm_array_new(vm);
+    Value iv; iv.type = VAL_INT; iv.sval = NULL; iv.ptr = NULL; iv.fval = 0;
+    iv.ival = amount;  rp_set_entry(vm, out, "amount", iv);
+    iv.ival = version; rp_set_entry(vm, out, "version", iv);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(cid); free(account);
+    return 1;
+}
+
+static int b_verse_econ_audit(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *cid = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    r_popn(vm, argc);
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/economy/audit?currency_id=%s", uri, cid);
+    else
+        snprintf(url, sizeof url, "%s/economy/audit?currency_id=%s", uri, cid);
+    int len = 0;
+    char *body = http_get_body(url, &len);
+    int count = 0, chain_ok = 0;
+    if (body) {
+        const char *c = strstr(body, "\"count\"");
+        if (c) { const char *x = strchr(c, ':'); if (x) count = atoi(x + 1); }
+        const char *k = strstr(body, "\"chain_ok\"");
+        if (k) { const char *x = strchr(k, ':'); if (x) chain_ok = atoi(x + 1); }
+        free(body);
+    }
+    int out = vm_array_new(vm);
+    Value iv; iv.type = VAL_INT; iv.sval = NULL; iv.ptr = NULL; iv.fval = 0;
+    iv.ival = count;    rp_set_entry(vm, out, "count", iv);
+    iv.ival = chain_ok; rp_set_entry(vm, out, "chain_ok", iv);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(cid);
+    return 1;
+}
+
 /* ---------- §55.6 reconnect, state and idempotency ---------- */
 
 /* Reconnect with the client's generation/sequence view (§55.6 fields). */
@@ -2493,7 +2703,12 @@ void verse_dist_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "verse_node_handoff", b_verse_node_handoff, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_session_reattach", b_verse_session_reattach, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_session_state", b_verse_session_state, 1|CAP_VERSE|CAP_NET, 0);
-    vm_register_builtin_full(vm, "verse_idem_begin", b_verse_idem_begin, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_public_ip", b_verse_public_ip, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_publish", b_verse_publish, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_idem_begin", b_verse_idem_begin, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_econ_domain", b_verse_econ_domain, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_econ_settle", b_verse_econ_settle, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_econ_mint", b_verse_econ_mint, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_econ_balance", b_verse_econ_balance, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_econ_audit", b_verse_econ_audit, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_public_ip", b_verse_public_ip, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_publish", b_verse_publish, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_identity_new", b_verse_identity_new, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_identity_pubkey", b_verse_identity_pubkey, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_sign", b_verse_sign, 1|CAP_VERSE, 0);

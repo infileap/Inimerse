@@ -102,6 +102,67 @@ static int g_auth_count;
 /* the node table is written by the HTTP threads and read/updated by the
    background health probe, so it needs its own lock */
 static pthread_mutex_t g_node_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* ---------- §43 economy: currency domains, balances, audit chain ----------
+   Definitions, balances, issuance and settlement are deliberately separate
+   objects (§43.2).  Every unit in circulation arrives through an auditable
+   mint/settle event in a hash-chained ledger; nothing can create currency by
+   editing a balance. */
+#define IM_ECON_DOMAINS 32
+#define IM_ECON_BALANCES 256
+#define IM_ECON_EVENTS 512
+#define IM_ECON_BRIDGES 16
+
+typedef struct {
+    char currency_id[65];    /* sha256 of the canonical signed definition */
+    char domain_id[64];
+    char issuer[65];         /* ed25519 public key of the issuing authority */
+    char value_kind[24];     /* utility | reputation | symbolic | real */
+    char supply_rule[128];
+    char denomination[32];
+    char transfer_policy[64];
+    char definition[1024];   /* the exact signed text */
+    char signature[129];
+    uint64_t expires_at_ms;
+} ImCurrency;
+
+typedef struct {
+    char currency_id[65];
+    char account[160];       /* "<domain_id>/<name>" */
+    long long amount;
+    int version;
+    char custody[64];
+    uint64_t last_settlement_ms;
+} ImBalance;
+
+typedef struct {
+    uint64_t seq;
+    char currency_id[65];
+    char from[160], to[160];
+    long long amount;
+    char kind[16];           /* transfer | mint | burn */
+    char idem[96];
+    char prev[65], hash[65];
+} ImEconEvent;
+
+typedef struct {
+    char source_domain[64], target_domain[64];
+    char rate[64], fee[64], limit[64], oracle[64], rollback[128];
+    char signature[129];
+    int paused;
+} ImBridge;
+
+static ImCurrency g_currencies[IM_ECON_DOMAINS];
+static int g_currency_count;
+static ImBalance g_balances[IM_ECON_BALANCES];
+static int g_balance_count;
+static ImEconEvent g_econ_events[IM_ECON_EVENTS];
+static int g_econ_event_count;
+static char g_econ_tail[65] = "0";
+static ImBridge g_bridges[IM_ECON_BRIDGES];
+static int g_bridge_count;
+static ImCrpSession g_econ_idem;      /* idempotency keys for settlements */
+static int g_econ_idem_ready;
 #define IM_NODE_MAX 128
 static ImNodeAd g_nodes[IM_NODE_MAX];
 static int g_node_count;
@@ -428,6 +489,72 @@ static void session_event_tail_hash(const char *verse, const char *peer, char ou
     sha256_hex(tail, strlen(tail), out);
 }
 
+/* ---------- §43 economy helpers ---------- */
+
+static ImCurrency *econ_currency(const char *currency_id) {
+    for (int i = 0; i < g_currency_count; ++i)
+        if (!strcmp(g_currencies[i].currency_id, currency_id)) return &g_currencies[i];
+    return NULL;
+}
+
+static ImBalance *econ_balance(const char *currency_id, const char *account, int create) {
+    for (int i = 0; i < g_balance_count; ++i)
+        if (!strcmp(g_balances[i].currency_id, currency_id) && !strcmp(g_balances[i].account, account))
+            return &g_balances[i];
+    if (!create || g_balance_count >= IM_ECON_BALANCES) return NULL;
+    ImBalance *b = &g_balances[g_balance_count++];
+    memset(b, 0, sizeof *b);
+    snprintf(b->currency_id, sizeof b->currency_id, "%s", currency_id);
+    snprintf(b->account, sizeof b->account, "%s", account);
+    return b;
+}
+
+/* the account's domain is its "<domain>/<name>" prefix (§43.2: different
+   domains cannot transfer directly) */
+static void econ_account_domain(const char *account, char *out, size_t cap) {
+    const char *slash = strchr(account, '/');
+    size_t n = slash ? (size_t)(slash - account) : strlen(account);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, account, n);
+    out[n] = 0;
+}
+
+/* append an auditable event: hash = sha256(prev || canonical fields) */
+static void econ_append(uint64_t seq, const char *kind, const char *currency_id,
+                        const char *from, const char *to, long long amount,
+                        const char *idem, ImEconEvent *out) {
+    ImEconEvent *ev;
+    if (g_econ_event_count < IM_ECON_EVENTS) ev = &g_econ_events[g_econ_event_count++];
+    else {
+        memmove(g_econ_events, g_econ_events + 1, (IM_ECON_EVENTS - 1) * sizeof g_econ_events[0]);
+        ev = &g_econ_events[IM_ECON_EVENTS - 1];
+    }
+    memset(ev, 0, sizeof *ev);
+    ev->seq = seq;
+    snprintf(ev->kind, sizeof ev->kind, "%s", kind);
+    snprintf(ev->currency_id, sizeof ev->currency_id, "%s", currency_id);
+    snprintf(ev->from, sizeof ev->from, "%s", from ? from : "");
+    snprintf(ev->to, sizeof ev->to, "%s", to ? to : "");
+    ev->amount = amount;
+    snprintf(ev->idem, sizeof ev->idem, "%s", idem ? idem : "");
+    snprintf(ev->prev, sizeof ev->prev, "%s", g_econ_tail);
+    char canon[768];
+    snprintf(canon, sizeof canon, "%llu|%s|%s|%s|%s|%lld|%s",
+             (unsigned long long)seq, ev->kind, ev->currency_id, ev->from, ev->to,
+             amount, ev->idem);
+    /* hash = sha256(prev_hash || canonical fields): the chain commits to its
+       predecessor, so rewriting history is detectable (§43.2 auditability) */
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, ev->prev, strlen(ev->prev));
+    sha256_update(&ctx, canon, strlen(canon));
+    uint8_t digest[32];
+    sha256_final(&ctx, digest);
+    sha256_hex_of_digest(digest, ev->hash);
+    snprintf(g_econ_tail, sizeof g_econ_tail, "%s", ev->hash);
+    if (out) *out = *ev;
+}
+
 /* verify a node advertisement: node_id is the signing public key */
 static int http_node_verify(const char *node_id, const char *payload, const char *signature) {
     if (!node_id || strlen(node_id) != 64 || !signature || strlen(signature) != 128 || !payload) return 0;
@@ -627,6 +754,15 @@ static void *http_loop(void *unused) {
         int reattach = n > 0 && strstr(req, "POST /session/reattach") != NULL;
         int state_get = n > 0 && strstr(req, "GET /session/state") != NULL;
         int idem = n > 0 && strstr(req, "POST /session/idem") != NULL;
+        /* §43 economy */
+        int econ_domain = n > 0 && strstr(req, "POST /economy/domain") != NULL;
+        int econ_domain_get = n > 0 && strstr(req, "GET /economy/domain/") != NULL;
+        int econ_settle = n > 0 && strstr(req, "POST /economy/settle") != NULL;
+        int econ_mint = n > 0 && strstr(req, "POST /economy/mint") != NULL;
+        int econ_balance_get = n > 0 && strstr(req, "GET /economy/balance") != NULL;
+        int econ_audit = n > 0 && strstr(req, "GET /economy/audit") != NULL;
+        int econ_bridge_post = n > 0 && strstr(req, "POST /economy/bridge") != NULL;
+        int econ_bridge_get = n > 0 && strstr(req, "GET /economy/bridge") != NULL;
         int portal = n > 0 && strstr(req, "POST /portal") != NULL;
         int status = 200;
         char request_token[64] = "";
@@ -635,7 +771,7 @@ static void *http_loop(void *unused) {
         (void)json_field_string(req, "verse", signal_verse, sizeof signal_verse); (void)json_field_string(req, "peer", signal_peer, sizeof signal_peer);
         if (signal && !token_allows(request_token, signal_verse, signal_peer)) { signal = 0; status = 403; }
         char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
-        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get || reattach || state_get || idem;
+        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get || reattach || state_get || idem || econ_domain || econ_domain_get || econ_settle || econ_mint || econ_balance_get || econ_audit || econ_bridge_post || econ_bridge_get;
         char findbuf[4096];
         if (find) {
             size_t used = 0; used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "{\"items\":[");
@@ -998,6 +1134,270 @@ reattach_done: ;
                          fresh ? "new" : "replay", key);
                 body = nodebuf;
             }
+        }
+        char econbuf[16384];
+        if (econ_domain) {
+            /* CurrencyDefinition must be signed by its issuer: currency_id is
+               the hash of the canonical definition, so an issuer cannot be
+               impersonated and the id is verifiable (§43.2 separate objects) */
+            char domain_id[64] = "", issuer[128] = "", kind[24] = "";
+            char supply[128] = "", denom[32] = "", transfer[64] = "", sig[160] = "";
+            uint64_t expires = 0;
+            (void)json_field_string(req, "domain_id", domain_id, sizeof domain_id);
+            (void)json_field_string(req, "issuer", issuer, sizeof issuer);
+            (void)json_field_string(req, "value_kind", kind, sizeof kind);
+            (void)json_field_string(req, "supply_rule", supply, sizeof supply);
+            (void)json_field_string(req, "denomination", denom, sizeof denom);
+            (void)json_field_string(req, "transfer_policy", transfer, sizeof transfer);
+            (void)json_field_string(req, "signature", sig, sizeof sig);
+            (void)json_field_u64(req, "expires_at", &expires);
+            int kind_ok = !strcmp(kind, "utility") || !strcmp(kind, "reputation") ||
+                          !strcmp(kind, "symbolic") || !strcmp(kind, "real");
+            if (!domain_id[0] || !issuer[0] || !denom[0] || !sig[0]) {
+                status = 400; body = "{\"error\":\"domain_issuer_denomination_signature_required\"}\n";
+            } else if (!kind_ok) {
+                /* the four value kinds are distinct and never interchangeable
+                   by default (§43.1) */
+                status = 400; body = "{\"error\":\"invalid_value_kind\"}\n";
+            } else {
+                char canon[1024];
+                snprintf(canon, sizeof canon, "%s|%s|%s|%s|%s|%s",
+                         domain_id, issuer, kind, supply, denom, transfer);
+                char cid[65];
+                sha256_hex(canon, strlen(canon), cid);
+                if (!http_node_verify(issuer, canon, sig)) {
+                    fprintf(stderr, "[hub] currency definition rejected: invalid issuer signature (domain %.24s)\n", domain_id);
+                    status = 400; body = "{\"error\":\"invalid_signature\"}\n";
+                } else {
+                    ImCurrency *c = econ_currency(cid);
+                    if (!c && g_currency_count < IM_ECON_DOMAINS) {
+                        c = &g_currencies[g_currency_count++];
+                        memset(c, 0, sizeof *c);
+                    }
+                    if (!c) { status = 507; body = "{\"error\":\"currency_registry_full\"}\n"; }
+                    else {
+                        snprintf(c->currency_id, sizeof c->currency_id, "%s", cid);
+                        snprintf(c->domain_id, sizeof c->domain_id, "%s", domain_id);
+                        snprintf(c->issuer, sizeof c->issuer, "%s", issuer);
+                        snprintf(c->value_kind, sizeof c->value_kind, "%s", kind);
+                        snprintf(c->supply_rule, sizeof c->supply_rule, "%s", supply);
+                        snprintf(c->denomination, sizeof c->denomination, "%s", denom);
+                        snprintf(c->transfer_policy, sizeof c->transfer_policy, "%s", transfer);
+                        snprintf(c->definition, sizeof c->definition, "%s", canon);
+                        snprintf(c->signature, sizeof c->signature, "%s", sig);
+                        c->expires_at_ms = expires;
+                        snprintf(econbuf, sizeof econbuf,
+                                 "{\"ok\":true,\"currency_id\":\"%s\",\"domain_id\":\"%s\",\"value_kind\":\"%s\"}\n",
+                                 cid, domain_id, kind);
+                        body = econbuf;
+                    }
+                }
+            }
+        }
+        if (econ_domain_get) {
+            const char *p = strstr(req, "GET /economy/domain/") + 19;
+            char cid[80] = "";
+            size_t i = 0;
+            while (p[i] && p[i] != ' ' && p[i] != '?' && i + 1 < sizeof cid) { cid[i] = p[i]; i++; }
+            cid[i] = 0;
+            ImCurrency *c = econ_currency(cid);
+            if (!c) { status = 404; body = "{\"error\":\"currency_not_found\"}\n"; }
+            else {
+                snprintf(econbuf, sizeof econbuf,
+                         "{\"currency_id\":\"%s\",\"domain_id\":\"%s\",\"issuer\":\"%s\","
+                         "\"value_kind\":\"%s\",\"denomination\":\"%s\",\"supply_rule\":\"%s\","
+                         "\"transfer_policy\":\"%s\",\"expires_at\":%llu}\n",
+                         c->currency_id, c->domain_id, c->issuer, c->value_kind, c->denomination,
+                         c->supply_rule, c->transfer_policy, (unsigned long long)c->expires_at_ms);
+                body = econbuf;
+            }
+        }
+        if (econ_settle || econ_mint) {
+            char cid[80] = "", from[160] = "", to[160] = "", key[128] = "", sig[160] = "";
+            long long amount = 0;
+            (void)json_field_string(req, "currency_id", cid, sizeof cid);
+            (void)json_field_string(req, "from", from, sizeof from);
+            (void)json_field_string(req, "to", to, sizeof to);
+            (void)json_field_string(req, "idempotency_key", key, sizeof key);
+            (void)json_field_string(req, "signature", sig, sizeof sig);
+            { const char *a = strstr(req, "\"amount\""); if (a) { const char *c = strchr(a, ':'); if (c) amount = strtoll(c + 1, NULL, 10); } }
+            ImCurrency *cur = econ_currency(cid);
+            char from_dom[64] = "", to_dom[64] = "";
+            if (to[0]) econ_account_domain(to, to_dom, sizeof to_dom);
+            if (from[0]) econ_account_domain(from, from_dom, sizeof from_dom);
+            if (!g_econ_idem_ready) { im_crp_session_init(&g_econ_idem, 1); g_econ_idem_ready = 1; }
+            if (!cur) {
+                status = 404; body = "{\"error\":\"currency_not_found\"}\n";
+            } else if (cur->expires_at_ms && cur->expires_at_ms <= http_now_ms()) {
+                status = 409; body = "{\"error\":\"currency_expired\"}\n";
+            } else if (amount <= 0) {
+                status = 400; body = "{\"error\":\"amount_must_be_positive\"}\n";
+            } else if (!strchr(to, '/') || (!econ_mint && !strchr(from, '/'))) {
+                /* accounts are "<domain_id>/<name>": the domain must be stated,
+                   never inferred, so cross-domain checks cannot be bypassed */
+                status = 400;
+                body = "{\"error\":\"invalid_account_format\",\"expected\":\"<domain_id>/<name>\"}\n";
+            } else if (!econ_mint && from_dom[0] && to_dom[0] && strcmp(from_dom, to_dom) != 0) {
+                /* §43.2: different economic domains cannot transfer directly;
+                   a bridge must be declared explicitly -- never a silent
+                   conversion */
+                fprintf(stderr, "[hub] cross-domain transfer denied (%s -> %s)\n", from_dom, to_dom);
+                status = 409;
+                snprintf(econbuf, sizeof econbuf,
+                         "{\"error\":\"cross_domain_transfer_denied\",\"from_domain\":\"%s\",\"to_domain\":\"%s\","
+                         "\"hint\":\"declare an explicit bridge (POST /economy/bridge)\"}\n", from_dom, to_dom);
+                body = econbuf;
+            } else {
+                char canon[768];
+                if (econ_mint)
+                    snprintf(canon, sizeof canon, "mint|%s|%s|%lld|%s", cid, to, amount, key);
+                else
+                    snprintf(canon, sizeof canon, "transfer|%s|%s|%s|%lld|%s", cid, from, to, amount, key);
+                int authorized = econ_mint ? http_node_verify(cur->issuer, canon, sig) : 1;
+                if (econ_mint && !authorized) {
+                    fprintf(stderr, "[hub] mint refused: not signed by the issuer of %.24s\n", cid);
+                    status = 403; body = "{\"error\":\"unauthorized_mint\"}\n";
+                } else {
+                    int fresh = key[0] ? im_crp_session_idem_begin(&g_econ_idem, canon) : 1;
+                    if (!fresh) {
+                        /* a retry of an already applied settlement must not move
+                           money a second time (§55.6 retry discipline) */
+                        ImBalance *bf = from[0] ? econ_balance(cid, from, 0) : NULL;
+                        ImBalance *bt = econ_balance(cid, to, 0);
+                        snprintf(econbuf, sizeof econbuf,
+                                 "{\"status\":\"replay\",\"currency_id\":\"%s\","
+                                 "\"balance_from\":%lld,\"balance_to\":%lld,\"event_seq\":%llu}\n",
+                                 cid, bf ? bf->amount : 0, bt ? bt->amount : 0,
+                                 (unsigned long long)g_econ_event_count);
+                        body = econbuf;
+                    } else {
+                        ImBalance *bt = econ_balance(cid, to, 1);
+                        ImBalance *bf = (!econ_mint && from[0]) ? econ_balance(cid, from, 1) : NULL;
+                        if (!bt || (!econ_mint && !bf)) {
+                            status = 507; body = "{\"error\":\"balance_registry_full\"}\n";
+                        } else if (!econ_mint && bf->amount < amount) {
+                            if (key[0]) im_crp_session_idem_end(&g_econ_idem, canon, 0);
+                            status = 409; body = "{\"error\":\"insufficient_balance\"}\n";
+                        } else {
+                            if (!econ_mint) { bf->amount -= amount; bf->version++; bf->last_settlement_ms = http_now_ms(); }
+                            bt->amount += amount;
+                            bt->version++;
+                            bt->last_settlement_ms = http_now_ms();
+                            if (key[0]) im_crp_session_idem_end(&g_econ_idem, canon, 1);
+                            ImEconEvent ev;
+                            econ_append((uint64_t)g_econ_event_count + 1, econ_mint ? "mint" : "transfer",
+                                        cid, econ_mint ? "" : from, to, amount, key, &ev);
+                            snprintf(econbuf, sizeof econbuf,
+                                     "{\"status\":\"settled\",\"currency_id\":\"%s\",\"kind\":\"%s\","
+                                     "\"balance_from\":%lld,\"balance_to\":%lld,\"version_from\":%d,\"version_to\":%d,"
+                                     "\"event_seq\":%llu,\"event_hash\":\"%s\"}\n",
+                                     cid, econ_mint ? "mint" : "transfer",
+                                     bf ? bf->amount : 0, bt->amount, bf ? bf->version : 0, bt->version,
+                                     (unsigned long long)ev.seq, ev.hash);
+                            body = econbuf;
+                        }
+                    }
+                }
+            }
+        }
+        if (econ_balance_get) {
+            char cid[80] = "", account[160] = "";
+            (void)query_param(req, "currency_id", cid, sizeof cid);
+            (void)query_param(req, "account", account, sizeof account);
+            ImBalance *b = econ_balance(cid, account, 0);
+            snprintf(econbuf, sizeof econbuf,
+                     "{\"currency_id\":\"%s\",\"account\":\"%s\",\"amount\":%lld,\"version\":%d,"
+                     "\"custody\":\"local\",\"last_settlement\":%llu}\n",
+                     cid, account, b ? b->amount : 0, b ? b->version : 0,
+                     (unsigned long long)(b ? b->last_settlement_ms : 0));
+            body = econbuf;
+        }
+        if (econ_audit) {
+            char cid[80] = "";
+            (void)query_param(req, "currency_id", cid, sizeof cid);
+            size_t used = (size_t)snprintf(econbuf, sizeof econbuf, "{\"events\":[");
+            int first = 1, n = 0;
+            char prev[65] = "0", calc[65];
+            int chain_ok = 1;
+            for (int i = 0; i < g_econ_event_count && used < sizeof econbuf - 512; ++i) {
+                ImEconEvent *ev = &g_econ_events[i];
+                if (cid[0] && strcmp(ev->currency_id, cid) != 0) continue;
+                /* recompute the chain so the response is self-verifying */
+                char canon[768];
+                snprintf(canon, sizeof canon, "%llu|%s|%s|%s|%s|%lld|%s",
+                         (unsigned long long)ev->seq, ev->kind, ev->currency_id, ev->from, ev->to,
+                         ev->amount, ev->idem);
+                Sha256Ctx ctx;
+                sha256_init(&ctx);
+                sha256_update(&ctx, ev->prev, strlen(ev->prev));
+                sha256_update(&ctx, canon, strlen(canon));
+                uint8_t dg[32];
+                sha256_final(&ctx, dg);
+                sha256_hex_of_digest(dg, calc);
+                if (strcmp(calc, ev->hash) != 0 || strcmp(ev->prev, prev) != 0) chain_ok = 0;
+                snprintf(prev, sizeof prev, "%s", ev->hash);
+                used += (size_t)snprintf(econbuf + used, sizeof econbuf - used,
+                                         "%s{\"seq\":%llu,\"kind\":\"%s\",\"currency_id\":\"%s\","
+                                         "\"from\":\"%s\",\"to\":\"%s\",\"amount\":%lld,\"idem\":\"%s\","
+                                         "\"prev\":\"%s\",\"hash\":\"%s\"}",
+                                         first ? "" : ",", (unsigned long long)ev->seq, ev->kind,
+                                         ev->currency_id, ev->from, ev->to, ev->amount, ev->idem,
+                                         ev->prev, ev->hash);
+                first = 0;
+                n++;
+            }
+            snprintf(econbuf + used, sizeof econbuf - used, "],\"count\":%d,\"chain_ok\":%d}\n", n, chain_ok);
+            body = econbuf;
+        }
+        if (econ_bridge_post) {
+            char sd[64] = "", td[64] = "", rate[64] = "", fee[64] = "", limit[64] = "", oracle[64] = "", rollback[128] = "";
+            (void)json_field_string(req, "source_domain", sd, sizeof sd);
+            (void)json_field_string(req, "target_domain", td, sizeof td);
+            (void)json_field_string(req, "rate", rate, sizeof rate);
+            (void)json_field_string(req, "fee", fee, sizeof fee);
+            (void)json_field_string(req, "limit", limit, sizeof limit);
+            (void)json_field_string(req, "oracle", oracle, sizeof oracle);
+            (void)json_field_string(req, "rollback_policy", rollback, sizeof rollback);
+            if (!sd[0] || !td[0] || !rate[0]) {
+                status = 400; body = "{\"error\":\"source_target_rate_required\"}\n";
+            } else if (g_bridge_count >= IM_ECON_BRIDGES) {
+                status = 507; body = "{\"error\":\"bridge_registry_full\"}\n";
+            } else {
+                ImBridge *b = &g_bridges[g_bridge_count++];
+                memset(b, 0, sizeof *b);
+                snprintf(b->source_domain, sizeof b->source_domain, "%s", sd);
+                snprintf(b->target_domain, sizeof b->target_domain, "%s", td);
+                snprintf(b->rate, sizeof b->rate, "%s", rate);
+                snprintf(b->fee, sizeof b->fee, "%s", fee);
+                snprintf(b->limit, sizeof b->limit, "%s", limit);
+                snprintf(b->oracle, sizeof b->oracle, "%s", oracle);
+                snprintf(b->rollback, sizeof b->rollback, "%s", rollback);
+                b->paused = 0;
+                snprintf(econbuf, sizeof econbuf,
+                         "{\"ok\":true,\"source_domain\":\"%s\",\"target_domain\":\"%s\","
+                         "\"rate\":\"%s\",\"paused\":0,\"execution\":\"not_implemented\"}\n", sd, td, rate);
+                body = econbuf;
+            }
+        }
+        if (econ_bridge_get) {
+            char sd[64] = "", td[64] = "";
+            (void)query_param(req, "source_domain", sd, sizeof sd);
+            (void)query_param(req, "target_domain", td, sizeof td);
+            size_t used = (size_t)snprintf(econbuf, sizeof econbuf, "{\"bridges\":[");
+            int first = 1;
+            for (int i = 0; i < g_bridge_count && used < sizeof econbuf - 400; ++i) {
+                ImBridge *b = &g_bridges[i];
+                if (sd[0] && strcmp(b->source_domain, sd) != 0) continue;
+                if (td[0] && strcmp(b->target_domain, td) != 0) continue;
+                used += (size_t)snprintf(econbuf + used, sizeof econbuf - used,
+                                         "%s{\"source_domain\":\"%s\",\"target_domain\":\"%s\",\"rate\":\"%s\","
+                                         "\"fee\":\"%s\",\"limit\":\"%s\",\"paused\":%d,\"execution\":\"not_implemented\"}",
+                                         first ? "" : ",", b->source_domain, b->target_domain, b->rate, b->fee,
+                                         b->limit, b->paused);
+                first = 0;
+            }
+            snprintf(econbuf + used, sizeof econbuf - used, "]}\n");
+            body = econbuf;
         }
         char portalbuf[512];
         if (register_route) {
