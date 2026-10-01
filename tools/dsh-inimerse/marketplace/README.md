@@ -56,10 +56,28 @@ npm error Two-factor authentication or granular access token with bypass 2fa
 npm error enabled is required to publish packages.
 ```
 
-The token is therefore either a **Classic "Publish"** token or a **Granular**
-token without *Bypass 2FA*. Either of these works instead:
+### What the token actually is, and why it cannot publish
 
-- **Classic Token → Automation** (bypasses 2FA by design), or
+The diagnosis is settled by the registry itself, not by guesswork:
+
+| Probe | Result | What it proves |
+| --- | --- | --- |
+| `npm whoami --registry=https://registry.npmjs.org/` | `infileap` | the token is a live credential for this account |
+| `GET /-/npm/v1/user` | `{"tfa":false, …}` | the account has **2FA off** |
+| `GET /-/npm/v1/tokens` | `200` `{"objects":[],"total":0}` | the account holds **zero classic tokens**, so the credential in `~/.npmrc` is a **Granular** token |
+| `PUT /dsh-inimerse` (raw `curl`, `Bearer`, no npm CLI) | `403 {"error":"Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages."}` | the refusal is the **registry's**, not the CLI's |
+| that same `PUT` with `npm-otp: 000000` | byte-identical `403` | an OTP can never satisfy it |
+
+So the credential is a **Granular Access Token with *Bypass 2FA* unchecked**.
+With 2FA off there is no OTP to supply — which is why `--otp=` changes nothing,
+and why the `otplease` frame in npm's stack trace is a dead end rather than a
+prompt to go and find a code.
+
+Replace it with either:
+
+- **Classic Token → Automation** —
+  https://www.npmjs.com/settings/infileap/tokens → *Generate New Token* →
+  *Classic Token* → **Automation**; or
 - **Granular Access Token** with **Bypass 2FA** checked, *Read and write*
   permission, *All packages*.
 
