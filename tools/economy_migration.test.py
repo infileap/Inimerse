@@ -73,30 +73,18 @@ def find_engine():
     raise SystemExit("inimerse engine not found; set INIMERSE_BIN")
 
 
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# Port allocation lives in tools/testports.py: the old hand-rolled
+# bind(0)/close() had a time-of-check/time-of-use window that made
+# hub_dist_regression fail under `ctest -j12` while passing in isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testports import distinct_ports, reserve_port as free_port  # noqa: E402
+from testports import wait_http_ping  # noqa: E402
 
 
 def wait_port(port, timeout=10.0):
-    import http.client
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/ping")
-            resp = conn.getresponse()
-            body = resp.read()
-            conn.close()
-            if resp.status == 200 and b"pong" in body:
-                return True
-        except OSError:
-            pass
-        time.sleep(0.1)
-    return False
+    # Shared implementation in tools/testports.py -- these suites need the
+    # /ping round trip, not merely a TCP accept (see testports.wait_http_ping).
+    return wait_http_ping(port, timeout=timeout)
 
 
 def post_raw(port, path, raw):
@@ -124,7 +112,11 @@ def http_json(port, method, path, payload=None):
 def start_hub(engine, cwd, script, port, log):
     cwd.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, INIMERSE_HUB_DIR=str(cwd / "universe"))
-    return subprocess.Popen([str(engine), "--headless", "--port", str(free_port()),
+    # TCP listen port must be distinct from `port` and from any sibling hub's:
+    # two free_port() calls in one expression can return the same number, which
+    # fails the engine's own headless bind ("headless: bind N failed").
+    listen_port = distinct_ports(1)[0]
+    return subprocess.Popen([str(engine), "--headless", "--port", str(listen_port),
                              "--http-port", str(port), str(script)],
                             cwd=str(cwd), env=env, stdout=subprocess.DEVNULL,
                             stderr=open(log, "w"))

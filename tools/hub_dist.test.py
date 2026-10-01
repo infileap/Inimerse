@@ -33,12 +33,12 @@ def find_engine():
     raise SystemExit("inimerse engine not found; set INIMERSE_BIN")
 
 
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# Port allocation lives in tools/testports.py: the old hand-rolled
+# bind(0)/close() had a time-of-check/time-of-use window that made
+# hub_dist_regression fail under `ctest -j12` while passing in isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
+                       wait_http_ping)
 
 
 def package_json(pkg_id="testpkg"):
@@ -83,14 +83,9 @@ def udp_fetch(port, pkg_id, timeout=5.0):
 
 
 def wait_port(port, timeout=10.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.1)
-    return False
+    # TCP-accept readiness only; this suite's engine answers no /ping.
+    from testports import wait_port as _wait_port
+    return _wait_port(port, timeout=timeout)
 
 
 def main():
@@ -100,7 +95,9 @@ def main():
         hub_dir = root / "universe"
         hub_dir.mkdir()
         (root / "hub.im").write_text('say "hub"\nwait 90\n', encoding="utf-8")
-        tcp_port, http_port = free_port(), free_port()
+        # tcp/http/script-listen are never all live at once, but taking them
+        # together costs nothing and removes any chance of an overlap.
+        tcp_port, http_port, listen_port = distinct_ports(3)
         env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
         hub = subprocess.Popen(
             [str(engine), "--headless", "--port", str(tcp_port),
@@ -135,7 +132,6 @@ def main():
             assert "udp_open=1" in out, out + rc.stderr.decode(errors="replace")
 
             # verse_listen starts a serving hub from script space
-            listen_port = free_port()
             server = root / "serve.im"
             server.write_text(
                 f'p = verse_listen({listen_port})\n'

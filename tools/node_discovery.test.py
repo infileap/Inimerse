@@ -38,40 +38,31 @@ def find_engine():
     raise SystemExit("inimerse engine not found; set INIMERSE_BIN")
 
 
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# Port allocation lives in tools/testports.py: the old hand-rolled
+# bind(0)/close() had a time-of-check/time-of-use window that made
+# hub_dist_regression fail under `ctest -j12` while passing in isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
+                       wait_http_ping)
 
 
-def start_hub(engine, root, http_port, hub_dir):
+def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
     (root / "hub.im").write_text('say "hub"\nwait 90\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
-    proc = subprocess.Popen([str(engine), "--headless", "--port", str(free_port()),
+    if tcp_port is None:
+        # A held allocation, not a bare free_port(): siblings must not
+        # be handed the same number as this hub's listen port.
+        tcp_port = distinct_ports(1)[0]
+    proc = subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
                              "--http-port", str(http_port), str(root / "hub.im")],
                             cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return proc
 
 
 def wait_port(port, timeout=10.0):
-    """Wait until the hub answers a real request, not merely accepts TCP."""
-    import http.client
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/ping")
-            resp = conn.getresponse()
-            body = resp.read()
-            conn.close()
-            if resp.status == 200 and b"pong" in body:
-                return True
-        except OSError:
-            pass
-        time.sleep(0.1)
-    return False
+    # Shared implementation in tools/testports.py -- these suites need the
+    # /ping round trip, not merely a TCP accept (see testports.wait_http_ping).
+    return wait_http_ping(port, timeout=timeout)
 
 
 PUBLISH = '''\
@@ -153,8 +144,11 @@ def main():
         root = Path(td)
         home = root / "home"
         home.mkdir()
-        hub_port = free_port()
-        hub = start_hub(engine, root, hub_port, root / "universe")
+        # hub, fake-directory and hub2 are alive at overlapping times; allocate
+        # them together so they are guaranteed distinct.
+        hub_port, fake_port, hub2_port = distinct_ports(3)
+        hub_tcp, hub2_tcp = distinct_ports(2)
+        hub = start_hub(engine, root, hub_port, root / "universe", hub_tcp)
         try:
             assert wait_port(hub_port), "hub did not start"
             expires = str(int(time.time() * 1000) + 120000)
@@ -191,7 +185,6 @@ def main():
             assert status == 400 and "expired_advertisement" in body, (status, body)
 
             # 4. a lying directory cannot make the client trust a node
-            fake_port = free_port()
             fake = HTTPServer(("127.0.0.1", fake_port), FakeDirectory)
             threading.Thread(target=fake.serve_forever, daemon=True).start()
             try:
@@ -205,8 +198,7 @@ def main():
                 fake.shutdown()
 
             # 5. two hubs: list, ping and discover independently
-            hub2_port = free_port()
-            hub2 = start_hub(engine, root, hub2_port, root / "universe2")
+            hub2 = start_hub(engine, root, hub2_port, root / "universe2", hub2_tcp)
             try:
                 assert wait_port(hub2_port), "second hub did not start"
                 multi = root / "multi.im"

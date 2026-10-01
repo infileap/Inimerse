@@ -22,10 +22,13 @@ Inimerse is the scripting engine and Infiverse is its Tauri desktop client.
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4     # expected: 100% tests passed, 0 failed out of 79
+ctest --test-dir build --output-on-failure -j4     # expected: 100% tests passed, 0 failed out of 85
 ```
 
 Resulting binary: `build/inimerse`. Always use this path rather than any stale copy in the repository root.
+
+Everything above, plus the §43.5 economy-migration suite, the DSH bridge plugin and
+the documentation links, is one command: `tools/gate.sh` (see [docs/BOARD.md](docs/BOARD.md) §3).
 
 ## Build the engine (Windows)
 

@@ -29,12 +29,12 @@ def find_engine():
     raise SystemExit("inimerse engine not found; set INIMERSE_BIN")
 
 
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# Port allocation lives in tools/testports.py: the old hand-rolled
+# bind(0)/close() had a time-of-check/time-of-use window that made
+# hub_dist_regression fail under `ctest -j12` while passing in isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testports import distinct_ports, reserve_port as free_port  # noqa: E402
+from testports import wait_http_ping  # noqa: E402
 
 
 def wait_ready(port, timeout=10.0):
@@ -57,7 +57,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="inimerse-crp-") as td:
         root = Path(td)
         (root / "hub.im").write_text('say "hub"\nwait 60\n', encoding="utf-8")
-        tcp_port, http_port = free_port(), free_port()
+        # distinct_ports() holds both at once: two free_port() calls in one
+        # expression can return the same number and break the engine's bind.
+        tcp_port, http_port = distinct_ports(2)
         proc = subprocess.Popen(
             [str(engine), "--headless", "--port", str(tcp_port),
              "--http-port", str(http_port), "hub.im"],

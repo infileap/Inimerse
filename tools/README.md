@@ -2,8 +2,9 @@
 > **核对提示**：本文件为设计/规范文档，实现状态可能已变化；权威总览以 [docs/API.md](../docs/API.md) 为准，状态与版本裁定见 [docs/STATUS.md](../docs/STATUS.md)。
 
 
-Three ways for an LLM agent to execute and fix Inimerse code safely. The third is
-the one this repository actively maintains.
+Four layers of agent tooling for this repository. The third is the one this
+repository actively maintains; the fourth is what makes several agents safe to
+run at the same time.
 
 ## 1. `ai_run.ps1` — one-shot sandboxed runner
 
@@ -78,6 +79,68 @@ local bundle pointed at this directory — never by hand-editing the profile.
 5. `inim_test` before claiming the change is safe; `inim_build` to reproduce the
    release gate from scratch when it is not.
 
+## 4. `gate.sh`, `stream.sh`, `check_links.py` — working with several agents at once
+
+When more than one DSH conversation works on this repository, three scripts keep
+them from stepping on each other. The board and the rules are in
+[docs/BOARD.md](../docs/BOARD.md); these are the tools.
+
+### `gate.sh` — the acceptance gate
+
+Five stages; exit 0 only if all pass. A branch is mergable when this is green.
+
+```bash
+tools/gate.sh                 # build + ctest + economy + plugin + links
+tools/gate.sh --fast          # reuse the existing build/ (skip configure)
+tools/gate.sh --only links    # one stage: build|ctest|economy|plugin|links
+```
+
+| Stage | Expectation |
+| --- | --- |
+| build | Release build, 0 error |
+| ctest | **85 / 85** |
+| economy | `tools/economy_migration.test.py` — **39 / 39** |
+| plugin | `node tools/dsh-inimerse/verify.mjs --live` — **55 / 55** |
+| links | `tools/check_links.py` — **0 broken** (66 markdown files, 209 links) |
+
+When one of those numbers changes, update this table *and* the baseline row in
+[docs/STATUS.md](../docs/STATUS.md) §1 — otherwise the next session gates against
+a stale expectation.
+
+### `stream.sh` — one working tree per conversation
+
+A shared working tree is how one session's `git add -A` swallows another's
+half-finished work (it happened: §43.5's work-in-progress rode into `fdcdb10`).
+Each stream gets its own worktree at `.worktrees/<slug>` and its own branch
+`stream/<slug>` — **the branch existing is what "claimed" means**, so no lock
+file is needed and every session sees it immediately via `git worktree list`.
+
+```bash
+tools/stream.sh new verse-upp     # .worktrees/verse-upp on branch stream/verse-upp
+tools/stream.sh list              # worktrees, branches, dirty state, commits ahead
+tools/stream.sh cd verse-upp      # prints the path: cd "$(tools/stream.sh cd verse-upp)"
+tools/stream.sh sync verse-upp    # merge current main into the stream
+tools/stream.sh rm verse-upp      # refuses if dirty; --force to discard
+tools/stream.sh prune             # drop worktrees whose branch is already merged
+```
+
+Each worktree has its own `build/`, so streams can build concurrently.
+
+### `check_links.py` — relative links in Markdown
+
+Moved a document into `docs/archive/` and left a dozen links pointing at where it
+used to be? That is the failure mode this catches. External URLs are never
+fetched (the gate must not depend on the network); only links that have to
+resolve inside the checkout are checked.
+
+```bash
+tools/check_links.py          # exit 1 if anything is broken
+tools/check_links.py -v       # also list the links that resolve
+tools/check_links.py --json   # machine-readable
+```
+
+It blanks fenced code blocks *and* inline code spans before parsing, because
+`` `object["m"](...)` `` in prose is not a link.
 
 ## Claude Desktop registration
 

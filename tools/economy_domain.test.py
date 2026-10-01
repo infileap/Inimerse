@@ -38,30 +38,17 @@ def find_engine():
     raise SystemExit("inimerse engine not found; set INIMERSE_BIN")
 
 
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# Port allocation lives in tools/testports.py: the old hand-rolled
+# bind(0)/close() had a time-of-check/time-of-use window that made
+# hub_dist_regression fail under `ctest -j12` while passing in isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testports import reserve_port as free_port, wait_http_ping  # noqa: E402
 
 
 def wait_port(port, timeout=10.0):
-    import http.client
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/ping")
-            resp = conn.getresponse()
-            body = resp.read()
-            conn.close()
-            if resp.status == 200 and b"pong" in body:
-                return True
-        except OSError:
-            pass
-        time.sleep(0.1)
-    return False
+    # Shared implementation in tools/testports.py -- these suites need the
+    # /ping round trip, not merely a TCP accept (see testports.wait_http_ping).
+    return wait_http_ping(port, timeout=timeout)
 
 
 def http_json(port, method, path, payload=None):

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# gate.sh — the acceptance gate every Inimerse/Infiverse stream must pass before
+# its branch may be merged into main.  See docs/BOARD.md §3.
+#
+#   tools/gate.sh              full gate: configure + build + all suites
+#   tools/gate.sh --fast       skip configure/build, reuse the existing build/
+#   tools/gate.sh --only links run a single stage (build|ctest|economy|plugin|links)
+#   tools/gate.sh --jobs 4     parallel job count for the build
+#
+# Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
+# and a summary table is printed last so a failing run is readable at a glance.
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 2
+
+BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"
+JOBS="$(nproc 2>/dev/null || echo 4)"
+FAST=0
+ONLY=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fast) FAST=1 ;;
+    --only) ONLY="${2:-}"; shift ;;
+    --jobs) JOBS="${2:-4}"; shift ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+STAGE_NAMES=()
+STAGE_RESULTS=()
+STAGE_NOTES=()
+FAILED=0
+
+run_stage() {
+  local name="$1" wanted="$2"; shift 2
+  if [ -n "$ONLY" ] && [ "$ONLY" != "$wanted" ]; then
+    STAGE_NAMES+=("$name"); STAGE_RESULTS+=("SKIP"); STAGE_NOTES+=("--only $ONLY")
+    return 0
+  fi
+  echo
+  echo "──────────────────────────────────────────────────────────────"
+  echo "▶ $name"
+  echo "──────────────────────────────────────────────────────────────"
+  local log; log="$(mktemp)"
+  "$@" 2>&1 | tee "$log"
+  local rc="${PIPESTATUS[0]}"
+  if [ "$rc" -eq 0 ]; then
+    STAGE_NAMES+=("$name"); STAGE_RESULTS+=("PASS"); STAGE_NOTES+=("")
+    echo "✔ $name"
+  else
+    STAGE_NAMES+=("$name"); STAGE_RESULTS+=("FAIL"); STAGE_NOTES+=("exit $rc")
+    echo "✘ $name (exit $rc)"
+    FAILED=1
+  fi
+  rm -f "$log"
+  return 0
+}
+
+stage_build() {
+  if [ "$FAST" -eq 0 ]; then
+    cmake -S "$REPO_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release || return 1
+  fi
+  cmake --build "$BUILD_DIR" -j"$JOBS" || return 1
+
+  # Tally warnings/errors.  `grep -c` exits 1 when it counts zero, and
+  # `set -o pipefail` (line 12) turns that into a stage failure for a perfectly
+  # clean build, so capture the log once and count with awk instead.
+  local log; log="$(mktemp)"
+  cmake --build "$BUILD_DIR" -j"$JOBS" >"$log" 2>&1
+  echo "-- warning/error tally --"
+  awk '/warning:/ { w++ } /error:/ { e++ } END {
+        printf "warnings: %d\nerrors: %d\n", w + 0, e + 0 }' "$log"
+  rm -f "$log"
+  return 0
+}
+
+stage_ctest() {
+  ctest --test-dir "$BUILD_DIR" --output-on-failure -j"$JOBS"
+}
+
+stage_economy() {
+  # §43.5 acceptance gate: 39 checks over the migration import path.
+  python3 "$REPO_ROOT/tools/economy_migration.test.py"
+}
+
+stage_plugin() {
+  # The DSH bridge plugin: offline checks plus a live round trip through the
+  # real inim-server / inim-client binaries.
+  if ! command -v node >/dev/null 2>&1; then
+    echo "node not found -- cannot run the plugin suite"; return 1
+  fi
+  node "$REPO_ROOT/tools/dsh-inimerse/verify.mjs" --live
+}
+
+stage_links() {
+  python3 "$REPO_ROOT/tools/check_links.py"
+}
+
+run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
+run_stage "ctest (expect 85/85)" ctest stage_ctest
+run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
+run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
+run_stage "docs relative links" links stage_links
+
+echo
+echo "══════════════════════════════════════════════════════════════"
+printf '%-58s %s\n' "STAGE" "RESULT"
+echo "──────────────────────────────────────────────────────────────"
+for i in "${!STAGE_NAMES[@]}"; do
+  printf '%-58s %s %s\n' "${STAGE_NAMES[$i]}" "${STAGE_RESULTS[$i]}" "${STAGE_NOTES[$i]}"
+done
+echo "══════════════════════════════════════════════════════════════"
+
+if [ "$FAILED" -ne 0 ]; then
+  echo "gate: FAILED — do not merge."
+  exit 1
+fi
+echo "gate: OK — every stage passed."
+exit 0

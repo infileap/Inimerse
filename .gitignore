@@ -55,3 +55,6 @@ oauth_*.bin
 # Local session artifacts
 .zcode/
 codex-reconnect-fix/
+
+# Per-session git worktrees (tools/stream.sh)
+.worktrees/

@@ -7,10 +7,12 @@
 | 文档 | 作用 | 什么时候读它 |
 | --- | --- | --- |
 | [STATUS.md](STATUS.md) | **状态、路线图与版本裁定的唯一权威** | 想知道"现在到底做到哪了""v0.6 那些声明算不算数" |
+| [BOARD.md](BOARD.md) | **多会话协调板**：任务认领、冲突域、门禁、交接格式 | 准备动手改代码之前——先确认没人已经认领了同一件事 |
 | [API.md](API.md) | **语言、API 与平台事实的唯一权威** | 想写脚本、查内建函数、查语法糖、查平台与编译目标支持 |
 | [REQUIREMENTS_ANALYSIS.md](REQUIREMENTS_ANALYSIS.md) | 需求分析与治理裁决：33 项需求↔现状差距矩阵、9 处口径冲突、P0–P3 优先级 | 想知道"文档承诺 vs 仓库现状"的完整对照 |
 
 > 研究性愿景与设计草案见 [../future/README.md](../future/README.md)。
+> STATUS.md 记录「**已经**做到哪了」（事实与证据），BOARD.md 记录「**正在**做什么、谁在做」（在途与认领）；两者不重叠。
 
 ## 三条硬规则
 
@@ -42,6 +44,17 @@ node tools/upp_reference.test.js
 node tools/crp_reference.test.js
 node tools/vverse_validate.test.js
 ```
+
+## 多会话工作
+
+多路会话并行开发时**不要共用工作区**。每个会话开自己的工作树，完成后跑门禁：
+
+```bash
+tools/stream.sh new <slug>     # 建 .worktrees/<slug> 与分支 stream/<slug>
+tools/gate.sh                  # build + ctest + economy + plugin + links，全绿才可合入 main
+```
+
+规则、任务板与交接格式见 [BOARD.md](BOARD.md)。
 
 ## 归档
 

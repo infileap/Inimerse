@@ -6,3 +6,11 @@
 *.js text working-tree-encoding=UTF-8
 *.json text working-tree-encoding=UTF-8
 
+# `src/mod/gui_mod.c` is stored in the index WITH CRLF while the `* text=auto
+# eol=lf` rule above tells git to materialise it as LF.  The two disagree, so
+# every fresh checkout wants to rewrite the file: a brand-new worktree reports
+# ` M src/mod/gui_mod.c` and `git diff --stat` shows the same 3932 lines added
+# and removed.  That noise makes tools/stream.sh call a clean stream dirty.
+# Keep this one file byte-for-byte as stored (see docs/BOARD.md §7).
+src/mod/gui_mod.c text eol=crlf
+

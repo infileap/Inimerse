@@ -1952,21 +1952,24 @@ reattach_done: ;
 int verse_http_start(int port) {
     if (g_http_running || port < 1 || port > 65535 || im_socket_init() != 0) return g_http_running ? 1 : 0;
     if (!g_state_loaded) { state_load(); g_state_loaded = 1; }
-    g_http_listener = im_socket_listen("127.0.0.1", (uint16_t)port, 16);
-    if (!g_http_listener || im_socket_set_nonblocking(g_http_listener, 1) != 0) { if (g_http_listener) im_socket_close(g_http_listener); g_http_listener = NULL; im_socket_shutdown(); return 0; }
-    g_http_running = 1;
-    if (pthread_create(&g_http_thread, NULL, http_loop, NULL) != 0) { g_http_running = 0; im_socket_close(g_http_listener); g_http_listener = NULL; im_socket_shutdown(); return 0; }
-    /* UDP hub shares the port; failure degrades to TCP-only, never silently
-       pretends UDP works */
+    /* Bind the UDP hub socket BEFORE the TCP listener accepts anything.
+       Ordering is load-bearing: callers (and the test suites) wait for the TCP
+       port to accept as their readiness signal, so as long as TCP came up
+       first there was a window in which the hub answered TCP but silently
+       dropped UDP.  A one-shot datagram sent in that window is lost for good
+       -- UDP does not retransmit -- which is exactly how hub_dist_regression
+       failed under `ctest -j12` while passing in isolation.  Binding UDP first
+       makes "TCP accepts" a truthful readiness signal for both transports. */
     g_udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (g_udp_fd >= 0) {
         struct sockaddr_in ua;
         memset(&ua, 0, sizeof ua);
         ua.sin_family = AF_INET;
         ua.sin_port = htons((unsigned short)port);
-        ua.sin_addr.s_addr = htonl(INADDR_ANY);
-        int uyes = 1;
-        (void)setsockopt(g_udp_fd, SOL_SOCKET, SO_REUSEADDR, &uyes, sizeof uyes);
+        /* Loopback, matching the TCP listener: this hub is a local process
+           service, so binding the wildcard address would only widen the set of
+           sockets that can shadow the port. */
+        ua.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (bind(g_udp_fd, (struct sockaddr *)&ua, sizeof ua) == 0) {
             /* non-blocking + poll: closing an fd another thread blocks on is
                not a reliable wakeup on POSIX, so the loop checks a flag */
@@ -1974,12 +1977,25 @@ int verse_http_start(int port) {
             (void)fcntl(g_udp_fd, F_SETFL, fl | O_NONBLOCK);
             g_udp_running = 1;
             if (pthread_create(&g_udp_thread, NULL, udp_loop, NULL) != 0) g_udp_running = 0;
-            if (!g_probe_running) {
-                g_probe_running = 1;
-                if (pthread_create(&g_probe_thread, NULL, node_probe_loop, NULL) != 0) g_probe_running = 0;
-            }
         }
+        /* Failure degrades to TCP-only -- never silently pretends UDP works. */
         if (!g_udp_running) { close(g_udp_fd); g_udp_fd = -1; }
+    }
+    g_http_listener = im_socket_listen("127.0.0.1", (uint16_t)port, 16);
+    if (!g_http_listener || im_socket_set_nonblocking(g_http_listener, 1) != 0) {
+        if (g_http_listener) im_socket_close(g_http_listener); g_http_listener = NULL;
+        if (g_udp_running) { g_udp_running = 0; pthread_join(g_udp_thread, NULL); if (g_udp_fd >= 0) { close(g_udp_fd); g_udp_fd = -1; } }
+        im_socket_shutdown(); return 0;
+    }
+    g_http_running = 1;
+    if (pthread_create(&g_http_thread, NULL, http_loop, NULL) != 0) {
+        g_http_running = 0; im_socket_close(g_http_listener); g_http_listener = NULL;
+        if (g_udp_running) { g_udp_running = 0; pthread_join(g_udp_thread, NULL); if (g_udp_fd >= 0) { close(g_udp_fd); g_udp_fd = -1; } }
+        im_socket_shutdown(); return 0;
+    }
+    if (!g_probe_running) {
+        g_probe_running = 1;
+        if (pthread_create(&g_probe_thread, NULL, node_probe_loop, NULL) != 0) g_probe_running = 0;
     }
     return 1;
 }

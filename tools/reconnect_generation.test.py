@@ -34,37 +34,27 @@ def find_engine():
     raise SystemExit("inimerse engine not found; set INIMERSE_BIN")
 
 
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# Port allocation lives in tools/testports.py: the old hand-rolled
+# bind(0)/close() had a time-of-check/time-of-use window that made
+# hub_dist_regression fail under `ctest -j12` while passing in isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
+                       wait_http_ping)
 
 
 def wait_port(port, timeout=10.0):
-    import http.client
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/ping")
-            resp = conn.getresponse()
-            body = resp.read()
-            conn.close()
-            if resp.status == 200 and b"pong" in body:
-                return True
-        except OSError:
-            pass
-        time.sleep(0.1)
-    return False
+    # Shared implementation in tools/testports.py -- these suites need the
+    # /ping round trip, not merely a TCP accept (see testports.wait_http_ping).
+    return wait_http_ping(port, timeout=timeout)
 
 
-def start_hub(engine, root, http_port, hub_dir):
+def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
     script = root / f"hub{http_port}.im"
     script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
-    return subprocess.Popen([str(engine), "--headless", "--port", str(free_port()),
+    if tcp_port is None:
+        tcp_port = free_port()
+    return subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
                              "--http-port", str(http_port), str(script)],
                             cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -110,8 +100,11 @@ def main():
         root = Path(td)
         home = root / "home"
         home.mkdir()
-        dir_port, node_a_port, node_b_port = free_port(), free_port(), free_port()
-        hubs = [start_hub(engine, root, p, root / f"u{p}") for p in (dir_port, node_a_port, node_b_port)]
+        # Held simultaneously so the three hubs cannot be handed one port.
+        dir_port, node_a_port, node_b_port = distinct_ports(3)
+        tcp_ports = distinct_ports(3)
+        hubs = [start_hub(engine, root, p, root / f"u{p}", tcp)
+                for p, tcp in zip((dir_port, node_a_port, node_b_port), tcp_ports)]
         try:
             for p in (dir_port, node_a_port, node_b_port):
                 assert wait_port(p), f"hub {p} did not start"
