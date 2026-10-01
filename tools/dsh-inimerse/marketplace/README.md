@@ -35,64 +35,71 @@ were run to verify them.
   already stale (its `dsh-skins` description stopped at `0.2.0-rc.1`, upstream
   says `0.2.0-rc.1/rc.2`). `diff` against upstream is exactly one added entry.
 
-## Why the listing is not live yet
+## Status
+
+`dsh-inimerse@0.1.0` is **published** — the first blocker is gone:
+
+```console
+$ npm publish --registry=https://registry.npmjs.org/ --access public
++ dsh-inimerse@0.1.0
+
+$ npm view dsh-inimerse version --registry=https://registry.npmjs.org/
+0.1.0
+$ npm view dsh-inimerse dist.shasum license --registry=https://registry.npmjs.org/
+dist.shasum = '9038702626b5501c2908f743f31ccd6fef047aa5'
+license = 'MIT'
+```
+
+The only remaining step is the upstream PR, which needs the fork
+`infileap/dsh-m` — it does not exist yet, and `git push` cannot create a
+repository.
+
+### Why the entry carries no `icon`
+
+An earlier draft pointed `icon` at
+`https://raw.githubusercontent.com/infileap/Inimerse/main/tools/dsh-inimerse/icon.svg`.
+That file really is public — GitHub's contents API returns it (`icon.svg`,
+297 bytes) and jsDelivr serves it with `200` — but `raw.githubusercontent.com`
+is unreachable from this machine by every route tried (`curl --noproxy '*'`,
+Node `fetch`, and the harness's own fetcher all fail with a connection reset),
+so the URL could not be verified before handing the PR over.
+
+No entry in the upstream list uses `icon`, and dsh-m falls back to the GitHub
+owner's avatar (`lib/client.js`: `entry.icon || https://github.com/<owner>.png?size=64`),
+so the card still shows an image. Re-adding the field is the only change needed
+once someone can check it from a network that reaches `raw.githubusercontent.com`.
+
+### Only npm is a workable source
 
 dsh-m's registry v1 schema only accepts `source: "npm"` or `source: "github"`,
 and a GitHub-source entry installs the **repository root** as the package —
 which for this repository is the engine, not the plugin. dsh-m explicitly
-skips monorepo subpackages without an npm package. So the only workable
-source is **npm**.
+skips monorepo subpackages without an npm package.
 
-An npmjs.org token now exists in `~/.npmrc` and authenticates correctly
-(`npm whoami --registry=https://registry.npmjs.org/` → `infileap`), but it
-cannot publish:
+### For anyone repeating the publish: the token trap
 
-```console
-$ npm publish --registry=https://registry.npmjs.org/ --access public
-npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
-npm error code E403
-npm error 403 403 Forbidden - PUT https://registry.npmjs.org/dsh-inimerse
-npm error Two-factor authentication or granular access token with bypass 2fa
-npm error enabled is required to publish packages.
-```
-
-### What the token actually is, and why it cannot publish
-
-The diagnosis is settled by the registry itself, not by guesswork:
+The first attempts failed with `E403 … Two-factor authentication or granular
+access token with bypass 2fa enabled is required to publish packages.` It was
+the registry, not the CLI, doing the refusing:
 
 | Probe | Result | What it proves |
 | --- | --- | --- |
-| `npm whoami --registry=https://registry.npmjs.org/` | `infileap` | the token is a live credential for this account |
-| `GET /-/npm/v1/user` | `{"tfa":false, …}` | the account has **2FA off** |
-| `GET /-/npm/v1/tokens` | `200` `{"objects":[],"total":0}` | the account holds **zero classic tokens**, so the credential in `~/.npmrc` is a **Granular** token |
-| `PUT /dsh-inimerse` (raw `curl`, `Bearer`, no npm CLI) | `403 {"error":"Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages."}` | the refusal is the **registry's**, not the CLI's |
-| that same `PUT` with `npm-otp: 000000` | byte-identical `403` | an OTP can never satisfy it |
+| `GET /-/npm/v1/user` | `{"tfa":false, …}` | the account had **2FA off** |
+| `GET /-/npm/v1/tokens` | `200` `{"objects":[],"total":0}` | there were zero classic tokens, so the credential was **Granular** |
+| `PUT /dsh-inimerse` (raw `curl`, `Bearer`, no CLI) | `403` with the message above | the refusal is the registry's |
+| that same `PUT` plus `npm-otp: 000000` | byte-identical `403` | an OTP can never satisfy it — a dead end, not a prompt for a code |
 
-So the credential is a **Granular Access Token with *Bypass 2FA* unchecked**.
-With 2FA off there is no OTP to supply — which is why `--otp=` changes nothing,
-and why the `otplease` frame in npm's stack trace is a dead end rather than a
-prompt to go and find a code.
+The fix was to re-create the token as a **Granular Access Token with *Bypass
+2FA* checked**, `Read and write (publish and stage)` — **not** `(stage only)`,
+which only permits `npm stage publish` — and *All packages*.
 
-Replace it with either:
-
-- **Classic Token → Automation** —
-  https://www.npmjs.com/settings/infileap/tokens → *Generate New Token* →
-  *Classic Token* → **Automation**; or
-- **Granular Access Token** with **Bypass 2FA** checked, *Read and write*
-  permission, *All packages*.
-
-Do **not** try `npm login`: on this machine npm 12.0.2's web-login flow polls
+Do **not** use `npm login` on this machine: npm 12.0.2's web-login flow polls
 `/-/v1/done` for ~30 s, gets a `404` when the browser grant is not completed,
 falls back to `web login not supported, trying couch`, and then dies with
 `Exit handler never called!` at the `Username:` prompt (non-interactive TTY).
 The debug log is unambiguous about that sequence.
 
-The name `dsh-inimerse` is still free on npmjs (`404` from the registry API) —
-the 403 above published nothing.
-
-## Step 1 — publish to npm
-
-With a token that can publish (see above):
+## Step 1 — publish to npm (done)
 
 ```bash
 cd tools/dsh-inimerse
@@ -100,42 +107,43 @@ npm publish --registry=https://registry.npmjs.org/ --access public
 ```
 
 `publishConfig` already pins `registry.npmjs.org` and `access: public`, so the
-plain `npm publish` is equivalent. `--dry-run` is green today: 8 files,
-`14.9 kB` packed / `51.3 kB` unpacked, shasum
-`9038702626b5501c2908f743f31ccd6fef047aa5`.
+plain `npm publish` is equivalent. The tarball is 8 files, `14.9 kB` packed /
+`51.3 kB` unpacked, shasum `9038702626b5501c2908f743f31ccd6fef047aa5` — the same
+shasum the registry now serves.
 
 ## Step 2 — get the entry into the curated list
 
 `registry.json` upstream is hand-curated; a listing is a pull request to
-`iasiv5/dsh-m` that appends `entry.json` to its `registry.json`. **Step 1 must
-land first**: upstream CI (`.github/workflows/registry.yml` →
-`scripts/validate-registry.mjs`) fetches
-`https://registry.npmjs.org/<npm>/latest` and fails the build if it 404s.
+`iasiv5/dsh-m` that appends `entry.json` to its `registry.json`. Step 1 has
+landed, so the CI check that fetches
+`https://registry.npmjs.org/<npm>/latest` now resolves.
 
 The PR is **two** files, not one — upstream also pins the curated-list length
 in its own test suite:
 
 | File | Change |
 | --- | --- |
-| `registry.json` | append the entry (byte-minimal, 20 lines) |
+| `registry.json` | append the entry (byte-minimal, 19 lines) |
 | `tests/registry.test.mjs` | `parsed.registry.plugins.length` `23` → `24` |
 
 Without the second hunk `npm test` fails even when the validator passes.
 
-A branch carrying both changes is prepared and verified at
+A branch carrying both changes is prepared at
 `/home/sakiko/inimerse/.dshm-pr` (clone of upstream `f18fc81`, branch
-`add-dsh-inimerse`, commit `1f13859`; the clone is listed in
-`.git/info/exclude` so it stays out of `git status`). It reproduces upstream CI
-locally:
+`add-dsh-inimerse`, commit `67a16c9`; the clone is listed in
+`.git/info/exclude` so it stays out of `git status`). `git diff f18fc81` there
+is exactly `registry.json | 19 +` and `tests/registry.test.mjs | 2 +-`.
+
+It reproduces upstream CI locally:
 
 - `npm ci` → `npm run build` → `[dsh-m] build ok: lib/host.js + lib/client.js`.
-- `node scripts/validate-registry.mjs` → every check green for all 23 existing
-  entries; the run then stops at
-  `✗ [dsh-inimerse] npm 查询 dsh-inimerse → HTTP 404`, which is exactly the
-  check step 1 unblocks. This entry's `github` / `homepage` / `icon` checks sit
-  behind the same `try` block and so are re-verified on the next run;
-  `infileap/Inimerse` is confirmed **public** (`api.github.com` → `200`,
-  `private: false`, default branch `main`) and `icon.svg` is on `main`.
+- `node scripts/validate-registry.mjs` → for `dsh-inimerse` the npm, GitHub and
+  homepage checks all pass. Run unauthenticated it eventually reports
+  `✗ … GitHub API 限额用尽（设置 GITHUB_TOKEN 可解）` for the tail of the list,
+  because the whole script shares one unauthenticated budget and upstream CI
+  supplies `secrets.GITHUB_TOKEN`. `infileap/Inimerse` was confirmed **public**
+  independently (`api.github.com` → `200`, `private: false`, default branch
+  `main`).
 - `npm test` → the only failures are two pre-existing, environment-dependent
   cases in `tests/run-command-error-digest.test.mjs` (`leader close… 实际
   112ms`); they reproduce identically on pristine `f18fc81` and never read

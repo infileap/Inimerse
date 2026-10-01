@@ -15,6 +15,5 @@
   "source": "npm",
   "npm": "dsh-inimerse",
   "github": "infileap/Inimerse",
-  "homepage": "https://github.com/infileap/Inimerse/tree/main/tools/dsh-inimerse",
-  "icon": "https://raw.githubusercontent.com/infileap/Inimerse/main/tools/dsh-inimerse/icon.svg"
+  "homepage": "https://github.com/infileap/Inimerse/tree/main/tools/dsh-inimerse"
 }
