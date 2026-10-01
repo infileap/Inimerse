@@ -2,7 +2,12 @@
 #define INIMERSE_CRP_SESSION_H
 #include <stdint.h>
 
-typedef enum { IM_CRP_IDLE, IM_CRP_RUNNING, IM_CRP_STOPPED, IM_CRP_CRASHED, IM_CRP_INCOMPATIBLE } ImCrpState;
+typedef enum {
+    IM_CRP_IDLE, IM_CRP_RUNNING, IM_CRP_STOPPED, IM_CRP_CRASHED, IM_CRP_INCOMPATIBLE,
+    /* §55.6 lifecycle: a dropped network is not a player leaving the world */
+    IM_CRP_DEGRADED, IM_CRP_DISCONNECTED_GRACE, IM_CRP_REATTACHING,
+    IM_CRP_RESUMED, IM_CRP_READ_ONLY, IM_CRP_EXPIRED
+} ImCrpState;
 
 typedef struct {
     ImCrpState state;
@@ -16,6 +21,12 @@ typedef struct {
     uint64_t lease_expires_ms;  /* 0 = no lease */
     uint64_t lease_ttl_ms;
     char lease_id[33];          /* hex lease id ("" = none) */
+    /* --- §55.6 extensions --- */
+    uint64_t generation;        /* authority generation this session is bound to */
+    uint64_t last_committed;    /* highest sequence the authority committed */
+    uint64_t grace_until_ms;    /* disconnected_grace deadline */
+    int pending_inputs;         /* unacknowledged client inputs (never authority) */
+    int rejected_inputs;
 } ImCrpSession;
 
 /* capability bits negotiated in the CRP handshake (§55.3) */
@@ -59,5 +70,40 @@ int im_crp_session_accept(ImCrpSession *s, uint64_t seq);
    *needs_snapshot (1 = send snapshot instead of replay). */
 int im_crp_session_resume_plan(const ImCrpSession *s, uint64_t last_ack_seq, int window,
                                int *replay_from, int *needs_snapshot);
+
+/* §55.6 lifecycle transitions.  disconnect() enters the grace window (a
+   dropped connection is not a departure); reattach_plan() decides how the
+   session resumes -- and after an authority change the answer is a snapshot,
+   never a replay. */
+int im_crp_session_disconnect(ImCrpSession *s, uint64_t now_ms, uint64_t grace_ms);
+int im_crp_session_grace_expired(const ImCrpSession *s, uint64_t now_ms);
+/* Mark unacknowledged client input: it stays pending/rejected and can never
+   silently overwrite authoritative state.  Returns the new pending count. */
+int im_crp_session_note_input(ImCrpSession *s, int rejected);
+
+typedef struct {
+    int needs_snapshot;      /* 1 = send a snapshot; replay is not possible */
+    int read_only;           /* 1 = observe only (cannot take authority back) */
+    int authority_changed;   /* generation differs from the session's binding */
+    uint64_t generation;     /* the authority generation to resume against */
+    uint64_t replay_from;    /* first sequence to replay (0 with a snapshot) */
+    uint64_t last_applied;   /* sequence to report; RESET to 0 on generation change */
+    char reason[64];
+} ImCrpResumePlan;
+
+/* Plan a reattach against the current authority generation.  last_received /
+   last_committed are the client's view (white paper §55.6 reconnect fields);
+   window is the retained event window size. */
+int im_crp_session_reattach_plan(const ImCrpSession *s, uint64_t generation,
+                                 uint64_t last_received, uint64_t last_committed,
+                                 int window, ImCrpResumePlan *out);
+/* Rebinding to a new authority resets the sequence domain. */
+int im_crp_session_set_generation(ImCrpSession *s, uint64_t generation);
+
+/* Idempotency keys for side-effecting requests (§55.6: query before retry):
+   begin returns 1 for a new key, 0 when this key was already applied. */
+#define IM_CRP_IDEM_SLOTS 64
+int im_crp_session_idem_begin(ImCrpSession *s, const char *key);
+int im_crp_session_idem_end(ImCrpSession *s, const char *key, int applied);
 
 #endif

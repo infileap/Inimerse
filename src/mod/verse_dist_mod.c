@@ -2111,6 +2111,117 @@ static int b_verse_stop(VM *vm) {
 static int vd_json_str(const char *json, const char *key, char *out, size_t cap);
 static void rp_set_entry(VM *vm, int aidx, const char *key, Value val);
 
+/* ---------- §55.6 reconnect, state and idempotency ---------- */
+
+/* Reconnect with the client's generation/sequence view (§55.6 fields). */
+static int b_verse_session_reattach(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *verse = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *peer = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    char *gen = _strdup(r_str(vm, argc - 4) ? r_str(vm, argc - 4) : "0");
+    char *recv = _strdup(r_str(vm, argc - 5) ? r_str(vm, argc - 5) : "0");
+    char *comm = _strdup(r_str(vm, argc - 6) ? r_str(vm, argc - 6) : "0");
+    r_popn(vm, argc);
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/session/reattach", uri);
+    else
+        snprintf(url, sizeof url, "%s/session/reattach", uri);
+    char body[2048];
+    snprintf(body, sizeof body,
+             "{\"verse\":\"%s\",\"peer\":\"%s\",\"generation\":%s,"
+             "\"last_received_sequence\":%s,\"last_committed_sequence\":%s}",
+             verse, peer, gen, recv, comm);
+    int len = 0;
+    char *resp = http_post_body(url, body, &len);
+    char resume[32] = "unknown", reason[64] = "";
+    int last_applied = 0, generation = 0;
+    if (resp) {
+        (void)vd_json_str(resp, "resume", resume, sizeof resume);
+        (void)vd_json_str(resp, "reason", reason, sizeof reason);
+        const char *la = strstr(resp, "\"last_applied\"");
+        if (la) { const char *c = strchr(la, ':'); if (c) last_applied = atoi(c + 1); }
+        const char *gg = strstr(resp, "\"generation\"");
+        if (gg) { const char *c = strchr(gg, ':'); if (c) generation = atoi(c + 1); }
+        free(resp);
+    }
+    int out = vm_array_new(vm);
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    kv.sval = resume;     rp_set_entry(vm, out, "resume", kv);
+    kv.sval = reason;     rp_set_entry(vm, out, "reason", kv);
+    Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
+    iv.ival = last_applied; rp_set_entry(vm, out, "last_applied", iv);
+    iv.ival = generation;   rp_set_entry(vm, out, "generation", iv);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(verse); free(peer); free(gen); free(recv); free(comm);
+    return 1;
+}
+
+/* Read the server-side session state (§55.6 lifecycle). */
+static int b_verse_session_state(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *verse = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *peer = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    r_popn(vm, argc);
+    char url[1400];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/session/state?verse=%s&peer=%s", uri, verse, peer);
+    else
+        snprintf(url, sizeof url, "%s/session/state?verse=%s&peer=%s", uri, verse, peer);
+    int len = 0;
+    char *body = http_get_body(url, &len);
+    char state[32] = "unknown", authority[128] = "none";
+    int generation = 0, pending = 0;
+    if (body) {
+        (void)vd_json_str(body, "state", state, sizeof state);
+        (void)vd_json_str(body, "authority", authority, sizeof authority);
+        const char *g = strstr(body, "\"generation\"");
+        if (g) { const char *c = strchr(g, ':'); if (c) generation = atoi(c + 1); }
+        const char *p2 = strstr(body, "\"pending_inputs\"");
+        if (p2) { const char *c = strchr(p2, ':'); if (c) pending = atoi(c + 1); }
+        free(body);
+    }
+    int out = vm_array_new(vm);
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    kv.sval = state;      rp_set_entry(vm, out, "state", kv);
+    kv.sval = authority;  rp_set_entry(vm, out, "authority", kv);
+    Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
+    iv.ival = generation; rp_set_entry(vm, out, "generation", iv);
+    iv.ival = pending;    rp_set_entry(vm, out, "pending_inputs", iv);
+    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    r_push(vm, d);
+    free(uri); free(verse); free(peer);
+    return 1;
+}
+
+/* Idempotency gate for side-effecting requests: "new" or "replay". */
+static int b_verse_idem_begin(VM *vm) {
+    int argc = vm->cur_argc;
+    char *uri = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
+    char *verse = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
+    char *peer = _strdup(r_str(vm, argc - 3) ? r_str(vm, argc - 3) : "");
+    char *key = _strdup(r_str(vm, argc - 4) ? r_str(vm, argc - 4) : "");
+    r_popn(vm, argc);
+    char url[1200];
+    if (strncmp(uri, "http://", 7) != 0 && strncmp(uri, "https://", 8) != 0)
+        snprintf(url, sizeof url, "http://%s/session/idem", uri);
+    else
+        snprintf(url, sizeof url, "%s/session/idem", uri);
+    char body[1024];
+    snprintf(body, sizeof body, "{\"verse\":\"%s\",\"peer\":\"%s\",\"key\":\"%s\"}", verse, peer, key);
+    int len = 0;
+    char *resp = http_post_body(url, body, &len);
+    char status[32] = "unknown";
+    if (resp) { (void)vd_json_str(resp, "status", status, sizeof status); free(resp); }
+    Value s; s.type = VAL_STRING; s.ival = 0; s.fval = 0; s.ptr = NULL; s.sval = strdup(status);
+    r_push(vm, s);
+    free(uri); free(verse); free(peer); free(key);
+    return 1;
+}
+
 /* ---------- §55.5 scheduling, authority and handoff ---------- */
 
 /* Scheduler view: only fresh + healthy nodes (what was excluded is reported). */
@@ -2379,7 +2490,10 @@ void verse_dist_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "verse_node_discover", b_verse_node_discover, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_node_schedule", b_verse_node_schedule, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_session_authority", b_verse_session_authority, 1|CAP_VERSE|CAP_NET, 0);
-    vm_register_builtin_full(vm, "verse_node_handoff", b_verse_node_handoff, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_public_ip", b_verse_public_ip, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_publish", b_verse_publish, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_node_handoff", b_verse_node_handoff, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_session_reattach", b_verse_session_reattach, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_session_state", b_verse_session_state, 1|CAP_VERSE|CAP_NET, 0);
+    vm_register_builtin_full(vm, "verse_idem_begin", b_verse_idem_begin, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_public_ip", b_verse_public_ip, 1|CAP_VERSE|CAP_NET, 0);    vm_register_builtin_full(vm, "verse_publish", b_verse_publish, 1|CAP_VERSE|CAP_NET, 0);
     vm_register_builtin_full(vm, "verse_identity_new", b_verse_identity_new, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_identity_pubkey", b_verse_identity_pubkey, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_sign", b_verse_sign, 1|CAP_VERSE, 0);

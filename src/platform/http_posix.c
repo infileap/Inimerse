@@ -93,6 +93,7 @@ typedef struct {
     int frozen;              /* source frozen: read-only during handoff */
     char checkpoint[65];     /* last verified state/snapshot hash */
     uint64_t updated_ms;
+    ImCrpSession sess;       /* §55.6 lifecycle + idempotency for this session */
 } ImAuthority;
 #define IM_AUTH_MAX 128
 static ImAuthority g_auths[IM_AUTH_MAX];
@@ -412,6 +413,8 @@ static ImAuthority *auth_get_or_create(const char *verse, const char *peer) {
     snprintf(a->authority, sizeof a->authority, "%s", "local");
     a->generation = 1;
     a->updated_ms = http_now_ms();
+    im_crp_session_init(&a->sess, 1);
+    im_crp_session_set_generation(&a->sess, 1);
     return a;
 }
 
@@ -621,6 +624,9 @@ static void *http_loop(void *unused) {
         int node_handoff = n > 0 && strstr(req, "POST /node/handoff") != NULL;
         int auth_post = n > 0 && strstr(req, "POST /session/authority") != NULL;
         int auth_get = n > 0 && strstr(req, "GET /session/authority") != NULL;
+        int reattach = n > 0 && strstr(req, "POST /session/reattach") != NULL;
+        int state_get = n > 0 && strstr(req, "GET /session/state") != NULL;
+        int idem = n > 0 && strstr(req, "POST /session/idem") != NULL;
         int portal = n > 0 && strstr(req, "POST /portal") != NULL;
         int status = 200;
         char request_token[64] = "";
@@ -629,7 +635,7 @@ static void *http_loop(void *unused) {
         (void)json_field_string(req, "verse", signal_verse, sizeof signal_verse); (void)json_field_string(req, "peer", signal_peer, sizeof signal_peer);
         if (signal && !token_allows(request_token, signal_verse, signal_peer)) { signal = 0; status = 403; }
         char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
-        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get;
+        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get || reattach || state_get || idem;
         char findbuf[4096];
         if (find) {
             size_t used = 0; used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "{\"items\":[");
@@ -867,6 +873,15 @@ static void *http_loop(void *unused) {
                     a->generation++;
                     a->frozen = 0;
                     a->updated_ms = http_now_ms();
+                    im_crp_session_set_generation(&a->sess, (uint64_t)a->generation);
+                    /* the previous authority's events belong to the old
+                       generation: replaying them under the new authority
+                       would resurrect stale state (§55.6) */
+                    for (int si = 0; si < g_session_count; ++si)
+                        if (!strcmp(g_sessions[si].verse, verse) && !strcmp(g_sessions[si].peer, peer)) {
+                            g_sessions[si].event_count = 0;
+                            g_sessions[si].seq = 0;   /* the sequence domain restarts */
+                        }
                     fprintf(stderr, "[hub] handoff %s/%s: authority -> %s (generation %d)\n",
                             verse, peer, to, a->generation);
                     snprintf(nodebuf, sizeof nodebuf,
@@ -875,6 +890,113 @@ static void *http_loop(void *unused) {
                              a->authority, a->generation, a->checkpoint, rules[0] ? rules : "1");
                     body = nodebuf;
                 }
+            }
+        }
+        if (reattach) {
+            /* §55.6 reconnect: the client sends its generation, last received
+               and last committed sequences plus its snapshot hash.  After an
+               authority change the only safe resume is a snapshot and
+               last_applied restarts at 0. */
+            char verse[128] = "", peer[128] = "", snap[65] = "";
+            uint64_t gen = 0, last_received = 0, last_committed = 0;
+            (void)json_field_string(req, "verse", verse, sizeof verse);
+            (void)json_field_string(req, "peer", peer, sizeof peer);
+            (void)json_field_string(req, "client_snapshot_hash", snap, sizeof snap);
+            (void)json_field_u64(req, "generation", &gen);
+            (void)json_field_u64(req, "last_received_sequence", &last_received);
+            (void)json_field_u64(req, "last_committed_sequence", &last_committed);
+            char tk[64] = "";
+            (void)json_field_string(req, "token", tk, sizeof tk);
+            if (tk[0] && !token_allows(tk, verse, peer)) {
+                status = 403; body = "{\"error\":\"invalid_capability_token\"}\n";
+                goto reattach_done;
+            }
+            ImAuthority *a = auth_find(verse, peer);
+            uint64_t cur_gen = a ? (uint64_t)a->generation : 1;
+            /* authority's view of the committed sequence comes from the
+               retained event window (the same source /session/resume uses) */
+            uint64_t have = 0;
+            for (int i = 0; i < g_session_count; ++i)
+                if (!strcmp(g_sessions[i].verse, verse) && !strcmp(g_sessions[i].peer, peer))
+                    have = g_sessions[i].seq;
+            ImCrpResumePlan plan;
+            ImCrpSession tmp;
+            im_crp_session_init(&tmp, 1);
+            tmp.generation = cur_gen;
+            tmp.last_applied = have;
+            if (im_crp_session_reattach_plan(&tmp, gen ? gen : cur_gen,
+                                             last_received, last_committed,
+                                             SESSION_EVENT_WINDOW, &plan) != 0) {
+                status = 500; body = "{\"error\":\"reattach_failed\"}\n";
+            } else if (plan.needs_snapshot) {
+                snprintf(nodebuf, sizeof nodebuf,
+                         "{\"resume\":\"snapshot_required\",\"reason\":\"%s\",\"authority_changed\":%d,"
+                         "\"last_applied\":0,\"generation\":%llu}\n",
+                         plan.reason, plan.authority_changed, (unsigned long long)cur_gen);
+                body = nodebuf;
+            } else {
+                size_t used = (size_t)snprintf(nodebuf, sizeof nodebuf,
+                                               "{\"resume\":\"replay\",\"reason\":\"replay\",\"replay_from\":%llu,"
+                                               "\"last_applied\":%llu,\"generation\":%llu,\"replay\":[",
+                                               (unsigned long long)plan.replay_from,
+                                               (unsigned long long)plan.last_applied,
+                                               (unsigned long long)cur_gen);
+                int first = 1;
+                for (int i = 0; i < g_session_count && used < sizeof nodebuf - 320; ++i)
+                    if (!strcmp(g_sessions[i].verse, verse) && !strcmp(g_sessions[i].peer, peer)) {
+                        ImSession *s = &g_sessions[i];
+                        for (int j = 0; j < s->event_count; ++j)
+                            if (s->event_seq[j] >= plan.replay_from) {
+                                used += (size_t)snprintf(nodebuf + used, sizeof nodebuf - used,
+                                                         "%s{\"seq\":%llu,\"event\":\"%s\"}",
+                                                         first ? "" : ",", (unsigned long long)s->event_seq[j], s->event[j]);
+                                first = 0;
+                            }
+                    }
+                snprintf(nodebuf + used, sizeof nodebuf - used, "]}\n");
+                body = nodebuf;
+            }
+reattach_done: ;
+        }
+        if (state_get) {
+            char verse[128] = "", peer[128] = "";
+            (void)query_param(req, "verse", verse, sizeof verse);
+            (void)query_param(req, "peer", peer, sizeof peer);
+            ImAuthority *a = auth_find(verse, peer);
+            const char *st = !a ? "idle" : a->frozen ? "read_only" : "connected";
+            snprintf(nodebuf, sizeof nodebuf,
+                     "{\"state\":\"%s\",\"generation\":%d,\"authority\":\"%s\","
+                     "\"pending_inputs\":%d,\"rejected_inputs\":%d,\"event_tail\":\"",
+                     st, a ? a->generation : 0, a ? a->authority : "none",
+                     a ? a->sess.pending_inputs : 0, a ? a->sess.rejected_inputs : 0);
+            char tail[65];
+            session_event_tail_hash(verse, peer, tail);
+            size_t su = strlen(nodebuf);
+            snprintf(nodebuf + su, sizeof nodebuf - su, "%s\"}\n", tail);
+            body = nodebuf;
+        }
+        if (idem) {
+            /* §55.6: side-effecting requests carry an idempotency key; a
+               repeat is reported instead of re-applied */
+            char verse[128] = "", peer[128] = "", key[160] = "";
+            (void)json_field_string(req, "verse", verse, sizeof verse);
+            (void)json_field_string(req, "peer", peer, sizeof peer);
+            (void)json_field_string(req, "key", key, sizeof key);
+            char tk[64] = "";
+            (void)json_field_string(req, "token", tk, sizeof tk);
+            ImAuthority *a = auth_get_or_create(verse, peer);
+            if (tk[0] && !token_allows(tk, verse, peer)) {
+                status = 403; body = "{\"error\":\"invalid_capability_token\"}\n";
+            } else if (!verse[0] || !peer[0] || !key[0]) {
+                status = 400; body = "{\"error\":\"verse_peer_key_required\"}\n";
+            } else if (!a) {
+                status = 507; body = "{\"error\":\"authority_registry_full\"}\n";
+            } else {
+                int fresh = im_crp_session_idem_begin(&a->sess, key);
+                (void)im_crp_session_idem_end(&a->sess, key, 1);
+                snprintf(nodebuf, sizeof nodebuf, "{\"status\":\"%s\",\"key\":\"%s\"}\n",
+                         fresh ? "new" : "replay", key);
+                body = nodebuf;
             }
         }
         char portalbuf[512];

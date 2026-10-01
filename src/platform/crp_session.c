@@ -95,3 +95,110 @@ int im_crp_session_resume_plan(const ImCrpSession *s, uint64_t last_ack_seq, int
     if (needs_snapshot) *needs_snapshot = 1;
     return 0;
 }
+
+/* ================= §55.6 lifecycle, reattach and idempotency ================= */
+
+int im_crp_session_disconnect(ImCrpSession *s, uint64_t now_ms, uint64_t grace_ms) {
+    if (!s) return -1;
+    if (s->state == IM_CRP_EXPIRED || s->state == IM_CRP_READ_ONLY) return -1;
+    if (grace_ms == 0) grace_ms = 30000;
+    s->grace_until_ms = now_ms + grace_ms;
+    s->state = IM_CRP_DISCONNECTED_GRACE;
+    return 0;
+}
+
+int im_crp_session_grace_expired(const ImCrpSession *s, uint64_t now_ms) {
+    if (!s) return 1;
+    if (s->state != IM_CRP_DISCONNECTED_GRACE && s->state != IM_CRP_DEGRADED) return 0;
+    return now_ms > s->grace_until_ms;
+}
+
+int im_crp_session_note_input(ImCrpSession *s, int rejected) {
+    if (!s) return -1;
+    if (rejected) s->rejected_inputs++;
+    else s->pending_inputs++;
+    return s->pending_inputs;
+}
+
+int im_crp_session_set_generation(ImCrpSession *s, uint64_t generation) {
+    if (!s) return -1;
+    s->generation = generation;
+    /* a new authority means a new sequence domain: nothing carries over */
+    s->last_applied = 0;
+    s->last_committed = 0;
+    s->pending_inputs = 0;
+    s->rejected_inputs = 0;
+    return 0;
+}
+
+int im_crp_session_reattach_plan(const ImCrpSession *s, uint64_t generation,
+                                 uint64_t last_received, uint64_t last_committed,
+                                 int window, ImCrpResumePlan *out) {
+    if (!s || !out) return -1;
+    memset(out, 0, sizeof *out);
+    out->generation = generation;
+    if (window < 0) window = 0;
+
+    if (generation != s->generation) {
+        /* authority moved: the old sequence domain is meaningless, so the
+           only safe resume is a snapshot and last_applied restarts at 0 --
+           replaying across generations could resurrect stale authority */
+        out->needs_snapshot = 1;
+        out->authority_changed = 1;
+        out->last_applied = 0;
+        out->replay_from = 0;
+        snprintf(out->reason, sizeof out->reason, "%s", "authority_changed");
+        return 0;
+    }
+    out->authority_changed = 0;
+    uint64_t have = s->last_applied;
+    uint64_t ack = last_committed;
+    if (ack > last_received) ack = last_received;
+    if (have > ack && (have - ack) > (uint64_t)window) {
+        /* the client fell out of the retained window: snapshot instead */
+        out->needs_snapshot = 1;
+        out->last_applied = have;
+        snprintf(out->reason, sizeof out->reason, "%s", "window_exceeded");
+        return 0;
+    }
+    out->needs_snapshot = 0;
+    out->replay_from = ack + 1;
+    out->last_applied = have;
+    snprintf(out->reason, sizeof out->reason, "%s", "replay");
+    return 0;
+}
+
+/* idempotency keys: a linear list of the recent keys in this session */
+typedef struct { char key[96]; int applied; } ImIdemSlot;
+static ImIdemSlot *idem_slots(ImCrpSession *s) {
+    /* the slots live in a side table keyed by the session pointer to keep
+       ImCrpSession layout stable for existing callers */
+    static struct { ImCrpSession *s; ImIdemSlot slots[IM_CRP_IDEM_SLOTS]; int n; int head; } g_idem[16];
+    static int n_idem = 0;
+    for (int i = 0; i < n_idem; ++i) if (g_idem[i].s == s) return g_idem[i].slots;
+    if (n_idem >= 16) return g_idem[0].slots;
+    g_idem[n_idem].s = s;
+    memset(g_idem[n_idem].slots, 0, sizeof g_idem[n_idem].slots);
+    return g_idem[n_idem++].slots;
+}
+
+int im_crp_session_idem_begin(ImCrpSession *s, const char *key) {
+    if (!s || !key || !key[0]) return 1;   /* no key: caller must treat as always-new */
+    ImIdemSlot *slots = idem_slots(s);
+    for (int i = 0; i < IM_CRP_IDEM_SLOTS; ++i)
+        if (slots[i].applied && strcmp(slots[i].key, key) == 0) return 0;   /* replay */
+    for (int i = 0; i < IM_CRP_IDEM_SLOTS; ++i)
+        if (!slots[i].applied) { snprintf(slots[i].key, sizeof slots[i].key, "%s", key); slots[i].applied = 0; return 1; }
+    /* table full: replace the first slot (bounded memory beats unbounded growth) */
+    snprintf(slots[0].key, sizeof slots[0].key, "%s", key);
+    slots[0].applied = 0;
+    return 1;
+}
+
+int im_crp_session_idem_end(ImCrpSession *s, const char *key, int applied) {
+    if (!s || !key || !key[0]) return -1;
+    ImIdemSlot *slots = idem_slots(s);
+    for (int i = 0; i < IM_CRP_IDEM_SLOTS; ++i)
+        if (strcmp(slots[i].key, key) == 0) { slots[i].applied = applied ? 1 : 0; return 0; }
+    return -1;
+}
