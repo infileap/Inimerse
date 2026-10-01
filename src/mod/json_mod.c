@@ -12,7 +12,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
 #include <windows.h>
+#else
+/* POSIX: sources are UTF-8; emulate the two CP_ACP helpers losslessly.
+   Serialize-side: treat each high byte as one U+0080..U+00FF code point.
+   Parse-side: emit UTF-8 for the code point (matches UTF-8 sources). */
+static int json_acp_to_wide(const char *s, int blen, unsigned *wc, int wcap) {
+    if (wcap < 1) return 0;
+    wc[0] = (unsigned char)s[0];
+    return 1;
+}
+typedef unsigned WCHAR;
+static int json_wide_to_acp(const unsigned *wc, int wcount, char *mb, int mbcap) {
+    unsigned cp = wc[0];
+    if (cp < 0x80) {
+        if (mbcap < 1) return 0;
+        mb[0] = (char)cp; return 1;
+    }
+    if (cp < 0x800) {
+        if (mbcap < 2) return 0;
+        mb[0] = (char)(0xC0 | (cp >> 6)); mb[1] = (char)(0x80 | (cp & 0x3F)); return 2;
+    }
+    if (mbcap < 3) return 0;
+    mb[0] = (char)(0xE0 | (cp >> 12)); mb[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); mb[2] = (char)(0x80 | (cp & 0x3F));
+    return 3;
+}
+#endif
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
@@ -46,9 +72,16 @@ static void json_escape_str(const char *s, char *out, int *pos, int outsz) {
         else if (c < 0x20) { int n = snprintf(out + *pos, outsz - *pos, "\\u%04x", c); *pos += n; p++; }
         else if (c >= 0x80) {
             /* GBK lead byte: try to convert one GBK char (1-2 bytes) to UTF-16 */
-            int blen = (c >= 0x81 && c <= 0xFE && p[1] != 0) ? 2 : 1;
+            int blen = 1;
+#ifdef _WIN32
+            blen = (c >= 0x81 && c <= 0xFE && p[1] != 0) ? 2 : 1;
+#endif
             WCHAR wc[2] = {0};
+#ifdef _WIN32
             int wn = MultiByteToWideChar(CP_ACP, 0, (const char *)p, blen, wc, 2);
+#else
+            int wn = json_acp_to_wide(p, blen, wc, 2);
+#endif
             if (wn > 0) {
                 for (int k = 0; k < wn && k < 2; k++) {
                     int n = snprintf(out + *pos, outsz - *pos, "\\u%04x", (unsigned)wc[k]);
@@ -167,7 +200,11 @@ static void json_decode_string(const char *s, int *i, char *out, int *opos, int 
                     *i += 5; /* \uXXXX */
                     WCHAR wc = (WCHAR)cp;
                     char mb[8];
+#ifdef _WIN32
                     int mbLen = WideCharToMultiByte(CP_ACP, 0, &wc, 1, mb, 8, NULL, NULL);
+#else
+                    int mbLen = json_wide_to_acp(&wc, 1, mb, 8);
+#endif
                     for (int k = 0; k < mbLen && *opos < outsz - 1; k++) out[(*opos)++] = mb[k];
                     break;
                 }

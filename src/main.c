@@ -46,6 +46,7 @@ void identity_mod_register(VM *vm);
 void social_mod_register(VM *vm);
 void ai_mod_register(VM *vm);
 void record_mod_register(VM *vm);
+void replay_mod_register(VM *vm);
 #include "runtime.h"
 #include "mod.h"
 #include "bytecode.h"
@@ -567,6 +568,7 @@ static void register_core_modules(VM *vm) {
     social_mod_register(vm);
     ai_mod_register(vm);
     record_mod_register(vm);
+    replay_mod_register(vm);
 }
 
 static void register_world_modules(VM *vm) {

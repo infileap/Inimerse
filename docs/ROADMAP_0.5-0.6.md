@@ -34,8 +34,9 @@
 - 示例与构建集成：`examples/cpp_native.im`、`examples/java_bridge.im`、`examples/python_bridge.im`、`examples/interface.def` 展示三条绑定管线；`examples/build.gradle` / `examples/pom.xml` 提供 Gradle/Maven 依赖集成（§3.2 验收）。
 - 错误转换测试 + 迁移报告：`bindgen.test.py` 断言三种语言的错误转换约定（C int 0=成功 / Java InimerseException / Python InimerseError）；`tools/migrate_report.py` 扫描 C/Python 源码生成不可转换语法（file:line）、依赖与运行时假设清单。
 - 调试信息：`buildc --debug-info` 输出 `<out>.dbg`（文本行号表 main/func/thread 分块 + STABS 风格符号）与 `<out>.debug_line`（DWARF 5 行号程序，已用独立解码器验证）。完整 ELF 容器与调试器断点需等待 AOT 后端进入稳定通道。
+- 确定性回放闭环（M1，roadmap §52 协议核心 3+4 / §24.2 事件信封 / §24.5 错误分类 / §48.4 命名随机流）：`src/mod/replay_mod.c` 提供 `replay_seed/replay_rand`（命名随机流）、`replay_tick/replay_time`（逻辑时钟）、`replay_log_begin/log/log_end`（JSONL 事件日志，信封含 event_id/idempotency_key/链式 sha256）、`replay_state_hash`（规范化状态哈希）、`replay_load/replay_verify`（链校验，篡改报 IntegrityError）。错误按 §24.5 分类（NotFound/ParseError/IntegrityError/ResourceLimit/TypeError/ProtocolError）以 dict 返回。跨平台（POSIX 不再是 stub）。测试 `tools/replay.test.py`（确定性 + 篡改检测）。
 - 通道性能对比：`tools/perf_compare.py`（§2.3 验收以测量数据为准，结果见 SELFHOST_BENCHMARK.md——Wasm MVP 实测 ~1.8x 解释器，AOT 打包通道等同解释器，≥2x 目标属优化型 AOT 后端）。
-- 回归测试：`tools/cli_incremental.test.py`、`tools/selfhost_bench.py`（`benchmark;regression`）、`tools/bindgen.test.py`、`tools/wasm_backend.test.py`（`wasm`）、`tools/scan_tools.test.py`（均注册 CTest）。
+- 回归测试：`tools/cli_incremental.test.py`、`tools/selfhost_bench.py`（`benchmark;regression`）、`tools/bindgen.test.py`、`tools/wasm_backend.test.py`（`wasm`）、`tools/scan_tools.test.py`、`tools/replay.test.py`（`runtime;regression`）（均注册 CTest）。
 
 **未实现部分：**
 - 优化型 AOT 后端（原生代码生成，性能目标 ≥2x 解释器）；当前 `run --aot` 明确报错，`compile --aot` 走打包通道。

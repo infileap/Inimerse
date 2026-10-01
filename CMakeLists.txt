@@ -121,6 +121,8 @@ if(INIMERSE_PYTHON)
   set_tests_properties(wasm_backend_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression;wasm")
   add_test(NAME scan_tools_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/scan_tools.test.py)
   set_tests_properties(scan_tools_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
+  add_test(NAME replay_closure_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/replay.test.py)
+  set_tests_properties(replay_closure_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "runtime;regression")
   set_tests_properties(cli_incremental_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME release_verify_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/release_verify.test.py)
   set_tests_properties(release_verify_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "release;regression")
@@ -171,7 +173,7 @@ if(INIMERSE_BUILD_ENGINE)
       src/runtime/runtime.c src/child_proc.c src/headless_server.c
       src/isolate_mod.c src/desugar_mod.c src/lint_mod.c src/mod/mod.c
       src/mod/gui_mod.c src/mod/io_mod.c src/mod/net_mod.c src/mod/json_mod.c
-      src/mod/record_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
+      src/mod/record_mod.c src/mod/replay_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
       src/mod/server_mod.c src/mod/identity_mod.c src/mod/social_mod.c
       src/mod/ai_mod.c src/mod/result_mod.c mods/build/build_mod.c)
     list(APPEND INIMERSE_ENGINE_SOURCES src/mod/say_mod_windows.c src/mod/say_stream.c)
@@ -180,7 +182,7 @@ if(INIMERSE_BUILD_ENGINE)
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/mod/say_stream.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
       src/platform/posix_stubs.c src/platform/http_posix.c src/platform/http_client.c src/platform/serial_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c
-      src/headless_server_posix.c src/mod/result_mod.c)
+      src/headless_server_posix.c src/mod/replay_mod.c src/mod/json_mod.c src/mod/result_mod.c)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
