@@ -19,3 +19,79 @@ int im_crp_session_auth(const char *provided, const char *expected) {
     return diff == 0;
 }
 int im_crp_session_reset(ImCrpSession *s) { if (!s) return -1; int abi = s->abi; im_crp_session_init(s, abi); return 0; }
+
+/* ================= handshake, lease and message sequencing (§55) ================= */
+
+static unsigned long long crp_mix64(unsigned long long x) {
+    x += 0x9E3779B97F4A7C15ULL;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+    return x ^ (x >> 31);
+}
+
+int im_crp_session_hello(int my_version, uint32_t my_caps,
+                         int peer_version, uint32_t peer_caps, ImCrpHello *out) {
+    if (!out) return -1;
+    memset(out, 0, sizeof *out);
+    out->my_version = my_version;
+    out->peer_version = peer_version;
+    out->my_caps = my_caps;
+    out->peer_caps = peer_caps;
+    if (my_version != peer_version) {
+        out->compatible = 0;
+        snprintf(out->error, sizeof out->error,
+                 "protocol version mismatch: peer %d, supported %d", peer_version, my_version);
+        return -1;
+    }
+    out->compatible = 1;
+    out->negotiated_caps = my_caps & peer_caps;
+    return 0;
+}
+
+int im_crp_session_lease_begin(ImCrpSession *s, uint64_t now_ms, uint64_t ttl_ms) {
+    if (!s) return -1;
+    if (ttl_ms == 0) ttl_ms = 30000;
+    s->lease_ttl_ms = ttl_ms;
+    s->lease_expires_ms = now_ms + ttl_ms;
+    unsigned long long id = crp_mix64(now_ms ^ ((unsigned long long)s->abi << 32) ^ (s->heartbeat + 1));
+    snprintf(s->lease_id, sizeof s->lease_id, "%016llx%016llx", id, crp_mix64(id));
+    return 0;
+}
+
+int im_crp_session_lease_touch(ImCrpSession *s, uint64_t now_ms, uint64_t ttl_ms) {
+    if (!s || !s->lease_id[0]) return -1;
+    if (now_ms > s->lease_expires_ms) return -1; /* expired: re-handshake required */
+    if (ttl_ms > 0) s->lease_ttl_ms = ttl_ms;
+    if (s->lease_ttl_ms == 0) s->lease_ttl_ms = 30000;
+    s->lease_expires_ms = now_ms + s->lease_ttl_ms;
+    return 0;
+}
+
+int im_crp_session_lease_expired(const ImCrpSession *s, uint64_t now_ms) {
+    if (!s || !s->lease_id[0]) return 1;
+    return now_ms > s->lease_expires_ms;
+}
+
+int im_crp_session_accept(ImCrpSession *s, uint64_t seq) {
+    if (!s) return -1;
+    if (seq <= s->last_applied) return 0;          /* duplicate: drop */
+    if (s->last_applied != 0 && seq > s->last_applied + 1) return -1; /* gap: resync */
+    s->last_applied = seq;
+    return 1;
+}
+
+int im_crp_session_resume_plan(const ImCrpSession *s, uint64_t last_ack_seq, int window,
+                               int *replay_from, int *needs_snapshot) {
+    if (!s) return -1;
+    if (window < 0) window = 0;
+    int behind = (s->last_applied >= last_ack_seq);
+    uint64_t gap = behind ? (s->last_applied - last_ack_seq) : 0;
+    if (behind && gap <= (uint64_t)window) {
+        if (replay_from) *replay_from = (int)(last_ack_seq + 1);
+        if (needs_snapshot) *needs_snapshot = 0;
+        return 0;
+    }
+    if (replay_from) *replay_from = 0;
+    if (needs_snapshot) *needs_snapshot = 1;
+    return 0;
+}

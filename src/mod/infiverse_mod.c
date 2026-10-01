@@ -28,6 +28,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#ifndef _WIN32
+#define _strdup strdup
+#endif
 
 /* ---------- world storage ---------- */
 #define VERSE_MAX_WORLDS 16
@@ -833,5 +836,5 @@ void infiverse_mod_register(VM *vm) {
     vm_register_builtin(vm, "verse_biome_set", b_verse_biome_set);
     vm_register_builtin(vm, "verse_biome_get", b_verse_biome_get);
     vm_register_builtin(vm, "verse_biome_palette", b_verse_biome_palette);
-    printf("[infiverse mod] loaded (%d worlds, world %d active)\n", VERSE_MAX_WORLDS, cur_world);
+    fprintf(stderr, "[infiverse mod] loaded (%d worlds, world %d active)\n", VERSE_MAX_WORLDS, cur_world);
 }

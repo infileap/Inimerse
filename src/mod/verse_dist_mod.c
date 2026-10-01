@@ -24,11 +24,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include "child_proc.h"
 #include <winhttp.h>
+#else
+#include <unistd.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <dirent.h>
+#include "platform/http_client.h"
+#define _strdup strdup
+#endif
 #include "vm.h"
 #include "platform/platform.h"
 #include "platform/dir.h"
@@ -114,6 +123,7 @@ static unsigned int crc32_buf(const unsigned char *d, int len) {
 }
 
 /* ---------- http GET (sync, full body, binary-safe) ---------- */
+#ifdef _WIN32
 static char *http_get_body(const char *url, int *out_len) {
     *out_len = 0;
     if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) return NULL;
@@ -216,6 +226,31 @@ static char *http_post_body(const char *url, const char *postdata, int *out_len)
     *out_len = blen;
     return body;
 }
+
+#else
+/* POSIX: use the portable HTTP client (fixed 8MB response budget) */
+#define VDP_HTTP_CAP (8 << 20)
+static char *http_get_body(const char *url, int *out_len) {
+    char *resp = (char*)malloc(VDP_HTTP_CAP);
+    if (!resp) return NULL;
+    int status = 0;
+    if (im_http_request("GET", url, NULL, resp, VDP_HTTP_CAP, &status) != 0 || status >= 400) {
+        free(resp); *out_len = 0; return NULL;
+    }
+    *out_len = (int)strlen(resp);
+    return resp;
+}
+static char *http_post_body(const char *url, const char *postdata, int *out_len) {
+    char *resp = (char*)malloc(VDP_HTTP_CAP);
+    if (!resp) return NULL;
+    int status = 0;
+    if (im_http_request("POST", url, postdata, resp, VDP_HTTP_CAP, &status) != 0 || status >= 400) {
+        free(resp); *out_len = 0; return NULL;
+    }
+    *out_len = (int)strlen(resp);
+    return resp;
+}
+#endif
 
 /* ---------- verse home dir ---------- */
 static char self_dir[1024] = {0};
@@ -374,10 +409,10 @@ static int identity_pubkey(char pubhex[65]) {
 static int b_verse_identity_new(VM *vm) {
     unsigned char seed[32];
     unsigned char digest[64];
-    LARGE_INTEGER pc; QueryPerformanceCounter(&pc);
-    ULONGLONG t0 = GetTickCount64();
+    uint64_t t0 = im_platform_now_ms();
+    unsigned long long pcq = (unsigned long long)im_platform_now_ms();
     unsigned char inp[64];
-    memcpy(inp, &t0, 8); memcpy(inp + 8, &pc.QuadPart, 8);
+    memcpy(inp, &t0, 8); memcpy(inp + 8, &pcq, 8);
     for (int i = 16; i < 64; i++) inp[i] = (unsigned char)((t0 >> (i % 8)) & 0xff) ^ (unsigned char)(i * 31);
     /* sha512_buf always writes 64 bytes; keep the Ed25519 seed at 32 bytes. */
     sha512_buf(inp, sizeof inp, digest);
@@ -877,10 +912,10 @@ static int b_verse_hub_ping(VM *vm) {
         snprintf(url, sizeof url, "http://%s/ping", uri);
     else
         snprintf(url, sizeof url, "%s/ping", uri);
-    ULONGLONG t0 = GetTickCount64();
+    uint64_t t0 = im_platform_now_ms();
     int len = 0;
     char *b = http_get_body(url, &len);
-    ULONGLONG dt = GetTickCount64() - t0;
+    uint64_t dt = im_platform_now_ms() - t0;
     int ok = (b && len >= 4 && strncmp(b, "pong", 4) == 0);
     free(b);
     r_push_int(vm, ok ? (int)dt : 0);
@@ -1023,11 +1058,19 @@ static int do_open(VM *vm, const char *uri) {
     if (!verse_unpack(vm, pkg, m.id, m.mainf, pkg_json)) { free(pkg_json); return 0; }
     free(pkg_json);
     char base[1200];
+#ifdef _WIN32
     snprintf(base, sizeof base, "%s\\universe\\%s\\", home_dir(), m.id);
     char cmd[1600];
     snprintf(cmd, sizeof cmd, "cmd /c start \"\" \"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, m.mainf);
     DWORD cpid = child_proc_spawn(cmd, "verse", 0);
     if (cpid) return 1;
+#else
+    snprintf(base, sizeof base, "%s/universe/%s/", home_dir(), m.id);
+    char cmd[1600];
+    snprintf(cmd, sizeof cmd, "cd \"%s\" && nohup \"%s/inimerse\" \"%s%s\" >/dev/null 2>&1 &", home_dir(), home_dir(), base, m.mainf);
+    int cpid = system(cmd); /* fire-and-forget launch */
+    if (cpid == 0) return 1;
+#endif
     fprintf(stderr, "[VDP] launch failed: %s\n", cmd);
     return 0;
 }
@@ -1058,23 +1101,45 @@ static int b_verse_pack(VM *vm) {
     if (argc >= 5) { const char *v5 = r_str(vm, argc - 5); if (v5 && v5[0]) snprintf(metaMin, sizeof metaMin, "%s", v5); }
     for (int i = argc - 6; i >= 0 && nMetaSrcs < 16; i--) { const char *s = r_str(vm, i); if (s && s[0]) snprintf(metaSrcs[nMetaSrcs++], sizeof metaSrcs[0], "%s", s); }
     r_popn(vm, argc);
-    /* gather files (dir\*.*) */
+    /* gather files (dir/*) */
+#ifdef _WIN32
     char pat[1200];
     snprintf(pat, sizeof pat, "%s\\*.*", dir);
     WIN32_FIND_DATAA fd;
     HANDLE hf = FindFirstFileA(pat, &fd);
     if (hf == INVALID_HANDLE_VALUE) { r_push_int(vm, 0); return 1; }
+#else
+    DIR *vdp = opendir(dir);
+    if (!vdp) { r_push_int(vm, 0); return 1; }
+    struct dirent *vent;
+#endif
     /* build files dict json manually to avoid dependency on VM during scan */
     char *files_json = malloc(65536); int fp = 0, fcap = 65536;
     char *b64all = malloc(65536); int ballen = 0, bacap = 65536;
     strcpy(files_json, "\"files\":{");
     fp = (int)strlen(files_json);
     int first = 1;
+#ifdef _WIN32
     do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        if (strstr(fd.cFileName, ".vverse")) continue;
+#else
+    while ((vent = readdir(vdp))) {
+#endif
+        const char *fname =
+#ifdef _WIN32
+            fd.cFileName;
+#else
+            vent->d_name;
+#endif
+        if (
+#ifdef _WIN32
+            fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY
+#else
+            vent->d_type == DT_DIR
+#endif
+        ) continue;
+        if (strstr(fname, ".vverse")) continue;
         char fpath[1300];
-        snprintf(fpath, sizeof fpath, "%s\\%s", dir, fd.cFileName);
+        snprintf(fpath, sizeof fpath, "%s/%s", dir, fname);
         int blen = 0;
         char *raw = read_file_buf(fpath, &blen);
         if (!raw) continue;
@@ -1083,20 +1148,20 @@ static int b_verse_pack(VM *vm) {
         int refed = 0;
         if (refMode && cache_has(hex)) refed = 1;  /* already in shared cache: emit ref:// */
         if (!refed) cache_put(hex, (unsigned char*)raw, blen);  /* fill asset cache */
-        int need = (int)strlen(fd.cFileName) + (int)strlen(hex) + 48;
+        int need = (int)strlen(fname) + (int)strlen(hex) + 48;
         while (fp + need > fcap) {
             fcap *= 2; files_json = realloc(files_json, (size_t)fcap);
         }
         if (refed) {
-            int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"ref://sha256:%s\"", first ? "" : ",", fd.cFileName, hex);
+            int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"ref://sha256:%s\"", first ? "" : ",", fname, hex);
             fp += n;
         } else {
             char *b64 = b64_encode((unsigned char*)raw, blen);
-            need = (int)strlen(fd.cFileName) + (int)strlen(b64) + 24;
+            need = (int)strlen(fname) + (int)strlen(b64) + 24;
             while (fp + need > fcap) {
                 fcap *= 2; files_json = realloc(files_json, (size_t)fcap);
             }
-            int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"%s\"", first ? "" : ",", fd.cFileName, b64);
+            int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"%s\"", first ? "" : ",", fname, b64);
             fp += n;
             size_t bl = strlen(b64);
             while (ballen + (int)bl + 1 > bacap) {
@@ -1107,8 +1172,13 @@ static int b_verse_pack(VM *vm) {
         }
         first = 0;
         free(raw);
+#ifdef _WIN32
     } while (FindNextFileA(hf, &fd));
     FindClose(hf);
+#else
+    }
+    closedir(vdp);
+#endif
     if (fp + 8 > fcap) { fcap += 16; files_json = realloc(files_json, (size_t)fcap); }
     strcpy(files_json + fp, "}"); fp += 2;
 
@@ -1247,11 +1317,15 @@ static int b_verse_remove(VM *vm) {
     if (!dir) { free(id); r_push_int(vm, 0); return 1; }
     while (im_dir_next_ex(dir, name, sizeof name, &is_dir)) {
         if (is_dir) continue;
-        char fp[1400]; snprintf(fp, sizeof fp, "%s\\%s", path, name);
+        char fp[1400]; snprintf(fp, sizeof fp, "%s/%s", path, name);
         remove(fp);
     }
     im_dir_close(dir);
+#ifdef _WIN32
     RemoveDirectoryA(path);
+#else
+    rmdir(path);
+#endif
     free(id);
     r_push_int(vm, 1);
     return 1;
@@ -1260,6 +1334,7 @@ static int b_verse_remove(VM *vm) {
 /* ---------- register ---------- */
 
 /* ---------- verse_listen(port): local HTTP server for packages ---------- */
+#ifdef _WIN32
 static SOCKET g_listen_sock = INVALID_SOCKET;
 static int g_listen_port = 0;
 static volatile int g_listen_run = 0;
@@ -1951,6 +2026,29 @@ static int b_verse_stop(VM *vm) {
     r_push_int(vm, 1);
     return 1;
 }
+#else
+/* POSIX: embedded verse HTTP/UDP hub server not ported yet — degrade
+   gracefully (pack/sign/verify/update flows above remain fully usable) */
+static char *verse_udp_fetch(const char *host, int port, const char *id, int *out_len) {
+    (void)host; (void)port; (void)id;
+    *out_len = 0;
+    fprintf(stderr, "[VDP] udp:// hub transport is Windows-only in this build; use verse://http hubs\n");
+    return NULL;
+}
+/* verse_http_start/stop are provided by platform/http_posix.c on POSIX */
+static int b_verse_listen(VM *vm) {
+    (void)vm;
+    fprintf(stderr, "[VDP] verse_listen is Windows-only in this build\n");
+    r_push_int(vm, 0);
+    return 1;
+}
+static int b_verse_stop(VM *vm) {
+    r_popn(vm, vm->cur_argc);
+    r_push_int(vm, 1);
+    return 1;
+}
+#endif /* _WIN32 embedded server */
+
 
 void verse_dist_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "verse_open", b_verse_open, 1|CAP_VERSE|CAP_NET, 0);
@@ -1966,5 +2064,5 @@ void verse_dist_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "verse_verify", b_verse_verify, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_list", b_verse_list, 1|CAP_VERSE, 0);
     vm_register_builtin_full(vm, "verse_remove", b_verse_remove, 1|CAP_VERSE, 0);
-    printf("[verse_dist mod] VDP loaded (verse://<hub>/<id>)\n");
+    fprintf(stderr, "[verse_dist mod] VDP loaded (verse://<hub>/<id>)\n");
 }

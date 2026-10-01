@@ -1087,5 +1087,5 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "entity_at", posix_entity_at);
 }
 
-void record_load_from_file(VM *vm, const char *path) { (void)vm; (void)path; }
-void record_save_to_file(VM *vm, const char *path) { (void)vm; (void)path; }
+/* record_load_from_file / record_save_to_file are provided by
+   src/mod/record_mod.c (now built on POSIX as well) */

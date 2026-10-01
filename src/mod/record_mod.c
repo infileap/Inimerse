@@ -14,7 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 extern void json_write_value(VM *vm, const Value *v, char *out, int *pos, int outsz);
 extern Value json_parse_value_text(VM *vm, const char *s, int *ok);

@@ -178,6 +178,13 @@ static int json_field_string(const char *json, const char *name, char *out, size
     while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++;
     out[i] = 0; return *p == '"';
 }
+/* ms clock for lease bookkeeping (§55.5) */
+static uint64_t http_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000);
+}
+
 static int json_field_u64(const char *json, const char *name, uint64_t *out) {
     char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return 0;
     p = strchr(p + strlen(key), ':'); if (!p) return 0; while (*++p == ' ' || *p == '\t') {}
@@ -221,6 +228,29 @@ static void *http_loop(void *unused) {
             }
             if (im_ws_accept(client, req, (size_t)n) == 0) {
                 ImCrpSession session; im_crp_session_init(&session, 1);
+                /* §55.3 capability handshake: clients may announce ?ver=N&caps=M;
+                   version mismatch is rejected explicitly (§24.6), absent
+                   parameters keep the legacy (permissive) behaviour. */
+                int ver = 1; uint32_t caps = 0; int announced = 0;
+                const char *vq = strstr(req, "ver=");
+                if (vq) { ver = atoi(vq + 4); announced = 1; }
+                const char *cq = strstr(req, "caps=");
+                if (cq) { caps = (uint32_t)strtoul(cq + 5, NULL, 10); announced = 1; }
+                if (announced) {
+                    ImCrpHello hello;
+                    if (im_crp_session_hello(1, IM_CRP_CAP_EVENTS | IM_CRP_CAP_SNAPSHOT | IM_CRP_CAP_UDP | IM_CRP_CAP_RELAY,
+                                             ver, caps, &hello) != 0) {
+                        char eb[256];
+                        int el = snprintf(eb, sizeof eb, "{\"error\":\"protocol_version_mismatch\",\"detail\":\"%s\"}", hello.error);
+                        (void)im_ws_send_text(client, eb, (size_t)el);
+                        im_socket_close(client);
+                        continue;
+                    }
+                    session.caps = hello.negotiated_caps;
+                } else {
+                    session.caps = IM_CRP_CAP_EVENTS | IM_CRP_CAP_SNAPSHOT | IM_CRP_CAP_UDP | IM_CRP_CAP_RELAY;
+                }
+                im_crp_session_lease_begin(&session, http_now_ms(), 30000);
                 pthread_mutex_lock(&g_ws_lock); int slot = -1; for (int i = 0; i < 32; ++i) if (!g_ws_clients[i]) { g_ws_clients[i] = client; slot = i; break; } pthread_mutex_unlock(&g_ws_lock);
                 if (slot < 0) { im_ws_send_text(client, "{\"error\":\"too_many_connections\"}", 34); im_socket_close(client); continue; }
                 char frame[65536];
@@ -228,9 +258,30 @@ static void *http_loop(void *unused) {
                     int flen = im_ws_read_text(client, frame, sizeof frame);
                     if (flen == -2) { (void)im_ws_send_pong(client, NULL, 0); continue; }
                     if (flen <= 0) break;
-                    char type[32]; uint64_t seq = 0;
+                    /* §55.5 lease: drop the connection once it expires */
+                    if (im_crp_session_lease_expired(&session, http_now_ms())) {
+                        const char *err = "{\"error\":\"lease_expired\"}";
+                        (void)im_ws_send_text(client, err, strlen(err));
+                        break;
+                    }
+                    char type[32]; uint64_t seq = 0; int has_seq = 0;
                     if (json_field_string(frame, "type", type, sizeof type)) {
+                        has_seq = json_field_u64(frame, "seq", &seq) && seq > 0;
                         (void)json_field_u64(frame, "seq", &seq);
+                        /* §55.6 sequencing: duplicates are dropped, gaps demand resync */
+                        if (has_seq) {
+                            int acc = im_crp_session_accept(&session, seq);
+                            if (acc == 0) continue;                 /* duplicate: safe to drop */
+                            if (acc < 0) {
+                                char eb[160];
+                                int el = snprintf(eb, sizeof eb,
+                                                  "{\"error\":\"resume_required\",\"last_applied\":%llu}",
+                                                  (unsigned long long)session.last_applied);
+                                (void)im_ws_send_text(client, eb, (size_t)el);
+                                continue;
+                            }
+                        }
+                        if (!strcmp(type, "heartbeat")) im_crp_session_lease_touch(&session, http_now_ms(), 30000);
                         int state_rc = im_crp_session_apply(&session, type, seq, 0, NULL);
                         if (state_rc < 0) {
                             const char *err = "{\"error\":\"invalid_session_transition\"}";
