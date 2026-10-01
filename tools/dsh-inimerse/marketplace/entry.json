@@ -1,0 +1,21 @@
+{
+  "id": "dsh-inimerse",
+  "name": "Inimerse Bridge",
+  "description": "把 Inimerse 引擎与 Infiverse 栈接进 agent 会话：构建、测试、运行 .im 脚本、驱动 Verse 层，全部作为 DSH 工具，不复制引擎逻辑。",
+  "category": "tools",
+  "tags": [
+    "引擎",
+    "构建",
+    "测试",
+    ".im 脚本",
+    "Verse"
+  ],
+  "source": "npm",
+  "npm": "dsh-inimerse",
+  "github": "infileap/Inimerse",
+  "homepage": "https://github.com/infileap/Inimerse/tree/main/tools/dsh-inimerse",
+  "icon": "https://raw.githubusercontent.com/infileap/Inimerse/main/tools/dsh-inimerse/icon.svg",
+  "verified": [
+    "0.2.0-rc.2"
+  ]
+}

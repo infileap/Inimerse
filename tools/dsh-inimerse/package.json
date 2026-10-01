@@ -1,7 +1,6 @@
 {
   "name": "dsh-inimerse",
   "version": "0.1.0",
-  "private": true,
   "description": "Harness bridge for the Inimerse engine and Infiverse stack: build, test, run .im scripts and drive Verse layers as first-class DSH tools.",
   "type": "module",
   "main": "./index.js",
@@ -17,8 +16,35 @@
     "icon.svg",
     "locale/*.json"
   ],
-  "license": "BSD-3-Clause",
+  "license": "MIT",
   "icon": "./icon.svg",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "inimerse",
+    "infiverse",
+    "verse",
+    "harness",
+    "interpreter"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "author": "infileap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/infileap/Inimerse.git",
+    "directory": "tools/dsh-inimerse"
+  },
+  "homepage": "https://github.com/infileap/Inimerse/tree/main/tools/dsh-inimerse",
+  "bugs": {
+    "url": "https://github.com/infileap/Inimerse/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

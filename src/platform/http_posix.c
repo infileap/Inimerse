@@ -4,6 +4,7 @@
 #include "crp_session.h"
 #include "../common/sha256.h"
 #include "../common/ed25519.h"
+#include "../verse/json_min.h"
 #include "http_client.h"
 #include <pthread.h>
 #include <time.h>
@@ -163,6 +164,21 @@ static ImBridge g_bridges[IM_ECON_BRIDGES];
 static int g_bridge_count;
 static ImCrpSession g_econ_idem;      /* idempotency keys for settlements */
 static int g_econ_idem_ready;
+/* migration packages accepted by /economy/import: kept apart from the local
+   ledger so an imported history cannot masquerade as locally committed */
+typedef struct {
+    char currency_id[65];
+    char content_hash[65];
+    char ledger_tail[65];
+    int  partial_slice;   /* the slice's origin prev lives outside the package */
+    int balance_count;
+    char accounts[64][160];
+    long long amounts[64];
+    int versions[64];
+} ImImportedLedger;
+#define IM_IMPORTS 16
+static ImImportedLedger g_imports[IM_IMPORTS];
+static int g_import_count;
 #define IM_NODE_MAX 128
 static ImNodeAd g_nodes[IM_NODE_MAX];
 static int g_node_count;
@@ -555,6 +571,278 @@ static void econ_append(uint64_t seq, const char *kind, const char *currency_id,
     if (out) *out = *ev;
 }
 
+/* ---------- §43.5 migration: export/import helpers ---------- */
+
+/* one balance line: the unit both the local snapshot and an imported package
+   are reduced to before hashing, so the two can never disagree by accident */
+typedef struct { char account[160]; long long amount; int version; } EconBalLine;
+
+/* sha256 over "<account>|<amount>|<version>\n" lines sorted by account.  The
+   digest is order-independent only because the writer sorts first, so every
+   producer of a balances_hash must go through here. */
+static void econ_digest_lines(EconBalLine *items, int n, char out[65]) {
+    for (int i = 1; i < n; ++i) {
+        int j = i;
+        while (j > 0 && strcmp(items[j - 1].account, items[j].account) > 0) {
+            EconBalLine t = items[j - 1]; items[j - 1] = items[j]; items[j] = t;
+            j--;
+        }
+    }
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
+    for (int i = 0; i < n; ++i) {
+        char line[256];
+        snprintf(line, sizeof line, "%s|%lld|%d\n", items[i].account, items[i].amount, items[i].version);
+        sha256_update(&ctx, line, strlen(line));
+    }
+    uint8_t dg[32];
+    sha256_final(&ctx, dg);
+    sha256_hex_of_digest(dg, out);
+}
+
+/* hash of the local balance snapshot for a currency */
+static void econ_balances_digest(const char *currency_id, char out[65]) {
+    EconBalLine items[IM_ECON_BALANCES];
+    int n = 0;
+    for (int i = 0; i < g_balance_count && n < IM_ECON_BALANCES; ++i)
+        if (!strcmp(g_balances[i].currency_id, currency_id)) {
+            snprintf(items[n].account, sizeof items[n].account, "%s", g_balances[i].account);
+            items[n].amount = g_balances[i].amount;
+            items[n].version = g_balances[i].version;
+            n++;
+        }
+    econ_digest_lines(items, n, out);
+}
+
+/* tail hash of the locally committed ledger for this currency */
+static void econ_ledger_digest(const char *currency_id, char out[65]) {
+    char tail[65] = "0";
+    for (int i = 0; i < g_econ_event_count; ++i)
+        if (!currency_id[0] || !strcmp(g_econ_events[i].currency_id, currency_id))
+            snprintf(tail, sizeof tail, "%s", g_econ_events[i].hash);
+    snprintf(out, 65, "%s", tail);
+}
+
+/* ---------- §43.5 migration: verify a package against its own bytes ----------
+
+   An imported package is a claim, and every part of it must be reproduced by
+   the package itself instead of taken on trust (§43.2 auditability):
+
+     hash_i        = sha256(prev_i || seq|kind|currency|from|to|amount|idem)
+     prev_i        = hash_(i-1)                       within the slice
+     ledger_tail   = hash_(last)
+     balances_hash = digest of the shipped balances array
+     balances      = the replay of the shipped ledger slice from zero
+
+   The last rule is what pins a slice whose origin lies outside the package.  A
+   per-currency export is a slice of ONE global chain (g_econ_tail), so its
+   first `prev` can name an event belonging to another currency and the chain
+   cannot be traced to a genesis in isolation -- that case is reported as
+   partial_slice.  Balances, however, are derived by applying exactly these
+   events from zero, so a slice that is complete for its currency still
+   reproduces the snapshot entry for entry, while one whose history was
+   truncated at the head cannot.  That is what makes deleting the first ledger
+   entry detectable even though the remaining tail still matches ledger_tail. */
+
+static void econ_entry_hash(const char *prev, long long seq, const char *kind,
+                            const char *currency_id, const char *from, const char *to,
+                            long long amount, const char *idem, char out[65]) {
+    char canon[768];
+    snprintf(canon, sizeof canon, "%llu|%s|%s|%s|%s|%lld|%s",
+             (unsigned long long)seq, kind, currency_id, from, to, amount, idem);
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, prev, strlen(prev));
+    sha256_update(&ctx, canon, strlen(canon));
+    uint8_t dg[32];
+    sha256_final(&ctx, dg);
+    sha256_hex_of_digest(dg, out);
+}
+
+/* balances replayed from a ledger slice, addressed by account */
+typedef struct {
+    char      account[IM_ECON_BALANCES][160];
+    long long amount[IM_ECON_BALANCES];
+    int       version[IM_ECON_BALANCES];
+    int       n;
+} EconReplay;
+
+static int econ_replay_slot(EconReplay *r, const char *account) {
+    for (int i = 0; i < r->n; ++i) if (!strcmp(r->account[i], account)) return i;
+    if (r->n >= IM_ECON_BALANCES) return -1;
+    int at = r->n++;
+    snprintf(r->account[at], sizeof r->account[at], "%s", account);
+    r->amount[at] = 0;
+    r->version[at] = 0;
+    return at;
+}
+
+/* digest of the balances array as shipped inside the package */
+static void econ_pkg_balances_digest(const VjVal *pkg, char out[65]) {
+    EconBalLine items[IM_ECON_BALANCES];
+    int n = 0;
+    const VjVal *bal = vj_get(pkg, "balances");
+    if (bal && bal->type == VJ_ARR)
+        for (size_t i = 0; i < bal->n && n < IM_ECON_BALANCES; ++i) {
+            const VjVal *b = bal->items[i];
+            const char *acct = b ? vj_str(vj_get(b, "account"), NULL) : NULL;
+            if (!acct) continue;
+            snprintf(items[n].account, sizeof items[n].account, "%s", acct);
+            items[n].amount = vj_int(vj_get(b, "amount"), 0);
+            items[n].version = (int)vj_int(vj_get(b, "version"), 0);
+            n++;
+        }
+    econ_digest_lines(items, n, out);
+}
+
+/* the shipped snapshot must be entry-for-entry the replay of the ledger */
+static int econ_snapshot_is_replay(const VjVal *pkg, const EconReplay *r) {
+    const VjVal *bal = vj_get(pkg, "balances");
+    int n = (bal && bal->type == VJ_ARR) ? (int)bal->n : 0;
+    if (n != r->n) return 0;
+    for (int i = 0; i < n; ++i) {
+        const VjVal *b = bal->items[i];
+        const char *acct = b ? vj_str(vj_get(b, "account"), NULL) : NULL;
+        if (!acct) return 0;
+        int at = -1;
+        for (int j = 0; j < r->n; ++j) if (!strcmp(r->account[j], acct)) { at = j; break; }
+        if (at < 0) return 0;
+        if (vj_int(vj_get(b, "amount"), 0) != r->amount[at]) return 0;
+        if ((int)vj_int(vj_get(b, "version"), 0) != r->version[at]) return 0;
+    }
+    return 1;
+}
+
+/* NULL when the package agrees with itself, otherwise the protocol error code
+   to answer with.  *partial_slice is derived from the package's own bytes: a
+   slice whose first prev is not the genesis marker cannot be traced to a
+   genesis from this package alone. */
+static const char *econ_verify_package(const VjVal *pkg, const char *cid,
+                                       const char *ldig, const char *bdig,
+                                       int *partial_slice, char *reason, size_t reasonlen) {
+    *partial_slice = 0;
+    const VjVal *ledger = vj_get(pkg, "ledger");
+    if (ledger && ledger->type != VJ_ARR) {
+        snprintf(reason, reasonlen, "ledger is not an array");
+        return "ledger_chain_broken";
+    }
+    int n = (ledger && ledger->type == VJ_ARR) ? (int)ledger->n : 0;
+    if (n > IM_ECON_EVENTS) {
+        snprintf(reason, reasonlen, "ledger holds more entries than the hub retains");
+        return "ledger_chain_broken";
+    }
+
+    EconReplay replay;
+    memset(&replay, 0, sizeof replay);
+    char prev[65] = "0";
+    long long prev_seq = 0;
+    for (int i = 0; i < n; ++i) {
+        const VjVal *ev = ledger->items[i];
+        if (!ev || ev->type != VJ_OBJ) {
+            snprintf(reason, reasonlen, "ledger[%d] is not an object", i);
+            return "ledger_chain_broken";
+        }
+        const char *kind  = vj_str(vj_get(ev, "kind"), NULL);
+        const char *from  = vj_str(vj_get(ev, "from"), "");
+        const char *to    = vj_str(vj_get(ev, "to"), "");
+        const char *idem  = vj_str(vj_get(ev, "idem"), "");
+        const char *eprev = vj_str(vj_get(ev, "prev"), NULL);
+        const char *ehash = vj_str(vj_get(ev, "hash"), NULL);
+        long long seq    = vj_int(vj_get(ev, "seq"), 0);
+        long long amount = vj_int(vj_get(ev, "amount"), 0);
+        if (!kind || !eprev || !ehash || seq < 1) {
+            snprintf(reason, reasonlen, "ledger[%d] is missing seq/kind/prev/hash", i);
+            return "ledger_chain_broken";
+        }
+        if (i == 0) {
+            *partial_slice = strcmp(eprev, "0") != 0;
+        } else if (seq <= prev_seq) {
+            snprintf(reason, reasonlen, "ledger[%d].seq does not increase", i);
+            return "ledger_chain_broken";
+        } else if (seq == prev_seq + 1 && strcmp(eprev, prev) != 0) {
+            /* the retained ledger is ONE chain shared by every currency, so a
+               currency's slice can skip over another currency's events; only
+               adjacent sequence numbers are guaranteed to link directly */
+            snprintf(reason, reasonlen, "ledger[%d].prev does not link to ledger[%d].hash", i, i - 1);
+            return "ledger_chain_broken";
+        }
+        char calc[65];
+        econ_entry_hash(eprev, seq, kind, cid, from, to, amount, idem, calc);
+        if (strcmp(calc, ehash) != 0) {
+            snprintf(reason, reasonlen, "ledger[%d].hash does not commit to its own fields", i);
+            return "ledger_chain_broken";
+        }
+        snprintf(prev, sizeof prev, "%s", ehash);
+        prev_seq = seq;
+
+        int at;
+        if (!strcmp(kind, "mint")) {
+            if (!to[0] || (at = econ_replay_slot(&replay, to)) < 0) {
+                snprintf(reason, reasonlen, "ledger[%d] does not attribute its mint", i);
+                return "ledger_chain_broken";
+            }
+            replay.amount[at] += amount;
+            replay.version[at]++;
+        } else if (!strcmp(kind, "transfer")) {
+            if (!to[0] || (at = econ_replay_slot(&replay, to)) < 0) {
+                snprintf(reason, reasonlen, "ledger[%d] does not attribute its credit", i);
+                return "ledger_chain_broken";
+            }
+            replay.amount[at] += amount;
+            replay.version[at]++;
+            if (!from[0] || (at = econ_replay_slot(&replay, from)) < 0) {
+                snprintf(reason, reasonlen, "ledger[%d] does not attribute its debit", i);
+                return "ledger_chain_broken";
+            }
+            replay.amount[at] -= amount;
+            replay.version[at]++;
+        } else {
+            snprintf(reason, reasonlen, "ledger[%d] has the unknown kind '%s'", i, kind);
+            return "ledger_chain_broken";
+        }
+    }
+
+    if (n == 0) {
+        if (strcmp(ldig, "0") != 0) {
+            snprintf(reason, reasonlen, "ledger_tail is not the genesis marker but the ledger is empty");
+            return "ledger_chain_broken";
+        }
+    } else if (strcmp(prev, ldig) != 0) {
+        snprintf(reason, reasonlen, "ledger_tail does not match the last entry's hash");
+        return "ledger_chain_broken";
+    }
+
+    char bcalc[65];
+    econ_pkg_balances_digest(pkg, bcalc);
+    if (strcmp(bcalc, bdig) != 0) {
+        snprintf(reason, reasonlen, "balances_hash does not recompute from the balance snapshot");
+        return "integrity_failed";
+    }
+    if (!econ_snapshot_is_replay(pkg, &replay)) {
+        snprintf(reason, reasonlen, "the balance snapshot is not the replay of the ledger slice");
+        return "ledger_chain_broken";
+    }
+    return NULL;
+}
+
+/* keep the shipped snapshot with the import record: an imported history must
+   stay distinguishable from locally committed events (§43.5) */
+static void econ_record_snapshot(ImImportedLedger *il, const VjVal *pkg) {
+    const VjVal *bal = vj_get(pkg, "balances");
+    il->balance_count = 0;
+    if (!bal || bal->type != VJ_ARR) return;
+    for (size_t i = 0; i < bal->n && il->balance_count < 64; ++i) {
+        const VjVal *b = bal->items[i];
+        const char *acct = b ? vj_str(vj_get(b, "account"), NULL) : NULL;
+        if (!acct) continue;
+        int at = il->balance_count;
+        snprintf(il->accounts[at], sizeof il->accounts[at], "%s", acct);
+        il->amounts[at] = vj_int(vj_get(b, "amount"), 0);
+        il->versions[at] = (int)vj_int(vj_get(b, "version"), 0);
+        il->balance_count++;
+    }
+}
+
 /* verify a node advertisement: node_id is the signing public key */
 static int http_node_verify(const char *node_id, const char *payload, const char *signature) {
     if (!node_id || strlen(node_id) != 64 || !signature || strlen(signature) != 128 || !payload) return 0;
@@ -763,6 +1051,8 @@ static void *http_loop(void *unused) {
         int econ_audit = n > 0 && strstr(req, "GET /economy/audit") != NULL;
         int econ_bridge_post = n > 0 && strstr(req, "POST /economy/bridge") != NULL;
         int econ_bridge_get = n > 0 && strstr(req, "GET /economy/bridge") != NULL;
+        int econ_export = n > 0 && strstr(req, "POST /economy/export") != NULL;
+        int econ_import = n > 0 && strstr(req, "POST /economy/import") != NULL;
         int portal = n > 0 && strstr(req, "POST /portal") != NULL;
         int status = 200;
         char request_token[64] = "";
@@ -771,7 +1061,7 @@ static void *http_loop(void *unused) {
         (void)json_field_string(req, "verse", signal_verse, sizeof signal_verse); (void)json_field_string(req, "peer", signal_peer, sizeof signal_peer);
         if (signal && !token_allows(request_token, signal_verse, signal_peer)) { signal = 0; status = 403; }
         char hubbuf[65536]; size_t hublen = hub_body(req, hubbuf, sizeof hubbuf, &status); int hub = hublen > 0;
-        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get || reattach || state_get || idem || econ_domain || econ_domain_get || econ_settle || econ_mint || econ_balance_get || econ_audit || econ_bridge_post || econ_bridge_get;
+        int ok = health || ping || find || friends_get || friends_post || resume || session_stop || signal || revoke || register_route || route_post || route_get || nat_get || portal || hub || node_advertise || node_discover || node_schedule || node_handoff || auth_post || auth_get || reattach || state_get || idem || econ_domain || econ_domain_get || econ_settle || econ_mint || econ_balance_get || econ_audit || econ_bridge_post || econ_bridge_get || econ_export || econ_import;
         char findbuf[4096];
         if (find) {
             size_t used = 0; used += (size_t)snprintf(findbuf + used, sizeof findbuf - used, "{\"items\":[");
@@ -1195,7 +1485,10 @@ reattach_done: ;
             }
         }
         if (econ_domain_get) {
-            const char *p = strstr(req, "GET /economy/domain/") + 19;
+            /* "GET /economy/domain/" is 20 bytes long, so the id begins after
+               the 20th character; the previous +19 left a leading '/' and the
+               lookup could never match (see docs/STATUS.md §2.3) */
+            const char *p = strstr(req, "GET /economy/domain/") + 20;
             char cid[80] = "";
             size_t i = 0;
             while (p[i] && p[i] != ' ' && p[i] != '?' && i + 1 < sizeof cid) { cid[i] = p[i]; i++; }
@@ -1398,6 +1691,169 @@ reattach_done: ;
             }
             snprintf(econbuf + used, sizeof econbuf - used, "]}\n");
             body = econbuf;
+        }
+        static char exportbuf[65536];
+        if (econ_export) {
+            /* §43.5 migration export: everything a compatible runtime needs to
+               continue the economy offline -- the signed definition, a balance
+               snapshot and the auditable ledger.  Integrity is self-contained
+               (no server key required to verify). */
+            char cid[80] = "";
+            (void)json_field_string(req, "currency_id", cid, sizeof cid);
+            ImCurrency *c = econ_currency(cid);
+            if (!c) {
+                status = 404; body = "{\"error\":\"currency_not_found\"}\n";
+            } else {
+                char bdig[65], ldig[65], ddig[65];
+                econ_balances_digest(cid, bdig);
+                econ_ledger_digest(cid, ldig);
+                sha256_hex(c->definition, strlen(c->definition), ddig);
+                uint64_t now = http_now_ms();
+                char meta[512];
+                snprintf(meta, sizeof meta, "1|local|%llu|%s|%s|%s|%s",
+                         (unsigned long long)now, c->currency_id, ddig, ldig, bdig);
+                char chash[65];
+                sha256_hex(meta, strlen(meta), chash);
+                size_t used = (size_t)snprintf(exportbuf, sizeof exportbuf,
+                    "{\"ok\":true,\"format_version\":1,\"service_id\":\"local\",\"exported_at\":%llu,"
+                    "\"currency\":{\"currency_id\":\"%s\",\"domain_id\":\"%s\",\"issuer\":\"%s\","
+                    "\"value_kind\":\"%s\",\"denomination\":\"%s\",\"definition\":\"%s\",\"signature\":\"%s\"},"
+                    "\"balances\":[",
+                    (unsigned long long)now, c->currency_id, c->domain_id, c->issuer,
+                    c->value_kind, c->denomination, c->definition, c->signature);
+                int first = 1;
+                for (int i = 0; i < g_balance_count && used < sizeof exportbuf - 400; ++i)
+                    if (!strcmp(g_balances[i].currency_id, cid)) {
+                        used += (size_t)snprintf(exportbuf + used, sizeof exportbuf - used,
+                                                 "%s{\"account\":\"%s\",\"amount\":%lld,\"version\":%d}",
+                                                 first ? "" : ",", g_balances[i].account,
+                                                 g_balances[i].amount, g_balances[i].version);
+                        first = 0;
+                    }
+                used += (size_t)snprintf(exportbuf + used, sizeof exportbuf - used, "],\"ledger\":[");
+                first = 1;
+                for (int i = 0; i < g_econ_event_count && used < sizeof exportbuf - 512; ++i) {
+                    ImEconEvent *ev = &g_econ_events[i];
+                    if (strcmp(ev->currency_id, cid) != 0) continue;
+                    used += (size_t)snprintf(exportbuf + used, sizeof exportbuf - used,
+                                             "%s{\"seq\":%llu,\"kind\":\"%s\",\"from\":\"%s\",\"to\":\"%s\","
+                                             "\"amount\":%lld,\"idem\":\"%s\",\"prev\":\"%s\",\"hash\":\"%s\"}",
+                                             first ? "" : ",", (unsigned long long)ev->seq, ev->kind,
+                                             ev->from, ev->to, ev->amount, ev->idem, ev->prev, ev->hash);
+                    first = 0;
+                }
+                snprintf(exportbuf + used, sizeof exportbuf - used,
+                         "],\"balances_hash\":\"%s\",\"ledger_tail\":\"%s\",\"definition_hash\":\"%s\","
+                         "\"content_hash\":\"%s\"}\n", bdig, ldig, ddig, chash);
+                body = exportbuf;
+            }
+        }
+        if (econ_import) {
+            /* §43.5 migration import.  Every claim is re-derived from the
+               package's own bytes: the content hash seals the meta, the issuer
+               signature covers the definition, and the ledger slice must
+               reproduce both its own chain and the snapshot it ships. */
+            char jerr[128] = "";
+            /* `req` holds the request line and headers too: parse the body only */
+            const char *bodyp = strstr(req, "\r\n\r\n");
+            bodyp = bodyp ? bodyp + 4 : req;
+            VjVal *pkg = vj_parse(bodyp, jerr, sizeof jerr);
+            if (!pkg || pkg->type != VJ_OBJ) {
+                fprintf(stderr, "[hub] migration import rejected: malformed package (%s)\n", jerr);
+                status = 400; body = "{\"error\":\"malformed\"}\n";
+            } else {
+                const VjVal *cur = vj_get(pkg, "currency");
+                const char *chash  = vj_str(vj_get(pkg, "content_hash"), "");
+                const char *bdig   = vj_str(vj_get(pkg, "balances_hash"), "");
+                const char *ldig   = vj_str(vj_get(pkg, "ledger_tail"), "");
+                const char *ddig   = vj_str(vj_get(pkg, "definition_hash"), "");
+                const char *svc    = vj_str(vj_get(pkg, "service_id"), "");
+                const char *cid    = vj_str(vj_get(cur, "currency_id"),
+                                            vj_str(vj_get(pkg, "currency_id"), ""));
+                const char *def    = vj_str(vj_get(cur, "definition"), "");
+                const char *sig    = vj_str(vj_get(cur, "signature"), "");
+                const char *issuer = vj_str(vj_get(cur, "issuer"),
+                                            vj_str(vj_get(pkg, "issuer"), ""));
+                long long exported = vj_int(vj_get(pkg, "exported_at"), 0);
+                if (!svc[0]) svc = "local";
+                if (!cid[0] || !chash[0] || !def[0]) {
+                    status = 400; body = "{\"error\":\"currency_content_hash_definition_required\"}\n";
+                } else {
+                    /* the content hash seals meta + definition + ledger tail +
+                       balance snapshot, so editing any of them changes it */
+                    char meta[512];
+                    snprintf(meta, sizeof meta, "1|%s|%lld|%s|%s|%s|%s",
+                             svc, exported, cid, ddig, ldig, bdig);
+                    char expect[65];
+                    sha256_hex(meta, strlen(meta), expect);
+                    char dcalc[65];
+                    sha256_hex(def, strlen(def), dcalc);
+                    int partial = 0;
+                    char reason[192] = "";
+                    const char *verr = NULL;
+                    if (strcmp(expect, chash) != 0) {
+                        fprintf(stderr, "[hub] migration import rejected: content hash mismatch\n");
+                        status = 409; body = "{\"error\":\"integrity_failed\"}\n";
+                    } else if (strcmp(dcalc, ddig) != 0) {
+                        fprintf(stderr, "[hub] migration import rejected: definition hash mismatch\n");
+                        status = 409; body = "{\"error\":\"integrity_failed\"}\n";
+                    } else if (!http_node_verify(issuer, def, sig)) {
+                        fprintf(stderr, "[hub] migration import rejected: bad definition signature\n");
+                        status = 409; body = "{\"error\":\"invalid_signature\"}\n";
+                    } else if ((verr = econ_verify_package(pkg, cid, ldig, bdig, &partial,
+                                                            reason, sizeof reason)) != NULL) {
+                        fprintf(stderr, "[hub] migration import rejected (%s): %s\n", verr, reason);
+                        status = 409;
+                        body = strcmp(verr, "integrity_failed") == 0
+                             ? "{\"error\":\"integrity_failed\"}\n"
+                             : "{\"error\":\"ledger_chain_broken\"}\n";
+                    } else {
+                        ImCurrency *existing = econ_currency(cid);
+                        int already = 0;
+                        for (int i = 0; i < g_import_count; ++i)
+                            if (!strcmp(g_imports[i].currency_id, cid)) {
+                                already = !strcmp(g_imports[i].content_hash, chash);
+                                if (!already) {
+                                    status = 409;
+                                    body = "{\"error\":\"conflict\",\"detail\":\"a different migration package for this currency was already imported\"}\n";
+                                }
+                                break;
+                            }
+                        if (status != 409) {
+                            if (!existing && g_currency_count < IM_ECON_DOMAINS) {
+                                existing = &g_currencies[g_currency_count++];
+                                memset(existing, 0, sizeof *existing);
+                                snprintf(existing->currency_id, sizeof existing->currency_id, "%s", cid);
+                                snprintf(existing->definition, sizeof existing->definition, "%s", def);
+                                snprintf(existing->signature, sizeof existing->signature, "%s", sig);
+                                snprintf(existing->issuer, sizeof existing->issuer, "%s", issuer);
+                            }
+                            if (already) {
+                                snprintf(econbuf, sizeof econbuf,
+                                         "{\"ok\":true,\"status\":\"already_present\",\"currency_id\":\"%s\","
+                                         "\"partial_slice\":%s}\n", cid, partial ? "true" : "false");
+                            } else if (g_import_count < IM_IMPORTS) {
+                                ImImportedLedger *il = &g_imports[g_import_count++];
+                                memset(il, 0, sizeof *il);
+                                snprintf(il->currency_id, sizeof il->currency_id, "%s", cid);
+                                snprintf(il->content_hash, sizeof il->content_hash, "%s", chash);
+                                snprintf(il->ledger_tail, sizeof il->ledger_tail, "%s", ldig);
+                                il->partial_slice = partial;
+                                econ_record_snapshot(il, pkg);
+                                snprintf(econbuf, sizeof econbuf,
+                                         "{\"ok\":true,\"status\":\"imported\",\"currency_id\":\"%s\","
+                                         "\"ledger_tail\":\"%s\",\"balances_hash\":\"%s\","
+                                         "\"partial_slice\":%s}\n",
+                                         cid, ldig, bdig, partial ? "true" : "false");
+                            } else {
+                                status = 507; body = "{\"error\":\"import_registry_full\"}\n";
+                            }
+                        }
+                        if (status != 507 && status != 409) body = econbuf;
+                    }
+                }
+                vj_free(pkg);
+            }
         }
         char portalbuf[512];
         if (register_route) {

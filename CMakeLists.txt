@@ -124,13 +124,13 @@ if(NOT WIN32)
   add_test(NAME headless_probe COMMAND headless_probe)
 endif()
 if(NOT WIN32)
-  add_executable(http_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/common/ed25519.c src/platform/http_client.c src/platform/http_probe.c)
+  add_executable(http_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/common/ed25519.c src/platform/http_client.c src/platform/http_probe.c)
   target_link_libraries(http_probe PRIVATE Threads::Threads)
   add_test(NAME http_probe COMMAND bash ${CMAKE_SOURCE_DIR}/tools/http_probe_retry.sh $<TARGET_FILE:http_probe>)
-  add_executable(hub_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/common/ed25519.c src/platform/http_client.c src/platform/hub_probe.c)
+  add_executable(hub_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/common/ed25519.c src/platform/http_client.c src/platform/hub_probe.c)
   target_link_libraries(hub_probe PRIVATE Threads::Threads)
   add_test(NAME hub_probe COMMAND hub_probe)
-  add_executable(websocket_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/common/ed25519.c src/platform/http_client.c src/platform/websocket_probe.c)
+  add_executable(websocket_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/common/ed25519.c src/platform/http_client.c src/platform/websocket_probe.c)
   target_link_libraries(websocket_probe PRIVATE Threads::Threads)
 endif()
 set_tests_properties(platform_probe fiber_probe process_probe socket_probe thread_probe dir_probe
@@ -177,13 +177,7 @@ if(INIMERSE_NODE)
   add_test(NAME economy_domain_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/economy_domain.test.py)
   set_tests_properties(economy_domain_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   add_test(NAME economy_migration_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/economy_migration.test.py)
-  # KNOWN DEFECT, deliberately not green-by-omission: this test asserts the behaviour
-  # /economy/import CLAIMS (re-derive the ledger chain from the package) and that
-  # behaviour is not implemented -- see docs/STATUS.md "§43.5 迁移导入：已证伪".
-  # WILL_FAIL keeps the release gate honest instead of hiding the failure, and it
-  # flips to an unmissable "unexpectedly passed" failure the moment someone fixes
-  # the importer, which is the signal to delete this marker.
-  set_tests_properties(economy_migration_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression;known-defect" WILL_FAIL TRUE)
+  set_tests_properties(economy_migration_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
   set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 30 LABELS "protocol;regression")
@@ -237,7 +231,7 @@ if(INIMERSE_BUILD_ENGINE)
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
       src/mod/mod_posix.c src/mod/net_mod_posix.c src/mod/server_mod_posix.c src/mod/say_mod_posix.c src/mod/say_stream.c src/platform/socket.c
       src/platform/process.c src/isolate_mod.c
-      src/platform/posix_stubs.c src/platform/http_posix.c src/platform/http_client.c src/platform/serial_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c
+      src/platform/posix_stubs.c src/platform/http_posix.c src/verse/json_min.c src/platform/http_client.c src/platform/serial_posix.c src/platform/websocket.c src/platform/crp_session.c src/desugar_mod.c src/lint_mod.c
       src/headless_server_posix.c src/mod/replay_mod.c src/mod/json_mod.c src/mod/result_mod.c
       src/mod/infiverse_mod.c src/mod/record_mod.c src/mod/verse_dist_mod.c)
   endif()

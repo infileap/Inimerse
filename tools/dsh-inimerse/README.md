@@ -52,9 +52,10 @@ parsed from CTest's own output. Options: `filter` (`--tests-regex`), `label`
 (`--label-regex`), `jobs`, `output_on_failure` (default on).
 
 The plugin reports CTest's verdict and does not re-judge it. In particular a test
-registered `WILL_FAIL TRUE` is *expected* to fail and CTest counts it as passing —
-that is how the §43.5 known defect is recorded in this repository, and silently
-inverting it here would hide the distinction the registration encodes.
+registered `WILL_FAIL TRUE` is *expected* to fail and CTest counts it as passing;
+silently inverting that here would hide the distinction the registration encodes.
+(This repository currently has no such test — `economy_migration_regression` was
+the one, until its defect was fixed and the marker removed.)
 
 ### `inim_run` — execute a script
 
