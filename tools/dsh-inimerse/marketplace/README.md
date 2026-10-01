@@ -20,6 +20,11 @@ were run to verify them.
   51.3 kB unpacked — `index.js`, `cordis.patch.yml`, `README.md`, `icon.svg`,
   `locale/*.json`, `package.json`, `LICENSE`. No `node_modules`, no lockfile,
   no dev-only files.
+- The **real** tarball was packed, extracted and imported outside the
+  repository: `dsh-inimerse-0.1.0.tgz`, 14,905 bytes, whose `index.js` loads
+  standalone and exports exactly `{ apply, inject, name }`. It imports only
+  `node:child_process`, `node:fs` and `node:path`, so there is no dependency
+  that could be missing from the published artifact.
 - Both `entry.json` alone and the full `registry.json` pass dsh-m's **own**
   validator (`validateRegistry` from `dsh-m/lib/core/registry.js`) with zero
   errors.
