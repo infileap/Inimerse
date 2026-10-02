@@ -46,7 +46,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 
 ## 3. 门禁（`tools/gate.sh`）
 
-合入 main 前必须全绿。六个阶段，任一失败即整体失败：
+合入 main 前必须全绿。七个阶段，任一失败即整体失败：
 
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
@@ -55,12 +55,13 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 | economy | `python3 tools/economy_migration.test.py` | `economy migration: ok`（**39 / 39**） |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` | **55 / 55** |
 | node | `node tools/node_suites/run_all.js` | **11 / 11**（`tools/` 下每个可独立运行的 JS 套件；`crp_session_flow.test.js` 需活跃 hub，由 CTest 的 `crp_session_flow_regression` 驱动，不在此列） |
-| links | `python3 tools/check_links.py` | **0 broken**（当前 66 个 md / 211 条链接 / 205 条本地链接） |
+| links | `python3 tools/check_links.py` | **0 broken** |
+| doc-paths | `python3 tools/check_doc_paths.py` | **0 broken**（反引号内的 `docs/…`/`future/…` `.md` 引用；`links` 阶段看不见这类，因为 `check_links.py` 必须先剥离行内代码，见 [streams/docs-audit.md](streams/docs-audit.md) §3.2） |
 
 ```bash
 tools/gate.sh                # 全量
 tools/gate.sh --fast         # 跳过 configure，复用已有 build/
-tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plugin|links
+tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plugin|links|doc-paths
 ```
 
 **门禁数字变了就必须同时改这张表和 [STATUS.md](STATUS.md) §1 的基线行**，否则下一个会话会拿旧数字当验收线。
