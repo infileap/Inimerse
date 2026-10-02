@@ -5,7 +5,7 @@ say "STAGE1_CREATE"
 n = 0
 ok = 0
 while n < 400 {
-    r = gui_sprite("m" + n, "monster8.bmp")
+    r = gui_sprite("m" + n, "examples/assets/monster8.bmp")
     if r == 1 {
         ok = ok + 1
     } else {

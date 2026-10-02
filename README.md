@@ -16,6 +16,7 @@ Inimerse is the scripting engine and Infiverse is its Tauri desktop client.
 - `future/` — research vision and design drafts (not implementation status).
 - `tools/` — Python and Node tooling: benchmarks, bindgen, Wasm host, protocol references and their tests.
 - `vtest/`, `scripts/`, `*.im` — examples and regression tests.
+- `examples/` — re-homed sample, regression, legacy-UI and benchmark scripts; provenance in [docs/HYGIENE.md](docs/HYGIENE.md) §4/§6.2.
 
 ## Build the engine (Linux / POSIX)
 

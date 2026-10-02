@@ -2,15 +2,19 @@
 
 > 执行流：`stream/repo-hygiene`（冲突域：仓库根，除 `README.md` / `LICENSE` / `CMakeLists.txt`）。
 > 作业单：[streams/repo-hygiene.md](streams/repo-hygiene.md)。
-> **本文件是方案，不是执行记录。第 1 批已执行（§1）；第 2 批（§3–§7）等协调者批准后才动。**
+> **第 1 批与第 2 批的「迁移」部分已执行（§1、§10）；第 2 批的「删除」部分仍是方案（§3–§7）。**
+> §3–§9 是动工前的方案，其数字与结论仍按原文保留；**执行事实以 §10 为准**。
 
 ## 0. 状态一览
 
 | 批次 | 范围 | 状态 |
 | --- | --- | --- |
 | 第 1 批 | 24 个 `CHANGES_*.txt` + `CMakeLists.txt.bak` | **已执行并提交**（§1） |
-| 第 2 批 | 146 个全仓库零引用文件（§2 修正后的数字） | **仅方案**（§3–§7） |
-| 连带项 | 30 个二阶孤儿（§6） | 仅方案 |
+| 第 2 批 · 桶 B | 22 个文件迁出根目录（§4） | **已执行**（迁 `examples/`，见 §10） |
+| 连带项 · §6.2 | 8 个二阶孤儿迁出根目录 | **已执行**（见 §10） |
+| 第 2 批 · 桶 A | 118 个零引用文件删除（§3） | **未执行**（仍只是方案；本批一个文件都没删） |
+| 第 2 批 · 桶 C | 6 个留根文件（§5） | **未执行**（按方案留根，一个都没动） |
+| 连带项 · §6.1 | 20 个随桶 A 删除的二阶孤儿 | **未执行**（随桶 A 一起等批准） |
 
 ## 1. 已执行的第 1 批
 
@@ -356,3 +360,110 @@ icon_spec.md
   但作业单 §2 明确要求 `rm`，且该文件不属于任何构建输入。
 - **BOARD.md 第 5 节的 `repo-hygiene` 行状态没有改**（仍写 `进行中`）。
   改板子是协调者的动作，且 `docs/` 与 `docs-audit` 冲突域相邻，我未动。
+
+## 10. 第 2 批「桶 B 迁移」执行记录（已执行）
+
+> 本节是**执行事实**，写于第 2 批的迁移部分完成之后。作业单只批了「只搬不删」的
+> 桶 B 迁移，没有批桶 A 的删除，因此 §3 的 118 个文件**一个都没删**，§6.1 的 20 个
+> 连带删除项也**一个都没删**。
+
+### 10.1 规模与去处
+
+| 去处 | 数量 | 来源 |
+| --- | --- | --- |
+| `examples/scripts/` | 5 | 桶 B（§4） |
+| `examples/regressions/` | 7 | 桶 B（§4） |
+| `examples/legacy-ui/` | 8 | 桶 B（§4） |
+| `examples/bench/` | 2 | 桶 B（§4） |
+| `examples/bench/` | 7 | §6.2 二阶孤儿（`cpu1/cpu8/cpu8s`、`es_200/400/800/1600`） |
+| `examples/assets/` | 1 | §6.2 二阶孤儿（`monster8.bmp`） |
+| **合计** | **30** | 22 个桶 B + 8 个二阶孤儿 |
+
+分桶计数**实测复核过**：桶 B 22 个，5 / 7 / 8 / 2 的拆分与 §4 逐条一致；§6.2 的 8 个文件
+全部存在。**§6.2 的排除条件（被 `CMakeLists.txt`、`vtest/` 或桶 C 引用则不迁）不触发**——
+全仓检索确认这 30 个文件没有任何一处被 `CMakeLists.txt`、`vtest/` 或 §5 的 6 个桶 C 文件引用
+（引用者只有 `cpu_measure.ps1`、`es_bench.ps1`、`entity_stress2.im` 三处，全部随本批一起处理）。
+
+### 10.2 逐文件哈希核对（唯一验收点）
+
+`git hash-object`（blob 哈希，等于逐字节内容）在迁移前后各算一次，30 个文件**全部相同**，
+文件模式也全部保持 `100644`。索引里旧路径**一个都不剩**（`git ls-files <旧路径>` 为空），
+`git status` 全部显示为 `R`（重命名），没有出现「删一个、加一个」的假重命名。
+
+| 原路径 | 新路径 | 迁移前 blob | 迁移后 blob | 判定 |
+| --- | --- | --- | --- | --- |
+| `canvas_demo.im` | `examples/scripts/canvas_demo.im` | `79df0699b10eaaa7e18e234f800a880e935fabe7` | `79df0699b10eaaa7e18e234f800a880e935fabe7` | 相同 |
+| `verse_biome_demo.im` | `examples/scripts/verse_biome_demo.im` | `5c8ec8ff87049137a69df76c7484ded822395169` | `5c8ec8ff87049137a69df76c7484ded822395169` | 相同 |
+| `im2d_test.im` | `examples/scripts/im2d_test.im` | `efbb9c50fdb2a4e3a71a02bf05070976f0ec873d` | `efbb9c50fdb2a4e3a71a02bf05070976f0ec873d` | 相同 |
+| `block_edit.im` | `examples/scripts/block_edit.im` | `f73e762a85aa6683a2c5c0fd896629f6b1ddd985` | `f73e762a85aa6683a2c5c0fd896629f6b1ddd985` | 相同 |
+| `textbox.im` | `examples/scripts/textbox.im` | `d357f5ef5728b9d16ba4cde21eaca4d535a37fdc` | `d357f5ef5728b9d16ba4cde21eaca4d535a37fdc` | 相同 |
+| `atomic_test.im` | `examples/regressions/atomic_test.im` | `44a067080e7682dc7d58382bce17da876b2a77cf` | `44a067080e7682dc7d58382bce17da876b2a77cf` | 相同 |
+| `cpu8m.im` | `examples/regressions/cpu8m.im` | `7ce2e75ffbe6da7e2aa169e8d1737fb19e580967` | `7ce2e75ffbe6da7e2aa169e8d1737fb19e580967` | 相同 |
+| `label_test.im` | `examples/regressions/label_test.im` | `fcd2d978704eeaea9e5bb9037f1406a063a09729` | `fcd2d978704eeaea9e5bb9037f1406a063a09729` | 相同 |
+| `restart_stress.im` | `examples/regressions/restart_stress.im` | `97e7f954f94ff3e161911501308aafa23cdb7ef5` | `97e7f954f94ff3e161911501308aafa23cdb7ef5` | 相同 |
+| `string_nested_crash_test.im` | `examples/regressions/string_nested_crash_test.im` | `7d9e45eb5ff99587d4b2addd9bbfb5905be3e359` | `7d9e45eb5ff99587d4b2addd9bbfb5905be3e359` | 相同 |
+| `task_loop_crash.im` | `examples/regressions/task_loop_crash.im` | `5c4dd0c463d1411808fae67bfb1ec5b902c3cdbc` | `5c4dd0c463d1411808fae67bfb1ec5b902c3cdbc` | 相同 |
+| `thread_test.im` | `examples/regressions/thread_test.im` | `eaddf5ddf4d03743a5e0f9c5e030564d694fe558` | `eaddf5ddf4d03743a5e0f9c5e030564d694fe558` | 相同 |
+| `chat.html` | `examples/legacy-ui/chat.html` | `35dfabf59e9b56baad511d3915bffb504db81edc` | `35dfabf59e9b56baad511d3915bffb504db81edc` | 相同 |
+| `desktop.html` | `examples/legacy-ui/desktop.html` | `f0272142623bf64b34824f73f5b242422fe348b1` | `f0272142623bf64b34824f73f5b242422fe348b1` | 相同 |
+| `hl_renderer.html` | `examples/legacy-ui/hl_renderer.html` | `564f2292c6e8f0172156a097ae2f48cd8cb6b956` | `564f2292c6e8f0172156a097ae2f48cd8cb6b956` | 相同 |
+| `home.html` | `examples/legacy-ui/home.html` | `740c4724a338ae2596ce8093b507fc0c943b430e` | `740c4724a338ae2596ce8093b507fc0c943b430e` | 相同 |
+| `netplay.html` | `examples/legacy-ui/netplay.html` | `e0b6d05510ea9a703ec906b7b40a699bd9b37f21` | `e0b6d05510ea9a703ec906b7b40a699bd9b37f21` | 相同 |
+| `verse_forge.html` | `examples/legacy-ui/verse_forge.html` | `2e6a53104ec1fe975c413a3f3091c61df7bcbff8` | `2e6a53104ec1fe975c413a3f3091c61df7bcbff8` | 相同 |
+| `wb.html` | `examples/legacy-ui/wb.html` | `3c346112d2d9e27590219ee04e47f90c8479b1a0` | `3c346112d2d9e27590219ee04e47f90c8479b1a0` | 相同 |
+| `workbench_web.html` | `examples/legacy-ui/workbench_web.html` | `c05d9a6cba57b347d7d309343fdc6aa9f1473634` | `c05d9a6cba57b347d7d309343fdc6aa9f1473634` | 相同 |
+| `cpu_measure.ps1` | `examples/bench/cpu_measure.ps1` | `7efe473aabf26fc438573ff329dc623f9052ef91` | `7efe473aabf26fc438573ff329dc623f9052ef91` | 相同 |
+| `es_bench.ps1` | `examples/bench/es_bench.ps1` | `92f5c447fb6e5d4b5920939048f673611d6b5ea6` | `92f5c447fb6e5d4b5920939048f673611d6b5ea6` | 相同 |
+| `monster8.bmp` | `examples/assets/monster8.bmp` | `de113074f5a4a558791b87fb6868ab056e635f82` | `de113074f5a4a558791b87fb6868ab056e635f82` | 相同 |
+| `cpu1.im` | `examples/bench/cpu1.im` | `2d2e9e7b3063a30982a36bbb39dcd4fb7cf17ae0` | `2d2e9e7b3063a30982a36bbb39dcd4fb7cf17ae0` | 相同 |
+| `cpu8.im` | `examples/bench/cpu8.im` | `3e80fad764a18f78e01aecaa255aa7fa08d755ef` | `3e80fad764a18f78e01aecaa255aa7fa08d755ef` | 相同 |
+| `cpu8s.im` | `examples/bench/cpu8s.im` | `69f6df68096d6c2b8822680036a107feafcdeaa0` | `69f6df68096d6c2b8822680036a107feafcdeaa0` | 相同 |
+| `es_200.im` | `examples/bench/es_200.im` | `3d6d71a2d8ba24aa12321e3870f631f575260591` | `3d6d71a2d8ba24aa12321e3870f631f575260591` | 相同 |
+| `es_400.im` | `examples/bench/es_400.im` | `ffa0cf86ce8c2a3bec7b77f96f798da174f8973e` | `ffa0cf86ce8c2a3bec7b77f96f798da174f8973e` | 相同 |
+| `es_800.im` | `examples/bench/es_800.im` | `20ff9bfdda29a420d4ad094f897f68dde369fe74` | `20ff9bfdda29a420d4ad094f897f68dde369fe74` | 相同 |
+| `es_1600.im` | `examples/bench/es_1600.im` | `380bd132f7749f13a7fdacf5efcf41203f9d011a` | `380bd132f7749f13a7fdacf5efcf41203f9d011a` | 相同 |
+
+**结论：30 / 30 逐字节相同，0 个内容变化。本批是迁移，不是删除，也不是改写。**
+
+### 10.3 本批同时改动的**非迁移**文件（与上表无关，单独列出）
+
+| 文件 | 改动 | 为什么 |
+| --- | --- | --- |
+| `entity_stress2.im`（第 8 行，桶 A，**未删**） | `gui_sprite("m"+n, "monster8.bmp")` → `gui_sprite("m"+n, "examples/assets/monster8.bmp")` | 该字符串是**相对 cwd 的文件系统路径**（`src/mod/gui_mod.c` 的 `load_bmp_cached`/`load_bmp` 原样交给 `LoadImageA`/WIC，不做资源解析）；纹理搬走后不改这一处，留在根的脚本才会坏 |
+| `README.md` | Layout 增加一行 `- examples/ — …` | 根布局变了，索引要跟着变 |
+| `examples/README.md`、`examples/{scripts,regressions,legacy-ui,bench,assets}/README.md`（5 个新增） | 新增索引与说明 | 迁移需要去处说明；`docs/HYGIENE.md` 不再唯一承载「这些文件为什么在这里」 |
+
+**代价（不粉饰）**：桶 A 的 118 个文件按作业单**一个都没删**，但 `entity_stress2.im` 的
+**内容**被改了——它是桶 A 文件，不在 10.2 的哈希表里。这是本批唯一一处「搬运之外」的
+源码改写，用途是保住一个留在根的脚本不被搬动作废。
+
+### 10.4 已知残留与未解决项
+
+1. **`es_200/400/800/1600.im` 仍写着裸名 `"monster8.bmp"`（知道会 dangling，故意没改）**。
+   它们是被**迁移**的文件，改一个字节就破坏 10.2 的验收点；因此保留原样，并把影响写进
+   `examples/bench/README.md`。这四个脚本只有在进程 cwd 里能看见 `monster8.bmp`
+   （例如 cwd 设为 `examples/assets/`）时才能找到纹理。
+2. **`home_embed.h` 是过期快照**：把根目录 6 个 `*_embed.h` 的 C 字符串数组解码后逐字节比对
+   HTML，结果是 `chat.html` / `desktop.html` / `netplay.html` / `wb.html` 与各自 header
+   **除末尾一个换行外完全相同**；`verse_forge.html` 与 `forge_embed.h` 只差「生成器在每个
+   换行前插了一个空格」（26 449 B vs 26 894 B）；而 **`home.html`（5 537 B）比
+   `home_embed.h`（解码 3 900 B）新**，多出的标记（如 `.profile-head`）只存在于 HTML 里。
+   `hl_renderer.html`、`workbench_web.html` 没有对应的 embed header。仓库里**没有**
+   任何生成器脚本能重建这些 header。移走的 HTML 没被构建读取，因此不影响构建；
+   但**人类可读的那份源现在在 `examples/legacy-ui/`**，这个对应关系只记录在
+   `examples/legacy-ui/README.md` 和本节。
+3. **本批自己的零引用计数与 §2 的 138 / 146 不一致**：我按「文件名全仓字面子串」重扫
+   （排除 `.git/`、`.worktrees/`、`build/`、`node_modules/`、`.npm-tmp/`、文件自身、
+   `docs/streams/repo-hygiene.md` 与 `docs/HYGIENE.md`），得到根目录 **128** 个零引用文件
+   （115 `.im` + 8 `.html` + 4 `.ps1` + 1 `.inim`），既不是 138 也不是 146。
+   已定位到的具体差异来源：`docs/STATUS.md` 里点名了 `ports.bat` 与 `smoke2.im`（所以它们
+   不算零引用），而 `docs/HYGIENE.md` 自身点名了每一个候选（所以按 §2 的口径要排除它）。
+   **差异没有被我抹平**；桶 B 的 22 个与 5/7/8/2 拆分不受影响，实测与 §4 一致。
+4. **引用面没有全覆盖**：`docs/STATUS.md` 在叙述段落（行内代码）里提到 `block_edit.im`、
+   `textbox.im`、`cpu8m.im`。这不是 markdown 链接，`check_links.py` 与 `check_doc_paths.py`
+   都看不见它；`docs/` 除本文件外是 `docs-audit` 的冲突域，本流没动，只在此登记。
+5. **`examples/bench/*.ps1` 是 Windows 专用**（硬编码 `D:\inimerse_stable\inimerse.exe`），
+   本机无法实际执行，所以「迁移后这些脚本仍能跑」这一点**我没有运行验证**，只有静态的
+   路径与目录关系核对。
+6. **本批没跑**：没有删除任何文件、没有触碰 `.gitattributes`、没有 `git add --renormalize`、
+   没有 push、没有合 `main`、没有动 `src/verse/`、`src/common/`、`src/mod/verse_dist_mod.c`。
