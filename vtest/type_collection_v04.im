@@ -1,4 +1,4 @@
-# Named types are collection-valued globals and can be reused by be.
+# A named type is a collection-valued global that `be` can consume.
 type Byte = [0~255]
 x be Byte: 42
-say x
+say "typecoll x=" + str(x)

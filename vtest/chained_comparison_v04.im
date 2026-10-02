@@ -1,5 +1,19 @@
+# Chained comparison `0 <= x < 100` compiles to a single EXPR_CHAIN_COMPARE.
+# The counter is the point: if the chain were compiled as two independent
+# comparisons (or as always-true), `outside` would add 100 and the assertion
+# on `chain hits=1 end` would fail.  The trailing ` end` is load-bearing: without
+# it the regex `chain hits=1` would also be satisfied by `chain hits=101`, because
+# a regular expression matches a PREFIX.  A `FAIL_REGULAR_EXPRESSION` on the suppressed
+# branch's text would be vacuous -- the engine echoes every string literal.
 inside = 50
-if 0 <= inside < 100 { say "inside" }
+if 0 <= inside < 100 { say "chain inside-hit" }
 
 outside = 120
-if 0 <= outside < 100 { say "bad" }
+if 0 <= outside < 100 { say "chain outside-hit" }
+
+hits = 0
+a = 50
+if 0 <= a < 100 { hits = hits + 1 }
+b = 120
+if 0 <= b < 100 { hits = hits + 100 }
+say "chain hits=" + str(hits) + " end"

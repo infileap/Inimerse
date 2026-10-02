@@ -1,13 +1,20 @@
+# `in <named type>` and `in [lo~hi]` collection patterns.
+#
+# Every marker carries a computed value on purpose.  The engine echoes all of a
+# program's string literals in one `[0]="..." [1]="..."` line before the real
+# output, so a marker made only of literals would be satisfied by that echo line
+# and the assertion would stay green no matter what the program actually did.
+# `"coll positive-type=" + str(42)` can only appear in the program's own output.
 type Positive = [1~100]
 case 42 {
-    in Positive: say "positive-type"
-    _: say "other"
+    in Positive: say "coll positive-type=" + str(42)
+    _: say "coll other=" + str(0)
 }
 case 7 {
-    in [0~10]: say "range-hit"
-    _: say "range-other"
+    in [0~10]: say "coll range-hit=" + str(7)
+    _: say "coll range-other=" + str(0)
 }
 case 999 {
-    in Positive: say "bad-positive"
-    _: say "wildcard-hit"
+    in Positive: say "coll bad-positive=" + str(999)
+    _: say "coll wildcard-hit=" + str(999)
 }

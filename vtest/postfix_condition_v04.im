@@ -1,8 +1,20 @@
-func mark_true() { say "if-true" }
-func mark_false() { say "not-printed" }
+# Postfix `if`/`unless` only bind to their host statement.
+# Suppression must leave a VALUE trace: a suppressed branch that only prints
+# text proves nothing, because the engine echoes every string literal, so a
+# FAIL_REGULAR_EXPRESSION on that text matches even when the branch is skipped.
+# Both counters below therefore change a variable, and the assertion is on
+# `postfix fired=0`.
+func mark_true() { say "postfix if-true" }
+fired = 0
+func mark_false() {
+    global fired
+    fired = fired + 1
+    say "postfix suppressed"
+}
 mark_true() if true
 mark_false() unless true
-say "say-if" if true
-say "say-unless" unless true
-unless false { say "unless-block" }
-unless true { say "not-printed" }
+say "postfix say-if" if true
+say "postfix say-unless" unless true
+unless false { say "postfix unless-block" }
+unless true { fired = fired + 1; say "postfix suppressed-block" }
+say "postfix fired=" + str(fired)

@@ -1,2 +1,3 @@
+# Doubles must survive the full 17 significant digits.
 value = 1.2345678901234567
-say str(value)
+say "float value=" + str(value)

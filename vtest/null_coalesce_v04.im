@@ -1,7 +1,8 @@
+# `??` yields the right operand only for nil.
 a = nil
 b = a ?? 42
-say b
+say "coalesce nil=" + str(b)
 
 c = 7
 d = c ?? 99
-say d
+say "coalesce some=" + str(d)

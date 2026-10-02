@@ -519,7 +519,7 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME collection_core_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/collection_core_v04.im)
   set_tests_properties(collection_core_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection" PASS_REGULAR_EXPRESSION "1,2")
   add_test(NAME type_collection_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/type_collection_v04.im)
-  set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection")
+  set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection" PASS_REGULAR_EXPRESSION "typecoll x=42")
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/range_meta_sandbox)
   add_test(NAME range_meta_runtime
     COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_BINARY_DIR}/range_meta_sandbox
@@ -536,14 +536,14 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME gc_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
   set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc" PASS_REGULAR_EXPRESSION "gc-ran;gc-stats-ok;thread-result-alive;closure-capture-alive;root-alive;gc-done")
   add_test(NAME pipeline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/pipeline_v04.im)
-  set_tests_properties(pipeline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar")
+  set_tests_properties(pipeline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1")
   add_test(NAME result_question_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_question_v04.im)
   # Assert on the marked VALUE line, not on the unreachable literal: the engine
   # echoes every string literal, so FAIL_REGULAR_EXPRESSION "resultq unreachable"
   # matched the echo even when the statement never ran.
   set_tests_properties(result_question_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result" PASS_REGULAR_EXPRESSION "resultq value=42.*resultq caught.*resultq reached=0")
   add_test(NAME null_coalesce_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/null_coalesce_v04.im)
-  set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety")
+  set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "coalesce nil=42.*coalesce some=7")
   add_test(NAME optional_member_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/optional_member_v04.im)
   # The engine echoes builtin call arguments, so the dict literal's own
   # "inimerse" appears in the output even when `?.` is broken -- assert on the
@@ -552,9 +552,9 @@ if(INIMERSE_BUILD_ENGINE)
   # stale recycled register that made nil?.name return the previous result.
   set_tests_properties(optional_member_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "OM present=inimerse" FAIL_REGULAR_EXPRESSION "OM missing=inimerse")
   add_test(NAME chained_comparison_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/chained_comparison_v04.im)
-  set_tests_properties(chained_comparison_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;comparison")
+  set_tests_properties(chained_comparison_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;comparison" PASS_REGULAR_EXPRESSION "chain inside-hit.*chain hits=1 end")
   add_test(NAME postfix_condition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_v04.im)
-  set_tests_properties(postfix_condition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow")
+  set_tests_properties(postfix_condition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow" PASS_REGULAR_EXPRESSION "postfix if-true.*postfix say-if.*postfix unless-block.*postfix fired=0")
   # Regression for the cross-line postfix-if ambiguity: a next-line `if cond { ... }` used to be
   # swallowed as a postfix condition of the previous statement, and the orphaned block was then
   # parsed as a dict literal (`expected ':', but got '}'`).  The test must both run (exit 0 is the
@@ -601,9 +601,13 @@ if(INIMERSE_BUILD_ENGINE)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox)
   set_tests_properties(lint_case_try_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox TIMEOUT 15 LABELS "language;lint;case;result;types" FAIL_REGULAR_EXPRESSION "case try guarded err coverage|finite err type")
   add_test(NAME case_collection_patterns_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_collection_patterns_v04.im)
-  set_tests_properties(case_collection_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;collection;types")
+  # The `=NN` values come from `+ str(N)` in the script, so this regex can only
+  # be satisfied by the program's own output -- never by the engine's echo line,
+  # which lists every string literal of the program and would match a marker
+  # built from literals alone.
+  set_tests_properties(case_collection_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;collection;types" PASS_REGULAR_EXPRESSION "coll positive-type=42.*coll range-hit=7.*coll wildcard-hit=999")
   add_test(NAME case_structural_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_structural_v04.im)
-  set_tests_properties(case_structural_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
+  set_tests_properties(case_structural_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "struct record-hit=1.*struct nested-hit=2.*struct deep-hit=3.*struct bind=not_found:1.*struct missing-safe=5")
   add_test(NAME case_alias_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_alias_v04.im)
   # The `alias ` prefixes make the assertion target the values the program
   # prints.  A bare `42` would also match the engine's echo of the string
@@ -639,7 +643,7 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(lambda_nested_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "lambda nested=9")
   set_tests_properties(lambda_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "lambda double=42.*lambda sum2=5")
   add_test(NAME float_precision_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/float_precision_v04.im)
-  set_tests_properties(float_precision_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;numeric")
+  set_tests_properties(float_precision_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;numeric" PASS_REGULAR_EXPRESSION "float value=1.2345678901234567")
   # Regression for BOARD row `engine-push-call-arg-miscompile`: a user-function call
   # nested inside another call's argument list corrupted the VM operand stack because
   # L_RETURN restored `t->sp` from frame_sp[frame_count] instead of [frame_count - 1].

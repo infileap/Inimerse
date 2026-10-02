@@ -903,4 +903,6 @@ printf 's = "a\\0b"\nsay str(len(s))\n' > /tmp/t.im && ./build/inimerse /tmp/t.i
 4. **不要用 `FAIL_REGULAR_EXPRESSION` 去匹配字符串字面量**。第 3 条的反面：既然每个字面量都会被回显，`FAIL_REGULAR_EXPRESSION "resultq unreachable"` 这种「断言某段文本不存在」的写法**恒为空** —— 语句根本没执行，字面量照样出现在回显行里。要让「某件事没发生」可断言，就让它**留下值上的痕迹**（把 `reached = 1` 放进那个不该执行的路径，然后断言 `PASS_REGULAR_EXPRESSION "resultq reached=0"`）。
 5. **`PASS_REGULAR_EXPRESSION` 的列表语义是「任一匹配即通过」**，比单条正则更弱；要多点校验就写成**一条**用 `.*` 连接的正则（`.*` 能跨行匹配，`CMakeLists.txt:607`、`:617` 是既有先例）。
 6. **断言必须双向验证**：不仅要在修复版上绿，还要把实现改回坏版本、重建、确认它**确实变红**，并记下红在哪条（`Required regular expression not found` 还是 `Error regular expression found in output`）。只验证「绿」的断言可能根本没有牙。
-3. `--lint` 不可用作解析谓词（M11）。
+7. **正则匹配的是前缀，数值标记必须带终结符**。`chained_comparison_runtime` 最初断言 `chain hits=1`，而把 `src/compiler/compiler.c:828` 的 `OP_AND` 改成 `OP_OR` 后程序打印的是 `chain hits=101` —— 它**以 `chain hits=1` 开头**，正则照样命中，测试仍是绿的。标记已改成 `chain hits=1 end`。凡是被测值是数字，就在它后面加一个不可能被别的数字续上的后缀。
+8. **「全部由字符串字面量组成的标记」会被回显行整体满足**。第 3 条的反面加强版：引擎把程序里**所有**字面量回显成**同一行**（`[0]="coll positive-type=" [1]="str" [2]="coll range-hit=" …`），所以一条跨多个纯字面量标记的正则（`coll positive-type.*coll range-hit.*coll wildcard-hit`）**整条被那一行满足**，程序真实行为完全不参与匹配。实测：把 `src/compiler/compiler.c:1682` 的 `OP_IN, tmp, subj, pat` 换成 `pat, subj` 后程序输出确实从 `coll positive-type` 变成 `coll other`，CTest 仍 Passed；`case_structural_runtime` 同理（`OP_EQ`→`OP_NEQ` 后第一行从 `struct record-hit` 变成 `struct bad`，仍 Passed）。**修法：每个标记都要带一个计算值**（`say "coll positive-type=" + str(42)`），使「标记+值」这个串只可能出现在程序自己的输出里；改后同样的两次打断都变成 `Required regular expression not found`。
+9. `--lint` 不可用作解析谓词（M11）。

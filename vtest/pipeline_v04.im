@@ -1,5 +1,8 @@
+# `|>` passes the left side as the first argument.
 func add_one(x) { return x + 1 }
 func add(x, y) { return x + y }
-say 4 |> add_one
-say 2 |> add_one |> add_one
-say 3 |> add(2)
+func sub(x, y) { return x - y }
+say "pipe one=" + str(4 |> add_one)
+say "pipe two=" + str(2 |> add_one |> add_one)
+say "pipe arg=" + str(3 |> add(2))
+say "pipe order=" + str(3 |> sub(2))

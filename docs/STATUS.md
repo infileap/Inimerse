@@ -1352,3 +1352,64 @@ alias guarded2-miss
 **一条顺带说清的语义**：`as` **只做绑定，不做匹配**。`n as whole2` 里的 `n` 是**裸标识符模式**，语义是值比较（`42 == nil` 不匹配，所以走 `_`），不是「把 subject 绑到 `n`」。这个区分在修复前后都一样。
 
 **门禁**：本批**不新增 CTest**，`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 67 更新为 **66**（`*_runtime` 类还剩 **10** 个）。
+
+### 10.23 `*_runtime` 第二批八条：两种「没有牙」的写法，以及「回显行」能整条满足正则（`language-behaviour-assertions`）
+
+承 §10.19/§10.21/§10.22 的 `ctest-assertion-gap`。本批给八个只断言退出码的 `*_runtime` 测试补上带标记的值行与 `PASS_REGULAR_EXPRESSION`，**八条全部双向验证通过**。但其中两条的**初版**被证明没有牙，而且两个根因不一样 —— 这两条教训比八条断言本身更值钱。
+
+**八条断言**（均为单条 `.*` 正则，理由见 `docs/SYNTAX.md` §8 第 5 条）：
+
+| 测试 | 断言 |
+|---|---|
+| `type_collection_runtime` | `typecoll x=42` |
+| `pipeline_runtime` | `pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1` |
+| `null_coalesce_runtime` | `coalesce nil=42.*coalesce some=7` |
+| `chained_comparison_runtime` | `chain inside-hit.*chain hits=1 end` |
+| `postfix_condition_runtime` | `postfix if-true.*postfix say-if.*postfix unless-block.*postfix fired=0` |
+| `case_collection_patterns_runtime` | `coll positive-type=42.*coll range-hit=7.*coll wildcard-hit=999` |
+| `case_structural_runtime` | `struct record-hit=1.*struct nested-hit=2.*struct deep-hit=3.*struct bind=not_found:1.*struct missing-safe=5` |
+| `float_precision_runtime` | `float value=1.2345678901234567` |
+
+**顺带加深了 `pipeline` 的覆盖**：原来的 `3 |> add(2)` 里 `add` 是可交换的，把前插改成后插也得出同一个数，**测不出插在哪一头**。改成非交换的 `func sub(x, y) { return x - y }` 与 `3 |> sub(2)`（`pipe order=1`）后，前插改后插会打印 `pipe order=-1`。
+
+**没有牙的写法 ①：正则匹配的是前缀。** `chained_comparison_runtime` 初版断言 `chain hits=1`。把 `src/compiler/compiler.c:828` 的 `else emit(comp->curBC, OP_AND, result, result, cmp);` 改成 `OP_OR` 后，程序确实打印 `chain inside-hit` / `chain outside-hit` / `chain hits=101` —— 可 `chain hits=101` **以 `chain hits=1` 开头**，正则照样命中，测试仍然是绿的。标记改成 `chain hits=1 end` 后，同一个打断变红。
+
+**没有牙的写法 ②：全部由字面量组成的标记，会被回显行整条满足。** 这是 §10.19/§10.21 那个坑的加强版：引擎把程序里**所有**字符串字面量回显成**同一行**，所以一条跨多个纯字面量标记的正则会被那一行整体命中。`case_collection_patterns_runtime` 初版断言 `coll positive-type.*coll range-hit.*coll wildcard-hit`，而回显行是
+
+```
+[0]="R" [1]="coll positive-type=" [2]="str" [3]="coll other=" [4]="coll range-hit=" [5]="coll range-other=" [6]="coll bad-positive=" [7]="coll wildcard-hit="
+```
+
+三个标记全在里面。实测两次打断，**程序行为确实被破坏，CTest 仍然 Passed**：
+
+- 把 `src/compiler/compiler.c:1682` 的 `emit(comp->curBC, OP_IN, tmp, subj, pat);` 换成 `pat, subj`（成员测试实参对调）⇒ 输出从 `coll positive-type` / `coll range-hit` 变成 `coll other=0` / `coll range-other=0`，**测试仍 Passed**；
+- 把 `src/compiler/compiler.c:1623` 的 `emit(comp->curBC, OP_EQ, eq, got, expected);` 换成 `OP_NEQ`（dict 字段比较取反）⇒ 第一行从 `struct record-hit` 变成 `struct bad`，**测试仍 Passed**。
+
+**修法：每个标记后面接一个计算值**（`say "coll positive-type=" + str(42)`），使「标记+值」这个串**只可能出现在程序自己的输出里**（回显行里只有 `[1]="coll positive-type="` 与 `[2]="str"`，没有 `coll positive-type=42`）。改后同样的两次打断都变成 `Required regular expression not found`：
+
+```
+1/1 Test #84: case_collection_patterns_runtime ...***Failed
+  Required regular expression not found. Regex=[coll positive-type=42.*coll range-hit=7.*coll wildcard-hit=999
+1/1 Test #85: case_structural_runtime ..........***Failed
+  Required regular expression not found. Regex=[struct record-hit=1.*struct nested-hit=2.*struct deep-hit=3.*struct bind=not_found:1.*struct missing-safe=5
+```
+
+**八条打断点与结果**（每条：打断 → 重建 → 确认该条变红 → 还原）：
+
+| 测试 | 打断点 | 结果 |
+|---|---|---|
+| `null_coalesce` | `src/compiler/compiler.c:639` `OP_JUMP_IF_FALSE`→`OP_JUMP_IF_TRUE` | RED |
+| `pipeline` | `src/parser/parser.c` 的 `\|>` 分支：前插 `args[0]` 改后插 `args[argCount]` | RED |
+| `type_collection` | `src/compiler/compiler.c:2205` `OP_BE, g, setReg, initReg`→`…, -1` | RED |
+| `chained_comparison` | `src/compiler/compiler.c:828` `OP_AND`→`OP_OR` | RED |
+| `postfix_condition` | `src/parser/parser.c:1662` `int invert = (peek(p).type == TOK_UNLESS);`→`= 0;`（**该行出现 2 次，须替换第 1 次**） | RED |
+| `float_precision` | `src/runtime/runtime_posix.c:59` `"%.17g"`→`"%.2f"` | RED |
+| `case_collection_patterns` | `src/compiler/compiler.c:1682` `OP_IN` 实参对调 | RED |
+| `case_structural` | `src/compiler/compiler.c:1623` `OP_EQ`→`OP_NEQ` | RED |
+
+**打断时踩到的两条源码事实**（都不是本批的缺陷，但会让打断脚本静默失效）：
+
+- **`OP_NE` 不存在。** `src/compiler/bytecode.h:11` 是 `OP_EQ, OP_NEQ, OP_LT, OP_GT, OP_LE, OP_GE,`，另有 `:37` 的 `OP_NEQK`。写 `OP_NE` 会编译失败（`BUILD-FAIL`），而不是让测试变红。
+- **`str` 被注册两次，后者覆盖前者。** `src/runtime/runtime.c:1810` 的 `vm_register_builtin(vm, "str", builtin_str);` 被 `src/runtime/runtime_posix.c:1032` 的 `vm_register_builtin(vm, "str", posix_core_str);` 覆盖。所以改 `src/runtime/runtime.c:67` 的 `builtin_str` **完全不生效**，`float_precision` 必须打断 `src/runtime/runtime_posix.c:59`。
+
+**门禁**：本批**不新增 CTest**，`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 66 更新为 **58**（`*_runtime` 类从 10 降到 **2**，只剩 `eidos_desugar_runtime` 与 `eidos_runtime`，它们是 Python 驱动的脚本测试、脚本内部自带 `assert`）。全量 `ctest --test-dir build` → `100% tests passed, 0 tests failed out of 101`。

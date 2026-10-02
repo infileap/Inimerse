@@ -1,23 +1,30 @@
+# Structural (dict) patterns, including nested ones and `k`/`v` binding.
+#
+# Every marker carries a computed value on purpose.  The engine echoes all of a
+# program's string literals in one `[0]="..." [1]="..."` line before the real
+# output, so a marker made only of literals would be satisfied by that echo line
+# and the assertion would stay green no matter what the program actually did.
+# `"struct record-hit=" + str(1)` can only appear in the program's own output.
 config = {"kind": "not_found", "retry": 1}
 envelope = {"error": {"kind": "not_found"}}
 deep = {"outer": {"inner": {"code": 404}}}
 case config {
-    {"kind": "permission_denied"}: say "bad"
-    {"kind": "not_found"}: say "record-hit"
-    _: say "other"
+    {"kind": "permission_denied"}: say "struct bad=" + str(0)
+    {"kind": "not_found"}: say "struct record-hit=" + str(1)
+    _: say "struct other=" + str(0)
 }
 case envelope {
-    {"error": {"kind": "not_found"}}: say "nested-hit"
-    _: say "nested-other"
+    {"error": {"kind": "not_found"}}: say "struct nested-hit=" + str(2)
+    _: say "struct nested-other=" + str(0)
 }
 case deep {
-    {"outer": {"inner": {"code": 404}}}: say "deep-hit"
-    _: say "deep-other"
+    {"outer": {"inner": {"code": 404}}}: say "struct deep-hit=" + str(3)
+    _: say "struct deep-other=" + str(0)
 }
 case config {
-    {"kind": k, "retry": retries}: say k + ":" + retries
+    {"kind": k, "retry": retries}: say "struct bind=" + k + ":" + str(retries)
 }
 case config {
-    {"missing": value}: say "bad-missing"
-    _: say "missing-safe"
+    {"missing": value}: say "struct bad-missing=" + str(0)
+    _: say "struct missing-safe=" + str(5)
 }
