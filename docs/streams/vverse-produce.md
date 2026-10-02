@@ -3,6 +3,11 @@
 > 这是给**一个 DSH 对话**的作业单。开工前先读 [BOARD.md](../BOARD.md) §1–§4。
 > 分支 `stream/vverse-produce`，冲突域 `src/`、`vtest/`。
 
+> **状态：已交付（2026-08 集成，`dc36493`）。** 已合入 `main`，交付内容、证据与**遗留边界**见
+> [STATUS.md §10.2](../STATUS.md#102-vverse-引擎侧打包器vverse-produce)。
+> **本文件是动工前的作业单** —— 下面「现状」一节记录的是当时的代码事实，不是今天的实现状态。
+> 判断某件事做了没有，以 `docs/STATUS.md` §10 与 `docs/BOARD.md` §5 为准。
+
 ## 1. 要交付什么
 
 **引擎能自己产出 `.vverse` 包**，产出的包能通过 `tools/vverse_validate.js` 校验，并且能被 `inim-server` 装载。

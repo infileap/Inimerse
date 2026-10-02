@@ -92,9 +92,10 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | 未认领 | `vverse-cli` | 打包器只是 `src/common/` 的库 + 探针驱动器（`build/vverse_pack_probe --pack <dir> <out> [seed-hex]`）；`.im` 脚本 / CLI 不能直接打包（`verse_pack()` 内建在 `src/mod/verse_dist_mod.c`） | `src/mod/verse_dist_mod.c`、`tools/vverse_*` | 一条 `.im` 脚本或 CLI 能直接产出通过全严格校验的 `.vverse` | — |
 | 未认领 | `hub-large-package` | **静默截断（真缺陷）**：`src/platform/http_posix.c:312 hub_body()` 的 `GET /v/<id>` 与 `GET /package/<id>` 用 `fread(body, 1, cap, vf)` 读文件，超 `cap` 即截断且**仍返回 200**（HTTP 调用点 `:1063` 缓冲 65536，实测 207991 字节包只回 65536，由 vverse 流交叉测试记录）；UDP 调用点 `:52-55` 缓冲 60001 且要求 `blen < 60000` 才发，即**根本不发、让对端超时**。`POST /package` 与 `POST /content` 上限各 49152。对照：`GET /content/<hash>` 因回算 sha256 会报 `content_corrupt` 500，**不静默** | `src/platform/http_posix.c` | 超大包要么完整送达，要么**明确报错**（413 / 长度协商），禁止 200 + 截断；补 >64 KiB 往返测试 | — |
 | 未认领 | `ws-client-coverage` | `tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用） | `tools/crp_ws_client*`、`tools/upp_session*` | 连接/重连/排队各自有断言；两个套件至少被一份文档引用 | — |
+| 未认领 | `archive-changes-refs` | 第 1 批删掉 24 个 `CHANGES_*.txt` 后，`docs/archive/protocol_v1.md:50` 的行内代码仍在引用已删的 `CHANGES_20260815_safety`。两个检查器都看不见它：`check_links.py` 必须先剥离行内代码，`check_doc_paths.py` **故意不扫 `docs/archive/`**（归档件引用旧路径被当成历史事实）。所以要显式选一条路，不能继续「检查器全绿但引用是断的」：**(a)** 在该处补一句「该文件已于 2026-08 删除，内容见 git 历史」，或 **(b)** 把「`docs/archive/` 与 `future/archive/` 不受引用有效性约束」写成明文规则放 [STATUS.md](STATUS.md) §1 | `docs/archive/`、`tools/check_doc_paths.py` | 要么补上说明，要么把规则写下来；不允许留「绿着但断着」 | — |
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
-| 进行中 | `repo-hygiene` | 仓库根残留清理。**第 1 批已执行**：删 24 个 `CHANGES_*.txt`（740 行）＋主工作区的 `CMakeLists.txt.bak`；分类方案已成文（[HYGIENE.md](HYGIENE.md)，357 行）。**口径更正：真实候选集是 146，不是 135** —— 原扫描有两处漏报（自匹配藏了 16 个；作业单自己点名的 8 个被当成引用者）。分桶 A 删 118 / B 迁出根 22 / C 留根 6，另有 30 个二阶孤儿。**第 2 批未执行**，待协调者批准 | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩 keep-set；分类方案成文 | `stream/repo-hygiene` |
+| 未认领 | `repo-hygiene` | 仓库根残留清理。**第 1 批已合入 `main`（`382ab67`）**：删 24 个 `CHANGES_*.txt`（740 行）＋主工作区的 `CMakeLists.txt.bak`；分类方案已成文（[HYGIENE.md](HYGIENE.md)，357 行）。**口径更正：真实候选集是 146，不是 135** —— 原扫描有两处漏报（自匹配藏了 16 个；作业单自己点名的 8 个被当成引用者）。分桶 A 删 118 / B 迁出根 22 / C 留根 6，另有 30 个二阶孤儿。**第 2 批一个文件都没动**，待决策（建议先做无损可逆的桶 B）。worktree 与分支已删除，重新认领用 `tools/stream.sh new repo-hygiene` | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩 keep-set；分类方案成文 | — |
 | 已完成 | `docs-audit` | 文档口径复查：`REQUIREMENTS_ANALYSIS.md` 的失效路径实为 **23 条 / 46 处**（板上的 22 条来自 ASCII 反引号 grep，漏掉了 CJK 文件名的 `docs/archive/工作台使用教程.md`），已逐条 `test -e` 改指 `docs/archive/` 或仓库根；新增独立检查器 `tools/check_doc_paths.py` 并接成门禁第 7 阶段 `doc-paths`（`links` 阶段看不见反引号里的路径 —— 它必须先剥离行内代码） | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken **且** `tools/check_doc_paths.py` 0 失效 + 抽查每处数字有出处 | `stream/docs-audit` |
 
 > **2026-08 修订说明（重要）。** 上一版把 `verse-upp` / `verse-crp` / `vverse-pack` 三行写成
@@ -141,6 +142,14 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 > `vverse-produce` 都改了 `CMakeLists.txt`，但落在不同区段）。
 > 两条流各自只看到自己那条分支上的 ctest 数 87，合并后是 **89**（85 + 2 + 2）；
 > 这正是 §3 那句「门禁数字变了就必须同时改表和 STATUS.md」要防的事。
+>
+> 合并提交 `9cf685e` 已推送（`f031565..9cf685e`）。四条流的分支与 worktree 随后一并删除
+> （`crp-in-engine` 那个空 worktree 也删了，重新认领时 `stream.sh new` 重建即可）。
+> 四份作业单保留在 [streams/](streams/) 并在文件头加了**状态横幅**：它们是**动工前的快照**，
+> 里面的「现状」记的是当时的代码事实，判断某件事做没做以 [STATUS.md](STATUS.md) §10 为准。
+> 之所以要加横幅，是因为本表 §5 的「2026-08 修订说明」记过同一类事故：原
+> `verse-upp` / `verse-crp` / `vverse-pack` 三行的验收判据在写下时就已经成立，会话一到手
+> 就会合理地把它标成「已完成」——**文档会自己骗自己**，作业单也一样。
 
 ## 7. 行尾：`src/mod/gui_mod.c` 的例外
 

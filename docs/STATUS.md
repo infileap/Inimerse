@@ -54,8 +54,8 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 85
-node tools/upp_reference.test.js                     # JS 侧协议测试（不在 CTest 内）
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 89
+node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
 

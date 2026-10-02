@@ -3,6 +3,13 @@
 > 这是给**一个 DSH 对话**的作业单。开工前先读 [BOARD.md](../BOARD.md) §1–§4。
 > 分支 `stream/repo-hygiene`，冲突域**仓库根**（除 `README.md` / `LICENSE` / `CMakeLists.txt`）。
 
+> **状态：第 1 批已交付（`382ab67`），第 2 批未执行 —— 本条流没做完。**
+> 第 1 批（删 24 个 `CHANGES_*.txt` + `CMakeLists.txt.bak`）已合入 `main`；
+> 第 2 批的 146 个候选只是 [HYGIENE.md](../HYGIENE.md) 里的**方案**，一个文件都没动。
+> 交付内容与**最大判断风险**（桶 A 的「已被 `vtest/` 覆盖」是自述推断，未逐条对照断言）见
+> [STATUS.md §10.3](../STATUS.md#103-仓库根清理repo-hygiene)。
+> **本文件是动工前的作业单**，判断某件事做了没有以 `docs/STATUS.md` §10 与 `docs/BOARD.md` §5 为准。
+
 ## 1. 真实规模（板子上那一行低估了）
 
 板子原来只列了几个文件。实际测量：

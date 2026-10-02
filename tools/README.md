@@ -87,25 +87,31 @@ them from stepping on each other. The board and the rules are in
 
 ### `gate.sh` — the acceptance gate
 
-Five stages; exit 0 only if all pass. A branch is mergable when this is green.
+Seven stages; exit 0 only if all pass. A branch is mergable when this is green.
+Run it **serially** — two gates at once bind overlapping ports and manufacture the
+failures [docs/STATUS.md](../docs/STATUS.md) §2.9 records.
 
 ```bash
-tools/gate.sh                 # build + ctest + economy + plugin + links
+tools/gate.sh                 # all seven stages
 tools/gate.sh --fast          # reuse the existing build/ (skip configure)
-tools/gate.sh --only links    # one stage: build|ctest|economy|plugin|links
+tools/gate.sh --only links    # one stage: build|ctest|economy|node|plugin|links|doc-paths
 ```
 
 | Stage | Expectation |
 | --- | --- |
 | build | Release build, 0 error |
-| ctest | **85 / 85** |
+| ctest | **89 / 89** |
 | economy | `tools/economy_migration.test.py` — **39 / 39** |
+| node | `node tools/node_suites/run_all.js` — **11 / 11** |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` — **55 / 55** |
-| links | `tools/check_links.py` — **0 broken** (66 markdown files, 209 links) |
+| links | `tools/check_links.py` — **0 broken** |
+| doc-paths | `tools/check_doc_paths.py` — **0 broken** |
 
 When one of those numbers changes, update this table *and* the baseline row in
 [docs/STATUS.md](../docs/STATUS.md) §1 — otherwise the next session gates against
-a stale expectation.
+a stale expectation. That is not hypothetical: `upp-in-engine` and
+`vverse-produce` each saw only **87** tests on their own branch (85 + their own
+two probes) and the merged tree has **89**.
 
 ### `stream.sh` — one working tree per conversation
 

@@ -3,6 +3,11 @@
 > 这是给**一个 DSH 对话**的作业单。开工前先读 [BOARD.md](../BOARD.md) §1–§4。
 > 分支 `stream/upp-in-engine`，冲突域 `src/verse/`、`src/mod/verse_dist_mod.c`。
 
+> **状态：已交付（2026-08 集成，`39ddabd`）。** 已合入 `main`，交付内容、证据与**遗留边界**见
+> [STATUS.md §10.1](../STATUS.md#101-upp-引擎侧upp-in-engine)。
+> **本文件是动工前的作业单** —— 下面「现状」一节记录的是当时的代码事实，不是今天的实现状态。
+> 判断某件事做了没有，以 `docs/STATUS.md` §10 与 `docs/BOARD.md` §5 为准。
+
 ## 1. 要交付什么
 
 **引擎侧真的能跑 UPP 全序列**，而不是只有一份 JS 参考实现。

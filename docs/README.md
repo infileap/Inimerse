@@ -26,7 +26,7 @@
 # 构建与全量测试
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4     # 期望：100% tests passed, 0 failed out of 85
+ctest --test-dir build --output-on-failure -j4     # 期望：100% tests passed, 0 failed out of 89
 
 # 运行与编译脚本
 build/inimerse run script.im
@@ -37,12 +37,10 @@ build/inim-server root main            # 从 stdin 读 canonical-JSON 请求行�
 build/inim-client root main scenario  # fork 一个 inim-server 子进程并按剧本驱动它
 ```
 
-JS 侧协议测试不在 CTest 内，需单独运行：
+JS 侧协议测试不在 CTest 内，由门禁的 `node` 阶段统一跑（11 个套件）：
 
 ```bash
-node tools/upp_reference.test.js
-node tools/crp_reference.test.js
-node tools/vverse_validate.test.js
+node tools/node_suites/run_all.js    # 期望：node protocol suites: 11/11 passed
 ```
 
 ## 多会话工作
@@ -51,8 +49,12 @@ node tools/vverse_validate.test.js
 
 ```bash
 tools/stream.sh new <slug>     # 建 .worktrees/<slug> 与分支 stream/<slug>
-tools/gate.sh                  # build + ctest + economy + plugin + links，全绿才可合入 main
+tools/gate.sh                  # 七个阶段：build + ctest + economy + node + plugin + links + doc-paths
 ```
+
+每个会话开工前先读自己那条流的**作业单**：`docs/streams/<slug>.md`（已结项的作业单在文件头
+标了状态，判断做没做以 [STATUS.md](STATUS.md) §10 与 [BOARD.md](BOARD.md) §5 为准）。
+门禁**串行跑**，不要两个一起跑——会撞端口，制造 §2.9 记的那种假失败。
 
 规则、任务板与交接格式见 [BOARD.md](BOARD.md)。
 
