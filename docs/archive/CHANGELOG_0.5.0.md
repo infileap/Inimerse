@@ -100,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 - **AOT Compilation**: Native executables and shared libraries outperform interpreter by at least 2x
+  > ⚠️ **已废止。** AOT 是**打包**通道，复用同一个 C 解释器；分布式测量（12 次试验）显示与解释器**等同**（中位 **0.98x**），1.09x 是噪声样本。`≥2x` 属于尚未实现的优化型 AOT 后端。见 [SELFHOST_BENCHMARK.md](SELFHOST_BENCHMARK.md)。
 - **JIT Backend**: Experimental just-in-time compilation infrastructure available
 
 ---

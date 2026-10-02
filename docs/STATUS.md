@@ -50,7 +50,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
 | 测试注册 | `CMakeLists.txt` 中 95 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1 + `.im` 打包往返 1，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
-| 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 81 ms = **1.09x** · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
+| 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
 ### 2.1 复现命令
 
@@ -293,7 +293,7 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 
 | 该文件声称 | 核实结果 |
 | --- | --- |
-| 「AOT compilation … outperform the interpreter by at least 2x」（第 43 行） | 实测 **1.09x**。AOT 通道是**打包**通道（引擎副本 + 嵌入规范化字节码），复用同一个 C 解释器，不自生成原生代码。原文 `SELFHOST_BENCHMARK.md` 已自述「不满足 ≥2x 目标」。 |
+| 「AOT compilation … outperform the interpreter by at least 2x」（第 52 行） | 实测与解释器**等同**——12 次试验中位 **0.98x**（0.85x..1.33x），与「解释器对自己」的对照区间（0.77x..1.36x）**12/12 重叠**，1.09x 只是其中一个噪声样本。AOT 通道是**打包**通道（引擎副本 + 嵌入规范化字节码），复用同一个 C 解释器，不自生成原生代码。原文 `SELFHOST_BENCHMARK.md` 已自述「不满足 ≥2x 目标」。 |
 | 「WebAssembly output … supporting SIMD optimizations and WebAssembly GC」（第 38 行） | `src/compilation/wasm_backend.h:10` 原文：`SIMD/GC/heaps are future work.` 当前为数值子集 MVP。 |
 | 「Python extension bridge: `inimerse_extension.c` implementing `PyInit_inimerse()`」（第 26 行） | 仓库中不存在 `inimerse_extension.c`，全仓无 `PyInit_inimerse` 实现。 |
 | 「Java native bridge: `InimerseBridge.java`」（第 27 行） | 仓库中不存在 `InimerseBridge.java`。 |
@@ -1002,3 +1002,44 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 **修前必失败（独立复现）。** worktree 内 `git checkout 1fe93be -- src/`（保留本流的 `tools/`）后重编：`verse_crp_crosscheck` → `crp_engine_crosscheck: 2 of 115 records differ`（line 76 `peer:5`、line 77 `peer:[]`：参考 404 而引擎 200）；`crp_session_flow_regression` → `Expected values to be strictly equal: 200 !== 404`；`reconnect_generation_regression` → `AssertionError: (200, '{"token":"posix-6abf5171","expires":1790923420,"verse":"v-unregistered","peer":"p1"}\n')`。恢复后重编、全量 `ctest` 全绿。语料 **112 → 115**。
 
 **遗留（未调和，如实登记）。** **R2 重复 JSON 键**：`vj_get` 是 first-wins，而 JS `JSON.parse` 是 last-wins。本流实测仍分歧 —— 对 `{"verse":"demo","verse":"ghost",…}`，证明按**首个** `demo` 算 → 200，按**末个** `ghost` 算 → 403；参考实现恰好相反（`JSON.parse` 取 `ghost`，故按 `ghost` 的证明会被接受、再被 `verses.has("ghost")` 判 404）。未修的原因是两个都成立：`vj_get` 在 `src/common/**`（本波硬禁碰），且 `JSON.parse` **无法**表达 first-wins，两侧不可兼得。R3（非字符串值回显）**随 R1 一并消失**：非字符串 verse/peer 现在直接 404，且回显改用 `portal_json_escape(vv->s)` 而非强转。
+
+### 10.14 AOT：`1.09x` 是噪声，而 `≥2x` 需要一个此前不存在的后端（`aot-backend`，`d23691e` + `70f73ae`）
+
+**结论一：归档的 `1.09x` 不可复现，它是中心在 `1.00x` 的分布里的一个样本。**
+`tools/aot_parity.py` 把整套 `perf_compare` 对比重复 N 次并打印**分布**，外加「解释器对解释器自己」的对照来量这台机器上的噪声地板（分子 = `run work.im` 中位减 `run empty.im` 中位，分母同理）。
+
+| 工作负载 | AOT 比值 | 对照（解释器 vs 自己） | 落在对照区间内 | ≥2x |
+|---|---|---|---|---|
+| `sum(1..2000000)`，12 次试验 | 0.85x .. 1.33x，中位 **0.98x** | 0.77x .. 1.36x，中位 0.98x | **12/12** | **0/12** |
+| `sum(1..20000000)`，7 次试验（10 倍工作量） | 0.47x .. 1.05x，中位 **0.95x** | 0.52x .. 1.07x，中位 0.99x | 6/7 | **0/7** |
+
+`1.09x` 恰好是第 8 次试验取到的值。工作量放大 10 倍也收不紧噪声（±20%~50%）。**所以「先原样复现 1.09x」这个要求本身不可满足 —— 而「复现不出来」就是答案。**
+
+**结论二：`--aot` 是打包通道，与解释器等同是预期结果，不是实现质量差。**
+`main_aot_package()`（`src/main.c:636-656`）走 `parse_program_file` → `comp->target = TARGET_AOT`（`:641`）→ 取主函数字节码 → `bytecode_append_to_exe(self, bc, output)`（`:646`）→ `chmod 0755`。`bytecode_append_to_exe()`（`src/compiler/bytecode.c:367-389`）把引擎可执行文件按 4096 字节分块**逐字节复制**，再追加字节码与尾魔数 `0x1BC0FFEE` + 偏移 —— 产物 = **引擎副本 + 字节码尾块**，跑的是同一个 C 解释器。`--aot` 分发在 `src/main.c:1120-1139`，`run --aot` 明确报错（`:1169-1170`）。
+**决定性证据：`TARGET_AOT` 是死值。** 声明在 `src/compiler/compiler.h:20`，只在 `src/main.c:641` 被赋值，**全仓库没有任何地方读它**（`grep -rn TARGET_AOT --include=*.c --include=*.h .` 只有这两处）。所以 `compile --aot` 产出的就是解释器本来也会产出的那份字节码。
+**因此「outperform the interpreter by at least 2x」在这个通道上不可能成立，与实现质量无关。**
+
+**结论三：`≥2x` 所属的原生代码生成后端此前不存在，本次给出原型并实测。**
+`src/compilation/aot_native.{c,h}` + `aot_native_tool.c`：AST 数值子集 → 独立 C → 宿主 `cc -O2`，子集外**一律拒绝翻译**（不是错误编译）。`python3 tools/aot_native_bench.py --trials 5 --runs 5`，工作负载 `mix(1, 2000000)`（数据依赖递推 `x = (x*3+7) % 65536`，无闭式）：
+
+| 试验 | 解释器计算 (ms) | 原生计算 (ms) | 加速比 | 对照 |
+|---|---|---|---|---|
+| 1 | 125.37 | 3.383 | 37.1x | 1.06x |
+| 2 | 126.16 | 3.683 | 34.3x | 1.00x |
+| 3 | 129.77 | 3.419 | 38.0x | 1.02x |
+| 4 | 132.58 | 3.899 | 34.0x | 0.98x |
+| 5 | 121.49 | 3.670 | 33.1x | 0.90x |
+
+中位 **34.3x**（33.1x .. 38.0x），对照中位 1.00x；生成汇编含 **99 处回跳分支**，两通道输出一致（`19713`）。工具内置两条拒绝条件：汇编没有循环分支就拒绝给比值；两通道答案不一致也拒绝。
+**识破并防住了两个会把结果变成虚构的测量陷阱：** ①`cc -O2` 会**完全常量折叠**字面量工作负载 —— 首次测量得到 **153x，纯属虚构**（GCC 编译期就算完 `sum(1..2000000)`，生成函数零分支，把 n 改成 2e8 仍耗时 0.00 s）；②即使输入来自运行期，标量演化仍会把 `sum(1..n)` 闭式成 `n(n-1)/2`，同样零分支。故改用无闭式的数据依赖递推 + `--extern/--entry` harness 钩子。
+
+**协调者独立验收（不采信自述）。** worktree 内 `bash tools/gate.sh` → 七阶段全 PASS、`gate: OK`、exit 0。`tools/aot_native_build.sh` 重建原型成功且 `-Wall` **零诊断**。我复跑 `tools/aot_native_bench.py --trials 5 --runs 5` → 中位 **36.4x**（27.1x .. 46.2x），对照中位 1.00x，99 处分支，两通道 `19713` —— 与它自报同量级。`tools/aot_native.test.py` → `57 cases (45 equivalence, 2 pinned divergences, 10 refusal), 0 failures`。
+
+**遗留（重要，已登记为 `aot-native-integration`）。** **整套原型不在门禁内**：`src/compilation/aot_native.c`（636 行）**不被 CI 编译**（第一波冻结了 `CMakeLists.txt`），`tools/aot_native.test.py`（57 例）**不被 CI 运行**，构建靠 stop-gap 的 `tools/aot_native_build.sh` 扫 `build/CMakeFiles/inimerse.dir/**/*.o`（`rm -rf build` 后必须先建引擎）。**提交了 636 行 C，门禁一行都不会看它。**
+另有四条如实上报的边界：①两处**真实语义分歧**被**钉死**在测试里（`func nothing() { x = 1 } say nothing()` → 解释器 `nil` vs 原生 `0`；函数内给全局赋值 → 解释器把该名字变**局部**、实测 `5\n2\n`，原生写全局 `7\n7\n`），只钉死未修；②`x = (x*1103515245+12345) % 2147483648` 解释器警告「out of 32-bit range, promoted to float」并输出 `0`，原生输出 `357615489` —— 既未修也**未进语料**；③**浮点打印不纳入等价语料**（解释器 `1.0/3.0`→`0.333333` 但 `1.23456789012345678`→`1.234568`，无单一 printf 精度可匹配，原生用 `%g`）—— 是**已知不覆盖**，不是通过；④45 项等价用例**全是 int/bool**，不能外推到语言整体。
+
+**口径收敛后的唯一正确表述**（`docs/archive/SELFHOST_BENCHMARK.md` 新增「口径归属」一节）：AOT **打包**通道 = 与解释器**等同**，不得表述为加速；Wasm MVP = 1.51x；原生代码生成 = 原型实测 34.3x 但**尚未发布、尚未接入构建**，不构成 v0.5 的能力声称；`≥2x` 的唯一归属是**优化型 AOT 后端，v0.5→v0.6 后续迭代**。
+
+**连带修正（本次一并落地）。** ①**行号错误**：`≥2x` 那句在 `docs/archive/RELEASE_0.5.0.md` **第 52 行**，不是第 43 行（第 43 行是「Optimizations: loop invariant hoisting…」）；`:43` 原先写在本文档 §3.1，被抄进了 `docs/BOARD.md` 与 `docs/streams/aot-backend.md`，三处已修正。②`docs/archive/CHANGELOG_0.5.0.md` 是唯一还挂着「at least 2x」且**没有任何更正**的副本，已加废止说明。③`docs/archive/ROADMAP_0.5-0.6.md:54` 写 Wasm MVP「~1.8x」，与 benchmark 自己的 **1.51x** 矛盾，已改为 1.51x。④`1.09x` 在 `RELEASE_0.5.0.md`、`archive/README.md`、`API.md`、`REQUIREMENTS_ANALYSIS.md`、`future/优化路线pro.md` 与本文档 §2 均改为**分布口径**（与解释器等同，中位 0.98x）。
+**未修（发现但不在本次写域内）：** `tools/perf_compare.py:131` 与 `tools/selfhost_bench.py:121` 的 `--write-docs` 把报告写到 `docs/` 下的 `SELFHOST_BENCHMARK.md` —— 少了 `archive/` 这一级，那条路径**不存在**，脚本会新建一个文件；真实文件在 `docs/archive/SELFHOST_BENCHMARK.md`。修它会牵动发布流程，单独记账。

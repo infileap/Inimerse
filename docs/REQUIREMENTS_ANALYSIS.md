@@ -83,7 +83,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | 脚本体量 | 全仓 **321 个 `.im`**（根目录 170 个为回归测试） | E4 |
 | 引擎版本 | `CMakeLists.txt` 与 `build/inimerse` = **0.5.0**；根目录 `./inimerse` = **0.4.0（陈旧）** | E4 |
 | 桌面端 | `Infiverse_standard/`（Tauri）自述 **"B0 骨架完成"**，最后提交 `f90d355 Release v0.3.0`；`src-tauri/target` 占 **4.0 GB** | E3 |
-| 性能事实 | 解释器 88 ms = 1.00x；Wasm MVP 58 ms = **1.51x**；AOT 打包 81 ms = **1.09x**（`docs/archive/SELFHOST_BENCHMARK.md`） | E4 |
+| 性能事实 | 解释器 88 ms = 1.00x；Wasm MVP 58 ms = **1.51x**；AOT 打包与解释器**等同**（分布式测量中位 **0.98x**，`docs/archive/SELFHOST_BENCHMARK.md`） | E4 |
 | 未提交工作 | `src/platform/http_posix.c` +218 行（`ImImportedLedger`、`econ_balances_digest()`，白皮书 §43.5 经济域迁移导入/导出） | E3 |
 
 ---

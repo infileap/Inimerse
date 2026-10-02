@@ -1,5 +1,12 @@
 # 作业单：`aot-backend` —— 把「AOT ≥2x」从宣传口径变成一个测出来的数字
 
+> ✅ **本条流已交付并合入 `main`（`d23691e` + `70f73ae`，merge `117456f`）。**
+> 交付结论见 [STATUS.md](../STATUS.md) §10.14。**不要按本作业单重新开工。**
+> 摘要：①`1.09x` **不可复现**，它是噪声（12 次试验中位 0.98x，与噪声对照区间 12/12 重叠）；
+> ②`--aot` 是**打包**通道，`TARGET_AOT` 是死值；③`≥2x` 所属的原生后端先前不存在，本次给出原型并实测中位 **34.3x**。
+> **未完成的收尾**（本作业单 §2.1 的第一步「原样复现 1.09x」在物理上不可满足，已在 §10.14 说明）
+> 与**最大残余**（整套原型不在门禁内）登记为新行 `aot-native-integration`。
+
 > **本条流第一波不碰 `CMakeLists.txt`、不碰 `src/main.c`。** 这一波 `CMakeLists.txt` 由
 > `xlang-bridge` 独占。你的第一交付物是**测量 + 判断**，不是新目标；需要新目标时**停下报告**，
 > 协调者会在 `xlang-bridge` 交回后把 `CMakeLists.txt` 交给你。
@@ -12,7 +19,7 @@
 
 | `docs/archive/RELEASE_0.5.0.md` 声称 | 核实结果 |
 | --- | --- |
-| 「AOT compilation … outperform the interpreter by **at least 2x**」（第 43 行） | 实测 **1.09x**。AOT 通道是**打包**通道（引擎副本 + 嵌入规范化字节码），**复用同一个 C 解释器**，不自生成原生代码。原文 `SELFHOST_BENCHMARK.md` 已自述「不满足 ≥2x 目标」 |
+| 「AOT compilation … outperform the interpreter by **at least 2x**」（第 52 行） | 实测 **1.09x**。AOT 通道是**打包**通道（引擎副本 + 嵌入规范化字节码），**复用同一个 C 解释器**，不自生成原生代码。原文 `SELFHOST_BENCHMARK.md` 已自述「不满足 ≥2x 目标」 |
 
 `docs/archive/SELFHOST_BENCHMARK.md:39` 自己写着：
 

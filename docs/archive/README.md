@@ -17,7 +17,7 @@
 
 | 文件 | 已废止的声明 | 实测结果 |
 | --- | --- | --- |
-| [RELEASE_0.5.0.md](RELEASE_0.5.0.md) | 「AOT compilation … outperform the interpreter by **at least 2x**」 | AOT 是**打包**通道，复用同一个 C 解释器，实测 **1.09x**。见 [SELFHOST_BENCHMARK.md](SELFHOST_BENCHMARK.md) |
+| [RELEASE_0.5.0.md](RELEASE_0.5.0.md) | 「AOT compilation … outperform the interpreter by **at least 2x**」 | AOT 是**打包**通道，复用同一个 C 解释器，实测与解释器**等同**（分布式测量中位 **0.98x**，12/12 落在噪声对照区间内）。见 [SELFHOST_BENCHMARK.md](SELFHOST_BENCHMARK.md) |
 | [RELEASE_0.5.0.md](RELEASE_0.5.0.md) | 「WebAssembly output … supporting **SIMD optimizations and WebAssembly GC**」 | `src/compilation/wasm_backend.h:10` 原文：`SIMD/GC/heaps are future work.` 当前仅数值子集 MVP |
 | [RELEASE_0.5.0.md](RELEASE_0.5.0.md) | Python 扩展桥 `inimerse_extension.c` / `PyInit_inimerse()` | 仓库中不存在该文件，全仓无 `PyInit_inimerse` 实现 |
 | [RELEASE_0.5.0.md](RELEASE_0.5.0.md) | Java 桥 `InimerseBridge.java` | 仓库中不存在该文件 |
