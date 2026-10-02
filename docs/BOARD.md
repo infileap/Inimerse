@@ -93,7 +93,7 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
 | 进行中 | `repo-hygiene` | 仓库根残留清理。实测根目录跟踪 **235** 个文件、**135** 个全仓库零引用（99 `.im` / 24 `CHANGES_*.txt` / 8 `.html` / 3 `.ps1` / 1 `.md`），另加被忽略的 `CMakeLists.txt.bak`。分两批：`CHANGES_*` 直接删，其余先出分类方案 | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩 keep-set；分类方案成文 | `stream/repo-hygiene` |
-| 进行中 | `docs-audit` | 文档口径复查：`REQUIREMENTS_ANALYSIS.md` 有 **22 条失效路径**（指向已归档文件，`check_links.py` 因剥离行内代码而看不见）；两套词汇并存；README 基线数字待复现 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken **且**新增的反引号路径检查 0 失效 + 抽查每处数字有出处 | `stream/docs-audit` |
+| 待验收 | `docs-audit` | 文档口径复查：`REQUIREMENTS_ANALYSIS.md` 的失效路径实为 **23 条**（板上的 22 条来自 ASCII 反引号 grep，漏掉了 CJK 文件名的 `docs/工作台使用教程.md`），**46 处**引用已改指 `docs/archive/` / 仓库根并逐条 `test -e`；两套词汇已加口径提示；README 基线数字已复现 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken **且** `tools/check_doc_paths.py`（新门禁阶段 `doc-paths`）0 失效 + 抽查每处数字有出处 | `stream/docs-audit` |
 
 > **2026-08 修订说明（重要）。** 上一版把 `verse-upp` / `verse-crp` / `vverse-pack` 三行写成
 > 「未认领」，验收判据是「`node tools/<x>.test.js` 全过」——**这是错的**：那八个套件当时
