@@ -1,0 +1,23 @@
+// Cross-language bridge ABI for the Inimerse engine (roadmap §2.2 / §3.2 / §3.4).
+//
+// One definition drives the shipping artifacts:
+//   python3 tools/bindgen.py src/bridge/inimerse_bridge.def --language c    --out <build>/bindings/c/inimerse_bridge.h
+//   python3 tools/bindgen.py src/bridge/inimerse_bridge.def --language java --out <build>/bindings/java/InimerseBridge.java
+//
+// The generated C header is the contract that src/bridge/bridge_abi.c
+// implements; the generated Java class is the facade that src/bridge/bridge_jni.c
+// backs with RegisterNatives.  The CPython extension
+// src/bridge/inimerse_extension.c drives the same contract, which is why
+// `import inimerse` and `java -cp … InimerseBridgeMain` print the same value.
+//
+// Unlike examples/interface.def (whose `add`/`greet`/`fail` have no
+// implementation anywhere in the tree) every function declared here is a real
+// engine call, not an echo.
+interface inimerse_bridge {
+    /// Engine version string (the engine's own INFIVERSE_VERSION).
+    fn version() -> string
+    /// Lowercase hex SHA-256 of a file, via the engine's own hasher (compilation/checksum.c).
+    fn sha256_file(path: string) -> string
+    /// Top-level statement count from the engine's own lexer+parser (parser/parser.c).
+    fn parse_count(source: string) -> i32
+}

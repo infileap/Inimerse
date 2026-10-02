@@ -296,7 +296,7 @@ endif()
 # that silently omits platform modules on POSIX systems.
 if(INIMERSE_BUILD_ENGINE)
   set(INIMERSE_ENGINE_SOURCES
-    src/main.c src/platform/platform.c src/platform/thread.c src/platform/fiber.c
+    src/platform/platform.c src/platform/thread.c src/platform/fiber.c
     src/platform/dir.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
     src/common/gzip.c src/common/vverse_pack.c
@@ -325,17 +325,28 @@ if(INIMERSE_BUILD_ENGINE)
       src/headless_server_posix.c src/mod/replay_mod.c src/mod/json_mod.c src/mod/result_mod.c
       src/mod/infiverse_mod.c src/mod/record_mod.c src/mod/verse_dist_mod.c)
   endif()
-  add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
-  target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
+  # The engine body is an OBJECT library so the cross-language bridges
+  # (Python C extension, JNI shared library) can be linked against exactly the
+  # same objects the `inimerse` executable runs.  src/main.c stays out of it:
+  # only the CLI provides main(), so both the executable and a shared library
+  # can carry the engine.  Position-independent code costs a little in the
+  # executable and is what makes the same objects loadable from a .so.
+  add_library(inimerse_engine OBJECT ${INIMERSE_ENGINE_SOURCES})
+  set_target_properties(inimerse_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(inimerse_engine PUBLIC src src/parser src/compiler src/vm
     src/runtime src/mod src/common src/lexer src/platform src/verse)
+  target_link_libraries(inimerse_engine PUBLIC inimerse_platform)
   if(NOT WIN32)
-    target_compile_definitions(inimerse PRIVATE
+    target_compile_definitions(inimerse_engine PUBLIC
       _GNU_SOURCE _stricmp=strcasecmp
       INIMERSE_VERSION_STRING="${INIMERSE_PACKAGE_VERSION}")
   else()
-    target_compile_definitions(inimerse PRIVATE
+    target_compile_definitions(inimerse_engine PUBLIC
       INIMERSE_VERSION_STRING="${INIMERSE_PACKAGE_VERSION}")
   endif()
+
+  add_executable(inimerse src/main.c)
+  target_link_libraries(inimerse PRIVATE inimerse_engine)
   if(WIN32)
     target_link_libraries(inimerse PRIVATE m winhttp crypt32 gdi32 winmm msimg32
       windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
@@ -343,6 +354,150 @@ if(INIMERSE_BUILD_ENGINE)
     target_link_libraries(inimerse PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
   endif()
   install(TARGETS inimerse RUNTIME DESTINATION bin)
+
+  # ------------------------------------------------------------------------
+  # Cross-language bridges (v0.5 roadmap §2.1 / §3.2): one IDL, real artifacts.
+  #
+  # This host ships no python3-dev headers and no JDK, and the build user has
+  # no sudo, so the toolchain is unpacked into a prefix outside the repository
+  # (examples/BUILDING_BRIDGES.md records the exact commands).  Point
+  # -DXLANG_TOOLCHAIN=/somewhere or $XLANG_TOOLCHAIN at it; the default below
+  # is a per-user prefix, never a hard-coded absolute path in the tree.
+  #
+  # The two regressions are registered unconditionally further down; only the
+  # artifacts are conditional.  A missing toolchain therefore shows up as a
+  # CTest skip, never as a silently smaller test count.
+  # ------------------------------------------------------------------------
+  if(NOT INIMERSE_PYTHON)
+    set(XLANG_TEST_PYTHON "python3")
+  else()
+    set(XLANG_TEST_PYTHON "${INIMERSE_PYTHON}")
+  endif()
+  if(DEFINED ENV{XLANG_TOOLCHAIN} AND NOT "$ENV{XLANG_TOOLCHAIN}" STREQUAL "")
+    set(XLANG_TOOLCHAIN_DEFAULT "$ENV{XLANG_TOOLCHAIN}")
+  else()
+    set(XLANG_TOOLCHAIN_DEFAULT "$ENV{HOME}/.local/xlang-toolchain")
+  endif()
+  set(XLANG_TOOLCHAIN "${XLANG_TOOLCHAIN_DEFAULT}" CACHE PATH
+    "Prefix holding python3.14 headers and a JDK (see examples/BUILDING_BRIDGES.md)")
+  set(XLANG_PYTHON_INCLUDE "${XLANG_TOOLCHAIN}/usr/include/python3.14")
+  set(XLANG_JAVA_HOME "${XLANG_TOOLCHAIN}/usr/lib/jvm/java-17-openjdk-amd64")
+  set(XLANG_BRIDGE_DIR "${CMAKE_BINARY_DIR}/bridge")
+
+  # Python.h pulls <multiarch>/python3.14/pyconfig.h, which libpython3.14-dev
+  # installs one level up (usr/include/x86_64-linux-gnu/python3.14/pyconfig.h).
+  execute_process(
+    COMMAND "${XLANG_TEST_PYTHON}" -c
+            "import sysconfig,sys;sys.stdout.write(sysconfig.get_config_var('MULTIARCH') or '')"
+    OUTPUT_VARIABLE XLANG_PYTHON_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+  set(XLANG_PYTHON_ARCH_INCLUDE
+    "${XLANG_TOOLCHAIN}/usr/include")
+
+  set(XLANG_HAVE_TOOLCHAIN FALSE)
+  if(EXISTS "${XLANG_PYTHON_INCLUDE}/Python.h"
+     AND EXISTS "${XLANG_TOOLCHAIN}/usr/include/${XLANG_PYTHON_MULTIARCH}/python3.14/pyconfig.h"
+     AND EXISTS "${XLANG_JAVA_HOME}/include/jni.h"
+     AND EXISTS "${XLANG_JAVA_HOME}/bin/javac")
+    set(XLANG_HAVE_TOOLCHAIN TRUE)
+  endif()
+
+  if(XLANG_HAVE_TOOLCHAIN)
+    execute_process(
+      COMMAND "${XLANG_TEST_PYTHON}" -c
+              "import sysconfig,sys;sys.stdout.write(sysconfig.get_config_var('EXT_SUFFIX') or '.so')"
+      OUTPUT_VARIABLE XLANG_EXT_SUFFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    # --- one IDL drives both artifacts ------------------------------------
+    set(XLANG_ABI_HEADER "${CMAKE_BINARY_DIR}/bindings/c/inimerse_bridge.h")
+    set(XLANG_JAVA_SRC "${CMAKE_BINARY_DIR}/bindings/java/InimerseBridge.java")
+    set(XLANG_JAVA_CLASSES_DIR "${CMAKE_BINARY_DIR}/bindings/java/classes")
+    set(XLANG_JAVA_STAMP "${XLANG_JAVA_CLASSES_DIR}/javac.stamp")
+    set(XLANG_JAR "${XLANG_BRIDGE_DIR}/InimerseBridge.jar")
+    set(XLANG_DEF "${CMAKE_SOURCE_DIR}/src/bridge/inimerse_bridge.def")
+
+    add_custom_command(OUTPUT "${XLANG_ABI_HEADER}"
+      COMMAND "${XLANG_TEST_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/bindgen.py"
+              "${XLANG_DEF}" --language c --out "${XLANG_ABI_HEADER}"
+      DEPENDS "${XLANG_DEF}" "${CMAKE_SOURCE_DIR}/tools/bindgen.py"
+      COMMENT "bindgen: C ABI header for inimerse_bridge" VERBATIM)
+
+    add_custom_command(OUTPUT "${XLANG_JAVA_SRC}"
+      COMMAND "${XLANG_TEST_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/bindgen.py"
+              "${XLANG_DEF}" --language java --out "${XLANG_JAVA_SRC}"
+      DEPENDS "${XLANG_DEF}" "${CMAKE_SOURCE_DIR}/tools/bindgen.py"
+      COMMENT "bindgen: InimerseBridge.java" VERBATIM)
+
+    # The engine's translation units call inim_load_text() (see
+    # src/parser/parser.c and src/compiler/compiler.c) and the only definition
+    # in the tree lives in src/main.c.  A shared library has to resolve it, so
+    # both bridge targets compile that same file - the same source, not a copy -
+    # with the CLI entry point renamed, so a Python extension does not export a
+    # `main`.  Nothing else in src/main.c is reachable from the bridge.
+    # --- the native library the generated Java facade loads ---------------
+    add_library(inimerse_bridge SHARED
+      src/bridge/bridge_abi.c src/bridge/bridge_jni.c src/main.c "${XLANG_ABI_HEADER}")
+    target_compile_definitions(inimerse_bridge PRIVATE main=inimerse_bridge_entry_unused)
+    set_target_properties(inimerse_bridge PROPERTIES
+      LIBRARY_OUTPUT_DIRECTORY "${XLANG_BRIDGE_DIR}")
+    target_include_directories(inimerse_bridge PRIVATE
+      "${CMAKE_BINARY_DIR}/bindings/c"
+      "${XLANG_JAVA_HOME}/include" "${XLANG_JAVA_HOME}/include/linux")
+    target_link_libraries(inimerse_bridge PRIVATE inimerse_engine)
+
+    # --- the CPython extension the wheel ships ----------------------------
+    add_library(inimerse_python MODULE
+      src/bridge/inimerse_extension.c src/bridge/bridge_abi.c src/main.c "${XLANG_ABI_HEADER}")
+    target_compile_definitions(inimerse_python PRIVATE main=inimerse_python_entry_unused)
+    set_target_properties(inimerse_python PROPERTIES
+      PREFIX "" OUTPUT_NAME "inimerse" SUFFIX "${XLANG_EXT_SUFFIX}"
+      LIBRARY_OUTPUT_DIRECTORY "${XLANG_BRIDGE_DIR}")
+    target_include_directories(inimerse_python PRIVATE
+      "${CMAKE_BINARY_DIR}/bindings/c" "${XLANG_PYTHON_INCLUDE}"
+      "${XLANG_PYTHON_ARCH_INCLUDE}")
+    target_link_libraries(inimerse_python PRIVATE inimerse_engine)
+
+    # --- compile + package the Java facade --------------------------------
+    add_custom_command(OUTPUT "${XLANG_JAVA_STAMP}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${XLANG_JAVA_CLASSES_DIR}"
+      COMMAND "${XLANG_JAVA_HOME}/bin/javac" -d "${XLANG_JAVA_CLASSES_DIR}"
+              "${XLANG_JAVA_SRC}" "${CMAKE_SOURCE_DIR}/src/bridge/InimerseBridgeMain.java"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${XLANG_JAVA_STAMP}"
+      DEPENDS "${XLANG_JAVA_SRC}" "${CMAKE_SOURCE_DIR}/src/bridge/InimerseBridgeMain.java"
+      COMMENT "javac: InimerseBridge + InimerseBridgeMain" VERBATIM)
+
+    add_custom_command(OUTPUT "${XLANG_JAR}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${XLANG_BRIDGE_DIR}"
+      COMMAND "${XLANG_JAVA_HOME}/bin/jar" cf "${XLANG_JAR}"
+              -C "${XLANG_JAVA_CLASSES_DIR}" .
+      DEPENDS "${XLANG_JAVA_STAMP}"
+      COMMENT "jar: InimerseBridge.jar" VERBATIM)
+
+    add_custom_target(inimerse_bridge_jar ALL DEPENDS "${XLANG_JAR}")
+    add_dependencies(inimerse_bridge_jar inimerse_bridge)
+  else()
+    message(WARNING
+      "xlang bridges: no toolchain at ${XLANG_TOOLCHAIN} "
+      "(need usr/include/python3.14/Python.h and usr/lib/jvm/java-17-openjdk-amd64). "
+      "The bridge artifacts are not built and the two bridge regressions will skip. "
+      "See examples/BUILDING_BRIDGES.md.")
+  endif()
+
+  # Registered unconditionally: if the toolchain is absent these exit 77 and
+  # CTest reports them as skipped, so the suite never looks greener than it is.
+  add_test(NAME xlang_python_bridge
+    COMMAND "${XLANG_TEST_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/xlang_python_bridge.test.py"
+            "${CMAKE_BINARY_DIR}" "${XLANG_TOOLCHAIN}")
+  set_tests_properties(xlang_python_bridge PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 300
+    LABELS "bridge;python" SKIP_RETURN_CODE 77)
+
+  add_test(NAME xlang_java_bridge
+    COMMAND "${XLANG_TEST_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/xlang_java_bridge.test.py"
+            "${CMAKE_BINARY_DIR}" "${XLANG_TOOLCHAIN}")
+  set_tests_properties(xlang_java_bridge PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 300
+    LABELS "bridge;java" SKIP_RETURN_CODE 77)
+
   add_test(NAME version_runtime COMMAND inimerse --version)
   set_tests_properties(version_runtime PROPERTIES
     TIMEOUT 15 LABELS "release;metadata"
