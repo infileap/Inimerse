@@ -278,6 +278,21 @@ def main():
         check("engine refuses an unsigned extra file",
               rc.returncode != 0 and b"unsigned file" in rc.stderr, rc.stderr.decode().strip())
 
+        # an unsigned package is refused before anything is written, and the
+        # error names the file that is actually absent
+        unsigned_pkg = root / "unsigned.vverse"
+        full = json.loads(gzip.decompress(ref_plain.read_bytes()))["files"]
+        unsigned_pkg.write_bytes(gzip.compress(
+            json.dumps({"format": "vverse-1",
+                        "files": {k: v for k, v in full.items() if k != "signatures/sha256.json"}}
+                       ).encode(), mtime=0))
+        rc = run([engine, "--unpack", unsigned_pkg, root / "unsigned_out"])
+        check("engine refuses an unsigned package and names what is missing",
+              rc.returncode != 0 and b"missing required metadata: signatures/sha256.json" in rc.stderr,
+              rc.stderr.decode().strip())
+        check("nothing was written for the unsigned package",
+              not (root / "unsigned_out").exists())
+
         # stale signature: a file changes and the digest table is recomputed,
         # but the ed25519 signature still covers the older table.  The engine
         # must fail on the signature and not be satisfied by a matching table.

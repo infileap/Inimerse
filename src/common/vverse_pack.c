@@ -660,11 +660,19 @@ int vverse_unpack(const char *pkg_path, const char *dest_dir, char *err, size_t 
         goto done;
     }
 
-    /* required metadata, same three as the reference's preview() */
-    if (obj_lookup(files, "manifest.json") < 0 || obj_lookup(files, "blueprint.json") < 0 ||
-        obj_lookup(files, "signatures/sha256.json") < 0) {
-        rc = vfail(err, errlen, "package missing required metadata");
-        goto done;
+    /* required metadata, same three as the reference's preview(); naming the
+     * missing one matters, because "missing metadata" is a confusing thing to
+     * read when manifest.json is present and only the signature is absent. */
+    {
+        static const char *const required_meta[] = {
+            "manifest.json", "blueprint.json", "signatures/sha256.json",
+        };
+        for (size_t i = 0; i < sizeof required_meta / sizeof required_meta[0]; i++) {
+            if (obj_lookup(files, required_meta[i]) < 0) {
+                rc = vfail(err, errlen, "package missing required metadata: %s", required_meta[i]);
+                goto done;
+            }
+        }
     }
 
     /* --- the sha256 table: every entry except signatures/ is recomputed --- */
