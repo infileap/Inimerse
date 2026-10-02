@@ -5,10 +5,14 @@
 - 方法：全量读 `future/infiverse-inim-os-summary.md`（分段摘要）+ 全量读 `docs/`；对仓库做**可执行证据核查**（干净构建、全量 CTest、代码规模统计、关键词反证、git 状态）
 - 证据等级沿用白皮书 §64.2：E0 概念 / E1 文字设计 / E2 静态样例 / E3 可运行原型 / E4 自动化验证 / E5 多环境验证 / E6 长期运行证据
 
-> **文档收敛说明（2026-10-01，分析之后执行）**
-> `docs/` 已收敛为 `README.md`（索引）+ `STATUS.md`（状态与路线图权威）+ `API.md`（语言与 API 权威）+ 本文件；分析时引用的其余 **39 份**文档（含 `ROADMAP_0.5-0.6.md`、`RELEASE_0.5.0.md`、`SELFHOST_BENCHMARK.md`、`ROADMAP.md`、`API_REFERENCE.md` 等）已移入 **`docs/archive/`**，本文中的 `docs/<name>` 现对应 `docs/archive/<name>`。
+> **文档收敛说明（2026-10-01，分析之后执行；2026-10 修订引用）**
+> `docs/` 已收敛为 `README.md`（索引）+ `STATUS.md`（状态与路线图权威）+ `API.md`（语言与 API 权威）+ `BOARD.md`（多会话协调板）+ 本文件；分析时引用的其余 **39 份**文档（含 `docs/archive/ROADMAP_0.5-0.6.md`、`docs/archive/RELEASE_0.5.0.md`、`docs/archive/SELFHOST_BENCHMARK.md`、`docs/archive/ROADMAP.md`、`docs/archive/API_REFERENCE.md` 等）已移入 **`docs/archive/`**。
 > `future/` 同样收敛：保留 `infiverse-inim-os-summary.md`、`愿景.md`、`优化路线pro.md`，其余 **7 份**移入 **`future/archive/`**。
-> 本文保留分析当时的原始引用以便追溯；已废止声明的清单见 [archive/README.md](archive/README.md)。
+> **本文正文里的 `docs/<name>.md` 引用已全部改写为实际位置**：归档件写成 `docs/archive/<name>.md`；`AI_LAYOUT.md` 是例外，它移到了仓库根。每条引用都用 `test -e` 逐条核对过，并由 `tools/check_doc_paths.py` 作为门禁复核（`tools/check_links.py` **看不见**反引号里的这类引用，因为它必须先剥离行内代码，见 `docs/streams/docs-audit.md` §3.2）。改动只涉及**指向归档件的引用**，未改归档内容，也未改分析当时的结论与数字；已废止声明的清单见 [archive/README.md](archive/README.md)。
+
+> **口径提示：本文用的是分析期词汇，交付口径以 [STATUS.md](STATUS.md) §1 为准。**
+> §3 的判定列用「**符合** / **部分** / **缺失** / **虚假**」四个词（定义在该节开头），那是分析当时为回答「文档声称 vs 仓库实测」而立的对照表，**与 [STATUS.md](STATUS.md) §1.1 的交付四标记「已验证 / 部分实现 / 设计未实现 / 已废止」不是同一套**，也不构成交付承诺。两者的近似对应关系是：符合 ≈ 有可执行证据（可支撑「已验证」）、部分 ≈「部分实现」、缺失 ≈「设计未实现」、虚假 ≈「已废止」的**候选**。正式裁定一律以 [STATUS.md](STATUS.md) §3.2 的裁定表为准，本文不自行升级任何条目的状态。
+> 本文中出现「已完成」字样处，一律是在**转述被分析文档的原话**（多数是被证伪的声称），不是本文对现状的判定。
 
 ---
 
@@ -16,9 +20,9 @@
 
 1. **存在两条互不相交的"事实线"。** `docs/` + `src/` 描述的是一个**扎实的脚本运行时**（36 836 行 C、531 个 builtin、79 个 CTest 全绿、自举编译器真实存在）；`future/infiverse-inim-os-summary.md` §28–§101 描述的是一个**操作系统 + 分布式内容平台**（Inim OS、Infiverse 内核、CRP 三平面、经济结算、证明后端、裸机路线）。两者之间没有中间层：**没有任何一份"从 A 到 B"的迁移计划，只有目标态**。
 
-2. **`docs/ROADMAP_0.5-0.6.md` 的 v0.6 章节存在系统性虚假"已完成"标记。** 它把 Inim OS Daemon（§1.1）、VFS（§1.2）、统一 PAL（§1.3）、包与服务生命周期（§1.4）、`infiverse.protocol.v1/` RFC（§2.1）全部标注 **已完成**，但仓库内：无 `src/inim_os`、无 `inim` CLI、无 daemon 字样、无 RFC 目录、无 `tilemap`/`scene::Node`/`camera::Camera`/`collision::AABB`（`grep` 命中 0 个文件）。同样地 `docs/RELEASE_0.5.0.md` 声称 AOT "至少快 2x"，被同仓库的 `docs/SELFHOST_BENCHMARK.md` 实测（AOT 打包 1.09x、Wasm MVP 1.51x，原文自述"不满足 ≥2x 目标"）直接否证。
+2. **`docs/archive/ROADMAP_0.5-0.6.md` 的 v0.6 章节存在系统性虚假"已完成"标记。** 它把 Inim OS Daemon（§1.1）、VFS（§1.2）、统一 PAL（§1.3）、包与服务生命周期（§1.4）、`infiverse.protocol.v1/` RFC（§2.1）全部标注 **已完成**，但仓库内：无 `src/inim_os`、无 `inim` CLI、无 daemon 字样、无 RFC 目录、无 `tilemap`/`scene::Node`/`camera::Camera`/`collision::AABB`（`grep` 命中 0 个文件）。同样地 `docs/archive/RELEASE_0.5.0.md` 声称 AOT "至少快 2x"，被同仓库的 `docs/archive/SELFHOST_BENCHMARK.md` 实测（AOT 打包 1.09x、Wasm MVP 1.51x，原文自述"不满足 ≥2x 目标"）直接否证。
 
-3. **需求实际上是三层，权重完全不同。** (a) **硬承诺层**——`docs/RELEASE_*.md`、`CHANGELOG_0.5.0.md` 的 `[Unreleased]` 段、`API_CATALOG.md`：这些有实现证据，是**当前真实交付边界**；(b) **工程路线图层**——`docs/ROADMAP.md`（206 行，2026-08-27）：唯一有状态口径定义（已完成=有可重复验收命令）和阶段出口条件的路线图，**应作为唯一权威**；(c) **研究愿景层**——白皮书 §28–§101 + `docs/ROADMAP_3.1.md`/`ROADMAP_FRONTIER.md`：按 `docs/README.md` 的约定属"研究性愿景"，**尚不构成交付承诺**。
+3. **需求实际上是三层，权重完全不同。** (a) **硬承诺层**——`docs/RELEASE_*.md`、`CHANGELOG_0.5.0.md` 的 `[Unreleased]` 段、`API_CATALOG.md`：这些有实现证据，是**当前真实交付边界**；(b) **工程路线图层**——`docs/archive/ROADMAP.md`（206 行，2026-08-27）：唯一有状态口径定义（已完成=有可重复验收命令）和阶段出口条件的路线图，**应作为唯一权威**；(c) **研究愿景层**——白皮书 §28–§101 + `docs/archive/ROADMAP_3.1.md`/`ROADMAP_FRONTIER.md`：按 `docs/README.md` 的约定属"研究性愿景"，**尚不构成交付承诺**。
 
 4. **白皮书自己给出了正确的下一步，而且与我实测的结论一致。** §77 明确写："**不再增加概念数量**，先选「一个最小 Layer、一个临时副本、一个服务器插件、一个客户端模组、一个训练沙盒」，分别验证创建·进入·同步·排空·恢复·撤销·回放"；§64.5 自述现状分栏为 `current_artifacts = inimerse_vm / .im_interpreter / selected_runtime_modules`、`verified_workflows = local_script_execution / basic_gui_or_io_demo`。**白皮书对现状的描述比 `ROADMAP_0.5-0.6.md` 诚实得多**——问题出在中间那层文档，不是愿景本身。
 
@@ -79,7 +83,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | 脚本体量 | 全仓 **321 个 `.im`**（根目录 170 个为回归测试） | E4 |
 | 引擎版本 | `CMakeLists.txt` 与 `build/inimerse` = **0.5.0**；根目录 `./inimerse` = **0.4.0（陈旧）** | E4 |
 | 桌面端 | `Infiverse_standard/`（Tauri）自述 **"B0 骨架完成"**，最后提交 `f90d355 Release v0.3.0`；`src-tauri/target` 占 **4.0 GB** | E3 |
-| 性能事实 | 解释器 88 ms = 1.00x；Wasm MVP 58 ms = **1.51x**；AOT 打包 81 ms = **1.09x**（`docs/SELFHOST_BENCHMARK.md`） | E4 |
+| 性能事实 | 解释器 88 ms = 1.00x；Wasm MVP 58 ms = **1.51x**；AOT 打包 81 ms = **1.09x**（`docs/archive/SELFHOST_BENCHMARK.md`） | E4 |
 | 未提交工作 | `src/platform/http_posix.c` +218 行（`ImImportedLedger`、`econ_balances_digest()`，白皮书 §43.5 经济域迁移导入/导出） | E3 |
 
 ---
@@ -88,7 +92,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 
 ### 2.1 硬承诺层（有实现证据，是当前真实边界）
 
-来源：`docs/RELEASE_0.2.0/0.2.1/0.4.0/0.4.1/0.5.0.md`、`docs/CHANGELOG_0.5.0.md`、`docs/API_REFERENCE.md`、`docs/API_CATALOG.md`、`docs/API_BUILTIN_TABLE.md`。
+来源：`docs/archive/RELEASE_0.2.0.md`、`docs/archive/RELEASE_0.2.1.md`、`docs/archive/RELEASE_0.4.0.md`、`docs/archive/RELEASE_0.4.1.md`、`docs/archive/RELEASE_0.5.0.md`、`docs/archive/CHANGELOG_0.5.0.md`、`docs/archive/API_REFERENCE.md`、`docs/archive/API_CATALOG.md`、`docs/archive/API_BUILTIN_TABLE.md`。
 
 **这一层的口径是可信的**，因为它自带验收命令与门禁：
 
@@ -102,10 +106,10 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 - `--jit=template|optimized` **始终是解释器安全回退**，文档明确"不得把回退解释器的波动解释成 JIT 加速"。
 - 有限集合枚举/TypeSet 已成体系，但 `case try` 的**开放错误域穷尽性证明**仍不完备。
 - Eidos **只有外糖可执行子集**（脱糖器明确拒绝 mixin），无可见性/sealed/frozen/invariant/热修改。
-- `docs/PARAM_FORMAT.md` 的 `inim bundle resolve/graph/verify/gc` 与 `.param` 清单属**提案，无实现证据**。
-- `docs/NUMERIC_MODEL_V04.md` 的数值塔 `Number = Z ∪ Q ∪ D ∪ F`**尚未实现**（当前 `strtod` + IEEE-754 double）。
+- `docs/archive/PARAM_FORMAT.md` 的 `inim bundle resolve/graph/verify/gc` 与 `.param` 清单属**提案，无实现证据**。
+- `docs/archive/NUMERIC_MODEL_V04.md` 的数值塔 `Number = Z ∪ Q ∪ D ∪ F`**尚未实现**（当前 `strtod` + IEEE-754 double）。
 
-### 2.2 工程路线图层（`docs/ROADMAP.md`，应作为唯一权威）
+### 2.2 工程路线图层（`docs/archive/ROADMAP.md`，应作为唯一权威）
 
 这份 206 行的文档是全仓**唯一定义了状态口径**的路线图：
 
@@ -118,7 +122,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | 阶段一 本底宇宙与单机参考实现 | 词法/语法/编译器/寄存器 VM/GC/模组加载器、Fiber 调度、实体系统、`isolate_run` 隔离 | **基本吻合**；稳定性治理 8 项未完成（稳定 ABI v1 版本协商、弃用周期、三平台构建矩阵、`net_mod`/`server_mod` 迁 `ImSocket`、`isolate_mod` 迁 `ImProcess`、统一 `features.h` 等） |
 | 阶段二 涌现与连接（**当前最高优先级**） | UPP 握手/心跳/manifest；CRP 2A–2D（FIND·PORTAL·SIGNAL、HTTP 中继、指数退避重连、多源下载 + HMAC 令牌） | **协议层 `[x]` 全勾且实测通过**；**客户端验收 0/3 勾**：三模式从桌面 UI 启动、`verse://hub/<id>` 可发现/下载/校验/启动、节点状态在客户端可见 |
 | 阶段三 Verse Forge | Verse 配置模型、蓝图导入导出、`.vverse` 生成与签名、Hub 清单、工作台创建/运行/分享 | **全部未勾**；`tools/vverse_pack.js` 已验证器与 pack/unpack/preview 基础 |
-| 阶段四 AI 居民 | 居民 API（人格/记忆/行为树/日程/对话/声誉）、AI 标识与权限边界、资源配额、隔离训练 Verse | **全部未勾**；已有 Ollama `ai_ask/ai_vision/ai_code` 接口与 `docs/AI_LAYOUT.md` 的视觉排版助手原型 |
+| 阶段四 AI 居民 | 居民 API（人格/记忆/行为树/日程/对话/声誉）、AI 标识与权限边界、资源配额、隔离训练 Verse | **全部未勾**；已有 Ollama `ai_ask/ai_vision/ai_code` 接口与 仓库根 `AI_LAYOUT.md` 的视觉排版助手原型 |
 | 阶段五 经济/资产/数字主权 | 本我之核、资产溯源、`store:server`/`store:both` CAS 冲突、`store:chain` 可插拔账本 | **全部未勾**；但 M4 已落地经济域原型（币种定义哈希 / 签名发行 / 幂等结算 / 审计链） |
 
 **结论**：`ROADMAP.md` 的诚实度与实测高度一致。它明确写了"当前最高优先级 = 阶段二 UPP/CRP"，且**客户端验收全未勾**——这正是 `ROADMAP_0.5-0.6.md` 声称"已完成"的那些内容的反面。
@@ -188,7 +192,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | 26 | 2D 游戏引擎（scene/sprite/tilemap/collision/camera/anim） | ROADMAP_0.5-0.6 §3 | **已完成**（总结段） | `grep tilemap\|scene::Node\|collision::AABB\|camera::Camera` → **0 个文件**；`gui_mod.c`（3 996 行、119 处 sprite）是 Scratch 风格 GUI | **虚假** |
 | 27 | `.vverse` 容器 + Ed25519 签名 + 依赖约束 + 缓存 | ROADMAP 阶段三 | 部分 | `tools/vverse_pack.js`/`vverse_validate.js` + `verse_pack_regression` CTest | **符合（基础）** |
 | 28 | 标准库集合/Result/case/闭包 | ROADMAP_0.5-0.6 §4.1 | **已完成** | TypeSet/枚举/Result/`case`/闭包各自有 CTest 与源码位置 | **符合** |
-| 29 | 异步 IO / `net::Server` / `async::Await`/`Promise` | ROADMAP_0.5-0.6 §4.2–4.3 | **已完成** | 无 async 运行时；`task`=Fiber、`thread`=OS 线程；`docs/API_REFERENCE.md` 明确 Fiber 调度器在主线程长眠时可能暂停 | **虚假** |
+| 29 | 异步 IO / `net::Server` / `async::Await`/`Promise` | ROADMAP_0.5-0.6 §4.2–4.3 | **已完成** | 无 async 运行时；`task`=Fiber、`thread`=OS 线程；`docs/archive/API_REFERENCE.md` 明确 Fiber 调度器在主线程长眠时可能暂停 | **虚假** |
 | 30 | AI 居民 / 训练沙盒 | ROADMAP 阶段四 | 全部未勾 | 仅 Ollama `ai_*` 接口 | **缺失** |
 | 31 | 本我之核 / 资产溯源 / `store:chain` | ROADMAP 阶段五 | 全部未勾 | 仅 `identity_mod`（3 个 builtin）+ OAuth 绑定 | **缺失** |
 | 32 | 多目标 `say` / `OutputStream` | ROADMAP 大段 | 全部未勾 | 已有 `say_target()` 与 11 个目标名 + `say_stream.c/.h`；**背压/取消/`say_error`/流路由表未实现** | **部分** |
@@ -202,16 +206,16 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
    `build/CMakeCache.txt` 里 `CMAKE_HOME_DIRECTORY:INTERNAL=/home/sakiko/inimerse_stable`，`build/CTestTestfile.cmake` 的 `WORKING_DIRECTORY` 全部指向 `/home/sakiko/inimerse_stable`（含 3 个 sandbox 子目录）。实际跑 `ctest` 得到 `Failed to change working directory to "/home/sakiko/inimerse_stable"`。
    → **任何"CTest 通过"的结论都必须在新建构建目录里复现**，否则是环境假象。
 
-2. **版本号三处不一致。** 根目录 `./inimerse` = `0.4.0`（且 `--version` 会打印 `[TBP] timeBeginPeriod(1)` 等 Windows 遗留噪声；`--help` 被当成脚本路径报 `cannot read script '--help'`）；`build/inimerse` = `0.5.0`；`CMakeLists.txt` = `0.5.0`。根 `README.md` 同时写"当前发布基线 0.5.0"又链到 `docs/RELEASE_0.4.1.md`。
-   → 直接违反 `docs/BUILD_RELEASE_LESSONS_0.4.0.md` 自己的第一条教训"版本号必须单一化"。
+2. **版本号三处不一致。** 根目录 `./inimerse` = `0.4.0`（且 `--version` 会打印 `[TBP] timeBeginPeriod(1)` 等 Windows 遗留噪声；`--help` 被当成脚本路径报 `cannot read script '--help'`）；`build/inimerse` = `0.5.0`；`CMakeLists.txt` = `0.5.0`。根 `README.md` 同时写"当前发布基线 0.5.0"又链到 `docs/archive/RELEASE_0.4.1.md`。
+   → 直接违反 `docs/archive/BUILD_RELEASE_LESSONS_0.4.0.md` 自己的第一条教训"版本号必须单一化"。
 
 3. **`Infiverse_standard/src-tauri/target` 独占 4.0 GB**，且该目录最后提交是 `f90d355 Release v0.3.0`——桌面端已落后引擎两个版本。
 
 4. **有未提交的在制品。** `src/platform/http_posix.c` 有 +218 行未提交改动，实现白皮书 **§43.5 经济域迁移**（`ImImportedLedger`、`IM_IMPORTS 16`、`g_imports[]`，注释明确"导入的历史不得伪装成本地已提交"，以及 `econ_balances_digest()` 按账户排序、与顺序无关的余额快照哈希）。这是一处**已经写了但没归档的进度**，且恰好对应白皮书 §95 的经济结算要求。
 
-5. **`docs/SYNTAX_SUGAR.md` 与 `docs/API_CATALOG.md` 对 `?.`/`??` 状态不一致**（前者列为"设计项"，后者标"已实现基础语义"）。
+5. **`docs/archive/SYNTAX_SUGAR.md` 与 `docs/archive/API_CATALOG.md` 对 `?.`/`??` 状态不一致**（前者列为"设计项"，后者标"已实现基础语义"）。
 
-6. **`docs/BUILD_RELEASE_LESSONS_0.4.0.md` 文末"版本间自举产物对比"的 0.5.0 记录仍是空模板**（4 个未勾选项：二进制大小、测试通过率、运行时版本一致性、性能对比）。
+6. **`docs/archive/BUILD_RELEASE_LESSONS_0.4.0.md` 文末"版本间自举产物对比"的 0.5.0 记录仍是空模板**（4 个未勾选项：二进制大小、测试通过率、运行时版本一致性、性能对比）。
 
 7. **白皮书 §64.5 比仓库更保守**：它把 `Linux_host` 列为 `known_gaps`，但仓库实测 POSIX 线相当完整（79 个 CTest 里含 `posix_runtime_parity`、`posix_core_api_runtime` 等多个 POSIX 专属测试）。说明白皮书 §64 写于更早的时点，**它的"现状分栏"也需要刷新**。
 
@@ -223,12 +227,12 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 
 | 编号 | 需求 | 依据 | 验收 |
 |---|---|---|---|
-| P0-1 | 重写 `docs/ROADMAP_0.5-0.6.md` 的 v0.6 章节状态标记，改为白皮书 §64 六态**按维度**标注 | §64.1、§64.7、§80.8、`docs/README.md` | 每个小节有 `status`/`evidence_level`/`known_gaps`；无"已完成"字样落在无代码条目上 |
-| P0-2 | 把 `docs/RELEASE_0.5.0.md` 的 "≥2x" 断言改为引用 `SELFHOST_BENCHMARK.md` 实测（1.09x/1.51x）并标 `planned` | §80.8 | 与 benchmark 文档数值一致 |
+| P0-1 | 重写 `docs/archive/ROADMAP_0.5-0.6.md` 的 v0.6 章节状态标记，改为白皮书 §64 六态**按维度**标注 | §64.1、§64.7、§80.8、`docs/README.md` | 每个小节有 `status`/`evidence_level`/`known_gaps`；无"已完成"字样落在无代码条目上 |
+| P0-2 | 把 `docs/archive/RELEASE_0.5.0.md` 的 "≥2x" 断言改为引用 `SELFHOST_BENCHMARK.md` 实测（1.09x/1.51x）并标 `planned` | §80.8 | 与 benchmark 文档数值一致 |
 | P0-3 | 清除跨机器复制的 `build/`；在 `.gitignore` 确认 `build*/` 与 `Infiverse_standard/src-tauri/target/` 被忽略 | §3 实测 | 干净 clone 后新建 `build_verify` 跑 79/79 |
 | P0-4 | 统一版本号：构建/替换根目录 `./inimerse`，修 `README.md` 的"基线 0.5.0 + 链到 RELEASE_0.4.1"矛盾 | `BUILD_RELEASE_LESSONS_0.4.0.md` | `./inimerse --version`、`build/inimerse --version`、`CMakeLists.txt` 三者一致 |
 | P0-5 | 为 `http_posix.c` 的 §43.5 经济域迁移补测试并提交（或明确回退） | 实测 `git status` | `economy_domain_regression` 覆盖 import/export + `econ_balances_digest` 顺序无关性 |
-| P0-6 | 消除 `docs/SYNTAX_SUGAR.md` ↔ `API_CATALOG.md` 的 `?.`/`??` 口径冲突 | §67.6（两章规则冲突不得靠"以后统一"解决） | 指定权威章节并记录冲突 ID |
+| P0-6 | 消除 `docs/archive/SYNTAX_SUGAR.md` ↔ `API_CATALOG.md` 的 `?.`/`??` 口径冲突 | §67.6（两章规则冲突不得靠"以后统一"解决） | 指定权威章节并记录冲突 ID |
 | P0-7 | 填写 `BUILD_RELEASE_LESSONS_0.4.0.md` 文末的 0.5.0 自举对比 4 项 | §1 自举门禁 | 四项有数值 |
 
 ### P1 —— 白皮书 §77 的最小闭环（本周期的唯一正确工程目标）
@@ -242,7 +246,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | P1-3 | 实现 14 事件类型 + `sequence` 单调 + `request_id` 幂等（重复返回首次结果）+ 超时 → `unknown` 只查询不重发 | §78、§79 | V-001…V-012 向量通过 |
 | P1-4 | 实现 `state_hash = SHA-256(canonical_json(...))` 与回放输出 `match/mismatch/incomplete` | §79 | 与 §90 `canonical_json/1` 规则一致（键按 UTF-8 字节序、无负零、拒重复键） |
 | P1-5 | 提交顺序 10 步：第 6 步 flush 失败**不得**执行 7–10；第 7 步失败进 `RECOVERY_REQUIRED` 且**不得返回 `committed`** | §80 | 故障注入测试（含 `fault inject server-crash --after transfer.prepared`） |
-| P1-6 | 把 `docs/ROADMAP.md` 阶段二的**客户端验收 0/3** 变成可执行项（三模式从桌面 UI 启动） | ROADMAP 阶段二出口条件 | 端到端演示脚本 |
+| P1-6 | 把 `docs/archive/ROADMAP.md` 阶段二的**客户端验收 0/3** 变成可执行项（三模式从桌面 UI 启动） | ROADMAP 阶段二出口条件 | 端到端演示脚本 |
 | P1-7 | 建立 §67 格式的需求追踪表（`requirement_id` / `source_reference` / `coverage_status` / `implementation_status` / `evidence_level` / `next_gate`） | §67.1–§67.3 | 本文 §3 的矩阵可直接迁入 |
 
 ### P2 —— 与 §78–§101 MVP 对齐（1–3 个月）
@@ -297,8 +301,8 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 
 - 构建与测试：`cmake -S . -B build_verify -DCMAKE_BUILD_TYPE=Release` → `cmake --build build_verify -j` → `ctest --test-dir build_verify --output-on-failure -j4`
 - 跨机器构建树证据：`build/CMakeCache.txt`（`CMAKE_HOME_DIRECTORY:INTERNAL=/home/sakiko/inimerse_stable`）、`build/CTestTestfile.cmake`（`WORKING_DIRECTORY`）
-- 自举：`selfhost/compiler.im`（22 357 B）、`selfhost/parser.im`（13 248 B）、`docs/SELFHOST_BENCHMARK.md`、CTest `selfhost_benchmark`
-- 性能：`docs/SELFHOST_BENCHMARK.md`（解释器 88 ms / Wasm MVP 58 ms / AOT 打包 81 ms）、`docs/COLLECTION_PERF_AUDIT.md`（门槛 100 000 KiB）
+- 自举：`selfhost/compiler.im`（22 357 B）、`selfhost/parser.im`（13 248 B）、`docs/archive/SELFHOST_BENCHMARK.md`、CTest `selfhost_benchmark`
+- 性能：`docs/archive/SELFHOST_BENCHMARK.md`（解释器 88 ms / Wasm MVP 58 ms / AOT 打包 81 ms）、`docs/archive/COLLECTION_PERF_AUDIT.md`（门槛 100 000 KiB）
 - 反证：`grep -rl 'tilemap\|scene::Node\|collision::AABB\|camera::Camera' src/ examples/` → 空；`ls src/inim_os` → 不存在
 - 在制品：`git diff src/platform/http_posix.c`（`ImImportedLedger`、`econ_balances_digest()`）
 - 模块注册：`src/main.c:35-49`；模块规模 `src/mod/infiverse_mod.c` 839 行 / `verse_dist_mod.c` 2 719 行 / `gui_mod.c` 3 996 行
@@ -308,15 +312,15 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 
 | 文档 | 裁定 |
 |---|---|
-| `docs/ROADMAP.md` | **权威**（唯一状态口径 + 阶段出口条件） |
-| `docs/CHANGELOG_0.5.0.md` 的 `[Unreleased]` | **权威**（当前真实实现清单） |
-| `docs/RELEASE_0.2.0`–`0.4.1`、`docs/V04_STATUS.md`、`docs/API_REFERENCE.md`、`docs/API_CATALOG.md`、`docs/PORTABILITY.md`、`docs/SELFHOST_BENCHMARK.md`、`docs/COLLECTION_PERF_AUDIT.md`、CI/发布教训 3 份、`docs/GITHUB_RELEASE_PLAYBOOK.md` | **可信**（自带验收命令与门禁） |
-| `docs/RELEASE_0.5.0.md` | **前瞻/宣传**（"≥2x"被同仓库 benchmark 否证） |
-| `docs/ROADMAP_0.5-0.6.md` 的 v0.5 段 | **大体可信** |
-| `docs/ROADMAP_0.5-0.6.md` 的 v0.6 段 | **不可信**（系统性虚假"已完成"；且第 163–302 行与 239–302 行是两套重复小节） |
-| `docs/PARAM_FORMAT.md` 的 `inim bundle *` | **提案**（无实现证据） |
-| `docs/NUMERIC_MODEL_V04.md` | **提案**（数值塔未实现） |
-| `docs/protocol_v1.md`、`docs/工作台使用教程.md` | **设计文档**（自带"权威总览以 API_REFERENCE.md 为准"提示） |
-| `docs/ROADMAP_3.1.md`、`docs/ROADMAP_FRONTIER.md` | **明确延期**（不属 v0.3–v0.6） |
+| `docs/archive/ROADMAP.md` | **权威**（唯一状态口径 + 阶段出口条件） |
+| `docs/archive/CHANGELOG_0.5.0.md` 的 `[Unreleased]` | **权威**（当前真实实现清单） |
+| `docs/archive/RELEASE_0.2.0.md`–`0.4.1.md`、`docs/archive/V04_STATUS.md`、`docs/archive/API_REFERENCE.md`、`docs/archive/API_CATALOG.md`、`docs/archive/PORTABILITY.md`、`docs/archive/SELFHOST_BENCHMARK.md`、`docs/archive/COLLECTION_PERF_AUDIT.md`、CI/发布教训 3 份、`docs/archive/GITHUB_RELEASE_PLAYBOOK.md` | **可信**（自带验收命令与门禁） |
+| `docs/archive/RELEASE_0.5.0.md` | **前瞻/宣传**（"≥2x"被同仓库 benchmark 否证） |
+| `docs/archive/ROADMAP_0.5-0.6.md` 的 v0.5 段 | **大体可信** |
+| `docs/archive/ROADMAP_0.5-0.6.md` 的 v0.6 段 | **不可信**（系统性虚假"已完成"；且第 163–302 行与 239–302 行是两套重复小节） |
+| `docs/archive/PARAM_FORMAT.md` 的 `inim bundle *` | **提案**（无实现证据） |
+| `docs/archive/NUMERIC_MODEL_V04.md` | **提案**（数值塔未实现） |
+| `docs/archive/protocol_v1.md`、`docs/archive/工作台使用教程.md` | **设计文档**（自带"权威总览以 API_REFERENCE.md 为准"提示） |
+| `docs/archive/ROADMAP_3.1.md`、`docs/archive/ROADMAP_FRONTIER.md` | **明确延期**（不属 v0.3–v0.6） |
 | `future/infiverse-inim-os-summary.md` §28–§101 | **研究愿景**（按 §80.8 未实现部分只能标 `designed`） |
 | `future/优化路线pro.md`/`愿景.md`（保留）、`future/archive/` 下的 `优化路线.md`/`集合化.md`/`前沿.md`/`面对对象.md`/`函数式和错误处理.md`/`Inim OS总纲.md`/`Inim OS特性.md` | **研究愿景**（约定见 `docs/README.md` 与 `future/README.md`） |
