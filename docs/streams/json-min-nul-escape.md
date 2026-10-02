@@ -6,6 +6,12 @@
 > **状态：未开工。** 本文件的「证据」一节是**协调者在开工前跑出来的**，可复现；
 > 「现状」记录的是**今天**的代码事实。判断某件事做了没有，以 `docs/STATUS.md` §10 与 `docs/BOARD.md` §5 为准。
 
+> **状态：已交付（`cef77f5`，merge `60a2338`），2026-08。**
+> 交付内容与证据、两条与 `JSON.parse` 的分歧、以及一次被驳回的交付见
+> [STATUS.md §10.7](../STATUS.md#107-json_min-的-u-解码json-min-nul-escapecef77f5)。
+> 关键边界：`\u0000` **被显式拒绝**（不是遗漏），孤立代理**映射为 U+FFFD** ——
+> 这两条是**有意保留的文档化分歧**，无法进 crosscheck，精确字节钉在 `src/verse/json_min_probe.c`。
+
 ## 0. 一句话
 
 `src/verse/json_min.c` 的 `\u` 解码在三个输入上**静默产出错数据**，其中两个还**违反本仓库已有的
@@ -174,6 +180,8 @@ alice\u0000B  NULL          （原 "alice"，两者塌成同一个 C 串）
    - 「`\u0000`：引擎**拒绝**该行（`ok:false`，`\u0000 is not representable`），Node `JSON.parse` 产出含 NUL 的串并接受（`"x\u0000y"` → 字节 `78 00 79`）。引擎侧所有 writer 都按 `*p` 扫到 NUL 为止，最小只能产出 `\u0001`，故此分歧不缩小引擎可生成的范围。」
    - 「孤立代理：引擎在解码时映射为 **U+FFFD**（`EF BF BD`），Node `JSON.parse` 保留未配对代理码元、`JSON.stringify` 再把它转义成 **六个字符 `\ud83d`**。引擎的字符串模型是 UTF-8 字节，装不下未配对代理，U+FFFD 是被迫的；两边线上字节不同、记录文本不同。引擎侧确切字节由 `src/verse/json_min_probe.c` 钉住。」
 3. 其余仍写着 92 的位置（我没动，供 Lead 决定）：`tools/README.md:103`、`docs/STATUS.md:41`、`:48`、`:57`、`:716`、`:729`、`docs/HYGIENE.md:321`、`docs/BOARD.md:54`。
+
+> **2026-08 合并时结清（Lead）。** 上面三条都已执行：BOARD §3 的 gate 表、`docs/STATUS.md` §10.6 的第五条分歧（两条分歧合并为一条编号，见 §10.7）、以及全部 92→93（`tools/README.md:103`、`docs/STATUS.md:41`/`:48`/`:57`/`:716`、`docs/README.md:29`、`README.md:26`、`docs/HYGIENE.md:321`、`docs/BOARD.md:54`）。**`docs/STATUS.md:729` 的 `89 → 92` 故意没改** —— 那是 CRP 流的历史记录，改了就成了假历史。合并后 `grep` 全仓已无其它 `92/92`。
 
 ### 7.6 复现命令
 

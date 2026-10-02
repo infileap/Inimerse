@@ -38,14 +38,14 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **92 / 92 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **93 / 93 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | `-j12` 连续 80 轮**失败 1 轮**（§2.9 残余的端口窗口；改前失败更密，见 §2.6–§2.9） | `for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 100 个 `.c` + 49 个 `.h`，合计 48,324 行（`.c` 单独 45,697 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 92 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3，见 §10.1/§10.2/§10.6） | — |
+| 测试注册 | `CMakeLists.txt` 中 93 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1，见 §10.1/§10.2/§10.6/§10.7） | — |
 | 工具 | `tools/` 94 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 81 ms = **1.09x** · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -54,7 +54,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 92
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 93
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -713,7 +713,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 tools/gate.sh          # 七个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
 ```
 
-见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 92 / 92**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。
+见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 93 / 93**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。
 
 ### 10.6 CRP 的引擎侧线层（`crp-in-engine`，`7b20505`）
 
@@ -733,9 +733,44 @@ tools/gate.sh          # 七个阶段，串行；不要并发跑，§2.9 的端�
 2. **base64url 解码比 Node 严**：引擎拒绝 `n%4==1`、非 alphabet 字节、`=` 填充、尾部非零 bit，而 Node 的 `Buffer.from(x,'base64url')` 会宽容接受其中一部分。分歧方向是「更严」，不会把坏输入当好输入。
 3. **JSON 语法错误文本无法一致**：引擎给 `bad literal at offset 0`，V8 给 `Unexpected token …`。引擎不嵌 V8。**契约级错误文本全部逐字一致**（`message must be an object`、`invalid CRP frame`、`unsupported CRP type: %s`、`CRP frame exceeds 1 MiB`、`FIND limit must be 1..1000` 等均已核对）；语料全是合法 JSON，所以这条分歧**未被触发**。
 4. **会话层语义是引擎独有的**：`im_crp_session_accept()` 的缺口判定、租约、11 个状态，参考实现都没有对应物。
+5. **两个 `\u` 解码分歧，由 `json-min-nul-escape` 流引入并有意保留**（精确 input/output 对见 §10.7）：
+   - **`\u0000` 被引擎拒绝**：`{"x":"x\u0000y"}` ⇒ 引擎 `ok:false`、`\u0000 is not representable at offset 13`、**不写任何字节**；`JSON.parse` 则给出内嵌 NUL（`payload.x` 字节 `78 00 79`）。**这不是能力不足，是刻意的**：`VjVal` 的字符串是无长度字段的 `char *s`，收下 NUL 就等于静默截断，而**引擎没有任何写出器能产出 `\u0000`**（七个 `\u%04x` 写出点循环条件全是 `for (p = …; *p; p++)`，裸 NUL 会先终止循环，最小可产出转义是 `\u0001`）⇒ 拒绝它**不构成对任何引擎可生成输入的收窄**。
+   - **孤立代理映射为 U+FFFD**：`{"x":"\uD83D"}` ⇒ 引擎输出 `EF BF BD`；`JSON.parse` 保留未配对代理，`JSON.stringify` 把它重新转义成**六个 ASCII 字符** `\ud83d`。**字节不同、解码后的值也不同**（U+FFFD vs 未配对代理码元），不是同一个值的两种拼法。**被迫而非可修**：以 UTF-8 字节为字符串模型就装不下未配对代理。
+   - **这两条都无法进 crosscheck**：`tools/crp_reference.js` 走 `JSON.parse`，它**两者都接受** ⇒ 语料里放进去只会得到「不一致」或需要归一化（那等于把 crosscheck 唯一要断言的「逐字节一致」放宽掉）。因此**精确字节钉在 `src/verse/json_min_probe.c`，不放宽比较器**。`tools/crp_engine_crosscheck.js` 里只有**字面** `\\u0000`（六个字符、无 NUL 字节）的条目 —— 那不是转义，是普通文本。
 
 **没做什么 / 已知边界**：
 - **一个显式取舍，代价已写明**：`session_store_seq()`（`src/verse/crp.c:912-916`）会调 `im_crp_session_accept()` 取 §55.6 判决，但只把它记进 `/status` 的 `acceptVerdict`，**最终写进 `last_applied` 的是参考实现更宽松的规则**（无条件 `last_applied = seq`）。**代价是引擎自带的缺口判定不影响线上行为，只作诊断暴露。** 选它的理由：判据要求对齐参考实现的线上行为。若日后要求「缺口即拒」，必须先明确「对齐参考实现」与「执行 §55.6」哪个优先 —— 在本流范围内二者不可兼得。
 - 参考实现的测试配置 `{ttlMs:1000, tokenTtlMs:1000, maxRevokedTokens:1}` **没有等价复现**：`crp-hub` 只走默认值（token TTL 5 min / registry TTL 30 min / 吊销集封顶 10000）。等价语义用**不同数值**单独验过（registry 剪枝、lease 过期、`max_revoked=2` 时封顶生效），但**那组具体数值没跑过**。
 - **base64url 与 HMAC-SHA256 直接放在 `src/verse/crp.{h,c}`**，没有进 `src/common/`（当时只有 CRP 一个消费者）。日后若 `.vverse` 或别的模块也要 base64url，需要再抽公共实现 —— 那时必须同时保住 `src/common/vverse_pack.c:169-215` 的**严格** padding 语义。
-- 顺带发现 `src/verse/json_min.c` 一条**继承的既有缺陷**，本流**没修**（避免动到现有语义）：`json_min.c:95` 的 `if (cp < 0x80) out[len++] = (char)cp;` 在 `\u0000` 时会往字符串里塞一个**裸 NUL**，而 `VjVal` 的字符串是**没有长度字段的 `char *s`** ⇒ 所有基于 `strlen` 的下游消费者都会看到被截断的字符串。已立为 BOARD §5 的 `json-min-nul-escape`。
+- 顺带发现 `src/verse/json_min.c` 一条**继承的既有缺陷**，本流**没修**（避免动到现有语义）：`json_min.c:95` 的 `if (cp < 0x80) out[len++] = (char)cp;` 在 `\u0000` 时会往字符串里塞一个**裸 NUL**，而 `VjVal` 的字符串是**没有长度字段的 `char *s`** ⇒ 所有基于 `strlen` 的下游消费者都会看到被截断的字符串。已立为 BOARD §5 的 `json-min-nul-escape`，**并已由该流修复** —— 见 §10.7。
+
+### 10.7 `json_min` 的 `\u` 解码（`json-min-nul-escape`，`cef77f5`）
+
+**立项**：§10.6 顺带发现的那条缺陷。派活前的侦察把它从「一条 BOARD 行」扩成了**跨四个模块**的真实缺陷面：`grep` 得 `src/` 下 **63 处 `vj_str(` 调用点**，消费者包括 `src/verse/crp.c`、`crp_peer.c`、`upp.c`、`layer.c`、`src/common/vverse_pack.c`，以及 **`src/platform/http_posix.c:1760`（解析来自网络的经济域导入包）**。`struct VjVal`（`src/verse/json_min.h:15-25`）的字符串字段是 `char *s;`，**无长度字段**。
+
+**修前实测**（Node `JSON.parse` 与引擎 `vj_parse` 逐字节对照）：
+
+| 输入 | Node | 引擎（修前） |
+| --- | --- | --- |
+| `"\uD83D\uDE00"` | `F0 9F 98 80`(4) | `ED A0 BD ED B8 80`(6) —— **CESU-8，非法 UTF-8** |
+| `"\uD83D"` | `EF BF BD` | `ED A0 BD` |
+| `"\uDE00"` | `EF BF BD` | `ED B8 80` |
+| `"x\u0000y"` | `78 00 79`(3) | `78`(1) —— **静默截断** |
+| `"alice\u0000A"` / `"alice\u0000B"` | 两个不同串 | 都变 `alice` —— **两个不同 JSON 串塌缩成同一个 C 串** |
+
+线上形式是六个 ASCII 字节 `\`,`u`,`0`,`0`,`0`,`0`（**不含裸 NUL**），能穿过 HTTP 头部剥离与所有 `strstr`/`strlen` 检查到达解析器。根因两处：`json_min.c:95` 写裸 NUL；`json_min.c:96-97` 把任何 ≥0x80 的码点编成至多 3 字节，于是代理对两半各自成 3 字节。
+
+**下游后果比 BOARD 原话更重**（`src/platform/http_posix.c`）：`econ_replay_slot(EconReplay *r, const char *account)` 用 `if (!strcmp(r->account[i], account)) return i;`，`econ_pkg_balances_digest(const VjVal *pkg, char out[65])` 用 `snprintf(items[n].account, …, "%s", acct)` ⇒ **只差 NUL 之后内容的两个账户会被合并进同一个余额槽位**，不只是摘要相同。
+
+**修法**（不采用给 `VjVal` 加长度字段：63 个调用点连锁，且它不解决 CESU-8）：①代理对合成 4 字节 UTF-8；②孤立代理输出 U+FFFD；③`\u0000` **显式拒绝**；④对象**键**走同一个 `vj_parse_string_raw`，一并修。
+
+**交付**：`src/verse/json_min.c`(103 行改动)、新 `src/verse/json_min_probe.c`(+262，76 checks，**链进 `src/verse/upp.c`** 使出厂的 `upp_json_write_string` 参与往返测试)、`CMakeLists.txt`(+10，`add_test(NAME verse_json_min_probe … LABELS "protocol;json")`)、`tools/crp_engine_crosscheck.js`、`tools/gate.sh`（`EXP_CTEST` 92→93）。
+
+**证据**：
+- **fails-before-fix**：`git stash push -- src/verse/json_min.c` 后探针 `74 checks, 20 failures`、exit 1；`stash pop` 后 `76 checks, 0 failures`。
+- **ASan + UBSan**（`ASAN_OPTIONS=detect_leaks=1`）：干净；贴边用例的堆缓冲恰为 `strlen+1`，任何越读都会被 ASan 抓到。
+- **crosscheck 语料 101 → 107 条 text-identical**（新增代理对 / 键位代理对 / 连续两对 / `\u0001` / `\u00e9\u4e2d` / 字面 `\\u0000`；**去掉**两条孤立代理行）。
+- **`P->p[0..3]` 前读（`json_min.c:88`）**：队友在 ASan+UBSan 下、每个输入装在恰为 `strlen+1` 的堆缓冲里，证得 `"\"\\u004"` / `"\"\\u0041"` / `"\"\\uD83D"` **无报告** —— 循环里第一个非法读就是 NUL 本身且在界内（`p[3]` 是终止符，`p[4]` 永不触及）⇒ **旧代码只对零余量的 NUL 结尾调用方安全，且纯属侥幸**。新增 `vj_read_hex4()` 开头的 `if (h == '\0') { vj_fail(P, "bad \\u escape"); return -1; }` 让读**可证有界**，且**不改变任何既有错误文本**。
+- 最终门禁（我在合并前于该 worktree 亲跑 `rm -rf build && tools/gate.sh --jobs 4`）：**七阶段全 PASS、ctest 93/93、`gate: OK`、exit 0**。
+
+**一次被驳回的交付（值得记的教训）**：队友首版为让孤立代理语料「通过」，在 `tools/crp_engine_crosscheck.js` 里加了 `canonicalRecord(line)`，把未配对代理归一成 U+FFFD 后再比。**这等于把 crosscheck 唯一要断言的「逐字节一致」放宽掉**，且注释里「the same bytes on the wire」**事实错误**（`\ud83d` 是六个 ASCII 字符、`EF BF BD` 是三个字节）。驳回并要求：删掉整个归一化函数、删掉孤立代理语料条目、把字节断言留在探针里，然后**证明去掉归一化后仍 text-identical 且门禁仍绿**。**我复核时补做了一次反向验证**：把被删掉的那条孤立代理行重新塞回一份临时副本，crosscheck 立刻报 `MISMATCH line 41` / `1 of 108 records differ` / exit 1 ⇒ **比较器是真的能看见这个分歧，而不是「不再喂它」了**。教训：**当测试开始需要归一化才能通过时，被放宽的往往正是它存在的理由。**
