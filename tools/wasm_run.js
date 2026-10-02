@@ -4,7 +4,17 @@
 // (docs/WASM.md PAL principle), validates the ABI probe, and runs the script.
 //
 // Usage: node tools/wasm_run.js <script.wasm>
+//        node tools/wasm_run.js --bench <script.wasm>
 // Exit code mirrors inimerse run: 0 = ok, 1 = script error (im_error called).
+//
+// Error codes: 1 division_by_zero, 2 call_frame_overflow, 3 call_stack_overflow,
+// 4 heap_exhausted, 5 array_index_out_of_range, 6 array_op_unsupported.
+//
+// --bench runs the two exported array-sum loops (scalar vs v128) instead of
+// the script and prints wall-clock nanoseconds plus an equality check.  See
+// docs/WASM.md "SIMD": the vector path is implemented and measured, but the
+// .im code generator does not select it - that claim needs a number, so this
+// mode is what produces one.
 
 const fs = require('fs');
 
@@ -30,9 +40,36 @@ function fmtFloat(d) {
   return (neg ? '-' : '') + out + '.' + fb;
 }
 
+function bench(path, inst) {
+  // Both loops sum exactly n terms of 1.0, and every partial sum is an exact
+  // integer below 2^53, so the scalar and the two-lane result must be equal.
+  if (typeof inst.exports.bench_sum_scalar !== 'function' || typeof inst.exports.bench_sum_simd !== 'function') {
+    console.error('error: this module has no benchmark exports');
+    process.exit(2);
+  }
+  const n = Number(process.argv[4] || 20000000);
+  const runs = [];
+  for (const name of ['bench_sum_scalar', 'bench_sum_simd']) {
+    const fn = inst.exports[name];
+    fn(1000);                                      // warm up / compile
+    const t0 = process.hrtime.bigint();
+    const v = fn(n);
+    const t1 = process.hrtime.bigint();
+    runs.push({ name, ns: Number(t1 - t0), v });
+  }
+  for (const r of runs) {
+    if (r.v !== n) { console.error(`error: ${r.name} returned ${r.v}, expected ${n}`); process.exit(1); }
+  }
+  const [a, b] = runs;
+  const ratio = a.ns / b.ns;
+  console.log(`wasm bench: n=${n} ${a.name}=${a.ns}ns ${b.name}=${b.ns}ns simd/scalar=${ratio.toFixed(3)}`);
+  console.log(`wasm bench: results equal (${a.v} == ${b.v})`);
+}
+
 function main() {
-  const path = process.argv[2];
-  if (!path) { console.error('usage: node wasm_run.js <script.wasm>'); process.exit(2); }
+  const benchMode = process.argv[2] === '--bench';
+  const path = benchMode ? process.argv[3] : process.argv[2];
+  if (!path) { console.error('usage: node wasm_run.js [--bench] <script.wasm>'); process.exit(2); }
   const bytes = new Uint8Array(fs.readFileSync(path));
 
   let exitCode = 0;
@@ -42,7 +79,10 @@ function main() {
     im_print_bool: (v) => process.stdout.write((v ? 'true' : 'false') + '\n'),
     im_print_nil: () => process.stdout.write('nil\n'),
     im_error: (code) => {
-      const names = { 1: 'division_by_zero', 2: 'call_frame_overflow', 3: 'call_stack_overflow' };
+      const names = {
+        1: 'division_by_zero', 2: 'call_frame_overflow', 3: 'call_stack_overflow',
+        4: 'heap_exhausted', 5: 'array_index_out_of_range', 6: 'array_op_unsupported',
+      };
       console.error(`error: ${names[code] || 'runtime_error'} (code ${code})`);
       exitCode = 1;
     },
@@ -56,6 +96,8 @@ function main() {
   const abi = inst.exports.inimerse_abi_version();
   if (probe !== 0x0500) { console.error(`error: unexpected wasm probe marker 0x${probe.toString(16)}`); process.exit(2); }
   if (abi !== 1) { console.error(`error: unsupported wasm ABI revision ${abi}`); process.exit(2); }
+
+  if (benchMode) { bench(path, inst); process.exit(0); }
 
   try {
     inst.exports.inimerse_run(0);
