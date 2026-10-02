@@ -33,6 +33,9 @@ Infiverse_standard/userdata/
 *.old
 *.cache
 tools/*.wasm
+# Engine asset cache written by verse_pack's cache_put (src/mod/verse_dist_mod.c);
+# universe/ has tracked entries, this subdirectory is generated.
+universe/_cache/
 _wv2sdk/
 app/*WebView2/
 app/wv2data/
@@ -55,6 +58,11 @@ oauth_*.bin
 # Local session artifacts
 .zcode/
 codex-reconnect-fix/
+# Per-session research scratch directory (not repository content).
+# NB: this line is hygiene.  The `links` gate no longer scans untracked files at
+# all (tools/check_links.py enumerates `git ls-files`), so a scratch directory
+# cannot turn it red whether or not it is listed here.
+.verify/
 
 # Per-session git worktrees (tools/stream.sh)
 .worktrees/

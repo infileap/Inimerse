@@ -6,6 +6,12 @@ only links that must resolve to a file or directory *inside* the checkout are
 checked.  That is the failure mode that actually rots: a file is moved into
 `docs/archive/` and a dozen documents keep pointing at where it used to be.
 
+The checked set is the repository's *git-tracked* Markdown (see
+`iter_markdown_files`), not the Markdown lying in the working tree.  This is a
+correctness property, not an optimisation: the gate answers "does this
+repository's references resolve", so a file that is not part of the repository
+must not be able to change the answer.
+
 Usage:
     python3 tools/check_links.py            # exit 1 if any link is broken
     python3 tools/check_links.py -v         # list every link, not just bad ones
@@ -18,17 +24,11 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-SKIP_DIRS = {
-    ".git", "node_modules", ".worktrees", "target", "userdata",
-    "__pycache__", ".venv", "venv", ".pnpm-store",
-}
-SKIP_PREFIXES = ("build", ".dshm-pr", ".npm")
-SKIP_FILES = {"node_modules"}
 
 # Inline links:  [label](target "optional title")
 INLINE_RE = re.compile(r"!?\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+\"[^\"]*\")?\s*\)")
@@ -55,23 +55,54 @@ def strip_code_fences(text: str) -> str:
 
 
 def iter_markdown_files() -> list[str]:
-    found = []
-    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
-        rel_dir = os.path.relpath(dirpath, REPO_ROOT)
-        if rel_dir == ".":
-            rel_dir = ""
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in SKIP_DIRS
-            and not any(d.startswith(p) for p in SKIP_PREFIXES)
+    """Return the repository's Markdown files, as git-tracked paths.
+
+    `git ls-files` is the definition of "this repository's content": it misses
+    nothing tracked and cannot pick up anything untracked.  Walking the working
+    tree instead made this gate non-hermetic -- an unrelated session's `.verify/`
+    scratch directory (untracked, at the repo root) once contributed 12 broken
+    links and turned the gate red for a repository that was perfectly fine.
+
+    That is worse than a nuisance failure.  A gate that goes red for reasons the
+    reader cannot act on teaches its readers to triage it ("is this one of the
+    junk reds?") instead of to fix the reference, and a gate nobody trusts is
+    worse than no gate.  Extending the skip-list cannot fix this class: any
+    blacklist is one unlisted scratch directory behind.  Enumerating the tracked
+    set removes the class.
+
+    There is deliberately no `os.walk` fallback.  A fallback would reinstate
+    exactly the defect this function exists to remove, and it would do so only
+    on machines where git is missing -- the environment where a junk-red gate is
+    hardest to diagnose.  Fail loudly instead.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z", "--", "*.md", "*.markdown"],
+            cwd=REPO_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-        for name in sorted(filenames):
-            if not name.endswith((".md", ".markdown")):
-                continue
-            if name in SKIP_FILES:
-                continue
-            found.append(os.path.join(rel_dir, name) if rel_dir else name)
-    return found
+    except OSError as exc:
+        sys.exit(
+            f"check_links: cannot run git ({exc}).\n"
+            "check_links: this stage checks the repository's git-tracked "
+            "Markdown; without git there is no way to distinguish repository "
+            "content from scratch files left in the working tree.\n"
+            "check_links: refusing to fall back to walking the working tree."
+        )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", "replace").strip()
+        sys.exit(
+            f"check_links: 'git ls-files' failed (exit {proc.returncode}) in "
+            f"{REPO_ROOT}\n{detail}\n"
+            "check_links: refusing to fall back to walking the working tree."
+        )
+    # -z: NUL-separated, so paths containing newlines survive verbatim.
+    return sorted(
+        name
+        for name in proc.stdout.decode("utf-8", "surrogateescape").split("\0")
+        if name
+    )
 
 
 def targets_in(text: str) -> list[str]:
