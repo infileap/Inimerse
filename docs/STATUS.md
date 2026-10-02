@@ -1721,3 +1721,52 @@ print('HOST-ALIVE')
 - **`longjmp` 的泄漏**（见上）：每次语法错漏掉半棵 AST。要「不漏」得把整个递归下降改成返回错误码，那是另一个量级的改动，没有做。
 - **嵌套调用返回 NULL**：在一次可恢复解析里再调 `parse_program_recoverable()` 会直接返回 NULL（解析器本来就不是可重入的）。今天没有这样的调用方。
 - `src/main.c.bak`（未被版本控制）里还有一份 `inim_load_text()`；它不参与构建，没有动。
+
+### 10.28 OAuth 回环拆出 Tauri、八个真实面板进 DOM 断言，以及「门禁把跳过当通过」（`oauth-bind-transport`、`forge-panels`）
+
+本轮两行都有一个共同形状：**板上写的验收对象，本机根本编译不出来 / 根本不存在**。处理方式不是降低判据，是把判据钉到真正能跑的那一层，并把做不到的部分**显式拆成新的前置行**。
+
+#### ① 为什么 OAuth 那一行必须拆（`oauth-bind` → 行 100 + 行 101）
+
+行 100 的标题是「OAuth **token 交换与资料绑定**」，而原判据只要求「回环证据」。**`gatehermetic` 对抗审计的原话**：「这个标题与判据之间的落差就是坑本身」。
+
+实测本机 `pkg-config` / `webkit2gtk-4.1` / `javascriptcoregtk-4.1` / `libsoup-3.0` / `gtk+-3.0` **全缺**，且**无免密 sudo**（`sudo -n true` 失败）⇒ 整个 Tauri 壳**编不出来**。但回环本身是普通 Rust，不需要 Tauri。于是：
+
+- **行 100 `oauth-bind-transport`（已完成）**：`Infiverse_standard/oauth_loop/` —— 纯 `std`、零外部依赖的库 crate，复刻 `Infiverse_standard/src-tauri/src/lib.rs:919-980` 的五个函数。真回环证据：`cargo test` **16 passed; 0 failed**，`callback_live_loop_over_real_socket` 绑 `127.0.0.1:0`（内核分配，**不是固定 8765**）、由测试自己扮演浏览器经**真实 `TcpStream`** 发请求，断言 `query() == "code=TESTCODE&state=TESTSTATE"` 并读回 `HTTP/1.1 200 OK`。
+- **行 101 `oauth-bind-transaction`（阻塞，新增）**：承载标题真正指的另外四件事 —— token 交换、`oauth_bind` 命令、`state` 校验、把 5 秒上限改回阻塞。**它仍需要 Tauri 壳**，所以是真前置行，不是拖延。写域与行 100 在 `Infiverse_standard/oauth_loop/` 重叠，已在板上注明。
+
+**判据「删掉 `&state={}` 会让测试红」被实测证伪**：那样改是**编译错** `error: argument never used`（`format!` 拒绝无用实参），拿不到断言失败。改用 `&state=X{}` 才是真咬合证据。同样被证伪的还有「非原子的引用计数」（见 §10.29 的闭包一节）。
+
+**`start_callback()` 静默丢迟到回调（审计抓出的真缺陷）**：原实现 `lib.rs:964` 的 `incoming().flatten().next()` **无限期阻塞**；crate 版的 `query()` 上限 `CALLBACK_WAIT = 5s`（`lib.rs:43`）然后写 `""`。对照实测（`--test-threads=1`）：≤5s 回 `code=FASTCODE&state=FASTSTATE`；**6s 后监听仍回 `200 OK`，但之后六次轮询全 `""`**。消费方窗口约 60s（`app.js:366` 每秒轮询，`++tries > 60`）⇒ **真人输密码或过 2FA 必然被丢**。`lib.rs:39-42` 那段辩解**两处都假**：不是「纯粹为测试」（它改变了生产行为），也不是「原实现从不阻塞」（阻塞的是 Rust 侧，非阻塞的只是 JS 轮询）。这段已改写为 `THIS IS A DIVERGENCE FROM THE ORIGINAL, AND IT IS NOT TEST-ONLY`，crate 头注释新增 `WHAT THIS CRATE DOES **NOT** PROVE`（5 条，全部带 `file:line`）。
+
+**坐实的一处用户可见假声明**：`app.js:285` 对用户写「授权后由回调服务交换 code，再调用 `oauth_bind` 保存资料」——**两半都假**。全仓 `grep -rniE 'access_token|oauth2/token|grant_type|refresh_token|exchange'` **零命中**；`oauth_bind` 只活在那句散文里；`linked_accounts.json` 全仓**只读不写** ⇒ 这个 UI **永远不可能**返回 `linked:true`。
+
+#### ② `forge-panels`：原判据是事实错误，改窄到实际存在的八个模块
+
+原文写「面板住在 `Infiverse_standard/src/ui/`」。实测：`grep -rln -iE 'forge'`（排除 `node_modules`）**只命中文档**与两个无关文件；`grep -rlni 'forge|spacetime|蓝图|blueprint'` 在 `Infiverse_standard/` 的 `*.rs`/`*.js`/`*.html`/`*.json`/`*.md` 里**零命中**；`src/ui/` 只有 `index.html`(41 行) / `app.js`(877 行) / `app.css`(113 行)。⇒ **不存在 Forge 面板，也不存在时空/物理/蓝图面板**，「面板可用」在源头上无物可验。
+
+改窄后的判据钉在 `app.js:7-16` 的 `MODULES` 表：`home`/`chat`/`browse`/`workbench`/`inimerse`/`toolbox`/`plugins`/`settings` 八个模块的**渲染、切换、以及每个模块触发的 IPC 命令序列**，由 `tools/infiverse_panels.test.js` 以 jsdom DOM 断言固定。原始截图/录屏要求随不存在的面板一起**降级并明说**。
+
+**三条踩坑（都是「看起来绿了其实没测」的同类）**：
+
+- **桩的形状会决定生死**：`get_local_ip` 必须返回**列表**（`app.js:83` 调 `.join(', ')`）、`get_engine_info` 需带 `.path`、`tool_files`/`get_achievements` 也必须是列表（`app.js:513`/`:94` 调 `.map`）。返回 `null` 会在 app 自己的 promise 链里抛 unhandled rejection，**直接杀进程，早于任何断言**。
+- **活动栏按钮数是 9 不是 8**：`#activitybar` 有 9 个 `.ab-item`，第 9 个是 `#theme-toggle`。按 `[data-mod]` 计数才等于 8，theme-toggle 单独断言存在。
+- **第一次破坏实验用错了函数名**：把 `setModule` 改成 `{ return; }` 完全没有效果（真实函数叫 `switchModule`），是一次**假红实验**。换成真名后 `module "home" rendered no content` 立刻变红。三证齐：删一个 `MODULES` 项 ⇒ 红；`switchModule` 空实现 ⇒ 红；删 `invoke('record_run')` ⇒ 红。
+
+#### ③ `stage_node` 原先把「跳过」当成「通过」——本轮最值得记的一条
+
+`tools/node_suites/run_all.js` 旧版只看退出码，把套件自报的 `skipped` 也算成 `ok`。于是 `wasm_host.test.js` **一直在 skip**：它默认找 `tools/wasm_probe.wasm`，而 CMake 把 probe 建在 `<build>/wasm_probe.wasm`（`CMakeLists.txt:320-328`）。⇒ 板上那条「expect 11/11」**从来不是 11 个真通过**。
+
+修法两层：`run_all.js` 用 `/\bskipped\b/` 单独归类并打印 `skipped (NOT passes): ...`；`stage_node` 见到任何 skip **一律让阶段红**，并断言**分母**（新增 `EXP_NODE="${EXP_NODE:-12}"`）。依据是 `examples/BUILDING_BRIDGES.md` 的既有规矩：**a gate can never go green while claiming evidence it did not collect**。传参后 `wasm_host.test.js` 真跑并过，带 `NODE_PATH` 时 **12/12 全通过、0 skip**（本仓首次）。
+
+同一个道理在本轮的另一处也生效：`oauth-loop` 阶段断言的是 `test result: ok. 16 passed; 0 failed` 这行**计数**，因为 `cargo test` 退 0 分不清「16 个测试过」和「1 个过 + 15 个被删」。
+
+#### ④ 环境与运行时事实
+
+- Rust 工具链由本轮装成：**cargo 1.99.0 / rustc 1.99.0**（`RUSTUP_HOME=/home/sakiko/.rustup`、`CARGO_HOME=/home/sakiko/.cargo`）。`static.rust-lang.org` 的 DNS 只给 IPv6 地址且不可达，`sh.rustup.rs` 可达。
+- **jsdom 30.1.1 装在仓外**：`/home/sakiko/.local/inimerse-jsdom/`（`npm install --prefix … jsdom --cache /home/sakiko/inimerse/.npm-tmp`，37 packages）。**仓内无 `package.json`，依赖不入仓**；运行时需 `NODE_PATH=/home/sakiko/.local/inimerse-jsdom/node_modules`，否则 node 阶段**按设计**因 skip 而红。
+
+#### 遗留（如实上报）
+
+- **行 101 仍阻塞**：需要 `webkit2gtk-4.1` 等系统库与能安装它们的权限，本机两样都没有。行 100 的 crate 只证明**运输层**正确，**不**证明浏览器授权流程端到端可用。
+- **`forge-panels` 的降级是降级**：新判据证明「能渲染 / 能切换 / 按预期发 IPC」，**不**证明「面板可用」原义 —— 原义的对象不存在。它按 `阻塞` → `已完成` 落账时，这一点已写在判据里，不是脚注。

@@ -71,3 +71,7 @@ verse_layer_probe_root/
 
 # Per-session git worktrees (tools/stream.sh)
 .worktrees/
+
+# npm cache used by `npm install --cache .npm-tmp` (the default ~/.npm is not
+# writable in some sessions). Build input, not source.
+.npm-tmp/

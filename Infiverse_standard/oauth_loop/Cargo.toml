@@ -1,0 +1,9 @@
+[package]
+name = "oauth_loop"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri-free extraction of the Infiverse OAuth loop-back logic (lib.rs:918-980)"
+license = ""
+
+# HARD REQUIREMENT 1: no external dependencies.  Pure std only.
+[dependencies]

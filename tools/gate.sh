@@ -48,6 +48,10 @@ FAILED=0
 # green having verified nothing about the bridge.
 EXP_CTEST="${EXP_CTEST:-103}"
 
+# The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
+# from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
+EXP_NODE="${EXP_NODE:-12}"
+
 run_stage() {
   local name="$1" wanted="$2"; shift 2
   if [ -n "$ONLY" ] && [ "$ONLY" != "$wanted" ]; then
@@ -129,7 +133,46 @@ stage_node() {
   if ! command -v node >/dev/null 2>&1; then
     echo "node not found -- cannot run the JS protocol suites"; return 1
   fi
-  node "$REPO_ROOT/tools/node_suites/run_all.js"
+  # Assert the registered suite COUNT (passed + skipped), not the pass count --
+  # the same reason stage_ctest asserts a count.  Two suites self-skip on a
+  # missing optional toolchain (wasm_host without a built wasm module,
+  # infiverse_panels without jsdom), so "N/N passed" is configuration-dependent
+  # and would be a flaky assertion.  What must be stable is the denominator: a
+  # suite dropped from run_all.js SUITES still fails this stage.
+  #
+  # Skips are counted and reported separately, and this stage FAILS on any skip
+  # -- matching examples/BUILDING_BRIDGES.md, whose rule is "a gate can never go
+  # green while claiming evidence it did not collect".  Before this, the runner
+  # counted a skipped suite as a pass, so a jsdom-less machine would have shown a
+  # green node stage having asserted nothing at all about the UI.
+  local out rc ran skipped
+  out="$(node "$REPO_ROOT/tools/node_suites/run_all.js" 2>&1)"
+  rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || return "$rc"
+  ran="$(printf '%s\n' "$out" | sed -n 's/^node protocol suites: [0-9]*\/\([0-9]*\) passed$/\1/p')"
+  if [ -z "$ran" ]; then
+    echo "gate: could not read the suite count from the node runner output." >&2
+    return 1
+  fi
+  if [ "$ran" -ne "$EXP_NODE" ]; then
+    echo "gate: node runner covered $ran suite(s), expected $EXP_NODE." >&2
+    echo "gate: a suite may have been dropped from tools/node_suites/run_all.js SUITES." >&2
+    echo "gate: bump EXP_NODE in tools/gate.sh and docs/BOARD.md 3 if that was intended." >&2
+    return 1
+  fi
+  skipped="$(printf '%s\n' "$out" | sed -n 's/^skipped (NOT passes): //p')"
+  if [ -n "$skipped" ]; then
+    echo "gate: ${skipped}" >&2
+    echo "gate: a skip is not a pass; this stage fails so the gate cannot go green" >&2
+    echo "gate: while claiming UI or wasm evidence it did not collect." >&2
+    echo "gate: for the panels suite install jsdom outside the repo, then re-run:" >&2
+    echo "gate:   npm install --prefix \$HOME/.local/inimerse-jsdom jsdom" >&2
+    echo "gate:   NODE_PATH=\$HOME/.local/inimerse-jsdom/node_modules bash tools/gate.sh" >&2
+    echo "gate: for wasm_host build the wasm module first." >&2
+    return 1
+  fi
+  return 0
 }
 
 stage_plugin() {
@@ -139,6 +182,48 @@ stage_plugin() {
     echo "node not found -- cannot run the plugin suite"; return 1
   fi
   node "$REPO_ROOT/tools/dsh-inimerse/verify.mjs" --live
+}
+
+stage_oauth_loop() {
+  # The Tauri-free OAuth loop-back crate (BOARD row 100).  It exists precisely
+  # so this layer can be exercised on a machine where the Tauri shell cannot be
+  # built, so it is worth nothing unless something runs it -- a crate nobody
+  # invokes is the same failure mode as the JS protocol suites that passed for
+  # months unregistered (see stage_node above).
+  #
+  # Rust is NOT required to build Inimerse.  A missing cargo is therefore a
+  # SKIP with a loud note, not a failure: turning it into a failure would make
+  # the gate unrunnable on any machine without a Rust toolchain, and the engine
+  # must stay buildable with nothing but a C compiler.
+  local crate="$REPO_ROOT/Infiverse_standard/oauth_loop"
+  if [ ! -d "$crate" ]; then
+    echo "gate: $crate is missing -- it is the row 100 artifact." >&2
+    return 1
+  fi
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "cargo not found -- skipping the oauth_loop crate (set PATH=\$HOME/.cargo/bin:\$PATH)."
+    echo "NOTE: this skip is not a pass; the loop-back tests did not run."
+    return 0
+  fi
+  # Keep cargo's target dir and network use inside the repo scratch area, and
+  # never let a stale lock from a parallel run block the stage.
+  #
+  # Assert the count, exactly as stage_ctest does for ctest: "cargo test exits
+  # 0" does not distinguish 16 passing tests from 1 passing test and 15 deleted
+  # ones.  The audit for this row deleted the slot write in start_callback() and
+  # the suite stayed green, so a count alone is weak -- but it at least catches
+  # the crate being emptied out.
+  local out rc
+  out="$( cd "$crate" && cargo test --offline --locked 2>&1 )"
+  rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || return "$rc"
+  if ! printf '%s\n' "$out" | grep -qE 'test result: ok\. 16 passed; 0 failed'; then
+    echo "gate: oauth_loop did not report 'test result: ok. 16 passed; 0 failed'." >&2
+    echo "gate: update the expected count here and in docs/BOARD.md if that was intended." >&2
+    return 1
+  fi
+  return 0
 }
 
 stage_links() {
@@ -158,8 +243,9 @@ stage_doc_paths() {
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
-run_stage "node protocol suites (expect 11/11)" node stage_node
+run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
+run_stage "oauth_loop crate (expect 16/16)" oauth-loop stage_oauth_loop
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 
