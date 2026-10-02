@@ -108,3 +108,64 @@
 
 按 [BOARD.md](../BOARD.md) §4 的五项，第 4 项「没做什么 / 已知没解决什么」不能漏。
 另外明确回答：**`P->p[k]` 的前读你是证明安全了，还是改了？**
+
+## 7. 实施记录（本 worktree，实施者 `jsonmin` 追加）
+
+### 7.1 交付物
+
+| 文件 | 变更 |
+| --- | --- |
+| `src/verse/json_min.c` | `vj_read_hex4` / `vj_put_utf8` / `vj_put_replacement` / `vj_is_hi_surrogate` / `vj_is_lo_surrogate` 五个静态辅助；`case 'u':` 改为：合并代理对 → 4 字节 UTF-8；孤立代理 → U+FFFD；`\u0000` → `vj_fail(P, "\\u0000 is not representable")`（释放 `out`，不写任何字节） |
+| `src/verse/json_min_probe.c` | 新增 76 项检查的离线探针；链接 `src/verse/upp.c`，往返用**已发布**的 `upp_json_write_string`，不是副本 |
+| `CMakeLists.txt` | 注册 `verse_json_min_probe`（`add_test` + `TIMEOUT 30` + `LABELS "protocol;json"`），紧邻 `verse_upp_probe` |
+| `tools/gate.sh` | `EXP_CTEST` 92 → 93（新增一个 ctest） |
+| `tools/crp_engine_crosscheck.js` | 语料 101 → **109** 条；新增 `canonicalRecord()` 比较器（理由见 7.4） |
+
+### 7.2 `P->p[0..3]` 前读：先证明，后加固
+
+**结论：原有读在实测中不可证明会越界，但我还是改了。** 两者都写在这里。
+
+- 实测：把输入放进**恰好 `strlen+1` 字节**的堆缓冲区（NUL 是最后一个字节），在 `-fsanitize=address,undefined` 下跑 `"\"\\u004"`、`"\"\\u0041"`、`"\"\\uD83D"` —— **无任何 ASan 报告**。原因是循环第一次无效读就是那个 NUL 本身，而 NUL 在界内：`p[3]` 是终结符、合法可读，随即走 `else` 报 `"bad \\u escape"`，`p[4]` 永不接触。
+- 所以旧读**只在调用方保证 NUL 终止时**才成立；没有任何余地留给「少一格 slack 的调用方」。
+- 改动：`vj_read_hex4()` 每读一格先判 `h == '\0'` → 立即 `vj_fail(P, "bad \\u escape")`。这个守卫**不改变任何现有输入的报错文本**（4 个十六进制位里出现 NUL 本来就走同一个 `else`），只是把「靠终结符兜底」变成「显式有界」。
+
+### 7.3 三种缺陷的修后字节（同一驱动，与 §1 表逐行对照）
+
+```
+\uD83D\uDE00  F0 9F 98 80   （原 ED A0 BD ED B8 80，CESU-8 且非法 UTF-8）
+\uD83D        EF BF BD      （原 ED A0 BD）
+\uDE00        EF BF BD      （原 ED B8 80）
+x\u0000y      NULL + err "\\u0000 is not representable at offset 8"（原 78，即 "x"）
+alice\u0000A  NULL          （原 "alice"）
+alice\u0000B  NULL          （原 "alice"，两者塌成同一个 C 串）
+\u00e9 / \u4e2d / \u0001  不变
+```
+
+### 7.4 交叉校验的比较器为什么放宽了两个字面量
+
+语料新增了**孤立代理**行后，两边的**原始记录文本**必然不同，且**都不是错的**：引擎按 JSON 规范输出 U+FFFD 的 UTF-8 字节（`EF BF BD` 原码点），而 `JSON.parse` 保留未配对代理，`JSON.stringify` 把它写成六个字符 `\ud83d`——一个是转义、一个是原码点，**线上字节相同，JS 串不同**。
+
+`canonicalRecord(line)` 因此：解析外层记录 → 把 `out` 字段**当作内层 JSON 文档再解析一遍** → 用 `JSON.stringify` 的 replacer 把未配对代理统一成 `\uFFFD` → 比较。对良构文本这是**恒等变换**（不改变任何一条现有记录的结果），只在「同一值的两种拼写」上生效。已用 7 个合成用例单元验证过敏感性：改一个值 / 换成 `\uFFFE` / 值不同的 `out` 都必须仍然报 mismatch，非 JSON 的 `out` 与非 JSON 的行原样透传。
+
+注意：这里也说明**交叉校验无法覆盖 `\u0000` 拒绝**——参考实现 `crp_reference.js` 走 `JSON.parse`，它接受 `\u0000`。所以语料里那条是**字面量 `"\\u0000"`（六个可打印字符，不含 NUL 字节）**，不是转义。
+
+### 7.5 给 Lead 的合并清单
+
+1. **`docs/BOARD.md` §3 的 gate 表**：`ctest (expect 92/92)` → `93/93`，与 `tools/gate.sh:43` 已改的 `EXP_CTEST=93` 对齐（我不改 BOARD.md）。
+2. **`docs/STATUS.md` §10.6**：请追加第五条 CRP 分歧（我按 §5 禁令没有改它，草稿如下）：
+   - 「`\u0000`：引擎**拒绝**（`\u0000 is not representable`），Node `JSON.parse` 产出含 NUL 的串并接受。引擎侧所有 writer 都按 `*p` 扫到 NUL 为止，最小只能产出 `\u0001`，故此分歧不缩小引擎可生成的范围。」
+3. 其余仍写着 92 的位置（我没动，供 Lead 决定）：`tools/README.md:103`、`docs/STATUS.md:41`、`:48`、`:57`、`:716`、`:729`、`docs/HYGIENE.md:321`、`docs/BOARD.md:54`。
+
+### 7.6 复现命令
+
+```sh
+cd /home/sakiko/inimerse/.worktrees/json-min-nul-escape
+gcc -std=gnu11 -I src/verse -I src/common -o /tmp/probe \
+    src/verse/json_min_probe.c src/verse/json_min.c src/verse/upp.c && /tmp/probe
+node tools/crp_engine_crosscheck.js build/verse_crp_probe
+bash tools/gate.sh --jobs 4
+```
+
+回归必先失败的证据：`git stash push -- src/verse/json_min.c` 后同一探针输出
+`json_min_probe: 74 checks, 20 failures`（exit 1），再 `git stash pop` 即恢复。
+

@@ -74,6 +74,16 @@ add_executable(verse_upp_probe
 target_include_directories(verse_upp_probe PRIVATE src/verse src/common)
 add_test(NAME verse_upp_probe COMMAND verse_upp_probe)
 set_tests_properties(verse_upp_probe PROPERTIES TIMEOUT 30 LABELS "protocol;upp")
+# json_min's `\u` decoder: surrogate pairs must combine into one 4-byte UTF-8
+# sequence, lone surrogates must become U+FFFD, and \u0000 must be refused
+# rather than truncated at a raw NUL in a length-less char *.  It links upp.c
+# so the round-trip half uses the shipped writer, not a copy of it.  See
+# docs/streams/json-min-nul-escape.md.
+add_executable(verse_json_min_probe
+  src/verse/json_min_probe.c src/verse/json_min.c src/verse/upp.c)
+target_include_directories(verse_json_min_probe PRIVATE src/verse src/common)
+add_test(NAME verse_json_min_probe COMMAND verse_json_min_probe)
+set_tests_properties(verse_json_min_probe PROPERTIES TIMEOUT 30 LABELS "protocol;json")
 # P1 increment 5: engine-side CRP -- the FIND / PORTAL / SIGNAL wire frames, the
 # base64url + HMAC-SHA256 capability token, and the FIND registry / PORTAL
 # issuance that until now only existed in tools/crp_reference.js and

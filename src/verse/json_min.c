@@ -55,6 +55,56 @@ static void vj_push(VjVal *v, VjVal *child, const char *key) {
     }
 }
 
+#define VJ_UTF8_REPLACEMENT "\xEF\xBF\xBD"     /* U+FFFD */
+
+static int vj_is_hi_surrogate(unsigned cp) { return cp >= 0xD800 && cp <= 0xDBFF; }
+static int vj_is_lo_surrogate(unsigned cp) { return cp >= 0xDC00 && cp <= 0xDFFF; }
+
+/* Write one code point as UTF-8.  Every caller has already reserved four bytes
+ * of headroom, which is the widest encoding possible. */
+static void vj_put_utf8(char *out, size_t *len, unsigned cp) {
+    if (cp < 0x80) {
+        out[(*len)++] = (char)cp;
+    } else if (cp < 0x800) {
+        out[(*len)++] = (char)(0xC0 | (cp >> 6));
+        out[(*len)++] = (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out[(*len)++] = (char)(0xE0 | (cp >> 12));
+        out[(*len)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[(*len)++] = (char)(0x80 | (cp & 0x3F));
+    } else {
+        out[(*len)++] = (char)(0xF0 | (cp >> 18));
+        out[(*len)++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[(*len)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[(*len)++] = (char)(0x80 | (cp & 0x3F));
+    }
+}
+
+/* Read the four hex digits of a `\u` escape.  P->p is the first digit on entry.
+ * Returns the code point, or -1 after failing the parse.  The explicit NUL test
+ * keeps the read inside the NUL-terminated input: p[0..3] would otherwise be
+ * read unconditionally, which is only in bounds for a caller that happens to
+ * leave slack past the terminator. */
+static int vj_read_hex4(VjParser *P) {
+    unsigned cp = 0;
+    for (int k = 0; k < 4; k++) {
+        char h = P->p[k];
+        if (h == '\0') { vj_fail(P, "bad \\u escape"); return -1; }
+        if (h >= '0' && h <= '9') cp = cp * 16 + (unsigned)(h - '0');
+        else if (h >= 'a' && h <= 'f') cp = cp * 16 + (unsigned)(h - 'a' + 10);
+        else if (h >= 'A' && h <= 'F') cp = cp * 16 + (unsigned)(h - 'A' + 10);
+        else { vj_fail(P, "bad \\u escape"); return -1; }
+    }
+    return (int)cp;
+}
+
+/* Append U+FFFD for a surrogate that is not part of a well-formed pair, which
+ * is what JSON.parse does. */
+static void vj_put_replacement(char *out, size_t *len) {
+    memcpy(out + *len, VJ_UTF8_REPLACEMENT, 3);
+    *len += 3;
+}
+
 static char *vj_parse_string_raw(VjParser *P) {
     if (*P->p != '"') { vj_fail(P, "expected string"); return NULL; }
     P->p++;
@@ -83,18 +133,49 @@ static char *vj_parse_string_raw(VjParser *P) {
             case 't':  out[len++] = '\t'; P->p++; break;
             case 'u': {
                 P->p++;
-                unsigned cp = 0;
-                for (int k = 0; k < 4; k++) {
-                    char h = P->p[k];
-                    if (h >= '0' && h <= '9') cp = cp * 16 + (unsigned)(h - '0');
-                    else if (h >= 'a' && h <= 'f') cp = cp * 16 + (unsigned)(h - 'a' + 10);
-                    else if (h >= 'A' && h <= 'F') cp = cp * 16 + (unsigned)(h - 'A' + 10);
-                    else { free(out); vj_fail(P, "bad \\u escape"); return NULL; }
-                }
+                int cp = vj_read_hex4(P);
+                if (cp < 0) { free(out); return NULL; }
                 P->p += 4;
-                if (cp < 0x80) out[len++] = (char)cp;
-                else if (cp < 0x800) { out[len++] = (char)(0xC0 | (cp >> 6)); out[len++] = (char)(0x80 | (cp & 0x3F)); }
-                else { out[len++] = (char)(0xE0 | (cp >> 12)); out[len++] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[len++] = (char)(0x80 | (cp & 0x3F)); }
+                if (cp == 0x0000) {
+                    /* A NUL byte cannot be represented: VjVal's string is a
+                     * length-less char *, so every strlen/strcmp/%s consumer
+                     * would see a silently truncated value.  No writer in the
+                     * engine can ever produce this escape either -- they all
+                     * loop over *p and stop at a NUL -- so refusing it does not
+                     * narrow anything the engine can generate.  Documented
+                     * divergence from JSON.parse, which yields "x\0y". */
+                    free(out);
+                    vj_fail(P, "\\u0000 is not representable");
+                    return NULL;
+                }
+                unsigned u = (unsigned)cp;
+                if (vj_is_hi_surrogate(u)) {
+                    /* A pair is two escapes back to back.  Peek at the second
+                     * one: if the next two bytes really are `\u` then its four
+                     * hex digits must be read and validated (a malformed
+                     * escape stays an error), otherwise this is a lone high
+                     * surrogate. */
+                    const char *save = P->p;
+                    unsigned lo = 0;
+                    if (P->p[0] == '\\' && P->p[1] == 'u') {
+                        P->p += 2;
+                        int lo_cp = vj_read_hex4(P);
+                        if (lo_cp < 0) { free(out); return NULL; }
+                        P->p += 4;
+                        lo = (unsigned)lo_cp;
+                    }
+                    if (vj_is_lo_surrogate(lo)) {
+                        u = 0x10000u + ((u - 0xD800u) << 10) + (lo - 0xDC00u);
+                    } else {
+                        P->p = save;
+                        vj_put_replacement(out, &len);
+                        break;
+                    }
+                } else if (vj_is_lo_surrogate(u)) {
+                    vj_put_replacement(out, &len);
+                    break;
+                }
+                vj_put_utf8(out, &len, u);
                 break;
             }
             default:
