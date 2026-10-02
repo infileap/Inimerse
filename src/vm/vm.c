@@ -3689,7 +3689,7 @@ L_CALL_FUNC: {
             if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];
             else { ret.type = VAL_NIL; ret.ival = 0; ret.fval = 0; ret.sval = NULL; }
             if (t->frame_count > 0) {
-                t->sp = t->frame_sp[t->frame_count];
+                t->sp = t->frame_sp[t->frame_count - 1];
                 t->frame_count--;
                 t->code = t->frame_code[t->frame_count];
                 t->ip = t->frame_ip[t->frame_count];

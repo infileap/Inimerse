@@ -1,0 +1,21 @@
+# Regression for BOARD row `engine-push-call-arg-miscompile`.
+#
+# A user-function call nested inside another call's argument list used to
+# corrupt the VM operand stack, because L_RETURN restored `t->sp` from the
+# wrong frame_sp slot (`frame_count` instead of `frame_count - 1`).
+#
+# This is the "alone" form: the file contains only the callee and the one
+# function under test.  This form happened to produce the right answer even
+# with the defect, so it is the control -- it must keep agreeing with the
+# "shared" form in call_arg_clobber_shared_v05.im after any future change.
+
+func g(x) { return x }
+
+func m2() {
+  a = []
+  push(a, g(1))
+  push(a, g(2))
+  return a
+}
+
+say "callarg-alone-ok n=" + str(len(m2()))

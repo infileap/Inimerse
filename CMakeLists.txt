@@ -626,6 +626,18 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(lambda_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional")
   add_test(NAME float_precision_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/float_precision_v04.im)
   set_tests_properties(float_precision_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;numeric")
+  # Regression for BOARD row `engine-push-call-arg-miscompile`: a user-function call
+  # nested inside another call's argument list corrupted the VM operand stack because
+  # L_RETURN restored `t->sp` from frame_sp[frame_count] instead of [frame_count - 1].
+  # Both forms exit 0 whether or not the defect is present, so these tests assert
+  # NUMBERS, never exit codes.  The engine prints module-load preamble lines before the
+  # program output, so the patterns are substrings, not whole-output anchors.
+  # `alone` is the control (it produced the right answer even on main); `shared` is the
+  # one that fails on main, and the pair is what pins "both forms must agree".
+  add_test(NAME call_arg_clobber_alone_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_alone_v05.im)
+  set_tests_properties(call_arg_clobber_alone_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" PASS_REGULAR_EXPRESSION "callarg-alone-ok n=2" FAIL_REGULAR_EXPRESSION "n=1|n=0")
+  add_test(NAME call_arg_clobber_shared_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_shared_v05.im)
+  set_tests_properties(call_arg_clobber_shared_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" PASS_REGULAR_EXPRESSION "callarg-shared-ok m1=1 m2=2 m3=2 m4=1 m5=1 dk=1 nest=1 rep=2,2,2" FAIL_REGULAR_EXPRESSION "m2=1|dk=0|nest=0|rep=1,1,1")
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

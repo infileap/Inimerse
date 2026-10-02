@@ -1,0 +1,76 @@
+# Regression for BOARD row `engine-push-call-arg-miscompile`.
+#
+# A user-function call nested inside another call's argument list used to
+# corrupt the VM operand stack.  Root cause: L_RETURN restored `t->sp` from
+# frame_sp[frame_count] while L_CALL_FUNC had written frame_sp[frame_count-1]
+# -- one slot too high, so the restore picked up a stale value from the last
+# deeper call and the pending operands below it were silently overwritten.
+#
+# This is the "shared" form: several functions in one compilation unit, and
+# the functions under test are NOT the first call in the program.  With the
+# defect this file yields m1=1 m2=1 m3=2 m4=0 m5=0 dict=0 r=0 rep=1,1,1;
+# the defect is invisible to exit codes (both forms exit 0), so everything
+# below is asserted as NUMBERS by the PASS/FAIL regular expressions in
+# CMakeLists.txt.
+#
+# Every counter below is a plain `push(<list>, <user call>)` shape, which is
+# what selfhost/parser.im:509-520 uses (`push(stmts, parse_stmt(p))`).
+
+func g(x) { return x }
+
+func m1() {
+  a = []
+  push(a, g(1))
+  return a
+}
+
+func m2() {
+  a = []
+  push(a, g(1))
+  push(a, g(2))
+  return a
+}
+
+func m3() {
+  a = []
+  push(a, 1)
+  push(a, 2)
+  return a
+}
+
+func m4() {
+  a = []
+  push(a, g(1))
+  say "callarg-inner=" + str(len(a))
+  return a
+}
+
+func m5() {
+  a = []
+  r = push(a, g(1))
+  return a
+}
+
+func dk() {
+  d = {"k": []}
+  push(d["k"], g(1))
+  return d["k"]
+}
+
+func call_into_arg() {
+  # nested call in the FIRST (non-final) argument position
+  return len(pick(g(1), []))
+}
+
+func pick(value, xs) {
+  return g(value)
+}
+
+say "callarg-shared-ok m1=" + str(len(m1())) +
+    " m2=" + str(len(m2())) +
+    " m3=" + str(len(m3())) +
+    " m4=" + str(len(m4())) +
+    " m5=" + str(len(m5())) +
+    " dk=" + str(len(dk())) +
+    " nest=" + str(call_into_arg()) +
+    " rep=" + str(len(m2())) + "," + str(len(m2())) + "," + str(len(m2()))
