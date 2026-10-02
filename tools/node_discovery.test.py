@@ -43,24 +43,25 @@ def find_engine():
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from testports import (distinct_ports,  # noqa: E402
+                       start_hub_bound_ports,
                        wait_http_ping)
 
 
-def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
+def start_hub(engine, root, hub_dir):
+    """Start a hub; return `(proc, http_port, tcp_port)`.
+
+    Both ports are kernel-assigned (`--port 0 --http-port 0`) and read back
+    from the engine's own startup lines, so this suite never reserves or
+    releases a hub port and the release-to-bind race in docs/STATUS.md 2.9
+    cannot happen.  Raises testports.HubStartError (carrying the hub's stderr)
+    if the engine never reports a port.
+    """
     (root / "hub.im").write_text('say "hub"\nwait 90\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
-    if tcp_port is None:
-        # Reached only if a caller forgets to pass one.  This pool knows
-        # nothing about the HTTP ports the caller holds, so the number can
-        # collide with one of them -- measured 9/500 -- and the engine then
-        # comes up with no HTTP service at all (bind fails EADDRINUSE while
-        # the process stays alive).  Pass a port from the caller's own
-        # distinct_ports() batch instead of relying on this.
-        tcp_port = distinct_ports(1)[0]
-    proc = subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
-                             "--http-port", str(http_port), str(root / "hub.im")],
-                            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return proc
+    proc, tcp_port, http_port = start_hub_bound_ports(
+        [engine, "--headless", "--port", "0", "--http-port", "0", str(root / "hub.im")],
+        cwd=root, env=env, log_path=root / f"{hub_dir.name}.log")
+    return proc, http_port, tcp_port
 
 
 def wait_port(port, timeout=10.0):
@@ -148,11 +149,12 @@ def main():
         root = Path(td)
         home = root / "home"
         home.mkdir()
-        # hub, fake-directory and hub2 are alive at overlapping times; allocate
-        # them together so they are guaranteed distinct.
-        # One call, not two -- see tools/testports.py on cross-call overlap.
-        hub_port, fake_port, hub2_port, hub_tcp, hub2_tcp = distinct_ports(5)
-        hub = start_hub(engine, root, hub_port, root / "universe", hub_tcp)
+        # The hubs pick their own ports and report them; the fake directory is
+        # the only server this suite binds itself, so its number is the only
+        # one it still has to allocate (and it is never released to a child,
+        # so no sibling suite can steal it).
+        fake_port = distinct_ports(1)[0]
+        hub, hub_port, _hub_tcp = start_hub(engine, root, root / "universe")
         try:
             assert wait_port(hub_port), "hub did not start"
             expires = str(int(time.time() * 1000) + 120000)
@@ -202,7 +204,7 @@ def main():
                 fake.shutdown()
 
             # 5. two hubs: list, ping and discover independently
-            hub2 = start_hub(engine, root, hub2_port, root / "universe2", hub2_tcp)
+            hub2, hub2_port, _hub2_tcp = start_hub(engine, root, root / "universe2")
             try:
                 assert wait_port(hub2_port), "second hub did not start"
                 multi = root / "multi.im"

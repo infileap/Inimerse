@@ -31,16 +31,25 @@ keeps the original best-effort behaviour for callers that only need a number.
 
 Usage
 -----
-    from testports import distinct_ports, free_port, wait_port, wait_http_ping
+    from testports import (distinct_ports, free_port, start_hub_bound_ports,
+                           wait_http_ping, wait_port)
+
+Starting a hub?  Use `start_hub_bound_ports()` with `--port 0 --http-port 0`
+and read back the ports the kernel assigned.  `distinct_ports()` is for the
+numbers that are still genuinely this process's business (a port this suite
+binds itself, or one it must never listen on).
 """
 
 from __future__ import annotations
 
 import errno
+import re
 import socket
+import subprocess
 import time
 
 __all__ = ["free_port", "reserve_port", "PortPool", "distinct_ports",
+           "start_hub_bound_ports", "HubStartError",
            "wait_port", "wait_http_ping"]
 
 _LOOPBACK = "127.0.0.1"
@@ -159,6 +168,19 @@ def distinct_ports(count: int, host: str = _LOOPBACK) -> list[int]:
     same number twice (measured: a duplicate in roughly one batch of three at
     count=40).  Every number here was held simultaneously, so they cannot
     collide with each other.
+
+    The guarantee holds *within one call only*.  Two separate calls each build
+    their own pool, and the second may be handed a number the first already
+    returned -- measured 5/200 at count 6 and 5/500 at count 3, because the
+    first call's ports have already been released by the time the second
+    starts.  When a suite needs several ports for sibling children, ask for
+    them all at once (`distinct_ports(n_hubs + n_tcp)`) rather than twice;
+    an overlap means two hubs are given the same port and the second one's
+    bind fails with EADDRINUSE while the process stays up and never listens.
+
+    Better still, do not guess at all: `start_hub_bound_ports()` below starts a
+    hub on `--port 0 --http-port 0` and reads back the numbers the kernel
+    actually assigned, which removes this whole class of race.
     """
     with PortPool(host) as pool:
         ports = [pool.take() for _ in range(count)]
@@ -211,25 +233,87 @@ def wait_http_ping(port: int, host: str = _LOOPBACK, timeout: float = 10.0,
     return False
 
 
-def distinct_ports(count: int, host: str = _LOOPBACK) -> list[int]:
-    """Return `count` distinct ports, released and ready for children to bind.
+def _read_text(path) -> str:
+    try:
+        with open(path, "r", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
 
-    The one-call form of `PortPool` for the common shape
 
-        dir_port, node_a_port, node_b_port = distinct_ports(3)
+class HubStartError(RuntimeError):
+    """A hub never announced the ports it bound, so the suite cannot go on.
 
-    where the old ``free_port(), free_port(), free_port()`` could hand back the
-    same number twice.  Every number here was held simultaneously, so they are
-    guaranteed different.
-
-    The guarantee holds *within one call only*.  Two separate calls each build
-    their own pool, and the second may be handed a number the first already
-    returned -- measured 5/200 at count 6 and 5/500 at count 3, because the
-    first call's ports have already been released by the time the second
-    starts.  When a suite needs several ports for sibling children, ask for
-    them all at once (``distinct_ports(n_hubs + n_tcp)``) rather than twice;
-    an overlap means two hubs are given the same port and the second one's
-    bind fails with EADDRINUSE while the process stays up and never listens.
+    Carries the hub's own stderr so the failure names the real reason (a bind
+    error, a missing mod, a crash on line 3) instead of only "the port never
+    answered".
     """
-    with PortPool(host) as pool:
-        return [pool.take() for _ in range(count)]
+
+    def __init__(self, message: str, log_text: str = ""):
+        super().__init__(message)
+        self.log_text = log_text
+
+
+_BOUND_TCP_RE = re.compile(r"^headless: 127\.0\.0\.1:(\d+)\s*$", re.MULTILINE)
+_BOUND_HTTP_RE = re.compile(r"^http api: 127\.0\.0\.1:(\d+)\s*$", re.MULTILINE)
+
+
+def start_hub_bound_ports(argv, cwd=None, env=None, log_path=None,
+                          timeout: float = 15.0):
+    """Start an engine with `--port 0 --http-port 0`; learn what it bound.
+
+    The kernel picks both numbers inside the child, so this process never
+    reserves, releases or guesses a port: the number goes straight from the
+    kernel to the engine to the engine's own startup line.  That removes the
+    residual race in `docs/STATUS.md` 2.9, where a pool released a number and
+    another suite's pool took it before the child could bind it.
+
+    The engine prints the ports it really bound on the lines it already had:
+
+        headless: 127.0.0.1:<tcp>
+        http api: 127.0.0.1:<http>
+
+    `argv` must therefore contain `--headless --port 0 --http-port 0`.  The
+    hub's stderr goes to `log_path` -- a file, never a pipe, so a hub that keeps
+    talking cannot block on a full pipe, and the log doubles as failure
+    evidence.  The file is polled until both lines appear; calls return as soon
+    as it is known the engine is listening, which is *before* it is known to
+    answer (use `wait_http_ping()` for that).
+
+    Returns `(proc, tcp_port, http_port)`.  Raises `HubStartError` carrying the
+    log text if the hub exits first or the lines do not arrive in `timeout`; a
+    hub still running at that point is killed, so a failed start cannot leave a
+    stray listener behind to break the next suite.
+    """
+    if log_path is None:
+        raise ValueError("start_hub_bound_ports() needs log_path for the hub's stderr")
+    with open(log_path, "wb") as log:
+        proc = subprocess.Popen([str(a) for a in argv], cwd=cwd, env=env,
+                               stdout=subprocess.DEVNULL, stderr=log)
+
+    text = ""
+    deadline = time.monotonic() + timeout
+    while True:
+        text = _read_text(log_path)
+        m_tcp = _BOUND_TCP_RE.search(text)
+        m_http = _BOUND_HTTP_RE.search(text)
+        if m_tcp and m_http:
+            tcp_port, http_port = int(m_tcp.group(1)), int(m_http.group(1))
+            if tcp_port > 0 and http_port > 0:
+                return proc, tcp_port, http_port
+            # A server that cannot report what it bound prints the number it
+            # was asked for, i.e. 0.  Treat that as "not started" rather than
+            # handing the caller a port nothing is listening on.
+        if proc.poll() is not None:
+            raise HubStartError(
+                f"hub exited with status {proc.returncode} before printing "
+                f"its bound ports", text)
+        if time.monotonic() >= deadline:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:      # pragma: no cover
+                pass
+            raise HubStartError(
+                f"hub did not print its bound ports within {timeout:.0f}s", text)
+        time.sleep(0.02)

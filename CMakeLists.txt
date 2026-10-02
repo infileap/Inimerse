@@ -224,6 +224,11 @@ if(INIMERSE_PYTHON)
   set_tests_properties(cli_incremental_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME release_verify_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/release_verify.test.py)
   set_tests_properties(release_verify_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "release;regression")
+  # Oversized HTTP file bodies must be refused (413), never truncated, and
+  # `--port 0` / `--http-port 0` must be reported by the engine.  Needs only
+  # Python and the engine binary, so it belongs to the Python-gated block.
+  add_test(NAME http_large_package_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/http_large_package.test.py)
+  set_tests_properties(http_large_package_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
 endif()
 if(INIMERSE_NODE)
   add_test(NAME crp_session_flow_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/crp_session.test.py)

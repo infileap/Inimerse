@@ -40,7 +40,7 @@ FAILED=0
 # below, not merely printed in the stage label: ctest exits 0 as long as no
 # test FAILS, so a suite that silently stopped being registered would otherwise
 # still show a green gate.  Bump this (and docs/BOARD.md §3) when you add one.
-EXP_CTEST="${EXP_CTEST:-93}"
+EXP_CTEST="${EXP_CTEST:-94}"
 
 run_stage() {
   local name="$1" wanted="$2"; shift 2

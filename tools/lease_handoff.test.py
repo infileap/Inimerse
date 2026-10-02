@@ -41,6 +41,7 @@ def find_engine():
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from testports import (distinct_ports,  # noqa: E402
+                       start_hub_bound_ports,
                        wait_http_ping)
 
 
@@ -50,20 +51,27 @@ def wait_port(port, timeout=10.0):
     return wait_http_ping(port, timeout=timeout)
 
 
-def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
-    (root / f"hub{http_port}.im").write_text('say "hub"\nwait 120\n', encoding="utf-8")
+def start_hub(engine, root, hub_dir):
+    """Start a hub and learn the two ports the *kernel* gave it.
+
+    The hub is asked for `--port 0 --http-port 0` and prints what it really
+    bound, which is what this suite now goes by.  It used to be handed numbers
+    out of this suite's own pool, and the pool had to release a number before
+    the child could bind it -- another suite's pool could take that number in
+    between, leaving a hub that stays up, never listens, and fails the suite
+    with "hub <port> did not start" (docs/STATUS.md 2.9, ~1 run in 80 under
+    `ctest -j12`).  No number is reserved, released or guessed any more.
+
+    Returns `(proc, http_port, tcp_port)`.  Raises testports.HubStartError,
+    which carries the hub's stderr, if the engine never reports its ports.
+    """
+    script = root / "hub.im"
+    script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
-    if tcp_port is None:
-        # Reached only if a caller forgets to pass one.  This pool knows
-        # nothing about the HTTP ports the caller holds, so the number can
-        # collide with one of them -- measured 9/500 -- and the engine then
-        # comes up with no HTTP service at all (bind fails EADDRINUSE while
-        # the process stays alive).  Pass a port from the caller's own
-        # distinct_ports() batch instead of relying on this.
-        tcp_port = distinct_ports(1)[0]
-    return subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
-                             "--http-port", str(http_port), str(root / f"hub{http_port}.im")],
-                            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc, tcp_port, http_port = start_hub_bound_ports(
+        [engine, "--headless", "--port", "0", "--http-port", "0", script],
+        cwd=root, env=env, log_path=root / f"{hub_dir.name}.log")
+    return proc, http_port, tcp_port
 
 
 def run_script(engine, script, home, cwd):
@@ -105,16 +113,16 @@ def main():
         home = root / "home"
         home.mkdir()
 
-        # All four at once, held together, so no two of them can be the same
-        # number.  (Three separate free_port() calls could collide; and the
-        # dead port must never be derived by +1, which could land on a real hub.)
-        # One call, not two: separate calls build separate pools, and the
-        # second can be handed a number the first already returned (measured
-        # 5/200 at count 6).  An overlap means a hub binds a port that is
-        # already taken, fails with EADDRINUSE, and never listens.
-        dir_port, node_a_port, node_b_port, dead_port, *tcp_ports = distinct_ports(7)
-        hubs = [start_hub(engine, root, p, root / f"universe{p}", tcp)
-                for p, tcp in zip((dir_port, node_a_port, node_b_port), tcp_ports)]
+        # The three hubs choose their own ports (`--port 0 --http-port 0`) and
+        # report what the kernel assigned, so this suite no longer reserves --
+        # and therefore cannot mis-release -- a hub port.  The dead endpoint is
+        # the one number that must stay unbound: it is allocated once and never
+        # handed to a child, so nothing can take it in a release-to-bind window
+        # (and it is never derived by +1, which could land on a real hub).
+        dead_port = distinct_ports(1)[0]
+        started = [start_hub(engine, root, root / f"universe{i}") for i in range(3)]
+        hubs = [proc for proc, _http, _tcp in started]
+        dir_port, node_a_port, node_b_port = (http for _proc, http, _tcp in started)
         try:
             for p in (dir_port, node_a_port, node_b_port):
                 assert wait_port(p), f"hub {p} did not start"
