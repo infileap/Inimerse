@@ -605,7 +605,10 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME case_structural_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_structural_v04.im)
   set_tests_properties(case_structural_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME case_alias_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_alias_v04.im)
-  set_tests_properties(case_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
+  # The `alias ` prefixes make the assertion target the values the program
+  # prints.  A bare `42` would also match the engine's echo of the string
+  # literals, so it would pass even with the alias stuck at nil.
+  set_tests_properties(case_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "alias whole=42.*alias ranged=42.*alias guarded=42.*alias guarded2-miss")
   add_test(NAME case_array_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_array_v04.im)
   set_tests_properties(case_array_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "30.*20")
   add_test(NAME case_nested_patterns_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_nested_patterns_v04.im)

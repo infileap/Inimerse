@@ -663,6 +663,31 @@ say str(d.a)        →  nil    # 成员访问失败
 
 `src/compiler/compiler.c:1128-1159` 对 `EXPR_IDENT` 对象把 `"d.a"` 拼成字符串，`lookup_local(comp, "d.a")` 失败后调 `register_global(comp, full)` 再 `OP_LOAD_GLOBAL` —— **读的是一个名叫 `"d.a"` 的全局**（`u.count` 这类模块限定名的设计用途）。源码注释写着「读取不创建全局」，但代码调用的正是 `register_global()`。所以对字典用 `.` 会**静默读到 `nil`**，属 D 级危险行为，但**不是成员访问实现缺失**，本条不对它记为待修缺陷。
 
+#### D12. `case` 的 `as` 别名恒绑 `nil`（已修复）
+
+`pattern as name` 把整个 subject 绑定到 `name`，语法顺序固定为 `pattern as name | guard:` —— `src/parser/parser.c:1047-1048` 先吃 `as`，紧随其后才是 `if (match(p, TOK_PIPE))` 守卫。
+
+实测（修复前）：
+
+```
+value = 42
+case value {
+    42 as whole: say whole      # 实测 nil，期望 42
+    _: say "miss"
+}
+```
+
+分支**匹配上了**（没走 `_`），但别名没被绑定。四种模式全中：`42 as whole` / `in [40~50] as w5` / `42 as g | g > 0` 都得到 `nil`。
+
+根因在 `src/compiler/compiler.c` 的 case 分支编译：`if (br->hasAlias) { … emit(OP_STORE_GLOBAL, …); body_start = comp->curBC->count; }` 这一块**排在守卫块之后**，而且把 `body_start` **推进到了 store 之后**。匹配成功的跳转（`body_jumps`）与守卫为真的跳转（`guard_true`）**都被 patch 到 `body_start`** ⇒ 那个 `OP_STORE_GLOBAL` 在所有路径上都不可达，是死代码。`br->alias` 在整个 `src/compiler/compiler.c` 里只有那一处引用。
+
+修复：把 store 提到守卫**之前**并让它成为分支入口（`entry_pc`），`body_jumps` 改指 `entry_pc`，守卫真跳转与 `if (!br->guard)` 的 patch 相应改道；原来那个排在守卫之后的块删掉。**附带修好**：守卫现在能引用别名（`42 as g | g > 0` 命中，`42 as g2 | g2 > 100` 正确不命中）。
+
+**回归**：`vtest/case_alias_v04.im` 重写为带 `alias ` 前缀的四行值行（`alias whole=42` / `alias ranged=42` / `alias guarded=42` / `alias guarded2-miss`），`case_alias_runtime`（`CMakeLists.txt:607-608`）补上 `PASS_REGULAR_EXPRESSION "alias whole=42.*alias ranged=42.*alias guarded=42.*alias guarded2-miss"`。**双向验证过**：还原修复 → 红在 `Required regular expression not found`，程序输出 `alias whole=nil` / `alias ranged=nil` / `alias guarded-miss`。
+**标记同样是必需的**：引擎回显里有 `[0]="alias whole=" [1]="str" [2]="alias whole-miss" …`，用裸 `42` 之类的正则会命中回显，等于没加 —— 同 D11(a) 那条模式。
+
+**注意 `as` 只做绑定、不做匹配**：`n as whole2` 里的 `n` 是**裸标识符模式**，语义是值比较（`42 == nil` 不匹配），不是「把 subject 绑到 `n`」。
+
 ### 7.2 危险·误导（报错信息误导或语义反直觉）
 
 #### M1. `|>` 与 `>>` 不能混用，报错信息误导
@@ -741,9 +766,9 @@ err(e) | e in FileError: say "file-error"
 
 实测 `n = 7` 时上面的 `case` 走 `n | n > 0` → `guard-ok`。**守卫是「绑定名 + `|` + 条件」，不是「任意模式 + `|` + 条件」**；`in [...]` 或字面量模式后接 `|` 报的是 `expected 'expression'`，指不到真正原因。
 
-#### M13. 101 个 CTest 里 73 个只断言退出码
+#### M13. 101 个 CTest 里 66 个只断言退出码（起点 73）
 
-`ctest --test-dir build --show-only=json-v1` 的元数据统计：
+`ctest --test-dir build --show-only=json-v1` 的元数据统计（**起点快照**）：
 
 ```
 total tests: 101
@@ -751,11 +776,15 @@ inimerse-driven: 100   script-driven: 1
 inimerse-driven with NO PASS/FAIL_REGULAR_EXPRESSION and not WILL_FAIL: 73
 ```
 
-这 73 个**只要进程退出 0 就算通过**，程序打印什么都不看。对 probe 类（`verse_*_probe`、`*_regression`）退出码可能确实是它们的契约，但对语言行为类（`*_runtime`）**已经证明不够**：
+这 73 个**只要进程退出 0 就算通过**，程序打印什么都不看。对 probe 类（`verse_*_probe`、`*_regression`）退出码可能确实是它们的契约，但对语言行为类（`*_runtime`）**已经证明不够**。按 [`docs/BOARD.md`](BOARD.md) 的 `ctest-assertion-gap` 行逐批补，**当前 66**：
 
-- `optional_member_runtime` 跑 `vtest/optional_member_v04.im`，该程序输出 `nil` 而它自己的源码期望 `inimerse` —— **测试仍然通过**（D11(a)，**已于本轮修复并补上双向验证过的断言**，是该类里第一个被补上的）。
-- `lambda_capture_runtime` 跑 `vtest/lambda_capture_rejected_v04.im`，文件名写着 *rejected*，内容却是一段**正常成功的闭包捕获**（`say add(3)` → `5`），既无 `WILL_FAIL` 也无正则 —— 名字与内容已经脱节。
-- `result_runtime`、`pipeline_runtime`、`null_coalesce_runtime`、`chained_comparison_runtime`、`case_collection_patterns_runtime`、`case_structural_runtime`、`case_alias_runtime`、`float_precision_runtime` 等语言测试同样没有输出断言。
+- `optional_member_runtime` 跑 `vtest/optional_member_v04.im`，该程序输出 `nil` 而它自己的源码期望 `inimerse` —— **测试仍然通过**（D11(a)，**已修复并补上双向验证过的断言**，是该类里第一个被补上的）。
+- `lambda_capture_runtime` 曾跑 `vtest/lambda_capture_rejected_v04.im`，文件名写着 *rejected*，内容却是一段**正常成功的闭包捕获**（`say add(3)` → `5`）—— 名字与内容脱节。**已 `git mv` 为 `vtest/lambda_capture_v04.im` 并补上断言**；`lambda_runtime`、`lambda_nested_runtime` 同批补上。
+- `result_runtime`、`result_question_runtime`、`result_propagation_runtime`、`try_finally_runtime` **已补上**。
+- `case_alias_runtime` **已补上**（D12）。
+- 仍未补：`pipeline_runtime`、`null_coalesce_runtime`、`chained_comparison_runtime`、`case_collection_patterns_runtime`、`case_structural_runtime`、`float_precision_runtime` 等语言测试。
+
+**两条可复用模式**（写断言前必读，详见 §8）：断言要打在**程序自己打印的带标记值行**上；且**不要用 `FAIL_REGULAR_EXPRESSION` 去匹配字符串字面量** —— 引擎会把程序里每一个字面量回显出来，于是「某件事没发生」这类断言恒为空，必须让没发生的事留下**值**上的痕迹（计数/状态变量）。
 
 这与 M11（`--lint` 恒 0）、以及 `stage_ctest` 早期「用例数只是装饰」是**同一类问题**：门禁在「过程成功」与「结果正确」之间没有桥。`EXP_CTEST` 断言已修（`f9d0270`），本条是它的下一层。
 
@@ -870,4 +899,8 @@ printf 's = "a\\0b"\nsay str(len(s))\n' > /tmp/t.im && ./build/inimerse /tmp/t.i
 **回归断言的注意事项**：
 1. 引擎向 stdout 打印三行模块装载信息与一行调用回显，断言必须容忍前缀行。
 2. **退出码经常区分不出对错**——D1（`push` 误编译）、D2（GUI 静默无效）、D5（未声明变量）、M11（`--lint` 恒 0）都返回 0。**必须断言输出数值。**
+3. **断言要打在程序自己打印的带标记值行上**。引擎的内建调用回显会把程序里的字面量与实参打印出来（`[0]="str" [1]="len"`、`[2]="name\nsay …"`），所以输出里**本来就有裸值**。用 `PASS_REGULAR_EXPRESSION "inimerse"` 在坏掉时也会通过，等于没加。给每个被测值加一个只有程序自己会打印的前缀（`OM present=`、`alias whole=`、`lambda double=`、`resultq reached=`），断言匹配**完整的前缀+值**。这也是 `vtest/case_alias_v04.im`、`vtest/optional_member_v04.im`、`vtest/lambda_*.im`、`vtest/result_*.im` 里那些标记的由来。
+4. **不要用 `FAIL_REGULAR_EXPRESSION` 去匹配字符串字面量**。第 3 条的反面：既然每个字面量都会被回显，`FAIL_REGULAR_EXPRESSION "resultq unreachable"` 这种「断言某段文本不存在」的写法**恒为空** —— 语句根本没执行，字面量照样出现在回显行里。要让「某件事没发生」可断言，就让它**留下值上的痕迹**（把 `reached = 1` 放进那个不该执行的路径，然后断言 `PASS_REGULAR_EXPRESSION "resultq reached=0"`）。
+5. **`PASS_REGULAR_EXPRESSION` 的列表语义是「任一匹配即通过」**，比单条正则更弱；要多点校验就写成**一条**用 `.*` 连接的正则（`.*` 能跨行匹配，`CMakeLists.txt:607`、`:617` 是既有先例）。
+6. **断言必须双向验证**：不仅要在修复版上绿，还要把实现改回坏版本、重建、确认它**确实变红**，并记下红在哪条（`Required regular expression not found` 还是 `Error regular expression found in output`）。只验证「绿」的断言可能根本没有牙。
 3. `--lint` 不可用作解析谓词（M11）。

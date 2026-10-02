@@ -1279,3 +1279,76 @@ say "resultq reached=" + str(reached)
 第①行里 `result_runtime` 与 `result_propagation_runtime` 一起红是**应该的** —— 两者都直接用 `is_ok`；第②③行各自只打红一条，说明这两条断言的射程是分开的。每次打断后都从 `/tmp/e13/` 的原始副本还原并 `cmake --build build -j12` 重建，确认 `git diff --numstat` 归零。
 
 **门禁**：本批**不新增 CTest**，`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 71 更新为 **67**（`*_runtime` 类还剩 11 个）。
+
+### 10.22 `case` 的 `as` 别名恒绑 `nil`：一个不可达的 `OP_STORE_GLOBAL`（`case-alias-binding`）
+
+**起因。** 按 `ctest-assertion-gap` 的清单给 `case_alias_runtime` 补断言时，先读它跑的脚本 `vtest/case_alias_v04.im`（5 行）：
+
+```
+value = 42
+case value {
+    42 as whole: say whole
+    _: say "miss"
+}
+```
+
+**实测输出 `nil`，而不是 `42`。** 注意分支是**匹配上了**的（没走 `_` 那条），所以问题不在匹配、而在**绑定**。
+
+**语法取证。** `src/parser/parser.c:1047-1048` 是 `if (match(p, TOK_AS)) { br->alias = consume(p, TOK_IDENT, "alias name").text; br->hasAlias = true; }`，**紧随其后**才是 `if (match(p, TOK_PIPE))` 守卫 ⇒ 顺序固定为 `pattern as name | guard:`。`br->alias` 在 `src/compiler/compiler.c` 里**只有一处**引用，就是下面那个坏块。
+
+**四种模式全中**（修复前，探测脚本 `/tmp/e13/alias_probe2.im`）：
+
+| 用例 | 修复前 | 修复后 |
+|---|---|---|
+| `42 as whole:` | `A whole=nil` | `A whole=42` |
+| `in [40~50] as w5:` | `E w5=nil` | `E w5=42` |
+| `42 as g \| g > 0:` | `G g=nil` | `G g=42` |
+| `42 as g2 \| g2 > 100:` | `H miss` | `H miss`（正确不命中） |
+
+**根因：一个在所有路径上都不可达的 `OP_STORE_GLOBAL`。** 修复前 `src/compiler/compiler.c` 的 case 分支编译里是：
+
+```c
+if (br->hasAlias) {
+    char alias[256];
+    snprintf(alias, sizeof(alias), "%.*s", (int)br->alias.length, br->alias.start);
+    emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, alias), subj, 0);
+    body_start = comp->curBC->count;
+}
+```
+
+这一块**排在守卫块之后**，而且把 `body_start` **推进到了 store 之后**。可是匹配成功的跳转（`body_jumps`，在 `if (!br->guard)` 分支里 patch）与守卫为真的跳转（`guard_true`）**都被 patch 到 `body_start`** —— 于是两条路都落在 store **之后**，那个 `OP_STORE_GLOBAL` 从来没有被执行过。`as` 恒为 `nil` 是必然结果。
+
+**修复：把绑定提到守卫之前，并让它成为分支入口。** 三处改动（`src/compiler/compiler.c`）：
+
+1. 在 `if (br->guard) {` **之前**插入 `int entry_pc = -1;` 与新的别名块 —— `entry_pc = comp->curBC->count;` 后发 store，并把 `body_jumps` **改指 `entry_pc`**；
+2. 守卫块里原来那句无条件 `for (… ) comp->curBC->code[body_jumps[ji]].r2 = guard_start;` 改成 **只在没有别名时**执行（`if (entry_pc < 0)`）；
+3. `if (!br->guard)` 里的 patch 改成 `entry_pc >= 0 ? entry_pc : body_start`；原来那个排在守卫之后的旧块**删掉**。
+
+为什么是这个形状：这是唯一同时满足「别名在**分支体**里可见」与「别名在**守卫**里可见」的位置 —— 守卫必须先看到绑定，所以 store 必须在守卫之前；而匹配跳转必须落在 store 上，所以 store 必须就是分支入口。**附带修好了一个此前无法表达的写法**：`42 as g | g > 0` 现在成立（命中），`42 as g2 | g2 > 100` 正确不命中。
+
+**回归：一条有牙的断言。** `vtest/case_alias_v04.im` 重写为四段 `case`、输出四行带 `alias ` 前缀的**值行**：
+
+```
+alias whole=42
+alias ranged=42
+alias guarded=42
+alias guarded2-miss
+```
+
+`case_alias_runtime`（`CMakeLists.txt:607-608`）补上 `PASS_REGULAR_EXPRESSION "alias whole=42.*alias ranged=42.*alias guarded=42.*alias guarded2-miss"`。
+
+**标记在这里同样是必需的，不是装饰。** 引擎的内建调用回显会打印脚本里每一个字符串字面量：`[0]="alias whole=" [1]="str" [2]="alias whole-miss" [3]="R" [4]="alias ranged=" …`。也就是说输出里**本来就有 `alias whole=`**，用裸 `42` 之类的正则会被回显满足，坏掉时也会通过 —— 与 §10.19、§10.21 是同一个坑的第三次出现。
+
+**双向验证。** 把 `src/compiler/compiler.c` 还原成修复前那份（`/tmp/e13/compiler.c.casealias.orig`）并重建：
+
+```
+1/1 Test #86: case_alias_runtime ...............***Failed
+  Required regular expression not found. Regex=[alias whole=42.*alias ranged=42.*alias guarded=42.*alias guarded2-miss
+程序输出：alias whole=nil / alias ranged=nil / alias guarded-miss / alias guarded2-miss
+```
+
+修复版回到 **#86 Passed**，全量 `ctest --test-dir build` → `100% tests passed, 0 tests failed out of 101`（其中 21 条 `case|finally|result` 相关全绿）。
+
+**一条顺带说清的语义**：`as` **只做绑定，不做匹配**。`n as whole2` 里的 `n` 是**裸标识符模式**，语义是值比较（`42 == nil` 不匹配，所以走 `_`），不是「把 subject 绑到 `n`」。这个区分在修复前后都一样。
+
+**门禁**：本批**不新增 CTest**，`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 67 更新为 **66**（`*_runtime` 类还剩 **10** 个）。

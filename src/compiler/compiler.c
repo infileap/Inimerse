@@ -1,4 +1,4 @@
-﻿#include "compiler.h"
+#include "compiler.h"
 #include "parser.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1708,9 +1708,26 @@ case STMT_WITH: {
                 }
                 int body_start;
                 int guard_true = -1;
+                /* `pattern as name` binds the whole subject.  Bind it here,
+                   BEFORE the guard, so the guard can use it (`42 as g | g > 0`),
+                   and make this store the branch entry: the match jump
+                   (body_jumps) is repointed at it, and the later patches that
+                   used to land on body_start land on entry_pc instead.  The
+                   previous code emitted the store after the guard and then
+                   advanced body_start past it, so both the match jump and the
+                   guard's true-jump skipped it and `as` always bound nil. */
+                int entry_pc = -1;
+                if (br->hasAlias) {
+                    char alias[256];
+                    snprintf(alias, sizeof(alias), "%.*s", (int)br->alias.length, br->alias.start);
+                    entry_pc = comp->curBC->count;
+                    emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, alias), subj, 0);
+                    for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = entry_pc;
+                }
                 if (br->guard) {
                     int guard_start = comp->curBC->count;
-                    for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = guard_start;
+                    if (entry_pc < 0)
+                        for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = guard_start;
                     if (result_bind >= 0 && result_field) {
                         int value = alloc_reg();
                         emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
@@ -1733,12 +1750,6 @@ case STMT_WITH: {
                 } else {
                     body_start = comp->curBC->count;
                 }
-                if (br->hasAlias) {
-                    char alias[256];
-                    snprintf(alias, sizeof(alias), "%.*s", (int)br->alias.length, br->alias.start);
-                    emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, alias), subj, 0);
-                    body_start = comp->curBC->count;
-                }
                 if (br->guard && guard_true >= 0) comp->curBC->code[guard_true].r2 = body_start;
                 if (!br->guard && result_bind >= 0 && result_field) {
                     int value = alloc_reg();
@@ -1753,7 +1764,7 @@ case STMT_WITH: {
                 add_break(&end_jumps, &end_count, je);
                 if (!br->guard) {
                     for (int i = 0; i < body_jcount; i++)
-                        comp->curBC->code[body_jumps[i]].r2 = body_start;
+                        comp->curBC->code[body_jumps[i]].r2 = entry_pc >= 0 ? entry_pc : body_start;
                 }
                 for (int i = 0; i < skip_count; i++)
                     comp->curBC->code[skip_jumps[i]].r2 = comp->curBC->count; /* next branch */

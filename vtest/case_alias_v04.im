@@ -1,5 +1,32 @@
+# `pattern as name` binds the whole subject for the branch body, and the binding
+# must be visible to the branch's guard (`42 as g | g > 0`).
+#
+# Until the fix, the compiler emitted the alias OP_STORE_GLOBAL *after* the
+# guard and then advanced body_start past it, so both the match jump
+# (body_jumps) and the guard's true-jump (guard_true) landed after the store:
+# the store was unreachable on every path and `as` always bound nil.
+# See docs/SYNTAX.md D12.
+#
+# The `alias ` prefixes on the printed lines exist so CTest can assert on the
+# VALUES the program produces, not merely its exit code.
 value = 42
+
 case value {
-    42 as whole: say whole
-    _: say "miss"
+    42 as whole: say "alias whole=" + str(whole)
+    _: say "alias whole-miss"
+}
+
+case value {
+    in [40~50] as ranged: say "alias ranged=" + str(ranged)
+    _: say "alias ranged-miss"
+}
+
+case value {
+    42 as guarded | guarded > 0: say "alias guarded=" + str(guarded)
+    _: say "alias guarded-miss"
+}
+
+case value {
+    42 as guarded2 | guarded2 > 100: say "alias guarded2=" + str(guarded2)
+    _: say "alias guarded2-miss"
 }
