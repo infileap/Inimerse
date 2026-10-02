@@ -1043,3 +1043,34 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 
 **连带修正（本次一并落地）。** ①**行号错误**：`≥2x` 那句在 `docs/archive/RELEASE_0.5.0.md` **第 52 行**，不是第 43 行（第 43 行是「Optimizations: loop invariant hoisting…」）；`:43` 原先写在本文档 §3.1，被抄进了 `docs/BOARD.md` 与 `docs/streams/aot-backend.md`，三处已修正。②`docs/archive/CHANGELOG_0.5.0.md` 是唯一还挂着「at least 2x」且**没有任何更正**的副本，已加废止说明。③`docs/archive/ROADMAP_0.5-0.6.md:54` 写 Wasm MVP「~1.8x」，与 benchmark 自己的 **1.51x** 矛盾，已改为 1.51x。④`1.09x` 在 `RELEASE_0.5.0.md`、`archive/README.md`、`API.md`、`REQUIREMENTS_ANALYSIS.md`、`future/优化路线pro.md` 与本文档 §2 均改为**分布口径**（与解释器等同，中位 0.98x）。
 **未修（发现但不在本次写域内）：** `tools/perf_compare.py:131` 与 `tools/selfhost_bench.py:121` 的 `--write-docs` 把报告写到 `docs/` 下的 `SELFHOST_BENCHMARK.md` —— 少了 `archive/` 这一级，那条路径**不存在**，脚本会新建一个文件；真实文件在 `docs/archive/SELFHOST_BENCHMARK.md`。修它会牵动发布流程，单独记账。
+
+### 10.15 跨语言绑定从「文档里的承诺」变成真的 `.whl` 与 `.jar`（`xlang-bridge`，`363665f`）
+
+**缺口（本文档 §3.1 第 ③④⑤ 条）。** `docs/archive/RELEASE_0.5.0.md:26` 声称 `inimerse_extension.c` / `PyInit_inimerse()` 存在、`:27` 声称 `InimerseBridge.java` 存在、`:123-130` 声称 `.whl` / `.jar` 存在 —— **全部不存在**。仓库当时只有 `tools/bindgen.py`（一份 `.def` → C/C++/Java/Python 的**生成器**）与 `tools/bindgen.test.py`（只覆盖生成器本身）；`examples/interface.def` 的 `imim_add` / `im_greet` / `im_fail` 在树里**没有任何实现**；`examples/python_bridge.im` 与 `examples/java_bridge.im` 只是 `say "see …"` 两行的说明脚本。
+
+**修法：一个 IDL，两侧真产物。**
+- 唯一 IDL `src/bridge/inimerse_bridge.def` 声明三个函数：`version()`、`sha256_file(path)`、`parse_count(source)`。
+- `CMakeLists.txt` 由 `tools/bindgen.py` 从它生成 `build/bindings/c/inimerse_bridge.h` 与 `build/bindings/java/InimerseBridge.java`，再分别编出 `inimerse_python`（`MODULE`，CPython 扩展）与 `inimerse_bridge`（`SHARED`，JNI）+ `InimerseBridge.jar`。
+- **引擎源表改成对象库**：`add_library(inimerse_engine OBJECT ${INIMERSE_ENGINE_SOURCES})`（`CMakeLists.txt:334`，`POSITION_INDEPENDENT_CODE ON`），`src/main.c` 移出引擎源表、单独成为 `add_executable(inimerse src/main.c)` 并链引擎 —— 于是可执行文件与两个 `.so` 用的是**同一批翻译单元**，不是副本。
+- 三个函数都调**真引擎符号**（`src/bridge/bridge_abi.c`）：`version()` → `INFIVERSE_VERSION`；`sha256_file()` → `inim_file_sha256()`（`src/compilation/checksum.c`）；`parse_count()` → `parse_program()`（`src/parser/parser.c`）。**没有一个是 echo。**
+
+**门禁改造（本波授权该流改 `tools/gate.sh`）。** `EXP_CTEST` **95 → 97**（`tools/gate.sh:49`）；stage 标签变 `ctest (expect 97/97, 0 skipped)`（`:159`）；`stage_ctest` 新增**跳过计数**（`:101`）：`grep -cF '***Skipped'`，非零就**红掉**并把 `The following tests did not run:` 段落打到 stderr。理由写在 diff 注释里：`ctest` 对 `exit 77`（`SKIP_RETURN_CODE`）的测试仍然打印 `100% tests passed, 0 tests failed out of N` —— 没有这个计数，**缺工具链时门禁会绿着一个字都没验证的状态**。
+两条新测试 `xlang_python_bridge`（`CMakeLists.txt:487`）/ `xlang_java_bridge`（`:494`）**无条件注册**（在 `if(XLANG_HAVE_TOOLCHAIN)` 块**之外**），只因前缀缺失而 exit 77。
+**工具链在仓库外**：`XLANG_TOOLCHAIN` 默认 `$ENV{HOME}/.local/xlang-toolchain`（`CMakeLists.txt` 明确不硬编码绝对路径），`examples/BUILDING_BRIDGES.md` 逐字记下 `apt-get download` / `dpkg-deb -x` 的全部命令。**前缀里没有一个字节进 git**：`git ls-files | grep -c xlang-toolchain` = 0，提交文件里 `/home/sakiko` **零命中**。
+
+**协调者独立验收（不采信自述）。**
+- 拓扑：单 commit `363665f`，基 `5305ebf`；`git diff --stat 5305ebf..stream/xlang-bridge` = 11 files, **+1161/-8**；与 main 自基点以来的改动**零文件重叠**；`git merge-tree --write-tree main stream/xlang-bridge` rc=0；`git merge --no-ff` → **`36bf4e9`**。
+- **我复跑两侧回归**：`python3 tools/xlang_python_bridge.test.py build ~/.local/xlang-toolchain` → `16 check(s), 0 failure(s)`；`python3 tools/xlang_java_bridge.test.py …` → `14 check(s), 0 failure(s)`。
+- **两侧输出逐字节相同**：`python says: 0.5.0 c3ece9cf870e190b5637b4d37e18944b7f37f6f2af8c47283b0241de7c758e47 5` 与 `java says:` 同一行。
+- **我独立重算该摘要**：`sha256sum src/bridge/bridge_fixture.im` → `c3ece9cf870e…47`，与两侧打印一致；fixture 头部手工标注的**顶层语句数 5** 也对得上。
+- **`.whl` 是真的**：`zipfile` 列出 = `inimerse.cpython-314-x86_64-linux-gnu.so` + `inimerse-0.5.0.dist-info/{METADATA,WHEEL,RECORD}`；`METADATA` = `Name: inimerse` / `Version: 0.5.0`。
+- **`.jar` 是真的**：`jar tf` = `InimerseBridge.class` + `InimerseBridge$InimerseException.class` + `InimerseBridgeMain.class`（另有一个 `javac.stamp`，是「classes 目录当 jar 根」的无害副产物）。
+- **修前必失败（结构性复核）**：main `468f5e8` 上 `git ls-tree main --name-only src/bridge/` = **0 个文件**、`tools/` 里 `xlang` **零命中**、`CMakeLists.txt` 里 `inimerse_bridge` **零命中**，且 `cmake --build build --target inimerse_bridge` → `gmake: *** No rule to make target 'inimerse_bridge'. Stop.`（与它自报的 `/tmp/xb-base` 结果一致）。
+- **合并后全量门禁（清理 `build/` 从零 configure）**：`rm -rf build && bash tools/gate.sh --jobs 8` → 七阶段全 PASS、`ctest (expect 97/97, 0 skipped)`、`gate: OK`、exit 0；links 88 files / 318 links / 0 broken。
+
+**三条裁决（它明确要我裁的）。**
+1. **`bindings/**` 与 `.whl`/`.jar` 不提交进 git —— 准。** 它们是**构建产物**，由唯一 IDL 生成/打包；提交了就必然与 IDL 漂移，还得再加一条「生成物过期」检查。验收条件是「存在且可重复构建」，而两侧回归**就在构建产物上断言**（`.whl` 装进干净 venv 后断言 `import` 从 venv 内解析而非 build 树、`.jar` 用真 `java -cp` 跑），比提交一个 blob 更强。发布文档里「`.whl`/`.jar` 存在」由此成为事实。
+2. **`parse_program()` 语法错时 `exit(1)` —— 确认是真缺陷，本次不修，单开后续流。** 我实测（不是采信）：在装了 wheel 的路径上 `inimerse.parse_count('x = ')` → **宿主 Python 进程直接以 exit code 1 退出**，stderr 只有 `Error: expected 'expression', but got '' (type 141)`，**没有异常、没有 traceback**。`grep -n "exit(1)" src/parser/parser.c` 命中 12 处（行 69 / 73 / 82 / 86 / 144 / 1061 / 1064 / 1411 / 1519 / 1521 / 1624）。`src/bridge/bridge_abi.c:78-81` 写了 `if (!prog) return 4;` 这条错误返回 —— **但它在语法错时不可达**：桥接层是按「可恢复」写的，引擎**不是**可恢复的。修它要动 `src/parser/**`（本波写域外）并会牵动 CLI 的既有错误策略。`examples/BUILDING_BRIDGES.md:162-165` 已如实披露这一条。
+3. **`inim_load_text()` 的绕行 —— 准其作为短期方案，但这是味道，单开后续流。** `grep -rn inim_load_text src/` 确认声明在 `src/common/common.h:55`、**唯一实现**在 `src/main.c:346`（另有 `src/compilation/aot_native_tool.c:24` 也定义了一份）。把 `src/main.c` 移出引擎源表后两个 `.so` 报 `undefined symbol: inim_load_text`，它的解是让桥接目标**再编一次同一份 `src/main.c`** 并用 `target_compile_definitions(... PRIVATE main=<target>_entry_unused)` 改名 —— **同源不同编译，不是拷贝**，且 `.so` 不导出 `main`。更干净的做法是把 `inim_load_text` 搬进引擎本体，那要动 `src/**`。
+
+**遗留（未做）。** ①**Windows 分支未验证**：桥接目标只在工具链探测通过时构建，WIN32 下不生成也不红，OBJECT 化保留了原 WIN32 链接块。②本机无 `python3.14-venv` / `ensurepip`，venv 用 `--without-pip` 建、wheel 用 `pip install --target` 装，wheel 本身用 `zipfile` 手工组装（`python3 -m build` 不存在）—— 已记在 `examples/BUILDING_BRIDGES.md`。③`examples/interface.def` 的 `inim_add` / `im_greet` / `im_fail` **仍是悬空示例 IDL**，本次没动它。①②③与上面两条裁决 2、3 一并登记为 `xlang-bridge-followups`。

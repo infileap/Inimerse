@@ -1,5 +1,13 @@
 # 作业单：`xlang-bridge` —— 让 Python / Java 桥接从「生成器」变成「真产物」
 
+> ✅ **本条流已交付并合入 `main`（`363665f`，merge `36bf4e9`）。**
+> 交付结论见 [STATUS.md](../STATUS.md) §10.15。**不要按本作业单重新开工。**
+> 摘要：一个 IDL（`src/bridge/inimerse_bridge.def`）驱动两侧真产物 —— 真 CPython 扩展与真 JNI facade，
+> 都链在同一批引擎对象上（引擎源表改为 OBJECT 库），三个函数调的是真引擎符号。协调者独立复跑 Python 16/16、Java 14/14。
+> **未做的两条**（`parse_program()` 语法错时 `exit(1)` 会杀掉宿主进程；`inim_load_text()` 的家在 `src/main.c`）
+> 登记为新行 `xlang-bridge-followups`；**`bindings/**` 最终未落盘**（生成物留 build 树，见 §10.15 裁决 1）。
+ —— 让 Python / Java 桥接从「生成器」变成「真产物」
+
 > **冲突域见 §3。本条流独占 `CMakeLists.txt`** —— 另外两条在飞的流（`wasm-simd-gc`、`aot-backend`）
 > 被明确要求**不碰它**，所以你是这一波唯一能新增源文件与 CTest 的人。请珍惜这个独占期：
 > 你要的东西加完就尽快交回，别把它当长期持有。
