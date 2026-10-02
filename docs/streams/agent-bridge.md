@@ -1,6 +1,6 @@
 # 作业单：`agent-bridge` —— 多智能体协调桥接层的复核、更新与接流程
 
-**状态**：进行中（**第一轮：只出设计，不写代码**）
+**状态**：进行中（**第一轮：只出设计，不写代码**；**第二轮：三条决断 + 一条非决断，见 §6**）
 **冲突域（别人别碰）**：`future/multi-agent-coordination-bridge.md`、`future/README.md`、`docs/streams/agent-bridge.md`、`docs/BOARD.md`（**仅 §5 一行**）、`docs/STATUS.md`（**仅 §9 新增一节**）
 **禁碰**：`src/**`、`tools/**`、`CMakeLists.txt`、`.gitattributes`、`future/archive/**`、`docs/BOARD.md` §1–§4
 
@@ -125,7 +125,24 @@
 - **§7.1（64 事件环不落盘）仍是本设计最大的 `unresolved`**，本轮只更新了行号，没有给答案。
 - **§7 其余各条（7.2–7.6、7.8）未动**；`SIGNAL.event` 的自由字符串问题（§7.3）仍未决。
 - **§9.3 的第三方原始字节没有进仓库**（两份不同许可证的第三方材料，且已跟踪的第三方 README 会永久污染 `links` 阶段）。
-- **留给下一轮**：Q1 的 peer 身份决断、Q2 的 per-pair 授权、REJECT 的 cell 语义（§1 REJECT 第 4 条）。
+- **留给下一轮**：~~Q1 的 peer 身份决断、Q2 的 per-pair 授权、REJECT 的 cell 语义（§1 REJECT 第 4 条）。~~ → **已在第二轮给出决断，见下方 §6。**
+
+## 6. 第二轮（`agent-bridge-round2`，2026-10-02，base `5f23e95`）—— 三条决断 + 一条非决断
+
+**状态**：**只出决断，引擎侧零改动**（`grep -rniE "\bagent" src/` 与 `grep -rni "commitment" src/` 本轮复测均为**零命中**）。
+**写域**：仅 `future/multi-agent-coordination-bridge.md`（新增 §7.10）与 `docs/streams/agent-bridge.md`（本 §6）。
+**禁碰本轮不变**：`src/**`、`tools/**`、`CMakeLists.txt`、`docs/BOARD.md`、`docs/STATUS.md`。
+
+| # | 问题 | 决断 | 一句话理由 | 落点 |
+|---|---|---|---|---|
+| ① | peer 身份是否升级为真实主体 | **不升级**。`(verse, peer)` 保持 scope 名，不成为 principal；桥接层只认「债务 `debtor` 必须由令牌 scope 派生」，**禁止采信调用方自报的 `actor`/`role`** | 升级需要同时改判据方载体 + 给 `CMakeLists.txt:96-115` 三个 hub 目标补链 `src/common/ed25519.c` —— 那是新机制，且本轮不写代码；今天 scope 名已足够当稳定记账键 | 设计文档 §7.10.1 |
+| ② | per-`(verse, peer)` 授权缺口 | **收，最小形态 = 把 `/portal` 证明输入从「两个自选字符串」扩为「hub 持有的 per-pair 注册项」**（per-pair key + per-pair `capabilities`），**未登记 pair 与证明错必须不可区分（都 403）**，否则 404 变成枚举 oracle | 是在既有机制内部加一个因子，不引入账号体系、不新增帧、不改令牌格式；但必须判据方与引擎**同一次改动落地** ⇒ 本轮不动 | 设计文档 §7.10.2 |
+| ③ | REJECT 的 cell 语义 | **不复用 `commitment:<id>` 的 `value=4`**（4 已被 §3.2 定义为 `CANCELLED` = 自愿撤销）。REJECT 落**独立 cell `reject:<id>`**，语义 = *发送方声称接收方违约*（与 G²CP `C(sender, receiver, violated(op, constraint))` 同构，**debtor = 指控者**） | 撤销与拒绝责任方不同，塞进同一个值会让二者不可区分；且 cell 记的是**声称**，「被记录 ≠ 发生过」必须随定义出现 | 设计文档 §7.10.3 |
+| §7.1 | 64 事件环不落盘 | **显式非决断**（不是留白）：不决断「协调事件要不要进持久审计」 | 缺的是连接件不是概念（平台层 `im_crp_session_resume_plan` 已算出 `needs_snapshot`，只是没接到 CRP hub 的 `/session/resume`）；它与 ② 是同类改动应合并进一条新流；且今天协调事件**根本不存在**，损失为零 —— 该论证随阶段 2/3 实现到期 | 设计文档 §7.10.4 |
+
+**与「错误响应不进事件日志」的共存方式（③ 的关键）**：**不试图把 HTTP 拒绝搬进 Layer**。协议层拒绝（`tools/crp_relay.js` 的 400/403/404/409）继续只存在于线路上、**不进审计**（判据方原文事实，桥接层不推翻）；要可审计的拒绝必须由某一方**显式发一条 `SIGNAL`** 主动表达。**两条路径永不混为一谈。**
+
+**第二轮没做**：未改 `src/**` 任何一行；未改判据方 `tools/crp_relay.js`（`tools/crp_engine_crosscheck.js` 仍 `115 records, text-identical`）；未开新流（② 与 §7.1 的落地需要新流、含 `CMakeLists.txt` 与判据方改动，按规矩先报协调者）；未把 `future/` 任何内容表述为已实现。
 
 ## 5. 复现命令（本 worktree 内原样可跑）
 

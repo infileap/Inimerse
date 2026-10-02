@@ -416,6 +416,57 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 | 7.8 | 引擎里根本没有 `commitment` 概念（`grep` 确认），所以 §3.2 的编码方案是**纯设计**，未经任何实现验证 | （状态说明） |
 | 7.9 | **「智能体」的身份没有任何已验证的载体**：`(verse, peer)` 是唯一出现在**被认证的**产物里的身份，但令牌只证明持有者知道 hub 级共享 secret（§7.7），而 `peer` 字符串由调用方自选；Layer 的 `actor`/`role` 是**调用方提供的自由字符串**（`vl_layer_put` 不校验）；`CAP_AI` 由 mod 在 `spi_meta()` 里**自声明**（`src/runtime/runtime.c:1275`，进程内、线上不可验证）；`ai_boundary`（`src/mod/say_stream.c:70`/`:98`）只是对 meta 的**子串匹配**，不是凭据校验。⇒ 本设计必须先写死一条规则：**桥接层不得采信调用方提供的 `actor`/`role`，承诺的 debtor 必须由令牌 scope 派生**。至于「谁是这个 peer」今天没有答案 —— 要不要把 peer 名变成真实主体是一次**先决断、先改参考实现**的事（见作业单 [streams/agent-bridge.md](../docs/streams/agent-bridge.md) §1 Q1/Q3） | `missing_owner` |
 
+### 7.10 决断记录（`agent-bridge-round2`，2026-10-02，base main `5f23e95`）
+
+> 本节是**决断**，不是备选清单。每条给出「证据 / 决断 / 理由」，并显式写明**引擎侧本轮零改动**。
+> 标注约定：`coverage`（这套语义覆盖到哪一层）/ `implementation`（今天到底有没有实现）/ `evidence`（证据等级按 §64.2 E0–E6）。
+> **说清本轮性质**：以下四条全部是**文档决断**，`implementation = 零`（引擎里 `grep -rniE "\bagent" src/` 与 `grep -rni "commitment" src/` 都是**零命中**，本轮复测）。任何一条要落地都必须**先改判据方 `tools/crp_relay.js`**，再动引擎，否则 `tools/crp_engine_crosscheck.js`（今天 `115 records, text-identical`）立刻判分歧。
+
+#### 7.10.1 ①|peer 身份**不**升级为真实主体（决断）
+
+- **证据**：`/portal` 的 enrollment 证明（`tools/crp_relay.js:29`）逐字为 `crypto.createHmac('sha256', enrollSecret).update(\`${verse}\0${peer}\`).digest('base64url')` —— 输入只有 `verse` 与 `peer` **两个调用方自选的字符串**，没有第三个因子；铸出的令牌 claim 里 `capabilities = ['signal']`（`tools/crp_relay.js:18` 默认值），`checkToken`（`tools/crp_relay.js:19`）的全部判据是 `p.verse === verse && p.peer === peer && p.exp > Date.now() && p.capabilities.includes(capability)` ⇒ **令牌表达的是"谁在说"，不是"谁被允许做什么"**。Layer 侧 `vl_layer_put(VlLayer *l, const char *idempotency_key, const char *actor, const char *role, const char *cell, long long value, int steps[VL_COMMIT_STEPS])`（`src/verse/layer.h:50-53`）对 `actor`/`role` **不做任何校验**，注释只管「seq/rev are assigned here, not by the caller」。`CAP_AI` 由 mod 在 `src/runtime/runtime.c:1275` 于 `spi_meta()` 里自声明，进程内、**线上不可验证**；`ai_boundary`（`src/mod/say_stream.c:70`/`:98`）只是对 meta 的**子串匹配**。而 hub/portal 路径**今天根本不能签名**：`CMakeLists.txt:96-115` 的 `verse_crp_probe` / `crp-hub` / `crp-peer` 三个目标**都没有链接 `src/common/ed25519.c`**（只有 `:121`、`:133`、`:191`/`:195`/`:199`、`:301` 链接了）。
+- **决断**：**不升级**。`(verse, peer)` **继续只是 scope 名**，不是主体（principal）；`peer` 保持为**调用方自选、hub 不校验的字符串**。桥接层只承认一条身份规则：**债务的 `debtor` 必须由令牌 scope 派生**（即 hub 回给调用方的 `p.verse` / `p.peer`），**任何调用方自报的 `actor`/`role` 一律不得进入承诺记账**。
+- **理由**：把 `peer` 变成真实主体**需要两件事同时发生** ——(a) 判据方新增一个载体（Ed25519 公钥或等价物）并让 `/portal` 的证明覆盖它；(b) 引擎侧 `CMakeLists.txt` 给上述三个 hub 目标补链 `src/common/ed25519.c`。这是**新机制**，落在本设计的「不新增第五套机制」原则之外，且**本轮任务明令不写引擎代码**。⇒ 本轮**决断为不动**，并给出可接受性论证（不是留白）：**今天的 scope 名已经足够表达"哪个会话里的哪条流"**，承诺记账只需要一个**稳定、hub 生成、调用方不能替换**的键 —— `(verse, peer)` 满足这一点（因为它是 hub 在 `/portal` 响应里返回的、且被令牌签名绑定的）。「这个 peer 背后是哪个人/哪个进程」**不是本设计要解决的问题**，它是 §55.6 平台会话面与未来身份层的事。**在身份层落地之前，把 `(verse, peer)` 当主体用会产生"自称即身份"的漏洞，所以宁可不升级。**
+- **`coverage`**：设计层（桥接层规则已冻结）/ **`implementation`**：零（无任何代码）/ **`evidence`**：E1 实测（源码逐行）+ E4（BM: 结构事实）。
+
+#### 7.10.2 ②|per-`(verse, peer)` 授权缺口：**收，但最小形态是"扩大证明输入"**（决断）
+
+- **证据**：§7.7 已定论 —— 今天 `/portal` 只有**调用方认证**（证明你知道 hub 级共享 secret），**没有 per-pair 授权**：知道 secret 的人可为**任意** `(verse, peer)` 现算证明并取得 `signal` 令牌。「授权」在判据方里**没有表达面**：`grep -n "status" tools/crp_relay.js` **零命中**，令牌 claim 里唯一的授权位是 `capabilities: ['signal']`，而它是**常量默认值**，不随 `(verse, peer)` 变化（`tools/crp_relay.js:18`）。
+- **决断**：**收，且最小形态已确定** —— 把 `/portal` 的证明输入从「两个自选字符串」扩展为**一个由 hub 持有的 per-pair 注册项**。具体：
+  1. **判据方先改** `tools/crp_relay.js`：新增一张 hub 侧 per-pair 表（例如 `enrollments: Map<\`${verse}\0${peer}\`, {secret, capabilities}>`），`enrollProof` 的密钥**不再是全局 `enrollSecret`，而是该 pair 自己的 `secret`**；`makeToken` 的 `capabilities` **取自该表**而不是常量默认值；未登记的 pair → 与今天未注册 verse 同级的拒绝（**fail-closed**，沿用既有 403/404 语义顺序）。
+  2. **必改的相邻项**：`enrollOk(auth, verse, peer)`（`tools/crp_relay.js:30`）的签名不变，但必须在**查注册表之后**才能知道用哪把 key ⇒ **403/404 的顺序要重新规定**：今天是 `!enrollSecret` → 403、`!enrollOk` → 403、未注册 verse → 404（`tools/crp_relay.js:80-92`）。新形态下"这个 pair 没登记"与"证明错"**必须不可区分**（都 403），否则 404 会变成一个**枚举 oracle**（攻击者可逐个试探哪些 pair 存在）。这是本轮**发现并写死的新约束**。
+  3. **引擎侧**：`crp_enroll_check()`（`src/verse/crp.c:1057`，`:1069` 的 `crp_registry_portal` 与 HTTP 监听器共用的**唯一判定点**）对应改造；**但本轮不动**。
+- **理由**：这是**在既有机制内部加一个因子**，不是新机制 —— 复用同一套 HMAC、同一个判定点、同一组 403/404，只把「一把全局 key」换成「一对一把 key」。它**不引入账号体系**（明令禁止），不引入新帧、不改令牌格式（`capabilities` 字段本来就在 claim 里，只是今天恒为常量）。相比之下，「另开一个 authorization 服务/新端點」才是新机制，故否决。
+- **本轮不改判据方的理由（必写）**：改 `tools/crp_relay.js` 会让 `tools/crp_engine_crosscheck.js` 的语料（今天 **115 条**，其中 `relay_portal` **13 条**、`relay_resume` **10 条**）立刻分歧，因为引擎侧没有对应的 per-pair 表 ⇒ **判据方与引擎必须同一次改动落地**，而那需要先开新流（作业单已写明「若某决断确实要动引擎，先开流、写作业单、报给协调者」）。**本轮零代码的法律后果是：缺口按原样留着，但不再是无主债务。**
+- **`coverage`**：设计层已到"可改"的粒度（含 key 归属、失败语义、顺序约束）/ **`implementation`**：零 / **`evidence`**：E1 实测（`tools/crp_relay.js` 逐行）+ E4。
+
+#### 7.10.3 ③|REJECT 在 Layer 上落**独立 cell**，**禁止**复用 `commitment:<id>` 的 `value=4`（决断）
+
+- **证据（外部，按 SHA 重取）**：`karim0bkh/G2CP_AAMAS @ e94f13d313c49f86129e23186a4f004fe983c098` 的 `g2cp/protocol/messages.py` 里 `Performative.REJECT` 的语义逐字是 *"Sender indicates receiver's operation violated constraints"*；`g2cp/protocol/commitments.py` 的 `create_from_message` 对 `REJECT` 造的是 **`C(sender, receiver, violated(op, constraint))` 且 `state=CommitmentState.ACTIVE`** —— 即**发指控的那一方自己欠了一条债**，要靠 `check_violations(timeout_seconds: float = 30.0)` / `violate()` 推进到 `VIOLATED`。**REJECT 从来不是"这条消息被拒了"**。另一侧：判据方的所有拒绝（400/403/404/409）都是 **HTTP 状态码 + 错误字符串**（`tools/crp_relay.js:80-92` 的 portal 三连、`:98` 的 `/signal`、`:105` 的 `/session/resume` 409），**一律不写任何事件/日志** ⇒ 「错误响应不进事件日志」是判据方的**原文事实**。
+- **决断**：
+  1. 桥接层对 REJECT 的承载**不复用** `commitment:<id>` 的 `value=4`。§3.2 已把 `4` 定义为 `CANCELLED`（**自愿撤销**）；把「被拒绝」也塞进 4 会让**撤销与拒绝不可区分**，而两者的责任方不同（撤销 = 自己收回，拒绝 = 指控对方违约）。
+  2. 落地方式：**新增一条独立 cell 命名空间**（设计层，不实现）—— `reject:<id>`，值域**另立**，语义固定为 *"发送方声称接收方的操作违反了约束"*，与 G²CP 的 `C(sender, receiver, violated(op, constraint))` 同构（**debtor = 指控者**）。
+  3. **可审计性的边界必须写死**：这条 cell 记录的是**发送方的声称**，不是"拒绝真的发生过"。Layer 的 `commit.head` 抗改写（§3.4）**不等于真实性**。所以文档与任何下游消费者都**不得**把 `reject:<id>` 读作"该操作确实被拒绝了"。**「被记录 ≠ 发生过」这句必须随 cell 定义一起出现。**
+  4. **与「错误响应不进事件日志」共存的方式**：**不试图把 HTTP 拒绝搬进 Layer**。传输层/协议层的拒绝（403/404/409）继续**只存在于线路上、不进审计** —— 这是判据方的设计，桥接层不推翻它。要被审计的拒绝，必须由某一方**显式发一条 `SIGNAL`** 主动表达（§2.2 的 SIGNAL 已经是承载面），落成上面的 `reject:<id>`。⇒ **两条路径分开：协议拒绝 = 不可审计（且不改它）；语义指控 = 可审计（且要显式发信号）。** 桥接层永不把它们混为一谈。
+- **理由**：这条决断同时满足两个硬约束 ——(a) 「错误响应不进事件日志」原样保留（不改判据方、不改引擎）；(b) 拒绝**仍然可审计**，但审计的是**声称**，并且文档里明说这一点。§0 结论 5 不把「可审计」偷换成「可验证为真」的原则在这里**逐字兑现**。
+- **`coverage`**：设计层（cell 命名空间与语义已冻结）/ **`implementation`**：零（`commitment` 在 `src/` 零命中）/ **`evidence`**：E5（外部按 SHA 读源）+ E1（判据方逐行）。
+
+#### 7.10.4 §7.1（64 事件环不落盘）|**显式非决断**（决断为"本轮不决断"，并给理由）
+
+- **证据**：`CrpEvent events[CRP_EVENT_WINDOW]` 在会话结构体内（`CrpEvent` 定义 `src/verse/crp.c:692-708`），淘汰逐字为 `src/verse/crp.c:1176-1182` 的 `if (s->nevents == CRP_EVENT_WINDOW) { vj_free(s->events[0].event); vj_free(s->events[0].data); memmove(&s->events[0], &s->events[1], (CRP_EVENT_WINDOW - 1) * sizeof s->events[0]); s->nevents--; }`，**无任何落盘**。但**平台层本来就建模了「环答不了 → 要快照」**：`im_crp_session_resume_plan`（`src/platform/crp_session.c:84-98`）在 `behind && gap <= window` 时给 `*replay_from = last_ack_seq + 1; *needs_snapshot = 0;`，否则 `*replay_from = 0; *needs_snapshot = 1;`。且判据方**根本没有 status 面**（`grep -n "status" tools/crp_relay.js` 零命中）：`/session/resume`（`tools/crp_relay.js:103-109`）里 `const replay = (sessionEvents.get(key) || []).filter(e => e.seq > seq);` —— 窗口外的旧事件**被静默丢弃**，响应里**没有任何"你的 replay 不完整"信号**。引擎侧 `needsSnapshot` 的唯一出口是 `crp_registry_status_json()`（`src/verse/crp.c:1287`），调用者只有 `src/verse/crp_hub.c:217`（hub 的 `op:"status"` 分支）与 `src/verse/crp_probe.c:766`/`:943`/`:983` ⇒ **`status`/`now` 是引擎侧测试钩子，判据方里不存在**。
+- **决断（非决断）**：**本轮不决断"协调事件要不要进持久审计"**。明确写下**理由**（不是留白）：
+  1. **缺的是连接件，不是概念**：平台层已经算出 `needs_snapshot`，缺的只是把它接到 CRP hub 的 `/session/resume` 响应上。这个改动**同时触及判据方与引擎**，与 7.10.2 是**同一类改动**（必须一次落地），应合并进同一条新流，不应拆成两次 crosscheck 分歧。
+  2. **它没有 owner**（`missing_owner` 成立）：把协调事件写进 Layer 意味着**轮子属于谁**必须由某次决断分配 —— 而 §7.6（`commitment:<id>` 命名空间碰撞）与 §7.10.2（scope 归属）都还没落地，先分配会导致返工。
+  3. **今天可接受性论证**：协调事件**当前并不存在**（`src/` 里 `agent`/`commitment` 零命中），所以"协调事件不进持久审计"**损失为零** —— 没有事件可丢。**这个论证会随阶段 2/3 的实现到期**，届时必须重新决断（见 §8 阶段 5）。
+- **⇒ 移交给下一轮的条件**：当且仅当 (a) 7.10.2 的 per-pair 授权已落地，且 (b) §8 阶段 3（承诺落 Layer）已实现 ⇒ 必须回来决断 §7.1。
+- **`coverage`**：无（非决断）/ **`implementation`**：零 / **`evidence`**：E1 实测（引擎 `:692-708`、`:1176-1182`、`:1287`、`crp_hub.c:217`）+ E1（判据方 `:103-109`）。
+
+#### 7.10.5 本轮**明确没做**的事（防误读）
+
+- **没有改引擎任何一行**（`src/**` 零改动）；**没有改判据方** `tools/crp_relay.js`（所以 `tools/crp_engine_crosscheck.js` 仍 `115 records, text-identical`）；**没有新增帧类型、没有新增能力位、没有新增 cell 之外的存储**。
+- **没有**把 `future/` 里任何内容表述为已实现；本轮四条全是**设计层决断**，`implementation` 一律为零。
+- **没有**开新流：7.10.2 与 7.10.4 的落地需要新流（含 `CMakeLists.txt` 与 `tools/crp_relay.js` 改动），按规矩**先报协调者**，本轮只登记「可改的粒度 + 失败语义 + 顺序约束」。
+
 ---
 
 ## 8. 分阶段落地计划与验收标准
