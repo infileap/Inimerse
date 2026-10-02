@@ -818,3 +818,28 @@ exit=1
 
 **没有做的事**：没碰 `tools/gate.sh`/`CMakeLists.txt`/`tools/node_suites/run_all.js`（`httpfix` 持有）、`tools/crp_ws_client*`/`tools/upp_session*`（`wscoverage` 持有）、`src/**`、`docs/BOARD.md` 与本文件既有行；没有 `push`/`merge`；**没有改任何已跟踪文件的既有引用**——修前修后 `0 broken` 一致，说明本次没有靠「把红的说成绿的」来收敛。
 
+
+### 10.9 WebSocket 客户端的连接 / 重连 / 排队（`ws-client-coverage`）
+
+**立项**：`docs/BOARD.md` §5 原写「`tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用）」。派活前实测，这句话**一半是错的**：`tools/regression.js:4` 的数组里**列了** `crp_ws_client.test.js`，`tools/upp_session` 也被 `tools/upp_engine_crosscheck.js:30` 直接 `require`。⇒ 真正的缺口是**行为没测**（连接、重连、排队三个机制一条断言都没有），外加 `crp_ws_client` 在 `docs/` 里没有任何出处。
+
+**它是什么、在哪**：CRP（跨节点会话）的 WebSocket 客户端。23 行，`tools/crp_ws_client.js`，导出 `CrpWebSocketClient`；构造 `new CrpWebSocketClient(url, { retries = 3, backoffMs = 100, onMessage = () => {} })`，方法 `connect()` / `send(value)` / `close()`。三个机制：① **连接** —— `open` 兑现 `connect()`，`error` 按 `retries` 次、以 `backoffMs * 2**(n-1)` **指数退避**重试，预算耗尽则 reject；② **重连** —— 对端主动关闭时自动重连，但 `close()` 之后不再重连，且**旧 generation 的 `close` 事件不能顶掉新连接**；③ **排队** —— 未 OPEN 时 `send()` 入队且不碰底层 socket，`open` 后按入队顺序 flush，`close()` 清空队列。它**直接用全局 `WebSocket`**（`crp_ws_client.js:10`、`:12`），而仓库既没有 WebSocket 服务端实现、也没有 `ws` 依赖。
+
+**怎么跑**（三条入口等价，都不需要网络）：
+
+```bash
+node tools/crp_ws_client.test.js        # 单跑本套件，31 条断言
+node tools/node_suites/run_all.js       # JS 协议套件总入口（门禁 node 阶段跑的就是它）
+bash tools/gate.sh --fast --only node   # 门禁第 6 阶段
+```
+
+测试**离线且确定性**：在 `require('./crp_ws_client')` **之前**把假 `WebSocket` 装进 `globalThis.WebSocket`（带 `OPEN` 常量与可手动触发的 `open`/`message`/`error`/`close`，并实现 `{once:true}`），跑完还原。**不引第三方 `ws`、不占端口、不依赖真实对端** —— 否则红了也分不清是「客户端回归」还是「对端慢」。
+
+**证据**：`tools/crp_ws_client.test.js` 由 2 条断言（入队 / `close()` 清空）扩到 **31 条**（连接 7、重试 8、重连 8、排队 8），跑完打印 `CRP WebSocket client tests: ok (31 assertions)`。**非空证据 = 变异测试**（一次性脚本，未提交）：对 `crp_ws_client.js` 做 **29 个单行变异**（其中 4 个是为击穿「断言被前一条挡住」而写的定向变异，标注 `[targeted]`），逐条记录**第一个变红的断言**：**29/31 条断言各有至少一个能把它打红的变异**。剩 2 条是**结构性屏蔽**，不是空断言 —— #20「`close()` 之后重连拨的是新 socket」被 #18「`close()` 忘掉当前 socket」挡住（任何复用旧 socket 的写法都先违反 #18），#28「OPEN 时 `send()` 直接上线」被 #23「陈旧 `close` 之后活 socket 仍能发数据」挡住（同一条规则在更早的场景里已经断言过）。**而原来的 2 条断言文件只看得见 29 个变异里的 2 个**（`close()` 清队列，以及「只在已有 socket 时入队」），其余 **27 个变异下它 exit 0 全绿** —— 这正是「旧文件测不到连接 / 重连 / 排队」的机器证据。
+
+**没做什么 / 遗留**：
+
+- **没有改 `tools/crp_ws_client.js`**。31 条断言在**未改动**的模块上全绿，没有发现真缺陷。
+- 一条**观察（不是缺陷，未改）**：`this.closed` 与 `_generation` 冗余 —— `close()` 同时做 `closed = true` 与 `++_generation`，所以任何 `closed === true` 的时刻，活回调捕获的 generation 必然已经对不上。代价为零，留着当第二道闸也无害。
+- **`closed` 守卫与 `_generation` 守卫无法各自单独隔离**：`close()` 一次动两个字段，所以「`close()` 之后不再重连」只能断言**可观察行为**；「旧 generation 的 `close` 不能顶掉新连接」可以单独归因给 generation 守卫（变异里去掉它、只留 `!this.closed`，该断言立刻变红）。
+- 没测：`send()` 在 `close()` 之后仍会入队（且永不 flush）这一姿势；默认值 `retries: 3` / `backoffMs: 100` 只由构造签名与显式配置的 `retries: 0` / `retries: 2` 间接覆盖，没跑默认值下的 4 次重试（那条要等约 700ms，收益不值）。
