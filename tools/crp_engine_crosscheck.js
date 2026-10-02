@@ -190,21 +190,27 @@ const CORPUS = [
    * The corpus never contained a surrogate before, which is why the engine's
    * CESU-8 output for \uD83D\uDE00 went unnoticed: json_min encoded the two
    * halves separately (ED A0 BD ED B8 80) where JSON.parse combines them into
-   * U+1F600 (F0 9F 98 80).  A lone surrogate was emitted as its 3-byte
-   * "encoding" instead of U+FFFD (EF BF BD).  These entries make both live
-   * under the byte-identical contract; the round trip through ref.encode also
-   * pins what the engine's writer must emit for the decoded bytes.
+   * U+1F600 (F0 9F 98 80).  A surrogate PAIR is representable on both sides,
+   * so these entries belong under the byte-identical contract; the round trip
+   * through ref.encode also pins what the engine's writer must emit for the
+   * decoded bytes.
    *
-   * \u0000 is deliberately absent: the engine refuses it where JSON.parse
-   * yields a NUL, a documented divergence (VjVal's string is a length-less
-   * char *).  A LITERAL "\u0000" -- six characters, no NUL byte -- is fine and
-   * is covered below, because such text is not an escape at all. */
+   * Two \u cases are deliberately ABSENT.  Both are real disagreements, not
+   * two spellings of one value, so no comparison could see through them
+   * without hiding a difference:
+   *   \u0000        the engine REFUSES the parse (VjVal's string is a
+   *                 length-less char *), where JSON.parse yields a NUL byte.
+   *   lone surrogate  the engine's string is UTF-8 bytes and cannot hold an
+   *                 unpaired surrogate, so it emits U+FFFD (EF BF BD), where
+   *                 JSON.parse preserves the surrogate and JSON.stringify
+   *                 re-stringifies it as the six characters `\ud83d`.  Those
+   *                 are different bytes, not two spellings of one value.
+   * Both are documented divergences -- see docs/STATUS.md §10.6 -- and the
+   * engine's exact bytes for them are pinned by src/verse/json_min_probe.c,
+   * not by widening this comparison.  A LITERAL "\u0000" -- six characters,
+   * no NUL byte -- is fine and is covered below: such text is not an escape. */
   { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D\\uDE00"}}' },
     run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D\\uDE00"}}'))) },
-  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D"}}' },
-    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D"}}'))) },
-  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\uDE00"}}' },
-    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\uDE00"}}'))) },
   { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\u0001"}}' },
     run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\u0001"}}'))) },
   { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"\\uD83D\\uDE00":"\\uD83D\\uDE00"}}' },
@@ -347,44 +353,6 @@ function bigRoundTrip(n) {
   return ref.encode(ref.decode(ref.encode(frame)));
 }
 
-/* Canonical serialisation of one record line, used only when the raw text of
- * the two records differs.  The corpora contain lone surrogates (see the
- * `\u escapes in a payload` entries): the engine follows the JSON spec and
- * emits U+FFFD, while JSON.parse keeps the unpaired surrogate, so the
- * reference's `out` carries the six characters `\ud83d` where the engine's
- * carries a literal EF BF BD.  One is a JSON escape, the other a raw code
- * point: the same value on the wire, not the same JS string, so the record text
- * differs even though neither side is wrong.  `out` is itself a JSON document
- * (the CRP line that was encoded/decoded), so parse it and normalise the parse:
- * escaping U+FFFD back to `\ufffd` is a no-op for every well-formed text, so
- * this cannot hide a real difference -- it only stops the two spellings of an
- * unpaired surrogate from disagreeing.  A line that is not JSON is returned
- * as-is so the mismatch still points at it. */
-function canonicalRecord(line) {
-  let rec;
-  try {
-    rec = JSON.parse(line);
-  } catch {
-    return line;
-  }
-  if (rec && typeof rec.out === 'string') {
-    try {
-      rec.out = JSON.parse(rec.out);
-    } catch {
-      /* not a CRP message -- leave it alone */
-    }
-  }
-  return JSON.stringify(rec, (key, value) => {
-    if (typeof value !== 'string' || value.isWellFormed()) return value;
-    let fixed = '';
-    for (const ch of value) {
-      const cp = ch.codePointAt(0);
-      fixed += cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : ch;
-    }
-    return fixed;
-  });
-}
-
 async function main() {
   const probe = process.argv[2];
   if (!probe) {
@@ -427,14 +395,6 @@ async function main() {
     const a = want[i];
     const b = got[i];
     if (a === b) continue;
-    /* The corpora now contain lone surrogates, and a well-formed-JSON record
-     * cannot carry one.  The engine follows the spec and emits U+FFFD where
-     * JSON.parse keeps the unpaired surrogate, so its record holds a literal
-     * EF BF BD while JSON.stringify escapes the reference's U+D83D as the six
-     * characters `\ud83d`.  Both decode to the same JSON value -- the same
-     * bytes on the wire -- so compare the canonical serialisation of BOTH
-     * sides rather than the two spellings. */
-    if (a !== undefined && b !== undefined && canonicalRecord(b) === canonicalRecord(a)) continue;
     bad++;
     if (bad <= 20) {
       console.error(`MISMATCH line ${i + 1} (${CORPUS[i] ? CORPUS[i].req.op : '?'})`);

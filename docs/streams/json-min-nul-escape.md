@@ -119,7 +119,7 @@
 | `src/verse/json_min_probe.c` | 新增 76 项检查的离线探针；链接 `src/verse/upp.c`，往返用**已发布**的 `upp_json_write_string`，不是副本 |
 | `CMakeLists.txt` | 注册 `verse_json_min_probe`（`add_test` + `TIMEOUT 30` + `LABELS "protocol;json"`），紧邻 `verse_upp_probe` |
 | `tools/gate.sh` | `EXP_CTEST` 92 → 93（新增一个 ctest） |
-| `tools/crp_engine_crosscheck.js` | 语料 101 → **109** 条；新增 `canonicalRecord()` 比较器（理由见 7.4） |
+| `tools/crp_engine_crosscheck.js` | 语料 101 → **107** 条（代理对、`\u0001`、`\u00e9\u4e2d`、字面 `\\u0000`）；比较仍是严格的 `a === b`，孤立代理不进语料（理由见 7.4） |
 
 ### 7.2 `P->p[0..3]` 前读：先证明，后加固
 
@@ -141,19 +141,38 @@ alice\u0000B  NULL          （原 "alice"，两者塌成同一个 C 串）
 \u00e9 / \u4e2d / \u0001  不变
 ```
 
-### 7.4 交叉校验的比较器为什么放宽了两个字面量
+### 7.4 孤立代理**不进**交叉校验语料：它是固有不一致，不是可归一化的拼写差
 
-语料新增了**孤立代理**行后，两边的**原始记录文本**必然不同，且**都不是错的**：引擎按 JSON 规范输出 U+FFFD 的 UTF-8 字节（`EF BF BD` 原码点），而 `JSON.parse` 保留未配对代理，`JSON.stringify` 把它写成六个字符 `\ud83d`——一个是转义、一个是原码点，**线上字节相同，JS 串不同**。
+第一版实施里我把它当成「同一值的两种拼写」加了 `canonicalRecord()` 归一化——**那是错的，已删除**。Lead 复核指出，事实是：
 
-`canonicalRecord(line)` 因此：解析外层记录 → 把 `out` 字段**当作内层 JSON 文档再解析一遍** → 用 `JSON.stringify` 的 replacer 把未配对代理统一成 `\uFFFD` → 比较。对良构文本这是**恒等变换**（不改变任何一条现有记录的结果），只在「同一值的两种拼写」上生效。已用 7 个合成用例单元验证过敏感性：改一个值 / 换成 `\uFFFE` / 值不同的 `out` 都必须仍然报 mismatch，非 JSON 的 `out` 与非 JSON 的行原样透传。
+- 引擎的 `out` 里是 **3 个字节 `EF BF BD`**（原码点 U+FFFD）；
+- 参考的 `out` 里是 **6 个 ASCII 字符 `\`,`u`,`d`,`8`,`3`,`d`**（`JSON.stringify` 对未配对代理的转义）。
 
-注意：这里也说明**交叉校验无法覆盖 `\u0000` 拒绝**——参考实现 `crp_reference.js` 走 `JSON.parse`，它接受 `\u0000`。所以语料里那条是**字面量 `"\\u0000"`（六个可打印字符，不含 NUL 字节）**，不是转义。
+**线上字节不同、记录文本不同、解码后的值也不同**（U+FFFD vs 未配对代理码元）。更根本的是：一个字符串模型是 UTF-8 字节的引擎**装不下**未配对代理，U+FFFD 是被迫的。所以这与 `\u0000` 拒绝同类——**固有的、要记录的分歧**，不是可以用比较器抹平的等式。
+
+现在的处理：
+
+- **代理对**（`\uD83D\uDE00`）保留在语料里，仍在**严格 `a === b`** 下逐字节一致——那才是真正的契约违规，也已修好。
+- 同时保留 `\u0001`、`\u00e9\u4e2d`、`pair in key`、`two pairs`、以及**字面量 `"\\u0000"`（六个可打印字符，不含 NUL 字节）**。
+- **删除**两条孤立代理条目，**删除 `canonicalRecord()`**，比较恢复为 `if (a === b) continue;`。
+- 引擎对孤立代理的确切字节由 `src/verse/json_min_probe.c` 断言（`\uD83D`/`\uDE00` → `efbfbd`，含 key 位置），这才是钉住它的正确位置。
+- 语料：101 → **107** 条（新增 6 条：代理对 ×3、`\u0001`、`\u00e9\u4e2d`、字面 `\\u0000`）。
+
+精确的分歧事实（供 §10.6 记录）：
+
+| | 输入（CRP 行） | 引擎 | 参考（Node） |
+| --- | --- | --- | --- |
+| 孤立代理 | `{"x":"\uD83D"}` | `ok:true`，`out` 内含 `EF BF BD`，字节 `…2278223a22efbfbd227d7d0a` | `ok:true`，`out` 内含 `\ud83d`，字节 `…2278223a225c7564383364227d7d0a` |
+| `\u0000` | `{"x":"x\u0000y"}` | `ok:false`，`"\\u0000 is not representable at offset 48"`，`out:null` | `ok:true`，`out` 为 `{"x":"x\u0000y"}`（转义），解出 `780079` |
+
+交叉校验**无法**覆盖这两条：参考实现 `crp_reference.js` 走 `JSON.parse`，两个输入它都接受。
 
 ### 7.5 给 Lead 的合并清单
 
 1. **`docs/BOARD.md` §3 的 gate 表**：`ctest (expect 92/92)` → `93/93`，与 `tools/gate.sh:43` 已改的 `EXP_CTEST=93` 对齐（我不改 BOARD.md）。
-2. **`docs/STATUS.md` §10.6**：请追加第五条 CRP 分歧（我按 §5 禁令没有改它，草稿如下）：
-   - 「`\u0000`：引擎**拒绝**（`\u0000 is not representable`），Node `JSON.parse` 产出含 NUL 的串并接受。引擎侧所有 writer 都按 `*p` 扫到 NUL 为止，最小只能产出 `\u0001`，故此分歧不缩小引擎可生成的范围。」
+2. **`docs/STATUS.md` §10.6**：请追加**两条**分歧（我按 §5 禁令没有改 STATUS.md，草稿如下；精确输入/输出见 7.4 的表）：
+   - 「`\u0000`：引擎**拒绝**该行（`ok:false`，`\u0000 is not representable`），Node `JSON.parse` 产出含 NUL 的串并接受（`"x\u0000y"` → 字节 `78 00 79`）。引擎侧所有 writer 都按 `*p` 扫到 NUL 为止，最小只能产出 `\u0001`，故此分歧不缩小引擎可生成的范围。」
+   - 「孤立代理：引擎在解码时映射为 **U+FFFD**（`EF BF BD`），Node `JSON.parse` 保留未配对代理码元、`JSON.stringify` 再把它转义成 **六个字符 `\ud83d`**。引擎的字符串模型是 UTF-8 字节，装不下未配对代理，U+FFFD 是被迫的；两边线上字节不同、记录文本不同。引擎侧确切字节由 `src/verse/json_min_probe.c` 钉住。」
 3. 其余仍写着 92 的位置（我没动，供 Lead 决定）：`tools/README.md:103`、`docs/STATUS.md:41`、`:48`、`:57`、`:716`、`:729`、`docs/HYGIENE.md:321`、`docs/BOARD.md:54`。
 
 ### 7.6 复现命令
