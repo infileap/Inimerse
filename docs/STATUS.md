@@ -983,3 +983,22 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 4. **HTTP 监听器的 `/portal` 仍不查注册表**（F4）：它对未注册的 verse 也铸发令牌，而 `crp_registry_portal` 与 `tools/crp_relay.js` 都答 404 `verse not found`。`src/platform/http_posix.c:2023-2028` 的注释称调用方「prove[s] it may open a portal for this exact (verse, peer)」，对非字符串 verse/peer 而言这句不成立。
 
 这四点已登记为 `task-9`（写域 `src/platform/http_posix.c`），附了验收条件：监听器的 `/portal` 要么整体走 `crp_registry_portal`，要么复现它的证明后拒绝（非字符串 verse → 404、falsy peer → 404，且不再有「意外为空」的 scope），并补一条「用非字符串 verse 铸发后、该令牌对另一个 verse 必须被拒」的回归。
+
+### 10.13 portal 令牌的 scope 必须是真实已注册的一对（`crp-portal-postcheck`，`d565253`）
+
+**来源。** §10.12 末段四点（`task-9`）。最重的是 **R1** —— `token_allows` 把「没有 scope」读成「所有 scope」；以及 **R4** —— HTTP 监听器的 `/portal` **从不查注册表**。
+
+**修法：三道防线，让 R1/R4 按构造消失（不是就地补扫描器）。**
+
+1. **判据方先改**（本仓库规矩）：`tools/crp_relay.js` 的 `/portal` 收紧为 `if (typeof p.verse !== 'string' || !verses.has(p.verse) || typeof p.peer !== 'string' || !p.peer) return json(res, 404, { error: 'verse not found' });`
+2. `src/platform/http_posix.c` 新增 `static int portal_verse_registered(const char *id)`，扫 `g_verses` —— 即 **`POST /register` 填的那张表**（写入 `:1959-1961`，读出 `:1166`），与参考实现的 `verses` Map 是同一集合。`/portal` 在两条 403 **之后**加：`if (!vv || vv->type != VJ_STR || !vv->s || !vv->s[0] || !portal_verse_registered(vv->s) || !pv || pv->type != VJ_STR || !pv->s || !pv->s[0]) { status = 404; body = "{\"error\":\"verse not found\"}\n"; }`；scope 改用 `vv->s`/`pv->s` **直取**，不再 `vj_str(…,"")` 强转。
+3. `token_register` 拒绝存入空的 scope 半边：`if (!verse || !*verse || !peer || !*peer) return;`；`token_allows` 改为先 `if (!g_tokens[i].verse[0] || !g_tokens[i].peer[0]) return 0;`，再要求两半**逐字相等**。
+4. 引擎的 crp.c 路径同步收紧：`crp_registry_portal` 的 peer 测试加上 `peer->type != VJ_STR || !peer->s || !peer->s[0]`，并把 `pstr` 从 `crp_js_string(peer, peerbuf, …)` 改成 `peer->s` —— 两侧**不再有强转可分歧**。
+
+**行为改变（对第三方客户端是破坏性的，必须写明）。** `/portal` 现在只为**经 `POST /register` 注册过**的 verse 铸发令牌。三个在树套件补了 `/register` 步骤：`tools/crp_relay.test.js`、`tools/crp_session_flow.test.js`、`tools/reconnect_generation.test.py`；`tools/crp_client.test.js` 本来就先 `register`。
+
+**协调者独立验收（不采信自述）。** worktree 内 `bash tools/gate.sh`（全量，非 `--fast`）→ 七阶段全 PASS、`gate: OK`、exit 0。裸 socket 探针（真引擎，先 `POST /register {"id":"demo",…}`）：**11 条断言全过** —— `{"verse":5,"peer":null}`→404、`{"verse":5,"peer":"p1"}`→404、`{"verse":"demo","peer":5}`→404、`{"verse":"demo","peer":null}`→404、`{"verse":"demo","peer":""}`→404、未注册 `{"verse":"ghost"}`（**证明正确**）→404、注册过的 `{"verse":"demo","peer":"p1"}`→200；该令牌打 `/signal` 与 `/session/stop` 的 `(demo,p1)` → 200，打 `(other,other)` → 403。**同一探针打 main 的 `build/inimerse` → 6 条 FAIL**，其中 `{"verse":5,"peer":null}` 铸出 `{"token":"posix-…","expires":…,"verse":"","peer":""}` —— 逐字就是 §10.12 记的 hub 全域通配令牌；`{"verse":"ghost"}` 则铸出 `"verse":"ghost","peer":"p1"`（**未注册也发**）。
+
+**修前必失败（独立复现）。** worktree 内 `git checkout 1fe93be -- src/`（保留本流的 `tools/`）后重编：`verse_crp_crosscheck` → `crp_engine_crosscheck: 2 of 115 records differ`（line 76 `peer:5`、line 77 `peer:[]`：参考 404 而引擎 200）；`crp_session_flow_regression` → `Expected values to be strictly equal: 200 !== 404`；`reconnect_generation_regression` → `AssertionError: (200, '{"token":"posix-6abf5171","expires":1790923420,"verse":"v-unregistered","peer":"p1"}\n')`。恢复后重编、全量 `ctest` 全绿。语料 **112 → 115**。
+
+**遗留（未调和，如实登记）。** **R2 重复 JSON 键**：`vj_get` 是 first-wins，而 JS `JSON.parse` 是 last-wins。本流实测仍分歧 —— 对 `{"verse":"demo","verse":"ghost",…}`，证明按**首个** `demo` 算 → 200，按**末个** `ghost` 算 → 403；参考实现恰好相反（`JSON.parse` 取 `ghost`，故按 `ghost` 的证明会被接受、再被 `verses.has("ghost")` 判 404）。未修的原因是两个都成立：`vj_get` 在 `src/common/**`（本波硬禁碰），且 `JSON.parse` **无法**表达 first-wins，两侧不可兼得。R3（非字符串值回显）**随 R1 一并消失**：非字符串 verse/peer 现在直接 404，且回显改用 `portal_json_escape(vv->s)` 而非强转。
