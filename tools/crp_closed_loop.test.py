@@ -26,6 +26,12 @@ HUB = os.environ.get("INIM_CRP_HUB_BIN", "crp-hub")
 # Same secret and frozen clock as src/verse/crp_probe.c, so the whole transcript
 # is reproducible byte for byte.
 SECRET = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+# The hub-side enrollment secret that gates POST /portal.  It is deliberately a
+# different secret from the one that signs capability tokens: a token admits a
+# caller to /signal, whereas the enrollment proof decides who may be issued a
+# token at all.  Both processes read it from the environment, and neither would
+# mint a portal token without it.
+ENROLL = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
 NOW = 1767225600000  # 2026-01-01T00:00:00Z
 
 checks = 0
@@ -40,10 +46,11 @@ def check(cond, label, detail=""):
 
 
 def main():
+    env = dict(os.environ, CRP_ENROLL_SECRET=ENROLL)
     hub = subprocess.Popen(
         [HUB, "0", SECRET, str(NOW)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
+        text=True, env=env,
     )
     try:
         announce = hub.stdout.readline()
@@ -56,7 +63,7 @@ def main():
         check(isinstance(port, int) and port > 0, "hub: bound a real port", port)
 
         peer = subprocess.run([PEER, str(port), SECRET, str(NOW)],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, timeout=30, env=env)
         for line in peer.stdout.splitlines():
             print("| " + line)
         if peer.stderr.strip():
@@ -74,13 +81,20 @@ def main():
         check(out.count('"frameText"') >= 8,
               "peer: sent real CRP frames over the socket",
               out.count('"frameText"'))
+        # The portal caller had to prove who it is: three well-formed requests
+        # with an absent, malformed and mismatched proof were all refused.
+        check(out.count("invalid enrollment proof") == 3,
+              "hub: refused absent, malformed and mismatched enrollment proofs",
+              out.count("invalid enrollment proof"))
+        check('"sessions":0' in out,
+              "hub: refused portals created no session", out.count('"sessions":0'))
         for status, want, label in (
-            (403, 4, "invalid capability token refused four ways"),
+            (403, 7, "capability token or enrollment proof refused"),
             (404, 3, "unknown verse or missing peer refused"),
             (409, 1, "out-of-order resume refused"),
             (400, 3, "malformed request refused"),
             (202, 3, "signals accepted"),
-            (200, 13, "successful exchanges"),
+            (200, 14, "successful exchanges"),
         ):
             got = out.count(f'"status":{status}')
             check(got == want, f"transcript: {label}", f"got {got}, want {want}")

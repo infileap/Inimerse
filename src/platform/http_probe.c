@@ -7,6 +7,10 @@
 
 int verse_http_start(int port);
 void verse_http_stop(void);
+/* The enrollment proof POST /portal demands; defined in src/platform/http_posix.c
+   so this probe can compute the very proof the listener verifies. */
+void verse_portal_proof(const char *enroll_secret, const char *verse, const char *peer,
+                        char *out, size_t cap);
 
 static int pal_health(int port, char *body, size_t cap, int *status) {
     const char *request = "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
@@ -89,6 +93,10 @@ int main(void) {
     setenv("INIMERSE_STATE_FILE", "/tmp/inimerse_http_probe_state", 1);
     remove("/tmp/inimerse_http_probe_state");
     setenv("CRP_TOKEN_TTL", "1", 1);
+    /* The hub-side portal enrollment secret.  /portal mints a capability token
+       only for a caller that proves it may open a portal for that (verse, peer);
+       with this unset the listener refuses every /portal outright. */
+    setenv("CRP_ENROLL_SECRET", "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", 1);
     int started = 0;
     for (int attempt = 0; attempt < 12 && !started; ++attempt) {
         started = verse_http_start(port);
@@ -109,8 +117,19 @@ int main(void) {
     const char *route = "POST /route HTTP/1.1\r\nHost: localhost\r\nContent-Length: 42\r\nConnection: close\r\n\r\n{\"id\":\"peer1\",\"endpoint\":\"127.0.0.1:9000\"}";
     if (!query(port, route, "\"ok\":true")) { verse_http_stop(); return 9; }
     if (!query(port, "GET /route/peer1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", "127.0.0.1:9000")) { verse_http_stop(); return 10; }
+    /* A portal is authority: without an enrollment proof the listener must mint
+       nothing and answer 403.  With one, it issues the token the rest of this
+       probe runs on. */
+    const char *noauth = "POST /portal HTTP/1.1\r\nHost: localhost\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"verse\":\"v1\",\"peer\":\"p1\"}";
+    if (!query(port, noauth, "403 Forbidden")) { verse_http_stop(); return 12; }
+    char proof[128] = {0};
+    verse_portal_proof("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", "v1", "p1", proof, sizeof proof);
+    if (!proof[0]) { verse_http_stop(); return 13; }
+    char portal_body[256];
+    snprintf(portal_body, sizeof portal_body, "{\"verse\":\"v1\",\"peer\":\"p1\",\"auth\":\"%s\"}", proof);
     char portal[512] = {0};
-    const char *portal_req = "POST /portal HTTP/1.1\r\nHost: localhost\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"verse\":\"v1\",\"peer\":\"p1\"}";
+    char portal_req[512];
+    snprintf(portal_req, sizeof portal_req, "POST /portal HTTP/1.1\r\nHost: localhost\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", strlen(portal_body), portal_body);
     if (request_body(port, portal_req, portal, sizeof portal) < 0 || !strstr(portal, "\"token\":\"posix-")) { verse_http_stop(); return 5; }
     char *tp = strstr(portal, "\"token\":\""); tp += 10; char token[64] = {0};
     char *te = strchr(tp, '"'); if (!te || (size_t)(te - tp) >= sizeof token) { verse_http_stop(); return 6; }

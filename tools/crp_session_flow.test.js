@@ -3,6 +3,7 @@
 // §55.3 handshake/negotiation, §55.6 sequencing + resume).
 // Usage: node crp_session_flow.test.js ws://127.0.0.1:PORT
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { MiniWs } = require('./mini_ws');
 
 const base = process.argv[2];
@@ -10,6 +11,15 @@ assert.ok(base, 'usage: node crp_session_flow.test.js ws://host:port');
 const m = base.match(/^ws:\/\/([^:/]+):(\d+)/);
 assert.ok(m, `bad base url: ${base}`);
 const HOST = m[1], PORT = Number(m[2]);
+
+/* /portal is the hub's one authorization entry point -- the token it returns is
+ * what /session/resume later trusts -- so a caller has to prove it may open a
+ * portal for that (verse, peer):
+ *   base64url(HMAC-SHA256(CRP_ENROLL_SECRET, String(verse) + "\0" + String(peer)))
+ * tools/crp_session.test.py starts the engine with the same secret, and here we
+ * also assert the proof-less request is refused. */
+const ENROLL = process.env.CRP_ENROLL_SECRET || '';
+const enrollProof = (verse, peer) => crypto.createHmac('sha256', ENROLL).update(`${verse}\0${peer}`).digest('base64url');
 
 function connect(query, timeoutMs = 4000) {
   const ws = new MiniWs(HOST, PORT);
@@ -67,9 +77,20 @@ async function main() {
   }
   // wait until the server has persisted the window (retry the HTTP read)
   const httpBase = `http://${HOST}:${PORT}`;
-  // /session/resume requires a capability token scoped to (verse, peer)
-  const tokRes = await fetch(`${httpBase}/portal`, {
+  // /session/resume requires a capability token scoped to (verse, peer), and
+  // /portal hands one out only against a valid enrollment proof.
+  const noAuth = await fetch(`${httpBase}/portal`, {
     method: 'POST', body: JSON.stringify({ verse, peer }),
+  });
+  assert.equal(noAuth.status, 403);
+  assert.equal(await noAuth.text(), '{"error":"invalid enrollment proof"}\n');
+  const wrongAuth = await fetch(`${httpBase}/portal`, {
+    method: 'POST', body: JSON.stringify({ verse, peer, auth: 'not-a-proof' }),
+  });
+  assert.equal(wrongAuth.status, 403);
+  assert.equal(await wrongAuth.text(), '{"error":"invalid enrollment proof"}\n');
+  const tokRes = await fetch(`${httpBase}/portal`, {
+    method: 'POST', body: JSON.stringify({ verse, peer, auth: enrollProof(verse, peer) }),
   });
   const tokText = await tokRes.text();
   const tokMatch = tokText.match(/"token":"([^"]+)"/);

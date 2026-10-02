@@ -2,17 +2,27 @@
 const assert = require('node:assert/strict');
 const { createRelay } = require('./crp_relay');
 const { CrpClient } = require('./crp_client');
-const { server } = createRelay();
+/* The hub holds the enrollment secret; the client has to present a proof made
+ * with the same one.  Both sides default to CRP_ENROLL_SECRET, and a hub with
+ * no enrollment secret refuses every /portal outright (see crp_relay.test.js). */
+const ENROLL = 'client-suite-enroll-secret';
+const { server, sessions } = createRelay({ enrollSecret: ENROLL });
 server.listen(0, async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     await fetch(base + '/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'demo', endpoint: 'local' }) });
-    const c = new CrpClient(base, { retries: 2, backoffMs: 1 });
+    const c = new CrpClient(base, { retries: 2, backoffMs: 1, enrollSecret: ENROLL });
     assert.equal((await c.find('demo')).items.length, 1);
     assert.equal((await c.registerRoute('peer-route', '127.0.0.1:9000', 'demo')).ok, true);
     assert.equal((await c.resolveRoute('peer-route')).endpoint, '127.0.0.1:9000');
     assert.equal((await c.registerCandidate('peer-nat', '10.0.0.2:4000', 'demo')).ok, true);
     assert.equal((await c.listCandidates()).candidates.some(x => x.id === 'peer-nat'), true);
+    /* A client that carries no enrollment secret cannot open a portal, and one
+     * that carries the wrong secret cannot either.  Either way the refusal
+     * leaves the hub with nothing: no token, no session. */
+    await assert.rejects(() => new CrpClient(base, { retries: 0, backoffMs: 1 }).portal('demo', 'peer'), /invalid enrollment proof/);
+    await assert.rejects(() => new CrpClient(base, { retries: 0, backoffMs: 1, enrollSecret: 'the-wrong-secret' }).portal('demo', 'peer'), /invalid enrollment proof/);
+    assert.equal(sessions.size, 0);
     assert.equal((await c.portal('demo', 'peer')).peer, 'peer');
     assert.equal((await c.signal('demo', 'join')).accepted, true);
     assert.equal((await c.signal('demo', 'ready')).seq, 2);

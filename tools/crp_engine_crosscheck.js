@@ -8,7 +8,7 @@
  *
  * The corpus below is replayed twice:
  *   - by the engine probe, as `crp_probe --transcript <corpus> --secret <hex>
- *     --now <ms>`, one JSON record per corpus line;
+ *     --enroll-secret <hex> --now <ms>`, one JSON record per corpus line;
  *   - by this script, through `tools/crp_reference.js` for the frame/codec/token
  *     ops and through a real `tools/crp_relay.js` HTTP server for the registry
  *     ops.
@@ -17,7 +17,10 @@
  * Both sides run on the SAME frozen clock: `Date.now` is replaced before the
  * relay is loaded, which is what `--now` does on the engine side.  Without that
  * the tokens, `expires` fields and registry pruning would differ by wall-clock
- * drift and nothing would be comparable.
+ * drift and nothing would be comparable.  Both sides are also given the same
+ * portal enrollment secret, so a `relay_portal` record pins not only "the proof
+ * for (verse, peer) was accepted" but that the engine and the reference compute
+ * the same proof bytes for the same inputs.
  */
 
 const fs = require('node:fs');
@@ -28,6 +31,11 @@ const { spawnSync } = require('node:child_process');
 
 const NOW = 1767225600000;
 const SECRET = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
+/* The hub-side enrollment secret that gates POST /portal -- deliberately a
+ * different secret from SECRET, which only signs capability tokens.  Mirrors
+ * PROBE_ENROLL_SECRET in src/verse/crp_probe.c and ENROLL in
+ * tools/crp_closed_loop.test.py. */
+const ENROLL_SECRET = 'ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100';
 
 let CLOCK = NOW;
 Date.now = () => CLOCK;
@@ -53,6 +61,14 @@ function checkToken(secret, token, verse, peer, capability, now) {
   } catch {
     return false;
   }
+}
+
+/* The enrollment proof a caller presents to POST /portal.  Both sides compute
+ * it as base64url(HMAC-SHA256(enroll, String(verse) + "\0" + String(peer))), so
+ * the corpus can pin the JS String() coercion (a number reads as its decimal
+ * text, an absent member as "undefined") across the process boundary. */
+function enrollProof(verse, peer) {
+  return crypto.createHmac('sha256', ENROLL_SECRET).update(`${verse}\0${peer}`).digest('base64url');
 }
 
 /* ---- record shapes ------------------------------------------------------- */
@@ -273,14 +289,28 @@ const CORPUS = [
   { req: { op: 'relay_find', q: 'zzz' }, run: () => http('GET', `/find?q=${encodeURIComponent('zzz')}`) },
 
   /* ---- registry: portal ------------------------------------------------- */
+  /* A portal may only be opened by a caller who proves it may open one for
+   * this exact (verse, peer): the proof is what stands between an anonymous
+   * request and a capability token, so the corpus pins the accepted proof and
+   * every refusal next to it. */
+  { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a', auth: enrollProof('demo', 'peer-a') },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-a', auth: enrollProof('demo', 'peer-a') }) },
+  { req: { op: 'relay_portal', verse: 'nope', peer: 'peer-a', auth: enrollProof('nope', 'peer-a') },
+    run: () => http('POST', '/portal', { verse: 'nope', peer: 'peer-a', auth: enrollProof('nope', 'peer-a') }) },
+  { req: { op: 'relay_portal', verse: 'demo', auth: enrollProof('demo', undefined) },
+    run: () => http('POST', '/portal', { verse: 'demo', auth: enrollProof('demo', undefined) }) },
+  { req: { op: 'relay_portal', verse: 5, peer: 'peer-a', auth: enrollProof(5, 'peer-a') },
+    run: () => http('POST', '/portal', { verse: 5, peer: 'peer-a', auth: enrollProof(5, 'peer-a') }) },
   { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a' },
     run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-a' }) },
-  { req: { op: 'relay_portal', verse: 'nope', peer: 'peer-a' },
-    run: () => http('POST', '/portal', { verse: 'nope', peer: 'peer-a' }) },
-  { req: { op: 'relay_portal', verse: 'demo' },
-    run: () => http('POST', '/portal', { verse: 'demo' }) },
-  { req: { op: 'relay_portal', verse: 5, peer: 'peer-a' },
-    run: () => http('POST', '/portal', { verse: 5, peer: 'peer-a' }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a', auth: 'not-a-proof' },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-a', auth: 'not-a-proof' }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a', auth: enrollProof('demo', 'peer-b') },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-a', auth: enrollProof('demo', 'peer-b') }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a', auth: enrollProof('nope', 'peer-a') },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-a', auth: enrollProof('nope', 'peer-a') }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: null, auth: enrollProof('demo', null) },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: null, auth: enrollProof('demo', null) }) },
 
   /* ---- registry: signal ------------------------------------------------- */
   { req: { op: 'relay_signal', verse: 'demo', event: 'join', data: { n: 1 } },
@@ -333,8 +363,8 @@ const CORPUS = [
     run: () => http('POST', '/session/resume', { verse: 'demo', peer: 'peer-a', token: TOKEN_A, seq: 11 }) },
 
   /* ---- registry: token TTL and registry TTL ----------------------------- */
-  { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-b' },
-    run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-b' }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-b', auth: enrollProof('demo', 'peer-b') },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-b', auth: enrollProof('demo', 'peer-b') }) },
   { req: { op: 'relay_signal', verse: 'demo', event: 'join', token: TOKEN_B, peer: 'peer-b' },
     run: () => http('POST', '/signal', { verse: 'demo', event: 'join', token: TOKEN_B, peer: 'peer-b' }) },
   { req: { op: 'now', ms: NOW + 300001 }, run: () => { CLOCK = NOW + 300001; return { ok: true, error: null, out: null, result: null }; } },
@@ -364,7 +394,7 @@ async function main() {
     process.exit(2);
   }
 
-  relay = createRelay({ secret: SECRET });
+  relay = createRelay({ secret: SECRET, enrollSecret: ENROLL_SECRET });
   await new Promise(resolve => relay.server.listen(0, '127.0.0.1', resolve));
   const port = relay.server.address().port;
   http = (method, url, body) => request(port, method, url, body);
@@ -372,7 +402,7 @@ async function main() {
   const tmp = path.join(os.tmpdir(), `crp_corpus_${process.pid}.jsonl`);
   fs.writeFileSync(tmp, CORPUS.map(e => JSON.stringify(e.req)).join('\n') + '\n');
 
-  const proc = spawnSync(probe, ['--transcript', tmp, '--secret', SECRET, '--now', String(NOW)], {
+  const proc = spawnSync(probe, ['--transcript', tmp, '--secret', SECRET, '--enroll-secret', ENROLL_SECRET, '--now', String(NOW)], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });

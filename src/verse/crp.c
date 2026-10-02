@@ -715,6 +715,7 @@ typedef struct {
 
 struct CrpRegistry {
     char       *secret;
+    char       *enroll_secret;  /* NULL/empty: /portal is fail-closed */
     long long   token_ttl_ms;
     long long   registry_ttl_ms;
     long long   max_revoked;
@@ -775,6 +776,11 @@ CrpRegistry *crp_registry_new(const CrpRegistryConfig *cfg) {
     r->secret = (char *)malloc(strlen(cfg->secret) + 1);
     if (!r->secret) { free(r); return NULL; }
     strcpy(r->secret, cfg->secret);
+    if (cfg->enroll_secret && cfg->enroll_secret[0]) {
+        r->enroll_secret = (char *)malloc(strlen(cfg->enroll_secret) + 1);
+        if (!r->enroll_secret) { free(r->secret); free(r); return NULL; }
+        strcpy(r->enroll_secret, cfg->enroll_secret);
+    }
     r->token_ttl_ms = cfg->token_ttl_ms > 0 ? cfg->token_ttl_ms : CRP_DEFAULT_TOKEN_TTL_MS;
     r->registry_ttl_ms = cfg->registry_ttl_ms > 0 ? cfg->registry_ttl_ms : CRP_DEFAULT_REGISTRY_TTL_MS;
     r->max_revoked = cfg->max_revoked > 0 ? cfg->max_revoked : CRP_DEFAULT_MAX_REVOKED;
@@ -785,6 +791,7 @@ CrpRegistry *crp_registry_new(const CrpRegistryConfig *cfg) {
 void crp_registry_free(CrpRegistry *r) {
     if (!r) return;
     free(r->secret);
+    free(r->enroll_secret);
     for (size_t i = 0; i < r->nverses; i++) vj_free(r->verses[i].obj);
     free(r->verses);
     for (size_t i = 0; i < r->nsessions; i++) {
@@ -1014,7 +1021,56 @@ CrpResult crp_registry_find(CrpRegistry *r, const char *q) {
     return res;
 }
 
-CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *peer) {
+int crp_enroll_proof(const char *enroll_secret, const VjVal *verse,
+                     const VjVal *peer, CrpBuf *out) {
+    if (!enroll_secret || !enroll_secret[0] || !out) return -1;
+    /* `String(verse) + "\0" + String(peer)`, with the reference's JS coercion:
+     * a missing member is "undefined", a number its decimal text. */
+    char vsb[512], psb[512];
+    const char *vs = crp_js_string(verse, vsb, sizeof vsb);
+    const char *ps = crp_js_string(peer, psb, sizeof psb);
+    CrpBuf msg;
+    upp_buf_init(&msg);
+    upp_buf_puts(&msg, vs);
+    upp_buf_putc(&msg, '\0');
+    upp_buf_puts(&msg, ps);
+    unsigned char mac[32];
+    crp_hmac_sha256(enroll_secret, strlen(enroll_secret),
+                    msg.data ? msg.data : "", msg.len, mac);
+    upp_buf_free(&msg);
+    return crp_b64url_encode(mac, sizeof mac, out);
+}
+
+/* Constant-time equality, the C shape of the reference's
+ * `got.length === want.length && crypto.timingSafeEqual(got, want)`: a length
+ * mismatch is refused first (timingSafeEqual throws on one), the bytes are then
+ * compared without an early exit so a near-miss cannot be found by timing. */
+static int enrollment_matches(const char *got, const char *want) {
+    if (!got || !want) return 0;
+    size_t n = strlen(got), m = strlen(want);
+    if (n != m) return 0;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < n; i++) diff |= (unsigned char)(got[i] ^ want[i]);
+    return diff == 0;
+}
+
+CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *peer,
+                              const VjVal *auth) {
+    /* /portal is the only authorization entry point -- every other capability
+     * endpoint trusts the token it mints -- so nothing is minted and no session
+     * is touched until the caller proves it may open a portal for this pair.
+     * Both refusals come BEFORE the registry is inspected, so an unproven
+     * caller cannot even learn whether the verse exists. */
+    if (!r || !r->enroll_secret || !r->enroll_secret[0])
+        return res_error(403, "portal enrollment is not configured");
+    CrpBuf want;
+    upp_buf_init(&want);
+    const char *got = (auth && auth->type == VJ_STR) ? auth->s : NULL;
+    int proven = crp_enroll_proof(r->enroll_secret, verse, peer, &want) == 0 &&
+                 enrollment_matches(got, want.data ? want.data : "");
+    upp_buf_free(&want);
+    if (!proven) return res_error(403, "invalid enrollment proof");
+
     const char *vstr = (verse && verse->type == VJ_STR) ? verse->s : NULL;
     if (!vstr || !registry_has_verse(r, vstr) || !vj_truthy(peer))
         return res_error(404, "verse not found");

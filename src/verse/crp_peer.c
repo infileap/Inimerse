@@ -176,6 +176,24 @@ static const char *frame_text_of(CrpBuf *raw) {
     return raw->data;
 }
 
+/* The enrollment proof a caller must present to open a portal for
+ * (verse, peer): base64url(HMAC-SHA256(enroll, String(verse) + "\0" +
+ * String(peer))), byte-identical to tools/crp_relay.js enrollProof().  A NULL
+ * argument means the member was absent from the request, which JS String()
+ * coerces to "undefined" -- so the proof for a request with no peer is the
+ * proof over the literal "undefined".  Never returns NULL. */
+static const char *proof_of(const char *enroll, const char *verse, const char *peer,
+                            char *scratch, size_t cap) {
+    VjVal v = { .type = VJ_STR, .s = (char *)verse };
+    VjVal p = { .type = VJ_STR, .s = (char *)peer };
+    CrpBuf b;
+    upp_buf_init(&b);
+    int rc = crp_enroll_proof(enroll, verse ? &v : NULL, peer ? &p : NULL, &b);
+    snprintf(scratch, cap, "%s", (rc == 0 && b.data) ? b.data : "");
+    upp_buf_free(&b);
+    return scratch;
+}
+
 static VjVal *parse_lit(const char *json) {
     char err[128];
     VjVal *v = vj_parse(json, err, sizeof err);
@@ -215,13 +233,21 @@ static VjVal *peer_call(Peer *p, const char *req, const char *label) {
 
 int main(int argc, char **argv) {
     if (argc < 4) {
-        fprintf(stderr, "usage: crp-peer <port> <secret-hex> <now-ms> [peer-id]\n");
+        fprintf(stderr, "usage: crp-peer <port> <secret-hex> <now-ms> [peer-id]\n"
+                        "       CRP_ENROLL_SECRET must be set to the hub's portal\n"
+                        "       enrollment secret; /portal is fail-closed without it.\n");
         return 2;
     }
     int port = atoi(argv[1]);
     const char *secret = argv[2];
     long long now = atoll(argv[3]);
     const char *self = argc > 4 ? argv[4] : "peer-a";
+    const char *enroll = getenv("CRP_ENROLL_SECRET");
+    if (!enroll || !enroll[0]) {
+        fprintf(stderr, "crp-peer: CRP_ENROLL_SECRET is required: /portal cannot be "
+                        "opened without the enrollment secret\n");
+        return 2;
+    }
 
     signal(SIGPIPE, SIG_IGN);
     Peer p;
@@ -233,8 +259,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "crp-peer: cannot connect to 127.0.0.1:%d: %s\n", port, strerror(errno));
         return 2;
     }
-    printf("# crp-peer (pid %ld) -> 127.0.0.1:%d, secret %zu bytes, clock %lld\n",
-           (long)getpid(), port, strlen(secret), now);
+    printf("# crp-peer (pid %ld) -> 127.0.0.1:%d, secret %zu bytes, enroll %zu bytes, clock %lld\n",
+           (long)getpid(), port, strlen(secret), strlen(enroll), now);
 
     char err[CRP_ERR_MAX];
     CrpBuf req, raw;
@@ -339,7 +365,8 @@ int main(int argc, char **argv) {
         upp_buf_free(&frame);
     }
 
-    /* --- 8..10 portal ----------------------------------------------------- */
+    /* --- 8..14 portal ----------------------------------------------------- */
+    char authbuf[256];
     {
         CrpBuf frame;
         upp_buf_init(&frame);
@@ -348,6 +375,7 @@ int main(int argc, char **argv) {
         jo_open(&pl);
         jo_str(&pl, "verse", "nope");
         jo_str(&pl, "peer", self);
+        jo_str(&pl, "auth", proof_of(enroll, "nope", self, authbuf, sizeof authbuf));
         jreq(&req, "portal", jo_done(&pl), frame_text_of(&frame));
         resp = peer_call(&p, req.data, "portal unknown");
         if (want_status(&p, resp, 404, "portal unknown"))
@@ -357,11 +385,58 @@ int main(int argc, char **argv) {
         upp_buf_free(&frame);
     }
 
+    /* The request names no peer, so the proof is over String(undefined); it is
+     * a well-formed proof and the request is still refused by the shape check. */
     jo_open(&pl);
     jo_str(&pl, "verse", "demo");
+    jo_str(&pl, "auth", proof_of(enroll, "demo", NULL, authbuf, sizeof authbuf));
     jreq(&req, "portal", jo_done(&pl), NULL);
     resp = peer_call(&p, req.data, "portal without peer");
     want_status(&p, resp, 404, "portal without peer");
+    vj_free(resp);
+    upp_buf_free(&req);
+
+    /* A caller must prove it may open a portal for *this* (verse, peer).
+     * Absent, malformed and mismatched proofs are all refused before the
+     * registry is consulted. */
+    jo_open(&pl);
+    jo_str(&pl, "verse", "demo");
+    jo_str(&pl, "peer", self);
+    jreq(&req, "portal", jo_done(&pl), NULL);
+    resp = peer_call(&p, req.data, "portal without auth");
+    if (want_status(&p, resp, 403, "portal without auth"))
+        want_error(&p, resp, "invalid enrollment proof", "portal without auth");
+    vj_free(resp);
+    upp_buf_free(&req);
+
+    jo_open(&pl);
+    jo_str(&pl, "verse", "demo");
+    jo_str(&pl, "peer", self);
+    jo_str(&pl, "auth", "not-a-proof");
+    jreq(&req, "portal", jo_done(&pl), NULL);
+    resp = peer_call(&p, req.data, "portal with wrong auth");
+    if (want_status(&p, resp, 403, "portal with wrong auth"))
+        want_error(&p, resp, "invalid enrollment proof", "portal with wrong auth");
+    vj_free(resp);
+    upp_buf_free(&req);
+
+    jo_open(&pl);
+    jo_str(&pl, "verse", "demo");
+    jo_str(&pl, "peer", self);
+    jo_str(&pl, "auth", proof_of(enroll, "demo", "peer-b", authbuf, sizeof authbuf));
+    jreq(&req, "portal", jo_done(&pl), NULL);
+    resp = peer_call(&p, req.data, "portal with a proof for another pair");
+    if (want_status(&p, resp, 403, "portal with a proof for another pair"))
+        want_error(&p, resp, "invalid enrollment proof", "portal with a proof for another pair");
+    vj_free(resp);
+    upp_buf_free(&req);
+
+    /* ...and nothing came of any of it: no refused caller created a session. */
+    jreq(&req, "status", NULL, NULL);
+    resp = peer_call(&p, req.data, "status after refused portals");
+    if (want_status(&p, resp, 200, "status after refused portals"))
+        expect(&p, body_int(resp, "sessions") == 0,
+               "refused portals created no session", NULL);
     vj_free(resp);
     upp_buf_free(&req);
 
@@ -375,6 +450,7 @@ int main(int argc, char **argv) {
         jo_open(&pl);
         jo_str(&pl, "verse", "demo");
         jo_str(&pl, "peer", self);
+        jo_str(&pl, "auth", proof_of(enroll, "demo", self, authbuf, sizeof authbuf));
         jreq(&req, "portal", jo_done(&pl), frame_text_of(&frame));
         resp = peer_call(&p, req.data, "portal demo");
         if (want_status(&p, resp, 200, "portal demo")) {
@@ -596,12 +672,13 @@ int main(int argc, char **argv) {
     vj_free(resp);
     upp_buf_free(&req);
 
-    /* --- 23..24 a token is bound to one peer ------------------------------ */
+    /* --- 27..28 a token is bound to one peer ------------------------------ */
     char other[CRP_TOKEN_MAX];
     other[0] = '\0';
     jo_open(&pl);
     jo_str(&pl, "verse", "demo");
     jo_str(&pl, "peer", "peer-b");
+    jo_str(&pl, "auth", proof_of(enroll, "demo", "peer-b", authbuf, sizeof authbuf));
     jreq(&req, "portal", jo_done(&pl), NULL);
     resp = peer_call(&p, req.data, "portal peer-b");
     if (want_status(&p, resp, 200, "portal peer-b")) {

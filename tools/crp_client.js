@@ -7,6 +7,12 @@ class CrpClient {
     this.retries = options.retries ?? 3;
     this.backoffMs = options.backoffMs ?? 100;
     this.token = options.token || ''; this.peer = options.peer || ''; this.nextSeq = Number.isSafeInteger(options.seq) ? options.seq : 0;
+    /* The hub-side portal enrollment secret: `/portal` mints a capability token
+     * only for a caller that proves it may open a portal for that (verse, peer).
+     * Without one the client still talks, but the hub refuses to issue a token
+     * -- which is the point: authorization is not something the caller opts
+     * into. */
+    this.enrollSecret = options.enrollSecret || process.env.CRP_ENROLL_SECRET || '';
     this.packageCache = new Map(); this.maxCacheBytes = options.maxCacheBytes ?? 128 * 1024 * 1024; this.cacheBytes = 0;
   }
   async request(path, init = {}, signal) {
@@ -34,7 +40,10 @@ class CrpClient {
   resolveRoute(id, signal) { return this.request('/route/' + encodeURIComponent(id), {}, signal); }
   registerCandidate(id, endpoint, verse = '', signal) { return this.request('/nat/candidate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, endpoint, verse }) }, signal); }
   listCandidates(signal) { return this.request('/nat/candidates', {}, signal); }
-  async portal(verse, peer, signal) { this.peer = peer || this.peer; const result = await this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer }) }, signal); if (result && result.token) this.token = result.token; return result; }
+  /* base64url(HMAC-SHA256(enrollSecret, String(verse) + "\0" + String(peer)));
+   * the hub recomputes exactly this and compares in constant time. */
+  enrollProof(verse, peer) { return crypto.createHmac('sha256', this.enrollSecret).update(`${verse}\0${peer}`).digest('base64url'); }
+  async portal(verse, peer, signal) { this.peer = peer || this.peer; const body = { verse, peer }; if (this.enrollSecret) body.auth = this.enrollProof(verse, peer); const result = await this.request('/portal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, signal); if (result && result.token) this.token = result.token; return result; }
   signal(verse, event, data = {}, signal) { const peer = data.peer || this.peer; const seq = Number.isSafeInteger(data.seq) ? data.seq : ++this.nextSeq; return this.request('/signal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer, event, data, seq, token: this.token }) }, signal); }
   async resumeSession(verse, peer, token, seq = 0, signal) { this.peer = peer || this.peer; this.token = token || this.token; this.nextSeq = Math.max(this.nextSeq, seq); return this.request('/session/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer: this.peer, token: this.token, seq, replay: true }) }, signal); }
   stopSession(verse, peer = this.peer, token = this.token, signal) { return this.request('/session/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verse, peer, token }) }, signal); }

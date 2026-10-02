@@ -23,6 +23,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
+# The hub-side portal enrollment secret: each hub below is started with it, and
+# the /portal call proves possession of it.  Without it the hub refuses every
+# /portal outright, so there would be no token to reconnect with.
+ENROLL = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+
 
 def find_engine():
     env = os.environ.get("INIMERSE_BIN")
@@ -60,7 +65,8 @@ def start_hub(engine, root, hub_dir):
     """
     script = root / f"{hub_dir.name}.im"
     script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
-    env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
+    env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir),
+               CRP_ENROLL_SECRET=ENROLL)
     proc, tcp_port, http_port = start_hub_bound_ports(
         [engine, "--headless", "--port", "0", "--http-port", "0", script],
         cwd=root, env=env, log_path=root / f"{hub_dir.name}.log")
@@ -124,9 +130,20 @@ def main():
             status, auth_body = http_json(dir_port, "POST", "/session/authority", {
                 "verse": "v1", "peer": "p1", "authority": node_a})
             assert status == 200, (status, auth_body)
-            # /signal requires a capability token scoped to (verse, peer)
+            # /signal requires a capability token scoped to (verse, peer), and
+            # /portal issues one only against the enrollment proof.
+            import base64
+            import hashlib
+            import hmac as hmac_mod
             import re
-            status, portal = http_json(dir_port, "POST", "/portal", {"verse": "v1", "peer": "p1"})
+            def enroll_proof(verse, peer):
+                return base64.urlsafe_b64encode(
+                    hmac_mod.new(ENROLL.encode(), f"{verse}\0{peer}".encode(),
+                                 hashlib.sha256).digest()).rstrip(b"=").decode()
+            status, no_auth = http_json(dir_port, "POST", "/portal", {"verse": "v1", "peer": "p1"})
+            assert status == 403, (status, no_auth)
+            status, portal = http_json(dir_port, "POST", "/portal", {
+                "verse": "v1", "peer": "p1", "auth": enroll_proof("v1", "p1")})
             assert status == 200, (status, portal)
             token = re.search(r'"token":"([^"]+)"', portal).group(1)
             for seq in (1, 2, 3):

@@ -17,6 +17,21 @@ function createRelay(options = {}) {
   const secret = options.secret || crypto.randomBytes(32).toString('hex');
   const makeToken = (verse, peer, capabilities = ['signal']) => { const exp = Date.now() + (options.tokenTtlMs || 5 * 60 * 1000); const body = Buffer.from(JSON.stringify({ verse, peer, capabilities, exp })).toString('base64url'); const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url'); return `${body}.${sig}`; };
   const checkToken = (token, verse, peer, capability) => { try { const [body, sig] = String(token).split('.'); const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url'); if (!body || !sig || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false; const p = JSON.parse(Buffer.from(body, 'base64url')); return p.verse === verse && p.peer === peer && p.exp > Date.now() && p.capabilities.includes(capability); } catch { return false; } };
+  /* /portal is the only authorization entry point: every other capability
+     endpoint trusts the token it mints, so the token *is* the authorization.
+     The caller must therefore prove it may open a portal for (verse, peer)
+     before any is issued. The proof is an HMAC over the pair, keyed by a
+     hub-side pre-shared enrollment secret that is deliberately DISTINCT from
+     the token-signing secret above: leaking one must not yield the other.
+     FAIL-CLOSED: with no enrollment secret configured, /portal refuses every
+     request, so the default cannot be "open" by accident. */
+  const enrollSecret = options.enrollSecret || process.env.CRP_ENROLL_SECRET || '';
+  const enrollProof = (verse, peer) => crypto.createHmac('sha256', enrollSecret).update(`${verse}\0${peer}`).digest('base64url');
+  const enrollOk = (auth, verse, peer) => {
+    if (!enrollSecret || typeof auth !== 'string') return false;
+    const got = Buffer.from(auth); const want = Buffer.from(enrollProof(verse, peer));
+    return got.length === want.length && crypto.timingSafeEqual(got, want);
+  };
   const tokenTtlMs = options.tokenTtlMs || 5 * 60 * 1000;
   const ttl = options.ttlMs || 10 * 60 * 1000;
   const registryTtlMs = options.registryTtlMs || 30 * 60 * 1000;
@@ -61,7 +76,10 @@ function createRelay(options = {}) {
         pruneRegistry(); return json(res, 200, { candidates: [...friends.values()].filter(f => f.endpoint).map(f => ({ id: f.id, endpoint: f.endpoint })) });
       }
       if (req.method === 'POST' && req.url === '/portal') {
-        const p = await read(req); if (!verses.has(p.verse) || !p.peer) return json(res, 404, { error: 'verse not found' });
+        const p = await read(req);
+        if (!enrollSecret) return json(res, 403, { error: 'portal enrollment is not configured' });
+        if (!enrollOk(p.auth, p.verse, p.peer)) return json(res, 403, { error: 'invalid enrollment proof' });
+        if (!verses.has(p.verse) || !p.peer) return json(res, 404, { error: 'verse not found' });
         const token = makeToken(p.verse, p.peer); return json(res, 200, { token, verse: p.verse, peer: p.peer, expires: Date.now() + tokenTtlMs });
       }
       if (req.method === 'POST' && req.url === '/signal') {

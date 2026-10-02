@@ -18,6 +18,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
+# The hub-side portal enrollment secret.  The engine's /portal mints a
+# capability token only for a caller that proves it may open a portal for that
+# (verse, peer); with no secret configured it refuses outright.  The flow test
+# below computes the proof from this same value.
+ENROLL = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+
 
 def find_engine():
     env = os.environ.get("INIMERSE_BIN")
@@ -60,15 +66,16 @@ def main():
         # Kernel-assigned hub ports, read back from the engine's own startup
         # lines: nothing is reserved here, so there is no release/bind window
         # for another suite's pool to take a number in (docs/STATUS.md 2.9).
+        env = dict(os.environ, CRP_ENROLL_SECRET=ENROLL)
         proc, _tcp_port, http_port = start_hub_bound_ports(
             [str(engine), "--headless", "--port", "0", "--http-port", "0",
              "hub.im"],
-            cwd=root, log_path=root / "hub.log")
+            cwd=root, log_path=root / "hub.log", env=env)
         try:
             assert wait_ready(http_port), "hub did not become ready"
             rc = subprocess.run([node, str(HERE / "crp_session_flow.test.js"),
                                  f"ws://127.0.0.1:{http_port}"],
-                                capture_output=True, timeout=30)
+                                capture_output=True, timeout=30, env=env)
             assert rc.returncode == 0, rc.stderr.decode(errors="replace") + rc.stdout.decode(errors="replace")
             assert b"crp session flow: ok" in rc.stdout, rc.stdout
         finally:

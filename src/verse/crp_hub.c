@@ -12,10 +12,14 @@
  * line on stdout: {"ok":true,"port":NNNNN}.  That removes the port race the
  * suite is prone to (docs/STATUS.md 2.9): the driver never guesses a port.
  *
+ * `CRP_ENROLL_SECRET` (env) is the pre-shared portal enrollment secret.  It is
+ * unset by default, and with it unset `/portal` refuses every request with 403
+ * (fail-closed) rather than minting capability tokens for anyone who asks.
+ *
  * Wire protocol: one JSON object per line, request then response.
  *   {"op":"register","payload":{id,name,endpoint,...}}
  *   {"op":"find","payload":{"query":"..."}}
- *   {"op":"portal","payload":{"verse":..,"peer":..}}
+ *   {"op":"portal","payload":{"verse":..,"peer":..,"auth":..}}
  *   {"op":"signal","payload":{"verse":..,"event":..,"data":..,"token":..,"peer":..,"seq":..}}
  *   {"op":"resume","payload":{"verse":..,"peer":..,"token":..,"seq":..,"replay":..}}
  *   {"op":"revoke","payload":{"token":"..."}}
@@ -238,7 +242,8 @@ static void handle(CrpRegistry *r, const VjVal *req, CrpBuf *out) {
         const char *qs = vj_truthy(q) ? crp_js_string(q, qbuf, sizeof qbuf) : "";
         res = crp_registry_find(r, qs);
     } else if (strcmp(op, "portal") == 0) {
-        res = crp_registry_portal(r, vj_get(payload, "verse"), vj_get(payload, "peer"));
+        res = crp_registry_portal(r, vj_get(payload, "verse"), vj_get(payload, "peer"),
+                                  vj_get(payload, "auth"));
     } else if (strcmp(op, "signal") == 0) {
         res = crp_registry_signal(r, vj_get(payload, "verse"), vj_get(payload, "event"),
                                   vj_get(payload, "data"), vj_get(payload, "token"),
@@ -299,7 +304,10 @@ static int serve_connection(int fd, CrpRegistry *r, int *exchanges) {
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: crp-hub <port> <secret-hex> [now-ms]\n");
+        fprintf(stderr, "usage: crp-hub <port> <secret-hex> [now-ms]\n"
+                        "       /portal stays fail-closed (403) unless the\n"
+                        "       CRP_ENROLL_SECRET environment variable is set\n"
+                        "       to the pre-shared enrollment secret.\n");
         return 2;
     }
     int port = atoi(argv[1]);
@@ -339,6 +347,9 @@ int main(int argc, char **argv) {
     CrpRegistryConfig cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.secret = secret;
+    /* Fail-closed: with CRP_ENROLL_SECRET unset the registry has no enrollment
+     * secret and every /portal request is refused with 403. */
+    cfg.enroll_secret = getenv("CRP_ENROLL_SECRET");
     cfg.now_ms = now;
     CrpRegistry *r = crp_registry_new(&cfg);
     if (!r) {

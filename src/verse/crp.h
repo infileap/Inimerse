@@ -120,6 +120,15 @@ int crp_token_check_str(const char *secret, const char *token,
  * checked).  Returns NULL on any refusal.  Caller frees with vj_free. */
 VjVal *crp_token_body(const char *token, char *err, size_t errlen);
 
+/* Enrollment proof for POST /portal, byte-identical to the reference relay's
+ * enrollProof(): base64url(HMAC-SHA256(enroll_secret, String(verse) + "\0" +
+ * String(peer))).  `verse`/`peer` are coerced exactly like JS String(), so a
+ * missing member reads "undefined" and a number reads its decimal text.
+ * Returns 0 and fills `out` on success; -1 when `enroll_secret` is unset/empty
+ * or `out` is NULL.  The caller frees `out` with upp_buf_free. */
+int crp_enroll_proof(const char *enroll_secret, const VjVal *verse,
+                     const VjVal *peer, CrpBuf *out);
+
 /* -------------------------------------------------------------- framing */
 
 int crp_type_is_valid(const char *type);
@@ -163,6 +172,12 @@ void crp_result_free(CrpResult *r);
 
 typedef struct {
     const char *secret;          /* required; its UTF-8 bytes are the HMAC key */
+    /* Optional; enables POST /portal.  The pre-shared enrollment secret a
+     * caller must prove possession of before a capability token is minted for
+     * (verse, peer).  Deliberately distinct from `secret` so that leaking the
+     * token key does not also grant portal enrollment.  NULL or empty means
+     * fail-closed: every /portal request is refused (403), never opened. */
+    const char *enroll_secret;
     long long   token_ttl_ms;    /* <= 0: CRP_DEFAULT_TOKEN_TTL_MS   */
     long long   registry_ttl_ms; /* <= 0: CRP_DEFAULT_REGISTRY_TTL_MS */
     long long   max_revoked;     /* <= 0: CRP_DEFAULT_MAX_REVOKED     */
@@ -190,8 +205,12 @@ const char *crp_registry_secret(const CrpRegistry *r);
 CrpResult crp_registry_register(CrpRegistry *r, const VjVal *p);
 /* GET /find?q= */
 CrpResult crp_registry_find(CrpRegistry *r, const char *q);
-/* POST /portal - the response body is {token,verse,peer,expires}. */
-CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *peer);
+/* POST /portal - the response body is {token,verse,peer,expires}.
+ * `auth` is the caller's enrollment proof; see crp_enroll_proof.  A request is
+ * refused (403) before the registry is looked at when no enrollment secret is
+ * configured, or when `auth` is absent, not a string, or does not match. */
+CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *peer,
+                              const VjVal *auth);
 /* POST /signal.  verse/event/data usually come from a decoded SIGNAL frame;
  * token/peer/seq are the HTTP-shaped fields. */
 CrpResult crp_registry_signal(CrpRegistry *r, const VjVal *verse, const VjVal *event,
