@@ -42,7 +42,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import distinct_ports, wait_http_ping  # noqa: E402
+from testports import start_hub_bound_ports, wait_http_ping  # noqa: E402
 
 
 def wait_port(port, timeout=10.0):
@@ -95,17 +95,16 @@ def main():
         root = Path(td)
         home = root / "home"
         home.mkdir()
-        # Held simultaneously: a bare free_port() is TOCTOU, and under
-        # `ctest -j12` another suite can claim the same number in the gap,
-        # making the engine's bind fail with EADDRINUSE.
-        hub_port, hub_tcp_port = distinct_ports(2)
+        # The hub's TCP and HTTP ports are kernel-assigned and read back from
+        # the lines the engine prints, so nothing is held-but-unused and there
+        # is no TOCTOU gap left for `ctest -j12` to lose a number in.
         hub_script = root / "hub.im"
         hub_script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
         env = dict(os.environ, INIMERSE_HUB_DIR=str(root / "universe"))
-        hub = subprocess.Popen([str(engine), "--headless", "--port", str(hub_tcp_port),
-                                "--http-port", str(hub_port), str(hub_script)],
-                               cwd=root, env=env, stdout=subprocess.DEVNULL,
-                               stderr=open(root / "hub.log", "w"))
+        hub, _hub_tcp_port, hub_port = start_hub_bound_ports(
+            [str(engine), "--headless", "--port", "0", "--http-port", "0",
+             str(hub_script)],
+            cwd=root, env=env, log_path=root / "hub.log")
         try:
             assert wait_port(hub_port), "hub did not start"
 

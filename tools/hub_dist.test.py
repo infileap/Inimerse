@@ -38,6 +38,7 @@ def find_engine():
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from testports import (distinct_ports,  # noqa: E402
+                       start_hub_bound_ports,
                        wait_http_ping)
 
 
@@ -95,14 +96,17 @@ def main():
         hub_dir = root / "universe"
         hub_dir.mkdir()
         (root / "hub.im").write_text('say "hub"\nwait 90\n', encoding="utf-8")
-        # tcp/http/script-listen are never all live at once, but taking them
-        # together costs nothing and removes any chance of an overlap.
-        tcp_port, http_port, listen_port = distinct_ports(3)
+        # The hub's own TCP and HTTP ports are kernel-assigned and read back
+        # from the lines it prints, so this suite never holds a number it is
+        # not using (docs/STATUS.md 2.9).  Only the verse_listen port that a
+        # *script* has to name is still reserved here: verse_listen cannot
+        # report an ephemeral port back to the script.
+        listen_port = distinct_ports(1)[0]
         env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
-        hub = subprocess.Popen(
-            [str(engine), "--headless", "--port", str(tcp_port),
-             "--http-port", str(http_port), str(root / "hub.im")],
-            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        hub, _tcp_port, http_port = start_hub_bound_ports(
+            [str(engine), "--headless", "--port", "0", "--http-port", "0",
+             str(root / "hub.im")],
+            cwd=root, env=env, log_path=root / "hub.log")
         try:
             assert wait_port(http_port), "hub did not start"
 
