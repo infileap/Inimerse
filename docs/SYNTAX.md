@@ -108,9 +108,9 @@ $"hello {name}"
 | `~` | `TOK_TILDE` | 区间分隔符（`[1~5]`） |
 | `\|>` | `TOK_PIPELINE` | 管道 |
 | `>>` | `TOK_COMPOSE` | 函数组合 |
-| `\|` | `TOK_PIPE` | 集合守卫（`case ... \| guard`） |
+| `\|` | `TOK_PIPE` | `case` 守卫分隔符，**只能挂在绑定名模式后**（`n \| n > 0:`）；挂在字面量/成员模式后是解析错误（见 §7.2 M12） |
 | `?` | `TOK_QUESTION` | Result 传播 / `??` 的前半 / `?.` 的前半 |
-| `?.` | | 安全成员访问（两 token） |
+| `?.` | | 安全成员访问（两 token）；**实测求值恒为 `nil`**（见 §7.1 D11） |
 | `??` | | nil 合并（两 token） |
 | `.` `,` `:` `;` `(` `)` `[` `]` `{` `}` | | 分隔符 |
 | `$`（单独） | `TOK_UNKNOWN` | 非法 |
@@ -178,8 +178,8 @@ $"hello {name}"
 |---|---|---|
 | `ident[...]` / `ident(...)` 含 `~` | **集合区间**，不是索引/调用 | `a[1~2]` 是集合不是切片 |
 | `ident(...)` 且 `ident` ∈ {`N`,`Z`,`Z+`,`Z-`,`Float1`…`Float9`} | **集合区间** | 同名用户函数无法调用 |
-| `?.name` | 安全成员访问 | 证据 `vtest/optional_member_v04.im` |
-| `.name` | 成员访问 | `.` 后可跟保留字（见下） |
+| `?.name` | 安全成员访问 | **实测恒为 `nil`**；`vtest/optional_member_v04.im` 的期望值并未产生（D11） |
+| `.name` | 成员访问 | 对字典**实测恒为 `nil`**（D11）；`.` 后可跟保留字（见下） |
 | `[expr]` | 索引 | |
 | `?` | Result 传播（`EXPR_PROPAGATE`） | `??` 会让位（`:551-555`） |
 | `-> int\|float\|str\|bool` | 类型转换（`EXPR_ARROW_CAST`） | 与 lambda 冲突 |
@@ -196,7 +196,7 @@ $"hello {name}"
 | lambda 单参 | `x -> expr` | `vtest/lambda_v04.im` |
 | lambda 多参 | `(a, b) -> expr` | 实测 → `3` |
 | nil 合并 | `a ?? b` | `vtest/null_coalesce_v04.im` |
-| 安全成员 | `a?.b` | `vtest/optional_member_v04.im` |
+| 安全成员 | `a?.b` | **实测恒为 `nil`**（D11）；该测试只验证退出码 |
 | Result 传播 | `f()?` | `vtest/result_propagation_v04.im` |
 | Result 解包 | `unwrap(e)`、`unwrap_or(e, d)`、`ok(e)`、`err(e)`、`is_ok(e)` | `vtest/result_v04.im` |
 
@@ -354,7 +354,7 @@ case [try] subject { ... }
 | 正则匹配 | `match "b": …` | ✓ |
 | 默认 | `else: …` | ✓ |
 | 别名 | `… as name:` | `vtest/case_alias_v04.im` |
-| 守卫 | `… \| guard:`（多条件用 `,` 连接） | `:1044-1055` |
+| 守卫 | `<绑定名> \| <条件>:`（多条件用 `,` 连接） | `:1044-1055`；**只能挂在绑定名后**，见 §7.2 M12 |
 
 分支体可以是 `{ }` 或单个语句，以 `:` 引导（`:1057`）。证据：`vtest/case_collection_patterns_v04.im`、`vtest/case_structural_v04.im`、`vtest/case_nested_patterns_v04.im`、`vtest/case_try_v04.im`。
 
@@ -555,9 +555,9 @@ name be <集合或表达式> [: init]
 
 ### 7.1 危险·静默（不报错，结果就是错的）
 
-#### D1. 「操作数栈非空时的用户函数调用」被 VM 误编译 —— 最高优先级
+#### D1. 「操作数栈非空时的用户函数调用」被 VM 误编译 —— 已于 `df82cf6` 修复
 
-**已在 [`docs/BOARD.md`](BOARD.md) §5 开行 `engine-push-call-arg-miscompile`。**
+**已于 `df82cf6` 修复**（[`docs/BOARD.md`](BOARD.md) §5 行 `engine-push-call-arg-miscompile` 已完成；[`docs/STATUS.md`](STATUS.md) §10.17）。根因**不是代码生成而是 VM 调用约定**：`L_CALL_FUNC` 在 `frame_count++` 之后写 `frame_sp[frame_count-1]`，而 `L_RETURN` 在 `frame_count--` **之前**读 `frame_sp[frame_count]`，于是返回时 `sp` 被从陈旧帧槽恢复、覆盖挂起的实参。修复一行 `src/vm/vm.c:3692`：`t->sp = t->frame_sp[t->frame_count - 1];`。**下面保留修复前**的实测记录作为历史。
 
 `push(list, <用户函数调用>)` 这一类写法被编错。确定性复现（连跑 3 次结果相同）：
 
@@ -574,6 +574,8 @@ func m2() {
 - 该函数**单独成一个文件** → 得到 `2`（正确）
 - 该函数**与其它函数同文件** → 得到 `1`（错误）
 
+**⚠ 上面这个「取决于同文件里还有什么」的读法是假象**，修复时被推翻：真正规律是**第一次调用总是对的、之后的调用错**。单独调用三次 `m2` → `call1=2 call2=1 call3=1`；加一个 `m1` 只是让 `m2` 不再是第一次调用。函数体字节码在两种形态下**逐条相同**，只有函数下标不同。
+
 | 形态 | 实测 | 应为 |
 |---|---|---|
 | 两次 `push(a, g(n))` | 1 | 2 |
@@ -587,7 +589,7 @@ func m2() {
 
 **影响面比 `push` 更宽**：凡是**操作数栈非空时发生的用户函数调用**都会中招。仓库内扫描 318 个 `.im`，**21 个文件 / 44 个（外层, 内层）调用点**受影响，其中 `selfhost/parser.im` 10 处（含 `push(stmts, parse_stmt(p))`）、`selfhost/eval.im` 4 处、`selfhost/compiler.im` 3 处、`workbench.im` 4 处、`projects/demo/main.im` 3 处。
 
-**这也是自举工具链只输出一条 `OP_HALT` 的直接原因**（`selfhost/parser.im` 的 `push` 累积从未落上去）。
+**这也是自举工具链曾经只输出一条 `OP_HALT` 的原因**（`selfhost/parser.im` 的 `push` 累积从未落上去）。修复后 `--dump` 从 1 条变成 **120 条指令**，但自举路径仍然一行程序输出都没有 ⇒ 自举还有**第二层**原因未解（[`docs/BOARD.md`](BOARD.md) §5 行 `selfhost-codegen-empty`）。
 
 **退出码与「跑得动」都完全掩盖它**——两种形态都 exit 0。任何回归必须断言**数值**。
 
@@ -626,6 +628,26 @@ func m2() {
 #### D10. `N`/`Z`/`Z+`/`Z-`/`Float1`…`Float9` 被硬编码为集合前缀
 
 见 §3.4。实测 `func Z(a,b) { return 999 }` 后 `Z(1,5)` → `set(Z interval)`，函数**根本没被调用**。
+
+#### D11. `.` 与 `?.` 成员访问对字典求值为 `nil`
+
+**实测**（同一 `build`，`df82cf6` 之后）：
+
+```
+d = {"a": 1}
+say str(d["a"])     →  1      # 索引访问正常
+say str(d.a)        →  nil    # 成员访问失败
+```
+
+```
+obj = {"name": "inimerse"}
+present = obj?.name
+say present         →  nil    # 期望 "inimerse"
+```
+
+`src/parser/parser.c:512-529` 把 `?.` 解析成 `EXPR_MEMBER{safe=true}`；`src/compiler/compiler.c:1038-1056` 的 `safe` 分支发的是 `OP_IS_NIL` + `OP_JUMP_IF_TRUE` + `OP_LOADK_STRING` + `OP_INDEX_GET`，**语义上等价于 `obj["name"]`，本应返回 `"inimerse"`**。非 `safe` 的 `.` 走 `compiler.c:1057` 之后的命名空间解析（源码注释：`a.b.c` 中 `a` 是当前模块可见命名空间则编译期解析为带前缀全局），对局部变量落空后返回 `nil`。
+
+**具体失效点（`OP_IS_NIL`/跳转偏移 vs `OP_INDEX_GET` 的键类型）尚未定位**——本条只记录可复现现象。关键点是这**不是文档口径问题**：`vtest/optional_member_v04.im` 自己的源码写着期望 `inimerse`，实际输出 `nil`，而**退出码是 0**（见 M13）。
 
 ### 7.2 危险·误导（报错信息误导或语义反直觉）
 
@@ -682,6 +704,46 @@ x = = 5    →  ./build/inimerse bad.im          exit 1
 ```
 
 **`--lint` 不能当作解析谓词使用。** 这条是**工具**问题而非语法问题，但会直接影响任何以 `--lint` 做门禁的脚本。
+
+#### M12. `|` 守卫只能挂在绑定名模式后，挂在别处报错误导
+
+**实测**：
+
+```
+case n {
+  in [7, 8] | true: say "guard-ok"
+}
+→  Error: expected 'expression', but got '|' (type 135)
+```
+
+而 `vtest/case_try_v04.im:15-26` 的正确写法是**守卫紧跟在绑定名后**：
+
+```
+n | n > 10: say "bad-guard"
+n | n > 0:  say "guard-ok"
+n | n > 0, n % 2 == 0: say "guard-two"
+err(e) | e in FileError: say "file-error"
+```
+
+实测 `n = 7` 时上面的 `case` 走 `n | n > 0` → `guard-ok`。**守卫是「绑定名 + `|` + 条件」，不是「任意模式 + `|` + 条件」**；`in [...]` 或字面量模式后接 `|` 报的是 `expected 'expression'`，指不到真正原因。
+
+#### M13. 101 个 CTest 里 73 个只断言退出码
+
+`ctest --test-dir build --show-only=json-v1` 的元数据统计：
+
+```
+total tests: 101
+inimerse-driven: 100   script-driven: 1
+inimerse-driven with NO PASS/FAIL_REGULAR_EXPRESSION and not WILL_FAIL: 73
+```
+
+这 73 个**只要进程退出 0 就算通过**，程序打印什么都不看。对 probe 类（`verse_*_probe`、`*_regression`）退出码可能确实是它们的契约，但对语言行为类（`*_runtime`）**已经证明不够**：
+
+- `optional_member_runtime` 跑 `vtest/optional_member_v04.im`，该程序输出 `nil` 而它自己的源码期望 `inimerse` —— **测试仍然通过**（D11）。
+- `lambda_capture_runtime` 跑 `vtest/lambda_capture_rejected_v04.im`，文件名写着 *rejected*，内容却是一段**正常成功的闭包捕获**（`say add(3)` → `5`），既无 `WILL_FAIL` 也无正则 —— 名字与内容已经脱节。
+- `result_runtime`、`pipeline_runtime`、`null_coalesce_runtime`、`chained_comparison_runtime`、`case_collection_patterns_runtime`、`case_structural_runtime`、`case_alias_runtime`、`float_precision_runtime` 等语言测试同样没有输出断言。
+
+这与 M11（`--lint` 恒 0）、以及 `stage_ctest` 早期「用例数只是装饰」是**同一类问题**：门禁在「过程成功」与「结果正确」之间没有桥。`EXP_CTEST` 断言已修（`f9d0270`），本条是它的下一层。
 
 ### 7.3 冗余（重复 / 不可达 / 无语法）
 
