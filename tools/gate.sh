@@ -122,7 +122,7 @@ stage_doc_paths() {
 }
 
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
-run_stage "ctest (expect 85/85)" ctest stage_ctest
+run_stage "ctest (expect 89/89)" ctest stage_ctest
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect 11/11)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin

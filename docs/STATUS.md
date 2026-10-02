@@ -38,15 +38,15 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **85 / 85 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **89 / 89 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | `-j12` 连续 80 轮**失败 1 轮**（§2.9 残余的端口窗口；改前失败更密，见 §2.6–§2.9） | `for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
-| 引擎代码 | `src/` 81 个 `.c` + 41 个 `.h`，合计 36,836 行（`.c` 单独 35,062 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
+| 引擎代码 | `src/` 96 个 `.c` + 48 个 `.h`，合计 44,588 行（`.c` 单独 42,176 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 167 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 85 个 `add_test(` | — |
-| 工具 | `tools/` 80 个条目 | `ls tools \| wc -l` |
+| 测试注册 | `CMakeLists.txt` 中 89 个 `add_test(`（85 + UPP 2 + `.vverse` 2，见 §10.1/§10.2） | — |
+| 工具 | `tools/` 92 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 81 ms = **1.09x** · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
 ### 2.1 复现命令
@@ -632,8 +632,77 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 
 **路线图上的下一步**：
 
-1. UPP 本地参考协议与 Verse manifest。
-2. CRP `FIND` / `PORTAL` 回环和签名校验。
-3. `.vverse` 打包、预览、下载与启动。
+1. ~~UPP 本地参考协议与 Verse manifest。~~ **引擎侧已实现**（§10.1）；剩余边界是 `timestamp` 只收整数、以及尚未接入 `inim-server`/`inim-client` 传输层。
+2. CRP `FIND` / `PORTAL` 回环和签名校验。**仍未实现**；`upp-in-engine` 合入 `main` 后已解阻塞（见 [BOARD.md](BOARD.md) 的 `crp-in-engine` 行）。
+3. ~~`.vverse` 打包、预览、下载与启动。~~ **引擎侧打包器已实现**（§10.2）；剩余是 `.im`/CLI 入口（`vverse-cli`）与 hub 对 >64 KiB 包的静默截断（`hub-large-package`）。
 4. GitHub/Bilibili OAuth token 交换和资料绑定。
 5. Verse Forge 第一批时空/物理/蓝图面板。
+
+---
+
+## 10. 四条并行流的交付与边界（2026-08 集成）
+
+> `.worktrees/` 下四条并行流的产出，由协调者在 `integration/streams-2026-08` 上合并、
+> 串行跑 `tools/gate.sh` 后进 `main`。**合并没有冲突** —— `upp-in-engine` 与
+> `vverse-produce` 都改了 `CMakeLists.txt`，但落在不同区段。
+> 分工：[BOARD.md](BOARD.md) §5 记「谁在做」，本节记「做完了什么、边界在哪」。
+>
+> 一个教训：两条流各自只看到**自己分支上**的 ctest 数 87，合并后是 **89**（85 + 2 + 2）。
+> 这正是 [BOARD.md](BOARD.md) §3 那句「门禁数字变了就必须同时改这张表和 STATUS.md §1」
+> 要防的事 —— 单人视角的验收数字天然偏低。
+
+### 10.1 UPP 引擎侧（`upp-in-engine`）
+
+**交付**：`src/verse/upp.{h,c}`、`src/verse/upp_probe.c`、`tools/upp_engine_crosscheck.js`，`CMakeLists.txt` +15。
+
+线上格式逐条照抄 `tools/upp_reference.js`：JSONL 一行一帧、`{upp:1,type,id?,payload}`、`id` 为空时**整键删除**、1 MiB 上限按 UTF-8 **字节**计、manifest 五字符串校验（`id` 正则 / `version` semver / `abi` 正整数 / `abiRange` 为 `N` 或 `N..M`）、hello/welcome ABI 协商（同角色拒绝、range 不交报 `incompatible ABI ranges: A vs B`、远端无 role 时 welcome **省略 `peerRole` 键**）。状态机：start 在 running **幂等**、从 crashed/incompatible 起报 `cannot start from %s`、stop 无条件、crash 的 error 缺失回落 `unknown crash`、recover 只许 crashed/stopped、心跳 `seq`/`timestamp` 非递减且**相等放行**、`check_heartbeat` 只在 running 判定、`timeoutMs=15000` 且严格 `>`。
+
+**证据**：`verse_upp_probe` **213 条断言**；`verse_upp_crosscheck` —— 111 个 op 的语料（用参考实现**自己的构造器**造帧）同进程喂 JS 参考、同时写成 JSONL 交给引擎，两边逐行**文本**比对，`upp crosscheck: ok (111 ops, engine and reference agree)`；ASan+UBSan 下断言模式与全语料模式均干净。
+
+**没做什么**：
+- `timestamp` **只支持整数**。它依赖 `src/verse/json_min.c`，而该解析器遇 `.`/`e`/`E` 直接报 `non-integer number unsupported`，于是对端带小数的 `Date.now()` 会让**整行帧被拒**。没改 `json_min.c`：它同时被 layer/eventlog/protocol 的 canonical JSON 与 `state_hash` 复用，改数字语法有破坏事件日志契约的风险，应作为独立增量连同回归一起做。
+- **UPP 尚未接入任何传输层**。交付的是库 + 探针；`inim-server`/`inim-client` 没有 `--upp` 开关。判据「引擎跑完全序列」是在**进程内**由探针跑完的，跨进程集成属 `crp-in-engine` 范畴。
+- 两处错误文本与参考/V8 不一致（非字符串的 truthy `payload.error`；malformed JSON 的**语法**错误措辞），**已在对照语料里避开** —— 即这两类没有被对照覆盖。
+
+### 10.2 `.vverse` 引擎侧打包器（`vverse-produce`）
+
+**交付**：`src/common/gzip.{h,c}`、`src/common/vverse_pack.{h,c}`、`src/common/vverse_pack_probe.c`、`tools/vverse_cross.test.py`，`CMakeLists.txt` +19。
+
+写侧做**确定性 gzip**（10 字节头 MTIME=0 / XFL=0 / OS=3，stored DEFLATE 块 ≤65535/块 + CRC32/ISIZE），读侧必须能解 zlib level-6 的 dynamic Huffman。打包是树内容的**纯函数** —— 不往源目录写任何东西（参考实现的 `pack()` 会写源树，交叉测试里显式断言了这个差异）。
+
+**证据**：`vverse_pack_probe` **37 项**（同目录连续两次打包 sha256 相同 → `4e798ef7376a6ed342fbd7fa5e5775908e6181ec906a01e7e213306f8e3c62e3`；篡改四类全按预期报错；`../escaped.txt` 恶意包被拒且外部无文件落地；200000 / 9000 字节逐字节往返；ed25519 载荷 19195 字节 > 8192 证明走流式 `Sha512Ctx`）。`tools/vverse_cross.test.py` **47 项双向**交叉验证：引擎包 → `vverse_pack.js unpack/preview` ＋ `vverse_validate.js --strict --require-signature --require-complete-signature --require-public-signature` 全绿（即 node `crypto.verify` 认可引擎产出的 DER SPKI）；解压后的 JSON 体与参考实现**逐字节相同**；node 用自生成密钥 + zlib(dynamic) 打的包 → 引擎 unpack/validate 通过；放进 `INIMERSE_HUB_DIR` 后 `GET /v/<id>` 逐字节取回。
+
+**没做什么**：
+- **没有 `.im` / CLI 入口** —— 现在只是 `src/common/` 的库 + 探针驱动器（`build/vverse_pack_probe --pack <dir> <out>`）。所以「引擎能自己产出 `.vverse`」严格说只做到**库**一级。已立 `vverse-cli` 行。
+- **写侧不做真压缩**：产出是 stored DEFLATE，包体约等于源内容的 1.33×，比参考实现的 zlib level-6 大。这是为「逐字节确定性」付的价，不是漏做。
+- 未做 inflate fuzz、几十 MB 超大包、Windows 路径分支。
+
+### 10.3 仓库根清理（`repo-hygiene`）
+
+**交付**：删 24 个 `CHANGES_*.txt`（740 行，`git rm`）＋主工作区的 `CMakeLists.txt.bak`（24881 B）。新增 `docs/HYGIENE.md`（357 行）＝第 2 批分类方案。
+
+`CMakeLists.txt.bak` 被 `.gitignore:32` 的 `*.bak` 忽略且未跟踪，**worktree 检出里根本不存在**，只能在主工作区删 —— 这**违反了 [BOARD.md](BOARD.md) §1「一个工作区一个会话」的字面要求**，已记录在 HYGIENE.md §9（回滚副本在 `/tmp/CMakeLists.txt.bak.stash`，已核对它是现行 `CMakeLists.txt` 的旧子集，缺 P1 的全部段落）。
+
+**口径更正（重要）**：板上原写「135 个零引用」是**少报**，真实候选集 **146**。两处漏报机制：① **自匹配** —— `grep -rqF "$f" .` 把文件自己内容里出现自己的名字算成引用，藏了 16 个（`block_edit.im`、`cpu8m.im`、`endless_busy.im`、`entity_stress.im`、`limit_test.im`、`ports.bat`、`smoke2.im`、`stress_cpu.im`、`stress_mem.im`、`test_room.im`、`textbox.im`、`timeout_test.im`、`ai_build.ps1`、`imai.ps1`、`endless_test.im`、`entity_stress2.im`）；② 作业单自己点名 8 个候选，被扫描器当成「引用者」。分桶 **A 删 118 / B 迁出根 22 / C 留根 6**（互不交叠、并集 == 146，生成时程序校验），另有 30 个二阶孤儿。
+
+**两处作业单前提已失效**（已写进 HYGIENE.md）：① `hl_bridge.c` **并不被 `CMakeLists.txt` 引用**（零命中、也无 GLOB 兜底），真实关系是**反向**的 —— 它 `#include` 那 6 个 `*_embed.h`，自己作为源码被 `src/mod/server_mod.c:61` 拼进运行期 exe 路径；它照样要留，但**理由不同**。② `CMakeLists.txt` 里的 41 个 `.im` 全在 `vtest/` 下，根目录 167 个 `.im` **没有一个**出现在 `CMakeLists.txt` 中 ⇒ 「根目录 `.im`」那条判据选出**空集**。另确认仓库无 GLOB / `*.im` 通配消费风险。
+
+**没做什么**：第 1 批**没跑构建/ctest**（只删 `.txt`，不进构建 —— 但「未验证」是事实）；第 2 批**完全未执行**（146 个候选只是方案，无 `git rm`/`git mv`/改引用路径）；桶 A「已被 `vtest/` 覆盖」是按特性名与文件头**自述**推断的，没把 28 个 `*_test.im` 的断言与 41 个入册用例逐条对照 —— 这是整个方案里**最大的判断风险**。
+
+### 10.4 文档口径复查（`docs-audit`）
+
+**交付**：`docs/REQUIREMENTS_ANALYSIS.md` 失效路径改指实际位置；新增 `tools/check_doc_paths.py` 并接成门禁第 7 阶段 `doc-paths`；`README.md` 基线数字复现（实跑 `100% tests passed, 0 tests failed out of 85` 那时为真，见 §10.5 的新数）。
+
+**关键更正**：失效路径实为 **23 条 / 46 处**，不是板上写的 22 条 —— ASCII 反引号 grep 匹配不到 CJK 文件名 `docs/archive/工作台使用教程.md`（它当时在 `docs/` 根，收敛时被归档）。所有引用改指 `docs/archive/…` 或仓库根 `AI_LAYOUT.md`，逐条 `test -e` 核对；只改**指向**，未动归档内容与结论。
+
+**为什么 `check_links.py` 看不见这类问题**：它必须先剥离行内代码（不剥离的话 `` `object["name"](...)` `` 会产生 15 个假阳性），而这些路径恰好写在反引号里 ⇒ **检查器全绿不等于路径都对**。这就是本次新增第 7 阶段的原因。新检查器扫根 `README.md` + `docs/*.md` + `future/*.md` 共 10 份，**故意不扫 `docs/archive/` 与 `future/archive/`**（归档件引用旧路径是历史事实）；日后在别处新增 `.md` 需手动加进文件表。
+
+**一条被驳回的怀疑（协调者裁定）**：`docs/STATUS.md` §4 的 `**已完成**` 标题曾被怀疑违反 §1.2 规则 2（无维度表述），因为同阶段下面还列着 8 个 `[ ]`。**裁定：不是违规。** 那个粗体标签只辖它**紧邻的下一个列表组**（那一组的条目全部是 `[x]`），未完成项在自己**显式命名**的 `**稳定性治理（未完成项）**` 标题下。文档没有把未做的事说成已完成。
+
+### 10.5 合并后的门禁（协调者串行执行）
+
+```bash
+tools/gate.sh          # 七个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
+```
+
+见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 89 / 89**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。

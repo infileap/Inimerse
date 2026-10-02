@@ -51,7 +51,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
 | build | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j` | 0 error |
-| ctest | `ctest --test-dir build --output-on-failure -j4` | **85 / 85 通过**，无 `WILL_FAIL` 记账项 |
+| ctest | `ctest --test-dir build --output-on-failure -j4` | **89 / 89 通过**，无 `WILL_FAIL` 记账项 |
 | economy | `python3 tools/economy_migration.test.py` | `economy migration: ok`（**39 / 39**） |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` | **55 / 55** |
 | node | `node tools/node_suites/run_all.js` | **11 / 11**（`tools/` 下每个可独立运行的 JS 套件；`crp_session_flow.test.js` 需活跃 hub，由 CTest 的 `crp_session_flow_regression` 驱动，不在此列） |
@@ -86,14 +86,16 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | 状态 | slug | 任务 | 冲突域（别人别碰） | 验收判据 | 认领 |
 | --- | --- | --- | --- | --- | --- |
 | 阻塞 | `marketplace-watch` | 上架 dsh-m：npm 包已发布，PR [iasiv5/dsh-m#1](https://github.com/iasiv5/dsh-m/pull/1) 等待维护者点 *Approve and run* | `tools/dsh-inimerse/marketplace/` | PR 合并后 `node scripts/validate-registry.mjs` 全绿 | 协调者 |
-| 进行中 | `upp-in-engine` | UPP 目前只有 **JS 参考实现**（`tools/upp_reference.js` + `upp_session.js`，29 条断言）；引擎侧没有对应状态机 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | `stream/upp-in-engine` |
-| 阻塞 | `crp-in-engine` | CRP 的 `FIND` / `PORTAL` 回环签名校验同样只在 JS 参考实现里；引擎侧无实现。**与 `upp-in-engine` 同冲突域，等它合入 main 再开工**（worktree 已开，可先读代码，别改 `src/verse/`） | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎实现能通过 `tools/crp_relay.test.js` 的等价场景，且有真实两进程证据 | `stream/crp-in-engine` |
-| 进行中 | `vverse-produce` | `.vverse` **打包器**（`tools/vverse_pack.js`）只在 JS 侧；引擎不会产出 `.vverse` | `src/`、`vtest/` | 引擎产出的 `.vverse` 能通过 `tools/vverse_validate.js` 校验并被 `inim-server` 装载 | `stream/vverse-produce` |
+| 已完成 | `upp-in-engine` | UPP 引擎侧已实现：`src/verse/upp.{h,c}` 帧编解码 + 分片 decoder + 状态机，213 条断言探针，并**逐事件对照**过参考实现（111 个 op 同语料两边跑，逐行文本比对）。遗留边界（不是没实现）：`timestamp` 只收整数、尚未接入 `inim-server`/`inim-client` 传输层 —— 见 [STATUS.md](STATUS.md) §10.1 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | `stream/upp-in-engine` |
+| 未认领 | `crp-in-engine` | CRP 的 `FIND` / `PORTAL` 回环签名校验同样只在 JS 参考实现里；引擎侧无实现。~~等 `upp-in-engine` 合入 main~~ **已解阻塞**（UPP 已合入 `main`），可直接开工 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎实现能通过 `tools/crp_relay.test.js` 的等价场景，且有真实两进程证据 | — |
+| 已完成 | `vverse-produce` | 引擎侧 `.vverse` 打包器已实现：`src/common/gzip.{h,c}`（确定性 gzip，写侧只做 stored 以换取逐字节可复现）＋ `src/common/vverse_pack.{h,c}`，与 JS 参考实现**双向**交叉验证（47 项，含 node `crypto.verify` 认可引擎产出的 DER SPKI）。遗留（不是没实现）：无 `.im`/CLI 入口；>64 KiB 的包经 hub 会被截断，见下两行 | `src/`、`vtest/` | 引擎产出的 `.vverse` 能通过 `tools/vverse_validate.js` 校验并被 `inim-server` 装载 | `stream/vverse-produce` |
+| 未认领 | `vverse-cli` | 打包器只是 `src/common/` 的库 + 探针驱动器（`build/vverse_pack_probe --pack <dir> <out> [seed-hex]`）；`.im` 脚本 / CLI 不能直接打包（`verse_pack()` 内建在 `src/mod/verse_dist_mod.c`） | `src/mod/verse_dist_mod.c`、`tools/vverse_*` | 一条 `.im` 脚本或 CLI 能直接产出通过全严格校验的 `.vverse` | — |
+| 未认领 | `hub-large-package` | **静默截断（真缺陷）**：`src/platform/http_posix.c:312 hub_body()` 的 `GET /v/<id>` 与 `GET /package/<id>` 用 `fread(body, 1, cap, vf)` 读文件，超 `cap` 即截断且**仍返回 200**（HTTP 调用点 `:1063` 缓冲 65536，实测 207991 字节包只回 65536，由 vverse 流交叉测试记录）；UDP 调用点 `:52-55` 缓冲 60001 且要求 `blen < 60000` 才发，即**根本不发、让对端超时**。`POST /package` 与 `POST /content` 上限各 49152。对照：`GET /content/<hash>` 因回算 sha256 会报 `content_corrupt` 500，**不静默** | `src/platform/http_posix.c` | 超大包要么完整送达，要么**明确报错**（413 / 长度协商），禁止 200 + 截断；补 >64 KiB 往返测试 | — |
 | 未认领 | `ws-client-coverage` | `tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用） | `tools/crp_ws_client*`、`tools/upp_session*` | 连接/重连/排队各自有断言；两个套件至少被一份文档引用 | — |
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
-| 进行中 | `repo-hygiene` | 仓库根残留清理。实测根目录跟踪 **235** 个文件、**135** 个全仓库零引用（99 `.im` / 24 `CHANGES_*.txt` / 8 `.html` / 3 `.ps1` / 1 `.md`），另加被忽略的 `CMakeLists.txt.bak`。分两批：`CHANGES_*` 直接删，其余先出分类方案 | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩 keep-set；分类方案成文 | `stream/repo-hygiene` |
-| 待验收 | `docs-audit` | 文档口径复查：`REQUIREMENTS_ANALYSIS.md` 的失效路径实为 **23 条**（板上的 22 条来自 ASCII 反引号 grep，漏掉了 CJK 文件名的 `docs/工作台使用教程.md`），**46 处**引用已改指 `docs/archive/` / 仓库根并逐条 `test -e`；两套词汇已加口径提示；README 基线数字已复现 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken **且** `tools/check_doc_paths.py`（新门禁阶段 `doc-paths`）0 失效 + 抽查每处数字有出处 | `stream/docs-audit` |
+| 进行中 | `repo-hygiene` | 仓库根残留清理。**第 1 批已执行**：删 24 个 `CHANGES_*.txt`（740 行）＋主工作区的 `CMakeLists.txt.bak`；分类方案已成文（[HYGIENE.md](HYGIENE.md)，357 行）。**口径更正：真实候选集是 146，不是 135** —— 原扫描有两处漏报（自匹配藏了 16 个；作业单自己点名的 8 个被当成引用者）。分桶 A 删 118 / B 迁出根 22 / C 留根 6，另有 30 个二阶孤儿。**第 2 批未执行**，待协调者批准 | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩 keep-set；分类方案成文 | `stream/repo-hygiene` |
+| 已完成 | `docs-audit` | 文档口径复查：`REQUIREMENTS_ANALYSIS.md` 的失效路径实为 **23 条 / 46 处**（板上的 22 条来自 ASCII 反引号 grep，漏掉了 CJK 文件名的 `docs/archive/工作台使用教程.md`），已逐条 `test -e` 改指 `docs/archive/` 或仓库根；新增独立检查器 `tools/check_doc_paths.py` 并接成门禁第 7 阶段 `doc-paths`（`links` 阶段看不见反引号里的路径 —— 它必须先剥离行内代码） | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken **且** `tools/check_doc_paths.py` 0 失效 + 抽查每处数字有出处 | `stream/docs-audit` |
 
 > **2026-08 修订说明（重要）。** 上一版把 `verse-upp` / `verse-crp` / `vverse-pack` 三行写成
 > 「未认领」，验收判据是「`node tools/<x>.test.js` 全过」——**这是错的**：那八个套件当时
@@ -128,6 +130,17 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | `socket_probe` exit 11 | 发送后只 peek 一次即断言可读；loopback 有负载时字节尚在途中。改为最多 200 次 × 1 ms 轮询（2/480 → 0/480） | [STATUS.md](STATUS.md) §2.7 |
 | hub HTTP 绑定失败静默 | `src/main.c:1013` 只在成功时打印；`errno 98 = EADDRINUSE` 时 hub 半活、调用方等到 10 s 超时。补失败分支响亮报错 | [STATUS.md](STATUS.md) §2.8 |
 | 套件端口跨池重叠 | `distinct_ports()` 的保证只在单次调用内成立（两次调用重叠 5/200；`economy_migration` 内部独立取号撞已持有端口 9/500）。合并为单次调用 | [STATUS.md](STATUS.md) §2.9 |
+| UPP 引擎侧实现 | `src/verse/upp.{h,c}`（帧编解码 + 分片 decoder + 状态机）；213 条断言探针 + 111 个 op 的**逐事件对照**（`tools/upp_engine_crosscheck.js`） | [STATUS.md](STATUS.md) §10.1 |
+| `.vverse` 引擎侧打包器 | `src/common/gzip.{h,c}` + `vverse_pack.{h,c}`；与 JS 参考实现双向交叉验证 47 项，含 node `crypto.verify` | [STATUS.md](STATUS.md) §10.2 |
+| 仓库根 24 个 `CHANGES_*.txt` | 开发日志（740 行）已删；第 1 批同时清掉主工作区的 `CMakeLists.txt.bak`。第 2 批（146 个候选）**未执行** | [HYGIENE.md](HYGIENE.md) |
+| `REQUIREMENTS_ANALYSIS.md` 失效路径 | 23 条 / 46 处改指 `docs/archive/` 或仓库根；根因是 `check_links.py` 必须剥离行内代码 ⇒ 反引号里的路径它天生看不见，已补第 7 阶段 `doc-paths` | [STATUS.md](STATUS.md) §10.4 |
+
+> **2026-08 集成记录。** 上面四条（UPP / `.vverse` / 仓库根清理 / 文档口径）是
+> `.worktrees/` 下四条并行流的产出，由协调者在 `integration/streams-2026-08`
+> 上合并、串行跑 `tools/gate.sh` 后进 `main`。合并**没有冲突**（`upp-in-engine` 与
+> `vverse-produce` 都改了 `CMakeLists.txt`，但落在不同区段）。
+> 两条流各自只看到自己那条分支上的 ctest 数 87，合并后是 **89**（85 + 2 + 2）；
+> 这正是 §3 那句「门禁数字变了就必须同时改表和 STATUS.md」要防的事。
 
 ## 7. 行尾：`src/mod/gui_mod.c` 的例外
 
