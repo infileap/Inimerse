@@ -27,7 +27,7 @@
 | 候选 | 它今天是什么 | 它不是 |
 |---|---|---|
 | **CRP peer** | `(verse, peer)` 是**唯一出现在「被认证的产物」里的身份** —— 能力令牌的 scope 就是这一对 | 令牌**不证明「你是谁」**：它证明持有者知道 hub 级共享 secret（§7.7），而 `peer` 字符串由调用方自选 |
-| **CAP_AI 持有者** | `CAP_AI` 是**mod 级能力位**，由 mod 自己在 `spi_meta(id, version, caps)` 里声明（`src/runtime/runtime.c:1275` 的 `spi_parse_caps()` 解析 `"…,ai,…"`） | **进程内自声明，线上不可验证**；`say.ai`（`src/mod/say_mod_posix.c:82`）同理 |
+| **CAP_AI 持有者** | `CAP_AI` 是**mod 级能力位**，由 mod 自己在 `spi_meta(id, version, caps)` 里声明（`src/runtime/runtime.c:1150` 的 `spi_parse_caps()` 解析 `"…,ai,…"`） | **进程内自声明，线上不可验证**；`say.ai`（`src/mod/say_mod_posix.c:82`）同理 |
 | **Layer 作者** | `vl_layer_put(l, key, actor, role, cell, value, steps)` 里的 `actor`/`role` | **调用方提供的自由字符串，Layer 不校验任何一方**（`src/verse/layer.h:50-53`） |
 
 最近的一条既有先例是 `ai_boundary`（`src/mod/say_stream.c:70` 与 `:98`）：`target == "ai"` 的帧必须自带 `"source":"ai"`，否则拒收，错误码 `ai_boundary`。它说明本仓库**已经有「AI 必须自我标识」的取向**（对应 [STATUS.md](../STATUS.md) §4 阶段四的「强制 AI 标识与权限边界」），但**判定方式是子串匹配 meta 字符串，不是凭据校验** —— 它防的是"冒充 AI 的帧"，不是"AI 冒充人类"的可验证证明。
