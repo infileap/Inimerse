@@ -37,6 +37,12 @@ const path = require('node:path');
 
 const UI_DIR = path.resolve(__dirname, '..', 'Infiverse_standard', 'src', 'ui');
 
+// Top-level `function name() {}` declarations, in source order.  Used below to
+// assert the file declares no name twice.
+function topLevelFunctionNames(src) {
+  return [...src.matchAll(/^function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1]);
+}
+
 let JSDOM;
 try {
   ({ JSDOM } = require('jsdom'));
@@ -125,13 +131,22 @@ const EXPECTED_IPC = [
             // runs.  Returning list shapes keeps the failure inside this suite
             // where it can be reported usefully.
             if (cmd === 'tool_files') return Promise.resolve([]);
+            // The OAuth link flow (BOARD row 101).  These shapes are the ones
+            // lib.rs actually returns, so the UI is exercised against its real
+            // contract rather than a convenient one.
+            if (cmd === 'oauth_status') return Promise.resolve({ linked: false, provider: args && args.provider });
+            if (cmd === 'oauth_start_callback') return Promise.resolve({ ok: true, addr: '127.0.0.1:8765' });
+            if (cmd === 'oauth_pkce_start') return Promise.resolve({ ok: true, challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', method: 'S256' });
+            if (cmd === 'oauth_authorize') return Promise.resolve('https://github.com/login/oauth/authorize?client_id=CID');
+            if (cmd === 'oauth_open') return Promise.resolve({ ok: true });
+            if (cmd === 'oauth_poll_callback') return Promise.resolve('code=THECODE&state=THESTATE');
+            if (cmd === 'oauth_bind') return Promise.resolve({ ok: true, provider: args && args.provider });
             if (cmd === 'list_projects') return Promise.resolve([]);
             if (cmd === 'list_downloads') return Promise.resolve([]);
             if (cmd === 'plugins_list') return Promise.resolve([]);
             // Unknown commands still resolve null, matching app.js's own
             // no-Tauri behaviour, but they are recorded so a new command shows
             // up in `cmds` rather than silently vanishing.
-            return Promise.resolve(null);
             return Promise.resolve(null);
           },
         },
@@ -140,6 +155,25 @@ const EXPECTED_IPC = [
       // as the URL above is not opaque.
     },
   });
+
+  // (0) No top-level function may be declared twice.
+  //
+  //     This is not a style rule.  app.js declared `function bindBrowse()`
+  //     twice (once with the OAuth wiring, once without); because declarations
+  //     hoist and the last wins, the FIRST body was dead code and the OAuth
+  //     authorize button did nothing when clicked -- for as long as that
+  //     duplicate existed.  Nothing caught it, because the panel suite only
+  //     asked whether modules render and switch, and every module still did.
+  //     A shadowed function is invisible in exactly the way a broken one is
+  //     not, so it gets its own assertion.
+  const names = topLevelFunctionNames(appJs);
+  const dupes = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
+  assert.deepEqual(
+    dupes,
+    [],
+    `app.js declares these top-level functions more than once: ${dupes.join(', ')}. ` +
+      'The later declaration silently replaces the earlier one at runtime.',
+  );
 
   const script = dom.window.document.createElement('script');
   script.textContent = appJs;
@@ -203,8 +237,58 @@ const EXPECTED_IPC = [
     );
   }
 
+  // (8) The OAuth link flow must go through PKCE and end at oauth_bind.
+  //
+  //     What this pins is the WIRING, not the cryptography: `app.js` has to ask
+  //     for a challenge, put it in the authorize URL, and only then call
+  //     oauth_bind -- the sequence that replaced the copy which promised a
+  //     binding that no command performed.  The state/token logic itself is
+  //     covered by the `oauth_loop` crate's own 36 tests, which can call it
+  //     directly; a DOM test cannot reach into Rust.
+  // The link card is rendered by `renderBrowse` (app.js:283-285), not by
+  // settings -- verified by locating the enclosing renderer, not assumed.
+  doc.querySelector('#activitybar [data-mod="browse"]').dispatchEvent(
+    new dom.window.MouseEvent('click', { bubbles: true }),
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  const clientInput = $('#oauth-client');
+  const ghBtn = $('#oauth-gh');
+  assert.ok(clientInput, 'the browse module must still render the OAuth client-id field');
+  assert.ok(ghBtn, 'the browse module must still render the GitHub authorize button');
+  clientInput.value = 'CID';
+  ghBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+  // The flow polls once a second; give it enough turns for one poll cycle.
+  await new Promise((r) => setTimeout(r, 1400));
+
+  const oauthCmds = calls.map((c) => c.cmd).filter((c) => c.startsWith('oauth_'));
+  assert.ok(
+    oauthCmds.includes('oauth_pkce_start'),
+    `the link flow must request a PKCE challenge; saw ${JSON.stringify(oauthCmds)}`,
+  );
+  assert.ok(
+    oauthCmds.indexOf('oauth_pkce_start') < oauthCmds.indexOf('oauth_authorize'),
+    'the challenge must be obtained BEFORE the authorize URL is built',
+  );
+  assert.ok(
+    oauthCmds.includes('oauth_bind'),
+    `a received callback must reach oauth_bind; saw ${JSON.stringify(oauthCmds)}`,
+  );
+  // The challenge has to actually travel in the URL, or the token exchange
+  // will be refused by the provider.
+  const authCall = calls.find((c) => c.cmd === 'oauth_authorize');
+  assert.ok(
+    authCall && authCall.args && authCall.args.codeChallenge,
+    'oauth_authorize must receive the PKCE codeChallenge',
+  );
+  const msg = $('#links-msg');
+  assert.ok(
+    msg && /已关联/.test(msg.textContent),
+    `a successful bind must be reported to the user; got ${JSON.stringify(msg && msg.textContent)}`,
+  );
+
   console.log(
-    `infiverse panels: ok (8/${EXPECTED_MODULES.length} modules rendered+switchable, ${calls.length} IPC calls)`,
+    `infiverse panels: ok (8/${EXPECTED_MODULES.length} modules rendered+switchable, ${calls.length} IPC calls, oauth link flow wired)`,
   );
   dom.window.close();
 })().catch((err) => {

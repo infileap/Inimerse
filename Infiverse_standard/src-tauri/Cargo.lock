@@ -69,6 +69,7 @@ name = "app"
 version = "0.2.1"
 dependencies = [
  "log",
+ "oauth_loop",
  "qrcode",
  "serde",
  "serde_json",
@@ -1979,6 +1980,10 @@ checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "oauth_loop"
+version = "0.1.0"
 
 [[package]]
 name = "objc2"

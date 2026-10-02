@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 static OAUTH_RESULT: std::sync::OnceLock<Arc<Mutex<String>>> = std::sync::OnceLock::new();
 fn oauth_result() -> Arc<Mutex<String>> { OAUTH_RESULT.get_or_init(|| Arc::new(Mutex::new(String::new()))).clone() }
+/// The PKCE verifier for the attempt in flight.  Memory only, never on disk.
+static OAUTH_VERIFIER: std::sync::OnceLock<Arc<Mutex<String>>> = std::sync::OnceLock::new();
+fn oauth_verifier() -> Arc<Mutex<String>> { OAUTH_VERIFIER.get_or_init(|| Arc::new(Mutex::new(String::new()))).clone() }
 static WORKBENCH_PID: std::sync::OnceLock<Arc<Mutex<Option<u32>>>> = std::sync::OnceLock::new();
 static WORKBENCH_STOPPED: AtomicBool = AtomicBool::new(false);
 fn workbench_pid() -> Arc<Mutex<Option<u32>>> { WORKBENCH_PID.get_or_init(|| Arc::new(Mutex::new(None))).clone() }
@@ -926,12 +929,25 @@ fn oauth_status(provider: String) -> serde_json::Value {
 }
 
 #[tauri::command]
-fn oauth_authorize(provider: String, client_id: String, redirect_uri: String, state: String) -> String {
+fn oauth_authorize(provider: String, client_id: String, redirect_uri: String, state: String, code_challenge: Option<String>, code_challenge_method: Option<String>) -> String {
     if client_id.trim().is_empty() || redirect_uri.trim().is_empty() { return String::new(); }
+    // PKCE (RFC 7636). The challenge travels in the authorize URL and the
+    // verifier in the token request; the pair is what lets a public client
+    // redeem a code without holding a client_secret. When a caller passes no
+    // challenge the URL keeps its original shape, so this extension is
+    // additive rather than a silent behaviour change for existing callers.
+    let pkce = match code_challenge.as_deref().filter(|c| !c.is_empty()) {
+        Some(challenge) => format!(
+            "&code_challenge={}&code_challenge_method={}",
+            oauth_loop::form_encode(challenge),
+            oauth_loop::form_encode(code_challenge_method.as_deref().unwrap_or("S256")),
+        ),
+        None => String::new(),
+    };
     if provider.eq_ignore_ascii_case("github") {
-        format!("https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:user%20user:email&state={}", client_id, redirect_uri, state)
+        format!("https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:user%20user:email&state={}{}", client_id, redirect_uri, state, pkce)
     } else if provider.eq_ignore_ascii_case("bilibili") {
-        format!("https://passport.bilibili.com/oauth2/authorize?client_id={}&response_type=code&redirect_uri={}&state={}", client_id, redirect_uri, state)
+        format!("https://passport.bilibili.com/oauth2/authorize?client_id={}&response_type=code&redirect_uri={}&state={}{}", client_id, redirect_uri, state, pkce)
     } else { String::new() }
 }
 
@@ -954,30 +970,175 @@ fn oauth_open(url: String) -> serde_json::Value {
 }
 
 #[tauri::command]
-fn oauth_start_callback() -> bool {
+fn oauth_start_callback() -> serde_json::Value {
     let result = oauth_result();
-    if result.lock().map(|mut s| s.clear()).is_err() { return false; }
+    if result.lock().map(|mut s| s.clear()).is_err() {
+        return serde_json::json!({ "ok": false, "error": "callback slot is poisoned" });
+    }
+    // BIND FAILURE IS REPORTED, NOT SWALLOWED.  The original did
+    // `let Ok(listener) = TcpListener::bind("127.0.0.1:8765") else { return; };`
+    // inside a detached thread and then returned `true` unconditionally
+    // (lib.rs:957-977), so a port already in use produced a cheerful "started"
+    // and a callback that could never arrive.  Binding here, on the caller's
+    // thread, makes the failure visible to the UI.
+    let addr = oauth_loop::DEFAULT_CALLBACK_ADDR;
+    let listener = match std::net::TcpListener::bind(addr) {
+        Ok(l) => l,
+        Err(e) => {
+            return serde_json::json!({
+                "ok": false,
+                "error": format!("cannot listen on {addr}: {e}"),
+            })
+        }
+    };
     std::thread::spawn(move || {
         use std::io::{Read, Write};
-        use std::net::TcpListener;
-        let Ok(listener) = TcpListener::bind("127.0.0.1:8765") else { return; };
+        // Blocks until the single callback arrives.  The original blocked
+        // indefinitely too (`incoming().flatten().next()`), and the JS consumer
+        // polls for ~60s (app.js:366), so a real human typing a password or
+        // completing 2FA is inside the window.
         if let Some(mut stream) = listener.incoming().flatten().next() {
-            let mut buf = [0u8; 4096]; let n = stream.read(&mut buf).unwrap_or(0);
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]);
             let target = req.split_whitespace().nth(1).unwrap_or("/");
             if let Some(q) = target.split('?').nth(1) {
-                if let Ok(mut out) = result.lock() { *out = q.to_string(); }
+                if let Ok(mut out) = result.lock() {
+                    *out = q.to_string();
+                }
             }
-            let body = "Authorization received. You can return to Infiverse.";
+            let body = oauth_loop::CALLBACK_BODY;
             let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
             let _ = stream.write_all(resp.as_bytes());
         }
     });
-    true
+    serde_json::json!({ "ok": true, "addr": addr })
 }
 
 #[tauri::command]
 fn oauth_poll_callback() -> String { oauth_result().lock().map(|s| s.clone()).unwrap_or_default() }
+
+/// Generate a PKCE verifier/challenge pair for one authorization attempt.
+///
+/// The verifier is kept in the shell's memory only; it is sent to the provider
+/// in the token request and never written to disk, because possessing it plus a
+/// `code` is what lets the code be redeemed.
+#[tauri::command]
+fn oauth_pkce_start() -> serde_json::Value {
+    let pkce = oauth_loop::Pkce::generate();
+    if let Ok(mut slot) = oauth_verifier().lock() {
+        *slot = pkce.verifier.clone();
+    }
+    serde_json::json!({ "ok": true, "challenge": pkce.challenge, "method": pkce.method() })
+}
+
+/// Finish the flow: verify the callback, redeem the code, and persist the account.
+///
+/// This is the `oauth_bind` the UI's copy (`app.js:285`) had been promising
+/// without the command existing at all.  Every failure path returns a reason —
+/// the original's silent ones (bind failure, dropped callbacks, and a
+/// `linked_accounts.json` nothing ever wrote) are what made this row necessary.
+#[tauri::command]
+fn oauth_bind(provider: String, expected_state: String, client_id: String, redirect_uri: String) -> serde_json::Value {
+    let query = oauth_result().lock().map(|s| s.clone()).unwrap_or_default();
+    if query.is_empty() {
+        return serde_json::json!({ "ok": false, "error": "no callback received yet" });
+    }
+
+    // ③ The state the provider echoed must be the one we generated, or this
+    // callback did not come from the request we started (login CSRF).
+    let code = match oauth_loop::verify_callback(&expected_state, &query) {
+        Ok(c) => c,
+        Err(e) => return serde_json::json!({ "ok": false, "error": e }),
+    };
+
+    let verifier = oauth_verifier().lock().map(|s| s.clone()).unwrap_or_default();
+    if verifier.is_empty() {
+        return serde_json::json!({ "ok": false, "error": "no PKCE verifier for this attempt" });
+    }
+
+    let Some(endpoint) = oauth_loop::token_endpoint(&provider) else {
+        return serde_json::json!({ "ok": false, "error": format!("unsupported provider: {provider}") });
+    };
+    let Some(body) = oauth_loop::token_request_body(&provider, &code, &redirect_uri, &verifier) else {
+        return serde_json::json!({ "ok": false, "error": "cannot build token request" });
+    };
+
+    // ① Redeem the code.  Same transport idiom as hub_download_install
+    // (lib.rs:656-672): curl, no shell, no URL interpolation.  The body goes in
+    // via stdin so the client id and code never appear in the process table.
+    let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let out = std::process::Command::new(curl)
+        .args([
+            "-fsS",
+            "--max-time", "30",
+            "-X", "POST",
+            "-H", "Accept: application/json",
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "--data-binary", "@-",
+            endpoint,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(mut si) = child.stdin.take() {
+                // client_id is part of the credentialed request and is encoded.
+                let payload = format!("client_id={}&{}", oauth_loop::form_encode(&client_id), body);
+                let _ = si.write_all(payload.as_bytes());
+            }
+            child.wait_with_output()
+        });
+
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => return serde_json::json!({ "ok": false, "error": format!("token request failed: {e}") }),
+    };
+    // A non-2xx status is a failure even when curl wrote a body; `-f` makes curl
+    // fail instead of printing an error page, and this keeps it honest.
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return serde_json::json!({
+            "ok": false,
+            "error": format!("token endpoint returned an error: {}", stderr.trim()),
+        });
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    let token = match oauth_loop::parse_token_response(&text) {
+        Ok(t) => t,
+        Err(e) => return serde_json::json!({ "ok": false, "error": e }),
+    };
+
+    // ② Persist the account.  `linked_accounts.json` is the file
+    // `oauth_status` (lib.rs:919-927) reads; before this command existed
+    // nothing in the repository ever wrote it, so `linked` could never be true.
+    let record = serde_json::json!({
+        "provider": provider.to_ascii_lowercase(),
+        "access_token": token.access_token,
+        "token_type": token.token_type,
+        "refresh_token": token.refresh_token,
+        "scope": token.scope,
+    });
+    let path = user_data("linked_accounts.json");
+    if let Some(dir) = path.parent() {
+        if let Err(e) = fs::create_dir_all(dir) {
+            return serde_json::json!({ "ok": false, "error": format!("cannot create userdata dir: {e}") });
+        }
+    }
+    match fs::write(&path, serde_json::to_string_pretty(&record).unwrap_or_default()) {
+        Ok(()) => {
+            if let Ok(mut slot) = oauth_verifier().lock() {
+                slot.clear();
+            }
+            serde_json::json!({ "ok": true, "provider": provider, "saved": path.to_string_lossy() })
+        }
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("cannot write linked accounts: {e}") }),
+    }
+}
+
 
 fn is_workspace_file(file: &str) -> bool {
     let Ok(root) = app_root().canonicalize() else { return false; };
@@ -1264,6 +1425,8 @@ pub fn run() {
             oauth_open,
             oauth_start_callback,
             oauth_poll_callback,
+            oauth_pkce_start,
+            oauth_bind,
             engine_versions,
             engine_select,
             update_channel_get,

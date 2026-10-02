@@ -282,7 +282,7 @@ function renderBrowse() {
   <div class="card"><h3>🔗 关联</h3>
     <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button></div></div>
     <div class="step"><span class="dot">📺</span><div><b>Bilibili</b> <span id="oauth-bili-status" class="muted">未关联</span><br><button class="btn" id="oauth-bili">打开授权页</button></div></div>
-    <div class="muted" id="links-msg">授权后由回调服务交换 code，再调用 oauth_bind 保存资料。</div>
+    <div class="muted" id="links-msg">授权码由 PKCE 换取令牌（无需 client secret），校验 state 后保存到 linked_accounts.json。GitHub 请把 OAuth App 的 callback 设为上面的地址。</div>
   </div>
   <button class="btn" data-go="workbench">→ 去工作台</button>`;
 }
@@ -357,18 +357,72 @@ function bindBrowse() {
     if (!cid) { if ($('#links-msg')) $('#links-msg').textContent = '请先填写 GitHub OAuth Client ID'; return; }
     localStorage.setItem('oauth_client_id', cid);
     const state = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
-    await invoke('oauth_start_callback');
-    const url = await invoke('oauth_authorize', { provider, clientId: cid, redirectUri: red, state });
+    const started = await invoke('oauth_start_callback');
+    if (!started || !started.ok) {
+      if ($('#links-msg')) $('#links-msg').textContent = '❌ 无法监听回调端口：' + ((started && started.error) || '未知错误');
+      return;
+    }
+    const pkce = await invoke('oauth_pkce_start');
+    if (!pkce || !pkce.ok) { if ($('#links-msg')) $('#links-msg').textContent = '❌ 无法生成 PKCE 参数'; return; }
+    const url = await invoke('oauth_authorize', { provider, clientId: cid, redirectUri: red, state, codeChallenge: pkce.challenge, codeChallengeMethod: pkce.method });
     if (url) {
       const opened = await invoke('oauth_open', { url });
       if (!opened || !opened.ok) { try { window.open(url, '_blank'); } catch (e) {} }
       if ($('#links-msg')) $('#links-msg').textContent = opened && opened.ok ? '✅ 已在默认浏览器打开授权页' : '请复制授权地址到浏览器打开';
-      let tries = 0; const timer = setInterval(async () => { const q = await invoke('oauth_poll_callback'); if (q || ++tries > 60) { clearInterval(timer); if (q && $('#links-msg')) $('#links-msg').textContent = '✅ 收到授权回调：' + q; } }, 1000);
+      let tries = 0; const timer = setInterval(async () => {
+        const q = await invoke('oauth_poll_callback');
+        if (!q && ++tries <= 60) return;
+        clearInterval(timer);
+        if (!q) { if ($('#links-msg')) $('#links-msg').textContent = '⌛ 等待回调超时（60 秒）'; return; }
+        // 收到回调不等于绑定成功：state 校验、code 兑换与写盘都在 oauth_bind 里，
+        // 失败必须把原因显示出来。
+        if ($('#links-msg')) $('#links-msg').textContent = '正在校验并兑换授权码…';
+        const bound = await invoke('oauth_bind', { provider, expectedState: state, clientId: cid, redirectUri: red });
+        if ($('#links-msg')) $('#links-msg').textContent = bound && bound.ok
+          ? '✅ 已关联并保存资料'
+          : '❌ 绑定失败：' + ((bound && bound.error) || '未知错误');
+        if (bound && bound.ok) {
+          const st = await invoke('oauth_status', { provider });
+          const el = provider === 'github' ? $('#oauth-gh-status') : $('#oauth-bili-status');
+          if (el && st && st.linked) el.textContent = '已关联';
+        }
+      }, 1000);
     } else if ($('#links-msg')) $('#links-msg').textContent = '无法生成授权地址';
   };
   const ghBtn = $('#oauth-gh'), biBtn = $('#oauth-bili');
   if (ghBtn) ghBtn.addEventListener('click', () => openAuth('github'));
   if (biBtn) biBtn.addEventListener('click', () => openAuth('bilibili'));
+
+  // ---- merged from the duplicate bindBrowse that used to shadow this one ----
+  document.querySelectorAll('[data-browse]').forEach(b => b.addEventListener('click', () => {
+    const name = b.dataset.browse;
+    b.textContent = '下载中…';
+    invoke('browse_download', { name }).then(r => {
+      const card = b.closest('.b-card');
+      const st = card ? card.querySelector('.tag') : null;
+      if (st) st.textContent = (r && r.state) || '';
+      if (card) {
+        let tip = card.querySelector('.b-tip');
+        if (!tip) { tip = document.createElement('div'); tip.className = 'muted b-tip'; card.appendChild(tip); }
+        tip.textContent = r && r.out ? ('校验：' + String(r.out).slice(0, 90)) : '';
+      }
+      b.textContent = '重新下载';
+    });
+  }));
+  // 好友节点配置
+  const fl = $('#friend-node-list');
+  if (fl) invoke('friends_list').then(friends => {
+    const real = (friends || []).filter(f => !f.is_ai && f.id);
+    fl.innerHTML = real.length ? real.map(f => '<div class="step"><span class="dot">👤</span><div>' + escapeHtml(f.name) + ' <span class="muted">' + escapeHtml(f.id) + '</span><br><input data-fid="' + escapeHtml(f.id) + '" class="code" value="' + escapeHtml(f.node || '') + '" placeholder="节点地址，如 192.168.1.5:11480" /></div></div>').join('') : '<div class="muted">暂无 verse 好友（friends.json）</div>';
+  });
+  const sb = $('#btn-save-nodes');
+  if (sb) sb.addEventListener('click', () => {
+    document.querySelectorAll('[data-fid]').forEach(inp => {
+      invoke('verse_save_node', { friendId: inp.dataset.fid, node: inp.value.trim() });
+    });
+    const msg = $('#node-msg');
+    if (msg) { msg.textContent = '✅ 节点配置已保存（friends.json）'; setTimeout(() => { msg.textContent = ''; }, 2500); }
+  });
 }
 
 function renderChat() {
@@ -590,46 +644,13 @@ function refreshPluginList() {
   const search = $('#pl-search');
   if (search && !search.dataset.bound) { search.dataset.bound = '1'; search.addEventListener('input', refreshPluginList); }
 }
-function bindBrowse() {
-  document.querySelectorAll('[data-browse]').forEach(b => b.addEventListener('click', () => {
-    const name = b.dataset.browse;
-    b.textContent = '下载中…';
-    invoke('browse_download', { name }).then(r => {
-      const card = b.closest('.b-card');
-      const st = card ? card.querySelector('.tag') : null;
-      if (st) st.textContent = (r && r.state) || '';
-      if (card) {
-        let tip = card.querySelector('.b-tip');
-        if (!tip) { tip = document.createElement('div'); tip.className = 'muted b-tip'; card.appendChild(tip); }
-        tip.textContent = r && r.out ? ('校验：' + String(r.out).slice(0, 90)) : '';
-      }
-      b.textContent = '重新下载';
-    });
-  }));
-  const ns = $('#net-addr');
-  const pm = $('#net-msg');
-  const pb = $('#btn-ping');
-  if (pb) pb.addEventListener('click', () => {
-    pm.textContent = '探测中…';
-    invoke('verse_ping', { addr: (ns ? ns.value : '127.0.0.1:11460') }).then(r => {
-      pm.textContent = r && r.ok ? '✅ 可达 ' + r.ms + 'ms' : '❌ 不可达（端口无服务：引擎 11460(HTTP 11470)需 start_all.ps1，桌面 verse 服务 11480）';
-    });
-  });
-  // 好友节点配置
-  const fl = $('#friend-node-list');
-  if (fl) invoke('friends_list').then(friends => {
-    const real = (friends || []).filter(f => !f.is_ai && f.id);
-    fl.innerHTML = real.length ? real.map(f => '<div class="step"><span class="dot">👤</span><div>' + escapeHtml(f.name) + ' <span class="muted">' + escapeHtml(f.id) + '</span><br><input data-fid="' + escapeHtml(f.id) + '" class="code" value="' + escapeHtml(f.node || '') + '" placeholder="节点地址，如 192.168.1.5:11480" /></div></div>').join('') : '<div class="muted">暂无 verse 好友（friends.json）</div>';
-  });
-  const sb = $('#btn-save-nodes');
-  if (sb) sb.addEventListener('click', () => {
-    document.querySelectorAll('[data-fid]').forEach(inp => {
-      invoke('verse_save_node', { friendId: inp.dataset.fid, node: inp.value.trim() });
-    });
-    const msg = $('#node-msg');
-    if (msg) { msg.textContent = '✅ 节点配置已保存（friends.json）'; setTimeout(() => { msg.textContent = ''; }, 2500); }
-  });
-}
+/* A second `function bindBrowse()` used to sit here.  JavaScript hoists
+   function declarations and the LAST one wins, so it silently replaced the
+   first -- which is why the OAuth authorize button, wired only in the first
+   copy, did absolutely nothing when clicked.  Its unique wiring was merged
+   into the surviving copy above.  Do not add a second declaration here:
+   tools/infiverse_panels.test.js fails if any top-level function name is
+   declared twice in this file. */
 function renderPluginsAndBind() { bindPlugins(); }
 
 function renderInimerse() {

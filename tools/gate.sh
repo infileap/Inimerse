@@ -209,17 +209,22 @@ stage_oauth_loop() {
   # never let a stale lock from a parallel run block the stage.
   #
   # Assert the count, exactly as stage_ctest does for ctest: "cargo test exits
-  # 0" does not distinguish 16 passing tests from 1 passing test and 15 deleted
+  # 0" does not distinguish 36 passing tests from 1 passing test and 35 deleted
   # ones.  The audit for this row deleted the slot write in start_callback() and
   # the suite stayed green, so a count alone is weak -- but it at least catches
   # the crate being emptied out.
+  #
+  # The count is 36 since the PKCE work (BOARD row 101) added the PKCE/SHA-256
+  # published-vector tests, a late-callback delivery test, a query_timeout test,
+  # and the state/token-exchange coverage that the bidirectional check showed was
+  # missing entirely (inverting the state comparison left the suite green at 20).  Bump this whenever the crate's suite grows on purpose.
   local out rc
   out="$( cd "$crate" && cargo test --offline --locked 2>&1 )"
   rc=$?
   printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || return "$rc"
-  if ! printf '%s\n' "$out" | grep -qE 'test result: ok\. 16 passed; 0 failed'; then
-    echo "gate: oauth_loop did not report 'test result: ok. 16 passed; 0 failed'." >&2
+  if ! printf '%s\n' "$out" | grep -qE 'test result: ok\. 36 passed; 0 failed'; then
+    echo "gate: oauth_loop did not report 'test result: ok. 36 passed; 0 failed'." >&2
     echo "gate: update the expected count here and in docs/BOARD.md if that was intended." >&2
     return 1
   fi
@@ -245,7 +250,7 @@ run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctes
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
-run_stage "oauth_loop crate (expect 16/16)" oauth-loop stage_oauth_loop
+run_stage "oauth_loop crate (expect 36/36)" oauth-loop stage_oauth_loop
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 

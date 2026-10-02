@@ -24,3 +24,6 @@ log = "0.4"
 qrcode = "0.14"
 tauri = { version = "2.11.3" }
 tauri-plugin-log = "2"
+# PKCE itself lives in the dependency-free `oauth_loop` crate, which implements
+# SHA-256 and base64url internally. Nothing extra is needed here.
+oauth_loop = { path = "../oauth_loop" }

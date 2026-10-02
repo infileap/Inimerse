@@ -6,4 +6,6 @@ description = "Tauri-free extraction of the Infiverse OAuth loop-back logic (lib
 license = ""
 
 # HARD REQUIREMENT 1: no external dependencies.  Pure std only.
+# PKCE needed SHA-256 and base64url; both are implemented in src/lib.rs and
+# pinned by published vectors instead of being taken as dependencies.
 [dependencies]

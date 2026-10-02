@@ -1770,3 +1770,73 @@ print('HOST-ALIVE')
 
 - **行 101 仍阻塞**：需要 `webkit2gtk-4.1` 等系统库与能安装它们的权限，本机两样都没有。行 100 的 crate 只证明**运输层**正确，**不**证明浏览器授权流程端到端可用。
 - **`forge-panels` 的降级是降级**：新判据证明「能渲染 / 能切换 / 按预期发 IPC」，**不**证明「面板可用」原义 —— 原义的对象不存在。它按 `阻塞` → `已完成` 落账时，这一点已写在判据里，不是脚注。
+
+### 10.29 `oauth-bind-transaction` 结案：PKCE 消掉 `client_secret`，以及一个被函数提升吃掉的按钮（行 101）
+
+§10.28 把行 101 记为「仍阻塞：需要 `webkit2gtk-4.1` 等系统库」。**那个阻塞的成因不是依赖冲突，是 apt 索引过期**——这值得先记，因为它花掉了两轮对话。
+
+#### ① 阻塞的真相：过一个版本的镜像 404，而不是依赖打架
+
+用户执行 `apt-get install` 报：
+
+```
+gstreamer1.0-plugins-good_1.28.2-2ubuntu0.3_amd64.deb  404 Not Found
+E: Unable to satisfy dependencies. Reached two conflicting assignments:
+   ... libwebkit2gtk-4.1-0 ... 依赖 gstreamer1.0-plugins-good but none of the choices are installable
+```
+
+`E: Unable to satisfy dependencies` 读起来像依赖冲突，**实际是索引指向了一个已被镜像删除的版本**：`apt-cache policy gstreamer1.0-plugins-good` 里唯一候选是 `1.28.2-2ubuntu0.3`，而镜像池里现存的只有 **`1.28.2-2ubuntu0.4`**（两个镜像 HTTP 200，`ubuntu0.3` 两个都 404）。`sudo apt-get update` 后一切照常安装。
+
+**教训**：`E: Unable to satisfy dependencies` 要先怀疑**索引过期**，再去读依赖图。此时引擎自己报的那条「abandon all hope」式的冲突信息完全是误导。
+
+装完实测：`pkg-config` / `webkit2gtk-4.1` / `javascriptcoregtk-4.1` / `libsoup-3.0` / `gtk+-3.0` **全部 PRESENT**；`cd Infiverse_standard/src-tauri && cargo build` ⇒ `Finished dev profile … in 1m 45s`，RC=0（编译 tauri 2.11.5、webkit2gtk 2.0.2、soup3 0.5.0、tao 0.35.3、muda 0.19.3、qrcode 0.14.1、app v0.2.1）。
+
+#### ② `client_secret` 的保管问题被 PKCE 消掉，而不是被藏起来
+
+行 101 原本要解决的问题之一是「`client_secret` 放哪」。**桌面应用无法保管 `client_secret`** —— 它必然随二进制分发。改用它本来的替代品：**PKCE（RFC 7636）**，授权请求带 `code_challenge`（S256），换取 token 时带 `code_verifier`，**不需要任何 secret**。
+
+`oauth_loop` 的 crate 头注释写着 **HARD REQUIREMENT 1: no external dependencies. Pure std only.**（`Cargo.toml:8`）。中间一度加了 `sha2` / `base64` / `getrandom` 三个依赖，**已全部撤销**：SHA-256（FIPS 180-4，约 80 行含 64 个 K 常量）与无填充 base64url 都**手写在 `src/lib.rs` 里**，并按**公开向量**钉死而非「信任自己的实现」：
+
+- `pkce_rfc7636_appendix_b_vector`：RFC 7636 Appendix B 原文的 `code_verifier = dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` ⇒ `code_challenge = E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`（从 `rfc-editor.org` 取回原文核对，另用 Python `hashlib` + `base64.urlsafe_b64encode` 独立复算，三处一致）。
+- `sha256_known_answer_vectors`：FIPS 向量六条（空串 / `abc` / 56 字节的标准串 / 100 万个 `a` / 55 字节 / 56 字节 —— 后两条专打 padding 边界）。
+
+**为什么手写哈希在这里可以接受，写进了注释**：它的唯一输入是 PKCE verifier，按构造就是公开的（verifier 要发给 provider、challenge 要进 authorize URL），所以手写哈希通常的风险（侧信道、密钥处理）不适用；且用公开向量钉死而不靠自我信任。注释同时写明「**若要拿它哈希别的东西，请改用真库**」——避免这个实现被当成通用哈希用。读熵同样如此：`fill_os_random()` 读 `/dev/urandom`，非 unix **返回 Err 而不是用时钟猜**——「Failing loudly beats deriving a "random" verifier from a clock」。
+
+#### ③ 第一次双向验证暴露了真问题：四个承载判据的函数当时**零覆盖**
+
+按 §10.27 的规矩，改完先做打断实验。**把 `verify_callback()` 的 state 比对取反（`!=` → `==`），20 个测试全绿。**
+
+也就是说 `verify_callback` / `parse_token_response` / `token_request_body` / `form_encode` 这四个**正是承载「token 交换、`state` 校验」判据的函数**，当时一条测试都没碰到。这与 task-15 对行 100 的审计结论（「套件对关键路径盲」）**同型，只是这次发生在协调者刚写的新代码上**——同一个错误在同一个项目里换了个人重犯，说明它不是某人的疏忽，而是「先写实现再补测试」的默认路径自带的。
+
+补 16 条覆盖测试后立刻报出**第二个真 bug**：`parse_token_response()` 只读嵌套的 `fields` 而不读顶层，导致 **GitHub 朴素 JSON 响应里的 `token_type` / `refresh_token` / `scope` 全部静默丢失**（`access_token` 因有 `.or_else(|| status.get("access_token"))` 回退才保住）。修法是四个字段统一走 `fields.get(k).or_else(|| status.get(k))`。修前 3 红，修后全绿。**这个 bug 是被「先抓覆盖、再抓行为」的顺序逼出来的**：如果当初补的是「让现有测试变绿」而不是「让断言先能红」，它会一直在。
+
+`oauth_loop` 测试数 16 → 18（`CALLBACK_WAIT` 两条）→ 20（PKCE 向量两条）→ **36**；`tools/gate.sh` 的 `stage_oauth_loop()` 计数断言同步到 `test result: ok. 36 passed; 0 failed`，注释写明「The count is 36 since … the coverage that the bidirectional check showed was missing entirely (inverting the state comparison left the suite green at 20)」。
+
+#### ④ 一个被函数提升吃掉的按钮：`app.js` 声明了两次 `bindBrowse`
+
+`tools/infiverse_panels.test.js` 新增的 OAuth 流程回归**第一次跑就红**，而它红的方式指向一个此前从未被发现的既有缺陷：
+
+`app.js` 有**两个同名顶层 `function bindBrowse()`** —— **行 288**（含 Hub 包安装、联机探测、**以及全部 OAuth 授权接线**：`oauth_status` 预取、`openAuth`、`ghBtn.addEventListener`，107 行）与 **行 615**（含 `[data-browse]` 下载卡片、`#btn-ping`、好友节点列表，40 行）。**JS 函数声明提升，后声明的覆盖先声明的** ⇒ 288 整份是死代码，**OAuth 授权按钮点了毫无反应**。
+
+取证不是靠读代码，是靠 jsdom 调试脚本在真 `index.html` + `app.js` 下切到 browse、点 `#oauth-gh`、追踪 `invoke` 记录（`/tmp/e13/dbg_panels.js` 等四份）。结果是：`oauth-client` / `oauth-gh` / `links-msg` **都渲染出来了**、点击**已派发**，但 `calls` 里**一个 `oauth_*` 都没有**。`grep` 全文件确认 `bindBrowse` 是**唯一**重复的顶层函数。
+
+**它为什么一直没被发现**：既有面板套件只断言「模块能否渲染与切换」，而重复声明后**每个模块照常渲染**。**能渲染 ≠ 接线生效** —— 一个被覆盖的函数在「渲染」这个粒度上完全隐形。新的 OAuth 回归能抓到它，唯一的原因是它断言的是点击之后的**实际 IPC 序列**。
+
+处理：保留 615 那份，把 288 独有接线并入（`#btn-ping` 两份都有，保第一份，其提示语更完整），删除重复声明并在原址留注释指向这条断言。**合并时先逐条列出两份的接线清单做差集**，避免「合并」变成「又一次覆盖」。教训记一条：脚本按 `');}))` 之类 token 切分时会把 `forEach(...)` 的收尾行一起删掉，产生 `SyntaxError: Unexpected token ')'`；改回按**大括号配对**定位边界，并按行级精确删除。
+
+套件里新增了一条通用断言：**`app.js` 不得重复声明任何顶层函数**（`topLevelFunctionNames()` + `dupes` 断言）。这不是风格规则，是防这一类隐形死代码。三处打断全部红在正确断言上：重引入重复声明 ⇒ `app.js declares these top-level functions more than once: bindBrowse.`；去掉 `oauth_pkce_start` ⇒ `the link flow must request a PKCE challenge; saw [...]`；跳过 `oauth_bind` ⇒ `a received callback must reach oauth_bind; saw [...]`。
+
+#### ⑤ 两处静默失败（这是「绑定了却什么都没发生」的另两个来源）
+
+- **`oauth_start_callback` 在端口被占时返回假的 `true`**：原实现 `let Ok(listener) = TcpListener::bind(...) else { return; };` 跑在 **detached 线程**里，bind 失败就静默 `return`，调用方收到 `true`。审计定级 HIGH。改为**在调用者线程上 bind**，失败返回 `{"ok": false, "error": "cannot listen on 127.0.0.1:8765: <e>"}`，UI 显示「❌ 无法监听回调端口」。
+- **`parse_token_response` 只看嵌套字段**（见 ③）：这是「授权成功但账号资料不全」的来源。
+
+#### ⑥ 验收与残留
+
+**验收**：`rm -rf build` 后完整八阶段 `tools/gate.sh --jobs 4` → `GATE_RC=0`、`gate: OK — every stage passed.`：build / ctest **103/103** / economy **39/39** / node **12/12** / dsh-inimerse plugin **55/55** / oauth_loop **36/36** / docs relative links / docs backtick paths。crate 的 `[dependencies]` **仍为空**（`cargo tree` 只有 `oauth_loop v0.1.0` 自身），`src-tauri` 只加一条 `oauth_loop = { path = "../oauth_loop" }`。
+
+**残留（不属本行判据，如实上报）**：
+
+- **`redirect_uri` 仍未绑定**（审计定级 MEDIUM）：`POST /TOTALLY/DIFFERENT/PATH?code=ATTACKER` 带 `Host: evil.example` 仍得 `200 OK`，query 被原样收下。修它需要回调服务校验路径与 Host，**尚未做**。
+- **`linked_accounts.json` 的读取侧未验证**：本轮证明了它会**被写**，但 `oauth_status` 永远返回 `linked:false` 的**另一半**（读回并反映到 UI）没有端到端验证过。
+- **端到端浏览器授权未跑**：`cargo build` 通过只证明壳能编译。PKCE 换取 token 走的是真 HTTP 到 `github.com`，本机网络对 `raw.githubusercontent.com` 都不可达，**没有做过一次真实的 provider 往返**。
