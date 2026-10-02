@@ -186,6 +186,43 @@ const CORPUS = [
   { req: { op: 'decode', line: '[]' },
     run: () => call(() => ref.encode(ref.decode('[]'))) },
 
+  /* ---- \u escapes in a payload ------------------------------------------ *
+   * The corpus never contained a surrogate before, which is why the engine's
+   * CESU-8 output for \uD83D\uDE00 went unnoticed: json_min encoded the two
+   * halves separately (ED A0 BD ED B8 80) where JSON.parse combines them into
+   * U+1F600 (F0 9F 98 80).  A surrogate PAIR is representable on both sides,
+   * so these entries belong under the byte-identical contract; the round trip
+   * through ref.encode also pins what the engine's writer must emit for the
+   * decoded bytes.
+   *
+   * Two \u cases are deliberately ABSENT.  Both are real disagreements, not
+   * two spellings of one value, so no comparison could see through them
+   * without hiding a difference:
+   *   \u0000        the engine REFUSES the parse (VjVal's string is a
+   *                 length-less char *), where JSON.parse yields a NUL byte.
+   *   lone surrogate  the engine's string is UTF-8 bytes and cannot hold an
+   *                 unpaired surrogate, so it emits U+FFFD (EF BF BD), where
+   *                 JSON.parse preserves the surrogate and JSON.stringify
+   *                 re-stringifies it as the six characters `\ud83d`.  Those
+   *                 are different bytes, not two spellings of one value.
+   * Both are documented divergences -- see docs/STATUS.md §10.6 -- and the
+   * engine's exact bytes for them are pinned by src/verse/json_min_probe.c,
+   * not by widening this comparison.  A LITERAL "\u0000" -- six characters,
+   * no NUL byte -- is fine and is covered below: such text is not an escape. */
+  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D\\uDE00"}}' },
+    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D\\uDE00"}}'))) },
+  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\u0001"}}' },
+    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\u0001"}}'))) },
+  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"\\uD83D\\uDE00":"\\uD83D\\uDE00"}}' },
+    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"\\uD83D\\uDE00":"\\uD83D\\uDE00"}}'))) },
+  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D\\uDE00\\uD83D\\uDE00"}}' },
+    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\uD83D\\uDE00\\uD83D\\uDE00"}}'))) },
+  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\u00e9\\u4e2d"}}' },
+    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\u00e9\\u4e2d"}}'))) },
+  /* six literal characters: a backslash, a 'u', four zeros -- not an escape */
+  { req: { op: 'decode', line: '{"crp":1,"type":"SIGNAL","payload":{"x":"\\\\u0000"}}' },
+    run: () => call(() => ref.encode(ref.decode('{"crp":1,"type":"SIGNAL","payload":{"x":"\\\\u0000"}}'))) },
+
   /* ---- tokens ----------------------------------------------------------- */
   { req: { op: 'token_make', verse: 'demo', peer: 'p1', capabilities: ['signal'], exp: NOW + 300000 },
     run: () => call(() => makeToken(SECRET, 'demo', 'p1', ['signal'], NOW + 300000)) },
