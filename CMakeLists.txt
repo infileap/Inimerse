@@ -64,6 +64,16 @@ add_test(NAME verse_closed_loop
   COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
           python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_closed_loop.test.py
           $<TARGET_FILE:inim-client>)
+# P1 increment 4: engine-side UPP -- universal plugin protocol framing (JSONL,
+# 1 MiB frame cap, hello/welcome negotiation) and the session state machine.
+# src/verse/upp_probe.c asserts the boundary cases offline; the
+# verse_upp_crosscheck test registered below replays one corpus through both
+# this engine implementation and the JS reference and diffs the transcripts.
+add_executable(verse_upp_probe
+  src/verse/upp_probe.c src/verse/upp.c src/verse/json_min.c)
+target_include_directories(verse_upp_probe PRIVATE src/verse src/common)
+add_test(NAME verse_upp_probe COMMAND verse_upp_probe)
+set_tests_properties(verse_upp_probe PROPERTIES TIMEOUT 30 LABELS "protocol;upp")
 # Ed25519 sign/verify round-trip probe.  Existing suites only sign a handful of
 # times each, so the 1/32 carry-propagation defect in ed25519_sign (fixed in
 # src/common/ed25519.c) went unnoticed; this signs 2000 deterministic messages.
@@ -181,6 +191,11 @@ if(INIMERSE_NODE)
   add_test(NAME protocol_regression COMMAND ${INIMERSE_NODE} tools/regression.js)
   set_tests_properties(protocol_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 30 LABELS "protocol;regression")
+  add_test(NAME verse_upp_crosscheck
+    COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/upp_engine_crosscheck.js
+            $<TARGET_FILE:verse_upp_probe>)
+  set_tests_properties(verse_upp_crosscheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TIMEOUT 60 LABELS "protocol;upp")
 endif()
 
 find_program(INIMERSE_CLANG clang)
