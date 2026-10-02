@@ -4,7 +4,8 @@
 #
 #   tools/gate.sh              full gate: configure + build + all suites
 #   tools/gate.sh --fast       skip configure/build, reuse the existing build/
-#   tools/gate.sh --only links run a single stage (build|ctest|economy|node|plugin|links)
+#   tools/gate.sh --only links run a single stage
+#                              (build|ctest|economy|node|plugin|links|doc-paths)
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #
 # Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
@@ -110,12 +111,23 @@ stage_links() {
   python3 "$REPO_ROOT/tools/check_links.py"
 }
 
+stage_doc_paths() {
+  # Complement to check_links.py, not a replacement.  check_links.py must strip
+  # inline code spans (otherwise a span like `object["m"](...)` is parsed as a
+  # link), and that makes it blind to the references this repository actually
+  # writes in backticks.  22 `docs/<name>.md` references in
+  # docs/REQUIREMENTS_ANALYSIS.md pointed at files moved into docs/archive/
+  # while check_links.py kept reporting 0 broken.  See docs/BOARD.md §3.
+  python3 "$REPO_ROOT/tools/check_doc_paths.py"
+}
+
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect 85/85)" ctest stage_ctest
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect 11/11)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
 run_stage "docs relative links" links stage_links
+run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 
 echo
 echo "══════════════════════════════════════════════════════════════"
