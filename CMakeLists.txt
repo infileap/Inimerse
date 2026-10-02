@@ -74,6 +74,37 @@ add_executable(verse_upp_probe
 target_include_directories(verse_upp_probe PRIVATE src/verse src/common)
 add_test(NAME verse_upp_probe COMMAND verse_upp_probe)
 set_tests_properties(verse_upp_probe PROPERTIES TIMEOUT 30 LABELS "protocol;upp")
+# P1 increment 5: engine-side CRP -- the FIND / PORTAL / SIGNAL wire frames, the
+# base64url + HMAC-SHA256 capability token, and the FIND registry / PORTAL
+# issuance that until now only existed in tools/crp_reference.js and
+# tools/crp_relay.js.  src/verse/crp_probe.c asserts the boundary cases offline.
+# crp-hub and crp-peer are two real processes: the hub owns the registry and
+# listens on a socket, the peer walks the relay scenarios over it, and
+# tools/crp_closed_loop.test.py drives both.  The verse_crp_crosscheck test
+# registered below replays one corpus through this engine implementation and the
+# JS reference and diffs the two transcripts.
+add_executable(verse_crp_probe
+  src/verse/crp_probe.c src/verse/crp.c src/verse/upp.c src/verse/json_min.c
+  src/platform/crp_session.c src/common/sha256.c)
+target_include_directories(verse_crp_probe PRIVATE src/verse src/common src/platform)
+add_test(NAME verse_crp_probe COMMAND verse_crp_probe)
+set_tests_properties(verse_crp_probe PROPERTIES TIMEOUT 60 LABELS "protocol;crp")
+if(NOT WIN32)
+  add_executable(crp-hub
+    src/verse/crp_hub.c src/verse/crp.c src/verse/upp.c src/verse/json_min.c
+    src/platform/crp_session.c src/common/sha256.c)
+  target_include_directories(crp-hub PRIVATE src/verse src/common src/platform)
+  add_executable(crp-peer
+    src/verse/crp_peer.c src/verse/crp.c src/verse/upp.c src/verse/json_min.c
+    src/platform/crp_session.c src/common/sha256.c)
+  target_include_directories(crp-peer PRIVATE src/verse src/common src/platform)
+  add_test(NAME verse_crp_closed_loop
+    COMMAND ${CMAKE_COMMAND} -E env INIM_CRP_HUB_BIN=$<TARGET_FILE:crp-hub>
+            python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/crp_closed_loop.test.py
+            $<TARGET_FILE:crp-peer>)
+  set_tests_properties(verse_crp_closed_loop PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TIMEOUT 60 LABELS "protocol;crp")
+endif()
 # Ed25519 sign/verify round-trip probe.  Existing suites only sign a handful of
 # times each, so the 1/32 carry-propagation defect in ed25519_sign (fixed in
 # src/common/ed25519.c) went unnoticed; this signs 2000 deterministic messages.
@@ -215,6 +246,11 @@ if(INIMERSE_NODE)
             $<TARGET_FILE:verse_upp_probe>)
   set_tests_properties(verse_upp_crosscheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 60 LABELS "protocol;upp")
+  add_test(NAME verse_crp_crosscheck
+    COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/crp_engine_crosscheck.js
+            $<TARGET_FILE:verse_crp_probe>)
+  set_tests_properties(verse_crp_crosscheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TIMEOUT 120 LABELS "protocol;crp")
 endif()
 
 find_program(INIMERSE_CLANG clang)
