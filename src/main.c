@@ -655,6 +655,52 @@ static int main_aot_package(const char *input, const char *output) {
     return 0;
 }
 
+/* Print one instruction section in the same textual form the self-hosted
+ * compiler emits (`selfhost/compiler.im --dump`): a header line, then one
+ * `op,r1,r2,r3` line per instruction.  Kept byte-comparable on purpose — the
+ * `bytecode` subcommand exists so the C compiler's artifact and the self-host
+ * compiler's artifact can be diffed and hashed against each other. */
+static void dump_bc_section(const char *header, Bytecode *bc) {
+    printf("%s\n", header);
+    for (int i = 0; i < bc->count; i++)
+        printf("%d,%d,%d,%d\n", (int)bc->code[i].op,
+               bc->code[i].r1, bc->code[i].r2, bc->code[i].r3);
+}
+
+/* `bytecode <input.im>`: compile with the C compiler and dump the stream. */
+static int main_dump_bytecode(const char *input) {
+    char *abs_in = make_abs_path_loose(input);
+    if (!abs_in) abs_in = strdup(input);
+    char *abs_script = chdir_to_script_dir(input); /* imports resolve against script dir */
+    Program *prog = parse_program_file(abs_script ? abs_script : abs_in);
+    if (!prog) {
+        fprintf(stderr, "error: cannot read script '%s'\n", input);
+        free(abs_in); free(abs_script);
+        return 1;
+    }
+    Compiler *comp = compiler_new();
+    comp->abi_version = INIM_ABI_VERSION;
+    comp->target = TARGET_HOST;
+    compiler_compile(comp, prog);
+    Bytecode *bc = compiler_get_main_bytecode(comp);
+    char hdr[1200];
+    dump_bc_section("main:", bc);
+    for (int i = 0; i < bc->func_count; i++) {
+        snprintf(hdr, sizeof hdr, "func:%s:%d",
+                 bc->func_names[i] ? bc->func_names[i] : "?", bc->func_argc[i]);
+        dump_bc_section(hdr, bc->funcs[i]);
+    }
+    for (int i = 0; i < bc->thread_count; i++) {
+        snprintf(hdr, sizeof hdr, "thread:%s:%d",
+                 bc->thread_names[i] ? bc->thread_names[i] : "?", bc->thread_argc[i]);
+        dump_bc_section(hdr, bc->threads[i]);
+    }
+    compiler_free(comp);
+    free(abs_in);
+    free(abs_script);
+    return 0;
+}
+
 /* Shared pipeline behind `buildc` and `compile`: parse + compile to .inim
  * bytecode, record a dependency trailer (main source + every resolved import,
  * SHA-256 each), optional symbol table export, and with --incremental skip
@@ -1207,6 +1253,12 @@ if (argc == 1) {
         free(abs_script);
         prof_finish(&vm, output);
         return rc_run;
+    }
+
+    /* bytecode command: dump the compiled instruction stream (self-host parity) */
+    if (strcmp(cmd, "bytecode") == 0) {
+        if (argc < 3) { fprintf(stderr, "usage: %s bytecode <input.im>\n", argv[0]); return 1; }
+        return main_dump_bytecode(argv[2]);
     }
 
     /* symbols command: export the symbol table of a compiled script */

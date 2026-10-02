@@ -1480,3 +1480,87 @@ endforeach()
 **穷尽性检查（确保没有第七个）**：对全部 `git ls-files '*.c'` 里「含 `int main` 且含 `assert(`」的文件，统计「除 `assert` 之外还有没有返回非零的路径」，只有这六个是 `nonzero_paths=0`；`src/verse/crp_probe.c`（13 条非零路径）与 `src/verse/json_min_probe.c`（19 条）虽然各含 1 处 `assert` 字样，但判决走自己的计数器，不受影响。
 
 **结案**：`ctest-assertion-gap` 的剩余数 **58 → 0**。73 个无输出断言的 CTest 全部归类：17 个补上了有牙的 `PASS_REGULAR_EXPRESSION`（§10.19–§10.23），6 个探针恢复了在 Release 下真正生效的断言（本节），其余 50 个的退出码经源码取证确认就是它们的契约。**本批不新增 CTest，`EXP_CTEST` 保持 101。**
+
+### 10.25 自举工具链「零输出」的两个根因：一个被 `posix_unsupported` 顶着的注册点，和一条缺失的隐式 `OP_RETURN`（`selfhost-codegen-empty`）
+
+BOARD 行 `selfhost-codegen-empty` 的记录停在「`--dump` 能出 120 条指令，但真跑一行程序输出都没有」，并判断「已不是 push 误编译」。本节给出**第二层与第三层原因**：它们都在该行开工前就存在（`selfhost/` 与 0.2.0 发布版 `8248e08` 逐字节相同，`git diff --stat 8248e08 HEAD -- selfhost/` 为空），属**一直没被测过的既有缺陷**，不是新回归。
+
+#### 根因 A：自举路径在 POSIX 上根本没有被执行
+
+`vm_exec` 这个内建把一段已编译的 `Bytecode *` 交给 VM 执行，是自举工具链的唯一入口。它的实现（`bc_from_data` 静态辅助 + `builtin_vm_exec`）原本只写在 `src/runtime/runtime.c` 里，并**只**由该文件自己的 `runtime_init` 注册。而 Linux 门禁走的是 `src/runtime/runtime_posix.c`，它在同名位置注册的是 `posix_unsupported`：
+
+```c
+vm_register_builtin_full(vm, "vm_exec", posix_unsupported, 1 | CAP_DBG | CAP_PROC, 0);
+```
+
+于是自举路径调 `vm_exec` 恒得 `-1` —— 编译出来的字节码**从来没被执行过**。这解释了一个此前无法解释的现象：`--dump`（纯前端，不经 `vm_exec`）能出 120 条指令，而真跑一行输出都没有，且**两条路径的退出码都是 0**。
+
+探针实测：`vm_exec_rc` 修前 **-1**、修后 **1**。
+
+#### 根因 B：自举编译器缺函数体末尾的隐式 `OP_RETURN`
+
+C 编译器在函数体编译完后无条件补一条返回：
+
+```c
+/* 末尾默认返回 nil */
+emit(comp->curBC, OP_RETURN, 0, 0, 0);
+```
+
+（`src/compiler/compiler.c:378-379`）。`selfhost/compiler.im` 的 `compile_program` 函数体循环之后**什么都没有**。少了这一条，函数体执行完就直接跑出 `code` 数组，**调用点之后的语句被静默丢弃** —— 这比「返回垃圾值」更难发现，因为它只吃掉调用者后续的输出。
+
+实证（`func g() { say "inner" }` / `g()` / `say "after"` / `stop all`）：
+
+| | `func:g:0` 指令 | 程序输出 |
+|---|---|---|
+| 修前 | 2 条（`3,1,0,0` / `30,1,0,0`） | 只有 `inner` |
+| 修后 | 3 条（多 `35,0,0,0`） | `inner` + `after` |
+
+#### 修复
+
+- 新增 `src/runtime/vm_exec_builtin.c`：把 `bc_from_data` 与 `im_builtin_vm_exec` 从 `runtime.c` **逐字搬过来**，使两个 runtime 都能链接到同一份实现（避免复制两份后各自漂移）。
+- `src/runtime/runtime.h` 加声明；`src/runtime/runtime.c` 删掉旧的两段并把注册改为 `im_builtin_vm_exec`；`src/runtime/runtime_posix.c:1064` 的 `posix_unsupported` → `im_builtin_vm_exec`。
+- `CMakeLists.txt` 把新文件加进 `INIMERSE_ENGINE_SOURCES`。
+- `selfhost/compiler.im:759` 补 `emit(fctx, OP_RETURN, 0, 0, 0)`，带三行中文注释指向 `compiler.c:379`。
+
+#### 判据②：两条路径的程序输出逐字节一致
+
+`./build/inimerse selfhost/compiler.im selfhost/test1.im` 与 `./build/inimerse selfhost/test1.im` 的输出**逐字节相同**（滤掉引擎固定打印的三行模块装载前言与 `[0]=…` 调用回显后各 63 B，输出哈希 `2f13eb753c50`）。
+
+#### 判据③：产物对照工具 `tools/selfhost_compare.py`
+
+对每个目标跑四条命令 —— C 运行 / 自举运行 / `inimerse bytecode <目标>` / `compiler.im --dump <目标>` —— 记录**运行输出哈希对**与**规范化字节码哈希对**（`ops_only()` 只取每条指令的 opcode 列）。
+
+实测 `python3 tools/selfhost_compare.py --check`：**`selfhost parity OK: 10 target(s) byte-identical, 23 skipped`，`CHECK_EXIT=0`**。逐字节相同的 10 个是 `selfhost/test1.im`、`bench_calc`、`bench_n`、`chain`、`fib15`、`h3`、`io_t4`、`prog1`、`prog2`、`rec`、`truthy_test`。
+
+**哈希对只记录、不要求相等**：实测 C dump **129 行** vs 自举 **123 行**，寄存器分配与全局下标不同（C 用全局槽 23/24、自举用 0/1），`stop all` 在 C 是 `OP_STOP`(32) 而在自举是 `OP_THREAD_CTRL`(38)。判据原文只要求「成对记录」+「对固定源码/参数可重复」，**真正必须相等的是程序运行输出**；两个编译器行为一致而寄存器分配自由，是合理差异。
+
+23 个跳过**每一个都打印理由**，五类：
+
+| 类别 | 含义 | 实例 |
+|---|---|---|
+| `path-base` | 相对路径基准不同 | C 路径按**脚本所在目录**解析 `read_file`/`import`，自举路径继承 `compiler.im` 的目录 `selfhost/`；同一目标 `read_file("tests/prog1num.im")` 在 C 侧得 `len=0`、自举侧得 `len=15` |
+| `unsupported-syntax` | 自举前端只实现**批式子集** | GUI 语法 `stage`/`sprite`/`when`/`on`/`forever`/`broadcast` 会打印 `parse error:` 到 **stdout 且 exit 0** |
+| `no-output` | 库/数据夹具 | `_mini` / `libx` / `prog1min` / `prog1num` / `cat_game`，两边都不打印 |
+| `gui-script` | GUI 脚本在 C 路径上死循环 | 必须**前置**判定，否则每个目标耗满一个 timeout |
+| `non-hermetic` | 活的外部副作用 | `hw_test.im` 调 `exec("echo hello from inimerse")` 与 `http_get("http://example.com")`，自举侧连跑三次输出哈希是 `b09127…` / `3de1f7…` / `b09127…`，**不可重复** |
+
+**顺带**：C 路径此前**没有** `--dump`（`--dump` 只实现在 `selfhost/compiler.im:780-793`），新增 `./build/inimerse bytecode <input.im>` 子命令（`src/main.c`，复用 `parse_program_file` + `compiler_new` + `TARGET_HOST`），输出格式与 `compiler.im --dump` 对齐 —— 没有它，判据③的「规范化字节码哈希」在 C 侧无从取得。
+
+#### 判据④：双向验证，两个根因各自独立成立
+
+新增 CTest `selfhost_codegen_parity`（`tools/selfhost_compare.py --check --engine $<TARGET_FILE:inimerse>`，`TIMEOUT 300`，`LABELS "compiler;selfhost;regression"`）。**不能用退出码**（两条路径都 exit 0），只断言程序输出。
+
+| 打断 | 改什么 | 结果 |
+|---|---|---|
+| BREAK 1（根因 A） | `src/runtime/runtime_posix.c:1064` 改回 `posix_unsupported`，**重编** | `FAIL selfhost/test1.im  c=63B sh=0B  c_out=2f13eb753c50 sh_out=-`，`exit=1` |
+| BREAK 2（根因 B） | 注释掉 `selfhost/compiler.im:759` 的 `emit`，**不需要重编**（`compiler.im` 是被解释的） | `FAIL selfhost/tests/prog2.im  c=25B sh=14B  c_out=46fb6fbf6057 sh_out=d818a31d7094`，`exit=1` |
+
+**一条关键发现**：`selfhost/test1.im` **不覆盖**根因 B —— 它的函数全部以显式 `return` 结尾，打断 B 后它仍然绿；覆盖 B 的是 `selfhost/tests/prog2.im`（`func greet(who) { say "hi " + who }` 从末尾掉出去）。两者都在默认目标集里，CTest 因此**同时钉住两个根因**。两处打断都已用 `cp` 还原、以 `cmp` 证明逐字节相同，重编后复绿。
+
+#### 判据⑤：门禁计数同步
+
+`EXP_CTEST` **101 → 102**（`tools/gate.sh:49`），`docs/BOARD.md` §3 的 ctest 行同步为「**102 / 102 通过**」与 `0 tests failed out of 102`。重新 configure 后 `grep -c 'add_test(' CMakeLists.txt` = **102**、`ctest --test-dir build -N` 的 `Total Tests: 102`，`ctest -R selfhost_codegen_parity` → **`Test #32 … Passed 19.76 sec`**。
+
+#### 一条方法论点
+
+本行开工前的描述判断「已不是 push 误编译」是对的，但**漏了「自举路径在 POSIX 上被 `posix_unsupported` 顶着」这一层**。它与「`--dump` 出 120 条指令而真跑零输出、且两者 exit 都是 0」完全自洽：`--dump` 是纯前端路径，不经过 `vm_exec`。教训是**同一个「零输出」现象可以有两层互不遮蔽的原因**，只修一层仍会留下另一层，而退出码把两层都掩盖掉。

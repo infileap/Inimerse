@@ -753,6 +753,10 @@ func compile_program(stmts) {
         for s in f["b"] {
             compile_stmt(fctx, s)
         }
+        # 末尾默认返回 nil，与 C 编译器一致（src/compiler/compiler.c:379 的
+        # `emit(comp->curBC, OP_RETURN, 0, 0, 0);`）。少了这一条，函数体执行完
+        # 就会跑出 code 数组，调用之后的语句被静默丢弃。
+        emit(fctx, OP_RETURN, 0, 0, 0)
         f["code"] = fctx["code"]
         f["strings"] = fctx["strings"]
         f["floats"] = fctx["floats"]

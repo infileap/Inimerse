@@ -1061,7 +1061,7 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "gc_auto", posix_gc_auto);
     vm_register_builtin(vm, "gc_now", posix_gc_now);
     vm_register_builtin(vm, "gc_stats", posix_gc_stats);
-    vm_register_builtin_full(vm, "vm_exec", posix_unsupported, 1 | CAP_DBG | CAP_PROC, 0);
+    vm_register_builtin_full(vm, "vm_exec", im_builtin_vm_exec, 1 | CAP_DBG | CAP_PROC, 0);
     vm_register_builtin(vm, "usage", posix_usage);
     vm_register_builtin_full(vm, "load_params", posix_unsupported, 1 | CAP_IO, 0);
     vm_register_builtin_full(vm, "save_params", posix_unsupported, 1 | CAP_IO, 0);

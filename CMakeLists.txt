@@ -238,6 +238,18 @@ if(INIMERSE_PYTHON)
   # currently emits a bare OP_HALT for every program (see the open BOARD row).
   add_test(NAME selfhost_toolchain_parses COMMAND inimerse ${CMAKE_SOURCE_DIR}/selfhost/compiler.im --dump tests/_mini.im)
   set_tests_properties(selfhost_toolchain_parses PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "compiler;selfhost;regression" PASS_REGULAR_EXPRESSION "main:")
+  # C path vs self-host path: the same source must produce the same *behaviour*.
+  # This is the regression for BOARD row `selfhost-codegen-empty`, and it cannot
+  # be an exit-code assertion -- both paths exit 0 even when the self-host path
+  # prints nothing at all, which is exactly what happened: `vm_exec` was
+  # registered as an unsupported stub on POSIX, and selfhost/compiler.im never
+  # emitted the implicit OP_RETURN that src/compiler/compiler.c:379 emits at the
+  # end of every function body.  The two compilers disagree on register
+  # allocation, so bytecode hashes are only *recorded*; what is asserted is that
+  # both paths print the same bytes.
+  add_test(NAME selfhost_codegen_parity
+           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/selfhost_compare.py --check --engine $<TARGET_FILE:inimerse>)
+  set_tests_properties(selfhost_codegen_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;selfhost;regression")
   add_test(NAME bindgen_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/bindgen.test.py)
   set_tests_properties(bindgen_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME wasm_backend_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_backend.test.py)
@@ -327,7 +339,10 @@ if(INIMERSE_BUILD_ENGINE)
     src/lexer/lexer.c src/parser/parser.c
     src/compiler/bytecode.c src/compiler/compiler.c
     src/compilation/checksum.c src/compilation/deps.c src/compilation/profiler.c src/compilation/debug_info.c src/compilation/wasm_backend.c
-    src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c)
+    src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c
+    # `vm_exec` is registered by BOTH runtimes (runtime.c on WIN32,
+    # runtime_posix.c elsewhere), so its implementation must build on both.
+    src/runtime/vm_exec_builtin.c)
   if(WIN32)
     list(APPEND INIMERSE_ENGINE_SOURCES
       src/platform/process.c src/platform/socket.c
