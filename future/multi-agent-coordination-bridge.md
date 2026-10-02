@@ -4,6 +4,7 @@
 > **口径**：每条结论按白皮书 §67.2 标注三个互相独立的维度 —— `coverage`（covered / partial / principle_only / conflicted / unresolved）、`implementation`（implemented / partial / specified / planned / retired）、`evidence`（E0–E6，见 §64.2）。`covered ≠ implemented ≠ validated`。
 > **范围**：只出设计。**本文件不包含任何引擎 C 代码改动**；§8 给的是逐阶段验收门，动手前先过评审。
 > **权威**：实现状态以 [`docs/STATUS.md`](../docs/STATUS.md) 为唯一权威；语言与 API 事实以 [`docs/API.md`](../docs/API.md) 为准。
+> **本轮修订（`agent-bridge` 流，2026-10-02，main `e6e4936`）**：§9 的实测数字整体重跑到当前 `main`（此前几乎每个数字都过期）；§7.7 改写（前提今天变了一半 —— 理由拆成「认证」与「授权」两句），§2.2 的对应缺口同步；本文件登记进 [`future/README.md`](README.md)「保留的 4 份指导文件」与 [`docs/STATUS.md`](../docs/STATUS.md) §9.3。**本轮只改文档，不含任何代码改动**；作业单见 [`docs/streams/agent-bridge.md`](../docs/streams/agent-bridge.md)。
 
 ---
 
@@ -15,7 +16,7 @@
 4. **社会承诺落到 Layer 的最小表达不需要新概念**（§77）：`commitment:<id>` 这个 cell 的值即承诺状态，状态迁移就是既有的 `put`，幂等键就是消息 id。承诺正文必须离开 wire，进内容面/带外存储，由 fallback ref 指回。→ §3.2
 5. **`commit.head` 给的是「抗改写」，不是「真实性」。** 一个 agent 完全可以提交一条虚假的 `FULFILLED`，链和锚点都会如实记录它。把「可审计」说成「可验证为真」是过度声明。→ §3.4
 6. **UPP 与 CRP 的编码层复用已经是既成事实，不是建议**：`src/verse/crp.h:59` 的 `typedef UppBuf CrpBuf;` 与 `src/verse/crp.h:43-46` 的注释说明了共享的转义实现。要新建的只有一条绑定：**宿主崩溃/心跳超时 → 承诺违反的持久记录**，今天这条线不存在。→ §5
-7. **今天「协调事件被持久审计」不成立**：CRP 的 64 事件环是会话结构体里的内存数组（`src/verse/crp.c:703` 的 `CrpEvent events[CRP_EVENT_WINDOW]`，淘汰逻辑 `src/verse/crp.c:1102-1105`），不落盘。这是本设计中最大的 `unresolved`，见 §7.1。→ §3.5
+7. **今天「协调事件被持久审计」不成立**：CRP 的 64 事件环是会话结构体里的内存数组（`src/verse/crp.c:703` 的 `CrpEvent events[CRP_EVENT_WINDOW]`，淘汰逻辑 `src/verse/crp.c:1176-1182`），不落盘。这是本设计中最大的 `unresolved`，见 §7.1。→ §3.5
 
 ---
 
@@ -81,7 +82,7 @@ return type && (strcmp(type, "FIND") == 0 || strcmp(type, "PORTAL") == 0 ||
 - **CONFIRM ← 这是唯一接近一一对应的条目。** CRP 帧的 `id` 字段（`crp.h` 的 `frame_tail()`，键序冻结为 `crp/type/payload/id`）天然就是关联键；`crp_frame_*(..., id)` 三个构造函数都接受它。G²CP 的 `CommitmentStore._fulfill_matching(debtor, creditor, condition_prefix)` 用 (债务人, 债权人, 条件前缀) 三元组去兑现，在 CRP 里换成 (peer, peer, 关联 `id`) 即可，不需要新字段。
 
 - **UPDATE —— 不能硬编成一对一，而且这里的差异是实质性的。** G²CP 把义务放在**接收方**：`UPDATE` 的 debtor 是 `msg.receiver`，也就是「你（接收方）必须去检查并应用这个 delta」。CRP 的模型**方向相反**：写入权由 `PORTAL` **预先授予**（令牌 `capabilities` 里写明），接收方无权自行决定要不要应用。所以 UPDATE 的两半必须分别落在 `PORTAL`（**谁能改**）与 `SIGNAL`（**改什么**）上。
-  > ⚠️ **当前实现的真实缺口**：CRP 的令牌机制本身是 `implemented` 且 E4，但**签发路径今天没有授权检查** —— `crp-hub` 收到 `{"op":"portal"}` 就签发（§9 的闭环记录里 `peer-b` 未做任何认证即拿到令牌）。也就是说"能力令牌"目前是*能力凭证*而非*访问控制*。把 UPDATE 映射到 PORTAL 的前提是补上签发侧的授权判定，否则这条映射只是形式上的。
+  > ⚠️ **当前实现的真实缺口**：CRP 的令牌机制本身是 `implemented` 且 E4，但**签发侧只有调用方认证、没有 per-`(verse, peer)` 授权**（`crp-portal-auth` `40f6094` 已合入 `main`；判定点 `crp_enroll_check()`，`src/verse/crp.c:1057`，两处拒绝在 `:1077`/`:1079`）。这两句必须分开说：**（a）认证** —— `/portal` 现在要求 enrollment 证明，未配 `CRP_ENROLL_SECRET` 时 fail-closed；**（b）授权** —— 但该证明的唯一输入是 `verse` 与 `peer` 两个字符串（`tools/crp_relay.js:29`），没有第三个因子，因此知道 hub 级共享 secret 的人**仍可为任意 `(verse, peer)` 现算证明并取得 `signal` 令牌**。也就是说"能力令牌"到目前为止是*能力凭证*（证明你是这个 hub 的成员）而非*访问控制*（证明你被授权访问这一对）。把 UPDATE 映射到 PORTAL 的前提是补上 per-pair 授权，否则这条映射仍只是形式上的。完整论证见 §7.7。
 
 - **REJECT —— 最大的语义缺口。** 三种帧类型里没有"拒绝"。CRP 的拒绝表现为 HTTP 状态码加错误字符串：`403 invalid capability token`、`409`（seq 乱序且无 replay）、`400`、`404`。G²CP 把拒绝当作**可审计的言语行为**（`REJECT` 产生一条 `ACTIVE` 的承诺记录），CRP 把它当作**传输层结果**。后果很具体：**错误响应不进事件日志**。所以要让 REJECT 可审计，发送方必须**显式**发一条 `SIGNAL`（`event: "REJECT"`），不能指望 CRP 的错误响应 —— 那条响应在 Layer 里是隐形的。
 
@@ -98,7 +99,7 @@ return type && (strcmp(type, "FIND") == 0 || strcmp(type, "PORTAL") == 0 ||
 | HMAC 能力令牌 `base64url(body).base64url(HMAC-SHA256(secret,body))`，body = `{verse,peer,capabilities,exp}` | `src/verse/crp.h:13`、`crp.c:285-375` | **无任何对应物** |
 | 撤销集合（上限 10000，`CRP_DEFAULT_MAX_REVOKED`） | `crp.h`、`crp.c` 的 `crp_registry_revoke()` | 承诺只能 `CANCELLED`，且是进程内内存态 |
 | 会话单调 seq + 乱序无 replay → 409 | 闭环记录里的 `409`/`resume` 分支 | 无 |
-| 64 事件环 + `resume(replay)` 补发 | `crp.c:1172-1196`、`CRP_EVENT_WINDOW` = `crp.h:52` | 无（Neo4j 事务由数据库代管，协议层没有） |
+| 64 事件环 + `resume(replay)` 补发 | `crp.c:1176-1196`、`CRP_EVENT_WINDOW` = `crp.h:52` | 无（Neo4j 事务由数据库代管，协议层没有） |
 | 会话租约与节点交接（11 态会话层） | `src/platform/crp_session.{h,c}` | 无 |
 | 持久化哈希链 + **外部**锚点 | `src/verse/layer.h:66-78`、`eventlog.h` | 无（`CommitmentStore` 是 `list`，进程结束即消失） |
 | 传输无关分帧（1 MiB 上限 `CRP_MAX_FRAME_BYTES`） | `crp.h` | 无 |
@@ -147,7 +148,7 @@ Slipstream 的 Force 是**封闭 12 值**（规范原文与 README、ABNF 三处
 | 7 条 performative 的帧投影 | covered | specified | E1 + E2（见 §9.3） |
 | CONFIRM ↔ 帧 `id` 关联 | covered | specified | E1 + E4（`id` 字段已 implemented） |
 | REJECT 在 CRP 无对应物 | **conflicted** | specified | E2（两侧源码都读到） |
-| UPDATE 需 PORTAL + SIGNAL 两步 | covered | specified | E1；且**签发侧无授权**这一前提缺口 = E4 实测（§9） |
+| UPDATE 需 PORTAL + SIGNAL 两步 | covered | specified | E1；且**签发侧只有调用方认证、没有 per-pair 授权**这一前提缺口 = E4 实测（§9.1，完整论证见 §7.7） |
 | 令牌/撤销/seq/事件环/锚点 | covered | implemented | E4 |
 | SLIP 12 Force 的承载位置 | partial | planned | E2（外部规范） |
 
@@ -325,7 +326,7 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 3. **引擎侧的正常位置在别处**：CRP 帧上限 1 MiB 但它是控制/数据面，不是内容通道（§55.1：内容面才做完整性、版本、许可和去重，而且"必须校验哈希和签名"）。
 4. **可拒绝性**：违反以上约束的输入必须**拒绝**并返回可区分错误，不得截断或"尽力而为"地发送 —— 静默截断会让审计链记录一条语义已被改变的协调消息。
 
-**边界（同一条的重要性）**：SLIP 是**词法**，不是**权限**。一条词法完全合法的 SLIP 行不携带任何权威；权威**完全**来自 CRP 的令牌（`crp_token_check_str(secret, tok, verse, peer, "signal", now)`）。**严禁**把 Force 当权限用 —— 例如把 `Commit` 解读成写许可，或把 `Reject` 解读成"撤回了他人的提交权"。`src/verse/crp.c:1082` 与 `:1146` 的检查只认字面量 `"signal"`，与 `event` 字段无关。
+**边界（同一条的重要性）**：SLIP 是**词法**，不是**权限**。一条词法完全合法的 SLIP 行不携带任何权威；权威**完全**来自 CRP 的令牌（`crp_token_check_str(secret, tok, verse, peer, "signal", now)`）。**严禁**把 Force 当权限用 —— 例如把 `Commit` 解读成写许可，或把 `Reject` 解读成"撤回了他人的提交权"。`src/verse/crp.c:1155-1156` 与 `:1220` 的检查（`crp_token_check(r->secret, tok, verse, …, "signal", now)` / `crp_token_check_str(r->secret, tok, vstr, pstr, "signal", now)`）只认字面量 `"signal"`，与 `event` 字段无关。
 
 判定标注：
 
@@ -395,7 +396,7 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 3. **不把 G²CP 的 `CommitmentStore` 当权威** —— 它是进程内 `list`，无持久化、无链、无签名；用它替换 Layer 是降级。
 4. **不让 Force 承担权限** —— 见 §4.5。
 5. **不新增 CRP 帧类型** —— 三个够用，`event` 已是自由字符串。
-6. **不改 `crp_encode` 的 key 顺序** —— 已有 107 条 text-identical 的交叉校验语料（§9），改顺序等于让全部语料失效。
+6. **不改 `crp_encode` 的 key 顺序** —— 已有 115 条 text-identical 的交叉校验语料（§9），改顺序等于让全部语料失效。
 7. **不把承诺正文放进 Layer cell** —— `value` 是 `long long`，做不到。
 8. **不在 wire 上放自然语言** —— MUST NOT #2。
 
@@ -405,14 +406,15 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 
 | # | 问题 | 债务类型 |
 |---|---|---|
-| 7.1 | **64 事件环不落盘**：`CrpEvent events[CRP_EVENT_WINDOW]` 在会话结构体内（`crp.c:703`），淘汰逻辑 `crp.c:1102-1105`。协调事件今天**不进**任何持久审计。要么扩 Layer 承载协调事件，要么明确接受"协调事件不进审计"并写进文档 | `missing_owner` |
+| 7.1 | **64 事件环不落盘**：`CrpEvent events[CRP_EVENT_WINDOW]` 在会话结构体内（`crp.c:703`），淘汰逻辑 `crp.c:1176-1182`。协调事件今天**不进**任何持久审计。要么扩 Layer 承载协调事件，要么明确接受"协调事件不进审计"并写进文档 | `missing_owner` |
 | 7.2 | fallback ref 索引表的所有者与生命周期（§4.4） | `missing_owner` / `hidden_dependency` |
 | 7.3 | `SIGNAL.event` 是否加封闭枚举校验：加了就与 SLIP 的 12 值（或 G²CP 的 7 值）耦合，不加则没有词法门禁 | `unbounded_scope` |
 | 7.4 | 承诺正文存内容面之后，内容面的撤销/过期与 Layer 里的承诺状态如何保持一致（§55.13 #4：内容缓存必须遵守过期和撤销） | `hidden_dependency` |
 | 7.5 | **谁判定 grounding 与 `apply_if_valid`** —— 桥接层的外部校验器是新的信任主体，必须显式记账 | `missing_owner` |
 | 7.6 | `commitment:<id>` 的命名空间碰撞：同一会话里多个 agent 的 id 来源唯一性由谁保证 | `term_drift` |
-| 7.7 | **`PORTAL` 签发侧无授权检查**：任何能到达 hub 的 peer 都能为任意 verse 取得 `signal` 令牌（§9 实测）。在补上签发授权之前，UPDATE → PORTAL 的映射只是形式上的 | `optimistic_claim` |
+| 7.7 | **`PORTAL` 的签发侧只有调用方认证、没有 per-`(verse,peer)` 授权**（`crp-portal-auth` `40f6094` 之后 —— 这条前提今天变了一半，理由必须拆成两句）：**(a) 认证** —— `/portal` 现在要求 enrollment 证明 `base64url(HMAC-SHA256(CRP_ENROLL_SECRET, String(verse) + "\0" + String(peer)))`，判定点**只有一处** `crp_enroll_check()`（`src/verse/crp.c:1057`），`crp_registry_portal` 与 HTTP 监听器**共用它**；未配 `CRP_ENROLL_SECRET` 时 **fail-closed** 403 `portal enrollment is not configured`，无证明/证明错 → 403 `invalid enrollment proof`。它证明的是**调用方知道 hub 级共享 secret**，这是*调用方认证*（caller authentication）。**(b) 授权** —— 它**不是**针对特定 `(verse, peer)` 的*授权*（authorization）：证明的输入只有 `verse` 与 `peer` 两个字符串、没有第三个因子，所以知道该 secret 的人**仍可为任意 `(verse, peer)` 现算证明并取得 `signal` 令牌**；今天每个 hub 成员对**每一个**会话都有签发权。⇒ **UPDATE → PORTAL 的映射仍然只是形式上的**，缺口从「完全没有检查」变成「只有 hub 级成员资格，没有 per-`(verse,peer)` 授权」。在补上 per-pair 授权之前，§2.2 的 UPDATE 映射不成立 | `optimistic_claim` |
 | 7.8 | 引擎里根本没有 `commitment` 概念（`grep` 确认），所以 §3.2 的编码方案是**纯设计**，未经任何实现验证 | （状态说明） |
+| 7.9 | **「智能体」的身份没有任何已验证的载体**：`(verse, peer)` 是唯一出现在**被认证的**产物里的身份，但令牌只证明持有者知道 hub 级共享 secret（§7.7），而 `peer` 字符串由调用方自选；Layer 的 `actor`/`role` 是**调用方提供的自由字符串**（`vl_layer_put` 不校验）；`CAP_AI` 由 mod 在 `spi_meta()` 里**自声明**（`src/runtime/runtime.c:1275`，进程内、线上不可验证）；`ai_boundary`（`src/mod/say_stream.c:70`/`:98`）只是对 meta 的**子串匹配**，不是凭据校验。⇒ 本设计必须先写死一条规则：**桥接层不得采信调用方提供的 `actor`/`role`，承诺的 debtor 必须由令牌 scope 派生**。至于「谁是这个 peer」今天没有答案 —— 要不要把 peer 名变成真实主体是一次**先决断、先改参考实现**的事（见作业单 [streams/agent-bridge.md](../docs/streams/agent-bridge.md) §1 Q1/Q3） | `missing_owner` |
 
 ---
 
@@ -420,7 +422,7 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 
 > **先设计、评审通过再实现。** 以下每阶段的验收命令都必须真的能跑出 `gate: OK` 且 exit 0。
 > **门禁规则**（`tools/gate.sh` 七阶段：build / ctest / economy / node / plugin / links / doc-paths）：
-> 新增测试必须同步 bump `tools/gate.sh:43` 的 `EXP_CTEST`（当前默认 93），并让 `grep -c "add_test(" CMakeLists.txt` 的计数吻合 —— 今天两者都是 93。同时按 `docs/BOARD.md` §3 与 `docs/STATUS.md` §1 的规则，**三处数字一起改**，否则 gate 的 ctest 阶段会因 `0 tests failed out of $EXP_CTEST` 不匹配而失败。
+> 新增测试必须同步 bump `tools/gate.sh:43` 的 `EXP_CTEST`（当前默认 95），并让 `grep -c "add_test(" CMakeLists.txt` 的计数吻合 —— 今天两者都是 95。同时按 `docs/BOARD.md` §3 与 `docs/STATUS.md` §1 的规则，**三处数字一起改**，否则 gate 的 ctest 阶段会因 `0 tests failed out of $EXP_CTEST` 不匹配而失败。
 
 ### 阶段 0：语义冻结（纯文档，零代码）
 - **内容**：本文件；`docs/STATUS.md` 加一条路线图条目。
@@ -447,7 +449,7 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 - **验收**：
   ```
   node tools/crp_engine_crosscheck.js ./build/verse_crp_probe
-  # 语料从 107 条扩到含 SLIP 行的 N 条，且 text-identical（N 由新增语料决定）
+  # 语料从 115 条扩到含 SLIP 行的 N 条，且 text-identical（N 由新增语料决定）
   ./build/verse_crp_probe          # 检查项数增加且 0 failures
   INIM_CRP_HUB_BIN=./build/crp-hub python3 tools/crp_closed_loop.test.py ./build/crp-peer
   # 断言一条 SLIP 行经 hub 往返后在 resume 的 replay 里字形不变
@@ -484,33 +486,38 @@ SLIP 的 `Fallback` 要求带一个 **1–16 位字母数字**的 ref（MUST 规
 
 ## 9. 证据索引（可复现命令与原始输出）
 
-### 9.1 引擎既有能力（本机实测，2026-10-02）
+### 9.1 引擎既有能力（本机实测，2026-10-02，main `e6e4936`）
 
 ```
 $ ctest --test-dir build -R "crp|upp|json_min|verse_" --output-on-failure
-100% tests passed, 0 tests failed out of 15
+100% tests passed, 0 tests failed out of 16
 Label Time Summary:
-crp           =   2.59 sec*proc (4 tests)
-protocol      =   4.28 sec*proc (9 tests)
+crp           =   2.97 sec*proc (4 tests)
+protocol      =   4.91 sec*proc (10 tests)
 
 $ ./build/verse_crp_probe
-crp_probe: 173 checks, 0 failures
+crp_probe: 185 checks, 0 failures
 
 $ node tools/crp_engine_crosscheck.js ./build/verse_crp_probe
-crp_engine_crosscheck: 107 records, text-identical
+crp_engine_crosscheck: 115 records, text-identical
 
 $ node tools/upp_engine_crosscheck.js ./build/verse_upp_probe
 upp crosscheck: ok (111 ops, engine and reference agree)
 
 $ INIM_CRP_HUB_BIN=./build/crp-hub python3 tools/crp_closed_loop.test.py ./build/crp-peer
-crp_peer: 27 exchanges, 0 failures
-hub: {"ok":true,"served":1,"exchanges":26,"bye":true}
-crp_closed_loop: 17 checks, 0 failures
+crp_peer: 31 exchanges, 0 failures
+hub: {"ok":true,"served":1,"exchanges":30,"bye":true}
+crp_closed_loop: 19 checks, 0 failures
 ```
 
-同一份闭环记录里可直接观察到本设计的两个前提：
-- `{"op":"portal","payload":{"verse":"demo","peer":"peer-b"}}` → `200` 且**未做任何认证**就返回令牌（§2.2 / §7.7 的"签发侧无授权"）。
-- `{"op":"signal", ...}` → `403 {"error":"invalid capability token"}`，且 `{"op":"resume",...}` 在令牌被 `revoke` 后同样 `403` —— 拒绝是**状态码**，不产生事件记录（§2.2 / §3.3）。
+同一份闭环记录里可直接观察到本设计的三个前提。**前两条已按 `crp-portal-auth`（`40f6094`）合入后的行为重写** —— 此前版本在这里写的是「`peer-b` 未做任何认证即取得令牌」，**那句话今天会失败**：
+
+- **`/portal` 今天会拒绝未带证明的调用方**：
+  - `{"op":"portal","payload":{"verse":"demo","peer":"peer-a"}}`（根本没有 `auth`）→ `403 {"error":"invalid enrollment proof"}`；`"auth":"not-a-proof"` → 同样 `403`。
+  - 未注册的 verse、或缺少 `peer` → `404 {"error":"verse not found"}`（注册表检查在证明检查**之前**）。
+  - 带正确证明 → `200`，返回 `{"token":"…","verse":"demo","peer":"peer-a","expires":…}`。
+- **证明确实绑定 `(verse, peer)`，但它没有第三个因子**：同一个证明字符串 `Ya3OicHgEBEpv3igKkYFtZNKS4EhYmFeyj7hVKvALPY` 对 `peer-a` 是 `403`、对 `peer-b` 是 `200`（同一次运行里的第 22 与第 52 条交换）。绑定为真的原因是证明的输入**只有** `verse` 与 `peer` 两个字符串 —— `tools/crp_relay.js:29` 逐字是 `crypto.createHmac('sha256', enrollSecret).update(`${verse}\0${peer}`).digest('base64url')`。因此它证明的只是**调用方知道 hub 级共享 secret**；知道该 secret 的人对**任意** `(verse, peer)` 都能现算证明。这正是 §7.7 必须拆成「认证」与「授权」两句的原因。
+- `{"op":"signal", ...}` 用**别人的**令牌 → `403 {"error":"invalid capability token"}`；令牌被 `revoke` 之后的 `signal` / `resume` 同样 `403` —— 拒绝是**状态码**，不产生事件记录（§2.2 / §3.3）。
 
 ### 9.2 结构性事实（源码，可复核）
 
@@ -518,7 +525,10 @@ crp_closed_loop: 17 checks, 0 failures
 $ grep -n "CrpEvent\|CRP_EVENT_WINDOW" src/verse/crp.c src/verse/crp.h
 src/verse/crp.c:697:} CrpEvent;
 src/verse/crp.c:703:    CrpEvent    events[CRP_EVENT_WINDOW];
-src/verse/crp.c:1102:    if (s->nevents == CRP_EVENT_WINDOW) {
+src/verse/crp.c:1176:    if (s->nevents == CRP_EVENT_WINDOW) {
+src/verse/crp.c:1179:        memmove(&s->events[0], &s->events[1], (CRP_EVENT_WINDOW - 1) * sizeof s->events[0]);
+src/verse/crp.c:1182:    CrpEvent *ev = &s->events[s->nevents];
+src/verse/crp.c:1246:    im_crp_session_resume_plan(&s->sess, (uint64_t)last_seq, CRP_EVENT_WINDOW,
 src/verse/crp.h:52:#define CRP_EVENT_WINDOW            64
 
 $ sed -n '491,494p' src/verse/crp.c        # crp_type_is_valid：只有三个帧类型
@@ -527,13 +537,15 @@ $ grep -n 'static const char \*DEFAULT_CAPS' src/verse/crp.c
 363:    static const char *DEFAULT_CAPS[] = { "signal" };
 
 $ grep -rn "commitment" src/ --include=*.c --include=*.h -i
-（无输出 —— 引擎里没有 commitment 概念）
+（无输出，rc=1 —— 引擎里没有 commitment 概念）
 
 $ sed -n '43p' tools/gate.sh
-EXP_CTEST="${EXP_CTEST:-93}"
+EXP_CTEST="${EXP_CTEST:-95}"
 $ grep -c "add_test(" CMakeLists.txt
-93
+95
 ```
+
+**行号漂移提示**：本设计的早期版本引用的 `crp.c:1102-1105`（事件环淘汰）与 `crp.c:1082`/`:1146`（令牌检查）**已经过期** —— 今天分别是 `crp.c:1176-1182` 与 `crp.c:1155-1156`/`:1220`。`:1082` 今天是「The portal's scope is a pair of non-empty strings…」注释，`:1146` 是「Map.has(p.verse): a non-string never matches a string key.」注释。引用行号时请以本节的实测为准。
 
 ### 9.3 外部系统事实的核实方式与落盘
 

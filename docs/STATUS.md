@@ -644,6 +644,24 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 4. GitHub/Bilibili OAuth token 交换和资料绑定。
 5. Verse Forge 第一批时空/物理/蓝图面板。
 
+### 9.3 多智能体协调桥接层（`设计未实现`）
+
+设计文档 [`future/multi-agent-coordination-bridge.md`](../future/multi-agent-coordination-bridge.md)（624 行，2026-10-02 复核更新，作业单 [streams/agent-bridge.md](streams/agent-bridge.md)）：在既有的 CRP（能力路由 / 授权平面）、Verse Layer（历史与提交）、UPP（打包与校验）之上，定义智能体之间如何**声明意图、达成承诺、留下可审计的证据**。它**不新增第五套机制**，只做三层映射：G²CP 的 performative 叠在 CRP 的 `SIGNAL` 上、承诺状态落成 Verse Layer 的一个 `commitment:<id>` cell、身份与生命周期沿用 UPP 的监督。
+
+- 状态：**`设计未实现` / E1** —— 只有设计，没有实现。判定依据：`grep -rn "commitment" src/ --include=*.c --include=*.h -i` 零命中（rc=1），`grep -rniE "\bagent" src/` 同样零命中。
+- 代码改动：**零**。本项不需要 `CMakeLists.txt`，也不需要动 `src/**`。
+- 挂靠点：§4 阶段四「AI 居民与训练沙盒」的 `强制 AI 标识与权限边界，避免将 AI 伪装成人类玩家。`（阶段出口条件见该节末）。
+- 已知前提缺口（**不是**「已具备」）：CRP `PORTAL` 的签发侧只有**调用方认证**、没有 per-`(verse, peer)` **授权**（文档 §7.7，`crp-portal-auth` `40f6094` 之后），因此 `UPDATE = PORTAL + SIGNAL` 的映射**今天仍只是形式上的**。
+- 主要未决项：智能体的身份没有已验证的载体（文档 §7.9）；`REJECT` 落账的 cell 语义；§7.1 的 64 事件环不落盘。
+- 可重复的验收命令（验证的是**底座**；桥接层自身没有可运行的验收，这正是 `设计未实现` 的含义）：
+
+  ```bash
+  ctest --test-dir build -R "crp|upp|json_min|verse_" --output-on-failure   # 0 tests failed out of 16
+  ./build/verse_crp_probe                                                   # crp_probe: 185 checks, 0 failures
+  node tools/crp_engine_crosscheck.js ./build/verse_crp_probe                # 115 records, text-identical
+  grep -rn "commitment" src/ --include=*.c --include=*.h -i                  # 无输出，rc=1
+  ```
+
 ---
 
 ## 10. 四条并行流的交付与边界（2026-08 集成）
