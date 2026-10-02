@@ -1,7 +1,13 @@
+# `ok`/`err` construct Results; `is_ok` / `unwrap_or` / `unwrap` inspect them.
+#
+# The `result ` prefixes exist so CTest can assert on the VALUES: the engine
+# echoes builtin call arguments, and the module self-check already prints a
+# bare `42`, so a bare-value assertion would match even while the Result
+# builtins were broken.
 r = ok(42)
-say is_ok(r)
-say unwrap_or(r, 0)
+say "result is_ok=" + str(is_ok(r))
+say "result unwrap_or=" + str(unwrap_or(r, 0))
 e = err("bad")
-say is_ok(e)
-say unwrap_or(e, 99)
-say unwrap(r)
+say "result is_ok_err=" + str(is_ok(e))
+say "result unwrap_or_err=" + str(unwrap_or(e, 99))
+say "result unwrap=" + str(unwrap(r))

@@ -1,8 +1,13 @@
-# Function-level ? propagates Err and unwraps Ok.
+# Function-level ? propagates Err and unwraps Ok: `pass_ok()` returns the bare
+# 7, `pass_err()` returns the Err itself rather than returning normally.
+#
+# The `resultprop ` prefixes exist so CTest can assert on the VALUES: the
+# engine echoes builtin call arguments, so bare `7`/`inner` in the combined
+# output would match even while propagation was broken.
 func pass_ok() { return ok(7)? }
 func pass_err() { return err("inner")? }
 ok_value = pass_ok()
 err_value = pass_err()
-say is_ok(ok_value)
-say is_ok(err_value)
-say result_error(err_value)
+say "resultprop unwrapped=" + str(ok_value)
+say "resultprop err_is_ok=" + str(is_ok(err_value))
+say "resultprop err=" + str(result_error(err_value))

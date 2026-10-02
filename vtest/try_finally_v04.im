@@ -1,4 +1,9 @@
-# finally runs on both normal and caught-exception paths.
+# finally runs on both the normal path and the caught-exception path, and it
+# still runs when the exception is re-thrown past it.
+#
+# The `finally ` prefixes exist so CTest can assert on the VALUES: `101` is a
+# prefix of `1110`, and the engine's module/builtin echo puts other bare
+# numbers in the combined output.
 flag = 0
 try {
     flag = flag + 1
@@ -7,7 +12,7 @@ try {
 } finally {
     flag = flag + 100
 }
-say flag
+say "finally normal=" + str(flag)
 flag = 0
 try {
     try {
@@ -16,8 +21,8 @@ try {
         flag = flag + 100
     }
 } catch (e) {
-    say flag
-    say e
+    say "finally nested=" + str(flag)
+    say "finally nested err=" + str(e)
 }
 try {
     throw "boom"
@@ -26,4 +31,4 @@ try {
 } finally {
     flag = flag + 1000
 }
-say flag
+say "finally caught=" + str(flag)

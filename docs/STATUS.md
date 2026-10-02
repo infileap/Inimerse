@@ -1237,3 +1237,45 @@ say "OM missing=" + missing
 **可复用的模式（补 §10.19 那条）。** §10.19 的结论是「当引擎回显会污染输出时，断言必须打在程序自己打印的带标记值行上」。本条补上后半句：**断言还要分开射程** —— 一条只覆盖它真正依赖的机制（`lambda_runtime` 不含捕获，就不该被捕获的破坏带红），否则双向验证时无法判断新断言抓的是哪一个缺陷。
 
 **门禁**：本批**不新增 CTest**（只加属性），`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 72 更新为 **71**。
+
+### 10.21 Result 三件套与 `try/finally`：四条断言，以及「FAIL 断言不能用字符串字面量」（`result-finally-assertions`）
+
+**起因。** §10.20 之后继续按 `ctest-assertion-gap` 的清单往下走，这一批是 Result 三件套（`result_runtime`、`result_question_runtime`、`result_propagation_runtime`）与 `try_finally_runtime`。四个脚本都重写成打印带标记的**值行**：
+
+| 脚本 | 新输出 |
+|---|---|
+| `vtest/result_v04.im` | `result is_ok=true` / `result unwrap_or=42` / `result is_ok_err=false` / `result unwrap_or_err=99` / `result unwrap=42` |
+| `vtest/result_question_v04.im` | `resultq value=42` / `resultq caught` / `resultq reached=0` |
+| `vtest/result_propagation_v04.im` | `resultprop unwrapped=7` / `resultprop err_is_ok=false` / `resultprop err=inner` |
+| `vtest/try_finally_v04.im` | `finally normal=101` / `finally nested=100` / `finally nested err=rethrow-me` / `finally caught=1110` |
+
+**一次失败的写法，就地推翻。** `result_question_runtime` 第一版是这样的：脚本里 `?` 传播之后留一句 `say "resultq unreachable"`，测试加 `FAIL_REGULAR_EXPRESSION "resultq unreachable"` —— 想法是「这句话不该被执行，所以它不该出现在输出里」。**跑出来是红的，而程序其实是对的**：引擎会把程序里**每一个字符串字面量**回显出来，回显行里赫然写着 `[6]="resultq unreachable"`。也就是说这条 FAIL 断言**在语句真的没跑时也会命中**，它断言的是「这个字面量不存在」，而不是「这句话没执行」——**是空的**。
+
+改法不是绕开，而是换一个不可被回显的东西当证据：让未执行的分支只改一个**计数变量**。
+
+```
+reached = 0
+try {
+  bad = err("failure")?
+  reached = 1
+} catch (ex) {
+  say "resultq caught"
+}
+say "resultq reached=" + str(reached)
+```
+
+断言变成 `PASS_REGULAR_EXPRESSION "resultq value=42.*resultq caught.*resultq reached=0"` —— 传播一旦失效，`reached` 就是 1，正则匹配不上。
+
+**这条把 §10.19 / §10.20 的结论往前推了一步**：不只是「断言要打在程序自己打印的值行上」，而是**字符串字面量本身也会被回显，所以 `FAIL_REGULAR_EXPRESSION` 不能拿字面量当靶子**。要断言「某件事没发生」，就得让「它发生了」留下一个**值**上的痕迹（计数、状态、标记），而不是留下一段**文本**。
+
+**双向验证：三种打断，各自只打红该打的那一个。**
+
+| 打断 | `result_runtime` | `result_question_runtime` | `result_propagation_runtime` | `try_finally_runtime` |
+|---|---|---|---|---|
+| ① `src/mod/result_mod.c:29` 的 `result_is_ok` 改成恒真 | **Failed** | Passed | **Failed** | Passed |
+| ② `src/compiler/compiler.c:1241` 顶层 `?` 由 `unwrap` 改成 `result_value`（Err 不再抛出） | Passed | **Failed** | Passed | Passed |
+| ③ `src/compiler/compiler.c:2232` 的 `for (int i = 0; i < stmt->tryStmt.finallyCount; i++)` 改成 `i < 0`（正常路径不再编译 finally 体） | Passed | Passed | Passed | **Failed** |
+
+第①行里 `result_runtime` 与 `result_propagation_runtime` 一起红是**应该的** —— 两者都直接用 `is_ok`；第②③行各自只打红一条，说明这两条断言的射程是分开的。每次打断后都从 `/tmp/e13/` 的原始副本还原并 `cmake --build build -j12` 重建，确认 `git diff --numstat` 归零。
+
+**门禁**：本批**不新增 CTest**，`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 71 更新为 **67**（`*_runtime` 类还剩 11 个）。

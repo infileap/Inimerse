@@ -1,8 +1,18 @@
+# `?` on an Ok unwraps it; on an Err it propagates out of the enclosing
+# try/catch, so the statement after it must not run and `reached` stays 0.
+#
+# Note the shape of the assertion: the engine echoes every string literal in
+# the program, so a FAIL_REGULAR_EXPRESSION on a literal such as
+# "resultq unreachable" matches the echo even when the statement never ran --
+# it is vacuous. Asserting on a marked VALUE line ("resultq reached=0") is
+# what actually has teeth here.
 value = ok(42)?
-say value
+say "resultq value=" + str(value)
+reached = 0
 try {
   bad = err("failure")?
-  say "unreachable"
+  reached = 1
 } catch (ex) {
-  say "caught"
+  say "resultq caught"
 }
+say "resultq reached=" + str(reached)
