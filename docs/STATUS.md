@@ -818,3 +818,19 @@ exit=1
 
 **没有做的事**：没碰 `tools/gate.sh`/`CMakeLists.txt`/`tools/node_suites/run_all.js`（`httpfix` 持有）、`tools/crp_ws_client*`/`tools/upp_session*`（`wscoverage` 持有）、`src/**`、`docs/BOARD.md` 与本文件既有行；没有 `push`/`merge`；**没有改任何已跟踪文件的既有引用**——修前修后 `0 broken` 一致，说明本次没有靠「把红的说成绿的」来收敛。
 
+**事后补记（协调者）：我把本节的反向验证输出抄进 `docs/BOARD.md` 时，自己在 `main` 上埋了一个红门禁。** 合入 `fa30036` 后，我把上面那段逐字输出抄进了 `docs/BOARD.md` 的 `gate-hermeticity` 行——**但抄成了行内 code span，不是围栏块**。`check_doc_paths.py` 只清空围栏代码块、**不清空行内 span**，于是两个并不存在的探针名被当成真引用：
+
+```
+BROKEN  docs/BOARD.md  ->  docs/__DOCPATHS_REVERSE_PROBE__.md  (no such file)
+BROKEN  docs/BOARD.md  ->  docs/zzz-probe.md  (no such file)
+
+check_doc_paths: 12 markdown files, 167 backtick refs, 2 broken
+exit=1
+```
+
+即 `bash tools/gate.sh --fast --only doc-paths` → `✘ docs backtick paths (expect 0 broken) (exit 1)`、`gate: FAILED — do not merge.`（`7f9d7f4`）。
+
+**教训（比缺陷本身重要）**：本节把探针输出放进围栏块是**对的**，错在我**把它抄到别处时丢掉了这个前提**。「检查器跳过围栏块」**不等于**「检查器跳过示例路径」——要贴检查器输出就贴进围栏块，或者干脆不要写成以 `.md` 结尾的 `docs/…` 形状。**也不允许**反过来通过删掉行内 span 通道来「修」：那个通道正是用来发现**正文里真断链**的，删了它，本节这条反向验证也就不成立了。修复方式是改 `docs/BOARD.md` 那一格的写法，**没有动任何检查器代码**。
+
+**另一个必须记住的门禁后果（另一个会话实测）**：**新增文档必须先 `git add` 再跑门禁**。两个检查器都只枚举**已跟踪**文件，所以一份新写的 `.md` 在被 `git add` 之前对它们**不存在**——检查器会照样打印 `0 broken`，而这个「绿」是假的。实测：`git add` 前引用计数 161、之后 167。
+
