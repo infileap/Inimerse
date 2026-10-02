@@ -70,6 +70,19 @@ add_test(NAME verse_closed_loop
 add_executable(ed25519_probe src/common/ed25519_probe.c src/common/ed25519.c)
 target_include_directories(ed25519_probe PRIVATE src/common)
 add_test(NAME ed25519_probe COMMAND ed25519_probe)
+# Engine-side `.vverse` packer (src/common/vverse_pack.c + src/common/gzip.c).
+# The format is owned by the read-only JS reference tools/vverse_pack.js, so
+# this probe locks what the reference cannot check for us: byte-level
+# determinism (same tree -> same sha256, mtime pinned to 0), purity (packing
+# must not write into the source tree), the ed25519 path over a >8 KiB payload,
+# tamper detection in both directions of the digest table, path-escape refusal,
+# and gzip known answers produced by zlib itself (dynamic Huffman + FNAME).
+add_executable(vverse_pack_probe
+  src/common/vverse_pack_probe.c src/common/vverse_pack.c src/common/gzip.c
+  src/common/sha256.c src/common/ed25519.c src/verse/json_min.c)
+target_include_directories(vverse_pack_probe PRIVATE src/verse src/common src/platform)
+target_link_libraries(vverse_pack_probe PRIVATE inimerse_platform)
+add_test(NAME vverse_pack_probe COMMAND vverse_pack_probe)
 add_executable(bytecode_capture_probe src/compiler/bytecode.c src/compilation/deps.c src/compiler/bytecode_capture_probe.c)
 target_include_directories(bytecode_capture_probe PRIVATE src src/compiler src/common)
 target_link_libraries(bytecode_capture_probe PRIVATE inimerse_platform)
@@ -168,6 +181,12 @@ if(INIMERSE_NODE)
   set_tests_properties(hub_dist_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "protocol;regression")
   add_test(NAME verse_pack_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/verse_pack.test.py)
   set_tests_properties(verse_pack_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "protocol;regression")
+  # Two-way `.vverse` interoperability: the engine packer is judged by the
+  # read-only JS reference (and the other way round), so both writers have to
+  # be built before this can run.
+  add_test(NAME vverse_cross_regression
+    COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/vverse_cross.test.py $<TARGET_FILE:vverse_pack_probe>)
+  set_tests_properties(vverse_cross_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   add_test(NAME node_discovery_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/node_discovery.test.py)
   set_tests_properties(node_discovery_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   add_test(NAME lease_handoff_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/lease_handoff.test.py)
