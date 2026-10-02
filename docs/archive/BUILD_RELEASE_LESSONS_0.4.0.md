@@ -148,27 +148,96 @@ sha256sum build-local/inimerse-0.4.0-Linux-x86_64.tar.gz \
    - 对比性能基准（执行时间、内存占用）
    - 确认运行时输出与 C++ 编译版本一致
 
-### 0.5.0 自举对比记录（待填充）
+### 0.5.0 自举对比记录（2026-10-02 实测）
 
-执行命令：
+**前置更正（必须先读）：本仓库从未有过 `inim` 目标。**
+
+`git log --all -S 'add_executable(inim ' -- CMakeLists.txt` 输出为空——全分支历史里 `inim` 从未是 CMake 目标；当前 `CMakeLists.txt` 的可执行目标列表中也没有它，`ls build/inim` 报 `No such file or directory`。
+
+本仓库的「自举编译器」是**源码**而非二进制：`selfhost/compiler.im`（22,357 B）+ `selfhost/lexer.im`（3,421 B）+ `selfhost/parser.im`（13,248 B），文件头自述用法为 `inimerse selfhost/compiler.im <target.im>`（"用 inimerse 写的编译器:AST -> 宿主字节码数据 -> vm_exec 执行"）。
+
+因此下文第 1、3 项按**实际存在的对象**重述；原措辞中 `inim` / `inimerse` 两个二进制对比的那一半**不适用**，不编造比值。
+
+执行命令（当前树可用；`build/` 是已配置目录，`build-local` 已不存在）：
 
 ```bash
-# 1. 用 C++ 编译 0.5.0
-cmake --build build-local
-inimerse --version  # 应显示 0.5.0
+# 0. 配置与构建（build/ 尚未配置时）
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)"
 
-# 2. 用 0.5.0 自身的 inim 编译 0.5.0
-./build-local/inim --version
+# 1. 二进制 / 产物大小
+ls -l build/inimerse
+wc -c selfhost/compiler.im selfhost/lexer.im selfhost/parser.im
+./build/inimerse buildc tools/bench/bench_collections.im /tmp/bc.inim && ls -l /tmp/bc.inim
 
-# 3. 运行测试套件
-ctest --test-dir build-local --output-on-failure
+# 2. 测试通过率
+ctest --test-dir build -j4 --output-on-failure
 python3 tools/release_verify.test.py
+
+# 3. 版本一致性
+./build/inimerse --version
+
+# 4. 性能（刻意不带 --write-docs，原因见文末「已知缺陷」）
+python3 tools/selfhost_bench.py --runs 5
+/usr/bin/time -v ./build/inimerse run /tmp/bc.inim
 ```
 
-**关键验证点：**
-- `[ ]` 二进制大小：`inimerse` vs `inim` 编译产物
-- `[ ]` 测试通过率：全部通过
-- `[ ]` 运行时版本一致性：`--version` 输出相同
-- `[ ]` 性能对比：编译/执行时间、RSS 内存
+**关键验证点（0.5.0，2026-10-02，主机 `Linux x86_64`，Python 3.14.4）：**
+
+- `[x]` **二进制大小** —— `build/inimerse` = **872,584 字节**（构建于 2026-10-02 15:39）；自举编译器以源码分发 = 22,357 + 3,421 + 13,248 = **39,026 字节**；`buildc` 产物 `.inim` = **2,542 字节**（`bench_collections.im`）。**未给出 `inim`/`inimerse` 大小比**：该对象不存在。
+- `[x]` **测试通过率** —— `ctest` **97/97 通过，0 失败，0 跳过**（real 12.81 s）；`python3 tools/release_verify.test.py` → `release verifier: ok`（exit 0）。0.4.0 基线为 66/66（见本文上方「截至 2026-09-13」）。
+- `[x]` **运行时版本一致性** —— `./build/inimerse --version` → `inimerse 0.5.0`。版本号单一来源：`src/common/common.h:61-64`（`INIMERSE_VERSION_STRING "0.5.0"` → `INFIVERSE_VERSION`），由 `CMakeLists.txt:8`（`set(INIMERSE_PACKAGE_VERSION "0.5.0")`）在 `CMakeLists.txt:342/345` 注入编译定义，`src/main.c:778` 打印、`src/main.c:619` 写入构建记录；CTest `version_runtime`（#53）守着它。本仓库只有一个运行时，故「两版 `--version` 输出相同」退化为「运行时与其自身构建元数据一致」——**已核实一致**。
+- `[x]` **性能对比** —— 本次采样（2026-10-02 08:01 UTC，`--runs 5`）对比上一份报告（[SELFHOST_BENCHMARK.md](SELFHOST_BENCHMARK.md)，2026-09-29 13:49 UTC）的运行中位数：
+
+  | 套例 | 本次运行中位 | 上次运行中位 | 变化 |
+  |---|---|---|---|
+  | collections | 26.2 ms | 32.3 ms | **−18.9%**（更快） |
+  | case-try | 32.8 ms | 29.2 ms | **+12.3%**（慢，未超阈） |
+  | vfs | 99.5 ms | 132.9 ms | **−25.1%**（更快） |
+  | selfhost | 27.5 ms | 28.7 ms | **−4.2%**（更快） |
+
+  编译中位数同向改善（1.6 / 1.8 / 1.8 / 1.7 ms，上次 2.0 / 2.3 / 2.2 / 3.2 ms）。**无任一套例劣化超过 20%**，[STATUS.md](../STATUS.md) §5 的发布门禁条款成立。四套例的规范化字节码哈希与上次报告**逐字相同**（`1edb937201a3a50f…` / `ca2a5a3dfbf0057d…` / `85c00d0b84beacde…` / `39167d8f6b3428d9…`），可复现构建性质跨时间成立。
+
+  RSS：`/usr/bin/time -v ./build/inimerse run /tmp/bc.inim` → **Maximum resident set size 70,032 KiB**，wall 0.06 s（0.4.0 记录的同量级峰值为 70,324 KiB，见上方「集合审计」）。
+
+**已知缺陷（本次不修，记账）：** 上面第 4 项刻意**不带 `--write-docs`**。`tools/selfhost_bench.py:121` 与 `tools/perf_compare.py:131` 把报告写到 `docs/SELFHOST_BENCHMARK.md` —— 少了 `archive/` 一级，真实文件在 `docs/archive/SELFHOST_BENCHMARK.md`；带该开关会凭空新建一个错位文件。该缺陷已记录在 [STATUS.md](../STATUS.md) §1063，且修复写域归属未认领行 `aot-native-integration`（[BOARD.md](../BOARD.md) §5 已把 `tools/selfhost_bench.py`、`tools/perf_compare.py`、`docs/archive/SELFHOST_BENCHMARK.md` 列入该行 writeScopes），故**不在本次写域内**。
+
+**口径（§67.2 三轴 / §64.2 E 级）：** 本节四项的 `coverage_status = covered`（对象、命令、数字齐备）、`implementation_status = implemented`（当前树可复现）、`evidence_level = E4`（自动化验证：CTest + 基准脚本 + `release_verify`）。但第 1、3 项的**原始 `inim` 前提** `coverage_status = conflicted`——文档假设的对象在本仓库全历史中不存在，已按实际对象重述；**跨版本自举（用 0.4.0 的 `inim` 编译 0.5.0 源码）未发生，不构成 E4，不宣称**。
+
+#### 更正：自举工具链当前**不可解析**（2026-10-02 发现，本文第 1 项不可读作「可用」）
+
+上面前置更正说「自举编译器以源码分发」，这只说明**源码在**，不等于**能跑**。实测：
+
+```bash
+./build/inimerse selfhost/compiler.im selfhost/d1.im          # exit 1
+./build/inimerse selfhost/compiler.im --dump selfhost/lexer.im # exit 1（文档记载的用法）
+# 两者都是：Error at line 564: expected '':'', but got '}' (type 98)
+```
+
+失败发生在**载入/解析期**，早于 `compiler.im` 自身的任何逻辑；报错来自宿主解析器（`src/parser/parser.c:84`），`selfhost/*.im` 里根本没有 `expected` 这个字面串。
+
+**根因（已定位到行）：** `src/parser/parser.c:1650-1664`（表达式语句后）与 `src/parser/parser.c:1689-1700`（`say` 后）处理后缀 `if`/`unless` 时**不检查换行**，于是把下一行 `if cond {` 的 `if` 当成后缀条件吃掉；剩下的 `{ ... }` 落到语句位置，被 `src/parser/parser.c:305-338` 当**表达式**解析成字典字面量，在 `src/parser/parser.c:327` 的 `consume(p, TOK_COLON, "':'")` 上炸掉。后缀条件本身是**合法且有测试**的语言特性（`vtest/postfix_condition_v04.im` 就是 `mark_true() if true`），所以这是**真歧义**，不是笔误。
+
+最小复现（4 行，逐字验证 exit 1）：
+
+```im
+        emit(ctx, OP_JUMP, pos, 0, 0)
+        if len(g_breaks) > 0 {
+            push(g_breaks[len(g_breaks) - 1], pos)
+        }
+```
+
+即：**`<调用语句>` 换行后紧跟 `if cond {` 一律解析失败**。`say "hello"` + `if true { say "yes" }` 这种最普通的写法同样 exit 1（报 `Error: expected 'expression', but got 'say' (type 27)`）。
+
+**这是回归，不是历史如此：** 后缀 `if` 由 `a21915b`（2026-09-06 06:09，"Add postfix if and unless syntax"）引入，`say` 上的后缀由 `fe65f6d`（2026-09-06 06:20）引入；两者都**不是** 0.2.0 发布点 `8248e08`（2026-08-27）的祖先。而该模式在 0.2.0 时已存在于 `selfhost/compiler.im` 与 `scripts/array_test.im` 中——即自举编译器是在 2026-09-06 那天被悄悄打坏的。
+
+**影响面（主树，已排除 `.worktrees/`）：** 该模式共 **19 处**，其中 `selfhost/` **15 处**（`compiler.im`、`eval.im`、`lexer.im`、`parser.im` 全中），另有 `scripts/array_test.im:30`、`examples/scripts/block_edit.im:232`、`projects/demo/main.im:330` 及根目录 1 处。三个非 `selfhost/` 文件实测全部 exit 1，且 `grep -rn "array_test\.im\|block_edit\.im\|projects/demo/main\.im" CMakeLists.txt tools/` **零命中**。
+
+**为什么门禁是绿的：** 没有任何测试碰 `selfhost/*.im`（`grep -rn "compiler\.im" tools/ CMakeLists.txt` 零命中；CTest `inim_regression` #28 跑 `tools/inim.test.py`，`selfhost_benchmark` #30 跑 `tools/selfhost_bench.py`）。`selfhost/` 与 0.2.0 发布版**逐字节相同**（`git diff --stat 8248e08 HEAD -- selfhost/` 为空），所以它一路腐坏而七阶段全绿。[STATUS.md](../STATUS.md) §574 仍把 `compiler.im --dump lexer.im` 记作自举入口，已失效。
+
+**测量方法上的教训（值得单独记）：** 最初用 `grep 'Error at line'` 判定失败，结论全错——`src/parser/parser.c:71` 的 `parse_error_expected()` 打印的是**不带行号**的 `Error: expected 'X', but got 'Y' (type Z)`，于是所有走这条路径的失败都被误判为「通过」。**判定编译器行为必须用退出码，不能 grep 报错文本。**
+
+**口径（§67.2 / §64.2）：** 本缺陷的证据级别 **E4**（`./build/inimerse` 的真实退出码 + 最小复现 + 全仓扫描计数 + `git log -S` 定位引入点）。自举工具链的 `implementation_status` 应记作**当前不可运行**：源码齐备但解析不过。本节四项测量**不受影响**（它们测的是宿主 `inimerse` 与基准脚本，不依赖 `selfhost/*.im` 能跑），但**跨版本自举（用旧版编译器编译新版源码）在这条链路修好之前不可能发生**。
+
+修复已开 [BOARD.md](../BOARD.md) §5 行 `selfhost-parser-postfix-ambiguity`（写域 `src/parser/parser.c`、`selfhost/`、`docs/`）。
 
 此章节将在每个版本发布后更新验证记录，形成版本间的编译器效果演变曲线。
