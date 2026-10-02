@@ -46,7 +46,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-102}"
+EXP_CTEST="${EXP_CTEST:-103}"
 
 run_stage() {
   local name="$1" wanted="$2"; shift 2

@@ -1564,3 +1564,83 @@ emit(comp->curBC, OP_RETURN, 0, 0, 0);
 #### 一条方法论点
 
 本行开工前的描述判断「已不是 push 误编译」是对的，但**漏了「自举路径在 POSIX 上被 `posix_unsupported` 顶着」这一层**。它与「`--dump` 出 120 条指令而真跑零输出、且两者 exit 都是 0」完全自洽：`--dump` 是纯前端路径，不经过 `vm_exec`。教训是**同一个「零输出」现象可以有两层互不遮蔽的原因**，只修一层仍会留下另一层，而退出码把两层都掩盖掉。
+
+### 10.26 原生后端接进门禁：一条 `add_executable` 取代 stop-gap 脚本，以及 `%2147483648` 分歧的定位（`aot-native-integration`）
+
+BOARD 行 `aot-native-integration` 是 `aot-backend` 留下的**最大残余风险**：原型（`src/compilation/aot_native.c` 636 行 + `aot_native.h` 55 行 + `aot_native_tool.c` 106 行）当时**不在任何门禁里** —— 不被 CI 编译（第一波作业单冻结了 `CMakeLists.txt`）、`tools/aot_native.test.py` 不被 CI 运行、构建靠一个 stop-gap 脚本扫 `build/CMakeFiles/inimerse.dir/**/*.o` 拼链接命令。**提交了 636 行 C，门禁一行都不会看它。**
+
+#### stop-gap 为什么必须被取代
+
+`tools/aot_native_build.sh` 的机制是 `find build/CMakeFiles/inimerse.dir -name '*.o' ! -name 'main.c.o' | sort`，再 `cc -O2 -std=gnu11 -Wall` 把 `aot_native.c` + `aot_native_tool.c` + 全部引擎对象链在一起（`-I` 九个 src 子目录、`-D_GNU_SOURCE -D_stricmp=strcasecmp`、`-lm -lpthread -ldl`）。三条理由使它不能留在门禁里：
+
+1. 它要求 build 树**已经存在**，所以 `rm -rf build` 后必须由脚本自己先建引擎 —— 顺序耦合；
+2. 引擎**新增一个翻译单元**时脚本不会知道，产物会静默过期（不报错、只是少一个 `.o`）；
+3. 门禁从不调用它，所以它自己也**从不被验证**。
+
+`CMakeLists.txt` 里已有现成的复用点：`:371` 的 `add_library(inimerse_engine OBJECT ${INIMERSE_ENGINE_SOURCES})`（`POSITION_INDEPENDENT_CODE ON`，且**不含 `src/main.c`**，注释在 `:367-368` 写明）。于是只加两行：
+
+```cmake
+add_executable(aot-native src/compilation/aot_native.c src/compilation/aot_native_tool.c)
+target_link_libraries(aot-native PRIVATE inimerse_engine)
+```
+
+引擎新增翻译单元时 `aot-native` 自动跟着重建，顺序耦合与过期问题一并消失。`tools/aot_native_build.sh` 已 `git rm`，两处调用点（`tools/aot_native.test.py` 的 prerequisites 与找不到二进制时的错误提示、`tools/aot_native_bench.py:27` 与 `:132`）同步改写为 `cmake --build build`。
+
+#### 判据②：注册进 CTest，并让数量成为断言
+
+```cmake
+add_test(NAME aot_native_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_native.test.py
+                 --build ${CMAKE_BINARY_DIR} --cc ${CMAKE_C_COMPILER})
+set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression")
+```
+
+`--cc ${CMAKE_C_COMPILER}` 让测试用**与引擎同一个编译器**，避免「引擎用 gcc、测试用别的 cc」的隐性偏差。`EXP_CTEST` 由 **102 同步到 103**（`tools/gate.sh:49`，`docs/BOARD.md` §3 ctest 行）。注意 `stage_ctest` 检查的是输出里确有 `0 tests failed out of 103` —— 光看 ctest 退出码是看不出一整个 `add_test( )` 悄悄掉了的。
+
+#### 判据③：它在 main 上必然失败（三证）
+
+- **M1（改坏实现，断言变红）**：把 `src/compilation/aot_native.c:210` 的 `nv_mod` 从 `return nv_int(y ? x % y : 0);` 改成 `x + y` ⇒ CTest `***Failed`，`FAIL int_mod` / `int_mod_negative` / `int_lcg_first_step` / `mixed_program` 四条等价用例同时红，且分歧钉死项报 `lcg_float_promotion: native moved from '377401575\n' to '3587540464946819303\n' — if it now matches the interpreter, promote this case to EQUIVALENCE`。`cmp` 证明还原后逐字节相同、重编复绿。
+- **M3（隐藏二进制）**：`mv build/aot-native /tmp/…` ⇒ `error: build/aot-native not found — configure and build the project (cmake --build build), which now builds aot-native as a normal target`，`rc=2`。
+- **main 上根本没有该目标**：`git show f923f4d:CMakeLists.txt | grep -c 'aot-native'` = **0**，改后 = **1**。即在这条 CTest 进树之前，`build/aot-native` 只能由那个不被门禁调用的脚本产生。
+
+#### 判据④：两处语义分歧写明为**已知不等价**
+
+两处都**没有修**（修它们要动解释器的名字解析与作用域规则，超出本行范围），而是**双端逐字钉死**在 `tools/aot_native.test.py` 的 `DIVERGENCE` 表里，任一侧改动即红：
+
+| 用例 | 源码 | 解释器 | 原生 | 机制 |
+| --- | --- | --- | --- | --- |
+| `func_nothing_returns_nil` | `func nothing() { x = 1 }` + `say nothing()` | `nil` | `0` | 解释器：函数里对未声明名字赋值不产生返回值，落到隐式 `nil`；原生：`x` 被当成局部并返回最后一个表达式的值 |
+| `global_write_from_func` | `global g` / `g = 2` / `func bump() { g = g + 5` / `return g }` / `say bump()` / `say g` | `5\n2\n` | `7\n7\n` | 解释器：函数内 `g = …` 把该名字**变成本地变量**，全局不动；原生：写的是全局 |
+
+#### 判据⑤：`%2147483648` 分歧从「排除」改为「覆盖」
+
+BOARD 原文只给了结果（解释器 `0`、原生 `357615489`），没有表达式。从本节之外的 `docs/STATUS.md` §10.14（`aot-backend` 那节）取回原文：
+
+```
+x = (x*1103515245+12345) % 2147483648
+```
+
+实测把分歧**定位到了迭代次数上**，这是原文没有说清的一点：
+
+| 迭代次数 | 解释器 | 原生 | |
+| --- | --- | --- | --- |
+| 1 | `1103527590` | `1103527590` | 一致 |
+| 2 | `0` | `377401575` | 分歧 |
+| 3 | `12345` | `662824084` | 分歧 |
+| 4 | `0` | `1147902781` | 分歧 |
+
+机制：`2147483648` 超过 `INT32_MAX`，解释器把它**提升为 float**（stderr 打 `warning: integer literal 2147483648 out of 32-bit range, promoted to float`，本测试只比 stdout 故不受影响）。第一步的 `x*1103515245+12345` 还在 2^53 以内、双精度精确，所以两边一致；**从第二步起中间量越过 2^53，低位被抹掉，取模塌成 `0` 或 `12345`**。原生用 int64，始终精确。三次重跑确认确定性。
+
+于是拆成两个用例：第一步进**等价语料**（`int_lcg_first_step`），第二步起进**钉死分歧**（`lcg_float_promotion`）。这比「明确排除」强：排除只是不测，钉死是**把差距固定住并让它在缩小时报警**（提示语明确要求「if it now matches the interpreter, promote this case to EQUIVALENCE」）。现为 `59 cases (46 equivalence, 3 pinned divergences, 10 refusal), 0 failures`。
+
+#### 顺带修掉的写域内路径缺陷
+
+行 109（`aot-backend`）与 `docs/archive/BUILD_RELEASE_LESSONS_0.4.0.md:202` 把 `tools/selfhost_bench.py`、`tools/perf_compare.py`、`docs/archive/SELFHOST_BENCHMARK.md` 列进了本行写域。核查发现一个真缺陷：两个工具都写 `docs/` 根下的 `SELFHOST_BENCHMARK.md`，而**该路径不存在** —— 唯一受版本控制的是 `docs/archive/SELFHOST_BENCHMARK.md`（报告在归档整理时搬走了，工具没跟着改）。后果是 `--write-docs` **静默新建一个未跟踪文件**而不是更新归档报告，跑完什么也没更新、还不报错。
+
+六处替换（`tools/selfhost_bench.py:6/:63/:121/:122`、`tools/perf_compare.py:16/:131`）后实测：`python3 tools/selfhost_bench.py --runs 1 --write-docs` 输出 `written: docs/archive/SELFHOST_BENCHMARK.md`，`git status` 只显示 ` M docs/archive/SELFHOST_BENCHMARK.md`，`docs/` 根下的 `SELFHOST_BENCHMARK.md` **不再被创建**（验证后已 `git checkout --` 还原归档报告）。
+
+#### 遗留（如实上报）
+
+- **`aot_native.test.py` 的 46 条等价用例全是 int/bool**，不能外推到语言整体；浮点打印**不在等价语料内**（解释器 `1.0/3.0` → `0.333333` 而 `1.23456789012345678` → `1.234568`，无单一 printf 精度可匹配，原生用 `%g`）—— 是**已知不覆盖**，不是通过。
+- **拒绝语料 10 例**只证明「超出子集时拒绝」，不证明拒绝原因文本的稳定性。
+- 门禁需要可用的 `cc`；引擎构建本来就要求它，故未新增前置。

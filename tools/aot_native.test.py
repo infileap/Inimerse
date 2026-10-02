@@ -15,8 +15,7 @@ Two properties are checked, and they are different properties:
                `aot-native translate`.
 
 Prerequisites:
-    cmake --build build -j4
-    tools/aot_native_build.sh          # builds build/aot-native
+    cmake --build build -j4            # builds build/inimerse and build/aot-native
 
 Usage:
     python3 tools/aot_native.test.py [--build build] [-v]
@@ -46,6 +45,12 @@ EQUIVALENCE = [
     ("int_div_exact",      "say 4 / 2\n", "2\n"),
     ("int_mod",            "say 7 % 3\n", "1\n"),
     ("int_mod_negative",   "say -7 % 3\n", "-1\n"),
+    # First step of the classic LCG.  The literal 2147483648 exceeds INT32_MAX
+    # and the interpreter promotes it to float (warning on stderr, which this
+    # harness ignores), but the first step still fits 2^53 exactly, so both
+    # sides agree.  The SECOND step is where they part — see DIVERGENCE.
+    ("int_lcg_first_step",
+     "x = 1\nx = (x*1103515245+12345) % 2147483648\nsay x\n", "1103527590\n"),
     # -- comparisons produce bools, printed as words
     ("cmp_lt",             "say 1 < 2\n", "true\n"),
     ("cmp_gt_false",       "say 3 > 4\n", "false\n"),
@@ -116,6 +121,16 @@ DIVERGENCE = [
     ("global_write_from_func",
      "global g\ng = 2\nfunc bump() { g = g + 5\nreturn g }\nsay bump()\nsay g\n",
      "5\n2\n", "7\n7\n"),
+
+    # Literal promotion, once it actually bites.  `2147483648` is promoted to
+    # float by the interpreter, so the LCG's `x*1103515245+12345` intermediate
+    # is evaluated in double: from the second step on it exceeds 2^53, the low
+    # bits are gone, and the modulo collapses to 0 (or 12345, depending on the
+    # step).  The codegen keeps int64 and stays exact.  The first step agrees
+    # and lives in EQUIVALENCE as `int_lcg_first_step`.
+    ("lcg_float_promotion",
+     "x = 1\nrepeat 2 { x = (x*1103515245+12345) % 2147483648 }\nsay x\n",
+     "0\n", "377401575\n"),
 ]
 
 # Each must be REFUSED by the translator, with a message, and must not leave a
@@ -150,8 +165,9 @@ def main():
     translator = build / "aot-native"
     for p in (engine, translator):
         if not p.is_file():
-            print(f"error: {p} not found — build the engine, then run "
-                  f"tools/aot_native_build.sh", file=sys.stderr)
+            print(f"error: {p} not found — configure and build the project "
+                  f"(cmake --build build), which now builds aot-native as a "
+                  f"normal target", file=sys.stderr)
             return 2
 
     checks = 0

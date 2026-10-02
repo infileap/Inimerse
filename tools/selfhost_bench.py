@@ -3,7 +3,7 @@
 Measures representative workloads — collection transforms, `case try`
 dispatch, VFS round-trips and the compiler itself — over N runs and reports
 median / P95 wall time.  Used as the release gate for bootstrap claims:
-see docs/SELFHOST_BENCHMARK.md (regenerate with `--write-docs`).
+see docs/archive/SELFHOST_BENCHMARK.md (regenerate with `--write-docs`).
 
 Usage:
     python3 tools/selfhost_bench.py [--runs N] [--write-docs] [--json PATH]
@@ -60,7 +60,7 @@ def p95(samples):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=5, help="samples per suite (default 5)")
-    ap.add_argument("--write-docs", action="store_true", help="update docs/SELFHOST_BENCHMARK.md")
+    ap.add_argument("--write-docs", action="store_true", help="update docs/archive/SELFHOST_BENCHMARK.md")
     ap.add_argument("--json", help="also dump raw samples as JSON")
     args = ap.parse_args()
 
@@ -118,8 +118,8 @@ def main():
     report = "\n".join(lines)
     print(report)
     if args.write_docs:
-        (REPO / "docs" / "SELFHOST_BENCHMARK.md").write_text(report + "\n", encoding="utf-8")
-        print(f"written: docs/SELFHOST_BENCHMARK.md")
+        (REPO / "docs" / "archive" / "SELFHOST_BENCHMARK.md").write_text(report + "\n", encoding="utf-8")
+        print(f"written: docs/archive/SELFHOST_BENCHMARK.md")
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2), encoding="utf-8")
 

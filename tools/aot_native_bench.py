@@ -23,8 +23,7 @@ Three things make the number trustworthy, and all three matter:
      you can see what a "speedup" of 1.00x measures like on this machine.
 
 Prerequisites:
-    cmake --build build -j4
-    tools/aot_native_build.sh
+    cmake --build build -j4            # builds build/inimerse and build/aot-native
 
 Usage:
     python3 tools/aot_native_bench.py [--trials 5] [--runs 5] [--n 2000000]
@@ -129,7 +128,7 @@ def main():
     engine = find_engine(build)
     translator = build / "aot-native"
     if not translator.is_file():
-        raise SystemExit(f"{translator} not found — run tools/aot_native_build.sh")
+        raise SystemExit(f"{translator} not found — run: cmake --build {build}")
 
     with tempfile.TemporaryDirectory(prefix="aot-native-bench-") as tmp:
         root = Path(tmp)

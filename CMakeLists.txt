@@ -254,6 +254,16 @@ if(INIMERSE_PYTHON)
   set_tests_properties(bindgen_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME wasm_backend_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_backend.test.py)
   set_tests_properties(wasm_backend_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression;wasm")
+  # The route-A native backend, end to end: for every in-subset program,
+  # `aot-native translate` plus a host `cc -O2` must reproduce the interpreter's
+  # stdout byte for byte; out-of-subset programs must be REFUSED rather than
+  # mistranslated.  The two pinned divergences assert both sides exactly, so
+  # fixing one (or letting the gap widen) fails here and demands a decision.
+  # It needs a working `cc`, which the engine build already required.
+  add_test(NAME aot_native_regression
+           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_native.test.py
+                   --build ${CMAKE_BINARY_DIR} --cc ${CMAKE_C_COMPILER})
+  set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression")
   add_test(NAME scan_tools_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/scan_tools.test.py)
   set_tests_properties(scan_tools_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME replay_closure_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/replay.test.py)
@@ -391,6 +401,27 @@ if(INIMERSE_BUILD_ENGINE)
     target_link_libraries(inimerse PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
   endif()
   install(TARGETS inimerse RUNTIME DESTINATION bin)
+
+  # ------------------------------------------------------------------------
+  # Route-A native backend: `aot-native translate prog.im prog.c`, then a host
+  # `cc` compiles the generated C.  It links against exactly the engine objects
+  # the interpreter links, minus src/main.c — the tool carries its own main().
+  #
+  # This target used to be produced by tools/aot_native_build.sh, which globbed
+  # build/CMakeFiles/inimerse.dir/**/*.o behind CMake's back.  That stop-gap
+  # required an already-configured build tree, went silently stale whenever the
+  # engine gained a translation unit, and — because nothing in the gate ever
+  # invoked it — left 636 lines of committed C that no test looked at.
+  add_executable(aot-native
+    src/compilation/aot_native.c
+    src/compilation/aot_native_tool.c)
+  target_link_libraries(aot-native PRIVATE inimerse_engine)
+  if(WIN32)
+    target_link_libraries(aot-native PRIVATE m winhttp crypt32 gdi32 winmm msimg32
+      windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+  else()
+    target_link_libraries(aot-native PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
+  endif()
 
   # ------------------------------------------------------------------------
   # Cross-language bridges (v0.5 roadmap §2.1 / §3.2): one IDL, real artifacts.

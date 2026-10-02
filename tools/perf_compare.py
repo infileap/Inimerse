@@ -13,7 +13,7 @@ reported delta is workload compute time.  Honest expectation: the AOT
 MVP backend is a straightforward translation without optimization — the
 >=2x target belongs to the optimizing AOT backend (v0.5 -> v0.6 follow-up).
 
-Results are appended to docs/SELFHOST_BENCHMARK.md with --write-docs.
+Results are appended to docs/archive/SELFHOST_BENCHMARK.md with --write-docs.
 """
 import argparse
 import datetime
@@ -128,7 +128,7 @@ def main():
     report = "\n".join(lines)
     print(report)
     if args.write_docs:
-        doc = REPO / "docs" / "SELFHOST_BENCHMARK.md"
+        doc = REPO / "docs" / "archive" / "SELFHOST_BENCHMARK.md"
         with open(doc, "a", encoding="utf-8") as f:
             f.write("\n" + report)
         print(f"appended: {doc}")
