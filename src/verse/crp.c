@@ -1054,6 +1054,18 @@ static int enrollment_matches(const char *got, const char *want) {
     return diff == 0;
 }
 
+int crp_enroll_check(const char *enroll_secret, const VjVal *verse,
+                     const VjVal *peer, const VjVal *auth) {
+    if (!enroll_secret || !enroll_secret[0]) return 0;
+    CrpBuf want;
+    upp_buf_init(&want);
+    const char *got = (auth && auth->type == VJ_STR) ? auth->s : NULL;
+    int proven = crp_enroll_proof(enroll_secret, verse, peer, &want) == 0 &&
+                 enrollment_matches(got, want.data ? want.data : "");
+    upp_buf_free(&want);
+    return proven;
+}
+
 CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *peer,
                               const VjVal *auth) {
     /* /portal is the only authorization entry point -- every other capability
@@ -1063,13 +1075,8 @@ CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *p
      * caller cannot even learn whether the verse exists. */
     if (!r || !r->enroll_secret || !r->enroll_secret[0])
         return res_error(403, "portal enrollment is not configured");
-    CrpBuf want;
-    upp_buf_init(&want);
-    const char *got = (auth && auth->type == VJ_STR) ? auth->s : NULL;
-    int proven = crp_enroll_proof(r->enroll_secret, verse, peer, &want) == 0 &&
-                 enrollment_matches(got, want.data ? want.data : "");
-    upp_buf_free(&want);
-    if (!proven) return res_error(403, "invalid enrollment proof");
+    if (!crp_enroll_check(r->enroll_secret, verse, peer, auth))
+        return res_error(403, "invalid enrollment proof");
 
     const char *vstr = (verse && verse->type == VJ_STR) ? verse->s : NULL;
     if (!vstr || !registry_has_verse(r, vstr) || !vj_truthy(peer))

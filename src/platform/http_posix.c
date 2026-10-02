@@ -5,6 +5,9 @@
 #include "../common/sha256.h"
 #include "../common/ed25519.h"
 #include "../verse/json_min.h"
+/* crp_enroll_proof()/crp_enroll_check(): /portal asks the registry's own
+ * precondition instead of keeping a second copy of the proof derivation. */
+#include "../verse/crp.h"
 #include "http_client.h"
 #include <pthread.h>
 #include <time.h>
@@ -424,97 +427,51 @@ static int json_field_string(const char *json, const char *name, char *out, size
    what /signal and /session/resume later trust.  So the caller must prove it
    may open a portal for the (verse, peer) it names, by presenting
    base64url(HMAC-SHA256(CRP_ENROLL_SECRET, String(verse) + "\0" + String(peer)))
-   -- byte-identical to enrollProof() in tools/crp_relay.js and to
-   crp_enroll_proof() in src/verse/crp.c.  With no enrollment secret configured
-   /portal refuses outright, because a security default must not depend on the
-   caller remembering to switch it on.  The HMAC is built here from
-   src/common/sha256.c: this translation unit does not link src/verse/crp.c. */
+   -- the same proof tools/crp_relay.js expects.  With no enrollment secret
+   configured /portal refuses outright, because a security default must not
+   depend on the caller remembering to switch it on.  The check itself is
+   crp_enroll_check() in src/verse/crp.c: this listener asks the registry's own
+   question rather than re-deriving the proof, so the two paths cannot drift. */
 
-static void portal_hmac_sha256(const unsigned char *key, size_t keylen,
-                               const unsigned char *msg, size_t msglen,
-                               unsigned char out[32]) {
-    unsigned char block[64], inner[32], pad[64];
-    Sha256Ctx ctx;
-    if (keylen > 64) { sha256_digest(key, keylen, block); keylen = 32; }
-    else if (keylen) memcpy(block, key, keylen);
-    memset(block + keylen, 0, sizeof block - keylen);
-    for (int i = 0; i < 64; ++i) pad[i] = (unsigned char)(block[i] ^ 0x36);
-    sha256_init(&ctx); sha256_update(&ctx, pad, 64); sha256_update(&ctx, msg, msglen); sha256_final(&ctx, inner);
-    for (int i = 0; i < 64; ++i) pad[i] = (unsigned char)(block[i] ^ 0x5c);
-    sha256_init(&ctx); sha256_update(&ctx, pad, 64); sha256_update(&ctx, inner, 32); sha256_final(&ctx, out);
-}
-
-static void portal_b64url(const unsigned char *in, size_t n, char *out, size_t cap) {
-    static const char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    size_t o = 0; unsigned int acc = 0; int bits = 0;
-    for (size_t i = 0; i < n; ++i) {
-        acc = (acc << 8) | in[i]; bits += 8;
-        while (bits >= 6) { bits -= 6; if (o + 1 < cap) out[o++] = alpha[(acc >> bits) & 0x3fu]; }
+/* Write a string's contents as JSON wants them (the quotes are the caller's).
+ * The portal response echoes the (verse, peer) the caller just proved, and a
+ * proven caller may have escaped either of them. */
+static void portal_json_escape(const char *s, char *out, size_t cap) {
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)s; *p && o + 8 < cap; ++p) {
+        switch (*p) {
+        case '"':  out[o++] = '\\'; out[o++] = '"'; break;
+        case '\\': out[o++] = '\\'; out[o++] = '\\'; break;
+        case '\n': out[o++] = '\\'; out[o++] = 'n'; break;
+        case '\r': out[o++] = '\\'; out[o++] = 'r'; break;
+        case '\t': out[o++] = '\\'; out[o++] = 't'; break;
+        default:
+            if (*p < 0x20) o += (size_t)snprintf(out + o, cap - o, "\\u%04x", (unsigned)*p);
+            else out[o++] = (char)*p;
+        }
     }
-    if (bits > 0 && o + 1 < cap) out[o++] = alpha[(acc << (6 - bits)) & 0x3fu];
-    out[o < cap ? o : cap - 1] = 0;
-}
-
-/* One member of the proof input as JS String() would render it: a string value
- * verbatim, otherwise `null` / `true` / `false` / a decimal number literal, and
- * the literal "undefined" when the key is absent -- which is exactly what the
- * reference computes for a missing member.  (Objects and arrays are out of this
- * reader's resolution; /portal is driven with scalar members.) */
-static void portal_member(const char *json, const char *name, char *out, size_t cap) {
-    char key[64]; snprintf(key, sizeof key, "\"%s\"", name);
-    const char *p = strstr(json, key);
-    if (p) p = strchr(p + strlen(key), ':');
-    if (!p) { snprintf(out, cap, "undefined"); return; }
-    while (*++p == ' ' || *p == '\t') {}
-    if (*p == '"') { size_t i = 0; ++p; while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++; out[i] = 0; return; }
-    if (!strncmp(p, "null", 4)) { snprintf(out, cap, "null"); return; }
-    if (!strncmp(p, "true", 4)) { snprintf(out, cap, "true"); return; }
-    if (!strncmp(p, "false", 5)) { snprintf(out, cap, "false"); return; }
-    if (*p == '-' || (*p >= '0' && *p <= '9')) {
-        size_t i = 0;
-        while (i + 1 < cap && (*p == '-' || *p == '+' || *p == '.' || *p == 'e' || *p == 'E' || (*p >= '0' && *p <= '9'))) out[i++] = *p++;
-        out[i] = 0; return;
-    }
-    snprintf(out, cap, "undefined");
+    out[o] = 0;
 }
 
 /* The proof /portal expects, for callers that already hold the members as
- * strings rather than as a raw request (src/platform/http_probe.c drives the
- * real listener this way).  Both the HTTP handler and this entry point compute
- * base64url(HMAC-SHA256(secret, verse + "\0" + peer)). */
+ * strings rather than as a parsed body (src/platform/http_probe.c drives the
+ * real listener this way).  A thin wrapper over the registry's own
+ * crp_enroll_proof(), so both entry points produce the same bytes. */
 void verse_portal_proof(const char *enroll_secret, const char *verse, const char *peer,
                         char *out, size_t cap) {
-    size_t vl = strlen(verse), pl = strlen(peer);
-    char *msg = (char *)malloc(vl + 1 + pl);
-    unsigned char mac[32];
-    if (!msg) { out[0] = 0; return; }
-    memcpy(msg, verse, vl); msg[vl] = 0; memcpy(msg + vl + 1, peer, pl);
-    portal_hmac_sha256((const unsigned char *)enroll_secret, strlen(enroll_secret),
-                       (const unsigned char *)msg, vl + 1 + pl, mac);
-    free(msg);
-    portal_b64url(mac, sizeof mac, out, cap);
+    VjVal v, p, *vp = &v, *pp = &p;
+    CrpBuf buf;
+    memset(&v, 0, sizeof v); memset(&p, 0, sizeof p);
+    if (!out || !cap) return;
+    out[0] = 0;
+    if (verse) { v.type = VJ_STR; v.s = (char *)verse; } else vp = NULL;
+    if (peer)  { p.type = VJ_STR; p.s = (char *)peer; }  else pp = NULL;
+    upp_buf_init(&buf);
+    if (crp_enroll_proof(enroll_secret, vp, pp, &buf) == 0 && buf.data)
+        snprintf(out, cap, "%s", buf.data);
+    upp_buf_free(&buf);
 }
 
-static void portal_proof(const char *secret, const char *json, char *out, size_t cap) {
-    char vs[256], ps[256];
-    portal_member(json, "verse", vs, sizeof vs);
-    portal_member(json, "peer", ps, sizeof ps);
-    verse_portal_proof(secret, vs, ps, out, cap);
-}
-
-/* Constant-time comparison: a proof that differs anywhere, or in length, is not
- * the caller's proof. */
-static int portal_proof_ok(const char *secret, const char *json, const char *got) {
-    char want[128];
-    size_t a, b, i;
-    unsigned char diff = 0;
-    if (!got || !got[0]) return 0;
-    portal_proof(secret, json, want, sizeof want);
-    a = strlen(got); b = strlen(want);
-    if (!b || a != b) return 0;
-    for (i = 0; i < a; ++i) diff |= (unsigned char)got[i] ^ (unsigned char)want[i];
-    return diff == 0;
-}
 
 /* read a URL query parameter (?name=value or &name=value) from a raw request */
 static int query_param(const char *req, const char *name, char *out, size_t cap) {
@@ -2063,22 +2020,38 @@ reattach_done: ;
             /* No enrollment proof, no token: the caller has to prove it may open
                a portal for this exact (verse, peer) before anything is minted or
                registered.  Both refusals happen before the registry is touched,
-               so a refused caller leaves no token and no session behind. */
+               so a refused caller leaves no token and no session behind.
+               The members are read from the parsed BODY with the engine's own
+               reader: the request line and the headers are not part of the
+               document the proof covers, and vj_parse decodes escapes and
+               whitespace exactly as src/verse/crp.c does for the same bytes. */
             const char *enroll = getenv("CRP_ENROLL_SECRET");
-            char proof[128] = "";
+            const char *bodyp = strstr(req, "\r\n\r\n");
+            char jerr[128] = "";
+            VjVal *pbody;
+            bodyp = bodyp ? bodyp + 4 : req;
+            pbody = vj_parse(bodyp, jerr, sizeof jerr);
+            /* crp_enroll_check() is the registry's own precondition, so this
+               listener and src/verse/crp.c cannot disagree about escapes,
+               whitespace or String() coercion: a body that parses there parses
+               here, and a proof accepted there is accepted here. */
             if (!enroll || !*enroll) { status = 403; body = "{\"error\":\"portal enrollment is not configured\"}\n"; }
-            else if (!json_field_string(req, "auth", proof, sizeof proof) || !portal_proof_ok(enroll, req, proof)) { status = 403; body = "{\"error\":\"invalid enrollment proof\"}\n"; }
+            else if (!crp_enroll_check(enroll, vj_get(pbody, "verse"), vj_get(pbody, "peer"), vj_get(pbody, "auth"))) { status = 403; body = "{\"error\":\"invalid enrollment proof\"}\n"; }
             else {
                 unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
                 time_t now = time(NULL); unsigned long ttl = 300;
                 const char *ttl_env = getenv("CRP_TOKEN_TTL");
                 if (ttl_env && *ttl_env) { char *end = NULL; unsigned long v = strtoul(ttl_env, &end, 10); if (end != ttl_env && v > 0 && v <= 86400) ttl = v; }
-                char scope_verse[128] = "", scope_peer[128] = "";
-                (void)json_field_string(req, "verse", scope_verse, sizeof scope_verse); (void)json_field_string(req, "peer", scope_peer, sizeof scope_peer);
-                snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu,\"verse\":\"%s\",\"peer\":\"%s\"}\n", seed, (unsigned long)now + ttl, scope_verse, scope_peer);
+                char scope_verse[128] = "", scope_peer[128] = "", esc_verse[256] = "", esc_peer[256] = "";
+                snprintf(scope_verse, sizeof scope_verse, "%s", vj_str(vj_get(pbody, "verse"), ""));
+                snprintf(scope_peer, sizeof scope_peer, "%s", vj_str(vj_get(pbody, "peer"), ""));
+                portal_json_escape(scope_verse, esc_verse, sizeof esc_verse);
+                portal_json_escape(scope_peer, esc_peer, sizeof esc_peer);
+                snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu,\"verse\":\"%s\",\"peer\":\"%s\"}\n", seed, (unsigned long)now + ttl, esc_verse, esc_peer);
                 char issued[64]; snprintf(issued, sizeof issued, "posix-%lx", seed); token_register(issued, now + (time_t)ttl, scope_verse, scope_peer);
                 body = portalbuf;
             }
+            vj_free(pbody);
         }
         if (revoke) { if (!request_token[0]) { status = 400; body = "{\"error\":\"token_required\"}\n"; } else { token_revoke(request_token); body = "{\"revoked\":true}\n"; } }
         size_t body_len = hub ? hublen : strlen(body); const char *status_text = status == 201 ? "201 Created" : status == 400 ? "400 Bad Request"

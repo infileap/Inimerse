@@ -129,6 +129,15 @@ VjVal *crp_token_body(const char *token, char *err, size_t errlen);
 int crp_enroll_proof(const char *enroll_secret, const VjVal *verse,
                      const VjVal *peer, CrpBuf *out);
 
+/* 1 when `auth` is the enrollment proof for this exact (verse, peer), 0
+ * otherwise -- including when `enroll_secret` is unset/empty, `auth` is missing
+ * or not a string, or the two differ in length.  This is the whole of the
+ * /portal precondition, exported so every listener asks the same question the
+ * same way instead of re-deriving the proof; the comparison is constant time.
+ * `auth` is the request's `auth` member (NULL when absent). */
+int crp_enroll_check(const char *enroll_secret, const VjVal *verse,
+                     const VjVal *peer, const VjVal *auth);
+
 /* -------------------------------------------------------------- framing */
 
 int crp_type_is_valid(const char *type);
