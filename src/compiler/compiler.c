@@ -1039,12 +1039,26 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             if (expr->member.safe) {
                 int object = compile_expr(comp, expr->member.object);
                 int result = alloc_reg();
+                /* Default the result to the object itself: when the object IS
+                   nil the jump below skips the write, and without this `result`
+                   kept a stale recycled register -- `nil?.name` returned
+                   whatever the previous safe access had produced. */
+                emit(comp->curBC, OP_MOV, result, object, 0);
                 int isnil = alloc_reg();
                 emit(comp->curBC, OP_IS_NIL, isnil, object, 0);
                 int skip = comp->curBC->count;
                 emit(comp->curBC, OP_JUMP_IF_TRUE, isnil, 0, 0);
                 int key = alloc_reg();
-                int key_idx = bytecode_add_string(comp->curBC, expr->member.member.start);
+                /* `member` is a StringView into the source, not a NUL-terminated
+                   C string. Passing .start straight to bytecode_add_string
+                   (which strcmp/strdups it) made the key the member name PLUS
+                   the whole rest of the source file, so the lookup always
+                   missed and `a?.b` evaluated to nil. Copy with the view's
+                   length, as the non-safe `.` branch below already does. */
+                char keyName[256];
+                snprintf(keyName, sizeof(keyName), "%.*s",
+                         (int)expr->member.member.length, expr->member.member.start);
+                int key_idx = bytecode_add_string(comp->curBC, keyName);
                 emit(comp->curBC, OP_LOADK_STRING, key, key_idx, 0);
                 int value = alloc_reg();
                 emit(comp->curBC, OP_INDEX_GET, value, object, key);

@@ -542,7 +542,12 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME null_coalesce_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/null_coalesce_v04.im)
   set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety")
   add_test(NAME optional_member_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/optional_member_v04.im)
-  set_tests_properties(optional_member_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety")
+  # The engine echoes builtin call arguments, so the dict literal's own
+  # "inimerse" appears in the output even when `?.` is broken -- assert on the
+  # OM-prefixed value lines instead. PASS catches the key being truncated
+  # (bytecode_add_string got a non-NUL-terminated StringView); FAIL catches the
+  # stale recycled register that made nil?.name return the previous result.
+  set_tests_properties(optional_member_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "OM present=inimerse" FAIL_REGULAR_EXPRESSION "OM missing=inimerse")
   add_test(NAME chained_comparison_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/chained_comparison_v04.im)
   set_tests_properties(chained_comparison_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;comparison")
   add_test(NAME postfix_condition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_v04.im)

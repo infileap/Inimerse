@@ -1,6 +1,11 @@
+# `?.` safe member access: `present` must be the looked-up value, `missing`
+# must be nil. The `OM ` prefixes exist so CTest can assert on the VALUES --
+# the engine's builtin-call echo prints the dict literal, so a bare
+# `inimerse` in the combined output matched even while the lookup was broken
+# (compiler.c passed a non-NUL-terminated StringView as the key, making the
+# key the member name plus the whole rest of the source file).
 obj = {"name": "inimerse"}
 present = obj?.name
-say present
-
 missing = nil?.name
-say missing
+say "OM present=" + present
+say "OM missing=" + missing

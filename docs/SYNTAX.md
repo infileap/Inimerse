@@ -110,7 +110,7 @@ $"hello {name}"
 | `>>` | `TOK_COMPOSE` | 函数组合 |
 | `\|` | `TOK_PIPE` | `case` 守卫分隔符，**只能挂在绑定名模式后**（`n \| n > 0:`）；挂在字面量/成员模式后是解析错误（见 §7.2 M12） |
 | `?` | `TOK_QUESTION` | Result 传播 / `??` 的前半 / `?.` 的前半 |
-| `?.` | | 安全成员访问（两 token）；**实测求值恒为 `nil`**（见 §7.1 D11） |
+| `?.` | | 安全成员访问（两 token）；曾恒为 `nil`，**已修复**（见 §7.1 D11(a)） |
 | `??` | | nil 合并（两 token） |
 | `.` `,` `:` `;` `(` `)` `[` `]` `{` `}` | | 分隔符 |
 | `$`（单独） | `TOK_UNKNOWN` | 非法 |
@@ -178,8 +178,8 @@ $"hello {name}"
 |---|---|---|
 | `ident[...]` / `ident(...)` 含 `~` | **集合区间**，不是索引/调用 | `a[1~2]` 是集合不是切片 |
 | `ident(...)` 且 `ident` ∈ {`N`,`Z`,`Z+`,`Z-`,`Float1`…`Float9`} | **集合区间** | 同名用户函数无法调用 |
-| `?.name` | 安全成员访问 | **实测恒为 `nil`**；`vtest/optional_member_v04.im` 的期望值并未产生（D11） |
-| `.name` | 成员访问 | 对字典**实测恒为 `nil`**（D11）；`.` 后可跟保留字（见下） |
+| `?.name` | 安全成员访问 | 曾恒为 `nil`，**已修复并补上断言**（D11(a)） |
+| `.name` | 成员访问 | 对字典**实测恒为 `nil`**（D11(b)，命名空间读取，非缺陷）；`.` 后可跟保留字（见下） |
 | `[expr]` | 索引 | |
 | `?` | Result 传播（`EXPR_PROPAGATE`） | `??` 会让位（`:551-555`） |
 | `-> int\|float\|str\|bool` | 类型转换（`EXPR_ARROW_CAST`） | 与 lambda 冲突 |
@@ -196,7 +196,7 @@ $"hello {name}"
 | lambda 单参 | `x -> expr` | `vtest/lambda_v04.im` |
 | lambda 多参 | `(a, b) -> expr` | 实测 → `3` |
 | nil 合并 | `a ?? b` | `vtest/null_coalesce_v04.im` |
-| 安全成员 | `a?.b` | **实测恒为 `nil`**（D11）；该测试只验证退出码 |
+| 安全成员 | `a?.b` | 曾恒为 `nil`，**已修复**（D11(a)）；该测试现已带断言 |
 | Result 传播 | `f()?` | `vtest/result_propagation_v04.im` |
 | Result 解包 | `unwrap(e)`、`unwrap_or(e, d)`、`ok(e)`、`err(e)`、`is_ok(e)` | `vtest/result_v04.im` |
 
@@ -629,15 +629,13 @@ func m2() {
 
 见 §3.4。实测 `func Z(a,b) { return 999 }` 后 `Z(1,5)` → `set(Z interval)`，函数**根本没被调用**。
 
-#### D11. `.` 与 `?.` 成员访问对字典求值为 `nil`
+#### D11. `.` 与 `?.` 成员访问对字典求值为 `nil`（`?.` 已修复）
 
-**实测**（同一 `build`，`df82cf6` 之后）：
+**两部分性质完全不同，不要混为一谈。**
 
-```
-d = {"a": 1}
-say str(d["a"])     →  1      # 索引访问正常
-say str(d.a)        →  nil    # 成员访问失败
-```
+**(a) `?.` 安全成员访问 —— 引擎缺陷，已修复。**
+
+实测（`df82cf6` 之后的 `build`，修复前）：
 
 ```
 obj = {"name": "inimerse"}
@@ -645,9 +643,25 @@ present = obj?.name
 say present         →  nil    # 期望 "inimerse"
 ```
 
-`src/parser/parser.c:512-529` 把 `?.` 解析成 `EXPR_MEMBER{safe=true}`；`src/compiler/compiler.c:1038-1056` 的 `safe` 分支发的是 `OP_IS_NIL` + `OP_JUMP_IF_TRUE` + `OP_LOADK_STRING` + `OP_INDEX_GET`，**语义上等价于 `obj["name"]`，本应返回 `"inimerse"`**。非 `safe` 的 `.` 走 `compiler.c:1057` 之后的命名空间解析（源码注释：`a.b.c` 中 `a` 是当前模块可见命名空间则编译期解析为带前缀全局），对局部变量落空后返回 `nil`。
+`src/parser/parser.c:512-529` 把 `?.` 解析成 `EXPR_MEMBER{safe=true}`；`src/compiler/compiler.c:1038` 起的 `safe` 分支发 `OP_IS_NIL` + `OP_JUMP_IF_TRUE` + `OP_LOADK_STRING` + `OP_INDEX_GET`，**语义上等价于 `obj["name"]`，本应返回 `"inimerse"`**。根因是同一分支里的**两个独立缺陷**：
 
-**具体失效点（`OP_IS_NIL`/跳转偏移 vs `OP_INDEX_GET` 的键类型）尚未定位**——本条只记录可复现现象。关键点是这**不是文档口径问题**：`vtest/optional_member_v04.im` 自己的源码写着期望 `inimerse`，实际输出 `nil`，而**退出码是 0**（见 M13）。
+- **缺陷①（键截断）**：`src/compiler/compiler.c:1047` 原文为 `int key_idx = bytecode_add_string(comp->curBC, expr->member.member.start);`。`expr->member.member` 是 `StringView`（`start` + `length`，指向源缓冲区内部，**不以 `\0` 结尾**），而 `src/compiler/bytecode.c:66` 的 `int bytecode_add_string(Bytecode *bc, const char *str)` 内部用 **`strcmp` 查重 + `strdup` 复制**，都是 NUL 终止语义。于是查找键不是 `"name"`，而是 **`"name"` 加上源文件剩下的一切**（引擎回显里那个 `[2]="name\nsay present\n\nmissing = nil?.name\nsay missing\n"` 就是它），`OP_INDEX_GET` 必然查不到 ⇒ `nil`。
+- **缺陷②（陈旧寄存器）**：对象为 `nil` 时 `OP_JUMP_IF_TRUE` 跳过写 `result`，而 `result` 来自 `alloc_reg()` 的回收寄存器，**保留上一次的值** —— 只修缺陷①后 `nil?.name` 会返回上一次的 `inimerse`。
+
+修复即两处：把键按视图长度 `snprintf("%.*s", …)` 复制（非 `safe` 的 `.` 分支本来就是这么写的，所以同一函数里一个对一个错）；并在 `OP_IS_NIL` 之前 `emit(comp->curBC, OP_MOV, result, object, 0)` 把 `result` 兜底为对象自身（引擎**没有专用 nil 载入操作码**：`src/compiler/bytecode.h` 里 NIL 相关只有 `OP_IS_NIL`，也没有 `EXPR_NIL`，这是选择兜底而非载入 nil 的原因）。
+
+**回归**：`vtest/optional_member_v04.im` 已重写为带 `OM ` 前缀标记的版本，`optional_member_runtime`（`CMakeLists.txt:544-550`）补上 `PASS_REGULAR_EXPRESSION "OM present=inimerse"` 与 `FAIL_REGULAR_EXPRESSION "OM missing=inimerse"`，两条**各有牙且分别验证过**：还原整个修复 → 红在 `Required regular expression not found`；只保留缺陷② → 红在 `Error regular expression found in output`。
+**标记是必需的，不是装饰**：引擎的内建调用回显会打印字典字面量，所以输出里**本来就有裸的 `inimerse`** —— 用 `PASS_REGULAR_EXPRESSION "inimerse"` 在坏掉时也会通过，等于没加。这是本项目一条可复用的模式：**当引擎回显会污染输出时，断言必须打在程序自己打印的带标记值行上。**
+
+**(b) `.` 命名空间读取 —— 不是缺陷，是设计，但对字典危险。**
+
+```
+d = {"a": 1}
+say str(d["a"])     →  1      # 索引访问正常
+say str(d.a)        →  nil    # 成员访问失败
+```
+
+`src/compiler/compiler.c:1128-1159` 对 `EXPR_IDENT` 对象把 `"d.a"` 拼成字符串，`lookup_local(comp, "d.a")` 失败后调 `register_global(comp, full)` 再 `OP_LOAD_GLOBAL` —— **读的是一个名叫 `"d.a"` 的全局**（`u.count` 这类模块限定名的设计用途）。源码注释写着「读取不创建全局」，但代码调用的正是 `register_global()`。所以对字典用 `.` 会**静默读到 `nil`**，属 D 级危险行为，但**不是成员访问实现缺失**，本条不对它记为待修缺陷。
 
 ### 7.2 危险·误导（报错信息误导或语义反直觉）
 
@@ -739,7 +753,7 @@ inimerse-driven with NO PASS/FAIL_REGULAR_EXPRESSION and not WILL_FAIL: 73
 
 这 73 个**只要进程退出 0 就算通过**，程序打印什么都不看。对 probe 类（`verse_*_probe`、`*_regression`）退出码可能确实是它们的契约，但对语言行为类（`*_runtime`）**已经证明不够**：
 
-- `optional_member_runtime` 跑 `vtest/optional_member_v04.im`，该程序输出 `nil` 而它自己的源码期望 `inimerse` —— **测试仍然通过**（D11）。
+- `optional_member_runtime` 跑 `vtest/optional_member_v04.im`，该程序输出 `nil` 而它自己的源码期望 `inimerse` —— **测试仍然通过**（D11(a)，**已于本轮修复并补上双向验证过的断言**，是该类里第一个被补上的）。
 - `lambda_capture_runtime` 跑 `vtest/lambda_capture_rejected_v04.im`，文件名写着 *rejected*，内容却是一段**正常成功的闭包捕获**（`say add(3)` → `5`），既无 `WILL_FAIL` 也无正则 —— 名字与内容已经脱节。
 - `result_runtime`、`pipeline_runtime`、`null_coalesce_runtime`、`chained_comparison_runtime`、`case_collection_patterns_runtime`、`case_structural_runtime`、`case_alias_runtime`、`float_precision_runtime` 等语言测试同样没有输出断言。
 

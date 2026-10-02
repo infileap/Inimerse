@@ -1145,3 +1145,63 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 **§7 是重点，共 31 条，每条都有实测输出或源码行号。** 10 条「危险·静默」（不报错但结果错）：D1 `push(list, <用户函数调用>)` 误编译、D2 GUI 动词无 arity/类型检查（`sprite 42` 与 `sprite "x"` 一样「成功」）、D3 类型标注纯装饰（`int x = "hello"` 通过）、D4 参数个数不校验（`h(1,2)`→`1`、`h()`→`nil`，两个方向都不报错）、D5 未声明变量求值为 `nil`、D6 字符串里的 `\0` 截断（`len("a\0b")` = 1）、D7 `(1,2)` 是区间不是元组、D8 `a[1~2]` 是集合区间不是切片、D9 `type` 已注册为内建却是保留字（`type(x)` 是解析错误，唯一途径 `x.type`）、D10 `N`/`Z`/`Z+`/`Z-`/`Float1..9` 被硬编码为集合前缀（`func Z(a,b)` 后 `Z(1,5)` 得到 `set(Z interval)`，函数根本没被调用）。11 条「危险·误导」：M1 `\|>` 与 `>>` 不能混用（两个顺序循环而非统一循环，报错是 `expected ')'`）、M2 `->` 既是 lambda 又是类型转换、M3 命名实参不支持且报错落在别处、M4 保留字可作成员名、M5 `until`/`till` 只在 `do…until`、M6 `..` 不是通用运算符、M7 `show(` 变函数调用、M8 `join` 双重身份、M9 `match` 上下文敏感（`no_infix_match`）、M10 后缀条件的行敏感规则、M11 `--lint` 恒 0。7 条冗余：R1 八组关键字别名、R2 后置 `with` 子句**四段代码不可达**（`src/parser/parser.c:1690`/`:1692`/`:1693`/`:1722` 用 `peek(p).type == TOK_IDENT && sv_eq_cstr(text,"with")` 判断，而 `with` 是 `TOK_WITH`）、R3 `src/parser/parser.c:1286`/`:1287` 是逐字相同的一行、R4 十六进制有两条扫描路径、R5 约 30 个 GUI 关键字没有自己的语法（只有 `parse_gui_stmt` 的「原文当字符串」机制）、R6 `TOK_UNKNOWN` 无人处理、R7 完全没有按位运算符。3 条卫生：H1 14 个受版本控制文件含 U+FFFD（C 注释是损坏的 GBK，`src/mod/gui_mod.c.bak2_20260808_221050` 1485、`mods/debug/debug_mod.c` 619、`src/compiler/bytecode.c` 409…）、H2 上述 `.bak2_` 备份文件被入库、H3 `ai_browser_diag.js` 是唯一**非法 UTF-8** 文件（偏移 478）。
 
 **两条方法论结论（对回归测试有直接影响）。** ①引擎在程序输出前固定打印三行模块装载信息（`[TBP] timeBeginPeriod(1) …`、`[infiverse mod] loaded …`、`[verse_dist mod] VDP loaded …`）与一行调用回显（形如 `[0]="str" [1]="len"`），**任何断言 stdout 的测试都必须容忍这些前缀行**。②**退出码经常区分不出对错** —— D1、D2、D5、M11 都返回 0；`--lint` 尤其不可用作解析谓词（`src/main.c:1252-1257` 的 `lint_check()` 恒返回 0）。
+
+### 10.19 `?.` 安全成员访问恒为 `nil`：两个独立缺陷，以及一条「有牙的断言」的写法（`optional-member-safe-access`）
+
+**起因。** §10.18 的 D11 是**只靠读码**写下的：`?.` 实测求值为 `nil`，文档如实记了现象，并明写「具体失效点尚未定位」。本条把它定位到行、修好，并把 `.`（非 `?.`）与它分开。
+
+**根因是两个独立缺陷，同在 `src/compiler/compiler.c` 的 `EXPR_MEMBER` safe 分支。**
+
+①**键截断**：原文 `src/compiler/compiler.c:1047` 是 `int key_idx = bytecode_add_string(comp->curBC, expr->member.member.start);`。`expr->member.member` 是 `StringView`（`start` + `length`，指向源缓冲区内部，**不以 `\0` 结尾**），而 `src/compiler/bytecode.c:66` 的 `int bytecode_add_string(Bytecode *bc, const char *str)` 内部用 **`strcmp` 查重 + `strdup` 复制**，两者都是 NUL 终止语义。于是 `obj?.name` 的查找键不是 `"name"`，而是 **`"name"` 加上源文件剩下的一切**，`OP_INDEX_GET` 必然查不到 ⇒ `nil`。**这条缺陷留下过一个可识别的指纹**：引擎回显里那个 `[2]="name\nsay present\n\nmissing = nil?.name\nsay missing\n"` —— 当时看着莫名其妙，其实就是被 `strdup` 读走的「成员名 + 文件剩余部分」。
+
+②**陈旧寄存器**：对象为 `nil` 时 `OP_JUMP_IF_TRUE` 跳过写 `result`，而 `result` 来自 `alloc_reg()` 的回收寄存器，**保留上一次的值**。所以只修①，`nil?.name` 会返回上一次安全访问产生的 `inimerse`。
+
+**修复。** 键按视图长度复制（非 `safe` 的 `.` 分支本来就是这么写的，**同一函数里一个对一个错**，正是这个疏漏的旁证）：
+
+```c
+char keyName[256];
+snprintf(keyName, sizeof(keyName), "%.*s",
+         (int)expr->member.member.length, expr->member.member.start);
+int key_idx = bytecode_add_string(comp->curBC, keyName);
+```
+
+并在 `OP_IS_NIL` 之前把 `result` 兜底为对象自身：
+
+```c
+int result = alloc_reg();
+emit(comp->curBC, OP_MOV, result, object, 0);
+```
+
+选兜底而不是「载入 nil」，是因为引擎**没有专用 nil 载入操作码**：`src/compiler/bytecode.h` 里 NIL 相关只有 `OP_IS_NIL`，`grep -arn 'LOADK_NIL\|LOAD_NIL' src/compiler/ src/vm/` 零命中，也没有 `EXPR_NIL`。
+
+**同类审计**：`grep -an 'bytecode_add_string([^)]*\.\(start\|text\)' src/compiler/*.c src/vm/*.c` **零命中** —— 这是孤例，不是一类错误。
+
+**回归断言：一条「有牙」的断言长什么样。** 本条的教训值得单独记，因为这个项目刚刚栽在相反的地方（M13：101 个 CTest 里 73 个只看退出码）。第一版设想是 `PASS_REGULAR_EXPRESSION "inimerse"` —— **它在缺陷还在时也会通过**，因为引擎的内建调用回显会打印字典字面量，输出里**本来就有裸的 `inimerse`**。所以 `vtest/optional_member_v04.im` 重写成打印带前缀的**值行**：
+
+```
+obj = {"name": "inimerse"}
+present = obj?.name
+missing = nil?.name
+say "OM present=" + present
+say "OM missing=" + missing
+```
+
+`CMakeLists.txt:544-550` 随之加两条断言，**各抓一个缺陷**：`PASS_REGULAR_EXPRESSION "OM present=inimerse"`（抓①键截断）、`FAIL_REGULAR_EXPRESSION "OM missing=inimerse"`（抓②陈旧寄存器）。
+
+**双向验证做了两次，不是一次** —— 因为两条正则各自声称抓一个缺陷，只验「整个修复还原后会红」证明不了第二条：
+
+| 编译器状态 | 程序输出 | 判决 |
+|---|---|---|
+| 还原到 HEAD（两缺陷都在） | `OM present=nil` / `OM missing=nil` | **Failed** — `Required regular expression not found. Regex=[OM present=inimerse]` |
+| 只保留缺陷②（删掉那行 `OP_MOV`） | `OM present=inimerse` / `OM missing=inimerse` | **Failed** — `Error regular expression found in output. Regex=[OM missing=inimerse]` |
+| 两处修复都在 | `OM present=inimerse` / `OM missing=nil` | **Passed** |
+
+第二行是关键：`PASS` 正则**已经满足**，是 `FAIL` 正则把它拦下来的 —— 证明缺陷②被独立捕获，不是靠 `PASS` 顺带盖住。
+
+**可复用的模式**：**当引擎回显会污染输出时，断言必须打在程序自己打印的带标记值行上**，不能打在裸值上。
+
+**`.`（非 `?.`）不是缺陷。** `src/compiler/compiler.c:1128-1159` 对 `EXPR_IDENT` 对象把 `"d.a"` 拼成字符串，`lookup_local(comp, "d.a")` 失败后调 `register_global(comp, full)` 再 `OP_LOAD_GLOBAL` —— **读的是一个名叫 `"d.a"` 的全局**（`u.count` 这类模块限定名的设计用途）。源码注释写着「读取不创建全局」，但代码调用的正是 `register_global()`。所以对字典用 `.` 会**静默读到 `nil`**，是 D 级危险行为，但**不是成员访问实现缺失**。`docs/SYNTAX.md` §7.1 已把 D11 拆成 (a) `?.`（已修复）与 (b) `.`（设计使然）两部分。
+
+**顺带修掉一处杂散改动**：`git diff` 显示 `src/compiler/compiler.c:1` 的 UTF-8 BOM 被之前的编辑剥掉了，不在修复意图内，已补回，使该文件的 diff 只剩两处修复。
+
+**门禁**：本轮**不新增 CTest**，`EXP_CTEST` 保持 **101**；改动落在 `src/compiler/compiler.c`、`vtest/optional_member_v04.im`、`CMakeLists.txt`，文档落在 `docs/SYNTAX.md`（D11 与四处交叉引用）、`docs/BOARD.md`（新行 `optional-member-safe-access` + `ctest-assertion-gap` 标记首个实例）、`docs/STATUS.md`（本节）。
