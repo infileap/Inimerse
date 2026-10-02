@@ -47,7 +47,9 @@
 - **冷联机**：下载 .vverse 本地运行（✅ verse_open 校验/解包/启动；ref://sha256 素材复用）
 
 ## 4. 远程调试安全边界（文档化）
-- 本地调试控制台（stdin）无网络面；`--safe` 已拦截注入（危险 builtin 清单见 CHANGES_20260815_safety）
+- 本地调试控制台（stdin）无网络面；`--safe` 已拦截注入（危险 builtin 清单见 CHANGES_20260815_safety
+  —— **该文件已于 2026-08 随 hygiene 第 1 批删除，内容见 git 历史**；本行不追新指向，
+  归档件不受引用有效性约束，见 [STATUS.md](../STATUS.md) §1 硬规则 6）
 - **未来远程 attach**（verse 控制通道）必须：`--debug-token <token>` + 只读命令 + safe_mode 强制；
   控制通道建议走独立端口 + token 握手（HMAC），禁止与游戏帧流复用
 - 注入入口：`vm_exec` / `dbg_exec` 已注册为危险 builtin（safe_mode 下拒绝）
