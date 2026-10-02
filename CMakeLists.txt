@@ -496,15 +496,17 @@ if(INIMERSE_BUILD_ENGINE)
       COMMENT "bindgen: InimerseBridge.java" VERBATIM)
 
     # The engine's translation units call inim_load_text() (see
-    # src/parser/parser.c and src/compiler/compiler.c) and the only definition
-    # in the tree lives in src/main.c.  A shared library has to resolve it, so
-    # both bridge targets compile that same file - the same source, not a copy -
-    # with the CLI entry point renamed, so a Python extension does not export a
-    # `main`.  Nothing else in src/main.c is reachable from the bridge.
+    # src/parser/parser.c and src/compiler/compiler.c).  That definition lives in
+    # src/common/common.c, which is part of the inimerse_engine object library,
+    # so both bridge targets simply link the engine and neither compiles
+    # src/main.c any more.  (They used to: the symbol used to be defined only in
+    # src/main.c, which is deliberately not in the engine library, so each bridge
+    # target compiled that whole file a second time with `main` renamed.  A
+    # duplicate of the function also lived in aot_native_tool.c for the same
+    # reason; both are gone.)
     # --- the native library the generated Java facade loads ---------------
     add_library(inimerse_bridge SHARED
-      src/bridge/bridge_abi.c src/bridge/bridge_jni.c src/main.c "${XLANG_ABI_HEADER}")
-    target_compile_definitions(inimerse_bridge PRIVATE main=inimerse_bridge_entry_unused)
+      src/bridge/bridge_abi.c src/bridge/bridge_jni.c "${XLANG_ABI_HEADER}")
     set_target_properties(inimerse_bridge PROPERTIES
       LIBRARY_OUTPUT_DIRECTORY "${XLANG_BRIDGE_DIR}")
     target_include_directories(inimerse_bridge PRIVATE
@@ -514,8 +516,7 @@ if(INIMERSE_BUILD_ENGINE)
 
     # --- the CPython extension the wheel ships ----------------------------
     add_library(inimerse_python MODULE
-      src/bridge/inimerse_extension.c src/bridge/bridge_abi.c src/main.c "${XLANG_ABI_HEADER}")
-    target_compile_definitions(inimerse_python PRIVATE main=inimerse_python_entry_unused)
+      src/bridge/inimerse_extension.c src/bridge/bridge_abi.c "${XLANG_ABI_HEADER}")
     set_target_properties(inimerse_python PROPERTIES
       PREFIX "" OUTPUT_NAME "inimerse" SUFFIX "${XLANG_EXT_SUFFIX}"
       LIBRARY_OUTPUT_DIRECTORY "${XLANG_BRIDGE_DIR}")

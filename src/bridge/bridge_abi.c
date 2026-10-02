@@ -6,7 +6,13 @@
  *
  *   version()      -> INFIVERSE_VERSION          (src/common/common.h)
  *   sha256_file()  -> inim_file_sha256()         (src/compilation/checksum.c)
- *   parse_count()  -> parse_program()            (src/parser/parser.c)
+ *   parse_count()  -> parse_program_recoverable() (src/parser/parser.c)
+ *
+ * parse_count() is deliberately the ONE caller of parse_program_recoverable():
+ * the text it parses comes from the caller, so a syntax error has to come back
+ * as this function's return code 4.  parse_program() itself stays fatal -- it
+ * terminates the process, which is the CLI's documented behaviour and is what
+ * every other caller in the tree wants.
  *
  * Strings are returned through a thread-local buffer that the next call on the
  * same thread overwrites.  No ownership crosses the boundary, so the JNI and
@@ -22,7 +28,7 @@
 #include "ast.h"                  /* Program */
 #include "common.h"               /* INFIVERSE_VERSION */
 #include "compilation/checksum.h" /* inim_file_sha256 */
-#include "parser.h"               /* parse_program */
+#include "parser.h"               /* parse_program_recoverable */
 
 /* 64 hex chars of SHA-256 plus room for a version string. */
 #define BRIDGE_STR_MAX 256
@@ -66,15 +72,20 @@ int inimerse_bridge_parse_count(const char *source, size_t source_len,
     if (!source || !out) return 1;
     if (source_len > (size_t)INT32_MAX) return 2;
 
-    /* parse_program() takes a NUL-terminated buffer and keeps StringViews into
-     * it, so the buffer is freed only after the one field we report - an int in
-     * the returned struct - has been read.  No StringView is ever dereferenced. */
+    /* parse_program_recoverable() takes a NUL-terminated buffer and keeps
+     * StringViews into it, so the buffer is freed only after the one field we
+     * report - an int in the returned struct - has been read.  No StringView is
+     * ever dereferenced.
+     *
+     * A syntax error prints its diagnostic to stderr and returns NULL here;
+     * before this used parse_program(), whose error path is exit(1), so the
+     * `return 4` below was unreachable and the HOST process died instead. */
     buf = (char *)malloc(source_len + 1);
     if (!buf) return 3;
     memcpy(buf, source, source_len);
     buf[source_len] = '\0';
 
-    prog = parse_program(buf);
+    prog = parse_program_recoverable(buf);
     if (!prog) {
         free(buf);
         return 4;

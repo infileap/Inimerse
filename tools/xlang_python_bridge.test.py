@@ -232,6 +232,37 @@ def main(argv):
             check("parse_count() matches the hand count in the fixture", got_count == str(EXPECTED_COUNT),
                   "want=%d got=%s" % (EXPECTED_COUNT, got_count))
 
+        # --- a bad source has to come back as a Python exception, not as a dead
+        # --- host process.  parse_count() parses text the CALLER supplies, and it
+        # --- used to hand that text to parse_program(), whose error path is
+        # --- exit(1): the interpreter died inside the call, no exception was
+        # --- raised, and because the process was killed with buffered stdout the
+        # --- caller's already-printed output vanished too (measured: the broken
+        # --- binary prints nothing at all, not even the line before the call).
+        # ---
+        # --- HOST-ALIVE is printed only if the probe survives to its last line,
+        # --- so a regression here cannot pass by accident.
+        bad = (
+            "import inimerse, sys\n"
+            "try:\n"
+            "    n = inimerse.parse_count('x = ')\n"
+            "    print('NO-RAISE', n); sys.exit(3)\n"
+            "except RuntimeError as e:\n"
+            "    print('RAISED', 'code 4' in str(e))\n"
+            "print('count-after', inimerse.parse_count('x = 1\\ny = 2\\n'))\n"
+            "print('HOST-ALIVE')\n"
+        )
+        alive = run([str(py), "-c", bad], cwd=tmp)
+        note("bad-source probe rc=%d stderr=%s" % (alive.returncode, (alive.stderr or "").strip()[-200:]))
+        check("a syntax error does not kill the host interpreter", alive.returncode == 0,
+              "rc=%d stderr=%s" % (alive.returncode, (alive.stderr or "")[-300:]))
+        check("the bad-source probe reached its last line", "HOST-ALIVE" in alive.stdout,
+              alive.stdout[-300:])
+        check("parse_count() reports a syntax error as a RuntimeError (code 4)",
+              "RAISED True" in alive.stdout, alive.stdout[-300:])
+        check("the interpreter is still usable after the error",
+              "count-after 2" in alive.stdout, alive.stdout[-300:])
+
     print("xlang_python_bridge: %d check(s), %d failure(s)" % (CHECKS, len(FAILURES)))
     return 1 if FAILURES else 0
 

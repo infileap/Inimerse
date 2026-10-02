@@ -5,9 +5,8 @@
  *     cc -O2 prog.c -o prog.native
  *
  * It is a separate translation unit with its own main() so that it can be
- * linked against the engine's object files (minus src/main.c.o) and measured
- * BEFORE CMakeLists.txt is opened for this stream; the stream brief freezes
- * CMakeLists.txt in wave 1.  See tools/aot_native_build.sh.
+ * linked against the engine's object files and measured independently of the
+ * CLI.  CMakeLists.txt builds it as the normal `aot-native` target.
  */
 #include "aot_native.h"
 #include "parser.h"
@@ -16,29 +15,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The engine defines this in src/main.c, and src/main.c.o is precisely the one
- * object the build script must exclude (it owns the engine's own main()).  The
- * tool therefore carries its own copy.  POSIX branch only: the engine's
- * function additionally transcodes GBK to UTF-8 under _WIN32, which does not
- * apply here and must not be silently reimplemented. */
-char *inim_load_text(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (len < 0 || len > (1 << 26)) { fclose(f); return NULL; }
-    char *buf = malloc((size_t)len + 1);
-    if (!buf) { fclose(f); return NULL; }
-    size_t rd = fread(buf, 1, (size_t)len, f);
-    fclose(f);
-    buf[rd] = '\0';
-    if (rd >= 3 && (unsigned char)buf[0] == 0xEF &&
-        (unsigned char)buf[1] == 0xBB && (unsigned char)buf[2] == 0xBF) {
-        memmove(buf, buf + 3, rd - 3 + 1);
-    }
-    return buf;
-}
+/* inim_load_text() is engine code (src/common/common.c, declared in
+ * src/common/common.h) and this tool links the engine library, so it must NOT
+ * define its own.  It used to carry a POSIX-only copy, because the only
+ * definition lived in src/main.c and src/main.c.o was the one object the old
+ * build script had to exclude; that copy also silently dropped the GBK(cp936)
+ * transcode the engine performs under _WIN32, so Windows readers of a legacy
+ * GBK script got different bytes here than from the engine.  Both problems are
+ * gone with the copy. */
 
 static void usage(const char *argv0) {
     fprintf(stderr,

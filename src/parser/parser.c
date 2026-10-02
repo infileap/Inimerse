@@ -2,10 +2,36 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>
 #ifndef _WIN32
 #include <strings.h>
 #endif
 #include <ctype.h>
+
+/* ==================== 语法错误的终止策略 ====================
+   下面每一处语法错误都先把诊断写到 stderr，然后交给 parse_fatal() 决定进程
+   是否必须死掉。
+
+   CLI 一直是死的（exit(1)）：源文件语法错就没有可执行的程序，而退出码是引擎
+   对外承诺的行为，不改。
+
+   嵌入方可以不同。xlang 桥接层把**调用方给它的文本**喂给 parse_program()，
+   以前一次坏源码会让宿主的 Python / JVM 进程直接消失（没有异常、没有
+   traceback）。parse_program_recoverable() 在那一次解析期间装好恢复点：错误
+   照常打印，但控制权回到调用者手里，返回 NULL。
+
+   状态用 _Thread_local：桥接层可以被任意 Python / JVM 线程进入，而
+   longjmp() 跳进另一个线程的栈帧是未定义行为。 */
+static _Thread_local jmp_buf g_parse_recover;
+static _Thread_local int     g_parse_recover_armed;
+
+static void parse_fatal(void) {
+    if (g_parse_recover_armed) {
+        g_parse_recover_armed = 0;
+        longjmp(g_parse_recover, 1);
+    }
+    exit(1);
+}
 
 /* AI-era structured errors (--err-json): LLM-friendly {error,line,col,expect,got,fix} */
 int g_err_json = 0;
@@ -77,11 +103,11 @@ static void parse_error_expected(Parser *p, const char *expected, Token got) {
     snprintf(buf, sizeof(buf), "%.*s", (int)got.text.length, got.text.start);
     if (g_err_json) {
         err_json("parse", p->lex.line, p->lex.col, expected, buf, "check the syntax around this token");
-        exit(1);
+        parse_fatal();
     }
     fprintf(stderr, "Error: expected '%s', but got '%s' (type %d)\n",
             expected, buf, got.type);
-    exit(1);
+    parse_fatal();
 }
 
 static Token consume(Parser *p, InimerseTokenType type, const char *expected) {
@@ -90,11 +116,11 @@ static Token consume(Parser *p, InimerseTokenType type, const char *expected) {
         snprintf(buf, sizeof(buf), "%.*s", (int)peek(p).text.length, peek(p).text.start);
         if (g_err_json) {
             err_json("parse", p->lex.line, p->lex.col, expected, buf, "insert or fix the expected token at this position");
-            exit(1);
+            parse_fatal();
         }
         fprintf(stderr, "Error at line %d: expected '%s', but got '%s' (type %d)\n",
                 p->lex.line, expected, buf, peek(p).type);
-        exit(1);
+        parse_fatal();
     }
     Token t = peek(p);
     advance(p);
@@ -152,7 +178,7 @@ static Expr *parse_fstring(Parser *p, StringView text) {
             }
             if (!ok) {
                 fprintf(stderr, "Error: f-string interpolation only supports plain identifiers inside {} (got '%s')\n", name);
-                exit(1);
+                parse_fatal();
             }
             Expr *id = malloc(sizeof(Expr));
             id->type = EXPR_IDENT;
@@ -1069,10 +1095,10 @@ static Stmt *parse_case(Parser *p) {
         if (peek(p).type == TOK_COLON) {
             if (g_err_json) {
                 err_json("parse", p->lex.line, p->lex.col, "',' or '}'", ":", "wrap the case action in { } when followed by a comparison branch");
-                exit(1);
+                parse_fatal();
             }
             fprintf(stderr, "Error: case action expression runs into ':' - wrap the action in { } when followed by a comparison branch.\n");
-            exit(1);
+            parse_fatal();
         }
         stmt->caseStmt.branchCount++;
     }
@@ -1419,7 +1445,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         stmt->forStmt.var = consume(p, TOK_IDENT, "variable").text; consume(p, TOK_IN, "'in'");
         if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "range")) {
             advance(p); consume(p, TOK_LPAREN, "'('");
-            if (peek(p).type == TOK_RPAREN) { fprintf(stderr, "range requires arguments\n"); exit(1); }
+            if (peek(p).type == TOK_RPAREN) { fprintf(stderr, "range requires arguments\n"); parse_fatal(); }
             Expr *arg1 = parse_expr(p);
             if (match(p, TOK_COMMA)) { stmt->forStmt.rangeStart = arg1; stmt->forStmt.rangeEnd = parse_expr(p); if (match(p, TOK_COMMA)) stmt->forStmt.rangeStep = parse_expr(p); else stmt->forStmt.rangeStep = NULL; }
             else { stmt->forStmt.rangeStart = NULL; stmt->forStmt.rangeEnd = arg1; stmt->forStmt.rangeStep = NULL; }
@@ -1527,9 +1553,9 @@ static Stmt *parse_stmt_impl(Parser *p) {
     else if (t.type == TOK_THREAD || t.type == TOK_TASK) {
         /* trap: task/thread definitions inside loop bodies are silently ineffective (never executed); reject at compile time */
         if (p->loop_depth > 0) {
-            if (g_err_json) { err_json("parse", p->lex.line, p->lex.col, "top-level", "task/thread", "definitions inside a loop are silently ineffective; define at top level"); exit(1); }
+            if (g_err_json) { err_json("parse", p->lex.line, p->lex.col, "top-level", "task/thread", "definitions inside a loop are silently ineffective; define at top level"); parse_fatal(); }
             fprintf(stderr, "Error at line %d: task/thread definitions inside a loop are silently ineffective; define at top level\n", p->lex.line);
-            exit(1);
+            parse_fatal();
         }
         advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_DEF;
         stmt->threadDef.flags = (t.type == TOK_TASK) ? THREAD_FLAG_TASK : 0;
@@ -1632,7 +1658,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
                 /* A2: x++ / x-- => x = x +1 / x = x -1 (simple variable only) */
                 if (expr->type != EXPR_IDENT) {
                     fprintf(stderr, "Error: '++'/'--' currently only supported on simple variables\n");
-                    exit(1);
+                    parse_fatal();
                 }
                 Expr *one = malloc(sizeof(Expr)); one->type = EXPR_NUMBER; one->intVal = 1;
                 Expr *bin = malloc(sizeof(Expr));
@@ -1734,6 +1760,23 @@ Program *parse_program(const char *source) {
         if (prog->count >= cap) { cap = cap == 0 ? 8 : cap * 2; prog->stmts = realloc(prog->stmts, cap * sizeof(Stmt*)); }
         prog->stmts[prog->count++] = s;
     }
+    return prog;
+}
+
+/* ==================== 可恢复的解析入口 ====================
+   与 parse_program() 相同的语法，但语法错误**不会**终止进程：诊断照常写到
+   stderr，函数返回 NULL。给宿主进程必须活下来的嵌入方用（xlang 桥接层把调用
+   方给的文本喂进来，一次坏源码不该让 Python / JVM 消失）。
+
+   一次只允许一层：本解析器本来就不是可重入的，而 g_parse_recover 是每线程
+   单点，嵌套调用直接返回 NULL。 */
+Program *parse_program_recoverable(const char *source) {
+    if (!source) return NULL;
+    if (g_parse_recover_armed) return NULL;   /* 已经在一次可恢复解析里 */
+    if (setjmp(g_parse_recover)) return NULL; /* 从 parse_fatal() 跳回：错误已打印 */
+    g_parse_recover_armed = 1;
+    Program *prog = parse_program(source);
+    g_parse_recover_armed = 0;
     return prog;
 }
 

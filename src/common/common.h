@@ -51,7 +51,7 @@ static inline bool sv_eq_cstr(StringView a, const char *s) {
 
 /* AI-era structured errors (--err-json): defined in parser.c, set by main.c */
 extern int g_err_json;
-/* UTF-8 unified text loading: BOM strip + GBK(cp936)->UTF-8 transcode. Implemented in main.c. */
+/* UTF-8 unified text loading: BOM strip + GBK(cp936)->UTF-8 transcode. Implemented in common.c. */
 char *inim_load_text(const char *path);
 
 

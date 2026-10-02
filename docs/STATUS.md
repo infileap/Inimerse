@@ -1644,3 +1644,80 @@ x = (x*1103515245+12345) % 2147483648
 - **`aot_native.test.py` 的 46 条等价用例全是 int/bool**，不能外推到语言整体；浮点打印**不在等价语料内**（解释器 `1.0/3.0` → `0.333333` 而 `1.23456789012345678` → `1.234568`，无单一 printf 精度可匹配，原生用 `%g`）—— 是**已知不覆盖**，不是通过。
 - **拒绝语料 10 例**只证明「超出子集时拒绝」，不证明拒绝原因文本的稳定性。
 - 门禁需要可用的 `cc`；引擎构建本来就要求它，故未新增前置。
+
+### 10.27 桥接层不该被调用方的坏源码杀死，以及 `inim_load_text()` 回家（`xlang-bridge-followups`）
+
+`xlang-bridge`（§10.15）交出的桥接层是按「可恢复」写的：`src/bridge/bridge_abi.c` 的 `inimerse_bridge_parse_count()` 里有一句 `if (!prog) return 4;`。这一行**从来不可达** —— `parse_program()` 的错误路径是 `exit(1)`。于是桥接层把**调用方给的文本**喂进去，一次语法错就让宿主的 Python / JVM 进程消失：没有异常、没有 traceback，只有 stderr 上一行 `Error: expected 'expression', but got '' (type 141)`。
+
+#### ① `parse_fatal()`：把「进程要不要死」变成一个决定
+
+`src/parser/parser.c` 里 **11 处**语法错误原先各自 `fprintf(stderr, ...); exit(1);`（BOARD 原文写「12 处」并列了 11 个行号，实测就是 11 处），现在全部改走一个函数：
+
+```c
+static _Thread_local jmp_buf g_parse_recover;
+static _Thread_local int     g_parse_recover_armed;
+
+static void parse_fatal(void) {
+    if (g_parse_recover_armed) { g_parse_recover_armed = 0; longjmp(g_parse_recover, 1); }
+    exit(1);
+}
+```
+
+`parse_program_recoverable()`（声明在 `src/parser/parser.h`）在那一次解析期间装恢复点：`if (g_parse_recover_armed) return NULL;` → `if (setjmp(g_parse_recover)) return NULL;` → 装点、调 `parse_program()`、清点、返回。
+
+**三点必须写下来的取舍**：
+
+- **CLI 一个字都没改。** `parse_program()` / `parse_program_file()` 保持 `exit(1)`：脚本语法错就没有可执行的程序，退出码是引擎对外承诺的行为。实测 `./build/inimerse /tmp/e13/bad.im` → rc 1，`say 1+1` → rc 0，`--err-json` 路径同样 rc 1 并打出 `{"error":"io",...}`。
+- **`_Thread_local` 不是可选项。** 桥接层能被任意 Python / JVM 线程进入，而 `longjmp()` 跳进另一个线程的栈帧是未定义行为。用全局 `jmp_buf` 在单线程测试里看不出问题，在多线程宿主里是随机崩溃。
+- **`longjmp` 会跳过 `free`。** 坏源码解析到一半时已 malloc 的 AST 片段被漏掉，每次语法错泄漏一段。桥接层是「宁可漏一点也不能死」，这是**已知且接受**的代价，不是没想到。
+
+`bridge_abi.c` 一行改完后（`parse_program(buf)` → `parse_program_recoverable(buf)`），那句 `return 4` 第一次可达，Python 侧看到的是正常的 `RuntimeError: inimerse: parse_count failed (code 4)`。
+
+#### ② `inim_load_text()` 搬进 `src/common/common.c`
+
+它声明在 `src/common/common.h:55`，唯一实现在 `src/main.c:346`，而 `src/main.c` **故意不在** `IMINERSE_ENGINE_SOURCES` 里（它拥有引擎自己的 `main()`）。引擎内部有两个翻译单元调它 —— `src/parser/parser.c`（经 `parse_program_file()`）与 `src/compiler/compiler.c`（模块内联）—— 于是每个链接引擎的嵌入方都得**把整个 `src/main.c` 再编一遍**，还要用 `target_compile_definitions(... PRIVATE main=<target>_entry_unused)` 把 `main` 改名。同一份源码不是拷贝，但味道难闻。
+
+`src/common/common.c` 原先只有一行 `#include "common.h"`，**却本来就在** `IMINERSE_ENGINE_SOURCES`（`CMakeLists.txt:344`），所以搬过去零成本：连同它唯一的使用者 `static int inim_utf8_valid()`（严格 UTF-8 校验，拒绝 overlong 与代理对）整段移过去，`src/main.c` 原址留一段指向 `common.c` 的说明，`src/common/common.h:54` 的 `Implemented in main.c` 改成 `common.c`。
+
+**顺带修掉一个真分歧**：`src/compilation/aot_native_tool.c` 里还有**第三份** `inim_load_text()`，是 POSIX-only 的 —— 它**静默丢掉了引擎在 `_WIN32` 下做的 GBK(cp936)→UTF-8 转码**。删掉它之后该工具直接用引擎那份，Windows 上读旧 GBK 脚本终于和引擎给一样的字节。（`aot-native` 链接 `inimerse_engine`，留着它本来也会是重复符号。）
+
+删除后的断言不是「我觉得没重复了」，是可查的：
+
+```
+build/CMakeFiles/inimerse_python.dir/link.txt → 无 main.c.o
+nm build/bridge/inimerse*.so                  → 恰好一个 T inim_load_text
+nm .../inimerse_engine.dir/src/common/common.c.o → 定义在这里
+nm .../aot_native_tool.c.o                    → 不再定义它
+```
+`rm -rf build` 全新构建 rc 0、无 duplicate symbol，`build/aot-native` 仍 876,920 B。
+
+#### ③ 双向验证：新断言必须能变红
+
+`tools/xlang_python_bridge.test.py` 新增 4 条断言，核心是子进程里跑：
+
+```python
+try:
+    n = inimerse.parse_count('x = ')
+    print('NO-RAISE', n); sys.exit(3)
+except RuntimeError as e:
+    print('RAISED', 'code 4' in str(e))
+print('count-after', inimerse.parse_count('x = 1\ny = 2\n'))
+print('HOST-ALIVE')
+```
+
+`HOST-ALIVE` 只有活到最后一行才会打印，所以这条断言不可能靠巧合通过。
+
+| 状态 | 结果 |
+|---|---|
+| 修好（`parse_program_recoverable`） | **20 checks / 0 failures / rc 0** |
+| 改坏（换回 main 那行 `parse_program(buf)`） | **20 checks / 4 failures / rc 1**，正好是新增那 4 条 |
+
+改坏时子进程的 **stdout 整段为空** —— 连调用之前那句 `print("version: ...")` 都没到管道。`exit(1)` 杀进程时缓冲里的 stdout 一起丢了。这比「宿主死了」更值得记一笔：桥接层闯的祸会把调用方**已经打印的输出**一起带走。
+
+`EXP_CTEST` **保持 103**（只在既有 `xlang_python_bridge` 里加断言，没有新增 `add_test`）。完整 `tools/gate.sh --jobs 4` 七阶段 PASS。
+
+#### 遗留（如实上报）
+
+- **`longjmp` 的泄漏**（见上）：每次语法错漏掉半棵 AST。要「不漏」得把整个递归下降改成返回错误码，那是另一个量级的改动，没有做。
+- **嵌套调用返回 NULL**：在一次可恢复解析里再调 `parse_program_recoverable()` 会直接返回 NULL（解析器本来就不是可重入的）。今天没有这样的调用方。
+- `src/main.c.bak`（未被版本控制）里还有一份 `inim_load_text()`；它不参与构建，没有动。
