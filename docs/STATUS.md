@@ -41,15 +41,15 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **93 / 93 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
-| 高争用稳定性 | `-j12` 连续 80 轮**失败 1 轮**（§2.9 残余的端口窗口；改前失败更密，见 §2.6–§2.9） | `for i in $(seq 80); do ctest --test-dir build -j12; done` |
+| 全量测试 | **94 / 94 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
-| 引擎代码 | `src/` 100 个 `.c` + 49 个 `.h`，合计 48,324 行（`.c` 单独 45,697 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
+| 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,779 行（`.c` 单独 46,152 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 93 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1，见 §10.1/§10.2/§10.6/§10.7） | — |
-| 工具 | `tools/` 94 个条目 | `ls tools \| wc -l` |
+| 测试注册 | `CMakeLists.txt` 中 94 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1，见 §10.1/§10.2/§10.6/§10.7/§10.10） | — |
+| 工具 | `tools/` 97 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 81 ms = **1.09x** · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
 ### 2.1 复现命令
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 93
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 94
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -244,9 +244,9 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 
 **两层缺陷，都已修**：
 
-1. **`free_port()` 是 TOCTOU**（`tools/testports.py:49-56`）：`bind(0)` 取号后立刻关闭，返回瞬间即释放。
+1. **`free_port()` 是 TOCTOU**（`tools/testports.py:58`）：`bind(0)` 取号后立刻关闭，返回瞬间即释放。
    实测单次连续分配 20 个时约 **23/300** 批次出现重复。全部 hub 端口点已改用 `distinct_ports`。
-2. **`distinct_ports()` 的保证只在单次调用内成立**（`tools/testports.py:214`）：两次独立调用各建一个池，
+2. **`distinct_ports()` 的保证只在单次调用内成立**（`tools/testports.py:160`）：两次独立调用各建一个池，
    第二次可以拿到第一次已归还的号码——实测 `distinct_ports(6)` 两次重叠 **5/200**、`distinct_ports(3)`
    两次重叠 **5/500**。更隐蔽的是套件内部：`tools/economy_migration.test.py` 的 `start_hub` 原来自己
    `listen_port = distinct_ports(1)[0]`，这个新池**看不到调用方已持有的 6 个 HTTP 端口**，
@@ -260,11 +260,14 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 
 **验证**：12 端口单池的 200 轮 × 6 hubs 就绪实验 **6/1200 → 0/1200** never-ready。
 
-**残余（诚实记录）**：端口在「池归还」到「子进程 bind」之间仍有一个窗口，**另一个套件的池**可以在
+**残余（原判）与最终修法**：端口在「池归还」到「子进程 bind」之间仍有一个窗口，**另一个套件的池**可以在
 这个窗口里抢到同一个号码。这是 `distinct_ports` 机制固有的，实测约 **1 轮 / 80 轮**全量 `ctest -j12`
-会因此失败。彻底的修法有两种：让引擎支持 `--http-port 0` 由内核分配并把真实端口打到 stderr（当前
-`verse_http_start` 拒绝 `port < 1`，故不支持），或让套件在就绪失败时用新端口重试。**两者都尚未实施**，
-当前依靠 §2.8 的响亮报错把这类失败从「神秘超时」变成「一行可读原因」。
+会因此失败。原判给了两条候选修法：让引擎支持 `--http-port 0` 由内核分配并把真实端口报出来，或让套件在
+就绪失败时用新端口重试。**采纳第一条，否决第二条**：就绪失败重试只是把不确定性推给下一次尝试，窗口仍在；
+而「预留一个 socket 再交给子进程」也不可能成立 —— 预留必须在子进程 `bind` 之前**释放**，预留天生只是建议性的。
+已实施（见 §10.10）：引擎支持 `--port 0` / `--http-port 0` 并把内核给的**真实**端口报出来，harness 改为
+**从引擎读取端口、不再猜号**；`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」
+为 **6**，证明竞态在 harness 而非引擎）。
 
 ---
 
@@ -901,3 +904,39 @@ queue: close() leaves the queue behind                     1    1
 - 一条**观察（不是缺陷，未改）**：`this.closed` 与 `_generation` 冗余 —— `close()` 同时做 `closed = true` 与 `++_generation`，所以任何 `closed === true` 的时刻，活回调捕获的 generation 必然已经对不上。代价为零，留着当第二道闸也无害。
 - **`closed` 守卫与 `_generation` 守卫无法各自单独隔离**：`close()` 一次动两个字段，所以「`close()` 之后不再重连」只能断言**可观察行为**；「旧 generation 的 `close` 不能顶掉新连接」可以单独归因给 generation 守卫（变异里去掉它、只留 `!this.closed`，该断言立刻变红）。
 - 没测：`send()` 在 `close()` 之后仍会入队（且永不 flush）这一姿势；默认值 `retries: 3` / `backoffMs: 100` 只由构造签名与显式配置的 `retries: 0` / `retries: 2` 间接覆盖，没跑默认值下的 4 次重试（那条要等约 700ms，收益不值）。
+
+### 10.10 超大包的静默截断与端口分配（`http-truncation-and-ports`，`578eb95`）
+
+**立项（实测）**：`src/platform/http_posix.c:312 hub_body()` 用 `fread(body, 1, cap, vf)` 读文件，超过 `cap` 即截断，而**调用方仍然回 200**。四条路径各自的真实后果不同：
+
+| 端点 | 原行为（实测） | 现行为 |
+| --- | --- | --- |
+| `GET /content/<hash>` | 回算 sha256 对不上 ⇒ **500 `content_corrupt`**（不是「截断」，是**把完好文件误报成损坏**） | 413 `content_too_large` |
+| `GET /v/<id>` | 200 + 只回 65536 / 66560 字节 | 413 `package_too_large` |
+| `GET /package/<id>` | 同上 | 413 `package_too_large` |
+| `POST /package/fork` | **201 `{"size":65536}`，且盘上留下截断副本**（写路径丢数据，四条里最严重） | 413，**在 `write_atomic` 之前拒绝，不落盘** |
+
+UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && blen > 0 && blen < 60000` 闸 —— 因为 `src/mod/verse_dist_mod.c:2060 verse_udp_fetch` 会把**任何**数据报原样当包返回。
+
+**修法**：新增 `static int read_file_capped(FILE *f, void *buf, size_t cap, size_t *out_len, unsigned long long *out_size)`（`src/platform/http_posix.c:328`），四处调用点改用它；超限即按端点回 413，不再静默。
+
+**端口**：`verse_http_start` 原来拒绝 `port < 1`，所以 harness 只能**猜号**。现在 `--port 0` / `--http-port 0` 交给内核分配，并把**真实**端口报出来：`verse_http_bound_port()`（`src/platform/http_posix.c:2001`）、`headless_bound_port()`（`src/headless_server_posix.c:51`）、`src/main.c:1018-1039` 打印真实端口（`:1025` 的闸改为 `headless_http_port >= 0`）；`hub_udp_bind()` 在 `:2005`，`port == 0` 的循环在 `:2053-2062`（≤16 次尝试），`:2068-2069` 记录内核给的号，`:2095` stop 时清零。harness 侧：`tools/testports.py:160 distinct_ports`（重复定义已删）、`:261 start_hub_bound_ports(...)`、`:302` 只认正数端口；八处 hub 启动改用 `--port 0 --http-port 0`。
+
+**证据（修复前必须失败）**：用**原始引擎**跑新套件 `tools/http_large_package.test.py`（30 checks）→ **exit 1，9 项失败**（上表四条路径 + `--port 0` → `headless: bind 0 failed`）；修后 → exit 0，30/30。
+
+**端口竞态的前后对照**（`tools/ports_race_probe.py`，每格 1224 次启动）：
+
+```
+                        修前   对照（已修引擎但仍猜端口）   修后
+失败 / 1224              5              6                0
+```
+
+**对照格是关键证据**：它证明引擎侧的修复本身**对竞态毫无作用** —— 竞态在 harness 的「猜号」里，不在引擎里。这也正是否决「就绪失败时用新端口重试」那条候选修法的实测依据（见 §2.9）。
+
+**一个被固化的旧期望（值得单独记一笔）**：`tools/vverse_cross.test.py:415-428` 原先竟把截断缺陷**写成了期望**（注释 "truncated … measured, not required"）。现已断言 413 + 真实大小（48 checks）。这是「测试**记录**缺陷而不是**约束**缺陷」的典型：测试变绿并不说明行为正确，只说明行为没变。
+
+**进树**：`CMakeLists.txt:230-231` 注册 `http_large_package_regression`（TIMEOUT 180，LABELS "protocol;regression"）；`tools/gate.sh:43` 的 `EXP_CTEST` 93→**94**（`add_test(` 共 94）；`tools/ports_race_probe.py` **故意不进 CTest** —— 它是测量工具，不是断言。
+
+**没做的（边界）**：Windows 孪生 —— `src/headless_server.c` 没有 bound-port getter，故 `--port 0` / `--http-port 0` 目前仅 POSIX；`src/mod/verse_dist_mod.c:1972-1990` 的裸 `blen < 60000`；`b_verse_listen(0)`（`src/mod/verse_dist_mod.c:2096`）—— 脚本仍无法得知内核给的 listen 端口，这是**最后一个引擎还能吸收的猜端口**。
+
+**环境事实（会影响别人写测试）**：本沙箱的 loopback 会**丢弃 >~1400 字节的 UDP 数据报**（用 python echo server 验证过），所以新测试的 UDP 探针用 900 字节包。
