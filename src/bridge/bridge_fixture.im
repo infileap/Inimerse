@@ -1,0 +1,22 @@
+# bridge_fixture.im - the source both bridges hand to the engine's parser.
+#
+# Five top-level statements, counted by hand so the number the engine reports is
+# checked against something that does not come from the engine:
+#   1. x = 1
+#   2. if x == 1 { ... }
+#   3. func twice(n) { ... }
+#   4. y = twice(21)
+#   5. say y
+#
+# The shape is deliberate: the engine's parser is fatal on a syntax error
+# (src/parser/parser.c calls exit(1)), and it also rejects some constructs that
+# look reasonable - for instance `say x` immediately followed by a top-level
+# `if` fails with "expected 'expression', but got 'say'".  Every line below was
+# confirmed to parse by running this file through the engine itself.
+x = 1
+if x == 1 {
+    say "one"
+}
+func twice(n) { return n * 2 }
+y = twice(21)
+say y
