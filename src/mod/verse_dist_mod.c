@@ -1050,12 +1050,97 @@ static void verse_parse_uri(const char *uri, char *fetch_uri, int fus,
     }
 }
 /* ---------- verse_open(uri): download/verify/unpack/launch ---------- */
+/* fire-and-forget launch of a verse's entry point.  `base` is the directory
+ * the caller unpacked into, trailing separator already included. */
+static int verse_launch(const char *base, const char *entry) {
+    char cmd[1600];
+    int ok = 0;
+#ifdef _WIN32
+    snprintf(cmd, sizeof cmd, "cmd /c start \"\" \"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, entry);
+    DWORD cpid = child_proc_spawn(cmd, "verse", 0);
+    ok = cpid != 0;
+#else
+    snprintf(cmd, sizeof cmd, "cd \"%s\" && nohup \"%s/inimerse\" \"%s%s\" >/dev/null 2>&1 &", home_dir(), home_dir(), base, entry);
+    ok = system(cmd) == 0; /* fire-and-forget launch */
+#endif
+    if (!ok) fprintf(stderr, "[VDP] launch failed: %s\n", cmd);
+    return ok;
+}
+
+/* ---------- verse_open on a real `.vverse` (gzip container) ----------
+ * A real verse keeps its id/version/entry in its OWN manifest.json, not in the
+ * container, so none of the legacy meta checks in do_open() apply to it.  The
+ * artifact is verified by src/common/vverse_pack.c instead -- format tag,
+ * digest table, every packaged file covered, optional ed25519 -- which is the
+ * same code that wrote it, so writer and reader cannot drift apart again.
+ * The tree lands in universe/<name>/ where <name> is the package file's
+ * basename, and the entry point is read from the manifest that just landed. */
+static int do_open_vverse(VM *vm, const char *fetch_uri, const void *pkg, size_t pkg_len) {
+    const char *tail = fetch_uri;
+    if (strncmp(tail, "verse://local/", 14) == 0) tail += 14;
+    const char *slash = strrchr(tail, '/');
+    if (slash && slash[1]) tail = slash + 1;
+    char name[256];
+    snprintf(name, sizeof name, "%.255s", tail);
+    size_t nlen = strlen(name);
+    if (nlen > 7 && strcmp(name + nlen - 7, ".vverse") == 0) name[nlen - 7] = 0;
+    if (!name[0]) snprintf(name, sizeof name, "package");
+
+    char dest[1200];
+    snprintf(dest, sizeof dest, "%s/universe/%s", home_dir(), name);
+    char err[512];
+    if (vverse_unpack_mem(pkg, pkg_len, dest, err, sizeof err)) {
+        fprintf(stderr, "[VDP] %s\n", err[0] ? err : "package rejected");
+        return 0;
+    }
+
+    char mpath[1300];
+    snprintf(mpath, sizeof mpath, "%s/manifest.json", dest);
+    int mlen = 0;
+    char *text = read_file_buf(mpath, &mlen);
+    if (!text || mlen <= 0) { fprintf(stderr, "[VDP] package has no manifest.json\n"); free(text); return 0; }
+    int jok = 0;
+    Value man = json_parse_value_text(vm, text, &jok);
+    free(text);
+    char entry[512] = "";
+    if (jok && man.type == VAL_DICT) {
+        ArrayObj *a = vm_pool_slot(vm, man.ival - 1);
+        for (int i = 0; a && i + 1 < a->count; i += 2) {
+            Value *k = &a->items[i], *v = &a->items[i + 1];
+            if (k->type == VAL_STRING && v->type == VAL_STRING && strcmp(k->sval, "entry") == 0) {
+                snprintf(entry, sizeof entry, "%s", v->sval);
+                break;
+            }
+        }
+    }
+    /* vverse_unpack_mem() already ran vverse_validate(), which requires
+     * manifest.json to declare a safe relative `entry` that exists -- so this
+     * is a guard, not a second validation. */
+    if (!entry[0]) { fprintf(stderr, "[VDP] package manifest declares no entry\n"); return 0; }
+
+    char base[1300];
+#ifdef _WIN32
+    snprintf(base, sizeof base, "%s\\", dest);
+#else
+    snprintf(base, sizeof base, "%s/", dest);
+#endif
+    return verse_launch(base, entry);
+}
+
 static int do_open(VM *vm, const char *uri) {
     char fetch_uri[1200], pub[65], ver[64], hash[65];
     verse_parse_uri(uri, fetch_uri, sizeof fetch_uri, pub, sizeof pub, ver, sizeof ver, hash, sizeof hash);
     int pkg_len = 0;
     char *pkg_json = verse_fetch(fetch_uri, &pkg_len);
     if (!pkg_json) { fprintf(stderr, "[VDP] download failed: %s\n", fetch_uri); return 0; }
+    /* Two containers, told apart by their first bytes and nothing else: a real
+     * `.vverse` is a gzip member (1f 8b), the legacy one is bare JSON ('{').
+     * The two cannot collide, so the legacy path below is untouched. */
+    if (pkg_len >= 2 && (unsigned char)pkg_json[0] == 0x1f && (unsigned char)pkg_json[1] == 0x8b) {
+        int rc = do_open_vverse(vm, fetch_uri, pkg_json, (size_t)pkg_len);
+        free(pkg_json);
+        return rc;
+    }
     int ok = 0;
     Value pkg = json_parse_value_text(vm, pkg_json, &ok);
     if (!ok || pkg.type != VAL_DICT) { fprintf(stderr, "[VDP] bad package json\n"); free(pkg_json); return 0; }
@@ -1083,19 +1168,10 @@ static int do_open(VM *vm, const char *uri) {
     char base[1200];
 #ifdef _WIN32
     snprintf(base, sizeof base, "%s/universe/%s\\", home_dir(), m.id);
-    char cmd[1600];
-    snprintf(cmd, sizeof cmd, "cmd /c start \"\" \"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, m.mainf);
-    DWORD cpid = child_proc_spawn(cmd, "verse", 0);
-    if (cpid) return 1;
 #else
     snprintf(base, sizeof base, "%s/universe/%s/", home_dir(), m.id);
-    char cmd[1600];
-    snprintf(cmd, sizeof cmd, "cd \"%s\" && nohup \"%s/inimerse\" \"%s%s\" >/dev/null 2>&1 &", home_dir(), home_dir(), base, m.mainf);
-    int cpid = system(cmd); /* fire-and-forget launch */
-    if (cpid == 0) return 1;
 #endif
-    fprintf(stderr, "[VDP] launch failed: %s\n", cmd);
-    return 0;
+    return verse_launch(base, m.mainf);
 }
 static int b_verse_open(VM *vm) {
     int argc = vm->cur_argc;

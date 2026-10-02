@@ -627,11 +627,24 @@ int vverse_unpack(const char *pkg_path, const char *dest_dir, char *err, size_t 
     unsigned char *pkg = file_read_all(pkg_path, &plen);
     if (!pkg) return vfail(err, errlen, "cannot read package: %s", pkg_path);
 
+    int rc = vverse_unpack_mem(pkg, plen, dest_dir, err, errlen);
+    free(pkg);
+    return rc;
+}
+
+/* Same, from an in-memory container.  The engine's `verse_open` fetches a
+ * package over the wire as often as from disk, and it must be able to read
+ * what `verse_pack` just wrote, so it needs this entry point rather than a
+ * throwaway temp file.  The bytes are not copied: `pkg_len` bounds every read. */
+int vverse_unpack_mem(const void *pkg_buf, size_t plen, const char *dest_dir, char *err, size_t errlen) {
+    if (err && errlen) err[0] = 0;
+    if (!pkg_buf || !dest_dir) return vfail(err, errlen, "vverse_unpack: missing argument");
+
+    const unsigned char *pkg = (const unsigned char *)pkg_buf;
     unsigned char *raw = NULL;
     size_t rawlen = 0;
     int rc = 0;
-    if (gzip_unpack(pkg, plen, &raw, &rawlen, err, errlen)) { free(pkg); return -1; }
-    free(pkg);
+    if (gzip_unpack(pkg, plen, &raw, &rawlen, err, errlen)) return -1;
 
     char *text = (char *)malloc(rawlen + 1);
     VList signed_files;
