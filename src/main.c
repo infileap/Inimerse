@@ -1003,12 +1003,26 @@ if (argc == 1) {
         char *abs = chdir_to_script_dir(script_arg);
         const char *read_path = abs ? abs : script_arg;
         if (headless_mode) {
+            /* Report the port that is really listening, not the number that was
+             * asked for: `--port 0` / `--http-port 0` mean "kernel, pick one",
+             * and the suites read this line instead of guessing a number from a
+             * pool they had to release before the child could bind it (the
+             * window in which another suite took it).  On POSIX both servers
+             * hand back the bound port; the winsock twins bind exactly what
+             * they are given and expose no getter, so 0 is not supported
+             * there.  A negative --http-port disables the HTTP API. */
             if (!headless_init(headless_port)) fprintf(stderr, "headless: bind %d failed\n", headless_port);
             else {
                 headless_start_thread();
+#if defined(_WIN32)
                 fprintf(stderr, "headless: 127.0.0.1:%d\n", headless_port);
+#else
+                extern int headless_bound_port(void);
+                int hl_bound = headless_bound_port();
+                fprintf(stderr, "headless: 127.0.0.1:%d\n", hl_bound > 0 ? hl_bound : headless_port);
+#endif
             }
-            if (headless_http_port > 0) {
+            if (headless_http_port >= 0) {
                 extern int verse_http_start(int);
                 /* Say so when this fails.  Staying quiet produced a hub that
                  * prints "headless:" and runs its script but never serves
@@ -1016,7 +1030,15 @@ if (argc == 1) {
                  * timeout, and the cause (usually EADDRINUSE from a port that
                  * was free a moment ago) was invisible.  A hub without its
                  * HTTP API is not a working hub, so this must be loud. */
-                if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%d\n", headless_http_port);
+                if (verse_http_start(headless_http_port)) {
+#if defined(_WIN32)
+                    fprintf(stderr, "http api: 127.0.0.1:%d\n", headless_http_port);
+#else
+                    extern int verse_http_bound_port(void);
+                    int api_bound = verse_http_bound_port();
+                    fprintf(stderr, "http api: 127.0.0.1:%d\n", api_bound > 0 ? api_bound : headless_http_port);
+#endif
+                }
                 else fprintf(stderr, "http api: bind %d failed (port in use?)\n", headless_http_port);
             }
         }

@@ -31,8 +31,11 @@ static void remove_client(int i) {
 }
 
 int headless_init(int port) {
-    if (port < 1 || port > 65535 || g_hl_enabled) return 0;
+    if (port < 0 || port > 65535 || g_hl_enabled) return 0;
     if (im_socket_init() != 0) return 0;
+    /* port 0 => the kernel picks a free port; headless_bound_port() reports
+       which one, so a caller never has to guess (and never races another
+       suite for a number it reserved itself). */
     g_hl_sock = im_socket_listen(NULL, (uint16_t)port, 4);
     if (!g_hl_sock) return 0;
     im_socket_set_nonblocking(g_hl_sock, 1);
@@ -42,6 +45,12 @@ int headless_init(int port) {
     ++g_hl_generation; g_hl_count = 0; g_hl_last_ci = -1; g_hl_enabled = g_hl_lock != NULL;
     if (!g_hl_enabled) { im_socket_close(g_hl_sock); g_hl_sock = NULL; }
     return g_hl_enabled;
+}
+
+/* Actual bound port of the headless TCP listener (0 when not listening). */
+int headless_bound_port(void) {
+    if (!g_hl_enabled || !g_hl_sock) return 0;
+    return im_socket_local_port(g_hl_sock);
 }
 
 void headless_shutdown(void) {
