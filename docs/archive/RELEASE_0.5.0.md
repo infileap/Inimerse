@@ -5,9 +5,9 @@
 >
 > 已废止的声明：
 > - 「AOT compilation … outperform the interpreter by **at least 2x**」→ 实测与解释器**等同**——分布式测量 12 次试验中位 **0.98x**（0.85x..1.33x，与「解释器对自己」的对照区间 12/12 重叠）。1.09x 只是该分布中的一个噪声样本。AOT 是打包通道，复用同一个 C 解释器，不自生成原生代码。
-> - 「WebAssembly output … **SIMD optimizations and WebAssembly GC**」→ `src/compilation/wasm_backend.h:10` 原文：`SIMD/GC/heaps are future work.`
-> - Python 扩展桥 `inimerse_extension.c` / `PyInit_inimerse()`、Java 桥 `InimerseBridge.java` → 仓库中不存在。
-> - 发布产物 `.whl` / `.jar` / `inimerse-aot` / `libinimerse.so` → 仓库中不存在。
+> - 「WebAssembly output … **SIMD optimizations and WebAssembly GC**」（第 47 行）→ **三件不同的事，`wasm-simd-gc`（`3fadc8b`）逐件裁决**：heaps **已做**（确定性回收 + 显式 `heap_exhausted`）；v128 SIMD **已实现、已测量、但生成器不选路**；wasm-GC **未实现**。详见 [../WASM.md](../WASM.md) 与 [../STATUS.md](../STATUS.md) §10.16。
+> - Python 扩展桥 `inimerse_extension.c` / `PyInit_inimerse()`、Java 桥 `InimerseBridge.java` → **已推翻**：`xlang-bridge`（`36bf4e9`）交付了真的 CPython 扩展（`src/bridge/inimerse_extension.c:93`）与真的 JNI facade，见 [../STATUS.md](../STATUS.md) §10.15。
+> - 发布产物 `.whl` / `.jar` / `inimerse-aot` / `libinimerse.so` → **部分推翻**：`.whl` 与 `.jar` 现在会被构建出来，但是**构建产物、不提交进 git**（§10.15 裁决 1）；`inimerse-aot` / `libinimerse.so` 仍不存在（`--aot` 是打包通道，§10.14）。
 
 Inimerse 0.5.0 is a major feature release that introduces the self-hosted compiler infrastructure and stable Native ABI, establishing Inimerse as a foundation for cross-language integration and compilation pipelines.
 

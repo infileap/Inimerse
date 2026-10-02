@@ -23,7 +23,7 @@ Inimerse is the scripting engine and Infiverse is its Tauri desktop client.
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4     # expected: 100% tests passed, 0 failed out of 95
+ctest --test-dir build --output-on-failure -j4     # expected: 100% tests passed, 0 failed out of 97
 ```
 
 Resulting binary: `build/inimerse`. Always use this path rather than any stale copy in the repository root.

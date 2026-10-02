@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 95
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 97
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -289,15 +289,15 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 | 协议与回放（CRP 会话、节点发现、权威交接、断线重连、确定性回放、包签名） | CTest `crp_session_flow_regression` / `node_discovery_regression` / `lease_handoff_regression` / `reconnect_generation_regression` / `replay_closure_regression` / `verse_pack_regression` / `hub_dist_regression` / `protocol_regression` |
 | 经济域与可审计结算 | CTest `economy_domain_regression`；`tools/economy_domain.test.py` |
 
-**声称但未交付（设计未实现）** —— `docs/archive/RELEASE_0.5.0.md` 的下列表述不成立：
+**声称与现状的对照** —— `docs/archive/RELEASE_0.5.0.md` 的下列表述：前两条**今天仍不成立**，后三条**已被后续交付推翻**（保留在此是为了让「当初为什么不成立」有据可查）。行号按 2026-10-02 的该文件正文计 —— 更正横幅插在文件顶部，此前的行号全部漂移了 9~11 行：
 
 | 该文件声称 | 核实结果 |
 | --- | --- |
 | 「AOT compilation … outperform the interpreter by at least 2x」（第 52 行） | 实测与解释器**等同**——12 次试验中位 **0.98x**（0.85x..1.33x），与「解释器对自己」的对照区间（0.77x..1.36x）**12/12 重叠**，1.09x 只是其中一个噪声样本。AOT 通道是**打包**通道（引擎副本 + 嵌入规范化字节码），复用同一个 C 解释器，不自生成原生代码。原文 `SELFHOST_BENCHMARK.md` 已自述「不满足 ≥2x 目标」。 |
-| 「WebAssembly output … supporting SIMD optimizations and WebAssembly GC」（第 38 行） | `src/compilation/wasm_backend.h:10` 原文：`SIMD/GC/heaps are future work.` 当前为数值子集 MVP。 |
-| 「Python extension bridge: `inimerse_extension.c` implementing `PyInit_inimerse()`」（第 26 行） | 仓库中不存在 `inimerse_extension.c`，全仓无 `PyInit_inimerse` 实现。 |
-| 「Java native bridge: `InimerseBridge.java`」（第 27 行） | 仓库中不存在 `InimerseBridge.java`。 |
-| 发布产物 `.whl` / `.jar` / `inimerse-aot`（第 123–130 行） | 仓库中不存在任何 `.whl` / `.jar` / `.aot` / `libinimerse.so` 产物。 |
+| 「WebAssembly output … supporting SIMD optimizations and WebAssembly GC」（第 47 行） | **它把三件不同的事写在了一起，`wasm-simd-gc`（`3fadc8b`）逐件给了结论，见 §10.16**：**heaps 已做**（模块自己的线性内存 arena，确定性引用计数回收，耗尽显式 `heap_exhausted (code 4)`）；**v128 SIMD 已实现、已测量（本机 ~1.5–2.5×）、但生成器不选路**（16 字节装箱槽让向量存储无收益、32 位溢出提升为 float、浮点归约重结合会改变结果 —— 与「逐字节等价」判据冲突）；**wasm-GC 明确未实现**，且它本来就是另一件事（需 `--enable-gc` 与 struct/array 引用类型）。`wasm_backend.h` 那句 `future work` 已改写。 |
+| 「Python extension bridge: `inimerse_extension.c` implementing `PyInit_inimerse()`」（第 35 行） | **已推翻（`xlang-bridge`，`36bf4e9`）**：`src/bridge/inimerse_extension.c:93` 就是 `PyMODINIT_FUNC PyInit_inimerse(void)`，见 §10.15。当初的记录是「仓库中不存在该文件、全仓无 `PyInit_inimerse` 实现」。 |
+| 「Java native bridge: `InimerseBridge.java`」（第 36 行） | **已推翻（`xlang-bridge`，`36bf4e9`）**：`InimerseBridge` 类由 `tools/bindgen.py` 从唯一 IDL 生成到构建树，`InimerseBridgeMain.java` 是仓库里的 driver；`build/bridge/InimerseBridge.jar` 含 `InimerseBridge.class`。见 §10.15。 |
+| 发布产物 `.whl` / `.jar` / `inimerse-aot`（第 132 / 133 / 139 行） | **部分推翻（`xlang-bridge`，`36bf4e9`）**：`.whl` 与 `.jar` 现在真的会被构建出来（`build/bridge/inimerse-0.5.0-cp314-cp314-linux_x86_64.whl`、`build/bridge/InimerseBridge.jar`），但**是构建产物、不提交进 git**（见 §10.15 裁决 1）；`inimerse-aot` / `libinimerse.so` 仍不存在 —— `--aot` 是打包通道，见 §10.14。 |
 
 **注**：`examples/` 下确有针对这些绑定的 `.im` 示例与 `build.gradle` / `pom.xml`，但示例脚本与真正的桥接产物不是一回事。
 
@@ -1092,3 +1092,24 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 3. **`inim_load_text()` 的绕行 —— 准其作为短期方案，但这是味道，单开后续流。** `grep -rn inim_load_text src/` 确认声明在 `src/common/common.h:55`、**唯一实现**在 `src/main.c:346`（另有 `src/compilation/aot_native_tool.c:24` 也定义了一份）。把 `src/main.c` 移出引擎源表后两个 `.so` 报 `undefined symbol: inim_load_text`，它的解是让桥接目标**再编一次同一份 `src/main.c`** 并用 `target_compile_definitions(... PRIVATE main=<target>_entry_unused)` 改名 —— **同源不同编译，不是拷贝**，且 `.so` 不导出 `main`。更干净的做法是把 `inim_load_text` 搬进引擎本体，那要动 `src/**`。
 
 **遗留（未做）。** ①**Windows 分支未验证**：桥接目标只在工具链探测通过时构建，WIN32 下不生成也不红，OBJECT 化保留了原 WIN32 链接块。②本机无 `python3.14-venv` / `ensurepip`，venv 用 `--without-pip` 建、wheel 用 `pip install --target` 装，wheel 本身用 `zipfile` 手工组装（`python3 -m build` 不存在）—— 已记在 `examples/BUILDING_BRIDGES.md`。③`examples/interface.def` 的 `inim_add` / `im_greet` / `im_fail` **仍是悬空示例 IDL**，本次没动它。①②③与上面两条裁决 2、3 一并登记为 `xlang-bridge-followups`。
+
+
+### 10.16 Wasm：线性内存堆是真的，v128 已实现但未被选路，GC 明确没做（`wasm-simd-gc`，`3fadc8b`）
+
+**来源。** `docs/archive/RELEASE_0.5.0.md:47` 声称「WebAssembly output … supporting SIMD optimizations and WebAssembly GC」，而 `src/compilation/wasm_backend.h` 原文写 `SIMD/GC/heaps are future work.`。作业单把这一句拆成**三件互不相同的事**，要求逐件给出事实或有证据的降级结论。判据是 `tools/wasm_backend.test.py` 的**解释器 vs wasm host 双跑逐字节等价**（13 例 → **22 例**）。
+
+**三件的结论。**
+
+- **heaps：做了，而且是确定的。** 模块自己的线性内存里开了一个 arena（`HEAP_BASE=4206592` .. `HEAP_END=8388608`，≈3.99 MiB，`MEM_PAGES=128`），块头 16 字节 `[size][refs][next_free][count]`，元素 i 在 `payload+16i`，`count` 同时就是 `len()`；分配器是 LIFO 空闲链表 first-fit + bump。**耗尽不是静默的**：`repeat 70000 { b=[a,2,3]; a=b }` → wasm rc=1、`error: heap_exhausted (code 4)`（解释器 rc=0；这是**有界分歧**，已写进文档）。**回收是确定的**：新块 `refs=0`，只有「被拥有槽持有」才 +1（具名/全局/参数/元素槽拥有，帧临时槽只借用）；`repeat 300000 { b=[1,2,3]; s=s+b[0] }` 打印 300000 与解释器一致 —— 不复用的话这个 arena 只装得下 65344 次（`(HEAP_END-HEAP_BASE)/64`）。
+- **v128 SIMD：实现了、测量了，但生成器不选它。** 导出 `bench_sum_scalar(n)` / `bench_sum_simd(n)`（f64x2 lane 并行，两者结果**逐位相等**），`node tools/wasm_run.js --bench <mod> <n>`。协调者独立复跑：n=2e7 → **2.158 / 2.342 / 2.008**（该流自报 1.870 / 2.136 / 1.791），n=5e7 → **1.509**（自报 1.888）—— 同量级，机器上有波动。**不选路的三条理由是承重的**：16 字节装箱槽让向量存储没有收益、32 位溢出提升为 float 使整型 lane 语义不同、浮点归约重结合会改变结果（与「逐字节等价」判据直接冲突）。所以口径是**「已实现、已测量、未选路」，不是「已用 SIMD 优化」**。
+- **wasm-GC：明确未实现，而且它本来就是另一件事** —— 需要 `--enable-gc` 与 struct/array 引用类型，与上面这个线性内存堆无关。**这正是 `RELEASE_0.5.0.md` 把三件事混为一谈的地方。**
+
+`wasm_backend.h` 那句已改写（现 `:10-27`，三段口径），新增 `docs/WASM.md`（211 行：ABI/PAL、模块布局、堆与所有权、数组语义表、错误码、SIMD 实测表、GC 降级、复现命令、已知边界）。
+
+**顺手修掉的两个真实缺陷 —— 都改了 `main` 的行为，必须写明。** ① `cg_print_slot` 原来把整段分派包在 `if (tag != 0)` 里，**`nil` 什么都不打印**：协调者实测 `func f() {}\nsay f()\nsay 7`，解释器输出 `nil\n7`，而 main 的 wasm **只输出 `7`（`nil` 被静默丢弃）**；修后两侧都是 `nil\n7`。② 元素存储与 `im_release` 用了**两个不同的元素基点**，每个数组末尾**多写 16 字节**，在 arena 末尾表现为 `memory access out of bounds` 而不是设计的 `heap_exhausted`。
+
+**协调者的独立验收（不采信自述）。** `git diff --name-only main...stream/wasm-simd-gc` 恰好 5 个文件、全在写域内（`CMakeLists.txt`、`tools/gate.sh`、`src/common/**`、`docs/STATUS.md`、`docs/BOARD.md` 零改动）；`merge-tree` rc=0 零冲突。**修前必失败**（worktree 内 `git checkout main -- src/compilation/wasm_backend.{c,h}`、保留本流的 `tools/` 后重编）：`tools/wasm_backend.test.py` 在 `nil_print` 上抛 `AssertionError: nil_print: output mismatch / wasm: b'0\n' / interp: b'nil\n0\n'`；恢复后 `wasm backend: ok (22 equivalence cases, 3 rejections, 3 explicit failures, simd bench equal)`。全量门禁七阶段 PASS、`ctest (expect 97/97, 0 skipped)`、`gate: OK`、exit 0 —— **未新增 CTest、未改 `CMakeLists.txt`**（新用例全塞进既有 `wasm_backend_regression`）。
+
+**遗留。** ① **字符串没做**（只做了数组）：打印字符串要给 PAL 加第 6 个 `env` 导入，而宿主契约是「未提供的导入一律拒绝」，加导入等于改宿主契约 ⇒ 维持编译期显式拒绝 `strings are not supported by the wasm MVP subset`。这是路线 A 唯一未做的子项。② 只存在于**临时槽**的数组不会被回收（**有界泄漏**，不是悬垂指针；具名槽回收确定）。③ `a[i] = v` 的越界写是**显式分歧**（解释器自动增长，wasm 拒绝 `array_index_out_of_range`），`say <数组>` 同理（`array_op_unsupported`）。④ `docs/WASM.md` 与头注释都写着 `22 equivalence cases` 这一行，**将来加例要同步两处**。
+
+**连带修正。** ① `RELEASE_0.5.0.md` 的声明行号**此前全部漂移**（更正横幅插在文件顶部所致）：SIMD/GC 实为 `:47`（旧记 38）、Python 桥 `:35`（旧记 26）、Java 桥 `:36`（旧记 27）、发布产物 `:132`/`:133`/`:139`（旧记 123–130）；AOT 那条 `:52` 是对的。② §3.1 表里「仓库中不存在 `inimerse_extension.c` / `InimerseBridge.java` / `.whl` / `.jar`」**三条已被 `xlang-bridge`（`36bf4e9`）推翻**，已一并更正 —— 留着一句「仓库中不存在」指着一个已经存在的文件，正是本仓库的口径纪律要防的事。

@@ -318,7 +318,7 @@ icon_spec.md
    属 `docs-audit` 冲突域，我不动，见 §8。
 5. **定向验证，不跑全量 gate**：
    `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4`、
-   `ctest --test-dir build --output-on-failure -j4`（应 95/95 —— 本文件写在 85 的年代，
+   `ctest --test-dir build --output-on-failure -j4`（应 97/97 —— 本文件写在 85 的年代，
    2026-08 集成加了 UPP 与 `.vverse` 各两个探针、CRP 三个、`json_min` 一个、超大包一个、
    `.im` 打包往返一个）、
    `python3 tools/check_links.py`（应 0 broken）。

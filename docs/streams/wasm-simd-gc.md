@@ -1,5 +1,10 @@
 # 作业单：`wasm-simd-gc` —— 把 `SIMD/GC/heaps are future work` 变成事实或明确的降级
 
+> ✅ **本条流已交付并合入 `main`（`3fadc8b`，merge `860cc62`）。**
+> 交付结论见 [STATUS.md](../STATUS.md) §10.16 与 [WASM.md](../WASM.md)。**不要按本作业单重新开工。**
+> 摘要：heaps **已做**（确定性回收 + 显式 `heap_exhausted`）、v128 SIMD **已实现已测量但生成器不选路**、wasm-GC **明确未实现**；
+> 顺带修掉 `nil` 被静默丢弃与数组末尾多写 16 字节两个缺陷。**未做的**：字符串（会改宿主 PAL 契约）。
+
 > **本条流不碰 `CMakeLists.txt`。** 这一波 `CMakeLists.txt` 由 `xlang-bridge` 独占。
 > 你只能**扩展现有的** CTest（`wasm_backend_regression` / `wasm_host` / `wasm_probe`）与
 > 现有测试脚本，**不能新增 CTest、不能新增编译目标**。如果你确实需要新目标，**停下报告**。
