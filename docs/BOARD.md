@@ -51,7 +51,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
 | build | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j` | 0 error |
-| ctest | `ctest --test-dir build --output-on-failure -j4` | **89 / 89 通过**，无 `WILL_FAIL` 记账项 |
+| ctest | `ctest --test-dir build --output-on-failure -j4` | **92 / 92 通过**，无 `WILL_FAIL` 记账项。**数量是断言，不是标签**：`stage_ctest` 会检查输出里确有 `0 tests failed out of 92`，否则阶段失败 —— 光看 ctest 退出码是看不出一整个 `add_test( )` 悄悄掉了的。改动用例数时同步 `tools/gate.sh` 的 `EXP_CTEST` 与本表 |
 | economy | `python3 tools/economy_migration.test.py` | `economy migration: ok`（**39 / 39**） |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` | **55 / 55** |
 | node | `node tools/node_suites/run_all.js` | **11 / 11**（`tools/` 下每个可独立运行的 JS 套件；`crp_session_flow.test.js` 需活跃 hub，由 CTest 的 `crp_session_flow_regression` 驱动，不在此列） |
@@ -87,11 +87,12 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | --- | --- | --- | --- | --- | --- |
 | 阻塞 | `marketplace-watch` | 上架 dsh-m：npm 包已发布，PR [iasiv5/dsh-m#1](https://github.com/iasiv5/dsh-m/pull/1) 等待维护者点 *Approve and run* | `tools/dsh-inimerse/marketplace/` | PR 合并后 `node scripts/validate-registry.mjs` 全绿 | 协调者 |
 | 已完成 | `upp-in-engine` | UPP 引擎侧已实现：`src/verse/upp.{h,c}` 帧编解码 + 分片 decoder + 状态机，213 条断言探针，并**逐事件对照**过参考实现（111 个 op 同语料两边跑，逐行文本比对）。遗留边界（不是没实现）：`timestamp` 只收整数、尚未接入 `inim-server`/`inim-client` 传输层 —— 见 [STATUS.md](STATUS.md) §10.1 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | `stream/upp-in-engine` |
-| 进行中 | `crp-in-engine` | CRP 的**会话层**引擎里**已有**（`src/platform/crp_session.{h,c}` ＋ `crp_session_probe.c`：11 态、版本/能力协商、租约、`accept()` 去重与缺口、`resume_plan()` 重放 vs 快照）。缺的是它**外面**那层：CRP 线帧（`FIND`/`PORTAL`/`SIGNAL`）、能力令牌（base64url + HMAC-SHA256）、FIND 注册表、PORTAL 签发 —— 这些只在 `tools/crp_reference.js` / `crp_relay.js` 里。详见 [streams/crp-in-engine.md](streams/crp-in-engine.md)（§0 已更正原「引擎侧无实现」的说法） | `src/verse/`、`src/common/`、`src/mod/verse_dist_mod.c` | 引擎实现能通过 `tools/crp_relay.test.js` 的等价场景，且有真实两进程证据 | `stream/crp-in-engine` |
+| 已完成 | `crp-in-engine` | 引擎侧 CRP 线层已实现并验证（见 §6 与 [STATUS.md](STATUS.md) §10.6）。会话层 `src/platform/crp_session.{h,c}` 本来就存在 —— 原「引擎侧无实现」的说法是错的，已更正。**遗留边界**：`/friends`、`/content`、`/package` 三个端点按边界仍未实现（`crp_relay.test.js` 的 23 条断言里 11 条属此）；`session_store_seq()` 把 §55.6 的缺口判定降级成诊断（`acceptVerdict`），线上行为对齐参考实现 | `src/verse/`、`src/common/`、`src/mod/verse_dist_mod.c` | 见 [STATUS.md](STATUS.md) §10.6 | — |
 | 已完成 | `vverse-produce` | 引擎侧 `.vverse` 打包器已实现：`src/common/gzip.{h,c}`（确定性 gzip，写侧只做 stored 以换取逐字节可复现）＋ `src/common/vverse_pack.{h,c}`，与 JS 参考实现**双向**交叉验证（47 项，含 node `crypto.verify` 认可引擎产出的 DER SPKI）。遗留（不是没实现）：无 `.im`/CLI 入口；>64 KiB 的包经 hub 会被截断，见下两行 | `src/`、`vtest/` | 引擎产出的 `.vverse` 能通过 `tools/vverse_validate.js` 校验并被 `inim-server` 装载 | `stream/vverse-produce` |
 | 未认领 | `vverse-cli` | 打包器只是 `src/common/` 的库 + 探针驱动器（`build/vverse_pack_probe --pack <dir> <out> [seed-hex]`）；`.im` 脚本 / CLI 不能直接打包（`verse_pack()` 内建在 `src/mod/verse_dist_mod.c`） | `src/mod/verse_dist_mod.c`、`tools/vverse_*` | 一条 `.im` 脚本或 CLI 能直接产出通过全严格校验的 `.vverse` | — |
 | 未认领 | `hub-large-package` | **静默截断（真缺陷）**：`src/platform/http_posix.c:312 hub_body()` 的 `GET /v/<id>` 与 `GET /package/<id>` 用 `fread(body, 1, cap, vf)` 读文件，超 `cap` 即截断且**仍返回 200**（HTTP 调用点 `:1063` 缓冲 65536，实测 207991 字节包只回 65536，由 vverse 流交叉测试记录）；UDP 调用点 `:52-55` 缓冲 60001 且要求 `blen < 60000` 才发，即**根本不发、让对端超时**。`POST /package` 与 `POST /content` 上限各 49152。对照：`GET /content/<hash>` 因回算 sha256 会报 `content_corrupt` 500，**不静默** | `src/platform/http_posix.c` | 超大包要么完整送达，要么**明确报错**（413 / 长度协商），禁止 200 + 截断；补 >64 KiB 往返测试 | — |
 | 未认领 | `ws-client-coverage` | `tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用） | `tools/crp_ws_client*`、`tools/upp_session*` | 连接/重连/排队各自有断言；两个套件至少被一份文档引用 | — |
+| 未认领 | `json-min-nul-escape` | `src/verse/json_min.c:95` 的 `if (cp < 0x80) out[len++] = (char)cp;` 在 `\u0000` 时把**裸 NUL** 塞进字符串，而 `VjVal` 的字符串是**没有长度字段的 `char *s`** ⇒ 所有基于 `strlen` 的下游消费者看到的是被截断的字符串。这个解析器被 layer / eventlog / protocol / crp 共用，所以影响面不止 CRP。（CRP 流发现后**故意没修**：动它就动到共享语义。另可顺带处理 `\uD800`–`\uDFFF` 代理对，目前被当普通码点编成 3 字节） | `src/verse/json_min.c`、`src/verse/json_min.h` | 要么在解析层拒绝 `\u0000`（并给出明确错误），要么给 `VjVal` 加长度字段；两条路都要先审计现有消费者 | — |
 | 未认领 | `archive-changes-refs` | 第 1 批删掉 24 个 `CHANGES_*.txt` 后，`docs/archive/protocol_v1.md:50` 的行内代码仍在引用已删的 `CHANGES_20260815_safety`。两个检查器都看不见它：`check_links.py` 必须先剥离行内代码，`check_doc_paths.py` **故意不扫 `docs/archive/`**（归档件引用旧路径被当成历史事实）。所以要显式选一条路，不能继续「检查器全绿但引用是断的」：**(a)** 在该处补一句「该文件已于 2026-08 删除，内容见 git 历史」，或 **(b)** 把「`docs/archive/` 与 `future/archive/` 不受引用有效性约束」写成明文规则放 [STATUS.md](STATUS.md) §1 | `docs/archive/`、`tools/check_doc_paths.py` | 要么补上说明，要么把规则写下来；不允许留「绿着但断着」 | — |
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
@@ -134,7 +135,8 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | 套件端口跨池重叠 | `distinct_ports()` 的保证只在单次调用内成立（两次调用重叠 5/200；`economy_migration` 内部独立取号撞已持有端口 9/500）。合并为单次调用 | [STATUS.md](STATUS.md) §2.9 |
 | UPP 引擎侧实现 | `src/verse/upp.{h,c}`（帧编解码 + 分片 decoder + 状态机）；213 条断言探针 + 111 个 op 的**逐事件对照**（`tools/upp_engine_crosscheck.js`） | [STATUS.md](STATUS.md) §10.1 |
 | `.vverse` 引擎侧打包器 | `src/common/gzip.{h,c}` + `vverse_pack.{h,c}`；与 JS 参考实现双向交叉验证 47 项，含 node `crypto.verify` | [STATUS.md](STATUS.md) §10.2 |
-| 仓库根 24 个 `CHANGES_*.txt` | 开发日志（740 行）已删；第 1 批同时清掉主工作区的 `CMakeLists.txt.bak`。第 2 批（146 个候选）**未执行** | [HYGIENE.md](HYGIENE.md) |
+| CRP 引擎侧线层 | `src/verse/crp.{h,c}`：`FIND`/`PORTAL`/`SIGNAL` 帧、base64url + HMAC-SHA256 能力令牌、FIND 注册表、PORTAL 签发 —— 架在**既有**的 `src/platform/crp_session.{h,c}` 之上，没有重写它。两进程闭回环 27 次交换 0 失败；crosscheck **101 条语料逐行文本相同**；ASan+UBSan 下 173 项检查 0 失败 | [STATUS.md](STATUS.md) §10.6 |
+| 仓库根 24 个 `CHANGES_*.txt` | 开发日志（740 行）已删；第 1 批同时清掉主工作区的 `CMakeLists.txt.bak`。第 2 批**只做桶 B**：30 个文件 `git mv` 出根，**30/30 blob 哈希逐字节相同**，根目录 228→198（`6b56af1`）。桶 A 的 118 个**仍未执行** | [HYGIENE.md](HYGIENE.md) §10、[STATUS.md](STATUS.md) §10.3 |
 | `REQUIREMENTS_ANALYSIS.md` 失效路径 | 23 条 / 46 处改指 `docs/archive/` 或仓库根；根因是 `check_links.py` 必须剥离行内代码 ⇒ 反引号里的路径它天生看不见，已补第 7 阶段 `doc-paths` | [STATUS.md](STATUS.md) §10.4 |
 
 > **2026-08 集成记录。** 上面四条（UPP / `.vverse` / 仓库根清理 / 文档口径）是

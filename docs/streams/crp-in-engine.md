@@ -4,6 +4,14 @@
 > 分支 `stream/crp-in-engine`，工作树 `.worktrees/crp-in-engine`，
 > 冲突域 `src/verse/`、`src/common/`、`src/mod/verse_dist_mod.c`。
 
+> **状态：已交付（`7b20505`），2026-08。**
+> 交付内容与证据、四条与参考实现的分歧、以及「没做什么」见
+> [STATUS.md §10.6](../STATUS.md#106-crp-的引擎侧线层crp-in-engine7b20505)。
+> 关键边界：`/friends`、`/content`、`/package` 三个端点**按本作业单的边界没有实现**
+> （`tools/crp_relay.test.js` 的 23 条断言里有 11 条属于它们）；
+> `session_store_seq()` 把 §55.6 的缺口判定降级为诊断，线上行为对齐参考实现。
+> **本文件下面的「现状」是动工前快照**，做没做以 STATUS §10.6 与 BOARD §5 为准。
+
 ## 0. 先纠正一件事：引擎**不是**从零开始
 
 `docs/BOARD.md` 那一行原来写「引擎侧无实现」——**这句话是错的**，写本简报时已更正。

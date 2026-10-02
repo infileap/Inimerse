@@ -26,7 +26,7 @@
 # 构建与全量测试
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4     # 期望：100% tests passed, 0 failed out of 89
+ctest --test-dir build --output-on-failure -j4     # 期望：100% tests passed, 0 failed out of 92
 
 # 运行与编译脚本
 build/inimerse run script.im

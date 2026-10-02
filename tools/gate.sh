@@ -36,6 +36,12 @@ STAGE_RESULTS=()
 STAGE_NOTES=()
 FAILED=0
 
+# The number of registered CTest cases this gate expects.  It is *asserted*
+# below, not merely printed in the stage label: ctest exits 0 as long as no
+# test FAILS, so a suite that silently stopped being registered would otherwise
+# still show a green gate.  Bump this (and docs/BOARD.md §3) when you add one.
+EXP_CTEST="${EXP_CTEST:-92}"
+
 run_stage() {
   local name="$1" wanted="$2"; shift 2
   if [ -n "$ONLY" ] && [ "$ONLY" != "$wanted" ]; then
@@ -80,7 +86,20 @@ stage_build() {
 }
 
 stage_ctest() {
-  ctest --test-dir "$BUILD_DIR" --output-on-failure -j"$JOBS"
+  local out rc
+  out="$(ctest --test-dir "$BUILD_DIR" --output-on-failure -j"$JOBS" 2>&1)"
+  rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || return "$rc"
+  # A green ctest only means "nothing failed".  Assert the count too, so that a
+  # dropped add_test( ) cannot pass silently.
+  if ! printf '%s\n' "$out" | grep -q "0 tests failed out of $EXP_CTEST"; then
+    echo "gate: ctest did not report '0 tests failed out of $EXP_CTEST'." >&2
+    echo "gate: a test may have stopped being registered, or the count moved." >&2
+    echo "gate: bump EXP_CTEST in tools/gate.sh and docs/BOARD.md 3 if that was intended." >&2
+    return 1
+  fi
+  return 0
 }
 
 stage_economy() {
@@ -122,7 +141,7 @@ stage_doc_paths() {
 }
 
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
-run_stage "ctest (expect 89/89)" ctest stage_ctest
+run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST})" ctest stage_ctest
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect 11/11)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin

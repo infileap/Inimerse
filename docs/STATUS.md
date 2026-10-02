@@ -38,15 +38,15 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **89 / 89 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **92 / 92 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | `-j12` 连续 80 轮**失败 1 轮**（§2.9 残余的端口窗口；改前失败更密，见 §2.6–§2.9） | `for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
-| 引擎代码 | `src/` 96 个 `.c` + 48 个 `.h`，合计 44,588 行（`.c` 单独 42,176 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
+| 引擎代码 | `src/` 100 个 `.c` + 49 个 `.h`，合计 48,324 行（`.c` 单独 45,697 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
-| 脚本规模 | 仓库 316 个 `.im`（根目录 167 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 89 个 `add_test(`（85 + UPP 2 + `.vverse` 2，见 §10.1/§10.2） | — |
-| 工具 | `tools/` 92 个条目 | `ls tools \| wc -l` |
+| 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
+| 测试注册 | `CMakeLists.txt` 中 92 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3，见 §10.1/§10.2/§10.6） | — |
+| 工具 | `tools/` 94 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 81 ms = **1.09x** · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
 ### 2.1 复现命令
@@ -54,7 +54,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 89
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 92
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -713,4 +713,29 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 tools/gate.sh          # 七个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
 ```
 
-见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 89 / 89**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。
+见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 92 / 92**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。
+
+### 10.6 CRP 的引擎侧线层（`crp-in-engine`，`7b20505`）
+
+**先更正板子上原先那句话**：`docs/BOARD.md` 曾写「CRP … 引擎侧无实现」，**那是错的**。引擎**早已**有会话层 —— `src/platform/crp_session.{h,c}`（220 行）＋ `crp_session_probe.c`：11 个状态（含 §55.6 的 `DEGRADED`/`DISCONNECTED_GRACE`/`REATTACHING`/`RESUMED`/`READ_ONLY`/`EXPIRED`）、版本与能力协商、30 秒租约、`accept()` 去重与缺口判定、`resume_plan()` 重放 vs 快照。缺的是它**外面**那一层，而那一层当时只活在 `tools/crp_relay.js` 里。派活前先更正了那一行，并写成 [streams/crp-in-engine.md](streams/crp-in-engine.md)。
+
+**交付**：`src/verse/crp.h`(215) / `crp.c`(1257)、`crp_hub.c`(387)、`crp_peer.c`(696)、`crp_probe.c`(1181)、`tools/crp_closed_loop.test.py`(123)、`tools/crp_engine_crosscheck.js`(394)，`CMakeLists.txt` +36。8 文件 4289 行，全部落在该流写入范围内；**没有重写** `crp_session.*`。
+
+**证据**：
+- `tools/crp_relay.test.js` 的 23 条断言中 **12 条覆盖**（register / find / portal.peer / expires 落在 `(now, now+ttl]` / resume seq4→lastSeq4 / resume 回退→409 / signal 202 / 借他人 token→403 / revoke / revoke 后 403 / 吊销集封顶 / 未知 verse→404）。**剩下 11 条按边界不做**，全部落在本流明令不做的三个端点（`/friends` 2 条、`/content` 3 条、`/package` 6 条）—— **这不是「我的测试过了」，是那三个端点根本没实现**。
+- **真实两进程闭回环**：`build/crp-hub` ↔ `build/crp-peer`，**27 次交换 0 失败**，driver 17 项检查 0 失败，状态码直方图 200×13 / 400×3 / 403×4 / 404×3 / 409×1 / 202×3，27 条 `>>` 对 27 条 `<<`，hub tail `bye:true`。hub 把临时端口作为 stdout 第一行 announce 出来、driver **从不猜端口** —— 这是对 §2.9 端口竞争的主动规避。
+- **crosscheck 逐行文本比对**：**101 条语料 text-identical**，同一份语料既走引擎、也走 `crp_reference.js` 与真实 `crp_relay.js`。关键机制：在 `require` 参考实现之前**冻结 `Date.now`**，否则令牌 `exp` / `expires` / TTL 剪枝会被墙钟漂移污染、根本不可比。首跑出现 8 条不一致、归为 4 类真问题，全部修掉。
+- **ASan + UBSan**（`ASAN_OPTIONS=detect_leaks=1`）：探针 **173 项检查 0 失败**，转写回放路径也单独过了一遍，无 sanitizer 输出。
+- `ctest` **89 → 92**（新增 `verse_crp_probe` / `verse_crp_closed_loop` / `verse_crp_crosscheck`）。
+
+**四条与参考实现的真实分歧**（都保留在引擎里，**没有为了对齐而放宽任何校验**）：
+1. **`/status` 是引擎独有的**，参考 relay 没有。后果具体：`sessions` 计数引擎是 3 而参考只会是 2 —— 引擎在 PORTAL 签发时就绑了一个会话。因此这条**不可跨实现比对**，被排除在 crosscheck 语料之外。
+2. **base64url 解码比 Node 严**：引擎拒绝 `n%4==1`、非 alphabet 字节、`=` 填充、尾部非零 bit，而 Node 的 `Buffer.from(x,'base64url')` 会宽容接受其中一部分。分歧方向是「更严」，不会把坏输入当好输入。
+3. **JSON 语法错误文本无法一致**：引擎给 `bad literal at offset 0`，V8 给 `Unexpected token …`。引擎不嵌 V8。**契约级错误文本全部逐字一致**（`message must be an object`、`invalid CRP frame`、`unsupported CRP type: %s`、`CRP frame exceeds 1 MiB`、`FIND limit must be 1..1000` 等均已核对）；语料全是合法 JSON，所以这条分歧**未被触发**。
+4. **会话层语义是引擎独有的**：`im_crp_session_accept()` 的缺口判定、租约、11 个状态，参考实现都没有对应物。
+
+**没做什么 / 已知边界**：
+- **一个显式取舍，代价已写明**：`session_store_seq()`（`src/verse/crp.c:912-916`）会调 `im_crp_session_accept()` 取 §55.6 判决，但只把它记进 `/status` 的 `acceptVerdict`，**最终写进 `last_applied` 的是参考实现更宽松的规则**（无条件 `last_applied = seq`）。**代价是引擎自带的缺口判定不影响线上行为，只作诊断暴露。** 选它的理由：判据要求对齐参考实现的线上行为。若日后要求「缺口即拒」，必须先明确「对齐参考实现」与「执行 §55.6」哪个优先 —— 在本流范围内二者不可兼得。
+- 参考实现的测试配置 `{ttlMs:1000, tokenTtlMs:1000, maxRevokedTokens:1}` **没有等价复现**：`crp-hub` 只走默认值（token TTL 5 min / registry TTL 30 min / 吊销集封顶 10000）。等价语义用**不同数值**单独验过（registry 剪枝、lease 过期、`max_revoked=2` 时封顶生效），但**那组具体数值没跑过**。
+- **base64url 与 HMAC-SHA256 直接放在 `src/verse/crp.{h,c}`**，没有进 `src/common/`（当时只有 CRP 一个消费者）。日后若 `.vverse` 或别的模块也要 base64url，需要再抽公共实现 —— 那时必须同时保住 `src/common/vverse_pack.c:169-215` 的**严格** padding 语义。
+- 顺带发现 `src/verse/json_min.c` 一条**继承的既有缺陷**，本流**没修**（避免动到现有语义）：`json_min.c:95` 的 `if (cp < 0x80) out[len++] = (char)cp;` 在 `\u0000` 时会往字符串里塞一个**裸 NUL**，而 `VjVal` 的字符串是**没有长度字段的 `char *s`** ⇒ 所有基于 `strlen` 的下游消费者都会看到被截断的字符串。已立为 BOARD §5 的 `json-min-nul-escape`。

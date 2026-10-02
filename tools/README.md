@@ -100,7 +100,7 @@ tools/gate.sh --only links    # one stage: build|ctest|economy|node|plugin|links
 | Stage | Expectation |
 | --- | --- |
 | build | Release build, 0 error |
-| ctest | **89 / 89** |
+| ctest | **92 / 92** |
 | economy | `tools/economy_migration.test.py` — **39 / 39** |
 | node | `node tools/node_suites/run_all.js` — **11 / 11** |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` — **55 / 55** |
