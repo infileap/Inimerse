@@ -818,7 +818,6 @@ exit=1
 
 **没有做的事**：没碰 `tools/gate.sh`/`CMakeLists.txt`/`tools/node_suites/run_all.js`（`httpfix` 持有）、`tools/crp_ws_client*`/`tools/upp_session*`（`wscoverage` 持有）、`src/**`、`docs/BOARD.md` 与本文件既有行；没有 `push`/`merge`；**没有改任何已跟踪文件的既有引用**——修前修后 `0 broken` 一致，说明本次没有靠「把红的说成绿的」来收敛。
 
-
 ### 10.9 WebSocket 客户端的连接 / 重连 / 排队（`ws-client-coverage`）
 
 **立项**：`docs/BOARD.md` §5 原写「`tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用）」。派活前实测，这句话**一半是错的**：`tools/regression.js:4` 的数组里**列了** `crp_ws_client.test.js`，`tools/upp_session` 也被 `tools/upp_engine_crosscheck.js:30` 直接 `require`。⇒ 真正的缺口是**行为没测**（连接、重连、排队三个机制一条断言都没有），外加 `crp_ws_client` 在 `docs/` 里没有任何出处。
@@ -835,7 +834,50 @@ bash tools/gate.sh --fast --only node   # 门禁第 6 阶段
 
 测试**离线且确定性**：在 `require('./crp_ws_client')` **之前**把假 `WebSocket` 装进 `globalThis.WebSocket`（带 `OPEN` 常量与可手动触发的 `open`/`message`/`error`/`close`，并实现 `{once:true}`），跑完还原。**不引第三方 `ws`、不占端口、不依赖真实对端** —— 否则红了也分不清是「客户端回归」还是「对端慢」。
 
-**证据**：`tools/crp_ws_client.test.js` 由 2 条断言（入队 / `close()` 清空）扩到 **31 条**（连接 7、重试 8、重连 8、排队 8），跑完打印 `CRP WebSocket client tests: ok (31 assertions)`。**非空证据 = 变异测试**（一次性脚本，未提交）：对 `crp_ws_client.js` 做 **29 个单行变异**（其中 4 个是为击穿「断言被前一条挡住」而写的定向变异，标注 `[targeted]`），逐条记录**第一个变红的断言**：**29/31 条断言各有至少一个能把它打红的变异**。剩 2 条是**结构性屏蔽**，不是空断言 —— #20「`close()` 之后重连拨的是新 socket」被 #18「`close()` 忘掉当前 socket」挡住（任何复用旧 socket 的写法都先违反 #18），#28「OPEN 时 `send()` 直接上线」被 #23「陈旧 `close` 之后活 socket 仍能发数据」挡住（同一条规则在更早的场景里已经断言过）。**而原来的 2 条断言文件只看得见 29 个变异里的 2 个**（`close()` 清队列，以及「只在已有 socket 时入队」），其余 **27 个变异下它 exit 0 全绿** —— 这正是「旧文件测不到连接 / 重连 / 排队」的机器证据。
+**证据**：`tools/crp_ws_client.test.js` 由 2 条断言（入队 / `close()` 清空）扩到 **31 条**（连接 7、重试 8、重连 8、排队 8），跑完打印 `CRP WebSocket client tests: ok (31 assertions)`。**非空证据 = 变异测试**，脚本已入库、可复跑：
+
+```bash
+python3 tools/crp_ws_client.mutation.py    # 默认 --old-ref d1bef61:tools/crp_ws_client.test.js
+```
+
+对 `crp_ws_client.js` 做 **29 个单行变异**（其中 4 个是为击穿「断言被前一条挡住」而写的定向变异，标注 `[targeted]`）。每个变异都在一个**唯一临时目录**（`tempfile.mkdtemp(prefix="crp-ws-mutation-")`，成功失败都删除）里跑**两套**套件 —— 旧套件（`d1bef61` 的 2 条断言，**只从显式 ref 读，绝不从 `HEAD` 读**）与新套件（31 条标签断言）—— 并逐条记录**第一个变红的断言**。实测两列（`old`/`new` 为退出码，1 = 该变异下该套件变红）：
+
+```
+mutation                                                   old  new
+connect: drop the in-flight dedup                          0    1
+connect: dial twice per connect()                          0    1
+connect: dial a url the constructor was not given          0    1
+connect: forget to record the dialing socket               0    1
+connect: resolve with the socket, not the client           0    1
+connect: the de-duplicated caller resolves to the socket   0    1
+message: hand onMessage the event, not event.data          0    1
+retry: swallow the error at exhaustion instead of rejecting 0    1
+retry: retries + 1 attempts                                0    1
+retry: no backoff before the first retry                   0    1
+retry: fixed backoff instead of exponential                0    1
+retry: retries 0 resolves instead of rejecting [targeted]  0    1
+retry: clamp retries to at least 1                         0    1
+retry: closed loop exits with the socket instead of the client 0    1
+retry: dial once more after the loop decides to stop [targeted] 0    1
+reconnect: never dial a replacement                        0    1
+reconnect: clear the socket after scheduling the replacement [targeted] 0    1
+reconnect: close() forgets to forget the socket            0    1
+reconnect: drop the generation guard                       0    1
+reconnect: drop the closed and generation guards           0    1
+reconnect: a close event always drops the socket           0    1
+queue: always queue, never write through                   0    1
+queue: send() through a socket that is not OPEN            0    1
+queue: pretty-print the JSON instead of compacting it      0    1
+queue: flush LIFO (pop instead of shift)                   0    1
+queue: flush without draining the queue                    0    1
+queue: send AND queue on an OPEN socket                    0    1
+queue: only queue when a socket already exists [targeted]  1    1
+queue: close() leaves the queue behind                     1    1
+```
+
+⇒ **旧文件只看得见 29 个变异里的 2 个**（`queue: only queue when a socket already exists [targeted]`、`queue: close() leaves the queue behind`），其余 **27 个变异下它 exit 0 全绿**；**新套件 29/31 条断言各有至少一个能把它打红的变异**。剩 2 条是**结构性屏蔽**，不是空断言 —— #20「`close()` 之后重连拨的是新 socket」被 #18「`close()` 忘掉当前 socket」挡住（任何复用旧 socket 的写法都先违反 #18），#28「OPEN 时 `send()` 直接上线」被 #23「陈旧 `close` 之后活 socket 仍能发数据」挡住（同一条规则在更早的场景里已经断言过）。这正是「旧文件测不到连接 / 重连 / 排队」的机器证据。
+
+**可复现性（脚本自己会守）**：第一版脚本读的是 `HEAD:tools/crp_ws_client.test.js` —— 在提交**之前** HEAD 恰好还是 `d1bef61`，所以表是对的；提交之后 HEAD 变成 269 行的新套件，两列会**一起变成新套件**、「旧文件看不见 27/29」当场不可复现（复核者在已提交的 worktree 里实测到了这个假象）。现在脚本把「旧文件必须是 6 行 / 2 条 `assert.` / 无 `  ok  ` 标签」写成**前置条件**，不满足就打印实际行数与标签数、**exit 2 拒绝运行**；另外还校验 `tools/crp_ws_client.js` 与 `d1bef61` 版本**逐字节相同**（本流承诺「未改模块」，可用 `--no-module-check` 跳过）、以及新套件自报的断言数与实际标签数一致。跑完打印 `RESULT: the documented kill map reproduces`、exit 0；与本文记录的数字不符则 exit 1 并指名是哪一条。
 
 **没做什么 / 遗留**：
 
