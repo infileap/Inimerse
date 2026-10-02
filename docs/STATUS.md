@@ -958,3 +958,28 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 **两条有意为之的能力损失（必须记录，不是疏忽）。** ①`b_verse_pack` 传 `seed = NULL`，**不再**用本地身份自动签名（遗留实现会）—— 这是「产物必须是树内容的纯函数」的直接要求（作业单第 3 条），代价是引擎写的包**不含** `signatures/ed25519.json`，故 `--require-public-signature` 对引擎产物不适用。②真容器的 `id`/`version`/`min_version` 在它自己的 `manifest.json` 里，故遗留那套 publisher / version / `min_version` 元数据校验对真容器**不适用**；它们对遗留容器仍然照旧生效（步骤 5、6）。
 
 **进树**：`CMakeLists.txt` 新增 CTest `vverse_cli_regression`；`tools/gate.sh:43` 的 `EXP_CTEST` 94→**95**；新 `tools/vverse_cli.test.py`（10 checks）。`tools/verse_pack.test.py` 与 `tools/vverse_cli.test.py` 的断言都住在**既有**的 CTest 条目里，所以没有第 96 个条目 —— 计数停在 95 是**有意**的。
+
+### 10.12 能力令牌的签发需要 enrollment 证明（`crp-portal-auth`，`40f6094`）
+
+**缺口。** `POST /portal` 是 hub 的**唯一**授权入口：`/signal`、`/session/resume`、`/session/stop`、`/ws` 都只要求令牌（`tools/crp_relay.js:70`/`:77`/`:83`/`:137`），所以**令牌本身就是全部授权**，而它可以被任何人索取 —— 参考实现只检查「verse 已注册且 `peer` 非空」，不看调用方是谁。危害不止拿到令牌：`crp_registry_portal` 还会 `registry_get_session`（不存在就新建）并 `im_crp_session_apply("start")` + `im_crp_session_lease_begin`，于是未认证调用方可以用任意 `peer` 字符串**无上限造 session**，并在该 (verse, peer) 已有会话时**重置并夺取租约**。这是**契约级缺口**（引擎忠实实现了参考实现），所以修法是**先动判据方**（参考实现），再让引擎跟随 —— 即板上 (b) 分支。
+
+**修法。** 证明式 `base64url(HMAC-SHA256(CRP_ENROLL_SECRET, String(verse) + "\0" + String(peer)))`，与 `tools/crp_relay.js` 的 `enrollProof()` 同式。判定点**只有一处**：`src/verse/crp.c` 新增导出 `int crp_enroll_check(const char *enroll_secret, const VjVal *verse, const VjVal *peer, const VjVal *auth)`（`:1057`），`crp_registry_portal`（`:1069`）与 HTTP 监听器都调用它。未配置 `CRP_ENROLL_SECRET` ⇒ 403 `portal enrollment is not configured`（**fail-closed**，安全默认不依赖调用方记得打开）；证明不匹配 ⇒ 403 `invalid enrollment proof`；**两条拒绝都在查注册表之前**，故未证明的调用方连 verse 是否存在都探不到。比较是常量时间的（先比长度，再 `diff |= got[i] ^ want[i]`）。
+
+**第一版交付被驳回的原因（值得记一笔）。** 第一版（`e47f903`）在 `src/platform/http_posix.c` 里**又写了一份**证明推导：用**原始文本扫描**（`portal_member` 从第一个 `"` 读到下一个 `"`）重新取 `verse`/`peer`，注释宣称与 `enrollProof()` **byte-identical**。我用裸 socket 打真引擎，证伪了三处：①`{"verse":"a\"b",…}` 的原始字节是 `"a\"b"`，扫描读到 `a\` ⇒ **proof over `a"b` → 403，而 over 错的 `a\` → 200**；②冒号后只跳空格与制表符，不跳换行 ⇒ pretty-print 的 body（`json.dumps(indent=2)` 风格）被读成 `"undefined"` → 403；③`strstr` 扫**整个原始请求**而不只是 body ⇒ 请求头里的 `"verse":"other"` 会**遮蔽** body 里的正确值 → 403。三者都不是认证绕过（攻击者仍须算出 HMAC），但都是新引入代码里的**契约/互操作瑕疵**，且 `tools/crp_engine_crosscheck.js` 走的是 `verse_crp_probe`（crp.c 路径），**不经过 HTTP 监听器**，所以门禁看不见。
+
+**第二版修法（`40f6094`，协调者裁定「按最彻底的修法」）。** 不去补扫描器，而是**删掉整份第二推导**（`portal_hmac_sha256`/`portal_b64url`/`portal_member`/`portal_js_string`/`portal_proof`/`portal_proof_ok`），HTTP 监听器改为 `strstr(req,"\r\n\r\n")` 定位 body → `vj_parse` → `vj_get` → `crp_enroll_check`（`src/platform/http_posix.c:2028-2040`）。`verse_portal_proof` 保留签名作薄包装，`src/platform/http_probe.c` 未动。`CMakeLists.txt` 四处加源（三个 probe + 引擎本体的非 WIN32 分支）、三处加 `target_include_directories(... src/verse src/common src/platform)`。CTest 计数**未变**（95）。
+
+**协调者的独立验收（不采信自述）。** `rm -rf build` 全量构建 exit 0，35 条 warning **无一来自 `crp.c`**；`ctest` **95/95**；`tools/gate.sh --fast` 与合入 main 后的 `rm -rf build && tools/gate.sh` 均**七阶段全 PASS、`gate: OK`、exit 0**。**修前必失败**（在 worktree 里 `git checkout main -- src/`，保留新的 `tools/` 测试后重编）：`ctest -R "verse_crp_probe|verse_crp_closed_loop|crp_session_probe|verse_crp_crosscheck|crp_session_flow_regression|reconnect_generation_regression|http_probe|hub_probe"` → **4 failed out of 8**，其中 `reconnect_generation_regression` 的失败值逐字是 `AssertionError: (200, '{"token":"posix-6abf402f","expires":1790919002,"verse":"v1","peer":"p1"}\n')` —— **无证明的 `/portal` 真的拿到了令牌**。修后同一条命令全绿。`crp_engine_crosscheck` → **112 records, text-identical**；`verse_crp_probe` 自检 → **185 checks, 0 failures**。
+
+**F1/F2/F3 由裸 socket 探针确认消失**（真引擎、逐字节控制请求体）：proof over `a"b` → **200**，over 错的 `a\` → **403**（错误读法不再被接受）；`verse` 值换行 → 200；请求头遮蔽 → 200；无 `CRP_ENROLL_SECRET` + 有效证明 → **403 fail-closed**。
+
+**类型强制转换已与 JS `String()` 逐一对齐**（HTTP 路径实测，并与 `verse_crp_probe` 的 crp.c 路径交叉验证）：`null`→`"null"`、`true`→`"true"`、`{}`→`"[object Object]"`、`["a","b"]`→`"a,b"`、`[null,"a"]`→`",a"`、键缺失→`"undefined"`、`\u00e9` 与裸 UTF-8 均 → `café`，全部 200。**这条正是「同一个检查」的直接证据**：`vj_parse` 解码转义与空白的方式与 `crp.c` 对同一串字节的处理一致，故不再有第二套语义。
+
+**已知没解决的四点（都不是本次引入 —— 每一条都在 main `922f9af` 上原样复现，故不阻塞合入）。**
+
+1. **空 scope 等于「任意」**（`src/platform/http_posix.c:287`）：`return (!g_tokens[i].verse[0] || …) && (!g_tokens[i].peer[0] || …)` —— 空 scope 匹配任何请求。`/portal` 用 `vj_str(vj_get(pbody,"verse"), "")`（`:2046-2047`）取 scope，**对任何非字符串 JSON 值都得到 `""`**，故 `{"verse":5,"peer":null}` 铸出的是 **hub 全域通配令牌**。端到端复现：铸出后 `POST /signal` / `POST /session/stop` 打 `{"verse":"totally-other-verse","peer":"other-peer"}` → **200 `{"ok":true,"accepted":true}`**，而 `{"verse":"demo","peer":"p1"}` 铸的令牌 → 403。**用 main 的 `build/inimerse` 跑同一探针输出逐行相同，且 main 上这一步连证明都不需要** ⇒ 本次交付是**收紧**（旧代码路径无需任何证明即可铸出通配符令牌），不是引入。今天严重度低（enrollment secret 是**一个** hub 级值，持有者本就能为任意 pair 出证明），但铸发侧应拒绝非字符串 verse/peer 或拒绝存入空 scope，`token_allows` 也不该把「没有 scope」读成「所有 scope」。
+2. **重复 JSON 键**：`vj_get` 返回**第一个**匹配键，main 的 `json_field_string`（`:419` `if (*p != '"') return 0;`）也是 first-wins，而 JS `JSON.parse` 是 last-wins。实测 `{…,"auth":"<good>","auth":"x"}` → 200，`{…,"auth":"x","auth":"<good>"}` → 403。无 secret 不可利用。
+3. **非字符串值的回显**：参考实现回显解析后的原值（`{"verse":5}` → `"verse":5`），监听器回显 `vj_str(…,"")` → `""`。与第 1 点同源。
+4. **HTTP 监听器的 `/portal` 仍不查注册表**（F4）：它对未注册的 verse 也铸发令牌，而 `crp_registry_portal` 与 `tools/crp_relay.js` 都答 404 `verse not found`。`src/platform/http_posix.c:2023-2028` 的注释称调用方「prove[s] it may open a portal for this exact (verse, peer)」，对非字符串 verse/peer 而言这句不成立。
+
+这四点已登记为 `task-9`（写域 `src/platform/http_posix.c`），附了验收条件：监听器的 `/portal` 要么整体走 `crp_registry_portal`，要么复现它的证明后拒绝（非字符串 verse → 404、falsy peer → 404，且不再有「意外为空」的 scope），并补一条「用非字符串 verse 铸发后、该令牌对另一个 verse 必须被拒」的回归。

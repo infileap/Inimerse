@@ -1,6 +1,6 @@
 # 作业单：`crp-portal-auth` —— 给能力令牌的签发加上调用方认证（**先改判据方**）
 
-**状态**：进行中
+**状态**：**已交付并合入 `main`（`40f6094`，fast-forward `922f9af..40f6094`）** —— 见 [STATUS.md](../STATUS.md) §10.12。第一版（`e47f903`）被驳回，原因与三处被证伪的分歧都记在那里；遗留四点登记为 `crp-portal-postcheck`（`task-9`）。本作业单保留原样，作为该流的判据记录，**不要按它重新开工**。
 **冲突域（别人别碰）**：`tools/crp_relay.js`、`tools/crp_reference.js`、`tools/crp_relay.test.js`、`tools/crp_engine_crosscheck.js`、`tools/crp_closed_loop.test.py`、`tools/crp_session.test.py`、`tools/crp_session_flow.test.js`、`tools/crp_client.js`、`tools/crp_client.test.js`、`src/verse/crp_hub.c`、`src/verse/crp.c`、`src/verse/crp.h`、`src/verse/crp_probe.c`、`src/verse/crp_peer.c`
 **禁碰**：`tools/gate.sh`、`CMakeLists.txt`（`vversecli` 持有）、`tools/vverse_*`、`src/mod/verse_dist_mod.c`、`src/common/**`、`docs/**`（协调者持有）、`tools/node_suites/**`
 
