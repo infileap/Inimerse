@@ -89,6 +89,18 @@ async function main() {
   });
   assert.equal(wrongAuth.status, 403);
   assert.equal(await wrongAuth.text(), '{"error":"invalid enrollment proof"}\n');
+  // A proof is not enough on its own: the verse must be one this hub
+  // registered (the reference's `verses.has(p.verse)`), so a correct proof for
+  // an unregistered verse is refused with 404, and /register is what lifts it.
+  const unregistered = await fetch(`${httpBase}/portal`, {
+    method: 'POST', body: JSON.stringify({ verse, peer, auth: enrollProof(verse, peer) }),
+  });
+  assert.equal(unregistered.status, 404);
+  assert.equal(await unregistered.text(), '{"error":"verse not found"}\n');
+  const registered = await fetch(`${httpBase}/register`, {
+    method: 'POST', body: JSON.stringify({ id: verse, endpoint: '127.0.0.1:9000' }),
+  });
+  assert.equal(registered.status, 200);
   const tokRes = await fetch(`${httpBase}/portal`, {
     method: 'POST', body: JSON.stringify({ verse, peer, auth: enrollProof(verse, peer) }),
   });

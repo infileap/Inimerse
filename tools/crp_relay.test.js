@@ -45,6 +45,17 @@ server.listen(0, async () => {
     // A proof is checked before the registry is inspected, so a caller who
     // cannot prove (verse, peer) never learns whether the verse exists.
     assert.equal((await post('/portal', { verse: 'missing', peer: 'p1', auth: proof('missing', 'p1') })).status, 404);
+    // The portal's scope is a pair of non-empty strings, so a member that is
+    // not a string names no scope at all: it is refused with the same 404 as an
+    // unregistered verse, and mints nothing.  The engine asks the very same
+    // question (registry_has_verse + a VJ_STR peer test in src/verse/crp.c),
+    // which is what the relay_portal corpus records pin.
+    const sessionsBefore = sessions.size;
+    assert.equal((await post('/portal', { verse: 5, peer: 'p1', auth: proof(5, 'p1') })).status, 404);
+    assert.equal((await post('/portal', { verse: 'demo', peer: 5, auth: proof('demo', 5) })).status, 404);
+    assert.equal((await post('/portal', { verse: 'demo', peer: ['a'], auth: proof('demo', 'a') })).status, 404);
+    assert.equal((await post('/portal', { verse: 'demo', peer: '', auth: proof('demo', '') })).status, 404);
+    assert.equal(sessions.size, sessionsBefore);
     assert.equal((await post('/portal', { verse: 'demo', peer: 'p1' })).status, 403);
     const pkg = await post('/package', { id: 'demo', data: Buffer.from('pkg').toString('base64') }); assert.equal(pkg.status, 201);
     assert.equal((await (await fetch(base + '/package/demo')).text()), 'pkg');

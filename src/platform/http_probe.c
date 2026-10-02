@@ -117,6 +117,12 @@ int main(void) {
     const char *route = "POST /route HTTP/1.1\r\nHost: localhost\r\nContent-Length: 42\r\nConnection: close\r\n\r\n{\"id\":\"peer1\",\"endpoint\":\"127.0.0.1:9000\"}";
     if (!query(port, route, "\"ok\":true")) { verse_http_stop(); return 9; }
     if (!query(port, "GET /route/peer1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", "127.0.0.1:9000")) { verse_http_stop(); return 10; }
+    /* /portal mints only for a verse this hub registered -- the reference's
+       `verses.has(p.verse)` (tools/crp_relay.js) -- so v1 goes in through the
+       same POST /register that fills g_verses.  Without this the portal below
+       is refused, which is exactly what the `ghost` case pins. */
+    const char *reg = "POST /register HTTP/1.1\r\nHost: localhost\r\nContent-Length: 39\r\nConnection: close\r\n\r\n{\"id\":\"v1\",\"endpoint\":\"127.0.0.1:9000\"}";
+    if (!query(port, reg, "\"ok\":true")) { verse_http_stop(); return 14; }
     /* A portal is authority: without an enrollment proof the listener must mint
        nothing and answer 403.  With one, it issues the token the rest of this
        probe runs on. */
@@ -139,6 +145,42 @@ int main(void) {
     sleep(2);
     char signal[256]; snprintf(signal, sizeof signal, "POST /signal HTTP/1.1\r\nHost: localhost\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n{\"token\":\"%s\"}", strlen(token) + 12, token);
     if (request_body(port, signal, portal, sizeof portal) < 0 || !strstr(portal, "403 Forbidden")) { verse_http_stop(); return 7; }
+    /* A portal whose members are not strings used to mint a token with an EMPTY
+       scope, and token_allows() read an empty scope as "any" -- so that one
+       token answered 200 on /signal for a verse and peer it was never proven
+       for.  The mint is refused now (there is no scope to write), and whatever
+       this request returned, no token from it may authorize another pair.  This
+       runs before the `ghost` case below so that on an unfixed listener the
+       failure is this one: the wildcard mint itself. */
+    char wild_proof[128] = {0}, wild_body[256], wild_req[512], wild_res[512] = {0};
+    verse_portal_proof("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", "5", "null", wild_proof, sizeof wild_proof);
+    snprintf(wild_body, sizeof wild_body, "{\"verse\":5,\"peer\":null,\"auth\":\"%s\"}", wild_proof);
+    snprintf(wild_req, sizeof wild_req, "POST /portal HTTP/1.1\r\nHost: localhost\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", strlen(wild_body), wild_body);
+    if (request_body(port, wild_req, wild_res, sizeof wild_res) < 0) { verse_http_stop(); return 16; }
+    if (!strstr(wild_res, "404 Not Found")) {
+        fprintf(stderr, "non-string portal scope was not refused: %s\n", wild_res);
+        verse_http_stop(); return 17;
+    }
+    char wild_token[64] = {0};
+    { char *wt = strstr(wild_res, "\"token\":\""); if (wt) { wt += 9; char *we = strchr(wt, '"'); if (we && (size_t)(we - wt) < sizeof wild_token) memcpy(wild_token, wt, (size_t)(we - wt)); } }
+    char wide_body[256], wide_req[512], wide_res[512] = {0};
+    snprintf(wide_body, sizeof wide_body, "{\"token\":\"%s\",\"verse\":\"totally-other-verse\",\"peer\":\"other-peer\"}", wild_token);
+    snprintf(wide_req, sizeof wide_req, "POST /signal HTTP/1.1\r\nHost: localhost\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", strlen(wide_body), wide_body);
+    if (request_body(port, wide_req, wide_res, sizeof wide_res) < 0 || !strstr(wide_res, "403 Forbidden")) {
+        fprintf(stderr, "a portal token authorized another pair: %s\n", wide_res);
+        verse_http_stop(); return 18;
+    }
+    /* A valid proof is not enough on its own: the verse must be one this hub
+       registered.  `ghost` never was, so a correct proof for it is refused with
+       the reference's own 404 and mints nothing. */
+    char ghost_proof[128] = {0}, ghost_body[256], ghost_req[512], ghost_res[512] = {0};
+    verse_portal_proof("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", "ghost", "p1", ghost_proof, sizeof ghost_proof);
+    snprintf(ghost_body, sizeof ghost_body, "{\"verse\":\"ghost\",\"peer\":\"p1\",\"auth\":\"%s\"}", ghost_proof);
+    snprintf(ghost_req, sizeof ghost_req, "POST /portal HTTP/1.1\r\nHost: localhost\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", strlen(ghost_body), ghost_body);
+    if (request_body(port, ghost_req, ghost_res, sizeof ghost_res) < 0 || !strstr(ghost_res, "404 Not Found")) {
+        fprintf(stderr, "unregistered verse was not refused: %s\n", ghost_res);
+        verse_http_stop(); return 15;
+    }
     verse_http_stop();
     puts("http probe: ok"); return 0;
 }

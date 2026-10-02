@@ -142,6 +142,16 @@ def main():
                                  hashlib.sha256).digest()).rstrip(b"=").decode()
             status, no_auth = http_json(dir_port, "POST", "/portal", {"verse": "v1", "peer": "p1"})
             assert status == 403, (status, no_auth)
+            # A proof is not enough on its own: /portal mints only for a verse
+            # this hub registered (the reference's `verses.has(p.verse)`), so an
+            # unregistered verse is refused with 404 and /register lifts it.
+            status, unreg = http_json(dir_port, "POST", "/portal", {
+                "verse": "v-unregistered", "peer": "p1",
+                "auth": enroll_proof("v-unregistered", "p1")})
+            assert status == 404, (status, unreg)
+            status, reg = http_json(dir_port, "POST", "/register",
+                                    {"id": "v1", "endpoint": "127.0.0.1:9000"})
+            assert status == 200, (status, reg)
             status, portal = http_json(dir_port, "POST", "/portal", {
                 "verse": "v1", "peer": "p1", "auth": enroll_proof("v1", "p1")})
             assert status == 200, (status, portal)

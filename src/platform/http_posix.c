@@ -275,6 +275,11 @@ static int token_known(const char *token) {
 static int token_revoked(const char *token) { for (int i = 0; i < g_revoked_count; ++i) if (!strcmp(g_revoked[i], token)) return 1; return 0; }
 static void token_register(const char *token, time_t expires, const char *verse, const char *peer) {
     if (g_token_count >= 128 || !token || !*token) return;
+    /* A token's scope is the pair it was proven for, and an empty half is not a
+       scope: token_allows() would have to guess what it matches, and the only
+       safe guess is "nothing".  Nothing is stored unless both halves are
+       present, so no later reader can meet an unscoped token at all. */
+    if (!verse || !*verse || !peer || !*peer) return;
     snprintf(g_tokens[g_token_count].value, sizeof g_tokens[0].value, "%s", token);
     g_tokens[g_token_count].expires = expires;
     snprintf(g_tokens[g_token_count].verse, sizeof g_tokens[0].verse, "%s", verse ? verse : "");
@@ -283,13 +288,33 @@ static void token_register(const char *token, time_t expires, const char *verse,
 }
 static int token_allows(const char *token, const char *verse, const char *peer) {
     if (!token_known(token) || token_revoked(token)) return 0;
-    for (int i = 0; i < g_token_count; ++i) if (!strcmp(g_tokens[i].value, token))
-        return (!g_tokens[i].verse[0] || (verse && !strcmp(g_tokens[i].verse, verse))) && (!g_tokens[i].peer[0] || (peer && !strcmp(g_tokens[i].peer, peer)));
+    for (int i = 0; i < g_token_count; ++i) if (!strcmp(g_tokens[i].value, token)) {
+        /* Both halves must be present and equal: a token with an empty scope
+           authorizes nothing.  It used to read as "any" (`!g_tokens[i].verse[0]
+           || ...`), which turned a /portal body whose members were not strings
+           -- `{"verse":5,"peer":null}` -- into a hub-wide capability that
+           answered 200 on /signal for a verse and peer it was never proven for.
+           /portal no longer mints such a token (it refuses the shapes) and
+           token_register() refuses to store one, so this is the third and last
+           line of defence. */
+        if (!g_tokens[i].verse[0] || !g_tokens[i].peer[0]) return 0;
+        return verse && peer && !strcmp(g_tokens[i].verse, verse) && !strcmp(g_tokens[i].peer, peer);
+    }
     return 0;
 }
 static void token_revoke(const char *token) { if (!token_revoked(token) && g_revoked_count < 128) snprintf(g_revoked[g_revoked_count++], sizeof g_revoked[0], "%s", token); }
 
 static int safe_id(const char *id) { return id && *id && !strstr(id, "..") && !strchr(id, '/') && !strchr(id, '\\') && !strchr(id, ':'); }
+/* Is this verse one the hub registered?  POST /register is the only writer of
+   g_verses, and that table is the listener's analogue of the reference's
+   `verses` Map (tools/crp_relay.js), which /portal consults with
+   `verses.has(p.verse)`.  Only a string id that passed safe_id() ever gets in,
+   so a non-string verse is not found by construction. */
+static int portal_verse_registered(const char *id) {
+    if (!id || !*id) return 0;
+    for (int i = 0; i < g_verse_count; ++i) if (!strcmp(g_verses[i], id)) return 1;
+    return 0;
+}
 static int valid_hash(const char *h) { if (!h || strlen(h) != 64) return 0; for (int i = 0; i < 64; ++i) if (!((h[i] >= '0' && h[i] <= '9') || (h[i] >= 'a' && h[i] <= 'f'))) return 0; return 1; }
 static const char *find_ci(const char *haystack, const char *needle) {
     size_t n = strlen(needle); if (!n) return haystack;
@@ -2020,7 +2045,11 @@ reattach_done: ;
             /* No enrollment proof, no token: the caller has to prove it may open
                a portal for this exact (verse, peer) before anything is minted or
                registered.  Both refusals happen before the registry is touched,
-               so a refused caller leaves no token and no session behind.
+               so a refused caller leaves no token and no session behind.  Then
+               the scope itself is checked -- the verse must be registered and
+               both members must be non-empty strings -- because the token's
+               scope is what every later request is matched against and an empty
+               one is not a scope.
                The members are read from the parsed BODY with the engine's own
                reader: the request line and the headers are not part of the
                document the proof covers, and vj_parse decodes escapes and
@@ -2038,18 +2067,33 @@ reattach_done: ;
             if (!enroll || !*enroll) { status = 403; body = "{\"error\":\"portal enrollment is not configured\"}\n"; }
             else if (!crp_enroll_check(enroll, vj_get(pbody, "verse"), vj_get(pbody, "peer"), vj_get(pbody, "auth"))) { status = 403; body = "{\"error\":\"invalid enrollment proof\"}\n"; }
             else {
-                unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
-                time_t now = time(NULL); unsigned long ttl = 300;
-                const char *ttl_env = getenv("CRP_TOKEN_TTL");
-                if (ttl_env && *ttl_env) { char *end = NULL; unsigned long v = strtoul(ttl_env, &end, 10); if (end != ttl_env && v > 0 && v <= 86400) ttl = v; }
-                char scope_verse[128] = "", scope_peer[128] = "", esc_verse[256] = "", esc_peer[256] = "";
-                snprintf(scope_verse, sizeof scope_verse, "%s", vj_str(vj_get(pbody, "verse"), ""));
-                snprintf(scope_peer, sizeof scope_peer, "%s", vj_str(vj_get(pbody, "peer"), ""));
-                portal_json_escape(scope_verse, esc_verse, sizeof esc_verse);
-                portal_json_escape(scope_peer, esc_peer, sizeof esc_peer);
-                snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu,\"verse\":\"%s\",\"peer\":\"%s\"}\n", seed, (unsigned long)now + ttl, esc_verse, esc_peer);
-                char issued[64]; snprintf(issued, sizeof issued, "posix-%lx", seed); token_register(issued, now + (time_t)ttl, scope_verse, scope_peer);
-                body = portalbuf;
+                const VjVal *vv = vj_get(pbody, "verse");
+                const VjVal *pv = vj_get(pbody, "peer");
+                /* The scope is a pair of non-empty strings, and the verse must
+                   be one this hub has registered: that is the reference's
+                   `verses.has(p.verse)` test (tools/crp_relay.js) and the
+                   registry's registry_has_verse (src/verse/crp.c).  A member
+                   that is not a string names no scope at all, so it is refused
+                   with the reference's own 404 instead of being minted as an
+                   empty -- previously wildcard -- one.  Nothing is minted,
+                   stored or bound before this. */
+                if (!vv || vv->type != VJ_STR || !vv->s || !vv->s[0] || !portal_verse_registered(vv->s) ||
+                    !pv || pv->type != VJ_STR || !pv->s || !pv->s[0]) {
+                    status = 404; body = "{\"error\":\"verse not found\"}\n";
+                } else {
+                    unsigned long seed = (unsigned long)time(NULL) ^ ++g_token_counter;
+                    time_t now = time(NULL); unsigned long ttl = 300;
+                    const char *ttl_env = getenv("CRP_TOKEN_TTL");
+                    if (ttl_env && *ttl_env) { char *end = NULL; unsigned long v = strtoul(ttl_env, &end, 10); if (end != ttl_env && v > 0 && v <= 86400) ttl = v; }
+                    char scope_verse[128] = "", scope_peer[128] = "", esc_verse[256] = "", esc_peer[256] = "";
+                    snprintf(scope_verse, sizeof scope_verse, "%s", vv->s);
+                    snprintf(scope_peer, sizeof scope_peer, "%s", pv->s);
+                    portal_json_escape(scope_verse, esc_verse, sizeof esc_verse);
+                    portal_json_escape(scope_peer, esc_peer, sizeof esc_peer);
+                    snprintf(portalbuf, sizeof portalbuf, "{\"token\":\"posix-%lx\",\"expires\":%lu,\"verse\":\"%s\",\"peer\":\"%s\"}\n", seed, (unsigned long)now + ttl, esc_verse, esc_peer);
+                    char issued[64]; snprintf(issued, sizeof issued, "posix-%lx", seed); token_register(issued, now + (time_t)ttl, scope_verse, scope_peer);
+                    body = portalbuf;
+                }
             }
             vj_free(pbody);
         }
