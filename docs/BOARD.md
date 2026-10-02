@@ -21,6 +21,9 @@
 
 ## 2. 开工流程
 
+**先读自己那条流的作业单**：`docs/streams/<slug>.md`（已开流的都有；没有的说明还没派活）。
+里面有现状代码位置、参考实现、量化判据、已知的坑——比第 5 节那一行详细得多。
+
 ```bash
 tools/stream.sh new <slug>          # 建 .worktrees/<slug> 与分支 stream/<slug>
 cd .worktrees/<slug>
@@ -88,8 +91,8 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | 未认领 | `ws-client-coverage` | `tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用） | `tools/crp_ws_client*`、`tools/upp_session*` | 连接/重连/排队各自有断言；两个套件至少被一份文档引用 | — |
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
-| 进行中 | `repo-hygiene` | 仓库根残留清理（24 个 `CHANGES_*.txt`、`_t_bisect.im`、`CMakeLists.txt.bak`、`nst2.inim`、`params*`、`vtest_signed.vverse`、若干 `*.html`） | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩应有的文件 | `stream/repo-hygiene` |
-| 进行中 | `docs-audit` | 文档口径复查：README 基线数字、四标记词汇一致性、`archive/` 引用 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken + 抽查每处数字有出处 | `stream/docs-audit` |
+| 进行中 | `repo-hygiene` | 仓库根残留清理。实测根目录跟踪 **235** 个文件、**135** 个全仓库零引用（99 `.im` / 24 `CHANGES_*.txt` / 8 `.html` / 3 `.ps1` / 1 `.md`），另加被忽略的 `CMakeLists.txt.bak`。分两批：`CHANGES_*` 直接删，其余先出分类方案 | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩 keep-set；分类方案成文 | `stream/repo-hygiene` |
+| 进行中 | `docs-audit` | 文档口径复查：`REQUIREMENTS_ANALYSIS.md` 有 **22 条失效路径**（指向已归档文件，`check_links.py` 因剥离行内代码而看不见）；两套词汇并存；README 基线数字待复现 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken **且**新增的反引号路径检查 0 失效 + 抽查每处数字有出处 | `stream/docs-audit` |
 
 > **2026-08 修订说明（重要）。** 上一版把 `verse-upp` / `verse-crp` / `vverse-pack` 三行写成
 > 「未认领」，验收判据是「`node tools/<x>.test.js` 全过」——**这是错的**：那八个套件当时
