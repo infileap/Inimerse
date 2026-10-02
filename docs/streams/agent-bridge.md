@@ -79,7 +79,7 @@
 | `./build/verse_crp_probe` | `crp_probe: 173 checks` | **`185 checks, 0 failures`** |
 | `node tools/crp_engine_crosscheck.js` | `107 records` | **`115 records, text-identical`** |
 | `crp_closed_loop.test.py` | `crp_peer: 27` / `hub: …exchanges:26` / `crp_closed_loop: 17` | **`31 exchanges` / `exchanges:30` / `19 checks`** |
-| `tools/gate.sh:43` 的 `EXP_CTEST` | `93` | **`95`**（`grep -c "add_test(" CMakeLists.txt` 同为 **95**） |
+| `tools/gate.sh` 的 `EXP_CTEST` | `93` | **`95`**（`grep -c "add_test(" CMakeLists.txt` 同为 **95**）。本轮复核时 `EXP_CTEST` 在第 **43** 行；`xlang-bridge` 合入后它是第 **49** 行、值为 **97** |
 | 事件环淘汰 | `crp.c:1102-1105` | **`crp.c:1176-1182`**（`memmove` 在 `:1179`，`nevents++` 在 `:1191`） |
 | 令牌检查的字面量 `"signal"` | `crp.c:1082` / `:1146` | **`crp.c:1155-1156` / `:1220`**（`1082`/`1146` 今天都是注释） |
 | §6 第 6 条的交叉校验语料 | `107 条` | **`115 条`** |
@@ -105,7 +105,7 @@
 
 ## 3. 判据（验收条件）
 
-1. **门禁全绿**：`tools/gate.sh`（**全量**，七阶段）打印 `gate: OK — every stage passed.` 且 exit 0。本轮不新增 CTest、不改 `CMakeLists.txt`，故 `EXP_CTEST` **必须保持 95**。
+1. **门禁全绿**：`tools/gate.sh`（**全量**，七阶段）打印 `gate: OK — every stage passed.` 且 exit 0。本轮不新增 CTest、不改 `CMakeLists.txt`，故 `EXP_CTEST` **必须与 main 一致**（本轮复核时 main 是 95；`xlang-bridge` 合入后 main 是 **97**，故合并后读作 97）。
 2. **新增文档先 `git add`**：两个检查器只枚举 `git ls-files`，否则会跳过新文档却照样打印 `0 broken`。
 3. **每条数字可在本 worktree 复现**：§5 的命令可原样跑出本节表格里的值。
 4. **本轮 `git diff --stat` 只含文档**：`src/**`、`tools/**`、`CMakeLists.txt` 零改动（可用 `git diff --name-only main...HEAD` 复核）。
@@ -142,7 +142,7 @@ INIM_CRP_HUB_BIN=./build/crp-hub python3 tools/crp_closed_loop.test.py ./build/c
 ./build/verse_protocol_probe                                               # 49 checks
 PATH="$PWD/build:$PATH" python3 tools/verse_closed_loop.test.py             # 67 checks
 
-sed -n '43p' tools/gate.sh ; grep -c "add_test(" CMakeLists.txt             # 95 / 95
+sed -n '49p' tools/gate.sh ; grep -c "add_test(" CMakeLists.txt             # 97 / 97
 grep -n "CrpEvent\|CRP_EVENT_WINDOW" src/verse/crp.c src/verse/crp.h
 grep -rn "commitment" src/ --include=*.c --include=*.h -i                  # 无输出，rc=1
 ```
