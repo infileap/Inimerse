@@ -296,6 +296,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/main.c src/platform/platform.c src/platform/thread.c src/platform/fiber.c
     src/platform/dir.c
     src/common/common.c src/common/sha256.c src/common/ed25519.c
+    src/common/gzip.c src/common/vverse_pack.c
     src/types/typeset.c src/types/enum.c src/types/error_types.c src/types/registry.c
     src/vm/closure.c
     src/lexer/lexer.c src/parser/parser.c
@@ -310,7 +311,8 @@ if(INIMERSE_BUILD_ENGINE)
       src/mod/gui_mod.c src/mod/io_mod.c src/mod/net_mod.c src/mod/json_mod.c
       src/mod/record_mod.c src/mod/replay_mod.c src/mod/infiverse_mod.c src/mod/verse_dist_mod.c
       src/mod/server_mod.c src/mod/identity_mod.c src/mod/social_mod.c
-      src/mod/ai_mod.c src/mod/result_mod.c mods/build/build_mod.c)
+      src/mod/ai_mod.c src/mod/result_mod.c mods/build/build_mod.c
+      src/verse/json_min.c)
     list(APPEND INIMERSE_ENGINE_SOURCES src/mod/say_mod_windows.c src/mod/say_stream.c)
   else()
     list(APPEND INIMERSE_ENGINE_SOURCES src/runtime/runtime_posix.c
@@ -322,7 +324,7 @@ if(INIMERSE_BUILD_ENGINE)
   endif()
   add_executable(inimerse ${INIMERSE_ENGINE_SOURCES})
   target_include_directories(inimerse PRIVATE src src/parser src/compiler src/vm
-    src/runtime src/mod src/common src/lexer)
+    src/runtime src/mod src/common src/lexer src/platform src/verse)
   if(NOT WIN32)
     target_compile_definitions(inimerse PRIVATE
       _GNU_SOURCE _stricmp=strcasecmp
@@ -392,6 +394,18 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME finally_goto_diagnostic COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/finally_control_flow.test.py $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/finally_goto_control_flow_probe_v04.im "goto is not allowed in finally")
   set_tests_properties(finally_goto_diagnostic PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;control-flow")
   add_test(NAME case_try_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_try_v04.im)
+  # `.im` -> real `.vverse`: drive the engine builtin `verse_pack` (src/mod/
+  # verse_dist_mod.c) through a script and judge the artifact with the read-only
+  # reference (tools/vverse_pack.js, tools/vverse_validate.js) plus the engine's
+  # own reader.  The test also proves packing leaves the source tree untouched
+  # and is byte-deterministic.  Node is the judge, so gate it on INIMERSE_NODE.
+  if(INIMERSE_NODE)
+    add_test(NAME vverse_cli_regression
+      COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/vverse_cli.test.py
+              $<TARGET_FILE:inimerse> $<TARGET_FILE:vverse_pack_probe>)
+    set_tests_properties(vverse_cli_regression PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
+  endif()
   set_tests_properties(case_try_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;result;case" PASS_REGULAR_EXPRESSION "deep-structural-hit;nested-result-hit")
   add_test(NAME lint_case_try_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_v04.im)
   set_tests_properties(lint_case_try_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;result" PASS_REGULAR_EXPRESSION "guarded err coverage" FAIL_REGULAR_EXPRESSION "line 11")

@@ -50,6 +50,12 @@ int vverse_pack(const char *root, const char *out_path, const unsigned char *see
  * ed25519 signature and any path that escapes `dest_dir`. */
 int vverse_unpack(const char *pkg_path, const char *dest_dir, char *err, size_t errlen);
 
+/* Same, from an in-memory container.  The engine's `verse_open` fetches a
+ * package over the wire as often as from disk, so it hands over the bytes it
+ * already holds instead of spooling a temp file. */
+int vverse_unpack_mem(const void *pkg_buf, size_t pkg_len, const char *dest_dir,
+                      char *err, size_t errlen);
+
 /* Directory-level validation with the reference's three switches on:
  * strictStructure + requireSignature + requireCompleteSignature, plus the
  * ed25519 check whenever signatures/ed25519.json exists. */

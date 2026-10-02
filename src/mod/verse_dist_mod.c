@@ -21,6 +21,7 @@
  * opening it spawns a fresh inimerse process like opening a URL.
  */
 #include "sha256.h"
+#include "vverse_pack.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1049,12 +1050,97 @@ static void verse_parse_uri(const char *uri, char *fetch_uri, int fus,
     }
 }
 /* ---------- verse_open(uri): download/verify/unpack/launch ---------- */
+/* fire-and-forget launch of a verse's entry point.  `base` is the directory
+ * the caller unpacked into, trailing separator already included. */
+static int verse_launch(const char *base, const char *entry) {
+    char cmd[1600];
+    int ok = 0;
+#ifdef _WIN32
+    snprintf(cmd, sizeof cmd, "cmd /c start \"\" \"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, entry);
+    DWORD cpid = child_proc_spawn(cmd, "verse", 0);
+    ok = cpid != 0;
+#else
+    snprintf(cmd, sizeof cmd, "cd \"%s\" && nohup \"%s/inimerse\" \"%s%s\" >/dev/null 2>&1 &", home_dir(), home_dir(), base, entry);
+    ok = system(cmd) == 0; /* fire-and-forget launch */
+#endif
+    if (!ok) fprintf(stderr, "[VDP] launch failed: %s\n", cmd);
+    return ok;
+}
+
+/* ---------- verse_open on a real `.vverse` (gzip container) ----------
+ * A real verse keeps its id/version/entry in its OWN manifest.json, not in the
+ * container, so none of the legacy meta checks in do_open() apply to it.  The
+ * artifact is verified by src/common/vverse_pack.c instead -- format tag,
+ * digest table, every packaged file covered, optional ed25519 -- which is the
+ * same code that wrote it, so writer and reader cannot drift apart again.
+ * The tree lands in universe/<name>/ where <name> is the package file's
+ * basename, and the entry point is read from the manifest that just landed. */
+static int do_open_vverse(VM *vm, const char *fetch_uri, const void *pkg, size_t pkg_len) {
+    const char *tail = fetch_uri;
+    if (strncmp(tail, "verse://local/", 14) == 0) tail += 14;
+    const char *slash = strrchr(tail, '/');
+    if (slash && slash[1]) tail = slash + 1;
+    char name[256];
+    snprintf(name, sizeof name, "%.255s", tail);
+    size_t nlen = strlen(name);
+    if (nlen > 7 && strcmp(name + nlen - 7, ".vverse") == 0) name[nlen - 7] = 0;
+    if (!name[0]) snprintf(name, sizeof name, "package");
+
+    char dest[1200];
+    snprintf(dest, sizeof dest, "%s/universe/%s", home_dir(), name);
+    char err[512];
+    if (vverse_unpack_mem(pkg, pkg_len, dest, err, sizeof err)) {
+        fprintf(stderr, "[VDP] %s\n", err[0] ? err : "package rejected");
+        return 0;
+    }
+
+    char mpath[1300];
+    snprintf(mpath, sizeof mpath, "%s/manifest.json", dest);
+    int mlen = 0;
+    char *text = read_file_buf(mpath, &mlen);
+    if (!text || mlen <= 0) { fprintf(stderr, "[VDP] package has no manifest.json\n"); free(text); return 0; }
+    int jok = 0;
+    Value man = json_parse_value_text(vm, text, &jok);
+    free(text);
+    char entry[512] = "";
+    if (jok && man.type == VAL_DICT) {
+        ArrayObj *a = vm_pool_slot(vm, man.ival - 1);
+        for (int i = 0; a && i + 1 < a->count; i += 2) {
+            Value *k = &a->items[i], *v = &a->items[i + 1];
+            if (k->type == VAL_STRING && v->type == VAL_STRING && strcmp(k->sval, "entry") == 0) {
+                snprintf(entry, sizeof entry, "%s", v->sval);
+                break;
+            }
+        }
+    }
+    /* vverse_unpack_mem() already ran vverse_validate(), which requires
+     * manifest.json to declare a safe relative `entry` that exists -- so this
+     * is a guard, not a second validation. */
+    if (!entry[0]) { fprintf(stderr, "[VDP] package manifest declares no entry\n"); return 0; }
+
+    char base[1300];
+#ifdef _WIN32
+    snprintf(base, sizeof base, "%s\\", dest);
+#else
+    snprintf(base, sizeof base, "%s/", dest);
+#endif
+    return verse_launch(base, entry);
+}
+
 static int do_open(VM *vm, const char *uri) {
     char fetch_uri[1200], pub[65], ver[64], hash[65];
     verse_parse_uri(uri, fetch_uri, sizeof fetch_uri, pub, sizeof pub, ver, sizeof ver, hash, sizeof hash);
     int pkg_len = 0;
     char *pkg_json = verse_fetch(fetch_uri, &pkg_len);
     if (!pkg_json) { fprintf(stderr, "[VDP] download failed: %s\n", fetch_uri); return 0; }
+    /* Two containers, told apart by their first bytes and nothing else: a real
+     * `.vverse` is a gzip member (1f 8b), the legacy one is bare JSON ('{').
+     * The two cannot collide, so the legacy path below is untouched. */
+    if (pkg_len >= 2 && (unsigned char)pkg_json[0] == 0x1f && (unsigned char)pkg_json[1] == 0x8b) {
+        int rc = do_open_vverse(vm, fetch_uri, pkg_json, (size_t)pkg_len);
+        free(pkg_json);
+        return rc;
+    }
     int ok = 0;
     Value pkg = json_parse_value_text(vm, pkg_json, &ok);
     if (!ok || pkg.type != VAL_DICT) { fprintf(stderr, "[VDP] bad package json\n"); free(pkg_json); return 0; }
@@ -1082,19 +1168,10 @@ static int do_open(VM *vm, const char *uri) {
     char base[1200];
 #ifdef _WIN32
     snprintf(base, sizeof base, "%s/universe/%s\\", home_dir(), m.id);
-    char cmd[1600];
-    snprintf(cmd, sizeof cmd, "cmd /c start \"\" \"%s\\inimerse.exe\" \"%s%s\"", home_dir(), base, m.mainf);
-    DWORD cpid = child_proc_spawn(cmd, "verse", 0);
-    if (cpid) return 1;
 #else
     snprintf(base, sizeof base, "%s/universe/%s/", home_dir(), m.id);
-    char cmd[1600];
-    snprintf(cmd, sizeof cmd, "cd \"%s\" && nohup \"%s/inimerse\" \"%s%s\" >/dev/null 2>&1 &", home_dir(), home_dir(), base, m.mainf);
-    int cpid = system(cmd); /* fire-and-forget launch */
-    if (cpid == 0) return 1;
 #endif
-    fprintf(stderr, "[VDP] launch failed: %s\n", cmd);
-    return 0;
+    return verse_launch(base, m.mainf);
 }
 static int b_verse_open(VM *vm) {
     int argc = vm->cur_argc;
@@ -1106,165 +1183,43 @@ static int b_verse_open(VM *vm) {
 }
 
 /* ---------- verse_pack(dir, out): pack folder -> .vverse ---------- */
+/* The container is NOT built here.  src/common/vverse_pack.c owns the
+ * `gzip({"format":"vverse-1","files":{<path>:<base64>}})` format and is
+ * cross-validated against the read-only reference tools/vverse_pack.js by
+ * tools/vverse_cross.test.py; tools/vverse_cli.test.py drives THIS builtin
+ * through a real script and judges the artifact with the same reference.
+ * This builtin is only the `.im` -> C adapter.
+ *
+ * Call shape is unchanged: verse_pack(root, out), with any trailing legacy
+ * arguments (ref-mode, version, min_version, sources) accepted and ignored --
+ * the format now takes its metadata from the tree's manifest.json instead of
+ * from the call site, which is exactly what makes the output a pure function
+ * of the tree.  The return value is unchanged in kind: the output path on
+ * success, a falsy value on failure (the old writer returned "" or 0), except
+ * that the reason is now reported on stderr so a script that ignores the
+ * return value can still see the failure.
+ *
+ * Deliberately NOT done here: signing with the local identity seed.  The old
+ * bare-JSON writer auto-signed whenever a local identity file existed, which
+ * made the package a function of (tree, local identity) rather than of the
+ * tree.  The real format's ed25519 block is optional and vverse_pack() takes a
+ * seed for it; passing NULL keeps re-packs of one tree byte-identical across
+ * machines.  Wiring the identity seed in is a separate, explicit decision.
+ */
 static int b_verse_pack(VM *vm) {
     int argc = vm->cur_argc;
+    if (argc < 2) { r_push_str(vm, _strdup("")); return 1; }
     char *out = _strdup(r_str(vm, argc - 2) ? r_str(vm, argc - 2) : "");
     char *dir = _strdup(r_str(vm, argc - 1) ? r_str(vm, argc - 1) : "");
-    int refMode = 0;
-    if (argc >= 3) {
-        Value rv = r_arg(vm, argc - 3);
-        if (rv.type == VAL_INT) refMode = (int)rv.ival;
-        else if (rv.type == VAL_STRING && rv.sval) refMode = atoi(rv.sval);
-    }
-        /* 12.3 meta: version (4th), min_version (5th), sources (6th+) - read BEFORE popn */
-    char metaVer[128] = "1.0.0", metaMin[128] = "";
-    char metaSrcs[16][512]; int nMetaSrcs = 0;
-    if (argc >= 4) { const char *v4 = r_str(vm, argc - 4); if (v4 && v4[0]) snprintf(metaVer, sizeof metaVer, "%s", v4); }
-    if (argc >= 5) { const char *v5 = r_str(vm, argc - 5); if (v5 && v5[0]) snprintf(metaMin, sizeof metaMin, "%s", v5); }
-    for (int i = argc - 6; i >= 0 && nMetaSrcs < 16; i--) { const char *s = r_str(vm, i); if (s && s[0]) snprintf(metaSrcs[nMetaSrcs++], sizeof metaSrcs[0], "%s", s); }
     r_popn(vm, argc);
-    /* gather files (dir/*) */
-#ifdef _WIN32
-    char pat[1200];
-    snprintf(pat, sizeof pat, "%s\\*.*", dir);
-    WIN32_FIND_DATAA fd;
-    HANDLE hf = FindFirstFileA(pat, &fd);
-    if (hf == INVALID_HANDLE_VALUE) { r_push_int(vm, 0); return 1; }
-#else
-    DIR *vdp = opendir(dir);
-    if (!vdp) { r_push_int(vm, 0); return 1; }
-    struct dirent *vent;
-#endif
-    /* build files dict json manually to avoid dependency on VM during scan */
-    char *files_json = malloc(65536); int fp = 0, fcap = 65536;
-    char *b64all = malloc(65536); int ballen = 0, bacap = 65536;
-    strcpy(files_json, "\"files\":{");
-    fp = (int)strlen(files_json);
-    int first = 1;
-#ifdef _WIN32
-    do {
-#else
-    while ((vent = readdir(vdp))) {
-#endif
-        const char *fname =
-#ifdef _WIN32
-            fd.cFileName;
-#else
-            vent->d_name;
-#endif
-        if (
-#ifdef _WIN32
-            fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY
-#else
-            vent->d_type == DT_DIR
-#endif
-        ) continue;
-        if (strstr(fname, ".vverse")) continue;
-        char fpath[1300];
-        snprintf(fpath, sizeof fpath, "%s/%s", dir, fname);
-        int blen = 0;
-        char *raw = read_file_buf(fpath, &blen);
-        if (!raw) continue;
-        char hex[65];
-        sha256_hex(raw, (size_t)blen, hex);
-        int refed = 0;
-        if (refMode && cache_has(hex)) refed = 1;  /* already in shared cache: emit ref:// */
-        if (!refed) cache_put(hex, (unsigned char*)raw, blen);  /* fill asset cache */
-        int need = (int)strlen(fname) + (int)strlen(hex) + 48;
-        while (fp + need > fcap) {
-            fcap *= 2; files_json = realloc(files_json, (size_t)fcap);
-        }
-        if (refed) {
-            int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"ref://sha256:%s\"", first ? "" : ",", fname, hex);
-            fp += n;
-        } else {
-            char *b64 = b64_encode((unsigned char*)raw, blen);
-            need = (int)strlen(fname) + (int)strlen(b64) + 24;
-            while (fp + need > fcap) {
-                fcap *= 2; files_json = realloc(files_json, (size_t)fcap);
-            }
-            int n = snprintf(files_json + fp, (size_t)(fcap - fp), "%s\"%s\":\"%s\"", first ? "" : ",", fname, b64);
-            fp += n;
-            size_t bl = strlen(b64);
-            while (ballen + (int)bl + 1 > bacap) {
-                bacap *= 2; b64all = realloc(b64all, (size_t)bacap);
-            }
-            memcpy(b64all + ballen, b64, bl); ballen += (int)bl;
-            free(b64);
-        }
-        first = 0;
-        free(raw);
-#ifdef _WIN32
-    } while (FindNextFileA(hf, &fd));
-    FindClose(hf);
-#else
+    char err[512];
+    err[0] = 0;
+    if (vverse_pack(dir, out, NULL, err, sizeof err) != 0) {
+        fprintf(stderr, "[verse_pack] %s: %s\n", dir, err[0] ? err : "pack failed");
+        r_push_str(vm, _strdup(""));
+    } else {
+        r_push_str(vm, _strdup(out));
     }
-    closedir(vdp);
-#endif
-    if (fp + 8 > fcap) { fcap += 16; files_json = realloc(files_json, (size_t)fcap); }
-    strcpy(files_json + fp, "}"); fp += 2;
-
-    /* 12.x ed25519 signing (publisher identity) */
-    char pubhex[65] = "", sighex[129] = "";
-    if (identity_pubkey(pubhex)) {
-        int slen = 0;
-        char *seed = read_file_buf(identity_seed_path(), &slen);
-        if (seed && slen >= 64) {
-            unsigned char seedb[32], sigb[64];
-            for (int si = 0; si < 32; si++) {
-                int hi = seed[si*2] >= 97 ? seed[si*2]-97+10 : seed[si*2]-48;
-                int lo = seed[si*2+1] >= 97 ? seed[si*2+1]-97+10 : seed[si*2+1]-48;
-                seedb[si] = (unsigned char)((hi << 4) | lo);
-            }
-            
-ed25519_sign(seedb, (const unsigned char*)b64all, (size_t)ballen, sigb);
-            static const char *hx = "0123456789abcdef";
-            for (int si = 0; si < 64; si++) { sighex[si*2] = hx[sigb[si] >> 4]; sighex[si*2+1] = hx[sigb[si] & 15]; }
-            
-sighex[128] = 0;
-        }
-        free(seed);
-    }
-
-    /* assemble meta json from values captured before popn */
-    char metaJson[4096] = "";
-    int mj = 0;
-    mj += snprintf(metaJson + mj, sizeof metaJson - mj, ",\"version\":\"%s\"", metaVer);
-    if (sighex[0]) {
-        mj += snprintf(metaJson + mj, sizeof metaJson - mj, ",\"publisher\":\"%s\",\"signature\":\"%s\"", pubhex, sighex);
-    }
-    if (metaMin[0]) mj += snprintf(metaJson + mj, sizeof metaJson - mj, ",\"min_version\":\"%s\"", metaMin);
-    if (nMetaSrcs > 0) {
-        mj += snprintf(metaJson + mj, sizeof metaJson - mj, ",\"sources\":[");
-        for (int i = 0; i < nMetaSrcs; i++) mj += snprintf(metaJson + mj, sizeof metaJson - mj, "%s\"%s\"", i == 0 ? "" : ",", metaSrcs[i]);
-        mj += snprintf(metaJson + mj, sizeof metaJson - mj, "]");
-    }
-
-    /* assemble package json (hash = crc32, sha256 = strong digest of embedded b64s) */
-    unsigned int crc = crc32_buf((unsigned char*)b64all, ballen);
-    char sha256s[65];
-    sha256_hex(b64all, (size_t)ballen, sha256s);
-    free(b64all);
-    char crcbuf[16]; snprintf(crcbuf, sizeof crcbuf, "%08x", crc);
-    int pkgcap = fcap + 1024 + (int)strlen(metaJson) + 64;
-    char *pkg = malloc(pkgcap);
-    char idbuf[600];
-    snprintf(idbuf, sizeof idbuf, "%s", strrchr(dir, '/') ? strrchr(dir, '/') + 1 : (strrchr(dir, '\\') ? strrchr(dir, '\\') + 1 : dir));
-    int pn = snprintf(pkg, pkgcap, "{\"id\":\"%s\"%s,\"main\":\"main.im\",%s,\"hash\":\"%s\",\"sha256\":\"%s\"}",
-                      idbuf, metaJson, files_json, crcbuf, sha256s);
-    while (pn >= pkgcap) {
-        pkgcap *= 2;
-        pkg = realloc(pkg, pkgcap);
-        pn = snprintf(pkg, pkgcap, "{\"id\":\"%s\"%s,\"main\":\"main.im\",%s,\"hash\":\"%s\",\"sha256\":\"%s\"}",
-                      idbuf, metaJson, files_json, crcbuf, sha256s);
-    }
-    free(files_json);
-
-    FILE *f = fopen(out, "wb");
-    if (f) { fwrite(pkg, 1, strlen(pkg), f); fclose(f); }
-    free(pkg);
-    if (f) { r_push_str(vm, _strdup(out)); }
-    else { r_push_str(vm, _strdup("")); }
     free(out);
     free(dir);
     return 1;
