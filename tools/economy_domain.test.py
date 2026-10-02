@@ -42,7 +42,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import reserve_port as free_port, wait_http_ping  # noqa: E402
+from testports import distinct_ports, wait_http_ping  # noqa: E402
 
 
 def wait_port(port, timeout=10.0):
@@ -95,11 +95,14 @@ def main():
         root = Path(td)
         home = root / "home"
         home.mkdir()
-        hub_port = free_port()
+        # Held simultaneously: a bare free_port() is TOCTOU, and under
+        # `ctest -j12` another suite can claim the same number in the gap,
+        # making the engine's bind fail with EADDRINUSE.
+        hub_port, hub_tcp_port = distinct_ports(2)
         hub_script = root / "hub.im"
         hub_script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
         env = dict(os.environ, INIMERSE_HUB_DIR=str(root / "universe"))
-        hub = subprocess.Popen([str(engine), "--headless", "--port", str(free_port()),
+        hub = subprocess.Popen([str(engine), "--headless", "--port", str(hub_tcp_port),
                                 "--http-port", str(hub_port), str(hub_script)],
                                cwd=root, env=env, stdout=subprocess.DEVNULL,
                                stderr=open(root / "hub.log", "w"))

@@ -120,6 +120,10 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | `ctest -j12` 偶发失败（`hub_dist_regression` UDP 超时） | 真因是 `verse_http_start()` **先让 TCP 接受、后绑 UDP**：就绪信号说谎约 150 ms，窗口内的单发数据报永久丢失（UDP 不重传）。已改为**先绑 UDP 再监听 TCP** | [STATUS.md](STATUS.md) §2.5 |
 | `free_port()` 重复分配 | 单发 `free_port()` 是 TOCTOU；改为 `tools/testports.py` 的 `distinct_ports()` / `PortPool`（持有 socket 直到释放） | [../tools/testports.py](../tools/testports.py) |
 | dsh-m 上架（发布部分） | `dsh-inimerse@0.1.0` 已发布，产物与工作副本逐字节一致 | [../tools/dsh-inimerse/marketplace/README.md](../tools/dsh-inimerse/marketplace/README.md) |
+| `closure_probe` 堆损坏 | 探针在 `release(e)` 之后仍把 `e` 当源传给 `copy_slot`；Release 下 `assert` 被 `-DNDEBUG` 编译掉，退化成静默堆破坏（十二路并发 3/720）。**只修探针，引擎不动** | [STATUS.md](STATUS.md) §2.6 |
+| `socket_probe` exit 11 | 发送后只 peek 一次即断言可读；loopback 有负载时字节尚在途中。改为最多 200 次 × 1 ms 轮询（2/480 → 0/480） | [STATUS.md](STATUS.md) §2.7 |
+| hub HTTP 绑定失败静默 | `src/main.c:1013` 只在成功时打印；`errno 98 = EADDRINUSE` 时 hub 半活、调用方等到 10 s 超时。补失败分支响亮报错 | [STATUS.md](STATUS.md) §2.8 |
+| 套件端口跨池重叠 | `distinct_ports()` 的保证只在单次调用内成立（两次调用重叠 5/200；`economy_migration` 内部独立取号撞已持有端口 9/500）。合并为单次调用 | [STATUS.md](STATUS.md) §2.9 |
 
 ## 7. 行尾：`src/mod/gui_mod.c` 的例外
 

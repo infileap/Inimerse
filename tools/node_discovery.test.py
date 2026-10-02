@@ -42,7 +42,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
+from testports import (distinct_ports,  # noqa: E402
                        wait_http_ping)
 
 
@@ -50,8 +50,12 @@ def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
     (root / "hub.im").write_text('say "hub"\nwait 90\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
     if tcp_port is None:
-        # A held allocation, not a bare free_port(): siblings must not
-        # be handed the same number as this hub's listen port.
+        # Reached only if a caller forgets to pass one.  This pool knows
+        # nothing about the HTTP ports the caller holds, so the number can
+        # collide with one of them -- measured 9/500 -- and the engine then
+        # comes up with no HTTP service at all (bind fails EADDRINUSE while
+        # the process stays alive).  Pass a port from the caller's own
+        # distinct_ports() batch instead of relying on this.
         tcp_port = distinct_ports(1)[0]
     proc = subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
                              "--http-port", str(http_port), str(root / "hub.im")],
@@ -146,8 +150,8 @@ def main():
         home.mkdir()
         # hub, fake-directory and hub2 are alive at overlapping times; allocate
         # them together so they are guaranteed distinct.
-        hub_port, fake_port, hub2_port = distinct_ports(3)
-        hub_tcp, hub2_tcp = distinct_ports(2)
+        # One call, not two -- see tools/testports.py on cross-call overlap.
+        hub_port, fake_port, hub2_port, hub_tcp, hub2_tcp = distinct_ports(5)
         hub = start_hub(engine, root, hub_port, root / "universe", hub_tcp)
         try:
             assert wait_port(hub_port), "hub did not start"

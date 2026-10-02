@@ -77,7 +77,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import distinct_ports, reserve_port as free_port  # noqa: E402
+from testports import distinct_ports  # noqa: E402
 from testports import wait_http_ping  # noqa: E402
 
 
@@ -109,13 +109,21 @@ def http_json(port, method, path, payload=None):
     return resp.status, text
 
 
-def start_hub(engine, cwd, script, port, log):
+def start_hub(engine, cwd, script, port, log, listen_port):
+    """Start one hub whose HTTP port is `port` and TCP listen port is `listen_port`.
+
+    Both ports are passed in rather than allocated here.  Allocating the listen
+    port inside this function meant a fresh ``distinct_ports(1)`` call whose pool
+    knew nothing about the HTTP ports the caller already held: measured 9/500
+    for one of six calls to land on a held HTTP port.  When that happens the
+    engine's second bind fails with EADDRINUSE and it comes up with *no HTTP
+    service at all* while the process stays alive -- the exact stderr signature
+    is a printed ``headless: 127.0.0.1:N`` and ``[0]="hub"`` but no ``http api:``
+    line, so every later request hangs until the suite's 10 s readiness budget
+    expires.
+    """
     cwd.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, INIMERSE_HUB_DIR=str(cwd / "universe"))
-    # TCP listen port must be distinct from `port` and from any sibling hub's:
-    # two free_port() calls in one expression can return the same number, which
-    # fails the engine's own headless bind ("headless: bind N failed").
-    listen_port = distinct_ports(1)[0]
     return subprocess.Popen([str(engine), "--headless", "--port", str(listen_port),
                              "--http-port", str(port), str(script)],
                             cwd=str(cwd), env=env, stdout=subprocess.DEVNULL,
@@ -267,16 +275,25 @@ def main():
         hub_script = root / "hub.im"
         hub_script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
 
-        def start(role):
-            port = free_port()
-            proc = start_hub(engine, root / role, hub_script, port, root / f"{role}.log")
+        # Both hubs' ports reserved up front and held together: separate
+        # free_port() calls can return the same number, and the gap before
+        # the child binds is a TOCTOU window another suite can win.
+        # One pool for HTTP *and* listen ports.  Allocating listen ports
+        # separately let one land on a held HTTP port (measured 9/500),
+        # which makes the engine come up with no HTTP service at all.
+        (src_port, tgt_port, bal_port, amt_port, drop_port, ws_port,
+         src_lp, tgt_lp, bal_lp, amt_lp, drop_lp, ws_lp) = distinct_ports(12)
+
+        def start(role, port, listen_port):
+            proc = start_hub(engine, root / role, hub_script, port,
+                             root / f"{role}.log", listen_port)
             hubs.append(proc)
             assert wait_port(port), f"{role} hub did not start"
             return port
 
         try:
-            src_port = start("src")
-            tgt_port = start("tgt")
+            src_port = start("src", src_port, src_lp)
+            tgt_port = start("tgt", tgt_port, tgt_lp)
 
             # ---- source hub: two signed currencies with real history ----
             cid_a, issuer_a = declare_domain_via_script(engine, work, home, src_port, "alpha")
@@ -469,7 +486,7 @@ def main():
             check("(premise) the snapshot-tampered package keeps the exported digests",
                   tbal_pkg["balances_hash"] == pkg_b["balances_hash"]
                   and tbal_pkg["content_hash"] == pkg_b["content_hash"], brief(tampered_balance))
-            bal_port = start("bal")
+            bal_port = start("bal", bal_port, bal_lp)
             status, body = post_raw(bal_port, "/economy/import", tampered_balance)
             print(f"  [req ] balance snapshot tamper: balances[0].amount="
                   f"{pkg_b['balances'][0]['amount']} -> {tbal_pkg['balances'][0]['amount']}, "
@@ -502,7 +519,7 @@ def main():
                   "and content_hash",
                   t_amt_pkg["ledger_tail"] == pkg_b["ledger_tail"]
                   and t_amt_pkg["content_hash"] == pkg_b["content_hash"], brief(t_amt))
-            amt_port = start("amt")
+            amt_port = start("amt", amt_port, amt_lp)
             status, body = post_raw(amt_port, "/economy/import", t_amt)
             print(f"  [req ] ledger entry tamper: ledger[0].amount="
                   f"{pkg_b['ledger'][0]['amount']} -> {t_amt_pkg['ledger'][0]['amount']}, "
@@ -519,7 +536,7 @@ def main():
             check("(premise) the edited package really lost its first ledger entry",
                   len(t_drop_pkg["ledger"]) == len(pkg_b["ledger"]) - 1
                   and t_drop_pkg["ledger_tail"] == pkg_b["ledger_tail"], brief(t_drop))
-            drop_port = start("drop")
+            drop_port = start("drop", drop_port, drop_lp)
             status, body = post_raw(drop_port, "/economy/import", t_drop)
             print(f"  [req ] ledger head deletion: ledger entries "
                   f"{len(pkg_b['ledger'])} -> {len(t_drop_pkg['ledger'])}, "
@@ -533,7 +550,7 @@ def main():
             assert '"ledger":[' in raw_b
             spaced = raw_b.replace('"ledger":[', '"ledger": [', 1)
             assert spaced != raw_b and json.loads(spaced) == pkg_b
-            ws_port = start("ws")
+            ws_port = start("ws", ws_port, ws_lp)
             status, body = post_raw(ws_port, "/economy/import", spaced)
             print(f"  [req ] re-encoding: '\\\"ledger\\\":[' -> '\\\"ledger\\\": [' "
                   f"({len(spaced) - len(raw_b):+d} byte), JSON-equivalent to the export")

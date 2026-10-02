@@ -40,7 +40,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
+from testports import (distinct_ports,  # noqa: E402
                        wait_http_ping)
 
 
@@ -54,8 +54,12 @@ def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
     (root / f"hub{http_port}.im").write_text('say "hub"\nwait 120\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
     if tcp_port is None:
-        # A held allocation, not a bare free_port(): siblings must not
-        # be handed the same number as this hub's listen port.
+        # Reached only if a caller forgets to pass one.  This pool knows
+        # nothing about the HTTP ports the caller holds, so the number can
+        # collide with one of them -- measured 9/500 -- and the engine then
+        # comes up with no HTTP service at all (bind fails EADDRINUSE while
+        # the process stays alive).  Pass a port from the caller's own
+        # distinct_ports() batch instead of relying on this.
         tcp_port = distinct_ports(1)[0]
     return subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
                              "--http-port", str(http_port), str(root / f"hub{http_port}.im")],
@@ -104,8 +108,11 @@ def main():
         # All four at once, held together, so no two of them can be the same
         # number.  (Three separate free_port() calls could collide; and the
         # dead port must never be derived by +1, which could land on a real hub.)
-        dir_port, node_a_port, node_b_port, dead_port = distinct_ports(4)
-        tcp_ports = distinct_ports(3)
+        # One call, not two: separate calls build separate pools, and the
+        # second can be handed a number the first already returned (measured
+        # 5/200 at count 6).  An overlap means a hub binds a port that is
+        # already taken, fails with EADDRINUSE, and never listens.
+        dir_port, node_a_port, node_b_port, dead_port, *tcp_ports = distinct_ports(7)
         hubs = [start_hub(engine, root, p, root / f"universe{p}", tcp)
                 for p, tcp in zip((dir_port, node_a_port, node_b_port), tcp_ports)]
         try:

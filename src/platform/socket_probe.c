@@ -1,6 +1,7 @@
 #include "socket.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 int main(void) {
     if (im_socket_init() != 0) return 2;
@@ -16,7 +17,18 @@ int main(void) {
     if (!accepted) return 6;
     if (im_socket_set_nonblocking(accepted, 0) != 0) return 16;
     const char *msg = "ping"; if (im_socket_send(client, msg, 4) != 4) return 7;
-    if (im_socket_peek(accepted) <= 0) return 11;
+    /* The send and the arrival of those bytes on the accepted socket are two
+     * separate events; loopback is fast but not instantaneous, and under a
+     * loaded machine (ctest -j12) the bytes can still be in flight when we
+     * look.  Reading 0 here is not a defect -- poll briefly, the same way the
+     * loop just below already does for the payload itself.  Peeking once made
+     * this probe fail roughly 2 in 480 runs with exit 11. */
+    int peeked = 0;
+    for (int i = 0; i < 200 && peeked <= 0; ++i) {
+        peeked = im_socket_peek(accepted);
+        if (peeked <= 0) { struct timespec ts = {0, 1000000}; nanosleep(&ts, NULL); }
+    }
+    if (peeked <= 0) return 11;
     char buf[8] = {0}; int received = 0;
     for (int i = 0; i < 20 && received < 4; ++i) {
         int n = im_socket_recv(accepted, buf + received, sizeof(buf) - (size_t)received);

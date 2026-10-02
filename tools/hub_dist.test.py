@@ -37,7 +37,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
+from testports import (distinct_ports,  # noqa: E402
                        wait_http_ping)
 
 

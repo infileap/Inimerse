@@ -38,8 +38,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import (distinct_ports, reserve_port as free_port,  # noqa: E402
-                       wait_http_ping)
+from testports import (distinct_ports, wait_http_ping)  # noqa: E402
 
 
 def wait_port(port, timeout=10.0):
@@ -53,7 +52,13 @@ def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
     script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
     if tcp_port is None:
-        tcp_port = free_port()
+        # Reached only if a caller forgets to pass one.  This pool knows
+        # nothing about the HTTP ports the caller holds, so the number can
+        # collide with one of them -- measured 9/500 -- and the engine then
+        # comes up with no HTTP service at all (bind fails EADDRINUSE while
+        # the process stays alive).  Pass a port from the caller's own
+        # distinct_ports() batch instead of relying on this.
+        tcp_port = distinct_ports(1)[0]
     return subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
                              "--http-port", str(http_port), str(script)],
                             cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -101,8 +106,8 @@ def main():
         home = root / "home"
         home.mkdir()
         # Held simultaneously so the three hubs cannot be handed one port.
-        dir_port, node_a_port, node_b_port = distinct_ports(3)
-        tcp_ports = distinct_ports(3)
+        # One call, not two -- see tools/testports.py on cross-call overlap.
+        dir_port, node_a_port, node_b_port, *tcp_ports = distinct_ports(6)
         hubs = [start_hub(engine, root, p, root / f"u{p}", tcp)
                 for p, tcp in zip((dir_port, node_a_port, node_b_port), tcp_ports)]
         try:

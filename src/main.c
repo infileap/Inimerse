@@ -1010,7 +1010,14 @@ if (argc == 1) {
             }
             if (headless_http_port > 0) {
                 extern int verse_http_start(int);
+                /* Say so when this fails.  Staying quiet produced a hub that
+                 * prints "headless:" and runs its script but never serves
+                 * HTTP: every later request just hangs until the caller's
+                 * timeout, and the cause (usually EADDRINUSE from a port that
+                 * was free a moment ago) was invisible.  A hub without its
+                 * HTTP API is not a working hub, so this must be loud. */
                 if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%d\n", headless_http_port);
+                else fprintf(stderr, "http api: bind %d failed (port in use?)\n", headless_http_port);
             }
         }
         int rc_gui = load_and_run(&vm, read_path);

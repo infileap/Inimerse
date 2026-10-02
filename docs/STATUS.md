@@ -38,7 +38,8 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **85 / 85 真通过**，无 `WILL_FAIL` 记账项；并行（`-j$(nproc)`）下连续 3 轮全绿，`-j12` 高争用场景（§2.5）单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **85 / 85 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 高争用稳定性 | `-j12` 连续 80 轮**失败 1 轮**（§2.9 残余的端口窗口；改前失败更密，见 §2.6–§2.9） | `for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 81 个 `.c` + 41 个 `.h`，合计 36,836 行（`.c` 单独 35,062 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
@@ -161,6 +162,106 @@ TCP 接受后再发一个数据报，等到 UDP 应答需要 +0.152s        # -P
 **教训**：`wait_port()` 只证明「有人在该端口 accept」。当同一端口上还有第二种传输时，
 不能用它当整体就绪判据——要么让第二种传输先就绪（本轮做法），要么给套件一个真正覆盖两种传输的
 就绪探针。这条与 §2.4 的教训同源：**不确定性失败先怀疑产品代码，别先怀疑测试**。
+
+### 2.6 `closure_probe` 的堆损坏：探针自身在 release 之后读已释放对象（**已修**）
+
+**症状**：`ctest -j12` 约每 60 轮出现 1 次 `closure_probe (Subprocess aborted)`，报
+`free(): invalid size` / `corrupted size vs. prev_size`，偶发 segfault。单独跑 **2000 次全过**，
+十二路并发跑 **3/720 失败**。
+
+**根因（ASan 给出确切栈）**：
+
+```
+ERROR: AddressSanitizer: heap-use-after-free
+READ of size 8 ... thread T0
+    #0 im_closure_env_get    src/vm/closure.c:69
+    #1 im_closure_env_copy_slot  src/vm/closure.c:60
+    #2 main                  src/vm/closure_probe.c:50
+freed by thread T0 here:
+    #1 im_closure_env_release   src/vm/closure.c:55
+previously allocated by thread T0 here:
+    #1 im_closure_env_new       src/vm/closure.c:37
+```
+
+`src/vm/closure_probe.c` 原第 38 行是 `im_closure_env_retain(e); im_closure_env_release(e); im_closure_env_release(e);`
+—— `e` 出生时 `refs == 1`（`:22` 已断言），这一行 retain 到 2、release 到 1、再 release 到 **0 ⇒ 就地释放**。
+而后面 `:50` 的 `assert(!im_closure_env_copy_slot(empty, 0, e, 0))` 仍把 `e` 当源传进去，读的就是那块已释放内存。
+
+**为什么时隐时现**：`build/CMakeCache.txt:25` `CMAKE_BUILD_TYPE:STRING=Release`，而
+`CMAKE_C_FLAGS_RELEASE:STRING=-O3 -DNDEBUG` —— **Release 下 `assert` 被编译掉**，那条断言不再执行，
+use-after-free 退化成堆破坏，只在并发把内存布局扰动到特定形状时才炸。
+
+**被证伪的假设**：我最初怀疑 `im_closure_env_retain` / `im_closure_env_release` 引用计数非原子（两条线程各
+10000 次并发 retain/release）。**这是错的**：`src/vm/closure.c:8` 与 `:11` 用的就是 `atomic_size_t refs`，
+`retain`/`release` 走 `atomic_fetch_add/sub_explicit`，无数据竞争。
+
+**修法**：只修探针，引擎代码零改动（按用户裁定）。`e` 的所有使用移到最终 release 之前；
+`:50` 的空目标断言改用一个**活的**源 env（新增 `src`），并补一条「目标槽位越界也必须拒绝」的断言；
+最终那次 release 成为对 `e` 的最后一次触碰。修后：ASan **0/480**（改前第 1 轮即触发）、
+Release 十二路并发 **0/720**（改前 3/720）。
+
+**教训**：`assert` 在 Release 下不存在，所以**探针不能把唯一的正确性检查放在 `assert` 里**——
+一旦断言被编译掉，错误就从「断言失败」变成「静默堆破坏」。另：**单独跑全过不等于没缺陷**，
+并发压力与不同的 `-O` 级别才是暴露内存错误的条件。
+
+### 2.7 `socket_probe` 的 exit 11：发出去到对方可读之间的竞态（**已修**）
+
+**症状**：`ctest -j12` 偶发 `socket_probe (Failed)`，实测退出码 **11**（`src/platform/socket_probe.c:19`
+的 `if (im_socket_peek(accepted) <= 0) return 11;`），十二路并发 **2/480**。
+
+**根因**：探针在客户端 `im_socket_send(client, "ping", 4)` 之后**只 peek 一次**就断言有数据可读。
+发送与「字节到达并进入已接受套接字的接收队列」是两个独立事件，loopback 快但不瞬时；机器有负载时
+字节可能还在路上。**读到 0 不是缺陷**——同一函数下面那段读 payload 的循环本来就是轮询的。
+
+**修法**：把单次 peek 改成最多 200 次、每次 1 ms 的轮询（与下方循环同样的处理方式），
+`src/platform/socket_probe.c` 增 `#include <time.h>`。修后十二路并发 **0/480**（改前 2/480）。
+
+### 2.8 hub 的 HTTP 绑定失败曾完全静默（**已修**）
+
+**症状**：`ctest -j12` 下 hub 偶发「永不就绪」，进程存活、脚本跑完（stdout 有 `hub`、stderr 有
+`headless: 127.0.0.1:N` 与 `[0]="hub"`），但**没有 `http api: 127.0.0.1:N` 这一行**，
+随后调用方等到 10 s 超时才失败。
+
+**根因（临时插桩取证）**：`src/main.c:1012-1013` 原来只在成功时打印，失败时什么都不说：
+
+```c
+if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%d\n", headless_http_port);
+```
+
+插桩后 200 轮 × 6 hubs = 1200 次启动里 8 次 never-ready，每次 stderr 都是
+`[hs] listen -> (nil) errno=98` ⇒ **errno 98 = EADDRINUSE**：TCP bind 失败，端口已被别的进程占用。
+直接实验确认：故意让 `--port` 与 `--http-port` 取同一端口，得到与野外**逐字一致**的 stderr 签名
+（有 `headless:`、无 `http api:`、`wait_http_ping` 为 False）。
+
+**修法**：`src/main.c` 补上失败分支，打印 `http api: bind <port> failed (port in use?)`。
+一个没有 HTTP API 的 hub 不是能用的 hub，这必须是响亮的失败而不是静默的半活状态。
+（插桩已完全移除，`grep INIMERSE_UDP_DEBUG` 与 `[hs]` 均为 0。）
+
+### 2.9 测试套件的端口分配：跨池重叠与 release 到 bind 的窗口（**已修**）
+
+**两层缺陷，都已修**：
+
+1. **`free_port()` 是 TOCTOU**（`tools/testports.py:49-56`）：`bind(0)` 取号后立刻关闭，返回瞬间即释放。
+   实测单次连续分配 20 个时约 **23/300** 批次出现重复。全部 hub 端口点已改用 `distinct_ports`。
+2. **`distinct_ports()` 的保证只在单次调用内成立**（`tools/testports.py:214`）：两次独立调用各建一个池，
+   第二次可以拿到第一次已归还的号码——实测 `distinct_ports(6)` 两次重叠 **5/200**、`distinct_ports(3)`
+   两次重叠 **5/500**。更隐蔽的是套件内部：`tools/economy_migration.test.py` 的 `start_hub` 原来自己
+   `listen_port = distinct_ports(1)[0]`，这个新池**看不到调用方已持有的 6 个 HTTP 端口**，
+   实测 **9/500** 会撞上。
+
+**修法**：把「hubs 一次、tcp 再一次」合并为**单次调用**（`tools/lease_handoff.test.py:111`
+`distinct_ports(7)`、`tools/node_discovery.test.py:150` `distinct_ports(5)`、
+`tools/reconnect_generation.test.py:104` `distinct_ports(6)`）；`economy_migration` 改为
+一次 `distinct_ports(12)`（6 HTTP + 6 listen），`start_hub(engine, cwd, script, port, log, listen_port)`
+两个端口都由调用方传入。三个套件的 `start_hub` 回退分支加了警告注释（该池可能与调用方持有的端口相撞）。
+
+**验证**：12 端口单池的 200 轮 × 6 hubs 就绪实验 **6/1200 → 0/1200** never-ready。
+
+**残余（诚实记录）**：端口在「池归还」到「子进程 bind」之间仍有一个窗口，**另一个套件的池**可以在
+这个窗口里抢到同一个号码。这是 `distinct_ports` 机制固有的，实测约 **1 轮 / 80 轮**全量 `ctest -j12`
+会因此失败。彻底的修法有两种：让引擎支持 `--http-port 0` 由内核分配并把真实端口打到 stderr（当前
+`verse_http_start` 拒绝 `port < 1`，故不支持），或让套件在就绪失败时用新端口重试。**两者都尚未实施**，
+当前依靠 §2.8 的响亮报错把这类失败从「神秘超时」变成「一行可读原因」。
 
 ---
 

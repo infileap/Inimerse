@@ -35,7 +35,6 @@ int main(void) {
     im_closure_env_clear(e);
     assert(im_closure_env_get(e, 0)->type == VAL_NIL);
     assert(!im_closure_env_set(e, 2, &v) && !im_closure_env_get(e, 2));
-    im_closure_env_retain(e); im_closure_env_release(e); im_closure_env_release(e);
     ImClosureEnv *captured = im_closure_env_new(1);
     ImClosureFunction *fn = im_closure_function_new(7, captured);
     assert(fn && im_closure_function_index(fn) == 7 && im_closure_function_env(fn) == captured);
@@ -45,11 +44,25 @@ int main(void) {
     im_closure_function_retain(fn); im_closure_function_release(fn); im_closure_function_release(fn);
     assert(!im_closure_function_new(-1, NULL));
     assert(!im_closure_env_clone(NULL));
+    /* An empty destination must refuse the copy.  The source here is a live
+     * env, not `e`: `e` is freed by the balance check below, and passing a
+     * freed env as the source meant this assertion read freed memory.  Under
+     * Release (-DNDEBUG) the assertion is compiled out and the stale pointer
+     * instead corrupted the heap -- "free(): invalid size" / "corrupted size
+     * vs. prev_size", roughly 3 in 720 runs at twelve-way parallelism.  The
+     * real fix is that `e` must not be released until every use is done. */
     ImClosureEnv *empty = im_closure_env_new(0);
+    ImClosureEnv *src = im_closure_env_new(1);
     assert(empty && im_closure_env_size(empty) == 0);
-    assert(!im_closure_env_copy_slot(empty, 0, e, 0));
+    assert(src && im_closure_env_copy_slot(empty, 9, src, 0) == 0);
+    assert(src && !im_closure_env_copy_slot(empty, 0, src, 0));
     im_closure_env_clear(empty);
     im_closure_env_release(empty);
+    im_closure_env_release(src);
+    /* Balanced retain/release must leave the count exactly where it started,
+     * and the last release must actually free -- so this is the final use of
+     * `e`, and it is deliberately the last reference. */
+    im_closure_env_retain(e); im_closure_env_release(e); im_closure_env_release(e);
     ImClosureEnv *shared = im_closure_env_new(1);
     void *t1 = shared ? im_thread_start(churn, shared) : NULL;
     void *t2 = shared ? im_thread_start(churn, shared) : NULL;

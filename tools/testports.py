@@ -221,6 +221,15 @@ def distinct_ports(count: int, host: str = _LOOPBACK) -> list[int]:
     where the old ``free_port(), free_port(), free_port()`` could hand back the
     same number twice.  Every number here was held simultaneously, so they are
     guaranteed different.
+
+    The guarantee holds *within one call only*.  Two separate calls each build
+    their own pool, and the second may be handed a number the first already
+    returned -- measured 5/200 at count 6 and 5/500 at count 3, because the
+    first call's ports have already been released by the time the second
+    starts.  When a suite needs several ports for sibling children, ask for
+    them all at once (``distinct_ports(n_hubs + n_tcp)``) rather than twice;
+    an overlap means two hubs are given the same port and the second one's
+    bind fails with EADDRINUSE while the process stays up and never listens.
     """
     with PortPool(host) as pool:
         return [pool.take() for _ in range(count)]
