@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-01 实测）
+## 2. 当前基线（2026-10-02 更新测试计数到 101；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **95 / 95 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **101 / 101 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 95 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1 + `.im` 打包往返 1，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11） | — |
+| 测试注册 | `CMakeLists.txt` 中 **101** 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1 + `.im` 打包往返 1 + 后缀条件跨行 1 + 自举可解析 1 + 调用实参破坏 2 = **101**，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11/§10.17） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 97
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 101
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -1113,3 +1113,35 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 **遗留。** ① **字符串没做**（只做了数组）：打印字符串要给 PAL 加第 6 个 `env` 导入，而宿主契约是「未提供的导入一律拒绝」，加导入等于改宿主契约 ⇒ 维持编译期显式拒绝 `strings are not supported by the wasm MVP subset`。这是路线 A 唯一未做的子项。② 只存在于**临时槽**的数组不会被回收（**有界泄漏**，不是悬垂指针；具名槽回收确定）。③ `a[i] = v` 的越界写是**显式分歧**（解释器自动增长，wasm 拒绝 `array_index_out_of_range`），`say <数组>` 同理（`array_op_unsupported`）。④ `docs/WASM.md` 与头注释都写着 `22 equivalence cases` 这一行，**将来加例要同步两处**。
 
 **连带修正。** ① `RELEASE_0.5.0.md` 的声明行号**此前全部漂移**（更正横幅插在文件顶部所致）：SIMD/GC 实为 `:47`（旧记 38）、Python 桥 `:35`（旧记 26）、Java 桥 `:36`（旧记 27）、发布产物 `:132`/`:133`/`:139`（旧记 123–130）；AOT 那条 `:52` 是对的。② §3.1 表里「仓库中不存在 `inimerse_extension.c` / `InimerseBridge.java` / `.whl` / `.jar`」**三条已被 `xlang-bridge`（`36bf4e9`）推翻**，已一并更正 —— 留着一句「仓库中不存在」指着一个已经存在的文件，正是本仓库的口径纪律要防的事。
+
+### 10.17 后缀 `if`/`unless` 的跨行歧义，与 VM 返回时恢复 `sp` 读错帧槽（`37d4ea6` + `df82cf6`）
+
+**来源。** 为 `selfhost-0.5-record` 验数时，协调者发现 `./build/inimerse selfhost/compiler.im <任意目标>` 与文档记载的 `selfhost/compiler.im --dump selfhost/lexer.im` **全部 exit 1** —— **整个自举工具链自 2026-09-06 起就不可解析**，而门禁一直是绿的。顺着往下挖出第二条缺陷。两条都属同一类：**退出码与「跑得动」完全掩盖了错误**。
+
+**缺陷 A —— 后缀 `if`/`unless` 跨行贪婪匹配（`37d4ea6`）。** `src/parser/parser.c` 的两处后缀条件调用点（原 `:1650` 表达式语句后、`:1689` `say` 后）**不检查换行**，把下一行 `if cond {` 的 `if` 当后缀条件吃掉；剩下的 `{ … }` 落到语句位置被当**表达式**解析成字典字面量，在 `consume(p, TOK_COLON, "':'")` 上炸掉。**这是回归**：后缀 `if` 由 `a21915b`、`say` 上的后缀由 `fe65f6d` 引入，两者都**不是 0.2.0 发布点 `8248e08` 的祖先**，而该模式在 0.2.0 时已存在于 `selfhost/compiler.im` 与 `scripts/array_test.im`。
+
+**消歧规则＝后缀 `if`/`unless` 必须与宿主语句同行。** 实现三处：`src/parser/parser.h` 的 `Parser` 新增 `int prevLine;`；`src/parser/parser.c` 的 `advance()` 改为 `p->prevLine = p->lex.line;` 再取下一个 token；新增 `static int postfix_cond_here(Parser *p)`（`return p->lex.line == p->prevLine;`），两处调用点改用它。**为什么选同行规则而不是「`if` 后跟条件再跟 `{` 优先当块语句」**：`lexer_next()` 先 `skip_whitespace()` 再取词（`src/lexer/lexer.c:100-101`），所以 `p->lex.line` 就是当前 token 起始行、`p->prevLine` 是上一枚已消费 token 的行，判据是**已有信息**、零额外前瞻；而块语句候选要保存/恢复 `Lexer` 再解析一遍条件表达式，既重复解析又会把首次尝试的 `parse_error_expected()` 打到 stderr。**残留风险**：规则依赖「同一行」，所以**排版（换行）会改变语义**。
+
+**影响面与验收。** 主树（排除 `.worktrees/`）**19 处**，`selfhost/` 占 15 处（`compiler.im`/`eval.im`/`lexer.im`/`parser.im` 全中），另有 `scripts/array_test.im:30`、`examples/scripts/block_edit.im:232`、`projects/demo/main.im:330`。进树回归 `vtest/postfix_condition_multiline_v05.im` + CTest `postfix_condition_multiline_runtime`，**带负控**（`git checkout HEAD -- src/parser/parser.c` 后重编 → `Failed  Required regular expression not found`；`git apply` 回补丁后 `Passed`，`cmp` 证明逐字节相同）；另有 CTest `selfhost_toolchain_parses` 跑 `compiler.im --dump tests/_mini.im` 并断言输出含 `main:`。**方法论纠正**：`--lint` **不能**当解析判据 —— `src/main.c:1252-1257` 的 `lint_check()` 走独立通道并**恒返回 0**，实测 `x = = 5` 的 `--lint` exit 0 而真跑 exit 1。
+
+**缺陷 B —— VM 返回时恢复 `sp` 读错帧槽（`df82cf6`）。** 修好解析后自举 codegen 只发一条 `OP_HALT`，再往下挖发现引擎把「实参里嵌一个用户函数调用」编错了。**判定在 VM 调用约定，不在代码生成**：临时 `dbg_fdis` 反汇编证明 `m2` 的函数体在「单独成文件」与「与 m1 同文件」两种形态下**字节码逐条相同**，只有函数下标不同。**真因**：`frame_sp` 写入用**本帧下标**（`L_CALL_FUNC` 在 `frame_count++` 之后写 `frame_sp[frame_count-1]`），读出却**高了一格**（`L_RETURN` 在 `frame_count--` **之前**读 `frame_sp[frame_count]`）；`frame_code`/`frame_ip`/`frame_base`/`frame_res`/`frame_env` 五个字段都是本帧下标读写，**只有 `frame_sp` 是异类**。`INIM_TRACE_SP` 实证：`[call f0] fc=2 WRITE frame_sp[1]=0` / `[ret] fc=2 READ frame_sp[2]=0`。读到陈旧值 ⇒ 返回时 `t->sp` 被重置成更深一层调用留下的旧值，**静默覆盖挂起的操作数**。**修复一行**（`src/vm/vm.c:3692`）：`t->sp = t->frame_sp[t->frame_count];` → `t->sp = t->frame_sp[t->frame_count - 1];`。
+
+**原判断被推翻。** 「取决于编译单元里还有什么」是**假象** —— 同一文件内连续调 `m2` 得 `call1=2 call2=1 call3=1`，**只有第一次调用是对的**，加 `m1` 只是让 `m2` 不再是第一次。⇒ **受影响面比 `push` 宽得多：凡是「操作数栈非空时发生的用户函数调用」都会中招**。扫描 318 个 `.im`：**21 个文件、44 个 (外层,内层) 调用点**（`selfhost/parser.im` 10、`selfhost/eval.im` 4、`selfhost/compiler.im` 3、`workbench.im` 4、`projects/demo/main.im` 3…）。两条进树回归 `call_arg_clobber_alone_runtime`（负控对照组，在 main 上本来就对）+ `call_arg_clobber_shared_runtime`（**在 main 上必失败**，`***Failed  Error regular expression found in output. Regex=[m2=1|dk=0|nest=0|rep=1,1,1]`），用 `FAIL_REGULAR_EXPRESSION` 断言**数值**——退出码在两种形态下都是 0。
+
+**协调者独立复跑（不采信自述）。** main `d923ec3` 的既有 `build/`：`callarg-shared-ok m1=1 m2=1 m3=2 m4=0 m5=0 dk=0 nest=1 rep=1,1,1`；`df82cf6` 分支工作树重建后：`callarg-inner=1` / `callarg-shared-ok m1=1 m2=2 m3=2 m4=1 m5=1 dk=1 nest=1 rep=2,2,2`；`git diff d923ec3..df82cf6 -- src/vm/vm.c` 确认净改动**恰好一行**。
+
+**门禁计数。** `EXP_CTEST` **99 → 101**（`tools/gate.sh:49`），BOARD §3 与本文件 §2/§2.1 同步。**作业单在这里算错了**：它写「99 → 100」，但同一段点名了**两个**测试名 ⇒ 加两条就是 101；队友第一次门禁照 100 跑，红在 `gate: ctest did not report '0 tests failed out of 100'.`。`CMakeLists.txt` 的 `add_test(` 实测 **101** 个。**这正是本仓库要把用例数当断言的原因**：两个文档检查器都不校验这个数字，门禁可以在文档写着 95、97、99 的状态下全绿。
+
+**顺带解除的阻塞。** `./build/inimerse selfhost/compiler.im --dump test1.im` 从 1 条 `OP_HALT` 变成 **120 条指令**；但自举路径仍**一行程序输出都没有**（C 路径打 11 行），两者 exit 均为 0 ⇒ `selfhost-codegen-empty` 的阻塞已解除，但它要查的是**第二层**原因。
+
+### 10.18 全量 `.im` 语法参考，以及一份冗余/危险语法清单（`docs/SYNTAX.md`）
+
+**起因。** 自举逃逸工作开始前需要一份「当前实现究竟接受什么语法」的权威清单 —— 此前 `docs/` 下**没有任何现行语法参考**（`docs/archive/SYNTAX_SUGAR.md` 是 2026-10-01 归档的历史件，只作参考）。**它同时是一次验收工具**：`engine-push-call-arg-miscompile`（§10.17）就是在这份文档 §7.1 的 D1 里被记为最高优先级危险语法，而该文档是**先于**修复完成的。
+
+**取证纪律。** 每条语法都给出**源码行号**（`路径:行号`）或**可复现的实测命令与输出**，证不出的不写。真相来源：关键字表 `src/lexer/lexer.c:5-53`、token 枚举 `src/lexer/lexer.h:7-40`、表达式种类 `src/parser/ast.h:41-49`、语句种类 `src/parser/ast.h:84-104`，加上约 40 个探针脚本的实测输出。**逐关键字反查结论**：对 `keywords[]` 每个词 grep 全部 `src/**/*.c|h`，**只有 `TOK_UNKNOWN` 在 lexer 之外零引用** —— 即没有完全死的关键字，但「被引用」≠「有语法」。
+
+**结构。** §0 取证来源表 / §1 词法 / §2 字面量与值 / §3 表达式与优先级（12 级优先级表，由 `parse_expr:720` → `parse_coalesce:687` → `parse_logic_or:678` → `parse_logic_and:669` → `parse_comparison:626` → `parse_add_sub:617` → `parse_mul_div:608` → `parse_unary:596` → `parse_postfix:503` → `parse_primary:183` 的下降链推出）/ §4 语句 / §5 内建函数（447 个 `vm_register_builtin*` 调用点的分布表）/ §6 完整关键字表（八组别名）/ §7 **疑似冗余或危险的语法** / §8 复现方法与回归断言注意事项。
+
+**§7 是重点，共 31 条，每条都有实测输出或源码行号。** 10 条「危险·静默」（不报错但结果错）：D1 `push(list, <用户函数调用>)` 误编译、D2 GUI 动词无 arity/类型检查（`sprite 42` 与 `sprite "x"` 一样「成功」）、D3 类型标注纯装饰（`int x = "hello"` 通过）、D4 参数个数不校验（`h(1,2)`→`1`、`h()`→`nil`，两个方向都不报错）、D5 未声明变量求值为 `nil`、D6 字符串里的 `\0` 截断（`len("a\0b")` = 1）、D7 `(1,2)` 是区间不是元组、D8 `a[1~2]` 是集合区间不是切片、D9 `type` 已注册为内建却是保留字（`type(x)` 是解析错误，唯一途径 `x.type`）、D10 `N`/`Z`/`Z+`/`Z-`/`Float1..9` 被硬编码为集合前缀（`func Z(a,b)` 后 `Z(1,5)` 得到 `set(Z interval)`，函数根本没被调用）。11 条「危险·误导」：M1 `\|>` 与 `>>` 不能混用（两个顺序循环而非统一循环，报错是 `expected ')'`）、M2 `->` 既是 lambda 又是类型转换、M3 命名实参不支持且报错落在别处、M4 保留字可作成员名、M5 `until`/`till` 只在 `do…until`、M6 `..` 不是通用运算符、M7 `show(` 变函数调用、M8 `join` 双重身份、M9 `match` 上下文敏感（`no_infix_match`）、M10 后缀条件的行敏感规则、M11 `--lint` 恒 0。7 条冗余：R1 八组关键字别名、R2 后置 `with` 子句**四段代码不可达**（`src/parser/parser.c:1690`/`:1692`/`:1693`/`:1722` 用 `peek(p).type == TOK_IDENT && sv_eq_cstr(text,"with")` 判断，而 `with` 是 `TOK_WITH`）、R3 `src/parser/parser.c:1286`/`:1287` 是逐字相同的一行、R4 十六进制有两条扫描路径、R5 约 30 个 GUI 关键字没有自己的语法（只有 `parse_gui_stmt` 的「原文当字符串」机制）、R6 `TOK_UNKNOWN` 无人处理、R7 完全没有按位运算符。3 条卫生：H1 14 个受版本控制文件含 U+FFFD（C 注释是损坏的 GBK，`src/mod/gui_mod.c.bak2_20260808_221050` 1485、`mods/debug/debug_mod.c` 619、`src/compiler/bytecode.c` 409…）、H2 上述 `.bak2_` 备份文件被入库、H3 `ai_browser_diag.js` 是唯一**非法 UTF-8** 文件（偏移 478）。
+
+**两条方法论结论（对回归测试有直接影响）。** ①引擎在程序输出前固定打印三行模块装载信息（`[TBP] timeBeginPeriod(1) …`、`[infiverse mod] loaded …`、`[verse_dist mod] VDP loaded …`）与一行调用回显（形如 `[0]="str" [1]="len"`），**任何断言 stdout 的测试都必须容忍这些前缀行**。②**退出码经常区分不出对错** —— D1、D2、D5、M11 都返回 0；`--lint` 尤其不可用作解析谓词（`src/main.c:1252-1257` 的 `lint_check()` 恒返回 0）。
