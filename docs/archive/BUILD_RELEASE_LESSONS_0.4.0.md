@@ -203,7 +203,7 @@ python3 tools/selfhost_bench.py --runs 5
 
 **口径（§67.2 三轴 / §64.2 E 级）：** 本节四项的 `coverage_status = covered`（对象、命令、数字齐备）、`implementation_status = implemented`（当前树可复现）、`evidence_level = E4`（自动化验证：CTest + 基准脚本 + `release_verify`）。但第 1、3 项的**原始 `inim` 前提** `coverage_status = conflicted`——文档假设的对象在本仓库全历史中不存在，已按实际对象重述；**跨版本自举（用 0.4.0 的 `inim` 编译 0.5.0 源码）未发生，不构成 E4，不宣称**。
 
-#### 更正：自举工具链当前**不可解析**（2026-10-02 发现，本文第 1 项不可读作「可用」）
+#### 更正：自举工具链曾**不可解析**（2026-10-02 发现，同日修复；本文第 1 项仍不可读作「自举可用」）
 
 上面前置更正说「自举编译器以源码分发」，这只说明**源码在**，不等于**能跑**。实测：
 
@@ -236,8 +236,33 @@ python3 tools/selfhost_bench.py --runs 5
 
 **测量方法上的教训（值得单独记）：** 最初用 `grep 'Error at line'` 判定失败，结论全错——`src/parser/parser.c:71` 的 `parse_error_expected()` 打印的是**不带行号**的 `Error: expected 'X', but got 'Y' (type Z)`，于是所有走这条路径的失败都被误判为「通过」。**判定编译器行为必须用退出码，不能 grep 报错文本。**
 
-**口径（§67.2 / §64.2）：** 本缺陷的证据级别 **E4**（`./build/inimerse` 的真实退出码 + 最小复现 + 全仓扫描计数 + `git log -S` 定位引入点）。自举工具链的 `implementation_status` 应记作**当前不可运行**：源码齐备但解析不过。本节四项测量**不受影响**（它们测的是宿主 `inimerse` 与基准脚本，不依赖 `selfhost/*.im` 能跑），但**跨版本自举（用旧版编译器编译新版源码）在这条链路修好之前不可能发生**。
+**口径（§67.2 / §64.2）：** 本缺陷的证据级别 **E4**（`./build/inimerse` 的真实退出码 + 最小复现 + 全仓扫描计数 + `git log -S` 定位引入点）。**发现时**自举工具链的 `implementation_status` 记作**不可运行**：源码齐备但解析不过。本节四项测量**不受影响**（它们测的是宿主 `inimerse` 与基准脚本，不依赖 `selfhost/*.im` 能跑），但**跨版本自举（用旧版编译器编译新版源码）在这条链路修好之前不可能发生**。
 
 修复已开 [BOARD.md](../BOARD.md) §5 行 `selfhost-parser-postfix-ambiguity`（写域 `src/parser/parser.c`、`selfhost/`、`docs/`）。
+
+#### 后续：解析回归已修复，但自举产物仍与宿主路径不一致（2026-10-02 同日）
+
+消歧规则定为**后缀 `if`/`unless` 必须与宿主语句同行**：`src/parser/parser.h` 的 `Parser` 新增 `int prevLine;`，`src/parser/parser.c` 的 `advance()` 改为先记 `p->prevLine = p->lex.line;` 再取下一枚 token，并新增 `postfix_cond_here(p)`（`return p->lex.line == p->prevLine;`），两处后缀调用点（原 `:1650`/`:1689`）改用它。之所以选同行规则而非「`if` 后跟条件再跟 `{` 时优先当块语句」：`lexer_next()` 先 `skip_whitespace()` 再取词（`src/lexer/lexer.c:100-101`），所以这两个行号是**已有信息**、零额外前瞻；块语句候选则要保存/恢复 `Lexer` 再解析一遍条件，既重复解析又会让首次尝试的 `parse_error_expected()` 打到 stderr。
+
+修复后（均为实测）：
+
+```bash
+./build/inimerse selfhost/compiler.im tests/_mini.im            # exit 0（修复前 exit 1）
+./build/inimerse selfhost/compiler.im --dump lexer.im           # exit 0（文档记载的用法）
+```
+
+`selfhost/` 下 15 个 `.im` 与 `scripts/array_test.im`、`examples/scripts/block_edit.im`、`projects/demo/main.im` 共 **19 处全部不再报解析错**。进树回归两条：`vtest/postfix_condition_multiline_v05.im`（CTest `postfix_condition_multiline_runtime`）与 `selfhost_toolchain_parses`（跑 `compiler.im --dump tests/_mini.im` 并断言输出含 `main:`）；`EXP_CTEST` **97 → 99**。两条回归都做过**负控**：`git checkout HEAD -- src/parser/parser.c` 后重编，二者均 `Failed`。
+
+**但「能解析」不等于「能用」——宿主路径与自举路径的产物差别极大：**
+
+```bash
+./build/inimerse selfhost/test1.im                 # 宿主路径：13 行程序输出
+./build/inimerse selfhost/compiler.im test1.im     # 自举路径：0 行程序输出（exit 仍是 0）
+./build/inimerse selfhost/compiler.im --dump test1.im   # 完整输出只有 main: 和 33,0,0,0
+```
+
+`33` 就是 `OP_HALT`（按 `src/compiler/bytecode.h:7-21` 逐项数得，`OP_MOV`=0 … `OP_HALT`=33），即**自举编译器对任何程序都只发出一条「停机」指令**；对 3,421 字节的 `selfhost/lexer.im` 同样如此。`compile_program`（`selfhost/compiler.im:723-746`）在 `:743-745` 的 `for s in stmts { compile_stmt(mctx, s) }` 之后于 `:746` 发 `OP_HALT`，dump 里只剩后者，说明循环体一条都没发——是 `parse_file(tgt)`（`:806`）返回了空列表，还是 `compile_stmt` 全是 no-op，尚未区分。
+
+**注意退出码在这里完全掩盖了分歧**（两条路径都 exit 0），所以判据必须是程序输出或字节码哈希。该缺陷已开 [BOARD.md](../BOARD.md) §5 行 `selfhost-codegen-empty`，并把「C 路径 vs 自举路径的规范化字节码哈希 + 运行输出哈希成对记录」列为它的核心验收物（这也是 ROADMAP「编译器自举与双构建对比」中 stage1 的地基）。口径：自举工具链当前 `coverage_status = partial`、`implementation_status = 前端可用 / 后端空转`、`evidence_level = E4`（有实测对照），**跨版本自举仍不主张**。
 
 此章节将在每个版本发布后更新验证记录，形成版本间的编译器效果演变曲线。

@@ -571,7 +571,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 ## 8. 验收基线
 
 - 引擎：`contract_test.im`、`ai_syntax_test.im`、`syntax_simple_test.im`、`node_task_state_test.im`、`string_ownership_test.im`。
-- selfhost：`compiler.im --dump lexer.im`、`eval.im`、`parser.im`。
+- selfhost：`compiler.im --dump lexer.im`、`eval.im`、`parser.im`。**更正（2026-10-02）**：`compiler.im` 自 `2026-09-06` 起一直无法解析（后缀 `if`/`unless` 跨行贪婪匹配，由 `a21915b`/`fe65f6d` 引入；见 BOARD 行 `selfhost-parser-postfix-ambiguity`，已修复并进 CTest）。修复后它能解析、能运行，但**其代码生成对任何程序只发出一条 `OP_HALT`（空程序）**，尚无任何目标能与宿主路径产出相同的运行结果 —— 见 BOARD 行 `selfhost-codegen-empty`。故本行列举的三个入口目前只证明「能载入」，**不证明自举可用**。
 - 协议：UPP/CRP 本地回环、签名篡改、断线重连和版本不兼容测试。
 - 桌面：`node --check src/ui/app.js`、`cargo check --offline`、`cargo build --release --offline`。
 - **发布门禁**：干净环境下 `ctest` 必须 100% 通过；`python3 tools/selfhost_bench.py` 相对上一份报告中位数劣化超过 20% 时不得宣称发布。

@@ -8,6 +8,7 @@ typedef struct {
     Lexer lex;
     int no_infix_match; /* set while parsing case-branch bodies: "match" is a branch keyword, not an infix op */
     int loop_depth;  /* loop nesting; task/thread defs inside loops are rejected (silently ineffective) */
+    int prevLine;    /* line of the most recently consumed token; keeps postfix if/unless on one line */
 } Parser;
 
 Program *parse_program(const char *source);

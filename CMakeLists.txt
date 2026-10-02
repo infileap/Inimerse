@@ -216,6 +216,16 @@ if(INIMERSE_PYTHON)
   set_tests_properties(cli_incremental_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME selfhost_benchmark COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/selfhost_bench.py --runs 1)
   set_tests_properties(selfhost_benchmark PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "benchmark;regression")
+  # Guard against the self-host toolchain rotting unnoticed.  Nothing in the suite used to touch
+  # selfhost/*.im (`grep -rn "compiler\.im" tools/ CMakeLists.txt` was empty), which is how
+  # selfhost/compiler.im stayed unparseable from 2026-09-06 until 2026-10-02 while the gate
+  # stayed green.  compiler.im chdirs to its own directory, so the target path is relative to
+  # selfhost/ even though WORKING_DIRECTORY is the source root.
+  # This asserts only that compiler.im PARSES and reaches code emission (the `main:` listing).
+  # It deliberately does NOT assert that the emitted bytecode is correct: compile_program()
+  # currently emits a bare OP_HALT for every program (see the open BOARD row).
+  add_test(NAME selfhost_toolchain_parses COMMAND inimerse ${CMAKE_SOURCE_DIR}/selfhost/compiler.im --dump tests/_mini.im)
+  set_tests_properties(selfhost_toolchain_parses PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "compiler;selfhost;regression" PASS_REGULAR_EXPRESSION "main:")
   add_test(NAME bindgen_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/bindgen.test.py)
   set_tests_properties(bindgen_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME wasm_backend_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_backend.test.py)
@@ -537,6 +547,12 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(chained_comparison_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;comparison")
   add_test(NAME postfix_condition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_v04.im)
   set_tests_properties(postfix_condition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow")
+  # Regression for the cross-line postfix-if ambiguity: a next-line `if cond { ... }` used to be
+  # swallowed as a postfix condition of the previous statement, and the orphaned block was then
+  # parsed as a dict literal (`expected ':', but got '}'`).  The test must both run (exit 0 is the
+  # primary assertion) and keep the same-line postfix working while unless still suppresses.
+  add_test(NAME postfix_condition_multiline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_multiline_v05.im)
+  set_tests_properties(postfix_condition_multiline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow" PASS_REGULAR_EXPRESSION "postfix-ok.*multiline-if-ok" FAIL_REGULAR_EXPRESSION "not-printed")
   add_test(NAME result_propagation_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_propagation_v04.im)
   set_tests_properties(result_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result")
   add_test(NAME result_finally_propagation_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_finally_propagation_probe_v04.im)

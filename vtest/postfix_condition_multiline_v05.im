@@ -1,0 +1,25 @@
+// 回归：后缀 if/unless 只在其宿主语句的同一行时才成立。
+//
+// 修复前（main 上）：下一行开头的 `if cond { ... }` 会被当成上一句的后缀条件吞掉，
+// 剩下的 `{ ... }` 落到表达式位置，parse_primary() 把它当 dict 字面量解析，
+// 于是 consume(TOK_COLON) 在收尾的 `}` 上失败：
+//     Error at line N: expected ':', but got '}' (type 98)
+// 症状是「报错行号指向一个看起来完全正常的 `}`」，且行号随上下文漂移。
+//
+// 本文件必须同时满足三件事：
+//   1. 同一行的后缀条件仍然生效（postfix-ok 必须打印）；
+//   2. unless 仍然抑制（not-printed 绝不能打印）；
+//   3. 跨行的 if 是独立的块语句（block-ok7 与 multiline-if-ok 必须打印）。
+
+func mark_true() { say "postfix-ok" }
+func mark_false() { say "not-printed" }
+func g(b, c) { say "block-ok" + str(b + c) }
+
+mark_true() if true
+mark_false() unless true
+
+g(1, 2)
+if true {
+    g(3, 4)
+}
+say "multiline-if-ok"

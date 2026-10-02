@@ -34,8 +34,19 @@ static void err_json(const char *kind, int line, int col, const char *expect, co
             kind, line, col, ex, gt, fx);
 }
 
-static void advance(Parser *p) { p->lex.current = lexer_next(&p->lex); }
+static void advance(Parser *p) { p->prevLine = p->lex.line; p->lex.current = lexer_next(&p->lex); }
 static Token peek(Parser *p) { return p->lex.current; }
+
+/* Postfix if/unless binds ONLY when it sits on the same line as the statement it modifies.
+   lexer_next() skips whitespace first, so p->lex.line is the line the current token starts on,
+   and p->prevLine is the line the last consumed token ended on.
+   Without this check the `if` of the NEXT line's `if cond { ... }` is swallowed as a postfix
+   condition; the orphaned `{ ... }` then lands in expression position, where parse_primary()
+   builds a dict literal and consume(TOK_COLON) dies on the closing brace. */
+static int postfix_cond_here(Parser *p) {
+    if (peek(p).type != TOK_IF && peek(p).type != TOK_UNLESS) return 0;
+    return p->lex.line == p->prevLine;
+}
 
 static Token peek_next(Parser *p) {
     Lexer saved = p->lex;
@@ -1647,7 +1658,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
             if (peek(p).type == TOK_LPAREN) { tagCount = parse_record_tags(p, &tags, 1); }
             stmt->assignStmt.target = expr; stmt->assignStmt.value = val; stmt->assignStmt.tags = tags; stmt->assignStmt.tagCount = tagCount; return stmt;
         }
-        if (peek(p).type == TOK_IF || peek(p).type == TOK_UNLESS) {
+        if (postfix_cond_here(p)) {
             int invert = (peek(p).type == TOK_UNLESS);
             advance(p);
             Expr *condition = parse_expr(p);
@@ -1686,7 +1697,7 @@ static Stmt *parse_simple_stmt(Parser *p) {
     else if (t.type == TOK_SAY) {
         advance(p);
         Stmt *say = calloc(1, sizeof(*say)); say->type = STMT_SAY; say->sayStmt.message = parse_expr(p);
-        if (peek(p).type == TOK_IF || peek(p).type == TOK_UNLESS) {
+        if (postfix_cond_here(p)) {
             int invert = (peek(p).type == TOK_UNLESS); advance(p);
             Expr *condition = parse_expr(p);
             if (invert) {
