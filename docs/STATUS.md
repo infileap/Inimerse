@@ -777,3 +777,44 @@ tools/gate.sh          # 七个阶段，串行；不要并发跑，§2.9 的端�
 - 最终门禁（我在合并前于该 worktree 亲跑 `rm -rf build && tools/gate.sh --jobs 4`）：**七阶段全 PASS、ctest 93/93、`gate: OK`、exit 0**。
 
 **一次被驳回的交付（值得记的教训）**：队友首版为让孤立代理语料「通过」，在 `tools/crp_engine_crosscheck.js` 里加了 `canonicalRecord(line)`，把未配对代理归一成 U+FFFD 后再比。**这等于把 crosscheck 唯一要断言的「逐字节一致」放宽掉**，且注释里「the same bytes on the wire」**事实错误**（`\ud83d` 是六个 ASCII 字符、`EF BF BD` 是三个字节）。驳回并要求：删掉整个归一化函数、删掉孤立代理语料条目、把字节断言留在探针里，然后**证明去掉归一化后仍 text-identical 且门禁仍绿**。**我复核时补做了一次反向验证**：把被删掉的那条孤立代理行重新塞回一份临时副本，crosscheck 立刻报 `MISMATCH line 41` / `1 of 108 records differ` / exit 1 ⇒ **比较器是真的能看见这个分歧，而不是「不再喂它」了**。教训：**当测试开始需要归一化才能通过时，被放宽的往往正是它存在的理由。**
+
+### 10.8 门禁 `links` 阶段的封闭性（`gate-hermeticity`）
+
+**缺陷（实测）**：`tools/check_links.py:57-74` 的 `iter_markdown_files()` 用 `os.walk(REPO_ROOT)` 遍历**工作区**，只靠 `SKIP_DIRS`/`SKIP_PREFIXES` 黑名单挡杂物。另一个会话在仓库根留下的暂存目录 `.verify/`（未跟踪）里有一份引用 GitHub 社区健康文件（`SECURITY.md`/`GOVERNANCE.md`/`MAINTAINERS.md`）的 README，于是本仓库的门禁被判红：
+
+| 树 | 检查器 | `git ls-files '*.md' '*.markdown'` |
+| --- | --- | --- |
+| 主工作区（含 `.verify/`） | **86 files / 319 links / 12 broken**，exit 1 | 78 |
+| 同一棵树的 worktree 去掉 `.verify/` | 78 files / 284 links / 0 broken | 78 |
+
+**为什么这不是「多漏了一个目录」**：门禁的职责是回答「**这个仓库**能不能合」。工作区里别人丢下的文件与这个答案无关，却能让答案变成「不能」。更贵的是它会**训练人不信任门禁**——红了先问「这次是不是又是杂物」，那一刻门禁就废了。**任何黑名单都永远漏一个目录**（这次是 `.verify/`，下次是别的名字），所以修法不是加名单。
+
+**修法**：`iter_markdown_files()` 改为 `git ls-files -z -- '*.md' '*.markdown'`（`cwd=REPO_ROOT`）。被检查的集合**就是仓库的内容**，按定义不漏不多。`SKIP_DIRS`/`SKIP_PREFIXES`/`SKIP_FILES` 三个常量随之删除（已无用）。git 不可用时 `sys.exit` 并打印清楚错误，**不提供 `os.walk` 回退**——回退会把本条流刚修掉的缺陷原样带回来，且只在 git 不在时复现。
+
+**顺带修掉的同族缺陷**：作业单判 `tools/check_doc_paths.py` 为「封闭」，实测**不成立**（已被写域条款授权修改）。它的 `scan_files()` 走 `os.listdir`，因此在 `docs/` 直接丢一个**未跟踪** `.md` 同样能让它变红：`12 markdown files, 1 broken`，exit 1。修法是**过滤**而非换路径（关键：git 的 `docs/*.md` 路径式**会**匹配 `docs/archive/*.md`，实测 51 vs 非递归 6；直接换会把本检查器故意不判的归档件拉进来），即保留 `os.listdir` 决定「本检查器拥有哪些文档」的原语义，再用 git 跟踪集过滤。对已跟踪文件判定**逐字不变**（11 files / 152 refs / 0 broken）。
+
+**反向验证（最重要的判据，两个检查器都做了）**：在一个**已跟踪**文件里插入指向不存在文件的相对引用，检查器必须**仍然能红**——否则 `0 broken` 只意味着「什么都没扫」。
+
+```
+BROKEN  docs/streams/vverse-produce.md  ->  ./__REVERSE_VERIFICATION_PROBE__.md  (does not exist)
+
+check_links: 78 markdown files, 285 links (7 external, 0 anchors, 278 local), 1 broken
+exit=1
+```
+同一次运行里还放着未跟踪的 `scratch-xyz/README.md`（内含指向 `NOPE.md` 的断链）：**只点名了已跟踪的那条，未跟踪的那条看不见**；`files` 仍是 78。`check_doc_paths.py` 的同类验证（探针插在 `docs/API.md` 内，同时另放一个未跟踪的 `docs/` 断链文件）输出：
+
+```
+BROKEN  docs/API.md  ->  docs/__DOC_PATHS_REVERSE_PROBE__.md  (no such file)
+
+check_doc_paths: 11 markdown files, 153 backtick refs, 1 broken
+exit=1
+```
+
+两处探针都已还原，`sha256` 与改前逐字节相同、`git diff --exit-code` 干净。
+
+**交付**：`tools/check_links.py`（`iter_markdown_files` 重写 + `subprocess` 导入，净 +62/−23）、`tools/check_doc_paths.py`（新增 `tracked_paths()` 并在 `scan_files()` 里过滤）、`.gitignore`（`universe/_cache/` 与 `.verify/` 两行——**这是卫生措施，不是本缺陷的修复**）。
+
+**判据**：①文件数守恒 `--json` 的 `files=78` == `git ls-files '*.md' '*.markdown' | wc -l` = 78；②`.verify/` **仍物理存在**的前提下检查器报 `78 files / 0 broken`、`grep .verify` 命中 0 行；③反向验证如上；④`scratch-xyz/README.md`（未跟踪）不被看见；⑤`bash tools/gate.sh --fast --only links` 与 `--only doc-paths` 均 PASS。
+
+**没有做的事**：没碰 `tools/gate.sh`/`CMakeLists.txt`/`tools/node_suites/run_all.js`（`httpfix` 持有）、`tools/crp_ws_client*`/`tools/upp_session*`（`wscoverage` 持有）、`src/**`、`docs/BOARD.md` 与本文件既有行；没有 `push`/`merge`；**没有改任何已跟踪文件的既有引用**——修前修后 `0 broken` 一致，说明本次没有靠「把红的说成绿的」来收敛。
+

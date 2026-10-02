@@ -50,6 +50,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,8 +72,66 @@ DOC_PATH_RE = re.compile(
 )
 
 
+def tracked_paths() -> set[str]:
+    """Repo-relative paths git tracks under README.md, docs/ and future/.
+
+    Used to *filter* scan_files(), never to replace it.  The split matters:
+    scan_files() decides which documents this checker owns -- deliberately not
+    docs/archive/, docs/streams/ or the repository root (see the module
+    docstring) -- and that scope is not expressible as a pathspec, because git's
+    `docs/*.md` matches `docs/archive/*.md` too (`*` crosses `/` in a pathspec;
+    measured: 51 matches, 6 of them non-recursive).
+
+    What git *is* used for is hermeticity.  A file that is not tracked is not
+    repository content, so it must not be able to turn this gate red.  This
+    checker is bounded to two directories rather than the whole tree, which is
+    why the repo-root `.verify/` incident never reached it -- but the same defect
+    class was reachable one directory over and was measured: an untracked
+    `docs/<name>.md` carrying a broken backtick reference produced
+    `1 broken` / exit 1 against a repository that was fine.
+
+    As in check_links.py there is no fallback to listing the directory when git
+    is missing: a fallback would restore the defect precisely on the machines
+    where a junk-red gate is hardest to explain.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z", "--", "README.md", "docs", "future"],
+            cwd=REPO_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        sys.exit(
+            f"check_doc_paths: cannot run git ({exc}).\n"
+            "check_doc_paths: this stage checks the repository's git-tracked "
+            "documents; without git there is no way to distinguish repository "
+            "content from scratch files left in the working tree.\n"
+            "check_doc_paths: refusing to fall back to listing the working tree."
+        )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", "replace").strip()
+        sys.exit(
+            f"check_doc_paths: 'git ls-files' failed (exit {proc.returncode}) in "
+            f"{REPO_ROOT}\n{detail}\n"
+            "check_doc_paths: refusing to fall back to listing the working tree."
+        )
+    return {
+        name
+        for name in proc.stdout.decode("utf-8", "surrogateescape").split("\0")
+        if name
+    }
+
+
 def scan_files() -> list[str]:
-    """README.md plus the non-recursive contents of docs/ and future/."""
+    """README.md plus the non-recursive contents of docs/ and future/.
+
+    The candidates come from the directory listing (that is what defines this
+    checker's scope); the tracked-path filter then drops anything that is not
+    part of the repository.  For a tracked file the result is identical to the
+    listing alone, which is why this changes no existing verdict.
+    """
+    tracked = tracked_paths()
     files = []
     if os.path.isfile(os.path.join(REPO_ROOT, "README.md")):
         files.append("README.md")
@@ -83,7 +142,7 @@ def scan_files() -> list[str]:
         for name in sorted(os.listdir(absdir)):
             if name.endswith(".md") and os.path.isfile(os.path.join(absdir, name)):
                 files.append(f"{tree}/{name}")
-    return files
+    return [f for f in files if f in tracked]
 
 
 def strip_code_fences(text: str) -> str:
