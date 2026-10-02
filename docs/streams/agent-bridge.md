@@ -109,7 +109,14 @@
 2. **新增文档先 `git add`**：两个检查器只枚举 `git ls-files`，否则会跳过新文档却照样打印 `0 broken`。
 3. **每条数字可在本 worktree 复现**：§5 的命令可原样跑出本节表格里的值。
 4. **本轮 `git diff --stat` 只含文档**：`src/**`、`tools/**`、`CMakeLists.txt` 零改动（可用 `git diff --name-only main...HEAD` 复核）。
-5. **文档内不再残留旧数字**：`grep` 不到 `1102-1105`、`EXP_CTEST:-93`、`107 records`、`crp_probe: 173`、`27 exchanges`、`exchanges:26`、`0 tests failed out of 15`。
+5. **旧数字只出现在注解与历史记录里**：`1102-1105`、`EXP_CTEST:-93`、`107 records`、`crp_probe: 173`、`27 exchanges`、`exchanges:26`、`0 tests failed out of 15`、`107 条`、`93/93` 不得再被本设计**当作事实引用**。允许的落点只有三类：**(a)** 本文件 §2.1 的旧值→新值对照表；**(b)** 设计文档 §9.2 的「行号漂移提示」与 §9.1 的「那句话今天会失败」注解（这两处是**故意**保留旧数字的反例说明）；**(c)** `docs/STATUS.md` 与 `docs/BOARD.md` 里**别的流的既有历史记录**（如 json-min 时代的「语料 101 → 107 条」「ctest 93/93」）—— 那些不属于本流，**不得顺手改**。复核命令：
+   ```bash
+   grep -n "1102-1105\|EXP_CTEST:-93\|107 records\|crp_probe: 173\|27 exchanges\|exchanges:26\|0 tests failed out of 15\|107 条\|93/93" \
+     future/multi-agent-coordination-bridge.md docs/streams/agent-bridge.md
+   # 预期：设计文档 1 处（§9.2 漂移提示）+ 本文件 §2.1 对照表 6 处 + 本条判据自身的 2 行；
+   # 两处正文（设计文档 §0–§8 与 §9.1 实测块）零命中
+   ```
+6. **`git diff --numstat e6e4936..HEAD` 与 §4 的「没做什么」一致**：`src/**`、`tools/**`、`CMakeLists.txt`、`.gitattributes` 全部零行改动。
 
 ## 4. 边界与没做什么
 
