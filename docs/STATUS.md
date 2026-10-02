@@ -41,15 +41,15 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **94 / 94 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **95 / 95 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
-| 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,779 行（`.c` 单独 46,152 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
+| 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 94 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1，见 §10.1/§10.2/§10.6/§10.7/§10.10） | — |
-| 工具 | `tools/` 97 个条目 | `ls tools \| wc -l` |
+| 测试注册 | `CMakeLists.txt` 中 95 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1 + `.im` 打包往返 1，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11） | — |
+| 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 81 ms = **1.09x** · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
 ### 2.1 复现命令
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 94
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 95
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -940,3 +940,21 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 **没做的（边界）**：Windows 孪生 —— `src/headless_server.c` 没有 bound-port getter，故 `--port 0` / `--http-port 0` 目前仅 POSIX；`src/mod/verse_dist_mod.c:1972-1990` 的裸 `blen < 60000`；`b_verse_listen(0)`（`src/mod/verse_dist_mod.c:2096`）—— 脚本仍无法得知内核给的 listen 端口，这是**最后一个引擎还能吸收的猜端口**。
 
 **环境事实（会影响别人写测试）**：本沙箱的 loopback 会**丢弃 >~1400 字节的 UDP 数据报**（用 python echo server 验证过），所以新测试的 UDP 探针用 900 字节包。
+
+### 10.11 `.im` 打包内建写出的必须是真 `.vverse`（`vverse-cli`，`82a2789`）
+
+**板上原话错在哪。** §5 原写「`vverse-cli`：无 `.im`/CLI 入口」。**这句是错的**：`src/mod/verse_dist_mod.c:2693` 早就注册了内建 `vm_register_builtin_full(vm, "verse_pack", b_verse_pack, 1|CAP_VERSE|CAP_NET, 0)`，`src/lobby_online_src.im:40` 也早就在用 `r1 = verse_pack(".", "universe/room.vverse")`；实测一条 3 行 `.im` 跑通并产出文件（exit 0）。**缺的不是入口，是格式。**
+
+**真正的缺陷。** `b_verse_pack`（原 `:1109-1271`，163 行）**自己手工拼 JSON**：拼 `"files":{…}`、用 sha256 **hex**，写出的是**裸 JSON**（实测头 32 字节 `{"id":"src","version":"1.0.0","publisher":"e4610a1d…`）。真正的 `.vverse` 是 `gzip({"format":"vverse-1","files":{…base64…}})`（mtime 固定 0）。把内建产物喂给参考实现：`node tools/vverse_pack.js preview <pkg>` → `vverse pack: incorrect header check`，`unpack` 退出码 1 ⇒ **内建是遗留的第二种格式，与整条工具链不兼容**：能打包，但打出来的东西谁也读不了。
+
+**修法（不写第二份打包器）。** `b_verse_pack` 改成 `vverse_pack(dir, out, NULL, err, sizeof err)` 的**薄适配层**（`src/mod/verse_dist_mod.c:1108-1146`），容器仍归 `src/common/vverse_pack.c` 所有 —— 该文件早已被 `tools/vverse_cross.test.py` 与 JS 参考实现**双向**交叉验证。为此把它与 `src/common/gzip.c` 加进引擎目标（此前只链进 `vverse_pack_probe`，见 `CMakeLists.txt:131-136`），并补 `src/platform`/`src/verse` 两个 include 目录（已核对无头文件重名）。
+
+**顺带修掉的一个更深的断裂（队友发现，我确认）。** 换掉写侧之后，引擎**读不懂自己刚写的东西**：`verse_open("verse://local/…")` 走的是遗留 `verse_unpack`（`src/mod/verse_dist_mod.c:685`），不认 gzip ⇒ 打印 `[VDP] bad package json`、`open=0`。**当时没有任何测试覆盖它**（`src/lobby_online_src.im` 无人注册）。修法是**嗅探首字节**（`do_open` 里 `pkg_len >= 2 && 0x1f 0x8b` ⇒ 交给新的 `vverse_unpack_mem()`），遗留分支**逐字节未动**：两种容器不可能混淆（gzip 魔数 vs JSON 的 `{`）。同时把 `vverse_unpack()` 重构成 `file_read_all` + `vverse_unpack_mem()` 的薄包装 —— 引擎从**线上**取包与从磁盘取包一样常见，不该为此写临时文件。
+
+**被改写的那份测试（值得单独记一笔）。** `tools/verse_pack.test.py` 原本把**遗留容器**钉死：`json.loads` 一个裸 JSON、断言 `publisher` 长 64 / `signature` 长 128、并对 `vtest_signed.vverse` 做**逐字节重生成**。写侧一换它就崩（`FileNotFoundError`）。处置：**步骤 5、6 逐字保留**（它们驱动 `verse_open` 读那个**已提交的**遗留向量，遗留**读侧**的回归因此不丢）；步骤 1–3 的篡改断言改为针对**真容器**（digest 表即签名，参考实现是裁判）；**步骤 7 退役**。`vtest_signed.vverse` 由此**改变角色而非失去覆盖** —— 它现在是**没有生产者的冻结遗留输入向量**，不是套件重生成的产物。这句话已写进该文件抬头（`:27-42`）的醒目段落，防止后人「顺手修好」。
+
+**交付证据。** 修前（未改引擎，新套件先写先跑）：`AssertionError: verse_pack did not write a gzip container; first bytes: b'{"id":"pkgdir","'`、exit 1（我**独立复现**过，用 main 的 `build/inimerse` 跑分支上的新套件，同样这条）。修后：包首字节 `1f8b 0800 0000 0000 0003 …`；`node tools/vverse_pack.js unpack` rc 0，再 `node tools/vverse_validate.js <dir> --strict --require-signature --require-complete-signature` rc 0（**裁判是参考实现，不是自己**）；源树**未被改动**（`find src -printf '%p %s %T@\n' | sort` 前后逐行相同，含 mtime）；**确定性**：同一棵树打两次 `cmp` 逐字节相同；**往返**：`verse_pack` → `verse_open` → `open=1` 且 `home/universe/<pkg>/` 下文件与字节正确（这是原先完全缺失的断言，现在被断言住了）。门禁 `rm -rf build && tools/gate.sh --jobs 4` → **七阶段全 PASS、ctest 95/95、`gate: OK`、exit 0**。
+
+**两条有意为之的能力损失（必须记录，不是疏忽）。** ①`b_verse_pack` 传 `seed = NULL`，**不再**用本地身份自动签名（遗留实现会）—— 这是「产物必须是树内容的纯函数」的直接要求（作业单第 3 条），代价是引擎写的包**不含** `signatures/ed25519.json`，故 `--require-public-signature` 对引擎产物不适用。②真容器的 `id`/`version`/`min_version` 在它自己的 `manifest.json` 里，故遗留那套 publisher / version / `min_version` 元数据校验对真容器**不适用**；它们对遗留容器仍然照旧生效（步骤 5、6）。
+
+**进树**：`CMakeLists.txt` 新增 CTest `vverse_cli_regression`；`tools/gate.sh:43` 的 `EXP_CTEST` 94→**95**；新 `tools/vverse_cli.test.py`（10 checks）。`tools/verse_pack.test.py` 与 `tools/vverse_cli.test.py` 的断言都住在**既有**的 CTest 条目里，所以没有第 96 个条目 —— 计数停在 95 是**有意**的。
