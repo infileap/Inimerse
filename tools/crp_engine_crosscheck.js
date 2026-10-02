@@ -301,6 +301,18 @@ const CORPUS = [
     run: () => http('POST', '/portal', { verse: 'demo', auth: enrollProof('demo', undefined) }) },
   { req: { op: 'relay_portal', verse: 5, peer: 'peer-a', auth: enrollProof(5, 'peer-a') },
     run: () => http('POST', '/portal', { verse: 5, peer: 'peer-a', auth: enrollProof(5, 'peer-a') }) },
+  /* The portal's scope is a pair of non-empty strings: a member that is not a
+   * string names no scope at all, so both sides refuse it with the same 404
+   * rather than minting a token whose claim (a number, an array) no request
+   * carrying a string could ever match.  The proof here is the correct one for
+   * the String() coercion of each member, so what is being pinned is the
+   * refusal itself and not a failed proof. */
+  { req: { op: 'relay_portal', verse: 'demo', peer: 5, auth: enrollProof('demo', 5) },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: 5, auth: enrollProof('demo', 5) }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: [], auth: enrollProof('demo', '') },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: [], auth: enrollProof('demo', '') }) },
+  { req: { op: 'relay_portal', verse: 'demo', peer: '', auth: enrollProof('demo', '') },
+    run: () => http('POST', '/portal', { verse: 'demo', peer: '', auth: enrollProof('demo', '') }) },
   { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a' },
     run: () => http('POST', '/portal', { verse: 'demo', peer: 'peer-a' }) },
   { req: { op: 'relay_portal', verse: 'demo', peer: 'peer-a', auth: 'not-a-proof' },

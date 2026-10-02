@@ -1079,7 +1079,16 @@ CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *p
         return res_error(403, "invalid enrollment proof");
 
     const char *vstr = (verse && verse->type == VJ_STR) ? verse->s : NULL;
-    if (!vstr || !registry_has_verse(r, vstr) || !vj_truthy(peer))
+    /* The portal's scope is a pair of non-empty strings, and the verse must be
+     * one this registry holds: `registry_has_verse` is the C shape of the
+     * reference's `verses.has(p.verse)`, and the peer test mirrors its
+     * `typeof p.peer === 'string' && p.peer`.  A member that is not a string
+     * names no scope -- the token's claim is what every later request is
+     * matched against -- so it is refused with the reference's own 404 rather
+     * than minted with a claim no string request could match.  Nothing is
+     * minted and no session is touched before this. */
+    if (!vstr || !registry_has_verse(r, vstr) || !vj_truthy(peer) ||
+        peer->type != VJ_STR || !peer->s || !peer->s[0])
         return res_error(404, "verse not found");
     long long now = crp_registry_now(r);
     long long expires = now + r->token_ttl_ms;
@@ -1094,8 +1103,10 @@ CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *p
 
     /* The portal opened a session for this peer: bind it onto the platform
      * session layer so the lease in crp_session.c is the one that moves. */
-    char peerbuf[512];
-    const char *pstr = crp_js_string(peer, peerbuf, sizeof peerbuf);
+    /* The peer is a non-empty string by the precondition above, so the session
+     * key is that very string: there is no coercion left for the two sides to
+     * disagree about. */
+    const char *pstr = peer->s;
     CrpSession *s = registry_get_session(r, vstr, pstr);
     if (s) {
         im_crp_session_apply(&s->sess, "start", 0, 0, NULL);

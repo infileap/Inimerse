@@ -79,7 +79,17 @@ function createRelay(options = {}) {
         const p = await read(req);
         if (!enrollSecret) return json(res, 403, { error: 'portal enrollment is not configured' });
         if (!enrollOk(p.auth, p.verse, p.peer)) return json(res, 403, { error: 'invalid enrollment proof' });
-        if (!verses.has(p.verse) || !p.peer) return json(res, 404, { error: 'verse not found' });
+        /* The portal's scope is a pair of non-empty strings, and the verse must
+           be one this hub has registered: `verses.has(p.verse)` is the
+           reference's registry test.  A member that is not a string names no
+           scope at all -- minting it would issue a token whose claim (a number,
+           an array, "") no request carrying a string could ever match -- so it
+           gets the same 404 as an unregistered verse, before anything is
+           minted.  The engine asks the same question with the same answer
+           (src/verse/crp.c registry_has_verse + a VJ_STR peer test), which is
+           what the relay_portal corpus records pin. */
+        if (typeof p.verse !== 'string' || !verses.has(p.verse) || typeof p.peer !== 'string' || !p.peer)
+          return json(res, 404, { error: 'verse not found' });
         const token = makeToken(p.verse, p.peer); return json(res, 200, { token, verse: p.verse, peer: p.peer, expires: Date.now() + tokenTtlMs });
       }
       if (req.method === 'POST' && req.url === '/signal') {
