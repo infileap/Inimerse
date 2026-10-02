@@ -38,7 +38,8 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import (distinct_ports, wait_http_ping)  # noqa: E402
+from testports import (start_hub_bound_ports,  # noqa: E402
+                       wait_http_ping)
 
 
 def wait_port(port, timeout=10.0):
@@ -47,21 +48,23 @@ def wait_port(port, timeout=10.0):
     return wait_http_ping(port, timeout=timeout)
 
 
-def start_hub(engine, root, http_port, hub_dir, tcp_port=None):
-    script = root / f"hub{http_port}.im"
+def start_hub(engine, root, hub_dir):
+    """Start a hub; return `(proc, http_port, tcp_port)`.
+
+    The hub asks the kernel for both numbers (`--port 0 --http-port 0`) and
+    prints what it bound, which this suite reads back.  Nothing is reserved and
+    nothing is released, so the release-to-bind window in docs/STATUS.md 2.9 --
+    where a sibling suite's pool takes the number before the child binds it --
+    no longer exists.  Raises testports.HubStartError, carrying the hub's
+    stderr, if the engine never reports its ports.
+    """
+    script = root / f"{hub_dir.name}.im"
     script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
-    if tcp_port is None:
-        # Reached only if a caller forgets to pass one.  This pool knows
-        # nothing about the HTTP ports the caller holds, so the number can
-        # collide with one of them -- measured 9/500 -- and the engine then
-        # comes up with no HTTP service at all (bind fails EADDRINUSE while
-        # the process stays alive).  Pass a port from the caller's own
-        # distinct_ports() batch instead of relying on this.
-        tcp_port = distinct_ports(1)[0]
-    return subprocess.Popen([str(engine), "--headless", "--port", str(tcp_port),
-                             "--http-port", str(http_port), str(script)],
-                            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc, tcp_port, http_port = start_hub_bound_ports(
+        [engine, "--headless", "--port", "0", "--http-port", "0", script],
+        cwd=root, env=env, log_path=root / f"{hub_dir.name}.log")
+    return proc, http_port, tcp_port
 
 
 def http_json(port, method, path, payload=None):
@@ -105,11 +108,11 @@ def main():
         root = Path(td)
         home = root / "home"
         home.mkdir()
-        # Held simultaneously so the three hubs cannot be handed one port.
-        # One call, not two -- see tools/testports.py on cross-call overlap.
-        dir_port, node_a_port, node_b_port, *tcp_ports = distinct_ports(6)
-        hubs = [start_hub(engine, root, p, root / f"u{p}", tcp)
-                for p, tcp in zip((dir_port, node_a_port, node_b_port), tcp_ports)]
+        # Each hub chooses its own ports and reports them, so no hub port is
+        # reserved, released or guessed here (docs/STATUS.md 2.9).
+        started = [start_hub(engine, root, root / f"u{i}") for i in range(3)]
+        hubs = [proc for proc, _http, _tcp in started]
+        dir_port, node_a_port, node_b_port = (http for _proc, http, _tcp in started)
         try:
             for p in (dir_port, node_a_port, node_b_port):
                 assert wait_port(p), f"hub {p} did not start"

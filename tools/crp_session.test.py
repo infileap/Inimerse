@@ -33,7 +33,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import distinct_ports  # noqa: E402
+from testports import start_hub_bound_ports  # noqa: E402
 from testports import wait_http_ping  # noqa: E402
 
 
@@ -57,13 +57,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix="inimerse-crp-") as td:
         root = Path(td)
         (root / "hub.im").write_text('say "hub"\nwait 60\n', encoding="utf-8")
-        # distinct_ports() holds both at once: two free_port() calls in one
-        # expression can return the same number and break the engine's bind.
-        tcp_port, http_port = distinct_ports(2)
-        proc = subprocess.Popen(
-            [str(engine), "--headless", "--port", str(tcp_port),
-             "--http-port", str(http_port), "hub.im"],
-            cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Kernel-assigned hub ports, read back from the engine's own startup
+        # lines: nothing is reserved here, so there is no release/bind window
+        # for another suite's pool to take a number in (docs/STATUS.md 2.9).
+        proc, _tcp_port, http_port = start_hub_bound_ports(
+            [str(engine), "--headless", "--port", "0", "--http-port", "0",
+             "hub.im"],
+            cwd=root, log_path=root / "hub.log")
         try:
             assert wait_ready(http_port), "hub did not become ready"
             rc = subprocess.run([node, str(HERE / "crp_session_flow.test.js"),

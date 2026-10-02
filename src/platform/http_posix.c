@@ -51,7 +51,12 @@ static void *udp_loop(void *unused) {
         int status = 0;
         char body[60001];
         size_t blen = hub_body(reqline, body, sizeof body, &status);
-        if (blen > 0 && blen < 60000)
+        /* Only a satisfied request is a package body.  verse_udp_fetch()
+           (src/mod/verse_dist_mod.c) hands the reply straight back as the
+           package bytes without inspecting them, so an error document sent
+           here would be installed as package content; dropping the datagram
+           makes the fetch fail honestly instead. */
+        if (status == 200 && blen > 0 && blen < 60000)
             (void)sendto(g_udp_fd, body, blen, 0, (struct sockaddr *)&from, flen);
     }
     return NULL;
@@ -308,6 +313,32 @@ static size_t b64decode(const char *s, unsigned char *out, size_t cap) {
 }
 static const char *json_value(const char *json, const char *name, char *out, size_t cap) { char key[64]; snprintf(key, sizeof key, "\"%s\"", name); const char *p = strstr(json, key); if (!p) return NULL; p = strchr(p + strlen(key), ':'); if (!p) return NULL; while (*++p == ' ' || *p == '\t') {} if (*p != '"') return NULL; ++p; size_t i = 0; while (*p && *p != '"' && i + 1 < cap) out[i++] = *p++; out[i] = 0; return *p == '"' ? out : NULL; }
 static int write_atomic(const char *path, const unsigned char *data, size_t len) { char tmp[1500]; snprintf(tmp, sizeof tmp, "%s.tmp.%lu", path, (unsigned long)getpid()); FILE *f = fopen(tmp, "wb"); if (!f) return 0; int ok = fwrite(data, 1, len, f) == len; if (fclose(f) != 0) ok = 0; if (ok) ok = rename(tmp, path) == 0; if (!ok) remove(tmp); return ok; }
+/* Read at most `cap` bytes of `f` into `buf`, sizing the file first.
+   hub_body() serves whole files out of fixed stack buffers, so a file longer
+   than the buffer must be refused rather than silently cut: a truncated body
+   is not a short answer, it is a corrupt one.  Measured on the unpatched code
+   with a 66560-byte package: GET /package/<id> and GET /v/<id> answered 200
+   with a 65536-byte prefix, GET /content/<hash> answered 500
+   content_corrupt for a perfectly good file, and POST /package/fork wrote
+   the 65536-byte prefix to disk as a new package and answered 201.
+   Returns 0 = *out_len holds the whole file; 1 = the file is larger than cap
+   (*out_len = 0, *out_size = the real size, untouched buffer); 2 = I/O error
+   (including a non-seekable source, which cannot be sized and is therefore
+   refused instead of guessed at). */
+static int read_file_capped(FILE *f, void *buf, size_t cap, size_t *out_len, unsigned long long *out_size) {
+    *out_len = 0;
+    if (out_size) *out_size = 0;
+    if (fseek(f, 0, SEEK_END) != 0) return 2;
+    long end = ftell(f);
+    if (end < 0 || fseek(f, 0, SEEK_SET) != 0) return 2;
+    unsigned long long size = (unsigned long long)end;
+    if (out_size) *out_size = size;
+    if (size > (unsigned long long)cap) return 1;
+    size_t got = fread(buf, 1, cap, f);
+    if (got != (size_t)size) return 2;
+    *out_len = got;
+    return 0;
+}
 static const char *json_value(const char *json, const char *name, char *out, size_t cap);
 static size_t hub_body(const char *request, char *body, size_t cap, int *status) {
     const char *root = getenv("INIMERSE_HUB_DIR"); if (!root || !*root) root = "./universe";
@@ -322,7 +353,10 @@ static size_t hub_body(const char *request, char *body, size_t cap, int *status)
         content += 13; char hash[65]; size_t i = 0; while (content[i] && content[i] != ' ' && i < 64) { hash[i] = content[i]; ++i; } hash[i] = 0;
         if (!valid_hash(hash)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_hash\"}\n"); }
         char path[1400]; snprintf(path, sizeof path, "%s/content-%s", root, hash); FILE *f = fopen(path, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"content_not_found\"}\n"); }
-        size_t len = fread(body, 1, cap, f); fclose(f); unsigned char got[32]; sha256_digest(body, len, got); char check[65]; sha256_hex_of_digest(got, check); if (strcmp(check, hash)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"content_corrupt\"}\n"); } *status = 200; return len;
+        size_t len = 0; unsigned long long fsize = 0; int rrc = read_file_capped(f, body, cap, &len, &fsize); fclose(f);
+        if (rrc == 1) { *status = 413; return (size_t)snprintf(body, cap, "{\"error\":\"content_too_large\",\"size\":%llu,\"limit\":%zu}\n", fsize, cap); }
+        if (rrc == 2) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"read_failed\"}\n"); }
+        unsigned char got[32]; sha256_digest(body, len, got); char check[65]; sha256_hex_of_digest(got, check); if (strcmp(check, hash)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"content_corrupt\"}\n"); } *status = 200; return len;
     }
     if (strstr(request, "GET /packages") == request) {
         char query[128] = ""; const char *qp = strstr(request, "?q="); if (qp) { qp += 3; size_t qi = 0; while (qp[qi] && qp[qi] != ' ' && qp[qi] != '&' && qi + 1 < sizeof query) { query[qi] = qp[qi]; qi++; } query[qi] = 0; }
@@ -340,18 +374,27 @@ static size_t hub_body(const char *request, char *body, size_t cap, int *status)
         char vfile[1400]; snprintf(vfile, sizeof vfile, "%s/%s.vverse", root, vid);
         FILE *vf = fopen(vfile, "rb");
         if (!vf) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"not_found\"}\n"); }
-        size_t vn = fread(body, 1, cap, vf); fclose(vf); *status = 200; return vn;
+        size_t vn = 0; unsigned long long vsize = 0; int vrc = read_file_capped(vf, body, cap, &vn, &vsize); fclose(vf);
+        if (vrc == 1) { *status = 413; return (size_t)snprintf(body, cap, "{\"error\":\"package_too_large\",\"size\":%llu,\"limit\":%zu}\n", vsize, cap); }
+        if (vrc == 2) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"read_failed\"}\n"); }
+        *status = 200; return vn;
     }
     const char *p = strstr(request, "GET /package/"); if (p == request) {
         p += 13; char id[128]; size_t i = 0; while (p[i] && p[i] != ' ' && p[i] != '?' && i + 1 < sizeof id) { id[i] = p[i]; ++i; } id[i] = 0;
         if (!safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"invalid_id\"}\n"); }
         char path[1400]; snprintf(path, sizeof path, "%s/%s.vverse", root, id); FILE *f = fopen(path, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"not_found\"}\n"); }
-        size_t n = fread(body, 1, cap, f); fclose(f); *status = 200; return n;
+        size_t n = 0; unsigned long long psize = 0; int prc = read_file_capped(f, body, cap, &n, &psize); fclose(f);
+        if (prc == 1) { *status = 413; return (size_t)snprintf(body, cap, "{\"error\":\"package_too_large\",\"size\":%llu,\"limit\":%zu}\n", psize, cap); }
+        if (prc == 2) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"read_failed\"}\n"); }
+        *status = 200; return n;
     }
     if (strstr(request, "POST /package/fork") == request) {
         char source[128], id[128]; if (!json_value(request, "source", source, sizeof source) || !json_value(request, "id", id, sizeof id) || !safe_id(source) || !safe_id(id)) { *status = 400; return (size_t)snprintf(body, cap, "{\"error\":\"source_and_id_required\"}\n"); }
         char src[1400], dst[1400]; snprintf(src, sizeof src, "%s/%s.vverse", root, source); snprintf(dst, sizeof dst, "%s/%s.vverse", root, id); FILE *f = fopen(src, "rb"); if (!f) { *status = 404; return (size_t)snprintf(body, cap, "{\"error\":\"source_not_found\"}\n"); }
-        unsigned char data[65536]; size_t len = fread(data, 1, sizeof data, f); fclose(f); if (!write_atomic(dst, data, len)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"write_failed\"}\n"); }
+        unsigned char data[65536]; size_t len = 0; unsigned long long ssize = 0; int frc = read_file_capped(f, data, sizeof data, &len, &ssize); fclose(f);
+        if (frc == 1) { *status = 413; return (size_t)snprintf(body, cap, "{\"error\":\"package_too_large\",\"source\":\"%s\",\"size\":%llu,\"limit\":%zu}\n", source, ssize, sizeof data); }
+        if (frc == 2) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"read_failed\"}\n"); }
+        if (!write_atomic(dst, data, len)) { *status = 500; return (size_t)snprintf(body, cap, "{\"error\":\"write_failed\"}\n"); }
         *status = 201; return (size_t)snprintf(body, cap, "{\"id\":\"%s\",\"forkOf\":\"%s\",\"size\":%zu}\n", id, source, len);
     }
     if (strstr(request, "POST /package") == request) {
@@ -1949,44 +1992,81 @@ reattach_done: ;
     return NULL;
 }
 
-int verse_http_start(int port) {
-    if (g_http_running || port < 1 || port > 65535 || im_socket_init() != 0) return g_http_running ? 1 : 0;
-    if (!g_state_loaded) { state_load(); g_state_loaded = 1; }
-    /* Bind the UDP hub socket BEFORE the TCP listener accepts anything.
-       Ordering is load-bearing: callers (and the test suites) wait for the TCP
-       port to accept as their readiness signal, so as long as TCP came up
-       first there was a window in which the hub answered TCP but silently
-       dropped UDP.  A one-shot datagram sent in that window is lost for good
-       -- UDP does not retransmit -- which is exactly how hub_dist_regression
-       failed under `ctest -j12` while passing in isolation.  Binding UDP first
-       makes "TCP accepts" a truthful readiness signal for both transports. */
+/* The port the HTTP listener is actually reachable on.  `--http-port 0` asks
+   the kernel for a free port, which the caller cannot know in advance, so it
+   is reported here and main.c prints it on the existing `http api:` line.
+   Zero means "no HTTP listener running". */
+static int g_http_port = 0;
+
+int verse_http_bound_port(void) { return g_http_port; }
+
+/* Bind the UDP half of the hub to `port` and start its loop.  Failure
+   degrades to TCP-only -- never silently pretends UDP works. */
+static void hub_udp_bind(int port) {
     g_udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (g_udp_fd >= 0) {
-        struct sockaddr_in ua;
-        memset(&ua, 0, sizeof ua);
-        ua.sin_family = AF_INET;
-        ua.sin_port = htons((unsigned short)port);
-        /* Loopback, matching the TCP listener: this hub is a local process
-           service, so binding the wildcard address would only widen the set of
-           sockets that can shadow the port. */
-        ua.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (bind(g_udp_fd, (struct sockaddr *)&ua, sizeof ua) == 0) {
-            /* non-blocking + poll: closing an fd another thread blocks on is
-               not a reliable wakeup on POSIX, so the loop checks a flag */
-            int fl = fcntl(g_udp_fd, F_GETFL, 0);
-            (void)fcntl(g_udp_fd, F_SETFL, fl | O_NONBLOCK);
-            g_udp_running = 1;
-            if (pthread_create(&g_udp_thread, NULL, udp_loop, NULL) != 0) g_udp_running = 0;
-        }
-        /* Failure degrades to TCP-only -- never silently pretends UDP works. */
-        if (!g_udp_running) { close(g_udp_fd); g_udp_fd = -1; }
+    if (g_udp_fd < 0) return;
+    struct sockaddr_in ua;
+    memset(&ua, 0, sizeof ua);
+    ua.sin_family = AF_INET;
+    ua.sin_port = htons((unsigned short)port);
+    /* Loopback, matching the TCP listener: this hub is a local process
+       service, so binding the wildcard address would only widen the set of
+       sockets that can shadow the port. */
+    ua.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(g_udp_fd, (struct sockaddr *)&ua, sizeof ua) == 0) {
+        /* non-blocking + poll: closing an fd another thread blocks on is
+           not a reliable wakeup on POSIX, so the loop checks a flag */
+        int fl = fcntl(g_udp_fd, F_GETFL, 0);
+        (void)fcntl(g_udp_fd, F_SETFL, fl | O_NONBLOCK);
+        g_udp_running = 1;
+        if (pthread_create(&g_udp_thread, NULL, udp_loop, NULL) != 0) g_udp_running = 0;
     }
-    g_http_listener = im_socket_listen("127.0.0.1", (uint16_t)port, 16);
+    if (!g_udp_running) { close(g_udp_fd); g_udp_fd = -1; }
+}
+
+int verse_http_start(int port) {
+    if (g_http_running || port < 0 || port > 65535 || im_socket_init() != 0) return g_http_running ? 1 : 0;
+    if (!g_state_loaded) { state_load(); g_state_loaded = 1; }
+    if (port != 0) {
+        /* Explicit port: bind the UDP hub socket BEFORE the TCP listener
+           accepts anything.  Ordering is load-bearing: callers (and the test
+           suites) wait for the TCP port to accept as their readiness signal,
+           so as long as TCP came up first there was a window in which the hub
+           answered TCP but silently dropped UDP.  A one-shot datagram sent in
+           that window is lost for good -- UDP does not retransmit -- which is
+           exactly how hub_dist_regression failed under `ctest -j12` while
+           passing in isolation.  Binding UDP first makes "TCP accepts" a
+           truthful readiness signal for both transports. */
+        hub_udp_bind(port);
+        g_http_listener = im_socket_listen("127.0.0.1", (uint16_t)port, 16);
+    } else {
+        /* Kernel-assigned port.  Both transports must share ONE number
+           (GET /v/<id> answers on both), so TCP is bound first to obtain a
+           number, then UDP is asked for that same one: an ephemeral port can
+           already be owned by another process's datagram socket even though
+           it was free for TCP, and the loop then just picks a fresh TCP port.
+           The ordering rule above cannot be reproduced here -- there is no
+           number to give UDP before TCP has one -- but it does not need to
+           be: the caller cannot know the port until this function returns and
+           main.c has printed it, so no client can be probing TCP while UDP is
+           still unbound. */
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            g_http_listener = im_socket_listen("127.0.0.1", 0, 16);
+            if (!g_http_listener) break;
+            int bound = im_socket_local_port(g_http_listener);
+            if (bound < 1) break;
+            hub_udp_bind(bound);
+            if (g_udp_running) break;
+            im_socket_close(g_http_listener); g_http_listener = NULL;   /* UDP could not take it */
+        }
+    }
     if (!g_http_listener || im_socket_set_nonblocking(g_http_listener, 1) != 0) {
         if (g_http_listener) im_socket_close(g_http_listener); g_http_listener = NULL;
         if (g_udp_running) { g_udp_running = 0; pthread_join(g_udp_thread, NULL); if (g_udp_fd >= 0) { close(g_udp_fd); g_udp_fd = -1; } }
         im_socket_shutdown(); return 0;
     }
+    g_http_port = im_socket_local_port(g_http_listener);
+    if (g_http_port < 1) g_http_port = port;
     g_http_running = 1;
     if (pthread_create(&g_http_thread, NULL, http_loop, NULL) != 0) {
         g_http_running = 0; im_socket_close(g_http_listener); g_http_listener = NULL;
@@ -2012,6 +2092,7 @@ void verse_http_stop(void) {
     }
     if (!g_http_running) return;
     g_http_running = 0;
+    g_http_port = 0;
     pthread_join(g_http_thread, NULL);
     if (g_http_listener) { im_socket_close(g_http_listener); g_http_listener = NULL; }
     im_socket_shutdown();

@@ -36,7 +36,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
-from testports import distinct_ports, wait_port  # noqa: E402
+from testports import start_hub_bound_ports, wait_port  # noqa: E402
 
 HELPER_JS = r"""
 'use strict';
@@ -376,12 +376,14 @@ def main():
         shutil.copy(small_pkg, hub_dir / f"{served_id}.vverse")
         shutil.copy(eng_pkg, hub_dir / "big.mod.vverse")
         (root / "hub.im").write_text('say "hub"\nwait 90\n', encoding="utf-8")
-        tcp_port, http_port = distinct_ports(2)
-        hub = subprocess.Popen(
-            [str(find_engine_binary()), "--headless", "--port", str(tcp_port),
-             "--http-port", str(http_port), str(root / "hub.im")],
+        # Kernel-assigned hub ports, read back from the engine's startup lines:
+        # this suite reserves no number at all, so there is no release/bind
+        # window another suite's pool could take it in.
+        hub, _tcp_port, http_port = start_hub_bound_ports(
+            [str(find_engine_binary()), "--headless", "--port", "0",
+             "--http-port", "0", str(root / "hub.im")],
             cwd=root, env=dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir)),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            log_path=root / "hub.log")
         try:
             check("the hub came up", wait_port(http_port))
 
@@ -412,14 +414,19 @@ def main():
             check("...and still validates against the reference", rc.returncode == 0,
                   rc.stderr.decode().strip())
 
-            # Measured, not required: the hub's body buffer is 64 KiB, so a
-            # larger package comes back as a prefix.  That buffer lives in
-            # src/platform/http_posix.c, outside this stream's conflict domain.
+            # The hub's body buffer is 64 KiB (src/platform/http_posix.c), so a
+            # bigger package cannot be handed out whole.  It must be *refused*:
+            # a prefix is indistinguishable from a corrupt package at the
+            # client, and this check used to accept exactly that.
             status, served_big = http_get("/v/big.mod")
-            check("an oversized package is truncated at a body-buffer boundary, not corrupted",
-                  status == 200 and served_big == Path(eng_pkg).read_bytes()[:len(served_big)]
-                  and len(served_big) < Path(eng_pkg).stat().st_size,
-                  f"served {len(served_big)} of {Path(eng_pkg).stat().st_size} bytes")
+            big_size = Path(eng_pkg).stat().st_size
+            check("an oversized package is refused (413 + real size), not truncated",
+                  status == 413 and str(big_size).encode() in served_big
+                  and len(served_big) < 4096,
+                  f"status {status}, {len(served_big)} bytes, {served_big[:80]!r}")
+            check("the refusal is not a prefix of the package it refused",
+                  not Path(eng_pkg).read_bytes().startswith(served_big),
+                  f"{len(served_big)} bytes of {big_size}")
         finally:
             hub.terminate()
             try:
