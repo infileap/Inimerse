@@ -1,5 +1,8 @@
 # V0.4 lambda smoke test
+# The `lambda ` prefixes exist so CTest can assert on the VALUES: the engine
+# echoes builtin/module call arguments, so a bare `42` in the output would match
+# even while the lambda was broken.
 double = x -> x * 2
-say double(21)
+say "lambda double=" + str(double(21))
 sum2 = (a, b) -> a + b
-say sum2(2, 3)
+say "lambda sum2=" + str(sum2(2, 3))

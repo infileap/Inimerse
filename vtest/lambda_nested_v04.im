@@ -1,7 +1,10 @@
 # Nested closures must forward captures from the enclosing closure.
+# The `lambda ` prefix exists so CTest can assert on the VALUE: a bare `9` in
+# the output matched even while the nested capture was broken, and `9` also
+# matches inside any larger number the engine might print.
 func make_nested(base) {
     return y -> x -> x + y + base
 }
 outer = make_nested(2)
 inner = outer(3)
-say inner(4)
+say "lambda nested=" + str(inner(4))

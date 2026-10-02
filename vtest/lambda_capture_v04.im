@@ -1,0 +1,30 @@
+# A closure captures its enclosing scope by value and stays callable after the
+# enclosing function returns.
+#
+# This file used to be vtest/lambda_capture_rejected_v04.im. 69e7fa0 introduced
+# it as a regression gate for the *rejected* contract ("Until closure
+# environments land, outer-local captures must be rejected"), then bd69935
+# implemented captured lambdas and flipped the expectation to this working case
+# -- without renaming the file, so the name kept claiming a contract that no
+# longer existed, and the CTest entry asserted nothing at all.
+#
+# The `lambda ` prefixes exist so CTest can assert on the VALUES: the engine
+# echoes builtin/module call arguments, so a bare `5` in the output would match
+# even while the capture was broken.
+func make_adder(base) {
+    return x -> x + base
+}
+
+# Each closure keeps its own captured value.
+add2 = make_adder(2)
+add10 = make_adder(10)
+say "lambda capture2=" + str(add2(3))
+say "lambda capture10=" + str(add10(3))
+
+# Locals, not just parameters, are captured too.
+func make_bump() {
+    n = 7
+    return x -> x + n
+}
+bump = make_bump()
+say "lambda local=" + str(bump(1))

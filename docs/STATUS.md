@@ -1205,3 +1205,35 @@ say "OM missing=" + missing
 **顺带修掉一处杂散改动**：`git diff` 显示 `src/compiler/compiler.c:1` 的 UTF-8 BOM 被之前的编辑剥掉了，不在修复意图内，已补回，使该文件的 diff 只剩两处修复。
 
 **门禁**：本轮**不新增 CTest**，`EXP_CTEST` 保持 **101**；改动落在 `src/compiler/compiler.c`、`vtest/optional_member_v04.im`、`CMakeLists.txt`，文档落在 `docs/SYNTAX.md`（D11 与四处交叉引用）、`docs/BOARD.md`（新行 `optional-member-safe-access` + `ctest-assertion-gap` 标记首个实例）、`docs/STATUS.md`（本节）。
+
+### 10.20 一条说谎的文件名，以及「有牙的断言」在闭包上的三种打断（`lambda-test-assertions`）
+
+**起因。** §10.19 补完第一条断言后，`ctest-assertion-gap` 的下一批是语言行为类的 `*_runtime`。lambda 三件套排在最前，因为其中一条**一眼就能看出问题**：`lambda_capture_runtime` 跑的脚本叫 `vtest/lambda_capture_rejected_v04.im`。
+
+**文件名在说谎，测试内容没错。** `git log` 把来历交代得很清楚：`69e7fa0`（2026-09-01，「Add regression gate for rejected lambda captures」）建这个文件时，首行注释是 `# Until closure environments land, outer-local captures must be rejected.`；`bd69935`（2026-09-03，「Execute captured lambdas in VM」，9 文件）实现了闭包捕获，把**注释改写成一段正常成功的用例**，却**没有改文件名**。于是文件名一直声称一个已经不存在的契约，而 CTest 条目既没有 `PASS_REGULAR_EXPRESSION` 也没有 `WILL_FAIL` —— 两边都不说实话。**定性结论：不是测试写错，是文件名写错。** 已 `git mv` 为 `vtest/lambda_capture_v04.im`（`git mv` 是执行了的，但内容从 6 行重写到 30 行，`git diff -M` 相似度低于 50%，所以提交里呈现为 delete + create，不是 `R`）。
+
+**三条断言。** 先用单条 `.*` 正则，而不是 `;` 分隔的列表 —— CMake 的 `PASS_REGULAR_EXPRESSION` 列表语义是**任一匹配即通过**，写成列表反而比一条正则更弱。仓库里既有用法可以佐证 `.*` 能跨行匹配（`CMakeLists.txt:607` 的 `"30.*20"`、`:617` 的 `"12.*7.*closure-throw-caught"`）。
+
+| 测试 | 新断言 |
+|---|---|
+| `lambda_runtime` | `"lambda double=42.*lambda sum2=5"` |
+| `lambda_capture_runtime` | `"lambda capture2=5.*lambda capture10=13.*lambda local=8"` |
+| `lambda_nested_runtime` | `"lambda nested=9"`（原来是裸 `"9"`） |
+
+三个 `.im` 相应重写为打印**带标记的值行**（`say "lambda double=" + str(double(21))`）。**标记是必需的**：引擎回显 `[0]="lambda double=" [1]="str" [2]="lambda sum2="`，裸的 `42` / `5` / `9` 既可能与回显碰撞，`9` 还可能匹配到任何更大的数字里。顺手把捕获的覆盖面也加深了 —— 新增两个独立闭包（`add2` / `add10`，各自保留自己的捕获值）和一处**局部变量（非参数）捕获**（`make_bump`），因为原来的用例只覆盖了参数捕获。
+
+**双向验证：三种打断。** 每次打断都 `cp` 还原 `src/vm/vm.c` 并 `cmake --build build -j12` 重建，确认回绿后再做下一种。
+
+| 打断 | `lambda_runtime` | `lambda_capture_runtime` | `lambda_nested_runtime` |
+|---|---|---|---|
+| `L_MAKE_FUNC` 里 `im_closure_env_new((size_t)ins.r3)` → `im_closure_env_new(0)`（所有捕获读回 `nil`） | Passed | **Failed** | **Failed** |
+| `im_closure_function_new(ins.r2, env)` → `ins.r2 + 1`（闭包自己的 `function_index` 偏一） | **Failed** | **Failed** | **Failed** |
+| `value_set(&R[ins.r1], VAL_FUNCTION, ins.r2, 0, NULL, fn)` → `ins.r2 + 1` | Passed | Passed | Passed |
+
+第一行里 `lambda_runtime` 保持绿色是**正确**的：它的两个 lambda（`x -> x * 2`、`(a, b) -> a + b`）都不捕获外层变量，本来就不该被闭包环境的破坏波及 —— 这正好说明三条断言各自的射程是分开的。
+
+**③ 牵出一条观察：`Value.ival` 在函数值上没人读。** 第三行打断把 `OP_MAKE_FUNC` 写进 `Value.ival` 的函数下标故意写错一格，**三个测试全绿**。查下去：`src/vm/vm.c:3632` 的 `L_CALL_VALUE` 派发用的是 `im_closure_function_index(im_closure_from_value(&R[ins.r1]))`，也就是闭包对象自己的 `fn->function_index`，从不看 `Value.ival`；`src/vm/closure.c` 里唯一的 `ival` 读取是 `v->type == VAL_STRING && v->ival != 1`（静态字符串标志）。所以 `OP_MAKE_FUNC` 往 `Value.ival` 写的那一格是**没人读的**。这里只宣称「对派发无效，已用『写错也不产生任何可观测差异』实证」，**不宣称该字段在整个引擎里全无用途**。
+
+**可复用的模式（补 §10.19 那条）。** §10.19 的结论是「当引擎回显会污染输出时，断言必须打在程序自己打印的带标记值行上」。本条补上后半句：**断言还要分开射程** —— 一条只覆盖它真正依赖的机制（`lambda_runtime` 不含捕获，就不该被捕获的破坏带红），否则双向验证时无法判断新断言抓的是哪一个缺陷。
+
+**门禁**：本批**不新增 CTest**（只加属性），`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 72 更新为 **71**。
