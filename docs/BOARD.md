@@ -82,13 +82,13 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|economy|node|plu
 | 状态 | slug | 任务 | 冲突域（别人别碰） | 验收判据 | 认领 |
 | --- | --- | --- | --- | --- | --- |
 | 阻塞 | `marketplace-watch` | 上架 dsh-m：npm 包已发布，PR [iasiv5/dsh-m#1](https://github.com/iasiv5/dsh-m/pull/1) 等待维护者点 *Approve and run* | `tools/dsh-inimerse/marketplace/` | PR 合并后 `node scripts/validate-registry.mjs` 全绿 | 协调者 |
-| 未认领 | `upp-in-engine` | UPP 目前只有 **JS 参考实现**（`tools/upp_reference.js` + `upp_session.js`，29 条断言）；引擎侧没有对应状态机 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | — |
+| 进行中 | `upp-in-engine` | UPP 目前只有 **JS 参考实现**（`tools/upp_reference.js` + `upp_session.js`，29 条断言）；引擎侧没有对应状态机 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | `stream/upp-in-engine` |
 | 未认领 | `crp-in-engine` | CRP 的 `FIND` / `PORTAL` 回环签名校验同样只在 JS 参考实现里；引擎侧无实现 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎实现能通过 `tools/crp_relay.test.js` 的等价场景，且有真实两进程证据 | — |
-| 未认领 | `vverse-produce` | `.vverse` **打包器**（`tools/vverse_pack.js`）只在 JS 侧；引擎不会产出 `.vverse` | `src/`、`vtest/` | 引擎产出的 `.vverse` 能通过 `tools/vverse_validate.js` 校验并被 `inim-server` 装载 | — |
+| 进行中 | `vverse-produce` | `.vverse` **打包器**（`tools/vverse_pack.js`）只在 JS 侧；引擎不会产出 `.vverse` | `src/`、`vtest/` | 引擎产出的 `.vverse` 能通过 `tools/vverse_validate.js` 校验并被 `inim-server` 装载 | `stream/vverse-produce` |
 | 未认领 | `ws-client-coverage` | `tools/crp_ws_client.js` 只有 **1 条**断言，且没有任何文档或脚本引用它（`upp_session` 同样 0 引用） | `tools/crp_ws_client*`、`tools/upp_session*` | 连接/重连/排队各自有断言；两个套件至少被一份文档引用 | — |
 | 未认领 | `oauth-bind` | GitHub / Bilibili OAuth token 交换与资料绑定 | `Infiverse_standard/` | 端到端有真实（或明确标注的假）回环证据 | — |
 | 未认领 | `forge-panels` | Verse Forge 第一批时空 / 物理 / 蓝图面板 | `Infiverse_standard/` | 面板可用 + 截图或录屏证据 | — |
-| 未认领 | `repo-hygiene` | 仓库根残留清理（24 个 `CHANGES_*.txt`、`_t_bisect.im`、`CMakeLists.txt.bak`、`nst2.inim`、`params*`、`vtest_signed.vverse`、若干 `*.html`） | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩应有的文件 | — |
+| 进行中 | `repo-hygiene` | 仓库根残留清理（24 个 `CHANGES_*.txt`、`_t_bisect.im`、`CMakeLists.txt.bak`、`nst2.inim`、`params*`、`vtest_signed.vverse`、若干 `*.html`） | 仓库根**除** `README.md`/`LICENSE`/`CMakeLists.txt` | 门禁全绿 + 根目录只剩应有的文件 | `stream/repo-hygiene` |
 | 未认领 | `docs-audit` | 文档口径复查：README 基线数字、四标记词汇一致性、`archive/` 引用 | `docs/`、`README.md`、`future/` | `tools/check_links.py` 0 broken + 抽查每处数字有出处 | — |
 
 > **2026-08 修订说明（重要）。** 上一版把 `verse-upp` / `verse-crp` / `vverse-pack` 三行写成
