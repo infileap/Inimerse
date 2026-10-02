@@ -158,6 +158,18 @@ add_executable(type_registry_probe src/types/typeset.c src/types/enum.c src/type
 target_include_directories(type_registry_probe PRIVATE src/types)
 add_test(NAME type_registry_probe COMMAND type_registry_probe)
 
+# These six probes state their expectations with assert(), and assert() is a
+# no-op under -DNDEBUG -- which is exactly what CMAKE_C_FLAGS_RELEASE carries
+# (-O3 -DNDEBUG).  Compiled as-is they exit 0 no matter what the engine does,
+# so CTest reports a green test that checks nothing at all.  -UNDEBUG has to
+# come after -DNDEBUG on the command line; target_compile_options appends
+# there, whereas target_compile_definitions would not undo it.
+foreach(_asserting_probe
+    bytecode_capture_probe closure_probe typeset_probe
+    enum_probe error_types_probe type_registry_probe)
+  target_compile_options(${_asserting_probe} PRIVATE -UNDEBUG)
+endforeach()
+
 add_executable(fiber_probe src/platform/fiber.c src/platform/fiber_probe.c)
 if(NOT WIN32)
   target_link_libraries(fiber_probe PRIVATE Threads::Threads)

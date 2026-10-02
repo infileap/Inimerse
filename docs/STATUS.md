@@ -1413,3 +1413,70 @@ alias guarded2-miss
 - **`str` 被注册两次，后者覆盖前者。** `src/runtime/runtime.c:1810` 的 `vm_register_builtin(vm, "str", builtin_str);` 被 `src/runtime/runtime_posix.c:1032` 的 `vm_register_builtin(vm, "str", posix_core_str);` 覆盖。所以改 `src/runtime/runtime.c:67` 的 `builtin_str` **完全不生效**，`float_precision` 必须打断 `src/runtime/runtime_posix.c:59`。
 
 **门禁**：本批**不新增 CTest**，`EXP_CTEST` 保持 **101**；`ctest-assertion-gap` 的剩余数从 66 更新为 **58**（`*_runtime` 类从 10 降到 **2**，只剩 `eidos_desugar_runtime` 与 `eidos_runtime`，它们是 Python 驱动的脚本测试、脚本内部自带 `assert`）。全量 `ctest --test-dir build` → `100% tests passed, 0 tests failed out of 101`。
+
+### 10.24 `ctest-assertion-gap` 结案：58 个的分类，以及六个「在 Release 里空转」的探针（`vacuous-probe-assertions`）
+
+§10.19 → §10.23 把 `*_runtime` 这一类补完了。本节处理剩下的 58 个只断言退出码的 CTest：**先分类，再修其中真正坏掉的那一类。**
+
+**分类结果：58 个里没有一个是由 `inimerse` 直接跑 `.im` 的。** 用 `ctest --show-only=json-v1` 取每条测试的 `command`，按第一个词分类：
+
+| 驱动 | 条数 | 退出码是否是它的契约 |
+|---|---|---|
+| C 探针二进制（`*_probe`、`*_crosscheck`） | 27 | 是 —— 源码里逐条 `return 27/28/…` 或 `return g_failures == 0 ? 0 : 1;` |
+| `python3` 驱动（`*_regression`、`*_diagnostic` 等） | 25 | 是 —— 失败路径 `return 1` / `raise SystemExit(...)` |
+| `node` 驱动（`protocol_regression`、`verse_*_crosscheck`、`wasm_*`） | 6 | 是 |
+| `cmake -P`（`verse_closed_loop`、`verse_crp_closed_loop`） | 2 | 是 |
+| `bash`（`http_probe`） | 1 | 是 |
+
+**所以「只断言退出码」对它们不是缺陷，退出码就是契约** —— 与 `*_runtime` 的区别在于：`inimerse` 跑一段 `.im` 后无论程序打印什么都返回 0，而探针与驱动的返回值是它们自己算出来的判决。分类依据可复现：`crp_session_probe.c` 每个检查点返回不同非零码（`return 27` … `return 45`），`tools/finally_control_flow.test.py:23` 是 `return 1`，`tools/xlang_python_bridge.test.py:73` 是 `sys.exit(77)`。
+
+**但分类过程中抓到一类真缺陷：六个探针在 Release 门禁里什么都不检查。** 它们用 `assert()` 表达**全部**期望，而门禁的构建带 `-DNDEBUG`：
+
+```
+CMAKE_BUILD_TYPE=Release
+CMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG
+build/CMakeFiles/enum_probe.dir/flags.make:  C_FLAGS = -O3 -DNDEBUG -std=gnu11
+nm -C build/enum_probe | grep -c '__assert_fail'   →  0
+```
+
+`assert()` 被预处理掉，六个可执行文件里**一个 `__assert_fail` 符号都没有**，无论引擎行为对错都 `return 0`。共 **107 条断言**：
+
+| 探针 | 断言数 |
+|---|---|
+| `src/types/enum_probe.c` | 36 |
+| `src/types/typeset_probe.c` | 21 |
+| `src/vm/closure_probe.c` | 20 |
+| `src/types/error_types_probe.c` | 14 |
+| `src/compiler/bytecode_capture_probe.c` | 9 |
+| `src/types/registry_probe.c` | 7 |
+
+**实证（修前）**：往 `src/types/registry_probe.c` 的 `main` 开头插一句 `assert(1 == 2);` 并重建 ——
+
+```
+1/1 Test #17: type_registry_probe ...............   Passed
+100% tests passed, 0 tests failed out of 1
+```
+
+**修法**（`CMakeLists.txt`，紧随 `add_test(NAME type_registry_probe …)`）：
+
+```cmake
+foreach(_asserting_probe
+    bytecode_capture_probe closure_probe typeset_probe
+    enum_probe error_types_probe type_registry_probe)
+  target_compile_options(${_asserting_probe} PRIVATE -UNDEBUG)
+endforeach()
+```
+
+`-UNDEBUG` 必须**排在 `-DNDEBUG` 之后**才会生效；`target_compile_options` 正是追加到 `C_FLAGS` 尾部（修后 `C_FLAGS = -O3 -DNDEBUG -std=gnu11 -UNDEBUG`），而 `target_compile_definitions` 只能继续加宏、撤不掉已经生效的。
+
+**实证（修后）**：六个二进制各含 **1** 个 `__assert_fail`；同一句 `assert(1 == 2);` 立刻让测试变红 ——
+
+```
+1/1 Test #17: type_registry_probe ...............***Failed  (Subprocess aborted)
+```
+
+删掉那句后 `ctest -R 'bytecode_capture_probe|closure_probe|typeset_probe|enum_probe|error_types_probe|type_registry_probe'` → `100% tests passed, 0 tests failed out of 6`，`git diff --numstat src/` 为空（探针源码**一行未改**，只改了构建选项）。
+
+**穷尽性检查（确保没有第七个）**：对全部 `git ls-files '*.c'` 里「含 `int main` 且含 `assert(`」的文件，统计「除 `assert` 之外还有没有返回非零的路径」，只有这六个是 `nonzero_paths=0`；`src/verse/crp_probe.c`（13 条非零路径）与 `src/verse/json_min_probe.c`（19 条）虽然各含 1 处 `assert` 字样，但判决走自己的计数器，不受影响。
+
+**结案**：`ctest-assertion-gap` 的剩余数 **58 → 0**。73 个无输出断言的 CTest 全部归类：17 个补上了有牙的 `PASS_REGULAR_EXPRESSION`（§10.19–§10.23），6 个探针恢复了在 Release 下真正生效的断言（本节），其余 50 个的退出码经源码取证确认就是它们的契约。**本批不新增 CTest，`EXP_CTEST` 保持 101。**
