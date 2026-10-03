@@ -2,7 +2,7 @@
 
 本文件是「全方位检查语言 bug + 解释运行 / JIT / 编译运行 / C++ / Rust 的效率与资源占用比较 + 优化方案」这一轮的交付物。全部数字与结论都在本仓库当前树上实测得到，复现命令见 §6。
 
-- §1 是**语言缺陷审计**：三条已复现的缺陷，其中两条是「静默算错」，一条是「越界检查被死代码吃掉」。
+- §1 是**语言缺陷审计**：四条已复现的缺陷（外加一个差分模糊测试装置）。最严重的一条 —— `and` / `or` 在两个后端返回不同的东西 —— 是模糊测试找出来的，不是手写探针：手写探针只能找到作者已经怀疑的东西。
 - §2–§4 是**效率与资源比较**：四条真实存在的执行通道（解释器 / AOT / C++ / Rust），五个工作负载，墙钟与峰值 RSS。
 - §5 是**优化方案**：按 效果 ÷ 风险 排序，每条给出验证方式。
 
@@ -29,6 +29,56 @@
 ---
 
 ## §1 语言缺陷审计
+
+### 1.0 `and` / `or` 在两个后端返回不同的东西 —— 本轮最严重的一条
+
+**这条不是手写探针找到的，是差分模糊测试找到的**（`tools/im_diff_fuzz.py`，见 §1.5）。手写探针只能找到作者已经怀疑的东西。
+
+**位置**：`src/compiler/compiler.c:648-670`（解释器侧）与 `src/compilation/aot_native.c:334-339`（AOT 侧）。
+
+解释器的编译器把 `and` / `or` 编译成**短路跳转并返回操作数**：
+
+```c
+if (expr->binary.op == TOK_AND) {
+    jmp_pos = comp->curBC->count;
+    emit(comp->curBC, OP_JUMP_IF_FALSE, result, 0, 0);
+    int right = compile_expr(comp, expr->binary.right);
+    emit(comp->curBC, OP_MOV, result, right, 0);
+} else {
+    jmp_pos = comp->curBC->count;
+    emit(comp->curBC, OP_JUMP_IF_TRUE, result, 0, 0);
+    int right = compile_expr(comp, expr->binary.right);
+    emit(comp->curBC, OP_MOV, result, right, 0);
+}
+```
+
+AOT 则把同一个运算符编译成布尔：
+
+```c
+if (op == TOK_AND || op == TOK_OR) {
+    buf_str(b, "nv_boo(nv_tru(");
+    ...
+    buf_str(b, op == TOK_AND ? ") && nv_tru(" : ") || nv_tru(");
+```
+
+**实测**（`/tmp/e13/probe/orv.im`，两列都是真实输出）：
+
+| 表达式 | 解释器 | AOT |
+| --- | --- | --- |
+| `31 or 1` | `31` | `true` |
+| `0 or 2` | `2` | `true` |
+| `1 and 5` | `5` | `true` |
+| `0 and 5` | `0` | `false` |
+
+解释器给的是**操作数**（Python / JS / Lua 的值语义），AOT 给的是**布尔**。
+
+**这个落差为什么难被发现**：`src/vm/vm.c:3166-3179` 的 `L_AND` / `L_OR` **确实是布尔语义的**（两个操作数取真值后存 `VAL_BOOL`）。也就是说 VM 的这两个 opcode 与 AOT 一致 —— 但**编译器根本不发它们**。`OP_OR` 在 `src/compiler/bytecode.h:12` 声明、**全仓从未被 emit**（`grep -rn "OP_OR" src/compiler/` 只命中声明）；`OP_AND` 只在 `src/compiler/compiler.c:827` 被用于**链式比较**（`1 < x < 10`）。于是「VM 的 opcode 是布尔语义」这件事对 `and`/`or` 运算符毫无影响，读 VM 代码的人会得出与运行时相反的结论。
+
+**文档是沉默的**：`docs/API.md:90` 只写 `and` `or` `not` 是「逻辑」，没有说返回操作数还是布尔。两边都「符合文档」，所以没有任何一方报错。
+
+**实际后果**：`x = a or default` 是常见的默认值写法。解释器下 `name or "anonymous"` 给 `anonymous`（实测），AOT 下同样的代码得到 `true` —— 编译后的程序静默地不再有默认值语义。
+
+**严重度**：最高。触发条件是**最常用的逻辑运算符**，两个后端静默不一致，且读代码无法看出哪边是对的。
 
 ### 1.1 `%` 在浮点路径把两个操作数截成 32 位 `int` —— 静默算错，且与 AOT 分歧
 
@@ -130,6 +180,44 @@ if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) { ... }
 | 除零 | `7 % 0` → 抛 `division_by_zero`，未捕获时 **exit code = 1**（正确） |
 | `int()` 截断 | `int(3.9)` → `3`、`int(-3.9)` → `-3`（向零截断） |
 
+### 1.5 差分模糊测试：这一节才是「全方位」的方法
+
+上面三条是手写探针找到的。手写探针有一个结构性缺陷：**它只能找到作者已经怀疑的东西**。`and` / `or` 那条（§1.0）之所以能出来，靠的是 `tools/im_diff_fuzz.py` —— 它生成随机程序，同一份源码分别送进解释器与 AOT（`aot-native translate` → `cc -O2` → 运行），逐对比较输出。
+
+生成范围限制在 AOT 支持的子集内（int/float/bool、`+ - * / %`、比较、`and/or/not`、`if/else`、`while`、`repeat`、`break`、赋值、用户函数、全局、`say`），所以**「翻译失败」会被报成生成器 bug，而不是记成一次分歧** —— 这两种东西必须分开，否则模糊测试的每一轮都会把「AOT 不支持这个语法」算成「后端不一致」。
+
+它区分两类发现，因为它们是不同的问题：
+
+- `DIVERGE` —— 两个后端都给出了值，而值不同。
+- `THREW` —— 一个后端拒绝执行（未捕获异常），另一个没有。
+
+常量刻意选在 int32 与 double 停止一致的那些边界上（`2147483647`、`2147483648`、`9007199254740992`、`3037000500`…），除数为零的字面量在生成时就避开（`division_by_zero` 是有文档的行为，不是分歧），但**求值产生的零**不避开 —— 那种情况下两个后端怎么处理正是要看的东西。
+
+**结果**（`--count 150 --seed 7`）：
+
+| | 数量 | 占比 |
+| --- | --- | --- |
+| 两个后端一致 | 109 | 72.7% |
+| `DIVERGE`（都有值，值不同） | **31** | **20.7%** |
+| `THREW`（一边拒绝、一边没拒绝） | **10** | **6.7%** |
+| 无法翻译 | 0 | 0% |
+
+也就是说，**在 AOT 自己文档化的子集内随机生成的程序里，超过四分之一（41/150 = 27.3%）在两个后端上给出不同结果。**
+
+**按根因归类这 41 个案例**（`/tmp/e13/fuzz3/`）：
+
+| 根因 | 案例数 |
+| --- | --- |
+| 含 `and` / `or` ⇒ §1.0 的值语义 vs 布尔 | **28** |
+| 含 int32 边界常量或 `%` ⇒ §1.1 / §1.2 | 13 |
+| **无法归因** | **0** |
+
+**「无法归因 0」这一行比总数更重要** —— 它说明这些分歧没有第五个未知机制在背后，四条已记录的缺陷就解释完了全部 41 例。68% 的分歧来自 §1.0，这也独立地确认了它是本轮最严重的一条。
+
+**一次生成器自身的教训**：第一版生成器固定给 `f` 传两个实参，而形参数量随机取 1–2，于是 44 个程序在 `aot-native translate` 阶段被拒（`aot-native: function 'f' takes 1 argument(s) but is called with 2`），全被记成「无法翻译」。这既掩盖了真实的分歧率，也掩盖了一个顺带的观察：**解释器不检查实参个数**（`docs/SYNTAX.md` 已记录的 M 类危险），而 **AOT 在翻译期就拒绝** —— 同一个程序解释器照跑、编译不过。修好生成器后「无法翻译」归零。
+
+**这个工具的定位是长期资产，不是一次性的**：修 §1.0 / §1.1 / §1.3 之后应当重跑它，用它来确认分歧数下降；`tools/aot_native.test.py` 里那三条 `DIVERGENCE` 钉死项也应当由它来复核。
+
 ---
 
 ## §2 执行通道效率比较
@@ -219,6 +307,12 @@ Rust 的时间**与 N 无关** —— `rustc -O` 把求和算成了闭式，那�
 
 ### 第一梯队（低风险，先做）
 
+**O0. 先定 `and` / `or` 的语义，再让两个后端一致（§1.0）** —— 这是本轮唯一需要**先做决定**而不是先写代码的一条。
+
+两条路：①按解释器现状（值语义）修 AOT 的 emitter，让它也短路并返回操作数；②按 AOT 现状（布尔）修 `src/compiler/compiler.c:648-670`，改成发 `OP_AND` / `OP_OR`。**应当选 ①**：值语义已经是解释器上被实际使用的行为（`name or "anonymous"`），改它会静默改变现有脚本的结果；而改 AOT 只是让编译产物与解释器一致。
+
+无论选哪条，`docs/API.md:90` 都必须写明返回的是操作数还是布尔 —— **现在文档对这件事沉默，正是这条分歧能活到现在的原因**。**验证**：§1.0 的四行表格两个后端逐格相同；`tools/im_diff_fuzz.py` 重跑后 `and`/`or` 相关分歧归零；顺带决定 `OP_OR`（当前是死 opcode）是删除还是真正启用。
+
 **O1. 修 `%` 的 32 位截断（§1.1）** —— 正确性修复，不是性能项。
 把 `L_MOD` 改成与 AOT 的 `nv_mod` 同语义：两个操作数按 64 位整数处理，除数为 0 时保持现有的 `division_by_zero` 抛出。**验证**：§1.1 表格里六个表达式逐个变成正确值；`2330089441 % 2147483647` 解释器与 AOT 都得到 `182605794`；现有 CTest 全绿。
 
@@ -278,6 +372,15 @@ python3 tools/perf_channels.py --reps 5
 
 # §4：JIT 三证（字节码哈希 + 输出 + 墙钟）
 python3 tools/perf_channels.py --jit-probe --only arith
+
+# §1.0 + §1.1 + §1.2：两个后端的分歧（含 and/or 的值语义）
+printf 'say 31 or 1\nsay 0 or 2\nsay 1 and 5\nsay 0 and 5\n' > /tmp/orv.im
+./build/inimerse /tmp/orv.im                      # 31 / 2 / 5 / 0
+./build/aot-native translate /tmp/orv.im /tmp/orv.c && cc -O2 -o /tmp/orv /tmp/orv.c && /tmp/orv
+                                                  # true / true / true / false
+
+# §1.5：差分模糊测试（随机程序，两个后端逐对比较）
+python3 tools/im_diff_fuzz.py --count 150 --seed 7 --keep /tmp/fuzz-cases
 
 # §1.1：模运算截断
 printf 'say 2330089441 %% 2147483647\n' > /tmp/mod.im && ./build/inimerse /tmp/mod.im
