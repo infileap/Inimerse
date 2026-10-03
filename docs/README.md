@@ -11,6 +11,7 @@
 | [API.md](API.md) | **语言、API 与平台事实的唯一权威** | 想写脚本、查内建函数、查语法糖、查平台与编译目标支持 |
 | [REQUIREMENTS_ANALYSIS.md](REQUIREMENTS_ANALYSIS.md) | 需求分析与治理裁决：33 项需求↔现状差距矩阵、9 处口径冲突、P0–P3 优先级 | 想知道"文档承诺 vs 仓库现状"的完整对照 |
 | [WASM.md](WASM.md) | **Wasm 后端的唯一权威**：线性内存堆与所有权、数组语义、PAL/ABI、错误码、v128 实测表、wasm-GC 降级 | 改 `src/compilation/wasm_backend.{c,h}`、写 `.wasm` 宿主、或想知道「SIMD/GC 到底做到哪了」 |
+| [AUDIT.md](AUDIT.md) | **语言缺陷审计与执行通道效率的唯一权威**：三条已复现缺陷（`%` 的 32 位截断、整数静默退化成 double、`vm.c:3637` 的死守卫）、四条通道 × 五个工作负载的实测表、12 条优化方案 | 想知道「引擎哪里会静默算错」「解释器 vs AOT vs C++/Rust 各快多少」、或准备做性能优化之前 |
 
 > 研究性愿景与设计草案见 [../future/README.md](../future/README.md)。
 > STATUS.md 记录「**已经**做到哪了」（事实与证据），BOARD.md 记录「**正在**做什么、谁在做」（在途与认领）；两者不重叠。
