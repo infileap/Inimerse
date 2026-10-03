@@ -775,6 +775,17 @@ if(INIMERSE_BUILD_ENGINE)
   # answering true.  See docs/AUDIT.md §1.10.
   add_test(NAME set_float_lattice_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_float_lattice_v05.im)
   set_tests_properties(set_float_lattice_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setlattice-ok n=4 last03=true in03=true upper=3 upper0=false half=6 int=6 big=100" FAIL_REGULAR_EXPRESSION "n=3|last03=false|in03=false|upper0=true")
+  # L_CALL_BUILTIN used to fall through when the name was not registered, so the call
+  # returned the last pushed operand instead of failing: str2int("42") handed back the
+  # string "42" and the program kept going.  Both compilation backends already refuse
+  # an unknown callee at compile time; this is the interpreter catching up.  The name
+  # in the test exists in no build, so it does not depend on which modules are linked.
+  # The regexes deliberately quote only text that is NOT a string literal in the test:
+  # the engine dumps its string pool on stderr, and an unanchored FAIL regex that names
+  # a literal in the source matches that dump and reports a false failure.
+  # See docs/AUDIT.md §1.11.
+  add_test(NAME unknown_builtin_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/unknown_builtin_v05.im)
+  set_tests_properties(unknown_builtin_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "unreg-ok state=1 control=true" FAIL_REGULAR_EXPRESSION "unreg-ok state=0|unreg-ok state=2|control=false")
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

@@ -1,0 +1,36 @@
+# Calling a builtin that does not exist must be an ERROR, not a value.
+#
+# L_CALL_BUILTIN looked the name up and, when the lookup failed, fell straight
+# through to the `r1 <- top-of-stack` pop at the end of the case -- so the call
+# returned whatever had been pushed last.  `str2int("42")` (registered only by
+# io_mod_register, which is a no-op stub on POSIX) handed back the string "42"
+# itself: `say str(str2int("42"))` printed 42 while `str2int("42") == 42` was
+# false, and the program carried on with that value.
+#
+# The interpreter was the lone outlier.  Both compilation backends already
+# refuse the same program at compile time --
+#   aot_native: call to 'nosuchbuiltin' is not a user-defined function in this program
+#   error: wasm MVP subset: function 'nosuchbuiltin' not found (builtins are not in the wasm MVP subset)
+# -- so this makes the third backend agree with the other two instead of
+# inventing a value.  The error is an ordinary throw: it is catchable, and the
+# program continues normally afterwards.
+#
+# The name below is deliberately one that exists in NO build, so the test does
+# not depend on which modules a platform happens to link.
+#
+# NOTE for anyone editing the regexes in CMakeLists.txt: the engine also prints
+# a dump of its STRING POOL on stderr, so a FAIL_REGULAR_EXPRESSION that quotes a
+# literal appearing in this file matches that dump too, and the test reports a
+# false failure.  That is why the states below are integers and the printed keys
+# are built by concatenation: `state=0`, `state=2` and `control=false` occur
+# nowhere in the pool.  (The first version of this test failed for exactly that
+# reason, with the implementation already correct.)
+#
+# See docs/AUDIT.md §1.11.
+state = 0
+try {
+    junk = definitely_not_a_builtin_xyz(1)
+} catch (e) {
+    if str(e) == "unknown builtin function 'definitely_not_a_builtin_xyz'" { state = 1 } else { state = 2 }
+}
+say "unreg-ok state=" + str(state) + " control=" + str(str(42) == "42")

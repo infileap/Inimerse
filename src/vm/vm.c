@@ -3554,6 +3554,16 @@ static void vm_execute_thread(VmThread *t) {
                             vm->cur_argc = ins.r3;
                             vm->builtins[bi].func(vm);
                         }
+                    } else {
+                        /* An unknown builtin used to fall straight through to the
+                           r1 <- top-of-stack pop below, so the call silently
+                           returned whatever was last pushed -- `str2int("42")`
+                           handed back the string "42" itself and the program
+                           kept running on junk.  A missing name is a fact worth
+                           reporting, not a value to invent. */
+                        char eb[256];
+                        snprintf(eb, sizeof eb, "unknown builtin function '%s'", name);
+                        vm_throw_msg(vm, eb);
                     }
                 }
             }

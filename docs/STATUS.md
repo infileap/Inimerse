@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-03 更新测试计数到 110；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-03 更新测试计数到 111；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **110 / 110 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **111 / 111 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **110** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **111** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 110
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 111
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -2720,4 +2720,81 @@ internal error, please report: running "rustup.cargo" failed: cannot create tran
 - `list` **只存在于解释器**：AOT 与 wasm 后端都没实现（`grep '"list"' src/compilation/*.c` 为空），所以这三个缺陷没有三后端比对可言，判据只能是解释器侧的数值断言 —— 与 §10.44 那条 `list` 缺陷同源。
 - 枚举上限的两道闸是**拒绝**而非截断：分量跨度超过 `10^7` 格、或端点绝对值超过 `9.0e18`，`list`/`len` 会回到「拒绝」而不是给一个截断的集合。这是刻意的取舍（宁可说不知道，也不给半截答案），但**没有回归钉住这两道闸** —— 已知空白。
 - `contract_test.im` **仍未进门禁**（手动/dormant 套件），也未随本轮扩充。
-- 仍未修的下一条：**调用未注册函数是静默留栈而非报错**（`say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 为 false）。取证在 `docs/AUDIT.md` §1.9，另行立项。
+- **调用未注册函数是静默留栈而非报错**（`say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 为 false）—— 取证在 `docs/AUDIT.md` §1.9，**已由 §10.46 修掉并钉进回归**。
+
+---
+
+## 10.46 调用未注册的内建函数不再静默返回栈顶（BOARD 行 140）
+
+### 一、症状：不报错，反而把最后一个实参交回来
+
+POSIX 上 `io_mod_register` 是空桩（`src/platform/posix_stubs.c`），所以 `str2int` 这个内建**确实不存在**。调用它不报错：
+
+| 探针（修前） | 输出 |
+| --- | --- |
+| `say "A:" + str(str2int("42"))` | `A:42` —— 拿到的是**字符串** `"42"` |
+| `say "B:" + str(str2int("42") == 42)` | `B:false` |
+| `say(str2int("abc"))` | `abc` |
+| 退出码 | **0** |
+
+这正是 §1.9 记录的那 4 条 `contract_test.im` 失败表现为「值不对」而不是「未知函数」的原因 —— 也是那遍穷举只能靠**注释跳过**、不可能靠报错定位的原因。
+
+### 二、根因：`if (bi >= 0)` 没有 `else`
+
+`L_CALL_BUILTIN`（`src/vm/vm.c:3519`）先 `int bi = builtin_lookup(vm, name);`（`builtin_lookup` 定义在 `src/vm/vm.c:1486`，表是 `builtins[512]` / `builtinCount`，`src/vm/vm.h:157`），然后：
+
+```c
+if (bi >= 0) {
+    …安全模式检查… …能力检查…
+    vm->cur_argc = ins.r3;
+    vm->builtins[bi].func(vm);
+}
+/* 没有 else —— 查不到名字时控制流落到 case 末尾的收尾代码 */
+if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
+```
+
+（收尾代码在 `src/vm/vm.c:3564-3567`。）它本来只服务于「有返回值的调用把结果移到 r1」，在查不到函数时就变成「把最后一个实参塞进 r1」。`str2int("42")` 因此把自己的实参当返回值交出来。（`src/vm/vm.c:4983` 的另一处 `OP_CALL_BUILTIN` 只是反汇编器。）
+
+### 三、解释器又是唯一的异类
+
+与「`+` 链整数溢出」（§1.9 之前）和「浮点第 17 位平局」（§1.8）同形：两个编译后端**早就在编译期拒绝同一个程序**。
+
+| 后端 | 拒绝文本 |
+| --- | --- |
+| AOT | `aot_native: call to 'nosuchbuiltin' is not a user-defined function in this program` |
+| wasm | `error: wasm MVP subset: function 'nosuchbuiltin' not found (builtins are not in the wasm MVP subset) (line 2)` |
+
+所以这一改是让第三个后端**向另外两个靠拢**，而不是新立一条语义。（两个后端还会整体拒绝「用字符串」的版本 —— `aot_native: expression kind 2 is outside the numeric subset` / `error: wasm MVP subset: expression type 2 not supported by wasm MVP subset (strings/collections need the interpreter) (line 1)` —— 所以三后端可比对的只有数值形态。）
+
+### 四、修法
+
+在 `bi >= 0` 块末尾补上缺失的分支：
+
+```c
+} else {
+    char eb[256];
+    snprintf(eb, sizeof eb, "unknown builtin function '%s'", name);
+    vm_throw_msg(vm, eb);
+}
+```
+
+修后 `./build/inimerse --no-mods .verify/unreg.im` 的 stdout 为空，stderr 为 `[exception] uncaught: unknown builtin function 'str2int'` 加 `  at ip=4 frames=0`，**退出码 1**。它是普通可捕获的 throw：`try { x = str2int("42") } catch (e) { say "caught: " + str(e) }` 打印 `caught: unknown builtin function 'str2int'`，随后程序照常继续。
+
+**影响面零**：修后全量 `ctest --test-dir build -j$(nproc)` 得 `100% tests passed, 0 tests failed out of 110`；没有任何测试依赖那条静默栈垃圾。
+
+### 五、判据与双向验证
+
+进树回归 `vtest/unknown_builtin_v05.im` ← CTest `unknown_builtin_runtime`（`CMakeLists.txt`，`LABELS "vm;language;regression"`，`PASS_REGULAR_EXPRESSION "unreg-ok state=1 control=true"` / `FAIL_REGULAR_EXPRESSION "unreg-ok state=0|unreg-ok state=2|control=false"`）。测试用 `definitely_not_a_builtin_xyz` 这个名字 —— 任何构建都不存在，故不依赖平台挂了哪些 mod。
+
+**反向验证**：`cp src/vm/vm.c .verify/vm.c.unknown_builtin` → `git checkout HEAD -- src/vm/vm.c` → 重编 ⇒ 该 CTest **红**（`Error regular expression found in output. Regex=[unreg-ok state=0|unreg-ok state=2|control=false]`），且 `./build/inimerse --no-mods .verify/q.im` 仍打印 `returned 1` / `alive`；拷回 + `cmp` 证逐字节一致 + 重编 ⇒ **绿**。
+
+### 六、门禁实测（本轮）
+
+`grep -c 'add_test(' CMakeLists.txt` **110 → 111**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **111**，`ctest -N` 的 `Total Tests: 111`（`Test #111: unknown_builtin_runtime`）。全量 **`100% tests passed, 0 tests failed out of 111`**；完整九阶段 `tools/gate.sh` **全 PASS**、`gate: OK — every stage passed.`、`GATE_RC=0`。
+
+### 七、诚实边界与一条坑
+
+- **写这条回归踩到的坑（已写进 `docs/AUDIT.md` §1.11）**：CTest 同时抓 stdout **和 stderr**，而引擎在 stderr 上还会打一份**字符串常量池转储**（形如 `[0]="returned" [1]="definitely_not_a_builtin_xyz" …`）。第一版测试的 FAIL 正则里写了 `wrong-msg`，正好命中池里的 `[6]="wrong-msg:"` ⇒ **实现已经正确、测试却报红**（一次假阴性）。改法：两个正则都改成**池里不会出现**的文本 —— 状态用整数 `state=0/1/2`，打印的键靠字符串拼接。`PASS_REGULAR_EXPRESSION` 同理。
+- 这条修复**没有**让 `contract_test.im` 的 4 条失败变绿：它们的输出形状变了（现在是抛异常而不是给错值），但**仍然失败**，因为 POSIX 构建本来就不编 gui_mod / io_mod。0 条 → 0 条，性质从「值不对」变成「名字不存在」，可诊断性才是本轮收益。
+- `contract_test.im` **仍未进门禁**（手动/dormant 套件），仍未随本轮扩充。
+- `tools/im_diff_fuzz.py` 仍未接进门禁（阈值未裁定）。
