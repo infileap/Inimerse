@@ -2433,3 +2433,30 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 ### 验收
 
 `rm -rf build` 后完整九阶段 `tools/gate.sh --jobs 4` → `GATE_RC=0`、`gate: OK — every stage passed.`，九阶段全 PASS：build / ctest（**104/104**，0 skipped）/ economy 39/39 / node 12/12 / dsh-inimerse plugin / oauth_loop **75/75** / userdata ignore rules / docs links（92 文件 377 链接 0 broken）/ doc-paths（15 文件 283 引用 0 broken）。
+
+---
+
+## 10.41 底层去C化设计：同一个语义的六个决定点（BOARD 行 135）
+
+**交付** [DECFY_DESIGN.md](DECFY_DESIGN.md)（新建）。本行**只出设计、不改任何引擎源码**；BOARD 行 135 的状态按规矩写 `进行中`，设计文档不等于交付实现。
+
+**这一行要纠正的直觉**：去C化的难点不是「哪个文件是 C 写的」，而是**同一条语言语义在仓库里有多个独立决定点，且这个分裂横切实现语言**。最硬的证据是两个 `.im` 文件互相矛盾：
+
+- `selfhost/compiler.im:254-266` —— `and`/`or` **值语义**（与 C 侧 `src/compiler/compiler.c:648-670` 同形：`OP_JUMP_IF_FALSE`/`OP_JUMP_IF_TRUE` + `OP_MOV result, right`）；
+- `selfhost/eval.im:114-123` —— 同一对运算符 **布尔语义**（`if !truthy(l) { return false }`）。
+
+⇒ **「用 `.im` 重写」本身不消除分歧，只是改变分歧发生在哪两个文件之间。** 同语言内部同样分裂：C 侧 `compiler.c`（值）对 `vm.c`/`aot_native.c`/`wasm_backend.c`（布尔）。
+
+**六个决定点**（全部逐行读过，`[读码]`）：`src/compiler/compiler.c:648-670`（C·值）、`selfhost/compiler.im:254-266`（`.im`·值）、`src/vm/vm.c:3166-3179`（C·布尔）、`src/compilation/aot_native.c:334-339`（C·布尔）、`src/compilation/wasm_backend.c:769-786`（C·布尔）、`selfhost/eval.im:114-123`（`.im`·布尔）= **2 值 : 4 布尔**。`%` 有 **3 个**：`src/vm/vm.c:3815-3824`（32 位）、`src/compilation/aot_native.c:208-211`（64 位）、`src/compilation/wasm_backend.c:938`/`:960`（64 位）。
+
+**注释不可当证据**：`src/compilation/aot_native.c:334-339` 的注释声称 "C's && and || short-circuit exactly as the interpreter's do"，与该处行为**相反**；`src/compilation/wasm_backend.c:6` 声称 "mirror the C VM exactly"，而其 `:9` 描述的 `L_MOD` 形状与自己的 `:938`（`W_I64_REM_S`）矛盾。这正是分歧能活到现在的原因。
+
+**根因比 `%` 更广**：`src/vm/vm.h:24-26` 的 `Value` 是 32 字节且整数载荷 **32 位 `int`**，而 `src/compilation/aot_native.c:172` 的 `NV` 整数是 **64 位 `long long`** —— VM 32 位 vs AOT 64 位是**系统性宽度分裂**，`%` 只是它的一个可观测面，与 §1.2 的 int32→double 提升同源。
+
+**方向**：不是换语言，而是**让所有后端消费同一个 IR（字节码）**。今天五个消费者都是 `Expr*` 进、各自判断（`src/compiler/compiler.c` → 字节码、`src/compilation/aot_native.c` → C、`src/compilation/wasm_backend.c` → wasm、`selfhost/compiler.im` → 字节码、`selfhost/eval.im` → 值）。AOT/wasm 改吃字节码后，`and`/`or` 在字节码里已定死，后端只剩 `opcode → 目标指令` 的映射表。**顺带发现**：`docs/archive/RELEASE_0.5.0.md:48` 早已书面宣称「**All backends (interpreter, AOT, Wasm) share the same bytecode format**」—— 代码并不满足这条 ⇒ 本设计是**兑现既有承诺**，不是新造需求。`OP_OR`（`src/compiler/bytecode.h:12`）**全仓零 emit**；`OP_AND` 唯一 emit 在 `src/compiler/compiler.c:827`（链式比较 `1 < x < 10`，需要布尔）⇒ **`OP_OR` 可删、`OP_AND` 必须保留**，这与 `AUDIT.md` §5 的 O0 是两个独立决定。
+
+**「五类暂时搬不动的 C」各给最强理由**：①`src/vm/vm.c`（5007 行）is substrate；②`src/platform/`、`src/runtime/runtime_posix.c`、`src/common/` 是 `.im` 无权表达的宿主能力；③`src/compilation/aot_native.c:168` 的 `kPreamble` 产出**宿主 C 源码**且必须经 `cc`；④**引导链是唯一不能靠重写消除的依赖** —— 没有 C VM 就没有运行 `.im` 的东西，这决定了去C化有理论上界；⑤`Value` 的宽度是 VM 寄存器 / AOT 生成的 C / wasm 线性内存槽 / 固定导入表（`src/compilation/wasm_backend.c:13-15`）**共同的形状**，且 `docs/archive/ROADMAP_3.1.md:23-25,28` 要求 BigInt / 窄化整数 / 枚举值在模块 ABI 与序列化中**可逆**。
+
+**与 `AUDIT.md` §5（现为 O0–O13）不冲突**：本设计**采纳 O0 选项①**（值语义胜出），并把该决定落到唯一语义表；O11 把「`selfhost/compiler.im` 必须与 `src/compiler/compiler.c` 保持一致」列为**风险**，本设计把它当作**待根治的缺陷本身**（§1.1 证明重写不消除分歧）；O13 诊断 wasm 后端算术发射质量差、怀疑每次算术都把 `Value` 装箱再拆箱 —— 这是 §3 的第二个独立论据（分歧与发射质量差同一个根因：缺统一 IR 层）。
+
+**诚实度**：本文档的 `[实测]` 栏是**「无」** —— 本会话**未构建、未跑 `tools/im_diff_fuzz.py`、未跑任何执行通道**，全部结论为 `[读码]`；引用的 fuzz/性能数字均标注为 `[转述]`（来自 `AUDIT.md`，非本会话实测）。`AUDIT.md` §1.0 的「四行表格两后端逐格相同」与 `tools/im_diff_fuzz.py` 归零都**仍是待做的验证**，不是已完成事实。
