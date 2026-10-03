@@ -2285,6 +2285,46 @@ mod tests {
         assert!(secret_shape_problem("   ").is_some());
     }
 
+    /// The env-var lookup the shell falls back to, which until now had a doc
+    /// comment claiming "a test can exercise the same lookup the shell uses"
+    /// and no test at all -- the route recommended for keeping the secret off
+    /// disk was the one route nothing checked.
+    ///
+    /// Each test uses its own provider name: the environment is process-global
+    /// and these tests run in parallel, so sharing `github` would make them
+    /// race each other.
+    #[test]
+    fn read_client_secret_reads_the_environment() {
+        let provider = "envtest_read";
+        std::env::set_var(client_secret_env_var(provider), "  a-real-looking-secret-value  ");
+        assert_eq!(
+            read_client_secret(provider).as_deref(),
+            Some("a-real-looking-secret-value"),
+            "the value must be read and trimmed"
+        );
+        std::env::remove_var(client_secret_env_var(provider));
+    }
+
+    #[test]
+    fn read_client_secret_treats_whitespace_as_absent() {
+        let provider = "envtest_blank";
+        std::env::set_var(client_secret_env_var(provider), "   ");
+        assert_eq!(
+            read_client_secret(provider),
+            None,
+            "whitespace is not a secret, and sending `client_secret=` is the same \
+             rejected request with an extra field name"
+        );
+        std::env::remove_var(client_secret_env_var(provider));
+    }
+
+    #[test]
+    fn read_client_secret_is_none_when_nothing_is_set() {
+        let provider = "envtest_unset";
+        std::env::remove_var(client_secret_env_var(provider));
+        assert_eq!(read_client_secret(provider), None);
+    }
+
     // -----------------------------------------------------------------------
     // device flow
     // -----------------------------------------------------------------------

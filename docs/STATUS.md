@@ -2146,3 +2146,30 @@ crate 测试 69 → **72**；`tools/gate.sh` 四处同步 72；`tools/infiverse_
 - 失败签名是 UDP 往返超时（`add1`/`add2` 都成功，说明地址登记没问题；`ping_ok=false` 说明 ping 那一步超时），与 OAuth 无关。
 - **结论**：**既有间歇性缺陷**，不是本行引入。它本身值得单独一行 —— 一个会随机红的门禁，其代价是让人开始习惯重跑。
 - **方法教训**：我第一次写复现循环时用 `tail -3 | grep "100% tests passed"` 判定，结果 summary 行被 `tail` 截掉，**12 轮全被误判为 FAIL**（真实情况全过）。这与早先 `GATE_EXIT` 那次「读到 `tail` 的退出码」是同一类错误：**别解析输出尾部来判断成败，用退出码**。
+
+## 10.35 被推荐的路线是唯一没人检查的路线（环境变量取 secret 的覆盖缺口）
+
+**触发**：收尾时用户问「我怎么做」，我推荐路线 A（secret 走环境变量、不落盘）而不是界面输入框。
+推荐完顺手核对那条路的代码，才发现它**零测试**。
+
+- **缺口**：`Infiverse_standard/oauth_loop/src/lib.rs` 的 `read_client_secret(provider)` 是壳侧取 secret 的
+  fallback（`oauth_bind` 的取法在 `Infiverse_standard/src-tauri/src/lib.rs:1161-1165`：**先读文件、trim 后非空**，
+  否则 `or_else` 走环境变量）。它的文档注释写着「This is the crate's only input-reading side effect, and it is here
+  rather than in the shell **so that a test can exercise the same lookup the shell uses**」——
+  **而这样的测试从来不存在**（全文件 `set_var` 零命中）。被推荐的路线恰恰是唯一没人检查的路线。
+- **补的 3 条**：`read_client_secret_reads_the_environment`（读值并 trim）、
+  `read_client_secret_treats_whitespace_as_absent`、`read_client_secret_is_none_when_nothing_is_set`。
+  每条用**自己的 provider 名**（环境是进程全局的，而测试并行跑，共用 `github` 会互相踩）。
+- **破坏实验暴露我自己的空转测试（本节最重要的部分）**：把 `std::env::var(client_secret_env_var(provider))`
+  改成 `std::env::var("INFIVERSE_NEVER_SET_AT_ALL")` 之后，`read_client_secret_reads_the_environment` 红了，
+  **但 `read_client_secret_treats_whitespace_as_absent` 照样通过** —— 因为「变量名错了」返回的也是 `None`，
+  与「空白被过滤掉」在断言层面不可区分。这条测试当时是**关于 `None` 的陈述，不是关于空白的陈述**。
+- **改写**：同一变量名先设纯空白断言 `None`，**再设真值断言 `Some`** —— 后一句证明这个名字确实是被读的那个，
+  于是前一句的 `None` 才成为关于空白/过滤的陈述。注释里写明为什么需要后半段。
+- **两处破坏（改写后）**：变量名指向不存在的名字 ⇒ **2 红**（`73 passed; 2 failed`）；
+  去掉 `.filter(|v| !v.is_empty())` ⇒ **1 红**（只有 whitespace 那条）。
+- **同步**：crate 72 → **75**；`tools/gate.sh` 四处（`:217` 注释、`:238` `grep -qE`、`:239` 错误串、`:273` 阶段标签）
+  与 `docs/BOARD.md` §3 阶段表、行 101/105 一并同步。**插注释时把续行漏了 `#` 前缀**，
+  `bash -n tools/gate.sh` 报 `syntax error near unexpected token 'and'`，已补。
+- **教训（可复用）**：**一个只在「什么都不做」时才通过的测试，和没有测试一样**；断言 `None` / 空 / 未调用时，
+  必须同时证明「有输入时它确实会变」，否则断言的是失败路径的形状而不是行为。

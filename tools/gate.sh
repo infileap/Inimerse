@@ -214,14 +214,19 @@ stage_oauth_loop() {
   # the suite stayed green, so a count alone is weak -- but it at least catches
   # the crate being emptied out.
   #
-  # The count is 72: 36 from the PKCE work (BOARD row 101), 10 from the
+  # The count is 75: 36 from the PKCE work (BOARD row 101), 10 from the
   # redirect_uri binding, 3 pinning the authorize URL encoding -- the defect that
   # made a real GitHub round trip fail with a misleading
   # incorrect_client_credentials -- 6 from the client_secret work, which is the
   # same defect one layer down: GitHub's exchange documents client_secret as
   # Required with no "unless PKCE" clause, so a correct verifier alone is refused,
   # and 14 pinning the device flow, the only GitHub path that needs no secret,
-  # plus 3 refusing a saved secret that is too short to be one -- the stale
+  # plus 3 refusing a saved secret that is too short to be one, and 3 for
+  # the environment lookup the shell falls back to -- the route recommended for
+  # keeping the secret off disk -- which had a doc comment claiming a test covered
+  # it and no test at all; the first version of that whitespace test was vacuous
+  # (a wrong variable name also returns None) and was rewritten to prove the name
+  # it reads.  The stale
   # 7-character value that made every exchange fail with an error blaming the
   # client_id while the panel's field sat empty.
   # Bump this whenever the crate's suite grows on purpose.
@@ -230,8 +235,8 @@ stage_oauth_loop() {
   rc=$?
   printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || return "$rc"
-  if ! printf '%s\n' "$out" | grep -qE 'test result: ok\. 72 passed; 0 failed'; then
-    echo "gate: oauth_loop did not report 'test result: ok. 72 passed; 0 failed'." >&2
+  if ! printf '%s\n' "$out" | grep -qE 'test result: ok\. 75 passed; 0 failed'; then
+    echo "gate: oauth_loop did not report 'test result: ok. 75 passed; 0 failed'." >&2
     echo "gate: update the expected count here and in docs/BOARD.md if that was intended." >&2
     return 1
   fi
@@ -265,7 +270,7 @@ run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctes
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
-run_stage "oauth_loop crate (expect 72/72)" oauth-loop stage_oauth_loop
+run_stage "oauth_loop crate (expect 75/75)" oauth-loop stage_oauth_loop
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 
