@@ -34,6 +34,12 @@ Infiverse_standard/src-tauri/userdata/stats.json
 # that without asking.  Never let a credential leave this machine.
 oauth_secret_*.txt
 Infiverse_standard/userdata/oauth_secret_*.txt
+# The same un-ignore rules expose the token file: oauth_bind and the device
+# poll both write a live access token here.  It is a credential and must never
+# be committed -- one `git add -A` is all it takes.
+linked_accounts.json
+Infiverse_standard/userdata/linked_accounts.json
+Infiverse_standard/src-tauri/userdata/linked_accounts.json
 **/messages/
 **/wv2data/
 *.bin

@@ -143,6 +143,7 @@ const EXPECTED_IPC = [
             if (cmd === 'oauth_poll_callback') return Promise.resolve('code=THECODE&state=THESTATE');
             if (cmd === 'oauth_bind') return Promise.resolve({ ok: true, provider: args && args.provider });
             if (cmd === 'oauth_device_start') return Promise.resolve({ ok: true, userCode: 'WDJB-MJHT', deviceCode: 'DC', verificationUri: 'https://github.com/login/device', interval: 5, expiresIn: 900 });
+            if (cmd === 'oauth_secret_status') return Promise.resolve({ ok: true, saved: true, length: 7, problem: 'the saved client secret is only 7 characters, which is too short to be one (GitHub issues 40) — re-paste it from the OAuth App\'s settings page', path: '/tmp/oauth_secret_github.txt', envVar: 'INFIVERSE_GITHUB_CLIENT_SECRET' });
             if (cmd === 'oauth_device_poll') return Promise.resolve({ ok: true, status: 'token', saved: '/tmp/linked_accounts.json' });
             if (cmd === 'list_projects') return Promise.resolve([]);
             if (cmd === 'list_downloads') return Promise.resolve([]);
@@ -375,6 +376,59 @@ const EXPECTED_IPC = [
     assert.ok(
       !Object.values(pollDev.args).includes('WDJB-MJHT'),
       'the user code must never be sent to the exchange',
+    );
+  }
+
+  // (9b) The device code must be copyable, and a saved secret's length must be
+  //      visible.  Both come from real use: carrying eight characters to another
+  //      window by hand is the flow's whole cost, and a stale 7-character secret
+  //      was invisible because a blank field deliberately does not wipe it.
+  {
+    const copyBtn = $('#oauth-copy-code');
+    assert.ok(copyBtn, 'the device box must offer to copy the user code');
+
+    // jsdom has no clipboard, so install one and assert what gets written.
+    let written = null;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: (t) => { written = t; return Promise.resolve(); } },
+    });
+    copyBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(
+      written,
+      'WDJB-MJHT',
+      `copying must write the user code, not the device code or nothing; wrote ${JSON.stringify(written)}`,
+    );
+    assert.ok(
+      /已复制/.test($('#links-msg').textContent),
+      `a successful copy must say so; got ${JSON.stringify($('#links-msg').textContent)}`,
+    );
+
+    // A clipboard that refuses must not claim success: WebKit only exposes the
+    // async clipboard API in a secure context, so this path is reachable.
+    written = null;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error('denied')) },
+    });
+    copyBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(
+      !/已复制/.test($('#links-msg').textContent),
+      `a refused copy must not claim success; got ${JSON.stringify($('#links-msg').textContent)}`,
+    );
+
+    // The saved secret is reported by length, so a stale value cannot hide.
+    const note = $('#oauth-secret-note');
+    assert.ok(note, 'the panel must show the state of the saved client secret');
+    assert.ok(
+      /7/.test(note.textContent),
+      `a too-short saved secret must be surfaced with its length; got ${JSON.stringify(note.textContent)}`,
+    );
+    assert.ok(
+      !/dd6165a/.test(note.textContent),
+      'the note must never print the secret itself',
     );
   }
 

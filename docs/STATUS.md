@@ -2080,3 +2080,69 @@ browse 模块新增 `#oauth-device` 按钮、`#oauth-device-box` 展示区与 `#
 - **`oauth_open` 不回收子进程**：`lib.rs:968-974` 的 `Command::spawn()` 立即丢弃句柄，`xdg-open` 每次调用留一个僵尸进程。本行未改。
 - **secret 内容本身是错的**：用户需要填入真的 40 位 client secret；当前文件里是提交号前缀。修卡死**不能**让错误的 secret 通过 —— 那会是 `incorrect_client_credentials`。
 - device flow 端到端仍未验证（本机 `github.com` 不可达，勾了 `Enable Device Flow` 也走不通）。
+
+### 10.34 回调授权仍失败：错的 secret 一直在文件里，而报错怪 client_id（BOARD 行 106）
+
+用户实测：「授权依旧输出 `❌ 绑定失败：provider refused the code (incorrect_client_credentials: ...)`；但设备码授权一次搞定」。**device flow 成功是决定性的证据**：它与回调路径用同一个 `client_id`，却不需要 secret —— 所以 client_id 一定是对的，问题只可能在 secret。
+
+#### ① 现场取证
+
+`Infiverse_standard/userdata/oauth_secret_github.txt` 实测 **7 字节、首二字符 `dd`、末二字符 `5a`** —— 也就是提交号 `dd6165a`。它不是 secret，而且**从头到尾没被换掉过**。
+
+#### ② 为什么它一直没被换掉（真正的缺陷）
+
+`app.js:368` 是 `if (secret) { await invoke('oauth_set_secret', ...) }` —— **字段为空时不写入**。这个选择本身是对的（空字段不该抹掉已保存的 secret），但它造成一个死角：
+
+- 面板的输入框**永远是空的**（密码框不回填，且没有「已保存」提示）；
+- 文件里却躺着一个错的 7 字符值；
+- 每次点「授权」都用它去兑换；
+- GitHub 回 `incorrect_client_credentials`，**原文怪的是 "client_id and/or client_secret"**。
+
+于是用户看到的是「client_id 不对」，而 client_id 完全正确。**这正是本行从 §10.30 起反复出现的同一类缺陷：一个指向错误嫌疑人的报错，而 app 里没有任何东西去反驳它。**
+
+#### ③ 修法（三层，都在「别让错误值走到网络」这一侧）
+
+1. **crate 侧新增 `secret_shape_problem(secret) -> Option<String>`** 与常量 `IMPLAUSIBLE_SECRET_LEN = 20`（GitHub 发 40 位、bilibili 32 位，20 是远远低于两者的地板）。返回的消息**只说长度、绝不复述值**：`the saved client secret is only 7 characters, which is too short to be one (GitHub issues 40) — re-paste it from the OAuth App's settings page`。**刻意不做格式校验**（那是 provider 的事），只拦「不可能成立」的值。
+2. **壳侧 `oauth_bind` 在发请求之前**调用它，不合格就直接返回该消息 + 文件路径 —— 不再浪费一次往返，也不再把 GitHub 那句误导的话转给用户。
+3. **壳侧新增 `oauth_secret_status(provider)`** 命令（返回 `saved`/`length`/`problem`/`path`/`envVar`，**不含值**），UI 把它显示在输入框旁：`已保存 client secret（40 位）` 或 `⚠️ 已保存的 secret 只有 7 位，不能是有效的`。**让陈旧值可见**，这是 ② 那个死角的直接解药。
+
+#### ④ 用户要求的复制功能
+
+`#oauth-copy-code` 按钮。复制失败**不能假装成功**：WebKit 只在 secure context 暴露异步剪贴板 API，所以失败时退回「选中文本 + 提示按 Ctrl+C」，并在消息里说清是哪一种。复制的是 `#oauth-user-code` 的内容（`WDJB-MJHT` 这类 user code），**不是** `deviceCode`。
+
+#### ⑤ 双向验证（三证，均还原后复绿）
+
+- 复制按钮写空串 ⇒ `'' !== 'WDJB-MJHT'` 红；
+- 剪贴板拒绝时仍置 `copied = true` ⇒ `a refused copy must not claim success; got "✅ 已复制设备码..."` 红；
+- crate 的 `if trimmed.len() < IMPLAUSIBLE_SECRET_LEN` 改成 `if false` ⇒ 3 红（`a_secret_too_short_to_be_one_is_named_as_such` / `a_real_looking_secret_passes_the_shape_check` / `whitespace_does_not_make_a_short_secret_look_longer`），`69 passed; 3 failed`。
+
+#### ⑥ 验收
+
+crate 测试 69 → **72**；`tools/gate.sh` 四处同步 72；`tools/infiverse_panels.test.js` 新增 (9b) 段（复制写对值、成功要说、拒绝不许说成功、secret 长度必须显示且**不得打印 secret 本身**），IPC calls 62 → **64**。完整八阶段门禁全 PASS。
+
+#### ⑦ 残留
+
+- **用户仍需填入真的 40 位 client secret**：修好报错不等于修好配置，现在的行为是「在发请求前告诉你它是 7 位」。
+- device flow 端到端**已被用户实测跑通**（这是本行第一次拿到真实成功的端到端证据），但回调路径端到端**仍未成功过**。
+
+#### ⑧ 两个意外发现（都来自这次实测）
+
+**发现 1：device flow 端到端真的跑通了 —— 这是本行第一次拿到真实的成功证据。**
+
+`Infiverse_standard/userdata/linked_accounts.json` 在用户点过「设备码授权」之后被写出来了，内容形如 `access_token = gho_…[len=40]` / `provider=github` / `scope=read:user user:email` / `token_type=bearer`（只列键与长度，不复述值）。⇒ 从 `oauth_device_start` → 用户在浏览器输入 8 位码 → `oauth_device_poll` 拿到 token → 落盘，**整条链路在真机上成立**，不再是「只在代码层成立」。同时 `oauth_status` 的读取侧（`linked:true` 分支）也随之被真实数据覆盖 —— 那是 §10.29 起一直挂着的残留。
+
+**发现 2：那个 token 文件是可提交的，和 secret 是同一个陷阱。**
+
+`.gitignore` 为了保住 `.gitkeep` 而用 `!Infiverse_standard/userdata/` 重新包含了整个目录，于是 `linked_accounts.json`（**装着真的 access token**）处于「未跟踪但 `git add -A` 就会进去」的状态。这与 §10.33 的 secret 完全同型，只是这次躺的是活凭据。已加三条忽略规则（`linked_accounts.json`、`Infiverse_standard/userdata/linked_accounts.json`、`Infiverse_standard/src-tauri/userdata/linked_accounts.json`），`git check-ignore` 确认命中，`git add -A --dry-run` 现在只列源码文件。
+
+> 这两次是同一根因的两次发作：**运行时写进 `userdata/` 的东西默认是可提交的**。加 `oauth_secret_*.txt` 与 `linked_accounts.json` 是打补丁；真正该做的是把 `userdata/` 的忽略规则反过来写（默认忽略、白名单只放 `.gitkeep`），那是独立的一行。
+
+#### ⑨ ctest 的一次间歇性失败（不是本行引入）
+
+本次完整门禁第一遍在 `node_discovery_regression` 上红了：`AssertionError: add1=1 add2=1 ping_ok=false hub2_count=0`，即 `verse_hub_ping` 对其中一个 hub 返回 ≤0。
+
+- **结构性证据**：本行改动的 7 个文件（`Infiverse_standard/oauth_loop/src/lib.rs`、`Infiverse_standard/src-tauri/src/lib.rs`、`Infiverse_standard/src/ui/app.js`、`docs/STATUS.md`、`tools/gate.sh`、`tools/infiverse_panels.test.js`、`.gitignore`）**在 `CMakeLists.txt` 里出现次数全为 0** ⇒ 引擎二进制与任何 ctest 用例都不消费它们。
+- **复现测量**：单跑 `node_discovery.test.py` **10/10 通过**；`ctest -R "node_discovery|lease_handoff|reconnect_generation|economy_migration|protocol_regression" -j4` **12/12 通过**；完整 `ctest -j4` **3/3 通过**（`100% tests passed, 0 tests failed out of 103`）。合计 **1 次失败 / 约 16 轮**。
+- 失败签名是 UDP 往返超时（`add1`/`add2` 都成功，说明地址登记没问题；`ping_ok=false` 说明 ping 那一步超时），与 OAuth 无关。
+- **结论**：**既有间歇性缺陷**，不是本行引入。它本身值得单独一行 —— 一个会随机红的门禁，其代价是让人开始习惯重跑。
+- **方法教训**：我第一次写复现循环时用 `tail -3 | grep "100% tests passed"` 判定，结果 summary 行被 `tail` 截掉，**12 轮全被误判为 FAIL**（真实情况全过）。这与早先 `GATE_EXIT` 那次「读到 `tail` 的退出码」是同一类错误：**别解析输出尾部来判断成败，用退出码**。

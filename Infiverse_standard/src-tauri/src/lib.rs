@@ -1094,6 +1094,30 @@ fn oauth_set_secret(provider: String, secret: String) -> serde_json::Value {
     }
 }
 
+/// Report whether a secret is already stored, and how long it is -- never its value.
+///
+/// The panel's field starts empty even when a secret is saved, because the UI
+/// deliberately does not overwrite a stored secret with a blank field.  That is
+/// the right call, but it made a stale value invisible: a 7-character leftover
+/// was being sent on every attempt while the field looked empty, and the only
+/// feedback was the provider's error blaming the client_id.  Showing the length
+/// makes the stale value visible without putting a credential on screen.
+#[tauri::command]
+fn oauth_secret_status(provider: String) -> serde_json::Value {
+    let path = oauth_secret_path(&provider);
+    let stored = fs::read_to_string(&path).ok().map(|s| s.trim().to_string());
+    let length = stored.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    let problem = stored.as_deref().and_then(oauth_loop::secret_shape_problem);
+    serde_json::json!({
+        "ok": true,
+        "saved": stored.is_some(),
+        "length": length,
+        "problem": problem,
+        "path": path.to_string_lossy(),
+        "envVar": oauth_loop::client_secret_env_var(&provider),
+    })
+}
+
 /// Finish the flow: verify the callback, redeem the code, and persist the account.
 ///
 /// This is the `oauth_bind` the UI's copy (`app.js:285`) had been promising
@@ -1146,6 +1170,21 @@ async fn oauth_bind(provider: String, expected_state: String, client_id: String,
                 "{provider} requires a client secret for this exchange (PKCE alone is not enough); \
                  paste it into the field on this panel, or set {} in the environment",
                 oauth_loop::client_secret_env_var(&provider)
+            ),
+        });
+    }
+    // A saved secret that cannot possibly work is refused here, before the
+    // request.  The real failure this catches: a 7-character value (a commit
+    // hash) sat in the file while the panel's field was empty -- the UI keeps a
+    // saved secret when the field is blank, so the stale value was invisible --
+    // and every exchange came back as `incorrect_client_credentials`, an error
+    // whose text blames the client_id.  The client_id was fine.
+    if let Some(problem) = secret.as_deref().and_then(oauth_loop::secret_shape_problem) {
+        return serde_json::json!({
+            "ok": false,
+            "error": format!(
+                "{problem} (from {})",
+                oauth_secret_path(&provider).to_string_lossy()
             ),
         });
     }
@@ -1685,6 +1724,7 @@ pub fn run() {
             oauth_poll_callback,
             oauth_pkce_start,
             oauth_set_secret,
+            oauth_secret_status,
             oauth_bind,
             oauth_device_start,
             oauth_device_poll,

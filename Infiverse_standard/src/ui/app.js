@@ -280,9 +280,9 @@ function renderBrowse() {
     <button class="btn primary" id="btn-save-nodes" style="margin-top:6px">保存节点地址</button>
     <span class="muted" id="node-msg"></span></div>
   <div class="card"><h3>🔗 关联</h3>
-    <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-secret" class="code" type="password" style="width:200px" placeholder="OAuth Client Secret"><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button><button class="btn" id="oauth-device">设备码授权</button></div></div>
+    <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-secret" class="code" type="password" style="width:200px" placeholder="OAuth Client Secret"><span id="oauth-secret-note" class="muted"></span><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button><button class="btn" id="oauth-device">设备码授权</button></div></div>
     <div class="step"><span class="dot">📺</span><div><b>Bilibili</b> <span id="oauth-bili-status" class="muted">未关联</span><br><button class="btn" id="oauth-bili">打开授权页</button></div></div>
-    <div class="step" id="oauth-device-box" style="display:none"><span class="dot">🔢</span><div>在浏览器打开 <a href="https://github.com/login/device" target="_blank" rel="noreferrer">github.com/login/device</a> 并输入：<br><b id="oauth-user-code" class="code" style="font-size:16px;letter-spacing:2px"></b></div></div>
+    <div class="step" id="oauth-device-box" style="display:none"><span class="dot">🔢</span><div>在浏览器打开 <a href="https://github.com/login/device" target="_blank" rel="noreferrer">github.com/login/device</a> 并输入：<br><b id="oauth-user-code" class="code" style="font-size:16px;letter-spacing:2px"></b><button class="btn" id="oauth-copy-code" style="margin-left:8px">复制设备码</button></div></div>
     <div class="muted" id="links-msg">两种 GitHub 授权方式：<b>授权</b>走浏览器回调（需要 client secret —— GitHub 不接受纯 PKCE 的兑换，PKCE 是加固而非替代）；<b>设备码授权</b>不需要 secret，官方文档写明「The client_secret is not needed for the device flow」，代价是手动输入 8 位码。授权成功后保存到 linked_accounts.json；GitHub 请把 OAuth App 的 callback 设为上面的地址。</div>
   </div>
   <button class="btn" data-go="workbench">→ 去工作台</button>`;
@@ -486,6 +486,48 @@ function bindBrowse() {
   };
   const devBtn = $('#oauth-device');
   if (devBtn) devBtn.addEventListener('click', deviceAuth);
+
+  // Copying the code is the whole point of showing it: the user has to carry
+  // eight characters to another window.  WebKit only exposes the async clipboard
+  // API in a secure context, so a failure must not be silent -- falling back to
+  // selecting the text is useful, pretending it was copied is not.
+  const copyBtn = $('#oauth-copy-code');
+  if (copyBtn) copyBtn.addEventListener('click', async () => {
+    const msg = $('#links-msg'), codeEl = $('#oauth-user-code');
+    const code = ((codeEl && codeEl.textContent) || '').trim();
+    if (!code) return;
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(code);
+        copied = true;
+      }
+    } catch (e) { copied = false; }
+    if (!copied) {
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(codeEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (e) { /* selection is best-effort */ }
+    }
+    if (msg) msg.textContent = copied ? '✅ 已复制设备码，去浏览器粘贴' : '已选中设备码，请按 Ctrl+C 复制';
+  });
+
+  // A saved secret is not shown in the field (blank field must not wipe it), so
+  // its length is reported instead -- otherwise a stale value poisons every
+  // attempt while the panel looks empty.
+  if ($('#oauth-secret-note')) {
+    invoke('oauth_secret_status', { provider: 'github' }).then(st => {
+      const note = $('#oauth-secret-note');
+      if (!note || !st || !st.ok) return;
+      if (!st.saved) { note.textContent = '未保存 client secret'; return; }
+      note.textContent = st.problem
+        ? '⚠️ 已保存的 secret 只有 ' + st.length + ' 位，不能是有效的'
+        : '已保存 client secret（' + st.length + ' 位）';
+    });
+  }
 
   // ---- merged from the duplicate bindBrowse that used to shadow this one ----
   document.querySelectorAll('[data-browse]').forEach(b => b.addEventListener('click', () => {

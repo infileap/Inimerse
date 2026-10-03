@@ -660,6 +660,41 @@ pub fn read_client_secret(provider: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// Shortest value that could plausibly be a `client_secret`.
+///
+/// GitHub issues 40-hex-character secrets and bilibili's are 32, so both clear
+/// this floor by a wide margin.  The point is not to validate the format -- that
+/// is the provider's job -- but to catch a value that cannot possibly be a
+/// secret *before* spending a request on it.
+pub const IMPLAUSIBLE_SECRET_LEN: usize = 20;
+
+/// Why a saved secret cannot work, if it obviously cannot.
+///
+/// This exists because of a real failure: a 7-character value (a commit hash, of
+/// all things) sat in `userdata/oauth_secret_github.txt` while the panel's field
+/// was empty -- the UI keeps a saved secret when the field is blank, so the stale
+/// value was invisible.  Every exchange then failed with GitHub's
+/// `incorrect_client_credentials`, whose text blames "the client_id and/or
+/// client_secret".  The client_id was fine.  The error names the wrong suspect,
+/// and nothing in the app contradicted it.
+///
+/// So: say plainly what is wrong with the value we are about to send, and say it
+/// before the request.  Never echo the value itself -- only its length.
+pub fn secret_shape_problem(secret: &str) -> Option<String> {
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        return Some("the saved client secret is empty".to_string());
+    }
+    if trimmed.len() < IMPLAUSIBLE_SECRET_LEN {
+        return Some(format!(
+            "the saved client secret is only {} characters, which is too short to be one \
+             (GitHub issues 40) — re-paste it from the OAuth App's settings page",
+            trimmed.len()
+        ));
+    }
+    None
+}
+
 /// Percent-encode one form value (`RFC 3986` unreserved set kept literal).
 pub fn form_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -2205,6 +2240,49 @@ mod tests {
     fn the_secret_env_var_is_namespaced_by_provider() {
         assert_eq!(client_secret_env_var("github"), "INFIVERSE_GITHUB_CLIENT_SECRET");
         assert_eq!(client_secret_env_var("bilibili"), "INFIVERSE_BILIBILI_CLIENT_SECRET");
+    }
+
+    /// The failure this was written for: a 7-character value -- a commit hash --
+    /// sat in the secret file while the panel's field was empty, so every
+    /// exchange failed with an error that blames the client_id instead.  Catching
+    /// it here means the user is told what is wrong before a request is spent.
+    #[test]
+    fn a_secret_too_short_to_be_one_is_named_as_such() {
+        let problem = secret_shape_problem("dd6165a").expect("a 7-character value must be rejected");
+        assert!(
+            problem.contains("only 7 characters"),
+            "the message must state the actual length so the stale value is identifiable: {problem}"
+        );
+        assert!(
+            !problem.contains("dd6165a"),
+            "the message must never echo the value -- it is a credential: {problem}"
+        );
+        assert!(
+            problem.contains("40"),
+            "the message should say what a real one looks like: {problem}"
+        );
+    }
+
+    /// Real secrets from both providers must pass, or the check would block a
+    /// working setup -- which is worse than the misleading error it replaces.
+    #[test]
+    fn a_real_looking_secret_passes_the_shape_check() {
+        assert_eq!(secret_shape_problem(&"a".repeat(40)), None, "GitHub's 40 hex characters");
+        assert_eq!(secret_shape_problem(&"b".repeat(32)), None, "bilibili's 32");
+        // The floor is deliberately far below any real secret's length: this
+        // check must not become a format validator that the provider disagrees with.
+        assert_eq!(secret_shape_problem(&"c".repeat(IMPLAUSIBLE_SECRET_LEN)), None);
+        assert!(secret_shape_problem(&"c".repeat(IMPLAUSIBLE_SECRET_LEN - 1)).is_some());
+    }
+
+    #[test]
+    fn whitespace_does_not_make_a_short_secret_look_longer() {
+        assert!(
+            secret_shape_problem("   dd6165a   ").is_some(),
+            "trimming must happen before the length is judged"
+        );
+        assert!(secret_shape_problem("").is_some(), "empty is its own message");
+        assert!(secret_shape_problem("   ").is_some());
     }
 
     // -----------------------------------------------------------------------
