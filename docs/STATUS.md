@@ -734,7 +734,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 ### 10.5 合并后的门禁（协调者串行执行）
 
 ```bash
-tools/gate.sh          # 七个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
+tools/gate.sh          # 九个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
 ```
 
 见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 93 / 93**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。
@@ -2199,3 +2199,46 @@ crate 测试 69 → **72**；`tools/gate.sh` 四处同步 72；`tools/infiverse_
 - **仍未做（不属于本行）**：`redirect_uri` 与 `Host` 的绑定校验只在**收回调时**做，
   注册值本身仍由用户在 GitHub 页面手工保证；`linked_accounts.json` 的**过期/刷新**路径不存在
   （`refresh_token = None`，GitHub 这个 app 没开 `Expire user access tokens`）。
+
+## 10.37 忽略规则写反了：运行时产物默认可提交（BOARD 行 106）
+
+**根因一句话**：`.gitignore` 先忽略 `userdata/`，又用 `!userdata/` 与 `!Infiverse_standard/userdata/`
+**把目录整体收回**（本意是保住 `.gitkeep`）。git 的语义是**收回一个目录就收回了它里面的一切** ——
+于是运行时写进去的任何文件**默认可提交**，而 `git add -A` 不会征求任何人同意。
+
+- **两次发作，同一根因**：①`Infiverse_standard/userdata/oauth_secret_github.txt`（§10.33，client secret）；
+  ②`Infiverse_standard/userdata/linked_accounts.json`（§10.34，**活的 `gho_` access token，40 字符**）。
+  两次都是「补一条文件名规则」挡住的。
+- **为什么补丁是错的修法**：补丁只覆盖**当事人想起来的名字**。第三个运行时产物（`stats.json` 早就是，
+  只是没人注意到）出现时，默认仍然是「可提交」。这不是疏忽，是**默认值选反了**。
+- **修法（反过来写）**：忽略**内容**、白名单放行占位文件 ——
+  ```
+  userdata/*
+  !userdata/.gitkeep
+  ```
+  三个目录各一份（`userdata/`、`Infiverse_standard/userdata/`、`Infiverse_standard/src-tauri/userdata/`）。
+  安全答案是默认值，新产物在**任何人知道它存在之前**就已受保护。
+- **顺手清掉的历史包袱**：`Infiverse_standard/src-tauri/userdata/stats.json` 自
+  `8248e08 Release Infiverse 0.2.0` 起**被跟踪**，每次跑测试都会把工作树弄脏。已 `git rm --cached`
+  （**文件仍在磁盘上**，app 自己会重建），现在 `git ls-files | grep userdata/` 只剩两个 `.gitkeep`。
+- **新增进树检查 `tools/check_ignored_credentials.py`**，挂在门禁新第 8 阶段
+  `run_stage "userdata ignore rules (default deny)" ignored-credentials stage_ignored_credentials`。
+  **它断言的是默认值，不是清单**：用 `git check-ignore --no-index -q` 去问一个
+  **从没被写过的文件名**（`__runtime_state_probe_never_created__.txt`）是否已被忽略。
+  为什么必须这样：一个只检查那三个已知名字的测试，**在旧规则下只要有人再加一条补丁就会变绿** ——
+  这正是原缺陷熬过两次事故的方式。检查同时要求 `.gitkeep` **不被**忽略（否则目录会从新克隆里消失），
+  并跑一遍 `git add -A --dry-run` 要求其中不出现任何 `userdata/` 路径。
+  `--no-index` 让它问的是**规则**而不是工作树，因此对不存在的路径与已跟踪文件都成立。
+- **双向验证（两次破坏，各自红在对应用例）**：①把规则改回旧写法 ⇒ **8 条失败**，
+  含三个目录的默认拒绝探针、三个 `stats.json`，以及 `git add -A` 那两项（它明确列出会收进提交的路径）；
+  ②删掉 `!userdata/.gitkeep` ⇒ 报 `userdata/.gitkeep: ignored. The placeholder must stay visible`。
+  两次还原后均 `ok`。
+- **判据要求的现场验证**：在三个目录里**同时**放入 `oauth_secret_github.txt`、`linked_accounts.json`、
+  `stats.json`（内容是占位值，不是真凭据），`git add -A --dry-run` **只列 6 个源码/文档文件，
+  `userdata/` 路径计数为 0**。
+- **门禁与文档同步**：阶段数 **八 → 九**（`docs/BOARD.md` §3 表新增 `ignored-credentials` 行、
+  `tools/gate.sh` 头部 `--only` 清单补上 `oauth-loop` 与 `ignored-credentials`、
+  `docs/README.md` 与本节顶部对 `tools/gate.sh` 的描述同步为九个阶段）。
+  完整九阶段 `GATE_RC=0`、`gate: OK — every stage passed.`
+- **保留的纵深防御**：`.gitignore` 仍保留 `oauth_secret_*.txt` 与 `linked_accounts.json` 两条**不限路径**的
+  规则 —— 这两个名字无论落在哪里都是凭据，不该只靠那三个目录保护。

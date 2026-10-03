@@ -5,7 +5,8 @@
 #   tools/gate.sh              full gate: configure + build + all suites
 #   tools/gate.sh --fast       skip configure/build, reuse the existing build/
 #   tools/gate.sh --only links run a single stage
-#                              (build|ctest|economy|node|plugin|links|doc-paths)
+#                              (build|ctest|economy|node|plugin|oauth-loop|
+#                               ignored-credentials|links|doc-paths)
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #
 # Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
@@ -251,6 +252,17 @@ stage_oauth_loop() {
   return 0
 }
 
+stage_ignored_credentials() {
+  # The userdata/ ignore rules are default-deny, so a runtime artifact -- a
+  # client secret, a live access token -- is protected before anyone knows it
+  # exists.  This asserts that default with a filename no run has ever written,
+  # rather than re-checking the three names someone already remembered; the
+  # previous per-file patches passed the narrower version of this test while the
+  # defect stayed live, and two credentials nearly shipped.  See docs/STATUS.md
+  # §10.37 and docs/BOARD.md row 106.
+  python3 "$REPO_ROOT/tools/check_ignored_credentials.py"
+}
+
 stage_links() {
   python3 "$REPO_ROOT/tools/check_links.py"
 }
@@ -271,6 +283,7 @@ run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
 run_stage "oauth_loop crate (expect 75/75)" oauth-loop stage_oauth_loop
+run_stage "userdata ignore rules (default deny)" ignored-credentials stage_ignored_credentials
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 

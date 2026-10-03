@@ -15,31 +15,30 @@ tools/__pycache__/
 Infiverse_standard/src-tauri/target/
 
 # Runtime and personal data
-userdata/
-Infiverse_standard/userdata/
-!userdata/
-!Infiverse_standard/userdata/
+#
+# Default deny.  Ignore the *contents* of every userdata/ directory and
+# whitelist only the placeholder that keeps the directory in the tree.
+#
+# The previous version did the opposite: it ignored the directories and then
+# re-included them with `!userdata/` so that `.gitkeep` survived.  Re-including
+# a directory re-includes everything inside it, so every file the app wrote at
+# runtime was committable and `git add -A` would take it without asking.  That
+# is not a hypothetical: it nearly published a client secret
+# (`userdata/oauth_secret_github.txt`) and then a live GitHub access token
+# (`userdata/linked_accounts.json`), and the per-file patches added in response
+# only ever covered the files someone happened to remember.  Denying the
+# contents makes the safe answer the default, so a new runtime artifact is
+# protected before anyone knows it exists.
+userdata/*
 !userdata/.gitkeep
+Infiverse_standard/userdata/*
 !Infiverse_standard/userdata/.gitkeep
-# The negations above un-ignore the directories wholesale, so they do not
-# actually keep runtime state out.  These files are written on every run and
-# must never be committed: a tracked stats.json from "Release Infiverse 0.2.0"
-# is already in the history and shows up as a dirty file after any test run.
-userdata/stats.json
-Infiverse_standard/userdata/stats.json
-Infiverse_standard/src-tauri/userdata/stats.json
-# A client secret is written here by oauth_set_secret.  The two un-ignore rules
-# above re-include the whole userdata directory to keep .gitkeep, so anything
-# dropped in at runtime becomes committable -- and `git add -A` does exactly
-# that without asking.  Never let a credential leave this machine.
+Infiverse_standard/src-tauri/userdata/*
+!Infiverse_standard/src-tauri/userdata/.gitkeep
+# Defence in depth: these two names are credentials wherever they land, not
+# only in the three directories above.
 oauth_secret_*.txt
-Infiverse_standard/userdata/oauth_secret_*.txt
-# The same un-ignore rules expose the token file: oauth_bind and the device
-# poll both write a live access token here.  It is a credential and must never
-# be committed -- one `git add -A` is all it takes.
 linked_accounts.json
-Infiverse_standard/userdata/linked_accounts.json
-Infiverse_standard/src-tauri/userdata/linked_accounts.json
 **/messages/
 **/wv2data/
 *.bin
