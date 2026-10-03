@@ -80,9 +80,13 @@ if (op == TOK_AND || op == TOK_OR) {
 
 **严重度**：最高。触发条件是**最常用的逻辑运算符**，两个后端静默不一致，且读代码无法看出哪边是对的。
 
+**补充（实测，见 §1.6）**：这条其实是**三方**分歧 —— 解释器给操作数、AOT 给布尔、**wasm 直接拒绝编译**。wasm 的加入使「挑一个后端对齐」这个提法失效。
+
 ### 1.1 `%` 在浮点路径把两个操作数截成 32 位 `int` —— 静默算错，且与 AOT 分歧
 
-**位置**：`src/vm/vm.c:3815`（`L_MOD`）。
+**位置**：`src/vm/vm.c:3824-3838`（`L_MOD`；初稿写的 `:3815` 是错的，见 §1.6 的更正与两条路径）。
+
+**补充（实测，见 §1.6）**：wasm 通道加进来之后，这条是**三后端三答案**（`3000000000 % 7` → 解释器 `-2` / AOT `4` / wasm `1`），而且「除数为 0」也有三种态度（报错 / 静默 0 / 报错）。
 
 ```c
 int bi = (int)val_as_double(b);
@@ -236,6 +240,89 @@ say vm_exec(bc)
 
 ---
 
+### 1.6 三通道差分实测：`and`/`or` 与 `%` 的真实爆炸半径
+
+§1.0 与 §1.1 的表格是**两个后端**（解释器 vs AOT）的对比。把 wasm 通道加进来之后，两条缺陷的形状都变了 —— 它们不是「两个后端不一致」，是**三个后端三个答案**。本节是实测，不是读码。
+
+**方法**：一个一次性的三通道探针（`/tmp/e13/backend_probe.py`，**尚未进树**），把一段 `.im` 依次跑在
+
+- 解释器：`./build/inimerse --no-mods p.im`
+- AOT：`./build/aot-native translate p.im p.c` → `cc -O2` → `./p.native`
+- wasm：`./build/inimerse compile --abi-target wasm p.im p.wasm` → `node tools/wasm_run.js p.wasm`
+
+20 个用例里 **12 个分歧**。
+
+#### `and` / `or`：三种行为，不是两种
+
+| 表达式 | 解释器 | AOT | wasm |
+| --- | --- | --- | --- |
+| `1 and 5` | `5` | `true` | **编译期拒绝** |
+| `2 and 3` | `3` | `true` | **编译期拒绝** |
+| `0 and 5` | `0` | `false` | **编译期拒绝** |
+| `1 and 0` | `0` | `false` | **编译期拒绝** |
+| `0 or 5` | `5` | `true` | **编译期拒绝** |
+| `1 or 5` | `1` | `true` | **编译期拒绝** |
+| `2 or 3` | `2` | `true` | **编译期拒绝** |
+| `0 or 0` | `0` | `false` | **编译期拒绝** |
+
+wasm 的原文：
+
+```
+error: wasm MVP subset: 'and'/'or' outside a condition is not supported (use it in if/while) (line 1)
+```
+
+也就是说：解释器给**操作数**，AOT 给**布尔**，wasm **拒绝编译**。三条路都对「`and`/`or` 返回什么」给出了自己的答案，其中一条是「不回答」。
+
+AOT 的布尔语义在生成的 C 里看得见：`nv_say(nv_boo(nv_tru(nv_int(1LL)) && nv_tru(nv_int(5LL))));`。
+
+**这改变了 §1.0 的结论**：之前写「VM 的 `L_AND`/`L_OR` 是布尔语义，与 AOT 一致，只是编译器不发它们」—— 那还是把问题当成两方之争。现在是三方，而 wasm 那一方连值都不产出。**O0 不是「挑一个后端对齐」，是「先定这门语言的 `and`/`or` 返回什么」**，因为三个后端里已经有两个各自定了。
+
+#### `%`：三个后端三个答案，且其中两个是 UB 或饱和
+
+| 表达式 | 解释器 | AOT | wasm | 正确值 |
+| --- | --- | --- | --- | --- |
+| `7 % 3` | `1` | `1` | `1` | 1 |
+| `-7 % 3` | `-1` | `-1` | `-1` | -1 |
+| `7 % -3` | `1` | `1` | `1` | 1 |
+| `2.5 % 1` | `0` | `0` | `0` | 0（三个都丢小数） |
+| `7 % 0.5` | **异常** `division_by_zero`（rc=1） | `0` | **异常** | 0 |
+| `5 % 0` | **异常** `division_by_zero`（rc=1） | `0` | **异常** | 未定义 |
+| `3000000000 % 7` | `-2` | `4` | `1` | **4** |
+| `2147483648 % 7` | `-2` | `2` | `1` | **2** |
+| `7 % 3000000000` | `7` | `7` | `7` | 7 |
+| `10 % 4294967296` | `10` | `10` | `10` | 10 |
+| `0 % 5` | `0` | `0` | `0` | 0 |
+
+**wasm 为什么给 `1`** —— 这条值得单独记，因为它的形状与解释器**不同**。wasm 后端有两条 `%` 路径（`src/compilation/wasm_backend.c:920-965`）：
+
+- **`int % int` 快路径**（两个操作数都带 `TAG_INT`）：`W_I64_REM_S`，**64 位，正确**。
+- **一般路径**（注释原文 `general: (int)da % (int)db`）：`e_push_as_double` → **`e_trunc_sat_i32`** → `W_I64_EXTEND_I32_S` → `W_I64_REM_S`。
+
+大整数文字被提升成 double（解释器自己会警告 `warning: integer literal 3000000000 out of 32-bit range, promoted to float`），所以走的是**一般路径**。`trunc_sat_i32` 是**饱和**转换：`3000000000.0` 与 `2147483648.0` 都饱和到 **2147483647**，而 `2147483647 % 7 == 1` —— 两个用例都得到 `1`，正是这个机制。
+
+而解释器同一条路径用的是 `(int)da`，x86-64 上是 `cvttsd2si`，越界给 **INT_MIN**（`-2147483648`），`-2147483648 % 7 == -2`。
+
+**所以解释器与 wasm 的差别是「未定义行为 vs 饱和语义」的差别**，不是两个各自正确的选择。这也解释了为什么 `say 3000000000` 在三个后端都正确输出 `3000000000` —— 文字解析没问题，坏的是 `%` 那一步。
+
+**顺带更正 §1.1 的位置**：真正的 `L_MOD` 是 `src/vm/vm.c:3824-3838`，而且它自己也有**两条**路径：
+
+```c
+value_set(&R[ins.r1], VAL_INT, a->ival % b->ival, 0, NULL, NULL);   /* :3827  int 快路径，32 位 */
+...
+int bi = (int)val_as_double(b);                                     /* :3830  先截断 */
+if (bi == 0) { vm_throw_kind(vm, "division_by_zero"); ... }         /* :3831  再判零 */
+double da = val_as_double(a);                                       /* :3836 */
+value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);        /* :3837  越界 (int) 是 UB */
+```
+
+零检查在**截断之后**（`:3830` 截断、`:3831` 判零），所以 `7 % 0.5` 与 `5 % 0` 被报成除零；AOT 的 `nv_mod` 则是 `nv_int(y ? x % y : 0)` —— **除数为 0 时静默返回 0**（`src/compilation/aot_native.c:208-210`）。三个后端对「除以零」有三种态度：报错 / 静默 0 / 报错。
+
+#### 对 §5 的影响
+
+- **O0 的判据不是「对齐 AOT」**，而是先定 `and`/`or` 的返回语义，再让三方都执行它。wasm 还要去掉「拒绝编译」这条，否则它是唯一一个把合法程序挡在门外的后端。
+- **O1 的判据要写成三方一致**，并且一并处理「除数为 0」：现在的三种态度必须收敛成一种。
+- **§1.2 的整数提升不是分歧**：实测 `2147483647 + 1` 在三个后端都是 `2147483648`，三方一致。它是**语言设计**问题（`Z` 是无限整数集合），不是后端不一致 —— 性质与 O0/O1 不同，别混在一起修。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
@@ -331,14 +418,27 @@ wasm 那一行**不能与原生通道直接比**：它量的是 `node` 进程，
 
 ### 第一梯队（低风险，先做）
 
-**O0. 先定 `and` / `or` 的语义，再让两个后端一致（§1.0）** —— 这是本轮唯一需要**先做决定**而不是先写代码的一条。
+**O0. 先定 `and` / `or` 的语义，再让三个后端一致（§1.0、§1.6）** —— 这是本轮唯一需要**先做决定**而不是先写代码的一条。
 
-两条路：①按解释器现状（值语义）修 AOT 的 emitter，让它也短路并返回操作数；②按 AOT 现状（布尔）修 `src/compiler/compiler.c:648-670`，改成发 `OP_AND` / `OP_OR`。**应当选 ①**：值语义已经是解释器上被实际使用的行为（`name or "anonymous"`），改它会静默改变现有脚本的结果；而改 AOT 只是让编译产物与解释器一致。
+实测是**三方**分歧（§1.6）：解释器给**操作数**（`1 and 5` → `5`），AOT 给**布尔**（`true`），wasm **拒绝编译**（`'and'/'or' outside a condition is not supported`）。所以「挑一个后端对齐」这个提法不成立 —— 得先定语言语义，再让三方都执行它。
 
-无论选哪条，`docs/API.md:90` 都必须写明返回的是操作数还是布尔 —— **现在文档对这件事沉默，正是这条分歧能活到现在的原因**。**验证**：§1.0 的四行表格两个后端逐格相同；`tools/im_diff_fuzz.py` 重跑后 `and`/`or` 相关分歧归零；顺带决定 `OP_OR`（当前是死 opcode）是删除还是真正启用。
+**应当选值语义**，理由有两条且都不是风格问题：
 
-**O1. 修 `%` 的 32 位截断（§1.1）** —— 正确性修复，不是性能项。
-把 `L_MOD` 改成与 AOT 的 `nv_mod` 同语义：两个操作数按 64 位整数处理，除数为 0 时保持现有的 `division_by_zero` 抛出。**验证**：§1.1 表格里六个表达式逐个变成正确值；`2330089441 % 2147483647` 解释器与 AOT 都得到 `182605794`；现有 CTest 全绿。
+- 值语义是解释器上**已经被实际使用**的行为（`name or "anonymous"` 这种默认值写法）。改成布尔会静默改变现有脚本的结果；改 AOT 只是让编译产物与解释器一致。
+- 它与 IR 收敛的方向一致：`src/compiler/compiler.c:648-670` 已经把它编成字节码（`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` + `OP_MOV`），**值语义已经在 IR 里定死了**；AOT 与 wasm 是各自重新遍历 AST 才跑偏的。让后端消费字节码，这条分歧在结构上就不可能发生。
+
+无论选哪条，`docs/API.md:90` 都必须写明返回的是操作数还是布尔 —— **现在文档对这件事沉默，正是这条分歧能活到现在的原因**。**验证**：§1.6 的八行表格三个后端逐格相同（wasm 必须从「拒绝编译」变成给出值）；`tools/im_diff_fuzz.py` 重跑后 `and`/`or` 相关分歧归零；顺带决定 `OP_OR`（当前是死 opcode）是删除还是真正启用。
+
+**O1. 修 `%` 的 32 位截断（§1.1、§1.6）** —— 正确性修复，不是性能项。
+
+实测是**三后端三答案**（§1.6）：`3000000000 % 7` → 解释器 `-2` / AOT `4`（正确）/ wasm `1`。两条坏路径形状不同：
+
+- `src/vm/vm.c:3837` 的 `(int)da % bi` —— 越界 `(int)` 是 **UB**，x86-64 给 INT_MIN，于是 `-2147483648 % 7 == -2`。
+- `src/compilation/wasm_backend.c:920-965` 一般路径的 `e_trunc_sat_i32` —— **饱和**到 INT32_MAX，于是 `2147483647 % 7 == 1`。
+
+修法：两处都按 64 位整数处理，与 AOT 的 `nv_mod` 同语义。**但「除数为 0」必须一并定** —— 现在有三种态度（解释器抛 `division_by_zero` / AOT 的 `nv_int(y ? x % y : 0)` **静默给 0** / wasm 抛错），得收敛成一种；建议保留抛出，并修掉 AOT 那个静默 0。零检查在解释器里位于**截断之后**（`src/vm/vm.c:3830` 截断、`:3831` 判零），修 64 位时顺序也要跟着改。
+
+**验证**：§1.6 的十一行表格三列逐格相同；`2330089441 % 2147483647` 解释器与 AOT 都得到 `182605794`；`5 % 0` 三个后端给同一个答案；现有 CTest 全绿。
 
 **O2. 让整数溢出可诊断（§1.2）** —— 至少让它不再静默。
 最小改动是把「计算产生的越界整数」也打一条警告（字面量那条已有），更好的做法是给出真正的 64 位整数类型。**验证**：`(2147483647 + 1).type` 的行为被明确写进 `docs/SYNTAX.md`；`9007199254740992 + 1` 要么算对，要么**有警告**；新增回归用例钉死当前选择。
@@ -411,6 +511,22 @@ printf 'say 31 or 1\nsay 0 or 2\nsay 1 and 5\nsay 0 and 5\n' > /tmp/orv.im
 ./build/inimerse /tmp/orv.im                      # 31 / 2 / 5 / 0
 ./build/aot-native translate /tmp/orv.im /tmp/orv.c && cc -O2 -o /tmp/orv /tmp/orv.c && /tmp/orv
                                                   # true / true / true / false
+
+# §1.6：三通道差分 —— and/or 是三方分歧，% 是三后端三答案
+cat > /tmp/tri_and.im <<'EOF'
+say 1 and 5
+EOF
+./build/inimerse --no-mods /tmp/tri_and.im                      # 5（操作数）
+./build/aot-native translate /tmp/tri_and.im /tmp/tri_and.c && cc -O2 -o /tmp/tri_and /tmp/tri_and.c && /tmp/tri_and   # true（布尔）
+./build/inimerse compile --abi-target wasm /tmp/tri_and.im /tmp/tri_and.wasm
+                        # 拒绝：'and'/'or' outside a condition is not supported (use it in if/while)
+
+cat > /tmp/tri_mod.im <<'EOF'
+say 3000000000 % 7
+EOF
+./build/inimerse --no-mods /tmp/tri_mod.im                      # -2（越界 (int) 是 UB）
+./build/aot-native translate /tmp/tri_mod.im /tmp/tri_mod.c && cc -O2 -o /tmp/tri_mod /tmp/tri_mod.c && /tmp/tri_mod   # 4（正确）
+./build/inimerse compile --abi-target wasm /tmp/tri_mod.im /tmp/tri_mod.wasm && node tools/wasm_run.js /tmp/tri_mod.wasm   # 1（trunc_sat_i32 饱和）
 
 # §1.5：差分模糊测试（随机程序，两个后端逐对比较）
 python3 tools/im_diff_fuzz.py --count 150 --seed 7 --keep /tmp/fuzz-cases
