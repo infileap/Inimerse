@@ -35,13 +35,13 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-03 更新测试计数到 104；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-03 更新测试计数到 108；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **104 / 104 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **108 / 108 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
@@ -57,8 +57,8 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 104
-node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 108
+node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
 
@@ -2535,4 +2535,38 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 - `tools/im_diff_fuzz.py` **仍未接进门禁**（怎么接、什么阈值，用户未定）。
 - O2 的 BigInt / 小整数快速路径**未做**（`docs/archive/ROADMAP_3.1.md` 已规划）。
 - `lint_scan` 是**逐行扫描器、根本不解析**：它自己的例子 `x = = 5` 在 `--lint` 下 **0 行发现、rc=0**，而真跑 rc=1。修退出码**不会**让 `x = = 5` 变红 —— 这条限制已用 `tools/lint_expected.test.py` 的 PINNED 用例**钉进测试**，而不是只写在文档里。
+
+## 10.43 `+` 链按项数换答案：`OP_CONCAT` 的整数回绕（BOARD 行 137）
+
+**起因。** §10.42 把「三后端逐格比对」立成判据之后，收尾复核的第一件事是去问：**审计自己写下的「三方一致」样本，取样够不够长。** §1.2 拿 `2147483647 + 1` 当「整数提升三方一致」的典型 —— 它确实一致，但它是**两项链**。
+
+**缺陷。** `src/compiler/compiler.c:715-786` 把 3 项以上的左结合 `+` 链折成**单个 `OP_CONCAT`**，2 项链走 `OP_ADD`；该处注释声称「identical per-step semantics to OP_ADD」。`OP_ADD` 用 `int64_t` 折叠、越界提升 float；`OP_CONCAT` 的整数快路径（`src/vm/vm.c:3042-3047`）直接相加两个 32 位载荷 ⇒ **回绕**。于是 `x = 2147483647` 时 `x + 1` 是 `2147483648` 而 `x + 1 + 0` 是 **`-2147483648`**。
+
+**分歧是 2 比 1，不是 1 比 1。** AOT 与 wasm 自始至终互相一致，解释器的 `OP_CONCAT` 是唯一异类 —— 这一点与作业单的初始表述相反，是本轮**先实测再定修法**的直接结果。（作业单把它写成「解释器 vs AOT」；若照此裁，会去改本来正确的 AOT。）
+
+**为什么漏了这么久。** 两件事同时成立才让它隐形：①`contract_test.im` §1 里**没有任何超过两项的 `+` 链**；②审计把两项链当成了整数提升的代表样本。**判据的样本长度本身就是判据的一部分。**
+
+**修法。** `L_CONCAT` 整数分支对齐 `L_ADD`：`int64_t` 折叠，越界提升 float 并置 `acc.sval = NULL`（与相邻泛型 double 分支一致）。`acc.type == VAL_INT` 时 `acc_fold_owned` 必为 0（唯一置 1 的字符串分支先判且已 `continue`），故无需 free。**不触及** §1.2 的结论。
+
+**判据与双向验证。** 新增 `tools/arith_chain_semantics.test.py`（CTest `arith_chain_semantics_regression`，**#57**，3.22 s，注册于 `CMakeLists.txt:357-365`），10 格 × 解释器/AOT/wasm，同时断言期望值与三方一致性。**反向验证**：把 `src/vm/vm.c` 退回 `HEAD` 重编 ⇒ **6/10 红**（恰为 3 项链与 4 项链那 6 格，无假阴无假阳）；恢复修复重编 ⇒ 全绿。所以它**不是** vacuous probe。
+
+**门禁计数。** `grep -c 'add_test(' CMakeLists.txt` = **108**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **107 → 108**；`docs/BOARD.md` §3 与本节 §2/§2.1 一并同步为 **108 / 108**。顺带修掉一处**先存的不同步**：BOARD §3 与本节 §2 此前还停在 **104**，而 `EXP_CTEST` 已经是 107 —— 上一个会话只改了 `gate.sh`，没改表，而 `docs/BOARD.md:69` 明文要求两者同时改。
+
+**门禁实测（本轮）。** 九阶段 **8 PASS / 1 FAIL**：`ctest (expect 108/108, 0 skipped)` **PASS**，`build` / `economy` / `node (12/12)` / `plugin (55/55 live)` / `userdata` / `links (0 broken)` / `doc-paths (0 broken)` 全 PASS。唯一失败是 `oauth_loop crate (expect 75/75)`，**exit 46，且 `cargo --version` 同样 exit 46**：
+
+```
+internal error, please report: running "rustup.cargo" failed: cannot create transient scope: DBus error "org.freedesktop.DBus.Error.UnixProcessIdUnknown": [Failed to set unit properties: No such process]
+```
+
+这是**环境的**失败（本沙箱里 systemd 无法为 rustup 创建 transient scope），不是测试失败，也与本轮改动无关 —— `git diff --name-only` 里没有任何 `Infiverse_standard/oauth_loop/` 路径。**因此本轮不能宣称「九阶段全绿」**，只能宣称「八阶段绿 + 一条环境失败的 Rust 阶段（连 `--version` 都跑不起来）」。
+
+**附带的两个发现（均已取证，未修，另行立项）。**
+
+1. **AOT 打印浮点丢精度。** `say(1000000.5)` → `1e+06`、`say(2147483648.5)` → `2.14748e+09`，而解释器与 wasm 打全精度。`vtest/float_precision_v04.im` 与 CTest `float_precision_runtime`（`CMakeLists.txt:739-740`）**只钉住解释器**（`src/runtime/runtime_posix.c:59` 的 `"%.17g"`）。这是**第二处** AOT 与解释器/wasm 不一致，且方向相反（这次 AOT 是异类）。
+2. **`contract_test.im` 根本没进门禁。** `grep -in contract CMakeLists.txt` 只有两条无关注释，没有任何 `add_test`；它是手动/dormant 套件（本节 §9 把它列在手动套件堆里），而且**当前跑到 `contract_test.im:80` 就抛异常**：`check(list(Z[1~3])[0] == 1, "list set")` → `CONTRACT FAIL: list set`。该行来自 `8248e08`（Release Infiverse 0.2.0），是**先存**失败。所以本轮往它 §1 补的 5 条链断言**验证了契约、但没有被门禁自动执行** —— 这点必须写在明处，不能让「断言加进去了」听起来像「它被守住了」。
+
+**诚实边界。**
+
+- 本轮**没有**修 AOT 的浮点打印，也**没有**修 `contract_test.im:80` 的 `list set`（两者都会把本轮提交撑成混合改动）。
+- 作业单写的是「加进 `tools/logic_semantics.test.py`」，实际落在**新建的 `tools/arith_chain_semantics.test.py`**：`logic_semantics.test.py` 的自述是「deliberately narrow（只谈 `and`/`or`/`not`）」，而本仓既有惯例是**每个被修掉的语义缺陷配一条自己的三后端套件**（`mod_semantics.test.py` 对 `%`、`logic_semantics.test.py` 对 `and`/`or`）。新增一条 CTest 也让计数变化**显式可见**。这是**有意的偏离**，不是遗漏。
 

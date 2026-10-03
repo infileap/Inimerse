@@ -3040,8 +3040,21 @@ static void vm_execute_thread(VmThread *t) {
                         continue;
                     }
                     if (acc.type == VAL_INT && b.type == VAL_INT) {
-                        acc.type = VAL_INT;
-                        acc.ival = acc.ival + b.ival;
+                        /* Same overflow rule as L_ADD: fold in 64 bits and promote to
+                           float when the result leaves int32.  A bare int32 add here
+                           wrapped instead, so a 3+-term chain (which OP_CONCAT folds)
+                           disagreed with the identical 2-term chain (which OP_ADD
+                           folds) the moment an intermediate left the int32 range. */
+                        int64_t r64 = (int64_t)acc.ival + (int64_t)b.ival;
+                        if (r64 > 2147483647LL || r64 < -2147483648LL) {
+                            acc.type = VAL_FLOAT;
+                            acc.fval = (double)r64;
+                            acc.ival = 0;
+                            acc.sval = NULL;
+                        } else {
+                            acc.type = VAL_INT;
+                            acc.ival = (int)r64;
+                        }
                         acc_fold_owned = 0;
                         continue;
                     }

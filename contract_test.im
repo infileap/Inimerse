@@ -20,6 +20,14 @@ x = 2147483647
 check(x + 1 == 2147483648.0, "int overflow -> float promote")
 check(x * 3 == 6442450941.0, "int mul overflow -> float")
 check(0 - 2147483647 - 1 == -2147483648, "int stays exact in range")
+# 一条 3 项以上的 `+` 链会被折成单个 OP_CONCAT，2 项链走 OP_ADD（见
+# src/compiler/compiler.c:715-786）。两者必须服从同一条溢出规则；在本行
+# 钉住它之前，`x + 1` 是 2147483648 而 `x + 1 + 0` 回绕成 -2147483648。
+check(x + 1 + 0 == 2147483648.0, "3-term + chain overflow -> float")
+check(x + 1 + 1 == 2147483649.0, "3-term + chain, two over")
+check(x + 1 + 0 + 0 == 2147483648.0, "4-term + chain overflow -> float")
+check(1000000000 + 1000000000 + 1000000000 == 3000000000.0, "3-term chain promotes mid-way")
+check(10 + 1 + 0 == 11, "in-range + chain unchanged")
 check(1 / 4 == 0.25, "int division is float")
 check(7 % 3 == 1, "modulo")
 check(2.5 * 2 == 5.0, "float arithmetic")

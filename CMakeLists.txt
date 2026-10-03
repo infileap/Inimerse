@@ -354,6 +354,17 @@ if(INIMERSE_CLANG AND NOT WIN32)
                      $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
                      --node ${INIMERSE_NODE})
     set_tests_properties(logic_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;compiler;wasm;regression")
+    # A `+` chain must not answer differently depending on how many terms it
+    # has: 3+ terms fold into one OP_CONCAT while 2 terms emit OP_ADD
+    # (src/compiler/compiler.c:715-786).  The interpreter's OP_CONCAT integer
+    # path added the two 32-bit payloads directly, so `x + 1` was 2147483648
+    # and `x + 1 + 0` wrapped to -2147483648.  It needs node because the wasm
+    # backend is the third opinion.
+    add_test(NAME arith_chain_semantics_regression
+             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/arith_chain_semantics.test.py
+                     $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
+                     --node ${INIMERSE_NODE})
+    set_tests_properties(arith_chain_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;runtime;compiler;wasm;regression")
   endif()
   set_tests_properties(wasm_probe wasm_host PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
 endif()
