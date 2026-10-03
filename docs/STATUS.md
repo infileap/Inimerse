@@ -2173,3 +2173,29 @@ crate 测试 69 → **72**；`tools/gate.sh` 四处同步 72；`tools/infiverse_
   `bash -n tools/gate.sh` 报 `syntax error near unexpected token 'and'`，已补。
 - **教训（可复用）**：**一个只在「什么都不做」时才通过的测试，和没有测试一样**；断言 `None` / 空 / 未调用时，
   必须同时证明「有输入时它确实会变」，否则断言的是失败路径的形状而不是行为。
+
+## 10.36 回调路径第一次端到端走通（行 101 的最后一个残留清掉）
+
+**2026-10-03 14:16–14:18，用户实机操作。** §10.29 起一直挂着的「回调这条路从未成功过」，到这一步结束。
+
+- **操作方式**：路线 A（secret 走环境变量、不落盘）。`Infiverse_standard/userdata/oauth_secret_github.txt`
+  已删除，app 由 `INFIVERSE_GITHUB_CLIENT_SECRET=<40 位> ./target/debug/app` 启动。
+- **时间线（用进程与文件时间戳判定，不靠叙述）**：app 启动 `14:16:36`（pid 64949）⇒ 用户点授权、
+  `oauth_start_callback` 绑定 `127.0.0.1:8765` ⇒ 浏览器授权后回环收到 code ⇒ `14:18:39`
+  `linked_accounts.json` 被重写（此前是 11:36 的 device flow 记录）⇒ 之后 8765 不再监听
+  （`serve_once` 只服务一次即释放），与「已收到并处理完」一致。
+- **落盘内容（只列键与长度）**：`access_token = gho_…len=40`、`provider = github`、
+  `scope = read:user user:email`、`token_type = bearer`、`refresh_token = None`。
+- **凭据是活的，不是「写进去了」**：拿这个 token 打真实 API ——
+  `GET https://api.github.com/user` → **200**，`login = infileap`、`id = 141123918`、`name = 月识`。
+- **路线 A 成立**：`oauth_secret_github.txt` **全程不存在** ⇒ 明文 secret 没有落盘，
+  这条路径依赖的 `read_client_secret()` 正是 §10.35 补上测试的那个函数。
+- **这条链上此前每一环都曾经是错的**，回调能成说明它们现在同时成立：
+  ①授权 URL 的 `redirect_uri` 必须百分号编码（`8b06402`，否则 GitHub 发回的 code 与 token 请求上下文不匹配，
+  报错却是 `incorrect_client_credentials`）；②`client_secret` 必须送（`dd6165a`，PKCE 不替代它）；
+  ③回调的路径与 `Host` 必须与注册的 redirect_uri 相符；④`state` 必须逐一比对；
+  ⑤token 响应必须解析 `error` 字段（HTTP 200 也可能是失败）；⑥**空 secret 字段不得覆盖已保存的 secret** ——
+  最后这条正是 §10.34 那个 7 字节 `dd6165a` 的死角。
+- **仍未做（不属于本行）**：`redirect_uri` 与 `Host` 的绑定校验只在**收回调时**做，
+  注册值本身仍由用户在 GitHub 页面手工保证；`linked_accounts.json` 的**过期/刷新**路径不存在
+  （`refresh_token = None`，GitHub 这个 app 没开 `Expire user access tokens`）。
