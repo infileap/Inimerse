@@ -142,6 +142,8 @@ const EXPECTED_IPC = [
             if (cmd === 'oauth_open') return Promise.resolve({ ok: true });
             if (cmd === 'oauth_poll_callback') return Promise.resolve('code=THECODE&state=THESTATE');
             if (cmd === 'oauth_bind') return Promise.resolve({ ok: true, provider: args && args.provider });
+            if (cmd === 'oauth_device_start') return Promise.resolve({ ok: true, userCode: 'WDJB-MJHT', deviceCode: 'DC', verificationUri: 'https://github.com/login/device', interval: 5, expiresIn: 900 });
+            if (cmd === 'oauth_device_poll') return Promise.resolve({ ok: true, status: 'token', saved: '/tmp/linked_accounts.json' });
             if (cmd === 'list_projects') return Promise.resolve([]);
             if (cmd === 'list_downloads') return Promise.resolve([]);
             if (cmd === 'plugins_list') return Promise.resolve([]);
@@ -332,6 +334,49 @@ const EXPECTED_IPC = [
     msg && /已关联/.test(msg.textContent),
     `a successful bind must be reported to the user; got ${JSON.stringify(msg && msg.textContent)}`,
   );
+
+  // (9a) The device flow is the only GitHub path that needs no client secret,
+  //      so it must actually be reachable from the panel -- and it must show the
+  //      user the code, because the whole flow is worthless if the 8 characters
+  //      the user has to type are never displayed.
+  {
+    const devBtn = $('#oauth-device');
+    assert.ok(devBtn, 'the browse module must render a device-flow button');
+    const before = calls.length;
+    devBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    // The first poll is scheduled at the provider's interval (5s in the stub);
+    // give it room to fire once.
+    await new Promise((r) => setTimeout(r, 5600));
+    const dev = calls.slice(before).map((c) => c.cmd).filter((c) => c.startsWith('oauth_'));
+    assert.ok(
+      dev.includes('oauth_device_start'),
+      `the device flow must request a device code; saw ${JSON.stringify(dev)}`,
+    );
+    assert.ok(
+      dev.includes('oauth_device_poll'),
+      `the device flow must poll the exchange; saw ${JSON.stringify(dev)}`,
+    );
+    const startDev = calls.find((c) => c.cmd === 'oauth_device_start');
+    const pollDev = calls.find((c) => c.cmd === 'oauth_device_poll');
+    assert.ok(startDev.args && startDev.args.clientId, 'the device flow needs the client id');
+    assert.strictEqual(
+      pollDev.args.deviceCode,
+      'DC',
+      'the poll must present the device code the provider issued, not the user code',
+    );
+    // The user code is what the human types, so it has to be on screen.
+    const codeEl = $('#oauth-user-code');
+    assert.ok(
+      codeEl && /WDJB-MJHT/.test(codeEl.textContent),
+      `the user code must be displayed for the user to type; got ${JSON.stringify(codeEl && codeEl.textContent)}`,
+    );
+    // And it must NOT be what goes to the provider: mixing the two up is the
+    // single most likely way to write this flow wrong.
+    assert.ok(
+      !Object.values(pollDev.args).includes('WDJB-MJHT'),
+      'the user code must never be sent to the exchange',
+    );
+  }
 
   // (9) A refused callback must be reported, not waited out.
   //

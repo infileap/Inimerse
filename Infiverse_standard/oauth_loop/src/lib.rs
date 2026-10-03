@@ -380,6 +380,190 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 }
 
 // ---------------------------------------------------------------------------
+// device flow
+// ---------------------------------------------------------------------------
+
+// The device flow is the only GitHub authorization path that does not require a
+// `client_secret`.  Its documentation says so twice and plainly: the token
+// exchange for `urn:ietf:params:oauth:grant-type:device_code` lists exactly
+// `client_id`, `device_code` and `grant_type`, and the error-code table adds
+// "For the device flow, you must pass your app's client ID ... The
+// `client_secret` is not needed for the device flow."
+//
+// That makes it the honest answer to the problem this repository just spent four
+// round trips on.  Storing a secret beside a desktop binary never really works;
+// not needing one does.  What it costs is the whole shape of the flow: no
+// loopback listener, no `state` to compare, no PKCE verifier -- the user types a
+// short code into a browser page instead.
+
+/// Where GitHub tells the user to type the code.
+pub const DEVICE_VERIFICATION_URI: &str = "https://github.com/login/device";
+
+/// The `grant_type` the device-code exchange demands.  Not `authorization_code`.
+pub const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+
+/// Endpoint that hands out the device and user codes.
+pub fn device_code_endpoint(provider: &str) -> Option<&'static str> {
+    if provider.eq_ignore_ascii_case("github") {
+        Some("https://github.com/login/device/code")
+    } else {
+        // Bilibili's flow is not modelled here; inventing an endpoint for it
+        // would be worse than saying so.
+        None
+    }
+}
+
+/// What step 1 of the device flow returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceCode {
+    /// 40 characters; the app polls with this and never shows it to the user.
+    pub device_code: String,
+    /// 8 characters with a hyphen; this is the half the user types.
+    pub user_code: String,
+    /// Where the user types it.
+    pub verification_uri: String,
+    /// Seconds until both codes expire (GitHub's default is 900).
+    pub expires_in: u64,
+    /// Minimum seconds between polls.  Polling faster earns `slow_down`, which
+    /// adds five seconds to this value, so it is a floor rather than a hint.
+    pub interval: u64,
+}
+
+/// Body for the step-1 request.  Only `client_id` and `scope` are defined.
+pub fn device_code_request_body(provider: &str, client_id: &str, scope: &str) -> Option<String> {
+    let _ = device_code_endpoint(provider)?;
+    let cid = form_encode(client_id.trim());
+    if cid.is_empty() {
+        return None;
+    }
+    let sc = scope.trim();
+    if sc.is_empty() {
+        Some(format!("client_id={cid}"))
+    } else {
+        Some(format!("client_id={cid}&scope={}", form_encode(sc)))
+    }
+}
+
+/// Parse the step-1 response, in either the form-encoded or JSON shape.
+///
+/// Absent or unparseable `interval`/`expires_in` fall back to GitHub's documented
+/// defaults rather than to zero: a zero interval would turn a poll loop into a
+/// rate-limit violation, which the provider answers with `slow_down`.
+pub fn parse_device_code_response(body: &str) -> Result<DeviceCode, String> {
+    let (top, nested) = parse_kv_body(body);
+    let field = |k: &str| nested.get(k).or_else(|| top.get(k)).cloned();
+
+    let device_code = field("device_code").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let user_code = field("user_code").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let (Some(device_code), Some(user_code)) = (device_code, user_code) else {
+        if let Some(err) = field("error") {
+            let desc = field("error_description").unwrap_or_default();
+            return Err(if desc.is_empty() { err } else { format!("{err}: {desc}") });
+        }
+        return Err("the device-code response carried no device_code/user_code".to_string());
+    };
+
+    let number = |k: &str, default: u64| -> u64 {
+        field(k)
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(default)
+    };
+
+    Ok(DeviceCode {
+        device_code,
+        user_code,
+        verification_uri: field("verification_uri").unwrap_or_else(|| DEVICE_VERIFICATION_URI.to_string()),
+        expires_in: number("expires_in", 900),
+        interval: number("interval", 5),
+    })
+}
+
+/// One poll's outcome.  The pending case is not an error -- it is the normal
+/// answer until the user finishes typing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DevicePoll {
+    /// Authorized; the token is in hand.
+    Token(Token),
+    /// `authorization_pending`: keep polling at the current interval.
+    Pending,
+    /// `slow_down`: the provider raised the floor by five seconds.
+    SlowDown { interval: u64 },
+    /// The codes expired and step 1 must be repeated.
+    Expired,
+    /// The user pressed cancel.  The code cannot be reused.
+    Denied,
+    /// The flow is switched off in the app's settings.
+    Disabled,
+    /// Anything else the provider reported.
+    Failed(String),
+}
+
+/// Interpret one poll response.
+///
+/// A response carrying a token wins even if it also carries an `error`, which is
+/// not a hypothetical: providers have been known to append warnings to successes,
+/// and treating a live token as a failure would discard a valid grant.
+pub fn parse_device_poll(body: &str) -> Result<DevicePoll, String> {
+    let (top, nested) = parse_kv_body(body);
+    let field = |k: &str| nested.get(k).or_else(|| top.get(k)).cloned();
+
+    if let Some(access_token) = field("access_token").filter(|s| !s.is_empty()) {
+        // Built here rather than delegated to `parse_token_response`: that
+        // function treats ANY `error` field as failure, which is the right rule
+        // for an exchange and the wrong one here, where a warning may accompany
+        // a live token.  Discarding a real grant over an appended note is the
+        // failure this test exists to prevent.
+        return Ok(DevicePoll::Token(Token {
+            access_token,
+            token_type: field("token_type"),
+            refresh_token: field("refresh_token"),
+            scope: field("scope"),
+        }));
+    }
+
+    let Some(err) = field("error").filter(|s| !s.is_empty()) else {
+        return Err("the device poll carried neither a token nor an error".to_string());
+    };
+
+    Ok(match err.as_str() {
+        "authorization_pending" => DevicePoll::Pending,
+        "slow_down" => DevicePoll::SlowDown {
+            // The provider is supposed to include the new interval; if it does
+            // not, the documented behaviour is to add five seconds.
+            interval: field("interval")
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(0)
+                .max(5),
+        },
+        "expired_token" | "token_expired" => DevicePoll::Expired,
+        "access_denied" => DevicePoll::Denied,
+        "device_flow_disabled" => DevicePoll::Disabled,
+        other => DevicePoll::Failed(field("error_description").unwrap_or_else(|| other.to_string())),
+    })
+}
+
+/// Body for a poll.  Deliberately without `client_secret`: that absence is the
+/// entire point of this flow, and `secret_is_required` does not apply here.
+pub fn device_poll_request_body(provider: &str, client_id: &str, device_code: &str) -> Option<String> {
+    // Gated on the DEVICE endpoint, not the token endpoint: bilibili has the
+    // latter but no device flow here, and gating on it would emit a poll for a
+    // flow that provider cannot serve.
+    let _ = device_code_endpoint(provider)?;
+    let cid = form_encode(client_id.trim());
+    if cid.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "client_id={}&device_code={}&grant_type={}",
+        cid,
+        form_encode(device_code.trim()),
+        form_encode(DEVICE_GRANT_TYPE),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // token exchange
 // ---------------------------------------------------------------------------
 
@@ -2021,6 +2205,168 @@ mod tests {
     fn the_secret_env_var_is_namespaced_by_provider() {
         assert_eq!(client_secret_env_var("github"), "INFIVERSE_GITHUB_CLIENT_SECRET");
         assert_eq!(client_secret_env_var("bilibili"), "INFIVERSE_BILIBILI_CLIENT_SECRET");
+    }
+
+    // -----------------------------------------------------------------------
+    // device flow
+    // -----------------------------------------------------------------------
+
+    /// The reason this flow exists.  If a secret ever appears in a device poll,
+    /// the whole justification for the flow has been undone -- so this asserts
+    /// the absence directly rather than trusting the format string.
+    #[test]
+    fn a_device_poll_carries_no_client_secret() {
+        let body = device_poll_request_body("github", "CID", "DEVICECODE").expect("github is supported");
+        assert!(!body.contains("client_secret"), "a device poll must not carry a secret: {body}");
+        assert_eq!(
+            body,
+            "client_id=CID&device_code=DEVICECODE&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code",
+        );
+    }
+
+    #[test]
+    fn a_device_code_request_carries_no_client_secret_either() {
+        let body = device_code_request_body("github", "CID", "read:user user:email")
+            .expect("github is supported");
+        assert!(!body.contains("client_secret"), "step 1 must not carry a secret: {body}");
+        assert_eq!(body, "client_id=CID&scope=read%3Auser%20user%3Aemail");
+        // Scope is optional; an empty one must not leave a dangling `&scope=`.
+        assert_eq!(
+            device_code_request_body("github", "CID", "  ").as_deref(),
+            Some("client_id=CID"),
+        );
+    }
+
+    #[test]
+    fn device_flow_is_github_only() {
+        assert!(device_code_endpoint("github").is_some());
+        assert!(device_code_endpoint("GitHub").is_some(), "lookup must be case-insensitive");
+        // Rather than invent an endpoint for a provider whose flow is not
+        // modelled, say so by returning nothing.
+        assert!(device_code_endpoint("bilibili").is_none());
+        assert!(device_code_request_body("bilibili", "CID", "s").is_none());
+        assert!(device_poll_request_body("bilibili", "CID", "D").is_none());
+    }
+
+    #[test]
+    fn a_blank_client_id_is_refused_rather_than_sent() {
+        assert!(device_code_request_body("github", "   ", "s").is_none());
+        assert!(device_poll_request_body("github", "", "D").is_none());
+    }
+
+    #[test]
+    fn step_one_reads_the_documented_form_body() {
+        // Verbatim from GitHub's device-flow documentation.
+        let d = parse_device_code_response(
+            "device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5\n\
+             &expires_in=900\n&interval=5\n&user_code=WDJB-MJHT\n\
+             &verification_uri=https%3A%2F%2Fgithub.com%2Flogin%2Fdevice",
+        )
+        .expect("the documented body must parse");
+        assert_eq!(d.device_code, "3584d83530557fdd1f46af8289938c8ef79f9dc5");
+        assert_eq!(d.user_code, "WDJB-MJHT");
+        assert_eq!(d.verification_uri, "https://github.com/login/device");
+        assert_eq!(d.expires_in, 900);
+        assert_eq!(d.interval, 5);
+    }
+
+    #[test]
+    fn step_one_reads_a_json_body_too() {
+        let d = parse_device_code_response(
+            r#"{"device_code":"D","user_code":"U-1","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
+        )
+        .expect("json must parse");
+        assert_eq!(d.device_code, "D");
+        assert_eq!(d.user_code, "U-1");
+    }
+
+    /// A zero interval would turn the poll loop into a rate-limit violation. The
+    /// defaults are GitHub's documented ones, not zero.
+    #[test]
+    fn a_missing_interval_falls_back_to_the_documented_default() {
+        let d = parse_device_code_response("device_code=D&user_code=U-1").expect("must parse");
+        assert_eq!(d.interval, 5, "a zero interval would earn slow_down immediately");
+        assert_eq!(d.expires_in, 900);
+        let z = parse_device_code_response("device_code=D&user_code=U-1&interval=0").expect("must parse");
+        assert_eq!(z.interval, 5, "interval=0 is not a usable floor");
+        assert_eq!(d.verification_uri, DEVICE_VERIFICATION_URI, "the URL is known even if omitted");
+    }
+
+    #[test]
+    fn step_one_reports_a_provider_error() {
+        let e = parse_device_code_response("error=unauthorized_client&error_description=nope")
+            .expect_err("an error body is not a device code");
+        assert!(e.contains("unauthorized_client"), "{e}");
+        assert!(e.contains("nope"), "the description must survive: {e}");
+        let bare = parse_device_code_response("device_code=ONLY")
+            .expect_err("a device_code without a user_code is useless");
+        assert!(bare.contains("no device_code/user_code"), "{bare}");
+    }
+
+    /// `authorization_pending` is the normal answer, not a failure -- treating it
+    /// as one would abort a flow that is working exactly as designed.
+    #[test]
+    fn pending_is_not_an_error() {
+        assert_eq!(
+            parse_device_poll("error=authorization_pending").expect("pending must parse"),
+            DevicePoll::Pending,
+        );
+    }
+
+    #[test]
+    fn every_documented_error_code_maps_to_its_own_outcome() {
+        assert_eq!(
+            parse_device_poll("error=slow_down&interval=10").expect("must parse"),
+            DevicePoll::SlowDown { interval: 10 },
+        );
+        // Without an interval, the documented behaviour is to add five seconds.
+        assert_eq!(
+            parse_device_poll("error=slow_down").expect("must parse"),
+            DevicePoll::SlowDown { interval: 5 },
+        );
+        assert_eq!(parse_device_poll("error=expired_token").expect("must parse"), DevicePoll::Expired);
+        assert_eq!(parse_device_poll("error=access_denied").expect("must parse"), DevicePoll::Denied);
+        assert_eq!(parse_device_poll("error=device_flow_disabled").expect("must parse"), DevicePoll::Disabled);
+        assert_eq!(
+            parse_device_poll("error=incorrect_device_code").expect("must parse"),
+            DevicePoll::Failed("incorrect_device_code".to_string()),
+        );
+    }
+
+    #[test]
+    fn a_successful_poll_yields_the_token() {
+        match parse_device_poll("access_token=gho_x&token_type=bearer&scope=repo%2Cgist").expect("must parse") {
+            DevicePoll::Token(t) => {
+                assert_eq!(t.access_token, "gho_x");
+                assert_eq!(t.token_type.as_deref(), Some("bearer"));
+                assert_eq!(t.scope.as_deref(), Some("repo,gist"));
+            }
+            other => panic!("expected a token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_poll_with_neither_token_nor_error_is_an_error() {
+        let e = parse_device_poll("token_type=bearer").expect_err("nothing to act on");
+        assert!(e.contains("neither a token nor an error"), "{e}");
+    }
+
+    /// A body with both a token and an error still grants: discarding a live
+    /// token over an appended warning would lose a real authorization.
+    #[test]
+    fn a_token_wins_over_a_warning_in_the_same_body() {
+        match parse_device_poll("access_token=gho_x&error=some_warning").expect("must parse") {
+            DevicePoll::Token(t) => assert_eq!(t.access_token, "gho_x"),
+            other => panic!("a present token must win, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_grant_type_is_the_device_one_not_authorization_code() {
+        let body = device_poll_request_body("github", "CID", "D").expect("github is supported");
+        assert!(body.contains("device_code"), "{body}");
+        assert!(!body.contains("grant_type=authorization_code"), "{body}");
+        assert_eq!(DEVICE_GRANT_TYPE, "urn:ietf:params:oauth:grant-type:device_code");
     }
 
     #[test]

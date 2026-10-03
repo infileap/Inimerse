@@ -2003,3 +2003,42 @@ UI（`Infiverse_standard/src/ui/app.js`）：
 - **这（a）不是安全**。secret 明文落盘在 `userdata/oauth_secret_<provider>.txt`。桌面 app 无法真正保管 client secret —— 它随二进制分发、可被提取。这条路只保证：**不进仓库、不编进二进制、不随程序分发**。这句话也写进了 crate 注释与 UI 文案，而不是只写在文档里。
 - **(b) device flow 是官方唯一「不需要 secret」的路径** —— 文档原文「The `client_secret` is not needed for the device flow.」，且第二份 `client_secret` 表标注为 `Required unless the token was generated using the device flow`。代价是授权方式整体替换（`user_code` 在浏览器输入，回调服务器 / `state` 校验 / PKCE 全套不再需要），需在 OAuth App 页面勾上 **Enable Device Flow**。**留给后续行**。
 - **仍未端到端验证**：`linked_accounts.json` 读取侧（`oauth_status` 的 `linked:true` 分支）。
+
+### 10.32 device flow：官方唯一「不需要 client secret」的 GitHub 路径（BOARD 行 104）
+
+§10.31 落地 (a) 之后紧接着落地 (b)。这一节记的是 (b)，以及它当场抓出的三个真 bug。
+
+#### ① 为什么这一行存在
+
+(a) 让回调路线能跑通，但它的诚实边界写在 §10.31 ⑦ 里：secret 明文落盘，**那不是安全**。官方文档同时给出了另一条路 —— device flow 侧明文写 **「The `client_secret` is not needed for the device flow.」**，第二份 `client_secret` 参数表也标注 `Required unless the token was generated using the device flow`。所以这一行不是「加个备选入口」，而是**唯一一条不依赖我们无法保管的凭据的路径**。
+
+#### ② 代价是明说的，不是悄悄换的
+
+device flow 的授权形状整体不同：没有回环监听、没有 `state` 校验、没有 PKCE，改为在浏览器打开 `https://github.com/login/device` 手动输入 8 位 `user_code`。UI 文案把两条路并列写出来（哪条要 secret、哪条不要），而不是只留按钮。使用前提：**必须在 OAuth App 设置里勾上 `Enable Device Flow`**，否则 step 1 直接返回 `device_flow_disabled` —— 本行把这个错误码单独映射成一句可执行的提示，而不是当成一般失败。
+
+#### ③ crate 侧（`Infiverse_standard/oauth_loop/src/lib.rs`，`[dependencies]` 仍为空）
+
+新增 `device_code_endpoint(provider)`、`device_code_request_body(provider, client_id, scope)`、`device_poll_request_body(provider, client_id, device_code)`、`parse_device_code_response`（返回 `DeviceCode { device_code, user_code, verification_uri, interval, expires_in }`）、`parse_device_poll`（返回 `DevicePoll` 枚举），以及 `grant_type` 常量 `urn:ietf:params:oauth:grant-type:device_code`。`parse_device_poll` **不把 pending 折叠成失败**：`DevicePoll::{Token, Pending, SlowDown{interval}, Expired, Denied, Disabled, Failed}` 七个分支各自可辨 —— 把「还在等」和「出错了」混成一个 bool，是这类流程最常见的写坏方式。
+
+#### ④ 壳侧（`Infiverse_standard/src-tauri/src/lib.rs`）
+
+新增 `fn post_form(endpoint, body) -> Result<String, String>`，把 POST 传输抽成一处（两个设备命令共用）：body 走 **stdin**（`--data-binary @-`），client id 与各码**不进进程表**；**非 2xx 即失败并带 stderr**，即使 curl 写了响应体。新增 `oauth_device_start(provider, client_id, scope)` 与 `oauth_device_poll(provider, client_id, device_code)` 两个命令，均已注册进 `generate_handler!`。`oauth_device_poll` 在拿到 token 时写出 `linked_accounts.json`，与 `oauth_bind` 同一记录形状。
+
+#### ⑤ UI（`Infiverse_standard/src/ui/app.js`）
+
+browse 模块新增 `#oauth-device` 按钮、`#oauth-device-box` 展示区与 `#oauth-user-code`。轮询按 provider 给的 `interval` 进行，**`slow_down` 会抬高这个下限并照办**（无视它只会换来更多 `slow_down`，最终由限流结束流程）；`expiresIn` 到点即停；`denied` / `expired` 各自有独立文案。
+
+#### ⑥ 双向验证（两证都有牙，均还原后复绿）
+
+- **破坏 1**：不把 `userCode` 写进 `#oauth-user-code` ⇒ `the user code must be displayed for the user to type; got ""` 红。整个流程的价值就在这 8 个字符上，不显示等于不可用。
+- **破坏 2**：轮询时把 `started.deviceCode` 写成 `started.userCode` ⇒ `'WDJB-MJHT' !== 'DC'` 红。套件另有一条断言专门盯这个：**user code 绝不能被送给兑换端点** —— 混淆这两个码是这条流程最可能写错的一处。
+
+#### ⑦ 验收
+
+测试 55 → **69**（新增 14 条：设备码请求体、`grant_type` 常量、响应解析、七个轮询分支、`interval` 默认与 `slow_down` 携带新值、未知错误码不被当成 pending）。`tools/gate.sh` 四处同步 69（`:229` `grep -qE`、`:230` 错误串、`:256` 标签、`:217` 注释）。完整八阶段门禁 `rm -rf build && NODE_PATH=/home/sakiko/.local/inimerse-jsdom/node_modules bash tools/gate.sh --jobs 4` → **`GATE_RC=0`**、`gate: OK — every stage passed.`，逐阶段全 PASS（build / ctest **103/103** / economy 39/39 / node 12/12 / plugin 55/55 live / **oauth_loop 69/69** / links / doc-paths）。`tools/infiverse_panels.test.js` 新增 (9a) 段三组断言（设备按钮必须存在；必须先后调 `oauth_device_start` 与 `oauth_device_poll`；user code 必须在屏幕上且**绝不**出现在轮询参数里），IPC calls 58 → **62**。
+
+#### ⑧ 残留
+
+- **端到端仍未验证**：本机没有可用的 OAuth App 配置，device flow 与 (a) 一样**只在代码层与测试层成立**，没有跑过一次真的 `user_code` → token。要真正验证需先把 `Enable Device Flow` 勾上。
+- `linked_accounts.json` 读取侧（`oauth_status` 的 `linked:true` 分支）仍未端到端验证 —— §10.29/§10.31 起就挂着。
+- `redirect_uri` 未绑定：本行不涉及，device flow 没有回调。

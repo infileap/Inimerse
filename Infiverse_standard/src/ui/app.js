@@ -280,9 +280,10 @@ function renderBrowse() {
     <button class="btn primary" id="btn-save-nodes" style="margin-top:6px">保存节点地址</button>
     <span class="muted" id="node-msg"></span></div>
   <div class="card"><h3>🔗 关联</h3>
-    <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-secret" class="code" type="password" style="width:200px" placeholder="OAuth Client Secret"><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button></div></div>
+    <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-secret" class="code" type="password" style="width:200px" placeholder="OAuth Client Secret"><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button><button class="btn" id="oauth-device">设备码授权</button></div></div>
     <div class="step"><span class="dot">📺</span><div><b>Bilibili</b> <span id="oauth-bili-status" class="muted">未关联</span><br><button class="btn" id="oauth-bili">打开授权页</button></div></div>
-    <div class="muted" id="links-msg">GitHub 不接受纯 PKCE 的授权码兑换，必须同时提交 client secret（PKCE 是加固，不是替代）。本机自用的 secret 只存在这台机器的 userdata 里，不会进仓库也不随程序分发。校验 state 后保存到 linked_accounts.json；GitHub 请把 OAuth App 的 callback 设为上面的地址。</div>
+    <div class="step" id="oauth-device-box" style="display:none"><span class="dot">🔢</span><div>在浏览器打开 <a href="https://github.com/login/device" target="_blank" rel="noreferrer">github.com/login/device</a> 并输入：<br><b id="oauth-user-code" class="code" style="font-size:16px;letter-spacing:2px"></b></div></div>
+    <div class="muted" id="links-msg">两种 GitHub 授权方式：<b>授权</b>走浏览器回调（需要 client secret —— GitHub 不接受纯 PKCE 的兑换，PKCE 是加固而非替代）；<b>设备码授权</b>不需要 secret，官方文档写明「The client_secret is not needed for the device flow」，代价是手动输入 8 位码。授权成功后保存到 linked_accounts.json；GitHub 请把 OAuth App 的 callback 设为上面的地址。</div>
   </div>
   <button class="btn" data-go="workbench">→ 去工作台</button>`;
 }
@@ -422,6 +423,69 @@ function bindBrowse() {
   const ghBtn = $('#oauth-gh'), biBtn = $('#oauth-bili');
   if (ghBtn) ghBtn.addEventListener('click', () => openAuth('github'));
   if (biBtn) biBtn.addEventListener('click', () => openAuth('bilibili'));
+
+  // Device flow: the one GitHub path that needs no client secret.  The user
+  // types an 8-character code in a browser instead of being redirected back to
+  // a loopback listener, so none of the callback machinery is involved.
+  const deviceAuth = async () => {
+    const msg = $('#links-msg');
+    const box = $('#oauth-device-box'), codeEl = $('#oauth-user-code');
+    const cid = (($('#oauth-client') && $('#oauth-client').value) || localStorage.getItem('oauth_client_id') || '').trim();
+    if (!cid) { if (msg) msg.textContent = '请先填写 GitHub OAuth Client ID'; return; }
+    localStorage.setItem('oauth_client_id', cid);
+    if (msg) msg.textContent = '正在申请设备码…';
+    const started = await invoke('oauth_device_start', { provider: 'github', clientId: cid, scope: 'read:user user:email' });
+    if (!started || !started.ok) {
+      if (msg) msg.textContent = '❌ 无法开始设备码授权：' + ((started && started.error) || '未知错误');
+      return;
+    }
+    if (box) box.style.display = '';
+    if (codeEl) codeEl.textContent = started.userCode;
+    if (msg) msg.textContent = '⌛ 等待你在浏览器中确认…';
+    try { await invoke('oauth_open', { url: started.verificationUri || 'https://github.com/login/device' }); } catch (e) {}
+
+    // Poll at the interval the provider asked for.  `slow_down` raises that
+    // floor and must be obeyed: ignoring it earns more slow_downs, and the
+    // provider's rate limit is what eventually ends the flow.
+    let interval = (started.interval || 5) * 1000;
+    const deadline = Date.now() + (started.expiresIn || 900) * 1000;
+    const tick = async () => {
+      if (Date.now() > deadline) {
+        if (msg) msg.textContent = '⌛ 设备码已过期，请重新开始';
+        if (box) box.style.display = 'none';
+        return;
+      }
+      const r = await invoke('oauth_device_poll', { provider: 'github', clientId: cid, deviceCode: started.deviceCode });
+      if (!r || !r.ok) {
+        if (msg) msg.textContent = '❌ 设备码授权失败：' + ((r && r.error) || '未知错误');
+        if (box) box.style.display = 'none';
+        return;
+      }
+      if (r.status === 'token') {
+        if (msg) msg.textContent = '✅ 已关联并保存资料';
+        if (box) box.style.display = 'none';
+        const st = await invoke('oauth_status', { provider: 'github' });
+        if (st && st.linked && $('#oauth-gh-status')) $('#oauth-gh-status').textContent = '已关联';
+        return;
+      }
+      if (r.status === 'slow_down') interval = (r.interval || 5) * 1000;
+      if (r.status === 'denied') {
+        if (msg) msg.textContent = '⚠️ 你在浏览器中取消了授权';
+        if (box) box.style.display = 'none';
+        return;
+      }
+      if (r.status === 'expired') {
+        if (msg) msg.textContent = '⌛ 设备码已过期，请重新开始';
+        if (box) box.style.display = 'none';
+        return;
+      }
+      // pending, or a slow_down we have already absorbed: keep waiting.
+      setTimeout(tick, interval);
+    };
+    setTimeout(tick, interval);
+  };
+  const devBtn = $('#oauth-device');
+  if (devBtn) devBtn.addEventListener('click', deviceAuth);
 
   // ---- merged from the duplicate bindBrowse that used to shadow this one ----
   document.querySelectorAll('[data-browse]').forEach(b => b.addEventListener('click', () => {

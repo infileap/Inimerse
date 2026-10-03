@@ -1247,6 +1247,141 @@ fn oauth_bind(provider: String, expected_state: String, client_id: String, redir
     }
 }
 
+/// POST one form body to a token-ish endpoint and return the response text.
+///
+/// Factored out of the two device-flow commands so the transport exists once.
+/// The body goes in on stdin, so the client id and codes never appear in the
+/// process table, and a non-2xx status is a failure even when curl wrote a body.
+fn post_form(endpoint: &str, body: &str) -> Result<String, String> {
+    let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let out = std::process::Command::new(curl)
+        .args([
+            "-fsS",
+            "--max-time", "30",
+            "-X", "POST",
+            "-H", "Accept: application/json",
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "--data-binary", "@-",
+            endpoint,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            let mut write_err = None;
+            if let Some(mut si) = child.stdin.take() {
+                if let Err(e) = si.write_all(body.as_bytes()) {
+                    write_err = Some(e);
+                }
+            }
+            let out = child.wait_with_output();
+            match (out, write_err) {
+                (Ok(o), None) => Ok(o),
+                (Ok(_), Some(e)) => Err(std::io::Error::new(
+                    e.kind(),
+                    format!("could not send the request body to curl: {e}"),
+                )),
+                (Err(e), _) => Err(e),
+            }
+        })
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("endpoint returned an error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Step 1 of the device flow: ask for a user code to show and a device code to
+/// poll with.
+///
+/// This flow exists because GitHub will not redeem a code without a
+/// `client_secret`, and a desktop app cannot honestly hold one.  Its own
+/// documentation says the secret "is not needed for the device flow" -- so this
+/// is the only path here that does not depend on a credential we cannot keep.
+#[tauri::command]
+fn oauth_device_start(provider: String, client_id: String, scope: String) -> serde_json::Value {
+    let Some(endpoint) = oauth_loop::device_code_endpoint(&provider) else {
+        return serde_json::json!({
+            "ok": false,
+            "error": format!("{provider} has no device flow configured here"),
+        });
+    };
+    let Some(body) = oauth_loop::device_code_request_body(&provider, &client_id, &scope) else {
+        return serde_json::json!({ "ok": false, "error": "a client id is required" });
+    };
+    let text = match post_form(endpoint, &body) {
+        Ok(t) => t,
+        Err(e) => return serde_json::json!({ "ok": false, "error": e }),
+    };
+    match oauth_loop::parse_device_code_response(&text) {
+        Ok(d) => serde_json::json!({
+            "ok": true,
+            "userCode": d.user_code,
+            "verificationUri": d.verification_uri,
+            "deviceCode": d.device_code,
+            "interval": d.interval,
+            "expiresIn": d.expires_in,
+        }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+    }
+}
+
+/// One poll of the device-code exchange.
+///
+/// The response is reported as a kind rather than collapsed to ok/err: a pending
+/// poll is the normal answer while the user is still typing, and a caller that
+/// cannot tell it from a failure will abandon a flow that is working.
+#[tauri::command]
+fn oauth_device_poll(provider: String, client_id: String, device_code: String) -> serde_json::Value {
+    let Some(endpoint) = oauth_loop::token_endpoint(&provider) else {
+        return serde_json::json!({ "ok": false, "error": format!("unsupported provider: {provider}") });
+    };
+    let Some(body) = oauth_loop::device_poll_request_body(&provider, &client_id, &device_code) else {
+        return serde_json::json!({ "ok": false, "error": "a client id and device code are required" });
+    };
+    let text = match post_form(endpoint, &body) {
+        Ok(t) => t,
+        Err(e) => return serde_json::json!({ "ok": false, "error": e }),
+    };
+    match oauth_loop::parse_device_poll(&text) {
+        Ok(oauth_loop::DevicePoll::Token(t)) => {
+            let record = serde_json::json!({
+                "provider": provider.to_ascii_lowercase(),
+                "access_token": t.access_token,
+                "token_type": t.token_type,
+                "refresh_token": t.refresh_token,
+                "scope": t.scope,
+            });
+            let path = user_data("linked_accounts.json");
+            if let Some(dir) = path.parent() {
+                if let Err(e) = fs::create_dir_all(dir) {
+                    return serde_json::json!({ "ok": false, "error": format!("cannot create userdata dir: {e}") });
+                }
+            }
+            match fs::write(&path, serde_json::to_string_pretty(&record).unwrap_or_default()) {
+                Ok(()) => serde_json::json!({ "ok": true, "status": "token", "saved": path.to_string_lossy() }),
+                Err(e) => serde_json::json!({ "ok": false, "error": format!("cannot write linked accounts: {e}") }),
+            }
+        }
+        Ok(oauth_loop::DevicePoll::Pending) => serde_json::json!({ "ok": true, "status": "pending" }),
+        Ok(oauth_loop::DevicePoll::SlowDown { interval }) => {
+            serde_json::json!({ "ok": true, "status": "slow_down", "interval": interval })
+        }
+        Ok(oauth_loop::DevicePoll::Expired) => serde_json::json!({ "ok": true, "status": "expired" }),
+        Ok(oauth_loop::DevicePoll::Denied) => serde_json::json!({ "ok": true, "status": "denied" }),
+        Ok(oauth_loop::DevicePoll::Disabled) => serde_json::json!({
+            "ok": false,
+            "error": "device flow is not enabled for this app — turn it on in the app's settings",
+        }),
+        Ok(oauth_loop::DevicePoll::Failed(e)) => serde_json::json!({ "ok": false, "error": e }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+    }
+}
+
 
 fn is_workspace_file(file: &str) -> bool {
     let Ok(root) = app_root().canonicalize() else { return false; };
@@ -1536,6 +1671,8 @@ pub fn run() {
             oauth_pkce_start,
             oauth_set_secret,
             oauth_bind,
+            oauth_device_start,
+            oauth_device_poll,
             engine_versions,
             engine_select,
             update_channel_get,
