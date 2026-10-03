@@ -1101,7 +1101,10 @@ fn oauth_set_secret(provider: String, secret: String) -> serde_json::Value {
 /// the original's silent ones (bind failure, dropped callbacks, and a
 /// `linked_accounts.json` nothing ever wrote) are what made this row necessary.
 #[tauri::command]
-fn oauth_bind(provider: String, expected_state: String, client_id: String, redirect_uri: String) -> serde_json::Value {
+async fn oauth_bind(provider: String, expected_state: String, client_id: String, redirect_uri: String) -> serde_json::Value {
+    // The exchange is a blocking curl with --max-time 30.  A synchronous
+    // #[tauri::command] runs on the webview's thread, so an unreachable host
+    // freezes the window for the whole timeout (measured: 30.0s).
     let query = oauth_result().lock().map(|s| s.clone()).unwrap_or_default();
     if query.is_empty() {
         return serde_json::json!({ "ok": false, "error": "no callback received yet" });
@@ -1252,7 +1255,19 @@ fn oauth_bind(provider: String, expected_state: String, client_id: String, redir
 /// Factored out of the two device-flow commands so the transport exists once.
 /// The body goes in on stdin, so the client id and codes never appear in the
 /// process table, and a non-2xx status is a failure even when curl wrote a body.
-fn post_form(endpoint: &str, body: &str) -> Result<String, String> {
+async fn post_form(endpoint: &str, body: &str) -> Result<String, String> {
+    // The curl child blocks for as long as --max-time allows, so it must not run
+    // on the thread that drives the webview: a synchronous #[tauri::command] runs
+    // on the main thread, and an unreachable host would freeze the window for the
+    // full timeout on every poll.  Measured: 30.0s of blocked main thread when
+    // github.com is unreachable, which is exactly the freeze this fixes.
+    let (endpoint, body) = (endpoint.to_owned(), body.to_owned());
+    tauri::async_runtime::spawn_blocking(move || post_form_blocking(&endpoint, &body))
+        .await
+        .map_err(|e| format!("request task failed: {e}"))?
+}
+
+fn post_form_blocking(endpoint: &str, body: &str) -> Result<String, String> {
     let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
     let out = std::process::Command::new(curl)
         .args([
@@ -1303,7 +1318,7 @@ fn post_form(endpoint: &str, body: &str) -> Result<String, String> {
 /// documentation says the secret "is not needed for the device flow" -- so this
 /// is the only path here that does not depend on a credential we cannot keep.
 #[tauri::command]
-fn oauth_device_start(provider: String, client_id: String, scope: String) -> serde_json::Value {
+async fn oauth_device_start(provider: String, client_id: String, scope: String) -> serde_json::Value {
     let Some(endpoint) = oauth_loop::device_code_endpoint(&provider) else {
         return serde_json::json!({
             "ok": false,
@@ -1313,7 +1328,7 @@ fn oauth_device_start(provider: String, client_id: String, scope: String) -> ser
     let Some(body) = oauth_loop::device_code_request_body(&provider, &client_id, &scope) else {
         return serde_json::json!({ "ok": false, "error": "a client id is required" });
     };
-    let text = match post_form(endpoint, &body) {
+    let text = match post_form(endpoint, &body).await {
         Ok(t) => t,
         Err(e) => return serde_json::json!({ "ok": false, "error": e }),
     };
@@ -1336,14 +1351,14 @@ fn oauth_device_start(provider: String, client_id: String, scope: String) -> ser
 /// poll is the normal answer while the user is still typing, and a caller that
 /// cannot tell it from a failure will abandon a flow that is working.
 #[tauri::command]
-fn oauth_device_poll(provider: String, client_id: String, device_code: String) -> serde_json::Value {
+async fn oauth_device_poll(provider: String, client_id: String, device_code: String) -> serde_json::Value {
     let Some(endpoint) = oauth_loop::token_endpoint(&provider) else {
         return serde_json::json!({ "ok": false, "error": format!("unsupported provider: {provider}") });
     };
     let Some(body) = oauth_loop::device_poll_request_body(&provider, &client_id, &device_code) else {
         return serde_json::json!({ "ok": false, "error": "a client id and device code are required" });
     };
-    let text = match post_form(endpoint, &body) {
+    let text = match post_form(endpoint, &body).await {
         Ok(t) => t,
         Err(e) => return serde_json::json!({ "ok": false, "error": e }),
     };

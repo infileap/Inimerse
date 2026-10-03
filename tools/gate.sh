@@ -232,6 +232,14 @@ stage_oauth_loop() {
     echo "gate: update the expected count here and in docs/BOARD.md if that was intended." >&2
     return 1
   fi
+  # A synchronous #[tauri::command] runs on the thread that drives the webview,
+  # so a command that shells out to curl with --max-time 30 freezes the window
+  # for the whole timeout when the host is unreachable.  No DOM assertion can
+  # see that, so assert the declaration instead.
+  if ! python3 "$REPO_ROOT/tools/check_async_commands.py"; then
+    echo "gate: a network-touching Tauri command is not async — it will block the UI thread." >&2
+    return 1
+  fi
   return 0
 }
 

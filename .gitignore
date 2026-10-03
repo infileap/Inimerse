@@ -28,6 +28,12 @@ Infiverse_standard/userdata/
 userdata/stats.json
 Infiverse_standard/userdata/stats.json
 Infiverse_standard/src-tauri/userdata/stats.json
+# A client secret is written here by oauth_set_secret.  The two un-ignore rules
+# above re-include the whole userdata directory to keep .gitkeep, so anything
+# dropped in at runtime becomes committable -- and `git add -A` does exactly
+# that without asking.  Never let a credential leave this machine.
+oauth_secret_*.txt
+Infiverse_standard/userdata/oauth_secret_*.txt
 **/messages/
 **/wv2data/
 *.bin

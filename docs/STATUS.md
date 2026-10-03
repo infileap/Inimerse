@@ -2042,3 +2042,41 @@ browse 模块新增 `#oauth-device` 按钮、`#oauth-device-box` 展示区与 `#
 - **端到端仍未验证**：本机没有可用的 OAuth App 配置，device flow 与 (a) 一样**只在代码层与测试层成立**，没有跑过一次真的 `user_code` → token。要真正验证需先把 `Enable Device Flow` 勾上。
 - `linked_accounts.json` 读取侧（`oauth_status` 的 `linked:true` 分支）仍未端到端验证 —— §10.29/§10.31 起就挂着。
 - `redirect_uri` 未绑定：本行不涉及，device flow 没有回调。
+
+### 10.33 device flow 点一下就把窗口卡死 30 秒（BOARD 行 105）
+
+用户实测报「infiverse 输入了之后卡退」。这是 §10.32 那版 device flow 的**真缺陷**，不是环境问题。
+
+#### ① 症状与现场
+
+- `~/inimerse/Infiverse_standard/userdata/oauth_secret_github.txt` 在 `11:05` 被写入，**只有 7 字节**，内容以 `dd616` 开头 —— 那不是 GitHub client secret（正常 40 位），是提交号 `dd6165a` 的前缀被粘进了 secret 输入框。
+- 进程已退出（`pgrep` 无匹配），日志 `/home/sakiko/.local/share/com.infiverse.app/logs/Infiverse.log` **是空的**，所以卡退没有任何日志痕迹 —— 走的是「窗口先无响应、再退出」这条路，不是 panic。
+
+#### ② 根因：同步的 `#[tauri::command]` 跑在 webview 线程上
+
+`Infiverse_standard/src-tauri/src/lib.rs` 里 **67 个命令全是同步的，没有一个 `async`**（`grep -c "async fn"` = 0）。Tauri 2 里**非 async 的 `#[tauri::command]` 在主线程上执行**，也就是驱动 webview 的那个线程。而本轮新增的 `post_form` 用 `curl --max-time 30` 发请求。
+
+本机 `github.com` 不可达（`curl` 28 超时；同一时段 `api.github.com` 返回 200）⇒ 每次调用**占满 30 秒**。device flow 是**每轮轮询都调一次**，所以窗口一路无响应。
+
+**实测（不是推断）**：写了一个与原命令同形状的 Rust 程序（同步 `Command::output()` + 同样的 `--max-time 30`，POST `https://github.com/login/device/code`）并计时 ⇒ **`elapsed=30.0s`，主线程确实被按住 30.0 秒**。
+
+#### ③ 为什么测试没抓到
+
+`tools/infiverse_panels.test.js` 在 jsdom 里跑，**jsdom 没有「被阻塞的主线程」这回事**，而且它把 `invoke` 整个 stub 掉了。任何 DOM 断言都看不见这个缺陷 —— 能渲染、能点击、IPC 序列全对，真机上照样卡死。**这是本行最重要的方法论结论**：UI 套件全绿与 UI 不卡死是两件事。
+
+#### ④ 修法
+
+`post_form` 拆成两层：`post_form` 变成 `async`，内部用 **`tauri::async_runtime::spawn_blocking`** 把阻塞的 curl 挪到运行时的阻塞线程池（不引入 `tokio` 依赖 —— 该 crate 的 `[dependencies]` 里本来就没有）；真正干活的 `post_form_blocking` 保持同步。三个网络命令改 `async`：`oauth_bind`、`oauth_device_start`、`oauth_device_poll`。`grep -c "^async fn"` 由 0 → **4**，`cargo build` 零 warning。
+
+#### ⑤ 进树守卫（因为 DOM 断言看不见它）
+
+新增 `tools/check_async_commands.py`：断言 `NETWORK_COMMANDS = ["oauth_bind", "oauth_device_start", "oauth_device_poll"]` 三个命令**必须声明为 `async`**，否则报「declared sync but shells out to a blocking curl — a sync #[tauri::command] runs on the main thread and freezes the window」。挂在 `tools/gate.sh` 的 `stage_oauth_loop()` 里（crate 计数断言之后）。
+
+**双向验证**：把 `oauth_device_poll` 改回同步 ⇒ `FAIL: oauth_device_poll: declared sync but does blocking network I/O`、`rc=1`；还原 ⇒ 打印 `ok: 3 network command(s) are async (off the webview thread)`。完整八阶段门禁 `rm -rf build && NODE_PATH=/home/sakiko/.local/inimerse-jsdom/node_modules bash tools/gate.sh --jobs 4` → **`GATE_RC=0`**、`gate: OK — every stage passed.`，`check_async_commands` 在日志里可见。`tools/infiverse_panels.test.js` 仍 `62 IPC calls` 全绿。
+
+#### ⑥ 残留
+
+- **`hub_download_install`（`lib.rs:689`）是同一形状**：同步命令 + `--max-time 30`，本行**没有改**（它属于 Hub 下载那条线，且是一次性下载而非每轮轮询；改动面应独立评估）。同一目录下 `:1170`（`oauth_bind`）与 `:1275`（`post_form`）已修。
+- **`oauth_open` 不回收子进程**：`lib.rs:968-974` 的 `Command::spawn()` 立即丢弃句柄，`xdg-open` 每次调用留一个僵尸进程。本行未改。
+- **secret 内容本身是错的**：用户需要填入真的 40 位 client secret；当前文件里是提交号前缀。修卡死**不能**让错误的 secret 通过 —— 那会是 `incorrect_client_credentials`。
+- device flow 端到端仍未验证（本机 `github.com` 不可达，勾了 `Enable Device Flow` 也走不通）。
