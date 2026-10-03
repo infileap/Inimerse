@@ -2308,14 +2308,26 @@ mod tests {
     #[test]
     fn read_client_secret_treats_whitespace_as_absent() {
         let provider = "envtest_blank";
-        std::env::set_var(client_secret_env_var(provider), "   ");
+        let var = client_secret_env_var(provider);
+        std::env::set_var(&var, "   ");
         assert_eq!(
             read_client_secret(provider),
             None,
             "whitespace is not a secret, and sending `client_secret=` is the same \
              rejected request with an extra field name"
         );
-        std::env::remove_var(client_secret_env_var(provider));
+        // Without this second half the assertion above is vacuous: a lookup that
+        // consults the wrong variable name also returns `None`, so the test would
+        // pass against a `read_client_secret` that reads nothing at all.  Setting
+        // a real value proves the name is the one being read, which is what makes
+        // the `None` above a statement about whitespace.
+        std::env::set_var(&var, "a-real-looking-secret-value");
+        assert_eq!(
+            read_client_secret(provider).as_deref(),
+            Some("a-real-looking-secret-value"),
+            "the same variable name must be readable, or the assertion above proves nothing"
+        );
+        std::env::remove_var(&var);
     }
 
     #[test]
