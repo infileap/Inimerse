@@ -930,25 +930,20 @@ fn oauth_status(provider: String) -> serde_json::Value {
 
 #[tauri::command]
 fn oauth_authorize(provider: String, client_id: String, redirect_uri: String, state: String, code_challenge: Option<String>, code_challenge_method: Option<String>) -> String {
-    if client_id.trim().is_empty() || redirect_uri.trim().is_empty() { return String::new(); }
-    // PKCE (RFC 7636). The challenge travels in the authorize URL and the
-    // verifier in the token request; the pair is what lets a public client
-    // redeem a code without holding a client_secret. When a caller passes no
-    // challenge the URL keeps its original shape, so this extension is
-    // additive rather than a silent behaviour change for existing callers.
-    let pkce = match code_challenge.as_deref().filter(|c| !c.is_empty()) {
-        Some(challenge) => format!(
-            "&code_challenge={}&code_challenge_method={}",
-            oauth_loop::form_encode(challenge),
-            oauth_loop::form_encode(code_challenge_method.as_deref().unwrap_or("S256")),
-        ),
-        None => String::new(),
-    };
-    if provider.eq_ignore_ascii_case("github") {
-        format!("https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:user%20user:email&state={}{}", client_id, redirect_uri, state, pkce)
-    } else if provider.eq_ignore_ascii_case("bilibili") {
-        format!("https://passport.bilibili.com/oauth2/authorize?client_id={}&response_type=code&redirect_uri={}&state={}{}", client_id, redirect_uri, state, pkce)
-    } else { String::new() }
+    // Build the URL in the crate, not here.  This shell used to interpolate
+    // `client_id`, `redirect_uri` and `state` raw, which made the provider parse
+    // a different redirect_uri than the one registered and killed the exchange
+    // with `incorrect_client_credentials`.  Keeping the construction in one place
+    // means the crate's own tests can pin it -- when it lived here, the only
+    // suite that ran near it stubbed this command and never saw the real string.
+    oauth_loop::oauth_authorize_pkce(
+        &provider,
+        &client_id,
+        &redirect_uri,
+        &state,
+        code_challenge.as_deref(),
+        code_challenge_method.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -970,7 +965,7 @@ fn oauth_open(url: String) -> serde_json::Value {
 }
 
 #[tauri::command]
-fn oauth_start_callback() -> serde_json::Value {
+fn oauth_start_callback(redirect_uri: Option<String>) -> serde_json::Value {
     let result = oauth_result();
     if result.lock().map(|mut s| s.clear()).is_err() {
         return serde_json::json!({ "ok": false, "error": "callback slot is poisoned" });
@@ -981,14 +976,31 @@ fn oauth_start_callback() -> serde_json::Value {
     // (lib.rs:957-977), so a port already in use produced a cheerful "started"
     // and a callback that could never arrive.  Binding here, on the caller's
     // thread, makes the failure visible to the UI.
-    let addr = oauth_loop::DEFAULT_CALLBACK_ADDR;
-    let listener = match std::net::TcpListener::bind(addr) {
+    //
+    // THE LISTENER IS NOW BOUND TO THE redirect_uri.  It used to take the
+    // substring after `?` from whatever arrived first and store it without ever
+    // looking at the path or Host, so any local process -- or any page the
+    // browser loads -- could deliver a forged callback, and because only one
+    // connection is served it also consumed the slot the real callback needed.
+    // The path and host now have to be the ones we told the provider to use.
+    let binding = match redirect_uri.as_deref().map(oauth_loop::CallbackBinding::from_uri) {
+        Some(Ok(b)) => b,
+        Some(Err(e)) => {
+            return serde_json::json!({ "ok": false, "error": format!("redirect_uri is unusable: {e}") })
+        }
+        // No redirect_uri supplied: fall back to the documented default so the
+        // listener still binds to a known path rather than to anything.
+        None => oauth_loop::CallbackBinding::from_uri(&format!("{}{}", oauth_loop::DEFAULT_CALLBACK_URI, "/callback"))
+            .expect("the built-in default callback URI is well-formed"),
+    };
+    let listener = match oauth_loop::bind_callback_listener(binding.clone()) {
         Ok(l) => l,
         Err(e) => {
+            let addr = oauth_loop::DEFAULT_CALLBACK_ADDR;
             return serde_json::json!({
                 "ok": false,
                 "error": format!("cannot listen on {addr}: {e}"),
-            })
+            });
         }
     };
     std::thread::spawn(move || {
@@ -1001,10 +1013,22 @@ fn oauth_start_callback() -> serde_json::Value {
             let mut buf = [0u8; 4096];
             let n = stream.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]);
-            let target = req.split_whitespace().nth(1).unwrap_or("/");
-            if let Some(q) = target.split('?').nth(1) {
-                if let Ok(mut out) = result.lock() {
-                    *out = q.to_string();
+            let (target, headers) = oauth_loop::split_raw_request_pub(&req);
+            match binding.check(&target, &headers) {
+                Ok(()) => {
+                    if let Some(q) = target.split('?').nth(1) {
+                        if let Ok(mut out) = result.lock() {
+                            *out = q.to_string();
+                        }
+                    }
+                }
+                // Store the reason in the slot rather than silently storing
+                // nothing, so the UI can say "a request arrived but it was not
+                // our callback" instead of showing nothing and timing out.
+                Err(why) => {
+                    if let Ok(mut out) = result.lock() {
+                        *out = format!("__refused__{why}");
+                    }
                 }
             }
             let body = oauth_loop::CALLBACK_BODY;
@@ -1012,7 +1036,7 @@ fn oauth_start_callback() -> serde_json::Value {
             let _ = stream.write_all(resp.as_bytes());
         }
     });
-    serde_json::json!({ "ok": true, "addr": addr })
+    serde_json::json!({ "ok": true, "addr": oauth_loop::DEFAULT_CALLBACK_ADDR })
 }
 
 #[tauri::command]
@@ -1084,12 +1108,27 @@ fn oauth_bind(provider: String, expected_state: String, client_id: String, redir
         .spawn()
         .and_then(|mut child| {
             use std::io::Write;
+            let mut write_err = None;
             if let Some(mut si) = child.stdin.take() {
                 // client_id is part of the credentialed request and is encoded.
                 let payload = format!("client_id={}&{}", oauth_loop::form_encode(&client_id), body);
-                let _ = si.write_all(payload.as_bytes());
+                // A failed write must NOT be swallowed.  If the body never
+                // reaches curl, curl sends an empty POST and GitHub answers
+                // "client_id ... incorrect" -- an error that blames the wrong
+                // thing.  That is exactly the shape this row kept hitting.
+                if let Err(e) = si.write_all(payload.as_bytes()) {
+                    write_err = Some(e);
+                }
             }
-            child.wait_with_output()
+            let out = child.wait_with_output();
+            match (out, write_err) {
+                (Ok(o), None) => Ok(o),
+                (Ok(_), Some(e)) => Err(std::io::Error::new(
+                    e.kind(),
+                    format!("could not send the token request body to curl: {e}"),
+                )),
+                (Err(e), _) => Err(e),
+            }
         });
 
     let out = match out {

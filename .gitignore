@@ -21,6 +21,13 @@ Infiverse_standard/userdata/
 !Infiverse_standard/userdata/
 !userdata/.gitkeep
 !Infiverse_standard/userdata/.gitkeep
+# The negations above un-ignore the directories wholesale, so they do not
+# actually keep runtime state out.  These files are written on every run and
+# must never be committed: a tracked stats.json from "Release Infiverse 0.2.0"
+# is already in the history and shows up as a dirty file after any test run.
+userdata/stats.json
+Infiverse_standard/userdata/stats.json
+Infiverse_standard/src-tauri/userdata/stats.json
 **/messages/
 **/wv2data/
 *.bin

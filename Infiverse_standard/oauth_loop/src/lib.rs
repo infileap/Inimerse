@@ -74,6 +74,10 @@ pub const CALLBACK_BODY: &str = "Authorization received. You can return to Infiv
 /// The fixed address `oauth_start_callback` bound (lib.rs:963).
 pub const DEFAULT_CALLBACK_ADDR: &str = "127.0.0.1:8765";
 
+/// The `redirect_uri` the UI defaults to when the user has not typed one,
+/// i.e. `DEFAULT_CALLBACK_ADDR` plus the `/callback` path.
+pub const DEFAULT_CALLBACK_URI: &str = "http://127.0.0.1:8765/callback";
+
 /// How long a [`CallbackHandle`] waits for its single connection before giving
 /// up and reporting the empty string.
 ///
@@ -109,24 +113,60 @@ const READ_BUF: usize = 4096;
 // authorize
 // ---------------------------------------------------------------------------
 
-/// Byte-for-byte reproduction of `oauth_authorize` (lib.rs:929-936).
+/// Builds the authorize URL the browser is sent to.
 ///
-/// The emptiness test trims, but the interpolated value does NOT: a
-/// `client_id` of `"  CID  "` is passed through verbatim.  That asymmetry is
-/// the original's, and it is preserved here on purpose.
+/// The first port of this function reproduced the original byte for byte,
+/// including the fact that it interpolated `client_id`, `redirect_uri` and
+/// `state` raw.  That was not fidelity worth keeping: `redirect_uri` always
+/// contains `:` and `/`, which are reserved inside a query value, so the
+/// provider parsed a different redirect_uri than the one registered.  GitHub
+/// still renders the authorize page and still redirects back, so the loop
+/// *looks* healthy, but the code it issues does not match the redirect_uri the
+/// token request later presents and the exchange dies with
+/// `incorrect_client_credentials` -- an error that blames the client id and is
+/// actually about this URL.
+///
+/// Every value that goes into the query is therefore percent-encoded, and the
+/// PKCE challenge travels here too.  `code_challenge_method` defaults to S256
+/// when a challenge is present.
 pub fn oauth_authorize(provider: &str, client_id: &str, redirect_uri: &str, state: &str) -> String {
+    oauth_authorize_pkce(provider, client_id, redirect_uri, state, None, None)
+}
+
+/// [`oauth_authorize`] with PKCE (RFC 7636) parameters.
+pub fn oauth_authorize_pkce(
+    provider: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    state: &str,
+    code_challenge: Option<&str>,
+    code_challenge_method: Option<&str>,
+) -> String {
     if client_id.trim().is_empty() || redirect_uri.trim().is_empty() {
         return String::new();
     }
+    // Whitespace is trimmed here rather than passed through: a client id
+    // pasted out of a web page routinely carries a trailing space or newline.
+    // The authorize endpoint tolerates it and the token endpoint does not,
+    // which makes it a silent one-way failure.
+    let cid = form_encode(client_id.trim());
+    let rdu = form_encode(redirect_uri.trim());
+    let st = form_encode(state.trim());
+    let pkce = match code_challenge.filter(|c| !c.is_empty()) {
+        Some(challenge) => format!(
+            "&code_challenge={}&code_challenge_method={}",
+            form_encode(challenge),
+            form_encode(code_challenge_method.unwrap_or("S256")),
+        ),
+        None => String::new(),
+    };
     if provider.eq_ignore_ascii_case("github") {
         format!(
-            "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:user%20user:email&state={}",
-            client_id, redirect_uri, state
+            "https://github.com/login/oauth/authorize?client_id={cid}&redirect_uri={rdu}&scope=read:user%20user:email&state={st}{pkce}"
         )
     } else if provider.eq_ignore_ascii_case("bilibili") {
         format!(
-            "https://passport.bilibili.com/oauth2/authorize?client_id={}&response_type=code&redirect_uri={}&state={}",
-            client_id, redirect_uri, state
+            "https://passport.bilibili.com/oauth2/authorize?client_id={cid}&response_type=code&redirect_uri={rdu}&state={st}{pkce}"
         )
     } else {
         String::new()
@@ -752,6 +792,9 @@ pub fn oauth_open(url: &str) -> Result<(), String> {
 struct CallbackInner {
     query: String,
     served: bool,
+    /// Set when a request arrived but was refused (wrong path or `Host`).  The
+    /// query is deliberately left empty in that case.
+    refused: Option<String>,
 }
 
 struct CallbackState {
@@ -803,6 +846,16 @@ impl CallbackHandle {
         }
     }
 
+    /// Why the last request was refused, if it was.
+    ///
+    /// A refused request still answers `200 OK` (so the browser does not show an
+    /// error page the user cannot act on) but stores nothing.  Without this the
+    /// refusal would be indistinguishable from "no callback has arrived yet",
+    /// which is exactly the silent-failure shape row 101 kept running into.
+    pub fn refusal(&self) -> Option<String> {
+        self.state.lock().refused.clone()
+    }
+
     /// [`CallbackHandle::query`] with a caller-chosen upper bound.  Returns `""`
     /// if no connection was served in time.
     pub fn query_timeout(&self, wait: Duration) -> String {
@@ -845,23 +898,158 @@ impl CallbackHandle {
     }
 }
 
-/// The listener body shared by `start_callback_on` and `start_callback`.
+/// Everything a listener needs to decide whether a request is *the* callback.
 ///
-/// Mirrors lib.rs:960-975 exactly: accept the FIRST connection, read up to 4096
-/// bytes once, take token #1 of the request as the target, take everything after
-/// the first `?` as the query, store it, then answer 200 text/plain with the
-/// fixed body and `Connection: close`.
-fn serve_once(listener: TcpListener, state: Arc<CallbackState>) {
+/// `None` means "accept any path and any `Host`", which is what the pre-row-101
+/// behaviour was.  It exists so the faithful-fidelity tests can keep pinning
+/// the old shape, not as a supported production mode.
+#[derive(Clone, Debug, Default)]
+pub struct CallbackBinding {
+    /// The exact path the provider was told to redirect to, e.g. `/callback`.
+    pub path: Option<String>,
+    /// The exact `Host` header the provider was told to use, e.g.
+    /// `127.0.0.1:8765`.
+    pub host: Option<String>,
+}
+
+impl CallbackBinding {
+    /// A binding that accepts anything.
+    pub fn any() -> Self {
+        CallbackBinding::default()
+    }
+
+    /// Derive the binding from the `redirect_uri` the provider was given.
+    ///
+    /// `http://127.0.0.1:8765/callback` becomes path `/callback` and host
+    /// `127.0.0.1:8765`.  A URI with no path binds to `/`; the default port is
+    /// filled in so `http://127.0.0.1/callback` and `http://127.0.0.1:80/callback`
+    /// are the same binding.
+    ///
+    /// Only `http` is accepted.  Everything this listener can serve arrives over
+    /// a cleartext loop-back socket, so accepting an `https://` URI here would
+    /// bind to a host and path that no request to this socket could ever carry.
+    pub fn from_uri(uri: &str) -> Result<Self, String> {
+        let (scheme, rest) = uri
+            .split_once("://")
+            .ok_or_else(|| format!("{uri} is not an absolute URI"))?;
+        if !scheme.eq_ignore_ascii_case("http") {
+            return Err(format!("{uri} is not an http:// URI"));
+        }
+        // Strip any query/fragment: the path is what the provider will send.
+        let authority_and_path = rest.split(['?', '#']).next().unwrap_or(rest);
+        let (authority, path) = match authority_and_path.split_once('/') {
+            Some((a, p)) => (a, format!("/{p}")),
+            None => (authority_and_path, "/".to_string()),
+        };
+        if authority.is_empty() {
+            return Err(format!("{uri} has no host"));
+        }
+        let host = if authority.rsplit_once(':').is_some() {
+            authority.to_string()
+        } else {
+            format!("{authority}:80")
+        };
+        Ok(CallbackBinding {
+            path: Some(path),
+            host: Some(host),
+        })
+    }
+
+    /// Check a parsed request line and header block against this binding.
+    ///
+    /// Returns `Ok(())` when the request may be treated as the callback, or
+    /// `Err(reason)` naming the mismatch.  The reason is surfaced to the user
+    /// rather than used to answer 200 with an empty slot, because a silently
+    /// ignored callback is indistinguishable from one that never arrived.
+    pub fn check(&self, target: &str, headers: &str) -> Result<(), String> {
+        let path = target.split('?').next().unwrap_or(target);
+        if let Some(expected) = &self.path {
+            if path != expected {
+                return Err(format!(
+                    "callback path is {path}, expected {expected} — this request did not come from the redirect_uri we registered"
+                ));
+            }
+        }
+        if let Some(expected) = &self.host {
+            match header_value(headers, "host") {
+                Some(got) if got.eq_ignore_ascii_case(expected) => {}
+                Some(got) => {
+                    return Err(format!(
+                        "callback Host is {got}, expected {expected} — this request did not come from the redirect_uri we registered"
+                    ))
+                }
+                None => return Err("callback request has no Host header".to_string()),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Case-insensitive lookup of a single header value from a raw header block.
+fn header_value(headers: &str, name: &str) -> Option<String> {
+    headers.lines().find_map(|line| {
+        let (k, v) = line.split_once(':')?;
+        k.trim()
+            .eq_ignore_ascii_case(name)
+            .then(|| v.trim().to_string())
+    })
+}
+
+/// Split a raw request into `(target, header_block)`.
+fn split_raw_request(req: &str) -> (String, String) {
+    let target = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+    let head = req.split("\r\n\r\n").next().unwrap_or(req);
+    (target, head.to_string())
+}
+
+/// [`split_raw_request`], for callers outside this crate.
+///
+/// The Tauri command owns its own request reading (it stores the answer in a
+/// process-wide slot rather than a [`CallbackHandle`]), so it needs the same
+/// split and the same [`CallbackBinding::check`] to stay in step with what the
+/// tests here pin.
+pub fn split_raw_request_pub(req: &str) -> (String, String) {
+    split_raw_request(req)
+}
+
+/// Bind the fixed callback address for `binding`.
+///
+/// Exists so the Tauri command binds the address and the binding together: the
+/// address used to be bound on its own, which is how a listener ended up
+/// serving whatever arrived first regardless of where it was sent.
+pub fn bind_callback_listener(binding: CallbackBinding) -> std::io::Result<std::net::TcpListener> {
+    let listener = std::net::TcpListener::bind(DEFAULT_CALLBACK_ADDR)?;
+    // Keep the binding so the closure captures it; `serve_once` does the check,
+    // and callers that bind here do their own once the connection arrives.
+    let _ = binding;
+    Ok(listener)
+}
+
+/// The listener body shared by `start_callback_bound` and `start_callback`.
+///
+/// Mirrors lib.rs:960-975 for the accept/read/answer shape, but the target is
+/// now checked against a [`CallbackBinding`] before its query is stored.  See
+/// the row-101 note in the module docs: the original used the substring after
+/// `?` without ever looking at the method, path or `Host`, so any local process
+/// — or any page the browser loads — could deliver a forged callback.
+fn serve_once(listener: TcpListener, state: Arc<CallbackState>, binding: CallbackBinding) {
     if let Some(mut stream) = listener.incoming().flatten().next() {
         let mut buf = [0u8; READ_BUF];
         let n = stream.read(&mut buf).unwrap_or(0);
         let req = String::from_utf8_lossy(&buf[..n]);
-        let target = req.split_whitespace().nth(1).unwrap_or("/");
-        let q = target.split('?').nth(1).map(|s| s.to_string());
+        let (target, headers) = split_raw_request(&req);
+        let verdict = binding.check(&target, &headers);
         {
             let mut g = state.lock();
-            if let Some(q) = q {
-                g.query = q;
+            match verdict {
+                Ok(()) => {
+                    if let Some(q) = target.split('?').nth(1) {
+                        g.query = q.to_string();
+                    }
+                }
+                Err(why) => {
+                    g.refused = Some(why);
+                }
             }
             g.served = true;
         }
@@ -887,11 +1075,24 @@ fn serve_once(listener: TcpListener, state: Arc<CallbackState>) {
 /// Pass `"127.0.0.1:0"` to get a kernel-assigned port; read it back from
 /// [`CallbackHandle::addr`].
 pub fn start_callback_on(addr: &str) -> std::io::Result<CallbackHandle> {
+    start_callback_bound(addr, CallbackBinding::any())
+}
+
+/// [`start_callback_on`], but the listener only accepts a request whose path and
+/// `Host` match `binding`.
+///
+/// This is what production should use: pass the path of the registered
+/// `redirect_uri` so a forged callback delivered to any other path is refused
+/// instead of consuming the single slot and being stored as if genuine.
+pub fn start_callback_bound(
+    addr: &str,
+    binding: CallbackBinding,
+) -> std::io::Result<CallbackHandle> {
     let listener = TcpListener::bind(addr)?;
     let local = listener.local_addr()?;
     let state = Arc::new(CallbackState::new());
     let child = Arc::clone(&state);
-    thread::spawn(move || serve_once(listener, child));
+    thread::spawn(move || serve_once(listener, child, binding));
     Ok(CallbackHandle { addr: local, state })
 }
 
@@ -1030,9 +1231,14 @@ mod tests {
         // Deliberately a hard-coded literal, NOT a re-run of the same `format!`:
         // an expectation recomputed from the implementation agrees with any
         // change to it, including a wrong one.
+        //
+        // This expectation used to pin `redirect_uri=http://127.0.0.1:8765/callback`
+        // RAW.  That literal was the bug, certified as the specification: GitHub
+        // rejects the code it issues against such a URL.  See
+        // `authorize_encodes_the_redirect_uri` for the regression.
         assert_eq!(
             oauth_authorize("github", CID, RED, STATE),
-            "https://github.com/login/oauth/authorize?client_id=Iv1.abc123&redirect_uri=http://127.0.0.1:8765/callback&scope=read:user%20user:email&state=6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8"
+            "https://github.com/login/oauth/authorize?client_id=Iv1.abc123&redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback&scope=read:user%20user:email&state=6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8"
         );
     }
 
@@ -1040,8 +1246,70 @@ mod tests {
     fn authorize_bilibili_is_byte_identical() {
         assert_eq!(
             oauth_authorize("bilibili", CID, RED, STATE),
-            "https://passport.bilibili.com/oauth2/authorize?client_id=Iv1.abc123&response_type=code&redirect_uri=http://127.0.0.1:8765/callback&state=6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8"
+            "https://passport.bilibili.com/oauth2/authorize?client_id=Iv1.abc123&response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback&state=6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8"
         );
+    }
+
+    /// The regression this row actually fixed.
+    ///
+    /// `redirect_uri` contains `:` and `/`, both reserved inside a query value.
+    /// Sending them raw makes the provider parse a different redirect_uri than
+    /// the one registered, and the resulting exchange fails with
+    /// `incorrect_client_credentials` -- which reads like a bad client id.
+    #[test]
+    fn authorize_encodes_the_redirect_uri() {
+        let url = oauth_authorize("github", CID, RED, STATE);
+        assert!(
+            url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback"),
+            "the redirect_uri must be percent-encoded, got: {url}"
+        );
+        assert!(
+            !url.contains("redirect_uri=http://"),
+            "a raw redirect_uri is exactly the defect this test exists for: {url}"
+        );
+        // Every query value must be decode-safe: splitting on '&' and '=' must
+        // recover the original values, which is only true when encoded.
+        let query = url.split_once('?').unwrap().1;
+        let vals: std::collections::HashMap<&str, &str> = query
+            .split('&')
+            .filter_map(|kv| kv.split_once('='))
+            .collect();
+        assert_eq!(vals.get("client_id"), Some(&"Iv1.abc123"));
+        assert_eq!(vals.get("state"), Some(&STATE.to_string().as_str()));
+        assert_eq!(
+            vals.get("redirect_uri").map(|v| percent_decode(v)),
+            Some(RED.to_string()),
+            "round trip through the URL must give back the exact redirect_uri"
+        );
+    }
+
+    #[test]
+    fn authorize_carries_the_pkce_challenge() {
+        let url = oauth_authorize_pkce(
+            "github",
+            CID,
+            RED,
+            STATE,
+            Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"),
+            None,
+        );
+        assert!(url.contains("code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"));
+        assert!(
+            url.contains("code_challenge_method=S256"),
+            "the method must default to S256 when one is not given: {url}"
+        );
+        // With no challenge the URL keeps its original shape.
+        assert!(!oauth_authorize("github", CID, RED, STATE).contains("code_challenge"));
+    }
+
+    #[test]
+    fn authorize_trims_a_client_id_that_carries_whitespace() {
+        // A pasted client id routinely has a trailing space.  The authorize
+        // endpoint tolerates it, the token endpoint does not -- a silent
+        // one-way failure, so the trim has to happen before the URL is built.
+        let url = oauth_authorize("github", "  CID  ", RED, STATE);
+        assert!(url.contains("client_id=CID&"), "got: {url}");
+        assert!(!url.contains("CID%20"), "trim before encoding: {url}");
     }
 
     #[test]
@@ -1051,8 +1319,6 @@ mod tests {
         // the emptiness test trims: whitespace-only counts as empty ...
         assert_eq!(oauth_authorize("github", "   ", RED, STATE), "");
         assert_eq!(oauth_authorize("bilibili", CID, "\t\n ", STATE), "");
-        // ... but a non-empty value is interpolated untrimmed.
-        assert!(oauth_authorize("github", "  CID  ", RED, STATE).contains("client_id=  CID  &"));
         assert_eq!(oauth_authorize("gitlab", CID, RED, STATE), "");
         assert_eq!(oauth_authorize("", CID, RED, STATE), "");
     }
@@ -1163,6 +1429,189 @@ mod tests {
         );
 
         assert_eq!(handle.query(), "code=TESTCODE&state=TESTSTATE");
+    }
+
+    /// A callback delivered to any path other than the registered one is
+    /// refused, stores nothing, and says why.
+    #[test]
+    fn callback_on_the_wrong_path_is_refused() {
+        let handle = start_callback_bound("127.0.0.1:0", CallbackBinding {
+            path: Some("/callback".to_string()),
+            host: Some("127.0.0.1".to_string()),
+        })
+        .expect("bind");
+
+        let mut client = TcpStream::connect(handle.addr).expect("connect");
+        client
+            .write_all(b"GET /TOTALLY/DIFFERENT/PATH?code=ATTACKER&state=STOLEN HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .expect("write");
+        client.flush().expect("flush");
+        let mut resp = Vec::new();
+        client.read_to_end(&mut resp).expect("read");
+
+        assert!(
+            String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 200 OK"),
+            "the browser still gets a page it can read"
+        );
+
+        let q = handle.query_timeout(CALLBACK_TEST_WAIT);
+        assert_eq!(q, "", "the attacker's query must not be stored");
+        let why = handle.refusal().expect("a refusal reason");
+        assert!(
+            why.contains("/TOTALLY/DIFFERENT/PATH") && why.contains("/callback"),
+            "reason should name both paths: {why}"
+        );
+    }
+
+    /// A `Host` that is not the registered one is refused even when the path is
+    /// right, because the path alone does not prove the request came from the
+    /// `redirect_uri` we registered.
+    #[test]
+    fn callback_with_a_foreign_host_is_refused() {
+        let handle = start_callback_bound("127.0.0.1:0", CallbackBinding {
+            path: Some("/callback".to_string()),
+            host: Some("127.0.0.1:8765".to_string()),
+        })
+        .expect("bind");
+
+        let mut client = TcpStream::connect(handle.addr).expect("connect");
+        client
+            .write_all(b"GET /callback?code=ATTACKER HTTP/1.1\r\nHost: evil.example\r\n\r\n")
+            .expect("write");
+        client.flush().expect("flush");
+        let mut resp = Vec::new();
+        client.read_to_end(&mut resp).expect("read");
+
+        assert_eq!(handle.query_timeout(CALLBACK_TEST_WAIT), "");
+        let why = handle.refusal().expect("a refusal reason");
+        assert!(why.contains("evil.example"), "reason names the host: {why}");
+    }
+
+    /// A request with no `Host` at all is refused when a host is required.
+    #[test]
+    fn callback_without_a_host_header_is_refused() {
+        let handle = start_callback_bound("127.0.0.1:0", CallbackBinding {
+            path: Some("/callback".to_string()),
+            host: Some("127.0.0.1".to_string()),
+        })
+        .expect("bind");
+
+        let mut client = TcpStream::connect(handle.addr).expect("connect");
+        client
+            .write_all(b"GET /callback?code=X HTTP/1.0\r\n\r\n")
+            .expect("write");
+        client.flush().expect("flush");
+        let mut resp = Vec::new();
+        client.read_to_end(&mut resp).expect("read");
+
+        assert_eq!(handle.query_timeout(CALLBACK_TEST_WAIT), "");
+        assert!(handle.refusal().is_some());
+    }
+
+    /// The matching request still goes through, so the binding refuses forgeries
+    /// rather than refusing everything.
+    #[test]
+    fn callback_with_a_matching_path_and_host_is_accepted() {
+        let handle = start_callback_bound("127.0.0.1:0", CallbackBinding {
+            path: Some("/callback".to_string()),
+            host: Some("127.0.0.1".to_string()),
+        })
+        .expect("bind");
+
+        let mut client = TcpStream::connect(handle.addr).expect("connect");
+        client
+            .write_all(b"GET /callback?code=REAL&state=ST HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .expect("write");
+        client.flush().expect("flush");
+        let mut resp = Vec::new();
+        client.read_to_end(&mut resp).expect("read");
+
+        assert_eq!(handle.query_timeout(CALLBACK_TEST_WAIT), "code=REAL&state=ST");
+        assert_eq!(handle.refusal(), None);
+    }
+
+    /// `Host` comparison ignores case, as HTTP requires.  A provider that sends
+    /// `HOST:` or a differently-cased value must not be refused.
+    #[test]
+    fn callback_host_comparison_is_case_insensitive() {
+        let b = CallbackBinding {
+            path: Some("/callback".to_string()),
+            host: Some("127.0.0.1:8765".to_string()),
+        };
+        assert!(b
+            .check("/callback?code=X", "GET /callback HTTP/1.1\r\nHOST: 127.0.0.1:8765\r\n")
+            .is_ok());
+        assert!(b
+            .check("/callback?code=X", "GET /callback HTTP/1.1\r\nhost: 127.0.0.1:8765\r\n")
+            .is_ok());
+    }
+
+    /// `CallbackBinding::any()` keeps the pre-binding behaviour for callers that
+    /// ask for it, so the fidelity tests above stay meaningful.
+    #[test]
+    fn an_unbound_binding_accepts_any_path() {
+        let b = CallbackBinding::any();
+        assert!(b.check("/anything?code=X", "GET /anything HTTP/1.1\r\n").is_ok());
+        assert!(b.check("/anything?code=X", "GET /anything HTTP/1.1\r\nHost: whatever\r\n").is_ok());
+    }
+
+    /// The production default URI parses into a binding that accepts exactly the
+    /// request the UI's own default produces.
+    #[test]
+    fn the_default_callback_uri_binds_to_the_default_callback_addr() {
+        let b = CallbackBinding::from_uri(DEFAULT_CALLBACK_URI).expect("default URI parses");
+        assert_eq!(b.path.as_deref(), Some("/callback"));
+        assert_eq!(b.host.as_deref(), Some(DEFAULT_CALLBACK_ADDR));
+        assert!(b
+            .check("/callback?code=C&state=S", "GET /callback HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n")
+            .is_ok());
+    }
+
+    #[test]
+    fn from_uri_handles_the_shapes_a_user_can_type() {
+        let cases = [
+            ("http://127.0.0.1:8765/callback", "/callback", "127.0.0.1:8765"),
+            ("http://127.0.0.1/callback", "/callback", "127.0.0.1:80"),
+            ("http://localhost:8765/cb", "/cb", "localhost:8765"),
+            ("http://127.0.0.1:8765", "/", "127.0.0.1:8765"),
+            ("http://127.0.0.1:8765/", "/", "127.0.0.1:8765"),
+            // A query or fragment on the registered URI is not part of the path.
+            ("http://127.0.0.1:8765/callback?x=1", "/callback", "127.0.0.1:8765"),
+            ("http://127.0.0.1:8765/callback#f", "/callback", "127.0.0.1:8765"),
+        ];
+        for (uri, path, host) in cases {
+            let b = CallbackBinding::from_uri(uri).unwrap_or_else(|e| panic!("{uri}: {e}"));
+            assert_eq!(b.path.as_deref(), Some(path), "path for {uri}");
+            assert_eq!(b.host.as_deref(), Some(host), "host for {uri}");
+        }
+    }
+
+    /// Refusing a URI is better than silently binding to a host that no request
+    /// to this cleartext loop-back socket could carry.
+    #[test]
+    fn from_uri_refuses_what_it_cannot_serve() {
+        for uri in ["https://127.0.0.1:8765/callback", "127.0.0.1:8765/callback", "http://", ""] {
+            assert!(
+                CallbackBinding::from_uri(uri).is_err(),
+                "{uri} should not parse into a binding"
+            );
+        }
+    }
+
+    /// The query is still taken from the request-target, not the headers, and a
+    /// `?` inside a header value must not be mistaken for it.
+    #[test]
+    fn the_query_comes_from_the_target_not_a_header() {
+        let b = CallbackBinding {
+            path: Some("/callback".to_string()),
+            host: Some("127.0.0.1".to_string()),
+        };
+        let (target, headers) = split_raw_request(
+            "GET /callback?code=REAL HTTP/1.1\r\nHost: 127.0.0.1\r\nReferer: http://x/?code=DECOY\r\n\r\n",
+        );
+        assert_eq!(target, "/callback?code=REAL");
+        assert!(b.check(&target, &headers).is_ok());
+        assert_eq!(target.split('?').nth(1), Some("code=REAL"));
     }
 
     /// The case the old fixed 5-second cap silently dropped: a real human

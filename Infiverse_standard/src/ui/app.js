@@ -352,12 +352,22 @@ function bindBrowse() {
   invoke('oauth_status', { provider: 'github' }).then(r => { if (ghStatus && r && r.linked) ghStatus.textContent = '已关联 · ' + (r.display_name || r.user_id || 'GitHub'); });
   invoke('oauth_status', { provider: 'bilibili' }).then(r => { if (biStatus && r && r.linked) biStatus.textContent = '已关联 · ' + (r.display_name || r.user_id || 'Bilibili'); });
   const openAuth = async (provider) => {
-    const cid = ($('#oauth-client') && $('#oauth-client').value) || localStorage.getItem('oauth_client_id') || '';
-    const red = ($('#oauth-redirect') && $('#oauth-redirect').value) || 'http://127.0.0.1:8765/callback';
+    // Trim: a client id pasted from the browser picks up whitespace often
+    // enough that GitHub's authorize endpoint tolerates it while the token
+    // endpoint rejects it.  The box also wins outright now -- the stored value
+    // used to take over whenever the box was empty, so a stale id could keep
+    // overriding a freshly typed one.
+    const box = (($('#oauth-client') && $('#oauth-client').value) || '').trim();
+    const cid = box || (localStorage.getItem('oauth_client_id') || '').trim();
+    const red = (($('#oauth-redirect') && $('#oauth-redirect').value) || 'http://127.0.0.1:8765/callback').trim();
     if (!cid) { if ($('#links-msg')) $('#links-msg').textContent = '请先填写 GitHub OAuth Client ID'; return; }
     localStorage.setItem('oauth_client_id', cid);
     const state = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
-    const started = await invoke('oauth_start_callback');
+    // The listener is bound to this exact path and host, so it has to be the
+    // same redirect_uri we hand to the provider and to oauth_bind.  Passed
+    // first, before the browser is opened, because oauth_start_callback binds
+    // on the caller's thread and can refuse a URI it cannot serve.
+    const started = await invoke('oauth_start_callback', { redirectUri: red });
     if (!started || !started.ok) {
       if ($('#links-msg')) $('#links-msg').textContent = '❌ 无法监听回调端口：' + ((started && started.error) || '未知错误');
       return;
@@ -374,6 +384,14 @@ function bindBrowse() {
         if (!q && ++tries <= 60) return;
         clearInterval(timer);
         if (!q) { if ($('#links-msg')) $('#links-msg').textContent = '⌛ 等待回调超时（60 秒）'; return; }
+        // A refused callback is not a callback.  The listener answers 200 but
+        // stores why it refused instead of a query; showing that reason is the
+        // difference between "someone sent us the wrong thing" and a 60-second
+        // wait that looks like nothing happened.
+        if (q.startsWith('__refused__')) {
+          if ($('#links-msg')) $('#links-msg').textContent = '❌ 收到一个请求但不是我们的回调：' + q.slice('__refused__'.length);
+          return;
+        }
         // 收到回调不等于绑定成功：state 校验、code 兑换与写盘都在 oauth_bind 里，
         // 失败必须把原因显示出来。
         if ($('#links-msg')) $('#links-msg').textContent = '正在校验并兑换授权码…';

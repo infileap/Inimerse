@@ -281,11 +281,59 @@ const EXPECTED_IPC = [
     authCall && authCall.args && authCall.args.codeChallenge,
     'oauth_authorize must receive the PKCE codeChallenge',
   );
+  // The listener binds to the redirect_uri, so all three of these must carry the
+  // SAME value: the one the listener binds to, the one in the authorize URL, and
+  // the one sent to the token exchange.  If they diverge, the provider redirects
+  // somewhere the listener refuses and the flow dies with a 60-second timeout.
+  const startCall = calls.find((c) => c.cmd === 'oauth_start_callback');
+  assert.ok(
+    startCall && startCall.args && startCall.args.redirectUri,
+    'oauth_start_callback must receive the redirectUri so the listener can bind to it',
+  );
+  assert.strictEqual(
+    startCall.args.redirectUri,
+    authCall.args.redirectUri,
+    'the listener must bind to the same redirect_uri that goes into the authorize URL',
+  );
+  const bindCall = calls.find((c) => c.cmd === 'oauth_bind');
+  assert.strictEqual(
+    bindCall.args.redirectUri,
+    startCall.args.redirectUri,
+    'the token exchange must present the same redirect_uri the provider saw',
+  );
   const msg = $('#links-msg');
   assert.ok(
     msg && /已关联/.test(msg.textContent),
     `a successful bind must be reported to the user; got ${JSON.stringify(msg && msg.textContent)}`,
   );
+
+  // (9) A refused callback must be reported, not waited out.
+  //
+  //     The listener answers 200 and stores the refusal reason instead of a
+  //     query.  If the UI treats that as "no callback yet", the user watches a
+  //     progress spinner for 60 seconds and is told the callback timed out --
+  //     when in fact a request DID arrive and was rejected.
+  {
+    const s2 = dom.window.document.createElement('script');
+    const refusal = '__refused__callback path is /evil, expected /callback';
+    s2.textContent = `
+      window.__refusalCall = null;
+      window.__origInvoke = window.__TAURI__.core.invoke;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        if (cmd === 'oauth_poll_callback') return Promise.resolve(${JSON.stringify(refusal)});
+        return window.__origInvoke(cmd, args);
+      };
+    `;
+    dom.window.document.body.appendChild(s2);
+    const btn2 = $('#oauth-gh');
+    btn2.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 1400));
+    const m2 = $('#links-msg');
+    assert.ok(
+      m2 && /不是我们的回调/.test(m2.textContent),
+      `a refused callback must be reported to the user, not waited out; got ${JSON.stringify(m2 && m2.textContent)}`,
+    );
+  }
 
   console.log(
     `infiverse panels: ok (8/${EXPECTED_MODULES.length} modules rendered+switchable, ${calls.length} IPC calls, oauth link flow wired)`,

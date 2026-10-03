@@ -1840,3 +1840,75 @@ E: Unable to satisfy dependencies. Reached two conflicting assignments:
 - **`redirect_uri` 仍未绑定**（审计定级 MEDIUM）：`POST /TOTALLY/DIFFERENT/PATH?code=ATTACKER` 带 `Host: evil.example` 仍得 `200 OK`，query 被原样收下。修它需要回调服务校验路径与 Host，**尚未做**。
 - **`linked_accounts.json` 的读取侧未验证**：本轮证明了它会**被写**，但 `oauth_status` 永远返回 `linked:false` 的**另一半**（读回并反映到 UI）没有端到端验证过。
 - **端到端浏览器授权未跑**：`cargo build` 通过只证明壳能编译。PKCE 换取 token 走的是真 HTTP 到 `github.com`，本机网络对 `raw.githubusercontent.com` 都不可达，**没有做过一次真实的 provider 往返**。
+
+---
+
+### 10.30 一次真实 GitHub 往返抓出的缺陷：授权 URL 没有百分号编码（行 101/102）
+
+这一节记的是一次**用户亲手跑出来的**失败。它推翻了我上一节写的「没有做过一次真实的 provider 往返」——那次往返做了，而且它当场打穿了三层都绿的代码。
+
+#### ① 现场
+
+用户在 app 里点 GitHub 授权，浏览器显示 `Authorization received. You can return to Infiverse.`（**回环本身是好的**），但 app 弹：
+
+```
+❌ 绑定失败：provider refused the code (incorrect_client_credentials: The client_id and/or client_secret passed are incorrect.)
+```
+
+回调 URL 是：
+
+```
+http://127.0.0.1:8765/callback?code=3f65cad143c3467351b0&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth&state=9604aba2-6c1a-4db6-95ad-b3db8b901cc5
+```
+
+`code` 到手、`state` 原样回来、路径与 `Host` 都通过 §10.29 新加的绑定校验（**没被拒绝**）——所以那一层是好的。
+
+#### ② 根因：`redirect_uri` 是原样插进 URL 的
+
+`Infiverse_standard/src-tauri/src/lib.rs` 的 `oauth_authorize` 当时是：
+
+```rust
+format!("https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:user%20user:email&state={}{}", client_id, redirect_uri, state, pkce)
+```
+
+`client_id`、`redirect_uri`、`state` **三个值全部零编码**。而 `redirect_uri` 恒为 `http://127.0.0.1:8765/callback`，里面 `:` 与 `/` 都是 query 值里的保留字符。provider 解析出的 `redirect_uri` 因此与注册值不同：它照样渲染授权页、照样回调（所以**看起来**是通的），但它发的 `code` 绑定的上下文与 token 请求提交的 `redirect_uri` 不一致，交换于是死在 `incorrect_client_credentials` —— **这个错误名在指责 `client_id`，实际是在指责 `redirect_uri`**。
+
+同一个文件里 `oauth_bind` 与 PKCE 参数**都用了 `form_encode`**，唯独授权 URL 这三个基础参数没有。它是行 101 早期就带进来的，一直被我当作「已经工作的部分」而没碰。
+
+#### ③ 这个缺陷为什么能活过三层绿灯（本节最值得记的部分）
+
+1. **crate 里那份是「逐字节复现」**：`Infiverse_standard/oauth_loop/src/lib.rs` 的 `oauth_authorize` 头注释原文是「Byte-for-byte reproduction of `oauth_authorize` (lib.rs:929-936)」，并**明确**把「空值判定 trim、插值不 trim」当作要保留的保真度。它把缺陷当规格抄了一遍。
+2. **测试把缺陷钉成了规范**：`authorize_github_is_byte_identical` 的期望值是硬编码字面量，注释还专门说明为什么不用重新计算的 `format!`（「an expectation recomputed from the implementation agrees with any change to it, including a wrong one」——诊断学是对的）。而它逐字节钉死的正是 `&redirect_uri=http://127.0.0.1:8765/callback&`。**十九个测试忠心耿耿地复现一个 GitHub 会拒绝的 URL。**
+3. **唯一跑得近的套件把它 stub 掉了**：`tools/infiverse_panels.test.js:140` 用 `return Promise.resolve('https://github.com/login/oauth/authorize?client_id=CID')` 顶替这个命令，所以它断言「有没有传 PKCE challenge / 三个调用是否共用同一个 redirectUri」，**永远看不到真实的那个字符串**。
+
+三层都绿，且都在互相确认一个不能用的事实。
+
+#### ④ 修法：把构造搬进 crate，让测试住的地方能测到它
+
+- **crate**：新增 `pub fn oauth_authorize_pkce(provider, client_id, redirect_uri, state, code_challenge: Option<&str>, code_challenge_method: Option<&str>)`，对进 query 的**每一个值**做 `form_encode`，并顺带把 `client_id` 的空白 trim 掉（从网页复制 client id 常带尾随空白：授权端点容忍、token 端点不容忍，是**单向静默失败**）。原来的 `oauth_authorize` 保留四参数签名，转调 `…_pkce(.., None, None)`，无 challenge 时 URL 形状不变。`code_challenge_method` 缺省 S256。
+- **壳**：`oauth_authorize` 命令改为一行委托 `oauth_loop::oauth_authorize_pkce(...)`。**不再有第二份实现**——缺陷原来正因为在壳里，而壳里没有测试。
+- **第三处（顺手，同类）**：`oauth_bind` 里 `let _ = si.write_all(payload.as_bytes());` 把写入错误整个吞掉。写失败时 curl 会发一个**空 POST**，GitHub 的回答正是「client_id 不对」——与本次症状同型。改为收集 `write_err`，失败返回 `could not send the token request body to curl: {e}`。
+- **JS**：`app.js` 的 `openAuth` 对 client id 与 redirect uri 都做 `.trim()`，并让**输入框优先于 `localStorage`**（原写法在输入框为空时会退回旧值，而 `:358` 每次点击都覆写存档，陈旧 id 可能一直压住新填的）。
+
+#### ⑤ 验收
+
+- crate 测试 **46 → 49**：`authorize_github_is_byte_identical`、`authorize_bilibili_is_byte_identical` 的期望值改为编码后的 URL；新增 `authorize_encodes_the_redirect_uri`（断言编码存在、`redirect_uri=http://` **不**存在、并按 `&`/`=` 切分后解码能还原出精确的 redirect_uri）、`authorize_carries_the_pkce_challenge`、`authorize_trims_a_client_id_that_carries_whitespace`。
+- **双向验证（三个破坏实验，各自只红对应用例）**：①`let rdu = redirect_uri.trim().to_string();`（还原原始缺陷）⇒ `authorize_encodes_the_redirect_uri` + 两个 byte-identical 共 **3 红**；②不 trim `client_id` ⇒ `authorize_trims_a_client_id_that_carries_whitespace` **1 红**；③`code_challenge_method` 硬编码成 `plain` ⇒ `authorize_carries_the_pkce_challenge` **1 红**。全部还原后 49/49 绿。
+  - 过程教训：第一次做③时改成了 `format!("{}", ...)`，那是**编译错**（未使用变量）不是测试红 —— 破坏实验必须能编译，否则你拿到的是构建失败而不是断言失败。
+- **完整八阶段门禁**：`rm -rf build && NODE_PATH=/home/sakiko/.local/inimerse-jsdom/node_modules bash tools/gate.sh --jobs 4` → `GATE_RC=0`，逐阶段 build / ctest（103/103，0 skipped）/ economy 39/39 / node 12/12 / dsh-inimerse plugin 55/55(live) / **oauth_loop crate 49/49** / links / doc-paths 全 PASS。`tools/gate.sh` 的计数断言与 `expect 49/49` 已同步。
+- **壳**：`cargo build` RC=0；真实产物 URL 由一次性探针 `oauth_loop::oauth_authorize_pkce(...)` 打印确认：
+
+```
+https://github.com/login/oauth/authorize?client_id=Iv1.0a1b2c3d4e5f6789&redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback&scope=read:user%20user:email&state=9604aba2-6c1a-4db6-95ad-b3db8b901cc5&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
+```
+
+#### ⑥ 环境事实（与代码无关，但花掉了两轮）
+
+- 本机 `api.github.com` → 200，`github.com` → **curl 28 超时**。用户机器 `github.com` → 200、`ip=20.205.243.166`（与本机 DNS 同 IP）。
+- 双方对 `github.com/login/oauth/access_token` 的 GET/POST（含空 POST）**都得 404 `{"error":"Not Found"}`** ⇒ 该路径在两边网络都被特殊处理，**本机无法复现真实交换**。这条要记住：不要把它误读成「端点坏了」或「client_id 坏了」。
+- 已证伪的假设：`form_encode` 会损坏 client id（对三种真实形状都是恒等变换）；client_id 来自 GitHub App（是 **OAuth App**）；Tauri 的 camelCase→snake_case 映射失效（`oauth_bind` 到达了 GitHub，证明映射有效）。
+
+#### ⑦ 残留
+
+- **修复后仍未重跑真实往返**：用户尚未重试，所以「PKCE 真能换到 token」目前仍是代码层成立 + URL 形状正确，**没有现场确认**。
+- `linked_accounts.json` 的读取侧（`oauth_status` 的 `linked:true` 分支）仍未端到端验证。
