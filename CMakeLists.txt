@@ -786,6 +786,22 @@ if(INIMERSE_BUILD_ENGINE)
   # See docs/AUDIT.md §1.11.
   add_test(NAME unknown_builtin_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/unknown_builtin_v05.im)
   set_tests_properties(unknown_builtin_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "unreg-ok state=1 control=true" FAIL_REGULAR_EXPRESSION "unreg-ok state=0|unreg-ok state=2|control=false")
+
+  # contract_test.im is the repo-root API/SPI conformance suite.  It had been a manual,
+  # dormant suite: the OP_CONCAT integer-overflow defect (§1.8) and the list(<set>)
+  # handle defect (§1.10) were both first caught by it, yet it was registered nowhere --
+  # and a suite that is not run is a suite that does not exist.  It is registered here.
+  # io_mod/gui_mod register str2int/noise2d/gui_*, and the POSIX build stubs those
+  # modules out, so calling them now throws "unknown builtin function" (§1.11).  The
+  # suite probes for each module and skips the dependent sections instead of failing,
+  # prints the probe values, and asserts a floor of 60 of its 70 checks so a mass skip
+  # cannot pass silently.  There is deliberately no FAIL_REGULAR_EXPRESSION: the throw
+  # text is a string literal in the suite, and CTest reads the engine's stderr string
+  # pool dump, so naming it would match the dump on a green run.  A throw exits 1 and
+  # fails the test on the exit code alone.
+  add_test(NAME contract_suite_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/contract_test.im)
+  set_tests_properties(contract_suite_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "vm;language;regression;contract" PASS_REGULAR_EXPRESSION "contract: [0-9]+ passed")
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

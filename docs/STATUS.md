@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-03 更新测试计数到 111；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-03 更新测试计数到 112；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **111 / 111 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **112 / 112 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **111** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **112** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 111
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 112
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -2796,5 +2796,54 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 
 - **写这条回归踩到的坑（已写进 `docs/AUDIT.md` §1.11）**：CTest 同时抓 stdout **和 stderr**，而引擎在 stderr 上还会打一份**字符串常量池转储**（形如 `[0]="returned" [1]="definitely_not_a_builtin_xyz" …`）。第一版测试的 FAIL 正则里写了 `wrong-msg`，正好命中池里的 `[6]="wrong-msg:"` ⇒ **实现已经正确、测试却报红**（一次假阴性）。改法：两个正则都改成**池里不会出现**的文本 —— 状态用整数 `state=0/1/2`，打印的键靠字符串拼接。`PASS_REGULAR_EXPRESSION` 同理。
 - 这条修复**没有**让 `contract_test.im` 的 4 条失败变绿：它们的输出形状变了（现在是抛异常而不是给错值），但**仍然失败**，因为 POSIX 构建本来就不编 gui_mod / io_mod。0 条 → 0 条，性质从「值不对」变成「名字不存在」，可诊断性才是本轮收益。
-- `contract_test.im` **仍未进门禁**（手动/dormant 套件），仍未随本轮扩充。
+- `contract_test.im` 当时**仍未进门禁**（手动/dormant 套件）—— **§10.47 已把它注册进 CTest**。
 - `tools/im_diff_fuzz.py` 仍未接进门禁（阈值未裁定）。
+
+
+## 10.47 手动套件进门禁：`contract_test.im` 成为 CTest（BOARD 行 141）
+
+**症状（流程缺陷，不是运行错误）**：仓库根的 `contract_test.im` 是 API/SPI 契约套件，头注释自称「每次引擎 API 变更必须跑本套件（回归门槛）」—— 但它**根本不在 CTest 里**。`grep -in contract CMakeLists.txt` 在本轮之前只命中两处无关注释。§1.8 的 `+` 链整数溢出与 §1.10 的 `list(<set>)` 句柄错位**都是它先抓到的**，只因要人手动跑，从没在门禁里红过。**一条不跑的套件等于没有套件。**
+
+### 一、为什么它会红、而且比文档记的还多
+
+POSIX 构建把 `io_mod`/`gui_mod` 桩成空实现（`src/platform/posix_stubs.c` 的三个 `STUB_REG`），`str2int`/`noise2d`/`gui_*` 在本平台不存在。§10.46 修掉「未注册内建静默返回栈顶」之后，这些调用**从「静默返回垃圾」变成「抛异常」**，于是三条原本**靠垃圾值侥幸通过**的断言立刻翻红：
+
+| 断言 | 旧行为（静默垃圾） | 修 §10.46 之后 |
+| --- | --- | --- |
+| `contract_test.im:206` `gui_frame_interval(16)` 包在 try 里 | 返回垃圾但不抛 → `fok = true` → **通过** | 抛 → `fok = false` → **失败** |
+| `contract_test.im:197` `check(gui_canvas(8, 8) >= 0, "canvas create")` | 返回垃圾 `8` → `8 >= 0` → **通过** | 抛 → **失败** |
+| `contract_test.im:194` `check(noise2d(…) == noise2d(…), "noise deterministic")` | 两次都返回同一个垃圾 `7` → 相等 → **通过** | 抛 → **失败** |
+
+**这是「可诊断性」的复利**：让错误可见，会把此前被静默掩盖的「通过」一起推翻。三条假通过里没有一条是断言写错了 —— 是它们测的东西当时根本不存在。
+
+### 二、修法
+
+套件开头加两个探针（`io_ok` 试 `str2int`；`gui_ok` 试无副作用的 `gui_vram_used()`），第 9/15/16 段按探针整段跳过。**跳过是可闻的**：末尾打印 `contract: skipped io=/gui=` 的实际取值。
+
+更关键的是加了一道**下限断言**：
+
+```
+if pass < 60 {
+    throw "CONTRACT FAIL: only " + str(pass) + " checks ran"
+}
+```
+
+全套共 **70** 个 `check`，POSIX 上 io/gui 双缺、跳过 **7** 个，实测 **63**。下限 60 对两个平台都成立（Windows 上是 70），而「整段整段没跑」不可能静默变绿。
+
+### 三、判据与双向验证
+
+进树判据：CTest `contract_suite_runtime`，注册在 `CMakeLists.txt`（`COMMAND inimerse ${CMAKE_SOURCE_DIR}/contract_test.im`，`WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}`，`TIMEOUT 30`，`LABELS "vm;language;regression;contract"`，`PASS_REGULAR_EXPRESSION "contract: [0-9]+ passed"`）。
+
+**故意不设 `FAIL_REGULAR_EXPRESSION`**：抛出的文本 `CONTRACT FAIL` 正是套件里的字符串字面量，而 CTest 会读引擎 stderr 上的**常量池转储**——照 §10.46 七记的那条坑，这个正则会在**绿跑**上命中池里的 `[N]="CONTRACT FAIL: "`，把正确实现判红。异常让进程 `exit 1`，靠退出码就够。
+
+**双向验证**：注册后 `ctest -R contract_suite_runtime` **绿**（`1/1 Test #112 … Passed`）；`git checkout HEAD -- contract_test.im`（未加探针的旧版）+ 重建 ⇒ **红**（`***Failed  Required regular expression not found. Regex=[contract: [0-9]+ passed`，旧版在第一处 `str2int` 就抛、退出码 1）；`cp` 回 + `cmp` 证逐字节一致 ⇒ 复绿。所以这条注册**真的在跑引擎**，不是「注册了一个永远绿的壳」。
+
+### 四、门禁实测（本轮）
+
+`grep -c 'add_test(' CMakeLists.txt` **111 → 112**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **112**，`ctest -N` 的 `Total Tests: 112`（`Test #112: contract_suite_runtime`）。`docs/BOARD.md` §3 与本节 §2 的计数同步 **112 / 112**。
+
+### 五、诚实边界
+
+- POSIX 上 io/gui 双缺，所以套件跑的是 **63/70**：门禁**确实没有验证那 7 条 io/gui 契约**。这是平台能力边界（这两个模块不在 POSIX 构建里），不是套件偷懒；`src/platform/posix_stubs.c` 把 `io_mod_register`/`gui_mod_register`/`build_mod_register` 桩成空实现是现状，不是本轮引入的。
+- 探针本身要跑一次真实调用：`str2int("42")` 与 `gui_vram_used()` 都无副作用，选后者正是因为它不建画布。
+- 7 条被跳过的断言**不是**「已通过的等价物」；本节把它们逐条列出，是为了让跳过在文档里同样可闻。
