@@ -1,0 +1,26 @@
+# A FloatN / floatN interval is a LATTICE: the members are k / 10^N, so they
+# have to be walked by index, not by repeatedly adding the step.
+#
+# The additive walk drifted upwards -- 0.1 + 0.1 + 0.1 is 0.30000000000000004,
+# which is strictly greater than the double 0.3 -- so the last member of the
+# interval fell off the end of the loop while `in`, which asks builtin_contains
+# about a value directly, kept reporting it as a member:
+#
+#     0.3 in float1[0~0.3]  ->  true
+#     len(float1[0~0.3])    ->  3        (should be 4)
+#     list(float1[0~0.3])   ->  [0, 0.1, 0.2]
+#
+# floatN (lower case, bi = 4 + 2*(N-1) + 1) admits whole numbers, FloatN (upper
+# case) does not, so the same interval has different cardinalities -- the pair
+# below is the control that keeps the index walk honest about that difference.
+#
+# See docs/AUDIT.md §1.10.
+s = float1[0~0.3]
+say list(s)
+t = Float1[0~0.3]
+say list(t)
+u = float1[0~0.5]
+say list(u)
+# str() renders a float with %.17g, so the expected last member is asserted by
+# comparing it rather than by printing it.
+say "setlattice-ok n=" + str(len(s)) + " last03=" + str((list(s)[3] == 0.3)) + " in03=" + str((0.3 in s)) + " upper=" + str(len(t)) + " upper0=" + str((0 in t)) + " half=" + str(len(u)) + " int=" + str(len(Z[0~5])) + " big=" + str(len(Z[1~100]))

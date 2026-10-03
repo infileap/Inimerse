@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-03 更新测试计数到 108；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-03 更新测试计数到 110；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **108 / 108 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **110 / 110 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **104** 个 `add_test(`（原有 101 + 自举 codegen 等价 1 + AOT 原生 1 + 坏函数索引 1 = **104**，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11/§10.17/§10.33/§10.40） | — |
+| 测试注册 | `CMakeLists.txt` 中 **110** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 108
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 110
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -2636,8 +2636,88 @@ internal error, please report: running "rustup.cargo" failed: cannot create tran
 
 ### 六、诚实边界
 
-- **另一条本轮发现、未修的独立缺陷：放进变量的集合完全不可枚举。** `z = Z[1~3]` 会被编成 `OP_SET_INTERVAL` **加一条 `OP_NEW_SET`**，于是 `z` 是 `compCount > 0` 的 kind-0 集合，正好撞上 `src/vm/vm.c:1989` 的 `if (s->kind != 0 || s->compCount > 0) return -1;`：`len(z)` 0 / `list(z)` nil / `size(z)` nil，而 `min(z)` 1 / `max(z)` 3 / `2 in z` true **全对**（那三个走 `comps[]`）。`s2 = 1, 2, Z[7~9]` 后 `len(s2)` 是 0（应为 5）。上面那条进树回归与 `contract_test.im:88` 钉的都是**内联**形态，故本轮修复对它们成立；变量形态是**另一个 bug**，未修，只在 `vtest/list_set_off_by_one_v05.im` 头部注释里写明，另行立项。
+- **另一条本轮发现、当时未修的独立缺陷：放进变量的集合完全不可枚举（已由 §10.45 修掉）。** `z = Z[1~3]` 会被编成 `OP_SET_INTERVAL` **加一条 `OP_NEW_SET`**，于是 `z` 是 `compCount > 0` 的 kind-0 集合，正好撞上 `src/vm/vm.c:1989` 的 `if (s->kind != 0 || s->compCount > 0) return -1;`：`len(z)` 0 / `list(z)` nil / `size(z)` nil，而 `min(z)` 1 / `max(z)` 3 / `2 in z` true **全对**（那三个走 `comps[]`）。`s2 = 1, 2, Z[7~9]` 后 `len(s2)` 是 0（应为 5）。上面那条进树回归与 `contract_test.im:88` 钉的都是**内联**形态，故本轮修复对它们成立；变量形态当时是**另一个 bug**、只在 `vtest/list_set_off_by_one_v05.im` 头部注释里写明 —— **§10.45 已将其修掉并钉进回归**。
 - `list` **只存在于解释器**：AOT 与 wasm 后端都没实现（`grep '"list"' src/compilation/*.c` 为空），所以这条没有三后端比对可言，判据只能是解释器侧的数值断言。
 - `contract_test.im` **仍未进门禁**。它本来就是手动/dormant 套件（`grep -in contract CMakeLists.txt` 只有两处无关注释）。本轮往它 §1 补的断言验证了契约，但**不被门禁自动执行** —— 这点必须写在明处，不能让「断言加进去了」听起来像「它被守住了」。
 - `type` **是保留字**：`say type(z)` 直接编译失败（`expected 'expression', but got 'type' (type 129)`），`say size z`（不带括号）也失败（`... 'size' (type 66)`）—— 必须写成 `type(z)` / `size(z)`。这是本轮探针反复踩到的坑。
 
+
+## 10.45 集合字面量是并集：三处「只走一半」的枚举（BOARD 行 139）
+
+上一轮 §10.44 的「诚实边界」里留了一条：**放进变量的集合完全不可枚举**。本轮去修它，结果连着挖出**三个**缺陷，形态完全一样 —— 「只处理了集合的一半」。三个都修掉了，各配一条进树回归，并都做了反向验证。
+
+### 一、一个集合有三个半边
+
+`SetObj`（`src/vm/vm.h:36-47`）把成员分在三处：
+
+| 半边 | 字段 | 装什么 |
+| --- | --- | --- |
+| `i64` | `long long *i64; int iCount, iCap;` | 整数字面量（有序，二分插入） |
+| `items` | `Value *items; int count, cap;` | 非整数字面量 |
+| `comps` | `SetComp *comps; int compCount, compCap;` | 区间分量（`SetComp` = 具名集合 ∩ `[lo,hi]`） |
+
+所以 `1, 2, Z[7~9]` 不是「一个区间」，而是**三者的并集** —— 两个整数放 `i64`，一个分量放 `comps`。`L_NEW_SET`（`src/vm/vm.c:3882-3910`）对 `VAL_SET` 操作数走 `vm_set_add_comp`、其余走 `vm_set_add`，`z = Z[1~3]` 于是成为 `compCount > 0` 的 kind-0 集合。这也正是 `min`/`max`/`in` 一直正确（走 `comps[]`）而 `len`/`list`/`size` 全瞎（不展开分量）的原因。
+
+### 二、① `vm_set_to_array` 拒绝一切带分量的集合
+
+`vm_set_to_array` 原文以 `if (s->kind != 0 || s->compCount > 0) return -1;` 收尾。而 `posix_core_len`（`src/runtime/runtime_posix.c:11-28`）拿到 -1 后 `n` 停在 0 —— 于是「拒答」被显示成「空集」，这是最坏的一种错：**错的答案长得像对的答案**。
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `b = 1, 2, Z[7~9]` 后 `len(b)` | 0 | **5** |
+| `c = Z[1~3], Z[5~7]` 后 `len(c)` | 0 | **6** |
+| `d = 1, Z[1~3]` 后 `len(d)`（1 落在分量里） | 0 | **3** |
+| `e = Z[1~3]` 后 `len(e)` | 0 | **3** |
+| `f = Z, 1` 后 `len(f)` / `list(f)`（真无限） | 0 / nil | 0 / nil（**仍拒绝**） |
+| `r = R[0~3]` 后 `len(r)` / `size(r)`（R 无格点） | 0 / nil | 0 / nil（**仍拒绝**） |
+
+`list(d)` 是 `[1, 2, 3]` 而不是四个 —— **必须去重**，字面量可能落在分量里。拒绝的边界必须原样保住：分量只有**两个有限端点且有格点**才可枚举，而 `vm_set_add_comp` 给「整个具名集合」写的哨兵 `(lo,hi,loInc,hiInc) == (0,0,0,0)`（`set_contains` 读作「无界」）因此仍返回 -1。
+
+### 三、② 浮点点阵按累加步长走，漏掉最后一个成员
+
+`FloatN`/`floatN` 的成员是 `k / 10^N`，**必须按格点下标走**。原实现累加 double 步长，而 `0.1 + 0.1 + 0.1` 是 `0.30000000000000004`，**严格大于** double `0.3`，于是区间最后一个成员被循环条件甩掉 —— 而 `in` 直接问 `builtin_contains`，仍然认它。**同一个集合上 `in` 与 `list` 自相矛盾**，这比单纯算错更难发现：
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `s = float1[0~0.3]` 的 `(0.3 in s)` | true | true |
+| `len(s)` | **3** | **4** |
+| `list(s)` | **`[0, 0.1, 0.2]`** | **`[0, 0.1, 0.2, 0.3]`** |
+| `len(Float1[0~0.3])`（大写，不含整数） | **2** | **3** |
+| `len(float1[0~0.5])` | 5 | **6** |
+
+修法是按 `k = ceil(lo·10^frac) … floor(hi·10^frac)` 走下标、`x = k / 10^frac`，显式重测端点包含性，`builtin_contains` 仍参与过滤。另外设了两道**拒绝而不是截断**的闸：`kh - kl >= 10000000`、以及端点绝对值超过 `9.0e18`（整数格点另有 32 位 `VAL_INT` 边界）。`floatN` 含整数、`FloatN` 不含，所以同一区间两者基数不同 —— 这既是修法的对照，也是 `builtin_contains` 仍在生效的证明。
+
+### 四、③ `vm_set_add_comp` 不复制 `src->i64`：嵌套字面量丢整数半
+
+`vm_set_add_comp` 在 `src->kind == 0` 分支里复制了 `items` 与 `comps`，**唯独没有 `i64` 循环**：
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `p = 1, 2, 3` 后 `len(p)` | 3 | 3 |
+| `q = p, 4` 后 `len(q)` | **1** | **4** |
+| `list(q)` | **`[4]`** | **`[1, 2, 3, 4]`** |
+| `m = 1.5, 2.5` / `n = m, 3.5` 后 `len(n)` | 3 | 3 |
+
+最后一行是**对照**：非整数走 `items`，所以它一直是对的 —— 这正是「只走一半」在修前能藏这么久的原因。
+
+### 五、判据与双向验证
+
+三个缺陷都**只改数值、不改退出码**，所以回归一律断言数值、不看 `rc`：
+
+- `vtest/set_components_enumerable_v05.im` ← CTest `set_components_enumerable_runtime`，成绩行 `setcomp-ok union=5/1,9 two=6/5 overlap=3/3 single=3 nested=4/4 size=3 infinite=0,nil`；`FAIL_REGULAR_EXPRESSION "union=0|overlap=0|single=0|nested=1|size=nil"`。一行同时钉住并集基数、首末元素、重叠去重、单分量包一层、嵌套、`size`，以及**真无限仍被拒**。
+- `vtest/set_float_lattice_v05.im` ← CTest `set_float_lattice_runtime`，成绩行 `setlattice-ok n=4 last03=true in03=true upper=3 upper0=false half=6 int=6 big=100`；FAIL 正则 `n=3|last03=false|in03=false|upper0=true`。`last03=true` 即「`list` 的最后一个成员确实等于 `0.3`」，与 `in03=true` 合起来正是修前那条自相矛盾的反面。（末元素靠**比较**断言，因为 `str()` 走 `%.17g`，会打出 `0.29999999999999999`。）
+
+**反向验证**：`git checkout HEAD -- src/vm/vm.c src/runtime/runtime_posix.c` 重编 ⇒ `ctest -R "set_components_enumerable|set_float_lattice"` 得 **`0% tests passed, 2 tests failed out of 2`**，两条**各自命中各自的 FAIL 正则**（`Regex=[union=0|overlap=0|single=0|nested=1|size=nil]` 与 `Regex=[n=3|last03=false|in03=false|upper0=true]`）；拷回重编 ⇒ 两条 `Passed`，`cmp` 证源码逐字节一致。**不是 vacuous probe。**
+
+**顺带统一**：`posix_core_size` 原先自己算 `(hi-lo)/step + 1`，现在改走同一个枚举器。于是 `size(<集合>)` 与 `len(<集合>)` 在复合/浮点形态上不再可能给出两个答案 —— 修前 `z = Z[1~3]` 的 `size(z)` 是 nil 而 `len(z)` 是 0，本身就是这种分裂的极端例子。
+
+### 六、门禁实测（本轮）
+
+`grep -c 'add_test(' CMakeLists.txt` **108 → 110**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **110**，`ctest -N` 的 `Total Tests: 110`（`Test #109: set_components_enumerable_runtime`、`Test #110: set_float_lattice_runtime`）。全量 **`100% tests passed, 0 tests failed out of 110`**；完整九阶段 `tools/gate.sh` **全 PASS**、`gate: OK — every stage passed.`、`GATE_RC=0`、`gate: ctest reported 0 skipped test(s)`。
+
+### 七、诚实边界
+
+- `list` **只存在于解释器**：AOT 与 wasm 后端都没实现（`grep '"list"' src/compilation/*.c` 为空），所以这三个缺陷没有三后端比对可言，判据只能是解释器侧的数值断言 —— 与 §10.44 那条 `list` 缺陷同源。
+- 枚举上限的两道闸是**拒绝**而非截断：分量跨度超过 `10^7` 格、或端点绝对值超过 `9.0e18`，`list`/`len` 会回到「拒绝」而不是给一个截断的集合。这是刻意的取舍（宁可说不知道，也不给半截答案），但**没有回归钉住这两道闸** —— 已知空白。
+- `contract_test.im` **仍未进门禁**（手动/dormant 套件），也未随本轮扩充。
+- 仍未修的下一条：**调用未注册函数是静默留栈而非报错**（`say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 为 false）。取证在 `docs/AUDIT.md` §1.9，另行立项。

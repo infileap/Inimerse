@@ -759,10 +759,22 @@ if(INIMERSE_BUILD_ENGINE)
   # its callers treat the result as a raw pool index, so `list(<set>)` answered the
   # NEXT pool slot -- an unrelated, usually empty array -- and `len(<set>)` measured
   # that same wrong array.  The defect changes VALUES, never the exit code, so this
-  # asserts numbers.  The remaining "a set in a variable is not enumerable at all"
-  # gap is a separate defect and is deliberately not pinned here.
+  # asserts numbers.  The "a set in a variable is not enumerable at all" gap that
+  # this line used to name as a separate defect is now fixed and pinned by
+  # set_components_enumerable_runtime below.
   add_test(NAME list_set_off_by_one_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/list_set_off_by_one_v05.im)
   set_tests_properties(list_set_off_by_one_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "listset-ok n=3 first=1 last=3 setlen=3" FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0")
+  # A set literal is a union of i64, items and interval COMPONENTS; enumerating only
+  # the first two made list()/len()/size() blind to any set written as `1, 2, Z[7~9]`
+  # or `z = Z[1~3]`, and vm_set_add_comp dropped the i64 half of a nested literal.
+  # Values only, never exit codes.  See docs/AUDIT.md §1.10.
+  add_test(NAME set_components_enumerable_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_components_enumerable_v05.im)
+  set_tests_properties(set_components_enumerable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setcomp-ok union=5/1,9 two=6/5 overlap=3/3 single=3 nested=4/4 size=3 infinite=0,nil" FAIL_REGULAR_EXPRESSION "union=0|overlap=0|single=0|nested=1|size=nil")
+  # A FloatN/floatN interval is a lattice, so it must be walked by index: adding the
+  # step drifted above the last member and hid it from list()/len() while `in` kept
+  # answering true.  See docs/AUDIT.md §1.10.
+  add_test(NAME set_float_lattice_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_float_lattice_v05.im)
+  set_tests_properties(set_float_lattice_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setlattice-ok n=4 last03=true in03=true upper=3 upper0=false half=6 int=6 big=100" FAIL_REGULAR_EXPRESSION "n=3|last03=false|in03=false|upper0=true")
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

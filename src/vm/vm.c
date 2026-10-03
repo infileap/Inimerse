@@ -1631,6 +1631,16 @@ static void vm_set_add_comp(VM *vm, int idx, SetObj *src) {
     SetObj *s = vm_set_slot(vm, idx);
     if (!s || s->kind != 0 || !src) return;
     if (src->kind == 0) {
+        /* src->i64 is the literal-integer half of the union.  Copying only
+           items and comps dropped every integer of a nested literal, so
+           `p = 1, 2, 3` followed by `q = p, 4` gave {4} instead of {1,2,3,4}
+           -- while `m = 1.5, 2.5` / `n = m, 3.5` was right, because the
+           non-integers live in items. */
+        for (int i = 0; i < src->iCount; i++) {
+            Value v;
+            v.type = VAL_INT; v.ival = (int)src->i64[i]; v.fval = 0; v.sval = NULL; v.ptr = NULL;
+            vm_set_add(vm, idx, &v);
+        }
         for (int i = 0; i < src->count; i++) vm_set_add(vm, idx, &src->items[i]);
         for (int i = 0; i < src->compCount; i++) {
             SetComp c = src->comps[i];
@@ -1960,40 +1970,84 @@ static int set_equal(VM *vm, int aidx, int bidx) {
     }
     return 1;
 }
+static int array_has(VM *vm, int aidx, const Value *v) {
+    int n = vm_array_len(vm, aidx);
+    for (int i = 0; i < n; i++) {
+        Value e = vm_array_get(vm, aidx, i);
+        if (val_eq(&e, v)) return 1;
+    }
+    return 0;
+}
+/* Walk ONE interval component -- the `Z[7~9]` of `1, 2, Z[7~9]` -- into `aidx`,
+   skipping anything already there.  `sentinelUnbounded` says whether the
+   (lo,hi,exclusive,exclusive)==(0,0,0,0) spelling means "a WHOLE named set", as
+   vm_set_add_comp writes it and set_contains reads it; a kind-2 set never uses
+   that spelling, so it passes 0 and gets the plain [] test instead.
+   Returns -1 when the component cannot be walked at all: R has no lattice,
+   an endpoint is infinite, or the component is a whole named set. */
+static int set_comp_enum(VM *vm, int aidx, const SetComp *c, int sentinelUnbounded) {
+    if (c->nameIdx < 0 || c->nameIdx > 23) return -1;
+    if (c->lo <= -1.0e300 || c->hi >= 1.0e300) return -1;
+    if (sentinelUnbounded && c->lo == 0 && c->hi == 0 && c->loInc == 0 && c->hiInc == 0) return -1;
+    /* Walk the component's own lattice BY INDEX, never by accumulating a double
+       step: 0.1 + 0.1 + 0.1 is 0.30000000000000004, which is strictly above the
+       double 0.3, so the additive walk dropped a member that `in` reports --
+       0.3 in float1[0~0.3] is true while list(float1[0~0.3]) stopped at 0.2. */
+    int isInt = (c->nameIdx <= 3);
+    if (c->lo < -9.0e18 || c->hi > 9.0e18) return -1;         /* keep the index math in range */
+    if (isInt && (c->lo < -2147483648.0 || c->hi > 2147483647.0)) return -1; /* VAL_INT holds 32 bits */
+    double scale = 1.0;
+    if (!isInt) {
+        int frac = (c->nameIdx - 4) / 2 + 1;
+        for (int i = 0; i < frac; i++) scale *= 10.0;
+    }
+    long long kl = (long long)ceil(c->lo * scale - 1e-6);
+    long long kh = (long long)floor(c->hi * scale + 1e-6);
+    if (kh < kl) return 0;                                    /* empty, not an error */
+    if (kh - kl >= 10000000) return -1;                       /* refuse rather than truncate */
+    for (long long k = kl; k <= kh; k++) {
+        double x = (double)k / scale;
+        if (x < c->lo || (x == c->lo && !c->loInc)) continue;
+        if (x > c->hi || (x == c->hi && !c->hiInc)) continue;
+        Value v;
+        if (isInt) { v.type = VAL_INT; v.ival = (int)x; v.fval = 0; }
+        else { v.type = VAL_FLOAT; v.fval = x; v.ival = 0; }
+        v.sval = NULL; v.ptr = NULL;
+        if (!builtin_contains(c->nameIdx, &v)) continue;
+        if (!array_has(vm, aidx, &v)) vm_array_push(vm, aidx, &v);
+    }
+    return 0;
+}
 /* Returns a RAW array-pool index, i.e. the same convention vm_array_* take --
    which is what every caller assumes.  (A VAL_ARRAY value carries idx + 1, so
-   the callers that build a Value are the ones that add the 1.)  -1 on failure. */
+   the callers that build a Value are the ones that add the 1.)  -1 on failure.
+
+   A kind-0 set is a UNION: the literals in i64/items plus every interval in
+   comps -- `1, 2, Z[7~9]` is how a set of five elements is spelled -- so all
+   three parts have to be walked, and the result de-duplicated, because a
+   literal can sit inside a component (`1, Z[1~3]` is {1,2,3}, not four). */
 int vm_set_to_array(VM *vm, int sidx) {
     SetObj *s = vm_set_slot(vm, sidx);
     if (!s) return -1;
-    if (s->kind == 2 && s->lo > -1e300 && s->hi < 1e300) {
-        if (s->nameIdx == 24) return -1; /* real interval: not enumerable */
-        int aidx = vm_array_new(vm);
-        if (aidx < 0) return -1;
-        double step = (s->nameIdx >= 0 && s->nameIdx <= 3) ? 1.0 : pow(10.0, -((s->nameIdx - 4) / 2 + 1));
-        if (step <= 0) step = 1.0;
-        double start = s->lo;
-        if (!s->loInc) start = s->lo + step;
-        int guard = 0;
-        for (int k = 0; ; k++, guard++) {
-            double x = start + (double)k * step;
-            if (x > s->hi || (x == s->hi && !s->hiInc)) break;
-            if (guard >= 10000000) break;
-            Value v;
-            if (s->nameIdx >= 0 && s->nameIdx <= 3) { v.type = VAL_INT; v.ival = (int)x; v.fval = 0; v.sval = NULL; }
-            else { v.type = VAL_FLOAT; v.fval = x; v.ival = 0; v.sval = NULL; }
-            if (builtin_contains(s->nameIdx, &v)) vm_array_push(vm, aidx, &v);
-        }
-        return aidx;
-    }
-    if (s->kind != 0 || s->compCount > 0) return -1;
+    if (s->kind != 0 && s->kind != 2) return -1; /* a whole named builtin: infinite */
     int aidx = vm_array_new(vm);
     if (aidx < 0) return -1;
-    for (int i = 0; i < s->iCount; i++) {
-        Value v; v.type = VAL_INT; v.ival = (int)s->i64[i];
-        vm_array_push(vm, aidx, &v);
+    if (s->kind == 2) {
+        SetComp c;
+        c.nameIdx = s->nameIdx; c.lo = s->lo; c.hi = s->hi;
+        c.loInc = s->loInc; c.hiInc = s->hiInc;
+        if (set_comp_enum(vm, aidx, &c, 0) < 0) return -1;
+        return aidx;
     }
-    for (int i = 0; i < s->count; i++) vm_array_push(vm, aidx, &s->items[i]);
+    for (int i = 0; i < s->iCount; i++) {
+        Value v;
+        v.type = VAL_INT; v.ival = (int)s->i64[i]; v.fval = 0; v.sval = NULL; v.ptr = NULL;
+        if (!array_has(vm, aidx, &v)) vm_array_push(vm, aidx, &v);
+    }
+    for (int i = 0; i < s->count; i++)
+        if (!array_has(vm, aidx, &s->items[i])) vm_array_push(vm, aidx, &s->items[i]);
+    for (int i = 0; i < s->compCount; i++)
+        if (set_comp_enum(vm, aidx, &s->comps[i], 1) < 0) return -1;
     return aidx;
 }
 static void named_range(int bi, double *lo, double *hi) {

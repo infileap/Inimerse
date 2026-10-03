@@ -450,19 +450,66 @@ value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);        /* :3837  �
 
 **顺带记录一条可诊断性缺陷（未修）：调用未注册的函数是静默留栈，不是报错。** 带不带 `--no-mods` 都一样：`say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 是 **false**；`say(str2int("abc"))` 打印 `abc`，而 `str2int("abc") == 0` 是 false；`noise2d(1.5, 2.5, 7)` → `7`（它的 seed 实参）；`gui_canvas(8, 8)` → `8`；`gui_vram_used()` → `0`。所以这 4 条失败表现为**值不对**，而不是「未知函数 `str2int`」—— 这正是上面那遍穷举必须靠注释跳过、而不可能靠报错定位的原因。
 
-**另一条本轮发现、**未修**的独立缺陷：放进变量的集合完全不可枚举。** 写上面那条回归时撞出来的，取证到此为止、另行立项。`z = Z[1~3]` 会被编成 `OP_SET_INTERVAL`（op 52）**加一条 `OP_NEW_SET`**（op 51），于是 `z` 是一个 `compCount > 0` 的 kind-0 集合，而 `vm_set_to_array` 在 `src/vm/vm.c:1989` 写着 `if (s->kind != 0 || s->compCount > 0) return -1;`。后果：
+**放进变量的集合曾完全不可枚举 —— 已修，见 §1.10。** 写上面那条回归时撞出来的：`z = Z[1~3]` 会被编成 `OP_SET_INTERVAL`（op 52）**加一条 `OP_NEW_SET`**（op 51），于是 `z` 是一个 `compCount > 0` 的 kind-0 集合，撞上 `vm_set_to_array` 的 `if (s->kind != 0 || s->compCount > 0) return -1;`。修前取证：`len(Z[1~3])` / `len(list(Z[1~3]))` 内联 3/3 正确，而 `z = Z[1~3]` 后 `len(z)` 是 **0**、`list(z)` 与 `size(z)` 是 **nil**；`min(z)` 1 / `max(z)` 3 / `2 in z` true 全对（走 `comps[]`）；`s2 = 1, 2, Z[7~9]` 后 `len(s2)` 是 0（应为 5）；`p = 1, 2, 3` 后 `len(p)` 是 3 正确。上面那条进树回归与 `contract_test.im:88` 钉的都是**内联**形态，因此本轮修复对它们成立；变量形态与复合形态现在由 `vtest/set_components_enumerable_v05.im` 钉住，见 §1.10。另注：`list` 只存在于解释器，AOT 与 wasm 后端都没有实现（`grep '"list"' src/compilation/*.c` 为空），所以这条没有三后端比对可言。
 
-| 探针 | 结果 | 判定 |
+## §1.10 集合字面量是并集：三处「只走一半」的枚举
+
+**一个集合有三个半边。** `SetObj`（`src/vm/vm.h:36-47`）把成员分在三处：`i64`（整数字面量，`iCount`）、`items`（非整数字面量，`count`）、`comps`（区间分量 `SetComp`，`compCount`）。`1, 2, Z[7~9]` 就是「前两处放两个、第三处放三个」的并集。本轮在**枚举**这条路上连着挖出三个缺陷，形态都是「只处理了一半」。
+
+### ① `vm_set_to_array` 拒绝一切带分量的集合
+
+`src/vm/vm.c` 的 `vm_set_to_array` 原文以 `if (s->kind != 0 || s->compCount > 0) return -1;` 收尾，于是 `list`/`len`/`size` 对 `Z[1~3]` 内联之外的一切集合形态瞎掉 —— 而 `min`/`max`/`in` 走 `comps[]`，一直是对的。
+
+| 探针 | 修前 | 修后 |
 | --- | --- | --- |
-| `len(Z[1~3])` / `len(list(Z[1~3]))`（内联） | 3 / 3 | ✓ |
-| `z = Z[1~3]` 后 `len(z)` | **0** | ✗ |
-| `z = Z[1~3]` 后 `list(z)` | **nil** | ✗ |
-| `z = Z[1~3]` 后 `size(z)` | **nil** | ✗ |
-| `z = Z[1~3]` 后 `min(z)` / `max(z)` / `2 in z` | 1 / 3 / true | ✓ |
-| `s2 = 1, 2, Z[7~9]` 后 `len(s2)`（应为 5） | **0** | ✗ |
-| `p = 1, 2, 3` 后 `len(p)` | 3 | ✓ |
+| `b = 1, 2, Z[7~9]` 后 `len(b)` | 0 | **5** |
+| `c = Z[1~3], Z[5~7]` 后 `len(c)` | 0 | **6** |
+| `d = 1, Z[1~3]` 后 `len(d)`（1 落在分量里） | 0 | **3** |
+| `e = Z[1~3]` 后 `len(e)` | 0 | **3** |
+| `f = Z, 1` 后 `len(f)` / `list(f)`（真无限） | 0 / nil | 0 / nil（**仍拒绝**） |
+| `r = R[0~3]` 后 `len(r)` / `size(r)`（R 无格点） | 0 / nil | 0 / nil（**仍拒绝**） |
 
-即 `min`/`max`/`in` 会走 `comps[]` 所以是对的，而 `len`/`list`/`size` 不展开分量所以是空的。上面那条进树回归与 `contract_test.im:88` 钉的都是**内联**形态，因此本轮修复对它们成立；变量形态是**另一个 bug**，未修，也未在回归里钉住（只在 `vtest/list_set_off_by_one_v05.im` 头部注释里写明）。另注：`list` 只存在于解释器，AOT 与 wasm 后端都没有实现（`grep '"list"' src/compilation/*.c` 为空），所以这条没有三后端比对可言。
+**修法**：按 `i64` + `items` + `comps` 三部分求并，并**去重** —— `d = 1, Z[1~3]` 是 {1,2,3} 而非四个，字面量可能落在分量里。拒绝的边界必须原样保住：分量只有**两个有限端点且有格点**才可枚举，而 `vm_set_add_comp` 给「整个具名集合」写的哨兵 `(lo,hi,loInc,hiInc) == (0,0,0,0)`（`set_contains` 读作「无界」）因此仍返回 -1，`R`（bi 24）同理。
+
+### ② 浮点点阵按累加步长走，漏掉最后一个成员
+
+`FloatN`/`floatN` 的成员是 `k / 10^N`，必须**按格点下标**走。原实现累加 double 步长，而 `0.1 + 0.1 + 0.1` 是 `0.30000000000000004`，**严格大于** double `0.3`，于是区间最后一个成员被循环条件甩掉，而 `in`（直接问 `builtin_contains`）仍然认它 —— 同一个集合上 `in` 与 `list`/`len` 自相矛盾：
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `s = float1[0~0.3]` 的 `(0.3 in s)` | true | true |
+| `len(s)` | **3** | **4** |
+| `list(s)` | **`[0, 0.1, 0.2]`** | **`[0, 0.1, 0.2, 0.3]`** |
+| `len(Float1[0~0.3])`（大写，不含整数） | **2** | **3** |
+| `len(float1[0~0.5])` | 5 | **6** |
+
+`floatN` 含整数、`FloatN` 不含，所以同一区间两者基数不同 —— 这既是修法的对照，也是 `builtin_contains` 仍在参与过滤的证明。
+
+### ③ `vm_set_add_comp` 不复制 `src->i64`：嵌套字面量丢整数半
+
+`vm_set_add_comp` 在 `src->kind == 0` 分支里复制了 `items` 与 `comps`，**唯独没有 `i64` 循环**。于是把一个字面量当元素再套一层时，它的整数成员全丢：
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `p = 1, 2, 3` 后 `len(p)` | 3 | 3 |
+| `q = p, 4` 后 `len(q)` | **1** | **4** |
+| `list(q)` | **`[4]`** | **`[1, 2, 3, 4]`** |
+| `m = 1.5, 2.5` / `n = m, 3.5` 后 `len(n)` | 3 | 3 |
+
+最后一行是**对照**：非整数走 `items`，所以它一直是对的 —— 这正是「只走一半」在修前能藏住的原因。
+
+### 判据与双向验证
+
+两条进树回归，都只断言**数值**（三个缺陷都改值、不改退出码）：
+
+- `vtest/set_components_enumerable_v05.im` ← CTest `set_components_enumerable_runtime`，`PASS_REGULAR_EXPRESSION "setcomp-ok union=5/1,9 two=6/5 overlap=3/3 single=3 nested=4/4 size=3 infinite=0,nil"`，`FAIL_REGULAR_EXPRESSION "union=0|overlap=0|single=0|nested=1|size=nil"`。这一行同时钉住并集基数、首末元素、重叠去重、单分量包一层、嵌套、`size`，以及**真无限仍被拒**（`infinite=0,nil`）。
+- `vtest/set_float_lattice_v05.im` ← CTest `set_float_lattice_runtime`，`PASS_REGULAR_EXPRESSION "setlattice-ok n=4 last03=true in03=true upper=3 upper0=false half=6 int=6 big=100"`。`last03=true` 即「`list` 的最后一个成员确实等于 `0.3`」，与 `in03=true` 合起来正是修前那条自相矛盾的反面。（`str()` 走 `%.17g`，所以末元素靠比较断言而不是打印。）
+
+**反向验证**：`cp src/vm/vm.c .verify/` → `git checkout HEAD -- src/vm/vm.c src/runtime/runtime_posix.c` → 重编 ⇒ `ctest -R "set_components_enumerable|set_float_lattice"` 得 **`0% tests passed, 2 tests failed out of 2`**，两条各自命中 `FAIL_REGULAR_EXPRESSION`（`Error regular expression found in output. Regex=[union=0|overlap=0|single=0|nested=1|size=nil]` 与 `Regex=[n=3|last03=false|in03=false|upper0=true]`）；拷回重编 ⇒ 两条 `Passed`，`cmp` 证源码逐字节一致。
+
+**顺带统一**：`posix_core_size` 原先自己算 `(hi-lo)/step + 1`，现在改走同一个枚举器。于是 `size(<集合>)` 与 `len(<集合>)` 在复合/浮点形态上不再可能给出两个答案；修前 `z = Z[1~3]` 的 `size(z)` 是 nil 而 `len(z)` 是 0，本身就是这种分裂的极端例子。
+
+**计数**：`grep -c 'add_test(' CMakeLists.txt` **108 → 110**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **110**。
 
 ## §2 执行通道效率比较
 

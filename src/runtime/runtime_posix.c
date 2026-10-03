@@ -34,12 +34,12 @@ static int posix_core_size(VM *vm) {
     if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
         SetObj *s = &vm->sets[v->ival];
         if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
-        else if (s->kind == 2 && s->lo > -1e300 && s->hi < 1e300) {
-            double step = (s->nameIdx >= 0 && s->nameIdx <= 3) ? 1.0 : pow(10.0, -((s->nameIdx - 4) / 2 + 1));
-            double lo = s->loInc ? s->lo : s->lo + step;
-            double hi = s->hiInc ? s->hi : s->hi - step;
-            if (hi >= lo) n = (int)((hi - lo) / step) + 1;
-            else n = 0;
+        else {
+            /* Go through the same enumerator len()/list() use, so that a set
+               whose elements live in interval components (`1, 2, Z[7~9]`) is
+               counted rather than reported as nil. */
+            int a = vm_set_to_array(vm, v->ival);
+            if (a >= 0) n = vm_array_len(vm, a);
         }
     } else if (v->type == VAL_ARRAY && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count : 0;

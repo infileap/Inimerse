@@ -1,0 +1,32 @@
+# A set literal is a UNION of three parts: the literal integers in i64, the
+# literal non-integers in items, and the interval COMPONENTS in comps.  A set
+# like `1, 2, Z[7~9]` puts two elements in the first part and the other three
+# in the last, and vm_set_to_array used to refuse any set with a component:
+#
+#     if (s->kind != 0 || s->compCount > 0) return -1;
+#
+# so list() and len() reported the set as empty or nil -- while `in`, `min` and
+# `max`, which walk the components, were correct all along.  The same refusal
+# hid the case where ONE element of the literal is written on its own, which the
+# compiler still wraps in a set: `z = Z[1~3]` is a NEW_SET over one component,
+# so `len(z)` was 0 even though `len(Z[1~3])` was 3.
+#
+# A component is only enumerable when it has two finite endpoints and a lattice.
+# `Z` on its own, `R`, and an interval with an open-into-infinity end are not,
+# and must stay refused rather than be reported as empty.
+#
+# See docs/AUDIT.md §1.10.
+b = 1, 2, Z[7~9]
+say list(b)
+c = Z[1~3], Z[5~7]
+say list(c)
+d = 1, Z[1~3]
+say list(d)
+e = Z[1~3]
+say list(e)
+f = Z, 1
+say list(f)
+p = 1, 2, 3
+q = p, 4
+say list(q)
+say "setcomp-ok union=" + str(len(b)) + "/" + str(list(b)[0]) + "," + str(list(b)[4]) + " two=" + str(len(c)) + "/" + str(list(c)[3]) + " overlap=" + str(len(d)) + "/" + str(list(d)[2]) + " single=" + str(len(e)) + " nested=" + str(len(q)) + "/" + str(list(q)[3]) + " size=" + str(size(Z[1~3])) + " infinite=" + str(len(f)) + "," + str(list(f))
