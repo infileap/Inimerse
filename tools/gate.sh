@@ -111,6 +111,12 @@ stage_ctest() {
     echo "gate: install the bridge toolchain (examples/BUILDING_BRIDGES.md) and re-run." >&2
     return 1
   fi
+  # The suites themselves have to be safe to run concurrently: a server bound
+  # to a reserved port number loses a release-to-bind race under `-j` and dies
+  # before its first assertion (tools/node_discovery.test.py did exactly that,
+  # 4/120 runs at 32-way load).  Checked here rather than in its own stage
+  # because it is a property of the suites this stage just ran.
+  python3 "$REPO_ROOT/tools/check_test_ports.py" || return 1
   # A green ctest only means "nothing failed".  Assert the count too, so that a
   # dropped add_test( ) cannot pass silently.
   if ! printf '%s\n' "$out" | grep -q "0 tests failed out of $EXP_CTEST"; then

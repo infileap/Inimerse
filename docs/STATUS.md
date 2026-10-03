@@ -2242,3 +2242,74 @@ crate 测试 69 → **72**；`tools/gate.sh` 四处同步 72；`tools/infiverse_
   完整九阶段 `GATE_RC=0`、`gate: OK — every stage passed.`
 - **保留的纵深防御**：`.gitignore` 仍保留 `oauth_secret_*.txt` 与 `linked_accounts.json` 两条**不限路径**的
   规则 —— 这两个名字无论落在哪里都是凭据，不该只靠那三个目录保护。
+
+## 10.38 node_discovery 的 flake：一个被证伪的机制，和一个被测出来的机制（BOARD 行 131）
+
+**先说更正。** 这一行立项时我写的机制是「`wait_http_ping` 等的是 HTTP，而 `verse_hub_ping` 走的是
+UDP 往返，两者不同步」。**代码证伪了它**：`b_verse_hub_ping`（`src/mod/verse_dist_mod.c:929`）
+调的是 `http_get_body(url)`，而 `url` 是 `http://<uri>/ping`，判定条件是 body 以 `pong` 开头 ——
+**它和 `wait_http_ping` 打的是同一个 HTTP 端点**。这条机制从来没成立过，写进板子时也没有验过。
+
+### 目标 flake（`ping_ok=false`）没有复现
+
+`tools/node_discovery.test.py:224` 的 `AssertionError: add1=1 add2=1 ping_ok=false hub2_count=0`
+是本行唯一的一手现场。为了复现它做了这些测量，**全部零命中**：
+
+| 负载 | 结果 |
+| --- | --- |
+| 整套件 48 轮 × 12 并发 | 1 次失败（端口那条，不是这条） |
+| 整套件 120 轮 × 32 并发 | 4 次失败（**全是**端口那条） |
+| 整套件 40 轮 × 12 并发，开 `INIMERSE_PING_DIAG=1` | **40/40 通过，且每次 ping 都是 `rc=0 status=200`** |
+| 两个热 hub + 300 次双 ping × 8 并发 | 0 失败 |
+| 健康 hub 连打 1200 次 ping | **0 个 0** |
+| 每轮新起两个 hub（复刻判据现场）+ 60 次双 ping × 12 并发 | 0 失败 |
+
+为此在 `b_verse_hub_ping` 里加过一段临时插桩（`INIMERSE_PING_DIAG`，把
+`http_get_body` 折叠掉的「连接失败 / HTTP ≥ 400 / body 空」三件事分开打印），
+**用完已完全移除**，`git diff src/mod/verse_dist_mod.c` 为空。
+
+**同时被实验否掉的四个假设**（都有证据，不是推测）：
+
+- 「亚毫秒往返返回 0」—— `r_push_int(vm, ok ? (int)dt : 0)`（`src/mod/verse_dist_mod.c:944`）
+  确实把**耗时**当返回值、又用 `0` 兼作失败哨兵，语义上真的二义；但 1200 次实测 0 个 0
+  （每次请求都要 `getaddrinfo`，`dt` 恒 ≥ 1ms）。**记为潜在隐患，不是本次原因。**
+- 「`shutdown()` 丢弃未发数据造成 RST」—— `im_socket_close` 就是裸 `close(fd)`，没有 `shutdown`。
+- 「`ok` 为假导致 404」—— `src/platform/http_posix.c:1187` 的 `ok` 合取里含 `ping`，`/ping` 恒被识别。
+- 「`im_socket_connect_timeout` 留下非阻塞套接字」—— `src/platform/socket.c:155` 恢复原 flags。
+
+### 被测出来的机制：FakeDirectory 预留端口再绑定
+
+同一套件里另有一条**可复现**的失败，而且它才是常见的那条：`FakeDirectory`
+（`tools/node_discovery.test.py:156` 的 `fake_port = distinct_ports(1)[0]`，`:194` 才
+`HTTPServer(("127.0.0.1", fake_port), ...)`）**先预留号码、很久以后才绑定** ——
+正是 `tools/testports.py` 存在的理由（释放到绑定的窗口），而套件对自己的服务器仍在用它。
+
+- **修复前**：120 轮 × 32 并发 → **116/120，4 次失败（3.3%）**，签名恒为
+  `OSError: [Errno 98] Address already in use`，出在 `self.socket.listen(...)`，
+  **一个断言都还没跑**。
+- **修复**：让内核分配 —— `HTTPServer(("127.0.0.1", 0), FakeDirectory)` 然后
+  `fake_port = fake.server_address[1]`。从内核给号那一刻起套接字就被持有，**窗口为零**。
+  这是 `start_hub_bound_ports` 对 hub 一直在用的同一套纪律。
+- **修复后**：同样 120 轮 × 32 并发 → **120/120，0 失败**。
+- **反向**：把 `distinct_ports(1)[0]` 那版改回去 → 同一负载下 **116/120，4 次失败（3.3%）**，
+  与基线逐位相同；还原后复绿。
+
+### 进树守卫
+
+新增 `tools/check_test_ports.py`，挂在 `tools/gate.sh` 的 `stage_ctest()` 里（ctest 通过之后）：
+扫描 `tools/*.test.py` 里所有 `HTTPServer(` / `ThreadingHTTPServer(` 构造，**端口参数必须是 `0`**，
+否则报出 `file:line` 与理由。**双向**：把预留再绑定那版写回去 → `FAILED`，指出
+`tools/node_discovery.test.py:201` 与 `port 'fake_port'`；还原 → `ok`。
+**刻意做窄**：只查套件**自己绑**的服务器；交给子进程的端口（`--port 0` 的 hub 等）是 §2.9 的
+另一个问题，把它们一起标红会牵连与本缺陷无关的套件。
+
+### 这一行真正的结论
+
+- 记录在板子上的机制是**错的**，且从未验证 —— 这是本行最值得记的一条。
+- 目标 flake 在六种负载下**一次都没复现**，因此**没有修它**：在没有机制的情况下改代码，
+  只是把一次未知的失败换成一次未知的成功。
+- 但**同一套件里另一条 flake 被量出来了**（3.3%），它可复现、有明确根因、修复后归零，
+  并且进了树 —— 这是本行实际交付的东西。
+- 顺带让下一次发生时可诊断：`multi.im` 现在除了 `ping_ok=` 还会打印
+  `ping_ms=<p1>,<p2>`，**指明是哪个 hub、返回值是多少**。原来那个裸布尔值什么都说明不了，
+  这次调查之所以没有结论，一半原因是现场只留下一句 `ping_ok=false`。
