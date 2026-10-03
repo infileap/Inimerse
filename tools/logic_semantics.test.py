@@ -35,6 +35,23 @@ backends accept.  Strings/collections are outside the wasm MVP subset, and
 their divergence is a separate, documented limitation, not something this test
 should paper over by silently skipping.
 
+Two further families live here for the same reason -- one place where an
+operator's meaning is asserted across all three backends:
+
+  * a `+` chain of three or more terms (CHAIN).  `src/compiler/compiler.c`
+    flattens such a chain into ONE `OP_CONCAT` while a two-term chain emits
+    `OP_ADD`; the flattening claimed "identical per-step semantics to OP_ADD"
+    and was not, for integer overflow: with `x = 2147483647`, `x + 1` was
+    2147483648 and `x + 1 + 0` was -2147483648.  See docs/AUDIT.md §1.7.
+  * printed floats (FLOAT).  Each backend had its own formatter -- `%g` in AOT,
+    a JS re-implementation in `tools/wasm_run.js`, `vts_double` in the
+    interpreter -- and they disagreed on the sign of a small negative, on a
+    fraction that rounds up into the integer part, and on one that rounds away
+    entirely.  All three now follow `vts_double`.  Its `|d| >= 1e15` arm calls
+    `%.17g`, so the JS side has to port glibc there -- including the half-to-even
+    tie rule, which ECMAScript's `toPrecision(17)` gets wrong: 1.0000000000000002e15
+    is exactly 1000000000000000.25, and on that tie the two pick different digits.
+
 It also caught a real, pre-existing bug the day it was written: the wasm
 backend applied i32.eqz twice for `not`, so every `not` was inverted
 (`not 0` printed false on wasm while interpreter and AOT printed true).
@@ -99,6 +116,72 @@ SHORT_CIRCUIT = [
     ("1 and (1 / z)", REFUSED),   # control: and must evaluate the right side
     ("1 or (1 / z)",  "true"),    # or short-circuits on true
     ("0 or (1 / z)",  REFUSED),   # control: or must evaluate the right side
+]
+
+# (label, source, expected last stdout line) -- a `+` chain must not answer
+# differently depending on how many terms it has.  `src/compiler/compiler.c`
+# flattens a chain of three or more operands into ONE `OP_CONCAT` while a
+# two-term chain emits `OP_ADD`; the flattening claimed "identical per-step
+# semantics to OP_ADD" and was not, for integer overflow.  Measured before the
+# fix, with `x = 2147483647`: `x + 1` was 2147483648 and `x + 1 + 0` was
+# -2147483648 -- the same expression, two answers, decided by term count.  AOT
+# and wasm agreed with each other throughout, so the interpreter's OP_CONCAT was
+# the outlier, not a two-way disagreement.  An operand that is itself a
+# parenthesized expression is excluded by the flattening guard, so the last row
+# is the control that proves both paths stay in step.
+CHAIN = [
+    # the two-term form is the reference every chain must match
+    ('2-term overflow',      'x = 2147483647\nsay(x + 1)\n',       '2147483648'),
+    ('3-term +0',            'x = 2147483647\nsay(x + 1 + 0)\n',   '2147483648'),
+    ('3-term +1',            'x = 2147483647\nsay(x + 1 + 1)\n',   '2147483649'),
+    ('4-term +0+0',          'x = 2147483647\nsay(x + 1 + 0 + 0)\n',
+     '2147483648'),
+    ('3-term identity',      'y = 1000000000\nsay(y + y + y)\n',   '3000000000'),
+    ('3-term 2e9+2e9+1',     'x = 2000000000\nsay(x + 2000000000 + 1)\n',
+     '4000000001'),
+    ('3-term literal chain', 'say(2147483647 + 1 + 0)\n',          '2147483648'),
+    # a chain that stays in range must be untouched by the promotion rule
+    ('in-range 3-term',      'x = 10\nsay(x + 1 + 0)\n',           '11'),
+    ('in-range to boundary', 'x = 2147483646\nsay(x + 1 + 0)\n',   '2147483647'),
+    # control: parenthesized operands defeat the flattening, so this always took
+    # the OP_ADD path; both paths must agree here too
+    ('parenthesized control', 'x = 0\nsay(x + (0 - 2147483647) + (0 - 2))\n',
+     '-2147483649'),
+]
+
+# (expression, expected last stdout line) -- printed floats must agree across
+# all three backends.  `vts_double` (`src/vm/vm.c`) is the spec: nan -> "nan",
+# zero -> "0", an integral value -> its integer text, |v| >= 1e15 -> "%.17g",
+# otherwise the integer part plus up to six decimals with trailing zeros
+# trimmed (and no bare "." once the fraction rounds away).  AOT's
+# `nv_fmt_double` and wasm's `fmtFloat` (`tools/wasm_run.js`) are ports of it.
+# Every row below is a case that a naive `%g`, a truncating six-decimal
+# formatter, or one that loses the sign of a small negative gets wrong.
+FLOAT = [
+    ('1.0 / 3.0',              '0.333333'),
+    ('2.0 / 3.0',              '0.666667'),
+    ('123456789.125',          '123456789.125'),
+    ('1.0',                    '1'),
+    ('0.1 + 0.2',              '0.3'),
+    ('2147483648.5',           '2147483648.5'),
+    ('0.000001',               '0.000001'),
+    ('1e-20',                  '0'),
+    ('0.9999999',              '1'),
+    ('0.0 - 0.5',              '-0.5'),
+    ('0.0 - 1e-20',            '-0'),
+    ('0.0 - 1.0 / 3.0',        '-0.333333'),
+    ('1e20',                   '1e+20'),
+    ('12345678901234567890.0', '1.2345678901234567e+19'),
+    # |d| >= 1e15 goes through the %.17g path in C and an exact-expansion port
+    # of it in the wasm runner.  A JS toPrecision(17) gets the first three
+    # wrong: 1.0000000000000002e15 is exactly 1000000000000000.25, and on a tie
+    # ECMAScript rounds "to the larger n" where glibc rounds half-to-even.
+    ('1.0000000000000002e15',      '1000000000000000.2'),
+    ('2000000000000000.25',        '2000000000000000.2'),
+    ('0.0 - 1.0000000000000002e15', '-1000000000000000.2'),
+    ('1500000000000000.5',         '1500000000000000.5'),
+    ('1.5e15',                     '1500000000000000'),
+    ('1e16',                       '10000000000000000'),
 ]
 
 EXIT_CRASH = 'crashed'
@@ -179,6 +262,10 @@ def main():
     for expr, want in SHORT_CIRCUIT:
         src = 'z = 0\nsay %s\n' % expr
         cases.append(('short-circuit: %s' % expr, src, want))
+    for label, src, want in CHAIN:
+        cases.append((label, src, want))
+    for expr, want in FLOAT:
+        cases.append(('say %s' % expr, 'say %s\n' % expr, want))
 
     bad = []
     with tempfile.TemporaryDirectory(prefix='logic-semantics-') as td:
@@ -218,8 +305,8 @@ def main():
         raise SystemExit('%d of %d cases not at the agreed semantics'
                          % (len(bad), len(cases)))
     print('logic semantics: ok (%d cases: value position, precedence, nesting, '
-          'not, condition position, short-circuit both ways; '
-          'interpreter/aot/wasm all agree)' % len(cases))
+          'not, condition position, short-circuit both ways, `+` chains, '
+          'printed floats; interpreter/aot/wasm all agree)' % len(cases))
 
 
 if __name__ == '__main__':

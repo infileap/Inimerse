@@ -1,0 +1,19 @@
+# Regression for the `list` / `len` off-by-one on sets (docs/AUDIT.md §1.9).
+#
+# vm_set_to_array() returned `aidx + 1`, but all three of its callers treat the
+# result as a RAW array-pool index -- two of them add the 1 themselves when they
+# build the VAL_ARRAY value.  The handle therefore pointed one slot PAST the
+# array that had just been filled, so `list(<set>)` answered an unrelated
+# (usually empty) array and `len(<set>)` measured that same wrong array.
+#
+# The defect changes VALUES, never the exit code, so assert numbers.
+#
+# KNOWN GAP, deliberately not pinned here: a set held in a VARIABLE is not
+# enumerable at all.  `z = Z[1~3]` compiles to OP_SET_INTERVAL + OP_NEW_SET, so
+# z is a kind-0 set whose compCount > 0, and vm_set_to_array() refuses that at
+# its `s->kind != 0 || s->compCount > 0` guard -- `len(z)` is 0 and `list(z)` is
+# nil, while `min z` / `max z` / `2 in z` are all correct because those walk
+# comps[].  That is a separate defect (docs/AUDIT.md §1.9) and is NOT fixed here.
+say "listset-ok n=" + str(len(list(Z[1~3]))) + " first=" + str(list(Z[1~3])[0]) + " last=" + str(list(Z[1~3])[2]) + " setlen=" + str(len(Z[1~3]))
+s1 = 1, 2, 3
+say "listset-lit=" + str(len(list(s1))) + "," + str(list(s1)[2])

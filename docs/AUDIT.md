@@ -82,7 +82,7 @@ if (op == TOK_AND || op == TOK_OR) {
 
 **补充（实测，见 §1.6）**：这条其实是**三方**分歧 —— 解释器给操作数、AOT 给布尔、**wasm 直接拒绝编译**。wasm 的加入使「挑一个后端对齐」这个提法失效。
 
-**修复（用户裁定：布尔语义）**：`and` / `or` 一律产出**真值**，同时**保留短路**。三个后端各改一处，语义由 `tools/logic_semantics.test.py`（34 例，三后端逐格比对）钉住：
+**修复（用户裁定：布尔语义）**：`and` / `or` 一律产出**真值**，同时**保留短路**。三个后端各改一处，语义由 `tools/logic_semantics.test.py`（64 例，三后端逐格比对）钉住：
 
 | 后端 | 位置 | 改法 |
 | --- | --- | --- |
@@ -361,12 +361,108 @@ value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);        /* :3837  �
 
 **修法**：`L_CONCAT` 的整数分支改成与 `L_ADD` 相同的 `int64_t` 折叠、越界提升 float（并 `acc.sval = NULL`，与相邻的泛型 double 分支一致）。这**不触及** §1.2 的结论（那是语言设计问题），只消掉「按项数换答案」。缓解手段：`acc.type == VAL_INT` 时 `acc_fold_owned` 必为 0（字符串分支先判且唯它置 1），故无需 free。
 
-**判据**：新增三后端套件 `tools/arith_chain_semantics.test.py`（CTest `arith_chain_semantics_regression`，`CMakeLists.txt:357-365`），10 格 × 解释器/AOT/wasm 逐格比对期望值与三方一致性；**修前实测 6/10 红**，修后全绿。`contract_test.im` §1 补入 3、4 项链断言（§1 由 7 条增至 12 条），但注意该套件**并未注册进 `CMakeLists.txt`**，是一条手动/dormant 套件，且它在 `contract_test.im:80`（`list(Z[1~3])[0] == 1`）另有一条**先存**的失败 —— 两者都不是本轮引入。
+**判据**：10 格并入三后端套件 `tools/logic_semantics.test.py` 的 `CHAIN` 表（该套件现在 **64 例** = 逻辑 24 + 条件 6 + 短路 4 + `+` 链 10 + 打印浮点 20（浮点表在 §1.8 的第二轮自查里由 14 增至 20），× 解释器/AOT/wasm 逐格比对期望值与三方一致性）；**修前实测 6/10 红**，修后全绿。原先为此单开过一条 CTest（`tools/arith_chain_semantics.test.py` / `arith_chain_semantics_regression`），后按裁定**并回既有套件**，`EXP_CTEST` 因此回到 **107**（本轮 §1.9 新增 `list_set_off_by_one_runtime` 才把它推到 **108**）—— 代价是这次并回本身不再显现在计数里，收益是同一个语义面只留一条三后端入口。`contract_test.im` §1 补入 3、4 项链断言（§1 由 7 条增至 12 条），但注意该套件**并未注册进 `CMakeLists.txt`**，是一条手动/dormant 套件，且它在 `contract_test.im:80`（`list(Z[1~3])[0] == 1`）另有一条**先存**的失败 —— 两者都不是本行引入。
 
-**本轮附带的两条发现（未修，另行立项）**：
+### 1.8 打印浮点：三个后端三个格式（**已修复：三份实现都按解释器的规范重写**）
 
-1. **AOT 打印浮点丢精度**：`say(1000000.5)` → AOT 打 `1e+06`，`say(2147483648.5)` → `2.14748e+09`；解释器与 wasm 打全精度。`vtest/float_precision_v04.im` 与 CTest `float_precision_runtime`（`CMakeLists.txt:739-740`）只钉住解释器（`src/runtime/runtime_posix.c:59` 的 `"%.17g"`）。
-2. **`contract_test.im` 未被门禁覆盖**，且停在 `contract_test.im:80` 的 `list set`（取证：该行来自 `8248e08`）。
+`say` 在解释器里走 `vm_value_to_string` → `value_to_string` → **`vts_double`（`src/vm/vm.c`）**，**不是** `str()` 用的 `"%.17g"`（`src/runtime/runtime_posix.c:54-64`）—— 同一个解释器内部就有两种浮点格式，这解释了为什么 `vtest/float_precision_v04.im`（CTest `float_precision_runtime`，`CMakeLists.txt:739-740`）钉住 `str(value)` 的 17 位，而 `say(1.0 / 3.0)` 打的是 `0.333333`。三个后端**各有一份实现**：
+
+- 解释器：`vts_double`（整数部分 + 最多 6 位小数、去尾零、整值走整数打印、`|v| >= 1e15` 才落 `"%.17g"`）；
+- AOT：生成代码前导里的 `nv_say` 用裸 `"%g"`（`src/compilation/aot_native.c` 的 `kPreamble`），并注释断言解释器的格式**不可复现**（"it prints 1e-20 as \"0.\" and mixes 6- and 7-digit precision"）—— 这条断言是错的，那个格式确定且可移植；**正是它把浮点用例长期排除在 `tools/aot_native.test.py` 的语料之外**（旧免责注释见 `tools/aot_native.test.py:34-37`）；
+- wasm：`tools/wasm_run.js` 里一份 JS 重实现。
+
+实测（修前，同一份源码三种跑法）：
+
+| `say(…)` | 解释器 | AOT | wasm | 缺陷类别 |
+| --- | --- | --- | --- | --- |
+| `1.0 / 3.0` | 0.333333 | 0.333333 | 0.333333 | 三方一致（正常行） |
+| `123456789.125` | 123456789.125 | **1.23457e+08** | 123456789.125 | AOT 只剩 6 位有效数字 |
+| `0.000001` | 0.000001 | **1e-06** | 0.000001 | AOT 走科学计数法 |
+| `1e-20` | **0.** | **1e-20** | 0 | **三方三个答案** |
+| `2.0000001` | **2.** | 2 | 2 | 解释器留悬挂 `.` |
+| `0.9999999` | **0.1** | 1 | **0.1** | 解释器与 wasm 吃掉进位 |
+| `0.0 - 0.5` | **0.5** | -0.5 | -0.5 | 解释器丢负号 |
+| `0.0 - 1e-20` | **0.** | **-1e-20** | -0 | 解释器丢负号 + 悬挂点 |
+| `0.0 - 1.0 / 3.0` | **0.333333** | -0.333333 | -0.333333 | 解释器丢负号 |
+| `1e20` | 1e+20 | 1e+20 | **1.e+20** | wasm 尾数修剪出畸形 |
+| `2147483648.5` | 2147483648.5 | **2.14748e+09** | 2147483648.5 | AOT 精度 |
+| `12345678901234567890.0` | 1.2345678901234567e+19 | **1.23457e+19** | 1.2345678901234567e+19 | AOT 精度 |
+
+**这是三个各自独立的缺陷，不是一个移植问题**：①解释器的小数部分乘 1e6 取整后若恰好进位到 1000000，随后的去尾零把进位吃掉（`0.9999999` → `0.1`）；②小数部分归零时仍输出 `.`（`2.0000001` → `2.`）；③`-1 < v < 0` 时整数部分是 0，符号只活在小数部分里，于是整数打印发的是裸 `"0"`（`-0.5` → `0.5`，`-1e-20` → `0.`）；④AOT 的 `%g` 只有 6 位有效数字，且对 `1e-06` / `2.14748e+09` 这类量级改用科学计数法；⑤wasm 的 `toPrecision(17)` 换成科学计数法时把尾数修成畸形 `1.e+20`。
+
+**修法（裁定：以「改正后的解释器规范」为唯一规范，三份实现都重写）** —— 不把解释器的 bug 移植给另外两个：
+
+- `src/vm/vm.c` 的 `vts_double`：小数部分进位（`frac == 1000000` 时 `ip += 1; frac = 0`）、`frac == 0` 时不再输出 `.`、负号显式处理（`neg && ip == 0` 时单独发 `'-'`，故 `-1e-20` 是 `-0` 而非 `0`）、整数部分改发 `vts_int(..., neg ? -ip : ip)`（`ip` 是**幅值** —— 第一版漏了这点，`-1.5` 打成 `1.5`，由探针当场抓到）；
+- `src/compilation/aot_native.c`：`kPreamble` 增加 `#include <string.h>`，新增 `nv_fmt_double`（同一算法的 C 移植），`nv_say` 的浮点分支改为 `nv_fmt_double` + `printf("%s\n", …)`，并删掉那条「不可复现」的错误断言；
+- `tools/wasm_run.js`：按同一规范重写 `fmtFloat`，并新增 `fmtG17`（`toPrecision(17)` 后修剪尾数再拼回指数，消掉 `1.e+20`）。`fmtFloat` 是 wasm 唯一的浮点出口（`im_print_float`，`tools/wasm_run.js:82`）。
+
+**修后**：上表各行 × 三后端逐格一致。
+
+**判据（两条，且都反向验证过）：**
+
+1. `tools/logic_semantics.test.py` 的 `FLOAT` 表（**20 格**，三后端逐格比对期望值与三方一致性）。**反向验证**：把 `tools/wasm_run.js` 的 `fmtFloat` 改坏（去符号 + 去进位）⇒ **4/64 红**，报的正是 `FAIL say 0.0 - 0.5: wasm printed '0.5', expected '-0.5'` 一类；还原 ⇒ 64/64 绿。JS 侧不需要重编，所以这条可以很便宜地重跑。
+2. `tools/aot_native.test.py` 的 `EQUIVALENCE` 语料：删掉 `:34-37` 那条把浮点排除在外的注释，插入 **15 条**浮点行（等价用例 46 → 65；全量输出 `78 cases (65 equivalence, 3 pinned divergences, 10 refusal), 0 failures`）。**这一步把「AOT 打印浮点」从「文档化的分歧」变成「被断言的等价」** —— 旧注释的存在本身就是这个缺陷活了这么久的原因。
+
+**教训**：`tools/aot_native.test.py` 的旧注释是**把 bug 写成了规范** —— 「解释器不可复现，所以浮点排除在外」。一句写在测试语料里的免责声明比缺陷本身更难发现，因为它让缺口看起来像一个已记录的决定。同类样本见 `docs/STATUS.md` §10.42 第 ④ 条：`REJECT_CASES` 曾把 O0 正要消除的拒绝行为钉成「正确行为」。
+
+**未进门禁**：`contract_test.im` 本身就是手动/dormant 套件，不在 CTest 内（`grep -in contract CMakeLists.txt` 只有两处无关注释）。它此后的第一个失败曾是 `list set`（`contract_test.im:88`，原 `:80`），**本轮已修**，见 §1.9；修后在本机能走到 `:120`，剩下 4 条**结构性**失败（Windows 专有 mod 的 POSIX 桩），同样见 §1.9。
+
+**第二轮（提交前自查）才发现的一类分歧：平局的舍入规则不同。** 上面那 14 格全绿之后，提交前又问了一次「`%.17g` 与 `toPrecision(17)` 真的等价吗」—— **不等价**。C 的 `%.17g` 按 IEEE 默认舍入（round-half-to-**even**）处理平局，而 ECMAScript 的 `Number.prototype.toPrecision` 规范明文写的是「若有两个这样的 n，取**较大**者」。这不是理论问题：`1.0000000000000002e15` 的精确值就是 **`1000000000000000.25`**，取 17 位有效数字正好卡在 `…0.2` 与 `…0.3` 中间 —— glibc 给 `.2`，JS 给 `.3`。**解释器与 AOT 用的是同一份 glibc，所以两者一致，只有 wasm 那份 JS 是异类。**
+
+| `say(…)` | 解释器 | AOT | wasm（`toPrecision(17)`） |
+| --- | --- | --- | --- |
+| `1.0000000000000002e15` | `1000000000000000.2` | `1000000000000000.2` | `1000000000000000.3` |
+| `2000000000000000.25` | `2000000000000000.2` | `2000000000000000.2` | `2000000000000000.3` |
+| `0.0 - 1.0000000000000002e15` | `-1000000000000000.2` | `-1000000000000000.2` | `-1000000000000000.3` |
+
+**为什么 14 格没抓到它。** 平局要求 double 的**精确**十进制展开在第 18 位恰好是 5、其后全为 0。`1e20`、`12345678901234567890.0` 这类被钉住的整数都不是平局 —— **判据的取样区间又一次成了判据的漏点**（与 §1.7 的「样本长度」同型）。
+
+**修法（改动完全封闭在 `tools/wasm_run.js` 一个文件里）。** 给 JS 写一个 `exactDecimal(a)`：double 必是 `m * 2^e`，`e < 0` 时即 `m * 5^-e × 10^e`，所以精确展开有限、BigInt 能精确装下；`fmtG17` 改为在这个精确整数上取 17 位有效数字 —— `2r > 10^k` 进位、`2r == 10^k` 时看 `q` 的奇偶（**五成双**）—— 再按 `%g` 的规则用十进制指数选定点/科学计数。解释器与 AOT 不动（它们本来就是对的）。
+
+**判据（三条，且都反向验证过）。** ①`tools/logic_semantics.test.py` 的 `FLOAT` 表 **14 → 20 格**（新增 6 格覆盖平局、非平局的 `>=1e15` 非整值、以及 `>=1e15` 的整值），该套件 **58 → 64 例**；②`tools/aot_native.test.py` 的 `EQUIVALENCE` 增 5 行，等价 **60 → 65**，全量报 `78 cases (65 equivalence, 3 pinned divergences, 10 refusal), 0 failures`；③**随机扫描**：380 个随机/边界 double（六个量级区间，外加 `10^14…10^19` 的 `+0.25/0.5/0.75`）三后端逐格比对，**0 分歧**。**反向验证**：把 JS 的平局判据改成 ECMAScript 的「取较大者」（`if (twice >= p) q += 1n;`）⇒ 恰好那 **3 条平局格红**（`wasm printed '1000000000000000.3', expected '…0.2'`），其余 61 格全绿；还原后 `cmp` 证 `tools/wasm_run.js` 逐字节一致 ⇒ 64/64 绿。
+
+## §1.9 `list(<集合>)` 差一格：`vm_set_to_array` 把 1-based 句柄交给按 raw 索引解释的调用方
+
+**症状。** `contract_test.im:88` 的 `check(list(Z[1~3])[0] == 1, "list set")` 失败：`list(Z[1~3])` 打印 `[]`、`len(list(Z[1~3]))` 是 **0**、`list(Z[1~3])[0]` 是 nil。`list(Z)` / `list(N)` 也是 nil（那是另一回事，见下）。
+
+**根因：两套索引约定被接在一起。** `VAL_ARRAY` **值**里存的是 **1-based 句柄** —— 解释器唯一的构造点是 `value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL);`（`src/vm/vm.c:3240`），读者都减一：`vm_array_get(vm, obj->ival - 1, i)`（`src/vm/vm.c:3275`）、`vm_array_set(vm, obj->ival - 1, i, valv)`（`:3323`）、`idx = val->ival - 1`（`:2447`）。而整个 `vm_array_*` **函数族**收的是 **raw 池下标**（`vm_array_len(vm, idx)`，`src/vm/vm.c:789-795`）。`vm_set_to_array`（`src/vm/vm.c:1966`）**两条造数组的分支都以 `return aidx + 1;` 收尾** —— 交出去的已经是句柄 —— 而它的三个调用方全部按 raw 解释：
+
+- `src/runtime/runtime_posix.c:19`（`posix_core_len` 的集合分支）：`n = vm_array_len(vm, a)`
+- `src/runtime/runtime_posix.c:236`（`posix_core_list`）：`Value out = { VAL_ARRAY, idx + 1, 0, NULL };`
+- `src/runtime/runtime.c:134`（WIN32 的 `builtin_list`）：`ival = r + 1`
+
+⇒ `list(<集合>)` 交回的是**池里的下一个数组**（刚新建、通常是空的），`len(<集合>)` 量的也是它。
+
+**修法。** 两处 `return aidx + 1;` → `return aidx;`，并在函数头加一条约定注释（*returns a RAW array-pool index — the same convention `vm_array_*` take — which is what every caller assumes. (A `VAL_ARRAY` value carries `idx + 1`, so the callers that build a `Value` are the ones that add the 1.) -1 on failure.*）。**改函数而不是改三个调用方**：它就坐在按 raw 索引的 `vm_array_*` 族里，且三个调用方本来就假定 raw。
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `list(Z[1~3])` | `[]` | `[1, 2, 3]` |
+| `len(list(Z[1~3]))` | 0 | 3 |
+| `len(Z[1~3])` | 0 | 3 |
+| `list(Z[1~3])[0]` / `[2]` | nil / nil | 1 / 3 |
+| `len(list(Z[1~100]))` / `len(list(N[0~10]))` | 0 / 0 | 100 / 11 |
+| `list(<数组>)` | `[1, 2]` | `[1, 2]`（透传，未受影响） |
+
+**判据（且反向验证过）。** 进树回归 `vtest/list_set_off_by_one_v05.im` + CTest `list_set_off_by_one_runtime`（`CMakeLists.txt`，`LABELS "vm;language;regression"`，`PASS_REGULAR_EXPRESSION "listset-ok n=3 first=1 last=3 setlen=3"` / `FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0"`）。**反向验证**：把函数里两处 `return aidx;` 还原成 `return aidx + 1;` 重编 ⇒ 输出 `listset-ok n=0 first=nil last=nil setlen=0`、`listset-lit=0,nil`，FAIL 正则命中 ⇒ 红；还原修复重编 ⇒ `n=3 first=1 last=3 setlen=3`、`listset-lit=3,3` ⇒ 绿，`diff` 证源码逐字节一致。这条缺陷改的是**数值不是退出码**，所以只能断言数值。`EXP_CTEST` **107 → 108**，`docs/BOARD.md` §3 与 `docs/STATUS.md` §2/§2.1 同步为 **108 / 108**。
+
+**`contract_test.im` 剩下的 4 条失败是结构性的，不是缺陷。** 用一遍自动跳过的脚本（跑套件 → 读 stderr 的 `CONTRACT FAIL: <desc>` → 注释掉该行 → 重跑）穷举出**恰好 4 条**：`str2int`、`str2int invalid -> 0`（`:120`/`:121`）、`noise range`（`:170`）、`vram accounting`（`:174`）；跳过这 4 条后该套件 `rc=0`。`str2int` 由 `io_mod_register` 注册（`src/mod/io_mod.c:315`，`vm_register_builtin(vm, "str2int", builtin_str2int);` 在 `:334`），`noise2d`/`gui_canvas`/`gui_px`/`gui_vram_used` 属 gui_mod —— 而 **POSIX 构建根本不编这两个 mod**：`CMakeLists.txt:383-393` 是 `if(WIN32)` 分支（`src/mod/gui_mod.c src/mod/io_mod.c …` 在那里），POSIX 的 `else()`（`:394-400`）挂的是 `src/platform/posix_stubs.c`，其正文 `#define STUB_REG(name) void name(VM *vm) { (void)vm; }` 后跟着 `STUB_REG(gui_mod_register) STUB_REG(build_mod_register) STUB_REG(io_mod_register)` —— **空实现**。`contract_test.im:2` 自己也写着 `# usage: inimerse.exe --time-limit 60 contract_test.im`（Windows）。
+
+**顺带记录一条可诊断性缺陷（未修）：调用未注册的函数是静默留栈，不是报错。** 带不带 `--no-mods` 都一样：`say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 是 **false**；`say(str2int("abc"))` 打印 `abc`，而 `str2int("abc") == 0` 是 false；`noise2d(1.5, 2.5, 7)` → `7`（它的 seed 实参）；`gui_canvas(8, 8)` → `8`；`gui_vram_used()` → `0`。所以这 4 条失败表现为**值不对**，而不是「未知函数 `str2int`」—— 这正是上面那遍穷举必须靠注释跳过、而不可能靠报错定位的原因。
+
+**另一条本轮发现、**未修**的独立缺陷：放进变量的集合完全不可枚举。** 写上面那条回归时撞出来的，取证到此为止、另行立项。`z = Z[1~3]` 会被编成 `OP_SET_INTERVAL`（op 52）**加一条 `OP_NEW_SET`**（op 51），于是 `z` 是一个 `compCount > 0` 的 kind-0 集合，而 `vm_set_to_array` 在 `src/vm/vm.c:1989` 写着 `if (s->kind != 0 || s->compCount > 0) return -1;`。后果：
+
+| 探针 | 结果 | 判定 |
+| --- | --- | --- |
+| `len(Z[1~3])` / `len(list(Z[1~3]))`（内联） | 3 / 3 | ✓ |
+| `z = Z[1~3]` 后 `len(z)` | **0** | ✗ |
+| `z = Z[1~3]` 后 `list(z)` | **nil** | ✗ |
+| `z = Z[1~3]` 后 `size(z)` | **nil** | ✗ |
+| `z = Z[1~3]` 后 `min(z)` / `max(z)` / `2 in z` | 1 / 3 / true | ✓ |
+| `s2 = 1, 2, Z[7~9]` 后 `len(s2)`（应为 5） | **0** | ✗ |
+| `p = 1, 2, 3` 后 `len(p)` | 3 | ✓ |
+
+即 `min`/`max`/`in` 会走 `comps[]` 所以是对的，而 `len`/`list`/`size` 不展开分量所以是空的。上面那条进树回归与 `contract_test.im:88` 钉的都是**内联**形态，因此本轮修复对它们成立；变量形态是**另一个 bug**，未修，也未在回归里钉住（只在 `vtest/list_set_off_by_one_v05.im` 头部注释里写明）。另注：`list` 只存在于解释器，AOT 与 wasm 后端都没有实现（`grep '"list"' src/compilation/*.c` 为空），所以这条没有三后端比对可言。
 
 ## §2 执行通道效率比较
 

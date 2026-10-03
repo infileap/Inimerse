@@ -31,10 +31,12 @@ REPO = Path(__file__).resolve().parent.parent
 
 # ------------------------------------------------------------------ corpus
 #
-# Int/bool printing only.  The interpreter's float formatter is not
-# reproducible (it prints 1e-20 as "0." and mixes 6- and 7-digit precision),
-# so printed floats are a documented divergence and stay out of this corpus
-# rather than being asserted around.
+# Int, bool and float printing.  The backend used to print floats with plain
+# %g, a lossy format that rounds differently, so printed floats stayed out of
+# this corpus as a documented divergence.  nv_fmt_double now ports the
+# interpreter's vts_double (src/vm/vm.c) exactly, and the float cases below
+# pin that agreement — including the surprising ones (1e-20 prints "0",
+# 0.9999999 carries to "1", and a negative value that rounds away prints "-0").
 EQUIVALENCE = [
     # -- integer arithmetic and precedence
     ("int_add",            "say 1 + 2\n", "3\n"),
@@ -51,6 +53,32 @@ EQUIVALENCE = [
     # sides agree.  The SECOND step is where they part — see DIVERGENCE.
     ("int_lcg_first_step",
      "x = 1\nx = (x*1103515245+12345) % 2147483648\nsay x\n", "1103527590\n"),
+    # -- float printing: vts_double prints an integral float as an integer, an
+    # exactly representable value with all its digits, and anything else with up
+    # to six decimals.  Each row below is a case a naive %g, a naive 6-decimal
+    # truncation, or a formatter that drops the sign of a small negative gets
+    # wrong.
+    ("float_third",             "say 1.0 / 3.0\n", "0.333333\n"),
+    ("float_two_thirds",        "say 2.0 / 3.0\n", "0.666667\n"),
+    ("float_more_digits_kept",  "say 123456789.125\n", "123456789.125\n"),
+    ("float_whole_prints_int",  "say 1.0\n", "1\n"),
+    ("float_round_then_trim",   "say 0.1 + 0.2\n", "0.3\n"),
+    ("float_mid_keeps_digits",  "say 2147483648.5\n", "2147483648.5\n"),
+    ("float_place_value_kept",  "say 0.000001\n", "0.000001\n"),
+    ("float_rounds_to_zero",    "say 1e-20\n", "0\n"),
+    ("float_carry_into_int",    "say 0.9999999\n", "1\n"),
+    ("float_negative_sign",     "say 0.0 - 0.5\n", "-0.5\n"),
+    ("float_negative_tiny",     "say 0.0 - 1e-20\n", "-0\n"),
+    ("float_small_negative",    "say 0.0 - 1.0 / 3.0\n", "-0.333333\n"),
+    ("float_big_scientific",    "say 1e20\n", "1e+20\n"),
+    ("float_big_17_digits",
+     "say 12345678901234567890.0\n", "1.2345678901234567e+19\n"),
+    # -- the %.17g region: a tie rounds half-to-even, not to the larger n
+    ("float_g17_tie",        "say 1.0000000000000002e15\n", "1000000000000000.2\n"),
+    ("float_g17_tie2",       "say 2000000000000000.25\n", "2000000000000000.2\n"),
+    ("float_g17_tie_neg",    "say 0.0 - 1.0000000000000002e15\n", "-1000000000000000.2\n"),
+    ("float_g17_no_tie",     "say 1500000000000000.5\n", "1500000000000000.5\n"),
+    ("float_g17_integral",   "say 1.5e15\n", "1500000000000000\n"),
     # -- comparisons produce bools, printed as words
     ("cmp_lt",             "say 1 < 2\n", "true\n"),
     ("cmp_gt_false",       "say 3 > 4\n", "false\n"),

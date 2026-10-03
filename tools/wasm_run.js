@@ -23,6 +23,9 @@ function fmtInt(v) { return String(v); }
 // Mirrors vts_double() in src/vm/vm.c: nan -> "nan", 0 -> "0", integral
 // values within int64 print as integers, >= 1e15 uses %.17g, otherwise
 // integer part + up to 6 fractional digits with trailing zeros trimmed.
+// The sign is carried separately, so -0.5 is never printed as "0.5", and a
+// fraction that rounds up to 1e6 carries into the integer part, so 0.9999999
+// prints "1" rather than "0.1".
 function fmtFloat(d) {
   if (Number.isNaN(d)) return 'nan';
   // C's %.17g (what vts_double falls through to for non-finite values) prints
@@ -31,17 +34,77 @@ function fmtFloat(d) {
   if (d === -Infinity) return '-inf';
   if (d === 0) return '0';
   if (Number.isInteger(d) && Math.abs(d) < 9223372036854775808) return String(BigInt(d));
-  if (d >= 1e15 || d <= -1e15) return d.toPrecision(17).replace(/(\.\d*?)0+($|e)/, '$1$2').replace(/\.$/, '');
+  if (d >= 1e15 || d <= -1e15) return fmtG17(d);
   const neg = d < 0;
   const a = neg ? -d : d;
-  const ip = Math.trunc(a);
-  const frac = Math.round((a - ip) * 1e6);
-  let out = String(ip);
-  if (frac === 0) return neg ? '-' + out : out;
-  let fb = String(frac).padStart(6, '0');
-  fb = fb.replace(/0+$/, '');
-  if (fb === '') return neg ? '-' + out : out;
-  return (neg ? '-' : '') + out + '.' + fb;
+  let ip = Math.trunc(a);
+  let frac = Math.round((a - ip) * 1e6);
+  if (frac === 1000000) { ip += 1; frac = 0; }
+  const sign = neg ? '-' : '';
+  if (frac === 0) return sign + String(ip);
+  const fb = String(frac).padStart(6, '0').replace(/0+$/, '');
+  return sign + String(ip) + '.' + fb;
+}
+
+// Exact decimal expansion of a positive finite double, as {digits, exp10} where
+// digits * 10^exp10 === a.  Every double is m * 2^e; for e < 0 that is m * 5^-e
+// scaled by 10^e, so the expansion is finite and BigInt can hold it exactly.
+function exactDecimal(a) {
+  const buf = new DataView(new ArrayBuffer(8));
+  buf.setFloat64(0, a);
+  const hi = buf.getUint32(0);
+  const lo = buf.getUint32(4);
+  const expBits = (hi >>> 20) & 0x7ff;
+  let m = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo);
+  let e;
+  if (expBits === 0) { e = -1074; }              // subnormal
+  else { m |= 1n << 52n; e = expBits - 1075; }
+  if (e >= 0) return { digits: m << BigInt(e), exp10: 0 };
+  return { digits: m * 5n ** BigInt(-e), exp10: e };
+}
+
+// C's %.17g, which vts_double uses for |d| >= 1e15 (and for integral values too
+// large for int64): 17 significant digits, trailing zeros trimmed, and the
+// decimal exponent picks fixed vs scientific (scientific when the exponent is
+// < -4 or >= 17, the latter always with at least two digits, so 1e20 -> "1e+20").
+//
+// Deliberately NOT Number.prototype.toPrecision(17).  That follows ECMAScript's
+// tie rule -- "if there are two such n, pick the larger n" -- while glibc rounds
+// the exact binary value half-to-even, and the two genuinely disagree on ties.
+// 1.0000000000000002e15 is exactly 1000000000000000.25: toPrecision(17) renders
+// it "1000000000000000.3", %.17g renders it "...0.2".  A tie needs the exact
+// expansion to be 5 followed by nothing, which is why 1e20 and the other pinned
+// integers never caught this.
+function fmtG17(d) {
+  const neg = d < 0;
+  const { digits, exp10 } = exactDecimal(neg ? -d : d);
+  const L = digits.toString().length;            // exact digit count
+  let exp = L - 1 + exp10;                       // floor(log10(|d|))
+  let n = digits;
+  const k = L - 17;
+  if (k > 0) {
+    const p = 10n ** BigInt(k);
+    let q = n / p;
+    const r = n % p;
+    const twice = r * 2n;
+    if (twice > p || (twice === p && q % 2n === 1n)) q += 1n;   // half-to-even
+    n = q;
+  } else if (k < 0) {
+    n = n * 10n ** BigInt(-k);
+  }
+  if (n === 10n ** 17n) { n = 10n ** 16n; exp += 1; }           // carry out
+  const s = n.toString();                        // exactly 17 digits
+  if (exp < -4 || exp >= 17) {
+    const mant = (s.slice(0, 1) + '.' + s.slice(1)).replace(/0+$/, '').replace(/\.$/, '');
+    return (neg ? '-' : '') + mant + 'e' + (exp < 0 ? '-' : '+') + String(Math.abs(exp)).padStart(2, '0');
+  }
+  const pointAt = exp + 1;
+  let out;
+  if (pointAt <= 0) out = '0.' + '0'.repeat(-pointAt) + s;
+  else if (pointAt >= 17) out = s + '0'.repeat(pointAt - 17);
+  else out = s.slice(0, pointAt) + '.' + s.slice(pointAt);
+  if (out.indexOf('.') !== -1) out = out.replace(/0+$/, '').replace(/\.$/, '');
+  return (neg ? '-' : '') + out;
 }
 
 function bench(path, inst) {

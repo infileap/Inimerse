@@ -348,23 +348,16 @@ if(INIMERSE_CLANG AND NOT WIN32)
     # `and`/`or`/`not` must mean the same thing on all three backends: a
     # truth-value, short-circuit preserved, in value position and in condition
     # position (docs/AUDIT.md §1.0, §5 O0).  It found an inverted `not` in the
-    # wasm backend the day it was written.
+    # wasm backend the day it was written.  The same file also pins a `+` chain
+    # of three or more terms -- one OP_CONCAT, which used to wrap where the
+    # two-term OP_ADD promoted (docs/AUDIT.md §1.7) -- and printed floats, which
+    # each backend used to format differently.  It needs node because wasm is
+    # the third opinion.
     add_test(NAME logic_semantics_regression
              COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/logic_semantics.test.py
                      $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
                      --node ${INIMERSE_NODE})
     set_tests_properties(logic_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;compiler;wasm;regression")
-    # A `+` chain must not answer differently depending on how many terms it
-    # has: 3+ terms fold into one OP_CONCAT while 2 terms emit OP_ADD
-    # (src/compiler/compiler.c:715-786).  The interpreter's OP_CONCAT integer
-    # path added the two 32-bit payloads directly, so `x + 1` was 2147483648
-    # and `x + 1 + 0` wrapped to -2147483648.  It needs node because the wasm
-    # backend is the third opinion.
-    add_test(NAME arith_chain_semantics_regression
-             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/arith_chain_semantics.test.py
-                     $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
-                     --node ${INIMERSE_NODE})
-    set_tests_properties(arith_chain_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;runtime;compiler;wasm;regression")
   endif()
   set_tests_properties(wasm_probe wasm_host PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
 endif()
@@ -761,6 +754,15 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(call_arg_clobber_alone_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" PASS_REGULAR_EXPRESSION "callarg-alone-ok n=2" FAIL_REGULAR_EXPRESSION "n=1|n=0")
   add_test(NAME call_arg_clobber_shared_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_shared_v05.im)
   set_tests_properties(call_arg_clobber_shared_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" PASS_REGULAR_EXPRESSION "callarg-shared-ok m1=1 m2=2 m3=2 m4=1 m5=1 dk=1 nest=1 rep=2,2,2" FAIL_REGULAR_EXPRESSION "m2=1|dk=0|nest=0|rep=1,1,1")
+  # Regression for the `list`/`len` off-by-one on sets (docs/AUDIT.md §1.9):
+  # vm_set_to_array() handed back an already-1-based array handle while all three of
+  # its callers treat the result as a raw pool index, so `list(<set>)` answered the
+  # NEXT pool slot -- an unrelated, usually empty array -- and `len(<set>)` measured
+  # that same wrong array.  The defect changes VALUES, never the exit code, so this
+  # asserts numbers.  The remaining "a set in a variable is not enumerable at all"
+  # gap is a separate defect and is deliberately not pinned here.
+  add_test(NAME list_set_off_by_one_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/list_set_off_by_one_v05.im)
+  set_tests_properties(list_set_off_by_one_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "listset-ok n=3 first=1 last=3 setlen=3" FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0")
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

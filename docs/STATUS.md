@@ -2492,7 +2492,7 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 
 新增两个进树回归，形状相同 —— 同一份源码在**解释器 / AOT / wasm 三个后端各跑一遍，然后互相比对**：
 
-- `tools/logic_semantics.test.py`（**34 例**：值位置 8 / 真值性 4 / 优先级 2 / 链式嵌套 3 / `not` 7 / 条件位置 6 / 短路 4）；
+- `tools/logic_semantics.test.py`（**34 例**：值位置 8 / 真值性 4 / 优先级 2 / 链式嵌套 3 / `not` 7 / 条件位置 6 / 短路 4）（§10.44 起该文件增至 **64 例**）；
 - `tools/mod_semantics.test.py`（**16 例** `%`/`/` 边界，含 `REFUSED` 哨兵）。
 
 **短路必须被双向证明**：四条 `SHORT_CIRCUIT` 用**除零当副作用**（`z = 0` 前置，`0 and (1/z)` → `false`、`1 and (1/z)` → **REFUSED**、`1 or (1/z)` → `true`、`0 or (1/z)` → **REFUSED**，三后端一致）。理由是「不做短路的那个方向必须拒绝」——否则「右操作数根本没跑」也会伪装成通过。用除零而非字符串是因为 AOT 与 wasm 都拒绝字符串，而「全局变量在函数里赋值」是本仓**已钉住的分歧**（`global_write_from_func`），两者都当不了见证。
@@ -2568,5 +2568,76 @@ internal error, please report: running "rustup.cargo" failed: cannot create tran
 **诚实边界。**
 
 - 本轮**没有**修 AOT 的浮点打印，也**没有**修 `contract_test.im:80` 的 `list set`（两者都会把本轮提交撑成混合改动）。
-- 作业单写的是「加进 `tools/logic_semantics.test.py`」，实际落在**新建的 `tools/arith_chain_semantics.test.py`**：`logic_semantics.test.py` 的自述是「deliberately narrow（只谈 `and`/`or`/`not`）」，而本仓既有惯例是**每个被修掉的语义缺陷配一条自己的三后端套件**（`mod_semantics.test.py` 对 `%`、`logic_semantics.test.py` 对 `and`/`or`）。新增一条 CTest 也让计数变化**显式可见**。这是**有意的偏离**，不是遗漏。
+- 作业单写的是「加进 `tools/logic_semantics.test.py`」，实际落在**新建的 `tools/arith_chain_semantics.test.py`**：`logic_semantics.test.py` 的自述是「deliberately narrow（只谈 `and`/`or`/`not`）」，而本仓既有惯例是**每个被修掉的语义缺陷配一条自己的三后端套件**（`mod_semantics.test.py` 对 `%`、`logic_semantics.test.py` 对 `and`/`or`）。新增一条 CTest 也让计数变化**显式可见**。这是**有意的偏离**，不是遗漏。（**§10.44 已按用户裁定改回**：那 10 格链用例移进了 `tools/logic_semantics.test.py`，`arith_chain_semantics_regression` 连同 `tools/arith_chain_semantics.test.py` 一起删掉了 —— 见下节。）
+
+## 10.44 三份浮点格式化器合一 + `list(<集合>)` 差一格（BOARD 行 138）
+
+**起因。** 本节要清掉 §10.43 结尾「附带的两个发现（均已取证，未修）」的 ① 和 ②，外加一条用户裁定：把 §10.43 临时单开的 CTest 并回既有套件。
+
+### 一、AOT 打印浮点丢精度 → 三个后端的三份实现合一
+
+**先实测，再定修法。** 三个后端本来各有**一份独立**的浮点格式化器：AOT 的 `nv_say` 用 `%g`，`tools/wasm_run.js` 的 `fmtFloat` 是一份 JS 重写，解释器走 `vts_double`（`src/vm/vm.c:1036-1063`）。逐格量出来是**五类分歧，不是一类**：
+
+| `say(…)` | 解释器 | AOT | wasm |
+| --- | --- | --- | --- |
+| `0.9999999` | `0.1` | `0.1` | `0.1` ← **三方全错** |
+| `2.0000001` | `2.` | `2.` | `2` ← 多一个点 |
+| `0.0 - 0.5` | `0.5` | `0.5` | `-0.5` ← 解释器与 AOT **丢符号** |
+| `0.0 - 1e-20` | `0.` | `0.` | `-0` |
+| `1e20` | `1e+20` | `1e+20` | `1.e+20` ← wasm 的点位置错 |
+| `123456789.125` | `123456789.125` | `1.23457e+08` | `123456789.125` ← AOT 丢精度 |
+| `2147483648.5` | `2147483648.5` | `2.14748e+09` | `2147483648.5` |
+
+三个 bug 各自独立，却都被同一个错误前提掩盖：**`AOT` 的注释断言「解释器的格式化器不可复现（它把 1e-20 打成 `0.`、6 位与 7 位精度混用），所以打印浮点是有记录的分歧」** —— 这句话被写进了 `tools/aot_native.test.py:34-37`，并据此把浮点**排除在语料外**。审计把 bug 写成了规范，于是它活了很久。
+
+**裁定：不把解释器的 bug 移植过去。** `fmtFloat` 是三者中数学上正确的那个，于是**以它为基准**反过来修 `vts_double`，再把三份实现全部对齐到修好的规范。规范：`nan` → `"nan"`；`dv == 0.0`（含 `-0.0`）→ `"0"`；整值且在 int64 内 → 整数文本；`|dv| >= 1e15` → `%.17g`；否则去符号取幅值，`ip = (long long)a`、`frac = (long long)((a - ip) * 1000000.0 + 0.5)`，**`frac == 1000000` 时进位**（`0.9999999` 由此才不再是 `0.1`），整数部分用 `vts_int(ib, sizeof ib, neg ? -ip : ip)` 打印、**且只在 `neg && ip == 0` 时单独发一个 `'-'`**（于是 `-1e-20` 是 `-0` 而不是 `0`），`frac == 0` 直接返回（不再吐孤零零的 `.`），否则 `.` + 六位补零后修剪尾零。
+
+**修了三处。** ①解释器：`src/vm/vm.c` 的 `vts_double` 按上式重写；②AOT：`src/compilation/aot_native.c` 的 `kPreamble` 里新增 `#include <string.h>` 与 `static void nv_fmt_double(char *buf, size_t bufsz, double dv)`（同算法，`snprintf`/`strlen`），`nv_say` 的浮点分支改为 `{ char b[64]; nv_fmt_double(b, sizeof b, a.f); printf("%s\n", b); }` —— AOT 没有 `str()`、也没有第二个打印浮点的位置，所以这是唯一一处；③wasm：`tools/wasm_run.js` 的 `fmtFloat` 重写（符号用变量的形式给出）并新增 `fmtG17(d)`（`toPrecision(17)` 后按 `'e'` 切开、修剪尾数与多余的点、再拼回指数 —— 这才是 `1e+20` 不再是 `1.e+20` 的原因）。
+
+**自己犯的错也记一笔。** `ip` 是**幅值**，第一版把 `vts_int(..., ip)` 直接打出去，于是 `-1.5` 成了 `1.5`；被 `.verify/edge.im` 当场抓到，改成 `neg ? -ip : ip` 才过。三个后端里同一个错各修了一遍 —— 这正是「三份实现」的代价。
+
+**判据与反向验证。** 15 条浮点等价行插进 `tools/aot_native.test.py` 的 `EQUIVALENCE`，等价用例 **46 → 65**，全量报 **`aot_native.test: 78 cases (65 equivalence, 3 pinned divergences, 10 refusal), 0 failures`**；同时把 `:34-37` 那条「把 bug 写成规范」的注释换成「`nv_fmt_double` 现在移植 `vts_double`，浮点**在语料内**」。另在 `tools/logic_semantics.test.py` 加 `FLOAT` 表 20 格（把 wasm 的 JS 格式化器也拉进门禁），该套件 **58 → 64 例**。**反向验证**：把 `tools/wasm_run.js` 的 `fmtFloat` 改坏（去符号 + 去进位）⇒ **4/64 红**，报的正是 `say 0.0 - 0.5` 期望 `-0.5` 实得 `0.5` 一类；还原（`cmp` 证逐字节一致）⇒ 全绿。**所以这些格子不是摆设。**
+
+**第二轮（提交前自查）又抓出一类：平局的舍入规则不同 —— 这一类的修法与上面同批。** 14 格全绿之后，我又问了一次「`%.17g` 与 `toPrecision(17)` 真的等价吗」，答案是**不等价**：C 的 `%.17g` 按 IEEE 默认（round-half-to-**even**）处理平局，ECMAScript 的 `toPrecision` 规范却是「若有两个这样的 n，取**较大**者」。**这不是理论问题**：`1.0000000000000002e15` 的精确值就是 `1000000000000000.25`，取 17 位有效数字正好是平局 —— glibc 给 `1000000000000000.2`，JS 给 `1000000000000000.3`；`2000000000000000.25` 与 `0.0 - 1.0000000000000002e15` 同样。**解释器与 AOT 是同一份 glibc，所以一致，只有 wasm 那份 JS 是异类**（与 `%g` 那批的异类方向相反）。为什么 14 格没抓到：**平局要求精确十进制展开的**第 18 位**恰好是 5 且其后全零**，而 `1e20`、`12345678901234567890.0` 这些被钉住的整数都不是平局 —— 判据的**取样区间**又一次成了漏点（与 §10.43「样本长度」同型）。修法**封闭在 `tools/wasm_run.js` 一个文件里**：新增 `exactDecimal(a)`（double 必是 `m * 2^e`，`e < 0` 时即 `m * 5^-e × 10^e`，精确展开有限、BigInt 装得下），`fmtG17` 改为在精确整数上取 17 位有效数字、`2r == 10^k` 时看 `q` 的奇偶（**五成双**），再按 `%g` 规则选定点/科学计数；解释器与 AOT 不动。验证三件：①`FLOAT` 表 **14 → 20 格**、套件 **58 → 64 例**；②`aot_native.test.py` 等价 **60 → 65**；③**随机扫描 380 个 double**（六个量级区间 + `10^14…10^19` 的 `+0.25/0.5/0.75`）三后端逐格比对 **0 分歧**。**反向验证**：把平局判据改成 ECMAScript 的 `if (twice >= p) q += 1n;` ⇒ **恰好奇迹般地只有那 3 条平局格红**（`wasm printed '1000000000000000.3', expected '…0.2'`），其余 61 格全绿；还原后 `cmp` 证逐字节一致 ⇒ 64/64 绿。
+
+### 二、把 §10.43 临时单开的 CTest 并回既有套件
+
+按用户裁定：`tools/arith_chain_semantics.test.py` **删除**（`git rm`），它在 `CMakeLists.txt` 的注册块移除 —— **`arith_chain_semantics_regression` 这个 CTest 现在不存在了**。10 格 3 项以上 `+` 链成了 `tools/logic_semantics.test.py` 的 `CHAIN` 表（`(label, source, want)` 三元组，因为链要**先赋值再算**），该套件 **34 → 64 例**（`TABLE` 24 + `COND` 6 + `SHORT_CIRCUIT` 4 + `CHAIN` 10 + `FLOAT` 20），`EXP_CTEST` **108 → 107**。取舍说清楚：并回之后**计数变化不再显式可见**（这正是 §10.43 当初新开一条的理由），换来的是一个语义面只有一条入口、`logic_semantics.test.py` 的自述不再与内容矛盾 —— 自述里**明写**了它现在也钉 `+` 链与打印浮点。
+
+### 三、`list(<集合>)` 差一格：`vm_set_to_array` 把 1-based 句柄交给按 raw 索引解释的调用方
+
+**症状。** `contract_test.im:88` 的 `list set` 失败：`list(Z[1~3])` 打印 `[]`、`len(list(Z[1~3]))` 是 **0**、`[0]` 是 nil。
+
+**根因：两套索引约定被接在一起。** `VAL_ARRAY` **值**里存的是 **1-based 句柄**（构造点 `src/vm/vm.c:3240` 的 `value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL)`；读者都减一，见 `src/vm/vm.c:3275`、`:3323`、`:2447`），而整个 `vm_array_*` **函数族**收的是 **raw 池下标**（`vm_array_len(vm, idx)`，`src/vm/vm.c:789-795`）。`vm_set_to_array`（`src/vm/vm.c:1966`）**两条造数组的分支都以 `return aidx + 1;` 收尾**，而它的三个调用方全部按 raw 解释：`src/runtime/runtime_posix.c:19`（`len` 的集合分支，`vm_array_len(vm, a)`）、`:236`（`list`，`{ VAL_ARRAY, idx + 1 }`）、`src/runtime/runtime.c:134`（WIN32 的 `list`，`ival = r + 1`）。⇒ `list(<集合>)` 交回的是**池里的下一个数组**（刚新建、通常是空的）。
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `list(Z[1~3])` | `[]` | `[1, 2, 3]` |
+| `len(list(Z[1~3]))` / `len(Z[1~3])` | 0 / 0 | 3 / 3 |
+| `list(Z[1~3])[0]` / `[2]` | nil / nil | 1 / 3 |
+| `len(list(Z[1~100]))` / `len(list(N[0~10]))` | 0 / 0 | 100 / 11 |
+| `list(<数组>)` | `[1, 2]` | `[1, 2]`（透传，未受影响） |
+
+**修法。** 两处 `return aidx + 1;` → `return aidx;` + 函数头一条约定注释（raw 索引）。**改函数而不是改三个调用方**：它就坐在按 raw 索引的 `vm_array_*` 族里，且三个调用方本来就假定 raw。**注意这条缺陷只改数值、不改退出码**，所以回归只能断言数值。
+
+**判据与反向验证。** 进树回归 `vtest/list_set_off_by_one_v05.im` + CTest `list_set_off_by_one_runtime`（`CMakeLists.txt`，`LABELS "vm;language;regression"`，`PASS_REGULAR_EXPRESSION "listset-ok n=3 first=1 last=3 setlen=3"` / `FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0"`）。**反向验证**：把函数里两处还原成 `return aidx + 1;` 重编 ⇒ `listset-ok n=0 first=nil last=nil setlen=0`、FAIL 正则命中 ⇒ 红；恢复重编 ⇒ `n=3 first=1 last=3 setlen=3` ⇒ 绿，`diff` 证源码逐字节一致。
+
+### 四、`contract_test.im` 剩下的 4 条失败是结构性的，不是缺陷
+
+用一遍自动跳过的脚本（跑套件 → 读 stderr 的 `CONTRACT FAIL: <desc>` → 注释掉该行 → 重跑）穷举出**恰好 4 条**：`str2int`、`str2int invalid -> 0`（`:120`/`:121`）、`noise range`（`:170`）、`vram accounting`（`:174`）；跳过这 4 条后该套件 `rc=0`。所以 `list set` 是它里面**唯一**的真语言缺陷。这 4 条属 io_mod / gui_mod，而 **POSIX 构建根本不编这两个 mod** —— `CMakeLists.txt:383-393` 是 `if(WIN32)`，POSIX 的 `else()`（`:394-400`）挂的是 `src/platform/posix_stubs.c`，其 `STUB_REG(...)` 是**空实现**；该套件自己写着 `# usage: inimerse.exe --time-limit 60 contract_test.im`（Windows）。
+
+**顺带记录一条可诊断性缺陷（未修）。调用未注册的函数是静默留栈，不是报错。** `say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 是 **false**；`noise2d(1.5, 2.5, 7)` → `7`；`gui_canvas(8, 8)` → `8`；`gui_vram_used()` → `0`（带不带 `--no-mods` 一样）。**这 4 条失败表现为「值不对」而非「未知函数」，正是上面那遍穷举只能靠注释跳过、不可能靠报错定位的原因。**
+
+### 五、门禁实测（本轮）
+
+**九阶段全绿 —— 这是本轮与 §10.43 的关键差别。** `build (Release, configure+incremental, -j12)` / `ctest (expect 108/108, 0 skipped)` / `economy migration (§43.5, expect 39/39)` / `node protocol suites (12/12 passed)` / `dsh-inimerse plugin (55/55 checks passed, live)` / **`oauth_loop crate (expect 75/75)`** / `userdata ignore rules` / `docs relative links (93 files, 383 links, 0 broken)` / `docs backtick paths (332 refs, 0 broken)` 全 **PASS**，末行 `gate: OK — every stage passed.`、`GATE_RC=0`。ctest 本体：**`100% tests passed, 0 tests failed out of 108`**，`gate: ctest reported 0 skipped test(s)`，`Total Test time (real) = 23.11 sec`。
+
+**§10.43 那条环境失败这次没出现。** 上一轮同一台机器上 `oauth_loop crate` 是 **exit 46**、连 `cargo --version` 都起不来（`DBus error … cannot create transient scope`），当时只能宣称「八阶段绿 + 一条环境失败」。本轮同一阶段 **PASS**，说明那是**间歇性的沙箱/systemd 状态**而非本仓缺陷 —— 也说明单次门禁结果不能当作「这个阶段坏了」的证据，要看它是否复现。
+
+### 六、诚实边界
+
+- **另一条本轮发现、未修的独立缺陷：放进变量的集合完全不可枚举。** `z = Z[1~3]` 会被编成 `OP_SET_INTERVAL` **加一条 `OP_NEW_SET`**，于是 `z` 是 `compCount > 0` 的 kind-0 集合，正好撞上 `src/vm/vm.c:1989` 的 `if (s->kind != 0 || s->compCount > 0) return -1;`：`len(z)` 0 / `list(z)` nil / `size(z)` nil，而 `min(z)` 1 / `max(z)` 3 / `2 in z` true **全对**（那三个走 `comps[]`）。`s2 = 1, 2, Z[7~9]` 后 `len(s2)` 是 0（应为 5）。上面那条进树回归与 `contract_test.im:88` 钉的都是**内联**形态，故本轮修复对它们成立；变量形态是**另一个 bug**，未修，只在 `vtest/list_set_off_by_one_v05.im` 头部注释里写明，另行立项。
+- `list` **只存在于解释器**：AOT 与 wasm 后端都没实现（`grep '"list"' src/compilation/*.c` 为空），所以这条没有三后端比对可言，判据只能是解释器侧的数值断言。
+- `contract_test.im` **仍未进门禁**。它本来就是手动/dormant 套件（`grep -in contract CMakeLists.txt` 只有两处无关注释）。本轮往它 §1 补的断言验证了契约，但**不被门禁自动执行** —— 这点必须写在明处，不能让「断言加进去了」听起来像「它被守住了」。
+- `type` **是保留字**：`say type(z)` 直接编译失败（`expected 'expression', but got 'type' (type 129)`），`say size z`（不带括号）也失败（`... 'size' (type 66)`）—— 必须写成 `type(z)` / `size(z)`。这是本轮探针反复踩到的坑。
 

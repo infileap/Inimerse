@@ -1045,19 +1045,20 @@ static void vts_double(char *buf, int bufsz, double dv) {
         snprintf(buf, bufsz, "%.17g", dv);
         return;
     }
-    long long ip = (long long)dv;
-    double fp = dv - (double)ip;
-    if (fp < 0) fp = -fp;
-    char ib[32]; vts_int(ib, sizeof(ib), ip);
+    const int neg = dv < 0;
+    double a = neg ? -dv : dv;               /* |dv| < 1e15 here, so the casts are in range */
+    long long ip = (long long)a;
+    long long frac = (long long)((a - (double)ip) * 1000000.0 + 0.5);
+    if (frac == 1000000) { ip += 1; frac = 0; }          /* 0.9999999 prints "1", not "0.1" */
+    char ib[32]; vts_int(ib, sizeof(ib), neg ? -ip : ip);
     int pos = 0;
+    if (neg && ip == 0 && pos < bufsz - 1) buf[pos++] = '-';   /* -1e-20 is not 0 */
     for (int i = 0; ib[i] && pos < bufsz - 1; i++) buf[pos++] = ib[i];
+    if (frac == 0) { buf[pos] = '\0'; return; }          /* no dangling '.' when it rounds away */
     if (pos < bufsz - 1) buf[pos++] = '.';
-    long long frac = (long long)(fp * 1000000.0 + 0.5);
-    if (frac == 0) { buf[pos] = '\0'; return; }
     char fb[32]; snprintf(fb, sizeof(fb), "%06lld", frac);  /* keep leading zeros: 5000 -> "005000" */
     int flen = (int)strlen(fb);
     while (flen > 0 && fb[flen - 1] == '0') fb[--flen] = '\0';  /* trim trailing zeros only */
-    if (flen == 0) { buf[pos] = '\0'; return; }
     for (int i = 0; i < flen && pos < bufsz - 1; i++) buf[pos++] = fb[i];
     buf[pos] = '\0';
 }
@@ -1959,6 +1960,9 @@ static int set_equal(VM *vm, int aidx, int bidx) {
     }
     return 1;
 }
+/* Returns a RAW array-pool index, i.e. the same convention vm_array_* take --
+   which is what every caller assumes.  (A VAL_ARRAY value carries idx + 1, so
+   the callers that build a Value are the ones that add the 1.)  -1 on failure. */
 int vm_set_to_array(VM *vm, int sidx) {
     SetObj *s = vm_set_slot(vm, sidx);
     if (!s) return -1;
@@ -1980,7 +1984,7 @@ int vm_set_to_array(VM *vm, int sidx) {
             else { v.type = VAL_FLOAT; v.fval = x; v.ival = 0; v.sval = NULL; }
             if (builtin_contains(s->nameIdx, &v)) vm_array_push(vm, aidx, &v);
         }
-        return aidx + 1;
+        return aidx;
     }
     if (s->kind != 0 || s->compCount > 0) return -1;
     int aidx = vm_array_new(vm);
@@ -1990,7 +1994,7 @@ int vm_set_to_array(VM *vm, int sidx) {
         vm_array_push(vm, aidx, &v);
     }
     for (int i = 0; i < s->count; i++) vm_array_push(vm, aidx, &s->items[i]);
-    return aidx + 1;
+    return aidx;
 }
 static void named_range(int bi, double *lo, double *hi) {
     *lo = -1.0e308; *hi = 1.0e308;
