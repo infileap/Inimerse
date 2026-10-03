@@ -280,9 +280,9 @@ function renderBrowse() {
     <button class="btn primary" id="btn-save-nodes" style="margin-top:6px">保存节点地址</button>
     <span class="muted" id="node-msg"></span></div>
   <div class="card"><h3>🔗 关联</h3>
-    <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button></div></div>
+    <div class="step"><span class="dot">🐙</span><div><b>GitHub</b> <span id="oauth-gh-status" class="muted">未关联</span><br><input id="oauth-client" class="code" style="width:180px" placeholder="OAuth Client ID"><input id="oauth-secret" class="code" type="password" style="width:200px" placeholder="OAuth Client Secret"><input id="oauth-redirect" class="code" style="width:240px" value="http://127.0.0.1:8765/callback"><button class="btn" id="oauth-gh">授权</button></div></div>
     <div class="step"><span class="dot">📺</span><div><b>Bilibili</b> <span id="oauth-bili-status" class="muted">未关联</span><br><button class="btn" id="oauth-bili">打开授权页</button></div></div>
-    <div class="muted" id="links-msg">授权码由 PKCE 换取令牌（无需 client secret），校验 state 后保存到 linked_accounts.json。GitHub 请把 OAuth App 的 callback 设为上面的地址。</div>
+    <div class="muted" id="links-msg">GitHub 不接受纯 PKCE 的授权码兑换，必须同时提交 client secret（PKCE 是加固，不是替代）。本机自用的 secret 只存在这台机器的 userdata 里，不会进仓库也不随程序分发。校验 state 后保存到 linked_accounts.json；GitHub 请把 OAuth App 的 callback 设为上面的地址。</div>
   </div>
   <button class="btn" data-go="workbench">→ 去工作台</button>`;
 }
@@ -359,6 +359,18 @@ function bindBrowse() {
     // overriding a freshly typed one.
     const box = (($('#oauth-client') && $('#oauth-client').value) || '').trim();
     const cid = box || (localStorage.getItem('oauth_client_id') || '').trim();
+    // GitHub refuses a token exchange that omits the client secret: its docs
+    // list client_secret as Required, with no "unless PKCE" clause.  The secret
+    // lives in userdata via the `oauth_set_secret` command -- not in
+    // localStorage, which the WebView keeps in a plainly readable place.
+    const secret = (($('#oauth-secret') && $('#oauth-secret').value) || '').trim();
+    if (secret) {
+      const stored = await invoke('oauth_set_secret', { provider, secret });
+      if (!stored || !stored.ok) {
+        if ($('#links-msg')) $('#links-msg').textContent = '❌ 无法保存 client secret：' + ((stored && stored.error) || '未知错误');
+        return;
+      }
+    }
     const red = (($('#oauth-redirect') && $('#oauth-redirect').value) || 'http://127.0.0.1:8765/callback').trim();
     if (!cid) { if ($('#links-msg')) $('#links-msg').textContent = '请先填写 GitHub OAuth Client ID'; return; }
     localStorage.setItem('oauth_client_id', cid);

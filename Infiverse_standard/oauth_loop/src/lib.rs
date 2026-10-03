@@ -406,13 +406,74 @@ pub fn token_request_body(
     redirect_uri: &str,
     code_verifier: &str,
 ) -> Option<String> {
+    token_request_body_with_secret(provider, code, redirect_uri, code_verifier, None)
+}
+
+/// The same body, plus `client_secret` when the caller has one.
+///
+/// PKCE is **not** a substitute for `client_secret` on GitHub's OAuth Apps.  The
+/// token-exchange table in GitHub's "Authorizing OAuth apps" documentation lists
+/// `client_secret` as plain `Required` -- there is no "unless PKCE" clause -- and
+/// says of `code_verifier` only that it is "Required if `code_challenge` was sent
+/// during the user authorization".  A correct verifier without the secret is
+/// answered with `incorrect_client_credentials`, an error that names the client
+/// id while actually missing the secret.
+///
+/// The crate models RFC 7636's public-client flow, where the verifier *does*
+/// replace the secret, so dropping the secret was a defensible reading of the
+/// spec and still the wrong one for this provider.  A `None` secret therefore
+/// does not assert that none is needed -- `secret_is_required` is the provider's
+/// own answer, and callers must consult it.
+pub fn token_request_body_with_secret(
+    provider: &str,
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    client_secret: Option<&str>,
+) -> Option<String> {
     let _ = token_endpoint(provider)?;
-    Some(format!(
+    let mut body = format!(
         "grant_type=authorization_code&code={}&redirect_uri={}&code_verifier={}",
         form_encode(code),
         form_encode(redirect_uri),
         form_encode(code_verifier),
-    ))
+    );
+    // An empty secret is treated as absent: sending `client_secret=` is the same
+    // request GitHub rejects, just with the field name attached.
+    if let Some(secret) = client_secret.filter(|s| !s.trim().is_empty()) {
+        body.push_str("&client_secret=");
+        body.push_str(&form_encode(secret.trim()));
+    }
+    Some(body)
+}
+
+/// Whether this provider refuses a token exchange that carries no client secret.
+///
+/// GitHub's OAuth Apps do.  That is a property of the provider, not of PKCE, and
+/// it is the single fact this row spent four failed round trips rediscovering.
+pub fn secret_is_required(provider: &str) -> bool {
+    provider.eq_ignore_ascii_case("github")
+}
+
+/// Environment variable a `client_secret` may be supplied through.
+///
+/// Named after the provider so a machine can hold several without them colliding.
+pub fn client_secret_env_var(provider: &str) -> String {
+    format!("INFIVERSE_{}_CLIENT_SECRET", provider.to_ascii_uppercase())
+}
+
+/// A `client_secret` from the environment, if one is set and non-empty.
+///
+/// This is the crate's only input-reading side effect, and it is here rather than
+/// in the shell so that a test can exercise the same lookup the shell uses.  It
+/// returns the secret as a `String` and callers must not log it: the value is a
+/// credential, and the reason the shell asks for it at all is that GitHub will
+/// not accept an exchange without it.
+pub fn read_client_secret(provider: &str) -> Option<String> {
+    std::env::var(client_secret_env_var(provider))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Percent-encode one form value (`RFC 3986` unreserved set kept literal).
@@ -1888,6 +1949,78 @@ mod tests {
     fn token_request_body_refuses_an_unknown_provider() {
         assert!(token_request_body("gitlab", "c", "r", "v").is_none());
         assert!(token_endpoint("gitlab").is_none());
+    }
+
+    /// The finding this row cost four round trips: on GitHub a correct PKCE
+    /// verifier with no `client_secret` is refused, and the refusal names the
+    /// client id.  A body carrying both is what actually redeems a code.
+    #[test]
+    fn a_secret_is_carried_alongside_the_pkce_verifier() {
+        let body = token_request_body_with_secret(
+            "github",
+            "THECODE",
+            "http://127.0.0.1:8765/callback",
+            "THEVERIFIER",
+            Some("s3cr3t-value"),
+        )
+        .expect("github is supported");
+
+        assert!(body.contains("code_verifier=THEVERIFIER"), "PKCE proof must survive: {body}");
+        assert!(body.contains("client_secret=s3cr3t-value"), "secret must be present: {body}");
+        // Order is not meaningful to the provider, but the presence of both is.
+        assert_eq!(body.matches("client_secret=").count(), 1, "secret sent twice: {body}");
+    }
+
+    #[test]
+    fn a_secret_that_needs_encoding_is_encoded() {
+        let body = token_request_body_with_secret("github", "c", "r", "v", Some("a b&c=d"))
+            .expect("github is supported");
+        assert!(
+            body.contains("client_secret=a%20b%26c%3Dd"),
+            "the secret is a credentialed value and must be encoded: {body}"
+        );
+        assert!(!body.contains("client_secret=a b&c=d"), "secret was not encoded: {body}");
+    }
+
+    /// An empty or all-whitespace secret is treated as absent.  Sending
+    /// `client_secret=` is the same request GitHub rejects, with a field name
+    /// attached, so passing `Some("")` must not look like compliance.
+    #[test]
+    fn an_empty_secret_is_omitted_rather_than_sent_blank() {
+        for blank in ["", "   ", "\t\n"] {
+            let body = token_request_body_with_secret("github", "c", "r", "v", Some(blank))
+                .expect("github is supported");
+            assert!(
+                !body.contains("client_secret"),
+                "a blank secret must not be sent as if present ({blank:?}): {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_secret_carrying_stray_whitespace_is_trimmed() {
+        let body = token_request_body_with_secret("github", "c", "r", "v", Some("  abc123  "))
+            .expect("github is supported");
+        assert!(body.contains("client_secret=abc123"), "secret not trimmed: {body}");
+        assert!(!body.contains("secret=%20"), "whitespace survived: {body}");
+    }
+
+    /// Only GitHub demands the secret; saying otherwise for every provider would
+    /// make the shell refuse exchanges the provider would have accepted.
+    #[test]
+    fn secret_requirement_is_the_providers_own_answer() {
+        assert!(secret_is_required("github"));
+        assert!(secret_is_required("GitHub"), "lookup must be case-insensitive");
+        assert!(!secret_is_required("bilibili"));
+        // An unknown provider is not secretly required; it fails earlier, at
+        // token_endpoint, with a message about the provider rather than a secret.
+        assert!(!secret_is_required("gitlab"));
+    }
+
+    #[test]
+    fn the_secret_env_var_is_namespaced_by_provider() {
+        assert_eq!(client_secret_env_var("github"), "INFIVERSE_GITHUB_CLIENT_SECRET");
+        assert_eq!(client_secret_env_var("bilibili"), "INFIVERSE_BILIBILI_CLIENT_SECRET");
     }
 
     #[test]

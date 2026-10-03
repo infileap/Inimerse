@@ -30,6 +30,20 @@ fn app_root() -> PathBuf {
         .map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 fn user_data(name: &str) -> PathBuf { app_root().join("userdata").join(name) }
+/// Where a provider's `client_secret` is kept between runs.
+///
+/// One file per provider so a machine can hold several, and the name is derived
+/// from the provider rather than taken from the caller: a caller-supplied path
+/// would turn a credential write into an arbitrary-file write.
+fn oauth_secret_path(provider: &str) -> PathBuf {
+    let slug: String = provider
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    user_data(&format!("oauth_secret_{slug}.txt"))
+}
 fn engine_root() -> PathBuf {
     if let Ok(root) = std::env::var("INIMERSE_ROOT") { let p = PathBuf::from(root); if p.is_dir() { return p; } }
     app_root().parent().map(PathBuf::from).unwrap_or_else(app_root)
@@ -1056,6 +1070,30 @@ fn oauth_pkce_start() -> serde_json::Value {
     serde_json::json!({ "ok": true, "challenge": pkce.challenge, "method": pkce.method() })
 }
 
+/// Store the `client_secret` a provider's token exchange demands.
+///
+/// GitHub's OAuth Apps list `client_secret` as plain `Required` for the exchange,
+/// so PKCE alone cannot redeem a code there.  The secret is written to the
+/// local `userdata` directory: it never enters the repository and is never
+/// compiled into the binary, which is the most a desktop app can honestly offer.
+/// It is deliberately *not* returned to the UI by any command.
+#[tauri::command]
+fn oauth_set_secret(provider: String, secret: String) -> serde_json::Value {
+    if provider.trim().is_empty() {
+        return serde_json::json!({ "ok": false, "error": "provider is required" });
+    }
+    let path = oauth_secret_path(&provider);
+    if let Some(dir) = path.parent() {
+        if let Err(e) = fs::create_dir_all(dir) {
+            return serde_json::json!({ "ok": false, "error": format!("cannot create userdata dir: {e}") });
+        }
+    }
+    match fs::write(&path, secret.trim()) {
+        Ok(()) => serde_json::json!({ "ok": true, "provider": provider, "saved": path.to_string_lossy() }),
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("cannot write client secret: {e}") }),
+    }
+}
+
 /// Finish the flow: verify the callback, redeem the code, and persist the account.
 ///
 /// This is the `oauth_bind` the UI's copy (`app.js:285`) had been promising
@@ -1084,7 +1122,38 @@ fn oauth_bind(provider: String, expected_state: String, client_id: String, redir
     let Some(endpoint) = oauth_loop::token_endpoint(&provider) else {
         return serde_json::json!({ "ok": false, "error": format!("unsupported provider: {provider}") });
     };
-    let Some(body) = oauth_loop::token_request_body(&provider, &code, &redirect_uri, &verifier) else {
+    // ① The provider's own answer to "can this exchange omit the secret?".
+    //
+    // GitHub's OAuth Apps say no: its token-exchange table lists `client_secret`
+    // as plain `Required`, with no "unless PKCE" clause, so PKCE hardens the flow
+    // without replacing the secret.  Sending the correct 43-character verifier
+    // and no secret is answered with `incorrect_client_credentials` -- an error
+    // that names the client id while actually missing the secret, which is why
+    // this took four round trips to pin down.  Failing here, with the reason,
+    // beats letting the provider phrase it as a client-id problem.
+    let secret = fs::read_to_string(oauth_secret_path(&provider))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| oauth_loop::read_client_secret(&provider));
+    if oauth_loop::secret_is_required(&provider) && secret.is_none() {
+        return serde_json::json!({
+            "ok": false,
+            "error": format!(
+                "{provider} requires a client secret for this exchange (PKCE alone is not enough); \
+                 paste it into the field on this panel, or set {} in the environment",
+                oauth_loop::client_secret_env_var(&provider)
+            ),
+        });
+    }
+
+    let Some(body) = oauth_loop::token_request_body_with_secret(
+        &provider,
+        &code,
+        &redirect_uri,
+        &verifier,
+        secret.as_deref(),
+    ) else {
         return serde_json::json!({ "ok": false, "error": "cannot build token request" });
     };
 
@@ -1465,6 +1534,7 @@ pub fn run() {
             oauth_start_callback,
             oauth_poll_callback,
             oauth_pkce_start,
+            oauth_set_secret,
             oauth_bind,
             engine_versions,
             engine_select,

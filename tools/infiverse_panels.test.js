@@ -137,6 +137,7 @@ const EXPECTED_IPC = [
             if (cmd === 'oauth_status') return Promise.resolve({ linked: false, provider: args && args.provider });
             if (cmd === 'oauth_start_callback') return Promise.resolve({ ok: true, addr: '127.0.0.1:8765' });
             if (cmd === 'oauth_pkce_start') return Promise.resolve({ ok: true, challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', method: 'S256' });
+            if (cmd === 'oauth_set_secret') return Promise.resolve({ ok: true, provider: args && args.provider });
             if (cmd === 'oauth_authorize') return Promise.resolve('https://github.com/login/oauth/authorize?client_id=CID');
             if (cmd === 'oauth_open') return Promise.resolve({ ok: true });
             if (cmd === 'oauth_poll_callback') return Promise.resolve('code=THECODE&state=THESTATE');
@@ -255,7 +256,18 @@ const EXPECTED_IPC = [
   const ghBtn = $('#oauth-gh');
   assert.ok(clientInput, 'the browse module must still render the OAuth client-id field');
   assert.ok(ghBtn, 'the browse module must still render the GitHub authorize button');
+  // GitHub refuses an exchange that omits the client secret, so the panel must
+  // offer somewhere to put one.  A missing field is not cosmetic: without it the
+  // only way to supply the secret is an environment variable.
+  const secretInput = $('#oauth-secret');
+  assert.ok(secretInput, 'the browse module must render a client-secret field for GitHub');
+  assert.strictEqual(
+    secretInput.getAttribute('type'),
+    'password',
+    'the secret field must not echo the credential on screen',
+  );
   clientInput.value = 'CID';
+  secretInput.value = 'THESECRET';
   ghBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
   // The flow polls once a second; give it enough turns for one poll cycle.
@@ -300,6 +312,20 @@ const EXPECTED_IPC = [
     bindCall.args.redirectUri,
     startCall.args.redirectUri,
     'the token exchange must present the same redirect_uri the provider saw',
+  );
+  // GitHub's exchange requires the secret, and its absence is reported by the
+  // provider as `incorrect_client_credentials` -- an error that blames the
+  // client id.  The UI must therefore persist the typed secret before it opens
+  // the authorize window, not leave the user with a misleading failure.
+  const secretCall = calls.find((c) => c.cmd === 'oauth_set_secret');
+  assert.ok(
+    secretCall,
+    `a typed client secret must be stored before the exchange; saw ${JSON.stringify(oauthCmds)}`,
+  );
+  assert.strictEqual(secretCall.args.secret, 'THESECRET', 'the typed secret must be the one stored');
+  assert.ok(
+    oauthCmds.indexOf('oauth_set_secret') < oauthCmds.indexOf('oauth_authorize'),
+    'the secret must be stored BEFORE the authorize window opens, or a retry loses it',
   );
   const msg = $('#links-msg');
   assert.ok(

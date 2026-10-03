@@ -1912,3 +1912,94 @@ https://github.com/login/oauth/authorize?client_id=Iv1.0a1b2c3d4e5f6789&redirect
 
 - **修复后仍未重跑真实往返**：用户尚未重试，所以「PKCE 真能换到 token」目前仍是代码层成立 + URL 形状正确，**没有现场确认**。
 - `linked_accounts.json` 的读取侧（`oauth_status` 的 `linked:true` 分支）仍未端到端验证。
+
+### §10.31 client_secret：一个被官方文档推翻的设计前提
+
+#### ① 现场
+
+`redirect_uri` 编码修好后（§10.30）用户**亲手重跑了一次真实 GitHub 往返**，错误**逐字相同**：
+
+```
+provider refused the code (incorrect_client_credentials:
+The client_id and/or client_secret passed are incorrect.)
+```
+
+即 §10.30 的修复是**必要的但不是充分的** —— 两个独立缺陷叠在同一个错误名上。
+
+#### ② 取证：先排除三个假设，再定案
+
+为免再花一轮网络往返，在 `oauth_bind` 里加了一段临时 `eprintln!` 诊断（**只印长度与首尾字符，不印完整 client_id / code / token**）。用户重启后跑一次，得到：
+
+```
+[oauth-diag] client_id len=20 first4="Ov23" last2="se" | verifier len=43
+             | code len=20 | redirect_uri="http://127.0.0.1:8765/callback"
+             | endpoint=https://github.com/login/oauth/access_token
+```
+
+| 假设 | 判据 | 结论 |
+|---|---|---|
+| client_id 混入隐藏字符 | 长度 **20**（`Iv1.` 型约 19） | **排除** |
+| PKCE verifier 没送出去 | 长度正好 **43**（RFC 7636 要求 43–128） | **排除** |
+| `redirect_uri` 与注册值不符 | 与注册值**逐字相同** | **排除** |
+
+诊断随即从工作树删除。**注意**：诊断输出里的 `Ov23` 前缀一度让我推断「用户抄了 GitHub App 的 ID」，用户随即确认其 **OAuth Apps 列表里那个 app 的 Client ID 也是 `Ov23`** ⇒ 该推断**被证伪**，GitHub 现在对 OAuth App 也发 `Ov23.` 前缀，`Iv1.` 不再是判据。这条弯路写在这里，是因为它差点导致一个错误的「改用 GitHub App」建议。
+
+#### ③ 定案：官方文档
+
+取证对象：`https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps`（HTTP 200，378,973 bytes），解析「2. Users are redirected back to your site by GitHub」一节下的 token 交换参数表。
+
+| 参数 | Required? | 原文要点 |
+|---|---|---|
+| `client_id` | `Required` | — |
+| **`client_secret`** | **`Required`** | **无任何「除非用了 PKCE」豁免** |
+| `code` | `Required` | — |
+| `redirect_uri` | `Strongly recommended` | — |
+| **`code_verifier`** | `Strongly recommended` | 「**Required if `code_challenge` was sent during the user authorization**」 |
+
+授权侧同时确认 PKCE **是被支持的**：`code_challenge` 必须是 43 字符 SHA-256；`code_challenge_method` **必须 `S256`，`plain` 不支持**。
+
+⇒ **在 GitHub OAuth App 上，PKCE 是 `client_secret` 的附加加固，不是替代品；两者都必须送。**
+
+#### ④ 我错在哪里
+
+「PKCE 消掉 `client_secret`」是本行立项时写下的设计目标（并因此进了 `app.js:285` 的用户可见文案）。它的依据是 **RFC 7636 对公共客户端的通用模型** —— 在那个模型里 verifier 确实替代 secret。但 **GitHub OAuth App 没有采纳它**：`client_secret` 仍是无条件 `Required`。
+
+我一度还说「OAuth App 不支持 PKCE」—— 文档证明**支持**，只是**不够**。两句都是我只凭先验、没查文档就下的判断。
+
+`incorrect_client_credentials` 的官方措辞是「client_id **and/or client_secret**」——**它字面就是缺 secret**，只是错误名把注意力引向了 client_id。这是本行花了四轮往返才拆开的一层。
+
+#### ⑤ 落地（a）：把 secret 变成显式输入
+
+`oauth_loop`（**`[dependencies]` 仍为空**）：
+
+- `token_request_body_with_secret(provider, code, redirect_uri, code_verifier, Option<&str>)` —— 有 secret 才追加 `client_secret=`；**空或纯空格视为缺失**（发 `client_secret=` 是同一个被拒的请求，只是多了个字段名）
+- `secret_is_required(provider) -> bool` —— GitHub 为真。**这是 provider 的属性，不是 PKCE 的属性**，写成函数是为了不让「需要 secret」变成散落各处的隐含假设
+- `client_secret_env_var(provider)` / `read_client_secret(provider)` —— 环境变量按 provider 命名，避免多 provider 互相覆盖
+
+壳侧（`Infiverse_standard/src-tauri/src/lib.rs`）：
+
+- `oauth_secret_path(provider)` —— 文件名**由 provider 派生**（非 ASCII 字符换成 `_`），不接受调用方给路径：否则一次凭据写入会变成任意文件写入
+- `oauth_set_secret` 命令（已注册进 `generate_handler!`）—— 写 `userdata/oauth_secret_<provider>.txt`
+- `oauth_bind` 取 secret 的顺序是**文件 → 环境变量**；`secret_is_required` 为真且两者皆无时**提前带原因失败**，不让 provider 用指责 client_id 的话来回答
+
+UI（`Infiverse_standard/src/ui/app.js`）：
+
+- 新增 `#oauth-secret`（`type=password`，不回显）
+- `openAuth` 在**开窗之前**调 `oauth_set_secret` —— 顺序有意义：放在后面会让一次失败的授权丢掉刚填的 secret
+- `app.js:285` 那句「无需 client secret」**已改写**。它现在（且一直）是假的，只是假的方式变了：原来假在「没有这个命令」，现在假在「不需要 secret」
+
+#### ⑥ 验收
+
+| 项 | 结果 |
+|---|---|
+| `oauth_loop` 测试 | **49 → 55**（secret 携带 / 编码 / 空值省略 / trim / provider 判定 / 环境变量命名） |
+| `tools/gate.sh` 计数断言 | 三处同步到 `55 passed`（注释、`grep -qE`、`run_stage` 标签） |
+| 面板套件 | 新增 3 条：secret 字段存在且为 `password`；填入的 secret 必须被持久化；持久化必须在 `oauth_authorize` **之前**（58 IPC calls） |
+| 双向验证 | ①注释掉 `oauth_set_secret` 调用 ⇒ 套件红；②从交换 body 去掉 secret ⇒ 套件红。均还原后复绿 |
+| 完整八阶段门禁 | `rm -rf build` 后 `GATE_RC=0`，`oauth_loop crate (expect 55/55)` **PASS**，其余七阶段全 PASS（ctest 103/103、economy 39/39、node 12/12、plugin 55/55 live、links、doc-paths） |
+
+#### ⑦ 诚实边界与残留
+
+- **这（a）不是安全**。secret 明文落盘在 `userdata/oauth_secret_<provider>.txt`。桌面 app 无法真正保管 client secret —— 它随二进制分发、可被提取。这条路只保证：**不进仓库、不编进二进制、不随程序分发**。这句话也写进了 crate 注释与 UI 文案，而不是只写在文档里。
+- **(b) device flow 是官方唯一「不需要 secret」的路径** —— 文档原文「The `client_secret` is not needed for the device flow.」，且第二份 `client_secret` 表标注为 `Required unless the token was generated using the device flow`。代价是授权方式整体替换（`user_code` 在浏览器输入，回调服务器 / `state` 校验 / PKCE 全套不再需要），需在 OAuth App 页面勾上 **Enable Device Flow**。**留给后续行**。
+- **仍未端到端验证**：`linked_accounts.json` 读取侧（`oauth_status` 的 `linked:true` 分支）。
