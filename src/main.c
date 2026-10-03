@@ -1242,8 +1242,14 @@ if (argc == 1) {
     if (g_lint) {
         char lb[16384];
         int ln = lint_check(script, lb, sizeof lb);
-        if (ln > 0) fprintf(stderr, "%s", lb);
-        return 0;
+        if (ln != 0) fprintf(stderr, "%s", lb);
+        /* A linter's verdict has to be readable by a shell, so the exit code
+           carries it: 1 = at least one finding, 2 = the file could not be read,
+           0 = clean.  This does NOT make --lint a parse predicate: lint_scan()
+           is a line-based scanner and reports nothing for a syntax error such
+           as `x = = 5`, which still exits 0 (docs/SYNTAX.md M11). */
+        if (ln < 0) return 2;
+        return ln > 0 ? 1 : 0;
     }
     char *abs_script = chdir_to_script_dir(script);
     const char *read_path = abs_script ? abs_script : script;

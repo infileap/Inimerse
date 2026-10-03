@@ -128,9 +128,17 @@ DIVERGENCE = [
     # bits are gone, and the modulo collapses to 0 (or 12345, depending on the
     # step).  The codegen keeps int64 and stays exact.  The first step agrees
     # and lives in EQUIVALENCE as `int_lcg_first_step`.
+    #
+    # The interpreter used to print 0 here, but that 0 was not the promotion:
+    # the general `%` path narrowed both operands through `int`, and 2147483648.0
+    # saturates to INT32_MIN on x86-64, so the old answer was INT_MIN % INT_MIN.
+    # Fixing that narrowing (docs/AUDIT.md §1.6) exposed the genuine residue,
+    # which is the double rounding in L_MUL's overflow promotion.  So this entry
+    # now pins O2 (an integer silently degrading to double), not O1: `%` itself
+    # agrees, and the two values differ by 25 because one ulp at 1.2e18 is 256.
     ("lcg_float_promotion",
      "x = 1\nrepeat 2 { x = (x*1103515245+12345) % 2147483648 }\nsay x\n",
-     "0\n", "377401575\n"),
+     "377401600\n", "377401575\n"),
 ]
 
 # Each must be REFUSED by the translator, with a message, and must not leave a

@@ -337,6 +337,23 @@ if(INIMERSE_CLANG AND NOT WIN32)
   if(INIMERSE_NODE)
     add_test(NAME wasm_probe COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/wasm_probe_check.js ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
     add_test(NAME wasm_host COMMAND ${INIMERSE_NODE} ${CMAKE_SOURCE_DIR}/tools/wasm_host.test.js ${CMAKE_BINARY_DIR}/wasm_probe.wasm)
+    # `%` and `/` must mean the same thing on all three backends, including
+    # which cases are refused (docs/AUDIT.md §1.6).  It needs node because the
+    # wasm backend is the third opinion.
+    add_test(NAME mod_semantics_regression
+             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mod_semantics.test.py
+                     $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
+                     --node ${INIMERSE_NODE})
+    set_tests_properties(mod_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "runtime;compiler;wasm;regression")
+    # `and`/`or`/`not` must mean the same thing on all three backends: a
+    # truth-value, short-circuit preserved, in value position and in condition
+    # position (docs/AUDIT.md §1.0, §5 O0).  It found an inverted `not` in the
+    # wasm backend the day it was written.
+    add_test(NAME logic_semantics_regression
+             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/logic_semantics.test.py
+                     $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
+                     --node ${INIMERSE_NODE})
+    set_tests_properties(logic_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;compiler;wasm;regression")
   endif()
   set_tests_properties(wasm_probe wasm_host PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
 endif()
@@ -665,6 +682,18 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME lint_case_try_alias_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_alias_v04.im)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox)
   set_tests_properties(lint_case_try_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox TIMEOUT 15 LABELS "language;lint;case;result;types" FAIL_REGULAR_EXPRESSION "case try guarded err coverage|finite err type")
+  # The five lint_case_* tests above assert their findings through CTest's
+  # PASS_REGULAR_EXPRESSION, and that property takes precedence over the process
+  # exit code -- so none of them can see whether --lint's own verdict is
+  # readable by a shell, and none can notice an *extra* finding.  This driver
+  # asserts the whole table at once: exit code (1 = findings, 2 = unreadable,
+  # 0 = clean), exact finding count and required text, plus one pinned
+  # limitation (a syntax error stays invisible to the line-based scanner).
+  # See docs/SYNTAX.md M11.
+  add_test(NAME lint_expected_regression
+    COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/lint_expected.test.py $<TARGET_FILE:inimerse>)
+  set_tests_properties(lint_expected_regression PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "language;lint;regression")
   add_test(NAME case_collection_patterns_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_collection_patterns_v04.im)
   # The `=NN` values come from `+ str(N)` in the script, so this regex can only
   # be satisfied by the program's own output -- never by the engine's echo line,

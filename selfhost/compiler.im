@@ -252,18 +252,36 @@ func compile_expr(ctx, e) {
     if t == "bin" {
         op = e["op"]
         if op == "and" or op == "or" {
+            // BOOLEAN semantics (docs/AUDIT.md §1.0/§5 O0): a truth-value, not
+            // an operand.  Short-circuit evaluation is preserved -- the right
+            // operand is compiled only on the taken path.
+            is_and = op == "and"
             left = compile_expr(ctx, e["l"])
             result = left
-            jpos = len(ctx["code"])
-            if op == "and" {
+            jshort = len(ctx["code"])
+            if is_and {
                 emit(ctx, OP_JUMP_IF_FALSE, result, 0, 0)
             } else {
                 emit(ctx, OP_JUMP_IF_TRUE, result, 0, 0)
             }
             right = compile_expr(ctx, e["r"])
-            emit(ctx, OP_MOV, result, right, 0)
-            end = len(ctx["code"])
-            ctx["code"][jpos][2] = end
+            // result is known truthy (and) / falsy (or) here, so AND/OR over
+            // both operands is exactly the truth-value of the right operand.
+            if is_and {
+                emit(ctx, OP_AND, result, result, right)
+            } else {
+                emit(ctx, OP_OR, result, result, right)
+            }
+            jend = len(ctx["code"])
+            emit(ctx, OP_JUMP, 0, 0, 0)
+            // Short-circuited: the deciding operand settled the answer.
+            ctx["code"][jshort][2] = len(ctx["code"])
+            if is_and {
+                emit(ctx, OP_LOADK_BOOL, result, 0, 0)
+            } else {
+                emit(ctx, OP_LOADK_BOOL, result, 1, 0)
+            }
+            ctx["code"][jend][2] = len(ctx["code"])
             return result
         }
         if op == "==" or op == "!=" {

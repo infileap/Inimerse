@@ -2460,3 +2460,79 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 **与 `AUDIT.md` §5（现为 O0–O13）不冲突**：本设计**采纳 O0 选项①**（值语义胜出），并把该决定落到唯一语义表；O11 把「`selfhost/compiler.im` 必须与 `src/compiler/compiler.c` 保持一致」列为**风险**，本设计把它当作**待根治的缺陷本身**（§1.1 证明重写不消除分歧）；O13 诊断 wasm 后端算术发射质量差、怀疑每次算术都把 `Value` 装箱再拆箱 —— 这是 §3 的第二个独立论据（分歧与发射质量差同一个根因：缺统一 IR 层）。
 
 **诚实度**：本文档的 `[实测]` 栏是**「无」** —— 本会话**未构建、未跑 `tools/im_diff_fuzz.py`、未跑任何执行通道**，全部结论为 `[读码]`；引用的 fuzz/性能数字均标注为 `[转述]`（来自 `AUDIT.md`，非本会话实测）。`AUDIT.md` §1.0 的「四行表格两后端逐格相同」与 `tools/im_diff_fuzz.py` 归零都**仍是待做的验证**，不是已完成事实。
+
+## 10.42 把三条「只取证未修复」的语义缺陷修掉，判据换成三后端逐格比对（BOARD 行 136）
+
+对应 `AUDIT.md` §1.0 / §1.1 / §1.2 与方案 **O0 / O1 / O2(a)**。这一节的重点不是「改了哪几行」，而是**判据怎么从「读码结论」变成「可复现的机器判定」**。
+
+### 先测爆炸半径，再动语义（这是本节最值钱的一步）
+
+用户裁定 O0 走**布尔语义**（`and`/`or` 一律产出真值、保留短路）之后，第一步不是改代码，而是量清楚**改它要付多少**。`git ls-files '*.im'` 全量分类：
+
+| 类别 | 数量 | 布尔语义下 |
+| --- | --- | --- |
+| 条件位置（`if`/`while`/`elif` 行） | **71** | 不受影响 |
+| 值位置但两侧已是布尔（`ok = ok and x == 7`） | **27** | 不受影响 |
+| 字符串/注释里的假命中（`"and works"`、`"op": "or"`） | **11** | 无关 |
+| **真正会变的值选择** | **1** | `t_sugar_desugared.im:7` 的 `k = 0 or 1` |
+
+⇒ 代价是 **1 个文件**，而且它被 git 跟踪却**不被任何 CTest 或门禁引用**（`grep -rn t_sugar_desugared CMakeLists.txt tools/` 零命中）⇒ **门禁零回归**。改后实测该文件由 `j=3 k=1` 变 `j=3 k=true`，与预测一致。**没有这张表，「布尔语义」只是一个听着合理的方向；有了它，它才是一个可以执行的决定。**
+
+### 三处修复
+
+**O0（`and`/`or`）**：解释器 `src/compiler/compiler.c:648-672` 改为「跳转路径上 `result` 已知为真（and）/假（or），故 `OP_AND`/`OP_OR` 对两操作数求真值**恰好等于右操作数的真值**；短路路径发 `OP_LOADK_BOOL` 常量」——**短路被保留**（右子树只在被取路径上编译）。`selfhost/compiler.im:254-268` 同形状改写。wasm 的拒绝（原 `src/compilation/wasm_backend.c:1237-1240`）改为**复用已有的 `cg_cond`**（它本来就发真值且含短路）+ `e_store_bool_from_stack`；AOT 本来就是布尔、**未改**。
+
+**顺带抓出第二个既有真缺陷：wasm 的 `not` 是反的。** `cg_cond` 的 `TOK_NOT` 分支已经做了一次 `i32.eqz`，`cg_expr` 的 `TOK_NOT` 分支又调 `cg_cond` 再 `eqz` 一次 ⇒ 双重否定。六条 `not` 用例**全部恰好相反**（`not 0` 在 wasm 上打 `false`，而解释器与 AOT 都打 `true`）。`git diff` 证明该分支未被本次改动触及，**是既有缺陷**，只是从来没人同时跑两个后端所以没被发现。
+
+**O1（`%`）**：`src/vm/vm.c` 的 `L_MOD` 有三重问题 —— 把两操作数窄化过 32 位 `int`（`2147483648 % 7` → **-2**，AOT `2`、wasm `1`）、**在截断之后**才判零（`7 % 0.5` 误报 `division_by_zero`，而真值 0 完全合法）、以及 `-2147483648 % -1` 实测 **rc=136 `Floating point exception`**（真崩溃，不是干净拒绝）。AOT 侧 `nv_div` 除零静默给 `inf` —— **AOT 此前完全没有错误机制**（`grep nv_error|nv_throw|nv_panic|abort()` 在 `src/compilation/aot_native.c` 零命中）。修法：VM 新增饱和转换 `im_dbl_to_i64()`、零检查**移到窄化之前**、`y == -1` 特判、结果超出 int32 时提升为 float（照抄 `L_NEG` 对 `INT_MIN` 的既有先例）；AOT 新增 `nv_die_division_by_zero()`；wasm 用 `e_trunc_sat_i64`（`0xFC 0x06`）替代 `e_trunc_sat_i32`。
+
+**O2(a)（整数静默提升可诊断）**：三处提升点 `src/vm/vm.c:2950`（`L_ADD`）/`:3073`（`L_SUB`）/`:3097`（`L_MUL`）形状相同且完全静默。配套缺陷是 `src/main.c:1242-1247` 的 `--lint` **恒返回 0** —— 而 `lint_check` 本身是真的（`src/lint_mod.c:558` 委托 `lint_scan`，599 行模块），所以 `vtest/lint_case_*_v04.im` 五个 fixture 里有四个「即使 lint 报告再多也永远绿」。修法：退出码承载判据（**1 = 有发现 / 2 = 文件不可读 / 0 = 干净**）。
+
+### 判据：三后端逐格比对，不是「值对了」
+
+新增两个进树回归，形状相同 —— 同一份源码在**解释器 / AOT / wasm 三个后端各跑一遍，然后互相比对**：
+
+- `tools/logic_semantics.test.py`（**34 例**：值位置 8 / 真值性 4 / 优先级 2 / 链式嵌套 3 / `not` 7 / 条件位置 6 / 短路 4）；
+- `tools/mod_semantics.test.py`（**16 例** `%`/`/` 边界，含 `REFUSED` 哨兵）。
+
+**短路必须被双向证明**：四条 `SHORT_CIRCUIT` 用**除零当副作用**（`z = 0` 前置，`0 and (1/z)` → `false`、`1 and (1/z)` → **REFUSED**、`1 or (1/z)` → `true`、`0 or (1/z)` → **REFUSED**，三后端一致）。理由是「不做短路的那个方向必须拒绝」——否则「右操作数根本没跑」也会伪装成通过。用除零而非字符串是因为 AOT 与 wasm 都拒绝字符串，而「全局变量在函数里赋值」是本仓**已钉住的分歧**（`global_write_from_func`），两者都当不了见证。
+
+**为什么这个形状值钱**：`not` 那条缺陷在解释器和 AOT 上一直是对的，**任何只测一个后端的测试都不会发现它**。
+
+### 双向验证（每条修复都验过两个方向）
+
+| 动作 | 结果 |
+| --- | --- |
+| 还原 wasm 的 `not` 修复（加回多余的 `eqz`） | `logic_semantics` **rc=1，6 条 FAIL** |
+| 把 `compiler.c` 的布尔发射改回 `OP_MOV result, right` | `logic_semantics` **rc=1，11 条 FAIL** |
+| 把 AOT 的 `if (y == 0) nv_die_division_by_zero();` sed 成 `if (0)` | `mod_semantics` **3 条 FAIL（`aot died from a signal`）、rc=1** |
+| `--lint` 用 `lint_always0.sh` 复现修复前行为 | `lint_expected` **`FAIL (5 problem(s))`、rc=1** |
+| 全部还原 | **rc=0，全绿** |
+
+### 测试自己抓出了一个「把 bug 钉死的期望」
+
+首跑全量 ctest：**107 例 1 失败**，`34 - wasm_backend_regression`。原因是 `tools/wasm_backend.test.py` 的 `REJECT_CASES` 里有一条：
+
+```python
+("and_outside", 'x = true and false\n', "'and'/'or' outside a condition"),
+```
+
+**它把 O0 要消除的拒绝行为当作正确行为钉住了** —— 报错是 `AssertionError: and_outside: expected compile-time rejection`。修法不是在 `CASES` 里钉一个新字符串，而是加两条**与解释器输出比对**的等价性用例（`and_or_value`、`not_value`），断言强度更高：钉字符串只保证「不退化回旧的」，比对解释器保证「两个后端说的是同一句话」。现为 `wasm backend: ok (24 equivalence cases, 2 rejections, 3 explicit failures, simd bench equal)`。
+
+### 计数与门禁
+
+`grep -c 'add_test(' CMakeLists.txt` = **107**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **106 → 107**（新增 `logic_semantics_regression`，ctest 中是 **#56**、14.12 s）。全量 **`100% tests passed, 0 tests failed out of 107`**（`CTEST_RC=0`）。完整 `tools/gate.sh` 九阶段 PASS。
+
+### 与 §10.41 的一处冲突（必须记下来）
+
+`docs/DECFY_DESIGN.md` **采纳了 O0 选项①（值语义胜出）**，并把「`selfhost/compiler.im` 必须与 `src/compiler/compiler.c` 保持一致」当作风险。**该决定已被用户推翻** —— 用户（m13513）裁定**布尔语义**。所以：
+
+- `DECFY_DESIGN.md` §1.1 里「值语义胜出」这一句现在是**过期结论**，与本节冲突时**以本节为准**（本节是已落盘、已过测试的实现）；
+- 但该设计文档的**核心论点不受影响、反而被本节加强**：它说「难点是同一语义有多个决定点、分裂横切实现语言」，本节正是这句话的实测版 —— 修 `and`/`or` 要**同时**动 C 编译器、`.im` 编译器、wasm 后端**三处**，而 `selfhost/eval.im`（`.im`·布尔）**不需要动**，因为它本来就与新语义一致。**决定点的数量就是修复要碰的文件数**。
+
+### 诚实边界
+
+- `tools/im_diff_fuzz.py` **仍未接进门禁**（怎么接、什么阈值，用户未定）。
+- O2 的 BigInt / 小整数快速路径**未做**（`docs/archive/ROADMAP_3.1.md` 已规划）。
+- `lint_scan` 是**逐行扫描器、根本不解析**：它自己的例子 `x = = 5` 在 `--lint` 下 **0 行发现、rc=0**，而真跑 rc=1。修退出码**不会**让 `x = = 5` 变红 —— 这条限制已用 `tools/lint_expected.test.py` 的 PINNED 用例**钉进测试**，而不是只写在文档里。
+

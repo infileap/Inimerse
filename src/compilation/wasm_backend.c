@@ -246,6 +246,10 @@ static void e_i32c(Buf *w, long long v) { e(w, W_I32_CONST); e_i(w, v); }
 static void e_i64c(Buf *w, long long v) { e(w, W_I64_CONST); e_i(w, v); }
 static void e_f64c(Buf *w, double v) { e(w, W_F64_CONST); bf64(w, v); }
 static void e_trunc_sat_i32(Buf *w) { e(w, 0xFC); e_u(w, 2); } /* i32.trunc_sat_f64_s: FC 02 */
+/* i64.trunc_sat_f64_s: FC 06.  `%` narrows its operands to 64 bits; doing that
+   through i32 saturated 3000000000 to INT32_MAX and made `3000000000 % 7`
+   yield 1 instead of 4.  See docs/AUDIT.md §1.6. */
+static void e_trunc_sat_i64(Buf *w) { e(w, 0xFC); e_u(w, 6); }
 
 static void e_addr(Buf *w, int kind, int slot) {
     if (kind == KIND_GLOBAL) {
@@ -937,17 +941,16 @@ static void cg_arith(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_
         e(w, W_LOCAL_GET); e_u(w, LOC_IB);
         e(w, W_I64_REM_S);
         e_store_payload_i64_from_stack(w, dst_kind, dst_slot);
-        e(w, W_ELSE);                                /* general: (int)da % (int)db */
+        e(w, W_ELSE);                                /* general: (long long)da % (long long)db */
         e_push_as_double(w, 0);
-        e_trunc_sat_i32(w);
-        e(w, W_I64_EXTEND_I32_S);
-        e(w, W_LOCAL_SET); e_u(w, LOC_IA);
+        e_trunc_sat_i64(w);
+        e(w, W_LOCAL_SET); e_u(w, LOC_IA);           /* LOC_IA: i64 dividend */
         e_push_as_double(w, 1);
-        e_trunc_sat_i32(w);
-        e(w, W_LOCAL_SET); e_u(w, LOC_RES);          /* RES: i32 (int)db */
-        e(w, W_LOCAL_GET); e_u(w, LOC_RES);
-        e_i32c(w, 0);
-        e(w, W_I32_EQ);
+        e_trunc_sat_i64(w);
+        e(w, W_LOCAL_SET); e_u(w, LOC_IB);           /* LOC_IB: i64 divisor */
+        e(w, W_LOCAL_GET); e_u(w, LOC_IB);
+        e_i64c(w, 0);
+        e(w, W_I64_EQ);
         e(w, W_IF); e_u(w, 0x40);
         e_i32c(w, 1);
         e(w, W_CALL); e_u(w, IMP_ERROR);
@@ -955,8 +958,7 @@ static void cg_arith(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_
         e(w, W_END);
         e_store_tag(w, dst_kind, dst_slot, TAG_INT);
         e(w, W_LOCAL_GET); e_u(w, LOC_IA);
-        e(w, W_LOCAL_GET); e_u(w, LOC_RES);
-        e(w, W_I64_EXTEND_I32_S);
+        e(w, W_LOCAL_GET); e_u(w, LOC_IB);
         e(w, W_I64_REM_S);
         e_store_payload_i64_from_stack(w, dst_kind, dst_slot);
         e(w, W_END);
@@ -1213,9 +1215,14 @@ static void cg_expr(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_s
                 return;
             }
             if (x->unary.op == TOK_NOT) {
+                /* cg_cond already emits the truth-value of the whole `not`:
+                   it walks the operand and then applies i32.eqz (see the
+                   EXPR_UNARY/TOK_NOT branch in cg_cond).  Applying eqz again
+                   here negated the result a second time, so `not 0` printed
+                   false on wasm while the interpreter and the native backend
+                   both printed true -- every `not` was inverted. */
                 cg_cond(cg, env, w, x, depth);
                 if (cg->err[0]) return;
-                e(w, W_I32_EQZ);
                 e_store_bool_from_stack(w, dst_kind, dst_slot);
                 return;
             }
@@ -1233,7 +1240,15 @@ static void cg_expr(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_s
                 return;
             }
             if (op == TOK_AND || op == TOK_OR) {
-                fail(cg, env, "'and'/'or' outside a condition is not supported (use it in if/while)");
+                /* BOOLEAN semantics (docs/AUDIT.md §1.0, §1.6, §5 O0): the
+                   result is a truth-value, which is exactly what cg_cond
+                   already emits -- short-circuit included.  This used to be a
+                   hard refusal, which made `x = a and b` a compile error here
+                   while the interpreter returned an operand and AOT returned a
+                   boolean: three answers for one operator. */
+                cg_cond(cg, env, w, x, depth);
+                if (cg->err[0]) return;
+                e_store_bool_from_stack(w, dst_kind, dst_slot);
                 return;
             }
             fail(cg, env, "operator not supported by wasm MVP subset");

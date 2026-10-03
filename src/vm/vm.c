@@ -1023,6 +1023,16 @@ static void vts_int(char *buf, int bufsz, long long v) {
     while (n > 0 && pos < bufsz - 1) buf[pos++] = tmp[--n];
     buf[pos] = '\0';
 }
+/* Truncate a double toward zero WITHOUT invoking UB when it falls outside the
+   int64 range (C11 6.3.1.4p1).  x86-64 `cvttsd2si` returns INT64_MIN for every
+   out-of-range input, which is how the old `(int)da % bi` turned 3000000000
+   into -2 and 7000000000 into INT_MIN.  See docs/AUDIT.md §1.6. */
+static long long im_dbl_to_i64(double d) {
+    if (d >= 9223372036854775808.0) return LLONG_MAX;
+    if (d < -9223372036854775808.0) return LLONG_MIN;
+    return (long long)d;                       /* C truncates toward zero */
+}
+
 static void vts_double(char *buf, int bufsz, double dv) {
     if (dv != dv) { const char *s = "nan"; int i = 0; for (; s[i] && i < bufsz - 1; i++) buf[i] = s[i]; buf[i] = '\0'; return; }
     if (dv == 0.0) { vts_int(buf, bufsz, 0); return; }   /* also -0.0 */
@@ -3824,17 +3834,32 @@ L_CALL_FUNC: {
                     R = t->reg + t->base;
                     continue;
                 }
+                /* INT_MIN % -1 overflows the idiv and traps (SIGFPE); the
+                   mathematical answer is 0. */
+                if (b->ival == -1) {
+                    value_set(&R[ins.r1], VAL_INT, 0, 0, NULL, NULL);
+                    continue;
+                }
                 value_set(&R[ins.r1], VAL_INT, a->ival % b->ival, 0, NULL, NULL);
                 continue;
             }
-            int bi = (int)val_as_double(b);
-            if (bi == 0) {
+            /* One operand is a float.  The zero test must run on the value the
+               user wrote, BEFORE it is narrowed: testing the narrowed int made
+               `7 % 0.5` a bogus division_by_zero, and narrowing through `int`
+               made `3000000000 % 7` read -2.  See docs/AUDIT.md §1.6. */
+            long long lb = im_dbl_to_i64(val_as_double(b));
+            if (lb == 0) {
                 vm_throw_kind(vm, "division_by_zero");
                 R = t->reg + t->base;
                 continue;
             }
-            double da = val_as_double(a);
-            value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);
+            long long r = (lb == -1) ? 0 : im_dbl_to_i64(val_as_double(a)) % lb;
+            /* The result can exceed the 32-bit int payload; promote to float
+               rather than truncate, exactly as L_NEG does for INT_MIN. */
+            if (r >= INT_MIN && r <= INT_MAX)
+                value_set(&R[ins.r1], VAL_INT, (int)r, 0, NULL, NULL);
+            else
+                value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r, NULL, NULL);
             continue;
         }
         L_NEW_SET: {

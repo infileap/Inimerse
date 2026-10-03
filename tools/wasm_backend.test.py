@@ -60,12 +60,19 @@ CASES = [
     # 200k allocations would need ~12 MB; the arena is ~4 MB, so this only
     # finishes if the refcounted ownership model really reclaims blocks.
     ("array_churn", 's = 0\nrepeat 200000 {\n    b = [1, 2, 3]\n    s = s + b[0]\n}\nsay s\n'),
+    # `and`/`or` in value position used to be a hard refusal here while the
+    # interpreter returned the deciding operand and AOT returned a boolean --
+    # one operator, three answers.  All three now produce the truth-value
+    # (docs/AUDIT.md §1.0, §5 O0).  These assert agreement with the
+    # interpreter rather than a hardcoded string, so the two cannot drift
+    # apart again.
+    ("and_or_value", 'say true and false\nsay true or false\nsay 0 or 7\nsay 7 and 0\n'),
+    ("not_value", 'say not 0\nsay not 1\nsay not (0 or 0)\n'),
 ]
 
 REJECT_CASES = [
     ("strings", 'say "hello"\n', "strings are not supported"),
     ("unknown_fn", 'say nosuch(1)\n', "function 'nosuch' not found"),
-    ("and_outside", 'x = true and false\n', "'and'/'or' outside a condition"),
 ]
 
 # Cases the interpreter accepts but the wasm subset refuses on purpose: the

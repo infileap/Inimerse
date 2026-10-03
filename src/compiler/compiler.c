@@ -652,20 +652,28 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 int result;
                 if (l_temp) result = left;  /* 缁撴灉澶嶇敤宸︽搷浣滄暟锛堜复鏃讹級 */
                 else { result = alloc_reg(); emit(comp->curBC, OP_MOV, result, left, 0); }
-                int jmp_pos;
-                if (expr->binary.op == TOK_AND) {
-                    jmp_pos = comp->curBC->count;
-                    emit(comp->curBC, OP_JUMP_IF_FALSE, result, 0, 0);
-                    int right = compile_expr(comp, expr->binary.right);
-                    emit(comp->curBC, OP_MOV, result, right, 0);
-                } else {
-                    jmp_pos = comp->curBC->count;
-                    emit(comp->curBC, OP_JUMP_IF_TRUE, result, 0, 0);
-                    int right = compile_expr(comp, expr->binary.right);
-                    emit(comp->curBC, OP_MOV, result, right, 0);
-                }
-                int end = comp->curBC->count;
-                comp->curBC->code[jmp_pos].r2 = end;
+                /* BOOLEAN semantics (docs/AUDIT.md §1.0, §1.6, §5 O0): `a and b`
+                   is a truth-value, not an operand.  The interpreter used to
+                   return the deciding operand, the AOT backend returned a
+                   boolean, and the wasm backend refused to compile the
+                   expression outside a condition -- three answers for one
+                   operator.  Short-circuit evaluation is preserved: the right
+                   operand is compiled only on the taken path. */
+                int is_and = (expr->binary.op == TOK_AND);
+                int jmp_short = comp->curBC->count;
+                emit(comp->curBC, is_and ? OP_JUMP_IF_FALSE : OP_JUMP_IF_TRUE, result, 0, 0);
+                int right = compile_expr(comp, expr->binary.right);
+                /* `result` is known truthy (and) / falsy (or) on this path, so
+                   AND/OR over both operands is exactly the truth-value of the
+                   right operand. */
+                emit(comp->curBC, is_and ? OP_AND : OP_OR, result, result, right);
+                int jmp_end = comp->curBC->count;
+                emit(comp->curBC, OP_JUMP, 0, 0, 0);
+                /* Short-circuited: the deciding operand settled the answer, so
+                   it is the constant opposite of the jump condition. */
+                comp->curBC->code[jmp_short].r2 = comp->curBC->count;
+                emit(comp->curBC, OP_LOADK_BOOL, result, is_and ? 0 : 1, 0);
+                comp->curBC->code[jmp_end].r2 = comp->curBC->count;
                 release_to(comp, r_wm);  /* 鍙冲瓙鏍戜复鏃跺凡娑堣垂 */
                 comp->last_temp = 1;
                 return result;

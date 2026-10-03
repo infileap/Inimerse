@@ -25,6 +25,10 @@ function fmtInt(v) { return String(v); }
 // integer part + up to 6 fractional digits with trailing zeros trimmed.
 function fmtFloat(d) {
   if (Number.isNaN(d)) return 'nan';
+  // C's %.17g (what vts_double falls through to for non-finite values) prints
+  // "inf"/"-inf"; JS String()/toPrecision() would print "Infinity".
+  if (d === Infinity) return 'inf';
+  if (d === -Infinity) return '-inf';
   if (d === 0) return '0';
   if (Number.isInteger(d) && Math.abs(d) < 9223372036854775808) return String(BigInt(d));
   if (d >= 1e15 || d <= -1e15) return d.toPrecision(17).replace(/(\.\d*?)0+($|e)/, '$1$2').replace(/\.$/, '');
