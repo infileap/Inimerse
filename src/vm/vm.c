@@ -3634,7 +3634,11 @@ L_CALL_VALUE: {
         }
 L_CALL_FUNC: {
             int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;
-            if (fidx >= 0 && fidx < root->func_count && root->func_names[fidx] && strncmp(root->func_names[fidx], "h", 1) == 0)
+            /* This guard must be unconditional.  It used to be the body of a
+             * stray `if (... strncmp(root->func_names[fidx], "h", 1) == 0)`, so
+             * it only ran for functions whose name began with 'h'; every other
+             * out-of-range fidx fell through to root->func_argc[fidx] below and
+             * read out of bounds.  See docs/AUDIT.md §1.3. */
             if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {
                 fprintf(stderr, "閿欒�? 鏃犳晥鍑芥暟绱㈠�?%d\n", fidx);
                 t->running = false;

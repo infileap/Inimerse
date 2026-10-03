@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-02 更新测试计数到 101；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-03 更新测试计数到 104；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **101 / 101 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **104 / 104 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **101** 个 `add_test(`（85 + UPP 2 + `.vverse` 2 + CRP 3 + json_min 1 + 超大包 1 + `.im` 打包往返 1 + 后缀条件跨行 1 + 自举可解析 1 + 调用实参破坏 2 = **101**，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11/§10.17） | — |
+| 测试注册 | `CMakeLists.txt` 中 **104** 个 `add_test(`（原有 101 + 自举 codegen 等价 1 + AOT 原生 1 + 坏函数索引 1 = **104**，见 §10.1/§10.2/§10.6/§10.7/§10.10/§10.11/§10.17/§10.33/§10.40） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 101
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 104
 node tools/node_suites/run_all.js                    # JS 侧协议套件 11 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -2359,3 +2359,77 @@ UDP 往返，两者不同步」。**代码证伪了它**：`b_verse_hub_ping`（
 优化方案 12 条按 效果÷风险 排在 [AUDIT.md](AUDIT.md) §5。**明确不值得先做的是 NaN-boxing**：全局变量与寄存器两处的每指令成本相同（都是 ~6 ns/instr），支配项是派发次数与指令条数，不是 32 字节结构体的宽度 —— 先做结构体特化会在错误的层上优化。
 
 四条缺陷**尚未修复**，只立项与取证；修复它们的顺序、判据与「修完要回头重新审视 `tools/aot_native.test.py` 里三条 `DIVERGENCE` 钉死项」都写在 [AUDIT.md](AUDIT.md) §5 与 §5 末尾。
+
+---
+
+## 10.40 越界调用索引的段错误，与 wasm 通道的第一次实测（BOARD 行 134）
+
+### 缺陷本身
+
+`src/vm/vm.c:3637` 原本是这么写的：
+
+```c
+if (fidx >= 0 && fidx < root->func_count && root->func_names[fidx] && strncmp(root->func_names[fidx], "h", 1) == 0)
+if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) { … }
+```
+
+第一行**没有花括号、也没有语句**，所以第二行那个完整的越界检查成了它的**语句体** —— 只有函数名以 `h` 开头时才执行。其余情况下代码继续走到 `:3666` 的 `root->func_argc[fidx]`，越界读。
+
+**一处自我更正**：审计初稿还写了「第一个条件自身就对越界 `fidx` 做 `root->func_names[fidx]`，在检查之前就已经越界读」。**这是错的** —— C 的短路求值保证 `root->func_names[fidx]` 只在边界检查通过之后才求值。缺陷只有上面那一条。
+
+### 触发不需要恶意字节码文件
+
+`vm_exec` 接受运行期手工构造的字节码（`src/runtime/vm_exec_builtin.c` 的 `bc_from_data` 读 `code`/`strings`/`floats`/`funcs`），所以五行 `.im` 就够：
+
+```im
+bc = {"code": [[34, 999, 0, 0], [33, 0, 0, 0]], "strings": [], "floats": [], "funcs": []}
+say vm_exec(bc)
+```
+
+（`OP_CALL_FUNC` = 34、`OP_HALT` = 33，见 `src/compiler/bytecode.h:8-23`；`funcs` 为空 ⇒ `fidx = 999` 全面越界。）
+
+| | 修复前 | 修复后 |
+| --- | --- | --- |
+| `./build/inimerse --no-mods badfidx.im` | **`EXIT=139`（Segmentation fault）** | `EXIT=1`，stderr 报「无效函数索引 999」 |
+
+### 双向验证是测试级的，不是探针级的
+
+进树回归 **`tools/vm_bad_fidx.test.py`**（ctest 名 `vm_bad_fidx_regression`，`EXP_CTEST` 103 → 104）断言三件事：不被信号杀死、退出码非 0、stderr 里出现 `999`；另加一个**对照程序**（`func f() { return 7 }` + `say f()` 必须 rc=0 且 stdout 含 `7`），使「VM 拒绝一切」无法蒙混过关。
+
+把守卫按原样重新包回 `if (... strncmp(root->func_names[fidx], "h", 1) == 0)` 后重建：
+
+```
+the out-of-range call index crashed the VM (signal 11); the L_CALL_FUNC guard is not running.
+```
+
+恢复修复后：`vm bad fidx: ok (out-of-range call index refused, control call works)`。
+
+**一个中间教训**：第一次打断时我给那个外层 `if` 加了 `{`，于是 vm.c **编译失败**，而测试**照样通过** —— 它跑的是上一次构建留下的旧二进制。`cmake --build` 的退出码必须看，不能只看测试结果。
+
+### wasm 通道：从「读码结论」到「实测结论」
+
+审计 §2 此前写的「wasm 与 AOT 一致」**基于读码**，当时就标注了这一点。本轮把它变成实测，代价是发现 wasm 通道**不能传 argv**：`tools/wasm_run.js:103` 调的是 `inst.exports.inimerse_run(0)`，而 wasm MVP 子集**没有 `args()`** —— 模板首行 `N = int(args()[0])` 让五个工作负载全部报
+
+```
+error: wasm MVP subset: function 'int' not found (builtins are not in the wasm MVP subset) (line 1)
+```
+
+解法是把绑定行**替换成字面量**再重新编译。这带来一个结构后果：通道不能再被当作「固定 argv」，`tools/perf_channels.py` 里每条通道变成一个 `rebuild[chan](m) -> (argv, err)`，解释器/原生通道只是换 argv，**wasm 通道重新编译**；缩放闸门随之从 `argv[:-1] + [str(n2)]` 改为调用 `rebuild`。
+
+**五负载答案在 interpreter / aot / wasm / c++ 之间逐位一致**：`199999990000000` / `25002330004640` / `3524578` / `469475` / `750656284`。
+
+| 工作负载 | N | interpreter | aot | **wasm** | c++ | rust |
+| --- | --- | --- | --- | --- | --- | --- |
+| `arith` | 20,000,000 | 0.845s (1.00x) | 0.005s (155.07x) | 0.310s (2.72x) | 0.006s (151.68x) | *闸门拦下* |
+| `branch` | 10,000,000 | 0.966s (1.00x) | 0.078s (12.42x) | 0.450s (2.15x) | 0.033s (29.34x) | 0.034s (28.56x) |
+| `fib` | 33 | 0.712s (1.00x) | 0.082s (8.63x) | 0.160s (4.44x) | 0.005s (140.80x) | 0.010s (73.45x) |
+| `lcg` | 20,000,000 | 1.164s (1.00x) | 0.083s (14.02x) | 0.425s (2.74x) | 0.062s (18.63x) | 0.065s (18.02x) |
+| `nested` | 3,400 | 0.711s (1.00x) | 0.044s (16.06x) | 0.313s (2.27x) | 0.033s (21.77x) | 0.037s (19.38x) |
+
+`RC=1` 是设计使然：唯一的 PROBLEM 是 `arith/rust: OPTIMIZED AWAY`，即负对照被正确拦下，不是故障。
+
+**结论**：wasm 只比解释器快 **2.15×–4.44×**、比 AOT 慢 **2×–57×**。最刺眼的是 `arith` —— 纯累加循环上只有 2.72× 而 AOT 是 155×（**差 57 倍**）。这不能归因于循环被折掉（缩放闸门已验证 wasm 的耗时随 N 增长），只能说明 wasm 后端的算术发射质量差；已立为优化项 **O13**。RSS：wasm **49.9–50.3 MB**，但**含 Node 宿主进程**，不可与原生通道（23.0–23.1 MB）直接比。
+
+### 验收
+
+`rm -rf build` 后完整九阶段 `tools/gate.sh --jobs 4` → `GATE_RC=0`、`gate: OK — every stage passed.`，九阶段全 PASS：build / ctest（**104/104**，0 skipped）/ economy 39/39 / node 12/12 / dsh-inimerse plugin / oauth_loop **75/75** / userdata ignore rules / docs links（92 文件 377 链接 0 broken）/ doc-paths（15 文件 283 引用 0 broken）。

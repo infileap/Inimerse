@@ -268,6 +268,12 @@ if(INIMERSE_PYTHON)
   set_tests_properties(scan_tools_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME replay_closure_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/replay.test.py)
   set_tests_properties(replay_closure_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "runtime;regression")
+  # The L_CALL_FUNC guard must fire for every out-of-range function index, not
+  # only for functions whose name begins with 'h' (docs/AUDIT.md §1.3).  Before
+  # the fix this probe segfaulted, so the test asserts on a signal as well.
+  add_test(NAME vm_bad_fidx_regression
+           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/vm_bad_fidx.test.py $<TARGET_FILE:inimerse>)
+  set_tests_properties(vm_bad_fidx_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "runtime;regression")
   set_tests_properties(cli_incremental_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME release_verify_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/release_verify.test.py)
   set_tests_properties(release_verify_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "release;regression")

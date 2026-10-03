@@ -3,7 +3,7 @@
 本文件是「全方位检查语言 bug + 解释运行 / JIT / 编译运行 / C++ / Rust 的效率与资源占用比较 + 优化方案」这一轮的交付物。全部数字与结论都在本仓库当前树上实测得到，复现命令见 §6。
 
 - §1 是**语言缺陷审计**：四条已复现的缺陷（外加一个差分模糊测试装置）。最严重的一条 —— `and` / `or` 在两个后端返回不同的东西 —— 是模糊测试找出来的，不是手写探针：手写探针只能找到作者已经怀疑的东西。
-- §2–§4 是**效率与资源比较**：四条真实存在的执行通道（解释器 / AOT / C++ / Rust），五个工作负载，墙钟与峰值 RSS。
+- §2–§4 是**效率与资源比较**：五条真实存在的执行通道（解释器 / AOT / wasm / C++ / Rust），五个工作负载，墙钟与峰值 RSS。
 - §5 是**优化方案**：按 效果 ÷ 风险 排序，每条给出验证方式。
 
 ---
@@ -23,7 +23,7 @@
 
 **两道闸门，任何一道不过就不报时间**：
 
-1. **正确性闸门** —— 同一 N 下四个通道必须打印同一个整数。一个算的是别的东西的通道，不是更快的通道。
+1. **正确性闸门** —— 同一 N 下所有通道必须打印同一个整数。一个算的是别的东西的通道，不是更快的通道。
 2. **缩放闸门** —— 每个通道额外在 `scale_n(name, n)` 处再测一次，时间必须增长到 `SCALING_MIN = 1.4` 倍以上；不增长即报 `OPTIMIZED AWAY` 并丢弃该通道。理由见 §2.3。
 
 ---
@@ -155,14 +155,30 @@ if (fidx >= 0 && fidx < root->func_count && root->func_names[fidx] && strncmp(ro
 if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) { ... }
 ```
 
-第一行**没有花括号也没有语句**，所以第二行那个完整的越界检查变成了它的**函数体**。后果有两条：
+第一行**没有花括号也没有语句**，所以第二行那个完整的越界检查变成了它的**函数体**。后果只有一条：
 
-1. 越界检查**只在函数名以 `h` 开头时才执行** —— 其余情况下 `root->funcs[fidx]` 被无条件解引用。
-2. 第一个条件自身就对越界 `fidx` 做 `root->func_names[fidx]`，**在检查之前就已经越界读**。
+1. 越界检查**只在函数名以 `h` 开头时才执行** —— 其余情况下会继续往下走到 `src/vm/vm.c:3666` 的 `int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;`，越界读。
+
+> **一处自我更正**：本节初稿还写了第二条「第一个条件自身就对越界 `fidx` 做 `root->func_names[fidx]`，在检查之前就已经越界读」。**这是错的。** 该条件是 `fidx >= 0 && fidx < root->func_count && root->func_names[fidx] && strncmp(root->func_names[fidx], "h", 1) == 0`，C 的短路求值保证 `root->func_names[fidx]` 只在边界检查通过之后才求值，**不存在越界读**。缺陷只有上面那一条。
 
 该文件其余部分的错误串是 GBK 乱码（`閿欒�? 鏃犳晥鍑芥暟绱㈠�?%d`），这条缺陷混在里面更难被读到。
 
-**严重度**：中高。这是内存安全问题，但触发需要 `fidx` 越界，正常编译产物里未必可达；无论如何这个守卫今天是**装饰品**。
+**严重度**：中高。内存安全问题，而且**不需要恶意字节码文件**就能触发。
+
+**已修复（本轮）**。`vm_exec` 接受运行期手工构造的字节码（`src/runtime/vm_exec_builtin.c` 的 `bc_from_data`），所以五行 `.im` 就能构造出越界调用：
+
+```im
+bc = {"code": [[34, 999, 0, 0], [33, 0, 0, 0]], "strings": [], "floats": [], "funcs": []}
+say vm_exec(bc)
+```
+
+`OP_CALL_FUNC` = 34、`OP_HALT` = 33（`src/compiler/bytecode.h:8-23`）。`funcs` 为空 ⇒ `fidx = 999` 全面越界。
+
+| | 修复前 | 修复后 |
+| --- | --- | --- |
+| `inimerse --no-mods badfidx.im` | **`EXIT=139`（Segmentation fault）** | `EXIT=1`，stderr 报「无效函数索引 999」 |
+
+修复是删掉那个游离的 `if`，让守卫无条件执行（`src/vm/vm.c:3642`）。进树回归 **`tools/vm_bad_fidx.test.py`**（ctest 名 `vm_bad_fidx_regression`）断言：不被信号杀死、退出码非 0、stderr 里出现 `999`，并附一个对照程序（真实函数调用仍须返回 `7`），使「VM 拒绝一切」无法蒙混过关。**双向验证**：把守卫按原样重新包进 `if (... strncmp(root->func_names[fidx], "h", 1) == 0)` 后重建 → 测试报 `the out-of-range call index crashed the VM (signal 11)`；恢复修复后 → `vm bad fidx: ok (out-of-range call index refused, control call works)`。
 
 ### 1.4 已核对但不构成本轮新缺陷的行为
 
@@ -222,33 +238,38 @@ if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) { ... }
 
 ## §2 执行通道效率比较
 
-### 2.1 四条通道
+### 2.1 五条通道
 
 | 通道 | 命令 | 说明 |
 | --- | --- | --- |
 | `interpreter` | `inimerse <wl>.im <N>` | 字节码 VM |
 | `aot` | `aot-native translate --extern N` → C → `cc -O2` | 原生后端（转译器，不是 JIT） |
+| `wasm` | `inimerse compile --abi-target wasm` → `node tools/wasm_run.js` | WebAssembly 后端（本轮新接入） |
 | `c++` | `g++ -O2` | 静态类型基线 |
 | `rust` | `rustc -O` | 静态类型基线 |
 
 **AOT 通道必须用 `--extern N`**。不加时宿主 C 编译器看到的是常量工作负载，会把整个循环在编译期算完 —— `src/compilation/aot_native_tool.c` 的 usage 原文：*Without this the host compiler sees every input as a constant, evaluates a constant workload at compile time, and any speedup measured against the binary is fiction.* 工具另加断言：生成的 C 里必须出现 `extern NV g_N;` 与 `nv_program_main`。
 
-### 2.2 结果（`--reps 5`，中位数）
+**wasm 通道不能传 argv，所以它把 `N` 烧进模块里。** `tools/wasm_run.js:103` 调的是 `inst.exports.inimerse_run(0)`（不传参数），而 wasm MVP 子集**没有 `args()`** —— 模板首行 `N = int(args()[0])` 会让五个工作负载全部报 `error: wasm MVP subset: function 'int' not found (builtins are not in the wasm MVP subset) (line 1)`。因此 wasm 通道把绑定行**替换成字面量**再重新编译。这带来一个结构后果：通道不能再被当作「固定 argv」，`tools/perf_channels.py` 里每条通道都是一个 `rebuild[chan](m) -> (argv, err)`，解释器/原生通道只是换 argv，**wasm 通道重新编译**。缩放闸门也随之从 `argv[:-1] + [str(n2)]` 改为调用 `rebuild`。
 
-| 工作负载 | N | interpreter | aot | c++ | rust |
-| --- | --- | --- | --- | --- | --- |
-| `arith` | 20,000,000 | 1.210s (1.00x) | 0.008s (**146.6x**) | 0.008s (**154.8x**) | *被缩放闸门拦下* |
-| `branch` | 10,000,000 | 1.379s (1.00x) | 0.112s (12.3x) | 0.048s (28.8x) | 0.049s (28.0x) |
-| `fib` | 33 | 0.972s (1.00x) | 0.127s (7.7x) | 0.009s (109.7x) | 0.012s (81.5x) |
-| `lcg` | 20,000,000 | 1.519s (1.00x) | 0.130s (11.7x) | 0.094s (16.1x) | 0.105s (14.5x) |
-| `nested` | 3,400 | 0.928s (1.00x) | 0.068s (13.8x) | 0.052s (17.9x) | 0.056s (16.7x) |
+### 2.2 结果（五通道，`--reps 5`，中位数）
 
-五个工作负载四个通道**答案全部一致**：`199999990000000` / `25002330004640` / `3524578` / `469475` / `750656284`。
+| 工作负载 | N | interpreter | aot | **wasm** | c++ | rust |
+| --- | --- | --- | --- | --- | --- | --- |
+| `arith` | 20,000,000 | 0.845s (1.00x) | 0.005s (**155.07x**) | 0.310s (2.72x) | 0.006s (151.68x) | *被缩放闸门拦下* |
+| `branch` | 10,000,000 | 0.966s (1.00x) | 0.078s (12.42x) | 0.450s (2.15x) | 0.033s (29.34x) | 0.034s (28.56x) |
+| `fib` | 33 | 0.712s (1.00x) | 0.082s (8.63x) | 0.160s (4.44x) | 0.005s (140.80x) | 0.010s (73.45x) |
+| `lcg` | 20,000,000 | 1.164s (1.00x) | 0.083s (14.02x) | 0.425s (2.74x) | 0.062s (18.63x) | 0.065s (18.02x) |
+| `nested` | 3,400 | 0.711s (1.00x) | 0.044s (16.06x) | 0.313s (2.27x) | 0.033s (21.77x) | 0.037s (19.38x) |
 
-**两条结论**：
+五个工作负载**答案在 interpreter / aot / wasm / c++ 四个通道之间全部一致**：`199999990000000` / `25002330004640` / `3524578` / `469475` / `750656284`。（`arith` 的 rust 通道被闸门拦下，见 §2.3，故不参与比对。）
 
-1. **AOT 比解释器快 7.7× – 146.6×**，差距随工作负载形状变化极大。
-2. **AOT 相对手写 C++ 从持平到慢 14 倍**：`arith` 1.00x（都退化成同样紧的循环）、`nested` 1.31x、`lcg` 1.38x、`branch` 2.33x、**`fib` 14.1x**。**调用密集的工作负载是 AOT 最弱的地方** —— `fib` 的每一次迭代都是两次函数调用。
+**四条结论**：
+
+1. **AOT 比解释器快 8.6× – 155.1×**，差距随工作负载形状变化极大。
+2. **AOT 相对手写 C++ 从持平到慢 16 倍**：`arith` 1.20x、`nested` 1.33x、`lcg` 1.34x、`branch` 2.36x、**`fib` 16.4x**。**调用密集的工作负载是 AOT 最弱的地方** —— `fib` 的每一次迭代都是两次函数调用。
+3. **wasm 只比解释器快 2.15× – 4.44×，比 AOT 慢 2× – 57×**。它不是一条「接近原生」的通道，而是一条**只比解释器快一个数量级以内**的通道。
+4. **最刺眼的是 `arith`**：纯累加循环上 wasm 只有 2.72×，而 AOT 是 155×，**差 57 倍**。这不能归因于循环被折掉（缩放闸门已验证 wasm 的耗时随 N 增长，见 §2.3），只能说明 **wasm 后端的算术发射质量很差**。这是一个独立于 §1 语言缺陷的、值得单独立项的可优化点。
 
 ### 2.3 缩放闸门拦下的那次「3522 倍」
 
@@ -266,7 +287,7 @@ Rust 的时间**与 N 无关** —— `rustc -O` 把求和算成了闭式，那�
 这就是缩放闸门存在的理由，而 `arith` 现在**刻意留在工作负载集里作为负对照** —— 它的 Rust 通道必须每次都被拦下。另有两个实现坑记在这里，因为都会伪装成别的问题：
 
 - `fib` 是指数递归，闸门若按 2N 缩放会把 `fib(66)` 送进地质时间 ⇒ `scale_n` 对 `fib` 返回 `n + 1`（黄金比 ~1.62 已过阈值）。
-- 缩放用的 argv 必须按「trip count 是**最后一个**元素」构造（`argv[:-1] + [str(n2)]`）。解释器的 argv 是 `[engine, script, N]`，写成 `[argv[0], n2]` 会丢掉脚本路径 —— 症状是**每个工作负载都报 `interpreter: exit 1`**。
+- 缩放用的 argv 必须按「trip count 是**最后一个**元素」构造。解释器的 argv 是 `[engine, script, N]`，写成 `[argv[0], n2]` 会丢掉脚本路径 —— 症状是**每个工作负载都报 `interpreter: exit 1`**。**wasm 通道不适用这条**：它的 trip count 活在模块里，抬 N 就是重新编译，所以缩放闸门统一走 `rebuild[chan](n2)`（见 §2.1）。
 
 ### 2.4 为什么 `lcg` 与 `branch` 的乘数取 31
 
@@ -279,9 +300,12 @@ Rust 的时间**与 N 无关** —— `rustc -O` 把求和算成了闭式，那�
 | 通道 | 峰值 RSS |
 | --- | --- |
 | `interpreter` | **68.4 – 68.5 MB** |
-| `aot` | 23.1 – 23.2 MB |
+| `wasm` | 49.9 – 50.3 MB（**含 Node 宿主进程**） |
+| `aot` | 23.0 – 23.1 MB |
 | `c++` | 23.1 – 23.2 MB |
 | `rust` | 23.1 – 23.2 MB |
+
+wasm 那一行**不能与原生通道直接比**：它量的是 `node` 进程，Node 运行时自身就占几十 MB。把它单列出来是因为「跑一个 wasm 程序要起一个 Node」本身就是一项部署成本。
 
 **解释器的常驻内存是原生通道的约 3 倍，多出的 ~45 MB 就是每个线程/任务启动时 `malloc` + `memset` 的 64 MiB 寄存器文件**（`src/vm/vm.h:51` 的 `VM_THREAD_REG_COUNT (2048 * 1024)` × 32 字节 `Value`；`src/vm/vm.c:4581-4583` 分配）。
 
@@ -319,7 +343,7 @@ Rust 的时间**与 N 无关** —— `rustc -O` 把求和算成了闭式，那�
 **O2. 让整数溢出可诊断（§1.2）** —— 至少让它不再静默。
 最小改动是把「计算产生的越界整数」也打一条警告（字面量那条已有），更好的做法是给出真正的 64 位整数类型。**验证**：`(2147483647 + 1).type` 的行为被明确写进 `docs/SYNTAX.md`；`9007199254740992 + 1` 要么算对，要么**有警告**；新增回归用例钉死当前选择。
 
-**O3. 修 `vm.c:3637` 的空体 `if`（§1.3）** —— 把两行合并成一个正确的守卫，让越界检查无条件执行。**验证**：构造 `fidx` 越界的用例，修前崩溃/越界读、修后走错误路径；`src/vm/closure_probe.c` 等现有探针全绿。
+**O3. 修 `vm.c:3637` 的空体 `if`（§1.3）** —— **本轮已完成**。删掉那个游离的 `if`，让越界检查无条件执行；进树回归 `tools/vm_bad_fidx.test.py`（ctest 名 `vm_bad_fidx_regression`）。**双向验证已做**：把守卫按原样重新包回 `if (... strncmp(root->func_names[fidx], "h", 1) == 0)` → 段错误（signal 11）；恢复 → 通过。修复前 `EXIT=139`，修复后 `EXIT=1` 并报出索引。
 
 **O4. 给集合操作去掉无条件的互斥锁** —— `src/vm/vm.c` 的 `vm_array_pop` / `vm_array_len` / `vm_dict_get` / `vm_dict_has` / `vm_dict_set`（`:777-798`、`:912-985`）**无条件**取 `VM_LOCK`，即使单线程也是真 `pthread_mutex` 对；而同文件其他站点都用 `int need_lock = (vm->active_threads > 1);`（`:604/695/721/744/766`）。**验证**：单线程下每次集合操作省 ~20–40 周期；多线程语义必须保持 —— 用现有并发测试与 `closure_probe` 的双线程用例反向验证。
 
@@ -343,7 +367,9 @@ Rust 的时间**与 N 无关** —— `rustc -O` 把求和算成了闭式，那�
 
 **风险集中在两点**：①这是解释器核心，`selfhost/compiler.im` 必须与 `src/compiler/compiler.c` 保持一致；②缓存 code 指针后，call/throw 路径必须刷新它（`R` 已在 `src/vm/vm.c:3296/3347/3479-3482` 做了这件事，照抄）。**验证**：先做 O11a（只缓存 code 指针，行为不变），用全量 CTest + 自举对比（`tools/selfhost_compare.py`）确认零差异，再上超指令。
 
-**O12. AOT 的函数调用开销** —— §2.2 里 `fib` 慢 14.1× 指向这里。`nv_*` 全部按值传 24 字节 `NV`（SysV MEMORY 类），全靠 `-O2` 内联 + SROA 才免费；调用密集时内联失败。**验证**：`fib` 的 AOT/C++ 比值从 14.1× 下降；同时 `tools/aot_native.test.py` 的等价语料必须保持全绿（它现在钉死了三处已知分歧，见下）。
+**O12. AOT 的函数调用开销** —— §2.2 里 `fib` 慢 16.4× 指向这里。`nv_*` 全部按值传 24 字节 `NV`（SysV MEMORY 类），全靠 `-O2` 内联 + SROA 才免费；调用密集时内联失败。**验证**：`fib` 的 AOT/C++ 比值从 16.4× 下降；同时 `tools/aot_native.test.py` 的等价语料必须保持全绿（它现在钉死了三处已知分歧，见下）。
+
+**O13. wasm 后端的算术发射质量（§2.2）** —— 纯累加循环上 wasm 只有 2.72×，而 AOT 是 155×，**差 57 倍**。这不是循环被折掉（缩放闸门已验证 wasm 的耗时随 N 增长），而是发射出来的 wasm 指令序列本身太差。要看 `src/compilation/wasm_backend.c` 对 `OP_ADD` / `OP_MUL` 与局部变量访问的发射；一个自然的怀疑是每次算术都要把 `Value`（32 字节）装箱再拆箱，而不是留在 wasm 的 i64 栈上。**验证**：`arith` 的 wasm 比值显著上升，且 `tools/perf_channels.py` 的答案一致性闸门保持全绿 —— wasm 的五个 `answer` 必须继续与解释器逐位相同。
 
 ### 明确不值得先做
 
@@ -367,8 +393,15 @@ Rust 的时间**与 N 无关** —— `rustc -O` 把求和算成了闭式，那�
 # 构建
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)"
 
-# §2 / §3：四条通道 × 五个工作负载（含两道闸门）
+# §2 / §3：五条通道 × 五个工作负载（含两道闸门）
 python3 tools/perf_channels.py --reps 5
+# wasm 通道额外需要 node（默认 tools/wasm_run.js，可用 --node / --wasm-runner 覆盖）；
+# 只想跑一条通道时用 --only，例如 python3 tools/perf_channels.py --reps 5 --only lcg
+
+# §1.3：越界函数索引（修复前 EXIT=139 段错误，修复后 EXIT=1 并报出索引）
+printf 'bc = {"code": [[34, 999, 0, 0], [33, 0, 0, 0]], "strings": [], "floats": [], "funcs": []}\nsay vm_exec(bc)\n' > /tmp/badfidx.im
+./build/inimerse --no-mods /tmp/badfidx.im; echo "exit=$?"
+python3 tools/vm_bad_fidx.test.py ./build/inimerse    # ctest 名：vm_bad_fidx_regression
 
 # §4：JIT 三证（字节码哈希 + 输出 + 墙钟）
 python3 tools/perf_channels.py --jit-probe --only arith

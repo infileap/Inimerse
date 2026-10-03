@@ -5,8 +5,13 @@ Channels measured for each workload in `tools/bench/channels/`:
 
   interpreter  `inimerse <workload>.im <N>`   -- bytecode VM
   aot          `aot-native translate` -> C -> `cc -O2`  -- the native backend
+  wasm         `inimerse compile --abi-target wasm` -> `node tools/wasm_run.js`
   c++          `g++ -O2`                      -- baseline, static types
   rust         `rustc -O`                     -- baseline, static types
+
+The wasm channel was added after the first audit, which had only read the wasm
+backend's emitter and therefore could say only that it *looked* consistent with
+AOT.  Reading is not measuring, so it is a channel here.
 
 ## What this does NOT measure, and why
 
@@ -42,6 +47,24 @@ instead of a literal.  Without it the host C compiler sees a constant workload,
 evaluates the whole loop at compile time, and the resulting binary measures
 nothing -- a fiction the tool refuses to produce: it asserts the generated C
 reads the harness-supplied global.
+
+## Why the wasm channel bakes N in instead of passing it
+
+The wasm host (`tools/wasm_run.js`) takes no argv -- it calls
+`inimerse_run(0)` -- and the MVP subset has no `args()`, so the template's
+`N = int(args()[0])` is rejected at compile time ("function 'int' not found
+(builtins are not in the wasm MVP subset)").  The wasm channel therefore
+substitutes the literal trip count for the bind line and compiles a fresh
+module, including a second one at 2N for the scaling gate; that is why every
+channel here is a *function of the trip count* rather than a fixed argv.
+
+Baking N in is not the same mistake as the AOT constant-workload trap: the
+wasm backend emits a real loop and has no optimiser that could fold it.  But
+that is a claim about code someone else wrote, so the scaling gate recompiles
+at 2N and checks it instead of trusting it.
+
+Peak RSS for this channel is the Node.js host plus the module, so it is not
+comparable with the native channels' RSS and is reported as-is.
 
 ## Methodology
 
@@ -204,6 +227,33 @@ def build_aot(translator, im, cc, tmp):
     return exe, None
 
 
+def build_wasm(engine, node, runner, im, n, tmp):
+    """Compile the workload to wasm with the trip count as a literal.
+
+    Returns (argv, None) or (None, reason).  The bind line is *replaced*, not
+    stripped: the wasm host passes no argv and the MVP subset has no `args()`,
+    so the literal is the only way in.  Each trip count gets its own module, so
+    the scaling gate calling this again at 2N is the intended use.
+    """
+    src = im.read_text(encoding="utf-8")
+    if src.count(BIND_LINE) != 1:
+        return None, (f"{im.name}: expected exactly one {BIND_LINE!r} line to "
+                      f"replace for the wasm variant; the template and this "
+                      f"tool have drifted apart")
+    wasm_im = tmp / f"{im.stem}.n{n}.im"
+    wasm_im.write_text(src.replace(BIND_LINE, f"N = {n}"), encoding="utf-8")
+    out = tmp / f"{im.stem}.n{n}.wasm"
+    r = sh([str(engine), "compile", "--abi-target", "wasm",
+            str(wasm_im), str(out)])
+    if r.returncode != 0:
+        detail = (r.stderr.strip() or r.stdout.strip()).splitlines()
+        return None, (f"wasm compile failed: "
+                      f"{detail[-1][:300] if detail else 'no output'}")
+    if not out.exists():
+        return None, "wasm compile reported success but wrote no module"
+    return [str(node), str(runner), str(out)], None
+
+
 def build_cpp(src, cxx, tmp):
     exe = tmp / (src.stem + ".cpp.bin")
     r = sh([cxx, "-O2", "-o", str(exe), str(src)])
@@ -239,6 +289,8 @@ def main():
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"))
     ap.add_argument("--cxx", default=os.environ.get("CXX", "g++"))
     ap.add_argument("--rustc", default="rustc")
+    ap.add_argument("--node", default="node")
+    ap.add_argument("--wasm-runner", default=str(REPO / "tools" / "wasm_run.js"))
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--only", default=None, help="comma-separated workload names")
     ap.add_argument("--jit-probe", action="store_true")
@@ -254,6 +306,12 @@ def main():
             print(f"error: {what} not found at {p} "
                   f"(build it: cmake --build build)", file=sys.stderr)
             return 2
+
+    runner = Path(args.wasm_runner)
+    if not runner.exists():
+        print(f"error: wasm runner not found at {runner}", file=sys.stderr)
+        return 2
+    node = args.node
 
     names = sorted(p.stem for p in CHANNELS.glob("*.im"))
     if args.only:
@@ -282,19 +340,30 @@ def main():
                 problems.append(f"{name}: no trip count in PARAMS; add one")
                 continue
 
-            exes = {}
-            exes["interpreter"], err = build_interpreter(engine, im, n, tmp), None
-            for chan, builder, src in (
-                ("aot", lambda: build_aot(translator, im, args.cc, tmp), None),
-                ("c++", lambda: build_cpp(CHANNELS / f"{name}.cpp", args.cxx, tmp), None),
-                ("rust", lambda: build_rust(CHANNELS / f"{name}.rs", args.rustc, tmp), None),
+            # Every channel is a *function of the trip count*: the wasm channel
+            # has to recompile for the scaling gate, while the others only need
+            # a different argv.  `rebuild[chan](m)` -> (argv, error).
+            exes, rebuild = {}, {}
+            exes["interpreter"] = build_interpreter(engine, im, n, tmp)
+            rebuild["interpreter"] = lambda m: ([str(engine), str(im), str(m)], None)
+
+            for chan, builder in (
+                ("aot", lambda: build_aot(translator, im, args.cc, tmp)),
+                ("wasm", lambda: build_wasm(engine, node, runner, im, n, tmp)),
+                ("c++", lambda: build_cpp(CHANNELS / f"{name}.cpp", args.cxx, tmp)),
+                ("rust", lambda: build_rust(CHANNELS / f"{name}.rs", args.rustc, tmp)),
             ):
-                exe, err = builder()
+                built, err = builder()
                 if err:
                     problems.append(f"{name}/{chan}: {err}")
                     exes[chan] = None
+                elif chan == "wasm":
+                    exes[chan] = built
+                    rebuild[chan] = lambda m: build_wasm(engine, node, runner,
+                                                         im, m, tmp)
                 else:
-                    exes[chan] = [str(exe), str(n)]
+                    exes[chan] = [str(built), str(n)]
+                    rebuild[chan] = lambda m, built=built: ([str(built), str(m)], None)
 
             if any(v is None for v in exes.values()):
                 continue
@@ -308,14 +377,16 @@ def main():
 
                 if args.scaling_gate:
                     n2 = scale_n(name, n)
-                    # The trip count is the LAST argv element for every channel:
-                    # the interpreter's argv is [engine, script, N] while the
-                    # others are [exe, N].  Rebuilding it as [argv[0], N] would
-                    # drop the script path and the engine would exit 1 on a
-                    # missing file -- which is exactly how this read for a
-                    # while, as "interpreter: exit 1 at 2N" on every workload.
-                    w2, _, _, spread2 = measure(argv[:-1] + [str(n2)],
-                                                reps=max(3, args.reps // 2))
+                    # Built, not patched: the wasm channel's trip count lives in
+                    # the module, so raising N means recompiling.  (The earlier
+                    # form, argv[:-1] + [n2], assumed the trip count was the
+                    # last argv element for every channel; it is for the others,
+                    # but there is no such element for wasm.)
+                    argv2, err2 = rebuild[chan](n2)
+                    if argv2 is None:
+                        problems.append(f"{name}/{chan}: at N={n2}: {err2}")
+                        continue
+                    w2, _, _, spread2 = measure(argv2, reps=max(3, args.reps // 2))
                     if w2 is None:
                         problems.append(f"{name}/{chan}: at N={n2}: {spread2}")
                         continue
@@ -360,7 +431,7 @@ def main():
     print("-" * 73)
     for name, n, answer, results in rows:
         base = results.get("interpreter", (None,))[0]
-        for chan in ("interpreter", "aot", "c++", "rust"):
+        for chan in ("interpreter", "aot", "wasm", "c++", "rust"):
             if chan not in results:
                 continue
             w, rss, sd = results[chan]
