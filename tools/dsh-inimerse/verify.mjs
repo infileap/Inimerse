@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -59,10 +59,19 @@ const ctx = {
     },
 };
 
-const raw = readFileSync(join(HERE, 'cordis.patch.yml'), 'utf8');
-const repoRoot = (/repoRoot:\s*(\S+)/.exec(raw)?.[1] ?? '/home/sakiko/inimerse');
+/* The checkout under test is the one this file lives in.  `cordis.patch.yml`
+ * names an absolute path for the *installed* plugin, and reading it here was a
+ * trap: run from a worktree or a fresh clone, this stage then exercised whatever
+ * engine that path held -- and a stale engine there passes while the tree under
+ * test is never touched.  The config is still read, only to report a mismatch. */
+const CHECKOUT = resolve(HERE, '..', '..');
+const configuredRoot = /repoRoot:\s*(\S+)/.exec(readFileSync(join(HERE, 'cordis.patch.yml'), 'utf8'))?.[1] ?? null;
+const repoRoot = CHECKOUT;
 
 mod.apply(ctx, { repoRoot });
+if (configuredRoot !== null && resolve(configuredRoot) !== CHECKOUT) {
+    console.log(`note: cordis.patch.yml names ${configuredRoot}, but this verifier lives in ${CHECKOUT}; verifying the checkout under test.`);
+}
 check('registers five tools', registered.length === 5, `got ${registered.length}`);
 
 const expected = ['inim_build', 'inim_run', 'inim_status', 'inim_test', 'inim_verse'];
@@ -126,8 +135,14 @@ check('inim_verse: status returned cells', Array.isArray(ensure.responses?.[1]?.
 /* ── live checks (opt-in: they build, test and mutate) ─────────────── */
 if (LIVE) {
     const inline = await call('inim_run', { source: 'print("dsh-inimerse probe");\n' });
+    /* Read `stdout` defensively: on an early return (`engine_missing`,
+     * `bad_request`) the tool answers without it, and `undefined.includes` used
+     * to crash the whole verifier -- which reports nothing at all, and so is
+     * worse than the named failure the check above already records. */
+    const inlineOut = typeof inline.stdout === 'string' ? inline.stdout : '';
     check('inim_run: executed inline source', inline.exitCode === 0, JSON.stringify(inline).slice(0, 300));
-    check('inim_run: captured program output', inline.stdout.includes('dsh-inimerse probe'), inline.stdout);
+    check('inim_run: captured program output', inlineOut.includes('dsh-inimerse probe'),
+        inlineOut === '' ? JSON.stringify(inline).slice(0, 300) : inlineOut);
 
     /* Start from a wiped layer: sequence numbers are state, so a leftover root
      * would make the very first `put` return a sequence other than 1. */

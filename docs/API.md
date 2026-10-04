@@ -111,8 +111,8 @@
 | 定长数组解构 `[a,b]` | 已实现 | `case_array_runtime` ← `vtest/case_array_v04.im` |
 | 嵌套 / 结构模式 | 已实现 | `case_nested_patterns_runtime` ← `vtest/case_nested_patterns_v04.im` |
 | `case try`（Result 分支） | 部分实现 | `case_try_runtime` ← `vtest/case_try_v04.im` |
-| `case value { _: ... }` 默认分支 | 已实现 | `lint_case_missing_default_v04.im` 相关 CTest |
-| `--lint` 的 case 覆盖诊断（穷尽性 / 成员 / 别名） | 部分实现 | `lint_case_enum_runtime`、`lint_case_exhaustive_v04.im`、`lint_case_membership_runtime`、`lint_case_try_members_runtime`、`lint_case_try_alias_runtime` |
+| `case value { _: ... }` 默认分支 | 已实现 | `case_structural_runtime`（`vtest/case_structural_v04.im:14,18,22,29` 的 `_:` 分支）、`case_nested_patterns_runtime`（`vtest/case_nested_patterns_v04.im:5,10,16`）；`--lint` 对**缺失**默认分支的告警由 `lint_case_missing_default_runtime` 钉住 ← `vtest/lint_case_missing_default_v04.im` |
+| `--lint` 的 case 覆盖诊断（穷尽性 / 成员 / 别名） | 部分实现 | `lint_case_enum_runtime`、`lint_case_membership_runtime`、`lint_case_try_members_runtime`、`lint_case_try_alias_runtime`；通配符排在其它分支之前（其后分支不可达）由 `lint_case_wildcard_unreachable_runtime` 钉住 ← `vtest/lint_case_exhaustive_v04.im` |
 | 谓词模式、`in TypeOrSet`、字典字段模式 | 部分实现 | `docs/archive/API_CATALOG.md` 列 部分实现；对应 CTest 覆盖有限 |
 
 ### 2.2 类型层内核（C API）
@@ -155,7 +155,7 @@
 | # | 改写 | 证据（`src/desugar_mod.c`） |
 |---|---|---|
 | 1 | `unless <cond> {` → `if !(<cond>) {` | `:37-38` |
-| 2 | `say@target expr` → `say_target("target", expr)` | `:76-79` |
+| 2 | `say@target expr` → `say_target("target", expr)` | `:76-79`；CTest `desugar_runtime`（`tools/desugar.test.py`） |
 | 3 | `print` → `say` | `:83` |
 | 4 | `fn` → `func` | `:90` |
 | 5 | `&&` → `and`，`\|\|` → `or` | `:97-98` |
@@ -167,7 +167,7 @@
 
 | 语法 | 状态 | 证据 |
 |---|---|---|
-| `say@target expr` | 已实现（**仅经脱糖**） | 核心前端不支持：实测 `say@console 42` → `Error: expected 'expression', but got '@' (type 142)`；同文件 `--desugar` 后成功产出 `say_target("console", 42)`。`@` 字符在 `src/lexer/lexer.c` **无任何 case**（`at` 是独立关键字） |
+| `say@target expr` | 已实现（**仅经脱糖**） | 核心前端不支持：实测 `say@console 42` → `Error: expected 'expression', but got '@' (type 142)`；同文件 `--desugar` 后成功产出 `say_target("console", 42)`。`@` 字符在 `src/lexer/lexer.c` **无任何 case**（`at` 是独立关键字）。CTest `desugar_runtime`（`tools/desugar.test.py`）逐条断言脱糖产物的三行改写，并带一条负对照：同源不加 `--desugar` 必须被拒 —— 若哪天通过了，说明 `say@target` 已成本语法、本节结论过期 |
 | `eidos Name { ... }` / `ed Name { ... }` | 已实现（**仅经外部工具**） | 核心前端零实现：`"eidos"`/`"ed"` 在 `src/lexer`、`src/parser`、`src/compiler` 均无命中。全部由 `tools/eidos_desugar.py`（516 行）实现；CTest `eidos_desugar_runtime`（`tools/eidos_desugar.test.py`）+ `eidos_runtime`（`tools/eidos_runtime.test.py`） |
 | 用户自定义别名 | 无实现证据 | 仅 `docs/archive/SYNTAX_SUGAR.md` 声明"支持用户自定义别名" |
 

@@ -963,7 +963,10 @@ endif()
 #
 # This block sits after the ENVIRONMENT loop above on purpose: that loop sets
 # ENVIRONMENT on every registered test, which would overwrite the LD_PRELOAD
-# this test needs.  It is also the last add_test, so no existing #N moves.
+# this test needs.  It is registered here rather than earlier so that no existing
+# #N moves; the three cases below follow it for the same reason, so #123 stays
+# resolve_timeout_runtime and these become #124-#126 on POSIX (the numbering rule
+# is written down in docs/STATUS.md §10.67).
 if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
   add_library(slowdns_preload MODULE src/platform/slowdns_preload.c)
   target_link_libraries(slowdns_preload PRIVATE ${CMAKE_DL_LIBS})
@@ -974,4 +977,39 @@ if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "platform;smoke"
     ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:slowdns_preload>"
     PASS_REGULAR_EXPRESSION "resolve_bound: ok")
+endif()
+
+# Three cases that wire up evidence the docs already cited but that nothing ran.
+#
+# `docs/API.md` §2.1 had two `case`-coverage rows whose "证据（CTest）" column named
+# vtest *files* -- vtest/lint_case_missing_default_v04.im and
+# vtest/lint_case_exhaustive_v04.im -- and no CTest referenced either file, so the
+# claim could only be checked by hand.  Both are registered here with the
+# diagnostic each one is supposed to produce, and with a FAIL regex naming the
+# *other* diagnostic: swapping them would be caught instead of silently accepted.
+#
+# `tools/desugar_probe.sh` was the only executable evidence for the whole
+# `--desugar` channel and the `say@target` rewrite, and nothing referenced it at
+# all -- so it never ran.  It is now tools/desugar.test.py, which also runs on
+# Windows where the shell probe could not.
+if(INIMERSE_BUILD_ENGINE)
+  # A `case` with no wildcard branch: the lint must say coverage cannot be proven.
+  add_test(NAME lint_case_missing_default_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_missing_default_v04.im)
+  set_tests_properties(lint_case_missing_default_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case"
+    PASS_REGULAR_EXPRESSION "case has no wildcard '_'/'else' branch"
+    FAIL_REGULAR_EXPRESSION "case branch is unreachable")
+  # A wildcard placed before another branch: the branch after it is unreachable.
+  add_test(NAME lint_case_wildcard_unreachable_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_exhaustive_v04.im)
+  set_tests_properties(lint_case_wildcard_unreachable_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case"
+    PASS_REGULAR_EXPRESSION "case branch is unreachable: wildcard '_'/'else' appears before this branch"
+    FAIL_REGULAR_EXPRESSION "case has no wildcard")
+  # `--desugar`: `say@target expr` -> `say_target("target", expr)`, plus the
+  # negative control that the engine refuses the sugar without the desugarer.
+  add_test(NAME desugar_runtime COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/tools/desugar.test.py $<TARGET_FILE:inimerse>)
+  set_tests_properties(desugar_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;desugar"
+    ENVIRONMENT "PYTHONIOENCODING=utf-8"
+    PASS_REGULAR_EXPRESSION "desugar tests: ok")
 endif()

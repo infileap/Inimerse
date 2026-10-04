@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-06 更新测试计数到 123；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-05 更新测试计数到 126；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **123 / 123 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **126 / 126 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **123** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **126** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 123
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 126
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -283,7 +283,7 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 | 增量编译与依赖尾块 | CTest `cli_incremental_regression`；`tools/cli_incremental.test.py` |
 | 可复现构建与产物清单 | CTest `release_verify_regression`；`tools/release_verify.py` |
 | Wasm 数值子集后端 | CTest `wasm_backend_regression` / `wasm_host` / `wasm_probe`；`tools/wasm_backend.test.py` |
-| 绑定生成与扫描工具 | CTest `bindgen_regression` / `scan_tools_regression`；`tools/bindgen.py`、`tools/cpp_scan.py`、`tools/python_scan.py`、`tools/migrate_report.py` |
+| 绑定生成与扫描工具 | CTest `bindgen_regression`（`tools/bindgen.test.py` → `tools/bindgen.py`）、`scan_tools_regression`（`tools/scan_tools.test.py` → `tools/cpp_scan.py`、`tools/python_scan.py`）；**`tools/migrate_report.py` 未被任何 CTest 或测试脚本引用**（本行原先把它与另外三个工具并列当证据） |
 | 语言语法糖（`?`、`\|>`、`case try`、lambda、`>>`、集合推导、`?.`、`??`） | CTest `pipeline_runtime` / `try_finally_runtime` / `lambda_*_runtime` / `case_*_runtime` / `null_coalesce_runtime` / `optional_member_runtime` |
 | POSIX 运行时对等 | CTest `posix_core_api_runtime` / `posix_runtime_parity` / `headless_probe` |
 | 协议与回放（CRP 会话、节点发现、权威交接、断线重连、确定性回放、包签名） | CTest `crp_session_flow_regression` / `node_discovery_regression` / `lease_handoff_regression` / `reconnect_generation_regression` / `replay_closure_regression` / `verse_pack_regression` / `hub_dist_regression` / `protocol_regression` |
@@ -3556,3 +3556,49 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 真实 Windows（ucrt64 gcc）上新探针 12/12 通过。
 
 **诚实边界：** 旧探针在本机 20/20 也通过，flake 始终没有被复现。所以这次修的是**可诊断性**与一处可疑的短等待，**不能声称 20 ms 就是那次红的根因**。
+
+## §10.74 两处「声称了但没人验」：模糊测试的分母，和三条指向文件的证据
+
+**症状（流程缺陷，不是引擎缺陷）。** 0.5.1 开在 0.5.0 发布之后，起因是两类同一形状的问题：
+
+1. `tools/gate.sh` 的 fuzz 阶段只跑一个种子（`EXP_FUZZ_SEED=1`），`sed` 只抽出 `DIVERGE` / `THREW` / `not translated` 三个计数，`-z` 兜底只覆盖「计数读不出来」。于是「120 个程序跑完且全部一致」与「一个程序都没跑」打印出**同一个绿**。
+2. 三处文档把**文件名**或**实现名**写在「证据（CTest）」列里：`docs/API.md` §2.1 的两行 case 覆盖写的是 `lint_case_missing_default_v04.im`、`lint_case_exhaustive_v04.im` 两个 vtest 文件（没有任何 CTest 引用它们），`docs/REQUIREMENTS_ANALYSIS.md` 第 11/12 行与 `docs/STATUS.md` 的绑定工具行则把 `tools/*.py` 的实现名当证据，其中 `tools/migrate_report.py` 没有任何 CTest 或测试脚本引用。
+
+**共同形状：断言了一个没有分母的结论。** fuzz 的 pin 只说「分歧数为 0」，没说「跑过几个程序」；证据列只说「有这么个文件」，没说「哪个用例会因此变红」。这和第 24/123 那次发布门禁、和「Windows 需重新 configure」是同一类 —— 决定点（跑没跑 / 谁在验）不在被断言的位置上。
+
+**改法（fuzz）。** `EXP_FUZZ_SEED=1` 变成 `EXP_FUZZ_SEEDS="${EXP_FUZZ_SEEDS:-1 2 3}"`，`stage_fuzz` 逐种子解析 `seed N, M programs` 与 `agreed`：
+
+- `M != EXP_FUZZ_COUNT` ⇒ 红，打印「一个空跑或缩水的运行不许当成『没有发现』」；
+- `agreed + DIVERGE + THREW + not translated != M` ⇒ 红（工具内部的分桶和必须闭合）；
+- 累计种子数为 0 ⇒ 红（`EXP_FUZZ_SEEDS` 为空时什么都没验证）；
+- pin 与 `not translated` 的判定改在**累计总数**上做，失败信息里带上「共几个种子 × 几个程序」。
+
+**改法（证据）。** 三个此前零引用的产物各自接进一个点名用例，且每个用例带一条指认**另一个**诊断的 `FAIL_REGULAR_EXPRESSION`（两个诊断写反了会被抓，而不是两边都算过）：
+
+| 用例 | 断言 | 原先写在证据列里的东西 |
+| --- | --- | --- |
+| `lint_case_missing_default_runtime` | `case has no wildcard '_'/'else' branch` | `lint_case_missing_default_v04.im` 相关 CTest |
+| `lint_case_wildcard_unreachable_runtime` | `case branch is unreachable: wildcard '_'/'else' appears before this branch` | 把 vtest 文件名混进测试名列表 |
+| `desugar_runtime` | `desugar tests: ok`（外加负对照：同一份源码不加 `--desugar` 必须被拒） | `tools/desugar_probe.sh`（零引用 ⇒ 从未运行） |
+
+`tools/desugar_probe.sh` 已删除，改为 `tools/desugar.test.py`：同一个探针（`--desugar` 产出的三行改写逐条断言），但能被 CTest 驱动，且用 Python 写因此在 Windows 上也能跑。负对照是这段探针的价值所在 —— 它钉住的不只是「脱糖能跑」，还有「`say@target` 确实只有脱糖这一条路」（`docs/API.md` §3.3 的结论）。
+
+**计数同步。** `grep -c 'add_test('` 123 → **126**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步为 126，`docs/BOARD.md` §3、本节 §2/§2.1 同步。三个新用例注册在 `CMakeLists.txt` **末尾**，`#123 resolve_timeout_runtime` 不移位（编号规则见 §10.67）。
+
+**正向对照。** `bash tools/gate.sh --fast --only fuzz` ⇒ 3 个种子 × 120 个程序 = 360，`0 DIVERGE / 0 THREW / 0 untranslated`，`gate: fuzz findings match the pin over 3 seed(s) x 120 programs (1 2 3)`，阶段 PASS。
+
+**诚实边界。** ① 分母断言保证的是「跑满了这么多个程序」，**不保证种子集选得好** —— 三个种子只是把「种子 1 恰好干净」的疑虑压小，不是覆盖率证明；② 证据列改成点名用例只让「谁在验」可查，**不改变那三行的实现状态**（`--lint` 的 case 覆盖仍是「部分实现」，`tools/migrate_report.py` 仍然没有测试）；③ 每条种子的程序数与 `not translated` 为 0 的约定不变（生成器造出后端翻不动的东西仍是生成器的 bug）。
+
+## §10.75 第三处同形状：插件验证跑的是**另一个** checkout
+
+**症状（流程缺陷，不是引擎缺陷）。** `tools/dsh-inimerse/verify.mjs` 从 `cordis.patch.yml`（**已提交**，`repoRoot: /home/sakiko/inimerse`）里读出绝对路径，再把它交给 `mod.apply`。于是 `tools/gate.sh` 的 plugin 阶段在**任何 worktree 或新克隆**里跑，验的都是**那个路径上的仓库**，而不是被测的那棵树 —— 0.5.1 的 worktree `/tmp/inim-051` 里，plugin 阶段是对 `/home/sakiko/inimerse` 的引擎打印 55/55 的，`/tmp/inim-051/build/inimerse` 一次都没被碰过。证据是实测：把 `/tmp/inim-051/build/inimerse` 改名藏起来，阶段**照样 55/55**。
+
+**同一个缺陷的副产物：崩溃，而不是报错。** 那个「别人的引擎」在验证瞬间不存在时（当时另一会话正在主 worktree 里重链接它），`inim_run` 返回 `{ok:false, code:'engine_missing'}`（这种早返回**没有** `stdout`），而 `verify.mjs:130` 直接读 `inline.stdout.includes(...)` ⇒ `TypeError: Cannot read properties of undefined`，整个验证器带着一个堆栈退出，**一个命名的失败都没留下**。本轮 0.5.1 的门禁运行里出现的就是这一行。
+
+**共同形状。** 与 §10.74 的两处同类：**决定点（「在验哪棵树」）不在被断言的位置上**。断言说「这个桥能用」，而「这个」指的是配置里的路径，不是被测的树。
+
+**改法。** `verify.mjs` 改为锚在**它自己所处的 checkout**（`CHECKOUT = resolve(HERE, '..', '..')`）；`cordis.patch.yml` 仍被读取，但只用于在两者不一致时打印一行 `note:`（该配置是给**装进 DSH 的插件**用的，不是被测树的属性）。同时 `inline.stdout` 改为防御性读取：早返回时不再崩，而是让已有的两条断言**带工具的完整 JSON 失败**（里面就有它找过的确切路径）。
+
+**验证（两个方向）。** ① 引擎在：`note: cordis.patch.yml names /home/sakiko/inimerse, but this verifier lives in /tmp/inim-051; verifying the checkout under test.` + `55/55 checks passed (live)`，rc=0；② 把 `build/inimerse` 改名藏起来：4 条命名失败（`inim_run: executed inline source — {"ok":false,"code":"engine_missing","error":"engine not found at /tmp/inim-051/build/inimerse; run inim_build first"}` 等）+ `51/55`，rc=1，**没有 TypeError**。失败信息里的路径正是**被测树**的路径，这一点本身就是锚定生效的证据。检查条数不变（仍 55），这一改修的是「报告方式」，不是「检查内容」。
+
+**诚实边界。** ① 那行 `note:` **不是断言**：worktree 里配置指向别处**仍然是绿的** —— 那份配置是装机用的，不是被测树的属性，为它判红是错的；② **没有任何 CI 工作流引用 `tools/gate.sh`**（`.github/workflows/*.yml` 零命中），所以这个阶段的证据只存在于本机；③ 该阶段仍会在 checkout 内写 `verify-root`（结束时删除）。

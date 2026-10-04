@@ -47,7 +47,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-123}"
+EXP_CTEST="${EXP_CTEST:-126}"
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
@@ -145,9 +145,9 @@ stage_ctest() {
 # union that keeps sizeof(Value) at 32 bytes, so the two agree: 0 findings across
 # seeds 1-6 at 120 programs each and seed 1 at 400.  See docs/AUDIT.md §1.14.
 #
-# The seed and the program count stay fixed, so the finding set is deterministic and a
-# regression is reproducible.  The counts are still asserted EXACTLY rather than as a
-# ceiling, because the direction of the surprise matters:
+# The program count stays fixed, so the finding set is deterministic and a regression
+# is reproducible.  The counts are still asserted EXACTLY rather than as a ceiling,
+# because the direction of the surprise matters:
 #
 #   * MORE findings is a new interpreter/AOT divergence -- do not paper over it;
 #   * FEWER findings means one was fixed -- promote that case into
@@ -158,45 +158,89 @@ stage_ctest() {
 # saying so.  `not translated` must be 0 either way -- the tool reports a program the
 # AOT backend cannot translate as a generator bug rather than as a divergence, and a
 # generator bug is never a finding.  See docs/AUDIT.md §1.2 (整数提升) and §1.13.
+#
+# Two things are pinned here that the finding counts alone cannot express:
+#
+#   * the seed *set*, not one seed.  A single seed pinned the corpus to a single RNG
+#     stream, so "the generator's range was explored" and "one stream was replayed"
+#     read the same in the log -- the wider sweeps that confirmed the 0/0 pin
+#     (seeds 2-10, docs/AUDIT.md §1.13) were manual runs this stage never repeated;
+#   * the *denominator*.  `DIVERGE 0 / THREW 0` is also what a run that produced
+#     nothing prints, so the stage asserts that the tool reported exactly
+#     EXP_FUZZ_COUNT programs per seed AND that agreed+DIVERGE+THREW+untranslated
+#     accounts for every one of them.  Without this the generator could stop
+#     producing programs -- or the tool could be replaced by `echo` -- and the stage
+#     would still pass, the same shape as the release workflow that ran 24 of the
+#     123 cases it claimed (docs/AUDIT.md §1.13 「分母」, §1.42).
+#
+# Cost: ~45-50 s per seed.  Lower EXP_FUZZ_SEEDS only by saying so in docs/BOARD.md 3
+# -- the set is part of the claim.
 EXP_FUZZ_COUNT="${EXP_FUZZ_COUNT:-120}"
-EXP_FUZZ_SEED="${EXP_FUZZ_SEED:-1}"
+EXP_FUZZ_SEEDS="${EXP_FUZZ_SEEDS:-1 2 3}"
 EXP_FUZZ_DIVERGE="${EXP_FUZZ_DIVERGE:-0}"
 EXP_FUZZ_THREW="${EXP_FUZZ_THREW:-0}"
 
 stage_fuzz() {
-  local out rc div threw untr
-  out="$(python3 "$REPO_ROOT/tools/im_diff_fuzz.py" \
-           --count "$EXP_FUZZ_COUNT" --seed "$EXP_FUZZ_SEED" 2>&1)"
-  rc=$?
-  printf '%s\n' "$out"
-  if [ "$rc" -eq 2 ]; then
-    echo "gate: the fuzzer could not find its engine or its translator." >&2
+  local seed out rc div threw untr agreed prog
+  local ran=0 total_agreed=0 total_div=0 total_threw=0 total_untr=0
+  for seed in $EXP_FUZZ_SEEDS; do
+    out="$(python3 "$REPO_ROOT/tools/im_diff_fuzz.py" \
+             --count "$EXP_FUZZ_COUNT" --seed "$seed" 2>&1)"
+    rc=$?
+    printf '%s\n' "$out"
+    if [ "$rc" -eq 2 ]; then
+      echo "gate: the fuzzer could not find its engine or its translator." >&2
+      return 1
+    fi
+    # The tool exits 1 whenever it finds anything -- the right default for interactive
+    # use, but the pin below is what decides here, so the exit code is not the verdict.
+    prog="$(printf '%s\n' "$out" | sed -n 's/^seed [0-9][0-9]*, \([0-9][0-9]*\) programs$/\1/p')"
+    agreed="$(printf '%s\n' "$out" | sed -n 's/^  agreed *\([0-9]*\)$/\1/p')"
+    div="$(printf '%s\n' "$out" | sed -n 's/^  DIVERGE *\([0-9]*\)$/\1/p')"
+    threw="$(printf '%s\n' "$out" | sed -n 's/^  THREW *\([0-9]*\)$/\1/p')"
+    untr="$(printf '%s\n' "$out" | sed -n 's/^  not translated *\([0-9]*\)$/\1/p')"
+    if [ -z "$prog" ] || [ -z "$agreed" ] || [ -z "$div" ] || [ -z "$threw" ] || [ -z "$untr" ]; then
+      echo "gate: could not read the fuzzer's counts (seed $seed) from its output." >&2
+      return 1
+    fi
+    # The denominator.  The finding counts cannot tell "120 programs ran and all
+    # agreed" from "no program ran at all", so assert both the run's size and that
+    # every program landed in exactly one bucket.
+    if [ "$prog" -ne "$EXP_FUZZ_COUNT" ]; then
+      echo "gate: seed $seed ran $prog program(s), pinned $EXP_FUZZ_COUNT." >&2
+      echo "gate: an empty or shrunken run must not pass as 'no findings'." >&2
+      return 1
+    fi
+    if [ "$((agreed + div + threw + untr))" -ne "$prog" ]; then
+      echo "gate: seed $seed accounted for $((agreed + div + threw + untr)) of $prog program(s)" >&2
+      echo "gate: (agreed $agreed + DIVERGE $div + THREW $threw + not translated $untr)." >&2
+      return 1
+    fi
+    total_agreed=$((total_agreed + agreed))
+    total_div=$((total_div + div))
+    total_threw=$((total_threw + threw))
+    total_untr=$((total_untr + untr))
+    ran=$((ran + 1))
+  done
+  if [ "$ran" -eq 0 ]; then
+    echo "gate: EXP_FUZZ_SEEDS is empty ('$EXP_FUZZ_SEEDS') -- nothing ran, so nothing was verified." >&2
     return 1
   fi
-  # The tool exits 1 whenever it finds anything -- the right default for interactive
-  # use, but the pin below is what decides here, so the exit code is not the verdict.
-  div="$(printf '%s\n' "$out" | sed -n 's/^  DIVERGE *\([0-9]*\)$/\1/p')"
-  threw="$(printf '%s\n' "$out" | sed -n 's/^  THREW *\([0-9]*\)$/\1/p')"
-  untr="$(printf '%s\n' "$out" | sed -n 's/^  not translated *\([0-9]*\)$/\1/p')"
-  if [ -z "$div" ] || [ -z "$threw" ] || [ -z "$untr" ]; then
-    echo "gate: could not read the fuzzer's finding counts from its output." >&2
-    return 1
-  fi
-  if [ "$untr" -ne 0 ]; then
-    echo "gate: the generator produced $untr program(s) the AOT backend cannot translate." >&2
+  if [ "$total_untr" -ne 0 ]; then
+    echo "gate: the generator produced $total_untr program(s) the AOT backend cannot translate." >&2
     echo "gate: that is a generator bug, not a divergence -- narrow the generator." >&2
     return 1
   fi
-  if [ "$div" -ne "$EXP_FUZZ_DIVERGE" ] || [ "$threw" -ne "$EXP_FUZZ_THREW" ]; then
-    echo "gate: differential fuzz found $div DIVERGE / $threw THREW, pinned $EXP_FUZZ_DIVERGE / $EXP_FUZZ_THREW" >&2
-    echo "gate: (seed $EXP_FUZZ_SEED, $EXP_FUZZ_COUNT programs)." >&2
+  if [ "$total_div" -ne "$EXP_FUZZ_DIVERGE" ] || [ "$total_threw" -ne "$EXP_FUZZ_THREW" ]; then
+    echo "gate: differential fuzz found $total_div DIVERGE / $total_threw THREW, pinned $EXP_FUZZ_DIVERGE / $EXP_FUZZ_THREW" >&2
+    echo "gate: ($ran seed(s) x $EXP_FUZZ_COUNT programs: $EXP_FUZZ_SEEDS)." >&2
     echo "gate: MORE findings is a new interpreter/AOT divergence -- do not paper over it." >&2
     echo "gate: FEWER findings means one was fixed -- promote that case into" >&2
     echo "gate: tools/aot_native.test.py, then bump EXP_FUZZ_DIVERGE/EXP_FUZZ_THREW" >&2
     echo "gate: here and the counts in docs/BOARD.md 3." >&2
     return 1
   fi
-  echo "gate: fuzz findings match the pin ($EXP_FUZZ_DIVERGE DIVERGE, $EXP_FUZZ_THREW THREW, 0 untranslated)."
+  echo "gate: fuzz findings match the pin over $ran seed(s) x $EXP_FUZZ_COUNT programs ($EXP_FUZZ_SEEDS): $total_div DIVERGE, $total_threw THREW, 0 untranslated, $total_agreed agreed."
   return 0
 }
 

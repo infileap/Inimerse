@@ -142,6 +142,13 @@ own schema, because a value the schema rejects turns a *successful* call into
 `INVALID_TOOL_OUTPUT`. Live checks are idempotent: they wipe their Verse root
 first, so sequence numbers start at 1 on every run.
 
+The verifier always drives **the checkout it lives in**, not the `repoRoot` in
+`cordis.patch.yml`: that key is an absolute path for the *installed* plugin, so
+honouring it here would make a worktree or a fresh clone verify some other tree —
+and a stale engine there passes while the tree under test is never touched. The
+config is still read, and a mismatch is printed as a `note:` line. `repoRoot`
+below therefore describes the installed plugin's behaviour, not this script's.
+
 ## Design notes
 
 - **No dependencies, no build step.** The module imports only Node builtins, so
