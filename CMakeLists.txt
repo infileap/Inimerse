@@ -1265,4 +1265,15 @@ if(INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;desugar"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
     PASS_REGULAR_EXPRESSION "desugar tests: ok")
+  # `tools/migrate_report.py` is the fourth product that a doc row cited as
+  # evidence while nothing ran it -- `docs/REQUIREMENTS_ANALYSIS.md` row 11 and
+  # `docs/STATUS.md` §4 named it beside `bindgen_regression` /
+  # `scan_tools_regression`, and neither of those touches the migration report.
+  # The harness drives a real scan and asserts the header's counts against the
+  # table body, so "0 adaptation points" printed over a full table is caught.
+  add_test(NAME migrate_report_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/migrate_report.test.py)
+  set_tests_properties(migrate_report_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;migration"
+    ENVIRONMENT "PYTHONIOENCODING=utf-8"
+    PASS_REGULAR_EXPRESSION "migrate_report tests: ok")
 endif()
