@@ -2880,6 +2880,7 @@ if pass < 60 {
 
 - `src/mod/gui_mod.c.bak2_20260808_221050`（**入库**，107461 字节，1485 个 U+FFFD）→ `git rm`。
 - `src/main.c.bak`（**未跟踪**，34646 字节）→ `rm`。
+- `mods/debug/mod.st.bak`（**未跟踪且被 `.gitignore:50` 的 `*.bak` 忽略**，78 字节）→ `rm`。它是 `mod.st.dev` 的逐字重复（同样三行、同一个 `debug_mod.dll`），且没有任何代码引用它。**同目录的 `mod.st.orig` / `mod.st.dev` / `mod.st.dev28` / `mod.st.dev29` / `mod.st.hold5` 没有动** —— 它们虽然名字像备份，但都是**受版本控制的、故意的 mod 状态变体**（`git ls-files mods` 收录），是 mod 加载器的状态夹具，不是遗留物。区分标准是「受版本控制 + 被别处使用」而不是文件名后缀。
 
 删前证明没有东西依赖它们：`tools/`、`CMakeLists.txt`、`*.sh`/`*.py`/`*.js`/`*.cmake` 对两个路径**零命中**，唯一引用它们的只有文档（`docs/SYNTAX.md`、`docs/STATUS.md`、`docs/BOARD.md`，本轮同步）。`realpath` 校验绝对路径之后才删。
 
