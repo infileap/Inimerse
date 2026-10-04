@@ -316,8 +316,8 @@ static char *read_file_buf(const char *path, int *len) {
     if (!f) return NULL;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     char *b = malloc((size_t)n + 1);
-    fread(b, 1, (size_t)n, f); b[n] = 0; fclose(f);
-    *len = (int)n;
+    size_t got = (size_t)fread(b, 1, (size_t)n, f); b[got] = 0; fclose(f);
+    *len = (int)got;
     return b;
 }
 
@@ -1950,7 +1950,7 @@ static DWORD WINAPI udp_server_thread(LPVOID arg) {
 static int b_verse_listen(VM *vm) {
     int argc = vm->cur_argc;
     Value pv = r_arg(vm, argc - 1);
-    int port = (pv.type == VAL_INT) ? pv.ival : (int)pv.fval;
+    int port = (int)val_as_int(&pv);
     r_popn(vm, argc);
     if (g_listen_run) { r_push_int(vm, g_listen_port); return 1; }
     WSADATA wsa;
@@ -2046,7 +2046,7 @@ static char *verse_udp_fetch(const char *host, int port, const char *id, int *ou
 static int b_verse_listen(VM *vm) {
     int argc = vm->cur_argc;
     Value pv = r_arg(vm, argc - 1);
-    int port = (pv.type == VAL_INT) ? pv.ival : (int)pv.fval;
+    int port = (int)val_as_int(&pv);
     r_popn(vm, argc);
     int rc = verse_http_start(port);
     r_push_int(vm, rc ? port : 0);

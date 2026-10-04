@@ -281,6 +281,20 @@ double val_as_double(const Value *v) {
 
 }
 
+/* The integer counterpart of val_as_double, added because the idiom it replaces
+   -- `x.type == VAL_INT ? x.ival : (int)x.fval` -- silently read the union's
+   DOUBLE member for a bool, a nil or a string.  Every branch here is
+   tag-checked, so a bool answers 1 or 0 and everything else answers 0 instead
+   of the bit pattern of whatever shares the storage.  See docs/AUDIT.md 1.20. */
+long long val_as_int(const Value *v) {
+    switch (v->type) {
+        case VAL_INT:   return v->ival;
+        case VAL_FLOAT: return (long long)v->fval;
+        case VAL_BOOL:  return v->ival ? 1 : 0;
+        default:        return 0;
+    }
+}
+
 /* The one truth-value production point (docs/DECFY_DESIGN.md:125).  The rule is
    the one docs/DECFY_DESIGN.md:24 documents and the one the wasm backend already
    emits: a zero number and nil are false, and *everything else* -- including the

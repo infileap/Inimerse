@@ -13,8 +13,8 @@
 #endif
 
 static int builtin_random(VM *vm) { if (vm_cur_sp(vm)<0) return 0; int max=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, rand()%max); return 1; }
-static int builtin_sqrt(VM *vm) { if (vm_cur_sp(vm)<0) return 0; double val=(vm_cur_stack(vm)[vm_cur_sp(vm)].type==VAL_INT)?vm_cur_stack(vm)[vm_cur_sp(vm)].ival:vm_cur_stack(vm)[vm_cur_sp(vm)].fval; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_float(vm, sqrt(val)); return 1; }
-static int builtin_read_file(VM *vm) { if (vm_cur_sp(vm)<0) return 0; Value _pv=vm_cur_stack(vm)[vm_cur_sp(vm)]; char *fn=strdup(_pv.sval ? _pv.sval : ""); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); if (_pv.type==VAL_STRING && _pv.ival!=1) free(_pv.sval); FILE *f=fopen(fn,"rb"); free(fn); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long len=ftell(f); fseek(f,0,SEEK_SET); char *buf=malloc(len+1); fread(buf,1,len,f); buf[len]='\0'; fclose(f); push_string(vm,buf); free(buf); return 1; }
+static int builtin_sqrt(VM *vm) { if (vm_cur_sp(vm)<0) return 0; double val=val_as_double(&vm_cur_stack(vm)[vm_cur_sp(vm)]); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_float(vm, sqrt(val)); return 1; }
+static int builtin_read_file(VM *vm) { if (vm_cur_sp(vm)<0) return 0; Value _pv=vm_cur_stack(vm)[vm_cur_sp(vm)]; char *fn=strdup(_pv.sval ? _pv.sval : ""); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); if (_pv.type==VAL_STRING && _pv.ival!=1) free(_pv.sval); FILE *f=fopen(fn,"rb"); free(fn); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long len=ftell(f); fseek(f,0,SEEK_SET); char *buf=malloc(len+1); size_t got=(size_t)fread(buf,1,(size_t)len,f); buf[got]='\0'; fclose(f); push_string(vm,buf); free(buf); return 1; }
 static int builtin_write_file(VM *vm) { if (vm_cur_sp(vm)<1) return 0; Value _pw=vm_cur_stack(vm)[vm_cur_sp(vm)]; Value _px=vm_cur_stack(vm)[vm_cur_sp(vm)-1]; char *content=strdup(_pw.sval ? _pw.sval : ""); char *fn=strdup(_px.sval ? _px.sval : ""); FILE *f=fopen(fn,"w"); int success=0; if(f){fputs(content,f);fclose(f);success=1;} vm_cur_set_sp(vm, vm_cur_sp(vm) - 2); if (_pw.type==VAL_STRING && _pw.ival!=1) free(_pw.sval); if (_px.type==VAL_STRING && _px.ival!=1) free(_px.sval); free(content); free(fn); push_int(vm,success); return 1; }
 static int builtin_input(VM *vm) {
     char *prompt = strdup("");
@@ -1195,7 +1195,7 @@ static int builtin_spi_meta(VM *vm) { /* spi_meta(id, version, caps): declare mo
     Value *verv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value *idv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 2];
     const char *id = (idv->type == VAL_STRING && idv->sval) ? idv->sval : "anon";
-    int version = (verv->type == VAL_INT) ? verv->ival : (int)verv->fval;
+    int version = (int)val_as_int(verv);  /* tag-checked: a bool's ival is not a double */
     int caps = 0;
     if (capsv->type == VAL_STRING) caps = spi_parse_caps(capsv->sval);
     else if (capsv->type == VAL_INT) caps = capsv->ival;
@@ -1547,7 +1547,7 @@ static int builtin_gc_auto(VM *vm) { /* gc_auto(1|0): enable/disable auto GC */
     int argc = vm_cur_sp(vm) + 1;
     if (argc >= 1) {
         Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-        int on = (v->type == VAL_INT) ? v->ival : (int)v->fval;
+        int on = val_as_double(v) != 0.0;  /* tag-checked: (int)v->fval read a bool's bits */
         vm->gc_enabled = on ? 1 : 0;
         if (on && vm->gc_threshold <= 0) vm->gc_threshold = 2.0 * 1024 * 1024;
     }

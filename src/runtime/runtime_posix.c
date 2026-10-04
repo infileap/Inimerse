@@ -81,10 +81,14 @@ static int posix_core_int(VM *vm) {
 
 static int posix_core_float(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
-    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)]; double n = 0.0;
-    if (v->type == VAL_STRING) n = strtod(v->sval ? v->sval : "0", NULL);
-    else if (v->type == VAL_INT) n = (double)v->ival;
-    else n = v->fval;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    /* Do not read a union member by assumption.  The old fallback was
+       `else n = v->fval`, which read the DOUBLE member of a bool: float(true)
+       answered 4.9406564584124654e-324, the bit pattern of the integer 1, while
+       float(false) and float(nil) answered 0 by accident.  val_as_double() is
+       tag-checked and gives a bool 1.0/0.0, exactly as the WIN32 copy does.
+       See docs/AUDIT.md 1.20. */
+    double n = v->type == VAL_STRING ? strtod(v->sval ? v->sval : "0", NULL) : val_as_double(v);
     pop(vm); push_float(vm, n); return 1;
 }
 
@@ -524,7 +528,7 @@ static int posix_core_index(VM *vm) {
 static int posix_gc_auto(VM *vm) {
     if (vm_cur_sp(vm) >= 0) {
         Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-        int on = v->type == VAL_INT ? v->ival : (int)v->fval;
+        int on = val_as_double(v) != 0.0;  /* tag-checked: (int)v->fval read a bool's bits */
         vm->gc_enabled = on ? 1 : 0;
         if (on && vm->gc_threshold <= 0) vm->gc_threshold = 2.0 * 1024.0 * 1024.0;
         pop(vm);
@@ -572,10 +576,10 @@ static int posix_gc_stats(VM *vm) {
 #include "../platform/process.h"
 
 static int posix_random(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; pop(vm); push_int(vm, n > 0 ? rand() % n : 0); return 1; }
-static int posix_sqrt(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); push_float(vm, sqrt(v.type == VAL_INT ? (double)v.ival : v.fval)); return 1; }
+static int posix_sqrt(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); push_float(vm, sqrt(val_as_double(&v))); return 1; }
 static int posix_time_ms(VM *vm) { push_int(vm, (int)(im_platform_now_ms() & 0x7fffffff)); return 1; }
 static int posix_sleep(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; int ms=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; pop(vm); if(ms>0) im_platform_sleep_ms((unsigned)ms); push_int(vm, 1); return 1; }
-static int posix_read_file(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; const char *p=v.sval?v.sval:""; FILE *f=fopen(p,"rb"); pop(vm); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long n=ftell(f); fseek(f,0,SEEK_SET); char *b=(char*)malloc((size_t)n+1); if(!b){fclose(f);push_string(vm,"");return 1;} fread(b,1,(size_t)n,f); fclose(f); b[n]=0; push_string(vm,b); free(b); return 1; }
+static int posix_read_file(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; const char *p=v.sval?v.sval:""; FILE *f=fopen(p,"rb"); pop(vm); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long n=ftell(f); fseek(f,0,SEEK_SET); char *b=(char*)malloc((size_t)n+1); if(!b){fclose(f);push_string(vm,"");return 1;} size_t got=(size_t)fread(b,1,(size_t)n,f); fclose(f); b[got]=0; push_string(vm,b); free(b); return 1; }
 static int posix_write_file(VM *vm) { if(vm_cur_sp(vm)<1)return 0; Value data=vm_cur_stack(vm)[vm_cur_sp(vm)], path=vm_cur_stack(vm)[vm_cur_sp(vm)-1]; FILE *f=fopen(path.sval?path.sval:"","wb"); int ok=0; if(f){fputs(data.sval?data.sval:"",f); fclose(f); ok=1;} vm_cur_set_sp(vm,vm_cur_sp(vm)-2); push_int(vm,ok); return 1; }
 static int posix_input(VM *vm) { if(vm_cur_sp(vm)>=0) pop(vm); char b[1024]; if(fgets(b,sizeof b,stdin)){size_t n=strlen(b); if(n&&b[n-1]=='\n')b[n-1]=0; push_string(vm,b);} else push_string(vm,""); return 1; }
 static int posix_env(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; char b[4096]; int r=im_platform_getenv(v.sval?v.sval:"",b,sizeof b); pop(vm); push_string(vm,r==0?b:""); return 1; }
@@ -727,7 +731,7 @@ static int posix_atomic_add(VM *vm) {
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value delta = vm_cur_stack(vm)[vm_cur_sp(vm)];
     const char *n = name.type == VAL_STRING ? name.sval : NULL;
-    int d = delta.type == VAL_INT ? delta.ival : (int)delta.fval;
+    int d = (int)val_as_int(&delta);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     int idx = posix_atomic_find(vm, n, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
@@ -750,7 +754,7 @@ static int posix_atomic_set(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value value = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int val = value.type == VAL_INT ? value.ival : (int)value.fval;
+    int val = (int)val_as_int(&value);
     int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 1);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     if (idx < 0) { push_int(vm, 0); return 1; }
@@ -916,7 +920,7 @@ static int posix_spi_meta(VM *vm) {
     if (found < 0 && vm->modCount < 32) found = vm->modCount++;
     if (found >= 0) {
         snprintf(vm->mods[found].id, sizeof vm->mods[found].id, "%s", name);
-        vm->mods[found].version = version.type == VAL_INT ? version.ival : (int)version.fval;
+        vm->mods[found].version = (int)val_as_int(&version);
         vm->mods[found].caps = mask;
     }
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 3);

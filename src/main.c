@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 extern int build_project_impl(void *vm, const char *cfgPath, int mode, const char *outExe);
@@ -275,7 +277,7 @@ static int load_and_run(VM *vm, const char *path) {
     if (plen > 6 && strcmp(path + plen - 6, ".imjar") == 0) {
         snprintf(jarCache, sizeof jarCache, "%s_cache", path);
         zip_extract_all(path, jarCache);
-        _chdir(jarCache);
+        if (_chdir(jarCache) != 0) { /* best effort: main.inim is looked up in the jar cache */ }
         runPath = "main.inim";
         plen = strlen(runPath);
         path = runPath;
@@ -449,7 +451,7 @@ static char *chdir_to_script_dir(const char *script) {
 #endif
     if (slash) {
         *slash = '\0';
-        _chdir(abs);
+        if (_chdir(abs) != 0) { /* best effort: keep running from the original cwd */ }
 #ifdef _WIN32
         *slash = '\\';
 #else
@@ -873,7 +875,7 @@ unsigned long timeout_ms = 0;
     if (self) {
         char *p = strrchr(self, '\\');
         if (!p) p = strrchr(self, '/');
-        if (p) { *p = '\0'; _chdir(self); }
+        if (p) { *p = '\0'; if (_chdir(self) != 0) { /* best effort */ } }
         free(self);
     }
 #endif

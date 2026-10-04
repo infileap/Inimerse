@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 116；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 117；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **116 / 116 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **117 / 117 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **116** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **117** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 116
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 117
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3037,7 +3037,7 @@ sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain
 
 ### 六、门禁实测
 
-十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 114/114, 0 skipped)`（`100% tests passed, 0 tests failed out of 114`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`（`check_links: 93 markdown files, 394 links (17 external, 0 anchors, 377 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 391 backtick references, 0 broken`）。
+十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0` —— **该计数当时是假的**，见 §10.54）、`✔ ctest (expect 114/114, 0 skipped)`（`100% tests passed, 0 tests failed out of 114`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`（`check_links: 93 markdown files, 394 links (17 external, 0 anchors, 377 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 391 backtick references, 0 broken`）。
 
 ### 七、诚实边界
 
@@ -3088,7 +3088,7 @@ setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set
 
 配 `FAIL_REGULAR_EXPRESSION "union=set\(2\)|single=set\(0\)|overlap=set\(1\)|two=set\(0\)|plain=set\(0\)"` —— 正对缺陷值。这条 FAIL 正则**已用 `grep -E` 双向验证过**：匹配修复前的那一行、不匹配修复后的那一行；一条永远匹配不上的 FAIL 正则等于没有断言。`EXP_CTEST` **114 → 115**，`docs/BOARD.md` §3 与本节 §2 同步 **115 / 115**。
 
-**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 115/115, 0 skipped)`（`100% tests passed, 0 tests failed out of 115`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`、`✔ docs backtick paths`。
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0` —— **该计数当时是假的**，见 §10.54）、`✔ ctest (expect 115/115, 0 skipped)`（`100% tests passed, 0 tests failed out of 115`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`、`✔ docs backtick paths`。
 
 **诚实边界。** 枚举器**拒绝**走不通的分量（端点朝无穷、整个具名集合、成员超过一千万），这时 `str()` 与 `len()` 都退回字面量部分 —— 两者仍然一致，`refused=set(0)/0` 就是这一格：`Z[1~10000001]` 的 `str` 是 `set(0)`、`len` 是 0，**两边都拒绝**，不是一边答空集。`kind == 1`（`Z`）与 `kind == 2`（`float1[0~0.3]`）从不声称计数，仍印 `set(Z)` 与 `set(float1 interval)`。另外 `str()` 印的始终是**概括**而不是元素表 —— 元素表是 `list()` 的事，`str(1, 2, 3)` 过去和现在都是 `set(3)`。详见 [AUDIT.md](AUDIT.md) §1.17。
 
@@ -3166,6 +3166,27 @@ release_to(comp, first + 1);
 
 连续性于是**由构造保证**，而不是由守卫的枚举去猜。守卫限制操作数只能是单寄存器种类，所以每个操作数最多多分配一个临时，峰值寄存器 `nops + 1`；`release_to(comp, first + 1)` 复现了原来「第一个操作数作为结果复用、其余临时被吃掉」的语义。`.verify/v31/d2.im` 的八行（参数在链首、局部变量在链首、局部变量在链中、全字面量折叠路径、混合字面量）三后端一致，`f("arr", [1,2])` 由抛错变为 `arr:z`。
 
-**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 116/116, 0 skipped)`（`100% tests passed, 0 tests failed out of 116`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`（`check_links: 93 markdown files, 403 links (17 external, 0 anchors, 386 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 411 backtick 引用, 0 broken`）。
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0` —— **该计数当时是假的**，见 §10.54）、`✔ ctest (expect 116/116, 0 skipped)`（`100% tests passed, 0 tests failed out of 116`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`（`check_links: 93 markdown files, 403 links (17 external, 0 anchors, 386 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 411 backtick 引用, 0 broken`）。
 
 **诚实边界。** ① 两个编译后端**根本走不到真值这些值**：AOT 的 `nv_tru`（`src/compilation/aot_native.c:193`）只处理数字，wasm 的 `cg_cond`（`src/compilation/wasm_backend.c:778-845`）对 `INT`/`BOOL`/`FLOAT` 之外的 tag 直接返回 1，而且 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` 在两个后端里都是 **0** —— 字符串与容器的真值只在解释器里有定义，这一节的三后端一致性**无从验证**，只能验证解释器自洽。② `src/verse/crp.c:57` 的 `vj_truthy()` 是**另一套类型系统**，它自己的注释就写着「JS `x || fallback` truthiness」，空串为假是刻意的，不在本次范围内、也不应改。③ `+` 链这次修的是**连续性**而不是链式折叠本身，`INDEX`/`CALL`/`MEMBER` 仍按原设计退回 `OP_ADD`（那条路本来就对，只是慢）。④ 两个缺陷**都没有退出码信号**：不抛异常、不报错，只是安静地算错，与 §10.50/§10.52 同类 —— 这正是模糊测试的盲区（它只覆盖 AOT 能接受的数字子集），只能靠手工探针撞出来。详见 [AUDIT.md](AUDIT.md) §1.18 与 §1.19。
+
+
+## 10.54 union 的另一个成员，以及门禁那句「warnings: 0」从来没被测过（BOARD 行 151、152）
+
+**症状与发现路径。** 第 13 轮换了一类去找：不再追「快路径当答案」（§10.50/§10.52/§10.53 已三例），而是把 WIN32 与 POSIX 两份运行时的内建逐个对读（`.verify/v31/twocopies.py`，59 个同名内建，逐字相同 2 个、不同 56 个）。对读过程中先看到 `float` 两份写法不一致，探针一跑就撞见 `float(true)` 答 `4.9406564584124654e-324`。
+
+**根因。** v3.1 把 `Value` 的整数槽改成 64 位时，为守住 32 字节宽度契约（`docs/DECFY_DESIGN.md:76`）用的是匿名 union：`ival` 与 `fval` **共享存储**。于是所有「只分两种类型」的取值写法 `X.type == VAL_INT ? X.ival : (int)X.fval` 对 `VAL_BOOL` 都会去读 `fval`，读出来的是 `ival` 的位模式。`float(false)`/`float(nil)` 答 0 只是碰巧（位模式全零）。
+
+**六处实测（修复前 → 修复后）。** `sqrt(true)` `2.2227587494850775e-162` → `1`；`float(true)` `4.9406564584124654e-324` → `1`；`gc_auto(true)` `0` → `1`（这一格最重：**静默地把 GC 关掉**）；`atomic_add("k", true)` `0` → `1`；`atomic_set("j", true)` `0` → `1`。
+
+**修法。** 补上 `val_as_double` 缺的整数对偶 `val_as_int`（`src/vm/vm.c`，声明 `src/vm/vm.h:355`），每个分支先看 tag。替换 10 处：`src/runtime/runtime_posix.c` 的 `posix_core_float`（`:82-95`）、`posix_sqrt`（`:579`）、`posix_atomic_add`（`:734`）、`posix_atomic_set`（`:757`）、`posix_spi_meta`（`:923`）；`src/runtime/runtime.c` 的 `builtin_sqrt`（`:16`）、`builtin_gc_auto`（`:1550`）、`builtin_spi_meta`（`:1198`）；`src/mod/verse_dist_mod.c`（`:1953`、`:2049`）。审计后确认不用改的四处写在 [AUDIT.md](AUDIT.md) §1.20。
+
+**判据。** 新增 CTest **`union_member_tag_runtime`（#117）**，钉一行 `union-ok sqrt-true=1 sqrt-false=0 sqrt-int=2 float-true=1 float-false=0 float-nil=0 aadd=1 aset=1 gcauto-true=1 gcauto-false=0`；FAIL 正则 `sqrt-true=2\.22|float-true=4\.94|aadd=0|aset=0|gcauto-true=0` **已双向验证**（`grep -Ec`：修复前 1、修复后 0）。`EXP_CTEST` **116 → 117**，§2 与本表同步 **117 / 117**。
+
+**顺带撞出的门禁缺陷。** `tools/gate.sh` 的 `stage_build` 先真编译一次，**再编一次**并数第二次的输出 —— 热树上第二次什么都不做，所以那个计数**只可能**是 0。实测：`touch src/runtime/runtime_posix.c` 后第一次构建 1 条警告，紧接着第二次 0 条。也就是说历次门禁记录里那句 `✔ build（warnings: 0）`（§10.50/§10.51/§10.53）**从来没有被测过**，它盖住的是 **34 条警告 / 23 个位置**。已改成只统计真正编译的那一次（日志落盘、失败时 `cat`），警告数仍是信息性的、不作断言（把它做成断言需要一个与编译器版本绑定的数字，那是脆的）。
+
+**修掉的机械警告。** `-Wunused-result` 的 `fread` 七处（`src/compiler/bytecode.c:566`、`src/mod/verse_dist_mod.c:319`、`src/mod/record_mod.c:66`/`:193`、`src/mod/mod_posix.c:23`、`src/runtime/runtime_posix.c:582`、`src/runtime/runtime.c:17`）改成接住返回值并按**实际读到的字节数**收尾；`chdir` 三处（`src/main.c:280`/`:454`/`:878`）—— 注意 **`(void)` 强制转换消不掉 `-Wunused-result`**，实测仍报，要写成 `if (_chdir(p) != 0) { }`；`_GNU_SOURCE` 重定义（`src/main.c:1`）加 `#ifndef` 保护。
+
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（**`warnings: 25`** —— 这是本仓库第一次如实报出警告数；`errors: 0`）、`✔ ctest (expect 117/117, 0 skipped)`（`100% tests passed, 0 tests failed out of 117`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）。**`--clean-first` 是必需的**：只统计「第一次构建」在树恰好是脏的时候才对，门禁经常在刚构建过的树上跑，那时增量构建一个文件都不重编、计数又变回 0（这正是修完第一版后仍看到 `warnings: 0` 的原因）。
+
+**诚实边界。** ① 还剩下 **16 条 `-Wformat-truncation`**（清单在 [AUDIT.md](AUDIT.md) §1.21），本轮**未动** —— 每一条都要判断是扩大缓冲、显式接受截断还是改成拒绝，留作独立一轮。② 六处缺陷**都没有退出码信号**，只改值：不抛异常、不报错，和 §10.50/§10.52/§10.53 同类。③ `sqrt` 仍然不吃字符串（`float("9")` 走 `strtod`，`sqrt("9")` 不是 3），是另一个未修的既有缺口。④ WIN32 的 `builtin_sqrt` 与 `src/mod/verse_dist_mod.c` 的两处端口解析**本机不可执行**（Linux 上这两个目标不编），能证明的只是与 POSIX 写法逐字一致。

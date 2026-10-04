@@ -20,7 +20,7 @@ static void load_one(VM *vm, const char *dir, const char *name) {
     FILE *f = fopen(p, "rb"); if (!f) return;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     char *j = malloc((size_t)n + 1); if (!j) { fclose(f); return; }
-    fread(j, 1, (size_t)n, f); fclose(f); j[n] = 0;
+    size_t got = (size_t)fread(j, 1, (size_t)n, f); fclose(f); j[got] = 0;
     char *script = json_string(j, "script");
     char *native = json_string(j, "native_lib");
     free(j);

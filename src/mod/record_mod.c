@@ -63,7 +63,7 @@ void record_load_from_file(VM *vm, const char *path) {
     fseek(f,0,SEEK_END); long len = ftell(f); fseek(f,0,SEEK_SET);
     if (len <=0 || len > (1<<20)) { fclose(f); return; }
     char *buf = malloc((size_t)len +1);
-    fread(buf,1,(size_t)len,f); buf[len] = '\0';
+    size_t got = (size_t)fread(buf,1,(size_t)len,f); buf[got] = '\0';
     fclose(f);
     int ok =0;
     Value d = json_parse_value_text(vm, buf, &ok);
@@ -190,7 +190,7 @@ static int builtin_load(VM *vm) {
     fseek(f,0,SEEK_END); long len = ftell(f); fseek(f,0,SEEK_SET);
     if (len <=0 || len > (1<<20)) { fclose(f); r_push_int(vm,0); return 1; }
     char *buf = malloc((size_t)len +1);
-    fread(buf,1,(size_t)len,f); buf[len] = '\0';
+    size_t got = (size_t)fread(buf,1,(size_t)len,f); buf[got] = '\0';
     fclose(f);
     int ok =0;
     Value d = json_parse_value_text(vm, buf, &ok);

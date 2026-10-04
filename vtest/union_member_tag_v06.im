@@ -1,0 +1,4 @@
+// v3.1 follow-up: `X.type == VAL_INT ? X.ival : (int)X.fval` read the union's
+// DOUBLE member for a bool, because ival and fval share storage.  Every value
+// below was silently wrong before the fix.  See docs/AUDIT.md 1.20.
+say "union-ok sqrt-true=" + str(sqrt(true)) + " sqrt-false=" + str(sqrt(false)) + " sqrt-int=" + str(sqrt(4)) + " float-true=" + str(float(true)) + " float-false=" + str(float(false)) + " float-nil=" + str(float(nil)) + " aadd=" + str(atomic_add("k", true)) + " aset=" + str(atomic_set("j", true)) + " gcauto-true=" + str(gc_auto(true)) + " gcauto-false=" + str(gc_auto(false))

@@ -837,6 +837,13 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME truthiness_single_point_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/truthiness_single_point_v06.im)
   set_tests_properties(truthiness_single_point_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "truth estr:T:false:true:0:1 str:T:false:true:0:1 arr:T:false:true:0:1 dict:T:false:true:0:1 set:T:false:true:0:1 zero:F:true:false:1:0 one:T:false:true:0:1 fzero:F:true:false:1:0 nil:F:true:false:1:0" FAIL_REGULAR_EXPRESSION "estr:T:false:false:1:1|str:T:false:true:1:1|dict:T:false:true:1:1|set:T:false:true:1:1")
 
+  # `X.type == VAL_INT ? X.ival : (int)X.fval` read the union's DOUBLE member for
+  # a bool: sqrt(true) answered 2.22e-162, float(true) the bit pattern of 1, and
+  # gc_auto(true) turned GC OFF.  The FAIL regex was checked both ways with
+  # grep -E (matches pre-fix, not post-fix).  See docs/AUDIT.md §1.20.
+  add_test(NAME union_member_tag_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/union_member_tag_v06.im)
+  set_tests_properties(union_member_tag_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "union-ok sqrt-true=1 sqrt-false=0 sqrt-int=2 float-true=1 float-false=0 float-nil=0 aadd=1 aset=1 gcauto-true=1 gcauto-false=0" FAIL_REGULAR_EXPRESSION "sqrt-true=2\\.22|float-true=4\\.94|aadd=0|aset=0|gcauto-true=0")
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

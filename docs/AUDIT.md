@@ -838,6 +838,104 @@ release_to(comp, first + 1);
 
 **诚实边界。** 这次修的是**连续性**，不是「链式折叠本身」；`INDEX`/`CALL`/`MEMBER` 这类多寄存器操作数仍然按原设计退回 `OP_ADD`（那条路本来就正确，只是慢）。另外这个缺陷**没有退出码信号**：它不抛异常、不报错，只是安静地算错，和 §1.15/§1.17 同一类。
 
+## §1.20 `X.type == VAL_INT ? X.ival : (int)X.fval` 读到的是 union 的另一个成员
+
+v3.1 把 `Value` 的整数槽改成 64 位时，为了不破坏 32 字节宽度契约（`docs/DECFY_DESIGN.md:76`）用了匿名 union：`int type; union { long long ival; double fval; }; char *sval; void *ptr;`。`ival` 与 `fval` **共享存储**，于是所有「只有两种类型」的取值写法都成了读错成员。
+
+写法本身长这样：
+
+```c
+X.type == VAL_INT ? X.ival : (int)X.fval
+```
+
+它对 `VAL_INT` 正确，对 `VAL_FLOAT` 也正确，但 `VAL_BOOL` 会去读 `fval` —— 那 8 个字节里躺着的是 `ival` 的位模式。`float(true)` 因此答 **`4.9406564584124654e-324`**（整数 1 的位模式被当成 double 读出来，正好是 denormal 最小值），`float(false)`/`float(nil)` 答 0 **只是碰巧对**（位模式全零）。
+
+三后端验证过的那批（`.verify/v31/conv3.im`，修复前 → 修复后）：
+
+| 调用 | 修复前 | 修复后 |
+|---|---|---|
+| `sqrt(true)` | `2.2227587494850775e-162` | `1` |
+| `float(true)` | `4.9406564584124654e-324` | `1` |
+| `gc_auto(true)` | `0`（**把 GC 关掉**） | `1` |
+| `atomic_add("k", true)` | `0` | `1` |
+| `atomic_set("j", true)` | `0` | `1` |
+
+`gc_auto(true)` 是最重的一格：它**静默地反向执行**，调用者以为打开了 GC。
+
+**修法。** 补上 `val_as_double` 缺的整数对偶 `val_as_int`（`src/vm/vm.c`，声明 `src/vm/vm.h:355`），每个分支都先看 tag：
+
+```c
+long long val_as_int(const Value *v) {
+    switch (v->type) {
+        case VAL_INT:   return v->ival;
+        case VAL_FLOAT: return (long long)v->fval;
+        case VAL_BOOL:  return v->ival ? 1 : 0;
+        default:        return 0;
+    }
+}
+```
+
+替换点：`src/runtime/runtime_posix.c` 的 `posix_core_float`（`:82-95`）、`posix_sqrt`（`:579`）、`posix_atomic_add`（`:734`）、`posix_atomic_set`（`:757`）、`posix_spi_meta`（`:923`）；`src/runtime/runtime.c` 的 `builtin_sqrt`（`:16`）、`builtin_gc_auto`（`:1550`）、`builtin_spi_meta`（`:1198`）；`src/mod/verse_dist_mod.c` 的两处端口解析（`:1953`、`:2049`）。
+
+**审计过、确认不用改的**：`src/runtime/runtime.c:48` 与 `src/runtime/runtime_posix.c:105`（两处 `round`，上游已有 `if (xv.type != VAL_INT && xv.type != VAL_FLOAT) { … push_nil … }`）、`src/mod/json_mod.c:107`（在 `case VAL_FLOAT:` 内）、`src/vm/vm.c:3420`/`:3443`/`:3463`（本来就写成 `(idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv)`），以及大量 `Value x; x.fval = 0;` 的初始化。
+
+**判据。** 新增 CTest **`union_member_tag_runtime`（#117）**，钉住一行：
+
+```
+union-ok sqrt-true=1 sqrt-false=0 sqrt-int=2 float-true=1 float-false=0 float-nil=0 aadd=1 aset=1 gcauto-true=1 gcauto-false=0
+```
+
+FAIL 正则 `sqrt-true=2\.22|float-true=4\.94|aadd=0|aset=0|gcauto-true=0`，**已双向验证**（`grep -Ec`：修复前 1，修复后 0）。
+
+**诚实边界。** 只改值、不改退出码 —— 和 §1.15/§1.17/§1.19 同一类，没有一条会抛异常。`sqrt` 仍然不吃字符串（`float("9")` 走 `strtod`，`sqrt("9")` 不是 3），这是另一个未修的既有缺口。WIN32 那份 `builtin_sqrt` 与 `src/mod/verse_dist_mod.c` 的两处端口解析**本机不可执行**（Linux 上不编这两个目标），可证明的只是与 POSIX 写法逐字一致。
+
+## §1.21 门禁的 `warnings: 0` 是个永远不会失败的检查
+
+`tools/gate.sh` 的 `stage_build` 原本这样数警告：
+
+```sh
+cmake --build "$BUILD_DIR" -j"$JOBS" || return 1     # 真正编译的那一次
+local log; log="$(mktemp)"
+cmake --build "$BUILD_DIR" -j"$JOBS" >"$log" 2>&1    # 再编一次，数它的输出
+awk '/warning:/ { w++ } …' "$log"
+```
+
+第二次 `cmake --build` 在**热树上什么都不做**，所以它永远不产生警告，计数**只可能**是 0。实测：`touch src/runtime/runtime_posix.c` 后第一次构建 1 条警告，紧接着第二次 0 条。
+
+也就是说，门禁每个阶段报告里那句 `✔ build（warnings: 0）` **从来没有被测过**，而它出现过的每一次门禁记录（`docs/STATUS.md` §10.50/§10.51/§10.53 的「门禁实测」段落）都把它当成「构建干净」的证据。
+
+**它藏起来的是 34 条警告 / 23 个不同位置**（全量 `--clean-first` 构建，`.verify/v31/warn_clean.txt`）。修法是把统计挪到真正编译的那一次（日志落盘，失败时 `cat` 出来）：
+
+```sh
+local log; log="$(mktemp)"
+cmake --build "$BUILD_DIR" --clean-first -j"$JOBS" >"$log" 2>&1 || { cat "$log"; rm -f "$log"; return 1; }
+```
+
+**`--clean-first` 是必需的**：只统计「第一次构建」在树恰好是脏的时候才对，而门禁经常在刚构建过的树上跑 —— 那时增量构建一个文件都不重编，计数又变回 0（这正是修完第一版后仍看到 `warnings: 0` 的原因）。清一次再编是唯一能让这个数字有意义的做法，代价是每次门禁多约一分半的编译。
+
+`stage_build` 仍然对警告数返回 0 —— **警告是信息，不是断言**。把它变成断言需要一个与编译器版本绑定的数字，那是脆的；本仓库对已知问题的惯例是「钉住而不是藏起来」，所以这里选择**如实报告**并把这个清单记在明处。
+
+修完后门禁第一次如实报出 **`warnings: 25`**（机械那批修掉 9 条之后），同一轮里 `errors: 0`、`100% tests passed, 0 tests failed out of 117`、`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`、`gate: OK — every stage passed.`、`GATE_RC=0`。
+
+**已经修掉的（本轮）：**
+
+- `-Wunused-result` 的 `fread` 七处：`src/compiler/bytecode.c:566`、`src/mod/verse_dist_mod.c:319`、`src/mod/record_mod.c:66` 与 `:193`、`src/mod/mod_posix.c:23`、`src/runtime/runtime_posix.c:582`、`src/runtime/runtime.c:17`。全部改成接住返回值并按**实际读到的字节数**收尾 —— 短读时原来的 `buf[n] = 0` 会留下未初始化字节，现在是清零（bytecode）或按 `got` 截断（其余六处）。
+- `-Wunused-result` 的 `chdir` 三处：`src/main.c:280`、`:454`、`:878`。注意 **`(void)` 强制转换不能消掉 `-Wunused-result`**（实测仍然报），要写成 `if (_chdir(p) != 0) { /* best effort */ }` 让值真的被用掉。
+- `_GNU_SOURCE` 重定义：`src/main.c:1` 加了 `#ifndef` 保护。
+
+**还剩下的 16 条 `-Wformat-truncation`（如实记在明处，本轮未动）：**
+
+| 位置 | 警告 |
+|---|---|
+| `src/platform/http_posix.c:553`、`:555` | `%s` 最多 32767 字节写进 505/512 字节 |
+| `src/lint_mod.c:181`（×2 形态）、`:377`、`:425`、`:429` | 最多 319 / 3071 / 5503 字节写进 96–303 字节 |
+| `src/mod/verse_dist_mod.c:384`、`:588`、`:590`、`:839`、`:1297` | 最多 1023 / 1199 / 8191 字节写进 1024–1400 字节 |
+| `src/mod/replay_mod.c:287` | 最多 287 字节写进 236 字节 |
+| `src/main.c:245` | 最多 511 字节写进 0–1023 字节 |
+| `src/compiler/compiler.c:922`、`:1952` | 最多 511 / 255 字节写进 256 / 249 字节 |
+
+这 16 条是真的缓冲区尺寸问题，每一条都需要一次判断（扩大缓冲、还是显式接受截断、还是改成拒绝），所以留作独立的一轮，不混在本次改动里。**它们是现在才第一次可见的** —— 之前那句 `warnings: 0` 把它们全部盖住了。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

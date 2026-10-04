@@ -47,7 +47,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-116}"
+EXP_CTEST="${EXP_CTEST:-117}"
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
@@ -82,13 +82,20 @@ stage_build() {
   if [ "$FAST" -eq 0 ]; then
     cmake -S "$REPO_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release || return 1
   fi
-  cmake --build "$BUILD_DIR" -j"$JOBS" || return 1
 
-  # Tally warnings/errors.  `grep -c` exits 1 when it counts zero, and
-  # `set -o pipefail` (line 12) turns that into a stage failure for a perfectly
-  # clean build, so capture the log once and count with awk instead.
+  # Tally warnings/errors from a build that actually compiles.
+  #
+  # This used to run `cmake --build` once and then run it AGAIN into the tally
+  # log.  On a warm tree the second run is a no-op, so the tally could only ever
+  # print `warnings: 0` no matter what the real build said -- it read 0 while the
+  # tree carried 34 warnings.  Tallying the first build fixes that only when the
+  # tree happened to be dirty, so the tally build is now `--clean-first`: an
+  # incremental rebuild that recompiles nothing is not a measurement.
+  # `grep -c` also exits 1 when it counts zero and `set -o pipefail` (line 12)
+  # would turn that into a stage failure for a perfectly clean build, hence the
+  # log plus awk.  See docs/AUDIT.md 1.21.
   local log; log="$(mktemp)"
-  cmake --build "$BUILD_DIR" -j"$JOBS" >"$log" 2>&1
+  cmake --build "$BUILD_DIR" --clean-first -j"$JOBS" >"$log" 2>&1 || { cat "$log"; rm -f "$log"; return 1; }
   echo "-- warning/error tally --"
   awk '/warning:/ { w++ } /error:/ { e++ } END {
         printf "warnings: %d\nerrors: %d\n", w + 0, e + 0 }' "$log"

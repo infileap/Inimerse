@@ -562,8 +562,10 @@ int bytecode_append_mods_to_exe(const char *exePath, const char *modsDir,
         long mlen = ftell(mf);
         fseek(mf, 0, SEEK_SET);
         unsigned char *data = malloc(mlen > 0 ? mlen : 1);
-        if (mlen > 0)
-            fread(data, 1, mlen, mf);
+        if (mlen > 0) {
+            size_t got = fread(data, 1, (size_t)mlen, mf);
+            if (got < (size_t)mlen) memset(data + got, 0, (size_t)mlen - got);
+        }
         fclose(mf);
 
         uint32_t rel_len = (uint32_t)strlen(rel_paths[i]) + 1;
