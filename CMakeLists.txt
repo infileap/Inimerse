@@ -188,9 +188,11 @@ if(NOT WIN32)
   add_executable(crp_session_probe src/platform/crp_session.c src/common/sha256.c src/platform/crp_session_probe.c)
   add_test(NAME crp_session_probe COMMAND crp_session_probe)
 endif()
-add_executable(socket_probe src/platform/socket.c src/platform/socket_probe.c)
+add_executable(socket_probe src/platform/socket.c src/platform/thread.c src/platform/socket_probe.c)
 if(WIN32)
   target_link_libraries(socket_probe PRIVATE ws2_32)
+else()
+  target_link_libraries(socket_probe PRIVATE Threads::Threads)
 endif()
 add_executable(thread_probe src/platform/thread.c src/platform/thread_probe.c)
 if(NOT WIN32)
@@ -209,15 +211,15 @@ if(NOT WIN32)
   add_test(NAME headless_probe COMMAND headless_probe)
 endif()
 if(NOT WIN32)
-  add_executable(http_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/verse/crp.c src/verse/upp.c src/common/ed25519.c src/platform/http_client.c src/platform/http_probe.c)
+  add_executable(http_probe src/platform/socket.c src/platform/thread.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/verse/crp.c src/verse/upp.c src/common/ed25519.c src/platform/http_client.c src/platform/http_probe.c)
   target_link_libraries(http_probe PRIVATE Threads::Threads)
   target_include_directories(http_probe PRIVATE src/verse src/common src/platform)
   add_test(NAME http_probe COMMAND bash ${CMAKE_SOURCE_DIR}/tools/http_probe_retry.sh $<TARGET_FILE:http_probe>)
-  add_executable(hub_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/verse/crp.c src/verse/upp.c src/common/ed25519.c src/platform/http_client.c src/platform/hub_probe.c)
+  add_executable(hub_probe src/platform/socket.c src/platform/thread.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/verse/crp.c src/verse/upp.c src/common/ed25519.c src/platform/http_client.c src/platform/hub_probe.c)
   target_link_libraries(hub_probe PRIVATE Threads::Threads)
   target_include_directories(hub_probe PRIVATE src/verse src/common src/platform)
   add_test(NAME hub_probe COMMAND hub_probe)
-  add_executable(websocket_probe src/platform/socket.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/verse/crp.c src/verse/upp.c src/common/ed25519.c src/platform/http_client.c src/platform/websocket_probe.c)
+  add_executable(websocket_probe src/platform/socket.c src/platform/thread.c src/platform/dir.c src/platform/websocket.c src/platform/crp_session.c src/common/sha256.c src/platform/http_posix.c src/verse/json_min.c src/verse/crp.c src/verse/upp.c src/common/ed25519.c src/platform/http_client.c src/platform/websocket_probe.c)
   target_link_libraries(websocket_probe PRIVATE Threads::Threads)
   target_include_directories(websocket_probe PRIVATE src/verse src/common src/platform)
 endif()
@@ -951,4 +953,25 @@ endif()
 get_property(INIMERSE_ALL_TESTS DIRECTORY PROPERTY TESTS)
 if(INIMERSE_ALL_TESTS)
   set_tests_properties(${INIMERSE_ALL_TESTS} PROPERTIES ENVIRONMENT "PYTHONIOENCODING=utf-8")
+endif()
+
+# Pins "a connect timeout covers name resolution too" (docs/AUDIT.md §1.40).
+# getaddrinfo() has no timeout in any standard, and it is the step that stalls
+# when DNS is unreachable, so the pin injects the stall through LD_PRELOAD
+# instead of needing a broken resolver (and it never needs the network).
+# POSIX-only because the injection mechanism is the dynamic loader's.
+#
+# This block sits after the ENVIRONMENT loop above on purpose: that loop sets
+# ENVIRONMENT on every registered test, which would overwrite the LD_PRELOAD
+# this test needs.  It is also the last add_test, so no existing #N moves.
+if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
+  add_library(slowdns_preload MODULE src/platform/slowdns_preload.c)
+  target_link_libraries(slowdns_preload PRIVATE ${CMAKE_DL_LIBS})
+  add_executable(resolve_timeout_probe src/platform/socket.c src/platform/thread.c src/platform/resolve_timeout_probe.c)
+  target_link_libraries(resolve_timeout_probe PRIVATE Threads::Threads)
+  add_test(NAME resolve_timeout_runtime COMMAND resolve_timeout_probe)
+  set_tests_properties(resolve_timeout_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "platform;smoke"
+    ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:slowdns_preload>"
+    PASS_REGULAR_EXPRESSION "resolve_bound: ok")
 endif()

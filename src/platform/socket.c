@@ -33,6 +33,12 @@ int im_socket_init(void) { return 0; }
 void im_socket_shutdown(void) {}
 #endif
 
+/* Included after the platform headers on purpose: thread.h pulls in <windows.h>,
+ * and <windows.h> before <winsock2.h> makes winsock2.h emit
+ * "#warning Please include winsock2.h before windows.h" -- a new warning this
+ * file did not have before the bounded resolve moved onto a helper thread. */
+#include "thread.h"
+
 static uint64_t socket_now_ms(void) {
 #ifdef _WIN32
     return (uint64_t)GetTickCount64();
@@ -73,6 +79,71 @@ static int resolve_addr(const char *host, uint16_t port, struct sockaddr_storage
     freeaddrinfo(result); return 0;
 }
 
+/* Name resolution runs on a helper thread, because getaddrinfo() has no timeout
+ * in any standard and it is the step that actually stalls when a host's resolver
+ * is unreachable: a blocked resolver waits out the system's own retry schedule,
+ * which is minutes, not milliseconds.
+ *
+ * im_socket_connect_timeout() promises a bound, and a promise that stops short of
+ * the slowest step is not a promise.  Before this, http_get() against a host
+ * whose DNS was black-holed hung the engine until the OS resolver gave up -- on
+ * a runner with no DNS egress that is the whole test timeout, and it looks like
+ * "21x slower" rather than "stopped".  The TCP connect below was always bounded;
+ * only the name lookup was not.
+ *
+ * getaddrinfo() cannot be cancelled, so on expiry the thread is detached and its
+ * job is deliberately leaked: freeing it would be a use-after-free against a
+ * thread still writing it.  One leak per stalled resolution is the honest price
+ * of a bound that holds.  Where the platform has no timed join (POSIX outside
+ * Linux) this degrades to the untimed resolve it replaces, which is no worse. */
+typedef struct {
+    char host[256];
+    char service[16];
+    struct addrinfo hints;
+    struct addrinfo *result;
+    int rc;
+} ResolveJob;
+
+#ifdef _WIN32
+static unsigned __stdcall resolve_job_run(void *raw) {
+#else
+static void *resolve_job_run(void *raw) {
+#endif
+    ResolveJob *job = (ResolveJob *)raw;
+    job->rc = getaddrinfo(job->host[0] ? job->host : NULL, job->service, &job->hints, &job->result);
+    if (job->rc != 0) job->result = NULL;
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+static int resolve_addr_timed(const char *host, uint16_t port, struct sockaddr_storage *out,
+                              socklen_t *out_len, int passive, int timeout_ms) {
+    if (timeout_ms <= 0) return resolve_addr(host, port, out, out_len, passive);
+    ResolveJob *job = (ResolveJob *)calloc(1, sizeof(*job));
+    if (!job) return resolve_addr(host, port, out, out_len, passive);
+    if (host && *host) snprintf(job->host, sizeof job->host, "%s", host);
+    snprintf(job->service, sizeof job->service, "%u", (unsigned)port);
+    job->hints.ai_family = AF_UNSPEC; job->hints.ai_socktype = SOCK_STREAM;
+    job->hints.ai_flags = passive ? AI_PASSIVE : 0;
+
+    void *thread = im_thread_start(resolve_job_run, job);
+    if (!thread) { free(job); return resolve_addr(host, port, out, out_len, passive); }
+    if (im_thread_join(thread, (unsigned int)timeout_ms) != 0) {
+        im_thread_detach(thread);
+        return -1;   /* job intentionally leaked; the resolver is still using it */
+    }
+    int rc = job->rc;
+    struct addrinfo *result = job->result;
+    free(job);
+    if (rc != 0 || !result) { if (result) freeaddrinfo(result); return -1; }
+    if (result->ai_addrlen > sizeof(*out)) { freeaddrinfo(result); return -1; }
+    memcpy(out, result->ai_addr, result->ai_addrlen); *out_len = (socklen_t)result->ai_addrlen;
+    freeaddrinfo(result); return 0;
+}
+
 ImSocket *im_socket_listen(const char *host, uint16_t port, int backlog) {
     struct sockaddr_storage addr; socklen_t addr_len;
     if (resolve_addr(host, port, &addr, &addr_len, 1) != 0) return NULL;
@@ -96,8 +167,8 @@ ImSocket *im_socket_listen(const char *host, uint16_t port, int backlog) {
 
 ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout_ms) {
     struct sockaddr_storage addr; socklen_t addr_len;
-    if (resolve_addr(host, port, &addr, &addr_len, 0) != 0) return NULL;
     if (timeout_ms <= 0) timeout_ms = 2000;
+    if (resolve_addr_timed(host, port, &addr, &addr_len, 0, timeout_ms) != 0) return NULL;
 #ifdef _WIN32
     SOCKET fd = socket(addr.ss_family, SOCK_STREAM, IPPROTO_TCP); if (fd == INVALID_SOCKET) return NULL;
     u_long mode = 1;

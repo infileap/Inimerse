@@ -1581,6 +1581,118 @@ line program。与 §1.35（`src/compilation/deps.c`）、§1.38
 Windows 上被调用，硬编码 `\\` 正是它唯一的调用者要的。查它是为了确认「公共源文件里的
 反斜杠」不是盲区，结论是这条路径的守卫在**调用方**而不是被调用方。
 
+## §1.40 一个连接超时兜不住名字解析
+
+**现象。** `tools/selfhost_compare.py` 的 `#27 selfhost_codegen_parity` 在 Linux 上是 13.03 s，在 Windows 上是 `***Timeout 300.05 sec`（协调者独立复测 270–300 s）。读数像「Windows 慢 21 倍」，实际不是慢：`selfhost/tests/hw_test.im` 里的 `http_get("http://example.com")` 走真实网络，而这条路径承诺的上界够不到名字解析这一步。把网络拿掉（`unshare -rn`）后同一个调用是 0.12 / 0.18 / 0.14 s。同一个调用的墙钟（各三次）：
+
+| 环境 | 三次实测 | 最坏 |
+|---|---|---|
+| `unshare -rn`（断网） | 0.12 / 0.18 / 0.14 s | 0.18 s |
+| 联网 | 0.71 / 2.79 / 1.62 s | 挂过 ≥300 s 一次 |
+
+`ctest --timeout 900` 对这种形状无效 —— 这是**停顿**，不是**慢**，900 s 只是把红灯推后；真正兜住它的是 300 s 的 per-test TIMEOUT。
+
+**根因。** HEAD 版 `src/platform/socket.c:97` 的 `ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout_ms)` 在 `:99` 先解析、`:100` 才 clamp 超时：
+
+```c
+if (resolve_addr(host, port, &addr, &addr_len, 0) != 0) return NULL;
+if (timeout_ms <= 0) timeout_ms = 2000;
+```
+
+`timeout_ms` 只在解析**之后**的 connect 等待里被用到（`:119` 的 deadline、`:126`–`:127` 的 `select()`）。而解析这一步拿到的是 `resolve_addr`（`src/platform/socket.c:66`）：
+
+```c
+static int resolve_addr(const char *host, uint16_t port, struct sockaddr_storage *out, socklen_t *out_len, int passive)
+```
+
+第五个参数是 `passive`（`hints.ai_flags = passive ? AI_PASSIVE : 0`），**不是超时**；`:70` 的 `getaddrinfo()` 没有任何超时，标准里也没有。于是「连接超时」这个承诺在整条路径**最慢的一步**上是空的：解析器被黑洞时，等的是系统自己的重试表（分钟级），而不是调用方给的毫秒。
+
+**修法。** 解析改走仓库已有的可移植线程面（`src/platform/thread.c` 的 `im_thread_start` / `im_thread_join` / `im_thread_detach`）：`resolve_addr_timed`（`src/platform/socket.c:117`）把解析放进 helper 线程，`im_thread_join(thread, timeout_ms)` 非 0 就 `im_thread_detach` 并返回 NULL —— 超时即拒绝。
+
+- 不用 `getaddrinfo_a()` / `gai`：glibc 独有，Windows 与 musl 都没有，会把可移植层变成 Linux-only。
+- 不用 `res_options` / `RES_OPTIONS`：全局（影响同进程所有解析）、不可移植，而且它给的是「系统重试计划的上界」，不是逐调用的上界。
+- 选线程是因为 `thread.c` 本来就是这个仓库的线程面，Windows 与 POSIX 两侧都已实现。
+
+**证据（A/B，`LD_PRELOAD` 把 `getaddrinfo` 换成一个会停顿的版本）。**
+
+| 版本 | 输出 |
+|---|---|
+| HEAD 的 `socket.c` | `host=example.com timeout_ms=5000 connected=yes elapsed=34270 ms` |
+| 修复版 | `host=example.com timeout_ms=5000 connected=no elapsed=5000 ms` |
+
+无停顿回归（修复版，不注入）：`example.com` 265 ms、`127.0.0.1` 3 ms、`nonexistent.invalid` 76 ms —— 有界路径没有把普通调用弄慢。
+
+**钉子。** 新增两个 POSIX-only 文件：
+
+- `src/platform/slowdns_preload.c`：`#define _GNU_SOURCE` + `dlsym(RTLD_NEXT, "getaddrinfo")` 拦截 `getaddrinfo`，`sleep(atoi(getenv("SLOWDNS_SECS")))`，停顿值**在调用时读取**，所以同一个探针进程能用两次不同停顿做两个 Phase。
+- `src/platform/resolve_timeout_probe.c`：Phase A 注入 10 s 停顿、超时 2000 ms，断言 `elapsed > 3500` 为「上界没兜住」；Phase B 用数字主机 `127.0.0.1`，不依赖网络。
+
+**「钉子是不是空的」不能用秒表判。** 第一版把非真空判定写成时间窗（`elapsed < 1500` 即「停顿没注入」）。独立复核实测把它**证伪**了：`env -u LD_PRELOAD` 连跑 11 次，第 11 次得到 `elapsed_ms=2871 connected=0` 与 `resolve_bound: ok`、rc=0 —— **没有注入却全绿**。根因是新代码下「无注入」的一次调用本来就要花掉真实解析加上一整个 connect 预算（约 2025 ms），真实 connect 稍慢就落进窗口，所以丢掉 preload 只有约 **10/11** 的概率被抓。改法：让垫片自己留可检验的痕迹 —— 垫片拦截时向 `SLOWDNS_LOG` 指向的文件追加 `getaddrinfo node=… stall=…`，探针跑完 Phase A 读该文件，空则报 `FAIL getaddrinfo was not interposed; the pin is vacuous`。文件内容不会「慢」，所以不会像秒表那样误判；改后同样的负控 **12/12** 都红。
+
+CTest **#123** `resolve_timeout_runtime`（`CMakeLists.txt:940`），`tools/gate.sh:50` 的 `EXP_CTEST` 从 122 改成 **123**。
+
+**反向对照。** 同一个探针分别链到 HEAD 的 `socket.c` 与修复版：HEAD 侧是 `resolve_bound stall: elapsed_ms=10224 connected=1`、`FAIL the bound did not hold`、rc=1；修复版 rc=0。也就是说这个钉子对修复前的代码**是红的**，不是一条永远绿的断言。
+
+**诚实边界。** ① 钉子是 POSIX-only：它靠动态加载器注入，Windows 不跑它，所以 Windows 侧只有代码路径，没有回归用例。② 修的是「解析不再无限等」，不是「解析一定成功」：超时后返回 NULL，调用方只看到连接失败，与 DNS 真失败不可区分。③ 被中断的解析线程仍在后台跑：`src/platform/thread.c` 的 `im_thread_detach` 在 POSIX 上是 `pthread_detach(*thread)` 加 `free(thread)`（句柄释放、线程退出时由 libc 回收），Windows 上是 `CloseHandle`；`ResolveJob` 则**故意泄漏**（`src/platform/socket.c:131` 写着 `job intentionally leaked; the resolver is still using it`），因为 `getaddrinfo()` 不能被取消，释放它就是对仍在写的线程做 use-after-free。④ Phase B 用数字主机，所以它验证的是「有界路径没把普通调用弄慢」，不是「解析在无停顿下正确」。⑤ 非 Linux 的 POSIX 上 `im_thread_join` 没有 timed join（`src/platform/thread.c:80-85` 退化成 `pthread_join`），那个平台上界是否成立没被证明 —— 它退化成原来那份无超时实现，「不比原来更糟」。⑥ 只修了 connect 路径：`im_socket_listen` 仍走无超时的 `resolve_addr`。⑦ `#27` 自己仍然跑真实网络请求（`selfhost/tests/hw_test.im` 未改），这次买到的是「挂住的那一步有界」，不是「测试不再依赖网络」。⑧ **上界是分阶段的，不是一次性的总预算**：`src/platform/socket.c:166` 的解析最多等 `timeout_ms`，`:185` 又给 TCP connect 一个**全新的** `timeout_ms`，所以最坏总耗时接近 `2×timeout_ms`；钉子只覆盖「解析超时」那一支，别把它读成硬性总上界。⑨ 这次改动一开始在 Windows 上引入了一条新警告：`#include "thread.h"`（`thread.h:5` 拉进 `<windows.h>`）排在 `<winsock2.h>` 之前，触发 `winsock2.h:15: #warning Please include winsock2.h before windows.h [-Wcpp]`（HEAD 版零警告，对 HEAD 版加 `-include src/platform/thread.h` 可复现同一条）。已把该 include 移到平台头之后，ucrt64 与 mingw64 两个工具链复测 `-Wall -Wextra -fsyntax-only` 均 rc=0 且零警告。全仓库没有 `-Werror`，`tools/gate.sh` 也没有 mingw 交叉编译步骤，所以它从未让门禁变红 —— 这类警告只有真去编 Windows 才看得见。
+
+## §1.41 CMake 里 `ENVIRONMENT` 是共享属性，最后写者胜
+
+**现象。** 新测试 `resolve_timeout_runtime` 需要 `LD_PRELOAD`，但第一次注册之后 `build/CTestTestfile.cmake` 里记录到的属性是 `ENVIRONMENT "PYTHONIOENCODING=utf-8"` —— `LD_PRELOAD` 干净地消失了，钉子在无人察觉的情况下变成一条「没注入停顿」的测试（Phase A 的 `elapsed < 1500` 会报 `the pin is vacuous`）。
+
+**根因。** `CMakeLists.txt:921` 的全局收尾：
+
+```cmake
+get_property(INIMERSE_ALL_TESTS DIRECTORY PROPERTY TESTS)
+if(INIMERSE_ALL_TESTS)
+  set_tests_properties(${INIMERSE_ALL_TESTS} PROPERTIES ENVIRONMENT "PYTHONIOENCODING=utf-8")
+endif()
+```
+
+`ENVIRONMENT` 在 CMake 里是**单一属性，不是列表累积**：对同一个测试 `set_tests_properties` 两次，第二次**替换**第一次（要累积必须自己把旧值读出来再拼）。这个循环对**每一个**已注册测试写一遍，所以它上面的测试属性赋值会被它整体覆盖。
+
+**这个症状第一次是怎么出现的。** 最初整块新测试放在 `if(INIMERSE_BUILD_ENGINE)` 内、也就是那个循环**之前**（那个 `endif()` 现在在 `CMakeLists.txt:915`），于是循环把 `LD_PRELOAD` 覆盖掉，生成文件里只看得见 `PYTHONIOENCODING=utf-8`。
+
+**修法。** 整块移到那个循环**之后**（现在就是 `CMakeLists.txt` 的最后一段，守卫 `if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)`，`:935`），记录到的属性变为 `ENVIRONMENT "LD_PRELOAD=/home/sakiko/inimerse/build/libslowdns_preload.so"` —— 生成器表达式 `$<TARGET_FILE:slowdns_preload>` 在 `ENVIRONMENT` 里确实会展开。
+
+**教训（一句话）。** 本仓库里测试的 `ENVIRONMENT` 是共享的、最后写者胜的属性；需要它的测试必须注册在那个全局循环**之后**，否则它的环境变量会被静默清空，而 CTest 不会给任何提示。
+
+**另记。** `slowdns_preload` 没有设 `PREFIX ""`，所以产物是 `libslowdns_preload.so`（保留 `lib` 前缀）；手写 `LD_PRELOAD` 或手动复现时要用这个名字。
+
+## §1.42 一个探针只打印 pid，所以四个失败码等于一个
+
+**现象。** Windows 上 `#19 process_probe` 间歇性红，而日志里能用来定位的只有一行进程号；CI 历史失败表里从来没有出现过它，所以也没有历史输出可查。问题不是它红，是**它红了说不出为什么** —— 四个不同的步骤失败，日志完全一样。
+
+**根因。** HEAD 版 `src/platform/process_probe.c:12` 只在开头打印一次 pid，之后以 2/3/4/5/6/7/8/9 退出：
+
+```c
+ImProcess *p = im_process_spawn(cmd, 0);
+if (!p) return 2;
+printf("process_pid=%llu\n", (unsigned long long)im_process_pid(p));
+if (im_process_wait_kill(p, 3000) != 0) return 3;
+...
+if (im_process_wait_kill(q, 20) != 1) return 6;
+...
+if (im_process_wait(b, 3000) != 0 || im_process_exit_code(b) != 7) return 9;
+```
+
+四个步骤（spawn、kill、短等待、退出码）的日志**逐字节相同**，退出码只有 CI 的 harness 看得到，`ctest` 的失败输出里也不带它。另有一处竞态：HEAD 的 `src/platform/process_probe.c:22` 只给 `im_process_wait_kill(q, 20)` **20 ms**，而 Windows 上那个慢命令（`cmd /c ping 127.0.0.1 -n 4 >nul`）光是 `cmd.exe` 启动就可能超过它 —— 「慢子进程还活着」是**假设**，不是检查。
+
+**修法。** 每个失败点自己报出步骤并打印实测值，一律返回 1：
+
+- `process_probe: FAIL spawn(%s)`
+- `process_probe: FAIL wait_kill(%s) rc=%d want 0`
+- `process_probe: FAIL still alive after wait_kill(%s)`
+- `process_probe: FAIL %s had already finished; cannot time a wait against it`
+- `process_probe: FAIL wait_kill(%s, 500) rc=%d want 1`
+- `process_probe: FAIL exit_code after kill=%d want >= 0`
+- `process_probe: FAIL wait(%s) rc=%d exit_code=%d want rc=0 exit_code=7`
+
+短等待从 **20 ms** 改成 **500 ms**（`src/platform/process_probe.c:39`），并把「慢子进程还活着」从假设改成显式前置检查 `im_process_alive(q)`（`:35`）：慢命令本身跑数秒，500 ms 落在这个窗口里很宽；真的起不来时报告的是「它已经结束了」，而不是一个假的超时。
+
+**判据。** 真实 Windows 上（`/mnt/c/msys64/ucrt64/bin/gcc.exe`）新探针 **12/12 通过**。
+
+**诚实边界。** ① 旧探针**在本机 20/20 也通过**：这个 flake 没有被复现，所以**不能**声称 20 ms 是根因 —— 只能说探针现在可诊断，并且不再含那个 20 ms 竞态。② flake 是否消失要等 CI 长跑；本次交付证明的是「下次红了，日志能说出是哪一步、看到的实测值是多少」。③ Linux 侧行为没变，改的只是 Windows 会走到的那条短等待与日志。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

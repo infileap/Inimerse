@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-05 更新测试计数到 122；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-06 更新测试计数到 123；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **122 / 122 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **123 / 123 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **122** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **123** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 122
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 123
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3520,3 +3520,39 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 `src/compilation/debug_info.c` 取源文件 basename 时只写了 `strrchr(source_path, '/')`，Windows 的 `C:\dir\app.im` 于是找不到分隔符，整条绝对路径被写进 `.debug_line` 的 line program。修法是同时看 `\` 并取靠后的那个（`:155-157`）。与 §1.35/§1.38 同类。该文件在公共源列表（`CMakeLists.txt:387`）里，两个平台都编，但 Linux 的输入全是 `/`，所以**没有新增用例**，`EXP_CTEST` 仍为 122；判据是协调者在 Windows 上检查 `<out>.debug_line` 记的是 basename。影响面只有调试元数据，不改执行语义。
 
 **另记一条查过并关掉的候选：** `src/compiler/bytecode.c:676` 硬编码 `"%s\\%s"` 把 `/` 换成 `\`，且该文件那里没有平台守卫——但唯一的调用点 `src/main.c:547` 位于 `src/main.c:524` `load_embedded_mods_impl()` 的 `#ifndef _WIN32` / `#else` 的 **Windows 分支**内（POSIX 侧直接 `(void)vm; return;`），所以它只在 Windows 上被调用，不是缺陷。守卫在调用方，不在被调用方。详见 [AUDIT.md](AUDIT.md) §1.39。
+
+## §10.71 有界名称解析：承诺了时间上界的那次连接，真正停住的一步没有上界
+
+`src/platform/socket.c:97` 的 `im_socket_connect_timeout()` 名字里有「timeout」，调用方 `src/platform/http_client.c:25` 也按 5000 ms 传参，两处都承诺了时间上界；但这个 `timeout_ms` 只用在了 `:126` 的 `select()` 上。`:99` 先调用的 `resolve_addr()`（`:66`）第五个参数是 `passive`，不是超时，它里面 `:70` 的 `getaddrinfo()` 完全没有超时 —— 而断网时真正停住的就是这一步。
+
+症状是 peer 报的 `#27 selfhost_codegen_parity`：Linux 13.03 s、Windows `***Timeout 300.05 sec`。根因在 `selfhost/tests/hw_test.im` 的 `http_get("http://example.com")`：它走真实网络，而 `unshare -rn` 断网后同一段分别只要 0.12 / 0.18 / 0.14 s（DNS 立刻失败）。所以慢的不是解析本身，而是断网后 DNS 服务器不回应、`getaddrinfo()` 无限期等待。
+
+**改法。** 名称查找改走 `src/platform/thread.c` 的 `im_thread_start` / `im_thread_join`：在工作线程里解析，超时即拒绝。不用 glibc-only 的 `getaddrinfo_a`，也不改全局的 `RES_OPTIONS` —— 后者动的是整个进程的解析行为，不是一个调用的上界。
+
+**A/B 证据：** HEAD `elapsed=34270 ms` → 修复后 `elapsed=5000 ms`。
+
+**新增 CTest #123 `resolve_timeout_runtime`**（`src/platform/resolve_timeout_probe.c` + `src/platform/slowdns_preload.c`，用 `LD_PRELOAD` 注入一个会停顿的 `getaddrinfo`），注册在 `CMakeLists.txt` 最末（编号规则见 §10.67），`tools/gate.sh:50` 的 `EXP_CTEST` 122 → 123。
+
+**反向对照：** 探针链到 HEAD 的 `socket.c` → `FAIL the bound did not hold (10224 ms for a 2000 ms timeout)`、rc=1；链到修复版 rc=0。同一个探针在旧代码上必须红。
+
+**诚实边界：** ① 钉子（探针）是 POSIX-only，Windows 侧没有对应回归；② 修的是「不再无限等」，不是「解析一定成功」——超时后连接直接失败，调用方拿到的是错误而不是地址；③ 被中断的解析线程仍在后台跑，线程本身没有被取消；④ 上界是**分阶段**的：解析等一个 `timeout_ms`，随后的 TCP connect 又拿一个全新的 `timeout_ms`，最坏总耗时接近 `2×timeout_ms`，别读成硬性总上界。
+
+**独立复核推翻了一版非真空判定。** 第一版探针用时间窗判「停顿有没有真的注入」（`elapsed < 1500` 即判空）。复核者实测 `env -u LD_PRELOAD` 连跑 11 次，第 11 次得到 `elapsed_ms=2871 connected=0` + `resolve_bound: ok` + rc=0 —— 没有注入却全绿；原因是新代码下「无注入」的调用本就要花真实解析加一整个 connect 预算（约 2025 ms），真实 connect 一慢就落进窗口，所以丢掉 preload 只有约 10/11 的概率被抓。现改为让垫片向 `SLOWDNS_LOG` 追加一行、探针读文件判空（`FAIL getaddrinfo was not interposed; the pin is vacuous`），同样的负控 **12/12** 都红。
+
+## §10.72 CMake 的 `ENVIRONMENT` 是最后写者胜
+
+`CMakeLists.txt` 末尾的 `get_property(INIMERSE_ALL_TESTS DIRECTORY PROPERTY TESTS)` 加 `set_tests_properties(${INIMERSE_ALL_TESTS} PROPERTIES ENVIRONMENT "PYTHONIOENCODING=utf-8")`（`CMakeLists.txt:921-923`）会覆盖**每一个**已注册测试的 `ENVIRONMENT` 属性。
+
+第一次把上面那个新测试块放在 `if(INIMERSE_BUILD_ENGINE)` 内时，`build/CTestTestfile.cmake` 里该用例只剩 `ENVIRONMENT "PYTHONIOENCODING=utf-8"`，我们设的 `LD_PRELOAD` 被整个吃掉，探针静默退化成「注入没有发生」（测试因此假绿/假红都说不清）。整块移到那个全局循环**之后**（`CMakeLists.txt:940`）才生效。
+
+**教训：** 任何需要 `ENVIRONMENT` 的测试都必须注册在那个全局循环之后。`set_tests_properties` 不是合并，是覆盖。
+
+## §10.73 探针可诊断性：各个失败码在日志里长得一样
+
+`src/platform/process_probe.c` 旧版只打印 `process_pid=`，失败时统一 `return 1`，于是 peer 报的 `#19 process_probe` 在 Windows 上间歇性变红时，日志里看不出停在哪一步 —— 各个失败码（2/3/4/5/6/7/8/9）的输出完全一样，无法定位。
+
+现在每个失败点自报所在步骤并打印实测值（进程是否已退出、等了多久、期望什么），一律返回 1；旧 step 6 的 20 ms 等待改成 500 ms（对 `cmd.exe` 的启动来说 20 ms 本来就是竞态），并把「慢子进程还活着」从等待之后的判断改成显式的前置检查。
+
+真实 Windows（ucrt64 gcc）上新探针 12/12 通过。
+
+**诚实边界：** 旧探针在本机 20/20 也通过，flake 始终没有被复现。所以这次修的是**可诊断性**与一处可疑的短等待，**不能声称 20 ms 就是那次红的根因**。
