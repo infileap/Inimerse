@@ -486,6 +486,20 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 - [ ] 角色对白测试覆盖身份伪造、受众范围、对白分支、字幕/语音同步和 AI 标识。
 - [ ] AI 分析测试覆盖结构化事件、权限隔离、脱敏、可解释摘要和训练反馈回放。
 
+### v0.6 目标：集合化类型系统（2026-10 由 v3.1 提前）
+
+集合化类型系统原为 §5 P3 的**明确延期项**（→ v3.1，见 [archive/ROADMAP_3.1.md](archive/ROADMAP_3.1.md)）。2026-10 收到人类指令改为 **v0.6 目标**——指令原文、i.json 设计原文的逐字引语、以及「`type` 用集合规范化定义」的规范条文（R1–R6）见 **[TYPESET_V06.md](TYPESET_V06.md)**。
+
+本节只登记**这件事的状态**，交付清单与验收标准不在这里重复：
+
+- [x] 已有雏形（取证见 [TYPESET_V06.md](TYPESET_V06.md) §4.1）：`be` 约束绑定、内置集合／字面量／区间／推导式、`+`/`*`/`-`/`in` 均已实现并被 CTest 覆盖。
+- [~] `type NAME = <集合>` 能解析能跑，但 `src/compiler/compiler.c:2224-2231` 把它编译成 `OP_STORE_GLOBAL`（**运行时全局值**），不是编译期类型。
+- [ ] R2：`Z` 改为数学整数集（任意精度），`int`/`int32`/`int64` 降为「`Z` 的子集别名」。**这一条落地前，「`int` 是 32 位还是 64 位」在语言层无法回答**——今天 `Z` 的上界是 `src/vm/vm.h:42` 的 `union { long long ival; double fval; };`。
+- [ ] R3：位宽由集合基数／范围派生；`@bits(n)`/`@bytes(n)` 显式钉住并编译期校验「位宽是否足够存储该集合的所有值」。
+- [ ] 消去「同一语义多决定点」：`in`／子集／`be` 今天各有两份实现（C 内核 `src/types/` 与 VM `SetObj`），须与 [DECFY_DESIGN.md](DECFY_DESIGN.md) 用同一份决定点清单收敛。
+
+**未决**：`b = 0 : a` 这一声明形状在 i.json 中**无逐字出处**（导出里已有三种别的形状，其中一种就是仓库已实现的 `OP_BE` 形式），要定必须由人裁定——见 [TYPESET_V06.md](TYPESET_V06.md) §7.1。
+
 ---
 
 ## 5. 优先级
@@ -542,7 +556,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 
 ### P3：明确延期，不要投入
 
-- 集合化类型系统（⚠ 集合化：`Z`/`Z+` 集合关系与 `be` 语法）→ v3.1，见 [archive/ROADMAP_3.1.md](archive/ROADMAP_3.1.md)。
+- ~~集合化类型系统（⚠ 集合化：`Z`/`Z+` 集合关系与 `be` 语法）→ v3.1，见 [archive/ROADMAP_3.1.md](archive/ROADMAP_3.1.md)。~~ **2026-10 由人裁定提前为 v0.6 目标**，见 §4「v0.6 目标：集合化类型系统」与 [TYPESET_V06.md](TYPESET_V06.md)。本行保留为历史裁定（它记录的是**当时为什么决定不做**），**不再是「不要投入」的依据**。
 - 概率编程、证明携带代码、量子启发叠加 → 见 [archive/ROADMAP_FRONTIER.md](archive/ROADMAP_FRONTIER.md)。
 - 微内核 / 裸机 Inim OS、去中心化权威 → 见 `future/`。
 
