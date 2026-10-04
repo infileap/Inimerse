@@ -137,6 +137,18 @@ stage_ctest() {
     echo "gate: bump EXP_CTEST in tools/gate.sh and docs/BOARD.md 3 if that was intended." >&2
     return 1
   fi
+  # A builtin name registered twice is dead code that reads as live: the name
+  # resolves to whichever handler landed first on the probe chain, and the second
+  # entry is unreachable.  vm_register_builtin now refuses the duplicate and says
+  # so on stderr, so a suite that prints this line is a suite whose engine carries
+  # one name with two answers.  Asserted here because it is a property of the
+  # suites this stage just ran, and because no single test file can see it.
+  if printf '%s\n' "$out" | grep -qF "is already registered"; then
+    echo "gate: a builtin name was registered twice:" >&2
+    printf '%s\n' "$out" | grep -F "is already registered" | sort -u >&2
+    echo "gate: one name, one handler -- delete the second registration." >&2
+    return 1
+  fi
   return 0
 }
 
