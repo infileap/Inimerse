@@ -121,6 +121,17 @@ PACKED_FILES = ["main.im", "data.txt", "manifest.json", "blueprint.json",
                 "laws/rule.im", "mods/entry.im"]
 
 
+def im_path_literal(path):
+    """A path as it has to appear inside the generated Inimerse string literal.
+
+    The opener source below is generated, not parsed, so a Windows path arrives
+    with its backslashes intact: written raw, "...\\Temp\\tampered.vverse" is
+    read by the lexer as "\\t" and turns into a TAB, and the file the test just
+    wrote is not the file the engine opens.  Escape backslashes and quotes.
+    """
+    return str(path).replace("\\", "\\\\").replace('"', '\\"')
+
+
 def main():
     engine = find_engine()
     sample = REPO / "vtest_signed.vverse"
@@ -183,7 +194,7 @@ def main():
         opener = root / "open.im"
 
         # 1b. round trip: the engine opens the package the engine just packed
-        opener.write_text(OPEN_PKG.format(path=str(pkg_path)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(pkg_path)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         out, err = rc.stdout.decode(errors="replace"), rc.stderr.decode(errors="replace")
         assert "open=1" in out, out + err
@@ -199,7 +210,7 @@ def main():
         bad["files"]["data.txt"] = base64.b64encode(bytes(payload)).decode("ascii")
         tampered = root / "tampered.vverse"
         tampered.write_bytes(gzip_json(bad))
-        opener.write_text(OPEN_PKG.format(path=str(tampered)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(tampered)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
         assert b"digest mismatch" in rc.stderr, rc.stderr
@@ -212,7 +223,7 @@ def main():
             json.dumps(table).encode("utf-8")).decode("ascii")
         badsig = root / "badsig.vverse"
         badsig.write_bytes(gzip_json(bad2))
-        opener.write_text(OPEN_PKG.format(path=str(badsig)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(badsig)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
         assert b"digest mismatch" in rc.stderr, rc.stderr
@@ -222,7 +233,7 @@ def main():
         del bad3["files"]["signatures/sha256.json"]
         nosig = root / "nosig.vverse"
         nosig.write_bytes(gzip_json(bad3))
-        opener.write_text(OPEN_PKG.format(path=str(nosig)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(nosig)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
         assert b"missing required metadata" in rc.stderr, rc.stderr
@@ -235,7 +246,7 @@ def main():
 
         # 5. the checked-in signed vector: its min_version (0.9.0) is newer than
         #    the engine, so it must be rejected as a dependency mismatch...
-        opener.write_text(OPEN_PKG.format(path=str(sample)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(sample)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
         assert b"needs infiverse >=" in rc.stderr, rc.stderr
@@ -246,7 +257,7 @@ def main():
         vec_pkg["min_version"] = "0.4.0"
         lowered = root / "sample_ok.vverse"
         lowered.write_text(json.dumps(vec_pkg), encoding="utf-8")
-        opener.write_text(OPEN_PKG.format(path=str(lowered)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(lowered)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         out, err = rc.stdout.decode(errors="replace"), rc.stderr.decode(errors="replace")
         assert "open=1" in out, out + err
@@ -257,7 +268,7 @@ def main():
         vec_pkg["files"]["data.txt"] = "AAAA" + vec_pkg["files"]["data.txt"][4:]
         broken = root / "sample_bad.vverse"
         broken.write_text(json.dumps(vec_pkg), encoding="utf-8")
-        opener.write_text(OPEN_PKG.format(path=str(broken)), encoding="utf-8")
+        opener.write_text(OPEN_PKG.format(path=im_path_literal(broken)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
         assert b"mismatch" in rc.stderr, rc.stderr
