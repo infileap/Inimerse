@@ -143,6 +143,21 @@ def probe(engine, target):
                 "c_ops_hash": "", "sh_ops_hash": "", "output_match": False,
                 "bytecode_match": False, "ops_match": False, "c_exit": 0, "sh_exit": 0}
 
+    if source_has_needle(abs_target, NON_HERMETIC):
+        # Decide this *before* running anything.  The self-host path really
+        # executes the target, so probing a target that calls http_get() makes
+        # the suite perform a live network request -- and on a host without DNS
+        # egress getaddrinfo() has no timeout (src/platform/socket.c:99), so the
+        # call hangs until the resolver gives up.  CTest reports that as a
+        # timeout on Windows (300.05s, measured 2026-10-04) for a suite that
+        # otherwise needs ~14s.  The verdict is "non-hermetic" either way: only
+        # the order of two checks changes, no target is both non-hermetic and
+        # path-io, and every reported reason stays as it was.
+        return {"target": rel, "skip_reason": "non-hermetic", "c_bytes": 0, "sh_bytes": 0,
+                "c_out_hash": "", "sh_out_hash": "", "c_bc_hash": "", "sh_bc_hash": "",
+                "c_ops_hash": "", "sh_ops_hash": "", "output_match": False,
+                "bytecode_match": False, "ops_match": False, "c_exit": 0, "sh_exit": 0}
+
     c_rc, c_out, _ = run([engine, rel])
     sh_rc, sh_out, _ = run([engine, COMPILER_IM, abs_target])
 
