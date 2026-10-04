@@ -1,0 +1,42 @@
+# `+` concatenates when EITHER operand is a string, and both operands must be
+# stringified the same way.  L_ADD (src/vm/vm.c) sent the RIGHT operand through
+# value_to_string() but read the LEFT one straight out of `a->sval`.  That is
+# correct only when the left operand IS a string: for every other tag `sval` is
+# whatever the register last held, and a freshly loaded integer holds NULL, so
+# the left operand contributed the empty string and vanished.
+#
+#   x = 5; y = "7"
+#   x + y        answered "7"     -- the 5 was gone, exit code 0
+#   x + "a"      answered "a"
+#   nil + "x"    answered "x"
+#   true + "x"   answered "x"
+#   5.5 + "x"    answered "x"
+#
+# The 3+-term chain is folded by L_CONCAT (src/vm/vm.c), which had the identical
+# asymmetry (`acc.sval ? acc.sval : ""`), so it lost the same operand:
+#
+#   x + y + "8"  answered "78"
+#   x + y + x    answered "75"
+#
+# The rule itself was never in doubt -- `"7" + 1` has always answered "71", i.e.
+# a string on either side makes the whole expression a concatenation.  Only one
+# half of that rule was implemented, which is why this is a silent data loss and
+# not a precedence question.
+#
+# Only the interpreter has this path: the AOT backend's nv_add handles no strings
+# at all (emit_expr has a case for EXPR_NUMBER only) and wasm refuses them, so
+# the three-channel differential fuzz cannot reach it.  f-strings never exercised
+# it either, because parse_fstring puts a literal string first in every chain.
+#
+# Values only, never exit codes.  See docs/AUDIT.md §1.23.
+x = 5
+y = "7"
+r1 = x + y
+r2 = x + "a"
+r3 = nil + "x"
+r4 = true + "x"
+r5 = 5.5 + "x"
+r6 = x + y + "8"
+r7 = x + y + x
+r8 = "a" + x
+say "concat-ok intstr=" + r1 + " strlit=" + r2 + " nil=" + r3 + " bool=" + r4 + " float=" + r5 + " chain3=" + r6 + " chainix=" + r7 + " rev=" + r8

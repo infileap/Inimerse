@@ -1007,6 +1007,44 @@ if (strcmp(a, b) != 0) return 11;
 - **WIN32 目标本机不编**，所以 `src/main.c` / `src/mod/verse_dist_mod.c` 的 Windows 分支只有与 POSIX 逐字一致这一层保证。
 - **`-Wformat-truncation` 只是可见警告的一部分。** 这一轮清掉的是 GCC 当前愿意报的那些；换编译器版本可能报出新的。
 
+## §1.23 `+` 里非字符串的左操作数被静默丢掉
+
+**症状。** `+` 的规则从来只有一条：**任一操作数是字符串，整个表达式就是拼接**——`"7" + 1` 一直是 `"71"`。但这条规则只实现了一半：右操作数是字符串时，左操作数会消失。
+
+| 表达式（`x = 5`，`y = "7"`） | 修复前 | 修复后 |
+| --- | --- | --- |
+| `x + y` | `7` | `57` |
+| `x + "a"` | `a` | `5a` |
+| `nil + "x"` | `x` | `nilx` |
+| `true + "x"` | `x` | `truex` |
+| `5.5 + "x"` | `x` | `5.5x` |
+| `x + y + "8"` | `78` | `578` |
+| `x + y + x` | `75` | `575` |
+| `"a" + x` | `a5` ✓ | `a5` ✓ |
+
+退出码全程 0，只有值不对——**静默数据丢失，不是优先级问题**。最后一行是本来就对的那一侧，留作回归护栏。
+
+**机制。** `L_ADD`（`src/vm/vm.c`）原文：
+
+```c
+const char *sa = a->sval?a->sval:"", *sb;
+char sbuf3[128];
+if (b->type == VAL_STRING) sb = b->sval?b->sval:"";
+else { value_to_string(vm, b, sbuf3, sizeof sbuf3, 0); sb = sbuf3; }
+```
+
+**右边走了 `value_to_string`，左边直接读 `a->sval`。** 只有 `a` 确实是字符串时这才对；对别的 tag，`sval` 是那个 `char *` 成员上一次留下的值（它**不在 union 里**，所以不会被 `ival` 的写入覆盖），刚 load 出来的整数那里是 NULL，于是左边贡献空串。`L_CONCAT` 的一般折叠路径有**逐字相同**的不对称（`const char *sa = acc.sval ? acc.sval : ""`），所以三项以上的链丢的是同一个操作数——这正是为什么 2 项链（走 `OP_ADD`）和 3 项链（走 `OP_CONCAT`）必须用同一条规则。
+
+**修法。** 两处都改成对称选择：类型是 `VAL_STRING` 就取 `sval`，否则 `value_to_string` 进一个新的 `abuf3[128]` / `abuf2[128]`。两处都加了注释说明「2 项链由 `OP_ADD` 折叠、3 项以上由 `OP_CONCAT` 折叠，两条规则必须一致」。
+
+**判据。** 新增 CTest **`concat_left_operand_runtime`（#118）**，钉一行 `concat-ok intstr=57 strlit=5a nil=nilx bool=truex float=5.5x chain3=578 chainix=575 rev=a5`；FAIL 正则 `concat-ok intstr=7 |strlit=a |nil=x |bool=x |float=x |chain3=78 |chainix=75 ` **已双向验证**（`grep -Ec`：修复前 1、修复后 0）。末尾的空格是刻意的：引擎会把字符串池 dump 到 stderr，而 CTest 连 stderr 一起捕获，带尾空格的模式匹配不到池里的任何字面量。`EXP_CTEST` **117 → 118**。
+
+### 诚实边界
+
+- **只有解释器有这条路径。** AOT 的 `nv_add`（`src/compilation/aot_native.c:220-225`）压根不处理字符串（`emit_expr` 只有 `EXPR_NUMBER` 一个 case），wasm 同样拒绝字符串。所以三通道差分模糊测试**测不到它**——这已经是本系列又一个只在解释器里的缺陷。
+- **f-string 从没走过坏路径。** `$"sum={name + 1}"` 被明确拒绝（`Error: f-string interpolation only supports plain identifiers inside {}`），而 `parse_fstring` 生成的链第一个操作数永远是字面量字符串，所以坏的那一侧从没被触发。
+- **编译器无辜。** `x = 1; y = "7"; z = x + y` 的字节码是正确的 `OP_ADD`（`LOAD_GLOBAL r1 = x`、`LOAD_GLOBAL r2 = y`），缺陷在 VM 的拼接分支里。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

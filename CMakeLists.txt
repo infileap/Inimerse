@@ -844,6 +844,15 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME union_member_tag_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/union_member_tag_v06.im)
   set_tests_properties(union_member_tag_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "union-ok sqrt-true=1 sqrt-false=0 sqrt-int=2 float-true=1 float-false=0 float-nil=0 aadd=1 aset=1 gcauto-true=1 gcauto-false=0" FAIL_REGULAR_EXPRESSION "sqrt-true=2\\.22|float-true=4\\.94|aadd=0|aset=0|gcauto-true=0")
 
+  # `+` concatenates when EITHER operand is a string, but L_ADD sent only the
+  # right operand through value_to_string() and read the left one out of
+  # `a->sval` -- which is the empty string for a freshly loaded integer, so the
+  # left operand vanished (`5 + "7"` answered "7").  L_CONCAT had the identical
+  # asymmetry for 3+-term chains.  The FAIL regex was checked both ways with
+  # grep -E (matches pre-fix, not post-fix).  See docs/AUDIT.md §1.23.
+  add_test(NAME concat_left_operand_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/concat_left_operand_v06.im)
+  set_tests_properties(concat_left_operand_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "concat-ok intstr=57 strlit=5a nil=nilx bool=truex float=5\\.5x chain3=578 chainix=575 rev=a5" FAIL_REGULAR_EXPRESSION "concat-ok intstr=7 |strlit=a |nil=x |bool=x |float=x |chain3=78 |chainix=75 ")
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

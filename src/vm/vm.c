@@ -3078,8 +3078,16 @@ static void vm_execute_thread(VmThread *t) {
                 continue;
             }
             if (a->type == VAL_STRING || b->type == VAL_STRING) {
-                const char *sa = a->sval?a->sval:"", *sb;
- char sbuf3[128];
+                /* BOTH sides must be stringified the same way.  Reading a->sval
+                   straight out is correct only when `a` IS a string; for any other
+                   tag sval is whatever the register last held (NULL for a freshly
+                   loaded integer), so `1 + "7"` answered "7" and the 1 vanished --
+                   silently, exit code 0.  `"7" + 1` was always right because the
+                   right operand already went through value_to_string(). */
+                const char *sa, *sb;
+ char sbuf3[128], abuf3[128];
+ if (a->type == VAL_STRING) sa = a->sval?a->sval:"";
+ else { value_to_string(vm, a, abuf3, sizeof abuf3, 0); sa = abuf3; }
  if (b->type == VAL_STRING) sb = b->sval?b->sval:"";
  else { value_to_string(vm, b, sbuf3, sizeof sbuf3, 0); sb = sbuf3; }
                 size_t la = strlen(sa), lb = strlen(sb);
@@ -3168,8 +3176,14 @@ static void vm_execute_thread(VmThread *t) {
                         continue;
                     }
                     if (acc.type == VAL_STRING || b.type == VAL_STRING) {
-                        const char *sa = acc.sval ? acc.sval : "", *sb;
- char sbuf2[128];
+                        /* Same rule as L_ADD, and it has to stay the same rule: a
+                           3+-term `+` chain is folded here while the 2-term chain is
+                           folded by OP_ADD, so any difference between the two shows up
+                           as the same expression answering two ways. */
+                        const char *sa, *sb;
+ char sbuf2[128], abuf2[128];
+ if (acc.type == VAL_STRING) sa = acc.sval ? acc.sval : "";
+ else { value_to_string(vm, &acc, abuf2, sizeof abuf2, 0); sa = abuf2; }
  if (b.type == VAL_STRING) sb = b.sval ? b.sval : "";
  else { value_to_string(vm, &b, sbuf2, sizeof sbuf2, 0); sb = sbuf2; }
                         size_t la = strlen(sa), lb = strlen(sb);

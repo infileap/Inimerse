@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 117；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 118；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **117 / 117 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **118 / 118 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **117** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **118** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 117
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 118
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3213,3 +3213,32 @@ release_to(comp, first + 1);
 **门禁实测。** 全量 `--clean-first` 构建 **`warning lines: 0`**（`.verify/v31/warn4.txt`，`BUILD_RC=0`）；`platform_probe` 退出码 **0**；`ctest -R 'platform_probe|truthiness|union_member|...'` **8/8 Passed**。
 
 **诚实边界。** ① **没有为「路径过长时跳过条目」写端到端测试** —— 触发它需要构造超过 1024 字节的路径，而 `zip_extract_all` / verse jar 解包都不可从 `.im` 直接调用；能钉住的只有 `im_platform_path_join` 本身的语义，拼接点是否都检查了返回值只由代码审阅保证。② `warnings: 0` 现在是真的，但 `stage_build` **仍然对警告数返回 0**，它不是断言；这一轮能说「归零」是因为全量 `--clean-first` 的输出被落盘并数过，而不是因为门禁说 0。③ WIN32 目标本机不编，`src/main.c` / `src/mod/verse_dist_mod.c` 的 Windows 分支只有与 POSIX 逐字一致这一层保证。④ 清掉的是 GCC 当前愿意报的那些，换编译器版本可能报出新的。
+
+## 10.56 `+` 里非字符串的左操作数被静默丢掉（BOARD 行 154）
+
+**起点。** §10.55 收尾时留了一个「下次再看」的疑点：`str(1 + "7")` 看起来是 `7`，而 `L_ADD` 的源码写的是「任一操作数是字符串就拼接」。改用变量（排除常量折叠）后确认：这不是疑点，是缺陷。
+
+**症状。** 用 `x = 5` / `y = "7"`：
+
+| 表达式 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `x + y` | `7` | `57` |
+| `x + "a"` | `a` | `5a` |
+| `nil + "x"` | `x` | `nilx` |
+| `true + "x"` | `x` | `truex` |
+| `5.5 + "x"` | `x` | `5.5x` |
+| `x + y + "8"` | `78` | `578` |
+| `x + y + x` | `75` | `575` |
+| `"a" + x` | `a5` ✓ | `a5` ✓ |
+
+退出码全程 0，只有值不对。`"7" + 1` 一直是 `"71"`，所以规则本身没有争议，是**只实现了一半**——静默数据丢失，不是优先级问题。
+
+**机制。** `L_ADD`（`src/vm/vm.c`）把**右**操作数送进 `value_to_string`，**左**操作数直接读 `a->sval`。`sval` 是 `Value` 里独立的 `char *`（**不在 union 内**，所以不会被 `ival` 的写入覆盖），刚 load 出来的整数那里是 NULL，于是左边贡献空串。`L_CONCAT` 的一般折叠路径有**逐字相同**的不对称（`const char *sa = acc.sval ? acc.sval : ""`），所以三项以上的链丢的是同一个操作数——这正是为什么 2 项链（走 `OP_ADD`）和 3 项链（走 `OP_CONCAT`）必须用同一条规则。
+
+**修法。** 两处都改成对称选择：类型是 `VAL_STRING` 就取 `sval`，否则 `value_to_string` 进一个新的 `abuf3[128]` / `abuf2[128]`；两处各加一段注释写明两条折叠路径必须一致。
+
+**判据。** 新增 CTest **`concat_left_operand_runtime`（#118）**，钉一行 `concat-ok intstr=57 strlit=5a nil=nilx bool=truex float=5.5x chain3=578 chainix=575 rev=a5`；FAIL 正则 `concat-ok intstr=7 |strlit=a |nil=x |bool=x |float=x |chain3=78 |chainix=75 ` **已双向验证**（`grep -Ec`：修复前 1、修复后 0）。末尾空格是刻意的——引擎把字符串池 dump 到 stderr，而 CTest 连 stderr 一起捕获，带尾空格的模式匹配不到池里的任何字面量。`EXP_CTEST` **117 → 118**，§2 与本表同步 **118 / 118**。
+
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`、`errors: 0` —— 这个计数从 §10.54 起才是真的）、`✔ ctest (expect 118/118, 0 skipped)`（`100% tests passed, 0 tests failed out of 118`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (§43.5, expect 39/39)`、`✔ node protocol suites (expect 12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (expect 75/75)`、`✔ userdata ignore rules (default deny)`、`✔ docs relative links`（`check_links: 93 markdown files, 409 links (17 external, 0 anchors, 392 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 425 backtick 引用, 0 broken`）。日志：`.verify/v31/gate_concat.log`。
+
+**诚实边界。** ① **只有解释器有这条路径** —— AOT 的 `nv_add`（`src/compilation/aot_native.c:220-225`）压根不处理字符串（`emit_expr` 只有 `EXPR_NUMBER` 一个 case），wasm 同样拒绝字符串，所以三通道差分模糊测试**测不到它**。② **f-string 从没走过坏路径** —— `$"sum={name + 1}"` 被明确拒绝（`Error: f-string interpolation only supports plain identifiers inside {}`），而 `parse_fstring` 生成的链第一个操作数永远是字面量字符串。③ **编译器无辜** —— `x = 1; y = "7"; z = x + y` 的字节码是正确的 `OP_ADD`（`LOAD_GLOBAL r1 = x`、`LOAD_GLOBAL r2 = y`），缺陷在 VM 的拼接分支里。
