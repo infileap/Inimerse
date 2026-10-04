@@ -11,7 +11,7 @@ Baseline for this release (see `docs/STATUS.md` §2):
 | --- | --- |
 | Version | `0.5.0` (`CMakeLists.txt`) |
 | Clean build | configure and build exit 0, **0 errors** |
-| Full test suite | **121 / 121** CTest cases, no `WILL_FAIL` bookkeeping entries |
+| Full test suite | **122 / 122** CTest cases, no `WILL_FAIL` bookkeeping entries |
 | Windows | the same suite runs under MinGW-w64 (see the Windows section below) |
 
 ## Language and runtime
@@ -69,6 +69,27 @@ Baseline for this release (see `docs/STATUS.md` §2):
 - The Linux build workflow and the release workflow called a `Makefile` target
   that no longer exists; both now use CMake, and the release workflow derives
   the version from the tag and refuses to publish if `CMakeLists.txt` disagrees.
+
+## Windows
+
+The Windows asset is new in this release. Its engine is the same source as the
+Linux one, with two deliberate platform differences:
+
+- **The distributed hub is reduced.** The complete hub — `/package`,
+  `/package/fork`, `/content/`, `/economy/*`, `/node/*`, `/session/*` — is
+  `src/platform/http_posix.c`, which the source lists compile into the POSIX
+  engine only. The Windows engine links `src/mod/verse_dist_mod.c` instead: a
+  reduced hub that answers `/ping`, `/v/<id>`, `/hub` and `/api/forge`. Local
+  verses, the VDP (`verse://local/…`), `inim` and `aot-native` are unaffected.
+- **The xlang bridges are not built**, so `xlang_python_bridge` and
+  `xlang_java_bridge` skip (they exit 77 and CTest reports them as skipped).
+
+Nine CTest regressions drive the POSIX hub's routes, so on Windows they are
+disabled rather than failed (`DISABLED TRUE` in `CMakeLists.txt`), and the suite
+reports the Windows engine's own coverage instead of failing on a feature that
+engine does not ship. `posix_runtime_parity` has been disabled the same way
+since before 0.5.0. Nothing is skipped silently: every disabled case is listed
+by `ctest -N` and named in this file.
 
 ## Assets
 
