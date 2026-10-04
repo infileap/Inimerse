@@ -66,8 +66,7 @@ static int posix_core_str(VM *vm) {
 static int posix_core_bool(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int truth = v->type == VAL_BOOL ? v->ival != 0 : v->type == VAL_INT ? v->ival != 0 :
-                v->type == VAL_FLOAT ? v->fval != 0.0 : v->type == VAL_STRING ? (v->sval && *v->sval) : v->type != VAL_NIL;
+    int truth = vm_truthy(v);  /* the empty string is truthy; see docs/AUDIT.md 1.18 */
     pop(vm); push_bool(vm, truth); return 1;
 }
 

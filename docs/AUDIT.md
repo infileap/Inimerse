@@ -754,6 +754,90 @@ setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set
 
 **诚实边界。** 枚举器**拒绝**走不通的分量（端点朝无穷、整个具名集合、成员超过一千万），这时 `str()` 与 `len()` 都退回字面量部分——两者仍然一致，`refused=set(0)/0` 就是这一格：`Z[1~10000001]` 的 `str` 是 `set(0)`、`len` 是 0，**两边都拒绝**，不是一边答空集。`kind == 1`（`Z`）和 `kind == 2`（`float1[0~0.3]`）从不声称计数，仍印 `set(Z)` 与 `set(float1 interval)`。另外 `str()` 印的始终是**概括**而不是元素表——元素表是 `list()` 的事，`str(1, 2, 3)` 过去和现在都是 `set(3)`。
 
+## §1.18 真值有五个产生点，而且它们互不一致
+
+**症状。** 每个需要判断真值的地方都自己写了一遍三目链，六处六个答案：
+
+| 位置 | 空串 `""` | 数组 `[1,2]` | 字典 `{1:2}` | 集合 `(1,2)` |
+| --- | --- | --- | --- | --- |
+| `L_JUMP_IF_FALSE`（`if`） | 真 | 真 | 真 | 真 |
+| `L_JUMP_IF_TRUE` | 假 | **真** | 假 | 假 |
+| `L_OR` | 假 | 真 | 假 | 假 |
+| `L_NOT` | 假 | 真 | 假 | 假 |
+| `posix_core_bool`（`bool()`） | **假** | 真 | 真 | 真 |
+| WIN32 `builtin_bool` | 假 | **假** | 假 | 假 |
+
+`if s` 认为空串为真，而 `not s`、`s or x` 与 `bool(s)` 认为它为假 —— 同一份值、同一个进程、五个答案。`or` 的短路点也跟着漂：实测（修复前，用带副作用的右操作数观察）`"" or f()`、`{1:2} or f()`、`(1,2) or f()` **都不短路**，只有数组短路。
+
+注意光看**返回值**看不出这件事：`or` 恒产出布尔，所以 `"" or 1` 与 `1 or 1` 都是 `true`。判据必须是**短路**——右操作数有没有被求值。
+
+**设计意图。** `docs/DECFY_DESIGN.md:125` 要求「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」；`:130` 要求一张 `OpCode → { VM 行为, AOT 行为, wasm 行为 }` 表作为唯一真值源，「三列不一致即构建失败」。`:24` 记下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
+
+**修法。** 新增唯一入口 `vm_truthy`（`src/vm/vm.c:293`，声明 `src/vm/vm.h:356`）：
+
+```c
+int vm_truthy(const Value *v) {
+    switch (v->type) {
+    case VAL_BOOL:  return v->ival != 0;
+    case VAL_INT:   return v->ival != 0;
+    case VAL_FLOAT: return v->fval != 0.0;
+    case VAL_NIL:   return 0;
+    default:        return 1;   /* 非 nil 的其余类型一律为真 */
+    }
+}
+```
+
+六处调用点全部改为调用它：`src/vm/vm.c:3341-3342`（`L_AND`）、`:3348-3349`（`L_OR`）、`:3355`（`L_NOT`）、`:3538`（`L_JUMP_IF_FALSE`）、`:3543`（`L_JUMP_IF_TRUE`），以及 `src/runtime/runtime_posix.c:69`、`src/runtime/runtime.c:68` 两份 `bool()`。三份文件里旧的三目链已 `grep -c` 为 0。`src/vm/vm.c:3896` 的 `OP_IS_NIL`（`(R[ins.r2].type == VAL_NIL) ? 1 : 0`）判的是 nil 本身而不是真值，**正确地未动**。
+
+**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md:24` 写下的规则，且六处里有三处本来就是这样；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 `bool("")` 从 `false` 变成 `true`，这是本次唯一面向用户的语义变化，单独写在明处。
+
+**判据。** 新增 `vtest/truthiness_single_point_v06.im` ← CTest **`truthiness_single_point_runtime`（#116）**，一行断言：
+
+```
+truth estr:T:false:true:0:1 str:T:false:true:0:1 arr:T:false:true:0:1 dict:T:false:true:0:1 set:T:false:true:0:1 zero:F:true:false:1:0 one:T:false:true:0:1 fzero:F:true:false:1:0 nil:F:true:false:1:0
+```
+
+每格是 `键:if:not:bool:or调用数:and调用数`。真值一律 `T:false:true:0:1`（`or` 短路、`and` 求值），假值一律 `F:true:false:1:0`。`FAIL_REGULAR_EXPRESSION` 正对修复前的四格（`estr:…:false:1:1`、`str`/`dict`/`set` 的 `…:true:1:1`），并且已用 `grep -E` 验证过它**匹配修复前的那一行、不匹配修复后的那一行**。
+
+**一个写测试的坑，值得单独记。** 计数器不能用全局标量：`.im` 里函数体内的 `n = n + 1` 创建的是**局部变量**，会遮蔽全局，于是 `bump()` 数的是自己的局部、调用方读的全局永远是 0。第一版就是这么写的，九个格子全印 `0:0`，看起来像「短路全对」。计数器改成全局数组的一个槽（`cnt[0] = cnt[0] + 1`）才观察得到。**一个恒为 0 的计数器比没有计数器更危险**——它给的是一个假的全绿。
+
+**诚实边界。** ① 两个编译后端**根本走不到这些值**：AOT 的 `nv_tru`（`src/compilation/aot_native.c:193`）只处理数字，wasm 的 `cg_cond`（`src/compilation/wasm_backend.c:778-845`）对 `INT`/`BOOL`/`FLOAT` 之外的 tag 直接返回 1，而 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` 在两个后端里都是 **0** —— 字符串与容器的真值只在解释器里有定义，所以这一节的三后端一致性无从验证，只能验证解释器自洽。② `src/verse/crp.c:57` 的 `vj_truthy()` 是**另一套类型系统**，它自己的注释就写着「JS `x || fallback` truthiness」，空串为假是刻意的，不在本次范围内，也不应改。
+
+## §1.19 函数里的 `+` 链会把一个参数折进操作数：`CONCAT` 读的是连续区间
+
+**症状。** `func f(k, v) { return k + ":" + "z" }`：
+
+| 调用 | 修复前 | 期望 |
+| --- | --- | --- |
+| `f("arr", "s")` | `arrs:` | `arr:z` |
+| `f("arr", 5)` | `arr5:` | `arr:z` |
+| `f("arr", [1,2])` | `Error: '+' is not defined for arrays/dicts …` | `arr:z` |
+
+第二个参数**根本没参与**这个表达式，却出现在了结果里。把函数体改成 `return k + ":" + str(v)` 就正常，所以触发条件是「链的某个操作数不是新分配的临时寄存器」。
+
+**机制。** 字节码把它编成了 `LOADK_STRING r3` / `LOADK_STRING r4` / `CONCAT r5, 1, 3` / `RETURN r5` —— 而 `L_CONCAT`（`src/vm/vm.c:3094`）折的是**连续区间** `R[r2 .. r2+r3-1]`。链的真实操作数在 r1（参数 `k`）、r3、r4，于是 `R[1..3]` 读到的是 `k`、`v`、`":"`，正好是 `"arr" + "s" + ":"`。**参数 `v` 是被「读」进来的，不是被「传」进来的。**
+
+根因在发射器 `src/compiler/compiler.c` 的 `case TOK_PLUS`（`:735-808`）。它把左结合 `+` 链压平成 `ops[0..nops-1]`，注释（`:749-750`）自己就写着「OP_CONCAT assumes contiguous operand registers R[first..first+nops-1]；多寄存器操作数（INDEX/CALL/MEMBER/…）破坏连续性 -> 退回 OP_ADD」，`:751-757` 的守卫也确实挡掉了这些种类 —— 但白名单里留着 **`EXPR_IDENT`**。局部变量与参数标识符解析到**它自己已有的寄存器**，而不是新分配一个临时，于是 `first` 之后的连续区间里出现空洞，而发射器**从未检查过连续性**，直接把 `first` 和 `nops` 交给了 `OP_CONCAT`。
+
+**修法。** 先占住整段区间，再把每个操作数**搬进**它的槽位：
+
+```c
+int first = next_register;
+for (int i = 0; i < nops; i++) (void)alloc_reg();          /* 先占住 first..first+nops-1 */
+for (int i = 0; i < nops; i++) {
+    int r = compile_expr(comp, ops[i]);
+    if (r != first + i) emit(comp->curBC, OP_MOV, first + i, r, 0);
+}
+emit(comp->curBC, OP_CONCAT, first, first, nops);
+release_to(comp, first + 1);
+```
+
+连续性于是**由构造保证**，而不是由守卫的枚举去猜。守卫限制操作数只能是单寄存器种类（`EXPR_STRING`/`NUMBER`/`FLOAT`/`BOOL`/`IDENT`），所以每个操作数最多多分配一个临时，峰值寄存器是 `nops + 1`（原来的写法峰值也是 `nops` 量级）。`release_to(comp, first + 1)` 复现了原来「第一个操作数作为结果复用、其余临时被吃掉」的语义。
+
+**判据。** 三后端同题验证：`.verify/v31/d2.im` 的八行（参数在链首、局部变量在链首、局部变量在链中、全字面量折叠路径、混合字面量）现在解释器、AOT、wasm 三者一致；`f("arr", [1,2])` 由**抛错**变为 `arr:z`。
+
+**诚实边界。** 这次修的是**连续性**，不是「链式折叠本身」；`INDEX`/`CALL`/`MEMBER` 这类多寄存器操作数仍然按原设计退回 `OP_ADD`（那条路本来就正确，只是慢）。另外这个缺陷**没有退出码信号**：它不抛异常、不报错，只是安静地算错，和 §1.15/§1.17 同一类。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

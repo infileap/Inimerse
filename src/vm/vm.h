@@ -353,6 +353,7 @@ int vm_push_value(VM *vm, Value *src);
 void vm_set_cur_thread(VmThread *t);
 double val_as_double(const Value *v);
 bool val_eq(const Value *a, const Value *b);
+int vm_truthy(const Value *v);
 
 #ifndef VM_LOCK
 #define VM_LOCK(vm) im_mutex_lock((ImMutex*)((vm)->global_lock))

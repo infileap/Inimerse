@@ -281,6 +281,25 @@ double val_as_double(const Value *v) {
 
 }
 
+/* The one truth-value production point (docs/DECFY_DESIGN.md:125).  The rule is
+   the one docs/DECFY_DESIGN.md:24 documents and the one the wasm backend already
+   emits: a zero number and nil are false, and *everything else* -- including the
+   empty string and every collection -- is true.  Before this helper five sites in
+   this file each decided for themselves, and they disagreed with each other and
+   with bool(): `"" or x` treated "" as false (L_JUMP_IF_TRUE had no case for a
+   string and fell through to 0) while `"" and x`, `not ""` and `if ""` all
+   treated it as true, and the same split hit every dict and set, because only
+   VAL_ARRAY was listed explicitly in L_JUMP_IF_TRUE.  See docs/AUDIT.md 1.18. */
+int vm_truthy(const Value *v) {
+    switch (v->type) {
+        case VAL_BOOL:  return v->ival != 0;
+        case VAL_INT:   return v->ival != 0;
+        case VAL_FLOAT: return v->fval != 0.0;
+        case VAL_NIL:   return 0;
+        default:        return 1;
+    }
+}
+
 /* v3.1: a boolean is an integer-valued operand (true == 1, false == 0).  Letting a
    bool push an expression onto the double path -- as the `a->type == VAL_INT &&
    b->type == VAL_INT` tests used to -- lost precision past 2^53, while the AOT
@@ -3319,24 +3338,21 @@ static void vm_execute_thread(VmThread *t) {
         /* ---------- 锟竭硷拷 ---------- */
         L_AND: {
             Value va = R[ins.r2], vb = R[ins.r3];
-            int a = (va.type == VAL_BOOL) ? (va.ival != 0) : (va.type == VAL_INT) ? (va.ival != 0) : (va.type == VAL_FLOAT) ? (va.fval != 0.0) : (va.type == VAL_NIL) ? 0 : 1;
-            int b = (vb.type == VAL_BOOL) ? (vb.ival != 0) : (vb.type == VAL_INT) ? (vb.ival != 0) : (vb.type == VAL_FLOAT) ? (vb.fval != 0.0) : (vb.type == VAL_NIL) ? 0 : 1;
+            int a = vm_truthy(&va);
+            int b = vm_truthy(&vb);
             value_set(&R[ins.r1], VAL_BOOL, (a && b) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_OR: {
             Value va = R[ins.r2], vb = R[ins.r3];
-            int a = (va.type == VAL_BOOL) ? (va.ival != 0) : (va.type == VAL_INT) ? (va.ival != 0) : (va.type == VAL_FLOAT) ? (va.fval != 0.0) : (va.type == VAL_NIL) ? 0 : 1;
-            int b = (vb.type == VAL_BOOL) ? (vb.ival != 0) : (vb.type == VAL_INT) ? (vb.ival != 0) : (vb.type == VAL_FLOAT) ? (vb.fval != 0.0) : (vb.type == VAL_NIL) ? 0 : 1;
+            int a = vm_truthy(&va);
+            int b = vm_truthy(&vb);
             value_set(&R[ins.r1], VAL_BOOL, (a || b) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_NOT: {
             Value *v = &R[ins.r2];
-            int truth = (v->type == VAL_BOOL) ? (v->ival != 0) :
-                        (v->type == VAL_INT)  ? (v->ival != 0) :
-                        (v->type == VAL_FLOAT) ? (v->fval != 0.0) :
-                        (v->type == VAL_NIL)  ? 0 : 1; /* 锟斤拷锟斤拷锟斤拷锟斤拷(锟街凤拷??锟斤拷锟斤拷/锟街碉拷)为锟斤拷,??JUMP_IF_FALSE 一??*/
+            int truth = vm_truthy(v);
             value_set(&R[ins.r1], VAL_BOOL, truth ? 0 : 1, 0, NULL, NULL);
             continue;
         }
@@ -3519,19 +3535,12 @@ static void vm_execute_thread(VmThread *t) {
             t->ip = ins.r2;
             continue;
         L_JUMP_IF_FALSE: {
-            int cond = (R[ins.r1].type == VAL_BOOL) ? R[ins.r1].ival == 0 :
-                       (R[ins.r1].type == VAL_INT)  ? R[ins.r1].ival == 0 :
-                       (R[ins.r1].type == VAL_FLOAT) ? R[ins.r1].fval == 0.0 :
-                       (R[ins.r1].type == VAL_NIL)  ? 1 : 0;
+            int cond = !vm_truthy(&R[ins.r1]);
             if (cond) t->ip = ins.r2;
             continue;
         }
         L_JUMP_IF_TRUE: {
-            int cond = (R[ins.r1].type == VAL_BOOL) ? R[ins.r1].ival != 0 :
-                       (R[ins.r1].type == VAL_INT)  ? R[ins.r1].ival != 0 :
-                       (R[ins.r1].type == VAL_FLOAT) ? R[ins.r1].fval != 0.0 :
-                       (R[ins.r1].type == VAL_ARRAY) ? 1 :
-                       (R[ins.r1].type == VAL_NIL)  ? 0 : 0;
+            int cond = vm_truthy(&R[ins.r1]);
             if (cond) t->ip = ins.r2;
             continue;
         }

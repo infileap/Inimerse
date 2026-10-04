@@ -825,6 +825,17 @@ if(INIMERSE_BUILD_ENGINE)
   # size(), list() and sum() do.  Values only, never exit codes.  See §1.17.
   add_test(NAME set_str_component_count_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_str_component_count_v06.im)
   set_tests_properties(set_str_component_count_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setstr-ok union=set\\(5\\)/5 single=set\\(4\\)/4 overlap=set\\(3\\)/3 two=set\\(6\\)/6 plain=set\\(3\\)/3 refused=set\\(0\\)/0 named=set\\(Z\\) interval=set\\(float1 interval\\)" FAIL_REGULAR_EXPRESSION "union=set\\(2\\)|single=set\\(0\\)|overlap=set\\(1\\)|two=set\\(0\\)|plain=set\\(0\\)")
+  # Five places each decided truthiness for themselves and disagreed.  `if ""`,
+  # `"" or f()`, `"" and f()`, `not ""` and `bool("")` did not share a rule: the
+  # empty string was truthy for `if` but falsy for `or`/`not`/`bool`, and a dict or
+  # a set did not short-circuit `or` while an array did.  They now all call one
+  # helper, vm_truthy().  The pin observes the rule AND the short-circuit, because
+  # the value alone does not discriminate -- `or` yields a boolean either way.  The
+  # counter is an array slot on purpose: `n = n + 1` inside a function creates a
+  # local that shadows the global, so the counter reads 0 no matter what ran.
+  # Values only, never exit codes.  See docs/AUDIT.md §1.18.
+  add_test(NAME truthiness_single_point_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/truthiness_single_point_v06.im)
+  set_tests_properties(truthiness_single_point_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "truth estr:T:false:true:0:1 str:T:false:true:0:1 arr:T:false:true:0:1 dict:T:false:true:0:1 set:T:false:true:0:1 zero:F:true:false:1:0 one:T:false:true:0:1 fzero:F:true:false:1:0 nil:F:true:false:1:0" FAIL_REGULAR_EXPRESSION "estr:T:false:false:1:1|str:T:false:true:1:1|dict:T:false:true:1:1|set:T:false:true:1:1")
 
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)

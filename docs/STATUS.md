@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 115；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 116；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **115 / 115 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **116 / 116 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **115** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **116** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 115
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 116
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3091,3 +3091,81 @@ setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set
 **门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 115/115, 0 skipped)`（`100% tests passed, 0 tests failed out of 115`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`、`✔ docs backtick paths`。
 
 **诚实边界。** 枚举器**拒绝**走不通的分量（端点朝无穷、整个具名集合、成员超过一千万），这时 `str()` 与 `len()` 都退回字面量部分 —— 两者仍然一致，`refused=set(0)/0` 就是这一格：`Z[1~10000001]` 的 `str` 是 `set(0)`、`len` 是 0，**两边都拒绝**，不是一边答空集。`kind == 1`（`Z`）与 `kind == 2`（`float1[0~0.3]`）从不声称计数，仍印 `set(Z)` 与 `set(float1 interval)`。另外 `str()` 印的始终是**概括**而不是元素表 —— 元素表是 `list()` 的事，`str(1, 2, 3)` 过去和现在都是 `set(3)`。详见 [AUDIT.md](AUDIT.md) §1.17。
+
+## 10.53 真值产生点收敛为一处，以及它牵出的 `+` 链折叠缺陷（BOARD 行 149、150）
+
+**这一节的起点不是「再找一个同形缺陷」，而是换一类。** §10.50/§10.51/§10.52 连着三节都是「集合的某个消费者只读了字面量那一部分」，再找第四个没有新信息。于是转去查**两份副本的系统性差异**：`.verify/v31/twocopies.py` 从 `src/runtime/runtime.c`（WIN32）与 `src/runtime/runtime_posix.c` 各抽出 `vm_register_builtin*` 注册的函数体，去注释、去空白、把函数名统一成 `FN` 之后逐字节比对。59 个同名内建里 **2 个相同、56 个不同、1 个没有函数体**。比例最低的几个是 `lower`/`upper`（0.264）、`bool`（0.256）、`atomic_get`（0.247）、`match`（0.227）—— 逐个看下去，`bool` 那一对把话题带到了真值本身。
+
+**症状：真值有五个产生点，六个答案。** 判断真值的地方各自写了一遍三目链：
+
+| 位置 | 空串 `""` | 数组 `[1,2]` | 字典 `{1:2}` | 集合 `(1,2)` |
+| --- | --- | --- | --- | --- |
+| `L_JUMP_IF_FALSE`（`if`） | 真 | 真 | 真 | 真 |
+| `L_JUMP_IF_TRUE` | 假 | **真** | 假 | 假 |
+| `L_OR` | 假 | 真 | 假 | 假 |
+| `L_NOT` | 假 | 真 | 假 | 假 |
+| `posix_core_bool`（`bool()`） | **假** | 真 | 真 | 真 |
+| WIN32 `builtin_bool` | 假 | **假** | 假 | 假 |
+
+`if s` 认为空串为真，`not s`、`s or x` 与 `bool(s)` 认为它为假。而 `docs/DECFY_DESIGN.md:125` 要求的是「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」，`:24` 写下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
+
+**判据必须是短路，不能是返回值。** 第一轮探测看的是 `"" or "FALLBACK"` 的返回值，得出「空串在 `or` 里是假」——**这是错的**：O0 那次修复之后 `and`/`or` 恒产出布尔，所以 `"" or 1` 与 `1 or 1` 都是 `true`，返回值不区分。改用带副作用的右操作数（`.verify/v31/sc.im` 的 `func boom(t) { say "  BOOM:" + t; return true }`）才看得见：修复前 `"" or boom()`、`{1:2} or boom()`、`(1,2) or boom()` **都不短路**，只有数组短路。
+
+**修法：唯一入口 `vm_truthy`。**
+
+```c
+int vm_truthy(const Value *v) {
+    switch (v->type) {
+    case VAL_BOOL:  return v->ival != 0;
+    case VAL_INT:   return v->ival != 0;
+    case VAL_FLOAT: return v->fval != 0.0;
+    case VAL_NIL:   return 0;
+    default:        return 1;
+    }
+}
+```
+
+新增在 `src/vm/vm.c:293`、声明在 `src/vm/vm.h:356`；六处调用点全部改为调用它：`src/vm/vm.c:3341-3342`（`L_AND`）、`:3348-3349`（`L_OR`）、`:3355`（`L_NOT`）、`:3538`（`L_JUMP_IF_FALSE`）、`:3543`（`L_JUMP_IF_TRUE`），以及 `src/runtime/runtime_posix.c:69` 与 `src/runtime/runtime.c:68` 两份 `bool()`。三份文件里旧的三目链 `grep -c` 已为 0。`src/vm/vm.c:3896` 的 `OP_IS_NIL`（`(R[ins.r2].type == VAL_NIL) ? 1 : 0`）判的是 nil 本身而不是真值，**正确地未动**。
+
+**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md:24` 写下的规则，且六处里本来就有三处如此；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 **`bool("")` 从 `false` 变成 `true`**，这是本次唯一面向用户的语义变化，单独写在明处。
+
+**判据。** 新增 `vtest/truthiness_single_point_v06.im` ← CTest **`truthiness_single_point_runtime`（#116）**，一行断言：
+
+```
+truth estr:T:false:true:0:1 str:T:false:true:0:1 arr:T:false:true:0:1 dict:T:false:true:0:1 set:T:false:true:0:1 zero:F:true:false:1:0 one:T:false:true:0:1 fzero:F:true:false:1:0 nil:F:true:false:1:0
+```
+
+每格是 `键:if:not:bool:or调用数:and调用数`：真值一律 `T:false:true:0:1`（`or` 短路、`and` 求值），假值一律 `F:true:false:1:0`。`FAIL_REGULAR_EXPRESSION` 正对修复前的四格（`estr:T:false:false:1:1` 与 `str`/`dict`/`set` 的 `…:true:1:1`），**已用 `grep -E` 双向验证**：匹配修复前的那一行、不匹配修复后的那一行。
+
+**写这个测试踩的坑，值得单独记一笔。** 计数器不能用全局标量。`.im` 里函数体内的 `n = n + 1` 创建的是**局部变量**、会遮蔽全局，于是 `bump()` 数的是自己的局部、调用方读的全局永远是 0 —— 第一版九个格子全印 `0:0`，**看起来像「短路全对」**。改用全局数组的一个槽（`cnt[0] = cnt[0] + 1`）才观察得到。一个恒为 0 的计数器比没有计数器更危险，因为它给的是一个假的全绿。
+
+**它牵出的第二个缺陷：函数里的 `+` 链会把一个参数折进操作数。** 真值测试写不下去的时候，`func f(k, v) { return k + ":" + "z" }` 这条探针暴露了别的东西：
+
+| 调用 | 修复前 | 期望 |
+| --- | --- | --- |
+| `f("arr", "s")` | `arrs:` | `arr:z` |
+| `f("arr", 5)` | `arr5:` | `arr:z` |
+| `f("arr", [1,2])` | `Error: '+' is not defined for arrays/dicts …` | `arr:z` |
+
+第二个参数**根本没参与**这个表达式，却出现在结果里。字节码是 `LOADK_STRING r3` / `LOADK_STRING r4` / `CONCAT r5, 1, 3` / `RETURN r5`，而 `L_CONCAT`（`src/vm/vm.c:3094`）折的是**连续区间** `R[r2 .. r2+r3-1]`；链的真实操作数在 r1（参数 `k`）、r3、r4，于是 `R[1..3]` 读到的是 `k`、`v`、`":"`，正好是 `"arr" + "s" + ":"`。参数 `v` 是被**读**进来的，不是被**传**进来的。
+
+根因在发射器 `src/compiler/compiler.c` 的 `case TOK_PLUS`（`:735-808`）：它把左结合 `+` 链压平成 `ops[0..nops-1]`，注释（`:749-750`）自己就写着「OP_CONCAT assumes contiguous operand registers R[first..first+nops-1]」，`:751-757` 的守卫也挡掉了多寄存器种类 —— 但白名单里留着 **`EXPR_IDENT`**。局部变量与参数解析到**自己已有的寄存器**而不是新分配一个临时，连续区间出现空洞，而发射器**从未检查过连续性**，直接把 `first` 和 `nops` 交给了 `OP_CONCAT`。
+
+**修法：先占住整段区间，再把每个操作数搬进它的槽位。**
+
+```c
+int first = next_register;
+for (int i = 0; i < nops; i++) (void)alloc_reg();
+for (int i = 0; i < nops; i++) {
+    int r = compile_expr(comp, ops[i]);
+    if (r != first + i) emit(comp->curBC, OP_MOV, first + i, r, 0);
+}
+emit(comp->curBC, OP_CONCAT, first, first, nops);
+release_to(comp, first + 1);
+```
+
+连续性于是**由构造保证**，而不是由守卫的枚举去猜。守卫限制操作数只能是单寄存器种类，所以每个操作数最多多分配一个临时，峰值寄存器 `nops + 1`；`release_to(comp, first + 1)` 复现了原来「第一个操作数作为结果复用、其余临时被吃掉」的语义。`.verify/v31/d2.im` 的八行（参数在链首、局部变量在链首、局部变量在链中、全字面量折叠路径、混合字面量）三后端一致，`f("arr", [1,2])` 由抛错变为 `arr:z`。
+
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 116/116, 0 skipped)`（`100% tests passed, 0 tests failed out of 116`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`（`check_links: 93 markdown files, 403 links (17 external, 0 anchors, 386 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 411 backtick 引用, 0 broken`）。
+
+**诚实边界。** ① 两个编译后端**根本走不到真值这些值**：AOT 的 `nv_tru`（`src/compilation/aot_native.c:193`）只处理数字，wasm 的 `cg_cond`（`src/compilation/wasm_backend.c:778-845`）对 `INT`/`BOOL`/`FLOAT` 之外的 tag 直接返回 1，而且 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` 在两个后端里都是 **0** —— 字符串与容器的真值只在解释器里有定义，这一节的三后端一致性**无从验证**，只能验证解释器自洽。② `src/verse/crp.c:57` 的 `vj_truthy()` 是**另一套类型系统**，它自己的注释就写着「JS `x || fallback` truthiness」，空串为假是刻意的，不在本次范围内、也不应改。③ `+` 链这次修的是**连续性**而不是链式折叠本身，`INDEX`/`CALL`/`MEMBER` 仍按原设计退回 `OP_ADD`（那条路本来就对，只是慢）。④ 两个缺陷**都没有退出码信号**：不抛异常、不报错，只是安静地算错，与 §10.50/§10.52 同类 —— 这正是模糊测试的盲区（它只覆盖 AOT 能接受的数字子集），只能靠手工探针撞出来。详见 [AUDIT.md](AUDIT.md) §1.18 与 §1.19。

@@ -1,0 +1,31 @@
+# The one truth-value production point (docs/AUDIT.md 1.18).
+#
+# Before this pin, five sites each decided truthiness for themselves and
+# disagreed.  For a truthy value the table below is
+#     if=T not=false bool=true or-calls=0 and-calls=1
+# and for a falsy value it is
+#     if=F not=true bool=false or-calls=1 and-calls=0
+# `or` must short-circuit on a truthy left operand and `and` must not; both are
+# observed through a global counter the right operand bumps.  The counter is an
+# array slot on purpose: a bare `n = n + 1` inside a function creates a LOCAL
+# that shadows the global, so the counter would read 0 no matter what ran.
+# The pre-fix binary printed `bool=false` for the empty string and evaluated the
+# right operand of `or` for "", a dict and a set (only an array short-circuited).
+cnt = [0]
+func bump() { cnt[0] = cnt[0] + 1; return true }
+
+func code(k, v) {
+    cnt[0] = 0
+    o = v or bump()
+    oc = cnt[0]
+    cnt[0] = 0
+    a = v and bump()
+    ac = cnt[0]
+    r = "F"
+    if v { r = "T" }
+    return k + ":" + r + ":" + str(not v) + ":" + str(bool(v)) + ":" + str(oc) + ":" + str(ac)
+}
+
+say "truth " + code("estr", "") + " " + code("str", "x") + " " + code("arr", [1,2]) +
+    " " + code("dict", {1:2}) + " " + code("set", (1,2)) + " " + code("zero", 0) +
+    " " + code("one", 1) + " " + code("fzero", 0.0) + " " + code("nil", nil)

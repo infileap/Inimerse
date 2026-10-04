@@ -786,23 +786,27 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                             comp->last_temp = 1;
                             return fr;
                         }
-                        int first = -1, l_temp = 0, w_after_first = -1;
+                        /* Reserve the operand run BEFORE compiling, and copy every
+                           operand into its slot.  OP_CONCAT folds the contiguous range
+                           R[first..first+nops-1], but an operand that is a local or a
+                           parameter resolves to its own register instead of a fresh
+                           temp, which left a hole in the run -- and the fold then read
+                           whatever happened to sit in that hole.  Measured before this
+                           fix: `func f(k, v) { return k + ":" + "z" }` compiled to
+                           `CONCAT r5, 1, 3` over R[1..3] = k, v, ":" , so
+                           `f("arr", "s")` answered `arrs:` and `f("arr", [1,2])` raised
+                           "'+' is not defined for arrays/dicts": the second parameter
+                           was folded in as an operand.  See docs/AUDIT.md 1.19. */
+                        int first = next_register;
+                        for (int i = 0; i < nops; i++) (void)alloc_reg();
                         for (int i = 0; i < nops; i++) {
                             int r = compile_expr(comp, ops[i]);
-                            if (i == 0) { first = r; l_temp = comp->last_temp; w_after_first = next_register; }
+                            if (r != first + i) emit(comp->curBC, OP_MOV, first + i, r, 0);
                         }
-                        int result;
-                        if (l_temp) {
-                            result = first;  /* result reuses first temp operand register */
-                            emit(comp->curBC, OP_CONCAT, result, first, nops);
-                            release_to(comp, w_after_first);  /* operands 1..n-1 temps consumed */
-                        } else {
-                            result = alloc_reg();
-                            emit(comp->curBC, OP_CONCAT, result, first, nops);
-                            /* first operand is a persistent reg; caller releases the temps */
-                        }
+                        emit(comp->curBC, OP_CONCAT, first, first, nops);
+                        release_to(comp, first + 1);  /* operands 1..n-1 temps consumed */
                         comp->last_temp = 1;
-                        return result;
+                        return first;
                     }
                     op = OP_ADD;
                     break;
