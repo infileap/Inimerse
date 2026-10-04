@@ -1216,3 +1216,32 @@ else()
   target_link_libraries(vm_pool_slot_probe PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 add_test(NAME vm_pool_slot_probe COMMAND vm_pool_slot_probe)
+
+# Two fixtures that docs/API.md claimed a CTest covered, and none did.
+#
+# `vtest/lint_case_missing_default_v04.im` is the `case value { _: ... }`
+# default-branch diagnostic and `vtest/lint_case_exhaustive_v04.im` is the
+# unreachable-branch diagnostic.  Both run green by hand (rc=1, one `[lint]`
+# warning each), both are named in docs/API.md's "evidence (CTest)" column --
+# and neither had a registration line, so the table's claim had no consumer.
+# A fixture with no registration is a file whose output nothing compares, and
+# nothing in the repository noticed: the five `lint_case_*` tests are
+# hand-listed, so the sixth and seventh were never added.  See
+# docs/AUDIT.md §1.59.
+#
+# The FAIL regex is the point of these two: each asserts that the *other*
+# fixture's warning is absent.  Asserting only your own finding cannot tell
+# "the diagnostic fired for the right reason" from "the diagnostic fired for
+# every case", and the two fixtures are one line apart in what they exercise.
+#
+# Registered last so no existing #N moves.
+add_test(NAME lint_case_missing_default_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_missing_default_v04.im)
+set_tests_properties(lint_case_missing_default_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case"
+  PASS_REGULAR_EXPRESSION "case has no wildcard"
+  FAIL_REGULAR_EXPRESSION "case branch is unreachable")
+add_test(NAME lint_case_exhaustive_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_exhaustive_v04.im)
+set_tests_properties(lint_case_exhaustive_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case"
+  PASS_REGULAR_EXPRESSION "case branch is unreachable: wildcard"
+  FAIL_REGULAR_EXPRESSION "case has no wildcard")
