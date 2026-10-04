@@ -51,7 +51,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-134}"
+EXP_CTEST="${EXP_CTEST:-136}"
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
@@ -382,6 +382,17 @@ stage_text_integrity() {
   python3 "$REPO_ROOT/tools/check_text_integrity.py"
 }
 
+stage_orphan_fixtures() {
+  # docs/API.md's "evidence (CTest)" column claimed a CTest covered
+  # vtest/lint_case_missing_default_v04.im and listed
+  # vtest/lint_case_exhaustive_v04.im among four real CTest names.  Neither had
+  # a registration line: the five lint_case_* tests are hand-listed, so the
+  # sixth and seventh were never added, and both fixtures ran green by hand
+  # while nothing compared their output.  This stage compares the set of test
+  # inputs against the set that actually runs.  See docs/AUDIT.md §1.59.
+  python3 "$REPO_ROOT/tools/check_orphan_fixtures.py"
+}
+
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
 run_stage "differential fuzz (interp vs AOT, expect 0 findings)" fuzz stage_fuzz
@@ -393,6 +404,7 @@ run_stage "userdata ignore rules (default deny)" ignored-credentials stage_ignor
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 run_stage "tracked text files carry no NUL byte (expect 0)" text-integrity stage_text_integrity
+run_stage "test inputs that no CTest runs (expect 0)" orphan-fixtures stage_orphan_fixtures
 
 # An --only value that matches no stage used to skip every stage, print
 # "gate: OK -- every stage passed." and exit 0: a green light from a run that
