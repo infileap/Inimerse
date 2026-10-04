@@ -3514,3 +3514,9 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 **② 包名只按 `/` 取（#38 verse_pack）。** `src/mod/verse_dist_mod.c:1082` 的 `strrchr(tail, '/')` 在 Windows 的 `C:\...\mypkg.vverse` 上返回 NULL，整条绝对路径成了包名，`dest` 里出现分量 `C:`，`mkdir` 失败 → `cannot create laws`。同一个文件里 `:271-273`（`home_dir`）与 `:387-389` 早就在同时看 `\`。修法是取靠后的那个分隔符。
 
 **没有新增用例**（两处都是 Linux 上不参与编译的 Windows-only 分支），`EXP_CTEST` 仍为 122。详见 [AUDIT.md](AUDIT.md) §1.37 与 §1.38。
+
+## §10.70 DWARF 的行号程序记下了整条绝对路径
+
+`src/compilation/debug_info.c` 取源文件 basename 时只写了 `strrchr(source_path, '/')`，Windows 的 `C:\dir\app.im` 于是找不到分隔符，整条绝对路径被写进 `.debug_line` 的 line program。修法是同时看 `\` 并取靠后的那个（`:155-157`）。与 §1.35/§1.38 同类。该文件在公共源列表（`CMakeLists.txt:387`）里，两个平台都编，但 Linux 的输入全是 `/`，所以**没有新增用例**，`EXP_CTEST` 仍为 122；判据是协调者在 Windows 上检查 `<out>.debug_line` 记的是 basename。影响面只有调试元数据，不改执行语义。
+
+**另记一条查过并关掉的候选：** `src/compiler/bytecode.c:676` 硬编码 `"%s\\%s"` 把 `/` 换成 `\`，且该文件那里没有平台守卫——但唯一的调用点 `src/main.c:547` 位于 `src/main.c:524` `load_embedded_mods_impl()` 的 `#ifndef _WIN32` / `#else` 的 **Windows 分支**内（POSIX 侧直接 `(void)vm; return;`），所以它只在 Windows 上被调用，不是缺陷。守卫在调用方，不在被调用方。详见 [AUDIT.md](AUDIT.md) §1.39。

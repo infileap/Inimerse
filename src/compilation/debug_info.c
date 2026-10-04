@@ -148,7 +148,12 @@ int debug_write_sidecar(struct Compiler *comp, const char *source_path, const ch
     snprintf(path, sizeof(path), "%s.debug_line", output);
     f = fopen(path, "wb");
     if (!f) return -1;
+    /* The basename of the source, separators as this platform writes them: a
+     * Windows path is C:\dir\app.im, so a '/'-only search found nothing and
+     * the DWARF line program recorded the whole absolute path.  Same class as
+     * the deps.c and verse_dist_mod.c basename sites. */
     const char *base = strrchr(source_path, '/');
+    { const char *bs = strrchr(source_path, '\\'); if (bs && (!base || bs > base)) base = bs; }
     base = base ? base + 1 : source_path;
     write_dwarf_line_program(f, main_bc->dbg_lines, main_bc->dbg_count, main_bc->count, base);
     fclose(f);

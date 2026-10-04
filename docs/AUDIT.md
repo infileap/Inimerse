@@ -1544,6 +1544,43 @@ Windows 上 `/` 与 `\` 都合法，只看一个会在混用路径上再次出�
 `dest = <home>/universe/mypkg`、`open=1`。② 这次没有新增用例：它和 §1.35 一样属于
 「Linux 上不参与编译的 Windows-only 分支」。
 
+## §1.39 DWARF 的行号程序记下了整条绝对路径
+
+**现象。** Windows 上生成的 `<out>.debug_line` 里，源文件名是整个绝对路径
+`C:\dir\app.im`，而不是 `app.im`。
+
+**根因。** `src/compilation/debug_info.c` 取 basename 时只看正斜杠：
+
+```c
+const char *base = strrchr(source_path, '/');
+base = base ? base + 1 : source_path;
+```
+
+Windows 的源路径是反斜杠形式，`strrchr` 返回 NULL，于是整条路径被写进 DWARF 的
+line program。与 §1.35（`src/compilation/deps.c`）、§1.38
+（`src/mod/verse_dist_mod.c`）是同一类：**一件事多个生产点，只有一处记得平台分隔符。**
+
+**修法。** 取靠后的那个分隔符（`src/compilation/debug_info.c:155-157`）：
+`{ const char *bs = strrchr(source_path, '\\'); if (bs && (!base || bs > base)) base = bs; }`。
+这个文件在 [../CMakeLists.txt](../CMakeLists.txt) 的**公共源列表**（`:387`）里，两个平台
+都编，所以它 Linux 上也编译，只是 Linux 的输入全是 `/`，测不出差别。
+
+**诚实边界。** ① 这一条**没有新增用例**：Linux 上 `source_path` 总用 `/`，除非刻意传一个
+含反斜杠的文件名，否则两种写法输出相同，所以 Linux 门禁只能证明「没改坏」。判据是
+协调者在 Windows 上生成一个 `<out>.debug_line` 并检查其中记的是 basename。② 影响面只有
+调试信息，不影响执行语义——它是本轮里唯一一条「纯粹是元数据写错」的缺陷。
+
+**一个查过并关掉的候选（记下来，免得下次再查）。** `src/compiler/bytecode.c:641`
+`bytecode_release_mods()` 在 `:676` 硬编码 `snprintf(out_path, ..., "%s\\%s", destDir, rel)`
+并把 `/` 全换成 `\\`，而且该文件里 `:676` 之外没有任何平台守卫（最近的条件指令是
+`:467 #ifdef _WIN32` / `:511 #else` / `:514 #endif`），看起来像「在 Linux 上把反斜杠当
+分隔符写文件名」。**它不是缺陷**：唯一的调用点是 `src/main.c:547`，而那一整段在
+`src/main.c:524` `static void load_embedded_mods_impl(VM *vm)` 的
+`#ifndef _WIN32`（`:525`，POSIX 直接 `(void)vm; return;`）`#else`（`:527`）分支里，
+`#endif` 在 `:552`——**这个函数在 POSIX 上是空的**，所以 `bytecode_release_mods` 只在
+Windows 上被调用，硬编码 `\\` 正是它唯一的调用者要的。查它是为了确认「公共源文件里的
+反斜杠」不是盲区，结论是这条路径的守卫在**调用方**而不是被调用方。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
