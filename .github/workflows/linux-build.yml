@@ -42,7 +42,20 @@ jobs:
           done
           # http_probe is covered by local CTest; hosted runners intermittently
           # fail its threaded loopback scheduling and must not block packages.
-          mapfile -t TESTS < <(ctest --test-dir build -N | sed -n 's/^[[:space:]]*Test #[0-9][0-9]*:[[:space:]]*//p')
+          #
+          # Enumerate through tools/ctest_enumerate.sh rather than an inline
+          # `sed`: it asserts that the names it collected are as many as
+          # `Total Tests` reports, so a broken extraction fails this job
+          # instead of quietly running a subset.  The pattern that used to be
+          # inline here demanded exactly one space between "Test" and "#",
+          # which `ctest -N`'s right-aligned numbering only satisfies below
+          # test 100: this loop was running 35 of 134 while reporting success.
+          if ! bash tools/ctest_enumerate.sh build > build/ctest-names.txt; then
+            echo "::error title=test extraction::ctest -N enumeration failed"
+            exit 1
+          fi
+          mapfile -t TESTS < build/ctest-names.txt
+          echo "running ${#TESTS[@]} registered CTest cases one at a time"
           for test_name in "${TESTS[@]}"; do
             if ctest --test-dir build -R "^${test_name}$" --output-on-failure; then
               :

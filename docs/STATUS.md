@@ -3790,3 +3790,27 @@ this one ran.」）。
 **验证（两个方向）。** ① 引擎在：`note: cordis.patch.yml names /home/sakiko/inimerse, but this verifier lives in /tmp/inim-051; verifying the checkout under test.` + `55/55 checks passed (live)`，rc=0；② 把 `build/inimerse` 改名藏起来：4 条命名失败（`inim_run: executed inline source — {"ok":false,"code":"engine_missing","error":"engine not found at /tmp/inim-051/build/inimerse; run inim_build first"}` 等）+ `51/55`，rc=1，**没有 TypeError**。失败信息里的路径正是**被测树**的路径，这一点本身就是锚定生效的证据。检查条数不变（仍 55），这一改修的是「报告方式」，不是「检查内容」。
 
 **诚实边界。** ① 那行 `note:` **不是断言**：worktree 里配置指向别处**仍然是绿的** —— 那份配置是装机用的，不是被测树的属性，为它判红是错的；② **没有任何 CI 工作流引用 `tools/gate.sh`**（`.github/workflows/*.yml` 零命中），所以这个阶段的证据只存在于本机；③ 该阶段仍会在 checkout 内写 `verify-root`（结束时删除）。
+
+## §10.89 第四处同形状：同一个修复贴着两份拷贝，只修了一份
+
+**症状。** `29402f8` 把 `.github/workflows/release.yml:45` 的抽取模式改成 `Test[[:space:]]*#`，并在 `:52-54` 加了一条 `collected != Total Tests` 的断言。同一段文本在 `.github/workflows/linux-build.yml:45` **原样留着旧模式** `Test #[0-9][0-9]*`，而且**没有那条断言**。实测本树：旧模式从 137 个测试名里只收集 **38** 个（三位数编号 `#100`–`#137`），新模式 **137** 个。`linux-build.yml` 那个 job 于是**跑 38 个、静默跳过 99 个**，照样报成功、照样打包 —— 与 0.5.0 发布时「24 of 123」、`--lint $FILES` 空 `$FILES`、fuzz 空跑是同一个形状：**断言了一个没有分母的结论**。
+
+**机制。** `ctest -N` 把编号**右对齐**，所以 `Test  #64:` 与 `Test #100:` 的空格数不同。旧模式**只在 `Total Tests <= 99` 时成立**，它在**第 100 个测试被加进来的那一刻静默降级**，而仓库里没有任何东西记录过这个阈值。⇒ 任何依赖 `ctest -N` 输出格式的解析都会在某个位数处失效，且失效点不会被写在它旁边。
+
+**为什么「修一份、留一份」比「两份都错」更难发现。** 两份拷贝都绿、门禁也绿（门禁不读 workflow），只有 `38` 这一个数在说话 —— 而那个数**没有被打印过**。
+
+**改法。** 抽成 `tools/ctest_enumerate.sh <build-dir>`：它同时拥有**模式**与**断言**（`ctest -N` 失败 ⇒ exit 1；收集数为 0 ⇒ exit 1；`collected != Total Tests` ⇒ exit 1），把测试名逐行打到 stdout。两个 workflow 都改成调用它，先落盘再 `mapfile`：
+
+```bash
+if ! bash tools/ctest_enumerate.sh build > build/ctest-names.txt; then
+  echo "::error title=test extraction::ctest -N enumeration failed"
+  exit 1
+fi
+mapfile -t TESTS < build/ctest-names.txt
+```
+
+落盘是必需的：`mapfile -t TESTS < <(…)` 的进程替换**吞掉退出码**，断言就会白写。
+
+**验证（A/B）。** ① 用 `sed` 把脚本里的模式退回旧形状，跑同一棵树：`collected 38 of 137 registered tests from build`，**rc=1**；② 脚本原样：137 个名字，**rc=0**。
+
+**诚实边界。** ① 这条断言证明的是「抽取与 `ctest -N` 一致」，**不是**「跑的是对的那些测试」；② 两个 workflow 的真实效果只能由一次真实 CI 运行证明，本机证据只是脚本自身的 A/B；③ `linux-build.yml` **仍然没有 `***Skipped` 断言**（门禁有、CI 没有）—— 这一条**只记录、未改**，因为在 CI 上 xlang 桥按设计 exit 77 跳过，为它判红需要先确认 CI 上到底该不该有跳过，而那是另一次判断。

@@ -42,18 +42,19 @@ jobs:
           done
           # http_probe is covered by local CTest; hosted runners intermittently
           # fail its threaded loopback scheduling and must not block packages.
-          mapfile -t TESTS < <(ctest --test-dir build -N | sed -n 's/^[[:space:]]*Test[[:space:]]*#[0-9][0-9]*:[[:space:]]*//p')
-          # `ctest -N` right-aligns the test number, so the gap between "Test"
-          # and "#1" is wider than the one before "#100".  A pattern that
-          # demanded a single space collected only the three-digit tests and
-          # this loop then looked like it had covered the whole suite: on the
-          # 0.5.0 release it ran 24 of 123.  Assert the count, so a broken
-          # extraction fails the release instead of quietly shrinking it.
-          REGISTERED="$(ctest --test-dir build -N | sed -n 's/^[[:space:]]*Total Tests:[[:space:]]*//p')"
-          if [ "${#TESTS[@]}" -ne "${REGISTERED:-0}" ]; then
-            echo "::error title=test extraction::collected ${#TESTS[@]} of ${REGISTERED:-?} registered tests"
+          # Enumerate through tools/ctest_enumerate.sh rather than an inline
+          # `sed` plus a second inline count: it owns both the pattern and the
+          # assertion, so the two workflows cannot drift into "one fixed, one
+          # not" again.  `ctest -N` right-aligns the test number, so the gap
+          # between "Test" and "#1" is wider than the one before "#100"; a
+          # pattern demanding a single space collected only the three-digit
+          # tests while the loop still looked complete -- the 0.5.0 release ran
+          # 24 of 123, and .github/workflows/linux-build.yml ran 35 of 134.
+          if ! bash tools/ctest_enumerate.sh build > build/ctest-names.txt; then
+            echo "::error title=test extraction::ctest -N enumeration failed"
             exit 1
           fi
+          mapfile -t TESTS < build/ctest-names.txt
           echo "running ${#TESTS[@]} registered CTest cases one at a time"
           for test_name in "${TESTS[@]}"; do
             if ctest --test-dir build -R "^${test_name}$" --output-on-failure; then
