@@ -747,7 +747,28 @@ static int builtin_ai_code(VM *vm) {
     io_popn(vm, vm->cur_argc);
     if (g_ai_busy || g_ai_locked) { push_string(vm, "AI:ERR busy"); return 1; }
     const char *mname = (model && model[0]) ? model : "Qwen2.5-7B-Instruct";
-    FILE *kb = fopen("D:\\inimerse_stable\\_ai_kb.im", "rb");
+    /* The optional local spec file was an absolute path from the author's own
+     * machine ("D:\inimerse_stable\_ai_kb.im"), which exists nowhere else, so on
+     * every other machine the knowledge base was silently absent and the prompt
+     * degraded to "(no spec)" with no way to tell why.  It is looked for beside
+     * the executable first and then in the working directory; not finding it is
+     * the normal case, not an error. */
+    FILE *kb = NULL;
+    {
+        char cand[1024];
+        if (im_platform_executable_path(cand, sizeof cand) >= 0) {
+            char *sep = strrchr(cand, '\\'); char *alt = strrchr(cand, '/');
+            if (alt && (!sep || alt > sep)) sep = alt;
+            if (sep) {
+                size_t used = (size_t)(sep + 1 - cand);
+                if (used + sizeof "_ai_kb.im" <= sizeof cand) {
+                    memcpy(cand + used, "_ai_kb.im", sizeof "_ai_kb.im");
+                    kb = fopen(cand, "rb");
+                }
+            }
+        }
+        if (!kb) kb = fopen("_ai_kb.im", "rb");
+    }
     char *kbtxt = NULL;
     if (kb) {
         fseek(kb, 0, SEEK_END); long ksz = ftell(kb); fseek(kb, 0, SEEK_SET);

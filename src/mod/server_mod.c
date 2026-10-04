@@ -180,13 +180,15 @@ static int builtin_server_ports(VM *vm) {
 }
 
 static int builtin_port_check(VM *vm) {
+    /* Three "[srvdbg]" lines were left here from a debugging session and went to
+     * stderr on every port_check() call on Windows; the POSIX copy of this
+     * builtin (src/mod/server_mod_posix.c) prints nothing.  A library that
+     * narrates itself on stderr is not a diagnosis, it is noise in the caller's
+     * log. */
     int port = (int)sv_arg_num(vm, 0);
-    fprintf(stderr, "[srvdbg] port_check arg=%d cur_argc=%d sp=%d\n", port, vm->cur_argc, vm_cur_sp(vm));
     sv_popn(vm, vm->cur_argc);
     int r = sv_port_listening(port);
-    fprintf(stderr, "[srvdbg] port_check result=%d sp_after=%d\n", r, vm_cur_sp(vm));
     push_int(vm, r);
-    fprintf(stderr, "[srvdbg] pushed, sp=%d\n", vm_cur_sp(vm));
     return 1;
 }
 
@@ -331,7 +333,13 @@ void server_mod_register(VM *vm) {
     vm_register_builtin_full(vm, "port_check", builtin_port_check, 1|CAP_NET, 0);
     vm_register_builtin_full(vm, "port_pid", builtin_port_pid, 1|CAP_NET, 0);
     vm_register_builtin_full(vm, "port_kill", builtin_port_kill, 1|CAP_NET, 0);
-    vm_register_builtin(vm, "lan_ip", builtin_lan_ip);
+    /* lan_ip reports this machine's address on the local network, so it is a
+     * network capability like every neighbour here.  Registered with
+     * vm_register_builtin it got flags 0, which made --safe (src/vm/vm.c:3700)
+     * allow it on Windows while the POSIX copy of the same name is registered
+     * 1|CAP_NET (src/mod/server_mod_posix.c:145) and refuses.  Same name, same
+     * capability. */
+    vm_register_builtin_full(vm, "lan_ip", builtin_lan_ip, 1|CAP_NET, 0);
     vm_register_builtin_full(vm, "server_start", builtin_server_start, 1|CAP_NET, 0);
     vm_register_builtin_full(vm, "server_join", builtin_server_join, 1|CAP_NET, 0);
     vm_register_builtin_full(vm, "server_status", builtin_server_status, 1|CAP_NET, 0);

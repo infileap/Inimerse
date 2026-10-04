@@ -73,7 +73,11 @@ static int posix_core_bool(VM *vm) {
 static int posix_core_int(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)]; int64_t n = 0;
-    if (v->type == VAL_STRING) n = strtoll(v->sval ? v->sval : "0", NULL, 10);
+    /* A "0x" prefix selects base 16, as src/runtime/runtime.c:40 does.  The two
+     * copies must answer the same thing for the same input -- they register the
+     * same builtin name -- and this one used to read "0x10" as 0 while the
+     * Windows copy read it as 16.  Base-10 strings are unaffected. */
+    if (v->type == VAL_STRING) { const char *s = v->sval ? v->sval : "0"; int hx = (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')); n = strtoll(s, NULL, hx ? 16 : 10); }
     else if (v->type == VAL_FLOAT) n = (int64_t)v->fval;
     else n = v->ival;
     pop(vm); push_int(vm, n); return 1;

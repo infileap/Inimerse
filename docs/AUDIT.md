@@ -1693,6 +1693,128 @@ if (im_process_wait(b, 3000) != 0 || im_process_exit_code(b) != 7) return 9;
 
 **诚实边界。** ① 旧探针**在本机 20/20 也通过**：这个 flake 没有被复现，所以**不能**声称 20 ms 是根因 —— 只能说探针现在可诊断，并且不再含那个 20 ms 竞态。② flake 是否消失要等 CI 长跑；本次交付证明的是「下次红了，日志能说出是哪一步、看到的实测值是多少」。③ Linux 侧行为没变，改的只是 Windows 会走到的那条短等待与日志。
 
+## §1.43 一个逃逸守卫读了没写过的字节，而唯一断言它的探针没有注册
+
+`src/platform/vfs.c:22` 的 `..` 守卫是 `if (w == 0 || !strchr(out, '/')) return -1;`，
+但此刻 `out[w]` 还没有写终止符 —— 终止符在 `:29` 才写。`strchr` 于是越过已写入的 `w`
+个字节，去读调用方缓冲区里**从未初始化过**的内容，命中与否取决于栈上恰好有什么。
+注释写着「A VFS path may never escape its mount prefix」，而这条约束实际被放行：
+`im_vfs_normalize("os:/../escape")` 从源码根连跑 40 次，**40/40 返回 0**（成功）。
+
+**为什么一直没人发现。** `vfs_probe` 在 `CMakeLists.txt:34` 就被构建，却从来没有
+`add_test` 注册，`tools/gate.sh` 里也没有任何 `vfs` 引用 —— 一个已经断言了正确行为、
+并且正在失败的探针，门禁从来没有跑过它。这和第 1.24 节、第 1.40 节是同一类：
+**断言存在，执行点不存在。**
+
+**修法。** `strchr(out, '/')` 改成 `memchr(out, '/', w)`，只搜已经写过的 `w` 个字节。
+修复后同一条命令 40/40 返回 0（正确拒绝），从 `build/` 跑返回 4（读不到 `README.md`），
+这正是必须带 `WORKING_DIRECTORY` 的原因。`src/platform/vfs_probe.c` 另加两条：
+`"os:/a/b/.."` 仍须正常归一化到 `"os:/a"`（前缀**内部**的 `..` 不能一并禁掉），以及
+**读路径**上的逃逸 `im_vfs_read_file(v, "os:/../README.md", ...)` 必须失败。
+
+**负对照。** 用 `git show HEAD:src/platform/vfs.c` 编出的旧探针 rc=**2**（逃逸检查触发），
+证明这个 pin 看得见修复前后的差别。注册为 CTest `#124 vfs_probe`，放在注册序列末尾。
+
+**诚实边界。** ① 这个缺陷**不是 Windows 专有**，两个平台都在读未初始化的栈内存；Linux
+上 40/40 都命中，是因为那个缓冲区恰好带着调用方的旧字节。② 我改的是「只搜已写入的
+字节」，没有改 `..` 的语义。
+
+## §1.44 `im_platform_write_file` 的成败极性反了，于是 POSIX 的 `server_start` 每次自杀
+
+`src/platform/platform.c:213` 原本是
+
+    int ok = (n == length && fclose(f) == 0) ? 0 : -1; if (ok) return 0; return -1;
+
+成功码是 0、失败码是 -1，而 `if (ok)` 在**成功时**为假。两个方向都反了：写成功返回 -1，
+写失败返回 0。唯一调用者是 `src/mod/server_mod_posix.c:89`：
+
+    if (mlen < 0 || im_platform_write_file(path, metadata, (size_t)mlen) != 0) {
+        im_process_kill(proc); im_process_close(proc); return (push_int(vm, 0), 1); }
+
+`!= 0` 是「当成失败」，而写成功恰好返回 -1 ⇒ **`server_start` 每次都 kill 掉自己刚
+spawn 的子进程，并返回 0 而不是房间号**，在每一个 POSIX 运行上，而进程退出码是 0。
+
+**为什么门禁看不见。** 这个函数在 Windows 上**没有任何调用者**（`im_platform_read_file`
+的三个调用点也都在 `server_mod_posix.c`），所以它不是 Windows 缺陷；而 POSIX 侧没有任何
+用例断言过 `server_start` 的返回值。这是「同一个计算有多个生产点」的反面：
+**一个生产点，两个方向都写反了，而没有断言看着它。**
+
+**修法。** 直接返回那个三元表达式。`src/platform/platform_probe.c` 加一个往返（写必须
+成功、读必须看见、写到一个打不开的路径必须拒绝），返回码 20–23。负对照：用 HEAD 版
+`platform.c` 编同一个探针 → rc=**20**。
+
+**诚实边界。** 我没有在 POSIX 上真跑一次 `server_start` 的端到端流程（它需要
+`server_mod_posix.c` 那一整套房间与子进程环境）；证据是「极性反了」这一读法 + 调用者
+的 `!= 0` 判据 + 往返探针。
+
+## §1.45 同一个内建名，两份实现，四个不同的答案（其中一个是崩溃）
+
+`src/runtime/runtime.c`（WIN32）与 `src/runtime/runtime_posix.c`（POSIX）用不同的代码注册
+**同一批名字**，所以一个名字有两份实现就是一个名字有两个答案。59 个同名内建逐条对拍出
+四条真分歧：
+
+| 输入 | POSIX | WIN32（修前） |
+| --- | --- | --- |
+| `int(9007199254740993)` | `9007199254740993` | `1` |
+| `int(9223372036854775807)` | `9223372036854775807` | `-1` |
+| `int("0x10")` | `0` | `16` |
+| `chr("A")` | `""` | `'\x01'`（每次不同） |
+| `atomic_get(42)` / `atomic_set(42, 7)` | `0` | **进程崩溃（rc=5）** |
+
+**① `int()` 的宽度。** `src/runtime/runtime.c:40` 用 `int res` 中转
+（`res=(int)strtoll(...)`、`(int)v->fval`），而 `ival` 是 64 位整数槽
+（`docs/DECFY_DESIGN.md:76`、`src/vm/vm.h:24-26`），所以这是把 64 位值 mod 2³² 后符号扩展。
+`src/runtime/runtime_posix.c:75` 一直是 `int64_t n`，POSIX 是基线。
+
+**② `chr()` 不查类型就读 union。** `src/runtime/runtime.c:354` 原本是
+`int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival;`。`ival` 与 `sval` 是**同一个 union 的两个
+成员**，按 type tag 二选一有效；对一个 `VAL_STRING` 读 `ival` 读的是**指针的一半**，所以
+`chr("A")` 每次给一个不同的控制字符。POSIX `:400` 先判 `v.type == VAL_INT`。
+
+**③ `atomic_get`/`atomic_set` 的 NULL 名字 —— 这一条会崩。** `:1631`/`:1650` 把非字符串
+实参变成 `nm = NULL`，然后**无条件**把它交给 `strcmp(vm->globals[i].name, nm)`。同族的
+`builtin_atomic_add:1585` 一直有 `if (!nm) { push_int(vm, 0); return 1; }`，POSIX 的
+`posix_atomic_find` 开头也有同样的检查 —— 所以这是**一个家族里漏掉的一个守卫**，不是有意
+的设计分歧。实测 `atomic_get(42)` 在 Windows 上 rc=5，输出 `[crash] rip=... [stack] #0..#15`，
+是用户可复现的进程崩溃。
+
+**④ 参数顺序：`say_log` / `say_file`。** 文档与 POSIX 副本都写 `say.log(text, level)`、
+`say.file(text, path)`（`src/mod/say_mod_posix.c:11`、`:31-38`），也就是**文本是第一个
+实参**；`src/mod/say_mod_windows.c:16`/`:27` 把第一个实参当成了另一个值。于是
+`say_log("TEXT", "WARN")` 在 Windows 上打印 `[TEXT] WARN`（文本当成了级别）。同一份文件
+还缺 `say_target` 的 `console`/`log`/`json` 三分支，且 `say_ai` 对已经是 JSON 的载荷一律
+再加一层引号与转义（POSIX `:42` 的 `is_json` 分支）。
+
+**⑤ 同批修掉的其余项。** `src/mod/net_mod.c:135-136` 的 `net_recv` 单参形式无条件读下标 1
+（POSIX `:26-28` 按 `argc` 分支）；`src/mod/server_mod.c:184/187/189` 三条遗留的 `[srvdbg]`
+调试输出（POSIX 对应物不打印）；`lan_ip` 在 Windows 上以 flags=0 注册而 POSIX 是
+`1|CAP_NET`（`src/mod/server_mod_posix.c:145`），于是 `--safe` 下 POSIX 拒绝、Windows 放行；
+`src/mod/io_mod.c:750` 的知识库路径硬编码成作者机器的 `D:\inimerse_stable\_ai_kb.im`；
+`src/mod/verse_dist_mod.c:2648` 的 `iv.ival = (int)expires_at` 把 `uint64_t` 的 Unix 秒截成
+32 位（2038-01-19 起变负数），以及 `src/runtime/runtime.c:1697` 的 `vv.ival = (int)vs[i]`
+把 gc 计数截成 32 位。
+
+**为什么这些活了下来。** 唯一做过 Windows↔POSIX 对拍的用例 `posix_runtime_parity` 在
+`CMakeLists.txt:662-663` 被 `DISABLED TRUE`（只在 `if(NOT WIN32)` 分支启用），所以
+**没有任何用例在 Windows 上比较过这两份运行时**。
+
+**修法与 pin。** 新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，
+**两端都跑**：Linux 上判 POSIX 副本，Windows 上判 WIN32 副本，打印同一行。
+
+**证据（真 Windows 工具链）。** msys2 里没有 `cmake.exe`，所以用 mingw64 gcc 按
+`CMakeLists.txt:412-436` 的 WIN32 源列表手工全量编译引擎（`.verify/v31/dvbuild.sh`）。
+**修前**引擎在那条 pin 上 rc=**5**；**修后**引擎 rc=**0**，且输出与 Linux **逐字相同**：
+`divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true
+a1=0 a2=0 a3=0 a4=0`。`say_pair_probe_v06.im` 在两个引擎上同样逐字相同
+（`[WARN] TEXT`、`payload:{a:1}` 不加引号、`payload:"plain"` 加引号、`null`、`saypair rc=1`）。
+
+**诚实边界。** ① `int("0x10")` 我选择**让两端都答 16**（把 base-16 分支补进 POSIX），因为
+「同一个名字同一个答案」比「少一个特性」重要，且没有任何用例钉过它。② `load_params` /
+`save_params` 的**无参**行为仍然分歧（POSIX 注册成 `posix_unsupported` 答 -1，Windows 有真
+实现答 0/1），方向未定，**我没有动它** —— `docs/API.md:590` 说这套 `.params` API
+「在源码中无实现证据」，即 POSIX 侧才是文档描述的状态。③ `round` 对非数字参数 Windows
+抛错、POSIX 返回 nil，是**有意保留**的硬/软拒绝设计分歧，未动。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

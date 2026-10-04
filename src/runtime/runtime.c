@@ -37,7 +37,7 @@ static int builtin_input(VM *vm) {
     free(prompt);
     return 1;
 }
-static int builtin_int(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; int res=0; if(v->type==VAL_STRING) { const char *sv = v->sval?v->sval:""; int hx = (sv[0]=='0' && (sv[1]=='x'||sv[1]=='X')); res=(int)strtoll(sv, NULL, hx?16:10); } else if(v->type==VAL_FLOAT) res=(int)v->fval; else if(v->type==VAL_BOOL) res=v->ival?1:0; else if(v->type==VAL_INT) res=v->ival; pop(vm); push_int(vm,res); return 1; }
+static int builtin_int(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; long long res=0; if(v->type==VAL_STRING) { const char *sv = v->sval?v->sval:""; int hx = (sv[0]=='0' && (sv[1]=='x'||sv[1]=='X')); res=strtoll(sv, NULL, hx?16:10); } else if(v->type==VAL_FLOAT) res=(long long)v->fval; else if(v->type==VAL_BOOL) res=v->ival?1:0; else if(v->type==VAL_INT) res=v->ival; pop(vm); push_int(vm,res); return 1; }
 static int builtin_round(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -350,8 +350,13 @@ static int builtin_ord(VM *vm) {
 
 /* chr(n)：ASCII 码转字符 */
 static int builtin_chr(VM *vm) {
+    /* ival and sval are two members of one union, valid according to the type
+     * tag (src/vm/vm.h:24-26), so reading .ival off a string reads half of a
+     * pointer.  chr("A") used to answer a random control character instead of
+     * refusing; src/runtime/runtime_posix.c:397-402 checks the tag first. */
     if (vm_cur_sp(vm) < 0) return 0;
-    int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int n = (v.type == VAL_INT) ? (int)(v.ival & 0xFF) : 0;
     pop(vm);
     char buf[2] = { (char)(n & 0xFF), '\0' };
     push_string(vm, buf);
@@ -1630,6 +1635,12 @@ static int builtin_atomic_get(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm)];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
+    /* A name that is not a string leaves nm NULL, and the lookup below hands it
+     * to strcmp: atomic_get(42) crashed the process on Windows.  Its sibling
+     * builtin_atomic_add has had this guard all along (:1585), and POSIX's
+     * posix_atomic_find starts with the same check, so this is the missing
+     * member of a family, not a design difference. */
+    if (!nm) { push_int(vm, 0); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1651,6 +1662,9 @@ static int builtin_atomic_set(VM *vm) {
     Value *vv = &st[vm_cur_sp(vm)];
     long long val = val_as_int(vv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
+    /* Same missing guard as builtin_atomic_get: a non-string name reached
+     * strcmp as NULL and crashed.  builtin_atomic_add checks it at :1585. */
+    if (!nm) { push_int(vm, 0); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1694,7 +1708,10 @@ static int builtin_gc_stats(VM *vm) { /* gc_stats() -> {runs, freed, enabled, th
     for (int i = 0; i < 5; i++) {
         Value k, vv;
         k.type = VAL_STRING; k.ival = 1;  k.sval = (char*)ks[i];
-        vv.type = VAL_INT; vv.ival = (int)vs[i];  vv.sval = NULL;
+        /* vs[i] is already long long; the (int) cast narrowed the 64-bit gc
+         * counters to 32 bits on the way into a 64-bit field, so a heap that
+         * had freed more than 2^31 bytes reported a negative "freed". */
+        vv.type = VAL_INT; vv.ival = vs[i];  vv.sval = NULL; vv.ptr = NULL;
         vm_array_push(vm, aidx, &k);
         vm_array_push(vm, aidx, &vv);
     }
