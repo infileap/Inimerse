@@ -819,6 +819,12 @@ if(INIMERSE_BUILD_ENGINE)
   # Values only, never exit codes.  See docs/AUDIT.md §1.15.
   add_test(NAME sum_components_int64_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/sum_components_int64_v06.im)
   set_tests_properties(sum_components_int64_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 bool=nil inf=nil" FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|bool=0")
+  # str() summarised a set as set(iCount + count) -- the LITERAL part only -- so
+  # `str(Z[1~4])` printed set(0) beside `len(Z[1~4]) == 4`.  It now enumerates
+  # through vm_set_to_array whenever the set has a component, exactly as len(),
+  # size(), list() and sum() do.  Values only, never exit codes.  See §1.17.
+  add_test(NAME set_str_component_count_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_str_component_count_v06.im)
+  set_tests_properties(set_str_component_count_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setstr-ok union=set\\(5\\)/5 single=set\\(4\\)/4 overlap=set\\(3\\)/3 two=set\\(6\\)/6 plain=set\\(3\\)/3 refused=set\\(0\\)/0 named=set\\(Z\\) interval=set\\(float1 interval\\)" FAIL_REGULAR_EXPRESSION "union=set\\(2\\)|single=set\\(0\\)|overlap=set\\(1\\)|two=set\\(0\\)|plain=set\\(0\\)")
 
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)

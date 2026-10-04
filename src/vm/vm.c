@@ -1101,7 +1101,22 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
         if (sidx >= 0 && sidx < vm->setCount) {
             SetObj *s = vm_set_slot(vm, sidx);
             if (!s) snprintf(buf, bufsz, "set(?)");
-            else if (s->kind == 0) snprintf(buf, bufsz, "set(%d)", s->iCount + s->count);
+            else if (s->kind == 0) {
+                /* iCount + count is only the LITERAL part.  A set literal is a
+                   union of i64 / items / interval comps, so `1, 2, Z[7~9]` has
+                   five members while the sum says two, and `Z[1~4]` has four
+                   while it says zero -- `str(Z[1~4])` printed set(0) beside
+                   len(Z[1~4]) == 4.  Enumerate exactly as len()/size()/list()
+                   do.  vm_set_to_array only marks gc_pending (vm.c:685) and
+                   never collects, so this stays safe on the exception path
+                   that calls us from vm_throw (vm.c:2343). */
+                int n = s->iCount + s->count;
+                if (s->compCount > 0) {
+                    int a = vm_set_to_array(vm, sidx);
+                    if (a >= 0) n = vm_array_len(vm, a);
+                }
+                snprintf(buf, bufsz, "set(%d)", n);
+            }
             else if (s->kind == 1) snprintf(buf, bufsz, "set(%s)", builtin_set_name(s->nameIdx));
             else snprintf(buf, bufsz, "set(%s interval)", builtin_set_name(s->nameIdx));
         } else snprintf(buf, bufsz, "set(?)");

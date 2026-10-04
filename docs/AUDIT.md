@@ -706,6 +706,50 @@ say g
 
 **判据与诚实边界。** 这个修复**在本机不可执行**：Linux 上 `src/runtime/runtime.c` 连 WinHTTP 段都编不过（`cc -std=gnu11 -fsyntax-only` 的报错全在 601–1651 行），只能证明「改动区间 0 错误」。能证明的是**构造上的一致**：改动后两个文件的集合分支逐字相同；而 POSIX 那一份是**实测**的 —— `vtest/set_components_enumerable_v05.im:32` 早已钉着分量集合的 `len`/`size`，本机复测 `len(1, 2, Z[7~9]) = 5`、`size(1, 2, Z[7~9]) = 5`、`len(Z[1~4]) = 4`、`size(Z[1~4]) = 4`，与 POSIX 实现一致。**「两份写法一致」能证明，「Windows 上真的跑对了」不能。**
 
+### 1.17 `str()` 把集合总结成 `set(iCount + count)`：分量集合被读成空集
+
+§1.15 修的是 `sum()`，§1.16 修的是 WIN32 的 `len()`/`size()`。同一个「拿快速路径的门当答案」的写法还有第三处，而且这一处**在本机就能看见**——它在 `src/vm/vm.c` 的 `value_to_string` 里：
+
+```c
+else if (s->kind == 0) snprintf(buf, bufsz, "set(%d)", s->iCount + s->count);
+```
+
+`iCount + count` 只是**字面量那一部分**。集合字面量是 i64 / items / 区间 comps 三部分的并（§1.10），所以对任何带分量的集合，这个和都不是元素个数。实测（修复前，右边是当时就已经正确的 `len()`）：
+
+| 程序 | `str()` 修复前 | `len()` |
+| --- | --- | --- |
+| `1, 2, Z[7~9]` | `set(2)` | 5 |
+| `Z[1~4]` | `set(0)` | 4 |
+| `Z[1~3], Z[5~7]` | `set(0)` | 6 |
+| `1, 2, 3` | `set(3)` | 3 |
+
+`set(0)` 对一个四元素集合不是「概括」，是**错答案**：它读起来就是「空集」。而 `z = Z[1~4]` 这种写法编译器仍然包成一个 `NEW_SET`，所以只写一个区间的变量也中招。
+
+**修法。** 带分量时改走 `vm_set_to_array` 枚举，与 `len()`/`size()`/`list()`/`sum()` 走同一条路，于是两者**构造上一致**，而不是各自算一遍：
+
+```c
+int n = s->iCount + s->count;
+if (s->compCount > 0) {
+    int a = vm_set_to_array(vm, sidx);
+    if (a >= 0) n = vm_array_len(vm, a);
+}
+snprintf(buf, bufsz, "set(%d)", n);
+```
+
+枚举器会去重，这一步是必需的：字面量可以落在分量里（`1, Z[1~3]` 是 {1,2,3} 而不是四个），两个分量也可以重叠（`Z[1~3], Z[5~7]` 不重叠，`Z[1~3], Z[2~5]` 重叠）。修复后实测这四种写法都给出与 `len()` 相同的数：5 / 4 / 3 / 6，重叠的两种是 3 和 5。
+
+**为什么在异常路径上分配是安全的。** `value_to_string`（`src/vm/vm.c:1093`）不只在 `say`/`str()` 里被调用，还在 `vm_throw`（`src/vm/vm.c:2312`）里格式化异常值（`:2343` 的 `try` 无 `catch` 分支、`:2358` 的 JSON 错误输出）。在那里分配 VM 池对象看起来危险，实际不是：`vm_array_new`（`src/vm/vm.c:656`）只会**置 `gc_pending`**（`src/vm/vm.c:685`），真正的 `gc_collect` 发生在解释器主循环里（`src/vm/vm.c:2814`），**不在这次调用里**。`vm_array_push`（`src/vm/vm.c:718`）同样不收集。
+
+**判据。** 新增 CTest **`set_str_component_count_runtime`（#115）**，钉住一行：
+
+```
+setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set(3)/3 refused=set(0)/0 named=set(Z) interval=set(float1 interval)
+```
+
+`FAIL_REGULAR_EXPRESSION` 正对缺陷值（`union=set(2)` / `single=set(0)` / `overlap=set(1)` / `two=set(0)` / `plain=set(0)`），并且已用 `grep -E` 验证过它**确实匹配修复前的那一行、不匹配修复后的那一行**——一条永远匹配不上的 FAIL 正则等于没有断言。`EXP_CTEST` **114 → 115**。
+
+**诚实边界。** 枚举器**拒绝**走不通的分量（端点朝无穷、整个具名集合、成员超过一千万），这时 `str()` 与 `len()` 都退回字面量部分——两者仍然一致，`refused=set(0)/0` 就是这一格：`Z[1~10000001]` 的 `str` 是 `set(0)`、`len` 是 0，**两边都拒绝**，不是一边答空集。`kind == 1`（`Z`）和 `kind == 2`（`float1[0~0.3]`）从不声称计数，仍印 `set(Z)` 与 `set(float1 interval)`。另外 `str()` 印的始终是**概括**而不是元素表——元素表是 `list()` 的事，`str(1, 2, 3)` 过去和现在都是 `set(3)`。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

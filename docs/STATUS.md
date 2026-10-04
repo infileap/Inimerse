@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 114；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 115；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **114 / 114 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **115 / 115 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **114** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **115** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 114
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 115
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3054,3 +3054,40 @@ sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain
 **修法。** WIN32 的集合分支对齐 POSIX（`else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }`，现 `src/runtime/runtime.c:88`、`:116`），`int n` 换成 `long long n`（`push_int` 收 `long long`，`len(9007199254740993)` 在 `int n` 下会截断 —— §10.49 那一类截断的又一处），并删掉 `builtin_size` 里用 `pow()` 的闭区间公式（它对闭区间与枚举器同答案、对分量集合给 nil）。`CMakeLists.txt:383` 的 `if(WIN32)` 决定只编一份：WIN32 编 `src/runtime/runtime.c`（`:386`）、其它平台编 `src/runtime/runtime_posix.c`（`:395`）。
 
 **判据与诚实边界。** **本机不可执行**：Linux 上 `src/runtime/runtime.c` 连 WinHTTP 段都编不过（`cc -std=gnu11 -fsyntax-only` 报错全在 601–1651 行），只能证明改动区间 0 错误。可证明的是**构造上的一致**：改动后两份的集合分支逐字相同。而 POSIX 那一份是实测的 —— `vtest/set_components_enumerable_v05.im:32` 早已钉着分量集合的 `len`/`size`，本机复测 `len(1, 2, Z[7~9]) = 5`、`size(1, 2, Z[7~9]) = 5`、`len(Z[1~4]) = 4`、`size(Z[1~4]) = 4`。**「两份写法一致」能证明，「Windows 上真的跑对了」不能。** 详见 [AUDIT.md](AUDIT.md) §1.16。
+
+## 10.52 `str()` 把集合总结成 `set(iCount + count)`：分量集合被读成空集（BOARD 行 148）
+
+**症状与发现路径。** §10.50 与 §10.51 修的是 `sum()` 和 WIN32 的 `len()`/`size()`，都出自「拿快速路径的门当答案」这一类。把 `SetObj` 的消费者全部列出来之后（`grep -rn "SetObj" src/`），只剩 `src/vm/vm.c:1104` 一处同形写法 —— 而这一处**在本机就能看见**，因为它在 `value_to_string` 里：
+
+```c
+else if (s->kind == 0) snprintf(buf, bufsz, "set(%d)", s->iCount + s->count);
+```
+
+`iCount + count` 只是**字面量那一部分**。实测（修复前，右边是当时就已经正确的 `len()`）：
+
+| 程序 | `str()` 修复前 | `len()` |
+| --- | --- | --- |
+| `1, 2, Z[7~9]` | `set(2)` | 5 |
+| `Z[1~4]` | `set(0)` | 4 |
+| `Z[1~3], Z[5~7]` | `set(0)` | 6 |
+| `1, 2, 3` | `set(3)` | 3 |
+
+`set(0)` 对一个四元素集合不是概括而是**错答案**，它读起来就是「空集」。`z = Z[1~4]` 这种只写一个区间的写法编译器仍然包成 `NEW_SET`，所以变量也中招。缺陷只改值、不改退出码。
+
+**根因。** 与 §10.50/§10.51 同源：集合字面量是 i64 / items / 区间 comps 三部分的并（§10.10），`iCount + count` 对任何带分量的集合都不是元素个数。§10.10 修好枚举器之后正确写法只有一种：能直接数就直接数，否则交给 `vm_set_to_array`。
+
+**修法。** 带分量时改走 `vm_set_to_array` 枚举（`src/vm/vm.c:1113-1116`），与 `len()`/`size()`/`list()`/`sum()` 同一条路，于是两者**构造上一致**而不是各自算一遍。枚举器会去重，这一步必需：字面量可以落在分量里（`1, Z[1~3]` 是 {1,2,3} 而不是四个），两个分量也可以重叠。修复后实测 5 / 4 / 3 / 6，重叠的两种是 3 和 5。
+
+**为什么在异常路径上分配是安全的。** `value_to_string`（`src/vm/vm.c:1093`）不只在 `say`/`str()` 里被调用，还在 `vm_throw`（`src/vm/vm.c:2312`）里格式化异常值（`:2343` 的 `try` 无 `catch` 分支、`:2358` 的 JSON 错误输出），在那里分配 VM 池对象看起来危险。实际安全：`vm_array_new`（`src/vm/vm.c:656`）只会**置 `gc_pending`**（`src/vm/vm.c:685`），真正的 `gc_collect` 发生在解释器主循环（`src/vm/vm.c:2814`），**不在这次调用里**；`vm_array_push`（`src/vm/vm.c:718`）同样不收集。这一点是写代码前先读出来确认的，不是假设。
+
+**判据。** 新增 `vtest/set_str_component_count_v06.im` ← CTest **`set_str_component_count_runtime`（#115）**，一行断言：
+
+```
+setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set(3)/3 refused=set(0)/0 named=set(Z) interval=set(float1 interval)
+```
+
+配 `FAIL_REGULAR_EXPRESSION "union=set\(2\)|single=set\(0\)|overlap=set\(1\)|two=set\(0\)|plain=set\(0\)"` —— 正对缺陷值。这条 FAIL 正则**已用 `grep -E` 双向验证过**：匹配修复前的那一行、不匹配修复后的那一行；一条永远匹配不上的 FAIL 正则等于没有断言。`EXP_CTEST` **114 → 115**，`docs/BOARD.md` §3 与本节 §2 同步 **115 / 115**。
+
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 115/115, 0 skipped)`（`100% tests passed, 0 tests failed out of 115`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`、`✔ docs backtick paths`。
+
+**诚实边界。** 枚举器**拒绝**走不通的分量（端点朝无穷、整个具名集合、成员超过一千万），这时 `str()` 与 `len()` 都退回字面量部分 —— 两者仍然一致，`refused=set(0)/0` 就是这一格：`Z[1~10000001]` 的 `str` 是 `set(0)`、`len` 是 0，**两边都拒绝**，不是一边答空集。`kind == 1`（`Z`）与 `kind == 2`（`float1[0~0.3]`）从不声称计数，仍印 `set(Z)` 与 `set(float1 interval)`。另外 `str()` 印的始终是**概括**而不是元素表 —— 元素表是 `list()` 的事，`str(1, 2, 3)` 过去和现在都是 `set(3)`。详见 [AUDIT.md](AUDIT.md) §1.17。
