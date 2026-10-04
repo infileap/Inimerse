@@ -355,6 +355,16 @@ stage_doc_paths() {
   python3 "$REPO_ROOT/tools/check_doc_paths.py"
 }
 
+stage_text_integrity() {
+  # A NUL byte in a text file is inert to the compiler and loud to grep: GNU
+  # grep calls the file binary, lists only the matches it found *before* that
+  # byte, puts "binary file matches" on stderr, and exits 0 -- a truncated
+  # answer that looks complete.  In src/mod/gui_mod.c the swallowed lines were
+  # the two that prove gui_fullscreen is registered twice, and the duplicate is
+  # a live defect (builtin_fullscreen is unreachable).  See docs/AUDIT.md §1.55.
+  python3 "$REPO_ROOT/tools/check_text_integrity.py"
+}
+
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
 run_stage "differential fuzz (interp vs AOT, expect 0 findings)" fuzz stage_fuzz
@@ -365,6 +375,7 @@ run_stage "oauth_loop crate (expect 75/75)" oauth-loop stage_oauth_loop
 run_stage "userdata ignore rules (default deny)" ignored-credentials stage_ignored_credentials
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
+run_stage "tracked text files carry no NUL byte (expect 0)" text-integrity stage_text_integrity
 
 echo
 echo "══════════════════════════════════════════════════════════════"
