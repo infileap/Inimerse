@@ -66,7 +66,10 @@ jobs:
             fi
           done
           cmake --build build --target package
-          find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
+          # Bare file names, not build/…: the checksum file is published next to
+          # the assets, so a downloader must be able to run `sha256sum -c
+          # SHA256SUMS` in the directory they landed in.
+          ( cd build && find . -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum | sed 's| \./| |' ) > build/SHA256SUMS
           python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
           test -f "docs/RELEASE_${VERSION}.md"
           {
