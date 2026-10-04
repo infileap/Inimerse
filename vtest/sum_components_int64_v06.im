@@ -1,0 +1,41 @@
+# sum() had two silent wrong answers, both in the same function, and both in the
+# two copies of it that must stay in step: posix_core_sum (src/runtime/runtime_posix.c,
+# the one registered on POSIX) and builtin_sum (src/runtime/runtime.c, the WIN32
+# registration -- CMakeLists.txt compiles exactly one of them).
+#
+#   1. A set was read straight out of its storage (`s->i64`, `s->items`) and only
+#      when `s->kind == 0 && s->compCount == 0`.  A set literal is a union of i64,
+#      items and interval COMPONENTS, so any set written as `1, 2, Z[7~9]` or
+#      `Z[1~2], Z[5~6]` failed that gate: both loops were skipped, `ok` stayed 1,
+#      and the total stayed at its initial 0.  `len(b)` was 5 and `list(b)` was
+#      [1, 2, 7, 8, 9] -- and `sum(b)` was 0.  No exception, exit code 0.
+#
+#   2. Integers were accumulated in a `double`, so everything above 2^53 was
+#      rounded away before it reached push_int: `sum([9007199254740993])` answered
+#      9007199254740992.  (On Windows the same total was then cast back to `int`
+#      by `push_int(vm, (int)sum)`.)  A value that entered as an integer must not
+#      leave as one that silently lost bits.
+#
+# The fix enumerates a set through vm_set_to_array -- the same path len(), size()
+# and list() already use (docs/AUDIT.md §1.10) -- accumulates integers in a 64-bit
+# total with a parallel `double` for the moment a float joins the sequence, and
+# raises numeric_overflow when the 64-bit total leaves range, which is the rule
+# the arithmetic operators follow (docs/AUDIT.md §1.14).
+#
+# An unbounded set (Z, an interval open into infinity) is refused by
+# vm_set_to_array and answers nil -- which is a CHANGE, and a correction: `sum(Z)`
+# used to answer 0.  The old gate `s->kind == 0 && s->compCount == 0` failed for
+# `Z`, and failing it left `ok` at its initial 1 and the total at its initial 0,
+# so an infinite set summed to zero with no error.  `list(Z)` is nil; nil is the
+# honest answer and 0 is not.
+#
+# The defect changes VALUES, never the exit code, so this asserts numbers and pins
+# them with both a PASS and a FAIL regex.  The overflow branch exits 1 and so
+# cannot live here; it is asserted by contract_test.im, whose try/catch turns the
+# throw into a check.
+#
+# See docs/AUDIT.md §1.15.
+b = 1, 2, Z[7~9]
+c = Z[1~2], Z[5~6]
+d = Z[1~4]
+say "sum-ok comp=" + str(sum(b)) + " two=" + str(sum(c)) + " single=" + str(sum(d)) + " big=" + str(sum([9007199254740993])) + " big2=" + str(sum([9007199254740993, 1])) + " plain=" + str(sum([1, 2, 3])) + " float=" + str(sum([1.5, 2])) + " empty=" + str(sum([])) + " bool=" + str(sum([true, 2])) + " inf=" + str(sum(Z))

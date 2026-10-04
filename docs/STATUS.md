@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 113；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 114；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **113 / 113 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **114 / 114 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **113** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **114** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 113
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 114
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -2563,7 +2563,7 @@ internal error, please report: running "rustup.cargo" failed: cannot create tran
 **附带的两个发现（均已取证，未修，另行立项）。**
 
 1. **AOT 打印浮点丢精度。** `say(1000000.5)` → `1e+06`、`say(2147483648.5)` → `2.14748e+09`，而解释器与 wasm 打全精度。`vtest/float_precision_v04.im` 与 CTest `float_precision_runtime`（`CMakeLists.txt:739-740`）**只钉住解释器**（`src/runtime/runtime_posix.c:59` 的 `"%.17g"`）。这是**第二处** AOT 与解释器/wasm 不一致，且方向相反（这次 AOT 是异类）。
-2. **`contract_test.im` 根本没进门禁。** `grep -in contract CMakeLists.txt` 只有两条无关注释，没有任何 `add_test`；它是手动/dormant 套件（本节 §9 把它列在手动套件堆里），而且**当前跑到 `contract_test.im:80` 就抛异常**：`check(list(Z[1~3])[0] == 1, "list set")` → `CONTRACT FAIL: list set`。该行来自 `8248e08`（Release Infiverse 0.2.0），是**先存**失败。所以本轮往它 §1 补的 5 条链断言**验证了契约、但没有被门禁自动执行** —— 这点必须写在明处，不能让「断言加进去了」听起来像「它被守住了」。
+2. **`contract_test.im` 根本没进门禁。** `grep -in contract CMakeLists.txt` 只有两条无关注释，没有任何 `add_test`；它是手动/dormant 套件（本节 §9 把它列在手动套件堆里），而且**当时跑到 `contract_test.im:80` 就抛异常**：`check(list(Z[1~3])[0] == 1, "list set")` → `CONTRACT FAIL: list set`。该行来自 `8248e08`（Release Infiverse 0.2.0），是**先存**失败。所以本轮往它 §1 补的 5 条链断言**验证了契约、但没有被门禁自动执行** —— 这点必须写在明处，不能让「断言加进去了」听起来像「它被守住了」。（**均已修**：§10.47 把它注册进 CTest；§1.10 的两处集合枚举缺陷修掉后该行通过，实测 `contract: all passed`；§10.50 又把检查数从 70 提到 73。上面这句是**当时**的状态记录。）
 
 **诚实边界。**
 
@@ -2993,6 +2993,54 @@ say g
 
 - 归零的是**这一批程序**上的分歧，不是「三后端处处一致」。模糊测试的生成器只覆盖数值子集，字符串、集合、闭包、模块边界都不在其中。
 - `Value` 的 32 字节契约仍在，**超过 int64 的整数还没有表示**：`INT64_MAX + 1` 是抛错而不是变成 BigInt。v3.1 phase 2 的 `VAL_BIG`（盒装 BigInt 走 `Value.ptr`，与 `VAL_STRING`/`VAL_ARRAY` 同构）尚未实现，`docs/archive/ROADMAP_3.1.md:23` 说的 `Z` = 无限整数集 + BigInt 也仍是路线图而非现状。
-- **`sum()` 仍在 double 里累加**：`src/runtime/runtime.c:138` 的 `builtin_sum` 用 `double sum` 求和、`allInt` 时再 `push_int(vm, (int)sum)`。这条**不是本轮引入的**（许多 int32 相加本来就会溢出 int32），但加宽之后它成了唯一还会静默丢精度的整数路径，已在此记录、未修。
+- **`sum()` 仍在 double 里累加**：`src/runtime/runtime.c:138` 的 `builtin_sum` 用 `double sum` 求和、`allInt` 时再 `push_int(vm, (int)sum)`。这条**不是本轮引入的**（许多 int32 相加本来就会溢出 int32），但加宽之后它成了唯一还会静默丢精度的整数路径，已在此记录、未修。（**已修，见 §10.50** —— 而且不止「double 累加」这一条：集合的区间分量还被整个跳过，`sum(1, 2, Z[7~9])` 是 0。）
 - Windows 专属分支（`src/mod/io_mod.c` 等）上的 `push_int` 调用点没有实测，只有 POSIX 侧跑过门禁。
 
+## 10.50 `sum()` 的两个静默错误答案：集合分量被跳过、整数在 double 里累加（BOARD 行 146）
+
+### 一、症状与发现路径
+
+§10.49 的诚实边界把 `sum()` 记成「唯一还会静默丢精度的整数路径」，当时未修。回查它时发现**两个**独立的错，都在同一个函数里，而且**都不改退出码**：
+
+1. **集合的区间分量被整个跳过，却报成功。** `b = 1, 2, Z[7~9]` 的 `len(b)` 是 5、`list(b)` 是 `[1, 2, 7, 8, 9]`，而 **`sum(b)` 是 0**。`t = Z[1~2], Z[5~6]` 同理（`len` 4、`list` `[1, 2, 5, 6]`、`sum` 0）。`sum(Z[1~4])` 是 0 而 `sum(list(Z[1~4]))` 是 10。
+2. **整数在 `double` 里累加。** `sum([9007199254740993])` 答 **9007199254740992**，`sum([9007199254740993, 1])` 同样是 `...992`。
+
+两者的共同点是**没有任何异常**、退出码 0 —— 只有把值打出来才看得见。
+
+### 二、根因
+
+**第一个错的根因**是读法：`sum` 只从 `s->i64`（整数字面量）与 `s->items`（非整数字面量）里读，而且整段包在 `if (s->kind == 0 && s->compCount == 0)` 里。集合字面量是三部分的并（`i64` / `items` / 区间 `comps`），带分量的集合不满足这个前提，于是**两个循环都没进**；`ok` 停在初值 **1**（不是 0），所以既不报错也不返回 nil，总额就停在初值 0。
+
+**第二个错的根因**是累加器类型：`double sum`，`allInt` 时再 `push_int(vm, (int)sum)` —— 2⁵³ 以上先被舍入，Windows 上再被截成 32 位。
+
+**同一个函数有两份实现，必须同步。** `CMakeLists.txt` 二选一编译：非 Windows 编 `src/runtime/runtime_posix.c`（`posix_core_sum`，`:241` 定义、`:1042` 注册），WIN32 编 `src/runtime/runtime.c`（`builtin_sum`，`:138` 定义、`:1693` 注册）。**POSIX 上生效的是前者** —— 只读后者会预测错行为，这是本次排查真实踩过的坑（先按 `src/runtime/runtime.c` 的代码推理，结论与实测不符，才发现生效的是另一份）。
+
+### 三、修法
+
+- 集合改走 **`vm_set_to_array`** 枚举 —— 就是 `len()`/`size()`/`list()` 已经走的那条路（§1.10 修完枚举器之后它才看得见分量），拿到的暂存数组由 GC 管，三个既有调用方都不 free 它。无界集合（`Z`、开口朝无穷的区间）返回 -1，`sum` 因此答 **nil**。**这是一处行为改变，而且是一处纠正**：`sum(Z)` 原来答 **0**（旧闸门不成立时 `ok` 停在初值 1、总额停在初值 0），`sum(Z[1~])` 同理；实测 `sum(R)` 前后都是 nil。`list(Z)` 是 nil，nil 才是诚实的答案。
+- 整数在 **`long long isum`** 里累加，同时并行维护 `double fsum`；序列里一出现浮点就改用后者。越界用 `__builtin_add_overflow` 判定并抛 **`numeric_overflow`**（§10.49 第七节定的运算符规则）。
+- Windows 那份去掉 `(int)` 截断，并保留它自己的错误风格（非数字元素 `vm_throw_msg(vm, "sum: non-numeric element")`，而不是 POSIX 的 nil）。
+
+### 四、判据
+
+新增 `vtest/sum_components_int64_v06.im` ← CTest **`sum_components_int64_runtime`（#114）**，一行断言：
+
+```
+sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 bool=nil inf=nil
+```
+
+配 `FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|bool=0"` —— 前三个正对「分量被跳过」，第四个正对「double 累加」。缺陷只改值不改退出码，所以断言的是数字而不是退出码。溢出分支会 `exit 1`，放不进同一个文件，改由 `contract_test.im` 的 `try`/`catch` 转成一条 `check`。`EXP_CTEST` **113 → 114**，`docs/BOARD.md` §3 与本节 §2 同步 **114 / 114**。
+
+### 五、顺带纠正契约套件里的旧教条
+
+`contract_test.im` §1 有 5 行写的是 `check(x + 1 == 2147483648.0, "int overflow -> float promote")` 之类。它们在 v3.1 之后**数值上仍然成立**（`==` 跨类型数值等价），所以一直是绿的 —— 但**描述已经是旧教条**。按 §10.49 的规则改成：越过 int32 仍是整数（`x + 1 == 2147483648`）、只有除不尽才出浮点（新增 `4 / 2 == 2`）、同类型比较精确（新增 `9007199254740993 != 9007199254740992`），并新增一条 `sum` 溢出检查。套件从 **70 条 `check` / 实测 63** 变成 **73 / 66**，`docs/AUDIT.md` §1.12 的计数与 `CMakeLists.txt` 的注册注释同步。
+
+### 六、门禁实测
+
+十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`）、`✔ ctest (expect 114/114, 0 skipped)`（`100% tests passed, 0 tests failed out of 114`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (39/39)`、`✔ node protocol suites (12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (75/75)`、`✔ userdata ignore rules`、`✔ docs relative links`（`check_links: 93 markdown files, 394 links (17 external, 0 anchors, 377 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 391 backtick references, 0 broken`）。
+
+### 七、诚实边界
+
+- `sum` 现在只是**与运算符同规则**，不是任意精度：`sum([INT64_MAX, 1])` 抛 `numeric_overflow` 而不是给出 BigInt（v3.1 phase 2 的 `VAL_BIG` 未实现）。
+- **Windows 那份没有实测**：本机是 POSIX 构建，`src/runtime/runtime.c` 在 Linux 上连 WinHTTP 段都编不过（`HINTERNET`/`WinHttpOpen`/`URL_COMPONENTS`/`WCHAR` 未声明），只能做语法检查 —— `cc -std=gnu11 -fsyntax-only -Isrc -Isrc/common -Isrc/runtime -Isrc/compiler -Isrc/vm -Isrc/platform -Isrc/types -Isrc/mod src/runtime/runtime.c` 的报错行**全部落在 593–1643 的 WinHTTP 段**，`builtin_sum` 所在的 **138–195 区间内 0 个错误**。这不是「测过了」，是「编得过」。
+- `src/mod/io_mod.c:51` 的 `io_push_int(VM*, int)` 仍是 `int` 参数（调用点传的是句柄与字节数，不是本节的累加器），本次未改；`src/mod/replay_mod.c:47` 的 `rp_push_int` 已随 §10.49 改成 `long long`。

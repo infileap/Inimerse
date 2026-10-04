@@ -240,24 +240,51 @@ static int posix_core_list(VM *vm) {
 
 static int posix_core_sum(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
-    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; double total = 0; int ok = 1, all_int = 1;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    /* Two things this used to get wrong, both silent:
+     *
+     *  1. A set was read straight out of its storage -- `s->i64` and `s->items`,
+     *     the literal parts -- and only when `s->kind == 0 && s->compCount == 0`.
+     *     A set whose elements live in interval COMPONENTS (`1, 2, Z[7~9]`,
+     *     `Z[1~2], Z[5~6]`) failed that gate, so both loops were skipped while
+     *     `ok` stayed 1 and `total` stayed at its initial 0: `sum` answered 0 for
+     *     a five-element set whose `len` was 5 and whose `list` was [1,2,7,8,9].
+     *     Enumerate through `vm_set_to_array`, the same path len()/size()/list()
+     *     use, and let a set that cannot be enumerated (an unbounded one) fall
+     *     through to nil.
+     *
+     *  2. Integers were accumulated in a `double`, so anything above 2^53 was
+     *     rounded away before it ever reached `push_int`.  Keep a 64-bit
+     *     accumulator and let it raise `numeric_overflow`, the same rule the
+     *     arithmetic operators now follow (docs/AUDIT.md §1.14); a `double` is
+     *     still kept in parallel so the moment a float joins, the result is the
+     *     float total of everything seen so far. */
+    const Value *items = NULL; int n = 0, ok = 1, all_int = 1;
     if (v.type == VAL_SET && v.ival >= 0 && v.ival < vm->setCount) {
-        SetObj *s = &vm->sets[v.ival];
-        if (s->kind == 0 && s->compCount == 0) {
-            ok = 1;
-            for (int i = 0; i < s->iCount; i++) total += (double)s->i64[i];
-            for (int i = 0; i < s->count; i++) {
-                if (s->items[i].type == VAL_STRING || s->items[i].type == VAL_BOOL) { ok = 0; break; }
-                if (s->items[i].type == VAL_FLOAT) all_int = 0;
-                total += val_as_double(&s->items[i]);
-            }
-        }
+        int a = vm_set_to_array(vm, v.ival);
+        if (a >= 0) { ArrayObj *arr = vm_pool_slot(vm, a); items = arr->items; n = arr->count; }
+        else ok = 0;
     } else if (v.type == VAL_ARRAY && v.ival > 0 && v.ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v.ival - 1);
-        for (int i = 0; i < a->count; i++) { if (a->items[i].type != VAL_INT && a->items[i].type != VAL_FLOAT) { ok = 0; break; } if (a->items[i].type == VAL_FLOAT) all_int = 0; total += val_as_double(&a->items[i]); }
+        items = a->items; n = a->count;
     } else ok = 0;
-    pop(vm); if (!ok) { push_nil(vm); return 1; }
-    if (all_int) push_int(vm, (int64_t)total); else push_float(vm, total); return 1;
+    long long isum = 0; double fsum = 0; int oflow = 0;
+    if (ok) for (int i = 0; i < n; i++) {
+        int t = items[i].type;
+        if (t != VAL_INT && t != VAL_FLOAT) { ok = 0; break; }
+        if (t == VAL_FLOAT) { all_int = 0; fsum += items[i].fval; }
+        else {
+            fsum += (double)items[i].ival;
+            long long tmp;
+            if (__builtin_add_overflow(isum, (long long)items[i].ival, &tmp)) oflow = 1;
+            else isum = tmp;
+        }
+    }
+    pop(vm);
+    if (!ok) { push_nil(vm); return 1; }
+    if (!all_int) { push_float(vm, fsum); return 1; }
+    if (oflow) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
+    push_int(vm, isum); return 1;
 }
 
 static int posix_core_push(VM *vm) {

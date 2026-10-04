@@ -794,7 +794,7 @@ if(INIMERSE_BUILD_ENGINE)
   # io_mod/gui_mod register str2int/noise2d/gui_*, and the POSIX build stubs those
   # modules out, so calling them now throws "unknown builtin function" (§1.11).  The
   # suite probes for each module and skips the dependent sections instead of failing,
-  # prints the probe values, and asserts a floor of 60 of its 70 checks so a mass skip
+  # prints the probe values, and asserts a floor of 60 of its 73 checks so a mass skip
   # cannot pass silently.  There is deliberately no FAIL_REGULAR_EXPRESSION: the throw
   # text is a string literal in the suite, and CTest reads the engine's stderr string
   # pool dump, so naming it would match the dump on a green run.  A throw exits 1 and
@@ -812,6 +812,13 @@ if(INIMERSE_BUILD_ENGINE)
   # See docs/AUDIT.md §1.10.
   add_test(NAME set_enumeration_refusal_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_enumeration_refusal_v05.im)
   set_tests_properties(set_enumeration_refusal_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setrefuse-ok bigspan=nil edge=nil i32=nil neg32=nil empty=0 ok10=10 ok3=3" FAIL_REGULAR_EXPRESSION "ok10=0|ok3=0|empty=nil")
+  # sum() read a set straight out of its storage and only when it had no interval
+  # COMPONENTS, so `1, 2, Z[7~9]` summed to 0 while len() was 5; and it accumulated
+  # integers in a double, so anything above 2^53 was rounded before push_int saw it.
+  # Both copies of the function (posix_core_sum, and builtin_sum on WIN32) are fixed.
+  # Values only, never exit codes.  See docs/AUDIT.md §1.15.
+  add_test(NAME sum_components_int64_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/sum_components_int64_v06.im)
+  set_tests_properties(sum_components_int64_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 bool=nil inf=nil" FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|bool=0")
 
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)

@@ -38,22 +38,37 @@ try {
 }
 
 # ---------- 1. 数字与溢出 ----------
+# v3.1（docs/AUDIT.md §1.14）：Value 的整数槽是 int64，int32 不再是边界 —— 越过
+# int32 仍然是整数，越过 int64 才是错误（numeric_overflow），不再提升为 float。
+# 下面几行原先写 `== 2147483648.0` 且描述为「提升为 float」；数值等价所以一直通过，
+# 但描述是旧教条，故期望值连同描述一起改成整数。整数除法同理：只有除不尽才出浮点。
 x = 2147483647
-check(x + 1 == 2147483648.0, "int overflow -> float promote")
-check(x * 3 == 6442450941.0, "int mul overflow -> float")
+check(x + 1 == 2147483648, "int stays int64 past int32")
+check(x * 3 == 6442450941, "int mul stays int64 past int32")
 check(0 - 2147483647 - 1 == -2147483648, "int stays exact in range")
 # 一条 3 项以上的 `+` 链会被折成单个 OP_CONCAT，2 项链走 OP_ADD（见
 # src/compiler/compiler.c:715-786）。两者必须服从同一条溢出规则；在本行
 # 钉住它之前，`x + 1` 是 2147483648 而 `x + 1 + 0` 回绕成 -2147483648。
-check(x + 1 + 0 == 2147483648.0, "3-term + chain overflow -> float")
-check(x + 1 + 1 == 2147483649.0, "3-term + chain, two over")
-check(x + 1 + 0 + 0 == 2147483648.0, "4-term + chain overflow -> float")
-check(1000000000 + 1000000000 + 1000000000 == 3000000000.0, "3-term chain promotes mid-way")
+check(x + 1 + 0 == 2147483648, "3-term + chain past int32")
+check(x + 1 + 1 == 2147483649, "3-term + chain, two over")
+check(x + 1 + 0 + 0 == 2147483648, "4-term + chain past int32")
+check(1000000000 + 1000000000 + 1000000000 == 3000000000, "3-term chain past int32")
 check(10 + 1 + 0 == 11, "in-range + chain unchanged")
-check(1 / 4 == 0.25, "int division is float")
+check(1 / 4 == 0.25, "int division is float when inexact")
+check(4 / 2 == 2, "exact int division stays integer")
 check(7 % 3 == 1, "modulo")
 check(2.5 * 2 == 5.0, "float arithmetic")
 check(1 == 1.0, "int/float cross equality")
+check(9007199254740993 != 9007199254740992, "int64 equality is exact")
+# sum() 必须服从同一条溢出规则：64 位总额越界抛 numeric_overflow，而不是被截断
+# （Windows 那份曾经是 `push_int(vm, (int)sum)`）。见 docs/AUDIT.md §1.15。
+sum_ovf = false
+try {
+    sum_ovf_val = sum([9223372036854775807, 1])
+} catch (e) {
+    sum_ovf = true
+}
+check(sum_ovf, "sum overflow raises numeric_overflow")
 
 # ---------- 2. 字面量 ----------
 check(1e6 == 1000000.0, "scientific literal 1e6")

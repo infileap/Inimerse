@@ -583,11 +583,11 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 
 **这是「可诊断性」的复利**：让错误可见，会把此前被静默掩盖的「通过」一起推翻。三条假通过里没有一条是断言写错了 —— 是它们测的东西当时根本不存在。
 
-**修法**：套件开头加两个探针（`io_ok` 试 `str2int`；`gui_ok` 试 `gui_vram_used()`，无副作用），第 9/15/16 段按探针整段跳过；末尾打印探针取值，并加一道**下限断言** `if pass < 60 { throw … }`（全套 70 个 `check`，POSIX 跳过 7 个，实测 63）—— 跳过是可闻的，整段没跑不会静默变绿。
+**修法**：套件开头加两个探针（`io_ok` 试 `str2int`；`gui_ok` 试 `gui_vram_used()`，无副作用），第 9/15/16 段按探针整段跳过；末尾打印探针取值，并加一道**下限断言** `if pass < 60 { throw … }`（全套 73 个 `check`，POSIX 跳过 7 个，实测 66）—— 跳过是可闻的，整段没跑不会静默变绿。
 
 **判据与双向验证**：CTest 名 `contract_suite_runtime`，在 `CMakeLists.txt` 里注册，`PASS_REGULAR_EXPRESSION "contract: [0-9]+ passed"`，`TIMEOUT 30`，标签 `vm;language;regression;contract`；**故意不设 `FAIL_REGULAR_EXPRESSION`** —— 抛出文本 `CONTRACT FAIL` 是套件里的字面量，会命中 §1.11 记的那条池转储坑，绿跑也会被误判；异常让进程 exit 1，靠退出码就够。`tools/gate.sh` 的 `EXP_CTEST` 111 → 112。**双向验证**：注册后 `ctest -R contract_suite_runtime` 绿；`git checkout HEAD -- contract_test.im`（未加探针的旧版）+ 重建 ⇒ 红（`***Failed  Required regular expression not found. Regex=[contract: [0-9]+ passed`，旧版在第一处 `str2int` 就抛、退出码 1）；`cp` 回 + `cmp` 逐字节相同 ⇒ 复绿。这条注册**真的在跑引擎**，不是「注册了一个永远绿的壳」。
 
-**诚实边界**：本平台 io/gui 双缺，所以 63/70；Windows 上两段会真的跑（70/70），下限 60 对两个平台都成立。但 POSIX 门禁**确实没有验证 io/gui 那 7 条契约** —— 这是平台能力边界（模块不在 POSIX 构建里），不是套件偷懒；`src/platform/posix_stubs.c` 是空实现这一现状记录在 `docs/STATUS.md` §10.47。
+**诚实边界**：本平台 io/gui 双缺，所以 66/73；Windows 上两段会真的跑（73/73），下限 60 对两个平台都成立。但 POSIX 门禁**确实没有验证 io/gui 那 7 条契约** —— 这是平台能力边界（模块不在 POSIX 构建里），不是套件偷懒；`src/platform/posix_stubs.c` 是空实现这一现状记录在 `docs/STATUS.md` §10.47。
 
 ## §1.13 差分模糊测试进门禁：它测不出「全绿」，只能测「没变宽」
 
@@ -673,6 +673,23 @@ say g
 **证据与门禁。** `tools/gate.sh` 的 `EXP_FUZZ_DIVERGE` / `EXP_FUZZ_THREW` **5 / 4 → 0 / 0**，阶段标签从「pinned 5+4」改成「expect 0 findings」；实测 seeds 1–6 各 120 个程序、seed 1 400 个程序，**全部 `0 DIVERGE / 0 THREW / 0 not translated`**。`tools/aot_native.test.py` 从 73 例扩到 **104 例**（86 equivalence、2 pinned divergences、6 runtime errors、10 refusal）：新增 `RUNTIME_ERROR` 类别断言「两端都 rc≠0 且错误种类相同」，`EQUIVALENCE` 增补 20 行覆盖 int64 字面量、精确算术、精确整数除法、布尔当整数、精确比较、int64 跨调用，以及 `or` 覆盖回归；原先钉在 `DIVERGENCE` 里的 `lcg_float_promotion` 被**提升**为 `int_lcg_second_step`（O2「整数静默退化成 double」随本节关闭）。
 
 **诚实边界。** 归零的是**这一批程序**上的分歧，不是「三后端处处一致」。生成器只覆盖数值子集，字符串、集合、闭包、模块边界都不在其中；`Value` 的 32 字节契约仍在，超过 int64 的整数**还没有**表示（v3.1 phase 2 的 `VAL_BIG` 盒装 BigInt 走 `Value.ptr`，与 `VAL_STRING`/`VAL_ARRAY` 同构，尚未实现）。`docs/archive/ROADMAP_3.1.md:23` 说的 `Z` = 无限整数集 + BigInt 也仍是路线图而非现状。
+
+## §1.15 `sum()` 的两个静默错误答案：集合分量被跳过、整数在 double 里累加
+
+**症状。** §1.14 把整数槽加宽到 int64 之后，它的诚实边界记下「`sum()` 仍在 `double` 里累加 …… 已记录、未修」。它有**两个**独立的错，都在同一个函数里，而且都不改退出码：
+
+1. **集合分量被跳过，却报成功。** `b = 1, 2, Z[7~9]` 的 `len(b)` 是 5、`list(b)` 是 `[1, 2, 7, 8, 9]`，而 `sum(b)` 是 **0**。集合字面量是三部分的并（i64、items、区间 comps），而 `sum` 只读前两部分，且前提是 `s->kind == 0 && s->compCount == 0`；带分量的集合不满足前提，于是两个循环都没进、`ok` 停在初值 **1**、总额停在初值 0。`sum(Z[1~4])` 是 0，而 `sum(list(Z[1~4]))` 是 10。**没有异常，退出码 0。**
+2. **整数在 `double` 里累加。** `sum([9007199254740993])` 答 **9007199254740992**（2⁵³ 以上舍入），`sum([9007199254740993, 1])` 同样是 `...992`。Windows 那份还多一层 `push_int(vm, (int)sum)` 截断。
+
+**同一个函数有两份实现，必须同步。** `CMakeLists.txt` 二选一编译：非 Windows 编 `src/runtime/runtime_posix.c`（`posix_core_sum`，`:241` 定义、`:1042` 注册），WIN32 编 `src/runtime/runtime.c`（`builtin_sum`，`:138` 定义、`:1693` 注册）。**POSIX 上生效的是前者** —— 只读后者会预测错行为，这是本次排查真实踩过的坑。
+
+**修法。** 集合改走 `vm_set_to_array` 枚举 —— 就是 `len()`/`size()`/`list()` 已经走的那条路（§1.10 修完枚举器之后它才看得见分量），拿到的暂存数组由 GC 管，三个既有调用方都不 free 它；整数在 `long long isum` 里累加，同时并行维护 `double fsum`，序列里一出现浮点就改用后者；64 位总额越界抛 `numeric_overflow`（§1.14 定的运算符规则）；Windows 那份的 `(int)` 去掉，并保留它自己的错误风格（非数字元素 `vm_throw_msg(vm, "sum: non-numeric element")`，而不是 POSIX 的 nil）。`vm_set_to_array` 对无界集合返回 -1，`sum` 因此答 **nil**。**这是一处行为改变，而且是一处纠正**：`sum(Z)` 原来答 **0** —— 旧闸门 `s->kind == 0 && s->compCount == 0` 对 `Z` 不成立，而不成立时 `ok` 停在初值 1、总额停在初值 0，于是一个无限集合求和得 0 且不报错。`list(Z)` 是 nil，nil 才是诚实的答案，0 不是。
+
+**判据与双向验证。** 新增 `vtest/sum_components_int64_v06.im` ← CTest `sum_components_int64_runtime`（**#114**），断言 `sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 bool=nil inf=nil`，配 `FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|bool=0"` —— 前三个正对「分量被跳过」、第四个正对「double 累加」。缺陷只改值不改退出码，所以断言的是数字而不是退出码。溢出分支会 exit 1，放不进这个文件，改由 `contract_test.im` 的 `try`/`catch` 转成一条 `check`。`EXP_CTEST` **113 → 114**，`docs/BOARD.md` §3 与 `docs/STATUS.md` §2 同步 **114 / 114**。
+
+**顺带纠正契约套件里的旧教条。** `contract_test.im` §1 有 5 行写的是 `check(x + 1 == 2147483648.0, "int overflow -> float promote")` 之类。它们在 v3.1 之后**数值上仍然成立**（`==` 跨类型数值等价），所以一直是绿的 —— 但描述已经是旧教条。改成本节的规则：越过 int32 仍是整数（`x + 1 == 2147483648`）、只有除不尽才出浮点（新增 `4 / 2 == 2`）、同类型比较精确（新增 `9007199254740993 != 9007199254740992`），并新增一条 `sum` 溢出检查。套件从 **70 条 `check` / 实测 63** 变成 **73 / 66**。
+
+**诚实边界。** ① `sum` 现在只是与运算符同规则，**不是**任意精度：`sum([INT64_MAX, 1])` 抛 `numeric_overflow` 而不是给出 BigInt（v3.1 phase 2 的 `VAL_BIG` 未实现）。② Windows 那份**没有实测**：本机是 POSIX 构建，`src/runtime/runtime.c` 在 Linux 上连 WinHTTP 段都编不过（`HINTERNET`/`WinHttpOpen`/`URL_COMPONENTS`/`WCHAR` 未声明），只能做语法检查 —— `cc -std=gnu11 -fsyntax-only -Isrc -Isrc/common -Isrc/runtime -Isrc/compiler -Isrc/vm -Isrc/platform -Isrc/types -Isrc/mod src/runtime/runtime.c` 的报错行全部落在 593–1643 的 WinHTTP 段，`builtin_sum` 所在的 138–195 区间内 **0 个错误**。③ `src/mod/io_mod.c:51` 的 `io_push_int(VM*, int)` 仍是 `int` 参数（调用点传的是句柄与字节数，不是本节的累加器），本次未改；`src/mod/replay_mod.c:47` 的 `rp_push_int` 已随 §1.14 改成 `long long`。
 
 ## §2 执行通道效率比较
 
