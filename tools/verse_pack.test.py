@@ -130,7 +130,10 @@ def main():
         home = root / "home"
         home.mkdir()
 
-        # a real verse tree: structure, metadata, entry point and content.
+        # a real verse tree: structure, metadata, entry point and content
+        pkgdir = root / "pkgdir"
+        for sub in ("laws", "assets", "mods", "signatures"):
+            (pkgdir / sub).mkdir(parents=True, exist_ok=True)
         # Write the bytes, not the text: Path.write_text() opens in text mode, so
         # on Windows it turns every "\n" into "\r\n" and the package would hold
         # CRLF bytes while the round-trip assertions below compare against "\n".
