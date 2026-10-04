@@ -1044,3 +1044,74 @@ else()
   set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
     PASS_REGULAR_EXPRESSION "round-nonnumber=nil")
 endif()
+
+# ---------------------------------------------------------------------------
+# `.` and `?.` are two production points for one syntax, and the node carrying
+# the difference is allocated by the parser.  `struct Expr`'s `member.safe`
+# (src/parser/ast.h:63) was left uninitialised on the `.` path -- the parser
+# allocated that node with malloc and wrote only type/object/member -- so `a.b`
+# compiled as an index get whenever the allocator handed back a non-zero byte.
+# A dotted global (for instance a parameter named `player.max_hp`) then silently
+# read nil, and the symptom looked like a file-size threshold because the byte
+# depended on the allocator's history.  Every AST node is allocated zeroed now,
+# so `safe` is false by construction on `.` and explicitly true on `?.`.
+#
+# The probe poisons the small-object heap with 0x01 before each parse, so a node
+# that is not zero-initialised is guaranteed to carry a non-zero `safe` instead
+# of relying on luck: it reports 5 failures on the pre-fix parser and passes on
+# the fixed one.  See docs/AUDIT.md 1.48.
+#
+# Registered last so no existing #N moves.
+add_executable(parser_member_safe_probe
+  src/parser/parser.c src/lexer/lexer.c src/common/common.c
+  src/parser/parser_member_safe_probe.c)
+target_include_directories(parser_member_safe_probe PRIVATE src/parser src/lexer src/common)
+if(NOT WIN32)
+  target_compile_definitions(parser_member_safe_probe PRIVATE _GNU_SOURCE _stricmp=strcasecmp)
+endif()
+add_test(NAME parser_member_safe_probe COMMAND parser_member_safe_probe)
+set_tests_properties(parser_member_safe_probe PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "parser;regression"
+  PASS_REGULAR_EXPRESSION "parser_member_safe_probe: ok")
+
+# ---------------------------------------------------------------------------
+# Parameters and the working directory.  load_and_run() opens the parameter file
+# AFTER chdir_to_script_dir() has moved the process into the script's directory,
+# so a RELATIVE --params path was resolved against that directory instead of the
+# caller's.  `inimerse --params vtest/p.params vtest/sub/s.im` therefore looked
+# for `vtest/sub/vtest/p.params`, found nothing, and every parameter read as nil
+# -- silently, with exit code 0.  The path is now pinned to an absolute one
+# while the process is still in the caller's directory.
+#
+# The second pin is the sibling defect: a file the user NAMED with --params is
+# not optional, so a miss is now an error instead of a silent nil.  The default
+# `params.params` stays optional.
+#
+# The third pin is the precompiled path: vm_load_bytecode() rebinds globals by
+# POSITION, so params loaded BEFORE the bytecode had their values attached to
+# whichever name occupied that slot.  See docs/AUDIT.md 1.49.
+#
+# Registered last so no existing #N moves.
+# NOTE: the --params arguments below are deliberately RELATIVE.  An absolute path
+# would make the chdir invisible and the first test would pass against the bug.
+add_test(NAME params_relative_path_runtime
+         COMMAND inimerse --no-mods --params vtest/params_relative_v06.params
+                 vtest/params_sub/relative_script.im)
+set_tests_properties(params_relative_path_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
+  PASS_REGULAR_EXPRESSION "params-relative speed=42")
+
+add_test(NAME params_missing_explicit_runtime
+         COMMAND inimerse --no-mods --params vtest/definitely_absent.params
+                 vtest/params_sub/relative_script.im)
+set_tests_properties(params_missing_explicit_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
+  PASS_REGULAR_EXPRESSION "cannot read params"
+  FAIL_REGULAR_EXPRESSION "params-relative speed=")
+
+add_test(NAME params_precompiled_runtime
+         COMMAND inimerse --no-mods --params vtest/params_precompiled_v06.params
+                 vtest/params_precompiled_v06.inim)
+set_tests_properties(params_precompiled_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
+  PASS_REGULAR_EXPRESSION "params-precompiled player=42")

@@ -1898,6 +1898,93 @@ Windows 的数值证据来自 ucrt64 手工全量编译的引擎。③ 判据是
 所以它钉的是**值**不是退出码（`docs/SYNTAX.md` §7.2 **M13**：101 个 CTest 里 66 个
 只断言退出码）。
 
+## §1.48 一个没被写过的字节，让 `a.b` 变成了 `a?.b`
+
+**症状。** 参数文件里写 `player.max_hp = 42`，脚本里读 `player.max_hp`：有些文件答 `42`，
+有些文件答 `nil`。答错的那一批看起来**完全由文件大小决定** —— 400 字节以内对、401 字节
+开始错。顺着这条线索找会一路找错地方：`inim_load_text` 的上限是 `1 << 26`，全 `src/`
+没有任何 `400` 这个常量。
+
+**真正的判据是一个从未被赋值的字节。** 在 `src/compiler/compiler.c` 的 `case EXPR_MEMBER:`
+顶上临时插桩，同一份 `buildc` 下两个文件的差别只有一行：
+
+```
+对的文件:  member='max_hp' objtype=3 safe=0
+错的文件:  member='max_hp' objtype=3 safe=97
+```
+
+`safe` 是 `97`，也就是字符 `'a'` —— 一块分配器还回来的旧数据。
+
+- `src/parser/ast.h:63`：`struct { Expr *object; StringView member; bool safe; } member;`
+- `src/parser/parser.c:570`（普通 `.` 路径）：`Expr *mem = malloc(sizeof(Expr));`，随后只写
+  `type` / `member.object` / `member.member`，**`safe` 一次也没被写过**；同一段的安全路径
+  `src/parser/parser.c:549` 用的是 `calloc` 并显式 `safe = true`。
+- `src/compiler/compiler.c:1083`：`if (expr->member.safe)` —— 字节非 0 就成立 ⇒ `a.b` 被当成
+  `a?.b` 编成 `OP_INDEX_GET`。点号全局（例如名为 `player.max_hp` 的参数）在对象 `player`
+  上当然查不到，于是**静默答 `nil`**。
+
+文件大小、注释长短、字符串字面量长短都只是「让那一个字节碰巧非零」的手段。交叉验证：长注释、
+长字符串字面量、12 条短注释都能触发；50 条 `y$i = $i` 填充到 462 字节**反而正常**（分配模式
+不同）。所以「400 字节阈值」是**观察的假象**，不是机制。
+
+**这不是编码错误，是同一语义的两个生产点，而判据是未初始化内存。** 它与 §1.40（CMake 的
+`ENVIRONMENT` 是共享属性、最后写者胜）、§1.46（引用被当成了答案）同族：一个值在两个地方被
+生产，而没有任何一处负责把它定下来。区别在于这里的「两个地方」不是两段代码，而是**同一段
+代码的两个分支**，中间隔着一个没人写过的字节。
+
+**修法。** `src/parser/parser.c` 里 AST 分配本来就不一致：22 处 `calloc`，95 处 `malloc`。
+按类型统一为零初始化：
+
+| 替换 | 处数 |
+|---|---|
+| `malloc(sizeof(Expr))` → `calloc(1, sizeof(Expr))` | 40 |
+| `malloc(sizeof(Stmt))` → `calloc(1, sizeof(Stmt))` | 55 |
+| `malloc(sizeof(Program))` → `calloc(1, sizeof(Program))` | 1 |
+
+于是 `safe` 在 `.` 路径上**按构造**为 false、在 `?.` 路径上显式为 true —— 判据不再依赖分配器
+的历史。
+
+**pin（非空验证）。** 新增 `src/parser/parser_member_safe_probe.c`，它**先往堆里灌 `0x01`
+再解析**，所以任何没被零初始化的节点都必然带着非 0 的 `safe`，不靠运气：
+
+- 修复前：`5 failure(s)`，rc=1（`x.y`、`x.y.z` 两层、`x?.y.z` 的外层、`x.y?.z` 的内层）
+- 修复后：10 项全 `ok`，rc=0
+- 同一支探针在 mingw64 上编出并运行，结果与 Linux 相同
+
+CTest `#127 parser_member_safe_probe`（注册在最后，既有 `#N` 不动），`tools/gate.sh:50` 的
+`EXP_CTEST` 126 → 127。
+
+**诚实边界。**
+1. 我只证明了 `member.safe` 这一个字段的后果。95 处 `malloc` 意味着**其它节点的每一个未写
+   字段**此前同样是未定义值；我修的是这一整类，但只为 `safe` 造了可复现的用例。
+2. 「400 字节」这个数字是我最初的误判。写在这里是为了记住假象的形状，它不是机制的一部分。
+3. 探针的 `0x01` 灌注依赖分配器复用同尺寸的已释放块（glibc 的 tcache/fastbin LIFO，以及
+   mingw 的对应行为）。两个平台都实测复现了修复前的失败，但严格说它依赖这条复用规律。
+4. 我只核了 `src/parser/parser.c` 一处；`grep -rn 'malloc(sizeof(Expr))\|malloc(sizeof(Stmt))'
+   src/` 在修复后为 0 命中，别的目录本来就没有 AST 分配。
+
+## §1.49 参数文件的名字是相对谁解析的，以及「没读到」为什么不是答案
+
+**症状。** `inimerse --params s.params s.im` 答 `s=42`，把脚本换成子目录里的 `inimerse --params s.params sub/s.im` 就答 `s=nil`，**退出码仍是 0**。一个用户明明命名了的文件被忽略，程序带着错值跑完。
+
+**机制。** `load_and_run()` 打开参数文件的位置在 `src/main.c:1346` 的 `chdir_to_script_dir(script)` **之后**（`:1348 load_and_run(&vm, read_path)`），而 `params_path` 是一个**相对**路径（默认 `"params.params"`，`src/main.c:195`），于是它是相对**脚本所在目录**解析的，不是相对调用者的工作目录。脚本在当前目录时两者恰好重合，所以它一直没被发现。
+
+**三处修改。**
+
+1. `src/main.c` 在任何 chdir 之前就把 `params_path` 固定成绝对路径（`make_abs_path_loose`，锚定 `g_caller_cwd`）。
+2. 新增 `params_explicit`：`--params` 命名的文件**不是可选的**，读不到就报错（`load_params_or_report()`）；默认的 `params.params` 仍然可选。这是同一个「静默 nil」形状的另一半。
+3. 删掉 `load_and_run_source()` 里的裸调试打印 `[main] compile preregister gc=%d g23.name=%s`（原 `src/main.c:355-356`）。它与 `b1bdc00` 删掉的字符串池 dump **同一个来源**：`git log -S` 追到 `8248e08 Release Infiverse 0.2.0`，也是从 0.2.0 起每版都在吐，而且把 `vm->globals[23].name` 这个内部索引写死在消息里。
+
+**一条旁证。** `vtest/params_precompiled_v06.inim` 是用**修复前**的 `buildc` 编的，于是它把 §1.48 的缺陷**烘进了字节码**：同一份 `.im` 源码经 `.inim` 路径跑出 `player=nil`，重新编译后才是 `player=42`。`.inim` 是一个把编译期结论存起来的生产点，所以修了前端不会自动修好已有的字节码。
+
+**pin 与双向验证。** 新增 CTest `#128 params_relative_path_runtime`、`#129 params_missing_explicit_runtime`、`#130 params_precompiled_runtime`（都注册在最后），`EXP_CTEST` 127 → **130**。第一条的 `--params` 参数**故意写相对路径**：写绝对路径会让 chdir 变得不可见，用例会在缺陷上面绿。`git stash push -- src/main.c` 后重编运行：**三条全部 Failed**（`Required regular expression not found`）；`git stash pop` 重编后 **4/4 Passed**。
+
+**诚实边界。**
+1. 我只核了 `--params` 这一个选项。`src/main.c` 里还有其它在 chdir 之后才被打开的路径，我没有逐个查完。
+2. 「`--params` 命名的文件读不到就报错」是一个**行为改动**，不是修 bug的必然结果——有人可能依赖「缺失就跳过」。我把它写在这里而不是当成修法的一部分。
+3. `params_precompiled_v06.inim` 是一个**二进制产物**。它会随前端变化而陈旧，而且没有任何东西在校对它与源码是否同步——这正是本仓库反复出现的「一个偶然对上的常量被当成了保证」。
+4. 三条用例都只断言程序输出，不断言退出码。第二条用 `FAIL_REGULAR_EXPRESSION "params-relative speed="` 补上「脚本不得跑完」这一半，否则一个打了错误信息但退出 0 的引擎会蒙混过去。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

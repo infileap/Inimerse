@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 126；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 130；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **126 / 126 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **130 / 130 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **126** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **130** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 126
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 130
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3597,3 +3597,19 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 状态 **REGISTERED, NOT RESOLVED**（POSIX 的 `nil` 属 [SYNTAX.md](SYNTAX.md) §7.1 D5
 【危险·静默】，Windows 的抛是【响的失败】；响的优于静默的，但「更好」不等于「已裁定」）。
 详见 [AUDIT.md](AUDIT.md) §1.47。
+
+## §10.78 一个没被写过的字节，让 `a.b` 变成了 `a?.b`
+
+`src/parser/parser.c:570` 的普通 `.` 路径用 `malloc` 分配 AST 节点、只写三个字段，
+`member.safe`（`src/parser/ast.h:63`）从未被赋值。字节非 0 时 `src/compiler/compiler.c:1083`
+把它当成安全访问，`a.b` 被编成 `OP_INDEX_GET`，**点号全局静默答 `nil`**（例如参数
+`player.max_hp`）。症状伪装成「400 字节文件大小阈值」，实际是分配器旧数据。
+修法是把 `src/parser/parser.c` 里 95 处 AST 分配统一为 `calloc`（40 个 `Expr`、55 个 `Stmt`、
+1 个 `Program`），并新增 `src/parser/parser_member_safe_probe.c` —— 它先向堆灌 `0x01` 再解析，
+所以修复前必然报 `5 failure(s)`（rc=1）、修复后 10 项全 `ok`。注册为 CTest
+`#127 parser_member_safe_probe`，`tools/gate.sh:50` 的 `EXP_CTEST` **126 → 127**。
+详见 [AUDIT.md](AUDIT.md) §1.48。
+
+## §10.79 参数文件的路径是相对谁解析的
+
+`load_and_run()` 打开参数文件时，进程已经在 `chdir_to_script_dir()` 里进了**脚本目录**（`src/main.c:1346` → `:1348 load_and_run`），而 `params_path` 是相对路径，于是 `inimerse --params s.params sub/s.im` 去找 `sub/s.params`、找不到、**每个参数读成 nil 而退出码仍是 0**。修法是在任何 chdir 之前就把它固定成绝对路径；并且 `--params` **命名**的文件读不到时现在报错（默认的 `params.params` 仍可选）。同批删掉 `load_and_run_source()` 里 `8248e08` 带来的裸调试打印。新 pin `#128`/`#129`/`#130`（`--params` 参数**故意写相对路径**），用 `git stash push -- src/main.c` 做了双向验证：修前**三条全部 Failed**，修后 **4/4 Passed**。另一条旁证：`vtest/params_precompiled_v06.inim` 是用**修复前**的 `buildc` 编的，把 §1.48 的缺陷烘进了字节码，重编后才答 `player=42`。详见 [AUDIT.md](AUDIT.md) §1.49。
