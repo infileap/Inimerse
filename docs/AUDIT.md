@@ -1308,6 +1308,78 @@ blast radius 为零（实测，不是推断）。
 
 **诚实边界。** ① 18 个用例是在 Windows 上观察到的，本机（Linux）修复前后都绿，所以「修好了那 18 个」的**最终确认在发布会话的 Windows 机器上**，本节的证据是「字段差集 + 负控探针」。② `memset` 修的是「未初始化」，不是「未定义」：清单与结构体的同步仍然靠人，探针只钉住**这一版**的字段集合；结构体新增字段而清单和探针都没跟上时，探针不会自动发现（它能发现的只有「零值不对」）。③ 探针断言的是 `vm_init` 之后的字段值，不覆盖 `vm_free` 与运行期语义。④ 同一轮**没有**碰 `atomic_*` 的 Windows 位宽缺陷与两个 verse C 探针的失败 —— 它们是独立的三类问题，分开处理。
 
+## §1.29 `atomic_set` 先写 `ival` 再写 `fval`：联合体的后一次写把值清零
+
+**现象。** Windows 上 `atomic_int64_width_runtime`（CTest #119）报
+`atomic-ok set=0 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=NO-THROW keep1=1 half=4611686018427387903 ovf2=NO-THROW keep2=4611686018427387904`，
+期望是 `set=3000000000 … ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807`。
+12 个数字全部由一条事实推出：**`atomic_set` 写了，但写进去的是 0** —— 注意 `add2p31=2147483648` 而不是 `5147483648`，说明它确实覆盖了旧值，只是覆盖成了 0。
+
+**根因。** `Value`（`src/vm/vm.h:24-26`）是 `{int type; union { long long ival; double fval; }; char *sval; void *ptr;}`，`ival` 与 `fval` **是同一块存储**。`src/runtime/runtime.c` 的 `builtin_atomic_set` 原本是
+`InterlockedExchange64((volatile LONG64*)&vm->globals[idx].val.ival, val); vm->globals[idx].val.fval = 0;`
+—— 后一句把前一句写进去的位型清零。POSIX 的 `posix_atomic_set`（`src/runtime/runtime_posix.c:781-793`）只写 `ival`、从不碰 `fval`，所以这个缺陷只在 Windows 存在：`src/runtime/runtime.c` 不参与 Linux 构建，Linux 门禁结构上看不见它。
+
+**修法。** 删掉那句 `fval = 0`，并把非联合体成员 `sval = NULL` 挪到写 `ival` **之前**，让 `InterlockedExchange64(…ival, val)` 成为对联合体的最后一次写。
+
+**判据。** ① 全仓扫描「同一个基址在 6 行内既写 `.ival =` 又写 `.fval =`」共 **14 处**，只有这一处有害：另外 12 处是「先 `fval = 0` 再 `ival`」的无效写（后写的 `ival` 才是值），2 处是互斥分支（`src/mod/json_mod.c:291-293`、`src/vm/vm.c:2114-2115`）。② 机制复现 `.verify/v31/union_repro.c` 按 `src/vm/vm.h:24-26` 原样重建布局，Linux `gcc -std=gnu11 -O2` 与 `/mnt/c/msys64/mingw64/bin/gcc.exe` 结论完全一致：`after ival then fval : ival=0 (expected 3000000000) CLOBBERED` / `after ival only : ival=3000000000 OK`。③ 引擎里本来就有正确的构造函数，只是它是 `static`：`src/vm/vm.c:474-482` 的 `value_set` 按 `type` **只写一个**联合体成员。`runtime.c` 调不到它，于是自己手搓构造并写错了纪律。
+
+**诚实边界。** ① 本机不能编译 `src/runtime/runtime.c`（`<windows.h>` / `<winhttp.h>`），证据是「改动区域语法通过 + 与 POSIX 版逐行同构 + 机制探针」，真机确认在发布会话。② Linux 侧**没有**新增 CTest：缺陷在 Linux 不可达，硬造一个静态检查（`tools/check_value_union.py`）被考虑过但没有做。③ 同轮**没有**统一 `value_set` 与各运行时的构造纪律 —— 那是一次更大的重构。
+
+## §1.30 路径锚定：调用者给的路径锚调用者的 cwd，引擎自己产生的路径锚进程 cwd
+
+**现象。** Windows CI 上 `cli_incremental_regression` 报 `error: cannot read script 'D:\a\Inimerse\Inimerse\build-windows-gcc\app.im'`，而进程的 cwd 是 `D:\a\Inimerse\Inimerse` —— 相对脚本名被解析到了**构建目录**而不是脚本目录。
+
+**根因。** 引擎在启动时把 cwd 切到脚本目录（`chdir_to_script_dir`，`src/main.c`），此后所有相对路径都相对脚本目录。但 `make_abs_path` / `make_abs_path_loose` 用 `_fullpath` / `realpath` 做归一化，它们锚的是**进程当时的 cwd**；一旦引擎为了别的原因动过 cwd（或调用发生在 `chdir` 之前），两者就不一致了。修法是把**调用者给的**路径显式锚到「调用者的 cwd」（启动时记下的 `g_caller_cwd`），与进程 cwd 解耦。
+
+**同轮抓到的自伤回归。** 第一版改动把**所有**调用点都锚到调用者 cwd，其中一个是错的：`src/compiler/compiler.h:76` 的 `cur_dir` 在顶层是 `""`（`compiler_new` 对 `Compiler` 做 `memset`），`resolve_import_path("" , rel)` 原样返回 `rel`（`src/compiler/compiler.c:3008`），于是 `comp->dep_paths[i]` 可以是**相对路径**（`:3035`）—— 它是引擎自己产生的，语义基准是脚本目录。修法是新增 `make_abs_path_cwd()`（Windows 走不锚定的 `_fullpath`，POSIX 走 `make_abs_path_loose`），只把那一个调用点换过去。
+
+**判据。** 除该点外，`make_abs_path*` / `chdir_to_script_dir` 的全部调用点拿的都是 `script` / `input` / `argv[2]` / `argv[3]`（完整清单见 `docs/BOARD.md` 第 161 行），锚调用者 cwd 是对的。mingw `-fsyntax-only src/main.c` RC=0；Linux `ctest -R "incremental|dep|compile|selfhost"` 4/4 通过。
+
+**诚实边界。** 打包发行版不靠这两个函数找随包资源：资源用的是**进程 cwd 下的相对字面量**（例如 `src/main.c:1102` 的 `read_file_alloc("mods/debug/main.im", NULL)`），DLL 靠加载器的 exe 目录搜索，`get_self_path()`（`src/main.c:117`）另有 5 个直接调用点。所以 `chdir` 的意图没有被这次改动破坏。
+
+## §1.31 「建目录」有两个生产点，两处都把盘符根交给了 `mkdir`，verse 那份还用 `fopen(dir)` 判存在
+
+**现象。** Windows 上 `verse_layer_probe`（#3）7 条失败、`verse_eventlog_probe` 连带、`verse_closed_loop`（#5）「第一次成功、第二次失败」，以及 `vverse_cross_regression`（#39）/ `vverse_cli_regression`（#74）的 `cannot create laws`。
+
+**根因（两层）。**
+① **存在性判据错了。** `src/verse/layer.c` 的 `vl_mkdir_p` 收尾是 `if (vl_mkdir(tmp) != 0) { FILE *probe = fopen(tmp, "r"); if (!probe) return -1; }`。`fopen(目录, "r")` 在 Windows 上**必然失败**（目录不能当文件打开），Linux 上却成功 —— 所以同一个路径第一次 `_mkdir` 成功返回 0，第二次 `_mkdir` 失败后 `fopen` 拿到 NULL，`vl_mkdir_p` 答 -1，`vl_layer_create` 于是返回 `VL_ERR_IO` 而不是 `VL_ERR_CONFLICT`，manifest 也没写下来，后续 `vl_layer_open` 全部失败。正确判据是 `errno == EEXIST`，两个 CRT 对「已经存在的目录」都这么答。
+② **盘符根不是目录。** `vl_mkdir_p` 按 `/` 和 `\` 切分前缀，于是任何绝对 Windows 路径的第一个前缀都是 `"C:"`。`_mkdir("C:")` 在「该盘没有当前目录」时返回 `EACCES`（实测 `errno=13`），在「恰好有」时返回 `EEXIST` —— 结果取决于进程从哪里启动。**同一个缺陷在 `src/platform/platform.c` 的 `im_platform_mkdirs` 里一模一样**（`:105-109` 同样按 `'/' || '\'` 切分），而 `src/common/vverse_pack.c:777` 建 `laws/` 走的正是它。
+
+**修法。** 两处各加一个纯字符串谓词 `vl_is_drive_root` / `im_is_drive_root`（`[A-Za-z]:` 且长度为 2），前缀扫描跳过它、收尾把它当成「已存在」直接返回 0；同时把 `vl_mkdir_p` 的存在性判据从 `fopen` 换成 `errno == EEXIST`。**两处都改**是必须的：这是同一份计算的第二个生产点，只改 verse 那份，#39/#74 仍然红。
+
+**判据（全部用真 Windows 工具链 `/mnt/c/msys64/mingw64/bin/gcc.exe` 实测）。**
+- `_mkdir("C:")` → `-1 errno=13 (Permission denied)`（直接复现盘符根那一层）。
+- `.verify/v31/mkdrive.c` + `src/platform/platform.c`：绝对新路径 `C:\Temp\vinim\mk3\out\laws` → `0`、再次 → `0`、正斜杠版 → `0`、相对路径 → `0`、`"C:"` 本身 → `0`。
+- `.verify/v31/layer_abs.c` + `src/verse/layer.c`（根用 `C:\Temp\vinim\vltest`）：`create1 -> 0 (VL_OK)`、`create2 -> -3 (VL_ERR_CONFLICT)`、`open -> non-NULL`、`PASS`。
+- **负控**：把 `vl_is_drive_root` 的两处守卫去掉后重编（`.verify/v31/layer_nodrive.c`），同一个程序变成 `create1 -> -2`（`VL_ERR_IO`）、`create2 -> -2`、`open -> NULL`、`FAIL`、exit 1 —— 也就是说**没有这个守卫时连第一次创建都会失败**，与「提交版恰好绕过它（它只按 `'/'` 切分）」相互印证。
+- `src/platform/platform_probe.c` 扩了 8 项 `im_platform_mkdirs` 契约断言（已存在即成功、深层新路径、尾部分隔符、`NULL`/空串拒绝、超长路径拒绝而非截断），`platform_probe` 通过；`verse_layer_probe`、`verse_eventlog_probe` 在 Linux 与 Windows 上都是 `all checks passed`。
+
+**诚实边界。** ① 盘符根那一层在 Linux 上不可达（没有盘符），Linux 侧只能钉住「已存在即成功」这条契约；盘符根由发布会话的 5 个 Windows 用例（#2/#3/#5/#39/#74）端到端确认。② `vl_mkdir_p` 与 `im_platform_mkdirs` 的规则**是重复的**，这是有意的：verse 核心刻意不依赖 `src/platform`，所以规则在两处各写一遍，两边都加了同样的注释指向对方。
+
+## §1.32 hub 端口：「实际绑定的端口」有两个生产点，只有一个会报
+
+**现象。** Windows 上 7 个 hub 用例（#36 `crp_session_flow`、#37 `hub_dist`、#40 `node_discovery`、#41 `lease_handoff`、#43 `economy_domain`、#44 `economy_migration`，外加 #35 `http_large_package` 连带）全部倒在 `start_hub_bound_ports` / `start_hub`；#35 拿到 `status=200 len=436 body='<html>…<b>Wrong port!</b>'`。
+
+**根因。** 引擎用 `--port 0 --http-port 0` 让内核分配端口，然后把**实际**端口打在 stderr 上，harness 读这一行（`tools/testports.py:302`：端口非正就当成「服务器报不出自己绑了什么，视为没起来」）。但 `src/headless_server.c` 的 `headless_init()` 只做 `g_hl_port = port;`（`:26`）而后再也不更新，`src/mod/verse_dist_mod.c` 的 `verse_http_start()` 也只做 `g_listen_port = port;`（`:1875`）—— 两处都报的是**被请求**的端口。Linux 之所以绿，是因为 POSIX 的两个孪生实现（`src/headless_server_posix.c:51-53`、`src/platform/http_posix.c:2129`）本来就有 `getsockname` 派生的 getter。**HTTP 服务器有两个生产点**（`src/platform/http_posix.c:2155` 与 `src/mod/verse_dist_mod.c:1862`，后者在 `:1315 #ifdef _WIN32` … `:2007 #else` … `:2063 #endif` 里），只有 POSIX 那个报实际端口。
+
+**修法。** winsock 两侧各加 `getsockname()`：`headless_init` 在 `listen()` 之后把 `g_hl_port` 换成实际端口，并在 `headless_enabled()` 旁加 `int headless_bound_port(void)`（写进 `src/headless_server.h`）；`verse_http_start` 同样在 `listen()` 之后记录实际端口，并加 `int verse_http_bound_port(void)`。`src/main.c` 里两组 `#if defined(_WIN32)` 分支随之删除，两个平台统一走 getter。
+
+**判据。** Linux 上 9 个 hub 相关用例（`crp_session`、`hub_dist`、`node_discovery`、`lease_handoff`、`economy`×2、`http_large`、`verse_closed` 等）`100% tests passed, 0 tests failed out of 9`；mingw `-fsyntax-only` 对 `src/main.c`、`src/mod/verse_dist_mod.c`、`src/headless_server.c`、`src/headless_server.h` 全部 PASS。
+
+**诚实边界。** Windows 侧的真机确认（`headless: 127.0.0.1:<非零>`）在发布会话。同轮顺带记录了 `docs/STATUS.md` §2.9「端口窗口已关闭」这条结论原本只在 Linux 上成立。
+
+## §1.33 eventlog 的回滚在 Windows 上被 `#ifndef` 编译掉了
+
+**现象。** `verse_eventlog_probe`（#2）在 `src/verse/eventlog_probe.c:146` 报 `vl_eventlog_verify(log) == VL_OK` 失败。
+
+**根因。** 故障注入的第 6 步（落盘失败）本应把已经写下的记录回滚掉：`src/verse/eventlog.c:498-505` 原本是 `if (!flush_ok) { #ifndef _WIN32 if (ftruncate(vl_fileno(log->fp), off) != 0) { /* best effort */ } #endif fseek(…); … return VL_ERR_DURABILITY; }` —— **截断在 Windows 上被编译掉了**，于是第 5 步已经写进文件的记录留在盘上，而内存里的 head/count/end_off 已经回滚，下一次 `verify()` 的 `vl_recompute` 对不上，答 `VL_ERR_RECOVERY_REQUIRED`。
+
+**修法。** 在 `src/verse/eventlog.c:10-18` 的宏块里加 `vl_truncate`（Windows `_chsize`，POSIX `ftruncate`），把守卫块换成无条件调用。`<io.h>` 在 Windows 上本来就已包含。
+
+**判据。** Windows `eventlog_probe.exe` → `verse_eventlog_probe: all checks passed`；Linux `./build/verse_eventlog_probe` → 同样。
+
+**诚实边界。** 「回滚要真的落盘」这条在 Linux 上一直成立，所以这个缺陷同样是 Windows-only；证据是同一个探针在两个工具链上的同一句输出。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

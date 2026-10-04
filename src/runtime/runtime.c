@@ -1590,7 +1590,7 @@ static int builtin_atomic_add(VM *vm) {
             idx = vm->globalCount;
             vm->globals[idx].name = strdup(nm);
             vm->globals[idx].val.type = VAL_INT; vm->globals[idx].val.ival = 0;
-            vm->globals[idx].val.fval = 0; vm->globals[idx].val.sval = NULL;
+            vm->globals[idx].val.sval = NULL;
             vm->globalCount++;
         }
         VM_UNLOCK(vm);
@@ -1658,15 +1658,23 @@ static int builtin_atomic_set(VM *vm) {
             idx = vm->globalCount;
             vm->globals[idx].name = strdup(nm);
             vm->globals[idx].val.type = VAL_INT; vm->globals[idx].val.ival = 0;
-            vm->globals[idx].val.fval = 0; vm->globals[idx].val.sval = NULL;
+            vm->globals[idx].val.sval = NULL;
             vm->globalCount++;
         }
         VM_UNLOCK(vm);
     }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
+    /* Write the union member that matches `type`, and only that one.  This used
+       to store `val` through InterlockedExchange64 and then clear `fval` -- but
+       `ival` and `fval` are the same storage (src/vm/vm.h:24-26), so the second
+       write zeroed the value that had just been stored.  atomic_set() therefore
+       wrote 0 for every argument on Windows and never failed loudly:
+       atomic_set("k", 3000000000) answered 3000000000 while atomic_get("k")
+       read 0.  The POSIX copy never had the second write.  `sval` is a
+       different member, not the union, so clearing it is safe. */
     vm->globals[idx].val.type = VAL_INT;
+    vm->globals[idx].val.sval = NULL;
     InterlockedExchange64((volatile LONG64*)&vm->globals[idx].val.ival, val);
-    vm->globals[idx].val.fval = 0; vm->globals[idx].val.sval = NULL;
     if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
     push_int(vm, val);
     return 1;

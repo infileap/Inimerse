@@ -3464,3 +3464,25 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 **计数同步。** `tools/gate.sh:50` 的 `EXP_CTEST` **120 → 121**，`docs/BOARD.md` §3 与本节 §2/§2.1 同步为 **121 / 121**。新探针注册在 `CMakeLists.txt` **测试列表末尾**（`add_test(NAME vm_init_probe COMMAND vm_init_probe)`）—— 它必须排在最后：CTest 的 `#N` 是注册顺序，插在中间会把 `#57` 之后的每一个既有编号整体后移，而多个历史行正引用着那些编号。
 
 **诚实边界。** ① 18 个用例是在 Windows 上观察到的，本机修复前后都绿，所以「修好了那 18 个」的最终确认在发布会话的 Windows 机器上；本节的证据是「字段差集 + 负控探针」。② `memset` 修的是「未初始化」，不是「未定义」：清单与结构体的同步仍然靠人，探针只钉住**这一版**的字段集合，结构体新增字段而清单与探针都没跟上时它不会自动发现。③ 探针只断言 `vm_init` 之后的字段值，不覆盖 `vm_free` 与运行期语义。④ 同一轮**没有**碰 `atomic_*` 的 Windows 位宽缺陷与两个 verse C 探针的失败 —— 它们是独立的三类问题，分开处理。
+
+## §10.62 `atomic_set` 写坏了 `Value` 的联合体：Windows 上它写进去的是 0
+
+`docs/AUDIT.md` §1.29。Windows `atomic_int64_width_runtime`（#119）实测
+`atomic-ok set=0 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=NO-THROW keep1=1 half=4611686018427387903 ovf2=NO-THROW keep2=4611686018427387904`。
+根因是 `src/runtime/runtime.c` 的 `builtin_atomic_set` 在 `InterlockedExchange64(…ival, val)` 之后又写了 `…fval = 0`，而 `ival`/`fval` 是同一块存储（`src/vm/vm.h:24-26`）。删掉那一句、把 `sval = NULL` 挪到写 `ival` 之前。全仓 14 处「双写联合体」只有这一处有害；`.verify/v31/union_repro.c` 在 Linux 与 mingw 两个工具链上给出同一结论。Linux 侧未新增 CTest（缺陷不可达）。**没有**在 §2 的测试计数里加任何数字。
+
+## §10.63 路径锚定：调用者的路径锚调用者的 cwd，引擎自己产生的路径锚进程 cwd
+
+`docs/AUDIT.md` §1.30。Windows CI 上 `cli_incremental_regression` 把相对脚本名解析到了构建目录。修法是给「调用者给的路径」一个显式的调用者 cwd 锚。同轮抓到一个自伤回归：`comp->dep_paths[i]`（`src/main.c:779`）是引擎自己产生的**相对**路径（`src/compiler/compiler.h:76` 的 `cur_dir` 在顶层为 `""`，`resolve_import_path` 原样返回 `rel`），语义基准是脚本目录，因此新增 `make_abs_path_cwd()` 并只把那一个调用点换过去。Linux `ctest -R "incremental|dep|compile|selfhost"` 4/4。
+
+## §10.64 「建目录」有两个生产点，两处都错在盘符根，verse 那份还用 `fopen(dir)` 判存在
+
+`docs/AUDIT.md` §1.31。这一条一起解释了 Windows 的 #2/#3/#5/#39/#74。`vl_mkdir_p`（`src/verse/layer.c`）的存在性判据从 `fopen(dir, "r")`（Windows 上打开目录必然失败）换成 `errno == EEXIST`；`vl_mkdir_p` 与 `im_platform_mkdirs`（`src/platform/platform.c:99`）各加一个 `is_drive_root` 谓词，**两处都改**。判据全部是真 Windows 工具链实测，含负控：去掉守卫后 `vl_layer_create` 对绝对路径答 `-2`（`VL_ERR_IO`），加上后 `0`（`VL_OK`）/ 再次 `-3`（`VL_ERR_CONFLICT`）。`src/platform/platform_probe.c` 扩了 8 项 `im_platform_mkdirs` 契约断言。**不新增 CTest，`EXP_CTEST` 保持 121。**
+
+## §10.65 hub 端口：两个生产点只有一个会报实际绑定的端口
+
+`docs/AUDIT.md` §1.32。Windows 的 7 个 hub 用例全部倒在 `start_hub_bound_ports`。`src/headless_server.c` 与 `src/mod/verse_dist_mod.c`（winsock 的 `verse_http_start`）都报「被请求」的端口；POSIX 的两个孪生实现本来就有 getter。两处各加 `getsockname()` 与一个 getter，`src/main.c` 里两组 `#if defined(_WIN32)` 分支删除。Linux 上 9 个 hub 相关用例 9/9 通过。
+
+## §10.66 eventlog 的回滚在 Windows 上被 `#ifndef` 编译掉了
+
+`docs/AUDIT.md` §1.33。`src/verse/eventlog.c` 故障注入第 6 步的 `ftruncate` 原本在 `#ifndef _WIN32` 里，Windows 上回滚不落盘，下一次 `verify()` 答 `VL_ERR_RECOVERY_REQUIRED`。改成宏 `vl_truncate`（Windows `_chsize`）后无条件调用；两个平台都是 `all checks passed`。

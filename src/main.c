@@ -405,9 +405,44 @@ static void strip_ext_into(char *out, size_t out_sz, const char *path) {
 }
 
 /* 鑾峰彇鑴氭湰鐨勭粷瀵硅矾寰勶紙malloc锛岃皟鐢拷?free�?*/
+
+#ifdef _WIN32
+/* The caller's working directory, captured before the packaged-build chdir in
+   main() replaces the process cwd with the EXE's directory (src/main.c:884).
+   A relative path typed on the command line belongs to the caller, so both
+   resolvers below expand it against this directory.  Without this,
+   `inimerse run sim.im` from D:\work looked for
+   D:\...\build-windows-gcc\sim.im, because _fullpath expands against the
+   process cwd that the chdir had already replaced. */
+static char g_caller_cwd[MAX_PATH];
+static int  g_caller_cwd_ok = 0;
+
+static void capture_caller_cwd(void) {
+    if (_getcwd(g_caller_cwd, (int)sizeof g_caller_cwd)) g_caller_cwd_ok = 1;
+}
+
+/* Absolute means root-relative, or a "C:" drive prefix. */
+static int path_is_absolute(const char *p) {
+    if (!p || !*p) return 0;
+    if (p[0] == '/' || p[0] == '\\') return 1;
+    if (((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':') return 1;
+    return 0;
+}
+
+/* Anchor a caller-supplied path to the caller's directory.  Returns `path`
+   unchanged when it is already absolute or the directory was not captured. */
+static const char *anchor_to_caller_cwd(const char *path, char *buf, size_t buf_sz) {
+    if (!g_caller_cwd_ok || path_is_absolute(path)) return path;
+    snprintf(buf, buf_sz, "%s\\%s", g_caller_cwd, path);
+    return buf;
+}
+#endif
+
 /* Loose absolute path: works for paths that do not exist yet (compile outputs). */
 static char *make_abs_path_loose(const char *path) {
 #ifdef _WIN32
+    char anchored[MAX_PATH * 2];
+    path = anchor_to_caller_cwd(path, anchored, sizeof anchored);
     char *abs = malloc(MAX_PATH); if (!abs) return NULL;
     if (!_fullpath(abs, path, MAX_PATH)) { free(abs); return NULL; }
     normalize_path(abs); return abs;
@@ -439,11 +474,29 @@ static char *make_abs_path_loose(const char *path) {
 
 static char *make_abs_path(const char *path) {
 #ifdef _WIN32
+    char anchored[MAX_PATH * 2];
+    path = anchor_to_caller_cwd(path, anchored, sizeof anchored);
     char *abs = malloc(MAX_PATH); if (!abs) return NULL;
     if (!_fullpath(abs, path, MAX_PATH)) { free(abs); return NULL; }
     normalize_path(abs); return abs;
 #else
     return realpath(path, NULL);
+#endif
+}
+
+/* Resolve against the PROCESS working directory, ignoring the caller's.
+   Used for paths the engine produced itself: the compiler's dependency paths
+   (comp->dep_paths) are relative to the script directory the process has
+   chdir'd into (src/compiler/compiler.h:76 -- cur_dir "" means CWD), so they
+   must keep resolving there and not against g_caller_cwd.  Caller-supplied
+   command-line paths use make_abs_path / make_abs_path_loose instead. */
+static char *make_abs_path_cwd(const char *path) {
+#ifdef _WIN32
+    char *abs = malloc(MAX_PATH); if (!abs) return NULL;
+    if (!_fullpath(abs, path, MAX_PATH)) { free(abs); return NULL; }
+    normalize_path(abs); return abs;
+#else
+    return make_abs_path_loose(path);
 #endif
 }
 
@@ -723,7 +776,7 @@ static int main_compile_cmd(const char *input, const char *output,
         }
         free(abs_main);
         for (int i = 0; i < comp->dep_count && n < comp->dep_count + 1; i++) {
-            char *abs = make_abs_path_loose(comp->dep_paths[i]);
+            char *abs = make_abs_path_cwd(comp->dep_paths[i]);
             if (abs && inim_file_sha256(abs, deps[n].sha_hex) == 0) {
                 deps_relative_path(out_dir, abs, rel, sizeof(rel));
                 deps[n++].path = strdup(rel);
@@ -875,8 +928,12 @@ unsigned long timeout_ms = 0;
 
     /* Windows packaged builds resolve bundled DLL/assets beside the EXE.
        POSIX keeps the caller's working directory so relative script paths
-       (and the benchmark harness) behave as expected. */
+       (and the benchmark harness) behave as expected.
+       The chdir below replaces the process cwd, so remember where the caller
+       was first: make_abs_path/make_abs_path_loose anchor relative
+       command-line paths to g_caller_cwd, not to the EXE's directory. */
 #ifdef _WIN32
+    capture_caller_cwd();
     char *self = get_self_path();
     if (self) {
         char *p = strrchr(self, '\\');
@@ -999,23 +1056,20 @@ if (argc == 1) {
              * asked for: `--port 0` / `--http-port 0` mean "kernel, pick one",
              * and the suites read this line instead of guessing a number from a
              * pool they had to release before the child could bind it (the
-             * window in which another suite took it).  On POSIX both servers
-             * hand back the bound port; the winsock twins bind exactly what
-             * they are given and expose no getter, so 0 is not supported
-             * there.  A negative --http-port disables the HTTP API. */
+             * window in which another suite took it).  Both servers now expose
+             * a bound-port getter on both platforms; the winsock twins used to
+             * bind exactly what they were given and had no getter, so a hub
+             * started with 0 printed 0 and the suites read that as "not
+             * started".  A negative --http-port disables the HTTP API. */
             if (!headless_init(headless_port)) fprintf(stderr, "headless: bind %d failed\n", headless_port);
             else {
                 headless_start_thread();
-#if defined(_WIN32)
-                fprintf(stderr, "headless: 127.0.0.1:%d\n", headless_port);
-#else
-                extern int headless_bound_port(void);
                 int hl_bound = headless_bound_port();
                 fprintf(stderr, "headless: 127.0.0.1:%d\n", hl_bound > 0 ? hl_bound : headless_port);
-#endif
             }
             if (headless_http_port >= 0) {
                 extern int verse_http_start(int);
+                extern int verse_http_bound_port(void);
                 /* Say so when this fails.  Staying quiet produced a hub that
                  * prints "headless:" and runs its script but never serves
                  * HTTP: every later request just hangs until the caller's
@@ -1023,13 +1077,8 @@ if (argc == 1) {
                  * was free a moment ago) was invisible.  A hub without its
                  * HTTP API is not a working hub, so this must be loud. */
                 if (verse_http_start(headless_http_port)) {
-#if defined(_WIN32)
-                    fprintf(stderr, "http api: 127.0.0.1:%d\n", headless_http_port);
-#else
-                    extern int verse_http_bound_port(void);
                     int api_bound = verse_http_bound_port();
                     fprintf(stderr, "http api: 127.0.0.1:%d\n", api_bound > 0 ? api_bound : headless_http_port);
-#endif
                 }
                 else fprintf(stderr, "http api: bind %d failed (port in use?)\n", headless_http_port);
             }

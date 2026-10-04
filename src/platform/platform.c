@@ -96,6 +96,20 @@ void im_platform_sleep_ms(unsigned int milliseconds) {
 #endif
 }
 
+/* "C:" / "c:" is a drive designator, not a directory.  On Windows
+   _mkdir("C:") answers EACCES when the drive has no current directory and
+   EEXIST only when it happens to have one, so passing it to _mkdir is either a
+   spurious failure or an accident of the caller's cwd -- and since the scan
+   below splits on '\\' too, every absolute Windows path starts with it.  That
+   is what made `cannot create laws` (src/common/vverse_pack.c:777) depend on
+   where the process happened to be started from.  Skip it as a prefix and treat
+   it as already present as the tail. */
+static int im_is_drive_root(const char *p) {
+    size_t n = strlen(p);
+    return n == 2 && p[1] == ':' &&
+           ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z'));
+}
+
 int im_platform_mkdirs(const char *path) {
     if (!path || !*path) return -1;
     char buf[4096];
@@ -105,13 +119,16 @@ int im_platform_mkdirs(const char *path) {
     for (char *p = buf + 1; *p; ++p) {
         if (*p != '/' && *p != '\\') continue;
         char saved = *p; *p = '\0';
+        if (*buf && !im_is_drive_root(buf)) {
 #ifdef _WIN32
-        if (*buf && _mkdir(buf) != 0 && errno != EEXIST) { *p = saved; return -1; }
+            if (_mkdir(buf) != 0 && errno != EEXIST) { *p = saved; return -1; }
 #else
-        if (*buf && mkdir(buf, 0755) != 0 && errno != EEXIST) { *p = saved; return -1; }
+            if (mkdir(buf, 0755) != 0 && errno != EEXIST) { *p = saved; return -1; }
 #endif
+        }
         *p = saved;
     }
+    if (im_is_drive_root(buf)) return 0;
 #ifdef _WIN32
     return (_mkdir(buf) == 0 || errno == EEXIST) ? 0 : -1;
 #else

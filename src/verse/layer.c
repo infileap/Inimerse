@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #  include <direct.h>
@@ -59,22 +60,40 @@ struct VlLayer {
 
 static void vl_empty_head(char out[65]);
 
+/* Create every component of `path`.  An already-existing directory is success.
+   The existence test is `errno == EEXIST`, which both CRTs answer for a
+   directory that is already there.  It used to be `fopen(tmp, "r")`, and on
+   Windows a directory cannot be opened as a file: opening an existing
+   directory returned NULL, vl_mkdir_p answered -1, vl_layer_create returned
+   VL_ERR_IO instead of VL_ERR_CONFLICT, and the manifest was never written --
+   which is why the layer tests failed on Windows only.  This mirrors
+   im_platform_mkdirs (src/platform/platform.c:99-120), which is the engine's
+   one production point for this; the verse core stays free of src/platform on
+   purpose, so the rule is repeated here rather than shared. */
+/* "C:" and "c:" are drive designators, not directories.  On Windows
+   _mkdir("C:") answers EACCES when the drive has no current directory and
+   EEXIST only when it happens to have one, so passing it to vl_mkdir is either
+   a spurious failure or an accident of the process's cwd -- and since the scan
+   below splits on '\\' as well, every absolute Windows path starts with it.
+   Skip it as a prefix and treat it as already present as the tail. */
+static int vl_is_drive_root(const char *p) {
+    size_t n = strlen(p);
+    return n == 2 && p[1] == ':' &&
+           ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z'));
+}
+
 static int vl_mkdir_p(const char *path) {
     char tmp[768];
     snprintf(tmp, sizeof tmp, "%s", path);
     for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0';
-            vl_mkdir(tmp);
-            *p = '/';
+        if (*p == '/' || *p == '\\') {
+            char saved = *p; *p = '\0';
+            if (*tmp && !vl_is_drive_root(tmp) && vl_mkdir(tmp) != 0 && errno != EEXIST) { *p = saved; return -1; }
+            *p = saved;
         }
     }
-    if (vl_mkdir(tmp) != 0) {
-        FILE *probe = fopen(tmp, "r");   /* already exists is fine */
-        if (!probe) return -1;
-        fclose(probe);
-    }
-    return 0;
+    if (vl_is_drive_root(tmp)) return 0;
+    return (vl_mkdir(tmp) == 0 || errno == EEXIST) ? 0 : -1;
 }
 
 static int vl_write_file(const char *path, const char *text) {

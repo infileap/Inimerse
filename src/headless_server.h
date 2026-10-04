@@ -3,6 +3,7 @@
 int headless_init(int port);
 void headless_shutdown(void);
 int headless_enabled(void);
+int headless_bound_port(void);   /* actual bound port; 0 when not listening */
 void headless_accept(void);
 int headless_send_frame(const char *json);
 int headless_poll_input(char *buf, int cap);

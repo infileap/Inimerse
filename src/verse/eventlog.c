@@ -11,10 +11,12 @@
 #  include <io.h>
 #  define vl_fileno(f)  _fileno(f)
 #  define vl_fsync(fd)  _commit(fd)
+#  define vl_truncate(fd, n) _chsize((fd), (n))
 #else
 #  include <unistd.h>
 #  define vl_fileno(f)  fileno(f)
 #  define vl_fsync(fd)  fsync(fd)
+#  define vl_truncate(fd, n) ftruncate((fd), (n))
 #endif
 
 /* ================================================================== */
@@ -496,9 +498,12 @@ VlStatus vl_commit(VlEventLog *log, const VlIntent *in, int steps[VL_COMMIT_STEP
     }
     if (fault == 6) flush_ok = 0;
     if (!flush_ok) {
-#ifndef _WIN32
-        if (ftruncate(vl_fileno(log->fp), off) != 0) { /* best effort */ }
-#endif
+        /* Roll the staged record back out of the file.  Step 5 already wrote
+           it, so leaving it there makes the file disagree with head/count and
+           the very next verify() answers RECOVERY_REQUIRED.  Windows has no
+           ftruncate; _chsize is its equivalent.  This rollback used to be
+           compiled out on Windows, which is why this probe failed there only. */
+        if (vl_truncate(vl_fileno(log->fp), off) != 0) { /* best effort */ }
         fseek(log->fp, off, SEEK_SET);
         log->last_status = VL_ERR_DURABILITY;
         return VL_ERR_DURABILITY;      /* steps 5..9 remain 0 */

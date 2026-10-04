@@ -37,6 +37,17 @@ int headless_init(int port) {
     sa.sin_port = htons((unsigned short)g_hl_port);
     if (bind(g_hl_sock, (struct sockaddr*)&sa, sizeof sa) != 0) { closesocket(g_hl_sock); g_hl_sock = INVALID_SOCKET; return 0; }
     if (listen(g_hl_sock, 4) != 0) { closesocket(g_hl_sock); g_hl_sock = INVALID_SOCKET; return 0; }
+    /* Record the port that is really listening.  `--port 0` asks the kernel for
+       one, so keeping the REQUESTED number here made a hub started with 0 print
+       "headless: 127.0.0.1:0"; tools/testports.py:302 reads a non-positive port
+       as "the server cannot report what it bound, i.e. not started" and every
+       hub suite failed on Windows.  Mirrors src/headless_server_posix.c:51-53. */
+    {
+        struct sockaddr_in ba;
+        int bl = (int)sizeof ba;
+        if (getsockname(g_hl_sock, (struct sockaddr*)&ba, &bl) == 0)
+            g_hl_port = (int)ntohs(ba.sin_port);
+    }
     g_hl_enabled = 1;
     InitializeCriticalSection(&g_hl_lock);
     return 1;
@@ -50,6 +61,16 @@ void headless_shutdown(void) {
 }
 
 int headless_enabled(void) { return g_hl_enabled; }
+
+/* Actual bound port of the headless TCP listener (0 when not listening).
+   Mirrors src/headless_server_posix.c:51-53. */
+int headless_bound_port(void) {
+    if (!g_hl_enabled || g_hl_sock == INVALID_SOCKET) return 0;
+    struct sockaddr_in ba;
+    int bl = (int)sizeof ba;
+    if (getsockname(g_hl_sock, (struct sockaddr*)&ba, &bl) != 0) return 0;
+    return (int)ntohs(ba.sin_port);
+}
 
 /* accept a client if none connected yet (non-blocking-ish with select) */
 void headless_accept(void) {

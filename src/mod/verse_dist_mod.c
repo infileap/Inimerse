@@ -1872,12 +1872,26 @@ int verse_http_start(int port) {
     sa.sin_port = htons((unsigned short)port);
     if (bind(g_listen_sock, (struct sockaddr*)&sa, sizeof sa) != 0) { closesocket(g_listen_sock); g_listen_sock = INVALID_SOCKET; return 0; }
     if (listen(g_listen_sock, 8) != 0) { closesocket(g_listen_sock); g_listen_sock = INVALID_SOCKET; return 0; }
-    g_listen_port = port;
+    /* Record the port that is really listening.  `--http-port 0` asks the kernel
+       for one, so storing the REQUESTED number here made a hub started with 0
+       print "http api: 127.0.0.1:0"; tools/testports.py:302 reads a non-positive
+       port as "the server cannot report what it bound, i.e. not started" and
+       every hub suite failed on Windows.  This is the winsock twin of
+       src/platform/http_posix.c, which has always reported the bound port. */
+    {
+        struct sockaddr_in ba;
+        int bl = (int)sizeof ba;
+        g_listen_port = (getsockname(g_listen_sock, (struct sockaddr*)&ba, &bl) == 0)
+                        ? (int)ntohs(ba.sin_port) : port;
+    }
     g_listen_run = 1;
     HANDLE h = CreateThread(NULL, 0, http_server_thread, NULL, 0, NULL);
     if (h) CloseHandle(h);
     return 1;
 }
+/* The port the HTTP listener is actually reachable on (0 = none listening).
+   Mirrors verse_http_bound_port in src/platform/http_posix.c:2129. */
+int verse_http_bound_port(void) { return g_listen_run ? g_listen_port : 0; }
 void verse_http_stop(void) {
     g_listen_run = 0;
     if (g_listen_sock != INVALID_SOCKET) { closesocket(g_listen_sock); g_listen_sock = INVALID_SOCKET; }
