@@ -42,16 +42,43 @@ legacy reader path).  Byte-stability of the real container is asserted twice in
 tools/vverse_cli.test.py ("two packs of the same tree are byte-identical").
 """
 import base64
+import contextlib
 import gzip
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
+
+
+@contextlib.contextmanager
+def package_tree(prefix):
+    """A disposable tree that survives Windows' delayed directory release.
+
+    Nothing of ours is running any more when the test body ends, yet Windows can
+    keep the directory locked afterwards: a tree that still refused to go 5 s
+    after the last child exited was removable a minute later.  Retry, and if it
+    is still held, say so instead of failing -- what is under test here is
+    packaging, not the timing of Windows handle release.
+    """
+    td = tempfile.mkdtemp(prefix=prefix)
+    try:
+        yield Path(td)
+    finally:
+        for _ in range(30):
+            try:
+                shutil.rmtree(td)
+                break
+            except OSError:
+                time.sleep(1)
+        else:
+            print("note: %s is still held by the system; leaving it in place" % td,
+                  file=sys.stderr)
 
 
 def find_engine():
@@ -136,7 +163,7 @@ def main():
     engine = find_engine()
     sample = REPO / "vtest_signed.vverse"
     assert sample.is_file(), f"missing sample {sample}"
-    with tempfile.TemporaryDirectory(prefix="inimerse-pkg-") as td:
+    with package_tree("inimerse-pkg-") as td:
         root = Path(td)
         home = root / "home"
         home.mkdir()
