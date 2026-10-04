@@ -754,10 +754,18 @@ static int posix_atomic_add(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value delta = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    const char *n = name.type == VAL_STRING ? name.sval : NULL;
     long long d = val_as_int(&delta);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
-    int idx = posix_atomic_find(vm, n, 1);
+    /* A name that is not a string is a caller error, not an empty counter:
+       raising is the one answer that cannot be mistaken for success.  The
+       check must come BEFORE the lookup, because posix_atomic_find folds
+       "this is not a string" and "there is no such name" into the same -1 --
+       one return value carrying two different decisions, which is the defect
+       this whole family keeps producing.  A slot that holds no integer is a
+       different question (runtime state) and still answers 0 without being
+       touched.  See docs/SYNTAX.md 7.1 D14. */
+    if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }
+    int idx = posix_atomic_find(vm, name.sval, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
     /* Same rule as posix_atomic_get: a slot that is not VAL_INT holds no
        integer, so there is no counter to add to.  Without this, the CAS loop
@@ -791,8 +799,17 @@ static int posix_atomic_add(VM *vm) {
 static int posix_atomic_get(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 0);
     pop(vm);
+    /* A name that is not a string is a caller error, not an empty counter:
+       raising is the one answer that cannot be mistaken for success.  The
+       check must come BEFORE the lookup, because posix_atomic_find folds
+       "this is not a string" and "there is no such name" into the same -1 --
+       one return value carrying two different decisions, which is the defect
+       this whole family keeps producing.  A slot that holds no integer is a
+       different question (runtime state) and still answers 0 without being
+       touched.  See docs/SYNTAX.md 7.1 D14. */
+    if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }
+    int idx = posix_atomic_find(vm, name.sval, 0);
     /* Read the union member that matches `type`, and only that one.  This used
        to answer `__sync_add_and_fetch(&...ival, 0)` whatever the slot held, so
        atomic_get("y") on `y = 1.5` answered 4609434218613702656 -- the IEEE754
@@ -810,8 +827,17 @@ static int posix_atomic_set(VM *vm) {
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value value = vm_cur_stack(vm)[vm_cur_sp(vm)];
     long long val = val_as_int(&value);
-    int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 1);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
+    /* A name that is not a string is a caller error, not an empty counter:
+       raising is the one answer that cannot be mistaken for success.  The
+       check must come BEFORE the lookup, because posix_atomic_find folds
+       "this is not a string" and "there is no such name" into the same -1 --
+       one return value carrying two different decisions, which is the defect
+       this whole family keeps producing.  A slot that holds no integer is a
+       different question (runtime state) and still answers 0 without being
+       touched.  See docs/SYNTAX.md 7.1 D14. */
+    if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }
+    int idx = posix_atomic_find(vm, name.sval, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
     __sync_lock_test_and_set(&vm->globals[idx].val.ival, val);
     vm->globals[idx].val.type = VAL_INT;

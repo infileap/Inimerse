@@ -1587,7 +1587,11 @@ static int builtin_atomic_add(VM *vm) {
     Value *dv = &st[vm_cur_sp(vm)];
     long long delta = val_as_int(dv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
-    if (!nm) { push_int(vm, 0); return 1; }
+    /* A name that is not a string is a caller error, not an empty counter:
+     * raising is the one answer that cannot be mistaken for success.  A slot
+     * that holds no integer is runtime state and still answers 0 without
+     * touching the slot.  See docs/SYNTAX.md 7.1 D14. */
+    if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1647,12 +1651,16 @@ static int builtin_atomic_get(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm)];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
-    /* A name that is not a string leaves nm NULL, and the lookup below hands it
-     * to strcmp: atomic_get(42) crashed the process on Windows.  Its sibling
-     * builtin_atomic_add has had this guard all along (:1585), and POSIX's
-     * posix_atomic_find starts with the same check, so this is the missing
-     * member of a family, not a design difference. */
-    if (!nm) { push_int(vm, 0); return 1; }
+    /* A name that is not a string leaves nm NULL, and the lookup below would
+     * hand it to strcmp: atomic_get(42) crashed the process on Windows.  The
+     * guard was added as a crash fix and answered 0; it now raises instead.
+     * The two questions are not the same one.  A name that is not a string is
+     * a caller error -- the call could never have worked -- so it is
+     * type_mismatch.  A name that resolves to a slot holding no integer is a
+     * runtime state, and that still answers 0 without touching the slot (see
+     * the type check further down).  Both platforms raise for the first and
+     * neither for the second.  See docs/SYNTAX.md 7.1 D14. */
+    if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1674,9 +1682,10 @@ static int builtin_atomic_set(VM *vm) {
     Value *vv = &st[vm_cur_sp(vm)];
     long long val = val_as_int(vv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
-    /* Same missing guard as builtin_atomic_get: a non-string name reached
-     * strcmp as NULL and crashed.  builtin_atomic_add checks it at :1585. */
-    if (!nm) { push_int(vm, 0); return 1; }
+    /* Same rule as builtin_atomic_get: a non-string name is a caller error
+     * and raises type_mismatch; a slot holding no integer is runtime state and
+     * still answers 0 without touching the slot.  See docs/SYNTAX.md 7.1 D14. */
+    if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
