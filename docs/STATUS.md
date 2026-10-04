@@ -3745,7 +3745,60 @@ this one ran.」）。
 **门**、**返回值**、**总结**三个层面上的样子。发现来自 `ivory-ember`（它在自己的
 `stream/ci-gate-static` 分支上也修了同一处），我独立复现。完整边界见 [AUDIT.md](AUDIT.md) §1.57。
 
-## §10.87 两处「声称了但没人验」：模糊测试的分母，和三条指向文件的证据
+## §10.89 一个内建名字有两个注册点，而注册表自己不会说
+
+`builtin_insert`（`src/vm/vm.c:1667`）线性探测**取第一个空槽，从不检查重名**；
+`builtin_lookup`（`:1657`）**返回探测链上第一个名字匹配的槽**。
+⇒ 同名注册两次时，**先注册的永远胜出，后注册的不可达**，而 `builtinCount` 照样把它算进去 ——
+「表里有几个内建」与「能调用几个内建」是两个数，**没有任何东西比较过它们**。
+
+**普查**：`src/` 全部注册点 **588** 个、唯一名字 **462** 个；同文件内重名**只有两处** ——
+`src/isolate_mod.c` 的 `isolate_run`（`#ifdef` 分叉，**误报**）与
+`src/mod/gui_mod.c` 的 `gui_fullscreen`（同一个函数里相隔 7 行，**真重名**，即 §10.82/§1.53 登记的那个）。
+
+**修法**：两个注册函数各加守卫（`src/vm/vm.c:1684`／`:1708`）——
+`builtin_lookup(vm, name) >= 0` 时**拒绝注册**并打一行
+`[vm] builtin '<name>' is already registered; the first one stays`。
+**不改变任何分派行为**（第二个本来就不可达），只是**不再保持沉默**。
+**A/B**：把 `src/runtime/runtime_posix.c:1117` 的 `random` 故意复制成两行 ⇒ 该行出现；恢复后消失。
+**Linux 零假阳性**（POSIX 源列表里 0 个重名），守卫在这里是无操作。
+
+**闸门断言**：`tools/gate.sh:146-152` —— ctest 输出里出现 `is already registered` ⇒ 阶段红。
+放在这里是因为重名发生在 VM 初始化期，**没有任何单个 `.im` 测试看得见它**。
+
+**§1.53 那个实例**：删掉的是**不可达的那一行注册**，**没有删掉另一个实现体** ——
+`builtin_fullscreen`（`src/mod/gui_mod.c:1682`）保留、编译、由 `(void)builtin_fullscreen;` 引用，
+旁边写明**两个体不一样**（保留的要求实参、用 `SetWindowLongA`；不注册的缺省切换、用 `SetWindowLongPtr`），
+**「该注册哪一个」不在这里决定**，§1.53 记着它是人的决定。⇒ **行为逐位不变，选择仍只差一行。**
+
+**诚实边界**：①`src/mod/gui_mod.c` **只在 Windows 上编译**（`CMakeLists.txt:431`），
+本机无法验证它编译得过；②守卫在调用方、不在表里，直接调 `builtin_insert` 会绕过它；
+③`builtin_insert` 本身仍然不检查重名；④两个体行为不同这件事没实测过（需要窗口）。
+完整边界见 [AUDIT.md](AUDIT.md) §1.58。
+
+## §10.90 一份表格声称有 CTest 覆盖，而那两个 fixture 从来没有注册过（BOARD 行 267）
+
+**症状。** `docs/API.md` 第 2.1 节的证据列标题是「证据（CTest）」，而 `:114` 把 `lint_case_missing_default_v04.im` 写成「相关 CTest」，`:115` 把 `lint_case_exhaustive_v04.im` 与四个真实测试名并列。**两处都不成立**：全仓库对这两个文件名的引用**只有那两行文档**，`ctest -N` 里没有它们，也没有任何含 `missing_default` 的名字。同族的第三、四处：`docs/REQUIREMENTS_ANALYSIS.md:177` 的「`migrate_report.py` + 对应 CTest」与 `docs/STATUS.md:286` 把该工具与 `bindgen_regression`／`scan_tools_regression` 并列 —— `tools/` 下没有 `migrate_report.test.py`，那两个 CTest 分别跑 `bindgen.test.py` 与 `scan_tools.test.py`（后者只碰 `cpp_scan`／`python_scan`）。
+
+**能力是真的，覆盖不是。** 两个 fixture 今天都跑得对（`--lint` 各出一条 `[WARN]`、rc=1），`migrate_report.py` 也跑得对（`--help` rc=0；对 `tools/cpp_scan.py` 出真报告、rc=0）。所以不是「文档描述了不存在的东西」，而是**「文档描述了一个从未接上的东西」**。
+
+**为什么没人发现。** `CMakeLists.txt:733-743` 的五个 `lint_case_*` 是**手写列举**的（`:744` 的注释自己数着「The five lint_case_* tests above」），第六、第七个 fixture 落地时没有任何东西要求把它们加进去；仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
+
+**普查。** 67 个 `vtest/*.im` 中 5 个一次都没被 `CMakeLists.txt` 提到：两个是**真缺口**（就是上面那两个），三个合法 —— `params_precompiled_v06.im` 是 `params_precompiled_v06.inim` 的源（`params_precompiled_runtime` 跑的是产物）、`eidos_object_probe_v04.im` 是 `docs/API.md:201` 的样例（功能由 `tools/eidos_runtime.test.py` 的内联脚本断言）、`say_pair_probe_v06.im` 是一次性探针（输出记在 `docs/AUDIT.md:1807`）。`tools/*.test.py` 30 个、`tools/*.test.js` 13 个**今天都是 0 孤儿**。
+
+**修法两半。** ①注册那两条 CTest（**#135** `lint_case_missing_default_runtime`、**#136** `lint_case_exhaustive_runtime`，注册在文件末尾以免既有 `#N` 位移），各带 `PASS_REGULAR_EXPRESSION` **和一条断言对方那条警告不出现的 `FAIL_REGULAR_EXPRESSION`** —— 两个 fixture 只差一行、走同一个 `--lint` 通道，只断言自己的发现分不开「因正确的理由触发」与「对每个 case 都触发」；两个方向实测都成立。②新增 `tools/check_orphan_fixtures.py` 与门禁第 **12** 阶段 `orphan-fixtures`：比较「测试输入集合」与「真正会跑的集合」，不在 `CMakeLists.txt` 里的必须进脚本的 `ALLOWED`，**且每条要写出「那跑的是什么」**（只列文件名的白名单是同一个缺陷上升一层）。
+
+```
+check_orphan_fixtures: 110 input(s) checked (67 vtest fixtures, 30 python harnesses, 13 node harnesses); 64 fixtures registered, 3 allowed with a stated reason.
+```
+
+**A/B。** 把 `CMakeLists.txt` 退回 `HEAD` ⇒ `2 orphaned input(s) out of 110 checked`、**rc=1**，点名的正好是文档声称有覆盖的那两个；恢复 ⇒ rc=0。**A/B 还抓出脚本自己的缺陷**：第一次跑它 `NameError: name 'CMAKE_SOURCE_DIR' is not defined` —— f-string 把 `${CMAKE_SOURCE_DIR}` 的花括号当成了替换字段，于是**一个「能发现孤儿」的检查在真发现孤儿时抛异常而不是报告**。已改成 `${{CMAKE_SOURCE_DIR}}`。**没有这次 A/B 就不会有人发现。**
+
+**同批更正四处文档声称**：`docs/API.md:114` 改成点名真测试 `lint_case_missing_default_runtime` ← 那个 fixture；`:115` 把文件名换成 `lint_case_exhaustive_runtime` ← 那个 fixture；`docs/REQUIREMENTS_ANALYSIS.md:177` 逐条写明哪个工具由哪条 CTest 覆盖、并写明 **`migrate_report.py` 无任何 CTest**，行末判定 **已完成 → 部分**；`docs/STATUS.md:286` 同。**`migrate_report.py` 的测试本轮不写**（`tools/*.test.py` 是对等方的改动域），它是本阶段唯一「已知且被记录」的覆盖缺口。
+
+**计数 134 → 136**，四处同步（`tools/gate.sh` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1）。**诚实边界**见 [AUDIT.md](AUDIT.md) §1.59：子串测试不是解析；本阶段不判断被注册的测试是否断言了任何东西；只查 `vtest/*.im`；`migrate_report.py` 那类「既非 fixture 又无 `X.test.py`」的工具落在两组之外。
+
+## §10.91 两处「声称了但没人验」：模糊测试的分母，和三条指向文件的证据
 
 **症状（流程缺陷，不是引擎缺陷）。** 0.5.1 开在 0.5.0 发布之后，起因是两类同一形状的问题：
 
@@ -3766,7 +3819,7 @@ this one ran.」）。
 | 用例 | 断言 | 原先写在证据列里的东西 |
 | --- | --- | --- |
 | `lint_case_missing_default_runtime` | `case has no wildcard '_'/'else' branch` | `lint_case_missing_default_v04.im` 相关 CTest |
-| `lint_case_wildcard_unreachable_runtime` | `case branch is unreachable: wildcard '_'/'else' appears before this branch` | 把 vtest 文件名混进测试名列表 |
+| `lint_case_exhaustive_runtime` | `case branch is unreachable: wildcard '_'/'else' appears before this branch` | 把 vtest 文件名混进测试名列表 |
 | `desugar_runtime` | `desugar tests: ok`（外加负对照：同一份源码不加 `--desugar` 必须被拒） | `tools/desugar_probe.sh`（零引用 ⇒ 从未运行） |
 
 `tools/desugar_probe.sh` 已删除，改为 `tools/desugar.test.py`：同一个探针（`--desugar` 产出的三行改写逐条断言），但能被 CTest 驱动，且用 Python 写因此在 Windows 上也能跑。负对照是这段探针的价值所在 —— 它钉住的不只是「脱糖能跑」，还有「`say@target` 确实只有脱糖这一条路」（`docs/API.md` §3.3 的结论）。
@@ -3777,13 +3830,13 @@ this one ran.」）。
 
 **诚实边界。** ① 分母断言保证的是「跑满了这么多个程序」，**不保证种子集选得好** —— 三个种子只是把「种子 1 恰好干净」的疑虑压小，不是覆盖率证明；② 证据列改成点名用例只让「谁在验」可查，**不改变那三行的实现状态**（`--lint` 的 case 覆盖仍是「部分实现」，`tools/migrate_report.py` 仍然没有测试）；③ 每条种子的程序数与 `not translated` 为 0 的约定不变（生成器造出后端翻不动的东西仍是生成器的 bug）。
 
-## §10.88 第三处同形状：插件验证跑的是**另一个** checkout
+## §10.92 第三处同形状：插件验证跑的是**另一个** checkout
 
 **症状（流程缺陷，不是引擎缺陷）。** `tools/dsh-inimerse/verify.mjs` 从 `cordis.patch.yml`（**已提交**，`repoRoot: /home/sakiko/inimerse`）里读出绝对路径，再把它交给 `mod.apply`。于是 `tools/gate.sh` 的 plugin 阶段在**任何 worktree 或新克隆**里跑，验的都是**那个路径上的仓库**，而不是被测的那棵树 —— 0.5.1 的 worktree `/tmp/inim-051` 里，plugin 阶段是对 `/home/sakiko/inimerse` 的引擎打印 55/55 的，`/tmp/inim-051/build/inimerse` 一次都没被碰过。证据是实测：把 `/tmp/inim-051/build/inimerse` 改名藏起来，阶段**照样 55/55**。
 
 **同一个缺陷的副产物：崩溃，而不是报错。** 那个「别人的引擎」在验证瞬间不存在时（当时另一会话正在主 worktree 里重链接它），`inim_run` 返回 `{ok:false, code:'engine_missing'}`（这种早返回**没有** `stdout`），而 `verify.mjs:130` 直接读 `inline.stdout.includes(...)` ⇒ `TypeError: Cannot read properties of undefined`，整个验证器带着一个堆栈退出，**一个命名的失败都没留下**。本轮 0.5.1 的门禁运行里出现的就是这一行。
 
-**共同形状。** 与 §10.87 的两处同类：**决定点（「在验哪棵树」）不在被断言的位置上**。断言说「这个桥能用」，而「这个」指的是配置里的路径，不是被测的树。
+**共同形状。** 与 §10.91 的两处同类：**决定点（「在验哪棵树」）不在被断言的位置上**。断言说「这个桥能用」，而「这个」指的是配置里的路径，不是被测的树。
 
 **改法。** `verify.mjs` 改为锚在**它自己所处的 checkout**（`CHECKOUT = resolve(HERE, '..', '..')`）；`cordis.patch.yml` 仍被读取，但只用于在两者不一致时打印一行 `note:`（该配置是给**装进 DSH 的插件**用的，不是被测树的属性）。同时 `inline.stdout` 改为防御性读取：早返回时不再崩，而是让已有的两条断言**带工具的完整 JSON 失败**（里面就有它找过的确切路径）。
 
@@ -3791,7 +3844,7 @@ this one ran.」）。
 
 **诚实边界。** ① 那行 `note:` **不是断言**：worktree 里配置指向别处**仍然是绿的** —— 那份配置是装机用的，不是被测树的属性，为它判红是错的；② **没有任何 CI 工作流引用 `tools/gate.sh`**（`.github/workflows/*.yml` 零命中），所以这个阶段的证据只存在于本机；③ 该阶段仍会在 checkout 内写 `verify-root`（结束时删除）。
 
-## §10.89 第四处同形状：同一个修复贴着两份拷贝，只修了一份
+## §10.93 第四处同形状：同一个修复贴着两份拷贝，只修了一份
 
 **症状。** `29402f8` 把 `.github/workflows/release.yml:45` 的抽取模式改成 `Test[[:space:]]*#`，并在 `:52-54` 加了一条 `collected != Total Tests` 的断言。同一段文本在 `.github/workflows/linux-build.yml:45` **原样留着旧模式** `Test #[0-9][0-9]*`，而且**没有那条断言**。实测本树：旧模式从 137 个测试名里只收集 **38** 个（三位数编号 `#100`–`#137`），新模式 **137** 个。`linux-build.yml` 那个 job 于是**跑 38 个、静默跳过 99 个**，照样报成功、照样打包 —— 与 0.5.0 发布时「24 of 123」、`--lint $FILES` 空 `$FILES`、fuzz 空跑是同一个形状：**断言了一个没有分母的结论**。
 

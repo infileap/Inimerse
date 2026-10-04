@@ -87,25 +87,32 @@ them from stepping on each other. The board and the rules are in
 
 ### `gate.sh` — the acceptance gate
 
-Seven stages; exit 0 only if all pass. A branch is mergable when this is green.
+Twelve stages; exit 0 only if all pass. A branch is mergable when this is green.
 Run it **serially** — two gates at once bind overlapping ports and manufacture the
 failures [docs/STATUS.md](../docs/STATUS.md) §2.9 records.
 
 ```bash
-tools/gate.sh                 # all seven stages
+tools/gate.sh                 # all twelve stages
 tools/gate.sh --fast          # reuse the existing build/ (skip configure)
-tools/gate.sh --only links    # one stage: build|ctest|economy|node|plugin|links|doc-paths
+tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|oauth-loop
+                              #            |ignored-credentials|links|doc-paths
+                              #            |text-integrity|orphan-fixtures
 ```
 
 | Stage | Expectation |
 | --- | --- |
 | build | Release build, 0 error |
-| ctest | **93 / 93** |
+| ctest | **137 / 137** |
 | economy | `tools/economy_migration.test.py` — **39 / 39** |
-| node | `node tools/node_suites/run_all.js` — **11 / 11** |
+| fuzz | `tools/im_diff_fuzz.py` — 3 seeds x 120 programs, **0 findings** |
+| node | `node tools/node_suites/run_all.js` — **12 / 12** |
 | plugin | `node tools/dsh-inimerse/verify.mjs --live` — **55 / 55** |
+| oauth-loop | `oauth_loop` crate — **75 / 75** |
+| ignored-credentials | `userdata/` ignore rules — default deny |
 | links | `tools/check_links.py` — **0 broken** |
 | doc-paths | `tools/check_doc_paths.py` — **0 broken** |
+| text-integrity | `tools/check_text_integrity.py` — **0 files with NUL** |
+| orphan-fixtures | `tools/check_orphan_fixtures.py` — **0 orphans** |
 
 When one of those numbers changes, update this table *and* the baseline row in
 [docs/STATUS.md](../docs/STATUS.md) §1 — otherwise the next session gates against

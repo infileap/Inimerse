@@ -1673,6 +1673,17 @@ static void builtin_insert(VM *vm, int bi) {
 }
 
 void vm_register_builtin(VM *vm, const char *name, BuiltinFunc func) {
+    /* One name, one handler.  builtin_lookup returns the FIRST slot on the
+       probe chain whose name matches, so a second registration of the same name
+       is unreachable code that reads as a live one -- and builtin_insert would
+       give it a slot of its own, leaving two entries for one name with only one
+       of them reachable.  Refuse the duplicate and name it, instead of losing
+       it silently.  This changes no dispatch: the first registration already
+       won. */
+    if (builtin_lookup(vm, name) >= 0) {
+        fprintf(stderr, "[vm] builtin '%s' is already registered; the first one stays\n", name);
+        return;
+    }
     if (vm->builtinCount < 512) {
         const char *np = vm_intern(vm, name);
         vm->builtins[vm->builtinCount].name = np ? (char*)np : strdup(name);
@@ -1686,6 +1697,17 @@ void vm_register_builtin(VM *vm, const char *name, BuiltinFunc func) {
 /* dangerous builtin: executes commands / touches fs / network / process control /
    code injection. Blocked when vm->safe_mode is set (code-injection guard). */
 void vm_register_builtin_full(VM *vm, const char *name, BuiltinFunc func, int flags, int since) {
+    /* One name, one handler.  builtin_lookup returns the FIRST slot on the
+       probe chain whose name matches, so a second registration of the same name
+       is unreachable code that reads as a live one -- and builtin_insert would
+       give it a slot of its own, leaving two entries for one name with only one
+       of them reachable.  Refuse the duplicate and name it, instead of losing
+       it silently.  This changes no dispatch: the first registration already
+       won. */
+    if (builtin_lookup(vm, name) >= 0) {
+        fprintf(stderr, "[vm] builtin '%s' is already registered; the first one stays\n", name);
+        return;
+    }
     if (vm->builtinCount < 512) {
         const char *np = vm_intern(vm, name);
         vm->builtins[vm->builtinCount].name = np ? (char*)np : strdup(name);

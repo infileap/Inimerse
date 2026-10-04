@@ -1226,13 +1226,20 @@ add_test(NAME vm_pool_slot_probe COMMAND vm_pool_slot_probe)
 # Registered after the contract pins above so that their documented #N -- cited in
 # docs/AUDIT.md and docs/STATUS.md -- do not move.
 #
-#
 # `docs/API.md` §2.1 had two `case`-coverage rows whose "证据（CTest）" column named
 # vtest *files* -- vtest/lint_case_missing_default_v04.im and
 # vtest/lint_case_exhaustive_v04.im -- and no CTest referenced either file, so the
 # claim could only be checked by hand.  Both are registered here with the
 # diagnostic each one is supposed to produce, and with a FAIL regex naming the
 # *other* diagnostic: swapping them would be caught instead of silently accepted.
+# The two fixtures are one line apart in what they exercise, so asserting only
+# your own finding cannot tell "the diagnostic fired for the right reason" from
+# "the diagnostic fired for every case".
+#
+# The names follow the fixture names, like the five hand-listed `lint_case_*`
+# tests already registered: a fixture with no registration is a file whose output
+# nothing compares, and nothing in the repository noticed the sixth and seventh
+# were missing.  See docs/AUDIT.md §1.59.
 #
 # `tools/desugar_probe.sh` was the only executable evidence for the whole
 # `--desugar` channel and the `say@target` rewrite, and nothing referenced it at
@@ -1246,8 +1253,8 @@ if(INIMERSE_BUILD_ENGINE)
     PASS_REGULAR_EXPRESSION "case has no wildcard '_'/'else' branch"
     FAIL_REGULAR_EXPRESSION "case branch is unreachable")
   # A wildcard placed before another branch: the branch after it is unreachable.
-  add_test(NAME lint_case_wildcard_unreachable_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_exhaustive_v04.im)
-  set_tests_properties(lint_case_wildcard_unreachable_runtime PROPERTIES
+  add_test(NAME lint_case_exhaustive_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_exhaustive_v04.im)
+  set_tests_properties(lint_case_exhaustive_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case"
     PASS_REGULAR_EXPRESSION "case branch is unreachable: wildcard '_'/'else' appears before this branch"
     FAIL_REGULAR_EXPRESSION "case has no wildcard")

@@ -621,7 +621,7 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 
 **已归零。** 这 5+4 条分歧在 v3.1 里逐条修掉了，pin 从 `5`/`4` 降到 `0`/`0`，阶段从「钉住」改成「零期望」—— 见 §1.14。
 
-**2026-10 补记：pin 只断言了「分歧数」，没断言「跑过」。** 上面这套判定读的是 `DIVERGE` / `THREW` / `not translated` 三个计数，而这三个计数在**一个程序都没跑**的时候同样全是 0 —— 空跑与干净跑打印出同一个绿，和发布门禁跑 24/123、`--lint $FILES` 在 `$FILES` 为空时通过是同一个形状（分母不在被断言的位置上）。0.5.1 按机制修掉：`EXP_FUZZ_SEED=1` 变成种子集 `EXP_FUZZ_SEEDS="${EXP_FUZZ_SEEDS:-1 2 3}"`，`stage_fuzz` 逐种子读回 `seed N, M programs` 并断言 `M == EXP_FUZZ_COUNT`（空跑或缩水的运行不许当成「没有发现」），同时断言四个分桶之和闭合、累计种子数不为 0；pin 与 `not translated` 的判定改在累计总数上做。细节见 [STATUS.md](STATUS.md) §10.87。
+**2026-10 补记：pin 只断言了「分歧数」，没断言「跑过」。** 上面这套判定读的是 `DIVERGE` / `THREW` / `not translated` 三个计数，而这三个计数在**一个程序都没跑**的时候同样全是 0 —— 空跑与干净跑打印出同一个绿，和发布门禁跑 24/123、`--lint $FILES` 在 `$FILES` 为空时通过是同一个形状（分母不在被断言的位置上）。0.5.1 按机制修掉：`EXP_FUZZ_SEED=1` 变成种子集 `EXP_FUZZ_SEEDS="${EXP_FUZZ_SEEDS:-1 2 3}"`，`stage_fuzz` 逐种子读回 `seed N, M programs` 并断言 `M == EXP_FUZZ_COUNT`（空跑或缩水的运行不许当成「没有发现」），同时断言四个分桶之和闭合、累计种子数不为 0；pin 与 `not translated` 的判定改在累计总数上做。细节见 [STATUS.md](STATUS.md) §10.91。
 
 **边界不变，且多一条。** 它仍然只证明「在这些种子和这批程序上，分歧的数量没有变」，不是两个后端一致的合格证；分母断言保证的是「跑满了这么多个程序」，**不保证种子集本身选得好** —— 三个种子只是把「种子 1 恰好干净」的疑虑压小，不是覆盖率证明。
 
@@ -2411,6 +2411,191 @@ gate: this was NOT the full gate: 11 stages are registered and only this one ran
 我独立复现了「打错名字 ⇒ 绿 + exit 0」这一条；② 没有穷举 `--only` 的其他畸形输入（空串、
 大小写、前后空格）；③ 阶段名列表是**派生**的，但派生自 `run_stage` 的**调用点**，如果有人绕过
 `run_stage` 直接跑一个函数，那个函数不会出现在列表里。
+
+## §1.58 一个内建名字有两个注册点，而注册表自己不会说
+
+`vm_register_builtin`（`src/vm/vm.c:1675`）把名字追加进 `vm->builtins[]` 后调用
+`builtin_insert`（`:1667-1673`）：线性探测，**取第一个空槽，从不检查这个名字是否已经在表里**。
+查找侧 `builtin_lookup`（`:1657-1666`）从 `builtin_hash_fn(name)` 出发探测，
+**返回探测链上第一个名字匹配的槽**。
+
+两条合起来的意思是：**同一个名字注册两次时，先注册的那个占住探测链上更早的槽，
+于是永远胜出；后注册的那个拿到自己的槽，但 `builtin_lookup` 永远走不到它。**
+它既不会被拒绝、也不会被报告 —— `builtinCount` 照样把它算进去，
+所以「表里有几个内建」和「能调用几个内建」是两个数，而**没有任何东西比较过这两个数**。
+
+### 普查
+
+对 `src/` 全部 `vm_register_builtin(_full)?(vm, "…")` 提取：**588 个注册点、462 个唯一名字**。
+跨文件的重名有 126 个，但绝大多数是**平台分叉**（`CMakeLists.txt:428-442`：
+`src/runtime/runtime.c` 在 `if(WIN32)` 里、`src/runtime/runtime_posix.c` 在 `else()` 里，
+二者互斥）—— 同一个二进制里只看得见其中一个，所以不是重名。
+
+**同一个文件内的重名只有两处**：
+
+| 位置 | 名字 | 判定 |
+|---|---|---|
+| `src/isolate_mod.c:227` 与 `:318` | `isolate_run` | **误报**：两处分别在 `#ifdef _WIN32` 与 `#else` 分支里 |
+| `src/mod/gui_mod.c:3690` 与 `:3697` | `gui_fullscreen` | **真重名**：两行在同一个 `gui_mod_register` 里相隔 7 行，**中间没有预处理条件** |
+
+⇒ 今天仓库里**唯一一个**「一个名字、两个注册点」的实例就是 §1.53 登记的那一个。
+（`gui_mod.c` 只在 `if(WIN32)` 里参与编译 —— `CMakeLists.txt:431` —— 所以这条**只在 Windows 上可达**，
+本机 Linux 引擎根本不含这个文件。）
+
+### 修法：让损失出声，而不是让注册表保持沉默
+
+`src/vm/vm.c` 的两个注册函数各加一段守卫（`vm_register_builtin:1684`、`vm_register_builtin_full:1708`）：
+
+```c
+if (builtin_lookup(vm, name) >= 0) {
+    fprintf(stderr, "[vm] builtin '%s' is already registered; the first one stays\n", name);
+    return;
+}
+```
+
+**这不改变任何分派行为**：`builtin_lookup` 本来就返回先注册的那个，所以第二个注册点
+**今天已经是不可达的**；守卫做的事只是「不再给它造一个槽」并且**把这件事说出来**。
+区别在于：从前它是**一条读起来像活代码的死代码**，现在它是**一行 stderr**。
+
+### A/B：守卫有牙
+
+把 `src/runtime/runtime_posix.c:1117` 的 `vm_register_builtin(vm, "random", posix_random);`
+**故意复制成两行**、重编、跑任意脚本：
+
+```
+[vm] builtin 'random' is already registered; the first one stays
+```
+
+恢复后该行不再出现。**Linux 侧零假阳性**：当前 POSIX 源列表里 `0` 个重名
+（与 §1.53 那次集合比对一致），所以守卫在 Linux 上是**无操作** —— 这一点是实测的，
+不是推的。
+
+### 闸门断言：`stage_ctest` 里的 `is already registered`
+
+守卫把损失变成一行 stderr，但**没有任何测试会因为它失败**。
+`tools/gate.sh` 的 `stage_ctest`（`tools/gate.sh:146-152`）新增一条断言：
+ctest 的输出里出现 `is already registered` ⇒ **阶段红**，并把那一行原样打出来。
+
+**为什么断言放在这里**：它是**这一阶段刚跑的那些套件**的性质，而**没有任何单个测试文件看得见它** ——
+重名发生在 VM 初始化期，早于任何 `.im` 断言的第一行。
+这条与 `stage_ctest` 已有的另外两条断言同族：`0 tests failed out of $EXP_CTEST`（数量）
+与 `***Skipped`（跳过）。三条都在回答同一个问题：**「跑了的那些」与「本该跑的那些」是不是同一批。**
+
+### §1.53 那个实例的处置：删掉重名，**不**替人做选择
+
+§1.53 把 `gui_fullscreen` 登记为**只登记、不动代码**，理由逐字是
+「两个体行为不同，选哪个是人的决定」。本轮**删掉的是不可达的那一行注册**，
+**没有删掉另一个实现体**：
+
+- `src/mod/gui_mod.c:3690` 的注册保持不动（它本来就是胜出的那个）；
+- `:3697` 那一行**删除**；
+- `builtin_fullscreen` 的**函数体保留**（`src/mod/gui_mod.c:1682`），
+  并在注册处用一行 `(void)builtin_fullscreen;` 引用它，使它在 `-Wunused-function` 下仍然干净；
+- 紧邻的注释写明：**两个体不一样**（保留下来的那个要求实参、用 `SetWindowLongA`；
+  保留但不注册的那个缺省是切换、用 `SetWindowLongPtr` 加保存的 restore style），
+  **「该注册哪一个」不在这里决定**，`docs/AUDIT.md` §1.53 记着它是一个人的决定。
+
+⇒ **行为逐位不变**（被删的那行今天已经不可达），**人的选择仍然摆在同一处、只差一行注册**。
+
+### 诚实边界
+
+1. **`src/mod/gui_mod.c` 的改动本机无法编译验证**：该文件只在 `if(WIN32)` 里参与编译
+   （`CMakeLists.txt:431`），Linux 引擎不含它。`(void)builtin_fullscreen;` 的合法性与
+   `-Wunused-function` 的干净性**必须在 Windows 上核**。
+2. **守卫只在「第二个注册点存在」时出声**。它不检查 `builtinCount` 与「可调用名字数」是否一致，
+   也不扫描源文件 —— 那需要一个解析预处理条件的提取器，而 §1.53 那次比对已经证明
+   不带条件的文本扫描会产生误报（`isolate_run`）。
+3. **`builtin_insert` 仍然不检查重名**。守卫在调用方，不在表里；
+   直接调 `builtin_insert` 的路径（今天只有这两个注册函数）绕过它就绕过了检查。
+4. **`gui_fullscreen` 的两个体行为不同这件事我没有实测过**（需要窗口），
+   是从两份实现逐行读出来的，与 §1.53 的读法一致。
+5. 普查的 588/462 是**文本提取**，不含运行时构造的名字（若有）。
+
+## §1.59 一份表格声称有 CTest 覆盖，而那两个 fixture 从来没有注册过
+
+**症状。** `docs/API.md` 第 2.1 节的证据列标题是「证据（CTest）」，而 `:114` 逐字写着：
+
+| `case value { _: ... }` 默认分支 | 已实现 | `lint_case_missing_default_v04.im` 相关 CTest |
+
+`:115` 把 `lint_case_exhaustive_v04.im` 与**四个真实的 CTest 名字**并列在同一个「证据（CTest）」格子里。两处都不成立：
+
+| 声称 | 实测 |
+| --- | --- |
+| `lint_case_missing_default_v04.im` 有「相关 CTest」 | 全仓库对该文件名的引用**只有这一行文档**；`ctest -N` 的 134 个名字里没有它，也没有任何名字含 `missing_default` |
+| `lint_case_exhaustive_v04.im` 是一个 CTest | 它是**文件名**，不是测试名；全仓库引用同样只有这一行；四个并列的名字（`lint_case_enum_runtime`／`lint_case_membership_runtime`／`lint_case_try_members_runtime`／`lint_case_try_alias_runtime`）**都是真的** |
+| `docs/REQUIREMENTS_ANALYSIS.md:177` 的「`migrate_report.py` + 对应 CTest」 | `tools/` 下**没有** `migrate_report.test.py`；`ctest -N` 里没有任何名字含 `migrate` |
+| `docs/STATUS.md:286` 把 `tools/migrate_report.py` 与两个 CTest 并列 | `bindgen_regression` 跑的是 `tools/bindgen.test.py`，`scan_tools_regression` 跑的是 `tools/scan_tools.test.py`（其 docstring 只提 `cpp_scan` 与 `python_scan`）—— 两个都不碰 `migrate_report.py` |
+
+**能力是真的，覆盖不是。** 两个 fixture 今天都跑得对：
+
+```
+$ ./build/inimerse --lint vtest/lint_case_missing_default_v04.im
+[lint] line 1 [WARN] case has no wildcard '_'/'else' branch; exhaustive coverage cannot be proven for open or infinite sets
+$ ./build/inimerse --lint vtest/lint_case_exhaustive_v04.im
+[lint] line 3 [WARN] case branch is unreachable: wildcard '_'/'else' appears before this branch
+```
+
+两者 rc 均为 1。`tools/migrate_report.py` 也跑得对（`--help` rc=0；对 `tools/cpp_scan.py` 生成真报告、rc=0）。所以这不是「文档描述了不存在的东西」，而是**「文档描述了一个从未接上的东西」** —— fixture 写好了、诊断是对的、表格把它当证据引用了，**而注册那一行从来没有被加过**。
+
+**为什么没有人发现。** `CMakeLists.txt:733-743` 的五个 `lint_case_*` 测试是**手写列举**的（`:744` 的注释自己数着「The five lint_case_* tests above」），于是第六个和第七个 fixture 落地时没有任何东西会要求把它们加进去。仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
+
+**普查。** 67 个 `vtest/*.im` 中 **5 个**在 `CMakeLists.txt` 里一次都没被提到：
+
+| fixture | 判定 |
+| --- | --- |
+| `lint_case_missing_default_v04.im` | **真缺口** —— 文档声称有覆盖 |
+| `lint_case_exhaustive_v04.im` | **真缺口** —— 文档声称有覆盖 |
+| `params_precompiled_v06.im` | 合法：它是 `vtest/params_precompiled_v06.inim` 的**源**，而 `params_precompiled_runtime`（`CMakeLists.txt:1113`）跑的是那份序列化产物 |
+| `eidos_object_probe_v04.im` | 合法：`docs/API.md:201` 引用的**样例脚本**；功能由 `tools/eidos_runtime.test.py` 自带的内联脚本断言 |
+| `say_pair_probe_v06.im` | 合法：一次性探针，输出逐字记在 `docs/AUDIT.md:1807`，本来就不是回归输入 |
+
+另外两组也查了，**今天都是 0 孤儿**：30 个 `tools/*.test.py` 全部被 `CMakeLists.txt` 提到；13 个 `tools/*.test.js` 全部被 `CMakeLists.txt` 或 `tools/node_suites/run_all.js` 提到。
+
+**修法分两半 —— 把声称变成真的，以及让下一个缺口自己出现。**
+
+**(1) 注册那两个 fixture**（`CMakeLists.txt` 末尾，**注册在最后以免任何既有的 `#N` 位移**）：`lint_case_missing_default_runtime`（**#135**）与 `lint_case_exhaustive_runtime`（**#136**），形状与既有的五个 `lint_case_*` 一致，各带 `PASS_REGULAR_EXPRESSION`。**并且各带一条 `FAIL_REGULAR_EXPRESSION` 断言对方那条警告不出现**：
+
+```
+lint_case_missing_default_runtime: PASS "case has no wildcard"       FAIL "case branch is unreachable"
+lint_case_exhaustive_runtime:      PASS "case branch is unreachable: wildcard"  FAIL "case has no wildcard"
+```
+
+理由是这两个 fixture 只差一行、且都在同一个 `--lint` 通道上：**只断言自己那条发现，分不开「诊断因正确的理由触发」与「诊断对每个 case 都触发」。** 实测两个方向都成立（各自输出里对方那条计数为 0）。
+
+**(2) 新增 `tools/check_orphan_fixtures.py` 与门禁第 12 阶段** `orphan-fixtures`。它比较「测试输入集合」与「真正会跑的集合」，三组都查；不在 `CMakeLists.txt` 里的必须出现在脚本的 `ALLOWED` 里，**且每条都要写出「那跑的是什么」**（上面表格里三条合法项的理由逐字在内）。一条只列文件名的白名单，就是同一个缺陷上升一层。
+
+```
+$ python3 tools/check_orphan_fixtures.py
+check_orphan_fixtures: 110 input(s) checked (67 vtest fixtures, 30 python harnesses, 13 node harnesses); 64 fixtures registered, 3 allowed with a stated reason.
+```
+
+**A/B（脚本有牙）。** 把 `CMakeLists.txt` 退回 `HEAD`（即没有那两条注册）：
+
+```
+check_orphan_fixtures: 2 orphaned input(s) out of 110 checked:
+  vtest/lint_case_exhaustive_v04.im: not named in CMakeLists.txt and not in ALLOWED. ...
+  vtest/lint_case_missing_default_v04.im: not named in CMakeLists.txt and not in ALLOWED. ...
+check_orphan_fixtures: an input nothing runs cannot fail, and cannot pass either -- it is not evidence.
+RC=1
+```
+
+恢复后 rc=0。**它点名的正好是文档声称有覆盖的那两个。**
+
+**A/B 抓出了脚本自己的缺陷（值得单独记）。** 第一次跑这个 A/B 时脚本**崩了**：
+
+```
+NameError: name 'CMAKE_SOURCE_DIR' is not defined
+```
+
+因为提示串是 f-string，`${CMAKE_SOURCE_DIR}` 里的花括号被当成替换字段。⇒ **一个「能发现孤儿」的检查在真发现孤儿时会抛异常而不是报告** —— 它存在、它退出非零、它答的是另一个问题。这与本仓库一直在治的形状逐字同形，只不过这次在检查器自己身上；已改成 `${{CMAKE_SOURCE_DIR}}`。**这条是 A/B 唯一的产出，没有 A/B 就不会有人发现。**
+
+**诚实边界。**
+1. **「在 `CMakeLists.txt` 里被提到」是子串测试，不是解析。** 一个只在注释里被提到的 fixture 会通过。这是刻意的：替代方案是写一个 CMake 解析器，而一条提到 fixture 的注释至少是一个能被找到的读者。
+2. **这一阶段不判断被注册的测试是否断言了任何东西。** 一条既无 `PASS_REGULAR_EXPRESSION` 也无 `FAIL_REGULAR_EXPRESSION` 的注册可以靠任何退出码通过 —— 见 `docs/SYNTAX.md` §7.2（M13）。
+3. **只查 `vtest/*.im`**，不查 `vtest/*.params` / `*.inim` / `*.txt`。那些是被注册的测试的输入而不是测试，且 `params_precompiled_v06.inim` 由跑它的那条注册点名。
+4. **`tools/migrate_report.py` 仍然没有 CTest。** 本轮只更正了那两处文档声称（并把它记成「部分」），**没有**为它写测试 —— `tools/*.test.py` 属于对等方的改动域。它是本阶段唯一「已知且被记录」的覆盖缺口：`check_orphan_fixtures.py` 查的是 `vtest/*.im` 与 `*.test.py`，**一个既非 fixture 又无 `X.test.py` 的工具落在两组之外**。这是一个刻意的窄口，写在脚本的 docstring 里。
+5. **本轮计数 134 → 136**（新增两条 CTest），`tools/gate.sh` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1 四处同步。
+
 
 ## §2 执行通道效率比较
 

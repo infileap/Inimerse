@@ -112,7 +112,7 @@
 | 嵌套 / 结构模式 | 已实现 | `case_nested_patterns_runtime` ← `vtest/case_nested_patterns_v04.im` |
 | `case try`（Result 分支） | 部分实现 | `case_try_runtime` ← `vtest/case_try_v04.im` |
 | `case value { _: ... }` 默认分支 | 已实现 | `case_structural_runtime`（`vtest/case_structural_v04.im:14,18,22,29` 的 `_:` 分支）、`case_nested_patterns_runtime`（`vtest/case_nested_patterns_v04.im:5,10,16`）；`--lint` 对**缺失**默认分支的告警由 `lint_case_missing_default_runtime` 钉住 ← `vtest/lint_case_missing_default_v04.im` |
-| `--lint` 的 case 覆盖诊断（穷尽性 / 成员 / 别名） | 部分实现 | `lint_case_enum_runtime`、`lint_case_membership_runtime`、`lint_case_try_members_runtime`、`lint_case_try_alias_runtime`；通配符排在其它分支之前（其后分支不可达）由 `lint_case_wildcard_unreachable_runtime` 钉住 ← `vtest/lint_case_exhaustive_v04.im` |
+| `--lint` 的 case 覆盖诊断（穷尽性 / 成员 / 别名） | 部分实现 | `lint_case_enum_runtime`、`lint_case_membership_runtime`、`lint_case_try_members_runtime`、`lint_case_try_alias_runtime`；通配符排在其它分支之前（其后分支不可达）由 `lint_case_exhaustive_runtime` 钉住 ← `vtest/lint_case_exhaustive_v04.im` |
 | 谓词模式、`in TypeOrSet`、字典字段模式 | 部分实现 | `docs/archive/API_CATALOG.md` 列 部分实现；对应 CTest 覆盖有限 |
 
 ### 2.2 类型层内核（C API）

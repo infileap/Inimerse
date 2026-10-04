@@ -174,7 +174,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | 8 | AOT ≥2x 解释器 | RELEASE_0.5.0 | 已完成 | `SELFHOST_BENCHMARK.md` 实测 **1.09x**，原文自述"打包是分发手段，不是优化" | **虚假** |
 | 9 | 优化型 JIT | 多处 | 草案 | `--jit=template\|optimized` 安全回退解释器 | **缺失** |
 | 10 | 增量/可复现构建 + debug-info | CHANGELOG `[Unreleased]` | 已实现 | `cli_incremental_regression` CTest 通过；`<out>.build.json`/`.dbg`/`.debug_line` 见于 changelog | **符合** |
-| 11 | 统一 IDL / bindgen / 迁移报告 | ROADMAP_0.5-0.6 §3.4 | 已完成 | CTest `bindgen_regression`（`tools/bindgen.test.py` → `tools/bindgen.py`）、`scan_tools_regression`（`tools/scan_tools.test.py` → `tools/cpp_scan.py`、`tools/python_scan.py`）；**`tools/migrate_report.py` 没有被任何 CTest 或测试脚本引用**（旧行把四个工具名并列当证据，其中一个不成立） | **符合** |
+| 11 | 统一 IDL / bindgen / 迁移报告 | ROADMAP_0.5-0.6 §3.4 | 已完成 | CTest `bindgen_regression`（`tools/bindgen.test.py` → `tools/bindgen.py`）、`scan_tools_regression`（`tools/scan_tools.test.py` → `tools/cpp_scan.py`、`tools/python_scan.py`）；**`tools/migrate_report.py` 没有被任何 CTest 或测试脚本引用**（`tools/` 下没有 `migrate_report.test.py`，旧行把四个工具名并列当证据，其中一个不成立）⇒ 该工具今天**无人回归** | **部分** |
 | 12 | UPP 协议（握手/心跳/manifest） | ROADMAP 阶段二 | `[x]` 协议层完成 | Node 协议套件 `tools/node_suites/run_all.js`（`stage_node` 断言 12/12 注册，任何 skip 即红）；被测实现 `tools/upp_reference.js`、`tools/upp_session.js`（各带同名 `.test.js`），跨引擎比对在 `tools/upp_engine_crosscheck.js` | **符合** |
 | 13 | CRP 2A–2D | ROADMAP 阶段二 | `[x]` | `crp_reference/relay/client/ws_client` + `crp_session_flow_regression` CTest | **符合** |
 | 14 | CRP 客户端 UI 闭环 | ROADMAP 阶段二出口条件 | **0/3 勾** | 桌面端仍是 "B0 骨架" | **缺失** |
