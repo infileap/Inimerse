@@ -305,6 +305,23 @@ void emit_from_bytecode(Ctx *c, const Bytecode *bc); /* 目标：共用唯一入
 
 **诚实边界（这条很重要，因为两个独立计数不一致）**：我的正则是 `vm_register_builtin(_full)?\s*\(\s*\w+\s*,\s*"([^"]+)"`，只匹配**字面量名字 + 简单首参**；用宏或变量传名字的会漏掉。`exact-lumen` 独立数出的是 WIN32 **398** / POSIX **128**，与我这里的 **431 / 241** 不一致——**我无法解释这个差**（很可能是它只扫了 `CMakeLists.txt:412-436` 那一段的文件子集，而 POSIX 的 `list(APPEND …)` 在 `:438-443`）。**两个数都留着，不调和一个我解释不了的差异。**
 
+#### 第二个先例，而且它比第一个更接近 §3.1 要做的事（2026-10 新增）
+
+第一个先例是「**在创建点拒绝**」——`builtin` 注册表能拒绝，因为第二次注册在语义上就是死代码。**但 §3.1 的表拒绝不了任何东西**：它只是把 69 个 opcode 与它们的消费者**摆在一起比较**。所以第一个先例证明的是「这个仓库肯为一条语义纪律加断言」，**没有**证明「跨两个artifact 的集合比对在这个仓库里跑通过」。
+
+**现在它跑通过了。** 第二个先例（来源：`exact-lumen` 本轮的实测与修复，**我未独立复核，标为 [转述]**）：
+
+- **症状**：四处文档声称有 CTest 覆盖、四处都没有 —— `docs/API.md` 第 2.1 节的证据列标题就是「证据（CTest）」，而 `:114` 把 `lint_case_missing_default_v04.im` 写成「相关 CTest」、`:115` 把 `lint_case_exhaustive_v04.im`（**是文件名，不是测试名**）与四个真实测试名并列；`docs/REQUIREMENTS_ANALYSIS.md:177` 与 `docs/STATUS.md:286` 把 `tools/migrate_report.py` 与 `bindgen_regression` / `scan_tools_regression` 并列，而 `tools/` 下**没有** `migrate_report.test.py`，那两个 CTest 跑的是 `bindgen.test.py` 与 `scan_tools.test.py`、**都不碰它**。
+- **能力是真的，覆盖不是**：两个 fixture 今天 `--lint` 各出一条 `[WARN]`、rc=1；`migrate_report.py` 也 rc=0 出真报告。⇒ **不是「文档描述了不存在的东西」，而是「文档描述了一个从未接上的东西」** —— fixture 写好了、诊断是对的、表格把它当证据引用了，**而注册那一行从来没有被加过**。
+- **为什么没人发现**：`CMakeLists.txt:733-743` 的五个 `lint_case_*` 是**手写列举**的（`:744` 的注释自己数着「The five lint_case_* tests above …」），第六、第七个 fixture 落地时**没有任何东西要求把它们加进去**；仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
+- **修法的两半**：① 注册 **#135** / **#136**，各带 `PASS_REGULAR_EXPRESSION` **和一条断言对方那条警告不出现的 `FAIL_REGULAR_EXPRESSION`**（两个 fixture 只差一行、走同一个 `--lint` 通道，只断言自己的发现**分不开**「因正确的理由触发」与「对每个 case 都触发」）；② 新增 `tools/check_orphan_fixtures.py` 与**门禁第 12 阶段 `orphan-fixtures`**。
+- **反向验证**：把 `CMakeLists.txt` 退回 `HEAD` ⇒ `2 orphaned input(s) out of 110 checked` + 逐条点名 + `exit 1`。
+- **普查**：67 个 `vtest/*.im` 中 5 个未被 `CMakeLists.txt` 提到 —— 两个真缺口、三个合法；30 个 `tools/*.test.py` 与 13 个 `tools/*.test.js` **今天都是 0 孤儿**。
+
+**它为什么是更好的先例**：§3.1 的判据（表行数 == 枚举成员数、双向差集为空）与 `orphan-fixtures` **是同一种断言** —— **两个 artifact 之间的集合关系，没有任何单个文件能看到**。第一个先例证明「能拒绝就拒绝」，第二个先例证明「**拒绝不了就比对**」。
+
+**而且这个先例自带一个教训，必须抄进 §7 第 4 条**：那个检查脚本**第一次跑 A/B 时自己崩了** —— `NameError: name 'CMAKE_SOURCE_DIR' is not defined`，因为提示串是 f-string，`${CMAKE_SOURCE_DIR}` 的花括号被当成了替换字段。⇒ **一个「能发现孤儿」的检查，在真的发现孤儿时抛异常而不是报告**：**它存在、它退出非零、而它答的是另一个问题。** 修法是把它写成 `${{CMAKE_SOURCE_DIR}}`。**没有那次反向验证，不会有人发现。** —— 这正是 §3.1 每条判据都要求「**故意改错必须变红**」而不是「加一个检查」的原因：**一个从未在真实反例上跑过的检查，不是证据。**
+
 ### 3.1.9 表里有一类行**不是「还没实现」，而是「不需要实现」**：零生产点 opcode
 
 `producers` 那一列（§3.1.3）第一次填就抓出**两个枚举里有、全仓库没有任何东西会发射**的 opcode。
@@ -427,6 +444,84 @@ IR 要放类型 ⇒ `RegInstruction`（`src/compiler/bytecode.h:69-74`）加字�
 **`var` 那一半不是「另一条路」，是 B″ 内部必须保留的一格**：IR 需要一个「动态」类型值（语义上等于 `im_typeset_any()`），使 `var` 声明的值走与 **A″ 完全相同**的运行期分派。⇒ **A″ 与 B″ 不是二选一**：B″ 的实现里**同时**有静态特化路径与动态分派路径，而**这两条路径的边界（哪些声明算 `var`）就是新的、必须被断言的东西**——否则「var 动态」会变成「有的地方静态、有的地方动态、没有东西说清是哪个」。
 
 **诚实边界**：① 「`im_typeset_*` 零消费者」是 `grep -rl` 的**字面结论**，它证明的是「`src/`（除 `src/types/`）里没有 `im_typeset` 这个字符串」；② 「`OP_BE` 用 `set_contains` 而非 `im_typeset_*`」是**读 `src/vm/vm.c:4262-4308` 命中行**得出的，我**没有**通读该块全文；③ 「`type X` 是运行期全局」是从**编译器发射形状**读出的，**没有实跑一个 `.im` 去观察全局**；④ 我**没有**检查 `mods/`、`projects/`、`vtest/` 里有没有人用 `type`。
+
+### 3.8 裁定已下：**契约式双层判定**（2026-10，第四个人类裁定）
+
+我在 §3.7 末尾把「编译期类型与 `OP_BE` 运行期检查的关系」提成三选一（(i) 编译期取代运行期；(ii) 两层都留但强制断言一致；(iii) 运行期仍是唯一判对错的人、编译期类型只是优化提示）。**人类裁定：走 (ii) 的强化版**，原文要点如下（下面是对裁定的转述与落地，**裁定本身以人的原话为准**）。
+
+#### 裁定的内容
+
+- **主从关系**：**编译期保守推断，运行期契约执行。** 不是「谁服从谁」，而是「**编译期建立契约，运行期执行契约**」。
+- **编译期的义务是保守**：编译器推断出的集合（记作 `CompilerSet`）必须是运行期实际可能出现的集合（`RuntimeSet`）的**超集** —— 即 `CompilerSet ⊇ RuntimeSet`。编译器只负责证明「**如果运行，绝不会因为类型/边界崩溃**」。
+- **运行期的地位**：`OP_BE` 是「编译期未竟事业的兜底」，**只在编译期无法证明安全性处插入**。若 `OP_BE` 触发，意味着**编译期的静态分析是错的**（或遇到了 `unsafe` / 动态逃逸）。
+- **一致性断言（Debug / Strict 模式）**：在编译期已证明安全的路径上，插入等价断言；**断言失败 ⇒ 编译器有 bug ⇒ Panic 并记录全息数据，按「极严重的编译器级错误」处理**。
+- **按执行模式分层**：
+  - **静态编译模式（默认，无 `var`）**：强制走 (ii)。编译期做极限推断（基于集合运算），**能证明的消除 `OP_BE`**，**不能证明的触发编译错误**，要求开发者显式提供 `@runtime_check` 或改写为 `Result`。
+  - **动态 / 脚本模式（`var` 或解释执行）**：**退化为 (iii)** —— 明确告知：此模式为快速原型，**运行期是最终真理**，`OP_BE` 是唯一判错者。
+  - **跨边界（静态与动态互调）**：必须插入**显式的边界转换检查**；这是两层结论一致性的**对接点**。
+- **对 AI 生成代码的三条准则**：① **绝不依赖运行期兜底**（要给出精确的集合类型标注，让编译器静态证明）；② **明确降级**（无法保证类型安全时，主动用 `Result` 或显式 `@runtime_check`，不得假装安全）；③ **尊重 `var`**（用了 `var` 就要明确告知此处依赖运行期 `OP_BE`，并做好错误处理）。
+- **一句话**：「**编译期负责『依法证明』，运行期负责『违法必究』，两者不得有二义**」；用 (ii) 的原则实现，`OP_BE` 做最终铡刀，**但必须用断言防止铡刀砍错人**。
+
+**裁定否决 (iii) 的理由（要记下来，因为它决定了 §1 的哪些修法不可接受）**：若运行期是唯一判对错的人、编译期类型只是优化提示，则**形式化验证与 Proof 失去根基**（编译期不能保证 `x in Z+`，关于 `hp >= 0` 的证明就是空中楼阁），且**集合论类型（`Z * [0~255]`）从「给开发者与 AI 的契约」沦为摆设**，「编译通过即安全」的哲学无法成立。
+
+#### 这条裁定与 §3.1.8 的先例**形状不同**，必须写清（否则读者会以为我们在重复已有的纪律）
+
+- **§3.1.8 的先例是「拒绝第二个决定点」**：builtin 注册表在**创建点**就拒绝重名（`src/vm/vm.c:1676-1686`），因为**它能拒绝** —— 第二次注册在语义上就是死代码。
+- **本裁定是「允许第二个决定点，但要求它有主从关系并被断言」**：编译期与运行期**都在判断类型**，而**编译期那一半不能被删掉**（删了就是 (iii)，已被否决）。⇒ 这里**不存在**「在创建点拒绝重复」的位置，只能**用断言钉住两者一致**。
+- **两者不矛盾**，但**它们是两个不同的模式**：**能拒绝就拒绝；拒绝不了就断言。** §3 的表与 §6 的判据必须同时容纳这两种模式，**不能把本裁定当成 §3.1.8 的推广**。
+
+#### 我要指出的三处「裁定的措辞与可实现的断言之间还有距离」（**不是反对裁定，是反对把它直接抄进代码**）
+
+1. **`CompilerSet == RuntimeSet` 这个等式不能直接实现。** `CompilerSet` 是**可能类型的集合**（一个上界），而运行期在某个点上是**一个具体的值 / 一个具体的 `Value.type`** —— 一个集合与一个元素之间没有 `==`。**可实现的形状是成员关系**：`type_of(实际值) ∈ CompilerSet`。等式只在**编译期集合恰好是单例**时才与成员关系等价（这正好是 §3.7 那条证明义务覆盖的情形）。**⇒ 落地时必须把它写成 `∈`，并说明 `==` 是它在单例情形下的特例**；否则那条 Debug 断言没有可写的形式。
+2. **`OP_BE` 在裁定里有两个不同角色，必须分清。** 「运行期的地位」段说 `OP_BE` **是编译期无法证明时的兜底**；而「静态编译模式」段说**无法证明时触发编译错误**。两者同时成立时，**静态模式下 `OP_BE` 永远不会被插入**（因为无法证明的程序根本编译不过）。**自洽的读法只有一条**：`OP_BE` 恰好出现在三处 —— ① **动态 / 脚本模式**（唯一判错者）；② 静态模式下**开发者显式写了 `@runtime_check` 的地方**；③ **Debug 断言路径**。**建议按这个读法落地，并请人类确认**——因为这是「一条规则两份说法」的形状，正是本文档 §1 在治的那个病，只不过这次它在**裁定的文本内部**。
+3. **「无法证明 ⇒ 编译错误」是一条今天不存在的语言规则，且它会让今天合法的程序编译不过。** 今天 `be` 是**纯运行期检查**，编译器**从不拒绝**（`src/compiler/compiler.c:2232-2240` 无条件发射 `OP_BE`）。⇒ 这条规则**新增了一项编译器的否决权**，而**没有任何东西量过有多少 `.im` 会因此被拒**。同样，`@runtime_check` 是**新语法**，今天不存在（`grep -rn "runtime_check" src/ selfhost/ docs/` 待做，我**没有**做）。**⇒ 这两项在 §6 里各自需要一条「先量后改」的前置判据，不能直接写进实现步。**
+
+#### 这条裁定对 §3 与 §6 的直接后果（登记为 §9 第 17 条）
+
+- **§3 的 69 行表要多一列**：每个 opcode 需要标注**它是否受编译期契约覆盖**（即：在静态模式下这个 opcode 是否可能被编译期消除）。今天表里的 `can_raise` 与 `producers` 两列都不表达这件事。**这是 B″ 与 (ii) 叠加后的新列，不是原表的冗余。**
+- **§6 需要两条新判据**（都可证伪）：
+  1. **保守性判据**：对每一个由编译器标注了类型的寄存器，**运行期实际 `Value.type` 必须属于该编译期集合**（`type_of(实际值) ∈ CompilerSet`）；**故意把某处 `CompilerSet` 收窄成不含实际值的一格，该测试必须变红。**
+  2. **主从判据**：在静态模式下，**凡编译期已证明安全的位置，`OP_BE` 不得出现**；凡 `OP_BE` 出现的位置，必须是动态模式 / 显式 `@runtime_check` / Debug 断言三者之一。**判据形式**：对同一段 `.im`，静态模式产出的字节码里 `OP_BE` 的出现次数为 **0**（或全部落在上述三类白名单位置），而动态模式产出里 `OP_BE` 保留 —— **同一份源码两种模式，产出必须都符合各自的规则**。
+
+### 3.9 裁定已下：**先量爆炸半径，以「静态模式 `OP_BE` 为 0」为终极目标**（2026-10，第五个人类裁定）+ 实测结果
+
+§3.8 指出裁定文本内部 `OP_BE` 有两个角色（「编译期无法证明时的兜底」vs「静态模式下无法证明 ⇒ 编译错误」），不能同时成立。我提了三选一；**人类裁定：短期执行 (C) 先量爆炸半径，长期锚定 (A)「静态模式下 `OP_BE` 必须为 0」**。裁定原文的要点：
+
+- **「无法证明」不等于「报错」，而是「强制显式降级」** —— 这是消解那两个角色的关键一句。⇒ **§3.8 那三处白名单（动态模式 / 显式 `@runtime_check` / Debug 断言）被确认为最终口径**；「无法证明且没有标 `@runtime_check`」才**是编译错误**，并要给出 AI 友好的提示（「编译器无法静态证明此处的类型约束，请添加 `@runtime_check` 或修改逻辑返回 `Result`」）。
+- **量完之后要把实例分成三类**（裁定原文的分类）：① **AI 生成的垃圾代码**（滥用 `be` 或缺上下文）⇒ 改提示词，不改编译器；② **复杂业务逻辑**（外部输入、第三方库）⇒ 天生不可证，需要逃生舱；③ **编译器能力不足**（本可证明但编译器太笨）⇒ 编译器团队的优化目标。**这个分类很重要，因为它决定了「不可证明的实例」该由谁负责修。**
+- **为什么否决 (A) 直接上**：那会让 Inimerse 比 Rust 还难写，违背「AI 易于生成、面向目标编程」的初衷；**为什么否决 (C) 全凭运行期**：集合论与形式化验证（Proof）将彻底失去意义。当前裁定「量 + 显式降级」保留了**契约精神**：想用 `var`/动态可以，但承认了风险；想用静态集合，必须承担证明义务；**编译器绝不悄悄替你兜底（隐式 `OP_BE`），一切都摆在台面上。**
+- **对 AI 的三条**（裁定原文）：**优先尝试证明**（拆分逻辑、用 `if x in Z+` 收窄，帮编译器完成证明）；**必须显式降级**（确实无法证明时主动把返回类型改成 `Result` 并处理 `Err`，而不是让编译器插隐式 `OP_BE`）；**绝不隐瞒不确定性**（含运行期不确定性的代码必须有显式路径捕获 `OP_BE` 可能引发的异常）。
+
+#### 实测：爆炸半径的**上界**是 10 处 / 346 个 `.im`，且这 10 处的约束**全部可由字面量或内建类型解析**（2026-10，本会话实测）
+
+裁定要求「先跑脚本量一下数据，看看如果『强制显式降级』到底会炸掉多少个文件」。**今天没有静态分析器，所以「不可证明」这个谓词不可计算**；可计算的是**上界**：**每一个 `be` 语句**，按「它的约束表达式能否只靠字面量 / 内建类型 / 具名类型声明解析出来」分类。
+
+**普查命令**（覆盖整个仓库，排除 `build/`、`.worktrees/`、`.verify/`）：
+
+```
+grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --include=*.im .
+```
+
+**结果：346 个受跟踪 `.im` 文件中，只有 10 处 `be` 语句，分布在 10 个文件里。逐条分类如下。**
+
+| 文件:行 | 语句 | 约束表达式的种类 | 能否解析 |
+|---|---|---|---|
+| `exc_test.im:11` | `gamemode be 0,1,2,3:0` | 字面量枚举 | ✅ |
+| `projects/exc_test.im:11` | `gamemode be 0,1,2,3:0` | 字面量枚举 | ✅ |
+| `meta_test.im:45` | `g be 0,1,2,3:0` | 字面量枚举 | ✅ |
+| `set_test.im:28` | `gamemode be 0,1,2,3:0` | 字面量枚举 | ✅ |
+| `inf_set_test.im:115` | `gv be (0,10):5` | 字面量区间 | ✅ |
+| `vtest/lint_case_membership_v04.im:2` | `dir be Direction = "N"` | 具名类型，声明在同文件 `:1` = `type Direction = "N","S","E","W"`（**字面量枚举**） | ✅ |
+| `vtest/lint_case_enum_v04.im:2` | `dir be Direction = "N"` | 同上 | ✅ |
+| `vtest/type_collection_v04.im:3` | `x be Byte: 42` | 具名类型，声明在同文件 `:2` = `type Byte = [0~255]`（**字面量区间**） | ✅ |
+| `big_globals_test.im:168` | `g200 be N : 42` | **内建类型** `N`（`src/vm/vm.c:1871` 的 `"N","Z","Z+","Z-"…` 名单，`:1880` `if (strcmp(name,"N") == 0) return 0;`） | ✅ |
+| `nsadv_mod.im:3` | `q be N : 5` | 同上 | ✅ |
+
+⇒ **今天爆炸半径的上界 = 0 个「不可解析约束」的实例。** 按裁定自己的执行路径（「**如果只炸几个，立刻执行 A 的落地口径**」），数据支持**直接采用 (A) 的口径**——**但有一个前提必须先说清**：这 10 条是我**按分类规则手工判定**的，**不是分析器跑出来的**；「不可证明」这个词在分析器存在之前**没有可执行的判据**。⇒ **正确的读法是「上界 10，且 10/10 属于『可解析』一类」，不是「已证明 0 处不可证明」。**
+
+**顺带两条与 `docs/SYNTAX.md` 的互相印证**：`docs/SYNTAX.md:550` 说 `be` 是「仓库里最不常见的语句形式之一」——**346 个文件里 10 处，实证了这句话**；而 `docs/SYNTAX.md:546` 给的形式是 `name be <集合或表达式> [: init]`，上表里 `be Direction = "N"` 用的是 `=` 而不是 `:`（`docs/SYNTAX.md` 没写 `=` 这种 init 分隔符）⇒ **文档与语法的又一处不一致，登记为待核**（我**没有**去读 `src/parser/parser.c:1357-1365` 确认 `=` 是否合法）。
+
+**诚实边界**：① 上表 10 条是**我手工分类**的，判据是「约束表达式能否只靠字面量/内建/同文件具名声明解析」，**不是**任何静态分析器的输出；② 正则只匹配「行首 标识符 空白 `be` 空白」这一种形状，**漏掉**别名/带下标的名字、`be` 前有换行的续行、以及非常规空白；**误报**（把表达式里恰好叫 `be` 的标识符当语句）**未排查**；③ 我**没有**检查 `type X = <依赖运行期值的表达式>` 这种**类型声明本身不可静态求值**的情况——那才是 §3.7 记的真问题（今天类型是运行期全局），上表只看了 `be` 的**使用点**；④ 「内建类型 `N` 可解析」是从 `src/vm/vm.c:1871/1880` 的**名字名单**读出的，**没有实跑**编译器去确认它对 `be N` 是否真的在编译期求值。
 
 ---
 
@@ -566,6 +661,23 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 
 **风险与不做。** 两半都要动引擎源码，**本文档只写不改**（见 §9 第 9、10 条）。不在这一步里顺手做 §3 的字节码收敛——两件事混在一起，失败时无法归因。也**不要**为了让三后端「看起来一致」而去改 `vm_truthy()`：它是唯一语义来源，改它等于把分歧换个地方发生。
 
+### 6.2 B″ + 契约式双层判定（§3.7 / §3.8）新增的判据
+
+§3.8 的裁定给这一步加了**三项证明义务**。它们**不在第 0–5 步的任何一条里**，必须单独列，否则「双层判定」会以「两层都在判断、没有东西说清谁对」的形状落地——那正是 §1 在治的病。
+
+| 判据 | 内容 | 可证伪形式 |
+| --- | --- | --- |
+| **保守性** | 编译器标了类型的寄存器，运行期实际类型必须落在该编译期集合**内** | 差分测试里对每个被标注的寄存器断言 `type_of(R[i]) ∈ CompilerSet`；**故意把某处 `CompilerSet` 收窄成不含实际值的一格，该测试必须变红** |
+| **主从（`OP_BE` 的位置）** | 静态模式下 `OP_BE` **不得**出现在编译期已证明安全处；它只允许在「动态/`var` 模式 / 显式 `@runtime_check` / Debug 断言」三处 | **同一份 `.im` 两种模式**：静态模式产出的字节码里 `OP_BE` 次数为 **0**（或全部落在白名单三类），动态模式产出里 `OP_BE` 保留；两条各自成立 |
+| **单例一致（§3.7 原有）** | 编译器给出「单例标量」的寄存器，VM 运行期类型必须一致 | 凡标注为单例 `IM_TYPE_INT` 的寄存器，运行到该指令时 `R[i].type` 必须为 `VAL_INT`；一个反例即红 |
+
+**三项都还缺一个前置测量**（**先量后改**，见 §9 第 17 条）：
+
+1. **有多少今天合法的 `.im` 会因「无法证明 ⇒ 编译错误」而编译不过？** 今天 `be` 是纯运行期检查（`src/compiler/compiler.c:2232-2240` 无条件发射 `OP_BE`），编译器**从不拒绝**。这条规则**新增了一项编译器的否决权**，而**没有任何东西量过它的爆炸半径**——本档 §0.5 记过一条教训：「凡『改动会破坏 N 处』的断言都应先量后写」（那次实测真正受影响的只有 **1** 个文件）。⇒ **先对 `vtest/`、`projects/`、`mods/` 全量统计「有 `be` 且编译器无法静态证明」的实例数，再决定这条规则是否分期生效。**
+   **→ 已量（2026-10，第五个人类裁定要求的那次），结论见 §3.9**：全仓 **346 个 `.im` 只有 10 处 `be`**，**10/10 的约束表达式都只依赖字面量 / 内建类型 / 同文件具名声明** ⇒ **上界 = 0 个不可解析实例**，按裁定自己的路径支持**直接采用 (A) 的口径**。**但 §3.9 的四条诚实边界必须一起读**（手工分类、正则只覆盖一种形状、只看了 `be` 使用点而非 `type` 声明、内建 `N` 未实跑验证）。
+2. **`@runtime_check` 的语法与它落到哪些 opcode 上。** 今天不存在这个语法（我**没有**跑过 `grep -rn "runtime_check" src/ selfhost/ docs/`，**未测**）。
+3. **断言里 `CompilerSet` 与运行期值的比较必须写成 `∈` 而不是 `==`**（§3.8 已说明理由：可能类型的集合与一个具体值之间没有 `==`）。**这条不是测量，是写法约束**——写错了断言就编不出来，或者编出来是恒真的。
+
 ---
 
 ## 7. (f) 风险与「不做什么」
@@ -577,6 +689,8 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 3. **不只改其中一路的 `and`/`or`**。改一路会把分歧从「三处不一致」变成「两处不一致」，不减少可观测缺陷。
 4. **不把注释当语义证据**。`src/compilation/aot_native.c:420-428` 的注释与行为相反；`src/compilation/wasm_backend.c:6` 声称 "mirror the C VM exactly" 却与 `:938` 冲突。这类「注释与代码互相担保」正是分歧能长期存活的原因。
    **第三例（2026-10 实测，比前两例更硬）**：本文档指定为**唯一语义来源**的 `src/vm/vm.c` 里，**有 58 行注释是乱码**（`锟斤拷` 一类损坏的编码），**其中 30 行落在 69 个指令体区间 `:3146-4680` 之内** —— 例如 `L_POP_REG` 上方那条分隔注释与 `L_CALL_BUILTIN` 体首的参数说明。**门禁的 `text-integrity` 阶段对此是绿的**，因为 `tools/check_text_integrity.py` 的判据是**「文件里没有 NUL 字节」**（该脚本 docstring 逐字写明它查的是 NUL），**不是「注释可读」**。⇒ 后果有两层：① 「读 VM 的 `L_X:` 块来填表」这件事，在 30 个格子上遇到的是**读不懂的注释**（代码本身可读，故不影响 §3.1.7 的分类，但会影响任何以注释为线索的读者）；② 一个**只查 NUL 的完整性检查**会给「注释已被损坏」发绿灯 —— 这是 §3.1.8 那个病的又一面：**被检查的东西与被断言的东西不是同一个**。
+   **第四例（2026-10 新增，来源 `exact-lumen`，标为 [转述]）——这一例最该记住，因为它说的不是注释，是「检查」**：`tools/check_orphan_fixtures.py`（门禁第 12 阶段 `orphan-fixtures`，见 §3.1.8 第二个先例）**第一次跑反向验证时自己崩了**：`NameError: name 'CMAKE_SOURCE_DIR' is not defined` —— 提示串是 f-string，`${CMAKE_SOURCE_DIR}` 的花括号被当成替换字段。⇒ **一个「能发现孤儿」的检查，在真的发现孤儿时抛异常而不是报告：它存在、它退出非零、而它答的是另一个问题。** 修法是 `${{CMAKE_SOURCE_DIR}}`；**没有那次反向验证，不会有人发现**。
+   ⇒ **这四例合起来给出本设计的一条硬规矩：一个从未在真实反例上跑过的检查不是证据。** 所以 §3.1 与 §6 的每条判据都写成「**故意改错必须变红**」/「**从 0 变成 69**」，而不是「加一个检查」——**一个只被正向跑过的检查，与被损坏的注释、与只查 NUL 的完整性检查，是同一类东西：被检查的对象与被断言的对象不是同一个。**
 5. **不在本设计内改动门禁脚本**（`tools/**` 不属本文档写域）。
 
 ### 风险
@@ -626,6 +740,7 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | 14 | `OP_STORE_CAPTURE`（`src/vm/vm.c:3952-3955`）、`OP_POP_REG`（`src/vm/vm.c:3761-3767`） | **两个零生产点 opcode：声明、分派、实现齐全，全仓库没有任何东西发射它们。** 它们是一对**没人用的第二套捕获协议**（今天真正在用的是 `OP_PUSH_REG` × N + `OP_MAKE_FUNC` 自己从 `t->stack` 取值）。⇒ **要么删、要么接上——这是人的选择，不是表能回答的。** 无论选哪条，**§3 的 69 行表都不该把它们算进「后端要映射的 opcode」**。**判据**：`LC_ALL=C comm -23 <(grep -oE '\bOP_[A-Z0-9_]+' src/compiler/bytecode.h \| sort -u) <(grep -oE '\bOP_[A-Z0-9_]+' src/compiler/compiler.c \| sort -u)` 今天输出恰好这两行 ⇒ 裁定后该输出应为**空**（若删）或**不再含它们**（若接上，则 `compiler.c` 侧必须出现发射点） | §3.1.9、§3.1.8 |
 | 15 | `src/compiler/bytecode.h:69-74`（`RegInstruction`）、`:87-128`（`Bytecode`） | **裁定 A′ 未覆盖的第三个岔口：类型信息放不放进 IR。** A′ 的措辞是「按 IR 的类型信息落值」，而 **IR 今天没有类型字段**（`{ OpCode op; int r1, r2, r3; }` 全是下标）。**A″**＝IR 保持无类型、后端照抄 VM 的运行期动态分派（忠实，但 wasm/AOT 不做类型特化，`docs/AUDIT.md` §5 O13 的性能账在 §3 里还不上）；**B″**＝IR 带类型标注（可特化，但**编译器要生产并维护类型** ⇒ 立了第二个类型决定点，把 §1 的病搬到「编译期 vs 运行期」这一维）。**这不是顺序问题，是架构问题，必须人裁定。** 本文档不替人做 —— **已裁定（2026-10）：`var` 动态、其余静态 ⇒ 走 B″，见 §3.7** | §3.6、§3.1.4、§3.7 |
 | 16 | `src/compiler/bytecode.h:64-66`（`INIM_BYTECODE_VERSION 3` / `INIM_ABI_VERSION 2`）、`:69-74`（`RegInstruction`） | **裁定 B″ 的格式后果**：IR 要携带类型 ⇒ `RegInstruction` 加字段 ⇒ **`.inim` 磁盘格式改变 ⇒ 版本号必须升**，且三个 `.inim` 读者（`src/compiler/bytecode.c`、`src/main.c`、`src/compilation/deps.h`）必须**同批**改。另：**`var` 需要 IR 里有一个「动态」类型值**（语义等于 `im_typeset_any()`），使 `var` 走与 A″ 相同的运行期分派 ⇒ **B″ 的实现里同时存在静态特化与动态分派两条路，它们的边界就是新的必须被断言的东西**。**不要在没有 §6 那条新证明义务（编译器单例标量类型 vs VM 运行期 `R[i].type`）的情况下先加字段。** | §3.7、§3.6 |
+| 17 | `src/compiler/compiler.c:2232-2240`（`case STMT_BE` 无条件发射 `OP_BE`）、`src/compiler/bytecode.h:69-74` | **裁定「契约式双层判定」（§3.8）的实现后果，三项，都还没做**：① **静态模式下「编译期无法证明 ⇒ 编译错误」是一条今天不存在的语言规则** —— 今天 `be` 是纯运行期检查、编译器从不拒绝，这条规则**新增了一项编译器的否决权**，而**没有任何东西量过有多少 `.im` 会因此被拒** ⇒ **先量后改**（**已量，见 §3.9：346 个 `.im` 只有 10 处 `be`，10/10 的约束只依赖字面量 / 内建类型 / 同文件具名声明 ⇒ 上界 0 个不可解析实例**）；② **`@runtime_check` 是新语法**，今天不存在（我**没有**跑过 `grep -rn "runtime_check" src/ selfhost/ docs/`）⇒ 需要先定它的语法与它落到哪些 opcode 上；③ **`CompilerSet == RuntimeSet` 这个等式不能直接实现** —— 一个可能类型的集合与一个具体值之间没有 `==`，**可实现的形状是成员关系 `type_of(实际值) ∈ CompilerSet`**，等式只在编译期集合恰为单例时等价。**⇒ 落地前必须先把断言写成 `∈`，否则那条 Debug 断言没有可写的形式。** 另：§3 的 69 行表需**新增一列**「该 opcode 在静态模式下是否可能被编译期消除」（`can_raise` 与 `producers` 两列都不表达这件事）。**判据（可证伪）**：对同一段 `.im`，**静态模式产出的字节码里 `OP_BE` 出现次数为 0**（或全部落在「动态模式 / 显式 `@runtime_check` / Debug 断言」三类白名单位置），**动态模式产出里 `OP_BE` 保留** —— 同一份源码两种模式，产出各自符合各自的规则 | §3.8、§6、§3.7 |
 
 ---
 
@@ -640,6 +755,8 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | **[实测]（本会话，2026-10 第四轮：IR 与 opcode 覆盖）** | ① opcode 表 **69** 个：`awk '/^typedef enum \{/{f=1;next} /^\} OpCode;/{f=0} f' src/compiler/bytecode.h \| sed 's,/\*.*\*/,,' \| grep -oE '\bOP_[A-Z0-9_]+' \| sort -u \| wc -l` → **69**；② VM 的 `case OP_` 也是 **69**，且**双向一一对应**（两个 `comm` 都是空集）；③ 各消费者引用的 opcode：`src/compilation/aot_native.c` → **0 个 token、`grep -c Bytecode` = 0、`grep -c RegInstruction` = 0**；`src/compilation/wasm_backend.c` → **1 个 token**（`:1500` 的注释 `(OP_LT double compare)`）、`Bytecode`/`RegInstruction` 都是 **0**；`selfhost/compiler.im` → **164 个 token（distinct 48）**；`selfhost/eval.im` → **0**；④ IR 的类型与版本实测：`src/compiler/bytecode.h:69-74` 的 `RegInstruction`、`:87-128` 的 `Bytecode`、`:64-66` 的 `INIM_BYTECODE_MAGIC`/`INIM_BYTECODE_VERSION 3`/`INIM_ABI_VERSION 2`；⑤ `.inim` 的读者实测为 `src/compiler/bytecode.c`、`src/main.c`、`src/compilation/deps.h`；⑥ VM 寄存器堆是动态类型的：`src/vm/vm.c:2912` `Value *R = t->R;`（**§3.1.4 的立论依据**）。 |
 | **[实测]（本会话，2026-10 第五轮：分派双射 + 反汇编器缺口）** | ① **opcode 原始 token 是 70 个、去重后 69 个**——多出来的那个是 `src/compiler/bytecode.h:56` **块注释里**提到的 `OP_LOADK_INT`（在描述 `:58` 的 `OP_LOADK_I64`）；⇒ 计数必须 `sort -u`，且**单行 `sed 's,/\*.*\*/,,'` 删不掉跨行块注释**（这是本轮第一次数错的成因）；② **VM 分派是 goto-threaded**：`src/vm/vm.c:3066` 的 `switch (ins.op)` 里是 **69 个 `case OP_X: goto L_X;`**（`:3068-3138`）+ `default:`（`:3139-3143`，坏 opcode → `[vm] bad opcode %d at ip %d` + `t->running = false`），**真正的指令体是 `L_X:` 标签块**（第一个是 `:3146` `L_MOV:`）⇒ 我最初按「case 块」抽体会得到 len=1，**是抽取方法错，不是代码怪**；③ **双射成立**：`case OP_X: goto L_X;` 抽出 69 对、`^ *L_[A-Z0-9_]+:` 抽出 69 个，**两个方向的差集都是空集** ⇒ 无死 opcode、无孤儿 label；④ **反汇编器 `src/vm/vm.c:5205-5267` 的 `vm_disasm_ins` 只有 48 个 case**（switch `:5208`、`default:` `:5265` 输出 `OP_%d`），**缺 21 个**（清单见 §3.1.6）；面向 `.im`（`builtin_dbg_disasm` `:5316`、注册 `:5365`）；⑤ **验证要用的那条路不依赖它**：`src/main.c:675-681` 的 `printf("%d,%d,%d,%d\n", …)`，注释 `:675` 写「Kept byte-comparable on purpose」⇒ CLI `bytecode` 子命令输出**纯数字**。 |
 | **[实测]（本会话，2026-10 第六轮：69 行骨架逐块读出）** | ① 69 个指令体 = `L_X:` 标签块，**连续覆盖 `src/vm/vm.c:3146-4680`**（`^ *(L_[A-Z0-9_]+):` 匹配 69 个，第 k 块区间 = 第 k+1 标签行 − 1）；② 按「是否写帧外状态」手工分类得 **P=37 / C=3 / S=29 = 69**；③ 独立第二轴 `can_raise`（块内含 `vm_throw`，helper 在 `src/vm/vm.c:2481`）= **16 个**；④ **交叠空格的发现**：`P ∩ can_raise` = **11 个**（`ADD` `CONCAT` `SUB` `MUL` `DIV` `NEG` `LT` `GT` `LE` `GE` `MOD`），`S ∩ can_raise` = **5 个**（`INDEX_SET` `STORE_GLOBAL` `CALL_BUILTIN` `BE` `THROW`），`C ∩ can_raise` = 0；⑤ 12 行的机制与名字不符（`DECLARE` 写 `vm->limit_*`、`RECORD` 写 `vm->record_*` 并取 `VM_LOCK`、`BE` 取全局分片锁 + `vm_global_grow`、`LOAD_GLOBAL` 条件加锁、`INDEX_GET` 的 dict 读加锁、`NEW_SET`/`SET_INTERVAL` 是**新建**而非共享写、`SAY` 绕过平台层走 `src/vm/vm.c:160-161` 的 POSIX shim），逐行见 §3.1.7；⑥ 命令：`python3` 按标签区间切块 + `grep -c vm_throw`；`sed -n '<区间>p' src/vm/vm.c` 可逐格复核。**分类是手工判定，不是自动推导**（§3.1.7 诚实边界）。 |
+| **[转述，来源 `exact-lumen`，非本会话实测]** | 2026-10 第二个先例（§3.1.8「拒绝不了就比对」）：① **四处文档声称有 CTest 覆盖、四处都没有** —— `docs/API.md` 第 2.1 节标题逐字「证据（CTest）」，`:114` 把 `lint_case_missing_default_v04.im` 写成「相关 CTest」、`:115` 把 `lint_case_exhaustive_v04.im`（**文件名，不是测试名**）与四个真实测试名并列；`docs/REQUIREMENTS_ANALYSIS.md:177` 与 `docs/STATUS.md:286` 把 `tools/migrate_report.py` 与 `bindgen_regression`／`scan_tools_regression` 并列，而 `tools/` 下**没有** `migrate_report.test.py`；② **根因**：`CMakeLists.txt:733-743` 的五个 `lint_case_*` 是**手写列举**（`:744` 注释自己数着「The five lint_case_* tests above …」），**仓库里没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**；③ **反向验证**：把 `CMakeLists.txt` 退回 `HEAD` ⇒ `2 orphaned input(s) out of 110 checked` + 逐条点名 + `exit 1`；④ **普查**：67 个 `vtest/*.im` 中 5 个未被 `CMakeLists.txt` 提到（两个真缺口、三个合法）、30 个 `tools/*.test.py` 与 13 个 `tools/*.test.js` **0 孤儿**；⑤ **新设施**：注册 **#135** / **#136**（各带 `PASS_REGULAR_EXPRESSION` + 一条断言对方警告不出现的 `FAIL_REGULAR_EXPRESSION`）、新增 `tools/check_orphan_fixtures.py` 与**门禁第 12 阶段 `orphan-fixtures`**；⑥ **该脚本自己崩过**：`NameError: name 'CMAKE_SOURCE_DIR' is not defined`（f-string 里的 `${…}` 被当替换字段），修为 `${{CMAKE_SOURCE_DIR}}`；⑦ **门禁**：`GATE_RC=0`、`gate: OK — every stage passed (12/12 stages ran).`、**`100% tests passed, 0 tests failed out of 136`**、`0 skipped`。**我未独立复核以上任何一条**；其中「12 阶段 / 136 测试」与我 §3.1.8 记的 `EXP_CTEST = 134` **不一致**（该值在 `tools/gate.sh:54`，本轮门禁正在被 merge 修改，**以仓库现状为准，我未重测**）。 |
+| **[转述，来源：人类裁定，非本会话实测]** | 2026-10 的**第四个人类裁定**（§3.8「契约式双层判定」）：走 (ii) 的强化版 —— 编译期保守推断（`CompilerSet ⊇ RuntimeSet`）、运行期契约执行（`OP_BE` 是编译期未竟事业的兜底）；Debug/Strict 模式下在已证明路径插等价断言，断言失败按**编译器级错误**处理；按执行模式分层（静态模式强制 (ii)，动态/`var` 模式**退化为 (iii)**，跨边界插显式转换检查）；否决 (iii) 的理由是**形式化验证与 Proof 会失去根基**、集合论类型沦为摆设。**本行的内容是转述，裁定以人的原话为准**；§3.8 里我另外标出了**三处「裁定措辞与可实现的断言之间还有距离」**（`==` 应写成 `∈`；`OP_BE` 在裁定内部有两个角色、需按「恰好三处」的读法落地并请人确认；「无法证明 ⇒ 编译错误」是新语言规则且**未量过**会让多少 `.im` 编译不过），**那三条是我读裁定后的判断，不是裁定的内容**。 |
 | **[实测]（本会话，2026-10 第九轮：类型代数零消费者 + 两个集合实现）** | 裁定 B″（`var` 动态、其余静态）之后的复核：① **类型代数存在且完整**：`src/types/typeset.c` **248 行**、`src/types/typeset.h:37-45` 导出 `im_typeset_empty`/`any`/`enum`/`int_interval`/`union`/`intersection`/`difference`/`complement`，`:47-56` 导出 `contains`/`subset`/`intersects`/`kind`/`cardinality`/`materialize_enum`；`src/types/` 共 957 行；② **它被构建、被测试**：`CMakeLists.txt:417` 编进引擎、`:157-159` 有 `typeset_probe` CTest，`src/types/typeset_probe.c` 断言的正是 ROADMAP_3.1 点名的 `im_typeset_int_interval(0,255,true,true)`（u8 窄化）与区间交、枚举并；③ **它零消费者**：`grep -rl "im_typeset" --include=*.c --include=*.h src/ \| grep -v "^src/types/"` → **0 个文件**（全仓只在 `src/types/` 内 9 个文件里出现）；`grep -c "typeset\|TypeSet\|type_of\|infer" src/compiler/compiler.c` → **0**；④ **今天类型是运行期的值**：`src/compiler/compiler.c:2224-2231` 的 `case STMT_TYPE` = `register_global(comp, tname)` + `compile_expr(comp, stmt->typeStmt.set)` + `emit(comp->curBC, OP_STORE_GLOBAL, g, setReg, 0)`；`STMT_BE` 同形（`:2232-2240`，发射 `OP_BE`）；⑤ **`OP_BE` 用 VM 自己的集合，不用 `im_typeset_*`**：`src/vm/vm.c:4262-4308` 内实测命中 `vm->be_bound[g] = sidx >= 0 ? sidx + 1 : 0;` 与 `set_contains(vm, sidx, &init)`；VM 的集合 API 面为 `vm_set_new`/`vm_set_add`/`vm_set_add_comp`/`vm_set_add_comp_dedup`/`vm_set_cur_thread`/`vm_set_free_objs`/`vm_set_slot`/`vm_set_to_array`。**诚实边界**：③ 是字面结论（证明的是「除 `src/types/` 外没有这个字符串」）；⑤ 是**命中行**，我**没有通读 `L_BE` 全文**；④ 是从**发射形状**读出的，**没有实跑 `.im` 观察全局**；**未检查 `mods/`、`projects/`、`vtest/` 里有没有人用 `type`**。 |
 | **[实测]（本会话，2026-10 第八轮：零生产点 opcode + 注释损坏）** | ① **零生产点**（`exact-lumen` 提出、**我独立复跑确认**）：`LC_ALL=C comm -23 <(grep -oE '\bOP_[A-Z0-9_]+' src/compiler/bytecode.h \| sort -u) <(grep -oE '\bOP_[A-Z0-9_]+' src/compiler/compiler.c \| sort -u)` → **恰好 `OP_POP_REG` 与 `OP_STORE_CAPTURE` 两行**；反向差集 `comm -13 …` → **空**；`grep -c 'emit(comp->curBC, OP_' src/compiler/compiler.c` → **330**；枚举 **69** 个名字 / `compiler.c` **67** 个；② `grep -rl '\bOP_STORE_CAPTURE\b' src/ selfhost/ tools/` → **只有 `src/compiler/bytecode.h` 与 `src/vm/vm.c`**（⇒ 零生产点）；`OP_POP_REG` 多一个 `selfhost/compiler.im:37` 的裸常量定义 `OP_POP_REG = 29`（全文件仅此一处）；③ 两个实现体实测存在：`src/vm/vm.c:3761-3767`（`L_POP_REG`）与 `:3952-3955`（`L_STORE_CAPTURE`）；④ **第二套捕获协议**的证据：`L_MAKE_FUNC`（`:3957` 起）自己从栈取捕获值 `Value *captured = &t->stack[t->sp--];`，而 `OP_PUSH_REG` 由 `compiler.c` 在 `:460`/`:562`/`:575`/`:587`/`:637-638`/`:879`/`:891`/`:903`/`:929` 等十余处发射；⑤ **注释损坏**：`grep -c '锟' src/vm/vm.c` → **58 行**，`awk 'NR>=3146&&NR<=4680 && /锟/' src/vm/vm.c \| wc -l` → **30 行落在指令体区间内**；`grep -n "vm\.c" tools/check_text_integrity.py` → 该脚本 docstring 只提到 `gui_mod.c`/`lexer.c`/`lexer.h` 三个文件的历史 NUL 缺陷，其判据（docstring 逐字）是 **NUL 字节**，故对乱码**无覆盖**。**诚实边界**：③「不可达」是从「零生产点」读出来的、**非运行时实测**（要造含该 opcode 的 `.inim` 才可真测）；② `grep -rl` **未扫 `mods/`、`projects/`、`vtest/`**；④ `enum − compiler.c` **只覆盖 C 编译器**这一个生产者，`selfhost/compiler.im` 的生产点是逐名字看的、**没做集合比对**。 |
 | **[实测]（本会话，2026-10 第七轮：builtin 注册表先例，§3.1.8）** | ① **机制拒绝**：`grep -rn "is already registered" src/` → `src/vm/vm.c:1684` 与 `:1708`（两个注册入口各一份），守卫 `if (builtin_lookup(vm, name) >= 0)` 在 `:1683`/`:1707`，注释在 `:1676-1682`/`:1700-1706`（逐字 `One name, one handler.` … `Refuse the duplicate and name it, instead of losing it silently.`）；② **门禁断言**：`tools/gate.sh:140-151`（在 **ctest 阶段内部**）用 `grep -qF "is already registered"` 让阶段失败，注释逐字含 `one name with two answers` / `dead code that reads as live` / `no single test file can see it`；③ **计数断言**：`tools/gate.sh:132-139` 断言 `0 tests failed out of $EXP_CTEST`，`EXP_CTEST` 在 `:54` = **134**，注释 `Assert the count too, so that a dropped add_test( ) cannot pass silently.`；④ **逐平台重算**（按 `CMakeLists.txt` 真实源列表：base `:412-425` 27 个文件、WIN32 追加 `:427-436` 26 个、POSIX 追加 `:438-443` 27 个；正则 `vm_register_builtin(_full)?\s*\(\s*\w+\s*,\s*"([^"]+)"`）：WIN32 **431 次 / 430 distinct / 1 重名**，POSIX **241 / 240 / 1**；唯一重名是 `isolate_run`（`src/isolate_mod.c:227` 与 `:318`），**假阳性**——两处在 `#ifdef _WIN32` / `#else` 分支里，只有一个编译；⑤ `gui_fullscreen` **已不再重复**（`src/mod/gui_mod.c:3690` 是唯一注册点，`:3691-3692` 留注释说明曾重复）⇒ §1.53 登记项**已修**。**诚实边界**：我的正则只认字面量名字 + 简单首参，宏/变量传名会漏；`exact-lumen` 独立数出 WIN32 **398** / POSIX **128**，与我的 **431 / 241** 不一致，**差异未解释、不调和**。 |
@@ -647,7 +764,9 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | **[读码，2026-10 复核轮补上]** | `docs/STATUS.md` §10.42（`:2464`）/ §10.49（`:2910`）/ §10.53（`:3095`）关键段，以及 §10.50–§10.56 的小节标题（`:2999`/`:3048`/`:3058`/`:3095`/`:3174`/`:3195`/`:3217`）；§10.56 全文（`:3217-3242`，含 `L_ADD` 与 `L_CONCAT` 的「逐字相同的不对称」）；`tools/aot_native.test.py:187-207` 的 `DIVERGENCE` 列表原文 |
 | **[转述]（引用 AUDIT，非本会话实测）** | 150 例 fuzz → 41/150 = 27.3% 分歧（28 例 and/or、13 例 int32/`%`、0 例无法归因）；`%` 四组预测值；`(2147483647 + 1).type == float`；解释器 RSS 68.5 MB vs 原生 23.2 MB；AOT 快 7.7×–146.6×，`fib` 比手写 C++ 慢 14×；`tools/selfhost_compare.py` 的 `10 target(s) byte-identical, 23 skipped`（来自工作订单转述，本会话**未实测**） |
 | **[读码，本轮补上]** | `docs/archive/RELEASE_0.5.0.md:12/23-28/48/102-106` 的 Native ABI 面、C ABI 类型映射、ABI 版本号、以及「三个后端共享同一字节码格式」这条与现状冲突的承诺；`docs/SYNTAX.md:551-556` 的 §7 分类（危险·静默 / 危险·误导 / 冗余 / 卫生），`:901` 「退出码经常区分不出对错，必须断言输出数值」 |
-| **[待复核]** | 无（原两项已补读；`docs/SYNTAX.md` 各条 D/M 编号的现状我未逐条复核是否仍成立） |
+| **[实测]（本会话，2026-10 第十轮：`be` 爆炸半径普查，§3.9）** | ① **普查命令**：`grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --include=*.im .`（覆盖全仓，排除 `build/`、`.worktrees/`、`.verify/`）→ **346 个受跟踪 `.im` 里只有 10 处 `be`**，逐条见 §3.9 的表；② **10/10 的约束表达式只依赖字面量枚举（4 处）/ 字面量区间（1 处）/ 同文件具名类型声明（3 处）/ 内建类型名（2 处）** ⇒ **上界 = 0 个不可解析实例**；③ 内建类型名单实测：`grep -n '"N"' src/compiler/compiler.c src/vm/vm.c` → `src/compiler/compiler.c:2864`、`src/vm/vm.c:1463`/`:1871`，且 `src/vm/vm.c:1880` `if (strcmp(name,"N") == 0) return 0;`（`:1881` `"Z"` → 1、`:1884` `"R"` → 24）⇒ **`N`/`Z`/`R` 等是内建类型名**；④ 语法来源：`docs/SYNTAX.md:546`（`name be <集合或表达式> [: init]`）、`:550`（称 `be` 是「仓库里最不常见的语句形式之一」，**10/346 实证了这句**）、`src/parser/parser.c:1357-1365`（`STMT_BE`）；⑤ **顺带发现一处文档与语法不一致**：`vtest/lint_case_membership_v04.im:2` 等用的是 `be Direction = "N"`（**`=`**），而 `docs/SYNTAX.md:546` 只写了 `:`。**诚实边界（四条，详见 §3.9）**：手工分类而非分析器输出；正则只匹配一种形状（漏别名/下标名/续行，误报未排查）；**只看了 `be` 使用点，没看 `type X = <运行期表达式>` 这种类型声明本身**（那才是 §3.7 的真问题）；「内建 `N` 可解析」是从名字名单读出的、**未实跑编译器**确认 `be N` 真在编译期求值。 |
+| **[转述，来源 `exact-lumen`，非本会话实测]** | 2026-10 门禁已到 **12 个阶段**（新增第 12 阶段 `orphan-fixtures`），`GATE_RC=0`、`gate: OK — every stage passed (12/12 stages ran).`、**`100% tests passed, 0 tests failed out of 136`**、`0 skipped`、`check_text_integrity: 771 text file(s), 0 with NUL bytes.`；`docs/BOARD.md:62` 与 `docs/README.md:55` 的清单已同步为十二个阶段。**我未独立复核**；其中「12 阶段 / 136 测试」与我在 §3.1.8 记的 `EXP_CTEST = 134`（`tools/gate.sh:54`）**不一致，未调和**。 |
+| **[待复核]** | 无（原两项已补读；`docs/SYNTAX.md` 各条 D/M 编号的现状我未逐条复核是否仍成立；§3.9 的 10 条 `be` 分类与 `=`/`:` 那处不一致待 `src/parser/parser.c:1357-1365` 复核） |
 
 ### 关于 Lead 的「wasm 与 AOT 一致」
 
