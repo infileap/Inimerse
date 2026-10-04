@@ -1003,6 +1003,18 @@ unsigned long timeout_ms = 0;
     }
 
 if (argc == 1) {
+    /* `--lint` needs a file to lint.  Without this check `inimerse --lint $FILES`
+       fell through to the interactive REPL when $FILES was empty or unset, printed
+       the banner and exited 0 -- so a gate that meant to check lint findings passed
+       while linting nothing.  Exit 2 refuses: "nothing was linted" is not a clean
+       bill of health.  The sibling options in the flag loop above (--desugar,
+       --limit-*, and by the same mechanism --entry/--extern) all fail loudly when
+       their operand is missing; this was the one exception (docs/SYNTAX.md §7.2
+       M11: --lint cannot be used as a predicate; §7.1 D5: silence reads as success). */
+    if (g_lint) {
+        fprintf(stderr, "lint: no input file\n");
+        return 2;
+    }
         VM vm; vm_init(&vm);
     if (g_lim_mem > 0) vm.limit_mem = g_lim_mem * 1024.0 * 1024.0;
     if (g_lim_vram > 0) vm.limit_vram = g_lim_vram * 1024.0 * 1024.0;
