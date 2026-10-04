@@ -11,8 +11,8 @@ Baseline for this release (see `docs/STATUS.md` §2):
 | --- | --- |
 | Version | `0.5.0` (`CMakeLists.txt`) |
 | Clean build | configure and build exit 0, **0 errors** |
-| Full test suite | **122 / 122** CTest cases, no `WILL_FAIL` bookkeeping entries |
-| Windows | the same suite runs under MinGW-w64 (see the Windows section below) |
+| Full test suite | **123 / 123** CTest cases on Linux; 103 of the same cases run on Windows (see the Windows section below) |
+| Windows | the suite is green under MinGW-w64/UCRT64, in CI and locally (see below) |
 
 ## Language and runtime
 
@@ -91,6 +91,12 @@ engine does not ship. `posix_runtime_parity` has been disabled the same way
 since before 0.5.0. Nothing is skipped silently: every disabled case is listed
 by `ctest -N` and named in this file.
 
+The suite is green on both platforms for the commit this release is built from:
+`123 / 123` on Linux, and on Windows `103` run of `113` registered — the ten
+`DISABLED` cases above plus the two bridge skips, no failures. The Windows run
+is what CI executes on every push (`windows-build.yml`, MSYS2 UCRT64), and the
+Windows assets below are built from that same commit with the same toolchain.
+
 ## Assets
 
 Linux x86_64:
@@ -103,6 +109,9 @@ Linux x86_64:
 Windows x86_64:
 
 - `inimerse-0.5.0-Windows-x86_64.zip` — the engine and its tools, built with
-  MinGW-w64.
-- `InfiverseSetup-0.5.0.exe` — the Infiverse desktop installer (Inno Setup),
+  MinGW-w64/UCRT64. It holds `bin/inimerse.exe`, `bin/aot-native.exe` (the AOT
+  translator for the numeric subset) and `bin/inim.py` (the `inim` driver; the
+  `.py` suffix is what Windows needs to run it).
+- `InfiverseSetup-0.5.0.exe` — the Infiverse desktop installer (Inno Setup 7),
   bundling the engine, the desktop shell and the standard plugin set.
+- `SHA256SUMS-Windows` — the two hashes above, in `sha256sum -c` format.
