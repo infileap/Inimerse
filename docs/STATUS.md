@@ -3578,7 +3578,9 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 59 个同名内建逐条对拍：`int()` 在 Windows 上经 `int` 截断 32 位；`chr()` 不查 type 就读
 `ival`（读指针的一半）；`atomic_get`/`atomic_set` 把非字符串名字交给 `strcmp(NULL)` 而
 **崩溃**（`builtin_atomic_add:1585` 一直有守卫）；`say_log`/`say_file` 的第一个实参当成了
-另一个值。新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，**两端都
+另一个值。**判据不是「挑一侧当基线」** —— 两份副本都是消费者，契约还不存在
+（`docs/DECFY_DESIGN.md:8-12`），所以 `int("0x10")` 那条**已登记、未裁定**：我一度把 base-16
+补进 POSIX，随后**已撤回**（那是特性移植，不是消去分歧），pin 不断言它。新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，**两端都
 跑**，补上 `posix_runtime_parity` 在 Windows 被 `DISABLED TRUE` 留下的空洞。用 mingw64
 手工全量编出的真 Windows 引擎上：修前 rc=5，修后 rc=0 且输出与 Linux 逐字相同。
 详见 [AUDIT.md](AUDIT.md) §1.45。

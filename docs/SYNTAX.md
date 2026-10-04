@@ -690,6 +690,40 @@ case value {
 
 **注意 `as` 只做绑定、不做匹配**：`n as whole2` 里的 `n` 是**裸标识符模式**，语义是值比较（`42 == nil` 不匹配），不是「把 subject 绑到 `n`」。
 
+#### D13. `chr(non-int)` 读 `Value` 的 union 而不看 type tag（已修复）
+
+`chr()` 只对 `VAL_INT` 有定义。Windows 副本（`src/runtime/runtime.c`，**只在 Windows 上编译**）
+原本是
+
+```c
+int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival;
+```
+
+`Value`（`src/vm/vm.h:24-26`，`sizeof == 32`）是
+`{int type; union {long long ival; double fval;}; char *sval; void *ptr;}` —— `ival` 与 `sval`
+是**同一个 union 的两个成员**，按 type tag 二选一有效。对 `VAL_STRING` 读 `ival` 读的是
+**指针的一半**，于是 `chr("A")` 返回一个**每次运行都不同**的控制字符。POSIX 副本
+（`src/runtime/runtime_posix.c`）一直是 `v.type == VAL_INT ? v.ival & 0xff : 0`，答空串。
+
+**为什么它是 D 级而不是「参数类型错误」**：设计记录里**没有任何**「参数类型不对时怎么办」的
+规定（本节 D3/D4/D5 反而说明引擎整体不校验类型与 arity），所以两侧都**不是**「照规范做」。
+这里唯一的硬要求是**确定性**：`chr("A")` 不能每次给不同的答案。
+
+**修复**：Windows 副本改为先判 type tag、非 `VAL_INT` 答 `""`（与 POSIX 一致）：
+
+```c
+Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+int n = (v.type == VAL_INT) ? (int)(v.ival & 0xFF) : 0;
+```
+
+**`""` 仍是静默错答**（按本节分类属「危险·静默」），所以这条**留在这里而不是标成「正确」**：
+`chr("A")` 应该显式报错，但那需要先有一条「参数类型错误怎么办」的规范 —— 见
+`docs/AUDIT.md` §1.45 的诚实边界与 §1.46。
+
+**回归**：`vtest/divergent_builtin_contract_v06.im`（CTest `#125`）断言 `chr("A") == ""` 与
+`chr(65) == "A"`，两端同跑。**双向验证过**：还原修复 → Windows 引擎上 `chr("A")` 给出随机
+控制字符，pin 红。
+
 ### 7.2 危险·误导（报错信息误导或语义反直觉）
 
 #### M1. `|>` 与 `>>` 不能混用，报错信息误导
