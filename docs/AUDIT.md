@@ -2408,6 +2408,105 @@ gate: this was NOT the full gate: 11 stages are registered and only this one ran
 大小写、前后空格）；③ 阶段名列表是**派生**的，但派生自 `run_stage` 的**调用点**，如果有人绕过
 `run_stage` 直接跑一个函数，那个函数不会出现在列表里。
 
+## §1.58 一个内建名字有两个注册点，而注册表自己不会说
+
+`vm_register_builtin`（`src/vm/vm.c:1675`）把名字追加进 `vm->builtins[]` 后调用
+`builtin_insert`（`:1667-1673`）：线性探测，**取第一个空槽，从不检查这个名字是否已经在表里**。
+查找侧 `builtin_lookup`（`:1657-1666`）从 `builtin_hash_fn(name)` 出发探测，
+**返回探测链上第一个名字匹配的槽**。
+
+两条合起来的意思是：**同一个名字注册两次时，先注册的那个占住探测链上更早的槽，
+于是永远胜出；后注册的那个拿到自己的槽，但 `builtin_lookup` 永远走不到它。**
+它既不会被拒绝、也不会被报告 —— `builtinCount` 照样把它算进去，
+所以「表里有几个内建」和「能调用几个内建」是两个数，而**没有任何东西比较过这两个数**。
+
+### 普查
+
+对 `src/` 全部 `vm_register_builtin(_full)?(vm, "…")` 提取：**588 个注册点、462 个唯一名字**。
+跨文件的重名有 126 个，但绝大多数是**平台分叉**（`CMakeLists.txt:428-442`：
+`src/runtime/runtime.c` 在 `if(WIN32)` 里、`src/runtime/runtime_posix.c` 在 `else()` 里，
+二者互斥）—— 同一个二进制里只看得见其中一个，所以不是重名。
+
+**同一个文件内的重名只有两处**：
+
+| 位置 | 名字 | 判定 |
+|---|---|---|
+| `src/isolate_mod.c:227` 与 `:318` | `isolate_run` | **误报**：两处分别在 `#ifdef _WIN32` 与 `#else` 分支里 |
+| `src/mod/gui_mod.c:3690` 与 `:3697` | `gui_fullscreen` | **真重名**：两行在同一个 `gui_mod_register` 里相隔 7 行，**中间没有预处理条件** |
+
+⇒ 今天仓库里**唯一一个**「一个名字、两个注册点」的实例就是 §1.53 登记的那一个。
+（`gui_mod.c` 只在 `if(WIN32)` 里参与编译 —— `CMakeLists.txt:431` —— 所以这条**只在 Windows 上可达**，
+本机 Linux 引擎根本不含这个文件。）
+
+### 修法：让损失出声，而不是让注册表保持沉默
+
+`src/vm/vm.c` 的两个注册函数各加一段守卫（`vm_register_builtin:1684`、`vm_register_builtin_full:1708`）：
+
+```c
+if (builtin_lookup(vm, name) >= 0) {
+    fprintf(stderr, "[vm] builtin '%s' is already registered; the first one stays\n", name);
+    return;
+}
+```
+
+**这不改变任何分派行为**：`builtin_lookup` 本来就返回先注册的那个，所以第二个注册点
+**今天已经是不可达的**；守卫做的事只是「不再给它造一个槽」并且**把这件事说出来**。
+区别在于：从前它是**一条读起来像活代码的死代码**，现在它是**一行 stderr**。
+
+### A/B：守卫有牙
+
+把 `src/runtime/runtime_posix.c:1117` 的 `vm_register_builtin(vm, "random", posix_random);`
+**故意复制成两行**、重编、跑任意脚本：
+
+```
+[vm] builtin 'random' is already registered; the first one stays
+```
+
+恢复后该行不再出现。**Linux 侧零假阳性**：当前 POSIX 源列表里 `0` 个重名
+（与 §1.53 那次集合比对一致），所以守卫在 Linux 上是**无操作** —— 这一点是实测的，
+不是推的。
+
+### 闸门断言：`stage_ctest` 里的 `is already registered`
+
+守卫把损失变成一行 stderr，但**没有任何测试会因为它失败**。
+`tools/gate.sh` 的 `stage_ctest`（`tools/gate.sh:146-152`）新增一条断言：
+ctest 的输出里出现 `is already registered` ⇒ **阶段红**，并把那一行原样打出来。
+
+**为什么断言放在这里**：它是**这一阶段刚跑的那些套件**的性质，而**没有任何单个测试文件看得见它** ——
+重名发生在 VM 初始化期，早于任何 `.im` 断言的第一行。
+这条与 `stage_ctest` 已有的另外两条断言同族：`0 tests failed out of $EXP_CTEST`（数量）
+与 `***Skipped`（跳过）。三条都在回答同一个问题：**「跑了的那些」与「本该跑的那些」是不是同一批。**
+
+### §1.53 那个实例的处置：删掉重名，**不**替人做选择
+
+§1.53 把 `gui_fullscreen` 登记为**只登记、不动代码**，理由逐字是
+「两个体行为不同，选哪个是人的决定」。本轮**删掉的是不可达的那一行注册**，
+**没有删掉另一个实现体**：
+
+- `src/mod/gui_mod.c:3690` 的注册保持不动（它本来就是胜出的那个）；
+- `:3697` 那一行**删除**；
+- `builtin_fullscreen` 的**函数体保留**（`src/mod/gui_mod.c:1682`），
+  并在注册处用一行 `(void)builtin_fullscreen;` 引用它，使它在 `-Wunused-function` 下仍然干净；
+- 紧邻的注释写明：**两个体不一样**（保留下来的那个要求实参、用 `SetWindowLongA`；
+  保留但不注册的那个缺省是切换、用 `SetWindowLongPtr` 加保存的 restore style），
+  **「该注册哪一个」不在这里决定**，`docs/AUDIT.md` §1.53 记着它是一个人的决定。
+
+⇒ **行为逐位不变**（被删的那行今天已经不可达），**人的选择仍然摆在同一处、只差一行注册**。
+
+### 诚实边界
+
+1. **`src/mod/gui_mod.c` 的改动本机无法编译验证**：该文件只在 `if(WIN32)` 里参与编译
+   （`CMakeLists.txt:431`），Linux 引擎不含它。`(void)builtin_fullscreen;` 的合法性与
+   `-Wunused-function` 的干净性**必须在 Windows 上核**。
+2. **守卫只在「第二个注册点存在」时出声**。它不检查 `builtinCount` 与「可调用名字数」是否一致，
+   也不扫描源文件 —— 那需要一个解析预处理条件的提取器，而 §1.53 那次比对已经证明
+   不带条件的文本扫描会产生误报（`isolate_run`）。
+3. **`builtin_insert` 仍然不检查重名**。守卫在调用方，不在表里；
+   直接调 `builtin_insert` 的路径（今天只有这两个注册函数）绕过它就绕过了检查。
+4. **`gui_fullscreen` 的两个体行为不同这件事我没有实测过**（需要窗口），
+   是从两份实现逐行读出来的，与 §1.53 的读法一致。
+5. 普查的 588/462 是**文本提取**，不含运行时构造的名字（若有）。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

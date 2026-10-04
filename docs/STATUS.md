@@ -3744,3 +3744,34 @@ this one ran.」）。
 与 §10.83（数组池的门不能拒绝）、§10.85（两个问题折成一个返回值）登记在一起：同一个缺陷类在
 **门**、**返回值**、**总结**三个层面上的样子。发现来自 `ivory-ember`（它在自己的
 `stream/ci-gate-static` 分支上也修了同一处），我独立复现。完整边界见 [AUDIT.md](AUDIT.md) §1.57。
+
+## §10.89 一个内建名字有两个注册点，而注册表自己不会说
+
+`builtin_insert`（`src/vm/vm.c:1667`）线性探测**取第一个空槽，从不检查重名**；
+`builtin_lookup`（`:1657`）**返回探测链上第一个名字匹配的槽**。
+⇒ 同名注册两次时，**先注册的永远胜出，后注册的不可达**，而 `builtinCount` 照样把它算进去 ——
+「表里有几个内建」与「能调用几个内建」是两个数，**没有任何东西比较过它们**。
+
+**普查**：`src/` 全部注册点 **588** 个、唯一名字 **462** 个；同文件内重名**只有两处** ——
+`src/isolate_mod.c` 的 `isolate_run`（`#ifdef` 分叉，**误报**）与
+`src/mod/gui_mod.c` 的 `gui_fullscreen`（同一个函数里相隔 7 行，**真重名**，即 §10.82/§1.53 登记的那个）。
+
+**修法**：两个注册函数各加守卫（`src/vm/vm.c:1684`／`:1708`）——
+`builtin_lookup(vm, name) >= 0` 时**拒绝注册**并打一行
+`[vm] builtin '<name>' is already registered; the first one stays`。
+**不改变任何分派行为**（第二个本来就不可达），只是**不再保持沉默**。
+**A/B**：把 `src/runtime/runtime_posix.c:1117` 的 `random` 故意复制成两行 ⇒ 该行出现；恢复后消失。
+**Linux 零假阳性**（POSIX 源列表里 0 个重名），守卫在这里是无操作。
+
+**闸门断言**：`tools/gate.sh:146-152` —— ctest 输出里出现 `is already registered` ⇒ 阶段红。
+放在这里是因为重名发生在 VM 初始化期，**没有任何单个 `.im` 测试看得见它**。
+
+**§1.53 那个实例**：删掉的是**不可达的那一行注册**，**没有删掉另一个实现体** ——
+`builtin_fullscreen`（`src/mod/gui_mod.c:1682`）保留、编译、由 `(void)builtin_fullscreen;` 引用，
+旁边写明**两个体不一样**（保留的要求实参、用 `SetWindowLongA`；不注册的缺省切换、用 `SetWindowLongPtr`），
+**「该注册哪一个」不在这里决定**，§1.53 记着它是人的决定。⇒ **行为逐位不变，选择仍只差一行。**
+
+**诚实边界**：①`src/mod/gui_mod.c` **只在 Windows 上编译**（`CMakeLists.txt:431`），
+本机无法验证它编译得过；②守卫在调用方、不在表里，直接调 `builtin_insert` 会绕过它；
+③`builtin_insert` 本身仍然不检查重名；④两个体行为不同这件事没实测过（需要窗口）。
+完整边界见 [AUDIT.md](AUDIT.md) §1.58。
