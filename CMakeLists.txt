@@ -259,6 +259,14 @@ if(INIMERSE_PYTHON)
   add_test(NAME selfhost_codegen_parity
            COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/selfhost_compare.py --check --engine $<TARGET_FILE:inimerse>)
   set_tests_properties(selfhost_codegen_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;selfhost;regression")
+  # The parity run spawns the engine once per target, and a process spawn on
+  # Windows costs an order of magnitude more than on Linux: the same 33 targets
+  # take 7 s here on Linux and 200 s on Windows, and the Windows CI runner is
+  # slower again.  300 s was already tight before the non-hermetic targets
+  # stopped making live network calls, and it is not enough on the runner.
+  if(WIN32)
+    set_tests_properties(selfhost_codegen_parity PROPERTIES TIMEOUT 900)
+  endif()
   add_test(NAME bindgen_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/bindgen.test.py)
   set_tests_properties(bindgen_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME wasm_backend_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_backend.test.py)
