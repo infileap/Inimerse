@@ -17,12 +17,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang lld wasi-libc
       - name: Protocol regression
         run: node tools/regression.js
-      - name: Build and run POSIX checks
-        run: make -j2 check
       - name: CMake build, tests, and package
         run: |
+          # The release version is owned by CMakeLists.txt.  Derive it here so a
+          # version bump cannot leave this workflow pinned to a stale number.
+          VERSION="$(sed -n 's/^set(INIMERSE_PACKAGE_VERSION "\([^"]*\)").*/\1/p' CMakeLists.txt)"
+          if [ -z "$VERSION" ]; then
+            echo "::error title=version::INIMERSE_PACKAGE_VERSION not found in CMakeLists.txt"
+            exit 1
+          fi
+          echo "packaging version ${VERSION}"
           rm -rf build
-          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION=0.4.1
+          cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
           for probe in platform_probe fiber_probe process_probe socket_probe thread_probe dir_probe headless_probe hub_probe; do
             if probe_output="$(./build/${probe} 2>&1)"; then
@@ -61,7 +67,7 @@ jobs:
           done
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
-          python3 tools/release_verify.py build --version 0.4.1 --require-wasm --require-deb-python3
+          python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
@@ -72,7 +78,7 @@ jobs:
             build/inimerse-*-Linux-*.deb
       - name: Clean generated binary
         if: always()
-        run: make clean
+        run: rm -rf build
 
   wasm-probe:
     runs-on: ubuntu-24.04
@@ -84,7 +90,13 @@ jobs:
       - name: Install WASI toolchain
         run: sudo apt-get update && sudo apt-get install -y clang lld wasi-libc
       - name: Build WASI probe
-        run: make wasm
+        run: |
+          # The WASI artifact is the CMake custom target `wasm_probe`
+          # (CMakeLists.txt); `make wasm` belonged to the retired Makefile.
+          rm -rf build-wasm
+          cmake -S . -B build-wasm
+          cmake --build build-wasm --target wasm_probe
+          cp build-wasm/wasm_probe.wasm tools/wasm_probe.wasm
       - name: Verify WebAssembly artifact
         run: file tools/wasm_probe.wasm | grep -qi 'WebAssembly'
       - name: Verify browser host boundary

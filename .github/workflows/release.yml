@@ -1,8 +1,8 @@
-name: Release Inimerse 0.4.1
+name: Release
 
 on:
   push:
-    tags: ['v0.4.1']
+    tags: ['v*']
 
 jobs:
   linux-release:
@@ -19,7 +19,14 @@ jobs:
       - name: Build, test, and package
         run: |
           node tools/regression.js
-          VERSION="0.4.1"
+          # The tag is the authority for the release version; CMakeLists.txt must
+          # agree with it, otherwise the assets would be mislabelled.
+          VERSION="${GITHUB_REF_NAME#v}"
+          DECLARED="$(sed -n 's/^set(INIMERSE_PACKAGE_VERSION "\([^"]*\)").*/\1/p' CMakeLists.txt)"
+          if [ "$VERSION" != "$DECLARED" ]; then
+            echo "::error title=version mismatch::tag ${GITHUB_REF_NAME} vs CMakeLists.txt ${DECLARED}"
+            exit 1
+          fi
           rm -rf build
           cmake -S . -B build -DINIMERSE_BUILD_ENGINE=ON -DINIMERSE_PACKAGE_VERSION="$VERSION"
           cmake --build build -j2
@@ -61,8 +68,9 @@ jobs:
           cmake --build build --target package
           find build -maxdepth 1 -type f -name 'inimerse-*' -print0 | sort -z | xargs -0 sha256sum > build/SHA256SUMS
           python3 tools/release_verify.py build --version "$VERSION" --require-wasm --require-deb-python3
+          test -f "docs/RELEASE_${VERSION}.md"
           {
-            cat docs/RELEASE_0.4.1.md
+            cat "docs/RELEASE_${VERSION}.md"
             printf '\n## SHA-256\n\n```text\n'
             cat build/SHA256SUMS
             printf '```\n'
