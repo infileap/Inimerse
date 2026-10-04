@@ -46,7 +46,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 
 ## 3. 门禁（`tools/gate.sh`）
 
-合入 main 前必须全绿。十个阶段，任一失败即整体失败：
+合入 main 前必须全绿。十一个阶段，任一失败即整体失败：
 
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
@@ -59,12 +59,13 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 | oauth-loop | `cargo test --offline --locked`（在 `Infiverse_standard/oauth_loop/`） | `test result: ok. 75 passed; 0 failed`（**计数是断言**，`cargo test` 退 0 不区分「75 个测试过」与「1 个过 + 74 个被删」；实测删掉一个测试连同其 `#[test]` 属性即红；计数随 PKCE/回调绑定/授权 URL 编码/client_secret/device flow 工作从 16 涨到 75）。无 `cargo` 时记 SKIP 并打印 `NOTE: this skip is not a pass` —— Inimerse 引擎本身不需要 Rust，不能因此让门禁不可跑 |
 | ignored-credentials | `python3 tools/check_ignored_credentials.py` | `check_ignored_credentials: ok`。断言的是**默认拒绝**：三个 `userdata/` 目录里**一个从没被写过的文件名也必须已被忽略**（`--no-index` 问规则，不要求文件存在），外加 `git add -A --dry-run` 不得列出任何 `userdata/` 路径。**为什么断言默认而不是清单**：旧规则是「忽略目录、再用 `!userdata/` 把目录整体收回」⇒ 运行时产物**默认可提交**，补丁只覆盖当事人想起来的名字，两次凭据（client secret、活的 `gho_` token）就是这样差点进仓库的。**双向**：把规则改回旧写法 ⇒ 8 条失败（含三个目录的默认拒绝探针与 `git add -A` 两项）；删掉 `!userdata/.gitkeep` ⇒ 报 `.gitkeep` 被忽略 |
 | links | `python3 tools/check_links.py` | **0 broken** |
+| text-integrity | `python3 tools/check_text_integrity.py` | `check_text_integrity: 770 text file(s), 0 with NUL bytes.`。断言的是**受版本控制的文本文件里没有 NUL 字节** —— 编译器不在意它，`grep` 在意：读到 NUL 就把文件判成二进制、**只列出该字节之前找到的匹配**、把 `binary file matches` 打到 stderr，**退出码仍是 0** ⇒ 一份**看起来完整**的截断清单。实测被吞掉的正是证明 `gui_fullscreen` 注册两次（`src/mod/gui_mod.c:3690`／`:3697`）的那两行。**为什么用扩展名白名单而不是黑名单**：新加的二进制产物不可能把这一阶段判红，也就不需要有人去改名单。**反向验证**：往 `src/lexer/lexer.h` 塞回一个 NUL ⇒ `1 NUL byte(s) in 1 of 770 tracked text file(s)` + 字节偏移与行号 + exit 1。见 [AUDIT.md](AUDIT.md) §1.55 |
 | doc-paths | `python3 tools/check_doc_paths.py` | **0 broken**（反引号内的 `docs/…`/`future/…` `.md` 引用；`links` 阶段看不见这类，因为 `check_links.py` 必须先剥离行内代码，见 [streams/docs-audit.md](streams/docs-audit.md) §3.2） |
 
 ```bash
 tools/gate.sh                # 全量
 tools/gate.sh --fast         # 跳过 configure，复用已有 build/
-tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|node|plugin|oauth-loop|links|doc-paths
+tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|node|plugin|oauth-loop|ignored-credentials|links|doc-paths|text-integrity
 ```
 
 **门禁数字变了就必须同时改这张表和 [STATUS.md](STATUS.md) §1 的基线行**，否则下一个会话会拿旧数字当验收线。
@@ -256,3 +257,5 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|nod
 
 | 已完成 | `random-bounded-contract`（**新增行**；对应 [AUDIT.md](AUDIT.md) §1.52 与 [STATUS.md](STATUS.md) §10.82） | **一个内建名字有两个生产点，而只有一个被注册。** `random` 有（**修前行号**）`src/runtime/runtime.c:16` 的 `builtin_random`（`rand() % max`，**`runtime_register_builtins` 从未注册这个名字**）与 `src/mod/io_mod.c:143` 的`builtin_random`（裸 `rand()`，**忽略实参**，被 `:322` 注册），而 `src/mod/io_mod.c` 只在 Windows 上编译 ⇒ 分歧只在 Windows 出现，且**退出码 0**：实测 `random(10)` = **27606**、`random(0)` = **同一个 27606**（实参根本没被读）；POSIX 同一程序 = `3` / `0`。**修法是把两个生产点收成一个**：runtime 侧补上 `max > 0` 门（`rand() % 0` 是整数除零）并在 `runtime_register_builtins` 里注册，删掉 io_mod 的副本与注册行。新 pin `vtest/random_bounded_contract_v06.im` / CTest **#133**，`PASS_REGULAR_EXPRESSION` 钉整行且两平台**同一行**（`posix_random` 本来就有上界与 `n > 0` 门，没有新立规则）；真 ucrt64 引擎双向验证：两文件退回 `HEAD` ⇒ `random(10)` = `27606 9428 30941`、`random(0)` = `27606 9428`（与前者头两个值逐字相同）、退出码 0；修后 ⇒ `1 7 9` / `0 0`。计数 132 → 133。同批**只登记**三处同形实例（`gui_fullscreen` 重名且一条不可达 —— `docs/API.md:234` 早就记下这个重复却只当成计数问题；`rand` 有文档有示例但全 `src/` 零注册；`docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」对 `random` 不成立，已就地更正），见 [AUDIT.md](AUDIT.md) §1.53。 | [AUDIT.md](AUDIT.md) §1.52、§1.53、[STATUS.md](STATUS.md) §10.82 |
 | 已完成 | `vm-pool-slot-refuses-nothing`（**新增行**；对应 [AUDIT.md](AUDIT.md) §1.54 与 [STATUS.md](STATUS.md) §10.83） | **数组/字典池唯一的门不能拒绝一个下标，所以它后面八个 `if (!a)` 都是死代码。** `vm_pool_slot`（`src/vm/vm.c:743`）是全 `src/` **71 个调用点**的唯一入口，而两个分支都返回地址：负下标答 `arrays_big - 4097`（新 VM 上 `arrays_big == NULL` ⇒ 野低地址 `0xffffffffffeefef0`，Linux 与 Windows **逐字节相同**；池长大后 ⇒ 真的堆地址），超出 `bigCap` 的下标答分配之外的槽，只有 `idx == 4096` 且 `bigCap == 0` 时**偶然**是 `NULL`。同一个文件里 GC 标记 `src/vm/vm.c:2818` 对同一个句柄用的是 `ival > 0 && ival - 1 < vm->arrayCount` ⇒ **检查存在于一个地方，却不在所有人都要过的那道上**。修法把边界放回那道门（`vm_array_new` 先扩好 `bigCap` 再交槽，池拥有的下标不会被拒）。新 pin `src/vm/vm_pool_slot_probe.c` / CTest **#134**（**无 PASS 正则、退出码即判据**；同时断言 `slot(0)`/`slot(4095)` 仍解析）。双向验证：Linux `git stash push -- src/vm/vm.c` ⇒ `***Failed` + 5 条 FAIL；Windows（ucrt64）换回旧函数体 ⇒ `FAIL slot(-1) answered FFFFFFFFFFEEFEF0` 等 5 条、`RC=1`，换回 ⇒ 四个 `(nil)`、`Passed`。同批：初版探针用 `far`/`at` 作局部名，mingw 把 `far` 定义成空宏 ⇒ **Windows 编不过而 Linux 编得过**，已改名。计数 133 → 134。 | [AUDIT.md](AUDIT.md) §1.54、[STATUS.md](STATUS.md) §10.83 |
+
+| 已完成 | `nul-bytes-in-tracked-sources`（**新增行**；对应 [AUDIT.md](AUDIT.md) §1.55 与 [STATUS.md](STATUS.md) §10.84） | **受版本控制的文本文件里的 NUL 字节让 `grep` 静默截断。** `src/mod/gui_mod.c`（5 个）、`src/lexer/lexer.c`（2 个）、`src/lexer/lexer.h`（1 个）在**块注释里**带 NUL 字节（8 个逐个用「反向数 `/*` 与 `*/`」确认都在注释内）。编译器完全不在意（构建一直绿），但 GNU `grep` 读到 NUL 就判定文件是二进制：**此后不再列出行，却已经把 NUL 之前找到的匹配打到了 stdout**，`binary file matches` 打到 stderr，**退出码 0** ⇒ 一份**看起来完整**的截断清单。实测 `grep -n 'gui_fullscreen' src/mod/gui_mod.c` **只给 `:1661` 一行**，而被吞掉的正是 `:3690`／`:3697` —— 证明 `gui_fullscreen` 注册两次、`builtin_fullscreen` 不可达（§1.53）的那两行。**修法是把字节去掉，不是教每个读者加 `-a`**：8 个字节换成空格，文件字节数不变、编译产物不变，修后 `grep -n` 直接给出三行。**全仓库扫描**（`git ls-files` 858 个路径）：只有这三处是 C 源码；`.inim`（引擎字节码）与图像资产里的 NUL 是**格式本身**，按扩展名排除、不动。**闸门**：新增第 11 阶段 `text-integrity`（`tools/check_text_integrity.py`），`git ls-files` + **扩展名白名单**，无 git 时响亮退出（照 `check_links.py`／`check_doc_paths.py` 的成例，不留 `os.walk` 回退）。**诚实边界**：①`.inim` 与图像没有逐个验证合规性，只按扩展名排除；②白名单是判断，新文本扩展名若含 NUL 看不见；③这 8 个字节的**来源未知** —— `git log -S` 对 NUL 不可用（git 自己把它当二进制），修的是后果不是原因；④「会截断」只在本机 GNU grep 实测，`ripgrep`／编辑器搜索没逐个测（`git grep` 实测同样只给一行）；⑤本阶段不断言「仓库里没有二进制文件」，只断言被当成文本的那些文件里没有 NUL |

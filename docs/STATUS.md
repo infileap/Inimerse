@@ -3672,3 +3672,14 @@ CTest **#133**，`PASS_REGULAR_EXPRESSION` 钉整行且两平台**同一行**（
 
 同批：初版探针把局部变量写成 `far`/`at`，mingw 的系统头把 `far` 定义成**空宏** ⇒ **Windows 编不过而 Linux 编得过**；已改名 `deep`/`edge`，双工具链 0 error。详见 [AUDIT.md](AUDIT.md) §1.54。
 
+## §10.84 受版本控制的文本文件里的 NUL 字节让 `grep` 静默截断
+
+三个 C 源文件在块注释里带着 NUL 字节（`src/mod/gui_mod.c` 5 个、`src/lexer/lexer.c` 2 个、
+`src/lexer/lexer.h` 1 个）。编译器不在意；`grep` 在意 —— 它把文件判成二进制，**只列出 NUL
+之前找到的匹配**，把 `binary file matches` 打到 stderr，**退出码 0**。被吞掉的正是证明
+`gui_fullscreen` 注册两次（`src/mod/gui_mod.c:3690`／`:3697`）的那两行。8 个字节已换成空格
+（字节数不变），`grep -n` 修后直接给出三行。新增门禁第 **11** 阶段 `text-integrity`
+（`tools/check_text_integrity.py`，`git ls-files` + 扩展名白名单，实测 **770 个文本文件 / 0 个
+含 NUL**；**数量不作断言**，它随每个新增文本文件变动，断言的是「0 个含 NUL」；
+反向验证塞回一个 NUL ⇒ exit 1）。机制、登记表与五条诚实边界见
+[AUDIT.md](AUDIT.md) §1.55。

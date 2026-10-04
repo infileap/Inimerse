@@ -1,6 +1,6 @@
 # 底层去C化设计（DECFY_DESIGN）
 
-> 工作订单：task-16。状态：**设计，未实现**。本文档只做设计，不改任何引擎源码。
+> 工作订单：task-16。状态：**设计（未实现的部分仍未实现）**——但本设计交付后已被实现方当作规格引用并落地多节，见 **§0.5 落地现状**。本文档只做设计，不改任何引擎源码。
 > 证据标注约定：**[读码]** = 逐行读过该文件该行；**[实测]** = 本会话实际执行命令所得；**[转述]** = 引用 `docs/AUDIT.md` 的实测数字，非本会话实测；**[待复核]** = 只见引用、未见原文。
 
 ## 0. 结论摘要
@@ -10,6 +10,29 @@
 最硬的证据：`selfhost/compiler.im:254-266` **[读码]** 与 `selfhost/eval.im:114-123` **[读码]** 都是 `.im` 写的，却对 `and`/`or` 给出相反答案（前者值语义，后者布尔）。⇒ 「换成 `.im`」本身不消除分歧，只是改变分歧发生在哪两个文件之间。
 
 真正的修法是让所有后端消费**同一个 IR（字节码）**，把语义从「每个消费者各自重判一次」收敛成**一张表**，使分歧在结构上不可表达。
+
+---
+
+## 0.5 落地现状（截至 HEAD `3484a47`，2026-10 复核）
+
+本节由 decfy-design 会话在 2026-10 复核 `docs/STATUS.md` 后补写。**原文（§1–§10）保留原样，作为当时的取证记录**；凡与本节现状表冲突处，**以现状表为准**（现状表锚定 commit 与 `docs/STATUS.md` 小节，可逐条复核）。
+
+| 本文档的原论断 | 现状 | 证据 |
+| --- | --- | --- |
+| §1.1 `and`/`or` 六个决定点、2 值 : 4 布尔 | **已修**：统一为**布尔**语义（短路保留），判据换成三后端逐格比对 | `docs/STATUS.md:2464` §10.42；`src/compiler/compiler.c:648-672`、`selfhost/compiler.im:254-268`、wasm 改为复用 `cg_cond`；AOT 本就正确、未动 |
+| §1.1 的语义方向：本文档主张**值语义胜出**（O0 选项①） | **已被用户裁定推翻**：`and`/`or` 返回**布尔** | `docs/STATUS.md:2526-2531`（该节明写「与本节冲突时以本节为准」）；用户裁定见 `docs/STATUS.md:2470` |
+| §1.2 `%` 三决定点、32 位截断 | **已修**：`im_dbl_to_i64()` 饱和、零检查前移、`y == -1` 特判、AOT 新增 `nv_die_division_by_zero()`、wasm 改用 `e_trunc_sat_i64`；16/16 三后端一致 | `docs/STATUS.md:2464` §10.42 |
+| §1.3 宽度契约分裂（`Value` 整数槽 32 位 vs AOT `NV` 64 位） | **已修，且正是按本文档 §2 的约束修的**：用**匿名 union** 把 `ival` 改 `long long` 而 `sizeof(Value)` 仍为 **32**，AOT 的 `NV` 完全未动 | `docs/STATUS.md:2910` §10.49（该节直接引用 `docs/DECFY_DESIGN.md:76` 当约束） |
+| §1.4 死指令 `OP_AND` / `OP_OR` | **已定**：`and`/`or` 降级为短路跳转 + 真值常量；另**新增 `OP_LOADK_I64`** ⇒ **opcode 表已变，本文档对 `src/compiler/bytecode.h:12` 的行号引用需重核** | `docs/STATUS.md:3095` §10.53；`docs/STATUS.md:2935`（新 opcode 追加在枚举末尾以保旧编号与 DLL ABI） |
+| §3.3 第 2 条「真值产生点唯一」 | **已实现**：`vm_truthy()` 单入口，六处调用点全部改调用它，旧三目链 `grep -c` 归零 | `docs/STATUS.md:3110-3128`（该节直接引用本文档 `:125` 当规格、`:24` 当真值规则） |
+| §3「IR 收敛」（后端改吃字节码） | **未做，仍是结构性下一步**：现状是「把语义判断抽成单一函数」——**分歧被消除，但每个后端各自遍历 AST 的结构成因仍在** | 本文档 §3；对照 `docs/STATUS.md:3171` 诚实边界①（两个编译后端根本走不到字符串/容器的真值） |
+
+**两条复核后新增、对本设计有利的证据**（原文没有）：
+
+1. **本文档已被实现方当规格引用。** `docs/STATUS.md:3110` 引用 `docs/DECFY_DESIGN.md:125` 的「真值产生点唯一」作为该节要达成的判据；`docs/STATUS.md:3130` 引用 `:24` 的三目链尾句作为选定语义的理由；`docs/STATUS.md:2922` 引用 `:76` 的 32 字节冻结作为「选匿名 union 而非加宽字段」的理由。⇒ 设计文档写下的**约束是可被执行的**，不只是描述。
+2. **§1.1 的论点被实测加强，而不是削弱。** `docs/STATUS.md:2531` 原文：「修 `and`/`or` 要**同时**动 C 编译器、`.im` 编译器、wasm 后端**三处**，而 `selfhost/eval.im`（`.im`·布尔）**不需要动**…**决定点的数量就是修复要碰的文件数**。」这正是 §1.1 的论点。
+
+**仍未做**：§3 的 IR 收敛；以及 `docs/STATUS.md:2536-2537` 记的一条诚实边界（O2 的 BigInt / 小整数快路径未做）仍成立。§10.42 当时记的「`tools/im_diff_fuzz.py` 未接门禁」**已被 `docs/STATUS.md:2851` §10.48 解决**（差分模糊测试已进门禁，判据为 `0 DIVERGE / 0 THREW / 0 untranslated`，见 `docs/STATUS.md:3169` 的门禁逐阶段输出）。
 
 ---
 
@@ -73,7 +96,7 @@
 | 平台 / OS 层 | `src/platform/`、`src/runtime/runtime_posix.c`、`src/common/` | **暂不可搬** | socket / 线程 / mutex / fork 是 `.im` 无权直接表达的宿主能力；搬 = 先造 FFI，而 FFI 本身又要 substrate 托底。 |
 | AOT 最后一跳 | `src/compilation/aot_native.c:168`（`kPreamble`）、宿主 `cc`、`NV`/`nv_*` 前导 | **暂不可搬** | 它产出的是**宿主 C 源码**并交给 `cc` 编译、链接出 `main`；`.im` 既不能代替 `cc`，也不能在没有 C 运行时的前提下提供进程入口。 |
 | 引导（bootstrap）链 | C VM ← `.im` 编译器 | **暂不可搬** | 没有 C VM 就没有运行 `.im` 的东西。**这是唯一一条无法靠「重写」消除的依赖**，它决定了去C化有理论上界。 |
-| 值表示 + 集合运行时 | `src/vm/vm.h:24-26`（`Value`，32 字节）、数组/字典/集合、以及集合化所需的 BigInt / 窄化整数 / 位图 | **永久不可搬（宽度契约部分）** | `Value` 是 VM 寄存器、AOT 生成的 C、wasm 线性内存槽、固定导入表**共同的形状**；`docs/archive/ROADMAP_3.1.md:23-25` 明确要引入 BigInt 与 u8/i16 窄化，并规定「动态容器与跨模块边界保留 boxed `Value`」；`:28` 要求 BigInt / 窄化整数 / 枚举值在模块 ABI 与 `.vverse` 序列化中**可逆映射**。宽度契约一旦可被 `.im` 单方面修改，ABI 与序列化可逆性即失效。**可搬的是其上的策略，不是它本身。** |
+| 值表示 + 集合运行时 | `src/vm/vm.h:24-26`（`Value`，32 字节）、数组/字典/集合、以及集合化所需的 BigInt / 窄化整数 / 位图 | **永久不可搬（宽度契约部分）**——**§0.5 复核：该约束已被遵守**（整数槽改 64 位而 `sizeof` 仍 32，AOT 的 `NV` 未动） | `Value` 是 VM 寄存器、AOT 生成的 C、wasm 线性内存槽、固定导入表**共同的形状**；`docs/archive/ROADMAP_3.1.md:23-25` 明确要引入 BigInt 与 u8/i16 窄化，并规定「动态容器与跨模块边界保留 boxed `Value`」；`:28` 要求 BigInt / 窄化整数 / 枚举值在模块 ABI 与 `.vverse` 序列化中**可逆映射**。宽度契约一旦可被 `.im` 单方面修改，ABI 与序列化可逆性即失效。**可搬的是其上的策略，不是它本身。** |
 
 **一处必须点名的误判**：把 `src/vm/vm.c:3166-3179` 的布尔语义归入「永久不可搬」是**错的**。那段是**政策**（policy），不是 substrate **能力**（capability）。政策必须上移到语义表，否则去C化会把缺陷一起固化。
 
@@ -111,7 +134,7 @@ void emit_expr(Ctx *c, const Expr *e);
 void emit_from_bytecode(Ctx *c, const Bytecode *bc);
 ```
 
-把 AOT / wasm 改成字节码进之后，`and`/`or` 在字节码里已经定死（值语义 + `OP_MOV`），后端只剩 `opcode → 目标指令` 的映射表，**分歧在结构上不可能发生**。
+把 AOT / wasm 改成字节码进之后，`and`/`or` 在字节码里已经定死（原文写「值语义 + `OP_MOV`」；**语义方向已由用户裁定改为布尔**，见 §0.5，`OP_MOV` 那半句仍成立），后端只剩 `opcode → 目标指令` 的映射表，**分歧在结构上不可能发生**。
 
 ### 3.2 `aot_native.c` 具体要改什么
 
@@ -167,7 +190,7 @@ void emit_from_bytecode(Ctx *c, const Bytecode *bc);
 
 | 步 | 动作 | 可证伪判据（含命令） |
 |---|---|---|
-| **0** | 冻结唯一语义表；采纳 `docs/AUDIT.md` §5 的 **O0 选项①**（值语义胜出，改 AOT 而非改解释器） | ① `tools/im_diff_fuzz.py` 重跑，`and`/`or` 类分歧 **= 0**；② `docs/API.md:90` 明写 `and`/`or` 返回**操作数**还是布尔；③ `AUDIT.md` §1.6 的八行表格**三后端逐格相同**（解释器 / AOT / wasm；wasm 必须从 `error: wasm MVP subset: 'and'/'or' outside a condition is not supported` 变成给出值） |
+| **0** | 冻结唯一语义表；采纳 `docs/AUDIT.md` §5 的 **O0 选项①**（~~值语义胜出~~ → **已由用户裁定改为布尔**，见 §0.5 / `docs/STATUS.md:2464`；改动落在解释器与 wasm，AOT 本就正确） | ① `tools/im_diff_fuzz.py` 重跑，`and`/`or` 类分歧 **= 0**（§0.5：已进门禁并归零）；② `docs/API.md:90` 明写 `and`/`or` 返回**操作数**还是布尔 —— **已定为布尔**；③ `AUDIT.md` §1.6 的八行表格**三后端逐格相同**（解释器 / AOT / wasm；wasm 必须从 `error: wasm MVP subset: 'and'/'or' outside a condition is not supported` 变成给出值） |
 | **1** | 两个编译器统一 `and`/`or` 降级（短路跳转 + `OP_MOV`）；顺带定夺 `OP_OR` 死指令去留 | `tools/selfhost_compare.py` 的 opcode 序列判据在 `or` 探针上**零差异**（AUDIT §6 的 `orv.im` 探针） |
 | **2** | `src/compilation/aot_native.c` 改吃字节码（§3.2） | `tools/aot_native.test.py` 的 `DIVERGENCE` / `EQUIVALENCE` 计数**不变**（零回归）；且 and/or 类不再需要 `DIVERGENCE` 钉死 |
 | **3** | `src/compilation/wasm_backend.c` 同改（§3.3） | 同第 2 步判据，跑 wasm 目标 |
@@ -203,13 +226,13 @@ void emit_from_bytecode(Ctx *c, const Bytecode *bc);
 
 **不冲突。** 本设计与 §5（`docs/AUDIT.md:328-386`，当前为 **O0–O13**，含已完成的 O3）的关系：
 
-- **O0**：本设计**采纳 O0 选项①**（值语义胜出），并把「决定」落到 §3.4 的唯一语义表上。
+- **O0**：本设计**当时采纳 O0 选项①**（值语义胜出），并把「决定」落到 §3.4 的唯一语义表上。**该方向已被用户裁定推翻为布尔语义**（§0.5、`docs/STATUS.md:2526-2531`）；但 O0 的「必须先把决定写进唯一一张表」这一要求不受影响，且已落地。
 - **O1 / O2**：§6 第 4 步即 O1 的宽度版本；本设计指出 O1 的根因比 `%` 更广（§1.3 的 `Value` vs `NV` 宽度），O2（整数溢出可诊断）与 §5.3 的 ABI 宽度标签是同一件事的两个面。
 - **O11**：`docs/AUDIT.md:368` 把「`selfhost/compiler.im` 必须与 `src/compiler/compiler.c` 保持一致」列为**风险①**；本设计把它当作**待根治的缺陷本身**（§1.1 证明 `.im` 重写不消除分歧）。两者方向一致，本设计是该风险的解法。
 - **O13**：`docs/AUDIT.md:372` 诊断 wasm 后端「算术发射质量差」（`arith` 只有 2.72× vs AOT 155×），怀疑「每次算术都要把 `Value`（32 字节）装箱再拆箱」。**这是 §3 的第二个独立论据**：wasm 后端既因逐个 AST 重判语义而分歧，也因缺少统一的 IR 层而无法做跨后端的发射质量改进。两件事同一个根因。
 - **§5 末尾三条 `DIVERGENCE`**：§6 第 5 步照其要求「修好后重新审视」（`docs/AUDIT.md:378-386`）。
 
-**唯一需要 Lead 裁决的张力**：O0 说无论选哪条都要在 `docs/API.md:90` 写明返回值。本设计建议写明**值语义**（即返回操作数），因为 AUDIT 已论证改解释器会静默改变现有脚本结果（如 `name or "anonymous"`）。
+**唯一需要 Lead 裁决的张力**：O0 说无论选哪条都要在 `docs/API.md:90` 写明返回值。本设计当时建议写明**值语义**（即返回操作数），理由是 AUDIT 论证改解释器会静默改变现有脚本结果（如 `name or "anonymous"`）。**该建议未被采纳，裁定为布尔语义**（§0.5）。事后看，这条建议的代价估计**过重**：实现方先量了爆炸半径，真正会变的值选择只有 **1 个文件**（`t_sugar_desugared.im:7` 的 `k = 0 or 1`）且它不被任何 CTest 或门禁引用 ⇒ 门禁零回归（`docs/STATUS.md:2470-2479`）。**教训：本设计的「代价」判断当时是读码推断，没有像实现方那样先量一遍；凡是「改动会破坏 N 处」的断言，都应当先量后写。**
 
 ---
 
@@ -219,14 +242,14 @@ void emit_from_bytecode(Ctx *c, const Bytecode *bc);
 
 | # | 位置 | 建议变更 | 依据 |
 |---|---|---|---|
-| 1 | `src/compiler/compiler.c:648-670` | `and`/`or` 降级统一为值语义 | §1.1 #1 |
+| 1 | `src/compiler/compiler.c:648-672` | ~~`and`/`or` 降级统一为值语义~~ → **已按布尔语义实现**（§0.5） | §1.1 #1 |
 | 2 | `src/compilation/aot_native.c:334-339` | 删除布尔发射，改按字节码查表 | §1.1 #4、§3.2 |
 | 3 | `src/compilation/wasm_backend.c:769-786` | 删除 `cg_cond` 的 AND/OR 递归 | §1.1 #5、§3.3 |
 | 4 | `src/vm/vm.c:3166-3179` | `L_AND` / `L_OR` 语义随唯一语义表定夺 | §1.1 #3、§2 的误判点名 |
 | 5 | `src/compiler/bytecode.h:12` | `OP_OR` 死指令去留（`OP_AND` 必须保留） | §1.4 |
-| 6 | `src/vm/vm.h:24-26` vs `src/compilation/aot_native.c:172` | 宽度契约统一（32 位 vs 64 位） | §1.3、§5 |
+| 6 | `src/vm/vm.h:24-26` vs `src/compilation/aot_native.c:172` | ~~宽度契约统一（32 位 vs 64 位）~~ → **已解决**：匿名 union 使 `ival` 为 64 位而 `sizeof(Value)` 仍 32（§0.5） | §1.3、§5 |
 | 7 | `src/compilation/wasm_backend.c:9` | 修正与代码矛盾的 `L_MOD` 描述 | §1.2 |
-| 8 | `docs/API.md:90` | 写明 `and`/`or` 返回操作数还是布尔 | AUDIT §5 O0 |
+| 8 | `docs/API.md:90` | 写明 `and`/`or` 返回操作数还是布尔 —— **已裁定为布尔**（§0.5） | AUDIT §5 O0 |
 
 ---
 

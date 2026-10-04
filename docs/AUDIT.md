@@ -2117,7 +2117,7 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 
 | 实例 | 两份说法 | 为什么本轮不动 |
 |---|---|---|
-| `gui_fullscreen` | `src/mod/gui_mod.c:3690` 注册 `builtin_gui_fullscreen`（`:1661`，用 `SetWindowLongA` 去掉 `WS_CAPTION | WS_THICKFRAME`，**要求实参**）；`:3697` 注册 `builtin_fullscreen`（`:1730`，用 `SetWindowLongPtr` + `WS_POPUP | WS_VISIBLE`、保存 `G.restoreStyle`、**支持无参切换**）。两行在同一个 `gui_mod_register` 里相隔 6 行。先注册者胜 ⇒ **`builtin_fullscreen` 不可达** | 两个体行为不同，选哪个是人的决定；且 `gui_mod.c` 需要窗口，本机没有可跑的 GUI 断言 |
+| `gui_fullscreen` | `src/mod/gui_mod.c:3690` 注册 `builtin_gui_fullscreen`（`:1661`，用 `SetWindowLongA` 去掉 `WS_CAPTION | WS_THICKFRAME`，**要求实参**）；`:3697` 注册 `builtin_fullscreen`（`:1730`，用 `SetWindowLongPtr` + `WS_POPUP | WS_VISIBLE`、保存 `G.restoreStyle`、**支持无参切换**）。两行在同一个 `gui_mod_register` 里相隔 **7** 行。先注册者胜 ⇒ **`builtin_fullscreen` 不可达**。**注意复核方式**：本节写下这条时，`src/mod/gui_mod.c` 含 5 个 NUL 字节，**普通 `grep` 会把该文件当二进制、只列出 NUL 之前那一行（`:1661`）并把 `binary file matches` 打到 stderr、退出码仍为 0** —— 要拿到 `:3690`／`:3697` 必须 `grep -a`。这些字节已由 §1.55 移除，此后普通 `grep` 即可 | 两个体行为不同，选哪个是人的决定；且 `gui_mod.c` 需要窗口，本机没有可跑的 GUI 断言 |
 | `rand` | `docs/SYNTAX.md:500` 把它列进「核心高频内建（**有 `vtest` 覆盖的**）」；`projects/demo/main.im:60` 的 `rand_int` 调用它。**全 `src/` 零注册**（`grep -rn '"rand"' src/` 无命中） | 加一个 `rand` 内建是**新立一个名字**，不是消除分歧；正确处置是从文档与示例里去掉它，那要改 `projects/`（见下条边界） |
 | `docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」 | 该名单里 `random` 当时**零覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`） | **本轮就地改了**：`rand` 从名单移除，`random` 的覆盖由 §1.52 的 pin 补上 |
 
@@ -2214,6 +2214,78 @@ ArrayObj *vm_pool_slot(VM *vm, int idx) {
 ④ `idx == 4096` 在 `bigCap == 0` 时返回 NULL 是**偶然**，不是设计；我没有去查历史上是否有代码依赖过这个偶然。
 
 ⑤ 探针用 `malloc(sizeof(VM))` + `memset` 造 VM，**不调 `vm_init`** —— 它只观察 `vm_pool_slot` 这一个函数的边界算术，不声称覆盖 VM 初始化（那是 `vm_init_probe` 的事）。
+
+## §1.55 受版本控制的文本文件里的 NUL 字节，让 `grep` 答一个更短的问题
+
+**一句话。** 三个受版本控制的 C 源文件在**块注释里**带着 NUL 字节：
+`src/mod/gui_mod.c` **5** 个（1,000,721 B）、`src/lexer/lexer.c` **2** 个（15,432 B）、
+`src/lexer/lexer.h` **1** 个（2,513 B）。字节对编译器完全无影响（构建一直绿），
+但**对读源码的工具不是**。
+
+**机制（实测）。** GNU `grep` 读到 NUL 就判定该文件是二进制，此后**不再列出行**，但它
+**已经把 NUL 之前找到的匹配打到了 stdout**，把 `binary file matches` 打到 **stderr**，
+**退出码 0**：
+
+```
+$ grep -n 'gui_fullscreen' src/mod/gui_mod.c
+1661:static int builtin_gui_fullscreen(VM *vm) {
+grep: src/mod/gui_mod.c: binary file matches
+$ echo $?
+0
+$ grep -an 'gui_fullscreen' src/mod/gui_mod.c
+1661:static int builtin_gui_fullscreen(VM *vm) {
+3690:    vm_register_builtin(vm, "gui_fullscreen", builtin_gui_fullscreen);
+3697:    vm_register_builtin(vm, "gui_fullscreen", builtin_fullscreen);
+```
+
+**所以这不是「文件读不了」，而是「文件回答了一个比被问的更短的问题，而且答案形状一样」。**
+只看 stdout、或不读 stderr 的人，拿到一份**看起来完整**的截断清单。这一次被吞掉的正是
+`:3690`／`:3697` —— 证明 `gui_fullscreen` 注册两次、`builtin_fullscreen` 不可达（§1.53）
+的那两行。**一条登记在 `docs/API.md:234` 的事实，此前没人能靠普通 grep 复核。**
+
+**修法：把字节去掉，而不是教每个读者加 `-a`。** 8 个字节**全部**落在块注释内
+（逐个用「反向数 `/*` 与 `*/`」确认），替换成空格，文件字节数不变、编译产物不变。
+修后 `grep -n` 直接给出三行。
+
+**为什么值得单独登记。** 它与本仓库反复记的那一族同形，只是下沉到工具层：
+**同一件事有两个生产点**（文件内容 vs 工具的读取策略）、**快路径的门被当成了答案**
+（「grep 退出 0」被当成「清单完整」）。`docs/SYNTAX.md:35` 已记「14 个受版本控制的文件含
+U+FFFD」；NUL 字节是**更硬的一种**：U+FFFD 只是让字符看起来不对，NUL 让**工具静默降级**。
+
+**登记表（全仓库扫描，`git ls-files` 858 个路径）。**
+
+| 类别 | 文件 | NUL 数 | 处置 |
+|---|---|---|---|
+| C 源码 | `src/mod/gui_mod.c` | 5 | **本轮修**（注释内） |
+| C 源码 | `src/lexer/lexer.c` | 2 | **本轮修**（注释内） |
+| C 源码 | `src/lexer/lexer.h` | 1 | **本轮修**（注释内） |
+| 引擎字节码 | `projects/{set_test,set_comp_test,exc_test,tt4,tt7,tt6,t1}.inim`、`vtest/params_precompiled_v06.inim` | 236–2779 | **不动**：`.inim` 是序列化后的程序，本来就是二进制 |
+| 二进制资产 | `icon.ico`、`Infiverse_standard/src-tauri/icons/*`、`examples/assets/monster8.bmp`、`selfhost/tests/*.bmp` | 23–8084 | **不动**：图像格式 |
+
+**闸门。** 新增第 **11** 个阶段 `text-integrity`（`tools/check_text_integrity.py`）：
+`git ls-files` 枚举受版本控制的路径，按**扩展名白名单**（`.c .h .md .im .py .sh .json .yml
+.cmake .iss .ts .js .css .html .xml` 等）挑出文本文件，逐个断言无 NUL 字节。
+白名单而非黑名单：新加的二进制产物**不可能**把闸门判红，也就不需要有人去改名单。
+没有 git 时**响亮退出**（照 `check_links.py`／`check_doc_paths.py` 的成例，不留 `os.walk` 回退）。
+实测 `770 text file(s), 0 with NUL bytes`（本阶段建立时是 **769**；多出的 1 个就是
+`tools/check_text_integrity.py` 自己 —— 它被提交之后才进入 `git ls-files`。**这个数会随每个
+新增文本文件变动，所以它不作断言**：本阶段断言的是「0 个含 NUL」，数量只作输出）；
+**反向验证**：往 `src/lexer/lexer.h` 塞回一个 NUL ⇒ `1 NUL byte(s) in 1 of 770 tracked text
+file(s)`、报出字节偏移与行号、`exit 1`，还原即复绿。
+
+**诚实边界。**
+
+1. 我核的是 **C 源码**这三个文件；`.inim` 与图像里的 NUL 是**格式本身**，我**没有**逐个
+   验证它们是否都合规，只是按扩展名排除。
+2. 白名单是**我的判断**：一个受版本控制的**新**文本扩展名（比如 `.vue`）若含 NUL，
+   本阶段**看不见**它。名单在 `tools/check_text_integrity.py` 的 `TEXT_SUFFIXES` 里，
+   加一项是一行的事。
+3. 我**没有**证明这 8 个字节是「某次编辑事故」还是「某工具写入的」——`git log -S` 对
+   NUL 字节不可用（git 自己把它当二进制），所以**来源未知**。修的是后果，不是原因。
+4. 「`grep` 会截断」这条是**本机 GNU grep** 的实测；`ripgrep`、编辑器内搜索、`git grep`
+   的行为**没有逐个实测**（`git grep` 在实测里同样只给了 `:1661` 一行）。
+5. 这一阶段**不是**在断言「仓库里没有二进制文件」，它只断言「被我们当成文本的那些文件
+   里没有 NUL」。
 
 ## §2 执行通道效率比较
 
