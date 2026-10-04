@@ -130,19 +130,19 @@ def main():
         home = root / "home"
         home.mkdir()
 
-        # a real verse tree: structure, metadata, entry point and content
-        pkgdir = root / "pkgdir"
-        for sub in ("laws", "assets", "mods", "signatures"):
-            (pkgdir / sub).mkdir(parents=True, exist_ok=True)
-        (pkgdir / "manifest.json").write_text(
-            json.dumps({"id": "pkgdir", "version": "1.2.3", "entry": "main.im",
-                        "dependencies": {}}) + "\n", encoding="utf-8")
-        (pkgdir / "blueprint.json").write_text(
-            json.dumps({"name": "pkgdir"}) + "\n", encoding="utf-8")
-        (pkgdir / "main.im").write_text('say "packed verse ok"\n', encoding="utf-8")
-        (pkgdir / "data.txt").write_text("data payload\n", encoding="utf-8")
-        (pkgdir / "laws" / "rule.im").write_text("rule = 1\n", encoding="utf-8")
-        (pkgdir / "mods" / "entry.im").write_text("mod = 1\n", encoding="utf-8")
+        # a real verse tree: structure, metadata, entry point and content.
+        # Write the bytes, not the text: Path.write_text() opens in text mode, so
+        # on Windows it turns every "\n" into "\r\n" and the package would hold
+        # CRLF bytes while the round-trip assertions below compare against "\n".
+        (pkgdir / "manifest.json").write_bytes(
+            (json.dumps({"id": "pkgdir", "version": "1.2.3", "entry": "main.im",
+                         "dependencies": {}}) + "\n").encode("utf-8"))
+        (pkgdir / "blueprint.json").write_bytes(
+            (json.dumps({"name": "pkgdir"}) + "\n").encode("utf-8"))
+        (pkgdir / "main.im").write_bytes(b'say "packed verse ok"\n')
+        (pkgdir / "data.txt").write_bytes(b"data payload\n")
+        (pkgdir / "laws" / "rule.im").write_bytes(b"rule = 1\n")
+        (pkgdir / "mods" / "entry.im").write_bytes(b"mod = 1\n")
         (pkgdir / "assets" / "blob.bin").write_bytes(b"\x00\x01\x02blob\n")
 
         # 1. identity + sign/verify round trip, then pack a REAL container
