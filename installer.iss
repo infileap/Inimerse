@@ -23,7 +23,7 @@ Source: "{#SourcePath}\Infiverse_standard\src-tauri\target\release\app.exe"; Des
 Source: "{#SourcePath}\inimerse.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}\Infiverse_standard\plugins\*"; DestDir: "{app}\plugins"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourcePath}\Infiverse_standard\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourcePath}\docs\OAUTH.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#SourcePath}\docs\API.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\userdata"
