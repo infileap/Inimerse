@@ -73,11 +73,16 @@ static int posix_core_bool(VM *vm) {
 static int posix_core_int(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)]; int64_t n = 0;
-    /* A "0x" prefix selects base 16, as src/runtime/runtime.c:40 does.  The two
-     * copies must answer the same thing for the same input -- they register the
-     * same builtin name -- and this one used to read "0x10" as 0 while the
-     * Windows copy read it as 16.  Base-10 strings are unaffected. */
-    if (v->type == VAL_STRING) { const char *s = v->sval ? v->sval : "0"; int hx = (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')); n = strtoll(s, NULL, hx ? 16 : 10); }
+    /* Base 10 only.  src/runtime/runtime.c:40 also accepts a "0x" prefix, so the
+     * two copies disagree on int("0x10") -- 0 here, 16 there.  That divergence is
+     * REGISTERED, NOT RESOLVED.  Neither copy is the baseline: both are consumers
+     * of a contract that does not exist yet (docs/DECFY_DESIGN.md:8-12 -- "让所有
+     * 后端消费同一个 IR"), so picking a side's value would crown one of them by
+     * fiat.  Porting the Windows branch here would not remove a divergence, it
+     * would create an undocumented capability (docs/STATUS.md:30, "设计文档中的
+     * 方案不等于已具备功能").  This needs a human: both base 10, or both refuse.
+     * See docs/AUDIT.md 1.45. */
+    if (v->type == VAL_STRING) { const char *s = v->sval ? v->sval : "0"; n = strtoll(s, NULL, 10); }
     else if (v->type == VAL_FLOAT) n = (int64_t)v->fval;
     else n = v->ival;
     pop(vm); push_int(vm, n); return 1;

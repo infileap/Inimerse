@@ -9,10 +9,17 @@
 #
 #   int(9007199254740993)    POSIX 9007199254740993  WIN 1     (through `int`)
 #   int(9223372036854775807) POSIX 9223372036854775807 WIN -1 (through `int`)
-#   int("0x10")              POSIX 0                 WIN 16    (base 16 only on WIN)
 #   chr("A")                 POSIX ""                WIN "\x01" (read .ival off a string)
 #   atomic_get(42)           POSIX 0                 WIN CRASH  (strcmp(NULL))
 #   atomic_set(42, 7)        POSIX 0                 WIN CRASH  (strcmp(NULL))
+#
+# REGISTERED, NOT PINNED: int("0x10") answers 0 on POSIX and 16 on WIN, because
+# src/runtime/runtime.c:40 accepts a "0x" prefix and the POSIX copy does not.
+# That one is deliberately NOT asserted here: neither copy is the baseline
+# (docs/DECFY_DESIGN.md:8-12 -- the two runtimes are both consumers of a contract
+# that does not exist yet), and porting the Windows branch to POSIX would create
+# an undocumented capability instead of removing a divergence.  It is a decision
+# for a human: both base 10, or both refuse.  See docs/AUDIT.md 1.45.
 #
 # The ival/sval pair is one union chosen by the type tag (src/vm/vm.h:24-26), so
 # chr() reading .ival off a string read half of a pointer -- a different control
@@ -24,7 +31,6 @@
 
 i1 = int(9007199254740993)
 i2 = int(9223372036854775807)
-i3 = int("0x10")
 i4 = int("16")
 c1 = chr(65)
 c2 = chr("A")
@@ -33,4 +39,4 @@ a2 = atomic_set(42, 7)
 a3 = atomic_add(42, 5)
 a4 = atomic_get("no_such_slot_at_all")
 
-say "divergent-ok i1=" + str(i1) + " i2=" + str(i2) + " i3=" + str(i3) + " i4=" + str(i4) + " c1=" + c1 + " c2empty=" + str(c2 == "") + " a1=" + str(a1) + " a2=" + str(a2) + " a3=" + str(a3) + " a4=" + str(a4)
+say "divergent-ok i1=" + str(i1) + " i2=" + str(i2) + " i4=" + str(i4) + " c1=" + c1 + " c2empty=" + str(c2 == "") + " a1=" + str(a1) + " a2=" + str(a2) + " a3=" + str(a3) + " a4=" + str(a4)

@@ -995,11 +995,14 @@ set_tests_properties(vfs_probe PROPERTIES
 # only test that compared them, posix_runtime_parity, is DISABLED on Windows
 # (:662).  This pin runs on BOTH platforms and prints one line either way, so on
 # Linux it judges the POSIX copy and on Windows the WIN32 one.  It pins
-# int()'s width and its "0x" prefix, chr()'s type check, and the name guard that
-# atomic_get/atomic_set were missing (which crashed the Windows engine).
+# int()'s width, chr()'s type check, and the name guard that atomic_get/atomic_set
+# were missing (which crashed the Windows engine).  int("0x10") is deliberately
+# NOT asserted: the two copies still disagree there and neither is the baseline,
+# so it is registered as an open divergence awaiting a human decision rather than
+# resolved by crowning one side.  See docs/AUDIT.md 1.45.
 # Registered last so no existing #N moves.
 add_test(NAME divergent_builtin_contract_runtime
          COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
 set_tests_properties(divergent_builtin_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0")
+  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0")
