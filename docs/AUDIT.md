@@ -2035,6 +2035,34 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 这条规则的推论，不是从任一侧继承来的值；③ 我没有核 `spi_has()` 的判定是否与 `mod_caps` 的位语义
 完全同构（`posix_spi_has` 与 `builtin_spi_has` 的写法本身也有细微差别，本轮未动）。
 
+## §1.51 原子槽不是整数时，两侧都去读了 union 里没被写过的那个成员
+
+**缺陷类**：一个名字两份实现（`src/runtime/runtime.c` 与 `src/runtime/runtime_posix.c`），**两份都不查槽的 `type` 标记就读写 union**。`Value`（`src/vm/vm.h:24-26`）是 `{int type; union {long long ival; double fval;}; char *sval; void *ptr;}`，`ival` 与 `fval` 是同一块存储，读错成员就是读别人的位型。这与 `docs/SYNTAX.md` §7.1 **D13**（`chr` 不查 `type` 就读 `ival`）是**同一个病**，只是 D13 当时只修了 `chr` 一处。
+
+**实测（POSIX，修前，退出码全部为 0）**：
+
+| 语句 | POSIX 修前 | WIN32 修前 | 修后（两侧） |
+| --- | --- | --- | --- |
+| `atomic_get("y")`，`y = 1.5` | `4609434218613702656`（`1.5` 的 IEEE754 位型） | `0` | `0` |
+| `atomic_get("s")`，`s = "abcdef"` | `1` | `0` | `0` |
+| `atomic_add("f", 1)`，`f = 1.5` | `4609434218613702657`，且 `f` 被毁 | `1`，且 `f` 被毁 | `0`，`f` 保持 `1.5` |
+| `atomic_add("h", 0)`，`h = 2.5` | `4612811918334230528`，**加零就把值毁掉** | `0`，同样毁掉 | `0`，`h` 保持 `2.5` |
+| `atomic_add("t", 1)`，`t = "abcdef"` | `2`，字符串被毁成 `2` | `1`，字符串被毁成 `1` | `0`，`t` 保持 `"abcdef"` |
+| `atomic_get("k")` / `atomic_add("k", 5)`，`k = 7` | `7` / `12` | `7` / `12` | `7` / `12`（未变） |
+
+两侧的机制不同但都错：POSIX（`src/runtime/runtime_posix.c` 的 `posix_atomic_get` / `posix_atomic_add`）**完全没有门**，直接 `__sync_add_and_fetch(&vm->globals[idx].val.ival, 0)`；WIN32（`src/runtime/runtime.c` 的 `builtin_atomic_add`）有一句 `if (val.type != VAL_INT) { type = VAL_INT; ival = 0; }`，**把「不是整数」当成了「它是 0」**，于是确定地把浮点值毁掉。前者是不确定的错答，后者是确定的数据毁坏——都是本仓库在修的那个形状。
+
+**修法**：两侧都先问 `type`。一个不是 `VAL_INT` 的槽**不是计数器**，所以答 `0` 并**不碰那个槽**——这正是这个族在名字解不开时已经给的答案（`idx < 0` 的三处都是 `push_int(vm, 0)`），所以**没有新立约定**。`atomic_set` 不动：它是调用方明确要写一个整数进去，把槽变成 `VAL_INT` 是应该的。
+
+**为什么不报错**：与 D13 同一条边界。`docs/SYNTAX.md` §7.1 的 D1–D12 说明引擎整体极度宽容，而**仓库里没有任何一条「参数/槽类型不对时怎么办」的规范**；报 `type_mismatch` 是新立一条规范，需要人批。当前答 `0` 仍属 `docs/SYNTAX.md` §7.1 的**危险·静默**类，已登记为 **REGISTERED, NOT RESOLVED**：要收敛的方向是「两端都报类型错」，但本分支不采。
+
+**双向验证**：`vtest/atomic_slot_type_contract_v06.im`（CTest **#132** `atomic_slot_type_contract_runtime`，`PASS_REGULAR_EXPRESSION` 钉住整行）。`git stash push -- src/runtime/runtime_posix.c` 后重编，同一条命令打出
+`atomic-slot-ok g1=4609434218613702656 r1=4609434218613702657 y=4609434218613702657 r3=4609434218613702657 yz=4609434218613702657 g2=1 r2=2 s=2 g3=7 r4=12`、**退出码 0**；恢复后打出
+`atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。两行在两个平台上**同一行**（故意不分平台分支）。Windows 侧（ucrt64，CI 同款工具链，`Total Tests: 122`）另做了同形的 A/B：把 `src/runtime/runtime.c` 的新守卫换回 `if (type != VAL_INT) { type = VAL_INT; ival = 0; }` 后重编，该测试打出
+`atomic-slot-ok g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1 g3=7 r4=12`、**Failed**（`PREFIX_CTEST_RC=8`）；换回后重新 Passed（`FIXED_CTEST_RC=0`）。这一行同时把上表里 WIN32 一列的「修前」值从读码结论升为**实测**。
+
+**诚实边界**：① 只核了 `atomic_get` / `atomic_add` / `atomic_set` 三个，族里其它名字未逐一核；② WIN32 侧的「修前」值已由 ucrt64 上的 A/B **实测确认**（打出 `g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、Failed，与上表逐格相符），不再是读码结论；③ 「应该报错而不是答 0」这一问未裁，本节只记录它；④ `posix_atomic_set` 与 `builtin_atomic_set` 都是无条件写 + 改 `type`，本节认为合理，但没有为它写用例。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 131；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 132；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **131 / 131 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **132 / 132 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **131** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **132** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 131
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 132
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3628,3 +3628,17 @@ Windows 打印 `space=256 audio=0 ionet=256`，两侧 ctest 均 **Failed**；修
 （Windows 侧 `#121`）。同批更正：上一轮「WIN32 `builtin_spi_mods` 用 `vm_array_push` 冒充 dict」
 是读码结论，实测 `vm_dict_set` 自己的布局就是交替键值数组、哈希惰性建，两者可观测等价
 （12 个字典操作两平台逐字相同）⇒ 登记为未被复现。详见 [AUDIT.md](AUDIT.md) §1.50。
+
+## §10.81 原子槽不是整数时，两侧都去读了 union 里没被写过的那个成员
+
+**发现路径**：上一轮修 `spi_meta` 的能力串时，发现它与 `atomic_*` 是同一个形状（同一个名字两份实现），于是把 `atomic_*` 安排进审计。审计交付两条真分歧，都在这个族里，都是**不查槽的 `type` 标记就读写 union**，都是**退出码 0 只改值**。
+
+**根因**：`Value`（`src/vm/vm.h:24-26`）的 `ival` 与 `fval` 是同一块存储。POSIX 侧完全没有类型门，WIN32 侧把「不是整数」归一化成「它是 0」再加。与 `docs/SYNTAX.md` §7.1 **D13**（`chr` 不查 `type` 就读 `ival`）同病，只是 D13 当时只修了 `chr` 一处。
+
+**实测（POSIX，修前，退出码全 0）**：`atomic_get("y")` 对 `y = 1.5` 答 **4609434218613702656**（IEEE754 位型）；`atomic_add("h", 0)` 对 `h = 2.5` 答 **4612811918334230528**，**加零就把 2.5 毁掉**；`atomic_add("t", 1)` 对 `t = "abcdef"` 把字符串毁成 **2**；整数槽一直正确（`k = 7` → `atomic_add("k", 5)` = 12）。
+
+**修法**：两侧都先问 `type`。不是 `VAL_INT` 的槽**不是计数器**，答 `0` 并不碰那个槽——正是这个族在名字解不开时已经给的答案，所以没有新立约定。`atomic_set` 不动（它是调用方明确要写一个整数进去）。**为什么不报 `type_mismatch`**：与 D13 同一条边界——仓库里没有任何一条「槽类型不对时怎么办」的规范，报错是新立一条规范，需要人批；当前已登记为 **REGISTERED, NOT RESOLVED**。
+
+**双向验证**：新 pin `vtest/atomic_slot_type_contract_v06.im` + CTest **#132** `atomic_slot_type_contract_runtime`（`PASS_REGULAR_EXPRESSION` 钉整行，两平台**同一行**）。`git stash push -- src/runtime/runtime_posix.c` 重编 ⇒ 打出 `atomic-slot-ok g1=4609434218613702656 r1=4609434218613702657 y=4609434218613702657 r3=4609434218613702657 yz=4609434218613702657 g2=1 r2=2 s=2 g3=7 r4=12`、退出码 0；恢复 ⇒ `atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。Windows 侧（ucrt64，CI 同款工具链，`Total Tests: 122`）同形 A/B：把新守卫换回 `type = VAL_INT; ival = 0;` 后重编 ⇒ 该测试打出 `atomic-slot-ok g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、**Failed**（`PREFIX_CTEST_RC=8`）；换回 ⇒ Passed。这一行把「修前 WIN32」从读码结论升为实测。计数 **131 → 132**（`tools/gate.sh` 的 `EXP_CTEST`）。
+
+**诚实边界**：WIN32 侧的「修前」值已由 ucrt64 上的 A/B 实测确认（打出 `g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、Failed）；只核了这三个名字。

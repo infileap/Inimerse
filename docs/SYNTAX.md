@@ -946,3 +946,14 @@ printf 's = "a\\0b"\nsay str(len(s))\n' > /tmp/t.im && ./build/inimerse /tmp/t.i
 7. **正则匹配的是前缀，数值标记必须带终结符**。`chained_comparison_runtime` 最初断言 `chain hits=1`，而把 `src/compiler/compiler.c:828` 的 `OP_AND` 改成 `OP_OR` 后程序打印的是 `chain hits=101` —— 它**以 `chain hits=1` 开头**，正则照样命中，测试仍是绿的。标记已改成 `chain hits=1 end`。凡是被测值是数字，就在它后面加一个不可能被别的数字续上的后缀。
 8. **「全部由字符串字面量组成的标记」会被回显行整体满足**。第 3 条的反面加强版：引擎把程序里**所有**字面量回显成**同一行**（`[0]="coll positive-type=" [1]="str" [2]="coll range-hit=" …`），所以一条跨多个纯字面量标记的正则（`coll positive-type.*coll range-hit.*coll wildcard-hit`）**整条被那一行满足**，程序真实行为完全不参与匹配。实测：把 `src/compiler/compiler.c:1682` 的 `OP_IN, tmp, subj, pat` 换成 `pat, subj` 后程序输出确实从 `coll positive-type` 变成 `coll other`，CTest 仍 Passed；`case_structural_runtime` 同理（`OP_EQ`→`OP_NEQ` 后第一行从 `struct record-hit` 变成 `struct bad`，仍 Passed）。**修法：每个标记都要带一个计算值**（`say "coll positive-type=" + str(42)`），使「标记+值」这个串只可能出现在程序自己的输出里；改后同样的两次打断都变成 `Required regular expression not found`。
 9. `--lint` 不可用作解析谓词（M11）。
+10. **按平台选出来的 `PASS_REGULAR_EXPRESSION` 只在 configure 期选一次。** 当一条断言必须
+    写「本平台各自的现行值」时（`round_nonnumber_contract_runtime` 的 `round-nonnumber=nil` /
+    `round: expected number`；`spi_caps_contract_runtime` 的 `bool=0` / `bool=65280`），
+    `CMakeLists.txt` 里用的是 `if(WIN32) set(...) else() set(...) endif()`，而
+    `set_tests_properties` 被**移出了那个 if/else**（否则另一个平台会连断言都没有，得到「无断言的绿」）。
+    正则随 `build/CTestTestfile.cmake` 一起在 configure 期落盘，所以**增量构建不会重挑**：
+    换平台、或改了那个 `if(WIN32)` 之后直接 `cmake --build`，跑的还是上一次 configure 写下的正则。
+    实测（`#131` 在 ucrt64 克隆上）：改完源文件不重跑 `cmake -S . -B <dir>` 时，Windows 仍拿 Linux
+    的 `bool=0` 去匹配、测试红；重跑 configure 后 Passed。**凡新增一条按平台分叉的断言，必须在
+    两个平台上各做一次干净 configure**，并把「需要重新 configure」写进交接说明。
+    这与第 6 条是同一件事的两面：双向验证证明断言有牙，这条证明**牙装在哪一侧**也会过期。
