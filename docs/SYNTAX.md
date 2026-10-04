@@ -497,8 +497,9 @@ sprite 42      → [0]="gui_sprite" [1]="x"    ← 无任何错误，静默无�
 | `src/mod/net_mod.c` | 11 | 网络 |
 | 其余（`vm.c`、`server_mod*`、`replay_mod`、`identity_mod`、`ai_mod`、`social_mod`、`lint_mod`、`isolate_mod`、`json_mod`、`identity_mod` 等） | 各 ≤10 | — |
 
-**核心高频内建**（有 `vtest` 覆盖的）：`len` `push` `pop` `str` `int` `float` `bool` `type` `has` `chars` `ord` `chr` `split` `join` `substr` `upper` `lower` `trim` `replace` `startswith` `endswith` `index` `sum` `sqrt` `round` `random` `rand` `range` `read_file` `write_file` `remove` `file_exists` `mkdir` `list_dir` `args` `env` `exec` `vm_exec` `input` `time_ms` `timer_ms` `sleep_ms` `json_parse` `json_serialize` `unwrap` `unwrap_or` `ok` `err` `is_ok` `result_value` `result_error` `match` `join` `thread_await` `thread_result` `thread_release` `gc_now` `gc_stats` `lint_check`。
+**核心高频内建**（有 `vtest` 覆盖的）：`len` `push` `pop` `str` `int` `float` `bool` `type` `has` `chars` `ord` `chr` `split` `join` `substr` `upper` `lower` `trim` `replace` `startswith` `endswith` `index` `sum` `sqrt` `round` `random` `range` `read_file` `write_file` `remove` `file_exists` `mkdir` `list_dir` `args` `env` `exec` `vm_exec` `input` `time_ms` `timer_ms` `sleep_ms` `json_parse` `json_serialize` `unwrap` `unwrap_or` `ok` `err` `is_ok` `result_value` `result_error` `match` `join` `thread_await` `thread_result` `thread_release` `gc_now` `gc_stats` `lint_check`。
 
+**⚠ 这张名单曾经是错的（2026-10 更正）**：`rand` 从未被任何文件注册（`grep -rn '"rand"' src/` 零命中），却列在这里，而且 `projects/demo/main.im:60` 的 `rand_int` 真的在调用它 ⇒ `rand(1, 6)` 实测 `[exception] uncaught: unknown builtin function 'rand'`、退出码 1。同时 `random` 当时**没有任何 `vtest` 覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`），所以「有 `vtest` 覆盖的」这句对它不成立。`random` 的覆盖由 `vtest/random_bounded_contract_v06.im`（CTest **#133**）补上，`rand` 从名单移除。见 `docs/AUDIT.md` §1.53。
 **⚠ `type` 不可调用**：`type` 已注册为内建，但它是**保留字**（`TOK_TYPE`，`src/lexer/lexer.c:44`），`type(x)` 是解析错误：
 
 ```

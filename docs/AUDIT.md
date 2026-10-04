@@ -2063,6 +2063,89 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 
 **诚实边界**：① 只核了 `atomic_get` / `atomic_add` / `atomic_set` 三个，族里其它名字未逐一核；② WIN32 侧的「修前」值已由 ucrt64 上的 A/B **实测确认**（打出 `g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、Failed，与上表逐格相符），不再是读码结论；③ 「应该报错而不是答 0」这一问未裁，本节只记录它；④ `posix_atomic_set` 与 `builtin_atomic_set` 都是无条件写 + 改 `type`，本节认为合理，但没有为它写用例。
 
+## §1.52 一个内建名字有两个生产点，而只有一个被注册
+
+**症状（Windows，退出码 0）。** `random(10)` 返回 **27606**；`random(0)` 返回 **27606** ——
+**同一个值**，因为实参根本没被读。同一个程序在 POSIX 上返回 `3`，`random(0)` 返回 `0`。
+
+**两个生产点。**
+
+| 位置 | 实现 | 是否被注册 |
+|---|---|---|
+| `src/runtime/runtime.c:28` `builtin_random`（**修前**在 `:16`，那里现在是说明注释） | `int max = ...ival; rand() % max` | **否** —— `runtime_register_builtins`（`src/runtime/runtime.c:1771`）里没有这个名字 |
+| `src/mod/io_mod.c:143` `builtin_random`（**修前**；那里现在是说明注释） | `push_int(vm, rand())`，**完全忽略实参** | 是（**修前** `src/mod/io_mod.c:322`；该行已删除） |
+
+`src/mod/io_mod.c` 只在 Windows 上编译（`CMakeLists.txt:431`），POSIX 侧由
+`src/platform/posix_stubs.c:6` 把 `io_mod_register` 桩掉，所以这个分歧只在 Windows 上出现。
+于是 runtime 里那个带 `max > 0` 门、看起来正确的实现是**死代码**，真正回答的是那个不读实参的副本。
+
+**为什么「先注册者胜」不是解释。** `vm_register_builtin`（`src/vm/vm.c`）不查重，
+`builtin_insert` 线性探测**只找第一个空槽**，所以同名时先注册的那条在探测序列里先被查到。
+`runtime_register_builtins` 与 `register_core_modules` 的调用顺序（`src/main.c:1096` / `:1097`）
+本来让 runtime 侧先注册 —— 但修前 runtime 侧**根本没注册这个名字**，顺序无从生效。
+修后顺序也不再承重：**只剩一个生产点**。
+
+**修法（三处编辑）。**
+
+1. `src/runtime/runtime.c:28`（**修前** `:16`）的 `builtin_random` 补上 POSIX 已有的门：
+   `push_int(vm, max > 0 ? rand() % max : 0);` —— `rand() % 0` 是整数除零。
+2. `src/runtime/runtime.c:1774` 在 `runtime_register_builtins` 里注册 `random`。
+3. 删掉 `src/mod/io_mod.c:143-147` 的副本与 `:322` 的注册行（两处都是**修前**行号）。
+
+**双向验证（真 ucrt64 引擎，CI 同款工具链）。** 把两个文件都 `git checkout` 回 `HEAD` 重建 ⇒
+`random(10)` → `27606 9428 30941`、`random(0)` → `27606 9428`（与前者头两个值**逐字相同**），
+两次退出码都是 **0**；换回修法 ⇒ `random(10)` → `1 7 9`、`random(0)` → `0 0`。
+
+**pin。** `vtest/random_bounded_contract_v06.im` / CTest **#133**，`PASS_REGULAR_EXPRESSION`
+钉整行，两平台**同一行** —— `posix_random` 本来就有上界与 `n > 0` 门，本轮只是把同一条规则
+给了第二个消费者，**没有新立规则**。Windows 上把两个文件退回 `HEAD` ⇒ 打出
+`random-bounded-ok one=false zero=false neg=false ten=false big=true`，**退出码仍是 0**。
+
+**诚实边界。**
+
+1. 五个字段里 `big` 在修前也是 `true` —— 裸 `rand()` 本来就小于 1000000。它留在断言里是因为
+   它同时守住「修完不许比上界还大」，但**它不是这条缺陷的证据**，只有另外四个字段是。
+2. `random("abc")` / `random(1.5)` 这类**非整数实参**两平台同形（都去读 `ival`），
+   与 `docs/SYNTAX.md` §7.1 **D13** 同病，**本轮未动，也没有登记为本条的一部分**。
+3. 我核过的是 `random` **这一个名字**，不是「所有重名」。注册表层面的集合比对只做了一次（见 §1.53）。
+4. `projects/demo/main.im:60` 的 `rand(a, b)` 与本条无关，见 §1.53。
+
+## §1.53 登记：三个「一个名字有两份说法」的实例，本轮不动代码
+
+§1.52 修的是**同一份注册表里的重名**。同一形状还有三处，全部**只登记**，
+理由逐条写在下面 —— 它们的共同点是：**改变哪一份都不是我能单方面决定的**。
+
+| 实例 | 两份说法 | 为什么本轮不动 |
+|---|---|---|
+| `gui_fullscreen` | `src/mod/gui_mod.c:3690` 注册 `builtin_gui_fullscreen`（`:1661`，用 `SetWindowLongA` 去掉 `WS_CAPTION | WS_THICKFRAME`，**要求实参**）；`:3697` 注册 `builtin_fullscreen`（`:1730`，用 `SetWindowLongPtr` + `WS_POPUP | WS_VISIBLE`、保存 `G.restoreStyle`、**支持无参切换**）。两行在同一个 `gui_mod_register` 里相隔 6 行。先注册者胜 ⇒ **`builtin_fullscreen` 不可达** | 两个体行为不同，选哪个是人的决定；且 `gui_mod.c` 需要窗口，本机没有可跑的 GUI 断言 |
+| `rand` | `docs/SYNTAX.md:500` 把它列进「核心高频内建（**有 `vtest` 覆盖的**）」；`projects/demo/main.im:60` 的 `rand_int` 调用它。**全 `src/` 零注册**（`grep -rn '"rand"' src/` 无命中） | 加一个 `rand` 内建是**新立一个名字**，不是消除分歧；正确处置是从文档与示例里去掉它，那要改 `projects/`（见下条边界） |
+| `docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」 | 该名单里 `random` 当时**零覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`） | **本轮就地改了**：`rand` 从名单移除，`random` 的覆盖由 §1.52 的 pin 补上 |
+
+**`gui_fullscreen` 的那条登记其实早就存在，只是被当成计数问题。** `docs/API.md:234` 逐字写着
+「`gui_mod` 计数虚高 | 表列 163，源码唯一名 **162**；原因是表内 `gui_fullscreen` 重复出现两次 |
+源码提取 + 集合比对」—— **一条被登记的事实，没有人消费它**：没人注意到「重复出现两次」
+意味着其中一条实现不可达。这与 §1.46 的引文、§1.43 的 `vfs_probe` 是同一个病：
+**事实被写下来了，但没有变成可检测的断言。**
+
+**一次注册表层面的集合比对（我做的，`python3` 按 `CMakeLists.txt:412-436` 的 WIN32 源列表
+与 POSIX 源列表分别抽 `vm_register_builtin(_full)?(vm, "…")`）：** WIN32 **398** 个名字 /
+**2** 个重名，POSIX **128** 个名字 / **0** 个重名。第二个重名 `isolate_run`
+（`src/isolate_mod.c:227` 与 `:318`）是**误报** —— 两处分别在 `#ifdef _WIN32` 与 `#else`
+分支里，扫描器不认预处理条件。
+
+**诚实边界。**
+
+1. 我**没有**在真 Windows 上跑过 `gui_fullscreen`（需要窗口），「`builtin_fullscreen` 不可达」
+   是从 `builtin_insert` 的探测语义与注册顺序读出来的，不是实测。
+2. `grep 'random('` 是**字面**匹配，它证明的是「这四处目录里没有 `random(` 这个字符串」，
+   不等于「没有别的方式覆盖 `random`」。
+3. `docs/SYNTAX.md:500` 那张名单我只核了 `random` / `rand` 两个名字，**其余 50 多个没有核**。
+4. `projects/demo/main.im` 我**没有改**：它在 POSIX 上跑到第一条 `gui_stage` 就死了
+   （`[exception] uncaught: unknown builtin function 'gui_stage'`），`rand` 那条要等 GUI 起来
+   才轮得到，所以「示例里这个函数是坏的」我是用 `rand(1, 6)` 单独实测 + 零注册的 grep 得出的，
+   不是跑完示例得出的。
+
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
