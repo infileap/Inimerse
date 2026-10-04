@@ -13,7 +13,19 @@
 #include <winhttp.h>
 #endif
 
-static int builtin_random(VM *vm) { if (vm_cur_sp(vm)<0) return 0; int max=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, rand()%max); return 1; }
+/* random(n) -> an integer in [0, n).  This is the Windows twin of
+ * src/runtime/runtime_posix.c's posix_random and must answer the same thing.
+ *
+ * It was dead code: nothing registered it, and src/mod/io_mod.c registered a
+ * DIFFERENT function under the same name -- `push_int(vm, rand())`, which
+ * ignores the argument and is unbounded.  Measured before this change:
+ * random(10) answered 24875 on Windows and 3 on POSIX, both with exit code 0.
+ * The io_mod copy is gone and this one is registered (runtime_register_builtins
+ * below), so the name has one answer again.
+ *
+ * The `max > 0` guard is not decoration: `rand() % 0` is an integer division by
+ * zero, and the old body had no guard at all. */
+static int builtin_random(VM *vm) { if (vm_cur_sp(vm)<0) return 0; int max=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, max > 0 ? rand() % max : 0); return 1; }
 static int builtin_sqrt(VM *vm) { if (vm_cur_sp(vm)<0) return 0; double val=val_as_double(&vm_cur_stack(vm)[vm_cur_sp(vm)]); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_float(vm, sqrt(val)); return 1; }
 static int builtin_read_file(VM *vm) { if (vm_cur_sp(vm)<0) return 0; Value _pv=vm_cur_stack(vm)[vm_cur_sp(vm)]; char *fn=strdup(_pv.sval ? _pv.sval : ""); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); if (_pv.type==VAL_STRING && _pv.ival!=1) free(_pv.sval); FILE *f=fopen(fn,"rb"); free(fn); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long len=ftell(f); fseek(f,0,SEEK_SET); char *buf=malloc(len+1); size_t got=(size_t)fread(buf,1,(size_t)len,f); buf[got]='\0'; fclose(f); push_string(vm,buf); free(buf); return 1; }
 static int builtin_write_file(VM *vm) { if (vm_cur_sp(vm)<1) return 0; Value _pw=vm_cur_stack(vm)[vm_cur_sp(vm)]; Value _px=vm_cur_stack(vm)[vm_cur_sp(vm)-1]; char *content=strdup(_pw.sval ? _pw.sval : ""); char *fn=strdup(_px.sval ? _px.sval : ""); FILE *f=fopen(fn,"w"); int success=0; if(f){fputs(content,f);fclose(f);success=1;} vm_cur_set_sp(vm, vm_cur_sp(vm) - 2); if (_pw.type==VAL_STRING && _pw.ival!=1) free(_pw.sval); if (_px.type==VAL_STRING && _px.ival!=1) free(_px.sval); free(content); free(fn); push_int(vm,success); return 1; }
@@ -1759,6 +1771,7 @@ static int builtin_mod_usage(VM *vm) {
 void runtime_register_builtins(VM *vm) {
     srand((unsigned)time(NULL));
     vm_register_builtin(vm, "sqrt", builtin_sqrt);
+    vm_register_builtin(vm, "random", builtin_random);
     vm_register_builtin(vm, "round", builtin_round);
     vm_register_builtin(vm, "int", builtin_int);
     vm_register_builtin(vm, "float", builtin_float);
