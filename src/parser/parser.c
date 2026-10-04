@@ -142,7 +142,7 @@ static Stmt **parse_block(Parser *p, int *count);
 /* f-string interpolation: $"a={x} b={y}" -> "a=" + x + " b=" + y (plain identifiers only inside {}) */
 static Expr *fstr_append(Expr *acc, Expr *e) {
     if (!acc) return e;
-    Expr *bin = malloc(sizeof(Expr));
+    Expr *bin = calloc(1, sizeof(Expr));
     bin->type = EXPR_BINARY;
     bin->binary.op = TOK_PLUS;
     bin->binary.left = acc;
@@ -160,7 +160,7 @@ static Expr *parse_fstring(Parser *p, StringView text) {
         if (*s == '{') {
             if (segLen > 0) {
                 seg[segLen] = 0;
-                Expr *e = malloc(sizeof(Expr));
+                Expr *e = calloc(1, sizeof(Expr));
                 e->type = EXPR_STRING;
                 e->stringVal.start = strdup(seg); e->stringVal.length = (int)strlen(seg);
                 acc = fstr_append(acc, e);
@@ -180,7 +180,7 @@ static Expr *parse_fstring(Parser *p, StringView text) {
                 fprintf(stderr, "Error: f-string interpolation only supports plain identifiers inside {} (got '%s')\n", name);
                 parse_fatal();
             }
-            Expr *id = malloc(sizeof(Expr));
+            Expr *id = calloc(1, sizeof(Expr));
             id->type = EXPR_IDENT;
             id->identName.start = strdup(name); id->identName.length = (int)strlen(name);
             acc = fstr_append(acc, id);
@@ -191,13 +191,13 @@ static Expr *parse_fstring(Parser *p, StringView text) {
     }
     if (segLen > 0) {
         seg[segLen] = 0;
-        Expr *e = malloc(sizeof(Expr));
+        Expr *e = calloc(1, sizeof(Expr));
         e->type = EXPR_STRING;
         e->stringVal.start = strdup(seg); e->stringVal.length = (int)strlen(seg);
         acc = fstr_append(acc, e);
     }
     if (!acc) {
-        Expr *e = malloc(sizeof(Expr));
+        Expr *e = calloc(1, sizeof(Expr));
         e->type = EXPR_STRING;
         e->stringVal = sv_from_cstr("");
         return e;
@@ -231,7 +231,7 @@ static Expr *parse_primary(Parser *p) {
             else if (t.type == TOK_SIZE) fname = "size";
             else if (t.type == TOK_MATCH) fname = "match";
             advance(p);
-            Expr *e = malloc(sizeof(Expr));
+            Expr *e = calloc(1, sizeof(Expr));
             e->type = EXPR_IDENT;
             e->identName = sv_from_cstr(fname);
             return e;
@@ -246,15 +246,15 @@ static Expr *parse_primary(Parser *p) {
                                  memchr(t.text.start, 'E', t.text.length) != NULL);
         if (is_float) {
             double val = strtod(t.text.start, NULL);
-            Expr *e = malloc(sizeof(Expr)); e->type = EXPR_FLOAT; e->floatVal = val; return e;
+            Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_FLOAT; e->floatVal = val; return e;
         } else {
             long long val = strtoll(t.text.start, NULL, hex ? 16 : 10);
-            Expr *e = malloc(sizeof(Expr)); e->type = EXPR_NUMBER; e->intVal = val; return e;
+            Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_NUMBER; e->intVal = val; return e;
         }
     }
     if (t.type == TOK_STRING) {
         advance(p);
-        Expr *e = malloc(sizeof(Expr)); e->type = EXPR_STRING; e->stringVal = t.text; return e;
+        Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_STRING; e->stringVal = t.text; return e;
     }
     if (t.type == TOK_FSTRING) {
         advance(p);
@@ -262,15 +262,15 @@ static Expr *parse_primary(Parser *p) {
     }
     if (t.type == TOK_TRUE || t.type == TOK_FALSE) {
         advance(p);
-        Expr *e = malloc(sizeof(Expr)); e->type = EXPR_BOOL; e->boolVal = (t.type == TOK_TRUE); return e;
+        Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_BOOL; e->boolVal = (t.type == TOK_TRUE); return e;
     }
     if (t.type == TOK_IDENT) {
         advance(p);
-        Expr *e = malloc(sizeof(Expr)); e->type = EXPR_IDENT; e->identName = t.text; return e;
+        Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_IDENT; e->identName = t.text; return e;
     }
     if (t.type == TOK_THIS) {
         advance(p);
-        Expr *e = malloc(sizeof(Expr)); e->type = EXPR_IDENT; e->identName = sv_from_cstr("this"); return e;
+        Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_IDENT; e->identName = sv_from_cstr("this"); return e;
     }
     if (t.type == TOK_LPAREN || t.type == TOK_LBRACKET) {
         if (looks_like_bare_interval(p)) return parse_bare_interval(p);
@@ -327,7 +327,7 @@ static Expr *parse_primary(Parser *p) {
     }
     if (t.type == TOK_LBRACKET) {
         advance(p);
-        Expr *e = malloc(sizeof(Expr)); e->type = EXPR_LIST; e->list.items = NULL; e->list.count = 0;
+        Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_LIST; e->list.items = NULL; e->list.count = 0;
         if (peek(p).type != TOK_RBRACKET) {
             do {
                 Expr *item = parse_expr(p);
@@ -344,7 +344,7 @@ static Expr *parse_primary(Parser *p) {
         Token n2 = peek_next_next(p);
         if (n1.type == TOK_IDENT && n2.type == TOK_IN) {
             advance(p); /* { */
-            Expr *e = malloc(sizeof(Expr)); e->type = EXPR_SETCOMP;
+            Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_SETCOMP;
             Token v = consume(p, TOK_IDENT, "comprehension variable");
             e->setcomp.varName = v.text;
             consume(p, TOK_IN, "'in'");
@@ -357,7 +357,7 @@ static Expr *parse_primary(Parser *p) {
 
         /* 字典字面量：{ "key": value, ... }（表达式位置，与语句块区分） */
         advance(p);
-        Expr *e = malloc(sizeof(Expr)); e->type = EXPR_DICT; e->dict.items = NULL; e->dict.count = 0;
+        Expr *e = calloc(1, sizeof(Expr)); e->type = EXPR_DICT; e->dict.items = NULL; e->dict.count = 0;
         if (peek(p).type != TOK_RBRACE) {
             do {
                 Expr *key = parse_expr(p);
@@ -437,7 +437,7 @@ static Expr *parse_set_interval(Parser *p, StringView base) {
     if (peek(p).type != TOK_RBRACKET && peek(p).type != TOK_RPAREN)
         hi = parse_expr(p);
     Token close = (peek(p).type == TOK_RBRACKET) ? consume(p, TOK_RBRACKET, "']'") : consume(p, TOK_RPAREN, "')'");
-    Expr *e = malloc(sizeof(Expr));
+    Expr *e = calloc(1, sizeof(Expr));
     e->type = EXPR_SETINTERVAL;
     e->setinterval.base = base;
     e->setinterval.lo = lo;
@@ -492,7 +492,7 @@ static Expr *parse_bare_interval(Parser *p) {
     if (peek(p).type != TOK_RBRACKET && peek(p).type != TOK_RPAREN)
         hi = parse_expr(p);
     Token close = (peek(p).type == TOK_RBRACKET) ? consume(p, TOK_RBRACKET, "']'") : consume(p, TOK_RPAREN, "')'");
-    Expr *e = malloc(sizeof(Expr));
+    Expr *e = calloc(1, sizeof(Expr));
     e->type = EXPR_SETINTERVAL;
     e->setinterval.base = sv_from_cstr("R");
     e->setinterval.lo = lo;
@@ -514,7 +514,7 @@ static bool looks_like_set_start(Parser *p) {
 }
 
 static Expr *parse_set_literal(Parser *p) {
-    Expr *e = malloc(sizeof(Expr));
+    Expr *e = calloc(1, sizeof(Expr));
     e->type = EXPR_SETLIT;
     e->setlit.items = NULL;
     e->setlit.count = 0;
@@ -567,13 +567,13 @@ static Expr *parse_postfix(Parser *p) {
             } else {
                 name = consume(p, TOK_IDENT, "identifier");
             }
-            Expr *mem = malloc(sizeof(Expr));
+            Expr *mem = calloc(1, sizeof(Expr));
             mem->type = EXPR_MEMBER;
             mem->member.object = e;
             mem->member.member = name.text;
             e = mem;
         }
-        else if (t.type == TOK_LBRACKET) { advance(p); Expr *index = parse_expr(p); consume(p, TOK_RBRACKET, "']'"); Expr *idx = malloc(sizeof(Expr)); idx->type = EXPR_INDEX; idx->index.object = e; idx->index.index = index; e = idx; }
+        else if (t.type == TOK_LBRACKET) { advance(p); Expr *index = parse_expr(p); consume(p, TOK_RBRACKET, "']'"); Expr *idx = calloc(1, sizeof(Expr)); idx->type = EXPR_INDEX; idx->index.object = e; idx->index.index = index; e = idx; }
         else if (t.type == TOK_QUESTION && peek_next(p).type == TOK_QUESTION) {
             /* `??` is an infix nil-coalescing operator; leave both tokens
                for parse_expr while a single `?` remains Result propagation. */
@@ -596,7 +596,7 @@ static Expr *parse_postfix(Parser *p) {
             else if (tt.type == TOK_BOOL) kind = 3;
             if (kind < 0) { parse_error_expected(p, "type (int/float/str/bool) after '->'", tt); }
             advance(p);
-            Expr *cast = malloc(sizeof(Expr));
+            Expr *cast = calloc(1, sizeof(Expr));
             cast->type = EXPR_ARROW_CAST;
             cast->arrowCast.object = e;
             cast->arrowCast.typeKind = kind;
@@ -604,7 +604,7 @@ static Expr *parse_postfix(Parser *p) {
         }
         else if (t.type == TOK_LPAREN) {
                 Token after = peek_next(p); if (after.type == TOK_IDENT) { Token nxt2 = peek_next_next(p); if (nxt2.type == TOK_COLON || nxt2.type == TOK_EQ) break; }
-            advance(p); Expr *call = malloc(sizeof(Expr)); call->type = EXPR_CALL; call->call.callee = e; call->call.args = NULL; call->call.argCount = 0;
+            advance(p); Expr *call = calloc(1, sizeof(Expr)); call->type = EXPR_CALL; call->call.callee = e; call->call.args = NULL; call->call.argCount = 0;
             if (peek(p).type != TOK_RPAREN) {
                 do {
                     Expr *arg = parse_expr(p);
@@ -622,11 +622,11 @@ static Expr *parse_postfix(Parser *p) {
 static Expr *parse_unary(Parser *p) {
     if (peek(p).type == TOK_MIN || peek(p).type == TOK_MAX) {
         Token op = peek(p); advance(p); Expr *operand = parse_unary(p);
-        Expr *u = malloc(sizeof(Expr)); u->type = EXPR_UNARY; u->unary.op = op.type; u->unary.operand = operand; return u;
+        Expr *u = calloc(1, sizeof(Expr)); u->type = EXPR_UNARY; u->unary.op = op.type; u->unary.operand = operand; return u;
     }
     if (peek(p).type == TOK_MINUS || peek(p).type == TOK_PLUS || peek(p).type == TOK_NOT) {
         Token op = peek(p); advance(p); Expr *operand = parse_unary(p);
-        Expr *u = malloc(sizeof(Expr)); u->type = EXPR_UNARY; u->unary.op = op.type; u->unary.operand = operand; return u;
+        Expr *u = calloc(1, sizeof(Expr)); u->type = EXPR_UNARY; u->unary.op = op.type; u->unary.operand = operand; return u;
     }
     return parse_postfix(p);
 }
@@ -635,7 +635,7 @@ static Expr *parse_mul_div(Parser *p) {
     Expr *e = parse_unary(p);
     while (peek(p).type == TOK_STAR || peek(p).type == TOK_SLASH || peek(p).type == TOK_PERCENT) {
         Token op = peek(p); advance(p); Expr *right = parse_unary(p);
-        Expr *bin = malloc(sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
+        Expr *bin = calloc(1, sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
     }
     return e;
 }
@@ -644,7 +644,7 @@ static Expr *parse_add_sub(Parser *p) {
     Expr *e = parse_mul_div(p);
     while (peek(p).type == TOK_PLUS || peek(p).type == TOK_MINUS) {
         Token op = peek(p); advance(p); Expr *right = parse_mul_div(p);
-        Expr *bin = malloc(sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
+        Expr *bin = calloc(1, sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
     }
     return e;
 }
@@ -671,9 +671,9 @@ static Expr *parse_comparison(Parser *p) {
         }
         if (op.type == TOK_MATCH) {
             /* a match b -> match(a, b) builtin call */
-            Expr *call = malloc(sizeof(Expr));
+            Expr *call = calloc(1, sizeof(Expr));
             call->type = EXPR_CALL;
-            call->call.callee = malloc(sizeof(Expr));
+            call->call.callee = calloc(1, sizeof(Expr));
             call->call.callee->type = EXPR_IDENT;
             call->call.callee->identName = sv_from_cstr("match");
             call->call.args = malloc(2 * sizeof(Expr*));
@@ -682,7 +682,7 @@ static Expr *parse_comparison(Parser *p) {
             call->call.argCount = 2;
             e = call;
         } else {
-            Expr *bin = malloc(sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
+            Expr *bin = calloc(1, sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = op.type; bin->binary.right = right; e = bin;
         }
     }
     if (count > 0) {
@@ -696,7 +696,7 @@ static Expr *parse_logic_and(Parser *p) {
     Expr *e = parse_comparison(p);
     while (match(p, TOK_AND)) {
         Expr *right = parse_comparison(p);
-        Expr *bin = malloc(sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = TOK_AND; bin->binary.right = right; e = bin;
+        Expr *bin = calloc(1, sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = TOK_AND; bin->binary.right = right; e = bin;
     }
     return e;
 }
@@ -705,7 +705,7 @@ static Expr *parse_logic_or(Parser *p) {
     Expr *e = parse_logic_and(p);
     while (match(p, TOK_OR)) {
         Expr *right = parse_logic_and(p);
-        Expr *bin = malloc(sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = TOK_OR; bin->binary.right = right; e = bin;
+        Expr *bin = calloc(1, sizeof(Expr)); bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = TOK_OR; bin->binary.right = right; e = bin;
     }
     return e;
 }
@@ -715,7 +715,7 @@ static Expr *parse_coalesce(Parser *p) {
     while (peek(p).type == TOK_QUESTION && peek_next(p).type == TOK_QUESTION) {
         advance(p); advance(p);
         Expr *right = parse_logic_or(p);
-        Expr *bin = malloc(sizeof(Expr));
+        Expr *bin = calloc(1, sizeof(Expr));
         bin->type = EXPR_BINARY; bin->binary.left = e; bin->binary.op = TOK_QUESTION; bin->binary.right = right;
         e = bin;
     }
@@ -766,7 +766,7 @@ static Expr *parse_expr(Parser *p) {
             call->call.args[0] = left;
             call->call.argCount++;
         } else {
-            call = malloc(sizeof(Expr));
+            call = calloc(1, sizeof(Expr));
             call->type = EXPR_CALL;
             call->call.callee = right;
             call->call.args = malloc(sizeof(Expr*));
@@ -842,7 +842,7 @@ static Stmt *try_parse_thread_wait(Parser *p) {
         return NULL;
     }
 
-    Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_WAIT;
+    Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_WAIT;
     stmt->threadWaitStmt.name = name;
     if (match(p, TOK_UNTIL)) {
         stmt->threadWaitStmt.mode = 1;
@@ -884,7 +884,7 @@ static Stmt **parse_body(Parser *p, int *count) {
 /* if 语句尾部：elif / else 链（elif 等价�?else + 嵌套 if，支持任意长度链�?*/
 static void parse_if_tail(Parser *p, Stmt *stmt) {
     if (match(p, TOK_ELIF)) {
-        Stmt *nested = malloc(sizeof(Stmt));
+        Stmt *nested = calloc(1, sizeof(Stmt));
         nested->type = STMT_IF;
         nested->ifStmt.condition = parse_expr(p);
         nested->ifStmt.thenBody = parse_body(p, &nested->ifStmt.thenCount);
@@ -920,7 +920,7 @@ static int gui_no_args(InimerseTokenType t) {
 }
 static Stmt *parse_gui_stmt(Parser *p) {
     Token t = peek(p);
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_GUI;
     stmt->guiStmt.verb = t.text;
     stmt->guiStmt.args = NULL; stmt->guiStmt.argCount = 0;
@@ -953,7 +953,7 @@ static Stmt *parse_gui_stmt(Parser *p) {
 static Stmt *parse_declare(Parser *p) {
     advance(p); /* TOK_DECLARE */
     consume(p, TOK_LBRACE, "'{'");
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_DECLARE;
     stmt->declareStmt.keys = NULL;
     stmt->declareStmt.values = NULL;
@@ -1028,7 +1028,7 @@ static Stmt *parse_declare(Parser *p) {
 /* case expr { pattern... : body ... } */
 static Stmt *parse_case(Parser *p) {
     advance(p); /* TOK_CASE */
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_CASE;
     stmt->caseStmt.isTry = match(p, TOK_TRY) ? 1 : 0;
     stmt->caseStmt.subject = parse_expr(p);
@@ -1136,7 +1136,7 @@ static int parse_record_tags(Parser *p, RecordTag **tags, int paren) {
 /* tag <label> <item1>, <item2>, ...: group sprites under a label (collectibles) */
 static Stmt *parse_tag_stmt(Parser *p) {
     advance(p); /* TOK_TAG */
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_TAG;
     Token name = consume(p, TOK_IDENT, "tag name");
     stmt->tagStmt.name = malloc(name.text.length + 1);
@@ -1166,7 +1166,7 @@ static Stmt *parse_tag_stmt(Parser *p) {
 /* const x = v: read-only global (compile-time check on assignment) */
 static Stmt *parse_const_stmt(Parser *p) {
     advance(p); /* TOK_CONST */
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_CONST;
     Token name = consume(p, TOK_IDENT, "constant name");
     stmt->constStmt.name = malloc(name.text.length + 1);
@@ -1179,7 +1179,7 @@ static Stmt *parse_const_stmt(Parser *p) {
 
 static Stmt *parse_record_stmt(Parser *p) {
     advance(p); /* TOK_RECORD */
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_RECORD;
     stmt->recordStmt.name = NULL;
     stmt->recordStmt.value = NULL;
@@ -1229,7 +1229,7 @@ static Stmt *parse_type_stmt(Parser *p) {
 /* with scope: "entity", store: "both" { stmts } */
 static Stmt *parse_with_tags_stmt(Parser *p) {
     advance(p); /* TOK_WITH */
-    Stmt *stmt = malloc(sizeof(Stmt));
+    Stmt *stmt = calloc(1, sizeof(Stmt));
     stmt->type = STMT_WITH;
     stmt->withStmt.tags = NULL;
     stmt->withStmt.tagCount = parse_record_tags(p, &stmt->withStmt.tags, 0);
@@ -1239,7 +1239,7 @@ static Stmt *parse_with_tags_stmt(Parser *p) {
 
 static Stmt *parse_try(Parser *p) {
     advance(p); /* try */
-    Stmt *s = malloc(sizeof(Stmt)); s->type = STMT_TRY;
+    Stmt *s = calloc(1, sizeof(Stmt)); s->type = STMT_TRY;
     s->tryStmt.body = NULL; s->tryStmt.bodyCount = 0;
     s->tryStmt.handler = NULL; s->tryStmt.handlerCount = 0;
     s->tryStmt.varName.start = NULL; s->tryStmt.varName.length = 0;
@@ -1276,7 +1276,7 @@ static Stmt *parse_try(Parser *p) {
 
 static Stmt *parse_throw(Parser *p) {
     advance(p); /* throw */
-    Stmt *s = malloc(sizeof(Stmt)); s->type = STMT_THROW;
+    Stmt *s = calloc(1, sizeof(Stmt)); s->type = STMT_THROW;
     s->throwStmt.expr = parse_expr(p);
     return s;
 }
@@ -1327,7 +1327,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         Token next = peek_next(p);
         if (next.type == TOK_LPAREN) {
             Expr *expr = parse_expr(p);
-            Stmt *stmt = malloc(sizeof(Stmt));
+            Stmt *stmt = calloc(1, sizeof(Stmt));
             stmt->type = STMT_EXPR;
             stmt->exprStmt.expr = expr;
             return stmt;
@@ -1336,18 +1336,18 @@ static Stmt *parse_stmt_impl(Parser *p) {
 
     if (t.type == TOK_RESTART) {
         advance(p);
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_CTRL; stmt->threadCtrlStmt.op = THREAD_OP_RESTART;
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_CTRL; stmt->threadCtrlStmt.op = THREAD_OP_RESTART;
         if (peek(p).type == TOK_THIS) { advance(p); stmt->threadCtrlStmt.name = sv_from_cstr("this"); }
         else stmt->threadCtrlStmt.name = consume(p, TOK_IDENT, "thread name").text;
         return stmt;
     }
     if (t.type == TOK_YIELD) {
-        advance(p); Stmt *ys = malloc(sizeof(Stmt)); ys->type = STMT_YIELD; return ys;
+        advance(p); Stmt *ys = calloc(1, sizeof(Stmt)); ys->type = STMT_YIELD; return ys;
     }
     if (t.type == TOK_WAIT) {
         advance(p);
-        if (match(p, TOK_UNTIL)) { Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_WAIT_UNTIL; stmt->waitUntilStmt.condition = parse_expr(p); return stmt; }
-        else { Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_WAIT; stmt->waitStmt.duration = parse_expr(p); return stmt; }
+        if (match(p, TOK_UNTIL)) { Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_WAIT_UNTIL; stmt->waitUntilStmt.condition = parse_expr(p); return stmt; }
+        else { Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_WAIT; stmt->waitStmt.duration = parse_expr(p); return stmt; }
     }
 
     /* 线程操作：worker.wait 10 / u.worker.wait until cond[, timeout] */
@@ -1358,7 +1358,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
             Token nxt = peek_next(p);
             if (nxt.type == TOK_COLON) {
                 /* label block: A: { ... } / A: stmt / A: while ... {} */
-                Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_LABEL;
+                Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_LABEL;
                 stmt->labelStmt.name = sv_dup(t.text);
                 advance(p); advance(p); /* ident, ':' */
                 if (peek(p).type == TOK_LBRACE) {
@@ -1372,7 +1372,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
             }
             if (nxt.type == TOK_TO) {
                 /* thread jump: thread1 to A */
-                Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_GOTO;
+                Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_GOTO;
                 stmt->threadGotoStmt.thread = sv_dup(t.text);
                 advance(p); advance(p); /* ident, TOK_TO */
                 Token lt = consume(p, TOK_IDENT, "label after 'thread to'");
@@ -1381,7 +1381,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
             }
         }
         if (peek_next(p).type == TOK_BE) {
-            Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_BE;
+            Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_BE;
             stmt->beStmt.name = consume(p, TOK_IDENT, "name").text;
             advance(p); /* TOK_BE */
             stmt->beStmt.set = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);
@@ -1403,14 +1403,14 @@ static Stmt *parse_stmt_impl(Parser *p) {
     /* label jump: to A / continue */
     if (t.type == TOK_TO) {
         advance(p);
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_GOTO_LABEL;
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_GOTO_LABEL;
         Token lt = consume(p, TOK_IDENT, "label after 'to'");
         stmt->gotoStmt.label = sv_dup(lt.text);
         return stmt;
     }
     if (t.type == TOK_CONTINUE) {
         advance(p);
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_CONTINUE;
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_CONTINUE;
         return stmt;
     }
 
@@ -1426,14 +1426,14 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     if (t.type == TOK_IF) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_IF;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_IF;
         stmt->ifStmt.condition = parse_expr(p);
         stmt->ifStmt.thenBody = parse_body(p, &stmt->ifStmt.thenCount);
         parse_if_tail(p, stmt);
         return stmt;
     }
     else if (t.type == TOK_WHILE) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_WHILE;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_WHILE;
         stmt->whileStmt.condition = parse_expr(p);
         p->loop_depth++;
         stmt->whileStmt.body = parse_body(p, &stmt->whileStmt.bodyCount);
@@ -1441,7 +1441,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_FOR) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_FOR;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_FOR;
         stmt->forStmt.var = consume(p, TOK_IDENT, "variable").text; consume(p, TOK_IN, "'in'");
         if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "range")) {
             advance(p); consume(p, TOK_LPAREN, "'('");
@@ -1479,7 +1479,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_REPEAT) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_REPEAT;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_REPEAT;
         stmt->repeatStmt.count = parse_expr(p);
         p->loop_depth++;
         stmt->repeatStmt.body = parse_body(p, &stmt->repeatStmt.bodyCount);
@@ -1487,14 +1487,14 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_DO) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_DO_UNTIL;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_DO_UNTIL;
         stmt->doUntilStmt.body = parse_body(p, &stmt->doUntilStmt.bodyCount);
         consume(p, TOK_UNTIL, "expected 'until'"); stmt->doUntilStmt.condition = parse_expr(p);
         return stmt;
     }
     else if (t.type == TOK_BREAK) {
         advance(p);
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_BREAK;
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_BREAK;
         stmt->breakStmt.label = NULL;
         if (peek(p).type == TOK_IDENT) {
             Token lt = consume(p, TOK_IDENT, "label after 'break'");
@@ -1503,7 +1503,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_FUNC) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_FUNC;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_FUNC;
         stmt->funcDef.name = consume(p, TOK_IDENT, "function name").text;
         consume(p, TOK_LPAREN, "'('");
         stmt->funcDef.params = NULL; stmt->funcDef.paramCount = 0;
@@ -1520,7 +1520,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_RETURN) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_RETURN;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_RETURN;
         if (peek(p).type == TOK_RBRACE || peek(p).type == TOK_EOF)
             stmt->returnStmt.value = NULL;
         else
@@ -1528,7 +1528,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_MAIN) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_MAIN;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_MAIN;
         stmt->mainStmt.flags = 0;
         while (peek(p).type == TOK_ENDLESS || peek(p).type == TOK_DAEMON || peek(p).type == TOK_RESTART || peek(p).type == TOK_SINGLE) {
             if (peek(p).type == TOK_ENDLESS) stmt->mainStmt.flags |= THREAD_FLAG_ENDLESS;
@@ -1541,7 +1541,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_GLOBAL) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_GLOBAL;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_GLOBAL;
         stmt->globalStmt.names = NULL; stmt->globalStmt.nameCount = 0;
         do {
             Token name = consume(p, TOK_IDENT, "global variable name");
@@ -1557,7 +1557,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
             fprintf(stderr, "Error at line %d: task/thread definitions inside a loop are silently ineffective; define at top level\n", p->lex.line);
             parse_fatal();
         }
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_DEF;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_DEF;
         stmt->threadDef.flags = (t.type == TOK_TASK) ? THREAD_FLAG_TASK : 0;
         while (peek(p).type == TOK_ENDLESS || peek(p).type == TOK_DAEMON || peek(p).type == TOK_RESTART || peek(p).type == TOK_SINGLE) {
             if (peek(p).type == TOK_ENDLESS) stmt->threadDef.flags |= THREAD_FLAG_ENDLESS;
@@ -1585,7 +1585,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_START) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_START;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_START;
         stmt->startStmt.name = parse_qualified_name(p);
         stmt->startStmt.args = NULL; stmt->startStmt.argCount = 0;
         if (match(p, TOK_LPAREN)) {
@@ -1602,7 +1602,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
     }
     else if (t.type == TOK_PAUSE || t.type == TOK_RESUME || t.type == TOK_KILL) {
         int op = (t.type == TOK_PAUSE) ? THREAD_OP_PAUSE : (t.type == TOK_RESUME) ? THREAD_OP_RESUME : THREAD_OP_KILL;
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_CTRL;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_CTRL;
         stmt->threadCtrlStmt.op = op;
         if (peek(p).type == TOK_THIS) { advance(p); stmt->threadCtrlStmt.name = sv_from_cstr("this"); }
         else stmt->threadCtrlStmt.name = parse_qualified_name(p);
@@ -1610,14 +1610,14 @@ static Stmt *parse_stmt_impl(Parser *p) {
     }
     else if (t.type == TOK_JOIN && peek_next(p).type != TOK_LPAREN) {
         /* 线程 join 语句（join(...) 是内置函数，走表达式分支�?*/
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_JOIN;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_JOIN;
         stmt->joinStmt.name = parse_qualified_name(p);
         stmt->joinStmt.timeout = NULL;
         if (match(p, TOK_COMMA)) stmt->joinStmt.timeout = parse_expr(p);
         return stmt;
     }
     else if (t.type == TOK_IMPORT) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_IMPORT;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_IMPORT;
         stmt->importStmt.path = consume(p, TOK_STRING, "file path").text;
         if (match(p, TOK_AS)) stmt->importStmt.ns = consume(p, TOK_IDENT, "namespace name").text;
         else stmt->importStmt.ns = sv_from_cstr("");
@@ -1625,7 +1625,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
     }
     else if (t.type == TOK_LOCK || t.type == TOK_UNLOCK) {
         int is_unlock = (t.type == TOK_UNLOCK);
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_LOCK;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_LOCK;
         stmt->lockStmt.name = consume(p, TOK_IDENT, "mutex name").text;
         if (is_unlock) { stmt->lockStmt.isBlock = 2; stmt->lockStmt.body = NULL; stmt->lockStmt.bodyCount = 0; }
         else if (peek(p).type == TOK_LBRACE) { stmt->lockStmt.isBlock = 1; stmt->lockStmt.body = parse_block(p, &stmt->lockStmt.bodyCount); }
@@ -1633,14 +1633,14 @@ static Stmt *parse_stmt_impl(Parser *p) {
         return stmt;
     }
     else if (t.type == TOK_SEND) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_SEND;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_SEND;
         stmt->sendStmt.name = parse_qualified_name(p);
         stmt->sendStmt.msg = parse_expr(p);
         return stmt;
     }
     else if (t.type == TOK_RECV) {
-        advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_RECV;
-        Expr *var = malloc(sizeof(Expr)); var->type = EXPR_IDENT;
+        advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_RECV;
+        Expr *var = calloc(1, sizeof(Expr)); var->type = EXPR_IDENT;
         var->identName = consume(p, TOK_IDENT, "variable").text;
         stmt->recvStmt.target = var;
         stmt->recvStmt.timeout = NULL;
@@ -1660,8 +1660,8 @@ static Stmt *parse_stmt_impl(Parser *p) {
                     fprintf(stderr, "Error: '++'/'--' currently only supported on simple variables\n");
                     parse_fatal();
                 }
-                Expr *one = malloc(sizeof(Expr)); one->type = EXPR_NUMBER; one->intVal = 1;
-                Expr *bin = malloc(sizeof(Expr));
+                Expr *one = calloc(1, sizeof(Expr)); one->type = EXPR_NUMBER; one->intVal = 1;
+                Expr *bin = calloc(1, sizeof(Expr));
                 bin->type = EXPR_BINARY;
                 bin->binary.left = expr;
                 bin->binary.op = (op == TOK_PLUS_PLUS) ? TOK_PLUS : TOK_MINUS;
@@ -1671,7 +1671,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
                 val = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);
                 if (op != TOK_EQ) {
                 /* x += v  =>  x = x + v */
-                Expr *bin = malloc(sizeof(Expr));
+                Expr *bin = calloc(1, sizeof(Expr));
                 bin->type = EXPR_BINARY;
                 bin->binary.left = expr;
                 bin->binary.op = (op == TOK_PLUS_EQ) ? TOK_PLUS : (op == TOK_MINUS_EQ) ? TOK_MINUS :
@@ -1680,7 +1680,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
                 val = bin;
             }
             }
-            Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_ASSIGN; RecordTag *tags = NULL; int tagCount =0;
+            Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_ASSIGN; RecordTag *tags = NULL; int tagCount =0;
             if (peek(p).type == TOK_LPAREN) { tagCount = parse_record_tags(p, &tags, 1); }
             stmt->assignStmt.target = expr; stmt->assignStmt.value = val; stmt->assignStmt.tags = tags; stmt->assignStmt.tagCount = tagCount; return stmt;
         }
@@ -1699,7 +1699,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
             stmt->ifStmt.elseBody = NULL; stmt->ifStmt.elseCount = 0;
             return stmt;
         }
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_EXPR; stmt->exprStmt.expr = expr; return stmt;
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_EXPR; stmt->exprStmt.expr = expr; return stmt;
     }
 }
 
@@ -1710,16 +1710,16 @@ static Stmt *parse_simple_stmt(Parser *p) {
         StringView mod;
         if (peek(p).type == TOK_THREAD) { advance(p); mod = sv_from_cstr("thread"); }
         else mod = consume(p, TOK_IDENT, "module name").text;
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_USING; stmt->usingStmt.modName = mod; return stmt;
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_USING; stmt->usingStmt.modName = mod; return stmt;
     }
-    else if (t.type == TOK_WINDOW) { advance(p); consume(p, TOK_LPAREN, "'('"); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_WINDOW; stmt->windowStmt.width = parse_expr(p); consume(p, TOK_COMMA, "','"); stmt->windowStmt.height = parse_expr(p); if (match(p, TOK_COMMA)) stmt->windowStmt.title = parse_expr(p); else stmt->windowStmt.title = NULL; consume(p, TOK_RPAREN, "')'"); return stmt; }
-    else if (t.type == TOK_SHOW) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_SHOW; stmt->showStmt.imagePath = consume(p, TOK_STRING, "image path").text; if (match(p, TOK_AT)) { stmt->showStmt.x = parse_expr(p); consume(p, TOK_COMMA, "','"); stmt->showStmt.y = parse_expr(p); } else { stmt->showStmt.x = NULL; stmt->showStmt.y = NULL; } if (match(p, TOK_LAYER)) stmt->showStmt.layer = parse_expr(p); else stmt->showStmt.layer = NULL; if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); stmt->showStmt.tags = parse_with_clause(p, &stmt->showStmt.tagCount); } else { stmt->showStmt.tags = NULL; stmt->showStmt.tagCount = 0; } return stmt; }
-    else if (t.type == TOK_HIDE) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_HIDE; stmt->hideStmt.imageExpr = parse_expr(p); return stmt; }
-    else if (t.type == TOK_NEW) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_NEW; stmt->newStmt.prototype = parse_expr(p); if (match(p, TOK_AT)) { stmt->newStmt.x = parse_expr(p); consume(p, TOK_COMMA, "','"); stmt->newStmt.y = parse_expr(p); } else { stmt->newStmt.x = NULL; stmt->newStmt.y = NULL; } if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "height")) { advance(p); stmt->newStmt.z = parse_expr(p); } else stmt->newStmt.z = NULL; if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); stmt->newStmt.tags = parse_with_clause(p, &stmt->newStmt.tagCount); } else { stmt->newStmt.tags = NULL; stmt->newStmt.tagCount = 0; } if (peek(p).type == TOK_LBRACE) stmt->newStmt.initStmts = parse_block(p, &stmt->newStmt.initCount); else { stmt->newStmt.initStmts = NULL; stmt->newStmt.initCount = 0; } return stmt; }
-    else if (t.type == TOK_BLOCK) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_BLOCK_DEF; stmt->blockDef.name = consume(p, TOK_IDENT, "block name").text; consume(p, TOK_LBRACE, "'{'"); stmt->blockDef.propertyKeys = NULL; stmt->blockDef.propertyValues = NULL; stmt->blockDef.propCount = 0; stmt->blockDef.tags = NULL; stmt->blockDef.tagCount = 0; while (!match(p, TOK_RBRACE) && peek(p).type != TOK_EOF) { if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); Tag *new_tags = parse_with_clause(p, &stmt->blockDef.tagCount); if (new_tags) stmt->blockDef.tags = new_tags; } else if (peek(p).type == TOK_IDENT) { Token key = consume(p, TOK_IDENT, "prop"); consume(p, TOK_EQ, "'='"); Expr *val = parse_expr(p); stmt->blockDef.propertyKeys = realloc(stmt->blockDef.propertyKeys, (stmt->blockDef.propCount+1)*sizeof(StringView)); stmt->blockDef.propertyValues = realloc(stmt->blockDef.propertyValues, (stmt->blockDef.propCount+1)*sizeof(Expr*)); stmt->blockDef.propertyKeys[stmt->blockDef.propCount] = key.text; stmt->blockDef.propertyValues[stmt->blockDef.propCount] = val; stmt->blockDef.propCount++; } else break; } return stmt; }
-    else if (t.type == TOK_CURSOR) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_CURSOR; stmt->cursorStmt.imagePath = parse_expr(p); return stmt; }
-    else if (t.type == TOK_INCLUDE) { advance(p); Token file = consume(p, TOK_STRING, "file path"); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_INCLUDE; stmt->includeStmt.filename = file.text; return stmt; }
-    else if (t.type == TOK_DELETE) { advance(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_DELETE; stmt->deleteStmt.target = parse_expr(p); return stmt; }
+    else if (t.type == TOK_WINDOW) { advance(p); consume(p, TOK_LPAREN, "'('"); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_WINDOW; stmt->windowStmt.width = parse_expr(p); consume(p, TOK_COMMA, "','"); stmt->windowStmt.height = parse_expr(p); if (match(p, TOK_COMMA)) stmt->windowStmt.title = parse_expr(p); else stmt->windowStmt.title = NULL; consume(p, TOK_RPAREN, "')'"); return stmt; }
+    else if (t.type == TOK_SHOW) { advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_SHOW; stmt->showStmt.imagePath = consume(p, TOK_STRING, "image path").text; if (match(p, TOK_AT)) { stmt->showStmt.x = parse_expr(p); consume(p, TOK_COMMA, "','"); stmt->showStmt.y = parse_expr(p); } else { stmt->showStmt.x = NULL; stmt->showStmt.y = NULL; } if (match(p, TOK_LAYER)) stmt->showStmt.layer = parse_expr(p); else stmt->showStmt.layer = NULL; if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); stmt->showStmt.tags = parse_with_clause(p, &stmt->showStmt.tagCount); } else { stmt->showStmt.tags = NULL; stmt->showStmt.tagCount = 0; } return stmt; }
+    else if (t.type == TOK_HIDE) { advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_HIDE; stmt->hideStmt.imageExpr = parse_expr(p); return stmt; }
+    else if (t.type == TOK_NEW) { advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_NEW; stmt->newStmt.prototype = parse_expr(p); if (match(p, TOK_AT)) { stmt->newStmt.x = parse_expr(p); consume(p, TOK_COMMA, "','"); stmt->newStmt.y = parse_expr(p); } else { stmt->newStmt.x = NULL; stmt->newStmt.y = NULL; } if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "height")) { advance(p); stmt->newStmt.z = parse_expr(p); } else stmt->newStmt.z = NULL; if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); stmt->newStmt.tags = parse_with_clause(p, &stmt->newStmt.tagCount); } else { stmt->newStmt.tags = NULL; stmt->newStmt.tagCount = 0; } if (peek(p).type == TOK_LBRACE) stmt->newStmt.initStmts = parse_block(p, &stmt->newStmt.initCount); else { stmt->newStmt.initStmts = NULL; stmt->newStmt.initCount = 0; } return stmt; }
+    else if (t.type == TOK_BLOCK) { advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_BLOCK_DEF; stmt->blockDef.name = consume(p, TOK_IDENT, "block name").text; consume(p, TOK_LBRACE, "'{'"); stmt->blockDef.propertyKeys = NULL; stmt->blockDef.propertyValues = NULL; stmt->blockDef.propCount = 0; stmt->blockDef.tags = NULL; stmt->blockDef.tagCount = 0; while (!match(p, TOK_RBRACE) && peek(p).type != TOK_EOF) { if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); Tag *new_tags = parse_with_clause(p, &stmt->blockDef.tagCount); if (new_tags) stmt->blockDef.tags = new_tags; } else if (peek(p).type == TOK_IDENT) { Token key = consume(p, TOK_IDENT, "prop"); consume(p, TOK_EQ, "'='"); Expr *val = parse_expr(p); stmt->blockDef.propertyKeys = realloc(stmt->blockDef.propertyKeys, (stmt->blockDef.propCount+1)*sizeof(StringView)); stmt->blockDef.propertyValues = realloc(stmt->blockDef.propertyValues, (stmt->blockDef.propCount+1)*sizeof(Expr*)); stmt->blockDef.propertyKeys[stmt->blockDef.propCount] = key.text; stmt->blockDef.propertyValues[stmt->blockDef.propCount] = val; stmt->blockDef.propCount++; } else break; } return stmt; }
+    else if (t.type == TOK_CURSOR) { advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_CURSOR; stmt->cursorStmt.imagePath = parse_expr(p); return stmt; }
+    else if (t.type == TOK_INCLUDE) { advance(p); Token file = consume(p, TOK_STRING, "file path"); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_INCLUDE; stmt->includeStmt.filename = file.text; return stmt; }
+    else if (t.type == TOK_DELETE) { advance(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_DELETE; stmt->deleteStmt.target = parse_expr(p); return stmt; }
     else if (t.type == TOK_SAY) {
         advance(p);
         Stmt *say = calloc(1, sizeof(*say)); say->type = STMT_SAY; say->sayStmt.message = parse_expr(p);
@@ -1739,20 +1739,20 @@ static Stmt *parse_simple_stmt(Parser *p) {
     }
     else if (t.type == TOK_STOP) {
         advance(p);
-        if (match(p, TOK_ALL)) { Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_STOP; stmt->stopStmt.stopAll = true; return stmt; }
-        Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_THREAD_CTRL; stmt->threadCtrlStmt.op = THREAD_OP_STOP;
+        if (match(p, TOK_ALL)) { Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_STOP; stmt->stopStmt.stopAll = true; return stmt; }
+        Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_CTRL; stmt->threadCtrlStmt.op = THREAD_OP_STOP;
         if (peek(p).type == TOK_THIS) { advance(p); stmt->threadCtrlStmt.name = sv_from_cstr("this"); }
         else stmt->threadCtrlStmt.name = consume(p, TOK_IDENT, "thread name").text;
         return stmt;
     }
-    else if (t.type == TOK_INT || t.type == TOK_FLOAT || t.type == TOK_STR || t.type == TOK_BOOL) { advance(p); Token id = consume(p, TOK_IDENT, "variable name"); int tagCount = 0; Tag *tags = NULL; if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); tags = parse_with_clause(p, &tagCount); } Expr *value = NULL; if (match(p, TOK_EQ)) value = parse_expr(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_ASSIGN; Expr *var = malloc(sizeof(Expr)); var->type = EXPR_IDENT; var->identName = id.text; stmt->assignStmt.target = var; stmt->assignStmt.value = value; free(tags); return stmt; }
-    else if (t.type == TOK_ARRAY) { advance(p); Token id = consume(p, TOK_IDENT, "array name"); if (match(p, TOK_EQ)) { Expr *value = parse_expr(p); Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_ASSIGN; Expr *var = malloc(sizeof(Expr)); var->type = EXPR_IDENT; var->identName = id.text; stmt->assignStmt.target = var; stmt->assignStmt.value = value; return stmt; } else { Stmt *stmt = malloc(sizeof(Stmt)); stmt->type = STMT_ASSIGN; Expr *var = malloc(sizeof(Expr)); var->type = EXPR_IDENT; var->identName = id.text; stmt->assignStmt.target = var; stmt->assignStmt.value = NULL; return stmt; } }
+    else if (t.type == TOK_INT || t.type == TOK_FLOAT || t.type == TOK_STR || t.type == TOK_BOOL) { advance(p); Token id = consume(p, TOK_IDENT, "variable name"); int tagCount = 0; Tag *tags = NULL; if (peek(p).type == TOK_IDENT && sv_eq_cstr(peek(p).text, "with")) { advance(p); tags = parse_with_clause(p, &tagCount); } Expr *value = NULL; if (match(p, TOK_EQ)) value = parse_expr(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_ASSIGN; Expr *var = calloc(1, sizeof(Expr)); var->type = EXPR_IDENT; var->identName = id.text; stmt->assignStmt.target = var; stmt->assignStmt.value = value; free(tags); return stmt; }
+    else if (t.type == TOK_ARRAY) { advance(p); Token id = consume(p, TOK_IDENT, "array name"); if (match(p, TOK_EQ)) { Expr *value = parse_expr(p); Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_ASSIGN; Expr *var = calloc(1, sizeof(Expr)); var->type = EXPR_IDENT; var->identName = id.text; stmt->assignStmt.target = var; stmt->assignStmt.value = value; return stmt; } else { Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_ASSIGN; Expr *var = calloc(1, sizeof(Expr)); var->type = EXPR_IDENT; var->identName = id.text; stmt->assignStmt.target = var; stmt->assignStmt.value = NULL; return stmt; } }
     else { parse_error_expected(p, "statement", peek(p)); return NULL; }
 }
 
 Program *parse_program(const char *source) {
     Parser p = {0}; lexer_init(&p.lex, source);
-    Program *prog = malloc(sizeof(Program)); prog->stmts = NULL; prog->count = 0; int cap = 0;
+    Program *prog = calloc(1, sizeof(Program)); prog->stmts = NULL; prog->count = 0; int cap = 0;
     while (peek(&p).type != TOK_EOF) {
         while (peek(&p).type == TOK_SEMI) advance(&p);
         if (peek(&p).type == TOK_EOF) break;
