@@ -2146,6 +2146,75 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
    不是跑完示例得出的。
 
 
+## §1.54 数组池唯一的门不能拒绝一个下标，所以它后面八个 `if (!a)` 都是死代码
+
+**症状**：`vm_pool_slot(VM *vm, int idx)`（`src/vm/vm.c:743`）是数组/字典池唯一的入口 —— 全 `src/` **71 个调用点**都从它取槽 —— 而它**不可能返回 NULL**：
+
+```c
+ArrayObj *vm_pool_slot(VM *vm, int idx) {
+    if (idx >= 0 && idx < 4096) return &vm->arrays[idx];
+    return &vm->arrays_big[idx - 4096];
+}
+```
+
+两个分支都返回地址。于是：
+
+| 下标 | 修前返回 | 含义 |
+|---|---|---|
+| `0 <= idx < 4096` | `&vm->arrays[idx]` | 正确 |
+| `idx == 4096`（`bigCap == 0`） | `NULL` | **偶然**（`NULL + 0`） |
+| `idx < 0` | `&vm->arrays_big[idx - 4096]` | 新 VM 上 `arrays_big == NULL` ⇒ **野低地址**；池长大后 ⇒ 一个真的堆地址 |
+| `idx >= 4096 + bigCap` | 分配之外的槽 | 越界 |
+
+**实测（修前）**：`src/vm/vm_pool_slot_probe.c` 在一个 `memset` 清零的 VM 上**不打任何解引用**，只打印返回值：
+
+- Linux：`raw -1=0xffffffffffeefef0 -4097=0xffffffffffddfef0 4096=(nil) 100000=0x18e0a00`
+- Windows（ucrt64，CI 同款）：`raw -1=FFFFFFFFFFEEFEF0 -4097=FFFFFFFFFFDDFEF0 4096=0000000000000000 100000=00000000018E0A00`
+
+两个平台的野低地址**逐字节相同** —— 它就是 `NULL - 4097 * sizeof(ArrayObj)`，与平台无关。`arrays_big` 非 NULL 时（探针把 `bigCap` 设成 4）`slot(-1)` 在 Linux 答 `0x5a671f67df10`、在 Windows 答 `00000227F33749A0` —— **都是真的堆地址**，也就是说一个负下标在池长起来之后不再是「低地址崩溃」，而是**读到别的对象**。
+
+**八个 `if (!a)` 是死代码**：`python3` 扫描 71 个调用点（把同一行或后两行出现 `!<var>` 算作有守卫），**只有 8 处有 NULL 守卫、63 处没有**。八处集中在 `src/mod/verse_dist_mod.c`（`:613`/`:631`/`:638`/`:689`/`:699`/`:740`/`:745`/`:1115`），形状都是 `ArrayObj *a = vm_pool_slot(vm, pkg.ival - 1); if (!a) return 0;`。
+
+**这个检查在本文件里不是不知道怎么写**：GC 标记 `src/vm/vm.c:2818` 对**同一个句柄**用的是 `if ((gv->type == VAL_ARRAY || gv->type == VAL_DICT) && gv->ival > 0 && gv->ival - 1 < vm->arrayCount)`，`:2832`/`:2841`/`:2853`/`:2862`/`:2869` 是同形的五处。⇒ **检查存在于一个地方，却不在所有人都要过的那道门上。**
+
+**修法**：把边界放回那道门（`src/vm/vm.c:743`），并在注释里引 `:2818` 的既有谓词：
+
+```c
+ArrayObj *vm_pool_slot(VM *vm, int idx) {
+    if (idx >= 0 && idx < 4096) return &vm->arrays[idx];
+    if (idx >= 4096) {
+        int big = idx - 4096;
+        if (big < vm->bigCap) return &vm->arrays_big[big];
+    }
+    return NULL;
+}
+```
+
+`vm_array_new`（`src/vm/vm.c:748`）在把槽交出去之前一定先 `realloc` + `memset` 并把 `bigCap` 提上去，所以任何**池真正拥有**的下标都不会被拒。
+
+**双向验证**：
+
+- Linux：`git stash push -- src/vm/vm.c` 重编 ⇒ CTest `#134 vm_pool_slot_probe` **`***Failed`**、5 条 `FAIL slot(...) answered …, want NULL`；`git stash pop` 重编 ⇒ `Passed`、`vm_pool_slot_probe: ok`。
+- Windows（ucrt64）：把函数体换成修前版本重编 ⇒ `FAIL slot(-1) answered FFFFFFFFFFEEFEF0, want NULL` 等 5 条、`PREFIX_PROBE_RC=1`、CTest `***Failed`；换回 ⇒ 四个 `(nil)`、`ok`、`Passed`。
+
+**新 pin**：`src/vm/vm_pool_slot_probe.c` / CTest `#134 vm_pool_slot_probe`（**无 `PASS_REGULAR_EXPRESSION`，退出码即判据**）。它同时断言 `slot(0) == &vm->arrays[0]` 与 `slot(4095) == &vm->arrays[4095]`，所以「一律返回 NULL」蒙不过去；它也不解引用任何东西 —— 越界答案是**一个指针值**，修前那个值就是证据。
+
+**为什么必须是一条 C 探针**：`.im` 脚本无法命名一个池下标，缺陷在 C 函数里，C 层是唯一能观察这条契约的高度。照 `vm_init_probe`（`CMakeLists.txt:938`）直接链 `inimerse_engine`。
+
+**同批发现：探针在 Linux 能编、在 Windows 编不过。** 初版把局部变量写成 `far` 与 `at`；mingw 的系统头把 `far` 定义成**空宏**（遗留 `__far`），于是 `ArrayObj *far = ...` 报 `expected identifier or '(' before '=' token`（共 3 个 error），而 Linux 的 `-fsyntax-only` 完全看不见。已改名为 `deep`/`edge`，双工具链 0 error。**这是「Linux 门禁看不到 Windows 编译」的又一个实例，只是这次挡住的不是引擎，是我自己的探针。**
+
+**诚实边界**：
+
+① 71 个调用点里 63 个没有 NULL 守卫，其中多数自带 `idx >= 0 && idx < vm->arrayCount` 之类的范围检查（例如 `src/vm/vm.c:885`、`:899`）；我只逐处看了 `src/mod/verse_dist_mod.c` 那 8 处与 `src/vm/vm.c` 内的部分。**「63 处都没有守卫」是扫描器的计数，不是逐处定性。**
+
+② `verse_verify`/`verse_unpack` 的两条调用链今天都先查了类型（`src/mod/verse_dist_mod.c:1154` 的 `if (!ok || pkg.type != VAL_DICT)`、`:813` 的 `if (!ok || pv.type != VAL_DICT)`），所以**负下标在今天不是可达的崩溃**；本轮修的是「不变量由每个调用方各自维持、门自己不检查」。
+
+③ 修法把 63 个无守卫调用点从「野指针解引用」变成「NULL 解引用」——**种类没变坏**，但行为变了。经验判据是全量门禁：**134 个测试全绿、0 跳过**，说明没有调用点依赖越界访问。我没有为这条做静态证明。
+
+④ `idx == 4096` 在 `bigCap == 0` 时返回 NULL 是**偶然**，不是设计；我没有去查历史上是否有代码依赖过这个偶然。
+
+⑤ 探针用 `malloc(sizeof(VM))` + `memset` 造 VM，**不调 `vm_init`** —— 它只观察 `vm_pool_slot` 这一个函数的边界算术，不声称覆盖 VM 初始化（那是 `vm_init_probe` 的事）。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

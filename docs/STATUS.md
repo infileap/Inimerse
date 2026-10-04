@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 133；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 134；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **133 / 133 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **134 / 134 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **133** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **134** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 133
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 134
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3661,3 +3661,14 @@ CTest **#133**，`PASS_REGULAR_EXPRESSION` 钉整行且两平台**同一行**（
 有示例但零注册、`docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」对 `random` 不成立），以及
 `docs/API.md:234` **早就记下 `gui_fullscreen` 重复却只当成计数问题**这一点，
 见 [AUDIT.md](AUDIT.md) §1.53。`docs/SYNTAX.md:500` 已就地更正（`rand` 移出名单）。
+
+## §10.83 数组池唯一的门不能拒绝一个下标，所以它后面八个 `if (!a)` 都是死代码
+
+`vm_pool_slot`（`src/vm/vm.c:743`）是全 `src/` **71 个调用点**取数组/字典槽的唯一入口，而它**不可能返回 NULL** —— 两个分支都返回地址。负下标答 `&arrays_big[idx - 4096]`（新 VM 上 `arrays_big == NULL` ⇒ 野低地址 `0xffffffffffeefef0`，Linux 与 Windows **逐字节相同**；池长大后 ⇒ 真的堆地址），超出 `bigCap` 的下标答分配之外的槽，只有 `idx == 4096` 且 `bigCap == 0` 时**偶然**是 `NULL`。`src/mod/verse_dist_mod.c` 的八处 `ArrayObj *a = vm_pool_slot(vm, pkg.ival - 1); if (!a) return 0;` 因此全是死代码。
+
+同一个文件里 GC 标记 `src/vm/vm.c:2818` 对**同一个句柄**用的是 `ival > 0 && ival - 1 < vm->arrayCount` —— **检查存在于一个地方，却不在所有人都要过的那道门上**。修法是把边界放回那道门（`vm_array_new` 在交出槽之前一定先扩好 `bigCap`，所以池真正拥有的下标不会被拒）。
+
+新 pin `src/vm/vm_pool_slot_probe.c` / CTest **#134 `vm_pool_slot_probe`**（**无 PASS 正则，退出码即判据**；同时断言 `slot(0)`/`slot(4095)` 仍解析，防「一律返回 NULL」蒙混）。双向验证：Linux `git stash push -- src/vm/vm.c` ⇒ `***Failed` + 5 条 FAIL，恢复 ⇒ `Passed`；Windows（ucrt64）换回旧函数体 ⇒ `FAIL slot(-1) answered FFFFFFFFFFEEFEF0` 等 5 条、`PREFIX_PROBE_RC=1`，换回 ⇒ 四个 `(nil)`、`Passed`。计数 133 → 134。
+
+同批：初版探针把局部变量写成 `far`/`at`，mingw 的系统头把 `far` 定义成**空宏** ⇒ **Windows 编不过而 Linux 编得过**；已改名 `deep`/`edge`，双工具链 0 error。详见 [AUDIT.md](AUDIT.md) §1.54。
+
