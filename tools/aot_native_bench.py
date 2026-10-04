@@ -126,7 +126,7 @@ def main():
 
     build = Path(args.build)
     engine = find_engine(build)
-    translator = build / "aot-native"
+    translator = build / ("aot-native.exe" if os.name == "nt" else "aot-native")
     if not translator.is_file():
         raise SystemExit(f"{translator} not found — run: cmake --build {build}")
 

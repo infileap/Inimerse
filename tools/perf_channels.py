@@ -285,7 +285,7 @@ def jit_probe(engine, im, n, reps):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", default=str(REPO / "build" / "inimerse"))
-    ap.add_argument("--translator", default=str(REPO / "build" / "aot-native"))
+    ap.add_argument("--translator", default=str(REPO / "build" / ("aot-native.exe" if os.name == "nt" else "aot-native")))
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"))
     ap.add_argument("--cxx", default=os.environ.get("CXX", "g++"))
     ap.add_argument("--rustc", default="rustc")

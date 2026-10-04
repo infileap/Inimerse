@@ -249,8 +249,8 @@ def main():
     args = ap.parse_args()
 
     build = Path(args.build)
-    engine = build / "inimerse"
-    translator = build / "aot-native"
+    engine = build / ("inimerse.exe" if os.name == "nt" else "inimerse")
+    translator = build / ("aot-native.exe" if os.name == "nt" else "aot-native")
     for p in (engine, translator):
         if not p.is_file():
             print(f"error: {p} not found — configure and build the project "

@@ -126,7 +126,7 @@ def run(argv, cwd, timeout=30):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", default=str(REPO / "build" / "inimerse"))
-    ap.add_argument("--translator", default=str(REPO / "build" / "aot-native"))
+    ap.add_argument("--translator", default=str(REPO / "build" / ("aot-native.exe" if os.name == "nt" else "aot-native")))
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"))
     ap.add_argument("--count", type=int, default=120)
     ap.add_argument("--seed", type=int, default=1)
