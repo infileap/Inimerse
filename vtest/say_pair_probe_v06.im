@@ -1,0 +1,12 @@
+# say_pair_probe.im -- the two say_mod copies must read their arguments the same
+# way round.  say.log(text, level) and say.file(text, path) put the text FIRST,
+# so the other value is the LAST argument; the Windows copy had them swapped.
+# Run on both engines and compare: the output must be identical.
+# See docs/AUDIT.md 1.45.
+
+say_log("TEXT", "WARN")
+say_ai("{a:1}")
+say_ai("plain")
+say_json("null")
+r = say_file("FILETEXT", "sayout.txt")
+say "saypair rc=" + str(r)

@@ -18,8 +18,13 @@ int im_vfs_normalize(const char *path, char *out, size_t cap) {
     for (char *part = strtok_r(tmp, "/", &save); part; part = strtok_r(NULL, "/", &save)) {
         if (!strcmp(part, ".") || !*part) continue;
         if (!strcmp(part, "..")) {
-            /* A VFS path may never escape its mount prefix. */
-            if (w == 0 || !strchr(out, '/')) return -1;
+            /* A VFS path may never escape its mount prefix.
+             * Search only the bytes actually written: out[w] is not a
+             * terminator yet, so strchr(out, '/') reads past the path into
+             * whatever the caller's buffer held and answers differently run
+             * to run.  With no '/' among those bytes the first component is
+             * the only one left, and ".." would remove it. */
+            if (w == 0 || memchr(out, '/', w) == NULL) return -1;
             while (w > 0 && out[w-1] != '/') w--; if (w > 0) w--;
             continue;
         }

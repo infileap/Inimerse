@@ -1,0 +1,36 @@
+# divergent_builtin_contract_v06.im -- a builtin name is one contract, and both
+# platform copies must answer the same thing for the same input.
+#
+# src/runtime/runtime.c (WIN32) and src/runtime/runtime_posix.c (POSIX) register
+# the same names through different code, so a name with two implementations is a
+# name with two answers.  Four of them disagreed, and this pin runs on BOTH
+# platforms: on Linux it judges the POSIX copy, on Windows the WIN32 one, and
+# the printed line is the same either way.  See docs/AUDIT.md §1.45.
+#
+#   int(9007199254740993)    POSIX 9007199254740993  WIN 1     (through `int`)
+#   int(9223372036854775807) POSIX 9223372036854775807 WIN -1 (through `int`)
+#   int("0x10")              POSIX 0                 WIN 16    (base 16 only on WIN)
+#   chr("A")                 POSIX ""                WIN "\x01" (read .ival off a string)
+#   atomic_get(42)           POSIX 0                 WIN CRASH  (strcmp(NULL))
+#   atomic_set(42, 7)        POSIX 0                 WIN CRASH  (strcmp(NULL))
+#
+# The ival/sval pair is one union chosen by the type tag (src/vm/vm.h:24-26), so
+# chr() reading .ival off a string read half of a pointer -- a different control
+# character each run.  atomic_add already guarded its name argument; atomic_get
+# and atomic_set did not, which is why one of the family crashed and the others
+# did not.  A non-string name is a refusal, not a crash: the answer is 0.
+#
+# Values only, never exit codes.
+
+i1 = int(9007199254740993)
+i2 = int(9223372036854775807)
+i3 = int("0x10")
+i4 = int("16")
+c1 = chr(65)
+c2 = chr("A")
+a1 = atomic_get(42)
+a2 = atomic_set(42, 7)
+a3 = atomic_add(42, 5)
+a4 = atomic_get("no_such_slot_at_all")
+
+say "divergent-ok i1=" + str(i1) + " i2=" + str(i2) + " i3=" + str(i3) + " i4=" + str(i4) + " c1=" + c1 + " c2empty=" + str(c2 == "") + " a1=" + str(a1) + " a2=" + str(a2) + " a3=" + str(a3) + " a4=" + str(a4)

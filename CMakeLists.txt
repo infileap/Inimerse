@@ -963,7 +963,7 @@ endif()
 #
 # This block sits after the ENVIRONMENT loop above on purpose: that loop sets
 # ENVIRONMENT on every registered test, which would overwrite the LD_PRELOAD
-# this test needs.  It is also the last add_test, so no existing #N moves.
+# this test needs.
 if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
   add_library(slowdns_preload MODULE src/platform/slowdns_preload.c)
   target_link_libraries(slowdns_preload PRIVATE ${CMAKE_DL_LIBS})
@@ -975,3 +975,31 @@ if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
     ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:slowdns_preload>"
     PASS_REGULAR_EXPRESSION "resolve_bound: ok")
 endif()
+
+# Pins "a VFS path may never escape its mount prefix" (docs/AUDIT.md §1.43).
+# im_vfs_normalize()'s ".." branch searched the caller's buffer with
+# strchr(out, '/') before out[w] had been terminated, so it read uninitialized
+# bytes and answered differently run to run -- on this tree
+# "os:/../escape" normalized successfully, i.e. the escape was allowed.  The
+# probe already asserted the opposite, but nothing registered it, so the gate
+# never ran it and the failure was invisible.  It reads README.md through the
+# "." mount, hence the source root as its working directory.
+# Registered last so no existing #N moves.
+add_test(NAME vfs_probe COMMAND vfs_probe)
+set_tests_properties(vfs_probe PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "platform;smoke")
+
+# A builtin name is one contract.  src/runtime/runtime.c (WIN32) and
+# src/runtime/runtime_posix.c (POSIX) register the same names through different
+# code, so a name with two implementations is a name with two answers -- and the
+# only test that compared them, posix_runtime_parity, is DISABLED on Windows
+# (:662).  This pin runs on BOTH platforms and prints one line either way, so on
+# Linux it judges the POSIX copy and on Windows the WIN32 one.  It pins
+# int()'s width and its "0x" prefix, chr()'s type check, and the name guard that
+# atomic_get/atomic_set were missing (which crashed the Windows engine).
+# Registered last so no existing #N moves.
+add_test(NAME divergent_builtin_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
+set_tests_properties(divergent_builtin_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0")
