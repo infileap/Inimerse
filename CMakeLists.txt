@@ -1185,3 +1185,32 @@ add_test(NAME random_bounded_contract_runtime
 set_tests_properties(random_bounded_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
   PASS_REGULAR_EXPRESSION "random-bounded-ok one=true zero=true neg=true ten=true big=true")
+
+# Pins "the array/dict pool refuses an index it does not own" (docs/AUDIT.md
+# 1.54).  vm_pool_slot is the single door to the pool -- 71 call sites in src/
+# go through it -- and eight of them test the answer for NULL.  The body had no
+# bounds test at all, so it could never answer NULL: slot(-1) returned
+# 0xffffffffffeefef0 on a fresh VM and a real heap address once arrays_big
+# existed, slot(100000) returned 0x18e0a00, and only slot(4096) happened to be
+# NULL (NULL + 0).  Every `if (!a)` downstream was dead code.
+#
+# A C probe rather than an .im script, and the reason is the point: a script
+# cannot name a pool index, and the defect is in the C function, so this is the
+# only level at which the contract is observable.  It links the engine objects
+# directly, like vm_init_probe above.  It asserts the two ends of the inline
+# pool still resolve as well, so a blanket `return NULL` cannot pass it, and it
+# dereferences nothing -- the out-of-range answer is a pointer value, and on the
+# pre-fix build that value is the evidence (probe prints `raw -1=...`).
+#
+# No PASS regex: the exit code is the verdict.
+#
+# Registered last so no existing #N moves.
+add_executable(vm_pool_slot_probe src/vm/vm_pool_slot_probe.c)
+target_link_libraries(vm_pool_slot_probe PRIVATE inimerse_engine)
+if(WIN32)
+  target_link_libraries(vm_pool_slot_probe PRIVATE m winhttp crypt32 gdi32 winmm msimg32
+    windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+else()
+  target_link_libraries(vm_pool_slot_probe PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME vm_pool_slot_probe COMMAND vm_pool_slot_probe)
