@@ -174,7 +174,7 @@ git status --short       #  M src/platform/http_posix.c（+218 行，§43.5 经�
 | 8 | AOT ≥2x 解释器 | RELEASE_0.5.0 | 已完成 | `SELFHOST_BENCHMARK.md` 实测 **1.09x**，原文自述"打包是分发手段，不是优化" | **虚假** |
 | 9 | 优化型 JIT | 多处 | 草案 | `--jit=template\|optimized` 安全回退解释器 | **缺失** |
 | 10 | 增量/可复现构建 + debug-info | CHANGELOG `[Unreleased]` | 已实现 | `cli_incremental_regression` CTest 通过；`<out>.build.json`/`.dbg`/`.debug_line` 见于 changelog | **符合** |
-| 11 | 统一 IDL / bindgen / 迁移报告 | ROADMAP_0.5-0.6 §3.4 | 已完成 | `tools/bindgen.py`、`cpp_scan.py`、`python_scan.py`、`migrate_report.py` + 对应 CTest | **符合** |
+| 11 | 统一 IDL / bindgen / 迁移报告 | ROADMAP_0.5-0.6 §3.4 | 已完成 | `tools/bindgen.py`（CTest `bindgen_regression`）、`cpp_scan.py` / `python_scan.py`（CTest `scan_tools_regression`）；**`migrate_report.py` 无任何 CTest**（`tools/` 下没有 `migrate_report.test.py`）⇒ 该工具今天**无人回归** | **部分** |
 | 12 | UPP 协议（握手/心跳/manifest） | ROADMAP 阶段二 | `[x]` 协议层完成 | `tools/upp_reference.js`、`upp_session.js`，Node 测试全过 | **符合** |
 | 13 | CRP 2A–2D | ROADMAP 阶段二 | `[x]` | `crp_reference/relay/client/ws_client` + `crp_session_flow_regression` CTest | **符合** |
 | 14 | CRP 客户端 UI 闭环 | ROADMAP 阶段二出口条件 | **0/3 勾** | 桌面端仍是 "B0 骨架" | **缺失** |

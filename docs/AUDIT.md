@@ -2507,6 +2507,92 @@ ctest 的输出里出现 `is already registered` ⇒ **阶段红**，并把那�
    是从两份实现逐行读出来的，与 §1.53 的读法一致。
 5. 普查的 588/462 是**文本提取**，不含运行时构造的名字（若有）。
 
+## §1.59 一份表格声称有 CTest 覆盖，而那两个 fixture 从来没有注册过
+
+**症状。** `docs/API.md` 第 2.1 节的证据列标题是「证据（CTest）」，而 `:114` 逐字写着：
+
+| `case value { _: ... }` 默认分支 | 已实现 | `lint_case_missing_default_v04.im` 相关 CTest |
+
+`:115` 把 `lint_case_exhaustive_v04.im` 与**四个真实的 CTest 名字**并列在同一个「证据（CTest）」格子里。两处都不成立：
+
+| 声称 | 实测 |
+| --- | --- |
+| `lint_case_missing_default_v04.im` 有「相关 CTest」 | 全仓库对该文件名的引用**只有这一行文档**；`ctest -N` 的 134 个名字里没有它，也没有任何名字含 `missing_default` |
+| `lint_case_exhaustive_v04.im` 是一个 CTest | 它是**文件名**，不是测试名；全仓库引用同样只有这一行；四个并列的名字（`lint_case_enum_runtime`／`lint_case_membership_runtime`／`lint_case_try_members_runtime`／`lint_case_try_alias_runtime`）**都是真的** |
+| `docs/REQUIREMENTS_ANALYSIS.md:177` 的「`migrate_report.py` + 对应 CTest」 | `tools/` 下**没有** `migrate_report.test.py`；`ctest -N` 里没有任何名字含 `migrate` |
+| `docs/STATUS.md:286` 把 `tools/migrate_report.py` 与两个 CTest 并列 | `bindgen_regression` 跑的是 `tools/bindgen.test.py`，`scan_tools_regression` 跑的是 `tools/scan_tools.test.py`（其 docstring 只提 `cpp_scan` 与 `python_scan`）—— 两个都不碰 `migrate_report.py` |
+
+**能力是真的，覆盖不是。** 两个 fixture 今天都跑得对：
+
+```
+$ ./build/inimerse --lint vtest/lint_case_missing_default_v04.im
+[lint] line 1 [WARN] case has no wildcard '_'/'else' branch; exhaustive coverage cannot be proven for open or infinite sets
+$ ./build/inimerse --lint vtest/lint_case_exhaustive_v04.im
+[lint] line 3 [WARN] case branch is unreachable: wildcard '_'/'else' appears before this branch
+```
+
+两者 rc 均为 1。`tools/migrate_report.py` 也跑得对（`--help` rc=0；对 `tools/cpp_scan.py` 生成真报告、rc=0）。所以这不是「文档描述了不存在的东西」，而是**「文档描述了一个从未接上的东西」** —— fixture 写好了、诊断是对的、表格把它当证据引用了，**而注册那一行从来没有被加过**。
+
+**为什么没有人发现。** `CMakeLists.txt:733-743` 的五个 `lint_case_*` 测试是**手写列举**的（`:744` 的注释自己数着「The five lint_case_* tests above」），于是第六个和第七个 fixture 落地时没有任何东西会要求把它们加进去。仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
+
+**普查。** 67 个 `vtest/*.im` 中 **5 个**在 `CMakeLists.txt` 里一次都没被提到：
+
+| fixture | 判定 |
+| --- | --- |
+| `lint_case_missing_default_v04.im` | **真缺口** —— 文档声称有覆盖 |
+| `lint_case_exhaustive_v04.im` | **真缺口** —— 文档声称有覆盖 |
+| `params_precompiled_v06.im` | 合法：它是 `vtest/params_precompiled_v06.inim` 的**源**，而 `params_precompiled_runtime`（`CMakeLists.txt:1113`）跑的是那份序列化产物 |
+| `eidos_object_probe_v04.im` | 合法：`docs/API.md:201` 引用的**样例脚本**；功能由 `tools/eidos_runtime.test.py` 自带的内联脚本断言 |
+| `say_pair_probe_v06.im` | 合法：一次性探针，输出逐字记在 `docs/AUDIT.md:1807`，本来就不是回归输入 |
+
+另外两组也查了，**今天都是 0 孤儿**：30 个 `tools/*.test.py` 全部被 `CMakeLists.txt` 提到；13 个 `tools/*.test.js` 全部被 `CMakeLists.txt` 或 `tools/node_suites/run_all.js` 提到。
+
+**修法分两半 —— 把声称变成真的，以及让下一个缺口自己出现。**
+
+**(1) 注册那两个 fixture**（`CMakeLists.txt` 末尾，**注册在最后以免任何既有的 `#N` 位移**）：`lint_case_missing_default_runtime`（**#135**）与 `lint_case_exhaustive_runtime`（**#136**），形状与既有的五个 `lint_case_*` 一致，各带 `PASS_REGULAR_EXPRESSION`。**并且各带一条 `FAIL_REGULAR_EXPRESSION` 断言对方那条警告不出现**：
+
+```
+lint_case_missing_default_runtime: PASS "case has no wildcard"       FAIL "case branch is unreachable"
+lint_case_exhaustive_runtime:      PASS "case branch is unreachable: wildcard"  FAIL "case has no wildcard"
+```
+
+理由是这两个 fixture 只差一行、且都在同一个 `--lint` 通道上：**只断言自己那条发现，分不开「诊断因正确的理由触发」与「诊断对每个 case 都触发」。** 实测两个方向都成立（各自输出里对方那条计数为 0）。
+
+**(2) 新增 `tools/check_orphan_fixtures.py` 与门禁第 12 阶段** `orphan-fixtures`。它比较「测试输入集合」与「真正会跑的集合」，三组都查；不在 `CMakeLists.txt` 里的必须出现在脚本的 `ALLOWED` 里，**且每条都要写出「那跑的是什么」**（上面表格里三条合法项的理由逐字在内）。一条只列文件名的白名单，就是同一个缺陷上升一层。
+
+```
+$ python3 tools/check_orphan_fixtures.py
+check_orphan_fixtures: 110 input(s) checked (67 vtest fixtures, 30 python harnesses, 13 node harnesses); 64 fixtures registered, 3 allowed with a stated reason.
+```
+
+**A/B（脚本有牙）。** 把 `CMakeLists.txt` 退回 `HEAD`（即没有那两条注册）：
+
+```
+check_orphan_fixtures: 2 orphaned input(s) out of 110 checked:
+  vtest/lint_case_exhaustive_v04.im: not named in CMakeLists.txt and not in ALLOWED. ...
+  vtest/lint_case_missing_default_v04.im: not named in CMakeLists.txt and not in ALLOWED. ...
+check_orphan_fixtures: an input nothing runs cannot fail, and cannot pass either -- it is not evidence.
+RC=1
+```
+
+恢复后 rc=0。**它点名的正好是文档声称有覆盖的那两个。**
+
+**A/B 抓出了脚本自己的缺陷（值得单独记）。** 第一次跑这个 A/B 时脚本**崩了**：
+
+```
+NameError: name 'CMAKE_SOURCE_DIR' is not defined
+```
+
+因为提示串是 f-string，`${CMAKE_SOURCE_DIR}` 里的花括号被当成替换字段。⇒ **一个「能发现孤儿」的检查在真发现孤儿时会抛异常而不是报告** —— 它存在、它退出非零、它答的是另一个问题。这与本仓库一直在治的形状逐字同形，只不过这次在检查器自己身上；已改成 `${{CMAKE_SOURCE_DIR}}`。**这条是 A/B 唯一的产出，没有 A/B 就不会有人发现。**
+
+**诚实边界。**
+1. **「在 `CMakeLists.txt` 里被提到」是子串测试，不是解析。** 一个只在注释里被提到的 fixture 会通过。这是刻意的：替代方案是写一个 CMake 解析器，而一条提到 fixture 的注释至少是一个能被找到的读者。
+2. **这一阶段不判断被注册的测试是否断言了任何东西。** 一条既无 `PASS_REGULAR_EXPRESSION` 也无 `FAIL_REGULAR_EXPRESSION` 的注册可以靠任何退出码通过 —— 见 `docs/SYNTAX.md` §7.2（M13）。
+3. **只查 `vtest/*.im`**，不查 `vtest/*.params` / `*.inim` / `*.txt`。那些是被注册的测试的输入而不是测试，且 `params_precompiled_v06.inim` 由跑它的那条注册点名。
+4. **`tools/migrate_report.py` 仍然没有 CTest。** 本轮只更正了那两处文档声称（并把它记成「部分」），**没有**为它写测试 —— `tools/*.test.py` 属于对等方的改动域。它是本阶段唯一「已知且被记录」的覆盖缺口：`check_orphan_fixtures.py` 查的是 `vtest/*.im` 与 `*.test.py`，**一个既非 fixture 又无 `X.test.py` 的工具落在两组之外**。这是一个刻意的窄口，写在脚本的 docstring 里。
+5. **本轮计数 134 → 136**（新增两条 CTest），`tools/gate.sh` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1 四处同步。
+
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

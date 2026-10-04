@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 134；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 136；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **134 / 134 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **136 / 136 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **134** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **136** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 134
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 136
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -283,7 +283,7 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 | 增量编译与依赖尾块 | CTest `cli_incremental_regression`；`tools/cli_incremental.test.py` |
 | 可复现构建与产物清单 | CTest `release_verify_regression`；`tools/release_verify.py` |
 | Wasm 数值子集后端 | CTest `wasm_backend_regression` / `wasm_host` / `wasm_probe`；`tools/wasm_backend.test.py` |
-| 绑定生成与扫描工具 | CTest `bindgen_regression` / `scan_tools_regression`；`tools/bindgen.py`、`tools/cpp_scan.py`、`tools/python_scan.py`、`tools/migrate_report.py` |
+| 绑定生成与扫描工具 | CTest `bindgen_regression`（`tools/bindgen.py`）、`scan_tools_regression`（`tools/cpp_scan.py` / `tools/python_scan.py`）；**`tools/migrate_report.py` 没有 CTest** —— 它今天无人回归，见 [AUDIT.md](AUDIT.md) §1.59 |
 | 语言语法糖（`?`、`\|>`、`case try`、lambda、`>>`、集合推导、`?.`、`??`） | CTest `pipeline_runtime` / `try_finally_runtime` / `lambda_*_runtime` / `case_*_runtime` / `null_coalesce_runtime` / `optional_member_runtime` |
 | POSIX 运行时对等 | CTest `posix_core_api_runtime` / `posix_runtime_parity` / `headless_probe` |
 | 协议与回放（CRP 会话、节点发现、权威交接、断线重连、确定性回放、包签名） | CTest `crp_session_flow_regression` / `node_discovery_regression` / `lease_handoff_regression` / `reconnect_generation_regression` / `replay_closure_regression` / `verse_pack_regression` / `hub_dist_regression` / `protocol_regression` |
@@ -3775,3 +3775,25 @@ this one ran.」）。
 本机无法验证它编译得过；②守卫在调用方、不在表里，直接调 `builtin_insert` 会绕过它；
 ③`builtin_insert` 本身仍然不检查重名；④两个体行为不同这件事没实测过（需要窗口）。
 完整边界见 [AUDIT.md](AUDIT.md) §1.58。
+
+## 10.90 一份表格声称有 CTest 覆盖，而那两个 fixture 从来没有注册过（BOARD 行 265）
+
+**症状。** `docs/API.md` 第 2.1 节的证据列标题是「证据（CTest）」，而 `:114` 把 `lint_case_missing_default_v04.im` 写成「相关 CTest」，`:115` 把 `lint_case_exhaustive_v04.im` 与四个真实测试名并列。**两处都不成立**：全仓库对这两个文件名的引用**只有那两行文档**，`ctest -N` 里没有它们，也没有任何含 `missing_default` 的名字。同族的第三、四处：`docs/REQUIREMENTS_ANALYSIS.md:177` 的「`migrate_report.py` + 对应 CTest」与 `docs/STATUS.md:286` 把该工具与 `bindgen_regression`／`scan_tools_regression` 并列 —— `tools/` 下没有 `migrate_report.test.py`，那两个 CTest 分别跑 `bindgen.test.py` 与 `scan_tools.test.py`（后者只碰 `cpp_scan`／`python_scan`）。
+
+**能力是真的，覆盖不是。** 两个 fixture 今天都跑得对（`--lint` 各出一条 `[WARN]`、rc=1），`migrate_report.py` 也跑得对（`--help` rc=0；对 `tools/cpp_scan.py` 出真报告、rc=0）。所以不是「文档描述了不存在的东西」，而是**「文档描述了一个从未接上的东西」**。
+
+**为什么没人发现。** `CMakeLists.txt:733-743` 的五个 `lint_case_*` 是**手写列举**的（`:744` 的注释自己数着「The five lint_case_* tests above」），第六、第七个 fixture 落地时没有任何东西要求把它们加进去；仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
+
+**普查。** 67 个 `vtest/*.im` 中 5 个一次都没被 `CMakeLists.txt` 提到：两个是**真缺口**（就是上面那两个），三个合法 —— `params_precompiled_v06.im` 是 `params_precompiled_v06.inim` 的源（`params_precompiled_runtime` 跑的是产物）、`eidos_object_probe_v04.im` 是 `docs/API.md:201` 的样例（功能由 `tools/eidos_runtime.test.py` 的内联脚本断言）、`say_pair_probe_v06.im` 是一次性探针（输出记在 `docs/AUDIT.md:1807`）。`tools/*.test.py` 30 个、`tools/*.test.js` 13 个**今天都是 0 孤儿**。
+
+**修法两半。** ①注册那两条 CTest（**#135** `lint_case_missing_default_runtime`、**#136** `lint_case_exhaustive_runtime`，注册在文件末尾以免既有 `#N` 位移），各带 `PASS_REGULAR_EXPRESSION` **和一条断言对方那条警告不出现的 `FAIL_REGULAR_EXPRESSION`** —— 两个 fixture 只差一行、走同一个 `--lint` 通道，只断言自己的发现分不开「因正确的理由触发」与「对每个 case 都触发」；两个方向实测都成立。②新增 `tools/check_orphan_fixtures.py` 与门禁第 **12** 阶段 `orphan-fixtures`：比较「测试输入集合」与「真正会跑的集合」，不在 `CMakeLists.txt` 里的必须进脚本的 `ALLOWED`，**且每条要写出「那跑的是什么」**（只列文件名的白名单是同一个缺陷上升一层）。
+
+```
+check_orphan_fixtures: 110 input(s) checked (67 vtest fixtures, 30 python harnesses, 13 node harnesses); 64 fixtures registered, 3 allowed with a stated reason.
+```
+
+**A/B。** 把 `CMakeLists.txt` 退回 `HEAD` ⇒ `2 orphaned input(s) out of 110 checked`、**rc=1**，点名的正好是文档声称有覆盖的那两个；恢复 ⇒ rc=0。**A/B 还抓出脚本自己的缺陷**：第一次跑它 `NameError: name 'CMAKE_SOURCE_DIR' is not defined` —— f-string 把 `${CMAKE_SOURCE_DIR}` 的花括号当成了替换字段，于是**一个「能发现孤儿」的检查在真发现孤儿时抛异常而不是报告**。已改成 `${{CMAKE_SOURCE_DIR}}`。**没有这次 A/B 就不会有人发现。**
+
+**同批更正四处文档声称**：`docs/API.md:114` 改成点名真测试 `lint_case_missing_default_runtime` ← 那个 fixture；`:115` 把文件名换成 `lint_case_exhaustive_runtime` ← 那个 fixture；`docs/REQUIREMENTS_ANALYSIS.md:177` 逐条写明哪个工具由哪条 CTest 覆盖、并写明 **`migrate_report.py` 无任何 CTest**，行末判定 **已完成 → 部分**；`docs/STATUS.md:286` 同。**`migrate_report.py` 的测试本轮不写**（`tools/*.test.py` 是对等方的改动域），它是本阶段唯一「已知且被记录」的覆盖缺口。
+
+**计数 134 → 136**，四处同步（`tools/gate.sh` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1）。**诚实边界**见 [AUDIT.md](AUDIT.md) §1.59：子串测试不是解析；本阶段不判断被注册的测试是否断言了任何东西；只查 `vtest/*.im`；`migrate_report.py` 那类「既非 fixture 又无 `X.test.py`」的工具落在两组之外。
