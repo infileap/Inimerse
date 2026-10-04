@@ -1181,23 +1181,11 @@ static int builtin_save_params(VM *vm) {
 
 
 /* ---------- L1 modular SPI: capability query + mod meta (minimal-permission) ---------- */
-/* caps string parser: "io,net,ai" -> bitmask ("all" = full) */
-static int spi_parse_caps(const char *s) {
-    int caps = 0;
-    const char *p = s ? s : "";
-    while (*p) {
-        if (strncmp(p, "io", 2) == 0) caps |= CAP_IO;
-        else if (strncmp(p, "net", 3) == 0) caps |= CAP_NET;
-        else if (strncmp(p, "ai", 2) == 0) caps |= CAP_AI;
-        else if (strncmp(p, "verse", 5) == 0) caps |= CAP_VERSE;
-        else if (strncmp(p, "dbg", 3) == 0) caps |= CAP_DBG;
-        else if (strncmp(p, "proc", 4) == 0) caps |= CAP_PROC;
-        else if (strncmp(p, "all", 3) == 0) caps |= CAP_MASK;
-        while (*p && *p != ',') p++;
-        if (*p == ',') p++;
-    }
-    return caps;
-}
+/* The capability string has one production point, shared with the POSIX runtime:
+   vm_parse_caps (src/vm/vm.c), declared in src/vm/vm.h next to the CAP_* bits it
+   returns.  The local copy that used to live here split on ',' and then asked
+   strncmp(p, "io", 2), so "io net" granted CAP_IO and silently dropped CAP_NET,
+   and "audio" granted nothing while POSIX granted CAP_IO.  See docs/AUDIT.md 1.50. */
 static int builtin_spi_meta(VM *vm) { /* spi_meta(id, version, caps): declare mod identity + capabilities */
     if (vm_cur_sp(vm) < 2) return 0;
     Value *capsv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -1206,7 +1194,7 @@ static int builtin_spi_meta(VM *vm) { /* spi_meta(id, version, caps): declare mo
     const char *id = (idv->type == VAL_STRING && idv->sval) ? idv->sval : "anon";
     int version = (int)val_as_int(verv);  /* tag-checked: a bool's ival is not a double */
     int caps = 0;
-    if (capsv->type == VAL_STRING) caps = spi_parse_caps(capsv->sval);
+    if (capsv->type == VAL_STRING) caps = vm_parse_caps(capsv->sval);
     else if (capsv->type == VAL_INT) caps = capsv->ival;
     else if (capsv->type == VAL_BOOL) caps = capsv->ival ? CAP_MASK : 0;
     vm->mod_caps = caps; /* replace declared mask (0 = no capabilities at all) */

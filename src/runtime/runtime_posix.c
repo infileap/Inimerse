@@ -946,13 +946,11 @@ static int posix_spi_meta(VM *vm) {
     const char *name = id.type == VAL_STRING ? id.sval : "anon";
     int mask = caps.type == VAL_INT ? caps.ival : 0;
     if (caps.type == VAL_STRING && caps.sval) {
-        if (strstr(caps.sval, "io")) mask |= CAP_IO;
-        if (strstr(caps.sval, "net")) mask |= CAP_NET;
-        if (strstr(caps.sval, "ai")) mask |= CAP_AI;
-        if (strstr(caps.sval, "verse")) mask |= CAP_VERSE;
-        if (strstr(caps.sval, "dbg")) mask |= CAP_DBG;
-        if (strstr(caps.sval, "proc")) mask |= CAP_PROC;
-        if (strstr(caps.sval, "all")) mask |= CAP_MASK;
+        /* One production point, shared with the Windows runtime: vm_parse_caps
+           matches a whole comma-separated token.  This used to be six strstr
+           calls over the whole string, so "audio" granted CAP_IO and "ionet"
+           granted CAP_IO|CAP_NET.  See docs/AUDIT.md 1.50. */
+        mask |= vm_parse_caps(caps.sval);
     }
     vm->mod_caps = mask;
     int found = -1;
