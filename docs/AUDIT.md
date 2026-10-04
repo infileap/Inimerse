@@ -509,7 +509,19 @@ value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);        /* :3837  �
 
 **顺带统一**：`posix_core_size` 原先自己算 `(hi-lo)/step + 1`，现在改走同一个枚举器。于是 `size(<集合>)` 与 `len(<集合>)` 在复合/浮点形态上不再可能给出两个答案；修前 `z = Z[1~3]` 的 `size(z)` 是 nil 而 `len(z)` 是 0，本身就是这种分裂的极端例子。
 
-**计数**：`grep -c 'add_test(' CMakeLists.txt` **108 → 110**，`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **110**。
+### ④ 两道「拒绝」闸门此前没有任何回归
+
+枚举器在两条边上**主动拒绝**而不是硬走：`kh - kl >= 10000000`（格点跨度一千万以上）与端点越界（`|lo| > 9.0e18`，或整数格点落在 int32 之外，因为 `VAL_INT` 只有 32 位）。这是**契约**：截断成前 N 个成员又便宜又错。但它此前只被上面两条回归**间接**碰过（`infinite=0,nil` 只钉住「真无限」那一种拒绝），而**拒绝与空区间在 `len()` 下都是 0** —— 用 `len()` 断言根本分不开这两者，所以那两条回归看不见闸门有没有被拆掉。
+
+`vtest/set_enumeration_refusal_v05.im` ← CTest `set_enumeration_refusal_runtime`，一行断言七个值：
+
+`setrefuse-ok bigspan=nil edge=nil i32=nil neg32=nil empty=0 ok10=10 ok3=3`
+
+前四个 `nil` 是四种拒绝（跨度 `Z[1~10000001]`、端点 `Z[1~10000000000000000000]`、int32 之外 `Z[1~3000000000]` 与 `Z[-3000000000~-1]`），第五个 `0` 是**空区间不是拒绝**（`list(Z[5~4])` 是 `[]` 而 `len` 为 0），最后两个 `10` / `3` 是**对照**：闸门不许扩大到把普通区间也拒掉。`PASS_REGULAR_EXPRESSION` 是整行字面量，`FAIL_REGULAR_EXPRESSION "ok10=0|ok3=0|empty=nil"` 专抓「拒绝过度」这一侧（三个 token 都带数字或词，池转储里凑不出，避开了 §1.11 记的坑）。
+
+**双向验证**：把跨度闸 `if (kh - kl >= 10000000) return -1;` 临时改成 `>= 3` ⇒ 该 CTest 红（`***Failed  Error regular expression found in output. Regex=[ok10=0|ok3=0|empty=nil]`，因为 `Z[1~10]` 也一起被拒了）；`cp` 还原 + `cmp` 逐字节一致 + 重编 ⇒ 绿。实测 **0.057 s**。
+
+**计数**：①–③ 的两次修复共 `grep -c 'add_test(' CMakeLists.txt` **108 → 110**（`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **110**）；④ 这条回归再 **112 → 113**（111 是 §1.11，112 是 §1.12）。
 
 ## §1.11 调用未注册的内建函数会静默返回栈顶，而不是报错
 
@@ -576,6 +588,32 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 **判据与双向验证**：CTest 名 `contract_suite_runtime`，在 `CMakeLists.txt` 里注册，`PASS_REGULAR_EXPRESSION "contract: [0-9]+ passed"`，`TIMEOUT 30`，标签 `vm;language;regression;contract`；**故意不设 `FAIL_REGULAR_EXPRESSION`** —— 抛出文本 `CONTRACT FAIL` 是套件里的字面量，会命中 §1.11 记的那条池转储坑，绿跑也会被误判；异常让进程 exit 1，靠退出码就够。`tools/gate.sh` 的 `EXP_CTEST` 111 → 112。**双向验证**：注册后 `ctest -R contract_suite_runtime` 绿；`git checkout HEAD -- contract_test.im`（未加探针的旧版）+ 重建 ⇒ 红（`***Failed  Required regular expression not found. Regex=[contract: [0-9]+ passed`，旧版在第一处 `str2int` 就抛、退出码 1）；`cp` 回 + `cmp` 逐字节相同 ⇒ 复绿。这条注册**真的在跑引擎**，不是「注册了一个永远绿的壳」。
 
 **诚实边界**：本平台 io/gui 双缺，所以 63/70；Windows 上两段会真的跑（70/70），下限 60 对两个平台都成立。但 POSIX 门禁**确实没有验证 io/gui 那 7 条契约** —— 这是平台能力边界（模块不在 POSIX 构建里），不是套件偷懒；`src/platform/posix_stubs.c` 是空实现这一现状记录在 `docs/STATUS.md` §10.47。
+
+## §1.13 差分模糊测试进门禁：它测不出「全绿」，只能测「没变宽」
+
+**症状（同样是流程缺陷，与 §1.12 同类）。** `tools/im_diff_fuzz.py` 就是 §1.5 立的方法本身 —— 三后端跑同一批随机程序、逐格比对 —— 但它**不在 `tools/gate.sh` 里**，只在有人想起来时手动跑。§1.5 关于「解释器与两个编译后端的真实爆炸半径」的结论正是它一次跑出来的；这样一个工具不进门禁，等于把「全方位」交给记性。
+
+**它进不了「零期望」的门，这是先测出来的、不是先猜的。** 工具默认 `--count 120 --seed 1`，实测：
+
+| 配置 | agreed | DIVERGE | THREW | not translated |
+| --- | --- | --- | --- | --- |
+| `--count 20 --seed 1` | 20 | 0 | 0 | 0 |
+| `--count 120 --seed 1`（默认） | 111 | **5** | **4** | 0 |
+| 把常量池限制成 int32 | — | **3** | **4** | 0 |
+
+**限制常量域不能把它变成零期望** —— 分歧不来自字面量本身，来自**计算**：`x + 1 + 1`（`x = 2147483647`）这样的表达式照样跨过 int32。这与 §1.2 记的是同一件事：`Value` 是 32 位 `ival` + double，超过 int32 时解释器把它当 double（低位没了），而 codegen 的 `NV.i` 是 64 位、算得精确。**没有干净的配置**，所以要么把这条真实分歧藏起来，要么钉住它。
+
+**修法：钉住（ratchet），而且双向都红。**
+
+- 种子与程序数固定（`EXP_FUZZ_COUNT=120`、`EXP_FUZZ_SEED=1`），分歧集合因此是确定的；
+- 两份计数**精确断言**（`EXP_FUZZ_DIVERGE=5`、`EXP_FUZZ_THREW=4`）：多一条是新的分歧（不许掩盖），少一条是修好了一条 —— **同样红**，必须把该例提升进 `tools/aot_native.test.py` 的 `EQUIVALENCE` 再抬 pin。这与 `tools/aot_native.test.py:132` 的 `DIVERGENCE` 清单是同一约定：「这些是被钉住的、不是被藏起来的；两边的输出都逐字断言，所以缺口既不能悄悄变宽，修好一条也会让测试大声要求把它提升。」
+- `not translated` 双向必须为 **0**：工具把「后端翻不动」单列成生成器 bug，而生成器 bug 不是分歧 —— 放宽生成器不能用来把红变绿。
+
+`stage_fuzz` 用 `sed -n 's/^  DIVERGE *\([0-9]*\)$/\1/p'` 读计数（`THREW` / `not translated` 同形），读不到即红并打印原因，失败时分别打印 MORE / FEWER 的处置说明。整阶段约 **45–50 s**，是门禁里最慢的一段。工具的退出码本身（发现任何东西就退 1）**不参与判定** —— 判定只看 pin，否则默认调用永远红。
+
+**双向验证。** ①默认 pin ⇒ `gate: fuzz findings match the pin (5 DIVERGE, 4 THREW, 0 untranslated).`，阶段 PASS；②`EXP_FUZZ_DIVERGE=0 bash tools/gate.sh --fast --only fuzz` ⇒ `gate: differential fuzz found 5 DIVERGE / 4 THREW, pinned 0 / 4` + 两条处置说明 + `✘ differential fuzz (interp vs AOT, pinned 0+4) (exit 1)` + `gate: FAILED — do not merge.`
+
+**诚实边界。** 这条门禁**不证明解释器与 AOT 一致**，只证明「在这 120 个程序上，分歧的数量没有变」。它是一把尺子，不是一张合格证；真正的收敛要靠把 5+4 条分歧逐条修掉，每修一条抬一次 pin。`not translated = 0` 也只覆盖这批程序能被 AOT 翻译，不代表生成器覆盖了全部语法。
 
 ## §2 执行通道效率比较
 

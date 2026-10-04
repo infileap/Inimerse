@@ -5,7 +5,7 @@
 #   tools/gate.sh              full gate: configure + build + all suites
 #   tools/gate.sh --fast       skip configure/build, reuse the existing build/
 #   tools/gate.sh --only links run a single stage
-#                              (build|ctest|economy|node|plugin|oauth-loop|
+#                              (build|ctest|fuzz|economy|node|plugin|oauth-loop|
 #                               ignored-credentials|links|doc-paths)
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #
@@ -47,7 +47,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-112}"
+EXP_CTEST="${EXP_CTEST:-113}"
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
@@ -125,6 +125,66 @@ stage_ctest() {
     echo "gate: bump EXP_CTEST in tools/gate.sh and docs/BOARD.md 3 if that was intended." >&2
     return 1
   fi
+  return 0
+}
+
+# The differential fuzzer (tools/im_diff_fuzz.py) is not an expect-zero stage, and
+# it cannot be one.  It deliberately generates constants at the int32/double
+# boundary, which is exactly where the interpreter and the AOT backend are known to
+# disagree: Value carries a 32-bit `ival` plus a double, while the codegen's NV.i is
+# 64-bit, so a number above int32 is a double in the VM (low bits gone) and an exact
+# int64 in AOT.  Restricting the generator to int32 constants does not help -- computed
+# overflow crosses the same boundary -- so the gap is pinned instead of hidden:
+#
+#   * the seed and the program count are fixed, so the finding set is deterministic;
+#   * the two counts are asserted EXACTLY, not as a ceiling.
+#
+# More findings is a new divergence.  Fewer findings means one was fixed, and that
+# also fails the gate on purpose: the pin has to be updated and the case promoted,
+# the same convention as the pinned DIVERGENCE list in tools/aot_native.test.py, so
+# the gap can neither widen nor close without someone saying so.  `not translated`
+# must be 0 either way -- the tool reports a program the AOT backend cannot translate
+# as a generator bug rather than as a divergence, and a generator bug is never a
+# finding.  See docs/AUDIT.md §1.2 (整数提升) and §1.13.
+EXP_FUZZ_COUNT="${EXP_FUZZ_COUNT:-120}"
+EXP_FUZZ_SEED="${EXP_FUZZ_SEED:-1}"
+EXP_FUZZ_DIVERGE="${EXP_FUZZ_DIVERGE:-5}"
+EXP_FUZZ_THREW="${EXP_FUZZ_THREW:-4}"
+
+stage_fuzz() {
+  local out rc div threw untr
+  out="$(python3 "$REPO_ROOT/tools/im_diff_fuzz.py" \
+           --count "$EXP_FUZZ_COUNT" --seed "$EXP_FUZZ_SEED" 2>&1)"
+  rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" -eq 2 ]; then
+    echo "gate: the fuzzer could not find its engine or its translator." >&2
+    return 1
+  fi
+  # The tool exits 1 whenever it finds anything -- the right default for interactive
+  # use, but the pin below is what decides here, so the exit code is not the verdict.
+  div="$(printf '%s\n' "$out" | sed -n 's/^  DIVERGE *\([0-9]*\)$/\1/p')"
+  threw="$(printf '%s\n' "$out" | sed -n 's/^  THREW *\([0-9]*\)$/\1/p')"
+  untr="$(printf '%s\n' "$out" | sed -n 's/^  not translated *\([0-9]*\)$/\1/p')"
+  if [ -z "$div" ] || [ -z "$threw" ] || [ -z "$untr" ]; then
+    echo "gate: could not read the fuzzer's finding counts from its output." >&2
+    return 1
+  fi
+  if [ "$untr" -ne 0 ]; then
+    echo "gate: the generator produced $untr program(s) the AOT backend cannot translate." >&2
+    echo "gate: that is a generator bug, not a divergence -- narrow the generator." >&2
+    return 1
+  fi
+  if [ "$div" -ne "$EXP_FUZZ_DIVERGE" ] || [ "$threw" -ne "$EXP_FUZZ_THREW" ]; then
+    echo "gate: differential fuzz found $div DIVERGE / $threw THREW, pinned $EXP_FUZZ_DIVERGE / $EXP_FUZZ_THREW" >&2
+    echo "gate: (seed $EXP_FUZZ_SEED, $EXP_FUZZ_COUNT programs)." >&2
+    echo "gate: MORE findings is a new interpreter/AOT divergence -- do not paper over it." >&2
+    echo "gate: FEWER findings means one was fixed -- promote that case into" >&2
+    echo "gate: tools/aot_native.test.py, then bump EXP_FUZZ_DIVERGE/EXP_FUZZ_THREW" >&2
+    echo "gate: here and the counts in docs/BOARD.md 3." >&2
+    return 1
+  fi
+  echo "gate: fuzz findings match the pin ($EXP_FUZZ_DIVERGE DIVERGE, $EXP_FUZZ_THREW THREW, 0 untranslated)."
   return 0
 }
 
@@ -285,6 +345,7 @@ stage_doc_paths() {
 
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
+run_stage "differential fuzz (interp vs AOT, pinned ${EXP_FUZZ_DIVERGE}+${EXP_FUZZ_THREW})" fuzz stage_fuzz
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin

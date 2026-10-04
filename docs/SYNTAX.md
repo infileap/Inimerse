@@ -834,7 +834,6 @@ C 源文件的注释是**损坏的 GBK 编码**（在 UTF-8 源码里表现为�
 
 | 文件 | U+FFFD 数 |
 |---|---|
-| `src/mod/gui_mod.c.bak2_20260808_221050` | 1485 |
 | `mods/debug/debug_mod.c` | 619 |
 | `src/compiler/bytecode.c` | 409 |
 | `mods/build/build_mod.c` | 50 |
@@ -844,6 +843,7 @@ C 源文件的注释是**损坏的 GBK 编码**（在 UTF-8 源码里表现为�
 | `src/main.c` | 15 |
 | `src/lexer/lexer.h` | 3 |
 | `src/mod/verse_dist_mod.c` | 3 |
+| `docs/AUDIT.md` | 2 |
 | `src/parser/ast.h` | 1 |
 | `src/runtime/runtime.c` | 1 |
 | `Infiverse_standard/src/ui/app.js` | 1 |
@@ -851,9 +851,13 @@ C 源文件的注释是**损坏的 GBK 编码**（在 UTF-8 源码里表现为�
 
 例：`src/lexer/lexer.c:151` 的 `/* lI锟? */`、`src/compiler/compiler.c:1926` 的 `/* 鍏朵粬 verb 锟?CALL_BUILTIN "gui_<verb>", args */`。**这些注释已经不可读**，等于丢失了实现说明。
 
-#### H2. `src/mod/gui_mod.c.bak2_20260808_221050` 是入库的备份文件
+**2026-10-04 复核**：表格原来把 `src/mod/gui_mod.c.bak2_20260808_221050`（1485）列在第一行并计入 14，同时**漏掉了 `docs/AUDIT.md`（2）**（该文件在 `HEAD` 上就已经是 2）。删除那个备份文件后重新统计**仍是 14 个** —— 少一个、补一个，标题里的数字恰好没变；现在最坏的是 `mods/debug/debug_mod.c` 619。
+
+#### H2. `src/mod/gui_mod.c.bak2_20260808_221050` 是入库的备份文件（**已修，2026-10-04**）
 
 1485 个 U+FFFD，文件名带 `.bak2_<时间戳>`。它被 `git ls-files` 收录，会被文档检查器与全文检索当作正式源码。
+
+**已删除**：`git rm src/mod/gui_mod.c.bak2_20260808_221050`，同时删掉**未被版本控制**的 `src/main.c.bak`（34646 字节，`src/main.c` 的另一份拷贝）。删前确认没有任何构建脚本、CTest 或工具引用这两个路径（`tools/`、`CMakeLists.txt`、`*.sh`/`*.py`/`*.js`/`*.cmake` 全部零命中），唯一引用它们的只有文档。记账见 `docs/STATUS.md` §10.48 与 `docs/BOARD.md` §5 的 `backup-files-removed` 行。
 
 #### H3. `ai_browser_diag.js` 含非法 UTF-8
 

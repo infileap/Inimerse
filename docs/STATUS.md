@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-03 更新测试计数到 112；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 113；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **112 / 112 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **113 / 113 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **112** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **113** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 112
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 113
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -1142,7 +1142,7 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 
 **结构。** §0 取证来源表 / §1 词法 / §2 字面量与值 / §3 表达式与优先级（12 级优先级表，由 `parse_expr:720` → `parse_coalesce:687` → `parse_logic_or:678` → `parse_logic_and:669` → `parse_comparison:626` → `parse_add_sub:617` → `parse_mul_div:608` → `parse_unary:596` → `parse_postfix:503` → `parse_primary:183` 的下降链推出）/ §4 语句 / §5 内建函数（447 个 `vm_register_builtin*` 调用点的分布表）/ §6 完整关键字表（八组别名）/ §7 **疑似冗余或危险的语法** / §8 复现方法与回归断言注意事项。
 
-**§7 是重点，共 31 条，每条都有实测输出或源码行号。** 10 条「危险·静默」（不报错但结果错）：D1 `push(list, <用户函数调用>)` 误编译、D2 GUI 动词无 arity/类型检查（`sprite 42` 与 `sprite "x"` 一样「成功」）、D3 类型标注纯装饰（`int x = "hello"` 通过）、D4 参数个数不校验（`h(1,2)`→`1`、`h()`→`nil`，两个方向都不报错）、D5 未声明变量求值为 `nil`、D6 字符串里的 `\0` 截断（`len("a\0b")` = 1）、D7 `(1,2)` 是区间不是元组、D8 `a[1~2]` 是集合区间不是切片、D9 `type` 已注册为内建却是保留字（`type(x)` 是解析错误，唯一途径 `x.type`）、D10 `N`/`Z`/`Z+`/`Z-`/`Float1..9` 被硬编码为集合前缀（`func Z(a,b)` 后 `Z(1,5)` 得到 `set(Z interval)`，函数根本没被调用）。11 条「危险·误导」：M1 `\|>` 与 `>>` 不能混用（两个顺序循环而非统一循环，报错是 `expected ')'`）、M2 `->` 既是 lambda 又是类型转换、M3 命名实参不支持且报错落在别处、M4 保留字可作成员名、M5 `until`/`till` 只在 `do…until`、M6 `..` 不是通用运算符、M7 `show(` 变函数调用、M8 `join` 双重身份、M9 `match` 上下文敏感（`no_infix_match`）、M10 后缀条件的行敏感规则、M11 `--lint` 恒 0。7 条冗余：R1 八组关键字别名、R2 后置 `with` 子句**四段代码不可达**（`src/parser/parser.c:1690`/`:1692`/`:1693`/`:1722` 用 `peek(p).type == TOK_IDENT && sv_eq_cstr(text,"with")` 判断，而 `with` 是 `TOK_WITH`）、R3 `src/parser/parser.c:1286`/`:1287` 是逐字相同的一行、R4 十六进制有两条扫描路径、R5 约 30 个 GUI 关键字没有自己的语法（只有 `parse_gui_stmt` 的「原文当字符串」机制）、R6 `TOK_UNKNOWN` 无人处理、R7 完全没有按位运算符。3 条卫生：H1 14 个受版本控制文件含 U+FFFD（C 注释是损坏的 GBK，`src/mod/gui_mod.c.bak2_20260808_221050` 1485、`mods/debug/debug_mod.c` 619、`src/compiler/bytecode.c` 409…）、H2 上述 `.bak2_` 备份文件被入库、H3 `ai_browser_diag.js` 是唯一**非法 UTF-8** 文件（偏移 478）。
+**§7 是重点，共 31 条，每条都有实测输出或源码行号。** 10 条「危险·静默」（不报错但结果错）：D1 `push(list, <用户函数调用>)` 误编译、D2 GUI 动词无 arity/类型检查（`sprite 42` 与 `sprite "x"` 一样「成功」）、D3 类型标注纯装饰（`int x = "hello"` 通过）、D4 参数个数不校验（`h(1,2)`→`1`、`h()`→`nil`，两个方向都不报错）、D5 未声明变量求值为 `nil`、D6 字符串里的 `\0` 截断（`len("a\0b")` = 1）、D7 `(1,2)` 是区间不是元组、D8 `a[1~2]` 是集合区间不是切片、D9 `type` 已注册为内建却是保留字（`type(x)` 是解析错误，唯一途径 `x.type`）、D10 `N`/`Z`/`Z+`/`Z-`/`Float1..9` 被硬编码为集合前缀（`func Z(a,b)` 后 `Z(1,5)` 得到 `set(Z interval)`，函数根本没被调用）。11 条「危险·误导」：M1 `\|>` 与 `>>` 不能混用（两个顺序循环而非统一循环，报错是 `expected ')'`）、M2 `->` 既是 lambda 又是类型转换、M3 命名实参不支持且报错落在别处、M4 保留字可作成员名、M5 `until`/`till` 只在 `do…until`、M6 `..` 不是通用运算符、M7 `show(` 变函数调用、M8 `join` 双重身份、M9 `match` 上下文敏感（`no_infix_match`）、M10 后缀条件的行敏感规则、M11 `--lint` 恒 0。7 条冗余：R1 八组关键字别名、R2 后置 `with` 子句**四段代码不可达**（`src/parser/parser.c:1690`/`:1692`/`:1693`/`:1722` 用 `peek(p).type == TOK_IDENT && sv_eq_cstr(text,"with")` 判断，而 `with` 是 `TOK_WITH`）、R3 `src/parser/parser.c:1286`/`:1287` 是逐字相同的一行、R4 十六进制有两条扫描路径、R5 约 30 个 GUI 关键字没有自己的语法（只有 `parse_gui_stmt` 的「原文当字符串」机制）、R6 `TOK_UNKNOWN` 无人处理、R7 完全没有按位运算符。3 条卫生：H1 14 个受版本控制文件含 U+FFFD（C 注释是损坏的 GBK；最坏的 `src/mod/gui_mod.c.bak2_20260808_221050` 1485 已随该文件删除，见 §10.48 —— 删除后复核**仍是 14 个**，因为原表漏记的 `docs/AUDIT.md`（2）补上了，现在最坏的是 `mods/debug/debug_mod.c` 619、`src/compiler/bytecode.c` 409…）、H2 上述 `.bak2_` 备份文件被入库（**已修，见 §10.48**）、H3 `ai_browser_diag.js` 是唯一**非法 UTF-8** 文件（偏移 478）。
 
 **两条方法论结论（对回归测试有直接影响）。** ①引擎在程序输出前固定打印三行模块装载信息（`[TBP] timeBeginPeriod(1) …`、`[infiverse mod] loaded …`、`[verse_dist mod] VDP loaded …`）与一行调用回显（形如 `[0]="str" [1]="len"`），**任何断言 stdout 的测试都必须容忍这些前缀行**。②**退出码经常区分不出对错** —— D1、D2、D5、M11 都返回 0；`--lint` 尤其不可用作解析谓词（`src/main.c:1252-1257` 的 `lint_check()` 恒返回 0）。
 
@@ -1720,7 +1720,7 @@ print('HOST-ALIVE')
 
 - **`longjmp` 的泄漏**（见上）：每次语法错漏掉半棵 AST。要「不漏」得把整个递归下降改成返回错误码，那是另一个量级的改动，没有做。
 - **嵌套调用返回 NULL**：在一次可恢复解析里再调 `parse_program_recoverable()` 会直接返回 NULL（解析器本来就不是可重入的）。今天没有这样的调用方。
-- `src/main.c.bak`（未被版本控制）里还有一份 `inim_load_text()`；它不参与构建，没有动。
+- `src/main.c.bak`（未被版本控制）里还有一份 `inim_load_text()`；它不参与构建，没有动。**（2026-10-04：该文件已删除，见 §10.48。）**
 
 ### 10.28 OAuth 回环拆出 Tauri、八个真实面板进 DOM 断言，以及「门禁把跳过当通过」（`oauth-bind-transport`、`forge-panels`）
 
@@ -2847,3 +2847,61 @@ if pass < 60 {
 - POSIX 上 io/gui 双缺，所以套件跑的是 **63/70**：门禁**确实没有验证那 7 条 io/gui 契约**。这是平台能力边界（这两个模块不在 POSIX 构建里），不是套件偷懒；`src/platform/posix_stubs.c` 把 `io_mod_register`/`gui_mod_register`/`build_mod_register` 桩成空实现是现状，不是本轮引入的。
 - 探针本身要跑一次真实调用：`str2int("42")` 与 `gui_vram_used()` 都无副作用，选后者正是因为它不建画布。
 - 7 条被跳过的断言**不是**「已通过的等价物」；本节把它们逐条列出，是为了让跳过在文档里同样可闻。
+
+## 10.48 差分模糊测试进门禁、枚举拒绝闸门钉进回归、两份备份删除（BOARD 行 143、144）
+
+本轮是用户的三条直接指令：**「接进门禁；回归钉住；删除备份」**（2026-10-04）。三件事互不相关，但都属于同一类：**已经知道的东西没有被门禁或文档钉住**。
+
+### 一、接进门禁：`tools/im_diff_fuzz.py` 成为门禁第 4 阶段
+
+`tools/im_diff_fuzz.py` 是 `docs/AUDIT.md` §1.5 立的三后端差分方法本身，却只在有人想起来时手动跑。它进不了「零期望」的门，这是先测出来的：
+
+| 配置 | agreed | DIVERGE | THREW | not translated |
+| --- | --- | --- | --- | --- |
+| `--count 20 --seed 1` | 20 | 0 | 0 | 0 |
+| `--count 120 --seed 1`（工具默认） | 111 | **5** | **4** | 0 |
+| 把常量池限制成 int32 | — | **3** | **4** | 0 |
+
+限制常量域不解决问题：分歧来自**计算**（`x + 1 + 1`，`x = 2147483647`），与 §1.2 是同一件事 —— `Value` 是 32 位 `ival` + double，而 codegen 的 `NV.i` 是 64 位。
+
+**修法：钉住（ratchet），双向都红。** `tools/gate.sh` 新增 `EXP_FUZZ_COUNT=120` / `EXP_FUZZ_SEED=1` / `EXP_FUZZ_DIVERGE=5` / `EXP_FUZZ_THREW=4` 与 `stage_fuzz()`，注册在 ctest 之后。种子与程序数固定 ⇒ 分歧集合确定；两份计数**精确断言** ⇒ 多一条是新的分歧，少一条是修好了一条（**同样红**，须把该例提升进 `tools/aot_native.test.py` 的 `EQUIVALENCE` 再抬 pin —— 与 `tools/aot_native.test.py:132` 的 `DIVERGENCE` 清单同一约定）。`not translated` 双向必须为 **0**（生成器造出后端翻不动的东西是生成器 bug，不是分歧；放宽生成器不能用来把红变绿）。**工具自身的退出码不参与判定** —— 它发现任何东西就退 1，若拿退出码当判据，默认调用永远红。
+
+### 二、回归钉住：枚举器的两道拒绝闸门
+
+`vm_set_to_array` 在两条边上主动 `return -1` 而不是硬走：跨度 `kh - kl >= 10000000`、端点越界（`|lo| > 9.0e18`，或整数格点落在 int32 之外，因为 `VAL_INT` 只有 32 位）。这是契约（截断成前 N 个又便宜又错），但此前只被间接碰过（`vtest/set_components_enumerable_v05.im` 的 `infinite=0,nil` 只钉住「真无限」那一种）。**关键：拒绝与空区间在 `len()` 下都是 0**，所以必须断言 `list()`。
+
+新增 `vtest/set_enumeration_refusal_v05.im` ← CTest `set_enumeration_refusal_runtime`（**#113**），一行断言七个值：
+
+`setrefuse-ok bigspan=nil edge=nil i32=nil neg32=nil empty=0 ok10=10 ok3=3`
+
+前四个 `nil` 是四种拒绝（跨度 `Z[1~10000001]`、端点 `Z[1~10000000000000000000]`、int32 之外 `Z[1~3000000000]` 与 `Z[-3000000000~-1]`），`empty=0` 是空区间**不是**拒绝（`list(Z[5~4])` 是 `[]`），`ok10=10` / `ok3=3` 是**对照**：闸门不许扩大到误伤普通区间。`FAIL_REGULAR_EXPRESSION "ok10=0|ok3=0|empty=nil"` 专抓「拒绝过度」这一侧；三个 token 都带数字或词，池转储里凑不出（§10.46 七记的坑）。实测 **0.057 s**。
+
+### 三、删除备份
+
+- `src/mod/gui_mod.c.bak2_20260808_221050`（**入库**，107461 字节，1485 个 U+FFFD）→ `git rm`。
+- `src/main.c.bak`（**未跟踪**，34646 字节）→ `rm`。
+
+删前证明没有东西依赖它们：`tools/`、`CMakeLists.txt`、`*.sh`/`*.py`/`*.js`/`*.cmake` 对两个路径**零命中**，唯一引用它们的只有文档（`docs/SYNTAX.md`、`docs/STATUS.md`、`docs/BOARD.md`，本轮同步）。`realpath` 校验绝对路径之后才删。
+
+### 四、顺带纠正：U+FFFD 的「14 个」是巧合而不是准数
+
+`docs/SYNTAX.md` 的 H1 表把 `.bak2`（1485）列在第一行并计入 14，却**漏记了 `docs/AUDIT.md`（2）** —— `git show HEAD:docs/AUDIT.md` 实测就是 2，所以删除前的真实数字是 **15**，表里的 14 早已不准。删除后重新统计**仍是 14 个**（少一个、补一个），标题里的数字恰好没变。表已改：去掉 `.bak2` 行、补上 `docs/AUDIT.md | 2`，现在最坏的是 `mods/debug/debug_mod.c` 619。
+
+### 五、判据与双向验证
+
+**fuzz**：默认 pin ⇒ `gate: fuzz findings match the pin (5 DIVERGE, 4 THREW, 0 untranslated).`、阶段 PASS；`EXP_FUZZ_DIVERGE=0 bash tools/gate.sh --fast --only fuzz` ⇒ `gate: differential fuzz found 5 DIVERGE / 4 THREW, pinned 0 / 4` + 两条处置说明 + `✘ differential fuzz (interp vs AOT, pinned 0+4) (exit 1)` + `gate: FAILED — do not merge.`
+
+**拒绝闸**：把跨度闸 `if (kh - kl >= 10000000) return -1;` 临时改成 `>= 3` ⇒ `1/1 Test #113 …***Failed  Error regular expression found in output. Regex=[ok10=0|ok3=0|empty=nil]`、`0% tests passed, 1 tests failed out of 1`（`Z[1~10]` 也一起被拒了）；`cp` 还原 + `cmp` 逐字节一致 + 重编 ⇒ `Passed`、`100% tests passed`。
+
+### 六、门禁实测
+
+`grep -c 'add_test(' CMakeLists.txt` **112 → 113**，`tools/gate.sh` 的 `EXP_CTEST` 同步 **113**，`ctest -N` 的 `Total Tests: 113`（`Test #113: set_enumeration_refusal_runtime`）。`tools/gate.sh` 的阶段数**九 → 十**，`--only` 的键列表新增 `fuzz`；`docs/BOARD.md` §3 与本节 §2 同步 **113 / 113**。
+
+**全量门禁实测（2026-10-04）**：十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。其中 ctest `100% tests passed, 0 tests failed out of 113` 且 **0 skipped**；fuzz `gate: fuzz findings match the pin (5 DIVERGE, 4 THREW, 0 untranslated).`；`check_links` 93 个 markdown、388 条链接、**0 broken**；`check_doc_paths` 16 个 markdown、372 条 backtick 引用、**0 broken**。
+
+### 七、诚实边界
+
+- fuzz 门禁**不证明解释器与 AOT 一致**，只证明「在这 120 个程序上分歧的数量没有变」。它是一把尺子，不是一张合格证；真正的收敛要靠把 5+4 条分歧逐条修掉，每修一条抬一次 pin。`not translated = 0` 也只覆盖这批程序能被 AOT 翻译，不代表生成器覆盖了全部语法。
+- fuzz 阶段约 **45–50 s**，是门禁里最慢的一段。
+- 备份文件**删除不等于内容消失**：`gui_mod.c.bak2` 的内容仍在 git 历史里（`git show <旧提交>:src/mod/gui_mod.c.bak2_20260808_221050`）；而 `src/main.c.bak` **从未入库**，它现在只存在于别处的工作副本里。
+- 拒绝闸门的断言只覆盖**解释器**：`list`/`len`/`size` 只有解释器实现（`grep '"list"' src/compilation/*.c` 为空），没有三后端比对可言。

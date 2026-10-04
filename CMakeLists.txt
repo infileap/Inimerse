@@ -802,6 +802,17 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME contract_suite_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/contract_test.im)
   set_tests_properties(contract_suite_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "vm;language;regression;contract" PASS_REGULAR_EXPRESSION "contract: [0-9]+ passed")
 
+  # vm_set_to_array stops at two gates and returns -1 rather than enumerating: the
+  # span gate (a lattice of ten million members or more) and the range gate
+  # (|endpoint| > 9.0e18, or an integer lattice outside int32, since VAL_INT holds
+  # 32 bits).  Refusing is the contract -- truncating to the first N members would
+  # be cheap and wrong -- but nothing pinned either gate.  len() returns 0 for a
+  # refused set AND for an empty one, so the test asserts list(), where a refusal
+  # is nil and an empty interval is [].
+  # See docs/AUDIT.md §1.10.
+  add_test(NAME set_enumeration_refusal_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_enumeration_refusal_v05.im)
+  set_tests_properties(set_enumeration_refusal_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setrefuse-ok bigspan=nil edge=nil i32=nil neg32=nil empty=0 ok10=10 ok3=3" FAIL_REGULAR_EXPRESSION "ok10=0|ok3=0|empty=nil")
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

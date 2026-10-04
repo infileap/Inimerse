@@ -1,0 +1,23 @@
+# set_enumeration_refusal_v05.im -- the two "refuse, never truncate" gates on set
+# enumeration.  See docs/AUDIT.md §1.10 and docs/STATUS.md §10.46 七.
+#
+# vm_set_to_array walks a component's own lattice BY INDEX and stops at two gates,
+# returning -1 instead of enumerating:
+#   ① span gate   -- kh - kl >= 10000000: the lattice has ten million members or
+#                    more, so the answer would be truncated (or would exhaust
+#                    memory).  Refuse.
+#   ② range gate  -- |endpoint| > 9.0e18, or an integer lattice whose endpoints
+#                    fall outside int32 (VAL_INT holds 32 bits).  Refuse.
+#
+# A refusal shows up as list() -> nil.  An EMPTY interval is a different thing:
+# list(Z[5~4]) -> [] -- empty, but not refused.  len() returns 0 for both, so only
+# list() can tell them apart; that is why every assertion below is on list(), and
+# the two controls assert that ordinary sets still enumerate.
+#
+# Remove either gate and list() really does try to build ten million elements:
+# the test then either blows past its TIMEOUT or produces an enormous line, and
+# the exact PASS line below stops matching either way.  That is the point of the
+# test: the gate is a refusal, not a truncation, and a truncation would be wrong
+# even though it is cheap.
+
+say "setrefuse-ok bigspan=" + str(list(Z[1~10000001])) + " edge=" + str(list(Z[1~10000000000000000000])) + " i32=" + str(list(Z[1~3000000000])) + " neg32=" + str(list(Z[-3000000000~-1])) + " empty=" + str(len(list(Z[5~4]))) + " ok10=" + str(len(list(Z[1~10]))) + " ok3=" + str(len(list(Z[1~3])))
