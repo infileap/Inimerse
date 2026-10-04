@@ -1,0 +1,13 @@
+# A predicate's result is a bool, on every platform.
+#
+# startswith/endswith/has are the same kind of computation -- "answer yes or no" --
+# so they must produce the same kind of value.  The Windows runtime built
+# startswith/endswith with push_int while its own has/remove used push_bool, and the
+# POSIX runtime used push_bool for all four, so str(startswith("abc","a")) answered
+# "true" on Linux and "1" on Windows.  str() is the observable, so pin it here.
+s = "  Hello World "
+say("predbool "
+    + str(startswith(s, "  "))
+    + " " + str(endswith(s, " "))
+    + " " + str(has("x", "y"))
+    + " " + str(len(s)))

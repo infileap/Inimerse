@@ -1380,6 +1380,34 @@ blast radius 为零（实测，不是推断）。
 
 **诚实边界。** 「回滚要真的落盘」这条在 Linux 上一直成立，所以这个缺陷同样是 Windows-only；证据是同一个探针在两个工具链上的同一句输出。
 
+## §1.34 谓词在 Windows 上答的是数字，不是布尔
+
+**现象。** 同一句 `str(startswith("abc", "a"))`，Linux 答 `true`，Windows 答 `1`。
+
+**根因。** 同一个计算有两个生产点，两边选的值种类不同：
+
+- Windows `src/runtime/runtime.c:465-474`（`builtin_str_startswith`）与 `src/runtime/runtime.c:475-485`（`builtin_str_endswith`）用 `push_int(vm, ok)`；
+- POSIX `src/runtime/runtime_posix.c:494-500`（`posix_core_startswith`）与 `src/runtime/runtime_posix.c:502-509`（`posix_core_endswith`）用 `push_bool(vm, ok)`。
+
+**Windows 那一份与它自己也不一致**：同一个文件里的 `builtin_has`（`src/runtime/runtime.c:403`）与 `builtin_remove`（`src/runtime/runtime.c:433`）用的都是 `push_bool`。「答是/否」这一类计算只有一种正确的结果种类，所以异类是 Windows 这一份。
+
+**差分扫描。** 把两个运行时里 59 个同名内建的 `push_bool`/`push_int`/`push_nil`/`push_float`/`push_string` 词汇逐一对比，全部差异只有 5 处、3 类：
+
+| 内建 | Windows | POSIX | 处置 |
+|---|---|---|---|
+| `startswith` `endswith` | `push_int` | `push_bool` | 改 Windows |
+| `spi_mods` | 无 `aidx < 0` 守卫，收尾仍发布 `ival = aidx + 1 = 0` | `push_nil` | 改 Windows |
+| `mod_usage` | 无守卫，两次 `vm_dict_set` 静默无效后仍发布 `ival = 0` | `push_nil` | 改 Windows |
+| `round`（非数字实参） | `vm_throw_msg` 抛错 | 返回 `nil` | **保留分歧**，见诚实边界 ② |
+
+`spi_mods`/`mod_usage` 只走分配失败路径：`vm_dict_set` 在 `src/vm/vm.c:1028` 有 `aidx < 0 || aidx >= vm->arrayCount` 守卫，所以不会越界写；危害是**把一个指向 −1 号槽的引用包装成 dict/array 发布出去**，违反既有的「宁可拒绝也不给出错误答案」。
+
+**修法。** `src/runtime/runtime.c` 三处向 POSIX 看齐：`push_bool` ×2，两处补 `if (aidx < 0) { push_nil(vm); return 1; }`。
+
+**判据。** 新用例 `vtest/predicate_result_type_v06.im` 打印 `predbool true true false 14`（把 `startswith`/`endswith`/`has` 的结果与 `len` 并排放在一行），注册为 CTest **#122** `predicate_result_type_runtime`，PASS 正则是整行、FAIL 正则 `predbool 1|predbool true 1|predbool true true 1`。`tools/gate.sh:50` 的 `EXP_CTEST` 121 → **122**。用例注册在测试列表末尾，既有 `#N` 不动。
+
+**诚实边界。** ① `src/runtime/runtime.c` 在 Linux 上根本不参与编译（`CMakeLists.txt:395` 的 `if(WIN32)` 分支），所以 Linux 门禁只能钉住 POSIX 那一半；Windows 那一半靠 ucrt64 与 mingw64 两套 gcc 16.1.0 的 `-fsyntax-only`（均 RC=0、0 error）加上协调者在 Windows 上的实跑。② `round` 的非数字实参分歧**没有动**：Windows 抛错、POSIX 答 `nil`，两者都是既有的拒绝形态（硬拒绝 vs 软拒绝），属于设计选择而非明显缺陷，改 POSIX 会改变 Linux 行为，需要单独一轮裁决，因此只在此记录。③ 本次没有为「值种类」加运行期断言，判据是 `str()` 的输出。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

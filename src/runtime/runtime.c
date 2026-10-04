@@ -469,7 +469,10 @@ static int builtin_str_startswith(VM *vm) {
     pop(vm); pop(vm);
     int ok = strncmp(s, pf, strlen(pf)) == 0;
     free(s); free(pf);
-    push_int(vm, ok);
+    /* A predicate answers a truth value, not a number: has/remove below already
+     * push_bool, and so does posix_core_startswith.  Pushing an int here made
+     * str(startswith("abc","a")) answer "1" on Windows and "true" on Linux. */
+    push_bool(vm, ok);
     return 1;
 }
 static int builtin_str_endswith(VM *vm) {
@@ -480,7 +483,7 @@ static int builtin_str_endswith(VM *vm) {
     size_t sl = strlen(s), fl = strlen(sf);
     int ok = fl <= sl && memcmp(s + sl - fl, sf, fl) == 0;
     free(s); free(sf);
-    push_int(vm, ok);
+    push_bool(vm, ok);   /* see builtin_str_startswith */
     return 1;
 }
 static int builtin_str_trim(VM *vm) {
@@ -1319,21 +1322,23 @@ static int builtin_spi_has(VM *vm) { /* spi_has(name) -> 1 if builtin exists and
 }
 static int builtin_spi_mods(VM *vm) { /* spi_mods() -> array of {id, version, caps} */
     int aidx = vm_array_new(vm);
-    if (aidx >= 0) {
-        for (int i = 0; i < vm->modCount; i++) {
-            int didx = vm_array_new(vm);
-            if (didx < 0) continue;
-            Value k, vv;
-            k.type = VAL_STRING; k.ival = 1;  k.sval = "id";
-            vv.type = VAL_STRING; vv.ival = 1;  vv.sval = vm->mods[i].id;
-            vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
-            k.sval = "version"; vv.type = VAL_INT; vv.ival = vm->mods[i].version;  vv.sval = NULL;
-            vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
-            k.sval = "caps"; vv.type = VAL_INT; vv.ival = vm->mods[i].caps;  vv.sval = NULL;
-            vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
-            Value dv; dv.type = VAL_DICT; dv.ival = didx + 1;  dv.sval = NULL;
-            vm_array_push(vm, aidx, &dv);
-        }
+    /* Refuse rather than hand back a handle we never allocated: with aidx == -1 the
+     * tail below used to publish ival == 0, i.e. a reference to slot -1 dressed up as
+     * an array.  posix_spi_mods answers nil here. */
+    if (aidx < 0) { push_nil(vm); return 1; }
+    for (int i = 0; i < vm->modCount; i++) {
+        int didx = vm_array_new(vm);
+        if (didx < 0) continue;
+        Value k, vv;
+        k.type = VAL_STRING; k.ival = 1;  k.sval = "id";
+        vv.type = VAL_STRING; vv.ival = 1;  vv.sval = vm->mods[i].id;
+        vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
+        k.sval = "version"; vv.type = VAL_INT; vv.ival = vm->mods[i].version;  vv.sval = NULL;
+        vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
+        k.sval = "caps"; vv.type = VAL_INT; vv.ival = vm->mods[i].caps;  vv.sval = NULL;
+        vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
+        Value dv; dv.type = VAL_DICT; dv.ival = didx + 1;  dv.sval = NULL;
+        vm_array_push(vm, aidx, &dv);
     }
     Value av; av.type = VAL_ARRAY; av.ival = aidx + 1;  av.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
@@ -1718,6 +1723,10 @@ static int builtin_mod_limit(VM *vm) {
 static int builtin_mod_usage(VM *vm) {
     double tsec = (vm->t_start > 0) ? (double)(im_platform_now_ms() - vm->t_start) / 1000.0 : 0;
     int aidx = vm_array_new(vm);
+    /* posix_mod_usage refuses when the dict cannot be allocated; without this the
+     * two vm_dict_set calls below are no-ops (they guard aidx < 0) and we publish
+     * ival == 0, a reference to slot -1 dressed up as a dict. */
+    if (aidx < 0) { push_nil(vm); return 1; }
     Value k, val;
     k.type = VAL_STRING; k.ival = 0;  k.sval = strdup("mem");
     val.type = VAL_FLOAT; val.fval = vm->used_mem;  val.sval = NULL;

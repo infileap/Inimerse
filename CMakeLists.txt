@@ -899,6 +899,13 @@ if(INIMERSE_BUILD_ENGINE)
   endif()
   add_test(NAME vm_init_probe COMMAND vm_init_probe)
 
+  # Pins "a predicate answers a bool, on every platform" (docs/AUDIT.md §1.34).
+  # str() is where the divergence showed: the Windows runtime built
+  # startswith/endswith with push_int, so str(startswith(s," ")) answered "1"
+  # there and "true" on POSIX.  Registered last so no existing #N moves.
+  add_test(NAME predicate_result_type_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/predicate_result_type_v06.im)
+  set_tests_properties(predicate_result_type_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;strings" PASS_REGULAR_EXPRESSION "predbool true true false 14" FAIL_REGULAR_EXPRESSION "predbool 1|predbool true 1|predbool true true 1")
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

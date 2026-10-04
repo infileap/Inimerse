@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-05 更新测试计数到 121；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-05 更新测试计数到 122；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **121 / 121 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **122 / 122 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **121** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **122** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 121
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 122
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3486,3 +3486,11 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 ## §10.66 eventlog 的回滚在 Windows 上被 `#ifndef` 编译掉了
 
 `docs/AUDIT.md` §1.33。`src/verse/eventlog.c` 故障注入第 6 步的 `ftruncate` 原本在 `#ifndef _WIN32` 里，Windows 上回滚不落盘，下一次 `verify()` 答 `VL_ERR_RECOVERY_REQUIRED`。改成宏 `vl_truncate`（Windows `_chsize`）后无条件调用；两个平台都是 `all checks passed`。
+
+## §10.67 谓词在 Windows 上答的是数字，不是布尔
+
+`str(startswith("abc", "a"))` 在 Linux 答 `true`、在 Windows 答 `1`。Windows 的 `builtin_str_startswith`（`src/runtime/runtime.c:465-474`）与 `builtin_str_endswith`（`src/runtime/runtime.c:475-485`）用 `push_int`，POSIX 的 `posix_core_startswith`（`src/runtime/runtime_posix.c:494-500`）与 `posix_core_endswith`（`src/runtime/runtime_posix.c:502-509`）用 `push_bool`，而 Windows 同一文件里的 `builtin_has`（`src/runtime/runtime.c:403`）/`builtin_remove`（`src/runtime/runtime.c:433`）用的也是 `push_bool` —— 异类是 Windows。
+
+对 59 个同名内建做 `push_*` 词汇差分，全部差异只有 5 处 3 类：上述两处，加上 `spi_mods` 与 `mod_usage` 缺 `aidx < 0` 守卫（分配失败时把指向 −1 号槽的引用包装成 dict/array 发布出去；`vm_dict_set` 在 `src/vm/vm.c:1028` 有守卫，所以不越界写），以及 `round` 非数字实参的硬/软拒绝分歧（**保留**，见 [AUDIT.md](AUDIT.md) §1.34 诚实边界 ②）。
+
+**计数同步。** `tools/gate.sh:50` 的 `EXP_CTEST` **121 → 122**，`docs/BOARD.md` §3 与本节 §2/§2.1 同步为 **122 / 122**。新用例 `vtest/predicate_result_type_v06.im` 注册在 `CMakeLists.txt` **测试列表末尾**（`add_test(NAME predicate_result_type_runtime …)`）—— 必须排在最后：CTest 的 `#N` 是注册顺序，插在中间会把既有编号整体后移，而多个历史行正引用着那些编号。
