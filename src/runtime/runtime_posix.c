@@ -585,7 +585,7 @@ static int posix_gc_stats(VM *vm) {
 #include "../platform/dir.h"
 #include "../platform/http_client.h"
 #include "../platform/serial.h"
-#include "../platform/process.h"
+#include "../platform/im_process.h"
 
 static int posix_random(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; pop(vm); push_int(vm, n > 0 ? rand() % n : 0); return 1; }
 static int posix_sqrt(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); push_float(vm, sqrt(val_as_double(&v))); return 1; }

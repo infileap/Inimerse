@@ -3,7 +3,7 @@
 #define CHILD_PROC_H
 
 #include <stdint.h>
-#include "platform/process.h"
+#include "platform/im_process.h"
 #ifdef _WIN32
 #include <windows.h>
 #else

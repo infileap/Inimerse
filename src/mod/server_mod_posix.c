@@ -1,5 +1,5 @@
 #include "vm.h"
-#include "../platform/process.h"
+#include "../platform/im_process.h"
 #include "../platform/platform.h"
 #include "../platform/socket.h"
 #include "../platform/dir.h"

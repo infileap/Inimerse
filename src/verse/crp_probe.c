@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "probe_compat.h"
+
 #include "crp.h"
 #include "sha256.h"
 

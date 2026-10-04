@@ -1267,6 +1267,29 @@ blast radius 为零（实测，不是推断）。
   各自检查，加注释说明。如果将来有新调用方忘了查，缺陷会以「又答 0」的形式回来。
 
 
+## §1.27 仓库自己的 `src/platform/process.h` 挡住了 CRT 的同名头，Windows 构建因此红了 158 个提交
+
+**症状。** Windows 构建（MSYS2 UCRT64）在 `39ddabd`（2026-10-02 `verse: engine-side UPP framing and session state machine`）之后一直红，最后一次绿是 `a2a583d`（v0.4.1），中间 158 个提交全红 —— 也就是说 Windows 运行时**从来没被验证过**。`ninja -k 0` 报出 7 个错误、落在 5 处，全部是「函数没有声明」：
+
+- `src/platform/thread.c:24`、`src/headless_server.c:188`、`src/mod/gui_mod.c:3199`：`implicit declaration of function '_beginthreadex'`
+- `src/common/vverse_pack_probe.c:42`：`implicit declaration of function '_getpid'`
+- `src/verse/upp_probe.c:884`、`src/verse/crp_probe.c:1210`：`implicit declaration of function 'getline'`
+- `src/common/vverse_pack.c:151`/`:156`：`_stat` 填进 `struct stat`，类型不符
+
+**根因（前三类里的五处）。** 仓库自带 `src/platform/process.h`，而 CMake 把 `src/platform` 加进了 include 路径（`CMakeLists.txt:25` 的 `inimerse_platform`，以及各探针的 `target_include_directories`）。于是 `#include <process.h>` 拿到的是**仓库自己的头** —— 它只有 `im_process_*` 那一组声明，没有任何 CRT 函数。证据：`gcc -M` 的依赖列表里出现的是 `src/platform/process.h`，`C:/msys64/mingw64/include/process.h` **根本没被打开**；同一段代码不加 `-Isrc/platform` 就能过。mingw-w64 与仓库**同名**的头还有两个：`dir.h`、`parser.h`（`ls /mnt/c/msys64/mingw64/include/{dir,parser,process}.h` 三个都在）。仓库目前没有 `<dir.h>` / `<parser.h>` 的尖括号引用，所以它们只是同类隐患，尚未发作。
+
+具体是哪些声明丢了：mingw-w64 的 `process.h:69-70` 把 `_getpid` 包在 `#ifdef _CRT_USE_WINAPI_FAMILY_DESKTOP_APP` 里，而 `corecrt.h:461-470` 只在 `WINAPI_FAMILY` 未定义（或分区到桌面）时才定义那个宏；`_beginthreadex` 同理在 CRT 头里。仓库头一挡，两者都消失。
+
+**修法。** 把仓库头改名：`src/platform/process.h` → `src/platform/im_process.h`（用 `git mv`，`git log --follow` 仍追得到），并更新 5 个引用点 —— `src/platform/process.c:1`、`src/platform/process_probe.c:1`（`"process.h"`）、`src/child_proc.h:6`（`"platform/process.h"`）、`src/runtime/runtime_posix.c:588`、`src/mod/server_mod_posix.c:2`（`"../platform/process.h"`），外加三处文档反引号引用（`docs/API.md:293`、`docs/STATUS.md:361`、`docs/archive/ROADMAP.md:62`）。改名之后那 5 个 `#include <process.h>` 自然解析到 CRT 头。**没有选 `#include_next <process.h>`**：它一行就能解决，但那是 GCC 专有扩展；改名是纯标准 C，而且把「仓库头不该与系统头同名」这条规则真正修好，`dir.h`/`parser.h` 的同类隐患也照此办理。
+
+**第五类（`getline`）与上面无关，是另一件事。** `#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)` 那段守卫**不是**原因：mingw-w64 的 `<stdio.h>` 里 `getline` **一次都没出现**（`grep -c getline` 在 MINGW64 与 UCRT64 两个 sysroot 上都是 **0**），改宏、把宏提前、不定义宏，三个最小复现都报同一个 implicit declaration。因此加本地 shim `src/common/probe_compat.h`：`#if defined(_WIN32)` 下 `probe_getline`（`fgets` + `realloc` 增长循环，遇 `\n` 返回读到的字节数，EOF 无数据返回 -1），随后 `#define getline probe_getline`，语义与 POSIX 一致。**没有选「把这两个探针从 Windows 构建里排除」** —— 那会悄悄删掉 Windows 的 upp/crp 覆盖，而 CTest 正是靠它们。
+
+**第六类（`VV_STAT`）。** `src/common/vverse_pack.c` 的 `_WIN32` 分支把 `VV_STAT` 定义成 `_stat`，而 `_stat` 是宏、展开为 `_stat64i32`（`_mingw_stat64.h:22`），它填的是 `struct _stat64i32`；代码里的变量却是 `struct stat`（同文件 `sys/stat.h:137` 的另一个布局）。加 `VV_STAT_T`（Windows `struct _stat64i32` / POSIX `struct stat`），`path_is_dir`、`path_is_file` 两处改用它。
+
+**验证。** 本机可以直接调用 Windows 侧工具链：`/mnt/c/msys64/mingw64/bin/gcc.exe`（gcc 16.1.0，Rev5）。对**全部** `src/**/*.c` 做 `-fsyntax-only` 扫描、只筛 `implicit declaration`：修复前命中 5 处，修复后只剩 `src/platform/http_probe.c:93` 的 `setenv` —— 而该文件在 `CMakeLists.txt:202` 的 `if(NOT WIN32)` 里，不参与 Windows 构建，因此不是 Windows 缺陷。逐个确认 PASS：`src/verse/upp_probe.c`、`src/verse/crp_probe.c`、`src/common/vverse_pack_probe.c`、`src/common/vverse_pack.c`、`src/platform/thread.c`、`src/headless_server.c`、`src/mod/gui_mod.c`、`src/vm/vm.c`。
+
+**诚实边界。** ① 本机 MSYS2 **没装 cmake.exe**，所以我做的是逐编译单元的 `-fsyntax-only`，不是完整 Windows 构建；完整证据（164/164 干净重建、`inimerse.exe` 链接成功）来自发布会话在**仓库外克隆**上的实测。② Linux 门禁**永远看不见**这一类缺陷：`tools/gate.sh` 跑在 Linux 上，glibc 没有 `<process.h>`，所以这道门禁此前红不了、以后也挡不住同类的 Windows-only 编译错 —— 能挡住它的只有 Windows CI，而 CI 自己红着的时候没人看。③ 编译修好之后 Windows 的 ctest 只有 **54/84**（30 项失败：9 项段错误、9 项超时、4 项 Failed、17 项 Not Run），那些是**运行时**缺陷，与本节无关，本轮**故意不修**（发布会话正在请用户决定是带已知问题发版还是修到全绿）。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

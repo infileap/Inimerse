@@ -59,7 +59,7 @@ v0.4–v0.6 分层规划详见 [ROADMAP_0.4-0.6.md](ROADMAP_0.4-0.6.md)。
 > 主程序自身路径解析已迁移到 `im_platform_executable_path`。
 > VM 全局/分片/消息/脚本锁已迁移到 `ImMutex` 平台接口，Windows 构建回归通过。
 > `child_proc` 注册表锁和计时已迁移；进程创建/终止后端仍待 POSIX 实现。
-> `src/platform/process.h` 已提供跨平台进程 API，并有 `process_probe` 验证程序。
+> `src/platform/im_process.h` 已提供跨平台进程 API，并有 `process_probe` 验证程序。
 > `child_proc` 已迁移到 `ImProcess`，下一步处理 `isolate_mod` 的输出捕获与超时。
 > `server_mod` 已移除固定盘符，路径默认随可执行文件目录推导并支持环境变量覆盖；
 > 房间目录创建/删除已脱离 Win32 文件调用，目录枚举仍待平台目录迭代器。

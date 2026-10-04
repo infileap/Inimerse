@@ -290,7 +290,7 @@ grep -a -oE 'vm_register_builtin(_full|_safe)?\s*\(\s*\w+\s*,\s*"[^"]+"' <文件
 | 互斥锁 | `ImMutex`、`im_mutex_new/free/lock/unlock` | `src/platform/sync.h` |
 | 线程 | `ImThreadProc`、`im_thread_start/join/detach/close` | `src/platform/thread.h` |
 | Fiber | `ImFiberProc`、`im_fiber_convert_current/create/switch/destroy` | `src/platform/fiber.h` |
-| 进程 | `im_process_spawn/pid/alive/wait/wait_kill/kill/exit_code/close/capture` | `src/platform/process.h` |
+| 进程 | `im_process_spawn/pid/alive/wait/wait_kill/kill/exit_code/close/capture` | `src/platform/im_process.h` |
 | Socket | `im_socket_init/shutdown/listen/connect/connect_timeout/accept/send/recv/peek/set_nonblocking/last_error/would_block/local_port/port_open/port_available/close` | `src/platform/socket.h` |
 
 实现细节（已核实）：Windows 用 Win32 / WinSock，POSIX 用 BSD sockets / pthread / `ucontext` / `fork-exec`；`src/platform/socket.c` 对 `EINTR` 重试（`:130,170,184,193,203`），发送前在支持时加 `MSG_NOSIGNAL`（`:181-182`）；`src/platform/fiber.c` 在 POSIX 用 `ucontext.h` + `makecontext`，在 Windows 用 `ConvertThreadToFiber(NULL)`。

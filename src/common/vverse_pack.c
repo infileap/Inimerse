@@ -36,11 +36,16 @@
 
 #ifdef _WIN32
 #include <sys/stat.h>
+/* _stat is a macro for _stat64i32 (_mingw_stat64.h:22), so the buffer it fills
+ * must be struct _stat64i32; plain `struct stat` is a different layout and the
+ * call does not type-check. */
 #define VV_STAT _stat
+#define VV_STAT_T struct _stat64i32
 #define VV_ISDIR(m) (((m) & _S_IFDIR) != 0)
 #else
 #include <sys/stat.h>
 #define VV_STAT stat
+#define VV_STAT_T struct stat
 #define VV_ISDIR(m) S_ISDIR(m)
 #endif
 
@@ -147,12 +152,12 @@ static int file_write_all(const char *path, const void *data, size_t len) {
 }
 
 static int path_is_dir(const char *p) {
-    struct stat st;
+    VV_STAT_T st;
     if (VV_STAT(p, &st) != 0) return 0;
     return VV_ISDIR(st.st_mode) ? 1 : 0;
 }
 static int path_is_file(const char *p) {
-    struct stat st;
+    VV_STAT_T st;
     if (VV_STAT(p, &st) != 0) return 0;
     return VV_ISDIR(st.st_mode) ? 0 : 1;
 }

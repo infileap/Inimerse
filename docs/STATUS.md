@@ -358,7 +358,7 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 - [ ] 将 `isolate_mod` 的输出捕获、超时和资源限制迁移到 `ImProcess` 管道后端。
 - [ ] 统一使用 `src/platform/features.h` 的能力声明，禁止模块直接散落平台宏判断。
 
-> 进展：平台时钟/休眠已接入 VM 兼容层；跨平台互斥锁接口已建立，VM 现有 `CRITICAL_SECTION` 调用仍待逐步替换；原生 Verse 线程和调度器线程的启动、join/close 已接入 `src/platform/thread.h`，取消与超时强制终止语义仍待迁移。Fiber 调用已接入 `src/platform/fiber.h`（Windows Fiber / POSIX `ucontext`）。主程序自身路径解析已迁移到 `im_platform_executable_path`。VM 全局/分片/消息/脚本锁已迁移到 `ImMutex` 平台接口，Windows 构建回归通过。`child_proc` 注册表锁和计时已迁移；进程创建/终止后端仍待 POSIX 实现。`src/platform/process.h` 已提供跨平台进程 API，并有 `process_probe` 验证程序。`child_proc` 已迁移到 `ImProcess`，下一步处理 `isolate_mod` 的输出捕获与超时。`server_mod` 已移除固定盘符，路径默认随可执行文件目录推导并支持环境变量覆盖；房间目录创建/删除已脱离 Win32 文件调用，目录枚举仍待平台目录迭代器。
+> 进展：平台时钟/休眠已接入 VM 兼容层；跨平台互斥锁接口已建立，VM 现有 `CRITICAL_SECTION` 调用仍待逐步替换；原生 Verse 线程和调度器线程的启动、join/close 已接入 `src/platform/thread.h`，取消与超时强制终止语义仍待迁移。Fiber 调用已接入 `src/platform/fiber.h`（Windows Fiber / POSIX `ucontext`）。主程序自身路径解析已迁移到 `im_platform_executable_path`。VM 全局/分片/消息/脚本锁已迁移到 `ImMutex` 平台接口，Windows 构建回归通过。`child_proc` 注册表锁和计时已迁移；进程创建/终止后端仍待 POSIX 实现。`src/platform/im_process.h` 已提供跨平台进程 API，并有 `process_probe` 验证程序。`child_proc` 已迁移到 `ImProcess`，下一步处理 `isolate_mod` 的输出捕获与超时。`server_mod` 已移除固定盘符，路径默认随可执行文件目录推导并支持环境变量覆盖；房间目录创建/删除已脱离 Win32 文件调用，目录枚举仍待平台目录迭代器。
 
 **阶段出口条件**：ABI v1 有版本协商和兼容性测试；至少一个旧版模组可在新运行时加载；三平台构建在干净环境可复现。
 
@@ -3438,3 +3438,15 @@ order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=ty
 操作码与 `set_minmax` 各自检查 + 注释说明，将来若有新调用方忘了查，缺陷会以「又答 0」回来；
 ④ `set_minmax` 对集合里的数组/字典元素以前按 0 比较、现在拒绝 —— 两者都不是「对」，
 只是后者不再声称一个数字。
+
+## §10.60 仓库自己的头挡住了 CRT 的同名头：Windows 构建的 158 个提交
+
+Windows 构建从 `39ddabd`（2026-10-02）起一直红，最后一次绿是 `a2a583d`（v0.4.1）。根因不是任何一个函数写错，而是 **`src/platform/process.h` 与 CRT 的 `<process.h>` 同名**，而 CMake 把 `src/platform` 放进了 include 路径 —— `#include <process.h>` 拿到的是仓库自己的头，于是 `_beginthreadex`（`src/platform/thread.c:24`、`src/headless_server.c:188`、`src/mod/gui_mod.c:3199`）和 `_getpid`（`src/common/vverse_pack_probe.c:42`）全部变成「没有声明」。mingw-w64 与仓库同名的头还有 `dir.h`、`parser.h`，目前没有尖括号引用，属于同类隐患。
+
+**修法（三处，互不相关）。** ① 仓库头改名 `src/platform/process.h` → `src/platform/im_process.h`（`git mv`），更新 5 个 C 引用点与 3 处文档反引号引用；没选 `#include_next`，因为那是 GCC 专有扩展，而改名是纯标准 C。② `getline` 与上面无关 —— mingw-w64 的 `<stdio.h>` 里 `getline` **零出现**（MINGW64 与 UCRT64 两个 sysroot 都是 0），所以新增 `src/common/probe_compat.h` 提供 Windows 本地 shim（`fgets` + `realloc`），而不是把两个探针从 Windows 构建里排除。③ `src/common/vverse_pack.c` 的 `VV_STAT` 是 `_stat`，而 `_stat` 展开为 `_stat64i32`（`_mingw_stat64.h:22`），填的却是 `struct stat`，加 `VV_STAT_T` 修正。
+
+**验证。** 直接调用 Windows 侧工具链 `/mnt/c/msys64/mingw64/bin/gcc.exe`（gcc 16.1.0）：对全部 `src/**/*.c` 做 `-fsyntax-only` 只筛 `implicit declaration`，修复前命中 5 处，修复后只剩 `src/platform/http_probe.c:93` 的 `setenv`，而它在 `CMakeLists.txt:202` 的 `if(NOT WIN32)` 里、不参与 Windows 构建。受影响编译单元逐个 PASS。发布会话在仓库外克隆上完成 164/164 干净重建、`inimerse.exe` 链接成功。
+
+**门禁实测（`.verify/v31/gate_win.log`）：** `GATE_RC=0`，`gate: OK — every stage passed.`，十阶段全 PASS，`warnings: 0` / `errors: 0`，`100% tests passed, 0 tests failed out of 120`、0 跳过，差分模糊测试钉住 `(0 DIVERGE, 0 THREW, 0 untranslated)`，`check_links: 93 markdown files, 412 links (17 external, 0 anchors, 395 local), 0 broken`，`check_doc_paths: 16 markdown files, 433 backtick 引用, 0 broken`。**没有新增 CTest，`EXP_CTEST` 保持 120** —— 本轮只动头文件位置与两个宏，不新增可执行行为。
+
+**诚实边界。** ① 本机 MSYS2 没装 `cmake.exe`，我给的证据是逐编译单元的 `-fsyntax-only`，完整构建证据来自发布会话。② Linux 门禁结构上**看不见**这一类缺陷（glibc 没有 `<process.h>`），能挡住它的只有 Windows CI。③ 编译修好后 Windows 的 ctest 仍只有 **54/84**（30 项运行时失败），本轮故意不修。
