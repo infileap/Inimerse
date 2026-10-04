@@ -295,6 +295,46 @@ long long val_as_int(const Value *v) {
     }
 }
 
+/* The one capability-string production point.  src/vm/vm.h:159 documents the
+   form -- spi_meta(id, version, "io,net") -- and both platform copies of
+   spi_meta used to tokenise it for themselves, with different answers on the
+   same input: posix_spi_meta asked strstr(s, "io") over the whole string, so
+   "audio" granted CAP_IO, while spi_parse_caps in the Windows runtime skipped
+   to the next comma and then asked strncmp(p, "io", 2), so "io net" granted
+   CAP_IO and silently dropped CAP_NET.  Both matched a capability NAME as a
+   substring of a larger run of characters instead of as a token.
+
+   Here a name is a whole comma-separated token and nothing else, which is
+   exactly the form vm.h documents.  An input that is not that form -- "audio",
+   "io net", "io, net" -- therefore grants nothing rather than the prefix of a
+   capability: the model in vm.h:156 is called "minimal-permission", so the
+   unspecified input is answered with the smaller set, and a mod that mistyped
+   its declaration finds out at the first capability-gated call, where the
+   builtin refuses it by capability, rather than by silently holding a grant it
+   never spelled.  Measured before this change, "audio" was 256 on POSIX and 0
+   Windows and "io net" was 768 on POSIX and 256 on Windows; after it both
+   answer 0, while the documented "io,net" still answers 768 on both.  See
+   docs/AUDIT.md 1.50. */
+int vm_parse_caps(const char *s) {
+    int caps = 0;
+    if (!s) return 0;
+    const char *p = s;
+    while (*p) {
+        const char *start = p;
+        while (*p && *p != ',') p++;
+        size_t n = (size_t)(p - start);
+        if      (n == 2 && strncmp(start, "io",    2) == 0) caps |= CAP_IO;
+        else if (n == 3 && strncmp(start, "net",   3) == 0) caps |= CAP_NET;
+        else if (n == 2 && strncmp(start, "ai",    2) == 0) caps |= CAP_AI;
+        else if (n == 5 && strncmp(start, "verse", 5) == 0) caps |= CAP_VERSE;
+        else if (n == 3 && strncmp(start, "dbg",   3) == 0) caps |= CAP_DBG;
+        else if (n == 4 && strncmp(start, "proc",  4) == 0) caps |= CAP_PROC;
+        else if (n == 3 && strncmp(start, "all",   3) == 0) caps |= CAP_MASK;
+        if (*p == ',') p++;
+    }
+    return caps;
+}
+
 /* The one truth-value production point (docs/DECFY_DESIGN.md:125).  The rule is
    the one docs/DECFY_DESIGN.md:24 documents and the one the wasm backend already
    emits: a zero number and nil are false, and *everything else* -- including the
