@@ -2593,9 +2593,102 @@ NameError: name 'CMAKE_SOURCE_DIR' is not defined
 1. **「在 `CMakeLists.txt` 里被提到」是子串测试，不是解析。** 一个只在注释里被提到的 fixture 会通过。这是刻意的：替代方案是写一个 CMake 解析器，而一条提到 fixture 的注释至少是一个能被找到的读者。
 2. **这一阶段不判断被注册的测试是否断言了任何东西。** 一条既无 `PASS_REGULAR_EXPRESSION` 也无 `FAIL_REGULAR_EXPRESSION` 的注册可以靠任何退出码通过 —— 见 `docs/SYNTAX.md` §7.2（M13）。
 3. **只查 `vtest/*.im`**，不查 `vtest/*.params` / `*.inim` / `*.txt`。那些是被注册的测试的输入而不是测试，且 `params_precompiled_v06.inim` 由跑它的那条注册点名。
-4. **`tools/migrate_report.py` 仍然没有 CTest。** 本轮只更正了那两处文档声称（并把它记成「部分」），**没有**为它写测试 —— `tools/*.test.py` 属于对等方的改动域。它是本阶段唯一「已知且被记录」的覆盖缺口：`check_orphan_fixtures.py` 查的是 `vtest/*.im` 与 `*.test.py`，**一个既非 fixture 又无 `X.test.py` 的工具落在两组之外**。这是一个刻意的窄口，写在脚本的 docstring 里。
+4. **`tools/migrate_report.py` 当时仍然没有 CTest** —— 本轮只更正了那两处文档声称（并把它记成「部分」），**没有**为它写测试，因为 `tools/*.test.py` 属于对等方的改动域。它是本阶段唯一「已知且被记录」的覆盖缺口：`check_orphan_fixtures.py` 查的是 `vtest/*.im` 与 `*.test.py`，**一个既非 fixture 又无 `X.test.py` 的工具落在两组之外**（刻意的窄口，写在脚本的 docstring 里）。**该缺口已补**：`tools/migrate_report.test.py` + CTest `migrate_report_runtime`，见 §1.60 末节。
 5. **本轮计数 134 → 136**（新增两条 CTest），`tools/gate.sh` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1 四处同步。
 
+
+## §1.60 同一个修复贴着两份拷贝：一份修了、一份没修，而第三份差点被造出来
+
+**症状（流程缺陷，不是引擎缺陷）。** `.github/workflows/` 里有两份逐字相同的 CTest 循环 ——
+`release.yml` 与 `linux-build.yml` 各一份。`release.yml` 那份被修过：抽取模式从
+`s/^[[:space:]]*Test #[0-9][0-9]*:/` 改成 `Test[[:space:]]*#`，并加上了
+`collected == Total Tests` 的计数断言。**`linux-build.yml` 那份没有**，而两份都绿。
+
+**机制（比「写错的 sed」有用）。** `ctest -N` **右对齐**测试编号：
+
+```
+Test   #9: ed25519_probe
+Test  #64: range_meta_runtime
+Test #100: function_thread_lifetime_runtime
+```
+
+所以旧模式**只在 `Total Tests <= 99` 时成立**，在**第 100 个测试被加进来那一刻静默降级** ——
+而仓库里没有任何东西记录过那个阈值。实测（本树 137 个测试）：
+旧模式收 **38** 个（`#100`–`#137`），新模式收 **137** 个。空格普查（134 个测试时）：
+`Test #` 35 个、`Test  #` 90 个、`Test   #` 9 个，合计 134。
+
+**两个后果。** ①`linux-build.yml:51` 的 `if [ "$test_name" = "range_meta_runtime" ]` 诊断块
+**从未执行** —— 那个名字（两位数编号）从来不在名单里。②`:43-44` 的注释
+`http_probe is covered by local CTest; hosted runners intermittently fail its threaded loopback
+scheduling and must not block packages.` 是又一次「**本地 CTest 覆盖了它，而本地 CTest 不在 CI 里**」——
+实测 `http_probe` **是**一个已注册的 CTest（`ctest -N | grep -c http_probe` = 1），所以它确实会被那个
+循环跑到；注释描述的意图是对的，而**执行它的循环当时只跑了 38/137**。
+
+**修法（`vivid-anchor`，`12ff42a`）。** 新增 `tools/ctest_enumerate.sh`：`ctest -N` → 新模式抽取 →
+读回 `Total Tests:` → `collected != registered` 即 `exit 1`，`ctest -N` 失败或零个名字也 `exit 1`，
+否则逐行打印名字。两份工作流都改成**先落文件再 `mapfile`**：
+
+```sh
+bash tools/ctest_enumerate.sh build > build/ctest-names.txt
+mapfile -t TESTS < build/ctest-names.txt
+```
+
+**这个 `mapfile` 写法本身是一个缺陷**：`mapfile -t TESTS < <(cmd)` 是进程替换，
+**`mapfile` 的退出码是它自己的，不是 `cmd` 的** —— 枚举脚本的 `exit 1` 会被丢掉，
+循环照旧在一个空名单上跑完并报绿。先落文件再判 `rc` 是必要的，不是风格。
+`release.yml` 里原来那段内联 `REGISTERED` 换成同一个调用；`linux-build.yml` 拿到了它从来没有的断言。
+A/B：本树 137 个名字 `rc=0`；把模式退回旧式 ⇒ `collected 38 of 137 registered tests from build`、`rc=1`。
+
+**第三份拷贝差点被造出来（本轮的真实教训）。** 我在**不知道** `12ff42a` 存在的情况下，独立写了
+`tools/ci_ctest.sh`（抽取 + 计数断言 + `***Skipped` 断言 + 逐测试循环）并把两份工作流改成调用它，
+建在一个本地 `git merge origin/main`（merge-base `6f0f7bd`，未含 `12ff42a`）之上。
+收到 `vivid-anchor` 的来信后核对远端，发现同一个修复已经落地 —— 于是**放弃本地 merge、删掉
+`tools/ci_ctest.sh`、把两份工作流恢复成它那一版**，只保留真正独有的部分（本节的 `migrate_report`
+harness）。**这不是一次「重复劳动」的遗憾，是这个缺陷在治它的时候又发作了一次**：
+两条分支各自独立修同一个 bug，正是本节要记录的形状本身。
+判据是**可复核的**：`git merge-base --is-ancestor 12ff42a HEAD` 与
+`git log --oneline origin/main | head` 在看远端之前都答不出「谁已经在修」。
+⇒ 这条与 §1.59 的 `orphan-fixtures` 是**同一个动作**：**在动手之前先比较两个集合**
+（这里是「我打算改的文件」与「远端已经改过的文件」），而不是事后。
+
+**CMake 自己会拒绝重名（实测，这是好消息）。** 三行隔离工程里两个 `add_test(NAME same_name …)` ⇒
+`CONFIGURE_RC=1`、`Configuring incomplete, errors occurred!`、`ctest -N` 报 `Total Tests: 0`。
+**所以同一个测试名不会静默进入任何一棵树** —— 它需要的是**一个决定**，不是一个守卫。
+合并时两侧都注册了指向同一个 fixture 的用例（`main` 的 `lint_case_wildcard_unreachable_runtime`
+与本分支的 `lint_case_exhaustive_runtime`），收口**保留了本分支那套按 fixture 命名的名字**，
+并保留 `main` 更严的 `PASS` 串与双向 `FAIL` 正则；最终 **137 个 `add_test(`、0 重名**。
+
+**最后补上的实例：`tools/migrate_report.py`。** 该工具是 §1.59 里「既非 fixture 又无
+`X.test.py`」那个刻意的窄口，也是文档声称有 CTest 覆盖而实际没有的第四处。
+新增 `tools/migrate_report.test.py`（CTest `migrate_report_runtime`）断言的是**分母**：
+
+- 两个 fixture 覆盖 `PYTHON_RULES` / `C_RULES` 里的**每一条规则**（`goto`/`setjmp`/`alloca`/
+  `threads`/`func-ptr` 与 `dynamic-attr`/`metaclass`/`yield`/`async`/`varargs`/`decorator`/
+  `global-stmt`/`exec-eval`/`lambda`）；
+- 表头的 `Scanned:` / `Manual adaptation points:` / `Dependencies:` **等于表体实际行数** ——
+  把 `f"- Manual adaptation points: {len(all_findings)}"` 改成常量 `0` ⇒ **红**
+  （`says 0 but the table has 15 row(s)`），这正是「一个没有分母的结论」那一族；
+- **负对照**：干净输入必须报 `0` 且表体为空 —— 没有它，一个「把什么都报成发现」的工具会通过上面两条；
+- 找不到源文件必须**非零退出并点名原因**（`error: no source files found`），而不是打一份看起来干净的报表。
+
+**两个方向都实测有牙**：删掉 `lambda` 规则 ⇒ `rule 'lambda' did not fire`、rc=1；把表头计数写成 `0`
+⇒ 两条 FAIL、rc=1；恢复 ⇒ `migrate_report tests: ok`、rc=0。
+
+**计数。** `grep -c 'add_test('` **134 → 136（本分支）→ 137（合并 `main` 后）→ 138**；
+`tools/gate.sh:54` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1 四处同步。
+`check_orphan_fixtures` 的输入数 **110 → 112**（`tools/desugar.test.py` + `tools/migrate_report.test.py`；
+`tools/desugar_probe.sh` 被删除）。`tools/README.md` 的门禁表原先写「Seven stages」、只列 7 个、
+`ctest` 期望 `93 / 93` —— 已由 `vivid-anchor` 改成十二阶段与当前数字；**这是同一形状的第五次**
+（一份手写列举，没有任何东西比较它与 `STAGE_WANTED`）。
+
+**诚实边界。** ①本轮**没有**在 Windows 上复核任何东西，上面全部是 Linux 实测；
+②`12ff42a` 的 `tools/ctest_enumerate.sh` 与 `741191b` 的合并**是别人的工作**，本节只记录合并后的状态，
+不复述它们的完整证据；③`ctest_enumerate.sh` 的断言只证明「抽取数与 `ctest -N` 一致」，
+**不证明抽对了测试**（名字含正则元字符时 `-R "^${name}$"` 仍会误配；本树 137 个名字元字符计数为 0）；
+④`linux-build.yml` 仍然**没有 `***Skipped` 断言**（`ivory-ember` 在 `stream/ci-gate-static` 上加了，
+未合入）—— 「跳过不是通过」这条在 CI 上仍然只有本地 `tools/gate.sh` 守着；
+⑤**「两条分支各自绿」没有守卫**：CMake 只拒绝**同一棵树内**的重名，跨分支的同一处修复
+仍然只能靠人先比较再动手，本轮是靠一封来信才看见的。
 
 ## §2 执行通道效率比较
 
