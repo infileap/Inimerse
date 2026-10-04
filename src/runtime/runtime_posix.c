@@ -759,6 +759,13 @@ static int posix_atomic_add(VM *vm) {
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     int idx = posix_atomic_find(vm, n, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
+    /* Same rule as posix_atomic_get: a slot that is not VAL_INT holds no
+       integer, so there is no counter to add to.  Without this, the CAS loop
+       below read and wrote `val.ival` on a slot whose live member was `fval`
+       or `sval` -- atomic_add("h", 0) on `h = 2.5` answered 4612811918334230528
+       and destroyed the 2.5.  Answering 0 and leaving the slot alone is the
+       same answer the family already gives when the name does not resolve. */
+    if (vm->globals[idx].val.type != VAL_INT) { push_int(vm, 0); return 1; }
     /* int64, like the language: a 32-bit `int old` here turned
        atomic_add("k", 3000000000) into -1294967296 -- silently, exit code 0.
        The CAS loop is what makes the sum checkable at all: a bare
@@ -786,7 +793,15 @@ static int posix_atomic_get(VM *vm) {
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm)];
     int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 0);
     pop(vm);
-    push_int(vm, idx < 0 ? 0 : __sync_add_and_fetch(&vm->globals[idx].val.ival, 0));
+    /* Read the union member that matches `type`, and only that one.  This used
+       to answer `__sync_add_and_fetch(&...ival, 0)` whatever the slot held, so
+       atomic_get("y") on `y = 1.5` answered 4609434218613702656 -- the IEEE754
+       bits of 1.5 -- silently, exit code 0.  A slot that holds no integer is
+       not an integer counter, and the answer for "no such counter" is already
+       0 on both platforms (see the `idx < 0` case above and below). */
+    push_int(vm, (idx < 0 || vm->globals[idx].val.type != VAL_INT)
+                     ? 0
+                     : __sync_add_and_fetch(&vm->globals[idx].val.ival, 0));
     return 1;
 }
 

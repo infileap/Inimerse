@@ -1594,7 +1594,19 @@ static int builtin_atomic_add(VM *vm) {
         VM_UNLOCK(vm);
     }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
-    if (vm->globals[idx].val.type != VAL_INT) { vm->globals[idx].val.type = VAL_INT; vm->globals[idx].val.ival = 0; }
+    /* A slot that is not VAL_INT holds no integer, so there is no counter to
+       add to -- answer 0 and leave the slot alone, the same answer this family
+       gives when the name does not resolve (the `idx < 0` cases above).  This
+       used to normalise instead (`type = VAL_INT; ival = 0`) and then add, which
+       read and wrote `val.ival` on a slot whose live member was `fval` or
+       `sval`: atomic_add("h", 0) on `h = 2.5` answered 0 and destroyed the 2.5.
+       POSIX had no gate at all and answered the union's bit pattern.  Both
+       copies now consume the same rule; see docs/AUDIT.md 1.51. */
+    if (vm->globals[idx].val.type != VAL_INT) {
+        if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
+        push_int(vm, 0);
+        return 1;
+    }
     /* int64, like POSIX and like the language: the 32-bit InterlockedExchangeAdd
        here turned atomic_add("k", 3000000000) into -1294967296.  MSVC has no
        __builtin_add_overflow, so the bound is checked by hand -- and the CAS loop
