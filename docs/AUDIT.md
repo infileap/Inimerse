@@ -1445,6 +1445,105 @@ blast radius 为零（实测，不是推断）。
 
 **诚实边界。** 这一行在 Linux 上不参与编译，所以 Linux 门禁看不见它；「通知走 stderr」这条规矩本身没有被测试钉住，只有三处源码的一致性。
 
+## §1.37 inim-client 在 Windows 上是一份桩，于是那个测试注定红
+
+**现象。** Windows ctest `#5 verse_closed_loop` 的第一条 FAIL 是
+`recover: the client reports the crash: 4`（`tools/verse_closed_loop.test.py:221`
+期望 `proc.returncode == 137`），紧接着 `committed records survived the crash:
+{'cells': [], 'head': 'e3b0c442...', 'seq': 0}`（`:228`）。
+
+**根因不在恢复，也不在落盘。** `src/verse/client.c` 在 Windows 上整份就是桩：
+
+```c
+#if defined(_WIN32)
+int main(void) {
+    fprintf(stderr, "inim-client: process spawning is not implemented on this platform\n");
+    return 4;
+}
+#else
+```
+
+客户端根本没跑起来，所以一个 `put` 都没发出去，`seq=0` / `cells=[]` /
+`head=e3b0c442...`（`e3b0c442` 是**空串**的 sha256）全是同一原因的后效。
+`src/verse/client.c:1-14` 的注释自己就写了「Spawning a child needs fork+exec,
+so this program is POSIX-only for now; on other platforms it says so instead of
+pretending to work」——**它在诚实地拒绝**，问题只在于 `CMakeLists.txt:62`/`:75`
+在 Windows 上也注册了这个测试，于是它注定红。
+
+**修法：补齐能力，不是跳过测试。** 把「spawn 一个带两条管道的子进程」抽成四个
+操作，一个平台一份：
+
+- `child_spawn(Child *, server, root, verse_id, FILE **to_child, FILE **from_child)`
+- `child_kill(Child *)` / `child_wait(Child *, int *exit_code)` / `child_close(Child *)`
+
+参数解析、`slurp`、请求循环、`#crash` 指令、退出码传递**全部共享**，两个平台不可能
+在「发什么、印什么」上再次漂移。POSIX 那半是原来的 `pipe` / `fork` / `dup2` /
+`execlp`，逐行未改；Windows 那半是 `CreatePipe`（`SECURITY_ATTRIBUTES.bInheritHandle
+= TRUE`，而父进程自己那两端要 `SetHandleInformation(..., HANDLE_FLAG_INHERIT, 0)`，
+否则子进程握着自己的 stdin 永远看不到 EOF）+ `CreateProcessA(NULL, cmd, ...)` +
+`_open_osfhandle` / `_fdopen`（两端都 `_O_BINARY`，让请求字节与 POSIX 逐字节相同）
++ `TerminateProcess`。`src/platform/im_process.h` 那层只有
+`im_process_spawn(command, new_console)`，没有管道重定向（`im_process_capture` 是
+POSIX PAL），所以这次不动平台层，客户端内部自足。
+
+**实测抓到的两个坑。**
+
+1. **命令行每段之间必须有空格。** 第一版 `cmdline_append` 只写了引号，于是生成
+   `"a""b""c"`，`CreateProcess` 把它解析成**一个**参数 `abc`，子进程 `argc` 只剩 1、
+   `argv[1]`/`argv[2]` 全空——而**管道是通的、退出码是对的、`#crash` 也正常**，只有
+   参数悄悄丢了。这正是「快速通道的门被当成了答案」那一类：管道通了不等于命令行对了。
+   判据是让假 server 把收到的 `argv` 印出来，而不是只看客户端自己印了什么。
+2. **反斜杠要转义。** `CommandLineToArgvA` 的规则是「引号前的连续反斜杠加倍」，
+   否则以 `\` 结尾的路径会吞掉收尾引号。`cmdline_append` 按这条规则写。
+
+**判据（真 Windows，ucrt64 gcc 16.1.0，配一个只回 JSON 行的假 server）：**
+
+| 用例 | 期望 | 实测 |
+|---|---|---|
+| `#crash` | 两条应答 + `#crash: server killed` + 退出码 **137** | 一致 |
+| 子进程 EOF 退出 3 | 客户端原样传出 **3** | 一致 |
+| root 以 `\` 结尾 | 子进程收到 `C:\Temp\vinim\root\` **一字不差** | 一致 |
+| server 路径带空格 | 能起来并应答 | 一致 |
+
+Linux 侧 `ctest -R verse_closed_loop` 仍 `Passed`，即 POSIX 那半行为未变。
+
+**诚实边界。** ① Linux 门禁只能钉住 POSIX 那半；Windows 那半的证据是 mingw 两套
+工具链（ucrt64 与 mingw64）的 `-fsyntax-only` 均 RC=0 且 `-Wall -Wextra` **零警告**，
+加假 server 实跑，真 server 的实跑由协调者在 Windows 上做。② 假 server 验的是
+**客户端自己的管道与命令行**，不是协议语义。③ Windows 上没有信号，「正常退出」与
+「被杀」只能靠退出码区分，所以 POSIX 那半「非 `WIFEXITED` 就不给退出码」的语义在
+Windows 上没有对应物，代码里记了这一点。
+
+## §1.38 包名只按 `/` 取，于是 Windows 上整条绝对路径成了包名
+
+**现象。** Windows `#38 verse_pack_regression` 报 `AssertionError: open=0`
+（`tools/verse_pack.test.py:189`），stderr 里有 `[VDP] cannot create laws`。
+
+**根因。** `src/mod/verse_dist_mod.c:1082` 只有一句
+
+```c
+const char *slash = strrchr(tail, '/');
+```
+
+而 `tail` 在 Windows 上是 `C:\Users\...\mypkg.vverse`——**全是反斜杠**，`strrchr`
+返回 NULL，于是整条绝对路径被当成包名；`:1087` 剥掉 `.vverse` 之后
+`dest = "<home>/universe/C:\Users\...\mypkg"`，逐段 `mkdir` 走到分量 **`C:`**，
+冒号在路径分量里非法 → `_mkdir` 失败 → `cannot create laws`（正是 `dirs[0]`）。
+
+**同一个文件里同一个计算已经有三个生产点，另外两个都记得反斜杠：**
+`src/mod/verse_dist_mod.c:271-273`（`home_dir`）与 `:387-389` 都写了
+`char *bs = strrchr(p, '\\'); if (bs && (!slash || bs > slash)) slash = bs;`。
+第三个（`:1082`）忘了。这与 `src/compilation/deps.c` 是同一类：一件事多个生产点，
+只有一处记得平台分隔符。
+
+**修法。** 用文件里已有的那句写法，取**靠后**的那个分隔符（不是「平台相关的那个」：
+Windows 上 `/` 与 `\` 都合法，只看一个会在混用路径上再次出错）。
+
+**诚实边界。** ① 这一处只在 Windows 上可观测（Linux 的包路径用 `/`），Linux 门禁
+钉不住它；判据是协调者在 UCRT64 上复跑 `#38`，预期 `name = mypkg`、
+`dest = <home>/universe/mypkg`、`open=1`。② 这次没有新增用例：它和 §1.35 一样属于
+「Linux 上不参与编译的 Windows-only 分支」。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

@@ -1079,7 +1079,14 @@ static int verse_launch(const char *base, const char *entry) {
 static int do_open_vverse(VM *vm, const char *fetch_uri, const void *pkg, size_t pkg_len) {
     const char *tail = fetch_uri;
     if (strncmp(tail, "verse://local/", 14) == 0) tail += 14;
+    /* the basename of the URI, separators as this platform writes them: the
+     * two other basename sites in this file (home_dir at :271, :387) have
+     * always looked at '\\' as well, and a Windows package URI is
+     * verse://local/C:\Users\...\mypkg.vverse -- so a '/'-only search found
+     * nothing, kept the whole absolute path as the name, and the ":" in the
+     * "C:" component made every mkdir under it fail. */
     const char *slash = strrchr(tail, '/');
+    { const char *bs = strrchr(tail, '\\'); if (bs && (!slash || bs > slash)) slash = bs; }
     if (slash && slash[1]) tail = slash + 1;
     char name[256];
     snprintf(name, sizeof name, "%.255s", tail);

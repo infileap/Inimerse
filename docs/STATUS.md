@@ -3504,3 +3504,13 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 **② 模组加载通知写进了 stdout（#29 wasm_backend）。** 只有 Windows 引擎链接 `mods/build/build_mod.c`（`CMakeLists.txt:400`），而它的 `mods/build/build_mod.c:742` 用 `printf`，另两处模组通知（`src/mod/infiverse_mod.c:839`、`src/mod/verse_dist_mod.c:2688`）都用 `fprintf(stderr, ...)`。改成 stderr；同文件里属于 `build` 内建**自身**输出的那些 `printf`（`:371`/`:373`/`:405`）保持不动。
 
 **没有新增用例。** 两处都在 Linux 上不参与编译（`deps.c` 走 POSIX 分支，`build_mod.c` 不在 POSIX 源列表里），Linux 门禁只能证明「没改坏」：`ctest -R "incremental|dep|compile|selfhost|cli_"` 5/5。详见 [AUDIT.md](AUDIT.md) §1.35 与 §1.36。
+
+## §10.69 客户端在 Windows 上是一份桩，包名只按 `/` 取
+
+两处 Windows-only 缺陷，都属于「同一个计算有多个生产点，只有一处守规矩」。
+
+**① `inim-client` 在 Windows 上整份是桩（#5 verse_closed_loop）。** `src/verse/client.c` 原来在 `_WIN32` 下只有 `int main(void) { ...; return 4; }`，于是 `tools/verse_closed_loop.test.py:221` 期望的 137 拿到 4，客户端根本没发过请求，后面 `seq=0` / `cells=[]` / `head=e3b0c442`（空串的 sha256）全是连锁。修法是把「带两条管道的子进程」抽成 `child_spawn`/`child_kill`/`child_wait`/`child_close` 四个操作、每平台一份，参数解析与请求循环全部共享；POSIX 那半逐行未改，Windows 那半是 `CreatePipe` + `CreateProcessA` + `_open_osfhandle`/`_fdopen`(`_O_BINARY`) + `TerminateProcess`。真 Windows 实测：`#crash` → 137、子进程退出 3 → 原样传出、以 `\` 结尾的 root 参数一字不差、带空格的 server 路径能起来；Linux `ctest -R verse_closed_loop` 仍 Passed。
+
+**② 包名只按 `/` 取（#38 verse_pack）。** `src/mod/verse_dist_mod.c:1082` 的 `strrchr(tail, '/')` 在 Windows 的 `C:\...\mypkg.vverse` 上返回 NULL，整条绝对路径成了包名，`dest` 里出现分量 `C:`，`mkdir` 失败 → `cannot create laws`。同一个文件里 `:271-273`（`home_dir`）与 `:387-389` 早就在同时看 `\`。修法是取靠后的那个分隔符。
+
+**没有新增用例**（两处都是 Linux 上不参与编译的 Windows-only 分支），`EXP_CTEST` 仍为 122。详见 [AUDIT.md](AUDIT.md) §1.37 与 §1.38。
