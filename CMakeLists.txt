@@ -904,3 +904,12 @@ if(INIMERSE_BUILD_ENGINE)
 else()
   message(STATUS "Building portable platform probes only; platform-specific VM modules remain disabled")
 endif()
+
+# The Python harnesses print UTF-8 (selfhost_bench.py's suite labels are Chinese),
+# while a Windows console defaults to the ANSI codepage -- cp1252 on the hosted
+# runners -- where print() raises UnicodeEncodeError.  Pin the stream encoding for
+# every registered test, in one place, instead of inside each harness.
+get_property(INIMERSE_ALL_TESTS DIRECTORY PROPERTY TESTS)
+if(INIMERSE_ALL_TESTS)
+  set_tests_properties(${INIMERSE_ALL_TESTS} PROPERTIES ENVIRONMENT "PYTHONIOENCODING=utf-8")
+endif()

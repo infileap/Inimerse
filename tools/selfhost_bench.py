@@ -23,6 +23,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BENCH = Path(__file__).resolve().parent / "bench"
 
+# The suite labels below are Chinese, and a Windows console defaults to the ANSI
+# codepage (cp1252 on the hosted runners), where print(report) raises
+# UnicodeEncodeError: 'charmap' codec can't encode characters.  Pin the streams.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 SUITES = [
     ("collections", "bench_collections.im", "集合变换：list 构造/遍历、dict 访问"),
     ("case-try", "bench_case_try.im", "`case try` 模式分发（1500 轮）"),
