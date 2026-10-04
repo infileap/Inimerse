@@ -1,0 +1,36 @@
+# docs/AUDIT.md 1.51 -- an atomic slot is an integer counter, and only that.
+#
+# The atomic family has two production points (src/runtime/runtime.c and
+# src/runtime/runtime_posix.c) and, until this pin, neither of them consulted
+# the slot's `type` tag before reading or writing the union:
+#
+#   atomic_get("y")   on `y = 1.5`     POSIX answered 4609434218613702656 (the
+#                                      IEEE754 bits of 1.5); Windows answered 0.
+#   atomic_add("h", 0) on `h = 2.5`    POSIX answered 4612811918334230528 and
+#                                      destroyed the 2.5; Windows answered 0 and
+#                                      also destroyed it, via a silent
+#                                      normalise (`type = VAL_INT; ival = 0`).
+#
+# Both copies now answer 0 and leave a non-integer slot untouched -- the same
+# answer the family already gives when the name does not resolve.  The values
+# below are asserted, not just the exit code: docs/SYNTAX.md 7.2 M13 records
+# that 66 of the CTest cases only look at the exit code, and this defect is
+# exactly the kind that exits 0.
+y = 1.5
+s = "abcdef"
+k = 7
+
+g1 = atomic_get("y")
+r1 = atomic_add("y", 1)
+y_after = str(y)
+r3 = atomic_add("y", 0)
+y_zero = str(y)
+
+g2 = atomic_get("s")
+r2 = atomic_add("s", 1)
+s_after = str(s)
+
+g3 = atomic_get("k")
+r4 = atomic_add("k", 5)
+
+say "atomic-slot-ok g1=" + str(g1) + " r1=" + str(r1) + " y=" + y_after + " r3=" + str(r3) + " yz=" + y_zero + " g2=" + str(g2) + " r2=" + str(r2) + " s=" + s_after + " g3=" + str(g3) + " r4=" + str(r4)

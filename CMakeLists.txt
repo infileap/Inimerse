@@ -1137,3 +1137,23 @@ else()
   set_tests_properties(spi_caps_contract_runtime PROPERTIES
     PASS_REGULAR_EXPRESSION "spi-caps-ok doc=768 space=0 audio=0 ionet=0 all=65280 int=256 bool=0")
 endif()
+
+# docs/AUDIT.md 1.51 -- an atomic slot is an integer counter, and only that.
+#
+# atomic_get/atomic_add have two production points (src/runtime/runtime.c and
+# src/runtime/runtime_posix.c) and neither consulted the slot's `type` tag
+# before reading or writing the union.  atomic_get("y") on `y = 1.5` answered
+# the IEEE754 bits of 1.5 on POSIX and 0 on Windows; atomic_add("h", 0) on
+# `h = 2.5` destroyed the 2.5 on both, silently, exit code 0.
+#
+# The whole line is asserted because the defect exits 0 (docs/SYNTAX.md 7.2
+# M13), and it is the SAME line on both platforms: both copies now consume one
+# rule -- a slot that is not VAL_INT holds no integer counter, so the answer is
+# 0 and the slot is left alone.  No per-platform branch, deliberately.
+#
+# Registered last so no existing #N moves.
+add_test(NAME atomic_slot_type_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/atomic_slot_type_contract_v06.im)
+set_tests_properties(atomic_slot_type_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+  PASS_REGULAR_EXPRESSION "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12")
