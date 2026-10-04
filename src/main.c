@@ -193,6 +193,7 @@ static void usage(const char *prog) {
 
 /* unified script loader: .inim bytecode or .im parse+compile, then vm_run */
 static const char *params_path = "params.params";  /* default parameter file */
+static int params_explicit = 0;   /* --params named a file: a miss must be loud, not nil */
 
 /* ---- minimal zip reader (STORE only) for .imjar ----
    extracts every entry into outDir (creating subdirs) */
@@ -276,6 +277,22 @@ static int zip_extract_all(const char *zipPath, const char *outDir) {
     return extracted;
 }
 
+/* Load the parameter file, or say why not.  The default `params.params` is
+   optional -- plenty of programs have none -- but a file the user NAMED with
+   --params is not: silently ignoring it turns every parameter into nil and the
+   program then runs to completion on wrong values.  That is the same
+   silent-nil shape as the relative-path bug this helper sits next to. */
+static int load_params_or_report(VM *vm) {
+    FILE *pf = fopen(params_path, "rb");
+    if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); return 0; }
+    if (params_explicit) {
+        if (g_err_json) { main_err_json("io", params_path, "the parameter file named by --params"); return -1; }
+        fprintf(stderr, "error: cannot read params '%s'\n", params_path);
+        return -1;
+    }
+    return 0;
+}
+
 static int load_and_run(VM *vm, const char *path) {
     char jarCache[1024];
     const char *runPath = path;
@@ -291,12 +308,19 @@ static int load_and_run(VM *vm, const char *path) {
     if (plen > 5 && strcmp(path + plen - 5, ".inim") == 0) {
         Bytecode *bc = bytecode_read_file(path);
         if (!bc) { if (g_err_json) { main_err_json("io", path, "recompile the .inim with buildc (old format)"); return 1; } fprintf(stderr, "error: cannot load bytecode '%s' (old format? recompile with buildc)\n", path); return 1; }
-    /* params first: their globals get stable indices before the main bytecode loads */
-    {
-        FILE *pf = fopen(params_path, "rb");
-        if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); }
-    }
         vm_load_bytecode(vm, bc);
+        /* params AFTER the bytecode, not before.  vm_load_bytecode rebinds globals by
+         * POSITION (src/vm/vm.c:1435-1440 frees globals[i].name and strdups the bytecode's
+         * own name into that slot, never touching .val).  Loading params first therefore
+         * left their values attached to the wrong name: for a bytecode whose global table
+         * ends in something other than the parameter name, the value was handed to that
+         * other name, and for one that ends in it the name appeared twice -- the nil slot
+         * first, so lookup answered nil.  Loading params second makes the seeding loop in
+         * vm_params_load walk a table the bytecode has already fixed, so both tables agree
+         * position by position.  The .im branch below must NOT be "unified" with this one:
+         * its params-first order is what lets it pre-register the parameter names into the
+         * compiler, and moving it would demote every read-only parameter name to a local. */
+        if (load_params_or_report(vm) != 0) return 1;
         vm_run(vm);
         bytecode_free(bc);
         if (vm->last_error) return 1;
@@ -307,10 +331,7 @@ static int load_and_run(VM *vm, const char *path) {
     Compiler *comp = compiler_new();
 
     /* params first: their globals get stable indices, then main compile pre-registers them */
-    {
-        FILE *pf = fopen(params_path, "rb");
-        if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); }
-    }
+    if (load_params_or_report(vm) != 0) return 1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);
     compiler_compile(comp, prog);
@@ -342,13 +363,8 @@ static int load_and_run_source(VM *vm, const char *src, const char *display) {
     Program *prog = parse_program(src);
     if (!prog) { if (g_err_json) { main_err_json("parse", display ? display : "(source)", "check the script syntax"); return 1; } fprintf(stderr, "error: cannot parse '%s'\n", display ? display : "(source)"); return 1; }
     Compiler *comp = compiler_new();
-    fprintf(stderr, "[main] compile preregister gc=%d g23.name=%s\n", vm->globalCount,
-            (vm->globalCount > 23 && vm->globals[23].name) ? vm->globals[23].name : "(null)");
     /* params first: their globals get stable indices, then main compile pre-registers them */
-    {
-        FILE *pf = fopen(params_path, "rb");
-        if (pf) { fclose(pf); vm_params_load_v2_or_legacy(vm, params_path); }
-    }
+    if (load_params_or_report(vm) != 0) return 1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);
     compiler_compile(comp, prog);
@@ -886,12 +902,12 @@ int headless_http_port = 11470;
             for (int i = 1; i < argc - 2; i++) argv[i] = argv[i + 2];
             argc -= 2;
         }
-        /* --params <file>: parameter file (default params.params) */
-        if (argc >= 3 && strcmp(argv[1], "--params") == 0) {
-            params_path = argv[2];
-            for (int i = 1; i < argc - 2; i++) argv[i] = argv[i + 2];
-            argc -= 2;
-        }
+        /* --params is NOT handled here: it is a general option, documented in
+         * docs/API.md as "load a parameter file", and it used to sit inside this
+         * --headless block, so `inimerse --params f.params prog.im` never consumed
+         * it -- the option became argv[1] of the script path and the run died with
+         * "cannot read script '--params'".  It is now spliced out positionally
+         * below, the same way --time-limit is. */
         if (argc >= 3 && strcmp(argv[1], "--http-port") == 0) {
             headless_http_port = atoi(argv[2]);
             for (int i = 1; i < argc - 2; i++) argv[i] = argv[i + 2];
@@ -900,6 +916,20 @@ int headless_http_port = 11470;
     }
 unsigned long timeout_ms = 0;
     int timeout_set = 0;   /* --time-limit given: 0 = unlimited */
+    /* --params <file>: parameter file (default params.params).  Scanned rather than
+     * matched at argv[1] so the option works in any position, and in particular both
+     * before and after --headless. */
+    if (argc >= 3) {
+        for (int i = 1; i < argc - 1; i++) {
+            if (strcmp(argv[i], "--params") == 0) {
+                params_path = argv[i + 1];
+                params_explicit = 1;
+                for (int j = i; j < argc - 2; j++) argv[j] = argv[j + 2];
+                argc -= 2;
+                break;
+            }
+        }
+    }
     if (argc >= 3) {
         for (int i = 1; i < argc - 1; i++) {
             if (strcmp(argv[i], "--time-limit") == 0) {
@@ -942,6 +972,18 @@ unsigned long timeout_ms = 0;
         free(self);
     }
 #endif
+
+    /* The parameter file is opened AFTER chdir_to_script_dir() (src/main.c:1346
+       -> load_and_run), so a relative --params path resolved against the
+       SCRIPT's directory instead of the caller's: `inimerse --params s.params
+       sub/s.im` looked for `sub/s.params`, found nothing, and every parameter
+       read as nil -- silently.  Pin it to an absolute path now, while the
+       process is still in the caller's working directory and before the EXE
+       directory chdir above can matter. */
+    {
+        char *abs_params = make_abs_path_loose(params_path);
+        if (abs_params) params_path = abs_params;
+    }
 
 #ifdef _WIN32
     if (argc >= 2 && strcmp(argv[1], "changelog") == 0)
