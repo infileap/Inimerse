@@ -90,6 +90,7 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|nod
 
 | 状态 | slug | 任务 | 冲突域（别人别碰） | 验收判据 | 认领 |
 | --- | --- | --- | --- | --- | --- |
+| 待验收 | `infiverse-handoff` | 把 Infiverse 大方向的交接件交给接手的新会话：已拍板决策（[HANDOFF_INFIVERSE.md](HANDOFF_INFIVERSE.md) §2 十组，逐条带 `i.json` message_id 或「人裁定」）、两条分支与 `main` 的差距（§3）、**按「有没有归属」排序的六件悬案**（§4）、三条操作建议（§5）。**只记事实与出处，不在此重新论证** | `docs/HANDOFF_INFIVERSE.md`、`docs/BOARD.md`（本行） | `tools/gate.sh --only links` 与 `--only doc-paths` 双绿；文档内每个数字都能指到「机器/目录/ref/时刻」；§4 每条写明归属 | `stream/infiverse-handoff` |
 | 阻塞 | `marketplace-watch` | 上架 dsh-m：npm 包已发布，PR [iasiv5/dsh-m#1](https://github.com/iasiv5/dsh-m/pull/1) 等待维护者点 *Approve and run* | `tools/dsh-inimerse/marketplace/` | PR 合并后 `node scripts/validate-registry.mjs` 全绿 | 协调者 |
 | 已完成 | `upp-in-engine` | UPP 引擎侧已实现：`src/verse/upp.{h,c}` 帧编解码 + 分片 decoder + 状态机，213 条断言探针，并**逐事件对照**过参考实现（111 个 op 同语料两边跑，逐行文本比对）。遗留边界（不是没实现）：`timestamp` 只收整数、尚未接入 `inim-server`/`inim-client` 传输层 —— 见 [STATUS.md](STATUS.md) §10.1 | `src/verse/`、`src/mod/verse_dist_mod.c` | 引擎能跑完 hello→start→heartbeat→（失联）crash→recover→reset 全序列，且与 JS 参考实现逐事件对照一致 | `stream/upp-in-engine` |
 | 已完成 | `crp-in-engine` | 引擎侧 CRP 线层已实现并验证（见 §6 与 [STATUS.md](STATUS.md) §10.6）。会话层 `src/platform/crp_session.{h,c}` 本来就存在 —— 原「引擎侧无实现」的说法是错的，已更正。**遗留边界**：`/friends`、`/content`、`/package` 三个端点按边界仍未实现（`crp_relay.test.js` 的 23 条断言里 11 条属此）；`session_store_seq()` 把 §55.6 的缺口判定降级成诊断（`acceptVerdict`），线上行为对齐参考实现 | `src/verse/`、`src/common/`、`src/mod/verse_dist_mod.c` | 见 [STATUS.md](STATUS.md) §10.6 | — |
