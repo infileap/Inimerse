@@ -706,9 +706,13 @@ int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival;
 **指针的一半**，于是 `chr("A")` 返回一个**每次运行都不同**的控制字符。POSIX 副本
 （`src/runtime/runtime_posix.c`）一直是 `v.type == VAL_INT ? v.ival & 0xff : 0`，答空串。
 
-**为什么它是 D 级而不是「参数类型错误」**：设计记录里**没有任何**「参数类型不对时怎么办」的
+**为什么它是 D 级而不是「参数类型错误」**：写下这条时设计记录里**没有任何**「参数类型不对时怎么办」的
 规定（本节 D3/D4/D5 反而说明引擎整体不校验类型与 arity），所以两侧都**不是**「照规范做」。
 这里唯一的硬要求是**确定性**：`chr("A")` 不能每次给不同的答案。
+
+**2026-10 更新**：这样的规定**现在有了** —— 见本节 **D14**（人类裁定）。D14 把「操作共享状态
+的调用」与「只产出值的调用」分成两支，`chr` 属后者，所以**它答 `""` 这一条不变**；变的只是
+「没有规定」这句话不再成立。
 
 **修复**：Windows 副本改为先判 type tag、非 `VAL_INT` 答 `""`（与 POSIX 一致）：
 
@@ -718,12 +722,59 @@ int n = (v.type == VAL_INT) ? (int)(v.ival & 0xFF) : 0;
 ```
 
 **`""` 仍是静默错答**（按本节分类属「危险·静默」），所以这条**留在这里而不是标成「正确」**：
-`chr("A")` 应该显式报错，但那需要先有一条「参数类型错误怎么办」的规范 —— 见
+`chr("A")` 本应显式报错，但 D14 的裁定把「只产出值的调用」留在「答定义值」这一支，所以它
+**按裁定是合规的**，只是这个定义值本身仍然掩盖了调用方的错误 —— 两件事，见
 `docs/AUDIT.md` §1.45 的诚实边界与 §1.46。
 
 **回归**：`vtest/divergent_builtin_contract_v06.im`（CTest `#125`）断言 `chr("A") == ""` 与
 `chr(65) == "A"`，两端同跑。**双向验证过**：还原修复 → Windows 引擎上 `chr("A")` 给出随机
 控制字符，pin 红。
+
+#### D14. 内建函数收到无法解释的实参类型时的通用规则（2026-10，人类裁定）
+
+内建函数收到无法解释为所要求类型的实参时，按**这次调用是否操作共享状态**分成两支：
+
+- **操作共享状态的调用**（原子槽 `atomic_get`／`atomic_set`／`atomic_add`，以及将来的同类写入点）⇒ 必须抛 `type_mismatch`，**不得静默返回**。理由是失败没有痕迹：调用方无从区分「成功了」与「什么都没发生」。同一家族已经会抛 `numeric_overflow`（`src/runtime/runtime.c:1631`），说明「做不到」与「那里没有东西」在本族内部本来就分属两回事。
+- **只产出值的调用**（`chr`、`int`、`round` 等）⇒ 按各自**已裁定**的定义值作答，不抛：`chr(non-int)` 答 `""`（见 D13）、`int("0x10")` 答 `16`。
+
+**明确不在本条范围内**：**运行期状态**的类型不符（原子槽里存的不是 `VAL_INT`、数组池里取出的不是预期对象等）。那属于「那里没有东西」，按该家族既有答案返回定义值（原子槽族为 `0`），**并且不得改动那份状态**——它与「调用方给的实参类型不对」是两件事，本条正是要把这两件事分开。
+
+##### 本条落在哪六处（2026-10 实测）
+
+| 平台 | 文件与函数 | 本条落地前的行为 |
+|---|---|---|
+| Windows | `src/runtime/runtime.c` 的 `builtin_atomic_add`／`builtin_atomic_get`／`builtin_atomic_set` | 三处都有 `if (!nm) { push_int(vm, 0); return 1; }` —— 名字不是字符串时**答 0** |
+| POSIX | `src/runtime/runtime_posix.c` 的 `posix_atomic_add`／`posix_atomic_get`／`posix_atomic_set` | 三处都把 `name.type == VAL_STRING ? name.sval : NULL` 交给 `posix_atomic_find`，而后者首行是 `if (!name) return -1;` ⇒ **答 0** |
+
+**POSIX 侧的形状值得单独记下来**：它不是「少一个守卫」，而是**两个本来不同的决定点被折成了一个返回值** ——
+「这个实参不是字符串」和「这个名字不存在」都变成 `posix_atomic_find` 的 `-1`，调用方再也分不开。
+所以守卫必须放在**调用 `find` 之前**，放在后面就晚了。这与 §1.54（数组池唯一的门不拒绝下标）是同一种
+病的两种形态：一个是「门不检查」，一个是「两个问题共用一个答案」。
+
+##### 验证入口
+
+`vtest/atomic_slot_type_contract_v06.im`（CTest `atomic_slot_type_contract_runtime`）。它**断言错误种类串**，
+不是只断言退出码 —— 只断言「抛了东西」的 pin 会在 `numeric_overflow`、索引错误或任何将来的种类上照样通过：
+
+```
+n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
+```
+
+`n1`/`n2`/`n3` 是 `atomic_get(42)`／`atomic_add(42, 1)`／`atomic_set(42, 1)` 经 `catch (e) { str(e) }`
+得到的种类串；`n4` 是 `atomic_get("this_name_was_never_created")`，**仍答 `0` 且不抛**。两条必须能同时
+被区分出来，否则等于没落地。
+
+**双向验证过**：把 `src/runtime/runtime_posix.c` 退回修改前，同一个 fixture 打出
+`n1=NO-THROW n2=NO-THROW n3=NO-THROW n4=0` 且**退出码仍是 0**（这正是这条缺陷的形状），pin 的
+`FAIL_REGULAR_EXPRESSION` 命中；恢复后打出上表。
+
+##### 诚实边界
+
+- **这是关于参数类型的第一条通用规则**，人类选的是「操作共享状态 ⇒ 抛／只产出值 ⇒ 答定义值」这个切法。
+  **这个推广本身还没有被正式确认**，所以本仓库**只落窄条款**：只有原子家族的名字参数改了行为，
+  `chr`／`int`／`round` 一个字都没动。
+- 运行期状态的类型不符（原子槽存的不是整数）**仍是答 0**，属本条的**排除项**，不是遗漏。
+
 
 ### 7.2 危险·误导（报错信息误导或语义反直觉）
 
@@ -804,6 +855,11 @@ err(e) | e in FileError: say "file-error"
 实测 `n = 7` 时上面的 `case` 走 `n | n > 0` → `guard-ok`。**守卫是「绑定名 + `|` + 条件」，不是「任意模式 + `|` + 条件」**；`in [...]` 或字面量模式后接 `|` 报的是 `expected 'expression'`，指不到真正原因。
 
 #### M13. 101 个 CTest 里 66 个只断言退出码（起点 73）
+
+> **分母已过期（2026-10）**：标题里的 **101** 与正文的 `total tests: 101` 是**写下这条时的快照**
+> （正文自己标了「起点快照」），当时 `EXP_CTEST` 也是 101。此后每加一个 pin 这个分母都在动，
+> 今天 `ctest -N` 报 **134**。**分子 66 仍是逐个数出来的**，但它是「101 里 66」，不是「134 里 66」——
+> 分母不复核就等于一个没人核对的数字。本条**不改成新数**（改了就同样会再过期），只标注它是快照。
 
 `ctest --test-dir build --show-only=json-v1` 的元数据统计（**起点快照**）：
 
@@ -896,7 +952,19 @@ C 源文件的注释是**损坏的 GBK 编码**（在 UTF-8 源码里表现为�
 
 #### H3. `ai_browser_diag.js` 含非法 UTF-8
 
-偏移 **478** 处有非法 UTF-8 字节序列（`python3` 的 `decode('utf-8')` 抛 `UnicodeDecodeError`）。这是全仓唯一一个**连 UTF-8 都不是**的文本文件。
+偏移 **478** 处有非法 UTF-8 字节序列（`python3` 的 `decode('utf-8')` 抛 `UnicodeDecodeError`）。
+
+**2026-10 更正**：本节原写「这是全仓**唯一一个**连 UTF-8 都不是的文本文件」—— **不成立**。按
+`git ls-files` 逐个 `decode('utf-8')` 实测，**两个**受版本控制的文本文件不是合法 UTF-8：
+
+| 文件 | 位置 | 报错 |
+|---|---|---|
+| `ai_browser_diag.js` | 偏移 478 | `invalid continuation byte` |
+| `examples/legacy-ui/desktop.html` | 偏移 3248 | `can't decode byte 0xcb in invalid continuation byte` |
+
+第二个是本轮新发现的。**注意它抓不到 `src/vm/vm.c:1512` 那类乱码**：`锟斤拷` 是**合法 UTF-8**
+（`xxd` 显示 `e9949f e696a4 e68bb7`），「合法 UTF-8」检查对它无效 —— 那是另一个问题（注释内容
+不可读），不能用编码有效性检查代替。
 
 ---
 
@@ -958,3 +1026,11 @@ printf 's = "a\\0b"\nsay str(len(s))\n' > /tmp/t.im && ./build/inimerse /tmp/t.i
     的 `bool=0` 去匹配、测试红；重跑 configure 后 Passed。**凡新增一条按平台分叉的断言，必须在
     两个平台上各做一次干净 configure**，并把「需要重新 configure」写进交接说明。
     这与第 6 条是同一件事的两面：双向验证证明断言有牙，这条证明**牙装在哪一侧**也会过期。
+
+    **第 7 次实测（2026-10，D14）——这次没有平台也能踩到**：改
+    `divergent_builtin_contract_runtime` 的 `PASS_REGULAR_EXPRESSION`（`a1=0` → `a1=type_mismatch`）
+    之后**不重新 configure** 直接 `ctest`，该测试**仍然红**，且报的是**旧正则**；跑一次
+    `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` 之后立刻绿。所以这条规则不止适用于
+    `if(WIN32)`：**任何对 `PASS_REGULAR_EXPRESSION`／`FAIL_REGULAR_EXPRESSION` 的编辑**，
+    在本次 configure 落盘的那份 `CTestTestfile.cmake` 被重写之前都不会生效 —— 而「测试仍然红」
+    恰好是最容易被读成「我的修改没生效」而**回头改代码**的地方。

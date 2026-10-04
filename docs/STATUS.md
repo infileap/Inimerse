@@ -3683,3 +3683,64 @@ CTest **#133**，`PASS_REGULAR_EXPRESSION` 钉整行且两平台**同一行**（
 含 NUL**；**数量不作断言**，它随每个新增文本文件变动，断言的是「0 个含 NUL」；
 反向验证塞回一个 NUL ⇒ exit 1）。机制、登记表与五条诚实边界见
 [AUDIT.md](AUDIT.md) §1.55。
+
+### §10.85 关于实参类型的第一条通用规则：D14 落地
+
+**裁定**（2026-10，人类，见 [`docs/SYNTAX.md`](SYNTAX.md) §7.1 D14）：内建函数收到无法解释为
+所要求类型的实参时，按**这次调用是否操作共享状态**分两支 —— 操作共享状态（原子槽
+`atomic_get`／`atomic_set`／`atomic_add`）⇒ 抛 `type_mismatch`，**不得静默返回**；只产出值
+（`chr`／`int`／`round`）⇒ 按各自已裁定的定义值作答。**运行期状态**的类型不符（槽里存的不是
+`VAL_INT`）**明确排除**，仍答 `0` 且不得改动那份状态。
+
+**为什么值得改**：这不是「少一个守卫」，而是 POSIX 侧**两个决定点被折成了一个返回值** ——
+`posix_atomic_find` 用同一个 `-1` 回答「你给的实参不是字符串」（调用方错误，这次调用从来不可能
+成功）与「这个名字不存在」（运行期状态，那里本来就没有东西）。调用方拿回 `-1` 后分不开，只能
+给一个答案，而这个答案对第一种情形是**静默失败**。与 §10.83 的数组池是同一种病的两种形态。
+
+**改动六处**：Windows（`src/runtime/runtime.c`）三处 `if (!nm) { push_int(vm, 0); return 1; }`
+改为 `vm_throw_kind(vm, "type_mismatch")`；POSIX（`src/runtime/runtime_posix.c`）三处在**调用
+`posix_atomic_find` 之前**加类型守卫（放后面就晚了）。`chr`／`int`／`round` 一个字未动。
+
+**pin**：`vtest/atomic_slot_type_contract_v06.im` 新增三段 `try/catch`，**断言错误种类串**
+（末行 `… r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0`）。`n4` 是「名字不存在」
+那一支，**必须仍是 `0`** —— 两条不能同时被区分出来就等于没落地。`CMakeLists.txt` 的 PASS 正则
+已扩并新增 `FAIL_REGULAR_EXPRESSION "n1=NO-THROW|n2=NO-THROW|n3=NO-THROW|n4=type_mismatch"`，
+**双向验过**（修前命中、修后不命中）。
+
+**A/B（Linux）**：`git stash push -- src/runtime/runtime_posix.c` 重编 ⇒ fixture 打出
+`n1=NO-THROW n2=NO-THROW n3=NO-THROW n4=0` 且**退出码仍是 0** —— 一个只看退出码的 pin 会**绿着**
+放它过去。恢复后打出期望行。
+
+**同批更正的两处过期声明**：① [`docs/SYNTAX.md`](SYNTAX.md) §7.4 H3 原写「全仓**唯一一个**连
+UTF-8 都不是的文本文件」—— 实测是**两个**（`ai_browser_diag.js` 偏移 478 与
+`examples/legacy-ui/desktop.html` 偏移 3248），第二个是本轮新发现；② §7.1 D13 的两段散文原写
+「设计记录里没有任何『参数类型不对时怎么办』的规定」「需要先有一条规范」—— 这条规范现在存在了，
+`chr` 答 `""` 不变，但「没有规定」不再成立。另给 §7.2 M13 加了「分母已过期」标注（标题里的 101
+是写下时的快照，今天 `ctest -N` 报 134；分子 66 仍是「101 里 66」，**不改成新数以免再次过期**）。
+
+**诚实边界**：① 这是关于参数类型的第一条通用规则，而「操作共享状态 ⇒ 抛／只产出值 ⇒ 答定义值」
+这个切法**本身还没被正式确认**，人类明确要求只落窄条款 ⇒ 本节结论**不能**外推成「引擎开始校验
+参数类型了」；② 运行期状态仍答 `0`，是排除项不是遗漏，`atomic_set` 的槽类型归一化没动；
+③ **没有静态证明**，判据是 134/134 与 fuzz 阶段全绿；④ **Windows 侧只做了编译与成对改动的等价性
+核对，本轮没有在真 Windows 上跑 `atomic_get(42)` 的 A/B**。
+
+**计数不变**：本轮**没有新增 CTest**，`EXP_CTEST` 保持 **134**（只扩了 `#132` 的正则并加了一条
+FAIL 正则）。机制、六处表与完整边界见 [AUDIT.md](AUDIT.md) §1.56。
+
+### §10.86 `--only` 打错阶段名：跑了个空，却打印绿灯
+
+`tools/gate.sh --only definitely-not-a-stage` 曾把**每一个**阶段记为 SKIP，然后照旧打印
+`gate: OK — every stage passed.` 并**退出 0** —— 收尾句与一次全绿的门禁逐字相同。这是仓库已有的
+「一个 skip 不是一次 pass」规则的下一层：**跳过全部**反而是绿的；CI 里阶段名写错会静默什么都不跑
+且绿。
+
+修法：`run_stage` 把每个选择器记进 `STAGE_WANTED`；阶段注册完后校验 `--only`，无匹配 ⇒ exit 2
+并列出**从 `STAGE_WANTED` 派生**的合法值（不是第二份手写清单）；收尾句在部分运行上不再读起来像
+整场门禁（`--only links` ⇒ 自报「this was NOT the full gate: 11 stages are registered and only
+this one ran.」）。
+
+实测：打错名字 ⇒ exit **2** + 合法值列表；`--only links` ⇒ 1 个阶段 + 自报部分运行。
+
+与 §10.83（数组池的门不能拒绝）、§10.85（两个问题折成一个返回值）登记在一起：同一个缺陷类在
+**门**、**返回值**、**总结**三个层面上的样子。发现来自 `ivory-ember`（它在自己的
+`stream/ci-gate-static` 分支上也修了同一处），我独立复现。完整边界见 [AUDIT.md](AUDIT.md) §1.57。

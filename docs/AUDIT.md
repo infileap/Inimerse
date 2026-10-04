@@ -2287,6 +2287,127 @@ file(s)`、报出字节偏移与行号、`exit 1`，还原即复绿。
 5. 这一阶段**不是**在断言「仓库里没有二进制文件」，它只断言「被我们当成文本的那些文件
    里没有 NUL」。
 
+## §1.56 关于实参类型的第一条通用规则：D14 落地，以及 POSIX 侧「两个决定点折成一个返回值」
+
+**形状**：内建函数收到**无法解释为所要求类型**的实参时怎么办？写 D13 的时候，仓库里
+**没有任何**这样的规定 —— D13 自己的正文就写着「设计记录里没有任何『参数类型不对时怎么办』的
+规定」，于是两侧都只能各自挑一个答案。原子家族挑了「答 0」：名字不是字符串时，Windows 三处
+`if (!nm) { push_int(vm, 0); return 1; }`（`src/runtime/runtime.c` 的 `builtin_atomic_add`／
+`builtin_atomic_get`／`builtin_atomic_set`），POSIX 三处把 `name.type == VAL_STRING ? name.sval :
+NULL` 交给 `posix_atomic_find`，而后者首行是 `if (!name) return -1;`。
+
+**这不是「少一个守卫」，是两个决定点被折成了一个返回值。** `posix_atomic_find` 用同一个 `-1`
+回答了两个不同的问题：
+
+- 「你给我的**实参**不是字符串」—— 调用方错误，这次调用**从来就不可能成功**；
+- 「这个名字**不存在**」—— 运行期状态，那里本来就没有东西。
+
+调用方拿回 `-1` 之后再也分不开这两件事，于是只能给一个答案（`0`），而这个答案对第一种情形是
+**静默失败**：调用方无从区分「成功了」与「什么都没发生」。这与 §1.54 是**同一种病的两种形态** ——
+一个是「门不检查」，一个是「两个问题共用一个答案」。
+
+**裁定（2026-10，人类，D14）**：按**这次调用是否操作共享状态**分两支。操作共享状态 ⇒ 抛
+`type_mismatch`，不得静默返回；只产出值 ⇒ 按各自已裁定的定义值作答（`chr(non-int)` 答 `""`、
+`int("0x10")` 答 `16`）。**运行期状态**的类型不符（槽里存的不是 `VAL_INT`）**明确排除**在外，
+仍答 `0` 且**不得改动那份状态**。完整条款见 [`docs/SYNTAX.md`](SYNTAX.md) §7.1 D14。
+
+**改动（六处）**：Windows 三处改为 `vm_throw_kind(vm, "type_mismatch")`；POSIX 三处在
+**调用 `find` 之前**加 `if (name.type != VAL_STRING)` 守卫（放在 `find` 之后就晚了 —— 这正是上面
+那条「折成一个返回值」的直接后果）。`chr`／`int`／`round` **一个字都没动**。
+
+**实测**（Linux，`./build/inimerse --no-mods`）：
+
+| 调用 | 改后 | 改前 |
+|---|---|---|
+| `atomic_get(42)` | `[exception] uncaught: type_mismatch`，rc=1 | 答 `0`，rc=0 |
+| `atomic_add(42, 1)` | 同上 | 答 `0`，rc=0 |
+| `atomic_set(42, 1)` | 同上 | 答 `0`，rc=0 |
+| `atomic_get("no_such_slot_anywhere")` | 答 `0`，rc=0 | 答 `0`，rc=0 |
+| `y = 1.5; atomic_get("y")` | 答 `0`，`y` 仍是 `1.5` | 答 `0`，`y` 仍是 `1.5` |
+| `h = 2.5; atomic_add("h", 0)` | 答 `0`，`h` 仍是 `2.5` | 答 `0`，`h` 仍是 `2.5` |
+
+**pin 断言的是错误种类串，不是退出码。** `vtest/atomic_slot_type_contract_v06.im` 用三段
+`try { … } catch (e) { n = str(e) }` 拿到种类串，末行期望
+
+```
+… r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
+```
+
+`n4` 是「名字不存在」那一支，**必须仍是 `0`**：只断言「抛了东西」的 pin 会在 `numeric_overflow`、
+索引错误或任何将来的种类上照样通过，而且分不出这两支 —— **两条不能同时被区分出来就等于没落地**。
+`CMakeLists.txt` 的 PASS 正则已扩、并新增
+`FAIL_REGULAR_EXPRESSION "n1=NO-THROW|n2=NO-THROW|n3=NO-THROW|n4=type_mismatch"`，**双向验过**
+（修前输出命中、修后不命中）。
+
+**A/B（Linux）**：`git stash push -- src/runtime/runtime_posix.c` 重编 ⇒ fixture 打出
+`n1=NO-THROW n2=NO-THROW n3=NO-THROW n4=0` 且**退出码仍是 0** —— 这正是这条缺陷的形状，也说明
+一个只看退出码的 pin 会**绿着**放它过去；恢复后打出上表。
+
+**诚实边界**：
+
+- **这是关于参数类型的第一条通用规则，而「操作共享状态 ⇒ 抛／只产出值 ⇒ 答定义值」这个切法本身
+  还没有被正式确认。** 人类明确要求**只落窄条款**：只有原子家族的名字参数改了行为。所以本节的
+  结论**不能**外推成「引擎开始校验参数类型了」—— D3／D4／D5 说明引擎整体仍不校验类型与 arity。
+- **运行期状态仍是答 `0`**，这是本条的**排除项**，不是遗漏。`atomic_set` 的槽类型归一化（写
+  `VAL_INT`）也**没动**。
+- **`docs/SYNTAX.md` §7.1 D13 的两段散文已同步**：它原来写「设计记录里没有任何这样的规定」与
+  「需要先有一条规范」，现在这条规范存在了；`chr` 答 `""` 不变，但「没有规定」这句话不再成立。
+- **没有做静态证明**：`type_mismatch` 之外没有别的种类被排除，判据是 134/134 与 fuzz 阶段全绿。
+- Windows 侧**只做了编译与代码等价性核对**（三处文本与 POSIX 侧成对改动），本轮**没有**在真
+  Windows 上跑 `atomic_get(42)` 的 A/B。
+
+## §1.57 `--only` 打错一个阶段名：跑了个空，却打印绿灯
+
+**形状**：`tools/gate.sh` 的 `run_stage` 在 `--only` 与当前阶段不匹配时把该阶段记为 `SKIP` 并
+`return 0`。于是 `--only` 给了**任何**不存在的名字，**每一个**阶段都被跳过，而收尾那行仍然是
+
+```
+gate: OK — every stage passed.
+```
+
+**退出码 0**。实测：
+
+```
+$ tools/gate.sh --only definitely-not-a-stage
+build … SKIP --only definitely-not-a-stage
+…（11 个阶段全部 SKIP）…
+gate: OK — every stage passed.
+$ echo $?
+0
+```
+
+表格里确实每一行都写了 `SKIP`，但**收尾句与一次全绿的门禁逐字相同** —— 只看最后一行（或只看退出
+码）的人拿到的是一次「什么都没跑」的绿。这是本仓库已经写下来的规则「**一个 skip 不是一次 pass**」
+（`tools/gate.sh` 顶部注释、`stage_ctest` 单独数 `***Skipped`）的下一层：跳过**全部**反而是绿的。
+在 CI 里把阶段名写错（例如在新阶段尚未合入时先写上去）会**静默**什么都不跑并且绿。
+
+**修法**（`tools/gate.sh`）：
+
+- `run_stage` 把每个选择器记进新数组 `STAGE_WANTED`（不论是否被 `--only` 选中）；
+- 所有阶段注册完之后校验 `--only`：没有匹配 ⇒ 报错、**exit 2**，并列出合法值；
+- 合法值**从 `STAGE_WANTED` 派生**，不是第二份手写清单 —— 手写清单没有消费者，它只约束写它的
+  那一刻（`EXP_CTEST` 的 130、M13 的 101、`API_BUILTIN_TABLE.md` 的 59，加上这条）。
+- 收尾句不再在部分运行上读起来像整场门禁：
+
+```
+gate: OK — the selected stage passed (--only links).
+gate: this was NOT the full gate: 11 stages are registered and only this one ran.
+```
+
+  全量运行则报「11/11 stages ran」。
+
+**实测**：`--only definitely-not-a-stage` ⇒ exit **2** + 三行 stderr（含合法值列表）；
+`--only links` ⇒ 跑 1 个阶段、收尾句自报「这不是完整门禁」。
+
+**为什么与 §1.54、§1.56 登记在一起**：三条是同一个缺陷类在三个层面上的样子 ——
+**一道不能拒绝的门**（数组池 `vm_pool_slot`）、**两个问题被折成一个返回值**
+（`posix_atomic_find` 的 `-1`）、**一句描述了一次它并没有执行的运行的总结**。
+
+**诚实边界**：① 这份发现来自 `ivory-ember`（它在自己的 `stream/ci-gate-static` 分支上也修了同一处），
+我独立复现了「打错名字 ⇒ 绿 + exit 0」这一条；② 没有穷举 `--only` 的其他畸形输入（空串、
+大小写、前后空格）；③ 阶段名列表是**派生**的，但派生自 `run_stage` 的**调用点**，如果有人绕过
+`run_stage` 直接跑一个函数，那个函数不会出现在列表里。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
