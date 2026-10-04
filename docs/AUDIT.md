@@ -1290,6 +1290,24 @@ blast radius 为零（实测，不是推断）。
 
 **诚实边界。** ① 本机 MSYS2 **没装 cmake.exe**，所以我做的是逐编译单元的 `-fsyntax-only`，不是完整 Windows 构建；完整证据（164/164 干净重建、`inimerse.exe` 链接成功）来自发布会话在**仓库外克隆**上的实测。② Linux 门禁**永远看不见**这一类缺陷：`tools/gate.sh` 跑在 Linux 上，glibc 没有 `<process.h>`，所以这道门禁此前红不了、以后也挡不住同类的 Windows-only 编译错 —— 能挡住它的只有 Windows CI，而 CI 自己红着的时候没人看。③ 编译修好之后 Windows 的 ctest 只有 **54/84**（30 项失败：9 项段错误、9 项超时、4 项 Failed、17 项 Not Run），那些是**运行时**缺陷，与本节无关，本轮**故意不修**（发布会话正在请用户决定是带已知问题发版还是修到全绿）。
 
+## §1.28 `vm_init` 是一张字段清单，清单漏了两个字段
+
+**现象。** Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相同：`rip=0x7ff7584c5673`，模块基址 `0x7ff7584a0000` ⇒ RVA `0x25673` ⇒ `prof_record_call+0x73`（函数入口 `0x140025600`）。`objdump -dS` 给出的故障指令是 `140025673: mov %ebx,0x8(%r12)`，对应 `src/compilation/profiler.c:101` 的 `fr->depth = depth;`，其中 `fr = &st->stack[st->stack_count++]`、`st = (ProfState*)vm->prof_state`。
+
+**根因。** `src/vm/vm.c` 的 `vm_init` 原本是一张**逐字段赋值清单**，没有任何 `memset`，而清单里从来没有 `prof_enabled`（`src/vm/vm.h:309`）和 `prof_state`（`src/vm/vm.h:310`）。两个调用点 `src/main.c:949` 与 `src/main.c:979` 都是**栈上**的 `VM vm; vm_init(&vm);`，于是这两个字段是栈上的垃圾值：`vm->prof_enabled` 非 0 时，`src/vm/vm.c:3930` 的 `if (vm->prof_enabled) prof_record_call(...)` 就用一个垃圾 `prof_state` 指针去记录调用。Linux 之所以是绿的，只是因为新栈页恰好是零 —— **这不是「Linux 对」，是「Linux 没被照到」**。
+
+**这不是两个字段的疏漏，是清单这种写法的必然结果。** `vm_init` 自己的注释（原 `src/vm/vm.c:1407`）已经写着「追加字段必须清零」——作者知道规则，清单还是漂了。把 `vm_init` 里的 `vm->X` 赋值集合与 `src/vm/vm.h` 的结构体声明做差，**12 个字段一次赋值都没有**：`hookCount`、`spi_sub_count`、`spi_sub_cap`、`spi_subs`、`user_data`、`argc`、`argv`、`cur_argc`、`prof_enabled`、`prof_state`、`main_thread`、`mod_bcs`；另有整组 `im2d_*`（`im2d_interval_ms`、`im2d_next_frame`、`im2d_ready`、`im2d_dt`、`im2d_scene[64]`、`im2d_last_scene[64]`、`im2d_cb_load/update/render`）同样一次都没有。
+
+**修法：`memset(vm, 0, sizeof(VM))` 放在 `vm_init` 最前面，清单原样保留。** 保留清单不是冗余，而是因为它设置的是**正确值不是 0** 的那些字段（`sp = -1`、`exec_timeout_ms = 120000`、`mod_caps = -1`、`record_save_path = strdup("save.dat")`、`ent_free_head = -1`）——清零保证起点确定，清单保证意图不被清零替代。**为什么 `memset` 不会破坏 `-1` 哨兵**：`im2d_cb_load/update/render` 的 `(-1=未解析, -2=不存在)` 只在 `src/vm/vm.c:2529` 的 `if (!vm->im2d_ready)` 里被读取，而 `:2526` 的 `if (vm->im2d_interval_ms <= 0) return 0;` 先把整条 `vm_frame_callback` 挡在门外；清零后两个守卫都读 0，哨兵在第一次被读之前就被重新建立。
+
+**同一轮删掉的调试残留。** `src/vm/vm.c:1312-1313` 在 Windows 上会往 stderr 打 `[TBP] timeBeginPeriod(1) result=%u (0=OK)` —— 这是发布阻塞项，改为 `(void)timeBeginPeriod(1);`（POSIX 侧 `src/vm/vm.c:157` 本来就有同名的空桩）。
+
+**判据（新增 CTest `vm_init_probe`，#121）。** 新探针 `src/vm/vm_init_probe.c` 先用 `memset(&vm, 0xAA, sizeof vm)` **把结构体填成脏值**，再调 `vm_init`，然后逐项断言上表全部字段为零、以及清单提供的非零默认值仍然正确。**预填 0xAA 才是这条判据的全部意义**：它让「删掉 memset」在任何平台上都红，而不是只在栈恰好是脏的那一台上红。**双向验证**：正常构建 `vm_init_probe: OK`（exit 0）；把 `memset(vm, 0, sizeof(VM));` 换成空注释后重编，探针打印 **25 条 `FAIL`**（`prof_enabled`、`prof_state`、`hookCount`、`spi_subs`、`spi_sub_count`、`spi_sub_cap`、`user_data`、`argc`、`argv`、`cur_argc`、`main_thread`、8×`mod_bcs[i]`、6×`im2d_*`）并以 exit 1 结束；还原后逐字节相同、复绿。
+
+**探针自己的一处修正。** 第一版负控**丢掉了全部 FAIL 行**：检查失败时结构体按定义是未定的，`vm_free(&vm)` 跟着垃圾指针走，进程在 stdout 被 flush 之前就以 `free(): invalid pointer` 中止。现在失败路径**不调 `vm_free`**、先 `fflush(stdout)` 再返回 1 —— 一个「失败时看不到失败原因」的判据等于没有判据。
+
+**诚实边界。** ① 18 个用例是在 Windows 上观察到的，本机（Linux）修复前后都绿，所以「修好了那 18 个」的**最终确认在发布会话的 Windows 机器上**，本节的证据是「字段差集 + 负控探针」。② `memset` 修的是「未初始化」，不是「未定义」：清单与结构体的同步仍然靠人，探针只钉住**这一版**的字段集合；结构体新增字段而清单和探针都没跟上时，探针不会自动发现（它能发现的只有「零值不对」）。③ 探针断言的是 `vm_init` 之后的字段值，不覆盖 `vm_free` 与运行期语义。④ 同一轮**没有**碰 `atomic_*` 的 Windows 位宽缺陷与两个 verse C 探针的失败 —— 它们是独立的三类问题，分开处理。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

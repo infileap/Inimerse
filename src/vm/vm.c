@@ -1297,6 +1297,14 @@ void vm_global_clone(VM *vm) {
 }
 
 void vm_init(VM *vm) {
+    /* Every field must start determinate. This used to be a field-by-field list
+     * only, and prof_enabled/prof_state were never in it -- so a stack VM (see
+     * src/main.c:949/:979) had garbage profiler state, and the first function
+     * call wrote through a garbage prof_state pointer. On Linux the fresh stack
+     * page happened to be zero; on Windows 18 CTest cases died with 0xC0000005
+     * at prof_record_call (src/compilation/profiler.c:101). The explicit list
+     * below still runs: it sets the fields whose correct value is NOT zero. */
+    memset(vm, 0, sizeof(VM));
     vm->limit_vram = 0;
     /* mark-sweep GC state */
     vm->gc_enabled = 0; vm->gc_pending = 0; vm->gc_threshold = 0;
@@ -1309,8 +1317,7 @@ void vm_init(VM *vm) {
     vm->gc_emark = NULL; vm->gc_emark_count = 0; vm->gc_emark_cap = 0;
     vm->gc_runs = 0; vm->gc_freed = 0;
 
-    MMRESULT tr = timeBeginPeriod(1); /* 1ms timer resolution */
-    fprintf(stderr, "[TBP] timeBeginPeriod(1) result=%u (0=OK)\n", (unsigned)tr);
+    (void)timeBeginPeriod(1); /* 1ms timer resolution; no-op stub on POSIX */
     vm->code = NULL;
     vm->ip = 0;
     vm->sp = -1;

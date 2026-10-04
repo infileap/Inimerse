@@ -885,6 +885,20 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME order_requires_orderable_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/order_requires_orderable_v06.im)
   set_tests_properties(order_requires_orderable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=type_mismatch nillt=type_mismatch streq=false strlt=true strgt=false numlt=true numle=true boollt=true biglt=true minset=nil maxset=nil minscalar=nil" FAIL_REGULAR_EXPRESSION "strnum=true|arrnum=true|nille=true|zerole=true|nillt=true|maxset=5 ")
 
+  # Pins "vm_init leaves no field indeterminate" (docs/AUDIT.md §1.28): prefills
+  # a VM with 0xAA, calls vm_init, and checks the fields the old field-by-field
+  # list never mentioned. It links the engine objects directly, which is the only
+  # way a C test can observe the C-side initialization contract at all.
+  add_executable(vm_init_probe src/vm/vm_init_probe.c)
+  target_link_libraries(vm_init_probe PRIVATE inimerse_engine)
+  if(WIN32)
+    target_link_libraries(vm_init_probe PRIVATE m winhttp crypt32 gdi32 winmm msimg32
+      windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+  else()
+    target_link_libraries(vm_init_probe PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
+  endif()
+  add_test(NAME vm_init_probe COMMAND vm_init_probe)
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

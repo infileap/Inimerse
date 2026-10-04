@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 120；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-05 更新测试计数到 121；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **120 / 120 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **121 / 121 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **120** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **121** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 120
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 121
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3450,3 +3450,17 @@ Windows 构建从 `39ddabd`（2026-10-02）起一直红，最后一次绿是 `a2
 **门禁实测（`.verify/v31/gate_win.log`）：** `GATE_RC=0`，`gate: OK — every stage passed.`，十阶段全 PASS，`warnings: 0` / `errors: 0`，`100% tests passed, 0 tests failed out of 120`、0 跳过，差分模糊测试钉住 `(0 DIVERGE, 0 THREW, 0 untranslated)`，`check_links: 93 markdown files, 412 links (17 external, 0 anchors, 395 local), 0 broken`，`check_doc_paths: 16 markdown files, 433 backtick 引用, 0 broken`。**没有新增 CTest，`EXP_CTEST` 保持 120** —— 本轮只动头文件位置与两个宏，不新增可执行行为。
 
 **诚实边界。** ① 本机 MSYS2 没装 `cmake.exe`，我给的证据是逐编译单元的 `-fsyntax-only`，完整构建证据来自发布会话。② Linux 门禁结构上**看不见**这一类缺陷（glibc 没有 `<process.h>`），能挡住它的只有 Windows CI。③ 编译修好后 Windows 的 ctest 仍只有 **54/84**（30 项运行时失败），本轮故意不修。
+
+## §10.61 `vm_init` 的字段清单漏了两个字段：Windows 上 18 个用例段错误
+
+Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相同：RVA `0x25673` ⇒ `prof_record_call+0x73`（`src/compilation/profiler.c:101` 的 `fr->depth = depth;`，`st = (ProfState*)vm->prof_state`）。根因是 `src/vm/vm.c` 的 `vm_init` 原本是一张**逐字段赋值清单**、没有任何 `memset`，而清单里从来没有 `prof_enabled`（`src/vm/vm.h:309`）与 `prof_state`（`src/vm/vm.h:310`）；两个调用点 `src/main.c:949`、`src/main.c:979` 都是**栈上**的 `VM vm;`，这两个字段因此是栈垃圾，`src/vm/vm.c:3930` 的 `if (vm->prof_enabled) prof_record_call(...)` 就拿垃圾指针去记录调用。Linux 是绿的只是因为新栈页恰好为零 —— 不是「Linux 对」，是「Linux 没被照到」。
+
+**这是清单这种写法的必然结果，不是两个字段的疏漏。** `vm_init` 自己的注释（原 `src/vm/vm.c:1407`）已经写着「追加字段必须清零」，清单还是漂了。把 `vm_init` 的 `vm->X` 赋值集合与 `src/vm/vm.h` 的结构体声明做差，**12 个字段一次赋值都没有**：`hookCount`、`spi_sub_count`、`spi_sub_cap`、`spi_subs`、`user_data`、`argc`、`argv`、`cur_argc`、`prof_enabled`、`prof_state`、`main_thread`、`mod_bcs`；整组 `im2d_*` 同样一次都没有。
+
+**修法。** `memset(vm, 0, sizeof(VM))` 放在 `vm_init` 最前面，原清单**原样保留** —— 清单设置的是「正确值不是 0」的字段（`sp = -1`、`exec_timeout_ms = 120000`、`mod_caps = -1`、`record_save_path = strdup("save.dat")`、`ent_free_head = -1`），清零保证起点确定，清单保证意图不被清零替代。`im2d_cb_*` 的 `-1` 哨兵不会被破坏：它只在 `src/vm/vm.c:2529` 的 `if (!vm->im2d_ready)` 里被读，而 `:2526` 的 `if (vm->im2d_interval_ms <= 0) return 0;` 先挡掉整条 `vm_frame_callback`，哨兵在第一次被读之前就重新建立。同一轮删掉 Windows 上的调试残留 `src/vm/vm.c:1312-1313`（`[TBP] timeBeginPeriod(1) result=%u`），改为 `(void)timeBeginPeriod(1);`。
+
+**判据（新增 CTest `vm_init_probe`，#121）。** `src/vm/vm_init_probe.c` 先用 `memset(&vm, 0xAA, sizeof vm)` 填脏，再调 `vm_init`，逐项断言全部字段为零以及清单的非零默认值仍正确。**预填 0xAA 是这条判据的全部意义**：它让「删掉 memset」在任何平台上都红。**双向验证**：正常构建 `vm_init_probe: OK`（exit 0）；把 `memset` 换成空注释后重编，探针打印 **25 条 `FAIL`** 并以 exit 1 结束；还原后复绿。探针自己修过一处：第一版负控**丢掉了全部 FAIL 行**（检查失败时结构体按定义未定，`vm_free` 跟着垃圾指针走，进程在 stdout flush 之前以 `free(): invalid pointer` 中止），现在失败路径不调 `vm_free`、先 `fflush(stdout)` 再返回 1。
+
+**计数同步。** `tools/gate.sh:50` 的 `EXP_CTEST` **120 → 121**，`docs/BOARD.md` §3 与本节 §2/§2.1 同步为 **121 / 121**。新探针注册在 `CMakeLists.txt` **测试列表末尾**（`add_test(NAME vm_init_probe COMMAND vm_init_probe)`）—— 它必须排在最后：CTest 的 `#N` 是注册顺序，插在中间会把 `#57` 之后的每一个既有编号整体后移，而多个历史行正引用着那些编号。
+
+**诚实边界。** ① 18 个用例是在 Windows 上观察到的，本机修复前后都绿，所以「修好了那 18 个」的最终确认在发布会话的 Windows 机器上；本节的证据是「字段差集 + 负控探针」。② `memset` 修的是「未初始化」，不是「未定义」：清单与结构体的同步仍然靠人，探针只钉住**这一版**的字段集合，结构体新增字段而清单与探针都没跟上时它不会自动发现。③ 探针只断言 `vm_init` 之后的字段值，不覆盖 `vm_free` 与运行期语义。④ 同一轮**没有**碰 `atomic_*` 的 Windows 位宽缺陷与两个 verse C 探针的失败 —— 它们是独立的三类问题，分开处理。
