@@ -1,6 +1,6 @@
 # Inimerse 0.5.0 Release Notes
 
-Inimerse 0.5.0 is the first release of the 0.5 line, 163 commits on from 0.4.1.
+Inimerse 0.5.0 is the first release of the 0.5 line, 182 commits on from 0.4.1.
 It is a correctness release: the language and the two runtimes were made to
 agree with each other, the verse (P1) layer gained a process-boundary closed
 loop, and the Windows build and its full CTest suite were brought back up.
