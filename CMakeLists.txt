@@ -291,6 +291,16 @@ if(INIMERSE_PYTHON)
   # Python and the engine binary, so it belongs to the Python-gated block.
   add_test(NAME http_large_package_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/http_large_package.test.py)
   set_tests_properties(http_large_package_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
+  if(WIN32)
+    # The complete hub -- /package, /package/fork, /content/, /economy/*,
+    # /node/*, /session/* -- is src/platform/http_posix.c, which the source
+    # lists below compile into the POSIX engine only.  The Windows engine links
+    # src/mod/verse_dist_mod.c instead: a reduced hub that answers /ping,
+    # /v/<id>, /hub and /api/forge, and hands every other path the 436-byte
+    # "Wrong port!" page.  This regression drives the POSIX hub's body limit,
+    # so on Windows it is disabled rather than failed (docs/STATUS.md §2.5-2.9).
+    set_tests_properties(http_large_package_regression PROPERTIES DISABLED TRUE)
+  endif()
 endif()
 if(INIMERSE_NODE)
   add_test(NAME crp_session_flow_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/crp_session.test.py)
@@ -328,6 +338,20 @@ if(INIMERSE_NODE)
             $<TARGET_FILE:verse_crp_probe>)
   set_tests_properties(verse_crp_crosscheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 120 LABELS "protocol;crp")
+  if(WIN32)
+    # These eight drive the POSIX hub's routes -- /package, /content/, /v/<id>
+    # over the WebSocket portal, /economy/*, /node/*, /session/* -- which only
+    # src/platform/http_posix.c serves.  The Windows engine's reduced hub
+    # (src/mod/verse_dist_mod.c) cannot answer them, so they are disabled
+    # rather than failed; the same reasoning as http_large_package_regression
+    # above.  `verse_pack_regression` is deliberately NOT in this list: the VDP
+    # is engine-side and must pass on Windows.
+    set_tests_properties(crp_session_flow_regression hub_dist_regression
+                         vverse_cross_regression node_discovery_regression
+                         lease_handoff_regression reconnect_generation_regression
+                         economy_domain_regression economy_migration_regression
+                         PROPERTIES DISABLED TRUE)
+  endif()
 endif()
 
 find_program(INIMERSE_CLANG clang)
