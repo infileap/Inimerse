@@ -1,0 +1,49 @@
+# spi_caps_contract_v06.im -- the capability string handed to spi_meta() used to
+# have TWO production points, and they answered the same input differently.
+#
+#   POSIX (posix_spi_meta, src/runtime/runtime_posix.c:948-956) asked
+#         strstr(s, "io") over the WHOLE string;
+#   WIN32 (spi_parse_caps, src/runtime/runtime.c:1185-1200) skipped to the next
+#         ',' and then asked strncmp(p, "io", 2).
+#
+# Both matched a capability NAME as a substring of a longer run of characters.
+# Measured, before the fix (POSIX | WIN32):
+#
+#   "io,net"  768 | 768   the form src/vm/vm.h:159 documents; the only input the
+#                         two copies agreed on
+#   "io net"  768 | 256   WIN32 granted CAP_IO from a non-token and silently
+#                         dropped CAP_NET
+#   "audio"   256 |   0   POSIX silently granted CAP_IO
+#   "ionet"   768 | 256   both granted CAP_IO, POSIX also granted CAP_NET
+#
+# FIXED: both runtimes now call the single vm_parse_caps (src/vm/vm.c), which
+# matches a whole comma-separated token and nothing else -- exactly the form
+# src/vm/vm.h:159 documents.  An input outside that form grants nothing, which
+# is the direction vm.h:156's "minimal-permission" model names; a mod that
+# mistyped its declaration finds out at the first capability-gated call, where
+# the builtin refuses it, instead of silently holding a grant it never spelled.
+#
+# REGISTERED, NOT RESOLVED: the caps argument's TYPE is still two production
+# points -- spi_meta(id, ver, true) answers 0 on POSIX and CAP_MASK on WIN32.
+# That field is asserted per platform in CMakeLists.txt, the way round() with a
+# non-number argument is (vtest/round_nonnumber_contract_v06.im).
+#
+# One line, values only, never exit codes (docs/SYNTAX.md:596).
+
+spi_meta("caps-doc", 1, "io,net")
+doc = spi_caps()
+spi_meta("caps-space", 1, "io net")
+space = spi_caps()
+spi_meta("caps-audio", 1, "audio")
+audio = spi_caps()
+spi_meta("caps-ionet", 1, "ionet")
+ionet = spi_caps()
+spi_meta("caps-all", 1, "all")
+allc = spi_caps()
+spi_meta("caps-int", 1, 256)
+intc = spi_caps()
+spi_meta("caps-bool", 1, true)
+boolc = spi_caps()
+say "spi-caps-ok doc=" + str(doc) + " space=" + str(space) + " audio=" + str(audio) +
+    " ionet=" + str(ionet) + " all=" + str(allc) + " int=" + str(intc) +
+    " bool=" + str(boolc)

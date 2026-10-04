@@ -1985,6 +1985,56 @@ CTest `#127 parser_member_safe_probe`（注册在最后，既有 `#N` 不动）�
 3. `params_precompiled_v06.inim` 是一个**二进制产物**。它会随前端变化而陈旧，而且没有任何东西在校对它与源码是否同步——这正是本仓库反复出现的「一个偶然对上的常量被当成了保证」。
 4. 三条用例都只断言程序输出，不断言退出码。第二条用 `FAIL_REGULAR_EXPRESSION "params-relative speed="` 补上「脚本不得跑完」这一半，否则一个打了错误信息但退出 0 的引擎会蒙混过去。
 
+## §1.50 能力串有两个生产点：同一句 `spi_meta` 在两侧拿到不同的权限
+
+`spi_meta(id, version, caps)` 的第三个实参是一串能力名，而仓库唯一写过它形状的地方是
+`src/vm/vm.h:159` 的注释——`spi_meta(id, version, "io,net")`，即**逗号分隔的整名**。
+但**解析它的是两份各自独立的代码**：
+
+- POSIX `posix_spi_meta`（`src/runtime/runtime_posix.c:948-956`）对**整串**连做六次 `strstr`：
+  `if (strstr(caps.sval, "io")) mask |= CAP_IO;` …；
+- WIN32 `spi_parse_caps`（`src/runtime/runtime.c:1185-1200`）先跳到下一个 `,`，再 `strncmp(p, "io", 2)`。
+
+于是两侧都把**能力名当成一段更长字符里的子串**来匹配，而且**方向相反**。实测（修前，POSIX | WIN32）：
+
+| `caps` 实参 | POSIX | WIN32 | 谁错了 |
+| --- | --- | --- | --- |
+| `"io,net"` | 768 | 768 | 都对（**唯一**一致的一格，也正是 `vm.h` 写下的形状） |
+| `"io net"` | 768 | 256 | WIN32：从 `"io net"` 这个非 token 里**前缀**匹配出 `io`，并**静默丢掉 `net`** |
+| `"audio"` | **256** | 0 | POSIX：`strstr("audio","io")` 命中，**静默过授 `CAP_IO`** |
+| `"ionet"` | 768 | 256 | 两侧都从非 token 里匹配出 `io`，POSIX 还多授了 `net` |
+
+**修法是把两个生产点收成一个**（`docs/DECFY_DESIGN.md:10-12` 的「让所有后端消费同一个 IR」）：
+新增 `int vm_parse_caps(const char *s)`（`src/vm/vm.c`，声明在 `src/vm/vm.h` 紧挨它返回的
+`CAP_*` 位），按**整段逗号分隔的 token** 精确匹配，正是 `vm.h:159` 写下的那个形状；两侧
+runtime 都调它，`spi_parse_caps` 整个删掉。不在那个形状里的输入（`"audio"`、`"io net"`、
+`"io, net"`）**什么都不授**——`vm.h:156` 把这个模型叫 **minimal-permission**，所以对未定义的
+输入答**更小**的那个集合；写错声明的模组会在第一次受能力管辖的调用上被内建**拒绝**，而不是
+悄悄持有一份它从未写出的授权。修后两侧在**全部 11 个字符串输入**上逐字一致：
+`doc=768 space=0 audio=0 ionet=0 all=65280 int=256`。
+
+**已登记、未裁定（第二处）**：`caps` 实参的**类型**仍是两个生产点——`spi_meta(id, ver, true)`
+POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 答 **65280 = CAP_MASK**
+（`src/runtime/runtime.c` 的 `else if (capsv->type == VAL_BOOL) caps = capsv->ival ? CAP_MASK : 0;`）。
+设计记录与 `docs/API.md` 都没有规定这个实参的类型，**不挑一侧当规范**（`docs/DECFY_DESIGN.md:8-12`、
+`docs/STATUS.md:30`）。新 pin `vtest/spi_caps_contract_v06.im` 把前六个字段断言成**一份**（两侧已
+一致），把 `bool=` 这一个字段**按平台各断言各自现行值**（`CMakeLists.txt`），任一侧漂移立刻变红
+——与 §1.47 的 `round` 同一手法。
+
+**同批更正一条上一轮的结论**：§1.45 之后收到的一份报告说 WIN32 `builtin_spi_mods`
+（`src/runtime/runtime.c:1328-1354`）用 `vm_array_push` 六次「冒充 dict」、是错的一侧。**实测证伪**：
+`vm_dict_set`（`src/vm/vm.c:1027`）**自己的存储布局就是「交替键值的数组」**（`a->items[a->count++] = key_copy;`
+`a->items[a->count++] = val_copy;`），哈希表是**惰性**建的（每个消费者进来先 `dict_hash_ensure`，
+再 `if (!h->slots && a->count > 0) dict_hash_build(vm, aidx);`），所以在没有「边写边查」的情况下两者
+**可观测地等价**。对 `spi_mods()[0]` 实测 12 个字典操作（`len`/`size`/`keys`/`has`/按键取值/取缺失键/
+`str()`/整数下标/写入后重查）**两平台逐字相同**。⇒ 那条是**读码结论，不是实测结论**；登记为
+「未被复现」，不作修改。
+
+**诚实边界**：① 我只测了 `spi_meta` 一处，没有全仓搜其它「用 `strstr`/`strncmp` 匹配名字」的地方；
+② `"io, net"`（逗号后有空格）修后答 0 是**新行为**，两侧此前都不是 0——这是「不在文档形状里就不授」
+这条规则的推论，不是从任一侧继承来的值；③ 我没有核 `spi_has()` 的判定是否与 `mod_caps` 的位语义
+完全同构（`posix_spi_has` 与 `builtin_spi_has` 的写法本身也有细微差别，本轮未动）。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

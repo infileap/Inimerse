@@ -1115,3 +1115,25 @@ add_test(NAME params_precompiled_runtime
 set_tests_properties(params_precompiled_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
   PASS_REGULAR_EXPRESSION "params-precompiled player=42")
+
+# spi_caps_contract_v06.im -- the capability string had two production points
+# (posix_spi_meta's strstr chain and the Windows runtime's spi_parse_caps), and
+# they answered "io net", "audio" and "ionet" differently.  Both now call the
+# single vm_parse_caps.  Every string field is asserted once, because both
+# platforms now agree on all of them; the caps argument's TYPE is still two
+# production points (true -> 0 on POSIX, CAP_MASK on WIN32), so that ONE field
+# is selected per platform here -- the divergence stays visible and
+# change-detectable without anyone adjudicating it.  See docs/AUDIT.md 1.50.
+#
+# Registered last so no existing #N moves.
+add_test(NAME spi_caps_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/spi_caps_contract_v06.im)
+set_tests_properties(spi_caps_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression")
+if(WIN32)
+  set_tests_properties(spi_caps_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "spi-caps-ok doc=768 space=0 audio=0 ionet=0 all=65280 int=256 bool=65280")
+else()
+  set_tests_properties(spi_caps_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "spi-caps-ok doc=768 space=0 audio=0 ionet=0 all=65280 int=256 bool=0")
+endif()
