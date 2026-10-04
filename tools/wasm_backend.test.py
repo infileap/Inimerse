@@ -118,7 +118,10 @@ def main():
             assert rc.returncode == 0, f"{name}: compile failed: {rc.stderr.decode(errors='replace')}"
 
             w = run([node, str(HERE / "wasm_run.js"), f"{name}.wasm"], root)
-            i = run([str(engine), "run", im.name], root)
+            # --no-mods: the wasm host runs the module alone, so the
+            # interpreter has to be compared without its module-load notices
+            # (mods/build/build_mod.c prints one to stdout on Windows).
+            i = run([str(engine), "--no-mods", "run", im.name], root)
             assert i.returncode == 0, f"{name}: interpreter failed: {i.stderr.decode(errors='replace')}"
             assert w.returncode == 0, f"{name}: wasm failed: {w.stderr.decode(errors='replace')}"
             assert w.stdout == i.stdout, (
@@ -140,7 +143,7 @@ def main():
                 f"{name}: expected the wasm backend to accept this program: "
                 f"{rc.stderr.decode(errors='replace')}")
             w = run([node, str(HERE / "wasm_run.js"), f"one_{name}.wasm"], root, timeout=120)
-            i = run([str(engine), "run", im.name], root, timeout=120)
+            i = run([str(engine), "--no-mods", "run", im.name], root, timeout=120)
             assert i.returncode == 0, (
                 f"{name}: the interpreter must accept this program: "
                 f"{i.stderr.decode(errors='replace')}")
