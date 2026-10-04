@@ -909,7 +909,9 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 return out;
             }
             if (expr->call.callee->type == EXPR_IDENT || expr->call.callee->type == EXPR_MEMBER) {
-                char fname[256];
+                /* 512, not 256: nsfull_c below is 512 and the namespaced-call
+                   path copies it in whole.  See docs/AUDIT.md 1.22. */
+                char fname[512];
                 if (expr->call.callee->type == EXPR_IDENT) {
                     snprintf(fname, sizeof(fname), "%.*s", (int)expr->call.callee->identName.length,
                              expr->call.callee->identName.start);
@@ -1948,7 +1950,8 @@ case STMT_WITH: {
                 if (stmt->guiStmt.argCount >= 1 && stmt->guiStmt.args[0]->type == EXPR_IDENT) {
                     char sname[256];
                     snprintf(sname, sizeof(sname), "%.*s", (int)stmt->guiStmt.args[0]->identName.length, stmt->guiStmt.args[0]->identName.start);
-                    char tname[256];
+                    /* 256 + strlen("sprite#") so the prefix cannot eat the name. */
+                    char tname[264];
                     snprintf(tname, sizeof(tname), "sprite#%s", sname);
                     int tidx = register_thread(comp, tname);
                     if (tidx >= 0) {

@@ -923,7 +923,7 @@ cmake --build "$BUILD_DIR" --clean-first -j"$JOBS" >"$log" 2>&1 || { cat "$log";
 - `-Wunused-result` 的 `chdir` 三处：`src/main.c:280`、`:454`、`:878`。注意 **`(void)` 强制转换不能消掉 `-Wunused-result`**（实测仍然报），要写成 `if (_chdir(p) != 0) { /* best effort */ }` 让值真的被用掉。
 - `_GNU_SOURCE` 重定义：`src/main.c:1` 加了 `#ifndef` 保护。
 
-**还剩下的 16 条 `-Wformat-truncation`（如实记在明处，本轮未动）：**
+**当时剩下的 16 条 `-Wformat-truncation`（如实记在明处；下一轮全部修掉，见 §1.22）：**
 
 | 位置 | 警告 |
 |---|---|
@@ -934,7 +934,78 @@ cmake --build "$BUILD_DIR" --clean-first -j"$JOBS" >"$log" 2>&1 || { cat "$log";
 | `src/main.c:245` | 最多 511 字节写进 0–1023 字节 |
 | `src/compiler/compiler.c:922`、`:1952` | 最多 511 / 255 字节写进 256 / 249 字节 |
 
-这 16 条是真的缓冲区尺寸问题，每一条都需要一次判断（扩大缓冲、还是显式接受截断、还是改成拒绝），所以留作独立的一轮，不混在本次改动里。**它们是现在才第一次可见的** —— 之前那句 `warnings: 0` 把它们全部盖住了。
+这 16 条是真的缓冲区尺寸问题，每一条都需要一次判断（扩大缓冲、还是显式接受截断、还是改成拒绝），所以留作独立的一轮，不混在本次改动里。**它们是现在才第一次可见的** —— 之前那句 `warnings: 0` 把它们全部盖住了。它们已在 §1.22 全部修掉。
+
+## §1.22 16 条 `-Wformat-truncation`：三种判断，以及一条「拒绝而不是截断」的新约定
+
+§1.21 把 16 条 `-Wformat-truncation` 如实记在明处，本轮把它们全部修掉。门禁的 `warnings` 从 25 降到 **0**（全量 `--clean-first` 构建，`.verify/v31/warn4.txt`）。
+
+**这些警告是真的。** `-Wformat-truncation` 不是风格问题：它说的是 `snprintf` 的目标缓冲区可能装不下格式化结果，而 `snprintf` 的回应是**静默截断**。对一条路径来说，静默截断意味着文件写到别的地方；对一条诊断信息来说，意味着用户看到半句话。GCC 只在能证明边界时才报，所以这 16 条每一条都需要一次判断。
+
+### 判断一：目标缓冲区本来就该更大 —— 扩大它
+
+| 位置 | 原来 | 现在 | 理由 |
+|---|---|---|---|
+| `src/compiler/compiler.c:912` | `char fname[256]` | `char fname[512]` | `:919` 的 `nsfull_c` 就是 `char[512]`，`:922` 整个拷进来 |
+| `src/compiler/compiler.c:1952` | `char tname[256]` | `char tname[264]` | 固定前缀 `"sprite#"` 7 字节 + `sname[256]` |
+| `src/mod/replay_mod.c:286` | `char tail[256]` | `char tail[448]` | 固定文本 40 + `key_esc[288]` + `g_prev_hash[65]` = 最坏 391 |
+
+这三处的共同点：**缓冲区比它要装的东西小，而装的东西的尺寸在编译期就能算出来**。扩大是唯一不丢信息的改法。
+
+### 判断二：截断是可接受的，但要显式写出来 —— 加精度
+
+| 位置 | 改法 |
+|---|---|
+| `src/lint_mod.c:377` | `"%s"` → `"%.95s"`（源和目标都是 `char[32][96]`） |
+| `src/lint_mod.c:425`、`:429` | `%s`（`variant[8]`）→ `%.7s`；`%s`（`type_name[64]`）→ `%.63s`，最坏 165 < 320 |
+| `src/mod/verse_dist_mod.c:588`、`:590` | `"http://%s/v/%s"` → `"http://%.500s/v/%.680s"`，最坏 1190/1194 < 1200 |
+| `src/platform/http_posix.c:553`、`:555` | `"http://%s/ping"` → `"http://%.499s/ping"`；`"%s/ping"` → `"%.506s/ping"` |
+
+显式精度把「编译器无法证明」变成「编译器能证明」，代价是承认超长输入会被截断。对诊断信息和探活 URL 来说这是可接受的 —— 截断后的 ping URL 会在 hub 上响亮地失败，而不是安静地访问错误的资源。
+
+**注意 `src/platform/http_posix.c:556` 的第一版精度 `%.500s` 仍然报同一条警告**：`"http://"`(7) + 500 + `"/ping"`(5) = 512，正好等于 `sizeof url`，但还要一个 NUL，所以差一字节。改成 `%.499s` 才是 7 + 499 + 5 = 511 + NUL = 512。**`snprintf` 的容量包含结尾 NUL**，这是这类 off-by-one 警告的常见来源。
+
+### 判断三：路径不能截断 —— 改成拒绝
+
+`src/lint_mod.c:181` 的 `lint_add` 往 `LintBuf.lines[64][200]` 写调用方的 `char msg[320]`。这里没有「扩大」这个选项：`LintBuf` 已经是 12.8 KB，而且可能是栈上分配的。改成前缀 `snprintf` + 显式 clamp + `memcpy` 余量 + NUL —— **`msg` 完全不再走 `%s`**，编译器因此能证明边界。截断的是诊断正文，前缀（行号和 tag）始终完整。
+
+路径类的四处（`src/main.c:247`、`src/mod/verse_dist_mod.c:384`、`:839`（两处）、`:1297`）换成 `im_platform_path_join`：
+
+```c
+int im_platform_path_join(char *buffer, size_t capacity, const char *base, const char *part);
+```
+
+它在 `src/platform/platform.c:122-133`，装不下时返回 **-1**（`return (written < 0 || (size_t)written >= capacity) ? -1 : 0;`），同时会去掉 `base` 结尾和 `part` 开头多余的分隔符，并按平台选 `/` 或 `\`。
+
+**为什么是拒绝而不是扩大缓冲区**：静默截断的路径会把文件写到**错误的位置** —— 那是数据损坏，而且是安静的；被拒绝的 join 只是一个被跳过的条目。调用方现在一律 `if (im_platform_path_join(...) != 0) continue;`。
+
+因为 `im_platform_path_join` 自己就按平台选分隔符，`src/main.c:247` 和 `src/mod/verse_dist_mod.c:384` 里那两段 `#ifdef _WIN32` 的 `/`→`\` 转换循环随之删掉。
+
+**这条约定值得单独记住**：本仓库原来的路径拼接是 `snprintf(dst, sizeof dst, "%s/%s", a, b)` —— 截断、且不告诉任何人。以后新写的路径拼接一律走 `im_platform_path_join`。
+
+### 钉住
+
+`src/platform/platform_probe.c` 是既有测试（CTest `platform_probe`，`CMakeLists.txt:190`），本轮把 join 的语义补进去，**没有新增 CTest、`EXP_CTEST` 不变（117）**：
+
+```c
+char tiny[8];
+if (im_platform_path_join(tiny, sizeof tiny, "/tmp", "inimerse") != -1) return 6;
+if (im_platform_path_join(NULL, sizeof tiny, "/tmp", "inimerse") != -1) return 7;
+if (im_platform_path_join(tiny, 0, "/tmp", "inimerse") != -1) return 8;
+char a[64], b[64];
+if (im_platform_path_join(a, sizeof a, "/tmp/", "/inimerse") != 0) return 9;
+if (im_platform_path_join(b, sizeof b, "/tmp", "inimerse") != 0) return 10;
+if (strcmp(a, b) != 0) return 11;
+```
+
+即：装不下必须拒绝、`NULL`/零容量必须拒绝、多余分隔符必须归一化。
+
+### 诚实边界
+
+- **没有为「路径过长时跳过条目」写端到端测试。** 要触发它需要构造一条超过 1024 字节的路径，而 `zip_extract_all` / verse jar 解包都不可从 `.im` 直接调用。能钉住的只有 `im_platform_path_join` 本身的语义（上面），拼接点是否都检查了返回值只由代码审阅保证。
+- **`warnings: 0` 现在是真的，但仍然不是断言。** `stage_build` 对警告数返回 0；把它做成断言需要一个与编译器版本绑定的数字。这一轮之所以能说「归零」，是因为全量 `--clean-first` 构建的输出被落盘并数过（`.verify/v31/warn4.txt`），而不是因为门禁说 0。
+- **WIN32 目标本机不编**，所以 `src/main.c` / `src/mod/verse_dist_mod.c` 的 Windows 分支只有与 POSIX 逐字一致这一层保证。
+- **`-Wformat-truncation` 只是可见警告的一部分。** 这一轮清掉的是 GCC 当前愿意报的那些；换编译器版本可能报出新的。
 
 ## §2 执行通道效率比较
 

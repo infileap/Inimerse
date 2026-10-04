@@ -549,10 +549,13 @@ static void *node_probe_loop(void *unused) {
             if (endpoints[i][0]) {
                 char url[512], buf[256];
                 int status = 0;
+                /* endpoints[i] is char[256] and url is 512, but bound the copy
+                   explicitly so the destination is provably sized.  See
+                   docs/AUDIT.md 1.22. */
                 if (strncmp(endpoints[i], "http://", 7) != 0 && strncmp(endpoints[i], "https://", 8) != 0)
-                    snprintf(url, sizeof url, "http://%s/ping", endpoints[i]);
+                    snprintf(url, sizeof url, "http://%.499s/ping", endpoints[i]);
                 else
-                    snprintf(url, sizeof url, "%s/ping", endpoints[i]);
+                    snprintf(url, sizeof url, "%.506s/ping", endpoints[i]);
                 if (im_http_request("GET", url, NULL, buf, sizeof buf, &status) == 0 && status == 200 && strstr(buf, "pong")) {
                     up = 1;
                     seen = http_now_ms();

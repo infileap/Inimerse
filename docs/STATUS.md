@@ -3190,3 +3190,26 @@ release_to(comp, first + 1);
 **门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（**`warnings: 25`** —— 这是本仓库第一次如实报出警告数；`errors: 0`）、`✔ ctest (expect 117/117, 0 skipped)`（`100% tests passed, 0 tests failed out of 117`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）。**`--clean-first` 是必需的**：只统计「第一次构建」在树恰好是脏的时候才对，门禁经常在刚构建过的树上跑，那时增量构建一个文件都不重编、计数又变回 0（这正是修完第一版后仍看到 `warnings: 0` 的原因）。
 
 **诚实边界。** ① 还剩下 **16 条 `-Wformat-truncation`**（清单在 [AUDIT.md](AUDIT.md) §1.21），本轮**未动** —— 每一条都要判断是扩大缓冲、显式接受截断还是改成拒绝，留作独立一轮。② 六处缺陷**都没有退出码信号**，只改值：不抛异常、不报错，和 §10.50/§10.52/§10.53 同类。③ `sqrt` 仍然不吃字符串（`float("9")` 走 `strtod`，`sqrt("9")` 不是 3），是另一个未修的既有缺口。④ WIN32 的 `builtin_sqrt` 与 `src/mod/verse_dist_mod.c` 的两处端口解析**本机不可执行**（Linux 上这两个目标不编），能证明的只是与 POSIX 写法逐字一致。
+
+
+## 10.55 16 条 `-Wformat-truncation` 清空，以及「路径拼接拒绝而不是截断」的新约定（BOARD 行 153）
+
+**起点。** §10.54 让门禁第一次如实报出警告数，那个数字是 `warnings: 25`（全量 `--clean-first`），其中 **16 条是 `-Wformat-truncation` / 15 个不同位置**（`src/platform/http_posix.c` 编进 4 个目标，所以按出现次数是 4 条）。本轮把它们全部修掉，`warnings` 归零。
+
+**为什么这些警告是真的。** `-Wformat-truncation` 说的是 `snprintf` 的目标缓冲区可能装不下格式化结果，而 `snprintf` 的回应是**静默截断**。对一条路径来说，截断意味着文件写到别的地方；对一条诊断信息来说，意味着用户看到半句话。GCC 只在能证明边界时才报，所以每一条都需要一次判断。
+
+**三种判断。**
+
+① **缓冲区本来就该更大**：`src/compiler/compiler.c:912` 的 `char fname[256]`（`:919` 的 `nsfull_c` 就是 `char[512]`）→ **512**；`src/compiler/compiler.c:1952` 的 `char tname[256]`（固定前缀 `"sprite#"` 7 字节 + `sname[256]`）→ **264**；`src/mod/replay_mod.c:286` 的 `char tail[256]`（固定 40 + `key_esc[288]` + `g_prev_hash[65]` = 最坏 391）→ **448**。
+
+② **截断可接受，但要显式写出来**：`src/lint_mod.c:377` `"%s"` → `"%.95s"`；`src/lint_mod.c:425`/`:429` 的 `variant[8]`/`type_name[64]` → `%.7s`/`%.63s`（最坏 165 < 320）；`src/mod/verse_dist_mod.c:588`/`:590` → `"http://%.500s/v/%.680s"`（最坏 1190/1194 < 1200）；`src/platform/http_posix.c:553`/`:555` → `"http://%.499s/ping"` / `"%.506s/ping"`。
+
+**`src/platform/http_posix.c:556` 的第一版 `%.500s` 仍然报同一条警告**：`"http://"`(7) + 500 + `"/ping"`(5) = 512，正好等于 `sizeof url`，但 `snprintf` 的容量**包含结尾 NUL**，所以差一字节；`%.499s` 才是 7 + 499 + 5 = 511 + NUL = 512。这是这类 off-by-one 的常见来源。
+
+③ **路径不能截断 —— 改成拒绝**：`src/main.c:247`、`src/mod/verse_dist_mod.c:384`、`:839`（两处）、`:1297` 四处换成 `im_platform_path_join`（`src/platform/platform.c:122-133`，装不下返回 **-1**，同时归一化分隔符、按平台选 `/` 或 `\`）。理由：静默截断的路径把文件写到**错误的位置**，那是安静的数据损坏；被拒绝的 join 只是一个被跳过的条目。调用方一律 `if (im_platform_path_join(...) != 0) continue;`。`src/lint_mod.c:181` 的 `lint_add` 没有「扩大」这个选项（`LintBuf` 已 12.8 KB、可能栈上），改成前缀 `snprintf` + 显式 clamp + `memcpy` 余量 + NUL，**`msg` 完全不再走 `%s`**。因为 join 自己按平台选分隔符，`src/main.c:247` 与 `src/mod/verse_dist_mod.c:384` 里那两段 `#ifdef _WIN32` 的 `/`→`\` 转换循环随之删掉。
+
+**判据。** 把 join 的语义补进既有的 `src/platform/platform_probe.c`（CTest `platform_probe`，`CMakeLists.txt:190`）：装不下必须返回 -1、`NULL`/零容量必须返回 -1、多余分隔符必须归一化。**没有新增 CTest，`EXP_CTEST` 保持 117**，§2 与本表不变。
+
+**门禁实测。** 全量 `--clean-first` 构建 **`warning lines: 0`**（`.verify/v31/warn4.txt`，`BUILD_RC=0`）；`platform_probe` 退出码 **0**；`ctest -R 'platform_probe|truthiness|union_member|...'` **8/8 Passed**。
+
+**诚实边界。** ① **没有为「路径过长时跳过条目」写端到端测试** —— 触发它需要构造超过 1024 字节的路径，而 `zip_extract_all` / verse jar 解包都不可从 `.im` 直接调用；能钉住的只有 `im_platform_path_join` 本身的语义，拼接点是否都检查了返回值只由代码审阅保证。② `warnings: 0` 现在是真的，但 `stage_build` **仍然对警告数返回 0**，它不是断言；这一轮能说「归零」是因为全量 `--clean-first` 的输出被落盘并数过，而不是因为门禁说 0。③ WIN32 目标本机不编，`src/main.c` / `src/mod/verse_dist_mod.c` 的 Windows 分支只有与 POSIX 逐字一致这一层保证。④ 清掉的是 GCC 当前愿意报的那些，换编译器版本可能报出新的。

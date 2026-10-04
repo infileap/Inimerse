@@ -380,11 +380,10 @@ static int verse_zip_extract(const char *zipPath, const char *outDir) {
         uint16_t lel = *(uint16_t*)(buf + lho + 28);
         uint32_t dataOff = lho + 30 + lnl + lel;
         if (dataOff + csize > (uint32_t)fsz) continue;
+        /* Refuses instead of truncating: a path that does not fit skips the
+           entry rather than writing the file elsewhere.  See docs/AUDIT.md 1.22. */
         char outPath[1024];
-        snprintf(outPath, sizeof outPath, "%s/%s", outDir, name);
-#ifdef _WIN32
-        for (char *p = outPath; *p; p++) if (*p == '/') *p = '\\';
-#endif
+        if (im_platform_path_join(outPath, sizeof outPath, outDir, name) != 0) continue;
         char *slash = strrchr(outPath, '/');
 #ifdef _WIN32
         { char *bs = strrchr(outPath, '\\'); if (bs && (!slash || bs > slash)) slash = bs; }
@@ -584,10 +583,12 @@ static char *verse_fetch(const char *uri, int *out_len) {
             hubs_load();
             for (int hi = 0; hi < g_hub_count; hi++) {
                 char u2[1200];
+                /* Both bounded explicitly: g_hubs[hi] is char[512] and rest is an
+                   arbitrary URI tail, while u2 is 1200.  See docs/AUDIT.md 1.22. */
                 if (strncmp(g_hubs[hi], "http://", 7) != 0 && strncmp(g_hubs[hi], "https://", 8) != 0)
-                    snprintf(u2, sizeof u2, "http://%s/v/%s", g_hubs[hi], rest);
+                    snprintf(u2, sizeof u2, "http://%.500s/v/%.680s", g_hubs[hi], rest);
                 else
-                    snprintf(u2, sizeof u2, "%s/v/%s", g_hubs[hi], rest);
+                    snprintf(u2, sizeof u2, "%.500s/v/%.680s", g_hubs[hi], rest);
                 fprintf(stderr, "[VDP] resolve %s via hub %s\n", rest, g_hubs[hi]);
                 char *bb = http_get_body(u2, out_len);
                 if (bb) return bb;
@@ -835,8 +836,8 @@ static int verse_do_update(VM *vm, const char *id, char **srcs, int nsrcs) {
                     if (entry_is_dir) continue;
                     if (strstr(entry, "manifest") && strcmp(entry, "verse.manifest") != 0) continue;
                     char sf[1400], df[1400];
-                    snprintf(sf, sizeof sf, "%s/%s", tmpdir, entry);
-                    snprintf(df, sizeof df, "%s%s", base, entry);
+                    if (im_platform_path_join(sf, sizeof sf, tmpdir, entry) != 0) continue;
+                    if (im_platform_path_join(df, sizeof df, base, entry) != 0) continue;
                     int slen = 0; char *raw = read_file_buf(sf, &slen);
                     if (raw) { FILE *w = fopen(df, "wb"); if (w) { fwrite(raw, 1, (size_t)slen, w); fclose(w); } free(raw); }
                 }
@@ -1294,7 +1295,7 @@ static int b_verse_remove(VM *vm) {
     if (!dir) { free(id); r_push_int(vm, 0); return 1; }
     while (im_dir_next_ex(dir, name, sizeof name, &is_dir)) {
         if (is_dir) continue;
-        char fp[1400]; snprintf(fp, sizeof fp, "%s/%s", path, name);
+        char fp[1400]; if (im_platform_path_join(fp, sizeof fp, path, name) != 0) continue;
         remove(fp);
     }
     im_dir_close(dir);

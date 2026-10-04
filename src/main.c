@@ -243,10 +243,16 @@ static int zip_extract_all(const char *zipPath, const char *outDir) {
         uint16_t lel = *(uint16_t*)(buf + lho + 28);
         uint32_t dataOff = lho + 30 + lnl + lel;
         if (dataOff + csize > (uint32_t)fsz) continue;
+        /* im_platform_path_join refuses (returns -1) instead of truncating, so a
+           path that does not fit skips the entry rather than writing the file to
+           the wrong place; it also picks the separator per platform, which is
+           what the #ifdef loop below used to do.  See docs/AUDIT.md 1.22. */
         char outPath[1024];
-        snprintf(outPath, sizeof outPath, "%s/%s", outDir, name);
+        if (im_platform_path_join(outPath, sizeof outPath, outDir, name) != 0) {
+            fprintf(stderr, "imjar: skip entry '%s' (path too long)\n", name);
+            continue;
+        }
 #ifdef _WIN32
-        for (char *p = outPath; *p; p++) if (*p == '/') *p = '\\';
         char *slash = strrchr(outPath, '\\');
 #else
         char *slash = strrchr(outPath, '/');

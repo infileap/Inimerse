@@ -283,7 +283,9 @@ static int builtin_replay_log(VM *vm) {
         int mlen = (int)strlen(meta);
         memcpy(canon, meta, (size_t)mlen); cpos = mlen;
         json_write_value_dyn(vm, &payload, &canon, &cpos, &ccap);
-        char tail[256];
+        /* 448, not 256: the fixed text is 40 bytes, key_esc is 288 and
+           g_prev_hash is 65, so the worst case is 391.  See docs/AUDIT.md 1.22. */
+        char tail[448];
         snprintf(tail, sizeof(tail), ",\"idempotency_key\":\"%s\",\"prev\":\"%s\",\"hash\":\"", key_esc, g_prev_hash);
         int tlen = (int)strlen(tail);
         if (cpos + tlen + 1 > ccap) { ccap = cpos + tlen + 1; canon = (char*)realloc(canon, (size_t)ccap); }

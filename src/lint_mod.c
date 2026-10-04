@@ -178,7 +178,19 @@ static void lint_strip(char *dst, const char *src, int *in_block) {
 
 static void lint_add(LintBuf *lb, int ln, const char *tag, const char *msg) {
     if (lb->count >= LINT_MAX_WARN) return;
-    snprintf(lb->lines[lb->count], sizeof lb->lines[lb->count], "[lint] line %d [%s] %s", ln, tag, msg);
+    /* The line buffer is 200 bytes and a caller's msg can be 320, so the message
+       is bounded here explicitly: a truncated diagnostic is acceptable, a
+       destination the compiler cannot size is not.  See docs/AUDIT.md 1.22. */
+    char *out = lb->lines[lb->count];
+    int cap = (int)sizeof lb->lines[lb->count];
+    int n = snprintf(out, (size_t)cap, "[lint] line %d [%s] ", ln, tag);
+    if (n < 0) n = 0;
+    if (n > cap - 1) n = cap - 1;
+    size_t room = (size_t)(cap - 1 - n);
+    size_t mlen = strlen(msg);
+    if (mlen > room) mlen = room;
+    memcpy(out + n, msg, mlen);
+    out[n + (int)mlen] = 0;
     lb->count++;
 }
 
@@ -374,7 +386,7 @@ static int lint_scan(const char *path, LintBuf *lb) {
                     int seen = 0;
                     for (int j = 0; j < case_covered_count; j++)
                         if (strcmp(case_covered[j], found_members[i]) == 0) seen = 1;
-                    if (!seen) snprintf(case_covered[case_covered_count++], 96, "%s", found_members[i]);
+                    if (!seen) snprintf(case_covered[case_covered_count++], 96, "%.95s", found_members[i]);
                 }
             }
         }
@@ -420,13 +432,16 @@ static int lint_scan(const char *path, LintBuf *lb) {
                     if (strcmp(rc->variant, "err") == 0 && case_try_err_complete) continue;
                     if (open) continue;
                     char msg[320];
+                    /* variant is char[8] and type_name char[64]; the explicit
+                       precisions keep the worst case inside msg.  See
+                       docs/AUDIT.md 1.22. */
                     if (rc->type_name[0]) {
                         snprintf(msg, sizeof msg,
-                            "case try guarded %s coverage via '%s' does not prove complete %s coverage; add %s(...) or '_'",
+                            "case try guarded %.7s coverage via '%.63s' does not prove complete %.7s coverage; add %.7s(...) or '_'",
                             rc->variant, rc->type_name, rc->variant, rc->variant);
                     } else {
                         snprintf(msg, sizeof msg,
-                            "case try guarded %s coverage does not prove complete %s coverage; add %s(...) or '_'",
+                            "case try guarded %.7s coverage does not prove complete %.7s coverage; add %.7s(...) or '_'",
                             rc->variant, rc->variant, rc->variant);
                     }
                     lint_add(lb, case_start_line, "WARN", msg);
