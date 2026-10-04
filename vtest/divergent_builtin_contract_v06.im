@@ -24,7 +24,12 @@
 # chr() reading .ival off a string read half of a pointer -- a different control
 # character each run.  atomic_add already guarded its name argument; atomic_get
 # and atomic_set did not, which is why one of the family crashed and the others
-# did not.  A non-string name is a refusal, not a crash: the answer is 0.
+# did not.  That guard first answered 0.  A human ruling (docs/SYNTAX.md 7.1 D14)
+# now splits the two questions that the single answer 0 had been covering: a name
+# argument of the wrong type is a CALLER ERROR and raises type_mismatch, while a
+# name that does not resolve is RUNTIME STATE and still answers 0.  The kind
+# string is asserted, not the exit code -- a1/a2/a3 used to read 0 and this pin
+# would have gone on passing through the change if it had only looked at exit 0.
 #
 # Values only, never exit codes.
 
@@ -34,9 +39,24 @@ i3 = int("0x10")
 i4 = int("16")
 c1 = chr(65)
 c2 = chr("A")
-a1 = atomic_get(42)
-a2 = atomic_set(42, 7)
-a3 = atomic_add(42, 5)
+try {
+  a1 = atomic_get(42)
+  a1 = "NO-THROW"
+} catch (e1) {
+  a1 = str(e1)
+}
+try {
+  a2 = atomic_set(42, 7)
+  a2 = "NO-THROW"
+} catch (e2) {
+  a2 = str(e2)
+}
+try {
+  a3 = atomic_add(42, 5)
+  a3 = "NO-THROW"
+} catch (e3) {
+  a3 = str(e3)
+}
 a4 = atomic_get("no_such_slot_at_all")
 
 say "divergent-ok i1=" + str(i1) + " i2=" + str(i2) + " i3=" + str(i3) + " i4=" + str(i4) + " c1=" + c1 + " c2empty=" + str(c2 == "") + " a1=" + str(a1) + " a2=" + str(a2) + " a3=" + str(a3) + " a4=" + str(a4)

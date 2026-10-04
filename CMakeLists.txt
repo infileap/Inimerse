@@ -1017,7 +1017,8 @@ add_test(NAME divergent_builtin_contract_runtime
          COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
 set_tests_properties(divergent_builtin_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0")
+  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=type_mismatch a2=type_mismatch a3=type_mismatch a4=0"
+  FAIL_REGULAR_EXPRESSION "a1=NO-THROW|a2=NO-THROW|a3=NO-THROW|a4=type_mismatch")
 
 # ---------------------------------------------------------------------------
 # round() with a non-number argument has two answers, and this pin asserts each
@@ -1156,7 +1157,8 @@ add_test(NAME atomic_slot_type_contract_runtime
          COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/atomic_slot_type_contract_v06.im)
 set_tests_properties(atomic_slot_type_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12")
+  PASS_REGULAR_EXPRESSION "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0"
+  FAIL_REGULAR_EXPRESSION "n1=NO-THROW|n2=NO-THROW|n3=NO-THROW|n4=type_mismatch")
 
 # docs/AUDIT.md 1.52 -- random(n) means an integer in [0, n), on both runtimes.
 #

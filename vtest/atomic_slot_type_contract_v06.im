@@ -33,4 +33,36 @@ s_after = str(s)
 g3 = atomic_get("k")
 r4 = atomic_add("k", 5)
 
-say "atomic-slot-ok g1=" + str(g1) + " r1=" + str(r1) + " y=" + y_after + " r3=" + str(r3) + " yz=" + y_zero + " g2=" + str(g2) + " r2=" + str(r2) + " s=" + s_after + " g3=" + str(g3) + " r4=" + str(r4)
+# docs/SYNTAX.md 7.1 D14 (2026-10, human ruling) -- a name argument that is not
+# a string is a *caller error*: the call could never have worked, and answering
+# 0 would be indistinguishable from success, so it raises type_mismatch.  A name
+# that simply does not resolve is *runtime state* -- there is nothing there --
+# and keeps answering 0.  Before D14 all four of the calls below answered 0, so
+# "you passed the wrong kind of thing" and "there is no such counter" had one
+# answer between them.
+#
+# The kind string is asserted, not the exit code.  A pin that only checked for
+# "something was raised" would pass on a numeric_overflow, on an index error, or
+# on any future kind; M13's numerator is exactly the count of tests that settle
+# for an exit code, and this is a case that has a distinguishable answer.
+try {
+  n1 = atomic_get(42)
+  n1 = "NO-THROW"
+} catch (e1) {
+  n1 = str(e1)
+}
+try {
+  n2 = atomic_add(42, 1)
+  n2 = "NO-THROW"
+} catch (e2) {
+  n2 = str(e2)
+}
+try {
+  n3 = atomic_set(42, 1)
+  n3 = "NO-THROW"
+} catch (e3) {
+  n3 = str(e3)
+}
+n4 = atomic_get("this_name_was_never_created")
+
+say "atomic-slot-ok g1=" + str(g1) + " r1=" + str(r1) + " y=" + y_after + " r3=" + str(r3) + " yz=" + y_zero + " g2=" + str(g2) + " r2=" + str(r2) + " s=" + s_after + " g3=" + str(g3) + " r4=" + str(r4) + " n1=" + n1 + " n2=" + n2 + " n3=" + n3 + " n4=" + str(n4)
