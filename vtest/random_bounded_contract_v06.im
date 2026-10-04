@@ -1,0 +1,45 @@
+# docs/AUDIT.md 1.52 -- random(n) means an integer in [0, n), on both runtimes.
+#
+# The name `random` had two production points and they disagreed:
+#
+# (the two lines below are PRE-FIX locations; the io_mod copy is now deleted)
+#   src/runtime/runtime.c:16   builtin_random   int max = ...ival; rand() % max
+#   src/mod/io_mod.c:143       builtin_random   rand()          (ignores the arg)
+#
+# and only the io_mod copy was registered (runtime_register_builtins did not
+# mention `random` at all), so on Windows the second one was the answer.  There
+# `vm_register_builtin` keeps the FIRST entry of a name in its probe sequence,
+# but that only mattered once a second copy existed.
+#
+# Measured on the ucrt64 engine before the fix, exit code 0 both times:
+#
+#   random(10)  -> 27606  9428  30941     (>= 10: the bound was ignored)
+#   random(0)   -> 27606  9428            (the SAME two values, so the argument
+#                                          was not read at all)
+#
+# After the fix -- the io_mod copy is gone and runtime.c registers the survivor:
+#
+#   random(10)  -> 1  7  9
+#   random(0)   -> 0  0
+#
+# The values below are asserted, not just the exit code: docs/SYNTAX.md 7.2 M13
+# records that 66 of the CTest cases only look at the exit code, and this defect
+# exits 0.  The bounds are checked on every draw rather than on an average,
+# because an average hides exactly this bug: the pre-fix mean of random(10) was
+# 16384, which is not a small number and not a large one either.
+one  = (random(1) == 0)
+zero = (random(0) == 0)
+neg  = (random(-5) == 0)
+
+ten = (random(10) >= 0) and (random(10) < 10)
+ten = ten and (random(10) >= 0) and (random(10) < 10)
+ten = ten and (random(10) >= 0) and (random(10) < 10)
+ten = ten and (random(10) >= 0) and (random(10) < 10)
+ten = ten and (random(10) >= 0) and (random(10) < 10)
+ten = ten and (random(10) >= 0) and (random(10) < 10)
+
+big = (random(1000000) >= 0) and (random(1000000) < 1000000)
+big = big and (random(1000000) >= 0) and (random(1000000) < 1000000)
+big = big and (random(1000000) >= 0) and (random(1000000) < 1000000)
+
+say "random-bounded-ok one=" + str(one) + " zero=" + str(zero) + " neg=" + str(neg) + " ten=" + str(ten) + " big=" + str(big)

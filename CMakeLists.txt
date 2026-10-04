@@ -1157,3 +1157,31 @@ add_test(NAME atomic_slot_type_contract_runtime
 set_tests_properties(atomic_slot_type_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
   PASS_REGULAR_EXPRESSION "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12")
+
+# docs/AUDIT.md 1.52 -- random(n) means an integer in [0, n), on both runtimes.
+#
+# `random` had two production points and only one of them was registered:
+# src/runtime/runtime.c's builtin_random computed `rand() % max` but
+# runtime_register_builtins never mentioned the name, while src/mod/io_mod.c
+# registered its own copy that answered a bare `rand()` and ignored the
+# argument.  On Windows that copy was the answer: random(10) returned 27606,
+# random(0) returned the very same 27606, and the exit code was 0 both times.
+#
+# The io_mod copy is gone; the survivor is registered in
+# runtime_register_builtins, which runs before register_core_modules
+# (src/main.c:1096/1097).  There is now exactly one production point, so that
+# ordering is no longer load-bearing.
+#
+# The whole line is asserted because the defect exits 0 (docs/SYNTAX.md 7.2
+# M13).  Four of the five fields catch it and one does not, which is stated
+# here rather than hidden: `big` is true on the pre-fix engine too, because a
+# bare rand() is already smaller than 1000000.  Same line on both platforms, no
+# per-platform branch: posix_random already had the bound and the `n > 0` gate,
+# so the rule being consumed is not new, only newly shared.
+#
+# Registered last so no existing #N moves.
+add_test(NAME random_bounded_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/random_bounded_contract_v06.im)
+set_tests_properties(random_bounded_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+  PASS_REGULAR_EXPRESSION "random-bounded-ok one=true zero=true neg=true ten=true big=true")
