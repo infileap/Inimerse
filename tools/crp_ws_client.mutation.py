@@ -164,7 +164,7 @@ def norm(s):
 def git_show(repo, spec):
     try:
         p = subprocess.run(["git", "show", spec], cwd=repo,
-                           capture_output=True, text=True, check=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     except FileNotFoundError:
         die("git is not on PATH; this harness needs git to read the old ref")
     except subprocess.CalledProcessError as e:
@@ -175,7 +175,7 @@ def git_show(repo, spec):
 def run_node(cwd, filename, timeout=20):
     try:
         p = subprocess.run(["node", filename], cwd=cwd,
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return "TIMEOUT", ""
     msg = next((m.group(1) for m in
@@ -244,7 +244,7 @@ def main():
 
     # --- precondition 3: the new suite must be the labelled suite -----------
     print()
-    clean = subprocess.run(["node", new_test], cwd=repo, capture_output=True, text=True)
+    clean = subprocess.run(["node", new_test], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
     labels = [norm(ln.split("ok  ", 1)[1])
               for ln in clean.stdout.splitlines() if ln.startswith("  ok  ")]
     advertised = re.search(r"CRP WebSocket client tests: ok \((\d+) assertions\)",

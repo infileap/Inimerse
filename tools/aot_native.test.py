@@ -238,7 +238,7 @@ RUNTIME_ERROR = [
 
 
 def run(cmd, cwd=None):
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=120)
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
 
 def main():

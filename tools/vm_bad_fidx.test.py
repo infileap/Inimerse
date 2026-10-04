@@ -35,7 +35,7 @@ def run(engine, source, td, name):
     script = Path(td) / name
     script.write_text(source, encoding='utf-8')
     return subprocess.run([engine, '--no-mods', str(script)],
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
 
 
 def main():

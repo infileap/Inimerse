@@ -147,7 +147,7 @@ def main():
                         "empty.im", "empty.c"], cwd=root, capture_output=True)
         for c, exe in (("work.c", "work.native"), ("empty.c", "empty.native")):
             rc = subprocess.run([args.cc, "-O2", "-o", exe, c, "harness.c"],
-                                cwd=root, capture_output=True, text=True)
+                                cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if rc.returncode != 0:
                 raise SystemExit(f"cc {c}: {rc.stderr.strip()[:600]}")
 
@@ -161,9 +161,9 @@ def main():
 
         # ---- guard 2: both channels must agree on the answer
         i_out = subprocess.run([str(engine), "--no-mods", str(root / "work.im")],
-                               cwd=root, capture_output=True, text=True).stdout.strip()
+                               cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
         n_out = subprocess.run([str(root / "work.native"), str(args.seed)],
-                               cwd=root, capture_output=True, text=True).stdout.strip()
+                               cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
         if i_out != n_out:
             raise SystemExit(
                 f"REFUSING to report a speedup: the two channels disagree "

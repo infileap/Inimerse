@@ -32,7 +32,9 @@ ENROLL = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
 def find_engine():
     env = os.environ.get("INIMERSE_BIN")
     cands = [Path(env)] if env else []
-    cands += [HERE.parent / "build" / "inimerse", HERE.parent / "build-local" / "inimerse"]
+    for _dir in ("build", "build-local", "build-windows-gcc", "build-py"):
+        for _name in ("inimerse", "inimerse.exe"):
+            cands.append(HERE.parent / _dir / _name)
     for c in cands:
         if c.is_file() and os.access(c, os.X_OK):
             return c.resolve()

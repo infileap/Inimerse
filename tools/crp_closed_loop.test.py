@@ -50,7 +50,7 @@ def main():
     hub = subprocess.Popen(
         [HUB, "0", SECRET, str(NOW)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=env,
+        text=True, encoding="utf-8", errors="replace", env=env,
     )
     try:
         announce = hub.stdout.readline()
@@ -63,7 +63,7 @@ def main():
         check(isinstance(port, int) and port > 0, "hub: bound a real port", port)
 
         peer = subprocess.run([PEER, str(port), SECRET, str(NOW)],
-                              capture_output=True, text=True, timeout=30, env=env)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env)
         for line in peer.stdout.splitlines():
             print("| " + line)
         if peer.stderr.strip():

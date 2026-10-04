@@ -78,7 +78,7 @@ def sha(text):
 
 def run(args, timeout=90):
     try:
-        p = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"

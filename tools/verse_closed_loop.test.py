@@ -36,7 +36,7 @@ def run_server(root, lines, verse="main", timeout=30):
     proc = subprocess.run(
         [SERVER, root, verse],
         input="\n".join(lines) + "\n",
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
     )
     out = [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
     return proc, out
@@ -217,7 +217,7 @@ def test_crash_and_resume(root):
         f.write("\n".join(script) + "\n")
 
     proc = subprocess.run([CLIENT, "--server", SERVER, root, "main", scenario],
-                          capture_output=True, text=True, timeout=30)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     check(proc.returncode == 137, "recover: the client reports the crash", proc.returncode)
     check("#crash: server killed" in proc.stdout, "recover: crash was deliberate", proc.stdout)
 

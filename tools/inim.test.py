@@ -5,7 +5,7 @@ HERE = Path(__file__).resolve().parent
 CLI = [sys.executable, str(HERE / 'inim.py')]
 
 def run(*args):
-    return subprocess.run(CLI + list(args), check=True, capture_output=True, text=True)
+    return subprocess.run(CLI + list(args), check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 def main():
     with tempfile.TemporaryDirectory(prefix='inim-test-') as td:
@@ -63,7 +63,7 @@ def main():
             escaped = subprocess.run(
                 CLI + ['update', '-p', str(root), '-r',
                        f'http://127.0.0.1:{server.server_port}'],
-                capture_output=True, text=True
+                capture_output=True, text=True, encoding="utf-8", errors="replace"
             )
             assert escaped.returncode != 0
             assert 'package URL escapes registry' in escaped.stderr
@@ -72,7 +72,7 @@ def main():
             encoded_escape = subprocess.run(
                 CLI + ['update', '-p', str(root), '-r',
                        f'http://127.0.0.1:{server.server_port}'],
-                capture_output=True, text=True
+                capture_output=True, text=True, encoding="utf-8", errors="replace"
             )
             assert encoded_escape.returncode != 0
             assert 'package URL escapes registry' in encoded_escape.stderr
@@ -92,7 +92,7 @@ def main():
         run('keygen', '-o', str(other_key), '--public-output', str(other_public))
         assert subprocess.run(
             CLI + ['verify', str(signed_dist), '--require-signature', '--trusted-key', str(other_public)],
-            capture_output=True, text=True
+            capture_output=True, text=True, encoding="utf-8", errors="replace"
         ).returncode != 0
         signed_item['signature']['signature'] = 'A' * 88
         (signed_dist / 'index.json').write_text(json.dumps(signed_index), encoding='utf-8')

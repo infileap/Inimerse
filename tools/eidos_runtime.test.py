@@ -41,7 +41,7 @@ say default_arg()
         script.write_text(translate(source), encoding='utf-8')
         result = subprocess.run(
             [sys.argv[1], str(script)],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
         )
         if result.returncode != 0:
             raise SystemExit(result.stderr or 'translated Eidos program failed')

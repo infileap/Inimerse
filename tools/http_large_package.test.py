@@ -46,7 +46,9 @@ HERE = Path(__file__).resolve().parent
 def find_engine():
     env = os.environ.get("INIMERSE_BIN")
     cands = [Path(env)] if env else []
-    cands += [HERE.parent / "build" / "inimerse", HERE.parent / "build-local" / "inimerse"]
+    for _dir in ("build", "build-local", "build-windows-gcc", "build-py"):
+        for _name in ("inimerse", "inimerse.exe"):
+            cands.append(HERE.parent / _dir / _name)
     for c in cands:
         if c.is_file() and os.access(c, os.X_OK):
             return c.resolve()
@@ -113,7 +115,7 @@ def start_hub(engine, cwd, hub_dir):
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
     proc = subprocess.Popen(
         [str(engine), "--headless", "--port", str(tcp_port), "--http-port", str(http_port), str(script)],
-        cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     procs.append(proc)
     return proc, http_port, tcp_port, read_ports(proc)
 
@@ -125,7 +127,7 @@ def start_hub_kernel_ports(engine, cwd, hub_dir):
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir))
     proc = subprocess.Popen(
         [str(engine), "--headless", "--port", "0", "--http-port", "0", str(script)],
-        cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     procs.append(proc)
     tcp, http_port, lines = read_ports(proc)
     return proc, tcp, http_port, lines

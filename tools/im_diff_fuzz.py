@@ -111,7 +111,7 @@ def run(argv, cwd, timeout=30):
     """(rc, last non-empty stdout line).  The engine echoes literals, so the
     answer is the last line that is not an engine notice."""
     try:
-        p = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+        p = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=timeout)
     except subprocess.TimeoutExpired:
         return None, "<timeout>"
@@ -155,13 +155,13 @@ def main():
 
             gen_c = tmp / f"f{n}.c"
             r = subprocess.run([args.translator, "translate", str(im), str(gen_c)],
-                               capture_output=True, text=True, timeout=120)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
             if r.returncode != 0:
                 untranslated.append((src, r.stderr.strip().splitlines()[:1]))
                 continue
             exe = tmp / f"f{n}.bin"
             r = subprocess.run([args.cc, "-O2", "-o", str(exe), str(gen_c)],
-                               capture_output=True, text=True, timeout=120)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
             if r.returncode != 0:
                 untranslated.append((src, r.stderr.strip().splitlines()[:1]))
                 continue

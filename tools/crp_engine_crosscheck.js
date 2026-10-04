@@ -423,7 +423,7 @@ async function main() {
     console.error(`crp_engine_crosscheck: probe exited ${proc.status}\n${proc.stderr}`);
     process.exit(1);
   }
-  const got = proc.stdout.split('\n').filter(l => l.length > 0);
+  const got = proc.stdout.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.length > 0);
 
   const want = [];
   for (let i = 0; i < CORPUS.length; i++) {

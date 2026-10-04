@@ -268,7 +268,7 @@ function runEngine(probe, corpusPath) {
   if (res.stderr && res.stderr.trim()) {
     process.stderr.write(`engine probe stderr:\n${res.stderr}`);
   }
-  return res.stdout.split('\n').filter(l => l.length > 0);
+  return res.stdout.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.length > 0);
 }
 
 /* --------------------------------------------------------------- main ---- */

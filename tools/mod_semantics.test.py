@@ -65,7 +65,7 @@ def last_line(out):
 
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
                           check=False, **kw)
 
 

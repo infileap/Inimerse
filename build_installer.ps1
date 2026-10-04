@@ -1,7 +1,17 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-if (-not (Test-Path -LiteralPath $iscc)) { throw 'Inno Setup 6 ISCC.exe was not found.' }
+# Inno Setup 7 installs per-user by default and 6 machine-wide; take whichever
+# is present, newest first.
+$isccCandidates = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 7\ISCC.exe'),
+    'C:\Program Files\Inno Setup 7\ISCC.exe',
+    'C:\Program Files (x86)\Inno Setup 7\ISCC.exe',
+    'C:\Program Files\Inno Setup 6\ISCC.exe',
+    'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+)
+$iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $iscc) { throw "Inno Setup ISCC.exe was not found. Tried:`n$($isccCandidates -join "`n")" }
+Write-Host "Using ISCC: $iscc"
 
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'build.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Engine build failed.' }

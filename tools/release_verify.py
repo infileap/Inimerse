@@ -59,7 +59,7 @@ def verify_deb_dependencies(path):
     try:
         result = subprocess.run(
             [dpkg_deb, "-f", str(path), "Depends"],
-            check=False, capture_output=True, text=True,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
     except OSError as exc:
         raise SystemExit(f"cannot inspect Debian metadata: {exc}")
@@ -76,7 +76,7 @@ def verify_deb_layout(path, require_wasm=False):
     try:
         result = subprocess.run(
             [dpkg_deb, "-c", str(path)],
-            check=False, capture_output=True, text=True,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
     except OSError as exc:
         raise SystemExit(f"cannot inspect Debian contents: {exc}")

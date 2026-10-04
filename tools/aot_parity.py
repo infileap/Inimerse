@@ -55,7 +55,9 @@ def find_engine():
     import os
     env = os.environ.get("INIMERSE_BIN")
     cands = [Path(env)] if env else []
-    cands += [REPO / "build" / "inimerse", REPO / "build-local" / "inimerse"]
+    for _dir in ("build", "build-local", "build-windows-gcc", "build-py"):
+        for _name in ("inimerse", "inimerse.exe"):
+            cands.append(REPO / _dir / _name)
     for c in cands:
         if c.is_file() and os.access(c, os.X_OK):
             return c.resolve()
@@ -137,7 +139,7 @@ def main():
 
     engine = find_engine()
     version = subprocess.run([str(engine), "--version"], capture_output=True,
-                             text=True).stdout.strip()
+                             text=True, encoding="utf-8", errors="replace").stdout.strip()
 
     with tempfile.TemporaryDirectory(prefix="inim-parity-") as td:
         root = Path(td)

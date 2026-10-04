@@ -14,7 +14,7 @@ def main() -> int:
         [engine, script],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
     output = proc.stdout + proc.stderr
     if proc.returncode == 0:

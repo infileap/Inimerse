@@ -18,12 +18,9 @@ def find_engine():
     env = os.environ.get("INIMERSE_BIN")
     if env:
         candidates.append(Path(env))
-    candidates += [
-        Path("build/inimerse"),
-        Path("build-local/inimerse"),
-        Path("build/inimerse.exe"),
-        Path("build-local/inimerse.exe"),
-    ]
+    for _dir in ("build", "build-local", "build-windows-gcc", "build-py"):
+        for _name in ("inimerse", "inimerse.exe"):
+            candidates.append(Path(_dir) / _name)
     for cand in candidates:
         if cand.is_file() and os.access(cand, os.X_OK):
             return cand.resolve()

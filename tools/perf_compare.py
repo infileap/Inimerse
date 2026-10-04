@@ -44,7 +44,9 @@ def find_engine():
     import os
     env = os.environ.get("INIMERSE_BIN")
     cands = [Path(env)] if env else []
-    cands += [REPO / "build" / "inimerse", REPO / "build-local" / "inimerse"]
+    for _dir in ("build", "build-local", "build-windows-gcc", "build-py"):
+        for _name in ("inimerse", "inimerse.exe"):
+            cands.append(REPO / _dir / _name)
     for c in cands:
         if c.is_file() and os.access(c, os.X_OK):
             return c.resolve()
@@ -109,7 +111,7 @@ def main():
     lines = [
         "## 通道性能对比（roadmap §2.3 验收：以测量数据为依据）",
         "",
-        f"- 引擎：`{subprocess.run([str(engine), '--version'], capture_output=True, text=True).stdout.strip()}`，"
+        f"- 引擎：`{subprocess.run([str(engine), '--version'], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()}`，"
         f"主机 `{platform.system()} {platform.machine()}`，工作负载 `sum(1..{args.n})`，每通道 {args.runs} 次取中位数",
         f"- 校准：各通道用自己的空脚本基线扣除启动开销（Node 启动约数百 ms）",
         "",

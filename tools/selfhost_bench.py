@@ -34,7 +34,9 @@ SUITES = [
 def find_engine():
     env = os.environ.get("INIMERSE_BIN")
     candidates = [Path(env)] if env else []
-    candidates += [REPO / "build" / "inimerse", REPO / "build-local" / "inimerse"]
+    for _dir in ("build", "build-local", "build-windows-gcc", "build-py"):
+        for _name in ("inimerse", "inimerse.exe"):
+            candidates.append(REPO / _dir / _name)
     for cand in candidates:
         if cand.is_file() and os.access(cand, os.X_OK):
             return cand.resolve()
@@ -65,7 +67,7 @@ def main():
     args = ap.parse_args()
 
     engine = find_engine()
-    version = subprocess.run([str(engine), "--version"], capture_output=True, text=True).stdout.strip()
+    version = subprocess.run([str(engine), "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
 
     workdir = Path(os.environ.get("INIMERSE_BENCH_TMP", Path(BENCH)))
     results = []

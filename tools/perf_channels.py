@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
 
 
 def sh(argv, cwd=None):
-    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=600)
+    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
 
 
 def last_int(stdout):
