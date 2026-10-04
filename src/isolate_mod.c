@@ -68,11 +68,11 @@ static void iso_push(VM *vm, Value v) {
     }
 }
 static void iso_push_int(VM *vm, int n) {
-    Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
+    Value v; v.type = VAL_INT; v.ival = n;  v.sval = NULL;
     iso_push(vm, v);
 }
 static void iso_push_str(VM *vm, const char *s) {
-    Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = strdup(s ? s : "");
+    Value v; v.type = VAL_STRING; v.ival = 0;  v.sval = strdup(s ? s : "");
     iso_push(vm, v);
 }
 
@@ -81,20 +81,20 @@ static void iso_push_result(VM *vm, long exit_code, const char *out, int timedou
     int aidx = vm_array_new(vm);
     if (aidx < 0) { iso_push_int(vm, -999); return; }
     Value k, val;
-    k.type = VAL_STRING; k.ival = 0; k.fval = 0; k.sval = strdup("exit");
-    val.type = VAL_INT; val.ival = (int)exit_code; val.fval = 0; val.sval = NULL;
+    k.type = VAL_STRING; k.ival = 0;  k.sval = strdup("exit");
+    val.type = VAL_INT; val.ival = (int)exit_code;  val.sval = NULL;
     vm_dict_set(vm, aidx, &k, &val);
     free(k.sval);
     k.sval = strdup("out");
-    val.type = VAL_STRING; val.ival = 0; val.fval = 0; val.sval = strdup(out ? out : "");
+    val.type = VAL_STRING; val.ival = 0;  val.sval = strdup(out ? out : "");
     vm_dict_set(vm, aidx, &k, &val);
     free(k.sval);
     free(val.sval);
     k.sval = strdup("timedout");
-    val.type = VAL_INT; val.ival = timedout; val.fval = 0; val.sval = NULL;
+    val.type = VAL_INT; val.ival = timedout;  val.sval = NULL;
     vm_dict_set(vm, aidx, &k, &val);
     free(k.sval);
-    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1; dv.fval = 0; dv.sval = NULL;
+    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1;  dv.sval = NULL;
     iso_push(vm, dv);
 }
 
@@ -256,7 +256,7 @@ static void iso_push(VM *vm, Value v) {
 }
 static void iso_push_result(VM *vm, int exit_code, const char *out, int timedout) {
     int aidx = vm_array_new(vm); if (aidx < 0) return;
-    Value k, v; k.type = VAL_STRING; k.ival = 0; k.fval = 0; v.sval = NULL;
+    Value k, v; k.type = VAL_STRING; k.ival = 0;  v.sval = NULL;
     k.sval = strdup("exit"); v.type = VAL_INT; v.ival = exit_code; vm_dict_set(vm, aidx, &k, &v); free(k.sval);
     k.sval = strdup("out"); v.type = VAL_STRING; v.sval = strdup(out ? out : ""); vm_dict_set(vm, aidx, &k, &v); free(k.sval); free(v.sval);
     k.sval = strdup("timedout"); v.type = VAL_INT; v.ival = timedout; v.sval = NULL; vm_dict_set(vm, aidx, &k, &v); free(k.sval);

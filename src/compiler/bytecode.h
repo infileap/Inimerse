@@ -50,7 +50,12 @@ typedef enum {
     OP_CONCAT,       /* concat chain: r1 = left-assoc fold(+) of R[r2 .. r2+r3-1] (single alloc fast path) */
     OP_YIELD,        /* yield: task cooperatively hands control back to the scheduler */
     OP_MAKE_FUNC, OP_CALL_VALUE,
-    OP_LOAD_CAPTURE, OP_STORE_CAPTURE
+    OP_LOAD_CAPTURE, OP_STORE_CAPTURE,
+    /* int64 literal (appended at end to keep old opcode numbers): r1 = r2 | (r3 << 32),
+       both halves read as UNSIGNED 32-bit.  A separate opcode rather than a reuse of
+       OP_LOADK_INT, whose r2 is a sign-extended int32 in every older stream — sharing
+       one encoding would silently change what old bytecode means. */
+    OP_LOADK_I64
  } OpCode;
 
 /* ---------- versioning ---------- */

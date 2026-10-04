@@ -64,7 +64,7 @@ static int builtin_round(VM *vm) {
     return 1;
 }
 static int builtin_float(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; double res=0.0; if(v->type==VAL_STRING) res=atof(v->sval?v->sval:""); else if(v->type==VAL_INT) res=(double)v->ival; else if(v->type==VAL_FLOAT) res=v->fval; else if(v->type==VAL_BOOL) res=v->ival?1.0:0.0; pop(vm); push_float(vm,res); return 1; }
-static int builtin_str(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; char buf[1024]={0}; if(v->type==VAL_INT) snprintf(buf,sizeof(buf),"%d",v->ival); else if(v->type==VAL_FLOAT) snprintf(buf,sizeof(buf),"%.17g",v->fval); else if(v->type==VAL_BOOL) snprintf(buf,sizeof(buf),"%s",v->ival?"true":"false"); else if(v->type==VAL_STRING) { char *sv=strdup(v->sval?v->sval:""); pop(vm); push_string(vm,sv); free(sv); return 1; } else vm_value_to_string(vm, v, buf, sizeof(buf)); pop(vm); push_string(vm,buf); return 1; }
+static int builtin_str(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; char buf[1024]={0}; if(v->type==VAL_INT) snprintf(buf,sizeof(buf),"%lld",(long long)v->ival); else if(v->type==VAL_FLOAT) snprintf(buf,sizeof(buf),"%.17g",v->fval); else if(v->type==VAL_BOOL) snprintf(buf,sizeof(buf),"%s",v->ival?"true":"false"); else if(v->type==VAL_STRING) { char *sv=strdup(v->sval?v->sval:""); pop(vm); push_string(vm,sv); free(sv); return 1; } else vm_value_to_string(vm, v, buf, sizeof(buf)); pop(vm); push_string(vm,buf); return 1; }
 static int builtin_bool(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; bool res=false; if(v->type==VAL_INT) res=v->ival!=0; else if(v->type==VAL_FLOAT) res=v->fval!=0.0; else if(v->type==VAL_STRING) res=v->sval&&strlen(v->sval)>0; else if(v->type==VAL_BOOL) res=v->ival!=0; pop(vm); push_bool(vm,res); return 1; }
 
 /* ---------- 数组内置函数 ---------- */
@@ -211,7 +211,7 @@ static int builtin_join(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value last = vm_cur_stack(vm)[vm_cur_sp(vm)];
     char *sep = NULL;
-    Value arrv = { VAL_NIL, 0, 0, NULL, NULL };
+    Value arrv = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     if (last.type == VAL_STRING && vm_cur_sp(vm) >= 1 && vm_cur_stack(vm)[vm_cur_sp(vm)-1].type == VAL_ARRAY) {
         sep = strdup(last.sval ? last.sval : "");
         arrv = vm_cur_stack(vm)[vm_cur_sp(vm)-1];
@@ -271,7 +271,7 @@ static int builtin_split(VM *vm) {
         char *part = malloc(len + 1);
         memcpy(part, p, len);
         part[len] = '\0';
-        Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = part;
+        Value v; v.type = VAL_STRING; v.ival = 0;  v.sval = part;
         vm_array_push(vm, aidx, &v);
         free(part);
         if (!q) break;
@@ -280,7 +280,7 @@ static int builtin_split(VM *vm) {
     free(sep);
     free(str);
 
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv;
@@ -299,10 +299,10 @@ static int builtin_chars(VM *vm) {
     if (aidx < 0) { free(s); push_nil(vm); return 1; }
     for (const char *p = s; *p; p++) {
         char buf[2] = { *p, '\0' };
-        Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = buf;
+        Value v; v.type = VAL_STRING; v.ival = 0;  v.sval = buf;
         vm_array_push(vm, aidx, &v);
     }
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv;
@@ -347,7 +347,7 @@ static int builtin_keys(VM *vm) {
             vm_array_push(vm, out, &a->items[i]);
         VM_UNLOCK(vm);
     }
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = out + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = out + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv;
@@ -396,7 +396,7 @@ static int builtin_remove(VM *vm) {
                 value_free(&ar->items[idx]);
                 for (int j = idx; j < ar->count - 1; j++) ar->items[j] = ar->items[j + 1];
                 ar->count--;
-                ar->items[ar->count] = (Value){ VAL_NIL, 0, 0, NULL, NULL };
+                ar->items[ar->count] = (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
                 removed = 1;
             }
             VM_UNLOCK(vm);
@@ -546,12 +546,12 @@ static int builtin_args(VM *vm) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { push_nil(vm); return 1; }
     for (int i = 0; i < vm->argc; i++) {
-        Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0;
+        Value v; v.type = VAL_STRING; v.ival = 0; 
         v.sval = strdup(vm->argv && vm->argv[i] ? vm->argv[i] : "");
         vm_array_push(vm, aidx, &v);
         free(v.sval);
     }
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv;
@@ -762,13 +762,13 @@ static int builtin_usage(VM *vm) {
     vals[5] = vm->limit_time;
     vals[6] = vm->limit_inst;
     for (int i = 0; i < 7; i++) {
-        Value k; k.type = VAL_STRING; k.ival = 1; k.fval = 0;
+        Value k; k.type = VAL_STRING; k.ival = 1; 
         const char *ks = vm_intern(vm, keys[i]);
         k.sval = (char*)(ks ? ks : keys[i]);
-        Value vv; vv.type = VAL_FLOAT; vv.fval = vals[i]; vv.ival = 0; vv.sval = NULL;
+        Value vv; vv.type = VAL_FLOAT; vv.fval = vals[i];  vv.sval = NULL;
         vm_dict_set(vm, out, &k, &vv);
     }
-    Value arrv; arrv.type = VAL_DICT; arrv.ival = out + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_DICT; arrv.ival = out + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv;
@@ -975,7 +975,7 @@ static int builtin_range(VM *vm) {
     if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
         int bidx = vm->be_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {
-            Value sv; sv.type = VAL_SET; sv.ival = bidx; sv.fval = 0; sv.sval = NULL;
+            Value sv; sv.type = VAL_SET; sv.ival = bidx;  sv.sval = NULL;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
             return 1;
         }
@@ -992,7 +992,7 @@ static int builtin_range(VM *vm) {
         s->kind = 2; s->nameIdx = 1;
         s->lo = -2147483648.0; s->hi = 2147483647.0;
         s->loInc = 1; s->hiInc = 1;
-        Value sv; sv.type = VAL_SET; sv.ival = sidx; sv.fval = 0; sv.sval = NULL;
+        Value sv; sv.type = VAL_SET; sv.ival = sidx;  sv.sval = NULL;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
         return 1;
     }
@@ -1003,7 +1003,7 @@ static int builtin_range(VM *vm) {
         s->kind = 2; s->nameIdx = 24; /* R: all reals */
         s->lo = -1e308; s->hi = 1e308;
         s->loInc = 0; s->hiInc = 0;
-        Value sv; sv.type = VAL_SET; sv.ival = sidx; sv.fval = 0; sv.sval = NULL;
+        Value sv; sv.type = VAL_SET; sv.ival = sidx;  sv.sval = NULL;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
         return 1;
     }
@@ -1032,10 +1032,10 @@ static int builtin_list_params(VM *vm) {
         if (!nm || !nm[0]) continue;
         if (strncmp(nm, "u.", 2) == 0) continue;          /* system namespace */
         if (!strchr(nm, '.')) continue;                   /* dotted (namespace) params only */
-        Value v; v.type = VAL_STRING; v.sval = (char*)nm; v.ival = 0; v.fval = 0;
+        Value v; v.type = VAL_STRING; v.sval = (char*)nm; v.ival = 0; 
         vm_array_push(vm, aidx, &v);
     }
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv; }
     else push_nil(vm);
     return 1;
@@ -1242,7 +1242,7 @@ static int builtin_spi_emit(VM *vm) {
     Value arg;
     if (data.type == VAL_STRING) {
         const char *si = vm_intern(vm, data.sval ? data.sval : "");
-        arg.type = VAL_STRING; arg.ival = 1; arg.fval = 0; arg.sval = (char*)si;
+        arg.type = VAL_STRING; arg.ival = 1;  arg.sval = (char*)si;
     } else arg = data;
     /* publish to global __spi_data (task callbacks read it) */
     for (int gi = 0; gi < vm->globalCount; gi++) {
@@ -1297,18 +1297,18 @@ static int builtin_spi_mods(VM *vm) { /* spi_mods() -> array of {id, version, ca
             int didx = vm_array_new(vm);
             if (didx < 0) continue;
             Value k, vv;
-            k.type = VAL_STRING; k.ival = 1; k.fval = 0; k.sval = "id";
-            vv.type = VAL_STRING; vv.ival = 1; vv.fval = 0; vv.sval = vm->mods[i].id;
+            k.type = VAL_STRING; k.ival = 1;  k.sval = "id";
+            vv.type = VAL_STRING; vv.ival = 1;  vv.sval = vm->mods[i].id;
             vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
-            k.sval = "version"; vv.type = VAL_INT; vv.ival = vm->mods[i].version; vv.fval = 0; vv.sval = NULL;
+            k.sval = "version"; vv.type = VAL_INT; vv.ival = vm->mods[i].version;  vv.sval = NULL;
             vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
-            k.sval = "caps"; vv.type = VAL_INT; vv.ival = vm->mods[i].caps; vv.fval = 0; vv.sval = NULL;
+            k.sval = "caps"; vv.type = VAL_INT; vv.ival = vm->mods[i].caps;  vv.sval = NULL;
             vm_array_push(vm, didx, &k); vm_array_push(vm, didx, &vv);
-            Value dv; dv.type = VAL_DICT; dv.ival = didx + 1; dv.fval = 0; dv.sval = NULL;
+            Value dv; dv.type = VAL_DICT; dv.ival = didx + 1;  dv.sval = NULL;
             vm_array_push(vm, aidx, &dv);
         }
     }
-    Value av; av.type = VAL_ARRAY; av.ival = aidx + 1; av.fval = 0; av.sval = NULL;
+    Value av; av.type = VAL_ARRAY; av.ival = aidx + 1;  av.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = av;
@@ -1490,13 +1490,13 @@ static int builtin_entity_neighbors(VM *vm) {
                 if (vm->ent_hp[e] < 0) continue;
                 float ddx = vm->ent_x[e] - (float)x, ddy = vm->ent_y[e] - (float)y;
                 if (ddx * ddx + ddy * ddy <= rr) {
-                    Value v; v.type = VAL_INT; v.ival = e; v.fval = 0; v.sval = NULL;
+                    Value v; v.type = VAL_INT; v.ival = e;  v.sval = NULL;
                     vm_array_push(vm, aidx, &v);
                 }
             }
         }
     }
-    Value av; av.type = VAL_ARRAY; av.ival = aidx + 1; av.fval = 0; av.sval = NULL;
+    Value av; av.type = VAL_ARRAY; av.ival = aidx + 1;  av.sval = NULL;
     { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = av; vm_cur_set_sp(vm, _sp + 1); }
     return 1;
 }
@@ -1637,12 +1637,12 @@ static int builtin_gc_stats(VM *vm) { /* gc_stats() -> {runs, freed, enabled, th
     vs[3] = (long long)vm->gc_threshold; vs[4] = (long long)vm->used_mem;
     for (int i = 0; i < 5; i++) {
         Value k, vv;
-        k.type = VAL_STRING; k.ival = 1; k.fval = 0; k.sval = (char*)ks[i];
-        vv.type = VAL_INT; vv.ival = (int)vs[i]; vv.fval = 0; vv.sval = NULL;
+        k.type = VAL_STRING; k.ival = 1;  k.sval = (char*)ks[i];
+        vv.type = VAL_INT; vv.ival = (int)vs[i];  vv.sval = NULL;
         vm_array_push(vm, aidx, &k);
         vm_array_push(vm, aidx, &vv);
     }
-    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1; dv.fval = 0; dv.sval = NULL;
+    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1;  dv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = dv;
@@ -1668,13 +1668,13 @@ static int builtin_mod_usage(VM *vm) {
     double tsec = (vm->t_start > 0) ? (double)(im_platform_now_ms() - vm->t_start) / 1000.0 : 0;
     int aidx = vm_array_new(vm);
     Value k, val;
-    k.type = VAL_STRING; k.ival = 0; k.fval = 0; k.sval = strdup("mem");
-    val.type = VAL_FLOAT; val.fval = vm->used_mem; val.ival = 0; val.sval = NULL;
+    k.type = VAL_STRING; k.ival = 0;  k.sval = strdup("mem");
+    val.type = VAL_FLOAT; val.fval = vm->used_mem;  val.sval = NULL;
     vm_dict_set(vm, aidx, &k, &val); free(k.sval);
     k.sval = strdup("time");
     val.type = VAL_FLOAT; val.fval = tsec;
     vm_dict_set(vm, aidx, &k, &val); free(k.sval);
-    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1; dv.fval = 0; dv.sval = NULL;
+    Value dv; dv.type = VAL_DICT; dv.ival = aidx + 1;  dv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = dv; }
     return 1;
 }

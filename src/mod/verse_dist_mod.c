@@ -61,15 +61,15 @@ static void r_push(VM *vm, Value v) {
     if (!vm_push_value(vm, &v)) value_free(&v);
 }
 static void r_push_int(VM *vm, int n) {
-    Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
+    Value v; v.type = VAL_INT; v.ival = n;  v.sval = NULL;
     r_push(vm, v);
 }
 static void r_push_str(VM *vm, const char *s) {
-    Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = (char*)s;
+    Value v; v.type = VAL_STRING; v.ival = 0;  v.sval = (char*)s;
     r_push(vm, v);
 }
 static void r_push_nil(VM *vm) {
-    Value v; v.type = VAL_NIL; v.ival = 0; v.fval = 0; v.sval = NULL;
+    Value v; v.type = VAL_NIL; v.ival = 0;  v.sval = NULL;
     r_push(vm, v);
 }
 
@@ -450,11 +450,11 @@ static int b_verse_identity_new(VM *vm) {
     char pubhex[65];
     identity_pubkey(pubhex);
     int aidx = vm_array_new(vm);
-    Value v; v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = _strdup(pubhex);
+    Value v; v.type = VAL_STRING; v.ival = 0;  v.sval = _strdup(pubhex);
     vm_array_push(vm, aidx, &v);
     v.ival = 0; v.sval = _strdup(hex);
     vm_array_push(vm, aidx, &v);
-    Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1; rv.fval = 0; rv.sval = NULL;
+    Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1;  rv.sval = NULL;
     r_push(vm, rv);
     return 1;
 }
@@ -919,10 +919,10 @@ static int b_verse_hubs(VM *vm) {
     hubs_load();
     int aidx = vm_array_new(vm);
     for (int i = 0; i < g_hub_count; i++) {
-        Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = g_hubs[i];
+        Value v; v.type = VAL_STRING; v.ival = 1;  v.sval = g_hubs[i];
         vm_array_push(vm, aidx, &v);
     }
-    Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1; rv.fval = 0; rv.sval = NULL;
+    Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1;  rv.sval = NULL;
     r_push(vm, rv);
     return 1;
 }
@@ -1271,13 +1271,13 @@ static int b_verse_list(VM *vm) {
         while (im_dir_next_ex(dir, name, sizeof name, &is_dir)) {
             if (is_dir) {
                 const char *s = vm_intern(vm, name);
-                Value v; v.type=VAL_STRING; v.ival=1; v.fval=0; v.sval=(char*)(s?s:name);
+                Value v; v.type=VAL_STRING; v.ival=1;  v.sval=(char*)(s?s:name);
                 vm_array_push(vm, aidx, &v);
             }
         }
         im_dir_close(dir);
     }
-    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1;  a.sval = NULL;
     r_push(vm, a);
     return 1;
 }
@@ -2114,7 +2114,7 @@ static int b_verse_econ_domain(VM *vm) {
     char *resp = http_post_body(url, body, &len);
     char cid[65] = "";
     if (resp) { (void)vd_json_str(resp, "currency_id", cid, sizeof cid); free(resp); }
-    Value s; s.type = VAL_STRING; s.ival = 0; s.fval = 0; s.ptr = NULL; s.sval = strdup(cid);
+    Value s; s.type = VAL_STRING; s.ival = 0;  s.ptr = NULL; s.sval = strdup(cid);
     r_push(vm, s);
     free(uri); free(domain); free(kind); free(denom); free(transfer);
     return 1;
@@ -2155,14 +2155,14 @@ static int b_verse_econ_settle(VM *vm) {
         free(resp);
     }
     int out = vm_array_new(vm);
-    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; 
     kv.sval = status;    rp_set_entry(vm, out, "status", kv);
     kv.sval = reason;    rp_set_entry(vm, out, "reason", kv);
     Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
     iv.ival = balance_to; rp_set_entry(vm, out, "balance_to", iv);
     iv.ival = version_to; rp_set_entry(vm, out, "version_to", iv);
     iv.ival = event_seq;  rp_set_entry(vm, out, "event_seq", iv);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(cid); free(from); free(to); free(amt); free(key);
     return 1;
@@ -2240,7 +2240,7 @@ static int b_verse_econ_balance(VM *vm) {
     Value iv; iv.type = VAL_INT; iv.sval = NULL; iv.ptr = NULL; iv.fval = 0;
     iv.ival = amount;  rp_set_entry(vm, out, "amount", iv);
     iv.ival = version; rp_set_entry(vm, out, "version", iv);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(cid); free(account);
     return 1;
@@ -2270,7 +2270,7 @@ static int b_verse_econ_audit(VM *vm) {
     Value iv; iv.type = VAL_INT; iv.sval = NULL; iv.ptr = NULL; iv.fval = 0;
     iv.ival = count;    rp_set_entry(vm, out, "count", iv);
     iv.ival = chain_ok; rp_set_entry(vm, out, "chain_ok", iv);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(cid);
     return 1;
@@ -2312,13 +2312,13 @@ static int b_verse_session_reattach(VM *vm) {
         free(resp);
     }
     int out = vm_array_new(vm);
-    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; 
     kv.sval = resume;     rp_set_entry(vm, out, "resume", kv);
     kv.sval = reason;     rp_set_entry(vm, out, "reason", kv);
     Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
     iv.ival = last_applied; rp_set_entry(vm, out, "last_applied", iv);
     iv.ival = generation;   rp_set_entry(vm, out, "generation", iv);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(verse); free(peer); free(gen); free(recv); free(comm);
     return 1;
@@ -2350,13 +2350,13 @@ static int b_verse_session_state(VM *vm) {
         free(body);
     }
     int out = vm_array_new(vm);
-    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; 
     kv.sval = state;      rp_set_entry(vm, out, "state", kv);
     kv.sval = authority;  rp_set_entry(vm, out, "authority", kv);
     Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
     iv.ival = generation; rp_set_entry(vm, out, "generation", iv);
     iv.ival = pending;    rp_set_entry(vm, out, "pending_inputs", iv);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(verse); free(peer);
     return 1;
@@ -2381,7 +2381,7 @@ static int b_verse_idem_begin(VM *vm) {
     char *resp = http_post_body(url, body, &len);
     char status[32] = "unknown";
     if (resp) { (void)vd_json_str(resp, "status", status, sizeof status); free(resp); }
-    Value s; s.type = VAL_STRING; s.ival = 0; s.fval = 0; s.ptr = NULL; s.sval = strdup(status);
+    Value s; s.type = VAL_STRING; s.ival = 0;  s.ptr = NULL; s.sval = strdup(status);
     r_push(vm, s);
     free(uri); free(verse); free(peer); free(key);
     return 1;
@@ -2418,7 +2418,7 @@ static int b_verse_node_schedule(VM *vm) {
             kv.sval = endpoint;               rp_set_entry(vm, entry, "endpoint", kv);
             kv.sval = caps;                   rp_set_entry(vm, entry, "caps", kv);
             kv.sval = health;                 rp_set_entry(vm, entry, "health", kv);
-            Value ev; ev.type = VAL_DICT; ev.ival = entry + 1; ev.fval = 0; ev.sval = NULL; ev.ptr = NULL;
+            Value ev; ev.type = VAL_DICT; ev.ival = entry + 1;  ev.sval = NULL; ev.ptr = NULL;
             vm_array_push(vm, aidx, &ev);
             count++;
             p += 9;
@@ -2426,11 +2426,11 @@ static int b_verse_node_schedule(VM *vm) {
         free(body);
     }
     int out = vm_array_new(vm);
-    Value nv; nv.type = VAL_INT; nv.ival = count; nv.fval = 0; nv.sval = NULL; nv.ptr = NULL;
+    Value nv; nv.type = VAL_INT; nv.ival = count;  nv.sval = NULL; nv.ptr = NULL;
     rp_set_entry(vm, out, "count", nv);
-    Value arr; arr.type = VAL_ARRAY; arr.ival = aidx + 1; arr.fval = 0; arr.sval = NULL; arr.ptr = NULL;
+    Value arr; arr.type = VAL_ARRAY; arr.ival = aidx + 1;  arr.sval = NULL; arr.ptr = NULL;
     rp_set_entry(vm, out, "nodes", arr);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(want);
     return 1;
@@ -2462,13 +2462,13 @@ static int b_verse_session_authority(VM *vm) {
         free(body);
     }
     int out = vm_array_new(vm);
-    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; kv.ival = 0;
+    Value kv; kv.type = VAL_STRING; kv.fval = 0; kv.ptr = NULL; 
     kv.sval = authority;  rp_set_entry(vm, out, "authority", kv);
     kv.sval = tail;       rp_set_entry(vm, out, "event_tail", kv);
     kv.sval = frozen;     rp_set_entry(vm, out, "frozen", kv);
-    Value iv; iv.type = VAL_INT; iv.ival = generation; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
+    Value iv; iv.type = VAL_INT; iv.ival = generation;  iv.sval = NULL; iv.ptr = NULL;
     rp_set_entry(vm, out, "generation", iv);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri); free(verse); free(peer);
     return 1;
@@ -2535,7 +2535,7 @@ static int vd_json_str(const char *json, const char *key, char *out, size_t cap)
 }
 
 static void rp_set_entry(VM *vm, int aidx, const char *key, Value val) {
-    Value k; k.type = VAL_STRING; k.ival = 1; k.fval = 0; k.sval = (char *)key; k.ptr = NULL;
+    Value k; k.type = VAL_STRING; k.ival = 1;  k.sval = (char *)key; k.ptr = NULL;
     vm_dict_set(vm, aidx, &k, &val);
 }
 
@@ -2625,7 +2625,7 @@ static int b_verse_node_discover(VM *vm) {
             iv.ival = verified;                        rp_set_entry(vm, entry, "verified", iv);
             iv.ival = (int)expires_at;                 rp_set_entry(vm, entry, "expires_at", iv);
             kv.type = VAL_STRING; kv.ival = 1; kv.sval = (char *)reason; rp_set_entry(vm, entry, "reason", kv);
-            Value ev; ev.type = VAL_DICT; ev.ival = entry + 1; ev.fval = 0; ev.sval = NULL; ev.ptr = NULL;
+            Value ev; ev.type = VAL_DICT; ev.ival = entry + 1;  ev.sval = NULL; ev.ptr = NULL;
             vm_array_push(vm, aidx, &ev);
             count++;
             p += 9; /* advance past this entry's key and keep scanning */
@@ -2633,11 +2633,11 @@ static int b_verse_node_discover(VM *vm) {
         free(body);
     }
     int out = vm_array_new(vm);
-    Value nv; nv.type = VAL_INT; nv.ival = count; nv.fval = 0; nv.sval = NULL; nv.ptr = NULL;
+    Value nv; nv.type = VAL_INT; nv.ival = count;  nv.sval = NULL; nv.ptr = NULL;
     rp_set_entry(vm, out, "count", nv);
-    Value arr; arr.type = VAL_ARRAY; arr.ival = aidx + 1; arr.fval = 0; arr.sval = NULL; arr.ptr = NULL;
+    Value arr; arr.type = VAL_ARRAY; arr.ival = aidx + 1;  arr.sval = NULL; arr.ptr = NULL;
     rp_set_entry(vm, out, "nodes", arr);
-    Value d; d.type = VAL_DICT; d.ival = out + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out + 1;  d.sval = NULL; d.ptr = NULL;
     r_push(vm, d);
     free(uri);
     return 1;

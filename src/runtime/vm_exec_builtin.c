@@ -27,7 +27,7 @@ static Bytecode *bc_from_data(VM *vm, Value data) {
     if (!bc) return NULL;
     bytecode_init(bc);
     Value key;
-    key.type = VAL_STRING; key.ival = 0; key.fval = 0; key.sval = "strings";
+    key.type = VAL_STRING; key.ival = 0;  key.sval = "strings";
     Value strs = vm_dict_get(vm, data.ival - 1, &key);
     if (strs.type == VAL_ARRAY) {
         int n = vm_array_len(vm, strs.ival - 1);
@@ -75,10 +75,10 @@ static Bytecode *bc_from_data(VM *vm, Value data) {
             Bytecode *fb = bc_from_data(vm, f);
             if (!fb) continue;
             bc->funcs[bc->func_count] = fb;
-            Value nk; nk.type = VAL_STRING; nk.ival = 0; nk.fval = 0; nk.sval = "n";
+            Value nk; nk.type = VAL_STRING; nk.ival = 0;  nk.sval = "n";
             Value nm = vm_dict_get(vm, f.ival - 1, &nk);
             bc->func_names[bc->func_count] = (nm.type == VAL_STRING && nm.sval) ? strdup(nm.sval) : strdup("func");
-            Value ak; ak.type = VAL_STRING; ak.ival = 0; ak.fval = 0; ak.sval = "a";
+            Value ak; ak.type = VAL_STRING; ak.ival = 0;  ak.sval = "a";
             Value av = vm_dict_get(vm, f.ival - 1, &ak);
             bc->func_argc[bc->func_count] = (av.type == VAL_INT) ? av.ival : 0;
             bc->func_count++;
@@ -95,10 +95,10 @@ static Bytecode *bc_from_data(VM *vm, Value data) {
             Bytecode *tb = bc_from_data(vm, f);
             if (!tb) continue;
             bc->threads[bc->thread_count] = tb;
-            Value nk2; nk2.type = VAL_STRING; nk2.ival = 0; nk2.fval = 0; nk2.sval = "n";
+            Value nk2; nk2.type = VAL_STRING; nk2.ival = 0;  nk2.sval = "n";
             Value nm2 = vm_dict_get(vm, f.ival - 1, &nk2);
             bc->thread_names[bc->thread_count] = (nm2.type == VAL_STRING && nm2.sval) ? strdup(nm2.sval) : strdup("th");
-            Value ak2; ak2.type = VAL_STRING; ak2.ival = 0; ak2.fval = 0; ak2.sval = "a";
+            Value ak2; ak2.type = VAL_STRING; ak2.ival = 0;  ak2.sval = "a";
             Value av2 = vm_dict_get(vm, f.ival - 1, &ak2);
             bc->thread_argc[bc->thread_count] = (av2.type == VAL_INT) ? av2.ival : 0;
             bc->thread_count++;

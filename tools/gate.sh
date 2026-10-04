@@ -128,28 +128,33 @@ stage_ctest() {
   return 0
 }
 
-# The differential fuzzer (tools/im_diff_fuzz.py) is not an expect-zero stage, and
-# it cannot be one.  It deliberately generates constants at the int32/double
-# boundary, which is exactly where the interpreter and the AOT backend are known to
-# disagree: Value carries a 32-bit `ival` plus a double, while the codegen's NV.i is
-# 64-bit, so a number above int32 is a double in the VM (low bits gone) and an exact
-# int64 in AOT.  Restricting the generator to int32 constants does not help -- computed
-# overflow crosses the same boundary -- so the gap is pinned instead of hidden:
+# The differential fuzzer (tools/im_diff_fuzz.py) is an expect-zero stage now.
 #
-#   * the seed and the program count are fixed, so the finding set is deterministic;
-#   * the two counts are asserted EXACTLY, not as a ceiling.
+# It deliberately generates constants at the int32/double boundary, which is exactly
+# where the interpreter and the AOT backend used to disagree: Value carried a 32-bit
+# `ival` plus a double while the codegen's NV.i was 64-bit, so a number above int32
+# became a double in the VM (low bits gone, integer zero guards skipped) and stayed an
+# exact int64 in AOT.  v3.1 widened Value's integer slot to int64 behind an anonymous
+# union that keeps sizeof(Value) at 32 bytes, so the two agree: 0 findings across
+# seeds 1-6 at 120 programs each and seed 1 at 400.  See docs/AUDIT.md §1.14.
 #
-# More findings is a new divergence.  Fewer findings means one was fixed, and that
-# also fails the gate on purpose: the pin has to be updated and the case promoted,
-# the same convention as the pinned DIVERGENCE list in tools/aot_native.test.py, so
-# the gap can neither widen nor close without someone saying so.  `not translated`
-# must be 0 either way -- the tool reports a program the AOT backend cannot translate
-# as a generator bug rather than as a divergence, and a generator bug is never a
-# finding.  See docs/AUDIT.md §1.2 (整数提升) and §1.13.
+# The seed and the program count stay fixed, so the finding set is deterministic and a
+# regression is reproducible.  The counts are still asserted EXACTLY rather than as a
+# ceiling, because the direction of the surprise matters:
+#
+#   * MORE findings is a new interpreter/AOT divergence -- do not paper over it;
+#   * FEWER findings means one was fixed -- promote that case into
+#     tools/aot_native.test.py, then lower the pin here and in docs/BOARD.md 3.
+#
+# That is the same convention as the pinned DIVERGENCE list in
+# tools/aot_native.test.py, so the gap can neither widen nor close without someone
+# saying so.  `not translated` must be 0 either way -- the tool reports a program the
+# AOT backend cannot translate as a generator bug rather than as a divergence, and a
+# generator bug is never a finding.  See docs/AUDIT.md §1.2 (整数提升) and §1.13.
 EXP_FUZZ_COUNT="${EXP_FUZZ_COUNT:-120}"
 EXP_FUZZ_SEED="${EXP_FUZZ_SEED:-1}"
-EXP_FUZZ_DIVERGE="${EXP_FUZZ_DIVERGE:-5}"
-EXP_FUZZ_THREW="${EXP_FUZZ_THREW:-4}"
+EXP_FUZZ_DIVERGE="${EXP_FUZZ_DIVERGE:-0}"
+EXP_FUZZ_THREW="${EXP_FUZZ_THREW:-0}"
 
 stage_fuzz() {
   local out rc div threw untr
@@ -345,7 +350,7 @@ stage_doc_paths() {
 
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
-run_stage "differential fuzz (interp vs AOT, pinned ${EXP_FUZZ_DIVERGE}+${EXP_FUZZ_THREW})" fuzz stage_fuzz
+run_stage "differential fuzz (interp vs AOT, expect 0 findings)" fuzz stage_fuzz
 run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
 run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
 run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin

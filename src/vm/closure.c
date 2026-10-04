@@ -15,7 +15,7 @@ static void closure_value_free(Value *v) {
     if (v->type == VAL_STRING && v->sval && v->ival != 1) free(v->sval);
     if (v->type == VAL_FUNCTION && v->ptr)
         im_closure_function_release((ImClosureFunction *)v->ptr);
-    v->type = VAL_NIL; v->ival = 0; v->fval = 0; v->sval = NULL; v->ptr = NULL;
+    v->type = VAL_NIL; v->ival = 0;  v->sval = NULL; v->ptr = NULL;
 }
 
 static int closure_value_copy(Value *dst, const Value *src) {
@@ -55,7 +55,7 @@ void im_closure_env_retain(ImClosureEnv *e) { if (e) atomic_fetch_add_explicit(&
 void im_closure_env_release(ImClosureEnv *e) { if (e && atomic_fetch_sub_explicit(&e->refs, 1, memory_order_acq_rel) == 1) { for (size_t i = 0; i < e->slots; ++i) closure_value_free(&e->values[i]); free(e->values); free(e); } }
 size_t im_closure_env_size(const ImClosureEnv *e) { return e ? e->slots : 0; }
 size_t im_closure_env_refs(const ImClosureEnv *e) { return e ? atomic_load_explicit(&e->refs, memory_order_acquire) : 0; }
-int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; Value copy = { VAL_NIL, 0, 0, NULL, NULL }; if (!closure_value_copy(&copy, v)) return 0; closure_value_free(&e->values[i]); e->values[i] = copy; return 1; }
+int im_closure_env_set(ImClosureEnv *e, size_t i, const Value *v) { if (!e || !v || i >= e->slots) return 0; Value copy = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL }; if (!closure_value_copy(&copy, v)) return 0; closure_value_free(&e->values[i]); e->values[i] = copy; return 1; }
 int im_closure_env_copy_slot(ImClosureEnv *dst, size_t di, const ImClosureEnv *src, size_t si) {
     const Value *v = im_closure_env_get(src, si);
     return v ? im_closure_env_set(dst, di, v) : 0;

@@ -39,11 +39,11 @@ static void r_push_copy(VM *vm, const Value *v) {
     if (!v || vm_cur_sp(vm) >= 1023) return;
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
     Value *dst = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    dst->type = VAL_NIL; dst->ival = 0; dst->fval = 0; dst->sval = NULL; dst->ptr = NULL;
+    dst->type = VAL_NIL; dst->ival = 0;  dst->sval = NULL; dst->ptr = NULL;
     vm_value_assign(dst, v);
 }
-static void r_push_int(VM *vm, int n) { Value v; v.type = VAL_INT; v.ival = n; v.fval =0; v.sval = NULL; r_push(vm, v); }
-static void r_push_nil(VM *vm) { Value v; v.type = VAL_NIL; v.ival =0; v.fval =0; v.sval = NULL; r_push(vm, v); }
+static void r_push_int(VM *vm, int n) { Value v; v.type = VAL_INT; v.ival = n;  v.sval = NULL; r_push(vm, v); }
+static void r_push_nil(VM *vm) { Value v; v.type = VAL_NIL; v.ival =0;  v.sval = NULL; r_push(vm, v); }
 
 static void r_copy_value(Value *dst, const Value *src) { vm_value_assign(dst, src); }
 static void r_free_value(Value *v) { value_free(v); }
@@ -76,16 +76,16 @@ void record_load_from_file(VM *vm, const char *path) {
 /* ---- save all record vars as {name: value} JSON ---- */
 static void record_save_to_dict(VM *vm, Value *out) {
     int aidx = vm_array_new(vm);
-    if (aidx <0) { out->type = VAL_NIL; out->ival =0; out->fval =0; out->sval = NULL; return; }
+    if (aidx <0) { out->type = VAL_NIL; out->ival =0;  out->sval = NULL; return; }
     for (int i =0; i < vm->record_meta_count; i++) {
         if (!(vm->record_names && vm->record_names[i])) continue;
         if (i >= vm->globalCount) continue;
-        Value k; k.type = VAL_STRING; k.ival =0; k.fval =0; k.sval = strdup(vm->record_names[i]);
+        Value k; k.type = VAL_STRING; k.ival =0;  k.sval = strdup(vm->record_names[i]);
         Value v = vm->globals[i].val;
         vm_dict_set(vm, aidx, &k, &v);
         free(k.sval);
     }
-    out->type = VAL_DICT; out->ival = aidx +1; out->fval =0; out->sval = NULL;
+    out->type = VAL_DICT; out->ival = aidx +1;  out->sval = NULL;
 }
 
 void record_save_to_file(VM *vm, const char *path) {
@@ -137,7 +137,7 @@ static int builtin_tagged(VM *vm) {
         for (int t = 0; t < g_tag_n; t++) {
             if (strcmp(g_tag_name[t], name_copy ? name_copy : "") == 0) {
                 for (int i = 0; i < g_tag_count[t]; i++) {
-                    Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = g_tag_items[t][i];
+                    Value v; v.type = VAL_STRING; v.ival = 1;  v.sval = g_tag_items[t][i];
                     vm_array_push(vm, out, &v);
                 }
                 break;
@@ -145,7 +145,7 @@ static int builtin_tagged(VM *vm) {
         }
     }
     free(name_copy);
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = out + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = out + 1;  arrv.sval = NULL;
     r_push(vm, arrv);
     return 1;
 }
@@ -224,11 +224,11 @@ static int builtin_record_dirty(VM *vm) {
     if (aidx <0) { r_push_nil(vm); return 1; }
     for (int i =0; i < vm->record_meta_count; i++) {
         if (vm->record_meta[i].dirty && vm->record_names && vm->record_names[i]) {
-            Value v; v.type = VAL_STRING; v.ival =1; v.fval =0; v.sval = vm->record_names[i];
+            Value v; v.type = VAL_STRING; v.ival =1;  v.sval = vm->record_names[i];
             vm_array_push(vm, aidx, &v);
         }
     }
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx +1; arrv.fval =0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx +1;  arrv.sval = NULL;
     r_push(vm, arrv);
     return 1;
 }
@@ -258,7 +258,7 @@ static int builtin_record_value(VM *vm) {
 static int builtin_record_set_value(VM *vm) {
     const char *name = vm->cur_argc >1 ? r_arg_str(vm, vm->cur_argc -1) : "";
     char *name_copy = strdup(name ? name : "");
-    Value v; v.type = VAL_NIL; v.ival =0; v.fval =0; v.sval = NULL; v.ptr = NULL;
+    Value v; v.type = VAL_NIL; v.ival =0;  v.sval = NULL; v.ptr = NULL;
     Value arg = vm->cur_argc >0 ? r_arg(vm, vm->cur_argc -2) : r_arg(vm,0);
     vm_value_assign(&v, &arg);
     r_popn(vm, vm->cur_argc);
@@ -288,19 +288,19 @@ static int builtin_record_get(VM *vm) {
     if (idx <0) { r_push_nil(vm); return 1; }
     int aidx = vm_array_new(vm);
     if (aidx <0) { r_push_nil(vm); return 1; }
-    Value k1; k1.type = VAL_STRING; k1.ival =1; k1.fval =0; k1.sval = "store";
-    Value v1; v1.type = VAL_INT; v1.ival = vm->record_meta[idx].store; v1.fval =0; v1.sval = NULL;
+    Value k1; k1.type = VAL_STRING; k1.ival =1;  k1.sval = "store";
+    Value v1; v1.type = VAL_INT; v1.ival = vm->record_meta[idx].store;  v1.sval = NULL;
     vm_dict_set(vm, aidx, &k1, &v1);
-    Value k2; k2.type = VAL_STRING; k2.ival =1; k2.fval =0; k2.sval = "scope";
-    Value v2; v2.type = VAL_INT; v2.ival = vm->record_meta[idx].scope; v2.fval =0; v2.sval = NULL;
+    Value k2; k2.type = VAL_STRING; k2.ival =1;  k2.sval = "scope";
+    Value v2; v2.type = VAL_INT; v2.ival = vm->record_meta[idx].scope;  v2.sval = NULL;
     vm_dict_set(vm, aidx, &k2, &v2);
-    Value k3; k3.type = VAL_STRING; k3.ival =1; k3.fval =0; k3.sval = "merge";
-    Value v3; v3.type = VAL_INT; v3.ival = vm->record_meta[idx].merge; v3.fval =0; v3.sval = NULL;
+    Value k3; k3.type = VAL_STRING; k3.ival =1;  k3.sval = "merge";
+    Value v3; v3.type = VAL_INT; v3.ival = vm->record_meta[idx].merge;  v3.sval = NULL;
     vm_dict_set(vm, aidx, &k3, &v3);
-    Value k4; k4.type = VAL_STRING; k4.ival =1; k4.fval =0; k4.sval = "version";
-    Value v4; v4.type = VAL_INT; v4.ival = vm->record_meta[idx].version; v4.fval =0; v4.sval = NULL;
+    Value k4; k4.type = VAL_STRING; k4.ival =1;  k4.sval = "version";
+    Value v4; v4.type = VAL_INT; v4.ival = vm->record_meta[idx].version;  v4.sval = NULL;
     vm_dict_set(vm, aidx, &k4, &v4);
-    Value d; d.type = VAL_DICT; d.ival = aidx +1; d.fval =0; d.sval = NULL;
+    Value d; d.type = VAL_DICT; d.ival = aidx +1;  d.sval = NULL;
     r_push(vm, d);
     return 1;
 }

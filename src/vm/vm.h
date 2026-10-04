@@ -21,9 +21,31 @@ typedef struct VmThread VmThread;
 
 enum ValueType { VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_OBJECT, VAL_NIL, VAL_ARRAY, VAL_DICT, VAL_SET, VAL_FUNCTION };
 
+/* Value -- the one shape shared by VM registers, AOT-generated C, wasm linear
+   memory slots and the fixed import table.  It MUST stay 32 bytes:
+   docs/DECFY_DESIGN.md:76 makes that width contract non-negotiable, because a
+   `.im` file must never be able to move the ABI or break serialization
+   round-trips.
+
+   `ival` and `fval` were already mutually exclusive -- the `type` tag decides
+   which one is live -- so they now share storage in an anonymous union (C11;
+   CMakeLists.txt:19-20 pins CMAKE_C_STANDARD 11).  sizeof stays 32 while the
+   integer slot becomes 64-bit, which is what AOT's `NV.i` (long long,
+   src/compilation/aot_native.c:174) and wasm's i64 payload slot
+   (src/compilation/wasm_backend.c:66) have always been.
+
+   Every use site keeps spelling them `v.ival` / `v.fval`; only ival's offset
+   moves (4 -> 8).  Never write both on one value -- the second write now
+   overwrites the first -- write only the field your `type` selects. */
 typedef struct {
-    int type; int ival; double fval; char *sval; void *ptr;
+    int type;
+    union { long long ival; double fval; };   /* anonymous union (C11) */
+    char *sval;
+    void *ptr;
 } Value;
+
+_Static_assert(sizeof(Value) == 32,
+               "Value must stay 32 bytes (ABI width contract, docs/DECFY_DESIGN.md:76)");
 
 /* set interval component: builtin set nameIdx intersected with [lo,hi] (inc flags); +/-1e308 = unbounded */
 typedef struct {
@@ -354,7 +376,7 @@ int vm_cur_sp(VM *vm);
 Value *vm_cur_stack(VM *vm);
 void vm_cur_set_sp(VM *vm, int sp);
 
-void push_int(VM *vm, int v);
+void push_int(VM *vm, long long v);
 void push_float(VM *vm, double v);
 void push_string(VM *vm, const char *s);
 void push_double(VM *vm, double d);

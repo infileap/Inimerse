@@ -141,11 +141,11 @@ static void biome_push_dict(VM *vm, VerseWorld *w, int id) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { r_push_nil(vm); return; }
     Value k, v;
-    k.type = VAL_STRING; k.ival = 1; k.fval = 0; k.sval = (char*)"name";
-    v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = b->name;
+    k.type = VAL_STRING; k.ival = 1;  k.sval = (char*)"name";
+    v.type = VAL_STRING; v.ival = 1;  v.sval = b->name;
     vm_array_push(vm, aidx, &k); vm_array_push(vm, aidx, &v);
     k.sval = (char*)"level";
-    v.type = VAL_INT; v.ival = b->level; v.fval = 0; v.sval = NULL;
+    v.type = VAL_INT; v.ival = b->level;  v.sval = NULL;
     vm_array_push(vm, aidx, &k); vm_array_push(vm, aidx, &v);
     k.sval = (char*)"parent";
     v.ival = b->parent;
@@ -154,14 +154,14 @@ static void biome_push_dict(VM *vm, VerseWorld *w, int id) {
     int paidx = vm_array_new(vm);
     if (paidx >= 0) {
         for (int i = 0; i < b->palette_count; i++) {
-            Value pv; pv.type = VAL_INT; pv.ival = b->palette[i]; pv.fval = 0; pv.sval = NULL;
+            Value pv; pv.type = VAL_INT; pv.ival = b->palette[i];  pv.sval = NULL;
             vm_array_push(vm, paidx, &pv);
         }
     }
     k.sval = (char*)"palette";
-    v.type = VAL_ARRAY; v.ival = paidx + 1; v.fval = 0; v.sval = NULL;
+    v.type = VAL_ARRAY; v.ival = paidx + 1;  v.sval = NULL;
     vm_array_push(vm, aidx, &k); vm_array_push(vm, aidx, &v);
-    Value d; d.type = VAL_DICT; d.ival = aidx + 1; d.fval = 0; d.sval = NULL;
+    Value d; d.type = VAL_DICT; d.ival = aidx + 1;  d.sval = NULL;
     r_push(vm, d);
 }
 
@@ -321,27 +321,27 @@ static void r_push(VM *vm, Value v) {
     if (!vm_push_value(vm, &v)) value_free(&v);
 }
 static void r_push_int(VM *vm, int n) {
-    Value v; v.type = VAL_INT; v.ival = n; v.fval = 0; v.sval = NULL;
+    Value v; v.type = VAL_INT; v.ival = n;  v.sval = NULL;
     r_push(vm, v);
 }
 static void r_push_nil(VM *vm) {
-    Value v; v.type = VAL_NIL; v.ival = 0; v.fval = 0; v.sval = NULL;
+    Value v; v.type = VAL_NIL; v.ival = 0;  v.sval = NULL;
     r_push(vm, v);
 }
 /* push {x,y,ly} dict */
 static void r_push_cell(VM *vm, int x, int y, int ly) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { r_push_nil(vm); return; }
-    Value kx; kx.type = VAL_STRING; kx.ival = 1; kx.fval = 0; kx.sval = (char*)"x";
-    Value kx2; kx2.type = VAL_STRING; kx2.ival = 1; kx2.fval = 0; kx2.sval = (char*)"y";
-    Value kx3; kx3.type = VAL_STRING; kx3.ival = 1; kx3.fval = 0; kx3.sval = (char*)"ly";
-    Value vx; vx.type = VAL_INT; vx.ival = x; vx.fval = 0; vx.sval = NULL;
-    Value vy; vy.type = VAL_INT; vy.ival = y; vy.fval = 0; vy.sval = NULL;
-    Value vl; vl.type = VAL_INT; vl.ival = ly; vl.fval = 0; vl.sval = NULL;
+    Value kx; kx.type = VAL_STRING; kx.ival = 1;  kx.sval = (char*)"x";
+    Value kx2; kx2.type = VAL_STRING; kx2.ival = 1;  kx2.sval = (char*)"y";
+    Value kx3; kx3.type = VAL_STRING; kx3.ival = 1;  kx3.sval = (char*)"ly";
+    Value vx; vx.type = VAL_INT; vx.ival = x;  vx.sval = NULL;
+    Value vy; vy.type = VAL_INT; vy.ival = y;  vy.sval = NULL;
+    Value vl; vl.type = VAL_INT; vl.ival = ly;  vl.sval = NULL;
     vm_dict_set(vm, aidx, &kx, &vx);
     vm_dict_set(vm, aidx, &kx2, &vy);
     vm_dict_set(vm, aidx, &kx3, &vl);
-    Value d; d.type = VAL_DICT; d.ival = aidx + 1; d.fval = 0; d.sval = NULL;
+    Value d; d.type = VAL_DICT; d.ival = aidx + 1;  d.sval = NULL;
     r_push(vm, d);
 }
 
@@ -440,7 +440,7 @@ static int b_verse_neighbors(VM *vm) {
                 char buf[64];
                 snprintf(buf, sizeof buf, "%d,%d", bkx(nb), bky(nb));
                 const char *s = vm_intern(vm, buf);
-                Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = (char*)(s ? s : buf);
+                Value v; v.type = VAL_STRING; v.ival = 1;  v.sval = (char*)(s ? s : buf);
                 vm_array_push(vm, aidx, &v);
             }
             break;
@@ -449,12 +449,12 @@ static int b_verse_neighbors(VM *vm) {
     if (w->adj_count == 0) {
         /* default flat four-neighbors as strings */
         char buf[64];
-        snprintf(buf, sizeof buf, "%d,%d", x + 16, y); { const char *s = vm_intern(vm, buf); Value v1; v1.type = VAL_STRING; v1.ival = 1; v1.fval = 0; v1.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v1); }
-        snprintf(buf, sizeof buf, "%d,%d", x - 16, y); { const char *s = vm_intern(vm, buf); Value v2; v2.type = VAL_STRING; v2.ival = 1; v2.fval = 0; v2.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v2); }
-        snprintf(buf, sizeof buf, "%d,%d", x, y + 16); { const char *s = vm_intern(vm, buf); Value v3; v3.type = VAL_STRING; v3.ival = 1; v3.fval = 0; v3.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v3); }
-        snprintf(buf, sizeof buf, "%d,%d", x, y - 16); { const char *s = vm_intern(vm, buf); Value v4; v4.type = VAL_STRING; v4.ival = 1; v4.fval = 0; v4.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v4); }
+        snprintf(buf, sizeof buf, "%d,%d", x + 16, y); { const char *s = vm_intern(vm, buf); Value v1; v1.type = VAL_STRING; v1.ival = 1;  v1.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v1); }
+        snprintf(buf, sizeof buf, "%d,%d", x - 16, y); { const char *s = vm_intern(vm, buf); Value v2; v2.type = VAL_STRING; v2.ival = 1;  v2.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v2); }
+        snprintf(buf, sizeof buf, "%d,%d", x, y + 16); { const char *s = vm_intern(vm, buf); Value v3; v3.type = VAL_STRING; v3.ival = 1;  v3.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v3); }
+        snprintf(buf, sizeof buf, "%d,%d", x, y - 16); { const char *s = vm_intern(vm, buf); Value v4; v4.type = VAL_STRING; v4.ival = 1;  v4.sval = (char*)(s ? s : buf); vm_array_push(vm, aidx, &v4); }
     }
-    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1;  a.sval = NULL;
     r_push(vm, a);
     return 1;
 }
@@ -596,11 +596,11 @@ static int b_verse_nearby(VM *vm) {
         if (hits) hn = grid_query(w, x, y, r, hits, w->ent_count);
     }
     for (int i = 0; i < hn; i++) {
-        Value v; v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = w->ents[hits[i]].id;
+        Value v; v.type = VAL_STRING; v.ival = 1;  v.sval = w->ents[hits[i]].id;
         vm_array_push(vm, aidx, &v);
     }
     free(hits);
-    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1;  a.sval = NULL;
     r_push(vm, a);
     return 1;
 }
@@ -638,7 +638,7 @@ static int b_verse_law_get(VM *vm) {
     VerseWorld *w = vw();
     for (int i = 0; i < w->law_count; i++) {
         if (strcmp(w->laws[i].name, name) == 0) {
-            Value v; v.type = VAL_FLOAT; v.fval = w->laws[i].val; v.ival = 0; v.sval = NULL;
+            Value v; v.type = VAL_FLOAT; v.fval = w->laws[i].val;  v.sval = NULL;
             r_push(vm, v);
             free(name); return 1;
         }
@@ -656,15 +656,15 @@ static int b_verse_snapshot(VM *vm) {
     for (int i = 0; i < w->blocks.cap; i++) {
         if (w->blocks.keys[i]) {
             uint64_t k = w->blocks.keys[i];
-            Value cell; cell.type = VAL_DICT; cell.ival = 0; cell.fval = 0; cell.sval = NULL;
+            Value cell; cell.type = VAL_DICT; cell.ival = 0;  cell.sval = NULL;
             int caidx = vm_array_new(vm);
             if (caidx < 0) break;
-            Value kx; kx.type = VAL_STRING; kx.ival = 1; kx.fval = 0; kx.sval = (char*)"x";
-            Value k2; k2.type = VAL_STRING; k2.ival = 1; k2.fval = 0; k2.sval = (char*)"y";
-            Value k3; k3.type = VAL_STRING; k3.ival = 1; k3.fval = 0; k3.sval = (char*)"t";
-            Value vx; vx.type = VAL_INT; vx.ival = bkx(k); vx.fval = 0; vx.sval = NULL;
-            Value vy; vy.type = VAL_INT; vy.ival = bky(k); vy.fval = 0; vy.sval = NULL;
-            Value vt; vt.type = VAL_INT; vt.ival = w->blocks.vals[i]; vt.fval = 0; vt.sval = NULL;
+            Value kx; kx.type = VAL_STRING; kx.ival = 1;  kx.sval = (char*)"x";
+            Value k2; k2.type = VAL_STRING; k2.ival = 1;  k2.sval = (char*)"y";
+            Value k3; k3.type = VAL_STRING; k3.ival = 1;  k3.sval = (char*)"t";
+            Value vx; vx.type = VAL_INT; vx.ival = bkx(k);  vx.sval = NULL;
+            Value vy; vy.type = VAL_INT; vy.ival = bky(k);  vy.sval = NULL;
+            Value vt; vt.type = VAL_INT; vt.ival = w->blocks.vals[i];  vt.sval = NULL;
             vm_dict_set(vm, caidx, &kx, &vx);
             vm_dict_set(vm, caidx, &k2, &vy);
             vm_dict_set(vm, caidx, &k3, &vt);
@@ -672,7 +672,7 @@ static int b_verse_snapshot(VM *vm) {
             vm_array_push(vm, aidx, &cell);
         }
     }
-    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1;  a.sval = NULL;
     r_push(vm, a);
     return 1;
 }
@@ -713,7 +713,7 @@ static int b_verse_biome_name(VM *vm) {  /* verse_biome_name(id) -> name or nil 
     r_popn(vm, argc);
     VerseWorld *w = vw();
     if (id < 0 || id >= w->biome_count) { r_push_nil(vm); return 1; }
-    Value sv; sv.type = VAL_STRING; sv.ival = 1; sv.fval = 0; sv.sval = w->biomes[id].name;
+    Value sv; sv.type = VAL_STRING; sv.ival = 1;  sv.sval = w->biomes[id].name;
     r_push(vm, sv);
     return 1;
 }
@@ -736,12 +736,12 @@ static int b_verse_biome_children(VM *vm) {  /* verse_biome_children(id) -> [ids
     if (id >= 0 && id < w->biome_count) {
         for (int i = 0; i < w->biome_count; i++) {
             if (w->biomes[i].parent == id) {
-                Value v; v.type = VAL_INT; v.ival = i; v.fval = 0; v.sval = NULL;
+                Value v; v.type = VAL_INT; v.ival = i;  v.sval = NULL;
                 vm_array_push(vm, aidx, &v);
             }
         }
     }
-    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1;  a.sval = NULL;
     r_push(vm, a);
     return 1;
 }
@@ -757,11 +757,11 @@ static int b_verse_biome_ancestors(VM *vm) {  /* verse_biome_ancestors(id) -> [r
         int cur = id;
         while (cur >= 0 && cn < 256) { chain[cn++] = cur; cur = w->biomes[cur].parent; }
         for (int i = cn - 1; i >= 0; i--) {
-            Value v; v.type = VAL_INT; v.ival = chain[i]; v.fval = 0; v.sval = NULL;
+            Value v; v.type = VAL_INT; v.ival = chain[i];  v.sval = NULL;
             vm_array_push(vm, aidx, &v);
         }
     }
-    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1; a.fval = 0; a.sval = NULL;
+    Value a; a.type = VAL_ARRAY; a.ival = aidx + 1;  a.sval = NULL;
     r_push(vm, a);
     return 1;
 }

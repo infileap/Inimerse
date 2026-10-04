@@ -149,6 +149,7 @@ function main() {
       const names = {
         1: 'division_by_zero', 2: 'call_frame_overflow', 3: 'call_stack_overflow',
         4: 'heap_exhausted', 5: 'array_index_out_of_range', 6: 'array_op_unsupported',
+        7: 'numeric_overflow',
       };
       console.error(`error: ${names[code] || 'runtime_error'} (code ${code})`);
       exitCode = 1;

@@ -2890,7 +2890,7 @@ if pass < 60 {
 
 ### 五、判据与双向验证
 
-**fuzz**：默认 pin ⇒ `gate: fuzz findings match the pin (5 DIVERGE, 4 THREW, 0 untranslated).`、阶段 PASS；`EXP_FUZZ_DIVERGE=0 bash tools/gate.sh --fast --only fuzz` ⇒ `gate: differential fuzz found 5 DIVERGE / 4 THREW, pinned 0 / 4` + 两条处置说明 + `✘ differential fuzz (interp vs AOT, pinned 0+4) (exit 1)` + `gate: FAILED — do not merge.`
+**fuzz**：默认 pin ⇒ `gate: fuzz findings match the pin (5 DIVERGE, 4 THREW, 0 untranslated).`、阶段 PASS；`EXP_FUZZ_DIVERGE=0 bash tools/gate.sh --fast --only fuzz` ⇒ `gate: differential fuzz found 5 DIVERGE / 4 THREW, pinned 0 / 4` + 两条处置说明 + `✘ differential fuzz (interp vs AOT, pinned 0+4) (exit 1)` + `gate: FAILED — do not merge.` **v3.1 起这条 pin 已降到 0 / 0**，阶段名改为「expect 0 findings」，见 §10.49。
 
 **拒绝闸**：把跨度闸 `if (kh - kl >= 10000000) return -1;` 临时改成 `>= 3` ⇒ `1/1 Test #113 …***Failed  Error regular expression found in output. Regex=[ok10=0|ok3=0|empty=nil]`、`0% tests passed, 1 tests failed out of 1`（`Z[1~10]` 也一起被拒了）；`cp` 还原 + `cmp` 逐字节一致 + 重编 ⇒ `Passed`、`100% tests passed`。
 
@@ -2902,7 +2902,97 @@ if pass < 60 {
 
 ### 七、诚实边界
 
-- fuzz 门禁**不证明解释器与 AOT 一致**，只证明「在这 120 个程序上分歧的数量没有变」。它是一把尺子，不是一张合格证；真正的收敛要靠把 5+4 条分歧逐条修掉，每修一条抬一次 pin。`not translated = 0` 也只覆盖这批程序能被 AOT 翻译，不代表生成器覆盖了全部语法。
+- fuzz 门禁**不证明解释器与 AOT 一致**，只证明「在这 120 个程序上分歧的数量没有变」。它是一把尺子，不是一张合格证；真正的收敛要靠把 5+4 条分歧逐条修掉，每修一条抬一次 pin。`not translated = 0` 也只覆盖这批程序能被 AOT 翻译，不代表生成器覆盖了全部语法。**（这 5+4 条已在 v3.1 里逐条修掉、pin 归零 —— 见 §10.49。）**
 - fuzz 阶段约 **45–50 s**，是门禁里最慢的一段。
 - 备份文件**删除不等于内容消失**：`gui_mod.c.bak2` 的内容仍在 git 历史里（`git show <旧提交>:src/mod/gui_mod.c.bak2_20260808_221050`）；而 `src/main.c.bak` **从未入库**，它现在只存在于别处的工作副本里。
 - 拒绝闸门的断言只覆盖**解释器**：`list`/`len`/`size` 只有解释器实现（`grep '"list"' src/compilation/*.c` 为空），没有三后端比对可言。
+
+## 10.49 v3.1 整数位宽：Value 的整数槽改 int64，模糊测试的分歧归零（BOARD 行 145）
+
+### 一、症状
+
+§10.48 把差分模糊测试接进门禁时，默认配置 `--count 120 --seed 1` 实测 `agreed 111 / DIVERGE 5 / THREW 4`，两份计数被**钉**在 `5` / `4`（[AUDIT.md](AUDIT.md) §1.13）。那 5 条 DIVERGE 里解释器把 `9007199254740993` 算成 `9007199254740992`、把整数除零算成 `inf`；4 条 THREW 是 AOT 抛 `division_by_zero` 而解释器根本不认为那是错。
+
+### 二、根因是一个，不是九个
+
+`src/vm/vm.h:24` 的 `Value` 是 `{int type; int ival; double fval; char *sval; void *ptr;}`，**32 字节、整数槽 32 位**。于是 `src/compiler/compiler.c` 在字面量超过 int32 时把它降级成浮点，整条表达式从此走 double：2^53 以上的低位没了，而且**所有整数守卫都不再被命中** —— `2147483647 / 0` 抛 `division_by_zero`，`2147483648 / 0` 却算出 `inf`，因为操作数已经不是整数了。守卫本身是对的，只是永远够不着。
+
+### 三、为什么是匿名 union 而不是加宽字段
+
+`docs/DECFY_DESIGN.md:76` 把 `Value` 的宽度**冻结**在 32 字节：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。`int ival` 直接改 `long long` 会让 `sizeof` 从 32 变成 40，是真正的 ABI 破坏。改用匿名 union：
+
+```c
+int type;
+union { long long ival; double fval; };
+char *sval;
+void *ptr;
+```
+
+实测 `sizeof` 前后都是 32，`type`/`sval`/`ptr` 的偏移不变（`ival` 与 `fval` 共用偏移 8）。`CMakeLists.txt:19-20` 是 C11，匿名 union 合法。wasm 后端**本来就是这样**的（`src/compilation/wasm_backend.c:66` 的 `SLOT_BYTES 16` 注释即 `[tag i32 @+0][pad][i64 payload @+8]`），所以 AOT 的 `NV` 完全没动，只有 VM 和 wasm 要改。顺带一提，改完之后 `grep -n 'Value v; .*v\.fval = 0' src/` 这类「同时给 `ival` 和 `fval` 赋值」的位置全部失效（两者现在是同一块存储），全仓 28 个文件里那些 5 字段的位置初始化 `{VAL_NIL, 0, 0, NULL, NULL}` 都要去掉中间那个 `0` —— 这是本次 diff 里最大的一片机械改动。
+
+### 四、逐条：加宽之后才暴露的六处
+
+1. **字节码没有 int64 字面量的载体。** `RegInstruction` 只有 `r1/r2/r3`，`OP_LOADK_INT` 的 `r2` 是**符号扩展的 int32**，无法承载无符号低半。先试过把高低 32 位相加（`r2 + (r3<<32)`），**这是错的**：低半符号位为 1 时 `(int)` 会把它符号扩展，结果少了 2³²（实测 `9223372036854775807` 被读成 `9223372032559808511`）。最终**在 `OpCode` 枚举末尾追加 `OP_LOADK_I64`**（`src/compiler/bytecode.h` 自己的约定就是「追加在末尾以保持旧 opcode 编号、DLL ABI 兼容」），两半都按无符号拼装；旧字节码的 `OP_LOADK_INT` 语义不变，`INIM_BYTECODE_VERSION` 仍是 **3** —— 它在 `src/compiler/bytecode.c:351`、`:731` 是**严格相等**比较的，一升版所有既有 `.inim` 都读不了。
+2. **`push_int` 的参数是 `int`。** `src/vm/vm.c:325` / `src/vm/vm.h:379` 原文 `void push_int(VM *vm, int v)`，而 `L_PUSH_REG` 对 `VAL_INT` 直接调它 —— **函数传参路径上每一个 64 位整数都被截成低 32 位**。实测 `func f(a) { return a } g = f(9007199254740993) say g` 解释器打印 `1`，AOT 和 wasm 都是 `9007199254740993`。这个缺陷一直潜伏：字面量以前都被降级成 double 走 `push_float`，`push_int` 根本见不到超过 int32 的值。
+3. **布尔操作数把表达式拖回 double。** 守卫写的是 `a->type == VAL_INT && b->type == VAL_INT`，`VAL_BOOL` 不满足，于是 `true * 9007199254740993` 解释器和 wasm 都是 `...992`、AOT 是 `...993`。判据定为「布尔是**整数值**操作数」：新增 `val_is_intlike()`（INT 或 BOOL）与 `val_i64()`（BOOL 取 0/1），用于 `L_ADD`/`L_SUB`/`L_MUL`/`L_DIV`/`L_NEG`/`L_MOD`、`val_cmp` 以及 `val_eq` 的跨类型数值分支；wasm 侧对应新增 `e_push_is_intlike()` / `e_push_is_numeric()`。
+4. **`L_DIV` 根本没有整数路径。** 它一律 `val_as_double(a) / val_as_double(b)` 并返回 `VAL_FLOAT`，所以 `6/3` 是 `2.0`。而 AOT 的 `nv_div` 一直按**文档写明**的规则做（其 preamble 原文：*The interpreter yields an int when the division is exact and a float otherwise (4/2 prints 2, 7/2 prints 3.5, 6/4 prints 1.5)*）—— 即「精确整除留整数，有余数才转浮点」。是解释器从没实现过自己这条规则。现在 `L_DIV` 逐字镜像 `nv_div`（`ib == 0` 抛 `division_by_zero`；`ib != -1 && ia % ib == 0` 留整数；否则浮点；`ib == -1` 故意落浮点，因为 `INT64_MIN / -1` 会溢出），wasm 的 `TOK_SLASH` 改成同形状三分支。**`2.0 / 0` 和 `2 / 0.0` 三端仍都是 `inf`** —— 只有 intlike×intlike 的零才抛。
+5. **wasm 的关系运算无条件走 f64**（`src/compilation/wasm_backend.c` 约 `:1061-1067`），所以 `9007199254740993 > 9007199254740992` 只有 wasm 是错的。补了缺失的 `W_I64_LE_S 0x57` / `W_I64_GE_S 0x59`，加了 i64 精确快路径。
+6. **AOT 的 `nv_eq`/`nv_ne` 判据错了两处。** 旧规则是「任一边是 bool 就按整数比，否则按 double 比」：于是 `true == 1.5` 把 1.5 经 `nv_asi` 截成 1 而答 `true`（另两端 `false`），而两个超过 2^53 的整数舍入到同一个 double，`9007199254740993 == 9007199254740992` 答 `true`（另两端 `false`）。改为镜像 `val_eq`（`src/vm/vm.c:293-309`）：**同 tag 按该 tag 比，只有混合数值对才提升到 double** —— 后者正是 D2「`==` 跨类型数值等价」的要求，`1 == 1.0` 与 `true == 1` 仍是 `true`。
+
+### 五、第 7 处不是算术缺陷，是编译器寄存器水位
+
+修完上面 6 处后 seed 1 已经 `120/0/0`，但 seed 2 还剩 1 条：
+
+```
+func f(a) { return ((a or (2147483646 < a)) % 31) }
+g = f(4294967296)
+say g
+```
+
+解释器 `0`，AOT 和 wasm 都是 `1`。这条**不能**套用「解释器是离群者」的老结论 —— 它是解释器**忠实地执行了错误的字节码**。函数体 dump：
+
+```
+0,2,1,0          MOV r2, r1            ; result r2 = a
+26,2,7,0         JUMP_IF_TRUE r2 -> 7
+1,3,2147483646,0 LOADK_INT r3, 2147483646
+12,5,3,1         LT r5, r3, r1
+0,4,5,0          MOV r4, r5
+17,2,2,4         OR r2, r2, r4
+24,0,8,0         JUMP -> 8
+4,2,1,0          LOADK_BOOL r2, true   ; 短路路径写 result
+1,2,31,0         LOADK_INT r2, 31      ; ← `%` 的右操作数复用了 r2
+50,2,2,2         MOD r2, r2, r2        ; 31 % 31 = 0
+```
+
+`src/compiler/compiler.c` 的逻辑表达式发射器（`TOK_AND`/`TOK_OR`）把释放水位 `int r_wm = next_register;` 放在 `result = alloc_reg()` **之前**；而 `alloc_reg()` 就是 `return next_register++;`，所以 `result == r_wm`，末尾的 `release_to(comp, r_wm)` **把它自己刚分配的结果寄存器释放了**，外层二元表达式随即把同一个寄存器分给右操作数并覆盖真值。只在函数里出现是因为：左操作数是变量时 `last_temp = 0` 才走 `alloc_reg()` 分支；字面量或全局读取返回 `last_temp = 1`，直接复用左寄存器。修法是把水位采集移到结果分配之后。另两处 `r_wm`（`TOK_IN` 与通用二元发射器）审过是安全的：它们的释放只发生在 `result = left < r_wm` 的分支里。
+
+### 六、顺带修掉四处「加宽之后才成立的截断」
+
+`Value` 的整数槽变宽之后，一批**以前无损、现在会丢**的 `int` 假设必须跟着改（做一次干净重建的 warning 扫描把它们照出来了）：
+
+- **`%d` 配 `long long`** 是 UB，三处：`src/runtime/runtime_posix.c:58`（`str()` 的整数分支）、`src/runtime/runtime.c:67`（同一个 `builtin_str` 的 Windows 版）、`src/mod/replay_mod.c:87`（`rp_hash_value` 把整数**十进制文本**喂进 SHA-256 —— 这一处若截断，重放哈希会对不同的值算出同一个哈希）。全部改成 `"%lld", (long long)v->ival`。
+- **`src/mod/replay_mod.c:47`**：`rp_push_int(VM *vm, long long n)` 的**参数本来就是 `long long`**，函数体却写 `v.ival = (int)n;`。改成 `v.ival = n;`。
+- **`len()` / `size()` 把整数当长度时截断**：`src/runtime/runtime_posix.c` 里两个函数各有一行 `n = (int)v->ival;`，而 `n` 是 `int`。**双向验证**（探针 `.verify/v31/trunc.im`，四行 `say`）：把 `posix_core_size` 那一行**临时改回 `(int)`** 重建 ⇒ `str(9007199254740993) len(9007199254740993) size(9007199254740993) str(2147483648)` 打出 `9007199254740993 9007199254740993 **1** 2147483648`（`1` 正是 2⁵³+1 的低 32 位）；改回 `n = v->ival;`（`n` 改成 `long long`）重建 ⇒ 第三格变成 `9007199254740993`。`cmp` 证逐字节还原。
+- 干净重建的 warning 计数：改之前 **37**，改完 **35**，`error: 0` —— 与 §2 基线记的 **35 warnings / 0 error** 一致，所以 §2 不需要改。
+
+### 七、错误名用已注册的 `numeric_overflow`
+
+整数离开 int64 时抛的错**没有**用草稿里自造的 `integer_overflow`：`src/types/error_types.c:6-31` 早已注册 `{"numeric_overflow", IM_ERROR_DOMAIN_ARITHMETIC_VM, 2002}`，而 `docs/archive/ROADMAP_CASE_TYPES_V04.md:44` 把 `ArithmeticVMError` 定义为 `{division_by_zero, numeric_overflow, invalid_numeric_operation}` —— 第四个同义词会是未注册、也未文档化的东西。三端现在的行为（实测，`rc=1`，stderr 逐字）：`INT64_MAX + 1`、`0 - x - 2`、`INT64_MAX * 2`、`0 - INT64_MIN` 都是 `[exception] uncaught: numeric_overflow`；`2147483648 / 0`、`2147483648 % 0` 都是 `[exception] uncaught: division_by_zero`。AOT 侧用 `__builtin_{add,sub,mul}_overflow` 判溢出后调新增的 `nv_die_numeric_overflow()`；wasm 侧用位运算判据（加 `((a^r)&(b^r))<0`、减 `((a^b)&(a^r))<0`、乘 `r/b != a`，并把 `b == 0`（不会溢出）与 `b == -1`（唯一会让 `i64.div_s` 陷阱的除数）特判掉）后调 `IMP_ERROR`，错误码新增 **7**（`tools/wasm_run.js` 的 `im_error` 映射表里 `2` 已经是 `call_frame_overflow`）。
+
+### 八、判据与双向验证
+
+- **`tools/gate.sh`**：`EXP_FUZZ_DIVERGE` / `EXP_FUZZ_THREW` **5 / 4 → 0 / 0**，阶段标签从 `pinned ${EXP_FUZZ_DIVERGE}+${EXP_FUZZ_THREW}` 改成 `differential fuzz (interp vs AOT, expect 0 findings)`。实测 seeds 1–6 各 120 个程序、seed 1 400 个程序，**全部 `0 DIVERGE / 0 THREW / 0 not translated`**。
+- **`tools/aot_native.test.py`**：73 例 → **104 例**（86 equivalence / 2 pinned divergences / 6 runtime errors / 10 refusal）。新增 `RUNTIME_ERROR` 类别断言「两端都 rc≠0 **且错误种类逐字相同**」；`EQUIVALENCE` 增补 20 行；原先钉在 `DIVERGENCE` 里的 `lcg_float_promotion` 被**提升**为 `int_lcg_second_step` —— 这正是 §1.13 那条「修好一条就把它提升、再抬 pin」的约定第一次被真正执行。
+- **反向验证**：上一节那条 `size()` 探针（临时退回 `(int)` ⇒ 红，还原 ⇒ 绿，`cmp` 证逐字节）；第 5 节的 `or` 覆盖缺陷另有 7 个分解探针（`.verify/v31/fz/s2b.im` … `s2i.im`），修前 5 个错、修后全对。
+
+### 九、门禁实测
+
+十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。其中 ctest `100% tests passed, 0 tests failed out of 113` 且 **0 skipped**（`EXP_CTEST` 仍是 **113** —— 本轮没有增删 CTest，改的是既有 `aot_native_regression` 的用例数）；fuzz `gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`；`check_links` 与 `check_doc_paths` 均 **0 broken**。干净重建（独立目录）**35 warnings / 0 error**，与 §2 基线一致。
+
+### 十、诚实边界
+
+- 归零的是**这一批程序**上的分歧，不是「三后端处处一致」。模糊测试的生成器只覆盖数值子集，字符串、集合、闭包、模块边界都不在其中。
+- `Value` 的 32 字节契约仍在，**超过 int64 的整数还没有表示**：`INT64_MAX + 1` 是抛错而不是变成 BigInt。v3.1 phase 2 的 `VAL_BIG`（盒装 BigInt 走 `Value.ptr`，与 `VAL_STRING`/`VAL_ARRAY` 同构）尚未实现，`docs/archive/ROADMAP_3.1.md:23` 说的 `Z` = 无限整数集 + BigInt 也仍是路线图而非现状。
+- **`sum()` 仍在 double 里累加**：`src/runtime/runtime.c:138` 的 `builtin_sum` 用 `double sum` 求和、`allInt` 时再 `push_int(vm, (int)sum)`。这条**不是本轮引入的**（许多 int32 相加本来就会溢出 int32），但加宽之后它成了唯一还会静默丢精度的整数路径，已在此记录、未修。
+- Windows 专属分支（`src/mod/io_mod.c` 等）上的 `push_int` 调用点没有实测，只有 POSIX 侧跑过门禁。
+

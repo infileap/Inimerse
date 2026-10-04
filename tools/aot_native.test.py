@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does the route-A native backend compute what the interpreter computes?
 
-Two properties are checked, and they are different properties:
+Three properties are checked, and they are different properties:
 
   EQUIVALENCE  For programs inside the numeric subset, the native executable's
                stdout must equal the interpreter's stdout, byte for byte.  The
@@ -13,6 +13,12 @@ Two properties are checked, and they are different properties:
                native binary is worse than no native binary, so every
                out-of-subset case here asserts a non-zero exit from
                `aot-native translate`.
+
+  RUNTIME_ERROR  For programs that ARE inside the subset but must fail when they
+               run, both sides must exit non-zero and name the SAME error kind.
+               An integer that leaves int64, or an integer division by zero, is
+               an ArithmeticVMError -- not a silent wraparound, and not a float
+               infinity.
 
 Prerequisites:
     cmake --build build -j4            # builds build/inimerse and build/aot-native
@@ -47,10 +53,10 @@ EQUIVALENCE = [
     ("int_div_exact",      "say 4 / 2\n", "2\n"),
     ("int_mod",            "say 7 % 3\n", "1\n"),
     ("int_mod_negative",   "say -7 % 3\n", "-1\n"),
-    # First step of the classic LCG.  The literal 2147483648 exceeds INT32_MAX
-    # and the interpreter promotes it to float (warning on stderr, which this
-    # harness ignores), but the first step still fits 2^53 exactly, so both
-    # sides agree.  The SECOND step is where they part — see DIVERGENCE.
+    # First step of the classic LCG.  The literal 2147483648 exceeds INT32_MAX;
+    # it used to be promoted to float with a warning, and the SECOND step then
+    # left 2^53 and stopped agreeing -- that pair was pinned in DIVERGENCE until
+    # v3.1 kept the whole expression in int64.  Both steps agree now.
     ("int_lcg_first_step",
      "x = 1\nx = (x*1103515245+12345) % 2147483648\nsay x\n", "1103527590\n"),
     # -- float printing: vts_double prints an integral float as an integer, an
@@ -127,6 +133,49 @@ EQUIVALENCE = [
     # -- multi-line program with several statements
     ("mixed_program",      "func f(n) { if n % 2 == 0 { return n / 2 }\nreturn n * 3 + 1 }\ni = 1\nwhile i <= 4 { say f(i)\ni = i + 1 }\n",
                            "4\n1\n10\n2\n"),
+    # -- v3.1 integer width (docs/AUDIT.md §1.14)
+    #
+    # Value's integer slot is int64 and an integer expression no longer degrades
+    # to double when it leaves int32.  Every row below disagreed with the native
+    # backend before that change: they are the 9 fuzz divergences, reduced to
+    # their minimal forms.
+    ("int_lcg_second_step",
+     "x = 1\nrepeat 2 { x = (x*1103515245+12345) % 2147483648 }\nsay x\n", "377401575\n"),
+    ("i64_literal",        "say 2147483648\n", "2147483648\n"),
+    ("i64_literal_2p53",   "say 9007199254740993\n", "9007199254740993\n"),
+    ("i64_add",            "say 9007199254740993 + 1\n", "9007199254740994\n"),
+    ("i64_sub",            "say 9007199254740993 - 1\n", "9007199254740992\n"),
+    ("i64_mul",            "say 4294967296 * 3\n", "12884901888\n"),
+    ("i64_mul_near_max",   "say 3037000499 * 3037000499\n", "9223372030926249001\n"),
+    ("i64_mod",            "say 9007199254740993 % 31\n", "9\n"),
+    # An exact integer division stays an integer; only a remainder makes it float.
+    # The interpreter never implemented that rule, so the AOT backend was the odd
+    # one out until both were made to mirror each other.
+    ("i64_div_exact",      "say 9007199254740993 / 1\n", "9007199254740993\n"),
+    ("i64_div_remainder",  "say 7 / 2\n", "3.5\n"),
+    # A bool is an integer-valued operand: it must not drag the other side onto
+    # the double path (`true * 9007199254740993` used to print ...992 here).
+    ("i64_bool_add",       "say true + 9007199254740993\n", "9007199254740994\n"),
+    ("i64_bool_mul",       "say 9007199254740993 * true\n", "9007199254740993\n"),
+    # Comparisons are exact inside the integer domain and promote only across
+    # types; the AOT backend used to compare two ints through double, so
+    # 9007199254740993 == 9007199254740992 answered true there.
+    ("i64_cmp_gt",         "say 9007199254740993 > 9007199254740992\n", "true\n"),
+    ("i64_cmp_eq_nbr",     "say 9007199254740993 == 9007199254740992\n", "false\n"),
+    ("i64_cmp_eq_mixed",   "say 9007199254740993 == 9007199254740993.0\n", "true\n"),
+    ("i64_cmp_bool_float", "say true == 1.5\n", "false\n"),
+    # int64 arguments survive the call boundary (push_int took an `int`).
+    ("i64_arg_return",     "func f(a) { return a }\nsay f(9007199254740993)\n", "9007199254740993\n"),
+    ("i64_arg_arith",      "func f(a) { return a + 0 }\nsay f(9007199254740993)\n", "9007199254740993\n"),
+    # A logical operator's result register must survive the enclosing
+    # expression's right operand.  alloc_reg() hands out next_register, so taking
+    # the release watermark before allocating `result` freed `result` itself and
+    # the right operand reused it: `(a or false) % 31` became MOD r2, r2, r2 and
+    # printed 31 % 31 = 0.  Only a variable left operand hit it.
+    ("or_result_not_clobbered",
+     "func f(a) { return ((a or false) + 31) }\nsay f(5)\n", "32\n"),
+    ("or_result_mod",      "func f(a) { return ((a or false) % 31) }\nsay f(5)\n", "1\n"),
+    ("and_result_mod",     "func f(a) { return ((a and true) % 31) }\nsay f(5)\n", "1\n"),
 ]
 
 # ------------------------------------------------------------------ known divergences
@@ -150,23 +199,11 @@ DIVERGENCE = [
      "global g\ng = 2\nfunc bump() { g = g + 5\nreturn g }\nsay bump()\nsay g\n",
      "5\n2\n", "7\n7\n"),
 
-    # Literal promotion, once it actually bites.  `2147483648` is promoted to
-    # float by the interpreter, so the LCG's `x*1103515245+12345` intermediate
-    # is evaluated in double: from the second step on it exceeds 2^53, the low
-    # bits are gone, and the modulo collapses to 0 (or 12345, depending on the
-    # step).  The codegen keeps int64 and stays exact.  The first step agrees
-    # and lives in EQUIVALENCE as `int_lcg_first_step`.
-    #
-    # The interpreter used to print 0 here, but that 0 was not the promotion:
-    # the general `%` path narrowed both operands through `int`, and 2147483648.0
-    # saturates to INT32_MIN on x86-64, so the old answer was INT_MIN % INT_MIN.
-    # Fixing that narrowing (docs/AUDIT.md §1.6) exposed the genuine residue,
-    # which is the double rounding in L_MUL's overflow promotion.  So this entry
-    # now pins O2 (an integer silently degrading to double), not O1: `%` itself
-    # agrees, and the two values differ by 25 because one ulp at 1.2e18 is 256.
-    ("lcg_float_promotion",
-     "x = 1\nrepeat 2 { x = (x*1103515245+12345) % 2147483648 }\nsay x\n",
-     "377401600\n", "377401575\n"),
+    # O2 -- "an integer silently degrades to double" -- is CLOSED as of v3.1: the
+    # interpreter keeps int64 now, so the LCG's second step agrees with the codegen
+    # and moved into EQUIVALENCE as `int_lcg_second_step`.  It lived here as
+    # `lcg_float_promotion` (interpreter 377401600, native 377401575) and the
+    # harness flagged the promotion exactly as this list is designed to.
 ]
 
 # Each must be REFUSED by the translator, with a message, and must not leave a
@@ -182,6 +219,21 @@ REFUSAL = [
     ("lambda",             "f = (x) => x + 1\nsay f(1)\n"),
     ("builtin_call",       "say len([1, 2])\n"),
     ("assign_to_member",   "a.b = 1\n"),
+]
+
+# Each must FAIL AT RUNTIME, identically on both sides.  An integer that leaves
+# int64, or an integer division by zero, is an ArithmeticVMError
+# (docs/archive/ROADMAP_CASE_TYPES_V04.md:44) -- not a silent wraparound, and not
+# a float infinity.  Both backends must exit non-zero and name the same kind.
+RUNTIME_ERROR = [
+    ("i64_add_overflow",  "say 9223372036854775807 + 1\n",             "numeric_overflow"),
+    ("i64_sub_overflow",  "x = 9223372036854775807\nsay 0 - x - 2\n",  "numeric_overflow"),
+    ("i64_mul_overflow",  "say 9223372036854775807 * 2\n",             "numeric_overflow"),
+    ("i64_neg_overflow",  "x = 0 - 9223372036854775807 - 1\nsay 0 - x\n", "numeric_overflow"),
+    # Past int32 the operand used to be demoted to float, which skipped the
+    # integer zero guard entirely and answered `inf`.
+    ("i64_div_by_zero",   "say 2147483648 / 0\n",                      "division_by_zero"),
+    ("i64_mod_by_zero",   "say 2147483648 % 0\n",                      "division_by_zero"),
 ]
 
 
@@ -280,6 +332,35 @@ def main():
                                 f"{nat.stdout!r} — if it now matches the "
                                 f"interpreter, promote this case to EQUIVALENCE")
 
+        # ----------------------------------------------------- runtime errors
+        for name, source, kind in RUNTIME_ERROR:
+            src = tmp / f"err_{name}.im"
+            src.write_text(source, encoding="utf-8")
+            cfile = tmp / f"err_{name}.c"
+            exe = tmp / f"err_{name}.native"
+
+            got = run([str(engine), "--no-mods", str(src)])
+            tr = run([str(translator), "translate", str(src), str(cfile)])
+            if tr.returncode != 0:
+                failures.append(f"{name}: translator refused an in-subset program: "
+                                f"{tr.stderr.strip()}")
+                continue
+            cc = run([args.cc, "-O2", "-o", str(exe), str(cfile)])
+            if cc.returncode != 0:
+                failures.append(f"{name}: cc failed: {cc.stderr.strip()[:400]}")
+                continue
+            nat = run([str(exe)])
+
+            checks += 1
+            want = f"uncaught: {kind}"
+            for who, r in (("interpreter", got), ("native", nat)):
+                if r.returncode == 0:
+                    failures.append(f"{name}: {who} did NOT fail — expected {kind}, "
+                                    f"printed {r.stdout!r}")
+                elif want not in r.stderr:
+                    failures.append(f"{name}: {who} failed with the wrong kind — "
+                                    f"expected {want!r}, stderr was {r.stderr.strip()!r}")
+
         # -------------------------------------------------------- refusal
         for name, source in REFUSAL:
             src = tmp / f"neg_{name}.im"
@@ -295,12 +376,12 @@ def main():
             elif not tr.stderr.strip():
                 failures.append(f"{name}: refused without a message on stderr")
 
-    total = len(EQUIVALENCE) + len(DIVERGENCE) + len(REFUSAL)
+    total = len(EQUIVALENCE) + len(DIVERGENCE) + len(RUNTIME_ERROR) + len(REFUSAL)
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"aot_native.test: {total} cases ({len(EQUIVALENCE)} equivalence, "
-          f"{len(DIVERGENCE)} pinned divergences, {len(REFUSAL)} refusal), "
-          f"{len(failures)} failures")
+          f"{len(DIVERGENCE)} pinned divergences, {len(RUNTIME_ERROR)} runtime errors, "
+          f"{len(REFUSAL)} refusal), {len(failures)} failures")
     if args.verbose:
         print(f"  successful comparisons: {checks - len(failures)}")
     return 1 if failures else 0

@@ -11,7 +11,7 @@
 static int posix_core_len(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int n = 0;
+    long long n = 0;
     if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
     else if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
         SetObj *s = &vm->sets[v->ival];
@@ -22,15 +22,15 @@ static int posix_core_len(VM *vm) {
         ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count / 2 : 0;
     }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
-    else if (v->type == VAL_INT) n = (int)v->ival;
-    else if (v->type == VAL_FLOAT) n = (int)v->fval;
+    else if (v->type == VAL_INT) n = v->ival;
+    else if (v->type == VAL_FLOAT) n = (long long)v->fval;
     pop(vm); push_int(vm, n); return 1;
 }
 
 static int posix_core_size(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int n = -1;
+    long long n = -1;
     if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
         SetObj *s = &vm->sets[v->ival];
         if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
@@ -46,8 +46,8 @@ static int posix_core_size(VM *vm) {
     } else if (v->type == VAL_DICT && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count / 2 : 0;
     } else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
-    else if (v->type == VAL_INT) n = (int)v->ival;
-    else if (v->type == VAL_FLOAT) n = (int)v->fval;
+    else if (v->type == VAL_INT) n = v->ival;
+    else if (v->type == VAL_FLOAT) n = (long long)v->fval;
     pop(vm); if (n < 0) push_nil(vm); else push_int(vm, n); return 1;
 }
 
@@ -55,7 +55,7 @@ static int posix_core_str(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
     char buf[1024];
-    if (v->type == VAL_INT) snprintf(buf, sizeof buf, "%d", v->ival);
+    if (v->type == VAL_INT) snprintf(buf, sizeof buf, "%lld", (long long)v->ival);
     else if (v->type == VAL_FLOAT) snprintf(buf, sizeof buf, "%.17g", v->fval);
     else if (v->type == VAL_BOOL) snprintf(buf, sizeof buf, "%s", v->ival ? "true" : "false");
     else if (v->type == VAL_STRING) { char *s = strdup(v->sval ? v->sval : ""); pop(vm); push_string(vm, s); free(s); return 1; }
@@ -152,10 +152,10 @@ static int posix_core_args(VM *vm) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { push_nil(vm); return 1; }
     for (int i = 0; i < vm->argc; i++) {
-        Value item = { VAL_STRING, 0, 0, vm->argv && vm->argv[i] ? vm->argv[i] : "" };
+        Value item = { .type = VAL_STRING, .ival = 0, .sval = vm->argv && vm->argv[i] ? vm->argv[i] : "" };
         vm_array_push(vm, aidx, &item);
     }
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL };
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
     return 1;
 }
@@ -194,7 +194,7 @@ static int posix_core_range(VM *vm) {
     if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
         int bidx = vm->be_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {
-            Value out = { VAL_SET, bidx, 0, NULL };
+            Value out = { .type = VAL_SET, .ival = bidx, .sval = NULL };
             vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
             vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
             return 1;
@@ -217,7 +217,7 @@ static int posix_core_range(VM *vm) {
         s->hi = v.type == VAL_INT ? 2147483647.0 : 1e308;
         s->loInc = v.type == VAL_INT ? 1 : 0;
         s->hiInc = v.type == VAL_INT ? 1 : 0;
-        Value out = { VAL_SET, sidx, 0, NULL };
+        Value out = { .type = VAL_SET, .ival = sidx, .sval = NULL };
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
         return 1;
@@ -233,7 +233,7 @@ static int posix_core_list(VM *vm) {
     int idx = (v.type == VAL_SET) ? vm_set_to_array(vm, v.ival) : -1;
     pop(vm);
     if (idx < 0) { push_nil(vm); return 1; }
-    Value out = { VAL_ARRAY, idx + 1, 0, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = idx + 1, .sval = NULL };
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
     return 1;
 }
@@ -315,14 +315,14 @@ static int posix_core_split(VM *vm) {
         char *part = malloc(n + 1);
         if (!part) break;
         memcpy(part, p, n); part[n] = '\0';
-        Value item = { VAL_STRING, 0, 0, part };
+        Value item = { .type = VAL_STRING, .ival = 0, .sval = part };
         vm_array_push(vm, aidx, &item);
         free(part);
         if (!q) break;
         p = q + sl;
     }
     free(src); free(sep);
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL };
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
     return 1;
 }
@@ -336,11 +336,11 @@ static int posix_core_chars(VM *vm) {
     if (aidx < 0) { free(s); push_nil(vm); return 1; }
     for (size_t i = 0; s[i]; i++) {
         char ch[2] = { s[i], '\0' };
-        Value item = { VAL_STRING, 0, 0, ch };
+        Value item = { .type = VAL_STRING, .ival = 0, .sval = ch };
         vm_array_push(vm, aidx, &item);
     }
     free(s);
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL };
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
     return 1;
 }
@@ -370,7 +370,7 @@ static int posix_core_keys(VM *vm) {
         ArrayObj *a = vm_pool_slot(vm, didx);
         for (int i = 0; a && i + 1 < a->count; i += 2) vm_array_push(vm, aidx, &a->items[i]);
     }
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL };
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
     return 1;
 }
@@ -402,7 +402,7 @@ static int posix_core_remove(VM *vm) {
             value_free(&a->items[idx]);
             for (int i = idx; i + 1 < a->count; i++) a->items[i] = a->items[i + 1];
             a->count--;
-            a->items[a->count] = (Value){ VAL_NIL, 0, 0, NULL };
+            a->items[a->count] = (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL };
             removed = 1;
         }
     }
@@ -532,11 +532,11 @@ static int posix_gc_stats(VM *vm) {
         (int64_t)vm->gc_threshold, (int64_t)vm->used_mem
     };
     for (int i = 0; i < 5; i++) {
-        Value k = { VAL_STRING, 1, 0, (char *)keys[i], NULL };
-        Value v = { VAL_INT, values[i], 0, NULL, NULL };
+        Value k = { .type = VAL_STRING, .ival = 1, .sval = (char *)keys[i], .ptr = NULL };
+        Value v = { .type = VAL_INT, .ival = values[i], .sval = NULL, .ptr = NULL };
         vm_dict_set(vm, aidx, &k, &v);
     }
-    Value dict = { VAL_DICT, aidx + 1, 0, NULL, NULL };
+    Value dict = { .type = VAL_DICT, .ival = aidx + 1, .sval = NULL, .ptr = NULL };
     vm_push_value(vm, &dict);
     return 1;
 }
@@ -618,11 +618,11 @@ static int posix_usage(VM *vm) {
                       vm->t_start ? (double)(im_platform_now_ms() - vm->t_start) / 1000.0 : 0.0,
                       vm->limit_time, vm->limit_inst };
     for (int i = 0; i < 7; i++) {
-        Value k = { VAL_STRING, 1, 0, (char *)keys[i], NULL };
-        Value v = { VAL_FLOAT, 0, vals[i], NULL, NULL };
+        Value k = { .type = VAL_STRING, .ival = 1, .sval = (char *)keys[i], .ptr = NULL };
+        Value v = { .type = VAL_FLOAT, .fval = vals[i], .sval = NULL, .ptr = NULL };
         vm_dict_set(vm, aidx, &k, &v);
     }
-    Value out = { VAL_DICT, aidx + 1, 0, NULL, NULL };
+    Value out = { .type = VAL_DICT, .ival = aidx + 1, .sval = NULL, .ptr = NULL };
     vm_push_value(vm, &out);
     return 1;
 }
@@ -653,13 +653,13 @@ static int posix_mod_limit(VM *vm) {
 static int posix_mod_usage(VM *vm) {
     int aidx = vm_array_new(vm);
     if (aidx < 0) { push_nil(vm); return 1; }
-    Value k = { VAL_STRING, 1, 0, "mem", NULL };
-    Value v = { VAL_FLOAT, 0, vm->used_mem, NULL, NULL };
+    Value k = { .type = VAL_STRING, .ival = 1, .sval = "mem", .ptr = NULL };
+    Value v = { .type = VAL_FLOAT, .fval = vm->used_mem, .sval = NULL, .ptr = NULL };
     vm_dict_set(vm, aidx, &k, &v);
     k.sval = "time";
     v.fval = vm->t_start ? (double)(im_platform_now_ms() - vm->t_start) / 1000.0 : 0.0;
     vm_dict_set(vm, aidx, &k, &v);
-    Value out = { VAL_DICT, aidx + 1, 0, NULL, NULL };
+    Value out = { .type = VAL_DICT, .ival = aidx + 1, .sval = NULL, .ptr = NULL };
     vm_push_value(vm, &out);
     return 1;
 }
@@ -670,10 +670,10 @@ static int posix_list_params(VM *vm) {
     for (int i = 0; i < vm->globalCount; i++) {
         const char *name = vm->globals[i].name;
         if (!name || strncmp(name, "u.", 2) == 0 || !strchr(name, '.')) continue;
-        Value v = { VAL_STRING, 0, 0, (char *)name, NULL };
+        Value v = { .type = VAL_STRING, .ival = 0, .sval = (char *)name, .ptr = NULL };
         vm_array_push(vm, aidx, &v);
     }
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL, .ptr = NULL };
     vm_push_value(vm, &out);
     return 1;
 }
@@ -691,7 +691,7 @@ static int posix_atomic_find(VM *vm, const char *name, int create) {
     if (vm->globalCount >= vm->globalCap) vm_global_grow(vm, vm->globalCount);
     int idx = vm->globalCount++;
     vm->globals[idx].name = strdup(name);
-    vm->globals[idx].val = (Value){ VAL_INT, 0, 0, NULL, NULL };
+    vm->globals[idx].val = (Value){ .type = VAL_INT, .ival = 0, .sval = NULL, .ptr = NULL };
     VM_UNLOCK(vm);
     return idx;
 }
@@ -845,11 +845,11 @@ static int posix_entity_neighbors(VM *vm) {
         if (vm->ent_hp[i] < 0) continue;
         double dx = vm->ent_x[i] - x, dy = vm->ent_y[i] - y;
         if (dx * dx + dy * dy <= rr) {
-            Value id = { VAL_INT, i, 0, NULL, NULL };
+            Value id = { .type = VAL_INT, .ival = i, .sval = NULL, .ptr = NULL };
             vm_array_push(vm, aidx, &id);
         }
     }
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL, .ptr = NULL };
     vm_push_value(vm, &out);
     return 1;
 }
@@ -987,17 +987,17 @@ static int posix_spi_mods(VM *vm) {
     for (int i = 0; i < vm->modCount; i++) {
         int didx = vm_array_new(vm);
         if (didx < 0) continue;
-        Value k = { VAL_STRING, 1, 0, "id", NULL };
-        Value v = { VAL_STRING, 1, 0, vm->mods[i].id, NULL };
+        Value k = { .type = VAL_STRING, .ival = 1, .sval = "id", .ptr = NULL };
+        Value v = { .type = VAL_STRING, .ival = 1, .sval = vm->mods[i].id, .ptr = NULL };
         vm_dict_set(vm, didx, &k, &v);
         k.sval = "version"; v.type = VAL_INT; v.ival = vm->mods[i].version; v.sval = NULL;
         vm_dict_set(vm, didx, &k, &v);
         k.sval = "caps"; v.ival = vm->mods[i].caps;
         vm_dict_set(vm, didx, &k, &v);
-        Value d = { VAL_DICT, didx + 1, 0, NULL, NULL };
+        Value d = { .type = VAL_DICT, .ival = didx + 1, .sval = NULL, .ptr = NULL };
         vm_array_push(vm, aidx, &d);
     }
-    Value out = { VAL_ARRAY, aidx + 1, 0, NULL, NULL };
+    Value out = { .type = VAL_ARRAY, .ival = aidx + 1, .sval = NULL, .ptr = NULL };
     vm_push_value(vm, &out);
     return 1;
 }

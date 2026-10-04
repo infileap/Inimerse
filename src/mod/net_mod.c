@@ -282,13 +282,13 @@ static int builtin_udp_recv(VM *vm) {
     u->qhead = (u->qhead + 1) % UDP_QUEUE;
     int aidx = vm_array_new(vm);
     Value v;
-    v.type = VAL_STRING; v.ival = 1; v.fval = 0; v.sval = _strdup((char*)u->qbuf[idx]);
+    v.type = VAL_STRING; v.ival = 1;  v.sval = _strdup((char*)u->qbuf[idx]);
     vm_array_push(vm, aidx, &v);
     v.sval = _strdup(u->qhost[idx]);
     vm_array_push(vm, aidx, &v);
-    v.type = VAL_INT; v.ival = u->qport[idx]; v.fval = 0; v.sval = NULL;
+    v.type = VAL_INT; v.ival = u->qport[idx];  v.sval = NULL;
     vm_array_push(vm, aidx, &v);
-    Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1; rv.fval = 0; rv.sval = NULL;
+    Value rv; rv.type = VAL_ARRAY; rv.ival = aidx + 1;  rv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = rv; }
     return 1;
 }

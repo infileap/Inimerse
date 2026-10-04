@@ -615,6 +615,65 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 
 **诚实边界。** 这条门禁**不证明解释器与 AOT 一致**，只证明「在这 120 个程序上，分歧的数量没有变」。它是一把尺子，不是一张合格证；真正的收敛要靠把 5+4 条分歧逐条修掉，每修一条抬一次 pin。`not translated = 0` 也只覆盖这批程序能被 AOT 翻译，不代表生成器覆盖了全部语法。
 
+**已归零。** 这 5+4 条分歧在 v3.1 里逐条修掉了，pin 从 `5`/`4` 降到 `0`/`0`，阶段从「钉住」改成「零期望」—— 见 §1.14。
+
+## §1.14 v3.1 整数位宽：Value 的整数槽改 int64，模糊测试的分歧归零
+
+**症状。** §1.13 把差分模糊测试接进门禁时，默认配置 `--count 120 --seed 1` 实测 `agreed 111 / DIVERGE 5 / THREW 4`，两份计数被**钉**在 `5` / `4`。那 5 条 DIVERGE 里解释器把 `9007199254740993` 算成 `9007199254740992`、把整数除零算成 `inf`；4 条 THREW 是 AOT 抛 `division_by_zero` 而解释器根本不认为那是错。本节记录把这 9 条逐条修掉的过程 —— 以及一个**不是算术缺陷**的发现。
+
+**根因是一个，不是九个。** `src/vm/vm.h:24` 的 `Value` 是 `{int type; int ival; double fval; char *sval; void *ptr;}`，**32 字节、整数槽 32 位**。于是 `src/compiler/compiler.c` 在字面量超过 int32 时把它降级成浮点（`OP_LOADK_FLOAT` 加一条 warning），整条表达式从此走 double：2^53 以上的低位没了，而且**所有整数守卫都不再被命中** —— `2147483647 / 0` 抛 `division_by_zero`，`2147483648 / 0` 却算出 `inf`，因为操作数已经不是整数了。守卫本身是对的，只是永远够不着。
+
+**为什么不能直接把 `int ival` 改成 `long long`。** `docs/DECFY_DESIGN.md:76` 把 `Value` 声明为**永久宽度冻结**：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。加宽会让 `sizeof(Value)` 从 32 变成 40，是真正的 ABI 破坏。**改用匿名 union 保住了 32 字节**：
+
+```c
+int type;
+union { long long ival; double fval; };
+char *sval;
+void *ptr;
+```
+
+实测 `sizeof` 前后都是 32，`type`/`sval`/`ptr` 的偏移不变（`ival` 与 `fval` 共用偏移 8）。`CMakeLists.txt:19-20` 是 C11，匿名 union 合法。wasm 后端**本来就是这样**的（`src/compilation/wasm_backend.c:66` 的 `SLOT_BYTES 16` 注释即 `[tag i32 @+0][pad][i64 payload @+8]`），所以 AOT 完全没动，只有 VM 和 wasm 要改。
+
+**逐条。** 修的过程里又暴露出六处各自独立的问题：
+
+1. **字节码没有 int64 字面量的载体。** `RegInstruction` 只有 `r1/r2/r3`，`OP_LOADK_INT` 的 `r2` 是**符号扩展的 int32**，无法承载无符号低半。先试过把高低 32 位相加（`r2 + (r3<<32)`），**这是错的**：低半符号位为 1 时 `(int)` 会把它符号扩展，结果少了 2³²（实测 `9223372036854775807` 被读成 `9223372032559808511`）。最终**在 `OpCode` 枚举末尾追加 `OP_LOADK_I64`**（该文件自己的约定就是「追加在末尾以保持旧 opcode 编号」），两半都按无符号拼装；旧字节码的 `OP_LOADK_INT` 语义不变，`INIM_BYTECODE_VERSION` 仍是 3 —— 它在 `src/compiler/bytecode.c:351`、`:731` 是**严格相等**比较的，一升版所有既有 `.inim` 都读不了。
+2. **`push_int` 的参数是 `int`。** `src/vm/vm.c:325` / `src/vm/vm.h:379` 原文 `void push_int(VM *vm, int v)`，而 `L_PUSH_REG` 对 `VAL_INT` 直接调它 —— **函数传参路径上每一个 64 位整数都被截成低 32 位**。实测 `func f(a) { return a } g = f(9007199254740993) say g` 解释器打印 `1`，AOT 和 wasm 都是 `9007199254740993`。这个缺陷一直潜伏：字面量以前都被降级成 double 走 `push_float`，`push_int` 根本见不到超过 int32 的值。
+3. **布尔操作数把表达式拖回 double。** 守卫写的是 `a->type == VAL_INT && b->type == VAL_INT`，`VAL_BOOL` 不满足，于是 `true * 9007199254740993` 解释器和 wasm 都是 `...992`、AOT 是 `...993`。判据定为「布尔是**整数值**操作数」：新增 `val_is_intlike()`（INT 或 BOOL）与 `val_i64()`（BOOL 取 0/1），用于 `L_ADD`/`L_SUB`/`L_MUL`/`L_DIV`/`L_NEG`/`L_MOD`、`val_cmp` 以及 `val_eq` 的跨类型数值分支；wasm 侧对应新增 `e_push_is_intlike()` / `e_push_is_numeric()`。
+4. **`L_DIV` 根本没有整数路径。** 它一律 `val_as_double(a) / val_as_double(b)` 并返回 `VAL_FLOAT`，所以 `6/3` 是 `2.0`。而 AOT 的 `nv_div` 一直按**文档写明**的规则做（其 preamble 原文：*The interpreter yields an int when the division is exact and a float otherwise (4/2 prints 2, 7/2 prints 3.5, 6/4 prints 1.5)*）—— 即「精确整除留整数，有余数才转浮点」。是解释器从没实现过自己这条规则。现在 `L_DIV` 逐字镜像 `nv_div`（`ib == 0` 抛 `division_by_zero`；`ib != -1 && ia % ib == 0` 留整数；否则浮点；`ib == -1` 故意落浮点，因为 `INT64_MIN / -1` 会溢出），wasm 的 `TOK_SLASH` 改成同形状三分支。**`2.0 / 0` 和 `2 / 0.0` 三端仍都是 `inf`** —— 只有 intlike×intlike 的零才抛。
+5. **wasm 的关系运算无条件走 f64**（`src/compilation/wasm_backend.c` 约 `:1061-1067`），所以 `9007199254740993 > 9007199254740992` 只有 wasm 是错的。补了缺失的 `W_I64_LE_S 0x57` / `W_I64_GE_S 0x59`，加了 i64 精确快路径。
+6. **AOT 的 `nv_eq`/`nv_ne` 判据错了两处。** 旧规则是「任一边是 bool 就按整数比，否则按 double 比」：于是 `true == 1.5` 把 1.5 经 `nv_asi` 截成 1 而答 `true`（另两端 `false`），而两个超过 2^53 的整数舍入到同一个 double，`9007199254740993 == 9007199254740992` 答 `true`（另两端 `false`）。改为镜像 `val_eq`：**同 tag 按该 tag 比，只有混合数值对才提升到 double** —— 后者正是 D2「`==` 跨类型数值等价」的要求，`1 == 1.0` 与 `true == 1` 仍是 `true`。
+
+**第 7 处不是算术缺陷，是编译器寄存器水位。** 修完上面 6 处后 seed 1 已经 `120/0/0`，但 seed 2 还剩 1 条：
+
+```
+func f(a) { return ((a or (2147483646 < a)) % 31) }
+g = f(4294967296)
+say g
+```
+
+解释器 `0`，AOT 和 wasm 都是 `1`。这条**不能**套用「解释器是离群者」的老结论 —— 它是解释器**忠实地执行了错误的字节码**。函数体 dump：
+
+```
+0,2,1,0          MOV r2, r1            ; result r2 = a
+26,2,7,0         JUMP_IF_TRUE r2 -> 7
+1,3,2147483646,0 LOADK_INT r3, 2147483646
+12,5,3,1         LT r5, r3, r1
+0,4,5,0          MOV r4, r5
+17,2,2,4         OR r2, r2, r4
+24,0,8,0         JUMP -> 8
+4,2,1,0          LOADK_BOOL r2, true   ; 短路路径写 result
+1,2,31,0         LOADK_INT r2, 31      ; ← `%` 的右操作数复用了 r2
+50,2,2,2         MOD r2, r2, r2        ; 31 % 31 = 0
+```
+
+`src/compiler/compiler.c` 的逻辑表达式发射器把释放水位 `int r_wm = next_register;` 放在 `result = alloc_reg()` **之前**；而 `alloc_reg()` 返回的就是 `next_register++`，所以 `result == r_wm`，末尾的 `release_to(comp, r_wm)` **把它自己刚分配的结果寄存器释放了**，外层二元表达式随即把同一个寄存器分给右操作数并覆盖真值。只在函数里出现是因为：左操作数是变量时 `last_temp = 0` 才走 `alloc_reg()` 分支；字面量或全局读取返回 `last_temp = 1`，直接复用左寄存器。修法是把水位采集移到结果分配之后。**这条与整数位宽无关**，是被同一轮模糊测试顺带照出来的独立缺陷，`tools/aot_native.test.py` 里以 `or_result_not_clobbered` / `or_result_mod` / `and_result_mod` 三行钉住。
+
+**错误名用已注册的 `numeric_overflow`。** 整数离开 int64 时抛的错**没有**用草稿里自造的 `integer_overflow`：`src/types/error_types.c:6-31` 早已注册 `{"numeric_overflow", IM_ERROR_DOMAIN_ARITHMETIC_VM, 2002}`，而 `docs/archive/ROADMAP_CASE_TYPES_V04.md:44` 把 `ArithmeticVMError` 定义为 `{division_by_zero, numeric_overflow, invalid_numeric_operation}` —— 第四个同义词会是未注册、也未文档化的东西。三端现在的行为：`INT64_MAX + 1`、`0 - x - 2`、`INT64_MAX * 2`、`0 - INT64_MIN` 都 `rc=1` 且 stderr 逐字是 `[exception] uncaught: numeric_overflow`；`2147483648 / 0`、`2147483648 % 0` 同理抛 `division_by_zero`。
+
+**证据与门禁。** `tools/gate.sh` 的 `EXP_FUZZ_DIVERGE` / `EXP_FUZZ_THREW` **5 / 4 → 0 / 0**，阶段标签从「pinned 5+4」改成「expect 0 findings」；实测 seeds 1–6 各 120 个程序、seed 1 400 个程序，**全部 `0 DIVERGE / 0 THREW / 0 not translated`**。`tools/aot_native.test.py` 从 73 例扩到 **104 例**（86 equivalence、2 pinned divergences、6 runtime errors、10 refusal）：新增 `RUNTIME_ERROR` 类别断言「两端都 rc≠0 且错误种类相同」，`EQUIVALENCE` 增补 20 行覆盖 int64 字面量、精确算术、精确整数除法、布尔当整数、精确比较、int64 跨调用，以及 `or` 覆盖回归；原先钉在 `DIVERGENCE` 里的 `lcg_float_promotion` 被**提升**为 `int_lcg_second_step`（O2「整数静默退化成 double」随本节关闭）。
+
+**诚实边界。** 归零的是**这一批程序**上的分歧，不是「三后端处处一致」。生成器只覆盖数值子集，字符串、集合、闭包、模块边界都不在其中；`Value` 的 32 字节契约仍在，超过 int64 的整数**还没有**表示（v3.1 phase 2 的 `VAL_BIG` 盒装 BigInt 走 `Value.ptr`，与 `VAL_STRING`/`VAL_ARRAY` 同构，尚未实现）。`docs/archive/ROADMAP_3.1.md:23` 说的 `Z` = 无限整数集 + BigInt 也仍是路线图而非现状。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

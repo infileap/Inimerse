@@ -588,7 +588,7 @@ static int builtin_lint_check(VM *vm) {
     int n = lint_check(path, buf, sizeof buf);
     if (n > 0) fprintf(stderr, "%s", buf);
     free(path);
-    Value v; v.type = VAL_INT; v.ival = n < 0 ? -1 : n; v.fval = 0; v.sval = NULL;
+    Value v; v.type = VAL_INT; v.ival = n < 0 ? -1 : n;  v.sval = NULL;
     vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
     vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
     return 1;

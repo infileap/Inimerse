@@ -44,11 +44,11 @@ static void rp_popn(VM *vm, int n) {
     }
 }
 static void rp_push(VM *vm, Value v) { if (!vm_push_value(vm, &v)) value_free(&v); }
-static void rp_push_int(VM *vm, long long n) { Value v; v.type = VAL_INT; v.ival = (int)n; v.fval = 0; v.sval = NULL; v.ptr = NULL; rp_push(vm, v); }
-static void rp_push_nil(VM *vm) { Value v; v.type = VAL_NIL; v.ival = 0; v.fval = 0; v.sval = NULL; v.ptr = NULL; rp_push(vm, v); }
+static void rp_push_int(VM *vm, long long n) { Value v; v.type = VAL_INT; v.ival = n;  v.sval = NULL; v.ptr = NULL; rp_push(vm, v); }
+static void rp_push_nil(VM *vm) { Value v; v.type = VAL_NIL; v.ival = 0;  v.sval = NULL; v.ptr = NULL; rp_push(vm, v); }
 
 static void rp_dict_set(VM *vm, int aidx, const char *key, Value val) {
-    Value k; k.type = VAL_STRING; k.ival = 1; k.fval = 0; k.sval = (char*)key; k.ptr = NULL;
+    Value k; k.type = VAL_STRING; k.ival = 1;  k.sval = (char*)key; k.ptr = NULL;
     vm_dict_set(vm, aidx, &k, &val);
     if (val.type == VAL_STRING && val.sval && val.ival == 0) free(val.sval);
 }
@@ -61,7 +61,7 @@ static void rp_push_error(VM *vm, const char *category, const char *code, int re
     s.ival = 1; s.sval = (char*)code;               rp_dict_set(vm, aidx, "code", s);
     s.type = VAL_BOOL; s.ival = retryable;          rp_dict_set(vm, aidx, "retryable", s);
     s.type = VAL_STRING; s.ival = 1; s.sval = (char*)msg; rp_dict_set(vm, aidx, "message", s);
-    Value d; d.type = VAL_DICT; d.ival = aidx + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = aidx + 1;  d.sval = NULL; d.ptr = NULL;
     rp_push(vm, d);
 }
 
@@ -84,7 +84,7 @@ static void rp_hash_value(Sha256Ctx *ctx, VM *vm, const Value *v, int depth) {
     switch (v->type) {
         case VAL_NIL:   sha256_update(ctx, "null", 4); break;
         case VAL_BOOL:  sha256_update(ctx, v->ival ? "true" : "false", v->ival ? 4 : 5); break;
-        case VAL_INT:   snprintf(tmp, sizeof(tmp), "%d", v->ival); sha256_update(ctx, tmp, strlen(tmp)); break;
+        case VAL_INT:   snprintf(tmp, sizeof(tmp), "%lld", (long long)v->ival); sha256_update(ctx, tmp, strlen(tmp)); break;
         case VAL_FLOAT: snprintf(tmp, sizeof(tmp), "%.17g", v->fval); sha256_update(ctx, tmp, strlen(tmp)); break;
         case VAL_STRING: rp_hash_string(ctx, v->sval ? v->sval : ""); break;
         case VAL_ARRAY: {
@@ -220,7 +220,7 @@ static int builtin_replay_state_hash(VM *vm) {
     char hex[65];
     rp_value_sha256(vm, &v, hex);
     rp_popn(vm, vm->cur_argc);
-    Value s; s.type = VAL_STRING; s.ival = 0; s.fval = 0; s.ptr = NULL; s.sval = strdup(hex);
+    Value s; s.type = VAL_STRING; s.ival = 0;  s.ptr = NULL; s.sval = strdup(hex);
     rp_push(vm, s);
     return 1;
 }
@@ -304,7 +304,7 @@ static int builtin_replay_log(VM *vm) {
     }
     free(canon);
     rp_popn(vm, vm->cur_argc);
-    Value s; s.type = VAL_STRING; s.ival = 0; s.fval = 0; s.ptr = NULL;
+    Value s; s.type = VAL_STRING; s.ival = 0;  s.ptr = NULL;
     char id[64];
     snprintf(id, sizeof(id), "evt:%lld", g_log_seq);
     s.sval = strdup(id);
@@ -357,10 +357,10 @@ static int builtin_replay_load(VM *vm) {
         if (strstr(lines[i], "\"meta\":true")) continue;
         int ok = 0;
         Value ev = json_parse_value_text(vm, lines[i], &ok);
-        Value meta; meta.type = VAL_STRING; meta.ival = 1; meta.fval = 0; meta.sval = (char*)"meta"; meta.ptr = NULL;
-        Value ismeta = (ok && ev.type == VAL_DICT) ? vm_dict_get(vm, ev.ival - 1, &meta) : (Value){.type = VAL_NIL, .ival = 0, .fval = 0, .sval = NULL, .ptr = NULL};
+        Value meta; meta.type = VAL_STRING; meta.ival = 1;  meta.sval = (char*)"meta"; meta.ptr = NULL;
+        Value ismeta = (ok && ev.type == VAL_DICT) ? vm_dict_get(vm, ev.ival - 1, &meta) : (Value){.type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL};
         if (ok && ev.type == VAL_DICT && !(ismeta.type == VAL_BOOL && ismeta.ival)) {
-            Value idx; idx.type = VAL_INT; idx.ival = n_events; idx.fval = 0; idx.sval = NULL; idx.ptr = NULL;
+            Value idx; idx.type = VAL_INT; idx.ival = n_events;  idx.sval = NULL; idx.ptr = NULL;
             vm_array_push(vm, events_aidx, &ev);
             n_events++;
         } else {
@@ -370,11 +370,11 @@ static int builtin_replay_load(VM *vm) {
     }
     free(lines);
     int out_aidx = vm_array_new(vm);
-    Value c; c.type = VAL_INT; c.ival = n_events; c.fval = 0; c.sval = NULL; c.ptr = NULL;
+    Value c; c.type = VAL_INT; c.ival = n_events;  c.sval = NULL; c.ptr = NULL;
     rp_dict_set(vm, out_aidx, "count", c);
-    Value evs; evs.type = VAL_ARRAY; evs.ival = events_aidx + 1; evs.fval = 0; evs.sval = NULL; evs.ptr = NULL;
+    Value evs; evs.type = VAL_ARRAY; evs.ival = events_aidx + 1;  evs.sval = NULL; evs.ptr = NULL;
     rp_dict_set(vm, out_aidx, "events", evs);
-    Value d; d.type = VAL_DICT; d.ival = out_aidx + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out_aidx + 1;  d.sval = NULL; d.ptr = NULL;
     rp_popn(vm, vm->cur_argc);
     rp_push(vm, d);
     return 1;
@@ -433,23 +433,23 @@ static int builtin_replay_verify(VM *vm) {
     for (int i = 0; i < count; i++) free(lines[i]);
     free(lines);
     int out_aidx = vm_array_new(vm);
-    Value okv; okv.type = VAL_BOOL; okv.ival = failed ? 0 : 1; okv.fval = 0; okv.sval = NULL; okv.ptr = NULL;
+    Value okv; okv.type = VAL_BOOL; okv.ival = failed ? 0 : 1;  okv.sval = NULL; okv.ptr = NULL;
     rp_dict_set(vm, out_aidx, "ok", okv);
-    Value c; c.type = VAL_INT; c.ival = last_ok; c.fval = 0; c.sval = NULL; c.ptr = NULL;
+    Value c; c.type = VAL_INT; c.ival = last_ok;  c.sval = NULL; c.ptr = NULL;
     rp_dict_set(vm, out_aidx, "count", c);
-    Value ls; ls.type = VAL_INT; ls.ival = last_ok; ls.fval = 0; ls.sval = NULL; ls.ptr = NULL;
+    Value ls; ls.type = VAL_INT; ls.ival = last_ok;  ls.sval = NULL; ls.ptr = NULL;
     rp_dict_set(vm, out_aidx, "last_seq", ls);
-    Value lh; lh.type = VAL_STRING; lh.ival = 0; lh.fval = 0; lh.ptr = NULL; lh.sval = strdup(prev);
+    Value lh; lh.type = VAL_STRING; lh.ival = 0;  lh.ptr = NULL; lh.sval = strdup(prev);
     rp_dict_set(vm, out_aidx, "last_hash", lh);
     if (failed) {
-        Value cat; cat.type = VAL_STRING; cat.ival = 1; cat.fval = 0; cat.ptr = NULL; cat.sval = (char*)"IntegrityError";
+        Value cat; cat.type = VAL_STRING; cat.ival = 1;  cat.ptr = NULL; cat.sval = (char*)"IntegrityError";
         rp_dict_set(vm, out_aidx, "category", cat);
-        Value code; code.type = VAL_STRING; code.ival = 1; code.fval = 0; code.ptr = NULL; code.sval = (char*)"integrity_failed";
+        Value code; code.type = VAL_STRING; code.ival = 1;  code.ptr = NULL; code.sval = (char*)"integrity_failed";
         rp_dict_set(vm, out_aidx, "code", code);
-        Value msg; msg.type = VAL_STRING; msg.ival = 0; msg.fval = 0; msg.ptr = NULL; msg.sval = strdup(fail_msg);
+        Value msg; msg.type = VAL_STRING; msg.ival = 0;  msg.ptr = NULL; msg.sval = strdup(fail_msg);
         rp_dict_set(vm, out_aidx, "message", msg);
     }
-    Value d; d.type = VAL_DICT; d.ival = out_aidx + 1; d.fval = 0; d.sval = NULL; d.ptr = NULL;
+    Value d; d.type = VAL_DICT; d.ival = out_aidx + 1;  d.sval = NULL; d.ptr = NULL;
     rp_popn(vm, vm->cur_argc);
     rp_push(vm, d);
     return 1;

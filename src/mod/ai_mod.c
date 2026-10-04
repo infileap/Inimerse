@@ -20,7 +20,7 @@
 
 static Value ai_arg(VM *vm, int i) {
   int sp = vm_cur_sp(vm);
-  Value z; z.type = VAL_NIL; z.ival = 0; z.fval = 0; z.sval = NULL;
+  Value z; z.type = VAL_NIL; z.ival = 0;  z.sval = NULL;
   if (sp - i < 0) return z;
   return vm_cur_stack(vm)[sp - i];
 }

@@ -490,11 +490,20 @@ static int compile_expr(Compiler *comp, Expr *expr) {
     switch (expr->type) {
         case EXPR_NUMBER: {
             int r = alloc_reg();
+            /* A literal that does not fit in 32 bits stays an integer.  It rides
+               in the two immediates of OP_LOADK_I64: r2 carries the low 32 bits
+               and r3 the high 32, both unsigned.  A separate opcode (rather than
+               a reuse of OP_LOADK_INT, whose r2 is a sign-extended int32 in every
+               older stream) keeps old bytecode meaning exactly what it always
+               did, and no int64 constant pool is needed.  Promoting through a
+               double instead (the old behaviour) rounded 9007199254740993 to
+               ...992 and moved the operand off the integer path, where the
+               division-by-zero guard could no longer see it.
+               See docs/AUDIT.md §1.14. */
             if (expr->intVal > 2147483647LL || expr->intVal < -2147483648LL) {
-                int fidx = bytecode_add_float(comp->curBC, (double)expr->intVal);
-                emit(comp->curBC, OP_LOADK_FLOAT, r, fidx, 0);
-                fprintf(stderr, "warning: integer literal %lld out of 32-bit range, promoted to float\r\n",
-                        (long long)expr->intVal);
+                emit(comp->curBC, OP_LOADK_I64, r,
+                     (int)(uint32_t)((uint64_t)expr->intVal & 0xFFFFFFFFULL),
+                     (int)(uint32_t)((uint64_t)expr->intVal >> 32));
             } else {
                 emit(comp->curBC, OP_LOADK_INT, r, (int)expr->intVal, 0);
             }
@@ -648,10 +657,21 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             if (expr->binary.op == TOK_AND || expr->binary.op == TOK_OR) {
                 int left = compile_expr(comp, expr->binary.left);
                 int l_temp = comp->last_temp;
-                int r_wm = next_register;
                 int result;
                 if (l_temp) result = left;  /* 缁撴灉澶嶇敤宸︽搷浣滄暟锛堜复鏃讹級 */
                 else { result = alloc_reg(); emit(comp->curBC, OP_MOV, result, left, 0); }
+                /* The watermark must be taken AFTER `result` exists.  alloc_reg()
+                   hands out next_register, so capturing r_wm first made the
+                   release_to(comp, r_wm) below free `result` itself; the enclosing
+                   expression then allocated that same register for its right
+                   operand and clobbered the truth-value.  Inside a function body
+                   `(a or b) % 31` compiled to MOD r2, r2, r2 and printed 31 % 31 = 0
+                   (the right operand's LOADK_INT landed on the `or` result register),
+                   while the AST-walking AOT and wasm backends printed 1.  It only
+                   showed up when the left operand was a variable (a non-temp, so the
+                   alloc_reg() path was taken) -- a literal or a global load returned
+                   last_temp = 1 and reused the left register instead. */
+                int r_wm = next_register;
                 /* BOOLEAN semantics (docs/AUDIT.md §1.0, §1.6, §5 O0): `a and b`
                    is a truth-value, not an operand.  The interpreter used to
                    return the deciding operand, the AOT backend returned a

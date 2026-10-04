@@ -1693,7 +1693,7 @@ static int builtin_gui_display_size(VM *vm) {
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     int aidx = vm_array_new(vm);
     Value v;
-    v.type = VAL_INT; v.ival = sw; v.fval = 0; v.sval = NULL; vm_array_push(vm, aidx, &v);
+    v.type = VAL_INT; v.ival = sw;  v.sval = NULL; vm_array_push(vm, aidx, &v);
     v.ival = sh; vm_array_push(vm, aidx, &v);
     v.type = VAL_ARRAY; v.ival = aidx + 1;
     if (vm_cur_sp(vm) < 1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = v; }
@@ -3501,9 +3501,9 @@ static int builtin_im2d_world_to_screen(VM *vm) {
     double sy = (wy - im2d_cam_y) * im2d_cam_zoom + ch / 2.0;
     int aidx = vm_array_new(vm);
     if (aidx < 0) { ret(vm, 0); return 1; }
-    { Value v; v.type = VAL_FLOAT; v.fval = sx; v.ival = 0; v.sval = NULL;
+    { Value v; v.type = VAL_FLOAT; v.fval = sx;  v.sval = NULL;
       vm_array_push(vm, aidx, &v); v.fval = sy; vm_array_push(vm, aidx, &v); }
-    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1; arrv.fval = 0; arrv.sval = NULL;
+    Value arrv; arrv.type = VAL_ARRAY; arrv.ival = aidx + 1;  arrv.sval = NULL;
     if (vm_cur_sp(vm) < 1023) { vm_cur_set_sp(vm, vm_cur_sp(vm) + 1); vm_cur_stack(vm)[vm_cur_sp(vm)] = arrv; }
     else ret(vm, 0);
     return 1;

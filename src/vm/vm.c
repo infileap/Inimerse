@@ -89,7 +89,7 @@ int vm_thread_completion(VM *vm, const char *name, Value *out) {
     }
     if (found->result_ready) value_assign(out, &found->result);
     else {
-        Value nil = { VAL_NIL, 0, 0, NULL, NULL };
+        Value nil = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
         value_assign(out, &nil);
     }
     VM_UNLOCK(vm);
@@ -202,7 +202,7 @@ int vm_thread_completion(VM *vm, const char *name, Value *out) {
     }
     if (found->result_ready) value_assign(out, &found->result);
     else {
-        Value nil = { VAL_NIL, 0, 0, NULL, NULL };
+        Value nil = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
         value_assign(out, &nil);
     }
     VM_UNLOCK(vm);
@@ -281,6 +281,15 @@ double val_as_double(const Value *v) {
 
 }
 
+/* v3.1: a boolean is an integer-valued operand (true == 1, false == 0).  Letting a
+   bool push an expression onto the double path -- as the `a->type == VAL_INT &&
+   b->type == VAL_INT` tests used to -- lost precision past 2^53, while the AOT
+   backend kept the whole expression in `long long` and the wasm backend in i64, so
+   the interpreter was the odd one out (measured: `true * 9007199254740993` gave
+   ...992 here and ...993 in AOT).  See docs/AUDIT.md §1.14. */
+static bool val_is_intlike(const Value *v) { return v->type == VAL_INT || v->type == VAL_BOOL; }
+static long long val_i64(const Value *v) { return v->type == VAL_BOOL ? (v->ival ? 1LL : 0LL) : (long long)v->ival; }
+
 bool val_eq(const Value *a, const Value *b) {
     if (a->type == b->type) {
         if (a->type == VAL_INT)    return a->ival == b->ival;
@@ -293,8 +302,8 @@ bool val_eq(const Value *a, const Value *b) {
         if (a->type == VAL_FUNCTION) return a->ptr == b->ptr;
     }
     /* int ??float 锟斤拷值锟饺较ｏ拷锟斤拷锟洁不同锟斤拷锟斤拷一锟缴诧拷锟斤拷龋锟斤拷薷锟斤拷锟??锟街碉拷??nil 锟饺较碉拷锟斤拷锟叫ｏ拷 */
-    if ((a->type == VAL_INT || a->type == VAL_FLOAT) &&
-        (b->type == VAL_INT || b->type == VAL_FLOAT))
+    if ((a->type == VAL_INT || a->type == VAL_FLOAT || a->type == VAL_BOOL) &&
+        (b->type == VAL_INT || b->type == VAL_FLOAT || b->type == VAL_BOOL))
         return val_as_double(a) == val_as_double(b);
     return false;
 }
@@ -305,6 +314,17 @@ static int val_cmp(Value *a, Value *b) {
         if (a->sval == b->sval) return 0;
         return strcmp(a->sval ? a->sval : "", b->sval ? b->sval : "");
     }
+    /* Two integers compare exactly.  Routing them through double (as this used
+       to) made `<`/`>` lossy above 2^53 -- precisely where the AOT backend
+       (`long long`) and the wasm backend (`i64`) compared exactly, so the
+       interpreter was the odd one out.  A float operand still goes through
+       double, so the cross-type relation is unchanged. */
+    if (val_is_intlike(a) && val_is_intlike(b)) {
+        long long ia = val_i64(a), ib = val_i64(b);
+        if (ia < ib) return -1;
+        if (ia > ib) return 1;
+        return 0;
+    }
     double da = val_as_double(a), db = val_as_double(b);
     if (da < db) return -1;
     if (da > db) return 1;
@@ -312,7 +332,11 @@ static int val_cmp(Value *a, Value *b) {
 }
 
 /* 栈锟斤拷锟斤拷锟斤拷为锟斤拷锟矫猴拷锟斤拷锟斤拷锟矫憋拷锟斤拷锟斤拷 */
-void push_int(VM *vm, int v) {
+/* long long, not int: the stack slot is 64-bit since the v3.1 integer slot
+   change, and an int parameter silently truncated every 64-bit push (the
+   function-argument path pushed through here, so f(9007199254740993) became
+   f(1)).  See docs/AUDIT.md §1.14. */
+void push_int(VM *vm, long long v) {
     if (g_cur_thread->sp >= 1023) return;
     g_cur_thread->sp++;
     g_cur_thread->stack[g_cur_thread->sp].type = VAL_INT;
@@ -377,7 +401,7 @@ static void value_copy(Value *dst, const Value *src) {
  * function/string payload.  Primitive and pool-backed values remain cheap. */
 static void value_assign(Value *dst, const Value *src) {
     if (!dst || !src || dst == src) return;
-    Value tmp = { VAL_NIL, 0, 0, NULL, NULL };
+    Value tmp = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     value_copy(&tmp, src);
     value_free(dst);
     *dst = tmp;
@@ -387,17 +411,22 @@ static void value_move(Value *dst, Value *src) {
     if (!dst || !src || dst == src) return;
     value_free(dst);
     *dst = *src;
-    src->type = VAL_NIL; src->ival = 0; src->fval = 0; src->sval = NULL; src->ptr = NULL;
+    src->type = VAL_NIL; src->ival = 0;  src->sval = NULL; src->ptr = NULL;
 }
 
-static void value_set(Value *dst, int type, int ival, double fval, char *sval, void *ptr) {
+/* The single choke point for building a Value in place.  `ival` and `fval` now
+   share storage (src/vm/vm.h anonymous union), so this must write exactly ONE
+   of them -- writing both would leave the second (always the caller's
+   defensive zero) as the surviving bits.  `type` picks the field; the other
+   argument is ignored, exactly as it always was semantically. */
+static void value_set(Value *dst, int type, long long ival, double fval, char *sval, void *ptr) {
     if (!dst) return;
     value_free(dst);
     dst->type = type;
-    dst->ival = ival;
-    dst->fval = fval;
     dst->sval = sval;
     dst->ptr = ptr;
+    if (type == VAL_FLOAT) dst->fval = fval;
+    else dst->ival = ival;
 }
 
 void limit_abort(VM *vm, const char *what, double used, double limit);
@@ -412,7 +441,6 @@ void value_free(Value *v) {
     }
     v->type = VAL_NIL;
     v->ival = 0;
-    v->fval = 0;
     v->sval = NULL;
     v->ptr = NULL;
 }
@@ -690,7 +718,7 @@ static int array_ensure(VM *vm, int idx, int need) {
 void vm_array_push(VM *vm, int idx, const Value *v) {
     if (idx < 0 || idx >= vm->arrayCount) return;
     /* Clone before growing: v may point into this array and realloc can move it. */
-    Value tmp; tmp.type = VAL_NIL; tmp.ival = 0; tmp.fval = 0; tmp.sval = NULL;
+    Value tmp; tmp.type = VAL_NIL; tmp.ival = 0;  tmp.sval = NULL;
     value_copy(&tmp, v);
     int need_lock = (vm->active_threads > 1);
     if (need_lock) VM_LOCK(vm);
@@ -715,7 +743,7 @@ static void vm_array_push_n(VM *vm, int idx, const Value *items, int n) {
     Value *tmp = malloc((size_t)n * sizeof(Value));
     if (!tmp) return;
     for (int i = 0; i < n; i++) {
-        tmp[i].type = VAL_NIL; tmp[i].ival = 0; tmp[i].fval = 0; tmp[i].sval = NULL;
+        tmp[i].type = VAL_NIL; tmp[i].ival = 0;  tmp[i].sval = NULL;
         value_copy(&tmp[i], &items[i]);
     }
     int need_lock = (vm->active_threads > 1);
@@ -739,7 +767,7 @@ static void vm_array_push_n(VM *vm, int idx, const Value *items, int n) {
 void vm_array_set(VM *vm, int idx, int i, const Value *v) {
     if (idx < 0 || idx >= vm->arrayCount || i < 0) return;
     /* Clone first so self-assignment and reallocating growth are safe. */
-    Value tmp; tmp.type = VAL_NIL; tmp.ival = 0; tmp.fval = 0; tmp.sval = NULL;
+    Value tmp; tmp.type = VAL_NIL; tmp.ival = 0;  tmp.sval = NULL;
     value_copy(&tmp, v);
     int need_lock = (vm->active_threads > 1);
     if (need_lock) VM_LOCK(vm);
@@ -751,7 +779,7 @@ void vm_array_set(VM *vm, int idx, int i, const Value *v) {
             if (need_lock) VM_UNLOCK(vm);
             return;
         }
-        Value nil; nil.type = VAL_NIL; nil.ival = 0; nil.fval = 0; nil.sval = NULL;
+        Value nil; nil.type = VAL_NIL; nil.ival = 0;  nil.sval = NULL;
         while (a->count <= i) value_copy(&a->items[a->count++], &nil);
         vm->used_mem += (double)(a->count - old_count) * sizeof(Value);
     }
@@ -761,7 +789,7 @@ void vm_array_set(VM *vm, int idx, int i, const Value *v) {
 }
 
 Value vm_array_get(VM *vm, int idx, int i) {
-    Value out; out.type = VAL_NIL; out.ival = 0; out.fval = 0; out.sval = NULL;
+    Value out; out.type = VAL_NIL; out.ival = 0;  out.sval = NULL;
     if (idx < 0 || idx >= vm->arrayCount || i < 0 || i >= vm_pool_slot(vm, idx)->count) return out;
     int need_lock = (vm->active_threads > 1);
     if (need_lock) VM_LOCK(vm);
@@ -775,7 +803,7 @@ Value vm_array_get(VM *vm, int idx, int i) {
 }
 
 Value vm_array_pop(VM *vm, int idx) {
-    Value out; out.type = VAL_NIL; out.ival = 0; out.fval = 0; out.sval = NULL;
+    Value out; out.type = VAL_NIL; out.ival = 0;  out.sval = NULL;
     if (idx < 0 || idx >= vm->arrayCount || vm_pool_slot(vm, idx)->count <= 0) return out;
     VM_LOCK(vm);
     ArrayObj *a = vm_pool_slot(vm, idx);
@@ -910,7 +938,7 @@ static int dict_hash_find(DictHash *h, ArrayObj *a, const Value *key, unsigned h
 }
 
 Value vm_dict_get(VM *vm, int aidx, const Value *key) {
-    Value nil; nil.type = VAL_NIL; nil.ival = 0; nil.fval = 0; nil.sval = NULL;
+    Value nil; nil.type = VAL_NIL; nil.ival = 0;  nil.sval = NULL;
     if (aidx < 0 || aidx >= vm->arrayCount) return nil;
     VM_LOCK(vm);
     ArrayObj *a = vm_pool_slot(vm, aidx);
@@ -948,8 +976,8 @@ void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val) {
     if (aidx < 0 || aidx >= vm->arrayCount) return;
     /* Clone inputs before any array growth or destination release. This covers
        self-assignment (d[k] = d[k]) and keys/values backed by the same array. */
-    Value key_copy; key_copy.type = VAL_NIL; key_copy.ival = 0; key_copy.fval = 0; key_copy.sval = NULL;
-    Value val_copy; val_copy.type = VAL_NIL; val_copy.ival = 0; val_copy.fval = 0; val_copy.sval = NULL;
+    Value key_copy; key_copy.type = VAL_NIL; key_copy.ival = 0;  key_copy.sval = NULL;
+    Value val_copy; val_copy.type = VAL_NIL; val_copy.ival = 0;  val_copy.sval = NULL;
     value_copy(&key_copy, key);
     value_copy(&val_copy, val);
     VM_LOCK(vm);
@@ -962,7 +990,7 @@ void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val) {
     if (i >= 0) {
         value_free(&a->items[i + 1]);
         a->items[i + 1] = val_copy;
-        val_copy.type = VAL_NIL; val_copy.ival = 0; val_copy.fval = 0; val_copy.sval = NULL; val_copy.ptr = NULL;
+        val_copy.type = VAL_NIL; val_copy.ival = 0;  val_copy.sval = NULL; val_copy.ptr = NULL;
     } else {
         int pair_idx = a->count;
         if (!array_ensure(vm, aidx, a->count + 2)) {
@@ -972,9 +1000,9 @@ void vm_dict_set(VM *vm, int aidx, const Value *key, const Value *val) {
             return;
         }
         a->items[a->count++] = key_copy;
-        key_copy.type = VAL_NIL; key_copy.ival = 0; key_copy.fval = 0; key_copy.sval = NULL; key_copy.ptr = NULL;
+        key_copy.type = VAL_NIL; key_copy.ival = 0;  key_copy.sval = NULL; key_copy.ptr = NULL;
         a->items[a->count++] = val_copy;
-        val_copy.type = VAL_NIL; val_copy.ival = 0; val_copy.fval = 0; val_copy.sval = NULL; val_copy.ptr = NULL;
+        val_copy.type = VAL_NIL; val_copy.ival = 0;  val_copy.sval = NULL; val_copy.ptr = NULL;
         vm->used_mem += 2.0 * (double)sizeof(Value);
         if (!h->slots) dict_hash_build(vm, aidx);  /* first pair(s): table now includes them */
         else dict_hash_insert(h, a, pair_idx, hk);
@@ -1002,8 +1030,8 @@ bool vm_dict_remove(VM *vm, int aidx, const Value *key) {
     a->count -= 2;
     /* The pair shift transfers ownership into the earlier slots.  Clear the
        two stale tail slots without releasing them a second time. */
-    a->items[a->count] = (Value){ VAL_NIL, 0, 0, NULL, NULL };
-    a->items[a->count + 1] = (Value){ VAL_NIL, 0, 0, NULL, NULL };
+    a->items[a->count] = (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
+    a->items[a->count + 1] = (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     vm->used_mem -= 2.0 * (double)sizeof(Value);
     if (vm->used_mem < 0.0) vm->used_mem = 0.0;
     if (a->count > 0) dict_hash_build(vm, aidx);
@@ -1169,7 +1197,6 @@ void vm_global_grow(VM *vm, int need) {
         vm->globals[i].name = NULL;
         vm->globals[i].val.type = VAL_NIL;
         vm->globals[i].val.ival = 0;
-        vm->globals[i].val.fval = 0;
         vm->globals[i].val.sval = NULL;
     }
     vm->be_bound = realloc(vm->be_bound, (size_t)nc * sizeof(int));
@@ -1615,7 +1642,7 @@ static void vm_set_add(VM *vm, int idx, Value *v) {
         s->items = ni;
         s->cap = nc;
     }
-    Value c = { VAL_NIL, 0, 0, NULL, NULL };
+    Value c = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     value_copy(&c, v);
     if (c.type == VAL_STRING) {
         const char *np = vm_intern(vm, c.sval ? c.sval : "");
@@ -1638,7 +1665,7 @@ static void vm_set_add_comp(VM *vm, int idx, SetObj *src) {
            non-integers live in items. */
         for (int i = 0; i < src->iCount; i++) {
             Value v;
-            v.type = VAL_INT; v.ival = (int)src->i64[i]; v.fval = 0; v.sval = NULL; v.ptr = NULL;
+            v.type = VAL_INT; v.ival = (int)src->i64[i];  v.sval = NULL; v.ptr = NULL;
             vm_set_add(vm, idx, &v);
         }
         for (int i = 0; i < src->count; i++) vm_set_add(vm, idx, &src->items[i]);
@@ -2010,8 +2037,8 @@ static int set_comp_enum(VM *vm, int aidx, const SetComp *c, int sentinelUnbound
         if (x < c->lo || (x == c->lo && !c->loInc)) continue;
         if (x > c->hi || (x == c->hi && !c->hiInc)) continue;
         Value v;
-        if (isInt) { v.type = VAL_INT; v.ival = (int)x; v.fval = 0; }
-        else { v.type = VAL_FLOAT; v.fval = x; v.ival = 0; }
+        if (isInt) { v.type = VAL_INT; v.ival = (int)x;  }
+        else { v.type = VAL_FLOAT; v.fval = x;  }
         v.sval = NULL; v.ptr = NULL;
         if (!builtin_contains(c->nameIdx, &v)) continue;
         if (!array_has(vm, aidx, &v)) vm_array_push(vm, aidx, &v);
@@ -2041,7 +2068,7 @@ int vm_set_to_array(VM *vm, int sidx) {
     }
     for (int i = 0; i < s->iCount; i++) {
         Value v;
-        v.type = VAL_INT; v.ival = (int)s->i64[i]; v.fval = 0; v.sval = NULL; v.ptr = NULL;
+        v.type = VAL_INT; v.ival = (int)s->i64[i];  v.sval = NULL; v.ptr = NULL;
         if (!array_has(vm, aidx, &v)) vm_array_push(vm, aidx, &v);
     }
     for (int i = 0; i < s->count; i++)
@@ -2062,7 +2089,7 @@ static int set_subset(VM *vm, int aidx, int bidx) {
     if (a->kind == 0) {
         for (int i = 0; i < a->iCount; i++) {
             Value iv;
-            iv.type = VAL_INT; iv.ival = (int)a->i64[i]; iv.fval = 0; iv.sval = NULL;
+            iv.type = VAL_INT; iv.ival = (int)a->i64[i];  iv.sval = NULL;
             if (!set_contains(vm, bidx, &iv)) return 0;
         }
         for (int i = 0; i < a->count; i++)
@@ -2073,7 +2100,7 @@ static int set_subset(VM *vm, int aidx, int bidx) {
                 /* component subset of b: try b's own components + named/interval membership */
                 if (c->lo != c->hi || !c->loInc || !c->hiInc) return 0;
                 Value probe;
-                probe.type = VAL_FLOAT; probe.fval = c->lo; probe.ival = 0;
+                probe.type = VAL_FLOAT; probe.fval = c->lo; 
                 if (!set_contains(vm, bidx, &probe)) return 0;
             } else {
                 if (c->nameIdx < 0 || b->nameIdx < 0) return 0;
@@ -2169,7 +2196,7 @@ static double set_scan_down(double start, double step, int bi, int *found) {
     *found = 0; return 0;
 }
 static void set_comp_minmax(VM *vm, SetComp *c, Value *dst, int isMax) {
-    dst->type = VAL_NIL; dst->ival = 0; dst->fval = 0; dst->sval = NULL;
+    dst->type = VAL_NIL; dst->ival = 0;  dst->sval = NULL;
     if (!c || c->nameIdx < 0) return;
     int bi = c->nameIdx;
     int isIntSet = (bi == 0 || bi == 1 || bi == 2 || bi == 3);
@@ -2193,7 +2220,7 @@ static void set_comp_minmax(VM *vm, SetComp *c, Value *dst, int isMax) {
     }
 }
 static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
-    dst->type = VAL_NIL; dst->ival = 0; dst->fval = 0; dst->sval = NULL;
+    dst->type = VAL_NIL; dst->ival = 0;  dst->sval = NULL;
     if (src->type != VAL_SET) return;
     SetObj *s = vm_set_slot(vm, src->ival);
     if (!s) return;
@@ -2203,7 +2230,7 @@ static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
         int bestIsStr = 0;
         for (int i = 0; i < s->iCount; i++) {
             Value iv;
-            iv.type = VAL_INT; iv.ival = (int)s->i64[i]; iv.fval = 0; iv.sval = NULL;
+            iv.type = VAL_INT; iv.ival = (int)s->i64[i];  iv.sval = NULL;
             if (!have) { best = iv; have = 1; bestIsStr = 0; continue; }
             if (bestIsStr) { have = -1; break; }
             int c = val_cmp(&iv, &best);
@@ -2219,7 +2246,7 @@ static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
         for (int i = 0; i < s->compCount && have >= 0; i++) {
             SetComp *c = &s->comps[i];
             Value cv;
-            cv.type = VAL_NIL; cv.ival = 0; cv.fval = 0; cv.sval = NULL;
+            cv.type = VAL_NIL; cv.ival = 0;  cv.sval = NULL;
             set_comp_minmax(vm, c, &cv, isMax);
             if (cv.type == VAL_NIL) { if (have == 0) have = -1; continue; }
             int cvIsStr = (cv.type == VAL_STRING);
@@ -2369,7 +2396,6 @@ void vm_throw_msg(VM *vm, const char *msg) {
     err.type = VAL_STRING;
     err.sval = (char*)vm_intern(vm, msg);
     err.ival = 1;
-    err.fval = 0;
     vm_throw(vm, t, &err);
 }
 
@@ -2446,7 +2472,6 @@ static int vm_frame_callback(VM *vm, VmThread *t) {
         vm->im2d_dt = (double)vm->im2d_interval_ms / 1000.0;
         argv[0].type = VAL_FLOAT;
         argv[0].fval = vm->im2d_dt;
-        argv[0].ival = 0;
         argv[0].sval = NULL;
         if (vm->im2d_cb_update == -1) vm->im2d_cb_update = vm_find_func(vm, "on_update");
         if (vm->im2d_cb_update >= 0 && vm_call_func_at(vm, t, vm->im2d_cb_update, 1, argv)) return 1;
@@ -2571,7 +2596,7 @@ static void gc_mark(VM *vm) {
         if (tk->error_ready) gc_mark_value(vm, &tk->error);
     }
     /* C-side holders */
-    if (vm->record_loaded_dict > 0) gc_mark_value(vm, &(Value){ .type = VAL_DICT, .ival = vm->record_loaded_dict, .fval = 0, .sval = NULL });
+    if (vm->record_loaded_dict > 0) gc_mark_value(vm, &(Value){ .type = VAL_DICT, .ival = vm->record_loaded_dict, .sval = NULL });
     for (int i = 0; i < vm->globalCount; i++) {
         if (vm->be_bound[i] > 0) {
             int sidx = vm->be_bound[i] - 1;
@@ -2675,11 +2700,11 @@ void gc_collect(VM *vm) {
             Value *gv = &vm->globals[gi].val;
             if ((gv->type == VAL_ARRAY || gv->type == VAL_DICT) && gv->ival > 0 && gv->ival - 1 < vm->arrayCount) {
                 ArrayObj *ga = vm_pool_slot(vm, gv->ival - 1);
-                if (ga->count == -1) { fprintf(stderr, "[gc] BADROOT global[%d] '%s' -> freed slot %d\n", gi, vm->globals[gi].name, gv->ival - 1); bad = 1; }
+                if (ga->count == -1) { fprintf(stderr, "[gc] BADROOT global[%d] '%s' -> freed slot %lld\n", gi, vm->globals[gi].name, (long long)gv->ival - 1); bad = 1; }
             }
             if (gv->type == VAL_SET && gv->ival > 0 && gv->ival - 1 < vm->setCount) {
                 SetObj *gs = vm_set_slot(vm, gv->ival - 1);
-                if (gs->iCount == -1) { fprintf(stderr, "[gc] BADROOT global[%d] '%s' -> freed set %d\n", gi, vm->globals[gi].name, gv->ival - 1); bad = 1; }
+                if (gs->iCount == -1) { fprintf(stderr, "[gc] BADROOT global[%d] '%s' -> freed set %lld\n", gi, vm->globals[gi].name, (long long)gv->ival - 1); bad = 1; }
             }
         }
         for (int ti = 0; ti < VM_MAX_THREADS && !bad; ti++) {
@@ -2689,7 +2714,7 @@ void gc_collect(VM *vm) {
                 Value *sv = &tt->stack[si];
                 if ((sv->type == VAL_ARRAY || sv->type == VAL_DICT) && sv->ival > 0 && sv->ival - 1 < vm->arrayCount) {
                     ArrayObj *sa = vm_pool_slot(vm, sv->ival - 1);
-                    if (sa->count == -1) { fprintf(stderr, "[gc] BADROOT stack t%d[%d] -> freed %d\n", ti, si, sv->ival - 1); bad = 1; }
+                    if (sa->count == -1) { fprintf(stderr, "[gc] BADROOT stack t%d[%d] -> freed %lld\n", ti, si, (long long)sv->ival - 1); bad = 1; }
                 }
             }
             int regEnd = tt->base + VM_FRAME_REGS;
@@ -2698,7 +2723,7 @@ void gc_collect(VM *vm) {
                 Value *rv = &tt->reg[ri];
                 if ((rv->type == VAL_ARRAY || rv->type == VAL_DICT) && rv->ival > 0 && rv->ival - 1 < vm->arrayCount) {
                     ArrayObj *ra = vm_pool_slot(vm, rv->ival - 1);
-                    if (ra->count == -1) { fprintf(stderr, "[gc] BADROOT reg t%d[%d] -> freed %d\n", ti, ri, rv->ival - 1); bad = 1; }
+                    if (ra->count == -1) { fprintf(stderr, "[gc] BADROOT reg t%d[%d] -> freed %lld\n", ti, ri, (long long)rv->ival - 1); bad = 1; }
                 }
             }
         }
@@ -2710,7 +2735,7 @@ void gc_collect(VM *vm) {
                 Value *sv = &tt->stack[si];
                 if ((sv->type == VAL_ARRAY || sv->type == VAL_DICT) && sv->ival > 0 && sv->ival - 1 < vm->arrayCount) {
                     ArrayObj *sa = vm_pool_slot(vm, sv->ival - 1);
-                    if (sa->count == -1) { fprintf(stderr, "[gc] BADROOT task%d stack[%d] -> freed %d\n", ti, si, sv->ival - 1); bad = 1; }
+                    if (sa->count == -1) { fprintf(stderr, "[gc] BADROOT task%d stack[%d] -> freed %lld\n", ti, si, (long long)sv->ival - 1); bad = 1; }
                 }
             }
             int regEnd = tt->base + VM_FRAME_REGS;
@@ -2719,14 +2744,14 @@ void gc_collect(VM *vm) {
                 Value *rv = &tt->reg[ri];
                 if ((rv->type == VAL_ARRAY || rv->type == VAL_DICT) && rv->ival > 0 && rv->ival - 1 < vm->arrayCount) {
                     ArrayObj *ra = vm_pool_slot(vm, rv->ival - 1);
-                    if (ra->count == -1) { fprintf(stderr, "[gc] BADROOT task%d reg[%d] -> freed %d\n", ti, ri, rv->ival - 1); bad = 1; }
+                    if (ra->count == -1) { fprintf(stderr, "[gc] BADROOT task%d reg[%d] -> freed %lld\n", ti, ri, (long long)rv->ival - 1); bad = 1; }
                 }
             }
             for (int mi = 0; mi < tt->msg_cap && !bad; mi++) {
                 Value *mv = &tt->msg_q[mi];
                 if ((mv->type == VAL_ARRAY || mv->type == VAL_DICT) && mv->ival > 0 && mv->ival - 1 < vm->arrayCount) {
                     ArrayObj *ma = vm_pool_slot(vm, mv->ival - 1);
-                    if (ma->count == -1) { fprintf(stderr, "[gc] BADROOT task%d msg[%d] -> freed %d\n", ti, mi, mv->ival - 1); bad = 1; }
+                    if (ma->count == -1) { fprintf(stderr, "[gc] BADROOT task%d msg[%d] -> freed %lld\n", ti, mi, (long long)mv->ival - 1); bad = 1; }
                 }
             }
         }
@@ -2875,6 +2900,7 @@ static void vm_execute_thread(VmThread *t) {
         switch (ins.op) {
         case OP_MOV: goto L_MOV;
         case OP_LOADK_INT: goto L_LOADK_INT;
+        case OP_LOADK_I64: goto L_LOADK_I64;
         case OP_LOADK_FLOAT: goto L_LOADK_FLOAT;
         case OP_LOADK_STRING: goto L_LOADK_STRING;
         case OP_LOADK_BOOL: goto L_LOADK_BOOL;
@@ -2952,10 +2978,20 @@ static void vm_execute_thread(VmThread *t) {
             value_assign(&R[ins.r1], &R[ins.r2]);
             continue;
         L_LOADK_INT:
-            { Value v = { VAL_INT, ins.r2, 0, NULL, NULL }; value_assign(&R[ins.r1], &v); }
+            { Value v = { .type = VAL_INT, .ival = ins.r2, .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
+            continue;
+        L_LOADK_I64:
+            /* r2 = low 32 bits, r3 = high 32, both read as UNSIGNED halves.  The
+               emitter in src/compiler/compiler.c only uses this opcode for values
+               outside int32, so OP_LOADK_INT above keeps its legacy meaning.
+               See docs/AUDIT.md §1.14. */
+            { Value v = { .type = VAL_INT,
+                          .ival = (long long)((unsigned long long)(unsigned int)ins.r2 |
+                                              ((unsigned long long)(unsigned int)ins.r3 << 32)),
+                          .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
         L_LOADK_FLOAT:
-            { Value v = { VAL_FLOAT, 0, t->code->float_pool[ins.r2], NULL, NULL }; value_assign(&R[ins.r1], &v); }
+            { Value v = { .type = VAL_FLOAT, .fval = t->code->float_pool[ins.r2], .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
         L_LOADK_STRING: {
             int sidx = ins.r2;
@@ -2969,13 +3005,12 @@ static void vm_execute_thread(VmThread *t) {
             } else {
                 s = vm_intern(vm, t->code->string_pool[sidx]);
             }
-            Value v = { VAL_STRING, (s != NULL) ? 1 : 0, 0,
-                        (char *)(s ? s : t->code->string_pool[sidx]), NULL };
+            Value v = { .type = VAL_STRING, .ival = (s != NULL) ? 1 : 0, .sval = (char *)(s ? s : t->code->string_pool[sidx]), .ptr = NULL };
             value_assign(&R[ins.r1], &v);
             continue;
         }
         L_LOADK_BOOL:
-            { Value v = { VAL_BOOL, ins.r2 ? 1 : 0, 0, NULL, NULL }; value_assign(&R[ins.r1], &v); }
+            { Value v = { .type = VAL_BOOL, .ival = ins.r2 ? 1 : 0, .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
 
         /* ---------- 锟斤拷锟斤拷 ---------- */
@@ -3004,13 +3039,18 @@ static void vm_execute_thread(VmThread *t) {
                 if (!nb) nb = strdup("");
                 else { memcpy(nb, sa, la); memcpy(nb+la, sb, lb); nb[la+lb] = 0; }
                 value_set(&R[ins.r1], VAL_STRING, 0, 0, nb, NULL);
-            } else if (a->type == VAL_INT && b->type == VAL_INT) {
-                int64_t r64 = (int64_t)a->ival + (int64_t)b->ival;
-                if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                    value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r64, NULL, NULL);
-                } else {
-                    value_set(&R[ins.r1], VAL_INT, (int)r64, 0, NULL, NULL);
+            } else if (val_is_intlike(a) && val_is_intlike(b)) {
+                /* v3.1: an integer result stays an integer.  Overflowing int64 is
+                   an error, not a silent slide into double.  The slide is what made
+                   the three backends disagree past 2^53 and what carried a value
+                   off the integer path, out of reach of the integer guards. */
+                long long r64;
+                if (__builtin_add_overflow(val_i64(a), val_i64(b), &r64)) {
+                    vm_throw_kind(vm, "numeric_overflow");
+                    R = t->reg + t->base;
+                    continue;
                 }
+                value_set(&R[ins.r1], VAL_INT, r64, 0, NULL, NULL);
             } else {
                 double da = val_as_double(a), db = val_as_double(b);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, da + db, NULL, NULL);
@@ -3070,11 +3110,11 @@ static void vm_execute_thread(VmThread *t) {
                     if (acc.type == VAL_SET || b.type == VAL_SET) {
                         if (acc.type == VAL_SET && b.type == VAL_SET) {
                             int n = set_union(vm, acc.ival, b.ival);
-                            if (n < 0) { acc.type = VAL_NIL; acc.ival = 0; acc.fval = 0; acc.sval = NULL; }
-                            else { acc.type = VAL_SET; acc.ival = n; acc.fval = 0; acc.sval = NULL; }
+                            if (n < 0) { acc.type = VAL_NIL; acc.ival = 0;  acc.sval = NULL; }
+                            else { acc.type = VAL_SET; acc.ival = n;  acc.sval = NULL; }
                         } else {
                             if (acc_fold_owned && acc.type == VAL_STRING && acc.sval) free(acc.sval);
-                            acc.type = VAL_NIL; acc.ival = 0; acc.fval = 0; acc.sval = NULL;
+                            acc.type = VAL_NIL; acc.ival = 0;  acc.sval = NULL;
                         }
                         acc_fold_owned = 0;
                         continue;
@@ -3098,21 +3138,19 @@ static void vm_execute_thread(VmThread *t) {
                         continue;
                     }
                     if (acc.type == VAL_INT && b.type == VAL_INT) {
-                        /* Same overflow rule as L_ADD: fold in 64 bits and promote to
-                           float when the result leaves int32.  A bare int32 add here
-                           wrapped instead, so a 3+-term chain (which OP_CONCAT folds)
-                           disagreed with the identical 2-term chain (which OP_ADD
-                           folds) the moment an intermediate left the int32 range. */
-                        int64_t r64 = (int64_t)acc.ival + (int64_t)b.ival;
-                        if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                            acc.type = VAL_FLOAT;
-                            acc.fval = (double)r64;
-                            acc.ival = 0;
-                            acc.sval = NULL;
-                        } else {
-                            acc.type = VAL_INT;
-                            acc.ival = (int)r64;
+                        /* Same rule as L_ADD (and it must stay the same rule): a
+                           3+-term `+` chain is folded here while the 2-term chain
+                           is folded by OP_ADD, so any difference between the two
+                           shows up as the same expression answering two ways. */
+                        long long r64;
+                        if (__builtin_add_overflow((long long)acc.ival, (long long)b.ival, &r64)) {
+                            acc_fold_owned = 0;
+                            vm_throw_kind(vm, "numeric_overflow");
+                            R = t->reg + t->base;
+                            goto concat_threw;
                         }
+                        acc.type = VAL_INT;
+                        acc.ival = r64;
                         acc_fold_owned = 0;
                         continue;
                     }
@@ -3120,13 +3158,14 @@ static void vm_execute_thread(VmThread *t) {
                         double da = val_as_double(&acc), db = val_as_double(&b);
                         acc.type = VAL_FLOAT;
                         acc.fval = da + db;
-                        acc.ival = 0; acc.sval = NULL;
+                        acc.sval = NULL;
                         acc_fold_owned = 0;
                     }
                 }
                 if (acc.type == VAL_STRING) acc.ival = 0;
                 value_move(&R[rres], &acc);
             }
+        concat_threw:   /* the fold overflowed; the throw is already queued */
             continue;
         }
         L_SUB: {
@@ -3140,13 +3179,14 @@ static void vm_execute_thread(VmThread *t) {
                 else value_set(&R[ins.r1], VAL_SET, n, 0, NULL, NULL);
                 continue;
             }
-            if (a->type == VAL_INT && b->type == VAL_INT) {
-                int64_t r64 = (int64_t)a->ival - (int64_t)b->ival;
-                if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                    value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r64, NULL, NULL);
-                } else {
-                    value_set(&R[ins.r1], VAL_INT, (int)r64, 0, NULL, NULL);
+            if (val_is_intlike(a) && val_is_intlike(b)) {
+                long long r64;
+                if (__builtin_sub_overflow(val_i64(a), val_i64(b), &r64)) {
+                    vm_throw_kind(vm, "numeric_overflow");
+                    R = t->reg + t->base;
+                    continue;
                 }
+                value_set(&R[ins.r1], VAL_INT, r64, 0, NULL, NULL);
             } else {
                 double res = val_as_double(a) - val_as_double(b);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
@@ -3164,13 +3204,14 @@ static void vm_execute_thread(VmThread *t) {
                 else value_set(&R[ins.r1], VAL_SET, n, 0, NULL, NULL);
                 continue;
             }
-            if (a->type == VAL_INT && b->type == VAL_INT) {
-                int64_t r64 = (int64_t)a->ival * (int64_t)b->ival;
-                if (r64 > 2147483647LL || r64 < -2147483648LL) {
-                    value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r64, NULL, NULL);
-                } else {
-                    value_set(&R[ins.r1], VAL_INT, (int)r64, 0, NULL, NULL);
+            if (val_is_intlike(a) && val_is_intlike(b)) {
+                long long r64;
+                if (__builtin_mul_overflow(val_i64(a), val_i64(b), &r64)) {
+                    vm_throw_kind(vm, "numeric_overflow");
+                    R = t->reg + t->base;
+                    continue;
                 }
+                value_set(&R[ins.r1], VAL_INT, r64, 0, NULL, NULL);
             } else {
                 double res = val_as_double(a) * val_as_double(b);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
@@ -3179,10 +3220,26 @@ static void vm_execute_thread(VmThread *t) {
         }
         L_DIV: {
             Value *a = &R[ins.r2], *b = &R[ins.r3];
-            if (a->type == VAL_INT && b->type == VAL_INT && b->ival == 0) {
-                vm_throw_kind(vm, "division_by_zero");
-                R = t->reg + t->base;
-                continue;
+            if (val_is_intlike(a) && val_is_intlike(b)) {
+                long long ia = val_i64(a), ib = val_i64(b);
+                if (ib == 0) {
+                    vm_throw_kind(vm, "division_by_zero");
+                    R = t->reg + t->base;
+                    continue;
+                }
+                /* An exact integer division stays an integer.  This is the rule the
+                   AOT backend documents and implements ("4/2 prints 2, 7/2 prints
+                   3.5, 6/4 prints 1.5"); the interpreter simply never did it, and
+                   rounding through double instead lost precision above 2^53
+                   (9007199254740993 / 1 gave ...992) and turned the quotient into a
+                   float -- which then missed every integer guard, so `x / 0` past
+                   int32 quietly became inf instead of an error.  ib == -1 is
+                   excluded because INT64_MIN / -1 overflows; it falls through to
+                   the float path.  See docs/AUDIT.md §1.14. */
+                if (ib != -1 && ia % ib == 0) {
+                    value_set(&R[ins.r1], VAL_INT, ia / ib, 0, NULL, NULL);
+                    continue;
+                }
             }
             double res = val_as_double(a) / val_as_double(b);
             value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
@@ -3191,12 +3248,13 @@ static void vm_execute_thread(VmThread *t) {
         L_NEG: {
             Value *v = &R[ins.r2];
             if (v->type == VAL_INT) {
-                if (v->ival == -2147483647 - 1) {
-                    value_set(&R[ins.r1], VAL_FLOAT, 0, 2147483648.0, NULL, NULL);
-                } else {
-                    int neg = -v->ival;
-                    value_set(&R[ins.r1], VAL_INT, neg, 0, NULL, NULL);
+                /* The only int64 negation that overflows is -(-2^63). */                long long neg;
+                if (__builtin_sub_overflow(0LL, (long long)v->ival, &neg)) {
+                    vm_throw_kind(vm, "numeric_overflow");
+                    R = t->reg + t->base;
+                    continue;
                 }
+                value_set(&R[ins.r1], VAL_INT, neg, 0, NULL, NULL);
             } else {
                 double neg = -val_as_double(v);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, neg, NULL, NULL);
@@ -3336,7 +3394,7 @@ static void vm_execute_thread(VmThread *t) {
                     /* 锟斤拷锟斤拷锟斤拷锟斤拷 ????i ??key锟斤拷锟斤拷 for x in d 锟斤拷锟斤拷锟斤拷锟斤拷 */
                     int i = idxv->ival;
                     VM_LOCK(vm);
-                    Value v; v.type = VAL_NIL; v.ival = 0; v.fval = 0; v.sval = NULL;
+                    Value v; v.type = VAL_NIL; v.ival = 0;  v.sval = NULL;
                     if (aidx >= 0 && aidx < vm->arrayCount && i >= 0 && i * 2 < vm_pool_slot(vm, aidx)->count) {
                         value_copy(&v, &vm_pool_slot(vm, aidx)->items[i * 2]);
                         if (v.type == VAL_STRING && v.sval && v.ival != 1) {
@@ -3418,7 +3476,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 vm->globalCount = idx + 1;
             }
-            Value newv = { VAL_NIL, 0, 0, NULL, NULL };
+            Value newv = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
             value_copy(&newv, &R[src_reg]);
             if (idx >= 0 && vm->be_bound[idx] > 0) {
                 int bidx = vm->be_bound[idx] - 1;
@@ -3782,7 +3840,7 @@ L_CALL_FUNC: {
             if (vm->prof_enabled) prof_record_return(vm, t->frame_count);
             Value ret;
             if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];
-            else { ret.type = VAL_NIL; ret.ival = 0; ret.fval = 0; ret.sval = NULL; }
+            else { ret.type = VAL_NIL; ret.ival = 0;  ret.sval = NULL; }
             if (t->frame_count > 0) {
                 t->sp = t->frame_sp[t->frame_count - 1];
                 t->frame_count--;
@@ -3824,7 +3882,7 @@ L_CALL_FUNC: {
                 s = vm_intern(vm, t->code->string_pool[sidx]);
             }
             Value sv;
-            sv.type = VAL_STRING; sv.ival = (s != NULL) ? 1 : 0; sv.fval = 0;
+            sv.type = VAL_STRING; sv.ival = (s != NULL) ? 1 : 0; 
             sv.sval = (char*)(s ? s : (t->code->string_pool[sidx] ? t->code->string_pool[sidx] : ""));
             Value opv = R[ins.r2];  /* 锟饺革拷锟狡诧拷锟斤拷锟斤拷锟斤拷r1 ??r2 锟斤拷锟斤拷同为 result 锟侥达拷??*/
             value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 1 : 0, 0, NULL, NULL);
@@ -3840,7 +3898,7 @@ L_CALL_FUNC: {
                 s = vm_intern(vm, t->code->string_pool[sidx]);
             }
             Value sv;
-            sv.type = VAL_STRING; sv.ival = (s != NULL) ? 1 : 0; sv.fval = 0;
+            sv.type = VAL_STRING; sv.ival = (s != NULL) ? 1 : 0; 
             sv.sval = (char*)(s ? s : (t->code->string_pool[sidx] ? t->code->string_pool[sidx] : ""));
             Value opv = R[ins.r2];  /* 锟饺革拷锟狡诧拷锟斤拷锟斤拷 */
             value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 0 : 1, 0, NULL, NULL);
@@ -3887,7 +3945,7 @@ L_CALL_FUNC: {
                 vm->record_meta[gidx].scope = (meta >>2) &3;
                 vm->record_meta[gidx].merge = (meta >>4) &1;
     if (vm->record_loaded_dict >0 && nm) {
-                    Value found; found.type = VAL_NIL; found.ival =0; found.fval =0; found.sval = NULL; found.ptr = NULL;
+                    Value found; found.type = VAL_NIL; found.ival =0;  found.sval = NULL; found.ptr = NULL;
                     ArrayObj *ld = vm_pool_slot(vm, vm->record_loaded_dict -1);
                     if (ld) {
                         for (int i =0; i +1 < ld->count; i +=2) {
@@ -3909,19 +3967,20 @@ L_CALL_FUNC: {
 
         L_MOD: {
             Value *a = &R[ins.r2], *b = &R[ins.r3];
-            if (a->type == VAL_INT && b->type == VAL_INT) {
-                if (b->ival == 0) {
+            if (val_is_intlike(a) && val_is_intlike(b)) {
+                long long ia = val_i64(a), ib = val_i64(b);
+                if (ib == 0) {
                     vm_throw_kind(vm, "division_by_zero");
                     R = t->reg + t->base;
                     continue;
                 }
-                /* INT_MIN % -1 overflows the idiv and traps (SIGFPE); the
+                /* INT64_MIN % -1 overflows the idiv and traps (SIGFPE); the
                    mathematical answer is 0. */
-                if (b->ival == -1) {
+                if (ib == -1) {
                     value_set(&R[ins.r1], VAL_INT, 0, 0, NULL, NULL);
                     continue;
                 }
-                value_set(&R[ins.r1], VAL_INT, a->ival % b->ival, 0, NULL, NULL);
+                value_set(&R[ins.r1], VAL_INT, ia % ib, 0, NULL, NULL);
                 continue;
             }
             /* One operand is a float.  The zero test must run on the value the
@@ -3935,12 +3994,9 @@ L_CALL_FUNC: {
                 continue;
             }
             long long r = (lb == -1) ? 0 : im_dbl_to_i64(val_as_double(a)) % lb;
-            /* The result can exceed the 32-bit int payload; promote to float
-               rather than truncate, exactly as L_NEG does for INT_MIN. */
-            if (r >= INT_MIN && r <= INT_MAX)
-                value_set(&R[ins.r1], VAL_INT, (int)r, 0, NULL, NULL);
-            else
-                value_set(&R[ins.r1], VAL_FLOAT, 0, (double)r, NULL, NULL);
+            /* v3.1: the int payload is 64-bit, so the result no longer has to be
+               promoted to float to survive.  See docs/AUDIT.md §1.14. */
+            value_set(&R[ins.r1], VAL_INT, r, 0, NULL, NULL);
             continue;
         }
         L_NEW_SET: {
@@ -4035,7 +4091,6 @@ L_CALL_FUNC: {
                     err.type = VAL_STRING;
                     err.sval = (char*)vm_intern(vm, "be: initial value out of range");
                     err.ival = 1;
-                    err.fval = 0;
                     im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
                     vm_throw(vm, t, &err);
                     R = t->reg + t->base;
@@ -4390,7 +4445,7 @@ L_CALL_FUNC: {
                     tt->msg_head = 0;
                     tt->msg_tail = n;
                 }
-                Value v = { VAL_NIL, 0, 0, NULL, NULL };
+                Value v = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
                 value_copy(&v, &R[ins.r2]);
                 tt->msg_q[tt->msg_tail] = v;
                 tt->msg_tail = (tt->msg_tail + 1) % tt->msg_cap;
@@ -4405,7 +4460,7 @@ L_CALL_FUNC: {
             if (ins.r2 >= 0) timeout = val_as_double(&R[ins.r2]);
             unsigned long long deadline = 0;
             if (timeout >= 0) deadline = GetTickCount64() + (unsigned long long)(timeout * 1000);
-            Value out; out.type = VAL_NIL; out.ival = 0; out.fval = 0; out.sval = NULL;
+            Value out; out.type = VAL_NIL; out.ival = 0;  out.sval = NULL;
             if (t->msg_lock) {
                 ImMutex *ml = (ImMutex*)t->msg_lock;
                 for (;;) {
@@ -4440,7 +4495,7 @@ L_CALL_FUNC: {
 /* ================= task scheduler (virtual threads on Fibers) ================= */
 static void vm_thread_finish_default(VmThread *t) {
     if (!t || t->result_ready || t->error_ready) return;
-    Value nil = { VAL_NIL, 0, 0, NULL, NULL };
+    Value nil = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     value_assign(&t->result, &nil);
     t->result_ready = true;
 }
@@ -4960,6 +5015,9 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     switch (ins->op) {
     case OP_MOV:            snprintf(out, outsz, "MOV r%d, r%d", ins->r1, ins->r2); return;
     case OP_LOADK_INT:      snprintf(out, outsz, "LOADK_INT r%d, %d", ins->r1, ins->r2); return;
+    case OP_LOADK_I64:      snprintf(out, outsz, "LOADK_I64 r%d, %lld", ins->r1,
+                                     (long long)((unsigned long long)(unsigned int)ins->r2 |
+                                                 ((unsigned long long)(unsigned int)ins->r3 << 32))); return;
     case OP_LOADK_FLOAT:    snprintf(out, outsz, "LOADK_FLOAT r%d, #%d", ins->r1, ins->r2); return;
     case OP_LOADK_STRING:
         snprintf(out, outsz, "LOADK_STRING r%d, \"%s\"", ins->r1,

@@ -135,6 +135,8 @@ static void bf64(Buf *w, double d) {
 #define W_I64_NE 0x52
 #define W_I64_LT_S 0x53
 #define W_I64_GT_S 0x55   /* 53=lt_s 54=lt_u 55=gt_s 56=gt_u */
+#define W_I64_LE_S 0x57   /* 57=le_s 58=le_u 59=ge_s 60=ge_u */
+#define W_I64_GE_S 0x59
 #define W_F64_EQ 0x61
 #define W_F64_LT 0x63
 #define W_F64_GT 0x64
@@ -150,7 +152,10 @@ static void bf64(Buf *w, double d) {
 #define W_I64_ADD 0x7C
 #define W_I64_SUB 0x7D
 #define W_I64_MUL 0x7E
+#define W_I64_DIV_S 0x7F
 #define W_I64_REM_S 0x81
+#define W_I64_AND 0x83
+#define W_I64_XOR 0x85
 #define W_F64_ADD 0xA0
 #define W_F64_SUB 0xA1
 #define W_F64_MUL 0xA2
@@ -191,6 +196,8 @@ static void bf64(Buf *w, double d) {
 #define LOC_FBASE 5
 #define LOC_IA 6
 #define LOC_IB 7
+#define LOC_IC 8                           /* i64: integer-op result, held here so the
+                                              overflow check can still see both operands */
 #define LOC_ARR 9                          /* i32: array base during indexing */
 #define LOC_IDX 10                         /* i32: decoded array index */
 
@@ -841,6 +848,29 @@ static void cg_cond(Cg *cg, FnEnv *env, Buf *w, Expr *x, int depth) {
     e(w, W_END);
 }
 
+/* push i32: 1 when LOC_TAG<which> is an integer-valued tag (INT or BOOL).
+   A boolean carries 0/1 in its i64 payload (see e_push_as_double), so mixing one
+   into arithmetic must stay on the integer path.  Testing only for TAG_INT dragged
+   the whole expression onto the double path instead and lost precision past 2^53
+   (measured: `true * 9007199254740993` gave ...992 here while the AOT backend,
+   which keeps `long long` throughout, gave ...993).  See docs/AUDIT.md §1.14. */
+static void e_push_is_intlike(Buf *w, int which) {
+    int tloc = which ? LOC_TAGB : LOC_TAGA;
+    e(w, W_LOCAL_GET); e_u(w, tloc); e_i32c(w, TAG_INT);  e(w, W_I32_EQ);
+    e(w, W_LOCAL_GET); e_u(w, tloc); e_i32c(w, TAG_BOOL); e(w, W_I32_EQ);
+    e(w, W_I32_OR);
+}
+
+/* push i32: 1 when LOC_TAG<which> is any numeric tag (INT, FLOAT or BOOL).
+   `==`/`!=` across those three tags is numerically equivalent (D2), so the
+   cross-tag branch needs all three, not just the two that used to be listed. */
+static void e_push_is_numeric(Buf *w, int which) {
+    int tloc = which ? LOC_TAGB : LOC_TAGA;
+    e_push_is_intlike(w, which);
+    e(w, W_LOCAL_GET); e_u(w, tloc); e_i32c(w, TAG_FLOAT); e(w, W_I32_EQ);
+    e(w, W_I32_OR);
+}
+
 static void cg_arith(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_slot, int depth, InimerseTokenType op) {
     if (depth + 1 >= TEMP_MAX) { fail(cg, env, "expression too deep"); return; }
     cg_expr(cg, env, w, x->binary.left, KIND_FRAME, TEMP_BASE + depth, depth + 1);
@@ -852,38 +882,56 @@ static void cg_arith(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_
     e_trap_on_string(w);
 
     if (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR) {
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGA);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGB);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
+        e_push_is_intlike(w, 0);
+        e_push_is_intlike(w, 1);
         e(w, W_I32_AND);
-        e(w, W_IF); e_u(w, 0x40);                    /* int x int */
+        e(w, W_IF); e_u(w, 0x40);                    /* intlike x intlike */
         e(w, W_LOCAL_GET); e_u(w, LOC_IA);
         e(w, W_LOCAL_GET); e_u(w, LOC_IB);
         if (op == TOK_PLUS) e(w, W_I64_ADD);
         else if (op == TOK_MINUS) e(w, W_I64_SUB);
         else e(w, W_I64_MUL);
-        e(w, W_LOCAL_SET); e_u(w, LOC_IA);
-        /* int32 overflow -> float of the exact i64 result */
-        e(w, W_LOCAL_GET); e_u(w, LOC_IA);
-        e_i64c(w, 2147483647);
-        e(w, W_I64_GT_S);
-        e(w, W_LOCAL_GET); e_u(w, LOC_IA);
-        e_i64c(w, -2147483648LL);
-        e(w, W_I64_LT_S);
-        e(w, W_I32_OR);
+        e(w, W_LOCAL_SET); e_u(w, LOC_IC);           /* r; both operands stay live */
+        /* Overflow is an error, not a silent wrap (docs/AUDIT.md §1.14): the
+           interpreter raises numeric_overflow, so this backend must refuse too.
+             add:  ((a^r) & (b^r)) < 0
+             sub:  ((a^b) & (a^r)) < 0
+             mul:  r/b != a, with b == 0 (never overflows) and b == -1 (the one
+                   divisor that traps i64.div_s) special-cased. */
+        if (op == TOK_PLUS) {
+            e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_LOCAL_GET); e_u(w, LOC_IC); e(w, W_I64_XOR);
+            e(w, W_LOCAL_GET); e_u(w, LOC_IB); e(w, W_LOCAL_GET); e_u(w, LOC_IC); e(w, W_I64_XOR);
+            e(w, W_I64_AND);
+            e_i64c(w, 0); e(w, W_I64_LT_S);
+        } else if (op == TOK_MINUS) {
+            e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_LOCAL_GET); e_u(w, LOC_IB); e(w, W_I64_XOR);
+            e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_LOCAL_GET); e_u(w, LOC_IC); e(w, W_I64_XOR);
+            e(w, W_I64_AND);
+            e_i64c(w, 0); e(w, W_I64_LT_S);
+        } else {
+            e(w, W_LOCAL_GET); e_u(w, LOC_IB); e_i64c(w, 0); e(w, W_I64_EQ);
+            e(w, W_IF); e_u(w, 0x7F);                /* result i32 */
+            e_i32c(w, 0);
+            e(w, W_ELSE);
+            e(w, W_LOCAL_GET); e_u(w, LOC_IB); e_i64c(w, -1); e(w, W_I64_EQ);
+            e(w, W_IF); e_u(w, 0x7F);
+            e(w, W_LOCAL_GET); e_u(w, LOC_IA);
+            e_i64c(w, -9223372036854775807LL - 1);
+            e(w, W_I64_EQ);
+            e(w, W_ELSE);
+            e(w, W_LOCAL_GET); e_u(w, LOC_IC); e(w, W_LOCAL_GET); e_u(w, LOC_IB); e(w, W_I64_DIV_S);
+            e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_I64_NE);
+            e(w, W_END);
+            e(w, W_END);
+        }
         e(w, W_IF); e_u(w, 0x40);
-        e_store_tag(w, dst_kind, dst_slot, TAG_FLOAT);
-        e(w, W_LOCAL_GET); e_u(w, LOC_IA);
-        e(w, W_F64_CONVERT_I64_S);
-        e_store_payload_f64_from_stack(w, dst_kind, dst_slot);
-        e(w, W_ELSE);
-        e_store_tag(w, dst_kind, dst_slot, TAG_INT);
-        e(w, W_LOCAL_GET); e_u(w, LOC_IA);
-        e_store_payload_i64_from_stack(w, dst_kind, dst_slot);
+        e_i32c(w, 7);                                /* error 7: numeric_overflow */
+        e(w, W_CALL); e_u(w, IMP_ERROR);
+        e(w, W_UNREACHABLE);
         e(w, W_END);
+        e_store_tag(w, dst_kind, dst_slot, TAG_INT);
+        e(w, W_LOCAL_GET); e_u(w, LOC_IC);
+        e_store_payload_i64_from_stack(w, dst_kind, dst_slot);
         e(w, W_ELSE);                                /* mixed/non-int: double path */
         e_push_as_double(w, 0);
         e_push_as_double(w, 1);
@@ -896,38 +944,58 @@ static void cg_arith(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_
         return;
     }
     if (op == TOK_SLASH) {
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGA);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGB);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
+        e_push_is_intlike(w, 0);
+        e_push_is_intlike(w, 1);
         e(w, W_I32_AND);
+        e(w, W_IF); e_u(w, 0x40);                    /* intlike / intlike */
         e(w, W_LOCAL_GET); e_u(w, LOC_IB);
         e_i64c(w, 0);
         e(w, W_I64_EQ);
-        e(w, W_I32_AND);
         e(w, W_IF); e_u(w, 0x40);
         e_i32c(w, 1);                                /* error 1: division_by_zero */
         e(w, W_CALL); e_u(w, IMP_ERROR);
         e(w, W_UNREACHABLE);
         e(w, W_END);
+        /* An exact integer division stays an integer, matching nv_div in
+           src/compilation/aot_native.c ("4/2 prints 2, 7/2 prints 3.5, 6/4 prints
+           1.5").  The double path alone lost precision above 2^53 and made the
+           quotient a float, which then missed every integer guard -- so `x / 0`
+           past int32 quietly became inf.  b == -1 is excluded because
+           INT64_MIN / -1 overflows; it falls through to the float path.
+           See docs/AUDIT.md §1.14. */
+        e(w, W_LOCAL_GET); e_u(w, LOC_IB); e_i64c(w, -1); e(w, W_I64_NE);
+        e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_LOCAL_GET); e_u(w, LOC_IB);
+        e(w, W_I64_REM_S);
+        e_i64c(w, 0); e(w, W_I64_EQ);
+        e(w, W_I32_AND);
+        e(w, W_IF); e_u(w, 0x40);                    /* exact */
+        e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_LOCAL_GET); e_u(w, LOC_IB);
+        e(w, W_I64_DIV_S);
+        e(w, W_LOCAL_SET); e_u(w, LOC_IC);
+        e_store_tag(w, dst_kind, dst_slot, TAG_INT);
+        e(w, W_LOCAL_GET); e_u(w, LOC_IC);
+        e_store_payload_i64_from_stack(w, dst_kind, dst_slot);
+        e(w, W_ELSE);
+        e(w, W_LOCAL_GET); e_u(w, LOC_IA); e(w, W_F64_CONVERT_I64_S);
+        e(w, W_LOCAL_GET); e_u(w, LOC_IB); e(w, W_F64_CONVERT_I64_S);
+        e(w, W_F64_DIV);
+        e_store_tag(w, dst_kind, dst_slot, TAG_FLOAT);
+        e_store_payload_f64_from_stack(w, dst_kind, dst_slot);
+        e(w, W_END);
+        e(w, W_ELSE);                                /* a float operand */
         e_push_as_double(w, 0);
         e_push_as_double(w, 1);
         e(w, W_F64_DIV);
         e_store_tag(w, dst_kind, dst_slot, TAG_FLOAT);
         e_store_payload_f64_from_stack(w, dst_kind, dst_slot);
+        e(w, W_END);
         return;
     }
     if (op == TOK_PERCENT) {
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGA);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGB);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
+        e_push_is_intlike(w, 0);
+        e_push_is_intlike(w, 1);
         e(w, W_I32_AND);
-        e(w, W_IF); e_u(w, 0x40);                    /* int % int */
+        e(w, W_IF); e_u(w, 0x40);                    /* intlike % intlike */
         e(w, W_LOCAL_GET); e_u(w, LOC_IB);
         e_i64c(w, 0);
         e(w, W_I64_EQ);
@@ -1003,20 +1071,8 @@ static void cg_compare_loaded(Cg *cg, FnEnv *env, Buf *w, int dst_kind, int dst_
         e(w, W_END);
         e(w, W_END);
         e(w, W_ELSE);                                /* different tags: numeric cross-compare */
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGA);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGA);
-        e_i32c(w, TAG_FLOAT);
-        e(w, W_I32_EQ);
-        e(w, W_I32_OR);
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGB);
-        e_i32c(w, TAG_INT);
-        e(w, W_I32_EQ);
-        e(w, W_LOCAL_GET); e_u(w, LOC_TAGB);
-        e_i32c(w, TAG_FLOAT);
-        e(w, W_I32_EQ);
-        e(w, W_I32_OR);
+        e_push_is_numeric(w, 0);
+        e_push_is_numeric(w, 1);
         e(w, W_I32_AND);
         e(w, W_IF); e_u(w, 0x7F);
         e_push_as_double(w, 0);
@@ -1030,12 +1086,28 @@ static void cg_compare_loaded(Cg *cg, FnEnv *env, Buf *w, int dst_kind, int dst_
         e_store_bool_from_stack(w, dst_kind, dst_slot);
         return;
     }
+    /* Two integer-valued operands compare exactly in i64.  The double path below
+       rounds both to the nearest representable double first, so `<`/`>` were lossy
+       above 2^53 -- exactly where the interpreter (int64) and the AOT backend
+       (`long long`) compared exactly.  See docs/AUDIT.md §1.14. */
+    e_push_is_intlike(w, 0);
+    e_push_is_intlike(w, 1);
+    e(w, W_I32_AND);
+    e(w, W_IF); e_u(w, 0x7F);
+    e(w, W_LOCAL_GET); e_u(w, LOC_IA);
+    e(w, W_LOCAL_GET); e_u(w, LOC_IB);
+    if (op == TOK_LT) e(w, W_I64_LT_S);
+    else if (op == TOK_GT) e(w, W_I64_GT_S);
+    else if (op == TOK_LE) e(w, W_I64_LE_S);
+    else e(w, W_I64_GE_S);
+    e(w, W_ELSE);
     e_push_as_double(w, 0);
     e_push_as_double(w, 1);
     if (op == TOK_LT) e(w, W_F64_LT);
     else if (op == TOK_GT) e(w, W_F64_GT);
     else if (op == TOK_LE) e(w, W_F64_LE);
     else e(w, W_F64_GE);
+    e(w, W_END);
     e_store_bool_from_stack(w, dst_kind, dst_slot);
 }
 
@@ -1163,11 +1235,11 @@ static void cg_expr(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_s
     if (depth >= TEMP_MAX) { fail(cg, env, "expression too deep (max %d)", TEMP_MAX); return; }
     switch (x->type) {
         case EXPR_NUMBER: {
-            long long v = x->intVal;
-            if (v > 2147483647LL || v < -2147483648LL)
-                e_store_float_const(w, dst_kind, dst_slot, (double)v);
-            else
-                e_store_int_const(w, dst_kind, dst_slot, v);
+            /* A numeric literal is a 64-bit integer and it stays one.  Demoting
+               out-of-int32 literals to f64 lost precision above 2^53 and made
+               the integer division-by-zero guard unreachable
+               (docs/AUDIT.md §1.14). */
+            e_store_int_const(w, dst_kind, dst_slot, x->intVal);
             return;
         }
         case EXPR_FLOAT:
@@ -1195,10 +1267,13 @@ static void cg_expr(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_s
                 e(w, W_I32_EQ);
                 e(w, W_IF); e_u(w, 0x40);
                 e(w, W_LOCAL_GET); e_u(w, LOC_IA);
-                e_i64c(w, -2147483648LL);
+                e_i64c(w, -9223372036854775807LL - 1);
                 e(w, W_I64_EQ);
-                e(w, W_IF); e_u(w, 0x40);            /* INT_MIN -> 2147483648.0 */
-                e_store_float_const(w, dst_kind, dst_slot, 2147483648.0);
+                e(w, W_IF); e_u(w, 0x40);            /* -(-2^63): the only int64
+                                                        negation that overflows */
+                e_i32c(w, 7);                        /* error 7: numeric_overflow */
+                e(w, W_CALL); e_u(w, IMP_ERROR);
+                e(w, W_UNREACHABLE);
                 e(w, W_ELSE);
                 e_store_tag(w, dst_kind, dst_slot, TAG_INT);
                 e(w, W_LOCAL_GET); e_u(w, LOC_IA);
@@ -1510,12 +1585,11 @@ static void emit_func_body(Cg *cg, Buf *code, Stmt **body, int count, int nparam
     e_epilogue_release(&fb, &env);           /* deterministic reclamation */
     /* implicit end */
     bput(&fb, W_END);
-    /* locals declaration: (5 x i32)(2 x i64)(1 x f64)(2 x i32) */
+    /* locals declaration: (5 x i32)(3 x i64)(2 x i32) */
     Buf out = {0};
-    bleb_u(&out, 4);
+    bleb_u(&out, 3);
     bleb_u(&out, LOC_IA - 1); bleb_u(&out, 0x7F);    /* locals 1..5: i32 */
-    bleb_u(&out, 2); bleb_u(&out, 0x7E);             /* i64 */
-    bleb_u(&out, 1); bleb_u(&out, 0x7C);             /* f64 */
+    bleb_u(&out, 3); bleb_u(&out, 0x7E);             /* LOC_IA/LOC_IB/LOC_IC: i64 */
     bleb_u(&out, LOC_IDX - LOC_ARR + 1); bleb_u(&out, 0x7F);  /* LOC_ARR/LOC_IDX */
     /* entry prologue: nil-fill the return slot and every declared local; a
        local assigned only inside a branch must not read stale frame memory */
@@ -1901,10 +1975,9 @@ int wasm_compile_program(Program *prog, const char *output_path) {
         /* main body */
         {
             Buf fb = {0};
-            bleb_u(&fb, 4);
+            bleb_u(&fb, 3);
             bleb_u(&fb, LOC_IA - 1); bleb_u(&fb, 0x7F);
-            bleb_u(&fb, 2); bleb_u(&fb, 0x7E);
-            bleb_u(&fb, 1); bleb_u(&fb, 0x7C);
+            bleb_u(&fb, 3); bleb_u(&fb, 0x7E);
             bleb_u(&fb, LOC_IDX - LOC_ARR + 1); bleb_u(&fb, 0x7F);
             FnEnv env;
             memset(&env, 0, sizeof(env));

@@ -3,10 +3,10 @@
 #include <string.h>
 #include <stdio.h>
 
-static Value key(const char *s) { Value v = { VAL_STRING, 0, 0, (char*)s }; return v; }
+static Value key(const char *s) { Value v = { .type = VAL_STRING, .ival = 0, .sval = (char*)s }; return v; }
 static Value make_result(VM *vm, int is_ok, const Value *payload) {
-    Value out = { VAL_NIL, 0, 0, NULL }; int a = vm_array_new(vm); if (a < 0) return out;
-    Value k_ok = key("ok"), k_val = key(is_ok ? "value" : "error"), flag = { VAL_BOOL, is_ok, 0, NULL };
+    Value out = { .type = VAL_NIL, .ival = 0, .sval = NULL }; int a = vm_array_new(vm); if (a < 0) return out;
+    Value k_ok = key("ok"), k_val = key(is_ok ? "value" : "error"), flag = { .type = VAL_BOOL, .ival = is_ok, .sval = NULL };
     vm_dict_set(vm, a, &k_ok, &flag); vm_dict_set(vm, a, &k_val, payload); out.type = VAL_DICT; out.ival = a + 1; return out;
 }
 
@@ -28,19 +28,19 @@ static int result_make_err(VM *vm) {
 }
 static int result_is_ok(VM *vm) {
     if (vm_cur_sp(vm) < 0) { push_bool(vm, false); return 1; }
-    Value r = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); Value k = key("ok"); Value v = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k) : (Value){VAL_BOOL, 0, 0, NULL};
+    Value r = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); Value k = key("ok"); Value v = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k) : (Value){ .type = VAL_BOOL, .ival = 0, .sval = NULL };
     push_bool(vm, v.type == VAL_BOOL && v.ival != 0); return 1;
 }
 static int result_unwrap_or(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value *stack = vm_cur_stack(vm);
     int sp = vm_cur_sp(vm);
-    Value fallback = { VAL_NIL, 0, 0, NULL, NULL };
-    Value r = { VAL_NIL, 0, 0, NULL, NULL };
+    Value fallback = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
+    Value r = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     vm_value_assign(&fallback, &stack[sp]);
     vm_value_assign(&r, &stack[sp - 1]);
-    Value ko = key("ok"), kv = key("value"); Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ko) : (Value){VAL_BOOL, 0, 0, NULL};
-    Value out = { VAL_NIL, 0, 0, NULL, NULL };
+    Value ko = key("ok"), kv = key("value"); Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ko) : (Value){ .type = VAL_BOOL, .ival = 0, .sval = NULL };
+    Value out = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     if (ok.type == VAL_BOOL && ok.ival) {
         Value got = vm_dict_get(vm, r.ival - 1, &kv);
         vm_value_move(&out, &got);
@@ -56,12 +56,12 @@ static int result_unwrap_or(VM *vm) {
 static int result_unwrap(VM *vm) {
     if (vm_cur_sp(vm) < 0) { push_nil(vm); return 1; }
     Value r = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); Value ko = key("ok"), kv = key("value"), ke = key("error");
-    Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ko) : (Value){VAL_BOOL, 0, 0, NULL};
+    Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ko) : (Value){ .type = VAL_BOOL, .ival = 0, .sval = NULL };
     if (ok.type == VAL_BOOL && ok.ival) {
         Value out = vm_dict_get(vm, r.ival - 1, &kv);
         vm_push_value(vm, &out);
     } else {
-        Value e = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ke) : (Value){VAL_STRING, 1, 0, "unwrap of non-Result"};
+        Value e = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &ke) : (Value){ .type = VAL_STRING, .ival = 1, .sval = "unwrap of non-Result" };
         char msg[256];
         snprintf(msg, sizeof msg, "Result unwrap failed: %s", e.sval ? e.sval : "error");
         vm_throw_msg(vm, msg);
@@ -74,10 +74,10 @@ static int result_field(VM *vm, int want_error) {
     if (vm_cur_sp(vm) < 0) { push_nil(vm); return 1; }
     Value r = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm);
     Value k_ok = key("ok"), k_field = key(want_error ? "error" : "value");
-    Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k_ok) : (Value){VAL_BOOL, 0, 0, NULL};
+    Value ok = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k_ok) : (Value){ .type = VAL_BOOL, .ival = 0, .sval = NULL };
     int is_ok = ok.type == VAL_BOOL && ok.ival != 0;
     if ((want_error && is_ok) || (!want_error && !is_ok)) { push_nil(vm); return 1; }
-    Value out = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k_field) : (Value){VAL_NIL, 0, 0, NULL};
+    Value out = r.type == VAL_DICT ? vm_dict_get(vm, r.ival - 1, &k_field) : (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL };
     vm_push_value(vm, &out);
     return 1;
 }
@@ -96,7 +96,7 @@ static int result_dict_has(VM *vm) {
 
 static int result_thread_result(VM *vm) {
     if (vm_cur_sp(vm) < 0) {
-        Value msg = { VAL_STRING, 0, 0, "thread_result requires a thread name", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread_result requires a thread name", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);
@@ -106,7 +106,7 @@ static int result_thread_result(VM *vm) {
     char name[512];
     if (name_value.type != VAL_STRING || !name_value.sval) {
         pop(vm);
-        Value msg = { VAL_STRING, 0, 0, "thread_result requires a string name", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread_result requires a string name", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);
@@ -115,10 +115,10 @@ static int result_thread_result(VM *vm) {
     snprintf(name, sizeof(name), "%s", name_value.sval);
     pop(vm);
 
-    Value payload = { VAL_NIL, 0, 0, NULL, NULL };
+    Value payload = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     int status = vm_thread_completion(vm, name, &payload);
     if (status == 0) {
-        Value msg = { VAL_STRING, 0, 0, "thread is missing or not finished", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread is missing or not finished", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);
@@ -128,7 +128,7 @@ static int result_thread_result(VM *vm) {
         Value k_ok = key("ok");
         Value marker = payload.type == VAL_DICT
             ? vm_dict_get(vm, payload.ival - 1, &k_ok)
-            : (Value){ VAL_NIL, 0, 0, NULL, NULL };
+            : (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
         if (marker.type == VAL_BOOL) {
             vm_push_value(vm, &payload);
         } else {
@@ -148,7 +148,7 @@ static int result_thread_result(VM *vm) {
 static int result_thread_await(VM *vm) {
     int argc = vm_cur_sp(vm) + 1;
     if (argc < 1) {
-        Value msg = { VAL_STRING, 0, 0, "thread_await requires a thread name", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread_await requires a thread name", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);
@@ -168,26 +168,26 @@ static int result_thread_await(VM *vm) {
         snprintf(name, sizeof(name), "%s", name_value.sval);
     while (vm_cur_sp(vm) >= 0) pop(vm);
     if (!name[0]) {
-        Value msg = { VAL_STRING, 0, 0, "thread_await requires a string name", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread_await requires a string name", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);
         return 1;
     }
     if (!vm_thread_wait(vm, name, timeout_ms)) {
-        Value msg = { VAL_STRING, 0, 0, "thread await timed out or thread is missing", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread await timed out or thread is missing", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);
         return 1;
     }
-    Value payload = { VAL_NIL, 0, 0, NULL, NULL };
+    Value payload = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     int status = vm_thread_completion(vm, name, &payload);
     if (status == 1) {
         Value marker_key = key("ok");
         Value marker = payload.type == VAL_DICT
             ? vm_dict_get(vm, payload.ival - 1, &marker_key)
-            : (Value){ VAL_NIL, 0, 0, NULL, NULL };
+            : (Value){ .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
         if (marker.type == VAL_BOOL) {
             vm_push_value(vm, &payload);
         } else {
@@ -200,7 +200,7 @@ static int result_thread_await(VM *vm) {
         vm_push_value(vm, &out);
         value_free(&out);
     } else {
-        Value msg = { VAL_STRING, 0, 0, "thread completed value is unavailable", NULL };
+        Value msg = { .type = VAL_STRING, .ival = 0, .sval = "thread completed value is unavailable", .ptr = NULL };
         Value out = make_result(vm, 0, &msg);
         vm_push_value(vm, &out);
         value_free(&out);

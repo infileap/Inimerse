@@ -152,7 +152,7 @@ static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz) {
 
 static int builtin_json_serialize(VM *vm) {
     Value arg = json_arg(vm, 0);
-    Value v = { VAL_NIL, 0, 0, NULL, NULL };
+    Value v = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
     vm_value_assign(&v, &arg);
     json_popn(vm, vm->cur_argc);
     char *buf = malloc(1 << 20); /* 1MB cap */
@@ -239,7 +239,7 @@ static Value json_parse_value(VM *vm, const char *s, int *i, int *ok) {
             json_decode_string(s, i, kbuf, &kpos, 8192);
             json_skip_ws(s, i);
             if (s[*i] == ':') (*i)++;
-            Value k; k.type = VAL_STRING; k.ival = 0; k.fval = 0; k.sval = strdup(kbuf);
+            Value k; k.type = VAL_STRING; k.ival = 0;  k.sval = strdup(kbuf);
             Value val = json_parse_value(vm, s, i, ok);
             if (!*ok) { free(k.sval); return v; }
             vm_dict_set(vm, aidx, &k, &val);
@@ -276,7 +276,7 @@ static Value json_parse_value(VM *vm, const char *s, int *i, int *ok) {
         char *buf = malloc(1 << 20);
         int bpos = 0;
         json_decode_string(s, i, buf, &bpos, 1 << 20);
-        v.type = VAL_STRING; v.ival = 0; v.fval = 0; v.sval = buf; /* caller frees */
+        v.type = VAL_STRING; v.ival = 0;  v.sval = buf; /* caller frees */
         return v;
     }
     if (strncmp(s + *i, "true", 4) == 0) { *i += 4; v.type = VAL_BOOL; v.ival = 1; return v; }
