@@ -740,9 +740,39 @@ const char *vm_intern(VM *vm, const char *s) {
     return dup;
 }
 
+/* The single door to the array/dict pool: 71 call sites in src/ go through it,
+ * and eight of them test the answer for NULL -- `ArrayObj *a = vm_pool_slot(vm,
+ * idx); if (!a) return 0;` -- as if this function could refuse an index.
+ *
+ * It could not.  Both branches returned an address, so:
+ *
+ *   idx < 0            -> &vm->arrays_big[idx - 4096].  On a fresh VM
+ *                         (arrays_big == NULL, bigCap == 0) that is a wild low
+ *                         address, e.g. slot(-1) == 0xffffffffffeefef0; once
+ *                         arrays_big exists it is a real address into the heap.
+ *   idx >= 4096+bigCap -> a slot past the allocation.  slot(100000) answered
+ *                         0x18e0a00 on a VM whose pool held a handful of slots.
+ *   idx == 4096        -> NULL by accident (NULL + 0), which is why the defect
+ *                         never showed up as a crash in that one case.
+ *
+ * The check was not unknown to this file: the GC marker at src/vm/vm.c:2818
+ * already guards the very same handle with `ival > 0 && ival - 1 <
+ * vm->arrayCount`.  It existed in one place and was missing in the one function
+ * everything else calls, so every `if (!a)` downstream was dead code and an
+ * out-of-range handle became a read instead of a refusal.
+ *
+ * vm_array_new keeps every valid index inside bigCap (it grows the pool with
+ * realloc + memset before handing the slot out), so refusing here cannot reject
+ * an index the pool actually owns.
+ *
+ * See docs/AUDIT.md 1.54 and src/vm/vm_pool_slot_probe.c. */
 ArrayObj *vm_pool_slot(VM *vm, int idx) {
     if (idx >= 0 && idx < 4096) return &vm->arrays[idx];
-    return &vm->arrays_big[idx - 4096];
+    if (idx >= 4096) {
+        int big = idx - 4096;
+        if (big < vm->bigCap) return &vm->arrays_big[big];
+    }
+    return NULL;
 }
 
 int vm_array_new(VM *vm) {
