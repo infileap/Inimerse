@@ -866,6 +866,16 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME atomic_int64_width_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/atomic_int64_width_v06.im)
   set_tests_properties(atomic_int64_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;runtime;regression" PASS_REGULAR_EXPRESSION "atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807" FAIL_REGULAR_EXPRESSION "set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 ")
 
+  # val_cmp() fell through to val_as_double(), whose `default` is 0.0, so every
+  # non-numeric value compared as the number 0: `"abc" < 1`, `[1, 2] < 1` and
+  # `nil <= 0` were all true while `==` said those pairs were not equal, and
+  # max() over a set holding nil answered 5.  Ordering is now defined only
+  # between two strings or between two numbers; anything else raises
+  # type_mismatch.  The FAIL regex was checked both ways with grep -E (matches
+  # pre-fix, not post-fix).  See docs/AUDIT.md 1.26.
+  add_test(NAME order_requires_orderable_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/order_requires_orderable_v06.im)
+  set_tests_properties(order_requires_orderable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=type_mismatch nillt=type_mismatch streq=false strlt=true strgt=false numlt=true numle=true boollt=true biglt=true minset=nil maxset=nil minscalar=nil" FAIL_REGULAR_EXPRESSION "strnum=true|arrnum=true|nille=true|zerole=true|nillt=true|maxset=5 ")
+
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
 else()

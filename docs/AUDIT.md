@@ -1188,6 +1188,85 @@ POSIX 原来那版 `if (!ok) { push_nil(vm); return 1; }` 把三种原因压成�
   本轮没有改动这一点。
 
 
+## §1.26 没有顺序的一对值，比较却答「0」
+
+**症状。** `val_cmp` 在既不是「两边都是字符串」也不是「两边都是整数」时，落到
+`val_as_double(a) < val_as_double(b)`，而 `val_as_double` 的 `default` 是 **0.0** ——
+于是**每一个非数字值都按数字 0 参与比较**。实测（修复前）：
+
+| 程序 | 结果 | `==` 的说法 |
+| --- | --- | --- |
+| `"abc" < 1` | **true** | `"abc" == 0` → false |
+| `"abc" > -1` | **true** | 同上 |
+| `"abc" <= 0` / `"abc" >= 0` | **true / true** | 同上 |
+| `[1, 2] < 1` | **true** | `[1, 2] == 0` → false |
+| `(1, 2) < 1`（集合） | **true** | — |
+| `nil <= 0` | **true** | `nil == 0` → false |
+| `0 <= nil` | **true** | 同上 |
+| `nil < 1` | **true** | — |
+| `nil > -1` | **true** | — |
+
+两条独立的伤害：
+
+1. **`<=` 与 `==` 自相矛盾。** `nil <= 0` 与 `0 <= nil` 同时为真，而 `nil == 0` 为假 ——
+   即 `a <= b && b <= a` 为真却 `a != b`。任何「用 `<=` 建立等价、再用 `==` 判断」的代码
+   都会得到两个答案。
+2. **比较本身答错了。** `"abc" < 1` 为真没有任何读法成立：字符串不是数字，也不是 0。
+
+**顺带一处：`max()` 把 nil 丢掉。** `s = nil, 5` 时 `max(s)` 答 **5**（nil 被当成 0 比较、输掉），
+而两个参数的 `min(nil, 1)` 早就答 **nil**。同一个问题两种拼写两个答案。
+
+**修法。** 顺序只在**两个字符串之间**或**两个数字之间**有定义（数字 = `VAL_INT` /
+`VAL_FLOAT` / `VAL_BOOL`）；其它任何一对**拒绝**而不是答 0：
+
+```c
+static int val_is_num(const Value *v) {
+    return v->type == VAL_INT || v->type == VAL_FLOAT || v->type == VAL_BOOL;
+}
+static int val_orderable(const Value *a, const Value *b) {
+    if (a->type == VAL_STRING && b->type == VAL_STRING) return 1;
+    return val_is_num(a) && val_is_num(b);
+}
+```
+
+`L_LT`/`L_GT`/`L_LE`/`L_GE` 四个操作码先查 `val_orderable`，不成立就
+`vm_throw_kind(vm, "type_mismatch")`（2202，`IM_ERROR_DOMAIN_TYPE_VM`，已经在
+`src/vm/vm.c` 的 `L_SET_GLOBAL` 路径上用过）。`set_minmax` 的三处 `val_cmp` 也加同一个前置检查，
+不成立就沿用它已有的 `have = -1` 拒绝路径。
+
+**这是「拒绝而不是算错」的又一处**（§1.10 的枚举器、§1.14 的整数溢出、§1.25 的 `sum` 同一族）。
+`nil` 因此**不可排序**：`nil <= nil` 也拒绝，与 Python 的 `None <= None` 抛 `TypeError` 一致。
+
+**修复后实测**（`vtest/order_requires_orderable_v06.im`）：
+
+```
+order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=type_mismatch
+         nillt=type_mismatch streq=false strlt=true strgt=false numlt=true numle=true
+         boollt=true biglt=true minset=nil maxset=nil minscalar=nil
+```
+
+后半段是**反方向的判据** —— 它挡住「把 `<` 一律改成抛异常」这种假修复：
+`"abc" < "abd"` 仍是 true、`"abc" > "abd"` 仍是 false、`1 < 2` / `2 <= 2` / `true < 2` /
+`9007199254740993 < 9007199254740994` 全部不变。
+
+**判据。** 新 CTest **`order_requires_orderable_runtime`**（#120），`EXP_CTEST` **119 → 120**。
+FAIL 正则 `strnum=true|arrnum=true|nille=true|zerole=true|nillt=true|maxset=5 `
+**已双向验证**（`grep -Ec`：修复前 **1**、修复后 **0**；修复前的整行是
+`… strnum=true arrnum=true nille=true zerole=true nillt=true … maxset=5 minscalar=nil`）。
+全套 ctest 从 119 升到 **120，0 失败** —— 也就是说**门禁里没有任何用例依赖这个强制转换**，
+blast radius 为零（实测，不是推断）。
+
+**诚实边界。**
+
+- 这一处只在解释器里：AOT 的 `emit_expr` 只有 `EXPR_NUMBER` 一个 case，wasm 拒绝字符串，
+  所以三通道差分模糊测试**够不到**这一处（同 §1.23）。
+- `set_minmax` 对**集合里**的混合类型现在也拒绝（`min(s)` / `max(s)` 都答 nil），
+  这与两个参数形态的 `min(nil, 1)` = nil 一致；但集合元素里如果有数组或字典，
+  以前是「按 0 比较」，现在是拒绝 —— 两者都不是「对」，只是后者不再声称一个数字。
+- **`val_cmp` 本身没有加运行时断言**：它仍是 `static`，前置条件靠四个操作码与 `set_minmax`
+  各自检查，加注释说明。如果将来有新调用方忘了查，缺陷会以「又答 0」的形式回来。
+
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

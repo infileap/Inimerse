@@ -1,0 +1,60 @@
+// Ordering is defined only between two strings or between two numbers.
+//
+// Before docs/AUDIT.md 1.26, val_cmp() fell through to val_as_double() for
+// every other pair, and that function's `default` is 0.0 -- so a string, an
+// array, a dict, a set or nil all compared as the number 0:
+//
+//   "abc" < 1     -> true      "abc" == 0   -> false
+//   [1, 2] < 1    -> true      [1, 2] == 0  -> false
+//   nil <= 0      -> true      nil == 0     -> false
+//   0 <= nil      -> true
+//
+// so `a <= b && b <= a` was true for pairs `a != b`, and a comparison that has
+// no answer answered "0" instead.  A pair with no order now refuses.
+//
+// Two separate things are pinned here: that a pair with no order refuses, and
+// that every pair that *does* have an order still works -- the second half is
+// what stops this from being "make < always raise".
+//
+//   ./build/inimerse --no-mods vtest/order_requires_orderable_v06.im
+
+r_strnum = "?"
+r_arrnum = "?"
+r_nille = "?"
+r_zerole = "?"
+r_nillt = "?"
+r_streq = "?"
+r_strlt = "?"
+r_strgt = "?"
+r_numlt = "?"
+r_numle = "?"
+r_boollt = "?"
+r_biglt = "?"
+
+try { r_strnum = str("abc" < 1) } catch (e) { r_strnum = str(e) }
+try { r_arrnum = str([1, 2] < 1) } catch (e) { r_arrnum = str(e) }
+try { r_nille = str(nil <= 0) } catch (e) { r_nille = str(e) }
+try { r_zerole = str(0 <= nil) } catch (e) { r_zerole = str(e) }
+try { r_nillt = str(nil < 1) } catch (e) { r_nillt = str(e) }
+
+r_streq = str("abc" == 0)
+r_strlt = str("abc" < "abd")
+r_strgt = str("abc" > "abd")
+r_numlt = str(1 < 2)
+r_numle = str(2 <= 2)
+r_boollt = str(true < 2)
+r_biglt = str(9007199254740993 < 9007199254740994)
+
+// min()/max() over a set holding nil used to answer 5 for max() -- the nil was
+// compared as 0 and lost -- while the two-argument min(nil, 1) already refused.
+// Both now refuse, so the two spellings agree.
+s = nil, 5
+r_minset = str(min(s))
+r_maxset = str(max(s))
+r_minscalar = str(min(nil, 1))
+
+say "order-ok strnum=" + r_strnum + " arrnum=" + r_arrnum + " nille=" + r_nille +
+    " zerole=" + r_zerole + " nillt=" + r_nillt + " streq=" + r_streq +
+    " strlt=" + r_strlt + " strgt=" + r_strgt + " numlt=" + r_numlt +
+    " numle=" + r_numle + " boollt=" + r_boollt + " biglt=" + r_biglt +
+    " minset=" + r_minset + " maxset=" + r_maxset + " minscalar=" + r_minscalar

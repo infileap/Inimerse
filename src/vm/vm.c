@@ -341,6 +341,22 @@ bool val_eq(const Value *a, const Value *b) {
     return false;
 }
 
+/* Ordering is defined only between two strings or between two numbers.
+   `val_cmp` used to fall through to val_as_double() for every other pair,
+   and that function's `default` is 0.0 -- so a string, an array, a dict, a
+   set or nil all compared as the number 0.  Measured before the fix:
+   `"abc" < 1`, `[1, 2] < 1`, `(1, 2) < 1`, `nil <= 0`, `0 <= nil` and
+   `nil < 1` were all true, while `==` said those pairs were not equal --
+   so `a <= b && b <= a` was true for pairs `a != b`.  A pair with no order
+   now refuses instead of answering "0".  See docs/AUDIT.md 1.26. */
+static int val_is_num(const Value *v) {
+    return v->type == VAL_INT || v->type == VAL_FLOAT || v->type == VAL_BOOL;
+}
+static int val_orderable(const Value *a, const Value *b) {
+    if (a->type == VAL_STRING && b->type == VAL_STRING) return 1;
+    return val_is_num(a) && val_is_num(b);
+}
+
 static int val_cmp(Value *a, Value *b) {
     /* 锟街凤拷锟斤拷锟斤拷锟街碉拷锟斤拷冉希锟絣exer 锟叫讹拷锟斤拷母锟斤拷锟斤拷瘸锟斤拷锟斤拷锟?*/
     if (a->type == VAL_STRING && b->type == VAL_STRING) {
@@ -358,6 +374,9 @@ static int val_cmp(Value *a, Value *b) {
         if (ia > ib) return 1;
         return 0;
     }
+    /* Precondition: val_orderable(a, b) -- both strings, handled above, or
+       both numbers.  Every caller checks it; do not call this with a pair
+       that has no order. */
     double da = val_as_double(a), db = val_as_double(b);
     if (da < db) return -1;
     if (da > db) return 1;
@@ -2281,6 +2300,7 @@ static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
             iv.type = VAL_INT; iv.ival = (int)s->i64[i];  iv.sval = NULL;
             if (!have) { best = iv; have = 1; bestIsStr = 0; continue; }
             if (bestIsStr) { have = -1; break; }
+            if (!val_orderable(&iv, &best)) { have = -1; break; }
             int c = val_cmp(&iv, &best);
             if ((isMax && c > 0) || (!isMax && c < 0)) best = iv;
         }
@@ -2288,6 +2308,7 @@ static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
             int itemIsStr = (s->items[i].type == VAL_STRING);
             if (!have) { best = s->items[i]; have = 1; bestIsStr = itemIsStr; continue; }
             if (itemIsStr != bestIsStr) { have = -1; break; }
+            if (!val_orderable(&s->items[i], &best)) { have = -1; break; }
             int c = val_cmp(&s->items[i], &best);
             if ((isMax && c > 0) || (!isMax && c < 0)) best = s->items[i];
         }
@@ -2300,6 +2321,7 @@ static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
             int cvIsStr = (cv.type == VAL_STRING);
             if (have == 1 && cvIsStr != bestIsStr) { have = -1; break; }
             if (!have) { best = cv; have = 1; bestIsStr = cvIsStr; continue; }
+            if (!val_orderable(&cv, &best)) { have = -1; break; }
             int c2 = val_cmp(&cv, &best);
             if ((isMax && c2 > 0) || (!isMax && c2 < 0)) best = cv;
         }
@@ -3343,21 +3365,41 @@ static void vm_execute_thread(VmThread *t) {
             continue;
         }
         L_LT: {
+            if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
+                vm_throw_kind(vm, "type_mismatch");
+                R = t->reg + t->base;
+                continue;
+            }
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
             value_set(&R[ins.r1], VAL_BOOL, (c < 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_GT: {
+            if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
+                vm_throw_kind(vm, "type_mismatch");
+                R = t->reg + t->base;
+                continue;
+            }
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
             value_set(&R[ins.r1], VAL_BOOL, (c > 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_LE: {
+            if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
+                vm_throw_kind(vm, "type_mismatch");
+                R = t->reg + t->base;
+                continue;
+            }
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
             value_set(&R[ins.r1], VAL_BOOL, (c <= 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
         L_GE: {
+            if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
+                vm_throw_kind(vm, "type_mismatch");
+                R = t->reg + t->base;
+                continue;
+            }
             int c = val_cmp(&R[ins.r2], &R[ins.r3]);
             value_set(&R[ins.r1], VAL_BOOL, (c >= 0) ? 1 : 0, 0, NULL, NULL);
             continue;

@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 119；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 120；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **119 / 119 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **120 / 120 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **119** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **120** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 119
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 120
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3366,3 +3366,75 @@ expect 39/39)`、`✔ node protocol suites (expect 12 registered)`、`✔ dsh-in
 `round("abc", 2)` 与 `list(123)` 仍答 `nil` 并打印 `should not print` —— 那是另一类（`nil` 是
 `list`/`round` 的既定拒绝惯例），不在本轮范围；③ `sum` 只读栈顶一个参数，`sum(1,2,3,4)` 与
 `sum("a","b")` 的行为不由 `argc` 决定，本轮未改。
+
+## §10.59 没有顺序的一对值，比较却答「0」
+
+**这一轮修的是「比较运算符声称两个值相等，而 `==` 说它们不等」。** `val_cmp` 在既不是「两边都是
+字符串」也不是「两边都是整数」时落到 `val_as_double(a) < val_as_double(b)`，而 `val_as_double`
+的 `default` 是 **0.0** —— 于是**每一个非数字值都按数字 0 参与比较**。
+
+**实测（修复前，`.verify/v31/rt15.im`）：**
+
+```
+"abc" < 1   = true      "abc" > -1 = true      "abc" <= 0 = true      "abc" >= 0 = true
+"abc" == 0  = false
+[1, 2] < 1  = true      [1, 2] > -1 = true     [1, 2] == 0 = false
+(1, 2) < 1  = true                             # 集合
+nil < 1     = true      nil > -1 = true        nil <= 0 = true         0 <= nil = true
+nil == 0    = false
+```
+
+两条独立的伤害：① **`<=` 与 `==` 自相矛盾** —— `nil <= 0` 与 `0 <= nil` 同时为真而 `nil == 0`
+为假，即 `a <= b && b <= a` 为真却 `a != b`；② **比较本身答错了** —— `"abc" < 1` 为真没有任何
+读法成立，字符串不是数字也不是 0。
+
+**顺带一处：`max()` 把 nil 丢掉。** `s = nil, 5` 时 `max(s)` 答 **5**（nil 被当成 0 比较、输掉），
+而两个参数的 `min(nil, 1)` 早就答 **nil** —— 同一个问题两种拼写两个答案。`set_minmax`
+（`src/vm/vm.c`）的三处 `val_cmp` 只挡了「整数 vs 字符串」（`bestIsStr`），没挡 nil / 数组 / 字典。
+
+**修法。** `.verify/v31/cmpfix.py`（逐处 `assert b.count(old)==n` 的字节级替换，共 9 处）。
+顺序只在**两个字符串之间**或**两个数字之间**有定义（数字 = `VAL_INT`/`VAL_FLOAT`/`VAL_BOOL`），
+其它任何一对**拒绝**：
+
+```c
+static int val_is_num(const Value *v) {
+    return v->type == VAL_INT || v->type == VAL_FLOAT || v->type == VAL_BOOL;
+}
+static int val_orderable(const Value *a, const Value *b) {
+    if (a->type == VAL_STRING && b->type == VAL_STRING) return 1;
+    return val_is_num(a) && val_is_num(b);
+}
+```
+
+`L_LT`/`L_GT`/`L_LE`/`L_GE` 四个操作码先查 `val_orderable`，不成立就
+`vm_throw_kind(vm, "type_mismatch")` 后 `R = t->reg + t->base; continue;`（与 `L_DIV` 的
+`division_by_zero` 同一形状）。`set_minmax` 的三处 `val_cmp` 加同一个前置检查，不成立就沿用
+它已有的 `have = -1` 拒绝路径。
+
+**修复后实测**（`vtest/order_requires_orderable_v06.im`）：
+
+```
+order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=type_mismatch
+         nillt=type_mismatch streq=false strlt=true strgt=false numlt=true numle=true
+         boollt=true biglt=true minset=nil maxset=nil minscalar=nil
+```
+
+后半段是**反方向的判据**，挡住「把 `<` 一律改成抛异常」这种假修复：`"abc" < "abd"` 仍 true、
+`"abc" > "abd"` 仍 false、`1 < 2` / `2 <= 2` / `true < 2` / `9007199254740993 < 9007199254740994`
+全部不变。
+
+**判据。** 新 CTest **`order_requires_orderable_runtime`**（#120，注册在
+`atomic_int64_width_runtime` 之后），`EXP_CTEST` **119 → 120**，计数锚点同轮更新。FAIL 正则
+`strnum=true|arrnum=true|nille=true|zerole=true|nillt=true|maxset=5 ` **已双向验证**
+（`grep -Ec`：修复前 **1**、修复后 **0**）。**全套 ctest 120 / 120、0 失败** —— 也就是说门禁里
+**没有任何用例依赖这个强制转换**，blast radius 为零，这是实测而不是推断。
+
+**门禁实测。** **门禁实测（`.verify/v31/gate_cmp.log`）：** `GATE_RC=0`，`gate: OK — every stage passed.`，十阶段全 PASS，`warnings: 0` / `errors: 0`，`100% tests passed, 0 tests failed out of 120`、0 跳过，差分模糊测试钉住 `(0 DIVERGE, 0 THREW, 0 untranslated)`，`check_links: 93 markdown files, 412 links (17 external, 0 anchors, 395 local), 0 broken`，`check_doc_paths: 16 markdown files, 433 backtick 引用, 0 broken`。（文档在跑门禁之前已写完，所以链接与反引号路径两个阶段已经覆盖到本节。）
+
+**诚实边界。** ① 这一处只在解释器里（AOT 的 `emit_expr` 只有 `EXPR_NUMBER` 一个 case、wasm
+拒绝字符串），三通道差分模糊测试**够不到**；② `nil` 现在**完全不可排序** —— `nil <= nil` 也拒绝，
+与 Python 的 `None <= None` 抛 `TypeError` 一致，但这也意味着任何拿 nil 参与 `<` 的旧代码现在会
+抛 `type_mismatch` 而不是拿到一个（错的）布尔；③ **`val_cmp` 没有加运行时断言**，前置条件靠四个
+操作码与 `set_minmax` 各自检查 + 注释说明，将来若有新调用方忘了查，缺陷会以「又答 0」回来；
+④ `set_minmax` 对集合里的数组/字典元素以前按 0 比较、现在拒绝 —— 两者都不是「对」，
+只是后者不再声称一个数字。
