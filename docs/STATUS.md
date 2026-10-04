@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 125；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 126；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **125 / 125 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **126 / 126 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **125** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **126** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 125
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 126
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3322,7 +3322,7 @@ sumstr_is_nil=true
 
 **推翻保守决定的理由。** ① 平台相关的程序含义本身就是缺陷 —— 门禁里有
 `differential fuzz (interp vs AOT)` 阶段，正因为「同一程序在不同通道上不同」被当作缺陷，
-而 POSIX 与 WIN32 之间**没有任何门禁**；② `nil` 在这里不可观测；③ §1.14 的教条是宁可抛不要静默算错。
+而 POSIX 与 WIN32 之间**没有任何门禁**；② `nil` 在这里不可观测；③ §1.14（`docs/AUDIT.md:624`）只规定**算术**溢出抛异常而不是回绕，**不是通用教条；本节原先把它升格了，更正见 §1.46。**
 
 **顺带修掉的第二处。** WIN32 的元素规则是 `if (t == VAL_STRING || t == VAL_BOOL) { ok = 0; break; }`
 —— **`VAL_NIL` 不在拒绝之列**，`val_as_double(nil)` 得 0.0，所以 `sum([1, nil])` 在 Windows 上答 **1**。
@@ -3579,9 +3579,21 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 `ival`（读指针的一半）；`atomic_get`/`atomic_set` 把非字符串名字交给 `strcmp(NULL)` 而
 **崩溃**（`builtin_atomic_add:1585` 一直有守卫）；`say_log`/`say_file` 的第一个实参当成了
 另一个值。**判据不是「挑一侧当基线」** —— 两份副本都是消费者，契约还不存在
-（`docs/DECFY_DESIGN.md:8-12`），所以 `int("0x10")` 那条**已登记、未裁定**：我一度把 base-16
-补进 POSIX，随后**已撤回**（那是特性移植，不是消去分歧），pin 不断言它。新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，**两端都
+（`docs/DECFY_DESIGN.md:8-12`）。`int("0x10")` 那条曾**已登记、未裁定**：我一度把 base-16
+补进 POSIX、随后**已撤回**（那是特性移植，不是消去分歧），登记一轮后**用户裁定两端都答 `16`**，
+于是两份副本一起改、pin 恢复断言它 —— 判据的最终来源是人，不是任何一侧的代码。新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，**两端都
 跑**，补上 `posix_runtime_parity` 在 Windows 被 `DISABLED TRUE` 留下的空洞。用 mingw64
 手工全量编出的真 Windows 引擎上：修前 rc=5，修后 rc=0 且输出与 Linux 逐字相同。
 详见 [AUDIT.md](AUDIT.md) §1.45。
 
+## §10.77 `round` 非数字实参：两侧各自现行值，已登记并 pin
+
+`round("x", 2)` 在 POSIX 答 `nil`（`src/runtime/runtime_posix.c:104`）、在 Windows 抛
+`round: expected number`（`src/runtime/runtime.c:41`）。**两侧都不改**，但把它从「未记录」
+变成「已登记、已 pin」—— 先例是 [AUDIT.md](AUDIT.md) §1.25（`sum()` 的非数字元素，保留两侧
+风格并记录，未统一）。新 pin `vtest/round_nonnumber_contract_v06.im` 注册为 CTest `#126`
+`round_nonnumber_contract_runtime`，`PASS_REGULAR_EXPRESSION` 在 configure 期按平台选，
+断言的是**双方各自的现行值**，所以任一侧漂移立刻变红、分歧保持可见 —— 这正是 §1.43 缺的那一环。
+状态 **REGISTERED, NOT RESOLVED**（POSIX 的 `nil` 属 [SYNTAX.md](SYNTAX.md) §7.1 D5
+【危险·静默】，Windows 的抛是【响的失败】；响的优于静默的，但「更好」不等于「已裁定」）。
+详见 [AUDIT.md](AUDIT.md) §1.47。

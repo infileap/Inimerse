@@ -1,0 +1,29 @@
+# round_nonnumber_contract_v06.im -- round() with a non-number argument has two
+# answers, and this pin asserts each platform's OWN answer instead of picking a
+# winner.
+#
+#   POSIX (posix_core_round, src/runtime/runtime_posix.c:104)  -> nil
+#   WIN32 (builtin_round,    src/runtime/runtime.c:41)         -> throws
+#          "round: expected number"
+#
+# REGISTERED, NOT RESOLVED.  Neither answer is the baseline: both runtimes are
+# consumers of a contract that does not exist yet (docs/DECFY_DESIGN.md:8-12 --
+# "让所有后端消费同一个 IR").  Precedent: docs/AUDIT.md 1.25 -- sum() with a
+# non-numeric element answers nil on POSIX and throws on WIN32, and that ruling
+# kept both styles and recorded the divergence rather than unifying it.  Class:
+# docs/SYNTAX.md 7.1 D5 -- a bad argument answered with nil is a silent wrong
+# answer, while the throw is loud; by 7's own classification the loud one is
+# better, but "better" is not "decided".
+#
+# provenance (NOT a rationale): the WIN32 copy carries an explicit check whose
+# author and date are not recoverable; the POSIX copy has none.  The design
+# record has no convention here -- "expected number" has zero hits in it, and
+# there is no general argument-type doctrine (see docs/AUDIT.md 1.46).
+#
+# The two answers are asserted in CMakeLists.txt, one per platform, so the
+# divergence is visible and change-detectable without adjudicating it.
+#
+# Values only, never exit codes.
+
+r = round("x", 2)
+say "round-nonnumber=" + str(r)

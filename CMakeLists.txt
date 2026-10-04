@@ -657,26 +657,38 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME posix_core_api_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
   set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings" PASS_REGULAR_EXPRESSION "posix-core-api-ok")
   add_test(NAME posix_runtime_parity COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_runtime_parity_v04.im)
-  if(NOT WIN32)
-    set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
+  # Enabled on both platforms.  It used to be `DISABLED TRUE` on Windows, which left the
+  # only test that compares the two runtimes unrun on the platform where they diverge --
+  # and a disabled test reports as "passed" (docs/AUDIT.md §1.37, §1.43).  The one known
+  # divergence is asserted per platform instead: `load_params` on a missing file answers
+  # -1 on POSIX (posix_unsupported) and 0 on WIN32 (a real implementation), so each side's
+  # CURRENT value is pinned and either side drifting turns this red.  Note that the old
+  # `DISABLED TRUE` branch set no assertions at all, so deleting it alone would have
+  # produced a green test that asserted nothing.
+  if(WIN32)
+    set(INIMERSE_PARITY_LOAD_MISSING "parity load_missing=0")
   else()
-    set_tests_properties(posix_runtime_parity PROPERTIES DISABLED TRUE)
+    set(INIMERSE_PARITY_LOAD_MISSING "parity load_missing=-1")
   endif()
+  set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok;${INIMERSE_PARITY_LOAD_MISSING}" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
   add_test(NAME gc_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
   set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc" PASS_REGULAR_EXPRESSION "gc-ran;gc-stats-ok;thread-result-alive;closure-capture-alive;root-alive;gc-done")
   add_test(NAME pipeline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/pipeline_v04.im)
   set_tests_properties(pipeline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1")
   add_test(NAME result_question_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_question_v04.im)
-  # Assert on the marked VALUE line, not on the unreachable literal: the engine
-  # echoes every string literal, so FAIL_REGULAR_EXPRESSION "resultq unreachable"
-  # matched the echo even when the statement never ran.
+  # Assert on the marked VALUE line, not on the unreachable literal.  This was forced by a
+  # compiler debug dump that wrote the first 16 string-pool entries to stderr on every
+  # compile (`src/compiler/compiler.c:3116`, removed this round), which made
+  # FAIL_REGULAR_EXPRESSION "resultq unreachable" match the echo even when the statement
+  # never ran.  The dump is gone; asserting on values is still the rule (docs/SYNTAX.md
+  # §7.2 M13: 66 of 101 CTest cases asserted only the exit code).
   set_tests_properties(result_question_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result" PASS_REGULAR_EXPRESSION "resultq value=42.*resultq caught.*resultq reached=0")
   add_test(NAME null_coalesce_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/null_coalesce_v04.im)
   set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "coalesce nil=42.*coalesce some=7")
   add_test(NAME optional_member_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/optional_member_v04.im)
-  # The engine echoes builtin call arguments, so the dict literal's own
-  # "inimerse" appears in the output even when `?.` is broken -- assert on the
-  # OM-prefixed value lines instead. PASS catches the key being truncated
+  # The old compiler string-pool dump echoed the dict literal's own "inimerse" even when
+  # `?.` was broken (that dump is removed; see the note on result_question_runtime above)
+  # -- assert on the OM-prefixed value lines. PASS catches the key being truncated
   # (bytecode_add_string got a non-NUL-terminated StringView); FAIL catches the
   # stale recycled register that made nil?.name return the previous result.
   set_tests_properties(optional_member_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "OM present=inimerse" FAIL_REGULAR_EXPRESSION "OM missing=inimerse")
@@ -996,13 +1008,39 @@ set_tests_properties(vfs_probe PROPERTIES
 # (:662).  This pin runs on BOTH platforms and prints one line either way, so on
 # Linux it judges the POSIX copy and on Windows the WIN32 one.  It pins
 # int()'s width, chr()'s type check, and the name guard that atomic_get/atomic_set
-# were missing (which crashed the Windows engine).  int("0x10") is deliberately
-# NOT asserted: the two copies still disagree there and neither is the baseline,
-# so it is registered as an open divergence awaiting a human decision rather than
-# resolved by crowning one side.  See docs/AUDIT.md 1.45.
+# were missing (which crashed the Windows engine).  int("0x10") is asserted: it
+# was an open divergence (0 on POSIX, 16 on WIN32) and a human ruled it to 16 on
+# both platforms, so it is a resolved contract now, not a crowned side.  See
+# docs/AUDIT.md 1.45.
 # Registered last so no existing #N moves.
 add_test(NAME divergent_builtin_contract_runtime
          COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
 set_tests_properties(divergent_builtin_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0")
+  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0")
+
+# ---------------------------------------------------------------------------
+# round() with a non-number argument has two answers, and this pin asserts each
+# platform's OWN answer instead of picking a winner: POSIX (posix_core_round,
+# src/runtime/runtime_posix.c:104) returns nil, WIN32 (builtin_round,
+# src/runtime/runtime.c:41) throws "round: expected number".
+#
+# REGISTERED, NOT RESOLVED.  Precedent: docs/AUDIT.md 1.25 -- sum() with a
+# non-numeric element is nil on POSIX and a throw on WIN32, and that ruling kept
+# both styles and recorded the divergence rather than unifying it.  Class:
+# docs/SYNTAX.md 7.1 D5 -- a bad argument answered with nil is a silent wrong
+# answer, the throw is loud; by 7's own classification the loud one is better,
+# but "better" is not "decided".  See docs/AUDIT.md 1.45.
+#
+# Registered last so no existing #N moves.
+add_test(NAME round_nonnumber_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/round_nonnumber_contract_v06.im)
+set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression")
+if(WIN32)
+  set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "round: expected number")
+else()
+  set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "round-nonnumber=nil")
+endif()
