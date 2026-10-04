@@ -816,9 +816,15 @@ if(INIMERSE_BUILD_ENGINE)
   # COMPONENTS, so `1, 2, Z[7~9]` summed to 0 while len() was 5; and it accumulated
   # integers in a double, so anything above 2^53 was rounded before push_int saw it.
   # Both copies of the function (posix_core_sum, and builtin_sum on WIN32) are fixed.
-  # Values only, never exit codes.  See docs/AUDIT.md §1.15.
+  # A third defect lived only in POSIX: a non-numeric element was answered with nil
+  # while WIN32 raised `sum: non-numeric element`, so the same program meant two
+  # different things per platform -- and nil was unobservable as a failure, because
+  # `sum([1, "a"]) + 1` was 1 (arithmetic absorbs nil).  Both now raise, with one
+  # element rule (VAL_INT and VAL_FLOAT only).  Values only, never exit codes: the
+  # raising branches are wrapped in try/catch and asserted on the message text.
+  # See docs/AUDIT.md §1.15 and §1.25.
   add_test(NAME sum_components_int64_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/sum_components_int64_v06.im)
-  set_tests_properties(sum_components_int64_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 bool=nil inf=nil" FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|bool=0")
+  set_tests_properties(sum_components_int64_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 inf=nil refuse-bool=sum: non-numeric element refuse-str=sum: non-numeric element refuse-nil=sum: non-numeric element" FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|refuse-bool=nil|refuse-str=nil|refuse-nil=nil")
   # str() summarised a set as set(iCount + count) -- the LITERAL part only -- so
   # `str(Z[1~4])` printed set(0) beside `len(Z[1~4]) == 4`.  It now enumerates
   # through vm_set_to_array whenever the set has a component, exactly as len(),

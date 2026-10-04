@@ -261,20 +261,31 @@ static int posix_core_sum(VM *vm) {
      *     accumulator and let it raise `numeric_overflow`, the same rule the
      *     arithmetic operators now follow (docs/AUDIT.md §1.14); a `double` is
      *     still kept in parallel so the moment a float joins, the result is the
-     *     float total of everything seen so far. */
-    const Value *items = NULL; int n = 0, ok = 1, all_int = 1;
+     *     float total of everything seen so far.
+     *
+     *  3. A non-numeric element was answered with nil, while the WIN32 copy of
+     *     this function raised `sum: non-numeric element` -- so the same program
+     *     meant two different things depending on the platform.  POSIX's nil was
+     *     also unobservable AS a failure: `sum([1, "a"]) + 1` was 1, because
+     *     arithmetic absorbs nil (`nil + 1` == 1), so a caller could not tell
+     *     "the sum is 1" from "the sum failed".  Both copies now raise, and both
+     *     use the same element rule -- VAL_INT and VAL_FLOAT only, so a NIL
+     *     element is no longer silently summed as 0 on Windows either.  Three
+     *     causes now have three signals: a malformed element raises, an
+     *     unenumerable set is nil (as list() does, docs/AUDIT.md §1.10), and a
+     *     non-container argument is nil.  See docs/AUDIT.md §1.25. */
+    const Value *items = NULL; int n = 0, enumerated = 0, bad_element = 0, all_int = 1;
     if (v.type == VAL_SET && v.ival >= 0 && v.ival < vm->setCount) {
         int a = vm_set_to_array(vm, v.ival);
-        if (a >= 0) { ArrayObj *arr = vm_pool_slot(vm, a); items = arr->items; n = arr->count; }
-        else ok = 0;
+        if (a >= 0) { ArrayObj *arr = vm_pool_slot(vm, a); items = arr->items; n = arr->count; enumerated = 1; }
     } else if (v.type == VAL_ARRAY && v.ival > 0 && v.ival - 1 < vm->arrayCount) {
         ArrayObj *a = vm_pool_slot(vm, v.ival - 1);
-        items = a->items; n = a->count;
-    } else ok = 0;
+        items = a->items; n = a->count; enumerated = 1;
+    }
     long long isum = 0; double fsum = 0; int oflow = 0;
-    if (ok) for (int i = 0; i < n; i++) {
+    if (enumerated) for (int i = 0; i < n; i++) {
         int t = items[i].type;
-        if (t != VAL_INT && t != VAL_FLOAT) { ok = 0; break; }
+        if (t != VAL_INT && t != VAL_FLOAT) { bad_element = 1; break; }
         if (t == VAL_FLOAT) { all_int = 0; fsum += items[i].fval; }
         else {
             fsum += (double)items[i].ival;
@@ -284,7 +295,8 @@ static int posix_core_sum(VM *vm) {
         }
     }
     pop(vm);
-    if (!ok) { push_nil(vm); return 1; }
+    if (bad_element) { vm_throw_msg(vm, "sum: non-numeric element"); return 1; }
+    if (!enumerated) { push_nil(vm); return 1; }
     if (!all_int) { push_float(vm, fsum); return 1; }
     if (oflow) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
     push_int(vm, isum); return 1;

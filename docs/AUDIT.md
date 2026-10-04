@@ -1112,6 +1112,82 @@ FAIL 正则 `set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648
   所以这一节是它第一次被写下来；也因此没有历史行为可供对照。
 
 
+## §1.25 同一段程序在两个平台上意思不同：`sum()` 的非数字元素
+
+**症状。** 容器里出现一个非数字元素时，POSIX 的 `sum()` 答 `nil`，而 WIN32 的 `sum()` 抛
+`sum: non-numeric element`。同一个 `.im` 程序因此在两个平台上**意思不同**：
+
+| 程序 | POSIX（修复前） | WIN32（修复前） |
+| --- | --- | --- |
+| `say sum([1, "a"])` | `nil` | 抛 `sum: non-numeric element` |
+| `say sum([true, 2])` | `nil` | 抛 |
+| `say sum([1, nil])` | `nil` | **`1`**（nil 被 `val_as_double` 当成 0） |
+| `say sum([1, "a"]) + 1` | **`1`** | 抛 |
+
+最后一格是真正的伤害：`nil` 被算术吸收（`nil + 1` == `1`），所以「求和失败」这个信号**不可观测** ——
+调用方分不清「和是 1」和「和失败了」。
+
+**这不是一处没注意到的分歧。** §1.15 当初明确写了「保留它自己的错误风格（非数字元素
+`vm_throw_msg(...)`，而不是 POSIX 的 nil）」。那是个**保守**决定（各副本保持原样），不是一个
+正确性论证。本节把它推翻，理由三条：① **平台相关的程序含义本身就是缺陷** —— 门禁里有
+`differential fuzz (interp vs AOT)` 这一阶段，正因为「同一个程序在不同通道上不同」被当作缺陷，
+而 POSIX 与 WIN32 之间**没有任何门禁**；② `nil` 作为失败信号在这里不可观测（上表最后一格）；
+③ 仓库自己的 §1.14 教条是「宁可抛，不要静默算错」。
+
+**顺带修掉的第二处。** WIN32 的元素规则是 `if (t == VAL_STRING || t == VAL_BOOL) { ok = 0; break; }`
+—— **`VAL_NIL` 不在拒绝之列**，于是 `val_as_double(nil)` 得 0.0，`sum([1, nil])` 在 Windows 上答 1。
+POSIX 的规则是 `t != VAL_INT && t != VAL_FLOAT`，更严。统一到 POSIX 那条。
+
+**修法。** 两份实现现在逐字同构：
+
+```c
+    const Value *items = NULL; int n = 0, enumerated = 0, bad_element = 0, all_int = 1;
+    ...
+    if (enumerated) for (int i = 0; i < n; i++) {
+        int t = items[i].type;
+        if (t != VAL_INT && t != VAL_FLOAT) { bad_element = 1; break; }
+        ...
+    }
+    pop(vm);
+    if (bad_element) { vm_throw_msg(vm, "sum: non-numeric element"); return 1; }
+    if (!enumerated) { push_nil(vm); return 1; }
+    if (!all_int) { push_float(vm, fsum); return 1; }
+    if (oflow) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
+    push_int(vm, isum); return 1;
+```
+
+关键是把原来那**一个** `ok` 标志拆成 `enumerated` 与 `bad_element` 两个 —— 三种原因必须给三种信号：
+
+| 原因 | 信号 | 为什么 |
+| --- | --- | --- |
+| 元素不是数字 | **抛** `sum: non-numeric element` | 输入坏了；nil 会被算术吸收，信号消失 |
+| 集合无法枚举（无界，如 `Z`） | `nil` | 与 `list(Z)` 一致，是 §1.10 定的「拒绝而不是截断」惯例 |
+| 参数根本不是容器 | `nil` | 同 `list(123)` |
+
+POSIX 原来那版 `if (!ok) { push_nil(vm); return 1; }` 把三种原因压成一种；WIN32 那版靠 `pop` 之后
+再读 `v->type` 来区分，而 `v` 是指进栈的指针 —— 现在两种情况都在 `pop` **之前**就决定好。
+
+**判据。** 既有 CTest **`sum_components_int64_runtime`（#114）** 就地扩展，不新增 CTest
+（`EXP_CTEST` 保持 119）：值那半仍是原来那行，末尾接 `refuse-bool=` / `refuse-str=` / `refuse-nil=`
+三格，各用 `try { … } catch (e) { … }` 接住并断言 `str(e)`。FAIL 正则
+`comp=0|two=0|single=0|big=9007199254740992|refuse-bool=nil|refuse-str=nil|refuse-nil=nil`
+**已双向验证**（`grep -Ec`：修复前 1、修复后 0）。`sum: non-numeric element` **不进字符串池**
+（实测 `grep` 计数 0），所以 PASS 正则引用它是安全的。全套 ctest **119 / 119**，`contract_test.im`
+**66 passed / all passed**。
+
+**诚实边界。**
+
+- **WIN32 那份本机不可执行。** `CMakeLists.txt:381-395` 把 `src/runtime/runtime.c` 放在 `if(WIN32)`
+  分支里，Linux 上编译的是 `runtime_posix.c`。对 `runtime.c` 只有两条证据：与 POSIX **逐字同构**，
+  以及两个文件里不再有旧的 `ok` / `val_as_double(&items[i])` 写法。**没有执行过** —— 打 Windows 包时
+  它是第一次真正被编译。
+- **`err_test.im` 是未被门禁覆盖的旧文件**，它早就假设 `sum` 会抛（`try { say sum(sx) } catch`）。
+  本轮之后那一段终于走到 `catch`；同一文件里 `round("abc", 2)` 与 `list(123)` 仍答 `nil` 并打印
+  `should not print`，那是另一类（`nil` 是 `list`/`round` 的既定拒绝惯例），不在本轮范围。
+- **`sum` 只读栈顶一个参数**，`sum(1,2,3,4)` 与 `sum("a","b")` 的行为不由 `argc` 决定。
+  本轮没有改动这一点。
+
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

@@ -162,42 +162,42 @@ static int builtin_sum(VM *vm) {
      * len()/size()/list() use; integers accumulate in 64 bits; and an
      * overflowing total raises numeric_overflow, the rule the arithmetic
      * operators follow (docs/AUDIT.md §1.14).  A parallel `double` keeps the
-     * float answer correct the moment a float joins the sequence. */
-    const Value *items = NULL; int n = 0, allInt = 1, ok = 0;
+     * float answer correct the moment a float joins the sequence.
+     *
+     *  4. a non-numeric element raised here but returned nil on POSIX, so the
+     *     same program meant two different things per platform -- and POSIX's
+     *     nil was unobservable as a failure (`sum([1, "a"]) + 1` == 1, since
+     *     arithmetic absorbs nil).  Both copies now raise, with the same element
+     *     rule (VAL_INT and VAL_FLOAT only), so a NIL element is no longer
+     *     summed as 0 here either.  See docs/AUDIT.md §1.25. */
+    const Value *items = NULL; int n = 0, enumerated = 0, bad_element = 0, allInt = 1;
     if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
         int a = vm_set_to_array(vm, v->ival);
-        if (a >= 0) { ArrayObj *arr = vm_pool_slot(vm, a); items = arr->items; n = arr->count; ok = 1; }
+        if (a >= 0) { ArrayObj *arr = vm_pool_slot(vm, a); items = arr->items; n = arr->count; enumerated = 1; }
     }
     else if (v->type == VAL_ARRAY) {
         int a = v->ival - 1;
         if (a >= 0 && a < vm->arrayCount) {
             ArrayObj *arr = vm_pool_slot(vm, a);
-            items = arr->items; n = arr->count; ok = 1;
+            items = arr->items; n = arr->count; enumerated = 1;
         }
     }
     long long isum = 0; double fsum = 0; int oflow = 0;
-    if (ok) for (int i = 0; i < n; i++) {
+    if (enumerated) for (int i = 0; i < n; i++) {
         int t = items[i].type;
-        if (t == VAL_STRING || t == VAL_BOOL) { ok = 0; break; }
+        if (t != VAL_INT && t != VAL_FLOAT) { bad_element = 1; break; }
         if (t == VAL_FLOAT) { allInt = 0; fsum += items[i].fval; }
         else {
-            fsum += val_as_double(&items[i]);
-            if (t == VAL_INT) {
-                long long tmp;
-                if (__builtin_add_overflow(isum, (long long)items[i].ival, &tmp)) oflow = 1;
-                else isum = tmp;
-            }
+            fsum += (double)items[i].ival;
+            long long tmp;
+            if (__builtin_add_overflow(isum, (long long)items[i].ival, &tmp)) oflow = 1;
+            else isum = tmp;
         }
     }
     pop(vm);
-    if (!ok) {
-        if (v->type == VAL_SET || v->type == VAL_ARRAY) {
-            vm_throw_msg(vm, "sum: non-numeric element");
-            return 1;
-        }
-        push_nil(vm);
-    }
-    else if (!allInt) push_float(vm, fsum);
+    if (bad_element) { vm_throw_msg(vm, "sum: non-numeric element"); return 1; }
+    if (!enumerated) { push_nil(vm); return 1; }
+    if (!allInt) push_float(vm, fsum);
     else if (oflow) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
     else push_int(vm, isum);
     return 1;
