@@ -60,9 +60,18 @@ add_test(NAME verse_protocol_probe COMMAND verse_protocol_probe)
 add_executable(inim-server src/verse/server.c ${VL_CORE_SOURCES})
 target_include_directories(inim-server PRIVATE src/verse src/common)
 add_executable(inim-client src/verse/client.c)
+# Locate the test interpreter before the first add_test that needs it.  The
+# interpreter is not called python3 everywhere: on Windows it is python.exe, and
+# a hardcoded `python3` makes the test die with "no such file or directory".
+find_program(INIMERSE_PYTHON NAMES python3 python)
+if(INIMERSE_PYTHON)
+  set(INIMERSE_TEST_PYTHON "${INIMERSE_PYTHON}")
+else()
+  set(INIMERSE_TEST_PYTHON "python3")
+endif()
 add_test(NAME verse_closed_loop
   COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
-          python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_closed_loop.test.py
+          ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_closed_loop.test.py
           $<TARGET_FILE:inim-client>)
 # P1 increment 4: engine-side UPP -- universal plugin protocol framing (JSONL,
 # 1 MiB frame cap, hello/welcome negotiation) and the session state machine.
@@ -110,7 +119,7 @@ if(NOT WIN32)
   target_include_directories(crp-peer PRIVATE src/verse src/common src/platform)
   add_test(NAME verse_crp_closed_loop
     COMMAND ${CMAKE_COMMAND} -E env INIM_CRP_HUB_BIN=$<TARGET_FILE:crp-hub>
-            python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/crp_closed_loop.test.py
+            ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/crp_closed_loop.test.py
             $<TARGET_FILE:crp-peer>)
   set_tests_properties(verse_crp_closed_loop PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TIMEOUT 60 LABELS "protocol;crp")
@@ -220,7 +229,7 @@ if(NOT WIN32)
   set_tests_properties(crp_session_probe PROPERTIES TIMEOUT 10 LABELS "platform;smoke;crp")
 endif()
 find_program(INIMERSE_NODE node)
-find_program(INIMERSE_PYTHON NAMES python3 python)
+# INIMERSE_PYTHON is located above, before the first add_test that needs it.
 if(INIMERSE_PYTHON)
   add_test(NAME inim_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/inim.test.py)
   set_tests_properties(inim_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "package;regression")
