@@ -210,5 +210,12 @@ int im_platform_read_file(const char *path, char *buffer, size_t capacity) {
 }
 int im_platform_write_file(const char *path, const char *data, size_t length) {
     if (!path || (!data && length)) return -1; FILE *f = fopen(path, "wb"); if (!f) return -1;
-    size_t n = fwrite(data, 1, length, f); int ok = (n == length && fclose(f) == 0) ? 0 : -1; if (ok) return 0; return -1;
+    /* The success code is 0 and the failure code is -1, so this must not be
+     * written as "if (ok) return 0".  It was, and because ok is 0 on success
+     * the branch was taken exactly when the write had failed: the function
+     * reported success for a failed write and failure for a good one.  Its
+     * only caller (src/mod/server_mod_posix.c:89) treats non-zero as failure,
+     * so server_start killed the child it had just spawned and returned 0
+     * instead of the room number, on every POSIX run. */
+    size_t n = fwrite(data, 1, length, f); return (n == length && fclose(f) == 0) ? 0 : -1;
 }

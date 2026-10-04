@@ -3113,14 +3113,6 @@ void compiler_compile(Compiler *comp, Program *prog) {
         comp->mainBC->global_name_count = comp->globalCount;
         for (int i = 0; i < comp->globalCount; i++)
             comp->mainBC->global_names[i] = comp->globals[i].name ? strdup(comp->globals[i].name) : strdup("?");
-    for (int _si = 0; _si < comp->mainBC->string_count && _si < 16; _si++) fprintf(stderr, "[%d]=\"%s\" ", _si, comp->mainBC->string_pool[_si] ? comp->mainBC->string_pool[_si] : "?");
-    fprintf(stderr, "\n");
-    for (int _di = 0; _di < comp->mainBC->count && _di < 40; _di++) {
-        RegInstruction *_in = &comp->mainBC->code[_di];
-    }
-    for (int _f = 0; _f < comp->mainBC->func_count; _f++) {
-        Bytecode *_fb = comp->mainBC->funcs[_f];
-    }
     }
 }
 

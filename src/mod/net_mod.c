@@ -132,12 +132,21 @@ static int builtin_net_send(VM *vm) {
 
 /* net_recv(sock[, maxlen]) -> string (empty = no data / closed; use net_status) */
 static int builtin_net_recv(VM *vm) {
-    SOCKET s = net_sock(vm, 1);
-    int maxlen = (int)net_arg_num(vm, 0);
+    /* The socket is the LAST argument and maxlen the one before it, and maxlen
+     * is optional.  This read index 1 unconditionally, so the documented
+     * one-argument form net_recv(sock) took the socket handle as the length and
+     * read the socket from an argument that was not there.  It also did not
+     * check that the call had any argument at all.  src/mod/net_mod_posix.c:25
+     * branches on the argument count, which is the rule. */
+    int argc = vm->cur_argc;
+    if (argc < 1) return 0;
+    SOCKET s = argc > 1 ? net_sock(vm, 1) : net_sock(vm, 0);
+    int maxlen = argc > 1 ? (int)net_arg_num(vm, 0) : 1024;
     if (maxlen < 1) maxlen = 1024;
     if (maxlen > 65536) maxlen = 65536;
     net_popn(vm, vm->cur_argc);
     char *buf = malloc(maxlen + 1);
+    if (!buf) { push_string(vm, ""); return 1; }
     int n = recv(s, buf, maxlen, 0);
     if (n > 0) buf[n] = '\0';
     else buf[0] = '\0';

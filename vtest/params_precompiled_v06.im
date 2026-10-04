@@ -1,0 +1,9 @@
+# Regression pin for the .inim params load order.
+#
+# src/vm/vm.c:1435-1440 rebinds vm->globals[i].name BY POSITION from the bytecode's own
+# global table, and never touches .val.  Loading params before that rebind therefore left
+# their values attached to whichever name the bytecode put in that slot: for a bytecode
+# whose table ends in the parameter name the name appeared twice (nil slot first, so
+# lookup answered nil), and for one that ends in something else the value was handed to
+# that other name.  Both paths must now answer 42.  See docs/AUDIT.md 1.48.
+say "params-precompiled player=" + str(player.max_hp)

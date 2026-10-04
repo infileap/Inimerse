@@ -1,0 +1,68 @@
+# docs/AUDIT.md 1.51 -- an atomic slot is an integer counter, and only that.
+#
+# The atomic family has two production points (src/runtime/runtime.c and
+# src/runtime/runtime_posix.c) and, until this pin, neither of them consulted
+# the slot's `type` tag before reading or writing the union:
+#
+#   atomic_get("y")   on `y = 1.5`     POSIX answered 4609434218613702656 (the
+#                                      IEEE754 bits of 1.5); Windows answered 0.
+#   atomic_add("h", 0) on `h = 2.5`    POSIX answered 4612811918334230528 and
+#                                      destroyed the 2.5; Windows answered 0 and
+#                                      also destroyed it, via a silent
+#                                      normalise (`type = VAL_INT; ival = 0`).
+#
+# Both copies now answer 0 and leave a non-integer slot untouched -- the same
+# answer the family already gives when the name does not resolve.  The values
+# below are asserted, not just the exit code: docs/SYNTAX.md 7.2 M13 records
+# that 66 of the CTest cases only look at the exit code, and this defect is
+# exactly the kind that exits 0.
+y = 1.5
+s = "abcdef"
+k = 7
+
+g1 = atomic_get("y")
+r1 = atomic_add("y", 1)
+y_after = str(y)
+r3 = atomic_add("y", 0)
+y_zero = str(y)
+
+g2 = atomic_get("s")
+r2 = atomic_add("s", 1)
+s_after = str(s)
+
+g3 = atomic_get("k")
+r4 = atomic_add("k", 5)
+
+# docs/SYNTAX.md 7.1 D14 (2026-10, human ruling) -- a name argument that is not
+# a string is a *caller error*: the call could never have worked, and answering
+# 0 would be indistinguishable from success, so it raises type_mismatch.  A name
+# that simply does not resolve is *runtime state* -- there is nothing there --
+# and keeps answering 0.  Before D14 all four of the calls below answered 0, so
+# "you passed the wrong kind of thing" and "there is no such counter" had one
+# answer between them.
+#
+# The kind string is asserted, not the exit code.  A pin that only checked for
+# "something was raised" would pass on a numeric_overflow, on an index error, or
+# on any future kind; M13's numerator is exactly the count of tests that settle
+# for an exit code, and this is a case that has a distinguishable answer.
+try {
+  n1 = atomic_get(42)
+  n1 = "NO-THROW"
+} catch (e1) {
+  n1 = str(e1)
+}
+try {
+  n2 = atomic_add(42, 1)
+  n2 = "NO-THROW"
+} catch (e2) {
+  n2 = str(e2)
+}
+try {
+  n3 = atomic_set(42, 1)
+  n3 = "NO-THROW"
+} catch (e3) {
+  n3 = str(e3)
+}
+n4 = atomic_get("this_name_was_never_created")
+
+say "atomic-slot-ok g1=" + str(g1) + " r1=" + str(r1) + " y=" + y_after + " r3=" + str(r3) + " yz=" + y_zero + " g2=" + str(g2) + " r2=" + str(r2) + " s=" + s_after + " g3=" + str(g3) + " r4=" + str(r4) + " n1=" + n1 + " n2=" + n2 + " n3=" + n3 + " n4=" + str(n4)

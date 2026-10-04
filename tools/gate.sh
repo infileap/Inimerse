@@ -35,6 +35,10 @@ done
 STAGE_NAMES=()
 STAGE_RESULTS=()
 STAGE_NOTES=()
+# Every selector passed to run_stage, recorded whether or not --only ran it.
+# The legal --only values are derived from this, never from a second handwritten
+# list: a list nothing consumes only constrains the moment it was written.
+STAGE_WANTED=()
 FAILED=0
 
 # The number of registered CTest cases this gate expects.  It is *asserted*
@@ -47,7 +51,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-126}"
+EXP_CTEST="${EXP_CTEST:-137}"
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
@@ -55,6 +59,7 @@ EXP_NODE="${EXP_NODE:-12}"
 
 run_stage() {
   local name="$1" wanted="$2"; shift 2
+  STAGE_WANTED+=("$wanted")
   if [ -n "$ONLY" ] && [ "$ONLY" != "$wanted" ]; then
     STAGE_NAMES+=("$name"); STAGE_RESULTS+=("SKIP"); STAGE_NOTES+=("--only $ONLY")
     return 0
@@ -399,6 +404,16 @@ stage_doc_paths() {
   python3 "$REPO_ROOT/tools/check_doc_paths.py"
 }
 
+stage_text_integrity() {
+  # A NUL byte in a text file is inert to the compiler and loud to grep: GNU
+  # grep calls the file binary, lists only the matches it found *before* that
+  # byte, puts "binary file matches" on stderr, and exits 0 -- a truncated
+  # answer that looks complete.  In src/mod/gui_mod.c the swallowed lines were
+  # the two that prove gui_fullscreen is registered twice, and the duplicate is
+  # a live defect (builtin_fullscreen is unreachable).  See docs/AUDIT.md §1.55.
+  python3 "$REPO_ROOT/tools/check_text_integrity.py"
+}
+
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
 run_stage "differential fuzz (interp vs AOT, expect 0 findings)" fuzz stage_fuzz
@@ -409,6 +424,26 @@ run_stage "oauth_loop crate (expect 75/75)" oauth-loop stage_oauth_loop
 run_stage "userdata ignore rules (default deny)" ignored-credentials stage_ignored_credentials
 run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
+run_stage "tracked text files carry no NUL byte (expect 0)" text-integrity stage_text_integrity
+
+# An --only value that matches no stage used to skip every stage, print
+# "gate: OK -- every stage passed." and exit 0: a green light from a run that
+# executed nothing.  A skip is not a pass, and skipping all of them is the most
+# complete form of that mistake -- a CI step with a misspelled stage name would
+# have been silently green.  The legal values are derived from STAGE_WANTED,
+# which run_stage filled in above, so this check cannot go stale on its own.
+if [ -n "$ONLY" ]; then
+  matched=0
+  for w in "${STAGE_WANTED[@]}"; do
+    [ "$w" = "$ONLY" ] && matched=1
+  done
+  if [ "$matched" -eq 0 ]; then
+    echo "gate: --only '$ONLY' matches no stage; nothing was run." >&2
+    echo "gate: legal values: ${STAGE_WANTED[*]}" >&2
+    echo "gate: refusing to report a pass for a run that executed nothing." >&2
+    exit 2
+  fi
+fi
 
 echo
 echo "══════════════════════════════════════════════════════════════"
@@ -423,5 +458,10 @@ if [ "$FAILED" -ne 0 ]; then
   echo "gate: FAILED — do not merge."
   exit 1
 fi
-echo "gate: OK — every stage passed."
+if [ -n "$ONLY" ]; then
+  echo "gate: OK — the selected stage passed (--only $ONLY)."
+  echo "gate: this was NOT the full gate: ${#STAGE_WANTED[@]} stages are registered and only this one ran."
+else
+  echo "gate: OK — every stage passed (${#STAGE_NAMES[@]}/${#STAGE_WANTED[@]} stages ran)."
+fi
 exit 0

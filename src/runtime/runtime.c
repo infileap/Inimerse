@@ -13,7 +13,19 @@
 #include <winhttp.h>
 #endif
 
-static int builtin_random(VM *vm) { if (vm_cur_sp(vm)<0) return 0; int max=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, rand()%max); return 1; }
+/* random(n) -> an integer in [0, n).  This is the Windows twin of
+ * src/runtime/runtime_posix.c's posix_random and must answer the same thing.
+ *
+ * It was dead code: nothing registered it, and src/mod/io_mod.c registered a
+ * DIFFERENT function under the same name -- `push_int(vm, rand())`, which
+ * ignores the argument and is unbounded.  Measured before this change:
+ * random(10) answered 24875 on Windows and 3 on POSIX, both with exit code 0.
+ * The io_mod copy is gone and this one is registered (runtime_register_builtins
+ * below), so the name has one answer again.
+ *
+ * The `max > 0` guard is not decoration: `rand() % 0` is an integer division by
+ * zero, and the old body had no guard at all. */
+static int builtin_random(VM *vm) { if (vm_cur_sp(vm)<0) return 0; int max=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, max > 0 ? rand() % max : 0); return 1; }
 static int builtin_sqrt(VM *vm) { if (vm_cur_sp(vm)<0) return 0; double val=val_as_double(&vm_cur_stack(vm)[vm_cur_sp(vm)]); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_float(vm, sqrt(val)); return 1; }
 static int builtin_read_file(VM *vm) { if (vm_cur_sp(vm)<0) return 0; Value _pv=vm_cur_stack(vm)[vm_cur_sp(vm)]; char *fn=strdup(_pv.sval ? _pv.sval : ""); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); if (_pv.type==VAL_STRING && _pv.ival!=1) free(_pv.sval); FILE *f=fopen(fn,"rb"); free(fn); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long len=ftell(f); fseek(f,0,SEEK_SET); char *buf=malloc(len+1); size_t got=(size_t)fread(buf,1,(size_t)len,f); buf[got]='\0'; fclose(f); push_string(vm,buf); free(buf); return 1; }
 static int builtin_write_file(VM *vm) { if (vm_cur_sp(vm)<1) return 0; Value _pw=vm_cur_stack(vm)[vm_cur_sp(vm)]; Value _px=vm_cur_stack(vm)[vm_cur_sp(vm)-1]; char *content=strdup(_pw.sval ? _pw.sval : ""); char *fn=strdup(_px.sval ? _px.sval : ""); FILE *f=fopen(fn,"w"); int success=0; if(f){fputs(content,f);fclose(f);success=1;} vm_cur_set_sp(vm, vm_cur_sp(vm) - 2); if (_pw.type==VAL_STRING && _pw.ival!=1) free(_pw.sval); if (_px.type==VAL_STRING && _px.ival!=1) free(_px.sval); free(content); free(fn); push_int(vm,success); return 1; }
@@ -37,7 +49,7 @@ static int builtin_input(VM *vm) {
     free(prompt);
     return 1;
 }
-static int builtin_int(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; int res=0; if(v->type==VAL_STRING) { const char *sv = v->sval?v->sval:""; int hx = (sv[0]=='0' && (sv[1]=='x'||sv[1]=='X')); res=(int)strtoll(sv, NULL, hx?16:10); } else if(v->type==VAL_FLOAT) res=(int)v->fval; else if(v->type==VAL_BOOL) res=v->ival?1:0; else if(v->type==VAL_INT) res=v->ival; pop(vm); push_int(vm,res); return 1; }
+static int builtin_int(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; long long res=0; if(v->type==VAL_STRING) { const char *sv = v->sval?v->sval:""; int hx = (sv[0]=='0' && (sv[1]=='x'||sv[1]=='X')); res=strtoll(sv, NULL, hx?16:10); } else if(v->type==VAL_FLOAT) res=(long long)v->fval; else if(v->type==VAL_BOOL) res=v->ival?1:0; else if(v->type==VAL_INT) res=v->ival; pop(vm); push_int(vm,res); return 1; }
 static int builtin_round(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -350,8 +362,13 @@ static int builtin_ord(VM *vm) {
 
 /* chr(n)：ASCII 码转字符 */
 static int builtin_chr(VM *vm) {
+    /* ival and sval are two members of one union, valid according to the type
+     * tag (src/vm/vm.h:24-26), so reading .ival off a string reads half of a
+     * pointer.  chr("A") used to answer a random control character instead of
+     * refusing; src/runtime/runtime_posix.c:397-402 checks the tag first. */
     if (vm_cur_sp(vm) < 0) return 0;
-    int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int n = (v.type == VAL_INT) ? (int)(v.ival & 0xFF) : 0;
     pop(vm);
     char buf[2] = { (char)(n & 0xFF), '\0' };
     push_string(vm, buf);
@@ -1176,23 +1193,11 @@ static int builtin_save_params(VM *vm) {
 
 
 /* ---------- L1 modular SPI: capability query + mod meta (minimal-permission) ---------- */
-/* caps string parser: "io,net,ai" -> bitmask ("all" = full) */
-static int spi_parse_caps(const char *s) {
-    int caps = 0;
-    const char *p = s ? s : "";
-    while (*p) {
-        if (strncmp(p, "io", 2) == 0) caps |= CAP_IO;
-        else if (strncmp(p, "net", 3) == 0) caps |= CAP_NET;
-        else if (strncmp(p, "ai", 2) == 0) caps |= CAP_AI;
-        else if (strncmp(p, "verse", 5) == 0) caps |= CAP_VERSE;
-        else if (strncmp(p, "dbg", 3) == 0) caps |= CAP_DBG;
-        else if (strncmp(p, "proc", 4) == 0) caps |= CAP_PROC;
-        else if (strncmp(p, "all", 3) == 0) caps |= CAP_MASK;
-        while (*p && *p != ',') p++;
-        if (*p == ',') p++;
-    }
-    return caps;
-}
+/* The capability string has one production point, shared with the POSIX runtime:
+   vm_parse_caps (src/vm/vm.c), declared in src/vm/vm.h next to the CAP_* bits it
+   returns.  The local copy that used to live here split on ',' and then asked
+   strncmp(p, "io", 2), so "io net" granted CAP_IO and silently dropped CAP_NET,
+   and "audio" granted nothing while POSIX granted CAP_IO.  See docs/AUDIT.md 1.50. */
 static int builtin_spi_meta(VM *vm) { /* spi_meta(id, version, caps): declare mod identity + capabilities */
     if (vm_cur_sp(vm) < 2) return 0;
     Value *capsv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -1201,7 +1206,7 @@ static int builtin_spi_meta(VM *vm) { /* spi_meta(id, version, caps): declare mo
     const char *id = (idv->type == VAL_STRING && idv->sval) ? idv->sval : "anon";
     int version = (int)val_as_int(verv);  /* tag-checked: a bool's ival is not a double */
     int caps = 0;
-    if (capsv->type == VAL_STRING) caps = spi_parse_caps(capsv->sval);
+    if (capsv->type == VAL_STRING) caps = vm_parse_caps(capsv->sval);
     else if (capsv->type == VAL_INT) caps = capsv->ival;
     else if (capsv->type == VAL_BOOL) caps = capsv->ival ? CAP_MASK : 0;
     vm->mod_caps = caps; /* replace declared mask (0 = no capabilities at all) */
@@ -1582,7 +1587,11 @@ static int builtin_atomic_add(VM *vm) {
     Value *dv = &st[vm_cur_sp(vm)];
     long long delta = val_as_int(dv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
-    if (!nm) { push_int(vm, 0); return 1; }
+    /* A name that is not a string is a caller error, not an empty counter:
+     * raising is the one answer that cannot be mistaken for success.  A slot
+     * that holds no integer is runtime state and still answers 0 without
+     * touching the slot.  See docs/SYNTAX.md 7.1 D14. */
+    if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1601,7 +1610,19 @@ static int builtin_atomic_add(VM *vm) {
         VM_UNLOCK(vm);
     }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
-    if (vm->globals[idx].val.type != VAL_INT) { vm->globals[idx].val.type = VAL_INT; vm->globals[idx].val.ival = 0; }
+    /* A slot that is not VAL_INT holds no integer, so there is no counter to
+       add to -- answer 0 and leave the slot alone, the same answer this family
+       gives when the name does not resolve (the `idx < 0` cases above).  This
+       used to normalise instead (`type = VAL_INT; ival = 0`) and then add, which
+       read and wrote `val.ival` on a slot whose live member was `fval` or
+       `sval`: atomic_add("h", 0) on `h = 2.5` answered 0 and destroyed the 2.5.
+       POSIX had no gate at all and answered the union's bit pattern.  Both
+       copies now consume the same rule; see docs/AUDIT.md 1.51. */
+    if (vm->globals[idx].val.type != VAL_INT) {
+        if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
+        push_int(vm, 0);
+        return 1;
+    }
     /* int64, like POSIX and like the language: the 32-bit InterlockedExchangeAdd
        here turned atomic_add("k", 3000000000) into -1294967296.  MSVC has no
        __builtin_add_overflow, so the bound is checked by hand -- and the CAS loop
@@ -1630,6 +1651,16 @@ static int builtin_atomic_get(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm)];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
+    /* A name that is not a string leaves nm NULL, and the lookup below would
+     * hand it to strcmp: atomic_get(42) crashed the process on Windows.  The
+     * guard was added as a crash fix and answered 0; it now raises instead.
+     * The two questions are not the same one.  A name that is not a string is
+     * a caller error -- the call could never have worked -- so it is
+     * type_mismatch.  A name that resolves to a slot holding no integer is a
+     * runtime state, and that still answers 0 without touching the slot (see
+     * the type check further down).  Both platforms raise for the first and
+     * neither for the second.  See docs/SYNTAX.md 7.1 D14. */
+    if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1651,6 +1682,10 @@ static int builtin_atomic_set(VM *vm) {
     Value *vv = &st[vm_cur_sp(vm)];
     long long val = val_as_int(vv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
+    /* Same rule as builtin_atomic_get: a non-string name is a caller error
+     * and raises type_mismatch; a slot holding no integer is runtime state and
+     * still answers 0 without touching the slot.  See docs/SYNTAX.md 7.1 D14. */
+    if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
@@ -1694,7 +1729,10 @@ static int builtin_gc_stats(VM *vm) { /* gc_stats() -> {runs, freed, enabled, th
     for (int i = 0; i < 5; i++) {
         Value k, vv;
         k.type = VAL_STRING; k.ival = 1;  k.sval = (char*)ks[i];
-        vv.type = VAL_INT; vv.ival = (int)vs[i];  vv.sval = NULL;
+        /* vs[i] is already long long; the (int) cast narrowed the 64-bit gc
+         * counters to 32 bits on the way into a 64-bit field, so a heap that
+         * had freed more than 2^31 bytes reported a negative "freed". */
+        vv.type = VAL_INT; vv.ival = vs[i];  vv.sval = NULL; vv.ptr = NULL;
         vm_array_push(vm, aidx, &k);
         vm_array_push(vm, aidx, &vv);
     }
@@ -1742,6 +1780,7 @@ static int builtin_mod_usage(VM *vm) {
 void runtime_register_builtins(VM *vm) {
     srand((unsigned)time(NULL));
     vm_register_builtin(vm, "sqrt", builtin_sqrt);
+    vm_register_builtin(vm, "random", builtin_random);
     vm_register_builtin(vm, "round", builtin_round);
     vm_register_builtin(vm, "int", builtin_int);
     vm_register_builtin(vm, "float", builtin_float);

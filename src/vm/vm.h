@@ -166,6 +166,11 @@ typedef void (*VMHook)(VM *vm);
 #define CAP_PROC  0x2000
 #define CAP_MASK  0xFF00
 
+/* The one production point for the capability string above.  Each platform copy
+   of spi_meta used to tokenise "io,net" for itself and the two disagreed: see
+   the definition in vm.c. */
+int vm_parse_caps(const char *s);
+
 #define VM_STR_POOL_LIMIT (1 << 20) /* 1M distinct strings (dedup bounds growth) */ /* 锟街凤拷锟斤拷锟斤拷锟斤拷锟斤拷:锟斤拷锟睫猴拷锟斤拷锟街凤拷锟斤拷锟斤拷??intern(锟斤拷锟斤拷 strdup),锟斤拷止锟斤拷锟斤拷锟斤拷锟斤拷 */
 struct StrPool;
 

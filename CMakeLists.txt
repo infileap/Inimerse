@@ -657,26 +657,38 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME posix_core_api_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
   set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings" PASS_REGULAR_EXPRESSION "posix-core-api-ok")
   add_test(NAME posix_runtime_parity COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_runtime_parity_v04.im)
-  if(NOT WIN32)
-    set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
+  # Enabled on both platforms.  It used to be `DISABLED TRUE` on Windows, which left the
+  # only test that compares the two runtimes unrun on the platform where they diverge --
+  # and a disabled test reports as "passed" (docs/AUDIT.md §1.37, §1.43).  The one known
+  # divergence is asserted per platform instead: `load_params` on a missing file answers
+  # -1 on POSIX (posix_unsupported) and 0 on WIN32 (a real implementation), so each side's
+  # CURRENT value is pinned and either side drifting turns this red.  Note that the old
+  # `DISABLED TRUE` branch set no assertions at all, so deleting it alone would have
+  # produced a green test that asserted nothing.
+  if(WIN32)
+    set(INIMERSE_PARITY_LOAD_MISSING "parity load_missing=0")
   else()
-    set_tests_properties(posix_runtime_parity PROPERTIES DISABLED TRUE)
+    set(INIMERSE_PARITY_LOAD_MISSING "parity load_missing=-1")
   endif()
+  set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok;${INIMERSE_PARITY_LOAD_MISSING}" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
   add_test(NAME gc_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
   set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc" PASS_REGULAR_EXPRESSION "gc-ran;gc-stats-ok;thread-result-alive;closure-capture-alive;root-alive;gc-done")
   add_test(NAME pipeline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/pipeline_v04.im)
   set_tests_properties(pipeline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1")
   add_test(NAME result_question_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_question_v04.im)
-  # Assert on the marked VALUE line, not on the unreachable literal: the engine
-  # echoes every string literal, so FAIL_REGULAR_EXPRESSION "resultq unreachable"
-  # matched the echo even when the statement never ran.
+  # Assert on the marked VALUE line, not on the unreachable literal.  This was forced by a
+  # compiler debug dump that wrote the first 16 string-pool entries to stderr on every
+  # compile (`src/compiler/compiler.c:3116`, removed this round), which made
+  # FAIL_REGULAR_EXPRESSION "resultq unreachable" match the echo even when the statement
+  # never ran.  The dump is gone; asserting on values is still the rule (docs/SYNTAX.md
+  # §7.2 M13: 66 of 101 CTest cases asserted only the exit code).
   set_tests_properties(result_question_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result" PASS_REGULAR_EXPRESSION "resultq value=42.*resultq caught.*resultq reached=0")
   add_test(NAME null_coalesce_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/null_coalesce_v04.im)
   set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "coalesce nil=42.*coalesce some=7")
   add_test(NAME optional_member_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/optional_member_v04.im)
-  # The engine echoes builtin call arguments, so the dict literal's own
-  # "inimerse" appears in the output even when `?.` is broken -- assert on the
-  # OM-prefixed value lines instead. PASS catches the key being truncated
+  # The old compiler string-pool dump echoed the dict literal's own "inimerse" even when
+  # `?.` was broken (that dump is removed; see the note on result_question_runtime above)
+  # -- assert on the OM-prefixed value lines. PASS catches the key being truncated
   # (bytecode_add_string got a non-NUL-terminated StringView); FAIL catches the
   # stale recycled register that made nil?.name return the previous result.
   set_tests_properties(optional_member_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "OM present=inimerse" FAIL_REGULAR_EXPRESSION "OM missing=inimerse")
@@ -964,9 +976,10 @@ endif()
 # This block sits after the ENVIRONMENT loop above on purpose: that loop sets
 # ENVIRONMENT on every registered test, which would overwrite the LD_PRELOAD
 # this test needs.  It is registered here rather than earlier so that no existing
-# #N moves; the three cases below follow it for the same reason, so #123 stays
-# resolve_timeout_runtime and these become #124-#126 on POSIX (the numbering rule
-# is written down in docs/STATUS.md §10.67).
+# #N moves; every block appended after it follows the same rule, so #123 stays
+# resolve_timeout_runtime (the numbering rule is written down in docs/STATUS.md
+# 10.67).  The blocks below register the pinned builtin contracts first
+# (#124-#134) and then three evidence cases (#135-#137) on POSIX.
 if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
   add_library(slowdns_preload MODULE src/platform/slowdns_preload.c)
   target_link_libraries(slowdns_preload PRIVATE ${CMAKE_DL_LIBS})
@@ -979,7 +992,240 @@ if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
     PASS_REGULAR_EXPRESSION "resolve_bound: ok")
 endif()
 
+# Pins "a VFS path may never escape its mount prefix" (docs/AUDIT.md §1.43).
+# im_vfs_normalize()'s ".." branch searched the caller's buffer with
+# strchr(out, '/') before out[w] had been terminated, so it read uninitialized
+# bytes and answered differently run to run -- on this tree
+# "os:/../escape" normalized successfully, i.e. the escape was allowed.  The
+# probe already asserted the opposite, but nothing registered it, so the gate
+# never ran it and the failure was invisible.  It reads README.md through the
+# "." mount, hence the source root as its working directory.
+# Registered last so no existing #N moves.
+add_test(NAME vfs_probe COMMAND vfs_probe)
+set_tests_properties(vfs_probe PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "platform;smoke")
+
+# A builtin name is one contract.  src/runtime/runtime.c (WIN32) and
+# src/runtime/runtime_posix.c (POSIX) register the same names through different
+# code, so a name with two implementations is a name with two answers -- and the
+# only test that compared them, posix_runtime_parity, is DISABLED on Windows
+# (:662).  This pin runs on BOTH platforms and prints one line either way, so on
+# Linux it judges the POSIX copy and on Windows the WIN32 one.  It pins
+# int()'s width, chr()'s type check, and the name guard that atomic_get/atomic_set
+# were missing (which crashed the Windows engine).  int("0x10") is asserted: it
+# was an open divergence (0 on POSIX, 16 on WIN32) and a human ruled it to 16 on
+# both platforms, so it is a resolved contract now, not a crowned side.  See
+# docs/AUDIT.md 1.45.
+# Registered last so no existing #N moves.
+add_test(NAME divergent_builtin_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
+set_tests_properties(divergent_builtin_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=type_mismatch a2=type_mismatch a3=type_mismatch a4=0"
+  FAIL_REGULAR_EXPRESSION "a1=NO-THROW|a2=NO-THROW|a3=NO-THROW|a4=type_mismatch")
+
+# ---------------------------------------------------------------------------
+# round() with a non-number argument has two answers, and this pin asserts each
+# platform's OWN answer instead of picking a winner: POSIX (posix_core_round,
+# src/runtime/runtime_posix.c:104) returns nil, WIN32 (builtin_round,
+# src/runtime/runtime.c:41) throws "round: expected number".
+#
+# REGISTERED, NOT RESOLVED.  Precedent: docs/AUDIT.md 1.25 -- sum() with a
+# non-numeric element is nil on POSIX and a throw on WIN32, and that ruling kept
+# both styles and recorded the divergence rather than unifying it.  Class:
+# docs/SYNTAX.md 7.1 D5 -- a bad argument answered with nil is a silent wrong
+# answer, the throw is loud; by 7's own classification the loud one is better,
+# but "better" is not "decided".  See docs/AUDIT.md 1.45.
+#
+# Registered last so no existing #N moves.
+add_test(NAME round_nonnumber_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/round_nonnumber_contract_v06.im)
+set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression")
+if(WIN32)
+  set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "round: expected number")
+else()
+  set_tests_properties(round_nonnumber_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "round-nonnumber=nil")
+endif()
+
+# ---------------------------------------------------------------------------
+# `.` and `?.` are two production points for one syntax, and the node carrying
+# the difference is allocated by the parser.  `struct Expr`'s `member.safe`
+# (src/parser/ast.h:63) was left uninitialised on the `.` path -- the parser
+# allocated that node with malloc and wrote only type/object/member -- so `a.b`
+# compiled as an index get whenever the allocator handed back a non-zero byte.
+# A dotted global (for instance a parameter named `player.max_hp`) then silently
+# read nil, and the symptom looked like a file-size threshold because the byte
+# depended on the allocator's history.  Every AST node is allocated zeroed now,
+# so `safe` is false by construction on `.` and explicitly true on `?.`.
+#
+# The probe poisons the small-object heap with 0x01 before each parse, so a node
+# that is not zero-initialised is guaranteed to carry a non-zero `safe` instead
+# of relying on luck: it reports 5 failures on the pre-fix parser and passes on
+# the fixed one.  See docs/AUDIT.md 1.48.
+#
+# Registered last so no existing #N moves.
+add_executable(parser_member_safe_probe
+  src/parser/parser.c src/lexer/lexer.c src/common/common.c
+  src/parser/parser_member_safe_probe.c)
+target_include_directories(parser_member_safe_probe PRIVATE src/parser src/lexer src/common)
+if(NOT WIN32)
+  target_compile_definitions(parser_member_safe_probe PRIVATE _GNU_SOURCE _stricmp=strcasecmp)
+endif()
+add_test(NAME parser_member_safe_probe COMMAND parser_member_safe_probe)
+set_tests_properties(parser_member_safe_probe PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "parser;regression"
+  PASS_REGULAR_EXPRESSION "parser_member_safe_probe: ok")
+
+# ---------------------------------------------------------------------------
+# Parameters and the working directory.  load_and_run() opens the parameter file
+# AFTER chdir_to_script_dir() has moved the process into the script's directory,
+# so a RELATIVE --params path was resolved against that directory instead of the
+# caller's.  `inimerse --params vtest/p.params vtest/sub/s.im` therefore looked
+# for `vtest/sub/vtest/p.params`, found nothing, and every parameter read as nil
+# -- silently, with exit code 0.  The path is now pinned to an absolute one
+# while the process is still in the caller's directory.
+#
+# The second pin is the sibling defect: a file the user NAMED with --params is
+# not optional, so a miss is now an error instead of a silent nil.  The default
+# `params.params` stays optional.
+#
+# The third pin is the precompiled path: vm_load_bytecode() rebinds globals by
+# POSITION, so params loaded BEFORE the bytecode had their values attached to
+# whichever name occupied that slot.  See docs/AUDIT.md 1.49.
+#
+# Registered last so no existing #N moves.
+# NOTE: the --params arguments below are deliberately RELATIVE.  An absolute path
+# would make the chdir invisible and the first test would pass against the bug.
+add_test(NAME params_relative_path_runtime
+         COMMAND inimerse --no-mods --params vtest/params_relative_v06.params
+                 vtest/params_sub/relative_script.im)
+set_tests_properties(params_relative_path_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
+  PASS_REGULAR_EXPRESSION "params-relative speed=42")
+
+add_test(NAME params_missing_explicit_runtime
+         COMMAND inimerse --no-mods --params vtest/definitely_absent.params
+                 vtest/params_sub/relative_script.im)
+set_tests_properties(params_missing_explicit_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
+  PASS_REGULAR_EXPRESSION "cannot read params"
+  FAIL_REGULAR_EXPRESSION "params-relative speed=")
+
+add_test(NAME params_precompiled_runtime
+         COMMAND inimerse --no-mods --params vtest/params_precompiled_v06.params
+                 vtest/params_precompiled_v06.inim)
+set_tests_properties(params_precompiled_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
+  PASS_REGULAR_EXPRESSION "params-precompiled player=42")
+
+# spi_caps_contract_v06.im -- the capability string had two production points
+# (posix_spi_meta's strstr chain and the Windows runtime's spi_parse_caps), and
+# they answered "io net", "audio" and "ionet" differently.  Both now call the
+# single vm_parse_caps.  Every string field is asserted once, because both
+# platforms now agree on all of them; the caps argument's TYPE is still two
+# production points (true -> 0 on POSIX, CAP_MASK on WIN32), so that ONE field
+# is selected per platform here -- the divergence stays visible and
+# change-detectable without anyone adjudicating it.  See docs/AUDIT.md 1.50.
+#
+# Registered last so no existing #N moves.
+add_test(NAME spi_caps_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/spi_caps_contract_v06.im)
+set_tests_properties(spi_caps_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression")
+if(WIN32)
+  set_tests_properties(spi_caps_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "spi-caps-ok doc=768 space=0 audio=0 ionet=0 all=65280 int=256 bool=65280")
+else()
+  set_tests_properties(spi_caps_contract_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "spi-caps-ok doc=768 space=0 audio=0 ionet=0 all=65280 int=256 bool=0")
+endif()
+
+# docs/AUDIT.md 1.51 -- an atomic slot is an integer counter, and only that.
+#
+# atomic_get/atomic_add have two production points (src/runtime/runtime.c and
+# src/runtime/runtime_posix.c) and neither consulted the slot's `type` tag
+# before reading or writing the union.  atomic_get("y") on `y = 1.5` answered
+# the IEEE754 bits of 1.5 on POSIX and 0 on Windows; atomic_add("h", 0) on
+# `h = 2.5` destroyed the 2.5 on both, silently, exit code 0.
+#
+# The whole line is asserted because the defect exits 0 (docs/SYNTAX.md 7.2
+# M13), and it is the SAME line on both platforms: both copies now consume one
+# rule -- a slot that is not VAL_INT holds no integer counter, so the answer is
+# 0 and the slot is left alone.  No per-platform branch, deliberately.
+#
+# Registered last so no existing #N moves.
+add_test(NAME atomic_slot_type_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/atomic_slot_type_contract_v06.im)
+set_tests_properties(atomic_slot_type_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+  PASS_REGULAR_EXPRESSION "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0"
+  FAIL_REGULAR_EXPRESSION "n1=NO-THROW|n2=NO-THROW|n3=NO-THROW|n4=type_mismatch")
+
+# docs/AUDIT.md 1.52 -- random(n) means an integer in [0, n), on both runtimes.
+#
+# `random` had two production points and only one of them was registered:
+# src/runtime/runtime.c's builtin_random computed `rand() % max` but
+# runtime_register_builtins never mentioned the name, while src/mod/io_mod.c
+# registered its own copy that answered a bare `rand()` and ignored the
+# argument.  On Windows that copy was the answer: random(10) returned 27606,
+# random(0) returned the very same 27606, and the exit code was 0 both times.
+#
+# The io_mod copy is gone; the survivor is registered in
+# runtime_register_builtins, which runs before register_core_modules
+# (src/main.c:1096/1097).  There is now exactly one production point, so that
+# ordering is no longer load-bearing.
+#
+# The whole line is asserted because the defect exits 0 (docs/SYNTAX.md 7.2
+# M13).  Four of the five fields catch it and one does not, which is stated
+# here rather than hidden: `big` is true on the pre-fix engine too, because a
+# bare rand() is already smaller than 1000000.  Same line on both platforms, no
+# per-platform branch: posix_random already had the bound and the `n > 0` gate,
+# so the rule being consumed is not new, only newly shared.
+#
+# Registered last so no existing #N moves.
+add_test(NAME random_bounded_contract_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/random_bounded_contract_v06.im)
+set_tests_properties(random_bounded_contract_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+  PASS_REGULAR_EXPRESSION "random-bounded-ok one=true zero=true neg=true ten=true big=true")
+
+# Pins "the array/dict pool refuses an index it does not own" (docs/AUDIT.md
+# 1.54).  vm_pool_slot is the single door to the pool -- 71 call sites in src/
+# go through it -- and eight of them test the answer for NULL.  The body had no
+# bounds test at all, so it could never answer NULL: slot(-1) returned
+# 0xffffffffffeefef0 on a fresh VM and a real heap address once arrays_big
+# existed, slot(100000) returned 0x18e0a00, and only slot(4096) happened to be
+# NULL (NULL + 0).  Every `if (!a)` downstream was dead code.
+#
+# A C probe rather than an .im script, and the reason is the point: a script
+# cannot name a pool index, and the defect is in the C function, so this is the
+# only level at which the contract is observable.  It links the engine objects
+# directly, like vm_init_probe above.  It asserts the two ends of the inline
+# pool still resolve as well, so a blanket `return NULL` cannot pass it, and it
+# dereferences nothing -- the out-of-range answer is a pointer value, and on the
+# pre-fix build that value is the evidence (probe prints `raw -1=...`).
+#
+# No PASS regex: the exit code is the verdict.
+#
+# Registered last so no existing #N moves.
+add_executable(vm_pool_slot_probe src/vm/vm_pool_slot_probe.c)
+target_link_libraries(vm_pool_slot_probe PRIVATE inimerse_engine)
+if(WIN32)
+  target_link_libraries(vm_pool_slot_probe PRIVATE m winhttp crypt32 gdi32 winmm msimg32
+    windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+else()
+  target_link_libraries(vm_pool_slot_probe PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME vm_pool_slot_probe COMMAND vm_pool_slot_probe)
+
 # Three cases that wire up evidence the docs already cited but that nothing ran.
+#
+# Registered after the contract pins above so that their documented #N -- cited in
+# docs/AUDIT.md and docs/STATUS.md -- do not move.
+#
 #
 # `docs/API.md` §2.1 had two `case`-coverage rows whose "证据（CTest）" column named
 # vtest *files* -- vtest/lint_case_missing_default_v04.im and

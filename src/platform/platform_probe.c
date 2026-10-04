@@ -55,6 +55,21 @@ int main(void) {
     memset(deep, 'x', sizeof deep - 1);
     deep[sizeof deep - 1] = '\0';
     if (im_platform_mkdirs(deep) != -1) return 19;
+    /* im_platform_write_file answers 0 on success and -1 on failure.  It was
+       written as `int ok = (...) ? 0 : -1; if (ok) return 0; return -1;`, which
+       inverted the two: a good write answered -1 and a failed write answered 0.
+       Its only caller (src/mod/server_mod_posix.c:89) reads non-zero as
+       failure, so server_start killed the child it had just spawned and
+       answered 0 instead of the room number on every POSIX run.  Both
+       directions are pinned here -- a write that must succeed, the read that
+       must see it, and a write to an unopenable path, which must refuse.
+       See docs/AUDIT.md 1.44. */
+    if (im_platform_write_file("im_pp_wf.txt", "abc", 3) != 0) return 20;
+    char back[8] = {0};
+    if (im_platform_read_file("im_pp_wf.txt", back, sizeof back) != 3) return 21;
+    if (strcmp(back, "abc") != 0) return 22;
+    if (im_platform_write_file("im_pp_mk/nope/x.txt", "abc", 3) != -1) return 23;
+    remove("im_pp_wf.txt");
     PP_RMDIR("im_pp_mk/a/b/c"); PP_RMDIR("im_pp_mk/a/b"); PP_RMDIR("im_pp_mk/a"); PP_RMDIR("im_pp_mk");
     return 0;
 }

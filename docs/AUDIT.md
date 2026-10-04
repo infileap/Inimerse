@@ -621,7 +621,7 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 
 **已归零。** 这 5+4 条分歧在 v3.1 里逐条修掉了，pin 从 `5`/`4` 降到 `0`/`0`，阶段从「钉住」改成「零期望」—— 见 §1.14。
 
-**2026-10 补记：pin 只断言了「分歧数」，没断言「跑过」。** 上面这套判定读的是 `DIVERGE` / `THREW` / `not translated` 三个计数，而这三个计数在**一个程序都没跑**的时候同样全是 0 —— 空跑与干净跑打印出同一个绿，和发布门禁跑 24/123、`--lint $FILES` 在 `$FILES` 为空时通过是同一个形状（分母不在被断言的位置上）。0.5.1 按机制修掉：`EXP_FUZZ_SEED=1` 变成种子集 `EXP_FUZZ_SEEDS="${EXP_FUZZ_SEEDS:-1 2 3}"`，`stage_fuzz` 逐种子读回 `seed N, M programs` 并断言 `M == EXP_FUZZ_COUNT`（空跑或缩水的运行不许当成「没有发现」），同时断言四个分桶之和闭合、累计种子数不为 0；pin 与 `not translated` 的判定改在累计总数上做。细节见 [STATUS.md](STATUS.md) §10.74。
+**2026-10 补记：pin 只断言了「分歧数」，没断言「跑过」。** 上面这套判定读的是 `DIVERGE` / `THREW` / `not translated` 三个计数，而这三个计数在**一个程序都没跑**的时候同样全是 0 —— 空跑与干净跑打印出同一个绿，和发布门禁跑 24/123、`--lint $FILES` 在 `$FILES` 为空时通过是同一个形状（分母不在被断言的位置上）。0.5.1 按机制修掉：`EXP_FUZZ_SEED=1` 变成种子集 `EXP_FUZZ_SEEDS="${EXP_FUZZ_SEEDS:-1 2 3}"`，`stage_fuzz` 逐种子读回 `seed N, M programs` 并断言 `M == EXP_FUZZ_COUNT`（空跑或缩水的运行不许当成「没有发现」），同时断言四个分桶之和闭合、累计种子数不为 0；pin 与 `not translated` 的判定改在累计总数上做。细节见 [STATUS.md](STATUS.md) §10.87。
 
 **边界不变，且多一条。** 它仍然只证明「在这些种子和这批程序上，分歧的数量没有变」，不是两个后端一致的合格证；分母断言保证的是「跑满了这么多个程序」，**不保证种子集本身选得好** —— 三个种子只是把「种子 1 恰好干净」的疑虑压小，不是覆盖率证明。
 
@@ -1136,7 +1136,7 @@ FAIL 正则 `set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648
 正确性论证。本节把它推翻，理由三条：① **平台相关的程序含义本身就是缺陷** —— 门禁里有
 `differential fuzz (interp vs AOT)` 这一阶段，正因为「同一个程序在不同通道上不同」被当作缺陷，
 而 POSIX 与 WIN32 之间**没有任何门禁**；② `nil` 作为失败信号在这里不可观测（上表最后一格）；
-③ 仓库自己的 §1.14 教条是「宁可抛，不要静默算错」。
+③ 仓库自己的 §1.14（`docs/AUDIT.md:624`「v3.1 整数位宽」）规定的是**算术**溢出要抛而不是回绕 —— **它只管算术，不是「任何内建遇到不认识的参数类型就抛」的通用教条；本节原先把它升格成了通用教条，更正见 §1.46。**
 
 **顺带修掉的第二处。** WIN32 的元素规则是 `if (t == VAL_STRING || t == VAL_BOOL) { ok = 0; break; }`
 —— **`VAL_NIL` 不在拒绝之列**，于是 `val_as_double(nil)` 得 0.0，`sum([1, nil])` 在 Windows 上答 1。
@@ -1696,6 +1696,721 @@ if (im_process_wait(b, 3000) != 0 || im_process_exit_code(b) != 7) return 9;
 **判据。** 真实 Windows 上（`/mnt/c/msys64/ucrt64/bin/gcc.exe`）新探针 **12/12 通过**。
 
 **诚实边界。** ① 旧探针**在本机 20/20 也通过**：这个 flake 没有被复现，所以**不能**声称 20 ms 是根因 —— 只能说探针现在可诊断，并且不再含那个 20 ms 竞态。② flake 是否消失要等 CI 长跑；本次交付证明的是「下次红了，日志能说出是哪一步、看到的实测值是多少」。③ Linux 侧行为没变，改的只是 Windows 会走到的那条短等待与日志。
+
+## §1.43 一个逃逸守卫读了没写过的字节，而唯一断言它的探针没有注册
+
+`src/platform/vfs.c:22` 的 `..` 守卫是 `if (w == 0 || !strchr(out, '/')) return -1;`，
+但此刻 `out[w]` 还没有写终止符 —— 终止符在 `:29` 才写。`strchr` 于是越过已写入的 `w`
+个字节，去读调用方缓冲区里**从未初始化过**的内容，命中与否取决于栈上恰好有什么。
+注释写着「A VFS path may never escape its mount prefix」，而这条约束实际被放行：
+`im_vfs_normalize("os:/../escape")` 从源码根连跑 40 次，**40/40 返回 0**（成功）。
+
+**为什么一直没人发现。** `vfs_probe` 在 `CMakeLists.txt:34` 就被构建，却从来没有
+`add_test` 注册，`tools/gate.sh` 里也没有任何 `vfs` 引用 —— 一个已经断言了正确行为、
+并且正在失败的探针，门禁从来没有跑过它。这和第 1.24 节、第 1.40 节是同一类：
+**断言存在，执行点不存在。**
+
+**修法。** `strchr(out, '/')` 改成 `memchr(out, '/', w)`，只搜已经写过的 `w` 个字节。
+修复后同一条命令 40/40 返回 0（正确拒绝），从 `build/` 跑返回 4（读不到 `README.md`），
+这正是必须带 `WORKING_DIRECTORY` 的原因。`src/platform/vfs_probe.c` 另加两条：
+`"os:/a/b/.."` 仍须正常归一化到 `"os:/a"`（前缀**内部**的 `..` 不能一并禁掉），以及
+**读路径**上的逃逸 `im_vfs_read_file(v, "os:/../README.md", ...)` 必须失败。
+
+**负对照。** 用 `git show HEAD:src/platform/vfs.c` 编出的旧探针 rc=**2**（逃逸检查触发），
+证明这个 pin 看得见修复前后的差别。注册为 CTest `#124 vfs_probe`，放在注册序列末尾。
+
+**诚实边界。** ① 这个缺陷**不是 Windows 专有**，两个平台都在读未初始化的栈内存；Linux
+上 40/40 都命中，是因为那个缓冲区恰好带着调用方的旧字节。② 我改的是「只搜已写入的
+字节」，没有改 `..` 的语义。
+
+## §1.44 `im_platform_write_file` 的成败极性反了，于是 POSIX 的 `server_start` 每次自杀
+
+`src/platform/platform.c:213` 原本是
+
+    int ok = (n == length && fclose(f) == 0) ? 0 : -1; if (ok) return 0; return -1;
+
+成功码是 0、失败码是 -1，而 `if (ok)` 在**成功时**为假。两个方向都反了：写成功返回 -1，
+写失败返回 0。唯一调用者是 `src/mod/server_mod_posix.c:89`：
+
+    if (mlen < 0 || im_platform_write_file(path, metadata, (size_t)mlen) != 0) {
+        im_process_kill(proc); im_process_close(proc); return (push_int(vm, 0), 1); }
+
+`!= 0` 是「当成失败」，而写成功恰好返回 -1 ⇒ **`server_start` 每次都 kill 掉自己刚
+spawn 的子进程，并返回 0 而不是房间号**，在每一个 POSIX 运行上，而进程退出码是 0。
+
+**为什么门禁看不见。** 这个函数在 Windows 上**没有任何调用者**（`im_platform_read_file`
+的三个调用点也都在 `server_mod_posix.c`），所以它不是 Windows 缺陷；而 POSIX 侧没有任何
+用例断言过 `server_start` 的返回值。这是「同一个计算有多个生产点」的反面：
+**一个生产点，两个方向都写反了，而没有断言看着它。**
+
+**修法。** 直接返回那个三元表达式。`src/platform/platform_probe.c` 加一个往返（写必须
+成功、读必须看见、写到一个打不开的路径必须拒绝），返回码 20–23。负对照：用 HEAD 版
+`platform.c` 编同一个探针 → rc=**20**。
+
+**诚实边界。** 我没有在 POSIX 上真跑一次 `server_start` 的端到端流程（它需要
+`server_mod_posix.c` 那一整套房间与子进程环境）；证据是「极性反了」这一读法 + 调用者
+的 `!= 0` 判据 + 往返探针。
+
+## §1.45 同一个内建名，两份实现，四个不同的答案（其中一个是崩溃）
+
+`src/runtime/runtime.c`（WIN32）与 `src/runtime/runtime_posix.c`（POSIX）用不同的代码注册
+**同一批名字**，所以一个名字有两份实现就是一个名字有两个答案。59 个同名内建逐条对拍出
+四条真分歧：
+
+| 输入 | POSIX | WIN32（修前） |
+| --- | --- | --- |
+| `int(9007199254740993)` | `9007199254740993` | `1` |
+| `int(9223372036854775807)` | `9223372036854775807` | `-1` |
+| `int("0x10")` | `0`（**修前**）→ `16` | `16`（**本轮裁定两端统一**） |
+| `chr("A")` | `""` | `'\x01'`（每次不同） |
+| `atomic_get(42)` / `atomic_set(42, 7)` | `0` | **进程崩溃（rc=5）** |
+
+**① `int()` 的宽度。** `src/runtime/runtime.c:40` 用 `int res` 中转
+（`res=(int)strtoll(...)`、`(int)v->fval`），而 `ival` 是 64 位整数槽
+（`docs/DECFY_DESIGN.md:76`、`src/vm/vm.h:24-26`），所以这是把 64 位值 mod 2³² 后符号扩展。
+`src/runtime/runtime_posix.c:75` 一直是 `int64_t n`。
+
+**② `chr()` 不查类型就读 union。** `src/runtime/runtime.c:354` 原本是
+`int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival;`。`ival` 与 `sval` 是**同一个 union 的两个
+成员**，按 type tag 二选一有效；对一个 `VAL_STRING` 读 `ival` 读的是**指针的一半**，所以
+`chr("A")` 每次给一个不同的控制字符。POSIX `:400` 先判 `v.type == VAL_INT`。
+
+**③ `atomic_get`/`atomic_set` 的 NULL 名字 —— 这一条会崩。** `:1631`/`:1650` 把非字符串
+实参变成 `nm = NULL`，然后**无条件**把它交给 `strcmp(vm->globals[i].name, nm)`。同族的
+`builtin_atomic_add:1585` 一直有 `if (!nm) { push_int(vm, 0); return 1; }`，POSIX 的
+`posix_atomic_find` 开头也有同样的检查 —— 所以这是**一个家族里漏掉的一个守卫**，不是有意
+的设计分歧。实测 `atomic_get(42)` 在 Windows 上 rc=5，输出 `[crash] rip=... [stack] #0..#15`，
+是用户可复现的进程崩溃。
+
+**④ 参数顺序：`say_log` / `say_file`。** 文档与 POSIX 副本都写 `say.log(text, level)`、
+`say.file(text, path)`（`src/mod/say_mod_posix.c:11`、`:31-38`），也就是**文本是第一个
+实参**；`src/mod/say_mod_windows.c:16`/`:27` 把第一个实参当成了另一个值。于是
+`say_log("TEXT", "WARN")` 在 Windows 上打印 `[TEXT] WARN`（文本当成了级别）。同一份文件
+还缺 `say_target` 的 `console`/`log`/`json` 三分支，且 `say_ai` 对已经是 JSON 的载荷一律
+再加一层引号与转义（POSIX `:42` 的 `is_json` 分支）。
+
+**⑤ 同批修掉的其余项。** `src/mod/net_mod.c:135-136` 的 `net_recv` 单参形式无条件读下标 1
+（POSIX `:26-28` 按 `argc` 分支）；`src/mod/server_mod.c:184/187/189` 三条遗留的 `[srvdbg]`
+调试输出（POSIX 对应物不打印）；`lan_ip` 在 Windows 上以 flags=0 注册而 POSIX 是
+`1|CAP_NET`（`src/mod/server_mod_posix.c:145`），于是 `--safe` 下 POSIX 拒绝、Windows 放行；
+`src/mod/io_mod.c:750` 的知识库路径硬编码成作者机器的 `D:\inimerse_stable\_ai_kb.im`；
+`src/mod/verse_dist_mod.c:2648` 的 `iv.ival = (int)expires_at` 把 `uint64_t` 的 Unix 秒截成
+32 位（2038-01-19 起变负数），以及 `src/runtime/runtime.c:1697` 的 `vv.ival = (int)vs[i]`
+把 gc 计数截成 32 位。
+
+**为什么这些活了下来。** 唯一做过 Windows↔POSIX 对拍的用例 `posix_runtime_parity` 在
+`CMakeLists.txt:662-663` 被 `DISABLED TRUE`（只在 `if(NOT WIN32)` 分支启用），所以
+**没有任何用例在 Windows 上比较过这两份运行时**。
+
+**修法与 pin。** 新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，
+**两端都跑**：Linux 上判 POSIX 副本，Windows 上判 WIN32 副本，打印同一行。
+
+**证据（真 Windows 工具链）。** msys2 里没有 `cmake.exe`，所以用 mingw64 gcc 按
+`CMakeLists.txt:412-436` 的 WIN32 源列表手工全量编译引擎（`.verify/v31/dvbuild.sh`）。
+**修前**引擎在那条 pin 上 rc=**5**；**修后**引擎 rc=**0**，且输出与 Linux **逐字相同**：
+`divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0`（`i3` 就是上表那条 `int("0x10")`，已按人的裁定恢复断言）。`say_pair_probe_v06.im` 在两个引擎上同样逐字相同
+（`[WARN] TEXT`、`payload:{a:1}` 不加引号、`payload:"plain"` 加引号、`null`、`saypair rc=1`）。
+
+**为什么不是「挑一侧当基线」。** 本轮的判据是**消去同一语义的两个决定点**，不是
+「让 Windows 抄 POSIX」。`docs/DECFY_DESIGN.md:8-12` 把这条写死了：「用 `.im` 重写」不是修法，
+真正的修法是让所有后端消费**同一个 IR（字节码）**、把语义收敛成**一张表**，使分歧在结构上
+不可表达。`docs/STATUS.md` 阶段一的两条 `[ ]` 直接对着这件事（把 Fiber/线程/锁/进程能力拆成
+POSIX/Windows 后端、统一走 `src/platform/features.h` 的能力声明）。先例是 `docs/STATUS.md`
+§5 P1 第 8 条：`inim-client` 的子进程派生是 POSIX-only，非 POSIX 平台**明说未实现（退出码 4）
+而不是假装可用**。所以判据顺序是：① `docs/SYNTAX.md`/`docs/API.md` 明文 → 照它；② 文档
+沉默 → **显式拒绝**，**不挑任一侧的值当规范**。这是仓库时代的操作性推断，不是设计期约定：
+设计对话（791 条消息）里作者从未讨论过平台基线，只有 `m00181`「初步完成了去Windows依赖」与
+`m00185`「Linux…甚至无母系统」，方向是**减少依赖**，不是「POSIX 是基线」。
+
+**判据的最终来源是人，不是任何一侧的代码。** 本节先把 `int("0x10")` 登记为未裁定，随后由协调者连同 `load_params`/`round` 一起提交给用户；**用户裁定两端都答 `16`**。所以这一条现在的状态是 **RESOLVED BY HUMAN**，落法是**两份副本一起改**（`src/runtime/runtime.c:40` 保留 base-16，`src/runtime/runtime_posix.c` 补上同一条分支），而不是「POSIX 抄 Windows」—— 方向由人给，代码跟着裁定走。
+
+**诚实边界。** ① `int("0x10")` **已由人裁定为两端都答 `16`**（本轮），状态从 REGISTERED, NOT RESOLVED 变为 RESOLVED BY HUMAN。它此前的分歧是：`src/runtime/runtime.c:40` 接受 `0x` 前缀、POSIX 副本不接受。我**先把它补进 POSIX**、随后**撤回**了（那是把一个决定点的**特性移植**到另一边，不是消去分歧 —— 修法把 1 个问题变成了 2 个），登记一轮后由人拍板；现在**两份副本一起改**，pin 恢复断言 `i3=16`，`docs/SYNTAX.md` §7.3 **R4** 的「十六进制有两条扫描路径」随之消去一条。② `load_params` /
+`save_params` 的**无参**行为仍然分歧（POSIX 注册成 `posix_unsupported` 答 -1，Windows 有真
+实现答 0/1），方向未定，**我没有动它** —— `docs/API.md:590` 说这套 `.params` API
+「在源码中无实现证据」，即 POSIX 侧才是文档描述的状态。③ `round` 对非数字参数 Windows
+抛错、POSIX 返回 nil，是**有意保留**的硬/软拒绝设计分歧，未动。
+
+## §1.46 一条被两处引用、却不在被引处里的「教条」
+
+`docs/AUDIT.md:1135` 与 `docs/STATUS.md:3325` 各自写着
+
+> ③ §1.14 的教条是「宁可抛，不要静默算错」。
+
+两处都把 **§1.14** 当作一条**通用教条**的来源。但 §1.14（`docs/AUDIT.md:624`）的标题是
+「v3.1 整数位宽：Value 的整数槽改 int64，模糊测试的分歧归零」—— 它定义的是**算术运算符**
+在溢出与整除上的行为（`ib == 0` 抛 `division_by_zero`、64 位总额越界抛 `numeric_overflow`），
+不是「任何内建遇到不认识的参数类型就抛」。顺带核一条：`docs/DECFY_DESIGN.md` 里**根本没有
+§1.14** —— 它的 §1 只到 §1.4（`:18`/`:35`/`:45`/`:52`），所以「§1.14」这个编号只能指
+`docs/AUDIT.md` 的那一节。
+
+**这条差别是有后果的。** 它是我在 §1.45 里**差点据此给 `chr(non-int)` 加硬抛**的依据：如果
+仓库真的有一条「宁可抛」的通用教条，那 `chr("A")` 答空串就是违反它。但 §1.14 只覆盖算术，
+而 `docs/SYNTAX.md` §7.1 的 D1–D12 说明这个引擎整体是**极度宽容**的（D3「类型标注是纯装饰，
+没有任何静态或动态检查」、D4「函数调用参数个数两个方向都不报错」、D5「未声明变量求值为
+`nil`」）。**在一处硬抛 = 凭空造一条只此一家的约定**，比两端一致的错误答案更糟。所以 §1.45
+的 `chr` 落法是「两端都答 `""`」（把非确定性换成确定性），并应在 `docs/SYNTAX.md` §7.1 按
+D1–D12 的格式登记成一条 D 类条目 —— 而不是硬抛。
+
+**另一处引用是对的。** `docs/STATUS.md:3325` 前一句「§1.14 让整数溢出抛异常而不是回绕的
+同一条理由」**站得住** —— 那正是 §1.14 定义的东西。错的只是把同一节升格成通用教条的那半句。
+
+**为什么值得单列一节。** 这不是抄错行号，而是**引用被当成了答案**：一个标签（「§1.14」）
+在**两个生产点**上被赋予了一个它并不承载的语义，而下游拿它当依据做决定。它与 §1.40
+（超时兜不住名字解析）、§1.41（`ENVIRONMENT` 最后写者胜）同类：**同一个主张有多个生产点，
+而且没有一个点去核对源头。** 处置按仓库惯例：历史小节保留自己的文字，本节给出指针与更正，
+不改写它们。
+
+**诚实边界。** ① 我只核了这两处**显式**写「§1.14」的地方；`docs/` 下未显式写编号但转述
+同一教条的位置**没有全查**。② 本条第一版保留了两处原文、只在这里更正；协调者随后按用户的裁定**就地改掉了** `docs/AUDIT.md:1135` 与 `docs/STATUS.md:3325`（只改「教条」那半句并各加一句指向本节，两节其余文字不动）。③ 「§1.14 覆盖算术、
+不覆盖通用参数类型」这个判断的依据是它的标题与正文第 4 条；我没有找到任何把它写成通用
+教条的地方。
+
+## §1.47 `round` 对非数字实参：两侧各自的现行拒绝形态，已登记并 pin 住
+
+`round("x", 2)` 在 POSIX 上答 `nil`（`src/runtime/runtime_posix.c:104` 的 `posix_core_round`：
+非 `VAL_INT`/`VAL_FLOAT` 时 `pop` 两次、`push_nil`），在 Windows 上抛
+`round: expected number`（`src/runtime/runtime.c:41` 的 `builtin_round`：同条件
+`vm_throw_msg`）。**本轮不改任何一侧**，但把它从「未记录」变成「已登记、已 pin」——
+因为**把未记录当成有意，正是本轮在修的那个病**。
+
+**先例是 §1.25。** `docs/AUDIT.md:1115` 那一节的标题逐字是「同一段程序在两个平台上意思不同：
+`sum()` 的非数字元素」：POSIX 答 `nil`、WIN32 抛 `sum: non-numeric element`，处置（见 `:690`）
+是**保留两侧风格并记录，没有统一**。`round` 与它同形，所以处置也同形。
+
+**provenance（归因，不是理由）。** Windows 侧存在一条显式的参数校验、POSIX 侧没有；
+**作者与时间不可考**（设计记录 `/home/sakiko/i.json` 里 `expected number` 命中 **0** ——
+这句是仓库时代产物，不是设计期约定）。「有人特意加的」是推断，「不可考」才是事实，
+所以它**不能**当作 rationale 用，只能当作 provenance 记。
+
+**分类。** POSIX 的 `nil` 属 `docs/SYNTAX.md` §7.1 **D5**【危险·静默】；Windows 的抛是
+【响的失败】。按 §7 自身的分类，响的优于静默的 —— 但**「更好」不等于「已裁定」**，
+所以这一条的状态是 **REGISTERED, NOT RESOLVED**，不是「已经对了」。
+若要收敛，方向是**两端都抛**；那是新立一条规范，要人批，本分支不采。
+
+**pin 的形状。** `vtest/round_nonnumber_contract_v06.im` 注册为 CTest `#126`
+`round_nonnumber_contract_runtime`，`PASS_REGULAR_EXPRESSION` 在 **configure 期按平台选**：
+Windows 断言 `round: expected number`、POSIX 断言 `round-nonnumber=nil`。
+这**不是**「挑一侧当基线」—— 它断言的是**双方各自的现行值**，所以任一侧漂移都会立刻变红，
+分歧保持可见且可变检测，不需要先裁定谁对。这正是 §1.43 缺的那一环（`vfs_probe` 建了却
+从没 `add_test`）。
+
+**诚实边界。** ① 这条只覆盖 `round` 一处，**不是** 59 个同名内建的全量对拍
+（全量对拍的形状见 §1.45 与 §10.77 的 pin，尚未做成 59 名一表）。② `round` 的 Windows
+一侧**没有在真 Windows 上跑过**本节的断言形状以外的东西：本机是 POSIX 构建，
+`src/runtime/runtime.c` 在 Linux 上不参与编译（`CMakeLists.txt` 的 `if(WIN32)` 分支），
+Windows 的数值证据来自 ucrt64 手工全量编译的引擎。③ 判据是 `str()` 的输出，
+所以它钉的是**值**不是退出码（`docs/SYNTAX.md` §7.2 **M13**：101 个 CTest 里 66 个
+只断言退出码）。
+
+## §1.48 一个没被写过的字节，让 `a.b` 变成了 `a?.b`
+
+**症状。** 参数文件里写 `player.max_hp = 42`，脚本里读 `player.max_hp`：有些文件答 `42`，
+有些文件答 `nil`。答错的那一批看起来**完全由文件大小决定** —— 400 字节以内对、401 字节
+开始错。顺着这条线索找会一路找错地方：`inim_load_text` 的上限是 `1 << 26`，全 `src/`
+没有任何 `400` 这个常量。
+
+**真正的判据是一个从未被赋值的字节。** 在 `src/compiler/compiler.c` 的 `case EXPR_MEMBER:`
+顶上临时插桩，同一份 `buildc` 下两个文件的差别只有一行：
+
+```
+对的文件:  member='max_hp' objtype=3 safe=0
+错的文件:  member='max_hp' objtype=3 safe=97
+```
+
+`safe` 是 `97`，也就是字符 `'a'` —— 一块分配器还回来的旧数据。
+
+- `src/parser/ast.h:63`：`struct { Expr *object; StringView member; bool safe; } member;`
+- `src/parser/parser.c:570`（普通 `.` 路径）：`Expr *mem = malloc(sizeof(Expr));`，随后只写
+  `type` / `member.object` / `member.member`，**`safe` 一次也没被写过**；同一段的安全路径
+  `src/parser/parser.c:549` 用的是 `calloc` 并显式 `safe = true`。
+- `src/compiler/compiler.c:1083`：`if (expr->member.safe)` —— 字节非 0 就成立 ⇒ `a.b` 被当成
+  `a?.b` 编成 `OP_INDEX_GET`。点号全局（例如名为 `player.max_hp` 的参数）在对象 `player`
+  上当然查不到，于是**静默答 `nil`**。
+
+文件大小、注释长短、字符串字面量长短都只是「让那一个字节碰巧非零」的手段。交叉验证：长注释、
+长字符串字面量、12 条短注释都能触发；50 条 `y$i = $i` 填充到 462 字节**反而正常**（分配模式
+不同）。所以「400 字节阈值」是**观察的假象**，不是机制。
+
+**这不是编码错误，是同一语义的两个生产点，而判据是未初始化内存。** 它与 §1.40（CMake 的
+`ENVIRONMENT` 是共享属性、最后写者胜）、§1.46（引用被当成了答案）同族：一个值在两个地方被
+生产，而没有任何一处负责把它定下来。区别在于这里的「两个地方」不是两段代码，而是**同一段
+代码的两个分支**，中间隔着一个没人写过的字节。
+
+**修法。** `src/parser/parser.c` 里 AST 分配本来就不一致：22 处 `calloc`，95 处 `malloc`。
+按类型统一为零初始化：
+
+| 替换 | 处数 |
+|---|---|
+| `malloc(sizeof(Expr))` → `calloc(1, sizeof(Expr))` | 40 |
+| `malloc(sizeof(Stmt))` → `calloc(1, sizeof(Stmt))` | 55 |
+| `malloc(sizeof(Program))` → `calloc(1, sizeof(Program))` | 1 |
+
+于是 `safe` 在 `.` 路径上**按构造**为 false、在 `?.` 路径上显式为 true —— 判据不再依赖分配器
+的历史。
+
+**pin（非空验证）。** 新增 `src/parser/parser_member_safe_probe.c`，它**先往堆里灌 `0x01`
+再解析**，所以任何没被零初始化的节点都必然带着非 0 的 `safe`，不靠运气：
+
+- 修复前：`5 failure(s)`，rc=1（`x.y`、`x.y.z` 两层、`x?.y.z` 的外层、`x.y?.z` 的内层）
+- 修复后：10 项全 `ok`，rc=0
+- 同一支探针在 mingw64 上编出并运行，结果与 Linux 相同
+
+CTest `#127 parser_member_safe_probe`（注册在最后，既有 `#N` 不动），`tools/gate.sh:50` 的
+`EXP_CTEST` 126 → 127。
+
+**诚实边界。**
+1. 我只证明了 `member.safe` 这一个字段的后果。95 处 `malloc` 意味着**其它节点的每一个未写
+   字段**此前同样是未定义值；我修的是这一整类，但只为 `safe` 造了可复现的用例。
+2. 「400 字节」这个数字是我最初的误判。写在这里是为了记住假象的形状，它不是机制的一部分。
+3. 探针的 `0x01` 灌注依赖分配器复用同尺寸的已释放块（glibc 的 tcache/fastbin LIFO，以及
+   mingw 的对应行为）。两个平台都实测复现了修复前的失败，但严格说它依赖这条复用规律。
+4. 我只核了 `src/parser/parser.c` 一处；`grep -rn 'malloc(sizeof(Expr))\|malloc(sizeof(Stmt))'
+   src/` 在修复后为 0 命中，别的目录本来就没有 AST 分配。
+
+## §1.49 参数文件的名字是相对谁解析的，以及「没读到」为什么不是答案
+
+**症状。** `inimerse --params s.params s.im` 答 `s=42`，把脚本换成子目录里的 `inimerse --params s.params sub/s.im` 就答 `s=nil`，**退出码仍是 0**。一个用户明明命名了的文件被忽略，程序带着错值跑完。
+
+**机制。** `load_and_run()` 打开参数文件的位置在 `src/main.c:1346` 的 `chdir_to_script_dir(script)` **之后**（`:1348 load_and_run(&vm, read_path)`），而 `params_path` 是一个**相对**路径（默认 `"params.params"`，`src/main.c:195`），于是它是相对**脚本所在目录**解析的，不是相对调用者的工作目录。脚本在当前目录时两者恰好重合，所以它一直没被发现。
+
+**三处修改。**
+
+1. `src/main.c` 在任何 chdir 之前就把 `params_path` 固定成绝对路径（`make_abs_path_loose`，锚定 `g_caller_cwd`）。
+2. 新增 `params_explicit`：`--params` 命名的文件**不是可选的**，读不到就报错（`load_params_or_report()`）；默认的 `params.params` 仍然可选。这是同一个「静默 nil」形状的另一半。
+3. 删掉 `load_and_run_source()` 里的裸调试打印 `[main] compile preregister gc=%d g23.name=%s`（原 `src/main.c:355-356`）。它与 `b1bdc00` 删掉的字符串池 dump **同一个来源**：`git log -S` 追到 `8248e08 Release Infiverse 0.2.0`，也是从 0.2.0 起每版都在吐，而且把 `vm->globals[23].name` 这个内部索引写死在消息里。
+
+**一条旁证。** `vtest/params_precompiled_v06.inim` 是用**修复前**的 `buildc` 编的，于是它把 §1.48 的缺陷**烘进了字节码**：同一份 `.im` 源码经 `.inim` 路径跑出 `player=nil`，重新编译后才是 `player=42`。`.inim` 是一个把编译期结论存起来的生产点，所以修了前端不会自动修好已有的字节码。
+
+**pin 与双向验证。** 新增 CTest `#128 params_relative_path_runtime`、`#129 params_missing_explicit_runtime`、`#130 params_precompiled_runtime`（都注册在最后），`EXP_CTEST` 127 → **130**。第一条的 `--params` 参数**故意写相对路径**：写绝对路径会让 chdir 变得不可见，用例会在缺陷上面绿。`git stash push -- src/main.c` 后重编运行：**三条全部 Failed**（`Required regular expression not found`）；`git stash pop` 重编后 **4/4 Passed**。
+
+**诚实边界。**
+1. 我只核了 `--params` 这一个选项。`src/main.c` 里还有其它在 chdir 之后才被打开的路径，我没有逐个查完。
+2. 「`--params` 命名的文件读不到就报错」是一个**行为改动**，不是修 bug的必然结果——有人可能依赖「缺失就跳过」。我把它写在这里而不是当成修法的一部分。
+3. `params_precompiled_v06.inim` 是一个**二进制产物**。它会随前端变化而陈旧，而且没有任何东西在校对它与源码是否同步——这正是本仓库反复出现的「一个偶然对上的常量被当成了保证」。
+4. 三条用例都只断言程序输出，不断言退出码。第二条用 `FAIL_REGULAR_EXPRESSION "params-relative speed="` 补上「脚本不得跑完」这一半，否则一个打了错误信息但退出 0 的引擎会蒙混过去。
+
+## §1.50 能力串有两个生产点：同一句 `spi_meta` 在两侧拿到不同的权限
+
+`spi_meta(id, version, caps)` 的第三个实参是一串能力名，而仓库唯一写过它形状的地方是
+`src/vm/vm.h:159` 的注释——`spi_meta(id, version, "io,net")`，即**逗号分隔的整名**。
+但**解析它的是两份各自独立的代码**：
+
+- POSIX `posix_spi_meta`（`src/runtime/runtime_posix.c:948-956`）对**整串**连做六次 `strstr`：
+  `if (strstr(caps.sval, "io")) mask |= CAP_IO;` …；
+- WIN32 `spi_parse_caps`（`src/runtime/runtime.c:1185-1200`）先跳到下一个 `,`，再 `strncmp(p, "io", 2)`。
+
+于是两侧都把**能力名当成一段更长字符里的子串**来匹配，而且**方向相反**。实测（修前，POSIX | WIN32）：
+
+| `caps` 实参 | POSIX | WIN32 | 谁错了 |
+| --- | --- | --- | --- |
+| `"io,net"` | 768 | 768 | 都对（**唯一**一致的一格，也正是 `vm.h` 写下的形状） |
+| `"io net"` | 768 | 256 | WIN32：从 `"io net"` 这个非 token 里**前缀**匹配出 `io`，并**静默丢掉 `net`** |
+| `"audio"` | **256** | 0 | POSIX：`strstr("audio","io")` 命中，**静默过授 `CAP_IO`** |
+| `"ionet"` | 768 | 256 | 两侧都从非 token 里匹配出 `io`，POSIX 还多授了 `net` |
+
+**修法是把两个生产点收成一个**（`docs/DECFY_DESIGN.md:10-12` 的「让所有后端消费同一个 IR」）：
+新增 `int vm_parse_caps(const char *s)`（`src/vm/vm.c`，声明在 `src/vm/vm.h` 紧挨它返回的
+`CAP_*` 位），按**整段逗号分隔的 token** 精确匹配，正是 `vm.h:159` 写下的那个形状；两侧
+runtime 都调它，`spi_parse_caps` 整个删掉。不在那个形状里的输入（`"audio"`、`"io net"`、
+`"io, net"`）**什么都不授**——`vm.h:156` 把这个模型叫 **minimal-permission**，所以对未定义的
+输入答**更小**的那个集合；写错声明的模组会在第一次受能力管辖的调用上被内建**拒绝**，而不是
+悄悄持有一份它从未写出的授权。修后两侧在**全部 11 个字符串输入**上逐字一致：
+`doc=768 space=0 audio=0 ionet=0 all=65280 int=256`。
+
+**已登记、未裁定（第二处）**：`caps` 实参的**类型**仍是两个生产点——`spi_meta(id, ver, true)`
+POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 答 **65280 = CAP_MASK**
+（`src/runtime/runtime.c` 的 `else if (capsv->type == VAL_BOOL) caps = capsv->ival ? CAP_MASK : 0;`）。
+设计记录与 `docs/API.md` 都没有规定这个实参的类型，**不挑一侧当规范**（`docs/DECFY_DESIGN.md:8-12`、
+`docs/STATUS.md:30`）。新 pin `vtest/spi_caps_contract_v06.im` 把前六个字段断言成**一份**（两侧已
+一致），把 `bool=` 这一个字段**按平台各断言各自现行值**（`CMakeLists.txt`），任一侧漂移立刻变红
+——与 §1.47 的 `round` 同一手法。
+
+**同批更正一条上一轮的结论**：§1.45 之后收到的一份报告说 WIN32 `builtin_spi_mods`
+（`src/runtime/runtime.c:1328-1354`）用 `vm_array_push` 六次「冒充 dict」、是错的一侧。**实测证伪**：
+`vm_dict_set`（`src/vm/vm.c:1027`）**自己的存储布局就是「交替键值的数组」**（`a->items[a->count++] = key_copy;`
+`a->items[a->count++] = val_copy;`），哈希表是**惰性**建的（每个消费者进来先 `dict_hash_ensure`，
+再 `if (!h->slots && a->count > 0) dict_hash_build(vm, aidx);`），所以在没有「边写边查」的情况下两者
+**可观测地等价**。对 `spi_mods()[0]` 实测 12 个字典操作（`len`/`size`/`keys`/`has`/按键取值/取缺失键/
+`str()`/整数下标/写入后重查）**两平台逐字相同**。⇒ 那条是**读码结论，不是实测结论**；登记为
+「未被复现」，不作修改。
+
+**诚实边界**：① 我只测了 `spi_meta` 一处，没有全仓搜其它「用 `strstr`/`strncmp` 匹配名字」的地方；
+② `"io, net"`（逗号后有空格）修后答 0 是**新行为**，两侧此前都不是 0——这是「不在文档形状里就不授」
+这条规则的推论，不是从任一侧继承来的值；③ 我没有核 `spi_has()` 的判定是否与 `mod_caps` 的位语义
+完全同构（`posix_spi_has` 与 `builtin_spi_has` 的写法本身也有细微差别，本轮未动）。
+
+## §1.51 原子槽不是整数时，两侧都去读了 union 里没被写过的那个成员
+
+**缺陷类**：一个名字两份实现（`src/runtime/runtime.c` 与 `src/runtime/runtime_posix.c`），**两份都不查槽的 `type` 标记就读写 union**。`Value`（`src/vm/vm.h:24-26`）是 `{int type; union {long long ival; double fval;}; char *sval; void *ptr;}`，`ival` 与 `fval` 是同一块存储，读错成员就是读别人的位型。这与 `docs/SYNTAX.md` §7.1 **D13**（`chr` 不查 `type` 就读 `ival`）是**同一个病**，只是 D13 当时只修了 `chr` 一处。
+
+**实测（POSIX，修前，退出码全部为 0）**：
+
+| 语句 | POSIX 修前 | WIN32 修前 | 修后（两侧） |
+| --- | --- | --- | --- |
+| `atomic_get("y")`，`y = 1.5` | `4609434218613702656`（`1.5` 的 IEEE754 位型） | `0` | `0` |
+| `atomic_get("s")`，`s = "abcdef"` | `1` | `0` | `0` |
+| `atomic_add("f", 1)`，`f = 1.5` | `4609434218613702657`，且 `f` 被毁 | `1`，且 `f` 被毁 | `0`，`f` 保持 `1.5` |
+| `atomic_add("h", 0)`，`h = 2.5` | `4612811918334230528`，**加零就把值毁掉** | `0`，同样毁掉 | `0`，`h` 保持 `2.5` |
+| `atomic_add("t", 1)`，`t = "abcdef"` | `2`，字符串被毁成 `2` | `1`，字符串被毁成 `1` | `0`，`t` 保持 `"abcdef"` |
+| `atomic_get("k")` / `atomic_add("k", 5)`，`k = 7` | `7` / `12` | `7` / `12` | `7` / `12`（未变） |
+
+两侧的机制不同但都错：POSIX（`src/runtime/runtime_posix.c` 的 `posix_atomic_get` / `posix_atomic_add`）**完全没有门**，直接 `__sync_add_and_fetch(&vm->globals[idx].val.ival, 0)`；WIN32（`src/runtime/runtime.c` 的 `builtin_atomic_add`）有一句 `if (val.type != VAL_INT) { type = VAL_INT; ival = 0; }`，**把「不是整数」当成了「它是 0」**，于是确定地把浮点值毁掉。前者是不确定的错答，后者是确定的数据毁坏——都是本仓库在修的那个形状。
+
+**修法**：两侧都先问 `type`。一个不是 `VAL_INT` 的槽**不是计数器**，所以答 `0` 并**不碰那个槽**——这正是这个族在名字解不开时已经给的答案（`idx < 0` 的三处都是 `push_int(vm, 0)`），所以**没有新立约定**。`atomic_set` 不动：它是调用方明确要写一个整数进去，把槽变成 `VAL_INT` 是应该的。
+
+**为什么不报错**：与 D13 同一条边界。`docs/SYNTAX.md` §7.1 的 D1–D12 说明引擎整体极度宽容，而**仓库里没有任何一条「参数/槽类型不对时怎么办」的规范**；报 `type_mismatch` 是新立一条规范，需要人批。当前答 `0` 仍属 `docs/SYNTAX.md` §7.1 的**危险·静默**类，已登记为 **REGISTERED, NOT RESOLVED**：要收敛的方向是「两端都报类型错」，但本分支不采。
+
+**双向验证**：`vtest/atomic_slot_type_contract_v06.im`（CTest **#132** `atomic_slot_type_contract_runtime`，`PASS_REGULAR_EXPRESSION` 钉住整行）。`git stash push -- src/runtime/runtime_posix.c` 后重编，同一条命令打出
+`atomic-slot-ok g1=4609434218613702656 r1=4609434218613702657 y=4609434218613702657 r3=4609434218613702657 yz=4609434218613702657 g2=1 r2=2 s=2 g3=7 r4=12`、**退出码 0**；恢复后打出
+`atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。两行在两个平台上**同一行**（故意不分平台分支）。Windows 侧（ucrt64，CI 同款工具链，`Total Tests: 122`）另做了同形的 A/B：把 `src/runtime/runtime.c` 的新守卫换回 `if (type != VAL_INT) { type = VAL_INT; ival = 0; }` 后重编，该测试打出
+`atomic-slot-ok g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1 g3=7 r4=12`、**Failed**（`PREFIX_CTEST_RC=8`）；换回后重新 Passed（`FIXED_CTEST_RC=0`）。这一行同时把上表里 WIN32 一列的「修前」值从读码结论升为**实测**。
+
+**诚实边界**：① 只核了 `atomic_get` / `atomic_add` / `atomic_set` 三个，族里其它名字未逐一核；② WIN32 侧的「修前」值已由 ucrt64 上的 A/B **实测确认**（打出 `g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、Failed，与上表逐格相符），不再是读码结论；③ 「应该报错而不是答 0」这一问未裁，本节只记录它；④ `posix_atomic_set` 与 `builtin_atomic_set` 都是无条件写 + 改 `type`，本节认为合理，但没有为它写用例。
+
+## §1.52 一个内建名字有两个生产点，而只有一个被注册
+
+**症状（Windows，退出码 0）。** `random(10)` 返回 **27606**；`random(0)` 返回 **27606** ——
+**同一个值**，因为实参根本没被读。同一个程序在 POSIX 上返回 `3`，`random(0)` 返回 `0`。
+
+**两个生产点。**
+
+| 位置 | 实现 | 是否被注册 |
+|---|---|---|
+| `src/runtime/runtime.c:28` `builtin_random`（**修前**在 `:16`，那里现在是说明注释） | `int max = ...ival; rand() % max` | **否** —— `runtime_register_builtins`（`src/runtime/runtime.c:1771`）里没有这个名字 |
+| `src/mod/io_mod.c:143` `builtin_random`（**修前**；那里现在是说明注释） | `push_int(vm, rand())`，**完全忽略实参** | 是（**修前** `src/mod/io_mod.c:322`；该行已删除） |
+
+`src/mod/io_mod.c` 只在 Windows 上编译（`CMakeLists.txt:431`），POSIX 侧由
+`src/platform/posix_stubs.c:6` 把 `io_mod_register` 桩掉，所以这个分歧只在 Windows 上出现。
+于是 runtime 里那个带 `max > 0` 门、看起来正确的实现是**死代码**，真正回答的是那个不读实参的副本。
+
+**为什么「先注册者胜」不是解释。** `vm_register_builtin`（`src/vm/vm.c`）不查重，
+`builtin_insert` 线性探测**只找第一个空槽**，所以同名时先注册的那条在探测序列里先被查到。
+`runtime_register_builtins` 与 `register_core_modules` 的调用顺序（`src/main.c:1096` / `:1097`）
+本来让 runtime 侧先注册 —— 但修前 runtime 侧**根本没注册这个名字**，顺序无从生效。
+修后顺序也不再承重：**只剩一个生产点**。
+
+**修法（三处编辑）。**
+
+1. `src/runtime/runtime.c:28`（**修前** `:16`）的 `builtin_random` 补上 POSIX 已有的门：
+   `push_int(vm, max > 0 ? rand() % max : 0);` —— `rand() % 0` 是整数除零。
+2. `src/runtime/runtime.c:1774` 在 `runtime_register_builtins` 里注册 `random`。
+3. 删掉 `src/mod/io_mod.c:143-147` 的副本与 `:322` 的注册行（两处都是**修前**行号）。
+
+**双向验证（真 ucrt64 引擎，CI 同款工具链）。** 把两个文件都 `git checkout` 回 `HEAD` 重建 ⇒
+`random(10)` → `27606 9428 30941`、`random(0)` → `27606 9428`（与前者头两个值**逐字相同**），
+两次退出码都是 **0**；换回修法 ⇒ `random(10)` → `1 7 9`、`random(0)` → `0 0`。
+
+**pin。** `vtest/random_bounded_contract_v06.im` / CTest **#133**，`PASS_REGULAR_EXPRESSION`
+钉整行，两平台**同一行** —— `posix_random` 本来就有上界与 `n > 0` 门，本轮只是把同一条规则
+给了第二个消费者，**没有新立规则**。Windows 上把两个文件退回 `HEAD` ⇒ 打出
+`random-bounded-ok one=false zero=false neg=false ten=false big=true`，**退出码仍是 0**。
+
+**诚实边界。**
+
+1. 五个字段里 `big` 在修前也是 `true` —— 裸 `rand()` 本来就小于 1000000。它留在断言里是因为
+   它同时守住「修完不许比上界还大」，但**它不是这条缺陷的证据**，只有另外四个字段是。
+2. `random("abc")` / `random(1.5)` 这类**非整数实参**两平台同形（都去读 `ival`），
+   与 `docs/SYNTAX.md` §7.1 **D13** 同病，**本轮未动，也没有登记为本条的一部分**。
+3. 我核过的是 `random` **这一个名字**，不是「所有重名」。注册表层面的集合比对只做了一次（见 §1.53）。
+4. `projects/demo/main.im:60` 的 `rand(a, b)` 与本条无关，见 §1.53。
+
+## §1.53 登记：三个「一个名字有两份说法」的实例，本轮不动代码
+
+§1.52 修的是**同一份注册表里的重名**。同一形状还有三处，全部**只登记**，
+理由逐条写在下面 —— 它们的共同点是：**改变哪一份都不是我能单方面决定的**。
+
+| 实例 | 两份说法 | 为什么本轮不动 |
+|---|---|---|
+| `gui_fullscreen` | `src/mod/gui_mod.c:3690` 注册 `builtin_gui_fullscreen`（`:1661`，用 `SetWindowLongA` 去掉 `WS_CAPTION | WS_THICKFRAME`，**要求实参**）；`:3697` 注册 `builtin_fullscreen`（`:1730`，用 `SetWindowLongPtr` + `WS_POPUP | WS_VISIBLE`、保存 `G.restoreStyle`、**支持无参切换**）。两行在同一个 `gui_mod_register` 里相隔 **7** 行。先注册者胜 ⇒ **`builtin_fullscreen` 不可达**。**注意复核方式**：本节写下这条时，`src/mod/gui_mod.c` 含 5 个 NUL 字节，**普通 `grep` 会把该文件当二进制、只列出 NUL 之前那一行（`:1661`）并把 `binary file matches` 打到 stderr、退出码仍为 0** —— 要拿到 `:3690`／`:3697` 必须 `grep -a`。这些字节已由 §1.55 移除，此后普通 `grep` 即可 | 两个体行为不同，选哪个是人的决定；且 `gui_mod.c` 需要窗口，本机没有可跑的 GUI 断言 |
+| `rand` | `docs/SYNTAX.md:500` 把它列进「核心高频内建（**有 `vtest` 覆盖的**）」；`projects/demo/main.im:60` 的 `rand_int` 调用它。**全 `src/` 零注册**（`grep -rn '"rand"' src/` 无命中） | 加一个 `rand` 内建是**新立一个名字**，不是消除分歧；正确处置是从文档与示例里去掉它，那要改 `projects/`（见下条边界） |
+| `docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」 | 该名单里 `random` 当时**零覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`） | **本轮就地改了**：`rand` 从名单移除，`random` 的覆盖由 §1.52 的 pin 补上 |
+
+**`gui_fullscreen` 的那条登记其实早就存在，只是被当成计数问题。** `docs/API.md:234` 逐字写着
+「`gui_mod` 计数虚高 | 表列 163，源码唯一名 **162**；原因是表内 `gui_fullscreen` 重复出现两次 |
+源码提取 + 集合比对」—— **一条被登记的事实，没有人消费它**：没人注意到「重复出现两次」
+意味着其中一条实现不可达。这与 §1.46 的引文、§1.43 的 `vfs_probe` 是同一个病：
+**事实被写下来了，但没有变成可检测的断言。**
+
+**一次注册表层面的集合比对（我做的，`python3` 按 `CMakeLists.txt:412-436` 的 WIN32 源列表
+与 POSIX 源列表分别抽 `vm_register_builtin(_full)?(vm, "…")`）：** WIN32 **398** 个名字 /
+**2** 个重名，POSIX **128** 个名字 / **0** 个重名。第二个重名 `isolate_run`
+（`src/isolate_mod.c:227` 与 `:318`）是**误报** —— 两处分别在 `#ifdef _WIN32` 与 `#else`
+分支里，扫描器不认预处理条件。
+
+**诚实边界。**
+
+1. 我**没有**在真 Windows 上跑过 `gui_fullscreen`（需要窗口），「`builtin_fullscreen` 不可达」
+   是从 `builtin_insert` 的探测语义与注册顺序读出来的，不是实测。
+2. `grep 'random('` 是**字面**匹配，它证明的是「这四处目录里没有 `random(` 这个字符串」，
+   不等于「没有别的方式覆盖 `random`」。
+3. `docs/SYNTAX.md:500` 那张名单我只核了 `random` / `rand` 两个名字，**其余 50 多个没有核**。
+4. `projects/demo/main.im` 我**没有改**：它在 POSIX 上跑到第一条 `gui_stage` 就死了
+   （`[exception] uncaught: unknown builtin function 'gui_stage'`），`rand` 那条要等 GUI 起来
+   才轮得到，所以「示例里这个函数是坏的」我是用 `rand(1, 6)` 单独实测 + 零注册的 grep 得出的，
+   不是跑完示例得出的。
+
+
+## §1.54 数组池唯一的门不能拒绝一个下标，所以它后面八个 `if (!a)` 都是死代码
+
+**症状**：`vm_pool_slot(VM *vm, int idx)`（`src/vm/vm.c:743`）是数组/字典池唯一的入口 —— 全 `src/` **71 个调用点**都从它取槽 —— 而它**不可能返回 NULL**：
+
+```c
+ArrayObj *vm_pool_slot(VM *vm, int idx) {
+    if (idx >= 0 && idx < 4096) return &vm->arrays[idx];
+    return &vm->arrays_big[idx - 4096];
+}
+```
+
+两个分支都返回地址。于是：
+
+| 下标 | 修前返回 | 含义 |
+|---|---|---|
+| `0 <= idx < 4096` | `&vm->arrays[idx]` | 正确 |
+| `idx == 4096`（`bigCap == 0`） | `NULL` | **偶然**（`NULL + 0`） |
+| `idx < 0` | `&vm->arrays_big[idx - 4096]` | 新 VM 上 `arrays_big == NULL` ⇒ **野低地址**；池长大后 ⇒ 一个真的堆地址 |
+| `idx >= 4096 + bigCap` | 分配之外的槽 | 越界 |
+
+**实测（修前）**：`src/vm/vm_pool_slot_probe.c` 在一个 `memset` 清零的 VM 上**不打任何解引用**，只打印返回值：
+
+- Linux：`raw -1=0xffffffffffeefef0 -4097=0xffffffffffddfef0 4096=(nil) 100000=0x18e0a00`
+- Windows（ucrt64，CI 同款）：`raw -1=FFFFFFFFFFEEFEF0 -4097=FFFFFFFFFFDDFEF0 4096=0000000000000000 100000=00000000018E0A00`
+
+两个平台的野低地址**逐字节相同** —— 它就是 `NULL - 4097 * sizeof(ArrayObj)`，与平台无关。`arrays_big` 非 NULL 时（探针把 `bigCap` 设成 4）`slot(-1)` 在 Linux 答 `0x5a671f67df10`、在 Windows 答 `00000227F33749A0` —— **都是真的堆地址**，也就是说一个负下标在池长起来之后不再是「低地址崩溃」，而是**读到别的对象**。
+
+**八个 `if (!a)` 是死代码**：`python3` 扫描 71 个调用点（把同一行或后两行出现 `!<var>` 算作有守卫），**只有 8 处有 NULL 守卫、63 处没有**。八处集中在 `src/mod/verse_dist_mod.c`（`:613`/`:631`/`:638`/`:689`/`:699`/`:740`/`:745`/`:1115`），形状都是 `ArrayObj *a = vm_pool_slot(vm, pkg.ival - 1); if (!a) return 0;`。
+
+**这个检查在本文件里不是不知道怎么写**：GC 标记 `src/vm/vm.c:2818` 对**同一个句柄**用的是 `if ((gv->type == VAL_ARRAY || gv->type == VAL_DICT) && gv->ival > 0 && gv->ival - 1 < vm->arrayCount)`，`:2832`/`:2841`/`:2853`/`:2862`/`:2869` 是同形的五处。⇒ **检查存在于一个地方，却不在所有人都要过的那道门上。**
+
+**修法**：把边界放回那道门（`src/vm/vm.c:743`），并在注释里引 `:2818` 的既有谓词：
+
+```c
+ArrayObj *vm_pool_slot(VM *vm, int idx) {
+    if (idx >= 0 && idx < 4096) return &vm->arrays[idx];
+    if (idx >= 4096) {
+        int big = idx - 4096;
+        if (big < vm->bigCap) return &vm->arrays_big[big];
+    }
+    return NULL;
+}
+```
+
+`vm_array_new`（`src/vm/vm.c:748`）在把槽交出去之前一定先 `realloc` + `memset` 并把 `bigCap` 提上去，所以任何**池真正拥有**的下标都不会被拒。
+
+**双向验证**：
+
+- Linux：`git stash push -- src/vm/vm.c` 重编 ⇒ CTest `#134 vm_pool_slot_probe` **`***Failed`**、5 条 `FAIL slot(...) answered …, want NULL`；`git stash pop` 重编 ⇒ `Passed`、`vm_pool_slot_probe: ok`。
+- Windows（ucrt64）：把函数体换成修前版本重编 ⇒ `FAIL slot(-1) answered FFFFFFFFFFEEFEF0, want NULL` 等 5 条、`PREFIX_PROBE_RC=1`、CTest `***Failed`；换回 ⇒ 四个 `(nil)`、`ok`、`Passed`。
+
+**新 pin**：`src/vm/vm_pool_slot_probe.c` / CTest `#134 vm_pool_slot_probe`（**无 `PASS_REGULAR_EXPRESSION`，退出码即判据**）。它同时断言 `slot(0) == &vm->arrays[0]` 与 `slot(4095) == &vm->arrays[4095]`，所以「一律返回 NULL」蒙不过去；它也不解引用任何东西 —— 越界答案是**一个指针值**，修前那个值就是证据。
+
+**为什么必须是一条 C 探针**：`.im` 脚本无法命名一个池下标，缺陷在 C 函数里，C 层是唯一能观察这条契约的高度。照 `vm_init_probe`（`CMakeLists.txt:938`）直接链 `inimerse_engine`。
+
+**同批发现：探针在 Linux 能编、在 Windows 编不过。** 初版把局部变量写成 `far` 与 `at`；mingw 的系统头把 `far` 定义成**空宏**（遗留 `__far`），于是 `ArrayObj *far = ...` 报 `expected identifier or '(' before '=' token`（共 3 个 error），而 Linux 的 `-fsyntax-only` 完全看不见。已改名为 `deep`/`edge`，双工具链 0 error。**这是「Linux 门禁看不到 Windows 编译」的又一个实例，只是这次挡住的不是引擎，是我自己的探针。**
+
+**诚实边界**：
+
+① 71 个调用点里 63 个没有 NULL 守卫，其中多数自带 `idx >= 0 && idx < vm->arrayCount` 之类的范围检查（例如 `src/vm/vm.c:885`、`:899`）；我只逐处看了 `src/mod/verse_dist_mod.c` 那 8 处与 `src/vm/vm.c` 内的部分。**「63 处都没有守卫」是扫描器的计数，不是逐处定性。**
+
+② `verse_verify`/`verse_unpack` 的两条调用链今天都先查了类型（`src/mod/verse_dist_mod.c:1154` 的 `if (!ok || pkg.type != VAL_DICT)`、`:813` 的 `if (!ok || pv.type != VAL_DICT)`），所以**负下标在今天不是可达的崩溃**；本轮修的是「不变量由每个调用方各自维持、门自己不检查」。
+
+③ 修法把 63 个无守卫调用点从「野指针解引用」变成「NULL 解引用」——**种类没变坏**，但行为变了。经验判据是全量门禁：**134 个测试全绿、0 跳过**，说明没有调用点依赖越界访问。我没有为这条做静态证明。
+
+④ `idx == 4096` 在 `bigCap == 0` 时返回 NULL 是**偶然**，不是设计；我没有去查历史上是否有代码依赖过这个偶然。
+
+⑤ 探针用 `malloc(sizeof(VM))` + `memset` 造 VM，**不调 `vm_init`** —— 它只观察 `vm_pool_slot` 这一个函数的边界算术，不声称覆盖 VM 初始化（那是 `vm_init_probe` 的事）。
+
+## §1.55 受版本控制的文本文件里的 NUL 字节，让 `grep` 答一个更短的问题
+
+**一句话。** 三个受版本控制的 C 源文件在**块注释里**带着 NUL 字节：
+`src/mod/gui_mod.c` **5** 个（1,000,721 B）、`src/lexer/lexer.c` **2** 个（15,432 B）、
+`src/lexer/lexer.h` **1** 个（2,513 B）。字节对编译器完全无影响（构建一直绿），
+但**对读源码的工具不是**。
+
+**机制（实测）。** GNU `grep` 读到 NUL 就判定该文件是二进制，此后**不再列出行**，但它
+**已经把 NUL 之前找到的匹配打到了 stdout**，把 `binary file matches` 打到 **stderr**，
+**退出码 0**：
+
+```
+$ grep -n 'gui_fullscreen' src/mod/gui_mod.c
+1661:static int builtin_gui_fullscreen(VM *vm) {
+grep: src/mod/gui_mod.c: binary file matches
+$ echo $?
+0
+$ grep -an 'gui_fullscreen' src/mod/gui_mod.c
+1661:static int builtin_gui_fullscreen(VM *vm) {
+3690:    vm_register_builtin(vm, "gui_fullscreen", builtin_gui_fullscreen);
+3697:    vm_register_builtin(vm, "gui_fullscreen", builtin_fullscreen);
+```
+
+**所以这不是「文件读不了」，而是「文件回答了一个比被问的更短的问题，而且答案形状一样」。**
+只看 stdout、或不读 stderr 的人，拿到一份**看起来完整**的截断清单。这一次被吞掉的正是
+`:3690`／`:3697` —— 证明 `gui_fullscreen` 注册两次、`builtin_fullscreen` 不可达（§1.53）
+的那两行。**一条登记在 `docs/API.md:234` 的事实，此前没人能靠普通 grep 复核。**
+
+**修法：把字节去掉，而不是教每个读者加 `-a`。** 8 个字节**全部**落在块注释内
+（逐个用「反向数 `/*` 与 `*/`」确认），替换成空格，文件字节数不变、编译产物不变。
+修后 `grep -n` 直接给出三行。
+
+**为什么值得单独登记。** 它与本仓库反复记的那一族同形，只是下沉到工具层：
+**同一件事有两个生产点**（文件内容 vs 工具的读取策略）、**快路径的门被当成了答案**
+（「grep 退出 0」被当成「清单完整」）。`docs/SYNTAX.md:35` 已记「14 个受版本控制的文件含
+U+FFFD」；NUL 字节是**更硬的一种**：U+FFFD 只是让字符看起来不对，NUL 让**工具静默降级**。
+
+**登记表（全仓库扫描，`git ls-files` 858 个路径）。**
+
+| 类别 | 文件 | NUL 数 | 处置 |
+|---|---|---|---|
+| C 源码 | `src/mod/gui_mod.c` | 5 | **本轮修**（注释内） |
+| C 源码 | `src/lexer/lexer.c` | 2 | **本轮修**（注释内） |
+| C 源码 | `src/lexer/lexer.h` | 1 | **本轮修**（注释内） |
+| 引擎字节码 | `projects/{set_test,set_comp_test,exc_test,tt4,tt7,tt6,t1}.inim`、`vtest/params_precompiled_v06.inim` | 236–2779 | **不动**：`.inim` 是序列化后的程序，本来就是二进制 |
+| 二进制资产 | `icon.ico`、`Infiverse_standard/src-tauri/icons/*`、`examples/assets/monster8.bmp`、`selfhost/tests/*.bmp` | 23–8084 | **不动**：图像格式 |
+
+**闸门。** 新增第 **11** 个阶段 `text-integrity`（`tools/check_text_integrity.py`）：
+`git ls-files` 枚举受版本控制的路径，按**扩展名白名单**（`.c .h .md .im .py .sh .json .yml
+.cmake .iss .ts .js .css .html .xml` 等）挑出文本文件，逐个断言无 NUL 字节。
+白名单而非黑名单：新加的二进制产物**不可能**把闸门判红，也就不需要有人去改名单。
+没有 git 时**响亮退出**（照 `check_links.py`／`check_doc_paths.py` 的成例，不留 `os.walk` 回退）。
+实测 `770 text file(s), 0 with NUL bytes`（本阶段建立时是 **769**；多出的 1 个就是
+`tools/check_text_integrity.py` 自己 —— 它被提交之后才进入 `git ls-files`。**这个数会随每个
+新增文本文件变动，所以它不作断言**：本阶段断言的是「0 个含 NUL」，数量只作输出）；
+**反向验证**：往 `src/lexer/lexer.h` 塞回一个 NUL ⇒ `1 NUL byte(s) in 1 of 770 tracked text
+file(s)`、报出字节偏移与行号、`exit 1`，还原即复绿。
+
+**诚实边界。**
+
+1. 我核的是 **C 源码**这三个文件；`.inim` 与图像里的 NUL 是**格式本身**，我**没有**逐个
+   验证它们是否都合规，只是按扩展名排除。
+2. 白名单是**我的判断**：一个受版本控制的**新**文本扩展名（比如 `.vue`）若含 NUL，
+   本阶段**看不见**它。名单在 `tools/check_text_integrity.py` 的 `TEXT_SUFFIXES` 里，
+   加一项是一行的事。
+3. 我**没有**证明这 8 个字节是「某次编辑事故」还是「某工具写入的」——`git log -S` 对
+   NUL 字节不可用（git 自己把它当二进制），所以**来源未知**。修的是后果，不是原因。
+4. 「`grep` 会截断」这条是**本机 GNU grep** 的实测；`ripgrep`、编辑器内搜索、`git grep`
+   的行为**没有逐个实测**（`git grep` 在实测里同样只给了 `:1661` 一行）。
+5. 这一阶段**不是**在断言「仓库里没有二进制文件」，它只断言「被我们当成文本的那些文件
+   里没有 NUL」。
+
+## §1.56 关于实参类型的第一条通用规则：D14 落地，以及 POSIX 侧「两个决定点折成一个返回值」
+
+**形状**：内建函数收到**无法解释为所要求类型**的实参时怎么办？写 D13 的时候，仓库里
+**没有任何**这样的规定 —— D13 自己的正文就写着「设计记录里没有任何『参数类型不对时怎么办』的
+规定」，于是两侧都只能各自挑一个答案。原子家族挑了「答 0」：名字不是字符串时，Windows 三处
+`if (!nm) { push_int(vm, 0); return 1; }`（`src/runtime/runtime.c` 的 `builtin_atomic_add`／
+`builtin_atomic_get`／`builtin_atomic_set`），POSIX 三处把 `name.type == VAL_STRING ? name.sval :
+NULL` 交给 `posix_atomic_find`，而后者首行是 `if (!name) return -1;`。
+
+**这不是「少一个守卫」，是两个决定点被折成了一个返回值。** `posix_atomic_find` 用同一个 `-1`
+回答了两个不同的问题：
+
+- 「你给我的**实参**不是字符串」—— 调用方错误，这次调用**从来就不可能成功**；
+- 「这个名字**不存在**」—— 运行期状态，那里本来就没有东西。
+
+调用方拿回 `-1` 之后再也分不开这两件事，于是只能给一个答案（`0`），而这个答案对第一种情形是
+**静默失败**：调用方无从区分「成功了」与「什么都没发生」。这与 §1.54 是**同一种病的两种形态** ——
+一个是「门不检查」，一个是「两个问题共用一个答案」。
+
+**裁定（2026-10，人类，D14）**：按**这次调用是否操作共享状态**分两支。操作共享状态 ⇒ 抛
+`type_mismatch`，不得静默返回；只产出值 ⇒ 按各自已裁定的定义值作答（`chr(non-int)` 答 `""`、
+`int("0x10")` 答 `16`）。**运行期状态**的类型不符（槽里存的不是 `VAL_INT`）**明确排除**在外，
+仍答 `0` 且**不得改动那份状态**。完整条款见 [`docs/SYNTAX.md`](SYNTAX.md) §7.1 D14。
+
+**改动（六处）**：Windows 三处改为 `vm_throw_kind(vm, "type_mismatch")`；POSIX 三处在
+**调用 `find` 之前**加 `if (name.type != VAL_STRING)` 守卫（放在 `find` 之后就晚了 —— 这正是上面
+那条「折成一个返回值」的直接后果）。`chr`／`int`／`round` **一个字都没动**。
+
+**实测**（Linux，`./build/inimerse --no-mods`）：
+
+| 调用 | 改后 | 改前 |
+|---|---|---|
+| `atomic_get(42)` | `[exception] uncaught: type_mismatch`，rc=1 | 答 `0`，rc=0 |
+| `atomic_add(42, 1)` | 同上 | 答 `0`，rc=0 |
+| `atomic_set(42, 1)` | 同上 | 答 `0`，rc=0 |
+| `atomic_get("no_such_slot_anywhere")` | 答 `0`，rc=0 | 答 `0`，rc=0 |
+| `y = 1.5; atomic_get("y")` | 答 `0`，`y` 仍是 `1.5` | 答 `0`，`y` 仍是 `1.5` |
+| `h = 2.5; atomic_add("h", 0)` | 答 `0`，`h` 仍是 `2.5` | 答 `0`，`h` 仍是 `2.5` |
+
+**pin 断言的是错误种类串，不是退出码。** `vtest/atomic_slot_type_contract_v06.im` 用三段
+`try { … } catch (e) { n = str(e) }` 拿到种类串，末行期望
+
+```
+… r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
+```
+
+`n4` 是「名字不存在」那一支，**必须仍是 `0`**：只断言「抛了东西」的 pin 会在 `numeric_overflow`、
+索引错误或任何将来的种类上照样通过，而且分不出这两支 —— **两条不能同时被区分出来就等于没落地**。
+`CMakeLists.txt` 的 PASS 正则已扩、并新增
+`FAIL_REGULAR_EXPRESSION "n1=NO-THROW|n2=NO-THROW|n3=NO-THROW|n4=type_mismatch"`，**双向验过**
+（修前输出命中、修后不命中）。
+
+**A/B（Linux）**：`git stash push -- src/runtime/runtime_posix.c` 重编 ⇒ fixture 打出
+`n1=NO-THROW n2=NO-THROW n3=NO-THROW n4=0` 且**退出码仍是 0** —— 这正是这条缺陷的形状，也说明
+一个只看退出码的 pin 会**绿着**放它过去；恢复后打出上表。
+
+**诚实边界**：
+
+- **这是关于参数类型的第一条通用规则，而「操作共享状态 ⇒ 抛／只产出值 ⇒ 答定义值」这个切法本身
+  还没有被正式确认。** 人类明确要求**只落窄条款**：只有原子家族的名字参数改了行为。所以本节的
+  结论**不能**外推成「引擎开始校验参数类型了」—— D3／D4／D5 说明引擎整体仍不校验类型与 arity。
+- **运行期状态仍是答 `0`**，这是本条的**排除项**，不是遗漏。`atomic_set` 的槽类型归一化（写
+  `VAL_INT`）也**没动**。
+- **`docs/SYNTAX.md` §7.1 D13 的两段散文已同步**：它原来写「设计记录里没有任何这样的规定」与
+  「需要先有一条规范」，现在这条规范存在了；`chr` 答 `""` 不变，但「没有规定」这句话不再成立。
+- **没有做静态证明**：`type_mismatch` 之外没有别的种类被排除，判据是 134/134 与 fuzz 阶段全绿。
+- Windows 侧**只做了编译与代码等价性核对**（三处文本与 POSIX 侧成对改动），本轮**没有**在真
+  Windows 上跑 `atomic_get(42)` 的 A/B。
+
+## §1.57 `--only` 打错一个阶段名：跑了个空，却打印绿灯
+
+**形状**：`tools/gate.sh` 的 `run_stage` 在 `--only` 与当前阶段不匹配时把该阶段记为 `SKIP` 并
+`return 0`。于是 `--only` 给了**任何**不存在的名字，**每一个**阶段都被跳过，而收尾那行仍然是
+
+```
+gate: OK — every stage passed.
+```
+
+**退出码 0**。实测：
+
+```
+$ tools/gate.sh --only definitely-not-a-stage
+build … SKIP --only definitely-not-a-stage
+…（11 个阶段全部 SKIP）…
+gate: OK — every stage passed.
+$ echo $?
+0
+```
+
+表格里确实每一行都写了 `SKIP`，但**收尾句与一次全绿的门禁逐字相同** —— 只看最后一行（或只看退出
+码）的人拿到的是一次「什么都没跑」的绿。这是本仓库已经写下来的规则「**一个 skip 不是一次 pass**」
+（`tools/gate.sh` 顶部注释、`stage_ctest` 单独数 `***Skipped`）的下一层：跳过**全部**反而是绿的。
+在 CI 里把阶段名写错（例如在新阶段尚未合入时先写上去）会**静默**什么都不跑并且绿。
+
+**修法**（`tools/gate.sh`）：
+
+- `run_stage` 把每个选择器记进新数组 `STAGE_WANTED`（不论是否被 `--only` 选中）；
+- 所有阶段注册完之后校验 `--only`：没有匹配 ⇒ 报错、**exit 2**，并列出合法值；
+- 合法值**从 `STAGE_WANTED` 派生**，不是第二份手写清单 —— 手写清单没有消费者，它只约束写它的
+  那一刻（`EXP_CTEST` 的 130、M13 的 101、`API_BUILTIN_TABLE.md` 的 59，加上这条）。
+- 收尾句不再在部分运行上读起来像整场门禁：
+
+```
+gate: OK — the selected stage passed (--only links).
+gate: this was NOT the full gate: 11 stages are registered and only this one ran.
+```
+
+  全量运行则报「11/11 stages ran」。
+
+**实测**：`--only definitely-not-a-stage` ⇒ exit **2** + 三行 stderr（含合法值列表）；
+`--only links` ⇒ 跑 1 个阶段、收尾句自报「这不是完整门禁」。
+
+**为什么与 §1.54、§1.56 登记在一起**：三条是同一个缺陷类在三个层面上的样子 ——
+**一道不能拒绝的门**（数组池 `vm_pool_slot`）、**两个问题被折成一个返回值**
+（`posix_atomic_find` 的 `-1`）、**一句描述了一次它并没有执行的运行的总结**。
+
+**诚实边界**：① 这份发现来自 `ivory-ember`（它在自己的 `stream/ci-gate-static` 分支上也修了同一处），
+我独立复现了「打错名字 ⇒ 绿 + exit 0」这一条；② 没有穷举 `--only` 的其他畸形输入（空串、
+大小写、前后空格）；③ 阶段名列表是**派生**的，但派生自 `run_stage` 的**调用点**，如果有人绕过
+`run_stage` 直接跑一个函数，那个函数不会出现在列表里。
 
 ## §2 执行通道效率比较
 

@@ -1,0 +1,62 @@
+# divergent_builtin_contract_v06.im -- a builtin name is one contract, and both
+# platform copies must answer the same thing for the same input.
+#
+# src/runtime/runtime.c (WIN32) and src/runtime/runtime_posix.c (POSIX) register
+# the same names through different code, so a name with two implementations is a
+# name with two answers.  Four of them disagreed, and this pin runs on BOTH
+# platforms: on Linux it judges the POSIX copy, on Windows the WIN32 one, and
+# the printed line is the same either way.  See docs/AUDIT.md §1.45.
+#
+#   int(9007199254740993)    POSIX 9007199254740993  WIN 1     (through `int`)
+#   int(9223372036854775807) POSIX 9223372036854775807 WIN -1 (through `int`)
+#   chr("A")                 POSIX ""                WIN "\x01" (read .ival off a string)
+#   atomic_get(42)           POSIX 0                 WIN CRASH  (strcmp(NULL))
+#   atomic_set(42, 7)        POSIX 0                 WIN CRASH  (strcmp(NULL))
+#
+# int("0x10") was REGISTERED, NOT RESOLVED for one round: 0 on POSIX, 16 on WIN,
+# because src/runtime/runtime.c:40 accepts a "0x" prefix and the POSIX copy did
+# not.  Neither copy is the baseline (docs/DECFY_DESIGN.md:8-12 -- the two
+# runtimes are both consumers of a contract that does not exist yet), so porting
+# the branch looked like crowning a side by fiat.  A human has now ruled that the
+# answer is 16 on both platforms, so it is asserted below.  See docs/AUDIT.md 1.45.
+#
+# The ival/sval pair is one union chosen by the type tag (src/vm/vm.h:24-26), so
+# chr() reading .ival off a string read half of a pointer -- a different control
+# character each run.  atomic_add already guarded its name argument; atomic_get
+# and atomic_set did not, which is why one of the family crashed and the others
+# did not.  That guard first answered 0.  A human ruling (docs/SYNTAX.md 7.1 D14)
+# now splits the two questions that the single answer 0 had been covering: a name
+# argument of the wrong type is a CALLER ERROR and raises type_mismatch, while a
+# name that does not resolve is RUNTIME STATE and still answers 0.  The kind
+# string is asserted, not the exit code -- a1/a2/a3 used to read 0 and this pin
+# would have gone on passing through the change if it had only looked at exit 0.
+#
+# Values only, never exit codes.
+
+i1 = int(9007199254740993)
+i2 = int(9223372036854775807)
+i3 = int("0x10")
+i4 = int("16")
+c1 = chr(65)
+c2 = chr("A")
+try {
+  a1 = atomic_get(42)
+  a1 = "NO-THROW"
+} catch (e1) {
+  a1 = str(e1)
+}
+try {
+  a2 = atomic_set(42, 7)
+  a2 = "NO-THROW"
+} catch (e2) {
+  a2 = str(e2)
+}
+try {
+  a3 = atomic_add(42, 5)
+  a3 = "NO-THROW"
+} catch (e3) {
+  a3 = str(e3)
+}
+a4 = atomic_get("no_such_slot_at_all")
+
+say "divergent-ok i1=" + str(i1) + " i2=" + str(i2) + " i3=" + str(i3) + " i4=" + str(i4) + " c1=" + c1 + " c2empty=" + str(c2 == "") + " a1=" + str(a1) + " a2=" + str(a2) + " a3=" + str(a3) + " a4=" + str(a4)

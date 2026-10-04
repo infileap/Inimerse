@@ -2645,7 +2645,11 @@ static int b_verse_node_discover(VM *vm) {
             kv.sval = (char *)caps;                    rp_set_entry(vm, entry, "caps", kv);
             Value iv; iv.type = VAL_INT; iv.fval = 0; iv.sval = NULL; iv.ptr = NULL;
             iv.ival = verified;                        rp_set_entry(vm, entry, "verified", iv);
-            iv.ival = (int)expires_at;                 rp_set_entry(vm, entry, "expires_at", iv);
+            /* expires_at is a uint64_t Unix second count (parsed by strtoull at
+             * :2625).  Casting it to int narrowed it to 32 bits on the way into
+             * a 64-bit field, so every expiry from 2038-01-19 on answered a
+             * negative number.  Nothing required the cast: ival is long long. */
+            iv.ival = (long long)expires_at;           rp_set_entry(vm, entry, "expires_at", iv);
             kv.type = VAL_STRING; kv.ival = 1; kv.sval = (char *)reason; rp_set_entry(vm, entry, "reason", kv);
             Value ev; ev.type = VAL_DICT; ev.ival = entry + 1;  ev.sval = NULL; ev.ptr = NULL;
             vm_array_push(vm, aidx, &ev);

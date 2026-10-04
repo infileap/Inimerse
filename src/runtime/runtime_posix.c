@@ -73,7 +73,19 @@ static int posix_core_bool(VM *vm) {
 static int posix_core_int(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)]; int64_t n = 0;
-    if (v->type == VAL_STRING) n = strtoll(v->sval ? v->sval : "0", NULL, 10);
+    /* A "0x" prefix means base 16, matching src/runtime/runtime.c:40.  The two
+     * copies used to disagree here -- 0 on POSIX, 16 on WIN32 -- and that was
+     * REGISTERED, NOT RESOLVED for one round: neither copy is the baseline, so
+     * porting the branch looked like crowning a side by fiat (docs/AUDIT.md
+     * 1.45, docs/DECFY_DESIGN.md:8-12).  A human has since ruled: the answer is
+     * 16 on both platforms.  That makes this a resolved contract rather than a
+     * ported capability -- and if the ruling is ever reversed, both copies move
+     * together. */
+    if (v->type == VAL_STRING) {
+        const char *s = v->sval ? v->sval : "0";
+        int hx = (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'));
+        n = strtoll(s, NULL, hx ? 16 : 10);
+    }
     else if (v->type == VAL_FLOAT) n = (int64_t)v->fval;
     else n = v->ival;
     pop(vm); push_int(vm, n); return 1;
@@ -742,11 +754,26 @@ static int posix_atomic_add(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value delta = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    const char *n = name.type == VAL_STRING ? name.sval : NULL;
     long long d = val_as_int(&delta);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
-    int idx = posix_atomic_find(vm, n, 1);
+    /* A name that is not a string is a caller error, not an empty counter:
+       raising is the one answer that cannot be mistaken for success.  The
+       check must come BEFORE the lookup, because posix_atomic_find folds
+       "this is not a string" and "there is no such name" into the same -1 --
+       one return value carrying two different decisions, which is the defect
+       this whole family keeps producing.  A slot that holds no integer is a
+       different question (runtime state) and still answers 0 without being
+       touched.  See docs/SYNTAX.md 7.1 D14. */
+    if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }
+    int idx = posix_atomic_find(vm, name.sval, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
+    /* Same rule as posix_atomic_get: a slot that is not VAL_INT holds no
+       integer, so there is no counter to add to.  Without this, the CAS loop
+       below read and wrote `val.ival` on a slot whose live member was `fval`
+       or `sval` -- atomic_add("h", 0) on `h = 2.5` answered 4612811918334230528
+       and destroyed the 2.5.  Answering 0 and leaving the slot alone is the
+       same answer the family already gives when the name does not resolve. */
+    if (vm->globals[idx].val.type != VAL_INT) { push_int(vm, 0); return 1; }
     /* int64, like the language: a 32-bit `int old` here turned
        atomic_add("k", 3000000000) into -1294967296 -- silently, exit code 0.
        The CAS loop is what makes the sum checkable at all: a bare
@@ -772,9 +799,26 @@ static int posix_atomic_add(VM *vm) {
 static int posix_atomic_get(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 0);
     pop(vm);
-    push_int(vm, idx < 0 ? 0 : __sync_add_and_fetch(&vm->globals[idx].val.ival, 0));
+    /* A name that is not a string is a caller error, not an empty counter:
+       raising is the one answer that cannot be mistaken for success.  The
+       check must come BEFORE the lookup, because posix_atomic_find folds
+       "this is not a string" and "there is no such name" into the same -1 --
+       one return value carrying two different decisions, which is the defect
+       this whole family keeps producing.  A slot that holds no integer is a
+       different question (runtime state) and still answers 0 without being
+       touched.  See docs/SYNTAX.md 7.1 D14. */
+    if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }
+    int idx = posix_atomic_find(vm, name.sval, 0);
+    /* Read the union member that matches `type`, and only that one.  This used
+       to answer `__sync_add_and_fetch(&...ival, 0)` whatever the slot held, so
+       atomic_get("y") on `y = 1.5` answered 4609434218613702656 -- the IEEE754
+       bits of 1.5 -- silently, exit code 0.  A slot that holds no integer is
+       not an integer counter, and the answer for "no such counter" is already
+       0 on both platforms (see the `idx < 0` case above and below). */
+    push_int(vm, (idx < 0 || vm->globals[idx].val.type != VAL_INT)
+                     ? 0
+                     : __sync_add_and_fetch(&vm->globals[idx].val.ival, 0));
     return 1;
 }
 
@@ -783,8 +827,17 @@ static int posix_atomic_set(VM *vm) {
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value value = vm_cur_stack(vm)[vm_cur_sp(vm)];
     long long val = val_as_int(&value);
-    int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 1);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
+    /* A name that is not a string is a caller error, not an empty counter:
+       raising is the one answer that cannot be mistaken for success.  The
+       check must come BEFORE the lookup, because posix_atomic_find folds
+       "this is not a string" and "there is no such name" into the same -1 --
+       one return value carrying two different decisions, which is the defect
+       this whole family keeps producing.  A slot that holds no integer is a
+       different question (runtime state) and still answers 0 without being
+       touched.  See docs/SYNTAX.md 7.1 D14. */
+    if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }
+    int idx = posix_atomic_find(vm, name.sval, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
     __sync_lock_test_and_set(&vm->globals[idx].val.ival, val);
     vm->globals[idx].val.type = VAL_INT;
@@ -934,13 +987,11 @@ static int posix_spi_meta(VM *vm) {
     const char *name = id.type == VAL_STRING ? id.sval : "anon";
     int mask = caps.type == VAL_INT ? caps.ival : 0;
     if (caps.type == VAL_STRING && caps.sval) {
-        if (strstr(caps.sval, "io")) mask |= CAP_IO;
-        if (strstr(caps.sval, "net")) mask |= CAP_NET;
-        if (strstr(caps.sval, "ai")) mask |= CAP_AI;
-        if (strstr(caps.sval, "verse")) mask |= CAP_VERSE;
-        if (strstr(caps.sval, "dbg")) mask |= CAP_DBG;
-        if (strstr(caps.sval, "proc")) mask |= CAP_PROC;
-        if (strstr(caps.sval, "all")) mask |= CAP_MASK;
+        /* One production point, shared with the Windows runtime: vm_parse_caps
+           matches a whole comma-separated token.  This used to be six strstr
+           calls over the whole string, so "audio" granted CAP_IO and "ionet"
+           granted CAP_IO|CAP_NET.  See docs/AUDIT.md 1.50. */
+        mask |= vm_parse_caps(caps.sval);
     }
     vm->mod_caps = mask;
     int found = -1;

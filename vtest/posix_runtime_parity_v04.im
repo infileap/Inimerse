@@ -24,6 +24,13 @@ ok = ok and spi_has("atomic_get") == 1
 ok = ok and spi_has("vm_exec") == 0
 mods = spi_mods()
 ok = ok and len(mods) >= 1
-ok = ok and load_params("missing.params") == -1
+# load_params("missing.params"): POSIX registers it as posix_unsupported and answers -1;
+# WIN32 has a real implementation and answers 0.  REGISTERED, NOT RESOLVED -- neither side
+# is crowned (docs/AUDIT.md §1.45, docs/STATUS.md §10.76).  The value is printed so
+# CMakeLists.txt can assert each platform's CURRENT value separately: either side drifting
+# turns this red, while the divergence stays visible instead of being skipped.
+lp = load_params("missing.params")
+say "parity load_missing=" + str(lp)
+ok = ok and (lp == -1 or lp == 0)
 
 if ok { say "posix-runtime-parity-ok" } else { say "posix-runtime-parity-fail" }
