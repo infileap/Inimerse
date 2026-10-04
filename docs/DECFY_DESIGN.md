@@ -521,7 +521,27 @@ grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --inclu
 
 **顺带两条与 `docs/SYNTAX.md` 的互相印证**：`docs/SYNTAX.md:550` 说 `be` 是「仓库里最不常见的语句形式之一」——**346 个文件里 10 处，实证了这句话**；而 `docs/SYNTAX.md:546` 给的形式是 `name be <集合或表达式> [: init]`，上表里 `be Direction = "N"` 用的是 `=` 而不是 `:`（`docs/SYNTAX.md` 没写 `=` 这种 init 分隔符）⇒ **文档与语法的又一处不一致，登记为待核**（我**没有**去读 `src/parser/parser.c:1357-1365` 确认 `=` 是否合法）。
 
-**诚实边界**：① 上表 10 条是**我手工分类**的，判据是「约束表达式能否只靠字面量/内建/同文件具名声明解析」，**不是**任何静态分析器的输出；② 正则只匹配「行首 标识符 空白 `be` 空白」这一种形状，**漏掉**别名/带下标的名字、`be` 前有换行的续行、以及非常规空白；**误报**（把表达式里恰好叫 `be` 的标识符当语句）**未排查**；③ 我**没有**检查 `type X = <依赖运行期值的表达式>` 这种**类型声明本身不可静态求值**的情况——那才是 §3.7 记的真问题（今天类型是运行期全局），上表只看了 `be` 的**使用点**；④ 「内建类型 `N` 可解析」是从 `src/vm/vm.c:1871/1880` 的**名字名单**读出的，**没有实跑**编译器去确认它对 `be N` 是否真的在编译期求值。
+**诚实边界**：① 上表 10 条是**我手工分类**的，判据是「约束表达式能否只靠字面量/内建/同文件具名声明解析」，**不是**任何静态分析器的输出；② 正则只匹配「行首 标识符 空白 `be` 空白」这一种形状，**漏掉**别名/带下标的名字、`be` 前有换行的续行、以及非常规空白；**误报**（把表达式里恰好叫 `be` 的标识符当语句）**未排查**；③ ~~我**没有**检查 `type X = <依赖运行期值的表达式>` 这种**类型声明本身不可静态求值**的情况~~ —— **已在下面第二轮补量，结论是该情形在全仓不存在**；④ 「内建类型 `N` 可解析」是从 `src/vm/vm.c:1871/1880` 的**名字名单**读出的，**没有实跑**编译器去确认它对 `be N` 是否真的在编译期求值。
+
+#### 补量：**`type` 声明侧也没有不可静态求值的实例**（同一轮，随后实测）
+
+§3.7 记的真问题是「今天类型是**运行期的值**」（`type X = <集合表达式>` 编译成 `OP_STORE_GLOBAL`，`src/compiler/compiler.c:2224-2231`），所以只查 `be` 的**使用点**不足以支撑「上界 = 0」——还必须查**类型声明本身**能不能静态求值。命令（同样覆盖全仓）：
+
+```
+grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im .
+```
+
+**结果：全仓只有 11 处 `type X = …` 声明，全部在 `vtest/` 下，且 RHS 全部是可静态求值的三种形状之一：**
+
+| 形状 | 实例 | 计数 |
+|---|---|---|
+| 字面量枚举 | `type Direction = "N", "S", "E", "W"`（`vtest/lint_case_membership_v04.im:1`、`vtest/lint_case_enum_v04.im:1`）、`type FileError = "not_found", "permission_denied", …`（`vtest/lint_case_try_alias_v04.im:1`、`vtest/lint_case_try_members_v04.im:1`、`vtest/lint_case_try_v04.im:3`、`vtest/case_try_v04.im:23`）、`type ParseError = "invalid_syntax"`（`vtest/lint_case_try_alias_v04.im:10`） | **7** |
+| 字面量区间 | `type Byte = [0~255]`（`vtest/type_collection_v04.im:2`）、`type Positive = [1~100]`（`vtest/case_collection_patterns_v04.im:8`） | **2** |
+| **具名类型引用（别名 / 并集）** | `type AppError = FileError`（`vtest/lint_case_try_alias_v04.im:2`，**别名**）、`type CombinedError = FileError + ParseError`（`vtest/lint_case_try_alias_v04.im:11`，**类型层的集合并集**） | **2** |
+
+⇒ **没有任何一处 `type X = <依赖运行期值的表达式>`。** 那两种「具名引用」形状也是可静态求值的（沿引用传递，并集就是两个可解析集合的并），**前提是类型求值器支持传递引用与 `+`**——**这正是 `src/types/typeset.c` 已有的能力**（`im_typeset_union`，`src/types/typeset.h:37-45`）。⇒ **`be` 使用点与 `type` 声明两侧的普查都指向同一个结论：今天不可静态求值的实例是 0 个（手工分类口径）。**
+
+**这一轮新增的诚实边界**：⑤ 「11 处」是**同一套正则口径**下的计数（`\btype\s+ident\s*=`），**没有**排除 `type` 出现在注释或字符串里的误报；⑥ 那 2 处具名引用（别名 / 并集）我**判定**为可静态求值，但**没有实跑**编译器确认它对 `AppError` / `CombinedError` 真的在编译期求值（`src/types/typeset.c` 有 `im_typeset_union`，但 §3.7 已记它**零消费者**）——**「有实现」与「被使用」在这两处恰好是两件不同的事**。
 
 ---
 
@@ -764,7 +784,8 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | **[读码，2026-10 复核轮补上]** | `docs/STATUS.md` §10.42（`:2464`）/ §10.49（`:2910`）/ §10.53（`:3095`）关键段，以及 §10.50–§10.56 的小节标题（`:2999`/`:3048`/`:3058`/`:3095`/`:3174`/`:3195`/`:3217`）；§10.56 全文（`:3217-3242`，含 `L_ADD` 与 `L_CONCAT` 的「逐字相同的不对称」）；`tools/aot_native.test.py:187-207` 的 `DIVERGENCE` 列表原文 |
 | **[转述]（引用 AUDIT，非本会话实测）** | 150 例 fuzz → 41/150 = 27.3% 分歧（28 例 and/or、13 例 int32/`%`、0 例无法归因）；`%` 四组预测值；`(2147483647 + 1).type == float`；解释器 RSS 68.5 MB vs 原生 23.2 MB；AOT 快 7.7×–146.6×，`fib` 比手写 C++ 慢 14×；`tools/selfhost_compare.py` 的 `10 target(s) byte-identical, 23 skipped`（来自工作订单转述，本会话**未实测**） |
 | **[读码，本轮补上]** | `docs/archive/RELEASE_0.5.0.md:12/23-28/48/102-106` 的 Native ABI 面、C ABI 类型映射、ABI 版本号、以及「三个后端共享同一字节码格式」这条与现状冲突的承诺；`docs/SYNTAX.md:551-556` 的 §7 分类（危险·静默 / 危险·误导 / 冗余 / 卫生），`:901` 「退出码经常区分不出对错，必须断言输出数值」 |
-| **[实测]（本会话，2026-10 第十轮：`be` 爆炸半径普查，§3.9）** | ① **普查命令**：`grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --include=*.im .`（覆盖全仓，排除 `build/`、`.worktrees/`、`.verify/`）→ **346 个受跟踪 `.im` 里只有 10 处 `be`**，逐条见 §3.9 的表；② **10/10 的约束表达式只依赖字面量枚举（4 处）/ 字面量区间（1 处）/ 同文件具名类型声明（3 处）/ 内建类型名（2 处）** ⇒ **上界 = 0 个不可解析实例**；③ 内建类型名单实测：`grep -n '"N"' src/compiler/compiler.c src/vm/vm.c` → `src/compiler/compiler.c:2864`、`src/vm/vm.c:1463`/`:1871`，且 `src/vm/vm.c:1880` `if (strcmp(name,"N") == 0) return 0;`（`:1881` `"Z"` → 1、`:1884` `"R"` → 24）⇒ **`N`/`Z`/`R` 等是内建类型名**；④ 语法来源：`docs/SYNTAX.md:546`（`name be <集合或表达式> [: init]`）、`:550`（称 `be` 是「仓库里最不常见的语句形式之一」，**10/346 实证了这句**）、`src/parser/parser.c:1357-1365`（`STMT_BE`）；⑤ **顺带发现一处文档与语法不一致**：`vtest/lint_case_membership_v04.im:2` 等用的是 `be Direction = "N"`（**`=`**），而 `docs/SYNTAX.md:546` 只写了 `:`。**诚实边界（四条，详见 §3.9）**：手工分类而非分析器输出；正则只匹配一种形状（漏别名/下标名/续行，误报未排查）；**只看了 `be` 使用点，没看 `type X = <运行期表达式>` 这种类型声明本身**（那才是 §3.7 的真问题）；「内建 `N` 可解析」是从名字名单读出的、**未实跑编译器**确认 `be N` 真在编译期求值。 |
+| **[实测]（本会话，2026-10 第十轮：`be` 爆炸半径普查，§3.9）** | ① **普查命令**：`grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --include=*.im .`（覆盖全仓，排除 `build/`、`.worktrees/`、`.verify/`）→ **346 个受跟踪 `.im` 里只有 10 处 `be`**，逐条见 §3.9 的表；② **10/10 的约束表达式只依赖字面量枚举（4 处）/ 字面量区间（1 处）/ 同文件具名类型声明（3 处）/ 内建类型名（2 处）** ⇒ **上界 = 0 个不可解析实例**；③ 内建类型名单实测：`grep -n '"N"' src/compiler/compiler.c src/vm/vm.c` → `src/compiler/compiler.c:2864`、`src/vm/vm.c:1463`/`:1871`，且 `src/vm/vm.c:1880` `if (strcmp(name,"N") == 0) return 0;`（`:1881` `"Z"` → 1、`:1884` `"R"` → 24）⇒ **`N`/`Z`/`R` 等是内建类型名**；④ 语法来源：`docs/SYNTAX.md:546`（`name be <集合或表达式> [: init]`）、`:550`（称 `be` 是「仓库里最不常见的语句形式之一」，**10/346 实证了这句**）、`src/parser/parser.c:1357-1365`（`STMT_BE`）；⑤ **顺带发现一处文档与语法不一致**：`vtest/lint_case_membership_v04.im:2` 等用的是 `be Direction = "N"`（**`=`**），而 `docs/SYNTAX.md:546` 只写了 `:`。**诚实边界（四条，详见 §3.9）**：手工分类而非分析器输出；正则只匹配一种形状（漏别名/下标名/续行，误报未排查）；**「内建 `N` 可解析」是从名字名单读出的、未实跑编译器**确认 `be N` 真在编译期求值；**`type` 声明侧已在同轮补量**（见下一格）。 |
+| **[实测]（本会话，2026-10 第十轮补：`type` 声明侧普查，§3.9）** | 命令 `grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im .`（全仓，排除 `build/`、`.worktrees/`、`.verify/`）→ **全仓只有 11 处 `type X = …`，全部在 `vtest/` 下**，RHS 形状分布：**字面量枚举 7 处**（`type Direction = "N", "S", "E", "W"` 等）、**字面量区间 2 处**（`type Byte = [0~255]`、`type Positive = [1~100]`）、**具名类型引用 2 处**（`type AppError = FileError` 别名、`type CombinedError = FileError + ParseError` 类型层并集）⇒ **没有任何 `type X = <依赖运行期值的表达式>`**，即 §3.9 原先的诚实边界③**已被补量关闭**。并集的实现能力在 `src/types/typeset.c`（`im_typeset_union`，声明 `src/types/typeset.h:37-45`），但 §3.7 已记它**零消费者** ⇒ 「有实现」与「被使用」在这里是两件事。**新增诚实边界**：「11 处」未排除注释/字符串里的误报；那 2 处具名引用是我**判定**可静态求值，**未实跑**编译器确认。 |
 | **[转述，来源 `exact-lumen`，非本会话实测]** | 2026-10 门禁已到 **12 个阶段**（新增第 12 阶段 `orphan-fixtures`），`GATE_RC=0`、`gate: OK — every stage passed (12/12 stages ran).`、**`100% tests passed, 0 tests failed out of 136`**、`0 skipped`、`check_text_integrity: 771 text file(s), 0 with NUL bytes.`；`docs/BOARD.md:62` 与 `docs/README.md:55` 的清单已同步为十二个阶段。**我未独立复核**；其中「12 阶段 / 136 测试」与我在 §3.1.8 记的 `EXP_CTEST = 134`（`tools/gate.sh:54`）**不一致，未调和**。 |
 | **[待复核]** | 无（原两项已补读；`docs/SYNTAX.md` 各条 D/M 编号的现状我未逐条复核是否仍成立；§3.9 的 10 条 `be` 分类与 `=`/`:` 那处不一致待 `src/parser/parser.c:1357-1365` 复核） |
 
