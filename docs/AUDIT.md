@@ -691,6 +691,21 @@ say g
 
 **诚实边界。** ① `sum` 现在只是与运算符同规则，**不是**任意精度：`sum([INT64_MAX, 1])` 抛 `numeric_overflow` 而不是给出 BigInt（v3.1 phase 2 的 `VAL_BIG` 未实现）。② Windows 那份**没有实测**：本机是 POSIX 构建，`src/runtime/runtime.c` 在 Linux 上连 WinHTTP 段都编不过（`HINTERNET`/`WinHttpOpen`/`URL_COMPONENTS`/`WCHAR` 未声明），只能做语法检查 —— `cc -std=gnu11 -fsyntax-only -Isrc -Isrc/common -Isrc/runtime -Isrc/compiler -Isrc/vm -Isrc/platform -Isrc/types -Isrc/mod src/runtime/runtime.c` 的报错行全部落在 593–1643 的 WinHTTP 段，`builtin_sum` 所在的 138–195 区间内 **0 个错误**。③ `src/mod/io_mod.c:51` 的 `io_push_int(VM*, int)` 仍是 `int` 参数（调用点传的是句柄与字节数，不是本节的累加器），本次未改；`src/mod/replay_mod.c:47` 的 `rp_push_int` 已随 §1.14 改成 `long long`。
 
+### 1.16 WIN32 那份 `len()`/`size()` 也没有分量回退：同一个门、同一个类（**已修，未实测**）
+
+§1.15 是在 `posix_core_sum` 上发现的。同一种「拿快速路径的门当答案」的写法，在 **WIN32 副本**里还有两处。这次不是撞上的，是照着 `grep -rn compCount src/` 把每个调用点看了一遍找出来的：
+
+- `src/runtime/runtime.c` 的 `builtin_len`（改动前 `:78`）：`if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;` —— **后面没有 `else`**。`n` 的初值是 `0`，于是 `len(1, 2, Z[7~9])` 答 **0**（POSIX 答 5）、`len(Z[1~4])` 答 **0**（POSIX 答 4）。缺陷只改值、不改退出码。
+- 同文件的 `builtin_size`（改动前 `:101`）：同一个门，后面接的 `else if (s->kind == 2 && s->lo > -1e300 && s->hi < 1e300)` 只认**闭区间**。带分量的集合 `kind` 是 0、`compCount` 是 1，两个分支都不成立，`n` 停在初值 **-1** ⇒ `size(1, 2, Z[7~9])` 答 **nil**（POSIX 答 5）。
+
+**为什么这算同一个类。** 集合字面量是 i64 / items / 区间 comps 三部分的并（§1.10），所以「`kind == 0 && compCount == 0`」只说明**能直接数**，不是「这个集合有多少个元素」的定义。§1.10 修好枚举器之后，正确的写法只有一种：**能直接数就直接数，否则交给 `vm_set_to_array` 数**。POSIX 的两份都这么写了，WIN32 的两份都没写。
+
+**修法。** WIN32 的集合分支对齐到 POSIX：`else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }`（现 `:88`、`:116`），并把 `int n` 换成 `long long n` —— `push_int` 收 `long long`，`len(9007199254740993)` 在 `int n` 下会被截断，这是 §10.49 那一类截断的又一处。`builtin_size` 里用 `pow()` 的那段闭区间公式随之删除：它对闭区间与枚举器给同一个答案，对分量集合给 nil，删掉之后两种输入都归枚举器。`pow()` 在本文件已无其它用处。
+
+**为什么两份必须同步。** `CMakeLists.txt:383` 是 `if(WIN32)`：WIN32 编 `src/runtime/runtime.c`（`:386`），其它平台编 `src/runtime/runtime_posix.c`（`:395`），**一个可执行文件里只会有一份**。`src/runtime/runtime.c:1716-1717` 把 `len`/`size` 注册到 `builtin_len`/`builtin_size`，`src/runtime/runtime_posix.c:1057-1058` 注册到 `posix_core_len`/`posix_core_size`。只读其中一份会预测错行为 —— §1.15 已经真实踩过一次。
+
+**判据与诚实边界。** 这个修复**在本机不可执行**：Linux 上 `src/runtime/runtime.c` 连 WinHTTP 段都编不过（`cc -std=gnu11 -fsyntax-only` 的报错全在 601–1651 行），只能证明「改动区间 0 错误」。能证明的是**构造上的一致**：改动后两个文件的集合分支逐字相同；而 POSIX 那一份是**实测**的 —— `vtest/set_components_enumerable_v05.im:32` 早已钉着分量集合的 `len`/`size`，本机复测 `len(1, 2, Z[7~9]) = 5`、`size(1, 2, Z[7~9]) = 5`、`len(Z[1~4]) = 4`、`size(Z[1~4]) = 4`，与 POSIX 实现一致。**「两份写法一致」能证明，「Windows 上真的跑对了」不能。**
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

@@ -68,14 +68,24 @@ static int builtin_str(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_s
 static int builtin_bool(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value *v=&vm_cur_stack(vm)[vm_cur_sp(vm)]; bool res=false; if(v->type==VAL_INT) res=v->ival!=0; else if(v->type==VAL_FLOAT) res=v->fval!=0.0; else if(v->type==VAL_STRING) res=v->sval&&strlen(v->sval)>0; else if(v->type==VAL_BOOL) res=v->ival!=0; pop(vm); push_bool(vm,res); return 1; }
 
 /* ---------- 数组内置函数 ---------- */
+/* Mirrors posix_core_len() in src/runtime/runtime_posix.c.  CMakeLists.txt
+ * compiles exactly one of the two files, so the two must agree; this copy used
+ * to gate on `s->kind == 0 && s->compCount == 0` and then fall through with
+ * n = 0, which reported an empty set for any set whose elements live in
+ * interval COMPONENTS (`1, 2, Z[7~9]` -> len() 0 instead of 5).  The gate is a
+ * fast path, not the answer: without a component the three parts are counted
+ * directly, and with one the set goes through the same enumerator list() uses.
+ * `n` is long long for the same reason push_int takes long long.  See
+ * docs/AUDIT.md 1.16. */
 static int builtin_len(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int n = 0;
+    long long n = 0;
     if (v->type == VAL_SET) {
         if (v->ival >= 0 && v->ival < vm->setCount) {
             SetObj *s = &vm->sets[v->ival];
             if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
+            else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }
         }
     }
     else if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
@@ -85,7 +95,7 @@ static int builtin_len(VM *vm) {
     }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
     else if (v->type == VAL_INT) n = v->ival;
-    else if (v->type == VAL_FLOAT) n = (int)v->fval;
+    else if (v->type == VAL_FLOAT) n = (long long)v->fval;
     pop(vm);
     push_int(vm, n);
     return 1;
@@ -94,25 +104,23 @@ static int builtin_len(VM *vm) {
 static int builtin_size(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int n = -1;
+    /* Mirrors posix_core_size().  The old `kind == 2` closed-interval formula
+     * here answered only for a closed interval and left every component set at
+     * n = -1, i.e. nil; the enumerator answers for both, and is the definition
+     * the interpreter already ships on POSIX.  See docs/AUDIT.md 1.16. */
+    long long n = -1;
     if (v->type == VAL_SET) {
         if (v->ival >= 0 && v->ival < vm->setCount) {
             SetObj *s = &vm->sets[v->ival];
             if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
-            else if (s->kind == 2 && s->lo > -1e300 && s->hi < 1e300) {
-                double step = (s->nameIdx >= 0 && s->nameIdx <= 3) ? 1.0 : pow(10.0, -((s->nameIdx - 4) / 2 + 1));
-                if (step <= 0) step = 1.0;
-                double lo = s->loInc ? s->lo : s->lo + step;
-                double hi = s->hiInc ? s->hi : s->hi - step;
-                if (hi < lo) n = 0; else n = (int)((hi - lo) / step) + 1;
-            }
+            else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }
         }
     }
     else if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
     else if (v->type == VAL_DICT) { int a = v->ival - 1; if (a >= 0 && a < vm->arrayCount) n = vm_pool_slot(vm, a)->count / 2; }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
     else if (v->type == VAL_INT) n = v->ival;
-    else if (v->type == VAL_FLOAT) n = (int)v->fval;
+    else if (v->type == VAL_FLOAT) n = (long long)v->fval;
     pop(vm);
     if (n < 0) push_nil(vm); else push_int(vm, n);
     return 1;

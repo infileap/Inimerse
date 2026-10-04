@@ -3044,3 +3044,13 @@ sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain
 - `sum` 现在只是**与运算符同规则**，不是任意精度：`sum([INT64_MAX, 1])` 抛 `numeric_overflow` 而不是给出 BigInt（v3.1 phase 2 的 `VAL_BIG` 未实现）。
 - **Windows 那份没有实测**：本机是 POSIX 构建，`src/runtime/runtime.c` 在 Linux 上连 WinHTTP 段都编不过（`HINTERNET`/`WinHttpOpen`/`URL_COMPONENTS`/`WCHAR` 未声明），只能做语法检查 —— `cc -std=gnu11 -fsyntax-only -Isrc -Isrc/common -Isrc/runtime -Isrc/compiler -Isrc/vm -Isrc/platform -Isrc/types -Isrc/mod src/runtime/runtime.c` 的报错行**全部落在 593–1643 的 WinHTTP 段**，`builtin_sum` 所在的 **138–195 区间内 0 个错误**。这不是「测过了」，是「编得过」。
 - `src/mod/io_mod.c:51` 的 `io_push_int(VM*, int)` 仍是 `int` 参数（调用点传的是句柄与字节数，不是本节的累加器），本次未改；`src/mod/replay_mod.c:47` 的 `rp_push_int` 已随 §10.49 改成 `long long`。
+
+## 10.51 WIN32 副本的 `len()`/`size()` 也没有分量回退：同一个门、同一个类（BOARD 行 147）
+
+**症状与发现路径。** §10.50 修完 `sum()` 之后，用 `grep -rn compCount src/` 把每个调用点过了一遍，找同一类写法。`src/runtime/runtime.c`（**WIN32 那份**）里 `builtin_len` 与 `builtin_size` 都写着 `if (s->kind == 0 && s->compCount == 0)` 这个门，**但都没有 `else` 回退**：`builtin_len` 的 `n` 停在初值 `0` ⇒ `len(1, 2, Z[7~9])` 答 **0**（POSIX 答 5）、`len(Z[1~4])` 答 **0**（POSIX 答 4）；`builtin_size` 的 `n` 停在初值 `-1` ⇒ 答 **nil**（POSIX 答 5），因为它后面接的 `else if (s->kind == 2 && …)` 只认闭区间，而带分量的集合 `kind` 是 0。两者都只改值、不改退出码。
+
+**根因。** 集合字面量是 i64 / items / 区间 comps 三部分的并（§10.10），`kind == 0 && compCount == 0` 只说明**能直接数**，不是元素个数的定义。§10.10 修好枚举器之后正确写法只有一种：能直接数就直接数，否则交给 `vm_set_to_array`。POSIX 两份都这么写了，WIN32 两份都没写 —— 这与 §10.50 的 `sum()` 是同一个门、同一个类。
+
+**修法。** WIN32 的集合分支对齐 POSIX（`else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }`，现 `src/runtime/runtime.c:88`、`:116`），`int n` 换成 `long long n`（`push_int` 收 `long long`，`len(9007199254740993)` 在 `int n` 下会截断 —— §10.49 那一类截断的又一处），并删掉 `builtin_size` 里用 `pow()` 的闭区间公式（它对闭区间与枚举器同答案、对分量集合给 nil）。`CMakeLists.txt:383` 的 `if(WIN32)` 决定只编一份：WIN32 编 `src/runtime/runtime.c`（`:386`）、其它平台编 `src/runtime/runtime_posix.c`（`:395`）。
+
+**判据与诚实边界。** **本机不可执行**：Linux 上 `src/runtime/runtime.c` 连 WinHTTP 段都编不过（`cc -std=gnu11 -fsyntax-only` 报错全在 601–1651 行），只能证明改动区间 0 错误。可证明的是**构造上的一致**：改动后两份的集合分支逐字相同。而 POSIX 那一份是实测的 —— `vtest/set_components_enumerable_v05.im:32` 早已钉着分量集合的 `len`/`size`，本机复测 `len(1, 2, Z[7~9]) = 5`、`size(1, 2, Z[7~9]) = 5`、`len(Z[1~4]) = 4`、`size(Z[1~4]) = 4`。**「两份写法一致」能证明，「Windows 上真的跑对了」不能。** 详见 [AUDIT.md](AUDIT.md) §1.16。
