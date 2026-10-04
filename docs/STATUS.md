@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-04 更新测试计数到 118；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-04 更新测试计数到 119；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **118 / 118 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **119 / 119 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **118** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **119** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:50` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 118
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 119
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3242,3 +3242,56 @@ release_to(comp, first + 1);
 **门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`、`errors: 0` —— 这个计数从 §10.54 起才是真的）、`✔ ctest (expect 118/118, 0 skipped)`（`100% tests passed, 0 tests failed out of 118`）、`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、`✔ economy migration (§43.5, expect 39/39)`、`✔ node protocol suites (expect 12 registered)`、`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (expect 75/75)`、`✔ userdata ignore rules (default deny)`、`✔ docs relative links`（`check_links: 93 markdown files, 409 links (17 external, 0 anchors, 392 local), 0 broken`）、`✔ docs backtick paths`（`check_doc_paths: 16 markdown files, 425 backtick 引用, 0 broken`）。日志：`.verify/v31/gate_concat.log`。
 
 **诚实边界。** ① **只有解释器有这条路径** —— AOT 的 `nv_add`（`src/compilation/aot_native.c:220-225`）压根不处理字符串（`emit_expr` 只有 `EXPR_NUMBER` 一个 case），wasm 同样拒绝字符串，所以三通道差分模糊测试**测不到它**。② **f-string 从没走过坏路径** —— `$"sum={name + 1}"` 被明确拒绝（`Error: f-string interpolation only supports plain identifiers inside {}`），而 `parse_fstring` 生成的链第一个操作数永远是字面量字符串。③ **编译器无辜** —— `x = 1; y = "7"; z = x + y` 的字节码是正确的 `OP_ADD`（`LOAD_GLOBAL r1 = x`、`LOAD_GLOBAL r2 = y`），缺陷在 VM 的拼接分支里。
+
+## §10.57 atomic_* 的宽度，以及溢出该抛而不是回绕
+
+**这一轮做的是「同一个计算有若干个产生点」的又一次实例** —— §10.53 的真值、§10.56 的 `+` 都属这一类；
+这次窄的不是类型判断，而是**宽度**：语言的整数层是 int64，`atomic_add` / `atomic_set` 却是 32 位。
+
+**症状。** `.verify/v31/atom.im` 修复前：`literal=3000000000`（字面量本身没问题），
+但 `get-after-set=-1294967296`、`add-big-ret=-1294967296`、`add-2p31-ret=-2147483648`、
+`get-after-2p31=-2147483648`。`add-small=7`、`add-float=8` 正常 —— 小数字看不出来。
+**退出码 0**，只改值。`atomic_get` 一直是对的，所以缺陷只在**写之后**可见。
+
+**机制。** POSIX `posix_atomic_add`（`src/runtime/runtime_posix.c:729`）是
+`int d = (int)val_as_int(&delta);` → `int old = __sync_fetch_and_add(&…ival, d);` → `push_int(vm, old + d);`，
+三步各窄一次；`posix_atomic_set`（`:753`）是 `int val = (int)val_as_int(&value);`。
+WIN32 三个函数（`src/runtime/runtime.c` 的 `builtin_atomic_add` `:1570`、`builtin_atomic_get` `:1604`、
+`builtin_atomic_set` `:1623`）逐字对应地窄，用的是 `LONG` 版的 `Interlocked*`。
+
+**为什么不能只加宽。** `+` 对整数溢出有明确规矩：`.verify/v31/ovf.im` 两行
+（`x = 9223372036854775807` / `say x + 1`）给出 `[exception] uncaught: numeric_overflow`、退出码 1。
+而裸的 `__sync_fetch_and_add` 看不见自己的溢出（先写再返回旧值），所以「加宽」只会把
+「静默少 2^32」换成「静默回绕到 INT64_MIN」。要判溢出就必须先算后写 —— CAS 循环。
+
+**修法。** `.verify/v31/atomicfix.py`（逐处 `assert b.count(old)==1` 的字节级替换，两文件共 6 处）：
+两处 `atomic_add` 改成 CAS 循环（POSIX 用 `__builtin_add_overflow`，WIN32 因 MSVC 无此内建函数而手写
+`LLONG_MAX`/`LLONG_MIN` 边界），溢出时 `vm_throw_kind(vm, "numeric_overflow")` 且**槽原样不动**；
+`atomic_set` 的 `int` 换成 `long long`/`LONG64`；WIN32 两个手写三元换成 `val_as_int`（顺带修掉
+`atomic_*(…, true)` 0 → 1，与 §10.52 同源）；`runtime.c` 补 `#include <limits.h>`；三个 `Interlocked*`
+全部换成 `Interlocked*64` 打在 `(volatile LONG64*)&…ival` 上。修复后 `.verify/v31/atom.im`：
+`get-after-set=3000000000`、`add-big-ret=3000000000`、`add-2p31-ret=2147483648`、`get-after-2p31=2147483648`；
+`.verify/v31/atom2.im` 现在打印 `max=9223372036854775807` 然后抛 `numeric_overflow`（原来是静默回绕）。
+构建 `BUILD_RC=0`，无新增警告。
+
+**判据。** 新增 CTest **`atomic_int64_width_runtime`（#119）**，钉一行
+`atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807`；
+FAIL 正则 `set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 `
+**已双向验证**（`grep -Ec`：修复前 1、修复后 0）。溢出用 `try { … } catch (err) { … }`
+（`docs/SYNTAX.md:339-340`）接住，`str(err)` 就是 `numeric_overflow` —— 所以测试只断言**值**，
+不依赖退出码，也就不需要 `WILL_FAIL` 记账项。`EXP_CTEST` **118 → 119**，§2 与本表同步 **119 / 119**。
+
+**门禁实测。** 十阶段**全绿**，`gate: OK — every stage passed.`、`GATE_RC=0`。逐阶段：`✔ build`（`warnings: 0`、
+`errors: 0`）、`✔ ctest (expect 119/119, 0 skipped)`（`100% tests passed, 0 tests failed out of 119`）、
+`✔ differential fuzz (interp vs AOT, expect 0 findings)`（`gate: fuzz findings match the pin (0 DIVERGE, 0 THREW, 0 untranslated).`）、
+`✔ economy migration (§43.5, expect 39/39)`、`✔ node protocol suites (expect 12 registered)`、
+`✔ dsh-inimerse plugin (offline + live)`、`✔ oauth_loop crate (expect 75/75)`、
+`✔ userdata ignore rules (default deny)`、`✔ docs relative links`、`✔ docs backtick paths`。
+日志：`.verify/v31/gate_atomic.log`。
+
+**诚实边界。** ① **WIN32 那三个函数本机不可执行** —— 该目标不在 Linux 上构建，只能证明它们与 POSIX
+逐字同构、且两个文件里再无残留的 32 位 `Interlocked*` 或 `(int)val_as_int`（`grep` 为空），**不是**跑过；
+② 两份实现的溢出判定**故意不同构**（`__builtin_add_overflow` vs 手写 `LLONG_MAX`/`LLONG_MIN`），
+因为 MSVC 没有那个内建函数；③ 字符串参数仍然等于 0（`val_as_int` 的 `default`），与 `sqrt("9")` 不是 3 一致，
+但与 `int("7")` = 7 不同，本轮不改；④ `atomic_*` 在此之前**没有任何文档**，
+`grep -rn atomic docs/*.md` 除 §1.20 的表格外没有命中。

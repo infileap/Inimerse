@@ -852,6 +852,13 @@ if(INIMERSE_BUILD_ENGINE)
   # grep -E (matches pre-fix, not post-fix).  See docs/AUDIT.md §1.23.
   add_test(NAME concat_left_operand_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/concat_left_operand_v06.im)
   set_tests_properties(concat_left_operand_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "concat-ok intstr=57 strlit=5a nil=nilx bool=truex float=5\\.5x chain3=578 chainix=575 rev=a5" FAIL_REGULAR_EXPRESSION "concat-ok intstr=7 |strlit=a |nil=x |bool=x |float=x |chain3=78 |chainix=75 ")
+  # atomic_add/atomic_set narrowed through `int` on a 64-bit slot, so
+  # atomic_set("k", 3000000000) answered -1294967296 -- silently, exit code 0.
+  # The add is now a CAS loop that raises numeric_overflow instead of wrapping,
+  # matching `+`.  The FAIL regex was checked both ways with grep -E (matches
+  # pre-fix, not post-fix).  See docs/AUDIT.md §1.24.
+  add_test(NAME atomic_int64_width_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/atomic_int64_width_v06.im)
+  set_tests_properties(atomic_int64_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;runtime;regression" PASS_REGULAR_EXPRESSION "atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807" FAIL_REGULAR_EXPRESSION "set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 ")
 
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)

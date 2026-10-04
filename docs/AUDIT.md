@@ -1045,6 +1045,73 @@ else { value_to_string(vm, b, sbuf3, sizeof sbuf3, 0); sb = sbuf3; }
 - **f-string 从没走过坏路径。** `$"sum={name + 1}"` 被明确拒绝（`Error: f-string interpolation only supports plain identifiers inside {}`），而 `parse_fstring` 生成的链第一个操作数永远是字面量字符串，所以坏的那一侧从没被触发。
 - **编译器无辜。** `x = 1; y = "7"; z = x + y` 的字节码是正确的 `OP_ADD`（`LOAD_GLOBAL r1 = x`、`LOAD_GLOBAL r2 = y`），缺陷在 VM 的拼接分支里。
 
+## §1.24 `atomic_add`/`atomic_set` 比语言本身窄
+
+**症状。** 整数层从 v3.1 起是 int64（`str(3000000000)` 就是 `3000000000`），但 `atomic_set` / `atomic_add`
+中间穿过一个 `int`，槽里落下的于是是另一个数。实测（`.verify/v31/atom.im`）：
+
+| 表达式 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `atomic_set("k", 3000000000)` 后 `atomic_get("k")` | **-1294967296** | 3000000000 |
+| `atomic_add("k", 3000000000)`（槽初值 0） | **-1294967296** | 3000000000 |
+| `atomic_add("k", 2147483648)`（槽初值 0） | **-2147483648** | 2147483648 |
+| `atomic_add("k", 7)` | 7 | 7（不变） |
+| `atomic_add("z", 1)`，`z` = 9223372036854775807 | **0**，槽被写成 -1 | 抛 `numeric_overflow`，槽**不变** |
+
+**退出码全程 0，只改值** —— 与 §1.15 / §1.17 / §1.23 同类的静默数据损坏。`atomic_get` 自身一直是对的，
+所以这个缺陷**只在写之后才看得见**：读一个从没写过的槽永远返回 0。
+
+**机制。** POSIX（`src/runtime/runtime_posix.c`）：
+
+```c
+int d = (int)val_as_int(&delta);                                    /* 32 位 */
+int old = __sync_fetch_and_add(&vm->globals[idx].val.ival, d);      /* 32 位返回 */
+push_int(vm, old + d);                                              /* 32 位加法 */
+```
+
+`posix_atomic_set` 同样是 `int val = (int)val_as_int(&value);`。槽本身是 `long long`，
+三步各窄一次，3000000000 在第一步就变成 -1294967296。WIN32 的三个函数（`src/runtime/runtime.c`）
+逐字对应地窄：`builtin_atomic_add` 用 `InterlockedExchangeAdd(…, (LONG)delta)` 配
+`push_int(vm, (int)(old + delta))`，`builtin_atomic_get` 用 `(int)InterlockedCompareExchange(…, 0, 0)`，
+`builtin_atomic_set` 用 `InterlockedExchange(…, (LONG)val)` 配 `push_int(vm, (int)val)` —— **三个都窄**，
+不是只漏了一个。
+
+对照 `posix_atomic_get`（`:744-751`）一直是 `__sync_add_and_fetch(&…ival, 0)`，`long long` 进已经加宽过的
+`push_int` —— 这正说明缺陷是「写」那半边独有的。
+
+**为什么不能只是加宽。** 语言对整数溢出有明确的规矩：`+` 抛 `numeric_overflow`
+（`x = 9223372036854775807; say x + 1` → `[exception] uncaught: numeric_overflow`，退出码 1）。
+裸的 `__sync_fetch_and_add` / `InterlockedExchangeAdd` **看不见自己的溢出** —— 它们先写再返回旧值，
+所以「加宽」本身会把「静默地少 2^32」换成「静默地回绕到 INT64_MIN」，只是把缺陷挪大。要能判溢出，
+就必须**先算后写**，也就是 CAS 循环。
+
+**修法。** 两处 `atomic_add` 都改成 CAS 循环，POSIX 用 `__builtin_add_overflow` 判、WIN32 因为
+MSVC 没有这个内建函数而手写 `LLONG_MAX`/`LLONG_MIN` 边界；溢出时 `vm_throw_kind(vm, "numeric_overflow")`
+并**原样留下槽**（不部分生效）。`atomic_set` 只需把 `int` 换成 `long long` / `LONG64`，
+并把 WIN32 那两个手写三元表达式换成 `val_as_int`（顺带修掉 `atomic_*(…, true)` 从 0 到 1，与 §1.20 同源）。
+`runtime.c` 补 `#include <limits.h>`。三个 `Interlocked*` 调用全部换成 `Interlocked*64` 打在
+`(volatile LONG64*)&…ival` 上。
+
+**判据。** 新增 CTest **`atomic_int64_width_runtime`（#119）**，钉一行
+`atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807`；
+FAIL 正则 `set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 `
+**已双向验证**（`grep -Ec`：修复前 1、修复后 0）。溢出那半边用 `try { … } catch (err) { … }`
+（`docs/SYNTAX.md:339-340`）接住错误，`str(err)` 得到错误种类名 `numeric_overflow` —— 这样测试仍然只断言
+**值**，不依赖退出码，也就不需要 `WILL_FAIL` 记账项。`keep1` / `keep2` 两格钉的是「被拒绝的加法不改槽」。
+
+**诚实边界。**
+
+- **WIN32 那三个函数本机不可执行。** 该目标不在 Linux 上构建，所以只能证明它们与 POSIX 逐字同构、
+  并且两个文件里再没有残留的 32 位 `InterlockedExchangeAdd(` / `InterlockedExchange(` /
+  `InterlockedCompareExchange(` / `(int)val_as_int`（`grep` 为空）——**不是**跑过。
+- **两份实现的溢出判定故意不同构。** POSIX 用 `__builtin_add_overflow`，WIN32 用手写的
+  `LLONG_MAX`/`LLONG_MIN` 边界，因为 MSVC 没有这个内建函数。语义相同，文本不同。
+- **字符串参数仍然等于 0。** `atomic_add("k", "7")` 走 `val_as_int` 的 `default` 分支得 0，与
+  `sqrt("9")` 不是 3 一致，但和 `int("7")` = 7 不是一回事。本轮不改。
+- **`atomic_*` 在此之前没有任何文档。** `grep -rn atomic docs/*.md` 除 §1.20 自己的表格外没有命中，
+  所以这一节是它第一次被写下来；也因此没有历史行为可供对照。
+
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

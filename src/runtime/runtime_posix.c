@@ -731,13 +731,29 @@ static int posix_atomic_add(VM *vm) {
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value delta = vm_cur_stack(vm)[vm_cur_sp(vm)];
     const char *n = name.type == VAL_STRING ? name.sval : NULL;
-    int d = (int)val_as_int(&delta);
+    long long d = val_as_int(&delta);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     int idx = posix_atomic_find(vm, n, 1);
     if (idx < 0) { push_int(vm, 0); return 1; }
-    int old = __sync_fetch_and_add(&vm->globals[idx].val.ival, d);
+    /* int64, like the language: a 32-bit `int old` here turned
+       atomic_add("k", 3000000000) into -1294967296 -- silently, exit code 0.
+       The CAS loop is what makes the sum checkable at all: a bare
+       __sync_fetch_and_add cannot see its own overflow, and `+` raises
+       numeric_overflow for exactly this case, so this must too. */
+    long long old = __sync_fetch_and_add(&vm->globals[idx].val.ival, 0);
+    for (;;) {
+        long long next;
+        if (__builtin_add_overflow(old, d, &next)) {
+            vm->globals[idx].val.type = VAL_INT;
+            vm_throw_kind(vm, "numeric_overflow");
+            return 1;
+        }
+        long long seen = __sync_val_compare_and_swap(&vm->globals[idx].val.ival, old, next);
+        if (seen == old) { old = next; break; }
+        old = seen;
+    }
     vm->globals[idx].val.type = VAL_INT;
-    push_int(vm, old + d);
+    push_int(vm, old);
     return 1;
 }
 
@@ -754,7 +770,7 @@ static int posix_atomic_set(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value value = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int val = (int)val_as_int(&value);
+    long long val = val_as_int(&value);
     int idx = posix_atomic_find(vm, name.type == VAL_STRING ? name.sval : NULL, 1);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     if (idx < 0) { push_int(vm, 0); return 1; }

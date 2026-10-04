@@ -1,0 +1,56 @@
+# atomic_int64_width_v06.im -- atomic_add/atomic_set must be as wide as the
+# language, and an overflowing add must be refused rather than wrapped.
+# See docs/AUDIT.md §1.24 and docs/STATUS.md §10.57.
+#
+# `3000000000` is an ordinary literal (the integer tier has been int64 since
+# v3.1), but atomic_set/atomic_add narrowed through `int`, so the slot answered
+# a different number -- silently, exit code 0:
+#
+#   atomic_set("k", 3000000000); atomic_get("k")   -1294967296
+#   atomic_add("k", 3000000000)                    -1294967296
+#   atomic_add("k", 2147483648)                    -2147483648
+#
+# The POSIX copy kept a 32-bit `int old` around __sync_fetch_and_add; the WIN32
+# copy used InterlockedExchangeAdd / InterlockedExchange / InterlockedCompare-
+# Exchange on a LONG (all three of them).  posix_atomic_get was already correct,
+# which is why the defect only showed up after a write.
+#
+# The second half is the doctrine `+` already follows -- integer overflow raises
+# numeric_overflow.  A bare __sync_fetch_and_add cannot see its own overflow, so
+# the add is now a CAS loop that checks before it stores, and a refused add must
+# leave the slot exactly as it was (that is what keep1/keep2 assert).
+#
+# Values only, never exit codes.
+
+atomic_set("k", 3000000000)
+w1 = atomic_get("k")
+atomic_set("k", 0)
+w2 = atomic_add("k", 3000000000)
+w3 = atomic_get("k")
+atomic_set("k", 0)
+w4 = atomic_add("k", 2147483648)
+w5 = atomic_get("k")
+atomic_set("k", 0)
+w6 = atomic_add("k", 7)
+w7 = atomic_get("k")
+
+atomic_set("z", 9223372036854775807)
+try {
+  o1 = atomic_add("z", 1)
+  o1 = "NO-THROW"
+} catch (e1) {
+  o1 = str(e1)
+}
+o2 = atomic_get("z")
+
+atomic_set("z", 4611686018427387904)
+o3 = atomic_add("z", 4611686018427387903)
+try {
+  o4 = atomic_add("z", 1)
+  o4 = "NO-THROW"
+} catch (e2) {
+  o4 = str(e2)
+}
+o5 = atomic_get("z")
+
+say "atomic-ok set=" + str(w1) + " add=" + str(w2) + " get=" + str(w3) + " add2p31=" + str(w4) + " get2=" + str(w5) + " small=" + str(w6) + " getsmall=" + str(w7) + " ovf1=" + o1 + " keep1=" + str(o2) + " half=" + str(o3) + " ovf2=" + o4 + " keep2=" + str(o5)

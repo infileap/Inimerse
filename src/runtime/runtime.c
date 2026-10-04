@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <limits.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
@@ -1574,7 +1575,7 @@ static int builtin_atomic_add(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm) - 1];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     Value *dv = &st[vm_cur_sp(vm)];
-    long long delta = (dv->type == VAL_INT) ? (long long)dv->ival : (dv->type == VAL_FLOAT ? (long long)dv->fval : 0);
+    long long delta = val_as_int(dv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
     if (!nm) { push_int(vm, 0); return 1; }
     int idx = -1;
@@ -1596,9 +1597,25 @@ static int builtin_atomic_add(VM *vm) {
     }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
     if (vm->globals[idx].val.type != VAL_INT) { vm->globals[idx].val.type = VAL_INT; vm->globals[idx].val.ival = 0; }
-    LONG old = InterlockedExchangeAdd((volatile LONG*)&vm->globals[idx].val.ival, (LONG)delta);
+    /* int64, like POSIX and like the language: the 32-bit InterlockedExchangeAdd
+       here turned atomic_add("k", 3000000000) into -1294967296.  MSVC has no
+       __builtin_add_overflow, so the bound is checked by hand -- and the CAS loop
+       is what makes the check meaningful. */
+    LONG64 old = InterlockedCompareExchange64((volatile LONG64*)&vm->globals[idx].val.ival, 0, 0);
+    for (;;) {
+        LONG64 next;
+        if ((delta > 0 && old > LLONG_MAX - delta) || (delta < 0 && old < LLONG_MIN - delta)) {
+            if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
+            vm_throw_kind(vm, "numeric_overflow");
+            return 1;
+        }
+        next = old + delta;
+        LONG64 seen = InterlockedCompareExchange64((volatile LONG64*)&vm->globals[idx].val.ival, next, old);
+        if (seen == old) { old = next; break; }
+        old = seen;
+    }
     if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
-    push_int(vm, (int)(old + delta));
+    push_int(vm, old);
     return 1;
 }
 static int builtin_atomic_get(VM *vm) {
@@ -1613,8 +1630,8 @@ static int builtin_atomic_get(VM *vm) {
         if (vm->globals[i].name && strcmp(vm->globals[i].name, nm) == 0) { idx = i; break; }
     if (idx < 0) { push_int(vm, 0); return 1; }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
-    int v = (vm->globals[idx].val.type == VAL_INT)
-        ? (int)InterlockedCompareExchange((volatile LONG*)&vm->globals[idx].val.ival, 0, 0)
+    LONG64 v = (vm->globals[idx].val.type == VAL_INT)
+        ? InterlockedCompareExchange64((volatile LONG64*)&vm->globals[idx].val.ival, 0, 0)
         : 0;
     if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
     push_int(vm, v);
@@ -1627,7 +1644,7 @@ static int builtin_atomic_set(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm) - 1];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     Value *vv = &st[vm_cur_sp(vm)];
-    long long val = (vv->type == VAL_INT) ? (long long)vv->ival : (vv->type == VAL_FLOAT ? (long long)vv->fval : 0);
+    long long val = val_as_int(vv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
     int idx = -1;
     for (int i = 0; i < vm->globalCount; i++)
@@ -1648,10 +1665,10 @@ static int builtin_atomic_set(VM *vm) {
     }
     if (vm->active_threads > 1) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
     vm->globals[idx].val.type = VAL_INT;
-    InterlockedExchange((volatile LONG*)&vm->globals[idx].val.ival, (LONG)val);
+    InterlockedExchange64((volatile LONG64*)&vm->globals[idx].val.ival, val);
     vm->globals[idx].val.fval = 0; vm->globals[idx].val.sval = NULL;
     if (vm->active_threads > 1) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
-    push_int(vm, (int)val);
+    push_int(vm, val);
     return 1;
 }
 static int builtin_gc_stats(VM *vm) { /* gc_stats() -> {runs, freed, enabled, threshold, used} */
