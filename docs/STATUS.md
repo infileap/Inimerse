@@ -498,7 +498,10 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 - [ ] R3：位宽由集合基数／范围派生；`@bits(n)`/`@bytes(n)` 显式钉住并编译期校验「位宽是否足够存储该集合的所有值」。
 - [ ] 消去「同一语义多决定点」：`in`／子集／`be` 今天各有两份实现（C 内核 `src/types/` 与 VM `SetObj`），须与 [DECFY_DESIGN.md](DECFY_DESIGN.md) 用同一份决定点清单收敛。
 
-**未决**：`b = 0 : a` 这一声明形状在 i.json 中**无逐字出处**（导出里已有三种别的形状，其中一种就是仓库已实现的 `OP_BE` 形式），要定必须由人裁定——见 [TYPESET_V06.md](TYPESET_V06.md) §7.1。
+**已裁定（2026-10，人类指令）**：
+
+- **声明形状采纳 ① 与 ③**：`b be a : 0`（`i.json#267`，即仓库已实现的 `OP_BE` 形式）与 `b: a = 0`（`i.json#721` 的「`[@标签...] 变量名 : 类型 [= 初值]`」）。上一轮的 `b = 0 : a` 是笔误、已撤回。两者是不同的事（前者约束绑定、后者声明标注），同一个 `:` 的两个用途仍待处理。
+- **`FloatN`／`floatN` 移出核心内置集合，改由拓展库提供**。影响清单（`file:line`）见 [TYPESET_V06.md](TYPESET_V06.md) §8；`docs/archive/ROADMAP_3.1.md` §非目标「v3.1 之前不删除」据此失效，但**该文件原文不改写**（§1 硬规则 6）。
 
 ---
 
