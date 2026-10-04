@@ -1408,6 +1408,43 @@ blast radius 为零（实测，不是推断）。
 
 **诚实边界。** ① `src/runtime/runtime.c` 在 Linux 上根本不参与编译（`CMakeLists.txt:395` 的 `if(WIN32)` 分支），所以 Linux 门禁只能钉住 POSIX 那一半；Windows 那一半靠 ucrt64 与 mingw64 两套 gcc 16.1.0 的 `-fsyntax-only`（均 RC=0、0 error）加上协调者在 Windows 上的实跑。② `round` 的非数字实参分歧**没有动**：Windows 抛错、POSIX 答 `nil`，两者都是既有的拒绝形态（硬拒绝 vs 软拒绝），属于设计选择而非明显缺陷，改 POSIX 会改变 Linux 行为，需要单独一轮裁决，因此只在此记录。③ 本次没有为「值种类」加运行期断言，判据是 `str()` 的输出。
 
+## §1.35 依赖 trailer 在 Windows 上记不下相对路径
+
+**现象。** 同一个最小工程（`lib.im` 加一个 `import "lib.im"` 的 `app.im`），Windows 上 `buildc app.im app.inim` 之后 trailer 里记的是 `../D:\inim-rel\nt2\app.im` 与 `../D:\inim-rel\nt2\lib.im`；第二次 `--incremental` 仍然打印 `compiled:` 而不是 `up to date`。
+
+**根因。** 同一个「把绝对路径变成相对路径」的计算有两个生产点，只有一处认识 Windows 的分隔符：`src/compilation/deps.c:83-93` 的 `deps_bc_dirname` **已经**在 `_WIN32` 下额外找 `\`（`:86-89`），而 `src/compilation/deps.c:97-121` 的 `deps_relative_path` 只按 `/` 切 —— `:104-105` 的尾部剥离与 `:107-108` 的两处 `strtok(..., "/")`。
+
+`src/main.c:390-396` 的 `normalize_path` 在 Windows 上把 `/` 全换成 `\`，`make_abs_path_loose`（`src/main.c:442-448`）会调它，所以 `src/main.c:774` 与 `:781` 传进来的 `abs_main`/`abs` 是反斜杠绝对路径。反斜杠路径里没有 `/`，于是 `ac`/`bc` 各自只剩一个分量，`common` 恒为 0，函数吐出 `".."` 加完整绝对路径。读回时 `deps_entry_abs_path`（`src/compilation/deps.c:123-133`）看到首字符是 `.`，既不认 `/` 也不认盘符，拼成 `dir + "/" + "../D:\...\app.im"` → 文件不存在 → sha256 失败 → 判定 stale → **每次增量都重编译**。
+
+**修法。** `src/compilation/deps.c` 加一个平台相关的分隔符集合：`_WIN32` 下 `#define DEPS_SEPS "\\/"` 与 `deps_is_sep(c)` 认 `/` 和 `\`，POSIX 下退化成只看 `/`；`deps_relative_path` 的尾部剥离与两处 `strtok` 都改用它。这与 `deps_bc_dirname` 的既有写法同源。
+
+**判据。** 用 ucrt64 gcc 16.1.0 编译 `src/compilation/deps.c` 加一个直接调 `deps_relative_path` 的探针，对 HEAD 那份与工作区那份各跑一遍：
+
+| from_dir | abs_target | 修复前 | 修复后 |
+|---|---|---|---|
+| `C:\Users\x\nt2` | `C:\Users\x\nt2\app.im` | `../C:\Users\x\nt2\app.im` | `app.im` |
+| `C:\Users\x\nt2` | `C:\Users\x\nt2\lib.im` | `../C:\Users\x\nt2\lib.im` | `lib.im` |
+| `C:\Users\x\nt2\sub` | `C:\Users\x\nt2\app.im` | `../C:\Users\x\nt2\app.im` | `../app.im` |
+| `C:\Users\x\nt2\` | `C:\Users\x\nt2\app.im` | `../C:\Users\x\nt2\app.im` | `app.im` |
+| `D:\proj` | `C:\other\lib.im` | `../C:\other\lib.im` | `../../C:/other/lib.im` |
+| `/tmp/tmp.X` | `/tmp/tmp.X/app.im` | `app.im` | `app.im` |
+
+修复前那一列与协调者在 Windows 上观察到的 trailer 逐字节一致；最后一行证明 POSIX 行为未变。
+
+**诚实边界。** ① 这是 Windows-only 缺陷（Linux 上 `DEPS_SEPS` 就是 `/`），Linux 门禁只能证明「没改坏」：`ctest -R "incremental|dep|compile|selfhost|cli_"` 5/5 通过。② `deps_entry_abs_path` 的绝对路径判定仍然只认前导 `/` 与盘符，不认前导 `\`；修复后 `deps_relative_path` 只会吐出 `/` 连接的相对路径或 `..` 前缀，所以这条分支不会被反斜杠路径命中 —— 但这是一个**没有被测试覆盖**的假设。③ trailer 内部仍然用 `/` 连接（`src/compilation/deps.c:113` 与 `:117`），这是刻意的：trailer 的内容要跨主机可比。
+
+## §1.36 模组加载通知写进了程序输出
+
+**现象。** 在 Windows 上（只有 Windows 引擎链接 `mods/build/build_mod.c`，见 `CMakeLists.txt:400`）解释器比 POSIX 多输出一行 `[build模组] 已加载`，`tools/wasm_backend.test.py` 的逐字节比较因此失败。
+
+**根因。** 同一件事（模组加载完成）有三个生产点，只有一处写 stdout：`mods/build/build_mod.c:742` 的 `printf`，对 `src/mod/infiverse_mod.c:839` 与 `src/mod/verse_dist_mod.c:2688` 两处都写 `fprintf(stderr, ...)`。
+
+**修法。** `mods/build/build_mod.c:742` 改 `fprintf(stderr, ...)`。同文件里其它的 `printf`（`mods/build/build_mod.c:371` 的 `打包完成`、`:373` 的 `已嵌入模组`、`:405` 的参数错误等）是 `build` 这个内建**本身**的输出，属于「命令的答案」，保持 stdout 不动。
+
+**判据。** ucrt64 与 mingw64 下 `-fsyntax-only` 均 RC=0、0 error。
+
+**诚实边界。** 这一行在 Linux 上不参与编译，所以 Linux 门禁看不见它；「通知走 stderr」这条规矩本身没有被测试钉住，只有三处源码的一致性。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

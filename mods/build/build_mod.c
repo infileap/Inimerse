@@ -739,5 +739,9 @@ int build_project_impl(VM *vm, const char *cfgPath, int mode, const char *outExe
 void build_mod_register(VM *vm) {
     vm->build_script = build_script_impl;
     vm_register_builtin_safe(vm, "build", builtin_build);
-    printf("[build模组] 已加载\n");
+    /* A load notice is a diagnostic, not program output: it goes to stderr
+     * like the other two mod notices (src/mod/infiverse_mod.c:839,
+     * src/mod/verse_dist_mod.c:2688).  On stdout it becomes an extra line in
+     * every program's output on the platforms that link this file. */
+    fprintf(stderr, "[build模组] 已加载\n");
 }

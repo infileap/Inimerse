@@ -80,6 +80,20 @@ void deps_free(DepEntry *deps, int count) {
     free(deps);
 }
 
+/* Path separators.  Windows accepts both, and the engine's own
+ * normalize_path() (src/main.c:390) hands absolute paths back with
+ * backslashes there, so a split that only knows '/' sees "C:\a\b" as a
+ * single component -- deps_relative_path() then emits ".." plus the whole
+ * absolute path instead of a relative one.  deps_bc_dirname() below has
+ * always looked at both. */
+#ifdef _WIN32
+#  define DEPS_SEPS "\\/"
+static int deps_is_sep(char c) { return c == '/' || c == '\\'; }
+#else
+#  define DEPS_SEPS "/"
+static int deps_is_sep(char c) { return c == '/'; }
+#endif
+
 void deps_bc_dirname(const char *bc_path, char *out, size_t out_sz) {
     snprintf(out, out_sz, "%s", bc_path);
     char *slash = strrchr(out, '/');
@@ -100,12 +114,12 @@ void deps_relative_path(const char *from_dir, const char *abs_target, char *out,
     char a[2048], b[2048];
     snprintf(a, sizeof(a), "%s", from_dir);
     snprintf(b, sizeof(b), "%s", abs_target);
-    /* strip trailing slashes */
-    size_t al = strlen(a); while (al > 1 && a[al-1] == '/') a[--al] = '\0';
-    size_t bl = strlen(b); while (bl > 1 && b[bl-1] == '/') b[--bl] = '\0';
+    /* strip trailing separators */
+    size_t al = strlen(a); while (al > 1 && deps_is_sep(a[al-1])) a[--al] = '\0';
+    size_t bl = strlen(b); while (bl > 1 && deps_is_sep(b[bl-1])) b[--bl] = '\0';
     char *ac[256], *bc[256]; int an = 0, bn = 0;
-    for (char *t = strtok(a, "/"); t && an < 256; t = strtok(NULL, "/")) ac[an++] = t;
-    for (char *t = strtok(b, "/"); t && bn < 256; t = strtok(NULL, "/")) bc[bn++] = t;
+    for (char *t = strtok(a, DEPS_SEPS); t && an < 256; t = strtok(NULL, DEPS_SEPS)) ac[an++] = t;
+    for (char *t = strtok(b, DEPS_SEPS); t && bn < 256; t = strtok(NULL, DEPS_SEPS)) bc[bn++] = t;
     int common = 0;
     while (common < an && common < bn && strcmp(ac[common], bc[common]) == 0) common++;
     size_t used = 0;

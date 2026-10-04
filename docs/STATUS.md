@@ -3494,3 +3494,13 @@ Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相�
 对 59 个同名内建做 `push_*` 词汇差分，全部差异只有 5 处 3 类：上述两处，加上 `spi_mods` 与 `mod_usage` 缺 `aidx < 0` 守卫（分配失败时把指向 −1 号槽的引用包装成 dict/array 发布出去；`vm_dict_set` 在 `src/vm/vm.c:1028` 有守卫，所以不越界写），以及 `round` 非数字实参的硬/软拒绝分歧（**保留**，见 [AUDIT.md](AUDIT.md) §1.34 诚实边界 ②）。
 
 **计数同步。** `tools/gate.sh:50` 的 `EXP_CTEST` **121 → 122**，`docs/BOARD.md` §3 与本节 §2/§2.1 同步为 **122 / 122**。新用例 `vtest/predicate_result_type_v06.im` 注册在 `CMakeLists.txt` **测试列表末尾**（`add_test(NAME predicate_result_type_runtime …)`）—— 必须排在最后：CTest 的 `#N` 是注册顺序，插在中间会把既有编号整体后移，而多个历史行正引用着那些编号。
+
+## §10.68 依赖 trailer 的分隔符与模组通知的流向
+
+两处 Windows-only 缺陷，都属于「同一个计算有两个生产点，只有一处守规矩」。
+
+**① trailer 记不下相对路径（#24 cli_incremental）。** `src/compilation/deps.c:83-93` 的 `deps_bc_dirname` 已经在 `_WIN32` 下额外找 `\`（`:86-89`），而 `:97-121` 的 `deps_relative_path` 只按 `/` 切（`:104-105` 的尾部剥离与 `:107-108` 的两处 `strtok`）。`src/main.c:390-396` 的 `normalize_path` 在 Windows 上把 `/` 换成 `\`，所以 `src/main.c:774`/`:781` 传进来的是反斜杠绝对路径，`common` 恒为 0，函数吐出 `".."` 加完整绝对路径；读回时 `deps_entry_abs_path`（`src/compilation/deps.c:123-133`）不认它，sha256 失败，于是**每次增量都重编译**。修法是平台相关的分隔符集合（`_WIN32` 下 `DEPS_SEPS` 为 `"\\/"`）。ucrt64 探针实测：`C:\Users\x\nt2` → `C:\Users\x\nt2\app.im` 由 `../C:\Users\x\nt2\app.im` 变成 `app.im`，`/tmp/tmp.X` 两版都是 `app.im`（POSIX 未变）。
+
+**② 模组加载通知写进了 stdout（#29 wasm_backend）。** 只有 Windows 引擎链接 `mods/build/build_mod.c`（`CMakeLists.txt:400`），而它的 `mods/build/build_mod.c:742` 用 `printf`，另两处模组通知（`src/mod/infiverse_mod.c:839`、`src/mod/verse_dist_mod.c:2688`）都用 `fprintf(stderr, ...)`。改成 stderr；同文件里属于 `build` 内建**自身**输出的那些 `printf`（`:371`/`:373`/`:405`）保持不动。
+
+**没有新增用例。** 两处都在 Linux 上不参与编译（`deps.c` 走 POSIX 分支，`build_mod.c` 不在 POSIX 源列表里），Linux 门禁只能证明「没改坏」：`ctest -R "incremental|dep|compile|selfhost|cli_"` 5/5。详见 [AUDIT.md](AUDIT.md) §1.35 与 §1.36。
