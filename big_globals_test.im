@@ -165,7 +165,7 @@ say "sum_a: " + sum_a()
 const g150 = 999
 if g150 != 999 { say "FAIL: const lost" } else { say "PASS: const beyond 256" }
 
-g200 be N : 42
+g200: N = 42
 g200 = 55
 if g200 != 55 { say "FAIL: be g200" } else { say "PASS: be beyond 256" }
 

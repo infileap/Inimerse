@@ -1,0 +1,8 @@
+# `be` 声明语法已移除（docs/TYPESET_V06.md §3.1 / docs/SYNTAX.md §6.3）。
+#
+# 这条判据钉住的是一个**静默**失败形状，而不是"报错难看"：
+# 移除前 `x be Byte: 42` 被解析器当成标签块（parser.c 里 `IDENT :` 分支先命中），
+# 结果 x 保持 nil、而全局 Byte 被静默改写成 42。现在它必须是可定位的语法错误。
+type Byte = [0~255]
+x be Byte: 42
+say "must not be reached"

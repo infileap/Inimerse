@@ -298,13 +298,15 @@ static int lint_scan(const char *path, LintBuf *lb) {
                 if (brace) *brace = 0;
                 snprintf(case_subject, sizeof case_subject, "%s", subject);
                 /* A variable is associated with a finite type when declared
-                   as `x be Type` earlier in the same file. */
+                   as `x: Type [= 初值]` earlier in the same file.  The old
+                   `x be Type` spelling was removed, so this scan reads the
+                   colon shape; docs/TYPESET_V06.md §3.1. */
                 FILE *decl = fopen(path, "rb");
                 if (decl) {
                     char dl[4096];
                     while (fgets(dl, sizeof dl, decl)) {
                         char dn[64], dt[64];
-                        if (sscanf(dl, "%63s be %63s", dn, dt) == 2 && strcmp(dn, case_subject) == 0) {
+                        if (sscanf(dl, " %63[^: \t] : %63s", dn, dt) == 2 && strcmp(dn, case_subject) == 0) {
                             char *nl = strpbrk(dt, "\r\n;{}"); if (nl) *nl = 0;
                             case_type = lint_find_type(types, type_count, dt);
                             break;

@@ -1130,7 +1130,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 char memN[128];
                 snprintf(memN, sizeof(memN), "%.*s", (int)expr->member.member.length, expr->member.member.start);
                 if (strcmp(memN, "range") == 0) {
-                    /* range(value, gidx): gidx lets runtime return the be-bound set */
+                    /* range(value, gidx): gidx lets the runtime return the bound set */
                     int g = -1;
                     if (expr->member.object->type == EXPR_IDENT) {
                         char objN[256];

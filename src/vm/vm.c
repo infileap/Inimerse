@@ -4282,7 +4282,7 @@ L_CALL_FUNC: {
                 if (sidx >= 0 && !set_contains(vm, sidx, &init)) {
                     Value err;
                     err.type = VAL_STRING;
-                    err.sval = (char*)vm_intern(vm, "be: initial value out of range");
+                    err.sval = (char*)vm_intern(vm, "initial value out of range");
                     err.ival = 1;
                     im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
                     vm_throw(vm, t, &err);
@@ -5116,10 +5116,10 @@ void vm_debug_var(VM *vm, const char *mode) {
         }
         value_to_string(vm, &vm->globals[i].val, buf, sizeof(buf), 0);
         if (!mode || !mode[0] || strcmp(mode, "all") == 0)
-            printf("%s = %s (%s)%s\n", vm->globals[i].name ? vm->globals[i].name : "?", buf, t, vm->global_bound[i] > 0 ? " [be]" : "");
+            printf("%s = %s (%s)%s\n", vm->globals[i].name ? vm->globals[i].name : "?", buf, t, vm->global_bound[i] > 0 ? " [bound]" : "");
         else if (strcmp(mode, "value") == 0) printf("%s = %s\n", vm->globals[i].name ? vm->globals[i].name : "?", buf);
         else if (strcmp(mode, "type") == 0) printf("%s: %s\n", vm->globals[i].name ? vm->globals[i].name : "?", t);
-        else if (strcmp(mode, "scope") == 0) printf("%s: global%s\n", vm->globals[i].name ? vm->globals[i].name : "?", vm->global_bound[i] > 0 ? " (be)" : "");
+        else if (strcmp(mode, "scope") == 0) printf("%s: global%s\n", vm->globals[i].name ? vm->globals[i].name : "?", vm->global_bound[i] > 0 ? " (bound)" : "");
     }
     /* bare-try ignored-exception debug slot */
     if (vm->last_ignored_exc && (!mode || !mode[0] || strcmp(mode, "all") == 0 || strcmp(mode, "value") == 0))

@@ -40,6 +40,10 @@ static struct {
     {"size",    TOK_SIZE},    {"sound",   TOK_SOUND},   {"music",   TOK_MUSIC},
     {"text",    TOK_TEXT},    {"broadcast", TOK_BROADCAST},
     {"clone",   TOK_CLONE}, {"declare", TOK_DECLARE}, {"case", TOK_CASE}, {"record", TOK_RECORD}, {"recorded", TOK_RECORD}, {"with", TOK_WITH}, {"const", TOK_CONST}, {"autosave", TOK_AUTOSAVE}, {"quit_on_escape", TOK_QUIT_ON_ESCAPE}, {"fullscreen", TOK_FULLSCREEN}, {"fixed", TOK_FIXED}, {"ghost", TOK_GHOST}, {"clickable", TOK_CLICKABLE}, {"drag", TOK_DRAG}, {"secret", TOK_SECRET}, {"tag", TOK_TAG},   {"forever", TOK_FOREVER}, {"when",    TOK_WHEN},
+    /* `be` 刻意保留为关键字（不是没删干净）：声明构造已移除，但若把这个词降级成普通
+       标识符，旧写法会静默变成别的东西 —— `be = 5` 成了给变量 be 赋值，`x be Byte: 42`
+       裂成表达式 x、表达式 be、声明 `Byte: 42`，于是**无声改写全局 Byte**。保留它，旧写法
+       就在 src/parser/parser.c:1376 报到一行带行号的错。见 docs/SYNTAX.md §6.3。 */
     {"be",      TOK_BE},     {"type",    TOK_TYPE},   {"min",     TOK_MIN},    {"max",     TOK_MAX},
     {"try",     TOK_TRY},
     {"final",   TOK_FINAL}, {"finally", TOK_FINAL},   {"catch",   TOK_CATCH},

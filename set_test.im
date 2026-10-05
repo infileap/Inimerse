@@ -25,7 +25,7 @@ say min c
 say max c
 say 3.01 in c
 say 3 in c
-gamemode be 0,1,2,3:0
+gamemode: 0,1,2,3 = 0
 say gamemode
 try {
     gamemode = 5

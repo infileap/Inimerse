@@ -1018,7 +1018,7 @@ static int builtin_range(VM *vm) {
     Value v = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     int gidx = (gi.type == VAL_INT) ? gi.ival : -1;
     pop(vm); pop(vm);
-    /* be-bound global: return the be set */
+    /* bound global: return its declared bound set */
     if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
         int bidx = vm->global_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {

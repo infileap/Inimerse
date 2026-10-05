@@ -1367,6 +1367,26 @@ static Stmt *parse_stmt_impl(Parser *p) {
         else { Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_WAIT; stmt->waitStmt.duration = parse_expr(p); return stmt; }
     }
 
+    /* `be` 已不再是声明关键字（docs/TYPESET_V06.md §3.1）。把这个词留在保留字
+       表里并在这里显式报错，是为了让旧代码**响亮地失败**而不是被静默重解析：
+         `be = 5`      —— 若 `be` 退化成普通标识符，这会变成给变量 be 赋值，不报错；
+         `x be Byte: 42` —— 会裂成三条语句（表达式 x、表达式 be、声明 Byte: 42），
+                            在没有任何错误的情况下改写全局 Byte。
+       两种静默结果都比一条可定位的语法错误糟。 */
+    if (t.type == TOK_BE) {
+        if (g_err_json) {
+            err_json("parse", p->lex.line, p->lex.col,
+                     "`be` declarations were removed (docs/SYNTAX.md 6.3)", "be",
+                     "write `name: set [= init]` in place of `name be set [: init]`");
+            parse_fatal();
+        }
+        fprintf(stderr,
+                "Error at line %d: `be` declarations were removed (docs/SYNTAX.md 6.3); "
+                "write `name: set [= init]` in place of `name be set [: init]`\n",
+                p->lex.line);
+        parse_fatal();
+    }
+
     /* 线程操作：worker.wait 10 / u.worker.wait until cond[, timeout] */
     if (t.type == TOK_IDENT) {
         Stmt *tw = try_parse_thread_wait(p);

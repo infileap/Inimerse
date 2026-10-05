@@ -1,7 +1,8 @@
 # restart thread + thread to A tests
-global i, j
+global i, j, hits
 i = 0
 j = 0
+hits = 0
 thread worker {
     global i
     i = 0
@@ -21,8 +22,14 @@ kill worker
 say "restart done"
 
 thread jumpy {
-    global j
-    A: j = 0
+    global j, hits
+    # `A: j = 0` is no longer a label either (see label_test.im); the block form
+    # keeps A a jump target for `jumpy to A` below.  `hits` counts the passes
+    # through A, so "A is still a label" is a deterministic assertion instead of
+    # the spin count j, which cannot be compared between runs.
+    A: {
+        hits = hits + 1
+        j = 0 }
     while j < 1000000 {
         j = j + 1 }
     j = -1
@@ -30,11 +37,11 @@ thread jumpy {
 start jumpy
 wait 0.05
 pause jumpy
-say j
+say "hits after start=" + str(hits)
 jumpy to A
 resume jumpy
 wait 0.02
 pause jumpy
-say j
+say "hits after jump=" + str(hits)
 kill jumpy
 say "jump done"

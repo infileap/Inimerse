@@ -196,7 +196,7 @@ static int posix_core_type(VM *vm) {
 }
 
 /* Keep the POSIX runtime's .range behavior aligned with the host runtime.
- * The compiler passes both the value and the global index so a `be` binding
+ * The compiler passes both the value and the global index so a bound global
  * can expose its declared set instead of a broad inferred numeric range. */
 static int posix_core_range(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;

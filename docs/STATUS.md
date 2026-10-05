@@ -41,7 +41,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **137 / 137 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **142 / 142 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 137
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 142
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```

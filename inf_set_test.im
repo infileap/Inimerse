@@ -112,7 +112,7 @@ try {
 }
 
 # be with real interval
-gv be (0,10):5
+gv: (0,10) = 5
 say gv
 try {
     gv = 11
