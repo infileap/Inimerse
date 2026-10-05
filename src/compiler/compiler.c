@@ -2891,6 +2891,7 @@ Compiler *compiler_new(void) {
     comp->builtins[comp->builtinCount++].name = strdup("bool");
     comp->builtins[comp->builtinCount++].name = strdup("len");
     comp->builtins[comp->builtinCount++].name = strdup("size");
+    comp->builtins[comp->builtinCount++].name = strdup("count");
     comp->builtins[comp->builtinCount++].name = strdup("list");
     comp->builtins[comp->builtinCount++].name = strdup("sum");
     comp->builtins[comp->builtinCount++].name = strdup("push");

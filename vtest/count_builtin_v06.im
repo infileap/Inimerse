@@ -1,0 +1,68 @@
+# count(A) is the canonical name for a collection's cardinality; size() is the
+# deprecated set-context spelling of it (2026-10 ruling, docs/TYPESET_V06.md
+# 7.8).  count() is registered aliasing nothing -- it shares size()'s set code,
+# so on a collection the two agree by construction rather than by two
+# independent computations, and it drops size()'s coercion tail:
+#
+#     size(42)  -> 42      count(42)  -> nil
+#     size(3.7) -> 3       count(3.7) -> nil
+#
+# size() keeps its string/array/dictionary answers and its GUI keyword identity;
+# only the set-context spelling is deprecated.  Three distinct routes to nil are
+# pinned apart below, because they are NOT the same event:
+#
+#     count(42)  -> nil    the argument is not a collection (type refusal)
+#     size(-5)   -> nil    the integer is negative: the tail `if (n < 0)`
+#                          treats a negative result as "no answer"
+#     count(Z)   -> nil    a collection the enumerator refuses (no lattice)
+#
+# Only the LAST argument of a builtin call is read -- every builtin reads the
+# stack top, and although src/vm/vm.c records vm->cur_argc nothing consumes it.
+# So `size(5, 5, 5)` is size(5) = 5, an accident of arity, not the cardinality
+# of three elements.  inf_set_test.im used to print 3 from `size(1,2,3)` that
+# way; the trap is pinned here so it stays a documented behaviour.
+#
+# See docs/AUDIT.md, docs/SYNTAX.md.
+bad = 0
+
+s1 = 1, 2, 3
+s2 = 1, 2, Z[7~9]
+d = {}
+d["a"] = 1
+d["bb"] = 2
+arr = [1, 2, 3]
+
+# a collection: count() and size() are the same measurement
+if !(count(s1) == 3) { bad = 1; say "countbad-set" }
+if !(count(s2) == 5) { bad = 1; say "countbad-mixed" }
+if !(count(s2) == size(s2)) { bad = 1; say "countbad-vs-size" }
+if !(count(s2) == len(s2)) { bad = 1; say "countbad-vs-len" }
+if !(count("hello") == 5) { bad = 1; say "countbad-str" }
+if !(count(arr) == 3) { bad = 1; say "countbad-arr" }
+if !(count(d) == 2) { bad = 1; say "countbad-dict" }
+
+# a collection the enumerator refuses: both names answer nil
+if !(str(count(Z)) == "nil") { bad = 1; say "countbad-Z" }
+if !(str(count(Z)) == str(size(Z))) { bad = 1; say "countbad-Z-agree" }
+
+# not a collection: nil, where size() coerces
+if !(str(count(42)) == "nil") { bad = 1; say "countbad-int" }
+if !(str(count(3.7)) == "nil") { bad = 1; say "countbad-float" }
+if !(str(count(true)) == "nil") { bad = 1; say "countbad-bool" }
+if !(str(count(nil)) == "nil") { bad = 1; say "countbad-nil" }
+
+# the retained behaviour count() must NOT have changed
+if !(size(42) == 42) { bad = 1; say "sizebad-int" }
+if !(size(3.7) == 3) { bad = 1; say "sizebad-float" }
+if !(str(size(-5)) == "nil") { bad = 1; say "sizebad-neg" }
+if !(str(count(-5)) == "nil") { bad = 1; say "countbad-neg" }
+if !(size("hello") == 5) { bad = 1; say "sizebad-str" }
+if !(size(arr) == 3) { bad = 1; say "sizebad-arr" }
+if !(size(d) == 2) { bad = 1; say "sizebad-dict" }
+
+# arity: the last argument alone is read
+if !(size(5, 5, 5) == 5) { bad = 1; say "aritybad-size" }
+if !(len(9) == 9) { bad = 1; say "aritybad-len" }
+if !(str(count(7, 8)) == "nil") { bad = 1; say "aritybad-count" }
+
+say "count-ok bad=" + str(bad) + " set=" + str(count(s1)) + "," + str(count(s2)) + "," + str(size(s2)) + "," + str(len(s2)) + " dict=" + str(count(d)) + "," + str(size(d)) + " str=" + str(count("hello")) + "," + str(size("hello")) + " arr=" + str(count(arr)) + "," + str(size(arr)) + " int=" + str(count(42)) + "," + str(size(42)) + " float=" + str(count(3.7)) + "," + str(size(3.7)) + " neg=" + str(count(-5)) + "," + str(size(-5)) + " unenum=" + str(count(Z)) + "," + str(size(Z)) + " arity=" + str(count(7, 8)) + "," + str(size(5, 5, 5)) + "," + str(len(9))

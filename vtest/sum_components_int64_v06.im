@@ -27,7 +27,7 @@
 #      raises, an unenumerable set is nil (as `list(Z)` is), and a non-container
 #      argument is nil.  See docs/AUDIT.md §1.25.
 #
-# The fix enumerates a set through vm_set_to_array -- the same path len(), size()
+# The fix enumerates a set through vm_set_to_array -- the same path len(), count()
 # and list() already use (docs/AUDIT.md §1.10) -- accumulates integers in a 64-bit
 # total with a parallel `double` for the moment a float joins the sequence, and
 # raises numeric_overflow when the 64-bit total leaves range, which is the rule

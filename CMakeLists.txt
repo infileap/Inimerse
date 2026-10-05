@@ -1288,4 +1288,17 @@ if(INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;desugar"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
     PASS_REGULAR_EXPRESSION "desugar tests: ok")
+  # count(A) is the canonical name for a collection's cardinality; size() is the
+  # deprecated set-context spelling of it (2026-10 ruling, docs/TYPESET_V06.md
+  # 7.8).  This pin separates the three distinct routes to nil -- a
+  # non-collection (count(42)), a negative integer through size()'s own `if
+  # (n < 0)` tail, and a collection the enumerator refuses (count(Z)) -- and
+  # keeps the retained size() coercions (size(42) = 42, size(3.7) = 3) and the
+  # arity trap where only the LAST argument of a builtin call is read
+  # (size(5, 5, 5) is size(5)).  Values only, never exit codes.
+  add_test(NAME count_builtin_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/count_builtin_v06.im)
+  set_tests_properties(count_builtin_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+    PASS_REGULAR_EXPRESSION "count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9"
+    FAIL_REGULAR_EXPRESSION "bad=[1-9]")
 endif()

@@ -5,7 +5,8 @@
 # A set literal is a UNION of three parts (the literal integers in i64, the
 # literal non-integers in items, and the interval COMPONENTS in comps), so that
 # sum is not the cardinality of anything that has a component.  Measured before
-# the fix, beside the len()/size() that were already correct:
+# the fix, beside the len()/count() that were already correct (size() is the
+# deprecated set-context spelling of count(); see docs/TYPESET_V06.md 7.8):
 #
 #     str(1, 2, Z[7~9])   -> set(2)   len 5
 #     str(Z[1~4])         -> set(0)   len 4      (`z = Z[1~4]` is a NEW_SET
@@ -15,7 +16,7 @@
 #
 # `set(0)` for a four-element set is not a summary, it is a wrong answer: it
 # reads as "empty".  str() now enumerates through vm_set_to_array whenever the
-# set has a component, exactly as len()/size()/list()/sum() do, so the two agree
+# set has a component, exactly as len()/count()/list()/sum() do, so the two agree
 # by construction.  Enumeration de-duplicates, because a literal can sit inside
 # a component (`1, Z[1~3]` is {1,2,3}, not four) and two components can overlap.
 #
