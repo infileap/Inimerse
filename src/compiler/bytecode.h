@@ -43,7 +43,7 @@ typedef enum {
     OP_IN,            /* in: r1 = (r2 in r3) membership/subset */
     OP_MIN,           /* min: r1 = min(r2) */
     OP_MAX,           /* max: r1 = max(r2) */
-    OP_BE,            /* bounded assign: r1=global idx, r2=set reg, r3=init reg(-1 = uninitialized) */
+    OP_BIND,            /* bounded assign: r1=global idx, r2=set reg, r3=init reg(-1 = uninitialized) */
     OP_TRY_START, OP_TRY_END, OP_THROW,
     OP_SET_ADD,
     OP_THREAD_GOTO,

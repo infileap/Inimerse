@@ -206,8 +206,8 @@ static int posix_core_range(VM *vm) {
     pop(vm);
     pop(vm);
 
-    if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
-        int bidx = vm->be_bound[gidx] - 1;
+    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
+        int bidx = vm->global_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {
             Value out = { .type = VAL_SET, .ival = bidx, .sval = NULL };
             vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);

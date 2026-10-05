@@ -98,6 +98,23 @@ static Token peek_next_next_next(Parser *p) {
     return tok;
 }
 
+/* After `标识符 :`, decide between the declaration shape `名字: 集合 [= 初值]`
+   and the labelled-statement shape `A: stmt` / `A: { ... }` (see parse_stmt_impl).
+   The two are only separable by what may follow the colon: `{` and every
+   keyword-led statement keep the label reading, while the token types below can
+   begin a collection expression and therefore select the declaration reading.
+   A labelled statement whose body begins with an expression must use a brace
+   block (`A: { x = 1 }`); see docs/SYNTAX.md §6.3. */
+static int starts_collection_expr(Token t) {
+    switch (t.type) {
+    case TOK_NUMBER: case TOK_STRING: case TOK_IDENT:
+    case TOK_LPAREN: case TOK_LBRACKET:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static void parse_error_expected(Parser *p, const char *expected, Token got) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%.*s", (int)got.text.length, got.text.start);
@@ -1356,7 +1373,7 @@ static Stmt *parse_stmt_impl(Parser *p) {
         if (tw) return tw;
         {
             Token nxt = peek_next(p);
-            if (nxt.type == TOK_COLON) {
+            if (nxt.type == TOK_COLON && !starts_collection_expr(peek_next_next(p))) {
                 /* label block: A: { ... } / A: stmt / A: while ... {} */
                 Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_LABEL;
                 stmt->labelStmt.name = sv_dup(t.text);
@@ -1370,6 +1387,19 @@ static Stmt *parse_stmt_impl(Parser *p) {
                 }
                 return stmt;
             }
+            if (nxt.type == TOK_COLON) {
+                /* 约束声明（唯一声明形状）：名字: 集合 [= 初值]
+                   `=` 之后才是初值；没有 `= 初值` 时该全局保持 nil，与旧写法一致。
+                   约束登记发生在编译产物上（见 compiler.c 的 STMT_BIND / OP_BIND），
+                   与旧的 `名字 be 集合 [: 初值]` 走同一条运行时路径。 */
+                Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_BIND;
+                stmt->bindStmt.name = t.text;
+                advance(p); advance(p); /* ident, ':' */
+                stmt->bindStmt.set = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);
+                stmt->bindStmt.init = NULL;
+                if (match(p, TOK_EQ)) stmt->bindStmt.init = parse_expr(p);
+                return stmt;
+            }
             if (nxt.type == TOK_TO) {
                 /* thread jump: thread1 to A */
                 Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_THREAD_GOTO;
@@ -1379,15 +1409,6 @@ static Stmt *parse_stmt_impl(Parser *p) {
                 stmt->threadGotoStmt.label = sv_dup(lt.text);
                 return stmt;
             }
-        }
-        if (peek_next(p).type == TOK_BE) {
-            Stmt *stmt = calloc(1, sizeof(Stmt)); stmt->type = STMT_BE;
-            stmt->beStmt.name = consume(p, TOK_IDENT, "name").text;
-            advance(p); /* TOK_BE */
-            stmt->beStmt.set = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);
-            stmt->beStmt.init = NULL;
-            if (match(p, TOK_COLON)) stmt->beStmt.init = parse_expr(p);
-            return stmt;
         }
     }
 

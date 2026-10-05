@@ -119,8 +119,8 @@ int im_builtin_vm_exec(VM *vm) {
     GlobalSlot *saved_globals = vm->globals;
     int saved_gc = vm->globalCount;
     int saved_cap = vm->globalCap;
-    int *saved_be = vm->be_bound;
-    int saved_be_cap = vm->be_bound_cap;
+    int *saved_be = vm->global_bound;
+    int saved_be_cap = vm->global_bound_cap;
     VmThread *saved_t = vm_get_cur_thread();
     Bytecode *saved_code = vm->code;
     vm_global_clone(vm);   /* swaps in an independent copy and leaves saved_globals untouched */
@@ -131,12 +131,12 @@ int im_builtin_vm_exec(VM *vm) {
     for (int i = 0; i < vm->globalCount; i++) value_free(&vm->globals[i].val);
     for (int i = 0; i < vm->globalCount; i++) free(vm->globals[i].name);
     free(vm->globals);
-    free(vm->be_bound);
+    free(vm->global_bound);
     vm->globals = saved_globals;
     vm->globalCount = saved_gc;
     vm->globalCap = saved_cap;
-    vm->be_bound = saved_be;
-    vm->be_bound_cap = saved_be_cap;
+    vm->global_bound = saved_be;
+    vm->global_bound_cap = saved_be_cap;
     bytecode_free(bc);
     free(bc);
     push_int(vm, 1);

@@ -259,7 +259,7 @@ EntBucket *ent_buckets;
     SetObj *sets;
     int setCount;
     int setCap;
-    int *be_bound; int be_bound_cap; /* per-global bound set (set pool idx+1, 0=none), for OP_BE; grown with globals */
+    int *global_bound; int global_bound_cap; /* per-global bound set (set pool idx+1, 0=none), for OP_BIND; grown with globals */
 
     /* Inimerse2D engine state (appended last, ABI-safe) */
     int im2d_interval_ms;        /* frame interval in ms, 0 = off */
@@ -368,7 +368,7 @@ int vm_truthy(const Value *v);
 
 #endif
 
-/* 鍒嗙墖閿侊細鍏ㄥ眬妲借闂儹鐐癸紙L_LOAD_GLOBAL / L_STORE_GLOBAL / L_BE / vm_throw锛夈�?
+/* 鍒嗙墖閿侊細鍏ㄥ眬妲借闂儹鐐癸紙L_LOAD_GLOBAL / L_STORE_GLOBAL / L_BIND / vm_throw锛夈�?
    鎸夊叏灞€绱㈠紩鍝堝笇鍒?16 鎶婇攣鈥斺€斾笉鍚屽彉閲忓苟琛岋紝鍚屽彉閲忎覆琛屻€?
    global_lock锛堝垎鐗?涔嬪鐨勫崟閿侊級浠嶇敤浜庢暟缁?瀛楀吀/闆嗗�?瀛楃涓叉睜绛夐€氱敤涓寸晫鍖恒�?*/
 #define VM_GLOBAL_SHARDS 16
