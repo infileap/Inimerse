@@ -1,0 +1,20 @@
+s = 1, 2, Z[7~9]
+say "set_size=" + str(size(s))
+say "set_count=" + str(count(s))
+say "set_len=" + str(len(s))
+say "list=" + str(list(s))
+say "int42_size=" + str(size(42)) + " int42_count=" + str(count(42))
+say "flt37_size=" + str(size(3.7)) + " flt37_count=" + str(count(3.7))
+say "neg5_size=" + str(size(-5)) + " neg5_count=" + str(count(-5))
+say "str_size=" + str(size("hello")) + " str_count=" + str(count("hello"))
+say "arr_size=" + str(size([1,2,3])) + " arr_count=" + str(count([1,2,3]))
+d = {}
+d["k"] = 1
+d["j"] = 2
+say "dict_size=" + str(size(d)) + " dict_count=" + str(count(d))
+t = Z[7~9]
+say "onlyint_size=" + str(size(t)) + " onlyint_count=" + str(count(t))
+u = 1, 2, Z[7~9], 5.5
+say "withflt_size=" + str(size(u)) + " withflt_count=" + str(count(u))
+e = 0, 1, 2, 3
+say "plain_size=" + str(size(e)) + " plain_count=" + str(count(e))

@@ -51,6 +51,37 @@ static int posix_core_size(VM *vm) {
     pop(vm); if (n < 0) push_nil(vm); else push_int(vm, n); return 1;
 }
 
+/* count(A) is the canonical name for a collection's cardinality (see
+ * docs/TYPESET_V06.md 7.8).  On a collection it reports exactly what size()
+ * reports -- the same closed form for a set with no components, the same
+ * enumerator for one whose elements live in interval components -- and it
+ * shares that code rather than recomputing it, so the two names cannot drift.
+ * What count() drops is size()'s coercion tail: an integer or a float is *not*
+ * a collection, so count(42) and count(3.7) are nil where size(42) is 42 and
+ * size(3.7) is 3.  `n` stays -1 for every non-collection, and the tail below
+ * turns that into nil. */
+static int posix_core_count(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    long long n = -1;
+    if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
+        SetObj *s = &vm->sets[v->ival];
+        if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
+        else {
+            /* Go through the same enumerator len()/list() use, so that a set
+               whose elements live in interval components (`1, 2, Z[7~9]`) is
+               counted rather than reported as nil. */
+            int a = vm_set_to_array(vm, v->ival);
+            if (a >= 0) n = vm_array_len(vm, a);
+        }
+    } else if (v->type == VAL_ARRAY && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
+        ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count : 0;
+    } else if (v->type == VAL_DICT && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
+        ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count / 2 : 0;
+    } else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
+    pop(vm); if (n < 0) push_nil(vm); else push_int(vm, n); return 1;
+}
+
 static int posix_core_str(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -214,7 +245,7 @@ static int posix_core_type(VM *vm) {
 }
 
 /* Keep the POSIX runtime's .range behavior aligned with the host runtime.
- * The compiler passes both the value and the global index so a `be` binding
+ * The compiler passes both the value and the global index so a bound global
  * can expose its declared set instead of a broad inferred numeric range. */
 static int posix_core_range(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
@@ -224,8 +255,8 @@ static int posix_core_range(VM *vm) {
     pop(vm);
     pop(vm);
 
-    if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
-        int bidx = vm->be_bound[gidx] - 1;
+    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
+        int bidx = vm->global_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {
             Value out = { .type = VAL_SET, .ival = bidx, .sval = NULL };
             vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
@@ -1164,6 +1195,7 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "has_capability", posix_capability);
     vm_register_builtin(vm, "len", posix_core_len);
     vm_register_builtin(vm, "size", posix_core_size);
+    vm_register_builtin(vm, "count", posix_core_count);
     vm_register_builtin(vm, "str", posix_core_str);
     vm_register_builtin(vm, "bool", posix_core_bool);
     vm_register_builtin(vm, "int", posix_core_int);

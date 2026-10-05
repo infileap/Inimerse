@@ -40,6 +40,10 @@ static struct {
     {"size",    TOK_SIZE},    {"sound",   TOK_SOUND},   {"music",   TOK_MUSIC},
     {"text",    TOK_TEXT},    {"broadcast", TOK_BROADCAST},
     {"clone",   TOK_CLONE}, {"declare", TOK_DECLARE}, {"case", TOK_CASE}, {"record", TOK_RECORD}, {"recorded", TOK_RECORD}, {"with", TOK_WITH}, {"const", TOK_CONST}, {"autosave", TOK_AUTOSAVE}, {"quit_on_escape", TOK_QUIT_ON_ESCAPE}, {"fullscreen", TOK_FULLSCREEN}, {"fixed", TOK_FIXED}, {"ghost", TOK_GHOST}, {"clickable", TOK_CLICKABLE}, {"drag", TOK_DRAG}, {"secret", TOK_SECRET}, {"tag", TOK_TAG},   {"forever", TOK_FOREVER}, {"when",    TOK_WHEN},
+    /* `be` 刻意保留为关键字（不是没删干净）：声明构造已移除，但若把这个词降级成普通
+       标识符，旧写法会静默变成别的东西 —— `be = 5` 成了给变量 be 赋值，`x be Byte: 42`
+       裂成表达式 x、表达式 be、声明 `Byte: 42`，于是**无声改写全局 Byte**。保留它，旧写法
+       就在 src/parser/parser.c:1376 报到一行带行号的错。见 docs/SYNTAX.md §6.3。 */
     {"be",      TOK_BE},     {"type",    TOK_TYPE},   {"min",     TOK_MIN},    {"max",     TOK_MAX},
     {"try",     TOK_TRY},
     {"final",   TOK_FINAL}, {"finally", TOK_FINAL},   {"catch",   TOK_CATCH},
@@ -77,8 +81,9 @@ static void skip_comment(Lexer *lex) {
         lex->pos += 2;
         while (lex->src[lex->pos] && lex->src[lex->pos] != '\n' && lex->src[lex->pos] != '\r')
             lex->pos++;
-        if (lex->src[lex->pos] == '\r') lex->pos++;
-        if (lex->src[lex->pos] == '\n') lex->pos++;
+        /* 不要把结尾的换行吃掉：skip_whitespace() 是唯一给行计数的地方。
+           这里每吃掉一个换行，后面每一条诊断的行号就少 1（实测：前面 9 行注释 ⇒
+           第 11 行的 `be` 报成 line 2），而门禁不会告诉你 —— CTest 不断言行号。 */
     } else if (lex->src[lex->pos] == '#') {
         if (lex->src[lex->pos+1] == '[') {
             lex->pos += 2;
@@ -86,14 +91,16 @@ static void skip_comment(Lexer *lex) {
             while (lex->src[lex->pos] && depth > 0) {
                 if (lex->src[lex->pos] == '[') depth++;
                 else if (lex->src[lex->pos] == ']') depth--;
+                else if (lex->src[lex->pos] == '\n') { lex->line++; lex->col = 0; }
                 if (depth > 0) lex->pos++;
             }
             if (lex->src[lex->pos] == ']') lex->pos++;
         }
         while (lex->src[lex->pos] && lex->src[lex->pos] != '\n' && lex->src[lex->pos] != '\r')
             lex->pos++;
-        if (lex->src[lex->pos] == '\r') lex->pos++;
-        if (lex->src[lex->pos] == '\n') lex->pos++;
+        /* 不要把结尾的换行吃掉：skip_whitespace() 是唯一给行计数的地方。
+           这里每吃掉一个换行，后面每一条诊断的行号就少 1（实测：前面 9 行注释 ⇒
+           第 11 行的 `be` 报成 line 2），而门禁不会告诉你 —— CTest 不断言行号。 */
     }
 }
 

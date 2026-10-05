@@ -1315,8 +1315,8 @@ extern void record_load_from_file(VM *vm, const char *path);
 extern void record_save_to_file(VM *vm, const char *path);
 
 /* ---------- dynamic globals ---------- */
-/* grow the globals + be_bound arrays to fit index `need` (0-based); zero-fills new slots.
-   Must be called with VM_LOCK held while other threads may be running (L_STORE_GLOBAL / L_BE / vm_throw). */
+/* grow the globals + global_bound arrays to fit index `need` (0-based); zero-fills new slots.
+   Must be called with VM_LOCK held while other threads may be running (L_STORE_GLOBAL / L_BIND / vm_throw). */
 void vm_global_grow(VM *vm, int need) {
     /* 鎵╁绉诲姩 globals 鏁扮粍鎸囬拡锛岄』鐙崰鍏ㄩ儴 16 鎶婂垎鐗囬攣�?
        璋冪敤鏂瑰繀椤诲厛閲婃斁鑷繁鐨勫垎鐗囷紙閬垮厤浜ゅ弶绛夊緟姝婚攣锛夛紝grow 鍚庨噸鍙栥€?
@@ -1336,10 +1336,10 @@ void vm_global_grow(VM *vm, int need) {
         vm->globals[i].val.ival = 0;
         vm->globals[i].val.sval = NULL;
     }
-    vm->be_bound = realloc(vm->be_bound, (size_t)nc * sizeof(int));
-    for (int i = vm->be_bound_cap; i < nc; i++) vm->be_bound[i] = 0;
+    vm->global_bound = realloc(vm->global_bound, (size_t)nc * sizeof(int));
+    for (int i = vm->global_bound_cap; i < nc; i++) vm->global_bound[i] = 0;
     vm->globalCap = nc;
-    vm->be_bound_cap = nc;
+    vm->global_bound_cap = nc;
     if (vm->active_threads > 1 && vm->global_locks[0]) {
         for (int i = VM_GLOBAL_SHARDS - 1; i >= 0; i--)
             im_mutex_unlock((ImMutex*)vm->global_locks[i]);
@@ -1352,17 +1352,17 @@ void vm_global_grow(VM *vm, int need) {
 void vm_global_clone(VM *vm) {
     GlobalSlot *src = vm->globals;
     int sc = vm->globalCount;
-    int *sbe = vm->be_bound;
-    int sbcap = vm->be_bound_cap;
+    int *sbe = vm->global_bound;
+    int sbcap = vm->global_bound_cap;
     vm->globals = NULL; vm->globalCount = 0; vm->globalCap = 0;
-    vm->be_bound = NULL; vm->be_bound_cap = 0;
+    vm->global_bound = NULL; vm->global_bound_cap = 0;
     vm_global_grow(vm, sc - 1);
     for (int i = 0; i < sc; i++) {
         vm->globals[i].val.type = VAL_NIL;
         value_copy(&vm->globals[i].val, &src[i].val);
         vm->globals[i].name = src[i].name ? strdup(src[i].name) : NULL;
     }
-    for (int i = 0; i < sbcap && i < vm->globalCap; i++) vm->be_bound[i] = sbe[i];
+    for (int i = 0; i < sbcap && i < vm->globalCap; i++) vm->global_bound[i] = sbe[i];
     vm->globalCount = sc;
 }
 
@@ -1395,8 +1395,8 @@ void vm_init(VM *vm) {
     vm->globals = NULL;
     vm->globalCount = 0;
     vm->globalCap = 0;
-    vm->be_bound = NULL;
-    vm->be_bound_cap = 0;
+    vm->global_bound = NULL;
+    vm->global_bound_cap = 0;
     vm_global_grow(vm, 63);  /* initial 64 slots (preset sets + user globals) */
     vm->builtinCount = 0;
     for (int i = 0; i < 512; i++) vm->builtin_hash[i] = 0;
@@ -1558,7 +1558,7 @@ void vm_free(VM *vm) {
         value_free(&vm->globals[i].val);
     }
     free(vm->globals); vm->globals = NULL; vm->globalCap = 0;
-    free(vm->be_bound); vm->be_bound = NULL; vm->be_bound_cap = 0;
+    free(vm->global_bound); vm->global_bound = NULL; vm->global_bound_cap = 0;
     /* builtins[i].name 锟窖筹拷??锟斤拷锟街凤拷锟斤拷锟斤拷统一锟酵凤拷 */
     for (int i = 0; i < vm->arrayCount; i++) {
         ArrayObj *a = vm_pool_slot(vm, i);
@@ -2653,7 +2653,7 @@ static int vm_frame_callback(VM *vm, VmThread *t) {
 
 /* ---------- mark-sweep GC for pool slots (arrays/dicts/sets) ----------
  * Roots: globals + every thread's stack[0..sp] and reg[0..base+VM_FRAME_REGS]
- *        + record_loaded_dict + be_bound[] (C-side holders).
+ *        + record_loaded_dict + global_bound[] (C-side holders).
  * Runs at instruction safe points with cooperative stop-the-world (gc_stop/gc_parked). */
 static void gc_ensure_mark(VM *vm, int cap, int is_array) {
     unsigned char **mk; int *mkcap;
@@ -2767,8 +2767,8 @@ static void gc_mark(VM *vm) {
     /* C-side holders */
     if (vm->record_loaded_dict > 0) gc_mark_value(vm, &(Value){ .type = VAL_DICT, .ival = vm->record_loaded_dict, .sval = NULL });
     for (int i = 0; i < vm->globalCount; i++) {
-        if (vm->be_bound[i] > 0) {
-            int sidx = vm->be_bound[i] - 1;
+        if (vm->global_bound[i] > 0) {
+            int sidx = vm->global_bound[i] - 1;
             unsigned char *mk = vm->gc_smark; int cap = vm->gc_smark_cap;
             if (sidx < cap && sidx < vm->setCount && !mk[sidx]) {
                 mk[sidx] = 1;
@@ -3130,7 +3130,7 @@ static void vm_execute_thread(VmThread *t) {
         case OP_IN: goto L_IN;
         case OP_MIN: goto L_MIN;
         case OP_MAX: goto L_MAX;
-        case OP_BE: goto L_BE;
+        case OP_BIND: goto L_BIND;
         case OP_TRY_START: goto L_TRY_START;
         case OP_TRY_END: goto L_TRY_END;
         case OP_THROW: goto L_THROW;
@@ -3678,8 +3678,8 @@ static void vm_execute_thread(VmThread *t) {
             }
             Value newv = { .type = VAL_NIL, .ival = 0, .sval = NULL, .ptr = NULL };
             value_copy(&newv, &R[src_reg]);
-            if (idx >= 0 && vm->be_bound[idx] > 0) {
-                int bidx = vm->be_bound[idx] - 1;
+            if (idx >= 0 && vm->global_bound[idx] > 0) {
+                int bidx = vm->global_bound[idx] - 1;
                 if (!set_contains(vm, bidx, &newv)) {
                     if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
                     vm_throw_kind(vm, "type_mismatch");
@@ -4259,7 +4259,7 @@ L_CALL_FUNC: {
             set_minmax(vm, &src, &R[ins.r1], 1);
             continue;
         }
-        L_BE: {
+        L_BIND: {
             int g = ins.r1;
             int setReg = ins.r2;
             int initReg = ins.r3;
@@ -4276,13 +4276,13 @@ L_CALL_FUNC: {
                 }
                 vm->globalCount = g + 1;
             }
-            vm->be_bound[g] = sidx >= 0 ? sidx + 1 : 0;
+            vm->global_bound[g] = sidx >= 0 ? sidx + 1 : 0;
             if (initReg >= 0) {
                 Value init = R[initReg];
                 if (sidx >= 0 && !set_contains(vm, sidx, &init)) {
                     Value err;
                     err.type = VAL_STRING;
-                    err.sval = (char*)vm_intern(vm, "be: initial value out of range");
+                    err.sval = (char*)vm_intern(vm, "initial value out of range");
                     err.ival = 1;
                     im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
                     vm_throw(vm, t, &err);
@@ -5116,10 +5116,10 @@ void vm_debug_var(VM *vm, const char *mode) {
         }
         value_to_string(vm, &vm->globals[i].val, buf, sizeof(buf), 0);
         if (!mode || !mode[0] || strcmp(mode, "all") == 0)
-            printf("%s = %s (%s)%s\n", vm->globals[i].name ? vm->globals[i].name : "?", buf, t, vm->be_bound[i] > 0 ? " [be]" : "");
+            printf("%s = %s (%s)%s\n", vm->globals[i].name ? vm->globals[i].name : "?", buf, t, vm->global_bound[i] > 0 ? " [bound]" : "");
         else if (strcmp(mode, "value") == 0) printf("%s = %s\n", vm->globals[i].name ? vm->globals[i].name : "?", buf);
         else if (strcmp(mode, "type") == 0) printf("%s: %s\n", vm->globals[i].name ? vm->globals[i].name : "?", t);
-        else if (strcmp(mode, "scope") == 0) printf("%s: global%s\n", vm->globals[i].name ? vm->globals[i].name : "?", vm->be_bound[i] > 0 ? " (be)" : "");
+        else if (strcmp(mode, "scope") == 0) printf("%s: global%s\n", vm->globals[i].name ? vm->globals[i].name : "?", vm->global_bound[i] > 0 ? " (bound)" : "");
     }
     /* bare-try ignored-exception debug slot */
     if (vm->last_ignored_exc && (!mode || !mode[0] || strcmp(mode, "all") == 0 || strcmp(mode, "value") == 0))

@@ -36,14 +36,20 @@
 
 ### 1.2 注释
 
-两种行注释，**没有块注释**（`src/lexer/lexer.c:74-90`、`:102-105`）：
+两种行注释，**加一种嵌套块注释**（`src/lexer/lexer.c:74-96` 的 `skip_comment`、`:101-105` 的跳过循环）：
 
 ```im
 // C/JS 风格行注释
 # 井号行注释
+#[ 块注释：可嵌套，#[ 与 ] 配对计数，配平即止 ]
 ```
 
-两者可连续使用，且与空白一起在 `lexer_next` 之前被跳过。
+三者可连续使用，且与空白一起在 `lexer_next` 之前被跳过。自举词法器同样支持块注释（`selfhost/lexer.im:6`）。
+
+**块注释的两条实测性质**（本机，`build/inimerse` 实测）：
+
+1. **可嵌套**：`#[ a #[ b ] c ]` 整段被吃掉（`skip_comment` 用 `depth` 计数，`src/lexer/lexer.c:83-92`）。
+2. **块注释结束后同行余下内容也被丢弃**：实现上块注释配平后**顺接**行注释的跳读（`src/lexer/lexer.c:93-96`），所以 `x = 3 #[ inline ] say 88` 里 `say 88` 不会执行 —— 块注释要**独占到行尾**，或在下一行再写代码。
 
 ### 1.3 标识符
 
@@ -285,7 +291,9 @@ do { } until cond
 break [label]
 continue
 to Label                            // 跳转到标签
-Label: { }   /   Label: stmt
+Label: { }                          // 标签块：对所有语句体都成立
+Label: <以关键字开头的语句>          // `C: case 2 { }`、`W: while … { }`、`SKIP: say "x"`
+                                    // ⚠ `Label: x = 1` 自 2026-10 起是**声明**，见 §6.3
 x = 1 if cond                       // 后缀 if
 x = 1 unless cond                   // 后缀 unless
 say "hi" if cond                    // 后缀 if 也可挂在 say 上
@@ -412,6 +420,7 @@ using thread
 const NAME = expr
 global a, b, c
 type Name = <集合或表达式>
+name: <集合或表达式> [= 初值]        // 受约束全局，`:` 后接完整集合表达式；见 §6.3
 record name = expr [, tags]
 record default store = expr
 recorded name = expr
@@ -420,6 +429,7 @@ with scope: "entity", store: "both" { }
 declare { mem 64 MB }            // 见下
 ```
 
+- `名字: <集合> [= 初值]` 走 `STMT_BIND`（`src/parser/parser.c:1415-1420`）；旧的 `be` 路径已删除，`be` 现在是**带行号的解析错误**（`src/parser/parser.c:1376`），不是别名。
 - `const` `:1141-1153`；`global` `:1517-1526`；`type` `:1192-1203`；`record` `:1154-1191`；`tag` `:1111-1140`；`with` `:1204-1213`；`declare` `:927-1002`。
 - `record` 与 `recorded` 是同一 token（`src/lexer/lexer.c:42`）。实测 `record score = 42, level: 3` → `42`。
 - `record default store = …` 是 `parse_record_stmt:1163-1172` 里对 `IDENT` 文本 `"default"` 的**字符串比对特例**。
@@ -497,7 +507,23 @@ sprite 42      → [0]="gui_sprite" [1]="x"    ← 无任何错误，静默无�
 | `src/mod/net_mod.c` | 11 | 网络 |
 | 其余（`vm.c`、`server_mod*`、`replay_mod`、`identity_mod`、`ai_mod`、`social_mod`、`lint_mod`、`isolate_mod`、`json_mod`、`identity_mod` 等） | 各 ≤10 | — |
 
-**核心高频内建**（有 `vtest` 覆盖的）：`len` `push` `pop` `str` `int` `float` `bool` `type` `has` `chars` `ord` `chr` `split` `join` `substr` `upper` `lower` `trim` `replace` `startswith` `endswith` `index` `sum` `sqrt` `round` `random` `range` `read_file` `write_file` `remove` `file_exists` `mkdir` `list_dir` `args` `env` `exec` `vm_exec` `input` `time_ms` `timer_ms` `sleep_ms` `json_parse` `json_serialize` `unwrap` `unwrap_or` `ok` `err` `is_ok` `result_value` `result_error` `match` `join` `thread_await` `thread_result` `thread_release` `gc_now` `gc_stats` `lint_check`。
+**核心高频内建**（有 `vtest` 覆盖的）：`len` `count` `push` `pop` `str` `int` `float` `bool` `type` `has` `chars` `ord` `chr` `split` `join` `substr` `upper` `lower` `trim` `replace` `startswith` `endswith` `index` `sum` `sqrt` `round` `random` `range` `read_file` `write_file` `remove` `file_exists` `mkdir` `list_dir` `args` `env` `exec` `vm_exec` `input` `time_ms` `timer_ms` `sleep_ms` `json_parse` `json_serialize` `unwrap` `unwrap_or` `ok` `err` `is_ok` `result_value` `result_error` `match` `join` `thread_await` `thread_result` `thread_release` `gc_now` `gc_stats` `lint_check`。
+
+**`count(A)` 是集合基数的规范名**（2026-10 裁定，见 [TYPESET_V06.md](TYPESET_V06.md) §7.8 第 2 条）。集合／数组／字典／字符串给基数；**非容器**（整数、浮点、布尔、`nil`）给 `nil`：
+
+```
+count(1, 2, 3)       # 3
+count(1, 2, Z[7~9])  # 5     -- 与 len()/size() 同一个枚举器，含区间分量
+count(Z)             # nil   -- 枚举器拒绝无格点的集合
+count(42)            # nil   -- 不是容器
+count("hello")       # 5
+```
+
+**`size` 在集合语境下是 `count` 的已弃用别名**；对**字符串／数组／字典**它保留，作为 **GUI 关键字**（§6 的关键字表、靠 `argc >= 2` 猜参数位置）它也**不动**。弃用的只有「拿它量集合」这一种用法。
+
+⚠ `size()` 对非容器**是强转而不是报错**：`size(42)` = `42`、`size(3.7)` = `3`、`size(-5)` = `nil`。第三条与前两条机制不同——它是尾部 `if (n < 0)` 把负数结果当成「无答案」，不是类型拒绝；`count(-5)` 的 `nil` 来自类型拒绝。**`count()` 没有这条兜底转型**，这正是它作为集合基数规范名的意义。三条 nil 已由 `vtest/count_builtin_v06.im` 分开钉。
+
+⚠ **只有最后一个实参会被读到**：每个内建只读栈顶，而 `src/vm/vm.c:3805` 记的 `vm->cur_argc` 无人消费 ⇒ `size(5, 5, 5)` 是 `size(5)` = `5`、`count(7, 8)` 是 `count(8)` = `nil`、`len(9)` = `9`。多传的实参被**静默忽略** —— 写 `count(1, 2, 3)` 期待三个元素是错的，要先把集合绑到名字上。
 
 **⚠ 这张名单曾经是错的（2026-10 更正）**：`rand` 从未被任何文件注册（`grep -rn '"rand"' src/` 零命中），却列在这里，而且 `projects/demo/main.im:60` 的 `rand_int` 真的在调用它 ⇒ `rand(1, 6)` 实测 `[exception] uncaught: unknown builtin function 'rand'`、退出码 1。同时 `random` 当时**没有任何 `vtest` 覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`），所以「有 `vtest` 覆盖的」这句对它不成立。`random` 的覆盖由 `vtest/random_bounded_contract_v06.im`（CTest **#133**）补上，`rand` 从名单移除。见 `docs/AUDIT.md` §1.53。
 **⚠ `type` 不可调用**：`type` 已注册为内建，但它是**保留字**（`TOK_TYPE`，`src/lexer/lexer.c:44`），`type(x)` 是解析错误：
@@ -539,15 +565,32 @@ Error: expected 'expression', but got 'type' (type 129)
 
 **GUI / 游戏**：`window` `show` `hide` `at` `layer` `stage` `background` `sprite` `move` `box` `costume` `face` `turn` `point_to` `velocity` `gravity` `bounce` `size` `sound` `music` `text` `broadcast` `clone` `forever` `when` `cursor` `autosave` `quit_on_escape` `fullscreen` `fixed` `ghost` `clickable` `drag` `secret` `tag`
 
-**其它**：`say` `print` `min` `max` `be` `not` `and` `or`
+**其它**：`say` `print` `min` `max` `not` `and` `or`
 
-### 6.3 `be` 语句
+> `be` **仍留在词法表里**（`src/lexer/lexer.c:43`、`src/lexer/lexer.h:33`），但它已经不是构造 —— 见 §6.3。
+
+### 6.3 `be` 语句（已移除）与声明形状 `名字: 集合 [= 初值]`
+
+2026-10 人裁定：**`be` 立即移除、不留等价别名**，声明形状唯一化为 `名字: 集合 [= 初值]`（[TYPESET_V06.md](TYPESET_V06.md) §3.1）。「唯一化」的意思是 `be` **不是脱糖别名**：旧写法不再是声明，而是一条**带行号的解析错误**。
 
 ```im
-name be <集合或表达式> [: init]
+name: <集合或表达式> [= 初值]         // 现行唯一形式
+age: [0, 120] = 18                   // `:` 后接的是完整集合表达式，不止一个类型名
+name be <集合或表达式> [: init]       // 已移除：报错，不静默
 ```
 
-`src/parser/parser.c:1357-1365`，`STMT_BE`。这是仓库里最不常见的语句形式之一。
+- 新形式：`src/parser/parser.c:1415-1420`，`STMT_BIND`；`:` 之后走 `looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p)`（与 `type` 同一条规则，`src/parser/parser.c:1242`），末尾的 `= 初值` 可选。
+- 旧形式：`src/parser/parser.c:1376-1387` 直接报 ``Error at line N: `be` declarations were removed (docs/SYNTAX.md 6.3); write `name: set [= init]` in place of `name be set [: init]` ``，exit 1。
+- 受约束全局**每次赋值都重校验**（越界抛 `type_mismatch`），登记点是 `global_bound[]`。它的三个消费者只读这个数组，所以换语法不改语义：`src/vm/vm.c:3681-3691`（`L_STORE_GLOBAL` 重校验）、`builtin_range`／`posix_core_range`、`src/vm/vm.c:2770-2783`（**GC 标记根**）。最后一个有专门用例 `vtest/gc_bound_root_v04.im`（`gc_bound_root`），**变异验证过**：注掉 `:2770` 的根，该测试即红。
+
+**⚠ `be` 保留在词法表里是刻意的，不是没删干净。** 两件事必须分开说（旧注释把两者混成一件，已被核验推翻）：
+
+- **真基线 `f6b3d87` 上** `x be Byte: 42` 是**合法的旧语法**：实测 `x=42`、`Byte=set(R interval)`，程序 exit 0。所以这条判据钉住的是「旧写法**静默成功**」，不是「静默改错值」。
+- **推演**（把 `be` 降级成普通标识符）：`be = 5` 变成给变量 `be` 赋值、不报错；`x be Byte: 42` **不报任何错**，而会把全局 `Byte` 从 `set(R interval)` **清成 nil**。实测替身拼写（`zz` 代 `be`）：`B0=set(R interval)` / `x=nil` / `B1=nil`。
+
+保留 `TOK_BE` 之后三条旧写法各报一条带行号的错、exit 1（`vtest/be_removed_decl_v04.im`、`be_removed_assign_v04.im`、`be_removed_bare_v04.im`）；`be_removed_decl_runtime` 的 PASS 正则同时钉行号与替代写法提示。
+
+**⚠ 标签形式也随之收窄**：`Label: <语句>` 只在语句**不以标识符／字面量／`(`／`[` 开头**时仍是标签（`C: case 2 { }`、`W: while … { }`、`SKIP: say "x"`）；`Label: x = 1` 现在会被读成**声明**，要写成 `Label: { x = 1 }`。闸门是 `src/parser/parser.c:1396` 的 `starts_collection_expr`（`:108`）。
 
 ---
 
@@ -974,6 +1017,81 @@ C 源文件的注释是**损坏的 GBK 编码**（在 UTF-8 源码里表现为�
 第二个是本轮新发现的。**注意它抓不到 `src/vm/vm.c:1512` 那类乱码**：`锟斤拷` 是**合法 UTF-8**
 （`xxd` 显示 `e9949f e696a4 e68bb7`），「合法 UTF-8」检查对它无效 —— 那是另一个问题（注释内容
 不可读），不能用编码有效性检查代替。
+
+#### H4. 一次观测 ≠ 一个性质（元规则）
+
+**规则**：任何写进文档的数字、状态、或「X 是 Y」形状的断言，必须同时记录它的**观测口径**——
+机器 / 目录 / ref / 时刻 / 命令——并且在引用它之前区分两件事：**我观测到的一次输出**，与
+**这个仓库（或这条分支、这个 CI）的性质**。前者只保真于它被观测的那一刻；把前者当后者用，
+是本仓库反复出现的缺陷类。
+
+**同族拷贝（一个数/一个格式被写下来时是对的，之后没有人核对它）**：
+
+- `EXP_CTEST = 130`（`docs/STATUS.md`、`docs/BOARD.md`）—— 写下来那一刻就没有权威来源，
+  测试数此后增长到 134+，没有任何东西比对过。
+- `docs/archive/API_BUILTIN_TABLE.md` 的「59」—— 偶然对得上时才对。
+- `linux-build.yml` 的 CTest 枚举模式「恰好一个空格」—— 只在 `Total Tests <= 99` 时成立，
+  第 100 个测试加入时静默降级（实测 137 个测试只收 38 个）；修复见 `tools/ctest_enumerate.sh`，
+  断言 `collected == Total Tests`，**不是常量**。
+- `docs/REQUIREMENTS_ANALYSIS.md` 的「`migrate_report.py` + 对应 CTest」—— 能力是真的、
+  覆盖不是（`docs/AUDIT.md` §1.59）。
+- 全局名恢复三份两种策略、预设全局 GBK/UTF-8 编码不一致等「同一语义多个生产点」实例，
+  见 `docs/AUDIT.md` §1.52–§1.58。
+
+**正例与反例（同一个会话，几分钟内）**：
+
+- *正例*：同一会话相隔几分钟两次 `git status` 读到**不同**的分支与工作树状态
+  （另一会话正以分钟粒度提交）—— 第一次的输出从不当成「这棵树的属性」引用，
+  每个结论都带着 ref 与时刻。这是本条的**正确用法**。
+- *反例*：同一会话从「`12ff42a` 改动了 `.github/workflows/linux-build.yml`」
+  推出「`stream/ci-gate-static` 分支已被覆盖、可删除」—— 实测该分支仍有
+  `origin/main` 上没有的 **+78 行**（`Acceptance gate` 步骤与 `***Skipped` 断言）。
+  **同一个文件被改过 ≠ 那份改动被覆盖。** 这是本条的**违规形态**：从局部观测跳到整体结论。
+
+**操作化**：写下数字前先问「它有没有权威来源」——没有就写成**可重算的断言**
+（像 `collected == Total Tests` 那样从同一份输出派生），而不是常量；引用别人的数字前
+先问「它的口径是什么」——`grep` 的 195 处 `size(` 与去重后的 29 处，差的就是口径
+（前者把 5 棵 worktree 副本与 `.verify/` 一起数了）。
+
+##### H4.1 行号与计数会随 ref 漂移（H4 的子情形）
+
+H4 的措辞偏「口径」（机器／目录／ref／时刻／命令）。**行号是同一规则的一个具体机制**，
+所以归在这里，不另立 §7.5——两个元规则会让下一个人不知道该往哪儿加案例。
+
+**机制**：一个**写下来时正确**的行号，会被**之后的改动**移动；而在**使用点上没有任何东西
+重新推导它**。它与「一开始就写错」是两回事：错值可以靠再读一遍源码纠正，而漂移值
+**再读一遍也还是对的**（读的是当时那棵树）。
+
+**实例（2026-10，同一份文档、同一天，两次）**：
+
+| 量 | 观测 1 | 观测 2 | 观测 3 |
+|---|---|---|---|
+| `size(` 处数 | `f6b3d87`：346 个受控 `.im` ⇒ **29** 处 / 17 文件 | `stream/be-removal`：351 个 ⇒ **29** | 集成分支：**30** |
+| `"size"` 注册行 | `main`：`runtime.c:1790` / `runtime_posix.c:1140` | `release/051-final` 与 `stream/builtin-contract-rulings`：`:1799` / `:1166` | 集成分支：`:1818` / `:1171` |
+
+第 1 行是 `count-smith` 在被核验者算出 30 之后修好的；第 2 行是**在修好第 1 行的同一次
+改动里**新写下的，而且**写下的当下就已经过期**——作者量的是它那棵树，落盘时分支又前插了。
+**⇒ 修一个漂移值不能靠换一个新数字，只能靠换一种写法。**
+
+**修法（写进文档的不是数字，是命令）**：
+
+```bash
+grep -n '"size"' src/runtime/runtime.c src/runtime/runtime_posix.c   # 注册行
+git ls-files '*.im' | xargs grep -o 'size(' | wc -l                  # 处数（受控文件，不含 worktree 副本）
+```
+
+**判定**：一条行号／计数断言合格，当且仅当它满足两者之一——①它旁边写着产出它的**命令**；
+②它被写成从同一份输出**派生的断言**（H4 的 `collected == Total Tests` 形态）。
+「我量过」不是合格形式，因为量过的是**那一刻的那棵树**。
+
+**H4.1 的处方（与上面的诊断分开写）**：H4.1 说的是「**这个量会漂**」，这一句说的是
+「**漂的量该怎么引用**」——
+
+> 凡引用一个会随 ref 变化的量（行号、计数、注册位置），不得只给数字；必须同时给出
+> 产出它的命令，由读者在自己那棵树上运行。**给数字不等于给出可信度** —— 漂移值再读
+> 一遍也还是对的，读的是当时那棵树。
+
+（这句来自本轮的协调层实测教训：**数字可以给，但给数字本身不是可信度的来源。**）
 
 ---
 

@@ -1,6 +1,6 @@
 # 模块内各类符号（全部应带 adv. 前缀隔离）
 const LIMIT = 10
-q be N : 5
+q: N = 5
 func getq() {
     return q
 }

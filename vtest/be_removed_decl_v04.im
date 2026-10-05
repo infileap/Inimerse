@@ -1,0 +1,16 @@
+# `be` 声明语法已移除（docs/TYPESET_V06.md §3.1 / docs/SYNTAX.md §6.3）。
+#
+# 真基线 f6b3d87 上这一行是**合法的旧语法**：实测 x=42、Byte=set(R interval)，程序 exit 0
+# 并打印 must-not-be-reached —— 所以这条判据钉住的是「旧写法**静默成功**」，不是
+# 「静默改错值」。（旧注释曾写成「x 保持 nil、Byte 被改写成 42」，那是把两件不同的事
+# 混成一件，已被核验推翻。）
+#
+# 反面推演（为什么词法表里必须留着 TOK_BE）：把 be 当普通标识符，同一行**不报任何错**，
+# 而且会把全局 Byte 从 set(R interval) 清成 nil。实测（be 的替身 zz）：
+# B0=set(R interval) / x=nil / B1=nil。
+#
+# 行号也是判据的一部分：本文件前面有 9 行注释，`be` 真身在第 11 行；词法曾把整行注释的
+# 换行一起吃掉且不计数，于是这里报的是 line 2。PASS 正则同时钉住行号与替代写法提示。
+type Byte = [0~255]
+x be Byte: 42
+say "must not be reached"

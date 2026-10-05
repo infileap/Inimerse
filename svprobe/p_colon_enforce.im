@@ -1,0 +1,6 @@
+// svprobe: does `:`-declared global enforce its set on assignment?
+type Byte = [0~255]
+x: Byte = 42
+say "init=" + str(x)
+x = 300
+say "ASSIGNED 300 -> x=" + str(x)

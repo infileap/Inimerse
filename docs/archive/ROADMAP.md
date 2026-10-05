@@ -6,7 +6,7 @@
 
 历史 0.3 审计见 [ROADMAP_0.3_AUDIT.md](ROADMAP_0.3_AUDIT.md)；当前状态以 [V04_STATUS.md](V04_STATUS.md) 为准。
 v0.4–v0.6 分层规划详见 [ROADMAP_0.4-0.6.md](ROADMAP_0.4-0.6.md)。
-集合化类型系统延期至 v3.1，详见 [ROADMAP_3.1.md](ROADMAP_3.1.md)。
+集合化类型系统~~延期至 v3.1~~ **已于 2026-10 提前为 v0.6 目标**：规格见 [ROADMAP_3.1.md](ROADMAP_3.1.md)，v0.6 交付项与规范条文见 [../TYPESET_V06.md](../TYPESET_V06.md)。
 
 ## 愿景映射
 

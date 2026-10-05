@@ -1130,7 +1130,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 char memN[128];
                 snprintf(memN, sizeof(memN), "%.*s", (int)expr->member.member.length, expr->member.member.start);
                 if (strcmp(memN, "range") == 0) {
-                    /* range(value, gidx): gidx lets runtime return the be-bound set */
+                    /* range(value, gidx): gidx lets the runtime return the bound set */
                     int g = -1;
                     if (expr->member.object->type == EXPR_IDENT) {
                         char objN[256];
@@ -2230,14 +2230,14 @@ case STMT_WITH: {
             release_temps(comp);
             break;
         }
-        case STMT_BE: {
+        case STMT_BIND: {
             char bname[256];
-            snprintf(bname, sizeof(bname), "%.*s", (int)stmt->beStmt.name.length, stmt->beStmt.name.start);
+            snprintf(bname, sizeof(bname), "%.*s", (int)stmt->bindStmt.name.length, stmt->bindStmt.name.start);
             int g = register_global(comp, bname);
-            int setReg = compile_expr(comp, stmt->beStmt.set);
+            int setReg = compile_expr(comp, stmt->bindStmt.set);
             int initReg = -1;
-            if (stmt->beStmt.init) initReg = compile_expr(comp, stmt->beStmt.init);
-            emit(comp->curBC, OP_BE, g, setReg, initReg);
+            if (stmt->bindStmt.init) initReg = compile_expr(comp, stmt->bindStmt.init);
+            emit(comp->curBC, OP_BIND, g, setReg, initReg);
             break;
         }
         case STMT_TRY: {
@@ -2891,6 +2891,7 @@ Compiler *compiler_new(void) {
     comp->builtins[comp->builtinCount++].name = strdup("bool");
     comp->builtins[comp->builtinCount++].name = strdup("len");
     comp->builtins[comp->builtinCount++].name = strdup("size");
+    comp->builtins[comp->builtinCount++].name = strdup("count");
     comp->builtins[comp->builtinCount++].name = strdup("list");
     comp->builtins[comp->builtinCount++].name = strdup("sum");
     comp->builtins[comp->builtinCount++].name = strdup("push");

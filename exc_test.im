@@ -8,7 +8,7 @@ try {
     say e
 }
 say "after"
-gamemode be 0,1,2,3:0
+gamemode: 0,1,2,3 = 0
 try {
     gamemode = 5
     say "should not print"

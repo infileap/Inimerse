@@ -1,0 +1,12 @@
+// svprobe: NEW `:` shape via a named type alias + init
+type Byte = [0~255]
+x: Byte = 42
+say "init=" + str(x)
+x = 255
+say "in-range 255 ok -> " + str(x)
+try {
+    x = 300
+    say "NO-CONSTRAINT: 300 accepted, x=" + str(x)
+} catch (e) {
+    say "caught=" + str(e)
+}

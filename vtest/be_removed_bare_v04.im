@@ -1,0 +1,3 @@
+# 孤立 `be`：同样必须是语法错误，而不是一个求值成 nil 的表达式语句。
+be
+say "must not be reached"

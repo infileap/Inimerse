@@ -649,6 +649,23 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(collection_core_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection" PASS_REGULAR_EXPRESSION "1,2")
   add_test(NAME type_collection_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/type_collection_v04.im)
   set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection" PASS_REGULAR_EXPRESSION "typecoll x=42")
+  # `be` was removed as a declaration keyword (docs/TYPESET_V06.md §3.1,
+  # docs/SYNTAX.md §6.3).  The word stays *reserved* on purpose.  These four
+  # registrations pin the shape that must not come back: with `be` demoted to an
+  # ordinary identifier, `be = 5` becomes an assignment to a variable named be and
+  # `x be Byte: 42` splits into three statements that re-declare the global Byte --
+  # both silent.  Before the removal the same line was swallowed as a label block
+  # (x stayed nil, Byte was overwritten).  No WILL_FAIL: with a PASS regex set,
+  # CTest ignores the exit code and judges by the regex alone, so WILL_FAIL would
+  # invert a match into a failure.  The regex pins the reason, not just the abort.
+  add_test(NAME be_removed_decl_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_decl_v04.im)
+  set_tests_properties(be_removed_decl_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "Error at line 15.*declarations were removed.*name: set" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME be_removed_assign_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_assign_v04.im)
+  set_tests_properties(be_removed_assign_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "declarations were removed" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME be_removed_bare_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_bare_v04.im)
+  set_tests_properties(be_removed_bare_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "declarations were removed" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME bind_init_overflow_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/bind_init_overflow_v04.im)
+  set_tests_properties(bind_init_overflow_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection" PASS_REGULAR_EXPRESSION "initial value out of range" FAIL_REGULAR_EXPRESSION "must not be reached")
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/range_meta_sandbox)
   add_test(NAME range_meta_runtime
     COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_BINARY_DIR}/range_meta_sandbox
@@ -673,6 +690,12 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok;${INIMERSE_PARITY_LOAD_MISSING}" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
   add_test(NAME gc_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
   set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc" PASS_REGULAR_EXPRESSION "gc-ran;gc-stats-ok;thread-result-alive;closure-capture-alive;root-alive;gc-done")
+  # The constrained global is itself a GC root: the bound set has no other
+  # C-side holder (the global stores the value, not the set), so it lives or dies
+  # by the global_bound[] root in the mark phase.  gc_runtime_v04.im covers the
+  # thread result, the closure capture and a plain array root, not this one.
+  add_test(NAME gc_bound_root COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_bound_root_v04.im)
+  set_tests_properties(gc_bound_root PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 20 LABELS "language;memory;gc;types;collection" PASS_REGULAR_EXPRESSION "bound-root-after-gc=2.*bound-rewrite-ok" FAIL_REGULAR_EXPRESSION "must not be reached")
   add_test(NAME pipeline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/pipeline_v04.im)
   set_tests_properties(pipeline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1")
   add_test(NAME result_question_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_question_v04.im)
@@ -1308,6 +1331,19 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(substr_boundary_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
     PASS_REGULAR_EXPRESSION "substr-boundary a=fghij b=fghij c=fghij")
+  # count(A) is the canonical name for a collection's cardinality; size() is the
+  # deprecated set-context spelling of it (2026-10 ruling, docs/TYPESET_V06.md
+  # 7.8).  This pin separates the three distinct routes to nil -- a
+  # non-collection (count(42)), a negative integer through size()'s own `if
+  # (n < 0)` tail, and a collection the enumerator refuses (count(Z)) -- and
+  # keeps the retained size() coercions (size(42) = 42, size(3.7) = 3) and the
+  # arity trap where only the LAST argument of a builtin call is read
+  # (size(5, 5, 5) is size(5)).  Values only, never exit codes.
+  add_test(NAME count_builtin_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/count_builtin_v06.im)
+  set_tests_properties(count_builtin_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+    PASS_REGULAR_EXPRESSION "count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9"
+    FAIL_REGULAR_EXPRESSION "bad=[1-9]")
 endif()
 
 # A host that is already an address literal must not reach the resolver.

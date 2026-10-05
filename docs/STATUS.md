@@ -35,20 +35,23 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 142；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 148；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 148；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **142 / 142 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **148 / 148 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **148 / 148 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **142** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **148** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **148** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +60,8 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 142
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 148
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 148
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -486,6 +490,27 @@ if (verse_http_start(headless_http_port)) fprintf(stderr, "http api: 127.0.0.1:%
 - [ ] 角色对白测试覆盖身份伪造、受众范围、对白分支、字幕/语音同步和 AI 标识。
 - [ ] AI 分析测试覆盖结构化事件、权限隔离、脱敏、可解释摘要和训练反馈回放。
 
+### v0.6 目标：集合化类型系统（2026-10 由 v3.1 提前）
+
+集合化类型系统原为 §5 P3 的**明确延期项**（→ v3.1，见 [archive/ROADMAP_3.1.md](archive/ROADMAP_3.1.md)）。2026-10 收到人类指令改为 **v0.6 目标**——指令原文、i.json 设计原文的逐字引语、以及「`type` 用集合规范化定义」的规范条文（R1–R6）见 **[TYPESET_V06.md](TYPESET_V06.md)**。
+
+本节只登记**这件事的状态**，交付清单与验收标准不在这里重复：
+
+- [x] 已有雏形（取证见 [TYPESET_V06.md](TYPESET_V06.md) §4.1）：`be` 约束绑定、内置集合／字面量／区间／推导式、`+`/`*`/`-`/`in` 均已实现并被 CTest 覆盖。
+- [~] `type NAME = <集合>` 能解析能跑，但 `src/compiler/compiler.c:2224-2231` 把它编译成 `OP_STORE_GLOBAL`（**运行时全局值**），不是编译期类型。
+- [ ] R2：`Z` 改为数学整数集（任意精度），`int`/`int32`/`int64` 降为「`Z` 的子集别名」。**这一条落地前，「`int` 是 32 位还是 64 位」在语言层无法回答**——今天 `Z` 的上界是 `src/vm/vm.h:42` 的 `union { long long ival; double fval; };`。
+- [ ] R3：位宽由集合基数／范围派生；`@bits(n)`/`@bytes(n)` 显式钉住并编译期校验「位宽是否足够存储该集合的所有值」。
+- [ ] 消去「同一语义多决定点」：`in`／子集／`be` 今天各有两份实现（C 内核 `src/types/` 与 VM `SetObj`），须与 [DECFY_DESIGN.md](DECFY_DESIGN.md) 用同一份决定点清单收敛。
+
+**已裁定（2026-10，人类指令）**：
+
+- **声明形状采纳 ① 与 ③**：`b be a : 0`（`i.json#267`，即仓库已实现的 `OP_BE` 形式）与 `b: a = 0`（`i.json#721` 的「`[@标签...] 变量名 : 类型 [= 初值]`」）。上一轮的 `b = 0 : a` 是笔误、已撤回。两者是不同的事（前者约束绑定、后者声明标注），同一个 `:` 的两个用途仍待处理。
+- **`FloatN`／`floatN` 移出核心内置集合，改由拓展库提供**。影响清单（`file:line`）见 [TYPESET_V06.md](TYPESET_V06.md) §8；`docs/archive/ROADMAP_3.1.md` §非目标「v3.1 之前不删除」据此失效，但**该文件原文不改写**（§1 硬规则 6）。
+- **集合运算用四则运算符**（`+` 并、`*` 交、`-` 差），不采用 `∪`／`∩`／`\`；**谓词可判定边界 = 简单计算 + 正则表达式**，SMT 求解器与形式化验证工具作拓展库接入、核心不依赖（内置已证结论表留在核心）。规范条文见 [TYPESET_V06.md](TYPESET_V06.md) §3.2–§3.3。
+- **基数记法 = `count(A)`**；`#A` 不可行（`#` 已是注释引导符，`src/lexer/lexer.c:82`／`:83-92`）。但 `count` 今天不存在、`size` 存在，两者处置**未定**——见 [TYPESET_V06.md](TYPESET_V06.md) §3.2／§7.8。
+- **声明形状唯一化为 `名字: 集合 [= 初值]`**（即 `b: a = 0`），取代同一天更早的「应为①③」；`be` 的退役代价（**19 个 `vtest/*.im`、42 行 `.im`、六处实现、`docs/SYNTAX.md` §6.3**）与退役节奏见 [TYPESET_V06.md](TYPESET_V06.md) §3.1／§7.8。
+- **`@bits(n)` 后置**（§3.4）；**谓词集合复用 `|`**（§3.5）；**`Z` 的 BigInt = 立即数 + 溢出切堆对象**（§3.6）。
+
 ---
 
 ## 5. 优先级
@@ -542,7 +567,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 
 ### P3：明确延期，不要投入
 
-- 集合化类型系统（⚠ 集合化：`Z`/`Z+` 集合关系与 `be` 语法）→ v3.1，见 [archive/ROADMAP_3.1.md](archive/ROADMAP_3.1.md)。
+- ~~集合化类型系统（⚠ 集合化：`Z`/`Z+` 集合关系与 `be` 语法）→ v3.1，见 [archive/ROADMAP_3.1.md](archive/ROADMAP_3.1.md)。~~ **2026-10 由人裁定提前为 v0.6 目标**，见 §4「v0.6 目标：集合化类型系统」与 [TYPESET_V06.md](TYPESET_V06.md)。本行保留为历史裁定（它记录的是**当时为什么决定不做**），**不再是「不要投入」的依据**。
 - 概率编程、证明携带代码、量子启发叠加 → 见 [archive/ROADMAP_FRONTIER.md](archive/ROADMAP_FRONTIER.md)。
 - 微内核 / 裸机 Inim OS、去中心化权威 → 见 `future/`。
 
@@ -4037,3 +4062,49 @@ PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false;match-long 2030 possib
 ### 诚实边界
 
 ①`FAIL_REGULAR_EXPRESSION` 钉的是「**没有任何**行报 `possible=false`」，它不检查 `possible=true` 出现了几次，也不检查那两行是**同一个长度**的两半（fixture 里长度与两半的配对关系由 fixture 自己保证，断言看不到）；②`match-long` 这个前缀字符串是断言与 fixtures 之间的**隐式契约**，改名会让断言静默失配（今天会红，因为 `PASS_` 那一半也找不到，但这是巧合，不是设计）；③这条记录的是**断言机制**，`match` 截断缺陷本身见 §10.97。
+## §10.94 `count` 成为基数正典：`size` 的集合语境迁出，以及「数出来的数必须带 ref」
+
+**裁定**（2026-10，人类选择「1、2」，[TYPESET_V06.md](TYPESET_V06.md) §7.8 第 2 条）：`count(A)` 是集合基数的**规范名**；`size` 在**集合语境**下降为**已弃用别名**并迁移；`size` 对**字符串／数组／字典**保留；`size` 作为 **GUI 关键字**不动。本流：`stream/count-size`，提交 `01da596`。
+
+**实现。** `posix_core_count`（`src/runtime/runtime_posix.c:63`，注册 `:1172`）与 `builtin_count`（`src/runtime/runtime.c:149`，注册 `:1819`）。两份与 `size` **共用同一份集合代码**——无分量集合走 `iCount + count` 闭式，含分量集合走 `vm_set_to_array` + `vm_array_len` 枚举——所以「`count(A)` 与今天 `size(A)` 同答」是**按构造成立**，不是两次独立计算碰巧相等。`src/compiler/compiler.c:2894` 的 `comp->builtins` 条目只是卫生，不是生效路径：`EXPR_CALL`+`EXPR_IDENT` 在 `lookup_func` 落空后直接回落**按名**的 `OP_CALL_BUILTIN`，而 `lookup_builtin` 全文只被 `"window"` 用过（`:2186`）。
+
+**写死的语义决定**：`count` 认**所有容器**（集合／数组／字典／字符串），**非容器一律 `nil`**，**不继承 `size` 的强转兜底**。于是 `count(42)` = `nil` 而 `size(42)` = `42`。
+
+**⚠ 三条 nil 是三条不同的路，不能混为一谈：**
+
+| 表达式 | 结果 | 机制 |
+|---|---|---|
+| `count(42)` | `nil` | **类型拒绝** —— 参数不是容器，`n` 保持 -1 |
+| `size(-5)` | `nil` | **数值兜底** —— `-5` 是合法整数结果，但尾部 `if (n < 0) push_nil(vm)` 把负数当成「无答案」 |
+| `count(Z)` | `nil` | **枚举器拒绝** —— 无格点，`vm_set_to_array` 返回 -1 |
+
+三者答案相同、来路不同。这正是为什么 `size(42)`／`size(3.7)` 的**强转**与 `size(-5)` 的 **nil** 不是同一件事，测试里必须分开钉。
+
+**⚠ 数出来的数必须带 ref，不能写成一个常量。** 本流最初把迁移面写成「29 处」，`surgery-verifier` **只用 `git ls-files '*.im'`、不数 worktree 副本**独立重算得到 **30**；`be-surgeon` 在同一口径下得到 **29**，并给出机制：**差异来自 ref，不是分类**。
+
+| ref | `git ls-files '*.im'` | `size(` |
+|---|---|---|
+| `stream/count-size` 基线 `f6b3d87` | 346 | **29** 处 / 17 文件 |
+| `stream/be-removal`（`be-surgeon` 的树） | 351 | **29** |
+| 集成分支（`surgery-verifier` 量） | — | **30** |
+
+**三个数各自为真，因为它们量的不是同一棵树。** ⇒ 文档一律写「**在 ref X 上是 N**」，并把「**落地迁移前必须在当时的 ref 上重数**」当作规则。全盘 `grep -r "size("` 得到 195 一类的大数，那是把 5 棵 worktree 的副本与 `.verify/` 一起数了，**不是迁移代价**。
+
+**分类（口径：在 `f6b3d87` 上重数，29 处 / 17 文件）** —— 26 处是真实调用，3 处只在注释里：
+
+- **16 处集合语境调用 → 迁 `count`**，其中 **15 处纯改名、输出逐字节不变**：`set_comp_test.im:5/9/13`、`set_op_test.im:8/15/34`、`projects/set_comp_test.im:4/8/12`、`projects/set_op_test.im:8/15/34`、`projects/tt4.im:2`、`vtest/set_components_enumerable_v05.im:32`、`inf_set_test.im:97`。**证据**：`vtest/set_components_enumerable_v05.im` 改名后它的 PASS 正则**至今仍要求 `size=3`**（`CMakeLists.txt:827`），输出不变红 ⇒ 改名没改行为。
+- **1 处必须改意图、不许改名了事**：`inf_set_test.im:85 o = size(1,2,3)`。它印出 `3` **只是因为内建只读最后一个实参**（等价于 `size(3)`），**纯属巧合**，不是 `{1,2,3}` 的基数——直接改名成 `count(1,2,3)` 会得到 `nil`（整数被拒）。已改成先绑 `o = 1,2,3` 再 `count(o)`，并在原处留注释写明为什么，以及这个巧合被钉在哪条测试里。
+- **10 处不是集合语境 → 保留 `size`**：9 处数组（`arr_test.im:4`、`err_test.im:15`、`lp2.im:4`、`lp3.im:4`、`params_test.im:6`、`t_lp3.im:4`、`t_push.im:6`，以及 `set_op_test.im:39`／`projects/set_op_test.im:39`）＋ 1 处字典（`vtest/posix_core_api_v04.im:15`）。**注意后两处**：那里是 `l = list(a)`，**`list()` 返的是数组、不是集合**，所以按「数组保留」不动——这一点本流最初归错了（报成 17 迁），是复核时抓出来的。
+- **3 处只出现在注释里**（`vtest/set_str_component_count_v06.im:8/18`、`vtest/sum_components_int64_v06.im:30`）：无代码改动，注释随规范名改写。
+
+**⚠ 多参陷阱：只有最后一个实参会被读到（本流实测发现）。** 每个内建只读栈顶 `vm_cur_stack(vm)[vm_cur_sp(vm)]`（`src/runtime/runtime_posix.c:32` / `src/runtime/runtime.c:119`），而 `src/vm/vm.c:3805` 虽记了 `vm->cur_argc = ins.r3` 却**无人消费**，调用返回时也只弹一项（`src/vm/vm.c:3825` 的 `value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--;`），于是多出的实参被**静默忽略**、留在栈上。实测：`size(5,5,5)` = `5`、`size(7,8)` = `8`、`size(7,8,9)` = `9`、`len(9)` = `9`、`len(5,5,5)` = `5`、`count(7,8)` = `nil`、`sum(7)` = `nil`、`sum(1,2,3,4)` = `nil`。**这不是本次引入的缺陷，是既有行为**；登记它是因为 `size(1,2,3)` 那种写法在语言里**没有任何一处会报错**，而人读到会以为它是「三个元素」。已钉进 `vtest/count_builtin_v06.im`（CTest `count_builtin_runtime`）。
+
+**测试与验证。**
+- 新增 `vtest/count_builtin_v06.im`，CTest `count_builtin_runtime`（`LABELS "runtime;types;regression"`）。PASS 正则 `count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9`，FAIL 正则 `bad=[1-9]`。断言文本用「字面量 + 计算值」的形状：CTest 同时抓 stderr，而引擎在 stderr 会打字符串常量池（`[0]="count-ok bad=" …`），字面量直接当正则会假绿。
+- 实测（`./build/inimerse --no-mods probe_count.im`，本机 Linux/POSIX，`f6b3d87` + 本流改动）：`countset=3 countmixed=5 countmixed_size=5 countstr=5 countarr=3 countdict=2 countint=nil countfloat=nil countbool=nil countnil=nil countZ=nil sizeint=42 sizefloat=3 sizeneg=nil countneg=nil sizestr=5 sizearr=3 sizedict=2 sizeZ=nil multisize=5 multilen=9 multicount=nil`。
+- `ctest --test-dir build -R count_builtin -V` ⇒ `100% tests passed, 0 tests failed out of 1`。
+
+**诚实边界。**
+1. **GUI `size` 零覆盖。** GUI 语境（`move`/`size`/`bounce`）在 346 个受版控 `.im` 里出现 **0 次** ⇒ CTest 对它**没有任何断言**，**「门禁全绿」不能当作「GUI `size` 没被动过」的证据**。本流没有改 `docs/SYNTAX.md:450/468/540/910`，也没有改 `src/compiler/compiler.c:1996` 的 `strcmp(verb, "size")`，但**在本流内未做验证**——这是缺口，不是成绩。
+2. **WIN32 那份没有编译证据。** `src/runtime/runtime.c` 在 Linux **不参与构建**（`CMakeLists.txt:429` 是 WIN32 源列表、`:438` 才 `list(APPEND … runtime_posix.c)`），且按 `docs/AUDIT.md` §1.16 它连 `cc -std=gnu11 -fsyntax-only` 都过不了（错误全在 601–1651 行）。本流只做到「两份同体 + 数组/字典都用 POSIX 那份带边界检查的写法」，**没有**跑改动前后错误行集合求差。
+3. **计数基线。** 本分支原生基线是 `f6b3d87`，`add_test` 137 → **138**；`main` 已在 `5cf4aa1`（142）。集成时正确值是 **143**（137+5+1），由协调者在集成分支处理，本分支不追。

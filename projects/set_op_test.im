@@ -5,14 +5,14 @@ u = a + b
 say 5 in u
 say 1 in u
 say 6 in u
-say size(u)
+say count(u)
 i = a * b
 say 3 in i
 say 2 in i
 d = a - b
 say 1 in d
 say 3 in d
-say size(d)
+say count(d)
 nz = N * Z[0~5]
 say 3 in nz
 say 6 in nz
@@ -31,7 +31,7 @@ say a == c
 nu = N + Float1
 say 7 in nu
 say 1.5 in nu
-say size(a)
+say count(a)
 say sum(a)
 say sum(1,2,3,4)
 l = list(a)

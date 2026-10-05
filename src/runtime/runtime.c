@@ -139,6 +139,34 @@ static int builtin_size(VM *vm) {
     return 1;
 }
 
+/* count(A) is the canonical name for a collection's cardinality (see
+ * docs/TYPESET_V06.md 7.8).  It mirrors posix_core_count() line for line,
+ * including the bounds-checked array/dictionary spellings, so the two platform
+ * copies cannot answer differently for an out-of-range slot.  On a collection
+ * it agrees with size() by sharing its code; on anything else it is nil, where
+ * size() coerces (size(42) is 42, size(3.7) is 3, count(42) and count(3.7) are
+ * nil). */
+static int builtin_count(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    long long n = -1;
+    if (v->type == VAL_SET && v->ival >= 0 && v->ival < vm->setCount) {
+        SetObj *s = &vm->sets[v->ival];
+        if (s->kind == 0 && s->compCount == 0) n = s->iCount + s->count;
+        else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }
+    }
+    else if (v->type == VAL_ARRAY && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
+        ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count : 0;
+    }
+    else if (v->type == VAL_DICT && v->ival > 0 && v->ival - 1 < vm->arrayCount) {
+        ArrayObj *a = vm_pool_slot(vm, v->ival - 1); n = a ? a->count / 2 : 0;
+    }
+    else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
+    pop(vm);
+    if (n < 0) push_nil(vm); else push_int(vm, n);
+    return 1;
+}
+
 static int builtin_list(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -1027,9 +1055,9 @@ static int builtin_range(VM *vm) {
     Value v = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     int gidx = (gi.type == VAL_INT) ? gi.ival : -1;
     pop(vm); pop(vm);
-    /* be-bound global: return the be set */
-    if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
-        int bidx = vm->be_bound[gidx] - 1;
+    /* bound global: return its declared bound set */
+    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
+        int bidx = vm->global_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {
             Value sv; sv.type = VAL_SET; sv.ival = bidx;  sv.sval = NULL;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
@@ -1797,6 +1825,7 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "bool", builtin_bool);
     vm_register_builtin(vm, "len", builtin_len);
     vm_register_builtin(vm, "size", builtin_size);
+    vm_register_builtin(vm, "count", builtin_count);
     vm_register_builtin(vm, "list", builtin_list);
     vm_register_builtin(vm, "sum", builtin_sum);
     vm_register_builtin(vm, "push", builtin_push);

@@ -1,0 +1,7 @@
+# 声明形状 `名字: 集合 [= 初值]` 的初值仍受集合约束：越界即抛错，不静默截断。
+#
+# 这条同时钉住消息文本：这条消息以前写作 "be: initial value out of range"，
+# `be` 移除后不再有测试引用它，等于一条无人看守的字符串。
+type Byte = [0~255]
+x: Byte = 300
+say "must not be reached"

@@ -98,7 +98,7 @@ typedef enum {
     STMT_WITH,
  STMT_CONST,
  STMT_TAG,
-    STMT_BE,
+    STMT_BIND,
     STMT_TRY,
     STMT_THROW,
     STMT_CONTINUE, STMT_LABEL, STMT_GOTO_LABEL, STMT_THREAD_GOTO
@@ -177,7 +177,7 @@ struct Stmt {
         char **items;
         int count;
     } tagStmt;
-    struct { StringView name; Expr *set; Expr *init; } beStmt;
+    struct { StringView name; Expr *set; Expr *init; } bindStmt;
     struct { StringView name; Expr *set; } typeStmt;
     struct { Stmt **body; int bodyCount; StringView varName; Stmt **handler; int handlerCount; Stmt **finallyBody; int finallyCount; } tryStmt;
     struct { Expr *expr; } throwStmt;

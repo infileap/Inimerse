@@ -1,0 +1,4 @@
+type Byte = [0~255]
+x be Byte: 42
+say "x=" + str(x)
+say "Byte=" + str(Byte)
