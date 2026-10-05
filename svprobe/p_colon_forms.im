@@ -1,0 +1,8 @@
+// svprobe: which inline-set spellings does `:` accept today?
+type Byte = [0~255]
+a: Byte = 42
+say "A named-type  a=" + str(a)
+b: [0, 3] = 2
+say "B bracket    b=" + str(b)
+c: 42
+say "C no-init    c=" + str(c)
