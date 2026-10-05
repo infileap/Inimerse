@@ -44,6 +44,17 @@ Honest bounds:
     anything".
   - A target named by something other than a test (an install rule, a custom
     command) is still reported: being copied is not being run.
+  - The numbers on the success line are *counted*, not derived.  The first
+    version of this file printed `len(targets) - len(ALLOWED)` and
+    `len(ALLOWED)`.  That is the right answer only while every entry in
+    ALLOWED happens to excuse a real orphan: put a target that IS run into
+    ALLOWED and the line claims one fewer running target than the tree has.
+    A number computed from a table instead of measured from the tree is a
+    number nobody can recheck -- and a negative control caught it, not a
+    reader.
+  - An entry in ALLOWED that does not excuse an orphan is itself reported.  An
+    allowance that excuses nothing is a sentence no run can falsify, and it
+    hides the day the target stops being run.
 """
 import re
 import sys
@@ -134,9 +145,13 @@ def main() -> int:
         )
         return 2
 
+    run_by_a_test = [n for n in targets if n in used]
+    orphans = [n for n in targets if n not in used]
+    excused = [n for n in orphans if n in ALLOWED]
+
     problems = []
-    for name in targets:
-        if name in used or name in ALLOWED:
+    for name in orphans:
+        if name in ALLOWED:
             continue
         elsewhere = len(re.findall(r"\b" + re.escape(name) + r"\b", cmake)) - 1
         problems.append(
@@ -146,10 +161,25 @@ def main() -> int:
             f"thing that runs instead."
         )
 
+    for name in sorted(ALLOWED):
+        if name in orphans:
+            continue
+        if name in used:
+            why = "a CTest runs it"
+        else:
+            why = "there is no such add_executable( ) target"
+        problems.append(
+            f"{name}: listed in ALLOWED, but it is not an orphan ({why}), so "
+            f"the allowance excuses nothing. Remove it, or it will hide the "
+            f"day this target becomes an orphan."
+        )
+
     if problems:
         print(
-            f"check_orphan_targets: {len(problems)} target(s) out of "
-            f"{len(targets)} checked are run by no CTest:",
+            f"check_orphan_targets: {len(problems)} problem(s) over "
+            f"{len(targets)} add_executable( ) target(s) checked "
+            f"({len(run_by_a_test)} run by at least one CTest, "
+            f"{len(orphans)} run by none):",
             file=sys.stderr,
         )
         for p in problems:
@@ -164,8 +194,8 @@ def main() -> int:
     print(
         f"check_orphan_targets: {len(targets)} add_executable( ) target(s) "
         f"checked against {len(tests)} add_test( ) registration(s); "
-        f"{len(targets) - len(ALLOWED)} run by at least one CTest, "
-        f"{len(ALLOWED)} allowed with a stated reason."
+        f"{len(run_by_a_test)} run by at least one CTest, "
+        f"{len(excused)} allowed with a stated reason."
     )
     return 0
 
