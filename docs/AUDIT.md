@@ -3310,18 +3310,24 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **症状（由 ivory-ember 复核指出，发生在本文档自己的推送流程里）。** `ce457df` 只删了一个 `。`，我在**文档三阶段 rc=0 之后就推了**，全量十二阶段门禁**在推之后**才跑完。**这次是对的，但「对」需要写出理由才算对** —— 否则「全量门禁在跑」这句话会被下一个读的人理解成「推的时候还没验证」。
 
-**规矩。** 推之前必须跑的，是**这笔 diff 能影响的阶段**；「能影响哪些阶段」不是感觉，它有判据，**判据就是 `git diff --name-only <base> <head>`**：
+**规矩。** 推之前必须跑的，是**这笔 diff 能影响的阶段**；这件事的**输入**是 `git diff --name-only <base> <head>`。
 
-| 改动落在 | 推前必须跑 | 构造上不可能受影响（推后补跑只为留痕） |
+| 改动落在 | 推前必须跑 | 为什么（不是「感觉不可能」） |
 |---|---|---|
-| `docs/**` | `links` / `doc-paths` / `text-integrity` | `build` / `ctest` / `fuzz` / `economy` / `node` / `oauth_loop` —— 它们不读 markdown |
-| `src/**` | `build` / `ctest` / `fuzz`（差分模糊） | `links` / `doc-paths` —— 它们不读 C 源码 |
-| `vtest/**`、`tools/*.test.*` | `ctest` + `test inputs that no CTest runs` | —— |
-| `tools/gate.sh`、`CMakeLists.txt` | **全部十二阶段**（判据本身变了） | **没有** |
+| `docs/**` | `links` / `doc-paths` / `text-integrity` | 只有这三个阶段读 markdown |
+| `src/**` | `build` / `ctest` / `fuzz` / **`text-integrity`** / **`economy`** / **`plugin`** | `tools/check_text_integrity.py:5-8` 逐字写着它**为什么存在**：「Three git-tracked C sources carried NUL bytes inside block comments -- `src/mod/gui_mod.c` (5), `src/lexer/lexer.c` (2), `src/lexer/lexer.h` (1)」，而 `:57` 的 `TEXT_SUFFIXES` 含 `.c`/`.h` ⇒ **`src/**` 就是这条阶段的输入集**；`tools/economy_migration.test.py:70-75` 找 `build/inimerse`、`:142` 跑它；`tools/dsh-inimerse/verify.mjs:137` 走 `inim_run`，而 `tools/gate.sh:318-321` 自述是「a live round trip through the real **inim-server / inim-client binaries**」 |
+| `vtest/**`、`tools/*.test.*` | `ctest` / `orphan-fixtures` | 输入是 fixture 与 runner；不读 C 源码、不读 markdown |
+| **`tools/check_*.py`**、`tools/*.test.py` | **它背书的那个阶段**（`check_links.py`→`links`、`check_doc_paths.py`→`doc-paths`、`check_text_integrity.py`→`text-integrity`、`check_orphan_fixtures.py`→`orphan-fixtures`、`check_ignored_credentials.py`→`ignored-credentials`、`economy_migration.test.py`→`economy`；`check_test_ports.py`/`check_async_commands.py` 由别的阶段在内部调用） | **判据本身变了** |
+| `tools/gate.sh`、`CMakeLists.txt` | **全部十二阶段** | **判据本身变了，且没有任何阶段可免** |
+| `.github/**` | 无（CI 自己的事）；`docs/**` 那一行仍适用 | —— |
 
-**为什么这条能判红绿。** 它量的不是「我跑够了没」，而是「**我没跑的那些，为什么不可能受影响**」—— 而 `--name-only` 是别人能重跑的命令。**没有这张表，「全量门禁在跑」和「没验证」在字面上无法区分**；有了它，两句话各自对应一个可重算的集合。
+**★ 这张表本身的成立条件（本条初稿在这上面错了四处，全部由 ivory-ember 复核指出，五条我逐条独立复核成立）。**
+1. **初稿的 `src/**` 行漏了三个阶段，而其中一个是「为 `src/` 而建」的**：`text-integrity` 的存在理由**就是** `src/` 里的 NUL 字节。**照初稿那张表跑的人，不会跑那个专门为 `src/` 而建的阶段** —— 一张用来**免跑**的表把该跑的免掉了，这比没有表更坏。
+2. **初稿把第三列写成「不受影响」的名单，而同一个表头下有两种意思**：`vtest/**` 那一行填 `——`，读作「没有阶段是不可能受影响的」，**而那是假的**（`vtest/**` 显然不影响 `links`/`doc-paths`）。**一个表头两种语义，就是本轮一直在治的形状。** 现在第三列改成「**为什么**」——它要的是**理由**，不是**名单**。
+3. **初稿缺了「判据本身变了」的第二个入口**：十二阶段里有八个是 `tools/` 下的脚本（见上表第四行）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。
+4. **标题比实际强一级（这一处仍未修）**：`git diff --name-only` 给的是**文件清单**，清单→阶段的映射**目前只存在于上面这张 markdown 表里（散文）**，**没有一条命令返回 0/1**。⇒ **判据的输入可重算，判据本身尚无可执行形态。** 这条在这里有牙：**§1.72 是用来免跑阶段的，一条不可执行的免跑判据，正是本轮反复治的形状。** 修法（**未做，已派 agent2 —— `tools/**` 是他的写域**）：给 `tools/gate.sh` 加 `--required-for <base>..<head>`，把上表编码进脚本、返回阶段名单与退出码；**在那之前，本节的措辞是「输入可重算」，不是「判据可执行」。**
 
-**边界（这条规矩自己的反例）。** 分档按**路径**、不按**语义**：`CMakeLists.txt` 里一行注释的改动落在「全部十二阶段」档里，是**过度**；而一个改 `docs/` 却被 `text-integrity` 之外的东西读到的文件会**漏**。⇒ 这张表是**充分不必要**的保守下界：**照它跑不会漏，但它不声称「跑完就够」**。
+**边界（本条初稿的反例放错了行，由 ivory-ember 实测更正）。** 初稿写「一个改 `docs/` 却被 `text-integrity` 之外的东西读到的文件会**漏**」。实测**那一侧是严的**：没有任何测试或检查器 `open` 一个 `docs/` 文件（`tools/check_orphan_fixtures.py` 只读 `CMakeLists.txt:104` 与 node runner `:109`），`add_test` 行里引用 `docs/` 的 = **0**。⇒ **`docs/**` 那一行是整张表里唯一严的一行；漏在 `src/**` 那一行**，已补完。这条规矩整体仍是**充分不必要**的保守下界：**照它跑不会漏，但它不声称「跑完就够」**。
 
 ## §2 执行通道效率比较
 
