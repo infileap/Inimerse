@@ -1,0 +1,57 @@
+# label/continue/restart/thread-goto tests
+# --- continue in while ---
+i = 0
+c = 0
+while i < 10 {
+    i = i + 1
+    if i % 2 == 0 {
+        continue }
+    c = c + 1
+}
+say c
+# --- continue in repeat ---
+n = 0
+s = 0
+repeat 5 {
+    n = n + 1
+    if n == 2 {
+        continue }
+    s = s + 1
+}
+say s
+# --- label block: to / break ---
+x = 0
+L: {
+    x = x + 1
+    if x < 3 {
+        to L }
+    break L
+}
+say x
+# --- label on while: break A exits the while ---
+y = 0
+W: while y < 100 {
+    y = y + 1
+    if y >= 5 {
+        break W }
+}
+say y
+# --- label on case ---
+z = 0
+C: case 2 {
+    1: z = 1
+    2: z = 2
+    else: z = 0
+}
+say z
+# --- label single line ---
+m = 0
+M: m = m + 1
+say m
+# --- to A jumps forward (skip code) ---
+k = 0
+to SKIP
+k = 99
+SKIP: k = k + 1
+say k
+say "done"

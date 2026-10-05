@@ -1,0 +1,4 @@
+type Byte = [0~255]
+say "l2"
+x be Byte: 42
+say "l3-reached"
