@@ -44,14 +44,19 @@ C: case 2 {
     else: z = 0
 }
 say z
-# --- label single line ---
+# --- label with a real BACKWARD jump ---
+# `M: m = m + 1` is no longer a label: after an identifier, `:` now starts the
+# declaration `名字: 集合 [= 初值]` (docs/TYPESET_V06.md §3.1, docs/SYNTAX.md §6.3).
+# A labelled single statement must be written as a block.
 m = 0
-M: m = m + 1
+M: { m = m + 1 }
+if m < 3 {
+    to M }
 say m
-# --- to A jumps forward (skip code) ---
+# --- to SKIP jumps FORWARD, skipping k = 99 ---
 k = 0
 to SKIP
 k = 99
-SKIP: k = k + 1
+SKIP: { k = k + 1 }
 say k
 say "done"

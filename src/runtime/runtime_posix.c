@@ -196,7 +196,7 @@ static int posix_core_type(VM *vm) {
 }
 
 /* Keep the POSIX runtime's .range behavior aligned with the host runtime.
- * The compiler passes both the value and the global index so a `be` binding
+ * The compiler passes both the value and the global index so a bound global
  * can expose its declared set instead of a broad inferred numeric range. */
 static int posix_core_range(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
@@ -206,8 +206,8 @@ static int posix_core_range(VM *vm) {
     pop(vm);
     pop(vm);
 
-    if (gidx >= 0 && gidx < vm->be_bound_cap && vm->be_bound[gidx] > 0) {
-        int bidx = vm->be_bound[gidx] - 1;
+    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
+        int bidx = vm->global_bound[gidx] - 1;
         if (bidx >= 0 && bidx < vm->setCount) {
             Value out = { .type = VAL_SET, .ival = bidx, .sval = NULL };
             vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);

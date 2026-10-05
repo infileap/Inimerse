@@ -1,4 +1,4 @@
 # A named type is a collection-valued global that `be` can consume.
 type Byte = [0~255]
-x be Byte: 42
+x: Byte = 42
 say "typecoll x=" + str(x)

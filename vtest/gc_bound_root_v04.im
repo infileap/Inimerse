@@ -1,0 +1,28 @@
+# 被约束的全局本身就是一颗 GC 根。
+#
+# 这条集合除了 VM 的 global_bound[] 之外**没有任何 C 侧持有者**：全局 x 里存的是
+# 值 2，不是集合。所以标记栈上少了这一个根，集合就会被回收、槽位随即被复用
+# （vm_set_new 先弹 set_free_list），而赋值重校验仍按旧索引去读它 —— 于是
+# 「合法的 2」也会被拒，越界赋值反而可能被接受。
+#
+# 这条用例的关键是**必须真的产生集合分配**：回收后 x 的槽位要能被下一次
+# vm_set_new 拿走。只 churn 数组（[i, ...]）不会碰集合池，槽位不复用，
+# 于是关掉这个根也看不出差别 —— 那正是本用例第一版没能发现变异的原因。
+#
+# 与 gc_runtime_v04.im 的分工：那条覆盖线程结果 / 闭包捕获 / 普通数组根，
+# 唯独没有覆盖 global_bound[]。
+gc_auto(1)
+x: 0,1,2,3 = 2
+gc_now()
+churn = 0
+i = 0
+while i < 6000 {
+    churn = i, i + 1
+    i = i + 1
+}
+gc_now()
+say "bound-root-after-gc=" + str(x)
+x = 2
+say "bound-rewrite-ok"
+x = 9
+say "must not be reached"

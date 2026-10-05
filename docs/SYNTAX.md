@@ -285,7 +285,9 @@ do { } until cond
 break [label]
 continue
 to Label                            // 跳转到标签
-Label: { }   /   Label: stmt
+Label: { }                          // 标签块：对所有语句体都成立
+Label: <以关键字开头的语句>          // `C: case 2 { }`、`W: while … { }`、`SKIP: say "x"`
+                                    // ⚠ `Label: x = 1` 自 2026-10 起是**声明**，见 §6.3
 x = 1 if cond                       // 后缀 if
 x = 1 unless cond                   // 后缀 unless
 say "hi" if cond                    // 后缀 if 也可挂在 say 上
@@ -412,6 +414,7 @@ using thread
 const NAME = expr
 global a, b, c
 type Name = <集合或表达式>
+name: <集合或表达式> [= 初值]        // 受约束全局，`:` 后接完整集合表达式；见 §6.3
 record name = expr [, tags]
 record default store = expr
 recorded name = expr
@@ -420,6 +423,7 @@ with scope: "entity", store: "both" { }
 declare { mem 64 MB }            // 见下
 ```
 
+- `名字: <集合> [= 初值]` 走 `STMT_BIND`（`src/parser/parser.c:1415-1420`）；旧的 `be` 路径已删除，`be` 现在是**带行号的解析错误**（`src/parser/parser.c:1376`），不是别名。
 - `const` `:1141-1153`；`global` `:1517-1526`；`type` `:1192-1203`；`record` `:1154-1191`；`tag` `:1111-1140`；`with` `:1204-1213`；`declare` `:927-1002`。
 - `record` 与 `recorded` 是同一 token（`src/lexer/lexer.c:42`）。实测 `record score = 42, level: 3` → `42`。
 - `record default store = …` 是 `parse_record_stmt:1163-1172` 里对 `IDENT` 文本 `"default"` 的**字符串比对特例**。
@@ -539,15 +543,32 @@ Error: expected 'expression', but got 'type' (type 129)
 
 **GUI / 游戏**：`window` `show` `hide` `at` `layer` `stage` `background` `sprite` `move` `box` `costume` `face` `turn` `point_to` `velocity` `gravity` `bounce` `size` `sound` `music` `text` `broadcast` `clone` `forever` `when` `cursor` `autosave` `quit_on_escape` `fullscreen` `fixed` `ghost` `clickable` `drag` `secret` `tag`
 
-**其它**：`say` `print` `min` `max` `be` `not` `and` `or`
+**其它**：`say` `print` `min` `max` `not` `and` `or`
 
-### 6.3 `be` 语句
+> `be` **仍留在词法表里**（`src/lexer/lexer.c:43`、`src/lexer/lexer.h:33`），但它已经不是构造 —— 见 §6.3。
+
+### 6.3 `be` 语句（已移除）与声明形状 `名字: 集合 [= 初值]`
+
+2026-10 人裁定：**`be` 立即移除、不留等价别名**，声明形状唯一化为 `名字: 集合 [= 初值]`（[TYPESET_V06.md](TYPESET_V06.md) §3.1）。「唯一化」的意思是 `be` **不是脱糖别名**：旧写法不再是声明，而是一条**带行号的解析错误**。
 
 ```im
-name be <集合或表达式> [: init]
+name: <集合或表达式> [= 初值]         // 现行唯一形式
+age: [0, 120] = 18                   // `:` 后接的是完整集合表达式，不止一个类型名
+name be <集合或表达式> [: init]       // 已移除：报错，不静默
 ```
 
-`src/parser/parser.c:1357-1365`，`STMT_BE`。这是仓库里最不常见的语句形式之一。
+- 新形式：`src/parser/parser.c:1415-1420`，`STMT_BIND`；`:` 之后走 `looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p)`（与 `type` 同一条规则，`src/parser/parser.c:1242`），末尾的 `= 初值` 可选。
+- 旧形式：`src/parser/parser.c:1376-1387` 直接报 ``Error at line N: `be` declarations were removed (docs/SYNTAX.md 6.3); write `name: set [= init]` in place of `name be set [: init]` ``，exit 1。
+- 受约束全局**每次赋值都重校验**（越界抛 `type_mismatch`），登记点是 `global_bound[]`。它的三个消费者只读这个数组，所以换语法不改语义：`src/vm/vm.c:3681-3691`（`L_STORE_GLOBAL` 重校验）、`builtin_range`／`posix_core_range`、`src/vm/vm.c:2770-2783`（**GC 标记根**）。最后一个有专门用例 `vtest/gc_bound_root_v04.im`（`gc_bound_root`），**变异验证过**：注掉 `:2770` 的根，该测试即红。
+
+**⚠ `be` 保留在词法表里是刻意的，不是没删干净。** 把它降级成普通标识符，旧写法会静默变形：
+
+- `be = 5` → 变成「给变量 `be` 赋值 5」，**不报错**；
+- `x be Byte: 42` → 裂成三条语句（表达式 `x`、表达式 `be`、声明 `Byte: 42`），于是**在没有任何错误的情况下改写全局 `Byte`**。
+
+实测（`vtest/be_removed_decl_v04.im` / `be_removed_assign_v04.im` / `be_removed_bare_v04.im`）：三条各报一条带行号的错、exit 1。对照 `x zz Byte: 42`（`zz` 是普通标识符）**exit 0 且打印 `Byte=nil`** —— 那正是没有这块墓碑时的行为。
+
+**⚠ 标签形式也随之收窄**：`Label: <语句>` 只在语句**不以标识符／字面量／`(`／`[` 开头**时仍是标签（`C: case 2 { }`、`W: while … { }`、`SKIP: say "x"`）；`Label: x = 1` 现在会被读成**声明**，要写成 `Label: { x = 1 }`。闸门是 `src/parser/parser.c:1396` 的 `starts_collection_expr`（`:108`）。
 
 ---
 

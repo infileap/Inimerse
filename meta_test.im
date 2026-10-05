@@ -42,7 +42,7 @@ case w {
     [1,2,3]: say "one two three"
     else: say "other"
 }
-g be 0,1,2,3:0
+g: 0,1,2,3 = 0
 say g in g.range
 say g.range
 say type(g)
