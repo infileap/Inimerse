@@ -1,0 +1,4 @@
+say "size555=" + str(size(5, 5, 5))
+say "len9=" + str(len(9))
+say "count555=" + str(count(5, 5, 5))
+say "count_none=" + str(count())

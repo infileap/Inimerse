@@ -1,0 +1,12 @@
+type Direction = "N", "S", "E", "W"
+dir be Direction = "N"
+
+case "N" {
+    in Direction: say "all-directions"
+    "N": say "unreachable"
+}
+
+case dir {
+    in Direction: say "all-directions-bound"
+    "N": say "unreachable-bound"
+}

@@ -1,0 +1,19 @@
+gc_auto(1)
+x: 0,1,2,3 = 2
+say "pre=" + str(x) + " range=" + str(x.range)
+gc_now()
+i = 0
+while i < 6000 {
+    churn = i, i + 1
+    i = i + 1
+}
+gc_now()
+say "post=" + str(x) + " range=" + str(x.range)
+x = 2
+say "rewrite-ok"
+try {
+    x = 9
+    say "DEFECT out-of-range 9 accepted x=" + str(x)
+} catch (e) {
+    say "out-of-range rejected=" + str(e)
+}
