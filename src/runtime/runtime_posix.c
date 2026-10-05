@@ -128,8 +128,25 @@ static int posix_core_match(VM *vm) {
     Value sv = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     const char *pattern = pv.type == VAL_STRING && pv.sval ? pv.sval : "";
     const char *subject = sv.type == VAL_STRING && sv.sval ? sv.sval : "";
-    char translated[2048]; size_t j = 0; int in_class = 0;
-    for (size_t i = 0; pattern[i] && j + 16 < sizeof translated; i++) {
+    /* Size the translation buffer from the pattern itself.  Every repair the
+     * loop below substitutes is at most 13 bytes ("\\w" -> "[[:alnum:]_]"), so
+     * 16 bytes of headroom per input byte is an upper bound, and the +1 is the
+     * terminator.
+     *
+     * This used to be a fixed `char translated[2048]` whose copy loop stopped
+     * at `j + 16 < sizeof translated`.  The pattern was then silently cut off
+     * at 2031 bytes and *the cut pattern is what ran*: the tail carried the
+     * whole constraint, so `match` answered true for a pattern that cannot
+     * match -- an answer with the same shape as the right one and no
+     * diagnostic.  On allocation failure we answer false with a diagnostic
+     * rather than truncating: false is wrong for patterns that do match, but it
+     * is never *silently* wrong, and we are assuming we cannot hold even 16x the
+     * pattern.  See docs/AUDIT.md 1.64. */
+    size_t tcap = 16 * strlen(pattern) + 1;
+    char *translated = (char *)malloc(tcap);
+    if (!translated) { pop(vm); pop(vm); push_bool(vm, 0); return 1; }
+    size_t j = 0; int in_class = 0;
+    for (size_t i = 0; pattern[i] && j + 16 < tcap; i++) {
         if (pattern[i] == '[') in_class = 1;
         if (pattern[i] == ']' && in_class) in_class = 0;
         if (pattern[i] == '\\' && pattern[i + 1]) {
@@ -160,6 +177,7 @@ static int posix_core_match(VM *vm) {
         ok = regexec(&re, subject, 0, NULL, 0) == 0;
         regfree(&re);
     }
+    free(translated);
     pop(vm); pop(vm); push_bool(vm, ok != 0); return 1;
 }
 

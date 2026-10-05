@@ -2856,6 +2856,87 @@ run5  init 2.1  listen 2265.2  port_available    8.3  connect    6.9  port_open 
 
 **诚实边界。** ①**本机 Linux 上改前/改后逐调用数字无法区分**（修复版 `listen` 2.6–6.2 ms，屏蔽快路径后 2.6–5.1 ms，其余都是 1–2 ms）—— Linux 对文字量本就几乎不花钱，**收益是 Windows 特有的**，`#141` 钉的是**机制**不是收益。②因此 `#141` 是 **POSIX-only**（同 `slowdns_preload` 的 `LD_PRELOAD` 手法），**Windows 侧对这条仍无覆盖**。③`#141` 断言的是「没有多余的解析调用」，**不证明** Windows 上那 4 次解析的耗时下降了多少 —— 那要 peer 的 Windows 驱动。④`InetPtonA` 的行为是读 Microsoft 文档的判断，**本机没有实测**。
 
+## §1.64 POSIX 的 `match` 静默截断模式：跑的不是被写下的那个模式
+
+### 症状
+
+`match` 的模式超过约 2031 字节时被**静默截断**，而**跑的是截断后的模式**。被截掉的那一段如果承载了整条约束，`match` 就会对一个根本不可能匹配的模式回答 `true` —— **与正确答案同形，没有诊断**。
+
+最小复现（对照只差长度，模式 = `"^" + N 个 a + "$zzz"`，主语 = N 个 a）：
+
+| N | 模式字节 | 应当 | 实测 |
+|---|---|---|---|
+| 2028 | 2033 | `false` | `false` ✓ |
+| **2030** | **2035** | `false` | **`true`** ✗ |
+| 3000 | 3005 | `false` | `true` ✗ |
+| 50（对照） | 55 | `false` | `false` ✓ |
+
+`$zzz` 要求串尾之后**还要**有字面 `zzz`，所以这个模式永远不可能匹配。翻转点 N=2030 与下面读码推出的 2031 字节上限**逐字吻合** ⇒ 不是「长模式都不准」，是「恰好越界就换个答案」。
+
+### 机制
+
+`src/runtime/runtime_posix.c:131`（修前）：
+
+```c
+char translated[2048]; size_t j = 0; int in_class = 0;
+for (size_t i = 0; pattern[i] && j + 16 < sizeof translated; i++) {
+```
+
+复制循环的上界是 `j + 16 < sizeof translated`，即**最多抄 2031 字节**；超出部分**无声丢弃**，然后拿截断后的串去 `regcomp`。被丢掉的正好是 `$zzz` —— 整条尾部约束 —— 剩下的 `^aaa…` 匹配前缀。
+
+**这个缺陷的形状**：不是崩溃、不是报错，是**给出一个与正确答案同形的答案**。读代码的人看到那层「把 `\d` 翻译成 `[[:digit:]]`」的循环，会以为它只是翻译；而它在**输入足够长时换了一个模式**。这与 §1.62 是同族：**检查在算一个已经不等于它要防的那个量** —— 那里是钳位算 `start + len`，这里是翻译算一个装不下的缓冲区。
+
+### 平台与基线
+
+`char translated[2048]` **只出现在 `runtime_posix.c`**。Windows 那份 `regex_match`（`src/runtime/runtime.c:986`）用的是自己写的匹配器，**没有定长模式缓冲**（它的 `builtin_match` 只有一个 `char sbuf[512]` 装主语）⇒
+
+- **缺陷是 POSIX-only，Windows 侧本来就是对的**；
+- 按本仓既有的 `int`（§1.45，人类裁定 16 进制前缀两侧统一 16）与 `float`（§1.20，`val_as_double()` 取代裸读 union）处置惯例，**基线是没有 bug 的那一份**。
+
+这条与 DECFY 的「并集归哪一层」是**同一类判断**：不是「选一个实现」，是「**定谁代表契约**」。
+
+### 覆盖为什么是零，以及原因要说对
+
+`match` 全仓只被 **1 个** vtest 文件用到（`vtest/posix_core_api_v04.im`），而 `vtest/` 里最长的模式是 **59 字节**（`"^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$"`）—— **低于阈值 34 倍**。
+
+⇒ 措辞必须是「**阈值远在任何正常用法之外，而越界时它不说话**」，**不是**「用户会踩」。缺陷是**沉默**，不是**概率**；把判据写成「长模式不准」会把这条降级成一个模糊的印象。
+
+### 修法
+
+按 `strlen(pattern)` **动态定尺寸**，不再有定长世界：
+
+```c
+size_t tcap = 16 * strlen(pattern) + 1;
+char *translated = (char *)malloc(tcap);
+if (!translated) { pop(vm); pop(vm); push_bool(vm, 0); return 1; }
+size_t j = 0; int in_class = 0;
+for (size_t i = 0; pattern[i] && j + 16 < tcap; i++) {
+```
+
+每处替换最多 13 字节（`\w` → `[[:alnum:]_]`），所以 16 倍是上界，`+1` 是终止符。`translated` 在 `regfree` 之后 `free`。
+
+**分配失败 ⇒ `push_bool(vm, 0)`，不截断** —— 本仓「拒绝优先于截断」的教条：`false` 对能匹配的模式是错的，但它**从不静默地错**，而走到这一支意味着连 16 倍模式都装不下。
+
+### 守卫与双向 A/B
+
+`vtest/match_long_pattern_v06.im` + CTest **`#142 match_long_pattern_runtime`**。
+
+**跨平台注册，不是 POSIX-only**：Windows 那份本来就对，只在 POSIX 上注册会让「**Windows 是对的**」这件事没有被钉住，而正是这一点让它算**缺陷**而不是**移植**。
+
+**每个长度成对断言**：不可能模式必须 `false`，**同时**同长度的可能模式必须 `true` —— 否则一个「一律回答 false」的假修法也能通过。
+
+- 修好 ⇒ `100% tests passed, 0 tests failed out of 1`、`Passed 0.07 sec`。
+- **A/B**：把 `tcap` 还原成 `2048`（即旧的定长世界）重建 ⇒ `***Failed Required regular expression not found`，`impossible=true`（2030 与 3000 两档），**两档 `possible` 与短对照仍全对** ⇒ 翻转点与长度绑定，不是整个函数坏掉。
+- 修前手测：`N=2028 false / N=2030 true / N=3000 true`；修后四档全 `impossible=false, possible=true`。
+
+### 五条诚实边界
+
+1. **`N=2030` 这个翻转点是我这一侧实测的**；`noble-zephyr` 已声明它只核了代码形状（`:131`、`:541`）、未独立复跑。发版复核若要引用该数字，应在合并后的树上重跑一次 `vtest/match_long_pattern_v06.im`。
+2. **`match` 的两个实现（手写回溯器 vs POSIX `regcomp`）是「两种实现」而不是「有测量到的行为差」**。本轮我一度声称 Windows 缺 `\d\w\s\D\W\S` —— **错**：`re_class_char`（`src/runtime/runtime.c:846`）六个全实现，`re_match_elem` 见到 `\` 就派发给它。**那是从体量差（444 vs 1336 字符）推断的，没读码。**
+3. **建议的分配上限是估计不是测量**：13 倍来自 `\w` → `[[:alnum:]_]` 那一条最长的替换；16 倍留了余量，但没有穷举全部替换。
+4. **有意的行为改变**：超过 16 倍模式的输入从「静默截断得答案」变成「返回 `false`」。极端构造下 `false` 是错的答案，只是不再静默。
+5. **`docs/SYNTAX.md` 对 `match` 的长度/字节/截断一个字都没有**，所以这条不是「违反已写下的契约」，是**补上一个从未写下的边界**；本档写完后建议在 `docs/SYNTAX.md` 对应处加一句「模式长度不设上限，超长不再截断」。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
