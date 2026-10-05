@@ -81,8 +81,9 @@ static void skip_comment(Lexer *lex) {
         lex->pos += 2;
         while (lex->src[lex->pos] && lex->src[lex->pos] != '\n' && lex->src[lex->pos] != '\r')
             lex->pos++;
-        if (lex->src[lex->pos] == '\r') lex->pos++;
-        if (lex->src[lex->pos] == '\n') lex->pos++;
+        /* 不要把结尾的换行吃掉：skip_whitespace() 是唯一给行计数的地方。
+           这里每吃掉一个换行，后面每一条诊断的行号就少 1（实测：前面 9 行注释 ⇒
+           第 11 行的 `be` 报成 line 2），而门禁不会告诉你 —— CTest 不断言行号。 */
     } else if (lex->src[lex->pos] == '#') {
         if (lex->src[lex->pos+1] == '[') {
             lex->pos += 2;
@@ -90,14 +91,16 @@ static void skip_comment(Lexer *lex) {
             while (lex->src[lex->pos] && depth > 0) {
                 if (lex->src[lex->pos] == '[') depth++;
                 else if (lex->src[lex->pos] == ']') depth--;
+                else if (lex->src[lex->pos] == '\n') { lex->line++; lex->col = 0; }
                 if (depth > 0) lex->pos++;
             }
             if (lex->src[lex->pos] == ']') lex->pos++;
         }
         while (lex->src[lex->pos] && lex->src[lex->pos] != '\n' && lex->src[lex->pos] != '\r')
             lex->pos++;
-        if (lex->src[lex->pos] == '\r') lex->pos++;
-        if (lex->src[lex->pos] == '\n') lex->pos++;
+        /* 不要把结尾的换行吃掉：skip_whitespace() 是唯一给行计数的地方。
+           这里每吃掉一个换行，后面每一条诊断的行号就少 1（实测：前面 9 行注释 ⇒
+           第 11 行的 `be` 报成 line 2），而门禁不会告诉你 —— CTest 不断言行号。 */
     }
 }
 

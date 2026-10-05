@@ -221,7 +221,7 @@ type NAME = <集合表达式>
 - **`|A|` 不需要**：`TOK_PIPE` 已由 `case` 的模式守卫（`src/parser/parser.c:1076`）与 `src/parser/parser.c:352` 占用，且 `|` 在本轮裁定里还要承担集合谓词（§3.5），不宜再叠一层绝对值。
 - 与 `i.json#426` 的关系：该条把 `count(A)` 保留为别名、**倾向符号记法**；本裁定反过来——`count(A)` 是**规范名**。
 
-**⚠ 必须一起决定的一件事**：`count` 在**今天的内建表里不存在**，而做同一件事的 `size` **存在**——Windows `src/runtime/runtime.c:1751`（`vm_register_builtin(vm, "size", builtin_size)`）、POSIX `src/runtime/runtime_posix.c:1089`（`posix_core_size`），全仓 `.im` 里 `size(` 出现 **29 次**。所以 `count(A)` 落地时要选：`count` 当规范名、`size` 对集合降为**已弃用别名**并迁移那 29 处；或者 `count` 只做 `size` 的别名。**推荐前者**——`size` 在本仓库**已经是 GUI 关键字**（`docs/SYNTAX.md:539` 的关键字表、`:468` 的 `argc >= 2` 参数猜测），`count` 反而消歧。**本目标不预设这一选择**，登记在 §7.8。
+**⚠ 必须一起决定的一件事**：`count` 在**今天的内建表里不存在**，而做同一件事的 `size` **存在**——Windows `src/runtime/runtime.c:1751`（`vm_register_builtin(vm, "size", builtin_size)`）、POSIX `src/runtime/runtime_posix.c:1089`（`posix_core_size`），全仓 `.im` 里 `size(` 出现 **29 次**（**⚠ 口径必须带 ref**：`git ls-files '*.im' | wc -l` = 351、`xargs grep -o "size(" | wc -l` = 29 / 17 个文件，以上在 `be-removal` 流的树上实测；核验者在集成分支 `stream/lang-migration` 上量到 **30** —— 差 1 来自 ref 而不是分类，落地迁移前必须在**当时的 ref** 上重新数一遍）。所以 `count(A)` 落地时要选：`count` 当规范名、`size` 对集合降为**已弃用别名**并迁移那 29 处；或者 `count` 只做 `size` 的别名。**推荐前者**——`size` 在本仓库**已经是 GUI 关键字**（`docs/SYNTAX.md:539` 的关键字表、`:468` 的 `argc >= 2` 参数猜测），`count` 反而消歧。**本目标不预设这一选择**，登记在 §7.8。
 
 （另外核过：`.im` 里 `count(` 的 10 处命中**全部是 `entity_count()`／`verse_block_count()` 这类函数名**，不是内建调用——所以 `count` 这个名字是干净的。）
 
@@ -370,7 +370,7 @@ positive = {x in Z | x > 0}
 1. **【已裁定】`be` 的退役节奏 = 立即移除，不留等价别名**（2026-10，人类选择 B，**取代**更早的「保留为纯脱糖的等价别名」）。见 §3.1 第一段引言：**10 个文件 10 条语句**（判据正则 `^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]`，全部在语句起始位置），真实面 13 处以上实现点全部退役，`STMT_BE`／`OP_BE` 从 AST 与字节码里消失。**顺序约束**：先做「`be_bound` 重校验迁移到 `:` 声明的全局」，再删 `be` 语法——反过来有窗口期两边都不带重校验。§3.1 推论 2 仍是前提，不因移除而消失。
 2. **【已裁定】`count` 为规范名，`size` 对集合语境降为已弃用别名**（2026-10，人类选择「1、2」）。
    - **`count` 这个名字是干净的**：`grep '"count"' src/runtime/runtime.c src/runtime/runtime_posix.c src/vm/vm.c` **为空** ⇒ 无内建占用。`.im` 里那 10 处 `count(` 全是前缀函数名（`entity_count()`、`verse_block_count()`，例 `ent_basic.im:5/12/14/18`），不是内建调用。`i.json#426` 已用 `count(A)` 这一形。
-   - **迁移面 = 29 处 / 17 文件**（受版控 `.im` 去重后；受版控 `.im` 共 346 个）。⚠ **全盘 `grep` 会得到 195 处**——那把 5 棵 worktree 的副本与 `.verify/` 一起数了（每棵树各约 10+4+3 处纯重复），**不是迁移代价**。占大头的：`set_op_test.im` 4、`projects/set_op_test.im` 4、`set_comp_test.im` 3、`projects/set_comp_test.im` 3，其余 13 文件各 1–2 处。
+   - **迁移面 = 29 处 / 17 文件**（**⚠ 与 `count-smith` 的口径差 1**：核验者在集成分支上量到 30，差 1 来自 ref）（受版控 `.im` 去重后；受版控 `.im` 共 346 个）。⚠ **全盘 `grep` 会得到 195 处**——那把 5 棵 worktree 的副本与 `.verify/` 一起数了（每棵树各约 10+4+3 处纯重复），**不是迁移代价**。占大头的：`set_op_test.im` 4、`projects/set_op_test.im` 4、`set_comp_test.im` 3、`projects/set_comp_test.im` 3，其余 13 文件各 1–2 处。
    - **`size` 的两个其它身份不动**：对**字符串／数组／字典**保留（`src/runtime/runtime.c:117 builtin_size` / `src/runtime/runtime_posix.c posix_core_size`，注册在 `:1790` 与 `:1140`）；作为 **GUI 关键字**不动（`docs/SYNTAX.md:540` 关键字表、`:450`、`:468` 靠 `argc >= 2` 猜参数、`:910` 说明这些关键字对语法无约束力）。
    - **为什么值得切**：`size()` 对非容器是**强转而非报错**——`size(42)` 返回 `42`、`size(3.7)` 返回 `3`。`count(A)` 是纯集合基数，没有这条兜底转型，这正是「用集合把 type 规范化」要的形状。
    - 实现注意：`size` 对**含区间分量的集合**（如 `1,2,Z[7~9]`）走的是 `vm_set_to_array` + `vm_array_len` 枚举路径（注释逐字：`Go through the same enumerator len()/list() use, so that a set whose elements live in interval components (1, 2, Z[7~9]) is counted rather than reported as nil`）；`count` 落地时应沿用这条枚举，或改为 `iCount + count` 的解析式——**这一条是未决的实现选择，不是记法问题**。
