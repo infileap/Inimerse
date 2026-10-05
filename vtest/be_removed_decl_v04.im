@@ -6,3 +6,9 @@
 type Byte = [0~255]
 x be Byte: 42
 say "must not be reached"
+
+# Optional, and NOT part of this test's PASS regex (CTest only requires the
+# tombstone line above): the error text is supposed to name both the new shape
+# and the doc section, so that a reader can act on it without searching.  A
+# probe that only greps "declarations were removed" would report Passed even if
+# the message lost its replacement hint.
