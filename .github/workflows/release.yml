@@ -49,7 +49,8 @@ jobs:
           # between "Test" and "#1" is wider than the one before "#100"; a
           # pattern demanding a single space collected only the three-digit
           # tests while the loop still looked complete -- the 0.5.0 release ran
-          # 24 of 123, and .github/workflows/linux-build.yml ran 35 of 134.
+          # 24 of 123, and .github/workflows/linux-build.yml ran 35 of 134 when
+          # the hole was found and 38 of 137 when this line was fixed.
           if ! bash tools/ctest_enumerate.sh build > build/ctest-names.txt; then
             echo "::error title=test extraction::ctest -N enumeration failed"
             exit 1
