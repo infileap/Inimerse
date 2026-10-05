@@ -1,0 +1,11 @@
+// svprobe: NEW `:` shape with inline set + init
+x: 0,1,2,3 = 2
+say "init=" + str(x)
+x = 3
+say "in-range 3 ok -> " + str(x)
+try {
+    x = 9
+    say "NO-CONSTRAINT: out-of-range 9 accepted, x=" + str(x)
+} catch (e) {
+    say "caught=" + str(e)
+}

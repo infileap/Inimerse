@@ -1,0 +1,15 @@
+// svprobe: size() on strings / arrays / dicts / scalars (must NOT change)
+say "str=" + str(size("hello"))
+say "empty=" + str(size(""))
+a = [1, 2, 3]
+say "arr=" + str(size(a))
+d = {}
+d["k"] = 1
+d["j"] = 2
+say "dict=" + str(size(d))
+say "int42=" + str(size(42))
+say "float3.7=" + str(size(3.7))
+say "int_neg5=" + str(size(-5))
+s = 0, 1, 2, 3
+say "set_plain=" + str(size(s))
+say "len_plain=" + str(len(s))

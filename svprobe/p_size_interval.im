@@ -1,0 +1,12 @@
+// svprobe: size() on a set with INTERVAL components (enumerator path)
+s = 1, 2, Z[7~9]
+say "size=" + str(size(s))
+say "len=" + str(len(s))
+say "list=" + str(list(s))
+say "sum=" + str(sum(s))
+t = Z[7~9]
+say "only_interval_size=" + str(size(t))
+say "only_interval_len=" + str(len(t))
+u = 1, 2, Z[7~9], 5.5
+say "with_float_size=" + str(size(u))
+say "with_float_len=" + str(len(u))

@@ -1,0 +1,25 @@
+// svprobe: is an INLINE bound set still a GC root?
+x be 0,1,2,3: 2
+say "before gc: x=" + str(x) + " range=" + str(x.range)
+gc_now()
+say "after gc: x=" + str(x)
+i = 0
+while i < 2000 {
+    junk = [i, i+1, i+2, i+3, i+4, i+5]
+    junk2 = [i, i+1]
+    i = i + 1
+}
+gc_now()
+say "after churn: x=" + str(x)
+try {
+    x = 2
+    say "in-range 2 accepted -> OK"
+} catch (e) {
+    say "DEFECT: in-range 2 REJECTED after GC -> " + str(e)
+}
+try {
+    x = 9
+    say "DEFECT: out-of-range 9 ACCEPTED after GC, x=" + str(x)
+} catch (e) {
+    say "out-of-range 9 rejected -> " + str(e)
+}
