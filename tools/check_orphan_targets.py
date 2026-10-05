@@ -44,6 +44,15 @@ Honest bounds:
     anything".
   - A target named by something other than a test (an install rule, a custom
     command) is still reported: being copied is not being run.
+  - "Is it run" is not "was it compiled here".  Two axes; this file measures
+    one.  A target can be run by a CTest and still be named only inside a
+    platform branch: `src/runtime/runtime.c` is selected under `if(WIN32)` and
+    has no POSIX counterpart in the source list, so on Linux a change to it
+    gets a green gate that compiled nothing it touched.  docs/AUDIT.md 1.71
+    measures that axis (12 files under `src/` are named only in that branch).
+    Do not fold it in here -- it needs its own ruling, and which of those 12
+    are genuinely Windows-only is still open -- and do not read a green line
+    from this file as covering it.
   - The numbers on the success line are *counted*, not derived.  The first
     version of this file printed `len(targets) - len(ALLOWED)` and
     `len(ALLOWED)`.  That is the right answer only while every entry in
@@ -196,6 +205,19 @@ def main() -> int:
         f"checked against {len(tests)} add_test( ) registration(s); "
         f"{len(run_by_a_test)} run by at least one CTest, "
         f"{len(excused)} allowed with a stated reason."
+    )
+    # The line below is not decoration.  A green light from the line above has
+    # been read before as "the targets are covered", and it does not say that:
+    # it says nothing was found that no test runs.  A target can be run by a
+    # test and still be absent from this platform's source list, in which case
+    # the gate compiles nothing and the PASS has no relation to the change
+    # (docs/AUDIT.md 1.71).  Saying which axis this is, on every run, is the
+    # difference between a measurement and a claim.
+    print(
+        "check_orphan_targets: this answers whether a target is run, not "
+        "whether it was compiled here -- a target can be run by a CTest and "
+        "still be named only inside a platform branch (docs/AUDIT.md 1.71), "
+        "and then a green gate says nothing about the file it names."
     )
     return 0
 

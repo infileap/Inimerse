@@ -6,7 +6,13 @@
 #   tools/gate.sh --fast       skip configure/build, reuse the existing build/
 #   tools/gate.sh --only links run a single stage
 #                              (build|ctest|fuzz|economy|node|plugin|oauth-loop|
-#                               ignored-credentials|links|doc-paths)
+#                               ignored-credentials|links|doc-paths|text-integrity|
+#                               orphan-fixtures|orphan-targets)
+#                              `orphan-targets` asks whether a target is run, not
+#                              whether it was compiled here: a target can be run
+#                              by a CTest and still be named only inside a
+#                              platform branch (docs/AUDIT.md 1.71), and then the
+#                              PASS says nothing about the file it names.
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #
 # Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
