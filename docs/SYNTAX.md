@@ -501,7 +501,23 @@ sprite 42      → [0]="gui_sprite" [1]="x"    ← 无任何错误，静默无�
 | `src/mod/net_mod.c` | 11 | 网络 |
 | 其余（`vm.c`、`server_mod*`、`replay_mod`、`identity_mod`、`ai_mod`、`social_mod`、`lint_mod`、`isolate_mod`、`json_mod`、`identity_mod` 等） | 各 ≤10 | — |
 
-**核心高频内建**（有 `vtest` 覆盖的）：`len` `push` `pop` `str` `int` `float` `bool` `type` `has` `chars` `ord` `chr` `split` `join` `substr` `upper` `lower` `trim` `replace` `startswith` `endswith` `index` `sum` `sqrt` `round` `random` `range` `read_file` `write_file` `remove` `file_exists` `mkdir` `list_dir` `args` `env` `exec` `vm_exec` `input` `time_ms` `timer_ms` `sleep_ms` `json_parse` `json_serialize` `unwrap` `unwrap_or` `ok` `err` `is_ok` `result_value` `result_error` `match` `join` `thread_await` `thread_result` `thread_release` `gc_now` `gc_stats` `lint_check`。
+**核心高频内建**（有 `vtest` 覆盖的）：`len` `count` `push` `pop` `str` `int` `float` `bool` `type` `has` `chars` `ord` `chr` `split` `join` `substr` `upper` `lower` `trim` `replace` `startswith` `endswith` `index` `sum` `sqrt` `round` `random` `range` `read_file` `write_file` `remove` `file_exists` `mkdir` `list_dir` `args` `env` `exec` `vm_exec` `input` `time_ms` `timer_ms` `sleep_ms` `json_parse` `json_serialize` `unwrap` `unwrap_or` `ok` `err` `is_ok` `result_value` `result_error` `match` `join` `thread_await` `thread_result` `thread_release` `gc_now` `gc_stats` `lint_check`。
+
+**`count(A)` 是集合基数的规范名**（2026-10 裁定，见 [TYPESET_V06.md](TYPESET_V06.md) §7.8 第 2 条）。集合／数组／字典／字符串给基数；**非容器**（整数、浮点、布尔、`nil`）给 `nil`：
+
+```
+count(1, 2, 3)       # 3
+count(1, 2, Z[7~9])  # 5     -- 与 len()/size() 同一个枚举器，含区间分量
+count(Z)             # nil   -- 枚举器拒绝无格点的集合
+count(42)            # nil   -- 不是容器
+count("hello")       # 5
+```
+
+**`size` 在集合语境下是 `count` 的已弃用别名**；对**字符串／数组／字典**它保留，作为 **GUI 关键字**（§6 的关键字表、靠 `argc >= 2` 猜参数位置）它也**不动**。弃用的只有「拿它量集合」这一种用法。
+
+⚠ `size()` 对非容器**是强转而不是报错**：`size(42)` = `42`、`size(3.7)` = `3`、`size(-5)` = `nil`。第三条与前两条机制不同——它是尾部 `if (n < 0)` 把负数结果当成「无答案」，不是类型拒绝；`count(-5)` 的 `nil` 来自类型拒绝。**`count()` 没有这条兜底转型**，这正是它作为集合基数规范名的意义。三条 nil 已由 `vtest/count_builtin_v06.im` 分开钉。
+
+⚠ **只有最后一个实参会被读到**：每个内建只读栈顶，而 `src/vm/vm.c:3805` 记的 `vm->cur_argc` 无人消费 ⇒ `size(5, 5, 5)` 是 `size(5)` = `5`、`count(7, 8)` 是 `count(8)` = `nil`、`len(9)` = `9`。多传的实参被**静默忽略** —— 写 `count(1, 2, 3)` 期待三个元素是错的，要先把集合绑到名字上。
 
 **⚠ 这张名单曾经是错的（2026-10 更正）**：`rand` 从未被任何文件注册（`grep -rn '"rand"' src/` 零命中），却列在这里，而且 `projects/demo/main.im:60` 的 `rand_int` 真的在调用它 ⇒ `rand(1, 6)` 实测 `[exception] uncaught: unknown builtin function 'rand'`、退出码 1。同时 `random` 当时**没有任何 `vtest` 覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`），所以「有 `vtest` 覆盖的」这句对它不成立。`random` 的覆盖由 `vtest/random_bounded_contract_v06.im`（CTest **#133**）补上，`rand` 从名单移除。见 `docs/AUDIT.md` §1.53。
 **⚠ `type` 不可调用**：`type` 已注册为内建，但它是**保留字**（`TOK_TYPE`，`src/lexer/lexer.c:44`），`type(x)` 是解析错误：
