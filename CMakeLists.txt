@@ -659,7 +659,7 @@ if(INIMERSE_BUILD_ENGINE)
   # CTest ignores the exit code and judges by the regex alone, so WILL_FAIL would
   # invert a match into a failure.  The regex pins the reason, not just the abort.
   add_test(NAME be_removed_decl_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_decl_v04.im)
-  set_tests_properties(be_removed_decl_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "declarations were removed" FAIL_REGULAR_EXPRESSION "must not be reached")
+  set_tests_properties(be_removed_decl_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "Error at line 15.*declarations were removed.*name: set" FAIL_REGULAR_EXPRESSION "must not be reached")
   add_test(NAME be_removed_assign_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_assign_v04.im)
   set_tests_properties(be_removed_assign_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "declarations were removed" FAIL_REGULAR_EXPRESSION "must not be reached")
   add_test(NAME be_removed_bare_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_bare_v04.im)

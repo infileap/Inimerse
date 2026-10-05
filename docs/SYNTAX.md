@@ -561,12 +561,12 @@ name be <集合或表达式> [: init]       // 已移除：报错，不静默
 - 旧形式：`src/parser/parser.c:1376-1387` 直接报 ``Error at line N: `be` declarations were removed (docs/SYNTAX.md 6.3); write `name: set [= init]` in place of `name be set [: init]` ``，exit 1。
 - 受约束全局**每次赋值都重校验**（越界抛 `type_mismatch`），登记点是 `global_bound[]`。它的三个消费者只读这个数组，所以换语法不改语义：`src/vm/vm.c:3681-3691`（`L_STORE_GLOBAL` 重校验）、`builtin_range`／`posix_core_range`、`src/vm/vm.c:2770-2783`（**GC 标记根**）。最后一个有专门用例 `vtest/gc_bound_root_v04.im`（`gc_bound_root`），**变异验证过**：注掉 `:2770` 的根，该测试即红。
 
-**⚠ `be` 保留在词法表里是刻意的，不是没删干净。** 把它降级成普通标识符，旧写法会静默变形：
+**⚠ `be` 保留在词法表里是刻意的，不是没删干净。** 两件事必须分开说（旧注释把两者混成一件，已被核验推翻）：
 
-- `be = 5` → 变成「给变量 `be` 赋值 5」，**不报错**；
-- `x be Byte: 42` → 裂成三条语句（表达式 `x`、表达式 `be`、声明 `Byte: 42`），于是**在没有任何错误的情况下改写全局 `Byte`**。
+- **真基线 `f6b3d87` 上** `x be Byte: 42` 是**合法的旧语法**：实测 `x=42`、`Byte=set(R interval)`，程序 exit 0。所以这条判据钉住的是「旧写法**静默成功**」，不是「静默改错值」。
+- **推演**（把 `be` 降级成普通标识符）：`be = 5` 变成给变量 `be` 赋值、不报错；`x be Byte: 42` **不报任何错**，而会把全局 `Byte` 从 `set(R interval)` **清成 nil**。实测替身拼写（`zz` 代 `be`）：`B0=set(R interval)` / `x=nil` / `B1=nil`。
 
-实测（`vtest/be_removed_decl_v04.im` / `be_removed_assign_v04.im` / `be_removed_bare_v04.im`）：三条各报一条带行号的错、exit 1。对照 `x zz Byte: 42`（`zz` 是普通标识符）**exit 0 且打印 `Byte=nil`** —— 那正是没有这块墓碑时的行为。
+保留 `TOK_BE` 之后三条旧写法各报一条带行号的错、exit 1（`vtest/be_removed_decl_v04.im`、`be_removed_assign_v04.im`、`be_removed_bare_v04.im`）；`be_removed_decl_runtime` 的 PASS 正则同时钉行号与替代写法提示。
 
 **⚠ 标签形式也随之收窄**：`Label: <语句>` 只在语句**不以标识符／字面量／`(`／`[` 开头**时仍是标签（`C: case 2 { }`、`W: while … { }`、`SKIP: say "x"`）；`Label: x = 1` 现在会被读成**声明**，要写成 `Label: { x = 1 }`。闸门是 `src/parser/parser.c:1396` 的 `starts_collection_expr`（`:108`）。
 
