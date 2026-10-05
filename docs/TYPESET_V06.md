@@ -161,10 +161,34 @@ type NAME = <集合表达式>
 >
 > 1. **`:` 后必须能接完整集合表达式**，不只是类型名。依据是 `be` 今天的实现：`src/parser/parser.c:1387` `stmt->beStmt.set = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);`——`age be [0, 120] : 18` 里的区间是**内联集合字面量**。所以 `age: [0, 120] = 18` 必须合法，否则退役 `be` 会**连带丢掉内联集合**这个能力。
 > 2. **每次赋值重校验的语义要跟着过来**。今天它长在 `be` 上：`src/vm/vm.h:257` `int *be_bound; int be_bound_cap;`（per-global bound set）+ `src/vm/vm.c:3589-3598` 抛 `type_mismatch`。统一到 `:` 之后，**同一套 `be_bound` 机制应挂到 `:` 声明的全局上**（形式合并、语义不缩水）。**这一条是推论**：无异议即生效，有异议请指出。
-> 3. **`be` 退役的实现面（实测）**：`src/parser/ast.h:101`（`STMT_BE`）／`:180`（`beStmt`）、`src/parser/parser.c:1384-1389`、`src/compiler/compiler.c:2233-2240`、`src/compiler/bytecode.h:46`（`OP_BE`）、`src/vm/vm.h:257`、`src/vm/vm.c:3041`（`case OP_BE: goto L_BE;`）；规范 `docs/SYNTAX.md:543-546`（§6.3「`be` 语句」，引 `src/parser/parser.c:1357-1365`）与 `:541` 的关键字表；**19 个 `vtest/*.im`** 用到 `be`，全仓 `.im` 里 `be` 共 **42 行**。**⚠ 上面这份清单原先少列了 4 处**（2026-10 经 peer 复核，我独立验证成立）：`src/vm/vm.c:4170` 的 `L_BE` 本体（`:4187` 写 `be_bound[g]`）、**`src/runtime/runtime.c:996 builtin_range`**（`:1005-1006` 读 `be_bound`，`:1778` 注册）与**它的平台副本** **`src/runtime/runtime_posix.c:189 posix_core_range`**（`:197-198`、`:1098` 注册）、**`src/runtime/vm_exec_builtin.c:122-139`**（内建调用边界保存／恢复 `be_bound`）。另有一批不改变语义但退役时容易被漏掉的接触点：`src/vm/vm.c:1248-1272`／`:1285-1295`／`:1328-1329`／`:1491`（`be_bound` 的增长／搬迁／释放）、`:2678-2679`、`:5027`／`:5030`（调试打印标 `[be]`／`(be)`）、`:2564`（注释把 `be_bound[]` 与其它 C 侧持有者并列）。⇒ **真实面 13 处以上，且其中一对是平台副本**——`be` 的语义漏进了一个**内建** `range()`；只改 parser／compiler 会留下「`be` 没了，但 `range(x)` 在 Windows 上仍回吐旧绑定集合」。数字复核（我自己跑）：`git grep -lw be main -- '*.im'` = **28 文件**、按行计数 **42 行**，其中 `vtest/` 占 **19 文件 26 行**，其余 9 个是 `big_globals_test.im`／`busy.im`／`exc_test.im`／`inf_set_test.im`／`meta_test.im`／`nsadv_mod.im`／`projects/exc_test.im`／`set_test.im`／`timeout_test.im`。
+> 3. **`be` 退役的实现面（实测）**：`src/parser/ast.h:101`（`STMT_BE`）／`:180`（`beStmt`）、`src/parser/parser.c:1384-1389`、`src/compiler/compiler.c:2233-2240`、`src/compiler/bytecode.h:46`（`OP_BE`）、`src/vm/vm.h:257`、`src/vm/vm.c:3041`（`case OP_BE: goto L_BE;`）；规范 `docs/SYNTAX.md:543-546`（§6.3「`be` 语句」，引 `src/parser/parser.c:1357-1365`）与 `:541` 的关键字表；**19 个 `vtest/*.im`** 用到 `be`，全仓 `.im` 里 `be` 共 **42 行**。**⚠ 上面这份清单原先少列了 4 处**（2026-10 经 peer 复核，我独立验证成立）：`src/vm/vm.c:4170` 的 `L_BE` 本体（`:4187` 写 `be_bound[g]`）、**`src/runtime/runtime.c:996 builtin_range`**（`:1005-1006` 读 `be_bound`，`:1778` 注册）与**它的平台副本** **`src/runtime/runtime_posix.c:189 posix_core_range`**（`:197-198`、`:1098` 注册）、**`src/runtime/vm_exec_builtin.c:122-139`**（内建调用边界保存／恢复 `be_bound`）。另有一批不改变语义但退役时容易被漏掉的接触点：`src/vm/vm.c:1248-1272`／`:1285-1295`／`:1328-1329`／`:1491`（`be_bound` 的增长／搬迁／释放）、`:2678-2679`、`:5027`／`:5030`（调试打印标 `[be]`／`(be)`）、`:2564`（注释把 `be_bound[]` 与其它 C 侧持有者并列）。⇒ **真实面 13 处以上，且其中一对是平台副本**——`be` 的语义漏进了一个**内建** `range()`；只改 parser／compiler 会留下「`be` 没了，但 `range(x)` 在 Windows 上仍回吐旧绑定集合」。数字复核（我自己跑）：`git grep -lw be main -- '*.im'` = **28 文件**、按行计数 **42 行**，其中 `vtest/` 占 **19 文件 26 行**，其余 9 个是 `big_globals_test.im`／`busy.im`／`exc_test.im`／`inf_set_test.im`／`meta_test.im`／`nsadv_mod.im`／`projects/exc_test.im`／`set_test.im`／`timeout_test.im`。**⚠ 但这两个数都不是迁移代价**：`grep -w be` 把 `// be caught`、`say "be caught"`、注释里的 `must be visible` 一起数了进去。**真正的语法位置判据是** `^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]` ⇒ **10 个文件 10 条语句**，全部在语句起始位置（无缩进、无分号后），迁移是纯文本机械替换。逐条见下方「退役节奏」第 1 段的取代说明。
 > 4. **这与既有计划相反**：`docs/archive/ROADMAP_3.1.md` §声明语法与兼容性原写「**传统 `:` 标注与 `be` 并存**：`a: int be type1`」，以及「`be` 继续表达约束并支持初始化 `a be type1 = -1`」。被取代的是这条计划——**该文件原文不改写**。
 >
-> **退役节奏已裁定（2026-10，人类选择 A）：保留为「纯脱糖」的等价别名。** 即 `名字 be 集合 : 初值` 与 `名字: 集合 = 初值` 是**同一种声明的两种拼写**，必须在 AST 上产生**同一个节点**（`STMT_BE` 从 AST 里消失，只留一个声明节点）。判据：实现点从 13 处以上收敛到 **2**（parser 的合流点 + VM 的 `be_bound` 登记），`.im` 改动 **0** 个。**别名若走独立路径，它自己就是新的决定点**——这一条被明确排除。
+> **退役节奏已裁定（2026-10，人类选择 B——取代更早的「选择 A」）：立即移除 `be`，不留等价别名。**
+>
+> 更早的一次裁定（「保留为纯脱糖的等价别名」）**已被取代，保留为历史**：它主张 `名字 be 集合 : 初值` 与 `名字: 集合 = 初值` 是同一种声明的两种拼写、在 AST 上产生同一个节点、`.im` 改动 0 个。取代理由是**迁移面被实测缩小了一个量级**：
+> - 该裁定写「19 个 `vtest/*.im`、全仓 42 行」，那是 `grep -w be` 的**噪音计数**——它把 `// be caught`、`say "be caught"`、注释里的 `must be visible` 一起数了进去。
+> - **判据正则 `^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]` 的真实结果是 10 个文件 10 条语句**，且**全部在语句起始位置**（无缩进、无分号后）⇒ 迁移是纯文本机械替换，不涉及语法歧义。
+> - 「改动 0」是用一条长期存在的第二条拼写路径换来的；而本仓库反复登记的教训（`gui_fullscreen` 在 `src/mod/gui_mod.c:3690`／`:3697` 重复注册、`docs/API.md:234` 早已写下 163 vs 162 却无人消费）正是「同一语义的第二个入口会变成新的决定点」。**当迁移面只有 10 条时，这条交换不再划算。**
+>
+> **顺序约束不因移除而消失**：必须先做推论 第 2 条（`be_bound` 重校验迁移到 `:` 声明的全局），再删 `be` 语法；反过来会出现窗口期——新旧两种写法都不带重校验，约束静默失效。
+>
+> **迁移面逐条（判据正则的全部命中，10 条）**：
+>
+> | 文件 | 语句 |
+> | --- | --- |
+> | `big_globals_test.im:168` | `g200 be N : 42` |
+> | `exc_test.im:11` | `gamemode be 0,1,2,3:0` |
+> | `inf_set_test.im:115` | `gv be (0,10):5` |
+> | `meta_test.im:45` | `g be 0,1,2,3:0` |
+> | `nsadv_mod.im:3` | `q be N : 5` |
+> | `projects/exc_test.im:11` | `gamemode be 0,1,2,3:0` |
+> | `set_test.im:28` | `gamemode be 0,1,2,3:0` |
+> | `vtest/lint_case_enum_v04.im:2` | `dir be Direction : "N"` |
+> | `vtest/lint_case_membership_v04.im:2` | `dir be Direction : "N"` |
+> | `vtest/type_collection_v04.im:3` | `x be Byte: 42` |
+>
+> 注意两种空格风格并存（`q be N : 5` 与 `x be Byte: 42`），统一到 `:` 时一并规范化。另有 9 个文件里出现 `be` 但**不在语法位置**（`busy.im`／`timeout_test.im` 等，属 `grep -w` 噪音）——**不迁移**。
 
 **下面记录的是更早一次裁定（「应为①③」），已被上面取代，保留为历史。**
 
@@ -343,8 +367,13 @@ positive = {x in Z | x > 0}
 
 ### 7.8 仍未决（本轮没有结论，不得当成已定）
 
-1. **【已裁定】`be` 的退役节奏 = 保留为纯脱糖的等价别名**（2026-10，人类选择 A）。见 §3.1 的第一段引言：`STMT_BE` 从 AST 消失、两种拼写产生同一个节点、实现点 13+ → 2、`.im` 改动 0。**唯一前提**是「纯脱糖」——若别名走独立路径即等于新的决定点，这一条被明确排除。§3.1 推论 2（`be_bound` 机制迁到 `:` 声明）随之生效。
-2. **`count` 与既有 `size` 的处置**：`count` 当规范名、`size` 对集合降为已弃用别名（`size(` 在 `.im` 里 29 处待迁），还是 `count` 只做别名？§3.2 给了推荐（推荐前者，理由：`size` 已是 GUI 关键字），**未定**。
+1. **【已裁定】`be` 的退役节奏 = 立即移除，不留等价别名**（2026-10，人类选择 B，**取代**更早的「保留为纯脱糖的等价别名」）。见 §3.1 第一段引言：**10 个文件 10 条语句**（判据正则 `^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]`，全部在语句起始位置），真实面 13 处以上实现点全部退役，`STMT_BE`／`OP_BE` 从 AST 与字节码里消失。**顺序约束**：先做「`be_bound` 重校验迁移到 `:` 声明的全局」，再删 `be` 语法——反过来有窗口期两边都不带重校验。§3.1 推论 2 仍是前提，不因移除而消失。
+2. **【已裁定】`count` 为规范名，`size` 对集合语境降为已弃用别名**（2026-10，人类选择「1、2」）。
+   - **`count` 这个名字是干净的**：`grep '"count"' src/runtime/runtime.c src/runtime/runtime_posix.c src/vm/vm.c` **为空** ⇒ 无内建占用。`.im` 里那 10 处 `count(` 全是前缀函数名（`entity_count()`、`verse_block_count()`，例 `ent_basic.im:5/12/14/18`），不是内建调用。`i.json#426` 已用 `count(A)` 这一形。
+   - **迁移面 = 29 处 / 17 文件**（受版控 `.im` 去重后；受版控 `.im` 共 346 个）。⚠ **全盘 `grep` 会得到 195 处**——那把 5 棵 worktree 的副本与 `.verify/` 一起数了（每棵树各约 10+4+3 处纯重复），**不是迁移代价**。占大头的：`set_op_test.im` 4、`projects/set_op_test.im` 4、`set_comp_test.im` 3、`projects/set_comp_test.im` 3，其余 13 文件各 1–2 处。
+   - **`size` 的两个其它身份不动**：对**字符串／数组／字典**保留（`src/runtime/runtime.c:117 builtin_size` / `src/runtime/runtime_posix.c posix_core_size`，注册在 `:1790` 与 `:1140`）；作为 **GUI 关键字**不动（`docs/SYNTAX.md:540` 关键字表、`:450`、`:468` 靠 `argc >= 2` 猜参数、`:910` 说明这些关键字对语法无约束力）。
+   - **为什么值得切**：`size()` 对非容器是**强转而非报错**——`size(42)` 返回 `42`、`size(3.7)` 返回 `3`。`count(A)` 是纯集合基数，没有这条兜底转型，这正是「用集合把 type 规范化」要的形状。
+   - 实现注意：`size` 对**含区间分量的集合**（如 `1,2,Z[7~9]`）走的是 `vm_set_to_array` + `vm_array_len` 枚举路径（注释逐字：`Go through the same enumerator len()/list() use, so that a set whose elements live in interval components (1, 2, Z[7~9]) is counted rather than reported as nil`）；`count` 落地时应沿用这条枚举，或改为 `iCount + count` 的解析式——**这一条是未决的实现选择，不是记法问题**。
 3. **`docs/SYNTAX.md:39` 与实现的矛盾**：那一节写「两种行注释，**没有块注释**」，而 `src/lexer/lexer.c:83-92` 确实实现了 `#[...]` 嵌套块注释，`selfhost/lexer.im:6` 也自述支持。**改文档还是删实现**，未定——本轮只记录矛盾，没有改。
 4. **`type` 的编译期消费（R1）仍是文档承诺**：`src/compiler/compiler.c:2224-2231` 至今把 `type NAME = <集合>` 编成 `OP_STORE_GLOBAL`。这属于 v0.6 的实做，不是记法问题，但**R1 未落地前 §3.1 的统一形状只有语法意义**。
 
@@ -390,7 +419,7 @@ positive = {x in Z | x > 0}
 - **回归形状**：一个 `vtest/*.im` + 一条 `add_test` + `PASS_REGULAR_EXPRESSION` **断言值**，注册在 `CMakeLists.txt` **末尾**（既有 `#N` 不漂移），并同步 `tools/gate.sh` 的 `EXP_CTEST`。
 - **两项原待裁，均已裁定（2026-10）**：
   1. **R2 的输入语法 → 字面量溢出即切堆**（不新增运算符），见 §3.7。它不再阻塞阶段 2，但阶段 2 的进树回归据此改写为「字面量超 `int64` 成功」+「算术溢出切堆成功」两条。
-  2. **`be` 退役节奏 → 保留为纯脱糖别名**，见 §3.1／§7.8 第 1 条。它把阶段 5 从「迁移 28 个文件 / 42 行」降为「parser 合流 + AST 去 `STMT_BE`」，但仍**必须排在 `be_bound` 迁移之后**（顺序约束不因别名而消失）。
+  2. **`be` 退役节奏 → 立即移除、不留别名**，见 §3.1／§7.8 第 1 条。它把阶段 5 从「保留一条长期并存的第二拼写」改回「parser 合流 + AST 去 `STMT_BE` + 迁 10 个文件 10 条语句」，但仍**必须排在 `be_bound` 迁移之后**（顺序约束不因移除而消失）。
 - **计划自报的不确定处（我未复核，不要当成已核）**：阶段 2 是否要动 `Value` 的 32 字节契约（`docs/DECFY_DESIGN.md:76` 的冻结面）；D1 的「C 内核零消费点」只核了两个函数的命中、**没做全仓调用图**；§9 里「`min`／`max` 走 `comps[]` 是运行时」未独立复核。
 - **一处外部引用要更正**：计划引 `docs/SYNTAX.md:781` 说「66 个 CTest 只断言退出码」——M13 实际在 **`:805`**（`:781` 是 M11 `--lint` 恒返回 0）。它引的那条规则本身成立（`:596`）。
 - **~~一处归属要更正~~ 这条更正是错的，已撤回（2026-10，我自己的错误）。** 我原先写「计划的实测自报『在 `main`（`29402f8`）上』，而 `29402f8` 不是 `main`」——**peer 是对的，我错了**：`29402f8` 就是 **`origin/main`**（`git log --oneline -1 origin/main` = `29402f8`），而**本地的 `main` 引用是过期的**（`0e5df55`，落后 `origin/main` **6 个提交**）。我当时只查了本地 `main` 就下了结论——**这正是本文一直在记的那个病的新实例：`main` 与 `origin/main` 是同一个名字的两个答案**。教训并进 §9 的「同名两答案」清单：**核一个 ref 时要说清是哪一个 ref**，`git log <name>` 回答的不是「`main` 是什么」，而是「本地那个叫 `main` 的引用是什么」。
