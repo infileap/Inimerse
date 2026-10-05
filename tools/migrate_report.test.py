@@ -94,8 +94,13 @@ def check(cond, what):
 
 
 def run(args, cwd=None):
+    # encoding= is not optional: on Windows the default text=True decoder is
+    # the locale codec (gbk), and the report is UTF-8.  Without it subprocess
+    # raises UnicodeDecodeError in its reader thread and stdout comes back as
+    # None, which then fails as a TypeError instead of a named assertion.
     p = subprocess.run([sys.executable, str(TOOL)] + args,
-                       capture_output=True, text=True, cwd=cwd)
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", cwd=cwd)
     return p.returncode, p.stdout, p.stderr
 
 

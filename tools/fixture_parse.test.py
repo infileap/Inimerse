@@ -89,6 +89,7 @@ def scan(engine, fixture):
             cwd=str(ROOT),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             errors="replace",
             timeout=TIMEOUT,
         )
