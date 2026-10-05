@@ -1339,3 +1339,21 @@ if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
     ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:getaddrinfo_log_preload>;GA_LOG=${CMAKE_BINARY_DIR}/literal-resolve.log"
     PASS_REGULAR_EXPRESSION "literal_resolve tests: ok")
 endif()
+
+# A `match` pattern longer than the translation buffer used to be silently cut,
+# and the cut pattern is what ran: the tail carried the whole constraint, so
+# `match` answered true for a pattern that cannot match -- an answer shaped
+# exactly like the right one, with no diagnostic.
+#
+# Registered on BOTH platforms on purpose.  Only the POSIX copy had the fixed
+# buffer (src/runtime/runtime_posix.c:131); src/runtime/runtime.c:986 never did,
+# so the expression below is already correct on Windows.  A POSIX-only test
+# would leave "Windows is the baseline" unpinned, and that is the whole reason
+# this is a defect rather than a port.  Each length is paired: the impossible
+# pattern must be false AND the possible one must be true, so that a non-fix
+# which simply always answers false cannot pass.  See docs/AUDIT.md 1.64.
+add_test(NAME match_long_pattern_runtime
+         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/match_long_pattern_v06.im)
+set_tests_properties(match_long_pattern_runtime PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
+  PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false")

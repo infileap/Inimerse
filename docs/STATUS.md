@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 141；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 142；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **141 / 141 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **142 / 142 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **141** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **142** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 141
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 142
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3958,3 +3958,34 @@ Windows/ucrt64 上 `socket_probe`（`#20`）`***Timeout 11.31 sec`。逐调用�
 **计数**：`add_test(` **139 → 141**，六处同步（`tools/gate.sh:54` 的 `EXP_CTEST`、`docs/STATUS.md` §2 四处、`docs/BOARD.md` §3 两处）。`check_orphan_fixtures` 输入数 **113 → 114**（新增一个 `vtest` fixture，67 → 68；`docs/BOARD.md:62` 的期望串同步）。
 
 **诚实边界**：①WIN32 的两处改动**本机编不到**（`src/runtime/runtime.c` 只在 `if(WIN32)` 分支；`InetPtonA` 只在 Windows 头里），**读码判断，未实测**，由 peer 在 ucrt64 复核；②本机 Linux 上 ②的改前/改后逐调用数字**无法区分**（都被 1–6 ms 淹没）—— 收益是 Windows 特有的，`#141` 钉的是**机制**；③`#141` 是 **POSIX-only**，**Windows 侧对这条仍无覆盖**；④修的是溢出与多余解析，**不是**「超大 `len` 应当被拒绝」那种语义决定。
+
+## §10.97 POSIX 的 `match` 把一个超长模式截断后再运行，于是给出了一个形状正确的错答案
+
+**症状**：`match` 的模式超过约 2031 字节时，**模式被悄悄切掉尾部，而被切过的模式就是实际运行的那个**。
+
+**测量**（引擎本体实测，非推断）：
+
+| 模式 | 长度 | `match` 返回 | 应当 |
+| --- | --- | --- | --- |
+| `"^" + 2028 个 a + "$zzz"` | 2033 | `false` | `false` ✅ |
+| `"^" + 2030 个 a + "$zzz"` | 2035 | **`true`** | `false` ❌ |
+| `"^" + 3000 个 a + "$zzz"` | 3005 | **`true`** | `false` ❌ |
+| `"^" + 50 个 a + "$zzz"`（对照） | 55 | `false` | `false` ✅ |
+
+`"$"` 要求串尾，其后还要再跟字面 `zzz` —— 这个模式**不可能匹配任何串**。翻转点落在 N=2030，与读码推出的 2031 字节上限逐字吻合。
+
+**机制**：`src/runtime/runtime_posix.c:131` 的 `char translated[2048]; size_t j = 0;` 配一条 `for (size_t i = 0; pattern[i] && j + 16 < sizeof translated; i++)` —— 拷贝在 `j + 16 >= 2048` 时停止，命中 `\d`/`\w`/`\s` 的展开还会额外吃掉配额。尾部（这里整个 `$zzz`）被丢掉，剩下的 `^aaa…` 匹配前缀 ⇒ **真**。
+
+**覆盖为零，而且原因要说对**：`match` 全仓只有 **1 个** vtest 用到（`vtest/posix_core_api_v04.im`），`vtest/` 里最长的模式是 **59 字节** —— 比阈值低 **34 倍**。所以缺陷不是「用户会踩到」，是「**阈值远在任何正常用法之外，越界时它不说话**」：**缺陷是沉默，不是概率**。
+
+**平台与基线**：`char translated[2048]` **只出现在 `src/runtime/runtime_posix.c:131`**；Windows 那份 `regex_match`（`src/runtime/runtime.c:986`）没有定长模式缓冲，本来就是对的 ⇒ **「同一个名字、两个答案」落在「两个平台副本」上，而且基线是没有 bug 的那一份**。这与 DECFY 设计档 §3.1.10「并集归哪一层」是同一类判断：不是选一个实现，是**定谁代表契约**。
+
+**修法**（`vivid-anchor` 批准，走「动态分配」方案）：`size_t tcap = 16 * strlen(pattern) + 1; char *translated = (char *)malloc(tcap);`，分配失败就 `push_bool(vm, 0)` 并返回；循环边界改为 `j + 16 < tcap`；`regfree` 之后 `free(translated);`。16 倍是**上界而非测量**（最大的展开是 `\w` → `[[:alnum:]_]` 的 13 倍）。**任何路径都不再静默截断**。
+
+**守卫与双向 A/B**：新 fixture `vtest/match_long_pattern_v06.im` + CTest **`#142 match_long_pattern_runtime`**，**跨平台注册**（不放 `if(NOT WIN32)` 里）—— Windows 那份本来就对，只在 POSIX 注册会让「Windows 是对的」这件事没有被钉住。断言是**成对**的：两档超长（2030、3000）的**不可能**模式必须 `false`，同长度的**可能**模式必须 `true`（否则「一律返回 false」的假修法也能过），另加 50 字节短对照。A/B：修好 ⇒ `Passed 0.07 sec`；把 `tcap` 缩回 2048（旧定长）⇒ `***Failed  Required regular expression not found`，两档 `impossible=true`，而两档 `possible` 与短对照仍然全对 —— **正好只有该红的红**。
+
+**计数**：`add_test(` 141 → **142**，`tools/gate.sh:54` 的 `EXP_CTEST` 同步；`docs/STATUS.md` §2 四处与 `docs/BOARD.md` §3 两处同步。`check_orphan_fixtures` 输入数 114 → **115**（`vtest` fixture 68 → 69；`docs/BOARD.md:62` 的期望串同步）。
+
+**一条过程记录（我自己的错，不是引擎的）**：我最初把 `PASS_REGULAR_EXPRESSION` 写成 `"match-long 2030 impossible=false possible=true"`，但输出是**两行**，`^` 把 `possible=true` 锚到了行首 ⇒ 断言永远不匹配，测试一上来就是红的，A/B 的第一步也因此假红。教训：**跨行的期望串不能用 `^` 起头拼**。
+
+**诚实边界**：①`16 * strlen(pattern) + 1` 的 16 倍是**上界估计，不是实测倍数**；②翻转点 N=2030 与「2031 字节上限」两处是我在本机实测的，`noble-zephyr` **只核了代码形状、未独立复跑**；③我只在 Linux/gcc 上跑了这条断言，Windows 侧的绿是**由代码形状推断的**（那份没有定长缓冲），本次冻结期内**没有在 ucrt64 上实测**；④分配失败分支返回 `false` 对**本来应该匹配**的超长模式是错答案 —— 它不比原来对，只是**不再沉默**；⑤这条修的是「截断后仍给答案」，**不是**「超长模式应当被拒绝」那种语义决定。
