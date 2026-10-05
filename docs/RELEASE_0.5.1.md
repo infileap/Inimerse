@@ -11,12 +11,12 @@
 | 项 | 值 |
 |---|---|
 | 版本 | 0.5.1 |
-| 测试 | Linux **141 / 141 真通过**（本地十二阶段门禁，0 跳过）；Windows `Total Tests: 130`，运行 121，**0 失败**，2 按设计跳过，9 按裁定 DISABLED |
-| 相对 `v0.5.0` | 该 tag 之后的 **59** 个提交（`git rev-list --count v0.5.0..v0.5.1`） |
+| 测试 | Linux **142 / 142 真通过**（本地十二阶段门禁，0 跳过）；Windows `Total Tests: 131`，运行 122，**0 失败**，2 按设计跳过，9 按裁定 DISABLED |
+| 相对 `v0.5.0` | 该 tag 之后的 **67** 个提交（`git rev-list --count v0.5.0..v0.5.1`） |
 
 ## 修了什么
 
-**五处同一个形状**，加一处同族的语法错误；第 6 条出现在本轮新增的断言自己身上。第 7、8 条不在这一族里（一处是**守卫自己的算术溢出**，一处是**字面量走了不该走的路**），但都是本版修掉的：
+**五处同一个形状**，加一处同族的语法错误；第 6 条出现在本轮新增的断言自己身上。第 7～9 条不在这一族里（一处是**守卫自己的算术溢出**，一处是**字面量走了不该走的路**，一处是**静默截断**），但都是本版修掉的：
 
 1. **发布门禁只跑了 24 / 123。** `ctest -N` 的编号是**右对齐**的（`Test   #1:` 三个空格，`Test #100:` 一个），而抽取脚本要求恰好一个空格，于是只有三位数编号的测试被收集：`release.yml` 收了 24 / 123，`linux-build.yml` 收了 38 / 137（这个洞被发现时它在 134 个测试的树上是 35 / 134）—— **两个工作流都报成功并照常打包**。修法不是「换个更聪明的 sed」，而是抽出 `tools/ctest_enumerate.sh`，并断言 `collected == Total Tests`：模式可以再写错，断言不会。
 
@@ -35,6 +35,10 @@
 7. **`substr` 的钳位算术自己溢出，于是守卫失效。** 两侧的守卫原本写成 `if (start + len > sl) len = sl - start;`，而 `start + len` 在 `int` 里相加会溢出成负数，比较恒假、`len` 保持约 2³¹，随后按这个长度 `memcpy`。实测 `substr("abcdefghij", 5, 2147483647)` **段错误、rc=139**；阈值恰好落在 `INT_MAX`（`len=2147483642` 相加不溢出 ⇒ 正常返回 `fghij`，`len=2147483643` 溢出 ⇒ 崩溃），翻转点与溢出点逐字吻合。两侧现在用同一条不做加法的规则（`if (len > sl - start) len = sl - start;`），Windows 那份还补齐了缺失的分配失败检查（POSIX 有、Windows 没有，同一处的第二个不对称）。新测试 `substr_boundary_runtime` 用**三个刚好跨 `INT_MAX` 的长度**钉住：2147483642 / 2147483647 / 0 与 2147483647 都必须得到同样的答案，所以「一律钳到 0」的假修法也过不去。
 
 8. **字面量主机名也在付完整解析器的钱（Windows 特有的超时）。** `socket_probe` 在 Windows 上偶发 `***Timeout 11.31 sec`（CTest 默认上限 10 s），而它自己 20 次串行重跑的用时是 151–8564 ms。逐调用计时驱动量出的机制是：`im_socket_init` 稳定 1–4 ms，而**每一个走名字解析的调用**是秒级（`listen` 3662 / 895 / 902 / 1029 / 2265 ms，`port_available` 到 1478，`connect` 到 1542，`port_open` 到 2116）——`resolve_addr_timed` 把 `"127.0.0.1"` 这种**字面量**也丢进完整解析器并起线程，而探针每轮做四次解析。修法是字面量短路（`InetPtonA` / `inet_pton`，两个解析入口都接），不是把上限调大：改后同一驱动整轮约 5 ms。新测试 `literal_resolve_runtime` 在 POSIX 上用 `LD_PRELOAD` **数 `getaddrinfo` 调用次数**，而不是量毫秒——Linux 上两条路径都是微秒级，计时断言是盲的。
+
+9. **POSIX 的 `match` 把一个超长模式截断后再运行，给出了一个形状正确的错答案。** `src/runtime/runtime_posix.c:131` 用 `char translated[2048]` 装翻译后的模式，复制循环的条件是 `j + 16 < sizeof translated`，于是最多抄 2031 字节、**超出部分直接丢掉且无诊断**，再拿截断后的串去 `regcomp`。丢掉的那半句如果是最关键的约束，答案就反了：`match(s, "^" + 2030 个 a + "$zzz")` —— 一个**永不可能匹配**的模式 —— 返回 `true`（2028/2029 是正确的 `false`，翻转点恰好是溢出点）。改用按 `strlen(pattern)` 动态分配（16 倍是 `\w` → `[[:alnum:]_]` 展开的**上界估计**），任何路径都不再静默截断；分配失败返回 `false` —— 对本来该匹配的超长模式那是**错答案，只是不再沉默**。缺陷是 **POSIX-only**：`src/runtime/runtime.c:986` 从来没有这个定长缓冲，所以这条测试**跨平台注册**，把「Windows 侧本来就是对的」也钉住。
+
+   这条的断言自己也被修了一次，而且第一个修法**被实测证伪**：注释承诺「恒答 false 的假修法过不了」，而 `PASS_REGULAR_EXPRESSION` 只命名了 `impossible` 那一半。把断言写成 `;` 分隔的两项**看起来**补上了 —— 但 CMake 的 `PASS_REGULAR_EXPRESSION` 是列表内**任一命中即通过（或，不是与）**，一个恒 `push_bool(vm, 0)` 的假修法实测**照样 `100% passed`**。落地的形态是 `PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false"` + `FAIL_REGULAR_EXPRESSION "match-long [0-9]+ possible=false"`（`FAIL_` 命中即红）。两方向都走 CTest 本身：真修法 `100% passed`，假修法 `***Failed ... Regex=[match-long [0-9]+ possible=false]`。细节见 `docs/STATUS.md` §10.97 / §10.98。
 
 ## 合并进来的内建契约
 
@@ -64,4 +68,5 @@
 - `migrate_report_runtime` 断言的是那个工具**自己的分母**，不是它的迁移正确性。
 - `fixture_parse_runtime` 的 `MIN_FIXTURES`/`ALLOWED` 只能防「空扫描」与「白名单退化成豁免名单」，**不能**证明每个 fixture 都断言了有意义的东西。
 - `substr_boundary_runtime` 钉的是**跨 `INT_MAX` 的那三个长度**，不证明其他实参组合都对；它断言的是「不再崩」，不是「语义已穷尽验证」。
-- `literal_resolve_runtime` 数的是 **`getaddrinfo` 调用次数**，所以它钉的是「字面量没走解析器」，**不是**「快了多少」；Windows 上「整轮降到约 5 ms」来自本机自己的计时驱动，不是 CTest 断言（Linux 上两条路径都是微秒级，计时断言在那里是盲的）。修后 Windows 全量跑一次绿，不等于超时的分布已经消失。
+- `match_long_pattern_runtime` 的 `FAIL_REGULAR_EXPRESSION` 钉的是「没有任何一行报 `possible=false`」，它看不到那两行是否**同一个长度**、也不数 `possible=true` 出现几次；`match-long` 这个前缀是断言与 fixture 之间的**隐式契约**。
+- - `literal_resolve_runtime` 数的是 **`getaddrinfo` 调用次数**，所以它钉的是「字面量没走解析器」，**不是**「快了多少」；Windows 上「整轮降到约 5 ms」来自本机自己的计时驱动，不是 CTest 断言（Linux 上两条路径都是微秒级，计时断言在那里是盲的）。修后 Windows 全量跑一次绿，不等于超时的分布已经消失。
