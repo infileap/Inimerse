@@ -41,13 +41,13 @@
 | # | 阻碍 | 证据 | 性质 |
 | --- | --- | --- | --- |
 | 1 | **IR 收敛一点没动**——五个消费者仍各自吃 `Expr*`、各自遍历 AST | 实测 `grep -rn "emit_from_bytecode" src/` **零命中**；**2026-10 量化（§3.1.1）**：`src/compilation/aot_native.c` 引用 opcode **0** 个、`src/compilation/wasm_backend.c` **1** 个（在注释里）、`selfhost/eval.im` **0** 个，而 `src/vm/vm.c` 是 **69/69**；两个后端连 `Bytecode` / `RegInstruction` 这两个类型名都不出现 | **结构成因**。`docs/STATUS.md:2531` 的「决定点数量＝修复要碰的文件数」因此仍然成立：这一轮修的 §10.42 / §10.49 / §10.53 **全是逐个决定点打补丁** |
-| 2 | **「怎么证明搬对了」覆盖面不够**——三后端一致性只覆盖到整数与布尔 | `docs/STATUS.md:3171` 诚实边界①：两个编译后端 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` **都是 0** ⇒ 字符串/容器真值**根本走不到**。**2026-10 实测更正两处**：① wasm 的 `cg_cond` 对非 INT/BOOL/FLOAT 返回 `1` **不是缺陷**——`vm_truthy()`（`src/vm/vm.c:347`）的规则就是「零与 `nil` 为假，**其余（含空串与所有容器）为真**」，`cg_cond` 的 `else 1` 与之逐字对应（`src/compilation/wasm_backend.c:834-847`）；② AOT 的 `nv_tru` **补不了分支**，因为 `NV` 的三个 tag（`NV_INT 0`/`NV_FLT 1`/`NV_BOO 2`，`src/compilation/aot_native.c:175-177`，结构体在 `:174`）**全部只描述标量**、**根本没有 nil / 字符串 / 容器的表示** ⇒ 这一半其实是「值表示」问题。**2026-10 人类裁定**：AOT 半**不做**「扩 `NV`」，改走 §3 第 2 步（AOT 吃带 `Value` 语义的同一份 IR、链接 `Value` 运行时）⇒ **本条的 AOT 半并入第 1 条**（§6.1 末段） | **证明能力的缺口**；**2026-10 实测后两半都没有「可修的缺陷」**：wasm 半的语义已经是对的（18/18 无分歧）、缺的是**非标量本身**（= §2 第 ⑤ 类，另立 1.5c）；AOT 半已被裁定并入第 1 条 |
+| 2 | **「怎么证明搬对了」覆盖面不够**——三后端一致性只覆盖到整数与布尔 | `docs/STATUS.md:3171` 诚实边界①：两个编译后端 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` **都是 0** ⇒ 字符串/容器真值**根本走不到**（**2026-10 更正：这条 grep 是坏的，`EXPR_ARRAY`/`EXPR_SET` 都不是枚举成员，见 §6.1 更正三；数组在 wasm 上其实可达且已跑通，字符串与字典/集合才走不到**）。**2026-10 实测更正两处**：① wasm 的 `cg_cond` 对非 INT/BOOL/FLOAT 返回 `1` **不是缺陷**——`vm_truthy()`（`src/vm/vm.c:347`）的规则就是「零与 `nil` 为假，**其余（含空串与所有容器）为真**」，`cg_cond` 的 `else 1` 与之逐字对应（`src/compilation/wasm_backend.c:834-847`）；② AOT 的 `nv_tru` **补不了分支**，因为 `NV` 的三个 tag（`NV_INT 0`/`NV_FLT 1`/`NV_BOO 2`，`src/compilation/aot_native.c:175-177`，结构体在 `:174`）**全部只描述标量**、**根本没有 nil / 字符串 / 容器的表示** ⇒ 这一半其实是「值表示」问题。**2026-10 人类裁定**：AOT 半**不做**「扩 `NV`」，改走 §3 第 2 步（AOT 吃带 `Value` 语义的同一份 IR、链接 `Value` 运行时）⇒ **本条的 AOT 半并入第 1 条**（§6.1 末段） | **证明能力的缺口**；**2026-10 实测后两半都没有「可修的缺陷」**：wasm 半的语义已经是对的（18/18 无分歧）、缺的是**非标量本身**（= §2 第 ⑤ 类，另立 1.5c）；AOT 半已被裁定并入第 1 条 |
 | 3 | 五类搬不动的 C（§2 表逐条给了理由） | ① `src/vm/vm.c`（~5000 行）substrate；② `src/platform/` + `src/runtime/runtime_posix.c` + `src/common/`（socket/线程/mutex/fork）；③ AOT 最后一跳（`src/compilation/aot_native.c:168` 的 `kPreamble` + 宿主 `cc`）；④ 引导链（`.im` 前端仍由 C VM 跑）；⑤ `Value` 32 字节布局 + 集合运行时（BigInt/窄化整数/位图，`docs/archive/ROADMAP_3.1.md`） | **边界**，非排期问题 |
 | 4 | **根因仍在持续产出新缺陷** | `docs/STATUS.md` §10.50–§10.56 连着七节，几乎全是「同一类错误还有第二、第三个副本」：`sum()` 两个静默错误答案 → WIN32 副本 `len()`/`size()` 同样缺分量回退 → `str()` 把集合读成空集 → 16 条 `-Wformat-truncation` → `+` 里非字符串左操作数被静默丢掉 | **代价在复利**。`docs/STATUS.md:3236`：`L_ADD` 与 `L_CONCAT` 有**逐字相同的不对称**，2 项链走 `OP_ADD`、3 项链走 `OP_CONCAT`，**两条路径必须同规则**——今天只是「被改成一致」，不是「结构上不可能不一致」 |
 | 5 | 三项待决 | ① `OP_AND`/`OP_OR` 去留（**已不是「删死指令」**，§10.42 给了活语义）；② `tools/aot_native.test.py:187` 的 `DIVERGENCE` 仍钉 **2 条**（`func_no_return`、`global_write_from_func`；原第三条 `lcg_float_promotion` 已升 `EQUIVALENCE`）；③ wasm 固定导入表是否补 ABI 版本号 | **已识别的决定**，只差裁决 |
 | 6 | 双构建等价证明自身有缺口 | `tools/selfhost_compare.py` 有 skipped 项（工作订单转述 `10 target(s) byte-identical, 23 skipped`）；本文档未在本会话实测该数字 | **基础设施** |
 
-**这六条的依赖关系（决定了先做哪一条）**：第 2 条是第 1 条的**前提**——不先把判据扩到非标量，§3 的第 2/3 步做完也只能证明整数与布尔，等于把「无法验证」原样带进新架构。用户已于 2026-10 选定 **先做第 2 条（§6.1）**；**但随后按 §6.1 的判据实测，第 2 条自身没有「可修的缺陷」**：wasm 半的语义已经与 `vm_truthy()` 一致（18/18、0 分歧）、非标量**根本没实现**（三个 `grep -c` 的 **0 是「特性不存在」，不是「存在但没接上」**），AOT 半已被裁定并入第 1 条。⇒ **第 2 条作为「扩覆盖」已核实关闭；它作为「实现非标量」是 §2 第 ⑤ 类的新工作量（§6.1 的 1.5c），不构成第 1 步的前提。** 于是**当前唯一的结构性下一步回到第 1 条（§3 的 IR 收敛）**。
+**这六条的依赖关系（决定了先做哪一条）**：第 2 条是第 1 条的**前提**——不先把判据扩到非标量，§3 的第 2/3 步做完也只能证明整数与布尔，等于把「无法验证」原样带进新架构。用户已于 2026-10 选定 **先做第 2 条（§6.1）**；**但随后按 §6.1 的判据实测，第 2 条自身没有「可修的缺陷」**：wasm 半的语义已经与 `vm_truthy()` 一致（18/18、0 分歧）、非标量**根本没实现**（三个 `grep -c` 的 **0 是「特性不存在」，不是「存在但没接上」**——**2026-10 更正：这条 grep 有三个分支、两个是死分支（`EXPR_ARRAY`/`EXPR_SET` 非枚举成员），而它掩盖了「wasm 已实现数组」，见 §6.1 更正三；准确的边界是「字符串与字典/集合没实现」，不是「非标量没实现」**），AOT 半已被裁定并入第 1 条。⇒ **第 2 条作为「扩覆盖」已核实关闭；它作为「实现非标量」是 §2 第 ⑤ 类的新工作量（§6.1 的 1.5c），不构成第 1 步的前提。** 于是**当前唯一的结构性下一步回到第 1 条（§3 的 IR 收敛）**。
 
 ---
 
@@ -174,7 +174,7 @@ void backend_emit_unit(Ctx *c, const Bytecode *bc);
 typedef struct {
     OpCode op;
     const char *name;
-    const char *producers;      /* 谁能发射它：见下，这是全表唯一能用 grep 客观判定的列 */
+    const char *declared_at;    /* 谁声明它：列名从「生产点」降级为「声明点」的原因见 §3.1.9 边界④ */
     int  arity;                 /* 用到的操作数个数（1..3） */
     int  touches_state;         /* 是否写当前帧之外的状态（§3.1.7 的 P/C/S，D14 的同一判据） */
     int  can_raise;             /* 独立第二轴：块内是否调 vm_throw（§3.1.7 实测 16 个） */
@@ -186,7 +186,7 @@ typedef struct {
 
 **两列都是必需的，不是冗余**：§3.1.7 实测出 `touches_state` 与 `can_raise` **互相独立**，交叠处有 11 个「纯值但会抛」的 opcode（`+` 与全部关系运算）——只带一列会把它们映射错。
 
-**`producers` 列（由 `exact-lumen` 提出、我已实测复核，见 §3.1.9）是全表唯一**能用 `grep` 客观判定**的列**。其余各列——`touches_state`、`can_raise`、`vm_semantics`、两个 `*_emit`——**都要读实现才能填**。一张每一格都靠读实现来填的表**它自己就没有判据**；`producers` 这一列给了它一个能自动复核的锚点，而且它立刻抓出两类**不该出现在表里**的行（§3.1.9）。
+**`declared_at` 列（原名 `producers`，由 `exact-lumen` 提出、我已实测复核，见 §3.1.9）是全表唯一**能用 `grep` 客观判定**的列**——**但它只能判定「声明」，判定不了「生产」，理由见 §3.1.9 边界④**（`OP_POP_REG` 的裸常量定义看起来像生产点、实际从不发射；且 `emit(comp->curBC, OP_…)` 不是唯一形状，有宏与包装）。其余各列——`touches_state`、`can_raise`、`vm_semantics`、两个 `*_emit`——**都要读实现才能填**。一张每一格都靠读实现来填的表**它自己就没有判据**；`declared_at` 这一列给了它一个能自动复核的锚点，而且它立刻抓出两类**不该出现在表里**的行（§3.1.9）。**改名的代价是诚实的代价：这一列从此不承诺「谁发射它」，只承诺「它出现在哪里」——而「生产点」需要逐 opcode 读码 69 次，本文档不假装有那个口径。**
 
 **这张表的每一行都必须能对着 `src/vm/vm.c` 的那一个指令体读出来**——注意**不是** `case` 块：VM 的分派是 goto-threaded（§3.1.6），69 个 `case OP_X: goto L_X;` 只是跳板，**真正的语义体是 `L_X:` 标签块**（连续覆盖 `src/vm/vm.c:3146-4680`）。因为 VM 是 **69/69** 的唯一完整实现（§3.1.1），它是**唯一语义来源**，`aot_emit` / `wasm_emit` 两列是**派生物**。这与 §6.1 的做法同构（`vm_truthy()` 唯一来源、其余调用它）。**§3.1.7 已经把 69 行逐块读了一遍。**
 
@@ -288,7 +288,7 @@ void emit_from_bytecode(Ctx *c, const Bytecode *bc); /* 目标：共用唯一入
 2. **门禁从任何单个文件之外断言这条性质**——`tools/gate.sh:140-151`，在 **ctest 阶段内部**（因为它是「刚跑完那些套件」的性质，不是某个文件的性质）：把套件输出里的 `is already registered` 捞出来就**让阶段失败**。注释逐字：
    > `A builtin name registered twice is dead code that reads as live: the name resolves to whichever handler landed first on the probe chain, and the second entry is unreachable.  vm_register_builtin now refuses the duplicate and says so on stderr, so a suite that prints this line is a suite whose engine carries one name with two answers.  Asserted here because it is a property of the suites this stage just ran, and because no single test file can see it.`
 
-3. **计数也一起断言**，免得「悄悄少了一条」通过——`tools/gate.sh:132-139`：`EXP_CTEST`（`:54`，当前 **134**）必须与 ctest 报的 `0 tests failed out of N` 相等，注释逐字 `Assert the count too, so that a dropped add_test( ) cannot pass silently.`
+3. **计数也一起断言**，免得「悄悄少了一条」通过——`tools/gate.sh:132-139`：`EXP_CTEST`（**`tools/gate.sh:54`，当前 `EXP_CTEST="${EXP_CTEST:-138}"` = 138**；本节初稿写 134、`exact-lumen` 报 136，**均已被后续提交推进**，链路 134 → 136 → 137（`a7d405d` merge）→ **138**，见 §3.1.8 与 §10 的订正）必须与 ctest 报的 `0 tests failed out of N` 相等，注释逐字 `Assert the count too, so that a dropped add_test( ) cannot pass silently.`
 
 **这段注释就是本文档 §1 的论点，由仓库自己用英文写下的版本**：「one name with two answers」「dead code that reads as live」「no single test file can see it」。
 §1 的六条 `and`/`or`、三个 `%`、六个真值点，与它是**同一个病**；§3.1 的 `OpSemantics` 表判据与它是**同一个处方**。⇒ §3 的可行性论据不是「应该能行」，而是「**这里已经行过一次**」。
@@ -348,6 +348,39 @@ for (int ci = ins.r3 - 1; ci >= 0; --ci) {
 **对 §3 的表意味着什么**：表若按「69 个 opcode × 三后端」建，**至少两行的三列都是空的，而其中 VM 列的空不是「未实现」而是「不可达」**。⇒ 表的每一行必须先过 `producers` 这一关；**一个零生产点的 opcode 不该出现在「后端要映射的 69 个」里**，它要么被删、要么被接上——**这是一个需要人裁定的选择，不是表能自己回答的**（已登记为 §9 第 14 条）。
 
 **诚实边界**：① 「`OP_STORE_CAPTURE` 不可达」是**从「全仓库零生产点」读出来的，不是运行时实测**——要真测需造一个含该 opcode 的 `.inim`；② 我只用 `grep -rl` 扫了 `src/`、`selfhost/`、`tools/`，**没有扫 `mods/`、`projects/`、`vtest/`**；③ `enum − compiler.c` 只覆盖**C 编译器**这一个生产者，`selfhost/compiler.im` 的生产点我是**逐名字看的，没有做集合比对**。
+④ **关于 `producers` 这一列本身，`exact-lumen` 给了一个我接受的降级**：那一列**不能用一次字面 grep 客观判定**，反例正是本节刚报的 `OP_POP_REG`（`selfhost/compiler.im:37` 的 `OP_POP_REG = 29` 是**裸常量定义**，看起来像生产点、实际从不发射），且 `src/compiler/compiler.c` 里 `emit(comp->curBC, OP_…)` **不是唯一形状**（有宏与包装）。⇒ **列名从「生产点」改成「声明点」是诚实的**；「生产点」需要**逐 opcode 读码 69 次**，**本文档不假装有那个口径**（§3.1.3 的表已按此改名）。
+
+### 3.1.10 两后端改吃 `Bytecode` 时，**第一件要指定的事不是接口，是「同一个语义归谁」**
+
+**`exact-lumen` 的更正二（我独立复跑确认）给出了一个比 §3.1.9 更值钱的实例：有人发射，但发射的是另一个实现。**
+
+**事实（实测 + 读码）**：`type CombinedError = FileError + ParseError` 的**集合并集真的算出来了**，但**不是在类型层算的**：
+
+```
+$ printf 'type FileError = "not_found","permission_denied"\ntype ParseError = "invalid_syntax","unexpected_token"\ntype CombinedError = FileError + ParseError\nsay FileError\nsay ParseError\nsay CombinedError\n' > /tmp/un.im
+$ ./build/inimerse --no-mods /tmp/un.im
+set(2)
+set(2)
+set(4)        ← 并集算出来了，rc=0
+```
+
+机制（读码）：
+- `parse_type_stmt` 的 RHS 走 `parse_expr(p)`（`src/parser/parser.c:1224-1226`）⇒ `FileError + ParseError` 是**一个二元 `+` 表达式节点**，不是类型层的集合运算。
+- `src/compiler/compiler.c:2224-2231` 的 `case STMT_TYPE:` 只做 `compile_expr(comp, stmt->typeStmt.set)` + `emit(comp->curBC, OP_STORE_GLOBAL, g, setReg, 0)` ⇒ **整条 RHS 在运行期求值**。
+- 并集发生在 **`src/vm/vm.c:3192-3200` 的 `L_ADD`**：`if (a->type == VAL_SET || b->type == VAL_SET) { … n = set_union(vm, a->ival, b->ival); … }`（`set_union` 定义在 **`src/vm/vm.c:2054`**，第二个调用点 `:3289`）。
+- 而 **`im_typeset_union`（声明 `src/types/typeset.h:41`、定义 `src/types/typeset.c:56`）在引擎里仍然零消费者** —— 全部调用点只有两个 probe：`src/types/typeset_probe.c:19`、`:50` 与 `src/types/enum_probe.c:91`、`:117`。
+
+⇒ **同一个语义（集合并集）有两个生产点**：**活的那个在 `src/vm/vm.c`（`L_ADD` → `set_union`）**，**符号的那个在 `src/types/typeset.c`（`im_typeset_union`），引擎永远到不了。** **§3.7「`src/types/typeset.c` 零消费者」确认成立，且比原先记的更严重**：不是「写好了没人用」，而是「**有人用了，用的是另一个实现**」——`OP_POP_REG` 那一条是「无人发射」，这一条是「**有人发射、但发射的是另一份代码**」。**这是 §1 那个病的第八个实例，也是第一个「两份实现都活着、只有一份被执行」的实例。**
+
+**为什么这件事必须在 §3.1.10 里先解决**：AOT 与 wasm 从 AST 改成吃 `Bytecode` 之后，**「集合并集」这个语义将有三个可能的家**——① `L_ADD` 的 `set_union`（今天活的）、② `src/types/typeset.c` 的 `im_typeset_union`（今天死的）、③ 将来 IR 上的某个 opcode。**如果 §3.1.10 不先指定并集归谁，两个后端各自接一份的概率很高**——那就是本档 `:10-12` 记的病，换个位置再长一次（**这次会同时长在两个后端里，且都不在 VM 里，于是没有任何一条现有 CTest 会红**）。
+
+**我给出的指定（作为 §3.1.10 的提案，非裁定）**：
+1. **并集的唯一语义来源 = `src/vm/vm.c:3192-3200` 的 `L_ADD` 分支**（它是今天唯一被执行的那份），**不是 `im_typeset_union`**。理由：`im_typeset_union` 的输入是 `ImTypeSet *`（编译期集合对象），而 `L_ADD` 的输入是两个 `Value` 里的 `ival`（运行期集合槽）——**两者不是同一个东西，不能「选一个」**；真正要定的是**在哪一层做并集**。
+2. **`im_typeset_union` 与 `set_union` 必须被明确标注为「两个不同层的同名语义」**，并在 §3 的 `OpSemantics` 表里给并集**一个 opcode 行**（今天它藏在 `OP_ADD` 里，`OP_ADD` 一行的 `vm_semantics` 列必须写出「数字加法 **或** 集合并集 **或** 字符串拼接」三态——**这正是「一个 opcode 三个语义」的写法，比拆 opcode 更诚实**）。**判据**：`grep -c 'set_union' src/vm/vm.c` 的调用点与 `OpSemantics` 里声明并集的行数必须能互相对上；**故意删掉表里那一行，§6 的断言必须变红。**
+3. **`im_typeset_union` 的去留是一个需要人裁定的选择**（接上编译期类型推断，或删掉）——**已登记为 §9 第 20 条**，本文档不动它。
+
+**共享代码边界（同一批实测）**：`src/compilation/aot_native.h` 逐字写 "The accepted subset is deliberately the one the Wasm backend already defines (`src/compilation/wasm_backend.h`)"，**而两个文件零共享代码**：缓冲区各一份（AOT `buf_init`/`buf_need`/`buf_fmt` `src/compilation/aot_native.c:35-57` vs wasm `bput`/`bleb_u`/`bf64` `src/compilation/wasm_backend.c:29-52`），符号表各一份（`Sym`/`sym_find`/`local_add` vs `Named`/`global_lookup`/`resolve_var`），**成功约定还相反**（`aot_native_translate` 返 **1 成功 / 0 失败**，`wasm_compile_program` 返 **0 成功 / −1 失败**）。⇒ **§3.1.3 的 `backend_emit_unit(Ctx *c, const Bytecode *bc)` 接口草图必须补一句：两个后端在改吃 `Bytecode` 的同一批里，先抽出一个共享的「字节码游标 + 符号表 + 缓冲区」层**，否则「两个后端都吃 IR」会变成「两个后端各自写一份 IR 消费者」——**同一个病，第二次。** 这一条与 §3.5 的 A′ 后果 ②（wasm 与 AOT 必须同一批改）是同一个要求的两面。
+
 
 ### 3.2 `aot_native.c` 具体要改什么
 
@@ -380,7 +413,7 @@ for (int ci = ins.r3 - 1; ci >= 0; --ci) {
 | 走法 | wasm 的处置 | 裁定 |
 | --- | --- | --- |
 | **A′**：wasm 后端也吃带 `Value` 语义的 IR，槽布局由 IR 的类型信息决定 | 16 字节槽被 IR 的类型定义取代 ⇒ 1.5c 变成「把 IR 的值语义映射到 wasm」 | **✅ 已选（2026-10，人类裁定）** |
-| **B′**：第 2 步只统一控制流，wasm 保留自己的 16 字节槽 | 1.5c（在 wasm 实现非标量）**是那时的前置** | 未选 |
+| **B′**：第 2 步只统一控制流，wasm 保留自己的 16 字节槽 | 1.5c（在 wasm 实现字符串与字典/集合；**数组已实现**）**是那时的前置** | 未选 |
 
 **A′ 的三条后果（与 §6.1 末段 A 的三条后果同形，写下来免得下次有人又去扩 `SLOT_BYTES`）。**
 
@@ -478,7 +511,7 @@ IR 要放类型 ⇒ `RegInstruction`（`src/compiler/bytecode.h:69-74`）加字�
 
 #### 这条裁定对 §3 与 §6 的直接后果（登记为 §9 第 17 条）
 
-- **§3 的 69 行表要多一列**：每个 opcode 需要标注**它是否受编译期契约覆盖**（即：在静态模式下这个 opcode 是否可能被编译期消除）。今天表里的 `can_raise` 与 `producers` 两列都不表达这件事。**这是 B″ 与 (ii) 叠加后的新列，不是原表的冗余。**
+- **§3 的 69 行表要多一列**：每个 opcode 需要标注**它是否受编译期契约覆盖**（即：在静态模式下这个 opcode 是否可能被编译期消除）。今天表里的 `can_raise` 与 `declared_at`（原 `producers`）两列都不表达这件事。**这是 B″ 与 (ii) 叠加后的新列，不是原表的冗余。**
 - **§6 需要两条新判据**（都可证伪）：
   1. **保守性判据**：对每一个由编译器标注了类型的寄存器，**运行期实际 `Value.type` 必须属于该编译期集合**（`type_of(实际值) ∈ CompilerSet`）；**故意把某处 `CompilerSet` 收窄成不含实际值的一格，该测试必须变红。**
   2. **主从判据**：在静态模式下，**凡编译期已证明安全的位置，`OP_BE` 不得出现**；凡 `OP_BE` 出现的位置，必须是动态模式 / 显式 `@runtime_check` / Debug 断言三者之一。**判据形式**：对同一段 `.im`，静态模式产出的字节码里 `OP_BE` 的出现次数为 **0**（或全部落在上述三类白名单位置），而动态模式产出里 `OP_BE` 保留 —— **同一份源码两种模式，产出必须都符合各自的规则**。
@@ -511,15 +544,15 @@ grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --inclu
 | `meta_test.im:45` | `g be 0,1,2,3:0` | 字面量枚举 | ✅ |
 | `set_test.im:28` | `gamemode be 0,1,2,3:0` | 字面量枚举 | ✅ |
 | `inf_set_test.im:115` | `gv be (0,10):5` | 字面量区间 | ✅ |
-| `vtest/lint_case_membership_v04.im:2` | `dir be Direction = "N"` | 具名类型，声明在同文件 `:1` = `type Direction = "N","S","E","W"`（**字面量枚举**） | ✅ |
-| `vtest/lint_case_enum_v04.im:2` | `dir be Direction = "N"` | 同上 | ✅ |
+| ~~`vtest/lint_case_membership_v04.im:2`~~ | `dir be Direction = "N"` | **~~具名类型~~ ⇒ 解析错误**（`=` 不是 `be` 的分隔符，见本节末「更正一」） | **❌ rc=1** |
+| ~~`vtest/lint_case_enum_v04.im:2`~~ | `dir be Direction = "N"` | **同上** | **❌ rc=1** |
 | `vtest/type_collection_v04.im:3` | `x be Byte: 42` | 具名类型，声明在同文件 `:2` = `type Byte = [0~255]`（**字面量区间**） | ✅ |
-| `big_globals_test.im:168` | `g200 be N : 42` | **内建类型** `N`（`src/vm/vm.c:1871` 的 `"N","Z","Z+","Z-"…` 名单，`:1880` `if (strcmp(name,"N") == 0) return 0;`） | ✅ |
+| `big_globals_test.im:168` | `g200 be N : 42` | **内建类型** `N`（`src/vm/vm.c:1871` 的 `"N","Z","Z+"…` 名单，`:1880` `if (strcmp(name,"N") == 0) return 0;`） | ✅ |
 | `nsadv_mod.im:3` | `q be N : 5` | 同上 | ✅ |
 
-⇒ **今天爆炸半径的上界 = 0 个「不可解析约束」的实例。** 按裁定自己的执行路径（「**如果只炸几个，立刻执行 A 的落地口径**」），数据支持**直接采用 (A) 的口径**——**但有一个前提必须先说清**：这 10 条是我**按分类规则手工判定**的，**不是分析器跑出来的**；「不可证明」这个词在分析器存在之前**没有可执行的判据**。⇒ **正确的读法是「上界 10，且 10/10 属于『可解析』一类」，不是「已证明 0 处不可证明」。**
+⇒ **今天爆炸半径的上界 = 0 个「不可解析约束」的实例。** 按裁定自己的执行路径（「**如果只炸几个，立刻执行 A 的落地口径**」），数据支持**直接采用 (A) 的口径**——**但有一个前提必须先说清**：这些条是我**按分类规则手工判定**的，**不是分析器跑出来的**；「不可证明」这个词在分析器存在之前**没有可执行的判据**。⇒ **正确的读法是「上界 10，且可解析的那 8 条全部属于『可解析』一类」，不是「已证明 0 处不可证明」。**
 
-**顺带两条与 `docs/SYNTAX.md` 的互相印证**：`docs/SYNTAX.md:550` 说 `be` 是「仓库里最不常见的语句形式之一」——**346 个文件里 10 处，实证了这句话**；而 `docs/SYNTAX.md:546` 给的形式是 `name be <集合或表达式> [: init]`，上表里 `be Direction = "N"` 用的是 `=` 而不是 `:`（`docs/SYNTAX.md` 没写 `=` 这种 init 分隔符）⇒ **文档与语法的又一处不一致，登记为待核**（我**没有**去读 `src/parser/parser.c:1357-1365` 确认 `=` 是否合法）。
+**顺带两条与 `docs/SYNTAX.md` 的互相印证**：`docs/SYNTAX.md:550` 说 `be` 是「仓库里最不常见的语句形式之一」——**346 个文件里 10 处，实证了这句话**；而 `docs/SYNTAX.md:546` 给的形式是 `name be <集合或表达式> [: init]`，上表里两处用了 `=` 而不是 `:` ⇒ **本节第一版把它登记成「文档与语法的不一致」，是错的：`docs/SYNTAX.md` 是对的，错的是 fixture。见下面的「更正一」。**
 
 **诚实边界**：① 上表 10 条是**我手工分类**的，判据是「约束表达式能否只靠字面量/内建/同文件具名声明解析」，**不是**任何静态分析器的输出；② 正则只匹配「行首 标识符 空白 `be` 空白」这一种形状，**漏掉**别名/带下标的名字、`be` 前有换行的续行、以及非常规空白；**误报**（把表达式里恰好叫 `be` 的标识符当语句）**未排查**；③ ~~我**没有**检查 `type X = <依赖运行期值的表达式>` 这种**类型声明本身不可静态求值**的情况~~ —— **已在下面第二轮补量，结论是该情形在全仓不存在**；④ 「内建类型 `N` 可解析」是从 `src/vm/vm.c:1871/1880` 的**名字名单**读出的，**没有实跑**编译器去确认它对 `be N` 是否真的在编译期求值。
 
@@ -541,7 +574,37 @@ grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im
 
 ⇒ **没有任何一处 `type X = <依赖运行期值的表达式>`。** 那两种「具名引用」形状也是可静态求值的（沿引用传递，并集就是两个可解析集合的并），**前提是类型求值器支持传递引用与 `+`**——**这正是 `src/types/typeset.c` 已有的能力**（`im_typeset_union`，`src/types/typeset.h:37-45`）。⇒ **`be` 使用点与 `type` 声明两侧的普查都指向同一个结论：今天不可静态求值的实例是 0 个（手工分类口径）。**
 
-**这一轮新增的诚实边界**：⑤ 「11 处」是**同一套正则口径**下的计数（`\btype\s+ident\s*=`），**没有**排除 `type` 出现在注释或字符串里的误报；⑥ 那 2 处具名引用（别名 / 并集）我**判定**为可静态求值，但**没有实跑**编译器确认它对 `AppError` / `CombinedError` 真的在编译期求值（`src/types/typeset.c` 有 `im_typeset_union`，但 §3.7 已记它**零消费者**）——**「有实现」与「被使用」在这两处恰好是两件不同的事**。
+#### 更正一（2026-10，来源 `exact-lumen`，**我独立复跑确认**）：不是 10/10 可解析，是 **8/10 可解析、2/10 是解析错误**
+
+本节第一版写「10/10 可解析」并把它当作「上界 0」的证据。**这半句是错的，必须更正**，否则本节会替一个假前提背书。
+
+**语法事实（读码）**：`be` 与 `type` 是**两个语句、两种分隔符** ——
+- `be`：`src/parser/parser.c:1383-1391`，`stmt->beStmt.set = looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p);` 之后 `if (match(p, TOK_COLON)) stmt->beStmt.init = parse_expr(p);` ⇒ **只认 `:`，不认 `=`**。
+- `type`：**另一个函数** `parse_type_stmt`（`src/parser/parser.c:1218-1227`），`consume(p, TOK_EQ, "'='");` ⇒ **只认 `=`**。
+
+**实测（本会话独立复跑，两条程序逐字）**：
+
+| 程序 | 结果 |
+|---|---|
+| `type Direction = "N","S","E","W"` + `dir be Direction = "N"` + `say dir` | **rc=1**，stderr `Error: expected 'expression', but got '=' (type 83)` |
+| 同上但 `dir be Direction : "N"` | **rc=0**，stdout `N` |
+
+⇒ 上表那 **2 处**（都在 `vtest/`，都是 `dir be Direction = "N"`）**是解析错误，不是「具名类型」**。其余 8 处全是 `:`、全部 rc=0。**「同文件具名类型」那一类实际是 1 处合法（`vtest/type_collection_v04.im:3` 的 `x be Byte: 42`）+ 2 处解析错误。** 「上界 0 个不可静态求值实例」这个结论**不受影响**（那两处的约束表达式本身仍是字面量/具名类型），但**「10/10 可解析」这句作废**。
+
+**为什么一年没人发现（这一段比错误本身更重要）**：这两个 fixture **只被 `--lint` 跑，而 `--lint` 路径不打印解析错误**。本会话实测：
+
+```
+$ ./build/inimerse --no-mods --lint vtest/lint_case_enum_v04.im ; echo rc=$?
+[lint] line 3 [WARN] finite case type 'Direction' is missing members: E, W
+rc=1
+$ ... | grep -c "expected 'expression'"   # → 0
+```
+
+rc 是 1，但**一个字都没说为什么**；而 CTest 的 `PASS_REGULAR_EXPRESSION` **优先于进程退出码**（匹配上就算通过）⇒ **绿着，而 fixture 描述的程序从来没有被解析过。** 全仓 67 个 `vtest/*.im` 里只有这 2 个吐解析错误。⇒ **这是 §7 第 4 条那个病的新形态：不是「检查是坏的」，而是「检查看得见的那个通道，和程序真正走的那个通道，不是同一个」**（`--lint` 的 stdout 有警告，`--lint` 的解析失败不在这条通道上）。**它同时是 §3.1.8 第二个先例的反面教材**：那个检查（`orphan-fixtures`）至少会因孤儿而变红，这两个 fixture 的「覆盖率」永远不会。
+
+**修法**：把两处 `=` 改成 `:`（`exact-lumen` 实测 `--lint` 输出逐字不变）。**我未改任何 `vtest/` 文件**（不在本文档写域），已由 `exact-lumen` 报给 `vivid-anchor` 定是否进 0.5.1。**这条也回填 §9 第 17 条的第 ① 项**：那份「先量后改」的普查上界应从 **10** 修正为 **8**（可解析的实例），并额外记下**2 处 fixture 解析错误**这个与 (A) 无关但必须修的事实。
+
+**「补量：`type` 声明侧」那一轮新增的诚实边界（保留）**：⑤ 「11 处」是**同一套正则口径**下的计数（`\btype\s+ident\s*=`），**没有**排除 `type` 出现在注释或字符串里的误报；⑥ 那 2 处具名引用（别名 / 并集）我**判定**为可静态求值，但**没有实跑**编译器确认它对 `AppError` / `CombinedError` 真的在编译期求值——**而更正二（见 §3.1.10）实测证明：`CombinedError` 的并集确实算出来了，但不是在类型层算的，是在 VM 运行期由 `L_ADD` 调 `set_union` 算的。⇒ 边界⑥ 从「未确认」升级为一个确凿的新发现。**
 
 ---
 
@@ -583,9 +646,9 @@ grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im
 |---|---|---|
 | **0** | 冻结唯一语义表；采纳 `docs/AUDIT.md` §5 的 **O0 选项①**（~~值语义胜出~~ → **已由用户裁定改为布尔**，见 §0.5 / `docs/STATUS.md:2464`；改动落在解释器与 wasm，AOT 本就正确） | ① `tools/im_diff_fuzz.py` 重跑，`and`/`or` 类分歧 **= 0**（§0.5：已进门禁并归零）；② `docs/API.md:90` 明写 `and`/`or` 返回**操作数**还是布尔 —— **已定为布尔**；③ `AUDIT.md` §1.6 的八行表格**三后端逐格相同**（解释器 / AOT / wasm；wasm 必须从 `error: wasm MVP subset: 'and'/'or' outside a condition is not supported` 变成给出值） |
 | **1** | 两个编译器统一 `and`/`or` 降级（短路跳转 + 真值常量）；顺带定夺 `OP_AND`/`OP_OR` 去留（§0.5 复核：§10.42 已给两者活语义，**该决定仍未做**） | `tools/selfhost_compare.py` 的 opcode 序列判据在 `or` 探针上**零差异**（AUDIT §6 的 `orv.im` 探针） |
-| **1.5a** | **已核实关闭（2026-10，实现会话实测）**：`src/compilation/wasm_backend.c` 的 `cg_cond` 语义**已经**与 `vm_truthy()` 同表，缺的是路径**可达**；而「可达」= 在 wasm 实现非标量（见 1.5c） | **无可修，故无新判据**：原三条判据分别「已由实测满足（18/18）」「无对象」「无需触发」。**未新增任何 CTest**（§6.1） |
+| **1.5a** | **已核实关闭（2026-10，实现会话实测）**：`src/compilation/wasm_backend.c` 的 `cg_cond` 语义**已经**与 `vm_truthy()` 同表，缺的是路径**可达**；而「可达」= 在 wasm 实现字符串与字典/集合（见 1.5c；**2026-10 更正三：数组已经可达**） | **无可修，故无新判据**：原三条判据分别「已由实测满足（18/18）」「无对象」「无需触发」。**未新增任何 CTest**（§6.1） |
 | **1.5b** | **AOT 半：已由人类裁定走 A（2026-10）⇒ 不做。** `NV`（`src/compilation/aot_native.c:174`，三个 tag `:175-177`）无 nil/字符串/容器表示，但第 2 步让 AOT 消费带 `Value` 语义的同一份 IR ⇒ `NV` 被整体替换 | **不适用（已裁定不做）**；原判据 `func_no_return` 分歧**归入第 2 步**（§6.1 末段） |
-| **1.5c** | **新立：在 wasm 实现非标量**（值表示 + 打印导入 + 堆生命周期）。**已由人类裁定 A′（2026-10）⇒ 不做「独立扩值表示」，改为「把 IR 的值语义映射到 wasm」，归入第 2 步**（§3.5）。**与 1.5a 分开命名**，否则计划里会一直写着「1.5a 便宜」 | 随第 2/3 步的表一起钉（§3.1.3 的 `OpSemantics` 非标量行） |
+| **1.5c** | **新立：在 wasm 实现字符串与字典/集合**（值表示 + 打印导入 + 堆生命周期）。**2026-10 更正后范围收窄**：数组**已经实现**（`EXPR_LIST` + `EXPR_INDEX`，见 §6.1 更正三），原写「非标量」过宽。**已由人类裁定 A′（2026-10）⇒ 不做「独立扩值表示」，改为「把 IR 的值语义映射到 wasm」，归入第 2 步**（§3.5）。**与 1.5a 分开命名**，否则计划里会一直写着「1.5a 便宜」 | 随第 2/3 步的表一起钉（§3.1.3 的 `OpSemantics` 非标量行） |
 | **2** | `src/compilation/aot_native.c` 改吃字节码（§3.1.3 / §3.2） | ① `grep -oE 'case OP_[A-Z0-9_]+' src/compilation/aot_native.c \| sort -u \| wc -l` 从**今天的 0** 变成 **69**（或逐条列出未实现的 opcode 与理由）；② `grep -c 'RegInstruction' src/compilation/aot_native.c` **> 0**；③ `OpSemantics` 表的行数 **= 69**，且有 CTest 断言**表行数 == `bytecode.h` 枚举成员数**（防漏行）；④ **反向验证**：故意改错表中一行，③ 的 CTest 必须变红；⑤ `tools/aot_native.test.py` 的 `DIVERGENCE` / `EQUIVALENCE` 计数**不变**（零回归） |
 | **3** | `src/compilation/wasm_backend.c` 同改（§3.1.3 / §3.3），**且必须与第 2 步同批**（§3.5 A′ 后果 2：只改一边会造出没有判据可证的中间态） | 同第 2 步的 ①–⑤，跑 wasm 目标；外加 ⑥ `grep -oE 'case OP_[A-Z0-9_]+' src/compilation/wasm_backend.c \| sort -u \| wc -l` 从**今天的 1（注释）** 变成 **69** |
 | **4** | `%` 与宽度契约统一（§1.2 / §1.3） | `2147483648 % 7` 等 **四组**预测值在**五条通道**给出同一整数（`docs/AUDIT.md` §1.1 已备好该四组值；五条通道见同文件 §2.1） |
@@ -597,7 +660,7 @@ grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im
 
 > **本节在 2026-10 被实测更正过一次，且更正的方向是「成本比原先写的高」。** 原文说「给 AOT 的 `nv_tru` 与 wasm 的 `cg_cond` 补上与 `vm_truthy()` 同表的非标量分支」——实测发现**两半都不成立**：wasm 那半**不需要改语义**（它已经同表），AOT 那半**改不了**（`NV` 根本没有对应表示）。原文把这条估成一个小步骤，**估错了**；下面是更正后的版本。
 
-**为什么是这一步，而不是直接做第 2 步。** §3 的 IR 收敛是结构修法，做完之后要回答的问题正是「你怎么知道搬对了」。今天的判据（`tools/aot_native.test.py` 的 `EQUIVALENCE` / `DIVERGENCE`、`tools/im_diff_fuzz.py`、`tools/selfhost_compare.py`）**只覆盖标量**：两个编译后端 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` 都是 **0**。⇒ 在扩覆盖之前动 §3，等于**把「无法验证」原样搬进新架构**。
+**为什么是这一步，而不是直接做第 2 步。** §3 的 IR 收敛是结构修法，做完之后要回答的问题正是「你怎么知道搬对了」。今天的判据（`tools/aot_native.test.py` 的 `EQUIVALENCE` / `DIVERGENCE`、`tools/im_diff_fuzz.py`、`tools/selfhost_compare.py`）**只覆盖标量**：两个编译后端 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` 都是 **0**（**2026-10 更正：该 grep 里 `EXPR_ARRAY`/`EXPR_SET` 都不是枚举成员，故它的一部分恒为 0；见 §6.1 更正三**）。⇒ 在扩覆盖之前动 §3，等于**把「无法验证」原样搬进新架构**。
 
 > **2026-10 实测结论：这一步的「便宜的那半」不存在。** 实现会话（`exact-lumen`）按本节判据去测 wasm 能否产出一个字符串，三条程序全部拒绝：
 >
@@ -608,7 +671,8 @@ grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im
 >                         (strings/collections need the interpreter) (line 1)
 > ```
 >
-> ⇒ **wasm 连一个字符串字面量都产不出来**，所以 `TAG_STR 4`（`:58-63`）与 `cg_cond` 的 `else 1` **今天都不可达**。**「让非标量可达」= 在 wasm 后端实现字符串与容器 = §2 表第 ⑤ 类**，与 1.5b **同类工作量，只是落在另一个后端上**。⇒ 本节原先写「1.5a 便宜」是错的；理由**不是**语义要改（语义**确实**不用改），而是缺的是**整个值表示**。
+> ⇒ **wasm 连一个字符串字面量都产不出来**，所以 `TAG_STR 4`（`:58-63`）**今天不可达**。**「让非标量可达」= 在 wasm 后端实现字符串与容器 = §2 表第 ⑤ 类**，与 1.5b **同类工作量，只是落在另一个后端上**。⇒ 本节原先写「1.5a 便宜」是错的；理由**不是**语义要改（语义**确实**不用改），而是缺的是**整个值表示**。
+> **2026-10 更正（见更正三）**：本段原文把 `cg_cond` 的 `else 1` 与 `TAG_STR 4` 并列成「都不可达」，**这是错的**——`else 1` 今天可达（数组走进去），只有 `TAG_STR 4` 是死的；「非标量」也过宽，数组已实现。**「1.5a 便宜」是错的这个结论仍然成立**，只是原因精确化为「字符串与字典/集合的整个值表示不存在」。
 
 **先确认唯一语义来源（实测）。** 真值规则**不是新定的**。唯一来源是 `src/vm/vm.c:347` 的 `vm_truthy()`（声明 `src/vm/vm.h:362`）：
 
@@ -626,7 +690,38 @@ int vm_truthy(const Value *v) {
 
 其上方注释（`src/vm/vm.c:340-346`）逐字写着规则：「**零与 `nil` 为假，其余一切——包括空串与每一个容器——为真**」，并说明这正是 §10.53 收敛六处调用点要解决的旧分歧。**注意**：本会话实测 `vm_truthy` 在 `src/vm/vm.c:347` / `src/vm/vm.h:362`，与 `docs/STATUS.md` §10.53 记的 `:293` / `:356` **不一致**（代码在其上方增长所致）——**以实测为准**。
 
-**更正一：wasm 那半不需要改语义，缺的是「走得到」。** `cg_cond` 的尾部（`src/compilation/wasm_backend.c:834-847`）实测已经是：`NIL → 0`；`INT`/`BOOL → i != 0`；`FLOAT → f != 0.0`；**其余 tag → 1**。这与 `vm_truthy()` 的 `default: return 1` **逐字对应**。⇒ `docs/STATUS.md:3171` 里「对非 INT/BOOL/FLOAT 直接返回 1」**不是缺陷，是正确行为**；真正的缺口是那条路径**不可达**（字符串/容器表达式根本不编译）。wasm 的 tag 空间**已经有** `TAG_STR 4` / `TAG_ARR 5`（`src/compilation/wasm_backend.c:58-63`），且 `:406`、`:1063` 已有 `TAG_STR` 发射点 ⇒ 这一半**不是改语义**（语义确实已对，见上方实测框），但也不是「补一条分支」——它是**在 wasm 实现非标量**，即 §2 表第 ⑤ 类。
+**更正一：wasm 那半不需要改语义，缺的是「走得到」——但「走不到」的范围被本节原先写大了。** `cg_cond` 的尾部（`src/compilation/wasm_backend.c:834-847`）实测已经是：`NIL → 0`；`INT`/`BOOL → i != 0`；`FLOAT → f != 0.0`；**其余 tag → 1**。这与 `vm_truthy()` 的 `default: return 1` **逐字对应**。⇒ `docs/STATUS.md:3171` 里「对非 INT/BOOL/FLOAT 直接返回 1」**不是缺陷，是正确行为**。wasm 的 tag 空间**已经有** `TAG_STR 4` / `TAG_ARR 5`（`src/compilation/wasm_backend.c:58-63`），且 `:406`、`:1063` 已有 `TAG_STR` 发射点。
+> **本句原文写「真正的缺口是那条路径**不可达**（字符串/容器表达式根本不编译）」，2026-10 被实测**部分推翻**——见下方更正三：**数组那一路是可达的、且已经跑通**；不可达的只有字符串与字典/集合。**更正一仍然成立的那一半**：wasm 的真值语义确实一行不用改，语义已经是对的。
+
+**更正三（2026-10，本会话实测；**推翻了本节与 §0.5.1 里一处共同论断**）：那条 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` = 0 的判据本身是坏的，而它掩盖了「wasm 已经实现了数组」。**
+
+- **`EXPR_ARRAY` 在整个 `src/` 里出现 0 次**（`grep -rn 'EXPR_ARRAY' src/ | wc -l` → **0**）——**它不是 `ast.h` 的枚举成员**。`EXPR_SET`（裸名）也不是；真名是 `EXPR_SETLIT` / `EXPR_SETCOMP` / `EXPR_SETINTERVAL`。**数组字面量的真名是 `EXPR_LIST`。** ⇒ 那条 grep 有三个分支里**两个永远不可能命中**，它的「0」是**恒真**，不是证据。`src/parser/ast.h` 的全部 20 个表达式种类：`EXPR_ARROW_CAST` `EXPR_BINARY` `EXPR_BOOL` `EXPR_CALL` `EXPR_CHAIN_COMPARE` `EXPR_DICT` `EXPR_FLOAT` `EXPR_IDENT` `EXPR_INDEX` `EXPR_LAMBDA` `EXPR_MEMBER` `EXPR_NUMBER` `EXPR_PROPAGATE` `EXPR_SETCOMP` `EXPR_SETINTERVAL` `EXPR_SETLIT` `EXPR_STRING` `EXPR_TAG_ACCESS` `EXPR_UNARY`（`EXPR_LIST` 在内，共 20）。
+- **两个后端实际处理的种类**（`grep -oE 'EXPR_[A-Z_]+' <file> | sort -u`）：
+  - **wasm 处理 11 种**：`EXPR_BINARY` `EXPR_BOOL` `EXPR_CALL` `EXPR_CHAIN_COMPARE` `EXPR_FLOAT` `EXPR_IDENT` **`EXPR_INDEX`** **`EXPR_LIST`** `EXPR_NUMBER` `EXPR_STRING` `EXPR_UNARY`（`src/compilation/wasm_backend.c:1336` `case EXPR_LIST:`、`:1340` `case EXPR_INDEX:`）。
+  - **AOT 处理 8 种**：`EXPR_BINARY` `EXPR_BOOL` `EXPR_CALL` `EXPR_CHAIN_COMPARE` `EXPR_FLOAT` `EXPR_IDENT` `EXPR_NUMBER` `EXPR_UNARY`（`src/compilation/aot_native.c:401/404/407/410/413/418/439/470`），其余走 `:497` 的 `default: fail(g, "expression kind %d is outside the numeric subset", (int)e->type);`——**显式拒绝，是好的**。
+- **`src/compilation/wasm_backend.h` 自己就写着**："Translates a numeric subset of the AST (…) **plus arrays**" ⇒ **代码与它自己的头注释是一致的；被推翻的是我们那条 grep，不是这个后端。**
+
+**执行证据（本会话实测，命令与输出逐字如下）**——先要找到正确的 CLI 形式，这是一个**容易踩的坑**：`--abi-target wasm` 是**全局旗标，必须紧跟子命令词**（`src/main.c:1024-1027` 的 `base = (argv[1] 是 compile/buildc/run/profile/symbols) ? 2 : 1`，随后只看 `argv[base]`），写成 `compile in.im out.wasm --abi-target wasm` 会**静默退回 host 目标**、产出一个 `INIM` 文件（`WebAssembly.Module(): expected magic word 00 61 73 6d, found 49 4e 49 4d`）。正确形式：
+
+```
+./build/inimerse compile --abi-target wasm <in.im> <out.wasm>      # 输出 "... (wasm MVP subset)"
+head -c4 <out.wasm> | xxd     # → 0061 736d  （真 wasm 魔数）
+node tools/wasm_run.js <out.wasm>
+```
+
+| 程序 | 解释器 | wasm | 一致？ |
+|---|---|---|---|
+| `a = [1,2]` + `if a { say 1 } else { say 0 }` | `1` | `1` | ✅ |
+| `a = []` + 同上（**空数组**） | `1` | `1` | ✅ |
+| `a = [1,2]` + `say a[0]` | `1` | `1` | ✅ |
+| `a = [1,2]` + `say a[5]`（**越界读**） | `nil` | `nil` | ✅ |
+| `s = "hi"` + `if s { say 1 } else { say 0 }` | `1` | **拒绝编译**：`error: wasm MVP subset: expression type 2 not supported by wasm MVP subset (strings/collections need the interpreter) (line 1)` | 拒绝（非分歧） |
+| `s = ""` + 同上（**空串**） | **`1`** | 同上拒绝 | 拒绝（非分歧） |
+| `if nil { say 1 } else { say 0 }` | `0` | **拒绝**：`error: wasm MVP subset: variable 'nil' used before assignment (line 1)` | 拒绝（**另一条消息**） |
+
+⇒ **更正后的准确表述**：**wasm 已经实现了数组与下标访问，且与解释器在四条用例上逐格一致**（非空数组为真、空数组为真、下标读、越界读为 `nil`）；**不可达的只有字符串与字典/集合**。`cg_cond` 的 `else 1` 分支**今天可达**（数组走进去），并且**给出的答案与 `vm_truthy()` 相同**。⇒ **`TAG_ARR 5` 是活的**；`TAG_STR 4` 仍是死的。
+**另外两条同批实测**：① `src/compilation/aot_native.h` 逐字写 "The accepted subset is deliberately the one the Wasm backend already defines (`src/compilation/wasm_backend.h`)"，而两个文件**零共享代码**——连缓冲区（AOT `buf_init`/`buf_need`/`buf_fmt` `src/compilation/aot_native.c:35-57` vs wasm `bput`/`bleb_u`/`bf64` `src/compilation/wasm_backend.c:29-52`）与符号表（`Sym`/`sym_find`/`local_add` vs `Named`/`global_lookup`/`resolve_var`）都是各写一份；② **两个后端的成功约定相反**：`aot_native_translate` 返 **1 成功 / 0 失败**，`wasm_compile_program` 返 **0 成功 / −1 失败**。**这两条是「同一件事有多个独立决定点」的又一个实例，落在后端的基础设施层。**
+**诚实边界**：① 上表 7 条是本会话实跑的，但**只用了一个宿主、一个 node 版本（v24.20.0）**，且 `node tools/wasm_run.js` 是仓库自带的运行器、**不是独立第三方 wasm 运行时**；② 我**没有**测字典/集合（`EXPR_DICT`/`EXPR_SETLIT`/`EXPR_SETCOMP`/`EXPR_SETINTERVAL`）在 wasm 的拒绝消息，只从「11 种里没有它们」读出「不支持」；③ 那张 11/8 的表是 **`grep` 出来的种类名**，**不保证每一种都被完整实现**（例如 wasm 命中 `EXPR_STRING` 是为了**拒绝**它，不是支持它）——「命中」与「支持」在这张表里是两件事。
 
 **更正二：AOT 那半不是「补分支」，是「补表示」。** 实测 `NV` 的定义是：
 
@@ -644,13 +739,13 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 
 ⇒ **这一半属于 §2 表第 ⑤ 类（值表示与集合运行时），不是「扩覆盖」的小步骤。** 把它算作第 1.5 步的一部分，就是原文最严重的估算错误。
 
-**因此第 1.5 步拆成两半——但实测之后，两半都不便宜，而且都没有「可修的缺陷」。** 实现会话（`exact-lumen`）的差分结论：**18 个标量真值用例，解释器与 wasm 逐条相同（18/18，0 分歧）**；AOT 侧既有套件 `aot_native.test: 104 cases (86 equivalence, 2 pinned divergences, 6 runtime errors, 10 refusal), 0 failures`。⇒ **标量一致已经由两个既有测试文件断言了**，「三后端真值表 CTest」这一半**加不了新信息**；而非标量那一半**今天根本跑不起来**（两个后端都拒绝）。**1.5a 今天没有可钉的东西**，故**未新增任何 CTest**（来源：`exact-lumen`）。
+**因此第 1.5 步拆成两半——但实测之后，两半都不便宜，而且都没有「可修的缺陷」。** 实现会话（`exact-lumen`）的差分结论：**18 个标量真值用例，解释器与 wasm 逐条相同（18/18，0 分歧）**；AOT 侧既有套件 `aot_native.test: 104 cases (86 equivalence, 2 pinned divergences, 6 runtime errors, 10 refusal), 0 failures`。⇒ **标量一致已经由两个既有测试文件断言了**，「三后端真值表 CTest」这一半**加不了新信息**；而非标量那一半**今天根本跑不起来**（两个后端都拒绝）——**2026-10 更正：准确边界是「字符串与字典/集合跑不起来」；数组在 wasm 上跑得起来且与解释器逐格一致，见 §6.1 更正三。因此 1.5c 的范围应从「实现非标量」收窄为「实现字符串与字典/集合」**。**1.5a 今天没有可钉的东西**，故**未新增任何 CTest**（来源：`exact-lumen`）。
 
 | 子步 | 内容 | 成本 |
 | --- | --- | --- |
-| **1.5a** | wasm：让 `cg_cond` 的 `else 1` **可达** | **原估「小」已被实测推翻**（2026-10）：见上方实测框 ⇒ 实为「在 wasm 实现非标量」= §2 第 ⑤ 类，与 1.5b **同类** |
+| **1.5a** | wasm：让 `cg_cond` 的 `else 1` **可达** | **原估「小」已被实测推翻**（2026-10）：见上方实测框 ⇒ 实为「在 wasm 实现字符串与字典/集合」= §2 第 ⑤ 类，与 1.5b **同类**。**2026-10 更正三**：`else 1` **本来就可达**（数组），故这一格的对象是字符串与字典/集合 |
 | **1.5b** | **AOT 半，已重新归类，且已被人类裁定为「不做」**：`NV`（`src/compilation/aot_native.c:174`，三个 tag `NV_INT 0`/`NV_FLT 1`/`NV_BOO 2` 在 `:175-177`）**无 nil/字符串/容器表示**。**这已不是「补一个分支」，而是 §2 表第 ⑤ 类（值表示）** | **已裁定走 A（2026-10，人类）**：AOT 改吃带 `Value` 语义的同一份 IR ⇒ `NV` 被整体替换 ⇒ **1.5b 不做**；AOT 改为**链接 `Value` 运行时**，归入第 2 步。见 §6.1 末段 |
-| **1.5c（新立，与 1.5a 分开命名）** | **在 wasm 后端实现字符串与容器**（值表示 + 打印导入 + 堆生命周期）。与 1.5b 同类 | 大。**已由人类裁定 A′（2026-10）⇒ 不做「独立扩值表示」，改为「把 IR 的值语义映射到 wasm」，归入第 2 步**（§3.5）。**必须与 1.5a 用不同的名字**，否则计划里会一直写着「1.5a 便宜」 |
+| **1.5c（新立，与 1.5a 分开命名）** | **在 wasm 后端实现字符串与字典/集合**（值表示 + 打印导入 + 堆生命周期）。与 1.5b 同类。**2026-10 更正三后范围收窄**：数组已实现（`EXPR_LIST` + `EXPR_INDEX`），原写「字符串与容器」里的「容器」应读作「字典/集合」 | 大。**已由人类裁定 A′（2026-10）⇒ 不做「独立扩值表示」，改为「把 IR 的值语义映射到 wasm」，归入第 2 步**（§3.5）。**必须与 1.5a 用不同的名字**，否则计划里会一直写着「1.5a 便宜」 |
 
 **1.5a 的处置：已核实，无可修（2026-10，实现会话实测）。** 三条原判据的现状：
 
@@ -694,9 +789,36 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 **三项都还缺一个前置测量**（**先量后改**，见 §9 第 17 条）：
 
 1. **有多少今天合法的 `.im` 会因「无法证明 ⇒ 编译错误」而编译不过？** 今天 `be` 是纯运行期检查（`src/compiler/compiler.c:2232-2240` 无条件发射 `OP_BE`），编译器**从不拒绝**。这条规则**新增了一项编译器的否决权**，而**没有任何东西量过它的爆炸半径**——本档 §0.5 记过一条教训：「凡『改动会破坏 N 处』的断言都应先量后写」（那次实测真正受影响的只有 **1** 个文件）。⇒ **先对 `vtest/`、`projects/`、`mods/` 全量统计「有 `be` 且编译器无法静态证明」的实例数，再决定这条规则是否分期生效。**
-   **→ 已量（2026-10，第五个人类裁定要求的那次），结论见 §3.9**：全仓 **346 个 `.im` 只有 10 处 `be`**，**10/10 的约束表达式都只依赖字面量 / 内建类型 / 同文件具名声明** ⇒ **上界 = 0 个不可解析实例**，按裁定自己的路径支持**直接采用 (A) 的口径**。**但 §3.9 的四条诚实边界必须一起读**（手工分类、正则只覆盖一种形状、只看了 `be` 使用点而非 `type` 声明、内建 `N` 未实跑验证）。
+   **→ 已量（2026-10，第五个人类裁定要求的那次），结论见 §3.9**：全仓 **346 个 `.im` 只有 10 处 `be`**，其中 **8 处可解析**（约束表达式只依赖字面量 / 内建类型 / 同文件具名声明），**另 2 处是 fixture 的解析错误**（`dir be Direction = "N"`，`=` 不是 `be` 的分隔符 —— **不是本文档要修的，是 `vtest/` 的 bug，见 §3.9 更正一**）⇒ **上界 = 0 个不可解析实例**，按裁定自己的路径支持**直接采用 (A) 的口径**。**但 §3.9 的四条诚实边界必须一起读**（手工分类、正则只覆盖一种形状、只看了 `be` 使用点而非 `type` 声明、内建 `N` 未实跑验证）。
 2. **`@runtime_check` 的语法与它落到哪些 opcode 上。** 今天不存在这个语法（我**没有**跑过 `grep -rn "runtime_check" src/ selfhost/ docs/`，**未测**）。
 3. **断言里 `CompilerSet` 与运行期值的比较必须写成 `∈` 而不是 `==`**（§3.8 已说明理由：可能类型的集合与一个具体值之间没有 `==`）。**这条不是测量，是写法约束**——写错了断言就编不出来，或者编出来是恒真的。
+
+### 6.3 (A) 的判据（**由我写、由实现方实现**，2026-10 与 `exact-lumen` 约定的分工）
+
+`exact-lumen` 提出的顺序是 **我先把判据写成 §6 的一条可证伪条目 → 它按判据实现拒绝点 → 反向验证**。理由（它的原话大意）：**谁先谁后决定的是「判据有没有被实现牵着走」**。所以下面这条**不是**描述它打算怎么实现，而是**规定它必须做到什么**。
+
+**判据主体（可证伪，落点在编译路径）**：
+
+> 对任意一份 `.im`，若某个 `be` 语句的约束表达式**只**由以下三类构成，则该语句在**静态模式**下不得发射 `OP_BE`：
+> (i) 字面量枚举 / 字面量区间（`0,1,2,3`、`(0,10)`、`[0~255]`）；
+> (ii) 内建类型名（`N`、`Z`、`R` …，名单来源 `src/vm/vm.c:1871`）；
+> (iii) **同一份 `.im` 里已声明的 `type X = …`，其 RHS 递归地也满足 (i)(ii)(iii)**。
+> 否则（含依赖运行期值、含未声明名字、含跨文件引用）**必须**走 §3.8 的三处白名单之一，**且若既无法证明又未标 `@runtime_check`，则为编译错误**。
+
+**为什么落点必须是编译路径而不是 `--lint`（这是这条判据最关键的一句）**：`exact-lumen` 实测发现，**今天 `--lint` 路径根本不打印解析错误**——`./build/inimerse --no-mods --lint vtest/lint_case_enum_v04.im` 的 `rc=1`，stdout 只有 `[lint] line 3 [WARN] …`，**`grep -c "expected 'expression'"` = 0**（§3.9 更正一）。⇒ **如果这条判据只落在 `--lint` 侧，它会变成第二个「绿着但没检查」**：判据存在、退出码非零、而它答的是另一个问题。**落点写死为 `src/parser/parser.c`（拒绝）或 `src/compiler/compiler.c`（不发射 `OP_BE`），二者之一，不得只在 lint 侧。**
+
+**四条可证伪判据**（每条都能被一次命令或一个反例证否）：
+
+| # | 判据 | 证伪方式 |
+| --- | --- | --- |
+| A1 | **正向**：`vtest/type_collection_v04.im`（`x be Byte: 42`，`Byte = [0~255]` 是同文件字面量区间）在静态模式下**能编译**，且产出的字节码里 `OP_BE` 次数为 **0** | 数 `OP_BE`（`./build/inimerse --no-mods bytecode <f> \| grep -c '^OP_BE'`）；**非 0 即红** |
+| A2 | **反向（判据有牙）**：构造一个约束依赖运行期值的 `be`（如 `n = 3` 后 `x be n : 1`，或跨文件的 `type`），**静态模式下必须被拒**，且**错误种类串可辨**（不是 `rc=1` 而无消息） | 该程序 rc≠0 **且** stderr 含可辨识的错误串；**若 rc=1 但无消息，判据视为未实现**（这正是 §3.9 更正一暴露的形状） |
+| A3 | **不误伤**：§3.9 那 **8** 处可解析的 `be`（`exc_test.im:11`、`projects/exc_test.im:11`、`meta_test.im:45`、`set_test.im:28`、`inf_set_test.im:115`、`vtest/type_collection_v04.im:3`、`big_globals_test.im:168`、`nsadv_mod.im:3`）在静态模式下**全部编译通过** | 逐个跑；**任一被拒即红**（这条防的是「判据太紧」，与 A2 防的「太松」是一对） |
+| A4 | **两种模式都要成立**：同一份 `vtest/type_collection_v04.im`，**静态模式**产出里 `OP_BE` 为 0、**动态模式**产出里 `OP_BE` **保留** | 两份字节码对比；**两份相同即红**（那说明模式没有生效） |
+
+**A3 的存在理由必须写下来**：第五个人类裁定否决「(A) 直接上」的理由是**它会让 Inimerse 比 Rust 还难写**。⇒ **A3 就是这条理由的可执行形式**：如果 (A) 的判据把今天合法的 8 处也拒了，那它就不是「新规则」，而是「破坏性变更」，**而 A3 会在第一时间把它标红**。**没有 A3 的 (A) 判据是不完整的。**
+
+**前置（`exact-lumen` 明确要求的一条）**：**A1 必须在 `--lint` 之外独立可跑** —— 即判据的观测点不能复用 `--lint` 的输出通道，因为那条通道已被证明会吞掉解析错误。
 
 ---
 
@@ -710,7 +832,13 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 4. **不把注释当语义证据**。`src/compilation/aot_native.c:420-428` 的注释与行为相反；`src/compilation/wasm_backend.c:6` 声称 "mirror the C VM exactly" 却与 `:938` 冲突。这类「注释与代码互相担保」正是分歧能长期存活的原因。
    **第三例（2026-10 实测，比前两例更硬）**：本文档指定为**唯一语义来源**的 `src/vm/vm.c` 里，**有 58 行注释是乱码**（`锟斤拷` 一类损坏的编码），**其中 30 行落在 69 个指令体区间 `:3146-4680` 之内** —— 例如 `L_POP_REG` 上方那条分隔注释与 `L_CALL_BUILTIN` 体首的参数说明。**门禁的 `text-integrity` 阶段对此是绿的**，因为 `tools/check_text_integrity.py` 的判据是**「文件里没有 NUL 字节」**（该脚本 docstring 逐字写明它查的是 NUL），**不是「注释可读」**。⇒ 后果有两层：① 「读 VM 的 `L_X:` 块来填表」这件事，在 30 个格子上遇到的是**读不懂的注释**（代码本身可读，故不影响 §3.1.7 的分类，但会影响任何以注释为线索的读者）；② 一个**只查 NUL 的完整性检查**会给「注释已被损坏」发绿灯 —— 这是 §3.1.8 那个病的又一面：**被检查的东西与被断言的东西不是同一个**。
    **第四例（2026-10 新增，来源 `exact-lumen`，标为 [转述]）——这一例最该记住，因为它说的不是注释，是「检查」**：`tools/check_orphan_fixtures.py`（门禁第 12 阶段 `orphan-fixtures`，见 §3.1.8 第二个先例）**第一次跑反向验证时自己崩了**：`NameError: name 'CMAKE_SOURCE_DIR' is not defined` —— 提示串是 f-string，`${CMAKE_SOURCE_DIR}` 的花括号被当成替换字段。⇒ **一个「能发现孤儿」的检查，在真的发现孤儿时抛异常而不是报告：它存在、它退出非零、而它答的是另一个问题。** 修法是 `${{CMAKE_SOURCE_DIR}}`；**没有那次反向验证，不会有人发现**。
-   ⇒ **这四例合起来给出本设计的一条硬规矩：一个从未在真实反例上跑过的检查不是证据。** 所以 §3.1 与 §6 的每条判据都写成「**故意改错必须变红**」/「**从 0 变成 69**」，而不是「加一个检查」——**一个只被正向跑过的检查，与被损坏的注释、与只查 NUL 的完整性检查，是同一类东西：被检查的对象与被断言的对象不是同一个。**
+   **第五例（2026-10 新增，**本会话实测**，比第四例更安静，因此更危险）——一个「判据」里有两个永远不会命中的分支**：本文档与 `docs/STATUS.md:3171` 都引用过的那条
+   ```
+   grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"
+   ```
+   **`EXPR_ARRAY` 在整个 `src/` 里出现 0 次**（`grep -rn 'EXPR_ARRAY' src/ | wc -l` → 0），**它不是 `ast.h` 的枚举成员**；`EXPR_SET`（裸名）也不是（真名 `EXPR_SETLIT`/`EXPR_SETCOMP`/`EXPR_SETINTERVAL`）。⇒ 三个分支里**两个恒为 0**，这条 grep 的「0」**是恒真的，不是证据**；而它掩盖的事实是**数组字面量的真名 `EXPR_LIST`，且 wasm 已经实现了它**（`src/compilation/wasm_backend.c:1336`，见 §6.1 更正三）。
+   ⇒ **第四例与第五例的差别值得写下来**：第四例**崩了**（吵、可见、被反向验证抓到），第五例**静静地返回了它一直在返回的值**——**第四例的错误会被人发现，第五例的错误会被引用。** 两者都是「一个从未在真实反例上跑过的检查」，但只有第四例**有牙**：它会抛异常，于是有人去查。⇒ 规矩再加一条：**检查的判据里不允许出现「不可能为真」的分支；如果某个分支今天恒为 0，必须证明它「今天恰好为 0」而不是「不可能非 0」**（对这条 grep 的正确写法是先确认 `EXPR_ARRAY`/`EXPR_SET` 是枚举成员，或直接改用 `ast.h` 的枚举集合做双向差集——与 §3.1.8 第二个先例同一种断言）。
+   ⇒ **这五例合起来给出本设计的一条硬规矩：一个从未在真实反例上跑过的检查不是证据。** 所以 §3.1 与 §6 的每条判据都写成「**故意改错必须变红**」/「**从 0 变成 69**」，而不是「加一个检查」——**一个只被正向跑过的检查，与被损坏的注释、与只查 NUL 的完整性检查、与一条含死分支的 grep，是同一类东西：被检查的对象与被断言的对象不是同一个。**
 5. **不在本设计内改动门禁脚本**（`tools/**` 不属本文档写域）。
 
 ### 风险
@@ -753,7 +881,7 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | 7 | `src/compilation/wasm_backend.c:9` | 修正与代码矛盾的 `L_MOD` 描述 | §1.2 |
 | 8 | `docs/API.md:90` | 写明 `and`/`or` 返回操作数还是布尔 —— **已裁定为布尔**（§0.5） | AUDIT §5 O0 |
 | 9 | `src/compilation/aot_native.c:174-177`（`NV` / `NV_INT` / `NV_FLT` / `NV_BOO`）、`:193`（`nv_tru`） | **不是补分支，是补表示**：三个 tag 全部只描述标量，无 nil/字符串/容器。**归入 §2 第 ⑤ 类；且 2026-10 人类已裁定「不做」——不要扩 `NV`，改走第 2 步（AOT 链接 `Value` 运行时）** | §0.5.1 第 2 条、§6.1 更正二、§6.1 末段 |
-| 10 | `src/compilation/wasm_backend.c:834-847`（`cg_cond` 尾部） | **语义一行不改**（`else 1` 已与 `vm_truthy()` 的 `default: return 1` 逐字对应）。**但原写「只加可达性与三后端真值表 CTest」已被实测推翻**：wasm 连字符串字面量都产不出来 ⇒ 「可达性」= **在 wasm 实现非标量**（1.5c，大，归 §2 第 ⑤ 类）；标量真值表已由既有测试断言（18/18 + `aot_native.test` 104 cases/0 failures），**加不了新信息** | §0.5.1 第 2 条、§6.1 更正一、§6.1 的 1.5a/1.5c |
+| 10 | `src/compilation/wasm_backend.c:834-847`（`cg_cond` 尾部） | **语义一行不改**（`else 1` 已与 `vm_truthy()` 的 `default: return 1` 逐字对应）。**但原写「只加可达性与三后端真值表 CTest」已被实测推翻**：wasm 连字符串字面量都产不出来 ⇒ 「可达性」= **在 wasm 实现字符串与字典/集合**（1.5c，大，归 §2 第 ⑤ 类）；标量真值表已由既有测试断言（18/18 + `aot_native.test` 104 cases/0 failures），**加不了新信息**。**2026-10 更正三**：`else 1` **今天可达**（数组），`TAG_ARR 5` 是活的、`TAG_STR 4` 才是死的 | §0.5.1 第 2 条、§6.1 更正一、§6.1 更正三、§6.1 的 1.5a/1.5c |
 | 11 | `src/compilation/wasm_backend.c:66`（`#define SLOT_BYTES 16`）vs `src/vm/vm.h:40-45`（`Value` 32 字节）vs `src/compilation/aot_native.c:174`（`NV`） | **wasm 的值表示同样未被裁定**：裁定 A 只覆盖 AOT ⇒ **已由人类裁定 A′（2026-10）**：wasm 也吃带 `Value` 语义的同一份 IR、**不要单独扩 `SLOT_BYTES`**（§3.5）。另：**同文件 `:4` 的头注释说「8-byte slot」，与 `:66` 的 16 字节矛盾**，必须一并修；引用行号时必须引定义处、不能引文件头 | §3.5、§7 第 4 条 |
 | 12 | `src/vm/vm.c:5208-5266`（`vm_disasm_ins` 的 switch，`default:` 在 `:5265`） | **补全反汇编器缺的 21 个 opcode 命名**（清单逐字见 §3.1.6）。**便宜、独立、且应在第 2 步之前做**：缺的 21 个恰好是集合/区间/闭包捕获/线程——正是 §3.1.4 与 1.5c 最难的一半，而人类可读 dump 是调试它的主要手段。**判据**：`grep -c 'case OP_' src/vm/vm.c` 在 `:5208-5266` 区间内从 **48** 变 **69**；且断言「反汇编器的 case 集合 == `bytecode.h` 的枚举集合」（差集为空，正反两向都查）。**注意不要与 `src/main.c:675-681` 的数字 dump 混淆**——那条路故意不经过反汇编器，是稳定判据，**不要改它** | §3.1.6 |
 | 13 | `docs/SYNTAX.md` §7.1 的 **D14** 裁定 | **登记一个口径缺口，不改 D14**：D14 是二分的（操作共享状态 ⇒ 抛 `type_mismatch`；只产出值 ⇒ 按已裁定定义值作答），而 §3.1.7 实测出 **11 个 opcode 属「纯值但会抛」**（`ADD` `CONCAT` `SUB` `MUL` `DIV` `NEG` `LT` `GT` `LE` `GE` `MOD`，全部调 `vm_throw`）。D14 讲的是**内建**、这 11 个是**运算符**，故未必冲突；但 `OpSemantics` 表**必须同时带 `touches_state` 与 `can_raise` 两列**，否则后端作者会把 `+`/`lt` 映射错。**请 D14 的所有者（不是本文档）决定要不要补第三个分支** | §3.1.7 |
@@ -761,6 +889,12 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | 15 | `src/compiler/bytecode.h:69-74`（`RegInstruction`）、`:87-128`（`Bytecode`） | **裁定 A′ 未覆盖的第三个岔口：类型信息放不放进 IR。** A′ 的措辞是「按 IR 的类型信息落值」，而 **IR 今天没有类型字段**（`{ OpCode op; int r1, r2, r3; }` 全是下标）。**A″**＝IR 保持无类型、后端照抄 VM 的运行期动态分派（忠实，但 wasm/AOT 不做类型特化，`docs/AUDIT.md` §5 O13 的性能账在 §3 里还不上）；**B″**＝IR 带类型标注（可特化，但**编译器要生产并维护类型** ⇒ 立了第二个类型决定点，把 §1 的病搬到「编译期 vs 运行期」这一维）。**这不是顺序问题，是架构问题，必须人裁定。** 本文档不替人做 —— **已裁定（2026-10）：`var` 动态、其余静态 ⇒ 走 B″，见 §3.7** | §3.6、§3.1.4、§3.7 |
 | 16 | `src/compiler/bytecode.h:64-66`（`INIM_BYTECODE_VERSION 3` / `INIM_ABI_VERSION 2`）、`:69-74`（`RegInstruction`） | **裁定 B″ 的格式后果**：IR 要携带类型 ⇒ `RegInstruction` 加字段 ⇒ **`.inim` 磁盘格式改变 ⇒ 版本号必须升**，且三个 `.inim` 读者（`src/compiler/bytecode.c`、`src/main.c`、`src/compilation/deps.h`）必须**同批**改。另：**`var` 需要 IR 里有一个「动态」类型值**（语义等于 `im_typeset_any()`），使 `var` 走与 A″ 相同的运行期分派 ⇒ **B″ 的实现里同时存在静态特化与动态分派两条路，它们的边界就是新的必须被断言的东西**。**不要在没有 §6 那条新证明义务（编译器单例标量类型 vs VM 运行期 `R[i].type`）的情况下先加字段。** | §3.7、§3.6 |
 | 17 | `src/compiler/compiler.c:2232-2240`（`case STMT_BE` 无条件发射 `OP_BE`）、`src/compiler/bytecode.h:69-74` | **裁定「契约式双层判定」（§3.8）的实现后果，三项，都还没做**：① **静态模式下「编译期无法证明 ⇒ 编译错误」是一条今天不存在的语言规则** —— 今天 `be` 是纯运行期检查、编译器从不拒绝，这条规则**新增了一项编译器的否决权**，而**没有任何东西量过有多少 `.im` 会因此被拒** ⇒ **先量后改**（**已量，见 §3.9：346 个 `.im` 只有 10 处 `be`，10/10 的约束只依赖字面量 / 内建类型 / 同文件具名声明 ⇒ 上界 0 个不可解析实例**）；② **`@runtime_check` 是新语法**，今天不存在（我**没有**跑过 `grep -rn "runtime_check" src/ selfhost/ docs/`）⇒ 需要先定它的语法与它落到哪些 opcode 上；③ **`CompilerSet == RuntimeSet` 这个等式不能直接实现** —— 一个可能类型的集合与一个具体值之间没有 `==`，**可实现的形状是成员关系 `type_of(实际值) ∈ CompilerSet`**，等式只在编译期集合恰为单例时等价。**⇒ 落地前必须先把断言写成 `∈`，否则那条 Debug 断言没有可写的形式。** 另：§3 的 69 行表需**新增一列**「该 opcode 在静态模式下是否可能被编译期消除」（`can_raise` 与 `producers` 两列都不表达这件事）。**判据（可证伪）**：对同一段 `.im`，**静态模式产出的字节码里 `OP_BE` 出现次数为 0**（或全部落在「动态模式 / 显式 `@runtime_check` / Debug 断言」三类白名单位置），**动态模式产出里 `OP_BE` 保留** —— 同一份源码两种模式，产出各自符合各自的规则 | §3.8、§6、§3.7 |
+| 18 | `docs/STATUS.md:3171` 的 `grep -c "EXPR_ARRAY\|EXPR_SET\|EXPR_DICT"` 判据、以及 `docs/DECFY_DESIGN.md` 转述它的三处（§0.5.1 第 2 条、§6.1 开头、§6.1 的 1.5a/1.5c） | **一条含两个死分支的判据必须被换掉，并把「wasm 已实现数组」登记为既有能力**：`EXPR_ARRAY` 与 `EXPR_SET`（裸名）**都不是 `src/parser/ast.h` 的枚举成员**（`grep -rn 'EXPR_ARRAY' src/ \| wc -l` → 0），所以那条 grep 的三个分支里两个**恒为 0**。**建议的替换判据（与 §3.1.8 第二个先例同形：两个 artifact 之间的集合关系）**：把 `src/parser/ast.h` 的枚举集合与「各后端实际处理的 `EXPR_*` 集合」做**双向差集**，输出两侧各自的差集（今天应为：wasm 缺 `EXPR_DICT`/`EXPR_LAMBDA`/`EXPR_MEMBER`/`EXPR_PROPAGATE`/`EXPR_SETCOMP`/`EXPR_SETINTERVAL`/`EXPR_SETLIT`/`EXPR_TAG_ACCESS`/`EXPR_ARROW_CAST` 共 9 个、AOT 再缺 `EXPR_INDEX`/`EXPR_LIST`/`EXPR_STRING` 共 12 个），并**故意删掉一个 `case EXPR_LIST:` 让断言变红**。**配套**：`src/compilation/wasm_backend.h` 早已逐字写 "plus arrays"，但**没有任何 CTest 钉住数组在 wasm 上的真值/越界行为**（§6.1 更正三的四条实测是手工跑的）⇒ 应为数组补一条 CTest（`a = []` 为真、`a[5]` 为 `nil`），**这是今天唯一「已实现却未被钉住」的非标量能力**。**`docs/STATUS.md` 是 `exact-lumen` 的写域，我不动它**，只登记 | §6.1 更正三、§7 第 4 条第五例、§10 |
+| 19 | `src/main.c:1024-1027`（`--abi-target` 的解析位置） | **一个会静默给错产物的 CLI 陷阱**：`--abi-target` 是全局旗标，但解析循环的 `base` 只看 `argv[1]`，故**必须紧跟子命令词**（`compile --abi-target wasm in.im out.wasm`）。写成 `compile in.im out.wasm --abi-target wasm` 时旗标**不被识别、不报错**，直接退回 host 目标产出 `INIM` 文件（实测：`WebAssembly.Module(): expected magic word 00 61 73 6d, found 49 4e 49 4d`）。⇒ **两种调用形式只有一种是对的，而错的那种不报错** —— 这与本档 §1 的病同形（同一件事两个决定点，其中一个静默）。**建议**：位置不对的旗标应被拒绝（`unknown option` 而非静默忽略），或至少在 `--abi-target` 缺席时也把目标写进产物；**登记，不改** | §6.1 更正三、§7 第 4 条第五例 |
+| 20 | `src/types/typeset.h:41`（`im_typeset_union` 声明）、`src/types/typeset.c:56`（定义）、`src/vm/vm.c:3192-3200`（`L_ADD` 的 `set_union` 分支）、`src/vm/vm.c:2054`（`set_union` 定义） | **同一个语义（集合并集）有两个生产点，只有一份被执行——`im_typeset_union` 的处置需要人裁定。** 实测：`type CombinedError = FileError + ParseError` + `say CombinedError` → `set(4)`，**并集是在 VM 运行期由 `L_ADD` 调 `set_union` 算的**；`im_typeset_union` 的全部调用点只有两个 probe（`src/types/typeset_probe.c:19`、`:50`、`src/types/enum_probe.c:91`、`:117`），**引擎零消费者**。⇒ 与 `OP_POP_REG`（无人发射）不同，这一条是「**有人发射、但发射的是另一份实现**」。**处置二选一**：① **接上**——让编译期类型推断真的调用 `im_typeset_union`（= §3.7 的 B″ 落地）；② **删掉**——承认类型层不参与，把并集语义唯一地定在 `L_ADD`（并把 §3.7 的 B″ 收窄）。**本文档倾向 ①**（它是 `docs/archive/ROADMAP_3.1.md` 的集合化类型系统的实现），**但这是裁定不是判断**。**判据（无论选哪个）**：`grep -rn 'im_typeset_union' src/` 的结果集合**必须与 `OpSemantics` 表里声明并集归属的那一行一致**；**故意在表里把并集归给另一层，§6 的断言必须变红** | §3.1.10、§3.7 |
+| 21 | `src/parser/parser.c:1383-1391`（`be` 只认 `TOK_COLON`）、`:1218-1227`（`type` 只认 `TOK_EQ`）、`vtest/lint_case_enum_v04.im:2`、`vtest/lint_case_membership_v04.im:2` | **`--lint` 路径吞掉解析错误 ⇒ 两个 fixture 绿着，而它们描述的程序从来没有被解析过。** 实测：`./build/inimerse --no-mods --lint vtest/lint_case_enum_v04.im` → `rc=1`，stdout 只有 `[lint] line 3 [WARN] finite case type 'Direction' is missing members: E, W`，**`grep -c "expected 'expression'"` = 0**；而直接跑同一个文件（非 `--lint`）→ `Error: expected 'expression', but got '=' (type 83)`。**两处 fixture 把 `:` 写成了 `=`**（`dir be Direction = "N"`），CTest 的 `PASS_REGULAR_EXPRESSION` **优先于退出码**，于是匹配上那条 warning ⇒ 绿。**两件事要分开**：(a) **fixture 的修法**是把 `=` 改成 `:`（`exact-lumen` 实测 `--lint` 输出逐字不变）——**`vtest/` 不在本文档写域**，已由它报给 `vivid-anchor` 定是否进 0.5.1；(b) **`--lint` 不打印解析错误**这件事本身是一个独立缺陷：**一个退出非零但不说原因的通道，会被任何以正则匹配输出的消费者当成通过**。**建议（登记，不改）**：`--lint` 在解析失败时**必须把解析错误打到它自己的输出通道**（或把 `rc=1` 的成因与「有 warning」区分开）。**判据（可证伪）**：对一个含解析错误的文件，`--lint` 的 stdout **必须**含该解析错误串；**故意让 `--lint` 只在 stderr 打印，断言必须变红** | §3.9 更正一、§6.3、§7 第 4 条 |
+
+**一条关于本文档自身维护的教训（写给下一个改这张表的人，也写给未来的我）**：本会话**四次**用 `edit` 插入本表新行时，`old_string` 取的是**上一行/目标行的行首片段**，结果**把被锚定那行的 `| N | … |` 前缀吃掉**，该行变成无前缀孤儿（第一次是第 16 条，第二次是第 19 条，前两次在更早的轮次）。**两次都是事后用 `python3` 补回前缀 + 按行首编号重排才修好。**⇒ **改本表只能用「整行锚定」或「脚本追加 + 事后 `grep -n '^| N |'` 核验编号连续」，绝不能用行首片段锚定。** 这条本身也是 §7 第 4 条那个主题的一个实例：**「我以为我改了一行」与「我实际改了一行」不是同一个断言，而只有 `grep` 能区分它们。**
 
 ---
 
@@ -787,7 +921,10 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 | **[实测]（本会话，2026-10 第十轮：`be` 爆炸半径普查，§3.9）** | ① **普查命令**：`grep -rnE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]+be[[:space:]]' --include=*.im .`（覆盖全仓，排除 `build/`、`.worktrees/`、`.verify/`）→ **346 个受跟踪 `.im` 里只有 10 处 `be`**，逐条见 §3.9 的表；② **10/10 的约束表达式只依赖字面量枚举（4 处）/ 字面量区间（1 处）/ 同文件具名类型声明（3 处）/ 内建类型名（2 处）** ⇒ **上界 = 0 个不可解析实例**；③ 内建类型名单实测：`grep -n '"N"' src/compiler/compiler.c src/vm/vm.c` → `src/compiler/compiler.c:2864`、`src/vm/vm.c:1463`/`:1871`，且 `src/vm/vm.c:1880` `if (strcmp(name,"N") == 0) return 0;`（`:1881` `"Z"` → 1、`:1884` `"R"` → 24）⇒ **`N`/`Z`/`R` 等是内建类型名**；④ 语法来源：`docs/SYNTAX.md:546`（`name be <集合或表达式> [: init]`）、`:550`（称 `be` 是「仓库里最不常见的语句形式之一」，**10/346 实证了这句**）、`src/parser/parser.c:1357-1365`（`STMT_BE`）；⑤ **顺带发现一处文档与语法不一致**：`vtest/lint_case_membership_v04.im:2` 等用的是 `be Direction = "N"`（**`=`**），而 `docs/SYNTAX.md:546` 只写了 `:`。**诚实边界（四条，详见 §3.9）**：手工分类而非分析器输出；正则只匹配一种形状（漏别名/下标名/续行，误报未排查）；**「内建 `N` 可解析」是从名字名单读出的、未实跑编译器**确认 `be N` 真在编译期求值；**`type` 声明侧已在同轮补量**（见下一格）。 |
 | **[实测]（本会话，2026-10 第十轮补：`type` 声明侧普查，§3.9）** | 命令 `grep -rnE '\btype[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' --include=*.im .`（全仓，排除 `build/`、`.worktrees/`、`.verify/`）→ **全仓只有 11 处 `type X = …`，全部在 `vtest/` 下**，RHS 形状分布：**字面量枚举 7 处**（`type Direction = "N", "S", "E", "W"` 等）、**字面量区间 2 处**（`type Byte = [0~255]`、`type Positive = [1~100]`）、**具名类型引用 2 处**（`type AppError = FileError` 别名、`type CombinedError = FileError + ParseError` 类型层并集）⇒ **没有任何 `type X = <依赖运行期值的表达式>`**，即 §3.9 原先的诚实边界③**已被补量关闭**。并集的实现能力在 `src/types/typeset.c`（`im_typeset_union`，声明 `src/types/typeset.h:37-45`），但 §3.7 已记它**零消费者** ⇒ 「有实现」与「被使用」在这里是两件事。**新增诚实边界**：「11 处」未排除注释/字符串里的误报；那 2 处具名引用是我**判定**可静态求值，**未实跑**编译器确认。 |
 | **[转述，来源 `exact-lumen`，非本会话实测]** | 2026-10 门禁已到 **12 个阶段**（新增第 12 阶段 `orphan-fixtures`），`GATE_RC=0`、`gate: OK — every stage passed (12/12 stages ran).`、**`100% tests passed, 0 tests failed out of 136`**、`0 skipped`、`check_text_integrity: 771 text file(s), 0 with NUL bytes.`；`docs/BOARD.md:62` 与 `docs/README.md:55` 的清单已同步为十二个阶段。**我未独立复核**；其中「12 阶段 / 136 测试」与我在 §3.1.8 记的 `EXP_CTEST = 134`（`tools/gate.sh:54`）**不一致，未调和**。 |
-| **[待复核]** | 无（原两项已补读；`docs/SYNTAX.md` 各条 D/M 编号的现状我未逐条复核是否仍成立；§3.9 的 10 条 `be` 分类与 `=`/`:` 那处不一致待 `src/parser/parser.c:1357-1365` 复核） |
+| **[实测]（本会话，2026-10 第十一轮：更正一 —— `be` 的 `=`/`:`）** | ① `sed -n '1218,1227p' src/parser/parser.c` → `parse_type_stmt` 里 `consume(p, TOK_EQ, "'='");`（**`type` 认 `=`**）；`sed -n '1383,1391p'` → `be` 分支 `if (match(p, TOK_COLON)) stmt->beStmt.init = parse_expr(p);`（**`be` 只认 `:`**）⇒ **两个语句、两种分隔符**；② 实跑两条程序：`dir be Direction = "N"` → **rc=1**、stderr `Error: expected 'expression', but got '=' (type 83)`；`dir be Direction : "N"` → **rc=0**、stdout `N`；③ `./build/inimerse --no-mods --lint vtest/lint_case_enum_v04.im` → **rc=1**，stdout 只有 `[lint] line 3 [WARN] finite case type 'Direction' is missing members: E, W`，**`grep -c "expected 'expression'"` = 0** ⇒ **`--lint` 通道吞掉解析错误**（§3.9 更正一、§9 第 21 条）。**`=`/`:`` 那一处原文登记为「文档与语法不一致」，结论反了：`docs/SYNTAX.md:546` 对、fixture 错。** |
+| **[实测]（本会话，2026-10 第十一轮：集合并集的两个生产点，§3.1.10）** | ① `sed -n '3192,3200p' src/vm/vm.c` → `L_ADD` 的 `if (a->type == VAL_SET \|\| b->type == VAL_SET)` 分支，`:3195` `n = set_union(vm, a->ival, b->ival);`（`set_union` 定义 `:2054`、第二调用点 `:3289`）；② `sed -n '2224,2231p' src/compiler/compiler.c` → `case STMT_TYPE:` 只做 `compile_expr` + `emit(comp->curBC, OP_STORE_GLOBAL, g, setReg, 0)` ⇒ **RHS 运行期求值**；③ `grep -rn 'im_typeset_union' --include=*.c --include=*.h .`（排除 `build/`、`.worktrees/`）→ 只有 `src/types/typeset.h:41`（声明）、`src/types/typeset.c:56`（定义）、`src/types/typeset_probe.c:19`/`:50`、`src/types/enum_probe.c:91`/`:117` ⇒ **引擎零消费者**；④ 实跑 `type FileError = "not_found","permission_denied"` + `type ParseError = "invalid_syntax","unexpected_token"` + `type CombinedError = FileError + ParseError` + 三个 `say` → `set(2)` / `set(2)` / **`set(4)`**、rc=0 ⇒ **并集确实算出来了，但是在 VM 运行期算的**。 |
+| **[转述，来源 `exact-lumen`，非本会话实测]** | 2026-10 第十一轮它给的四条：① **更正一**（10/10 → 8/10，`be` 只认 `:`）——**我已独立复跑确认，见上两行**；② **`OP_POP_REG` 的「生产点」列无法用一次字面 grep 判定**（`selfhost/compiler.im:37` 的 `OP_POP_REG = 29` 是裸常量定义；`emit(comp->curBC, OP_…)` 不是唯一形状，有宏与包装）⇒ **列名降级为「声明点」**（我接受，§3.1.3 已改名）；③ **当前 `EXP_CTEST` = 138**（链路 134 → 136 → 137 `a7d405d` → 138），`tools/gate.sh:54`；**我已实测确认 `:54` 的值是 138**；④ **(A) 的分工**：我写判据、它实现拒绝点，且**判据必须落在编译路径而非 `--lint`**（理由就是上两行的实测）——**已按此写成 §6.3**。 |
+| **[待复核]** | 无（原两项已补读）。**本轮关闭的**：`docs/SYNTAX.md:546` 的 `=`/`:` 那处**已实跑定案（文档对、fixture 错）**；§3.9 的 10 条 `be` 分类**已更正为 8 可解析 + 2 解析错误**。**仍待复核**：① `docs/SYNTAX.md` 各条 D/M 编号的现状我未逐条复核是否仍成立；② §6.3 的 A1–A4 **一条都还没被实现方跑过**（那是 (A) 落地时的事）；③ `--lint` 吞解析错误的**范围**我只测了 2 个 fixture，**没有普查**其他 `--lint` 消费者（例如 lint 的 `rc=1` 与「有 warning」是否在所有路径上都不可区分）。 |
 
 ### 关于 Lead 的「wasm 与 AOT 一致」
 
