@@ -821,7 +821,7 @@ n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
 - 规则依赖「同一行」，所以**排版（换行）会改变语义**——把 `f(a) if true` 拆成两行就变成块形式或报错。
 - 该判定只看行号，不看缩进或语句边界；`p->lex.line` 是**当前 token 起始行**（`src/lexer/lexer.c:100-101` 先跳空白），所以 `f(a) if\n true {` 中 `if` 与 `f(a)` 同行，仍按后缀解析，条件跨行。
 
-#### M11. `--lint` 恒返回 0
+#### M11. `--lint` 的退出码回答的不是「能不能解析」
 
 `src/main.c:1252-1257`：`lint_check()` 走独立通道并**无条件 `return 0`**。实测：
 
@@ -831,6 +831,15 @@ x = = 5    →  ./build/inimerse bad.im          exit 1
 ```
 
 **`--lint` 不能当作解析谓词使用。** 这条是**工具**问题而非语法问题，但会直接影响任何以 `--lint` 做门禁的脚本。
+
+> **2026-10 更正（本节标题与「恒返回 0」这句已过期，结论不变）。** 退出码后来被改成承载判据 —— `1 = 有发现 / 2 = 文件不可读 / 0 = 干净`（见 [STATUS.md](STATUS.md) §10.49 一带的 O2(a) 条目），所以**标题里的「恒返回 0」不再成立**。但**结论更强了**，因为退出码仍然不回答「能不能解析」：
+>
+> | 输入 | `--lint` | 直接跑 |
+> | --- | --- | --- |
+> | `x = = 5`（本节原例） | **rc=0**，且**一条 lint 输出都没有** | rc=1，`Error: expected 'expression', but got '=' (type 83)` |
+> | `dir be Direction = "N"`（[AUDIT.md](AUDIT.md) §1.61） | **rc=1**，输出 `[lint] line 3 [WARN] …`，**解析错误一个字都没有** | rc=1，同一条 `expected 'expression'` |
+>
+> 两行合起来说明：`--lint` 的退出码在「没发现」和「发现了解析错误」上**可以都是 0**，在「发现了解析错误」上**也可以是 1**（因为它发现的是 lint 发现，不是解析失败）。**它不是解析谓词，改成非零退出码也没有让它变成解析谓词。** §1.61 的两个 fixture 就是这么被绿着用了很久的。
 
 #### M12. `|` 守卫只能挂在绑定名模式后，挂在别处报错误导
 
@@ -879,7 +888,7 @@ inimerse-driven with NO PASS/FAIL_REGULAR_EXPRESSION and not WILL_FAIL: 73
 
 **两条可复用模式**（写断言前必读，详见 §8）：断言要打在**程序自己打印的带标记值行**上；且**不要用 `FAIL_REGULAR_EXPRESSION` 去匹配字符串字面量** —— 引擎会把程序里每一个字面量回显出来，于是「某件事没发生」这类断言恒为空，必须让没发生的事留下**值**上的痕迹（计数/状态变量）。
 
-这与 M11（`--lint` 恒 0）、以及 `stage_ctest` 早期「用例数只是装饰」是**同一类问题**：门禁在「过程成功」与「结果正确」之间没有桥。`EXP_CTEST` 断言已修（`f9d0270`），本条是它的下一层。
+这与 M11（`--lint` 的退出码不回答「能不能解析」，见该条 2026-10 更正）、以及 `stage_ctest` 早期「用例数只是装饰」是**同一类问题**：门禁在「过程成功」与「结果正确」之间没有桥。`EXP_CTEST` 断言已修（`f9d0270`），本条是它的下一层。
 
 ### 7.3 冗余（重复 / 不可达 / 无语法）
 
@@ -1014,7 +1023,7 @@ printf 's = "a\\0b"\nsay str(len(s))\n' > /tmp/t.im && ./build/inimerse /tmp/t.i
 6. **断言必须双向验证**：不仅要在修复版上绿，还要把实现改回坏版本、重建、确认它**确实变红**，并记下红在哪条（`Required regular expression not found` 还是 `Error regular expression found in output`）。只验证「绿」的断言可能根本没有牙。
 7. **正则匹配的是前缀，数值标记必须带终结符**。`chained_comparison_runtime` 最初断言 `chain hits=1`，而把 `src/compiler/compiler.c:828` 的 `OP_AND` 改成 `OP_OR` 后程序打印的是 `chain hits=101` —— 它**以 `chain hits=1` 开头**，正则照样命中，测试仍是绿的。标记已改成 `chain hits=1 end`。凡是被测值是数字，就在它后面加一个不可能被别的数字续上的后缀。
 8. **「全部由字符串字面量组成的标记」会被回显行整体满足**。第 3 条的反面加强版：引擎把程序里**所有**字面量回显成**同一行**（`[0]="coll positive-type=" [1]="str" [2]="coll range-hit=" …`），所以一条跨多个纯字面量标记的正则（`coll positive-type.*coll range-hit.*coll wildcard-hit`）**整条被那一行满足**，程序真实行为完全不参与匹配。实测：把 `src/compiler/compiler.c:1682` 的 `OP_IN, tmp, subj, pat` 换成 `pat, subj` 后程序输出确实从 `coll positive-type` 变成 `coll other`，CTest 仍 Passed；`case_structural_runtime` 同理（`OP_EQ`→`OP_NEQ` 后第一行从 `struct record-hit` 变成 `struct bad`，仍 Passed）。**修法：每个标记都要带一个计算值**（`say "coll positive-type=" + str(42)`），使「标记+值」这个串只可能出现在程序自己的输出里；改后同样的两次打断都变成 `Required regular expression not found`。
-9. `--lint` 不可用作解析谓词（M11）。
+9. `--lint` 不可用作解析谓词（M11）。**「`--lint` 退出码非零」同样不是解析成功的证据** —— §1.61 的两个 fixture 就是 `--lint` rc=1 而程序根本不能解析；要判「能不能解析」就跑一遍本体，见 `tools/fixture_parse.test.py`。
 10. **按平台选出来的 `PASS_REGULAR_EXPRESSION` 只在 configure 期选一次。** 当一条断言必须
     写「本平台各自的现行值」时（`round_nonnumber_contract_runtime` 的 `round-nonnumber=nil` /
     `round: expected number`；`spi_caps_contract_runtime` 的 `bool=0` / `bool=65280`），

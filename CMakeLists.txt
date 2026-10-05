@@ -1265,4 +1265,30 @@ if(INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;desugar"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
     PASS_REGULAR_EXPRESSION "desugar tests: ok")
+  # `tools/migrate_report.py` is the fourth product that a doc row cited as
+  # evidence while nothing ran it -- `docs/REQUIREMENTS_ANALYSIS.md` row 11 and
+  # `docs/STATUS.md` §4 named it beside `bindgen_regression` /
+  # `scan_tools_regression`, and neither of those touches the migration report.
+  # The harness drives a real scan and asserts the header's counts against the
+  # table body, so "0 adaptation points" printed over a full table is caught.
+  add_test(NAME migrate_report_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/migrate_report.test.py)
+  set_tests_properties(migrate_report_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;migration"
+    ENVIRONMENT "PYTHONIOENCODING=utf-8"
+    PASS_REGULAR_EXPRESSION "migrate_report tests: ok")
+
+  # Every `vtest/*.im` fixture must be parseable.  Two of them were not:
+  # `dir be Direction = "N"` is a parse error -- `be` takes `:` for its
+  # initialiser (src/parser/parser.c:1383-1391) while `type X = ...` is a
+  # different statement taking `=` (parse_type_stmt, src/parser/parser.c:1218-1227).
+  # Nothing noticed, because both fixtures are consumed only by `--lint`, and the
+  # lint path does not print the parse error at all: the CTest passed on the
+  # warning text while the program the fixture describes had never been parsed.
+  # The scan prints both numbers, so "0 of 0" cannot read as clean.
+  # See docs/AUDIT.md §1.61.
+  add_test(NAME fixture_parse_runtime COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/tools/fixture_parse.test.py $<TARGET_FILE:inimerse>)
+  set_tests_properties(fixture_parse_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;fixtures;parser"
+    ENVIRONMENT "PYTHONIOENCODING=utf-8"
+    PASS_REGULAR_EXPRESSION "fixture_parse tests: ok")
 endif()
