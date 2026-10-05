@@ -3147,6 +3147,143 @@ $ git cat-file -p 4e444dd:CMakeLists.txt | grep -c 'add_test('
 
 **本节所有数字都在写之前用上面的命令跑过一遍。** 一条命令若只覆盖表的一部分、或只在另一棵树上跑过，**就必须在正文里写清覆盖范围与适用树** —— 否则这一节在落地当天就是一条漂移值。
 
+## §1.70 Windows 上 match 长模式的崩溃：26 帧 × 32896 字节，和一次把尾调用写成递归
+
+**测量点。** 崩溃读数取自 `main` 的祖先 `c71ea00`（也就是发布线 `release/051-final`）的 Windows 构建；修复与反向验证在 `stream/win-match-fix`（base `main` @ `57ece55`）上做。两棵树都点名，因为同一个量在两棵树上有两个值。
+
+### A. 现象与分类
+
+`match_long_pattern_runtime` 在 Windows 上 `***Exception: SegFault`（`w38-ctest.log:262-263`）。分类键是日志里的 `code`：
+
+```
+[crash] code=0xC00000FD
+```
+
+`0xC00000FD` 是 `STATUS_STACK_OVERFLOW`，不是 `0xC0000005`（访问违例）。同一台机器上另有一处 `code=0xC0000005` 的崩溃（`crash-g.log`，15 帧），两者可区分。
+
+`[stack] #7` 与 `[crash] rip` 逐字节相同 ⇒ 回溯停在崩溃帧。原因是 `RtlCaptureStackBackTrace` 走 `.pdata`，而 `___chkstk_ms` 没有 `.pdata` 条目。**这不是 `-g` 或 `-Wl,-Map` 能补的**，是结构上取不到，所以下面不用回溯。
+
+### B. 机制（实测）
+
+方法：直接读原始栈内存，数落在 `re_seq` 运行区间内的返回地址。运行区间由 `rip - 0x974c6`（`___chkstk_ms` 的 RVA）加 `nm` 给出的偏移算出 —— 不能用 PE 静态 `ImageBase`，ASLR 下镜像加载基址是随机的。
+
+```
+RE_HITS=51
+DISTINCT_RET_OFFSETS={+0x16: 26, +0x25a: 25}
+STRIDES={0x48: 25, 0x8038: 25}
+FRAME_SLOTS=26
+RSP=0x407af0
+```
+
+`+0x16` 是 `call ___chkstk_ms` 之后那条指令，`+0x25a` 是唯一那次递归 `call re_seq` 之后那条（`14005333a: mov %rax,%rbx`）。`re_seq` 的序言是
+
+```
+push %r15
+mov $0x8038,%eax
+push %r14,r13,r12,rbp,rdi,rsi,rbx
+call ___chkstk_ms
+sub %rax,%rsp
+```
+
+所以帧 = 8×8 + 0x8038 + 8 = **32896 B = 0x8080**，与测到的步长逐项相同。
+
+⇒ **崩溃瞬间有 26 个活的 `re_seq` 帧，仅它们就占 26 × 32896 = 855296 B。**
+
+预算：`objdump -p` 给出 `SizeOfStackReserve 0x200000`（2 MiB），两个 exe 一致。`vm_execute_thread`（`src/vm/vm.c:2931`）不是 OS 线程，是主线程在 `src/vm/vm.c:4950` 调的 ⇒ 预算就是主线程的 2 MiB。
+
+算术：崩溃时 `rsp=0x407af0`，可读顶 `0x601000` ⇒ 已耗 `0x1f9510` = 2069776 B = **98.7%**。剩余 `0x60f0`(24816 B) 小于进入下一帧需要的 `0x8080`(32896 B) ⇒ **差 8080 B**。这就是 `___chkstk_ms` 报 `STATUS_STACK_OVERFLOW` 的算术。
+
+**最有力的一步是两个输入给出逐项相同的读数**：2030 个字符的输入与 25 个字符的输入，`RSP` 都是 `0x407af0`，都是同样的 26 帧 ⇒ **深度由栈预算封顶，与输入长度无关**。
+
+独立复核：在 `re_seq` 上打断点计数，`contract_test.im` 3 次、`vtest/posix_core_api_v04.im` 6 次、`vtest/match_long_pattern_v06.im` 26 次后 SIGSEGV。两个互不相干的方法都落在 26。
+
+**边界（保留）。** 不声称这 26 个里哪一个是崩溃帧。两个计数彼此自洽，但「出错的那一帧」与「走完序言的那些帧」之间的一格之差，这两次测量都没有分辨。
+
+**边界（保留）。** `CONSUMED` 与 `STACK_READABLE_TOP` 来自读探针，Windows `ReadProcessMemory` 对 reserved-but-uncommitted 页会成功并返回零 ⇒ 可读顶可能高于真正的 `StackBase`。26 帧与 `0x8080` 步长不受影响，因为那是栈上的真实数据。
+
+### C. 读码（与实测分开写）
+
+以下行号都在**修复前**的字节 `2245ca1` 上。`re_seq`（`src/runtime/runtime.c:948`）是手写回溯器。模式里没有 `*`/`+`/`?` 时 `elnext = re + elen`（`:990`），而续接写成了递归：
+
+```
+:1005    const char *cont = re_seq(elnext, t);
+```
+
+于是**每个模式元素花一帧**。2030 个字符的字面模式要 2030 帧 × 32896 B ≈ 66.8 MB。
+
+### D. 修法
+
+三处纯尾调用改写成既有 `for (;;)`（`:949`）的迭代：
+
+| 位置 | 改前（`2245ca1`） | 改后（`24f6814`） |
+|---|---|---|
+| `$` 分支 | `:952 return (*s == '\0') ? re_seq(re + 1, s) : NULL;` | `:953-961 if (*s != '\0') return NULL; re++; continue;` |
+| 交替分支 | `:969 return re_seq(re + alt + 1, s);` | `:981-982 re = re + alt + 1; continue;` |
+| 无量化续接 | `:1005 const char *cont = re_seq(elnext, t);` | `:1017-1028 if (!quant) { re = elnext; s = t; continue; }` |
+
+无量化那条是尾调用，理由是**构造上的**：没有量化符 ⇒ `qmin == qmax == 1` ⇒ 下面的回溯循环只能返回续接或返回 NULL，没有第二条路。新增的 `quant` 标志（`:998`，三个量化分支置 1）就是用来分辨这两条路的。
+
+有量化那条仍然递归，但每次 `re_seq(elnext, t)` 返回之后才进下一次，深度由嵌套决定而非模式长度（早先一个探针实测深度 2）。不会死循环：`elnext = re + elen`，`elen >= 1`，`re` 严格前进。
+
+`src/runtime/runtime.c` 是这次唯一改动的 `src/` 文件：`git diff --name-only 57ece55 -- src/` 只有它。
+
+### E. 判据
+
+| 判据 | 结果 |
+|---|---|
+| ① 那条 CTest 在 Windows 上由 SEGFAULT 变通过 | 通过（`1/1 Test #137 ... Passed 1.01 sec`） |
+| ② 反向验证：在**带修复的同一棵树**上换回修复前的字节，增量重建，必须重新红 | 通过（`***Exception: SegFault 1.08 sec`） |
+| ③′ 同树 Windows 全量 ctest 不新增失败 | 通过（见下表） |
+| ③ 同树 Linux 门禁 | **作废，空绿** |
+
+同树 Windows 全量 ctest（`INIMERSE_BIN` 必须指到构建目录，否则测试工具找不到引擎）：
+
+| 状态 | 结果 |
+|---|---|
+| 修复前 `237c547ef2cb5f8c7f29702bafd77062f41feff4` | `98% tests passed, 3 tests failed out of 128` |
+| 修复后 `e0b3d93c204901ee475f8524e9a8b7f23e08045a` | `98% tests passed, 2 tests failed out of 128` |
+
+修复前那三条是 `process_probe`（本环境下的既有抖动，在 `w38-ctest.log:38-39` 的发布证据里是 Passed）、`count_builtin_runtime`（见 F.4）、`match_long_pattern_runtime`（本次目标）。
+
+**③ 为什么作废。** `src/runtime/runtime.c` 在 POSIX 上根本不参与编译：`CMakeLists.txt:429` 在 WIN32 分支里选它，`:438` 的 `else()` 分支选 `src/runtime/runtime_posix.c`（后者没有 `re_seq`，用 libc `regcomp`）。所以 Linux 门禁**不会编译被改的那个文件**。它在这次修复上是空绿 —— 可以跑，但只能当卫生检查，不能当证据。**这不是本节的性质，是门禁的性质**，见 §1.71。
+
+### F. 登记但未修
+
+1. **`pos[4096]` 的无守卫读。** `:1007 const char *pos[4096];`，写入有守卫（`:1012 if (count < 4096) pos[count] = nt;`），回溯读没有（`:1035 t = pos[count - 1];`）。这是并存的独立缺陷，**未被本次崩溃触发** —— 由「25 就崩」证伪：4096 项的数组在 25 不可能溢出。只登记，不改。
+2. **被证伪的假设留在产物里。** 崩溃起点被钉在 N=25（20…24 正常，25 首次崩），`pos[4096]` 溢出假设与任何页/大小阈值假设一并被排除。留下它，是因为下一个读到「25 就崩」的人会先去想 4096，这一段能省他一轮。
+3. **`re_seq` 仍有 32896 字节的帧。** 尾调用改掉之后，它仍然封顶**嵌套量化元素或嵌套分组**的可用深度。触发类已写出，**未测**。
+4. **同一类崩溃的第二个实例，不在本次修复范围。** `count_builtin_runtime` 在 Windows 上也是 `code=0xC00000FD`，但 `[stack] #8` 是 `0000000000006ed8`（≠ `re_seq` 的 `0x8038`），`re_seq` 断点在它的 fixture 上计数为 **0**，原始栈扫描把它定位到 `compile_expr` 自递归（32 帧，偏移 `+0x16` 与 `+0x15eb`）。该测试在发布证据 `w38-ctest.log` 里不存在（是 `c71ea00` 之后新增的），而且在 `c71ea00` 的 `build-sym` 上同样崩 ⇒ **既有缺陷，被新测试暴露**，不是本次修复引入的。
+
+### G. 空绿
+
+「一条构造上不可能变红的判据，不是判据。」这次撞到三处：
+
+- 本节的 ③：Linux 门禁不编译被改的文件。
+- 测试工具里的 `find_engine()`：候选目录写死为 `build` / `build-local` / `build-windows-gcc` / `build-py`。构建目录叫别的名字时，六个工具测试会以 `inimerse engine not found; set INIMERSE_BIN` 失败 —— 那是**找不到引擎**，不是产品红。用 `INIMERSE_BIN` 指过去之后它们全过。
+- `[stack] #8 0000000000008038`：这不是哨兵，是 `re_seq` 序言里的帧大小常量 `$0x8038` 被压在栈上。帧大小由它独立印证了一次。
+
+## §1.71 Linux 门禁对 12 个 `src/**/*.c` 结构性失明：它们只在 `if(WIN32)` 分支里
+
+**症状。** §1.70 的判据 ③ 被它自己的作者判成**空绿**：`src/runtime/runtime.c` 在 POSIX 上根本不参与编译，所以「同树 Linux 门禁」在那次修复上只能当卫生检查，不能当证据。**这不是那一节的性质，是门禁的性质** —— 同一个形状覆盖 12 个文件。
+
+**实测（`main` @ `c76273f`，构建目录 `build/`）。** 逐文件比对「被 git 跟踪的 `src/**/*.c`」与「Linux 构建实际产出 `.o` 的」：
+
+```
+tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
+  src/child_proc.c        src/headless_server.c      src/mod/ai_mod.c
+  src/mod/gui_mod.c       src/mod/identity_mod.c     src/mod/io_mod.c
+  src/mod/mod.c           src/mod/net_mod.c          src/mod/say_mod_windows.c
+  src/mod/server_mod.c    src/mod/social_mod.c       src/runtime/runtime.c
+```
+
+方法：`find build -name '*.o'` 取 basename 去掉 `.o` 后缀，与 `git ls-files src/` 里的 `*.c` 求差。**边界**：这是对**现有增量构建目录**的测量，不是对 CMake 目标图的解析 —— 若某文件本该被编译却因增量状态缺 `.o`，也会落进这 12 个里。**独立交叉核对**：这 12 个在 `CMakeLists.txt` 里**全部只出现在 `:429-436` 的 `if(WIN32)` 块内**（`grep -n '<file>' CMakeLists.txt` 的首个命中全落在这一段），POSIX 侧 `:438-444` 的清单里一个都没有 ⇒ 两条互不相干的方法给出同一组文件。**另一个独立读数**：`nm build/inimerse | grep -c 're_seq'` = **0**。
+
+**为什么这是缺陷而不是设计。** 「Windows 运行时只在 Windows 上编译」本身合理；**不合理的是门禁把「没编译」报成「PASS」**。Linux 十二阶段里 `build` 与 `ctest` 对这 12 个文件无声，而 `grep` 类检查器只看文档与 fixture 名（§1.67）—— 于是**改动这 12 个中的任何一个，在 Linux 上拿到的是一个全绿的门禁**，而绿的原因与改动无关。§1.70 G 节把这一类叫「一条构造上不可能变红的判据，不是判据」。
+
+**与 §1.67 的关系。** §1.67 说的是检查器问「东西在不在」、不问「是不是唯一」；本条更强一层：**检查器连东西都没看**。两者同族，本条不重复 §1.67 的判据，只登记这一组文件与它的量化。
+
+**登记，未修。** 修法候选（**未裁定**）：①在 `build` 阶段增加一条显式的「这些文件在本平台上不参与编译」清单与理由 —— 照 §1.60 的规矩，白名单也要写出「那跑的是什么」；②或把源文件也纳入某个既有的孤儿检查（agent2 已实测 `tools/check_orphan_fixtures.py` 的 `grep -c 'src/'` = **0**，即它结构上不可能发现 `src/` 孤儿）。**本条只登记**：改门禁在 `tools/**`（agent2 的写域），且这 12 个里哪些是**真** Windows-only、哪些是**漏进** WIN32 分支的，需要逐个裁定。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
