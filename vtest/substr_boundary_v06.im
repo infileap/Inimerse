@@ -1,0 +1,30 @@
+# substr boundary: the clamp must not overflow.
+#
+# `start + len` was computed in `int`.  With a subject of length 10 and
+# start = 5, len = 2147483643 made the sum overflow to a negative value, so the
+# guard `start + len > sl` read FALSE and `len` stayed at ~2^31: the engine then
+# malloc'd ~2 GB and memcpy'd that far past a 10-byte string.  Measured before
+# the fix: segmentation fault, exit 139.  `start` is already clamped into
+# [0, sl] by the preceding lines, so the clamp is now `len > sl - start`, which
+# cannot overflow.
+#
+# The three lengths below straddle the exact boundary: 5 + 2147483642 ==
+# INT_MAX (no overflow) and 5 + 2147483643 == INT_MAX + 1 (overflow).  Both must
+# print the same thing, and a test that only asserted "did not crash" could not
+# tell which side of the boundary it was on, which is how this survived: the
+# clamp had one happy-path case (start = 2, len = 5, in
+# vtest/posix_core_api_v04.im) and no boundary case at all.
+s = "abcdefghij"
+
+a = substr(s, 5, 2147483642)
+b = substr(s, 5, 2147483643)
+c = substr(s, 5, 2147483647)
+
+say "substr-boundary a=" + a + " b=" + b + " c=" + c
+
+# The other three clamps, one line each, so a change to any single one of them
+# is visible on its own line rather than hidden behind the overflow case.
+say "substr-clamp over=" + substr(s, 99, 3)
+say "substr-clamp neg-start=" + substr(s, -4, 3)
+say "substr-clamp neg-len=" + substr(s, 2, -1)
+say "substr-clamp len0=" + substr(s, 4, 0)

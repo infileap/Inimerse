@@ -1291,4 +1291,51 @@ if(INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;fixtures;parser"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
     PASS_REGULAR_EXPRESSION "fixture_parse tests: ok")
+
+  # The `substr` clamp computed `start + len` in `int` (both runtimes).  With
+  # `start` already clamped into [0, sl] and `len` near INT_MAX the sum overflowed
+  # to a negative, the guard `start + len > sl` read false, and `len` stayed at
+  # ~2^31: the engine malloc'd ~2 GB and memcpy'd that far past a string of length
+  # `sl`.  A segmentation fault reachable from any script.
+  #
+  # The three lengths in the fixture straddle the exact boundary -- 5 + 2147483642
+  # == INT_MAX and 5 + 2147483643 == INT_MAX + 1 -- so the assertion has teeth in
+  # both directions: before the fix the process dies and the line is never printed;
+  # a "fix" that clamps len to 0 instead prints `a= b= c=` and also fails.  The
+  # one happy-path case that existed (start = 2, len = 5) could not tell the two
+  # apart.  See docs/AUDIT.md §1.62.
+  add_test(NAME substr_boundary_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/substr_boundary_v06.im)
+  set_tests_properties(substr_boundary_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
+    PASS_REGULAR_EXPRESSION "substr-boundary a=fghij b=fghij c=fghij")
+endif()
+
+# A host that is already an address literal must not reach the resolver.
+#
+# getaddrinfo() accepts "127.0.0.1" and returns it unchanged, but it gets there
+# through the full resolver path, and that path is the slow one.  Measured on
+# Windows (ucrt64): im_socket_init stayed at 1-4 ms while im_socket_listen took
+# 0.9-3.7 s and a probe round (four resolutions) ranged from 151 ms to 8564 ms,
+# which is how `socket_probe` started hitting the ctest 10 s ceiling.  Both
+# resolve entry points -- resolve_addr (listen) and resolve_addr_timed (timed
+# connect) -- now ask one helper first.
+#
+# The assertion counts getaddrinfo calls rather than milliseconds, because the
+# two states return the same address and only differ in cost, and that cost is
+# platform-specific: on Linux a literal resolves in microseconds either way, so
+# a timing assertion would be blind on the platform that can run it and vacuous
+# on the platform where the defect bites.  The count is exact on both.
+#
+# POSIX only, like the shim it uses: this pins the *mechanism*, and Windows
+# still has no coverage for it.  See docs/AUDIT.md §1.63.
+if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
+  add_library(getaddrinfo_log_preload MODULE src/platform/getaddrinfo_log_preload.c)
+  target_link_libraries(getaddrinfo_log_preload PRIVATE ${CMAKE_DL_LIBS})
+  add_executable(literal_resolve_probe src/platform/socket.c src/platform/thread.c src/platform/literal_resolve_probe.c)
+  target_link_libraries(literal_resolve_probe PRIVATE Threads::Threads)
+  add_test(NAME literal_resolve_runtime COMMAND literal_resolve_probe)
+  set_tests_properties(literal_resolve_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "platform;smoke"
+    ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:getaddrinfo_log_preload>;GA_LOG=${CMAKE_BINARY_DIR}/literal-resolve.log"
+    PASS_REGULAR_EXPRESSION "literal_resolve tests: ok")
 endif()

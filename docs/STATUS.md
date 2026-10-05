@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 139；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 141；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **139 / 139 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **141 / 141 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **139** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **141** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 139
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 141
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3930,3 +3930,31 @@ disagrees with its own table`、rc=1；两次都从 `/tmp` 备份精确恢复 �
 **同族第七处，本轮被自己踩到**：新增 `tools/fixture_parse.test.py` 使 `tools/check_orphan_fixtures.py` 的输入数从 **112** 变成 **113**（python harness 32 → 33），而 `docs/BOARD.md:62` 的阶段表逐字引着 `112 input(s) checked (67 vtest fixtures, 32 python harnesses, 13 node harnesses)`。⇒ **加一个 harness 会静默让一份文档里引的数变成假的**，而没有任何东西比较这两者（`vivid-anchor` 在那行末尾留了一句「`tools/*.test.py` 每加一个，第二个数就加一」，那是一句**给人的提醒，不是检查**）。本轮手工改成 113/33；**「阶段表引的期望串必须真的出现在门禁输出里」这条检查留给 0.5.2**。
 
 **诚实边界**：标记表是取自 `src/parser/parser.c` 与 `src/lexer/lexer.c` 的**字面前缀**（新增一种错误消息形状不会被认出）；刻意排除 `Error at line %d: task/thread definitions inside a loop are silently ineffective`（被接受然后被忽略，不是解析失败）；超时算作没解析失败；**只扫 `vtest/*.im`**（仓库根 `*.im`、`selfhost/**`、`examples/**`、`projects/**` 不在范围内，那 8 处 `be` 恰好都在这些位置且今天都是 `:`）；「`--lint` 不打印解析错误」是一条命令的实测，没有读实现去解释。详见 [AUDIT.md](AUDIT.md) §1.61。
+
+## §10.96 两条发版前的修复：`substr` 的钳位溢出与文字量的解析器往返
+
+### ① `substr(s, start, len)`：`start + len` 溢出后守卫恒假 ⇒ 段错误
+
+`start`、`len` 都是 `int`，`start` 已钳进 `[0, sl]`。`len` 接近 `INT_MAX` 时 `start + len` **有符号溢出**变负 ⇒ `if (start + len > sl)` 恒假 ⇒ `len` 保持 ~2^31 ⇒ `malloc(~2 GB)` 后 `memcpy` 越界读约 2 GB。**任何脚本可触发**：`substr("abcdefghij", 5, 2147483647)` ⇒ **rc=139 SIGSEGV**。
+
+**阈值实测**：`start=5` 时 `len=2147483642`（和 = INT_MAX）rc=0 打印 `fghij`，`len=2147483643`（溢出）**rc=139**；`start=0` 永不崩。**崩溃边界恰好是溢出边界** ⇒ 机制证明。
+
+**修法**：`start` 已钳好 ⇒ `sl - start ∈ [0, sl]` 不可能溢出，比较换到减法一侧 —— `if (len > sl - start) len = sl - start;`，**POSIX `src/runtime/runtime_posix.c:476` 与 WIN32 `src/runtime/runtime.c:560` 两处都换**，对不溢出输入逐字相同；另补 **WIN32 缺的 NULL 检查**（POSIX 早有，两份拷贝在 OOM 上原本给出两个答案）。
+
+**A/B**：新增 CTest **`#140 substr_boundary_runtime`**（`vtest/substr_boundary_v06.im`，三个长度跨边界：`2147483642` / `2147483643` / `2147483647`，另钉 `start > sl`、负 `start`、负 `len`、`len=0` 各一行）。修复版 **100% passed**；换回 `start + len > sl` 重建 ⇒ **`0% tests passed, 1 tests failed`** 且手工跑 **rc=139**，恢复后复绿。
+
+**为什么活到今天**：`docs/SYNTAX.md:500` 把它列进「核心高频内建（有 vtest 覆盖的）」，而实际只有**一条 happy path**（`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5)`）；边界一个都没有 —— 分母从来没被问过。
+
+### ② 数值字面量也走全套解析器 ⇒ Windows 上 `socket_probe` 撞 10 s 上限
+
+Windows/ucrt64 上 `socket_probe`（`#20`）`***Timeout 11.31 sec`。逐调用计时显示 `im_socket_init` 恒 1–4 ms，而 `listen` 0.9–3.7 s、`port_available` 最高 1478 ms、`connect` 1542 ms、`port_open` 2116 ms；一轮探针做 4 次解析 ⇒ wall time 151 ms–8564 ms，长尾撞上 ctest 默认 10 s。
+
+`getaddrinfo()` 接受 `"127.0.0.1"` 并原样返回，但**穿过完整解析路径**才做到。
+
+**修法**：`src/platform/socket.c` 新增 `addr_from_literal()`（`inet_pton` / WIN32 `InetPtonA`，经 `IM_INET_PTON` 择一；先 `AF_INET` 再 `AF_INET6`）。**两个入口都问同一个助手**：`resolve_addr`（`im_socket_listen`）与 `resolve_addr_timed`（`im_socket_connect_timeout`，且在线程派生之前）—— 否则快路径会变成 `listen` 一条规则、`connect` 另一条。空主机/主机名/`AI_PASSIVE` 全部回落 `getaddrinfo`，行为不变。
+
+**A/B（不吃时间的判定）**：新增 LD_PRELOAD 垫片 `src/platform/getaddrinfo_log_preload.c` + 探针 `src/platform/literal_resolve_probe.c`，CTest **`#141 literal_resolve_runtime`**，断言 **`getaddrinfo` 调用计数**而非毫秒。修复版 `literal-resolve literal=0 name=1`（文字量 0 次、`localhost` 1 次）；把 `addr_from_literal` 改成恒 -1 重建 ⇒ `***Failed Required regular expression not found` + `a literal host reached getaddrinfo 1 time(s); the fast path is gone`。探针**第二半**（主机名必须到达 `getaddrinfo`）不是装饰：「文字量不进解析器」被「干脆永不解析」同样满足，而那严重得多。
+
+**计数**：`add_test(` **139 → 141**，六处同步（`tools/gate.sh:54` 的 `EXP_CTEST`、`docs/STATUS.md` §2 四处、`docs/BOARD.md` §3 两处）。`check_orphan_fixtures` 输入数 **113 → 114**（新增一个 `vtest` fixture，67 → 68；`docs/BOARD.md:62` 的期望串同步）。
+
+**诚实边界**：①WIN32 的两处改动**本机编不到**（`src/runtime/runtime.c` 只在 `if(WIN32)` 分支；`InetPtonA` 只在 Windows 头里），**读码判断，未实测**，由 peer 在 ucrt64 复核；②本机 Linux 上 ②的改前/改后逐调用数字**无法区分**（都被 1–6 ms 淹没）—— 收益是 Windows 特有的，`#141` 钉的是**机制**；③`#141` 是 **POSIX-only**，**Windows 侧对这条仍无覆盖**；④修的是溢出与多余解析，**不是**「超大 `len` 应当被拒绝」那种语义决定。

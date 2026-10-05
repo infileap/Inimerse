@@ -2782,6 +2782,80 @@ rc=1；恢复 ⇒ rc=0。注册在 `migrate_report_runtime` 之后（末尾追�
 4. **只扫 `vtest/*.im`**。仓库根目录的 `*.im`、`selfhost/**`、`examples/**`、`projects/**` 都不在范围内 —— 那 10 处 `be` 里有 8 处在这些位置，它们今天恰好都是 `:`，但**这个检查不保证它们**。
 5. 「`--lint` 不打印解析错误」是**一条命令的实测**，我没有读 `--lint` 的实现去解释它为什么这样。
 
+## §1.62 `substr` 的钳位整型溢出：`start + len` 溢出后守卫恒假
+
+**症状。** 任何脚本都能让引擎段错误：
+
+```im
+s = "abcdefghij"
+say substr(s, 5, 2147483647)
+```
+```
+$ ./build/inimerse --no-mods /tmp/substr_ovf.im
+Segmentation fault      rc=139
+```
+
+**机制。** `start` 与 `len` 都是 `int`，而 `start` 在前几行已经钳进 `[0, sl]`：
+
+- `src/runtime/runtime_posix.c:476`：`if (len < 0) len = 0; if (start + len > sl) len = sl - start;`
+- `src/runtime/runtime.c:560`：`if (start + len > (int)sl) len = (int)sl - start;`
+
+`len` 接近 `INT_MAX` 时 `start + len` **有符号溢出**（UB），结果变负 ⇒ `> sl` 恒假 ⇒ `len` 保持 ~2^31 ⇒ `malloc((size_t)len + 1)` 约 2 GB ⇒ `memcpy(out, s + start, (size_t)len)` 从一个长度 `sl` 的堆字符串**越界读约 2 GB**。
+
+**阈值实测（`s = "abcdefghij"`，`sl = 10`）：**
+
+| start | len | `start + len` | 结果 |
+| ---: | ---: | ---: | --- |
+| 5 | 2147483640 | 2147483645 | rc=0，`fghij` |
+| 5 | 2147483641 | 2147483646 | rc=0，`fghij` |
+| 5 | 2147483642 | **2147483647 = INT_MAX** | rc=0，`fghij` |
+| 5 | **2147483643** | **2147483648 溢出** | **rc=139 SIGSEGV** |
+| 5 | 2147483647 | 溢出 | rc=139 |
+| 0 | 2147483647 | 2147483647 = INT_MAX | rc=0，`abcdefghij` |
+
+崩溃边界**恰好**是溢出边界（`2147483642` 不崩、`2147483643` 崩、`start=0` 永不崩），所以这是机制证明而不是相关性。
+
+**修法（语义不变的钳位）。** `start` 已钳进 `[0, sl]` ⇒ `sl - start ∈ [0, sl]` **不可能溢出**，把比较换到减法那一侧：
+
+```c
+if (len < 0) len = 0; if (len > sl - start) len = sl - start;
+```
+
+**两处都换**（POSIX `src/runtime/runtime_posix.c:476`、WIN32 `src/runtime/runtime.c:560`），对**所有不溢出输入逐字相同**。另补 **WIN32 缺的 NULL 检查**：POSIX 早有 `if (!out) { free(s); push_string(vm, ""); return 1; }`，WIN32 是 `malloc` 后直接 `memcpy`，两份拷贝在 OOM 上给出两个答案。
+
+**A/B。** CTest **`#140 substr_boundary_runtime`**（`vtest/substr_boundary_v06.im`）把三个长度放在边界两侧：`2147483642`（无溢出）与 `2147483643` / `2147483647`（溢出）。实测：修复版 **100% tests passed**；把 POSIX 那一行换回 `start + len > sl` 重建 ⇒ **`0% tests passed, 1 tests failed`**，手工跑同一条 ⇒ **rc=139**，`cmp` 恢复后复绿。
+
+**为什么活到今天。** `docs/SYNTAX.md:500` 把 `substr` 列在「核心高频内建（**有 vtest 覆盖的**）」里，而实际覆盖是**一条 happy path**：`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5) == "Hello"`（另一个提到 `substr` 的 `vtest/spi_caps_contract_v06.im:9` 是注释里的「substring」一词）。`len > INT_MAX - start` 没有任何用例靠近过 —— **分母从来没被问过**。
+
+**诚实边界。** ①阈值表是 Linux/POSIX 实测；**WIN32 侧只有读码**（`src/runtime/runtime.c` 只在 `CMakeLists.txt:427-429` 的 `if(WIN32)` 分支被编译，Linux 上编不到），那里的溢出相同、且多一个缺 NULL 检查。②探针脚本在 `/tmp/substr_ovf.im`、`/tmp/t.im`，未入库。③修的是**溢出**，不是「超大 `len` 应当被拒绝」—— 后者是语义决定，本轮按「行为对不溢出输入逐字不变」的最小改动做。
+
+## §1.63 数值字面量也走全套解析器：Windows 上 `socket_probe` 撞 CTest 上限
+
+**症状（Windows/ucrt64 实测）。** `socket_probe`（`#20`）在 Windows 全量 ctest 里 `***Timeout 11.31 sec`（ctest 默认 10 s）。不是断言错、不是 flake：20 次单跑全部 rc=0，但 wall time 从 **151 ms 到 8564 ms** 长尾。逐调用计时驱动的 5 次运行（毫秒）：
+
+```
+run1  init 1.5  listen 3662.1  port_available 1478.6  connect 1542.1  port_open 2116.2  close 882.7
+run2  init 1.7  listen  895.8  port_available  782.2  connect  837.4  port_open 1780.8  close 1.2
+run3  init 1.5  listen  902.8  port_available    3.0  connect    7.8  port_open    4.7  close 2.6
+run4  init 3.7  listen 1029.0  port_available    1.3  connect    6.2  port_open    4.1  close 1029.1
+run5  init 2.1  listen 2265.2  port_available    8.3  connect    6.9  port_open   13.3  close 3.5
+```
+
+`im_socket_init` 恒为毫秒级；**慢的全是走名字解析的那几个调用**，`listen` 最重。探针一轮做 4 次解析（`im_socket_listen`、`im_socket_port_available`→`listen`、`im_socket_connect`、`im_socket_port_open`），长尾就是这 4 次的和。
+
+**机制。** `getaddrinfo()` **接受** `"127.0.0.1"` 与 `"::1"` 并原样返回，但它是**穿过完整解析路径**才做到的，而那条路径正是慢的那条（`src/platform/socket.c:82-98` 的注释已记：解析器不可达时它等的是系统自己的重试表，单位是分钟）。
+
+**修法。** `src/platform/socket.c` 新增 `addr_from_literal()`：`inet_pton`（WIN32 `InetPtonA`，同一个契约：1 成功 / 0 非法 / -1 出错，经 `IM_INET_PTON` 宏择一）先试 `AF_INET`、再试 `AF_INET6`，成功就直接填 `sockaddr_storage`。**两个解析入口都问同一个助手**：`resolve_addr`（`im_socket_listen` 走它）与 `resolve_addr_timed`（`im_socket_connect_timeout` 走它，且**在线程派生之前**）—— 否则「快路径」会变成 `listen` 一条规则、`connect` 另一条。空主机 / 主机名 / `AI_PASSIVE` 一律回落 `getaddrinfo`，行为不变。
+
+**A/B（不吃时间的判定）。** 新增 LD_PRELOAD 垫片 `src/platform/getaddrinfo_log_preload.c`（拦截 `getaddrinfo`，把每次调用的 node 追加进 `$GA_LOG`）+ 探针 `src/platform/literal_resolve_probe.c`，CTest **`#141 literal_resolve_runtime`**。断言的是**调用计数而不是毫秒**，因为两态返回**同一个地址**、只有代价不同，而代价是平台相关的（Linux 上文字量两种实现都是微秒级）。实测：
+
+- 修复版：`literal-resolve literal=0 name=1` ⇒ 文字量 **0 次** `getaddrinfo`，`localhost` **1 次**；`literal_resolve tests: ok`。
+- 把 `addr_from_literal` 改成恒返回 -1 重建 ⇒ `***Failed  Required regular expression not found`，stderr `a literal host reached getaddrinfo 1 time(s); the fast path is gone`，日志里是 `getaddrinfo node=127.0.0.1`。
+
+探针的**第二半不是装饰**：「文字量不再进解析器」这个断言，被「干脆永远不调解析器」同样满足，而那是个严重得多的缺陷；要求主机名仍然到达 `getaddrinfo` 才是「回落还在」的证据。
+
+**诚实边界。** ①**本机 Linux 上改前/改后逐调用数字无法区分**（修复版 `listen` 2.6–6.2 ms，屏蔽快路径后 2.6–5.1 ms，其余都是 1–2 ms）—— Linux 对文字量本就几乎不花钱，**收益是 Windows 特有的**，`#141` 钉的是**机制**不是收益。②因此 `#141` 是 **POSIX-only**（同 `slowdns_preload` 的 `LD_PRELOAD` 手法），**Windows 侧对这条仍无覆盖**。③`#141` 断言的是「没有多余的解析调用」，**不证明** Windows 上那 4 次解析的耗时下降了多少 —— 那要 peer 的 Windows 驱动。④`InetPtonA` 的行为是读 Microsoft 文档的判断，**本机没有实测**。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道

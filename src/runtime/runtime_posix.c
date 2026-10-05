@@ -473,7 +473,15 @@ static int posix_core_substr(VM *vm) {
     int sl = (int)strlen(s);
     if (start < 0) start = sl + start;
     if (start < 0) start = 0; if (start > sl) start = sl;
-    if (len < 0) len = 0; if (start + len > sl) len = sl - start;
+    /* `start` is already clamped into [0, sl] by the lines above, so `sl - start`
+       lies in [0, sl] and cannot overflow.  `start + len` could: with len near
+       INT_MAX the sum overflowed to a negative, the guard read false, and `len`
+       stayed at ~2^31 -- so the malloc below asked for ~2 GB and the memcpy read
+       that far past a string of length sl.  Measured: substr("abcdefghij", 5,
+       2147483643) segfaulted on both runtimes.  Compare against the remaining
+       length instead.  The WIN32 copy in src/runtime/runtime.c carries the same
+       clamp and must stay the same rule.  See docs/AUDIT.md §1.62. */
+    if (len < 0) len = 0; if (len > sl - start) len = sl - start;
     char *out = malloc((size_t)len + 1);
     if (!out) { free(s); push_string(vm, ""); return 1; }
     memcpy(out, s + start, (size_t)len); out[len] = '\0';
