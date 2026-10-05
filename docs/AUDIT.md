@@ -525,7 +525,7 @@ value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);        /* :3837  �
 
 **双向验证**：把跨度闸 `if (kh - kl >= 10000000) return -1;` 临时改成 `>= 3` ⇒ 该 CTest 红（`***Failed  Error regular expression found in output. Regex=[ok10=0|ok3=0|empty=nil]`，因为 `Z[1~10]` 也一起被拒了）；`cp` 还原 + `cmp` 逐字节一致 + 重编 ⇒ 绿。实测 **0.057 s**。
 
-**计数**：①–③ 的两次修复共 `grep -c 'add_test(' CMakeLists.txt` **108 → 110**（`tools/gate.sh:50` 的 `EXP_CTEST` 同步 **110**）；④ 这条回归再 **112 → 113**（111 是 §1.11，112 是 §1.12）。
+**计数**：①–③ 的两次修复共 `grep -c 'add_test(' CMakeLists.txt` **108 → 110**（`tools/gate.sh` 的 `EXP_CTEST` 那一行同步 **110**）；④ 这条回归再 **112 → 113**（111 是 §1.11，112 是 §1.12）。
 
 ## §1.11 调用未注册的内建函数会静默返回栈顶，而不是报错
 
@@ -1408,7 +1408,7 @@ blast radius 为零（实测，不是推断）。
 
 **修法。** `src/runtime/runtime.c` 三处向 POSIX 看齐：`push_bool` ×2，两处补 `if (aidx < 0) { push_nil(vm); return 1; }`。
 
-**判据。** 新用例 `vtest/predicate_result_type_v06.im` 打印 `predbool true true false 14`（把 `startswith`/`endswith`/`has` 的结果与 `len` 并排放在一行），注册为 CTest **#122** `predicate_result_type_runtime`，PASS 正则是整行、FAIL 正则 `predbool 1|predbool true 1|predbool true true 1`。`tools/gate.sh:50` 的 `EXP_CTEST` 121 → **122**。用例注册在测试列表末尾，既有 `#N` 不动。
+**判据。** 新用例 `vtest/predicate_result_type_v06.im` 打印 `predbool true true false 14`（把 `startswith`/`endswith`/`has` 的结果与 `len` 并排放在一行），注册为 CTest **#122** `predicate_result_type_runtime`，PASS 正则是整行、FAIL 正则 `predbool 1|predbool true 1|predbool true true 1`。`tools/gate.sh` 的 `EXP_CTEST` 那一行 121 → **122**。用例注册在测试列表末尾，既有 `#N` 不动。
 
 **诚实边界。** ① `src/runtime/runtime.c` 在 Linux 上根本不参与编译（`CMakeLists.txt:395` 的 `if(WIN32)` 分支），所以 Linux 门禁只能钉住 POSIX 那一半；Windows 那一半靠 ucrt64 与 mingw64 两套 gcc 16.1.0 的 `-fsyntax-only`（均 RC=0、0 error）加上协调者在 Windows 上的实跑。② `round` 的非数字实参分歧**没有动**：Windows 抛错、POSIX 答 `nil`，两者都是既有的拒绝形态（硬拒绝 vs 软拒绝），属于设计选择而非明显缺陷，改 POSIX 会改变 Linux 行为，需要单独一轮裁决，因此只在此记录。③ 本次没有为「值种类」加运行期断言，判据是 `str()` 的输出。
 
@@ -1633,7 +1633,7 @@ static int resolve_addr(const char *host, uint16_t port, struct sockaddr_storage
 
 **「钉子是不是空的」不能用秒表判。** 第一版把非真空判定写成时间窗（`elapsed < 1500` 即「停顿没注入」）。独立复核实测把它**证伪**了：`env -u LD_PRELOAD` 连跑 11 次，第 11 次得到 `elapsed_ms=2871 connected=0` 与 `resolve_bound: ok`、rc=0 —— **没有注入却全绿**。根因是新代码下「无注入」的一次调用本来就要花掉真实解析加上一整个 connect 预算（约 2025 ms），真实 connect 稍慢就落进窗口，所以丢掉 preload 只有约 **10/11** 的概率被抓。改法：让垫片自己留可检验的痕迹 —— 垫片拦截时向 `SLOWDNS_LOG` 指向的文件追加 `getaddrinfo node=… stall=…`，探针跑完 Phase A 读该文件，空则报 `FAIL getaddrinfo was not interposed; the pin is vacuous`。文件内容不会「慢」，所以不会像秒表那样误判；改后同样的负控 **12/12** 都红。
 
-CTest **#123** `resolve_timeout_runtime`（`CMakeLists.txt:940`），`tools/gate.sh:50` 的 `EXP_CTEST` 从 122 改成 **123**。
+CTest **#123** `resolve_timeout_runtime`（`CMakeLists.txt:940`），`tools/gate.sh` 的 `EXP_CTEST` 那一行从 122 改成 **123**。
 
 **反向对照。** 同一个探针分别链到 HEAD 的 `socket.c` 与修复版：HEAD 侧是 `resolve_bound stall: elapsed_ms=10224 connected=1`、`FAIL the bound did not hold`、rc=1；修复版 rc=0。也就是说这个钉子对修复前的代码**是红的**，不是一条永远绿的断言。
 
@@ -1955,7 +1955,7 @@ Windows 的数值证据来自 ucrt64 手工全量编译的引擎。③ 判据是
 - 修复后：10 项全 `ok`，rc=0
 - 同一支探针在 mingw64 上编出并运行，结果与 Linux 相同
 
-CTest `#127 parser_member_safe_probe`（注册在最后，既有 `#N` 不动），`tools/gate.sh:50` 的
+CTest `#127 parser_member_safe_probe`（注册在最后，既有 `#N` 不动），`tools/gate.sh` 的
 `EXP_CTEST` 126 → 127。
 
 **诚实边界。**
@@ -2473,7 +2473,7 @@ if (builtin_lookup(vm, name) >= 0) {
 ### 闸门断言：`stage_ctest` 里的 `is already registered`
 
 守卫把损失变成一行 stderr，但**没有任何测试会因为它失败**。
-`tools/gate.sh` 的 `stage_ctest`（`tools/gate.sh:146-152`）新增一条断言：
+`tools/gate.sh` 的 `stage_ctest`（该函数在 `4ca013d` 上占 `:148-236`；这条断言就是 `:168` 的 `tools/check_test_ports.py` 调用）新增一条断言：
 ctest 的输出里出现 `is already registered` ⇒ **阶段红**，并把那一行原样打出来。
 
 **为什么断言放在这里**：它是**这一阶段刚跑的那些套件**的性质，而**没有任何单个测试文件看得见它** ——
@@ -2675,7 +2675,7 @@ harness）。**这不是一次「重复劳动」的遗憾，是这个缺陷在�
 ⇒ 两条 FAIL、rc=1；恢复 ⇒ `migrate_report tests: ok`、rc=0。
 
 **计数。** `grep -c 'add_test('` **134 → 136（本分支）→ 137（合并 `main` 后）→ 138**；
-`tools/gate.sh:54` 的 `EXP_CTEST`、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1 四处同步。
+`tools/gate.sh` 的 `EXP_CTEST` 那一行、`docs/BOARD.md` §3、`docs/STATUS.md` §2/§2.1 四处同步。
 `check_orphan_fixtures` 的输入数 **110 → 112**（`tools/desugar.test.py` + `tools/migrate_report.test.py`；
 `tools/desugar_probe.sh` 被删除）。`tools/README.md` 的门禁表原先写「Seven stages」、只列 7 个、
 `ctest` 期望 `93 / 93` —— 已由 `vivid-anchor` 改成十二阶段与当前数字；**这是同一形状的第五次**
@@ -2772,7 +2772,7 @@ rc=1；恢复 ⇒ rc=0。注册在 `migrate_report_runtime` 之后（末尾追�
 
 ### 同节附带修掉的一处：计数的第六个点
 
-`docs/BOARD.md:54` 写的是 **`137 / 137`** 与 `0 tests failed out of 137`，而 `tools/gate.sh:54` 当时是 **138**。这一行恰恰是**引用 `stage_ctest` 断言文本**的那一行（「`stage_ctest` 会检查输出里确有 `0 tests failed out of N`」）⇒ 一份声称「数量是断言」的表格，自己引的数**落后一轮**。上一轮我报「四处计数已同步」时把这一处算进去了，**它实际没被改**。本轮连同 139 一起改成六处：`tools/gate.sh:54`、`docs/STATUS.md` §2 的四处（`:38`/`:44`/`:51`/`:60`）、`docs/BOARD.md:54`。
+`docs/BOARD.md:54` 写的是 **`137 / 137`** 与 `0 tests failed out of 137`，而 `tools/gate.sh` 的 `EXP_CTEST` 那一行当时是 **138**。这一行恰恰是**引用 `stage_ctest` 断言文本**的那一行（「`stage_ctest` 会检查输出里确有 `0 tests failed out of N`」）⇒ 一份声称「数量是断言」的表格，自己引的数**落后一轮**。上一轮我报「四处计数已同步」时把这一处算进去了，**它实际没被改**。本轮连同 139 一起改成六处：`tools/gate.sh` 的 `EXP_CTEST` 那一行、`docs/STATUS.md` §2 的四处（`:38`/`:44`/`:51`/`:60`）、`docs/BOARD.md:54`。
 
 ### 诚实边界
 
@@ -3023,7 +3023,7 @@ $ python3 tools/check_orphan_fixtures.py
 check_orphan_fixtures: 115 input(s) checked (69 vtest fixtures, 33 python harnesses, 13 node harnesses); 66 fixtures registered, 3 allowed with a stated reason.
 ```
 
-它的 docstring 第一行写着 `Why this exists (docs/AUDIT.md §1.59):`，且在门禁里真的跑（`tools/gate.sh:437`）。**⇒ §1.59 描述的那个缺口已经被这条检查补上了。** 它自己第 23-24 行那句「a set is named, and its membership is never checked against the set that actually runs」是在描述**它要修的缺陷**，不是在描述它自己 —— **读起来极易反过来理解。**
+它的 docstring 第一行写着 `Why this exists (docs/AUDIT.md §1.59):`，且在门禁里真的跑（`tools/gate.sh` 里 `stage_orphan_fixtures` 的 `tools/check_orphan_fixtures.py` 调用；`4ca013d` 上在 `:474`）。**⇒ §1.59 描述的那个缺口已经被这条检查补上了。** 它自己第 23-24 行那句「a set is named, and its membership is never checked against the set that actually runs」是在描述**它要修的缺陷**，不是在描述它自己 —— **读起来极易反过来理解。**
 
 同类还有 `tools/check_text_integrity.py`（为 §1.55 而写，检查文本文件不得含 NUL 字节 —— 这是**内容**性质的，不是指向性的）。
 
@@ -3042,7 +3042,7 @@ check_orphan_fixtures: 115 input(s) checked (69 vtest fixtures, 33 python harnes
 
 1. **本条只描述现状的形状，不主张把所有检查都改成 content-shaped。** 有些检查本就该是指向性的 —— `check_links.py` 问「这个链接指向的文件在不在」就是它的全部职责，让它去查重复会把两件事混成一件。**判据是「先分类」，不是「都应该变成后者」。**
 2. **实例是枚举出来的，不是穷举。** 我只逐个量了 `tools/check_*.py` 这 7 个文件（用上面那条 `grep` 命令，判据是「是否含 `dup`/`repeat`/`seen`/`count(`」），**没有**审计 `tools/` 下其余脚本、`.github/workflows/**`、`tools/gate.sh` 里各阶段的检查逻辑，也没有审计 CTest 侧。⇒ 若别处存在 content-shaped 检查，本条的第一句应当再收窄；**这条命令是重跑的入口，不是已经穷尽的结果。**
-3. **本节的实例清单同时含「已修」与「现存」两类，而两者的判据不同** —— 这是两种不同的定性，不能混读：**「已修」的判据是「存在一条检查器、且它真的跑在门禁里」**（`§1.59` → `tools/check_orphan_fixtures.py`，`tools/gate.sh:437`；`§1.55` → `tools/check_text_integrity.py`，`tools/gate.sh:426`），**「现存」的判据是「没有任何检查器覆盖这件事」**（`§1.66` 的 `grep -n 'dup\|repeat\|seen' tools/check_links.py tools/check_doc_paths.py` 零命中；`§1.65` 的两个口径无任何比对）。⇒ **同一个列表里两类条目若不分判据，读者会把「已修」读成「仍有缺口」或反过来** —— 而这两种误读都恰好是本族在治的形状。**本节因此把两类并列写出，而不是只留现存缺口。**
+3. **本节的实例清单同时含「已修」与「现存」两类，而两者的判据不同** —— 这是两种不同的定性，不能混读：**「已修」的判据是「存在一条检查器、且它真的跑在门禁里」**（`§1.59` → `tools/check_orphan_fixtures.py`，`tools/gate.sh` 的 `stage_orphan_fixtures`；`§1.55` → `tools/check_text_integrity.py`，`tools/gate.sh` 的 `stage_text_integrity`），**「现存」的判据是「没有任何检查器覆盖这件事」**（`§1.66` 的 `grep -n 'dup\|repeat\|seen' tools/check_links.py tools/check_doc_paths.py` 零命中；`§1.65` 的两个口径无任何比对）。⇒ **同一个列表里两类条目若不分判据，读者会把「已修」读成「仍有缺口」或反过来** —— 而这两种误读都恰好是本族在治的形状。**本节因此把两类并列写出，而不是只留现存缺口。**
 
 ## §1.68 同一个量在两棵树上有两个值，而两个都是对的
 
@@ -3077,7 +3077,7 @@ check_orphan_fixtures: 115 input(s) checked (69 vtest fixtures, 33 python harnes
 
 **三条探针，都是「不靠门禁」，但触发时机不同**：**列数**（本轮有人在 Markdown 单元格里嵌换行、把 6 格的行拆成 3 格，门禁全绿）、**行是否重复**（另一条线上 `docs/BOARD.md`/`docs/STATUS.md` 一行出现两遍，`check_links`/`check_doc_paths` 全绿）、**我在哪棵树上**（本节作者的 `142` 误读）。**前两条在写完之后读回文件，第三条在读之前** —— 同族而触发条件不同，三条都要留。
 
-**活体标本（同一路径、两个分支、两个值、门禁全绿）**：根工作树的 `tools/gate.sh:54` 至今是 `EXP_CTEST="${EXP_CTEST:-142}"`，而 `main` 上是 `148`。**本节作者读它时正好中招**，一度把 `142` 判成对方的数字错。
+**活体标本（同一路径、两个分支、两个值、门禁全绿）**：`stream/builtin-contract-rulings @ ab70a71` 的 `tools/gate.sh` 的 `EXP_CTEST` 那一行是 `EXP_CTEST="${EXP_CTEST:-142}"`，而 `main` 上是 `148`（**原文写的是「根工作树的 …… 至今是」，那个「至今」在根工作树切到 `main` 之后就假了** —— 又一次「观测点没跟着被观测的对象走」）。**本节作者读它时正好中招**，一度把 `142` 判成对方的数字错。
 
 ## §1.69 测量点、发布物、以及「我说的那棵树」怎么变成可判定的
 
@@ -3308,7 +3308,7 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 ## §1.72 一次推送前必须跑哪些阶段，由 `git diff --name-only` 决定，不由感觉决定
 
-**症状（由 ivory-ember 复核指出，发生在本文档自己的推送流程里）。** `ce457df` 只删了一个 `。`，我在**文档三阶段 rc=0 之后就推了**，全量十二阶段门禁**在推之后**才跑完。**这次是对的，但「对」需要写出理由才算对** —— 否则「全量门禁在跑」这句话会被下一个读的人理解成「推的时候还没验证」。
+**症状（由 ivory-ember 复核指出，发生在本文档自己的推送流程里）。** `ce457df` 只删了一个 `。`，我在**文档三阶段 rc=0 之后就推了**，全量门禁（**当时是十二阶段**）**在推之后**才跑完。**这次是对的，但「对」需要写出理由才算对** —— 否则「全量门禁在跑」这句话会被下一个读的人理解成「推的时候还没验证」。
 
 **规矩。** 推之前必须跑的，是**这笔 diff 能影响的阶段**；这件事的**输入**是 `git diff --name-only <base> <head>`。
 
@@ -3332,43 +3332,45 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 | 改动落在 | 推前必须跑 | 为什么（不是「感觉不可能」） |
 |---|---|---|
 | `docs/**` | `links` / `doc-paths` + **通则 A** | 只有 `links` 与 `doc-paths` 把 markdown **当 markdown** 读 |
-| `src/**` | `build` / `ctest` / `fuzz` / `economy` / `plugin` + **通则 A** | `tools/check_text_integrity.py:5-8` 逐字写着它**为什么存在**：「Three git-tracked C sources carried NUL bytes inside block comments -- `src/mod/gui_mod.c` (5), `src/lexer/lexer.c` (2), `src/lexer/lexer.h` (1)」；`tools/economy_migration.test.py:70-75` 找 `build/inimerse`、`:142` 跑它；`tools/dsh-inimerse/verify.mjs:137` 走 `inim_run`，而 `tools/gate.sh:318-321` 自述是「a live round trip through the real **inim-server / inim-client binaries**」 |
+| `src/**` | `build` / `ctest` / `fuzz` / `economy` / `plugin` + **通则 A** | `tools/check_text_integrity.py:5-8` 逐字写着它**为什么存在**：「Three git-tracked C sources carried NUL bytes inside block comments -- `src/mod/gui_mod.c` (5), `src/lexer/lexer.c` (2), `src/lexer/lexer.h` (1)」；`tools/economy_migration.test.py:70-75` 找 `build/inimerse`、`:142` 跑它；`tools/dsh-inimerse/verify.mjs:137` 走 `inim_run`，而 `tools/gate.sh` 的 `stage_plugin` 自述（`4ca013d` 上 `:356-357`）是「a live round trip through the real **inim-server / inim-client binaries**」 |
 | `vtest/**` | `ctest` / `orphan-fixtures` + **通则 A** | 输入是 fixture；不读 C 源码、不读 markdown |
 | **`tools/` 下任何被 `tools/gate.sh` 调用的文件**（含 `Infiverse_standard/oauth_loop/**`） | **它被调用时所在的那个阶段** + **通则 A** | **判据本身变了**。**这一行不许按名字手写 glob，必须从 `tools/gate.sh` 的真实调用点派生** —— 映射见下表 |
 | `tools/gate.sh`、`CMakeLists.txt` | **全部阶段** | **判据本身变了，且没有任何阶段可免** |
 | `.github/**` | **通则 A**（`.yml` 在列）；其余无 | 实测**无人读 `.github/`**：全仓只有 `tools/ctest_enumerate.sh:12` 的一句注释提到它 ⇒ 「没有阶段读它」成立，**但「不受影响」不成立**（`.yml` 是 `text-integrity` 的输入） |
 
-**`tools/gate.sh` 的真实调用点（逐个读出，不是按名字猜）。**
+**`tools/gate.sh` 的真实调用点（逐个读出，不是按名字猜；**下表全部在 `4ca013d` 上量**）。**
 
 | 阶段 | 它调用的判据 |
 |---|---|
-| `ctest` | `tools/check_test_ports.py`（`:131`，**在 `stage_ctest` = `:111-200` 内部**） |
-| `fuzz` | `tools/im_diff_fuzz.py`（`:204`） |
-| `economy` | `tools/economy_migration.test.py`（`:266`） |
-| `node` | `tools/node_suites/run_all.js`（`:289`） |
-| `plugin` | `tools/dsh-inimerse/verify.mjs`（`:324`） |
-| `oauth-loop` | `Infiverse_standard/oauth_loop`（`:338`）、`tools/check_async_commands.py`（`:387`，**在 `stage_oauth_loop` = `:327-394` 内部**） |
-| `ignored-credentials` | `tools/check_ignored_credentials.py`（`:402`） |
-| `links` | `tools/check_links.py`（`:406`） |
-| `doc-paths` | `tools/check_doc_paths.py`（`:416`） |
-| `text-integrity` | `tools/check_text_integrity.py`（`:426`） |
-| `orphan-fixtures` | `tools/check_orphan_fixtures.py`（`:437`） |
+| `ctest` | `tools/check_test_ports.py`（`:168`，**在 `stage_ctest` = `:148-236` 内部**） |
+| `fuzz` | `tools/im_diff_fuzz.py`（`:241`） |
+| `economy` | `tools/economy_migration.test.py`（`:303`） |
+| `node` | `tools/node_suites/run_all.js`（`:326`） |
+| `plugin` | `tools/dsh-inimerse/verify.mjs`（`:361`；它自己的自述在 `:356-357`） |
+| `oauth-loop` | `Infiverse_standard/oauth_loop`（`:375`）、`tools/check_async_commands.py`（`:424`，**在 `stage_oauth_loop` = `:364-430` 内部**） |
+| `ignored-credentials` | `tools/check_ignored_credentials.py`（`:439`） |
+| `links` | `tools/check_links.py`（`:443`） |
+| `doc-paths` | `tools/check_doc_paths.py`（`:453`） |
+| `text-integrity` | `tools/check_text_integrity.py`（`:463`） |
+| `orphan-fixtures` | `tools/check_orphan_fixtures.py`（`:474`） |
+| `orphan-targets` | `tools/check_orphan_targets.py`（`:488`） |
+**为什么是十二行。** 四个数**各自有出处**，不用减法串起来（全部在 `4ca013d` 上量）：`$REPO_ROOT/` 在 `tools/gate.sh` 里出现 **15** 处（`grep -c '\$REPO_ROOT/' tools/gate.sh`）；其中 `:54` 的 `BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"` 是**构建输出目录**、`:625` 的 `--required-for` 读取器是**读 `TEXT_SUFFIXES` 的工具本身** ⇒ **13 处判据调用点**；`STAGE_SPECS` 里注册 **13 个阶段**（`awk '/^STAGE_SPECS=\(/{f=1;next} f&&/^\)/{exit} f' tools/gate.sh | grep -c '^ *"'`），除 `build` 外**每个阶段调用一个判据** ⇒ **12 个阶段**；而 **12 行对应 13 处引用**，因为 `oauth-loop` 那一行含**两个**文件（`:375` 与 `:424`）。
+**这四个数在合入 `4ca013d` 时全部变了一次**（`$REPO_ROOT/` 13 → **15**、阶段 12 → **13**、引用 12 → **13**、行 11 → **12**），而**两个非调用点的 `$REPO_ROOT/` 里，有一个正是修这条规矩的那个机制自己加的**（`:625` 的 `--required-for` 读取器）—— **修「集合变了、数字没变」的那一笔，自己又往那个集合里加了一项。这是本节的第三次「集合变了、数字没变」，也是唯一一次成因是「修这个病的东西本身就是新元素」。**
 
-**为什么是十一行。** 三个数**各自有出处**，不用减法串起来：`$REPO_ROOT/` 在 `tools/gate.sh` 里出现 **13** 处（`grep -c '\$REPO_ROOT/' tools/gate.sh`）；其中 `:19` 的 `BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"` 是**构建输出目录**、不是判据 ⇒ **12 处判据引用**；十二阶段里除 `build` 外**每个阶段调用一个判据** ⇒ **11 个阶段**；而 **11 行对应 12 处引用**，因为 `oauth-loop` 那一行含**两个**文件（`:338` 与 `:387`）。
-
-**这一句的初稿是本节第三个数字问题，而且是性质最坏的一个。** 初稿写「引用共**十二**处……十二阶段减 `build` 得十一」—— 实测总数是 **13**，于是那个减法在它自己的量上不成立（13 − 1 = 12 ≠ 11）；**它把「判据引用数」和「阶段数」当成了同一个量，在一个句子里换了两次口径**。**三者是三种形状**：「八个」→十一是**过期的数**（集合变了、数字没变）；`TEXT_NAMES` 的洞**不是数字问题、也没有「变了」** —— 那是**机制只写了一半**（一条从未在文档里出现过的通道，不是过期的数）；而这一个是**新写的错数**。**三种形状比「两个同类 + 一个更坏」更能支持「性质最坏」这个判断**：前两者是漏改，第三个是新增。
+**这一句的初稿是本节第三个数字问题，而且是性质最坏的一个。** 初稿写「引用共**十二**处……十二阶段减 `build` 得十一」—— 实测总数是 **13**（`git show 4b7b37c:tools/gate.sh | grep -c '\$REPO_ROOT/'`），于是那个减法在它自己的量上不成立（13 − 1 = 12 ≠ 11）；**它把「判据引用数」和「阶段数」当成了同一个量，在一个句子里换了两次口径**。**三者是三种形状**：「八个」→十一是**过期的数**（集合变了、数字没变）；`TEXT_NAMES` 的洞**不是数字问题、也没有「变了」** —— 那是**机制只写了一半**（一条从未在文档里出现过的通道，不是过期的数）；而这一个是**新写的错数**。**三种形状比「两个同类 + 一个更坏」更能支持「性质最坏」这个判断**：前两者是漏改，第三个是新增。
 
 **★ 这张表本身的成立条件（本条初稿在这上面错了四处，全部由 ivory-ember 复核指出，五条我逐条独立复核成立）。**
 1. **初稿的 `src/**` 行漏了三个阶段，而其中一个是「为 `src/` 而建」的**：`text-integrity` 的存在理由**就是** `src/` 里的 NUL 字节。**照初稿那张表跑的人，不会跑那个专门为 `src/` 而建的阶段** —— 一张用来**免跑**的表把该跑的免掉了，这比没有表更坏。
 2. **初稿把第三列写成「不受影响」的名单，而同一个表头下有两种意思**：`vtest/**` 那一行填 `——`，读作「没有阶段是不可能受影响的」，**而那是假的**（`vtest/**` 显然不影响 `links`/`doc-paths`）。**一个表头两种语义，就是本轮一直在治的形状。** 现在第三列改成「**为什么**」——它要的是**理由**，不是**名单**。
-3. **初稿缺了「判据本身变了」的第二个入口**：十二阶段里有**十一个**调用了 `tools/`（或 `Infiverse_standard/`）下的文件（见下表；**十二减 `build` 得十一** —— `build` 阶段的 `$REPO_ROOT/build` 是**输出目录**，不是判据）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。**这个数字在第二轮补进四个之后没跟着改（同一节、隔一张表），是「集合变了、数字没变」的又一例。**
-4. **标题比实际强一级（这一处仍未修）**：`git diff --name-only` 给的是**文件清单**，清单→阶段的映射**目前只存在于上面这张 markdown 表里（散文）**，**没有一条命令返回 0/1**。⇒ **判据的输入可重算，判据本身尚无可执行形态。** 这条在这里有牙：**§1.72 是用来免跑阶段的，一条不可执行的免跑判据，正是本轮反复治的形状。** 修法（**未做，已派 agent2 —— `tools/**` 是他的写域**）：给 `tools/gate.sh` 加 `--required-for <base>..<head>`，把上表编码进脚本、返回阶段名单与退出码；**在那之前，本节的措辞是「输入可重算」，不是「判据可执行」。**
+3. **初稿缺了「判据本身变了」的第二个入口**：十三阶段里有**十二个**调用了 `tools/`（或 `Infiverse_standard/`）下的文件（见下表；**十三减 `build` 得十二** —— `build` 阶段的 `$REPO_ROOT/build` 是**输出目录**，不是判据）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。**这个数字在第二轮补进四个之后没跟着改（同一节、隔一张表），是「集合变了、数字没变」的又一例；而在合入 `4ca013d` 之后它又变了一次（十二 → 十三，`orphan-targets` 是第十三个阶段），当时它正被本节引用 —— 同一个量、同一节、第二次。**
+4. **标题比实际强一级 —— 这一处在 `4ca013d` 上已修。** `git diff --name-only` 给的是**文件清单**，清单→阶段的映射原先只存在于上面那张 markdown 表里（散文）、**没有一条命令返回 0/1**。**现在有了**：`tools/gate.sh --required-for <base>..<head>`（`4ca013d` 上 `:17` 是用法、`:65` 取参、`:625` 读 `TEXT_SUFFIXES`/`TEXT_NAMES`），它**从 `STAGE_SPECS` 与真实调用点派生**，先例就在同一个文件里（逐字：「The legal `--only` values are derived from this, never from a second handwritten list: **a list nothing consumes only constrains the moment it was written**」），并带四条**可重做**的红控（注册表指向不存在的函数、规则写成不存在的阶段、派生器读不到任何调用点、某个已注册阶段没有任何规则能到达它 —— 各返回 rc=2）。**仍未可派生的一半**：`REQUIRED_SCOPES` 里「哪个阶段的主题覆盖哪棵子树」仍手写，因为 `stage_links` 跑 `tools/check_links.py`、**没有任何调用点说它读 `docs/`**（引擎是被编译器读的，也没有 reader），每次运行与注册表核对。⇒ **判据可执行了；表里「覆盖哪棵子树」那一列仍是声明。**
 5. **第四行的 glob 是按「名字形状」选的，漏了四个「判据本身」（第二轮打回）**：初稿写 glob `tools/check_*.py`、`tools/*.test.py`，于是**名字不像 checker 的四个全漏了** —— `tools/im_diff_fuzz.py`（→`fuzz`）、`tools/node_suites/run_all.js`（→`node`）、`tools/dsh-inimerse/verify.mjs`（→`plugin`）、`Infiverse_standard/oauth_loop/**`（→`oauth-loop`）。**这四个恰恰是「改了就影响某个阶段」的判据本身。** 而**修法不是再加一个 glob，是换来源**：从 `tools/gate.sh` 的真实调用点派生。**我这次是靠手工枚举才把四个找出来的，而这个枚举本身就该由脚本做。**
 6. **表内自相矛盾**：row `src/**` 的「为什么」**逐字引用了 `tools/dsh-inimerse/verify.mjs:137`** 当作必须跑 `plugin` 的理由，而同一文件在第四行**不是**「判据本身变了」的入口 —— **同一张表对同一个文件给了两种身份。**
 7. **`text-integrity` 漏在后三行，成因是它按扩展名扫全部受管文本**：`tools/check_text_integrity.py:55` 起 `TEXT_SUFFIXES` 含 `.md .im .py .sh .yml .js .json .rs .ts .txt .toml` 等，作用域是 `git ls-files` 的**全部**受管文本 ⇒ row 3（`.im`/`.py`）漏、row 4（`.py`）漏、**row 5 说 `.github/**` 「无」是错的**（`.yml` 在列）；顺带 row 1 的理由也不准（它写「只有这三个阶段读 markdown」，而 `text-integrity` **并不把 markdown 当 markdown 读**）。**干净修法是表外加一条通则，不是逐行补**（见通则 A）。
 8. **row 3 与 row 4 的 glob 相交且答案不同**：初稿 row 3 的 `tools/*.test.*` **包含** row 4 的 `tools/*.test.py`；对 `tools/economy_migration.test.py`，row 3 说跑 `ctest`/`orphan-fixtures`（**错的** —— 它不是 CTest 的输入），row 4 说跑 `economy`（对的）。**一个路径类落在两行、两个答案。** 现在 row 3 只留 `vtest/**`。
-9. **两个「在内部被别的阶段调用」的脚本必须点名它属于哪个阶段**，否则「它背书的那个阶段」是一句空话：`tools/check_test_ports.py` 在 `tools/gate.sh:131`、属 `stage_ctest`（`:111-200`）⇒ 背书 `ctest`；`tools/check_async_commands.py` 在 `:387`、属 `stage_oauth_loop`（`:327-394`）⇒ 背书 **`oauth-loop`**（**按名字完全猜不到**）。
+9. **两个「在内部被别的阶段调用」的脚本必须点名它属于哪个阶段**，否则「它背书的那个阶段」是一句空话：`tools/check_test_ports.py` 在 `tools/gate.sh:168`、属 `stage_ctest`（`:148-236`）⇒ 背书 `ctest`；`tools/check_async_commands.py` 在 `:424`、属 `stage_oauth_loop`（`:364-430`）⇒ 背书 **`oauth-loop`**（**按名字完全猜不到**）。
 
+10. **合入 `4ca013d` 让本节自己失效了一次（本节的第三次「集合变了」）。** 那条分支在 `tools/gate.sh` 顶部加了 35 行，于是**本文档里 13 处 `tools/gate.sh:<N>` 引用当场全部失效**（实测映射：`EXP_CTEST` 那一行 `:54` → **`:92`**、`check_test_ports.py` `:131` → `:168`、`stage_ctest` `:111-200` → `:148-236`、`stage_oauth_loop` `:327-394` → `:364-430`、`check_orphan_fixtures.py` `:437` → `:474`、`check_text_integrity.py` `:426` → `:463`）。**同一个目标在本文档里已经有过三个号码**（`EXP_CTEST` 那一行：`:50` → `:54` → `:92`），**而每一次写下时都是对的**。⇒ 处置**不是把 13 个号码换成新号码**（下一笔又会漂），而是**在 `tools/gate.sh` 上不再写裸行号、改写成锚**（写「`EXP_CTEST` 那一行」、写「`stage_orphan_fixtures` 的 `check_orphan_fixtures.py` 调用」）；**只有上面那张映射表保留行号，因为那张表的主题就是行号，且整表带 `4ca013d`。**
 **边界（本条初稿的反例放错了行，由 ivory-ember 实测更正）。** 初稿写「一个改 `docs/` 却被 `text-integrity` 之外的东西读到的文件会**漏**」。实测**那一侧是严的**：没有任何测试或检查器 `open` 一个 `docs/` 文件（`tools/check_orphan_fixtures.py` 只读 `CMakeLists.txt:104` 与 node runner `:109`），`add_test` 行里引用 `docs/` 的 = **0**。⇒ **`docs/**` 那一行是整张表里唯一严的一行；漏在 `src/**` 那一行**，已补完。这条规矩整体仍是**充分不必要**的保守下界：**照它跑不会漏，但它不声称「跑完就够」**。
 ## §1.73 一个建出来、编译过、却没有任何东西跑它的目标，是唯一一种连「失败」都拿不到的证据
 
