@@ -35,20 +35,20 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 138；其余各项为 2026-10-01 实测）
+## 2. 当前基线（2026-10-07 更新测试计数到 139；其余各项为 2026-10-01 实测）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.0` | `CMakeLists.txt:8`；git tag `v0.5.0` |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **138 / 138 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
+| 全量测试 | **139 / 139 真通过**，无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s | `ctest --test-dir build -j$(nproc)` |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **138** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
+| 测试注册 | `CMakeLists.txt` 中 **139** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 138
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 139
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -3910,3 +3910,23 @@ disagrees with its own table`、rc=1；两次都从 `/tmp` 备份精确恢复 �
 ③「在 `CMakeLists.txt` 里被提到」这类子串判据的边界见 §10.90；④`linux-build.yml` 仍然**没有
 `***Skipped` 断言**（`ivory-ember` 在 `stream/ci-gate-static` 上加过，未合入）—— 「跳过不是通过」在 CI 上
 仍然只有本地 `tools/gate.sh` 守着。
+
+## §10.95 两个 fixture 描述的程序从来没有被解析过；以及计数的第六个点
+
+**缺陷**：`vtest/lint_case_enum_v04.im:2` 与 `vtest/lint_case_membership_v04.im:2` 写的是 `dir be Direction = "N"`。`be` 的初始化分隔符是 **`:`**（`src/parser/parser.c:1383-1391`：`if (match(p, TOK_COLON)) stmt->beStmt.init = parse_expr(p);`），`=` 属于另一个语句 `type X = ...`（`parse_type_stmt`，`src/parser/parser.c:1218-1227`：`consume(p, TOK_EQ, "'='")`）。直接跑 ⇒ `Error: expected 'expression', but got '=' (type 83)`、**rc=1**。
+
+**为什么一直绿**：这两个 fixture 只被 `--lint` 消费，而 **lint 路径不打印解析错误**（实测同一条命令里 `expected '` 出现 0 次，只有 `[lint] line 3 [WARN] …`，rc=1）。CTest 的 `PASS_REGULAR_EXPRESSION` 匹的是那条 warning ⇒ **绿着，而 fixture 描述的程序从来没有被解析过**。分母（「这个 fixture 能不能被解析」）没有任何地方问过。
+
+**普查**：`vtest/*.im` 共 67 个，**2 个**吐解析错误（就是这两个），其余 65 个干净。全仓受跟踪 `.im` 里 `be` 只有 10 处，其中恰好这 2 处用了 `=`。
+
+**修法**：两处 `=` → `:`。直接跑 rc=1 → **rc=0**；`--lint` 输出**逐字不变**（`line 3 [WARN] finite case type 'Direction' is missing members: E, W`；`line 6`/`line 11` 两条 unreachable）⇒ `PASS`/`FAIL` 正则一条都不用改。
+
+**守卫**：新增 `tools/fixture_parse.test.py` 与 CTest **`#139 fixture_parse_runtime`**（注册在 `migrate_report_runtime` 之后，既有 `#N` 不移）。断言「吐解析错误的 fixture 数 == 0」，并**同时打印两个数**（`fixture_parse: 67 fixture(s) scanned, 0 emitted a parse error`）；`MIN_FIXTURES = 50` 防「0 of 0 读作干净」，`ALLOWED` 每条必须写出它是什么的证据（今天为空）。**A/B**：改回 `=` ⇒ `67 fixture(s) scanned, 2 emitted a parse error` + 逐条点名 + rc=1；恢复 ⇒ rc=0。
+
+**计数**：`add_test(` 138 → **139**；`EXP_CTEST`（`tools/gate.sh:54`）同步。
+
+**同节附带修掉的一处**：`docs/BOARD.md:54` 写的是 `137 / 137` 与 `0 tests failed out of 137`，而 `tools/gate.sh` 当时已是 **138** —— 这一行恰恰是**引用 `stage_ctest` 断言文本**的那一行，即「一份声称数量是断言的表格，自己引的数落后一轮」。上一轮我报「四处计数已同步」时把这一处算进去了，**它实际没被改**；本轮连同 139 一起改成**六处**：`tools/gate.sh:54`、`docs/STATUS.md` §2 的 `:38`/`:44`/`:51`/`:60`、`docs/BOARD.md:54`。
+
+**同族第七处，本轮被自己踩到**：新增 `tools/fixture_parse.test.py` 使 `tools/check_orphan_fixtures.py` 的输入数从 **112** 变成 **113**（python harness 32 → 33），而 `docs/BOARD.md:62` 的阶段表逐字引着 `112 input(s) checked (67 vtest fixtures, 32 python harnesses, 13 node harnesses)`。⇒ **加一个 harness 会静默让一份文档里引的数变成假的**，而没有任何东西比较这两者（`vivid-anchor` 在那行末尾留了一句「`tools/*.test.py` 每加一个，第二个数就加一」，那是一句**给人的提醒，不是检查**）。本轮手工改成 113/33；**「阶段表引的期望串必须真的出现在门禁输出里」这条检查留给 0.5.2**。
+
+**诚实边界**：标记表是取自 `src/parser/parser.c` 与 `src/lexer/lexer.c` 的**字面前缀**（新增一种错误消息形状不会被认出）；刻意排除 `Error at line %d: task/thread definitions inside a loop are silently ineffective`（被接受然后被忽略，不是解析失败）；超时算作没解析失败；**只扫 `vtest/*.im`**（仓库根 `*.im`、`selfhost/**`、`examples/**`、`projects/**` 不在范围内，那 8 处 `be` 恰好都在这些位置且今天都是 `:`）；「`--lint` 不打印解析错误」是一条命令的实测，没有读实现去解释。详见 [AUDIT.md](AUDIT.md) §1.61。

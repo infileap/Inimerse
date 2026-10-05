@@ -1,5 +1,5 @@
 type Direction = "N", "S", "E", "W"
-dir be Direction = "N"
+dir be Direction : "N"
 case dir {
     "N": say "north"
     "S": say "south"

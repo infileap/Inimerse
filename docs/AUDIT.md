@@ -2690,6 +2690,98 @@ harness）。**这不是一次「重复劳动」的遗憾，是这个缺陷在�
 ⑤**「两条分支各自绿」没有守卫**：CMake 只拒绝**同一棵树内**的重名，跨分支的同一处修复
 仍然只能靠人先比较再动手，本轮是靠一封来信才看见的。
 
+## §1.61 两个 fixture 描述的程序，从来没有被解析过
+
+### 症状
+
+`vtest/lint_case_enum_v04.im:2` 与 `vtest/lint_case_membership_v04.im:2` 都写着：
+
+```
+dir be Direction = "N"
+```
+
+`be` 语句的初始化分隔符是 **`:`**，不是 `=`。实测直接跑：
+
+```
+$ ./build/inimerse --no-mods vtest/lint_case_enum_v04.im
+Error: expected 'expression', but got '=' (type 83)      # rc=1
+```
+
+而这两个 fixture 各自的 CTest（`lint_case_enum_runtime` / `lint_case_membership_runtime`）**一直是绿的**。
+
+### 机制：两条语法，两个分隔符
+
+不是「文档与实现不一致」，是**两个不同语句的两个不同分隔符**：
+
+| 语句 | 解析点 | 初始化分隔符 |
+| --- | --- | --- |
+| `name be <集合或表达式> [: init]` | `src/parser/parser.c:1383-1391` | `if (match(p, TOK_COLON)) stmt->beStmt.init = parse_expr(p);` —— **只有 `:`** |
+| `type X = <集合或表达式>` | `src/parser/parser.c:1218-1227`（`parse_type_stmt`） | `consume(p, TOK_EQ, "'='")` —— **要求 `=`** |
+
+`be` 的 RHS 与 `type` 的 RHS 都走 `looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p)`，**形状相同、分隔符不同**，所以写错一个字符会得到一条看起来像「表达式写错了」的消息。实测 `dir be Direction : "N"` ⇒ rc=0、打印 `N`。
+
+### 为什么没有任何东西发现
+
+这两个 fixture **只被 `--lint` 消费**，而 **lint 路径根本不打印解析错误**：
+
+```
+$ ./build/inimerse --lint vtest/lint_case_enum_v04.im
+[lint] line 3 [WARN] finite case type 'Direction' is missing members: E, W
+$ echo $?      # 1
+```
+
+同一条命令的合并输出里 **`expected '` 出现 0 次**（实测 `parseerr=0`）。CTest 的 `PASS_REGULAR_EXPRESSION "missing members: E, W"` 匹的是那条 warning，`FAIL_REGULAR_EXPRESSION "line 11"` 也成立 ⇒ **绿着，而 fixture 描述的那个程序从来没有被解析过**。这是本族里「断言了一个没有分母的结论」的又一例：分母是「这个 fixture 能不能被解析」，而没有任何地方问过。
+
+### 普查
+
+`vtest/*.im` 共 **67** 个，其中 **2 个**吐解析错误 —— 就是这两个。其余 65 个干净。全仓受跟踪的 `.im` 里 `be` 只有 10 处，其中**恰好 2 处**用了 `=`（即这两个 fixture），另外 8 处都是 `:` 且 rc=0。
+
+### 修法与 A/B
+
+把两行的 `=` 改成 `:`（各一个字符）：
+
+| | 修前 | 修后 |
+| --- | --- | --- |
+| 直接跑 | `Error: expected 'expression', but got '=' (type 83)`、rc=1 | rc=0，无错误 |
+| `--lint` 输出 | `line 3 [WARN] finite case type 'Direction' is missing members: E, W` | **逐字相同** |
+| `--lint` 输出（membership） | `line 6` / `line 11` 两条 unreachable | **逐字相同** |
+
+⇒ `PASS_REGULAR_EXPRESSION` 与 `FAIL_REGULAR_EXPRESSION` **一条都不需要改**，而 fixture 从「不可解析」变成「可解析」。
+
+### 守卫：`tools/fixture_parse.test.py` + CTest `#139 fixture_parse_runtime`
+
+扫描 `vtest/*.im`，断言**吐解析错误的 fixture 数 == 0**，并**同时打印两个数**：
+
+```
+fixture_parse: 67 fixture(s) scanned, 0 emitted a parse error
+fixture_parse tests: ok
+```
+
+两层防「空扫描读作干净」：`MIN_FIXTURES = 50`（找到的 fixture 少于这个数直接失败），以及 `ALLOWED` 里每条必须写出**它是什么的证据**（今天为空；将来出现合法的负例 fixture 时，一条只列文件名的白名单就是同一个缺陷上升一层）。
+
+**A/B（守卫有牙）**：把两行改回 `=` ⇒
+
+```
+fixture_parse: 67 fixture(s) scanned, 2 emitted a parse error
+  lint_case_enum_v04.im: Error: expected 'expression', but got '=' (type 83)
+  lint_case_membership_v04.im: Error: expected 'expression', but got '=' (type 83)
+a fixture that cannot be parsed cannot be evidence for anything the engine does with it
+```
+
+rc=1；恢复 ⇒ rc=0。注册在 `migrate_report_runtime` 之后（末尾追加，既有 `#N` 不移），`EXP_CTEST` 138 → **139**。
+
+### 同节附带修掉的一处：计数的第六个点
+
+`docs/BOARD.md:54` 写的是 **`137 / 137`** 与 `0 tests failed out of 137`，而 `tools/gate.sh:54` 当时是 **138**。这一行恰恰是**引用 `stage_ctest` 断言文本**的那一行（「`stage_ctest` 会检查输出里确有 `0 tests failed out of N`」）⇒ 一份声称「数量是断言」的表格，自己引的数**落后一轮**。上一轮我报「四处计数已同步」时把这一处算进去了，**它实际没被改**。本轮连同 139 一起改成六处：`tools/gate.sh:54`、`docs/STATUS.md` §2 的四处（`:38`/`:44`/`:51`/`:60`）、`docs/BOARD.md:54`。
+
+### 诚实边界
+
+1. **标记表是字面前缀**，取自 `src/parser/parser.c` 与 `src/lexer/lexer.c` 里全部解析期错误串（`expected '` 覆盖 `parse_error_expected` 的两种形状，另加 f-string / case-action / `++`·`--` / 未终止字符串四条）。**新增一种错误消息形状不会被这里认出来** —— 这是检查的边界，不是它的能力。
+2. **刻意排除** `Error at line %d: task/thread definitions inside a loop are silently ineffective`（`src/parser/parser.c:1557`）：它报告的是**被接受然后被忽略**的构造，不是解析失败。
+3. **超时算作没解析失败**（每个 fixture 20 s）。一个真的挂死的 fixture 不会被这里抓到。
+4. **只扫 `vtest/*.im`**。仓库根目录的 `*.im`、`selfhost/**`、`examples/**`、`projects/**` 都不在范围内 —— 那 10 处 `be` 里有 8 处在这些位置，它们今天恰好都是 `:`，但**这个检查不保证它们**。
+5. 「`--lint` 不打印解析错误」是**一条命令的实测**，我没有读 `--lint` 的实现去解释它为什么这样。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
