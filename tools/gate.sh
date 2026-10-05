@@ -14,18 +14,34 @@
 #                              platform branch (docs/AUDIT.md 1.71), and then the
 #                              PASS says nothing about the file it names.
 #   tools/gate.sh --jobs 4     parallel job count for the build
-#   tools/gate.sh --required-for <base>..<head>
-#                              print the stages that range forces, one selector
-#                              per line, then `required: N stage(s)`.  It runs
+#   tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
+#                              print the stages that change forces, one selector
+#                              per line, then `required: N stage(s)` and, in
+#                              brackets, which question was answered.  It runs
 #                              nothing, and it exits 0 whenever it can answer:
 #                              "which stages are required" and "the required
 #                              stages ran" are two questions, and this answers
-#                              only the first.  It exits 2 when it cannot
-#                              answer -- an unresolvable range, a selector no
-#                              stage answers to, or a registered stage no rule
-#                              can reach.  See docs/AUDIT.md §1.72: a rule used
-#                              to excuse work, that no command can run, is a
-#                              rule applied by feel.
+#                              only the first.  One argument is handed to git
+#                              as it stands, and git reads three different
+#                              things out of it: `<base>..<head>` is committed
+#                              history and does not read the working tree at
+#                              all, a single rev is that commit against the
+#                              working tree and does, and a bare path is the
+#                              unstaged changes to that path and reads neither
+#                              history nor the index.  `staged` and `worktree`
+#                              name the two questions git's own syntax has no
+#                              spelling for.  All five print the same
+#                              `required: 0 stage(s)` when nothing changed, so
+#                              the count line says which one it was: a mistyped
+#                              path is a call that answers a question nobody
+#                              asked, and the bracket is where that shows.
+#
+#                              It exits 2 when it cannot answer: an argument
+#                              git cannot resolve, a missing argument, a
+#                              selector no stage answers to, or a registered
+#                              stage no rule can reach.  See docs/AUDIT.md
+#                              §1.72: a rule used to excuse work, that no
+#                              command can run, is a rule applied by feel.
 #
 #                              The stage list is STAGE_SPECS, the same registry
 #                              --only reads, so the two cannot drift.  Which
@@ -40,6 +56,17 @@
 #                              site says which subtree a subject reads; and
 #                              text-integrity's own TEXT_SUFFIXES/TEXT_NAMES,
 #                              read out of tools/check_text_integrity.py.
+#
+#                              The two lists watch each other, and each
+#                              direction has a command that goes red: a scopes
+#                              row naming a stage STAGE_SPECS does not declare
+#                              exits 2 ("a rule names stage 'nosuchstage', but
+#                              no stage answers to it."), and a STAGE_SPECS row
+#                              no scopes row and no `all` row can reach also
+#                              exits 2 ("stage 'build' is registered, but no
+#                              rule can reach it.").  A reader does not have to
+#                              take the second table's word for agreeing with
+#                              the first; he can run it.
 #
 # Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
 # and a summary table is printed last so a failing run is readable at a glance.
@@ -56,14 +83,19 @@ JOBS="$(nproc 2>/dev/null || echo 4)"
 FAST=0
 ONLY=""
 REQUIRED_FOR=""
+# Whether the flag was given at all.  An empty REQUIRED_FOR used to mean both
+# "the flag is absent" and "the flag was given no argument", so
+# `--required-for` on its own ran the full gate instead of refusing: the same
+# shape as the other refusals below, one flag earlier.
+REQUIRED_FOR_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --fast) FAST=1 ;;
     --only) ONLY="${2:-}"; shift ;;
     --jobs) JOBS="${2:-4}"; shift ;;
-    --required-for) REQUIRED_FOR="${2:-}"; shift ;;
-    -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
+    --required-for) REQUIRED_FOR="${2:-}"; REQUIRED_FOR_SET=1; shift ;;
+    -h|--help) sed -n '2,72p' "$0"; exit 0 ;;
     *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
@@ -565,18 +597,45 @@ done
 #     becomes an excused stage.
 REQUIRED_SCOPES=(
   # changed subtree                     stages whose subject reads it
+  #
+  # Every row says why it is written rather than derived.  "The scopes are
+  # handwritten" is only defensible if each row names what a call site could not
+  # have said, so each one does -- and there are two kinds of reason, the second
+  # being the one to watch: a reader exists but does not name the subtree, or
+  # there is no reader in this file at all.
+  #
+  # docs/* -- reader named, subtree not.  stage_links runs
+  #   tools/check_links.py, and that line passes it no directory: the file the
+  #   call site names says nothing about which tree the checker walks.
   "docs/*|links doc-paths"
+  # src/* -- no reader.  src/ is read by the compiler, and a compiler is not a
+  #   path named in this file.  fuzz and economy read a built engine, plugin the
+  #   shipped plugin, ctest the binaries; none of them names a source file.
   "src/*|build ctest fuzz economy plugin"
+  # vtest/* -- no reader.  stage_ctest runs ctest, which is handed no fixture
+  #   list, and check_orphan_fixtures.py builds its own set by globbing
+  #   vtest/*.im rather than being pointed at one.
   "vtest/*|ctest orphan-fixtures"
+  # tools/*.test.py, tools/*.test.js -- same shape as vtest/*: ctest names no
+  #   path, and the orphan checker globs the pattern itself.
   "tools/*.test.py|ctest orphan-fixtures"
   "tools/*.test.js|ctest orphan-fixtures"
+  # tools/node_suites/* -- reader named, subtree not.  stage_node runs
+  #   tools/node_suites/run_all.js, and no line in this file lists the suites
+  #   that runner discovers for itself.
   "tools/node_suites/*|node"
+  # tools/dsh-inimerse/* -- reader named, subtree not.  stage_plugin runs
+  #   tools/dsh-inimerse/verify.mjs, which loads the rest of that directory.
   "tools/dsh-inimerse/*|plugin"
-  # A change to the gate itself, or to the build, invalidates every stage's
-  # premise.  Nothing is excused.
+  # tools/gate.sh -- no reader.  No stage_ function names this file; every stage
+  #   depends on it because every stage is run by it, and "is run by" is not a
+  #   call site.
   "tools/gate.sh|all"
+  # CMakeLists.txt -- no reader.  cmake reads it and cmake is not a path named
+  #   here; stage_build names the source directory, not this file.  A change to
+  #   the build graph invalidates every stage's premise, so nothing is excused.
   "CMakeLists.txt|all"
-  # CI is CI's own business and needs no stage here.
+  # .github/* -- no reader and no stage: CI is CI's own business.
   ".github/*|-"
 )
 
@@ -669,15 +728,67 @@ stages_for_path() {
 DERIVED_EDGES=""
 TEXT_GLOBS=()
 
-# Print the stages a range forces, in registry order, then the count.
+# Print the stages a change forces, in registry order, then the count, then
+# which question was answered.
+#
+# The bracket on the count line is not decoration.  Git reads three different
+# questions out of one argument -- a range is committed history, a single rev is
+# that commit against the working tree, a bare path is the unstaged changes to
+# that path -- and all three print `required: 0 stage(s)` when nothing changed.
+# A mistyped path therefore gets a confident, well-formed answer to a question
+# nobody asked.  Refusing the path would be worse: the single-rev form is the
+# only one that reads the working tree at all, and a rule demanding `..` would
+# forbid it.  So the answer says what it inspected instead.
 required_for() {
-  local range="$1" changed
-  if ! changed="$(git -C "$REPO_ROOT" diff --name-only "$range" 2>&1)"; then
-    echo "gate: --required-for: git cannot resolve '$range' as a range:" >&2
-    printf '%s\n' "$changed" >&2
-    echo "gate: refusing to answer a question about a range that does not exist." >&2
+  local range="$1" changed label
+
+  if [ -z "$range" ]; then
+    echo "gate: --required-for needs an argument: '<base>..<head>', 'staged', 'worktree'," >&2
+    echo "gate: a single rev, or a path." >&2
+    echo "gate: with no argument it ran the full gate instead of refusing, which is this same" >&2
+    echo "gate: shape one flag earlier: a question never asked, reporting a result." >&2
     exit 2
   fi
+
+  case "$range" in
+    staged)
+      label="staged: the index against HEAD -- the working tree is not read"
+      if ! changed="$(git -C "$REPO_ROOT" diff --cached --name-only 2>&1)"; then
+        echo "gate: --required-for staged: git could not diff the index:" >&2
+        printf '%s\n' "$changed" >&2
+        exit 2
+      fi
+      ;;
+    worktree)
+      label="worktree: the worktree and index against HEAD, plus untracked files"
+      if ! changed="$(git -C "$REPO_ROOT" diff HEAD --name-only 2>&1
+                       git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>&1)"; then
+        echo "gate: --required-for worktree: git could not read the worktree:" >&2
+        printf '%s\n' "$changed" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      if ! changed="$(git -C "$REPO_ROOT" diff --name-only "$range" 2>&1)"; then
+        echo "gate: --required-for: git cannot resolve '$range' against anything:" >&2
+        printf '%s\n' "$changed" >&2
+        echo "gate: refusing to answer a question about an argument that does not exist." >&2
+        exit 2
+      fi
+      case "$range" in
+        *..*)
+          label="range $range: committed only -- the working tree is not read"
+          ;;
+        *)
+          if [ -n "$(git -C "$REPO_ROOT" rev-parse --verify --quiet "${range}^{commit}" 2>/dev/null || true)" ]; then
+            label="single rev $range: against the working tree -- uncommitted tracked changes are read"
+          else
+            label="path $range: unstaged changes to that path only -- history and the index are not read"
+          fi
+          ;;
+      esac
+      ;;
+  esac
 
   # The derivation, once, before anything is answered.
   local -a edges=()
@@ -794,12 +905,14 @@ required_for() {
     echo "$path"
     n=$((n + 1))
   done
-  echo "required: $n stage(s)"
+  echo "required: $n stage(s)  [$label]"
 }
 
 # --required-for answers a question; it does not run the gate, so it returns
-# before the first stage starts.
-if [ -n "$REQUIRED_FOR" ]; then
+# before the first stage starts.  The flag having been given is what counts, not
+# the answer being non-empty: `--required-for` with no argument must refuse, not
+# fall through to a full gate run.
+if [ "$REQUIRED_FOR_SET" -eq 1 ]; then
   required_for "$REQUIRED_FOR"
   exit 0
 fi

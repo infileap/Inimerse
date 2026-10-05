@@ -101,14 +101,27 @@ tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|
                               # whether it was compiled here — a target can be run by a
                               # CTest and still be named only inside a platform branch
                               # ([docs/AUDIT.md](../docs/AUDIT.md) §1.71).
-tools/gate.sh --required-for <base>..<head>
-                              # print the stages that range forces, one selector per
-                              # line. Runs nothing, so a green answer here is not a
-                              # green gate. The stage list is the same registry
-                              # `--only` reads; which path forces which stage comes
-                              # from each `stage_*` function's own call sites, from
-                              # the scopes written in `gate.sh`, and from
-                              # `check_text_integrity.py`'s own suffix/name lists.
+tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
+                              # print the stages that change forces, one selector per
+                              # line, then `required: N stage(s)` and a bracket saying
+                              # which question was answered — a range is committed
+                              # history and does not read the working tree, a single
+                              # rev does, and a bare path is the unstaged changes to
+                              # that path. All three print the same `0 stage(s)`, so
+                              # the bracket is what tells a mistyped path from a change
+                              # that needs nothing. `staged` and `worktree` name the two
+                              # questions git's own syntax has no spelling for. Runs
+                              # nothing, so a green answer here is not a green gate.
+                              # The stage list is the same registry `--only` reads;
+                              # which path forces which stage comes from each
+                              # `stage_*` function's own call sites, from the scopes
+                              # written in `gate.sh` (each row carries the reason it
+                              # cannot be derived), and from `check_text_integrity.py`'s
+                              # own suffix/name lists. The scopes table and the registry
+                              # watch each other, and both directions can go red: a
+                              # scopes row naming a stage the registry does not declare
+                              # exits 2, and a registered stage that no scope row and
+                              # no `all` row can reach exits 2.
 ```
 
 | Stage | Expectation |
