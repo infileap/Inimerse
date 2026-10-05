@@ -437,6 +437,20 @@ stage_orphan_fixtures() {
   python3 "$REPO_ROOT/tools/check_orphan_fixtures.py"
 }
 
+stage_orphan_targets() {
+  # The stage above compares the set of test *inputs* against the set that
+  # actually runs.  It cannot see the same defect one level down: an executable
+  # that is built and run by nothing.  `src/platform/vfs.c`'s `..` guard read
+  # uninitialised memory and was accepted 40 times out of 40, and the one
+  # program that asserts the correct behaviour, `src/platform/vfs_probe.c`, was
+  # built while nothing ever ran it -- `tools/check_orphan_fixtures.py` globs
+  # `vtest/`, `tools/*.test.py` and `tools/*.test.js`, so a probe in `src/` is
+  # outside its denominator by construction (`grep -c 'src/'` on it is 0).
+  # This stage compares the `add_executable( )` set against the targets some
+  # `add_test( )` actually names.  See docs/AUDIT.md §1.67.
+  python3 "$REPO_ROOT/tools/check_orphan_targets.py"
+}
+
 run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
 run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
 run_stage "differential fuzz (interp vs AOT, expect 0 findings)" fuzz stage_fuzz
@@ -449,6 +463,7 @@ run_stage "docs relative links" links stage_links
 run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
 run_stage "tracked text files carry no NUL byte (expect 0)" text-integrity stage_text_integrity
 run_stage "test inputs that no CTest runs (expect 0)" orphan-fixtures stage_orphan_fixtures
+run_stage "executables that no CTest runs (expect 0)" orphan-targets stage_orphan_targets
 
 # An --only value that matches no stage used to skip every stage, print
 # "gate: OK -- every stage passed." and exit 0: a green light from a run that
