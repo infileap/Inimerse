@@ -11,12 +11,12 @@
 | 项 | 值 |
 |---|---|
 | 版本 | 0.5.1 |
-| 测试 | Linux **139 / 139 真通过**（本地十二阶段门禁，0 跳过）；Windows `Total Tests: 129`，运行 120，**0 失败**，2 按设计跳过，9 按裁定 DISABLED |
-| 相对 `v0.5.0` | 该 tag 之后的 **51** 个提交（`git rev-list --count v0.5.0..v0.5.1`） |
+| 测试 | Linux **141 / 141 真通过**（本地十二阶段门禁，0 跳过）；Windows `Total Tests: 130`，运行 121，**0 失败**，2 按设计跳过，9 按裁定 DISABLED |
+| 相对 `v0.5.0` | 该 tag 之后的 **59** 个提交（`git rev-list --count v0.5.0..v0.5.1`） |
 
 ## 修了什么
 
-**五处同一个形状**，加一处同族的语法错误；第 6 条出现在本轮新增的断言自己身上：
+**五处同一个形状**，加一处同族的语法错误；第 6 条出现在本轮新增的断言自己身上。第 7、8 条不在这一族里（一处是**守卫自己的算术溢出**，一处是**字面量走了不该走的路**），但都是本版修掉的：
 
 1. **发布门禁只跑了 24 / 123。** `ctest -N` 的编号是**右对齐**的（`Test   #1:` 三个空格，`Test #100:` 一个），而抽取脚本要求恰好一个空格，于是只有三位数编号的测试被收集：`release.yml` 收了 24 / 123，`linux-build.yml` 收了 38 / 137（这个洞被发现时它在 134 个测试的树上是 35 / 134）—— **两个工作流都报成功并照常打包**。修法不是「换个更聪明的 sed」，而是抽出 `tools/ctest_enumerate.sh`，并断言 `collected == Total Tests`：模式可以再写错，断言不会。
 
@@ -31,6 +31,10 @@
 顺带更正 `tools/README.md` 里的阶段表：它写着 `Seven stages` 并只列了 7 个，而门禁实际有 **12** 个阶段。
 
 6. **同一族的第六处，出在本轮新增的那条分母断言自己身上。** `tools/migrate_report.test.py` 用 `text=True` 起子进程却没给 `encoding=`，于是 Windows 上 Python 用本地编码（gbk）解 UTF-8 报告，在 `subprocess` 的读线程里抛 `UnicodeDecodeError`，测试最后以一个 `NoneType` 的 `TypeError` 收场——**又一条不具名的红**。它只在这条流水线的 Linux 侧跑过；这与 0.5.0 的 `100d3b1`（同样修法，33 处）是同一个教训：**只在一侧跑过的检查，不知道另一侧会怎样**。修后 Windows 上 `#128 migrate_report_runtime` 0.88 s 通过。
+
+7. **`substr` 的钳位算术自己溢出，于是守卫失效。** 两侧的守卫原本写成 `if (start + len > sl) len = sl - start;`，而 `start + len` 在 `int` 里相加会溢出成负数，比较恒假、`len` 保持约 2³¹，随后按这个长度 `memcpy`。实测 `substr("abcdefghij", 5, 2147483647)` **段错误、rc=139**；阈值恰好落在 `INT_MAX`（`len=2147483642` 相加不溢出 ⇒ 正常返回 `fghij`，`len=2147483643` 溢出 ⇒ 崩溃），翻转点与溢出点逐字吻合。两侧现在用同一条不做加法的规则（`if (len > sl - start) len = sl - start;`），Windows 那份还补齐了缺失的分配失败检查（POSIX 有、Windows 没有，同一处的第二个不对称）。新测试 `substr_boundary_runtime` 用**三个刚好跨 `INT_MAX` 的长度**钉住：2147483642 / 2147483647 / 0 与 2147483647 都必须得到同样的答案，所以「一律钳到 0」的假修法也过不去。
+
+8. **字面量主机名也在付完整解析器的钱（Windows 特有的超时）。** `socket_probe` 在 Windows 上偶发 `***Timeout 11.31 sec`（CTest 默认上限 10 s），而它自己 20 次串行重跑的用时是 151–8564 ms。逐调用计时驱动量出的机制是：`im_socket_init` 稳定 1–4 ms，而**每一个走名字解析的调用**是秒级（`listen` 3662 / 895 / 902 / 1029 / 2265 ms，`port_available` 到 1478，`connect` 到 1542，`port_open` 到 2116）——`resolve_addr_timed` 把 `"127.0.0.1"` 这种**字面量**也丢进完整解析器并起线程，而探针每轮做四次解析。修法是字面量短路（`InetPtonA` / `inet_pton`，两个解析入口都接），不是把上限调大：改后同一驱动整轮约 5 ms。新测试 `literal_resolve_runtime` 在 POSIX 上用 `LD_PRELOAD` **数 `getaddrinfo` 调用次数**，而不是量毫秒——Linux 上两条路径都是微秒级，计时断言是盲的。
 
 ## 合并进来的内建契约
 
@@ -59,3 +63,5 @@
 - 文档里点名了测试，**不改变那些行的实现状态**（`--lint` 的 `case` 覆盖仍是部分实现）。
 - `migrate_report_runtime` 断言的是那个工具**自己的分母**，不是它的迁移正确性。
 - `fixture_parse_runtime` 的 `MIN_FIXTURES`/`ALLOWED` 只能防「空扫描」与「白名单退化成豁免名单」，**不能**证明每个 fixture 都断言了有意义的东西。
+- `substr_boundary_runtime` 钉的是**跨 `INT_MAX` 的那三个长度**，不证明其他实参组合都对；它断言的是「不再崩」，不是「语义已穷尽验证」。
+- `literal_resolve_runtime` 数的是 **`getaddrinfo` 调用次数**，所以它钉的是「字面量没走解析器」，**不是**「快了多少」；Windows 上「整轮降到约 5 ms」来自本机自己的计时驱动，不是 CTest 断言（Linux 上两条路径都是微秒级，计时断言在那里是盲的）。修后 Windows 全量跑一次绿，不等于超时的分布已经消失。
