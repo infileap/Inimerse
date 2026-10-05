@@ -3888,3 +3888,50 @@ mapfile -t TESTS < build/ctest-names.txt
 **验证（A/B）。** ① 用 `sed` 把脚本里的模式退回旧形状，跑同一棵树：`collected 38 of 137 registered tests from build`，**rc=1**；② 脚本原样：137 个名字，**rc=0**。
 
 **诚实边界。** ① 这条断言证明的是「抽取与 `ctest -N` 一致」，**不是**「跑的是对的那些测试」；② 两个 workflow 的真实效果只能由一次真实 CI 运行证明，本机证据只是脚本自身的 A/B；③ `linux-build.yml` **仍然没有 `***Skipped` 断言**（门禁有、CI 没有）—— 这一条**只记录、未改**，因为在 CI 上 xlang 桥按设计 exit 77 跳过，为它判红需要先确认 CI 上到底该不该有跳过，而那是另一次判断。
+
+## §10.94 `count` 成为基数正典：`size` 的集合语境迁出，以及「数出来的数必须带 ref」
+
+**裁定**（2026-10，人类选择「1、2」，[TYPESET_V06.md](TYPESET_V06.md) §7.8 第 2 条）：`count(A)` 是集合基数的**规范名**；`size` 在**集合语境**下降为**已弃用别名**并迁移；`size` 对**字符串／数组／字典**保留；`size` 作为 **GUI 关键字**不动。本流：`stream/count-size`，提交 `01da596`。
+
+**实现。** `posix_core_count`（`src/runtime/runtime_posix.c:63`，注册 `:1172`）与 `builtin_count`（`src/runtime/runtime.c:149`，注册 `:1819`）。两份与 `size` **共用同一份集合代码**——无分量集合走 `iCount + count` 闭式，含分量集合走 `vm_set_to_array` + `vm_array_len` 枚举——所以「`count(A)` 与今天 `size(A)` 同答」是**按构造成立**，不是两次独立计算碰巧相等。`src/compiler/compiler.c:2894` 的 `comp->builtins` 条目只是卫生，不是生效路径：`EXPR_CALL`+`EXPR_IDENT` 在 `lookup_func` 落空后直接回落**按名**的 `OP_CALL_BUILTIN`，而 `lookup_builtin` 全文只被 `"window"` 用过（`:2186`）。
+
+**写死的语义决定**：`count` 认**所有容器**（集合／数组／字典／字符串），**非容器一律 `nil`**，**不继承 `size` 的强转兜底**。于是 `count(42)` = `nil` 而 `size(42)` = `42`。
+
+**⚠ 三条 nil 是三条不同的路，不能混为一谈：**
+
+| 表达式 | 结果 | 机制 |
+|---|---|---|
+| `count(42)` | `nil` | **类型拒绝** —— 参数不是容器，`n` 保持 -1 |
+| `size(-5)` | `nil` | **数值兜底** —— `-5` 是合法整数结果，但尾部 `if (n < 0) push_nil(vm)` 把负数当成「无答案」 |
+| `count(Z)` | `nil` | **枚举器拒绝** —— 无格点，`vm_set_to_array` 返回 -1 |
+
+三者答案相同、来路不同。这正是为什么 `size(42)`／`size(3.7)` 的**强转**与 `size(-5)` 的 **nil** 不是同一件事，测试里必须分开钉。
+
+**⚠ 数出来的数必须带 ref，不能写成一个常量。** 本流最初把迁移面写成「29 处」，`surgery-verifier` **只用 `git ls-files '*.im'`、不数 worktree 副本**独立重算得到 **30**；`be-surgeon` 在同一口径下得到 **29**，并给出机制：**差异来自 ref，不是分类**。
+
+| ref | `git ls-files '*.im'` | `size(` |
+|---|---|---|
+| `stream/count-size` 基线 `f6b3d87` | 346 | **29** 处 / 17 文件 |
+| `stream/be-removal`（`be-surgeon` 的树） | 351 | **29** |
+| 集成分支（`surgery-verifier` 量） | — | **30** |
+
+**三个数各自为真，因为它们量的不是同一棵树。** ⇒ 文档一律写「**在 ref X 上是 N**」，并把「**落地迁移前必须在当时的 ref 上重数**」当作规则。全盘 `grep -r "size("` 得到 195 一类的大数，那是把 5 棵 worktree 的副本与 `.verify/` 一起数了，**不是迁移代价**。
+
+**分类（口径：在 `f6b3d87` 上重数，29 处 / 17 文件）** —— 26 处是真实调用，3 处只在注释里：
+
+- **16 处集合语境调用 → 迁 `count`**，其中 **15 处纯改名、输出逐字节不变**：`set_comp_test.im:5/9/13`、`set_op_test.im:8/15/34`、`projects/set_comp_test.im:4/8/12`、`projects/set_op_test.im:8/15/34`、`projects/tt4.im:2`、`vtest/set_components_enumerable_v05.im:32`、`inf_set_test.im:97`。**证据**：`vtest/set_components_enumerable_v05.im` 改名后它的 PASS 正则**至今仍要求 `size=3`**（`CMakeLists.txt:827`），输出不变红 ⇒ 改名没改行为。
+- **1 处必须改意图、不许改名了事**：`inf_set_test.im:85 o = size(1,2,3)`。它印出 `3` **只是因为内建只读最后一个实参**（等价于 `size(3)`），**纯属巧合**，不是 `{1,2,3}` 的基数——直接改名成 `count(1,2,3)` 会得到 `nil`（整数被拒）。已改成先绑 `o = 1,2,3` 再 `count(o)`，并在原处留注释写明为什么，以及这个巧合被钉在哪条测试里。
+- **10 处不是集合语境 → 保留 `size`**：9 处数组（`arr_test.im:4`、`err_test.im:15`、`lp2.im:4`、`lp3.im:4`、`params_test.im:6`、`t_lp3.im:4`、`t_push.im:6`，以及 `set_op_test.im:39`／`projects/set_op_test.im:39`）＋ 1 处字典（`vtest/posix_core_api_v04.im:15`）。**注意后两处**：那里是 `l = list(a)`，**`list()` 返的是数组、不是集合**，所以按「数组保留」不动——这一点本流最初归错了（报成 17 迁），是复核时抓出来的。
+- **3 处只出现在注释里**（`vtest/set_str_component_count_v06.im:8/18`、`vtest/sum_components_int64_v06.im:30`）：无代码改动，注释随规范名改写。
+
+**⚠ 多参陷阱：只有最后一个实参会被读到（本流实测发现）。** 每个内建只读栈顶 `vm_cur_stack(vm)[vm_cur_sp(vm)]`（`src/runtime/runtime_posix.c:32` / `src/runtime/runtime.c:119`），而 `src/vm/vm.c:3805` 虽记了 `vm->cur_argc = ins.r3` 却**无人消费**，调用返回时也只弹一项（`src/vm/vm.c:3825` 的 `value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--;`），于是多出的实参被**静默忽略**、留在栈上。实测：`size(5,5,5)` = `5`、`size(7,8)` = `8`、`size(7,8,9)` = `9`、`len(9)` = `9`、`len(5,5,5)` = `5`、`count(7,8)` = `nil`、`sum(7)` = `nil`、`sum(1,2,3,4)` = `nil`。**这不是本次引入的缺陷，是既有行为**；登记它是因为 `size(1,2,3)` 那种写法在语言里**没有任何一处会报错**，而人读到会以为它是「三个元素」。已钉进 `vtest/count_builtin_v06.im`（CTest `count_builtin_runtime`）。
+
+**测试与验证。**
+- 新增 `vtest/count_builtin_v06.im`，CTest `count_builtin_runtime`（`LABELS "runtime;types;regression"`）。PASS 正则 `count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9`，FAIL 正则 `bad=[1-9]`。断言文本用「字面量 + 计算值」的形状：CTest 同时抓 stderr，而引擎在 stderr 会打字符串常量池（`[0]="count-ok bad=" …`），字面量直接当正则会假绿。
+- 实测（`./build/inimerse --no-mods probe_count.im`，本机 Linux/POSIX，`f6b3d87` + 本流改动）：`countset=3 countmixed=5 countmixed_size=5 countstr=5 countarr=3 countdict=2 countint=nil countfloat=nil countbool=nil countnil=nil countZ=nil sizeint=42 sizefloat=3 sizeneg=nil countneg=nil sizestr=5 sizearr=3 sizedict=2 sizeZ=nil multisize=5 multilen=9 multicount=nil`。
+- `ctest --test-dir build -R count_builtin -V` ⇒ `100% tests passed, 0 tests failed out of 1`。
+
+**诚实边界。**
+1. **GUI `size` 零覆盖。** GUI 语境（`move`/`size`/`bounce`）在 346 个受版控 `.im` 里出现 **0 次** ⇒ CTest 对它**没有任何断言**，**「门禁全绿」不能当作「GUI `size` 没被动过」的证据**。本流没有改 `docs/SYNTAX.md:450/468/540/910`，也没有改 `src/compiler/compiler.c:1996` 的 `strcmp(verb, "size")`，但**在本流内未做验证**——这是缺口，不是成绩。
+2. **WIN32 那份没有编译证据。** `src/runtime/runtime.c` 在 Linux **不参与构建**（`CMakeLists.txt:429` 是 WIN32 源列表、`:438` 才 `list(APPEND … runtime_posix.c)`），且按 `docs/AUDIT.md` §1.16 它连 `cc -std=gnu11 -fsyntax-only` 都过不了（错误全在 601–1651 行）。本流只做到「两份同体 + 数组/字典都用 POSIX 那份带边界检查的写法」，**没有**跑改动前后错误行集合求差。
+3. **计数基线。** 本分支原生基线是 `f6b3d87`，`add_test` 137 → **138**；`main` 已在 `5cf4aa1`（142）。集成时正确值是 **143**（137+5+1），由协调者在集成分支处理，本分支不追。
