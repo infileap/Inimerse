@@ -1284,7 +1284,7 @@ blast radius 为零（实测，不是推断）。
 
 具体是哪些声明丢了：mingw-w64 的 `process.h:69-70` 把 `_getpid` 包在 `#ifdef _CRT_USE_WINAPI_FAMILY_DESKTOP_APP` 里，而 `corecrt.h:461-470` 只在 `WINAPI_FAMILY` 未定义（或分区到桌面）时才定义那个宏；`_beginthreadex` 同理在 CRT 头里。仓库头一挡，两者都消失。
 
-**修法。** 把仓库头改名：`src/platform/process.h` → `src/platform/im_process.h`（用 `git mv`，`git log --follow` 仍追得到），并更新 5 个引用点 —— `src/platform/process.c:1`、`src/platform/process_probe.c:1`（`"process.h"`）、`src/child_proc.h:6`（`"platform/process.h"`）、`src/runtime/runtime_posix.c:588`、`src/mod/server_mod_posix.c:2`（`"../platform/process.h"`），外加三处文档反引号引用（`docs/API.md:293`、`docs/STATUS.md:361`、`docs/archive/ROADMAP.md:62`）。改名之后那 5 个 `#include <process.h>` 自然解析到 CRT 头。**没有选 `#include_next <process.h>`**：它一行就能解决，但那是 GCC 专有扩展；改名是纯标准 C，而且把「仓库头不该与系统头同名」这条规则真正修好，`dir.h`/`parser.h` 的同类隐患也照此办理。
+**修法。** 把仓库头改名：`src/platform/process.h` → `src/platform/im_process.h`（用 `git mv`，`git log --follow` 仍追得到），并更新 5 个引用点 —— `src/platform/process.c:1`、`src/platform/process_probe.c:1`（`"process.h"`）、`src/child_proc.h:6`（`"platform/process.h"`）、`src/runtime/runtime_posix.c:588`、`src/mod/server_mod_posix.c:2`（`"../platform/process.h"`），外加三处文档反引号引用（`docs/API.md:293`、`docs/STATUS.md:361` [obs: ab70a71 ≡ main]、`docs/archive/ROADMAP.md:62`）。改名之后那 5 个 `#include <process.h>` 自然解析到 CRT 头。**没有选 `#include_next <process.h>`**：它一行就能解决，但那是 GCC 专有扩展；改名是纯标准 C，而且把「仓库头不该与系统头同名」这条规则真正修好，`dir.h`/`parser.h` 的同类隐患也照此办理。
 
 **第五类（`getline`）与上面无关，是另一件事。** `#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)` 那段守卫**不是**原因：mingw-w64 的 `<stdio.h>` 里 `getline` **一次都没出现**（`grep -c getline` 在 MINGW64 与 UCRT64 两个 sysroot 上都是 **0**），改宏、把宏提前、不定义宏，三个最小复现都报同一个 implicit declaration。因此加本地 shim `src/common/probe_compat.h`：`#if defined(_WIN32)` 下 `probe_getline`（`fgets` + `realloc` 增长循环，遇 `\n` 返回读到的字节数，EOF 无数据返回 -1），随后 `#define getline probe_getline`，语义与 POSIX 一致。**没有选「把这两个探针从 Windows 构建里排除」** —— 那会悄悄删掉 Windows 的 upp/crp 覆盖，而 CTest 正是靠它们。
 
@@ -2021,7 +2021,7 @@ runtime 都调它，`spi_parse_caps` 整个删掉。不在那个形状里的输�
 POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 答 **65280 = CAP_MASK**
 （`src/runtime/runtime.c` 的 `else if (capsv->type == VAL_BOOL) caps = capsv->ival ? CAP_MASK : 0;`）。
 设计记录与 `docs/API.md` 都没有规定这个实参的类型，**不挑一侧当规范**（`docs/DECFY_DESIGN.md:8-12`、
-`docs/STATUS.md:30`）。新 pin `vtest/spi_caps_contract_v06.im` 把前六个字段断言成**一份**（两侧已
+`docs/STATUS.md:30` [obs: ab70a71 ≡ main]）。新 pin `vtest/spi_caps_contract_v06.im` 把前六个字段断言成**一份**（两侧已
 一致），把 `bool=` 这一个字段**按平台各断言各自现行值**（`CMakeLists.txt`），任一侧漂移立刻变红
 ——与 §1.47 的 `round` 同一手法。
 
@@ -2524,7 +2524,7 @@ ctest 的输出里出现 `is already registered` ⇒ **阶段红**，并把那�
 | `lint_case_missing_default_v04.im` 有「相关 CTest」 | 全仓库对该文件名的引用**只有这一行文档**；`ctest -N` 的 134 个名字里没有它，也没有任何名字含 `missing_default` |
 | `lint_case_exhaustive_v04.im` 是一个 CTest | 它是**文件名**，不是测试名；全仓库引用同样只有这一行；四个并列的名字（`lint_case_enum_runtime`／`lint_case_membership_runtime`／`lint_case_try_members_runtime`／`lint_case_try_alias_runtime`）**都是真的** |
 | `docs/REQUIREMENTS_ANALYSIS.md:177` 的「`migrate_report.py` + 对应 CTest」 | `tools/` 下**没有** `migrate_report.test.py`；`ctest -N` 里没有任何名字含 `migrate` |
-| `docs/STATUS.md:286` 把 `tools/migrate_report.py` 与两个 CTest 并列 | `bindgen_regression` 跑的是 `tools/bindgen.test.py`，`scan_tools_regression` 跑的是 `tools/scan_tools.test.py`（其 docstring 只提 `cpp_scan` 与 `python_scan`）—— 两个都不碰 `migrate_report.py` |
+| `docs/STATUS.md:286` [obs: ab70a71 ≡ main] 把 `tools/migrate_report.py` 与两个 CTest 并列 | `bindgen_regression` 跑的是 `tools/bindgen.test.py`，`scan_tools_regression` 跑的是 `tools/scan_tools.test.py`（其 docstring 只提 `cpp_scan` 与 `python_scan`）—— 两个都不碰 `migrate_report.py` |
 
 **能力是真的，覆盖不是。** 两个 fixture 今天都跑得对：
 
@@ -2952,15 +2952,15 @@ for (size_t i = 0; pattern[i] && j + 16 < tcap; i++) {
 
 **修法。** 不做「删掉 131」，也不写任何推导数：
 
-- `docs/STATUS.md:44` 与 `docs/BOARD.md:54` 改为**按平台并列**：`Linux Total Tests: 142` / `Windows Total Tests: 122`（`dc0624f`）。
-- `docs/STATUS.md:51` 写明 `142` 的**身份是注册上限，不是任一平台的实跑数**，并逐条给出三个裁剪注册的**环境**条件：`INIMERSE_NODE`（`CMakeLists.txt:233`）、`INIMERSE_CLANG`（`:367`，条件为 `:368 if(INIMERSE_CLANG AND NOT WIN32)`）、`INIMERSE_PYTHON`（`:66`）。三者都不是平台条件 ⇒ **平台间的差无法只由 `CMakeLists.txt` 推出**。
-- `docs/STATUS.md:38` 标题补「表内数字除注明外均为 Linux 实测」。
+- `docs/STATUS.md:44` 与 `docs/BOARD.md:54` 改为**按平台并列**：`Linux Total Tests: 142` / `Windows Total Tests: 122`（`dc0624f`）。**[原文，已在 `main` 上被改写] [obs: ab70a71]**：`ab70a71` 上这两处写 `Linux Total Tests: 142`，`main` 上已改成 `148` 并各带自己的 ref ⇒ 引的是**当时的原文**，锚要按被引处**现在**的特征串取（`按平台并列`）。
+- `docs/STATUS.md:51` 写明 `142` 的**身份是注册上限，不是任一平台的实跑数**，并逐条给出三个裁剪注册的**环境**条件：`INIMERSE_NODE`（`CMakeLists.txt:233`）、`INIMERSE_CLANG`（`:367`，条件为 `:368 if(INIMERSE_CLANG AND NOT WIN32)`）、`INIMERSE_PYTHON`（`:66`）。三者都不是平台条件 ⇒ **平台间的差无法只由 `CMakeLists.txt` 推出**。**[原文，已在 `main` 上被改写] [obs: ab70a71]**：这条引的 `142` 在 `main` 上已是 `148`（锚按现在取：`是注册上限`）。
+- `docs/STATUS.md:38` 标题补「表内数字除注明外均为 Linux 实测」。 [obs: ab70a71 ≡ main]（锚：`表内数字除注明外均为 Linux 实测`，两棵树上都在）
 
 **为什么这是缺陷而不是书写问题。** 那四行 `add_test`（`:381 :382 :386 :399`）的条件栈是**嵌套**的：它们同时在 `if(INIMERSE_NODE)`（`:380`）**和** `if(INIMERSE_CLANG AND NOT WIN32)`（`:368`）之下。本节的两轮取证各自只认了其中一层——一方把它们计入「Windows 必然不注册」（当平台条件），另一方把它们完全剔除（当工具条件）——**两个方向是同一个错：都把嵌套读成了单层。** 只要注册条件里混着环境与平台两类，就不能靠数 `add_test(` 推出任何一个平台会跑多少个。
 
 **判据（今后）。** 凡写 `Total Tests: N`，**必须同时写明是注册上限还是某平台实跑数**；只写数字的用法，本档视为未完成的记账。
 
-**口径（合并后补）。** 本节所有行号都是在 `ab70a71` 上量的；合并进 `main`（`57ece55`）时 `docs/STATUS.md` 与 `docs/AUDIT.md` 都被插入了内容，**这些行号已经漂了** —— 正文里的旧行号一律写成 `:旧 → :新` 的映射：`:3642 → :3663`、`:3624 → :3645`、`:1562 → :1583`（三处已就地更正并带上 ref）。**规矩是「凡带前缀的引用都要带上它的观测点」，不是「不许出现旧值」** —— 旧行号可以留（§1.46 那三处就留着 `docs/STATUS.md:3325` 并各带观测点），但每一处都要紧挨着写明它是在哪棵树上量的（`<ref> @ <sha>`，或紧邻的「写作时 X 上」）；**裸引用不许有**。但**下面这条我原本写成的「可执行判据」是错的，而且绿在唯一该红的地方**：我原写「`grep -o 'docs/STATUS\.md:[0-9]*' docs/AUDIT.md | sort -u`，输出里不应出现旧值」，而 `docs/STATUS.md` 的 `:3325`（下面 §1.46 引的那一处）当时**就是**陈旧的带前缀引用，它不在我手写的旧值清单里 ⇒ 判据放它过去。**成因**：这条判据对「旧」的定义**就是那张映射表的左列** ⇒ **它只能复核我已写下的例外，不能发现漂移**；它是 §9 第 31 条 (c)（「量的是它自己」，这次量的是它自己维护的清单）的第三个投影，也是第 30 条自指形状的第三面（由 ivory-ember 的独立复核证伪并附活反例）。**判据不能建立在行号上，只能建立在内容上** —— 一条引用一条断言：`sed -n '<N>p' docs/STATUS.md | grep -q '<被引句的特征串>'`（期望 rc=0）。**本段原写「这三处已就地更正」，而实测另有两处漏改与一处指向不存在的行**（见本节正文第 4 条与下面的诚实边界 1）—— 由 ivory-ember 的独立复核发现，在本笔更正。**处方写在前言、病灶在正文，这是「处方不是执行」的又一个实例。****范围也只覆盖了本文档。** 带前缀的 `docs/STATUS.md:<N>` 引用还散在 `docs/DECFY_DESIGN.md`、`docs/BOARD.md`、`docs/STATUS.md` 自身、`docs/streams/`、`docs/HANDOFF_INFIVERSE.md`、`docs/HYGIENE.md` 里，**全部裸写、全部在本条视野之外**；重取命令 `grep -rno 'docs/STATUS\.md:[0-9]\+' docs/ tools/`。**漂移区是 `N > 488`**：`ab70a71` → `main` 在 `docs/STATUS.md:488` 之后插入了 21 行（`diff` 的 hunk 头 `488a489,509`），此后**整段 +21**，落在里面的引用都要逐条按内容重取。**我只逐条证伪了 `:3325`，其余是「未验证、且无任何东西在检查」**（这一句照引 ivory-ember 的原话）。**下面几条诚实边界里其余的 `docs/STATUS.md:NNNN` 同理，复核时请用命令重取、不要照抄行号**：`grep -n '<那句原文的特征串>' docs/STATUS.md`。这正是 H4.1 与 `docs/DECFY_DESIGN.md` 的 `[口径]` 要治的形状。
+**口径（合并后补）。** 本节所有行号都是在 `ab70a71` 上量的；合并进 `main`（`57ece55`）时 `docs/STATUS.md` 与 `docs/AUDIT.md` 都被插入了内容，**这些行号已经漂了** —— 正文里的旧行号一律写成 `:旧 → :新` 的映射：`:3642 → :3663`、`:3624 → :3645`、`:1562 → :1583`（三处已就地更正并带上 ref）。**规矩是「凡带前缀的引用都要带上它的观测点」，不是「不许出现旧值」** —— 旧行号可以留（§1.46 那三处就留着 `docs/STATUS.md:3325` 并各带观测点），但**每一处所在段落都要含一个可 `grep` 的记号 `[obs: <ref>]`**（在哪棵树上量的就写哪棵；同文于两棵树时写 `[obs: <ref> ≡ main]`）——**「紧挨着」不是可判定的距离，记号才是**；**裸引用不许有**。但**下面这条我原本写成的「可执行判据」是错的，而且绿在唯一该红的地方**：我原写「`grep -o 'docs/STATUS\.md:[0-9]*' docs/AUDIT.md | sort -u`，输出里不应出现旧值」，而 `docs/STATUS.md` 的 `:3325`（上面 §1.46 引的那一处）当时**就是**陈旧的带前缀引用，它不在我手写的旧值清单里 ⇒ 判据放它过去。**成因**：这条判据对「旧」的定义**就是那张映射表的左列** ⇒ **它只能复核我已写下的例外，不能发现漂移**；它是 §9 第 31 条 (c)（「量的是它自己」，这次量的是它自己维护的清单）的第三个投影，也是第 30 条自指形状的第三面（由 ivory-ember 的独立复核证伪并附活反例）。**判据不能建立在行号上，只能建立在内容上** —— 一条引用一条断言：`sed -n '<N>p' docs/STATUS.md | grep -q '<被引句的特征串>'`（期望 rc=0）。**这条判据还有第三个情形，而本节自己就踩了两次**：引用一段**已被就地改写的原文**时，被引句现在不在被引处 —— 本节修法里引的 `docs/STATUS.md:44` 与 `:51` 就是（`ab70a71` 上那两行写 `142`，`main` 上已改成 `148`），读者拿到 rc=1 **仍然分不清「漂了」还是「原句被改过」**，也就是又回到本段在治的那个歧义。**补法**：锚换成**被引处现在的特征串**，并显式标成 `[原文，已被 <谁> 改掉]`。**并且两种东西的分工要写清**：**观测点是诊断用的**（这条是在哪棵树上量的 ⇒ 能区分「漂了」和「本来就不对」），**内容锚是判据用的**（它对不对），**两者不能互相替代** —— 只有内容锚、没有观测点，漂移会被误判成错误（ivory-ember 本轮实际就这么错过一次，并据此提出了一个把错行号钉死的修正）；只有观测点、没有内容锚，只知道它从哪来、不知道它对不对。**本段原写「这三处已就地更正」，而实测另有两处漏改与一处指向不存在的行**（见本节正文第 4 条与下面的诚实边界 1）—— 由 ivory-ember 的独立复核发现，在本笔更正。**处方写在前言、病灶在正文，这是「处方不是执行」的又一个实例。****范围也只覆盖了本文档。** 带前缀的 `docs/STATUS.md:<N>` 引用还散在 `docs/DECFY_DESIGN.md`、`docs/BOARD.md`、`docs/STATUS.md` 自身、`docs/streams/`、`docs/HANDOFF_INFIVERSE.md`、`docs/HYGIENE.md` 里，**全部裸写、全部在本条视野之外**；重取命令 `grep -rno 'docs/STATUS\.md:[0-9]\+' docs/ tools/`。**漂移区是 `N > 488`**：`ab70a71` → `main` 在 `docs/STATUS.md:488` 之后插入了 21 行（`diff` 的 hunk 头 `488a489,509`），此后**整段 +21**，落在里面的引用都要逐条按内容重取。**我只逐条证伪了 `:3325`，其余是「未验证、且无任何东西在检查」**（这一句照引 ivory-ember 的原话）。**下面几条诚实边界里其余的 `docs/STATUS.md:NNNN` 同理，复核时请用命令重取、不要照抄行号**：`grep -n '<那句原文的特征串>' docs/STATUS.md`。这正是 H4.1 与 `docs/DECFY_DESIGN.md` 的 `[口径]` 要治的形状。**规矩本身的例外已清**：本条原写「凡带前缀的引用都要带上它的观测点」，而实测本文档有 **7 处**带前缀引用没有观测点（`:1287`→`:361`、`:2024`→`:30`、`:2527`→`:286`、`:2955`→`:44`、`:2956`→`:51`、`:2957`→`:38`、`:3235`→`:327`）⇒ **这句在它自己的文档里是假的**；已逐处补 `[obs: …]`。**分两半说才准**：「凡带前缀的引用」原句为假（7 处反例），但「**凡落在漂移区的带前缀引用**」为真（漂移区内 6 处全带观测点）。
 
 ### 三条诚实边界
 
@@ -3147,7 +3147,165 @@ $ git cat-file -p 4e444dd:CMakeLists.txt | grep -c 'add_test('
 
 **本节所有数字都在写之前用上面的命令跑过一遍。** 一条命令若只覆盖表的一部分、或只在另一棵树上跑过，**就必须在正文里写清覆盖范围与适用树** —— 否则这一节在落地当天就是一条漂移值。
 
-## §1.70 一个建出来、编译过、却没有任何东西跑它的目标，是唯一一种连「失败」都拿不到的证据
+## §1.70 Windows 上 match 长模式的崩溃：26 帧 × 32896 字节，和一次把尾调用写成递归
+
+**测量点。** 崩溃读数取自 `main` 的祖先 `c71ea00`（也就是发布线 `release/051-final`）的 Windows 构建；修复与反向验证在 `stream/win-match-fix`（base `main` @ `57ece55`）上做。两棵树都点名，因为同一个量在两棵树上有两个值。
+
+### A. 现象与分类
+
+`match_long_pattern_runtime` 在 Windows 上 `***Exception: SegFault`（`w38-ctest.log:262-263`）。分类键是日志里的 `code`：
+
+```
+[crash] code=0xC00000FD
+```
+
+`0xC00000FD` 是 `STATUS_STACK_OVERFLOW`，不是 `0xC0000005`（访问违例）。同一台机器上另有一处 `code=0xC0000005` 的崩溃（`crash-g.log`，15 帧），两者可区分。
+
+`[stack] #7` 与 `[crash] rip` 逐字节相同 ⇒ 回溯停在崩溃帧。原因是 `RtlCaptureStackBackTrace` 走 `.pdata`，而 `___chkstk_ms` 没有 `.pdata` 条目。**这不是 `-g` 或 `-Wl,-Map` 能补的**，是结构上取不到，所以下面不用回溯。
+
+### B. 机制（实测）
+
+方法：直接读原始栈内存，数落在 `re_seq` 运行区间内的返回地址。运行区间由 `rip - 0x974c6`（`___chkstk_ms` 的 RVA）加 `nm` 给出的偏移算出 —— 不能用 PE 静态 `ImageBase`，ASLR 下镜像加载基址是随机的。
+
+```
+RE_HITS=51
+DISTINCT_RET_OFFSETS={+0x16: 26, +0x25a: 25}
+STRIDES={0x48: 25, 0x8038: 25}
+FRAME_SLOTS=26
+RSP=0x407af0
+```
+
+`+0x16` 是 `call ___chkstk_ms` 之后那条指令，`+0x25a` 是唯一那次递归 `call re_seq` 之后那条（`14005333a: mov %rax,%rbx`）。`re_seq` 的序言是
+
+```
+push %r15
+mov $0x8038,%eax
+push %r14,r13,r12,rbp,rdi,rsi,rbx
+call ___chkstk_ms
+sub %rax,%rsp
+```
+
+帧大小在两个配置上各量了一次，**逐项相同**：发布配置 `-O3 -DNDEBUG`（`build-windows-gcc/inimerse.exe`，`re_seq` @ `0x140063440`）与 `RelWithDebInfo` `-O2 -g`（`build-sym`）的序言都是 `push %r15 / mov $0x8038,%eax / push ×6 / call ___chkstk_ms / sub %rax,%rsp`，帧 = 8×8 + 0x8038 + 8 = **32896 B = 0x8080**，与测到的步长逐项相同。发布配置上另有两处独立印证：`___chkstk_ms` 在 `0x1400c0850`，而 `w38-ctest.log` 里 `rip` 的 RVA `0xc0866` = 它 `+0x16`（崩溃帧正落在 `___chkstk_ms+0x16`）；同一条日志里的 `[stack] #8 0000000000008038` 就是这个常量。**这条推翻了本节初稿的边界**：帧大小原先只是 `RelWithDebInfo` 上的读数、对发布配置是外推；现在它是发布证据那个二进制本身的读数，`0x8080` 不是 `-O2` 的产物。
+
+⇒ **崩溃瞬间有 26 个活的 `re_seq` 帧，仅它们就占 26 × 32896 = 855296 B。**
+
+预算：`objdump -p` 给出 `SizeOfStackReserve 0x200000`（2 MiB），两个 exe 一致。`vm_execute_thread`（`src/vm/vm.c:2931`）不是 OS 线程，是主线程在 `src/vm/vm.c:4950` 调的 ⇒ 预算就是主线程的 2 MiB。
+
+算术：崩溃时 `rsp=0x407af0`，可读顶 `0x601000` ⇒ 已耗 `0x1f9510` = 2069776 B = **98.7%**。剩余 `0x60f0`(24816 B) 小于进入下一帧需要的 `0x8080`(32896 B) ⇒ **差 8080 B**。这就是 `___chkstk_ms` 报 `STATUS_STACK_OVERFLOW` 的算术。
+
+**最有力的一步是两个输入给出逐项相同的读数**：2030 个字符的输入与 25 个字符的输入，`RSP` 都是 `0x407af0`，都是同样的 26 帧 ⇒ **深度由栈预算封顶，与输入长度无关**。
+
+独立复核：在 `re_seq` 上打断点计数，`contract_test.im` 3 次、`vtest/posix_core_api_v04.im` 6 次、`vtest/match_long_pattern_v06.im` 26 次后 SIGSEGV。两个互不相干的方法都落在 26。
+
+**边界（保留）。** 不声称这 26 个里哪一个是崩溃帧。两个计数彼此自洽，但「出错的那一帧」与「走完序言的那些帧」之间的一格之差，这两次测量都没有分辨。
+
+**边界（保留）。** `CONSUMED` 与 `STACK_READABLE_TOP` 来自读探针，Windows `ReadProcessMemory` 对 reserved-but-uncommitted 页会成功并返回零 ⇒ 可读顶可能高于真正的 `StackBase`。26 帧与 `0x8080` 步长不受影响，因为那是栈上的真实数据。
+
+### C. 读码（与实测分开写）
+
+以下行号都在**修复前**的字节 `2245ca1` 上。`re_seq`（`src/runtime/runtime.c:948`）是手写回溯器。模式里没有 `*`/`+`/`?` 时 `elnext = re + elen`（`:990`），而续接写成了递归：
+
+```
+:1005    const char *cont = re_seq(elnext, t);
+```
+
+于是**每个模式元素花一帧**。2030 个字符的字面模式要 2030 帧 × 32896 B ≈ 66.8 MB。
+
+### D. 修法
+
+三处纯尾调用改写成既有 `for (;;)`（`:949`）的迭代：
+
+| 位置 | 改前（`2245ca1`） | 改后（`24f6814`） |
+|---|---|---|
+| `$` 分支 | `:952 return (*s == '\0') ? re_seq(re + 1, s) : NULL;` | `:953-961 if (*s != '\0') return NULL; re++; continue;` |
+| 交替分支 | `:969 return re_seq(re + alt + 1, s);` | `:981-982 re = re + alt + 1; continue;` |
+| 无量化续接 | `:1005 const char *cont = re_seq(elnext, t);` | `:1017-1028 if (!quant) { re = elnext; s = t; continue; }` |
+
+无量化那条是尾调用，理由是**构造上的**：没有量化符 ⇒ `qmin == qmax == 1` ⇒ 下面的回溯循环只能返回续接或返回 NULL，没有第二条路。新增的 `quant` 标志（`:998`，三个量化分支置 1）就是用来分辨这两条路的。
+
+有量化那条仍然递归，但每次 `re_seq(elnext, t)` 返回之后才进下一次，深度由嵌套决定而非模式长度（早先一个探针实测深度 2）。不会死循环：`elnext = re + elen`，`elen >= 1`，`re` 严格前进。
+
+`src/runtime/runtime.c` 是这次唯一改动的 `src/` 文件：`git diff --name-only 57ece55 -- src/` 只有它。
+
+### E. 判据
+
+| 判据 | 结果 |
+|---|---|
+| ① 那条 CTest 在 Windows 上由 SEGFAULT 变通过 | 通过（`1/1 Test #137 ... Passed 1.01 sec`） |
+| ② 反向验证：在**带修复的同一棵树**上换回修复前的字节，增量重建，必须重新红 | 通过（`***Exception: SegFault 1.08 sec`） |
+| ③′ 同树 Windows 全量 ctest 不新增失败 | 通过（见下表） |
+| ③ 同树 Linux 门禁 | **作废，空绿** |
+
+同树 Windows 全量 ctest（`INIMERSE_BIN` 必须指到构建目录，否则测试工具找不到引擎）：
+
+| 状态 | 结果 |
+|---|---|
+| 修复前 `237c547ef2cb5f8c7f29702bafd77062f41feff4` | `98% tests passed, 3 tests failed out of 128` |
+| 修复后 `e0b3d93c204901ee475f8524e9a8b7f23e08045a` | `98% tests passed, 2 tests failed out of 128` |
+
+修复前那三条是 `process_probe`（本环境下的既有抖动，在 `w38-ctest.log:38-39` 的发布证据里是 Passed）、`count_builtin_runtime`（见 F.4）、`match_long_pattern_runtime`（本次目标）。
+
+**③ 为什么作废。** `src/runtime/runtime.c` 在 POSIX 上根本不参与编译：`CMakeLists.txt:429` 在 WIN32 分支里选它，`:438` 的 `else()` 分支选 `src/runtime/runtime_posix.c`（后者没有 `re_seq`，用 libc `regcomp`）。所以 Linux 门禁**不会编译被改的那个文件**。它在这次修复上是空绿 —— 可以跑，但只能当卫生检查，不能当证据。**这不是本节的性质，是门禁的性质**，见 §1.71。
+
+### F. 登记但未修
+
+1. **`pos[4096]` 的无守卫读。** `:1007 const char *pos[4096];`，写入有守卫（`:1012 if (count < 4096) pos[count] = nt;`），回溯读没有（`:1035 t = pos[count - 1];`）。这是并存的独立缺陷，**未被本次崩溃触发** —— 由「25 就崩」证伪：4096 项的数组在 25 不可能溢出。只登记，不改。
+2. **被证伪的假设留在产物里。** 崩溃起点被钉在 N=25（20…24 正常，25 首次崩），`pos[4096]` 溢出假设与任何页/大小阈值假设一并被排除。留下它，是因为下一个读到「25 就崩」的人会先去想 4096，这一段能省他一轮。
+3. **`re_seq` 仍有 32896 字节的帧。** 尾调用改掉之后，它仍然封顶**嵌套量化元素或嵌套分组**的可用深度。触发类已写出，**未测**。
+4. **同一类崩溃的第二个实例，不在本次修复范围。** `count_builtin_runtime` 在 Windows 上也是 `code=0xC00000FD`，但 `[stack] #8` 是 `0000000000006ed8`（≠ `re_seq` 的 `0x8038`），`re_seq` 断点在它的 fixture 上计数为 **0**，原始栈扫描把它定位到 `compile_expr` 自递归（32 帧，偏移 `+0x16` 与 `+0x15eb`）。该测试在发布证据 `w38-ctest.log` 里不存在（是 `c71ea00` 之后新增的），而且在 `c71ea00` 的 `build-sym` 上同样崩 ⇒ **既有缺陷，被新测试暴露**，不是本次修复引入的。
+
+### G. 空绿
+
+「一条构造上不可能变红的判据，不是判据。」这次撞到三处：
+
+- 本节的 ③：Linux 门禁不编译被改的文件。
+- 测试工具里的 `find_engine()`：候选目录写死为 `build` / `build-local` / `build-windows-gcc` / `build-py`。构建目录叫别的名字时，六个工具测试会以 `inimerse engine not found; set INIMERSE_BIN` 失败 —— 那是**找不到引擎**，不是产品红。用 `INIMERSE_BIN` 指过去之后它们全过。
+- `[stack] #8 0000000000008038`：这不是哨兵，是 `re_seq` 序言里的帧大小常量 `$0x8038` 被压在栈上。帧大小由它独立印证了一次。
+
+## §1.71 Linux 门禁对 12 个 `src/**/*.c` 结构性失明：它们只在 `if(WIN32)` 分支里
+
+**症状。** §1.70 的判据 ③ 被它自己的作者判成**空绿**：`src/runtime/runtime.c` 在 POSIX 上根本不参与编译，所以「同树 Linux 门禁」在那次修复上只能当卫生检查，不能当证据。**这不是那一节的性质，是门禁的性质** —— 同一个形状覆盖 12 个文件。
+
+**实测（`main` @ `c76273f`，构建目录 `build/`）。** 逐文件比对「被 git 跟踪的 `src/**/*.c`」与「Linux 构建实际产出 `.o` 的」：
+
+```
+tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
+  src/child_proc.c        src/headless_server.c      src/mod/ai_mod.c
+  src/mod/gui_mod.c       src/mod/identity_mod.c     src/mod/io_mod.c
+  src/mod/mod.c           src/mod/net_mod.c          src/mod/say_mod_windows.c
+  src/mod/server_mod.c    src/mod/social_mod.c       src/runtime/runtime.c
+```
+
+方法：`find build -name '*.o'` 取 basename 去掉 `.o` 后缀，与 `git ls-files src/` 里的 `*.c` 求差。**边界**：这是对**现有增量构建目录**的测量，不是对 CMake 目标图的解析 —— 若某文件本该被编译却因增量状态缺 `.o`，也会落进这 12 个里。**独立交叉核对**：这 12 个在 `CMakeLists.txt` 里**全部只出现在 `:429-436` 的 `if(WIN32)` 块内**（`grep -n '<file>' CMakeLists.txt` 的首个命中全落在这一段），POSIX 侧 `:438-444` 的清单里一个都没有 ⇒ 两条互不相干的方法给出同一组文件。**另一个独立读数**：`nm build/inimerse | grep -c 're_seq'` = **0**。
+
+**为什么这是缺陷而不是设计。** 「Windows 运行时只在 Windows 上编译」本身合理；**不合理的是门禁把「没编译」报成「PASS」**。Linux 十二阶段里 `build` 与 `ctest` 对这 12 个文件无声，而 `grep` 类检查器只看文档与 fixture 名（§1.67）—— 于是**改动这 12 个中的任何一个，在 Linux 上拿到的是一个全绿的门禁**，而绿的原因与改动无关。§1.70 G 节把这一类叫「一条构造上不可能变红的判据，不是判据」。
+
+**与 §1.67 的关系。** §1.67 说的是检查器问「东西在不在」、不问「是不是唯一」；本条更强一层：**检查器连东西都没看**。两者同族，本条不重复 §1.67 的判据，只登记这一组文件与它的量化。
+
+**登记，未修。** 修法候选（**未裁定**）：①在 `build` 阶段增加一条显式的「这些文件在本平台上不参与编译」清单与理由 —— 照 §1.60 的规矩，白名单也要写出「那跑的是什么」；②或把源文件也纳入某个既有的孤儿检查（agent2 已实测 `tools/check_orphan_fixtures.py` 的 `grep -c 'src/'` = **0**，即它结构上不可能发现 `src/` 孤儿）。**本条只登记**：改门禁在 `tools/**`（agent2 的写域），且这 12 个里哪些是**真** Windows-only、哪些是**漏进** WIN32 分支的，需要逐个裁定。
+
+**§1.71 补（同一笔之后加的读数）。** 把上面这 12 个按「POSIX 侧有没有替代物」分成三组 —— 两组是设计，一组不是：
+
+| 组 | 文件 | POSIX 侧 | 性质 |
+|---|---|---|---|
+| ① 有对等实现 | `src/runtime/runtime.c`→`runtime_posix.c`、`src/headless_server.c`→`headless_server_posix.c`、`src/mod/mod.c`→`mod_posix.c`、`src/mod/net_mod.c`→`net_mod_posix.c`、`src/mod/server_mod.c`→`server_mod_posix.c`、`src/mod/say_mod_windows.c`→`say_mod_posix.c` | `CMakeLists.txt:438-443` 各有一个 | 平台对等，合理 |
+| ② 被空桩顶掉 | `src/mod/gui_mod.c`、`src/mod/io_mod.c`、`src/mod/identity_mod.c`、`src/mod/social_mod.c`、`src/mod/ai_mod.c` | `src/platform/posix_stubs.c:6-8` 的 `STUB_REG(...)` | 已登记的平台边界，但**登记得不全**（见下） |
+| ③ 两组都不是 | `src/child_proc.c` | 无对等实现、也无桩 | 无引用者，故不参与链接；**未裁定** |
+
+**②这一组的登记不全，是本条真正的增量。** `docs/STATUS.md` §10.44/§10.47、`docs/AUDIT.md:453` 与 `:594`、`docs/API.md:323` 说的都是**三个**桩（`io_mod`/`gui_mod`/`build_mod`），而 `src/platform/posix_stubs.c:6-8` 逐字桩的是**六个**：
+
+    STUB_REG(gui_mod_register) STUB_REG(build_mod_register) STUB_REG(io_mod_register)
+    STUB_REG(identity_mod_register)
+    STUB_REG(social_mod_register) STUB_REG(ai_mod_register)
+
+⇒ `identity_mod`、`social_mod`、`ai_mod` 三个**不在任何一份已登记的清单里**。规模也没登记过：这六个模块在 Windows 上 `vm_register_builtin` 的次数是 `io_mod` 44、`gui_mod` 162、`identity_mod` 8、`social_mod` 5、`ai_mod` 6（`build_mod` 在 `mods/` 下，不计），合计 **225** 个内建名在 POSIX 上不存在。
+
+**并且那个「告诉你它不可用」的函数，六个桩里只有一个用。** 同文件 `:4` 的 `unsupported()` 会打印 `inimerse: capability '%s' is not available on this POSIX build yet`，而它**只被 `build_project_impl`（`:9`）调用**；六个 `STUB_REG` 展开成 `void name(VM *vm) { (void)vm; }`，**一个字都不打**。实测（`main @ 8e67a1e`，`./build/inimerse --no-mods`）：`file_exists("CMakeLists.txt")` → `[exception] uncaught: unknown builtin function 'file_exists'`；`ai_list()` → `unknown builtin function 'ai_list'` —— **读者看到的是「这个名字不存在」，而不是「这个平台不支持它」**，而后者才是作者写在同一个文件里的答案。`docs/STATUS.md` §10.47 记的正是这次「从静默返回垃圾变成抛异常」的可诊断性收益；本条是它的**下一步**：异常说了「没有」，没说「为什么没有」。
+
+**顺带一条未核对的观察。** `docs/SYNTAX.md:510` 把 `file_exists` `mkdir` `io_list_dir` `http_get` `clipboard_set` `timer_ms` `exec_async` `proc_list` 列进「**核心高频内建**（有 `vtest` 覆盖的）」；**该行没有平台标注**（全节未逐处核对），而实测在 POSIX 上这些名字全部不存在。**未裁定**：是给那张表加平台列，还是在平台边界那条登记里指过去。
+
+**边界。** 225 是 `grep -c 'register_builtin'` 的**计数**，不是去重后的名字数（同一名字可能多处注册），也不是「Linux 用户实际会调到的名字数」；要精确须取注册名集合。**本条只登记，不改 `src/`、不改门禁。**
+## §1.72 一个建出来、编译过、却没有任何东西跑它的目标，是唯一一种连「失败」都拿不到的证据
 
 **本节是 §1.67（检查器问「东西在不在」，不问「两个值是不是同一个」）与 §1.59（没人跑的测试输入）在 CMake 可执行目标上的落地。** §1.59 比的是测试**输入**集合，本节比的是可执行**目标**集合 —— 同一个问题在两个层级上。
 
@@ -3292,7 +3450,7 @@ wasm 那一行**不能与原生通道直接比**：它量的是 `node` 进程，
 2. **产物**：`--jit off|template|optimized` 下同一程序 `bytecode` 子命令输出的 md5 **三者相同**（`3dc6030de6b930cb95b3561472e7b104`）。
 3. **行为**：同一程序三种取值下输出相同，墙钟 2.845 / 2.942 / 2.804s（sd 0.087 / 0.110 / 0.075）—— 差异全在噪声内，顺序不重现方向。
 
-**结论**：`--jit` 改的是一个从不被消费的全局变量，**不得把它当作加速通道报告**。这一结论与仓内既有记录一致（`docs/STATUS.md:327`、`docs/API.md:485`）。本报告因此只比较解释器与 AOT 两条真实通道，并把「让 `--jit` 诚实（拒绝或实现）」列为 §5 的一项。
+**结论**：`--jit` 改的是一个从不被消费的全局变量，**不得把它当作加速通道报告**。这一结论与仓内既有记录一致（`docs/STATUS.md:327` [obs: ab70a71 ≡ main]、`docs/API.md:485`）。本报告因此只比较解释器与 AOT 两条真实通道，并把「让 `--jit` 诚实（拒绝或实现）」列为 §5 的一项。
 
 ---
 

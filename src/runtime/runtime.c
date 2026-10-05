@@ -949,7 +949,19 @@ static const char *re_seq(const char *re, const char *s) {
     for (;;) {
         if (re[0] == '\0' || re[0] == ')') return s;
         if (re[0] == '^') { re++; continue; }
-        if (re[0] == '$') return (*s == '\0') ? re_seq(re + 1, s) : NULL;
+        if (re[0] == '$') {
+            /* Tail position.  This used to be `return re_seq(re + 1, s)`, so
+               every '$' in a pattern pushed another frame.  Together with the
+               continuation below that made the recursion cost one frame per
+               pattern element, and a 2030-character literal pattern needed
+               2030 frames of 32896 bytes each on a 2 MiB Windows stack: it
+               died inside re_seq's own prologue with STATUS_STACK_OVERFLOW
+               (code 0xC00000FD).  The continuation is an iteration of the
+               enclosing loop instead of a call. */
+            if (*s != '\0') return NULL;
+            re++;
+            continue;
+        }
         /* alternation: top-level '|' */
         {
             int depth = 0;
@@ -966,7 +978,8 @@ static const char *re_seq(const char *re, const char *s) {
                 const char *m = re_seq(left, s);
                 free(left);
                 if (m) return m;
-                return re_seq(re + alt + 1, s);
+                re = re + alt + 1;  /* tail position: iterate, do not recurse */
+                continue;
             }
         }
         /* element length (escapes / classes / groups span >1 chars) */
@@ -982,11 +995,11 @@ static const char *re_seq(const char *re, const char *s) {
             if (!cl) return NULL;
             elen = (int)(cl - re) + 1;
         }
-        int qmin = 1, qmax = 1;
+        int qmin = 1, qmax = 1, quant = 0;
         const char *elnext;
-        if (re[elen] == '*') { qmin = 0; qmax = 1000000000; elnext = re + elen + 1; }
-        else if (re[elen] == '+') { qmin = 1; qmax = 1000000000; elnext = re + elen + 1; }
-        else if (re[elen] == '?') { qmin = 0; qmax = 1; elnext = re + elen + 1; }
+        if (re[elen] == '*') { qmin = 0; qmax = 1000000000; quant = 1; elnext = re + elen + 1; }
+        else if (re[elen] == '+') { qmin = 1; qmax = 1000000000; quant = 1; elnext = re + elen + 1; }
+        else if (re[elen] == '?') { qmin = 0; qmax = 1; quant = 1; elnext = re + elen + 1; }
         else elnext = re + elen;
         /* greedy consume, then backtrack from longest */
         const char *t = s;
@@ -1001,6 +1014,19 @@ static const char *re_seq(const char *re, const char *s) {
             count++;
         }
         if (count < qmin) return NULL;
+        if (!quant) {
+            /* No quantifier means qmin == qmax == 1, so the backtracking loop
+               below can only return the continuation or return NULL: it is a
+               tail call.  Iterating here is what keeps a long literal pattern
+               off the stack -- this is the path the 2030-character fixture
+               takes.  The quantifier path still recurses, but its depth is
+               bounded by how deeply quantified elements nest, not by how long
+               the pattern is: each re_seq(elnext, t) there returns before the
+               next one is entered. */
+            re = elnext;
+            s = t;
+            continue;
+        }
         for (;;) {
             const char *cont = re_seq(elnext, t);
             if (cont) return cont;
