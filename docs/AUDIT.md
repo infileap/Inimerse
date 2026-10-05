@@ -3312,7 +3312,14 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **规矩。** 推之前必须跑的，是**这笔 diff 能影响的阶段**；这件事的**输入**是 `git diff --name-only <base> <head>`。
 
-**通则 A（按扩展名，不按目录）。** `tools/check_text_integrity.py:55` 起 `TEXT_SUFFIXES` = `.c .h .cc .cpp .hpp .rs .py .sh .bash .md .txt .im .json .jsonc .yml .yaml .toml .ini .cfg .cmake .iss .ts .tsx .js .mjs .cjs .css .html .xml .csv .gitignore .gitattributes .editorconfig`，作用域是 `git ls-files` 的**全部受管文本** ⇒ **凡改动落在这些扩展名上，`text-integrity` 就必须跑，与文件在哪个目录无关。** 这条单独写，因为**逐行补必漏**（初稿只在 row 1/row 2 写了它，于是 row 3/row 4/row 5 全漏）；且 **`text-integrity` 不是「读 markdown 的阶段」** —— markdown 只是它拥有的三十几个后缀之一。
+**通则 A（按扩展名**或**文件名，不按目录）。** `tools/check_text_integrity.py` 有**两条**入口，缺一条这条通则就只写了一半：
+
+- **`:55` 起 `TEXT_SUFFIXES`** = `.c .h .cc .cpp .hpp .rs .py .sh .bash .md .txt .im .json .jsonc .yml .yaml .toml .ini .cfg .cmake .iss .ts .tsx .js .mjs .cjs .css .html .xml .csv .gitignore .gitattributes .editorconfig`，作用域是 `git ls-files` 的**全部受管文本**；
+- **`:93` `TEXT_NAMES = frozenset({"CMakeLists.txt", "LICENSE", "Makefile", "Dockerfile"})`**，由 **`:125` `if path.name in TEXT_NAMES: return True`** 生效；`:52-54` 逐字写着理由：「\`CMakeLists.txt\`, \`LICENSE\` and \`Makefile\` are matched by name below because they have no informative suffix or none at all.」
+
+⇒ **凡改动落在这些扩展名、或这些文件名上，`text-integrity` 就必须跑，与文件在哪个目录无关。** 这条单独写，因为**逐行补必漏**（初稿只在 row 1/row 2 写了它，于是 row 3/row 4/row 5 全漏）；且 **`text-integrity` 不是「读 markdown 的阶段」** —— markdown 只是它拥有的三十几个后缀之一。
+
+**`TEXT_NAMES` 那一半是第二轮之后才补的，补之前它是个真洞**：`CMakeLists.txt` 被「全部阶段」那一行覆盖了，但 **`LICENSE`、`Makefile`、`Dockerfile` 落在每一行之外** —— 改它们的人照这张表跑，**一个阶段都不用跑，而 `text-integrity` 会读它们**。本树里 `LICENSE` 与 `Makefile` 都真实存在（`Dockerfile` 没有），而 `docs/AUDIT.md` 里 `LICENSE`/`Makefile` 各出现 **0** 次。**通则是按机制写的，那就要把机制写全，不能只写机制里好看的那一半。**
 
 | 改动落在 | 推前必须跑 | 为什么（不是「感觉不可能」） |
 |---|---|---|
@@ -3339,10 +3346,12 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 | `text-integrity` | `tools/check_text_integrity.py`（`:426`） |
 | `orphan-fixtures` | `tools/check_orphan_fixtures.py`（`:437`） |
 
+**为什么是十一行而不是十二行。** `tools/gate.sh` 里 `$REPO_ROOT/` 的引用共十二处，其中 `:19` 的 `$REPO_ROOT/build` 是**构建输出目录**、不是判据 ⇒ **十二阶段减 `build` 得十一**。**不写这句，数 11 vs 12 的人会以为少了一行。**
+
 **★ 这张表本身的成立条件（本条初稿在这上面错了四处，全部由 ivory-ember 复核指出，五条我逐条独立复核成立）。**
 1. **初稿的 `src/**` 行漏了三个阶段，而其中一个是「为 `src/` 而建」的**：`text-integrity` 的存在理由**就是** `src/` 里的 NUL 字节。**照初稿那张表跑的人，不会跑那个专门为 `src/` 而建的阶段** —— 一张用来**免跑**的表把该跑的免掉了，这比没有表更坏。
 2. **初稿把第三列写成「不受影响」的名单，而同一个表头下有两种意思**：`vtest/**` 那一行填 `——`，读作「没有阶段是不可能受影响的」，**而那是假的**（`vtest/**` 显然不影响 `links`/`doc-paths`）。**一个表头两种语义，就是本轮一直在治的形状。** 现在第三列改成「**为什么**」——它要的是**理由**，不是**名单**。
-3. **初稿缺了「判据本身变了」的第二个入口**：十二阶段里有八个是 `tools/` 下的脚本（见上表第四行）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。
+3. **初稿缺了「判据本身变了」的第二个入口**：十二阶段里有**十一个**调用了 `tools/`（或 `Infiverse_standard/`）下的文件（见下表；**十二减 `build` 得十一** —— `build` 阶段的 `$REPO_ROOT/build` 是**输出目录**，不是判据）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。**这个数字在第二轮补进四个之后没跟着改（同一节、隔一张表），是「集合变了、数字没变」的又一例。**
 4. **标题比实际强一级（这一处仍未修）**：`git diff --name-only` 给的是**文件清单**，清单→阶段的映射**目前只存在于上面这张 markdown 表里（散文）**，**没有一条命令返回 0/1**。⇒ **判据的输入可重算，判据本身尚无可执行形态。** 这条在这里有牙：**§1.72 是用来免跑阶段的，一条不可执行的免跑判据，正是本轮反复治的形状。** 修法（**未做，已派 agent2 —— `tools/**` 是他的写域**）：给 `tools/gate.sh` 加 `--required-for <base>..<head>`，把上表编码进脚本、返回阶段名单与退出码；**在那之前，本节的措辞是「输入可重算」，不是「判据可执行」。**
 5. **第四行的 glob 是按「名字形状」选的，漏了四个「判据本身」（第二轮打回）**：初稿写 glob `tools/check_*.py`、`tools/*.test.py`，于是**名字不像 checker 的四个全漏了** —— `tools/im_diff_fuzz.py`（→`fuzz`）、`tools/node_suites/run_all.js`（→`node`）、`tools/dsh-inimerse/verify.mjs`（→`plugin`）、`Infiverse_standard/oauth_loop/**`（→`oauth-loop`）。**这四个恰恰是「改了就影响某个阶段」的判据本身。** 而**修法不是再加一个 glob，是换来源**：从 `tools/gate.sh` 的真实调用点派生。**我这次是靠手工枚举才把四个找出来的，而这个枚举本身就该由脚本做。**
 6. **表内自相矛盾**：row `src/**` 的「为什么」**逐字引用了 `tools/dsh-inimerse/verify.mjs:137`** 当作必须跑 `plugin` 的理由，而同一文件在第四行**不是**「判据本身变了」的入口 —— **同一张表对同一个文件给了两种身份。**
