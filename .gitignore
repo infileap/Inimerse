@@ -93,3 +93,8 @@ verse_layer_probe_root/
 # npm cache used by `npm install --cache .npm-tmp` (the default ~/.npm is not
 # writable in some sessions). Build input, not source.
 .npm-tmp/
+
+# Demo-recording pipeline migrated from the previous workspace root: pagecast
+# source + patches, our test harnesses, finished clips and the MCP config.
+# Local tooling and output, not Inimerse repository content.
+video-pipeline/
