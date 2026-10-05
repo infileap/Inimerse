@@ -3317,7 +3317,7 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 - **`:55` 起 `TEXT_SUFFIXES`** = `.c .h .cc .cpp .hpp .rs .py .sh .bash .md .txt .im .json .jsonc .yml .yaml .toml .ini .cfg .cmake .iss .ts .tsx .js .mjs .cjs .css .html .xml .csv .gitignore .gitattributes .editorconfig`，作用域是 `git ls-files` 的**全部受管文本**；
 - **`:93` `TEXT_NAMES = frozenset({"CMakeLists.txt", "LICENSE", "Makefile", "Dockerfile"})`**，由 **`:125` `if path.name in TEXT_NAMES: return True`** 生效；`:52-54` 逐字写着理由：「\`CMakeLists.txt\`, \`LICENSE\` and \`Makefile\` are matched by name below because they have no informative suffix or none at all.」
 
-⇒ **凡改动落在这些扩展名、或这些文件名上，`text-integrity` 就必须跑，与文件在哪个目录无关。** 这条单独写，因为**逐行补必漏**（初稿只在 row 1/row 2 写了它，于是 row 3/row 4/row 5 全漏）；且 **`text-integrity` 不是「读 markdown 的阶段」** —— markdown 只是它拥有的三十几个后缀之一。
+⇒ **凡改动落在这些扩展名、或这些文件名上，`text-integrity` 就必须跑，与文件在哪个目录无关。** 这条单独写，因为**逐行补必漏**（初稿只在 row 1/row 2 写了它，于是 row 3/row 4/row 5 全漏）；且 **`text-integrity` 不是「读 markdown 的阶段」** —— markdown 只是它拥有的三十几个后缀之一。 **通则是按机制写的，那就要把机制写全，不能只写机制里好看的那一半。**
 
 **`TEXT_NAMES` 那一半是第二轮之后才补的，补之前它是个真洞**：`CMakeLists.txt` 被「全部阶段」那一行覆盖了，但 **`LICENSE`、`Makefile`、`Dockerfile` 落在每一行之外** —— 改它们的人照这张表跑，**一个阶段都不用跑，而 `text-integrity` 会读它们**。本树里 `LICENSE` 与 `Makefile` 都真实存在（`Dockerfile` 没有），而**在 `a64c4fd` 上** `docs/AUDIT.md` 里 `LICENSE`/`Makefile` 各出现 **0** 次（`git show a64c4fd:docs/AUDIT.md | grep -c 'LICENSE'` ⇒ 0）。
 
@@ -3327,7 +3327,7 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **★ 由此得到一条比上面几条都硬的处方：当被数的东西就是这句话自己写的字时，不要报绝对数，报增量。** 证据就在这一段里：**每加一段「解释这个数为什么错」的话，就又多出几行命中，于是那个数又变了** —— `4b7b37c` 2 → `588a302` 3 → `601aac1` 4，**这是一个发散过程，不是收敛过程**；所以它不是「这条规矩的又一个实例」，而是**这条规矩会自己生产新实例**。修法**不是**再写一段自觉的文字（那会变成 5），而是写成**不随自己变化的形状**：「**这一笔又加了一行含该词的行**」是**增量、永远为真、不需要 ref**；**绝对数必须带 ref**；**被测量的是本文档自身的量（词频、行距、字符距）时，绝对现值一律非法** —— 因为改这句话就是移动被测量的东西，合法的只有两种：**带 ref 的历史读数**，或**增量**。**这一段到此为止，不再加自觉的散文 —— 再长，它的数字只会更错。**
 
-**这条规矩的落空，每一次都发生在一句正在解释这条规矩的话里**（H4.1 的判定、§1.70 的观测点、这一句，都只是已经能点名的几个） ⇒ 所以它不是新缺陷，是**这条规矩的又一个必要实例**：**不带 ref 的观测点会随下一笔失效，而失效方向恰好是「越解释越假」。****通则是按机制写的，那就要把机制写全，不能只写机制里好看的那一半。**
+**这条规矩的落空，每一次都发生在一句正在解释这条规矩的话里**（H4.1 的判定、§1.70 的观测点、这一句，都只是已经能点名的几个） ⇒ 所以它不是新缺陷，是**这条规矩的又一个必要实例**：**不带 ref 的观测点会随下一笔失效，而失效方向恰好是「越解释越假」。**
 
 | 改动落在 | 推前必须跑 | 为什么（不是「感觉不可能」） |
 |---|---|---|
