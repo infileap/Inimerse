@@ -14,25 +14,56 @@
 #                              platform branch (docs/AUDIT.md 1.71), and then the
 #                              PASS says nothing about the file it names.
 #   tools/gate.sh --jobs 4     parallel job count for the build
+#   tools/gate.sh --required-for <base>..<head>
+#                              print the stages that range forces, one selector
+#                              per line, then `required: N stage(s)`.  It runs
+#                              nothing, and it exits 0 whenever it can answer:
+#                              "which stages are required" and "the required
+#                              stages ran" are two questions, and this answers
+#                              only the first.  It exits 2 when it cannot
+#                              answer -- an unresolvable range, a selector no
+#                              stage answers to, or a registered stage no rule
+#                              can reach.  See docs/AUDIT.md §1.72: a rule used
+#                              to excuse work, that no command can run, is a
+#                              rule applied by feel.
+#
+#                              The stage list is STAGE_SPECS, the same registry
+#                              --only reads, so the two cannot drift.  Which
+#                              stage a changed path forces comes from three
+#                              places, and it is worth knowing which: the call
+#                              sites, read out of each stage_ function in this
+#                              file at run time (a name-shaped `tools/check_*`
+#                              glob misses tools/im_diff_fuzz.py, node_suites,
+#                              dsh-inimerse and Infiverse_standard/oauth_loop --
+#                              the four stages whose subject is not a checker);
+#                              the scopes, written down below because no call
+#                              site says which subtree a subject reads; and
+#                              text-integrity's own TEXT_SUFFIXES/TEXT_NAMES,
+#                              read out of tools/check_text_integrity.py.
 #
 # Exit code 0 only when every stage passed.  Each stage prints PASS/FAIL/SKIP,
 # and a summary table is printed last so a failing run is readable at a glance.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This file's own path, resolved now: --required-for reads the call sites out of
+# it, and $0 is not reliable once a stage has changed directory.
+GATE_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 cd "$REPO_ROOT" || exit 2
 
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 FAST=0
 ONLY=""
+REQUIRED_FOR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --fast) FAST=1 ;;
     --only) ONLY="${2:-}"; shift ;;
     --jobs) JOBS="${2:-4}"; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --required-for) REQUIRED_FOR="${2:-}"; shift ;;
+    -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
     *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
@@ -41,9 +72,10 @@ done
 STAGE_NAMES=()
 STAGE_RESULTS=()
 STAGE_NOTES=()
-# Every selector passed to run_stage, recorded whether or not --only ran it.
-# The legal --only values are derived from this, never from a second handwritten
-# list: a list nothing consumes only constrains the moment it was written.
+# Every registered selector, in registration order.  Filled from STAGE_SPECS at
+# the bottom of this file, never from a second handwritten list: the legal
+# --only values, the stage count, and the paths --required-for maps to stages
+# are all derived from that one array, so no two of them can drift apart.
 STAGE_WANTED=()
 FAILED=0
 
@@ -65,7 +97,6 @@ EXP_NODE="${EXP_NODE:-12}"
 
 run_stage() {
   local name="$1" wanted="$2"; shift 2
-  STAGE_WANTED+=("$wanted")
   if [ -n "$ONLY" ] && [ "$ONLY" != "$wanted" ]; then
     STAGE_NAMES+=("$name"); STAGE_RESULTS+=("SKIP"); STAGE_NOTES+=("--only $ONLY")
     return 0
@@ -457,19 +488,326 @@ stage_orphan_targets() {
   python3 "$REPO_ROOT/tools/check_orphan_targets.py"
 }
 
-run_stage "build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)" build stage_build
-run_stage "ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)" ctest stage_ctest
-run_stage "differential fuzz (interp vs AOT, expect 0 findings)" fuzz stage_fuzz
-run_stage "economy migration (§43.5, expect 39/39)" economy stage_economy
-run_stage "node protocol suites (expect ${EXP_NODE} registered)" node stage_node
-run_stage "dsh-inimerse plugin (offline + live)" plugin stage_plugin
-run_stage "oauth_loop crate (expect 75/75)" oauth-loop stage_oauth_loop
-run_stage "userdata ignore rules (default deny)" ignored-credentials stage_ignored_credentials
-run_stage "docs relative links" links stage_links
-run_stage "docs backtick paths (expect 0 broken)" doc-paths stage_doc_paths
-run_stage "tracked text files carry no NUL byte (expect 0)" text-integrity stage_text_integrity
-run_stage "test inputs that no CTest runs (expect 0)" orphan-fixtures stage_orphan_fixtures
-run_stage "executables that no CTest runs (expect 0)" orphan-targets stage_orphan_targets
+# ── the stage registry ──────────────────────────────────────────────────────
+#
+# One entry per stage: selector|label|function.  Every consumer reads this
+# array -- the runner below, the --only legality check, and --required-for --
+# so the legal selectors, the stage count and the path table cannot drift from
+# one another.  The count is written down nowhere: `all` is resolved from this
+# array and the summary counts its entries, so adding a stage is this array and
+# nothing else.  The gate grew a thirteenth stage while the table below was
+# being written; a hardcoded twelve would have been wrong on the day it was
+# typed.
+STAGE_SPECS=(
+  "build|build (Release, $( [ "$FAST" -eq 1 ] && echo incremental || echo configure+incremental ), -j$JOBS)|stage_build"
+  "ctest|ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)|stage_ctest"
+  "fuzz|differential fuzz (interp vs AOT, expect 0 findings)|stage_fuzz"
+  "economy|economy migration (§43.5, expect 39/39)|stage_economy"
+  "node|node protocol suites (expect ${EXP_NODE} registered)|stage_node"
+  "plugin|dsh-inimerse plugin (offline + live)|stage_plugin"
+  "oauth-loop|oauth_loop crate (expect 75/75)|stage_oauth_loop"
+  "ignored-credentials|userdata ignore rules (default deny)|stage_ignored_credentials"
+  "links|docs relative links|stage_links"
+  "doc-paths|docs backtick paths (expect 0 broken)|stage_doc_paths"
+  "text-integrity|tracked text files carry no NUL byte (expect 0)|stage_text_integrity"
+  "orphan-fixtures|test inputs that no CTest runs (expect 0)|stage_orphan_fixtures"
+  "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
+)
+for _spec in "${STAGE_SPECS[@]}"; do
+  STAGE_WANTED+=("${_spec%%|*}")
+done
+
+# ── which stages a change forces ────────────────────────────────────────────
+#
+# docs/AUDIT.md §1.72 writes the rule down: a change under docs/ does not need
+# the build, a change under src/ does.  It was left without an executable form
+# -- the mapping from a changed path to the stages it forces lived only as
+# prose in a table, and no command returned 0 or 1.  A judgement used to excuse
+# work, that cannot be run, is a judgement applied by feel.
+#
+# The stage list is not written down here.  It is STAGE_SPECS, the registry
+# --only already reads, and this command reads it for the same reason --only
+# does: a list nothing consumes only constrains the moment it was written.
+# Adding a stage there, and its stage_ function, is enough for both commands.
+#
+# Where the mapping comes from is two parts, and the split is the point:
+#
+#   (1) The call sites.  For every registry entry, the repo paths its stage_
+#       function actually executes are read out of this file at run time.  A
+#       name-shaped glob gets this wrong, and the four stages it gets wrong on
+#       are the four whose subject is not called check_*: tools/im_diff_fuzz.py
+#       backs fuzz, tools/node_suites/run_all.js backs node,
+#       tools/dsh-inimerse/verify.mjs backs plugin, and
+#       Infiverse_standard/oauth_loop backs oauth-loop.
+#   (2) The scopes.  Which subtree a stage's subject covers.  A call site
+#       cannot state this: `stage_links` runs tools/check_links.py, and nothing
+#       in that line says the checker reads docs/.  They are written down
+#       below, and every name in them is resolved against the registry on every
+#       run -- an unknown name is exit 2, not a row that quietly stops excusing
+#       anything.
+#
+# text-integrity is a third kind of case, and it is read rather than written:
+# its two entry points are TEXT_SUFFIXES and TEXT_NAMES in its own source, so a
+# change to LICENSE, Makefile, Dockerfile, or any .c/.md/.yml/.json file forces
+# it whatever directory the file is in.  Writing that list here as well would be
+# a copy free to drift from the file it describes.
+#
+# Three properties are deliberate, and none of them is obvious:
+#
+#   * A path that matches nothing forces EVERY stage, not none.  A table that
+#     exists to excuse work is worse than no table when it excuses too much, so
+#     the unknown case falls on the expensive side -- and says so on stderr,
+#     because a silent fallback would hide how incomplete the table is.
+#   * `all` is resolved from STAGE_SPECS, never written out.  See above.
+#   * A rule naming a stage no stage answers to is exit 2, and so is a
+#     registered stage no rule can reach.  Those are one defect seen from two
+#     sides -- a table and a registry that disagree -- and either side silently
+#     becomes an excused stage.
+REQUIRED_SCOPES=(
+  # changed subtree                     stages whose subject reads it
+  "docs/*|links doc-paths"
+  "src/*|build ctest fuzz economy plugin"
+  "vtest/*|ctest orphan-fixtures"
+  "tools/*.test.py|ctest orphan-fixtures"
+  "tools/*.test.js|ctest orphan-fixtures"
+  "tools/node_suites/*|node"
+  "tools/dsh-inimerse/*|plugin"
+  # A change to the gate itself, or to the build, invalidates every stage's
+  # premise.  Nothing is excused.
+  "tools/gate.sh|all"
+  "CMakeLists.txt|all"
+  # CI is CI's own business and needs no stage here.
+  ".github/*|-"
+)
+
+# The call sites: for each stage function in this file, the repo paths it
+# executes.  Comments and messages are skipped -- a path named in a comment is a
+# path nobody runs, and mapping a change to a stage because a comment mentions
+# the file is how a table starts lying.  Measured: without the two skips,
+# docs/BOARD.md is named in five stage bodies and would force five stages.
+derived_edges() {
+  awk '
+    /^stage_[a-z_]+\(\) *\{/ {
+      fn = $1; sub(/\(\).*/, "", fn); next
+    }
+    /^\}/ { fn = "" }
+    fn != "" {
+      l = $0; sub(/^[ \t]+/, "", l)
+      if (l ~ /^#/) next
+      if (l ~ /echo|printf/) next
+      line = $0
+      while (match(line, /(tools|src|vtest|docs|Infiverse_standard|packages|mods|selfhost|scripts|examples|future|rooms|universe|userdata)\/[A-Za-z0-9_.\/-]*[A-Za-z0-9_-]/)) {
+        print fn "\t" substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+      }
+      while (match(line, /CMakeLists\.txt/)) {
+        print fn "\t" substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }' "$GATE_SELF" | sort -u
+}
+
+# text-integrity's two entry points, read out of the checker that owns them.
+# TEXT_SUFFIXES is a multi-line literal and TEXT_NAMES a one-line one; both end
+# in a line containing ')', which is what closes the block.
+derived_text_globs() {
+  awk '
+    /^TEXT_SUFFIXES *= *frozenset\(/ { block = 1 }
+    /^TEXT_NAMES *= *frozenset\(/ { block = 1 }
+    block {
+      line = $0
+      while (match(line, /"[.A-Za-z0-9_-]+"/)) {
+        s = substr(line, RSTART + 1, RLENGTH - 2)
+        if (s ~ /^\./) print "*" s; else print s
+        line = substr(line, RSTART + RLENGTH)
+      }
+      if (/\)/) block = 0
+    }' "$REPO_ROOT/tools/check_text_integrity.py" | sort -u
+}
+
+# The registry's selector for a stage function.  This is the one place the two
+# names are tied together: derived_edges keys on the function it read out of
+# this file, and STAGE_SPECS says which selector that function answers to.  A
+# function no registry entry names is exit 2 -- it is a stage that exists and
+# cannot be required, and its edges would otherwise point at a name nothing
+# answers to.
+selector_for_function() {
+  local want="$1" spec
+  for spec in "${STAGE_SPECS[@]}"; do
+    if [ "${spec##*|}" = "$want" ]; then echo "${spec%%|*}"; return 0; fi
+  done
+  return 1
+}
+
+# Which stages a single changed path forces.  Prints selectors, in no order.
+# A named file matches exactly; a named directory matches everything under it.
+stages_for_path() {
+  local path="$1" rule pattern sels sel g
+  for rule in "${REQUIRED_SCOPES[@]}"; do
+    pattern="${rule%%|*}"; sels="${rule#*|}"
+    case "$path" in $pattern) ;; *) continue ;; esac
+    [ "$sels" = "-" ] && continue
+    if [ "$sels" = "all" ]; then
+      for sel in "${STAGE_WANTED[@]}"; do echo "$sel"; done
+    else
+      for sel in $sels; do echo "$sel"; done
+    fi
+  done
+  while IFS=$'\t' read -r sel pattern; do
+    [ -n "$sel" ] || continue
+    case "$path" in
+      "$pattern") echo "$sel" ;;
+      "$pattern"/*) echo "$sel" ;;
+    esac
+  done <<<"$DERIVED_EDGES"
+  for g in ${TEXT_GLOBS[@]+"${TEXT_GLOBS[@]}"}; do
+    case "$path" in $g) echo "text-integrity"; break ;; esac
+  done
+}
+
+# Filled in once per --required-for run, before any question is answered.
+DERIVED_EDGES=""
+TEXT_GLOBS=()
+
+# Print the stages a range forces, in registry order, then the count.
+required_for() {
+  local range="$1" changed
+  if ! changed="$(git -C "$REPO_ROOT" diff --name-only "$range" 2>&1)"; then
+    echo "gate: --required-for: git cannot resolve '$range' as a range:" >&2
+    printf '%s\n' "$changed" >&2
+    echo "gate: refusing to answer a question about a range that does not exist." >&2
+    exit 2
+  fi
+
+  # The derivation, once, before anything is answered.
+  local -a edges=()
+  local fn
+  while IFS=$'\t' read -r fn _path; do
+    [ -n "$fn" ] || continue
+    if ! sel="$(selector_for_function "$fn")"; then
+      echo "gate: --required-for: $GATE_SELF defines $fn, but no registry entry names it." >&2
+      echo "gate: a stage function the registry does not answer to cannot be required by anything." >&2
+      exit 2
+    fi
+    edges+=("$sel"$'\t'"$_path")
+  done <<<"$(derived_edges)"
+  DERIVED_EDGES="$(printf '%s\n' ${edges[@]+"${edges[@]}"})"
+  TEXT_GLOBS=()
+  while IFS= read -r _g; do [ -n "$_g" ] && TEXT_GLOBS+=("$_g"); done < <(derived_text_globs)
+  if [ "${#TEXT_GLOBS[@]}" -eq 0 ]; then
+    echo "gate: --required-for: could not read TEXT_SUFFIXES/TEXT_NAMES out of tools/check_text_integrity.py." >&2
+    echo "gate: text-integrity's scope is read, not written down here; an empty read is not a rule." >&2
+    exit 2
+  fi
+  if [ -z "$DERIVED_EDGES" ]; then
+    echo "gate: --required-for: read no call site out of any stage_ function in $GATE_SELF." >&2
+    echo "gate: an empty call-site table would excuse every stage; refusing to answer." >&2
+    exit 2
+  fi
+
+  local sel pattern path sels s out joined hit
+
+  # Every derived edge must force its own stage.  This is the derivation
+  # checking itself: if the matching below cannot reach the stage a call site
+  # belongs to, the table is being read and not consumed, which is the defect
+  # --required-for exists to make visible.
+  while IFS=$'\t' read -r sel path; do
+    [ -n "$sel" ] || continue
+    joined="$(stages_for_path "$path" | sort -u | tr '\n' ' ')"
+    case " $joined " in
+      *" $sel "*) ;;
+      *)
+        echo "gate: --required-for: the call site in stage_${sel//-/_} names '$path'," >&2
+        echo "gate: but a change to '$path' does not force '$sel'.  The derivation is not" >&2
+        echo "gate: reaching the stage it came from; refusing to answer." >&2
+        exit 2
+        ;;
+    esac
+  done <<<"$DERIVED_EDGES"
+
+  local -a picked=()
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    out="$(stages_for_path "$path")"
+    if [ -z "$out" ]; then
+      echo "gate: --required-for: no rule matches '$path'; requiring every stage." >&2
+      for sel in "${STAGE_WANTED[@]}"; do picked+=("$sel"); done
+    else
+      while IFS= read -r sel; do [ -n "$sel" ] && picked+=("$sel"); done <<<"$out"
+    fi
+  done <<<"$changed"
+
+  # A rule that names a stage nobody answers to has quietly stopped excusing
+  # anything, or quietly started excusing the wrong thing.
+  if [ "${#picked[@]}" -gt 0 ]; then
+    for sel in "${picked[@]}"; do
+      hit=0
+      for path in "${STAGE_WANTED[@]}"; do
+        [ "$path" = "$sel" ] && hit=1 && break
+      done
+      if [ "$hit" -eq 0 ]; then
+        echo "gate: --required-for: a rule names stage '$sel', but no stage answers to it." >&2
+        echo "gate: the path table and the stage registry disagree; refusing to answer." >&2
+        exit 2
+      fi
+    done
+  fi
+
+  # And the other direction: a registered stage no rule can reach is a stage
+  # this command would excuse for every change there is.  Reachability counts
+  # all three sources -- the scopes, the call sites, and text-integrity's own
+  # entry points, which is the one stage no path rule has to name.
+  local reach
+  for path in "${STAGE_WANTED[@]}"; do
+    reach=0
+    for sel in "${REQUIRED_SCOPES[@]}"; do
+      sels="${sel#*|}"
+      [ "$sels" = "-" ] && continue
+      if [ "$sels" = "all" ]; then reach=1; break; fi
+      for s in $sels; do
+        if [ "$s" = "$path" ]; then reach=1; break; fi
+      done
+      [ "$reach" -eq 1 ] && break
+    done
+    if [ "$reach" -eq 0 ]; then
+      while IFS=$'\t' read -r s _p; do
+        [ "$s" = "$path" ] && { reach=1; break; }
+      done <<<"$DERIVED_EDGES"
+    fi
+    [ "$path" = "text-integrity" ] && reach=1
+    if [ "$reach" -eq 0 ]; then
+      echo "gate: --required-for: stage '$path' is registered, but no rule can reach it." >&2
+      echo "gate: a stage no rule can require is a stage every change silently excuses." >&2
+      exit 2
+    fi
+  done
+
+  local n=0
+  for path in "${STAGE_WANTED[@]}"; do
+    hit=0
+    if [ "${#picked[@]}" -gt 0 ]; then
+      for sel in "${picked[@]}"; do
+        if [ "$sel" = "$path" ]; then hit=1; break; fi
+      done
+    fi
+    [ "$hit" -eq 1 ] || continue
+    echo "$path"
+    n=$((n + 1))
+  done
+  echo "required: $n stage(s)"
+}
+
+# --required-for answers a question; it does not run the gate, so it returns
+# before the first stage starts.
+if [ -n "$REQUIRED_FOR" ]; then
+  required_for "$REQUIRED_FOR"
+  exit 0
+fi
+
+for _spec in "${STAGE_SPECS[@]}"; do
+  _sel="${_spec%%|*}"; _rest="${_spec#*|}"
+  run_stage "${_rest%%|*}" "$_sel" "${_rest#*|}"
+done
 
 # An --only value that matches no stage used to skip every stage, print
 # "gate: OK -- every stage passed." and exit 0: a green light from a run that

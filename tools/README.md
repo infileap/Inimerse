@@ -101,6 +101,14 @@ tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|
                               # whether it was compiled here — a target can be run by a
                               # CTest and still be named only inside a platform branch
                               # ([docs/AUDIT.md](../docs/AUDIT.md) §1.71).
+tools/gate.sh --required-for <base>..<head>
+                              # print the stages that range forces, one selector per
+                              # line. Runs nothing, so a green answer here is not a
+                              # green gate. The stage list is the same registry
+                              # `--only` reads; which path forces which stage comes
+                              # from each `stage_*` function's own call sites, from
+                              # the scopes written in `gate.sh`, and from
+                              # `check_text_integrity.py`'s own suffix/name lists.
 ```
 
 | Stage | Expectation |
