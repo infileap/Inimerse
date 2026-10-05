@@ -1351,9 +1351,13 @@ endif()
 # would leave "Windows is the baseline" unpinned, and that is the whole reason
 # this is a defect rather than a port.  Each length is paired: the impossible
 # pattern must be false AND the possible one must be true, so that a non-fix
-# which simply always answers false cannot pass.  See docs/AUDIT.md 1.64.
+# which simply always answers false cannot pass.  Both halves are asserted --
+# an expectation built by joining lines with "^" anchors to the end of the
+# merged output and never matches, so they are separate list items instead.
+# See docs/AUDIT.md 1.64.
 add_test(NAME match_long_pattern_runtime
          COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/match_long_pattern_v06.im)
 set_tests_properties(match_long_pattern_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
-  PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false")
+  PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false"
+  FAIL_REGULAR_EXPRESSION "match-long [0-9]+ possible=false")

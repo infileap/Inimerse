@@ -3989,3 +3989,51 @@ Windows/ucrt64 上 `socket_probe`（`#20`）`***Timeout 11.31 sec`。逐调用�
 **一条过程记录（我自己的错，不是引擎的）**：我最初把 `PASS_REGULAR_EXPRESSION` 写成 `"match-long 2030 impossible=false possible=true"`，但输出是**两行**，`^` 把 `possible=true` 锚到了行首 ⇒ 断言永远不匹配，测试一上来就是红的，A/B 的第一步也因此假红。教训：**跨行的期望串不能用 `^` 起头拼**。
 
 **诚实边界**：①`16 * strlen(pattern) + 1` 的 16 倍是**上界估计，不是实测倍数**；②翻转点 N=2030 与「2031 字节上限」两处是我在本机实测的，`noble-zephyr` **只核了代码形状、未独立复跑**；③我只在 Linux/gcc 上跑了这条断言，Windows 侧的绿是**由代码形状推断的**（那份没有定长缓冲），本次冻结期内**没有在 ucrt64 上实测**；④分配失败分支返回 `false` 对**本来应该匹配**的超长模式是错答案 —— 它不比原来对，只是**不再沉默**；⑤这条修的是「截断后仍给答案」，**不是**「超长模式应当被拒绝」那种语义决定。
+
+## §10.98 一条注释声称成对，而断言在 CMake 里是「或」不是「与」
+
+`match_long_pattern_runtime` 的注释逐字写着「Each length is paired: the impossible pattern must be false AND the possible one must be true, so that a non-fix which simply always answers false cannot pass」，而它唯一的断言是：
+
+```cmake
+PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false"
+```
+
+**注释承诺的那一半，没有任何东西在读。** fixture 数据本身是成对的（六行输出：两档 `impossible=false` 与两档 `possible=true` 都在），缺的不是数据，是断言。
+
+### 第一个修法被实测证伪
+
+把断言改成 `;` 分隔的两项 ——
+
+```cmake
+PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false;match-long 2030 possible=true"
+```
+
+**看起来**是把两半都钉住了。实测：把 `posix_core_match` 临时改成恒 `push_bool(vm, 0)`（一个「永远答 false」的假修法）重建后，这条 CTest **仍然 `100% tests passed`**。原因是 CMake 的 `PASS_REGULAR_EXPRESSION` 是**列表内任一命中即通过（或）**，不是要求全部命中（与）。⇒ 这个「修法」把一个注释谎言换成了一个断言谎言，**比不改更坏**：下一个读者会以为成对性已经被断言了。
+
+### 落地的形态
+
+成对性要用两个**不同种类**的属性表达，而不是同一个列表的两项：
+
+```cmake
+  PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false"
+  FAIL_REGULAR_EXPRESSION "match-long [0-9]+ possible=false"
+```
+
+`FAIL_REGULAR_EXPRESSION` 命中即**红**，所以「没有任何一个可能模式答 false」这件事才有了读者。
+
+### 第二个坑：「possible」是「impossible」的子串
+
+我第一版写的是 `FAIL_REGULAR_EXPRESSION "possible=false"` —— 它匹配上了 `impossible=false` 里的子串（`im` + **`possible=false`**），于是**真修好的代码也红**。这与 `strstr("audio","io")` 过授 `CAP_IO` 是同一个形状：**子串匹配把「看起来像」当成了「就是」**。锚到行首那一节（`match-long [0-9]+ possible=false`）之后两个方向才对。
+
+### A/B（两个方向，都走 CTest 本身）
+
+| 代码 | 结果 |
+|---|---|
+| 真修法（`tcap = 16 * strlen(pattern) + 1`） | `100% tests passed, 0 tests failed out of 1` |
+| 假修法（恒 `push_bool(vm, 0)`） | `***Failed  Error regular expression found in output. Regex=[match-long [0-9]+ possible=false]` |
+
+还原后 `cmp` 证明与提交版本**逐字节相同**，worktree 干净。
+
+### 诚实边界
+
+①`FAIL_REGULAR_EXPRESSION` 钉的是「**没有任何**行报 `possible=false`」，它不检查 `possible=true` 出现了几次，也不检查那两行是**同一个长度**的两半（fixture 里长度与两半的配对关系由 fixture 自己保证，断言看不到）；②`match-long` 这个前缀字符串是断言与 fixtures 之间的**隐式契约**，改名会让断言静默失配（今天会红，因为 `PASS_` 那一半也找不到，但这是巧合，不是设计）；③这条记录的是**断言机制**，`match` 截断缺陷本身见 §10.97。
