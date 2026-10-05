@@ -3438,6 +3438,67 @@ rc=1
 - **被 install 规则或 custom command 引用的目标仍算孤儿**：被复制不是被跑。
 - **本节只量了 `add_executable( )`。** 本仓库另有 6 个 `add_library( )`（`CMakeLists.txt:25`、`:451`、`:578`、`:588`、`:1007`、`:1381`）与 2 个 `add_custom_target( )`（`:377`、`:614`），**都没有量**。对库来说，「被跑」的类比是「被测试加载」，而那是另一个问题 —— 一个当 `LD_PRELOAD` 用的 `.so` 是写在测试的环境里，不是写在 `COMMAND` 里，本节那把尺子量不到它。**这是没查，不是查过没有。**
 
+## §1.74 命令能复现的，只有与运行状态无关的量
+
+**本节记的是 H4.1 判定① 的两种失效，以及本节自己写下来时踩的第三次。**
+
+H4.1（`docs/DECFY_DESIGN.md`）的两条判定是：① 数字旁边写着产出它的**命令**，或 ② 它被写成从同一份输出**派生**的断言。下面两处各证明 ① 的一种失效，而它们**方向相反**。
+
+### A. 命令给了，也复现不出来：`822` vs `823`
+
+`tools/check_text_integrity.py` 收尾打印的分母（「N text file(s)」）**不是任何 ref 的属性**。决定性实验（用隔离索引，不碰共享索引）：
+
+```
+$ export GIT_INDEX_FILE=/tmp/probe_idx_$$ ; git read-tree HEAD
+$ GIT_INDEX_FILE=$GIT_INDEX_FILE python3 tools/check_text_integrity.py | tail -1
+check_text_integrity: 823 text file(s), 0 with NUL bytes.
+$ printf 'x\n' > .scratch_index_probe.md
+$ GIT_INDEX_FILE=$GIT_INDEX_FILE git add .scratch_index_probe.md
+$ GIT_INDEX_FILE=$GIT_INDEX_FILE python3 tools/check_text_integrity.py | tail -1
+check_text_integrity: 824 text file(s), 0 with NUL bytes.      ← 同一 HEAD、同一工作区、只多一个索引条目
+```
+
+成因是读码事实：脚本第 79 行是 `["git", "ls-files", "-z"]`、`cwd=REPO_ROOT` ⇒ **读的是索引，不读任何 ref**。所以 `822` 是 `7fbc190`（911 paths）那棵树的值，`c9a218d` 与 `e3da33c` 各自量都是 **823 text / 912 paths**；差的那一个路径是 `tools/check_orphan_targets.py`（`edbc788` 加入、`4ca013d` 才进主线）。
+
+**两个人都没读错，读的是两棵树** —— 数字被挂到了「它谈论的那个 ref」而不是「它读到的那棵树上」。
+
+> **补充情形一。** 一个数如果是从**工作区 / 索引**读出来的（`git ls-files`、`git status`、文件系统枚举），那么「给出命令」不足以复现它；必须再给出**命令被运行时的状态**（哪个 ref 检出、索引是否干净），或者把它改写成**从 ref 派生**的量（`git ls-tree -r <ref>`）。判据：**同一命令在两个 ref 上跑，若得数不同，这个数就必须带 ref。**
+
+同一处还有一条**脚本自身的不对称**：它的 docstring 逐字写着「`git ls-files` defines repository content … an untracked scratch file must not be able to turn this gate red」—— **对红绿成立，而它印出来的分母带着它刚刚声明要排除的那种依赖** ⇒ **同一个脚本里，「什么算内容」这条规则对判定严格，对报数宽松。** 最小改动一行：收尾那行自报出处（`(git ls-files: the index, not a commit)`）。
+
+### B. 命令精确复现，而数是错的：`106` vs `114`
+
+```
+git ls-files 'src/**/*.c'            106   ← 报告里写的
+git ls-files ':(glob)src/**/*.c'     114   ← 真数
+git ls-files 'src/*.c'               114
+git ls-files '*.c'                   118   ← 全仓受管 .c
+```
+
+差集逐字是 `src/` 顶层那 8 个：`child_proc.c`、`desugar_mod.c`、`headless_server.c`、`headless_server_posix.c`、`headless_server_probe.c`、`isolate_mod.c`、`lint_mod.c`、`main.c`。**成因：默认 pathspec 里 `**` 被当作 `*`，而 `*` 能跨 `/`** ⇒ `src/**/*.c` 的两个字面斜杠仍然要求两个路径分隔符，直接躺在 `src/` 下的文件斜杠不够 ⇒ 落选；**`:(glob)` 下 `**/` 才有「零或多个目录」的语义**。⇒ **不是「`**` 漏了」，是「不写 `:(glob)` 时 `**` 根本不是 `**`」。**
+
+⇒ `114` 与 `118` 都真，**`106` 是唯一那个「说的和量的不是同一个集合」的**；而「C 层有多大」**不是良定义的问题**，该写的是「**哪个集合**」（`src/` 之外还有 4 个：`hl_bridge.c`、`mods/build/build_mod.c`、`mods/debug/debug_mod.c`、`tools/wasm_probe.c`）。
+
+> **补充情形二（比 A 更根本）。** 一个计数断言合格，**当且仅当**旁边写着产出它的命令，**且该命令的筛选条件本身是可复核的**。可执行检验：**把筛选条件换一种等价写法再量一次；若得数不同，那么「这个数是多少」这个问题在被问出来之前就还没定义好。**
+
+**判定① 保证的是「可复现」，不是「正确」。** 而这条被记录下来的坑，**在同一天、同一棵树、同一条命令上又被踩了一次**（它早已写在 agent2 的 12 文件裁定表里）⇒ **一个已经被记录下来的坑，不阻止下一个人再踩一次；阻止它的只有把它写成判据。**
+
+### C. 本节写下来时踩的第三次：一个数不能写在它自己数的那个提交里
+
+`docs/RELEASE_0.5.2.md` 的基线表初稿写「相对 `v0.5.1`：该 tag 之后的 **74** 个提交（`git rev-list --count v0.5.1..v0.5.2`）」。**`74` 是在 `88e9338` 上量的**（那是合并 agent4 那条分支之后的 HEAD），而文档随 `751b2a0` 发布 —— 同一个命令在 `751b2a0` 上给 **76**。**数与它的 ref 错位，与 A 是同一形状。**
+
+而这一处**比 A 更硬**：就算当时量对了，**这个字面量也永远不可能对** —— 写下一个数**就多一个提交**，而那个数正是要数的提交数。⇒ 落地的写法**不写这个字面量**：给出命令，把字面量挂在**一个被点名的 ref** 上。
+
+> **§1.65 的形状在这里第二次出现，而这次它落在发布说明上。** 与 §1.65 的区别只是：那里写下结论的动作往仓库里加了一个**字符串命中**，这里加了一个**提交**。
+
+### D. `--required-for` 的两种形式各回答什么
+
+`tools/gate.sh --required-for` 有两种形式，而**命令行里没有任何东西告诉读者答的是哪一个**：
+
+- **单参 `--required-for <ref>`** = **工作区相对那个 ref 变了什么**。读码事实：`tools/gate.sh:675` 是 `git -C "$REPO_ROOT" diff --name-only "$range"` ⇒ 含已暂存与未暂存、**与提交历史无关**。⇒ 干净树上必然是 `required: 0 stage(s)` + rc=0（agent4 在那棵树上看到的），脏树上就是那些脏文件（本轮在 `main` 上看到三个阶段）。
+- **两参 `--required-for <base>..<head>`** = **那个提交区间变了什么**。
+
+**两个答案都对，错的是「成功那一侧不自报问题」。** 「拒绝回答」那一侧是有牙的（`:676-679` 对不可解析的范围打 `gate: refusing to answer a question about a range that does not exist.` + `exit 2`）；缺的只是成功时说明它答的是哪一个 —— 而**「零个阶段」在一个敲错的调用里仍然是最危险的答案**。
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
