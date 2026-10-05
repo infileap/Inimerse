@@ -1031,8 +1031,21 @@ set_tests_properties(vfs_probe PROPERTIES
 # A builtin name is one contract.  src/runtime/runtime.c (WIN32) and
 # src/runtime/runtime_posix.c (POSIX) register the same names through different
 # code, so a name with two implementations is a name with two answers -- and the
-# only test that compared them, posix_runtime_parity, is DISABLED on Windows
-# (:662).  This pin runs on BOTH platforms and prints one line either way, so on
+# only test that compared them used to be one-sided.  This paragraph read, until
+# da79097 ("tests: enable posix_runtime_parity on Windows; int(\"0x10\") is ruled
+# 16, not withdrawn"), verbatim:
+#
+#     the only test that compared them, posix_runtime_parity, is DISABLED on Windows (:662)
+#
+# That is no longer true.  da79097 deleted the `DISABLED TRUE` branch, so
+# `posix_runtime_parity` is registered on BOTH platforms now, and each
+# registration carries its own expected value -- `parity load_missing=-1` on
+# POSIX, `0` on WIN32 -- so neither side's current answer can drift unnoticed.
+# The old wording is still readable at 18b865b:CMakeLists.txt, and the line
+# number it cites is gone; read the current registration with
+# `grep -n 'posix_runtime_parity' CMakeLists.txt` instead of a number, because
+# the number moved when the Windows branch was removed.
+# This pin runs on BOTH platforms and prints one line either way, so on
 # Linux it judges the POSIX copy and on Windows the WIN32 one.  It pins
 # int()'s width, chr()'s type check, and the name guard that atomic_get/atomic_set
 # were missing (which crashed the Windows engine).  int("0x10") is asserted: it
