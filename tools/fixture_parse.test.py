@@ -36,11 +36,28 @@ and then ignored, not a program that failed to parse.
 A fixture may be listed in ALLOWED, but every entry must say what it is
 evidence for.  A bare filename would be the same defect one level up: an
 exemption that nobody can audit.
+
+Where the scan runs
+-------------------
+Against a copy of `vtest/`, not against `vtest/` itself.  The interpreter
+chdirs to the directory of the script it is running (`chdir_to_script_dir`,
+`src/main.c:520`), so a fixture that writes a file writes it next to itself,
+and `vtest/say_pair_probe_v06.im:11` calls
+`say_file("FILETEXT", "sayout.txt")`.  Every scan therefore appended
+`FILETEXT\n` to `vtest/sayout.txt` -- an untracked file that `git status`
+reported after every gate run, because this scan executes fixtures rather than
+only parsing them.  A copy keeps the sibling-relative reads the fixtures rely
+on (`params_relative_v06.params`, `params_sub/`) and puts every write where a
+test is allowed to write.  The scan then asserts that `vtest/` gained and lost
+nothing, so a fixture that finds another way into the tree fails here instead
+of turning up in `git status`.
 """
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -120,13 +137,32 @@ def main():
         % (len(fixtures), MIN_FIXTURES)
     )
 
+    source = ROOT / "vtest"
+    before = sorted(p.name for p in source.iterdir())
+
     bad = []
-    for fixture in fixtures:
-        if fixture.name in ALLOWED:
-            continue
-        found = scan(engine, fixture)
-        if found:
-            bad.append((fixture.name, found))
+    with tempfile.TemporaryDirectory(prefix="inimerse-fixture-parse-") as tmp:
+        scratch = Path(tmp) / "vtest"
+        shutil.copytree(source, scratch)
+        for fixture in sorted(scratch.glob("*.im")):
+            if fixture.name in ALLOWED:
+                continue
+            found = scan(engine, fixture)
+            if found:
+                bad.append((fixture.name, found))
+
+    after = sorted(p.name for p in source.iterdir())
+    if after != before:
+        print(
+            "fixture_parse: the scan changed the tree it was scanning -- "
+            "vtest/ gained %s and lost %s"
+            % (sorted(set(after) - set(before)), sorted(set(before) - set(after)))
+        )
+        print(
+            "a fixture that writes next to itself must be run somewhere it is "
+            "allowed to write, not in the source tree"
+        )
+        return 1
 
     print(
         "fixture_parse: %d fixture(s) scanned, %d emitted a parse error"

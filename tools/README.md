@@ -87,22 +87,34 @@ them from stepping on each other. The board and the rules are in
 
 ### `gate.sh` — the acceptance gate
 
-Twelve stages; exit 0 only if all pass. A branch is mergable when this is green.
+Thirteen stages; exit 0 only if all pass. A branch is mergable when this is green.
 Run it **serially** — two gates at once bind overlapping ports and manufacture the
 failures [docs/STATUS.md](../docs/STATUS.md) §2.9 records.
 
 ```bash
-tools/gate.sh                 # all twelve stages
+tools/gate.sh                 # all thirteen stages
 tools/gate.sh --fast          # reuse the existing build/ (skip configure)
 tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|oauth-loop
                               #            |ignored-credentials|links|doc-paths
-                              #            |text-integrity|orphan-fixtures
+                              #            |text-integrity|orphan-fixtures|orphan-targets
+                              # `orphan-targets` asks whether a target is run, not
+                              # whether it was compiled here — a target can be run by a
+                              # CTest and still be named only inside a platform branch
+                              # ([docs/AUDIT.md](../docs/AUDIT.md) §1.71).
+tools/gate.sh --required-for <base>..<head>
+                              # print the stages that range forces, one selector per
+                              # line. Runs nothing, so a green answer here is not a
+                              # green gate. The stage list is the same registry
+                              # `--only` reads; which path forces which stage comes
+                              # from each `stage_*` function's own call sites, from
+                              # the scopes written in `gate.sh`, and from
+                              # `check_text_integrity.py`'s own suffix/name lists.
 ```
 
 | Stage | Expectation |
 | --- | --- |
 | build | Release build, 0 error |
-| ctest | **137 / 137** |
+| ctest | **148 / 148** |
 | economy | `tools/economy_migration.test.py` — **39 / 39** |
 | fuzz | `tools/im_diff_fuzz.py` — 3 seeds x 120 programs, **0 findings** |
 | node | `node tools/node_suites/run_all.js` — **12 / 12** |
@@ -113,6 +125,7 @@ tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|
 | doc-paths | `tools/check_doc_paths.py` — **0 broken** |
 | text-integrity | `tools/check_text_integrity.py` — **0 files with NUL** |
 | orphan-fixtures | `tools/check_orphan_fixtures.py` — **0 orphans** |
+| orphan-targets | `tools/check_orphan_targets.py` — **0 orphans**, where a target is measured by the target some `add_test( )` runs and never by the test's name. It answers *is it run*, not *was it compiled here*: a target can be run by a CTest and still be named only inside a platform branch, and then the PASS has no relation to the change ([docs/AUDIT.md](../docs/AUDIT.md) §1.71) |
 
 When one of those numbers changes, update this table *and* the baseline row in
 [docs/STATUS.md](../docs/STATUS.md) §1 — otherwise the next session gates against
