@@ -39,7 +39,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
-| 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点**：`v0.5.2`（`git rev-parse --short 'v0.5.2^{commit}'`）—— **这一行不写那个短 sha 的字面量**：它随 tag 落在哪个提交而变，而写下它的那一笔自己就是「之后」的提交（§1.74 C）。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；`git rev-list --count 'v0.5.1^{commit}'..'v0.5.2^{commit}'` → **76**（到 0.5.2 发布点） |
+| 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点**：`v0.5.2` → `0ebd68d`（`git rev-parse --short 'v0.5.2^{commit}'`）。**这个字面量是合法的**：写下它的这一笔在 tag **之后**，写下它**不移动 `v0.5.2^{commit}`** —— 判据是「写下它会不会改变它量的那个东西」，不是「不许写字面量」（§1.74 C）。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；`git rev-list --count 'v0.5.1^{commit}'..'v0.5.2^{commit}'` → **76**（到 0.5.2 发布点） |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
 | 全量测试 | **148 / 148 真通过**（Linux），无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s。**按平台并列，且每个读数带自己的 ref**：本树（合并后的 `main`）Linux `Total Tests: 148` / `stream/builtin-contract-rulings` @ `ab70a71` 上 Windows `Total Tests: 122` | `ctest --test-dir build -j$(nproc)`；Windows 读数见 §10.81（ucrt64，CI 同款工具链） |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
