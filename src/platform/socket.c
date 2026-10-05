@@ -69,7 +69,49 @@ static ImSocket *wrap_socket(
     socket->fd = fd; return socket;
 }
 
+#ifdef _WIN32
+/* InetPtonA carries inet_pton's contract: 1 on success, 0 when the string is not
+ * a valid literal for that family, -1 on error. */
+#define IM_INET_PTON(family, src, dst) InetPtonA((family), (src), (dst))
+#else
+#define IM_INET_PTON(family, src, dst) inet_pton((family), (src), (dst))
+#endif
+
+/* A host that is already an address literal does not need a resolver.
+ *
+ * getaddrinfo() does accept "127.0.0.1" and "::1" and hands them back unchanged,
+ * but it reaches them through the full resolver path, and that path is the one
+ * that stalls when a machine's resolver is slow or unreachable.  Measured on
+ * Windows (ucrt64) by timing each socket call in one probe round: im_socket_init
+ * stayed at 1-4 ms while im_socket_listen took 0.9-3.7 s, port_available up to
+ * 1478 ms, connect 1542 ms, port_open 2116 ms -- four resolutions per round, so
+ * the round's wall time ranged from 151 ms to 8564 ms and the CTest 10 s ceiling
+ * turned the tail red.  inet_pton() answers a literal with no I/O and no
+ * resolver thread.
+ *
+ * This is a fast path, not the answer: anything inet_pton() rejects falls through
+ * to getaddrinfo() exactly as before, so a hostname, an empty host, and the
+ * AI_PASSIVE (no host) case keep their previous behaviour -- including the
+ * bounded-resolution machinery below, which still covers every non-literal.
+ * Both resolve entry points consult this one helper so the fast path cannot
+ * become a second rule.  See docs/AUDIT.md §1.63. */
+static int addr_from_literal(const char *host, uint16_t port, struct sockaddr_storage *out, socklen_t *out_len) {
+    if (!host || !*host) return -1;
+    struct sockaddr_in v4; struct sockaddr_in6 v6;
+    memset(&v4, 0, sizeof v4); memset(&v6, 0, sizeof v6);
+    if (IM_INET_PTON(AF_INET, host, &v4.sin_addr) == 1) {
+        v4.sin_family = AF_INET; v4.sin_port = htons(port);
+        memcpy(out, &v4, sizeof v4); *out_len = (socklen_t)sizeof v4; return 0;
+    }
+    if (IM_INET_PTON(AF_INET6, host, &v6.sin6_addr) == 1) {
+        v6.sin6_family = AF_INET6; v6.sin6_port = htons(port);
+        memcpy(out, &v6, sizeof v6); *out_len = (socklen_t)sizeof v6; return 0;
+    }
+    return -1;
+}
+
 static int resolve_addr(const char *host, uint16_t port, struct sockaddr_storage *out, socklen_t *out_len, int passive) {
+    if (addr_from_literal(host, port, out, out_len) == 0) return 0;
     struct addrinfo hints = {0}, *result = NULL;
     char service[16]; snprintf(service, sizeof service, "%u", (unsigned)port);
     hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; hints.ai_flags = passive ? AI_PASSIVE : 0;
@@ -122,6 +164,11 @@ static void *resolve_job_run(void *raw) {
 static int resolve_addr_timed(const char *host, uint16_t port, struct sockaddr_storage *out,
                               socklen_t *out_len, int passive, int timeout_ms) {
     if (timeout_ms <= 0) return resolve_addr(host, port, out, out_len, passive);
+    /* The literal fast path has to sit here too, not only inside resolve_addr():
+     * a bound that is only honoured after a resolver round trip is not a bound,
+     * and spawning a thread to resolve "127.0.0.1" is what made the Windows probe
+     * slow.  Both entries ask the same helper, so there is one rule. */
+    if (addr_from_literal(host, port, out, out_len) == 0) return 0;
     ResolveJob *job = (ResolveJob *)calloc(1, sizeof(*job));
     if (!job) return resolve_addr(host, port, out, out_len, passive);
     if (host && *host) snprintf(job->host, sizeof job->host, "%s", host);
