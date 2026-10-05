@@ -79,7 +79,7 @@ ALLOWED = {
     ),
     "say_pair_probe_v06.im": (
         "an ad-hoc probe whose output is recorded verbatim in "
-        "docs/AUDIT.md:1807; it was run by hand while comparing two engines "
+        "docs/AUDIT.md:1811-1812; it was run by hand while comparing two engines "
         "and was never meant to be a regression input"
     ),
     "range_metadata_probe_v06.im": (
