@@ -3076,6 +3076,74 @@ check_orphan_fixtures: 115 input(s) checked (69 vtest fixtures, 33 python harnes
 
 **活体标本（同一路径、两个分支、两个值、门禁全绿）**：根工作树的 `tools/gate.sh:54` 至今是 `EXP_CTEST="${EXP_CTEST:-142}"`，而 `main` 上是 `148`。**本节作者读它时正好中招**，一度把 `142` 判成对方的数字错。
 
+## §1.69 测量点、发布物、以及「我说的那棵树」怎么变成可判定的
+
+**本节是 §1.67（「东西在不在」有人问，「两个值是不是同一个」没人问）与 §1.68（同一个量在两棵树上有两个值）在发布动作上的落地。** 一节写证据的文档，若只说「量过」，读者无法判断量的是不是发布的那棵树 —— **本节把每个断言换成一条可重跑的命令。**
+
+### A. 测量点 ≠ 发布树
+
+**`122` / `121` 是在 `c71ea00` 上量的，而发布树是 `4e444dd`。**
+
+```
+$ git rev-list --count c71ea00..5868940        →  44      （量过；不是 112）
+$ git merge-base --is-ancestor c71ea00 5868940 →  是祖先（RC=0）
+```
+
+**完整、不得压缩成「122/121」一句话**：
+
+> **在 `main` 的祖先 `c71ea00` 上量到 122 注册 / 121 实跑；`main` 已于 `5868940`；两者之间 44 个提交；未在 `5868940` 上重量。**
+
+**`44` 是量的；`112` 是 `v0.5.0..5868940`，与本节无关。** 两个数出自两个区间 —— 一个数写错出处，下一个读者就会把它当成另一个区间。**命令：`git rev-list --count <refA>..<refB>`，用哪个区间就写哪个区间。**
+
+### B. 发布树是哪一棵
+
+```
+$ git rev-parse --short v0.5.1              →  ceda774   （annotated）
+$ git rev-parse --short v0.5.1^{commit}     →  4e444dd
+$ git diff --stat 5868940 4e444dd           →  docs/STATUS.md | 2 +-   (1 insertion, 1 deletion)
+$ git rev-parse --short main                →  5868940   （未动）
+```
+
+**`4e444dd` 的父是 `5868940`，tag 指的 commit 与 `main` 差一个文档提交。** 不写这句，读者会把「发布树」当成上面 A 里那个测量点 `c71ea00`。
+
+**「Lands the language migration on `release/051-final`」这句是可判定的，不是措辞**：
+
+```
+$ git merge-base --is-ancestor release/051-final 5868940   →  RC=0（是祖先）
+$ git rev-parse --short release/051-final                  →  c71ea00
+```
+
+⇒ **祖先关系成立**，同时它说明 **`release/051-final` 与 A 里的测量点是同一个 commit** —— 两句话指同一个 ref，**读者必须能从命令看出来，而不是从措辞猜。**
+
+### C. `142` / `148`：同一量、两棵树、两个值、两个都对
+
+```
+$ git cat-file -p c71ea00:tools/gate.sh | sed -n '54p'
+EXP_CTEST="${EXP_CTEST:-142}"
+$ git cat-file -p c71ea00:CMakeLists.txt | grep -c 'add_test('
+142
+$ git cat-file -p 4e444dd:tools/gate.sh | sed -n '54p'
+EXP_CTEST="${EXP_CTEST:-148}"   # recounted off the merged tree by the commit below, not inherited from either side
+$ git cat-file -p 4e444dd:CMakeLists.txt | grep -c 'add_test('
+148
+```
+
+**`148` 的留痕形态不是一份日志，是一个提交加一条可重跑的命令**：`4e5b3f8`（`gate: the number is 148`）、`9d1ec6f`（`gate: EXP_CTEST is recounted off the merged tree, not inherited`）。**⇒ 数字在树上一致，且它是怎么来的写在树里。** **「几条测试」与「EXP_CTEST 是多少」在同一棵树上互相印证**，`grep -c 'add_test('` 一条命令即可复算。
+
+**⚠️ 若不追问，tag 正文里的 `148` 会看起来与本项目的 `142` 冲突。** 事实是：**合并后的树重数了一遍，`142` 与 `148` 各自为真、各自有出处。** 这正是 §1.68 的形状，**而这次的「两棵树」是发布前后的两棵树。**
+
+### D. 两个目录：留着是为了能重跑，不是因为它们重要
+
+**`build-windows-gcc` = DO NOT DELETE / DO NOT REBUILD。** 它是 Windows `122`（注册数）证据对应的构建目录，而 `/mnt/d/inim-rel/src/build.ps1` 会 `Remove-Item -Recurse -Force` 掉它 —— **一次手快的「重跑一遍」就会销毁证据**。带符号的取证另起 `build-sym`（`RelWithDebInfo`，未碰它）。
+
+**`inimerse_crash.log` 是追加写入、且按 CWD 落盘**（从 `/mnt/d/inim-rel/src` 跑会落在 `vtest/inimerse_crash.log`）⇒ **必须先清空再读、且只读一条条目**；否则会串到旧条目上（本轮一度把一条陈旧的 `0xC0000005` 读成栈溢出链）。
+
+**`vtest/_bisect_*.im` 探针留着。** 它们是二分出「N=25 起崩」的工具，而「25 起崩不是 `pos[4096]` 越界」这条结论**靠它们才站得住**：**留下的是结论、扔掉的是能重跑结论的东西。** 它们不在 git 内，不构成发布树上的字节。
+
+### E. 本节自己遵守的纪律
+
+**本节所有数字都在写之前用上面的命令跑过一遍。** 一条命令若只覆盖表的一部分、或只在另一棵树上跑过，**就必须在正文里写清覆盖范围与适用树** —— 否则这一节在落地当天就是一条漂移值。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
