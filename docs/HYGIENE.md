@@ -494,7 +494,7 @@ type / posix 等）；桶 A 里那 28 个 `*_test.im` 测的是**特性与缺陷
 `tools/` 下没有 glob 根目录 `.im` 的 runner（`tools/release_verify.py`、`tools/inim.test.py`
 都不扫）；而 `contract_test.im:2` 自己写着
 `# usage: inimerse.exe --time-limit 60 contract_test.im`——**手动**调用。
-同时 `docs/STATUS.md:567` 与本文 §3「特性小测」把它们**按名字列为引擎测试清单**。
+同时 `docs/STATUS.md` §8（@ 809dc73 → :594）与本文 §3「特性小测」把它们**按名字列为引擎测试清单**。
 也就是说「零引用」量的是**自动化**引用面，不是价值；删掉等于删掉那份清单的**唯一副本**。
 （真正的缺口是「这套手动测试没有 runner」，不是「这些文件多余」——但补 runner 不在本流内，
 见下面再议条件。）
