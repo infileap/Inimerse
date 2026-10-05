@@ -1,0 +1,60 @@
+# range_metadata_probe_v06.im -- pins the observed semantics of the metadata
+# members (.range / .type / .int / .float / .str / .bool) and of the set
+# enumerators on interval-typed values.
+#
+# Recorded by stream/range-semantics as EVIDENCE for docs/streams/range-semantics.md.
+# Every line below is an observation, not a wish: this file asserts nothing.
+# Binary: build/inimerse sha256 0ad8daa7a3ffb3d569e013e2744cedb3ff943f5bae9060b0e10d568c81a5e167
+# HEAD at recording time: 517e7dcde0d232185ad556fe27e3b1cecba11b68 (2026-10-05 11:32 CST)
+
+type Byte = [0~255]
+x be Byte: 42
+y = 42
+z = 3.14
+s = "hi"
+b = true
+n = nil
+
+say "== A. .range answers the DECLARED set when the object is a bare identifier =="
+say "A1 str(x.range)      = " + str(x.range)
+say "A2 42   in x.range   = " + str(42 in x.range)
+say "A3 300  in x.range   = " + str(300 in x.range)
+say "A4 -5   in x.range   = " + str(-5 in x.range)
+say "A5 1e300 in x.range  = " + str(1e300 in x.range)
+say "A6 str(Byte)         = " + str(Byte)
+
+say "== B. contrast: an unconstrained integer infers Z =="
+say "B1 str(y.range)      = " + str(y.range)
+say "B2 300  in y.range   = " + str(300 in y.range)
+
+say "== C. .range is SYNTAX-DEPENDENT: the same value, reached differently =="
+arr = [x]
+func id(a) { return a }
+say "C1 300 in arr[0].range = " + str(300 in arr[0].range)
+say "C2 str(arr[0].range)   = " + str(arr[0].range)
+say "C3 300 in id(x).range  = " + str(300 in id(x).range)
+say "C4 str(id(x).range)    = " + str(id(x).range)
+
+say "== D. the .type / .int / .float / .str / .bool family =="
+say "D1 x.type=" + str(x.type) + " y.type=" + str(y.type) + " z.type=" + str(z.type)
+say "D2 s.type=" + str(s.type) + " b.type=" + str(b.type) + " n.type=" + str(n.type)
+say "D3 x.int=" + str(x.int) + " x.float=" + str(x.float) + " x.str=" + str(x.str) + " x.bool=" + str(x.bool)
+say "D4 z.int=" + str(z.int) + " (truncates 3.14)"
+say "D5 s.int=" + str(s.int) + " b.int=" + str(b.int)
+say "D6 (\"hi\").range=" + str(("hi").range) + " (true).range=" + str((true).range)
+
+say "== E. the enumerators on a FINITE interval whose base name is R =="
+type A = Z[0~9]
+say "E1 size(Byte)=" + str(size(Byte)) + " list(Byte)=" + str(list(Byte)) + " len(Byte)=" + str(len(Byte))
+say "E2 size(A)=" + str(size(A)) + " list(A)=" + str(list(A)) + " len(A)=" + str(len(A))
+say "E3 10 in A=" + str(10 in A) + " 10 in Byte=" + str(10 in Byte)
+q = float1[0~0.3]
+say "E4 size(float1[0~0.3])=" + str(size(q)) + " list=" + str(list(q))
+r = R[0~9]
+say "E5 str(R[0~9])=" + str(r) + " size=" + str(size(r)) + " list=" + str(list(r)) + " len=" + str(len(r))
+say "E6 5 in R[0~9]=" + str(5 in r) + " 10 in R[0~9]=" + str(10 in r)
+
+say "== F. range() called by the user is not the compiler's 2-arg protocol =="
+say "F1 range(42)=" + str(range(42))
+say "F2 range(1.5)=" + str(range(1.5))
+say "done"
