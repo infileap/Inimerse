@@ -3147,6 +3147,66 @@ $ git cat-file -p 4e444dd:CMakeLists.txt | grep -c 'add_test('
 
 **本节所有数字都在写之前用上面的命令跑过一遍。** 一条命令若只覆盖表的一部分、或只在另一棵树上跑过，**就必须在正文里写清覆盖范围与适用树** —— 否则这一节在落地当天就是一条漂移值。
 
+## §1.70 一个建出来、编译过、却没有任何东西跑它的目标，是唯一一种连「失败」都拿不到的证据
+
+**本节是 §1.67（检查器问「东西在不在」，不问「两个值是不是同一个」）与 §1.59（没人跑的测试输入）在 CMake 可执行目标上的落地。** §1.59 比的是测试**输入**集合，本节比的是可执行**目标**集合 —— 同一个问题在两个层级上。
+
+### A. 分母
+
+```
+$ grep -c 'add_test(' CMakeLists.txt            →  148
+$ python3 tools/check_orphan_targets.py
+check_orphan_targets: 38 add_executable( ) target(s) checked against 148 add_test( ) registration(s); 37 run by at least one CTest, 1 allowed with a stated reason.
+```
+
+**判据**：一个目标算「被跑」，当且仅当它的名字作为某个 `add_test( )` 里 `COMMAND` 之后的第一个 token、或作为 `$<TARGET_FILE:…>` 的实参出现。**匹配的是目标，不是测试名**（见 D）。
+
+### B. 那个 1 是谁
+
+**`websocket_probe`。** 它被建（`CMakeLists.txt:222`）、被链接（`:223`）、被 include（`:224`），源列表里有 `src/platform/websocket_probe.c`，而 `tools/` 与 `.github/` 里没有任何东西引用它。
+
+**它不是新发现，也不需要修**：`docs/API.md:481` 已经记着「`CMakeLists.txt` 里没有该 CTest」，`docs/API.md:622` 的通道表把 WebSocket 行标为「⬜ **预留** … 协议帧未实现；**无 `websocket_probe` CTest**」。**登记为「已知未注册」，保留。** 判据不是「它有没有用」，而是「**它是不是唯一剩下的那个**」—— 38 个里 37 个被至少一个 CTest 跑。
+
+### C. 为什么这个集合从来没有被比过
+
+`tools/check_orphan_fixtures.py` 的分母是三类输入文件：`vtest/*.im`、`tools/*.test.py`、`tools/*.js`（读码 `:113-146`；`grep -c 'src/' tools/check_orphan_fixtures.py` = **0**）。而 38 个可执行目标的**第一个源文件全部在 `src/` 下**（`CMakeLists.txt:32 src/platform/platform_probe.c` … `:1370 src/platform/socket.c`）。
+
+⇒ **该检查器在结构上不可能看见这一族：它的分母里根本没有「目标」这个概念。** 这不是它写错了，是它被写成了回答另一个问题 —— 与 §1.66、§1.67 同形状。
+
+这条形状付过一次真实的代价：`src/platform/vfs.c` 的 `..` 守卫搜了一个从未写入的终止符（读未初始化内存），`im_vfs_normalize("os:/../escape")` **40/40 被接受**，而唯一断言正确行为的 `src/platform/vfs_probe.c` **建了很久却从没被跑过** —— 它是被人读码看见的，不是被抓住的。它现在已注册（`CMakeLists.txt:34`、`:1027`，CTest `#129`）。
+
+### D. 那把尺子，以及它第一次给出的三个假孤儿
+
+第一次手查用的是「测试名是否等于目标名」（`add_test(NAME <目标名> …)`），报出三个：`literal_resolve_probe`、`resolve_timeout_probe`、`websocket_probe`。**前两个是假的**：测试名由写注册的人起，不必像它跑的目标 —— 它们是 `literal_resolve_runtime` 与 `resolve_timeout_runtime`，两个目标都在跑。换成「目标是否出现在 `add_test( )` 的 `COMMAND` 或 `$<TARGET_FILE:…>` 里」之后，**三个变一个**。
+
+**按测试名匹配目标名是错的尺子。** 这句话写在 `tools/check_orphan_targets.py` 的头注释里，而不是留在本节当一条轶事 —— 下一个量这个问题的人会先读那个文件。
+
+### E. 一条什么都不豁免的豁免，是一句没有任何运行能证伪的话
+
+检查器里有一张 `ALLOWED` 表，唯一一项是 `websocket_probe` 及其理由。两次反向对照：
+
+```
+$ # A：把 ALLOWED 的键改名，使查找落空
+check_orphan_targets: 2 problem(s) over 38 add_executable( ) target(s) checked (37 run by at least one CTest, 1 run by none):
+  websocket_probe: built, but no add_test( ) runs it (it is named 3 other time(s) in CMakeLists.txt). …
+  websocket_probe_renamed: listed in ALLOWED, but it is not an orphan (there is no such add_executable( ) target), so the allowance excuses nothing. …
+rc=1
+
+$ # B：把一个「已经被测试跑」的目标塞进 ALLOWED
+check_orphan_targets: 1 problem(s) over 38 add_executable( ) target(s) checked (37 run by at least one CTest, 1 run by none):
+  inimerse: listed in ALLOWED, but it is not an orphan (a CTest runs it), so the allowance excuses nothing. …
+rc=1
+```
+
+**对照 B 当场抓出了检查器自己的一个缺陷。** 成功行原来印的 `37 run by at least one CTest` 是 `len(targets) - len(ALLOWED)` **算出来的**，而不是数出来的 —— 只在每个豁免恰好都豁免真孤儿时才等于实数。把 `inimerse` 塞进 `ALLOWED`，它就印 `36`，而树上有 37 个。**一个从表里算出来的数，是一个没有人能复核的数**（§1.68 说的是同一个病：一个量在两处有两个值）。修法两条：两个数都改成**数出来的**；`ALLOWED` 里不豁免孤儿的那条**自己也被报出来** —— 一条什么都不豁免的豁免，就是一句没有任何运行能证伪的话，而且它会掩盖「这个目标某天不再被跑」的那一天。
+
+### F. 诚实边界
+
+- **`COMMAND` 的首 token 是文本读法。** 经 CMake 变量间接引用的目标（`COMMAND ${SOME_TARGET}`）认不出；今天没有这样的注册，这一句是「今天没有」，不是「永远不会有」。
+- **「被跑」不等于「被断言」。** 没有 PASS 也没有 FAIL 正则的注册，在任意退出码上都算过（§7.2 M13）。本检查器回答的是「有没有东西跑它」，不是「跑它能不能证明什么」。
+- **被 install 规则或 custom command 引用的目标仍算孤儿**：被复制不是被跑。
+- **本节只量了 `add_executable( )`。** 本仓库另有 6 个 `add_library( )`（`CMakeLists.txt:25`、`:451`、`:578`、`:588`、`:1007`、`:1381`）与 2 个 `add_custom_target( )`（`:377`、`:614`），**都没有量**。对库来说，「被跑」的类比是「被测试加载」，而那是另一个问题 —— 一个当 `LD_PRELOAD` 用的 `.so` 是写在测试的环境里，不是写在 `COMMAND` 里，本节那把尺子量不到它。**这是没查，不是查过没有。**
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
