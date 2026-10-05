@@ -3284,6 +3284,28 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **登记，未修。** 修法候选（**未裁定**）：①在 `build` 阶段增加一条显式的「这些文件在本平台上不参与编译」清单与理由 —— 照 §1.60 的规矩，白名单也要写出「那跑的是什么」；②或把源文件也纳入某个既有的孤儿检查（agent2 已实测 `tools/check_orphan_fixtures.py` 的 `grep -c 'src/'` = **0**，即它结构上不可能发现 `src/` 孤儿）。**本条只登记**：改门禁在 `tools/**`（agent2 的写域），且这 12 个里哪些是**真** Windows-only、哪些是**漏进** WIN32 分支的，需要逐个裁定。
 
+**§1.71 补（同一笔之后加的读数）。** 把上面这 12 个按「POSIX 侧有没有替代物」分成三组 —— 两组是设计，一组不是：
+
+| 组 | 文件 | POSIX 侧 | 性质 |
+|---|---|---|---|
+| ① 有对等实现 | `src/runtime/runtime.c`→`runtime_posix.c`、`src/headless_server.c`→`headless_server_posix.c`、`src/mod/mod.c`→`mod_posix.c`、`src/mod/net_mod.c`→`net_mod_posix.c`、`src/mod/server_mod.c`→`server_mod_posix.c`、`src/mod/say_mod_windows.c`→`say_mod_posix.c` | `CMakeLists.txt:438-443` 各有一个 | 平台对等，合理 |
+| ② 被空桩顶掉 | `src/mod/gui_mod.c`、`src/mod/io_mod.c`、`src/mod/identity_mod.c`、`src/mod/social_mod.c`、`src/mod/ai_mod.c` | `src/platform/posix_stubs.c:6-8` 的 `STUB_REG(...)` | 已登记的平台边界，但**登记得不全**（见下） |
+| ③ 两组都不是 | `src/child_proc.c` | 无对等实现、也无桩 | 无引用者，故不参与链接；**未裁定** |
+
+**②这一组的登记不全，是本条真正的增量。** `docs/STATUS.md` §10.44/§10.47、`docs/AUDIT.md:453` 与 `:594`、`docs/API.md:323` 说的都是**三个**桩（`io_mod`/`gui_mod`/`build_mod`），而 `src/platform/posix_stubs.c:6-8` 逐字桩的是**六个**：
+
+    STUB_REG(gui_mod_register) STUB_REG(build_mod_register) STUB_REG(io_mod_register)
+    STUB_REG(identity_mod_register)
+    STUB_REG(social_mod_register) STUB_REG(ai_mod_register)
+
+⇒ `identity_mod`、`social_mod`、`ai_mod` 三个**不在任何一份已登记的清单里**。规模也没登记过：这六个模块在 Windows 上 `vm_register_builtin` 的次数是 `io_mod` 44、`gui_mod` 162、`identity_mod` 8、`social_mod` 5、`ai_mod` 6（`build_mod` 在 `mods/` 下，不计），合计 **225** 个内建名在 POSIX 上不存在。
+
+**并且那个「告诉你它不可用」的函数，六个桩里只有一个用。** 同文件 `:4` 的 `unsupported()` 会打印 `inimerse: capability '%s' is not available on this POSIX build yet`，而它**只被 `build_project_impl`（`:9`）调用**；六个 `STUB_REG` 展开成 `void name(VM *vm) { (void)vm; }`，**一个字都不打**。实测（`main @ 8e67a1e`，`./build/inimerse --no-mods`）：`file_exists("CMakeLists.txt")` → `[exception] uncaught: unknown builtin function 'file_exists'`；`ai_list()` → `unknown builtin function 'ai_list'` —— **读者看到的是「这个名字不存在」，而不是「这个平台不支持它」**，而后者才是作者写在同一个文件里的答案。`docs/STATUS.md` §10.47 记的正是这次「从静默返回垃圾变成抛异常」的可诊断性收益；本条是它的**下一步**：异常说了「没有」，没说「为什么没有」。
+
+**顺带一条未核对的观察。** `docs/SYNTAX.md:510` 把 `file_exists` `mkdir` `io_list_dir` `http_get` `clipboard_set` `timer_ms` `exec_async` `proc_list` 列进「**核心高频内建**（有 `vtest` 覆盖的）」；**该行没有平台标注**（全节未逐处核对），而实测在 POSIX 上这些名字全部不存在。**未裁定**：是给那张表加平台列，还是在平台边界那条登记里指过去。
+
+**边界。** 225 是 `grep -c 'register_builtin'` 的**计数**，不是去重后的名字数（同一名字可能多处注册），也不是「Linux 用户实际会调到的名字数」；要精确须取注册名集合。**本条只登记，不改 `src/`、不改门禁。**
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
