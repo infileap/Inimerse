@@ -82,6 +82,13 @@ ALLOWED = {
         "docs/AUDIT.md:1807; it was run by hand while comparing two engines "
         "and was never meant to be a regression input"
     ),
+    "range_metadata_probe_v06.im": (
+        "a recording, not a test: every line is an observation with no "
+        "assertion, and its header names the binary sha256 and the commit it "
+        "was taken on.  Registering it would add a green stage that cannot "
+        "fail -- see docs/SYNTAX.md 7.4 H4 on one observation versus a "
+        "property.  It is kept as evidence for the open .range question"
+    ),
 }
 
 
