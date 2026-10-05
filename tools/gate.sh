@@ -51,7 +51,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-148}"   # recounted off the merged tree, not inherited from either side
+EXP_CTEST="${EXP_CTEST:-PENDING-RECOUNT}"   # this number is written by the NEXT commit, read off the merged tree
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
