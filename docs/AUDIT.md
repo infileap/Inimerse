@@ -450,7 +450,7 @@ value_set(&R[ins.r1], VAL_INT, (int)da % bi, 0, NULL, NULL);        /* :3837  �
 
 **判据（且反向验证过）。** 进树回归 `vtest/list_set_off_by_one_v05.im` + CTest `list_set_off_by_one_runtime`（`CMakeLists.txt`，`LABELS "vm;language;regression"`，`PASS_REGULAR_EXPRESSION "listset-ok n=3 first=1 last=3 setlen=3"` / `FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0"`）。**反向验证**：把函数里两处 `return aidx;` 还原成 `return aidx + 1;` 重编 ⇒ 输出 `listset-ok n=0 first=nil last=nil setlen=0`、`listset-lit=0,nil`，FAIL 正则命中 ⇒ 红；还原修复重编 ⇒ `n=3 first=1 last=3 setlen=3`、`listset-lit=3,3` ⇒ 绿，`diff` 证源码逐字节一致。这条缺陷改的是**数值不是退出码**，所以只能断言数值。`EXP_CTEST` **107 → 108**，`docs/BOARD.md` §3 与 `docs/STATUS.md` §2/§2.1 同步为 **108 / 108**。
 
-**`contract_test.im` 剩下的 4 条失败是结构性的，不是缺陷。** 用一遍自动跳过的脚本（跑套件 → 读 stderr 的 `CONTRACT FAIL: <desc>` → 注释掉该行 → 重跑）穷举出**恰好 4 条**：`str2int`、`str2int invalid -> 0`（`:120`/`:121`）、`noise range`（`:170`）、`vram accounting`（`:174`）；跳过这 4 条后该套件 `rc=0`。`str2int` 由 `io_mod_register` 注册（`src/mod/io_mod.c:315`，`vm_register_builtin(vm, "str2int", builtin_str2int);` 在 `:334`），`noise2d`/`gui_canvas`/`gui_px`/`gui_vram_used` 属 gui_mod —— 而 **POSIX 构建根本不编这两个 mod**：`CMakeLists.txt:383-393` 是 `if(WIN32)` 分支（`src/mod/gui_mod.c src/mod/io_mod.c …` 在那里），POSIX 的 `else()`（`:394-400`）挂的是 `src/platform/posix_stubs.c`，其正文 `#define STUB_REG(name) void name(VM *vm) { (void)vm; }` 后跟着 `STUB_REG(gui_mod_register) STUB_REG(build_mod_register) STUB_REG(io_mod_register)` —— **空实现**。`contract_test.im:2` 自己也写着 `# usage: inimerse.exe --time-limit 60 contract_test.im`（Windows）。
+**`contract_test.im` 剩下的 4 条失败是结构性的，不是缺陷。** 用一遍自动跳过的脚本（跑套件 → 读 stderr 的 `CONTRACT FAIL: <desc>` → 注释掉该行 → 重跑）穷举出**恰好 4 条**：`str2int`、`str2int invalid -> 0`（`:120`/`:121`）、`noise range`（`:170`）、`vram accounting`（`:174`）；跳过这 4 条后该套件 `rc=0`。`str2int` 由 `io_mod_register` 注册（`src/mod/io_mod.c:315`，`vm_register_builtin(vm, "str2int", builtin_str2int);` 在 `:334`），`noise2d`/`gui_canvas`/`gui_px`/`gui_vram_used` 属 gui_mod —— 而 **POSIX 构建根本不编这两个 mod**：`CMakeLists.txt:426-436` 是 `if(WIN32)` 分支（`src/mod/gui_mod.c src/mod/io_mod.c …` 在 `:431`），POSIX 的 `else()`（`:437-443`）挂的是 `src/platform/posix_stubs.c`（`:441`），其正文 `#define STUB_REG(name) void name(VM *vm) { (void)vm; }` 后跟着 `STUB_REG(gui_mod_register) STUB_REG(build_mod_register) STUB_REG(io_mod_register)` —— **空实现**。`contract_test.im:2` 自己也写着 `# usage: inimerse.exe --time-limit 60 contract_test.im`（Windows）。
 
 **可诊断性缺陷：调用未注册的函数是静默留栈，不是报错 —— 已修，见 §1.11。** 修前带不带 `--no-mods` 都一样：`say(str2int("42"))` 打印 `42`，但 `str2int("42") == 42` 是 **false**；`say(str2int("abc"))` 打印 `abc`，而 `str2int("abc") == 0` 是 false；`noise2d(1.5, 2.5, 7)` → `7`（它的 seed 实参）；`gui_canvas(8, 8)` → `8`；`gui_vram_used()` → `0`。所以这 4 条失败表现为**值不对**，而不是「未知函数 `str2int`」—— 这正是上面那遍穷举必须靠注释跳过、而不可能靠报错定位的原因。§1.11 之后同样的调用会抛 `unknown builtin function 'str2int'`。
 
@@ -989,7 +989,7 @@ int im_platform_path_join(char *buffer, size_t capacity, const char *base, const
 
 ### 钉住
 
-`src/platform/platform_probe.c` 是既有测试（CTest `platform_probe`，`CMakeLists.txt:190`），本轮把 join 的语义补进去，**没有新增 CTest、`EXP_CTEST` 不变（117）**：
+`src/platform/platform_probe.c` 是既有测试（CTest `platform_probe`，注册在 `CMakeLists.txt:201`，目标建在 `:32`），本轮把 join 的语义补进去，**没有新增 CTest、`EXP_CTEST` 不变（117）**：
 
 ```c
 char tiny[8];
@@ -1181,7 +1181,7 @@ POSIX 原来那版 `if (!ok) { push_nil(vm); return 1; }` 把三种原因压成�
 
 **诚实边界。**
 
-- **WIN32 那份本机不可执行。** `CMakeLists.txt:381-395` 把 `src/runtime/runtime.c` 放在 `if(WIN32)`
+- **WIN32 那份本机不可执行。** `CMakeLists.txt:426-436` 的 `if(WIN32)` 分支（`list(APPEND INIMERSE_ENGINE_SOURCES` 那一段）把 `src/runtime/runtime.c` 放在 `:429`
   分支里，Linux 上编译的是 `runtime_posix.c`。对 `runtime.c` 只有两条证据：与 POSIX **逐字同构**，
   以及两个文件里不再有旧的 `ok` / `val_as_double(&items[i])` 写法。**没有执行过** —— 打 Windows 包时
   它是第一次真正被编译。
@@ -1290,7 +1290,7 @@ blast radius 为零（实测，不是推断）。
 
 **第六类（`VV_STAT`）。** `src/common/vverse_pack.c` 的 `_WIN32` 分支把 `VV_STAT` 定义成 `_stat`，而 `_stat` 是宏、展开为 `_stat64i32`（`_mingw_stat64.h:22`），它填的是 `struct _stat64i32`；代码里的变量却是 `struct stat`（同文件 `sys/stat.h:137` 的另一个布局）。加 `VV_STAT_T`（Windows `struct _stat64i32` / POSIX `struct stat`），`path_is_dir`、`path_is_file` 两处改用它。
 
-**验证。** 本机可以直接调用 Windows 侧工具链：`/mnt/c/msys64/mingw64/bin/gcc.exe`（gcc 16.1.0，Rev5）。对**全部** `src/**/*.c` 做 `-fsyntax-only` 扫描、只筛 `implicit declaration`：修复前命中 5 处，修复后只剩 `src/platform/http_probe.c:93` 的 `setenv` —— 而该文件在 `CMakeLists.txt:202` 的 `if(NOT WIN32)` 里，不参与 Windows 构建，因此不是 Windows 缺陷。逐个确认 PASS：`src/verse/upp_probe.c`、`src/verse/crp_probe.c`、`src/common/vverse_pack_probe.c`、`src/common/vverse_pack.c`、`src/platform/thread.c`、`src/headless_server.c`、`src/mod/gui_mod.c`、`src/vm/vm.c`。
+**验证。** 本机可以直接调用 Windows 侧工具链：`/mnt/c/msys64/mingw64/bin/gcc.exe`（gcc 16.1.0，Rev5）。对**全部** `src/**/*.c` 做 `-fsyntax-only` 扫描、只筛 `implicit declaration`：修复前命中 5 处，修复后只剩 `src/platform/http_probe.c:93` 的 `setenv` —— 而该文件在 `CMakeLists.txt:213` 的 `if(NOT WIN32)` 里（`add_executable(http_probe …)` 在 `:214`），不参与 Windows 构建，因此不是 Windows 缺陷。逐个确认 PASS：`src/verse/upp_probe.c`、`src/verse/crp_probe.c`、`src/common/vverse_pack_probe.c`、`src/common/vverse_pack.c`、`src/platform/thread.c`、`src/headless_server.c`、`src/mod/gui_mod.c`、`src/vm/vm.c`。
 
 **诚实边界。** ① 本机 MSYS2 **没装 cmake.exe**，所以我做的是逐编译单元的 `-fsyntax-only`，不是完整 Windows 构建；完整证据（164/164 干净重建、`inimerse.exe` 链接成功）来自发布会话在**仓库外克隆**上的实测。② Linux 门禁**永远看不见**这一类缺陷：`tools/gate.sh` 跑在 Linux 上，glibc 没有 `<process.h>`，所以这道门禁此前红不了、以后也挡不住同类的 Windows-only 编译错 —— 能挡住它的只有 Windows CI，而 CI 自己红着的时候没人看。③ 编译修好之后 Windows 的 ctest 只有 **54/84**（30 项失败：9 项段错误、9 项超时、4 项 Failed、17 项 Not Run），那些是**运行时**缺陷，与本节无关，本轮**故意不修**（发布会话正在请用户决定是带已知问题发版还是修到全绿）。
 
@@ -1410,7 +1410,7 @@ blast radius 为零（实测，不是推断）。
 
 **判据。** 新用例 `vtest/predicate_result_type_v06.im` 打印 `predbool true true false 14`（把 `startswith`/`endswith`/`has` 的结果与 `len` 并排放在一行），注册为 CTest **#122** `predicate_result_type_runtime`，PASS 正则是整行、FAIL 正则 `predbool 1|predbool true 1|predbool true true 1`。`tools/gate.sh` 的 `EXP_CTEST` 那一行 121 → **122**。用例注册在测试列表末尾，既有 `#N` 不动。
 
-**诚实边界。** ① `src/runtime/runtime.c` 在 Linux 上根本不参与编译（`CMakeLists.txt:395` 的 `if(WIN32)` 分支），所以 Linux 门禁只能钉住 POSIX 那一半；Windows 那一半靠 ucrt64 与 mingw64 两套 gcc 16.1.0 的 `-fsyntax-only`（均 RC=0、0 error）加上协调者在 Windows 上的实跑。② `round` 的非数字实参分歧**没有动**：Windows 抛错、POSIX 答 `nil`，两者都是既有的拒绝形态（硬拒绝 vs 软拒绝），属于设计选择而非明显缺陷，改 POSIX 会改变 Linux 行为，需要单独一轮裁决，因此只在此记录。③ 本次没有为「值种类」加运行期断言，判据是 `str()` 的输出。
+**诚实边界。** ① `src/runtime/runtime.c` 在 Linux 上根本不参与编译（`CMakeLists.txt:426` 的 `if(WIN32)` 分支（引擎源清单那一段）），所以 Linux 门禁只能钉住 POSIX 那一半；Windows 那一半靠 ucrt64 与 mingw64 两套 gcc 16.1.0 的 `-fsyntax-only`（均 RC=0、0 error）加上协调者在 Windows 上的实跑。② `round` 的非数字实参分歧**没有动**：Windows 抛错、POSIX 答 `nil`，两者都是既有的拒绝形态（硬拒绝 vs 软拒绝），属于设计选择而非明显缺陷，改 POSIX 会改变 Linux 行为，需要单独一轮裁决，因此只在此记录。③ 本次没有为「值种类」加运行期断言，判据是 `str()` 的输出。
 
 ## §1.35 依赖 trailer 在 Windows 上记不下相对路径
 
@@ -1439,7 +1439,7 @@ blast radius 为零（实测，不是推断）。
 
 ## §1.36 模组加载通知写进了程序输出
 
-**现象。** 在 Windows 上（只有 Windows 引擎链接 `mods/build/build_mod.c`，见 `CMakeLists.txt:400`）解释器比 POSIX 多输出一行 `[build模组] 已加载`，`tools/wasm_backend.test.py` 的逐字节比较因此失败。
+**现象。** 在 Windows 上（只有 Windows 引擎链接 `mods/build/build_mod.c`，见 `CMakeLists.txt:434`）解释器比 POSIX 多输出一行 `[build模组] 已加载`，`tools/wasm_backend.test.py` 的逐字节比较因此失败。
 
 **根因。** 同一件事（模组加载完成）有三个生产点，只有一处写 stdout：`mods/build/build_mod.c:742` 的 `printf`，对 `src/mod/infiverse_mod.c:839` 与 `src/mod/verse_dist_mod.c:2688` 两处都写 `fprintf(stderr, ...)`。
 
@@ -1566,7 +1566,7 @@ line program。与 §1.35（`src/compilation/deps.c`）、§1.38
 
 **修法。** 取靠后的那个分隔符（`src/compilation/debug_info.c:155-157`）：
 `{ const char *bs = strrchr(source_path, '\\'); if (bs && (!base || bs > base)) base = bs; }`。
-这个文件在 [../CMakeLists.txt](../CMakeLists.txt) 的**公共源列表**（`:387`）里，两个平台
+这个文件在 [../CMakeLists.txt](../CMakeLists.txt) 的**公共源列表**（`:421`）里，两个平台
 都编，所以它 Linux 上也编译，只是 Linux 的输入全是 `/`，测不出差别。
 
 **诚实边界。** ① 这一条**没有新增用例**：Linux 上 `source_path` 总用 `/`，除非刻意传一个
@@ -1799,14 +1799,14 @@ spawn 的子进程，并返回 0 而不是房间号**，在每一个 POSIX 运�
 把 gc 计数截成 32 位。
 
 **为什么这些活了下来。** 唯一做过 Windows↔POSIX 对拍的用例 `posix_runtime_parity` 在
-`CMakeLists.txt:662-663` 被 `DISABLED TRUE`（只在 `if(NOT WIN32)` 分支启用），所以
+`CMakeLists.txt:676` 的 `posix_runtime_parity` 当时被 `DISABLED TRUE`（只在 `if(NOT WIN32)` 分支启用）—— **这个 `DISABLED` 分支已由 `da79097` 删掉、两端都注册**（`CMakeLists.txt:677` 与 `:1040` 的注释自己写着），所以
 **没有任何用例在 Windows 上比较过这两份运行时**。
 
 **修法与 pin。** 新 pin `vtest/divergent_builtin_contract_v06.im` 注册为 CTest `#125`，
 **两端都跑**：Linux 上判 POSIX 副本，Windows 上判 WIN32 副本，打印同一行。
 
 **证据（真 Windows 工具链）。** msys2 里没有 `cmake.exe`，所以用 mingw64 gcc 按
-`CMakeLists.txt:412-436` 的 WIN32 源列表手工全量编译引擎（`.verify/v31/dvbuild.sh`）。
+`CMakeLists.txt:427-436` 的 WIN32 源列表（`list(APPEND INIMERSE_ENGINE_SOURCES` 那一段）手工全量编译引擎（`.verify/v31/dvbuild.sh`）。
 **修前**引擎在那条 pin 上 rc=**5**；**修后**引擎 rc=**0**，且输出与 Linux **逐字相同**：
 `divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=0 a2=0 a3=0 a4=0`（`i3` 就是上表那条 `int("0x10")`，已按人的裁定恢复断言）。`say_pair_probe_v06.im` 在两个引擎上同样逐字相同
 （`[WARN] TEXT`、`payload:{a:1}` 不加引号、`payload:"plain"` 加引号、`null`、`saypair rc=1`）。
@@ -2131,7 +2131,7 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 意味着其中一条实现不可达。这与 §1.46 的引文、§1.43 的 `vfs_probe` 是同一个病：
 **事实被写下来了，但没有变成可检测的断言。**
 
-**一次注册表层面的集合比对（我做的，`python3` 按 `CMakeLists.txt:412-436` 的 WIN32 源列表
+**一次注册表层面的集合比对（我做的，`python3` 按 `CMakeLists.txt:427-436` 的 WIN32 源列表
 与 POSIX 源列表分别抽 `vm_register_builtin(_full)?(vm, "…")`）：** WIN32 **398** 个名字 /
 **2** 个重名，POSIX **128** 个名字 / **0** 个重名。第二个重名 `isolate_run`
 （`src/isolate_mod.c:227` 与 `:318`）是**误报** —— 两处分别在 `#ifdef _WIN32` 与 `#else`
@@ -2427,7 +2427,7 @@ gate: this was NOT the full gate: 11 stages are registered and only this one ran
 ### 普查
 
 对 `src/` 全部 `vm_register_builtin(_full)?(vm, "…")` 提取：**588 个注册点、462 个唯一名字**。
-跨文件的重名有 126 个，但绝大多数是**平台分叉**（`CMakeLists.txt:428-442`：
+跨文件的重名有 126 个，但绝大多数是**平台分叉**（`CMakeLists.txt:427-443`：
 `src/runtime/runtime.c` 在 `if(WIN32)` 里、`src/runtime/runtime_posix.c` 在 `else()` 里，
 二者互斥）—— 同一个二进制里只看得见其中一个，所以不是重名。
 
@@ -2537,7 +2537,7 @@ $ ./build/inimerse --lint vtest/lint_case_exhaustive_v04.im
 
 两者 rc 均为 1。`tools/migrate_report.py` 也跑得对（`--help` rc=0；对 `tools/cpp_scan.py` 生成真报告、rc=0）。所以这不是「文档描述了不存在的东西」，而是**「文档描述了一个从未接上的东西」** —— fixture 写好了、诊断是对的、表格把它当证据引用了，**而注册那一行从来没有被加过**。
 
-**为什么没有人发现。** `CMakeLists.txt:733-743` 的五个 `lint_case_*` 测试是**手写列举**的（`:744` 的注释自己数着「The five lint_case_* tests above」），于是第六个和第七个 fixture 落地时没有任何东西会要求把它们加进去。仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
+**为什么没有人发现。** `CMakeLists.txt:756-766` 的五个 `lint_case_*` 测试是**手写列举**的（`:767` 的注释自己数着「The five lint_case_* tests above」），于是第六个和第七个 fixture 落地时没有任何东西会要求把它们加进去。仓库里**没有任何一处比较过「`vtest/` 里有什么」与「CTest 跑什么」**。
 
 **普查。** 67 个 `vtest/*.im` 中 **5 个**在 `CMakeLists.txt` 里一次都没被提到：
 
@@ -2827,7 +2827,7 @@ if (len < 0) len = 0; if (len > sl - start) len = sl - start;
 
 **为什么活到今天。** `docs/SYNTAX.md:500` 把 `substr` 列在「核心高频内建（**有 vtest 覆盖的**）」里，而实际覆盖是**一条 happy path**：`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5) == "Hello"`（另一个提到 `substr` 的 `vtest/spi_caps_contract_v06.im:9` 是注释里的「substring」一词）。`len > INT_MAX - start` 没有任何用例靠近过 —— **分母从来没被问过**。
 
-**诚实边界。** ①阈值表是 Linux/POSIX 实测；**WIN32 侧只有读码**（`src/runtime/runtime.c` 只在 `CMakeLists.txt:427-429` 的 `if(WIN32)` 分支被编译，Linux 上编不到），那里的溢出相同、且多一个缺 NULL 检查。②探针脚本在 `/tmp/substr_ovf.im`、`/tmp/t.im`，未入库。③修的是**溢出**，不是「超大 `len` 应当被拒绝」—— 后者是语义决定，本轮按「行为对不溢出输入逐字不变」的最小改动做。
+**诚实边界。** ①阈值表是 Linux/POSIX 实测；**WIN32 侧只有读码**（`src/runtime/runtime.c` 只在 `CMakeLists.txt:426-429` 的 `if(WIN32)` 分支被编译，Linux 上编不到），那里的溢出相同、且多一个缺 NULL 检查。②探针脚本在 `/tmp/substr_ovf.im`、`/tmp/t.im`，未入库。③修的是**溢出**，不是「超大 `len` 应当被拒绝」—— 后者是语义决定，本轮按「行为对不溢出输入逐字不变」的最小改动做。
 
 ## §1.63 数值字面量也走全套解析器：Windows 上 `socket_probe` 撞 CTest 上限
 
@@ -3323,7 +3323,7 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **这句必须带观测点，而初稿没带。** 它在 `a64c4fd` 上为真，在写下它的 `4b7b37c` 之后**为假** —— **因为这句话自己把这两个词各写了两遍**（`git show 4b7b37c:docs/AUDIT.md | grep -c 'LICENSE'` ⇒ 2 —— **注意这个命令必须带 ref**）。这是 §9 第 30 条的又一投影，**而且它出现在「补上机制的另一半」那一段里**：要保住的事实是「**补之前**它是洞」，不是「这个词永远不出现」。
 
-**这条命令的初稿不带 ref，于是它自己就是这条规矩的第三次落空。** 初稿写的是不带 ref 的 `grep -c`（**关于当前树的断言 ⇒ 下一笔就失效**）：**这一笔又加了一行含该词的行**（`git show 588a302:docs/AUDIT.md | grep -c 'LICENSE'` ⇒ 3；而**基数是 2 不是 1**，因为早就在的 `:3318` 那行逐字引了 `TEXT_NAMES`）。**而正确形式就在它前一句**：前一句带 ref、永远为真，后一句不带 ⇒ **同一段里两种形式并存，一个成立一个不成立。**（**这里原来写的是「隔四个词」，那是一个没量过的说法** —— 错因正是 H4.1：**给了一个会随 ref 变化的量，却没给产出它的命令**。初稿后来补的那两个距离数也删了：**它们量的是本文档两点之间的距离，而其中一个端点就是这句被改掉的话 —— 改它，必然移动它。**）
+**这条命令的初稿不带 ref，于是它自己就是这条规矩的又一次落空。** 初稿写的是不带 ref 的 `grep -c`（**关于当前树的断言 ⇒ 下一笔就失效**）：**这一笔又加了一行含该词的行**（`git show 588a302:docs/AUDIT.md | grep -c 'LICENSE'` ⇒ 3；而**基数是 2 不是 1**，因为早就在的 `:3318` 那行逐字引了 `TEXT_NAMES`）。**而正确形式就在它前一句**：前一句带 ref、永远为真，后一句不带 ⇒ **同一段里两种形式并存，一个成立一个不成立。**（**这里原来写的是「隔四个词」，那是一个没量过的说法** —— 错因正是 H4.1：**给了一个会随 ref 变化的量，却没给产出它的命令**。初稿后来补的那两个距离数也删了：**它们量的是本文档两点之间的距离，而其中一个端点就是这句被改掉的话 —— 改它，必然移动它。**）
 
 **★ 由此得到一条比上面几条都硬的处方：当被数的东西就是这句话自己写的字时，不要报绝对数，报增量。** 证据就在这一段里：**每加一段「解释这个数为什么错」的话，就又多出几行命中，于是那个数又变了** —— `4b7b37c` 2 → `588a302` 3 → `601aac1` 4，**这是一个发散过程，不是收敛过程**；所以它不是「这条规矩的又一个实例」，而是**这条规矩会自己生产新实例**。修法**不是**再写一段自觉的文字（那会变成 5），而是写成**不随自己变化的形状**：「**这一笔又加了一行含该词的行**」是**增量、永远为真、不需要 ref**；**绝对数必须带 ref**；**被测量的是本文档自身的量（词频、行距、字符距）时，绝对现值一律非法** —— 因为改这句话就是移动被测量的东西，合法的只有两种：**带 ref 的历史读数**，或**增量**。**这一段到此为止，不再加自觉的散文 —— 再长，它的数字只会更错。**
 
@@ -3363,7 +3363,7 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 1. **初稿的 `src/**` 行漏了三个阶段，而其中一个是「为 `src/` 而建」的**：`text-integrity` 的存在理由**就是** `src/` 里的 NUL 字节。**照初稿那张表跑的人，不会跑那个专门为 `src/` 而建的阶段** —— 一张用来**免跑**的表把该跑的免掉了，这比没有表更坏。
 2. **初稿把第三列写成「不受影响」的名单，而同一个表头下有两种意思**：`vtest/**` 那一行填 `——`，读作「没有阶段是不可能受影响的」，**而那是假的**（`vtest/**` 显然不影响 `links`/`doc-paths`）。**一个表头两种语义，就是本轮一直在治的形状。** 现在第三列改成「**为什么**」——它要的是**理由**，不是**名单**。
 3. **初稿缺了「判据本身变了」的第二个入口**：十三阶段里有**十二个**调用了 `tools/`（或 `Infiverse_standard/`）下的文件（见下表；**十三减 `build` 得十二** —— `build` 阶段的 `$REPO_ROOT/build` 是**输出目录**，不是判据）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。**这个数字在第二轮补进四个之后没跟着改（同一节、隔一张表），是「集合变了、数字没变」的一例；而在合入 `4ca013d` 之后它又变了一次（十二 → 十三，`orphan-targets` 是第十三个阶段），当时它正被本节引用 —— 同一个量、同一节，又变了一次。**
-4. **标题比实际强一级 —— 这一处在 `4ca013d` 上已修。** `git diff --name-only` 给的是**文件清单**，清单→阶段的映射原先只存在于上面那张 markdown 表里（散文）、**没有一条命令返回 0/1**。**现在有了**：`tools/gate.sh --required-for <base>..<head>`（`4ca013d` 上 `:17` 是用法、`:65` 取参、`:625` 读 `TEXT_SUFFIXES`/`TEXT_NAMES`），它**从 `STAGE_SPECS` 与真实调用点派生**，先例就在同一个文件里（逐字：「The legal `--only` values are derived from this, never from a second handwritten list: **a list nothing consumes only constrains the moment it was written**」），并带四条红控：注册表指向不存在的函数、规则写成不存在的阶段、派生器读不到任何调用点 —— 这三条各返回 rc=2；**第四条要先把 `REQUIRED_SCOPES` 里两条 `|all` 规则去掉才会红**（`tools/gate.sh:768` 的 `if [ "$sels" = "all" ]` 让 `reach` 对每个已注册阶段都是 1）。**有 `all` 时每个已注册阶段确实可达，所以 rc=0 是对的 —— 错的是把它写成「各返回 rc=2」。****仍未可派生的一半**：`REQUIRED_SCOPES` 里「哪个阶段的主题覆盖哪棵子树」仍手写，因为 `stage_links` 跑 `tools/check_links.py`、**没有任何调用点说它读 `docs/`**（引擎是被编译器读的，也没有 reader），每次运行与注册表核对。⇒ **判据可执行了；表里「覆盖哪棵子树」那一列仍是声明。**
+4. **标题比实际强一级 —— 这一处在 `4ca013d` 上已修。** `git diff --name-only` 给的是**文件清单**，清单→阶段的映射原先只存在于上面那张 markdown 表里（散文）、**没有一条命令返回 0/1**。**现在有了**：`tools/gate.sh --required-for <base>..<head>`（`4ca013d` 上 `:17` 是用法、`:65` 取参、`:625` 读 `TEXT_SUFFIXES`/`TEXT_NAMES`），它**从 `STAGE_SPECS` 与真实调用点派生**，先例就在同一个文件里（逐字：「The legal `--only` values are derived from this, never from a second handwritten list: **a list nothing consumes only constrains the moment it was written**」），并带四条红控：注册表指向不存在的函数、规则写成不存在的阶段、派生器读不到任何调用点 —— 这三条各返回 rc=2；**第四条要先把 `REQUIRED_SCOPES` 里两条 `|all` 规则去掉才会红**（`tools/gate.sh:768` 的 `if [ "$sels" = "all" ]` 让 `reach` 对每个已注册阶段都是 1）。**有 `all` 时每个已注册阶段确实可达，所以 rc=0 是对的 —— 错的是把它写成「各返回 rc=2」。****（补：它并非看不见未提交改动 —— 单参形式 `--required-for HEAD` 是「rev vs 工作区」，实测对 ` M .gitignore` 答 `text-integrity`；两参形式 `<base>..<head>` 只看已提交。⇒ 正确的处置不是「要求参数含 `..`」（那会禁掉唯一能看见工作区的形式），而是**让它自报它回答的是哪个问题**。）**仍未可派生的一半**：`REQUIRED_SCOPES` 里「哪个阶段的主题覆盖哪棵子树」仍手写，因为 `stage_links` 跑 `tools/check_links.py`、**没有任何调用点说它读 `docs/`**（引擎是被编译器读的，也没有 reader），每次运行与注册表核对。⇒ **判据可执行了；表里「覆盖哪棵子树」那一列仍是声明。**
 5. **第四行的 glob 是按「名字形状」选的，漏了四个「判据本身」（第二轮打回）**：初稿写 glob `tools/check_*.py`、`tools/*.test.py`，于是**名字不像 checker 的四个全漏了** —— `tools/im_diff_fuzz.py`（→`fuzz`）、`tools/node_suites/run_all.js`（→`node`）、`tools/dsh-inimerse/verify.mjs`（→`plugin`）、`Infiverse_standard/oauth_loop/**`（→`oauth-loop`）。**这四个恰恰是「改了就影响某个阶段」的判据本身。** 而**修法不是再加一个 glob，是换来源**：从 `tools/gate.sh` 的真实调用点派生。**我这次是靠手工枚举才把四个找出来的，而这个枚举本身就该由脚本做。**
 6. **表内自相矛盾**：row `src/**` 的「为什么」**逐字引用了 `tools/dsh-inimerse/verify.mjs:137`** 当作必须跑 `plugin` 的理由，而同一文件在第四行**不是**「判据本身变了」的入口 —— **同一张表对同一个文件给了两种身份。**
 7. **`text-integrity` 漏在后三行，成因是它按扩展名扫全部受管文本**：`tools/check_text_integrity.py:55` 起 `TEXT_SUFFIXES` 含 `.md .im .py .sh .yml .js .json .rs .ts .txt .toml` 等，作用域是 `git ls-files` 的**全部**受管文本 ⇒ row 3（`.im`/`.py`）漏、row 4（`.py`）漏、**row 5 说 `.github/**` 「无」是错的**（`.yml` 在列）；顺带 row 1 的理由也不准（它写「只有这三个阶段读 markdown」，而 `text-integrity` **并不把 markdown 当 markdown 读**）。**干净修法是表外加一条通则，不是逐行补**（见通则 A）。
@@ -3371,7 +3371,7 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 9. **两个「在内部被别的阶段调用」的脚本必须点名它属于哪个阶段**，否则「它背书的那个阶段」是一句空话：`tools/check_test_ports.py` 在 `tools/gate.sh:168`、属 `stage_ctest`（`:148-236`）⇒ 背书 `ctest`；`tools/check_async_commands.py` 在 `:424`、属 `stage_oauth_loop`（`:364-430`）⇒ 背书 **`oauth-loop`**（**按名字完全猜不到**）。
 
 10. **合入 `4ca013d` 让本节自己失效了一次（「集合变了」的又一例）。** 那条分支在 `tools/gate.sh` 顶部加了 35 行，于是**本文档里 13 处 `tools/gate.sh:<N>` 引用当场全部失效**（实测映射：`EXP_CTEST` 那一行 `:54` → **`:92`**、`check_test_ports.py` `:131` → `:168`、`stage_ctest` `:111-200` → `:148-236`、`stage_oauth_loop` `:327-394` → `:364-430`、`check_orphan_fixtures.py` `:437` → `:474`、`check_text_integrity.py` `:426` → `:463`）。**同一个目标在本文档里已经有过三个号码**（`EXP_CTEST` 那一行：`:50` → `:54` → `:92`），**而每一次写下时都是对的**。⇒ 处置**不是把 13 个号码换成新号码**（下一笔又会漂），而是**在 `tools/gate.sh` 上不再写裸行号、改写成锚**（写「`EXP_CTEST` 那一行」、写「`stage_orphan_fixtures` 的 `check_orphan_fixtures.py` 调用」）；**只有上面那张映射表保留行号，因为那张表的主题就是行号，且整表带 `4ca013d`。**
-11. **本文档指向 `CMakeLists.txt` 的行号没有任何东西在查，而且已经漂过。** 这次合并对 `CMakeLists.txt` 的改动是 `@@ -1031,8 +1031,21 @@`（净 +13），于是 §1.73 里那处 `:1370`（38 个可执行目标的第一个源文件那一段的端点）**当场变成 `:1383`**；而同一节里另外七处（`:25`/`:377`/`:451`/`:578`/`:588`/`:614`/`:1007`）全在 1031 之前，**不受影响**。**普查另找到两处不是这次合并造成的**：`:383`/`:386`/`:395`（`CMakeLists.txt` 上根本不是那三样东西）与 `:1113`（`params_precompiled_runtime` 实际注册在 `:1153`）—— **两处都已按内容重取**。⇒ `tools/gate.sh` 的行号有上面那张表与 `--required-for` 兜着，**`CMakeLists.txt` 的行号一处兜的都没有**。（以上号在 `c9a218d` 上量。）
+11. **本文档指向 `CMakeLists.txt` 的行号没有任何东西在查，而且已经漂过。** 这次合并对 `CMakeLists.txt` 的改动是 `@@ -1031,8 +1031,21 @@`（净 +13），于是 §1.73 里那处 `:1370`（38 个可执行目标的第一个源文件那一段的端点）**当场变成 `:1383`**；而同一节里另外七处（`:25`/`:377`/`:451`/`:578`/`:588`/`:614`/`:1007`）全在 1031 之前，**不受影响**。**普查另找到两处不是这次合并造成的**：`:383`/`:386`/`:395`（`CMakeLists.txt` 上根本不是那三样东西）与 `:1113`（`params_precompiled_runtime` 实际注册在 `:1153`）—— **两处都已按内容重取**。⇒ `tools/gate.sh` 的行号有上面那张表与 `--required-for` 兜着，**`CMakeLists.txt` 的行号一处兜的都没有**。（以上号在 `c9a218d` 上量；补充读数在 `4fe8850` 上量。）**补：这条普查的筛选条件是错的** —— 我按「号 > 1031」筛，等于假设陈旧只能是这次合并造成的；**正确的条件是「引的是 `CMakeLists.txt` 的行号」**。按内容重取后另找到四处明确陈旧（`:453` 的 `:383-393`/`:394-400`、`:1184` 的 `:381-395`、`:1413` 的 `:395`、`:1442` 的 `:400`）与四处区间端点偏了（`:1809`/`:2134` 的 `:412-436`、`:2430` 的 `:428-442`、`:2830` 的 `:427-429`）。**而每一次漂移的偏移量都不同**：`:383 → :426` 是 **+43**、`:400 → :434` 是 **+34**、`:412 → :427` 是 **+15**、`:387 → :421` 是 **+34**、`:733 → :756` 是 **+23**、`:662 → :676` 是 **+14**、`:190 → :201` 是 **+11**、`:202 → :213` 是 **+11**：`:383 → :426` 是 **+43**、`:400 → :434` 是 **+34**、`:412 → :427` 是 **+15** ⇒ **没有统一偏移量，「按合并的 +13 换算」与「按某个固定偏移量换算」都不成立，只能按内容重取。**
 **边界（本条初稿的反例放错了行，由 ivory-ember 实测更正）。** 初稿写「一个改 `docs/` 却被 `text-integrity` 之外的东西读到的文件会**漏**」。实测**那一侧是严的**：没有任何测试或检查器 `open` 一个 `docs/` 文件（`tools/check_orphan_fixtures.py` 只读 `CMakeLists.txt:104` 与 node runner `:109`），`add_test` 行里引用 `docs/` 的 = **0**。⇒ **`docs/**` 那一行是整张表里唯一严的一行；漏在 `src/**` 那一行**，已补完。这条规矩整体仍是**充分不必要**的保守下界：**照它跑不会漏，但它不声称「跑完就够」**。
 ## §1.73 一个建出来、编译过、却没有任何东西跑它的目标，是唯一一种连「失败」都拿不到的证据
 
