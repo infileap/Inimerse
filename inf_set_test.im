@@ -82,8 +82,13 @@ say Z+ in (,)
 say (,5] in (,)
 say (,) in Z
 
-o = size(1,2,3)
-say o
+# Was `o = size(1,2,3)`, which printed 3 only because a builtin reads the LAST
+# argument alone -- it was size(3), the integer coercion tail, not the
+# cardinality of {1,2,3}.  Binding the set first measures what the line always
+# meant, and count() is the canonical name for a collection's cardinality.  The
+# trap itself is pinned by vtest/count_builtin_v06.im.
+o = 1,2,3
+say count(o)
 
 p = list(Z[1~5])
 say p
@@ -94,7 +99,7 @@ r2 = 2,4,6,8,10
 say q == r2
 say 4 in q
 say 7 in q
-say size(q)
+say count(q)
 say list(q)
 
 src = 1,2,3,4
