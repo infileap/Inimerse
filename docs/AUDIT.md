@@ -3312,20 +3312,43 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **规矩。** 推之前必须跑的，是**这笔 diff 能影响的阶段**；这件事的**输入**是 `git diff --name-only <base> <head>`。
 
+**通则 A（按扩展名，不按目录）。** `tools/check_text_integrity.py:55` 起 `TEXT_SUFFIXES` = `.c .h .cc .cpp .hpp .rs .py .sh .bash .md .txt .im .json .jsonc .yml .yaml .toml .ini .cfg .cmake .iss .ts .tsx .js .mjs .cjs .css .html .xml .csv .gitignore .gitattributes .editorconfig`，作用域是 `git ls-files` 的**全部受管文本** ⇒ **凡改动落在这些扩展名上，`text-integrity` 就必须跑，与文件在哪个目录无关。** 这条单独写，因为**逐行补必漏**（初稿只在 row 1/row 2 写了它，于是 row 3/row 4/row 5 全漏）；且 **`text-integrity` 不是「读 markdown 的阶段」** —— markdown 只是它拥有的三十几个后缀之一。
+
 | 改动落在 | 推前必须跑 | 为什么（不是「感觉不可能」） |
 |---|---|---|
-| `docs/**` | `links` / `doc-paths` / `text-integrity` | 只有这三个阶段读 markdown |
-| `src/**` | `build` / `ctest` / `fuzz` / **`text-integrity`** / **`economy`** / **`plugin`** | `tools/check_text_integrity.py:5-8` 逐字写着它**为什么存在**：「Three git-tracked C sources carried NUL bytes inside block comments -- `src/mod/gui_mod.c` (5), `src/lexer/lexer.c` (2), `src/lexer/lexer.h` (1)」，而 `:57` 的 `TEXT_SUFFIXES` 含 `.c`/`.h` ⇒ **`src/**` 就是这条阶段的输入集**；`tools/economy_migration.test.py:70-75` 找 `build/inimerse`、`:142` 跑它；`tools/dsh-inimerse/verify.mjs:137` 走 `inim_run`，而 `tools/gate.sh:318-321` 自述是「a live round trip through the real **inim-server / inim-client binaries**」 |
-| `vtest/**`、`tools/*.test.*` | `ctest` / `orphan-fixtures` | 输入是 fixture 与 runner；不读 C 源码、不读 markdown |
-| **`tools/check_*.py`**、`tools/*.test.py` | **它背书的那个阶段**（`check_links.py`→`links`、`check_doc_paths.py`→`doc-paths`、`check_text_integrity.py`→`text-integrity`、`check_orphan_fixtures.py`→`orphan-fixtures`、`check_ignored_credentials.py`→`ignored-credentials`、`economy_migration.test.py`→`economy`；`check_test_ports.py`/`check_async_commands.py` 由别的阶段在内部调用） | **判据本身变了** |
-| `tools/gate.sh`、`CMakeLists.txt` | **全部十二阶段** | **判据本身变了，且没有任何阶段可免** |
-| `.github/**` | 无（CI 自己的事）；`docs/**` 那一行仍适用 | —— |
+| `docs/**` | `links` / `doc-paths` + **通则 A** | 只有 `links` 与 `doc-paths` 把 markdown **当 markdown** 读 |
+| `src/**` | `build` / `ctest` / `fuzz` / `economy` / `plugin` + **通则 A** | `tools/check_text_integrity.py:5-8` 逐字写着它**为什么存在**：「Three git-tracked C sources carried NUL bytes inside block comments -- `src/mod/gui_mod.c` (5), `src/lexer/lexer.c` (2), `src/lexer/lexer.h` (1)」；`tools/economy_migration.test.py:70-75` 找 `build/inimerse`、`:142` 跑它；`tools/dsh-inimerse/verify.mjs:137` 走 `inim_run`，而 `tools/gate.sh:318-321` 自述是「a live round trip through the real **inim-server / inim-client binaries**」 |
+| `vtest/**` | `ctest` / `orphan-fixtures` + **通则 A** | 输入是 fixture；不读 C 源码、不读 markdown |
+| **`tools/` 下任何被 `tools/gate.sh` 调用的文件**（含 `Infiverse_standard/oauth_loop/**`） | **它被调用时所在的那个阶段** + **通则 A** | **判据本身变了**。**这一行不许按名字手写 glob，必须从 `tools/gate.sh` 的真实调用点派生** —— 映射见下表 |
+| `tools/gate.sh`、`CMakeLists.txt` | **全部阶段** | **判据本身变了，且没有任何阶段可免** |
+| `.github/**` | **通则 A**（`.yml` 在列）；其余无 | 实测**无人读 `.github/`**：全仓只有 `tools/ctest_enumerate.sh:12` 的一句注释提到它 ⇒ 「没有阶段读它」成立，**但「不受影响」不成立**（`.yml` 是 `text-integrity` 的输入） |
+
+**`tools/gate.sh` 的真实调用点（逐个读出，不是按名字猜）。**
+
+| 阶段 | 它调用的判据 |
+|---|---|
+| `ctest` | `tools/check_test_ports.py`（`:131`，**在 `stage_ctest` = `:111-200` 内部**） |
+| `fuzz` | `tools/im_diff_fuzz.py`（`:204`） |
+| `economy` | `tools/economy_migration.test.py`（`:266`） |
+| `node` | `tools/node_suites/run_all.js`（`:289`） |
+| `plugin` | `tools/dsh-inimerse/verify.mjs`（`:324`） |
+| `oauth-loop` | `Infiverse_standard/oauth_loop`（`:338`）、`tools/check_async_commands.py`（`:387`，**在 `stage_oauth_loop` = `:327-394` 内部**） |
+| `ignored-credentials` | `tools/check_ignored_credentials.py`（`:402`） |
+| `links` | `tools/check_links.py`（`:406`） |
+| `doc-paths` | `tools/check_doc_paths.py`（`:416`） |
+| `text-integrity` | `tools/check_text_integrity.py`（`:426`） |
+| `orphan-fixtures` | `tools/check_orphan_fixtures.py`（`:437`） |
 
 **★ 这张表本身的成立条件（本条初稿在这上面错了四处，全部由 ivory-ember 复核指出，五条我逐条独立复核成立）。**
 1. **初稿的 `src/**` 行漏了三个阶段，而其中一个是「为 `src/` 而建」的**：`text-integrity` 的存在理由**就是** `src/` 里的 NUL 字节。**照初稿那张表跑的人，不会跑那个专门为 `src/` 而建的阶段** —— 一张用来**免跑**的表把该跑的免掉了，这比没有表更坏。
 2. **初稿把第三列写成「不受影响」的名单，而同一个表头下有两种意思**：`vtest/**` 那一行填 `——`，读作「没有阶段是不可能受影响的」，**而那是假的**（`vtest/**` 显然不影响 `links`/`doc-paths`）。**一个表头两种语义，就是本轮一直在治的形状。** 现在第三列改成「**为什么**」——它要的是**理由**，不是**名单**。
 3. **初稿缺了「判据本身变了」的第二个入口**：十二阶段里有八个是 `tools/` 下的脚本（见上表第四行）。**改 `check_doc_paths.py` 显然影响 `doc-paths` 阶段**，而初稿只把 `tools/gate.sh`/`CMakeLists.txt` 当成判据变更入口。
 4. **标题比实际强一级（这一处仍未修）**：`git diff --name-only` 给的是**文件清单**，清单→阶段的映射**目前只存在于上面这张 markdown 表里（散文）**，**没有一条命令返回 0/1**。⇒ **判据的输入可重算，判据本身尚无可执行形态。** 这条在这里有牙：**§1.72 是用来免跑阶段的，一条不可执行的免跑判据，正是本轮反复治的形状。** 修法（**未做，已派 agent2 —— `tools/**` 是他的写域**）：给 `tools/gate.sh` 加 `--required-for <base>..<head>`，把上表编码进脚本、返回阶段名单与退出码；**在那之前，本节的措辞是「输入可重算」，不是「判据可执行」。**
+5. **第四行的 glob 是按「名字形状」选的，漏了四个「判据本身」（第二轮打回）**：初稿写 glob `tools/check_*.py`、`tools/*.test.py`，于是**名字不像 checker 的四个全漏了** —— `tools/im_diff_fuzz.py`（→`fuzz`）、`tools/node_suites/run_all.js`（→`node`）、`tools/dsh-inimerse/verify.mjs`（→`plugin`）、`Infiverse_standard/oauth_loop/**`（→`oauth-loop`）。**这四个恰恰是「改了就影响某个阶段」的判据本身。** 而**修法不是再加一个 glob，是换来源**：从 `tools/gate.sh` 的真实调用点派生。**我这次是靠手工枚举才把四个找出来的，而这个枚举本身就该由脚本做。**
+6. **表内自相矛盾**：row `src/**` 的「为什么」**逐字引用了 `tools/dsh-inimerse/verify.mjs:137`** 当作必须跑 `plugin` 的理由，而同一文件在第四行**不是**「判据本身变了」的入口 —— **同一张表对同一个文件给了两种身份。**
+7. **`text-integrity` 漏在后三行，成因是它按扩展名扫全部受管文本**：`tools/check_text_integrity.py:55` 起 `TEXT_SUFFIXES` 含 `.md .im .py .sh .yml .js .json .rs .ts .txt .toml` 等，作用域是 `git ls-files` 的**全部**受管文本 ⇒ row 3（`.im`/`.py`）漏、row 4（`.py`）漏、**row 5 说 `.github/**` 「无」是错的**（`.yml` 在列）；顺带 row 1 的理由也不准（它写「只有这三个阶段读 markdown」，而 `text-integrity` **并不把 markdown 当 markdown 读**）。**干净修法是表外加一条通则，不是逐行补**（见通则 A）。
+8. **row 3 与 row 4 的 glob 相交且答案不同**：初稿 row 3 的 `tools/*.test.*` **包含** row 4 的 `tools/*.test.py`；对 `tools/economy_migration.test.py`，row 3 说跑 `ctest`/`orphan-fixtures`（**错的** —— 它不是 CTest 的输入），row 4 说跑 `economy`（对的）。**一个路径类落在两行、两个答案。** 现在 row 3 只留 `vtest/**`。
+9. **两个「在内部被别的阶段调用」的脚本必须点名它属于哪个阶段**，否则「它背书的那个阶段」是一句空话：`tools/check_test_ports.py` 在 `tools/gate.sh:131`、属 `stage_ctest`（`:111-200`）⇒ 背书 `ctest`；`tools/check_async_commands.py` 在 `:387`、属 `stage_oauth_loop`（`:327-394`）⇒ 背书 **`oauth-loop`**（**按名字完全猜不到**）。
 
 **边界（本条初稿的反例放错了行，由 ivory-ember 实测更正）。** 初稿写「一个改 `docs/` 却被 `text-integrity` 之外的东西读到的文件会**漏**」。实测**那一侧是严的**：没有任何测试或检查器 `open` 一个 `docs/` 文件（`tools/check_orphan_fixtures.py` 只读 `CMakeLists.txt:104` 与 node runner `:109`），`add_test` 行里引用 `docs/` 的 = **0**。⇒ **`docs/**` 那一行是整张表里唯一严的一行；漏在 `src/**` 那一行**，已补完。这条规矩整体仍是**充分不必要**的保守下界：**照它跑不会漏，但它不声称「跑完就够」**。
 
