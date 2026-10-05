@@ -2547,7 +2547,7 @@ $ ./build/inimerse --lint vtest/lint_case_exhaustive_v04.im
 | `lint_case_exhaustive_v04.im` | **真缺口** —— 文档声称有覆盖 |
 | `params_precompiled_v06.im` | 合法：它是 `vtest/params_precompiled_v06.inim` 的**源**，而 `params_precompiled_runtime`（`CMakeLists.txt:1153`）跑的是那份序列化产物 |
 | `eidos_object_probe_v04.im` | 合法：`docs/API.md:201` 引用的**样例脚本**；功能由 `tools/eidos_runtime.test.py` 自带的内联脚本断言 |
-| `say_pair_probe_v06.im` | 合法：一次性探针，输出逐字记在 `docs/AUDIT.md:1807`，本来就不是回归输入 |
+| `say_pair_probe_v06.im` | 合法：一次性探针，输出逐字记在 `docs/AUDIT.md:1811-1812`（原文这里写的 `:1807` 是陈旧号），本来就不是回归输入 |
 
 另外两组也查了，**今天都是 0 孤儿**：30 个 `tools/*.test.py` 全部被 `CMakeLists.txt` 提到；13 个 `tools/*.test.js` 全部被 `CMakeLists.txt` 或 `tools/node_suites/run_all.js` 提到。
 
