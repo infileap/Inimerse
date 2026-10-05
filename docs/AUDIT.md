@@ -1284,7 +1284,7 @@ blast radius 为零（实测，不是推断）。
 
 具体是哪些声明丢了：mingw-w64 的 `process.h:69-70` 把 `_getpid` 包在 `#ifdef _CRT_USE_WINAPI_FAMILY_DESKTOP_APP` 里，而 `corecrt.h:461-470` 只在 `WINAPI_FAMILY` 未定义（或分区到桌面）时才定义那个宏；`_beginthreadex` 同理在 CRT 头里。仓库头一挡，两者都消失。
 
-**修法。** 把仓库头改名：`src/platform/process.h` → `src/platform/im_process.h`（用 `git mv`，`git log --follow` 仍追得到），并更新 5 个引用点 —— `src/platform/process.c:1`、`src/platform/process_probe.c:1`（`"process.h"`）、`src/child_proc.h:6`（`"platform/process.h"`）、`src/runtime/runtime_posix.c:588`、`src/mod/server_mod_posix.c:2`（`"../platform/process.h"`），外加三处文档反引号引用（`docs/API.md:293`、`docs/STATUS.md:361`、`docs/archive/ROADMAP.md:62`）。改名之后那 5 个 `#include <process.h>` 自然解析到 CRT 头。**没有选 `#include_next <process.h>`**：它一行就能解决，但那是 GCC 专有扩展；改名是纯标准 C，而且把「仓库头不该与系统头同名」这条规则真正修好，`dir.h`/`parser.h` 的同类隐患也照此办理。
+**修法。** 把仓库头改名：`src/platform/process.h` → `src/platform/im_process.h`（用 `git mv`，`git log --follow` 仍追得到），并更新 5 个引用点 —— `src/platform/process.c:1`、`src/platform/process_probe.c:1`（`"process.h"`）、`src/child_proc.h:6`（`"platform/process.h"`）、`src/runtime/runtime_posix.c:588`、`src/mod/server_mod_posix.c:2`（`"../platform/process.h"`），外加三处文档反引号引用（`docs/API.md:293`、`docs/STATUS.md:361` [obs: ab70a71 ≡ main]、`docs/archive/ROADMAP.md:62`）。改名之后那 5 个 `#include <process.h>` 自然解析到 CRT 头。**没有选 `#include_next <process.h>`**：它一行就能解决，但那是 GCC 专有扩展；改名是纯标准 C，而且把「仓库头不该与系统头同名」这条规则真正修好，`dir.h`/`parser.h` 的同类隐患也照此办理。
 
 **第五类（`getline`）与上面无关，是另一件事。** `#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)` 那段守卫**不是**原因：mingw-w64 的 `<stdio.h>` 里 `getline` **一次都没出现**（`grep -c getline` 在 MINGW64 与 UCRT64 两个 sysroot 上都是 **0**），改宏、把宏提前、不定义宏，三个最小复现都报同一个 implicit declaration。因此加本地 shim `src/common/probe_compat.h`：`#if defined(_WIN32)` 下 `probe_getline`（`fgets` + `realloc` 增长循环，遇 `\n` 返回读到的字节数，EOF 无数据返回 -1），随后 `#define getline probe_getline`，语义与 POSIX 一致。**没有选「把这两个探针从 Windows 构建里排除」** —— 那会悄悄删掉 Windows 的 upp/crp 覆盖，而 CTest 正是靠它们。
 
@@ -2021,7 +2021,7 @@ runtime 都调它，`spi_parse_caps` 整个删掉。不在那个形状里的输�
 POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 答 **65280 = CAP_MASK**
 （`src/runtime/runtime.c` 的 `else if (capsv->type == VAL_BOOL) caps = capsv->ival ? CAP_MASK : 0;`）。
 设计记录与 `docs/API.md` 都没有规定这个实参的类型，**不挑一侧当规范**（`docs/DECFY_DESIGN.md:8-12`、
-`docs/STATUS.md:30`）。新 pin `vtest/spi_caps_contract_v06.im` 把前六个字段断言成**一份**（两侧已
+`docs/STATUS.md:30` [obs: ab70a71 ≡ main]）。新 pin `vtest/spi_caps_contract_v06.im` 把前六个字段断言成**一份**（两侧已
 一致），把 `bool=` 这一个字段**按平台各断言各自现行值**（`CMakeLists.txt`），任一侧漂移立刻变红
 ——与 §1.47 的 `round` 同一手法。
 
@@ -2524,7 +2524,7 @@ ctest 的输出里出现 `is already registered` ⇒ **阶段红**，并把那�
 | `lint_case_missing_default_v04.im` 有「相关 CTest」 | 全仓库对该文件名的引用**只有这一行文档**；`ctest -N` 的 134 个名字里没有它，也没有任何名字含 `missing_default` |
 | `lint_case_exhaustive_v04.im` 是一个 CTest | 它是**文件名**，不是测试名；全仓库引用同样只有这一行；四个并列的名字（`lint_case_enum_runtime`／`lint_case_membership_runtime`／`lint_case_try_members_runtime`／`lint_case_try_alias_runtime`）**都是真的** |
 | `docs/REQUIREMENTS_ANALYSIS.md:177` 的「`migrate_report.py` + 对应 CTest」 | `tools/` 下**没有** `migrate_report.test.py`；`ctest -N` 里没有任何名字含 `migrate` |
-| `docs/STATUS.md:286` 把 `tools/migrate_report.py` 与两个 CTest 并列 | `bindgen_regression` 跑的是 `tools/bindgen.test.py`，`scan_tools_regression` 跑的是 `tools/scan_tools.test.py`（其 docstring 只提 `cpp_scan` 与 `python_scan`）—— 两个都不碰 `migrate_report.py` |
+| `docs/STATUS.md:286` [obs: ab70a71 ≡ main] 把 `tools/migrate_report.py` 与两个 CTest 并列 | `bindgen_regression` 跑的是 `tools/bindgen.test.py`，`scan_tools_regression` 跑的是 `tools/scan_tools.test.py`（其 docstring 只提 `cpp_scan` 与 `python_scan`）—— 两个都不碰 `migrate_report.py` |
 
 **能力是真的，覆盖不是。** 两个 fixture 今天都跑得对：
 
@@ -2952,15 +2952,15 @@ for (size_t i = 0; pattern[i] && j + 16 < tcap; i++) {
 
 **修法。** 不做「删掉 131」，也不写任何推导数：
 
-- `docs/STATUS.md:44` 与 `docs/BOARD.md:54` 改为**按平台并列**：`Linux Total Tests: 142` / `Windows Total Tests: 122`（`dc0624f`）。
-- `docs/STATUS.md:51` 写明 `142` 的**身份是注册上限，不是任一平台的实跑数**，并逐条给出三个裁剪注册的**环境**条件：`INIMERSE_NODE`（`CMakeLists.txt:233`）、`INIMERSE_CLANG`（`:367`，条件为 `:368 if(INIMERSE_CLANG AND NOT WIN32)`）、`INIMERSE_PYTHON`（`:66`）。三者都不是平台条件 ⇒ **平台间的差无法只由 `CMakeLists.txt` 推出**。
-- `docs/STATUS.md:38` 标题补「表内数字除注明外均为 Linux 实测」。
+- `docs/STATUS.md:44` 与 `docs/BOARD.md:54` 改为**按平台并列**：`Linux Total Tests: 142` / `Windows Total Tests: 122`（`dc0624f`）。**[原文，已在 `main` 上被改写] [obs: ab70a71]**：`ab70a71` 上这两处写 `Linux Total Tests: 142`，`main` 上已改成 `148` 并各带自己的 ref ⇒ 引的是**当时的原文**，锚要按被引处**现在**的特征串取（`按平台并列`）。
+- `docs/STATUS.md:51` 写明 `142` 的**身份是注册上限，不是任一平台的实跑数**，并逐条给出三个裁剪注册的**环境**条件：`INIMERSE_NODE`（`CMakeLists.txt:233`）、`INIMERSE_CLANG`（`:367`，条件为 `:368 if(INIMERSE_CLANG AND NOT WIN32)`）、`INIMERSE_PYTHON`（`:66`）。三者都不是平台条件 ⇒ **平台间的差无法只由 `CMakeLists.txt` 推出**。**[原文，已在 `main` 上被改写] [obs: ab70a71]**：这条引的 `142` 在 `main` 上已是 `148`（锚按现在取：`是注册上限`）。
+- `docs/STATUS.md:38` 标题补「表内数字除注明外均为 Linux 实测」。 [obs: ab70a71 ≡ main]（锚：`表内数字除注明外均为 Linux 实测`，两棵树上都在）
 
 **为什么这是缺陷而不是书写问题。** 那四行 `add_test`（`:381 :382 :386 :399`）的条件栈是**嵌套**的：它们同时在 `if(INIMERSE_NODE)`（`:380`）**和** `if(INIMERSE_CLANG AND NOT WIN32)`（`:368`）之下。本节的两轮取证各自只认了其中一层——一方把它们计入「Windows 必然不注册」（当平台条件），另一方把它们完全剔除（当工具条件）——**两个方向是同一个错：都把嵌套读成了单层。** 只要注册条件里混着环境与平台两类，就不能靠数 `add_test(` 推出任何一个平台会跑多少个。
 
 **判据（今后）。** 凡写 `Total Tests: N`，**必须同时写明是注册上限还是某平台实跑数**；只写数字的用法，本档视为未完成的记账。
 
-**口径（合并后补）。** 本节所有行号都是在 `ab70a71` 上量的；合并进 `main`（`57ece55`）时 `docs/STATUS.md` 与 `docs/AUDIT.md` 都被插入了内容，**这些行号已经漂了** —— 正文里的旧行号一律写成 `:旧 → :新` 的映射：`:3642 → :3663`、`:3624 → :3645`、`:1562 → :1583`（三处已就地更正并带上 ref）。**规矩是「凡带前缀的引用都要带上它的观测点」，不是「不许出现旧值」** —— 旧行号可以留（§1.46 那三处就留着 `docs/STATUS.md:3325` 并各带观测点），但每一处都要紧挨着写明它是在哪棵树上量的（`<ref> @ <sha>`，或紧邻的「写作时 X 上」）；**裸引用不许有**。但**下面这条我原本写成的「可执行判据」是错的，而且绿在唯一该红的地方**：我原写「`grep -o 'docs/STATUS\.md:[0-9]*' docs/AUDIT.md | sort -u`，输出里不应出现旧值」，而 `docs/STATUS.md` 的 `:3325`（下面 §1.46 引的那一处）当时**就是**陈旧的带前缀引用，它不在我手写的旧值清单里 ⇒ 判据放它过去。**成因**：这条判据对「旧」的定义**就是那张映射表的左列** ⇒ **它只能复核我已写下的例外，不能发现漂移**；它是 §9 第 31 条 (c)（「量的是它自己」，这次量的是它自己维护的清单）的第三个投影，也是第 30 条自指形状的第三面（由 ivory-ember 的独立复核证伪并附活反例）。**判据不能建立在行号上，只能建立在内容上** —— 一条引用一条断言：`sed -n '<N>p' docs/STATUS.md | grep -q '<被引句的特征串>'`（期望 rc=0）。**本段原写「这三处已就地更正」，而实测另有两处漏改与一处指向不存在的行**（见本节正文第 4 条与下面的诚实边界 1）—— 由 ivory-ember 的独立复核发现，在本笔更正。**处方写在前言、病灶在正文，这是「处方不是执行」的又一个实例。****范围也只覆盖了本文档。** 带前缀的 `docs/STATUS.md:<N>` 引用还散在 `docs/DECFY_DESIGN.md`、`docs/BOARD.md`、`docs/STATUS.md` 自身、`docs/streams/`、`docs/HANDOFF_INFIVERSE.md`、`docs/HYGIENE.md` 里，**全部裸写、全部在本条视野之外**；重取命令 `grep -rno 'docs/STATUS\.md:[0-9]\+' docs/ tools/`。**漂移区是 `N > 488`**：`ab70a71` → `main` 在 `docs/STATUS.md:488` 之后插入了 21 行（`diff` 的 hunk 头 `488a489,509`），此后**整段 +21**，落在里面的引用都要逐条按内容重取。**我只逐条证伪了 `:3325`，其余是「未验证、且无任何东西在检查」**（这一句照引 ivory-ember 的原话）。**下面几条诚实边界里其余的 `docs/STATUS.md:NNNN` 同理，复核时请用命令重取、不要照抄行号**：`grep -n '<那句原文的特征串>' docs/STATUS.md`。这正是 H4.1 与 `docs/DECFY_DESIGN.md` 的 `[口径]` 要治的形状。
+**口径（合并后补）。** 本节所有行号都是在 `ab70a71` 上量的；合并进 `main`（`57ece55`）时 `docs/STATUS.md` 与 `docs/AUDIT.md` 都被插入了内容，**这些行号已经漂了** —— 正文里的旧行号一律写成 `:旧 → :新` 的映射：`:3642 → :3663`、`:3624 → :3645`、`:1562 → :1583`（三处已就地更正并带上 ref）。**规矩是「凡带前缀的引用都要带上它的观测点」，不是「不许出现旧值」** —— 旧行号可以留（§1.46 那三处就留着 `docs/STATUS.md:3325` 并各带观测点），但**每一处所在段落都要含一个可 `grep` 的记号 `[obs: <ref>]`**（在哪棵树上量的就写哪棵；同文于两棵树时写 `[obs: <ref> ≡ main]`）——**「紧挨着」不是可判定的距离，记号才是**；**裸引用不许有**。但**下面这条我原本写成的「可执行判据」是错的，而且绿在唯一该红的地方**：我原写「`grep -o 'docs/STATUS\.md:[0-9]*' docs/AUDIT.md | sort -u`，输出里不应出现旧值」，而 `docs/STATUS.md` 的 `:3325`（上面 §1.46 引的那一处）当时**就是**陈旧的带前缀引用，它不在我手写的旧值清单里 ⇒ 判据放它过去。**成因**：这条判据对「旧」的定义**就是那张映射表的左列** ⇒ **它只能复核我已写下的例外，不能发现漂移**；它是 §9 第 31 条 (c)（「量的是它自己」，这次量的是它自己维护的清单）的第三个投影，也是第 30 条自指形状的第三面（由 ivory-ember 的独立复核证伪并附活反例）。**判据不能建立在行号上，只能建立在内容上** —— 一条引用一条断言：`sed -n '<N>p' docs/STATUS.md | grep -q '<被引句的特征串>'`（期望 rc=0）。**这条判据还有第三个情形，而本节自己就踩了两次**：引用一段**已被就地改写的原文**时，被引句现在不在被引处 —— 本节修法里引的 `docs/STATUS.md:44` 与 `:51` 就是（`ab70a71` 上那两行写 `142`，`main` 上已改成 `148`），读者拿到 rc=1 **仍然分不清「漂了」还是「原句被改过」**，也就是又回到本段在治的那个歧义。**补法**：锚换成**被引处现在的特征串**，并显式标成 `[原文，已被 <谁> 改掉]`。**并且两种东西的分工要写清**：**观测点是诊断用的**（这条是在哪棵树上量的 ⇒ 能区分「漂了」和「本来就不对」），**内容锚是判据用的**（它对不对），**两者不能互相替代** —— 只有内容锚、没有观测点，漂移会被误判成错误（ivory-ember 本轮实际就这么错过一次，并据此提出了一个把错行号钉死的修正）；只有观测点、没有内容锚，只知道它从哪来、不知道它对不对。**本段原写「这三处已就地更正」，而实测另有两处漏改与一处指向不存在的行**（见本节正文第 4 条与下面的诚实边界 1）—— 由 ivory-ember 的独立复核发现，在本笔更正。**处方写在前言、病灶在正文，这是「处方不是执行」的又一个实例。****范围也只覆盖了本文档。** 带前缀的 `docs/STATUS.md:<N>` 引用还散在 `docs/DECFY_DESIGN.md`、`docs/BOARD.md`、`docs/STATUS.md` 自身、`docs/streams/`、`docs/HANDOFF_INFIVERSE.md`、`docs/HYGIENE.md` 里，**全部裸写、全部在本条视野之外**；重取命令 `grep -rno 'docs/STATUS\.md:[0-9]\+' docs/ tools/`。**漂移区是 `N > 488`**：`ab70a71` → `main` 在 `docs/STATUS.md:488` 之后插入了 21 行（`diff` 的 hunk 头 `488a489,509`），此后**整段 +21**，落在里面的引用都要逐条按内容重取。**我只逐条证伪了 `:3325`，其余是「未验证、且无任何东西在检查」**（这一句照引 ivory-ember 的原话）。**下面几条诚实边界里其余的 `docs/STATUS.md:NNNN` 同理，复核时请用命令重取、不要照抄行号**：`grep -n '<那句原文的特征串>' docs/STATUS.md`。这正是 H4.1 与 `docs/DECFY_DESIGN.md` 的 `[口径]` 要治的形状。**规矩本身的例外已清**：本条原写「凡带前缀的引用都要带上它的观测点」，而实测本文档有 **7 处**带前缀引用没有观测点（`:1287`→`:361`、`:2024`→`:30`、`:2527`→`:286`、`:2955`→`:44`、`:2956`→`:51`、`:2957`→`:38`、`:3235`→`:327`）⇒ **这句在它自己的文档里是假的**；已逐处补 `[obs: …]`。**分两半说才准**：「凡带前缀的引用」原句为假（7 处反例），但「**凡落在漂移区的带前缀引用**」为真（漂移区内 6 处全带观测点）。
 
 ### 三条诚实边界
 
@@ -3232,7 +3232,7 @@ wasm 那一行**不能与原生通道直接比**：它量的是 `node` 进程，
 2. **产物**：`--jit off|template|optimized` 下同一程序 `bytecode` 子命令输出的 md5 **三者相同**（`3dc6030de6b930cb95b3561472e7b104`）。
 3. **行为**：同一程序三种取值下输出相同，墙钟 2.845 / 2.942 / 2.804s（sd 0.087 / 0.110 / 0.075）—— 差异全在噪声内，顺序不重现方向。
 
-**结论**：`--jit` 改的是一个从不被消费的全局变量，**不得把它当作加速通道报告**。这一结论与仓内既有记录一致（`docs/STATUS.md:327`、`docs/API.md:485`）。本报告因此只比较解释器与 AOT 两条真实通道，并把「让 `--jit` 诚实（拒绝或实现）」列为 §5 的一项。
+**结论**：`--jit` 改的是一个从不被消费的全局变量，**不得把它当作加速通道报告**。这一结论与仓内既有记录一致（`docs/STATUS.md:327` [obs: ab70a71 ≡ main]、`docs/API.md:485`）。本报告因此只比较解释器与 AOT 两条真实通道，并把「让 `--jit` 诚实（拒绝或实现）」列为 §5 的一项。
 
 ---
 
