@@ -87,17 +87,17 @@ them from stepping on each other. The board and the rules are in
 
 ### `gate.sh` — the acceptance gate
 
-Fourteen stages; exit 0 only if all pass. A branch is mergable when this is green.
+Fifteen stages; exit 0 only if all pass. A branch is mergable when this is green.
 Run it **serially** — two gates at once bind overlapping ports and manufacture the
 failures [docs/STATUS.md](../docs/STATUS.md) §2.9 records.
 
 ```bash
-tools/gate.sh                 # all fourteen stages
+tools/gate.sh                 # all fifteen stages
 tools/gate.sh --fast          # reuse the existing build/ (skip configure)
 tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|oauth-loop
                               #            |ignored-credentials|links|doc-paths
                               #            |text-integrity|orphan-fixtures|orphan-targets
-                              #            |line-refs
+                              #            |line-refs|release-tags
                               # `orphan-targets` asks whether a target is run, not
                               # whether it was compiled here — a target can be run by a
                               # CTest and still be named only inside a platform branch
@@ -107,6 +107,13 @@ tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|
                               # `gate.sh`: how many are written in each of the four
                               # forms, and how many have nothing holding them. It does
                               # not assert that any number is right.
+                              # `release-tags` asks whether the sha a document records
+                              # for a tag is still the sha that tag points at. A tag is
+                              # a moving pointer and moving one leaves no trace locally
+                              # (`git reflog show <tag>` prints nothing), so a number
+                              # that was true when written and is false now cannot be
+                              # caught by reading ([docs/AUDIT.md](../docs/AUDIT.md)
+                              # §1.74 E).
 tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
                               # print the stages that change forces, one selector per
                               # line, then `required: N stage(s)` and a bracket saying
@@ -146,6 +153,7 @@ tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
 | orphan-fixtures | `tools/check_orphan_fixtures.py` — **0 orphans** |
 | orphan-targets | `tools/check_orphan_targets.py` — **0 orphans**, where a target is measured by the target some `add_test( )` runs and never by the test's name. It answers *is it run*, not *was it compiled here*: a target can be run by a CTest and still be named only inside a platform branch, and then the PASS has no relation to the change ([docs/AUDIT.md](../docs/AUDIT.md) §1.71) |
 | line-refs | `tools/check_line_refs.py` — **pins held**: the input set is non-empty, all four writings are present, the explicit-form count has not shrunk, and the unanchored count has not grown. It asserts denominators, not an anchor rate, and it does not assert that any number is right: a number still there that now points at something else is not caught ([docs/AUDIT.md](../docs/AUDIT.md) §1.72) |
+| release-tags | `tools/check_release_tags.py` — **every `tag → sha` binding in `docs/` agrees with `git rev-parse`**, and every version named in backticks is a tag that exists. The tag names come from `git tag -l`, never from the file, so the next release adds one without anyone editing it. It says the documents and the tags agree *right now*: it cannot see a tag that moves after the run, and it cannot tell where a tag was meant to point. The defect register's own quotes of the old `v0.5.2 → 0ebd68d` cell are excused by name, and a register that excuses nothing is itself reported ([docs/AUDIT.md](../docs/AUDIT.md) §1.74 E) |
 
 When one of those numbers changes, update this table *and* the baseline row in
 [docs/STATUS.md](../docs/STATUS.md) §1 — otherwise the next session gates against

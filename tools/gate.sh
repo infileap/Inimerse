@@ -7,7 +7,8 @@
 #   tools/gate.sh --only links run a single stage
 #                              (build|ctest|fuzz|economy|node|plugin|oauth-loop|
 #                               ignored-credentials|links|doc-paths|text-integrity|
-#                               orphan-fixtures|orphan-targets|line-refs)
+#                               orphan-fixtures|orphan-targets|line-refs|
+#                               release-tags)
 #                              `orphan-targets` asks whether a target is run, not
 #                              whether it was compiled here: a target can be run
 #                              by a CTest and still be named only inside a
@@ -22,6 +23,13 @@
 #                              still there that now points at something else is
 #                              not caught.  See docs/AUDIT.md 1.72 and the
 #                              checker's own docstring.
+#                              `release-tags` asks whether the sha a document
+#                              records for a tag is still the sha that tag points
+#                              at.  A tag is a moving pointer, and moving one
+#                              leaves no trace locally -- `git reflog show <tag>`
+#                              prints nothing -- so a number that was true when
+#                              it was written and is false now cannot be caught
+#                              by reading.  See docs/AUDIT.md 1.74 E.
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #   tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
 #                              print the stages that change forces, one selector
@@ -104,7 +112,15 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${2:-}"; shift ;;
     --jobs) JOBS="${2:-4}"; shift ;;
     --required-for) REQUIRED_FOR="${2:-}"; REQUIRED_FOR_SET=1; shift ;;
-    -h|--help) sed -n '2,81p' "$0"; exit 0 ;;
+    -h|--help)
+      # The header comment is the help text, and its last line is whatever sits
+      # just above `set -uo pipefail`.  It used to be a fixed number here, which
+      # meant every added line of help was also an edit here -- and the edit that
+      # gets forgotten is the one in the file nobody reads while changing the
+      # other (docs/SYNTAX.md H4.1: a drifting value is not fixed by a new
+      # number, only by a different way of writing it).
+      sed -n "2,$(( $(grep -n '^set -uo pipefail' "$0" | head -1 | cut -d: -f1) - 1 ))p" "$0"
+      exit 0 ;;
     *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
@@ -548,6 +564,23 @@ stage_line_refs() {
   python3 "$REPO_ROOT/tools/check_line_refs.py"
 }
 
+stage_release_tags() {
+  # A tag is a moving pointer, and this is the fourth kind of failure: the
+  # number was right when it was written, and then somebody moved the thing
+  # being measured.  docs/STATUS.md's release-point cell once read
+  # `v0.5.2` -> `0ebd68d`, which was true; the tag was moved twice and the same
+  # cell became false with no edit to it.  It is also invisible locally: moving
+  # a tag leaves no trace, so `git reflog show v0.5.2` prints nothing and there
+  # is no history to read.  A number that was true and is now false, with no
+  # edit and no log entry, has to be checked by running something.
+  #
+  # The checker reads the tag names out of `git tag -l`, so the next release
+  # adds one without anyone editing it -- a checker with `v0.5.2` written in it
+  # would need editing at exactly the moment it is most likely to be forgotten.
+  # See docs/AUDIT.md 1.74 E.
+  python3 "$REPO_ROOT/tools/check_release_tags.py"
+}
+
 # ── the stage registry ──────────────────────────────────────────────────────
 #
 # One entry per stage: selector|label|function.  Every consumer reads this
@@ -573,6 +606,7 @@ STAGE_SPECS=(
   "orphan-fixtures|test inputs that no CTest runs (expect 0)|stage_orphan_fixtures"
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
   "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
+  "release-tags|sha a document records for a tag, against the tag today|stage_release_tags"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -638,7 +672,10 @@ REQUIRED_SCOPES=(
   #   call site names says nothing about which tree the checker walks.
   #   stage_line_refs runs tools/check_line_refs.py, which globs `docs/**/*.md`
   #   for itself and is pointed at no path either.
-  "docs/*|links doc-paths line-refs"
+  #   stage_release_tags runs tools/check_release_tags.py, which walks docs/ the
+  #   same way; and what it compares those documents against is `git tag -l`,
+  #   which is not a path at all, so no call site could have named it.
+  "docs/*|links doc-paths line-refs release-tags"
   # src/* -- no reader.  src/ is read by the compiler, and a compiler is not a
   #   path named in this file.  fuzz and economy read a built engine, plugin the
   #   shipped plugin, ctest the binaries; none of them names a source file.
