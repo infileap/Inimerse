@@ -3631,6 +3631,44 @@ $ git ls-files -z   | tr '\0' '\n' | grep -c .   →  913
 
 **只登记、未修。** 修它在 `tools/**`（归 agent2 的写域）：三处最小改动是「判定先比全名」「`.ps1` 进清单」「清单里每个条目至少被一个受管文件命中（否则它要么是死条目、要么是缺文件）」。**第三条本身就该是一个检查器**，而它比前两条更根本 —— 一个永远不匹配的 allow-list 条目与一个没人跑的 `add_executable` 是同一件事（§1.73），只是它在**清单里**而不是在构建里。
 
+## §1.76 那张「核心高频内建」名单缺平台标注：四个名字、三种归属、零覆盖
+
+**症状。** `docs/SYNTAX.md` 的「**核心高频内建**（有 `vtest` 覆盖的）」那一行把 Windows 独有、POSIX 独有与两平台共有的内建名并列，读者无从判断一个名字在哪个平台上存在。本节把那一行里**四个**名字逐一定案。（同族的规模登记见 §1.71：`src/mod/io_mod.c` 只在 `CMakeLists.txt` 的 `if(WIN32)` 源码分支里被编译，POSIX 侧给它的是 `src/runtime/runtime_posix.c`。）
+
+**实测（`main @ d27413a`，Linux，`build/inimerse --no-mods`，每个名字一条独立脚本，逐字）。**
+
+```
+file_exists("/tmp")       → rc=1  [exception] uncaught: unknown builtin function 'file_exists'
+timer_ms()                → rc=1  [exception] uncaught: unknown builtin function 'timer_ms'
+mkdir("/tmp/probe9/xx")   → rc=0  true
+list_dir("/tmp")          → rc=0  probe9
+```
+
+**生产点（`git grep -n '"<name>"' -- src/`，逐字）。**
+
+| 名字 | Windows（`src/mod/io_mod.c`） | POSIX（`src/runtime/runtime_posix.c`） | 归属 |
+| --- | --- | --- | --- |
+| `file_exists` | `:318` | — | **仅 Windows** |
+| `timer_ms` | `:337` | — | **仅 Windows** |
+| `mkdir` | `:319` | `:1183` | **两平台，两个生产点** |
+| `list_dir` | — | `:1184` | **仅 POSIX**；Windows 上注册的是**另一个名字** `io_list_dir`（`src/mod/io_mod.c:323`） |
+
+⇒ **`list_dir` 不是「同一个名字两个生产点」** —— 它是 POSIX 独有，Windows 那个是另一个名字。**`io_mod.c` 也不是「POSIX 上是空桩」** —— 它有三个真实实现（`builtin_file_exists`、`builtin_io_list_dir`、`builtin_timer_ms`），只是**在 POSIX 上根本没有被编译**。这两句是 `docs/RELEASE_0.5.2.md` 登记这一行时的原话，已在 `main` 上就地更正（更正后**只有那句结论不变**：缺平台标注）；冻结的 tag 那棵树保留原文。
+
+**「有 `vtest` 覆盖」对这四个名字全不成立。** `git grep -c '<name>' -- vtest/` 对 `file_exists` / `timer_ms` / `mkdir` / `list_dir`（以及 `io_list_dir`）**全 0 命中** ⇒ 那一行开头的括号对这四个名字是假的，而它同时是「有覆盖」这个断言唯一的出处。`docs/SYNTAX.md` 那一行已就地加括注（**行数中性**：加行会移动 `docs/TYPESET_V06.md` 引的 `docs/SYNTAX.md:596` 与 `:805`）。
+
+**顺带更正一处引用（同族、另一种形状）。** §1.71 末尾那段「顺带一条未核对的观察」把「`file_exists` `mkdir` `io_list_dir` `http_get` `clipboard_set` `timer_ms` `exec_async` `proc_list`」八个名字记成是 `docs/SYNTAX.md` 那一行列出的，并断言「实测在 POSIX 上这些名字**全部不存在**」。**两句都错，而且错的方向不同：**
+
+- **名单不对**：八个名字里只有三个（`file_exists`、`mkdir`、`timer_ms`）真的在那一行上；`io_list_dir`、`http_get`、`clipboard_set`、`exec_async`、`proc_list` 在 `docs/SYNTAX.md` **全篇零命中**（按名字逐个 grep 反引号形式，五个都为空）。⇒ **引用被当成了答案**：一个名字列表被挂到一行上，而那一行没写这些名字。这与 §1.46 那条「引用被当成了答案」同形，只是这里的「答案」是一份名单。
+- **「全部不存在」不对**：同一批名字里 `mkdir`（POSIX `src/runtime/runtime_posix.c:1183`）与 `http_get`（`:1185`）在 POSIX 上**都有注册**。实测：`mkdir("/tmp/probe9/xx")` = `true`（rc=0）、`http_get("http://127.0.0.1:9/")` = rc=0。另四个的实测逐字是 `[exception] uncaught: unknown builtin function 'io_list_dir'` / `'clipboard_set'` / `'exec_async'` / `'proc_list'`（各 rc=1，尾行 `at ip=N frames=0`）。⇒ **那六个确实在 POSIX 上不存在**（`file_exists`、`timer_ms`、`io_list_dir`、`clipboard_set`、`exec_async`、`proc_list`），**但那两个存在** —— 「全部」这个词把六个的结论借给了两个反例。那段自称「未核对的观察」，而它错的恰好是**核对一下就会翻的那两句**。
+
+**未裁定（留给下一次）。** 那一行还有 50 多个名字没逐个核平台与覆盖（§1.52 只核过 `random`/`rand`，§1.53 只核过 `substr`）。本节**不动名单本身**，只给那四个名字加括注、并在行尾指向本节。
+
+**判据（可重跑）。** ①四个名字各跑一条单行脚本，rc 与首行输出与上表逐字一致；②`git grep -n '"<name>"' -- src/` 给出上表的生产点，且 `list_dir` 的 Windows 侧为空、`io_list_dir` 的 POSIX 侧为空；③`git grep -c '<name>' -- vtest/` 对五个名字全 0；④按名字在 `docs/SYNTAX.md` 里 grep 反引号形式，`io_list_dir` 为空（证明那段登记里的名单不是那一行的抄录）。
+
+**这一节自己什么时候会变假。** 四个名字的**归属**由 `src/` 的注册点与 `CMakeLists.txt` 的源码分支决定，不随文档编辑改变；而**「零覆盖」那一半会变** —— 任何人补一条 vtest 就翻，而它**没有站岗者**。所以它按「现值 + 无人站岗」登记：**数在这里、命令在这里、它什么时候会烂也写在这里**（§1.74 E 那条判据的实例）。
+
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
