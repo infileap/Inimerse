@@ -7,12 +7,21 @@
 #   tools/gate.sh --only links run a single stage
 #                              (build|ctest|fuzz|economy|node|plugin|oauth-loop|
 #                               ignored-credentials|links|doc-paths|text-integrity|
-#                               orphan-fixtures|orphan-targets)
+#                               orphan-fixtures|orphan-targets|line-refs)
 #                              `orphan-targets` asks whether a target is run, not
 #                              whether it was compiled here: a target can be run
 #                              by a CTest and still be named only inside a
 #                              platform branch (docs/AUDIT.md 1.71), and then the
 #                              PASS says nothing about the file it names.
+#                              `line-refs` asserts the denominators of the sweep
+#                              over the line numbers docs/ cites in
+#                              CMakeLists.txt and tools/gate.sh -- how many
+#                              citations are written in each of the four forms,
+#                              and how many have nothing holding them.  It does
+#                              not assert that any number is right; a number
+#                              still there that now points at something else is
+#                              not caught.  See docs/AUDIT.md 1.72 and the
+#                              checker's own docstring.
 #   tools/gate.sh --jobs 4     parallel job count for the build
 #   tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
 #                              print the stages that change forces, one selector
@@ -95,7 +104,7 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${2:-}"; shift ;;
     --jobs) JOBS="${2:-4}"; shift ;;
     --required-for) REQUIRED_FOR="${2:-}"; REQUIRED_FOR_SET=1; shift ;;
-    -h|--help) sed -n '2,72p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,81p' "$0"; exit 0 ;;
     *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
@@ -520,6 +529,25 @@ stage_orphan_targets() {
   python3 "$REPO_ROOT/tools/check_orphan_targets.py"
 }
 
+stage_line_refs() {
+  # A number cited in docs/ is held by something, or it is not.  docs/ cites
+  # line numbers in CMakeLists.txt and in tools/gate.sh; CMakeLists.txt's moved
+  # eight times in one merge series by eight different offsets (+43 +34 +15 +34
+  # +23 +14 +11 +11) and again by +67, so no single correction repairs them, and
+  # 13 citations of tools/gate.sh moved at once when this file grew by 35 lines.
+  # This stage asserts the sweep's DENOMINATORS, not its anchor rate: that the
+  # input set is non-empty, that each of the four writings is still present (a
+  # checker that has quietly become a prefix scan reports that nothing was
+  # missed while missing the shape it exists to find), that the explicit-form
+  # count has not shrunk, and that the unanchored count has not grown -- 501 is
+  # a known quantity today and 520 tomorrow is an unannounced regression.
+  #
+  # It does not assert that any number is right.  A number that is still there
+  # and now points at something else is not caught here.  See docs/AUDIT.md
+  # 1.72 and the checker's own docstring.
+  python3 "$REPO_ROOT/tools/check_line_refs.py"
+}
+
 # ── the stage registry ──────────────────────────────────────────────────────
 #
 # One entry per stage: selector|label|function.  Every consumer reads this
@@ -544,6 +572,7 @@ STAGE_SPECS=(
   "text-integrity|tracked text files carry no NUL byte (expect 0)|stage_text_integrity"
   "orphan-fixtures|test inputs that no CTest runs (expect 0)|stage_orphan_fixtures"
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
+  "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -607,7 +636,9 @@ REQUIRED_SCOPES=(
   # docs/* -- reader named, subtree not.  stage_links runs
   #   tools/check_links.py, and that line passes it no directory: the file the
   #   call site names says nothing about which tree the checker walks.
-  "docs/*|links doc-paths"
+  #   stage_line_refs runs tools/check_line_refs.py, which globs `docs/**/*.md`
+  #   for itself and is pointed at no path either.
+  "docs/*|links doc-paths line-refs"
   # src/* -- no reader.  src/ is read by the compiler, and a compiler is not a
   #   path named in this file.  fuzz and economy read a built engine, plugin the
   #   shipped plugin, ctest the binaries; none of them names a source file.
