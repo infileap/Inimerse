@@ -180,7 +180,7 @@ def main() -> int:
 
     files = scan_files()
     total = 0
-    broken: list[tuple[str, str]] = []
+    broken: list[tuple[str, str, str]] = []
     good: list[tuple[str, str]] = []
 
     for rel in files:
@@ -188,27 +188,27 @@ def main() -> int:
             with open(os.path.join(REPO_ROOT, rel), encoding="utf-8") as fh:
                 text = fh.read()
         except (OSError, UnicodeDecodeError) as exc:
-            broken.append((rel, f"<unreadable: {exc}>"))
+            broken.append((rel, "<unreadable>", str(exc)))
             continue
         for path in doc_paths_in(text):
             total += 1
             if os.path.exists(os.path.join(REPO_ROOT, path)):
                 good.append((rel, path))
             else:
-                broken.append((rel, path))
+                broken.append((rel, path, "no such file"))
 
     if args.json:
         print(json.dumps({
             "files": len(files),
             "references": total,
-            "broken": [{"file": f, "path": p} for f, p in broken],
+            "broken": [{"file": f, "path": p, "why": w} for f, p, w in broken],
         }, ensure_ascii=False, indent=2))
     else:
         if args.verbose:
             for rel, path in sorted(set(good)):
                 print(f"  ok  {rel}  ->  {path}")
-        for rel, path in broken:
-            print(f"BROKEN  {rel}  ->  {path}  (no such file)")
+        for rel, path, why in broken:
+            print(f"BROKEN  {rel}  ->  {path}  ({why})")
         print()
         print(f"check_doc_paths: {len(files)} markdown files, {total} backtick "
               f"`docs/…`/`future/…` .md references, {len(broken)} broken")
