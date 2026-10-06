@@ -2062,7 +2062,7 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 
 **双向验证**：`vtest/atomic_slot_type_contract_v06.im`（CTest **#132** `atomic_slot_type_contract_runtime`，`PASS_REGULAR_EXPRESSION` 钉住整行）。`git stash push -- src/runtime/runtime_posix.c` 后重编，同一条命令打出
 `atomic-slot-ok g1=4609434218613702656 r1=4609434218613702657 y=4609434218613702657 r3=4609434218613702657 yz=4609434218613702657 g2=1 r2=2 s=2 g3=7 r4=12`、**退出码 0**；恢复后打出
-`atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。两行在两个平台上**同一行**（故意不分平台分支）。Windows 侧（ucrt64，CI 同款工具链，`Total Tests: 122`）另做了同形的 A/B：把 `src/runtime/runtime.c` 的新守卫换回 `if (type != VAL_INT) { type = VAL_INT; ival = 0; }` 后重编，该测试打出
+`atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。两行在两个平台上**同一行**（故意不分平台分支）。Windows 侧（ucrt64，CI 同款工具链；ctest 汇总分母 **122**，**不是 `Total Tests:`** —— 该平台注册数是 **131**（`c71ea00`），见本节 §1.65）另做了同形的 A/B：把 `src/runtime/runtime.c` 的新守卫换回 `if (type != VAL_INT) { type = VAL_INT; ival = 0; }` 后重编，该测试打出
 `atomic-slot-ok g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1 g3=7 r4=12`、**Failed**（`PREFIX_CTEST_RC=8`）；换回后重新 Passed（`FIXED_CTEST_RC=0`）。这一行同时把上表里 WIN32 一列的「修前」值从读码结论升为**实测**。
 
 **诚实边界**：① 只核了 `atomic_get` / `atomic_add` / `atomic_set` 三个，族里其它名字未逐一核；② WIN32 侧的「修前」值已由 ucrt64 上的 A/B **实测确认**（打出 `g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、Failed，与上表逐格相符），不再是读码结论；③ 「应该报错而不是答 0」这一问未裁，本节只记录它；④ `posix_atomic_set` 与 `builtin_atomic_set` 都是无条件写 + 改 `type`，本节认为合理，但没有为它写用例。
