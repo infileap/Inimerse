@@ -86,6 +86,17 @@ verse_layer_probe_root/
 # all (tools/check_links.py enumerates `git ls-files`), so a scratch directory
 # cannot turn it red whether or not it is listed here.
 .verify/
+# Per-session audit scratch: probe scripts, throwaway .im files and scratch
+# copies of documents kept while reviewing.  Not repository content.
+# NB: this line is hygiene, not a gate dependency.  The checkers that enumerate
+# repository content (tools/check_links.py, tools/check_doc_paths.py,
+# tools/check_text_integrity.py) read `git ls-files`, and
+# tools/check_orphan_fixtures.py globs only `vtest/` and `tools/` -- so none of
+# them can see a root-level scratch directory whether or not it is listed here.
+.scratch/
+# Leftover root from the argument-passing / byte-declaration / range-syntax
+# probes run against the engine.  Same as above: hygiene, not a gate dependency.
+.probe-ie/
 
 # Per-session git worktrees (tools/stream.sh)
 .worktrees/
