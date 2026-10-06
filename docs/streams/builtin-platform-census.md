@@ -52,7 +52,7 @@ fa8247e:src/mod/gui_mod.c:3848:    vm_register_builtin(vm, "rand", builtin_gui_r
 
 ## 5. `window` 必须分两层写
 
-**作为关键字**，两个平台都有通路，而且那三个文件在 `CMakeLists.txt` 的**公共源码清单**里（不在 `if(WIN32)` / `else()` 任何一支）：`src/parser/parser.c:241`（`TOK_WINDOW` → `fname = "window"`）、`src/compiler/compiler.c:2205`（`lookup_builtin(comp, "window")`）、`src/compiler/compiler.c:2927`（把 `"window"` 写进编译器自己的内建名表）。
+**作为关键字**，两个平台都有通路，而且那三个文件在 `CMakeLists.txt` 的**公共源码清单**里（不在 `if(WIN32)` / `else()` 任何一支）：`src/parser/parser.c:241`（`TOK_WINDOW` → `fname = "window"`）、`src/compiler/compiler.c:2205`（@ `344a37b`：`lookup_builtin(comp, "window")`）、`src/compiler/compiler.c:2927`（@ `344a37b`：把 `"window"` 写进编译器自己的内建名表）。
 
 **作为 VM 侧内建注册点**，只有 `src/mod/gui_mod.c:3689`，即**只有 Windows**。
 
@@ -84,7 +84,7 @@ rc=1
 - **10 个名字各有几侧被实跑过，不是整齐的**：7 个（`env`、`sleep_ms`、`time_ms`、`io_list_dir`、`key`、`rand`、`window`）**两侧都跑了**；`file_exists`、`timer_ms`、`mkdir`、`list_dir` 这 4 个**只有 POSIX 一侧是实跑读数**，它们的 Windows 侧**仍然只是分支归属**。⇒ **「每个名字都至少有一侧被实跑过」成立；「两侧都实跑过」不成立。**
 - **两侧不是同一棵树**（POSIX `439df94` / Windows `d27413a`），上表已逐格标注；**没有在同一个 ref 上跑过两侧**。
 - 仓库自带的 `build/inimerse` **是从哪个 ref 配置出来的，没测到**（它 `find src -name '*.c' -newer build/inimerse` 为空、`git diff HEAD -- src/` 为空 ⇒ 工作区 src == HEAD src，但这不等于该二进制 == HEAD 的构建）。为消掉这条边界，另从 `git archive 439df94` 现建了一个引擎复核，两者一致。
-- `docs/SYNTAX.md` 里 **269 个反引号标识符在 `src/` 里没有任何 `vm_register_builtin` 生产点**（多为 token 名、类型名、测试名、C 函数名），**没有逐个判它们是不是内建** —— 没测到。
+- `docs/SYNTAX.md` 里 **269 个反引号标识符在 `src/` 里没有任何 `vm_register_builtin` 生产点**（多为 token 名、类型名、测试名、C 函数名），**没有逐个判它们是不是内建** —— 没测到。**这个数是一条记录，不是一条可重跑的断言**：产出它的脚本是 `vivid-anchor` 的 `/tmp/syntax-census/nonreg.py`（**不在仓库里**），判据是「`docs/SYNTAX.md` 里被反引号括起的标识符（不含点）中，在 `src/` 里找不到以 `vm_register_builtin` 起头、第二实参为该名字的语句行」。**要重跑请重写这条判据**；两轮实测（`fa8247e` 与 `344a37b`）都得 269，但**两轮的规则不同**（第一版正则允许带点，得 287）。
 - `vtest/` 覆盖情况这一轮没查（§1.76 的那一半沿用它的结论，**没有重量**）。
 
 ## 8. 一条顺手测出来、归属未定的旁证

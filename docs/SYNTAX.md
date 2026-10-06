@@ -525,7 +525,7 @@ count("hello")       # 5
 
 ⚠ **只有最后一个实参会被读到**：每个内建只读栈顶，而 `src/vm/vm.c:3805` 记的 `vm->cur_argc` 无人消费 ⇒ `size(5, 5, 5)` 是 `size(5)` = `5`、`count(7, 8)` 是 `count(8)` = `nil`、`len(9)` = `9`。多传的实参被**静默忽略** —— 写 `count(1, 2, 3)` 期待三个元素是错的，要先把集合绑到名字上。
 
-**⚠ 这张名单曾经是错的（2026-10 更正）**：`rand` 从未被任何文件注册（`grep -rn '"rand"' src/` 零命中），却列在这里，而且 `projects/demo/main.im:60` 的 `rand_int` 真的在调用它 ⇒ `rand(1, 6)` 实测 `[exception] uncaught: unknown builtin function 'rand'`、退出码 1。同时 `random` 当时**没有任何 `vtest` 覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`），所以「有 `vtest` 覆盖的」这句对它不成立。`random` 的覆盖由 `vtest/random_bounded_contract_v06.im`（CTest **#133**）补上，`rand` 从名单移除。见 `docs/AUDIT.md` §1.53。
+**⚠ 这张名单曾经是错的（2026-10 更正）**：`rand` 在 **POSIX 侧**从未被注册（`grep -rn '"rand"' src/runtime/runtime_posix.c` 零命中）—— 而当年写下它的那句「`grep -rn '"rand"' src/` 零命中」**本身是错的**：它自 `8248e08`（Release 0.2.0，2026-08-27）起就注册在 `src/mod/gui_mod.c`，**只是那个文件只在 `if(WIN32)` 分支里编译**。⇒ **名单错的那一半（POSIX 上不存在）是对的；写下它的理由（任何文件里都没有）是错的。** 完整普查见 [streams/builtin-platform-census.md](streams/builtin-platform-census.md) §4。却列在这里，而且 `projects/demo/main.im:60` 的 `rand_int` 真的在调用它 ⇒ `rand(1, 6)` 实测 `[exception] uncaught: unknown builtin function 'rand'`、退出码 1。同时 `random` 当时**没有任何 `vtest` 覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`），所以「有 `vtest` 覆盖的」这句对它不成立。`random` 的覆盖由 `vtest/random_bounded_contract_v06.im`（CTest **#133**）补上，`rand` 从名单移除。见 `docs/AUDIT.md` §1.53。
 **⚠ `type` 不可调用**：`type` 已注册为内建，但它是**保留字**（`TOK_TYPE`，`src/lexer/lexer.c:44`），`type(x)` 是解析错误：
 
 ```
