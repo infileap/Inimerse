@@ -4128,3 +4128,24 @@ printf 'say (2147483647 + 1).type\nsay 9007199254740992 + 1\n' > /tmp/prom.im &&
 - 读码侧独立吻合：`STMT_WINDOW` 全仓**只有一个赋值点** `src/parser/parser.c:1756`（`git grep -n 'STMT_WINDOW' -- src/` 只有 `src/parser/ast.h:84` 枚举、`parser.c:1756` 赋值、`compiler.c:2210` 消费），而 `src/parser/parser.c:1342` 对「`window` + `(`」**直接 `stmt->type = STMT_EXPR; return stmt;`**（`:1345`）；`:1756` 要走到就必须下一个 token **不是** `(`，可它紧接着 `consume(p, TOK_LPAREN, "'('")`（不匹配即 `parse_fatal()`，`src/parser/parser.c:130-141`）⇒ **任何解析成功的程序都构造不出 `STMT_WINDOW` 节点。**
 - ★ **(b) 因此不可观测 —— 但把它「如果执行」会发生什么测出来了，比「调到另一个内建」更糟**：`src/vm/vm.c:3772`/`:3773` 取 `string_pool[ins.r2]`，`:3776 if (name) {` **没有 `else`**，`:3819` 关掉它，`:3825 if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }` ⇒ 小程序的池里没有第 27 个字符串 ⇒ `ins.r2 = 26` **越界** ⇒ `name = NULL` ⇒ **整块被跳过、落到 `:3825` 把栈顶弹进结果寄存器** ⇒ **调用静默返回「上一次压进去的东西」，不报错**。而 `src/vm/vm.c:3808-3814` 的注释逐字写着它修掉了这类（`a missing name is a fact worth reporting, not a value to invent`）—— **那修的是「名字查不到」那条分支；「操作数越界」这条今天仍然静默穿过。** ⇒ **同一条路径上有两个没有 `else` 的口子，一个在编译器侧（`src/compiler/compiler.c:2219`）、一个在 VM 侧（`src/vm/vm.c:3776`），而它们各自的「静默」形状不同：前者编译成空、后者返回陈旧值。**
 - 边界（它自己标的）：第三条是**读码**不是运行读数（构造不出能到达 `case STMT_WINDOW` 的程序）。未测：`case STMT_WINDOW` 的**删除是否安全**；`src/vm/vm.c` 那条越界静默路径**是否还有别的调用者能触发**。
+**★ 第十七个实例 + 五条判据（`ivory-ember` 的，全部是读数）。** 它给四个检查器**各注入一个非 UTF-8 文件到它自己的输入集里**（用它们自己的 `main()`、`REPO_ROOT`/`ROOT` 指到 `/tmp/nonutf8/inject`，仓库一个字节没动）：
+```
+check_links           rc=1  names the file: True
+   BROKEN  bad.md  ->  <unreadable>  ('utf-8' codec can't decode byte 0xff in position 10: invalid start byte)
+check_doc_paths       rc=1  names the file: True
+   BROKEN  bad.md  ->  <unreadable: 'utf-8' codec ...>  (no such file)
+check_text_integrity  rc=0  (bad.js IS in its input set, and is invalid UTF-8)
+   output: 'check_text_integrity: 1 text file(s), 0 with NUL bytes.'
+check_orphan_fixtures rc=1   names vtest/orphan.im: True   names vtest/orphan.inim: False
+```
+⇒ **①「在扫描集里、读失败、而输出仍绿」这个状态，在这四份里一处都不存在** —— 每一条失败路径都是响的（进 `broken` 或 `sys.exit`）。⇒ **可分性不是靠输出做到的，是靠「没有那个状态」做到的。**
+⇒ **② 但「不在扫描集里」与「在扫描集里」在输出上确实不可分**：`check_text_integrity` 只印一个总数（`N text file(s), 0 with NUL bytes`）、**从不印每文件名单** ⇒ 读者无法从那行判断某个文件是被白名单排除、还是被算进了那个 N。**要判只能去读它的白名单。**
+⇒ **③ 而那一行 rc=0 是本轮最扎人的读数**：`bad.js` **在输入集里、被读了、通过了** —— 因为**它的判据是「有没有 NUL 字节」，不是「是不是文本」**。
+**★ `errors='replace'` 判死（读数，不是论断）**：把那 27 个非 UTF-8 文件用 `errors='replace'` 解一遍 ⇒ **27 files, U+FFFD total = 724661**（最大三个：`selfhost/tests/bg.bmp` 480004、`Infiverse_standard/src-tauri/icons/icon.icns` 113254、`icon.ico` 25974），**全部 27 个的替换字符数都超过全仓最坏的 mojibake（619）**；replace 解出的 `icon.ico` 前 90 字符逐字 `'\x00\x00\x01\x00\x01\x00\ufffd\ufffd\x00\x00\x01\x00 \x00(\x08\x01\x00...'` ⇒ **它是一个合法的 `str`** ⇒ 下游每一条「拿字符串做判断」的检查都会照常跑完、给出一个完整形状的答案。
+⇒ **★ 更硬的一条：这个修法对那 27 个文件一点用都没有** —— 它们**不是解码失败被跳过的，是按白名单就不在输入集里**：**四个检查器的输入集里，27 个总共只命中 2 个**（`ai_browser_diag.js`、`examples/legacy-ui/desktop.html`，都只落在 `check_text_integrity`，而它**根本不解码**）⇒ **`errors='replace'` 能影响的文件数 = 0；它会新造的 mojibake = 724661 个替换字符。**
+- **④ 三分法的第四个格子**：`check_text_integrity` 把 **`ai_browser_diag.js`**（2556 字节、**0 个 NUL**）与 **`examples/legacy-ui/desktop.html`**（4880 字节、**0 个 NUL**）**算进「text file(s)」并放行** ⇒ **那个阶段的「text file(s)」是文件名的属性（`.js`/`.html` 在白名单里），不是字节的属性；而它的判据（NUL）与这个集合的名字正交。** 不是①解不开、不是②解出替换字符、不是③有 NUL，而是 **④扩展名说是文本、字节说不是、而判据两样都不问**。
+- **⑤ 一个不带 reason 的报告格式，会自己编一个**：`check_doc_paths` 的红对照逐字 `BROKEN  bad.md  ->  <unreadable: 'utf-8' codec ...>  (no such file)` —— 它的 `broken` 类型是 `(source, path)` **没有 reason 字段**，印的时候**硬拼了一句 `(no such file)`** ⇒ **一个存在但读不了的文件，被报成不存在的文件。** 对比 `check_links`：那边 `broken` 是三元组 `(source, target, why)`，印出来是 `<unreadable>  (utf-8 codec …)` —— **同一个形状，一个带 reason 一个不带，不带的那个就自己编了一个。**
+- **⑥ 知识在仓库里，不在输入集里**：`check_orphan_fixtures` 的 `*.im` glob **看不见 `.inim`**（红对照 `names vtest/orphan.inim : False`）；今天那唯一一个 `vtest/params_precompiled_v06.inim` 没被漏掉，**是因为有人把它的说明写进了旁边那条 `ALLOWED` 条目的正文里** ⇒ **下一个 `.inim` 不会有这种运气。** 仓库里今天共 **9 个 `.inim`**（`projects/` 7、`vtest/` 1、根 `nst2.inim` 1），**没有一个在任何检查器的输入集里。**
+- **⑦ 三种解码行为，各自的位置**：`strict`（`check_links.py:152`、`check_doc_paths.py:188` ⇒ 抛、进 `broken`、响）；`replace`（`check_test_ports.py:58`、`migrate_report.py:47`、`check_ignored_credentials.py:57` 及一批 `*.test.py` ⇒ 不抛、制造替换字符、**把失败伪装成数据**）；`surrogateescape`（`check_orphan_fixtures.py:104`/`:109`、`check_orphan_targets.py:142`、以及三个检查器**路径名**的解码 ⇒ 不抛也不替换、坏字节原样留在 `str` 里，**可逆**（`encode('utf-8','surrogateescape')` 能还原），但**下游任何 `print`/`json.dumps` 都会在写出时炸**）。
+- **⑧ 一条拒绝测量的理由（要进产物）**：它**没量** `src/compiler/compiler.c:2211` 那条被糊掉的注释与 `:2219` 无 `else` 分支的相邻性 —— 理由逐字：**「一个距离分布要有一个零模型」**（那个文件里有 619 个 U+FFFD、分散在很多行），**没有零模型，量出来的是「它们在同一屏里」，那不是判据。** ⇒ **一条「我没量」若写出理由，它的价值等于一次测量；写不出理由的「我没量」只是缺口。**
+- 它**独立复核了我的 14 个**（同一命令、逐文件计数**逐个相同**）⇒ 现在这个数有**三份独立读数**（我的、`docs/BOARD.md:150` 的、它的）。
