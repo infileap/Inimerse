@@ -1,0 +1,23 @@
+// A member access on something that is not a bare name has no lowering.
+//
+// `a?.b` (safe navigation) is implemented: it lowers to OP_INDEX_GET and answers
+// nil.  The plain form was not.  For an object that is not an EXPR_IDENT the
+// EXPR_MEMBER case in src/compiler/compiler.c fell through to `return -1`, and
+// every caller used that -1 as a register number -- so the program died with
+// SIGSEGV at the first *use* of the value, while a bare statement was silently
+// ignored:
+//
+//     say str(arr[0].bogus)   ->  RC=139   before the fix
+//     arr[0].bogus            ->  RC=0     before the fix (silently dropped)
+//
+// This file is the red control for that fix.  It asserts the error, so it must
+// never execute past the offending statement: the compiler refuses the file
+// before the program starts.  If "must not be reached" ever prints, the
+// compiler accepted a form it has no lowering for and the fix is gone.
+//
+// This is not a test of `?.`: that path already worked and is pinned by
+// xrange_t2_v06.im's neighbour assertions.
+
+arr = [1, 2]
+say str(arr[0].bogus)
+say "must not be reached"
