@@ -54,13 +54,21 @@ The gate stage asserts DENOMINATORS, not anchor rates:
   - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
     shrink while nobody is looking;
   - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: 501 is a known
-    quantity today, and 520 tomorrow is an unannounced regression.
+    cannot grow while nobody is looking.  This is the tooth: 508 is a known
+    quantity today, and 527 tomorrow is an unannounced regression.
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
 
   - a pin proves no shrinkage and no growth.  It proves no anchor is right.
+  - the pin measures a set that contains the paragraph describing the pin.
+    docs/BOARD.md's line-refs row names CMakeLists.txt and tools/gate.sh and
+    carries about a dozen inline numbers, so it is itself in the input set:
+    writing that row moved the counts it records.  EXP_LINE_REFS was measured
+    at 686 before the row existed, and the row's own tree already read 690 --
+    the pin shipped stale by its own subject matter.  This is a fixed point,
+    not a slip: the number and its description move together or not at all,
+    so a change to that row and a re-measurement are one action.
   - "has an anchor" is not "the number is right".  The rule is "some quoted
     text on the citing line sits at line N of a file that line names", so a
     match proves the number is HELD by content, not that it points at the
@@ -92,7 +100,7 @@ Negative control -- redo it, and note that the first version was worthless:
 
     sed -i '426s|.*|# NEGATIVE CONTROL line|' CMakeLists.txt
     python3 tools/check_line_refs.py
-        held 494 -> 488, unanchored 501 -> 507 -- six references move, and the
+        held 497 -> 491, unanchored 508 -> 514 -- six references move, and the
         stage goes red on the ceiling, not on a rate
     git checkout -- CMakeLists.txt
 
@@ -133,9 +141,9 @@ TARGETS = {
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "686"))
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "694"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "501")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "508")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
