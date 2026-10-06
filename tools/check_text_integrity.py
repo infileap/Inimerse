@@ -276,5 +276,19 @@ def main() -> int:
     return 0
 
 
+# Why a name that is not valid UTF-8 cannot end this checker in the moment
+# it has something to say: `tracked_paths` decodes `git ls-files -z` with
+# `surrogateescape`, so such a name is a legal `str` here -- and every write
+# that carries a path names `file=sys.stderr` (`sys.stderr` is
+# `backslashreplace`), while the only stdout write is the pass line, which
+# carries counts and no path (`sys.stdout` is `strict`, so the same name on
+# stdout raises UnicodeEncodeError instead of printing the line).  Measured,
+# not assumed: with the offending-path line pointed at stdout this file dies
+# with "UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' ...
+# surrogates not allowed"; left alone it prints `bad\udcff.txt`.  A path
+# written to stdout here would need that stream's handler set --
+# `errors="backslashreplace"`, never `"replace"`, which turns "cannot be
+# read" into "read as replacement characters".
+
 if __name__ == "__main__":
     sys.exit(main())
