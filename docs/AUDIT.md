@@ -4095,7 +4095,7 @@ printf 'say (2147483647 + 1).type\nsay 9007199254740992 + 1\n' > /tmp/prom.im &&
 
 ### §1.74 增补二 的更正三：第七种建集形态、一条「定不下来」的实测形态、以及编译器那张表其实不参与判定
 
-**第七种建集形态：`except: continue`。** `ivory-ember` 自报：它上一轮那份跨行普查里，`git show` 外面包着 `try: … except Exception: continue` ⇒ **919 个受版控文件里 27 个不是合法 UTF-8**（16 个图标 png/ico/icns/bmp、`ai_browser_diag.js`、`examples/legacy-ui/desktop.html`、`projects/set_comp_test.inim`、`projects/set_test.inim`、`vtest/params_precompiled_v06.inim`）**被静默跳过**。⇒ 它此前给出的任何「全仓 N 个文件」都是**「可解码的那一部分」的数**。
+**第七种建集形态：`except: continue`。** `ivory-ember` 自报：它上一轮那份跨行普查里，`git show` 外面包着 `try: … except Exception: continue` ⇒ **917 个受版控文件里 27 个不是合法 UTF-8**（此处原写 `919`，已于 `ivory-ember` 自报后更正；见本节「第九个形态」）（16 个图标 png/ico/icns/bmp、`ai_browser_diag.js`、`examples/legacy-ui/desktop.html`、`projects/set_comp_test.inim`、`projects/set_test.inim`、`vtest/params_precompiled_v06.inim`）**被静默跳过**。⇒ 它此前给出的任何「全仓 N 个文件」都是**「可解码的那一部分」的数**。
 **判据：`except: continue` 把「我读不了」写成了「它不在」。** 与「零被当作通过」同族（都是把一个**失败**记成一个**合法答案**），入口不同：那一个是**没有数据**，这一个是**读数据失败**。**正确写法**：要么在输出里单列「跳过了几个、为什么」，要么让跳过的文件把探针**变红**。
 
 **一条「定不下来」的实测形态。** 我派它判「反引号外、行中间的裸号」（`SYNTAX.md 500`，无冒号）的锚能不能定下来。它的答案分两步：**第 1 步「哪一段文本算提到了这个文件」定得下来**（`[^:§]{0,12}?` 的邻域 + 字母/数字边界守卫挡掉了规则号 `D14`/`M13` 与 sha 尾数字）；**第 2 步「这个数是指向文件内部的坐标，还是关于文件自己的量」定不下来 —— 两者写法完全相同。**
@@ -4167,3 +4167,30 @@ check_orphan_fixtures rc=1   names vtest/orphan.im: True   names vtest/orphan.in
 - **六个真红**（rc=1、不是记录、不是平台、不是超时）：`projects/host/main.im`（`错误: 无法读取文件 'sync.im'`，缺同级依赖）、`projects/set_comp_test.im`（`[exception] uncaught: comprehension: source set is not enumerable`）、`projects/tt1.im`（`[exception] uncaught: x`）、`examples/scripts/verse_biome_demo.im`（`Error: '+' is not defined for arrays/dicts (arr + [x] silently loses data; use push(arr, x…`）、`svprobe/label_old.im`（`error: unknown label 'SKIP'`）、`svprobe/p_colon_enforce.im`（`[exception] uncaught: type_mismatch`）。**它只判了前四个，后两个不下结论**（名字暗示有意，但没有 `be` 那批的抬头自述）—— **这是正确的留白。**
 - ★ **一条它自己标出的射程洞**：观测者只搜了**字面路径/文件名**（`git grep -F`）⇒ **靠拼接、变量、glob 到达这些文件的观测者搜不到**；它只额外手查了 `CMakeLists.txt` 的 `.im` 目标目录直方图来补这个洞，**没有**穷举 `file(GLOB)` 与 `.sh`。⇒ **与「按形状搜邻域」同族：一个按字面名建的输入集，它的射程就是「按字面名能到达的那些」。**
 - **另两条边界**：`rc=124` 只说明「15 秒内没跑完」，**没有区分「慢」与「死循环」**（它判 `cpu1.im` 是慢，依据是源码与同族 `cpu8.im` rc=0，**不是**跑到底）；第 3 类引的 `CMakeLists.txt:872-874` 讲的是 `contract_test.im` 那套 probe 的处理方式，**不是它实测过那 7 个文件在 Windows 上的行为**。
+**★ 第九个形态：切分 —— `str.split()` 是一个会改变集合大小的操作，而它长得像「把输出读进来」（`ivory-ember` 自报）。** 它写的是 `git ls-tree -r --name-only <ref>` 的 `stdout.split()`，而 **`str.split()` 按空白切** ⇒ 两个**含空格的受跟踪文件名**（`future/archive/Inim OS总纲.md`、`future/archive/Inim OS特性.md`）各被切成两个 token ⇒ **917 + 2 = 919**：
+```
+ls-tree -z (NUL-separated) = 917
+ls-tree    (newline)       = 917
+ls-tree    .split()        = 919        <- 它用的就是这个
+wc -l                      = 917
+names containing space/tab/newline = 2
+```
+**正确切分是 `-z` 的 NUL（`git ls-files -z` / `git ls-tree -z`）或 `splitlines()`。** ⇒ **分子是对的、而且很稳**：**27** 在 `2d0ecd8`/`439df94`/`f575fd6`/`4af0409`/`cfda74c` **五个 ref 上逐个量过、全是 27**。**错的只有分母。**
+⇒ ★ **一般式（要进产物）：分母的错误不会让分子看起来可疑** —— 27 一直是对的，所以那个 919 从来没被怀疑过。⇒ **一个数被怀疑，靠的不是「它旁边有别的数」，是「它旁边有一条产出它的命令」。**
+⇒ 它已落在产物里：本档上一段与那笔提交信息都写着 `919` ⇒ **本档那处已更正为 917（分子不动）；提交信息改不了 ⇒ 登记为记录，不假装它没发生。**
+**★ 第八个形态：同一个通配符在两种工具里不是同一个集合（它自报，且它差点把它报成仓库缺陷）。** 它先看到 `git ls-files -- 'vtest/*.im'` = **79**、`glob.glob("vtest/*.im")` = **78**，形状是「一个受跟踪的 fixture 从工作区里消失了」；**实测那个文件在盘上（`vtest/params_sub/relative_script.im`，42 字节）** —— 差的是**两个不同的通配符**：**`git` 的 `*` 跨 `/`**（匹配子目录），**`glob` 的 `*` 不跨 `/`** ⇒ **79 与 78 是同一个集合被两种通配符量了两次。**
+⇒ **准确说法**：检查器印的 `124` 是「**glob 看得见的**」，那个前缀下受跟踪的是 `125` ⇒ **差的那一个不是未跟踪的，是子目录里的、glob 看不见。今天它的输入集比仓库小 1，不是大。** 两个方向都存在，今天是「小」。
+**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:142`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:124` ⇒ `:211` `print` **stdout**）⇒ **会**。
+```
+stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   locale zh_CN.UTF-8
+  print(s)                        -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 3: surrogates not allowed
+  sys.stdout.write(s)             -> UnicodeEncodeError: ...
+  json.dumps(ensure_ascii=False)  -> UnicodeEncodeError: ...
+  sys.stderr.write(s)             -> ok
+  sys.exit(s)                     -> SystemExit (wrote to stderr)
+```
+⇒ **stdout 是 strict、stderr 是 `backslashreplace`** ⇒ **红报告里走 stdout 的那几行会以一个 `UnicodeEncodeError` 结束，而不是以那条 BROKEN 行结束。** 红对照（注入、仓库一字节没动）：干净跑 rc=0、surrogate 出现在输出里 **False**；offender 跑 rc=1、印出 `['  /tmp/nonutf8/surr/bad\udcff.js  (1 NUL)']`、surrogate 出现 **True**。
+⇒ ★ **三条路径都只在「已经红了」的时候才走到**（offender / broken / `--verbose` / `--json`；干净跑只印计数）—— **而「已经红了」正是读者最需要看清文件名的时刻** ⇒ **它在最该说话的时刻失败。** 与「一个不带 reason 的报告格式会自己编一个」同族：**报告格式在它最该说话的时刻失败。**
+⇒ **今天这个状态不存在，也是量出来的**：`git ls-files -z` ⇒ **917 个受跟踪路径，名字不是合法 UTF-8 的 = 0** ⇒ 与跨行那条同形：**不是「已覆盖」，是「未出现」** —— 只是这一次连「未出现」都是读数。
+**★ 它自己的第二个假绿（要进产物）：把输出重定向进 `StringIO`，于是根本不会发生编码。** 它第一版测 surrogate 时重定向进 `StringIO` ⇒ 读到的「`print` 没炸」是**假绿**；第二次用**真 stdout** 才得到上表。⇒ **与「构造空绿 / 约定空绿」同形：我测的是「我重定向到的那个东西」，不是「真正会写出东西的那个东西」。**
+**★ 配方三段（已修正为 `-z`，不会再产出 919）**：脚本用 `subprocess.run(["git","ls-tree","-r","-z","--name-only",REF]).stdout.split(b"\0")` 取名字、用 `importlib` 加载 `tools/check_text_integrity.py` **并直接调用它自己的 `is_text()`**、其余三份各按其自身谓词（`links` = 后缀 `.md`/`.markdown`；`doc_paths` = `README.md` 或 `docs/`|`future/` 下的 `.md`；`orphan_fixtures` = `vtest/*.im` 或 `tools/*.test.{py,js}`）；期望输出（`main @ cfda74c` 实跑）：`ref = main` / `tracked files = 917, not valid UTF-8 = 27` / **`text-integrity 2 of 27`、`links 0 of 27`、`doc-paths 0 of 27`、`orphan-fixtures 0 of 27`**。
