@@ -46,27 +46,38 @@ Three honest boundaries.
     which is the point.  Where a document does need to quote an old binding, it
     puts it in a fenced block, and a fenced block is not an assertion.
 
-  * A register is a document whose subject is defects, and it quotes false
-    values on purpose: `docs/AUDIT.md` 1.74 E quotes the old STATUS.md cell
-    verbatim, and those quotes are the evidence.  Registers are listed in
-    REGISTERS below, each with the reason.  The same guard as
-    `tools/check_orphan_targets.py`'s ALLOWED applies -- **a register that
-    excludes nothing is reported**, because an allowance that excuses nothing
-    is a sentence no run can falsify.
+  * A binding is a claim about where a tag points today unless the text says
+    otherwise, and it has to say so NEXT TO THE BINDING -- not by living in a
+    file that some list excuses.  Two things say it.  A *recollection* needs a
+    marker ("记录", "初稿写过", "曾经的", "[obs:") AND the falsifier that makes
+    the old value old ("失效", "不再", "已移到").  A *quotation* of another
+    document's text needs a `docs/...` path and a quotation verb on the line.
+    An exemption granted by a list of files cannot keep up with a rule written
+    by shape, and this checker had one: `docs/STATUS.md:42` says "本格初稿写过
+    `v0.5.2` -> `0ebd68d` ... 前者在 tag 被移动后失效" -- the document followed
+    the move -- and the list version printed "the tag moved and the document
+    did not".  The same guard as `tools/check_orphan_targets.py`'s ALLOWED
+    applies -- **a rule that exempts no recollection is reported**, because an
+    allowance that excuses nothing is a sentence no run can falsify.
 
-Negative evidence (this is a re-runnable experiment, not a claim):
+Negative evidence (these are re-runnable experiments, not claims).  All of
+them run against a COPY under --docs-root, never against docs/ itself:
 
     git tag v0.0.0-test <some commit>
-    cp docs/RELEASE_0.5.2.md /tmp/x.md          # a copy, never the original
-    sed -i 's/`v0.5.1` -> `4e444dd`/`v0.0.0-test` -> `deadbee`/' /tmp/x.md
-    python3 tools/check_release_tags.py --docs-root /tmp
+    cp -r docs /tmp/ctl && rm /tmp/ctl/RELEASE_0.5.2.md
+    printf '%s\n' '`v0.0.0-test` -> `deadbee`' >> /tmp/ctl/STATUS.md
+    python3 tools/check_release_tags.py --docs-root /tmp/ctl
 
-    => the binding names a tag that exists and records the wrong sha: red.
+    => a bare binding, no record marker, no falsifier: red.
 
-And the control that proves the rule is not vacuous: write the same wrong sha
-for a tag that does NOT exist => "names a tag that is not in git tag -l": red.
-A checker that reported nothing when a binding was wrong and nothing when the
-tag was missing would be reporting nothing at all.
+  * the same line with the marker and the falsifier, and the same wrong sha:
+    "记录：`v0.0.0-test` 曾经的绑定 `deadbee`，已在 tag 移动后失效" => exempt, and
+    the run is green.  That pair is the rule's two directions: it is the SHAPE
+    that decides, not the file the line lives in.
+  * and the control that proves the sweep is not vacuous: write the same wrong
+    sha for a tag that does NOT exist => "names a tag that is not in git tag
+    -l": red.  A checker that reported nothing when a binding was wrong and
+    nothing when the tag was missing would be reporting nothing at all.
 """
 
 import os
@@ -78,22 +89,32 @@ from pathlib import Path
 HERE = Path(__file__).resolve()
 ROOT = HERE.parent.parent
 
-# A document whose subject is defects, and which quotes false values on purpose.
-# Each entry says why.  A register that excludes no binding is reported: an
-# allowance that excuses nothing is a sentence no run can falsify.
-REGISTERS = {
-    "docs/AUDIT.md": (
-        "the defect register: 1.74 E quotes the old STATUS.md cell verbatim, "
-        "and those quotes are the evidence for the defect it records"
-    ),
-}
+# There is no file-wide exemption list, and that is the change: a list of
+# excused files is a rule about where a sentence LIVES, while the rule is about
+# what the sentence SAYS.  `docs/AUDIT.md` was on that list, and the list is
+# what made the checker print a false verdict about `docs/STATUS.md:42`.
+RECORD_MARKERS = ("记录", "初稿写过", "曾经的", "曾记", "曾把", "当时", "[obs:")
+FALSIFIER_MARKERS = ("失效", "不再", "已移到", "已漂", "移动后", "旧值", "[obs:")
+QUOTE_VERBS = ("里写", "写过", "原文", "引文", "引用")
+OTHER_DOC = re.compile(r"`docs/[^`]+`")
 
 # How many bindings the sweep must still find.  A sweep that finds zero is
 # green and asserts nothing -- the same shape as docs/AUDIT.md 1.65's zero
 # hits.  This is a floor, not a target: finding more is fine, finding fewer is
 # a document that stopped making release claims, or a rule that stopped
 # matching them.
-EXP_TAG_BINDINGS = int(os.environ.get("EXP_TAG_BINDINGS", "3"))
+# 2, and it was 3 while the exemption was a list of files: `docs/STATUS.md:42`
+# carries two bindings that the list did not excuse and the shape rule does
+# (both are recollections), so the floor moved with the rule it measures.  It
+# is still a floor on a set that has to be non-empty, which is what the number
+# is for -- `--only release-tags` would otherwise go green on a checker that
+# stopped matching bindings at all.
+EXP_TAG_BINDINGS = int(os.environ.get("EXP_TAG_BINDINGS", "2"))
+
+# The exemption rule has to exempt something, or it is a sentence no run can
+# falsify.  This is the same guard the deleted file list had, moved onto the
+# rule that replaced it.  A floor, not a target.
+EXP_TAG_RECOLLECTIONS = int(os.environ.get("EXP_TAG_RECOLLECTIONS", "1"))
 
 TAG_NAME = re.compile(r"^v(\d+)\.(\d+)\.(\d+)")
 # No `.` in the trailing class: `v0.5.0..5868940` is a range expression, and a
@@ -161,6 +182,23 @@ def docs_markdown(root_override):
     return [(r, ROOT / r) for r in rels]
 
 
+def recollection(line, lines, lineno):
+    """Why this binding is not a claim, or None if it is one.
+
+    The window is the binding's own line and the two lines around it: a
+    sentence that says "the tag moved and this number is the old one" can put
+    the marker and the falsifier on either side of the binding.
+    """
+    window = "\n".join(lines[max(0, lineno - 2):lineno])
+    marked = [w for w in RECORD_MARKERS if w in window]
+    falsified = [w for w in FALSIFIER_MARKERS if w in window]
+    if marked and falsified:
+        return "recollection"
+    if OTHER_DOC.search(line) and any(v in line for v in QUOTE_VERBS):
+        return "quotation"
+    return None
+
+
 def main():
     argv = sys.argv[1:]
     root_override = None
@@ -182,14 +220,14 @@ def main():
     excused_by = {}
 
     documents = docs_markdown(root_override)
-    scanned = {rel for rel, _ in documents}
     for rel, path in documents:
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         in_fence = False
-        for lineno, line in enumerate(text.split("\n"), 1):
+        lines = text.split("\n")
+        for lineno, line in enumerate(lines, 1):
             if FENCE.match(line):
                 in_fence = True if not in_fence else False
                 continue
@@ -210,18 +248,20 @@ def main():
                 if name not in known:
                     missing_tags.append((rel, lineno, name))
                     continue
-                if rel in REGISTERS:
-                    excluded.append((rel, lineno, name, sha, "register"))
-                    excused_by[rel] = excused_by.get(rel, 0) + 1
-                elif in_fence:
+                if in_fence:
                     excluded.append((rel, lineno, name, sha, "fenced block"))
                 elif quoted:
                     excluded.append((rel, lineno, name, sha, "blockquote"))
                 else:
-                    checked.append((rel, lineno, name, sha))
+                    why = recollection(line, lines, lineno)
+                    if why:
+                        excluded.append((rel, lineno, name, sha, why))
+                        excused_by[why] = excused_by.get(why, 0) + 1
+                    else:
+                        checked.append((rel, lineno, name, sha))
 
     wrong = [c for c in checked if c[3] != known[c[2]]]
-    idle = [r for r in REGISTERS if r in scanned and r not in excused_by]
+    recollections = excused_by.get("recollection", 0)
 
     print(
         "check_release_tags: %d tag(s) in the namespace (major(s) %s); "
@@ -253,17 +293,21 @@ def main():
     for rel, lineno, name, sha in wrong:
         print(
             "check_release_tags: %s:%d records `%s` -> `%s`, but `git rev-parse "
-            "--short '%s^{commit}'` is `%s` today -- the tag moved and the "
-            "document did not" % (rel, lineno, name, sha, name, known[name])
+            "--short '%s^{commit}'` is `%s` today.  Read as a claim: no record "
+            "marker and no falsifier sit on this line or the lines next to it, "
+            "so this is taken as where the tag points now -- a recollection is "
+            "exempt, and this line is not written as one"
+            % (rel, lineno, name, sha, name, known[name])
         )
-    for rel in idle:
+    failed = bool(missing_tags or wrong)
+    if recollections < EXP_TAG_RECOLLECTIONS:
         print(
-            "check_release_tags: %s is listed in REGISTERS (%s), but no binding "
-            "was excluded there, so the allowance excuses nothing"
-            % (rel, REGISTERS[rel])
+            "check_release_tags: only %d recollection(s) were exempted, below "
+            "EXP_TAG_RECOLLECTIONS=%d -- an exemption rule that exempts nothing "
+            "is green and asserts nothing"
+            % (recollections, EXP_TAG_RECOLLECTIONS)
         )
-
-    failed = bool(missing_tags or wrong or idle)
+        failed = True
     if len(checked) < EXP_TAG_BINDINGS:
         print(
             "check_release_tags: only %d binding(s) were checked, below "
