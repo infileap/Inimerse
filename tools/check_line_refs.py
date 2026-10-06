@@ -56,8 +56,10 @@ The gate stage asserts DENOMINATORS, not anchor rates:
   - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
     shrink while nobody is looking;
   - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: 552 is a known
-    quantity today, and 558 tomorrow is an unannounced regression.
+    cannot grow while nobody is looking.  This is the tooth: one more than the
+    reading below is an unannounced regression.  The reading is deliberately
+    not repeated here -- a value written into the sentence that explains the
+    value is a value that rots in place.
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
@@ -312,9 +314,21 @@ TARGETS = {
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "761"))
+# Both readings are taken on the tree that has absorbed every branch that
+# moves them, never on a branch that is about to be merged.  The merge of
+# stream/pin-shift into main moved them 764/539 -> 768/561 in one action, from
+# two causes and no author:
+#   +3 explicit / -13 unanchored: main's own docs grew references that carry
+#      their anchors (the §1.74 additions);
+#   +4 explicit / +22 unanchored: that branch rewrote tools/gate.sh (227 ins /
+#      32 del), so every `tools/gate.sh:<N>` in docs/ lost its anchor at once.
+# The second cause is the one worth noticing: the ceiling is a property of the
+# tree, and swapping the file every one of those numbers points into resets it
+# wholesale.  A ceiling that a merge can raise by 22 measures that merge, not
+# the batch of references it was meant to hold down.
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "768"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "552")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "561")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
