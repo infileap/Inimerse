@@ -3744,6 +3744,17 @@ $ git ls-files -z   | tr '\0' '\n' | grep -c .   →  913
 
 **只登记、未修。** 修它在 `tools/**`（归 agent2 的写域）：三处最小改动是「判定先比全名」「`.ps1` 进清单」「清单里每个条目至少被一个受管文件命中（否则它要么是死条目、要么是缺文件）」。**第三条本身就该是一个检查器**，而它比前两条更根本 —— 一个永远不匹配的 allow-list 条目与一个没人跑的 `add_executable` 是同一件事（§1.73），只是它在**清单里**而不是在构建里。
 
+**更正（`vivid-anchor` 实测，`main @ b68d6d6`；本节上面的数字作为**记录**保留 —— 它们各自带着写下时的那棵树）。** 判据 ③ **成立，而且带正对照**：往受管的 `build_installer.ps1` 的 offset 100 插一个 NUL（`git diff --numstat` 给 `-	-	build_installer.ps1`、`git diff` 印 `Binary files a/build_installer.ps1 and b/build_installer.ps1 differ` ⇒ **变异确实落进了文件**），`bash tools/gate.sh --only text-integrity` ⇒ **rc=0**、`check_text_integrity: 825 text file(s), 0 with NUL bytes.`、阶段行 `✔ tracked text files carry no NUL byte (expect 0)  PASS`；把**同一个字节**插到受管的 `AI_LAYOUT.md` 的同一处 ⇒ **rc=1**、`check_text_integrity: 1 NUL byte(s) in 1 of 825 tracked text file(s).` / `  AI_LAYOUT.md  (1 NUL)` / `    byte 100 (line 2)` / `✘ tracked text files carry no NUL byte (expect 0) (exit 1)`。**同树、同命令、同字节，`.ps1` 绿、`.md` 红** —— 差别不在文件里，在清单里。**一处口径**：`--only` 那次的**末行**逐字是 `gate: this was NOT the full gate: 13 stages are registered and only this one ran.`（`gate: OK — the selected stage passed` 在阶段表**上方**），引用时别把两行合成一行。
+
+**而本节另外四个数今天不成立**（同一次实测，全部可重跑）：
+
+- **「三个不可达条目」应为 15 个，且必须分成两类。** `TEXT_SUFFIXES` 实际 **33** 条（本节写 35）、`TEXT_NAMES` **4** 条。**(A) 结构性不可达 —— 3 条**：`.gitignore`、`.gitattributes`、`.editorconfig`。`Path('.gitignore').suffix == ''`，而本仓库真的叫这名字的 **5 个文件全是点文件**（逐个验过 `tracked=True`、`suffix=''`）。**但「永远不会匹配任何文件」这话太强**：一个叫 `foo.gitignore` 的文件是能命中的（`suffix='.gitignore'`）⇒ 准确说法是「**永远匹配不上点文件，而本仓库这 5 个全是点文件**」。**(B) 今天没有受管文件命中的死条目 —— 12 条**：`.bash .cc .cfg .cjs .cmake .csv .hpp .ini .jsonc .ts .tsx` 十一个后缀，加 **`Dockerfile`**。它们**原理上可达**（加一个该扩展名的文件就活了），只是今天没人用 —— **这 12 条是本节的分类没数的**。可达的是后缀 **19** 条、名字 **3** 条（`CMakeLists.txt`、`LICENSE`、`Makefile`）；19 + 14 = 33 ✓。**大小写形态**：受管文件里后缀含大写字母的 **0** 个、`TEXT_NAMES` 没有变体 ⇒ `.lower()` 与大小写敏感给出**同一份**死清单。
+- **`:3709` 的受管文件总数 913 今天 914**（`git ls-files -z` 与 plain 一致；树长了一个文件）。
+- **`:3737-3738` 的 `915` vs `913`、「差的 12 个」今天复现不出来**：`git ls-files | wc -l`、`git ls-files -z | tr '\0' '\n' | grep -c .`、`git -c core.quotePath=false ls-files | wc -l` —— **三个读法全是 914，差 0**。而且**它自己的算术也不自洽**（915 − 913 = **2**，不是 12）；**机制上也不成立**：非 ASCII 路径 **10** 个、含换行的路径 **0** 个，而 C 式引号是**转义**（`\345` 这类）、**不产生新行** ⇒ 两种读法的**行数本来就该相等**。**「同一棵树、同一个命令、两个分母」这句话本身对，但它举的这个实例今天复现不出来** —— 最可能是把 `git ls-tree -r --name-only` 那个形态（§1.74 A 段：813 vs 823）串了行。**不替它圆：今天就是 914 / 914 / 0。**
+- **`:3720` 的算术与分类**：它列的 12 类**实际相加 53**（本节写 50），53 + 5 = **58**（本节写 55）；**`.inim` 被误分类** —— 9 个里 **1 个文本、8 个二进制**，而 `tools/check_text_integrity.py` 的 docstring 逐字写着 `.inim` 「is a serialised program, not source」、**out of scope by construction** ⇒ 它本来就不该在缺口名单里。用一条显式判据（**无 NUL 字节且能按 UTF-8 解码**）把 89 个逐个分类 ⇒ **视野外 text = 59、binary = 30**；二进制 30 = `.png` 14 + `.bmp` 5 + `.ico` 2 + `.icns` 1 + `.inim` 8 ✓ 恰好对上。⇒ **`89` 这个数是对的，`55` 这个数不对，真值是 59**；而且**构成**也不一样 —— 本节漏了 `mods/debug/mod.st.{dev,dev28,dev29,hold5,orig}` 这 5 个与 `.svg`，多算了 `.inim` 的 8 个二进制。
+
+**可重跑判据（本节那条的加强版）**：用 `git ls-files -z`，并**直接 `import` 那份清单本身**（`sys.path.insert(0,'tools'); import check_text_integrity as cti`）—— 清单改了、判据跟着改，不会脱节；再把每个视野外文件按「**无 NUL 且 UTF-8 可解码**」分类。⇒ **这一节的病与 §1.74 H 同形：`55`、`50`、`913`、`915`、`三个` 都写在正文里，而站岗的只有 `0 NUL` 那一条。**
+
 ## §1.76 那张「核心高频内建」名单缺平台标注：四个名字、三种归属、零覆盖
 
 **症状。** `docs/SYNTAX.md` 的「**核心高频内建**（有 `vtest` 覆盖的）」那一行把 Windows 独有、POSIX 独有与两平台共有的内建名并列，读者无从判断一个名字在哪个平台上存在。本节把那一行里**四个**名字逐一定案。（同族的规模登记见 §1.71：`src/mod/io_mod.c` 只在 `CMakeLists.txt` 的 `if(WIN32)` 源码分支里被编译，POSIX 侧给它的是 `src/runtime/runtime_posix.c`。）
@@ -3936,13 +3947,13 @@ wasm 那一行**不能与原生通道直接比**：它量的是 `node` 进程，
 
 ### 已知的非等价（保留，不当作缺陷修）
 
-`tools/aot_native.test.py` 用 `DIVERGENCE` 双端逐字钉死了三处解释器与 AOT 的不一致，它们是**有意的记录**而非待修项：
+`tools/aot_native.test.py` 用 `DIVERGENCE` 双端逐字钉死了**写下时的三处**解释器与 AOT 的不一致，它们是**有意的记录**而非待修项。（**「三」是记录、不是现值**：读今天的条数用 `sed -n '/^DIVERGENCE = \[/,/^\]/p' tools/aot_native.test.py`；而**下面第三条已不在这个列表里**，见该条。）
 
 - `func nothing() { x = 1 }` + `say nothing()` → 解释器 `nil` / AOT `0`。
 - 函数内对全局赋值 `g = g + 5` → 解释器 `5\n2\n` / AOT `7\n7\n`（解释器把函数内赋值变成局部变量）。
-- `lcg_float_promotion`（`x = (x*1103515245+12345) % 2147483648` 的第二步）→ 解释器 `0` / AOT `377401575`，机制是 §1.2 的 float 提升。
+- `lcg_float_promotion`（`x = (x*1103515245+12345) % 2147483648` 的第二步）→ 解释器 `0` / AOT `377401575`，机制是 §1.2 的 float 提升。**—— 这一条今天已不在 `DIVERGENCE` 里**：O2 在 v3.1 关闭、它被**提升**为 `EQUIVALENCE` 的 `int_lcg_second_step`（`tools/aot_native.test.py:142`，逐字 `("int_lcg_second_step", "x = 1\nrepeat 2 { x = (x*1103515245+12345) % 2147483648 }\nsay x\n", "377401575\n")`），原处只留注释（`:204-205` 逐字「It lived here as `lcg_float_promotion` … and the harness flagged the promotion exactly as this list is designed to.」）。§1.14（本档 `:681`）记的就是这次提升 ⇒ **同一份档的两节此前互相矛盾**（`:681` 说已提升，§5 末尾还在数「三处」）。**（`noble-zephyr` 报，`main @ 32771cf`；本档 `DIVERGENCE` 今天两处 = `func_no_return`、`global_write_from_func`。）**
 
-**这三处与 §1.1、§1.2 同源**：都是「解释器的整数语义与 AOT 的 int64 语义不同」。修 §1.1 / §1.2 时应当**同时重新审视这三条钉死项**，因为修好之后它们可能变成等价，那时就该按用例里的提示语把它们提升为 `EQUIVALENCE`。
+**这三处（写下时的三处）与 §1.1、§1.2 同源**：都是「解释器的整数语义与 AOT 的 int64 语义不同」。修 §1.1 / §1.2 时应当**同时重新审视当时那几条钉死项**，因为修好之后它们可能变成等价，那时就该按用例里的提示语把它们提升为 `EQUIVALENCE` —— **`lcg_float_promotion` 就是这样被提升的，这就是这条机制的一次成功用例。**
 
 ---
 
