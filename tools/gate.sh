@@ -936,27 +936,41 @@ required_for() {
   # this command would excuse for every change there is.  Reachability counts
   # all three sources -- the scopes, the call sites, and text-integrity's own
   # entry points, which is the one stage no path rule has to name.
-  local reach
+  # "Reachable" is not enough, and the gap is exactly one rule wide.  The two
+  # `all` rules fire only for tools/gate.sh and CMakeLists.txt, so a stage that
+  # nothing but `all` reaches is reachable on paper and excused in practice for
+  # every other change there is -- which is the defect this loop exists to name,
+  # wearing the answer as a disguise.  So each stage must be reached by a rule
+  # OF ITS OWN; `all` alone is exit 2.  Measured, not assumed: with a stage
+  # registered and only `all` reaching it, --required-for answers a docs-only
+  # change without it and exits 0.
+  local reach own
   for path in "${STAGE_WANTED[@]}"; do
     reach=0
+    own=0
     for sel in "${REQUIRED_SCOPES[@]}"; do
       sels="${sel#*|}"
       [ "$sels" = "-" ] && continue
-      if [ "$sels" = "all" ]; then reach=1; break; fi
+      if [ "$sels" = "all" ]; then reach=1; continue; fi
       for s in $sels; do
-        if [ "$s" = "$path" ]; then reach=1; break; fi
+        if [ "$s" = "$path" ]; then reach=1; own=1; break; fi
       done
-      [ "$reach" -eq 1 ] && break
     done
-    if [ "$reach" -eq 0 ]; then
+    if [ "$own" -eq 0 ]; then
       while IFS=$'\t' read -r s _p; do
-        [ "$s" = "$path" ] && { reach=1; break; }
+        [ "$s" = "$path" ] && { reach=1; own=1; break; }
       done <<<"$DERIVED_EDGES"
     fi
-    [ "$path" = "text-integrity" ] && reach=1
+    [ "$path" = "text-integrity" ] && { reach=1; own=1; }
     if [ "$reach" -eq 0 ]; then
       echo "gate: --required-for: stage '$path' is registered, but no rule can reach it." >&2
       echo "gate: a stage no rule can require is a stage every change silently excuses." >&2
+      exit 2
+    fi
+    if [ "$own" -eq 0 ]; then
+      echo "gate: --required-for: stage '$path' is registered, but only the 'all' rules reach it." >&2
+      echo "gate: an 'all' rule fires only for tools/gate.sh and CMakeLists.txt, so every other" >&2
+      echo "gate: change excuses this stage in silence; name a subtree its subject reads." >&2
       exit 2
     fi
   done

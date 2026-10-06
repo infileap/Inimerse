@@ -131,10 +131,14 @@ tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
                               # written in `gate.sh` (each row carries the reason it
                               # cannot be derived), and from `check_text_integrity.py`'s
                               # own suffix/name lists. The scopes table and the registry
-                              # watch each other, and both directions can go red: a
+                              # watch each other, and all three directions can go red: a
                               # scopes row naming a stage the registry does not declare
-                              # exits 2, and a registered stage that no scope row and
-                              # no `all` row can reach exits 2.
+                              # exits 2; a registered stage that no scope row and no
+                              # `all` row can reach exits 2; and a registered stage that
+                              # ONLY the `all` rows reach exits 2 as well -- an `all`
+                              # row fires only for `tools/gate.sh` and `CMakeLists.txt`,
+                              # so a stage nothing else reaches is reachable on paper and
+                              # excused in silence for every other change there is.
 ```
 
 | Stage | Expectation |
