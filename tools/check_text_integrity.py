@@ -62,7 +62,7 @@ TEXT_SUFFIXES = frozenset(
         ".rs",
         ".py",
         ".sh",
-        ".bash",
+        ".bash", ".ps1",
         ".md",
         ".txt",
         ".im",
@@ -122,9 +122,56 @@ def tracked_paths() -> list[str]:
 
 def is_text(name: str) -> bool:
     path = Path(name)
-    if path.name in TEXT_NAMES:
+    if path.name in TEXT_NAMES or path.name.lower() in TEXT_SUFFIXES:
         return True
     return path.suffix.lower() in TEXT_SUFFIXES
+
+
+# Why `is_text` compares the full name before the suffix: `Path('.gitignore')`
+# has suffix `''` (a leading dot marks a hidden file, not an extension), so a
+# suffix-only rule can never reach the dotfile of that name -- and this
+# repository tracks five files named that way.  The suffix rule stays: a file
+# called `foo.gitignore` does have the suffix `.gitignore`, and dropping the
+# rule would put it out of scope.
+#
+# Allow-list entries that no tracked file matches today.  The list is an
+# allow-list for file types this repository has not written yet, so an unused
+# entry is not by itself a defect -- but an entry that nothing matches and
+# nobody chose is either a typo or a stale entry, and either way it is
+# invisible: the checker simply never looks at that kind of file.  Every name
+# below was measured on the tree that added this check; adding a file with that
+# suffix brings the entry to life and takes it off this list (that is the red
+# control for the check below: it fires on an entry nobody stated, and on a
+# stated entry that came alive).
+NO_FILE_TODAY = frozenset(
+    {
+        ".bash",
+        ".cc",
+        ".cfg",
+        ".cjs",
+        ".cmake",
+        ".csv",
+        ".editorconfig",
+        ".hpp",
+        ".ini",
+        ".jsonc",
+        ".ts",
+        ".tsx",
+        "Dockerfile",
+    }
+)
+
+
+def unmatched_entries(paths: list[str]) -> list[str]:
+    """Allow-list entries that no tracked path matches, by name or by suffix.
+
+    Both tests are here for one reason: `.gitignore` is matched by its full
+    name and `foo.gitignore` by its suffix, and an entry that neither reaches
+    is the one thing this function exists to find.
+    """
+    names = {Path(p).name for p in paths}
+    suffixes = {Path(p).suffix for p in paths}
+    return sorted(e for e in TEXT_SUFFIXES | TEXT_NAMES if e not in names and e not in suffixes)
 
 
 def nul_offsets(path: Path) -> list[int]:
@@ -152,6 +199,35 @@ def describe(path: Path, offsets: list[int], limit: int = 3) -> list[str]:
 def main() -> int:
     paths = tracked_paths()
     text = [name for name in paths if is_text(name)]
+
+    dead = unmatched_entries(paths)
+    undeclared = [e for e in dead if e not in NO_FILE_TODAY]
+    alive = sorted(e for e in NO_FILE_TODAY if e not in dead)
+    if undeclared or alive:
+        if undeclared:
+            print(
+                "check_text_integrity: the allow-list has "
+                f"{len(undeclared)} entry(ies) that no tracked file matches: "
+                + " ".join(undeclared),
+                file=sys.stderr,
+            )
+        if alive:
+            print(
+                "check_text_integrity: NO_FILE_TODAY names "
+                f"{len(alive)} entry(ies) a tracked file matches after all: "
+                + " ".join(alive),
+                file=sys.stderr,
+            )
+        print(
+            "check_text_integrity: an entry nothing matches is either a typo "
+            "or a stale entry, and the file type it names goes unchecked "
+            "either way; a stated reason that stopped being true is not a "
+            "reason.\n"
+            "check_text_integrity: name the entry in NO_FILE_TODAY, or delete "
+            "it from the allow-list.",
+            file=sys.stderr,
+        )
+        return 1
 
     if not text:
         sys.exit(
@@ -192,7 +268,11 @@ def main() -> int:
         )
         return 1
 
-    print(f"check_text_integrity: {len(text)} text file(s), 0 with NUL bytes.")
+    print(
+        f"check_text_integrity: {len(text)} text file(s), 0 with NUL bytes; "
+        f"{len(TEXT_SUFFIXES)} suffix(es) + {len(TEXT_NAMES)} name(s) in the "
+        f"allow-list, {len(dead)} of them match nothing today (stated)."
+    )
     return 0
 
 
