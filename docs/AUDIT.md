@@ -1100,7 +1100,7 @@ MSVC 没有这个内建函数而手写 `LLONG_MAX`/`LLONG_MIN` 边界；溢出�
 `atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807`；
 FAIL 正则 `set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 `
 **已双向验证**（`grep -Ec`：修复前 1、修复后 0）。溢出那半边用 `try { … } catch (err) { … }`
-（`docs/SYNTAX.md:339-340`）接住错误，`str(err)` 得到错误种类名 `numeric_overflow` —— 这样测试仍然只断言
+（`docs/SYNTAX.md` §4.4 错误处理，写下时 `:339-340`）接住错误，`str(err)` 得到错误种类名 `numeric_overflow` —— 这样测试仍然只断言
 **值**，不依赖退出码，也就不需要 `WILL_FAIL` 记账项。`keep1` / `keep2` 两格钉的是「被拒绝的加法不改槽」。
 
 **诚实边界。**
