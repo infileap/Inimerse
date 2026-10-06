@@ -87,28 +87,58 @@ them from stepping on each other. The board and the rules are in
 
 ### `gate.sh` — the acceptance gate
 
-Thirteen stages; exit 0 only if all pass. A branch is mergable when this is green.
+Fifteen stages; exit 0 only if all pass. A branch is mergable when this is green.
 Run it **serially** — two gates at once bind overlapping ports and manufacture the
 failures [docs/STATUS.md](../docs/STATUS.md) §2.9 records.
 
 ```bash
-tools/gate.sh                 # all thirteen stages
+tools/gate.sh                 # all fifteen stages
 tools/gate.sh --fast          # reuse the existing build/ (skip configure)
 tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|oauth-loop
                               #            |ignored-credentials|links|doc-paths
                               #            |text-integrity|orphan-fixtures|orphan-targets
+                              #            |line-refs|release-tags
                               # `orphan-targets` asks whether a target is run, not
                               # whether it was compiled here — a target can be run by a
                               # CTest and still be named only inside a platform branch
                               # ([docs/AUDIT.md](../docs/AUDIT.md) §1.71).
-tools/gate.sh --required-for <base>..<head>
-                              # print the stages that range forces, one selector per
-                              # line. Runs nothing, so a green answer here is not a
-                              # green gate. The stage list is the same registry
-                              # `--only` reads; which path forces which stage comes
-                              # from each `stage_*` function's own call sites, from
-                              # the scopes written in `gate.sh`, and from
-                              # `check_text_integrity.py`'s own suffix/name lists.
+                              # `line-refs` asserts the denominators of the sweep over
+                              # line numbers `docs/` cites in `CMakeLists.txt` and
+                              # `gate.sh`: how many are written in each of the four
+                              # forms, and how many have nothing holding them. It does
+                              # not assert that any number is right.
+                              # `release-tags` asks whether the sha a document records
+                              # for a tag is still the sha that tag points at. A tag is
+                              # a moving pointer and moving one leaves no trace locally
+                              # (`git reflog show <tag>` prints nothing), so a number
+                              # that was true when written and is false now cannot be
+                              # caught by reading ([docs/AUDIT.md](../docs/AUDIT.md)
+                              # §1.74 E).
+tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
+                              # print the stages that change forces, one selector per
+                              # line, then `required: N stage(s)` and a bracket saying
+                              # which question was answered — a range is committed
+                              # history and does not read the working tree, a single
+                              # rev does, and a bare path is the unstaged changes to
+                              # that path. All three print the same `0 stage(s)`, so
+                              # the bracket is what tells a mistyped path from a change
+                              # that needs nothing. `staged` and `worktree` name the two
+                              # questions git's own syntax has no spelling for. Runs
+                              # nothing, so a green answer here is not a green gate.
+                              # The stage list is the same registry `--only` reads;
+                              # which path forces which stage comes from each
+                              # `stage_*` function's own call sites, from the scopes
+                              # written in `gate.sh` (each row carries the reason it
+                              # cannot be derived), and from `check_text_integrity.py`'s
+                              # own suffix/name lists. The scopes table and the registry
+                              # watch each other, and all three directions can go red: a
+                              # scopes row naming a stage the registry does not declare
+                              # exits 2; a registered stage that no scope row and no
+                              # `all` row can reach exits 2; and a registered stage that
+                              # ONLY the `all` rows reach exits 2 as well -- an `all`
+                              # row fires only for `tools/gate.sh` and `CMakeLists.txt`,
+                              # so a stage nothing else reaches is reachable on paper and
+                              # excused in silence for every other change there is.
 ```
 
 | Stage | Expectation |
@@ -126,6 +156,8 @@ tools/gate.sh --required-for <base>..<head>
 | text-integrity | `tools/check_text_integrity.py` — **0 files with NUL** |
 | orphan-fixtures | `tools/check_orphan_fixtures.py` — **0 orphans** |
 | orphan-targets | `tools/check_orphan_targets.py` — **0 orphans**, where a target is measured by the target some `add_test( )` runs and never by the test's name. It answers *is it run*, not *was it compiled here*: a target can be run by a CTest and still be named only inside a platform branch, and then the PASS has no relation to the change ([docs/AUDIT.md](../docs/AUDIT.md) §1.71) |
+| line-refs | `tools/check_line_refs.py` — **pins held**: the input set is non-empty, all four writings are present, the explicit-form count has not shrunk, and the unanchored count has not grown. It asserts denominators, not an anchor rate, and it does not assert that any number is right: a number still there that now points at something else is not caught ([docs/AUDIT.md](../docs/AUDIT.md) §1.72). The input set is hermetic: **only a file git tracks can hold a number**, because an untracked build artefact can hold one -- before that fix the same commit read 520 held / 515 unanchored in a tree carrying `build/` and 514 / 521 in a depth-1 clone of it, and six numbers were held by artefacts the clone does not contain. The pins are denominators, they were taken on a git-tracked-only tree `[obs: 56bf4c5]`, and they also expire from outside: a `git merge main` moved the explicit-form count from 694 to 720 without anyone touching this row. |
+| release-tags | `tools/check_release_tags.py` — **every `tag → sha` binding in `docs/` agrees with `git rev-parse`**, and every version named in backticks is a tag that exists. The tag names come from `git tag -l`, never from the file, so the next release adds one without anyone editing it. It says the documents and the tags agree *right now*: it cannot see a tag that moves after the run, and it cannot tell where a tag was meant to point. The defect register's own quotes of the old `v0.5.2 → 0ebd68d` cell are excused by name, and a register that excuses nothing is itself reported ([docs/AUDIT.md](../docs/AUDIT.md) §1.74 E) |
 
 When one of those numbers changes, update this table *and* the baseline row in
 [docs/STATUS.md](../docs/STATUS.md) §1 — otherwise the next session gates against
