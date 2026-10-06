@@ -1,0 +1,179 @@
+# website/ —— Infiverse 站点
+
+这个目录就是 `infiverse.localhost.cc` 的全部内容。**没有构建步骤**：改完文件直接刷新就是效果。
+不需要 Node、不需要 npm、不需要装任何东西。
+
+> **为什么要重复这句话**：这套站点将来要整包上传到 B站 Toy（跑在 `/toy/<slug>/` 子路径下），
+> Toy 的硬性要求就是「资源必须相对路径」「只传构建产物」。所以这里从第一天起就按那个约束建，
+> 将来不需要为了上 Toy 再维护第二套代码。
+
+---
+
+## 一、目录结构
+
+```
+website/
+├── index.html          首页（含「栏目状态一览」总表）
+├── games/index.html    在线游戏（B站 Toy 作品位 + 联机判定）
+├── videos/index.html   实机演示（视频列表 + 给录制那边的交付要求）
+├── tools/index.html    小工具（计划中的 6 个）
+├── about/index.html    关于（域名边界、内容以仓库为准）
+├── assets/
+│   ├── site.css        全站样式（深色）
+│   └── site.js         渲染逻辑（经典脚本，无模块、无 fetch）
+├── data/
+│   ├── site.js         ← 站名 / 仓库地址 / Releases 地址，**换站只改这一个文件**
+│   ├── videos.js       ← 视频记录（要加视频只改这个文件）
+│   └── toys.js         ← Toy 作品记录（要加作品只改这个文件）
+└── scratch/            临时产物放这里，**不要落在仓库根**
+```
+
+---
+
+## 二、本地怎么打开
+
+**最简单**：文件管理器里双击 `website/index.html`。
+（能直接打开是有意设计的——数据内联成 JS、不用 `fetch`，所以 `file://` 下和线上表现一致。）
+
+**更像线上**（推荐，能验证相对路径都对不对）：
+
+```bash
+cd website
+python3 -m http.server 8080
+# 然后浏览器打开 http://127.0.0.1:8080/
+```
+
+验证要点：五个页面都能点开、控制台无红色报错、视频/作品位显示的是**空状态提示**（当前还没有记录，这是正常的）。
+
+---
+
+## 三、DNS 现状（**当前阻塞点**）
+
+```
+infiverse.localhost.cc   →  当前没有任何 DNS 记录
+```
+
+实测过：随机编一个没注册的名字（如 `zzq7f3k9-not-registered.localhost.cc`）同样没有记录，
+说明**平台没有泛解析** ⇒ 不能自己开 `blog.` / `tools.` 这类子域，
+所以全站走**路径式**（`/games/`、`/videos/`、`/tools/`），这是对的，别改。
+
+**域名不属于我们**，平台随时可能回收。因此：
+
+- 内容的 canonical 副本在 **Git 仓库的这个目录**，不在域名上。域名没了，东西一行不丢。
+- 尽早买一个真域名，把这套文件复制过去，老域名做 301 跳新域名。
+- 不要用这个域名发邮件（极易被判垃圾），也不要指望它能接广告联盟。
+
+---
+
+## 四、DNS 面板必须先确认的三件事
+
+打开 `localhost.cc` 的域名管理面板（不是网站后台，是**域名**那边），记录下面三个答案，
+**它们直接决定走哪条路**：
+
+| # | 要确认的 | 影响 |
+|---|---|---|
+| 1 | 能不能加 **CNAME** 记录？ | 能 → 可以挂 Cloudflare Pages / Vercel / GitHub Pages，零成本、自带 HTTPS |
+| 2 | 只能加 **A 记录**？ | 是 → 需要一个有公网 IP 的机器（VPS），用 Caddy/Nginx 托管 |
+| 3 | 能不能加 **TXT** 记录？ | 能 → 可以用 Google Search Console 的「网址前缀」验证；**「网域资源」验证做不了**（顶层域不是我们的） |
+
+> 拿不准就先截图面板，三个问题逐个试一遍（加一条测试记录，看能不能保存）。
+
+---
+
+## 五、部署（按面板能力选一条）
+
+### 路线 A：能加 CNAME → 静态托管（**推荐**）
+
+1. 把 `website/` 里的文件推到一个 Git 仓库（本仓库已经包含它们）。
+2. Cloudflare Pages / Vercel / GitHub Pages 新建项目，指向该仓库，**构建命令留空**，输出目录填 `website`。
+3. 托管商会给你一个 `xxx.pages.dev` 之类的地址，先确认它能打开。
+4. 回到域名面板，加一条 CNAME：`infiverse` → 托管商给的那个地址。
+5. 等几分钟，访问 `https://infiverse.localhost.cc/`。
+6. 在托管商后台加自定义域 `infiverse.localhost.cc`，开启自动 HTTPS。
+
+### 路线 B：只能加 A → VPS + Caddy
+
+1. 准备一台有公网 IP 的机器，把 `website/` 传上去（如 `/var/www/infiverse`）。
+2. Caddy 的 `Caddyfile` 只写三行：
+
+   ```
+   infiverse.localhost.cc {
+       root * /var/www/infiverse
+       file_server
+   }
+   ```
+
+3. `caddy run`。Caddy 会自动申请证书——**但免费二级域名的 ACME 校验可能失败**（平台未必放行
+   `_acme-challenge`）。失败就先只上 `http://`，HTTPS 等换成自己的域名再说。
+
+### 路线 C：面板里根本没有 DNS 编辑入口
+
+说明这个平台不给解析权限 ⇒ **当前域名无法指向任何真实托管**。
+这时候只有两件事可做：① 站点的 canonical 继续留在 Git（已经做到了）；
+② 去买一个真域名。别在这上面继续耗时间。
+
+---
+
+## 六、上线之后（三件收尾）
+
+1. **Search Console**：只做「网址前缀」验证（`https://infiverse.localhost.cc/`），
+   能加 TXT 就用 TXT，不能加就用 HTML 文件验证（把给的文件放进 `website/` 根目录）。
+   提交 `sitemap.xml`。
+2. **买真域名后**：新域名指到同一份托管，老域名 301 到新域名。
+3. **备份**：只要这个目录在 Git 里，就不用额外备份。
+
+---
+
+## 七、怎么加内容
+
+### 加一个视频
+
+打开 `data/videos.js`，往数组里加一条：
+
+```js
+{
+  id: "inim-os-walkthrough-01",
+  title: "Inim OS 桌面走查",
+  bvid: "未投稿",              // 投了就填 BV 号，没投就保留这四个字——不要留空
+  duration: "03:42",
+  resolution: "1920x1080",
+  cover: "assets/covers/inim-os-walkthrough-01.jpg",
+  summary: "一句话说明这个视频演示了什么。",
+  ref: "f1dfe62583b7a89e2395ddc502fcf2ac7b60055e",   // 录制时的 git rev-parse HEAD
+  date: "2026-10-06",
+  orientation: "landscape",    // 竖屏写 "portrait"
+  featured: true               // 可选，最多一条
+}
+```
+
+封面按 `videos/index.html` 页里「交付要求」那张表来做（16:9、≤300KB、文件名用 `id`）。
+**没有这条记录，视频就不显示**——这是有意设计的，避免出现「页面上挂着链接但不知道是哪一版录的」。
+
+### 加一个 Toy 作品
+
+拿到 Toy 内测资格、作品审核通过后，往 `data/toys.js` 里加：
+
+```js
+{
+  slug: "inimerse-demo",
+  title: "Inimerse 语法演示",
+  summary: "一句话说明。",
+  url: "https://www.bilibili.com/toy/inimerse-demo/index.html",
+  poster: "assets/toys/inimerse-demo.jpg",
+  status: "live"
+}
+```
+
+---
+
+## 八、发布到 B站 Toy 时的额外要求
+
+真正上传玩具包的时候，除了「相对路径」，还要注意：
+
+- **前端路由用 hash 模式**（`#/xxx`）。history 模式每条路由都得有一个真实 HTML 文件，否则刷新 404。
+- 包里根目录或恰好一层子目录下必须有 `index.html`；**只传构建产物**，别把 `scratch/` 传上去。
+- **slug 发布后不能改**，定名之前想清楚。
+- 发布不是即时的：要过安全扫描 + 内容审核，通过后才有链接。
+- 作品页分享时要带 `index.html` 后缀。
+
+这份清单的完整版在官方仓库 `bilibili/toy` 的 `references/content-checklist.md`。

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>关于 · Infiverse</title>
+<meta name="description" content="Infiverse 站点的定位、内容来源与域名边界。">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="../index.html">首页</a>
+      <a href="../games/index.html">在线游戏</a>
+      <a href="../videos/index.html">实机演示</a>
+      <a href="../tools/index.html">小工具</a>
+      <a href="index.html" aria-current="page">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap">
+    <h1>关于</h1>
+    <p class="lede">这个站点是 Inimerse / Infiverse 的对外门面：能玩的东西、能看的演示、能用的工具。</p>
+
+    <section class="section">
+      <h2>内容以仓库为准</h2>
+      <p class="note">
+        站点用的是免费二级域名 <code>infiverse.localhost.cc</code>，<b>它不属于我们</b>——
+        平台随时可能回收。所以真正的 canonical 副本是 Git 仓库里的
+        <code>website/</code> 目录：域名没了，内容一行不丢，换个域名重新指一次就回来了。
+      </p>
+      <p style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a class="btn" href="https://github.com/infileap/Inimerse" target="_blank" rel="noopener">GitHub 仓库</a>
+        <a class="btn" href="https://github.com/infileap/Inimerse/releases" target="_blank" rel="noopener">Releases（下载）</a>
+      </p>
+    </section>
+
+    <section class="section">
+      <h2>这个域名不适合做的事</h2>
+      <table class="table">
+        <thead><tr><th>不要做</th><th>原因</th></tr></thead>
+        <tbody>
+          <tr><td>拿它发邮件</td><td>免费二级域名不适合作为邮件身份，极易被判垃圾</td></tr>
+          <tr><td>把它当唯一入口</td><td>域名不属于你，回收即全损；仓库才是底本</td></tr>
+          <tr><td>用它做需要长期信誉的事</td><td>域名带 <code>localhost</code> 字样，部分企业 DNS 过滤器与 SSRF 校验会误杀</td></tr>
+          <tr><td>指望广告变现</td><td>免费二级域名基本接不到主流广告联盟</td></tr>
+        </tbody>
+      </table>
+      <p class="note" style="margin-top:12px;">
+        反正该做：尽早买一个真域名，把这个站 301 过去；现在的建设方式（相对路径、无构建、内容在 Git）
+        保证了将来搬家只是一次复制。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2>技术约束（建设时就定下的）</h2>
+      <ul style="color:var(--fg-dim);font-size:14px;">
+        <li><b>相对路径</b>：整站可以被放在任意子目录下，包括 B站 Toy 的 <code>/toy/&lt;slug&gt;/</code>。</li>
+        <li><b>零依赖零构建</b>：没有打包步骤，没有 CDN，没有外部字体；双击 <code>index.html</code> 就能看。</li>
+        <li><b>数据内联为 JS</b>：不用 <code>fetch</code> 读 JSON，所以本地打开和线上托管表现一致。</li>
+      </ul>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="../data/site.js"></script>
+<script src="../data/videos.js"></script>
+<script src="../data/toys.js"></script>
+<script src="../assets/site.js"></script>
+</body>
+</html>

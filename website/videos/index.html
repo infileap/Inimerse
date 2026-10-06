@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实机演示 · Infiverse</title>
+<meta name="description" content="Inimerse 引擎与 Infiverse 桌面端的实机演示视频，逐条标注录制时的代码版本，同步发布到 B站。">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="../index.html">首页</a>
+      <a href="../games/index.html">在线游戏</a>
+      <a href="index.html" aria-current="page">实机演示</a>
+      <a href="../tools/index.html">小工具</a>
+      <a href="../about/index.html">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap">
+    <h1>实机演示</h1>
+    <p class="lede">
+      引擎与桌面端的真实运行画面。每条记录都带录制时的代码版本（git ref），
+      所以隔一段时间回来看，仍然知道当时跑的是哪一版。
+    </p>
+    <p style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;">
+      <!-- B站 账号入口：地址填在 data/site.js 的 bilibiliUrl，填了才显示。
+           不在这里硬编码 UID —— 编错一个数字比没有这个按钮更糟。 -->
+      <a class="btn" id="bili-account" href="#" target="_blank" rel="noopener" hidden>B站 账号</a>
+      <a class="btn btn--ghost" href="https://github.com/infileap/Inimerse" target="_blank" rel="noopener">源码（看录制时的版本）</a>
+    </p>
+
+    <div class="callout">
+      <strong>记录是唯一入口。</strong>
+      站点只按记录渲染：没有 <code>id / 标题 / BV 号 / 时长 / 分辨率 / 封面 / 简介 / ref + 日期</code> 这一组字段，
+      视频就不会出现在这里。未投稿的写「未投稿」，不要留空——留空和忘记投稿看起来是一样的。
+    </div>
+
+    <!-- ============================================================
+         内容位：实机演示视频
+         渲染源 = ../data/videos.js（window.INFIVERSE_VIDEOS）
+         版式：首条可 featured 占整行 16:9 大卡，其余 3 列栅格；
+               竖屏记录自动切 9:16 封面，建议单独一行、宽度上限 360px。
+         ============================================================ -->
+    <section class="section">
+      <h2>全部演示</h2>
+      <div id="video-list" class="video-list"></div>
+    </section>
+
+    <section class="section">
+      <h2>交付要求（给录制那边）</h2>
+      <p class="note">按这份参数交付，接上就是一步，不用再来一轮。</p>
+      <table class="table">
+        <thead><tr><th>项</th><th>要求</th></tr></thead>
+        <tbody>
+          <tr><td>封面比例 / 分辨率</td><td>横屏 <b>16:9</b>，最低 1280×720，建议 1920×1080；JPG 或 WebP，≤ 300 KB</td></tr>
+          <tr><td>封面文件名</td><td><code>&lt;id&gt;.jpg</code>，与记录里的 <code>id</code> 一致</td></tr>
+          <tr><td>竖屏</td><td>9:16，1080×1920；单页最多 1 条竖屏，不与横屏混排同一行</td></tr>
+          <tr><td>内嵌还是外链</td><td><b>以 B站 外链为主</b>（封面 + 跳转按钮），站内播放为可选的点击后加载</td></tr>
+          <tr><td>单页放几个</td><td>最多 12 条；第 1 条可标 <code>featured</code> 占整行</td></tr>
+          <tr><td>横竖屏</td><td>默认横屏；竖屏在记录里写 <code>orientation: "portrait"</code></td></tr>
+          <tr><td>时长 / 分辨率</td><td>时长形如 <code>03:42</code>，分辨率形如 <code>1920x1080</code></td></tr>
+          <tr><td>录制版本</td><td><code>ref</code> = 录制时的 <code>git rev-parse HEAD</code> 完整 40 位 + 录制日期</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="../data/site.js"></script>
+<script src="../data/videos.js"></script>
+<script src="../data/toys.js"></script>
+<script src="../assets/site.js"></script>
+</body>
+</html>

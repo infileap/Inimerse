@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小工具 · Infiverse</title>
+<meta name="description" content="和 Inimerse 同源的一组纯静态小工具：编码转换、乱码修复、正则、时间戳、Diff。">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="../index.html">首页</a>
+      <a href="../games/index.html">在线游戏</a>
+      <a href="../videos/index.html">实机演示</a>
+      <a href="index.html" aria-current="page">小工具</a>
+      <a href="../about/index.html">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap">
+    <h1>小工具</h1>
+    <p class="lede">
+      和产品同源的日常工具。全部纯静态、不联网、不上传任何内容——
+      在浏览器里本地算完就显示结果。
+    </p>
+
+    <div class="callout">
+      <strong>为什么只做这几个：</strong>不做零搜索需求的自嗨工具。
+      下面每一个都对应一个真实的高频搜索意图，而且和引擎做的事同源（文本、编码、结构比较）。
+    </div>
+
+    <!-- ============================================================
+         内容位：小工具列表
+         每个工具一个独立目录（如 tools/gbk-fix/index.html），
+         保持相对路径，将来整站也能原样打包。
+         状态：planned（未做）/ live（可用）
+         ============================================================ -->
+    <section class="section">
+      <h2>计划与现状</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>GBK ↔ UTF-8 乱码修复</h3>
+          <p>把「涓枃」这类经典乱码还原回中文，也能反向构造。在浏览器本地完成，不上传。</p>
+          <div class="badges"><span class="badge badge--muted">未开始</span></div>
+        </div>
+        <div class="card">
+          <h3>正则测试</h3>
+          <p>实时高亮匹配、分组与替换预览，支持常见 flag 对比。</p>
+          <div class="badges"><span class="badge badge--muted">未开始</span></div>
+        </div>
+        <div class="card">
+          <h3>纵横转换 / 时间戳</h3>
+          <p>Unix 时间戳与可读时间互转，秒与毫秒都认，带时区显示。</p>
+          <div class="badges"><span class="badge badge--muted">未开始</span></div>
+        </div>
+        <div class="card">
+          <h3>文本 Diff</h3>
+          <p>两段文本按行比较，输出增删标记，便于快速对照。</p>
+          <div class="badges"><span class="badge badge--muted">未开始</span></div>
+        </div>
+        <div class="card">
+          <h3>Base64 / URL 编码</h3>
+          <p>编解码与链式嵌套，带错误定位。</p>
+          <div class="badges"><span class="badge badge--muted">未开始</span></div>
+        </div>
+        <div class="card">
+          <h3>Markdown 表格生成</h3>
+          <p>贴表格数据，输出对齐的 Markdown，支持中英文混排宽度。</p>
+          <div class="badges"><span class="badge badge--muted">未开始</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="../data/site.js"></script>
+<script src="../data/videos.js"></script>
+<script src="../data/toys.js"></script>
+<script src="../assets/site.js"></script>
+</body>
+</html>

@@ -339,15 +339,19 @@ TARGETS = {
 # is: the delta grows as the base ages, and that line is how a reader tells "the
 # references got worse" from "the base is old".  Re-taking the pins is moving
 # the base, in a commit that says so; nothing else may move it.
-#
-# The base is main's 32a9418, not this branch's 8c75f31.  The branch was cut
-# before main grew six more cited numbers (docs/AUDIT.md 1.74 增补三), so
-# measuring it against its own base would have reported that growth as this
-# branch's delta -- a delta against a base the branch never contained is a
-# delta about the base's age, which is exactly what the "is N commit(s) behind
-# HEAD" line exists to distinguish.
-EXP_LINE_REFS_BASE = os.environ.get("EXP_LINE_REFS_BASE", "32a9418cb0635e7e38e897bb7b28580b61b2623f")
-EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "0"))
+# The base is main's 1c6b338, not this branch's 8c75f31.  The branch was cut
+# before main grew the 1.74 增补三 references and before main merged the
+# delta-form pin itself, so measuring it against its own base would have
+# reported main's growth as this branch's delta -- a delta against a base
+# the branch never contained is a delta about the base's age, which is
+# exactly what the "is N commit(s) behind HEAD" line exists to distinguish.
+EXP_LINE_REFS_BASE = os.environ.get("EXP_LINE_REFS_BASE", "1c6b3381f3db8b77ca90c53ae5737dfa3698624f")
+# -1, and the reason is a reading: this branch REMOVED one explicit-form
+# reference -- docs/STATUS.md 51 carried `tools/gate.sh:54`, a line number
+# that had stopped pointing at the constant it named -- and a removal is a
+# change the pin has to be told about in the same commit that makes it.
+# A reference removed is not a reference gained.
+EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "-1"))
 # +1, not 0, and the reason is a reading rather than a mood.  docs/BOARD.md's
 # line-refs row carries `:241 (CMakeLists.txt)`, and what held that number was
 # the fragment `docs/` -- which sat on line 241 of tools/check_line_refs.py,

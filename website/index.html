@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Infiverse · Inimerse 引擎与桌面端</title>
+<meta name="description" content="Inimerse 是一个 C 语言脚本引擎，Infiverse 是它的桌面客户端。这里放实机演示、可玩的互动作品和一组小工具。">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="index.html" aria-current="page">首页</a>
+      <a href="games/index.html">在线游戏</a>
+      <a href="videos/index.html">实机演示</a>
+      <a href="tools/index.html">小工具</a>
+      <a href="about/index.html">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <h1>Inimerse 引擎 · Infiverse 桌面端</h1>
+      <p class="lede">
+        Inimerse 是一个用 C 写的脚本引擎，Infiverse 是它的桌面客户端。
+        这个站点放三样东西：能亲手玩的互动作品、能看清引擎到底怎么跑的实机演示，以及一组同源的小工具。
+      </p>
+      <p style="margin-top:22px; display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn btn--primary" href="https://github.com/infileap/Inimerse/releases" target="_blank" rel="noopener">下载（GitHub Releases）</a>
+        <a class="btn" href="https://github.com/infileap/Inimerse" target="_blank" rel="noopener">源码</a>
+        <a class="btn btn--ghost" href="videos/index.html">先看实机演示</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       两类内容的总入口。顺序即优先级：
+       ① 实机演示（今天就能上，只等 video 会话交付记录）
+       ② 在线游戏（今天上不了，等 B站 Toy 内测资格）
+       ============================================================ -->
+  <section class="page" style="padding-top:24px;">
+    <div class="wrap">
+      <div class="grid">
+
+        <!-- 内容位 A：在线游戏（B站 Toy 托管 + infiverse 联机） -->
+        <a class="card" href="games/index.html">
+          <h3>在线游戏</h3>
+          <p>在浏览器里直接玩。两条路：B站 Toy 托管页，以及本站自带的联机入口。</p>
+          <div class="badges">
+            <span class="badge badge--blocked">等前置：Toy 内测资格</span>
+            <span class="badge badge--partial">联机：服务端可开、前端未就绪</span>
+          </div>
+        </a>
+
+        <!-- 内容位 B：实机演示视频（Inim OS / 引擎能力） -->
+        <a class="card" href="videos/index.html">
+          <h3>实机演示</h3>
+          <p>引擎与桌面端的真实运行画面，逐条记录录制时的代码版本，并同步发到 B站。</p>
+          <div class="badges">
+            <span class="badge badge--live">今天就能上</span>
+            <span class="badge badge--partial">等 video 交付记录</span>
+          </div>
+        </a>
+
+        <a class="card" href="tools/index.html">
+          <h3>小工具</h3>
+          <p>和产品同源的日常工具：编码、正则、时间戳、Diff。纯静态、不联网。</p>
+          <div class="badges">
+            <span class="badge badge--live">今天就能上</span>
+          </div>
+        </a>
+
+      </div>
+
+      <div class="callout">
+        <strong>每一栏归谁管，写清楚省得互相等。</strong>
+        实机演示只认「记录」——记录由录制那边交付，站点只按记录渲染；
+        在线游戏被一件事挡住——B站 Toy 的发布权限目前是邀请制内测。
+        两件事互不阻塞，所以演示可以先上，游戏栏先留好位置。
+      </div>
+
+      <div class="section">
+        <h2>栏目状态一览</h2>
+        <p class="note">「今天就能上」= 现在动手、不需要任何外部批准；「等前置」= 缺的那件东西写在同一行。</p>
+        <table class="table">
+          <thead>
+            <tr><th>栏目</th><th>接入方式</th><th>归属</th><th>缺什么</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>实机演示</td>
+              <td>封面图 + 外链到 B站视频页；可选站内 iframe 播放</td>
+              <td><span class="badge badge--live">今天就能上</span></td>
+              <td>video 会话交付的记录（含 BV 号）</td>
+            </tr>
+            <tr>
+              <td>在线游戏 · B站 Toy</td>
+              <td>上传 HTML/zip 到 Toy 管理端，页面由平台托管在 <code>www.bilibili.com/toy/&lt;slug&gt;/</code></td>
+              <td><span class="badge badge--blocked">等前置</span></td>
+              <td>B站 Toy 内测资格（邀请制）</td>
+            </tr>
+            <tr>
+              <td>在线游戏 · 浏览器里跑引擎</td>
+              <td>把引擎编译成 wasm 在浏览器执行</td>
+              <td><span class="badge badge--blocked">今天做不到</span></td>
+              <td>引擎没有浏览器运行时（见<a href="games/index.html">下方说明</a>）</td>
+            </tr>
+            <tr>
+              <td>在线游戏 · 联机</td>
+              <td>CRP 中继（HTTP + WebSocket 服务）</td>
+              <td><span class="badge badge--partial">服务端可开，前端没有</span></td>
+              <td>一个浏览器里可玩的对局前端</td>
+            </tr>
+            <tr>
+              <td>小工具</td>
+              <td>本站静态页，零依赖零后端</td>
+              <td><span class="badge badge--live">今天就能上</span></td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>下载</td>
+              <td>直接指向 GitHub Releases，不自建分发</td>
+              <td><span class="badge badge--live">今天就能上</span></td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>域名 <code>infiverse.localhost.cc</code> 为免费二级域名，内容以 Git 仓库为准（canonical 在仓库里）。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="data/site.js"></script>
+<script src="data/videos.js"></script>
+<script src="data/toys.js"></script>
+<script src="assets/site.js"></script>
+</body>
+</html>

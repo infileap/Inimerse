@@ -144,7 +144,7 @@ tools/gate.sh --required-for <base>..<head>|staged|worktree|<rev>|<path>
 | Stage | Expectation |
 | --- | --- |
 | build | Release build, 0 error |
-| ctest | **148 / 148** |
+| ctest | every test passes; the count is `EXP_CTEST` in `tools/gate.sh` |
 | economy | `tools/economy_migration.test.py` — **39 / 39** |
 | fuzz | `tools/im_diff_fuzz.py` — 3 seeds x 120 programs, **0 findings** |
 | node | `node tools/node_suites/run_all.js` — **12 / 12** |
