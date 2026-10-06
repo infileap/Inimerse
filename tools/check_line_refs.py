@@ -56,8 +56,8 @@ The gate stage asserts DENOMINATORS, not anchor rates:
   - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
     shrink while nobody is looking;
   - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: 548 is a known
-    quantity today, and 554 tomorrow is an unannounced regression.
+    cannot grow while nobody is looking.  This is the tooth: 552 is a known
+    quantity today, and 558 tomorrow is an unannounced regression.
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
@@ -105,6 +105,15 @@ the claim and the artifact travel together:
     such pairs are already measured (docs/AUDIT.md:713 fixed :383 while :453
     kept it; :3330 dropped an ordinal while :3326 kept it; :1659 fixed :935
     while :1657, two lines above, kept :915).
+  - `target` in --report is a LABEL, not the identity of the citation.  When
+    the file a number belongs to is not one of TARGETS, the checker prints the
+    first target file the same line mentions:
+        target = owner if owner in TARGETS else next(t for ... if t in TARGETS)
+    docs/BOARD.md's `src/parser/parser.c:1286`/`:1287` is reported as
+    `target=tools/gate.sh`, whose 1045 lines make the report read "out of
+    range" -- while the file those numbers name has 1832 lines and holds them.
+    This misled a reader of the report once (the report's author), who passed
+    the number on as out of range.  Read `owner`, or read the citing line.
   - two rules that look reasonable were tried on this repository and rejected:
     "the file named nearest before the number owns it" (240 references
     unresolved) and "the quoted text nearest the number anchors it" (held fell
@@ -126,6 +135,13 @@ to today's reading:
     8bfe8a2   the first merge               734       523   530
     cfcb19e   tip before the T2 merge       734       541   530
     807e0e4   the T2 merge                  750       543   548
+    c3ea2b6   where the pin was re-taken    750       543   548
+    3f3e5b9   merge origin/main (fb18bd7)  762       552   551
+    (rewrite) nine DECFY_DESIGN.md:<N>     758       550   549
+              rewritten as section numbers
+    f401f82   merge origin/main (2d0ecd8)  758       551   551
+    c3f7857   merge origin/main (68248e4)  758       551   551
+    (account) the account written          761       553   552
 
   - the delta 720 -> 734 is +14, and it is not this branch's work: +4 are this
     branch's own four spelling examples on docs/BOARD.md's line-refs row (main
@@ -146,11 +162,14 @@ to today's reading:
     independent shift, and it moved the *other* file: `CMakeLists.txt` grew by 17
     lines (an insert near line 1357, `add_test(NAME xrange_t2_runtime ...)`) while
     `tools/gate.sh` changed one line and **kept its line count**.  explicit
-    734 -> 749 and unanchored 530 -> 550 from that merge alone; +15 explicit arrive
+    734 -> 749 and unanchored 530 -> 550 when that merge landed (750 / 548 once this
+    branch's own account of it was written); +15 explicit arrive
     with T2 (13 in `docs/BOARD.md`, 2 in the new `docs/streams/win-source-attribution.md`),
     and +20 unanchored split by target into 18 into `CMakeLists.txt` and 2 into
     `tools/gate.sh`.  Those 2 are the instructive ones: they were held before T2 not
-    by the file they name -- both numbers are past its end -- but by
+    by the file the report labels as their target -- those two numbers name
+    `src/parser/parser.c`, which is 1832 lines and holds them; the label says
+    `tools/gate.sh`, and a label is not an identity -- but by
     `src/compiler/compiler.c`, named on the same line, which T2 edited.  So "does this
     reference have an anchor" and "did the file it names move" are two different
     questions, and the three causes (gate.sh shift / CMakeLists shift / anchor living
@@ -160,6 +179,33 @@ to today's reading:
     and unanchored -2, because the fragments it quotes hold two numbers on that row
     that nothing held before -- which is why the pins below were taken after the
     prose, not before it.
+  - the third shift is the merge of `origin/main` = `fb18bd7`, which was
+    announced as pin-neutral and is not: explicit 750 -> 762 and unanchored
+    548 -> 551.  All twelve explicit sit on ONE appended row of `docs/BOARD.md`
+    (the rewritten `xrange-t2` row, commit 3e0a9bd, which arrived from the
+    other side), while `docs/AUDIT.md` grew 39 lines in the same merge and
+    added not one reference.  The addendum that says it is pin-neutral is
+    pin-neutral; a row that names both target files is not.
+  - the fourth shift is this branch's own work on the citations it was given:
+    nine `docs/DECFY_DESIGN.md:<N>` references became section numbers (the
+    §2(a) "value representation + collection runtime" row, §3.3 item 2, §1.1
+    table row 3), taking explicit 762 -> 758 and unanchored 551 -> 549.  Only
+    four of the nine sat on a line that names a target file -- the writings
+    count counts only those -- and two of the four had no anchor.  Line counts
+    did not move: 3/3, 4/4, 2/2 and 2/2 substituted lines.
+  - the fifth shift is the merge of `origin/main` = `2d0ecd8`, which brought a
+    new file instead of moving an old one: `docs/streams/builtin-platform-
+    census.md` (104 lines) carries 3 references and 2 of them have no anchor
+    (`:2205` and `:2927` on its line 55; the third, `:241`, is held), while one
+    anchor was gained in `docs/AUDIT.md` and one lost in
+    `docs/TYPESET_V06.md`.  explicit stayed 758, unanchored 549 -> 551.
+  - the sixth shift is the merge of `origin/main` = `68248e4`, and it is
+    neutral: 1102 references, 758 / 551 / 551 before and after.
+  - the pins above were taken AFTER the account was written, and writing the
+    account moved them: 758 / 551 before it, 761 / 552 after.  The account is a
+    paragraph inside the measured set, so "write the account" and "take the
+    pin" are one action, and the second of those numbers holds only until the
+    next person quotes either target file.
     9969e5b 1049 references / 506 unanchored -> merged 1053 / 530.  30
     references that had an anchor lost it, 10 gained one by coincidence, and 4
     are new.  Of the 30, 29 point into tools/gate.sh and 1 into docs/BOARD.md.
@@ -200,7 +246,7 @@ Negative control -- redo it, and note that the first version was worthless:
 
     sed -i '426s|.*|# NEGATIVE CONTROL line|' CMakeLists.txt
     python3 tools/check_line_refs.py
-        held 543 -> 537, unanchored 548 -> 554 -- six references move, and the
+        held 553 -> 547, unanchored 552 -> 558 -- six references move, and the
         stage goes red on the ceiling, not on a rate
     git checkout -- CMakeLists.txt
 
@@ -219,23 +265,25 @@ tools/gate.sh:<N> reference goes from green to red when that file's content
 moves underneath it, and nothing on the citing side changes.
 
     cp tools/gate.sh .scratch/gate.sh.bak
-    python3 tools/check_line_refs.py --report | grep ':54 (tools/gate.sh)'
-        docs/AUDIT.md:3359  :54 (tools/gate.sh) cited at line 3359:
-        'BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"'      -- red
-    git show 9969e5b:tools/gate.sh > tools/gate.sh        # the pre-merge file
-    git diff --numstat -- tools/gate.sh                   # 32 227: it landed
     python3 tools/check_line_refs.py --report | grep -c ':54 (tools/gate.sh)'
-        0 -- the reference is gone from the report        -- green
+        12 -- and all twelve show THIS tree's gate.sh:54, which is
+        '#                              asked, and the bracket is where t',
+        a line none of them quotes                          -- red
+    git show 9969e5b:tools/gate.sh > tools/gate.sh        # the pre-merge file
+    git diff --numstat -- tools/gate.sh                   # 33 228: it landed
+    python3 tools/check_line_refs.py --report | grep -c ':54 (tools/gate.sh)'
+        11 -- one of the twelve quotes the line now there    -- green
     python3 tools/check_line_refs.py
-        held 543 -> 565, unanchored 548 -> 526            -- under the ceiling
+        held 553 -> 575, unanchored 552 -> 530            -- under the ceiling
     cp .scratch/gate.sh.bak tools/gate.sh
 
-docs/AUDIT.md:3359 quotes `BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"`, points
-at `:54`, and records the commit it measured on ("全部在 `4ca013d` 上量").
-The number moved anyway: tools/gate.sh:54 is that line on 9969e5b, and
-`#                              asked, and the bracket is where that shows.`
-on 8bfe8a2.  Recording an observation basis does not hold a number; only an
-anchor does.  That is this file's whole argument in one line.
+The aggregate, not the single count, is what moves: 22 references are held by
+the pre-merge file and not by this tree's.  The one `:54` case this control was
+first written around (docs/AUDIT.md:3359, which quotes
+`BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"` and records the commit it measured
+on, "全部在 `4ca013d` 上量") is not in the report any more -- that file grew,
+and the citation with it.  Recording an observation basis does not hold a
+number; only an anchor does.  That is this file's whole argument in one line.
 
 Usage:
     python3 tools/check_line_refs.py             assert the pins; exit 1 if a
@@ -264,9 +312,9 @@ TARGETS = {
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "750"))
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "761"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "548")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "552")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies

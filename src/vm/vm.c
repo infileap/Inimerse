@@ -335,8 +335,8 @@ int vm_parse_caps(const char *s) {
     return caps;
 }
 
-/* The one truth-value production point (docs/DECFY_DESIGN.md:125).  The rule is
-   the one docs/DECFY_DESIGN.md:24 documents and the one the wasm backend already
+/* The one truth-value production point (docs/DECFY_DESIGN.md §3.3 item 2).  The rule is
+   the one docs/DECFY_DESIGN.md §1.1 table row 3 documents and the one the wasm backend already
    emits: a zero number and nil are false, and *everything else* -- including the
    empty string and every collection -- is true.  Before this helper five sites in
    this file each decided for themselves, and they disagreed with each other and

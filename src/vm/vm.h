@@ -23,7 +23,7 @@ enum ValueType { VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_OBJECT, VAL_NIL, 
 
 /* Value -- the one shape shared by VM registers, AOT-generated C, wasm linear
    memory slots and the fixed import table.  It MUST stay 32 bytes:
-   docs/DECFY_DESIGN.md:76 makes that width contract non-negotiable, because a
+   docs/DECFY_DESIGN.md §2(a) "value representation + collection runtime" row makes that width contract non-negotiable, because a
    `.im` file must never be able to move the ABI or break serialization
    round-trips.
 
@@ -45,7 +45,7 @@ typedef struct {
 } Value;
 
 _Static_assert(sizeof(Value) == 32,
-               "Value must stay 32 bytes (ABI width contract, docs/DECFY_DESIGN.md:76)");
+               "Value must stay 32 bytes (ABI width contract, docs/DECFY_DESIGN.md §2(a) \"value representation + collection runtime\" row)");
 
 /* set interval component: builtin set nameIdx intersected with [lo,hi] (inc flags); +/-1e308 = unbounded */
 typedef struct {

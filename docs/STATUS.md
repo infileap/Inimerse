@@ -2940,7 +2940,7 @@ if pass < 60 {
 
 ### 三、为什么是匿名 union 而不是加宽字段
 
-`docs/DECFY_DESIGN.md:76` 把 `Value` 的宽度**冻结**在 32 字节：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。`int ival` 直接改 `long long` 会让 `sizeof` 从 32 变成 40，是真正的 ABI 破坏。改用匿名 union：
+`docs/DECFY_DESIGN.md` §2(a) 层次划分表「值表示 + 集合运行时」行 把 `Value` 的宽度**冻结**在 32 字节：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。`int ival` 直接改 `long long` 会让 `sizeof` 从 32 变成 40，是真正的 ABI 破坏。改用匿名 union：
 
 ```c
 int type;
@@ -3128,7 +3128,7 @@ setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set
 | `posix_core_bool`（`bool()`） | **假** | 真 | 真 | 真 |
 | WIN32 `builtin_bool` | 假 | **假** | 假 | 假 |
 
-`if s` 认为空串为真，`not s`、`s or x` 与 `bool(s)` 认为它为假。而 `docs/DECFY_DESIGN.md:125` 要求的是「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」，`:24` 写下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
+`if s` 认为空串为真，`not s`、`s or x` 与 `bool(s)` 认为它为假。而 `docs/DECFY_DESIGN.md` §3.3 第 2 条 要求的是「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」，§1.1 表第 3 行 写下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
 
 **判据必须是短路，不能是返回值。** 第一轮探测看的是 `"" or "FALLBACK"` 的返回值，得出「空串在 `or` 里是假」——**这是错的**：O0 那次修复之后 `and`/`or` 恒产出布尔，所以 `"" or 1` 与 `1 or 1` 都是 `true`，返回值不区分。改用带副作用的右操作数（`.verify/v31/sc.im` 的 `func boom(t) { say "  BOOM:" + t; return true }`）才看得见：修复前 `"" or boom()`、`{1:2} or boom()`、`(1,2) or boom()` **都不短路**，只有数组短路。
 
@@ -3148,7 +3148,7 @@ int vm_truthy(const Value *v) {
 
 新增在 `src/vm/vm.c:293`、声明在 `src/vm/vm.h:356`；六处调用点全部改为调用它：`src/vm/vm.c:3341-3342`（`L_AND`）、`:3348-3349`（`L_OR`）、`:3355`（`L_NOT`）、`:3538`（`L_JUMP_IF_FALSE`）、`:3543`（`L_JUMP_IF_TRUE`），以及 `src/runtime/runtime_posix.c:69` 与 `src/runtime/runtime.c:68` 两份 `bool()`。三份文件里旧的三目链 `grep -c` 已为 0。`src/vm/vm.c:3896` 的 `OP_IS_NIL`（`(R[ins.r2].type == VAL_NIL) ? 1 : 0`）判的是 nil 本身而不是真值，**正确地未动**。
 
-**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md:24` 写下的规则，且六处里本来就有三处如此；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 **`bool("")` 从 `false` 变成 `true`**，这是本次唯一面向用户的语义变化，单独写在明处。
+**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md` §1.1 表第 3 行 写下的规则，且六处里本来就有三处如此；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 **`bool("")` 从 `false` 变成 `true`**，这是本次唯一面向用户的语义变化，单独写在明处。
 
 **判据。** 新增 `vtest/truthiness_single_point_v06.im` ← CTest **`truthiness_single_point_runtime`（#116）**，一行断言：
 
@@ -3196,7 +3196,7 @@ release_to(comp, first + 1);
 
 **症状与发现路径。** 第 13 轮换了一类去找：不再追「快路径当答案」（§10.50/§10.52/§10.53 已三例），而是把 WIN32 与 POSIX 两份运行时的内建逐个对读（`.verify/v31/twocopies.py`，59 个同名内建，逐字相同 2 个、不同 56 个）。对读过程中先看到 `float` 两份写法不一致，探针一跑就撞见 `float(true)` 答 `4.9406564584124654e-324`。
 
-**根因。** v3.1 把 `Value` 的整数槽改成 64 位时，为守住 32 字节宽度契约（`docs/DECFY_DESIGN.md:76`）用的是匿名 union：`ival` 与 `fval` **共享存储**。于是所有「只分两种类型」的取值写法 `X.type == VAL_INT ? X.ival : (int)X.fval` 对 `VAL_BOOL` 都会去读 `fval`，读出来的是 `ival` 的位模式。`float(false)`/`float(nil)` 答 0 只是碰巧（位模式全零）。
+**根因。** v3.1 把 `Value` 的整数槽改成 64 位时，为守住 32 字节宽度契约（`docs/DECFY_DESIGN.md` §2(a)「值表示 + 集合运行时」行）用的是匿名 union：`ival` 与 `fval` **共享存储**。于是所有「只分两种类型」的取值写法 `X.type == VAL_INT ? X.ival : (int)X.fval` 对 `VAL_BOOL` 都会去读 `fval`，读出来的是 `ival` 的位模式。`float(false)`/`float(nil)` 答 0 只是碰巧（位模式全零）。
 
 **六处实测（修复前 → 修复后）。** `sqrt(true)` `2.2227587494850775e-162` → `1`；`float(true)` `4.9406564584124654e-324` → `1`；`gc_auto(true)` `0` → `1`（这一格最重：**静默地把 GC 关掉**）；`atomic_add("k", true)` `0` → `1`；`atomic_set("j", true)` `0` → `1`。
 
@@ -3679,9 +3679,9 @@ CTest **#133**，`PASS_REGULAR_EXPRESSION` 钉整行且两平台**同一行**（
 计数 132 → **133**。
 
 同批**只登记、不动代码**的三处同形实例（`gui_fullscreen` 重名且一条不可达、`rand` 有文档
-有示例但零注册、`docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」对 `random` 不成立），以及
+有示例但**POSIX 侧零注册、Windows 侧有**（见 [builtin-platform-census.md](streams/builtin-platform-census.md) §4）、`docs/SYNTAX.md` §5（写下时 `:500`）的「有 `vtest` 覆盖」对 `random` 不成立），以及
 `docs/API.md:234` **早就记下 `gui_fullscreen` 重复却只当成计数问题**这一点，
-见 [AUDIT.md](AUDIT.md) §1.53。`docs/SYNTAX.md:500` 已就地更正（`rand` 移出名单）。
+见 [AUDIT.md](AUDIT.md) §1.53。`docs/SYNTAX.md` §5（写下时 `:500`）已就地更正（`rand` 移出名单）。
 
 ## §10.83 数组池唯一的门不能拒绝一个下标，所以它后面八个 `if (!a)` 都是死代码
 
@@ -3964,7 +3964,7 @@ disagrees with its own table`、rc=1；两次都从 `/tmp` 备份精确恢复 �
 
 **A/B**：新增 CTest **`#140 substr_boundary_runtime`**（`vtest/substr_boundary_v06.im`，三个长度跨边界：`2147483642` / `2147483643` / `2147483647`，另钉 `start > sl`、负 `start`、负 `len`、`len=0` 各一行）。修复版 **100% passed**；换回 `start + len > sl` 重建 ⇒ **`0% tests passed, 1 tests failed`** 且手工跑 **rc=139**，恢复后复绿。
 
-**为什么活到今天**：`docs/SYNTAX.md:500` 把它列进「核心高频内建（有 vtest 覆盖的）」，而实际只有**一条 happy path**（`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5)`）；边界一个都没有 —— 分母从来没被问过。
+**为什么活到今天**：`docs/SYNTAX.md` §5（写下时 `:500`）把它列进「核心高频内建（有 vtest 覆盖的）」，而实际只有**一条 happy path**（`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5)`）；边界一个都没有 —— 分母从来没被问过。
 
 ### ② 数值字面量也走全套解析器 ⇒ Windows 上 `socket_probe` 撞 10 s 上限
 
