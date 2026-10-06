@@ -23,11 +23,17 @@ jobs:
           # red; it cannot rot into a green run that checked nothing.
           #
           # Stages of the gate that are NOT here, and what each one needs:
-          #   build ctest fuzz node plugin oauth-loop   a compiled engine
-          #   economy                                   INIMERSE_BIN, same thing
-          #   release-tags                              git tags, which a
-          #                                             depth-1 checkout has
-          #                                             none of
+          #   build ctest fuzz plugin oauth-loop         a compiled engine
+          #   economy                                    INIMERSE_BIN, same thing
+          #   node                                       jsdom, installed OUTSIDE
+          #                                              the repo; a missing one
+          #                                              makes the panels suite
+          #                                              skip, and a skip is not
+          #                                              a pass -- measured, see
+          #                                              tools/gate.sh's own hint
+          #   release-tags                               git tags, which a
+          #                                              depth-1 checkout has
+          #                                              none of
           # run: the gate
           for stage in ignored-credentials links doc-paths text-integrity \
                        orphan-fixtures orphan-targets line-refs; do
