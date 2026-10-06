@@ -57,8 +57,18 @@ Three honest boundaries.
     `v0.5.2` -> `0ebd68d` ... 前者在 tag 被移动后失效" -- the document followed
     the move -- and the list version printed "the tag moved and the document
     did not".  The same guard as `tools/check_orphan_targets.py`'s ALLOWED
-    applies -- **a rule that exempts no recollection is reported**, because an
-    allowance that excuses nothing is a sentence no run can falsify.
+    applies, one class at a time -- **every exemption class must exempt at
+    least one binding in this tree, or it is reported**.  An unused licence is
+    not the same thing as a blind sweep: an input *form* with no member is a
+    failure (`tools/check_line_refs.py` reports one that way, because deleting
+    the form would blind the sweep), while an *exemption class* with no member
+    is a mechanism no run can exercise, and this docstring would still read as
+    if it stood guard.  A class that is legitimately empty is deleted, not
+    excused.  This file had a third one, a `>` blockquote, and no binding in
+    `docs/` is written in that form (`git grep -nE '^[[:space:]]*>' -- docs/`
+    finds none), so the branch is gone; a blockquoted binding is now read by
+    the shape rule like any other line, and a blockquote of another document
+    carries the `docs/...` path and the verb that make it a quotation.
 
 Negative evidence (these are re-runnable experiments, not claims).  All of
 them run against a COPY under --docs-root, never against docs/ itself:
@@ -111,10 +121,17 @@ OTHER_DOC = re.compile(r"`docs/[^`]+`")
 # stopped matching bindings at all.
 EXP_TAG_BINDINGS = int(os.environ.get("EXP_TAG_BINDINGS", "2"))
 
-# The exemption rule has to exempt something, or it is a sentence no run can
+# The exemption rules have to exempt something, or they are sentences no run can
 # falsify.  This is the same guard the deleted file list had, moved onto the
-# rule that replaced it.  A floor, not a target.
-EXP_TAG_RECOLLECTIONS = int(os.environ.get("EXP_TAG_RECOLLECTIONS", "1"))
+# rules that replaced it -- and it is per class, because one floor on one class
+# leaves the other classes free to be dead.  A floor per class, not a target.
+EXP_TAG_EXEMPTION_CLASSES = tuple(
+    c
+    for c in os.environ.get(
+        "EXP_TAG_EXEMPTION_CLASSES", "fenced block,quotation,recollection"
+    ).split(",")
+    if c
+)
 
 TAG_NAME = re.compile(r"^v(\d+)\.(\d+)\.(\d+)")
 # No `.` in the trailing class: `v0.5.0..5868940` is a range expression, and a
@@ -123,7 +140,6 @@ TAG_REF = re.compile(r"v(\d+)\.(\d+)\.(\d+)[A-Za-z0-9\-]*")
 BACKTICKED = re.compile(r"`([^`\n]*)`")
 BINDING = re.compile(r"`(v[0-9][^`\s]*)`[ \t]*(?:→|->|=)[ \t]*`([0-9a-f]{7,40})`")
 FENCE = re.compile(r"^\s*(?:```|~~~)")
-QUOTE = re.compile(r"^\s*>")
 # A tag reference starts the quoted text or follows a quote character.  A
 # version number that follows a bare space inside a phrase belongs to the
 # phrase: `Release v0.3.0` is a commit message and `oauth_loop v0.1.0` is a
@@ -231,7 +247,6 @@ def main():
             if FENCE.match(line):
                 in_fence = True if not in_fence else False
                 continue
-            quoted = bool(QUOTE.match(line))
 
             for span in BACKTICKED.findall(line):
                 for m in refs_in(span):
@@ -250,18 +265,22 @@ def main():
                     continue
                 if in_fence:
                     excluded.append((rel, lineno, name, sha, "fenced block"))
-                elif quoted:
-                    excluded.append((rel, lineno, name, sha, "blockquote"))
                 else:
                     why = recollection(line, lines, lineno)
                     if why:
                         excluded.append((rel, lineno, name, sha, why))
-                        excused_by[why] = excused_by.get(why, 0) + 1
                     else:
                         checked.append((rel, lineno, name, sha))
 
+    # Counted from what was actually exempted, not incremented at the branch
+    # that exempted it: a class can be reached from more than one place, and a
+    # count that only sees one of them is a count that can be zero while the
+    # class is doing its job.
+    excused_by = {}
+    for _rel, _lineno, _name, _sha, why in excluded:
+        excused_by[why] = excused_by.get(why, 0) + 1
+
     wrong = [c for c in checked if c[3] != known[c[2]]]
-    recollections = excused_by.get("recollection", 0)
 
     print(
         "check_release_tags: %d tag(s) in the namespace (major(s) %s); "
@@ -300,14 +319,25 @@ def main():
             % (rel, lineno, name, sha, name, known[name])
         )
     failed = bool(missing_tags or wrong)
-    if recollections < EXP_TAG_RECOLLECTIONS:
-        print(
-            "check_release_tags: only %d recollection(s) were exempted, below "
-            "EXP_TAG_RECOLLECTIONS=%d -- an exemption rule that exempts nothing "
-            "is green and asserts nothing"
-            % (recollections, EXP_TAG_RECOLLECTIONS)
-        )
-        failed = True
+    for klass in EXP_TAG_EXEMPTION_CLASSES:
+        if excused_by.get(klass, 0) == 0:
+            print(
+                "check_release_tags: the %s exemption class exempted no binding "
+                "in this tree, and EXP_TAG_EXEMPTION_CLASSES still lists it -- a "
+                "class no run can exercise is a rule that stands guard in the "
+                "docstring only.  Delete the class, or find what it should have "
+                "caught." % klass
+            )
+            failed = True
+    for klass in sorted(excused_by):
+        if klass not in EXP_TAG_EXEMPTION_CLASSES:
+            print(
+                "check_release_tags: the %s exemption class exempted %d binding(s) "
+                "and EXP_TAG_EXEMPTION_CLASSES does not list it -- an exemption "
+                "nobody declared is one nobody decided on."
+                % (klass, excused_by[klass])
+            )
+            failed = True
     if len(checked) < EXP_TAG_BINDINGS:
         print(
             "check_release_tags: only %d binding(s) were checked, below "

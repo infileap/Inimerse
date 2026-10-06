@@ -7,8 +7,10 @@
                         different offsets (+43 +34 +15 +34 +23 +14 +11 +11)
                         and again by +67.  There is no uniform offset, so
                         "add N" is not a repair; only re-taking by content is.
-    tools/gate.sh    -- same shape, and the file itself grew by 35 lines in
-                        one merge, invalidating 13 references to it at once.
+    tools/gate.sh    -- same shape, and the file itself grew by 195 lines
+                        (850 -> 1045) while the 14th and 15th gate stages and
+                        the --required-for closure were written, invalidating
+                        29 references to it at once.
 
 `tools/gate.sh`'s own numbers are held by the push-stage table and by
 `--required-for`.  `CMakeLists.txt`'s numbers were held by nothing.
@@ -54,8 +56,8 @@ The gate stage asserts DENOMINATORS, not anchor rates:
   - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
     shrink while nobody is looking;
   - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: 521 is a known
-    quantity today, and 527 tomorrow is an unannounced regression.
+    cannot grow while nobody is looking.  This is the tooth: 530 is a known
+    quantity today, and 536 tomorrow is an unannounced regression.
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
@@ -70,14 +72,19 @@ the claim and the artifact travel together:
     not a slip: the number and its description move together or not at all,
     so a change to that row and a re-measurement are one action.  A merge of
     main moves them without anyone touching the row -- 694 -> 720 in one merge
-    -- so the pin is a reading of a moving set, not a constant.
+    -- so the pin is a reading of a moving set, not a constant.  "Nobody
+    touched this line" is not a reason for "this number did not move": the
+    number is derived from the content of the whole tree.
   - only a file git tracks can hold a number.  The working tree also holds
     build output, and a verdict that changes depending on whether someone has
     run a build is not a verdict about the repository: on one commit this read
     520 held / 515 unanchored with build/ present and 514 / 521 in a checkout
     of the same commit, so six numbers were held by an artifact the clone does
     not have.  check_links.py was fixed for the same defect when it walked the
-    directory instead of asking git (docs/AUDIT.md 1.66).
+    directory instead of asking git (docs/AUDIT.md 1.66).  tracked() closed it
+    here: a clean checkout of 8bfe8a2 reads the same 523 held / 530 unanchored
+    as the tree it was cloned from, because a number can only be held by a path
+    git lists.
   - "has an anchor" is not "the number is right".  The rule is "some quoted
     text on the citing line sits at line N of a file that line names", so a
     match proves the number is HELD by content, not that it points at the
@@ -105,11 +112,75 @@ the claim and the artifact travel together:
     file names, several numbers and several quoted spans, and neither
     proximity rule can tell which belongs to which.
 
+The pin was taken at 56bf4c5 (720 / 521) and this branch's own six commits
+after it -- acdaf5f, 754d5ff, b92e7d1, e43c1cb, 34499bf, 6de3d9a -- moved
+NEITHER number: 6de3d9a reads 720 / 521, exactly what 56bf4c5 read.  A pin does
+not expire because its author kept working.  It expired in the MERGE, and the
+account of that merge is what makes re-taking it different from resetting it
+to today's reading:
+
+    commit    what it is                    explicit  held  unanchored
+    56bf4c5   where the pin was taken       720       514   521
+    6de3d9a   this branch's tip, pre-merge  720       514   521
+    9969e5b   main at the merge             730       543   506
+    8bfe8a2   the merge                     734       523   530
+
+  - the delta 720 -> 734 is +14, and it is not this branch's work: +4 are this
+    branch's own four spelling examples on docs/BOARD.md's line-refs row (main
+    does not have that row, so relative to main they are new; relative to this
+    branch they are as old as the pin), and +10 are main's later documentation
+    commits, which this branch had never seen (docs/BOARD.md +9,
+    docs/DECFY_DESIGN.md +1).  No number was re-taken to reach 734.
+  - the delta 521 -> 530 is +9, and those are the same main-side references
+    read against this branch's tools/gate.sh: 9 of main's 10 new references
+    were written for main's 850-line file and have nothing holding them in
+    this branch's 1045-line one.
+  - per file, unanchored (main / this branch / merged): docs/AUDIT.md 119 /
+    139 / 139, docs/BOARD.md 197 / 193 / 198, docs/DECFY_DESIGN.md 71 / 68 /
+    72, docs/STATUS.md 93 / 95 / 95.  docs/AUDIT.md's +20 is the whole point:
+    this branch never edited that file -- it edited the file that file cites.
+  - the same merge seen from main's side instead of this branch's: base
+    9969e5b 1049 references / 506 unanchored -> merged 1053 / 530.  30
+    references that had an anchor lost it, 10 gained one by coincidence, and 4
+    are new.  Of the 30, 29 point into tools/gate.sh and 1 into docs/BOARD.md.
+  - the 10 that gained an anchor are coincidence, not repair: 6 are held by
+    text that happens to sit at that number now (tools/gate.sh and
+    docs/BOARD.md both moved), and 4 are held by the note added at
+    CMakeLists.txt:1044-1047, which quotes the very lines two of them cite.
+    A gained anchor is not evidence that the number is right.
+  - the 30 are listed, not silently re-taken.  Which stage inserted the lines:
+    tools/gate.sh grew 850 -> 1045 across c19709b (+34/-3, the 14th stage),
+    29d9459 (+40/-3, the 15th stage) and 50134e1 (+21/-7, the --required-for
+    closure); e3e84fe and 56bf4c5 did not move it.  docs/BOARD.md grew by 2
+    from its 61st line (two stage rows).  The list, as (file:line  :number
+    owner):
+
+    docs/AUDIT.md (24):  :3359 :54 gate.sh, :3375 :92 gate.sh x2,
+      :2476 :148 gate.sh, :3373 :148 gate.sh, :3375 :148 gate.sh,
+      :2476 :168 gate.sh, :3373 :168 gate.sh, :3375 :168 gate.sh,
+      :3337 :356 gate.sh, :3373 :364 check_async_commands.py,
+      :3375 :364 gate.sh, :3359 :375 gate.sh, :3359 :424 gate.sh,
+      :3373 :424 check_async_commands.py, :3375 :463 gate.sh,
+      :3026 :474 check_orphan_fixtures.py, :3375 :474 gate.sh,
+      :3359 :625 gate.sh, :3509 :675 gate.sh, :3376 :676 CMakeLists.txt,
+      :3559 :766 gate.sh, :3368 :768 gate.sh x2
+    docs/BOARD.md (3):  :116 :16 gate.sh, :126 :210 src/compilation/aot_native.c,
+      :277 :560 src/runtime/runtime.c
+    docs/STATUS.md (2):  :2574 :69 docs/BOARD.md, :1096 :159 gate.sh
+    docs/DECFY_DESIGN.md (1):  :320 :513 gate.sh
+
+  - why accepted rather than repaired here: two of those files are not this
+    branch's to edit (docs/AUDIT.md is the coordinator's, docs/DECFY_DESIGN.md
+    is agent4's), and substituting a fresh number is the repair
+    docs/SYNTAX.md H4 forbids.  So the pin is re-taken WITH this account, and
+    the list is handed to the files' owners.  Re-taking it silently is what
+    this note exists to make impossible.
+
 Negative control -- redo it, and note that the first version was worthless:
 
     sed -i '426s|.*|# NEGATIVE CONTROL line|' CMakeLists.txt
     python3 tools/check_line_refs.py
-        held 514 -> 508, unanchored 521 -> 527 -- six references move, and the
+        held 523 -> 517, unanchored 530 -> 536 -- six references move, and the
         stage goes red on the ceiling, not on a rate
     git checkout -- CMakeLists.txt
 
@@ -122,6 +193,29 @@ replacement text still contained the string being tested, so the mutation
 landed in the file and not in the thing under test.  Confirming that an edit
 landed is necessary, not sufficient -- confirm it landed in the measured
 object.
+
+The control this pin exists for is on the MERGE, not on a line: a
+tools/gate.sh:<N> reference goes from green to red when that file's content
+moves underneath it, and nothing on the citing side changes.
+
+    cp tools/gate.sh .scratch/gate.sh.bak
+    python3 tools/check_line_refs.py --report | grep ':54 (tools/gate.sh)'
+        docs/AUDIT.md:3359  :54 (tools/gate.sh) cited at line 3359:
+        'BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"'      -- red
+    git show 9969e5b:tools/gate.sh > tools/gate.sh        # the pre-merge file
+    git diff --numstat -- tools/gate.sh                   # 32 227: it landed
+    python3 tools/check_line_refs.py --report | grep -c ':54 (tools/gate.sh)'
+        0 -- the reference is gone from the report        -- green
+    python3 tools/check_line_refs.py
+        held 523 -> 546, unanchored 530 -> 507            -- under the ceiling
+    cp .scratch/gate.sh.bak tools/gate.sh
+
+docs/AUDIT.md:3359 quotes `BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"`, points
+at `:54`, and records the commit it measured on ("全部在 `4ca013d` 上量").
+The number moved anyway: tools/gate.sh:54 is that line on 9969e5b, and
+`#                              asked, and the bracket is where that shows.`
+on 8bfe8a2.  Recording an observation basis does not hold a number; only an
+anchor does.  That is this file's whole argument in one line.
 
 Usage:
     python3 tools/check_line_refs.py             assert the pins; exit 1 if a
@@ -145,14 +239,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # because of its name.
 TARGETS = {
     "CMakeLists.txt": "moved eight times by eight offsets; cited throughout docs/",
-    "tools/gate.sh": "grew by 35 lines in one merge, invalidating 13 citations",
+    "tools/gate.sh": "grew by 195 lines in one merge, invalidating 29 citations",
 }
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "720"))
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "734"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "521")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "530")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
