@@ -1,0 +1,65 @@
+# .range answers a question about the VALUE.  Before this change it answered two
+# different questions depending on how the source text spelled the object: for a
+# bare identifier it returned the set the variable was DECLARED with, and for
+# every other expression it inferred a set from the value itself:
+#
+#     type Byte = [0~255]
+#     x: Byte = 42
+#     arr = [x]
+#     func id(a) { return a }
+#
+#     x.range        -> set(R interval)    300 in x.range        -> false
+#     arr[0].range   -> set(Z interval)    300 in arr[0].range   -> true
+#     id(x).range    -> set(Z interval)    300 in id(x).range    -> true
+#
+# arr[0] IS x IS 42, so those are two answers about one value, and which one you
+# got depended on where you wrote the value rather than on what it was.  T2
+# makes .range syntax-independent (value inference only) and moves the
+# declaration question to a new member, .declared, which is nil when the object
+# has no declaration to report.
+#
+# The red control for this change is the TREE, not the value: on the pre-T2 tree
+# the syntax paths DISAGREE and this test fails; on this tree they agree.  The
+# two paths are asserted to be equal here, which is the conclusion T2 delivers --
+# it is deliberately NOT used as the premise of the change.
+#
+# What T2 does NOT do: value inference for an integer still answers the whole
+# domain Z rather than narrowing to the value (`42.range` is Z, not Z[42~42]).
+# This change unifies which question is asked; it does not make the answer
+# finer.  A narrowing inference would be a separate ruling.
+#
+# See docs/SYNTAX.md, docs/AUDIT.md.
+bad = 0
+
+type Byte = [0~255]
+x: Byte = 42
+y = 42
+z = 3.14
+s = 1, 2, 3
+arr = [x]
+func id(a) { return a }
+
+# --- the two syntax paths must agree about the same value ---
+if !(str(x.range) == str(arr[0].range)) { bad = 1; say "agreebad-arr" }
+if !(str(x.range) == str(id(x).range)) { bad = 1; say "agreebad-call" }
+if !((300 in x.range) == (300 in arr[0].range)) { bad = 1; say "agreebad-in-arr" }
+if !((300 in x.range) == (300 in id(x).range)) { bad = 1; say "agreebad-in-call" }
+
+# --- .range is now the value answer: an integer is Z, a float is R, a set is itself ---
+if !(str(x.range) == str(y.range)) { bad = 1; say "valuebad-int" }
+if !(300 in x.range) { bad = 1; say "valuebad-z" }
+if !(str(z.range) == str((3.14).range)) { bad = 1; say "valuebad-float" }
+if !(str(s.range) == str(s)) { bad = 1; say "valuebad-set" }
+
+# --- .declared is the declaration answer, and nil when there is no declaration ---
+if !(42 in x.declared) { bad = 1; say "declbad-in" }
+if 300 in x.declared { bad = 1; say "declbad-out" }
+if !(str(y.declared) == "nil") { bad = 1; say "declbad-y" }
+if !(str(arr[0].declared) == "nil") { bad = 1; say "declbad-arr" }
+if !(str(id(x).declared) == "nil") { bad = 1; say "declbad-call" }
+
+# --- .declared is not the same question as .range: 300 is in one and not the other ---
+if !(300 in x.range) { bad = 1; say "splitbad-range" }
+if 300 in x.declared { bad = 1; say "splitbad-declared" }
+
+say "xrange-ok bad=" + str(bad) + " x.range=" + str(x.range) + " arr0.range=" + str(arr[0].range) + " id.range=" + str(id(x).range) + " y.range=" + str(y.range) + " z.range=" + str(z.range) + " s.range=" + str(s.range) + " x.declared=" + str(x.declared) + " y.declared=" + str(y.declared) + " arr0.declared=" + str(arr[0].declared) + " 300in.range=" + str(300 in x.range) + " 300in.declared=" + str(300 in x.declared) + " 42in.declared=" + str(42 in x.declared)

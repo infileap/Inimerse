@@ -1073,23 +1073,18 @@ static int builtin_match(VM *vm) {
     return 1;
 }
 
+/* .range answers about the VALUE, never about how the object was spelled (T2).
+   It used to take a second argument -- the global slot of a bare identifier --
+   and prefer that variable's declared bound set, which made `x.range` and
+   `arr[0].range` two answers about one value.  That question now lives in
+   builtin_declared below, and this call takes only the value, so there is no
+   longer any way for two spellings of one value to get two answers. */
 static int builtin_range(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
-    /* Copy both arguments before pop(): the stack slots may be released or
-       reused while the builtin constructs the result set. */
-    Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    Value v = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
-    int gidx = (gi.type == VAL_INT) ? gi.ival : -1;
-    pop(vm); pop(vm);
-    /* bound global: return its declared bound set */
-    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
-        int bidx = vm->global_bound[gidx] - 1;
-        if (bidx >= 0 && bidx < vm->setCount) {
-            Value sv; sv.type = VAL_SET; sv.ival = bidx;  sv.sval = NULL;
-            { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
-            return 1;
-        }
-    }
+    /* Copy before pop(): the stack slot may be released or reused while the
+       builtin constructs the result set. */
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    pop(vm);
     if (v.type == VAL_SET) {
         Value sv = v;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
@@ -1116,6 +1111,32 @@ static int builtin_range(VM *vm) {
         Value sv; sv.type = VAL_SET; sv.ival = sidx;  sv.sval = NULL;
             { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
         return 1;
+    }
+    push_nil(vm);
+    return 1;
+}
+
+/* declared(value, gidx) -- the set the object was DECLARED with, or nil.
+   This is the question .range used to answer for a bare identifier, split out
+   so that .range could stop depending on syntax.  It stays syntax-dependent on
+   purpose: a declaration is a property of a NAME, not of a value, so the
+   compiler passes the global slot only when the object is written as a bare
+   identifier and -1 otherwise -- which is how "there is no declaration to
+   report" reaches here, and why `arr[0].declared` is nil rather than an error.
+   The slot indexes vm->global_bound, the same array the OP_BIND write-back
+   check reads at src/vm/vm.c L_STORE_GLOBAL; this builtin only reads it. */
+static int builtin_declared(VM *vm) {
+    if (vm_cur_sp(vm) < 2) { push_nil(vm); return 1; }
+    Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int gidx = (gi.type == VAL_INT) ? gi.ival : -1;
+    pop(vm); pop(vm);
+    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
+        int bidx = vm->global_bound[gidx] - 1;
+        if (bidx >= 0 && bidx < vm->setCount) {
+            Value sv; sv.type = VAL_SET; sv.ival = bidx;  sv.sval = NULL;
+            { int _sp = vm_cur_sp(vm); vm_cur_stack(vm)[_sp + 1] = sv; vm_cur_set_sp(vm, _sp + 1); }
+            return 1;
+        }
     }
     push_nil(vm);
     return 1;
@@ -1879,6 +1900,10 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "usage", builtin_usage);
     vm_register_builtin(vm, "match", builtin_match);
     vm_register_builtin(vm, "range", builtin_range);
+    /* T2: the declaration question, split off .range so .range could stop
+       reading syntax.  Registered next to range because they are a pair and a
+       reader looking for one should find the other. */
+    vm_register_builtin(vm, "declared", builtin_declared);
     vm_register_builtin_full(vm, "load_params", builtin_load_params, 1|CAP_IO, 0);
     vm_register_builtin_full(vm, "save_params", builtin_save_params, 1|CAP_IO, 0);
     vm_register_builtin(vm, "list_params", builtin_list_params);

@@ -247,23 +247,21 @@ static int posix_core_type(VM *vm) {
 /* Keep the POSIX runtime's .range behavior aligned with the host runtime.
  * The compiler passes both the value and the global index so a bound global
  * can expose its declared set instead of a broad inferred numeric range. */
+/* .range answers about the VALUE, never about how the object was spelled (T2).
+   It used to take a second argument -- the global slot of a bare identifier --
+   and prefer that variable's declared bound set, which made `x.range` and
+   `arr[0].range` two answers about one value.  That question now lives in
+   posix_core_declared below, and this call takes only the value, so there is no
+   longer any way for two spellings of one value to get two answers.
+   This is the POSIX half; src/runtime/runtime.c carries the Windows half and
+   the two must keep answering identically -- that is what the fixture
+   vtest/xrange_t2_v06.im pins, and a difference between the halves is a defect
+   even when each half is self-consistent. */
 static int posix_core_range(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
-    Value v = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
-    Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    int gidx = gi.type == VAL_INT ? (int)gi.ival : -1;
-    pop(vm);
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
     pop(vm);
 
-    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
-        int bidx = vm->global_bound[gidx] - 1;
-        if (bidx >= 0 && bidx < vm->setCount) {
-            Value out = { .type = VAL_SET, .ival = bidx, .sval = NULL };
-            vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
-            vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
-            return 1;
-        }
-    }
     if (v.type == VAL_SET && v.ival >= 0 && v.ival < vm->setCount) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = v;
@@ -285,6 +283,35 @@ static int posix_core_range(VM *vm) {
         vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
         vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
         return 1;
+    }
+    push_nil(vm);
+    return 1;
+}
+
+/* declared(value, gidx) -- the set the object was DECLARED with, or nil.
+   This is the question .range used to answer for a bare identifier, split out
+   so that .range could stop depending on syntax.  It stays syntax-dependent on
+   purpose: a declaration is a property of a NAME, not of a value, so the
+   compiler passes the global slot only when the object is written as a bare
+   identifier and -1 otherwise -- which is how "there is no declaration to
+   report" reaches here, and why `arr[0].declared` is nil rather than an error.
+   POSIX half of src/runtime/runtime.c's builtin_declared; see that function for
+   why the slot indexes vm->global_bound and why this only ever reads it. */
+static int posix_core_declared(VM *vm) {
+    if (vm_cur_sp(vm) < 2) { push_nil(vm); return 1; }
+    Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    int gidx = gi.type == VAL_INT ? (int)gi.ival : -1;
+    pop(vm);
+    pop(vm);
+
+    if (gidx >= 0 && gidx < vm->global_bound_cap && vm->global_bound[gidx] > 0) {
+        int bidx = vm->global_bound[gidx] - 1;
+        if (bidx >= 0 && bidx < vm->setCount) {
+            Value out = { .type = VAL_SET, .ival = bidx, .sval = NULL };
+            vm_cur_set_sp(vm, vm_cur_sp(vm) + 1);
+            vm_cur_stack(vm)[vm_cur_sp(vm)] = out;
+            return 1;
+        }
     }
     push_nil(vm);
     return 1;
@@ -1205,6 +1232,10 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "args", posix_core_args);
     vm_register_builtin(vm, "type", posix_core_type);
     vm_register_builtin(vm, "range", posix_core_range);
+    /* T2: the declaration question, split off .range so .range could stop
+       reading syntax.  Registered next to range because they are a pair and a
+       reader looking for one should find the other. */
+    vm_register_builtin(vm, "declared", posix_core_declared);
     vm_register_builtin(vm, "list", posix_core_list);
     vm_register_builtin(vm, "sum", posix_core_sum);
     vm_register_builtin(vm, "push", posix_core_push);
