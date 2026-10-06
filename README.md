@@ -4,7 +4,7 @@ Inimerse is the scripting engine and Infiverse is its Tauri desktop client.
 
 > **状态、路线图与版本裁定**：[docs/STATUS.md](docs/STATUS.md) —— 唯一权威。
 > **语言、API 与平台事实**：[docs/API.md](docs/API.md) —— 唯一权威。
-> 当前发布基线：**0.5.0**（git tag `v0.5.0`）。v0.6 的「已完成」声明已被逐条废止，清单见 [docs/STATUS.md](docs/STATUS.md) §3.2。
+> 当前发布基线：**0.5.2**（git tag `v0.5.2`）。v0.6 的「已完成」声明已被逐条废止，清单见 [docs/STATUS.md](docs/STATUS.md) §3.2。
 
 ## Layout
 
@@ -23,7 +23,7 @@ Inimerse is the scripting engine and Infiverse is its Tauri desktop client.
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4     # expected: 100% tests passed, 0 failed out of 97
+ctest --test-dir build --output-on-failure -j4     # expected: 100% tests passed, 0 failed -- the count is pinned as EXP_CTEST in tools/gate.sh
 ```
 
 Resulting binary: `build/inimerse`. Always use this path rather than any stale copy in the repository root.

@@ -20,7 +20,11 @@ What it checks, for the tags `git tag -l` reports:
      exists;
   2. every release-point binding -- a backticked tag, then an arrow or `=`,
      then a backticked sha, adjacent -- records the sha that
-     `git rev-parse --short '<tag>^{commit}'` gives today.
+     `git rev-parse --short '<tag>^{commit}'` gives today;
+  3. the release baseline the root README states is the newest tag.  That
+     number is a copy, and it read `0.5.0` while `v0.5.2` was the newest tag:
+     a copy nobody compares expires in silence.  The check is here because the
+     sweep below reads docs/ only, and the root README is not under docs/.
 
 The tag names are never written down in this file.  They come from
 `git tag -l`, so the next release adds one without anyone editing this checker,
@@ -140,6 +144,9 @@ TAG_REF = re.compile(r"v(\d+)\.(\d+)\.(\d+)[A-Za-z0-9\-]*")
 BACKTICKED = re.compile(r"`([^`\n]*)`")
 BINDING = re.compile(r"`(v[0-9][^`\s]*)`[ \t]*(?:→|->|=)[ \t]*`([0-9a-f]{7,40})`")
 FENCE = re.compile(r"^\s*(?:```|~~~)")
+# The release baseline the root README states.  A baseline is a copy of the
+# newest tag, and this one read `0.5.0` while `v0.5.2` was the newest tag.
+BASELINE = re.compile(r"当前发布基线：\*\*([0-9]+\.[0-9]+\.[0-9]+)\*\*")
 # A tag reference starts the quoted text or follows a quote character.  A
 # version number that follows a bare space inside a phrase belongs to the
 # phrase: `Release v0.3.0` is a commit message and `oauth_loop v0.1.0` is a
@@ -198,6 +205,19 @@ def docs_markdown(root_override):
     return [(r, ROOT / r) for r in rels]
 
 
+def baseline_claim():
+    """(version, lineno) the root README states as the release baseline."""
+    try:
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for lineno, line in enumerate(text.split("\n"), 1):
+        m = BASELINE.search(line)
+        if m:
+            return m.group(1), lineno
+    return None
+
+
 def recollection(line, lines, lineno):
     """Why this binding is not a claim, or None if it is one.
 
@@ -227,6 +247,12 @@ def main():
 
     known = tags()
     majors = {TAG_NAME.match(n).group(1) for n in known if TAG_NAME.match(n)}
+    versioned = [n for n in known if TAG_NAME.match(n)]
+    newest = (
+        max(versioned, key=lambda n: tuple(int(x) for x in TAG_NAME.match(n).groups()))
+        if versioned
+        else None
+    )
 
     checked = []          # (rel, lineno, tag, sha)
     excluded = []         # (rel, lineno, tag, sha, why)
@@ -318,7 +344,30 @@ def main():
             "exempt, and this line is not written as one"
             % (rel, lineno, name, sha, name, known[name])
         )
-    failed = bool(missing_tags or wrong)
+    # The baseline is a copy of the newest tag, and this is what makes the copy
+    # safe: a number nobody compares is a number that expires in silence.
+    claim = baseline_claim()
+    baseline_failed = False
+    if claim is None:
+        print(
+            "check_release_tags: the root README states no release baseline -- a "
+            "check that can find nothing is green and asserts nothing.  If the "
+            "line was dropped on purpose, drop this assertion in the same commit."
+        )
+        baseline_failed = True
+    else:
+        version, lineno = claim
+        if newest is None or ("v" + version) != newest:
+            print(
+                "check_release_tags: README.md:%d states the release baseline "
+                "`%s`, and the newest tag is `%s`.  A baseline no release moves "
+                "is a number nobody is keeping -- move it in the commit that "
+                "tags, or drop the number and point at `git tag "
+                "--sort=-v:refname | head -1`." % (lineno, version, newest or "none")
+            )
+            baseline_failed = True
+
+    failed = bool(missing_tags or wrong) or baseline_failed
     for klass in EXP_TAG_EXEMPTION_CLASSES:
         if excused_by.get(klass, 0) == 0:
             print(
@@ -350,7 +399,8 @@ def main():
         print("check_release_tags: FAILED")
         return 1
     print(
-        "check_release_tags: every binding agrees with `git rev-parse` today.  "
+        "check_release_tags: every binding agrees with `git rev-parse` today, "
+        "and the root README states the newest tag.  "
         "This says the documents and the tags agree right now; it does not say "
         "the tags point where they were meant to, and it cannot see a tag "
         "that moves after this run."

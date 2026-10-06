@@ -57,8 +57,8 @@ char *inim_load_text(const char *path);
 
 #endif /* COMMON_H */
 /* The release build injects this from CMake/CPack so CLI and package versions
- * cannot drift. Keep a source-tree fallback for non-CMake consumers. */
+ * cannot drift. A source tree cannot know a release number: the fallback does not claim one -- it said 0.5.0 while the release line was 0.5.2. */
 #ifndef INIMERSE_VERSION_STRING
-#define INIMERSE_VERSION_STRING "0.5.0"
+#define INIMERSE_VERSION_STRING "0.0.0-unknown"
 #endif
 #define INFIVERSE_VERSION INIMERSE_VERSION_STRING

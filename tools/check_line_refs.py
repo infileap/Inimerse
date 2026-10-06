@@ -340,7 +340,12 @@ TARGETS = {
 # references got worse" from "the base is old".  Re-taking the pins is moving
 # the base, in a commit that says so; nothing else may move it.
 EXP_LINE_REFS_BASE = os.environ.get("EXP_LINE_REFS_BASE", "8c75f3116e491ddd9e1ccfe233518f002bc82416")
-EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "0"))
+# -1, and the reason is a reading: this branch REMOVED one explicit-form
+# reference -- docs/STATUS.md 51 carried `tools/gate.sh:54`, a line number
+# that had stopped pointing at the constant it named -- and a removal is a
+# change the pin has to be told about in the same commit that makes it.
+# A reference removed is not a reference gained.
+EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "-1"))
 # +1, not 0, and the reason is a reading rather than a mood.  docs/BOARD.md's
 # line-refs row carries `:241 (CMakeLists.txt)`, and what held that number was
 # the fragment `docs/` -- which sat on line 241 of tools/check_line_refs.py,
