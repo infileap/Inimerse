@@ -1100,7 +1100,7 @@ MSVC 没有这个内建函数而手写 `LLONG_MAX`/`LLONG_MIN` 边界；溢出�
 `atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807`；
 FAIL 正则 `set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 `
 **已双向验证**（`grep -Ec`：修复前 1、修复后 0）。溢出那半边用 `try { … } catch (err) { … }`
-（`docs/SYNTAX.md:339-340`）接住错误，`str(err)` 得到错误种类名 `numeric_overflow` —— 这样测试仍然只断言
+（`docs/SYNTAX.md` §4.4 错误处理，写下时 `:339-340`）接住错误，`str(err)` 得到错误种类名 `numeric_overflow` —— 这样测试仍然只断言
 **值**，不依赖退出码，也就不需要 `WILL_FAIL` 记账项。`keep1` / `keep2` 两格钉的是「被拒绝的加法不改槽」。
 
 **诚实边界。**
@@ -2122,8 +2122,8 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 | 实例 | 两份说法 | 为什么本轮不动 |
 |---|---|---|
 | `gui_fullscreen` | `src/mod/gui_mod.c:3690` 注册 `builtin_gui_fullscreen`（`:1661`，用 `SetWindowLongA` 去掉 `WS_CAPTION | WS_THICKFRAME`，**要求实参**）；`:3697` 注册 `builtin_fullscreen`（`:1730`，用 `SetWindowLongPtr` + `WS_POPUP | WS_VISIBLE`、保存 `G.restoreStyle`、**支持无参切换**）。两行在同一个 `gui_mod_register` 里相隔 **7** 行。先注册者胜 ⇒ **`builtin_fullscreen` 不可达**。**注意复核方式**：本节写下这条时，`src/mod/gui_mod.c` 含 5 个 NUL 字节，**普通 `grep` 会把该文件当二进制、只列出 NUL 之前那一行（`:1661`）并把 `binary file matches` 打到 stderr、退出码仍为 0** —— 要拿到 `:3690`／`:3697` 必须 `grep -a`。这些字节已由 §1.55 移除，此后普通 `grep` 即可 | 两个体行为不同，选哪个是人的决定；且 `gui_mod.c` 需要窗口，本机没有可跑的 GUI 断言 |
-| `rand` | `docs/SYNTAX.md:500` 把它列进「核心高频内建（**有 `vtest` 覆盖的**）」；`projects/demo/main.im:60` 的 `rand_int` 调用它。**全 `src/` 零注册**（`grep -rn '"rand"' src/` 无命中） | 加一个 `rand` 内建是**新立一个名字**，不是消除分歧；正确处置是从文档与示例里去掉它，那要改 `projects/`（见下条边界） |
-| `docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」 | 该名单里 `random` 当时**零覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`） | **本轮就地改了**：`rand` 从名单移除，`random` 的覆盖由 §1.52 的 pin 补上 |
+| `rand` | `docs/SYNTAX.md` §5（写下时 `:500`）把它列进「核心高频内建（**有 `vtest` 覆盖的**）」；`projects/demo/main.im:60` 的 `rand_int` 调用它。**POSIX 侧零注册**；**Windows 侧有**（`src/mod/gui_mod.c` 注册 `rand`，自 `8248e08`（2026-08-27）起）—— ⇒ 写下「全 `src/` 零注册」时该命令在当时的树上**就已不成立**（「这个平台上没有」被写成了「任何文件里都没有」；普查见 [builtin-platform-census.md](streams/builtin-platform-census.md) §4） | 加一个 `rand` 内建是**新立一个名字**，不是消除分歧；正确处置是从文档与示例里去掉它，那要改 `projects/`（见下条边界） |
+| `docs/SYNTAX.md` §5（写下时 `:500`）的「有 `vtest` 覆盖」 | 该名单里 `random` 当时**零覆盖**（`grep 'random(' vtest/ tools/ mods/ projects/` 只命中 Python 的 `rng.random()`） | **本轮就地改了**：`rand` 从名单移除，`random` 的覆盖由 §1.52 的 pin 补上 |
 
 **`gui_fullscreen` 的那条登记其实早就存在，只是被当成计数问题。** `docs/API.md:234` 逐字写着
 「`gui_mod` 计数虚高 | 表列 163，源码唯一名 **162**；原因是表内 `gui_fullscreen` 重复出现两次 |
@@ -2143,7 +2143,7 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
    是从 `builtin_insert` 的探测语义与注册顺序读出来的，不是实测。
 2. `grep 'random('` 是**字面**匹配，它证明的是「这四处目录里没有 `random(` 这个字符串」，
    不等于「没有别的方式覆盖 `random`」。
-3. `docs/SYNTAX.md:500` 那张名单我只核了 `random` / `rand` 两个名字，**其余 50 多个没有核**。
+3. `docs/SYNTAX.md` §5（写下时 `:500`）那张名单我只核了 `random` / `rand` 两个名字，**其余 50 多个没有核**。
 4. `projects/demo/main.im` 我**没有改**：它在 POSIX 上跑到第一条 `gui_stage` 就死了
    （`[exception] uncaught: unknown builtin function 'gui_stage'`），`rand` 那条要等 GUI 起来
    才轮得到，所以「示例里这个函数是坏的」我是用 `rand(1, 6)` 单独实测 + 零注册的 grep 得出的，
@@ -2825,7 +2825,7 @@ if (len < 0) len = 0; if (len > sl - start) len = sl - start;
 
 **A/B。** CTest **`#140 substr_boundary_runtime`**（`vtest/substr_boundary_v06.im`）把三个长度放在边界两侧：`2147483642`（无溢出）与 `2147483643` / `2147483647`（溢出）。实测：修复版 **100% tests passed**；把 POSIX 那一行换回 `start + len > sl` 重建 ⇒ **`0% tests passed, 1 tests failed`**，手工跑同一条 ⇒ **rc=139**，`cmp` 恢复后复绿。
 
-**为什么活到今天。** `docs/SYNTAX.md:500` 把 `substr` 列在「核心高频内建（**有 vtest 覆盖的**）」里，而实际覆盖是**一条 happy path**：`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5) == "Hello"`（另一个提到 `substr` 的 `vtest/spi_caps_contract_v06.im:9` 是注释里的「substring」一词）。`len > INT_MAX - start` 没有任何用例靠近过 —— **分母从来没被问过**。
+**为什么活到今天。** `docs/SYNTAX.md` §5（写下时 `:500`）把 `substr` 列在「核心高频内建（**有 vtest 覆盖的**）」里，而实际覆盖是**一条 happy path**：`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5) == "Hello"`（另一个提到 `substr` 的 `vtest/spi_caps_contract_v06.im:9` 是注释里的「substring」一词）。`len > INT_MAX - start` 没有任何用例靠近过 —— **分母从来没被问过**。
 
 **诚实边界。** ①阈值表是 Linux/POSIX 实测；**WIN32 侧只有读码**（`src/runtime/runtime.c` 只在 `CMakeLists.txt:426-429` 的 `if(WIN32)` 分支被编译，Linux 上编不到），那里的溢出相同、且多一个缺 NULL 检查。②探针脚本在 `/tmp/substr_ovf.im`、`/tmp/t.im`，未入库。③修的是**溢出**，不是「超大 `len` 应当被拒绝」—— 后者是语义决定，本轮按「行为对不溢出输入逐字不变」的最小改动做。
 
@@ -4025,7 +4025,7 @@ printf 'say (2147483647 + 1).type\nsay 9007199254740992 + 1\n' > /tmp/prom.im &&
 
 **第十一种（被引方这一侧）**：同一族病在**引用方**与**被引方**两侧各有一份，而被引方这一侧更隐蔽 —— **被引方是照规矩长大的（加内容），漂移是照规矩发生的。** 最刺眼的一处不在文档里，在引擎源码里：`src/vm/vm.c:338` / `:339` 与 `src/vm/vm.h:26` / `:48` 的注释指着 `docs/DECFY_DESIGN.md` 的**空行**。⇒ **一个文件「照规矩长大」不产生任何红。**
 
-**第十二种（一条规矩只写在被引方，管不到引用方）**：`docs/SYNTAX.md:539` 逐字写着「`rand` 从未被任何文件注册（`grep -rn '"rand"' src/` 零命中）」，而**它自己引的那条命令**在 `fa8247e` 上恰好给 **1 条命中**（`src/mod/gui_mod.c:3848`，来自 `8248e08 Release Infiverse 0.2.0`，**早于** 2026-10 那次更正）⇒ **那句话写下的当时就已经不成立，而证伪者住在它旁边、没人去问。** 同一份文档 `:32` 写着「对本文档的引用请引节号，不要引行号」，而**它自己 9 处自违**（§3.1.11 的六行 **6/6 全错**，偏移成对出现 +1/+1、+43/+43、+55/+55 ⇒ 是插入造成的漂移，不是笔误）。⇒ **规矩写在被引方，管不到引用方；证伪者写在被引方，也管不到写下那句话的人。**
+**第十二种（一条规矩只写在被引方，管不到引用方）**：`docs/SYNTAX.md` §5 逐字写着「`rand` 从未被任何文件注册（`grep -rn '"rand"' src/` 零命中）」，而**它自己引的那条命令**在 `fa8247e` 上恰好给 **1 条命中**（`src/mod/gui_mod.c:3848`，来自 `8248e08 Release Infiverse 0.2.0`，**早于** 2026-10 那次更正）⇒ **那句话写下的当时就已经不成立，而证伪者住在它旁边、没人去问。** （**位置按名字给，原号留作记录**：写下时是 `:539`，而 `:539` **只在 `94702e1` 那棵树上是它**，`main @ fb18bd7` 上它在 `:528` —— 本档这一句就是在 `docs/SYNTAX.md` 那个 +11 的窗口里写的，**这是「在窗口里写下的引用」第一个已确认的成员**；窗口由 ivory-ember 的行数中性那一笔关掉。读数：`git show <你读的那棵树>:docs/SYNTAX.md | sed -n '528p'`。） 同一份文档 `:32` 写着「对本文档的引用请引节号，不要引行号」，而**它自己 9 处自违**（§3.1.11 的六行 **6/6 全错**，偏移成对出现 +1/+1、+43/+43、+55/+55 ⇒ 是插入造成的漂移，不是笔误）。⇒ **规矩写在被引方，管不到引用方；证伪者写在被引方，也管不到写下那句话的人。**
 
 **分类学①（锚可以住在别的文件里）**：**「一个引用有没有锚」与「它点名的文件有没有动」是两件事。** 实测（agent2，`c3ea2b6`）：`docs/BOARD.md` 里那 2 条写的是 `tools/gate.sh` 的号，而 `hits = ['src/compiler/compiler.c']` —— **托住它们的是同一行提到的另一个文件**，它们点名的那个文件甚至没有那么多行。⇒ 与 I 段（按形状定的规矩、按文件列的豁免）同族，两个面。
 
