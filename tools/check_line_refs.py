@@ -56,8 +56,8 @@ The gate stage asserts DENOMINATORS, not anchor rates:
   - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
     shrink while nobody is looking;
   - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: 530 is a known
-    quantity today, and 536 tomorrow is an unannounced regression.
+    cannot grow while nobody is looking.  This is the tooth: 548 is a known
+    quantity today, and 554 tomorrow is an unannounced regression.
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
@@ -123,7 +123,9 @@ to today's reading:
     56bf4c5   where the pin was taken       720       514   521
     6de3d9a   this branch's tip, pre-merge  720       514   521
     9969e5b   main at the merge             730       543   506
-    8bfe8a2   the merge                     734       523   530
+    8bfe8a2   the first merge               734       523   530
+    cfcb19e   tip before the T2 merge       734       541   530
+    807e0e4   the T2 merge                  750       543   548
 
   - the delta 720 -> 734 is +14, and it is not this branch's work: +4 are this
     branch's own four spelling examples on docs/BOARD.md's line-refs row (main
@@ -140,6 +142,24 @@ to today's reading:
     72, docs/STATUS.md 93 / 95 / 95.  docs/AUDIT.md's +20 is the whole point:
     this branch never edited that file -- it edited the file that file cites.
   - the same merge seen from main's side instead of this branch's: base
+  - The T2 merge (`cfcb19e` -> `807e0e4`, main = `fa8247e`) is a second and
+    independent shift, and it moved the *other* file: `CMakeLists.txt` grew by 17
+    lines (an insert near line 1357, `add_test(NAME xrange_t2_runtime ...)`) while
+    `tools/gate.sh` changed one line and **kept its line count**.  explicit
+    734 -> 749 and unanchored 530 -> 550 from that merge alone; +15 explicit arrive
+    with T2 (13 in `docs/BOARD.md`, 2 in the new `docs/streams/win-source-attribution.md`),
+    and +20 unanchored split by target into 18 into `CMakeLists.txt` and 2 into
+    `tools/gate.sh`.  Those 2 are the instructive ones: they were held before T2 not
+    by the file they name -- both numbers are past its end -- but by
+    `src/compiler/compiler.c`, named on the same line, which T2 edited.  So "does this
+    reference have an anchor" and "did the file it names move" are two different
+    questions, and the three causes (gate.sh shift / CMakeLists shift / anchor living
+    elsewhere) are told apart by reading `hits`, not by diffing.  Writing this
+    paragraph then moved the count again by itself: explicit +1, because a file name
+    immediately followed by a number (`docs/TYPESET_V06.md` +1) is read as a citation,
+    and unanchored -2, because the fragments it quotes hold two numbers on that row
+    that nothing held before -- which is why the pins below were taken after the
+    prose, not before it.
     9969e5b 1049 references / 506 unanchored -> merged 1053 / 530.  30
     references that had an anchor lost it, 10 gained one by coincidence, and 4
     are new.  Of the 30, 29 point into tools/gate.sh and 1 into docs/BOARD.md.
@@ -180,7 +200,7 @@ Negative control -- redo it, and note that the first version was worthless:
 
     sed -i '426s|.*|# NEGATIVE CONTROL line|' CMakeLists.txt
     python3 tools/check_line_refs.py
-        held 523 -> 517, unanchored 530 -> 536 -- six references move, and the
+        held 543 -> 537, unanchored 548 -> 554 -- six references move, and the
         stage goes red on the ceiling, not on a rate
     git checkout -- CMakeLists.txt
 
@@ -207,7 +227,7 @@ moves underneath it, and nothing on the citing side changes.
     python3 tools/check_line_refs.py --report | grep -c ':54 (tools/gate.sh)'
         0 -- the reference is gone from the report        -- green
     python3 tools/check_line_refs.py
-        held 523 -> 546, unanchored 530 -> 507            -- under the ceiling
+        held 543 -> 565, unanchored 548 -> 526            -- under the ceiling
     cp .scratch/gate.sh.bak tools/gate.sh
 
 docs/AUDIT.md:3359 quotes `BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"`, points
@@ -244,9 +264,9 @@ TARGETS = {
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "734"))
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "750"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "530")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "548")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
