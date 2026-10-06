@@ -421,7 +421,7 @@ positive = {x in Z | x > 0}
 | 语义 | `src/vm/vm.c:1824` `int upper = (bi - 4) % 2;`（`floatN` 不超过 N 位／`FloatN` 恰好 N 位）、`:1884`、`:2367`、`:1172-1173`、`src/vm/vm.h:60` `nameIdx` 注释 | 整条「浮点点阵」语义外移；核心不再有第 5–22 号集合 |
 | 测试 | `vtest/set_float_lattice_v05.im`（`:18`／`:20`／`:22`）、`vtest/set_str_component_count_v06.im:25`、`set_test.im:20-23`／`:48-49`、`set_op_test.im:31`、`contract_test.im:122` | 随之外移或改写成拓展库的回归 |
 | 不受影响 | `src/compilation/`（AOT 与 wasm 后端）对 `FloatN` **零命中**；`selfhost/` 对 `be`／`type`／`eidos` **零命中**（`grep -c '\bbe\b'` 在 `compiler.im`／`parser.im`／`eval.im` 全是 0，唯一命中是 `selfhost/compiler.im:327` 的字符串 `"member"`） | 这两处**没有**要改的东西。但后者本身是更大的缺口：自举编译器完全不支持 `be`／`type` |
-| 文档 | `docs/SYNTAX.md:139`／`:182`／`:228`／`:239`／`:630`（**D10** 内置集合前缀抢占用户函数名）、`docs/archive/API_REFERENCE.md:55`、`docs/archive/ROADMAP_3.1.md:44`、`docs/BOARD.md:141` | 改口径；`ROADMAP_3.1.md` 不改写，由 §4.4 的取代说明承担 |
+| 文档 | `docs/SYNTAX.md` **D10**（内置集合前缀抢占用户函数名；**写下时写的是 `:139`／`:182`／`:228`／`:239`／`:630`** —— 这一串是全角斜杠 `／` 链，正则按 `[/-]` 切看不见它，五个号今天没有一个是 D10 本身）、`docs/archive/API_REFERENCE.md:55`、`docs/archive/ROADMAP_3.1.md:44`、`docs/BOARD.md:141` | 改口径；`ROADMAP_3.1.md` 不改写，由 §4.4 的取代说明承担 |
 
 **「拓展库」在仓库里的落地形态**：`src/parser/parser.c:1619` 已有 `TOK_IMPORT` → `STMT_IMPORT`（`import "文件" [as 命名空间]`，用例如 `scripts/ns_test.im:1 import "lib2.im" as lib`）。所以外移后的形态是**语言层 `.im` 库**（`type Float2 = {x in R | round(x * 100) == x * 100}` 之类），落到哪个库、由谁加载，随 v0.6 的库机制定。**本轮不预设。**
 
