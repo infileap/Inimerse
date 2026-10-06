@@ -40,26 +40,26 @@ arr = [x]
 func id(a) { return a }
 
 # --- the two syntax paths must agree about the same value ---
-if !(str(x.range) == str(arr[0].range)) { bad = 1; say "agreebad-arr" }
-if !(str(x.range) == str(id(x).range)) { bad = 1; say "agreebad-call" }
-if !((300 in x.range) == (300 in arr[0].range)) { bad = 1; say "agreebad-in-arr" }
-if !((300 in x.range) == (300 in id(x).range)) { bad = 1; say "agreebad-in-call" }
+if !(str(x.range) == str(arr[0].range)) { bad = bad + 1; say "agreebad-arr" }
+if !(str(x.range) == str(id(x).range)) { bad = bad + 1; say "agreebad-call" }
+if !((300 in x.range) == (300 in arr[0].range)) { bad = bad + 1; say "agreebad-in-arr" }
+if !((300 in x.range) == (300 in id(x).range)) { bad = bad + 1; say "agreebad-in-call" }
 
 # --- .range is now the value answer: an integer is Z, a float is R, a set is itself ---
-if !(str(x.range) == str(y.range)) { bad = 1; say "valuebad-int" }
-if !(300 in x.range) { bad = 1; say "valuebad-z" }
-if !(str(z.range) == str((3.14).range)) { bad = 1; say "valuebad-float" }
-if !(str(s.range) == str(s)) { bad = 1; say "valuebad-set" }
+if !(str(x.range) == str(y.range)) { bad = bad + 1; say "valuebad-int" }
+if !(300 in x.range) { bad = bad + 1; say "valuebad-z" }
+if !(str(z.range) == str((3.14).range)) { bad = bad + 1; say "valuebad-float" }
+if !(str(s.range) == str(s)) { bad = bad + 1; say "valuebad-set" }
 
 # --- .declared is the declaration answer, and nil when there is no declaration ---
-if !(42 in x.declared) { bad = 1; say "declbad-in" }
-if 300 in x.declared { bad = 1; say "declbad-out" }
-if !(str(y.declared) == "nil") { bad = 1; say "declbad-y" }
-if !(str(arr[0].declared) == "nil") { bad = 1; say "declbad-arr" }
-if !(str(id(x).declared) == "nil") { bad = 1; say "declbad-call" }
+if !(42 in x.declared) { bad = bad + 1; say "declbad-in" }
+if 300 in x.declared { bad = bad + 1; say "declbad-out" }
+if !(str(y.declared) == "nil") { bad = bad + 1; say "declbad-y" }
+if !(str(arr[0].declared) == "nil") { bad = bad + 1; say "declbad-arr" }
+if !(str(id(x).declared) == "nil") { bad = bad + 1; say "declbad-call" }
 
 # --- .declared is not the same question as .range: 300 is in one and not the other ---
-if !(300 in x.range) { bad = 1; say "splitbad-range" }
-if 300 in x.declared { bad = 1; say "splitbad-declared" }
+if !(300 in x.range) { bad = bad + 1; say "splitbad-range" }
+if 300 in x.declared { bad = bad + 1; say "splitbad-declared" }
 
 say "xrange-ok bad=" + str(bad) + " x.range=" + str(x.range) + " arr0.range=" + str(arr[0].range) + " id.range=" + str(id(x).range) + " y.range=" + str(y.range) + " z.range=" + str(z.range) + " s.range=" + str(s.range) + " x.declared=" + str(x.declared) + " y.declared=" + str(y.declared) + " arr0.declared=" + str(arr[0].declared) + " 300in.range=" + str(300 in x.range) + " 300in.declared=" + str(300 in x.declared) + " 42in.declared=" + str(42 in x.declared)

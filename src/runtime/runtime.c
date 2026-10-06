@@ -1080,7 +1080,7 @@ static int builtin_match(VM *vm) {
    builtin_declared below, and this call takes only the value, so there is no
    longer any way for two spellings of one value to get two answers. */
 static int builtin_range(VM *vm) {
-    if (vm_cur_sp(vm) < 1) return 0;
+    if (vm_cur_sp(vm) < 0) return 0;
     /* Copy before pop(): the stack slot may be released or reused while the
        builtin constructs the result set. */
     Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
@@ -1126,7 +1126,7 @@ static int builtin_range(VM *vm) {
    The slot indexes vm->global_bound, the same array the OP_BIND write-back
    check reads at src/vm/vm.c L_STORE_GLOBAL; this builtin only reads it. */
 static int builtin_declared(VM *vm) {
-    if (vm_cur_sp(vm) < 2) { push_nil(vm); return 1; }
+    if (vm_cur_sp(vm) < 1) return 0;
     Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
     int gidx = (gi.type == VAL_INT) ? gi.ival : -1;
     pop(vm); pop(vm);

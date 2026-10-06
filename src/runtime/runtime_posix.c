@@ -258,7 +258,7 @@ static int posix_core_type(VM *vm) {
    vtest/xrange_t2_v06.im pins, and a difference between the halves is a defect
    even when each half is self-consistent. */
 static int posix_core_range(VM *vm) {
-    if (vm_cur_sp(vm) < 1) return 0;
+    if (vm_cur_sp(vm) < 0) return 0;
     Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
     pop(vm);
 
@@ -298,7 +298,7 @@ static int posix_core_range(VM *vm) {
    POSIX half of src/runtime/runtime.c's builtin_declared; see that function for
    why the slot indexes vm->global_bound and why this only ever reads it. */
 static int posix_core_declared(VM *vm) {
-    if (vm_cur_sp(vm) < 2) { push_nil(vm); return 1; }
+    if (vm_cur_sp(vm) < 1) return 0;
     Value gi = vm_cur_stack(vm)[vm_cur_sp(vm)];
     int gidx = gi.type == VAL_INT ? (int)gi.ival : -1;
     pop(vm);
