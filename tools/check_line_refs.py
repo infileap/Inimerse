@@ -346,12 +346,16 @@ TARGETS = {
 # the branch never contained is a delta about the base's age, which is
 # exactly what the "is N commit(s) behind HEAD" line exists to distinguish.
 EXP_LINE_REFS_BASE = os.environ.get("EXP_LINE_REFS_BASE", "1c6b3381f3db8b77ca90c53ae5737dfa3698624f")
-# -1, and the reason is a reading: this branch REMOVED one explicit-form
-# reference -- docs/STATUS.md 51 carried `tools/gate.sh:54`, a line number
-# that had stopped pointing at the constant it named -- and a removal is a
-# change the pin has to be told about in the same commit that makes it.
-# A reference removed is not a reference gained.
-EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "-1"))
+# +14, and the reason is two readings rather than a mood.  This branch first
+# REMOVED one explicit-form reference -- docs/STATUS.md 51 carried
+# `tools/gate.sh:54`, a line number that had stopped pointing at the constant
+# it named -- and a removal is a change the pin has to be told about in the
+# same commit that makes it: -1.  It then ADDED a file,
+# docs/streams/v06-decision-points.md, whose 15 explicit-form citations of
+# CMakeLists.txt lines each carry the test name that sits on the cited line:
+# +15.  Net +14.  A reference removed is not a reference gained, and a
+# reference added is not one either.
+EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "14"))
 # +1, not 0, and the reason is a reading rather than a mood.  docs/BOARD.md's
 # line-refs row carries `:241 (CMakeLists.txt)`, and what held that number was
 # the fragment `docs/` -- which sat on line 241 of tools/check_line_refs.py,
