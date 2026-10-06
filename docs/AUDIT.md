@@ -631,7 +631,7 @@ if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 
 **根因是一个，不是九个。** `src/vm/vm.h:24` 的 `Value` 是 `{int type; int ival; double fval; char *sval; void *ptr;}`，**32 字节、整数槽 32 位**。于是 `src/compiler/compiler.c` 在字面量超过 int32 时把它降级成浮点（`OP_LOADK_FLOAT` 加一条 warning），整条表达式从此走 double：2^53 以上的低位没了，而且**所有整数守卫都不再被命中** —— `2147483647 / 0` 抛 `division_by_zero`，`2147483648 / 0` 却算出 `inf`，因为操作数已经不是整数了。守卫本身是对的，只是永远够不着。
 
-**为什么不能直接把 `int ival` 改成 `long long`。** `docs/DECFY_DESIGN.md:76` 把 `Value` 声明为**永久宽度冻结**：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。加宽会让 `sizeof(Value)` 从 32 变成 40，是真正的 ABI 破坏。**改用匿名 union 保住了 32 字节**：
+**为什么不能直接把 `int ival` 改成 `long long`。** `docs/DECFY_DESIGN.md` **§2 (a) 层次划分表 item ⑤**（写下时 `:76`）把 `Value` 声明为**永久宽度冻结**：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。加宽会让 `sizeof(Value)` 从 32 变成 40，是真正的 ABI 破坏。**改用匿名 union 保住了 32 字节**：
 
 ```c
 int type;
@@ -775,7 +775,7 @@ setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set
 
 注意光看**返回值**看不出这件事：`or` 恒产出布尔，所以 `"" or 1` 与 `1 or 1` 都是 `true`。判据必须是**短路**——右操作数有没有被求值。
 
-**设计意图。** `docs/DECFY_DESIGN.md:125` 要求「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」；`:130` 要求一张 `OpCode → { VM 行为, AOT 行为, wasm 行为 }` 表作为唯一真值源，「三列不一致即构建失败」。`:24` 记下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
+**设计意图。** `docs/DECFY_DESIGN.md` **§3.3 第 2 条**（写下时 `:125`）要求「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」；**§3.4**（写下时 `:130`）要求一张 `OpCode → { VM 行为, AOT 行为, wasm 行为 }` 表作为唯一真值源，「三列不一致即构建失败」。**§1.1 表第 3 行**（写下时 `:24`）记下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
 
 **修法。** 新增唯一入口 `vm_truthy`（`src/vm/vm.c:293`，声明 `src/vm/vm.h:356`）：
 
@@ -793,7 +793,7 @@ int vm_truthy(const Value *v) {
 
 六处调用点全部改为调用它：`src/vm/vm.c:3341-3342`（`L_AND`）、`:3348-3349`（`L_OR`）、`:3355`（`L_NOT`）、`:3538`（`L_JUMP_IF_FALSE`）、`:3543`（`L_JUMP_IF_TRUE`），以及 `src/runtime/runtime_posix.c:69`、`src/runtime/runtime.c:68` 两份 `bool()`。三份文件里旧的三目链已 `grep -c` 为 0。`src/vm/vm.c:3896` 的 `OP_IS_NIL`（`(R[ins.r2].type == VAL_NIL) ? 1 : 0`）判的是 nil 本身而不是真值，**正确地未动**。
 
-**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md:24` 写下的规则，且六处里有三处本来就是这样；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 `bool("")` 从 `false` 变成 `true`，这是本次唯一面向用户的语义变化，单独写在明处。
+**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md` **§1.1 表第 3 行**（写下时 `:24`）写下的规则，且六处里有三处本来就是这样；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 `bool("")` 从 `false` 变成 `true`，这是本次唯一面向用户的语义变化，单独写在明处。
 
 **判据。** 新增 `vtest/truthiness_single_point_v06.im` ← CTest **`truthiness_single_point_runtime`（#116）**，一行断言：
 
@@ -844,7 +844,7 @@ release_to(comp, first + 1);
 
 ## §1.20 `X.type == VAL_INT ? X.ival : (int)X.fval` 读到的是 union 的另一个成员
 
-v3.1 把 `Value` 的整数槽改成 64 位时，为了不破坏 32 字节宽度契约（`docs/DECFY_DESIGN.md:76`）用了匿名 union：`int type; union { long long ival; double fval; }; char *sval; void *ptr;`。`ival` 与 `fval` **共享存储**，于是所有「只有两种类型」的取值写法都成了读错成员。
+v3.1 把 `Value` 的整数槽改成 64 位时，为了不破坏 32 字节宽度契约（`docs/DECFY_DESIGN.md` **§2 (a) 层次划分表 item ⑤**，写下时 `:76`）用了匿名 union：`int type; union { long long ival; double fval; }; char *sval; void *ptr;`。`ival` 与 `fval` **共享存储**，于是所有「只有两种类型」的取值写法都成了读错成员。
 
 写法本身长这样：
 
@@ -1767,7 +1767,7 @@ spawn 的子进程，并返回 0 而不是房间号**，在每一个 POSIX 运�
 
 **① `int()` 的宽度。** `src/runtime/runtime.c:40` 用 `int res` 中转
 （`res=(int)strtoll(...)`、`(int)v->fval`），而 `ival` 是 64 位整数槽
-（`docs/DECFY_DESIGN.md:76`、`src/vm/vm.h:24-26`），所以这是把 64 位值 mod 2³² 后符号扩展。
+（`docs/DECFY_DESIGN.md` **§2 (a) 层次划分表 item ⑤**，写下时 `:76`、`src/vm/vm.h:24-26`），所以这是把 64 位值 mod 2³² 后符号扩展。
 `src/runtime/runtime_posix.c:75` 一直是 `int64_t n`。
 
 **② `chr()` 不查类型就读 union。** `src/runtime/runtime.c:354` 原本是
