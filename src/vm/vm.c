@@ -3771,8 +3771,8 @@ static void vm_execute_thread(VmThread *t) {
             /* r2 = 锟斤拷锟斤拷锟斤拷锟斤拷锟街凤拷锟斤拷锟截碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街诧拷锟揭ｏ拷锟斤拷锟斤拷注锟斤拷顺锟斤拷影锟斤拷??*/
             const char *name = (ins.r2 >= 0 && ins.r2 < t->code->string_count)
                                ? t->code->string_pool[ins.r2] : NULL;
-            Bytecode *caller_code = t->code;
-            int caller_base = t->base;
+            if (!name) { char eb[256]; snprintf(eb, sizeof eb, "unknown builtin function (string index %d is out of range)", ins.r2); vm_throw_msg(vm, eb); }
+            Bytecode *caller_code = t->code; int caller_base = t->base;
             if (name) {
                 int nidx = ins.r2;
                 if (t->code->str_interned && nidx >= 0 && nidx < t->code->string_count) {

@@ -4223,7 +4223,7 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
 - **只登记**：`src/compiler/bytecode_capture_probe.c:7 #define BC_MAGIC 0x1BC0FFDB`（同认那个尾部魔数）是否被测试注册，未查；五个注册计数照旧不下判断。
 
 **★ 第二十二条判据（来自一次合并）：一个会被「换掉被指向的那个文件」整体重置的天花板，量的是那一次合并，不是它想压住的那批引用。**
-- `stream/pin-shift` 合进 `main` 之后 pin 从 **764/539** 变成 **768/561**，**两个成因、没有一个作者**：①**+3 explicit / −13 unanchored** = `main` 自己的文档长出了带锚的引用（§1.74 的几次追加）；②**+4 explicit / +22 unanchored** = 那一支重写了 `tools/gate.sh`（`227 ins / 32 del`）⇒ **`docs/` 里每一条 `tools/gate.sh:<N>` 同时失去内容锚**。⇒ **天花板是「树」的性质，而换掉那些号共同指向的那个文件，会把它一次性重置。** 已按「pin 在散文之后取」重取，**并把这段成因写进常量的注释里、不写在信里**（`EXP_LINE_REFS = 768`、`EXP_LINE_REFS_UNANCHORED_MAX = 561`）。
+- `stream/pin-shift` 合进 `main` 之后 pin 从 **764/539** 变成 **768/561**，**两个成因、没有一个作者**：①**+3 explicit / −13 unanchored** = `main` 自己的文档长出了带锚的引用（§1.74 的几次追加）；②**+4 explicit / +22 unanchored** = 那一支重写了 `tools/gate.sh`（`227 ins / 32 del`）⇒ **`docs/` 里每一条 `tools/gate.sh:<N>` 同时失去内容锚**。⇒ **天花板是「树」的性质，而换掉那些号共同指向的那个文件，会把它一次性重置。** 已按「pin 在散文之后取」重取，**并把这段成因写进常量的注释里、不写在信里**（当时重取为计数形态 `EXP_LINE_REFS = 768`、`EXP_LINE_REFS_UNANCHORED_MAX = 561`）。★ **这两个常量名今天已经不存在** —— 同一支车道随后把计数形态整体换成了**相对一棵具名基树的 delta**（`EXP_LINE_REFS_BASE` / `EXP_LINE_REFS_DELTA` / `EXP_LINE_REFS_UNANCHORED_DELTA_MAX`，`e18d6d1` + `e6dc449`，我合并在 `32a9418` 之上、并把基树移到 main 尖端）。**这一段留作计数形态的历史读数，不是可跟的指针。**
 - 顺带修掉它自己的一处同族病：docstring 里解释天花板的那个句子**把被解释的值写进了句子本身**（「552 is a known quantity today, and 558 tomorrow is an unannounced regression」）⇒ 改成不点值：「one more than the reading below is an unannounced regression」。
 
 **★ 一条判据（来自后缀清单）：一条按后缀定的规则，必须对「这个后缀」成立，不能只对「今天这几个实例」成立。**

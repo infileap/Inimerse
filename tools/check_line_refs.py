@@ -53,30 +53,39 @@ The gate stage asserts DENOMINATORS, not anchor rates:
 
   - the input set is not empty and every writing above is present at least
     once;
-  - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
-    shrink while nobody is looking;
-  - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: one more than the
-    reading below is an unannounced regression.  The reading is deliberately
-    not repeated here -- a value written into the sentence that explains the
-    value is a value that rots in place.
+  - the explicit-form reference count has a DELTA pin (EXP_LINE_REFS_DELTA,
+    against EXP_LINE_REFS_BASE), so it cannot shrink or grow while nobody is
+    looking;
+  - the unanchored count has a DELTA ceiling
+    (EXP_LINE_REFS_UNANCHORED_DELTA_MAX, against the same base), so it cannot
+    grow while nobody is looking.  This is the tooth: one more than the base
+    reading is an unannounced regression.  Neither reading is repeated here --
+    a value written into the sentence that explains the value rots in place,
+    and a reading is not a pin.
+  - the base is a sha and must be an ancestor of HEAD; if it is not, this
+    checker exits 2 rather than report a delta between two trees that are not
+    on one line.  It also prints how far behind HEAD the base is, because the
+    delta grows as the base ages: that line is how a reader tells "the
+    references got worse" from "the base is old".
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
 
-  - a pin proves no shrinkage and no growth.  It proves no anchor is right.
-  - the pin measures a set that contains the paragraph describing the pin.
+  - a delta proves no shrinkage and no growth.  It proves no anchor is right.
+  - the delta measures a set that contains the paragraph describing it.
     docs/BOARD.md's line-refs row names CMakeLists.txt and tools/gate.sh and
     carries about a dozen inline numbers, so it is itself in the input set:
-    writing that row moved the counts it records.  EXP_LINE_REFS was measured
+    writing that row moves the counts it records.  EXP_LINE_REFS was measured
     at 686 before the row existed, and the row's own tree already read 690 --
     the pin shipped stale by its own subject matter.  This is a fixed point,
-    not a slip: the number and its description move together or not at all,
-    so a change to that row and a re-measurement are one action.  A merge of
-    main moves them without anyone touching the row -- 694 -> 720 in one merge
-    -- so the pin is a reading of a moving set, not a constant.  "Nobody
-    touched this line" is not a reason for "this number did not move": the
-    number is derived from the content of the whole tree.
+    not a slip: the numbers and their description move together or not at all,
+    so a change to that row and a re-take are one action.  A merge of main
+    moves the readings without anyone touching the row -- 694 -> 720 in one
+    merge -- so a reading is not a constant.  "Nobody touched this line" is
+    not a reason for "this number did not move": the number is derived from
+    the content of the whole tree.  A delta against a base that merge did not
+    move says so out loud, and the "N commit(s) behind HEAD" line says how
+    much of it is the base ageing rather than this batch.
   - only a file git tracks can hold a number.  The working tree also holds
     build output, and a verdict that changes depending on whether someone has
     run a build is not a verdict about the repository: on one commit this read
@@ -314,27 +323,42 @@ TARGETS = {
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-# Both readings are taken on the tree that has absorbed every branch that
-# moves them, never on a branch that is about to be merged.  The merge of
-# stream/pin-shift into main moved them 764/539 -> 768/561 in one action, from
-# two causes and no author:
-#   +3 explicit / -13 unanchored: main's own docs grew references that carry
-#      their anchors (the §1.74 additions);
-#   +4 explicit / +22 unanchored: that branch rewrote tools/gate.sh (227 ins /
-#      32 del), so every `tools/gate.sh:<N>` in docs/ lost its anchor at once.
-# The second cause is the one worth noticing: the ceiling is a property of the
-# tree, and swapping the file every one of those numbers points into resets it
-# wholesale.  A ceiling that a merge can raise by 22 measures that merge, not
-# the batch of references it was meant to hold down.
-# 768 -> 774: docs/AUDIT.md 1.74 增补三 (instance ledger / five shapes / six new
-# criteria) cites six more inline numbers than the tree that set 768.  The
-# unanchored ceiling did NOT move (561 -> 561) -- the two new unanchored
-# references that section first introduced were removed, not anchored: a
-# stale pointer quoted as a number is content, and content is what an anchor
-# is for.  Re-taken, not lowered.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "774"))
-EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "561")
+#
+# Both pins are DELTAS against a named base tree, not counts of this tree.  A
+# count is a property of the tree, and swapping the file every one of those
+# numbers points into resets it wholesale: the merge of stream/pin-shift into
+# main moved the readings 764/539 -> 768/561 in one action, +4 explicit / +22
+# unanchored of it from that branch's rewrite of tools/gate.sh (227 ins / 32
+# del), so every `tools/gate.sh:<N>` in docs/ lost its anchor at once and
+# nothing on the citing side changed.  A ceiling a merge can raise by 22
+# measures that merge, not the batch of references it was meant to hold down.
+#
+# A delta needs a tree that does not move, and a named ref moves -- "base" would
+# then mean a different tree every day.  So the base is a sha, this checker
+# asserts it is an ancestor of HEAD, and it prints how far behind HEAD the base
+# is: the delta grows as the base ages, and that line is how a reader tells "the
+# references got worse" from "the base is old".  Re-taking the pins is moving
+# the base, in a commit that says so; nothing else may move it.
+#
+# The base is main's 32a9418, not this branch's 8c75f31.  The branch was cut
+# before main grew six more cited numbers (docs/AUDIT.md 1.74 增补三), so
+# measuring it against its own base would have reported that growth as this
+# branch's delta -- a delta against a base the branch never contained is a
+# delta about the base's age, which is exactly what the "is N commit(s) behind
+# HEAD" line exists to distinguish.
+EXP_LINE_REFS_BASE = os.environ.get("EXP_LINE_REFS_BASE", "32a9418cb0635e7e38e897bb7b28580b61b2623f")
+EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "0"))
+# +1, not 0, and the reason is a reading rather than a mood.  docs/BOARD.md's
+# line-refs row carries `:241 (CMakeLists.txt)`, and what held that number was
+# the fragment `docs/` -- which sat on line 241 of tools/check_line_refs.py,
+# a file that row merely names, because that line read "... edit
+# (docs/AUDIT.md is the coordinator's, docs/DECFY_DESIGN.md ...".  A hit is a
+# coincidence of text, and rewriting the docstring above moved the coincidence
+# off line 241, so this reference lost an anchor it never really had.  The
+# ceiling says so instead of hiding it: one more number now has nothing
+# holding it, and nothing else may join it.
+EXP_LINE_REFS_UNANCHORED_DELTA_MAX = int(
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "1")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
@@ -349,48 +373,90 @@ PURE_NUMBER = re.compile(r"^:?\d+(?:-\d+)?$")
 LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
 MAX_PARA = 20
 
-_CACHE: dict[str, list[str] | None] = {}
-_TRACKED: set[str] | None = None
+class Tree:
+    """One tree's files: the working tree, or the objects of a commit.
+
+    The pins are deltas against a named base, so this checker takes the same
+    reading twice.  Everything the scan reads goes through here for that reason:
+    a second code path for the base would be a second definition of the
+    measurement, and the two would drift apart exactly when the delta mattered.
+    """
+
+    def __init__(self, rev: str | None = None):
+        self.rev = rev
+        self._listing: set[str] | None = None
+        self._cache: dict[str, list[str] | None] = {}
+        self._batch = None
+
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    def _tracked(self) -> set[str]:
+        if self._listing is None:
+            out = (
+                self._git("ls-files", "-z")
+                if self.rev is None
+                else self._git("ls-tree", "-r", "--name-only", "-z", self.rev)
+            )
+            self._listing = set(out.split("\0"))
+        return self._listing
+
+    def tracked(self, rel: str) -> bool:
+        return rel in self._tracked()
+
+    def text(self, rel: str) -> str:
+        """Content, decoded the way the working-tree read decodes it."""
+        if self.rev is None:
+            return (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        return self._blob(rel).decode("utf-8", "replace")
+
+    def docs(self) -> list[str]:
+        return [p for p in self._tracked() if p.startswith("docs/") and p.endswith(".md")]
+
+    def lines(self, rel: str) -> list[str] | None:
+        if rel not in self._cache:
+            self._cache[rel] = self.text(rel).splitlines() if self.tracked(rel) else None
+        return self._cache[rel]
+
+    def _blob(self, rel: str) -> bytes:
+        """One object from the base tree, over a single `git cat-file --batch`."""
+        if self._batch is None:
+            self._batch = subprocess.Popen(
+                ["git", "-C", str(REPO_ROOT), "cat-file", "--batch"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            )
+        spec = f"{self.rev}:{rel}".encode()
+        self._batch.stdin.write(spec + b"\n")
+        self._batch.stdin.flush()
+        header = self._batch.stdout.readline().decode("utf-8", "replace").split()
+        if len(header) < 3 or header[1] != "blob":
+            sys.exit(
+                f"check_line_refs: {spec.decode()} is not a blob in {self.rev}; "
+                "refusing to guess what the base tree holds."
+            )
+        size = int(header[2])
+        data = self._batch.stdout.read(size)
+        self._batch.stdout.read(1)
+        return data
+
+
+# The tree the scan reads.  main() swaps this to take the base reading.
+TREE = Tree()
 
 
 def tracked(rel: str) -> bool:
-    """Only a file git tracks may be read, and therefore may hold a number.
-
-    The working tree also holds build output.  A verdict that changes
-    depending on whether someone has run a build is not a verdict about the
-    repository: measured on one commit, this checker read 520 held / 515
-    unanchored with build/ present and 514 / 521 in a checkout of the same
-    commit -- six numbers were being held by an artifact that does not exist
-    in the clone.  check_links.py was fixed for the same thing when it walked
-    the directory instead of asking git (docs/AUDIT.md 1.66).
-    """
-    global _TRACKED
-    if _TRACKED is None:
-        out = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
-            capture_output=True, text=True, check=True,
-        ).stdout
-        _TRACKED = set(out.split("\0"))
-    return rel in _TRACKED
+    return TREE.tracked(rel)
 
 
 def lines_of(rel: str) -> list[str] | None:
-    if rel not in _CACHE:
-        path = REPO_ROOT / rel
-        _CACHE[rel] = (
-            path.read_text(encoding="utf-8", errors="replace").splitlines()
-            if tracked(rel) and path.is_file()
-            else None
-        )
-    return _CACHE[rel]
+    return TREE.lines(rel)
 
 
 def docs_markdown() -> list[str]:
-    out = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files", "docs/"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    return [p for p in out.splitlines() if p.endswith(".md")]
+    return TREE.docs()
 
 
 def file_mentions(line: str) -> list[tuple[int, int, str]]:
@@ -398,7 +464,7 @@ def file_mentions(line: str) -> list[tuple[int, int, str]]:
     found = []
     for m in PATHISH.finditer(line):
         token = m.group(0).rstrip(".")
-        if token in TARGETS or (tracked(token) and (REPO_ROOT / token).is_file()):
+        if token in TARGETS or TREE.tracked(token):
             found.append((m.start(), m.end(), token))
     return found
 
@@ -476,7 +542,7 @@ def scan() -> dict:
     files: set[str] = set()
 
     for rel in docs_markdown():
-        text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        text = TREE.text(rel)
         for first, last, lines in paragraphs(text):
             for offset, line in enumerate(lines):
                 lineno = first + offset
@@ -536,10 +602,50 @@ def scan() -> dict:
     }
 
 
+def base_scan() -> tuple[dict, int]:
+    """The same reading on the base tree, and how far behind HEAD it is.
+
+    The base must be an ancestor of HEAD, or the delta compares two trees that
+    are not on one line -- and a delta that can be taken against anything is a
+    number with no subject.  A base that cannot be resolved is refused, not
+    guessed: exit 2, the same answer gate.sh gives for a stage no rule reaches,
+    because both are "this question cannot be answered as posed".
+    """
+    global TREE
+    if subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor",
+         EXP_LINE_REFS_BASE, "HEAD"],
+        capture_output=True,
+    ).returncode != 0:
+        print(
+            f"check_line_refs: EXP_LINE_REFS_BASE={EXP_LINE_REFS_BASE} cannot be "
+            "resolved, or is not an ancestor of HEAD.\n"
+            "check_line_refs: the pins are deltas against that tree; a base that "
+            "is not behind this one makes the delta a comparison between two "
+            "trees that are not on one line.\n"
+            "check_line_refs: refusing to report a delta with no base.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    saved = TREE
+    TREE = Tree(EXP_LINE_REFS_BASE)
+    try:
+        r = scan()
+    finally:
+        TREE = saved
+    behind = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-list", "--count",
+         f"{EXP_LINE_REFS_BASE}..HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return r, int(behind)
+
+
 def main() -> int:
     args = sys.argv[1:]
     report = "--report" in args
     strict = "--strict" in args
+    base, behind = base_scan()
     r = scan()
 
     print(
@@ -572,24 +678,40 @@ def main() -> int:
                 f"that has quietly become a prefix scan reports that nothing "
                 f"was missed while missing the shape it exists to find"
             )
-    if r["explicit"] != EXP_LINE_REFS:
-        moved = "shrank" if r["explicit"] < EXP_LINE_REFS else "grew"
+    explicit_delta = r["explicit"] - base["explicit"]
+    unanchored_delta = len(r["no_anchor"]) - len(base["no_anchor"])
+    if explicit_delta != EXP_LINE_REFS_DELTA:
+        moved = "shrank" if explicit_delta < EXP_LINE_REFS_DELTA else "grew"
         failures.append(
-            f"explicit-form references: {r['explicit']}, but EXP_LINE_REFS is "
-            f"{EXP_LINE_REFS} -- the cited form {moved} without anyone saying so"
+            f"explicit-form references: {explicit_delta:+d} since base "
+            f"{EXP_LINE_REFS_BASE} ({base['explicit']} -> {r['explicit']}), but "
+            f"EXP_LINE_REFS_DELTA is {EXP_LINE_REFS_DELTA:+d} -- the cited form "
+            f"{moved} without anyone saying so"
         )
-    if len(r["no_anchor"]) > EXP_LINE_REFS_UNANCHORED_MAX:
+    if unanchored_delta > EXP_LINE_REFS_UNANCHORED_DELTA_MAX:
         failures.append(
-            f"unanchored references: {len(r['no_anchor'])}, over the ceiling "
-            f"EXP_LINE_REFS_UNANCHORED_MAX={EXP_LINE_REFS_UNANCHORED_MAX} -- "
-            f"{len(r['no_anchor']) - EXP_LINE_REFS_UNANCHORED_MAX} more "
+            f"unanchored references: {unanchored_delta:+d} since base "
+            f"{EXP_LINE_REFS_BASE} ({len(base['no_anchor'])} -> "
+            f"{len(r['no_anchor'])}), over the ceiling "
+            f"EXP_LINE_REFS_UNANCHORED_DELTA_MAX="
+            f"{EXP_LINE_REFS_UNANCHORED_DELTA_MAX:+d} -- "
+            f"{unanchored_delta - EXP_LINE_REFS_UNANCHORED_DELTA_MAX} more "
             f"number(s) now have nothing holding them"
         )
 
     print(
-        f"check_line_refs: pins -- explicit {r['explicit']} (expect "
-        f"{EXP_LINE_REFS}), unanchored {len(r['no_anchor'])} (ceiling "
-        f"{EXP_LINE_REFS_UNANCHORED_MAX})."
+        f"check_line_refs: pins -- explicit delta {explicit_delta:+d} (expect "
+        f"{EXP_LINE_REFS_DELTA:+d}), unanchored delta {unanchored_delta:+d} "
+        f"(ceiling {EXP_LINE_REFS_UNANCHORED_DELTA_MAX:+d})."
+    )
+    print(
+        f"check_line_refs: readings -- explicit {r['explicit']} (base "
+        f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
+        f"{len(base['no_anchor'])})."
+    )
+    print(
+        f"check_line_refs: base {EXP_LINE_REFS_BASE} is {behind} commit(s) "
+        f"behind HEAD."
     )
 
     if report:
@@ -620,9 +742,10 @@ def main() -> int:
         return 1
 
     print(
-        "check_line_refs: every pin held.  A pin proves no shrinkage and no "
-        "growth; it does not prove any anchor is right, and a number that is "
-        "still there and points at something else is not caught here."
+        "check_line_refs: every pin held.  A delta proves this batch did not "
+        "grow or shrink without a commit saying so; it does not prove any "
+        "anchor is right, and a number that is still there and points at "
+        "something else is not caught here."
     )
     return 0
 
