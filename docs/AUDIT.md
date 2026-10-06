@@ -3191,7 +3191,9 @@ sub %rax,%rsp
 
 预算：`objdump -p` 给出 `SizeOfStackReserve 0x200000`（2 MiB），两个 exe 一致。`vm_execute_thread`（`src/vm/vm.c:2931`）不是 OS 线程，是主线程在 `src/vm/vm.c:4950` 调的 ⇒ 预算就是主线程的 2 MiB。
 
-算术：崩溃时 `rsp=0x407af0`，可读顶 `0x601000` ⇒ 已耗 `0x1f9510` = 2069776 B = **98.7%**。剩余 `0x60f0`(24816 B) 小于进入下一帧需要的 `0x8080`(32896 B) ⇒ **差 8080 B**。这就是 `___chkstk_ms` 报 `STATUS_STACK_OVERFLOW` 的算术。
+算术：崩溃时 `rsp=0x407af0`，可读顶 `0x601000` ⇒ 已耗 `0x1f9510` = 2069776 B = **98.70%**（2 MiB 预留 `0x200000` 的 98.70%）。剩余 `rsp − 0x401000` = `0x6af0` = **27376 B**，小于进入下一帧需要的 `0x8080`(32896 B) ⇒ **差 5520 B**。这就是 `___chkstk_ms` 报 `STATUS_STACK_OVERFLOW` 的算术。
+
+**更正（写下这一节时才发现）。** 本行初稿写「剩余 `0x60f0`(24816 B) ⇒ 差 8080 B」——**`0x407af0 − 0x401000` 是 `0x6af0` = 27376，不是 `0x60f0` = 24816**；`8080` 是这一步的连带值。独立核对（不经过上面任何一步）：已耗 2069776 + 进一帧 32896 = **2102672**，超出预留 2097152 **恰好 5520**。**三个数各量不同的东西，不得互相推导**：26 帧自身 855296 B 是 `re_seq` 帧的和（占预留 **40.78%**），98.70% 是整条栈的已耗，5520 B 是差多少进不去。这一处与本节其余读数无关（帧数、帧大小、步长、两个输入读数相同都不受影响）。
 
 **最有力的一步是两个输入给出逐项相同的读数**：2030 个字符的输入与 25 个字符的输入，`RSP` 都是 `0x407af0`，都是同样的 26 帧 ⇒ **深度由栈预算封顶，与输入长度无关**。
 
@@ -3506,6 +3508,91 @@ git ls-files '*.c'                   118   ← 全仓受管 .c
 - **两参 `--required-for <base>..<head>`** = **那个提交区间变了什么**。
 
 **两个答案都对，错的是「成功那一侧不自报问题」。** 「拒绝回答」那一侧是有牙的（`:676-679` 对不可解析的范围打 `gate: refusing to answer a question about a range that does not exist.` + `exit 2`）；缺的只是成功时说明它答的是哪一个 —— 而**「零个阶段」在一个敲错的调用里仍然是最危险的答案**。
+### E. 第四种失效：写下时对，之后被别人移动了被量的东西
+
+前三段（A 运行状态、B 筛选条件、C 自指）都是**写下的时候就错了**，所以都能靠「写得更仔细」避免。第四种不能。
+
+`docs/STATUS.md` 的「已发布点」那一格曾逐字写：
+
+```
+**已发布点**：`v0.5.2` → `0ebd68d`（`git rev-parse --short 'v0.5.2^{commit}'`）… `git rev-list --count 'v0.5.1^{commit}'..'v0.5.2^{commit}'` → **76**
+```
+
+**写下它的时候，两处都是真的** —— `0ebd68d` 时 tag 就指向 `0ebd68d`，`v0.5.1..0ebd68d` 也确实是 77（而 76 是 `751b2a0` 上的值，即发布提交上的值）。C 段的论证也逐字成立：*写下它不移动 `v0.5.2^{commit}`* ⇒ 按 §1.74 C 的判据，它「合法」。
+
+**然后 tag 被移动了两次**（第一次治发布说明里那个自指的字面量，第二次治 §1.70 那处算错的算术）。实测在冻结的 HEAD 上：
+
+```
+git rev-parse --short 'v0.5.2^{commit}'                     = 322c085   ← 文档写 0ebd68d
+git rev-list --count 'v0.5.1^{commit}'..'v0.5.2^{commit}'    = 80        ← 文档写 76
+git rev-list --count 'v0.5.1^{commit}'..751b2a0              = 76        ← 76 是这里量的
+```
+
+⇒ **同一行两个假数，而它们是「对过之后才变假的」。**
+
+**结论一：每一条判据只保证它自己那一根轴。** 判定① 保证的是**可复现**，不是正确（B 段）。§1.74 C 保证的是**不自指**，不是**不会过期**（本段）。**C 段那条论证在自己的轴上完全正确，它只是不保证值会保持为真。**
+
+**结论二：这条线有一个无限回退。** 修它要开一笔提交 ⇒ 为了让「tag 落在说对了的那棵树上」tag 又要移动 ⇒ **那一移又让新写的数过期**。只要「已发布点」写成「tag 当前指向 X」，它就永远追不上自己。
+
+**处方（唯一能终止回退的那一种）：把现值换成带 ref 的历史读数。**
+- 「已发布点」写**发版提交** `751b2a0`（那一笔上有版本号与发版说明），**不写 tag 当前指向哪**；要 tag 就 `git rev-parse`，并且**不从它派生任何数**。
+- 派生的计数**一律带 ref**：「在 `751b2a0` 上量是 76」。
+- 这不是新规矩：`docs/RELEASE_0.5.2.md` 的基线表**本来就长这样**（「在 `751b2a0` 上量是 **76**」，逐字写着「本行不写这个字面量」）。**同一个版本里两条相反的做法，活下来的是不写现值的那条** —— 而它给的理由（自指）**恰好不是它活下来的原因**，真正的原因是**它带了 ref**。**理由对了一半，产物就是对的；理由全对而写法是现值，产物照样过期。**
+
+**结论三：这一条能进 `tools/`，而 A/B/C 那三种都不能。** 判据是一条命令：`git rev-parse --short 'v0.5.2^{commit}'` 与文档里记的那个 sha 相等；**不等 ⇒ 文档里所有从 `v0.5.2` 派生的数一次性全部作废**。手工普查做了一整轮，这一条一条命令查完 —— **它也是这一族里第一个「能自动变红」的**（A/B/C 的判据都要求人去跑一次原始读数）。
+
+**一条支撑事实（本段自己量的）**：**移动 tag 在本地不留痕迹** —— `git reflog show v0.5.2` 返回空（tag 默认不写 reflog）⇒ 除了「文档里的 sha ≠ 实际的 sha」，没有任何东西会告诉你它动过。**这就是为什么这一类必须由检查器看，不能由人看。**
+
+## §1.75 `text-integrity` 的 allow-list 里有三个不可达条目，而 89 个受管文件在它视野之外
+
+**症状。** `tools/check_text_integrity.py` 用**允许清单**（allow-list）决定哪些文件归它管（`:55` 的 `TEXT_SUFFIXES` 加 `:93` 的 `TEXT_NAMES`）。清单里写着 `.gitignore`、`.gitattributes`、`.editorconfig` —— **这三个条目永远不会匹配任何文件**：
+
+```
+$ python3 -c "import os; print(os.path.splitext('.gitignore'))"
+('.gitignore', '')
+```
+
+`os.path.splitext` 对一个**以点开头、且点后再无点**的名字返回**空后缀**（那是隐藏文件，不是扩展名）。判定在 `:125-127`：先查 `path.name in TEXT_NAMES`，再查 `path.suffix.lower() in TEXT_SUFFIXES` —— 两条都不成立。⇒ 本仓库里**真的叫这个名字的 5 个文件**（`.gitattributes`、`.gitignore`、`Infiverse_standard/oauth_loop/.gitignore`、`Infiverse_standard/src-tauri/.gitignore`、`tools/dsh-inimerse/.gitignore`）**一个都没被检查过**。要匹配它们得走 `TEXT_NAMES`，或者把判定改成「先比全名、再比后缀」。
+
+**规模。** 用 `git ls-files -z`（**必须带 `-z`**，见下）：
+
+```
+受管文件 913 ；在 text-integrity 之外 89
+  .ps1      19   ai_build.ps1, build.ps1, build_asan.ps1, …        ← 全是构建脚本，是文本
+  .png      14   Infiverse_standard/src-tauri/icons/128x128.png …  ← 二进制，应当在外
+  .inim      9   nst2.inim, projects/exc_test.inim …               ← 文本
+  无后缀     8   .gitattributes, .gitignore, …（其中 5 个就是上面那批）
+  .params    8   bad.params, game.params, params.params            ← 文本
+  .bmp       5   examples/assets/monster8.bmp …                    ← 二进制，应当在外
+  .tpl       5   templates/README.tpl, templates/main.tpl …        ← 文本
+  .lock 2 / .ico 2 / .def 2 / .st 2 / .vverse 2 / .icns 1 / .gradle 1 / .bat 1 / .java 1 / .svg 1 / .manifest 1 / .dev 1 / .dev28 1 / .dev29 1 / .hold5 1 / .orig 1
+```
+
+⇒ **二进制那几类（`.png` `.bmp` `.ico` `.icns`）在外是对的**；**`.ps1` `.inim` `.params` `.tpl` `.st` `.def` `.bat` `.java` `.manifest` `.gradle` `.vverse` `.lock` 在外是缺口**（合计 50 个文本文件），加上三个不可达条目覆盖的 5 个，**这份清单今天看不见 89 个受管文件里的 55 个文本文件**。
+
+**这一条是被 `--required-for` 自己暴露的**，不是被读码发现的：
+
+```
+$ tools/gate.sh --required-for HEAD
+gate: --required-for: no rule matches 'build_installer.ps1'; requiring every stage.
+… required: 13 stage(s)
+```
+
+**它的保守回退是对的** —— 没人定过规则的改动就当它什么都可能影响。但根因是 allow-list 少了一个扩展名，所以**每一个 `.ps1` 的改动都会把十三阶段全拉一遍**，而**没有一个阶段真的读那个文件**。
+
+**同一个引号陷阱，这是第三次（本节自己踩了一次）。** 同一个 `git ls-files`：
+
+```
+$ git ls-files      | wc -l   →  915
+$ git ls-files -z   | tr '\0' '\n' | grep -c .   →  913
+```
+
+差的 12 个是**带空格或非 ASCII 的路径被 C 式引号转义**后的产物：`docs/archive/工作台使用教程.md` 在输出里带上引号，`os.path.splitext` 于是看到后缀 `.md"`，落出清单。**同一棵树、同一个命令、两个分母，差不是文件变了，是读法变了。**（§1.74 A 段记的是同一个陷阱在 `git ls-tree -r --name-only` 上的形态：那边给 813、加 `-z` 给 823。§1.72 的通则 A 说的是「按扩展名、不按目录」—— **这里要补一句：按扩展名，就得先保证扩展名是那么读出来的**。）
+
+**判据（可重跑）。** ① `python3 -c "import os; print(os.path.splitext('.gitignore'))"` 给空后缀；② `git ls-files -z | tr '\0' '\n' | grep -c '\.ps1$'` 给 19，而 `text-integrity` 印出的分母里不含它们（`:57` 的清单里没有 `.ps1`）；③ 往一个 `.ps1` 里插一个 NUL 字节，`text-integrity` **不变红**（而往 `.md` 里插会红）—— **第三条是这条断言真正的牙**：前两条只证明清单里没有它，第三条证明后果。
+
+**只登记、未修。** 修它在 `tools/**`（归 agent2 的写域）：三处最小改动是「判定先比全名」「`.ps1` 进清单」「清单里每个条目至少被一个受管文件命中（否则它要么是死条目、要么是缺文件）」。**第三条本身就该是一个检查器**，而它比前两条更根本 —— 一个永远不匹配的 allow-list 条目与一个没人跑的 `add_executable` 是同一件事（§1.73），只是它在**清单里**而不是在构建里。
+
 ## §2 执行通道效率比较
 
 ### 2.1 五条通道
