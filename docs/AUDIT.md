@@ -3316,6 +3316,8 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **但这仍不是一次链接**：没跑 `ld`、没跑、没被任何测试碰到、对行为什么都没说。**而它该不该被列进去，是一个决定，不是一个测量** —— 下一步要问的是「POSIX 侧有谁调它」：若无，编进去只改变二进制的内容，不改变任何行为。
 
+**那个问题现在也答了（`main @ 2734b57`，`git grep -n 'child_proc_' -- src/ tools/ vtest/`）：调用者只有三个文件，全在 `src/mod/` 下** —— `src/mod/io_mod.c` 六处、`src/mod/server_mod.c` 四处、`src/mod/verse_dist_mod.c` 三处；**而这三个文件都只在 `CMakeLists.txt` 的 `if(WIN32)` 源码分支里列出**（`verse_dist_mod.c` 那处还顺手调了 `Sleep(1500)`）⇒ **POSIX 构建里没有任何被列进去的东西调它。** 把 `child_proc.c` 加进 POSIX 列表**只会改变二进制的内容，不改变任何行为**。⇒ **清单是对的；文件开头那句 `/* Cross-platform child process registry. */` 是一个意愿，不是一条现状。** 这一处**只登记、不改**。
+
 
 ## §1.72 一次推送前必须跑哪些阶段，由 `git diff --name-only` 决定，不由感觉决定
 
