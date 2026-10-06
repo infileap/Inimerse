@@ -1368,12 +1368,32 @@ if(INIMERSE_BUILD_ENGINE)
   # no declaration.  The assertion here is that the two syntax paths AGREE; that
   # is the conclusion the change delivers and deliberately not its premise.  The
   # red control is therefore the tree, not the value: on the pre-T2 tree the
-  # paths disagree and this test fails.  See docs/SYNTAX.md.
+  # paths disagree and this test fails.  See docs/TYPESET_V06.md §3.8 (not
+  # docs/SYNTAX.md: that section's line numbers are cited from other documents,
+  # so the entry there is deliberately line-neutral and points here instead).
   add_test(NAME xrange_t2_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/xrange_t2_v06.im)
   set_tests_properties(xrange_t2_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
     PASS_REGULAR_EXPRESSION "xrange-ok bad=0"
     FAIL_REGULAR_EXPRESSION "bad=[1-9]")
+  # A member access on something that is not a bare name had no lowering: the
+  # EXPR_MEMBER case in src/compiler/compiler.c fell through to `return -1`, and
+  # every caller used that -1 as a register number.  `say str(arr[0].b)` died
+  # with SIGSEGV (RC=139) at the first *use* of the value, while a bare
+  # `arr[0].b` was silently dropped.  The nil-safe form `a?.b` was implemented
+  # all along, which is what makes this a missing lowering and not a design
+  # question.  The fix reports it and exits 1, like the read-only property error.
+  #
+  # The assertion is the message, not a value: this file never runs.  The red
+  # control is measured, not argued -- the same file on the pre-fix tree printed
+  # nothing and exited 139, so the regex below could not match.  No WILL_FAIL:
+  # with a PASS regex set CTest judges by the regex alone (see the `be` removal
+  # block above).
+  add_test(NAME member_on_nonname_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/member_on_nonname_v06.im)
+  set_tests_properties(member_on_nonname_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;syntax;regression"
+    PASS_REGULAR_EXPRESSION "'.bogus' on something that is not a name is not implemented"
+    FAIL_REGULAR_EXPRESSION "must not be reached")
 endif()
 
 # A host that is already an address literal must not reach the resolver.

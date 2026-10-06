@@ -285,6 +285,26 @@ positive = {x in Z | x > 0}
 
 **注意**：`2 ** 200` **依然不是合法语法**（§4.3 已撤回那个样例）；`i.json` 里指数一律以 `^` 写在散文里（`2^18`、`10^9`），**不是语言运算符**。这条裁定不改变这一点——它只是指出**不需要**运算符也能造出大数。
 
+### 3.8 元属性 `.range` 与 `.declared` 答的是两个不同的问题（2026-10 T2 裁定）
+
+一个值可以问两个问题，而**写法不该是答案的一部分**：
+
+| 写法 | 答什么 | 例（`type Byte = [0~255]` / `x: Byte = 42` / `arr = [x]` / `func id(a) { return a }`） |
+| --- | --- | --- |
+| `.range` | **这个值**属于哪个集合，与写法无关 | `x.range` = `arr[0].range` = `id(x).range` = `set(Z interval)`；`3.7` 那种 ⇒ `set(R interval)`；对象本身就是集合 ⇒ 它自己 |
+| `.declared` | **这个名字被声明成什么**；对象不是裸标识符 ⇒ `nil` | `x.declared` = 声明时那个 `Byte`；`y.declared`（只有赋值、没有声明）= `nil`；`arr[0].declared` = `id(x).declared` = `nil` |
+
+**T2 之前 `.range` 答的是哪一个，取决于对象是怎么写的**：裸标识符答**声明**集合，其它表达式答**推断**集合。于是上例里 `x.range` 是 `Byte`（`300 in x.range` 为假）而 `arr[0].range` 是 `Z`（`300 in arr[0].range` 为真）——**同一棵树、同一个值 42、两个答案，谁都没读错**。
+
+`.declared` 对写法的依赖**是刻意的**：声明是**名字**的属性，不是值的属性，所以只有对象写成裸标识符时才答得出来。两个名字都进了 `src/compiler/compiler.c` 的元属性表，因此对**任何**对象都安全——不会掉进「点号全局」那条路，也不会掉进下面边界 2 那条路。
+
+**红色对照的宾语是树，不是值**：`vtest/xrange_t2_v06.im`（CTest `xrange_t2_runtime`）钉的是「两条路必须同答」；在 T2 之前那棵树上两条路不同答，该测试失败。**「它们答同一个值」是这一改的结论，不是对照的前提**——一个以自己要证明的那件事为前提的对照，是同义反复。
+
+**两处诚实边界**：
+
+1. **区间字面量集合的渲染**：`str(Byte)` 出来是 `set(R interval)`。判定与包含关系都是对的（`42 in Byte` 为真、`300 in Byte` 为假、`x = 300` 抛 `type_mismatch`），错的只是**显示**。另案。
+2. **非裸标识符对象 + 非元属性成员名**（`arr[0].bogus`、`f().bogus`）：`EXPR_MEMBER` 落到 `src/compiler/compiler.c` 的 `return -1`，而调用方把 `-1` 当寄存器号用 ⇒ `say str(arr[0].bogus)` **段错误（RC=139）**，写成裸语句则被静默丢弃（RC=0，什么也不说）。**nil 安全的 `?.` 一直是实现的**（降为 `OP_INDEX_GET`）⇒ 这是**缺一条 lowering**，不是设计取舍。T2 这一笔把它变成干净报错（`Error: '.bogus' on something that is not a name is not implemented`，RC=1，与只读属性错误同一条出口）；红色对照 `vtest/member_on_nonname_v06.im`（CTest `member_on_nonname_runtime`），**在 CTest 层量过**：修前 `***Exception: SegFault`，修后 `Passed`。**`.bogus` 最终该报错、还是该降成与 `?.` 同体只差 nil 守卫的 `OP_INDEX_GET`，仍未裁定**——登记在 §7.8 第 5 条。
+
 ## 4. v0.6 交付项
 
 ### 4.1 已有雏形（按 `file:line` 取证）
@@ -383,6 +403,7 @@ positive = {x in Z | x > 0}
    - **GUI `size` 的覆盖缺口（如实记录，不留给下一个人以为验过了）**：GUI 语境在 346 个受版控 `.im` 里出现 **0 次** ⇒ CTest 对它**零覆盖**，**「门禁全绿」不能当作「GUI `size` 没被动过」的证据**。本流没有改 `docs/SYNTAX.md:450/468/540/910`，也没有改 `src/compiler/compiler.c:1996` 的 `strcmp(verb, "size")`，但在本流内**未做验证**。
 3. **`docs/SYNTAX.md:39` 与实现的矛盾**：那一节写「两种行注释，**没有块注释**」，而 `src/lexer/lexer.c:83-92` 确实实现了 `#[...]` 嵌套块注释，`selfhost/lexer.im:6` 也自述支持。**改文档还是删实现**，未定——本轮只记录矛盾，没有改。
 4. **`type` 的编译期消费（R1）仍是文档承诺**：`src/compiler/compiler.c:2224-2231` 至今把 `type NAME = <集合>` 编成 `OP_STORE_GLOBAL`。这属于 v0.6 的实做，不是记法问题，但**R1 未落地前 §3.1 的统一形状只有语法意义**。
+5. **【T2 登记，未裁】非裸标识符对象上的普通 `.` 该报错、还是该降为 `OP_INDEX_GET`**：nil 安全的 `?.` 早已实现（`src/compiler/compiler.c` 的 `expr->member.safe` 分支，降为 `OP_INDEX_GET`），而普通 `.` 对**不是裸标识符**的对象一直没有 lowering（`EXPR_MEMBER` 落到 `return -1`，调用方把 `-1` 当寄存器号用 ⇒ 段错误）。T2 已把它从崩溃改成报错（见 §3.8 边界 2），但**「报错」是不是最终答案没有裁**。两个候选：① 维持报错——保守，不改变任何今天能跑的程序；② 降成与 `?.` 同体、只差 nil 守卫的 `OP_INDEX_GET`——语义上 `.` 与 `?.` 就只差一个守卫，对字典也自然。**裁定之前，② 不得被当作既定行为写进任何文档或测试。**
 
 ## 8. `FloatN`／`floatN` 移出核心：影响清单（2026-10 审计）
 
