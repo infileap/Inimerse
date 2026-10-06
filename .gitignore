@@ -97,6 +97,29 @@ verse_layer_probe_root/
 # Leftover root from the argument-passing / byte-declaration / range-syntax
 # probes run against the engine.  Same as above: hygiene, not a gate dependency.
 .probe-ie/
+# Leftover from running `vtest/say_pair_probe_v06.im` by hand: line 11 calls
+# `say_file("FILETEXT", "sayout.txt")` and the engine chdirs to the script's own
+# directory (`chdir_to_script_dir`, src/main.c:520), so the write lands in
+# `vtest/` beside the fixture rather than in the caller's cwd.  Unlike the
+# entries above, this one is not a root-level scratch directory but a fixed name
+# inside a tracked directory -- hence the leading slash, and hence the note
+# below had to be re-derived for this path instead of copied.  No CTest runs the
+# fixture (tools/check_orphan_fixtures.py records why) and the gate's fixture
+# scan already runs fixtures against a *copy* of `vtest/` for this very reason
+# (tools/fixture_parse.test.py), so only the hand-run case is left: nothing in
+# the gate re-creates this file, which is the whole reason the line changes no
+# reading.  Not repository content.
+# NB: this line is hygiene, not a gate dependency.  The checkers that enumerate
+# repository content read `git ls-files` (tools/check_links.py:80,
+# tools/check_doc_paths.py:99, tools/check_text_integrity.py:100), and
+# tools/check_orphan_fixtures.py:115 globs `vtest/*.im` -- `:55` says `*.txt` is
+# not checked -- so this file cannot turn a stage red either way.
+# Deliberately NOT fixed inside the fixture: the byproduct's *name* is the
+# probe's observable.  The swap it guards against (docs/AUDIT.md 1.45) would
+# create a file named `FILETEXT` holding `sayout.txt`, which this rule does not
+# hide -- a cleanup line would have to remove that too, and that deletes the
+# evidence.
+/vtest/sayout.txt
 
 # Per-session git worktrees (tools/stream.sh)
 .worktrees/
