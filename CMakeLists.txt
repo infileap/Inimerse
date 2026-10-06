@@ -1357,6 +1357,23 @@ if(INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
     PASS_REGULAR_EXPRESSION "count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9"
     FAIL_REGULAR_EXPRESSION "bad=[1-9]")
+  # .range used to answer two different questions depending on how the object
+  # was spelled: a bare identifier returned the set it was DECLARED with, any
+  # other expression inferred a set from the value.  With `x: Byte = 42` and
+  # `arr = [x]`, that made `x.range` say set(R interval) while `arr[0].range`
+  # said set(Z interval) -- two answers about one value, chosen by the spelling.
+  #
+  # T2 makes .range syntax-independent (value inference only) and moves the
+  # declaration question to a new member, .declared, which is nil when there is
+  # no declaration.  The assertion here is that the two syntax paths AGREE; that
+  # is the conclusion the change delivers and deliberately not its premise.  The
+  # red control is therefore the tree, not the value: on the pre-T2 tree the
+  # paths disagree and this test fails.  See docs/SYNTAX.md.
+  add_test(NAME xrange_t2_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/xrange_t2_v06.im)
+  set_tests_properties(xrange_t2_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
+    PASS_REGULAR_EXPRESSION "xrange-ok bad=0"
+    FAIL_REGULAR_EXPRESSION "bad=[1-9]")
 endif()
 
 # A host that is already an address literal must not reach the resolver.

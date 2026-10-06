@@ -1113,6 +1113,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 size_t ml = expr->member.member.length;
                 metadata_member = (ml == 4 && strncmp(mn, "type", 4) == 0) ||
                                   (ml == 5 && strncmp(mn, "range", 5) == 0) ||
+                                  (ml == 8 && strncmp(mn, "declared", 8) == 0) ||
                                   (ml == 3 && strncmp(mn, "int", 3) == 0) ||
                                   (ml == 5 && strncmp(mn, "float", 5) == 0) ||
                                   (ml == 3 && strncmp(mn, "str", 3) == 0) ||
@@ -1130,7 +1131,25 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 char memN[128];
                 snprintf(memN, sizeof(memN), "%.*s", (int)expr->member.member.length, expr->member.member.start);
                 if (strcmp(memN, "range") == 0) {
-                    /* range(value, gidx): gidx lets the runtime return the bound set */
+                    /* T2: .range answers about the VALUE only, never about how the
+                       object was spelled.  It used to hand the runtime the global
+                       slot of a bare identifier so it could answer with the set the
+                       variable was DECLARED with, which made `x.range` and
+                       `arr[0].range` two answers about one value.  That question
+                       moved to .declared below; this call no longer passes a slot.
+                       One argument: a builtin reads the stack top. */
+                    int a = compile_expr(comp, expr->member.object);
+                    int result = emit_builtin_call(comp, "range", a, 1);
+                    comp->last_temp = 1;
+                    return result;
+                }
+                if (strcmp(memN, "declared") == 0) {
+                    /* The set the object was DECLARED with, or nil.  This stays
+                       syntax-dependent on purpose: a declaration is a property of a
+                       NAME, not of a value, so it is only answerable when the object
+                       is written as a bare identifier.  gidx = -1 is how "no
+                       declaration" is spelled to the runtime, and it is also what
+                       any non-identifier object gets. */
                     int g = -1;
                     if (expr->member.object->type == EXPR_IDENT) {
                         char objN[256];
@@ -1145,7 +1164,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                     emit(comp->curBC, OP_PUSH_REG, gr, 0, 0);
                     release_to(comp, w0);
                     int result = alloc_reg();
-                    int ni = bytecode_add_string(comp->curBC, "range");
+                    int ni = bytecode_add_string(comp->curBC, "declared");
                     emit(comp->curBC, OP_CALL_BUILTIN, result, ni, 2);
                     comp->last_temp = 1;
                     return result;
@@ -2407,7 +2426,7 @@ case STMT_ASSIGN: {
                     char onm[256], mnm[128], full[384];
                     snprintf(onm, sizeof onm, "%.*s", (int)stmt->assignStmt.target->member.object->identName.length, stmt->assignStmt.target->member.object->identName.start);
                     snprintf(mnm, sizeof mnm, "%.*s", (int)stmt->assignStmt.target->member.member.length, stmt->assignStmt.target->member.member.start);
-                    if (strcmp(mnm, "type") == 0 || strcmp(mnm, "range") == 0 || strcmp(mnm, "int") == 0 ||
+                    if (strcmp(mnm, "type") == 0 || strcmp(mnm, "range") == 0 || strcmp(mnm, "declared") == 0 || strcmp(mnm, "int") == 0 ||
                         strcmp(mnm, "float") == 0 || strcmp(mnm, "str") == 0 || strcmp(mnm, "bool") == 0) {
                         fprintf(stderr, "Error: cannot assign to read-only property '%s.%s'\n", onm, mnm);
                         exit(1);
