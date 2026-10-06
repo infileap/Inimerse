@@ -22,4 +22,4 @@ finally { Pop-Location }
 
 & $iscc (Join-Path $root 'installer.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
-Write-Host 'Installer ready: D:\Infiverse_release\InfiverseSetup.exe'
+Write-Host 'Installer ready: D:\Infiverse_release\InfiverseSetup-0.5.2.exe'

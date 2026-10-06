@@ -39,12 +39,12 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
-| 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点**：`v0.5.2` → `0ebd68d`（`git rev-parse --short 'v0.5.2^{commit}'`）。**这个字面量是合法的**：写下它的这一笔在 tag **之后**，写下它**不移动 `v0.5.2^{commit}`** —— 判据是「写下它会不会改变它量的那个东西」，不是「不许写字面量」（§1.74 C）。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；`git rev-list --count 'v0.5.1^{commit}'..'v0.5.2^{commit}'` → **76**（到 0.5.2 发布点） |
+| 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点**：`v0.5.2` → `0ebd68d`（`git rev-parse --short 'v0.5.2^{commit}'`），发版说明见 [RELEASE_0.5.2.md](RELEASE_0.5.2.md)。**这个字面量是合法的**：写下它的这一笔在 tag **之后**，写下它**不移动 `v0.5.2^{commit}`** —— 判据是「写下它会不会改变它量的那个东西」，不是「不许写字面量」（§1.74 C）。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；`git rev-list --count 'v0.5.1^{commit}'..'v0.5.2^{commit}'` → **76**（到 0.5.2 发布点） |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
 | 全量测试 | **148 / 148 真通过**（Linux），无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s。**按平台并列，且每个读数带自己的 ref**：本树（合并后的 `main`）Linux `Total Tests: 148` / `stream/builtin-contract-rulings` @ `ab70a71` 上 Windows `Total Tests: 122` | `ctest --test-dir build -j$(nproc)`；Windows 读数见 §10.81（ucrt64，CI 同款工具链） |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
-| 引擎代码 | `src/` 101 个 `.c` + 49 个 `.h`，合计 48,753 行（`.c` 单独 46,120 行） | `find src -name '*.c' -o -name '*.h' \| xargs cat \| wc -l` |
+| 引擎代码 | `src/` **114** 个 `.c` + **51** 个 `.h`，合计 **53,547** 行（`.c` 单独 **50,706** 行） | 文件个数与行数是**两个量，各给自己的命令**：`find src -name '*.c' \| wc -l`、`find src -name '*.h' \| wc -l`；`find src \( -name '*.c' -o -name '*.h' \) \| xargs cat \| wc -l`。**原值 `101`/`49`/`48,753`/`46,120` 已陈**，且原来只给了一条**数行数**的命令却拿它当**文件个数**的出处 —— 引的证据与它证的命题不是同一个量（@ `0ebd68d` 重取） |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |

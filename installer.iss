@@ -4,13 +4,13 @@
 [Setup]
 AppId={{A8A1D2C7-4A1B-4E80-9E13-8F2B3A5D6C11}
 AppName=Infiverse
-AppVersion=0.5.1
+AppVersion=0.5.2
 AppPublisher=Infiverse
 DefaultDirName={autopf}\Infiverse
 DefaultGroupName=Infiverse
 UninstallDisplayIcon={app}\app.exe
 OutputDir=D:\Infiverse_release
-OutputBaseFilename=InfiverseSetup
+OutputBaseFilename=InfiverseSetup-0.5.2
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
