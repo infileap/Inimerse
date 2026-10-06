@@ -1041,10 +1041,10 @@ set_tests_properties(vfs_probe PROPERTIES
 # `posix_runtime_parity` is registered on BOTH platforms now, and each
 # registration carries its own expected value -- `parity load_missing=-1` on
 # POSIX, `0` on WIN32 -- so neither side's current answer can drift unnoticed.
-# The old wording is still readable at 18b865b:CMakeLists.txt, and the line
-# number it cites is gone; read the current registration with
-# `grep -n 'posix_runtime_parity' CMakeLists.txt` instead of a number, because
-# the number moved when the Windows branch was removed.
+# The old wording is still readable at 18b865b:CMakeLists.txt.  The `:662` in
+# that quote is the number as it stood then, not a pointer to follow; the
+# registration is CMakeLists.txt:676 @ 621a602, and it is read by content --
+# `grep -n 'posix_runtime_parity' CMakeLists.txt` -- because it moved once.
 # This pin runs on BOTH platforms and prints one line either way, so on
 # Linux it judges the POSIX copy and on Windows the WIN32 one.  It pins
 # int()'s width, chr()'s type check, and the name guard that atomic_get/atomic_set

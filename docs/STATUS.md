@@ -39,16 +39,16 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
-| 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点 = 发版说明落笔点 `751b2a0`**（`CMakeLists.txt:8` 升到 `0.5.2`、发版说明落笔，都在这一笔上；说明见 [RELEASE_0.5.2.md](RELEASE_0.5.2.md)）。**但这一笔不等于「四个版本生产点都说对了」的那棵树**：实测在 `751b2a0` 上 `CMakeLists.txt:8` = `0.5.2` ✅，而 `installer.iss:7` 仍是 `AppVersion=0.5.1`、`:13` 仍是不带版本号的 `InfiverseSetup`、`build_installer.ps1:25` 同 ⇒ **四个生产点只有 1 个对**；改对它们的是 `2cf072e`。**这一版没有任何一个提交同时说对四个** —— `751b2a0` 说对 1/4，而 4/4 的那棵树（`git rev-parse 'v0.5.2^{commit}'` 给出的那个）在发版**之后**。判据一条命令：`for p in CMakeLists.txt:8 installer.iss:7 installer.iss:13 build_installer.ps1:25; do git show <ref>:$p; done`，任一与 `CMakeLists.txt:8` 的版本不等 ⇒ 那个提交不是发版点。**本格不写 tag 当前指向哪个提交**：tag 是**可变指针**（本轮它被移动过两次，而移动在本地不留痕迹 —— `git reflog show v0.5.2` 返回空），要它就 `git rev-parse 'v0.5.2^{commit}'`；**也不要从它派生任何数**。本格初稿写过 `v0.5.2` → `0ebd68d` 与「到 0.5.2 发布点 **76**」：**前者在 tag 被移动后失效，后者是 `751b2a0` 上的值** —— 而写下它们的那一笔**当时确实是对的**，是后来的操作把它们改成了假的。这**不是** A（命令复现不出）、**不是** B（筛选条件错）、**也不是** C（自指），是第四种：**写下时对、之后被别人移动了被量的东西**。见 §1.74 E 段。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；**0.5.2 的那个数一律带 ref 写**，例如「在 `751b2a0` 上量是 **76**」 |
+| 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点 = 发版说明落笔点 `751b2a0`**（`CMakeLists.txt:8` 升到 `0.5.2`、发版说明落笔，都在这一笔上；说明见 [RELEASE_0.5.2.md](RELEASE_0.5.2.md)）。**但这一笔不等于「四个版本生产点都说对了」的那棵树**：实测在 `751b2a0` 上 `CMakeLists.txt:8` = `0.5.2` ✅，而 `installer.iss:7` 仍是 `AppVersion=0.5.1`、`:13` 仍是不带版本号的 `InfiverseSetup`、`build_installer.ps1:25` 同 ⇒ **四个生产点只有 1 个对**；改对它们的是 `2cf072e`。**这一版没有任何一个提交同时说对四个** —— `751b2a0` 说对 1/4，而 4/4 的那棵树（`git rev-parse 'v0.5.2^{commit}'` 给出的那个）在发版**之后**。判据一条命令：`for p in CMakeLists.txt:8 installer.iss:7 installer.iss:13 build_installer.ps1:25; do git show <ref>:$p; done`，任一与 `CMakeLists.txt:8` 的版本不等 ⇒ 那个提交不是发版点。**本格不写 tag 当前指向哪个提交**：tag 是**可变指针**（本轮它被移动过两次，而移动在本地不留痕迹 —— `git reflog show v0.5.2` 返回空），要它就 `git rev-parse 'v0.5.2^{commit}'`；**也不要从它派生任何数**。本格初稿写过 `v0.5.2` → `0ebd68d` 与「到 0.5.2 发布点 **76**」：**前者在 tag 被移动后失效，后者是 `751b2a0` 上的值**（**记录一个曾经的绑定，不能写成绑定的形状**：`tools/check_release_tags.py` 按形状认绑定，分不出「断言」与「回忆」，扫一眼这一格的读者也分不出） —— 而写下它们的那一笔**当时确实是对的**，是后来的操作把它们改成了假的。这**不是** A（命令复现不出）、**不是** B（筛选条件错）、**也不是** C（自指），是第四种：**写下时对、之后被别人移动了被量的东西**。见 §1.74 E 段。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；**0.5.2 的那个数一律带 ref 写**，例如「在 `751b2a0` 上量是 **76**」 |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **148 / 148 真通过**（Linux），无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s。**按平台并列，且每个读数带自己的 ref**：本树（合并后的 `main`）Linux `Total Tests: 148` / `stream/builtin-contract-rulings` @ `ab70a71` 上 Windows `Total Tests: 122` | `ctest --test-dir build -j$(nproc)`；Windows 读数见 §10.81（ucrt64，CI 同款工具链） |
+| 全量测试 | **148 / 148 真通过**（Linux），无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s。**按平台并列，且每个读数带自己的 ref**：本树（合并后的 `main`）Linux `Total Tests: 148` / `release/051-final` @ `c71ea00` （导出树 `ab70a71` 与它逐字相同，**两个 sha 都要写**：读数是在那棵导出树上取的，`c71ea00` 是它的工具链归属）上 Windows `ctest -N` 的 `Total Tests:` **131**（**122 是 ctest 汇总分母、120 是实跑，都不是 `Total Tests:`**；**`122 = 131 − 9`**：分母只排除 9 条 `(Disabled)`，2 条 `***Skipped` 仍在 122 里；见 §10.81） | `ctest --test-dir build -j$(nproc)`；Windows 读数见 §10.81（ucrt64，CI 同款工具链） |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` **114** 个 `.c` + **51** 个 `.h`，合计 **53,547** 行（`.c` 单独 **50,706** 行） | 文件个数与行数是**两个量，各给自己的命令**：`find src -name '*.c' \| wc -l`、`find src -name '*.h' \| wc -l`；`find src \( -name '*.c' -o -name '*.h' \) \| xargs cat \| wc -l`。**原值 `101`/`49`/`48,753`/`46,120` 已陈**，且原来只给了一条**数行数**的命令却拿它当**文件个数**的出处 —— 引的证据与它证的命题不是同一个量（@ `0ebd68d` 重取） |
 | 内建函数注册 | 531 处 `vm_register_builtin*` 调用 | `grep -rho 'vm_register_builtin[a-z_]*' src \| wc -l` |
 | 自举编译器 | `selfhost/` 48 个 `.im`、2,316 行 | `find selfhost -name '*.im'` |
 | 脚本规模 | 仓库 316 个 `.im`（根目录 148 个为回归测试） | `find . -name '*.im' -not -path './build/*'` |
-| 测试注册 | `CMakeLists.txt` 中 **148** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x）。**148 是注册上限，不是任一平台的实跑数**：注册还受 `INIMERSE_NODE`（`:233` `find_program(INIMERSE_NODE node)`）、`INIMERSE_CLANG`（`:367`，条件为 `:368 if(INIMERSE_CLANG AND NOT WIN32)`）、`INIMERSE_PYTHON`（`:66`）三个**环境**条件裁剪，而它们都不是平台条件，所以平台间的差**无法只由 `CMakeLists.txt` 推出**（这四个行号已在合并树上复核）。Windows 唯一的实测留痕是 `Total Tests: 122`（§10.81）。**`131` 不是平台注册数** —— 它作为 **Windows 读数**的出处是 `docs/RELEASE_0.5.1.md:14`；在 `EXP_CTEST` 记账里的出处是 §10.81 的「计数 131 → 132」（`docs/STATUS.md` §10.81（@ 57ece55 → :3663）），与同一行的 CTest 序号 `#132` 同处一行（`#131` 在同日的另一节 §10.80），极易被读成平台数。**本条不要写成「零命中」**：引用它的每一行都是它的一次出现，写下结论这个动作本身就会让那个计数失效（`docs/AUDIT.md` §1.65 已按此更正） | — |
+| 测试注册 | `CMakeLists.txt` 中 **148** 个 `add_test(`（`grep -c 'add_test(' CMakeLists.txt`；这个数字是**断言**，必须与 `tools/gate.sh:54` 的 `EXP_CTEST` 同步，历史增量见各 §10.x）。**148 是注册上限，不是任一平台的实跑数**：注册还受 `INIMERSE_NODE`（`:233` `find_program(INIMERSE_NODE node)`）、`INIMERSE_CLANG`（`:367`，条件为 `:368 if(INIMERSE_CLANG AND NOT WIN32)`）、`INIMERSE_PYTHON`（`:66`）三个**环境**条件裁剪，而它们都不是平台条件，所以平台间的差**无法只由 `CMakeLists.txt` 推出**（这四个行号已在合并树上复核）。Windows 的实测留痕是 `release/051-final` @ `c71ea00`（**导出树 `ab70a71` 与它逐字相同**，两个 sha 都要写）上 `ctest -N` 的 `Total Tests:` **131**（汇总分母 **122**、实跑 **120**；**`122 = 131 − 9`** —— `ctest -N` 印了 131 条 `Test #N:`，其中 9 条带 `(Disabled)` 不进汇总分母，2 条 `***Skipped` 仍在分母里；**`ctest -N` 不检查可执行文件是否存在**，所以它是**注册表读数**、不是实跑数；见 §10.81）。**`131` 就是 Windows 配置出的注册数** —— 它作为 **Windows 读数**的出处是 `docs/RELEASE_0.5.1.md:14`；在 `EXP_CTEST` 记账里的出处是 §10.81 的「计数 131 → 132」（`docs/STATUS.md` §10.81（@ 57ece55 → :3663）），与同一行的 CTest 序号 `#132` 同处一行（`#131` 在同日的另一节 §10.80），**同一个数字在两个语境里是两个角色**（平台注册数 / 记账增量），这正是它容易被读错的原因。**本条不要写成「零命中」**：引用它的每一行都是它的一次出现，写下结论这个动作本身就会让那个计数失效（`docs/AUDIT.md` §1.65 已按此更正） | — |
 | 工具 | `tools/` 98 个条目 | `ls tools \| wc -l` |
 | 性能（`sum(1..2000000)`） | 解释器 88 ms = 1.00x · AOT 打包 = 与解释器**等同**（分布中位 **0.98x**） · Wasm MVP 58 ms = 1.51x | [SELFHOST_BENCHMARK.md](archive/SELFHOST_BENCHMARK.md) |
 
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 148（Linux；Windows 在 `ab70a71` 上实测 122，见 §10.81）
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 148（Linux；Windows 的 `Total Tests:` 是 **131**，汇总分母 122、实跑 120，见 §10.81）
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
@@ -2940,7 +2940,7 @@ if pass < 60 {
 
 ### 三、为什么是匿名 union 而不是加宽字段
 
-`docs/DECFY_DESIGN.md:76` 把 `Value` 的宽度**冻结**在 32 字节：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。`int ival` 直接改 `long long` 会让 `sizeof` 从 32 变成 40，是真正的 ABI 破坏。改用匿名 union：
+`docs/DECFY_DESIGN.md` §2(a) 层次划分表「值表示 + 集合运行时」行 把 `Value` 的宽度**冻结**在 32 字节：它同时是 VM 寄存器、AOT 生成 C 的 `NV`、wasm 线性内存槽位的共同形状。`int ival` 直接改 `long long` 会让 `sizeof` 从 32 变成 40，是真正的 ABI 破坏。改用匿名 union：
 
 ```c
 int type;
@@ -3128,7 +3128,7 @@ setstr-ok union=set(5)/5 single=set(4)/4 overlap=set(3)/3 two=set(6)/6 plain=set
 | `posix_core_bool`（`bool()`） | **假** | 真 | 真 | 真 |
 | WIN32 `builtin_bool` | 假 | **假** | 假 | 假 |
 
-`if s` 认为空串为真，`not s`、`s or x` 与 `bool(s)` 认为它为假。而 `docs/DECFY_DESIGN.md:125` 要求的是「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」，`:24` 写下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
+`if s` 认为空串为真，`not s`、`s or x` 与 `bool(s)` 认为它为假。而 `docs/DECFY_DESIGN.md` §3.3 第 2 条 要求的是「`OP_JUMP_IF_FALSE` / `OP_JUMP_IF_TRUE` 各对应一条 `W_IF` 映射，**真值产生点唯一**」，§1.1 表第 3 行 写下的规则是那条三目链的尾句 `… : (va.type == VAL_NIL) ? 0 : 1`，即**非 nil 且非零为真，空串也算真**。
 
 **判据必须是短路，不能是返回值。** 第一轮探测看的是 `"" or "FALLBACK"` 的返回值，得出「空串在 `or` 里是假」——**这是错的**：O0 那次修复之后 `and`/`or` 恒产出布尔，所以 `"" or 1` 与 `1 or 1` 都是 `true`，返回值不区分。改用带副作用的右操作数（`.verify/v31/sc.im` 的 `func boom(t) { say "  BOOM:" + t; return true }`）才看得见：修复前 `"" or boom()`、`{1:2} or boom()`、`(1,2) or boom()` **都不短路**，只有数组短路。
 
@@ -3148,7 +3148,7 @@ int vm_truthy(const Value *v) {
 
 新增在 `src/vm/vm.c:293`、声明在 `src/vm/vm.h:356`；六处调用点全部改为调用它：`src/vm/vm.c:3341-3342`（`L_AND`）、`:3348-3349`（`L_OR`）、`:3355`（`L_NOT`）、`:3538`（`L_JUMP_IF_FALSE`）、`:3543`（`L_JUMP_IF_TRUE`），以及 `src/runtime/runtime_posix.c:69` 与 `src/runtime/runtime.c:68` 两份 `bool()`。三份文件里旧的三目链 `grep -c` 已为 0。`src/vm/vm.c:3896` 的 `OP_IS_NIL`（`(R[ins.r2].type == VAL_NIL) ? 1 : 0`）判的是 nil 本身而不是真值，**正确地未动**。
 
-**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md:24` 写下的规则，且六处里本来就有三处如此；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 **`bool("")` 从 `false` 变成 `true`**，这是本次唯一面向用户的语义变化，单独写在明处。
+**为什么统一到「空串为真」而不是统一到 `bool()` 的「空串为假」。** ① 前者是 `docs/DECFY_DESIGN.md` §1.1 表第 3 行 写下的规则，且六处里本来就有三处如此；② 前者**完全不动 `if` 的控制流**，对既有 `.im` 程序的爆炸半径为零 —— 反过来统一到「空串为假」会让每个 `if s` 在 `s` 为空串时静默换分支。代价是 **`bool("")` 从 `false` 变成 `true`**，这是本次唯一面向用户的语义变化，单独写在明处。
 
 **判据。** 新增 `vtest/truthiness_single_point_v06.im` ← CTest **`truthiness_single_point_runtime`（#116）**，一行断言：
 
@@ -3196,7 +3196,7 @@ release_to(comp, first + 1);
 
 **症状与发现路径。** 第 13 轮换了一类去找：不再追「快路径当答案」（§10.50/§10.52/§10.53 已三例），而是把 WIN32 与 POSIX 两份运行时的内建逐个对读（`.verify/v31/twocopies.py`，59 个同名内建，逐字相同 2 个、不同 56 个）。对读过程中先看到 `float` 两份写法不一致，探针一跑就撞见 `float(true)` 答 `4.9406564584124654e-324`。
 
-**根因。** v3.1 把 `Value` 的整数槽改成 64 位时，为守住 32 字节宽度契约（`docs/DECFY_DESIGN.md:76`）用的是匿名 union：`ival` 与 `fval` **共享存储**。于是所有「只分两种类型」的取值写法 `X.type == VAL_INT ? X.ival : (int)X.fval` 对 `VAL_BOOL` 都会去读 `fval`，读出来的是 `ival` 的位模式。`float(false)`/`float(nil)` 答 0 只是碰巧（位模式全零）。
+**根因。** v3.1 把 `Value` 的整数槽改成 64 位时，为守住 32 字节宽度契约（`docs/DECFY_DESIGN.md` §2(a)「值表示 + 集合运行时」行）用的是匿名 union：`ival` 与 `fval` **共享存储**。于是所有「只分两种类型」的取值写法 `X.type == VAL_INT ? X.ival : (int)X.fval` 对 `VAL_BOOL` 都会去读 `fval`，读出来的是 `ival` 的位模式。`float(false)`/`float(nil)` 答 0 只是碰巧（位模式全零）。
 
 **六处实测（修复前 → 修复后）。** `sqrt(true)` `2.2227587494850775e-162` → `1`；`float(true)` `4.9406564584124654e-324` → `1`；`gc_auto(true)` `0` → `1`（这一格最重：**静默地把 GC 关掉**）；`atomic_add("k", true)` `0` → `1`；`atomic_set("j", true)` `0` → `1`。
 
@@ -3660,7 +3660,7 @@ Windows 打印 `space=256 audio=0 ionet=256`，两侧 ctest 均 **Failed**；修
 
 **修法**：两侧都先问 `type`。不是 `VAL_INT` 的槽**不是计数器**，答 `0` 并不碰那个槽——正是这个族在名字解不开时已经给的答案，所以没有新立约定。`atomic_set` 不动（它是调用方明确要写一个整数进去）。**为什么不报 `type_mismatch`**：与 D13 同一条边界——仓库里没有任何一条「槽类型不对时怎么办」的规范，报错是新立一条规范，需要人批；当前已登记为 **REGISTERED, NOT RESOLVED**。
 
-**双向验证**：新 pin `vtest/atomic_slot_type_contract_v06.im` + CTest **#132** `atomic_slot_type_contract_runtime`（`PASS_REGULAR_EXPRESSION` 钉整行，两平台**同一行**）。`git stash push -- src/runtime/runtime_posix.c` 重编 ⇒ 打出 `atomic-slot-ok g1=4609434218613702656 r1=4609434218613702657 y=4609434218613702657 r3=4609434218613702657 yz=4609434218613702657 g2=1 r2=2 s=2 g3=7 r4=12`、退出码 0；恢复 ⇒ `atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。Windows 侧（ucrt64，CI 同款工具链，`Total Tests: 122`）同形 A/B：把新守卫换回 `type = VAL_INT; ival = 0;` 后重编 ⇒ 该测试打出 `atomic-slot-ok g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、**Failed**（`PREFIX_CTEST_RC=8`）；换回 ⇒ Passed。这一行把「修前 WIN32」从读码结论升为实测。计数 **131 → 132**（`tools/gate.sh` 的 `EXP_CTEST`）。
+**双向验证**：新 pin `vtest/atomic_slot_type_contract_v06.im` + CTest **#132** `atomic_slot_type_contract_runtime`（`PASS_REGULAR_EXPRESSION` 钉整行，两平台**同一行**）。`git stash push -- src/runtime/runtime_posix.c` 重编 ⇒ 打出 `atomic-slot-ok g1=4609434218613702656 r1=4609434218613702657 y=4609434218613702657 r3=4609434218613702657 yz=4609434218613702657 g2=1 r2=2 s=2 g3=7 r4=12`、退出码 0；恢复 ⇒ `atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12`。Windows 侧（ucrt64，CI 同款工具链；读数在 `ab70a71` 的导出树上取，`c71ea00` 与它逐字相同 —— **两个 sha 都要写**；ctest 汇总分母 **122**，**不是 `Total Tests:`** —— 该平台注册数是 **131**，`122 = 131 − 9` 条 `(Disabled)`，见 §10.81）同形 A/B：把新守卫换回 `type = VAL_INT; ival = 0;` 后重编 ⇒ 该测试打出 `atomic-slot-ok g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、**Failed**（`PREFIX_CTEST_RC=8`）；换回 ⇒ Passed。这一行把「修前 WIN32」从读码结论升为实测。计数 **131 → 132**（`tools/gate.sh` 的 `EXP_CTEST`）。
 
 **诚实边界**：WIN32 侧的「修前」值已由 ucrt64 上的 A/B 实测确认（打出 `g1=0 r1=1 y=1 r3=1 yz=1 g2=0 r2=1 s=1`、Failed）；只核了这三个名字。
 
@@ -3679,9 +3679,9 @@ CTest **#133**，`PASS_REGULAR_EXPRESSION` 钉整行且两平台**同一行**（
 计数 132 → **133**。
 
 同批**只登记、不动代码**的三处同形实例（`gui_fullscreen` 重名且一条不可达、`rand` 有文档
-有示例但零注册、`docs/SYNTAX.md:500` 的「有 `vtest` 覆盖」对 `random` 不成立），以及
+有示例但**POSIX 侧零注册、Windows 侧有**（见 [builtin-platform-census.md](streams/builtin-platform-census.md) §4）、`docs/SYNTAX.md` §5（写下时 `:500`）的「有 `vtest` 覆盖」对 `random` 不成立），以及
 `docs/API.md:234` **早就记下 `gui_fullscreen` 重复却只当成计数问题**这一点，
-见 [AUDIT.md](AUDIT.md) §1.53。`docs/SYNTAX.md:500` 已就地更正（`rand` 移出名单）。
+见 [AUDIT.md](AUDIT.md) §1.53。`docs/SYNTAX.md` §5（写下时 `:500`）已就地更正（`rand` 移出名单）。
 
 ## §10.83 数组池唯一的门不能拒绝一个下标，所以它后面八个 `if (!a)` 都是死代码
 
@@ -3964,7 +3964,7 @@ disagrees with its own table`、rc=1；两次都从 `/tmp` 备份精确恢复 �
 
 **A/B**：新增 CTest **`#140 substr_boundary_runtime`**（`vtest/substr_boundary_v06.im`，三个长度跨边界：`2147483642` / `2147483643` / `2147483647`，另钉 `start > sl`、负 `start`、负 `len`、`len=0` 各一行）。修复版 **100% passed**；换回 `start + len > sl` 重建 ⇒ **`0% tests passed, 1 tests failed`** 且手工跑 **rc=139**，恢复后复绿。
 
-**为什么活到今天**：`docs/SYNTAX.md:500` 把它列进「核心高频内建（有 vtest 覆盖的）」，而实际只有**一条 happy path**（`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5)`）；边界一个都没有 —— 分母从来没被问过。
+**为什么活到今天**：`docs/SYNTAX.md` §5（写下时 `:500`）把它列进「核心高频内建（有 vtest 覆盖的）」，而实际只有**一条 happy path**（`vtest/posix_core_api_v04.im:14` 的 `substr(s, 2, 5)`）；边界一个都没有 —— 分母从来没被问过。
 
 ### ② 数值字面量也走全套解析器 ⇒ Windows 上 `socket_probe` 撞 10 s 上限
 
