@@ -326,7 +326,13 @@ TARGETS = {
 # tree, and swapping the file every one of those numbers points into resets it
 # wholesale.  A ceiling that a merge can raise by 22 measures that merge, not
 # the batch of references it was meant to hold down.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "768"))
+# 768 -> 774: docs/AUDIT.md 1.74 增补三 (instance ledger / five shapes / six new
+# criteria) cites six more inline numbers than the tree that set 768.  The
+# unanchored ceiling did NOT move (561 -> 561) -- the two new unanchored
+# references that section first introduced were removed, not anchored: a
+# stale pointer quoted as a number is content, and content is what an anchor
+# is for.  Re-taken, not lowered.
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "774"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
     os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "561")
 )

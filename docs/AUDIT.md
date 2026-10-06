@@ -4031,7 +4031,7 @@ printf 'say (2147483647 + 1).type\nsay 9007199254740992 + 1\n' > /tmp/prom.im &&
 
 **分类学②（越界号）**：**一个超出文件行数的号，是这一族里唯一不可能成为「记录」的形态。** 记录能留是因为「写下时是对的」；越界号连这个都不成立 ⇒ **永远硬错，没有 `[obs:]` 可救，也不该被写成边界。**
 
-**分类学③（零被当作通过）**：一个**产出「什么都没有」的子系统**，与一个**「本来就没有什么可说」的子系统**，在输出上无法区分。两处实测：`doc-paths` 扫不到 `docs/streams/`（那一行 `0 broken` 对它什么都没说）；`dsh-session-org` 的 `readings.refresh()` **有文档、有导出、一个调用者都没有** ⇒ `readings.lineage` 整个进程生命周期都是空的，而客户端**什么都画不出来且不报错**（空表是合法输入）。⇒ **凡是「零」被当作通过的地方，都必须同时说明它在什么情况下会非零。**
+**分类学③（零被当作通过）**：一个**产出「什么都没有」的子系统**，与一个**「本来就没有什么可说」的子系统**，在输出上无法区分。两处实测：`doc-paths` 扫不到 `docs/streams/`（那一行 `0 broken` 对它什么都没说）；`dsh-session-org` 的 `readings.refresh()` **零个调用点 + 一个已发布的引用**（`as of 3f612b8^`，fixed in `3f612b8`；我一度在**修好之后的树**上量到 `:273`/`:605`/`:658` 三处调用点并据此质疑它 —— **那是我的读数晚于主语**，见增补三的第四格）⇒ `readings.lineage` 整个进程生命周期都是空的，而客户端**什么都画不出来且不报错**（空表是合法输入）。⇒ **凡是「零」被当作通过的地方，都必须同时说明它在什么情况下会非零。**
 
 **三条读数纪律（补）**：
 - **对账不闭合时，放弃的是方法，不是数。** agent2 的 diff 对账得 `13 − 5 + 14 = +22 ≠ +20`，它改用读数与逐文件表，**没有修数去让账平**。
@@ -4089,7 +4089,7 @@ printf 'say (2147483647 + 1).type\nsay 9007199254740992 + 1\n' > /tmp/prom.im &&
 
 **整族量法**：STMT_GUI 路径里 `strcmp(verb, …)` 出现的 verb 共 **16** 个；其中 **3 个根本到不了 `:2038`** —— `forever`（`compiler.c:1922` 分支，`:1940 break`）、`when`（`:1942` 分支，`:1966` 发射**另一个字面量** `"gui_wait_broadcast"`，`:1980 break`）、`on`（`:1982` 分支，`:2004` 发射 `"gui_bind"`，`:2017 break`）；余下 **13/13 全部有 `gui_<verb>` 字面量注册，缺失 0 个**。
 
-**一条新的零调用者（「零被当作通过」的第二个实例）**：`vm_register_builtin_safe`（`src/vm/vm.c:1721` 定义、`src/vm/vm.h:400` 声明）**一个调用点都没有** ⇒ 与 `readings.refresh()` 同形：**一个「安全包装器」没有调用者，读起来像一条可用通路，实际上是零。** ⇒ 判据（与「零被当作通过」合并）：**凡「零」被当作通过的地方，都必须说明它在什么情况下会非零。**
+**★ 一条撤回（`vivid-anchor` 自报，我复核成立）：这一条不是「零被当作通过」的实例。** `vm_register_builtin_safe`（`src/vm/vm.c:1721` 定义、`src/vm/vm.h:400` 声明，声明行注释逐字 `/* dangerous: blocked in safe_mode */`）**有调用点** —— `mods/build/build_mod.c:741: vm_register_builtin_safe(vm, "build", builtin_build);`。⇒ **错因是范围写小了：普查只扫 `src/`，而调用点在 `mods/`。** 同一个边界、同一行纠正了它两次（另一次见本节「A 集 = 0」那条撤回）。⇒ 判据：**一个边界错一次是疏忽；同一个边界在同一行上错两次，说明那条边界从来没被写下来过。** 而它现在是一条**正面的读数**：**一个头文件注释写着「在 safe_mode 下被阻断」的注册器，恰好只有一个调用者，而那一个调用者就是 `build`。**
 
 **未测**：`forever` 分支究竟发射什么名字 —— 只测到它 `break` 在 `:2038` 之前、且**没有** `gui_forever` 字面量注册；它发射的那个名字**没读**。
 
@@ -4122,11 +4122,11 @@ printf 'say (2147483647 + 1).type\nsay 9007199254740992 + 1\n' > /tmp/prom.im &&
 ⇒ **「还剩多少处旧写法」这个问题，答案不是 17 也不是 0，而是「17 处、其中 0 处是缺陷」** —— **同一个数在两种读法下含义完全不同。**
 **★ 「零被当作通过」的第三个实例，与一条细化（`glad-falcon` 的，同一族）。** `setReminderFilter` 在**没有 store 时是空操作** ⇒ 测试若不自己装一个 `globalThis.localStorage`，那条「关掉过滤后 teammate 会重新出现」的断言会在**从没走到它命名的那条分支**的情况下**通过**。
 ⇒ **细化后的判据：零当作通过的地方，必须同时说明它在什么情况下会非零。** 而这条实例给出了一个比「没有数据」和「读数据失败」都更隐蔽的入口：**断言通过，是因为它从没走到它自己的主语** —— 与「空绿」同族（一个通过，不代表它谈的那件事被检验过），但**主体是一条断言，不是一份检查器**。
-三个实例并排，入口各不相同：**没有数据**（`vm_register_builtin_safe` 零调用者）、**读数据失败**（`except: continue`）、**从没走到主语**（没有 store 的空操作）。⇒ 判据合并成一句：**凡「零」被当作通过的地方，都必须说明它在什么情况下会非零；说不出的，那个通过就不是证据。**
+三个实例并排，入口各不相同：**没有数据**（`readings.refresh()`，见分类学③）、**读数据失败**（`except: continue`）、**从没走到主语**（没有 store 的空操作）。⇒ 判据合并成一句：**凡「零」被当作通过的地方，都必须说明它在什么情况下会非零；说不出的，那个通过就不是证据。**
 **★ 第十六个实例 + 一条方法：证明「不可达」靠「那个常量在产物里从不出现」（`vivid-anchor` 的，读数）。** 它用**引擎自带的 `bytecode` 子命令**（`src/main.c:686 main_dump_bytecode`、`:1308 strcmp(cmd,"bytecode")`）把编译结果原样打成 `op,r1,r2,r3` 四元组，先按 opcode 枚举定标（`OP_MOV=0 … OP_LOADK_INT=1 … OP_LOADK_STRING=3 … OP_CALL_BUILTIN=27 … OP_HALT=33`，与 dump 逐一对上），再读三个程序：`window(1,1,"t")` 发射 `27,1,0,3`；前面加一句 `say "zzz"` 后发射 `27,1,1,3`；再加两个常量后发射 `27,1,3,3` ⇒ **第二个操作数跟着字符串池走（0/1/3），从来不是编译器表里 `window` 的位次 26**（`src/compiler/compiler.c:2941`，全表 29 条、`window` 第 27 条）⇒ **这些调用由通用标识符路径发射，`case STMT_WINDOW`（`src/compiler/compiler.c:2210`）没有执行。**
 ⇒ **方法：当一条分支的「不可达」无法用「构造一个程序让它跑」证明（构造不出来）时，改用产物侧的反证 —— 让它本该产生的那个常量在产物里从不出现，而另一个随输入变化的量一直在出现。** 与「按形状搜邻域」同族：**用产物上可复核的量，替代「我构造不出来」这句断言。**
 - 读码侧独立吻合：`STMT_WINDOW` 全仓**只有一个赋值点** `src/parser/parser.c:1756`（`git grep -n 'STMT_WINDOW' -- src/` 只有 `src/parser/ast.h:84` 枚举、`parser.c:1756` 赋值、`compiler.c:2210` 消费），而 `src/parser/parser.c:1342` 对「`window` + `(`」**直接 `stmt->type = STMT_EXPR; return stmt;`**（`:1345`）；`:1756` 要走到就必须下一个 token **不是** `(`，可它紧接着 `consume(p, TOK_LPAREN, "'('")`（不匹配即 `parse_fatal()`，`src/parser/parser.c:130-141`）⇒ **任何解析成功的程序都构造不出 `STMT_WINDOW` 节点。**
-- ★ **(b) 因此不可观测 —— 但把它「如果执行」会发生什么测出来了，比「调到另一个内建」更糟**：`src/vm/vm.c:3772`/`:3773` 取 `string_pool[ins.r2]`，`:3776 if (name) {` **没有 `else`**，`:3819` 关掉它，`:3825 if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }` ⇒ 小程序的池里没有第 27 个字符串 ⇒ `ins.r2 = 26` **越界** ⇒ `name = NULL` ⇒ **整块被跳过、落到 `:3825` 把栈顶弹进结果寄存器** ⇒ **调用静默返回「上一次压进去的东西」，不报错**。而 `src/vm/vm.c:3808-3814` 的注释逐字写着它修掉了这类（`a missing name is a fact worth reporting, not a value to invent`）—— **那修的是「名字查不到」那条分支；「操作数越界」这条今天仍然静默穿过。** ⇒ **同一条路径上有两个没有 `else` 的口子，一个在编译器侧（`src/compiler/compiler.c:2219`）、一个在 VM 侧（`src/vm/vm.c:3776`），而它们各自的「静默」形状不同：前者编译成空、后者返回陈旧值。**
+- ★ **(b) 因此不可观测 —— 但把它「如果执行」会发生什么测出来了，比「调到另一个内建」更糟**：`src/vm/vm.c:3772`/`:3773` 取 `string_pool[ins.r2]`，`:3776 if (name) {` **没有 `else`**，`:3819` 关掉它，`:3825 if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }` ⇒ 小程序的池里没有第 27 个字符串 ⇒ `ins.r2 = 26` **越界** ⇒ `name = NULL` ⇒ **整块被跳过、落到 `:3825` 把栈顶弹进结果寄存器** ⇒ **调用静默返回「上一次压进去的东西」，不报错**。而 `src/vm/vm.c:3808-3814` 的注释逐字写着它修掉了这类（`a missing name is a fact worth reporting, not a value to invent`）—— **那修的是「名字查不到」那条分支；「操作数越界」这条今天仍然静默穿过。** ⇒ **同一条路径上有两个没有 `else` 的口子，一个在编译器侧（`src/compiler/compiler.c:2219`）、一个在 VM 侧（`src/vm/vm.c:3776`），而它们各自的「静默」形状不同：前者编译成空、后者返回陈旧值。** ★ **VM 侧那一个已于 `1a2c14e` 修掉**（用户裁定「只修 VM 侧」）：`src/vm/vm.c:3774` 现在在 `if (!name)` 时挂上 `unknown builtin function (string index %d is out of range)` 并走**既有的** `vm_throw_msg` 路径 —— **没有新发明错误形状，也没有加 `else`**（守卫放在没人引用的两行上，`docs/AUDIT.md` 一处号都不用重取；加 `else` 那版实测让 `unanchored` 561 → 562，当场退掉）。可红对照：同一份 `r2=26` 的构造物，改前 `rc=0`、stdout=`abcdef`、stderr 空（**`len("abcdef")` 返回了它自己的实参**），改后 `rc=1` 且 stderr 有那个索引；合法程序 `rc=0`、`150/150`、pins held。**下面这段「整块被跳过、落到 `:3825` 把栈顶弹进结果寄存器」由此成为历史读数**（结论过期，行号与引文都还成立）。
 - 边界（它自己标的）：第三条是**读码**不是运行读数（构造不出能到达 `case STMT_WINDOW` 的程序）。未测：`case STMT_WINDOW` 的**删除是否安全**；`src/vm/vm.c` 那条越界静默路径**是否还有别的调用者能触发**。
 **★ 第十七个实例 + 五条判据（`ivory-ember` 的，全部是读数）。** 它给四个检查器**各注入一个非 UTF-8 文件到它自己的输入集里**（用它们自己的 `main()`、`REPO_ROOT`/`ROOT` 指到 `/tmp/nonutf8/inject`，仓库一个字节没动）：
 ```
@@ -4215,10 +4215,10 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
 
 **★ 第二十一个实例（`vivid-anchor` 的，读数）：受跟踪的 `.inim` 语料与「今天能跑的输入」不是一回事；能把字节码喂进 VM 的入口有四个，四个全是数据可达的。**
 - **9 个受跟踪 `.inim`，越界 `r2` 一个都没有**：逐文件解析（8 字节头 + `count` + 字符串池 + 浮点池 + `count×16` 指令），**共查 25 条 `OP_CALL_BUILTIN`，越界 0 条**。**`nst2.inim` 是 0 字节的空 blob**（`e69de29b…`），根本不是字节码 —— 这就是第一遍解析它失败的原因。
-- ★ **6 个被版本闸门挡掉**：`projects/set_test.inim`/`t1.inim` 是 **ver=1**、`exc_test`/`set_comp_test`/`tt4`/`tt6`/`tt7` 是 **ver=2**，而今天的 `INIM_BYTECODE_VERSION` = **3**（`src/compiler/bytecode.h:65`），`bytecode_read_file`（`src/compiler/bytecode.c:346-356`）要求 `magic[6] == 3` ⇒ 实测报 `cannot load bytecode … (old format? recompile with buildc)`。**8 个可解析的里只有 `vtest/params_precompiled_v06.inim`（ver=3）是活输入。** ⇒ **不是缺陷（历史留档），但「语料」这个词会把两者说成一件事。**
+- ★ **7 个被版本闸门挡掉**（此处原写「6 个」；名单里就是 7 个名字，`exact-lumen` 逐条跑出 **8 个 rc=1** = 7 个版本闸门 + `nst2.inim` 那个 0 字节空 blob）：`projects/set_test.inim`/`t1.inim` 是 **ver=1**、`exc_test`/`set_comp_test`/`tt4`/`tt6`/`tt7` 是 **ver=2**，而今天的 `INIM_BYTECODE_VERSION` = **3**（`src/compiler/bytecode.h:65`），`bytecode_read_file`（`src/compiler/bytecode.c:346-356`）要求 `magic[6] == 3` ⇒ 实测报 `cannot load bytecode … (old format? recompile with buildc)`。**8 个可解析的里只有 `vtest/params_precompiled_v06.inim`（ver=3）是活输入。** ⇒ **不是缺陷（历史留档），但「语料」这个词会把两者说成一件事。**
 - **四个入口，四个全是数据可达**：①`src/main.c:309 bytecode_read_file(path)` ← `load_and_run`（`src/main.c:296`，`.inim` CLI 参数 `:308`）——**用户命名的任意磁盘文件**；②`src/main.c:1072 bytecode_load_from_exe(self_path)` ——**正在运行的 EXE 自己**的尾部 trailer（`TAIL_MAGIC 0x1BC0FFEE`、`BC_MAGIC 0x1BC0FFDB`，`src/compiler/bytecode.c:391-430`），而 **EXE 是一个文件、尾部是普通数据**；③`src/main.c:302-304 zip_extract_all(path, jarCache)` → `runPath = "main.inim"` ——**用户命名的任意 ZIP**；④`mods/build/build_mod.c:337 bytecode_read_file(input)` ——**build 命令收到的任意 `.inim`**。
 - ★ **同一条数据路径上，四个入口的闸门不是同一个**：入口 1/3/4 过 `bytecode_read_file`（查 8 字节头的版本），而**入口 2 走 `bytecode_load_from_exe` → 直接 `bytecode_read(f)`**（`src/compiler/bytecode.c:413`/`:428`），**只查尾部 `TAIL_MAGIC`、不查字节码版本**。⇒ **判据：说「这条路有闸门」之前，先问「是不是每一个入口都过同一个闸门」。**
-- ★ **`bytecode_read_file_compat`（`src/compiler/bytecode.c:716`，声明 `src/compiler/bytecode.h:147`）调用点为零** ⇒ **「零被当作通过」的第三个实例**（前两个：`vm_register_builtin_safe`、`readings.refresh()`）。**一个名字里带 compat 的读入器，读起来像一条兼容通路，实际是零。**
+- ★ **`bytecode_read_file_compat`（`src/compiler/bytecode.c:716`，声明 `src/compiler/bytecode.h:147`）调用点为零** ⇒ **「零被当作通过」的一个实例**（编号与前两个的名单见增补三的实例台账；此处原写的第二个已被撤回）。**一个名字里带 compat 的读入器，读起来像一条兼容通路，实际是零。**
 - **它自己划的那条线值得记下来**：入口 2 的实际触发**它没测** —— 理由是「在 `/tmp` 里改一个 EXE 的尾部去喂入口 2，我判断它越过了『接受字节码文件的程序喂字节码文件』那条线 —— 那是在改一个不是为字节码设计的容器。**所以我不做，照实写没测到。**」⇒ **这正是边界纪律的正确形态：不是「我不敢」，是「我说得出为什么这一条越线」。**
 - **只登记**：`src/compiler/bytecode_capture_probe.c:7 #define BC_MAGIC 0x1BC0FFDB`（同认那个尾部魔数）是否被测试注册，未查；五个注册计数照旧不下判断。
 
@@ -4289,3 +4289,74 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
 ### `TARGETS` 是一份白名单，而白名单之外的世界不是「没问题」，是「没人问」
 
 `tools/check_line_refs.py` 的 `TARGETS = {"CMakeLists.txt", "tools/gate.sh"}` ⇒ **只有这两个文件的行号引用有站岗的。** 指向 `tools/*.py` 的号**没有任何东西在看** —— 上面那处错了多久、还有多少处，今天没人知道。**这一节自己就是证据**：这句话的第一版把那个号写成裸号，于是它按「本行最近的文件名」继承了行内另一个目标文件，`line-refs` 当场把它算成一条无锚引用 —— **我写「白名单之外没人问」的那一行，正好落进白名单之内，并且被抓到了。**已派一次普查：`docs/**` 里指向 `tools/*.py` 的行号引用逐条对着今天的内容量一次，报「指对 / 指错 / 号不存在」三栏。
+
+
+## §1.74 增补三：实例台账重排、五种形态、以及六条新判据
+
+**这一节把「零被当作通过」这一族从三个实例重排成五个，并把今天四条车道上量出来的判据并到一起。**
+
+### A. 实例台账（重排后）
+
+| # | 形态 | 实例 | 谁在什么情况下会非零 |
+|---|---|---|---|
+| 1 | **定义了，从没被调用** | `dsh-session-org` 的 `ensureSessionScope`（零调用点） | 补上调用点即可 —— **但补上之后门还是死的，见 #2** |
+| 2 | **注册了，但注册在不在链上的键** | guard 挂在 `createScope(ctx, {sessionId})` 上，而 `tools.guardReason(exec)` 走 `chainLayers(exec.agent)`，agent 的 scope key 是 **agent 对象本身** | 没有任何东西会非零：**注册成功、不报错、永远不被咨询** |
+| 3 | **两个部件对同一个键各写各的** | `assignRole` 存角色 id **字符串**，`charterFor` 读**定义** ⇒ 章程 `undefined`、section 名 `session-org:charter:undefined` | 没有任何东西会非零，**也不报错** |
+| 4 | **自动路径零调用点，但有一个已发布的引用** | `readings.refresh()`（**零个调用点 + 一个已发布的引用**，`as of 3f612b8^`，fixed in `3f612b8`） | 只有**手动**调用才会非零；线钟（`3f612b8` 加的）之前，`readings.lineage` 整个进程生命周期为空 |
+| 5 | **写好了 + 有文档 + 有测试 + 已发布 + 两个方向都没有消费者** | `dsh-session-org` 的 `renderHandoff`（`src/handoff.js:78` 生产路径零调用点；`HandoffLedger` 在 `apply` 里被 new 出来、发布到 `sessionOrg` 服务面，**没有东西消费它，也不在 Remote 面上**） | 两个方向都断 —— 前四个至少有一个方向是通的 |
+
+⇒ **判据：这一族不是一种病，是五种；「零被当作通过」只是它们共同的症状名，而它们的修法各不相同。** 编号口径：**第三个实例是 `setReminderFilter`（没有 store 时是空操作）**，`bytecode_read_file_compat` 与 `renderHandoff` 依次在其后；**本档旧文里「第二个实例 = `vm_register_builtin_safe`」已撤回**（它有调用点，在 `mods/build/build_mod.c:741`）。
+
+### B. ★ 第四格：读数需要一个绑定时刻
+
+**审计实例是关于「某个提交区间」的陈述，不是关于「某个文件」的陈述。在一个已经修好的树上量一个实例，永远是假的。**
+- 实测：我在 `dsh-session-org` 的 **HEAD** 上量到 `src/index.js:273`/`:605`/`:658` 三处调用 `readings.refresh()`，据此质疑那个实例；而 `git show 3f612b8^:src/index.js | grep -n` 给的是 **`:466 refreshLineage: () => readings.refresh(),` 一处已发布的引用 + `:505 setInterval(sweep, …)`（那是标题修复那条线，不是血缘）**。⇒ **那三处正是修它时加的。**
+- 判据逐字（`glad-falcon` 的）：**「你量到的那个零和我报的那个零，不是同一个零 —— 你的读数晚于主语。」** 我那条判据（「零被当作通过」要说明「非零的东西真的在被读的地方」）由此长出第四格：**一个读数即使非零、即使真的在被读的地方，它仍然可能是假的 —— 如果它不是在主语那个时刻读的。**
+- 它与两条已登记的判据同族：**血缘读数需要一个时钟**（`readings` 那处）、用户原话**「按隐藏有延迟反应」**（交付那处）。⇒ **同一个族，第三次出现在三个不同的层上（时钟 / 交付 / 审计）。**
+- 落档形态：**实例必须带区间**（`as of <sha>` / `fixed in <sha>`），否则它会在被修好之后继续为真地说话。
+
+### C. ★ 光断言「它存在」不够，要断言「它可达」
+
+- 实例（`glad-falcon`）：`test/arming.test.mjs:338` 钉住宿主半承诺的**工具名集合**恰好是 `escalate,handoff,overseer_review`；把 handoff 的注册删掉，它立刻失败并打印 `escalate,overseer_review` ⇒ **那行输出就是「交接不存在」与「交接可达」的差别。**
+- ⇒ **「存在」是一条关于源码的陈述，「可达」是一条关于调用图的陈述，而它们今天在五个地方分开了**（上表五格）。
+- 同族（本仓，`vivid-anchor` 的普查）：**一个只扫 `src/` 的「零调用点」普查，会把 4 个活符号报成零** —— `vm_register_builtin_safe`（调用点 `mods/build/build_mod.c:741`）、`compiler_get_using_mods`（`mods/build/build_mod.c:351`）、`vm_debug_threads`（`mods/debug/debug_mod.c:604`）、`vm_debug_jump`（`mods/debug/debug_mod.c:593`/`:599`）。⇒ **`mods/` 是每一个 `src/` 作用域普查的盲区。**
+- ★ **第二种盲区不会因为扩大目录范围而消失：跨语言同名。** 排除掉的候选里有两个假阳性来自它 —— `compile_index_set_chain` 命中的是 `selfhost/compiler.im:393` 的**自举编译器同名函数**，`test_drain`/`test_undo` 命中的是 `tools/verse_closed_loop.test.py:134` 的 **Python 测试函数**。⇒ 判据：**一个按名字匹配的普查，假阳性有两种来源 —— 名字在别的目录里、以及名字在别的语言里。**
+- ★ **出现次数 ≥ 3 不证明可达。** `bytecode_check_compatible` 有 3 次出现（定义 + 声明 + 一处调用），而它**唯一的调用者在 `bytecode_read_file_compat` 体内** —— 那是一对**互相支撑、但没有入口**的符号。⇒ **一个按出现次数判定零的普查，会把这个死对报成活的；要读调用者。**
+- ★ **`bytecode_read_file_compat` / `bytecode_check_compatible` 属于「从来没被调用过」，不是回归。** `git log --all -S` 对两个名字各只返回一笔（`7be36c6`），在那之前 0 命中，在那一笔里两个都存在且**从诞生那一刻起就只有那一条内部调用**；`docs/archive/CHANGELOG_0.5.0.md:142` 逐字 `- \`bytecode_read_file_compat\`/\`bytecode_check_compatible\` matched a non-existent header layout; rewritten against the real INIMBC container`（**这处坐标原报作 `docs/` 直接下属的 CHANGELOG\_0.5.0.md 的 `:129`，两处都错：那个路径不存在，文件在 `docs/archive/` 下，引文在 `:142` —— `doc-paths` 当场红了，它印的是一行 `BROKEN` 加那个不存在的路径。**⇒ 又一个实例：**一条被引的坐标，要么能被某个检查器证明，要么它只是在等下一个读它的人。**）⇒ 判据：**「零」有两种 —— 从来没被调用过（设计遗留）/ 曾经被调用过、后来断了（回归），而它们在今天的样子完全一样。** 边界：`7be36c6` 是一笔**压平的发布提交**（59 文件、+26740/−167）⇒ **一次 squash 会把「它诞生时有没有调用者」变成不可观测的**；那条 changelog 只能证明它被重写过，不能证明重写前后有没有调用者。
+
+### D. ★ 等号该用在哪里（对 §1.74 第二十二条的裁定）
+
+- 我裁 **agent2 的 (b)**：把 `EXP_LINE_REFS` 的等号/上限换成**相对一棵具名基树的 delta**。理由：**(a) 补 22 条内容锚只解决这一次** —— 下一次有人重写被引文件，同样的位移会再来，而这一点今天已经被证明了两次（`9969e5b` 那 850 行、`stream/pin-shift` 那一支的 `tools/gate.sh`）。
+- 两件今天没有的东西定下来：**基树 = 一个 HEAD 的祖先 sha**（检查器断言它是祖先，**不可解析 ⇒ exit 2**，用 `--required-for` 那条已有的牙）；**基树过期就让它自报** —— 报告行必须带 **`base <sha> is N commit(s) behind HEAD`**。⇒ 判据：**一个 delta 的权威性来自「基树不动」；正因为它不动，delta 会随主线前进而变大 —— 所以 delta 必须与「它离基树多远」一起印出来。**
+- ★ **而 `glad-falcon` 给出了区分这两种等号的判据**（它为自己的工具名集合**保留等号**）：**等号该用在「这个集合的成员身份是有意义的」上；用在「这个集合的成员身份会自己变」上，它测的是噪声。** 工具名不会因为无关编辑漂移，行号会 ⇒ **同样是等号，一个断言的是一条有意义的边界，另一个断言的是一条会自己漂的坐标。** 它的代价它自己认，并把它从「代价」改成「契约」：**让失败信息自己说出这个契约**，于是一次正当的增长是**一行、故意的动作**，而不是一道谜题。
+
+### E. ★ 行数中性是手段，「被引的号没有位移」才是目的
+
+- 两条独立到达同一句：`ivory-ember` 改两个检查器时总行数 **199 → 223 / 220 → 243**，而**被引的号一个都没动**（`:39`/`:80`/`:103`/`:152`/`:99`/`:188` 改前改后逐字节相同）；`exact-lumen` 修 `src/vm/vm.c:3776` 那口子时**不加 `else`**，把守卫放在没人引用的两行上，因为**要保护的不是文件长度，是被引用的行号**（它实测加 `else` 那版让 `unanchored` 561 → 562 并当场退掉）。
+- ⇒ 判据：**两者冲突时，报出总行数变了，并证明被引的号逐字节相同。**
+
+### F. ★ 规则文件的射程（`noble-zephyr` 的普查）
+
+**8 个文件在写规则，规则条数合计 ≥ 26，有门禁在守的 = 0 条**（`tools/ENCODING_RULES.txt` 7 条 0 守、`docs/BOARD.md` §「三条硬规则」3 条 0 守、`docs/README.md` §「三条硬规则」3 条 0 守、`tools/README.md` ~8 条 0 守、根 `README.md` 2 条 0 守、根 `imai_sys.txt` 2 条 0 守、`docs/HANDOFF_INFIVERSE.md` §4.6+§5 1 元规则+3 建议 0 守、`docs/SYNTAX.md` §7.4 H4 1 元规则 0 守）。
+
+三条最刺眼的形状：
+1. **★ 「三条硬规则」是一个名字两个答案。** `docs/BOARD.md:9` 与 `docs/README.md:20` 各有一节，标题**逐字都是「三条硬规则」**，装的是**六条不同的规则**（3+3，零交集，没有任何交叉链接或消歧）。⇒ **引擎里那条判据（同名注册两次、`builtin_lookup` 只认第一个）的原文，出现在文档层** —— 而它更隐蔽：**引擎里那次至少有一个探测链会出声，文档层没有任何东西出声，读者靠标题找规则。** ⇒ **这两节哪一条是家，是一个决定，不是一个测量。**
+2. **★ 同一个量 5 个抄本、4 个错、唯一对的在代码里**：根 `README.md:26` 与 `docs/README.md:32` 写 `out of 97`、`tools/README.md:147` 写 `148 / 148`、`docs/SYNTAX.md:1030` 写 `130`、`tools/gate.sh:149` 写 `150`（唯一权威）。而 `docs/STATUS.md:51` 自己写着「必须与 `tools/gate.sh` 的 `EXP_CTEST` 同步」—— **它指的那个行号也已经不对了**（那一行今天是 `EXP_CTEST` 的默认值定义行，默认值 150，位于 `tools/gate.sh` 的 `stage_ctest` 之前）。⇒ **它不是「数烂了」，是「维持数不烂的那个机制自己烂了」。** 而 `tools/README.md` 自己那张表下面逐字写着 `When one of those numbers changes, update this table *and* the baseline row in docs/STATUS.md §1 — otherwise the next session gates against a stale expectation.` ⇒ **规则写在文件里，文件自己违反了它，没有任何东西检查。**
+3. **★ 一条说「规则需要家」的规则，当年没有家；后来有了家，而它举的第一个例子同时过期两次。** `docs/HANDOFF_INFIVERSE.md` §4.6 逐字「**规则本身还没有家**：一次观测 ≠ 一个性质」+「本文件的作者没有权限写那两处，所以它被留在这里」；后来家是 `docs/SYNTAX.md:1021` §7.4 H4；而 H4 同族清单第一条逐字 `` - `EXP_CTEST = 130`（`docs/STATUS.md`、`docs/BOARD.md`）—— 写下来那一刻就没有权威来源 `` —— **今天它是 150，而权威来源存在** ⇒ **数变了，且「没有权威来源」这句已经不成立。** ⇒ 判据：**一条元规则也会成为它自己的实例，而它过期的方式是「它举的例子先过期」。**
+
+另两处同族：`tools/README.md` 抬头给自己发免责声明（「实现状态可能已变化；权威总览以 `docs/API.md` 为准」）⇒ **一份规则文件给自己发免责声明，等于承认「这份文件里的规则没有门禁守」**；它的 Windows 路径那一族（`D:\inimerse_stable\tools\ai_run.ps1` 与 `mcp_server.js` 都不存在，而 `tools/ai_run.ps1`/`tools/mcp_server.js` 就在仓库里）—— **`ENCODING_RULES` 那一族的第二个文件，而这次是活文档（5 个文件引用它）。**
+**唯一对的一格也记一笔**：`tools/README.md` 写 Fifteen stages，而 `tools/gate.sh` 里**恰好 15 个 `stage_*` 函数**，`--only` 的合法值也是这 15 个 ⇒ **只报坏消息的普查会让人以为整份文件都烂了，而它有一格是对的。**
+
+### G. ★ 一条「有没有动」的判据，对「从来没对过」是瞎的
+
+- 实例（`ivory-ember` 撞出、我复核成立）：`docs/AUDIT.md:4183` 原写 `check_doc_paths.py:124` ⇒ 解码点其实在 `:121`，而 `:124` 是一个空行；扫该文件每一个历史提交，**`:124` 从不是解码点**（`NO commit has the decode site at :124`）⇒ 这是 **F（坐标从来没对过）**，不是漂移。同一句里另外两个号都对 —— **三个里错一个**。
+- 机制：它找移位的判据是「改前 vs 改后这个号上的内容一样吗」，而它报 `SAME` —— **因为两边都是空行**。⇒ 判据：**两棵树对比只能发现漂移，永远发现不了「从未正确」**（与 H4.1 同源）。
+
+### H. ★ 两条来自「错误形状」的判据
+
+- **「不可逆」的规模必须先说清坏在哪一层**（`noble-zephyr` 的逐行普查）：按 `line.encode('gb18030').decode('utf-8')` 判，**(a) 能精确还原 25 行 / (b) 有损 157 行 / (c) 判不出来源 0 行**；而 **(b) 要分两种**：**(b-1) 文件里已经有一个 U+FFFD 字面量 —— 104 行**（已经烙进去的替换字符，任何逆变换都救不回来）、**(b-2) 只有 PUA、没有 U+FFFD —— 53 行**（逆到一半**字节流本身不是合法 UTF-8**，例 `src/compiler/compiler.c:18` 重建出 `e8b083 efbf 3f 2a2f`）⇒ **在双重编码之前就已经坏了**。⇒ 准确说法不是「有损一次」，是**至少坏过两次**：(a) 那 25 行是一次双重编码、可逆；(b) 这 157 行**在双重编码之前就已经坏了**（那一层是什么工具做的，没测）。
+- **一条测试可以在「从没走到它命名的那个主语」的情况下通过**（`glad-falcon` 自报，它当场发现并改掉）：同步的 `test()` helper 配 async body ⇒ helper **不 await body** ⇒ `.then()` 里的断言在**汇总行之后**才跑 ⇒ **测试报绿而一条都没检查**。⇒ 与「凡『零』被当作通过的地方……」是同一个东西，**只是主语换成了测试自己**。**而它是在一次「绿」里被发现的，不是在一次「红」里。**
+
+### I. ★ 未出现 ≠ 已覆盖 ≠ 不可达（一处待判）
+
+`exact-lumen` 初读发现：`tools/check_text_integrity.py` 的**所有红报告都走 `file=sys.stderr`**（唯一的 stdout 是那句**不含任何路径**的通过行），而 `sys.stderr` 默认 `backslashreplace`、`sys.stdout` 才是 `strict` ⇒ 同一个炸弹在这个文件上**可能根本走不到**。而 `ivory-ember` 在 `tools/check_links.py` 与 `tools/check_doc_paths.py` 上**把同一个炸弹做红了**（那两个文件的报告走裸 `print()`，即 stdout）⇒ **同一族形状，一个可达一个不可达，差别就是 `file=` 这一个参数。** ⇒ 待它把「可达 / 不可达」逐字量出来后落档；**两种产出都要写清是哪一种**：「它可达，修它」或「它今天不可达，而不可达的原因是这个参数 —— 记下来，别改」。
