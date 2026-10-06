@@ -4180,7 +4180,7 @@ names containing space/tab/newline = 2
 ⇒ 它已落在产物里：本档上一段与那笔提交信息都写着 `919` ⇒ **本档那处已更正为 917（分子不动）；提交信息改不了 ⇒ 登记为记录，不假装它没发生。**
 **★ 第八个形态：同一个通配符在两种工具里不是同一个集合（它自报，且它差点把它报成仓库缺陷）。** 它先看到 `git ls-files -- 'vtest/*.im'` = **79**、`glob.glob("vtest/*.im")` = **78**，形状是「一个受跟踪的 fixture 从工作区里消失了」；**实测那个文件在盘上（`vtest/params_sub/relative_script.im`，42 字节）** —— 差的是**两个不同的通配符**：**`git` 的 `*` 跨 `/`**（匹配子目录），**`glob` 的 `*` 不跨 `/`** ⇒ **79 与 78 是同一个集合被两种通配符量了两次。**
 ⇒ **准确说法**：检查器印的 `124` 是「**glob 看得见的**」，那个前缀下受跟踪的是 `125` ⇒ **差的那一个不是未跟踪的，是子目录里的、glob 看不见。今天它的输入集比仓库小 1，不是大。** 两个方向都存在，今天是「小」。
-**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:142`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:124` ⇒ `:211` `print` **stdout**）⇒ **会**。
+**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:142`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:121` ⇒ `:211` `print` **stdout**，**原写 `:124`**）⇒ **会**。
 ```
 stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   locale zh_CN.UTF-8
   print(s)                        -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 3: surrogates not allowed
@@ -4191,7 +4191,7 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
 ```
 ⇒ **stdout 是 strict、stderr 是 `backslashreplace`** ⇒ **红报告里走 stdout 的那几行会以一个 `UnicodeEncodeError` 结束，而不是以那条 BROKEN 行结束。** 红对照（注入、仓库一字节没动）：干净跑 rc=0、surrogate 出现在输出里 **False**；offender 跑 rc=1、印出 `['  /tmp/nonutf8/surr/bad\udcff.js  (1 NUL)']`、surrogate 出现 **True**。
 ⇒ ★ **三条路径都只在「已经红了」的时候才走到**（offender / broken / `--verbose` / `--json`；干净跑只印计数）—— **而「已经红了」正是读者最需要看清文件名的时刻** ⇒ **它在最该说话的时刻失败。** 与「一个不带 reason 的报告格式会自己编一个」同族：**报告格式在它最该说话的时刻失败。**
-⇒ **今天这个状态不存在，也是量出来的**：`git ls-files -z` ⇒ **917 个受跟踪路径，名字不是合法 UTF-8 的 = 0** ⇒ 与跨行那条同形：**不是「已覆盖」，是「未出现」** —— 只是这一次连「未出现」都是读数。
+⇒ **写这句话时那个状态不存在，也是量出来的**（观测点 `main @ cfda74c`）：`git ls-files -z` ⇒ **917 个受跟踪路径，名字不是合法 UTF-8 的 = 0** —— **这个分母随每一笔加文件的提交变**（`9aa8442` 上已是 **919**，多出的两个是 `tools/check_line_refs.py` 与 `tools/check_release_tags.py`；分子今天仍是 **0**）⇒ 与跨行那条同形：**不是「已覆盖」，是「未出现」** —— 只是这一次连「未出现」都是读数。
 **★ 它自己的第二个假绿（要进产物）：把输出重定向进 `StringIO`，于是根本不会发生编码。** 它第一版测 surrogate 时重定向进 `StringIO` ⇒ 读到的「`print` 没炸」是**假绿**；第二次用**真 stdout** 才得到上表。⇒ **与「构造空绿 / 约定空绿」同形：我测的是「我重定向到的那个东西」，不是「真正会写出东西的那个东西」。**
 **★ 配方三段（已修正为 `-z`，不会再产出 919）**：脚本用 `subprocess.run(["git","ls-tree","-r","-z","--name-only",REF]).stdout.split(b"\0")` 取名字、用 `importlib` 加载 `tools/check_text_integrity.py` **并直接调用它自己的 `is_text()`**、其余三份各按其自身谓词（`links` = 后缀 `.md`/`.markdown`；`doc_paths` = `README.md` 或 `docs/`|`future/` 下的 `.md`；`orphan_fixtures` = `vtest/*.im` 或 `tools/*.test.{py,js}`）；期望输出（`main @ cfda74c` 实跑）：`ref = main` / `tracked files = 917, not valid UTF-8 = 27` / **`text-integrity 2 of 27`、`links 0 of 27`、`doc-paths 0 of 27`、`orphan-fixtures 0 of 27`**。
 **★ 第二十个实例（本轮最重要的一条）：一条「只有编译器能到达」的路径，其实是「数据可达」的 —— 全部实测。**
@@ -4208,7 +4208,7 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
 - **更正**：我上一轮写「输出的是 GBK 字节、被当 UTF-8 读」——**错**。逐字节比对：`src/compiler/compiler.c:3072` 的 `fprintf(stderr, "閿欒: 鏃犳硶璇诲彇鏂囦欢 '%s'\n", full);` 与引擎实际吐出的字节**到 `'%s'` 为止逐字节相同** ⇒ **中间没有任何转换，引擎把字面量原样打印**；终端也无辜。**真正的机制是双重编码**：`printf '鏃犳硶璇诲彇鏂囦欢' | iconv -f UTF-8 -t GBK` ⇒ **`无法读取文件`** ⇒ 原文的 UTF-8 字节曾被当成 GBK 解码、结果再存成 UTF-8。`git grep '无法读取文件' -- src/` = **0 命中**，**不是因为它不在，是因为它被糊过了**。
 - ★ **由此得到一条判据：一个按「是不是合法 UTF-8」建的输入集，对「被双重编码过的中文」全盲。** 乱码**本身是合法 UTF-8** —— 所以「全 `src/` 都是合法 UTF-8」与「这里有一处中文被糊过」两句话**同时为真**。这与本档已登记的**第十四/十五种**同族：**判据的名字听起来在量内容，实际在量编码。** 同一层的三个入口是：**27 个非 UTF-8 文件**（解不开）、**182 行双重编码**（解得开、是乱的）、**14 个含 U+FFFD 的文件**（解得开、有替换字符）—— **门禁只看第三种。**
 - **射程（`src/**/*.{c,h}`，python 与 `git grep -P` 两种数法交叉核对）**：含 **PUA（U+E000–U+F8FF）的行 = 95**、含 **U+FFFD 的行 = 104**、**并集 = 182 行 / 11 个文件**（`src/compiler/compiler.c` 61、`src/compiler/bytecode.c` 36、`src/vm/vm.c` 28、`src/vm/vm.h` 17、`src/main.c` 14、`src/parser/parser.c` 14、`src/compiler/compiler.h` 7、`src/lexer/lexer.h` 2，另三个各 1）。**`src/` 里全部 14 条含中文的 `fprintf(stderr, …)` 行，14 条全是乱码，0 条干净。** 全仓含 U+FFFD 的受跟踪文件 14 个，其中 9 个在 `src/`。
-- ★ **它不是统一可逆的，而且同一个行里头的部分和尾的部分不一样**：`无法读取文件` 能精确还原；**`错误` 不能** —— `printf '閿欒' | iconv -f UTF-8 -t GBK` 只吐回 `e99499e8`，而 `错误` 的 UTF-8 是 `e99499e8 afaf` ⇒ **末两字节 `af af` 已经变成 PUA 洞 `U+E1E4`**。至少 16 行能干净还原（例：`src/compiler/compiler.c:246` → `/* ---------- 线程与互斥锁 ---------- */`、`:661` → `/* 结果复用左操作数（临时） */`、`:983` → `/* 参数已压栈，临时寄存器可回收 */`）。
+- ★ **可还原的是少数，而「PUA 是洞」这句话本身是错的**（`noble-zephyr` 自报后更正，见本节末尾「可还原性普查」）：逆变换必须**用 GB18030、不是 GBK** —— `iconv -t GBK` 在这里失败（GBK 表没有 PUA 那一段），**GB18030 有**，`printf '閿欒' | iconv -f UTF-8 -t GB18030` 精确吐回 `e99499e8 afaf` ⇒ **`错误` 也能还原**；**真正的洞是 U+FFFD，PUA 只是 GB18030 的用户定义区**。按 `line.encode('gb18030').decode('utf-8')` 逐行判：**(a) 能精确还原 25 行 / (b) 有损 157 行 / (c) 判不出来源 0 行**（原写「至少 16 行」是把 GBK 当成 GB18030 之后的低估）。例：`src/compiler/compiler.c:246` → `/* ---------- 线程与互斥锁 ---------- */`、`:661` → `/* 结果复用左操作数（临时） */`、`:983` → `/* 参数已压栈，临时寄存器可回收 */`）。
 - **它不是本仓引入的，而且它还在长**：`src/compiler/compiler.c` 最早出现在 `8248e08 Release Infiverse 0.2.0`，那时**已带 62 行** PUA/FFFD；今天 61。`src/vm/vm.c` **9 → 28**、`src/main.c` 11 → 14。⇒ **继承来的，但没停止增长 —— 这不是考古题。**
 - ★ **案发现场是一份规则文件**：`tools/ENCODING_RULES.txt` 逐字写着双轨制「文档/脚本(md/im/tpl): **GBK(936)**」「新内容源文件: **UTF-8**」，外加「禁止 Node 对 GBK 文件做 latin1+utf8 混合读写」「禁止 write_file 直接覆盖 GBK 中文文件」—— **这份文件自己预告了这次事故**，而它里面的工具路径还写着 `D:\inimerse_stable\…`、`C:\Users\Lenovo\Infiverse\…`。⇒ **判据：一份规则文件若只禁止「混合读写」而不指定「哪一侧是权威编码」，它就只是把事故描述了一遍。**
 - **`sync.im` 从来没有存在过（不是回归）**：`git log --diff-filter=D -- '**/sync.im'` = **空**；`git log --all -- 'sync.im' 'projects/host/sync.im' 'projects/sync.im'` = 只有 `8248e08`；`git ls-files projects/host/` = **只有 `main.im`**；而 `projects/host/main.im:1` 就是 `import "sync.im"`，import 按**脚本目录**解析（`src/compiler/compiler.c:139` 那条糊掉的注释还原出来正是「import 相对路径解析…：绝对/带盘符原样，否则 base_dir + rel」）⇒ **一个从 Infiverse 搬来、同级依赖没跟着搬、因此从没跑通过的样例。** 六条真红里 `projects/host/main.im` 那一条至此结案。
@@ -4234,3 +4234,58 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
 - `tools/check_doc_paths.py` 原来的 `broken` 是 `(source, path)`、打印时硬拼 `(no such file)` ⇒ 一个 UTF-8 解码失败的文件也被说成「文件不存在」。修法是**让 reason 随条目走**（三元组 `(rel, path, why)`），**不是按分支拼句子** —— 理由是 `tools/check_links.py:146` 本来就是三元组 `(source, target, why)`：**它从来没有这个毛病；差别在字段，不在打印。** ⇒ **这一件不是「补一个特例」，是把两个检查器的报告格式对齐到那个本来就对的一边。**
 - 红对照（真 stdout、真 `main()`、注入输入集）：(a) 只有解不开的文件 ⇒ `BROKEN  unreadable.md  ->  <unreadable>  ('utf-8' codec can't decode byte 0xff in position 4: invalid start byte)`，**输出里不出现 `(no such file)`**；(b) 只有真的不存在的目标 ⇒ `(no such file)` 保留；(c) 两者并存 ⇒ 两条各自的 reason 都在，`--json` 的 `why` 字段两条都带上。A/B（同一棵树）：**改前改后都是 `21 markdown files, 991 backtick refs, 0 broken` rc=0** ⇒ **绿树上一个读数都没变，它只改「红了的时候那句话的形状」。** 行数中性：`6 6`，**六处编辑每一处都是换一行**（该文件被 `docs/AUDIT.md` 按行号引着）。
 - ★ **它自报的一处，形状与本档第 ⓪ 条同族**：它把「`git` 的 `*` 跨 `/`、`glob` 的 `*` 不跨」当成新发现报上来，而**它早就写在 `tools/check_doc_paths.py:82-83` 的 docstring 里**（`63c79c3` 加的，逐字 `` `docs/*.md` matches `docs/archive/*.md` too (`*` crosses `/` in a pathspec; measured: 51 matches, 6 of them non-recursive). ``）—— **它读那个文件是为了看它的输入集，不是为了看它知道什么。** ⇒ **「把『我没找到』当成『它不在』」的宾语可以是仓库里的知识，不只是文件。**
+
+## §1.75 增补：三条最小改动落地之后的读数，以及一处从未正确的坐标
+
+**这一节是重取，不是改写。** §1.75 正文里的 `913` / `915` / 「三个不可达条目」/「`:57` 的清单里没有 `.ps1`」是**记录**（各自带着写下时的那棵树）；本节更正块里的「今天 914」是**当时的读数**。三条最小改动落地之后（`c40cc83` + `a1b8822`，合并为 `9aa8442`），今天的读数是：
+
+- `TEXT_SUFFIXES = 44`、`TEXT_NAMES = 4`（原 33 / 4）
+- **(A) 结构性不可达 = 0 条**（原 3 条：`.gitignore` / `.gitattributes` / `.editorconfig`）
+- **(B) 今天没有受管文件命中的死条目 = 13 条**，逐字 `.bash .cc .cfg .cjs .cmake .csv .editorconfig .hpp .ini .jsonc .ts .tsx Dockerfile`（我的 12 + `.editorconfig` —— **我原把它归在 (A)，错了**：(A) 说的是「匹配规则够不着」（点文件），而它是「一个受管文件都没有」）
+- 受管文本文件 **879**（原 830，更早 825）
+- `--required-for <碰到 .ps1 的提交>` ⇒ **`required: 5 stage(s)`**（原逐字 `no rule matches 'build_installer.ps1'; requiring every stage.` ⇒ 15）
+- `.ps1` 现在在清单的 **`:65`** 那一行（原「`:57` 的清单里没有 `.ps1`」已不成立）
+
+**★ 但更正块本身也会过期，而且它以同样的方式过期。** 更正块里写「今天 914」，今天这个数是 **919** —— 因为它旁边没有观测点，而**它的读数不经过任何门禁**：没有任何阶段会因为「受跟踪文件数变了」而红。⇒ **判据：一个「今天」若旁边没有观测点，它会随下一笔提交变假，而变假时没有人会说话。** 这与 H（现值 + 无人站岗）同形，只是这次的现值住在一段**更正**里。
+
+**两个分母与它们的差**：`9aa8442` 上 `git ls-tree -r -z --name-only` = **919**；`e2501a3` / `aba5ed4` / `2d0ecd8` / `f575fd6` 上都是 **917**，`439df94` 上 **916**。差的两个是 `tools/check_line_refs.py` 与 `tools/check_release_tags.py`（`git diff --name-status aba5ed4 9aa8442 | grep '^A'`）—— **不是「数错了」，是「树长了」**；而 `str.split()` 那个 919 是另一回事（见本节「第九个形态：切分」）。
+
+### 一处从未正确的坐标（F 类的新实例，`ivory-ember` 发现，我独立复核）
+
+本文档上一段那句「`check_doc_paths.py:124` ⇒ `:211` `print`」**错**：解码点在 **`:121`**，`:124` 是一个空行。已就地改成 `:121` 并标出原文。
+
+- `tools/check_doc_paths.py:121` = `for name in proc.stdout.decode("utf-8", "surrogateescape").split("\0")`；`:124` = 空行。
+- **历史**：只有 `63c79c3` 与 `509d5d2` 碰过这个文件，`63c79c3` 上解码点就在 `:121` ⇒ **没有任何一笔提交把解码点放在 `:124`** ⇒ 这是 **F（坐标从来没对过）**，不是漂移。同一句里 `check_text_integrity.py:120` ✓、`check_links.py:103` ✓ 都对 —— **三个里错一个**。
+
+★ **它是怎么被发现的，比这一处本身值钱**：`ivory-ember` 找移位的判据是「改前 vs 改后这个号上的内容一样吗」，而它报 `SAME` —— **因为两边都是空行**。⇒ **判据：一个「有没有动」的判据，对「从来没对过」是瞎的 —— 错号只要继续错，就永远比对相等。** 与 H4.1 同源：**两棵树对比只能发现漂移，永远发现不了「从未正确」；后者只能把号对着内容再量一次。**
+
+### 可还原性普查（`noble-zephyr`，并更正它自己上一轮的机制）
+
+**它上一轮说「`错误` 的末两字节 `af af` 变成了 PUA 洞」是错的 —— PUA 不是洞，正确的逆变换是 GB18030，不是 GBK。** `iconv -t GBK` 在这里失败（GBK 表没有 PUA 那一段），`iconv -t GB18030` 有：`printf '閿欒' | iconv -f UTF-8 -t GB18030` 精确吐回 `e99499e8 afaf`。⇒ **真正的洞是 U+FFFD；PUA 只是 GB18030 的用户定义区。**
+
+判据 `line.encode('gb18030').decode('utf-8')`，182 行逐行：
+
+| | (a) 能精确还原 | (b) 有损 | (c) 判不出来源 |
+|---|---|---|---|
+| 行数 | **25** | **157** | **0** |
+
+(a) 的分布极不均匀：`src/compiler/compiler.c` 22、`src/compiler/compiler.h` 2、`src/vm/vm.h` 1，**其余 8 个文件 0 行**。
+
+**而 (b) 这 157 行不是「坏过一次」，是「至少坏过两次」**，两种分开报：
+
+- **(b-1) 文件里已经有一个 U+FFFD 字面量：104 行** —— 已经烙进去的替换字符，任何逆变换都救不回来。
+- **(b-2) 只有 PUA、没有 U+FFFD：53 行** —— 它们逆到一半**字节流本身不是合法 UTF-8**（例 `src/compiler/compiler.c:18` 重建出 `e8b083 efbf 3f 2a2f`，其中 `ef bf 3f` 是一个被截断的三字节序列加 `?`）⇒ **在双重编码之前就已经坏了。** 那一层是什么工具做的，**没测**。
+
+洞的码位直方图（(b) 全部 157 行）：`U+FFFD` 104 行，其余全是 GB18030 用户定义区的码位（`U+E044` 8、`U+E046` 8、`U+E7D2` 7、`U+E100` 7、`U+E0FF` 6、`U+E21A` 6 …）。
+
+⇒ **判据：说一个「不可逆」的规模之前，必须先说清它坏在哪一层 —— 一次双重编码可逆，二次不可逆。**
+
+### `tools/ENCODING_RULES.txt` 的射程：**7 条里，有门禁在守的 = 0 条**
+
+- **`git grep -n 'ENCODING_RULES'` 全仓 1 命中**，就是本文档上一段（在引它）⇒ **功能引用 0 个。**
+- 逐条：①「文档/脚本(md/im/tpl) 走 GBK(936)」**没有门禁，而且被仓库自己否定**（`.md` 93、`.im` 386、`.tpl` 5、`.txt` 8 = **492/492 全是合法 UTF-8，0 个 GBK**；三个文档检查器都 `open(..., encoding="utf-8")`）⇒ **门禁不是没守它，是站在它的反面**；②「新内容源文件走 UTF-8」**没有门禁，但它被遵守了，同时 182 行是乱的** ⇒ **「守住了」与「事故」同时为真**；③「唯一允许的读写方式是 PowerShell + .NET（禁止 Node readFileSync/writeFileSync）」**没有门禁，而且这条规则描述的工作方式已经不在了**（实际工具链是 Python + Node）；④「校验：`Test-GbkClean` / `Test-GbkText`」**没有门禁**（`grep -ciE 'gbk|cp936|iconv' tools/gate.sh` = **0**；16 个阶段没有一个碰编码）；⑤「禁止 `write_file` 直接覆盖 GBK 中文文件」**没有**；⑥「禁止 PowerShell 命令内联中文字面量」**没有**；⑦ 两个 Windows 工具路径：`D:\inimerse_stable\tools\enc_utils.ps1` **不存在**、`C:\Users\Lenovo\Infiverse\tools\enc_utils.ps1` **在这台机器上存在**，而 `tools/enc_utils.ps1` 连同 `check_enc.ps1` / `conv_tpl.ps1` / `gbk2utf8.ps1` / `gbktool.ps1` / `patch_gbk.ps1` / `read_gbk.ps1` / `utf82gbk.ps1` **在仓库里**。
+- ⇒ **7 条里 5 条连「它描述的那个世界」都已经不在了。** 判据照旧：**一条只写在规则文件里、没有任何门禁在守的规则，与一条不存在的规则在行为上无法区分。**
+
+### `TARGETS` 是一份白名单，而白名单之外的世界不是「没问题」，是「没人问」
+
+`tools/check_line_refs.py` 的 `TARGETS = {"CMakeLists.txt", "tools/gate.sh"}` ⇒ **只有这两个文件的行号引用有站岗的。** 指向 `tools/*.py` 的号**没有任何东西在看** —— 上面那处错了多久、还有多少处，今天没人知道。**这一节自己就是证据**：这句话的第一版把那个号写成裸号，于是它按「本行最近的文件名」继承了行内另一个目标文件，`line-refs` 当场把它算成一条无锚引用 —— **我写「白名单之外没人问」的那一行，正好落进白名单之内，并且被抓到了。**已派一次普查：`docs/**` 里指向 `tools/*.py` 的行号引用逐条对着今天的内容量一次，报「指对 / 指错 / 号不存在」三栏。
