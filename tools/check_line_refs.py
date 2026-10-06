@@ -54,7 +54,7 @@ The gate stage asserts DENOMINATORS, not anchor rates:
   - the explicit-form reference count has a pin (EXP_LINE_REFS), so it cannot
     shrink while nobody is looking;
   - the unanchored count has a ceiling (EXP_LINE_REFS_UNANCHORED_MAX), so it
-    cannot grow while nobody is looking.  This is the tooth: 508 is a known
+    cannot grow while nobody is looking.  This is the tooth: 521 is a known
     quantity today, and 527 tomorrow is an unannounced regression.
 
 What those pins do NOT say -- written here rather than in a letter, so that
@@ -68,7 +68,16 @@ the claim and the artifact travel together:
     at 686 before the row existed, and the row's own tree already read 690 --
     the pin shipped stale by its own subject matter.  This is a fixed point,
     not a slip: the number and its description move together or not at all,
-    so a change to that row and a re-measurement are one action.
+    so a change to that row and a re-measurement are one action.  A merge of
+    main moves them without anyone touching the row -- 694 -> 720 in one merge
+    -- so the pin is a reading of a moving set, not a constant.
+  - only a file git tracks can hold a number.  The working tree also holds
+    build output, and a verdict that changes depending on whether someone has
+    run a build is not a verdict about the repository: on one commit this read
+    520 held / 515 unanchored with build/ present and 514 / 521 in a checkout
+    of the same commit, so six numbers were held by an artifact the clone does
+    not have.  check_links.py was fixed for the same defect when it walked the
+    directory instead of asking git (docs/AUDIT.md 1.66).
   - "has an anchor" is not "the number is right".  The rule is "some quoted
     text on the citing line sits at line N of a file that line names", so a
     match proves the number is HELD by content, not that it points at the
@@ -100,7 +109,7 @@ Negative control -- redo it, and note that the first version was worthless:
 
     sed -i '426s|.*|# NEGATIVE CONTROL line|' CMakeLists.txt
     python3 tools/check_line_refs.py
-        held 497 -> 491, unanchored 508 -> 514 -- six references move, and the
+        held 514 -> 508, unanchored 521 -> 527 -- six references move, and the
         stage goes red on the ceiling, not on a rate
     git checkout -- CMakeLists.txt
 
@@ -141,9 +150,9 @@ TARGETS = {
 
 # Pins in the sense of tools/gate.sh's EXP_CTEST: neither may move without
 # someone saying so in a commit message.
-EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "694"))
+EXP_LINE_REFS = int(os.environ.get("EXP_LINE_REFS", "720"))
 EXP_LINE_REFS_UNANCHORED_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "508")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_MAX", "521")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
@@ -159,6 +168,28 @@ LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
 MAX_PARA = 20
 
 _CACHE: dict[str, list[str] | None] = {}
+_TRACKED: set[str] | None = None
+
+
+def tracked(rel: str) -> bool:
+    """Only a file git tracks may be read, and therefore may hold a number.
+
+    The working tree also holds build output.  A verdict that changes
+    depending on whether someone has run a build is not a verdict about the
+    repository: measured on one commit, this checker read 520 held / 515
+    unanchored with build/ present and 514 / 521 in a checkout of the same
+    commit -- six numbers were being held by an artifact that does not exist
+    in the clone.  check_links.py was fixed for the same thing when it walked
+    the directory instead of asking git (docs/AUDIT.md 1.66).
+    """
+    global _TRACKED
+    if _TRACKED is None:
+        out = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        _TRACKED = set(out.split("\0"))
+    return rel in _TRACKED
 
 
 def lines_of(rel: str) -> list[str] | None:
@@ -166,7 +197,7 @@ def lines_of(rel: str) -> list[str] | None:
         path = REPO_ROOT / rel
         _CACHE[rel] = (
             path.read_text(encoding="utf-8", errors="replace").splitlines()
-            if path.is_file()
+            if tracked(rel) and path.is_file()
             else None
         )
     return _CACHE[rel]
@@ -181,11 +212,11 @@ def docs_markdown() -> list[str]:
 
 
 def file_mentions(line: str) -> list[tuple[int, int, str]]:
-    """(start, end, path) for every existing repo file named on this line."""
+    """(start, end, path) for every tracked repo file named on this line."""
     found = []
     for m in PATHISH.finditer(line):
         token = m.group(0).rstrip(".")
-        if token in TARGETS or (REPO_ROOT / token).is_file():
+        if token in TARGETS or (tracked(token) and (REPO_ROOT / token).is_file()):
             found.append((m.start(), m.end(), token))
     return found
 
