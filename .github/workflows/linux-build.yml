@@ -6,6 +6,35 @@ on:
   pull_request:
 
 jobs:
+  # The gate stages that need neither a build nor tags.  Separate from
+  # linux-core on purpose: these run in seconds on a bare checkout, so a
+  # docs-only change gets a verdict without waiting for a compiler.
+  repo-invariants:
+    name: Repository invariants (no build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Gate stages that need no build
+        run: |
+          # This list is a copy of part of tools/gate.sh's stage registry, and
+          # the copy is safe for exactly one reason: --only REFUSES a name it
+          # does not know (exit 2) instead of running nothing and reporting a
+          # pass.  Renaming a stage in tools/gate.sh therefore turns this step
+          # red; it cannot rot into a green run that checked nothing.
+          #
+          # Stages of the gate that are NOT here, and what each one needs:
+          #   build ctest fuzz node plugin oauth-loop   a compiled engine
+          #   economy                                   INIMERSE_BIN, same thing
+          #   release-tags                              git tags, which a
+          #                                             depth-1 checkout has
+          #                                             none of
+          # run: the gate
+          for stage in ignored-credentials links doc-paths text-integrity \
+                       orphan-fixtures orphan-targets line-refs; do
+            echo "::group::gate --only ${stage}"
+            bash tools/gate.sh --only "${stage}"
+            echo "::endgroup::"
+          done
   linux-core:
     runs-on: ubuntu-24.04
     steps:
