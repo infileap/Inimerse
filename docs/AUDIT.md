@@ -3310,6 +3310,13 @@ tracked src/**/*.c = 114   Linux 构建出 .o 的 = 102   没有 .o 的 = 12
 
 **这 12 个文件的逐文件裁定（Windows 侧生产点 / POSIX 对应物 / 归属 / 注册测试可达性）记在 `docs/streams/win-source-attribution.md`（`agent3` 量于 `d27413a`：74 条以 `inimerse.exe` 为 COMMAND 的测试 × 14 个入口断点）。** 两处要点先放在这里：**「仅 Windows」有两义** —— **空桩**（gui/io/identity/social/ai 五个，POSIX 有 `STUB_REG`，功能确实只在 Windows）与**构建表所致**（`child_proc.c`：**文件里一行 `_WIN32` 都没有**，头文件还专门为非 Windows 给了 `DWORD` typedef，是 `CMakeLists.txt` 只在 `if(WIN32)` 里列它；**是否能编进 POSIX 分支 —— 未测**）。而第三列解释了本节的「结构性失明」具体长什么样：**8 个 `*_mod_register` 由 `src/main.c` 里的 `register_core_modules(&vm)` 无条件调用，`--no-mods` 挡不住**（73/74 命中），`mod_load_all` 57/74，`child_proc_*` 与 `headless_*` **0/74** —— 而那是**「没测到」，不是「不存在」**（`headless_probe` 在 Windows 根本没注册，gdb 也不跟子进程）。**这是一行指针，表本身在那边；它是记录，不是断言。**
 
+**那两处「未测」现在测了（agent3，`main @ b68d6d6`，`-fsyntax-only` 跑在真实的 POSIX 旗标下）：`src/child_proc.c` 通过、`src/headless_server.c` 与 `src/runtime/runtime.c` 不过。** 宏与包含路径取自本树 Linux 构建的 `flags.make`，并**回到源码**核过（`if(NOT WIN32)` 那段给的是 `_GNU_SOURCE` 与 `_stricmp=strcasecmp`；`_WIN32` 在 POSIX 旗标里出现 **0** 次）。不过的两个都死在**第一个 Windows 头或类型**上：`headless_server.c` 第 6 行的 `#include <winsock2.h>`；`runtime.c` 里的 `HINTERNET`。
+
+⇒ **`child_proc.c` 的「仅 Windows」不是文件的性质，是一条清单的性质。** 它 17 行、7 个 `#include`、**没有任何预处理条件**（这正是上文那句「一行 `_WIN32` 都没有」），头文件还给非 Windows 补了 `DWORD`；`-c` 产出的目标文件里所有未定义符号（`im_process_spawn`/`im_process_pid`/`im_process_alive`/`im_process_kill`/`im_process_close`、`im_mutex_*`、`im_platform_now_ms`）**在 POSIX 侧的目标文件里都有定义**（`src/platform/process.c` 同时列在两个分支、自带 `#ifdef _WIN32`/`#else`）。而 `nm build/inimerse` 里 `child_proc_spawn` **0 命中**、`build/` 里**没有**它的目标文件 ⇒ 它在 Linux 引擎里缺席，**只因为构建列表没列它**。
+
+**但这仍不是一次链接**：没跑 `ld`、没跑、没被任何测试碰到、对行为什么都没说。**而它该不该被列进去，是一个决定，不是一个测量** —— 下一步要问的是「POSIX 侧有谁调它」：若无，编进去只改变二进制的内容，不改变任何行为。
+
+
 ## §1.72 一次推送前必须跑哪些阶段，由 `git diff --name-only` 决定，不由感觉决定
 
 **症状（由 ivory-ember 复核指出，发生在本文档自己的推送流程里）。** `ce457df` 只删了一个 `。`，我在**文档三阶段 rc=0 之后就推了**，全量门禁（**当时是十二阶段**）**在推之后**才跑完。**这次是对的，但「对」需要写出理由才算对** —— 否则「全量门禁在跑」这句话会被下一个读的人理解成「推的时候还没验证」。
