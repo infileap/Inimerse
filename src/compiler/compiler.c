@@ -1225,7 +1225,21 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 comp->last_temp = 1;
                 return r;
             }
-            return -1;
+            /* A member access on something that is not a bare name has no
+               lowering: the nil-safe form `a?.b` is implemented (OP_INDEX_GET,
+               in the safe branch above), this one is not.  It used to `return
+               -1`, and every caller took that -1 for a register number -- so
+               `say str(arr[0].b)` died with SIGSEGV at the first *use* of the
+               value, while a bare statement was silently dropped.  Same exit
+               path as the read-only property error in STMT_ASSIGN below. */
+            {
+                char memB[128];
+                snprintf(memB, sizeof(memB), "%.*s", (int)expr->member.member.length,
+                         expr->member.member.start);
+                fprintf(stderr, "Error: '.%s' on something that is not a name is not implemented"
+                                " (write '?.%s' for a nil-safe index)\n", memB, memB);
+                exit(1);
+            }
         }
         case EXPR_LAMBDA: {
             char lname[64]; snprintf(lname, sizeof lname, "__lambda_%d", lambda_counter++);

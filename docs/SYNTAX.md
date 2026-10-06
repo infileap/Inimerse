@@ -193,18 +193,7 @@ $"hello {name}"
 | `-> int\|float\|str\|bool` | 类型转换（`EXPR_ARROW_CAST`） | 与 lambda 冲突 |
 | `(args)` | 调用 | 命名实参不支持 |
 
-**`.` 后可跟保留字**（`src/parser/parser.c:532-540`）：`x.int`、`x.float`、`x.str`、`x.bool`、`x.type`、`x.match` 都合法。这是**访问 `type` 的唯一途径**——`type` 是保留字，`type(x)` 直接是解析错误（见 §7.1）。
-
-**元属性 `.range` 与 `.declared` 答的是两个不同的问题**（2026-10 T2 裁定；二者都在 `src/compiler/compiler.c` 的元属性表里，故对**任何**对象都安全）：
-
-| 写法 | 答什么 | 例（`type Byte = [0~255]` / `x: Byte = 42` / `arr = [x]` / `func id(a) { return a }`） |
-|---|---|---|
-| `.range` | **这个值**（与写法无关） | `x.range` = `arr[0].range` = `id(x).range` = `set(Z interval)`；`3.7.range` = `R`；集合 ⇒ 它自己 |
-| `.declared` | **这个名字被声明成什么** | `x.declared` = `Byte`；`y.declared`（未声明）= `nil`；`arr[0].declared` = `id(x).declared` = `nil`（对象不是裸标识符） |
-
-**T2 之前 `.range` 答的是哪个问题取决于写法**：裸标识符答**声明**集合、其它表达式答**推断**集合 ⇒ 上面那个例子里 `x.range` 是 `Byte`（`300 in` 为假）而 `arr[0].range` 是 `Z`（`300 in` 为真）——**同一棵树、同一个值 42、两个答案，谁都没读错**。CTest `xrange_t2_runtime`（`vtest/xrange_t2_v06.im`）钉的就是「两条路必须同答」；**红色对照的宾语是树而不是值**（在 T2 之前那棵树上两条路不同答），因为「它们答同一个值」是这一改的**结论**、不是前提。
-
-**两处诚实边界**：① 区间字面量集合 `str(Byte)` 出来是 `set(R interval)`（渲染怪癖；`42 in Byte` 为真、`300 in Byte` 为假、`x = 300` 抛 `type_mismatch`，判定与包含关系都正确）；② `arr[0].bogus` 这类**非元属性成员名 + 非裸标识符对象**今天**段错误**（`src/compiler/compiler.c:1209` 的 `return -1;` 被调用方直接当寄存器号用），与本次改动无关、另案。
+**`.` 后可跟保留字**（`src/parser/parser.c:532-540`）：`x.int`、`x.float`、`x.str`、`x.bool`、`x.type`、`x.match` 都合法。这是**访问 `type` 的唯一途径**——`type` 是保留字，`type(x)` 直接是解析错误（见 §7.1）。**元属性 `.range` 与 `.declared`**（2026-10 T2 裁定）答的是两个不同的问题——`.range` 答**这个值**（与写法无关），`.declared` 答**这个名字被声明成什么**（对象不是裸标识符则答 `nil`）；完整对照表、T2 之前「答哪个问题取决于写法」的行为、以及两处诚实边界都记在 [TYPESET_V06.md](TYPESET_V06.md) §3.8。**这一节刻意不再展开**：本节及其后各节的行号被其它文档按行引用着，在这里多加一行，那些坐标会集体漂移（同 §7.4 H4 子项）。
 
 ### 3.3 函数式糖
 
