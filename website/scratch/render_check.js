@@ -1,17 +1,62 @@
-/* render_check.js —— 在 Node 里用最小 DOM 桩执行 assets/site.js 的渲染路径。
-   目的：静态 HTML 里 video-list / toy-list 是空容器，靠 JS 填。
-   不开浏览器（本机没装 bsk）时，这是唯一能证明「空状态 + 有记录两种分支都不炸」的办法。
-
-   用法：node website/scratch/render_check.js   （在仓库根或任意目录都能跑）
-*/
+/* render_check.js —— 五页渲染验证（Node + 最小 DOM 桩）
+ *
+ * 跑法（**从仓库根、从 website/、从任何目录都可以**，路径按 __dirname 解析）：
+ *     node website/scratch/render_check.js
+ * 退出码：全部通过 = 0；有 FAIL = 1（可以直接接进 CI / gate）。
+ *
+ * 本机没装 bsk（BrowserSkill 未安装）⇒ 开不了浏览器。这个桩是唯一能证明
+ * 「页面渲染分支不炸」的办法，所以它必须覆盖全部五页，不能只盯一页。
+ *
+ * ---------------------------------------------------------------------------
+ * 红对照（变异测试）怎么复现 —— 全绿不等于它有用，要证明它会红：
+ *
+ *   # 0. 先确认基线干净，否则分不清是你的变异还是原有改动
+ *   git diff --numstat
+ *   # 1. 变异 M1：把 videos/index.html 的 id 改名（JS 静默 early-return 的典型形状）
+ *   sed -i 's/id="video-list"/id="video-list-typo"/' website/videos/index.html
+ *   git diff --numstat website/videos/index.html     # ← 非空才叫落地
+ *   node website/scratch/render_check.js; echo "exit=$?"   # 必须红、exit=1
+ *   git checkout -- website/videos/index.html
+ *   # 2. 变异 M2：往 data/videos.js 里塞一条缺 ref、bvid 非法的记录
+ *   #    注意：**先看 numstat 非空再读结论**。这条变异第一次做时 replace 目标串
+ *   #    没匹配上、根本没落地，而结果照样「全绿」—— 空 numstat 是唯一的警报。
+ *   ...
+ *
+ * 变异必须在**读结果之前**证明已落盘（numstat 非空 / diff 正文可见）。
+ * ---------------------------------------------------------------------------
+ *
+ * 它验证两层，缺一不可：
+ *
+ *   A. 结构层 —— 读 HTML 文件本身：页面引用的 js/css 是否真的存在、id 是否唯一、
+ *      有没有绝对路径、内容位注释在不在、每个页面该有的结构在不在。
+ *
+ *   B. 运行层 —— 用**从该页 HTML 里抽出来的 id** 搭 DOM 桩，按页面真实顺序
+ *      跑 data/*.js + assets/site.js，断言「它渲染出了什么」。
+ *      每页都跑两遍：数据为空 / 数据有值。
+ *
+ * ⚠ 为什么运行层的 id 必须从 HTML 抽、绝不能手抄：
+ *   手抄的桩在「HTML 把 id 改名了、JS 还在找旧名」时**依然会全绿** —— 而那正是
+ *   最该抓的 bug（JS 静默 early-return，页面缺一块，控制台不报错）。
+ *   从 HTML 抽 ⇒ 两边一旦不一致，getElementById 返回 null，断言立刻红。
+ *   同样，锚点的 href / hidden 初值也从 HTML 里读，不手抄。
+ */
 'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(__dirname, '..');        // = website/
+const PAGES = [
+  { key: 'index',  label: '首页',     file: 'index.html',        slots: 2, containers: [] },
+  { key: 'games',  label: '在线游戏', file: 'games/index.html',  slots: 2, containers: ['toy-list'] },
+  { key: 'videos', label: '实机演示', file: 'videos/index.html', slots: 1, containers: ['video-list', 'bili-account'] },
+  { key: 'tools',  label: '小工具',   file: 'tools/index.html',  slots: 1, containers: [] },
+  { key: 'about',  label: '关于',     file: 'about/index.html',  slots: 0, containers: [] },
+];
+const DATA_FILES = ['data/site.js', 'data/videos.js', 'data/toys.js'];
 
-/* ---------- 最小 DOM ---------- */
+/* ============================ 最小 DOM 桩 ============================ */
 class El {
   constructor(tag) {
     this.tagName = String(tag).toUpperCase();
@@ -25,191 +70,444 @@ class El {
     if (this.children.length === 0) return this._text;
     return this.children.map((c) => c.textContent).join('');
   }
-  set textContent(v) {
-    this.children = [];
-    this._text = v == null ? '' : String(v);
-  }
+  set textContent(v) { this.children = []; this._text = v == null ? '' : String(v); }
   appendChild(c) { c.parent = this; this.children.push(c); return c; }
   removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
   replaceWith(n) {
     const p = this.parent;
-    if (p) { const i = p.children.indexOf(this); p.children[i] = n; }
+    if (p) p.children[p.children.indexOf(this)] = n;
     n.parent = p;
   }
-  remove() {
-    const p = this.parent;
-    if (p) p.children = p.children.filter((x) => x !== this);
-  }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this); }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return this.attrs[k]; }
   addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); }
   click() { (this.listeners.click || []).forEach((f) => f()); }
-  /* 结构化遍历：断言用 */
   walk(fn) { fn(this); this.children.forEach((c) => c.walk(fn)); }
   find(pred) {
     let hit = null;
     this.walk((n) => { if (!hit && pred(n)) hit = n; });
     return hit;
   }
+  all(pred) { const out = []; this.walk((n) => { if (pred(n)) out.push(n); }); return out; }
   html() {
     const cls = this.className ? ` class="${this.className}"` : '';
     const at = Object.keys(this.attrs).map((k) => ` ${k}="${this.attrs[k]}"`).join('');
     const href = this.href ? ` href="${this.href}"` : '';
     const src = this.src ? ` src="${this.src}"` : '';
-    if (this.children.length === 0) {
-      return `<${this.tagName.toLowerCase()}${cls}${at}${href}${src}>${this._text}</${this.tagName.toLowerCase()}>`;
-    }
-    return `<${this.tagName.toLowerCase()}${cls}${at}${href}${src}>${this.children.map((c) => c.html()).join('')}</${this.tagName.toLowerCase()}>`;
+    const t = this.tagName.toLowerCase();
+    const inner = this.children.length ? this.children.map((c) => c.html()).join('') : this._text;
+    return `<${t}${cls}${at}${href}${src}>${inner}</${t}>`;
   }
 }
 
-const HOSTS = {};
-['video-list', 'toy-list', 'year', 'bili-account'].forEach((id) => { HOSTS[id] = new El('div'); });
-/* 桩不解析 HTML，所以这里手抄 videos/index.html 里那个锚点的初始状态：
-   <a class="btn" id="bili-account" href="#" target="_blank" rel="noopener" hidden>
-   不抄的话 href 会是 undefined，断言测的就是桩而不是页面。 */
-HOSTS['bili-account'].href = '#';
-HOSTS['bili-account'].hidden = true;
-HOSTS.year.textContent = '';
-
-const document = {
-  readyState: 'complete',
-  createElement: (t) => new El(t),
-  getElementById: (id) => HOSTS[id] || null,
-  addEventListener: () => {},
+/* ============================ HTML 解析（只做够用的部分）================ */
+const idsIn = (html) => {
+  const out = [];
+  const re = /\sid="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(html))) out.push(m[1]);
+  return out;
 };
 
-const sandbox = {
-  document,
-  console,
-  Date,
-  String,
-  parseInt,
-  encodeURIComponent,
-};
-sandbox.window = sandbox;
-vm.createContext(sandbox);
-
-/* ---------- 按页面真实顺序加载 data/*.js 再加载 assets/site.js ---------- */
-function run(file) {
-  vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), sandbox, { filename: file });
+/** 取含 id="X" 那个标签的属性（用于把 href / hidden 初值也从 HTML 读出来） */
+function attrsForId(html, id) {
+  const re = new RegExp(`<[a-zA-Z][^>]*\\sid="${id}"[^>]*>`);
+  const m = html.match(re);
+  if (!m) return null;
+  const tag = m[0];
+  const href = (tag.match(/\shref="([^"]*)"/) || [])[1];
+  return { href: href === undefined ? undefined : href, hidden: /\shidden(\s|>)/.test(tag) };
 }
 
+const refsIn = (html) => {
+  const out = [];
+  for (const re of [/<script[^>]*\ssrc="([^"]+)"/g, /<link[^>]*\shref="([^"]+\.css)"/g]) {
+    let m;
+    while ((m = re.exec(html))) out.push(m[1]);
+  }
+  return out;
+};
+
+/* ============================ 断言收集 ============================ */
 const results = [];
+let currentPage = '(全局)';
 function check(name, cond, detail) {
-  results.push({ name, ok: !!cond, detail: detail || '' });
+  results.push({ page: currentPage, name, ok: !!cond, detail: detail === undefined ? '' : String(detail) });
 }
 
-/* ===== 第一轮：空记录（仓库当前的真实状态）===== */
-sandbox.INFIVERSE_VIDEOS = [];
-sandbox.INFIVERSE_TOYS = [];
-run('data/site.js');
-run('data/videos.js');
-run('data/toys.js');
-run('assets/site.js');
+/* ============================ 运行一页 ============================ */
+/**
+ * @param page   PAGES 里的条目
+ * @param data   { videos: [], toys: [] } —— 要在加载 site.js 之前注入的数据
+ * @param html   该页 HTML 源文
+ */
+function runPage(page, data, html) {
+  const ids = idsIn(html);
 
-check('空状态：视频列表显示提示文案',
-  /还没有视频记录/.test(HOSTS['video-list'].textContent),
-  HOSTS['video-list'].textContent.slice(0, 80));
-check('空状态：作品位显示提示文案',
-  /还没有已发布的作品/.test(HOSTS['toy-list'].textContent),
-  HOSTS['toy-list'].textContent.slice(0, 80));
-check('页脚年份被填入',
-  /^\d{4}$/.test(HOSTS.year.textContent),
-  HOSTS.year.textContent);
-check('data/site.js 提供了仓库地址',
-  /github\.com\/infileap\/Inimerse/.test(sandbox.INFIVERSE_SITE.repoUrl),
-  sandbox.INFIVERSE_SITE.repoUrl);
-check('空状态无脚本抛错', true, '');
-check('B站 账号按钮：bilibiliUrl 留空时不指向任何地址（不编 UID）',
-  HOSTS['bili-account'].href === '#',
-  String(HOSTS['bili-account'].href));
+  // 用该页真实存在的 id 建容器；不存在的 id 一律返回 null（这是关键：不手抄、不补造）
+  const hosts = {};
+  ids.forEach((id) => {
+    const e = new El('div');
+    e.id = id;
+    const a = attrsForId(html, id);
+    if (a && a.href !== undefined) e.href = a.href;
+    if (a && a.hidden) e.hidden = true;
+    hosts[id] = e;
+  });
 
-/* ===== 第二轮：未投稿的记录 ===== */
-HOSTS['video-list'] = new El('div');
-sandbox.INFIVERSE_VIDEOS = [{
-  id: 'demo-01', title: '演示一', bvid: '未投稿', duration: '03:42',
-  resolution: '1920x1080', cover: '', summary: '一句话。',
-  ref: 'f1dfe62583b7a89e2395ddc502fcf2ac7b60055e', date: '2026-10-06',
-}];
-const src2 = fs.readFileSync(path.join(ROOT, 'assets/site.js'), 'utf8');
-vm.runInContext(src2, sandbox, { filename: 'assets/site.js#2' });
-const vl2 = HOSTS['video-list'];
-check('未投稿：显示「待投稿后补 BV 号」徽章',
-  /待投稿后补 BV 号/.test(vl2.textContent), vl2.textContent.slice(0, 120));
-check('未投稿：元信息写「B站 未投稿」',
-  /B站 未投稿/.test(vl2.textContent));
-check('未投稿：封面缺失时给占位而不是坏图',
-  /封面待交付/.test(vl2.textContent));
-check('未投稿：ref 只显示前 7 位',
-  /ref f1dfe62/.test(vl2.textContent) && !/f1dfe62583b7a89e/.test(vl2.textContent));
-check('未投稿：不生成外链（没有可点的 a[href]）',
-  vl2.find((n) => n.tagName === 'A' && n.href) === null);
+  const document = {
+    readyState: 'complete',
+    createElement: (t) => new El(t),
+    getElementById: (id) => (Object.prototype.hasOwnProperty.call(hosts, id) ? hosts[id] : null),
+    addEventListener: () => {},
+  };
 
-/* ===== 第三轮：已投稿 + featured 的记录，并点一次「在站内播放」===== */
-HOSTS['video-list'] = new El('div');
-sandbox.INFIVERSE_VIDEOS = [
-  {
-    id: 'demo-02', title: '演示二', bvid: 'BV1xx411c7mD', duration: '10:00',
-    resolution: '2560x1440', cover: 'assets/covers/demo-02.jpg', summary: '两句话。',
-    ref: 'f1dfe62583b7a89e2395ddc502fcf2ac7b60055e', date: '2026-10-01', featured: true,
-  },
-  { id: 'demo-03', title: '竖屏演示', bvid: 'BV1yy411c7mE', orientation: 'portrait', cover: 'x.jpg' },
-];
-vm.runInContext(src2, sandbox, { filename: 'assets/site.js#3' });
-const vl3 = HOSTS['video-list'];
-check('已投稿：生成 B站 观看外链并指向正确 BV',
-  !!vl3.find((n) => n.tagName === 'A' && /bilibili\.com\/video\/BV1xx411c7mD\//.test(n.href || '')),
-  vl3.children[0].html().slice(0, 200));
-check('已投稿：元信息写「B站 BV1xx411c7mD」', /B站 BV1xx411c7mD/.test(vl3.textContent));
-check('已投稿：featured 首条带 video--featured 类',
-  /video--featured/.test(vl3.children[0].className), vl3.children[0].className);
-check('竖屏：封面容器带 portrait 类',
-  !!vl3.find((n) => /video__cover--portrait/.test(n.className)));
-check('列表：两条记录渲染成两张卡', vl3.children.length === 2, String(vl3.children.length));
+  const sandbox = { document, console, Date, String, parseInt, encodeURIComponent };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
 
-const embedBtn = vl3.children[0].find((n) => n.tagName === 'BUTTON' && /在站内播放/.test(n.textContent));
-check('已投稿：有「在站内播放」按钮', !!embedBtn);
-if (embedBtn) {
-  embedBtn.click();
-  const iframe = vl3.find((n) => n.tagName === 'IFRAME');
-  check('点击后在原封面位置插入 iframe', !!iframe);
-  check('iframe 指向 B站播放器且带正确 bvid',
-    !!iframe && /player\.bilibili\.com\/player\.html\?bvid=BV1xx411c7mD&page=1&autoplay=0/.test(iframe.src),
-    iframe ? iframe.src : '(无 iframe)');
-  check('插入后封面容器被替换掉（不会留下两张封面）',
-    vl3.children[0].find((n) => /video__cover/.test(n.className)) === null);
+  const run = (rel) => vm.runInContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), sandbox, { filename: rel });
+
+  // 页面真实顺序：data/site.js -> data/videos.js -> data/toys.js -> assets/site.js
+  run(DATA_FILES[0]);
+  run(DATA_FILES[1]);
+  run(DATA_FILES[2]);
+  sandbox.INFIVERSE_VIDEOS = data.videos;   // 注入本轮要测的数据
+  sandbox.INFIVERSE_TOYS = data.toys;
+  run('assets/site.js');
+
+  return { hosts, sandbox, ids };
 }
 
-/* ===== 第四轮：作品位有记录 ===== */
-HOSTS['toy-list'] = new El('div');
-sandbox.INFIVERSE_TOYS = [{
-  slug: 'inimerse-demo', title: '语法演示', summary: '一句话。',
-  url: 'https://www.bilibili.com/toy/inimerse-demo/index.html', status: 'live', channel: 'toy',
-}];
-vm.runInContext(src2, sandbox, { filename: 'assets/site.js#4' });
-const tl = HOSTS['toy-list'];
-check('作品位：渲染成卡并带上 Toy 链接',
-  /bilibili\.com\/toy\/inimerse-demo\/index\.html/.test(tl.children[0].href || ''),
-  tl.children[0].href);
-check('作品位：live 状态显示「今天可玩」', /今天可玩/.test(tl.textContent));
-check('作品位：标注「B站 Toy 托管」', /B站 Toy 托管/.test(tl.textContent));
+/* ============================ 测试数据 ============================ */
+const EMPTY = { videos: [], toys: [] };
 
-/* ===== 第五轮：填了 bilibiliUrl 之后，按钮才指向那个地址 ===== */
-sandbox.INFIVERSE_SITE = Object.assign({}, sandbox.INFIVERSE_SITE, {
-  bilibiliUrl: 'https://space.bilibili.com/987654321',
+const ONE_VIDEO_UNPUBLISHED = {
+  videos: [{
+    id: 'demo-01', title: '演示一', bvid: '未投稿', duration: '03:42',
+    resolution: '1920x1080', cover: '', summary: '一句话。',
+    ref: 'f1dfe62583b7a89e2395ddc502fcf2ac7b60055e', date: '2026-10-06',
+  }],
+  toys: [],
+};
+
+const FULL = {
+  videos: [
+    {
+      id: 'demo-02', title: '演示二', bvid: 'BV1xx411c7mD', duration: '10:00',
+      resolution: '2560x1440', cover: 'assets/covers/demo-02.jpg', summary: '两句话。',
+      ref: 'f1dfe62583b7a89e2395ddc502fcf2ac7b60055e', date: '2026-10-01', featured: true,
+    },
+    { id: 'demo-03', title: '竖屏演示', bvid: 'BV1yy411c7mE', orientation: 'portrait', cover: 'x.jpg' },
+  ],
+  toys: [{
+    slug: 'inimerse-demo', title: '语法演示', summary: '一句话。',
+    url: 'https://www.bilibili.com/toy/inimerse-demo/index.html', status: 'live', channel: 'toy',
+  }],
+};
+
+/* ============================ 开始：结构层 ============================ */
+const allRefs = [];
+
+PAGES.forEach((page) => {
+  currentPage = page.label;
+  const abs = path.join(ROOT, page.file);
+  const html = fs.readFileSync(abs, 'utf8');
+
+  // 1. 引用到的 js/css 是否真的存在（每条引用算一项检查）
+  const refs = refsIn(html);
+  check(`${page.file}：引用了 ${refs.length} 个 js/css`, refs.length === 5, refs.length);
+  refs.forEach((r) => {
+    const target = path.resolve(path.dirname(abs), r);
+    const exists = fs.existsSync(target);
+    allRefs.push({ page: page.file, ref: r, exists });
+    check(`${page.file}：资源存在 → ${r}`, exists, path.relative(ROOT, target));
+  });
+
+  // 2. id 唯一（重复 id 是静默 bug：getElementById 只给第一个）
+  const ids = idsIn(html);
+  const dup = ids.filter((v, i) => ids.indexOf(v) !== i);
+  check(`${page.file}：id 不重复`, dup.length === 0, dup.join(','));
+
+  // 3. 没有绝对路径（Toy 托管 / 子目录部署的硬要求）
+  const absPath = html.match(/(?:src|href)="\//g);
+  check(`${page.file}：没有绝对路径`, absPath === null, absPath ? absPath.join(' ') : '无');
+
+  // 4. 内容位注释数量（视频/作品/工具将来插在哪一块，靠这些注释定位）
+  const slots = (html.match(/内容位/g) || []).length;
+  check(`${page.file}：内容位注释 ${page.slots} 处`, slots === page.slots, slots);
+
+  // 5. 页脚年份容器（五个页面都该有）
+  check(`${page.file}：有 #year`, ids.includes('year'));
+
+  /* 5b. 该页**必须存在**的 JS 容器。
+     这一条不能写成「如果存在就检查」—— 容器被改名/删掉时，那种写法会静默跳过、
+     整页断言集体失效，而页面只是少一块、控制台不报错。这里是无条件断言。 */
+  page.containers.forEach((cid) => {
+    check(`${page.file}：必须有 #${cid}（JS 靠它渲染，缺了会静默少一块）`,
+      ids.includes(cid));
+  });
+
+  // 6. 页面必须能本地直接打开：不依赖 fetch / 模块
+  check(`${page.file}：没有 fetch(`,
+    !/\bfetch\s*\(/.test(html), '');
+  check(`${page.file}：script 不带 type="module"`,
+    !/<script[^>]*type="module"/.test(html));
 });
-vm.runInContext(src2, sandbox, { filename: 'assets/site.js#5' });
-const bili = HOSTS['bili-account'];
-check('B站 账号按钮：填了地址后指向它，且不再 hidden',
-  bili.href === 'https://space.bilibili.com/987654321' && bili.hidden === false,
-  String(bili.href) + ' hidden=' + String(bili.hidden));
 
-/* ---------- 结果 ---------- */
-let bad = 0;
+/* ============================ 开始：运行层（每页 × 空/有数据）============ */
+PAGES.forEach((page) => {
+  const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
+
+  /* ---- 空数据 ---- */
+  currentPage = `${page.label}（空数据）`;
+  let st;
+  try {
+    st = runPage(page, EMPTY, html);
+    check('不抛异常', true);
+  } catch (e) {
+    check('不抛异常', false, e.message);
+    return;
+  }
+  check('页脚年份被填入', /^\d{4}$/.test(st.hosts.year.textContent), st.hosts.year.textContent);
+  check('日期不为空字符串', st.hosts.year.textContent.length === 4);
+
+  /* 无条件：本页该有的容器必须都在。下面的渲染断言都写成「如果容器存在就检查」，
+     所以必须在这里补一条无条件的 —— 否则容器一旦消失，整页断言集体被跳过。 */
+  page.containers.forEach((cid) => {
+    check(`容器 #${cid} 真的在 DOM 里`, !!st.hosts[cid]);
+  });
+
+  if (st.hosts['video-list']) {
+    check('视频位显示空状态文案',
+      /还没有视频记录/.test(st.hosts['video-list'].textContent),
+      st.hosts['video-list'].textContent.slice(0, 60));
+    check('空状态不是一片空白（有 <p> 提示）',
+      st.hosts['video-list'].find((n) => n.tagName === 'P') !== null);
+  }
+  if (st.hosts['toy-list']) {
+    check('作品位显示空状态文案',
+      /还没有已发布的作品/.test(st.hosts['toy-list'].textContent),
+      st.hosts['toy-list'].textContent.slice(0, 60));
+    check('空状态提到内测资格（不能只说"暂无"）',
+      /内测/.test(st.hosts['toy-list'].textContent));
+  }
+  if (st.hosts['bili-account']) {
+    check('B站 按钮：bilibiliUrl 留空时仍是初始 href（不编 UID）',
+      st.hosts['bili-account'].href === '#',
+      String(st.hosts['bili-account'].href));
+    check('B站 按钮：留空时保持 hidden',
+      st.hosts['bili-account'].hidden === true,
+      String(st.hosts['bili-account'].hidden));
+  }
+  /* 没有 JS 容器的页面：断言它「渲染出了什么」落在 HTML 结构上 */
+  if (page.key === 'index') {
+    const cards = (html.match(/class="card"/g) || []).length;
+    check('首页：三张入口卡都在', cards >= 3, cards);
+    check('首页：有「栏目状态一览」总表', /栏目状态一览/.test(html));
+    check('首页：总表六行', (html.match(/<tr>\s*<td>[\s\S]*?<\/tr>/g) || []).length >= 6,
+      (html.match(/<tr>\s*<td>[\s\S]*?<\/tr>/g) || []).length);
+  }
+  if (page.key === 'tools') {
+    const toolCards = (html.match(/class="card"/g) || []).length;
+    check('小工具：六张计划卡都在', toolCards === 6, toolCards);
+    check('小工具：每张都标「未开始」（不假装做完了）',
+      (html.match(/未开始/g) || []).length === 6,
+      (html.match(/未开始/g) || []).length);
+  }
+  if (page.key === 'about') {
+    check('关于：四条「不要做」都在', (html.match(/<tr><td>/g) || []).length === 4,
+      (html.match(/<tr><td>/g) || []).length);
+    check('关于：三条技术约束都在', (html.match(/<li><b>/g) || []).length === 3,
+      (html.match(/<li><b>/g) || []).length);
+  }
+  if (page.key === 'games') {
+    check('游戏页：逐字引用「当前 Toy 发布面向邀请 UP 主逐步开放」这句',
+      /当前 Toy 发布面向邀请 UP 主逐步开放/.test(html));
+    check('游戏页：写明「没有集成路径」（判定 2 的逐字证据在页面上）',
+      /没有集成路径/.test(html));
+  }
+  if (page.key === 'videos') {
+    check('演示页：交付要求表在（给录制那边的接口）', /交付要求/.test(html));
+  }
+
+  /* ---- 有数据：未投稿一条 ---- */
+  currentPage = `${page.label}（有数据/未投稿）`;
+  let s2;
+  try {
+    s2 = runPage(page, ONE_VIDEO_UNPUBLISHED, html);
+    check('不抛异常', true);
+  } catch (e) {
+    check('不抛异常', false, e.message);
+    return;
+  }
+  check('页脚年份仍被填入', /^\d{4}$/.test(s2.hosts.year.textContent));
+  if (s2.hosts['video-list']) {
+    check('未投稿：显示「待投稿后补 BV 号」徽章',
+      /待投稿后补 BV 号/.test(s2.hosts['video-list'].textContent));
+    check('未投稿：元信息写「B站 未投稿」，不留空',
+      /B站 未投稿/.test(s2.hosts['video-list'].textContent));
+    check('未投稿：封面缺失给占位，不放坏图',
+      /封面待交付/.test(s2.hosts['video-list'].textContent));
+    check('未投稿：ref 只显示前 7 位',
+      /ref f1dfe62/.test(s2.hosts['video-list'].textContent) &&
+      !/f1dfe62583b7a89e/.test(s2.hosts['video-list'].textContent));
+    check('未投稿：不生成任何可点外链',
+      s2.hosts['video-list'].find((n) => n.tagName === 'A' && n.href) === null);
+  }
+
+  /* ---- 有数据：已投稿 + featured + 竖屏 + 作品 ---- */
+  currentPage = `${page.label}（有数据/完整）`;
+  let s3;
+  try {
+    s3 = runPage(page, FULL, html);
+    check('不抛异常', true);
+  } catch (e) {
+    check('不抛异常', false, e.message);
+    return;
+  }
+  check('页脚年份仍被填入', /^\d{4}$/.test(s3.hosts.year.textContent));
+
+  if (s3.hosts['video-list']) {
+    const vl = s3.hosts['video-list'];
+    check('已投稿：渲染成两张卡', vl.children.length === 2, vl.children.length);
+    check('已投稿：生成 B站 外链且 BV 号正确',
+      !!vl.find((n) => n.tagName === 'A' && /bilibili\.com\/video\/BV1xx411c7mD\//.test(n.href || '')));
+    check('已投稿：元信息写「B站 BV1xx411c7mD」', /B站 BV1xx411c7mD/.test(vl.textContent));
+    check('已投稿：featured 首条带 video--featured 类',
+      /video--featured/.test(vl.children[0].className), vl.children[0].className);
+    check('竖屏：封面容器带 portrait 类',
+      !!vl.find((n) => /video__cover--portrait/.test(n.className)));
+    const btn = vl.children[0].find((n) => n.tagName === 'BUTTON' && /在站内播放/.test(n.textContent));
+    check('已投稿：有「在站内播放」按钮', !!btn);
+    if (btn) {
+      btn.click();
+      const iframe = vl.children[0].find((n) => n.tagName === 'IFRAME');
+      check('点击后插入 iframe', !!iframe);
+      check('iframe 指向 B站播放器且 bvid 正确',
+        !!iframe && /player\.bilibili\.com\/player\.html\?bvid=BV1xx411c7mD&page=1&autoplay=0/.test(iframe.src),
+        iframe ? iframe.src : '(无)');
+      check('插入后原封面容器被替换（不留两张封面）',
+        vl.children[0].find((n) => /video__cover/.test(n.className)) === null);
+    }
+  }
+  if (s3.hosts['toy-list']) {
+    const tl = s3.hosts['toy-list'];
+    check('作品位：渲染成卡', tl.children.length === 1, tl.children.length);
+    check('作品位：卡上带 Toy 链接',
+      /bilibili\.com\/toy\/inimerse-demo\/index\.html/.test(tl.children[0].href || ''),
+      tl.children[0].href);
+    check('作品位：live 状态显示「今天可玩」', /今天可玩/.test(tl.textContent));
+    check('作品位：标注「B站 Toy 托管」', /B站 Toy 托管/.test(tl.textContent));
+  }
+  if (s3.hosts['bili-account']) {
+    check('B站 按钮：留空时仍不指向任何地址', s3.hosts['bili-account'].href === '#');
+  }
+});
+
+/* ============================ 第五轮：填了 bilibiliUrl ============================ */
+currentPage = '实机演示（bilibiliUrl 有值）';
+{
+  const page = PAGES.find((p) => p.key === 'videos');
+  const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
+  const st = runPage(page, EMPTY, html);
+  st.sandbox.INFIVERSE_SITE = Object.assign({}, st.sandbox.INFIVERSE_SITE, {
+    bilibiliUrl: 'https://space.bilibili.com/987654321',
+  });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/site.js'), 'utf8'), st.sandbox,
+    { filename: 'assets/site.js#bili' });
+  const b = st.hosts['bili-account'];
+  check('填了地址后按钮指向它', b.href === 'https://space.bilibili.com/987654321', String(b.href));
+  check('填了地址后不再 hidden', b.hidden === false, String(b.hidden));
+}
+
+/* ============================ 数据文件契约 ============================
+ * 上面运行层的数据是**桩自带的 fixture**，所以「真实数据文件里字段写错」它看不见。
+ * 这一段补上这个缺口：直接把 data/videos.js / data/toys.js 求值，逐条校验字段。
+ * 记录为空时它不喊 —— 但 glad-badger 交付第一条的那一刻，它就开始工作。
+ */
+function loadDataFile(rel) {
+  const sb = { console };
+  sb.window = sb;
+  vm.createContext(sb);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), sb, { filename: rel });
+  return sb;
+}
+const BV_RE = /^BV[0-9A-Za-z]{8,12}$/;
+const HEX40 = /^[0-9a-f]{40}$/;
+
+currentPage = '数据文件 data/videos.js';
+{
+  const sb = loadDataFile('data/videos.js');
+  const vids = sb.INFIVERSE_VIDEOS;
+  check('导出 INFIVERSE_VIDEOS 且是数组', Array.isArray(vids));
+  (vids || []).forEach((v, i) => {
+    const tag = `videos[${i}] ${v && v.id ? v.id : '(缺 id)'}`;
+    ['id', 'title', 'bvid', 'duration', 'resolution', 'summary', 'ref', 'date'].forEach((k) => {
+      check(`${tag}：${k} 是非空字符串`, !!v && typeof v[k] === 'string' && v[k].length > 0);
+    });
+    check(`${tag}：bvid 是 BV 号或「未投稿」`,
+      !v || v.bvid === '未投稿' || BV_RE.test(v.bvid || ''), v && v.bvid);
+    check(`${tag}：ref 是 40 位十六进制`, !v || HEX40.test(v.ref || ''), v && v.ref);
+    check(`${tag}：date 形如 YYYY-MM-DD（月 01-12、日 01-31）`,
+      !v || /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(v.date || ''), v && v.date);
+    check(`${tag}：orientation 合法`,
+      !v || v.orientation === undefined || ['landscape', 'portrait'].indexOf(v.orientation) !== -1,
+      v && v.orientation);
+    /* 这一条**故意不是**「cover 可以是字符串」那种恒真断言（恒真断言只会撑大分母）：
+       已投稿的记录必须有封面 —— 否则 B站 上挂着、站内却是一块占位，看起来像没做完。
+       未投稿允许留空，那时页面显示「封面待交付」占位。 */
+    check(`${tag}：已投稿的记录必须有封面`,
+      !v || v.bvid === '未投稿' || (typeof v.cover === 'string' && v.cover.length > 0),
+      v && v.cover);
+  });
+}
+
+currentPage = '数据文件 data/toys.js';
+{
+  const sb = loadDataFile('data/toys.js');
+  const toys = sb.INFIVERSE_TOYS;
+  check('导出 INFIVERSE_TOYS 且是数组', Array.isArray(toys));
+  (toys || []).forEach((t, i) => {
+    const tag = `toys[${i}] ${t && (t.slug || t.title) ? (t.slug || t.title) : '(缺 slug)'}`;
+    ['slug', 'title', 'summary'].forEach((k) => {
+      check(`${tag}：${k} 是非空字符串`, !!t && typeof t[k] === 'string' && t[k].length > 0);
+    });
+    check(`${tag}：url 是 http(s) 地址`, !t || /^https?:\/\//.test(t.url || ''), t && t.url);
+    check(`${tag}：status 合法`, !t || ['live', 'pending'].indexOf(t.status) !== -1, t && t.status);
+    check(`${tag}：channel 合法`,
+      !t || t.channel === undefined || ['toy', 'self'].indexOf(t.channel) !== -1, t && t.channel);
+  });
+}
+
+/* ============================ 报告 ============================ */
+const byPage = new Map();
 results.forEach((r) => {
-  if (!r.ok) bad++;
-  console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : '   ← ' + r.detail}`);
+  if (!byPage.has(r.page)) byPage.set(r.page, { pass: 0, fail: 0 });
+  const s = byPage.get(r.page);
+  r.ok ? s.pass++ : s.fail++;
 });
-console.log(`\n${results.length - bad}/${results.length} 通过`);
-process.exit(bad ? 1 : 0);
+
+let bad = 0;
+for (const [pageName, s] of byPage) {
+  if (s.fail) { /* 失败的逐条打在下面 */ }
+}
+results.forEach((r) => {
+  if (!r.ok) {
+    bad++;
+    console.log(`FAIL  [${r.page}] ${r.name}${r.detail ? '   ← ' + r.detail : ''}`);
+  }
+});
+
+const uniqRefs = new Set(allRefs.map((r) => path.resolve(ROOT, path.dirname(PAGES.find((p) => p.file === r.page).file), r.ref)));
+console.log('');
+console.log(`页面覆盖：${PAGES.length}/${PAGES.length} 页（${PAGES.map((p) => p.label).join('、')}）`);
+console.log(`运行次数：${PAGES.length} 页 × 3 轮（空数据 / 未投稿 / 完整）= ${PAGES.length * 3} 次脚本求值`);
+console.log(`资源引用：${allRefs.length} 条，去重后 ${uniqRefs.size} 个文件，全部存在=${allRefs.every((r) => r.exists)}`);
+console.log(`检查项：${results.length - bad}/${results.length} 通过`);
+if (bad) {
+  console.log(`\n✗ 有 ${bad} 项失败`);
+  process.exit(1);
+}
+console.log('\n✓ 全部通过');
