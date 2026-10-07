@@ -282,7 +282,7 @@ if(INIMERSE_PYTHON)
   add_test(NAME aot_native_regression
            COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_native.test.py
                    --build ${CMAKE_BINARY_DIR} --cc ${CMAKE_C_COMPILER})
-  set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression")
+  set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression" PASS_REGULAR_EXPRESSION "aot_native\\.test: [0-9]+ cases")
   add_test(NAME scan_tools_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/scan_tools.test.py)
   set_tests_properties(scan_tools_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME replay_closure_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/replay.test.py)
@@ -387,7 +387,7 @@ if(INIMERSE_CLANG AND NOT WIN32)
              COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mod_semantics.test.py
                      $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
                      --node ${INIMERSE_NODE})
-    set_tests_properties(mod_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "runtime;compiler;wasm;regression")
+    set_tests_properties(mod_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "runtime;compiler;wasm;regression" PASS_REGULAR_EXPRESSION "mod semantics: ok \\([0-9]+ boundary cases")
     # `and`/`or`/`not` must mean the same thing on all three backends: a
     # truth-value, short-circuit preserved, in value position and in condition
     # position (docs/AUDIT.md §1.0, §5 O0).  It found an inverted `not` in the
@@ -400,7 +400,7 @@ if(INIMERSE_CLANG AND NOT WIN32)
              COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/logic_semantics.test.py
                      $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
                      --node ${INIMERSE_NODE})
-    set_tests_properties(logic_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;compiler;wasm;regression")
+    set_tests_properties(logic_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;compiler;wasm;regression" PASS_REGULAR_EXPRESSION "logic semantics: ok \\([0-9]+ cases")
   endif()
   set_tests_properties(wasm_probe wasm_host PROPERTIES TIMEOUT 10 LABELS "wasm;smoke")
 endif()

@@ -27,6 +27,7 @@ Usage:
     python3 tools/aot_native.test.py [--build build] [-v]
 """
 import argparse
+import case_counts
 import os
 import subprocess
 import sys
@@ -377,6 +378,9 @@ def main():
                 failures.append(f"{name}: refused without a message on stderr")
 
     total = len(EQUIVALENCE) + len(DIVERGENCE) + len(RUNTIME_ERROR) + len(REFUSAL)
+    case_counts.count(__file__, lambda m: (len(m.EQUIVALENCE) + len(m.DIVERGENCE)
+                                           + len(m.RUNTIME_ERROR) + len(m.REFUSAL)), 0,
+                      'aot_native cases')
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"aot_native.test: {total} cases ({len(EQUIVALENCE)} equivalence, "
