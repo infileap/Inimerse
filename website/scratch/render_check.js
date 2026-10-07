@@ -64,7 +64,12 @@ class El {
 }
 
 const HOSTS = {};
-['video-list', 'toy-list', 'year'].forEach((id) => { HOSTS[id] = new El('div'); });
+['video-list', 'toy-list', 'year', 'bili-account'].forEach((id) => { HOSTS[id] = new El('div'); });
+/* 桩不解析 HTML，所以这里手抄 videos/index.html 里那个锚点的初始状态：
+   <a class="btn" id="bili-account" href="#" target="_blank" rel="noopener" hidden>
+   不抄的话 href 会是 undefined，断言测的就是桩而不是页面。 */
+HOSTS['bili-account'].href = '#';
+HOSTS['bili-account'].hidden = true;
 HOSTS.year.textContent = '';
 
 const document = {
@@ -116,6 +121,9 @@ check('data/site.js 提供了仓库地址',
   /github\.com\/infileap\/Inimerse/.test(sandbox.INFIVERSE_SITE.repoUrl),
   sandbox.INFIVERSE_SITE.repoUrl);
 check('空状态无脚本抛错', true, '');
+check('B站 账号按钮：bilibiliUrl 留空时不指向任何地址（不编 UID）',
+  HOSTS['bili-account'].href === '#',
+  String(HOSTS['bili-account'].href));
 
 /* ===== 第二轮：未投稿的记录 ===== */
 HOSTS['video-list'] = new El('div');
@@ -186,6 +194,16 @@ check('作品位：渲染成卡并带上 Toy 链接',
   tl.children[0].href);
 check('作品位：live 状态显示「今天可玩」', /今天可玩/.test(tl.textContent));
 check('作品位：标注「B站 Toy 托管」', /B站 Toy 托管/.test(tl.textContent));
+
+/* ===== 第五轮：填了 bilibiliUrl 之后，按钮才指向那个地址 ===== */
+sandbox.INFIVERSE_SITE = Object.assign({}, sandbox.INFIVERSE_SITE, {
+  bilibiliUrl: 'https://space.bilibili.com/987654321',
+});
+vm.runInContext(src2, sandbox, { filename: 'assets/site.js#5' });
+const bili = HOSTS['bili-account'];
+check('B站 账号按钮：填了地址后指向它，且不再 hidden',
+  bili.href === 'https://space.bilibili.com/987654321' && bili.hidden === false,
+  String(bili.href) + ' hidden=' + String(bili.hidden));
 
 /* ---------- 结果 ---------- */
 let bad = 0;
