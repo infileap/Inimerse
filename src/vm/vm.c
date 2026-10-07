@@ -1249,7 +1249,7 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
         if (depth < 2) {
             int aidx = v->ival - 1;
             if (aidx >= 0 && aidx < vm->arrayCount) {
-                VM_LOCK(vm);
+                if (depth == 0) VM_LOCK(vm); /* outermost frame only: VM_LOCK is a plain lock, not reentrant */
                 ArrayObj *a = vm_pool_slot(vm, aidx);
                 for (int i = 0; i < a->count; i++) {
                     char tmp[256];
@@ -1260,7 +1260,7 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
                         used += snprintf(buf + used, bufsz - used, "%s", tmp);
                     } else break;
                 }
-                VM_UNLOCK(vm);
+                if (depth == 0) VM_UNLOCK(vm);
             }
         }
         snprintf(buf + used, bufsz - used, "]");
@@ -1271,7 +1271,7 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
         if (depth < 2) {
             int aidx = v->ival - 1;
             if (aidx >= 0 && aidx < vm->arrayCount) {
-                VM_LOCK(vm);
+                if (depth == 0) VM_LOCK(vm); /* outermost frame only: VM_LOCK is a plain lock, not reentrant */
                 ArrayObj *a = vm_pool_slot(vm, aidx);
                 int pairs = a->count / 2;
                 for (int i = 0; i < pairs; i++) {
@@ -1284,7 +1284,7 @@ void value_to_string(VM *vm, const Value *v, char *buf, int bufsz, int depth) {
                         used += snprintf(buf + used, bufsz - used, "%s: %s", k, vv);
                     } else break;
                 }
-                VM_UNLOCK(vm);
+                if (depth == 0) VM_UNLOCK(vm);
             }
         }
         snprintf(buf + used, bufsz - used, "}");

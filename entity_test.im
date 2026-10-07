@@ -29,6 +29,10 @@ func entity_get(e, name) {
         }
     }
 }
+func entity_set(e, name, value) {
+    e[name] = value
+    return value
+}
 Entity = {"__type__": "entity", "hp": 100, "strength": 10}
 Player = entity_extend(Entity, {"__type__": "player", "level": 1})
 p1 = entity_new(Player)
