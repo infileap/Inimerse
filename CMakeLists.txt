@@ -1447,3 +1447,37 @@ set_tests_properties(match_long_pattern_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
   PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false"
   FAIL_REGULAR_EXPRESSION "match-long [0-9]+ possible=false")
+
+# REGISTERED, NOT RESOLVED -- one root, two faces, one fix.
+#
+# Neither serializer detects a cycle, and narrowing the VM lock (4783ad8) is
+# what made that visible.  `value_to_string` bounds its walk with `if (depth < 2)`
+# (src/vm/vm.c:1249 for arrays, :1271 for dicts) -- a depth ceiling doing a cycle
+# detector's job -- so `b = [[[1]]]` prints as `[[[]]]`.  `json_write`
+# (src/mod/json_mod.c:100) has no such guard at all: its `depth` only decides who
+# takes the lock, the recursion is unbounded, and so the same value through
+# `json_serialize` prints in full while a cyclic one dies on the stack (rc=-11).
+# The two faces are one root with two symptoms -- one serializer pretends to
+# detect a cycle, the other does not pretend at all -- not two designs answering
+# differently, and the fix is one thing: a "this same container is already on the
+# stack" decision, not two.
+#
+# Both faces are live on the merged tree, and this reading is LATER than
+# 4783ad8 / 823cf7c: their messages say nothing about any of it, because this
+# reading is later than they are -- do not amend them with it (docs/AUDIT.md
+# ### H4).  Measured against the engine built from 2239c16
+# (.worktrees/unpatched-dl, the only copy of the "before" side): every case in
+# the test hangs (rc=124, no output).  The truncation and the divergence are
+# consequences of that change, not pre-existing differences.
+#
+# The test asserts *today's* behaviour on purpose: a registration that cannot go
+# red is a comment.  When the cycle decision lands it must go red, and its header
+# says why it was here and what the real fix is.  No PASS_REGULAR_EXPRESSION on
+# purpose: the exit code is the judgement.
+if(INIMERSE_PYTHON)
+  add_test(NAME serializer_cycle_regression
+           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/serializer_cycle_regression.test.py
+                   $<TARGET_FILE:inimerse>)
+  set_tests_properties(serializer_cycle_regression PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "runtime;regression")
+endif()
