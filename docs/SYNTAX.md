@@ -927,7 +927,7 @@ inimerse-driven with NO PASS/FAIL_REGULAR_EXPRESSION and not WILL_FAIL: 73
 - `lambda_capture_runtime` 曾跑 `vtest/lambda_capture_rejected_v04.im`，文件名写着 *rejected*，内容却是一段**正常成功的闭包捕获**（`say add(3)` → `5`）—— 名字与内容脱节。**已 `git mv` 为 `vtest/lambda_capture_v04.im` 并补上断言**；`lambda_runtime`、`lambda_nested_runtime` 同批补上。
 - `result_runtime`、`result_question_runtime`、`result_propagation_runtime`、`try_finally_runtime` **已补上**。
 - `case_alias_runtime` **已补上**（D12）。
-- 仍未补：`pipeline_runtime`、`null_coalesce_runtime`、`chained_comparison_runtime`、`case_collection_patterns_runtime`、`case_structural_runtime`、`float_precision_runtime` 等语言测试。
+- 仍未补：`pipeline_runtime`、`null_coalesce_runtime`、`chained_comparison_runtime`、`case_collection_patterns_runtime`、`case_structural_runtime`、`float_precision_runtime` 等语言测试。 **★ 本条已过期，原文留作记录：这六条今天全部注册着**（逐条查过 `add_test`）。原文是一次**指针**（「现在还没补」），而指针必须跟着现值走；它没跟，于是变成一句假话，而它旁边没有任何门禁会红。
 
 **两条可复用模式**（写断言前必读，详见 §8）：断言要打在**程序自己打印的带标记值行**上；且**不要用 `FAIL_REGULAR_EXPRESSION` 去匹配字符串字面量** —— 引擎会把程序里每一个字面量回显出来，于是「某件事没发生」这类断言恒为空，必须让没发生的事留下**值**上的痕迹（计数/状态变量）。
 
