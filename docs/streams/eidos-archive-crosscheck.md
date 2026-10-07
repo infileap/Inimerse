@@ -179,7 +179,7 @@ PLAN_V06 §4 第 3 条逐字：「**Inim OS 自己的文档说了它要什么**�
 | 行 | 文件 | 逐字判定 |
 |---|---|---|
 | `:21` | `集合化.md` | 「**长线方向**，对应 [../../docs/archive/ROADMAP_3.1.md]；**当前未实现**」 |
-| `:16` | `Inim OS总纲.md` | 「Inim OS 尚未实现；**概念已被 [../infiverse-inim-os-summary.md](../infiverse-inim-os-summary.md) 的白皮书章节正式覆盖**」 |
+| `:16` | `Inim OS总纲.md` | 「Inim OS 尚未实现；**概念已被 `../infiverse-inim-os-summary.md` 的白皮书章节正式覆盖**」——该路径按 README 自己的位置（`future/archive/`）解析，即 [future/infiverse-inim-os-summary.md](../../future/infiverse-inim-os-summary.md) |
 | `:22` | `面对对象.md` | 「部分实现：Eidos 单继承与有限 `super` 已有运行时回归；规范其余部分（宇宙变换、热修改等）**未实现**」 |
 
 ⇒ **两条要分开说的**：
