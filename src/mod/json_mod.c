@@ -54,7 +54,7 @@ static void json_popn(VM *vm, int n) {
 
 /* ---- serialize ---- */
 
-static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz);
+static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz, int depth);
 
 /* escape a GBK string into JSON form (\uXXXX for non-ASCII, control escapes for ASCII) */
 static void json_escape_str(const char *s, char *out, int *pos, int outsz) {
@@ -97,7 +97,7 @@ static void json_escape_str(const char *s, char *out, int *pos, int outsz) {
     }
 }
 
-static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz) {
+static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz, int depth) {
     if (*pos >= outsz - 8) { *pos = outsz; return; } /* saturate: caller extends buffer */
     switch (v->type) {
         case VAL_INT:
@@ -119,29 +119,29 @@ static void json_write(VM *vm, const Value *v, char *out, int *pos, int outsz) {
             break;
         }
         case VAL_ARRAY: {
-            VM_LOCK(vm);
+            if (depth == 0) VM_LOCK(vm); /* outermost frame only: VM_LOCK is a plain lock, not reentrant */
             ArrayObj *a = vm_pool_slot(vm, v->ival - 1);
             out[(*pos)++] = '[';
             for (int i = 0; i < a->count; i++) {
                 if (i > 0) out[(*pos)++] = ',';
-                json_write(vm, &a->items[i], out, pos, outsz);
+                json_write(vm, &a->items[i], out, pos, outsz, depth + 1);
             }
             out[(*pos)++] = ']';
-            VM_UNLOCK(vm);
+            if (depth == 0) VM_UNLOCK(vm);
             break;
         }
         case VAL_DICT: {
-            VM_LOCK(vm);
+            if (depth == 0) VM_LOCK(vm); /* outermost frame only: VM_LOCK is a plain lock, not reentrant */
             ArrayObj *a = vm_pool_slot(vm, v->ival - 1);
             out[(*pos)++] = '{';
             for (int i = 0; i + 1 < a->count; i += 2) {
                 if (i > 0) out[(*pos)++] = ',';
-                json_write(vm, &a->items[i], out, pos, outsz);
+                json_write(vm, &a->items[i], out, pos, outsz, depth + 1);
                 out[(*pos)++] = ':';
-                json_write(vm, &a->items[i + 1], out, pos, outsz);
+                json_write(vm, &a->items[i + 1], out, pos, outsz, depth + 1);
             }
             out[(*pos)++] = '}';
-            VM_UNLOCK(vm);
+            if (depth == 0) VM_UNLOCK(vm);
             break;
         }
         default:
@@ -157,7 +157,7 @@ static int builtin_json_serialize(VM *vm) {
     json_popn(vm, vm->cur_argc);
     char *buf = malloc(1 << 20); /* 1MB cap */
     int pos = 0;
-    json_write(vm, &v, buf, &pos, 1 << 20);
+    json_write(vm, &v, buf, &pos, 1 << 20, 0);
     buf[pos] = '\0';
     push_string(vm, buf);
     free(buf);
@@ -315,17 +315,17 @@ void json_mod_register(VM *vm) {
 #pragma GCC diagnostic pop
 
 /* public wrappers for other modules (record_mod) */
-void json_write_value(VM *vm, const Value *v, char *out, int *pos, int outsz) { json_write(vm, v, out, pos, outsz); }
+void json_write_value(VM *vm, const Value *v, char *out, int *pos, int outsz) { json_write(vm, v, out, pos, outsz, 0); }
 Value json_parse_value_text(VM *vm, const char *s, int *ok) { int i =0; return json_parse_value(vm, s, &i, ok); }
 
 /* dynamic-buffer serialize: auto-extends (record save etc.) */
 void json_write_value_dyn(VM *vm, const Value *v, char **buf, int *pos, int *cap) {
-    json_write(vm, v, *buf, pos, *cap);
+    json_write(vm, v, *buf, pos, *cap, 0);
     while (*pos >= *cap) {
         int nc = (*cap) * 2;
         char *nb = realloc(*buf, (size_t)nc);
         if (!nb) break;
         *buf = nb; *cap = nc; *pos =0;
-        json_write(vm, v, *buf, pos, *cap);
+        json_write(vm, v, *buf, pos, *cap, 0);
     }
 }
