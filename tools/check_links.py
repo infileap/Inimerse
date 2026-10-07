@@ -173,26 +173,50 @@ def main() -> int:
                 broken.append((rel, target, "does not exist"))
 
     if args.json:
-        print(json.dumps({
+        print(printable(json.dumps({
             "files": len(files),
             "links": total,
             "external": external,
             "anchors": anchor,
             "checked": checked,
             "broken": [{"file": f, "target": t, "why": w} for f, t, w in broken],
-        }, ensure_ascii=False, indent=2))
+        }, ensure_ascii=False, indent=2)))
     else:
         if args.verbose:
             for rel, target in sorted(good):
-                print(f"  ok  {rel}  ->  {target}")
+                print(printable(f"  ok  {rel}  ->  {target}"))
         for rel, target, why in broken:
-            print(f"BROKEN  {rel}  ->  {target}  ({why})")
+            print(printable(f"BROKEN  {rel}  ->  {target}  ({why})"))
         print()
         print(f"check_links: {len(files)} markdown files, {total} links "
               f"({external} external, {anchor} anchors, {checked} local), "
               f"{len(broken)} broken")
 
     return 1 if broken else 0
+
+
+# Defined after main() on purpose: this file is cited by line number from
+# .gitignore (`:80`, the input set) and from docs/AUDIT.md (`:39`, `:103`,
+# `:152`, `:176`, `:187`, `:189`), so a helper placed above those would move
+# every one of those refs.  Python resolves the name when main() runs, so the
+# order costs nothing.
+def printable(line: str) -> str:
+    """Render one output line so a strict-UTF-8 stdout cannot fail on it.
+
+    Pathnames come from `git ls-files -z` decoded with `surrogateescape`, so a
+    tracked path whose bytes are not UTF-8 arrives as lone surrogates.  Those
+    are reversible -- `encode("utf-8", "surrogateescape")` restores the original
+    bytes -- but stdout here is `errors="strict"`, so writing one raises
+    UnicodeEncodeError.  The lines that carry a pathname are the BROKEN lines:
+    a report that dies on the one thing it exists to report is worse than one
+    that is merely ugly.
+
+    Applied to the whole rendered line rather than to each value, so the
+    collected tuples stay byte-faithful and there is exactly one escape point
+    per write.  `backslashreplace` -- what stderr already does -- and never
+    `replace`, which would turn an unreadable name into U+FFFD and hide it.
+    """
+    return line.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
 
 
 if __name__ == "__main__":

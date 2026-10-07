@@ -52,9 +52,9 @@ Honest bounds:
   - This says nothing about whether a registered test *asserts* anything.  A
     registration with no PASS regex and no FAIL regex can pass on any exit code
     -- see docs/SYNTAX.md §7.2 (M13).
-  - Only `vtest/*.im` is checked, not `vtest/*.params`, `*.inim` or `*.txt`.
-    Those are inputs to registered tests rather than tests themselves, and
-    `params_precompiled_v06.inim` is named by the registration that runs it.
+  - `vtest/*.im` and `vtest/*.inim` are checked; `vtest/*.params` and `*.txt`
+    are not.  A `.inim` is executable by the engine, so it is a thing that gets
+    run -- a `.params`/`.txt` is data, and its question is "who reads it".
 """
 import re
 import sys
@@ -113,11 +113,24 @@ def main() -> int:
 
     # 1. vtest fixtures
     fixtures = sorted(p.name for p in (ROOT / "vtest").glob("*.im"))
-    for name in fixtures:
+    # A serialised program (`*.inim`) is executable by the engine, so it belongs
+    # in this set for the same reason the source above does: it is something a
+    # test RUNS, not data a test reads.  `*.params`/`*.txt` are data and stay
+    # out -- see the honest bound in the docstring.
+    serialised = sorted(p.name for p in (ROOT / "vtest").glob("*.inim"))
+    for name in fixtures + serialised:
         checked += 1
         if named_in_cmake(name, cmake):
             continue
         if name in ALLOWED:
+            continue
+        if name.endswith(".inim"):
+            problems.append(
+                f"vtest/{name}: not named in CMakeLists.txt and not in ALLOWED. "
+                f"A serialised program is an input to the test that loads it: "
+                f"either name it in that test's COMMAND, or add it to ALLOWED in "
+                f"this file with the thing that runs instead."
+            )
             continue
         problems.append(
             f"vtest/{name}: not named in CMakeLists.txt and not in ALLOWED. "
@@ -163,10 +176,11 @@ def main() -> int:
 
     print(
         f"check_orphan_fixtures: {checked} input(s) checked "
-        f"({len(fixtures)} vtest fixtures, {len(py_tests)} python harnesses, "
+        f"({len(fixtures) + len(serialised)} vtest fixtures, "
+        f"{len(py_tests)} python harnesses, "
         f"{len(js_tests)} node harnesses); "
-        f"{len(fixtures) - sum(1 for n in fixtures if n in ALLOWED)} fixtures "
-        f"registered, {len(ALLOWED)} allowed with a stated reason."
+        f"{len(fixtures) + len(serialised) - sum(1 for n in fixtures + serialised if n in ALLOWED)} "
+        f"fixtures registered, {len(ALLOWED)} allowed with a stated reason."
     )
     return 0
 
