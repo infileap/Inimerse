@@ -280,8 +280,8 @@ if(INIMERSE_PYTHON)
   # fixing one (or letting the gap widen) fails here and demands a decision.
   # It needs a working `cc`, which the engine build already required.
   add_test(NAME aot_native_regression
-           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_native.test.py
-                   --build ${CMAKE_BINARY_DIR} --cc ${CMAKE_C_COMPILER})
+           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_native\\.test: [0-9]+ cases" --
+                   ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_native.test.py --build ${CMAKE_BINARY_DIR} --cc ${CMAKE_C_COMPILER})
   set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression" PASS_REGULAR_EXPRESSION "aot_native\\.test: [0-9]+ cases")
   add_test(NAME scan_tools_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/scan_tools.test.py)
   set_tests_properties(scan_tools_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
@@ -384,7 +384,7 @@ if(INIMERSE_CLANG AND NOT WIN32)
     # which cases are refused (docs/AUDIT.md §1.6).  It needs node because the
     # wasm backend is the third opinion.
     add_test(NAME mod_semantics_regression
-             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mod_semantics.test.py
+             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "mod semantics: ok \\([0-9]+ boundary cases" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mod_semantics.test.py
                      $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
                      --node ${INIMERSE_NODE})
     set_tests_properties(mod_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "runtime;compiler;wasm;regression" PASS_REGULAR_EXPRESSION "mod semantics: ok \\([0-9]+ boundary cases")
@@ -397,7 +397,7 @@ if(INIMERSE_CLANG AND NOT WIN32)
     # each backend used to format differently.  It needs node because wasm is
     # the third opinion.
     add_test(NAME logic_semantics_regression
-             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/logic_semantics.test.py
+             COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "logic semantics: ok \\([0-9]+ cases" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/logic_semantics.test.py
                      $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
                      --node ${INIMERSE_NODE})
     set_tests_properties(logic_semantics_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "language;compiler;wasm;regression" PASS_REGULAR_EXPRESSION "logic semantics: ok \\([0-9]+ cases")
