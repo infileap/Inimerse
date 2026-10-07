@@ -73,7 +73,7 @@
 
 > **「用 `.im` 重写」不是修法。** 本题的难点不是「哪个文件是 C」，而是同一条语言语义在仓库里有多个独立决定点，且这个分裂横切实现语言。
 
-**最硬的证据**：`selfhost/compiler.im` 与 `selfhost/eval.im` **都是 `.im` 写的**，却对 `and`/`or` 给出相反答案（前者值语义、后者布尔）。⇒ **换成 `.im` 本身不消除分歧，只是改变分歧发生在哪两个文件之间。**
+**最硬的证据（已按 `d4b65c6` 重取）**：`and`/`or` 这条语义当时有 **5 个实现点**——解释器编译器、解释器 VM、`selfhost/compiler.im`、AOT、wasm；**用户裁定布尔后，其中三个各自改过，AOT 本就一致**，而 **`selfhost/eval.im` 从来就是布尔、不在分歧里**（`git show d4b65c6^:selfhost/eval.im` 逐字：`if op == "and" { … if !truthy(l) { return false } … }`）。⇒ **换成 `.im` 本身不消除分歧，只是改变分歧发生在哪几个实现点之间。**
 
 **已落地（`docs/DECFY_DESIGN.md` §0.5 落地现状表，逐条锚定 commit）：**
 

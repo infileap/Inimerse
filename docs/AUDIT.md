@@ -4546,3 +4546,25 @@ Error: typert: dsh-session-org#sessionOrgReviews/decideReview parameter id stric
 ⇒ ★ **两条方法论**：**① 它没有去复刻那个校验器的规则，它把真的校验器请进来跑**（「两条断言跑的是真的校验器，不是它规则的副本」）；**② 把一次修复钉住的最强形式，不是钉住修好之后的值，是钉住「它还能红」。**
 
 **★ 编号口径（本次更正）**：本档此前把这一族记作「第十个实例」，而**「形态」与「实例」是两条不同的轴** —— 增补五的 A/B/H2 记的是**形态**（第七/第八/第九种），增补三 A 记的是**实例台账**（重排成五个，口径见那一节）。**这一条是「第十种形态」。** ★ 而我在给它的回信里先写成「第十一个」，**那句话是错的，以本节为准。**
+
+### H4. 第三类引文错：它从来没有在它被搬去的那棵树上是真的（`ivory-ember` 找到的）
+
+**它证明的是我自己写下的东西是错的**，而错的方式是这一档里前两类都不覆盖的。
+
+**事实**：`docs/PLAN_V06.md` 那句「`selfhost/compiler.im` 与 `selfhost/eval.im` **都是 `.im` 写的**，却对 `and`/`or` 给出相反答案（前者值语义、后者布尔）」——**在它被写下的那棵树上就是假的**：
+- `d4b65c6` 已经把 `selfhost/compiler.im` 改成布尔（`OP_AND`/`OP_OR` + 短路 + 那句引 `docs/AUDIT.md` 的注释），而 **`selfhost/eval.im` 从 `d4b65c6^` 起本来就是布尔**（逐字 `if op == "and" { … if !truthy(l) { return false } … }`）。
+- ★ **`docs/PLAN_V06.md` 首次出现晚于 `d4b65c6`**：`git cat-file -e d4b65c6:docs/PLAN_V06.md` **失败**、`d4b65c6^:` **也失败**；`git log -1 -- docs/PLAN_V06.md` 指向 `2239c16`。
+- 而它抄的那两处（`docs/AUDIT.md` 的「爆炸半径（先测后改）」与 `docs/STATUS.md` 的那张表）**正确地把它标成过去** —— **它抄了同一件事，没抄时态。**
+
+⇒ ★ **这不是漂移（§1.74 A–E，那条引用曾经对过），也不是「从未正确」（§1.74 F，那条引用在写下时就已经不对），是第三类**：**文档写在一棵已经修好的树上，而句子取自一份记录旧状态的审计文。**
+
+★ **判据句（它给的，照抄）**：**把一句记录过去的话搬进现在时，等于给旧事实发了一张新日期。**
+
+★ **它与增补五 D（引文也带观测点）同族但不同**：D 说的是**引文会过期**（写下时对、后来错），这一条说的是**引文在它被搬去的那一刻就已经错了** —— **而两者的样子完全一样，因为「抄的人没抄时态」这个动作在两种情况下都发生了。** ⇒ D 的处方（要么重取、要么盖上「读于 `<sha>`」）**治得了这一条**，但 D 的诊断句治不了：**它不是「带着走的引文没有观测点」，是「带着走的引文没有带上它的时态」。**
+
+**★ 而它顺手给出了那条判据的第一次反面命中。** `d4b65c6` 的提交信息逐字：**`and`/`or` was one operator with three answers: the interpreter returned the deciding operand, AOT returned a boolean, and wasm refused to compile it at all. … The interpreter compiler, the .im bootstrap compiler and the wasm backend each changed; AOT already agreed.`** ⇒ **5 个实现点**（解释器编译器、解释器 VM、`selfhost/compiler.im`、AOT、wasm），而 **PLAN 只点了 2 个文件，且其中一个（`eval.im`）从来不在分歧里**。
+⇒ ★ **「两个决定点 vs 两个说法」这条判据，第一次被证伪的方向不是「把两个说法当成了两个决定点」，是「把两个文件当成了全部决定点」——按文件数建集得 2，按语义建集得 5。**
+
+**处置**：`docs/PLAN_V06.md` 那一句已按 `d4b65c6` 重取（**行数中性**，因为它被 `docs/streams/eidos-archive-crosscheck.md` 按行号引了 `:55`/`:207`/`:208`），正文改成 5 个实现点 + `eval.im` 从来不在分歧里 + 那句 `git show` 逐字。
+
+**★ 一条更宽的边界（`ivory-ember` 自报，我认）**：`tools/logic_semantics.test.py` 的 34 例**只驱动三个后端**（interpreter/AOT/wasm）；`grep -n 'selfhost' tools/logic_semantics.test.py` **rc=1、零命中**。自举侧唯一的守卫是 `selfhost_codegen_parity`，而它自述比对的是**两条路径的运行输出哈希** ⇒ **第 4 个实现点只被「跑一遍看输出」间接覆盖，而那条覆盖取决于目标集里有没有 `and`/`or`。**
