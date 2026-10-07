@@ -4629,13 +4629,20 @@ if token in TARGETS and line[end:m.start()] == "":
 
 ★ **它比 §7 第 4 条（注释不是语义证据）前五个机制值，因为它是第六个、而且形状相反**：**前五个是注释写错了；这一个的注释在写下时是对的** —— 它错在把一次**真实存在**的修复的射程说宽了，而那条修复**就写在旁边**，所以读者没有任何理由怀疑它。
 
+★★ **而 `noble-zephyr` 随后把它改准了，改法比原判据值**：**同一次修复留下了两份记录，而它们的精度不同。**
+
+- **运行期注释**（`src/runtime/runtime_posix.c:1074-1077`、`src/runtime/runtime.c:1280-1284`）：都说 **「one production point, shared with the other runtime」** —— **把整件事说成收敛了。**
+- **测试夹具抬头**（`vtest/spi_caps_contract_v06.im:19-29`）：逐字 **「FIXED: both runtimes now call the single vm_parse_caps」** ＋ **「REGISTERED, NOT RESOLVED: the caps argument's TYPE is still two production points」** —— **它把「字符串那一格已收敛」与「bool 那一格仍两处」分开说。**
+
+⇒ ★ **夹具是对的、而且比注释精确。而读者更可能读到的是注释。** ⇒ ★ **所以正确的形状不是「注释写宽了」，是「同一次修复的两份记录精度不同，而有牙齿的那一份在夹具里」** —— ★ **判据：一份记录有没有牙齿，与它写得对不对，是两个独立的性质；而没牙齿的那一份通常更短、更好读、离读者更近。**
+
 ### C. 无效的输入会以「差异」的样子返回一个正确的值（`noble-zephyr` 自捕）
 
 它用 `spi_meta("m", 1, "rw")` 量到 `caps = 0`，**差点写成「字符串形式在 POSIX 上失效」**；复核 `vm_parse_caps` 只认 `io`/`net`/`ai`/`verse`/`dbg`/`proc`/`all` —— **`"rw"` 不是能力名，那个 0 是正确的。** 重取后 `"all"` → 65280、`"io"` → 256。
 
 ★ **判据**：**一个读数看起来像分歧时，先问它量的是不是一个合法的输入。** ⇒ **一般形：一个「差异」有两个来源 —— 两侧真的不同，或者你给的输入两边都不认。** ★ **后者会返回一个【正确】的值，因此它看起来比错误更像发现。**
 
-### D. `spi_meta` 的 `true` 那一格：登记在文档里的一条缺陷
+### D. `spi_meta` 的 `true` 那一格：**它早就登记过了** —— 一次重复登记，而登记人是我
 
 | `spi_meta(id, ver, X)` | POSIX `mod_caps` | WIN32 `mod_caps` |
 |---|---|---|
@@ -4653,7 +4660,17 @@ if token in TARGETS and line[end:m.start()] == "":
 
 ★ **旁证比来历本身值**：同一个函数里 `src/runtime/runtime.c:1285` 逐字 `/* tag-checked: a bool's ival is not a double */`，**三行之后**同一个 `ival` 被当成「全部能力」用 ⇒ **一个函数里，对 bool 的 ival 有两种信念。**
 
-★ **登记点就是 `true` 那一格**；★ **修法排队**（用户裁过 v0.6 先不动 `src/`，而登记是文档）。
+★★ **撤回：这一格不是「未登记的缺陷」，它今天已经被逐平台钉住了。**
+
+`vtest/spi_caps_contract_v06.im` 的抬头逐字：**「REGISTERED, NOT RESOLVED: the caps argument's TYPE is still two production points -- spi_meta(id, ver, true) answers 0 on POSIX and CAP_MASK on WIN32. That field is asserted per platform in CMakeLists.txt, the way round() with a non-number argument is」** —— 而那份逐平台断言真的在：`spi_caps_contract_runtime` 用**两个独立的 `if(WIN32)` / `else()` 分支**各给一条 PASS 正则，Windows 侧钉 `bool=65280`、POSIX 侧钉 `bool=0`。
+
+⇒ ★★ **所以上面那张表和「三样齐了才登记」的推理都对，而结论是错的：它已经被登记过了。** ★ **而这次误判的入口是新的、值得单列**：
+
+> **第三个人口：把一条【已登记】的记录，读成【未登记】。**
+
+它与本轮的另外两个入口并列：**把已更正的读成未更正**（`rand`，§1.74 增补五 H4 第二形态）、**把旧读数写成现在时**（同一节的 H4）。★ **而这一次登记人是我** —— `noble-zephyr` 报了「可达 + 端到端可观测 + 来历无理由」，我据此裁定「登记为一条缺陷」，**而我没有去问「这件事有没有人已经登记过」**。⇒ ★ **判据：一份读数可以完全正确，而它仍然不构成一个缺陷 —— 因为「它是不是一个新的缺陷」不由读数回答，由【有没有人已经登记过】回答。**
+
+★★ **而它自己把它撤回了，撤得比我准**：它指出这**正是它在上一轮犯过的同一个错**（把已更正的 `rand` 记录读成现存缺陷）⇒ ★ **这一族现在有三个入口，而其中两个是同一个人的两轮。**
 
 ### E. 一个数字可能是从一次变异里抄来的（`exact-lumen` 自捕）
 
@@ -4684,6 +4701,26 @@ if token in TARGETS and line[end:m.start()] == "":
 ★ **正确定义（可判，不需要读函数体）**：**同一侧把 N 个不同实现塌缩成一个函数，而另一侧保持 N 个。** ★ **本仓今天只有 1 处。** ⇒ ★ **能红的只有清单形式**，且**两个方向都要能红**（加名字不更新清单；清单里有一个名字而它今天不再注册到那个函数）。
 
 ★ **而 `-1` 是一个合法值**：真实失败也返回 `-1` ⇒ **调用方分不出「不支持」与「保存失败」** —— **一个不存在的能力，被一个在成功与失败的语言里都已经有主的值回答。**
+
+**五个名字逐条（`noble-zephyr` 数全了）**：`key_press` / `mouse_move` / `mouse_click` 三个在 `src/runtime/runtime_posix.c:1219-1221` 用 `vm_register_builtin` 注册；`load_params` / `save_params` 在 `:1264-1265` 用 `vm_register_builtin_full(…, 1 | CAP_IO, 0)` 注册。Windows 侧对应 `builtin_key_press` / `builtin_mouse_move` / `builtin_mouse_click`（`src/mod/io_mod.c:330-332`）与 `builtin_load_params` / `builtin_save_params`（`src/runtime/runtime.c:1907-1908`）。**五个一个都不在编译器那张 29 条内建名表里** ⇒ ★ **这一类只能走字符串池那条路到达** —— 实跑 `key_press(65, 1)` ⇒ 输出 `key_press=-1`，**RC=0，一个字都不报。**
+
+★★ **「数全」的证据**：`posix_unsupported` 在整个 `src/` 与 `mods/` 里只有定义点加这五个注册点，另有一处**注释**（`src/runtime/vm_exec_builtin.c` 的抬头）。
+
+### ★★ 而它今天【不是】埋着的坑 —— 它已经漏过一次，写在仓库里
+
+`src/runtime/vm_exec_builtin.c` 的抬头逐字：
+
+> `The POSIX runtime (runtime_posix.c) re-implements the whole builtin surface and had registered vm_exec as posix_unsupported -- so on Linux the self-hosted compiler compiled a program, called vm_exec, got a silent -1 back and exited 0 with no output at all.`
+
+⇒ ★★ **「got a silent `-1` back and exited 0 with no output at all」就是这一次问的那个歧义，而它已经真的发生过一次。** ★ **而当时的修法是给 `vm_exec` 一个真实现（共享实现），不是把歧义去掉** ⇒ **歧义还在，剩下这五个仍坐在它上面。**
+
+**四个活调用点**（`noble-zephyr` 量的）：
+
+- `selfhost/eval.im:311-313`（**三个**，自举求值器的内建分发）逐字 `if name == "key_press" { return key_press(args[0]) }` 等三行 ⇒ ★ **返回值被直接 `return` 出去** ⇒ **它分不开「不支持」与「失败」，因为它就是那个值。**
+- `vtest/posix_runtime_parity_v04.im:34` 逐字 **`ok = ok and (lp == -1 or lp == 0)`** ⇒ ★★ **夹具自己两个值都接受** ⇒ **它的牙齿全在上一行的 `say` 与那条逐平台正则上。**
+- `save_params`：**零调用点**（按函数调用形状搜）。
+
+⇒ ★ **所以正确的话不是「这个歧义今天没有代价」，是：四个活调用点，而这个家族已经以「静默 `-1`、exit 0、无输出」的形式漏过一次。** ★ **「埋着的坑」与「漏过的坑」在树上的样子一样，处置相反** —— 而这一格有书面证据说明它是后者。
 
 ### I. 「成功的后果没有读者」（`glad-falcon`）
 
