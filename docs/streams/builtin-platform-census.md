@@ -95,10 +95,66 @@ Windows 侧**每一条运行**都在 stderr 第一行打印：
 [vm] builtin 'gui_say' is already registered; the first one stays
 ```
 
-**七个名字、七次运行，七次都打。** 这是 `vm_register_builtin` 的重复注册守卫在说话 —— 即 `src/mod/gui_mod.c` 里 `gui_fullscreen` 那个重复注册被修掉之后，**`gui_say` 还留着一个**。**第二个注册点在哪，没测到** ⇒ 本节只登记读数，不判归属。（与 §9 第 53 条「两个 body 哪个该注册由人决定」同族，但**没有验证过它们同源**。）
+**七个名字、七次运行，七次都打。** 这是 `vm_register_builtin` 的重复注册守卫在说话 —— 即 `src/mod/gui_mod.c` 里 `gui_fullscreen` 那个重复注册被修掉之后，**`gui_say` 还留着一个**。**第二个注册点已测到**（`noble-zephyr`，观测点 `main`）：`src/mod/say_mod_windows.c:75` 逐字 `vm_register_builtin(vm, "say_target", say_target); vm_register_builtin(vm, "gui_say", say_console);`，而 `src/main.c` 里 `gui_mod_register(vm)` 在 `say_mod_register(vm)` 之前 ⇒ **活的是 `builtin_gui_say`**（定义在 `src/mod/gui_mod.c:2828`），第二个被 `vm_register_builtin` 的守卫拒绝。⇒ **本条归属已定**：代价是**每次 Windows 引擎启动印一行 stderr，包括每一次 CTest**。（与 §9 第 53 条同源。）
+
+★ 而仓库早就为它写了一条**正确的断言**：门禁的 `stage_ctest` 抓整份 `ctest` 输出里的 `is already registered` 并据此非零退出。**但那条断言跑在看不见它的平台上** —— 那两个文件在 Linux 上不编，而 Windows 作业只跑 `ctest`、不跑 `gate.sh`。⇒ **一条正确的断言，被放在了结构上看不见这个缺陷的那一侧。**
 
 ## 9. 边界
 
 - 「平台条件性」= **源码分支归属**，不是运行读数。它不随文档编辑改变，但**会随 `CMakeLists.txt` 或注册点改动而变，而且没有站岗者** —— 这份文件本身就是它唯一的记录。
 - 本表所有行号**只在这份文件里**，且都写成 `<ref> @ <sha>` + 行号；**没有把 `CMakeLists.txt` / `tools/gate.sh` 的行号写进任何 `docs/**`**（那会移动 `tools/check_line_refs.py` 的 pin）。
 - `docs/streams/` 被 `tools/check_doc_paths.py` **按构造跳过**（docstring：internal per-stream work orders, not delivered docs）⇒ 这份文件在 `doc-paths` 那一行上**是空绿**；它在 `links` 与 `text-integrity` 的扫描集里（分母会各 +1）。
+
+## 10. 增补：第三类 —— 两侧都有名字，一侧是桩（`noble-zephyr`，观测点 `main`）
+
+**§3 那张表按【注册名】分类，因此有一类它看不见：名字两侧都有，而一侧注册到一个什么都不做的函数。**
+
+`src/runtime/runtime_posix.c:718` 逐字：
+
+```c
+static int posix_unsupported(VM *vm) {
+    int n = vm_cur_sp(vm) + 1; if (n > 0) vm_cur_set_sp(vm, -1); push_int(vm, -1); return 1;
+}
+```
+
+**它清空整个栈、返回 `-1`。** 而 POSIX 侧把它注册给了 **5 个名字**：
+
+| 名字 | POSIX | Windows |
+|---|---|---|
+| `key_press` | `src/runtime/runtime_posix.c:1219` → `posix_unsupported` | `src/mod/io_mod.c:330` → `builtin_key_press` |
+| `mouse_move` | `src/runtime/runtime_posix.c:1220` → `posix_unsupported` | `src/mod/io_mod.c:331` → `builtin_mouse_move` |
+| `mouse_click` | `src/runtime/runtime_posix.c:1221` → `posix_unsupported` | `src/mod/io_mod.c:332` → `builtin_mouse_click` |
+| `load_params` | `src/runtime/runtime_posix.c:1264` → `posix_unsupported` | `src/runtime/runtime.c:1907` → `builtin_load_params` |
+| `save_params` | `src/runtime/runtime_posix.c:1265` → `posix_unsupported` | `src/runtime/runtime.c:1908` → `builtin_save_params` |
+
+⇒ **这 5 个名字两侧都有**，而 **POSIX 侧什么都不做** —— 注册名的静态对会判成「两侧都有」，**这一类在注册名上不可见。**
+
+**正确归属**：不是「仅 Windows 有」，是「**两侧都有名字，一侧是桩**」。§3 表把前 5 个中的 `load_params` 之外的四个当成了「仅 Windows」的近亲，而 `load_params` 甚至已经被登记为一条「语义分歧」（`CMakeLists.txt` 里写成「on a missing file answers…」）—— ★ **而真相是 POSIX 上它是个桩，无论文件在不在都返回 `-1`** ⇒ **「已登记的分歧」这个标签也可以盖住一个更粗的事实。**
+
+★ **`-1` 是一个合法值**：`save_params` 在真实失败时也返回 `-1` ⇒ **调用方分不出「不支持」与「保存失败」** —— 一个不存在的能力，被一个在成功与失败的语言里都已经有主的值回答。
+
+### 判据必须从「名字」降到「实现体」，而降下来之后**形状判不出来**
+
+`noble-zephyr` 量了三种形状（本仓 236 对同名注册点）：
+
+| 形状 | 命中 | 精度 | 假阳性是谁 |
+|---|---|---|---|
+| S1 同一侧 ≥2 个注册名共享同一个 C 函数（别名组） | WIN32 24 组 / POSIX 24 组 / **不对称 4 组** | **1/4** | 合法别名：`say.console say_console`、`gui_wheel wheel`、`gui_say say.console say_console` |
+| S2 不读参数 **且** 清空栈 | WIN32 0 / POSIX 3 | **1/3** | `posix_entity_clear`、`posix_entity_count` —— **正确的零参内建** |
+| S3 短函数体 | 158/236 | 67% 假阳性 | 含 `entity_at`/`float`/`exec`/`http_get`/`net_*`/`lower` 等真实现 |
+
+⇒ ★ **S2 的两个假阳性是正确的代码** ⇒ **一条基于形状的门禁会把正确的代码判成缺陷** —— **这不是「还不够准」，是用错了对象。精度可以调，对象不能。**
+
+### 因此这一类只能走【显式清单】
+
+**正确的定义**（`noble-zephyr`）：不是「一侧是桩」（不可判），而是
+
+> **同一侧把 N 个不同实现塌缩成一个函数，而另一侧保持 N 个。**
+
+**这个可判**（它是注册表的性质，不需要读函数体），**本仓今天只有 1 处**，而那 5 个名字在 Windows 侧**确实是 5 个不同函数**。
+
+**能红的只有清单形式**：断言「**注册到被声明为桩的那个函数的名字集合 == 声明的清单**」。两个方向都要能红：加第 6 个名字而不更新清单；清单里有一个名字而它今天不再注册到那个函数。
+
+⇒ ★ **「要么被写成一份显式清单，要么它就不存在」—— 第三类只能走清单那一支，因为形状判不出来。**
+
+**边界**：三种形状都是**启发式**，假阳性率是用本仓 236 对同名注册点量的，**不是定理**；S3 的假阳性率**部分由那份脚本自己的白名单边界造成**（★ **工具量的是它自己的扫描范围** —— 这是同一位在这一轮第三次撞上同一形状）；全部是**读码**，没有在 Windows 上跑过。
