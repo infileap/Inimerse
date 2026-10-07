@@ -312,6 +312,7 @@ def main():
                                            + len(m.SHORT_CIRCUIT) + len(m.CHAIN)
                                            + len(m.FLOAT)), 0,
                       'logic semantics cases')
+    case_counts.expect_labels(__file__, 'logic semantics cases')
     print('logic semantics: ok (%d cases: value position, precedence, nesting, '
           'not, condition position, short-circuit both ways, `+` chains, '
           'printed floats; interpreter/aot/wasm all agree)' % len(cases))

@@ -162,6 +162,7 @@ def main():
                          % (len(bad), len(TABLE)))
     case_counts.count(__file__, lambda m: len(m.TABLE), 0,
                       'mod semantics boundary cases')
+    case_counts.expect_labels(__file__, 'mod semantics boundary cases')
     print('mod semantics: ok (%d boundary cases, interpreter/aot/wasm all agree)'
           % len(TABLE))
 

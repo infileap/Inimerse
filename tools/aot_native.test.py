@@ -381,6 +381,7 @@ def main():
     case_counts.count(__file__, lambda m: (len(m.EQUIVALENCE) + len(m.DIVERGENCE)
                                            + len(m.RUNTIME_ERROR) + len(m.REFUSAL)), 0,
                       'aot_native cases')
+    case_counts.expect_labels(__file__, 'aot_native cases')
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"aot_native.test: {total} cases ({len(EQUIVALENCE)} equivalence, "
