@@ -56,6 +56,7 @@ It also caught a real, pre-existing bug the day it was written: the wasm
 backend applied i32.eqz twice for `not`, so every `not` was inverted
 (`not 0` printed false on wasm while interpreter and AOT printed true).
 """
+import case_counts
 import os
 import subprocess
 import sys
@@ -304,6 +305,14 @@ def main():
             print('FAIL ' + line)
         raise SystemExit('%d of %d cases not at the agreed semantics'
                          % (len(bad), len(cases)))
+    rows = len(TABLE) + len(COND) + len(SHORT_CIRCUIT) + len(CHAIN) + len(FLOAT)
+    case_counts.expect_equal(len(cases), rows,
+                             'logic semantics: one case per table row')
+    case_counts.count(__file__, lambda m: (len(m.TABLE) + len(m.COND)
+                                           + len(m.SHORT_CIRCUIT) + len(m.CHAIN)
+                                           + len(m.FLOAT)), 0,
+                      'logic semantics cases')
+    case_counts.expect_labels(__file__, 'logic semantics cases')
     print('logic semantics: ok (%d cases: value position, precedence, nesting, '
           'not, condition position, short-circuit both ways, `+` chains, '
           'printed floats; interpreter/aot/wasm all agree)' % len(cases))

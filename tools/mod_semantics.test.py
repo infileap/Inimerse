@@ -26,6 +26,7 @@ A refusal counts only when all three backends exit non-zero and none of them
 died from a signal: a signal means a guard is decorative again, and exit 0
 means the backend accepted something the other two rejected.
 """
+import case_counts
 import os
 import subprocess
 import sys
@@ -159,6 +160,9 @@ def main():
             print('FAIL ' + line)
         raise SystemExit('%d of %d cases not at the agreed semantics'
                          % (len(bad), len(TABLE)))
+    case_counts.count(__file__, lambda m: len(m.TABLE), 0,
+                      'mod semantics boundary cases')
+    case_counts.expect_labels(__file__, 'mod semantics boundary cases')
     print('mod semantics: ok (%d boundary cases, interpreter/aot/wasm all agree)'
           % len(TABLE))
 
