@@ -314,6 +314,108 @@ R3（一种类型可以声明自己的表示与宽度）是**语言侧**的声�
 
 ---
 
+## 2.11 `@unsafe` 是一个标记，不是一层（**已裁定 A**）
+
+**裁定**：`@unsafe` **标记「这一段放弃了哪几条保证」**，语法本身不换。**它必须点名。**
+
+**为什么**：**「不安全」不是一条可以被检查的性质，而「放弃了借用检查」是。** 一个只写 `@unsafe` 的块，读它的人无法知道什么被放弃了；一个点了名的标记，可以被检查「你点的那条，在这段代码里真的被放弃了吗」。
+
+**层二（看得见硬件）不需要 `@unsafe`** —— 看见寄存器和放弃安全保证是**两件事**。把它们绑在一起，会让「想看硬件」变成「必须先声明不安全」。
+
+### 伪代码（**这是设计，不是今天的语法**）
+
+**① 标记必须点名**
+
+```text
+@unsafe(borrow, bounds)
+func read_raw(arr: array(Z), i: Z) -> Z {
+    return arr[i]                 # 这一段里，借用检查与越界检查被放弃
+}
+
+@unsafe                           # 不点名 —— 拒绝
+func f(arr: array(Z), i: Z) -> Z { return arr[i] }
+# error: '@unsafe' must name the guarantees it drops
+```
+
+**可以点名的保证**（每条都对应一个**能被单独关掉**的检查）：
+
+| 名字 | 关掉的是 |
+| --- | --- |
+| `borrow` | 借用/所有权检查（含 `ptr_add` 这类指针运算） |
+| `bounds` | 数组/集合的越界检查 |
+| `types` | 值的重新解释（把一个类型当另一个用） |
+| `init` | 读未初始化 |
+| `sets` | 集合约束检查（`Z+`、`N * [0~999]`）—— ★ 与 §2.10 同一条 |
+| `overflow` | 算术溢出 |
+| `null` | 空值检查（`?.` / `??` 那一族） |
+
+**② 点名必须被挣到（红方向一）**
+
+```text
+@unsafe(bounds)
+func safe_looking(arr: array(Z), i: Z) -> Z {
+    if i >= 0 and i < len(arr) {
+        return arr[i]             # 这里没有任何一处本来会被越界检查拒绝
+    }
+    return 0
+}
+# error: this block declares @unsafe(bounds), but nothing in it would be
+#        refused by the bounds check -- the marker is decoration
+```
+
+**③ 用了但没点名（红方向二）**
+
+```text
+func f(p: *Z) -> *Z {
+    return ptr_add p, 1
+}
+# error: pointer arithmetic needs @unsafe(borrow), which is not declared
+```
+
+**④ 层二不需要 `@unsafe`**
+
+```text
+@asm.raw {
+    mov rax, rdi
+    add rax, 1
+    ret
+}
+# 没有 @unsafe。层二放弃的是「编译器替你分配寄存器」——
+# 那是一条便利，不是一条保证。
+
+@asm.raw {
+    @unsafe(borrow) {             # 层二里做裸指针运算，仍然要点名
+        mov rax, [rdi]
+    }
+}
+```
+
+**⑤ 检查器怎么判**
+
+```text
+func check_unsafe_block(block):
+    named = block.unsafe_guarantees()
+    if named is empty:
+        error("'@unsafe' must name the guarantees it drops")
+
+    for g in named:                                   # 方向一：点了没用
+        if not block.would_be_refused_without(g):
+            error("declares @unsafe(" + g + "), but nothing here "
+                  "would be refused by it")
+
+    for g in block.guarantees_actually_needed():      # 方向二：用了没点
+        if g not in named:
+            error("this code needs @unsafe(" + g + "), which is not declared")
+```
+
+### 这条判据诚实的地方
+
+- **`would_be_refused_without(g)` 是一个近似。** 精确判定「这段代码里有没有东西本来会被拒绝」与停机问题同类 ⇒ **它必然有假阳与假阴**。⇒ 检查器必须**自报它是近似**（说清它考虑了哪些形状），否则「没有报错」会被读成「没有问题」—— 而这两件事不一样。
+- **`guarantees_actually_needed()` 同理** —— 它只能看见**它能看见的形状**。
+- ★ **今天 `.im` 里没有任何一条这样的保证被实现成「可以单独关掉」** ⇒ 这一节是**设计**，不是今天的语法。它的用处是：**在有人实现 `@unsafe` 之前，先把「什么算用对了」写清楚。**
+
+---
+
 ## 3. 与 v0.6 的边界
 
 | 事项 | v0.6 | v0.7 |
