@@ -575,13 +575,13 @@ Error: expected 'expression', but got 'type' (type 129)
 
 ```im
 name: <集合或表达式> [= 初值]         // 现行唯一形式
-age: [0, 120] = 18                   // `:` 后接的是完整集合表达式，不止一个类型名
+age: [0~120] = 18                    // `:` 后接完整集合表达式；这里 `[0~120]` 求值为集合
 name be <集合或表达式> [: init]       // 已移除：报错，不静默
 ```
 
-- 新形式：`src/parser/parser.c:1415-1420`，`STMT_BIND`；`:` 之后走 `looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p)`（与 `type` 同一条规则，`src/parser/parser.c:1242`），末尾的 `= 初值` 可选。
+- 新形式：`src/parser/parser.c:1415-1420`，`STMT_BIND`；`:` 之后走 `looks_like_set_start(p) ? parse_set_literal(p) : parse_expr(p)`（与 `type` 同一条规则，`src/parser/parser.c:1242`），末尾的 `= 初值` 可选。**约束生效与否不取决于写法，只取决于求值结果是不是集合**：`looks_like_set_start` 只认 `数字/字符串 ,`、`标识符 ,`、`标识符[` 三种开头，**不认开头的 `[`** ⇒ `[0, 120]` 走 `parse_expr` 得到**数组**，而 `src/vm/vm.c` 的 `L_BIND` 里 `int sidx = (R[setReg].type == VAL_SET) ? R[setReg].ival : -1;` 取 −1 ⇒ `global_bound[g] = 0`。实测：`age: [0, 120] = 18` 后 `age = 200` ⇒ 打 `200`、**无约束**；`age: [0~120] = 18` 后 `age = 200` ⇒ `uncaught: type_mismatch`；`age: 0, 120 = 18` ⇒ `initial value out of range`（**`0, 120` 是集合 {0,120}，不是区间 0..120**）。
 - 旧形式：`src/parser/parser.c:1376-1387` 直接报 ``Error at line N: `be` declarations were removed (docs/SYNTAX.md 6.3); write `name: set [= init]` in place of `name be set [: init]` ``，exit 1。
-- 受约束全局**每次赋值都重校验**（越界抛 `type_mismatch`），登记点是 `global_bound[]`。它的三个消费者只读这个数组，所以换语法不改语义：`src/vm/vm.c:3681-3691`（`L_STORE_GLOBAL` 重校验）、`builtin_range`／`posix_core_range`、`src/vm/vm.c:2770-2783`（**GC 标记根**）。最后一个有专门用例 `vtest/gc_bound_root_v04.im`（`gc_bound_root`），**变异验证过**：注掉 `:2770` 的根，该测试即红。
+- 受约束全局**每次赋值都重校验**（越界抛 `type_mismatch`），登记点是 `global_bound[]`。它的三个消费者只读这个数组，所以换语法不改语义：`src/vm/vm.c:3681-3691`（`L_STORE_GLOBAL` 重校验）、`builtin_range`／`posix_core_range`、`src/vm/vm.c:2770-2783`（**GC 标记根**）。最后一个有专门用例 `vtest/gc_bound_root_v04.im`（`gc_bound_root`），**变异验证过**：注掉 `:2770` 的根，该测试即红。**已知行为（不是笔误，是 `L_BIND` 的行为）**：任何求值结果不是集合的绑定表达式都**静默**地不登记约束 —— `age: [0, 120] = 18`（数组）、`x: NoSuchSet = 5`（未定义标识符，随后 `x = 999` 打 `reached`）、`x: Byte = 42`（今天 `say Byte` = `nil`、`say N` = `set(N)`）都会接受任意赋值。判这条只要四行：`age: [0, 120] = 18` + `age = 200`（打 `200`）对 `age: [0~120] = 18` + `age = 200`（`type_mismatch`）。
 
 **⚠ `be` 保留在词法表里是刻意的，不是没删干净。** 两件事必须分开说（旧注释把两者混成一件，已被核验推翻）：
 
