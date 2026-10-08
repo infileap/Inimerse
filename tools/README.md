@@ -165,6 +165,62 @@ a stale expectation. That is not hypothetical: `upp-in-engine` and
 `vverse-produce` each saw only **87** tests on their own branch (85 + their own
 two probes) and the merged tree has **89**.
 
+### Three facts about `add_test` and `gated_run.py`
+
+Each of these is a fact about the tools, written the way the file writes it,
+next to what the tools actually do today and who measured it.  They are here
+because the surrounding prose says what the gate *requires*; these say what the
+machinery *can express*, and the two are not the same set.
+
+**1. In `add_test(NAME x COMMAND a b c)`, CMake parses the arguments, and a
+`;` inside a quoted argument is a list separator, not part of the string.**
+The file writes `add_test(NAME <name> COMMAND <program> <args...>)`, and the
+first argument after `COMMAND` is the program.  `tools/gated_run.py` is written
+around this: `--shape` may be repeated, and a single value is split with
+`for part in value.split(";"):` (`tools/gated_run.py:92`), which the usage text
+at `tools/gated_run.py:60-62` states outright -- the wrapper exists to be the
+thing CMake calls, so it has to read what CMake would have read.  Measured on
+this tree: `grep -c 'PASS_REGULAR_EXPRESSION "[^"]*;' CMakeLists.txt` is **0**
+-- no `;` is left inside a `PASS_REGULAR_EXPRESSION` any more, because the five
+tests that had one are now wrapped and the split happens inside the wrapper.
+Who measured it: noble-zephyr found those five (`posix_runtime_parity` `:690`,
+`gc_runtime` `:692`, `case_try_runtime` `:755`, `case_nested_patterns_runtime`
+`:795`, `thread_result_runtime` `:812`), and the list was reproduced
+independently here, item for item.  The same parsing story produced a wiring
+bug worth remembering: an inserter that took its body from a keyword's opening
+`(` while slicing from its first character was off by `len(keyword) - 1`
+characters -- 8 for `add_test(`, 20 for `set_tests_properties(`.
+
+**2. `tools/gated_run.py` asks only positive questions, so it cannot replace an
+attribute that says something must NOT appear.**  The wrapper asks three
+questions -- did the exit code match, did every clause match, and does its own
+report avoid satisfying the pattern it was asked to check -- and every one of
+them is a "must".  There is no `--not-shape`.  Measured on this tree:
+`grep -c 'FAIL_REGULAR_EXPRESSION' CMakeLists.txt` is **41**, against
+`grep -c 'gated_run.py' CMakeLists.txt` = **71**, so 41 tests still lean on an
+attribute the wrapper has no way to express.  Who measured it: the
+`gc_bound_root` red control.  With `:27 x = 9` changed to `x = 2` and `:28`
+deleted, the shape line still printed, the negative guard never ran, and the
+`FAIL_REGULAR_EXPRESSION` stayed silent -- the only red was
+`question 1 of 3 ... FAIL (exit code 0)`.  The boundary this writes down is
+about the tool, not about that run: **"nothing went wrong this time" is a fact
+about this time, and the next person to wire a test up will not know where this
+run's edge was.**
+
+**3. `--shape` is a regular expression, so metacharacters that occur literally
+in the output are metacharacters in the pattern.**  The file writes
+`--shape REGEX [--shape REGEX ...]`, and `PASS_REGULAR_EXPRESSION` is a regex
+property too, so this is one fact about both.  Measured: the first version of
+the `errors_cli_runtime` clause copied the checker's own closing line,
+`3 question(s) asked, 0 failed`, and reported `0 of 1 matched` **while that
+exact line was in the output** -- as a pattern it reads `3 question`, then the
+group `s`, then ` asked`.  It was replaced with a clause free of
+metacharacters, `asked, 0 failed -- the CLI is a view of g_errors`, and the
+reason is written beside it.  Who measured it: that red.  A pattern that
+contains a metacharacter the output also contains can therefore fail to match a
+line that is present, or match wider than the writer meant, and both outcomes
+print the same thing: `--shape` passed or did not pass.
+
 ### `stream.sh` — one working tree per conversation
 
 A shared working tree is how one session's `git add -A` swallows another's
