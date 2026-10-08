@@ -1496,3 +1496,15 @@ set_tests_properties(bitwise_builtins_runtime PROPERTIES
 # says "now write A3 for real".
 add_test(NAME bitwise_shift_boundary_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --exit 1 --shape "at ip=" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/bitwise_shift_boundary_v07.im)
 set_tests_properties(bitwise_shift_boundary_runtime PROPERTIES LABELS "runtime;bitwise;v0.7")
+
+# The error table's guard in the TREE (docs/ERROR_CODES_V06.md section 3.3):
+# it sees "the table grew" -- somebody gave a domain a 17th member.  The other
+# guard is a runtime one (im_enum_create), and it sees the opposite thing: a
+# code built by hand on a path that runs.  Neither red condition covers the
+# other, which is why both exist.  This one parses g_errors[] as source text,
+# so a code assembled anywhere else in the engine is invisible to it -- stated
+# here because it is the boundary of the reading, not because it is a defect.
+if(INIMERSE_PYTHON)
+  add_test(NAME error_domain_width_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_error_domains.py)
+  set_tests_properties(error_domain_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "invariants")
+endif()
