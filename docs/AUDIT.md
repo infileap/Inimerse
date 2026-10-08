@@ -4887,3 +4887,56 @@ void vm_throw_kind(VM *vm, const char *kind) {
 
 ★ **先量磁盘、再改文案**：`headagent` 的子会话**仍然恰好 32 个**、其中标题「你被指派为 employee（执行者）」的**恰好 3 个**（与用户截图上那张卡的 3 个逐个对上）、**最近半小时内没有任何一条缓存被删** ⇒ ★ **用户的读数是对的，它的读数是假的。**
 ★ **新断言钉的是「近似匹配不许发生」，不是「正例能匹配」**（`session-` 前缀的 id 原样保留；**写错前缀的 `parentId` 一个都不许被收编**）—— ★ **一个只钉正例的断言，会在「匹配变宽了」的时候继续通过。**
+
+## §1.80 一个宽 `default` 的受害面，是「还没有人给它加守卫的那些调用方」
+
+**症状。** `src/vm/vm.c:278`（`val_as_double`）的 `default: return 0.0;` 今天还在。而仓库为它写过**三条注释、修过三个调用方**，三次修的都是调用方、`default` 一次都没动：
+
+1. `src/vm/vm.c:384-390`（`val_cmp`，§1.26）逐字 *"`val_cmp` used to fall through to val_as_double() for every other pair, and that function's `default` is 0.0 -- so a string, an array, a dict, a set or nil all compared as the number 0. Measured before the fix: `"abc" < 1`, `[1, 2] < 1`, `(1, 2) < 1`, `nil <= 0`, `0 <= nil` and `nil < 1` were all true, while `==` said those pairs were not equal -- so `a <= b && b <= a` was true for pairs `a != b`."*
+2. `src/vm/vm.c:285-288`（`val_as_int` 的由来，§1.20）逐字 *"added because the idiom it replaces -- `x.type == VAL_INT ? x.ival : (int)x.fval` -- silently read the union's DOUBLE member for a bool, a nil or a string."*
+3. `src/runtime/runtime_posix.c:128-133`（`float()`，§1.20）逐字 *"The old fallback was `else n = v->fval`, which read the DOUBLE member of a bool: float(true) answered 4.9406564584124654e-324, the bit pattern of the integer 1, while float(false) and float(nil) answered 0 by accident."*
+
+⇒ **它第四次咬人时咬在别处**：`src/vm/vm.c:3612`（`L_INDEX_GET` 的 `VAL_STRING` 支）逐字 `int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);` ⇒ **`e["code"]` 返回 `"d"`**（那个 dict 的键是 `"code"`，`val_as_double` 对 `VAL_STRING` 走 `default` 得到 `0.0`，`(int)0.0` = 0 ⇒ 取第 0 个字符）。
+
+**判据（今后）。** ★ **一个「宽 `default`」的已知受害者全部是在调用方被治好的 —— 于是这个 `default` 的受害面不是「已经发生过的那些」，是「还没有人给它加守卫的那些调用方」。**
+
+**为什么这是一个新形态。** 前面那些形态的病，**修好一处就少一处**；这一种的病，**每加一个调用方就多一处**。而它长得像「已经修过三次了」—— 三次都绿。与「一个不持有意见的函数，不能犯错，也不能报警」（§1.79 A）是同一族的反面：**那个是「没有人判断」，这个是「判断被搬到了每一个调用方，而搬走之后根还在」。**
+
+**规模（`noble-zephyr` 的读数，观测点 `5805538`）。** `val_as_double` 在 `src/` 有 **28 个调用点**（32 处文本命中减去声明、定义与两处注释）；`val_as_int` 有 **7 个**（`src/runtime/runtime_posix.c:841`/`:913`/`:1086`、`src/runtime/runtime.c:1291`/`:1672`/`:1767`、`src/mod/verse_dist_mod.c:1975`/`:2071`）⇒ **35 个，逐个有没有守卫【未读】。** ★ **一个根因在 `default` 里、而修复在调用方的病，它的剩余风险只能靠【数调用点】来估，不能靠【数已修的】。**
+
+### §1.80.1 挑第一个量时先问分辨力
+
+★ `noble-zephyr` 原本要数「`switch (v->type)` 的站点数」，数出来了：`src/` 全部 `switch` **71**；`switch (…type…)` **27**；**真正在 Value tag 上分派 = 10**。★ **但没有分辨力** —— 真正的 tag 分派是用 `if/else if` 链做的：`grep -rnE '(\.|->)type *== *VAL_' src/ --include=*.c` ⇒ **381 处、26 个文件**（`src/vm/vm.c` 109、`src/runtime/runtime_posix.c` 80、`src/runtime/runtime.c` 78、`src/mod/result_mod.c` 19、`src/runtime/vm_exec_builtin.c` 16、`src/mod/say_stream.c` 11、`src/mod/verse_dist_mod.c` 9）。
+
+⇒ ★ **一个 tag 要加，要问的不是「有几个 `switch`」，是「有几处在按 tag 分派，以及每一处没命中时干什么」。** ★ 一般式：**一个普查的规模，要先和「同一件事的另一种写法」比一遍；比值小的那个量，量的是写法，不是事情。**
+
+★ 那 10 个 `switch` 的 `default`（逐站读出的，是分类不是实测）：8 个静默（`val_as_double` `return 0.0` / `val_as_int` `return 0` / `vm_truthy` `return 1` / `dict_hash_key` `return 0` / `vm_execute_thread` `push_nil` / `vm_debug_var` `break` / `json_write` `"null"`）；2 个印 `unknown`（`posix_core_type`、`builtin_type`）；1 个把 tag 号写进哈希 —— ★ **`src/mod/replay_mod.c:131` 逐字 `snprintf(tmp,…,"\"<%d>\"", v->type);` ⇒ 新 tag 会改重放哈希。**
+⇒ ★ **十个 `default` 里，九个把新 tag 吞掉、一个把它写进哈希 —— 而「吞掉」与「写进去」在加 tag 的那一刻都叫「没有报错」。** ★ 这解释了为什么这一类必须先普查再动手：**你以为要修的是渲染，实际要修的是哈希。**
+
+### §1.80.2 `VAL_OBJECT`：类型表里已经存在、`src/` 里不存在
+
+★ `src/vm/vm.c:1215-1294` 的 `value_to_string` **9 条分支**（STRING/INT/FLOAT/BOOL/NIL/SET/ARRAY/DICT/FUNCTION）+ `else snprintf(buf, bufsz, "<unknown>")`；而 `enum ValueType`（`src/vm/vm.h:22`）**10 个 tag，唯一没有分支的就是 `VAL_OBJECT`**。
+
+★★ **射程更正比原结论值**：在 `src/` 里 grep `VAL_OBJECT` ⇒ **1 行，就是那行枚举本身** ⇒ 差点写成「从不被生产」；★ **改全仓取**：`git grep -n 'VAL_OBJECT'` ⇒ **3 行**，另外两行都在 `mods/debug/debug_mod.c`（`:197`、`:332`），**印 `<object>`**。
+⇒ **同一个 tag，`mods/` 印 `<object>`、`src/vm/vm.c` 印 `<unknown>` —— 两个渲染器两个答案，而引擎里那个更不认识它。** 全仓**没有任何生产者**。
+
+⇒ ★ **判据：「加了 tag 忘了渲染器」这个形状今天在类型表里已经有位置了 —— 不是猜想，是现状。**
+
+### §1.80.3 两道匿名拒绝：AOT 与 wasm 拒绝 `try` 是响亮的，但不是有牙齿的
+
+★ `grep -nE 'STMT_TRY|EXPR_THROW|OP_THROW|OP_TRY|try_entries|catch'` ⇒ `src/compilation/aot_native.c` **0 命中**、`src/compilation/wasm_backend.c` **0 命中** ⇒ 两个后端**都没有任何异常构造**。
+
+**实测**（观测点 `5805538`）：`./build/inimerse --no-mods t1.im` ⇒ `caught: division_by_zero` rc=0；`./build/aot-native translate t1.im` ⇒ `aot_native: statement kind 45 is outside the numeric subset` rc=1；`./build/inimerse compile --abi-target wasm t1.im` ⇒ `error: wasm MVP subset: statement type not supported by wasm MVP subset (line 1)` rc=1；对照 `ctl.im`（无 try）⇒ AOT 无输出 rc=0、wasm `compiled: …ctl.wasm` rc=0。★ **45 = `STMT_TRY`，由独立枚举 `src/parser/ast.h` 的 `StmtType` 数出**（`STMT_SAY` = 17、`STMT_TRY` = 45、`STMT_THROW` = 46），不是从编号猜的。★ AOT 的拒绝语在 `src/compilation/aot_native.c:592`（`:514` 那个语句 switch 的 `default:`）；wasm 的在 `src/compilation/wasm_backend.c:1561`（`:1426` 的 `default:`）—— ★ **源码里那句字面量没有 `(line 1)`，位置是 `fail()` 补上去的。**
+
+**两条要单列**：
+1. ★★ **这两个拒绝都没有任何测试钉着。** `tools/aot_native.test.py` 的 `REFUSAL`（`:211-222`）**10 条**，逐条是 `string_value`/`string_concat`/`list_literal`/`dict_literal`/`for_range`/`member_access`/`index_access`/`lambda`/`builtin_call`/`assign_to_member` —— **没有 try/throw**；`tools/wasm_backend.test.py` 的 `REJECT_CASES`（`:74-77`）**只有 2 条**（`strings`、`unknown_fn`）。⇒ **谁把 `case STMT_TRY: break;` 加进去，整套测试会全绿。**
+2. ★★ **两个拒绝语都是匿名的**：AOT 印 `kind 45`（**一个数字，要翻 `src/parser/ast.h` 才知道是什么**）；wasm 印 `statement type`（**一个名词，连编号都没有**）。⇒ ★ **今天一个错误值最远的消费者不是 AOT 也不是 wasm —— 是这两句拒绝语本身，而它们说不出被拒绝的是哪一件事。** ★ **一道边界，如果它的拒绝语说不出边界在哪，它就只是一次失败。**
+
+### §1.80.4 `src/jit/**` 不存在，而仓库已经量过并配了测试
+
+★ `ls src/jit/` ⇒ No such file or directory；实际是 `src/vm/jit_mode.c`（**全文 15 行**：一个三值枚举 + `im_jit_mode_parse` + `im_jit_mode_name`，**没有 Value、没有 throw、没有编译**）、`src/vm/jit_mode.h`、`src/vm/jit_mode_probe.c`。`im_jit_mode` 的全部命中：定义三处、声明三处、探针五处、`src/main.c:887`/`:889` ⇒ ★ **写进去、读出来只为了印名字，执行路径上零读者。**
+
+★★ **而 `tools/perf_channels.py:18-22` 逐字已经写着这件事**：*"`--jit=template|optimized` is not a channel. `im_jit_mode` is written by `src/main.c` and read by nothing on the execution path …, and the flag changes neither the bytecode nor the output. `--jit` is passed to the interpreter channel here purely so the claim stays testable rather than asserted: `--jit-probe` runs the same workload under all three values and checks that the bytecode hash and the output are identical."*
+⇒ ★ **这一处没人看，但有东西在测** —— 与「错的落在最显眼的地方，而没有任何东西因此变红」（§1.79 B）正好相反。
+
+**射程（六条，照引）。** ① AOT/wasm 的实测是用「能不能编过」回答「错误值能不能到」，**没有**构造任何 AOT/wasm 上真跑 `try` 的东西（构造不出来：两边都在第一个 `try` 节点就拒了）；② `VAL_OBJECT` 那一格是 **`git grep` 全仓 + `src/` 内 grep 两条命令的差**，不是类型系统分析；③ 那 10 个 `switch` 的 `default` 是**逐站读出的**，「8 静默/2 印 unknown/1 改哈希/1 印 null」是分类不是实测；④ `381` 那个正则**会漏掉把 `type` 存进局部变量再比的写法**；⑤ `val_as_double` 28 / `val_as_int` 7 个调用点**有没有守卫，没读**（下一件的形状，只点了数）；⑥ `mods/debug/debug_mod.c` 的**生产者**没找 —— 证明的是「`VAL_OBJECT` 没有生产者」，用的是它全仓只出现 3 次这个读数。
