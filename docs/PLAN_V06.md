@@ -460,7 +460,20 @@ two=39998
 - `usage()` 的 `threads` / `threads_limit` 两个键；
 - 真 OS 线程（`src/platform/thread.c` 的 `im_thread_start` / `im_thread_join`，两个平台各一对）。
 
-★ **而同步原语只有一半的平台有**：`ai_lock` / `ai_unlock` / `ai_wait_task`（`src/mod/io_mod.c:350-357`）与 `gui_wait` / `gui_wait_broadcast`（`src/mod/gui_mod.c:3707`、`src/mod/gui_mod.c:3827`）**都只列在 `if(WIN32)` 的源清单里** ⇒ ★ **POSIX 上一个锁 / 互斥量 / 条件变量 / 通道都没有，只有三个原子操作。**
+★★ **而「同步原语」必须分三层答 —— 本节第一版把这一条写错了，更正如下。**
+
+| 层 | POSIX | WIN32 |
+|---|---|---|
+| **引擎内部互斥量** | ✅ `im_mutex_*`（`src/platform/platform.c:33-78`，底层 `pthread_mutex_t`） | ✅ 同一接口（底层 `CRITICAL_SECTION`） |
+| **脚本级 `lock` / `unlock` / `send` / `recv`** | ✅ **在共享的 `src/vm/vm.c` 里**（`OP_LOCK` / `OP_SEND` / `OP_RECV` 与 `L_LOCK` / `L_SEND` / `L_RECV`） | ✅ 同 |
+| **脚本级 `ai_lock` / `ai_unlock` / `ai_wait_task`、`gui_wait` / `gui_wait_broadcast`** | ❌ **没有** | ✅ 有（列在 `if(WIN32)` 的源清单里） |
+| **脚本级 `sleep_ms`** | ✅ 有 | ❌ 没有 |
+
+★ **第一版错在把第一层与第二层漏掉了** —— 它的原话是「POSIX 上一个锁 / 互斥量 / 条件变量 / 通道都没有」，**而 `im_mutex_*` 在全仓有 70 余处使用**（`src/vm/vm.c` 42 处、`src/runtime/runtime.c` 8 处、`src/headless_server_posix.c` 11 处、`src/child_proc.c` 3 处、`src/platform/platform.c` 4 处），**且 `lock` / `send` / `recv` 的字节码实现就在共享的 `src/vm/vm.c` 里。** ⇒ ★ **正确的话是：POSIX 缺的是【脚本能拿到的那几个名字】，不是锁。**
+
+★★ **而两个平台真正共同缺的是【条件变量】**：`pthread_cond` / `sem_init` / `sem_wait` / `sem_post` / `rwlock` / `pthread_barrier` 在 `src/` 与 `mods/` **合计零命中** ⇒ ★ **`L_RECV` 因此是轮询**（取一次、没取到就 `im_platform_sleep_ms(1)` 再取），**因为没有任何东西可以等。**
+
+★★ **另一条第一版没写的**：`sleep_ms` 同时是**一个 C 宏名**（`src/vm/vm.c` 里 `#define sleep_ms(ms) im_platform_sleep_ms(...)`）**和一个脚本内建名**；而它两平台都只是**睡当前 OS 线程** ⇒ ★ **在 `thread` 里它睡那一根 OS 线程，在 `task`（Fiber）里它睡的是整根 OS 线程 —— 也就是同一根线程上的所有 task 一起停。** ⇒ **「它是让出还是整进程停」的答案是「都不是」。**
 
 ★ **两条已知活缺陷**（都已被独立量过，登记未修）：
 
