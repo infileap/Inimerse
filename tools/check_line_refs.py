@@ -86,6 +86,17 @@ the claim and the artifact travel together:
     the content of the whole tree.  A delta against a base that merge did not
     move says so out loud, and the "N commit(s) behind HEAD" line says how
     much of it is the base ageing rather than this batch.
+  - the prefix form is an EQUALITY -- a target name ENDING exactly where the
+    number begins -- and it used to be an empty-slice test.  `line[end:
+    m.start()]` is silently '' when end > m.start(), so a name to the RIGHT of
+    a number satisfied a test written to mean "glued to the left": on 1c6b338
+    that was 603 of the 788 prefix-form references, and 416 of those 603 were
+    numbers whose owner is some other file.  The count had not merely risen --
+    the input set was 46% about the two files it names, and 100% after the fix
+    (185 of 185).  An empty slice AND not-reversed is exactly equality, so the
+    equality is the whole rule: `end <= m.start()` is a different rule, and it
+    would have taken in 301 more -- names strictly to the left, where the old
+    test read a non-empty slice and said no.
   - only a file git tracks can hold a number.  The working tree also holds
     build output, and a verdict that changes depending on whether someone has
     run a build is not a verdict about the repository: on one commit this read
@@ -116,15 +127,21 @@ the claim and the artifact travel together:
     such pairs are already measured (docs/AUDIT.md:713 fixed :383 while :453
     kept it; :3330 dropped an ordinal while :3326 kept it; :1659 fixed :935
     while :1657, two lines above, kept :915).
-  - `target` in --report is a LABEL, not the identity of the citation.  When
-    the file a number belongs to is not one of TARGETS, the checker prints the
-    first target file the same line mentions:
-        target = owner if owner in TARGETS else next(t for ... if t in TARGETS)
-    docs/BOARD.md's `src/parser/parser.c:1286`/`:1287` is reported as
-    `target=tools/gate.sh`, whose 1045 lines make the report read "out of
+  - `target` in --report is a LABEL, and it uses the same position rule the
+    owner does: the last tracked name ENDING at or before the number.  So it
+    names the file the number belongs to, whether or not that file is one of
+    TARGETS.  It used to fall back to the first target file mentioned anywhere
+    on the line, which printed a name sitting to the RIGHT of the number as its
+    owner: on 1c6b338 that was 302 no-anchor rows whose label's name sits to
+    the right of the number, and 429 whose label is not the owner at all.  No
+    count moved for that one, which is why it survived -- it reads like a
+    reading.
+    docs/BOARD.md's `src/parser/parser.c:1286`/`:1287` was reported as
+    `target=tools/gate.sh`, whose 1045 lines made the report read "out of
     range" -- while the file those numbers name has 1832 lines and holds them.
     This misled a reader of the report once (the report's author), who passed
-    the number on as out of range.  Read `owner`, or read the citing line.
+    the number on as out of range.  The label is now the file the numbers name,
+    so that reading cannot happen again.
   - two rules that look reasonable were tried on this repository and rejected:
     "the file named nearest before the number owns it" (240 references
     unresolved) and "the quoted text nearest the number anchors it" (held fell
@@ -355,7 +372,7 @@ EXP_LINE_REFS_BASE = os.environ.get("EXP_LINE_REFS_BASE", "1c6b3381f3db8b77ca90c
 # CMakeLists.txt lines each carry the test name that sits on the cited line:
 # +15.  Net +14.  A reference removed is not a reference gained, and a
 # reference added is not one either.
-EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "14"))
+EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # +1, not 0, and the reason is a reading rather than a mood.  docs/BOARD.md's
 # line-refs row carries `:241 (CMakeLists.txt)`, and what held that number was
 # the fragment `docs/` -- which sat on line 241 of tools/check_line_refs.py,
@@ -501,7 +518,15 @@ def classify(line: str, mentions: list[tuple[int, int, str]], m: re.Match) -> st
     rejected.
     """
     for _start, end, token in mentions:
-        if token in TARGETS and line[end:m.start()] == "":
+        # `end == m.start()`, not `line[end:m.start()] == ""`.  A reversed slice
+        # is silently empty in Python, so the empty-string test was true for a
+        # TARGET name sitting to the RIGHT of the number as well -- the test
+        # said "glued to the left" and answered "somewhere on the line".
+        # Measured on 1c6b338: 603 of the 788 prefix-form references were held
+        # up ONLY by a name to their right, and 416 of those 603 were numbers
+        # whose real owner is some other file.  An empty slice AND not-reversed
+        # is exactly equality, so the equality is the whole rule.
+        if token in TARGETS and end == m.start():
             return "prefix-range" if m.group(2) else "prefix"
     links = [(x.start(), x.end()) for x in LINK.finditer(line)]
     for start, _end, token in mentions:
@@ -587,15 +612,27 @@ def scan() -> dict:
                         if owner not in hits:
                             held_elsewhere += 1
                     else:
-                        target = owner if owner in TARGETS else next(
-                            t for _s, _e, t in mentions if t in TARGETS
-                        )
-                        target_lines = lines_of(target)
-                        cited = (
-                            target_lines[number - 1].strip()
-                            if target_lines and 1 <= number <= len(target_lines)
-                            else "<out of range>"
-                        )
+                        # The report says which file the number points at, so it
+                        # has to use the position rule the owner already uses:
+                        # the last tracked name ENDING at or before the number.
+                        # The old fallback took the first TARGET mention in the
+                        # list no matter where it sat, so a name to the RIGHT of
+                        # the number was printed as its owner.  Measured on
+                        # 1c6b338: 302 no-anchor rows printed a label whose name
+                        # sits to the right of the number, and 429 printed a
+                        # label that is not the number's owner at all.  No count
+                        # moved for that one, which is why it survived -- it
+                        # reads like a reading.
+                        target = owner if owner else "<no tracked file named before this number>"
+                        if not owner:
+                            cited = "<no tracked file named before this number>"
+                        else:
+                            target_lines = lines_of(owner)
+                            cited = (
+                                target_lines[number - 1].strip()
+                                if target_lines and 1 <= number <= len(target_lines)
+                                else "<out of range>"
+                            )
                         no_anchor.append(
                             (rel, lineno, first, last, number, target, cited[:64])
                         )
