@@ -67,6 +67,14 @@ The gate stage asserts DENOMINATORS, not anchor rates:
     on one line.  It also prints how far behind HEAD the base is, because the
     delta grows as the base ages: that line is how a reader tells "the
     references got worse" from "the base is old".
+  - the MIS-LABELLED count (EXP_LINE_REFS_OFF_TARGET_MAX, a ceiling of zero) is
+    the one pin that is not about how many references there are.  A reference
+    counted in the explicit form whose owner is not a file this checker reads
+    means the two halves of this file -- the writing, and the label the report
+    prints -- disagree.  That is a different question from the delta pin, and
+    the reversed-slice defect needed it: 788 explicit and 416 of them with an
+    owner outside TARGETS left every count in this file self-consistent.  A
+    pin on the count would have watched it happen.
 
 What those pins do NOT say -- written here rather than in a letter, so that
 the claim and the artifact travel together:
@@ -382,8 +390,45 @@ EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # off line 241, so this reference lost an anchor it never really had.  The
 # ceiling says so instead of hiding it: one more number now has nothing
 # holding it, and nothing else may join it.
+#
+# Re-taken 1 -> 2 by the census wiring (`a121aa1`), and the reason is a
+# mechanism worth naming: that commit kept `CMakeLists.txt` at 1483 lines
+# exactly so that `docs/**` references would not move -- and the preservation
+# is what killed the anchors.  It rewrote the TEXT of 66 lines, and docs quote
+# those lines.  Five references quote the first word of a command the wrapper
+# was inserted in front of (`CMakeLists.txt:676`, `:756`, `:1113` quoted
+# `COMMAND inimerse ...`; `:1355` twice quoted `COMMAND inimerse --no-mods ...`),
+# and four quote `CMakeLists.txt:1358`, a line whose only content was
+# `PASS_REGULAR_EXPRESSION "count-ok ..."` -- the property came out in place, the
+# line stayed to keep the count, and the anchor is now the empty string.  So the
+# number did not move and the reference still points at `:1358`; the line is
+# still there and it now says nothing.
+#
+# And then the ceiling did not have to move after all: the row of
+# `docs/BOARD.md` that RECORDS the wiring re-anchored the very references it
+# describes, taking the reading back to base +0 -- which is the fixed point of
+# the paragraph above, happening to the sentence that explains it.  The ceiling
+# stays at 1: a value that only holds because a description sits on the thing
+# it describes is not a value to widen a pin around.
 EXP_LINE_REFS_UNANCHORED_DELTA_MAX = int(
     os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "1")
+)
+
+# The one pin here that is not about how many references there are, but about
+# what the report says each one is.  A reference counted in the explicit form
+# (so: a target file name ends where the number starts) whose OWNER -- the last
+# tracked name ending at or before the number -- is not a target at all is a
+# reference the two halves of this file disagree about.  It must be zero.
+#
+# This is the assertion the reversed-slice defect needed and did not have.  On
+# 1c6b338, with `line[end:m.start()] == ""` standing in for `end == m.start()`,
+# 788 references were counted explicit and 416 of them had an owner outside
+# TARGETS -- and every other count in this file was consistent with that, which
+# is why the shape survived: it reads like a reading.  The `explicit` delta pin
+# asks whether the cited form grew; this one asks whether the report is still
+# naming the right file, and a change can fail either one alone.
+EXP_LINE_REFS_OFF_TARGET_MAX = int(
+    os.environ.get("EXP_LINE_REFS_OFF_TARGET_MAX", "0")
 )
 
 # Every writing that must still be in the input set.  A prefix scan satisfies
@@ -570,6 +615,7 @@ def scan() -> dict:
     held = 0
     held_elsewhere = 0
     no_anchor: list[tuple] = []
+    off_target: list[tuple] = []
     mention_lines = 0
     inline_lines = 0
     files: set[str] = set()
@@ -601,6 +647,17 @@ def scan() -> dict:
                     writings[writing] += 1
                     if writing.startswith("prefix"):
                         explicit += 1
+                        # The count and the label are two different pieces of
+                        # code -- `classify` decides the writing, the loop above
+                        # decides the owner -- and this is the number that says
+                        # they still agree.  It is the one that would have caught
+                        # the reversed-slice shape: while `line[end:m.start()]`
+                        # stood in for "the name ends where the number starts",
+                        # every number with a target name to its RIGHT was
+                        # counted here, and 416 of the 788 had an owner that is
+                        # not a target at all.  No other count moved for that.
+                        if owner not in TARGETS:
+                            off_target.append((rel, lineno, number, owner))
                     hits = []
                     for _s, _e, token in mentions:
                         target_lines = lines_of(token)
@@ -642,6 +699,7 @@ def scan() -> dict:
     return {
         "writings": writings, "explicit": explicit, "held": held,
         "held_elsewhere": held_elsewhere, "no_anchor": no_anchor,
+        "off_target": off_target,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
         "files": files,
     }
@@ -744,6 +802,19 @@ def main() -> int:
             f"number(s) now have nothing holding them"
         )
 
+    if len(r["off_target"]) > EXP_LINE_REFS_OFF_TARGET_MAX:
+        shown = ", ".join(
+            f"{rel}:{lineno} :{number} owner={owner or '<none>'}"
+            for rel, lineno, number, owner in r["off_target"][:5]
+        )
+        failures.append(
+            f"mis-labelled references: {len(r['off_target'])} reference(s) are "
+            f"counted in the explicit form but their owner is not a file this "
+            f"checker reads (ceiling EXP_LINE_REFS_OFF_TARGET_MAX="
+            f"{EXP_LINE_REFS_OFF_TARGET_MAX}) -- the count and the label are two "
+            f"different pieces of code, and they no longer agree.  First: {shown}"
+        )
+
     print(
         f"check_line_refs: pins -- explicit delta {explicit_delta:+d} (expect "
         f"{EXP_LINE_REFS_DELTA:+d}), unanchored delta {unanchored_delta:+d} "
@@ -752,7 +823,8 @@ def main() -> int:
     print(
         f"check_line_refs: readings -- explicit {r['explicit']} (base "
         f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
-        f"{len(base['no_anchor'])})."
+        f"{len(base['no_anchor'])}), mis-labelled {len(r['off_target'])} "
+        f"(base {len(base['off_target'])})."
     )
     print(
         f"check_line_refs: base {EXP_LINE_REFS_BASE} is {behind} commit(s) "
