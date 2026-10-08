@@ -442,6 +442,35 @@ two=39998
 
 **并发访问的规则**。今天**没有规则**（共享可变、无同步），而**这次测试恰好没丢** ⇒ ★ **「没有规则」与「没有事故」今天长得一样。**
 
+### 6.4.1 线程：裁定与今天的读数（**本轮新增**）
+
+★ **人类裁定（逐字「线程按B」）**：线程这件事**挂「去 C 化」线**，不新立一条主线；error 整数码挂「集合化类型系统」线。⇒ **线程的交付物是「去 C 化」交付物的一部分**，不是一份独立设计。
+
+★ **为什么这条归属是对的（不是分类偏好）**：上一节末句逐字是「**并发访问的规则。今天没有规则（共享可变、无同步）**」—— ★ 而「没有规则」的精确形态是「**规则被分散地写在 C 里，且只写了一半的平台**」。
+
+**语言面今天很宽（都有实现）**：
+
+- 关键字 `thread` / `task`（`src/lexer/lexer.h:8`、`src/lexer/lexer.c:12`）；
+- 四个修饰 `endless` / `daemon` / `restart` / `single`（`THREAD_FLAG_*`）；
+- 定义形 `thread name: {}` 与 `thread name(params) {}`（`src/parser/parser.c:1594`）；
+- `start` / `join`（`src/parser/parser.c:247` 把 `TOK_JOIN` 映成 `"join"`）；
+- `thread_await`（`src/mod/result_mod.c:233`）；
+- `atomic_add` / `atomic_get` / `atomic_set`；
+- `sleep_ms`；
+- `usage()` 的 `threads` / `threads_limit` 两个键；
+- 真 OS 线程（`src/platform/thread.c` 的 `im_thread_start` / `im_thread_join`，两个平台各一对）。
+
+★ **而同步原语只有一半的平台有**：`ai_lock` / `ai_unlock` / `ai_wait_task`（`src/mod/io_mod.c:350-357`）与 `gui_wait` / `gui_wait_broadcast`（`src/mod/gui_mod.c:3707`、`src/mod/gui_mod.c:3827`）**都只列在 `if(WIN32)` 的源清单里** ⇒ ★ **POSIX 上一个锁 / 互斥量 / 条件变量 / 通道都没有，只有三个原子操作。**
+
+★ **两条已知活缺陷**（都已被独立量过，登记未修）：
+
+1. **ABBA 锁序**（**两个平台都有**）：`vm_global_grow` 升序取 16 把分片锁、降序放（`src/vm/vm.c:1327`、`src/vm/vm.c:1344`），而 intern 点在持分片锁时去取 `global_lock`（`src/vm/vm.c:3649`，有条件）；★ WIN32 也在持 `global_lock` 时调用 grow（`src/runtime/runtime.c:1683`、`src/runtime/runtime.c:1777`）。
+2. **POSIX 三个原子内建缺分片锁**（**只有 POSIX**）：`posix_atomic_add` / `_get` / `_set`（`src/runtime/runtime_posix.c:837`、`src/runtime/runtime_posix.c:883`、`src/runtime/runtime_posix.c:909`）；★ 而 `posix_atomic_set` 的原子写之后紧跟一句普通写（`src/runtime/runtime_posix.c:926` 是 `__sync_lock_test_and_set`，`src/runtime/runtime_posix.c:927` 是 `val.type = VAL_INT;`）⇒ **连那一次写本身都不是原子的**；★ WIN32 对照 `src/runtime/runtime.c:1777-1802`：三条语句两平台逐字相同，**唯一差别是 WIN32 把它们夹在一对 `VM_GSHARD` 里** ⇒ **「这不是两套实现，是同一段代码少了一对锁。」**
+
+★ **判据**：★ **「没有规则」与「没有事故」今天长得一样** —— ★ 而这一节把「没有规则」的形态说清了：**规则存在，但它被写在 C 里、按平台各写一份、而其中一份只写了一半。**
+
+★ **下一步（已派）**：**线程族的决定点普查**（`noble-zephyr`，只报不改，与 `+` / `and` / `or` 那几张表同一把尺子）—— 四条：① 语言面各语义由谁决定、哪些修饰今天只被解析而没有被执行；② **同步原语的平台剖面**（POSIX 上到底有没有任何锁，含不叫这些名字的）；③ 两条活缺陷各自的决定点数量；④ `selfhost/compiler.im` 与 `selfhost/eval.im` 对那 7 个并发语句是否对称。★ **普查回来后写设计档**（`docs/THREADS_V06.md`）；**本节只登记读数与裁定，不写设计。**
+
 ## 6.5 两份粘贴手册的对表：8 条量完，而「对表」这个动作有一半没有对象
 
 ★ **观测点**：`/home/sakiko/inimerse`，`main @ de0900f3bb6d0b004d5ef85e5e1892a9e09e1718`，读法 `git show HEAD:<path>` / `git grep <pat> HEAD`（**已提交对象**，不是工作树 —— 当时工作树里 `website/**` 有别人在改的 7 个 M + 1 个未跟踪目录）。全部读数由 `vivid-anchor` 给出，逐条附原样输出。
