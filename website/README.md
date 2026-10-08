@@ -183,25 +183,33 @@ infiverse.localhost.cc   →  当前没有任何 DNS 记录
 
 ### 加一个视频
 
-打开 `data/videos.js`，往数组里加一条：
+打开 `data/videos.js`，往数组里加一条。**里面已经有一条真实记录，照它的形状写**
+（字段含义见该文件顶部的表）：
 
 ```js
 {
-  id: "inim-os-walkthrough-01",
-  title: "Inim OS 桌面走查",
+  id: "infiverse-desktop-demo-01",
+  title: "Infiverse 桌面应用",
   bvid: "未投稿",              // 投了就填 BV 号，没投就保留这四个字——不要留空
-  duration: "03:42",
-  resolution: "1920x1080",
-  cover: "assets/covers/inim-os-walkthrough-01.jpg",
+  duration: "00:25",
+  resolution: "800x600",
+  cover: "assets/covers/infiverse-desktop-demo-01.jpg",
   summary: "一句话说明这个视频演示了什么。",
-  ref: "f1dfe62583b7a89e2395ddc502fcf2ac7b60055e",   // 录制时的 git rev-parse HEAD
+  ref: "f1dfe62583b7a89e2395ddc502fcf2ac7b60055e",   // **录制那一刻**的 git rev-parse HEAD
   date: "2026-10-06",
   orientation: "landscape",    // 竖屏写 "portrait"
   featured: true               // 可选，最多一条
 }
 ```
 
-封面按 `videos/index.html` 页里「交付要求」那张表来做（16:9、≤300KB、文件名用 `id`）。
+⚠ **`ref` 是记录，不是指针。** 它记的是按下录制那一刻那棵树；仓库之后往前走多少次都不许改它，
+更不许有人把它更新成最新的 HEAD。旁边必须带日期——否则「这是哪一版录的」就没了证据。
+
+⚠ **片名与所有文案一律用「Infiverse 桌面应用」**。不要用仓库里那份「操作系统」构想的名字来
+称呼它——它是个账号 / 内容平台客户端，不是操作系统（人类裁定原文见 `docs/PLAN_V06.md`）。
+
+封面按 `videos/index.html` 页里「交付要求」那张表来做（16:9、≤300KB、文件名用 `id`），
+落到 `assets/covers/<id>.jpg`。
 **没有这条记录，视频就不显示**——这是有意设计的，避免出现「页面上挂着链接但不知道是哪一版录的」。
 
 ### 加一个 Toy 作品

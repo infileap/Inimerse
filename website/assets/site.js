@@ -5,6 +5,35 @@
 
   var BVID_RE = /^BV[0-9A-Za-z]{8,12}$/;
 
+  /* ---------- 站点根：数据里的路径是「相对站点根」写的 ----------
+     data/videos.js 里的 cover 写成 "assets/covers/x.jpg"。一份数据被首页和各子页共用，
+     所以它没法写成 "../assets/..."（首页要的是没有 ../ 的那个）。
+     而浏览器解析相对路径是按**页面目录**来的：从 /videos/ 打开会去找 /videos/assets/...
+     ⇒ 404；整包传到 B站 Toy 的 /toy/<slug>/ 下同理，更糟。
+     所以这里从本脚本自己的 URL 反推站点根 —— 页面嵌多深都对，且不需要每页写一个前缀。
+     取不到时返回 ''（退回改动前的行为，不制造新故障）。 */
+  function siteRoot() {
+    try {
+      var s = document.currentScript;
+      if (!s || !s.src) {
+        var all = document.getElementsByTagName('script');
+        for (var i = all.length - 1; i >= 0; i--) {
+          var u = all[i].src || '';
+          if (/\/assets\/site\.js(\?|$)/.test(u)) { s = all[i]; break; }
+        }
+      }
+      if (s && s.src) return s.src.replace(/assets\/site\.js(\?.*)?$/, '');
+    } catch (e) { /* 取不到就退回旧行为 */ }
+    return '';
+  }
+  var SITE_BASE = siteRoot();
+
+  /** 站点根相对路径 → 浏览器真能取到的地址；外链与绝对路径原样返回 */
+  function asset(p) {
+    if (!p || /^[a-z][a-z0-9+.-]*:/i.test(p) || p.charAt(0) === '/') return p;
+    return SITE_BASE + p;
+  }
+
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -35,7 +64,7 @@
 
     if (rec.cover) {
       var img = document.createElement('img');
-      img.src = rec.cover;
+      img.src = asset(rec.cover);
       img.alt = rec.title || '';
       img.loading = 'lazy';
       cover.appendChild(img);
@@ -122,6 +151,12 @@
       var card = el('a', 'card');
       card.href = t.url || '#';
       if (t.url && t.channel === 'toy') { card.target = '_blank'; card.rel = 'noopener'; }
+      if (t.poster) {                       // 数据里的路径同样是「相对站点根」，走 asset()
+        var poster = el('img', 'card__poster');
+        poster.src = asset(t.poster);
+        poster.alt = t.title || t.slug || '';
+        card.appendChild(poster);
+      }
       card.appendChild(el('h3', null, t.title || t.slug || '(无标题)'));
       if (t.summary) card.appendChild(el('p', null, t.summary));
       var badges = el('div', 'badges');

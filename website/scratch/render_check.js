@@ -120,6 +120,21 @@ function attrsForId(html, id) {
   return { href: href === undefined ? undefined : href, hidden: /\shidden(\s|>)/.test(tag) };
 }
 
+/* 按浏览器的规则，把一个页面里的相对引用解析成站点内的绝对路径（站点根 = '/'）。
+   桩必须自己会这一步：否则「数据里的路径写对了」和「浏览器真能取到」永远是两件事。 */
+function resolveFrom(pageFile, ref) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(ref) || ref.charAt(0) === '/') return ref;
+  const baseDir = pageFile.replace(/[^/]+$/, '');
+  const out = [];
+  for (const p of (baseDir + ref).split('/')) {
+    if (p === '' || p === '.') continue;
+    if (p === '..') out.pop();
+    else out.push(p);
+  }
+  return '/' + out.join('/');
+}
+const ORIGIN = 'https://example.invalid';
+
 const refsIn = (html) => {
   const out = [];
   for (const re of [/<script[^>]*\ssrc="([^"]+)"/g, /<link[^>]*\shref="([^"]+\.css)"/g]) {
@@ -132,9 +147,13 @@ const refsIn = (html) => {
 /* ============================ 断言收集 ============================ */
 const results = [];
 let currentPage = '(全局)';
+let pageRuns = 0;
 function check(name, cond, detail) {
   results.push({ page: currentPage, name, ok: !!cond, detail: detail === undefined ? '' : String(detail) });
 }
+/* 只是「报事实」的行，不参与判定 —— 让看报告的人不用自己跑一遍才知道解析结果 */
+const infos = [];
+function info(s) { infos.push(s); }
 
 /* ============================ 运行一页 ============================ */
 /**
@@ -143,6 +162,7 @@ function check(name, cond, detail) {
  * @param html   该页 HTML 源文
  */
 function runPage(page, data, html) {
+  pageRuns++;
   const ids = idsIn(html);
 
   // 用该页真实存在的 id 建容器；不存在的 id 一律返回 null（这是关键：不手抄、不补造）
@@ -156,11 +176,18 @@ function runPage(page, data, html) {
     hosts[id] = e;
   });
 
+  // 这一页自己引用的 assets/site.js 是写成 "../assets/site.js" 还是 "assets/site.js"，
+  // 从 HTML 里读；再按浏览器规则解析成绝对 URL —— currentScript.src 在浏览器里就是
+  // 这个解析后的值，桩不能手写一个假的。
+  const scriptRef = refsIn(html).find((r) => /assets\/site\.js(\?|$)/.test(r)) || 'assets/site.js';
+
   const document = {
     readyState: 'complete',
     createElement: (t) => new El(t),
     getElementById: (id) => (Object.prototype.hasOwnProperty.call(hosts, id) ? hosts[id] : null),
     addEventListener: () => {},
+    currentScript: { src: ORIGIN + resolveFrom(page.file, scriptRef) },
+    getElementsByTagName: () => [],
   };
 
   const sandbox = { document, console, Date, String, parseInt, encodeURIComponent };
@@ -173,8 +200,10 @@ function runPage(page, data, html) {
   run(DATA_FILES[0]);
   run(DATA_FILES[1]);
   run(DATA_FILES[2]);
-  sandbox.INFIVERSE_VIDEOS = data.videos;   // 注入本轮要测的数据
-  sandbox.INFIVERSE_TOYS = data.toys;
+  if (data) {                               // data === null ⇒ 不注入，用 data/*.js 自己现在的内容
+    sandbox.INFIVERSE_VIDEOS = data.videos;  // 注入本轮要测的数据
+    sandbox.INFIVERSE_TOYS = data.toys;
+  }
   run('assets/site.js');
 
   return { hosts, sandbox, ids };
@@ -204,6 +233,7 @@ const FULL = {
   toys: [{
     slug: 'inimerse-demo', title: '语法演示', summary: '一句话。',
     url: 'https://www.bilibili.com/toy/inimerse-demo/index.html', status: 'live', channel: 'toy',
+    poster: 'assets/covers/demo-02.jpg',
   }],
 };
 
@@ -400,6 +430,12 @@ PAGES.forEach((page) => {
       tl.children[0].href);
     check('作品位：live 状态显示「今天可玩」', /今天可玩/.test(tl.textContent));
     check('作品位：标注「B站 Toy 托管」', /B站 Toy 托管/.test(tl.textContent));
+    /* 作品封面走的是同一个 asset()。这条在**在线游戏页**上再验一次：
+       它是个子页，如果 asset() 没生效，这里会解析成 /games/assets/... 而不是 /assets/... */
+    const pimg = tl.children[0].find((n) => n.tagName === 'IMG' && n.src);
+    check('作品位：poster 解析成站点根下的绝对 URL（不是 /games/assets/...）',
+      !!pimg && pimg.src === ORIGIN + '/assets/covers/demo-02.jpg',
+      pimg ? pimg.src : '(没有 img)');
   }
   if (s3.hosts['bili-account']) {
     check('B站 按钮：留空时仍不指向任何地址', s3.hosts['bili-account'].href === '#');
@@ -413,12 +449,14 @@ currentPage = '实机演示（bilibiliUrl 有值）';
   const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
   const st = runPage(page, EMPTY, html);
   st.sandbox.INFIVERSE_SITE = Object.assign({}, st.sandbox.INFIVERSE_SITE, {
-    bilibiliUrl: 'https://space.bilibili.com/987654321',
+    // 故意用一个明显不是 B站 的地址：**不在这里放任何看起来像真 UID 的数字**。
+    // 桩只需要「一个非空字符串被原样搬进 href」，不需要一个能被人误认成事实的号。
+    bilibiliUrl: 'https://example.invalid/bili-test',
   });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/site.js'), 'utf8'), st.sandbox,
     { filename: 'assets/site.js#bili' });
   const b = st.hosts['bili-account'];
-  check('填了地址后按钮指向它', b.href === 'https://space.bilibili.com/987654321', String(b.href));
+  check('填了地址后按钮指向它', b.href === 'https://example.invalid/bili-test', String(b.href));
   check('填了地址后不再 hidden', b.hidden === false, String(b.hidden));
 }
 
@@ -478,7 +516,86 @@ currentPage = '数据文件 data/toys.js';
     check(`${tag}：status 合法`, !t || ['live', 'pending'].indexOf(t.status) !== -1, t && t.status);
     check(`${tag}：channel 合法`,
       !t || t.channel === undefined || ['toy', 'self'].indexOf(t.channel) !== -1, t && t.channel);
+    /* poster 是可选的；一旦填了就必须能取到 —— 要么是外链，要么是站点根下真实存在的文件。
+       「填了个取不到的路径」和「没填」在页面上看起来一样（都是没有封面），
+       但在数据里是两种不同的错误，所以这里分开判。 */
+    if (t && t.poster) {
+      const ok = /^https?:\/\//.test(t.poster) || fs.existsSync(path.join(ROOT, t.poster));
+      check(`${tag}：poster 指向真实存在的文件（或外链）`, ok, t.poster);
+    }
   });
+}
+
+/* ============================ 真实数据轮 ============================
+ * ★ 上面运行层用的是**桩自带的 fixture** —— 也就是说，真实 data/*.js 里现在
+ *   躺着什么、渲染出来是什么，它会一路绿灯地不知道。这一轮补上这个缺口：
+ *   不注入任何东西，直接跑 data/*.js 现在的内容，看页面渲染成什么。
+ *   这一轮才是「今天打开网站看到的东西」的断言。
+ */
+currentPage = '实机演示（真实数据 data/videos.js）';
+{
+  const page = PAGES.find((p) => p.key === 'videos');
+  const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
+  const st = runPage(page, null, html);
+  const real = st.sandbox.INFIVERSE_VIDEOS || [];
+  const vl = st.hosts['video-list'];
+
+  check('真实 data/videos.js 至少渲染出一条记录', real.length >= 1, `${real.length} 条`);
+  if (real.length) {
+    check('真实第一条渲染成卡（不是空状态）', vl.children.length === real.length, vl.children.length);
+    check('真实记录标题出现在页面上', vl.textContent.indexOf(real[0].title) !== -1);
+    check('真实记录：封面文件真的在磁盘上',
+      fs.existsSync(path.resolve(ROOT, real[0].cover)), real[0].cover);
+    /* ★ 上面那条只说明「文件在磁盘上」；它**不说明浏览器取得到**。
+       数据里的路径是相对站点根写的，而浏览器按**页面目录**解析 —— 从 /videos/ 打开时
+       "assets/covers/x.jpg" 会变成 /videos/assets/covers/x.jpg ⇒ 404。
+       所以这条按浏览器规则走一遍：拿到渲染后的 img.src，解析成站点内路径，再看文件在不在。 */
+    const img = vl.find((n) => n.tagName === 'IMG' && n.src);
+    const raw = img ? img.src : '';
+    // 站点根反推成功时 img.src 已经是绝对 URL（站点根 + 数据里的路径）⇒ 剥掉 origin
+    // 再当站点内路径用；反推失败时它还是个页面相对路径 ⇒ 按浏览器规则解析（这正是 404 的形态）。
+    const asPath = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+      ? raw.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
+      : (raw.charAt(0) === '/' ? raw : resolveFrom(page.file, raw));
+    check('真实记录：封面按浏览器规则解析后仍落在站点内、且文件存在',
+      !!img && fs.existsSync(path.join(ROOT, asPath.split('?')[0])),
+      `${raw || '(没有 img)'} → ${asPath}`);
+    info(`真实记录封面：数据里写 "${real[0].cover}"，页面渲染出 "${raw}"（浏览器会请求 ${asPath}）`);
+    check('真实记录：未投稿时页面写「B站 未投稿」，不是空白',
+      real[0].bvid !== '未投稿' || /B站 未投稿/.test(vl.textContent));
+    check('真实记录：ref 在页面上只显示前 7 位',
+      vl.textContent.indexOf(real[0].ref.slice(0, 7)) !== -1 &&
+      vl.textContent.indexOf(real[0].ref) === -1);
+    /* ref 必须是一棵**真实存在过**的树。这不是「格式对不对」，是「有没有出处」——
+       一个查不到的 ref 和编造的数字是同一件事。 */
+    let gitSays = '';
+    let refOk = false;
+    try {
+      require('child_process').execSync(
+        `git rev-parse --quiet --verify ${JSON.stringify(real[0].ref + '^{commit}')}`,
+        { cwd: path.resolve(ROOT, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
+      refOk = true;
+    } catch (e) {
+      gitSays = String((e && e.stderr) || (e && e.message) || e).trim().slice(0, 120);
+    }
+    check(`真实记录：ref 指向一个仓库里真实存在的提交（${real[0].ref.slice(0, 7)}）`,
+      refOk, gitSays);
+  }
+}
+
+currentPage = '在线游戏（真实数据 data/toys.js）';
+{
+  const page = PAGES.find((p) => p.key === 'games');
+  const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
+  const st = runPage(page, null, html);
+  const real = st.sandbox.INFIVERSE_TOYS || [];
+  const tl = st.hosts['toy-list'];
+  if (real.length === 0) {
+    check('还没有 Toy 记录，页面必须显示空状态（含内测说明）',
+      /还没有已发布的作品/.test(tl.textContent) && /内测/.test(tl.textContent));
+  } else {
+    check('有 Toy 记录时渲染成卡', tl.children.length === real.length, tl.children.length);
+  }
 }
 
 /* ============================ 报告 ============================ */
@@ -503,9 +620,10 @@ results.forEach((r) => {
 const uniqRefs = new Set(allRefs.map((r) => path.resolve(ROOT, path.dirname(PAGES.find((p) => p.file === r.page).file), r.ref)));
 console.log('');
 console.log(`页面覆盖：${PAGES.length}/${PAGES.length} 页（${PAGES.map((p) => p.label).join('、')}）`);
-console.log(`运行次数：${PAGES.length} 页 × 3 轮（空数据 / 未投稿 / 完整）= ${PAGES.length * 3} 次脚本求值`);
+console.log(`运行次数：${pageRuns} 次页面求值（${PAGES.length} 页 × 3 轮夹具 + 真实数据轮 + 按钮两种初值轮）`);
 console.log(`资源引用：${allRefs.length} 条，去重后 ${uniqRefs.size} 个文件，全部存在=${allRefs.every((r) => r.exists)}`);
 console.log(`检查项：${results.length - bad}/${results.length} 通过`);
+infos.forEach((s) => console.log(`  · ${s}`));
 if (bad) {
   console.log(`\n✗ 有 ${bad} 项失败`);
   process.exit(1);

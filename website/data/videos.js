@@ -17,18 +17,20 @@
  * B站 Toy（/toy/<slug>/ 子路径）。内联成 JS 全局变量就同时满足这两条。
  */
 window.INFIVERSE_VIDEOS = [
-  // 记录由 video 会话交付后追加到这里。示例形状（保持注释，避免渲染假数据）：
-  // {
-  //   id: "demo-01",
-  //   title: "Inimerse 引擎实机演示 · 解释器与编译路径",
-  //   bvid: "未投稿",
-  //   duration: "03:42",
-  //   resolution: "1920x1080",
-  //   cover: "images/demo-01.jpg",
-  //   summary: "一句话说明这个演示证明了什么。",
-  //   ref: "f1dfe62583b7a89e2395ddc502fcf2ac7b60055e",
-  //   date: "2026-10-06",
-  //   orientation: "landscape",
-  //   featured: true
-  // },
+  /* infiverse-desktop-demo-01 —— video 会话交付，出处 video-pipeline/DELIVERY-RECORD.md。
+     封面 1920×1080 · 93 976 B，已落 website/assets/covers/。
+     ⚠ ref 是**记录**，不是指针：它记的是按下录制那一刻那棵树，不许跟着仓库往前走。 */
+  {
+    id: "infiverse-desktop-demo-01",
+    title: "Infiverse 桌面应用",
+    bvid: "未投稿",
+    duration: "00:25",
+    resolution: "800x600",
+    cover: "assets/covers/infiverse-desktop-demo-01.jpg",
+    summary: "Infiverse 桌面应用 v0.2.1 实机运行：账号页与八个侧栏模块（主页 / 聊天 / 浏览 / 工作台 / Inimerse 引擎管理 / 工具箱 / 插件库 / 设置）逐个点开。",
+    ref: "f1dfe62583b7a89e2395ddc502fcf2ac7b60055e",
+    date: "2026-10-06",
+    orientation: "landscape",
+    featured: true,
+  },
 ];
