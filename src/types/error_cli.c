@@ -102,3 +102,15 @@ int im_error_print_table(const char *query, int as_json) {
     return 0;
 }
 
+
+/* `0x11 permission_denied` -- the code and the name, code first.  A reader who
+   has the byte from a log has to be able to find it in a lint message, and a
+   reader who has the name has to be able to read it too
+   (docs/ERROR_CODES_V06.md section 3.2).  A member the error table does not
+   know is printed by name alone: the name is never dropped, and inventing a
+   code for it would be a second table. */
+void im_error_label(const char *name, char *out, size_t cap) {
+    const ImErrorKind *k = im_error_kind_lookup(name);
+    if (k) snprintf(out, cap, "0x%02X %s", k->code, name);
+    else snprintf(out, cap, "%s", name);
+}
