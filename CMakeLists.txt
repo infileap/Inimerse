@@ -1481,3 +1481,18 @@ if(INIMERSE_PYTHON)
   set_tests_properties(serializer_cycle_regression PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "runtime;regression")
 endif()
+
+# v0.7 A1/A2/A4: the six bitwise builtins, callable on this platform.
+add_test(NAME bitwise_builtins_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/bitwise_builtins_v07.im)
+set_tests_properties(bitwise_builtins_runtime PROPERTIES
+    PASS_REGULAR_EXPRESSION "bitwise-ok and=8 or=14 xor=6 not5=-6 notm5=4 not0=-1 shl=1024 shlmax=4611686018427387904 shr=-4 shrfar=-1 shlzero=0"
+    LABELS "runtime;bitwise;v0.7")
+# v0.7 A3's BOUNDARY.  Not A3 itself: A3 asks for 1001 decimal digits, and this
+# engine cannot hold that number today (no arbitrary precision; docs/API.md:411,
+# docs/HANDOFF_INFIVERSE.md section 2.8).  So the assertion is the boundary --
+# `1 << 1000` must be REFUSED, with exit code 1 (a refusal, not a crash: a
+# segfault is -11 and an abort is 134, and those are not this number).
+# When the immediate+heap form lands this test goes RED, and that red is what
+# says "now write A3 for real".
+add_test(NAME bitwise_shift_boundary_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --exit 1 --shape "at ip=" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/bitwise_shift_boundary_v07.im)
+set_tests_properties(bitwise_shift_boundary_runtime PROPERTIES LABELS "runtime;bitwise;v0.7")
