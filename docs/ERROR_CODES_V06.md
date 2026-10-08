@@ -150,6 +150,18 @@ case try specific {
 
 ### §3.2 ★ 名字不能丢 —— 码是运行时的身份，名字是给人看的把手
 
+★★ **状态（`main @ 80ddbfb`）：这一节标题里的那句话是【目标态】，而今天是反的。** 这是 `exact-lumen` 做完 §5 第 6 条之后量出来的（观测点 `e7ffe7c`），它的表逐字是：
+
+| | 今天是什么 | 谁在用它 |
+|---|---|---|
+| **声明里的成员** | **字符串**（`type FileError = "not_found", …`） | 编译器 / `im_typeset_*` |
+| **模式匹配比的字符串** | **字符串**（C4：`lint_mod.c` 里两处 `strcmp(成员名, 成员名)`） | `case try` / `case` 的 `err(...)` 分支 |
+| **运行时的码** | **字节 `0x10`–`0x66`**（§5 第 1 条落定、第 6 条接上） | `g_errors[]`、`im_error_domain_enum`、`--lint` 的输出 |
+
+⇒ ★ **一致的是前两样**：声明与匹配**都**是名字，**所以 C4 今天不是缺陷，是自洽的**。★ **落后的是第三样**：码已经在表里、已经能由名字编出来，**但语言层没有任何路径把它取出来** —— `catch (e)` 绑的是纯字符串（§1.4 实跑过），**没有 `e.code`**。
+⇒ ★★ **所以今天「名字是运行时的身份，码是给人看的（`--lint` 印它）」—— 而这一节标题说的正好相反。** 标题说的是**目标态**，它没有变；变的只是「今天兑现了多少」。
+★ **判据**：★ **设计档里「X 是身份、Y 是把手」这类句子，说的是【目标态】还是【今天】，只有拿今天的两条路径去比才知道 —— 而它读起来两种都像。**
+
 ★ **`--lint` 今天报的是名字**（`is missing members: permission_denied, disk_full`）。**换成整数码之后它必须同时给两个**：
 
 ```
@@ -178,7 +190,7 @@ case try specific {
 
 | 读数 | 逐字 |
 |---|---|
-| `src/types/enum.c:28` | `e->width = count <= 256 ? IM_ENUM_U8 : (count <= 65536 ? IM_ENUM_U16 : IM_ENUM_BOXED);` |
+| `src/types/enum.c` 的宽度选择那一行 | `e->width = count <= 256 ? IM_ENUM_U8 : (count <= 65536 ? IM_ENUM_U16 : IM_ENUM_BOXED);`（★ 原写作 `:28`；`exact-lumen` 的第 6 条给 `struct ImEnum` 加了 `codes` 字段 ⇒ 那行今天是 `:29`。按家法改形式、不换号） |
 | `src/types/enum_probe.c:35-38` | `/* Width selection is defined by representable member codes. */` + `sizes[] = {256, 257, 65536, 65537}` / `widths[] = {IM_ENUM_U8, IM_ENUM_U16, IM_ENUM_U16, IM_ENUM_BOXED}` + `assert(large && im_enum_width(large) == widths[si]);` |
 | `./build/enum_probe` | `enum_probe: ok`，rc=0 |
 | 语言侧 17 个成员（`type Big = 0, 1, … 16`） | rc=0，`case v { in Big: … }` 印 `in-big` |
