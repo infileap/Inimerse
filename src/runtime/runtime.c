@@ -1861,6 +1861,14 @@ static int builtin_mod_usage(VM *vm) {
     return 1;
 }
 
+/* Defined at the end of this file; the six names below must be visible
+ * here, and runtime.c / runtime_posix.c are compiled one at a time. */
+static int builtin_bit_and(VM *vm);
+static int builtin_bit_or(VM *vm);
+static int builtin_bit_xor(VM *vm);
+static int builtin_bit_not(VM *vm);
+static int builtin_shl(VM *vm);
+static int builtin_shr(VM *vm);
 void runtime_register_builtins(VM *vm) {
     srand((unsigned)time(NULL));
     vm_register_builtin(vm, "sqrt", builtin_sqrt);
@@ -1928,4 +1936,87 @@ void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "entity_clear", builtin_entity_clear);
     vm_register_builtin(vm, "entity_neighbors", builtin_entity_neighbors);
     vm_register_builtin(vm, "entity_at", builtin_entity_at);    vm_register_builtin(vm, "gc_stats", builtin_gc_stats);
+    vm_register_builtin(vm, "bit_and", builtin_bit_and);
+    vm_register_builtin(vm, "bit_or", builtin_bit_or);
+    vm_register_builtin(vm, "bit_xor", builtin_bit_xor);
+    vm_register_builtin(vm, "bit_not", builtin_bit_not);
+    vm_register_builtin(vm, "shl", builtin_shl);
+    vm_register_builtin(vm, "shr", builtin_shr);
+}
+
+/* ---------- bitwise builtins (v0.7 A1) ----------
+ * `Z` today is `long long ival` -- tag `VAL_INT` (src/vm/vm.h:22), payload the
+ * anonymous union at src/vm/vm.h:42.  It is 64-bit signed, and arithmetic that
+ * does not fit is REFUSED (`numeric_overflow`), not wrapped.  So bit_and /
+ * bit_or / bit_xor / bit_not are exact at this width, while shl / shr are exact
+ * only while the result still fits -- and shl refuses rather than wrapping.
+ * Arbitrary precision is NOT implemented: the human ruling is "immediate plus a
+ * heap object on overflow" (docs/HANDOFF_INFIVERSE.md section 2.8), not a
+ * second tag, and docs/API.md:411 records the current state as "int64 +
+ * double".  Until that lands `1 << 1000` must be a refusal, which is why
+ * acceptance A3 cannot be written today (docs/PLAN_V07.md section 1.6).
+ * runtime.c and runtime_posix.c are compiled one at a time (CMakeLists.txt),
+ * so these six exist in both and the two copies must agree.
+ */
+static int builtin_bit_and(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value *xv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    if (xv->type != VAL_INT || nv->type != VAL_INT) { vm_throw_msg(vm, "bit_and: expected two integers"); return 1; }
+    long long r = (long long)xv->ival & (long long)nv->ival;
+    pop(vm); pop(vm); push_int(vm, r); return 1;
+}
+static int builtin_bit_or(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value *xv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    if (xv->type != VAL_INT || nv->type != VAL_INT) { vm_throw_msg(vm, "bit_or: expected two integers"); return 1; }
+    long long r = (long long)xv->ival | (long long)nv->ival;
+    pop(vm); pop(vm); push_int(vm, r); return 1;
+}
+static int builtin_bit_xor(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value *xv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    if (xv->type != VAL_INT || nv->type != VAL_INT) { vm_throw_msg(vm, "bit_xor: expected two integers"); return 1; }
+    long long r = (long long)xv->ival ^ (long long)nv->ival;
+    pop(vm); pop(vm); push_int(vm, r); return 1;
+}
+/* ~x == -x-1, and that identity holds at ANY width -- so A2 is exact here. */
+static int builtin_bit_not(VM *vm) {
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    if (v->type != VAL_INT) { vm_throw_msg(vm, "bit_not: expected an integer"); return 1; }
+    long long r = ~((long long)v->ival);
+    pop(vm); push_int(vm, r); return 1;
+}
+/* x << n grows; at 64 bits it stops fitting, and then this REFUSES (A3's
+ * subject).  `0 << n` stays 0 at any n -- nothing grows. */
+static int builtin_shl(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value *xv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    if (xv->type != VAL_INT || nv->type != VAL_INT) { vm_throw_msg(vm, "shl: expected two integers"); return 1; }
+    long long a = (long long)xv->ival, n = (long long)nv->ival, r;
+    if (n < 0) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
+    if (a == 0) { r = 0; }
+    else if (n >= 64) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
+    else {
+        r = (long long)((unsigned long long)a << n);
+        if ((r >> n) != a) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
+    }
+    pop(vm); pop(vm); push_int(vm, r); return 1;
+}
+/* Arithmetic right shift: the sign extends to infinity, so -8 >> 1 is -4 and
+ * never 2147483644.  Past the width it saturates to the sign, which is the
+ * same rule read from further away. */
+static int builtin_shr(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value *nv = &vm_cur_stack(vm)[vm_cur_sp(vm)];
+    Value *xv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
+    if (xv->type != VAL_INT || nv->type != VAL_INT) { vm_throw_msg(vm, "shr: expected two integers"); return 1; }
+    long long a = (long long)xv->ival, n = (long long)nv->ival, r;
+    if (n < 0) { vm_throw_kind(vm, "numeric_overflow"); return 1; }
+    r = (n >= 64) ? (a < 0 ? -1 : 0) : (a >> n);
+    pop(vm); pop(vm); push_int(vm, r); return 1;
 }

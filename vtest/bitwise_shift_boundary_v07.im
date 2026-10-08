@@ -1,0 +1,8 @@
+# A3's boundary, asserted as today's fact.  `1 << 1000` is 1001 decimal digits
+# under the V2 ruling (Z is arbitrary precision), and this engine cannot hold
+# that number yet: the ruling's shape is "immediate plus a heap object on
+# overflow" (docs/HANDOFF_INFIVERSE.md section 2.8) and it is not implemented.
+# So TODAY this must be refused -- and this test asserts the refusal.  When the
+# heap-object form lands, `shl(1, 1000)` will succeed, this test will go RED,
+# and that red is the signal to replace it with A3's real form: 1001 digits.
+say shl(1, 1000)

@@ -1,0 +1,7 @@
+# v0.7 A1/A2/A4.  `Z` today is `long long ival` (src/vm/vm.h:22/:42): 64-bit
+# signed, and arithmetic that does not fit is refused, not wrapped.  These six
+# names are the ones A1 asks for, on both registration paths.
+# A2 is the identity, not a description: ~x == -x-1 at any width.
+# A4 is arithmetic right shift: -8 >> 1 is -4, never 2147483644.
+# One line: this dialect has no line continuation and `say a, b` is not a form.
+say "bitwise-ok" + " and=" + str(bit_and(12, 10)) + " or=" + str(bit_or(12, 10)) + " xor=" + str(bit_xor(12, 10)) + " not5=" + str(bit_not(5)) + " notm5=" + str(bit_not(-5)) + " not0=" + str(bit_not(0)) + " shl=" + str(shl(1, 10)) + " shlmax=" + str(shl(1, 62)) + " shr=" + str(shr(-8, 1)) + " shrfar=" + str(shr(-1, 100)) + " shlzero=" + str(shl(0, 1000))
