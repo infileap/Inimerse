@@ -117,10 +117,10 @@ static int builtin_len(VM *vm) {
 static int builtin_size(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    /* Mirrors posix_core_size().  The old `kind == 2` closed-interval formula
-     * here answered only for a closed interval and left every component set at
-     * n = -1, i.e. nil; the enumerator answers for both, and is the definition
-     * the interpreter already ships on POSIX.  See docs/AUDIT.md 1.16. */
+    /* The SET branch mirrors posix_core_size().  The ARRAY branch below does
+     * not: `vm_array_len(vm, v->ival - 1)` runs with no bounds check, and it is
+     * the only one of this pair's six branches without one -- builtin_count
+     * guards set, array and dict alike.  See docs/AUDIT.md 1.16 for the set half. */
     long long n = -1;
     if (v->type == VAL_SET) {
         if (v->ival >= 0 && v->ival < vm->setCount) {
