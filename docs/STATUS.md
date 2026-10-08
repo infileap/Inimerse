@@ -1081,7 +1081,7 @@ UDP 发送侧（`src/platform/http_posix.c:59`）另加了 `status == 200 && ble
 **口径收敛后的唯一正确表述**（`docs/archive/SELFHOST_BENCHMARK.md` 新增「口径归属」一节）：AOT **打包**通道 = 与解释器**等同**，不得表述为加速；Wasm MVP = 1.51x；原生代码生成 = 原型实测 34.3x 但**尚未发布、尚未接入构建**，不构成 v0.5 的能力声称；`≥2x` 的唯一归属是**优化型 AOT 后端，v0.5→v0.6 后续迭代**。
 
 **连带修正（本次一并落地）。** ①**行号错误**：`≥2x` 那句在 `docs/archive/RELEASE_0.5.0.md` **第 52 行**，不是第 43 行（第 43 行是「Optimizations: loop invariant hoisting…」）；`:43` 原先写在本文档 §3.1，被抄进了 `docs/BOARD.md` 与 `docs/streams/aot-backend.md`，三处已修正。②`docs/archive/CHANGELOG_0.5.0.md` 是唯一还挂着「at least 2x」且**没有任何更正**的副本，已加废止说明。③`docs/archive/ROADMAP_0.5-0.6.md:54` 写 Wasm MVP「~1.8x」，与 benchmark 自己的 **1.51x** 矛盾，已改为 1.51x。④`1.09x` 在 `RELEASE_0.5.0.md`、`archive/README.md`、`API.md`、`REQUIREMENTS_ANALYSIS.md`、`future/优化路线pro.md` 与本文档 §2 均改为**分布口径**（与解释器等同，中位 0.98x）。
-**未修（发现但不在本次写域内）：** `tools/perf_compare.py:131` 与 `tools/selfhost_bench.py:121` 的 `--write-docs` 把报告写到 `docs/` 下的 `SELFHOST_BENCHMARK.md` —— 少了 `archive/` 这一级，那条路径**不存在**，脚本会新建一个文件；真实文件在 `docs/archive/SELFHOST_BENCHMARK.md`。修它会牵动发布流程，单独记账。
+**当时未修（发现但不在本次写域内）：** `tools/perf_compare.py:131` 与 `tools/selfhost_bench.py:121` 的 `--write-docs` 把报告写到 `docs/` 下的 `SELFHOST_BENCHMARK.md` —— 少了 `archive/` 这一级，那条路径**不存在**，脚本会新建一个文件；真实文件在 `docs/archive/SELFHOST_BENCHMARK.md`。修它会牵动发布流程，单独记账。**（这一段的坐标是 `d23691e` 那棵树上的读数；`199e240` 已把它修掉 —— 今天那两个 `--write-docs` 写在 `docs/archive/SELFHOST_BENCHMARK.md`，在 `tools/selfhost_bench.py:130` 与 `tools/perf_compare.py:133`。）**
 
 ### 10.15 跨语言绑定从「文档里的承诺」变成真的 `.whl` 与 `.jar`（`xlang-bridge`，`363665f`）
 
