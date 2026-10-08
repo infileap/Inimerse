@@ -247,8 +247,8 @@ if(INIMERSE_PYTHON)
   # This asserts only that compiler.im PARSES and reaches code emission (the `main:` listing).
   # It deliberately does NOT assert that the emitted bytecode is correct: compile_program()
   # currently emits a bare OP_HALT for every program (see the open BOARD row).
-  add_test(NAME selfhost_toolchain_parses COMMAND inimerse ${CMAKE_SOURCE_DIR}/selfhost/compiler.im --dump tests/_mini.im)
-  set_tests_properties(selfhost_toolchain_parses PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "compiler;selfhost;regression" PASS_REGULAR_EXPRESSION "main:")
+  add_test(NAME selfhost_toolchain_parses COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "main:" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/selfhost/compiler.im --dump tests/_mini.im)
+  set_tests_properties(selfhost_toolchain_parses PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "compiler;selfhost;regression")
   # C path vs self-host path: the same source must produce the same *behaviour*.
   # This is the regression for BOARD row `selfhost-codegen-empty`, and it cannot
   # be an exit-code assertion -- both paths exit 0 even when the self-host path
@@ -637,18 +637,18 @@ if(INIMERSE_BUILD_ENGINE)
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 300
     LABELS "bridge;java" SKIP_RETURN_CODE 77)
 
-  add_test(NAME version_runtime COMMAND inimerse --version)
+  add_test(NAME version_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "inimerse ${INIMERSE_PACKAGE_VERSION}" -- $<TARGET_FILE:inimerse> --version)
   set_tests_properties(version_runtime PROPERTIES
     TIMEOUT 15 LABELS "release;metadata"
-    PASS_REGULAR_EXPRESSION "inimerse ${INIMERSE_PACKAGE_VERSION}")
-  add_test(NAME result_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_v04.im)
-  set_tests_properties(result_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;result" PASS_REGULAR_EXPRESSION "result is_ok=true.*result unwrap_or=42.*result is_ok_err=false.*result unwrap_or_err=99.*result unwrap=42")
+)
+  add_test(NAME result_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "result is_ok=true.*result unwrap_or=42.*result is_ok_err=false.*result unwrap_or_err=99.*result unwrap=42" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_v04.im)
+  set_tests_properties(result_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;result")
   add_test(NAME collection_comprehension_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/collection_comprehension_v04.im)
   set_tests_properties(collection_comprehension_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "102")
   add_test(NAME collection_core_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/collection_core_v04.im)
   set_tests_properties(collection_core_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection" PASS_REGULAR_EXPRESSION "1,2")
-  add_test(NAME type_collection_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/type_collection_v04.im)
-  set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection" PASS_REGULAR_EXPRESSION "typecoll x=42")
+  add_test(NAME type_collection_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "typecoll x=42" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/type_collection_v04.im)
+  set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection")
   # `be` was removed as a declaration keyword (docs/TYPESET_V06.md §3.1,
   # docs/SYNTAX.md §6.3).  The word stays *reserved* on purpose.  These four
   # registrations pin the shape that must not come back: with `be` demoted to an
@@ -658,12 +658,12 @@ if(INIMERSE_BUILD_ENGINE)
   # (x stayed nil, Byte was overwritten).  No WILL_FAIL: with a PASS regex set,
   # CTest ignores the exit code and judges by the regex alone, so WILL_FAIL would
   # invert a match into a failure.  The regex pins the reason, not just the abort.
-  add_test(NAME be_removed_decl_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_decl_v04.im)
-  set_tests_properties(be_removed_decl_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "Error at line 15.*declarations were removed.*name: set" FAIL_REGULAR_EXPRESSION "must not be reached")
-  add_test(NAME be_removed_assign_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_assign_v04.im)
-  set_tests_properties(be_removed_assign_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "declarations were removed" FAIL_REGULAR_EXPRESSION "must not be reached")
-  add_test(NAME be_removed_bare_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/be_removed_bare_v04.im)
-  set_tests_properties(be_removed_bare_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" PASS_REGULAR_EXPRESSION "declarations were removed" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME be_removed_decl_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "Error at line 15.*declarations were removed.*name: set" --exit 1 -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/be_removed_decl_v04.im)
+  set_tests_properties(be_removed_decl_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME be_removed_assign_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "declarations were removed" --exit 1 -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/be_removed_assign_v04.im)
+  set_tests_properties(be_removed_assign_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME be_removed_bare_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "declarations were removed" --exit 1 -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/be_removed_bare_v04.im)
+  set_tests_properties(be_removed_bare_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection;syntax" FAIL_REGULAR_EXPRESSION "must not be reached")
   add_test(NAME bind_init_overflow_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/bind_init_overflow_v04.im)
   set_tests_properties(bind_init_overflow_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection" PASS_REGULAR_EXPRESSION "initial value out of range" FAIL_REGULAR_EXPRESSION "must not be reached")
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/range_meta_sandbox)
@@ -671,9 +671,9 @@ if(INIMERSE_BUILD_ENGINE)
     COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_BINARY_DIR}/range_meta_sandbox
       $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/range_meta_v04.im)
   set_tests_properties(range_meta_runtime PROPERTIES TIMEOUT 15 LABELS "language;types;metadata" PASS_REGULAR_EXPRESSION "range-meta-pass")
-  add_test(NAME posix_core_api_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
-  set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings" PASS_REGULAR_EXPRESSION "posix-core-api-ok")
-  add_test(NAME posix_runtime_parity COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/posix_runtime_parity_v04.im)
+  add_test(NAME posix_core_api_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "posix-core-api-ok" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/posix_core_api_v04.im)
+  set_tests_properties(posix_core_api_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection;strings")
+  add_test(NAME posix_runtime_parity COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "posix-runtime-parity-ok" --shape "${INIMERSE_PARITY_LOAD_MISSING}" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/posix_runtime_parity_v04.im)
   # Enabled on both platforms.  It used to be `DISABLED TRUE` on Windows, which left the
   # only test that compares the two runtimes unrun on the platform where they diverge --
   # and a disabled test reports as "passed" (docs/AUDIT.md §1.37, §1.43).  The one known
@@ -687,27 +687,27 @@ if(INIMERSE_BUILD_ENGINE)
   else()
     set(INIMERSE_PARITY_LOAD_MISSING "parity load_missing=-1")
   endif()
-  set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" PASS_REGULAR_EXPRESSION "posix-runtime-parity-ok;${INIMERSE_PARITY_LOAD_MISSING}" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
-  add_test(NAME gc_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
-  set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc" PASS_REGULAR_EXPRESSION "gc-ran;gc-stats-ok;thread-result-alive;closure-capture-alive;root-alive;gc-done")
+  set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
+  add_test(NAME gc_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "gc-ran" --shape "gc-stats-ok" --shape "thread-result-alive" --shape "closure-capture-alive" --shape "root-alive" --shape "gc-done" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
+  set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc")
   # The constrained global is itself a GC root: the bound set has no other
   # C-side holder (the global stores the value, not the set), so it lives or dies
   # by the global_bound[] root in the mark phase.  gc_runtime_v04.im covers the
   # thread result, the closure capture and a plain array root, not this one.
-  add_test(NAME gc_bound_root COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/gc_bound_root_v04.im)
-  set_tests_properties(gc_bound_root PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 20 LABELS "language;memory;gc;types;collection" PASS_REGULAR_EXPRESSION "bound-root-after-gc=2.*bound-rewrite-ok" FAIL_REGULAR_EXPRESSION "must not be reached")
+  add_test(NAME gc_bound_root COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "bound-root-after-gc=2.*bound-rewrite-ok" --exit 1 -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/gc_bound_root_v04.im)
+  set_tests_properties(gc_bound_root PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 20 LABELS "language;memory;gc;types;collection" FAIL_REGULAR_EXPRESSION "must not be reached")
   add_test(NAME pipeline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/pipeline_v04.im)
   set_tests_properties(pipeline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1")
-  add_test(NAME result_question_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_question_v04.im)
+  add_test(NAME result_question_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "resultq value=42.*resultq caught.*resultq reached=0" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_question_v04.im)
   # Assert on the marked VALUE line, not on the unreachable literal.  This was forced by a
   # compiler debug dump that wrote the first 16 string-pool entries to stderr on every
   # compile (`src/compiler/compiler.c:3116`, removed this round), which made
   # FAIL_REGULAR_EXPRESSION "resultq unreachable" match the echo even when the statement
   # never ran.  The dump is gone; asserting on values is still the rule (docs/SYNTAX.md
   # §7.2 M13: 66 of 101 CTest cases asserted only the exit code).
-  set_tests_properties(result_question_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result" PASS_REGULAR_EXPRESSION "resultq value=42.*resultq caught.*resultq reached=0")
-  add_test(NAME null_coalesce_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/null_coalesce_v04.im)
-  set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "coalesce nil=42.*coalesce some=7")
+  set_tests_properties(result_question_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result")
+  add_test(NAME null_coalesce_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "coalesce nil=42.*coalesce some=7" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/null_coalesce_v04.im)
+  set_tests_properties(null_coalesce_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety")
   add_test(NAME optional_member_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/optional_member_v04.im)
   # The old compiler string-pool dump echoed the dict literal's own "inimerse" even when
   # `?.` was broken (that dump is removed; see the note on result_question_runtime above)
@@ -715,22 +715,22 @@ if(INIMERSE_BUILD_ENGINE)
   # (bytecode_add_string got a non-NUL-terminated StringView); FAIL catches the
   # stale recycled register that made nil?.name return the previous result.
   set_tests_properties(optional_member_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;null-safety" PASS_REGULAR_EXPRESSION "OM present=inimerse" FAIL_REGULAR_EXPRESSION "OM missing=inimerse")
-  add_test(NAME chained_comparison_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/chained_comparison_v04.im)
-  set_tests_properties(chained_comparison_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;comparison" PASS_REGULAR_EXPRESSION "chain inside-hit.*chain hits=1 end")
-  add_test(NAME postfix_condition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_v04.im)
-  set_tests_properties(postfix_condition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow" PASS_REGULAR_EXPRESSION "postfix if-true.*postfix say-if.*postfix unless-block.*postfix fired=0")
+  add_test(NAME chained_comparison_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "chain inside-hit.*chain hits=1 end" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/chained_comparison_v04.im)
+  set_tests_properties(chained_comparison_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;comparison")
+  add_test(NAME postfix_condition_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "postfix if-true.*postfix say-if.*postfix unless-block.*postfix fired=0" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_v04.im)
+  set_tests_properties(postfix_condition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow")
   # Regression for the cross-line postfix-if ambiguity: a next-line `if cond { ... }` used to be
   # swallowed as a postfix condition of the previous statement, and the orphaned block was then
   # parsed as a dict literal (`expected ':', but got '}'`).  The test must both run (exit 0 is the
   # primary assertion) and keep the same-line postfix working while unless still suppresses.
-  add_test(NAME postfix_condition_multiline_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_multiline_v05.im)
-  set_tests_properties(postfix_condition_multiline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow" PASS_REGULAR_EXPRESSION "postfix-ok.*multiline-if-ok" FAIL_REGULAR_EXPRESSION "not-printed")
-  add_test(NAME result_propagation_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_propagation_v04.im)
-  set_tests_properties(result_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result" PASS_REGULAR_EXPRESSION "resultprop unwrapped=7.*resultprop err_is_ok=false.*resultprop err=inner")
-  add_test(NAME result_finally_propagation_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/result_finally_propagation_probe_v04.im)
-  set_tests_properties(result_finally_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;result" PASS_REGULAR_EXPRESSION "finally-ran" FAIL_REGULAR_EXPRESSION "inner")
-  add_test(NAME try_finally_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/try_finally_v04.im)
-  set_tests_properties(try_finally_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling" PASS_REGULAR_EXPRESSION "finally normal=101.*finally nested=100.*finally nested err=rethrow-me.*finally caught=1110")
+  add_test(NAME postfix_condition_multiline_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "postfix-ok.*multiline-if-ok" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/postfix_condition_multiline_v05.im)
+  set_tests_properties(postfix_condition_multiline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow" FAIL_REGULAR_EXPRESSION "not-printed")
+  add_test(NAME result_propagation_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "resultprop unwrapped=7.*resultprop err_is_ok=false.*resultprop err=inner" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_propagation_v04.im)
+  set_tests_properties(result_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result")
+  add_test(NAME result_finally_propagation_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finally-ran" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_finally_propagation_probe_v04.im)
+  set_tests_properties(result_finally_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;result" FAIL_REGULAR_EXPRESSION "inner")
+  add_test(NAME try_finally_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finally normal=101.*finally nested=100.*finally nested err=rethrow-me.*finally caught=1110" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/try_finally_v04.im)
+  set_tests_properties(try_finally_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling")
   add_test(NAME finally_return_override_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/finally_return_override_v04.im)
   set_tests_properties(finally_return_override_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;control-flow" PASS_REGULAR_EXPRESSION "8.*1.*12.*111")
   add_test(NAME finally_break_diagnostic COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/finally_control_flow.test.py $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/finally_control_flow_probe_v04.im "break is not allowed in finally")
@@ -739,7 +739,7 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(finally_continue_diagnostic PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;control-flow")
   add_test(NAME finally_goto_diagnostic COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/finally_control_flow.test.py $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/finally_goto_control_flow_probe_v04.im "goto is not allowed in finally")
   set_tests_properties(finally_goto_diagnostic PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;control-flow")
-  add_test(NAME case_try_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_try_v04.im)
+  add_test(NAME case_try_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "deep-structural-hit" --shape "nested-result-hit" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_try_v04.im)
   # `.im` -> real `.vverse`: drive the engine builtin `verse_pack` (src/mod/
   # verse_dist_mod.c) through a script and judge the artifact with the read-only
   # reference (tools/vverse_pack.js, tools/vverse_validate.js) plus the engine's
@@ -752,15 +752,15 @@ if(INIMERSE_BUILD_ENGINE)
     set_tests_properties(vverse_cli_regression PROPERTIES
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "protocol;regression")
   endif()
-  set_tests_properties(case_try_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;result;case" PASS_REGULAR_EXPRESSION "deep-structural-hit;nested-result-hit")
-  add_test(NAME lint_case_try_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_v04.im)
-  set_tests_properties(lint_case_try_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;result" PASS_REGULAR_EXPRESSION "guarded err coverage" FAIL_REGULAR_EXPRESSION "line 11")
-  add_test(NAME lint_case_enum_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_enum_v04.im)
-  set_tests_properties(lint_case_enum_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;types" PASS_REGULAR_EXPRESSION "missing members: E, W" FAIL_REGULAR_EXPRESSION "line 11")
-  add_test(NAME lint_case_membership_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_membership_v04.im)
-  set_tests_properties(lint_case_membership_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;types" PASS_REGULAR_EXPRESSION "finite-set membership branch already covers" FAIL_REGULAR_EXPRESSION "line 4")
-  add_test(NAME lint_case_try_members_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_members_v04.im)
-  set_tests_properties(lint_case_try_members_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;result" PASS_REGULAR_EXPRESSION "finite err type 'FileError' is missing members: permission_denied, disk_full" FAIL_REGULAR_EXPRESSION "line 11")
+  set_tests_properties(case_try_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;result;case")
+  add_test(NAME lint_case_try_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "guarded err coverage" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_v04.im)
+  set_tests_properties(lint_case_try_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;result" FAIL_REGULAR_EXPRESSION "line 11")
+  add_test(NAME lint_case_enum_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "missing members: E, W" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_enum_v04.im)
+  set_tests_properties(lint_case_enum_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;types" FAIL_REGULAR_EXPRESSION "line 11")
+  add_test(NAME lint_case_membership_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finite-set membership branch already covers" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_membership_v04.im)
+  set_tests_properties(lint_case_membership_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;types" FAIL_REGULAR_EXPRESSION "line 4")
+  add_test(NAME lint_case_try_members_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finite err type 'FileError' is missing members: permission_denied, disk_full" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_members_v04.im)
+  set_tests_properties(lint_case_try_members_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;result" FAIL_REGULAR_EXPRESSION "line 11")
   add_test(NAME lint_case_try_alias_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_alias_v04.im)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox)
   set_tests_properties(lint_case_try_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox TIMEOUT 15 LABELS "language;lint;case;result;types" FAIL_REGULAR_EXPRESSION "case try guarded err coverage|finite err type")
@@ -776,48 +776,48 @@ if(INIMERSE_BUILD_ENGINE)
     COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/lint_expected.test.py $<TARGET_FILE:inimerse>)
   set_tests_properties(lint_expected_regression PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "language;lint;regression")
-  add_test(NAME case_collection_patterns_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_collection_patterns_v04.im)
+  add_test(NAME case_collection_patterns_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "coll positive-type=42.*coll range-hit=7.*coll wildcard-hit=999" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_collection_patterns_v04.im)
   # The `=NN` values come from `+ str(N)` in the script, so this regex can only
   # be satisfied by the program's own output -- never by the engine's echo line,
   # which lists every string literal of the program and would match a marker
   # built from literals alone.
-  set_tests_properties(case_collection_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;collection;types" PASS_REGULAR_EXPRESSION "coll positive-type=42.*coll range-hit=7.*coll wildcard-hit=999")
-  add_test(NAME case_structural_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_structural_v04.im)
-  set_tests_properties(case_structural_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "struct record-hit=1.*struct nested-hit=2.*struct deep-hit=3.*struct bind=not_found:1.*struct missing-safe=5")
-  add_test(NAME case_alias_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_alias_v04.im)
+  set_tests_properties(case_collection_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;collection;types")
+  add_test(NAME case_structural_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "struct record-hit=1.*struct nested-hit=2.*struct deep-hit=3.*struct bind=not_found:1.*struct missing-safe=5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_structural_v04.im)
+  set_tests_properties(case_structural_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
+  add_test(NAME case_alias_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "alias whole=42.*alias ranged=42.*alias guarded=42.*alias guarded2-miss" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_alias_v04.im)
   # The `alias ` prefixes make the assertion target the values the program
   # prints.  A bare `42` would also match the engine's echo of the string
   # literals, so it would pass even with the alias stuck at nil.
-  set_tests_properties(case_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "alias whole=42.*alias ranged=42.*alias guarded=42.*alias guarded2-miss")
+  set_tests_properties(case_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME case_array_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_array_v04.im)
   set_tests_properties(case_array_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "30.*20")
-  add_test(NAME case_nested_patterns_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_nested_patterns_v04.im)
-  set_tests_properties(case_nested_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "53;nested-fallback-ok;nested-literal-ok")
-  add_test(NAME lambda_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/lambda_v04.im)
+  add_test(NAME case_nested_patterns_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "53" --shape "nested-fallback-ok" --shape "nested-literal-ok" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_nested_patterns_v04.im)
+  set_tests_properties(case_nested_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
+  add_test(NAME lambda_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "lambda double=42.*lambda sum2=5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/lambda_v04.im)
   add_test(NAME composition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/composition_v04.im)
   set_tests_properties(composition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "8")
-  add_test(NAME lambda_capture_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/lambda_capture_v04.im)
+  add_test(NAME lambda_capture_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "lambda capture2=5.*lambda capture10=13.*lambda local=8" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/lambda_capture_v04.im)
   # Renamed from lambda_capture_rejected_v04.im: bd69935 implemented captured
   # lambdas and flipped the file's expectation to the working case without
   # renaming it, so the name claimed a contract that no longer existed.
-  set_tests_properties(lambda_capture_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "lambda capture2=5.*lambda capture10=13.*lambda local=8")
+  set_tests_properties(lambda_capture_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional")
   add_test(NAME lambda_nested_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/lambda_nested_v04.im)
-  add_test(NAME function_value_lifetime_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/function_value_lifetime_v04.im)
-  set_tests_properties(function_value_lifetime_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;functional;memory" PASS_REGULAR_EXPRESSION "12.*7.*closure-throw-caught")
-  add_test(NAME function_thread_lifetime_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/function_thread_lifetime_v04.im)
+  add_test(NAME function_value_lifetime_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "12.*7.*closure-throw-caught" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/function_value_lifetime_v04.im)
+  set_tests_properties(function_value_lifetime_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;functional;memory")
+  add_test(NAME function_thread_lifetime_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "9.*function-thread-lifetime-ok" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/function_thread_lifetime_v04.im)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/function_thread_sandbox)
-  set_tests_properties(function_thread_lifetime_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/function_thread_sandbox TIMEOUT 15 LABELS "language;functional;memory;thread" PASS_REGULAR_EXPRESSION "9.*function-thread-lifetime-ok")
+  set_tests_properties(function_thread_lifetime_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/function_thread_sandbox TIMEOUT 15 LABELS "language;functional;memory;thread")
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox)
-  add_test(NAME thread_result_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_result_v04.im)
-  set_tests_properties(thread_result_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox TIMEOUT 15 LABELS "language;thread;result;error-handling" PASS_REGULAR_EXPRESSION "worker-failed;release-plain;released-result-is-err;restarted-plain;release-task;restarted-task;release-running;release-finished")
-  add_test(NAME thread_await_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_await_v04.im)
-  set_tests_properties(thread_await_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox TIMEOUT 30 LABELS "language;thread;result;error-handling" PASS_REGULAR_EXPRESSION "thread-await-ok" FAIL_REGULAR_EXPRESSION "thread-await-fail!")
+  add_test(NAME thread_result_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "worker-failed" --shape "release-plain" --shape "released-result-is-err" --shape "restarted-plain" --shape "release-task" --shape "restarted-task" --shape "release-running" --shape "release-finished" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_result_v04.im)
+  set_tests_properties(thread_result_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox TIMEOUT 15 LABELS "language;thread;result;error-handling")
+  add_test(NAME thread_await_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "thread-await-ok" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_await_v04.im)
+  set_tests_properties(thread_await_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox TIMEOUT 30 LABELS "language;thread;result;error-handling" FAIL_REGULAR_EXPRESSION "thread-await-fail!")
   add_test(NAME eidos_desugar_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/eidos_desugar.test.py)
   set_tests_properties(eidos_desugar_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;eidos")
   add_test(NAME eidos_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/eidos_runtime.test.py $<TARGET_FILE:inimerse>)
   set_tests_properties(eidos_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;eidos")
   set_tests_properties(lambda_nested_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "lambda nested=9")
-  set_tests_properties(lambda_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "lambda double=42.*lambda sum2=5")
+  set_tests_properties(lambda_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional")
   add_test(NAME float_precision_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/float_precision_v04.im)
   set_tests_properties(float_precision_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;numeric" PASS_REGULAR_EXPRESSION "float value=1.2345678901234567")
   # Regression for BOARD row `engine-push-call-arg-miscompile`: a user-function call
@@ -828,10 +828,10 @@ if(INIMERSE_BUILD_ENGINE)
   # program output, so the patterns are substrings, not whole-output anchors.
   # `alone` is the control (it produced the right answer even on main); `shared` is the
   # one that fails on main, and the pair is what pins "both forms must agree".
-  add_test(NAME call_arg_clobber_alone_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_alone_v05.im)
-  set_tests_properties(call_arg_clobber_alone_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" PASS_REGULAR_EXPRESSION "callarg-alone-ok n=2" FAIL_REGULAR_EXPRESSION "n=1|n=0")
-  add_test(NAME call_arg_clobber_shared_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_shared_v05.im)
-  set_tests_properties(call_arg_clobber_shared_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" PASS_REGULAR_EXPRESSION "callarg-shared-ok m1=1 m2=2 m3=2 m4=1 m5=1 dk=1 nest=1 rep=2,2,2" FAIL_REGULAR_EXPRESSION "m2=1|dk=0|nest=0|rep=1,1,1")
+  add_test(NAME call_arg_clobber_alone_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "callarg-alone-ok n=2" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_alone_v05.im)
+  set_tests_properties(call_arg_clobber_alone_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" FAIL_REGULAR_EXPRESSION "n=1|n=0")
+  add_test(NAME call_arg_clobber_shared_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "callarg-shared-ok m1=1 m2=2 m3=2 m4=1 m5=1 dk=1 nest=1 rep=2,2,2" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/call_arg_clobber_shared_v05.im)
+  set_tests_properties(call_arg_clobber_shared_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;compiler;regression" FAIL_REGULAR_EXPRESSION "m2=1|dk=0|nest=0|rep=1,1,1")
   # Regression for the `list`/`len` off-by-one on sets (docs/AUDIT.md §1.9):
   # vm_set_to_array() handed back an already-1-based array handle while all three of
   # its callers treat the result as a raw pool index, so `list(<set>)` answered the
@@ -840,19 +840,19 @@ if(INIMERSE_BUILD_ENGINE)
   # asserts numbers.  The "a set in a variable is not enumerable at all" gap that
   # this line used to name as a separate defect is now fixed and pinned by
   # set_components_enumerable_runtime below.
-  add_test(NAME list_set_off_by_one_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/list_set_off_by_one_v05.im)
-  set_tests_properties(list_set_off_by_one_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "listset-ok n=3 first=1 last=3 setlen=3" FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0")
+  add_test(NAME list_set_off_by_one_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "listset-ok n=3 first=1 last=3 setlen=3" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/list_set_off_by_one_v05.im)
+  set_tests_properties(list_set_off_by_one_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "n=0|first=nil|setlen=0")
   # A set literal is a union of i64, items and interval COMPONENTS; enumerating only
   # the first two made list()/len()/size() blind to any set written as `1, 2, Z[7~9]`
   # or `z = Z[1~3]`, and vm_set_add_comp dropped the i64 half of a nested literal.
   # Values only, never exit codes.  See docs/AUDIT.md §1.10.
-  add_test(NAME set_components_enumerable_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_components_enumerable_v05.im)
-  set_tests_properties(set_components_enumerable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setcomp-ok union=5/1,9 two=6/5 overlap=3/3 single=3 nested=4/4 size=3 infinite=0,nil" FAIL_REGULAR_EXPRESSION "union=0|overlap=0|single=0|nested=1|size=nil")
+  add_test(NAME set_components_enumerable_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "setcomp-ok union=5/1,9 two=6/5 overlap=3/3 single=3 nested=4/4 size=3 infinite=0,nil" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/set_components_enumerable_v05.im)
+  set_tests_properties(set_components_enumerable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "union=0|overlap=0|single=0|nested=1|size=nil")
   # A FloatN/floatN interval is a lattice, so it must be walked by index: adding the
   # step drifted above the last member and hid it from list()/len() while `in` kept
   # answering true.  See docs/AUDIT.md §1.10.
-  add_test(NAME set_float_lattice_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_float_lattice_v05.im)
-  set_tests_properties(set_float_lattice_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setlattice-ok n=4 last03=true in03=true upper=3 upper0=false half=6 int=6 big=100" FAIL_REGULAR_EXPRESSION "n=3|last03=false|in03=false|upper0=true")
+  add_test(NAME set_float_lattice_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "setlattice-ok n=4 last03=true in03=true upper=3 upper0=false half=6 int=6 big=100" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/set_float_lattice_v05.im)
+  set_tests_properties(set_float_lattice_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "n=3|last03=false|in03=false|upper0=true")
   # L_CALL_BUILTIN used to fall through when the name was not registered, so the call
   # returned the last pushed operand instead of failing: str2int("42") handed back the
   # string "42" and the program kept going.  Both compilation backends already refuse
@@ -862,8 +862,8 @@ if(INIMERSE_BUILD_ENGINE)
   # the engine dumps its string pool on stderr, and an unanchored FAIL regex that names
   # a literal in the source matches that dump and reports a false failure.
   # See docs/AUDIT.md §1.11.
-  add_test(NAME unknown_builtin_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/unknown_builtin_v05.im)
-  set_tests_properties(unknown_builtin_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "unreg-ok state=1 control=true" FAIL_REGULAR_EXPRESSION "unreg-ok state=0|unreg-ok state=2|control=false")
+  add_test(NAME unknown_builtin_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "unreg-ok state=1 control=true" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/unknown_builtin_v05.im)
+  set_tests_properties(unknown_builtin_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "unreg-ok state=0|unreg-ok state=2|control=false")
 
   # contract_test.im is the repo-root API/SPI conformance suite.  It had been a manual,
   # dormant suite: the OP_CONCAT integer-overflow defect (§1.8) and the list(<set>)
@@ -877,8 +877,8 @@ if(INIMERSE_BUILD_ENGINE)
   # text is a string literal in the suite, and CTest reads the engine's stderr string
   # pool dump, so naming it would match the dump on a green run.  A throw exits 1 and
   # fails the test on the exit code alone.
-  add_test(NAME contract_suite_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/contract_test.im)
-  set_tests_properties(contract_suite_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "vm;language;regression;contract" PASS_REGULAR_EXPRESSION "contract: [0-9]+ passed")
+  add_test(NAME contract_suite_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "contract: [0-9]+ passed" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/contract_test.im)
+  set_tests_properties(contract_suite_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "vm;language;regression;contract")
 
   # vm_set_to_array stops at two gates and returns -1 rather than enumerating: the
   # span gate (a lattice of ten million members or more) and the range gate
@@ -888,8 +888,8 @@ if(INIMERSE_BUILD_ENGINE)
   # refused set AND for an empty one, so the test asserts list(), where a refusal
   # is nil and an empty interval is [].
   # See docs/AUDIT.md §1.10.
-  add_test(NAME set_enumeration_refusal_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_enumeration_refusal_v05.im)
-  set_tests_properties(set_enumeration_refusal_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setrefuse-ok bigspan=nil edge=nil i32=nil neg32=nil empty=0 ok10=10 ok3=3" FAIL_REGULAR_EXPRESSION "ok10=0|ok3=0|empty=nil")
+  add_test(NAME set_enumeration_refusal_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "setrefuse-ok bigspan=nil edge=nil i32=nil neg32=nil empty=0 ok10=10 ok3=3" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/set_enumeration_refusal_v05.im)
+  set_tests_properties(set_enumeration_refusal_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "ok10=0|ok3=0|empty=nil")
   # sum() read a set straight out of its storage and only when it had no interval
   # COMPONENTS, so `1, 2, Z[7~9]` summed to 0 while len() was 5; and it accumulated
   # integers in a double, so anything above 2^53 was rounded before push_int saw it.
@@ -901,14 +901,14 @@ if(INIMERSE_BUILD_ENGINE)
   # element rule (VAL_INT and VAL_FLOAT only).  Values only, never exit codes: the
   # raising branches are wrapped in try/catch and asserted on the message text.
   # See docs/AUDIT.md §1.15 and §1.25.
-  add_test(NAME sum_components_int64_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/sum_components_int64_v06.im)
-  set_tests_properties(sum_components_int64_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 inf=nil refuse-bool=sum: non-numeric element refuse-str=sum: non-numeric element refuse-nil=sum: non-numeric element" FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|refuse-bool=nil|refuse-str=nil|refuse-nil=nil")
+  add_test(NAME sum_components_int64_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "sum-ok comp=27 two=14 single=10 big=9007199254740993 big2=9007199254740994 plain=6 float=3.5 empty=0 inf=nil refuse-bool=sum: non-numeric element refuse-str=sum: non-numeric element refuse-nil=sum: non-numeric element" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/sum_components_int64_v06.im)
+  set_tests_properties(sum_components_int64_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "comp=0|two=0|single=0|big=9007199254740992|refuse-bool=nil|refuse-str=nil|refuse-nil=nil")
   # str() summarised a set as set(iCount + count) -- the LITERAL part only -- so
   # `str(Z[1~4])` printed set(0) beside `len(Z[1~4]) == 4`.  It now enumerates
   # through vm_set_to_array whenever the set has a component, exactly as len(),
   # size(), list() and sum() do.  Values only, never exit codes.  See §1.17.
-  add_test(NAME set_str_component_count_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/set_str_component_count_v06.im)
-  set_tests_properties(set_str_component_count_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "setstr-ok union=set\\(5\\)/5 single=set\\(4\\)/4 overlap=set\\(3\\)/3 two=set\\(6\\)/6 plain=set\\(3\\)/3 refused=set\\(0\\)/0 named=set\\(Z\\) interval=set\\(float1 interval\\)" FAIL_REGULAR_EXPRESSION "union=set\\(2\\)|single=set\\(0\\)|overlap=set\\(1\\)|two=set\\(0\\)|plain=set\\(0\\)")
+  add_test(NAME set_str_component_count_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "setstr-ok union=set\\(5\\)/5 single=set\\(4\\)/4 overlap=set\\(3\\)/3 two=set\\(6\\)/6 plain=set\\(3\\)/3 refused=set\\(0\\)/0 named=set\\(Z\\) interval=set\\(float1 interval\\)" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/set_str_component_count_v06.im)
+  set_tests_properties(set_str_component_count_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "union=set\\(2\\)|single=set\\(0\\)|overlap=set\\(1\\)|two=set\\(0\\)|plain=set\\(0\\)")
   # Five places each decided truthiness for themselves and disagreed.  `if ""`,
   # `"" or f()`, `"" and f()`, `not ""` and `bool("")` did not share a rule: the
   # empty string was truthy for `if` but falsy for `or`/`not`/`bool`, and a dict or
@@ -925,8 +925,8 @@ if(INIMERSE_BUILD_ENGINE)
   # a bool: sqrt(true) answered 2.22e-162, float(true) the bit pattern of 1, and
   # gc_auto(true) turned GC OFF.  The FAIL regex was checked both ways with
   # grep -E (matches pre-fix, not post-fix).  See docs/AUDIT.md §1.20.
-  add_test(NAME union_member_tag_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/union_member_tag_v06.im)
-  set_tests_properties(union_member_tag_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "union-ok sqrt-true=1 sqrt-false=0 sqrt-int=2 float-true=1 float-false=0 float-nil=0 aadd=1 aset=1 gcauto-true=1 gcauto-false=0" FAIL_REGULAR_EXPRESSION "sqrt-true=2\\.22|float-true=4\\.94|aadd=0|aset=0|gcauto-true=0")
+  add_test(NAME union_member_tag_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "union-ok sqrt-true=1 sqrt-false=0 sqrt-int=2 float-true=1 float-false=0 float-nil=0 aadd=1 aset=1 gcauto-true=1 gcauto-false=0" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/union_member_tag_v06.im)
+  set_tests_properties(union_member_tag_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "sqrt-true=2\\.22|float-true=4\\.94|aadd=0|aset=0|gcauto-true=0")
 
   # `+` concatenates when EITHER operand is a string, but L_ADD sent only the
   # right operand through value_to_string() and read the left one out of
@@ -934,15 +934,15 @@ if(INIMERSE_BUILD_ENGINE)
   # left operand vanished (`5 + "7"` answered "7").  L_CONCAT had the identical
   # asymmetry for 3+-term chains.  The FAIL regex was checked both ways with
   # grep -E (matches pre-fix, not post-fix).  See docs/AUDIT.md §1.23.
-  add_test(NAME concat_left_operand_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/concat_left_operand_v06.im)
-  set_tests_properties(concat_left_operand_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "concat-ok intstr=57 strlit=5a nil=nilx bool=truex float=5\\.5x chain3=578 chainix=575 rev=a5" FAIL_REGULAR_EXPRESSION "concat-ok intstr=7 |strlit=a |nil=x |bool=x |float=x |chain3=78 |chainix=75 ")
+  add_test(NAME concat_left_operand_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "concat-ok intstr=57 strlit=5a nil=nilx bool=truex float=5\\.5x chain3=578 chainix=575 rev=a5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/concat_left_operand_v06.im)
+  set_tests_properties(concat_left_operand_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "concat-ok intstr=7 |strlit=a |nil=x |bool=x |float=x |chain3=78 |chainix=75 ")
   # atomic_add/atomic_set narrowed through `int` on a 64-bit slot, so
   # atomic_set("k", 3000000000) answered -1294967296 -- silently, exit code 0.
   # The add is now a CAS loop that raises numeric_overflow instead of wrapping,
   # matching `+`.  The FAIL regex was checked both ways with grep -E (matches
   # pre-fix, not post-fix).  See docs/AUDIT.md §1.24.
-  add_test(NAME atomic_int64_width_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/atomic_int64_width_v06.im)
-  set_tests_properties(atomic_int64_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;runtime;regression" PASS_REGULAR_EXPRESSION "atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807" FAIL_REGULAR_EXPRESSION "set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 ")
+  add_test(NAME atomic_int64_width_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "atomic-ok set=3000000000 add=3000000000 get=3000000000 add2p31=2147483648 get2=2147483648 small=7 getsmall=7 ovf1=numeric_overflow keep1=9223372036854775807 half=9223372036854775807 ovf2=numeric_overflow keep2=9223372036854775807" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/atomic_int64_width_v06.im)
+  set_tests_properties(atomic_int64_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;runtime;regression" FAIL_REGULAR_EXPRESSION "set=-1294967296|add=-1294967296|get=-1294967296|add2p31=-2147483648|get2=-2147483648|ovf1=0 |half=-1 |ovf2=0 ")
 
   # val_cmp() fell through to val_as_double(), whose `default` is 0.0, so every
   # non-numeric value compared as the number 0: `"abc" < 1`, `[1, 2] < 1` and
@@ -951,8 +951,8 @@ if(INIMERSE_BUILD_ENGINE)
   # between two strings or between two numbers; anything else raises
   # type_mismatch.  The FAIL regex was checked both ways with grep -E (matches
   # pre-fix, not post-fix).  See docs/AUDIT.md 1.26.
-  add_test(NAME order_requires_orderable_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/order_requires_orderable_v06.im)
-  set_tests_properties(order_requires_orderable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" PASS_REGULAR_EXPRESSION "order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=type_mismatch nillt=type_mismatch streq=false strlt=true strgt=false numlt=true numle=true boollt=true biglt=true minset=nil maxset=nil minscalar=nil" FAIL_REGULAR_EXPRESSION "strnum=true|arrnum=true|nille=true|zerole=true|nillt=true|maxset=5 ")
+  add_test(NAME order_requires_orderable_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "order-ok strnum=type_mismatch arrnum=type_mismatch nille=type_mismatch zerole=type_mismatch nillt=type_mismatch streq=false strlt=true strgt=false numlt=true numle=true boollt=true biglt=true minset=nil maxset=nil minscalar=nil" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/order_requires_orderable_v06.im)
+  set_tests_properties(order_requires_orderable_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "strnum=true|arrnum=true|nille=true|zerole=true|nillt=true|maxset=5 ")
 
   # Pins "vm_init leaves no field indeterminate" (docs/AUDIT.md §1.28): prefills
   # a VM with 0xAA, calls vm_init, and checks the fields the old field-by-field
@@ -972,8 +972,8 @@ if(INIMERSE_BUILD_ENGINE)
   # str() is where the divergence showed: the Windows runtime built
   # startswith/endswith with push_int, so str(startswith(s," ")) answered "1"
   # there and "true" on POSIX.  Registered last so no existing #N moves.
-  add_test(NAME predicate_result_type_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/predicate_result_type_v06.im)
-  set_tests_properties(predicate_result_type_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;strings" PASS_REGULAR_EXPRESSION "predbool true true false 14" FAIL_REGULAR_EXPRESSION "predbool 1|predbool true 1|predbool true true 1")
+  add_test(NAME predicate_result_type_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "predbool true true false 14" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/predicate_result_type_v06.im)
+  set_tests_properties(predicate_result_type_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;strings" FAIL_REGULAR_EXPRESSION "predbool 1|predbool true 1|predbool true true 1")
 
   install(PROGRAMS tools/inim.py DESTINATION bin RENAME inim)
   install(FILES README.md LICENSE DESTINATION share/doc/inimerse)
@@ -1008,11 +1008,11 @@ if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
   target_link_libraries(slowdns_preload PRIVATE ${CMAKE_DL_LIBS})
   add_executable(resolve_timeout_probe src/platform/socket.c src/platform/thread.c src/platform/resolve_timeout_probe.c)
   target_link_libraries(resolve_timeout_probe PRIVATE Threads::Threads)
-  add_test(NAME resolve_timeout_runtime COMMAND resolve_timeout_probe)
+  add_test(NAME resolve_timeout_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "resolve_bound: ok" -- $<TARGET_FILE:resolve_timeout_probe>)
   set_tests_properties(resolve_timeout_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "platform;smoke"
     ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:slowdns_preload>"
-    PASS_REGULAR_EXPRESSION "resolve_bound: ok")
+)
 endif()
 
 # Pins "a VFS path may never escape its mount prefix" (docs/AUDIT.md §1.43).
@@ -1054,10 +1054,10 @@ set_tests_properties(vfs_probe PROPERTIES
 # docs/AUDIT.md 1.45.
 # Registered last so no existing #N moves.
 add_test(NAME divergent_builtin_contract_runtime
-         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=type_mismatch a2=type_mismatch a3=type_mismatch a4=0" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/divergent_builtin_contract_v06.im)
 set_tests_properties(divergent_builtin_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "divergent-ok i1=9007199254740993 i2=9223372036854775807 i3=16 i4=16 c1=A c2empty=true a1=type_mismatch a2=type_mismatch a3=type_mismatch a4=0"
+
   FAIL_REGULAR_EXPRESSION "a1=NO-THROW|a2=NO-THROW|a3=NO-THROW|a4=type_mismatch")
 
 # ---------------------------------------------------------------------------
@@ -1110,10 +1110,10 @@ target_include_directories(parser_member_safe_probe PRIVATE src/parser src/lexer
 if(NOT WIN32)
   target_compile_definitions(parser_member_safe_probe PRIVATE _GNU_SOURCE _stricmp=strcasecmp)
 endif()
-add_test(NAME parser_member_safe_probe COMMAND parser_member_safe_probe)
+add_test(NAME parser_member_safe_probe COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "parser_member_safe_probe: ok" -- $<TARGET_FILE:parser_member_safe_probe>)
 set_tests_properties(parser_member_safe_probe PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "parser;regression"
-  PASS_REGULAR_EXPRESSION "parser_member_safe_probe: ok")
+)
 
 # ---------------------------------------------------------------------------
 # Parameters and the working directory.  load_and_run() opens the parameter file
@@ -1136,11 +1136,11 @@ set_tests_properties(parser_member_safe_probe PROPERTIES
 # NOTE: the --params arguments below are deliberately RELATIVE.  An absolute path
 # would make the chdir invisible and the first test would pass against the bug.
 add_test(NAME params_relative_path_runtime
-         COMMAND inimerse --no-mods --params vtest/params_relative_v06.params
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "params-relative speed=42" -- $<TARGET_FILE:inimerse> --no-mods --params vtest/params_relative_v06.params
                  vtest/params_sub/relative_script.im)
 set_tests_properties(params_relative_path_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
-  PASS_REGULAR_EXPRESSION "params-relative speed=42")
+)
 
 add_test(NAME params_missing_explicit_runtime
          COMMAND inimerse --no-mods --params vtest/definitely_absent.params
@@ -1151,11 +1151,11 @@ set_tests_properties(params_missing_explicit_runtime PROPERTIES
   FAIL_REGULAR_EXPRESSION "params-relative speed=")
 
 add_test(NAME params_precompiled_runtime
-         COMMAND inimerse --no-mods --params vtest/params_precompiled_v06.params
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "params-precompiled player=42" -- $<TARGET_FILE:inimerse> --no-mods --params vtest/params_precompiled_v06.params
                  vtest/params_precompiled_v06.inim)
 set_tests_properties(params_precompiled_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;params;regression"
-  PASS_REGULAR_EXPRESSION "params-precompiled player=42")
+)
 
 # spi_caps_contract_v06.im -- the capability string had two production points
 # (posix_spi_meta's strstr chain and the Windows runtime's spi_parse_caps), and
@@ -1194,10 +1194,10 @@ endif()
 #
 # Registered last so no existing #N moves.
 add_test(NAME atomic_slot_type_contract_runtime
-         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/atomic_slot_type_contract_v06.im)
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/atomic_slot_type_contract_v06.im)
 set_tests_properties(atomic_slot_type_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "atomic-slot-ok g1=0 r1=0 y=1.5 r3=0 yz=1.5 g2=0 r2=0 s=abcdef g3=7 r4=12 n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0"
+
   FAIL_REGULAR_EXPRESSION "n1=NO-THROW|n2=NO-THROW|n3=NO-THROW|n4=type_mismatch")
 
 # docs/AUDIT.md 1.52 -- random(n) means an integer in [0, n), on both runtimes.
@@ -1223,10 +1223,10 @@ set_tests_properties(atomic_slot_type_contract_runtime PROPERTIES
 #
 # Registered last so no existing #N moves.
 add_test(NAME random_bounded_contract_runtime
-         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/random_bounded_contract_v06.im)
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "random-bounded-ok one=true zero=true neg=true ten=true big=true" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/random_bounded_contract_v06.im)
 set_tests_properties(random_bounded_contract_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-  PASS_REGULAR_EXPRESSION "random-bounded-ok one=true zero=true neg=true ten=true big=true")
+)
 
 # Pins "the array/dict pool refuses an index it does not own" (docs/AUDIT.md
 # 1.54).  vm_pool_slot is the single door to the pool -- 71 call sites in src/
@@ -1289,29 +1289,29 @@ if(INIMERSE_BUILD_ENGINE)
     PASS_REGULAR_EXPRESSION "case has no wildcard '_'/'else' branch"
     FAIL_REGULAR_EXPRESSION "case branch is unreachable")
   # A wildcard placed before another branch: the branch after it is unreachable.
-  add_test(NAME lint_case_exhaustive_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_exhaustive_v04.im)
+  add_test(NAME lint_case_exhaustive_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "case branch is unreachable: wildcard '_'/'else' appears before this branch" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_exhaustive_v04.im)
   set_tests_properties(lint_case_exhaustive_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case"
-    PASS_REGULAR_EXPRESSION "case branch is unreachable: wildcard '_'/'else' appears before this branch"
+
     FAIL_REGULAR_EXPRESSION "case has no wildcard")
   # `--desugar`: `say@target expr` -> `say_target("target", expr)`, plus the
   # negative control that the engine refuses the sugar without the desugarer.
-  add_test(NAME desugar_runtime COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/tools/desugar.test.py $<TARGET_FILE:inimerse>)
+  add_test(NAME desugar_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "desugar tests: ok" -- ${INIMERSE_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/tools/desugar.test.py $<TARGET_FILE:inimerse>)
   set_tests_properties(desugar_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;desugar"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
-    PASS_REGULAR_EXPRESSION "desugar tests: ok")
+)
   # `tools/migrate_report.py` is the fourth product that a doc row cited as
   # evidence while nothing ran it -- `docs/REQUIREMENTS_ANALYSIS.md` row 11 and
   # `docs/STATUS.md` §4 named it beside `bindgen_regression` /
   # `scan_tools_regression`, and neither of those touches the migration report.
   # The harness drives a real scan and asserts the header's counts against the
   # table body, so "0 adaptation points" printed over a full table is caught.
-  add_test(NAME migrate_report_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/migrate_report.test.py)
+  add_test(NAME migrate_report_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "migrate_report tests: ok" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/migrate_report.test.py)
   set_tests_properties(migrate_report_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;migration"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
-    PASS_REGULAR_EXPRESSION "migrate_report tests: ok")
+)
 
   # Every `vtest/*.im` fixture must be parseable.  Two of them were not:
   # `dir be Direction = "N"` is a parse error -- `be` takes `:` for its
@@ -1322,11 +1322,11 @@ if(INIMERSE_BUILD_ENGINE)
   # warning text while the program the fixture describes had never been parsed.
   # The scan prints both numbers, so "0 of 0" cannot read as clean.
   # See docs/AUDIT.md §1.61.
-  add_test(NAME fixture_parse_runtime COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/tools/fixture_parse.test.py $<TARGET_FILE:inimerse>)
+  add_test(NAME fixture_parse_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "fixture_parse tests: ok" -- ${INIMERSE_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/tools/fixture_parse.test.py $<TARGET_FILE:inimerse>)
   set_tests_properties(fixture_parse_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;fixtures;parser"
     ENVIRONMENT "PYTHONIOENCODING=utf-8"
-    PASS_REGULAR_EXPRESSION "fixture_parse tests: ok")
+)
 
   # The `substr` clamp computed `start + len` in `int` (both runtimes).  With
   # `start` already clamped into [0, sl] and `len` near INT_MAX the sum overflowed
@@ -1340,10 +1340,10 @@ if(INIMERSE_BUILD_ENGINE)
   # a "fix" that clamps len to 0 instead prints `a= b= c=` and also fails.  The
   # one happy-path case that existed (start = 2, len = 5) could not tell the two
   # apart.  See docs/AUDIT.md §1.62.
-  add_test(NAME substr_boundary_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/substr_boundary_v06.im)
+  add_test(NAME substr_boundary_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "substr-boundary a=fghij b=fghij c=fghij" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/substr_boundary_v06.im)
   set_tests_properties(substr_boundary_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
-    PASS_REGULAR_EXPRESSION "substr-boundary a=fghij b=fghij c=fghij")
+)
   # count(A) is the canonical name for a collection's cardinality; size() is the
   # deprecated set-context spelling of it (2026-10 ruling, docs/TYPESET_V06.md
   # 7.8).  This pin separates the three distinct routes to nil -- a
@@ -1352,10 +1352,10 @@ if(INIMERSE_BUILD_ENGINE)
   # keeps the retained size() coercions (size(42) = 42, size(3.7) = 3) and the
   # arity trap where only the LAST argument of a builtin call is read
   # (size(5, 5, 5) is size(5)).  Values only, never exit codes.
-  add_test(NAME count_builtin_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/count_builtin_v06.im)
+  add_test(NAME count_builtin_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/count_builtin_v06.im)
   set_tests_properties(count_builtin_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-    PASS_REGULAR_EXPRESSION "count-ok bad=0 set=3,5,5,5 dict=2,2 str=5,5 arr=3,3 int=nil,42 float=nil,3 neg=nil,nil unenum=nil,nil arity=nil,5,9"
+
     FAIL_REGULAR_EXPRESSION "bad=[1-9]")
   # .range used to answer two different questions depending on how the object
   # was spelled: a bare identifier returned the set it was DECLARED with, any
@@ -1371,10 +1371,10 @@ if(INIMERSE_BUILD_ENGINE)
   # paths disagree and this test fails.  See docs/TYPESET_V06.md §3.8 (not
   # docs/SYNTAX.md: that section's line numbers are cited from other documents,
   # so the entry there is deliberately line-neutral and points here instead).
-  add_test(NAME xrange_t2_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/xrange_t2_v06.im)
+  add_test(NAME xrange_t2_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "xrange-ok bad=0" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/xrange_t2_v06.im)
   set_tests_properties(xrange_t2_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;types;regression"
-    PASS_REGULAR_EXPRESSION "xrange-ok bad=0"
+
     FAIL_REGULAR_EXPRESSION "bad=[1-9]")
   # A member access on something that is not a bare name had no lowering: the
   # EXPR_MEMBER case in src/compiler/compiler.c fell through to `return -1`, and
@@ -1389,10 +1389,10 @@ if(INIMERSE_BUILD_ENGINE)
   # nothing and exited 139, so the regex below could not match.  No WILL_FAIL:
   # with a PASS regex set CTest judges by the regex alone (see the `be` removal
   # block above).
-  add_test(NAME member_on_nonname_runtime COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/member_on_nonname_v06.im)
+  add_test(NAME member_on_nonname_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "'.bogus' on something that is not a name is not implemented" --exit 1 -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/member_on_nonname_v06.im)
   set_tests_properties(member_on_nonname_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;syntax;regression"
-    PASS_REGULAR_EXPRESSION "'.bogus' on something that is not a name is not implemented"
+
     FAIL_REGULAR_EXPRESSION "must not be reached")
 endif()
 
@@ -1419,11 +1419,11 @@ if(NOT WIN32 AND INIMERSE_BUILD_ENGINE)
   target_link_libraries(getaddrinfo_log_preload PRIVATE ${CMAKE_DL_LIBS})
   add_executable(literal_resolve_probe src/platform/socket.c src/platform/thread.c src/platform/literal_resolve_probe.c)
   target_link_libraries(literal_resolve_probe PRIVATE Threads::Threads)
-  add_test(NAME literal_resolve_runtime COMMAND literal_resolve_probe)
+  add_test(NAME literal_resolve_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "literal_resolve tests: ok" -- $<TARGET_FILE:literal_resolve_probe>)
   set_tests_properties(literal_resolve_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "platform;smoke"
     ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:getaddrinfo_log_preload>;GA_LOG=${CMAKE_BINARY_DIR}/literal-resolve.log"
-    PASS_REGULAR_EXPRESSION "literal_resolve tests: ok")
+)
 endif()
 
 # A `match` pattern longer than the translation buffer used to be silently cut,
@@ -1442,10 +1442,10 @@ endif()
 # merged output and never matches, so they are separate list items instead.
 # See docs/AUDIT.md 1.64.
 add_test(NAME match_long_pattern_runtime
-         COMMAND inimerse --no-mods ${CMAKE_SOURCE_DIR}/vtest/match_long_pattern_v06.im)
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "match-long 2030 impossible=false" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/match_long_pattern_v06.im)
 set_tests_properties(match_long_pattern_runtime PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 30 LABELS "language;strings;runtime"
-  PASS_REGULAR_EXPRESSION "match-long 2030 impossible=false"
+
   FAIL_REGULAR_EXPRESSION "match-long [0-9]+ possible=false")
 
 # REGISTERED, NOT RESOLVED -- one root, two faces, one fix.

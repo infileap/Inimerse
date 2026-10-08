@@ -151,7 +151,13 @@ def main(argv=None):
     compiled = []
     for text in texts:
         try:
-            compiled.append((text, re.compile(text)))
+            # re.S, because CMake's regex engine lets `.` cross a newline and
+            # Python's does not: the property `a.*b` matches an output that
+            # prints `a` and `b` on separate lines, and this wrapper has to ask
+            # the same question the property asked.  (Measured: with the default
+            # flags, `result_runtime` failed question 2 while its output
+            # plainly carried both halves on two lines.)
+            compiled.append((text, re.compile(text, re.S)))
         except re.error as exc:
             sys.stderr.write("gated_run: --shape %r is not a regex: %s\n" % (text, exc))
             sys.stderr.write("gated_run: nothing was run.\n")
@@ -188,7 +194,14 @@ def main(argv=None):
     # pass on the wrapper's words.  Measured, not assumed: the check runs on the
     # report with the question-3 verdict itself left out, so that verdict cannot
     # be what satisfies a clause.
-    probe = "\n".join(report) + "\ngated_run: question 3 of 3: %s .......... " % Q3
+    # The `clause N of M` lines quote the pattern back with %r, and a pattern
+    # containing `.*` matches its own quotation -- so the probe leaves the
+    # quotation out.  What is left is everything the wrapper says on its own
+    # behalf: a clause that one of those lines satisfies is a clause the
+    # wrapper could satisfy while the program did not.
+    probe_lines = [ln for ln in report if not ln.startswith("gated_run:   clause ")]
+    probe = ("\n".join(probe_lines)
+             + "\ngated_run: question 3 of 3: %s .......... " % Q3)
     self_bad = [text for text, rx in compiled
                 if rx.search(probe) and not rx.search(out)]
     self_ok = not self_bad
