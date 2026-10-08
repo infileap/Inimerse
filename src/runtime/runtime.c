@@ -118,9 +118,9 @@ static int builtin_size(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
     /* The SET branch mirrors posix_core_size().  The ARRAY branch below passes
-     * `vm_array_len(vm, v->ival - 1)` unguarded here -- the only one of this
-     * pair's six branches -- and is kept safe by its callee instead: vm_array_len
-     * guards the range and returns 0.  See docs/AUDIT.md 1.16 for the set half. */
+     * `vm_array_len(vm, v->ival - 1)` unguarded HERE -- the only one of this
+     * pair's six branches.  Nothing here guards it; three things elsewhere do,
+     * and they are named at the end of this file.  See docs/AUDIT.md 1.16. */
     long long n = -1;
     if (v->type == VAL_SET) {
         if (v->ival >= 0 && v->ival < vm->setCount) {
@@ -2020,3 +2020,41 @@ static int builtin_shr(VM *vm) {
     r = (n >= 64) ? (a < 0 ? -1 : 0) : (a >> n);
     pop(vm); pop(vm); push_int(vm, r); return 1;
 }
+
+/* ---------------------------------------------------------------------------
+ * The ARRAY branch of builtin_size above passes `vm_array_len(vm, v->ival - 1)`
+ * with no bounds check of its own.  It is the only one of the six branches of
+ * builtin_size / builtin_count without one -- and "without one" is a fact about
+ * THIS LINE, not about the path.  Its safety is the joint product of three
+ * things, none of which was written for it:
+ *
+ *   1. the producers, which is an input check on their side:
+ *          src/runtime/runtime_posix.c:217   if (aidx < 0) { push_nil(vm); return 1; }
+ *          src/runtime/runtime_posix.c:433   if (aidx < 0) { free(src); free(sep); push_nil(vm); return 1; }
+ *          src/runtime/runtime_posix.c:466   if (aidx < 0) { free(s); push_nil(vm); return 1; }
+ *      (19 sites build `{ .type = VAL_ARRAY, .ival = aidx + 1 }`; every one of
+ *      them tests `aidx < 0` first.  `ival` is the pool index PLUS ONE, so a
+ *      handle that exists was built from a real index.)
+ *
+ *   2. the pool's allocation policy, which is a decision about capacity:
+ *          src/vm/vm.c:786   idx = vm->arrayCount++;
+ *          src/vm/vm.c:801   idx = vm->arrayCount++;
+ *      `arrayCount` never decreases, and the recycle path (src/vm/vm.c:781-785,
+ *      `array_free_list`) reuses an index that is already below it.
+ *
+ *   3. the accessor's own defensive check:
+ *          src/vm/vm.c:940   if (idx < 0 || idx >= vm->arrayCount) return 0;
+ *
+ * So the right statement is not "no guard is needed here" but "the guard is in
+ * three places, and it is nobody's job".  Any one of the three changing its
+ * purpose flips the conclusion, and nothing in the tree would say so: there is
+ * no test that reaches this branch with `v->ival - 1` outside
+ * [0, arrayCount), because such a program could not be constructed while all
+ * three hold.  What that means is that this line has no guard of its own AND no
+ * watcher over the guards it borrows.
+ *
+ * Also, honestly scoped: the range check at src/vm/vm.c:940 cannot see a
+ * handle that has been recycled underneath -- that yields a WRONG VALUE and not
+ * an out-of-range index.  This branch's safety argument does not claim to cover
+ * that case, and nothing here claims to have measured it.
+ * ------------------------------------------------------------------------- */
