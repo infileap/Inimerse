@@ -16,6 +16,11 @@ typedef enum {
 } ImEnumWidth;
 
 ImEnum *im_enum_create(const char *type_name, const char *const *members, size_t count);
+/* Same, but the members carry the codes they have on the wire instead of
+   taking their positions.  An error domain is the case this exists for: the
+   byte in a log is `0x11`, not "the second member". */
+ImEnum *im_enum_create_coded(const char *type_name, const char *const *members,
+                             const uint32_t *codes, size_t count);
 ImEnum *im_enum_from_typeset(const char *type_name, const ImTypeSet *set);
 ImEnum *im_enum_from_finite_set(const char *type_name, const ImTypeSet *set);
 void im_enum_free(ImEnum *enumeration);

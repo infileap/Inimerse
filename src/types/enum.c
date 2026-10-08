@@ -7,6 +7,7 @@
 struct ImEnum {
     char *type_name;
     char **members;
+    uint32_t *codes;   /* NULL: a member's code is its position */
     size_t count;
     ImEnumWidth width;
 };
@@ -38,6 +39,16 @@ ImEnum *im_enum_create(const char *type_name, const char *const *members, size_t
                 if (strcmp(e->members[j], e->members[i]) == 0) { im_enum_free(e); return NULL; }
         }
     }
+    return e;
+}
+
+ImEnum *im_enum_create_coded(const char *type_name, const char *const *members,
+                             const uint32_t *codes, size_t count) {
+    ImEnum *e = im_enum_create(type_name, members, count);
+    if (!e || !codes || count == 0) return e;
+    e->codes = (uint32_t *)malloc(count * sizeof(uint32_t));
+    if (!e->codes) { im_enum_free(e); return NULL; }
+    for (size_t i = 0; i < count; ++i) e->codes[i] = codes[i];
     return e;
 }
 
@@ -85,7 +96,7 @@ ImEnum *im_enum_from_finite_set(const char *type_name, const ImTypeSet *set) {
 void im_enum_free(ImEnum *e) {
     if (!e) return;
     for (size_t i = 0; i < e->count; ++i) free(e->members[i]);
-    free(e->members); free(e->type_name); free(e);
+    free(e->members); free(e->codes); free(e->type_name); free(e);
 }
 
 const char *im_enum_type_name(const ImEnum *e) { return e ? e->type_name : NULL; }
@@ -100,16 +111,33 @@ uint32_t im_enum_code_limit(const ImEnum *e) {
     return e->width == IM_ENUM_U8 ? UINT8_MAX : (e->width == IM_ENUM_U16 ? UINT16_MAX : UINT32_MAX);
 }
 
+static bool im_enum_index_of_code(const ImEnum *e, uint32_t code, size_t *out) {
+    if (e->codes) {
+        for (size_t i = 0; i < e->count; ++i) if (e->codes[i] == code) { *out = i; return true; }
+        return false;
+    }
+    if (code >= e->count) return false;
+    *out = (size_t)code;
+    return true;
+}
+
 bool im_enum_encode(const ImEnum *e, const char *name, uint32_t *out) {
     if (!e || !name || !out) return false;
-    for (size_t i = 0; i < e->count; ++i) if (strcmp(e->members[i], name) == 0) { *out = (uint32_t)i; return true; }
+    for (size_t i = 0; i < e->count; ++i)
+        if (strcmp(e->members[i], name) == 0) { *out = e->codes ? e->codes[i] : (uint32_t)i; return true; }
     return false;
 }
 
-const char *im_enum_decode(const ImEnum *e, uint32_t code) { return e && code < e->count ? e->members[code] : NULL; }
+const char *im_enum_decode(const ImEnum *e, uint32_t code) {
+    size_t i = 0;
+    return e && im_enum_index_of_code(e, code, &i) ? e->members[i] : NULL;
+}
+
 int im_enum_qualified_member(const ImEnum *e, uint32_t code, char *out, size_t capacity) {
-    if (!e || !out || capacity == 0 || code >= e->count) return 0;
-    int n = snprintf(out, capacity, "%s.%s", e->type_name, e->members[code]);
+    if (!e || !out || capacity == 0) return 0;
+    size_t i = 0;
+    if (!im_enum_index_of_code(e, code, &i)) return 0;
+    int n = snprintf(out, capacity, "%s.%s", e->type_name, e->members[i]);
     return n >= 0 && (size_t)n < capacity;
 }
 bool im_enum_parse_qualified(const ImEnum *e, const char *qualified, uint32_t *out) {

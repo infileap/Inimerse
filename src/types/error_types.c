@@ -82,11 +82,17 @@ ImEnum *im_error_domain_enum(ImErrorDomain domain) {
     for (size_t i = 0; i < im_error_kind_count(); ++i)
         if (g_errors[i].domain == domain) ++count;
     const char **names = count ? (const char **)malloc(count * sizeof(*names)) : NULL;
-    if (count && !names) return NULL;
+    uint32_t *codes = count ? (uint32_t *)malloc(count * sizeof(*codes)) : NULL;
+    if (count && (!names || !codes)) { free(names); free(codes); return NULL; }
     size_t j = 0;
     for (size_t i = 0; i < im_error_kind_count(); ++i)
-        if (g_errors[i].domain == domain) names[j++] = g_errors[i].name;
-    ImEnum *result = im_enum_create(im_error_domain_name(domain), names, count);
+        if (g_errors[i].domain == domain) { names[j] = g_errors[i].name; codes[j] = (uint32_t)g_errors[i].code; ++j; }
+    /* The code a member has here is the byte it has on the wire, not its
+       position in this list: the two agree today only because the table is
+       written in code order, and a member inserted in the middle would part
+       them without anything going red. */
+    ImEnum *result = im_enum_create_coded(im_error_domain_name(domain), names, codes, count);
     free(names);
+    free(codes);
     return result;
 }

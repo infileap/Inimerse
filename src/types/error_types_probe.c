@@ -29,5 +29,20 @@ int main(void) {
     assert(strcmp(im_enum_decode(file_enum, code), "not_found") == 0);
     assert(!im_enum_contains(file_enum, "numeric_overflow"));
     im_enum_free(file_enum);
+
+    /* Every member, one by one, against the table -- not against itself.  The
+       round trip above passes whether the code is the byte or the position,
+       which is why it could not see this. */
+    for (size_t i = 0; i < im_error_kind_count(); ++i) {
+        const ImErrorKind *kind = im_error_kind_at(i);
+        ImEnum *domain_enum = im_error_domain_enum(kind->domain);
+        uint32_t byte = 0;
+        assert(kind && domain_enum);
+        assert(im_enum_encode(domain_enum, kind->name, &byte));
+        assert(byte == (uint32_t)kind->code);
+        assert(im_enum_decode(domain_enum, (uint32_t)kind->code) != NULL);
+        assert(strcmp(im_enum_decode(domain_enum, (uint32_t)kind->code), kind->name) == 0);
+        im_enum_free(domain_enum);
+    }
     return 0;
 }
