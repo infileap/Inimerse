@@ -390,7 +390,7 @@ Label:  /  thread1 to Label        // 线程跳转
 
 - 定义 `:1527-1560`；`task` 与 `thread` 只差 `THREAD_FLAG_TASK`（`:1535`）。
 - 名字后的 `:` 是**可选**的（`:1544`、`:1557` 的 `match(p, TOK_COLON)`）。
-- **`join` 的双重身份**：后跟 `(` 时走内建函数调用，否则是语句（`:1585` 的 `peek_next(p).type != TOK_LPAREN`）。
+- **`join` 的双重身份**：后跟 `(` 时走内建函数调用，否则是语句（`src/parser/parser.c:1652` 的 `peek_next(p).type != TOK_LPAREN`）。
 - `send name expr` **没有分隔符**（`:1609-1613`）：`send worker "hi"`。
 - `lock`/`unlock` 共用 `STMT_LOCK`，用 `isBlock` 区分 0/1/2（`:1600-1608`）。
 
@@ -851,7 +851,7 @@ n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
 
 #### M8. `join` 的双重身份
 
-`src/parser/parser.c:1585`：`join(` 是内建函数，`join name` 是线程语句。同一个词，加个括号就换语义。
+`src/parser/parser.c:1652`：`join(` 是内建函数，`join name` 是线程语句。同一个词，加个括号就换语义。
 
 #### M9. `match` 上下文敏感
 

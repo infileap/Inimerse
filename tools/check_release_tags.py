@@ -137,6 +137,15 @@ EXP_TAG_EXEMPTION_CLASSES = tuple(
     if c
 )
 
+# How many lines a record marker and a falsifier may sit in to excuse a binding:
+# its own line, plus the same reach on each side.  A sentence that says "the tag
+# moved and this number is the old one" can put the marker above and the
+# falsifier below, so a window that reaches upwards only reports a falsifier
+# that IS on the line next to the binding as absent -- and quotes the rule it is
+# breaking while doing it.  At 2 this reaches upwards only, which is what this
+# file did before the asymmetry was measured.
+TAG_WINDOW_LINES = 3
+
 TAG_NAME = re.compile(r"^v(\d+)\.(\d+)\.(\d+)")
 # No `.` in the trailing class: `v0.5.0..5868940` is a range expression, and a
 # class that swallowed the `..` would report the whole range as a tag name.
@@ -221,11 +230,15 @@ def baseline_claim():
 def recollection(line, lines, lineno):
     """Why this binding is not a claim, or None if it is one.
 
-    The window is the binding's own line and the two lines around it: a
+    The window is TAG_WINDOW_LINES lines centred on the binding, because a
     sentence that says "the tag moved and this number is the old one" can put
-    the marker and the falsifier on either side of the binding.
+    the marker and the falsifier on either side of it.  This sentence and the
+    failure message in main() have always promised both sides; the slice did
+    not, and reached one line up instead of one line each way.
     """
-    window = "\n".join(lines[max(0, lineno - 2):lineno])
+    above = TAG_WINDOW_LINES // 2
+    below = TAG_WINDOW_LINES - 1 - above
+    window = "\n".join(lines[max(0, lineno - 1 - above):lineno + below])
     marked = [w for w in RECORD_MARKERS if w in window]
     falsified = [w for w in FALSIFIER_MARKERS if w in window]
     if marked and falsified:
