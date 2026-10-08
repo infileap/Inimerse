@@ -422,7 +422,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c
     # `vm_exec` is registered by BOTH runtimes (runtime.c on WIN32,
     # runtime_posix.c elsewhere), so its implementation must build on both.
-    src/runtime/vm_exec_builtin.c)
+    src/runtime/vm_exec_builtin.c src/types/error_cli.c)
   if(WIN32)
     list(APPEND INIMERSE_ENGINE_SOURCES
       src/platform/process.c src/platform/socket.c
@@ -1507,4 +1507,27 @@ set_tests_properties(bitwise_shift_boundary_runtime PROPERTIES LABELS "runtime;b
 if(INIMERSE_PYTHON)
   add_test(NAME error_domain_width_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_error_domains.py)
   set_tests_properties(error_domain_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "invariants")
+endif()
+
+# `inimerse errors` is the lookup route the user asked for ("另外需要速查整数码
+# 的途径，或许 inimerse.exe 可以输出对应码、域"), docs/ERROR_CODES_V06.md
+# section 4.  This pins that it stays a *view* of g_errors[] and does not
+# become a second copy of it -- section 4.2 states that criterion as an
+# assertion that can go red rather than as a promise, and the assertion here is
+# two-sided on purpose: planting a table name in src/main.c makes question 1
+# fail, and the reverse lookup is asked as its own question because it is a
+# second code path over the same table and can be wrong while the listing is
+# right.  What neither question can see is a copy assembled from the source at
+# compile time; the derivation itself is proven by mutation (add a member to
+# g_errors[], rebuild, and the output follows with no edit to main.c), which is
+# a reading and not a gate -- stated because it is the boundary of the check.
+if(INIMERSE_PYTHON)
+  # The shape is a REGEX, so the script's own line cannot be quoted literally
+  # here: `3 question(s) asked` as a pattern means `3 question` + a group + `s
+  # asked`, which does not match the literal `(s)` the script prints.  This
+  # clause is therefore chosen to carry no metacharacter at all.  (Measured:
+  # with the literal form, the clause reported `0 of 1 matched` while the line
+  # it was quoting sat in the output.)
+  add_test(NAME errors_cli_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --exit 0 --shape "asked, 0 failed -- the CLI is a view of g_errors" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_errors_cli.py $<TARGET_FILE:inimerse>)
+  set_tests_properties(errors_cli_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "invariants")
 endif()
