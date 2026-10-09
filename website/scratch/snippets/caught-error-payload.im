@@ -1,0 +1,5 @@
+try {
+  say 1 / 0
+} catch (e) {
+  say str(e)
+}
