@@ -150,6 +150,18 @@ case try specific {
 
 ### §3.2 ★ 名字不能丢 —— 码是运行时的身份，名字是给人看的把手
 
+★★ **状态（`main @ 80ddbfb`）：这一节标题里的那句话是【目标态】，而今天是反的。** 这是 `exact-lumen` 做完 §5 第 6 条之后量出来的（观测点 `e7ffe7c`），它的表逐字是：
+
+| | 今天是什么 | 谁在用它 |
+|---|---|---|
+| **声明里的成员** | **字符串**（`type FileError = "not_found", …`） | 编译器 / `im_typeset_*` |
+| **模式匹配比的字符串** | **字符串**（C4：`lint_mod.c` 里两处 `strcmp(成员名, 成员名)`） | `case try` / `case` 的 `err(...)` 分支 |
+| **运行时的码** | **字节 `0x10`–`0x66`**（§5 第 1 条落定、第 6 条接上） | `g_errors[]`、`im_error_domain_enum`、`--lint` 的输出 |
+
+⇒ ★ **一致的是前两样**：声明与匹配**都**是名字，**所以 C4 今天不是缺陷，是自洽的**。★ **落后的是第三样**：码已经在表里、已经能由名字编出来，**但语言层没有任何路径把它取出来** —— `catch (e)` 绑的是纯字符串（§1.4 实跑过），**没有 `e.code`**。
+⇒ ★★ **所以今天「名字是运行时的身份，码是给人看的（`--lint` 印它）」—— 而这一节标题说的正好相反。** 标题说的是**目标态**，它没有变；变的只是「今天兑现了多少」。
+★ **判据**：★ **设计档里「X 是身份、Y 是把手」这类句子，说的是【目标态】还是【今天】，只有拿今天的两条路径去比才知道 —— 而它读起来两种都像。**
+
 ★ **`--lint` 今天报的是名字**（`is missing members: permission_denied, disk_full`）。**换成整数码之后它必须同时给两个**：
 
 ```
@@ -157,6 +169,17 @@ case try specific {
 ```
 
 ★ **理由**：`0x12` 是运行时和磁盘上的东西，**而读 lint 输出的是人**。**只给码，人要去查表；只给名字，人无法把它对上运行时看到的值。** ⇒ **两个都给，且顺序固定（码在前、名字在后）。**
+
+★★ **而「名字不能丢」这条真正的理由比上面这句硬，是 `noble-zephyr` 实测出来的**（观测点 `5805538`）：
+
+★ **消息字符串不是「给人看的把手」，它是渲染层的输入。** 三处独立的假设都只认 `VAL_STRING`：
+- 未捕获时的渲染逐字是 `(err->type == VAL_STRING && err->sval) ? err->sval : "(non-string value)"`（`src/vm/vm.c`）；
+- 创建时逐字 `err.type = VAL_STRING; err.sval = (char*)vm_intern(vm, msg); err.ival = 1;`（同文件）；
+- 落槽时的 intern 也只认 `VAL_STRING`，并用 `ival != 1` 当「已经 intern 过」的记号（同文件）。
+
+★ **实测**：`throw 42` ⇒ `[exception] uncaught: (non-string value)`；`throw {"code": 7, "msg": "boom"}` ⇒ **同一句**、值整个丢掉。
+⇒ ★★ **把消息字符串【换掉】= 让所有非字符串错误在默认输出里变成 `(non-string value)`。** ⇒ **码必须与消息【并存】，不是替代它。**
+★ 而 `--err-json` 那条分支走的是 `value_to_string`（它会把 `42` 印出来）⇒ **同一个 `err`、两个分支两种渲染，而只有 plain 那条今天可达**（见 §7 第 8 条）。
 
 ### §3.3 ② C —— ★ **更正：这不是两条守卫，是一条**
 
@@ -167,7 +190,7 @@ case try specific {
 
 | 读数 | 逐字 |
 |---|---|
-| `src/types/enum.c:28` | `e->width = count <= 256 ? IM_ENUM_U8 : (count <= 65536 ? IM_ENUM_U16 : IM_ENUM_BOXED);` |
+| `src/types/enum.c` 的宽度选择那一行 | `e->width = count <= 256 ? IM_ENUM_U8 : (count <= 65536 ? IM_ENUM_U16 : IM_ENUM_BOXED);`（★ 原写作 `:28`；`exact-lumen` 的第 6 条给 `struct ImEnum` 加了 `codes` 字段 ⇒ 那行今天是 `:29`。按家法改形式、不换号） |
 | `src/types/enum_probe.c:35-38` | `/* Width selection is defined by representable member codes. */` + `sizes[] = {256, 257, 65536, 65537}` / `widths[] = {IM_ENUM_U8, IM_ENUM_U16, IM_ENUM_U16, IM_ENUM_BOXED}` + `assert(large && im_enum_width(large) == widths[si]);` |
 | `./build/enum_probe` | `enum_probe: ok`，rc=0 |
 | 语言侧 17 个成员（`type Big = 0, 1, … 16`） | rc=0，`case v { in Big: … }` 印 `in-big` |
@@ -179,6 +202,9 @@ case try specific {
 
 ⇒ ★ **结论**：★ **半字节的约束在枚举层【之上】，它是错误表这条链的性质** ——
 ★ **而那正是 §5 第 2 条那个域守卫读的东西。** ⇒ **守卫只有一条，第 3 条撤掉。**
+
+★ **而这条「不可能」有一个机械原因**：`im_enum_create` 的签名逐字是 `ImEnum *im_enum_create(const char *type_name, const char *const *members, size_t count);`（`src/types/enum.h`）—— ★ **它没有宽度参数**，宽度是 `src/types/enum.c` 自己算出来的 ⇒ **「按 `IM_ENUM_U8` 拒绝」今天不可能发生，除非先给这个签名加一个宽度参数。**
+★ 而那是**一处签名变更**，它属于「待批准的变更」，不属于 §1.2 的裁定表 —— ★ **一条被写进裁定表的前提，如果它今天还不具备，那它不是前提，是一个愿望。**
 
 ★★ **并且：「每域 ≤ 16」是「高半字节点名本域」的【推论】，不是一条独立事实。**
 ★ 理由：**一个域只有 16 个低半字节槽，所以第 17 个成员必然带一个不再是本域的高半字节。**
@@ -238,6 +264,28 @@ case try specific {
 
 ★ **顺序的理由**：**1–2 是「表的形状」，3–6 是「表被谁读」。** ★ **先立形状再接线** —— 否则接线会以「它今天跑得通」为由把形状固定成一个临时的样子。
 
+### §5.1 ★★ 第 3 条的射程比它看起来大：四个消费面，而第四个是语言面
+
+★ `noble-zephyr` 数出**四个**拿到错误值的地方，不是一个：
+
+| # | 形状 | 今天拿到什么 | 码要活到这里需要什么 |
+|---|---|---|---|
+| **C1** | `catch (e)` 带变量 | 槽里是**完整 32 字节 `Value`**，类型端到端保持（实测：dict 穿 `finally` 重抛后 `e["code"]` = 7） | 只要 `Value` 有码字段，**机制不用动** |
+| **C2** | `catch { }` 不带变量 | `varIdx = -1` + `ignore = 0` ⇒ 两个分支都不进、**值一个字不留** | **按设计**，但码也一起没了 |
+| **C3** | 裸 `try`（无 catch） | 走 `value_to_string` ⇒ **类型被压成字符串**，落进 `last_ignored_exc`（**`char *` 不是 `Value`**） | ★ 码到这里已经没了，且落点是 `char*` ⇒ 想留必须改字段类型 |
+| **C4** | ★★ `case try e { err(...) }` | 走 `OP_CALL_BUILTIN` + 名字上的三个内建（`is_ok` / `result_error` / `result_value`），再就地用 `OP_EQ` 与 `OP_INDEX_GET` 比 payload | ★★ **见下** |
+
+★★ **C4 是最容易被忘的那个，而它把这件事从「运行时改动」变成「语言改动」**：`err(...)` 的模式**能匹配结构化 payload** —— `vtest/case_try_v04.im` 里逐字有 `err({"kind": "not_found", "code": 404})`、`err({"outer": {"inner": {"code": 404}}})`、`err([first, {"code": code}])`、`err(e) | e in FileError`。
+
+★★ **判据**：★ **payload 换成整数码 ⇒ 每一条 `err("not_found")` / `err({...})` / `err([...])` 模式都静默不匹配 —— 不报错，只是没有分支命中。**
+
+★ 加上声明形式本身（`type FileError = "not_found", "permission_denied"` —— **成员是字符串字面量**）⇒ ★ **裁定 ① 的「成员」有两处用法：它怎么写、以及它怎么被比。** ⇒ **两处必须同批改，否则 C4 会以「没有分支命中」的样子失败。**
+
+### §5.2 ★★ 「让每一个抛出点都有码可接」比「把码接上去」大得多
+
+★ 32 个 `vm_throw_kind` 调用点**全是裸字符串字面量**；而**外部 20 个 `vm_throw_msg` 调用点里，15 个是自由英文句子、5 个连字面量都不是**（`snprintf` 现拼）⇒ ★ **这 20 处不在 `g_errors[]` 的 24 个 kind 里。**
+⇒ ★ **它们要么各自映射到一个 kind，要么永远没有码。** ★ **第一版把这件事说成了「24 个码换个形状」，而实际是「32 + 20 个抛出点各自决定有没有码」。**
+
 ---
 
 ## §6 不做什么
@@ -247,10 +295,14 @@ case try specific {
 3. ★ **不设「每域泛化错误」槽**（§2.2 的理由）。
 4. ★ **不追溯改 `vtest/` 里已有的夹具** —— 它们随第 1 条一起换，**但「换了几个夹具」不是判据**。
 5. ★ **不动 `src/vm/vm.c` 里 `vm_throw_kind` 的两个同形分支** —— 那是**另一件**（它把码丢掉这件事本身要单独处置，见 §7）。
+6. ★★ **不碰那 20 个自由英文句子的抛出点。** 它们不属于本档的范围（§5.2）—— ★ **本档只保证「有 kind 的那些点带上码」，不保证「每一个错误都有码」。** ★ **把这条写成范围，是因为不写它，读者会把 §5 读成「全部错误都码化了」。**
+7. ★★ **不改 `--err-json`。** 它是**另一件、先于本档存在的事**（§7 第 8 条）。
 
 ---
 
 ## §7 诚实边界
+
+★ **第 8 条是这一节里唯一一条「不是本档的边界、而是一个独立的缺陷」的，它由 `noble-zephyr` 实测发现、我单独登记。**
 
 1. ★ **「今天换码零代价」是我量过的**（唯一消费者把码丢掉），**但「仓库外没有人记过旧码」我量不到。**
 2. ★ **「每域 ≤ 16」这条约束今天没有守卫** —— 今天最大一域是 RUNTIME_VM 的 **7**，**离上限还有一半**，**而「今天够用」不是「将来够用」。**
@@ -259,3 +311,27 @@ case try specific {
 5. ★ **「编译器检测到所有都有处理就能安全过关」今天成立的范围**：★ **只在 `--lint` 下成立，不在默认编译路径下成立。** ★ **`inimerse foo.im` 不会因为一个 `case` 没覆盖全而拒绝编译** —— **这是「安全过关」这句话的射程边界，不能读宽。**
 6. ★ **本文档没有实测任何一条** —— 它是设计。★ **§5 的六条判据全部是「应当能红」，不是「已经红了」。**
 7. ★ **§3.3 的更正块里那四条读数是实测的，观测点写在各条旁边**；★ **它证伪的是本档第一版的一条设计，不是引擎的一条行为。**
+8. ★★★ **`--err-json` 从初始提交起就 100% 不可达 —— 这是本档范围外的一个独立缺陷，`noble-zephyr` 实测发现，我单独登记。**
+
+**机制（一行）**：`src/main.c` 里 `--err-json` 是一个**独立 `if`**（设标志），紧接着是**另一条** `if/else if/…/else break` 链，**链里没有它** ⇒ `else break` 直接跳出 ⇒ **token 不被 shift 掉** ⇒ `argv[1]` 仍是 `--err-json`，**而 `argv[1]` 就是脚本路径槽** ⇒ ★ **`g_err_json` 唯一的取值方式，同时把脚本路径设成了 `"--err-json"`。**
+
+**实测（观测点 `5805538`，`build/inimerse`）**：
+
+| argv | 结果 |
+|---|---|
+| `--err-json` | `{"error":"io","detail":"--err-json","fix":"check that the script path exists"}`，**rc=1** |
+| `--safe --err-json --time-limit 10 <file>`（**= `tools/ai_run.ps1` 与 `tools/mcp_server.js` 逐字产出的 argv**） | **同一条 io JSON**、rc=1、★ **脚本体一个字都没跑** |
+| `<file> --err-json` | 脚本跑了，但错误是**朴素格式**（那条循环只看 `argv[1]`） |
+| `--err-json --params /nonexistent <file>` | **仍是那条 io JSON** ⇒ 今天唯一可达的 JSON 行是 `main_err_json` 那条 |
+
+★ **`git blame` 指到初始提交 `8248e08`（`Release Infiverse 0.2.0`）** ⇒ ★ **不是回归，从第一天就是这样，而 `tools/` 里的两个消费者也是同一天写的。**
+
+★★★ **而正确的形状就在同一个文件、往前两个 block 的地方**：注释逐字 *"Scanned rather than matched at argv[1] so the option works in any position"*，而 `--params` 与 `--time-limit` **都全位置扫描并把 token shift 掉** ⇒ ★ **`--err-json` 是 `src/main.c` 里唯一「只认 `argv[1]`、且不消耗」的旗标** —— ★ **而它头上的注释逐字写着 *"repeatable and order-independent (--safe / --err-json)"***。
+
+★★ **判据**：★ **注释断言的那个性质，代码没有。** ★ 而这比一般的「注释与代码不符」更重：★ **正确的形状就在同一个文件里，它不是没人想过，是这一处没照做。**
+
+★ **为什么单独登记**：★ **它不是 error 码的一部分，它先于码存在**；★ **而它是唯一一条「工具链消费者今天 100% 跑不了」的** —— `--err-json` 是 `tools/ai_run.ps1` 与 `tools/mcp_server.js` 取结构化错误的唯一途径。
+
+★ **三个生产者、三种键集**（读码；只有 `io` 那条是实测）：`parse` = `{"error","line","col","expect","got","fix"}`；`io` = `{"error","detail","fix"}` ← 实测；`exception` = `{"error","message","ip","frames"}`。★ 而 `tools/README.md` **只文档化了第一种的形状**并把三个 kind 名并列在同一行 ⇒ ★ **文档描述的是三个里的一个。**
+
+★ **红对照（今天必失败）**：`./build/inimerse --safe --err-json --time-limit 10 <file>` 必须 (a) 印出脚本体自己的 stdout、(b) 印出一行 JSON —— **今天两者都没有。**
