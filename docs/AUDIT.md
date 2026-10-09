@@ -879,7 +879,7 @@ long long val_as_int(const Value *v) {
 }
 ```
 
-替换点：`src/runtime/runtime_posix.c` 的 `posix_core_float`（`:82-95`）、`posix_sqrt`（`:579`）、`posix_atomic_add`（`:734`）、`posix_atomic_set`（`:757`）、`posix_spi_meta`（`:923`）；`src/runtime/runtime.c` 的 `builtin_sqrt`（`:16`）、`builtin_gc_auto`（`:1550`）、`builtin_spi_meta`（`:1198`）；`src/mod/verse_dist_mod.c` 的两处端口解析（`:1953`、`:2049`）。
+替换点（**记录**：下面的号是写下它们时那棵树上的坐标，不是今天的；★ **函数名已经写在旁边，引用请用名字、不要用号**）：`src/runtime/runtime_posix.c` 的 `posix_core_float`（`:82-95`）、`posix_sqrt`（`:579`）、`posix_atomic_add`（`:734`）、`posix_atomic_set`（`:757`）、`posix_spi_meta`（`:923`）；`src/runtime/runtime.c` 的 `builtin_sqrt`（`:16`）、`builtin_gc_auto`（`:1550`）、`builtin_spi_meta`（`:1198`）；`src/mod/verse_dist_mod.c` 的两处端口解析（`:1953`、`:2049`）。★ **2026-10 复量（观测点 `1f7378f`）：这 8 个号里只有 3 个在引入它们的那一笔 `2a14f68` 上成立** —— `posix_core_float` 的 `:82`、`posix_sqrt` 的 `:579`、`builtin_sqrt` 的 `:16`；**其余 5 个（`posix_atomic_add`、`posix_atomic_set`、`posix_spi_meta`、`builtin_gc_auto`、`builtin_spi_meta`）在 `2a14f68` 与它的父提交上都不成立** ⇒ ★ **它们是 F 类（坐标从来没对过），不是漂移。** ★ **判据：一份「替换点」清单里的号，如果一部分取自改动前、一部分取自改动后，那么它们没有任何一个共同的观测点 —— 而它们看起来完全一样。**
 
 **审计过、确认不用改的**：`src/runtime/runtime.c:48` 与 `src/runtime/runtime_posix.c:105`（两处 `round`，上游已有 `if (xv.type != VAL_INT && xv.type != VAL_FLOAT) { … push_nil … }`）、`src/mod/json_mod.c:107`（在 `case VAL_FLOAT:` 内）、`src/vm/vm.c:3420`/`:3443`/`:3463`（本来就写成 `(idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv)`），以及大量 `Value x; x.fval = 0;` 的初始化。
 
