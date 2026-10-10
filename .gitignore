@@ -132,3 +132,17 @@ verse_layer_probe_root/
 # source + patches, our test harnesses, finished clips and the MCP config.
 # Local tooling and output, not Inimerse repository content.
 video-pipeline/
+
+# Runtime room files.  src/mod/server_mod_posix.c room_path() writes
+# "<rooms>/<port>.txt" with the room's project and pass, under
+# $INIMERSE_ROOMS_DIR or "./rooms" when that is unset; the allocator then walks
+# 11510, 11520, ... upward and stops at the first name that does not exist.
+# Two such files (11510.txt, 11530.txt) were carried into the repository by
+# 8248e08 and sat in it since, which is why they are gone from this commit and
+# not merely ignored: an ignore rule added later does not remove what is
+# already tracked, and it does not remove it from history either.
+# Root-anchored, and narrowed to *.txt: room_path() builds "<port>.txt", so the
+# rule names exactly what the server produces and leaves anything else that may
+# ever live in this directory trackable.  A bare /rooms/ would ignore those too,
+# which is a wider claim than the evidence supports.
+/rooms/*.txt
