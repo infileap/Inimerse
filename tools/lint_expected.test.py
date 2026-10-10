@@ -43,7 +43,7 @@ EXPECT = {
         "case has no wildcard '_'/'else' branch",
         "case try is missing Result branch(es): err",
         "case try guarded err coverage does not prove complete err coverage",
-        "case try finite err type 'FileError' is missing members: permission_denied, disk_full",
+        "case try finite err type 'FileError' is missing members: 0x11 permission_denied, 0x12 disk_full",
     ]),
     "lint_case_enum_v04": (1, 1, [
         "finite case type 'Direction' is missing members: E, W",
@@ -55,7 +55,7 @@ EXPECT = {
         "case has no wildcard '_'/'else' branch",
         "case try is missing Result branch(es): err",
         "case try guarded err coverage does not prove complete err coverage",
-        "case try finite err type 'FileError' is missing members: permission_denied, disk_full",
+        "case try finite err type 'FileError' is missing members: 0x11 permission_denied, 0x12 disk_full",
     ]),
     "lint_case_try_alias_v04": (0, 0, []),
 }

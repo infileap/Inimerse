@@ -1972,7 +1972,7 @@ static DWORD WINAPI udp_server_thread(LPVOID arg) {
 static int b_verse_listen(VM *vm) {
     int argc = vm->cur_argc;
     Value pv = r_arg(vm, argc - 1);
-    int port = (int)val_as_int(&pv);
+    int port = (int)val_as_int(vm, &pv);
     r_popn(vm, argc);
     if (g_listen_run) { r_push_int(vm, g_listen_port); return 1; }
     WSADATA wsa;
@@ -2068,7 +2068,7 @@ static char *verse_udp_fetch(const char *host, int port, const char *id, int *ou
 static int b_verse_listen(VM *vm) {
     int argc = vm->cur_argc;
     Value pv = r_arg(vm, argc - 1);
-    int port = (int)val_as_int(&pv);
+    int port = (int)val_as_int(vm, &pv);
     r_popn(vm, argc);
     int rc = verse_http_start(port);
     r_push_int(vm, rc ? port : 0);

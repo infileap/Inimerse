@@ -356,8 +356,17 @@ void vm_value_assign(Value *dst, const Value *src);
 void vm_value_move(Value *dst, Value *src);
 int vm_push_value(VM *vm, Value *src);
 void vm_set_cur_thread(VmThread *t);
-double val_as_double(const Value *v);
-long long val_as_int(const Value *v);
+/* Strict readers: a non-numeric tag is refused (type_mismatch), not coerced.
+   These are the names a new call site should reach for; the coercing pair
+   below is what you have to spell out, and spelling it out is the point --
+   `default: return 0.0` used to answer "is this a number?" with "0.0".
+   See src/vm/vm.c and docs/AUDIT.md 1.86. */
+double val_as_double(VM *vm, const Value *v);
+long long val_as_int(VM *vm, const Value *v);
+/* Coercing readers: any value answers a number (non-numeric tags -> 0).  Only
+   for truthiness and the int/float cross-type arm of equality/ordering. */
+double val_as_double_coerce(const Value *v);
+long long val_as_int_coerce(const Value *v);
 bool val_eq(const Value *a, const Value *b);
 int vm_truthy(const Value *v);
 

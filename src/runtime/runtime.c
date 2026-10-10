@@ -25,8 +25,38 @@
  *
  * The `max > 0` guard is not decoration: `rand() % 0` is an integer division by
  * zero, and the old body had no guard at all. */
-static int builtin_random(VM *vm) { if (vm_cur_sp(vm)<0) return 0; int max=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_int(vm, max > 0 ? rand() % max : 0); return 1; }
-static int builtin_sqrt(VM *vm) { if (vm_cur_sp(vm)<0) return 0; double val=val_as_double(&vm_cur_stack(vm)[vm_cur_sp(vm)]); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_float(vm, sqrt(val)); return 1; }
+static int builtin_random(VM *vm) {
+  /* The contract is random(n), one argument.  Called with none, this function
+     used to decline -- `if (vm_cur_sp(vm) < 0) return 0;` -- and a builtin that
+     returns 0 is read by the dispatch as "not handled", which leaves the
+     destination register holding whatever it held.  So `random()` answered a
+     stale register: in contract_test.im's context that was the string "k", and
+     `random() % 100` coerced it to 0.0 in silence, so `check(r1 >= 0 and r1 <
+     100)` passed on a value that was not a number.  In a fresh program the same
+     call answers 0.  The arity test therefore goes BEFORE the decline, not
+     after it; the value test stays after, where the value is.  See the block
+     above posix_random in src/runtime/runtime_posix.c for the measurements.
+     NOTE: this file is inside the `if(WIN32)` source list in CMakeLists.txt,
+     so it does NOT compile on Linux and this edit was NOT built or run here.
+     It is written to match runtime_posix.c's posix_random, which was. */
+  if (vm->cur_argc < 1) {
+    vm_throw_kind(vm, "type_mismatch");
+    push_int(vm, 0);
+    return 1;
+  }
+  if (vm_cur_sp(vm) < 0) return 0;
+  Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+  vm_cur_set_sp(vm, vm_cur_sp(vm) - 1);
+  if (v.type != VAL_INT && v.type != VAL_FLOAT && v.type != VAL_BOOL) {
+    vm_throw_kind(vm, "type_mismatch");
+    push_int(vm, 0);
+    return 1;
+  }
+  int max = (v.type == VAL_INT || v.type == VAL_BOOL) ? v.ival : (int)v.fval;
+  push_int(vm, max > 0 ? rand() % max : 0);
+  return 1;
+}
+static int builtin_sqrt(VM *vm) { if (vm_cur_sp(vm)<0) return 0; double val=val_as_double(vm, &vm_cur_stack(vm)[vm_cur_sp(vm)]); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); push_float(vm, sqrt(val)); return 1; }
 static int builtin_read_file(VM *vm) { if (vm_cur_sp(vm)<0) return 0; Value _pv=vm_cur_stack(vm)[vm_cur_sp(vm)]; char *fn=strdup(_pv.sval ? _pv.sval : ""); vm_cur_set_sp(vm, vm_cur_sp(vm) - 1); if (_pv.type==VAL_STRING && _pv.ival!=1) free(_pv.sval); FILE *f=fopen(fn,"rb"); free(fn); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long len=ftell(f); fseek(f,0,SEEK_SET); char *buf=malloc(len+1); size_t got=(size_t)fread(buf,1,(size_t)len,f); buf[got]='\0'; fclose(f); push_string(vm,buf); free(buf); return 1; }
 static int builtin_write_file(VM *vm) { if (vm_cur_sp(vm)<1) return 0; Value _pw=vm_cur_stack(vm)[vm_cur_sp(vm)]; Value _px=vm_cur_stack(vm)[vm_cur_sp(vm)-1]; char *content=strdup(_pw.sval ? _pw.sval : ""); char *fn=strdup(_px.sval ? _px.sval : ""); FILE *f=fopen(fn,"w"); int success=0; if(f){fputs(content,f);fclose(f);success=1;} vm_cur_set_sp(vm, vm_cur_sp(vm) - 2); if (_pw.type==VAL_STRING && _pw.ival!=1) free(_pw.sval); if (_px.type==VAL_STRING && _px.ival!=1) free(_px.sval); free(content); free(fn); push_int(vm,success); return 1; }
 static int builtin_input(VM *vm) {
@@ -117,10 +147,10 @@ static int builtin_len(VM *vm) {
 static int builtin_size(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    /* Mirrors posix_core_size().  The old `kind == 2` closed-interval formula
-     * here answered only for a closed interval and left every component set at
-     * n = -1, i.e. nil; the enumerator answers for both, and is the definition
-     * the interpreter already ships on POSIX.  See docs/AUDIT.md 1.16. */
+    /* The SET branch mirrors posix_core_size().  The ARRAY branch below passes
+     * `vm_array_len(vm, v->ival - 1)` unguarded HERE -- the only one of this
+     * pair's six branches.  Nothing here guards it; three things elsewhere do,
+     * and they are named at the end of this file.  See docs/AUDIT.md 1.16. */
     long long n = -1;
     if (v->type == VAL_SET) {
         if (v->ival >= 0 && v->ival < vm->setCount) {
@@ -1288,7 +1318,7 @@ static int builtin_spi_meta(VM *vm) { /* spi_meta(id, version, caps): declare mo
     Value *verv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value *idv = &vm_cur_stack(vm)[vm_cur_sp(vm) - 2];
     const char *id = (idv->type == VAL_STRING && idv->sval) ? idv->sval : "anon";
-    int version = (int)val_as_int(verv);  /* tag-checked: a bool's ival is not a double */
+    int version = (int)val_as_int(vm, verv);  /* tag-checked: a bool's ival is not a double */
     int caps = 0;
     if (capsv->type == VAL_STRING) caps = vm_parse_caps(capsv->sval);
     else if (capsv->type == VAL_INT) caps = capsv->ival;
@@ -1642,7 +1672,7 @@ static int builtin_gc_auto(VM *vm) { /* gc_auto(1|0): enable/disable auto GC */
     int argc = vm_cur_sp(vm) + 1;
     if (argc >= 1) {
         Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-        int on = val_as_double(v) != 0.0;  /* tag-checked: (int)v->fval read a bool's bits */
+        int on = val_as_double_coerce(v) != 0.0;  /* tag-checked: (int)v->fval read a bool's bits */
         vm->gc_enabled = on ? 1 : 0;
         if (on && vm->gc_threshold <= 0) vm->gc_threshold = 2.0 * 1024 * 1024;
     }
@@ -1669,7 +1699,7 @@ static int builtin_atomic_add(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm) - 1];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     Value *dv = &st[vm_cur_sp(vm)];
-    long long delta = val_as_int(dv);
+    long long delta = val_as_int(vm, dv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
     /* A name that is not a string is a caller error, not an empty counter:
      * raising is the one answer that cannot be mistaken for success.  A slot
@@ -1764,7 +1794,7 @@ static int builtin_atomic_set(VM *vm) {
     Value *nv = &st[vm_cur_sp(vm) - 1];
     const char *nm = (nv->type == VAL_STRING) ? nv->sval : NULL;
     Value *vv = &st[vm_cur_sp(vm)];
-    long long val = val_as_int(vv);
+    long long val = val_as_int(vm, vv);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - argc);
     /* Same rule as builtin_atomic_get: a non-string name is a caller error
      * and raises type_mismatch; a slot holding no integer is runtime state and
@@ -2020,3 +2050,41 @@ static int builtin_shr(VM *vm) {
     r = (n >= 64) ? (a < 0 ? -1 : 0) : (a >> n);
     pop(vm); pop(vm); push_int(vm, r); return 1;
 }
+
+/* ---------------------------------------------------------------------------
+ * The ARRAY branch of builtin_size above passes `vm_array_len(vm, v->ival - 1)`
+ * with no bounds check of its own.  It is the only one of the six branches of
+ * builtin_size / builtin_count without one -- and "without one" is a fact about
+ * THIS LINE, not about the path.  Its safety is the joint product of three
+ * things, none of which was written for it:
+ *
+ *   1. the producers, which is an input check on their side:
+ *          src/runtime/runtime_posix.c:217   if (aidx < 0) { push_nil(vm); return 1; }
+ *          src/runtime/runtime_posix.c:433   if (aidx < 0) { free(src); free(sep); push_nil(vm); return 1; }
+ *          src/runtime/runtime_posix.c:466   if (aidx < 0) { free(s); push_nil(vm); return 1; }
+ *      (19 sites build `{ .type = VAL_ARRAY, .ival = aidx + 1 }`; every one of
+ *      them tests `aidx < 0` first.  `ival` is the pool index PLUS ONE, so a
+ *      handle that exists was built from a real index.)
+ *
+ *   2. the pool's allocation policy, which is a decision about capacity:
+ *          src/vm/vm.c:786   idx = vm->arrayCount++;
+ *          src/vm/vm.c:801   idx = vm->arrayCount++;
+ *      `arrayCount` never decreases, and the recycle path (src/vm/vm.c:781-785,
+ *      `array_free_list`) reuses an index that is already below it.
+ *
+ *   3. the accessor's own defensive check:
+ *          src/vm/vm.c:940   if (idx < 0 || idx >= vm->arrayCount) return 0;
+ *
+ * So the right statement is not "no guard is needed here" but "the guard is in
+ * three places, and it is nobody's job".  Any one of the three changing its
+ * purpose flips the conclusion, and nothing in the tree would say so: there is
+ * no test that reaches this branch with `v->ival - 1` outside
+ * [0, arrayCount), because such a program could not be constructed while all
+ * three hold.  What that means is that this line has no guard of its own AND no
+ * watcher over the guards it borrows.
+ *
+ * Also, honestly scoped: the range check at src/vm/vm.c:940 cannot see a
+ * handle that has been recycled underneath -- that yields a WRONG VALUE and not
+ * an out-of-range index.  This branch's safety argument does not claim to cover
+ * that case, and nothing here claims to have measured it.
+ * ------------------------------------------------------------------------- */

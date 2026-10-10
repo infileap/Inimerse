@@ -449,17 +449,13 @@ static int lint_scan(const char *path, LintBuf *lb) {
                     lint_add(lb, case_start_line, "WARN", msg);
                 }
                 if (!case_try_err_open && !case_try_err_complete && case_try_err_type) {
-                    char missing[160] = "";
+                    char missing[256] = "";
                     for (int mi = 0; mi < case_try_err_type->count; mi++) {
                         int found = 0;
                         for (int ci = 0; ci < case_try_err_member_count; ci++)
                             if (strcmp(case_try_err_type->members[mi], case_try_err_members[ci]) == 0)
                                 found = 1;
-                        if (!found) {
-                            if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1);
-                            strncat(missing, case_try_err_type->members[mi],
-                                    sizeof(missing) - strlen(missing) - 1);
-                        }
+                        if (!found) { void im_error_label(const char *, char *, size_t); char item[128]; im_error_label(case_try_err_type->members[mi], item, sizeof item); if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1); strncat(missing, item, sizeof(missing) - strlen(missing) - 1); }
                     }
                     if (missing[0]) {
                         char msg[320];
@@ -471,15 +467,12 @@ static int lint_scan(const char *path, LintBuf *lb) {
                 }
             }
             if (case_type && !case_wildcard_line) {
-                char missing[160] = "";
+                char missing[256] = "";
                 for (int i = 0; i < case_type->count; i++) {
                     int found = 0;
                     for (int j = 0; j < case_covered_count; j++)
                         if (strcmp(case_type->members[i], case_covered[j]) == 0) found = 1;
-                    if (!found) {
-                        if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1);
-                        strncat(missing, case_type->members[i], sizeof(missing) - strlen(missing) - 1);
-                    }
+                    if (!found) { void im_error_label(const char *, char *, size_t); char item[128]; im_error_label(case_type->members[i], item, sizeof item); if (missing[0]) strncat(missing, ", ", sizeof(missing) - strlen(missing) - 1); strncat(missing, item, sizeof(missing) - strlen(missing) - 1); }
                 }
                 if (missing[0]) {
                     char msg[320];
@@ -614,3 +607,12 @@ static int builtin_lint_check(VM *vm) {
 void lint_mod_register(VM *vm) {
     vm_register_builtin(vm, "lint_check", builtin_lint_check);
 }
+
+/* The missing-members lists above print `0x11 permission_denied`, code first,
+   order fixed, because the name alone cannot be found from a log that carries
+   the byte (docs/ERROR_CODES_V06.md section 3.2).  The name is never dropped,
+   and a member the error table does not know keeps its name and gets no code:
+   inventing one would be a second table (section 4.2).  This note is here
+   rather than beside the loops so that src/lint_mod.c:558, cited by line from
+   docs/STATUS.md:2510, does not move.
+*/

@@ -989,7 +989,7 @@ unsigned long timeout_ms = 0;
     if (argc >= 2 && strcmp(argv[1], "changelog") == 0)
         return print_changelog();
 #endif
-
+    if (argc >= 2 && strcmp(argv[1], "errors") == 0) { int im_error_print_table(const char *, int); return im_error_print_table(argc >= 3 && strcmp(argv[2], "--json") != 0 ? argv[2] : NULL, argc >= 3 && strcmp(argv[2], "--json") == 0); }  /* see src/types/error_cli.c: it says why this is one line, and why that matters */
     /* 鏃犲弬鏁帮細鍏堝皾璇曞唴宓屽瓧鑺傜爜锛堟墦鍖呭悗�?exe锛夛紝鍚﹀垯杩涘叆 REPL */        /* leading flags: repeatable and order-independent (--safe / --err-json) */
     for (;;) {
         if (argc >= 2 && strcmp(argv[1], "--err-json") == 0) g_err_json = 1;

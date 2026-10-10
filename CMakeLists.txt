@@ -422,7 +422,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c
     # `vm_exec` is registered by BOTH runtimes (runtime.c on WIN32,
     # runtime_posix.c elsewhere), so its implementation must build on both.
-    src/runtime/vm_exec_builtin.c)
+    src/runtime/vm_exec_builtin.c src/types/error_cli.c)
   if(WIN32)
     list(APPEND INIMERSE_ENGINE_SOURCES
       src/platform/process.c src/platform/socket.c
@@ -759,7 +759,7 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(lint_case_enum_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;types" FAIL_REGULAR_EXPRESSION "line 11")
   add_test(NAME lint_case_membership_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finite-set membership branch already covers" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_membership_v04.im)
   set_tests_properties(lint_case_membership_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;types" FAIL_REGULAR_EXPRESSION "line 4")
-  add_test(NAME lint_case_try_members_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finite err type 'FileError' is missing members: permission_denied, disk_full" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_members_v04.im)
+  add_test(NAME lint_case_try_members_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "is missing members: 0x11 permission_denied, 0x12 disk_full" --exit 1 -- $<TARGET_FILE:inimerse> --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_members_v04.im)
   set_tests_properties(lint_case_try_members_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;lint;case;result" FAIL_REGULAR_EXPRESSION "line 11")
   add_test(NAME lint_case_try_alias_runtime COMMAND inimerse --lint ${CMAKE_SOURCE_DIR}/vtest/lint_case_try_alias_v04.im)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/lint_alias_sandbox)
@@ -1496,3 +1496,38 @@ set_tests_properties(bitwise_builtins_runtime PROPERTIES
 # says "now write A3 for real".
 add_test(NAME bitwise_shift_boundary_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --exit 1 --shape "at ip=" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/bitwise_shift_boundary_v07.im)
 set_tests_properties(bitwise_shift_boundary_runtime PROPERTIES LABELS "runtime;bitwise;v0.7")
+
+# The error table's guard in the TREE (docs/ERROR_CODES_V06.md section 3.3):
+# it sees "the table grew" -- somebody gave a domain a 17th member.  The other
+# guard is a runtime one (im_enum_create), and it sees the opposite thing: a
+# code built by hand on a path that runs.  Neither red condition covers the
+# other, which is why both exist.  This one parses g_errors[] as source text,
+# so a code assembled anywhere else in the engine is invisible to it -- stated
+# here because it is the boundary of the reading, not because it is a defect.
+if(INIMERSE_PYTHON)
+  add_test(NAME error_domain_width_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_error_domains.py)
+  set_tests_properties(error_domain_width_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "invariants")
+endif()
+
+# `inimerse errors` is the lookup route the user asked for ("另外需要速查整数码
+# 的途径，或许 inimerse.exe 可以输出对应码、域"), docs/ERROR_CODES_V06.md
+# section 4.  This pins that it stays a *view* of g_errors[] and does not
+# become a second copy of it -- section 4.2 states that criterion as an
+# assertion that can go red rather than as a promise, and the assertion here is
+# two-sided on purpose: planting a table name in src/main.c makes question 1
+# fail, and the reverse lookup is asked as its own question because it is a
+# second code path over the same table and can be wrong while the listing is
+# right.  What neither question can see is a copy assembled from the source at
+# compile time; the derivation itself is proven by mutation (add a member to
+# g_errors[], rebuild, and the output follows with no edit to main.c), which is
+# a reading and not a gate -- stated because it is the boundary of the check.
+if(INIMERSE_PYTHON)
+  # The shape is a REGEX, so the script's own line cannot be quoted literally
+  # here: `3 question(s) asked` as a pattern means `3 question` + a group + `s
+  # asked`, which does not match the literal `(s)` the script prints.  This
+  # clause is therefore chosen to carry no metacharacter at all.  (Measured:
+  # with the literal form, the clause reported `0 of 1 matched` while the line
+  # it was quoting sat in the output.)
+  add_test(NAME errors_cli_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --exit 0 --shape "asked, 0 failed -- the CLI is a view of g_errors" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_errors_cli.py $<TARGET_FILE:inimerse>)
+  set_tests_properties(errors_cli_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "invariants")
+endif()

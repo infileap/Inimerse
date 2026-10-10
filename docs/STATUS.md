@@ -2507,7 +2507,7 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 
 **O1（`%`）**：`src/vm/vm.c` 的 `L_MOD` 有三重问题 —— 把两操作数窄化过 32 位 `int`（`2147483648 % 7` → **-2**，AOT `2`、wasm `1`）、**在截断之后**才判零（`7 % 0.5` 误报 `division_by_zero`，而真值 0 完全合法）、以及 `-2147483648 % -1` 实测 **rc=136 `Floating point exception`**（真崩溃，不是干净拒绝）。AOT 侧 `nv_div` 除零静默给 `inf` —— **AOT 此前完全没有错误机制**（`grep nv_error|nv_throw|nv_panic|abort()` 在 `src/compilation/aot_native.c` 零命中）。修法：VM 新增饱和转换 `im_dbl_to_i64()`、零检查**移到窄化之前**、`y == -1` 特判、结果超出 int32 时提升为 float（照抄 `L_NEG` 对 `INT_MIN` 的既有先例）；AOT 新增 `nv_die_division_by_zero()`；wasm 用 `e_trunc_sat_i64`（`0xFC 0x06`）替代 `e_trunc_sat_i32`。
 
-**O2(a)（整数静默提升可诊断）**：三处提升点 `src/vm/vm.c:2950`（`L_ADD`）/`:3073`（`L_SUB`）/`:3097`（`L_MUL`）形状相同且完全静默。配套缺陷是 `src/main.c:1242-1247` 的 `--lint` **恒返回 0** —— 而 `lint_check` 本身是真的（`src/lint_mod.c:558` 委托 `lint_scan`，599 行模块），所以 `vtest/lint_case_*_v04.im` 五个 fixture 里有四个「即使 lint 报告再多也永远绿」。修法：退出码承载判据（**1 = 有发现 / 2 = 文件不可读 / 0 = 干净**）。
+**O2(a)（整数静默提升可诊断）**：三处提升点 `src/vm/vm.c:2950`（`L_ADD`）/`:3073`（`L_SUB`）/`:3097`（`L_MUL`）形状相同且完全静默。配套缺陷是 `src/main.c:1242-1247` 的 `--lint` **恒返回 0** —— 而 `lint_check` 本身是真的（它在 `src/lint_mod.c` 里，签名 `int lint_check(const char *path, char *out, int cap)`，体内 `int n = lint_scan(path, &lb);` —— 这里引形式不引行号：原来的行号已经漂了，而签名与那句委托还在原地），所以 `vtest/lint_case_*_v04.im` 五个 fixture 里有四个「即使 lint 报告再多也永远绿」。修法：退出码承载判据（**1 = 有发现 / 2 = 文件不可读 / 0 = 干净**）。
 
 ### 判据：三后端逐格比对，不是「值对了」
 

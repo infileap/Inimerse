@@ -270,28 +270,75 @@ void vm_cur_set_sp(VM *vm, int sp) { (void)vm; if (g_cur_thread) g_cur_thread->s
 #define Sleep(ms) im_platform_sleep_ms((unsigned int)(ms))
 #endif
 
-double val_as_double(const Value *v) {
+/* ---------------------------------------------------------------------------
+   Two readers, and the difference between them is a refusal, not a range.
+
+   `..._coerce` answers "read this value as a number whatever it is": a string,
+   a nil, an array, a set and a dict all answer 0.0.  That is the right answer
+   for exactly two questions -- truthiness and the int/float cross-type arm of
+   equality/ordering, where the tag has already been checked by the caller.
+   It is the wrong answer for every arithmetic site, because there the question
+   is not "what number is this" but "is this a number at all", and 0.0 answers
+   the first while silently denying the second.
+
+   `val_as_double` / `val_as_int` are the strict pair: a non-numeric tag is
+   REFUSED (type_mismatch) instead of coerced.  They take the VM because a
+   refusal has to be raised somewhere, and they are the names a new call site
+   should reach for first -- the coercing pair is the one you have to spell out.
+
+   The names are the enforcement.  Before this split, one function served both
+   questions and its `default: return 0.0` was indistinguishable from a value;
+   the split is not "add a check at 40 sites", it is "make the compiler ask at
+   all 40 of them which question is being asked here".  Measured symptoms, all
+   rc=0 before this change: `"a" - 1` -> -1, `1 / "a"` -> inf, `1 % "a"` ->
+   division_by_zero, `nil + 1` -> 1, `a["x"]` -> a[0].  See docs/AUDIT.md 1.86.
+
+   `VAL_BOOL` is a case in both readers, not a fallthrough: a bool is numeric
+   here and answers 1 or 0, and that is deliberate (see `L_NEG`, which is the
+   one arithmetic site where the tag check and the value must agree).
+   --------------------------------------------------------------------------- */
+double val_as_double_coerce(const Value *v) {
     switch (v->type) {
         case VAL_INT:   return v->ival;
         case VAL_FLOAT: return v->fval;
         case VAL_BOOL:  return v->ival ? 1.0 : 0.0;
         default:        return 0.0;
     }
-
-
 }
 
-/* The integer counterpart of val_as_double, added because the idiom it replaces
+/* The integer counterpart, added because the idiom it replaces
    -- `x.type == VAL_INT ? x.ival : (int)x.fval` -- silently read the union's
    DOUBLE member for a bool, a nil or a string.  Every branch here is
    tag-checked, so a bool answers 1 or 0 and everything else answers 0 instead
    of the bit pattern of whatever shares the storage.  See docs/AUDIT.md 1.20. */
-long long val_as_int(const Value *v) {
+long long val_as_int_coerce(const Value *v) {
     switch (v->type) {
         case VAL_INT:   return v->ival;
         case VAL_FLOAT: return (long long)v->fval;
         case VAL_BOOL:  return v->ival ? 1 : 0;
         default:        return 0;
+    }
+}
+
+double val_as_double(VM *vm, const Value *v) {
+    switch (v->type) {
+        case VAL_INT:   return v->ival;
+        case VAL_FLOAT: return v->fval;
+        case VAL_BOOL:  return v->ival ? 1.0 : 0.0;
+        default:
+            vm_throw_kind(vm, "type_mismatch");
+            return 0.0;   /* the refusal is the answer; this value is not read */
+    }
+}
+
+long long val_as_int(VM *vm, const Value *v) {
+    switch (v->type) {
+        case VAL_INT:   return v->ival;
+        case VAL_FLOAT: return (long long)v->fval;
+        case VAL_BOOL:  return v->ival ? 1 : 0;
+        default:
+            vm_throw_kind(vm, "type_mismatch");
+            return 0;     /* the refusal is the answer; this value is not read */
     }
 }
 
@@ -377,7 +424,7 @@ bool val_eq(const Value *a, const Value *b) {
     /* int ??float 锟斤拷值锟饺较ｏ拷锟斤拷锟洁不同锟斤拷锟斤拷一锟缴诧拷锟斤拷龋锟斤拷薷锟斤拷锟??锟街碉拷??nil 锟饺较碉拷锟斤拷锟叫ｏ拷 */
     if ((a->type == VAL_INT || a->type == VAL_FLOAT || a->type == VAL_BOOL) &&
         (b->type == VAL_INT || b->type == VAL_FLOAT || b->type == VAL_BOOL))
-        return val_as_double(a) == val_as_double(b);
+        return val_as_double_coerce(a) == val_as_double_coerce(b);
     return false;
 }
 
@@ -417,7 +464,7 @@ static int val_cmp(Value *a, Value *b) {
     /* Precondition: val_orderable(a, b) -- both strings, handled above, or
        both numbers.  Every caller checks it; do not call this with a pair
        that has no order. */
-    double da = val_as_double(a), db = val_as_double(b);
+    double da = val_as_double_coerce(a), db = val_as_double_coerce(b);
     if (da < db) return -1;
     if (da > db) return 1;
     return 0;
@@ -1946,7 +1993,7 @@ static int set_contains(VM *vm, int sidx, const Value *x) {
             if (!builtin_contains(c->nameIdx, x)) continue;
             if (c->lo == 0 && c->hi == 0 && c->loInc == 0 && c->hiInc == 0)
                 return 1; /* named set component: no bounds */
-            double d = val_as_double((Value*)x);
+            double d = val_as_double_coerce((Value*)x);  /* guard is builtin_contains()'s opening type check; see the block at the end of this file */
             if (d < c->lo || (d == c->lo && !c->loInc)) continue;
             if (d > c->hi || (d == c->hi && !c->hiInc)) continue;
             return 1;
@@ -1957,7 +2004,7 @@ static int set_contains(VM *vm, int sidx, const Value *x) {
     if (s->kind == 1) return builtin_contains(s->nameIdx, x);
     if (s->kind == 2) {
         if (!builtin_contains(s->nameIdx, x)) return 0;
-        double d = val_as_double((Value*)x);
+        double d = val_as_double_coerce((Value*)x);  /* same guard as the comps loop above; see the block at the end of this file */
         if (d < s->lo || (d == s->lo && !s->loInc)) return 0;
         if (d > s->hi || (d == s->hi && !s->hiInc)) return 0;
         return 1;
@@ -3229,7 +3276,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 value_set(&R[ins.r1], VAL_INT, r64, 0, NULL, NULL);
             } else {
-                double da = val_as_double(a), db = val_as_double(b);
+                double da = val_as_double(vm, a), db = val_as_double(vm, b);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, da + db, NULL, NULL);
             }
             continue;
@@ -3338,7 +3385,7 @@ static void vm_execute_thread(VmThread *t) {
                         continue;
                     }
                     {
-                        double da = val_as_double(&acc), db = val_as_double(&b);
+                        double da = val_as_double(vm, &acc), db = val_as_double(vm, &b);
                         acc.type = VAL_FLOAT;
                         acc.fval = da + db;
                         acc.sval = NULL;
@@ -3371,7 +3418,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 value_set(&R[ins.r1], VAL_INT, r64, 0, NULL, NULL);
             } else {
-                double res = val_as_double(a) - val_as_double(b);
+                double res = val_as_double(vm, a) - val_as_double(vm, b);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             }
             continue;
@@ -3396,7 +3443,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 value_set(&R[ins.r1], VAL_INT, r64, 0, NULL, NULL);
             } else {
-                double res = val_as_double(a) * val_as_double(b);
+                double res = val_as_double(vm, a) * val_as_double(vm, b);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             }
             continue;
@@ -3424,7 +3471,7 @@ static void vm_execute_thread(VmThread *t) {
                     continue;
                 }
             }
-            double res = val_as_double(a) / val_as_double(b);
+            double res = val_as_double(vm, a) / val_as_double(vm, b);
             value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             continue;
         }
@@ -3439,7 +3486,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
                 value_set(&R[ins.r1], VAL_INT, neg, 0, NULL, NULL);
             } else {
-                double neg = -val_as_double(v);
+                double neg = -val_as_double(vm, v);
                 value_set(&R[ins.r1], VAL_FLOAT, 0, neg, NULL, NULL);
             }
             continue;
@@ -3586,7 +3633,7 @@ static void vm_execute_thread(VmThread *t) {
             Value *obj = &R[ins.r2];
             Value *idxv = &R[ins.r3];
             if (obj->type == VAL_ARRAY) {
-                int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);
+                int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(vm, idxv);
                 { Value got = vm_array_get(vm, obj->ival - 1, i); value_move(&R[ins.r1], &got); } /* out-of-range read stays nil (compat) */
             } else if (obj->type == VAL_DICT) {
                 int aidx = obj->ival - 1;
@@ -3609,7 +3656,7 @@ static void vm_execute_thread(VmThread *t) {
                 }
             } else if (obj->type == VAL_STRING) {
                 /* 锟街凤拷锟斤拷锟斤拷锟街斤拷锟斤拷锟斤拷 s[i] ??锟斤拷锟街凤拷锟街凤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷尾锟斤拷锟斤拷 */
-                int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);
+                int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(vm, idxv);
                 const char *s = obj->sval ? obj->sval : "";
                 int len = (int)strlen(s);
                 if (i < 0) i = len + i;
@@ -3629,7 +3676,7 @@ static void vm_execute_thread(VmThread *t) {
             Value *idxv = &R[ins.r2];
             Value *valv = &R[ins.r3];
             if (obj->type == VAL_ARRAY) {
-                int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(idxv);
+                int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(vm, idxv);
                 if (i < 0) {
                     vm_throw_kind(vm, "index_out_of_range");
                     R = t->reg + t->base;
@@ -4180,13 +4227,13 @@ L_CALL_FUNC: {
                user wrote, BEFORE it is narrowed: testing the narrowed int made
                `7 % 0.5` a bogus division_by_zero, and narrowing through `int`
                made `3000000000 % 7` read -2.  See docs/AUDIT.md §1.6. */
-            long long lb = im_dbl_to_i64(val_as_double(b));
+            long long lb = im_dbl_to_i64(val_as_double(vm, b));
             if (lb == 0) {
                 vm_throw_kind(vm, "division_by_zero");
                 R = t->reg + t->base;
                 continue;
             }
-            long long r = (lb == -1) ? 0 : im_dbl_to_i64(val_as_double(a)) % lb;
+            long long r = (lb == -1) ? 0 : im_dbl_to_i64(val_as_double(vm, a)) % lb;
             /* v3.1: the int payload is 64-bit, so the result no longer has to be
                promoted to float to survive.  See docs/AUDIT.md §1.14. */
             value_set(&R[ins.r1], VAL_INT, r, 0, NULL, NULL);
@@ -4223,8 +4270,22 @@ L_CALL_FUNC: {
         }
         L_SET_INTERVAL: {
             if (t->sp < 1) { value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL); continue; }
-            double hi = val_as_double(&t->stack[t->sp]); value_free(&t->stack[t->sp]); t->sp--;
-            double lo = val_as_double(&t->stack[t->sp]); value_free(&t->stack[t->sp]); t->sp--;
+            /* A bound that is not a number refuses the interval, and it refuses
+               the way the guard above refuses: with nil, not with a throw.
+               This used to coerce, so `(nil, 1)` became `(0, 1)` and answered a
+               set -- and `min((nil, 1))` answered nil only because the coerced
+               bounds came out inverted and the set was empty.  The right answer
+               arrived by accident.  val_is_num() keeps VAL_BOOL accepted (it is
+               a case, not a fallback), so nothing about a boolean bound moves.
+               See docs/AUDIT.md 1.20 and the A1 census in docs/AUDIT.md 1.85. */
+            if (!val_is_num(&t->stack[t->sp]) || !val_is_num(&t->stack[t->sp - 1])) {
+                value_free(&t->stack[t->sp]); t->sp--;
+                value_free(&t->stack[t->sp]); t->sp--;
+                value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
+                continue;
+            }
+            double hi = val_as_double(vm, &t->stack[t->sp]); value_free(&t->stack[t->sp]); t->sp--;
+            double lo = val_as_double(vm, &t->stack[t->sp]); value_free(&t->stack[t->sp]); t->sp--;
             int nameFlags = ins.r2;
             int nameIdx = nameFlags & 0xFFFFFF;
             int flags = (nameFlags >> 24) & 0xFF;
@@ -4540,7 +4601,7 @@ L_CALL_FUNC: {
                     if (vm->tasks[_ti] && vm->tasks[_ti]->tidx == tidx) { tt = vm->tasks[_ti]; break; }
             }
             double timeout = -1.0;
-            if (ins.r2 >= 0) timeout = val_as_double(&R[ins.r2]);
+            if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);
             if (!tt || tt->finished || tt == t) continue;
             unsigned long long deadline = 0;
             if (timeout >= 0) deadline = GetTickCount64() + (unsigned long long)(timeout * 1000);
@@ -4564,14 +4625,14 @@ L_CALL_FUNC: {
             VmThread *wtt = (tidx >= 0 && tidx < VM_MAX_THREADS) ? vm->threads[tidx] : NULL;
             if (!wtt) { for (int _ti = 0; _ti < vm->task_count; _ti++) if (vm->tasks[_ti] && vm->tasks[_ti]->tidx == tidx) { wtt = vm->tasks[_ti]; break; } }
             if (wtt && !wtt->finished) {
-                double sec = val_as_double(&R[ins.r2]);
+                double sec = val_as_double(vm, &R[ins.r2]);
                 wtt->paused = true;
                 wtt->wake_at = GetTickCount64() + (unsigned long long)(sec * 1000);
             }
             if (tidx >= 0 && tidx < VM_MAX_THREADS) {
                 VmThread *tt = vm->threads[tidx];
                 if (tt && !tt->finished) {
-                    double sec = val_as_double(&R[ins.r2]);
+                    double sec = val_as_double(vm, &R[ins.r2]);
                     tt->paused = true;
                     tt->wake_at = GetTickCount64() + (unsigned long long)(sec * 1000);
                 }
@@ -4650,7 +4711,7 @@ L_CALL_FUNC: {
         L_RECV: {
             int res = ins.r1;
             double timeout = -1.0;
-            if (ins.r2 >= 0) timeout = val_as_double(&R[ins.r2]);
+            if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);
             unsigned long long deadline = 0;
             if (timeout >= 0) deadline = GetTickCount64() + (unsigned long long)(timeout * 1000);
             Value out; out.type = VAL_NIL; out.ival = 0;  out.sval = NULL;
@@ -5366,3 +5427,41 @@ void vm_debug_builtins_register(VM *vm) {
     vm_register_builtin(vm, "dbg_var", builtin_dbg_var);
     vm_register_builtin(vm, "dbg_exec", builtin_dbg_exec);
 }
+
+/* ---------------------------------------------------------------------------
+   Where the guard is, for the coercing reads in set_contains()
+
+   set_contains() reads through val_as_double_coerce() twice -- once in the
+   comps loop, once in the `kind == 2` branch.  Both are correct, and in both
+   cases the reason is not in set_contains():
+
+     * the comps loop is only reached after
+       `if (!builtin_contains(c->nameIdx, x)) continue;`
+     * the `kind == 2` branch begins with
+       `if (!builtin_contains(s->nameIdx, x)) return 0;`
+
+   and builtin_contains() opens with
+
+       `if (x->type != VAL_INT && x->type != VAL_FLOAT) return 0;`
+
+   so only an int or a float reaches either read.  That opening line is the
+   guard.  It was written for its own reason, in a different function, and
+   nothing in the repository says that set_contains() is relying on it.
+
+   That is why the accessor there is the COERCING one and not the strict one:
+   the strict val_as_double() would refuse, and refusing is the wrong answer to
+   a question somebody else already answered.  It also means the guarantee is
+   borrowed.  If that opening line ever widens -- to accept a string, or to stop
+   being the first statement -- both reads begin answering 0.0 for a value that
+   is not a number, and nothing in set_contains(), and no test, would say so.
+   A change there has to come back here.
+
+   This block is at the end of the file on purpose: docs/ cites this file by
+   line, 168 distinct lines of it, and the highest cited line is above this one,
+   so writing the explanation here moves no citation.  See docs/AUDIT.md 1.85.
+
+   The same-shaped place with the opposite answer is src/runtime/runtime_posix.c's
+   posix_gc_auto(): it also uses the coercing accessor, but because "is this
+   value truthy" is a question every tag answers -- there is nothing to refuse
+   and no borrowed guard.
+   --------------------------------------------------------------------------- */
