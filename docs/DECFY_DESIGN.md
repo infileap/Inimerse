@@ -59,7 +59,7 @@
 
 | # | 位置 | 语言 | 语义 | 机制 |
 |---|---|---|---|---|
-| 1 | `src/compiler/compiler.c:648-670` | C | **值** | `OP_JUMP_IF_FALSE`（and）/ `OP_JUMP_IF_TRUE`（or）+ `OP_MOV result, right`；跳转目标回填 `comp->curBC->code[jmp_pos].r2 = end` |
+| 1 | **取证当时** `src/compiler/compiler.c:648-670`；锚 = `compile_expr` 的 `EXPR_BINARY` 里判 `TOK_AND`/`TOK_OR` 的那一支 | C | **值**（**取证当时**的记录，对应 `d4b65c6` **之前**的树；该提交之后此处已是**布尔** —— `OP_JUMP_IF_FALSE`/`OP_JUMP_IF_TRUE` + `OP_AND`/`OP_OR` + `OP_LOADK_BOOL`，见 §10.42） | `OP_JUMP_IF_FALSE`（and）/ `OP_JUMP_IF_TRUE`（or）+ `OP_MOV result, right`；跳转目标回填 `comp->curBC->code[jmp_pos].r2 = end` |
 | 2 | `selfhost/compiler.im:254-266` | `.im` | **值** | 与 #1 同形：`jpos = len(ctx["code"])`，`ctx["code"][jpos][2] = end` |
 | 3 | **取证当时** `src/vm/vm.c:3166-3172`（`L_AND`）/ `:3173-3179`（`L_OR`）；**现状（2026-10 实测）** `:3486-3491` / `:3493-3498` | C | **布尔** | `value_set(&R[ins.r1], VAL_BOOL, (a && b) ? 1 : 0, …)`；**取证当时**的真值函数是三目链 `(va.type == VAL_BOOL) ? … : (va.type == VAL_NIL) ? 0 : 1`，**§10.53 已把六个产生点收敛为唯一一处 `vm_truthy()`（`src/vm/vm.c:347`）** |
 | 4 | `src/compilation/aot_native.c:420-428`（`EXPR_BINARY` 在 `:418`，特判在 `:420`，发射在 `:425-428`；**取证当时记作 `:334-339`**） | C | **布尔** | `buf_str(b, "nv_boo(nv_tru(")` … `op == TOK_AND ? ") && nv_tru(" : ") || nv_tru("` … `buf_str(b, "))")` |
