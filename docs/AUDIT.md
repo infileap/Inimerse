@@ -72,7 +72,7 @@ if (op == TOK_AND || op == TOK_OR) {
 
 解释器给的是**操作数**（Python / JS / Lua 的值语义），AOT 给的是**布尔**。
 
-**这个落差为什么难被发现**：`src/vm/vm.c:3166-3179` 的 `L_AND` / `L_OR` **确实是布尔语义的**（两个操作数取真值后存 `VAL_BOOL`）。也就是说 VM 的这两个 opcode 与 AOT 一致 —— 但**编译器根本不发它们**。`OP_OR` 在 `src/compiler/bytecode.h:12` 声明、**全仓从未被 emit**（`grep -rn "OP_OR" src/compiler/` 只命中声明）；`OP_AND` 只在 `src/compiler/compiler.c:827` 被用于**链式比较**（`1 < x < 10`）。于是「VM 的 opcode 是布尔语义」这件事对 `and`/`or` 运算符毫无影响，读 VM 代码的人会得出与运行时相反的结论。
+**这个落差为什么难被发现**：`src/vm/vm.c:3166-3179` 的 `L_AND` / `L_OR` **确实是布尔语义的**（两个操作数取真值后存 `VAL_BOOL`）。也就是说 VM 的这两个 opcode 与 AOT 一致 —— 但**编译器根本不发它们**。`OP_OR` 在 `bytecode.h` 里声明 —— ★ **更正（`d4b65c6`，本句描述的缺陷已被修掉）：**「全仓从未被 emit」与「只在链式比较里用」**在写下的那一刻是对的**，而让它们失效的**正是把它们要描述的那个缺陷修掉的那一笔**；今天 `grep -rn "OP_OR" src/compiler/` 给 **3 命中**，其中 `compiler.c` 的 `and`/`or` 分支里那一行`emit(comp->curBC, is_and ? OP_AND : OP_OR, result, result, right);` 就是发射点，`OP_AND` 另有一处链式比较的发射点。于是「VM 的 opcode 是布尔语义」这件事对 `and`/`or` 运算符毫无影响，读 VM 代码的人会得出与运行时相反的结论。
 
 **文档是沉默的**：`docs/API.md:90` 只写 `and` `or` `not` 是「逻辑」，没有说返回操作数还是布尔。两边都「符合文档」，所以没有任何一方报错。
 
