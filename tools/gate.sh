@@ -8,7 +8,7 @@
 #                              (build|ctest|fuzz|economy|node|plugin|oauth-loop|
 #                               ignored-credentials|links|doc-paths|text-integrity|
 #                               orphan-fixtures|orphan-targets|line-refs|
-#                               release-tags)
+#                               release-tags|obs-markers)
 #                              `orphan-targets` asks whether a target is run, not
 #                              whether it was compiled here: a target can be run
 #                              by a CTest and still be named only inside a
@@ -581,6 +581,24 @@ stage_release_tags() {
   python3 "$REPO_ROOT/tools/check_release_tags.py"
 }
 
+stage_obs_markers() {
+  # A citation that carries an observation marker claims that the number beside
+  # it was read on the tree the marker names.  That claim is checkable, and this
+  # is the only place it is checked: a marker is otherwise prose, and prose
+  # cannot be run.
+  #
+  # It is registered as a stage while its own ceiling is a debt.  The pin is
+  # still an equality -- pointers may grow by at most EXP_OBS_POINTERS_DELTA_MAX
+  # against EXP_OBS_BASE, and the checker prints the ceiling beside the reading
+  # -- but the ceiling was set, in the commit that registered this stage, to the
+  # value measured there rather than to zero.  A ceiling of zero while the
+  # pointers are unaccounted for is a rule that is red on the day it lands; a
+  # ceiling set to the measured value is a debt with a number on it, and paying
+  # it down means lowering the ceiling in the same commit that removes the
+  # pointers.  See docs/AUDIT.md 1.78.
+  python3 "$REPO_ROOT/tools/check_obs_markers.py"
+}
+
 # ── the stage registry ──────────────────────────────────────────────────────
 #
 # One entry per stage: selector|label|function.  Every consumer reads this
@@ -607,6 +625,7 @@ STAGE_SPECS=(
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
   "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
   "release-tags|sha a document records for a tag, against the tag today|stage_release_tags"
+  "obs-markers|every citation names the tree it was read on|stage_obs_markers"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -675,7 +694,7 @@ REQUIRED_SCOPES=(
   #   stage_release_tags runs tools/check_release_tags.py, which walks docs/ the
   #   same way; and what it compares those documents against is `git tag -l`,
   #   which is not a path at all, so no call site could have named it.
-  "docs/*|links doc-paths line-refs release-tags"
+  "docs/*|links doc-paths line-refs release-tags obs-markers"
   # src/* -- no reader.  src/ is read by the compiler, and a compiler is not a
   #   path named in this file.  fuzz and economy read a built engine, plugin the
   #   shipped plugin, ctest the binaries; none of them names a source file.

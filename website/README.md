@@ -28,9 +28,30 @@
 **切域时要改的地方，只有一处**：`data/site.js`。站内所有链接都是相对的，
 没有任何地方写死了域名——这也是第三节为什么强调「内容以仓库为准」。
 
+### 这条裁定落到哪条路上：GitHub Pages（Actions 部署）
+
+**已经定了**：用 GitHub Pages，地址是 **`https://infileap.github.io/Inimerse/`**。
+它同时满足上面三条：今天就能解析、自带 HTTPS、不需要账号之外的任何东西（仓库是 public）。
+
+> ★ **它把站点放在一个子路径下**（`/Inimerse/`）—— 这不是缺点，是**顺便验了一次
+> 「资源必须相对路径」那条设计**。B站 Toy 会把同一份产物放在 `/toy/<slug>/` 下，
+> 形状是一样的。所以本站有一条不变式：**站内资源 URL 必须从站点根派生，不许硬写绝对路径。**
+> 验证方式见第五节（同一套检查跑两遍：站点在根、站点在 `/Inimerse/`）。
+
+**这条路只需要一次人类动作**：仓库 `Settings → Pages → Source` 选 **GitHub Actions**。
+没有这一下，`deploy` 那一步会失败，而**失败信息不会直说「是设置没开」**。
+
+> ★ 为什么选 Actions 而不是「`gh-pages` 分支 + Deploy from a branch」：
+> **两条路都需要那一次设置**，区别只在**失败的样子**。Actions 那条失败时是**一次红的运行**；
+> 分支那条失败时**什么都不会发生**，只是 URL 一直 404 —— 而「没看见红」不是绿。
+> 这个仓库的规矩是「绿必须是一个数」，所以选了会红的那条。
+
 ---
 
 ## 一、目录结构
+
+> 部署相关的两处不在 `website/` 里：`.github/workflows/pages.yml`（发布工作流）
+> 与仓库的 `Settings → Pages`（一次人类动作，见第〇节）。
 
 ```
 website/
@@ -122,9 +143,39 @@ infiverse.localhost.cc   →  当前没有任何 DNS 记录
 
 ### 第一步：今天就能做完（**不碰 DNS**）
 
-先让站活在一个**已经能解析**的域上。实测：`https://localhost.cc/` → HTTP 200，
-`www.localhost.cc` → `207.57.128.200`。
-按下面任一条路线部署，**这一步不需要任何 DNS 权限，也不需要等任何人**。
+工作流在 `.github/workflows/pages.yml`：`push` 到 `main` 时把 `website/` 发到 GitHub Pages。
+它做三件事：把 `website/scratch/`（站点工具：引用守卫、片段生成器、渲染桩、片段源）
+**挡在产物之外**，`configure-pages`，然后上传 + 部署。
+
+**唯一的人类动作**：仓库 `Settings → Pages → Source = GitHub Actions`。
+
+**验收判据（这一条是硬的）**：
+**一个部署工作流变绿，不是「站上线了」。判据是去取那个真实 URL，拿到真实的页面。**
+
+```bash
+B=https://infileap.github.io/Inimerse
+for p in / /games/ /videos/ /tools/ /about/ \
+         /assets/site.js /assets/site.css /data/site.js /data/videos.js /data/toys.js \
+         /assets/covers/infiverse-desktop-demo-01.jpg; do
+  printf '%-52s %s\n' "$B$p" "$(curl -s -o /dev/null -w '%{http_code}' "$B$p")"
+done
+curl -s "$B/scratch/render_check.js" -o /dev/null -w 'scratch 应当 404 → %{http_code}\n'
+```
+
+**五个页面逐个 200、资源全部 200、`scratch/` 是 404** —— 这四条都拿到，才叫上线了。
+
+**这台机器跑不了那个工作流**（没有 `gh` CLI、没有 token），所以**只能靠取 URL 来验，
+不能靠看 Actions 的运行状态**。「工作流绿了」与「URL 真的给页面」是两件事。
+
+**上线前在本机先验一遍**（模拟 `/Inimerse/` 这个子路径，不需要网络）：
+
+```bash
+node website/scratch/render_check.js                    # 站点在根
+SITE_PREFIX=/Inimerse node website/scratch/render_check.js   # 站点在 /Inimerse/ 下
+```
+
+两条都必须全绿。★ 第二遍是有牙齿的：把站点根写成「域根」那种写法**只在第二遍会红**
+（第一遍照样全绿）—— 而那正是「本站换一个托管路径就坏掉」的形状。
 
 ### 第二步：DNS 加好之后切域
 

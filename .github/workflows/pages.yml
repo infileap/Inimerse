@@ -1,0 +1,80 @@
+# 把 website/ 发布到 GitHub Pages。
+#
+# ★ 为什么是这条路：README 第〇节的裁定是「先按已经能解析的域部署，DNS 加好之后再切过去」。
+#   GitHub Pages 给的 https://<owner>.github.io/<repo>/ 今天就能解析、自带 HTTPS，
+#   不需要账号之外的任何东西 —— 而且它把站点放在一个**子路径**下，正好压着本站
+#   「资源必须相对路径」那条设计（同一个形状也是 B站 Toy 的 /toy/<slug>/）。
+#
+# ★ 一次人类动作：仓库 Settings → Pages → Source 必须选 "GitHub Actions"。
+#   没有这一下，deploy 那一步会失败，而失败信息不会直说「是设置没开」。
+#
+# ★ 判据不是「这个工作流绿了」，是**去取那个真实 URL、拿到真实页面**（见 README 第五节）。
+#   绿必须是一个数，不是一个「没看见红」。
+#
+# ⚠ 下面四个 `uses:` 的版本号不是凭常识写的，是核过的 —— 观测点：api.github.com 的
+#   `/repos/<owner>/<repo>/releases/latest`（2026-10 量）：
+#     actions/checkout              v7.0.1  (2026-07-20)
+#     actions/configure-pages       v6.0.0  (2026-03-25)
+#     actions/upload-pages-artifact v5.0.0  (2026-04-10)
+#     actions/deploy-pages          v5.0.1  (2026-09-01)
+#   而 `path`（upload-pages-artifact 的输入）与 `page_url`（deploy-pages 的输出）也是
+#   从各自的 `action.yml` 里读出来的，不是照记忆写的：
+#     upload-pages-artifact@v5.0.0 的 inputs 里确有 `path`（required: true，默认 "_site/"）；
+#     deploy-pages@v5.0.1 的 outputs 里确有 `page_url`。
+#   ★ 凭常识写的版本号（我第一版写的是 checkout@v4 / configure-pages@v5 /
+#     upload-pages-artifact@v3 / deploy-pages@v4）**四个全是旧的** —— 这正是
+#     「手抄的读数会漂」那一族：它不会报错，只会安静地用一个两年前的 action。
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # scratch/ 是站点的工具（引用守卫、片段生成器、渲染桩、片段源），不是站点本身。
+      # 它留在仓库里，但不进产物 —— 否则每个访问者都能取到我的检查脚本。
+      #
+      # ⚠ 作用域（写在这里，因为 `rm -rf` 是破坏性的、而且它躺在一个很容易被
+      #   本地复制粘贴的位置）：**这一行只作用于 runner 里的那次检出，不作用于仓库。**
+      #   `website/scratch/` 在仓库里原样保留，下一次 checkout 又会把它取回来。
+      #   在本地照抄这一行会真的删掉你的工作树 —— 那不是它在 CI 里的作用域。
+      - name: 把工具挡在产物之外
+        run: |
+          rm -rf website/scratch
+          echo "--- 产物内容（顶层）---"
+          ls -1 website
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: website
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

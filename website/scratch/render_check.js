@@ -134,6 +134,11 @@ function resolveFrom(pageFile, ref) {
   return '/' + out.join('/');
 }
 const ORIGIN = 'https://example.invalid';
+/* 站点被托管在哪个子路径下。
+   GitHub Pages 把它放在 /Inimerse/ 下，B站 Toy 会放在 /toy/<slug>/ 下 ——
+   而「资源必须相对路径」这条设计正是为这两种情况写的。默认空 = 站点在根。
+   用法：SITE_PREFIX=/Inimerse node website/scratch/render_check.js */
+const PREFIX = process.env.SITE_PREFIX || '';
 
 const refsIn = (html) => {
   const out = [];
@@ -186,7 +191,7 @@ function runPage(page, data, html) {
     createElement: (t) => new El(t),
     getElementById: (id) => (Object.prototype.hasOwnProperty.call(hosts, id) ? hosts[id] : null),
     addEventListener: () => {},
-    currentScript: { src: ORIGIN + resolveFrom(page.file, scriptRef) },
+    currentScript: { src: ORIGIN + PREFIX + resolveFrom(page.file, scriptRef) },
     getElementsByTagName: () => [],
   };
 
@@ -434,7 +439,7 @@ PAGES.forEach((page) => {
        它是个子页，如果 asset() 没生效，这里会解析成 /games/assets/... 而不是 /assets/... */
     const pimg = tl.children[0].find((n) => n.tagName === 'IMG' && n.src);
     check('作品位：poster 解析成站点根下的绝对 URL（不是 /games/assets/...）',
-      !!pimg && pimg.src === ORIGIN + '/assets/covers/demo-02.jpg',
+      !!pimg && pimg.src === ORIGIN + PREFIX + '/assets/covers/demo-02.jpg',
       pimg ? pimg.src : '(没有 img)');
   }
   if (s3.hosts['bili-account']) {
@@ -554,13 +559,20 @@ currentPage = '实机演示（真实数据 data/videos.js）';
     const raw = img ? img.src : '';
     // 站点根反推成功时 img.src 已经是绝对 URL（站点根 + 数据里的路径）⇒ 剥掉 origin
     // 再当站点内路径用；反推失败时它还是个页面相对路径 ⇒ 按浏览器规则解析（这正是 404 的形态）。
-    const asPath = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+    let asPath = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
       ? raw.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
       : (raw.charAt(0) === '/' ? raw : resolveFrom(page.file, raw));
+    if (PREFIX && asPath.indexOf(PREFIX + '/') === 0) asPath = asPath.slice(PREFIX.length);
     check('真实记录：封面按浏览器规则解析后仍落在站点内、且文件存在',
       !!img && fs.existsSync(path.join(ROOT, asPath.split('?')[0])),
       `${raw || '(没有 img)'} → ${asPath}`);
     info(`真实记录封面：数据里写 "${real[0].cover}"，页面渲染出 "${raw}"（浏览器会请求 ${asPath}）`);
+    /* ★ 子路径不变式：站点被托管在 PREFIX 之下时，站内资源 URL 必须以 ORIGIN+PREFIX 开头。
+       它抓的是「把站点根当成域根」这一类 bug —— 那种写法在根路径下能跑，在 /Inimerse/ 下 404。
+       根路径那一遍也照跑（此时要求以 ORIGIN+'/' 开头，等于顺带禁掉了硬写的绝对路径）。 */
+    check(`真实记录：封面 URL 落在托管路径 ${PREFIX || '/'} 之下（不是域根的绝对路径）`,
+      raw.indexOf(ORIGIN + PREFIX + '/') === 0,
+      `${raw} 应以 ${ORIGIN + PREFIX}/ 开头`);
     check('真实记录：未投稿时页面写「B站 未投稿」，不是空白',
       real[0].bvid !== '未投稿' || /B站 未投稿/.test(vl.textContent));
     check('真实记录：ref 在页面上只显示前 7 位',
@@ -622,6 +634,7 @@ console.log('');
 console.log(`页面覆盖：${PAGES.length}/${PAGES.length} 页（${PAGES.map((p) => p.label).join('、')}）`);
 console.log(`运行次数：${pageRuns} 次页面求值（${PAGES.length} 页 × 3 轮夹具 + 真实数据轮 + 按钮两种初值轮）`);
 console.log(`资源引用：${allRefs.length} 条，去重后 ${uniqRefs.size} 个文件，全部存在=${allRefs.every((r) => r.exists)}`);
+console.log(`托管路径：${PREFIX || '/'}（SITE_PREFIX 环境变量；空 = 站点在根）`);
 console.log(`检查项：${results.length - bad}/${results.length} 通过`);
 infos.forEach((s) => console.log(`  · ${s}`));
 if (bad) {

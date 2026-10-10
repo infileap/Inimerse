@@ -59,14 +59,14 @@
 
 | # | 位置 | 语言 | 语义 | 机制 |
 |---|---|---|---|---|
-| 1 | `src/compiler/compiler.c:648-670` | C | **值** | `OP_JUMP_IF_FALSE`（and）/ `OP_JUMP_IF_TRUE`（or）+ `OP_MOV result, right`；跳转目标回填 `comp->curBC->code[jmp_pos].r2 = end` |
-| 2 | `selfhost/compiler.im:254-266` | `.im` | **值** | 与 #1 同形：`jpos = len(ctx["code"])`，`ctx["code"][jpos][2] = end` |
+| 1 | **取证当时** `src/compiler/compiler.c:648-670`；锚 = `compile_expr` 的 `EXPR_BINARY` 里判 `TOK_AND`/`TOK_OR` 的那一支 | C | **值**（**取证当时**的记录，对应 `d4b65c6` **之前**的树；该提交之后此处已是**布尔** —— `OP_JUMP_IF_FALSE`/`OP_JUMP_IF_TRUE` + `OP_AND`/`OP_OR` + `OP_LOADK_BOOL`，见 §10.42） | **取证当时** `OP_JUMP_IF_FALSE`（and）/ `OP_JUMP_IF_TRUE`（or）+ `OP_MOV result, right`；跳转目标回填 `comp->curBC->code[jmp_pos].r2 = end`（`jmp_pos` 是取证当时的名字） |
+| 2 | **取证当时** `selfhost/compiler.im:254-266`；锚 = `compile_expr` 的 `t == "bin"` 里判 `op == "and" or op == "or"` 的那一支（今天在 `:254-286`） | `.im` | **值**（**取证当时**的记录，对应 `d4b65c6` **之前**的树；该提交之后此处已是**布尔** —— `OP_JUMP_IF_FALSE`/`OP_JUMP_IF_TRUE` + `OP_AND`/`OP_OR` + `OP_LOADK_BOOL`，见 §10.42） | **取证当时** 与 #1 同形：`jpos = len(ctx["code"])`，`ctx["code"][jpos][2] = end`（`d4b65c6^` 上逐行核过：`:257` 是 `jpos = len(ctx["code"])`、`:264` 是 `emit(ctx, OP_MOV, result, right, 0)`、`:266` 是 `ctx["code"][jpos][2] = end`；今天这两个名字是 `jshort`/`jend`） |
 | 3 | **取证当时** `src/vm/vm.c:3166-3172`（`L_AND`）/ `:3173-3179`（`L_OR`）；**现状（2026-10 实测）** `:3486-3491` / `:3493-3498` | C | **布尔** | `value_set(&R[ins.r1], VAL_BOOL, (a && b) ? 1 : 0, …)`；**取证当时**的真值函数是三目链 `(va.type == VAL_BOOL) ? … : (va.type == VAL_NIL) ? 0 : 1`，**§10.53 已把六个产生点收敛为唯一一处 `vm_truthy()`（`src/vm/vm.c:347`）** |
 | 4 | `src/compilation/aot_native.c:420-428`（`EXPR_BINARY` 在 `:418`，特判在 `:420`，发射在 `:425-428`；**取证当时记作 `:334-339`**） | C | **布尔** | `buf_str(b, "nv_boo(nv_tru(")` … `op == TOK_AND ? ") && nv_tru(" : ") || nv_tru("` … `buf_str(b, "))")` |
 | 5 | `src/compilation/wasm_backend.c:769-776`（AND）/ `:778-786`（OR） | C | **布尔** | `cg_cond()` 递归：AND 为 `W_IF` 左→右→`W_ELSE`+`e_i32c(0)`→`W_END`；OR 为左→`W_IF`+`e_i32c(1)`→`W_ELSE`→右→`W_END` |
 | 6 | `selfhost/eval.im:114-118`（and）/ `:119-123`（or） | `.im` | **布尔** | `if !truthy(l) { return false }` / `if truthy(l) { return true }`；成功路径 `return truthy(eval_expr(e["r"], env))` |
 
-⇒ **2 值 : 4 布尔，横切两种语言。** 且**同语言内部同样分歧**：C 侧 `compiler.c`（值）对 `vm.c`/`aot_native.c`/`wasm_backend.c`（布尔）；`.im` 侧 `compiler.im`（值）对 `eval.im`（布尔）。
+⇒ **（取证当时的分布）** **2 值 : 4 布尔，横切两种语言。** 且**同语言内部同样分歧**：C 侧 `compiler.c`（值）对 `vm.c`/`aot_native.c`/`wasm_backend.c`（布尔）；`.im` 侧 `compiler.im`（值）对 `eval.im`（布尔）。★ **今天不是这个分布**：`d4b65c6` 之后**六处全部为布尔**（0 值 : 6 布尔）—— 这一行与上面那张表都是**取证当时**的记录，不是今天的现值。
 
 **本仓现有实测（[转述]，`docs/AUDIT.md` §1.6「三通道差分实测」）**：`and`/`or` 三通道 **8/8 分歧、三种行为**——解释器给操作数（`1 and 5` → `5`）、AOT 给布尔（→ `true`）、**wasm 在条件之外直接拒绝编译**（`error: wasm MVP subset: 'and'/'or' outside a condition is not supported (use it in if/while) (line 1)`）。⇒ 上表的「值 / 布尔」二分之外还有第三种行为：**拒答**（wasm 的 `cg_cond` 只在条件位置工作）。
 

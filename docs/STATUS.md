@@ -2341,7 +2341,7 @@ UDP 往返，两者不同步」。**代码证伪了它**：`b_verse_hub_ping`（
 
 ### 手写探针找不到的东西，模糊测试找到了
 
-本轮最严重的一条 —— `and` / `or` 在两个后端返回不同的东西 —— **不是手写探针找到的**。解释器的编译器把 `and`/`or` 编译成短路跳转并返回操作数（`src/compiler/compiler.c:648-670`），AOT 编译成布尔（`src/compilation/aot_native.c:334-339`）；实测 `31 or 1` 解释器给 `31`、AOT 给 `true`。
+本轮最严重的一条 —— `and` / `or` 在两个后端返回不同的东西 —— **不是手写探针找到的**。解释器的编译器把 `and`/`or` 编译成短路跳转并返回操作数（`src/compiler/compiler.c:648-670`），AOT 编译成布尔（`src/compilation/aot_native.c:334-339`）；实测 `31 or 1` 解释器给 `31`、AOT 给 `true`。 ★ **本行是【记录】，坐标读于写下它的那一刻**；解释器今天已按用户裁定改成布尔（`d4b65c6`）—— 按内容找，不按号。
 
 **最难察觉的地方在于**：VM 的 `L_AND`/`L_OR`（`src/vm/vm.c:3166-3179`）**确实是布尔语义的**，但编译器根本不发它们 —— `OP_OR` 声明在 `src/compiler/bytecode.h:12` 却**全仓从未被 emit**，`OP_AND` 只在 `src/compiler/compiler.c:827` 用于链式比较。所以「去读 VM 代码」会得出与运行时**相反**的结论。而 `docs/API.md:90` 只说这两个是「逻辑」，没说返回操作数还是布尔 ⇒ **两边都符合文档，都不报错**。
 
@@ -2463,12 +2463,12 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 
 **这一行要纠正的直觉**：去C化的难点不是「哪个文件是 C 写的」，而是**同一条语言语义在仓库里有多个独立决定点，且这个分裂横切实现语言**。最硬的证据是两个 `.im` 文件互相矛盾：
 
-- `selfhost/compiler.im:254-266` —— `and`/`or` **值语义**（与 C 侧 `src/compiler/compiler.c:648-670` 同形：`OP_JUMP_IF_FALSE`/`OP_JUMP_IF_TRUE` + `OP_MOV result, right`）；
+- `selfhost/compiler.im:254-266` —— `and`/`or` **值语义**（与 C 侧 `src/compiler/compiler.c:648-670` 同形：`OP_JUMP_IF_FALSE`/`OP_JUMP_IF_TRUE` + `OP_MOV result, right`）； ★ **本行是【记录】；而「同形」这句今天反了 —— C 侧与 `selfhost/compiler.im` 今天都是布尔（`d4b65c6`）。**
 - `selfhost/eval.im:114-123` —— 同一对运算符 **布尔语义**（`if !truthy(l) { return false }`）。
 
 ⇒ **「用 `.im` 重写」本身不消除分歧，只是改变分歧发生在哪两个文件之间。** 同语言内部同样分裂：C 侧 `compiler.c`（值）对 `vm.c`/`aot_native.c`/`wasm_backend.c`（布尔）。
 
-**六个决定点**（全部逐行读过，`[读码]`）：`src/compiler/compiler.c:648-670`（C·值）、`selfhost/compiler.im:254-266`（`.im`·值）、`src/vm/vm.c:3166-3179`（C·布尔）、`src/compilation/aot_native.c:334-339`（C·布尔）、`src/compilation/wasm_backend.c:769-786`（C·布尔）、`selfhost/eval.im:114-123`（`.im`·布尔）= **2 值 : 4 布尔**。`%` 有 **3 个**：`src/vm/vm.c:3815-3824`（32 位）、`src/compilation/aot_native.c:208-211`（64 位）、`src/compilation/wasm_backend.c:938`/`:960`（64 位）。
+**六个决定点**（全部逐行读过，`[读码]`）：`src/compiler/compiler.c:648-670`（C·值）、`selfhost/compiler.im:254-266`（`.im`·值）、`src/vm/vm.c:3166-3179`（C·布尔）、`src/compilation/aot_native.c:334-339`（C·布尔）、`src/compilation/wasm_backend.c:769-786`（C·布尔）、`selfhost/eval.im:114-123`（`.im`·布尔）= **2 值 : 4 布尔**。 ★ **本行是【记录】，且它与 `docs/BOARD.md` 的 `decfy-design` 行是同一张表写了两遍 —— 两份一起过期，今天读是 `0 值 : 6 布尔`。**`%` 有 **3 个**：`src/vm/vm.c:3815-3824`（32 位）、`src/compilation/aot_native.c:208-211`（64 位）、`src/compilation/wasm_backend.c:938`/`:960`（64 位）。
 
 **注释不可当证据**：`src/compilation/aot_native.c:334-339` 的注释声称 "C's && and || short-circuit exactly as the interpreter's do"，与该处行为**相反**；`src/compilation/wasm_backend.c:6` 声称 "mirror the C VM exactly"，而其 `:9` 描述的 `L_MOD` 形状与自己的 `:938`（`W_I64_REM_S`）矛盾。这正是分歧能活到现在的原因。
 
