@@ -196,7 +196,15 @@ j = json_serialize({"k": 1})
 check(json_parse(j)["k"] == 1, "json roundtrip")
 
 # ---------- 13. 随机确定性 ----------
-r1 = random() % 100
+# random(n) takes one argument.  This line used to call it with none, and the
+# builtin then read the type tag of whatever slot happened to be on top of the
+# stack.  Measured in THIS file's context before the fix: `str(random())`
+# answered "true" and `r1 = random()` answered "k" -- the value json_parse(j)
+# had left two lines above.  `random() % 100` then handed a string to the
+# arithmetic, which coerced it to 0.0 in silence, so the check below PASSED.
+# A check that passes on garbage is a finding, not a typo: the argument is
+# restored, and both copies of the builtin now check the argument's type.
+r1 = random(100) % 100
 check(r1 >= 0 and r1 < 100, "random range")
 
 # ---------- 14. SPI 能力 ----------

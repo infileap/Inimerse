@@ -128,10 +128,16 @@ static int posix_core_float(VM *vm) {
     /* Do not read a union member by assumption.  The old fallback was
        `else n = v->fval`, which read the DOUBLE member of a bool: float(true)
        answered 4.9406564584124654e-324, the bit pattern of the integer 1, while
-       float(false) and float(nil) answered 0 by accident.  val_as_double() is
-       tag-checked and gives a bool 1.0/0.0, exactly as the WIN32 copy does.
-       See docs/AUDIT.md 1.20. */
-    double n = v->type == VAL_STRING ? strtod(v->sval ? v->sval : "0", NULL) : val_as_double(v);
+       float(false) and float(nil) answered 0 by accident.  val_as_double_coerce()
+       is tag-checked and gives a bool 1.0/0.0, exactly as the WIN32 copy does.
+       See docs/AUDIT.md 1.20.
+       This is the coercing accessor on purpose, and the reason is pinned:
+       CMakeLists.txt registers union_member_tag_runtime with the shape clause
+       `float-nil=0`, so float(nil) == 0 is a contract, not an accident that
+       survived.  The strict val_as_double() would refuse a nil here and turn
+       that clause red.  The tag check is what fixed the bool case; "should a
+       nil be refused" is not this site's question.  See docs/AUDIT.md 1.85. */
+    double n = v->type == VAL_STRING ? strtod(v->sval ? v->sval : "0", NULL) : val_as_double_coerce(v);
     pop(vm); push_float(vm, n); return 1;
 }
 
@@ -636,7 +642,13 @@ static int posix_core_index(VM *vm) {
 static int posix_gc_auto(VM *vm) {
     if (vm_cur_sp(vm) >= 0) {
         Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-        int on = val_as_double(v) != 0.0;  /* tag-checked: (int)v->fval read a bool's bits */
+        /* The coercing accessor, on purpose: 'is this value truthy' is a
+           question every tag has an answer to, so there is nothing here to
+           refuse.  (int)v->fval was wrong for a different reason -- it read
+           a bool's bits -- and val_as_double_coerce() is what fixed that.
+           The strict val_as_double() would refuse a nil, and `if nil` is
+           defined to be false.  See docs/AUDIT.md 1.85. */
+        int on = val_as_double_coerce(v) != 0.0;
         vm->gc_enabled = on ? 1 : 0;
         if (on && vm->gc_threshold <= 0) vm->gc_threshold = 2.0 * 1024.0 * 1024.0;
         pop(vm);
@@ -683,8 +695,61 @@ static int posix_gc_stats(VM *vm) {
 #include "../platform/serial.h"
 #include "../platform/im_process.h"
 
-static int posix_random(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; int n = vm_cur_stack(vm)[vm_cur_sp(vm)].ival; pop(vm); push_int(vm, n > 0 ? rand() % n : 0); return 1; }
-static int posix_sqrt(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); push_float(vm, sqrt(val_as_double(&v))); return 1; }
+/* The contract is `random(n)`.  Called with no argument, this function used to
+ * answer a value anyway -- and the value was not computed from anything the
+ * caller passed.
+ *
+ * What actually happens, measured, not inferred.  The compiler emits
+ * OP_CALL_BUILTIN with argc = 0, the VM sets vm->cur_argc = 0 and calls in
+ * here, and this function's OWN first line declines:
+ *
+ *     if (vm_cur_sp(vm) < 0) return 0;       -- and 0 means "not handled"
+ *
+ * The stack really is empty, so it returns 0.  The dispatch then falls through
+ * to
+ *
+ *     if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
+ *
+ * and with t->sp == -1 that does not run either -- so R[ins.r1] KEEPS ITS OLD
+ * VALUE and the call's answer is whatever register happened to hold.  That is
+ * a stale REGISTER, not a stale stack slot: in contract_test.im's own context
+ * `str(random())` answered "true" and `r1 = random()` answered "k" (the string
+ * json_parse had left in that register), and in a fresh program the same call
+ * answers 0, because there the register was fresh.  Both are one defect.
+ *
+ * Because the decline is this function's own first line, an argument check
+ * placed AFTER it never runs -- the sp guard swallows the call first.  The
+ * argument-count test therefore goes BEFORE it, and the value test after, and
+ * both use the same error path the strict accessors use.
+ *
+ * Two measured boundaries, so the next reader does not have to re-derive them:
+ *   - vm->cur_argc is the argument count the instruction carries; the dispatch
+ *     sets it immediately before calling a builtin (and src/mod/* consult it,
+ *     while the builtins in this file consulted it zero times before this).
+ *   - the language has no arity checking anywhere: a user function called with
+ *     no arguments answers nil, and one called with too many answers its first
+ *     argument.  So this is one site of a language-wide property, and this
+ *     change does not claim to fix the property.
+ * See docs/AUDIT.md 1.86. */
+static int posix_random(VM *vm) {
+    if (vm->cur_argc < 1) {
+        vm_throw_kind(vm, "type_mismatch");
+        push_int(vm, 0);
+        return 1;
+    }
+    if (vm_cur_sp(vm) < 0) return 0;
+    Value v = vm_cur_stack(vm)[vm_cur_sp(vm)];
+    pop(vm);
+    if (v.type != VAL_INT && v.type != VAL_FLOAT && v.type != VAL_BOOL) {
+        vm_throw_kind(vm, "type_mismatch");
+        push_int(vm, 0);
+        return 1;
+    }
+    int n = (v.type == VAL_INT || v.type == VAL_BOOL) ? v.ival : (int)v.fval;
+    push_int(vm, n > 0 ? rand() % n : 0);
+    return 1;
+}
+static int posix_sqrt(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; Value v = vm_cur_stack(vm)[vm_cur_sp(vm)]; pop(vm); push_float(vm, sqrt(val_as_double(vm, &v))); return 1; }
 static int posix_time_ms(VM *vm) { push_int(vm, (int)(im_platform_now_ms() & 0x7fffffff)); return 1; }
 static int posix_sleep(VM *vm) { if (vm_cur_sp(vm) < 0) return 0; int ms=vm_cur_stack(vm)[vm_cur_sp(vm)].ival; pop(vm); if(ms>0) im_platform_sleep_ms((unsigned)ms); push_int(vm, 1); return 1; }
 static int posix_read_file(VM *vm) { if(vm_cur_sp(vm)<0)return 0; Value v=vm_cur_stack(vm)[vm_cur_sp(vm)]; const char *p=v.sval?v.sval:""; FILE *f=fopen(p,"rb"); pop(vm); if(!f){push_string(vm,"");return 1;} fseek(f,0,SEEK_END); long n=ftell(f); fseek(f,0,SEEK_SET); char *b=(char*)malloc((size_t)n+1); if(!b){fclose(f);push_string(vm,"");return 1;} size_t got=(size_t)fread(b,1,(size_t)n,f); fclose(f); b[got]=0; push_string(vm,b); free(b); return 1; }
@@ -838,7 +903,7 @@ static int posix_atomic_add(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value delta = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    long long d = val_as_int(&delta);
+    long long d = val_as_int(vm, &delta);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     /* A name that is not a string is a caller error, not an empty counter:
        raising is the one answer that cannot be mistaken for success.  The
@@ -910,7 +975,7 @@ static int posix_atomic_set(VM *vm) {
     if (vm_cur_sp(vm) < 1) return 0;
     Value name = vm_cur_stack(vm)[vm_cur_sp(vm) - 1];
     Value value = vm_cur_stack(vm)[vm_cur_sp(vm)];
-    long long val = val_as_int(&value);
+    long long val = val_as_int(vm, &value);
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
     /* A name that is not a string is a caller error, not an empty counter:
        raising is the one answer that cannot be mistaken for success.  The
@@ -1083,7 +1148,7 @@ static int posix_spi_meta(VM *vm) {
     if (found < 0 && vm->modCount < 32) found = vm->modCount++;
     if (found >= 0) {
         snprintf(vm->mods[found].id, sizeof vm->mods[found].id, "%s", name);
-        vm->mods[found].version = (int)val_as_int(&version);
+        vm->mods[found].version = (int)val_as_int(vm, &version);
         vm->mods[found].caps = mask;
     }
     vm_cur_set_sp(vm, vm_cur_sp(vm) - 3);
