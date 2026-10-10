@@ -110,7 +110,24 @@ EXP_OBS_CITATIONS = int(os.environ.get("EXP_OBS_CITATIONS", "2000"))
 # tree: a count is a property of the tree, and this repository grows.  The base
 # is a sha because the meaning of "base" is a thing that does not move.
 EXP_OBS_BASE = os.environ.get("EXP_OBS_BASE", "e3e97c71e51ba491cf28d4b7a064ecbece9bf140")
-EXP_OBS_POINTERS_DELTA_MAX = int(os.environ.get("EXP_OBS_POINTERS_DELTA_MAX", "0"))
+# A CEILING, and it is an equality -- but it is not 0, and that is a debt with a
+# number on it.  This stage was registered while the pointers it counts were
+# unaccounted for, and the number below is the delta measured in the commit that
+# registered it: 2234 -> 2396, 162 citations that name no tree.  A ceiling of 0
+# would be a rule that is red on the day it lands, and a rule that is red on the
+# day it lands is one everybody learns to step around; a ceiling at the measured
+# value counts the debt without pretending it is paid.  Paying it down means
+# lowering this number in the same commit that removes the pointers, and 0 is
+# where it ends.
+#
+# The number is not a constant of this repository, and it must not be copied
+# from anywhere else: it read 156 at e8bddcd, 154 after 83a3829 turned two
+# pointers into records, and 162 at 60f0572 -- three readings, three ordinary
+# docs/ edits.  Taking it and writing it have to be the same commit, or the
+# number on the page describes a tree that no longer exists.  (Only docs/ moves
+# it: this file walks `docs/**/*.md`, so the tools/ and CI edits in the same
+# commit are invisible to it.)
+EXP_OBS_POINTERS_DELTA_MAX = int(os.environ.get("EXP_OBS_POINTERS_DELTA_MAX", "162"))
 
 # Which classes may exempt a citation from the HEAD check.  A record is the
 # only one: it names its own tree.

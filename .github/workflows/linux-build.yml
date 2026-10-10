@@ -36,7 +36,7 @@ jobs:
           #                                              none of
           # run: the gate
           for stage in ignored-credentials links doc-paths text-integrity \
-                       orphan-fixtures orphan-targets line-refs; do
+                       orphan-fixtures orphan-targets line-refs obs-markers; do
             echo "::group::gate --only ${stage}"
             bash tools/gate.sh --only "${stage}"
             echo "::endgroup::"
