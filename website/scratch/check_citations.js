@@ -28,6 +28,10 @@ const ROOT = path.resolve(SITE, '..');     // 仓库根
 
 const results = [];
 let current = '(全局)';
+/* 只报事实的行，不参与判定 —— 与 render_check.js 里的同名工具同形。 */
+const infos = [];
+function info(s) { infos.push(s); }
+
 function check(name, cond, detail) {
   results.push({ where: current, name, ok: !!cond, detail: detail === undefined ? '' : String(detail) });
 }
@@ -343,6 +347,25 @@ const MSR_LABEL = MSR_SPEC.kind === 'pointer'
   ? `${MSR_SPEC.resolve} 解析出的 ${MSR_SHA.slice(0, 7)}（一个指针，不是钉）`
   : `${MSR_SHA.slice(0, 7)}（钉）`;
 check('markerScanRef 解析出来的必须是一个真实提交', /^[0-9a-f]{40}$/.test(MSR_SHA), MSR_SHA);
+
+/* ★ 守卫 ⑪（谁裁的）问的是【现状】：「这份文件里今天每一处归属，台账都跟上了吗」。
+   所以它读一根【指针】。家法：指针（「去看那儿」）必须更新到当前值；
+   记录（「当时量到什么」）保留原值并写明是哪棵树。
+   ★ 逐条条目的 `readAt` 仍然是【记录】—— 它们说的是「这条引文当时读自哪棵树」。 */
+const ATT_SPEC = (D.attribution && D.attribution.tree)
+  || { kind: 'pin', resolve: (D.attribution && D.attribution.readAt) || D.ref };
+const ATT_SHA = execFileSync('git', ['rev-parse', ATT_SPEC.resolve], { cwd: ROOT, encoding: 'utf8' }).trim();
+const ATT_LABEL = ATT_SPEC.kind === 'pointer'
+  ? `${ATT_SPEC.resolve} 解析出的 ${ATT_SHA.slice(0, 7)}（一个指针，不是钉）`
+  : `${ATT_SHA.slice(0, 7)}（钉）`;
+check('attribution 的树解析出来必须是一个真实提交', /^[0-9a-f]{40}$/.test(ATT_SHA), ATT_SHA);
+/* ★ 一个会动的数如果不印出它今天解析成了什么，读报告的人会把它当成一个稳定的数。 */
+{
+  const at = D.attribution || {};
+  const t = docAtRef(ATT_SHA, at.file || 'docs/EIDOS_V06.md').text;
+  const sites = (t.match(new RegExp(at.askUserQuestion || 'ask_user_question', 'g')) || []).length;
+  info(`守卫 ⑪ 的输入树：${ATT_LABEL} —— 这份文件在那棵树上出现「${at.askUserQuestion || 'ask_user_question'}」${sites} 处`);
+}
 const docFiles = execFileSync('git', ['ls-tree', '-r', '--name-only', MSR_SHA, 'docs/'], { cwd: ROOT, encoding: 'utf8' })
   .split('\n').map((x) => x.trim()).filter((x) => x.endsWith('.md'));
 const ledgerFiles = new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean));
@@ -382,7 +405,7 @@ const boundary = { marker: [], mention: [] };
  *   而默认那一份永远来自一棵树（见下表），不是来自磁盘。
  * ★★ 覆盖表 —— 一个缝一个文件，而**两个缝的默认树不是同一棵**：
  *     MARKER_SCAN_FILE → docs/EIDOS_V06.md  默认读 MSR_SHA（`origin/main` 运行时解析，量的是现状）
- *     ATTRIBUTION_DOC  → docs/EIDOS_V06.md  默认读 `attribution.readAt`（是那条断言的记录）
+ *     ATTRIBUTION_DOC  → docs/EIDOS_V06.md  默认读 `attribution.tree`（一根指针，量的是现状）
  *   ⇒ ★ 所以「把它设成 `docs/EIDOS_V06.md` 在 `D.ref` 上的内容 ⇒ 读数与不设时相同」
  *     这条验收**不成立**：`D.ref`（= `754403b`）是这两条**都不是**的那棵树。
  *     正确的验收是【设成它自己的默认树上的内容】—— 见下面那条守卫，它对每个缝分别做。 */
@@ -394,7 +417,7 @@ const SEAMS = {
   },
   ATTRIBUTION_DOC: {
     file: 'docs/EIDOS_V06.md',
-    tree: () => (D.attribution && D.attribution.readAt) || D.ref,
+    tree: () => ATT_SHA,
     usedBy: '守卫 ⑪（谁裁的）',
   },
 };
@@ -719,22 +742,87 @@ if (at) {
     copies.length ? `还有 ${copies.length} 处：第 ${copies.join('、')} 行` : '没有副本');
 }
 
-/* ---------------- ⑫ 守卫 ⑪ 的输入树 vs 今天那棵树：它会不会「因为看不见所以绿」 ----------------
- * 守卫 ⑪ 的输入树是 `attribution.readAt` —— 一根**钉**。如果那份文件在那棵树上与今天
- * 那棵树上不同，守卫读的就是一份旧副本：它绿，而它绿的理由是**它没看**。
- * ★ 这不是假想的：`docs/` 整体在 `0217b34` 与今天之间动过 8 个文件、+605/−30。
- * ★ 这一条把它变成一个会说话的数 —— 「看不见」与「没问题」在绿上长得一样，
- *   而它们的处置相反（前者要重钉或改成指针，后者什么都不用做）。
+/* ---------------- ⑫ spec.js 里那些【手写的树】还在不在、离今天多远 ----------------
+ * ★ 这一条的射程【搬过一次家】，理由要写在原地：
+ *   它原来的射程是「守卫 ⑪ 的输入树 vs 今天那棵树」—— 而那条守卫的存在理由，
+ *   是守卫 ⑪ 读一根**钉**这个事实。⑪ 改成指针之后，⑫ 的两边永远相等 ⇒
+ *   **它会变成一条恒真的守卫**。而恒真的守卫与不存在的守卫都是绿的。
+ * ★ 判据：一个探测器的存在理由如果是【另一个东西的形状】，那个形状改掉之后它必须
+ *   一起改掉 —— 否则它不再说话，而它不说话的样子与「它看了，没问题」一样。
+ * ★ 搬到哪里：`spec.js` 里每一份**手写的树**（本页的主观测点 + 逐份文档的 `ref`）。
+ *   每份都要被问两次：「它还是一个真实提交吗」「它读的那份文件与今天那棵树差多少」。
  */
-current = '覆盖：守卫 ⑪ 的输入树 vs 今天那棵树';
+current = '覆盖：规范页里手写的树';
 {
-  const attrTree = (D.attribution && D.attribution.readAt) || D.ref;
-  const attrFile = (D.attribution && D.attribution.file) || 'docs/EIDOS_V06.md';
-  const same = docAtRef(attrTree, attrFile).text === docAtRef(MSR_SHA, attrFile).text;
-  check(`守卫 ⑪ 的输入树（${String(attrTree).slice(0, 7)}）上那份文件与今天那棵树上逐字相同`,
-    same,
-    same ? `逐字相同（${String(attrTree).slice(0, 7)} vs ${String(MSR_SHA).slice(0, 7)}）`
-         : `不同 ⇒ 它读的是 ${String(attrTree).slice(0, 7)}，今天是 ${String(MSR_SHA).slice(0, 7)} —— 台账可能落后，或这一根钉该改成指针`);
+  const specs = [];
+  specs.push({ what: '本页的主观测点 spec.js.ref', ref: S.ref, file: null });
+  (S.docs || []).forEach((d) => { if (d.ref) specs.push({ what: `${d.file} 的逐份 ref`, ref: d.ref, file: d.file }); });
+
+  specs.forEach((sp) => {
+    let real = false, why = '';
+    try {
+      execFileSync('git', ['rev-parse', '--quiet', '--verify', `${sp.ref}^{commit}`],
+        { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      real = true;
+    } catch (e) { why = String((e && e.stderr) || (e && e.message) || e).trim().slice(0, 90); }
+    check(`${sp.what} 是一个真实存在的提交（${String(sp.ref).slice(0, 7)}）`, real, why);
+    if (!real) return;
+
+    // 它必须是【过去】的一棵树：一棵将来的树当记录，是一句没有发生过的引文。
+    let anc = false;
+    try {
+      execFileSync('git', ['merge-base', '--is-ancestor', sp.ref, MSR_SHA],
+        { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      anc = true;
+    } catch (e) { /* 不是祖先 */ }
+    check(`${sp.what} 是今天那棵树的祖先（记录只能来自过去）`, anc,
+      anc ? '' : `${String(sp.ref).slice(0, 7)} 不是 ${String(MSR_SHA).slice(0, 7)} 的祖先`);
+
+    if (sp.file) {
+      const d = execFileSync('git', ['diff', '--numstat', sp.ref, MSR_SHA, '--', sp.file],
+        { cwd: ROOT, encoding: 'utf8' }).trim();
+      info(`${sp.what}（${String(sp.ref).slice(0, 7)}）→ 今天：${d ? `改了 ${d}` : '逐字未改'}`);
+    }
+  });
+  info(`手写的树共 ${specs.length} 处：${specs.map((x) => String(x.ref).slice(0, 7)).join(' / ')}`);
+}
+
+/* ---------------- ⑬ auditSelection 的分母：三节里每一条都要有去处 ----------------
+ * ★ 我原来只在文字里声称「A–AF 与 A–W 全覆盖」—— 那是一句【值 + 无守卫】，
+ *   按家法它是一个断言，不是一个占位符。这一条把它变成两个方向都会红的检查：
+ *   分母从 docs/AUDIT.md 里【数出来】（不是写下来的），分子 = 收录 + 排除。
+ *   ★ 少一条（既没收也没排除）红；多一条（排除清单里有不存在的 id）红。
+ */
+current = 'auditSelection：分母与分子';
+{
+  const AS = D.auditSelection;
+  if (!AS) {
+    check('auditSelection 存在（三节的取舍必须是一份可核的数据）', false, '缺 auditSelection');
+  } else {
+    const text = docAtRef(AS.readAt, AS.file).text;
+    const lines = text.split('\n');
+    const denom = new Set();
+    AS.sections.forEach((sec) => {
+      const start = lines.findIndex((l) => new RegExp(`^#{2,3}\\s+${sec.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(l));
+      if (start === -1) { check(`auditSelection：节「${sec.id}」在 ${AS.file} 里找得到`, false, '找不到这一节'); return; }
+      const end = lines.findIndex((l, k) => k > start && /^#{2,3}\s/.test(l));
+      const re = new RegExp(sec.itemRe);
+      lines.slice(start + 1, end === -1 ? lines.length : end).forEach((l) => {
+        const m = l.match(re);
+        if (m) denom.add(`${sec.id}|${m[1]}`);
+      });
+    });
+    const numer = new Set();
+    (AS.included || []).forEach((x) => numer.add(`${x.section}|${x.item}`));
+    (AS.excluded || []).forEach((g) => (g.ids || []).forEach((id) => numer.add(`${g.section}|${id}`)));
+    const missing = [...denom].filter((k) => !numer.has(k));
+    const extra = [...numer].filter((k) => !denom.has(k));
+    check(`auditSelection：三节里每一条都被【收录】或【排除】（分母 ${denom.size}）`,
+      missing.length === 0, missing.length ? `既没收录也没排除：${missing.join('、')}` : `${denom.size} 条都有去处`);
+    check('auditSelection：排除清单里没有不存在的条目',
+      extra.length === 0, extra.length ? `清单里有而原文没有：${extra.join('、')}` : '没有多余的');
+    info(`auditSelection：分母 ${denom.size} = 收录 ${(AS.included || []).length} + 排除 ${(AS.excluded || []).reduce((a, g) => a + (g.ids || []).length, 0)}（读自 ${AS.readAt}）`);
+  }
 }
 
 /* ---------------- 被禁字符串守卫 ---------------- */
@@ -784,6 +872,7 @@ console.log('出处分级：' + Object.keys(AT.routes)
   + ` ／ 射程：${AT.file} 的已裁条目里，没写「谁裁的」的 `
   + D.entries.filter((e) => e.source.file === AT.file && e.status === 'ruled' && !e.ruledBy).length + ' 条'
   + '（humanRuled 那个块是这套做法的出处，不是花名册）');
+infos.forEach((x) => console.log(`  · ${x}`));
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
 console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md（读自 ${MSR_LABEL}），其中 ${marked.length} 份带标记`);
 console.log(`标记 / 提及的分界：标记 ${boundary.marker.length} 行 / 提及 ${boundary.mention.length} 行（判成提及的逐行在下面）`);
