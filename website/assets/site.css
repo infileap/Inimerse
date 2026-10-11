@@ -169,3 +169,71 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
   .page > .wrap > h1 { font-size: 24px; }
   .site-nav { gap: 12px; }
 }
+
+/* ---------- 规范页 / 台账页 ---------- */
+.muted { color: var(--fg-dim); }
+.callout--tight { margin: 14px 0; font-size: 14px; }
+
+/* 状态徽章：已裁与提案必须一眼分得开 —— 台账页如果分不出这两者，它就没在做台账 */
+.badge--human { color: var(--accent); border-color: var(--accent); }
+
+.legend { display: grid; gap: 8px; margin: 6px 0 18px; }
+.legend__item { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+.legend__note { color: var(--fg-dim); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 22px; }
+.filter {
+  font: inherit; font-size: 13px; cursor: pointer;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg-dim);
+}
+.filter:hover { border-color: var(--accent); color: var(--fg); }
+.filter--on { border-color: var(--accent); color: var(--fg); background: var(--bg-soft, #11161d); }
+
+.decisions { display: grid; gap: 18px; }
+.spec { display: grid; gap: 34px; }
+
+.decision {
+  border: 1px solid var(--line); border-left-width: 3px; border-radius: 8px;
+  padding: 16px 18px; background: var(--bg-soft, #11161d);
+}
+.decision--ruled { border-left-color: var(--ok); }
+.decision--proposal { border-left-color: var(--warn); }
+.decision--undecided { border-left-color: var(--warn); }
+.decision--notdone, .decision--notdoing, .decision--discipline { border-left-color: var(--line); }
+
+.decision__head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.decision__id { font-size: 12px; color: var(--fg-dim); }
+.decision__title { margin: 0 0 12px; font-size: 17px; }
+
+.field { margin: 0 0 10px; }
+.field__label {
+  display: inline-block; font-size: 11px; letter-spacing: .06em;
+  color: var(--fg-dim); margin-bottom: 3px;
+}
+.field__text { margin: 0; font-size: 14px; }
+.field--decided .field__text { color: var(--fg); }
+.field--alt .field__text, .field--why .field__text, .field--overturn .field__text { color: var(--fg-dim); }
+.field--overturn { border-left: 2px solid var(--accent); padding-left: 10px; }
+.field--flag .field__text { color: var(--warn); }
+.field--zero .field__text { color: var(--fg-dim); font-style: italic; }
+.field__attribution { margin: 6px 0 0; font-size: 12px; color: var(--fg-dim); }
+.field--mine .field__text { color: var(--fg-dim); }
+.field--verbatim .verbatim { margin: 4px 0 0; padding-left: 18px; color: var(--fg-dim); font-size: 13px; }
+.field--verbatim .verbatim li { margin: 2px 0; }
+
+.source { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.source__head { margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; }
+.source__label { font-size: 11px; letter-spacing: .06em; color: var(--fg-dim); }
+.source__where { font-size: 12px; color: var(--accent); }
+.source__quote {
+  margin: 0; padding: 8px 12px; border-left: 2px solid var(--line);
+  color: var(--fg-dim); font-size: 13px; white-space: pre-wrap;
+}
+.source__warn { margin: 8px 0 0; font-size: 12px; color: var(--warn); }
+
+.spec-doc { border-top: 1px solid var(--line); padding-top: 20px; }
+.spec-doc__title { margin: 0 0 6px; font-size: 19px; }
+.spec-doc__meta { margin: 0 0 14px; font-size: 12px; color: var(--fg-dim); }
+.spec-doc__count { margin: 16px 0 10px; font-size: 13px; color: var(--fg-dim); }
+.spec-doc .decision { margin-bottom: 14px; }
