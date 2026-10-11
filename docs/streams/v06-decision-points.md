@@ -165,3 +165,9 @@ git grep -n 'set_contains\|set_subset\|im_typeset_contains\|im_typeset_subset' -
 git grep -n 'OP_BIND\|STMT_BIND\|STMT_TYPE\|TOK_BE' -- src/          # §7
 git grep -n 'emit_from_bytecode' -- src/                            # §2 消费者读法：0
 ```
+
+---
+
+★ **本清单里的 18 个决定点（`and`/`or` 7 点、`%` 6 点、真值 5 点）另有一栏【独立判定 / 委托】—— 每个点还要分清它是【自己判】还是【把答案交给别人】—— 见 [`docs/streams/v06-decision-points-delegation.md`](v06-decision-points-delegation.md)。**
+
+★ **本文件是记录，那一栏是读数**：本文件的全部读数取自 `f6e22f5`，它的结论与行号一条都不动；那一栏取自 `9f3761e`，并把两套行号并列写出（**旧号是记录，新号是读数，两个都留** —— 删掉任何一个都会让「它漂过没有」变成不可判）。
