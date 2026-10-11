@@ -52,7 +52,7 @@ function docAt(ref, file) {
 /** 节号在标题里出现：`## 4. ★ super…` / `### 3.1 ★★★ …` / `## 7. 未定…` */
 function sectionExists(text, section) {
   const esc = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．]|$)`, 'm');
+  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．：:]|$)`, 'm');
   const m = text.match(re);
   return m ? m[0] : null;
 }
@@ -183,7 +183,7 @@ const NOT_A_STANCE = ['undecided', 'notdone', 'notdoing', 'discipline'];
 /** 取某节的标题行 */
 function sectionHeading(text, section) {
   const esc = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．]|$).*$`, 'm');
+  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．：:]|$).*$`, 'm');
   const m = re.exec(text);
   return m ? m[0] : '';
 }
@@ -191,7 +191,7 @@ function sectionHeading(text, section) {
 /** 取某节的正文：从标题行之后，到下一个标题为止 */
 function sectionBody(text, section) {
   const esc = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．]|$).*$`, 'm');
+  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．：:]|$).*$`, 'm');
   const m = re.exec(text);
   if (!m) return null;
   const rest = text.slice(m.index + m[0].length);
@@ -277,6 +277,19 @@ for (const sd of (S && S.docs) || []) {
     const at = d.text.indexOf(h);
     check(`${sd.file} 的文件头逐字存在：「${h.slice(0, 34)}…」`,
       at !== -1, at === -1 ? `找不到：「${h.slice(0, 60)}」` : `第 ${d.text.slice(0, at).split('\n').length} 行`);
+  }
+
+  /* ★ 一份文档可以声明自己的 ref（元信息读自另一棵树）。
+     它必须是一个真实提交，且与主观测点不同 —— 相同就不该写这个字段。 */
+  if (sd.ref && sd.ref !== S.ref) {
+    let real = false; let why = '';
+    try {
+      execFileSync('git', ['rev-parse', '--quiet', '--verify', `${sd.ref}^{commit}`],
+        { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+      real = true;
+    } catch (e) { why = String((e && e.stderr) || (e && e.message) || e).trim().slice(0, 120); }
+    check(`${sd.file} 声明的 ref（${String(sd.ref).slice(0, 7)}）是一个真实提交`, real, why);
+    check(`${sd.file} 声明的 ref 与主观测点不同（相同就不该写这个字段）`, sd.ref !== S.ref);
   }
 
   /* 引用规矩那条引文 */
