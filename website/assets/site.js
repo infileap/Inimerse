@@ -219,6 +219,22 @@
     return box;
   }
 
+  /* ★★ 第二维度：「做到没有」。
+     台账原来的 `ruled` 徽章同时声称了「裁过了」与（读者会默认的）「做到了」——
+     而仓库自己把「有没有代码」与「有没有测试盯着」写成两个问题，并明说这一层与三分清单正交、不许混用。
+     这一块把被压掉的那一维接回来：逐条的 `built` 优先；否则用 `builtAxes.byFile` 里的**文档级**声明；
+     两处都没有 ⇒ 「docs 未记录做到没有」（★ 那是一个零，而零要写出来，不能留白）。 */
+  var BUILT_LABEL = {
+    done: '做到了', partial: '部分做到', none: '尚未做到', unknown: 'docs 未记录做到没有',
+  };
+  function builtInfo(D, e) {
+    if (e.built) return { built: e.built, scope: e.builtScope || 'section', src: e.builtSource || null, why: null };
+    var byFile = (D.builtAxes && D.builtAxes.byFile) || {};
+    var b = byFile[e.source.file];
+    if (b) return { built: b.built, scope: b.scope || 'doc', src: b.source || null, why: b.why || null };
+    return { built: 'unknown', scope: null, src: null, why: null };
+  }
+
   function decisionCard(D, e) {
     var card = el('article', 'decision decision--' + e.status);
     card.id = e.id;
@@ -237,6 +253,15 @@
     if (e.whyNot) card.appendChild(field('为什么没走', e.whyNot, 'why'));
     if (e.overturn) card.appendChild(field('要推翻它需要什么', e.overturn, 'overturn'));
     if (e.flag) card.appendChild(field('注意', e.flag, 'flag'));
+    var bi = builtInfo(D, e);
+    var bl = el('div', 'field field--built');
+    bl.appendChild(el('span', 'field__label', '做到没有'));
+    var bv = el('span', 'field__value');
+    bv.appendChild(el('span', 'badge badge--built badge--built-' + bi.built, BUILT_LABEL[bi.built]));
+    if (bi.scope === 'doc') bv.appendChild(el('span', 'muted', '（文档级声明，不是这一节自己的读数）'));
+    if (bi.src) bv.appendChild(el('span', 'muted', '出处：' + bi.src.file + ' §' + bi.src.section));
+    bl.appendChild(bv);
+    card.appendChild(bl);
     card.appendChild(sourceBox(D, e));
     return card;
   }
@@ -269,6 +294,20 @@
         '其中 ' + human + ' 条是 2026-10 人类在 ask_user_question 上逐条选定的 —— ' +
         '「已裁」不是一种，是两种：这四条是人当场选的，另有几条同样标着【已裁】、' +
         '出处却是更早的裁定。页面上这两者分开标，否则「谁裁的」就消失了。'));
+    }
+
+    /* ★ 被压掉的那一维：把仓库自己那句「两层正交、不许混用」和那处撞车原句放在列表之前 */
+    var axesBox = document.getElementById('decisions-axes');
+    if (axesBox && D.builtAxes) {
+      axesBox.appendChild(el('p', null,
+        '★ 「裁过了」与「做到了」是两个正交的维度 —— 这个仓库自己这么说：'));
+      axesBox.appendChild(el('blockquote', 'verbatim', D.builtAxes.axes.source.quote));
+      axesBox.appendChild(el('p', 'muted',
+        D.builtAxes.axes.source.file + ' §' + D.builtAxes.axes.source.section + ' · ' + D.builtAxes.axes.why));
+      axesBox.appendChild(el('p', null,
+        '★ 而有一处原句字面上就同时写着这两件事：'));
+      axesBox.appendChild(el('blockquote', 'verbatim', D.builtAxes.collision.source.quote));
+      axesBox.appendChild(el('p', 'muted', D.builtAxes.collision.why));
     }
 
     /* 筛选：按状态。★ 不筛「有没有备选」—— 那会让「docs 未记录备选」被藏起来。 */
