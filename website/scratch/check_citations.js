@@ -322,13 +322,21 @@ const MARKER_RE = /【已裁定?】|【提案】|【待裁】|【未做】/g;
    后果是可测的：同一份守卫在不同分支上给出不同的「带标记的文档」数，
    而 `docs/` 是别人在推的，所以那个差不是我的改动造成的、也不会有人报错。
    ⇒ 统一成读 `D.ref`（引文钉读的那棵树），并把 ref 印进报告。 */
-const docFiles = execFileSync('git', ['ls-tree', '-r', '--name-only', D.ref, 'docs/'], { cwd: ROOT, encoding: 'utf8' })
+/* ★★ 这一问读的是【它自己的】观测点：`markerScanRef`，一个**指针**（运行时解析）。
+   它**不是** `D.ref` —— 那是引文的记录，一个字都不因这一问而改变。 */
+const MSR_SPEC = D.markerScanRef || { kind: 'pin', resolve: D.ref };
+const MSR_SHA = execFileSync('git', ['rev-parse', MSR_SPEC.resolve], { cwd: ROOT, encoding: 'utf8' }).trim();
+const MSR_LABEL = MSR_SPEC.kind === 'pointer'
+  ? `${MSR_SPEC.resolve} 解析出的 ${MSR_SHA.slice(0, 7)}（一个指针，不是钉）`
+  : `${MSR_SHA.slice(0, 7)}（钉）`;
+check('markerScanRef 解析出来的必须是一个真实提交', /^[0-9a-f]{40}$/.test(MSR_SHA), MSR_SHA);
+const docFiles = execFileSync('git', ['ls-tree', '-r', '--name-only', MSR_SHA, 'docs/'], { cwd: ROOT, encoding: 'utf8' })
   .split('\n').map((x) => x.trim()).filter((x) => x.endsWith('.md'));
 const ledgerFiles = new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean));
 const marked = [];
 for (const rel of docFiles) {
   const kinds = {};
-  docAtRef(D.ref, rel).text.split('\n').forEach((l) => {
+  docAtRef(MSR_SHA, rel).text.split('\n').forEach((l) => {
     Object.keys(MARKER_STATUS).forEach((mk) => { if (isMarkerLine(l, mk)) kinds[mk] = (kinds[mk] || 0) + 1; });
   });
   if (!Object.keys(kinds).length) continue;
@@ -357,7 +365,7 @@ const boundary = { marker: [], mention: [] };
 const SCAN_OVERRIDE = process.env.MARKER_SCAN_FILE;
 for (const rel of docFiles) {
   const text = (SCAN_OVERRIDE && rel === 'docs/EIDOS_V06.md')
-    ? fs.readFileSync(SCAN_OVERRIDE, 'utf8') : docAtRef(D.ref, rel).text;
+    ? fs.readFileSync(SCAN_OVERRIDE, 'utf8') : docAtRef(MSR_SHA, rel).text;
   text.split('\n').forEach((l, i) => {
     for (const mk of Object.keys(MARKER_STATUS)) {
       if (l.indexOf(mk) === -1) continue;
@@ -685,7 +693,7 @@ console.log('出处分级：' + Object.keys(AT.routes)
   + D.entries.filter((e) => e.source.file === AT.file && e.status === 'ruled' && !e.ruledBy).length + ' 条'
   + '（humanRuled 那个块是这套做法的出处，不是花名册）');
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
-console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md（读自 ${String(D.ref).slice(0, 7)}），其中 ${marked.length} 份带标记`);
+console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md（读自 ${MSR_LABEL}），其中 ${marked.length} 份带标记`);
 console.log(`标记 / 提及的分界：标记 ${boundary.marker.length} 行 / 提及 ${boundary.mention.length} 行（判成提及的逐行在下面）`);
 boundary.mention.forEach((r) => console.log(`    · 提及  ${r}`));
 console.log('');
