@@ -6315,7 +6315,7 @@ say d              # {<function>: fn}   ← 存进去了
 
 ★ **(a) 树自写下以来动了 8 条**：`docs/AUDIT.md:2567` 写 `110 input(s) checked … 64 fixtures registered, 3 allowed`、`:3021` 写 `115 … 66 … 3`，**今天实测 `128 input(s) checked (81 vtest fixtures, 34 python harnesses, 13 node harnesses); 77 fixtures registered, 4 allowed with a stated reason.`**；另有 `:3400` `148` → 今天 `153`、`:3401`、`:3742`/`:3743` `915`/`913` → 今天 `987`、`:2233`/`:2238`。
 
-★★★ **(b) 块的【内容本身】是一个会动的 ref 的值 —— 1 条，最尖**：`docs/AUDIT.md:3106` 的 `$ git rev-parse --short main  →  5868940   （未动）`，**今天同一条命令给 `77410cb`**；而同块里的 `git rev-parse --short v0.5.1^{commit}` 给 `4e444dd`、**今天仍是 `4e444dd`**。
+★★★ **(b) 块的【内容本身】是一个会动的 ref 的值 —— 1 条，最尖**：`docs/AUDIT.md:3107` 的 `$ git rev-parse --short main  →  5868940   （读于该次测量）`（★ 引文里的连续空白已压缩，原行有 16 个对齐空格；★ 坐标也已改正：这句话的内容在 `:3107`，而原文写的 `:3106` 是它上面那行 `git diff --stat`），**今天同一条命令给 `77410cb`**；而同块里的 `git rev-parse --short v0.5.1^{commit}` 给 `4e444dd`、**今天仍是 `4e444dd`**。
 
 ⇒ ★★★★ **判据（收，新）：一个块的「可重跑性」与它的「稳定性」是两件独立的事 —— 而一条确定性的命令读一个会动的量时，可重跑性恰恰是它必然过期的证明。**
 
