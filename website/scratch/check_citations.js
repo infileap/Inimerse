@@ -457,10 +457,24 @@ current = '出处：谁裁的 / 读自哪棵树';
  *   副本的守卫不在你删的那一处。** ⇒ 所以这一节扫的是整份文档，不是某一个行号。
  * ★ 而「这份文件里有几份」是这条守卫的射程，所以它必须被报出来，不能只写在注释里。
  */
+/* 一个【偏移】落在哪一节里：从头数到那个偏移，最后一个标题就是它所在的节。 */
+function secAtOffset(txt, offset) {
+  let cur = null;
+  for (const l of txt.slice(0, offset).split('\n')) {
+    const h = l.match(/^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)/);
+    if (h) cur = h[1];
+  }
+  return cur;
+}
 current = '谁裁的（整份文件）';
 const at = D.attribution;
 if (at) {
-  const doc = docAtRef(at.readAt, at.file);
+  /* ★ 测试缝（声明在此，因为它是这一节唯一一个非读数输入）：
+     `ATTRIBUTION_DOC=<路径>` 可以让这一节读**磁盘上的一个文件**，而不是那棵树上的那一份。
+     ★ 它只为红对照存在 —— 因为红对照要往文档里塞一句话，而那份文档是别人的写域。
+     ★ 默认（不设这个变量）行为完全不变。 */
+  const seam = process.env.ATTRIBUTION_DOC;
+  const doc = seam ? { text: fs.readFileSync(seam, 'utf8') } : docAtRef(at.readAt, at.file);
   const lines = doc.text.split('\n');
 
   /* (a) 每一处【已裁】的节，台账里都要有一条已裁条目 —— 否则那一处身份没有出处。 */
@@ -490,6 +504,48 @@ if (at) {
     noRoute.length ? `没写出处：${noRoute.map((e) => e.id).join('、')}` : '全部写明了');
 
   /* (c) 文件里每一处说「在 ask_user_question 上裁的」的地方，它点到的节都必须是 human。 */
+  /* (c2) ★★ 按【关键词窗口】扫：每一处 `ask_user_question` 前后各 120 个字符里点到的节，
+     都必须是 `human` —— **除非同一个窗口里带着一条否定**（不是 / 不走 / 另一条 / 更早 / 本人的裁定），
+     那种说法说的是「这一条**不是**从这条路来的」。
+     ★ 为什么是窗口而不是整句：★ 我第一版按整句扫，**红对照 (a) 没红** ——
+       因为那一句被切出来的块里含了上文里的一个「不是」，于是整句被当成否定句跳过了。
+       ★ 一条过滤条件如果按【比它要判的东西大得多】的单位来取，它会把不相干的话当成证据。
+     ★ 窗口里如果【没有点名任何节】，就归属到它所在的那一节（否则一句不点名的错误归属会被静默跳过）。 */
+  const WIN = 120;
+  const NEAR = 30;
+  const NEG = ['不是', '不走', '另一条', '更早', '本人的裁定'];
+  const sentWrong = [];
+  let scanFrom = 0;
+  for (;;) {
+    const idx = doc.text.indexOf(at.askUserQuestion, scanFrom);
+    if (idx === -1) break;
+    scanFrom = idx + at.askUserQuestion.length;
+    const win = doc.text.slice(Math.max(0, idx - WIN), idx + at.askUserQuestion.length + WIN);
+    /* ★ 否定词只看【紧挨着关键词】的那一小段（前后各 30 字），不看整个 120 字窗口。
+       ★ 红对照 (a) 第二次没红，就是死在这一步：★ 上文里一句「第一件事**不是**发明」
+         离关键词 100 多字，却把整个窗口判成了否定句 —— ★ 一条过滤条件如果取得比它要判的东西宽，
+         它会把不相干的话当成证据。 */
+    const near = doc.text.slice(Math.max(0, idx - NEAR), idx + at.askUserQuestion.length + NEAR);
+    if (NEG.some((w) => near.indexOf(w) !== -1)) continue;
+    const has = (sec) => D.entries.some((e) => e.source.file === at.file && e.source.section === sec);
+    /* ★ 只认【台账里真有条目】的那些节号。★ 否则 `§1`（说的是「§1 那一节」，
+       而不是「§1 这一条是这么裁的」）会被当成一个归属，而它没有条目 ⇒ 检查静默落空。
+       ★ 一个点不中的节号必须【退回到所在节】，不能当成「没有归属」。
+       —— 红对照 (a) 第一次没红，就是死在这一步。 */
+    const named = (win.match(/§[0-9]+(?:\.[0-9]+)*/g) || [])
+      .map((x) => x.slice(1)).filter(has);
+    const here = secAtOffset(doc.text, idx);
+    const secs = named.length ? named : (here && has(here) ? [here] : []);
+    secs.forEach((sec) => {
+      D.entries
+        .filter((e) => e.source.file === at.file && e.source.section === sec)
+        .forEach((e) => { if (e.ruledBy !== 'human') sentWrong.push(`${e.id}(§${sec})=${e.ruledBy}`); });
+    });
+  }
+  check(`每一处「${at.askUserQuestion}」前后 ${WIN} 字里点到的节，都是 ruledBy=human（前后 ${NEAR} 字内有否定的除外）`,
+    sentWrong.length === 0,
+    sentWrong.length ? `对不上：${sentWrong.join('、')}` : '对得上');
+
   /* (c) ★ 只认【批次名单】里的节 —— 不认「提到 ask_user_question 的那一行里出现的所有 §号」。
      理由：那样会把「同一行里为了别的目的提到的节」也算进来，那是**假红**。
      名单的形状是 `第N批…（§…、§…）`，从括号里取节号。 */
