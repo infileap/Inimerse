@@ -20,7 +20,7 @@ if (req.method === 'POST' && req.url === '/portal') {
 }
 ```
 
-只检查「verse 已注册且 `peer` 非空」，**不看调用方是谁**。引擎侧 `src/verse/crp_hub.c:240-241` → `crp_registry_portal`（`src/verse/crp.c:1017`）**行为一致**；唯一的前置 `verify_frame`（`src/verse/crp_hub.c:158-187`）是**自洽性**检查（客户端自带的 `frameText` 的 `type` 与 payload 字段须与请求一致），**不含签名、不含身份**。
+只检查「verse 已注册且 `peer` 非空」，**不看调用方是谁**。引擎侧 `src/verse/crp_hub.c:244-245` → `crp_registry_portal`（`src/verse/crp.c:1069`）**行为一致**；唯一的前置 `verify_frame`（`src/verse/crp_hub.c:162-191`）是**自洽性**检查（客户端自带的 `frameText` 的 `type` 与 payload 字段须与请求一致），**不含签名、不含身份**。
 
 **危害不止「拿到令牌」**：`crp_registry_portal` 还会 `registry_get_session`（`src/verse/crp.c:879-899`，**不存在就新建**）并 `im_crp_session_apply("start")` + `im_crp_session_lease_begin`（`:1036-1041`）。⇒ 未认证调用方可以：
 
