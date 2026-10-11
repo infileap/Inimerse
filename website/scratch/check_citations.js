@@ -63,11 +63,19 @@ check('导出 INFIVERSE_DECISIONS', !!D);
 check('有 ref', !!(D && D.ref), D && D.ref);
 check('有 entries 且非空', !!(D && Array.isArray(D.entries) && D.entries.length), D && D.entries && D.entries.length);
 
+/* ★★ 一份文档上出现了【两批引文，读自两棵树】。
+   `ref` 是台账的主观测点；`e.readAt` 是这一条引文实际读自的那棵树。
+   ★ 为什么必须逐条：新裁的几条（§1.5 / §3.2 / §3.4 / §7.2 / §7.4）的原文
+     在主观测点那棵树上**根本不存在**；另有两条引的句子在那之后被**改写**过。
+   ★ 缓存键必须带 ref —— 只按文件名缓存会让「同一个文件的两棵树」互相顶掉。 */
 const docCache = new Map();
-function doc(file) {
-  if (!docCache.has(file)) docCache.set(file, docAt(D.ref, file));
-  return docCache.get(file);
+function docAtRef(ref, file) {
+  const k = `${ref}|${file}`;
+  if (!docCache.has(k)) docCache.set(k, docAt(ref, file));
+  return docCache.get(k);
 }
+function doc(file, ref) { return docAtRef(ref || D.ref, file); }
+function readAtOf(e) { return e.readAt || D.ref; }
 
 const seenIds = new Map();
 const SECTION_SOURCE = 'docs/ERROR_CODES_V06.md 开头与 docs/EIDOS_V06.md 文件头都逐字要求「引节号（§3.2、§5），不要引行号」';
@@ -90,7 +98,7 @@ for (const e of D.entries) {
   }
 
   if (!e.source || !e.source.file) continue;
-  const d = doc(e.source.file);
+  const d = doc(e.source.file, readAtOf(e));
 
   /* ① 节号存在 */
   const hit = sectionExists(d.text, e.source.section);
@@ -129,6 +137,18 @@ for (const e of D.entries) {
  *   ⇒ 它被判定成「不用这套词表」而**整份跳过**，那三条裁定在台账里一条都没有，而守卫全绿。
  */
 current = '身份一致（台账 vs docs 原文）';
+/* ★★ 【标记】与【提及】的分界 —— 写成一条规则，两处共用（守卫 ⑧ 与 ⑪(a)）。
+   判据：一行只有在**它自己就是在声称一个身份**时才算标记 ——
+   把行首的 `> # * ★ 空白 数字 . - — ) （` 全部剥掉之后，这一行**以那个标记开头**。
+   ★ `docs/AUDIT.md:7807` 那一行是 `★ 文件头那一句：★ **前半句说「四条【已裁】是…选定的」…`
+     ⇒ 剥完以「文件头那一句」开头 ⇒ 它是**提及**（它在引用别人的句子），不是标记。
+   ★ 而 `★★★ **【已裁】语义是…` / `### 1.6 【未做】` / `4. **【已裁定】…`
+     ⇒ 剥完以标记开头 ⇒ 是**标记**。
+   ★ 这条规则是**收窄**：⑧ 原来按整份文件 `match` 计数，于是把 AUDIT 里那句引用算成了一个标记，
+     而它让一个 7930 行的审计档看起来像是「带身份标记的文档」。 */
+const stripLead = (l) => l.replace(/^[>#*★\s\d.\-—)–）]+/, '');
+const isMarkerLine = (l, mk) => stripLead(l).startsWith(mk);
+
 const MARKER_STATUS = {
   '【已裁】': 'ruled', '【已裁定】': 'ruled',
   '【提案】': 'proposal', '【待裁】': 'undecided', '【未做】': 'notdone',
@@ -158,7 +178,7 @@ let stanceChecked = 0;
 let stanceSkipped = 0;
 for (const e of D.entries) {
   if (!e.source || !e.source.file) continue;
-  const d = doc(e.source.file);
+  const d = doc(e.source.file, readAtOf(e));
   const usesVocabulary = Object.keys(MARKER_STATUS).some((k) => d.text.includes(k));
   if (!usesVocabulary) { stanceSkipped++; continue; }
   const body = sectionBody(d.text, e.source.section);
@@ -179,19 +199,21 @@ for (const e of D.entries) {
   }
 }
 
-/* ⑤ 出处分级：humanRuled 那四条必须真的存在、真的都是 ruled */
+/* ⑤ 出处分级：humanRuled 那一块是【那套做法的出处】，不是花名册。
+   ★ 原来这里逐条检查 `humanRuled.ids` 那四条存在且 ruled。★ 那个 `ids` 已退役
+     （理由见 `website/data/decisions.js` 里 `humanRuled` 的注释）：**它引的那句话不再点名了。**
+   ★ 「谁裁的」现在由每一条自己的 `ruledBy` 承担；文件头那条全称断言由下面
+     `headerWatch.universalClaim` 盯着。★ 一次退役要说出来 —— 退役与「它不红了」长得一样。 */
 current = '出处分级';
-check('humanRuled 存在（四条人类在 ask_user_question 上选的）', !!(D.humanRuled && D.humanRuled.ids));
-for (const id of (D.humanRuled && D.humanRuled.ids) || []) {
-  const e = D.entries.find((x) => x.id === id);
-  check(`${id} 在台账里存在且状态是 ruled`, !!e && e.status === 'ruled', e ? e.status : '条目不存在');
-}
 if (D.humanRuled && D.humanRuled.source) {
-  const d = doc(D.humanRuled.source.file);
+  const d = doc(D.humanRuled.source.file, D.humanRuled.source.readAt || D.ref);
   check('humanRuled 的出处引文逐字存在',
     d.text.indexOf(D.humanRuled.source.quote) !== -1,
     `找不到：「${String(D.humanRuled.source.quote).slice(0, 50)}…」`);
 }
+check('humanRuled 不再带 ids（那一栏已退役：它引的那句话不再点名）',
+  !(D.humanRuled && D.humanRuled.ids),
+  (D.humanRuled && D.humanRuled.ids) ? `还有 ids：${D.humanRuled.ids.join('、')}` : '没有 ids');
 
 /* ---------------- ⑥ 规范页的文档元信息：标题、行数、文件头引文都必须逐字 ----------------
  * `website/data/spec.js` 是手写的，而它里面混了两种东西：
@@ -283,10 +305,11 @@ const ledgerFiles = new Set(D.entries.map((e) => e.source && e.source.file).filt
 const marked = [];
 for (const p of docFiles) {
   const rel = path.relative(ROOT, p);
-  const m = fs.readFileSync(p, 'utf8').match(MARKER_RE) || [];
-  if (!m.length) continue;
   const kinds = {};
-  m.forEach((x) => { kinds[x] = (kinds[x] || 0) + 1; });
+  fs.readFileSync(p, 'utf8').split('\n').forEach((l) => {
+    Object.keys(MARKER_STATUS).forEach((mk) => { if (isMarkerLine(l, mk)) kinds[mk] = (kinds[mk] || 0) + 1; });
+  });
+  if (!Object.keys(kinds).length) continue;
   marked.push({ file: rel, kinds, inSpec: specFiles.has(rel), inLedger: ledgerFiles.has(rel) });
 }
 const notInSpec = marked.filter((x) => !x.inSpec);
@@ -364,6 +387,213 @@ for (const e of D.entries) {
     hit.length ? `引文里有「${hit.join('、')}」，而这一条是 ${r.built}` : '引文里没有实现状态的负面词');
 }
 
+/* ⑩ 「谁裁的」与「读自哪棵树」
+ * ★ ruledBy 是一个【出处】，不是一个装饰：它必须是 ruled，否则「谁裁的」这句话是空的。
+ * ★ readAt 必须是一个真实存在的提交 —— 否则「这条引文读自那棵树」这句话没有出处。
+ * ★ 真正的方向：**一条引文如果不在主观测点那棵树上成立，它就必须说出自己读自哪棵树。** */
+current = '出处：谁裁的 / 读自哪棵树';
+{
+  const humans = D.entries.filter((e) => e.ruledBy === 'human');
+  const notRuled = humans.filter((e) => e.status !== 'ruled');
+  check(`标了「人类裁定」的条目必须是 ruled（${humans.length} 条）`,
+    notRuled.length === 0,
+    notRuled.map((e) => `${e.id}=${e.status}`).join('、'));
+
+  for (const r of [...new Set(D.entries.filter((e) => e.readAt).map((e) => e.readAt))]) {
+    let ok = false, why = '';
+    try {
+      execFileSync('git', ['rev-parse', '--quiet', '--verify', `${r}^{commit}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+      ok = true;
+    } catch (err) { why = String((err && err.stderr) || err).trim().slice(0, 90); }
+    check(`readAt ${String(r).slice(0, 7)} 是一个真实存在的提交`, ok, why);
+    check(`readAt ${String(r).slice(0, 7)} 与主观测点不同（否则这个字段没有意义）`, r !== D.ref, r);
+  }
+
+  /* ★★ 这一条才是这一组的方向：不在主观测点上成立的引文，必须自带出处 */
+  const silent = D.entries.filter((e) => {
+    const t = docAtRef(D.ref, e.source.file).text;
+    return t.indexOf(e.source.quote) === -1 && !e.readAt;
+  });
+  check('引文不在主观测点上成立的条目，必须带 readAt（否则它没有出处）',
+    silent.length === 0, silent.map((e) => e.id).join('、'));
+
+  const claimed = D.entries.filter((e) => e.readAt).length;
+  const actual = D.entries.filter((e) => docAtRef(D.ref, e.source.file).text.indexOf(e.source.quote) === -1).length;
+  check('带 readAt 的条目数 = 引文在主观测点上不成立的条目数', claimed === actual, `${claimed} / ${actual}`);
+
+  /* ★★ 反方向。上面两条挡的是「不成立却不带 readAt」——
+     它们**不挡**「带了一个多余的 readAt」，而「后者今天不存在」与「后者不可能存在」
+     在读数上都是绿的。所以补这一条：带了 readAt，就必须真的在主观测点上不成立。 */
+  const redundant = D.entries.filter(
+    (e) => e.readAt && docAtRef(D.ref, e.source.file).text.indexOf(e.source.quote) !== -1);
+  check('带 readAt 的条目，引文必须在主观测点上【真的不成立】（否则是多余标记）',
+    redundant.length === 0,
+    redundant.length
+      ? `多余的 readAt：${redundant.map((e) => `${e.id}@${String(e.readAt).slice(0, 7)}`).join('、')}`
+      : '没有多余的（射程：只看每条条目自己的 source.quote 这一栏；builtSource.quote 与 builtAxes 那几份文档级引文不在本条射程内）');
+
+  /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
+     它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
+  /* ★★ 退役一条：原来这里有一条「humanRuled 那句话点名的节号，与 ids 的节号集合一致」。
+     ★ 它退役的理由与前一条同族，而且更彻底：**它比的两个东西都没了** ——
+       `af85fef` 把名字删了，`ids` 也随之退役。★ 一次退役要说出来。 */
+
+    /* ★★ 退役一条：原来这里有一条「那句『其余每一条仍是【提案】或【待裁】』还成立」。
+       ★ 它退役**不是因为它错了，是因为它盯的那句话没了** —— `3df3a9b` 把那个全称断言
+         换成了「未列出的条目，其身份以各自的标题标记为准」。★ 一次退役要说出来。 */
+
+  const hw = D.headerWatch;
+  if (hw) {
+    const doc = docAtRef(hw.readAt, hw.file);
+    check(`文件头改写后的新半句在 ${String(hw.readAt).slice(0, 7)} 上逐字存在`,
+      doc.text.indexOf(hw.quote) !== -1, hw.quote.slice(0, 36) + '…');
+
+    /* ★★ 再退役一条：接着换上来的那条「文件头那个总数（本文的四条【已裁】）与正文对得上」
+       也退役了 —— `af85fef` 把那个总数**连同那四个名字**一起删掉了。
+       ★ 理由同上：**它盯的那个东西没了。** ★ 一次退役要说出来。
+
+       ★★★ 而删掉一个总数，不等于删掉那句话里的**权威**：
+         `af85fef` 把它换成了**一条全称断言**（「本文【已裁】的条目，是……由人类……选定的」）。
+         ★ 全称断言比总数更难核，而这一条恰好**可核** —— 因为它管的那批条目在台账里
+           有 `status` 与 `ruledBy` 两个字段。所以新守卫盯的是那个全称断言。 */
+    /* ★★ 退役一条（第四条）：原来这里有一条「文件头那条全称断言……在台账里没有反例」。
+       ★ 它退役的理由**与前三条不同** —— ★ 前三条是「它盯的东西没了」，
+         这一条是「**它盯的那句话被判定太宽，正在被改**」（exact-otter 裁 (a)）。
+       ★ 它的活**没有消失，只是换了射程**：★ 从「盯文件头那一句」改成
+         「盯整份文件里**每一处**关于『谁裁的』的说法」—— 就是下面的 ⑪。
+       ★ `headerWatch.universalClaim` 这一栏因此降级成**文档**（记下那句话曾经是什么）。 */
+  }
+}
+
+/* ---------------- ⑪ 谁裁的：按【整份文件】扫，不按某一行扫 ----------------
+ * ★ 判据：**一句被删掉的话，盯着它的守卫也随之退役 —— 而那句话可能还有别的副本，
+ *   副本的守卫不在你删的那一处。** ⇒ 所以这一节扫的是整份文档，不是某一个行号。
+ * ★ 而「这份文件里有几份」是这条守卫的射程，所以它必须被报出来，不能只写在注释里。
+ */
+/* 一个【偏移】落在哪一节里：从头数到那个偏移，最后一个标题就是它所在的节。 */
+function secAtOffset(txt, offset) {
+  let cur = null;
+  for (const l of txt.slice(0, offset).split('\n')) {
+    const h = l.match(/^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)/);
+    if (h) cur = h[1];
+  }
+  return cur;
+}
+current = '谁裁的（整份文件）';
+const at = D.attribution;
+if (at) {
+  /* ★ 测试缝（声明在此，因为它是这一节唯一一个非读数输入）：
+     `ATTRIBUTION_DOC=<路径>` 可以让这一节读**磁盘上的一个文件**，而不是那棵树上的那一份。
+   ★★ 而这个缝的存在本身是一个事实的产物：**红对照要往这份文档里塞一句话，而这份文档
+     不是我的写域。** ★ 一个测试缝不该只记「怎么用它」，还要记「它为什么会存在」——
+     否则下一轮有人会把它当成一个普通的调试开关，而它其实是一处**写域边界**留下的接口。
+     ★ 它只为红对照存在 —— 因为红对照要往文档里塞一句话，而那份文档是别人的写域。
+     ★ 默认（不设这个变量）行为完全不变。 */
+  const seam = process.env.ATTRIBUTION_DOC;
+  const doc = seam ? { text: fs.readFileSync(seam, 'utf8') } : docAtRef(at.readAt, at.file);
+  const lines = doc.text.split('\n');
+
+  /* (a) 每一处【已裁】的节，台账里都要有一条已裁条目 —— 否则那一处身份没有出处。 */
+  const marked = new Set();
+  let cur = null;
+  /* ★ 区分【标记】与【提及】：`【已裁】` 出现在行首附近（前 40 字符内）才算这一节的标记；
+     出现在句子深处的（例如 §10 第 ⑤ 条里「而 §1.1 的【已裁】那一条」）是**提及**，
+     它说的是别处的身份，不是这一节自己的。★ 这个 40 是这条守卫的射程的一部分，写在这里。 */
+  lines.forEach((l) => {
+    const h = l.match(/^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)/);
+    if (h) cur = h[1];
+    if (cur && isMarkerLine(l, '【已裁】')) marked.add(cur);
+  });
+  const ruledSecs = new Set(D.entries
+    .filter((e) => e.source.file === at.file && e.status === 'ruled')
+    .map((e) => e.source.section));
+  const unaccounted = [...marked].filter((x) => !ruledSecs.has(x)).sort();
+  check(`文件里每一处【已裁】的节，台账里都有一条已裁条目（${marked.size} 处）`,
+    unaccounted.length === 0,
+    unaccounted.length ? `没有出处：${unaccounted.map((x) => '§' + x).join('、')}` : '全部有出处');
+
+  /* (b) 每一条已裁条目都必须写明走的是哪条路 —— 空着等于「谁裁的」这一维消失。 */
+  const noRoute = D.entries.filter((e) => e.source.file === at.file && e.status === 'ruled' && !e.ruledBy);
+  check('每一条已裁条目都写明了「谁裁的」（不许空着）',
+    noRoute.length === 0,
+    noRoute.length ? `没写出处：${noRoute.map((e) => e.id).join('、')}` : '全部写明了');
+
+  /* (c) 文件里每一处说「在 ask_user_question 上裁的」的地方，它点到的节都必须是 human。 */
+  /* (c2) ★★ 按【关键词窗口】扫：每一处 `ask_user_question` 前后各 120 个字符里点到的节，
+     都必须是 `human` —— **除非同一个窗口里带着一条否定**（不是 / 不走 / 另一条 / 更早 / 本人的裁定），
+     那种说法说的是「这一条**不是**从这条路来的」。
+     ★ 为什么是窗口而不是整句：★ 我第一版按整句扫，**红对照 (a) 没红** ——
+       因为那一句被切出来的块里含了上文里的一个「不是」，于是整句被当成否定句跳过了。
+       ★ 一条过滤条件如果按【比它要判的东西大得多】的单位来取，它会把不相干的话当成证据。
+     ★ 窗口里如果【没有点名任何节】，就归属到它所在的那一节（否则一句不点名的错误归属会被静默跳过）。 */
+  const NEG = ['不是', '不走', '另一条', '更早', '本人的裁定'];
+  const sentWrong = [];
+  let scanFrom = 0;
+  for (;;) {
+    const idx = doc.text.indexOf(at.askUserQuestion, scanFrom);
+    if (idx === -1) break;
+    scanFrom = idx + at.askUserQuestion.length;
+    /* ★★ 作用域 = 【子句】，不是固定宽度窗口。
+       ★ 第一版按【整句】取：切出来的块含了上文一句「第一件事**不是**发明」（离关键词一百多字），
+         整句被判成否定句 ⇒ 红对照 (a) 没红。
+       ★ 第二版按【前后 30 字】取否定：能过红对照，却在真文档上**假红** ——
+         `0217b34` 的新文件头一句里同时写了「一条是…在 \`ask_user_question\` 上选定的（…§9 第⑦条）；
+         另一条是更早的一次裁定（§1.1 与 §1.3…）」⇒ §1.1/§1.3 落在第一个关键词的 120 字里，
+         而「更早」落在 30 字外。
+       ⇒ ★ 判据的单位必须是**它要判的那个东西**：这里要判的是「这一句话在说谁」，
+         而一句话的边界是句号/分号/换行。★ 于是两个宽度都不需要了。 */
+    const isDelim = (c) => c === '。' || c === '；' || c === '\n';
+    let a0 = idx; while (a0 > 0 && !isDelim(doc.text[a0 - 1])) a0--;
+    let b0 = idx; while (b0 < doc.text.length && !isDelim(doc.text[b0])) b0++;
+    const win = doc.text.slice(a0, b0);
+    if (NEG.some((w) => win.indexOf(w) !== -1)) continue;
+    const has = (sec) => D.entries.some((e) => e.source.file === at.file && e.source.section === sec);
+    /* ★ 只认【台账里真有条目】的那些节号。★ 否则 `§1`（说的是「§1 那一节」，
+       而不是「§1 这一条是这么裁的」）会被当成一个归属，而它没有条目 ⇒ 检查静默落空。
+       ★ 一个点不中的节号必须【退回到所在节】，不能当成「没有归属」。
+       —— 红对照 (a) 第一次没红，就是死在这一步。 */
+    const named = (win.match(/§[0-9]+(?:\.[0-9]+)*/g) || [])
+      .map((x) => x.slice(1)).filter(has);
+    const here = secAtOffset(doc.text, idx);
+    const secs = named.length ? named : (here && has(here) ? [here] : []);
+    secs.forEach((sec) => {
+      D.entries
+        .filter((e) => e.source.file === at.file && e.source.section === sec)
+        .forEach((e) => { if (e.ruledBy !== 'human') sentWrong.push(`${e.id}(§${sec})=${e.ruledBy}`); });
+    });
+  }
+  check(`每一处「${at.askUserQuestion}」【所在子句】里点到的节，都是 ruledBy=human（子句里有否定的除外）`,
+    sentWrong.length === 0,
+    sentWrong.length ? `对不上：${sentWrong.join('、')}` : '对得上');
+
+  /* (c) ★ 只认【批次名单】里的节 —— 不认「提到 ask_user_question 的那一行里出现的所有 §号」。
+     理由：那样会把「同一行里为了别的目的提到的节」也算进来，那是**假红**。
+     名单的形状是 `第N批…（§…、§…）`，从括号里取节号。 */
+  const batches = [];
+  const reBatch = /第[一二三四]批[^（]*（([^）]*)）/g;
+  let mb;
+  while ((mb = reBatch.exec(doc.text))) {
+    (mb[1].match(/§[0-9]+(?:\.[0-9]+)*/g) || []).forEach((x) => batches.push(x.slice(1)));
+  }
+  const wrongRoute = [];
+  batches.forEach((sec) => {
+    const es = D.entries.filter((e) => e.source.file === at.file && e.source.section === sec);
+    if (es.length === 0) wrongRoute.push(`§${sec}(台账里没有条目)`);
+    es.forEach((e) => { if (e.ruledBy !== 'human') wrongRoute.push(`${e.id}(§${sec})=${e.ruledBy}`); });
+  });
+  check(`文件里那两批名单（${batches.length} 个节号）在台账里都是 ruledBy=human`,
+    wrongRoute.length === 0,
+    wrongRoute.length ? `对不上：${wrongRoute.join('、')}` : '对得上');
+
+  /* (d) ★ 那句已退役的话在整份文件里还有几份 —— 这是这条守卫的射程，必须报出来。 */
+  const copies = lines
+    .map((l, i) => (l.indexOf(at.retiredSentence) !== -1 ? i + 1 : 0))
+    .filter((n) => n > 0);
+  check(`已退役的那句「${at.retiredSentence}」在整份文件里没有副本`,
+    copies.length === 0,
+    copies.length ? `还有 ${copies.length} 处：第 ${copies.join('、')} 行` : '没有副本');
+}
+
 /* ---------------- 被禁字符串守卫 ---------------- */
 current = '全站文本';
 const BANNED = ['Inim', ' OS'].join('');   // 人类硬约束：任何地方不许出现
@@ -395,11 +625,22 @@ results.filter((r) => !r.ok).forEach((r) => {
 const docsTouched = new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean));
 console.log('');
 console.log(`条目数：${D.entries.length}`);
-console.log(`引文钉：${D.entries.length} 条，涉及 ${docsTouched.size} 个 docs 文件（读自 ref ${String(D.ref).slice(0, 7)}）`);
+const byRef = {};
+D.entries.forEach((e) => { const r = readAtOf(e); byRef[r] = (byRef[r] || 0) + 1; });
+console.log(`引文钉：${D.entries.length} 条，涉及 ${docsTouched.size} 个 docs 文件（读自 ${Object.keys(byRef).map((r) => `${String(r).slice(0, 7)} × ${byRef[r]}`).join(' / ')}）`);
 console.log(`节号钉：${D.entries.length} 个`);
 console.log(`身份一致：检查了 ${stanceChecked} 条，跳过 ${stanceSkipped} 条（词表 = 【已裁】/【已裁定】/【提案】/【待裁】/【未做】；标记看 标题+正文）`);
 console.log(`做到没有：${Object.keys(builtCount).map((k) => k + ' ' + builtCount[k]).join(' / ')}（引文里带实现状态负面词的条目 ${builtNegative} 条）`);
-console.log(`出处分级：humanRuled ${((D.humanRuled && D.humanRuled.ids) || []).length} 条`);
+/* ★ 分母要写清射程：`ruledBy` 是 `docs/EIDOS_V06.md` 这一份文件里的词汇，
+   别的文档（PLAN_V06 / PLAN_V07 / TYPESET_V06）的已裁条目不写这一栏 —— 那是正常的，
+   不是缺口。★ 所以下面那个「没写」只数那一份文件里的，否则它会把一个正常的省略读成缺陷。 */
+const AT = D.attribution;
+console.log('出处分级：' + Object.keys(AT.routes)
+  .map((k) => `ruledBy=${k} ${D.entries.filter((e) => e.ruledBy === k).length} 条`)
+  .join(' / ')
+  + ` ／ 射程：${AT.file} 的已裁条目里，没写「谁裁的」的 `
+  + D.entries.filter((e) => e.source.file === AT.file && e.status === 'ruled' && !e.ruledBy).length + ' 条'
+  + '（humanRuled 那个块是这套做法的出处，不是花名册）');
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
 console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md，其中 ${marked.length} 份带标记`);
 console.log('');

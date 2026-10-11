@@ -85,12 +85,59 @@ window.INFIVERSE_DECISIONS = {
      而 EIDOS 里另有几条同样标着【已裁】、出处却是更早的裁定（归档文档当时不知道）。
      台账页必须把这两者分开显示 —— 否则「谁裁的」这件事在页面上消失了。 */
   humanRuled: {
-    ids: ['EIDOS-3.1', 'EIDOS-3.3', 'EIDOS-4', 'EIDOS-6.1'],
+    /* ★★ `ids` 已退役（原来点名四条）。退役理由：**它引的那句话不再点名了。**
+       `af85fef` 把「本文的四条【已裁】…（§3.1 合并规则、§3.3 参数重叠、§4 `super` 限定、§6.1 改名）」
+       改成了「本文【已裁】的条目，是 2026-10 起由人类…逐条选定的」——
+       ★ 名字与总数一起没了。⇒ 这一块从此只记【那套做法的出处】，不再是花名册；
+       「谁裁的」住在每一条自己的 `ruledBy` 上，而那条全称断言由 headerWatch 盯着。 */
     source: {
       file: 'docs/EIDOS_V06.md',
       section: '0',
-      quote: '★ **本文的四条【已裁】是 2026-10 由人类在 `ask_user_question` 上逐条选定的**（§3.1 合并规则、§3.3 参数重叠、§4 `super` 限定、§6.1 改名）。★ **其余每一条仍是【提案】或【待裁】。**',
+      readAt: '0217b34',
+      /* ★ 重钉（第二次）。上一次钉的是「本文【已裁】的条目，是 2026-10 起由人类在
+         `ask_user_question` 上逐条选定的」—— 那句在 `0217b34` 被拆成了【两条来路】，
+         原文里不再逐字存在。★ 现在钉的是拆完之后那句话的**主干**：它短、且是台账真正依赖的
+         那件事（「已裁」有两种来路）。★ 教训：钉一个【断言的结构】，不要钉它的【枚举】。 */
+      quote: '★ **本文【已裁】的条目有两条来路。**',
     },
+  },
+
+  /* ★ 文件头那句在 17571f7 被改写（`3df3a9b` 是改写后的树）：
+     后半句从「其余每一条仍是【提案】或【待裁】」（一个**全称断言**）
+     换成「未列出的条目，其身份以各自的标题标记为准」（说的是**答案住在哪里**）。
+     ★ 而它**前半句仍记着一个总数**（「本文的四条【已裁】」），
+     并且**在同一句里说「这里不记总数：总数会过期」**。
+     ⇒ 所以这一条留着：那个总数必须与正文对得上 —— 一个总数不会因为它旁边写了一句
+       「总数会过期」而变得不会过期。 */
+  /* ★★ 谁裁的：这份文件里有【不止一处】在说「这一条是谁裁的」——
+     文件头一处，§9 第 ⑦ 条一处。★ 判据：**一句被删掉的话，盯着它的守卫也随之退役 ——
+     而那句话可能还有别的副本，副本的守卫不在你删的那一处。**
+     ⇒ 所以守卫按【整份文件】扫，不按某一行扫；而「这份文件里有几份」是那条守卫的射程。
+     ★ 而裁定有【两条路】，不是一条：`human` = 2026-10 在 `ask_user_question` 上逐条选定；
+     `earlier` = 更早的一次裁定（人类本人的裁定，不走那个机制）。
+     ★ 一个徽章只能压掉一个维度 —— 所以 `ruledBy` 是值，不是布尔。 */
+  attribution: {
+    file: 'docs/EIDOS_V06.md',
+    readAt: '0217b34',
+    askUserQuestion: 'ask_user_question',
+    retiredSentence: '其余每一条仍是【提案】或【待裁】',
+    routes: {
+      human: '2026-10 在 `ask_user_question` 上逐条选定',
+      earlier: '更早的一次裁定（人类本人的裁定，不走 `ask_user_question`）',
+    },
+  },
+
+  headerWatch: {
+    file: 'docs/EIDOS_V06.md',
+    readAt: '0217b34',
+    quote: '★ **不在这里列名，也不记总数：列名会不全，总数会过期，而各自的标题标记不会。**',
+    /* ★ `universalClaim` 已【降级成文档】：盯它的那条守卫退役了（它盯的那句话被判定太宽、
+       已由 `0217b34` 拆成两条来路），活交给了守卫 ⑪。这里记的是【它当年那句话】，
+       以及它现在收窄成了什么 —— 免得下一轮有人以为它还在被盯着。 */
+    universalClaim: '一条是 2026-10 起由人类在 `ask_user_question` 上逐条选定的',
+    universalClaimRetired: '本文【已裁】的条目，是 2026-10 起由人类在 `ask_user_question` 上逐条选定的',
+    scopeFile: 'docs/EIDOS_V06.md',
+    note: '这是一条【全称断言】。台账里 source.file 是它、status 是 ruled 的每一条，都必须 ruledBy=human —— 否则文件头那句话在它自己的文档里就有反例。',
   },
 
   /* 状态词表。★ 台账页必须能显示【已裁】与【提案】的差别 ——
@@ -109,6 +156,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-1.1',
       status: 'ruled',
+      ruledBy: 'earlier',
       title: 'Eidos 是「进引擎」还是「永远外部」',
       decided: '变成「内糖」—— 编译器认识它（声明、成员、继承、super、字段引用由编译器解析并检查；开放与封闭在编译期判定），VM 不需要认识它（不新增 opcode、不新增运行时类型信息）。',
       alternative: '① 保持外糖；② 完整内建',
@@ -123,6 +171,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-1.3',
       status: 'ruled',
+      ruledBy: 'earlier',
       title: '`@unfold eidos extend A, B` 与归档 `eidos C: A + B` 是同一件事的两种拼写',
       decided: '保留 `@unfold eidos extend A, B`；归档的 `eidos C: A + B` 作为一种【记录】留在归档原文里，不进入现行语法。',
       alternative: '归档的 `eidos C: A + B`（多重继承用 `+`）',
@@ -137,6 +186,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-3.1',
       status: 'ruled',
+      ruledBy: 'human',
       title: '合并规则第一条：同名且相同 ⇒ 只保留一份',
       decided: '静默合并（不报错），但编译器必须把「合并了哪两份」报出来，并且这个报告本身要能被一条测试钉住。',
       alternative: '(a) 纯静默合并；(b) 相同也必须显式（写 `bark from animal`，文本一样也不自动合）',
@@ -151,6 +201,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-3.3',
       status: 'ruled',
+      ruledBy: 'human',
       title: '参数不同不算同名 ——「保证不存在重叠」有两个相反的答案',
       decided: '取「最特化优先」：允许相交，更特化的赢；只有互不更特化才算歧义。',
       alternative: '不相交（任意两个签名不得相交）；另有第三条路本轮未取：编译器报出重叠的那块类型（是报，不是拒）',
@@ -165,6 +216,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-6.1',
       status: 'ruled',
+      ruledBy: 'human',
       title: '`@template` 这个名字会被读错 —— 已改名 `@mixin`',
       decided: '改名 `@mixin`。',
       alternative: '`@trait` / `@abstract`（没有被否，它们只是没有被选）',
@@ -179,6 +231,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-4',
       status: 'ruled',
+      ruledBy: 'human',
       title: '`super` 必须带名字（唯一一条推翻归档已写下规范的裁定）',
       decided: '`super` 必须带名字 —— `super pet.play`（或 `super(pet)`）。人类在 `ask_user_question` 上选的是它。',
       alternative: '位置式 `super`（归档 §2.5 逐字：「`super` 调用最近的父类实现」）',
@@ -193,16 +246,18 @@ window.INFIVERSE_DECISIONS = {
     },
     {
       id: 'EIDOS-1.5',
-      status: 'proposal',
-      title: '`invariant` 是唯一一条与「VM 不需要认识它」有张力的',
-      decided: '【提案】走 (a)：编译器把它降到已有的构造（在每次赋值后插入一次调用 + 一个失败分支）⇒ VM 仍然不需要认识 Eidos。',
-      alternative: '(b) VM 认识 `invariant`',
-      whyNot: '(b) 与「VM 不需要认识它」的裁定冲突。',
-      overturn: '构造一个能绕过检查的写入路径（容器元素、嵌套字段、`frozen` 之外的第二条路）⇒ 若它能绕过，说明写入点的枚举不全。「每次」是一个全称量词，而全称量词只能靠枚举来验。',
+      status: 'ruled',
+      ruledBy: 'human',
+      readAt: '17571f7',
+      title: '`invariant` 的语义：违反时调 `on_violation`（修复），不是拒绝写入',
+      decided: '编译器把它降到已有的构造（每次赋值后插一次检查 + 一个失败分支）⇒ VM 仍然不需要认识 Eidos。★ 而**违反时的语义是调 `on_violation` 去修复，不是拒绝这次写入**。★ 容器元素绕过是**写下的边界**；★ **不提供关闭它的构建开关**。',
+      alternative: '(b) VM 认识 `invariant`；以及「违反时直接拒绝写入」这条语义',
+      whyNot: '(b) 与「VM 不需要认识它」的裁定冲突。「拒绝写入」被实测否掉了 —— 裁定选的是 `on_violation` 修复。',
+      overturn: '构造一个能绕过检查的写入路径（容器元素、嵌套字段、`frozen` 之外的第二条路）⇒ 若它能绕过，说明写入点的枚举不全。「每次」是一个全称量词，而全称量词只能靠枚举来验。★ 另：找到一条能关掉它的构建开关 ⇒ 「不提供开关」为假。',
       source: {
         file: 'docs/EIDOS_V06.md',
         section: '1.5',
-        quote: '⇒ **【提案】走 (a)。**',
+        quote: '★★★ **【已裁】语义是【违反时调 `on_violation`】—— 修复，不是【拒绝写入】。** 人类在 `ask_user_question` 上选的，而实测把它的语义也定死了：',
       },
     },
     {
@@ -221,30 +276,35 @@ window.INFIVERSE_DECISIONS = {
     },
     {
       id: 'EIDOS-3.2',
-      status: 'proposal',
-      title: '歧义诊断必须点名来源',
-      decided: '【提案】诊断必须点名来源，并给出「只取一份」的写法（`keep one: bark from animal`）。',
-      alternative: '只报一句「你必须覆写 `bark`」',
-      whyNot: '「另一条路是什么」必须写出来，否则读者以为只有一条路 —— 而这一覆写同时丢掉了 `animal.bark` 与 `pet.bark` 两份实现，且没有任何东西告诉他丢的是哪两份。',
-      overturn: '删掉诊断里那句 `keep one: bark from animal` ⇒ 必须有一条断言红（否则「诊断会点名来源」这句话没有守卫）。',
+      status: 'ruled',
+      ruledBy: 'human',
+      readAt: '17571f7',
+      title: '歧义诊断的形状照 `rustc --error-format=json`',
+      decided: '诊断的形状照 `rustc --error-format=json`：它是一个**树**（每个来源是带 `span` 的 child，每个「可选写法」是带**把握度**的 fix）。★ 三条边界：① 「点名来源」在四个真实现里**一个字段都不是** —— 它只活在散文或 fix 的替换串里 ⇒ 没有现成形状可抄，必须自己设计；② 「字段清单」不是一个全局 schema，**按诊断种类变**；③ **位置的单位不定**（clang 给 unicodeCodePoints、gcc 给 byte-column 与 display-column、rustc 给 column_start + byte_start），而「点名来源」正建立在位置上。',
+      alternative: '只报一句「你必须覆写 `bark`」（本节草案那一版）',
+      whyNot: '「另一条路是什么」必须写出来，否则读者以为只有一条路 —— 而这一覆写同时丢掉了 `animal.bark` 与 `pet.bark` 两份实现，且没有任何东西告诉他丢的是哪两份。★ 草案那一版仍然是对的，只是不再是唯一一条路。',
+      overturn: '删掉诊断里那句 `keep one: bark from animal` ⇒ 必须有一条断言红。★ 另：找到一个「机器可读地点名来源」的现成形状 ⇒ 「没有现成形状可抄」为假。',
       source: {
         file: 'docs/EIDOS_V06.md',
         section: '3.2',
-        quote: '★ 理由：**「另一条路是什么」必须写出来，否则读者以为只有一条路。**',
+        quote: '★★★ **【已裁】诊断的形状照 `rustc --error-format=json` —— 它是一个树，而且比本节的草案多两样。** 人类在 `ask_user_question` 上选的。逐条实测（本机 `rustc 1.99.0`）：',
       },
     },
     {
       id: 'EIDOS-3.4',
-      status: 'proposal',
-      title: '字段的合并规则与方法不同，而今天没有写',
-      decided: '【提案】单列一条规则，且报错时把两个默认值都印出来。',
-      alternative: null,
-      whyNot: '字段「同名不同默认值」不是覆写，是一个没有自然解的冲突 —— 取哪个默认值？',
-      overturn: null,
+      status: 'ruled',
+      ruledBy: 'human',
+      readAt: '17571f7',
+      title: '字段的合并规则：与 §3.1 同形（静默合并 + 合并点报出 + 可钉住）',
+      decided: '字段与方法走同一条规则：**静默合并（两个字段都保留）+ 合并点报出 + 可钉住**；而**无限定访问命中两个以上 = 编译错误**，不是静默取一个。★ 实测三种有可比性的做法里，没有一种在合并点报错：C++ 两个字段都保留、只拒绝无限定访问（与已裁的 §3.1 同形）；Python 静默取第一个；JS 静默取最后一个。',
+      alternative: '报错时把两个默认值都印出来（草案那一版，它仍然是对的，只是不再是唯一一条路）',
+      whyNot: '同一个合并问题问两次（方法一次、字段一次），如果两次的答案不同，那么两次里必有一次是随手写的。',
+      overturn: '把「无限定访问命中两个以上」改成静默取一个 ⇒ 必须有一条断言红。',
+      flag: '★ 本条与 §3.3 的「最特化优先」不冲突：§3.3 管同名方法的重载，本条管同名字段的合并；两者都不是「静默挑一个」。',
       source: {
         file: 'docs/EIDOS_V06.md',
         section: '3.4',
-        quote: '★ **字段「同名不同默认值」不是覆写，是一个没有自然解的冲突** —— 取哪个默认值？',
+        quote: '★★★ **【已裁】字段与 §3.1 的方法走同一条规则：静默合并（两个字段都保留）+ 合并点报出 + 可钉住；而【无限定访问命中两个以上 = 编译错误】，不是静默取一个。** 人类在 `ask_user_question` 上选的。',
       },
     },
     {
@@ -264,47 +324,67 @@ window.INFIVERSE_DECISIONS = {
     },
     {
       id: 'EIDOS-7.2',
-      status: 'notdone',
-      title: '`@unfold` 可传递吗（docs 尚未写）',
-      decided: 'docs 尚未写这一条；原文只写下了那个问题：`@unfold` 的结果是模板还是类？能再展开就定义链，不能就定义深度 1。',
-      alternative: '定义链（可传递）',
-      whyNot: null,
-      overturn: null,
-      flag: '★ 本节在 docs 原文里**没有标身份**。★ 它与 §7.4 是同一个问题（展开的深度是 1 还是一条链），docs 逐字要求**两个必须一起裁**。',
+      status: 'ruled',
+      ruledBy: 'human',
+      readAt: '17571f7',
+      title: '`@unfold` 可传递 —— 且链必须【拼接】而不是【拷贝】',
+      decided: '**可传递**。两条独立的理由：① 实现形态上只有一种选法 —— 同一个 mixin 写成 class 工厂能 `super`，写成普通对象再 `Object.assign` 进去就永远不能 ⇒ 若实现成「把成员拷进目标类」，`super` 没有落脚点，必须是**把链拼成一条链**；② `super` 已经带名字（§4）⇒「链上的下一个是谁」这个问题根本不出现 ⇒ **不需要线性化**。',
+      alternative: '定义深度 1（不可传递）',
+      whyNot: '**这不是「哪种语义更好」，是「哪种实现让 §4 的裁定有可能成立」。**',
+      overturn: '把链改成「拷贝成员」⇒ 必须有一条断言红（`super` 会失去落脚点）。',
+      flag: '★ docs 逐字的边界：本条与 §7.4 的实测材料取自本机（python3 / node / g++ / rustc），**而它同时是一个由可用性决定的样本** —— D / Eiffel / Ada 在本机核不了。',
       source: {
         file: 'docs/EIDOS_V06.md',
         section: '7.2',
-        quote: '**`@unfold` 的结果是模板还是类？** ★ **能再展开就定义链，不能就定义深度 1。**',
+        quote: '★★★ **【已裁】可传递。** 人类在 `ask_user_question` 上选的，两条独立的理由：',
       },
     },
     {
       id: 'EIDOS-7.4',
-      status: 'notdone',
-      title: '`super` 能不能调用祖父（§4 边界③，docs 尚未写）',
-      decided: 'docs 尚未写这一条；原文只写下了那个问题：§4 裁的是**怎么指名**（`super pet.play`），**不是**「`pet` 自己的 `super` 指向谁」。若 `pet` 也 `extend` 了 `animal`，`pet.play` 内部再写 `super` 时指向谁？',
-      alternative: '展开深度是 1（`super` 只能走一层）',
-      whyNot: null,
-      overturn: '★ docs 逐字给的判据：**两个问题必须一起裁，否则会出现「展开是链、而 `super` 只能走一层」这种半传递状态** —— 而那个状态在今天的提案里没有任何东西会拒绝它。',
-      flag: '★ 本节在 docs 原文里**没有标身份**。★ 它是 §4 边界③留下的未判项，docs 逐字说它与 §7.2 必须一起裁。',
+      status: 'ruled',
+      ruledBy: 'human',
+      readAt: '17571f7',
+      title: '`super` 能调用祖父，且不需要线性化',
+      decided: '**能调用祖父，而它不需要线性化。** 因为 `super` 的宾语是**一个名字**（`super pet.play`），不是**一个位置**；名字指哪个祖先由名字定，不由「链上的下一个」定 ⇒ §7.2 与 §7.4 一起裁的结果是：**链存在（可传递），而走链靠名字（不需要顺序算法）**。★ 对照：C++ / Rust 选的是**不可传递** ⇒ **「带名字」本身不蕴含「可传递」，这一条是独立的决定，不是前一条的推论。**',
+      alternative: '不可传递（`super` 只能走一层）；或需要线性化（如 Python 的 C3）',
+      whyNot: 'Python 为它需要 C3，而 C3 无解时它**拒绝编译**（`class E(C, D)` ⇒ TypeError）；Eidos 因为 §4 带了名字，连需要拒绝的机会都少了。',
+      overturn: '让 `super` 只走一层 ⇒ 会出现「展开是链、而 `super` 只能走一层」的半透明状态，而那个状态在今天的提案里没有任何东西会拒绝它。',
       source: {
         file: 'docs/EIDOS_V06.md',
         section: '7.4',
-        quote: '★ §4 裁的是**怎么指名**（`super pet.play`），**不是**「`pet` 自己的 `super` 指向谁」。',
+        quote: '★★★ **【已裁】能调用祖父，而它【不需要线性化】。** ★ 因为 `super` 的宾语是**一个名字**（`super pet.play`），不是**一个位置**。★ **名字指哪个祖先由名字定，不由「链上的下一个」定** ⇒ ★ **§7.2 与 §7.4 一起裁的结果是：链存在（可传递），而走链靠名字（不需要顺序算法）。**',
       },
     },
     {
       id: 'EIDOS-8',
       status: 'proposal',
+      readAt: '17571f7',
       title: '与其他语言的关系（缺的那一半）',
       decided: '【提案】每一类封闭手段，给出【至少三种语言怎么做】+【Eidos 为什么这样选】+【另一条路为什么没走】。',
       alternative: null,
       whyNot: '归档全文提到语言名只有两处，都不是比较 —— 它回答了「Eidos 怎么封闭」，没有回答「其他语言怎么封闭、Eidos 为什么这样选」。',
       overturn: null,
-      flag: '这一节与网站「跨语言比对」那一页是同一份内容的两个渲染 —— 只做语法差异时它是一份说明书；把「别的语言怎么解决封闭性」也做进去，它就是本文缺的那一章。',
+      flag: '★ 这一句在 `17571f7` 被改写过：原文从「与……是同一份内容的两个渲染」改成「**计划**与……互为两个渲染（★ 那一页今天【不存在】—— 这是一个计划，不是一个引用）」。★ 这一条讲的是**今天有没有那一页**，是一个现状，所以引文跟着现状走。★ 原 flag 保留：这一节与网站「跨语言比对」那一页是同一份内容的两个渲染 —— 只做语法差异时它是一份说明书；把「别的语言怎么解决封闭性」也做进去，它就是本文缺的那一章。',
       source: {
         file: 'docs/EIDOS_V06.md',
         section: '8',
-        quote: '★ **这一节与 `website/compare/` 那一页是同一份内容的两个渲染**',
+        quote: '★ **这一节计划与 `website/compare/` 那一页互为同一份内容的两个渲染**（★ **那一页今天【不存在】—— 这是一个计划，不是一个引用**）—— 如果那一页只做语法差异，它是一份说明书；**如果把「别的语言怎么解决封闭性」也做进去，它就是本文件缺的那一章。**',
+      },
+    },
+    {
+      id: 'EIDOS-6.2',
+      status: 'ruled',
+      ruledBy: 'earlier',
+      title: '与归档的拼写冲突 —— 与 §1.3 是同一条裁定',
+      decided: '保留 `@unfold eidos extend A, B`；归档的 `+` 拼写不进入现行语法，作为【记录】留在归档原文里。',
+      alternative: '归档的 `eidos C: A + B`（多重继承用 `+`）',
+      whyNot: '`+` 只能表达「从谁那里取」，不能表达「取哪一个成员」；而歧义诊断需要点名来源，`+` 拼写里没有那个名字的位置。',
+      overturn: '把 §6.2 那一句删掉而 §1.3 那一句留着 ⇒ 这同一条裁定在文件里只剩一处，规范页上 §6.2 会变空 —— 这本身不是红，但它说明这两条必须一起动。',
+      flag: '★ 这一条与 `EIDOS-1.3` 是**同一条裁定**（原文自己写着「与 §1.3 同一条裁定」）。★ 两条都留着，是因为它们在文件里是两处。★ 而 `ruledBy` 是 `earlier`（更早的一次裁定），不是 `human`。',
+      source: {
+        file: 'docs/EIDOS_V06.md',
+        section: '6.2',
+        quote: '★★ **【已裁】保留 `@unfold eidos extend A, B`**（与 §1.3 同一条裁定）。★ **归档的 `+` 拼写不进入现行语法，作为【记录】留在归档原文里。**',
       },
     },
     {

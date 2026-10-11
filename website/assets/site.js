@@ -187,6 +187,15 @@
   }
 
   /** 出处：文件 + 节号（不写行号 —— 行号会失效，节号不会）+ 逐字引文 */
+  /* ★ 一条引文如果不在主观测点那棵树上成立，它就必须说出自己读自哪棵树。
+     只在前者与后者不同时才显示 —— 全都标一遍等于没标。 */
+  function readAtNote(D, e) {
+    if (!e.readAt || e.readAt === D.ref) return null;
+    return el('p', 'source__readat',
+      '这一条的引文读自 ' + String(e.readAt).slice(0, 7) + '（不是台账的主观测点 ' + String(D.ref).slice(0, 7) +
+      '）—— 因为那句话在那棵树上不存在，或已被改写。');
+  }
+
   function sourceBox(D, e) {
     var box = el('div', 'source');
     var head = el('p', 'source__head');
@@ -242,8 +251,18 @@
     var head = el('div', 'decision__head');
     head.appendChild(el('code', 'decision__id', e.id));
     head.appendChild(statusBadge(D, e.status));
-    if (D.humanRuled && D.humanRuled.ids.indexOf(e.id) !== -1) {
-      head.appendChild(el('span', 'badge badge--human', '人类在 ask_user_question 上选的'));
+    /* ★ 用逐条的 ruledBy，不用 humanRuled.ids —— 后者是【那套做法的出处】，不是花名册。
+       一旦把它当花名册用，新裁的条目就会静默地不带这个标记，而页面上看不出少了什么。 */
+    /* ★★ `ruledBy` 是【值】不是布尔：文件里现在有两条路 ——
+       `human`（2026-10 在 `ask_user_question` 上选的）与 `earlier`（更早的一次裁定）。
+       ★ 一个徽章只能压掉一个维度，所以按值渲染，而不是「是/不是人类选的」。 */
+    if (e.ruledBy) {
+      var RULED_BY = {
+        human: ['badge--human', '人类在 ask_user_question 上选的'],
+        earlier: ['badge--route-earlier', '更早的一次裁定'],
+      };
+      var rb = RULED_BY[e.ruledBy] || ['badge--muted', '谁裁的：' + e.ruledBy];
+      head.appendChild(el('span', 'badge ' + rb[0], rb[1]));
     }
     card.appendChild(head);
 
@@ -263,6 +282,8 @@
     bl.appendChild(bv);
     card.appendChild(bl);
     card.appendChild(sourceBox(D, e));
+    var ra = readAtNote(D, e);
+    if (ra) card.appendChild(ra);
     return card;
   }
 
@@ -285,7 +306,7 @@
     if (summary) {
       var n = {};
       D.entries.forEach(function (e) { n[e.status] = (n[e.status] || 0) + 1; });
-      var human = D.humanRuled ? D.humanRuled.ids.length : 0;
+      var human = D.entries.filter(function (e) { return e.ruledBy === 'human'; }).length;
       summary.appendChild(el('p', null,
         '共 ' + D.entries.length + ' 条：' + Object.keys(n).map(function (k) {
           return (D.statuses[k] ? D.statuses[k].label : k) + ' ' + n[k];

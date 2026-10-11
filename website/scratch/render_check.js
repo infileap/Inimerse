@@ -666,10 +666,23 @@ currentPage = '台账（真实数据 data/decisions.js）';
     check('台账页：引 PLAN_V07 的条目同时显示了 §0.3「数字都不是读数」',
       !!c && /没有观测点/.test(c.textContent), c ? c.textContent.slice(0, 40) : '(找不到)');
   }
-  /* ★ 出处分级：四条人类选的必须与其余「已裁」分得开 */
+  /* ★ 出处分级：带「人类选的」标记的条数必须等于【逐条 ruledBy=human 的条数】，
+     而不是 humanRuled.ids 的长度 —— 后者是那套做法的出处，不是花名册。 */
   const marked = host.all((n) => /badge--human/.test(n.className)).length;
-  check('台账页：四条人类选定的带「人类选的」标记，与其余已裁分得开',
-    marked === D.humanRuled.ids.length, `${marked} / ${D.humanRuled.ids.length}`);
+  const humanN = D.entries.filter((e) => e.ruledBy === 'human').length;
+  /* ★ 第二条路也要有它自己的徽章：`earlier`（更早的一次裁定）。
+     ★ 否则「谁裁的」这一维又会被一个徽章压成两种 —— 而这正是它被分开的理由。 */
+  const earlierMarked = host.all((n) => /badge--route-earlier/.test(n.className)).length;
+  const earlierN = D.entries.filter((e) => e.ruledBy === 'earlier').length;
+  check('台账页：带「更早的一次裁定」标记的条数 = 逐条 ruledBy=earlier 的条数',
+    earlierMarked === earlierN, `${earlierMarked} / ${earlierN}`);
+  check('台账页：带「人类选的」标记的条数 = 逐条 ruledBy=human 的条数',
+    marked === humanN, `${marked} / ${humanN}`);
+  /* ★ 读自哪棵树：不在主观测点上成立的那些，页面上必须说出自己读自哪棵树 */
+  const offRef = D.entries.filter((e) => e.readAt && e.readAt !== D.ref);
+  const notes = host.all((n) => /source__readat/.test(n.className)).length;
+  check(`台账页：${offRef.length} 条读自另一棵树的，页面上都写出了自己读自哪棵树`,
+    notes === offRef.length, `${notes} / ${offRef.length}`);
   check('台账页：摘要里明说「已裁」不是一种、是两种',
     /已裁」不是一种，是两种/.test(summary.textContent));
 
