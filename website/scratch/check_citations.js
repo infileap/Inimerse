@@ -137,6 +137,18 @@ for (const e of D.entries) {
  *   ⇒ 它被判定成「不用这套词表」而**整份跳过**，那三条裁定在台账里一条都没有，而守卫全绿。
  */
 current = '身份一致（台账 vs docs 原文）';
+/* ★★ 【标记】与【提及】的分界 —— 写成一条规则，两处共用（守卫 ⑧ 与 ⑪(a)）。
+   判据：一行只有在**它自己就是在声称一个身份**时才算标记 ——
+   把行首的 `> # * ★ 空白 数字 . - — ) （` 全部剥掉之后，这一行**以那个标记开头**。
+   ★ `docs/AUDIT.md:7807` 那一行是 `★ 文件头那一句：★ **前半句说「四条【已裁】是…选定的」…`
+     ⇒ 剥完以「文件头那一句」开头 ⇒ 它是**提及**（它在引用别人的句子），不是标记。
+   ★ 而 `★★★ **【已裁】语义是…` / `### 1.6 【未做】` / `4. **【已裁定】…`
+     ⇒ 剥完以标记开头 ⇒ 是**标记**。
+   ★ 这条规则是**收窄**：⑧ 原来按整份文件 `match` 计数，于是把 AUDIT 里那句引用算成了一个标记，
+     而它让一个 7930 行的审计档看起来像是「带身份标记的文档」。 */
+const stripLead = (l) => l.replace(/^[>#*★\s\d.\-—)–）]+/, '');
+const isMarkerLine = (l, mk) => stripLead(l).startsWith(mk);
+
 const MARKER_STATUS = {
   '【已裁】': 'ruled', '【已裁定】': 'ruled',
   '【提案】': 'proposal', '【待裁】': 'undecided', '【未做】': 'notdone',
@@ -293,10 +305,11 @@ const ledgerFiles = new Set(D.entries.map((e) => e.source && e.source.file).filt
 const marked = [];
 for (const p of docFiles) {
   const rel = path.relative(ROOT, p);
-  const m = fs.readFileSync(p, 'utf8').match(MARKER_RE) || [];
-  if (!m.length) continue;
   const kinds = {};
-  m.forEach((x) => { kinds[x] = (kinds[x] || 0) + 1; });
+  fs.readFileSync(p, 'utf8').split('\n').forEach((l) => {
+    Object.keys(MARKER_STATUS).forEach((mk) => { if (isMarkerLine(l, mk)) kinds[mk] = (kinds[mk] || 0) + 1; });
+  });
+  if (!Object.keys(kinds).length) continue;
   marked.push({ file: rel, kinds, inSpec: specFiles.has(rel), inLedger: ledgerFiles.has(rel) });
 }
 const notInSpec = marked.filter((x) => !x.inSpec);
@@ -471,6 +484,9 @@ const at = D.attribution;
 if (at) {
   /* ★ 测试缝（声明在此，因为它是这一节唯一一个非读数输入）：
      `ATTRIBUTION_DOC=<路径>` 可以让这一节读**磁盘上的一个文件**，而不是那棵树上的那一份。
+   ★★ 而这个缝的存在本身是一个事实的产物：**红对照要往这份文档里塞一句话，而这份文档
+     不是我的写域。** ★ 一个测试缝不该只记「怎么用它」，还要记「它为什么会存在」——
+     否则下一轮有人会把它当成一个普通的调试开关，而它其实是一处**写域边界**留下的接口。
      ★ 它只为红对照存在 —— 因为红对照要往文档里塞一句话，而那份文档是别人的写域。
      ★ 默认（不设这个变量）行为完全不变。 */
   const seam = process.env.ATTRIBUTION_DOC;
@@ -486,8 +502,7 @@ if (at) {
   lines.forEach((l) => {
     const h = l.match(/^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)/);
     if (h) cur = h[1];
-    const pos = l.indexOf('【已裁】');
-    if (cur && pos !== -1 && pos <= 40) marked.add(cur);
+    if (cur && isMarkerLine(l, '【已裁】')) marked.add(cur);
   });
   const ruledSecs = new Set(D.entries
     .filter((e) => e.source.file === at.file && e.status === 'ruled')
@@ -511,8 +526,6 @@ if (at) {
        因为那一句被切出来的块里含了上文里的一个「不是」，于是整句被当成否定句跳过了。
        ★ 一条过滤条件如果按【比它要判的东西大得多】的单位来取，它会把不相干的话当成证据。
      ★ 窗口里如果【没有点名任何节】，就归属到它所在的那一节（否则一句不点名的错误归属会被静默跳过）。 */
-  const WIN = 120;
-  const NEAR = 30;
   const NEG = ['不是', '不走', '另一条', '更早', '本人的裁定'];
   const sentWrong = [];
   let scanFrom = 0;
@@ -520,13 +533,20 @@ if (at) {
     const idx = doc.text.indexOf(at.askUserQuestion, scanFrom);
     if (idx === -1) break;
     scanFrom = idx + at.askUserQuestion.length;
-    const win = doc.text.slice(Math.max(0, idx - WIN), idx + at.askUserQuestion.length + WIN);
-    /* ★ 否定词只看【紧挨着关键词】的那一小段（前后各 30 字），不看整个 120 字窗口。
-       ★ 红对照 (a) 第二次没红，就是死在这一步：★ 上文里一句「第一件事**不是**发明」
-         离关键词 100 多字，却把整个窗口判成了否定句 —— ★ 一条过滤条件如果取得比它要判的东西宽，
-         它会把不相干的话当成证据。 */
-    const near = doc.text.slice(Math.max(0, idx - NEAR), idx + at.askUserQuestion.length + NEAR);
-    if (NEG.some((w) => near.indexOf(w) !== -1)) continue;
+    /* ★★ 作用域 = 【子句】，不是固定宽度窗口。
+       ★ 第一版按【整句】取：切出来的块含了上文一句「第一件事**不是**发明」（离关键词一百多字），
+         整句被判成否定句 ⇒ 红对照 (a) 没红。
+       ★ 第二版按【前后 30 字】取否定：能过红对照，却在真文档上**假红** ——
+         `0217b34` 的新文件头一句里同时写了「一条是…在 \`ask_user_question\` 上选定的（…§9 第⑦条）；
+         另一条是更早的一次裁定（§1.1 与 §1.3…）」⇒ §1.1/§1.3 落在第一个关键词的 120 字里，
+         而「更早」落在 30 字外。
+       ⇒ ★ 判据的单位必须是**它要判的那个东西**：这里要判的是「这一句话在说谁」，
+         而一句话的边界是句号/分号/换行。★ 于是两个宽度都不需要了。 */
+    const isDelim = (c) => c === '。' || c === '；' || c === '\n';
+    let a0 = idx; while (a0 > 0 && !isDelim(doc.text[a0 - 1])) a0--;
+    let b0 = idx; while (b0 < doc.text.length && !isDelim(doc.text[b0])) b0++;
+    const win = doc.text.slice(a0, b0);
+    if (NEG.some((w) => win.indexOf(w) !== -1)) continue;
     const has = (sec) => D.entries.some((e) => e.source.file === at.file && e.source.section === sec);
     /* ★ 只认【台账里真有条目】的那些节号。★ 否则 `§1`（说的是「§1 那一节」，
        而不是「§1 这一条是这么裁的」）会被当成一个归属，而它没有条目 ⇒ 检查静默落空。
@@ -542,7 +562,7 @@ if (at) {
         .forEach((e) => { if (e.ruledBy !== 'human') sentWrong.push(`${e.id}(§${sec})=${e.ruledBy}`); });
     });
   }
-  check(`每一处「${at.askUserQuestion}」前后 ${WIN} 字里点到的节，都是 ruledBy=human（前后 ${NEAR} 字内有否定的除外）`,
+  check(`每一处「${at.askUserQuestion}」【所在子句】里点到的节，都是 ruledBy=human（子句里有否定的除外）`,
     sentWrong.length === 0,
     sentWrong.length ? `对不上：${sentWrong.join('、')}` : '对得上');
 

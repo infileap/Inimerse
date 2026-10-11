@@ -93,8 +93,12 @@ window.INFIVERSE_DECISIONS = {
     source: {
       file: 'docs/EIDOS_V06.md',
       section: '0',
-      readAt: 'af85fef',
-      quote: '★ **本文【已裁】的条目，是 2026-10 起由人类在 `ask_user_question` 上逐条选定的。**',
+      readAt: '0217b34',
+      /* ★ 重钉（第二次）。上一次钉的是「本文【已裁】的条目，是 2026-10 起由人类在
+         `ask_user_question` 上逐条选定的」—— 那句在 `0217b34` 被拆成了【两条来路】，
+         原文里不再逐字存在。★ 现在钉的是拆完之后那句话的**主干**：它短、且是台账真正依赖的
+         那件事（「已裁」有两种来路）。★ 教训：钉一个【断言的结构】，不要钉它的【枚举】。 */
+      quote: '★ **本文【已裁】的条目有两条来路。**',
     },
   },
 
@@ -114,7 +118,7 @@ window.INFIVERSE_DECISIONS = {
      ★ 一个徽章只能压掉一个维度 —— 所以 `ruledBy` 是值，不是布尔。 */
   attribution: {
     file: 'docs/EIDOS_V06.md',
-    readAt: 'af85fef',
+    readAt: '0217b34',
     askUserQuestion: 'ask_user_question',
     retiredSentence: '其余每一条仍是【提案】或【待裁】',
     routes: {
@@ -125,9 +129,13 @@ window.INFIVERSE_DECISIONS = {
 
   headerWatch: {
     file: 'docs/EIDOS_V06.md',
-    readAt: 'af85fef',
+    readAt: '0217b34',
     quote: '★ **不在这里列名，也不记总数：列名会不全，总数会过期，而各自的标题标记不会。**',
-    universalClaim: '本文【已裁】的条目，是 2026-10 起由人类在 `ask_user_question` 上逐条选定的',
+    /* ★ `universalClaim` 已【降级成文档】：盯它的那条守卫退役了（它盯的那句话被判定太宽、
+       已由 `0217b34` 拆成两条来路），活交给了守卫 ⑪。这里记的是【它当年那句话】，
+       以及它现在收窄成了什么 —— 免得下一轮有人以为它还在被盯着。 */
+    universalClaim: '一条是 2026-10 起由人类在 `ask_user_question` 上逐条选定的',
+    universalClaimRetired: '本文【已裁】的条目，是 2026-10 起由人类在 `ask_user_question` 上逐条选定的',
     scopeFile: 'docs/EIDOS_V06.md',
     note: '这是一条【全称断言】。台账里 source.file 是它、status 是 ruled 的每一条，都必须 ruledBy=human —— 否则文件头那句话在它自己的文档里就有反例。',
   },
