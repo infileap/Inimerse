@@ -185,6 +185,7 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
   border-left: 2px solid var(--warn, #d0a24c); padding-left: 8px;
 }
 .badge--human { color: var(--accent); border-color: var(--accent); }
+.badge--route-earlier { color: var(--fg-dim); border-color: var(--border); }
 
 .legend { display: grid; gap: 8px; margin: 6px 0 18px; }
 .legend__item { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }

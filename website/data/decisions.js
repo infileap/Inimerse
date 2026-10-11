@@ -105,6 +105,24 @@ window.INFIVERSE_DECISIONS = {
      并且**在同一句里说「这里不记总数：总数会过期」**。
      ⇒ 所以这一条留着：那个总数必须与正文对得上 —— 一个总数不会因为它旁边写了一句
        「总数会过期」而变得不会过期。 */
+  /* ★★ 谁裁的：这份文件里有【不止一处】在说「这一条是谁裁的」——
+     文件头一处，§9 第 ⑦ 条一处。★ 判据：**一句被删掉的话，盯着它的守卫也随之退役 ——
+     而那句话可能还有别的副本，副本的守卫不在你删的那一处。**
+     ⇒ 所以守卫按【整份文件】扫，不按某一行扫；而「这份文件里有几份」是那条守卫的射程。
+     ★ 而裁定有【两条路】，不是一条：`human` = 2026-10 在 `ask_user_question` 上逐条选定；
+     `earlier` = 更早的一次裁定（人类本人的裁定，不走那个机制）。
+     ★ 一个徽章只能压掉一个维度 —— 所以 `ruledBy` 是值，不是布尔。 */
+  attribution: {
+    file: 'docs/EIDOS_V06.md',
+    readAt: 'af85fef',
+    askUserQuestion: 'ask_user_question',
+    retiredSentence: '其余每一条仍是【提案】或【待裁】',
+    routes: {
+      human: '2026-10 在 `ask_user_question` 上逐条选定',
+      earlier: '更早的一次裁定（人类本人的裁定，不走 `ask_user_question`）',
+    },
+  },
+
   headerWatch: {
     file: 'docs/EIDOS_V06.md',
     readAt: 'af85fef',
@@ -130,6 +148,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-1.1',
       status: 'ruled',
+      ruledBy: 'earlier',
       title: 'Eidos 是「进引擎」还是「永远外部」',
       decided: '变成「内糖」—— 编译器认识它（声明、成员、继承、super、字段引用由编译器解析并检查；开放与封闭在编译期判定），VM 不需要认识它（不新增 opcode、不新增运行时类型信息）。',
       alternative: '① 保持外糖；② 完整内建',
@@ -144,6 +163,7 @@ window.INFIVERSE_DECISIONS = {
     {
       id: 'EIDOS-1.3',
       status: 'ruled',
+      ruledBy: 'earlier',
       title: '`@unfold eidos extend A, B` 与归档 `eidos C: A + B` 是同一件事的两种拼写',
       decided: '保留 `@unfold eidos extend A, B`；归档的 `eidos C: A + B` 作为一种【记录】留在归档原文里，不进入现行语法。',
       alternative: '归档的 `eidos C: A + B`（多重继承用 `+`）',
@@ -341,6 +361,22 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '8',
         quote: '★ **这一节计划与 `website/compare/` 那一页互为同一份内容的两个渲染**（★ **那一页今天【不存在】—— 这是一个计划，不是一个引用**）—— 如果那一页只做语法差异，它是一份说明书；**如果把「别的语言怎么解决封闭性」也做进去，它就是本文件缺的那一章。**',
+      },
+    },
+    {
+      id: 'EIDOS-6.2',
+      status: 'ruled',
+      ruledBy: 'earlier',
+      title: '与归档的拼写冲突 —— 与 §1.3 是同一条裁定',
+      decided: '保留 `@unfold eidos extend A, B`；归档的 `+` 拼写不进入现行语法，作为【记录】留在归档原文里。',
+      alternative: '归档的 `eidos C: A + B`（多重继承用 `+`）',
+      whyNot: '`+` 只能表达「从谁那里取」，不能表达「取哪一个成员」；而歧义诊断需要点名来源，`+` 拼写里没有那个名字的位置。',
+      overturn: '把 §6.2 那一句删掉而 §1.3 那一句留着 ⇒ 这同一条裁定在文件里只剩一处，规范页上 §6.2 会变空 —— 这本身不是红，但它说明这两条必须一起动。',
+      flag: '★ 这一条与 `EIDOS-1.3` 是**同一条裁定**（原文自己写着「与 §1.3 同一条裁定」）。★ 两条都留着，是因为它们在文件里是两处。★ 而 `ruledBy` 是 `earlier`（更早的一次裁定），不是 `human`。',
+      source: {
+        file: 'docs/EIDOS_V06.md',
+        section: '6.2',
+        quote: '★★ **【已裁】保留 `@unfold eidos extend A, B`**（与 §1.3 同一条裁定）。★ **归档的 `+` 拼写不进入现行语法，作为【记录】留在归档原文里。**',
       },
     },
     {

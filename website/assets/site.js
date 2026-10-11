@@ -253,8 +253,16 @@
     head.appendChild(statusBadge(D, e.status));
     /* ★ 用逐条的 ruledBy，不用 humanRuled.ids —— 后者是【那套做法的出处】，不是花名册。
        一旦把它当花名册用，新裁的条目就会静默地不带这个标记，而页面上看不出少了什么。 */
-    if (e.ruledBy === 'human') {
-      head.appendChild(el('span', 'badge badge--human', '人类在 ask_user_question 上选的'));
+    /* ★★ `ruledBy` 是【值】不是布尔：文件里现在有两条路 ——
+       `human`（2026-10 在 `ask_user_question` 上选的）与 `earlier`（更早的一次裁定）。
+       ★ 一个徽章只能压掉一个维度，所以按值渲染，而不是「是/不是人类选的」。 */
+    if (e.ruledBy) {
+      var RULED_BY = {
+        human: ['badge--human', '人类在 ask_user_question 上选的'],
+        earlier: ['badge--route-earlier', '更早的一次裁定'],
+      };
+      var rb = RULED_BY[e.ruledBy] || ['badge--muted', '谁裁的：' + e.ruledBy];
+      head.appendChild(el('span', 'badge ' + rb[0], rb[1]));
     }
     card.appendChild(head);
 

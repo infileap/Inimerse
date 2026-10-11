@@ -670,6 +670,12 @@ currentPage = '台账（真实数据 data/decisions.js）';
      而不是 humanRuled.ids 的长度 —— 后者是那套做法的出处，不是花名册。 */
   const marked = host.all((n) => /badge--human/.test(n.className)).length;
   const humanN = D.entries.filter((e) => e.ruledBy === 'human').length;
+  /* ★ 第二条路也要有它自己的徽章：`earlier`（更早的一次裁定）。
+     ★ 否则「谁裁的」这一维又会被一个徽章压成两种 —— 而这正是它被分开的理由。 */
+  const earlierMarked = host.all((n) => /badge--route-earlier/.test(n.className)).length;
+  const earlierN = D.entries.filter((e) => e.ruledBy === 'earlier').length;
+  check('台账页：带「更早的一次裁定」标记的条数 = 逐条 ruledBy=earlier 的条数',
+    earlierMarked === earlierN, `${earlierMarked} / ${earlierN}`);
   check('台账页：带「人类选的」标记的条数 = 逐条 ruledBy=human 的条数',
     marked === humanN, `${marked} / ${humanN}`);
   /* ★ 读自哪棵树：不在主观测点上成立的那些，页面上必须说出自己读自哪棵树 */
