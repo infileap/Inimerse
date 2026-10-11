@@ -151,7 +151,28 @@ current = '身份一致（台账 vs docs 原文）';
    ★ 一个白名单式的剥头集合，它的漏项由【哪些符号会出现在标记前面】决定，
      而那个集合没有任何东西在维护 —— 这一条是被一次全量普查找出来的。 */
 const stripLead = (l) => l.replace(/^[>#*★\s\d.\-—)–）⇒]+/, '');
-const isMarkerLine = (l, mk) => stripLead(l).startsWith(mk);
+
+/* ★★★ 身份标记的【作用域】是它所在的那个【语义单元】—— 一行、一个表格单元格、或一个列表项 ——
+   而**不要求它出现在行首**。一个标记说的是「这一单元的内容有那个身份」，
+   而它在单元内的位置不改变它说什么。（这条约定是 2026-10 由人类裁定的，原文见与 exact-otter 的往来。）
+   ⇒ `| | **不相交**（初稿提案写的） | **最特化优先**【已裁】 |` 那一格**是标记**：那一格在说「这一列是裁定」。
+   ⇒ 而 `（初稿提案写的【已裁】）` **不是**：标记被包在括注里，不再声称那一格的身份。
+   验收就是这两行 —— 前者的行号必须出现在【标记】那一栏里，后者必须落回【提及】。 */
+const stripEmph = (s) => s.replace(/^[\s*_`]+/, '').replace(/[\s*_`]+$/, '');
+const unitIsMarker = (unit, mk) => {
+  const t = stripEmph(unit);
+  return t.startsWith(mk) || t.endsWith(mk);
+};
+const isMarkerLine = (l, mk) => {
+  if (stripLead(l).startsWith(mk)) return true;      // 整行以标记开头（原有规则）
+  const t = stripEmph(stripLead(l));
+  if (t.startsWith('|')) return t.split('|').some((c) => unitIsMarker(c, mk));  // 表格行 ⇒ 逐格
+  return t.endsWith(mk);                             // 整行以标记收尾：这一行在声称自己的身份
+};
+
+/* ★ 这条白名单的完备性没有任何东西在报 —— 而它藏起来的那一行，
+   与【那一行不是标记】在输出上完全一样。
+   下面那行常驻打印能把**藏不住的那部分**列出来，而它**不会说「这个集合少了一个符号」**。 */
 
 const MARKER_STATUS = {
   '【已裁】': 'ruled', '【已裁定】': 'ruled',
@@ -331,8 +352,13 @@ check('带身份标记、且在规范页清单里的文件，台账里至少有�
    只有把那些行列出来，这条边界才是可以被别人反驳的。
    而它必须每次运行都打印：**一次性的普查会过期，一条常驻的打印不会。** */
 const boundary = { marker: [], mention: [] };
+/* ★ 这个缝与 ATTRIBUTION_DOC 同源：**红对照要改的那一行，在别人的写域里。**
+   默认不设 ⇒ 行为不变（仍然读 D.ref）。它不消除那件事，它让那件事可以被测。 */
+const SCAN_OVERRIDE = process.env.MARKER_SCAN_FILE;
 for (const rel of docFiles) {
-  docAtRef(D.ref, rel).text.split('\n').forEach((l, i) => {
+  const text = (SCAN_OVERRIDE && rel === 'docs/EIDOS_V06.md')
+    ? fs.readFileSync(SCAN_OVERRIDE, 'utf8') : docAtRef(D.ref, rel).text;
+  text.split('\n').forEach((l, i) => {
     for (const mk of Object.keys(MARKER_STATUS)) {
       if (l.indexOf(mk) === -1) continue;
       const row = `${rel}:${i + 1} [${mk}] ${stripLead(l).slice(0, 76)}`;
