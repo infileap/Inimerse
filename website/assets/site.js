@@ -383,8 +383,12 @@
       /* 数据里的 title 是**逐字**（带 `#`，受守卫钉住）；显示时去掉那个 Markdown 标记，
          否则页面上会出现一个字面的 `#`。 */
       box.appendChild(el('h3', 'spec-doc__title', doc.title.replace(/^#+\s*/, '')));
-      box.appendChild(el('p', 'spec-doc__meta',
-        doc.file + ' · ' + doc.lines + ' 行 · 引用规矩：' + doc.cite));
+      var meta = doc.file + ' · ' + doc.lines + ' 行 · 引用规矩：' + doc.cite;
+      if (doc.ref && doc.ref !== S.ref) {
+        meta += ' · ★ 元信息读自 ' + doc.ref.slice(0, 7) +
+                '（不是本页的主观测点 ' + S.ref.slice(0, 7) + '）';
+      }
+      box.appendChild(el('p', 'spec-doc__meta', meta));
 
       box.appendChild(field('本站概括（不是原文）', doc.role, 'mine'));
 
