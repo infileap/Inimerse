@@ -645,7 +645,7 @@ void *ptr;
 **逐条。** 修的过程里又暴露出六处各自独立的问题：
 
 1. **字节码没有 int64 字面量的载体。** `RegInstruction` 只有 `r1/r2/r3`，`OP_LOADK_INT` 的 `r2` 是**符号扩展的 int32**，无法承载无符号低半。先试过把高低 32 位相加（`r2 + (r3<<32)`），**这是错的**：低半符号位为 1 时 `(int)` 会把它符号扩展，结果少了 2³²（实测 `9223372036854775807` 被读成 `9223372032559808511`）。最终**在 `OpCode` 枚举末尾追加 `OP_LOADK_I64`**（该文件自己的约定就是「追加在末尾以保持旧 opcode 编号」），两半都按无符号拼装；旧字节码的 `OP_LOADK_INT` 语义不变，`INIM_BYTECODE_VERSION` 仍是 3 —— 它在 `src/compiler/bytecode.c:351`、`:731` 是**严格相等**比较的，一升版所有既有 `.inim` 都读不了。
-2. **`push_int` 的参数是 `int`。** `src/vm/vm.c:325` / `src/vm/vm.h:379` 原文 `void push_int(VM *vm, int v)`，而 `L_PUSH_REG` 对 `VAL_INT` 直接调它 —— **函数传参路径上每一个 64 位整数都被截成低 32 位**。实测 `func f(a) { return a } g = f(9007199254740993) say g` 解释器打印 `1`，AOT 和 wasm 都是 `9007199254740993`。这个缺陷一直潜伏：字面量以前都被降级成 double 走 `push_float`，`push_int` 根本见不到超过 int32 的值。
+2. **`push_int` 的参数是 `int`。** `src/vm/vm.c:325` / `src/vm/vm.h:379` 原文 `void push_int(VM *vm, int v)`，而 `L_PUSH_REG` 对 `VAL_INT` 直接调它 —— **函数传参路径上每一个 64 位整数都被截成低 32 位**。实测 `func f(a) { return a } g = f(9007199254740993) say g` 解释器打印 `1`，AOT 和 wasm 都是 `9007199254740993`。这个缺陷一直潜伏：字面量以前都被降级成 double 走 `push_float`，`push_int` 根本见不到超过 int32 的值。★ **这一行上的两个号不同档**（写下时都按当时那棵树取）：`src/vm/vm.c` 那个号从来没指到过 `push_int` —— 签名取 `int` 的那一段里，它在该文件被触及的 23 棵树上从 123 走到 315，从未到过 325（逐棵取 `git rev-list 8248e08..33b6dd2^ -- src/vm/vm.c`，再对每棵取 `git show <c>:src/vm/vm.c | grep -n 'void push_int(VM *vm, int v)'`），今天它在 478 行；`src/vm/vm.h` 那个号只在【改完之后】的那棵树上成立 —— 句子引的是改之前的签名 `int`，而 `git show 8248e08:src/vm/vm.h | grep -n 'void push_int'` 印出 330、`git show 33b6dd2^:src/vm/vm.h | grep -n 'void push_int'` 印出 357，只有 `git show 33b6dd2:src/vm/vm.h | grep -n 'void push_int'` 印出 379（那一行已是 `long long`）；今天它在 395 行。
 3. **布尔操作数把表达式拖回 double。** 守卫写的是 `a->type == VAL_INT && b->type == VAL_INT`，`VAL_BOOL` 不满足，于是 `true * 9007199254740993` 解释器和 wasm 都是 `...992`、AOT 是 `...993`。判据定为「布尔是**整数值**操作数」：新增 `val_is_intlike()`（INT 或 BOOL）与 `val_i64()`（BOOL 取 0/1），用于 `L_ADD`/`L_SUB`/`L_MUL`/`L_DIV`/`L_NEG`/`L_MOD`、`val_cmp` 以及 `val_eq` 的跨类型数值分支；wasm 侧对应新增 `e_push_is_intlike()` / `e_push_is_numeric()`。
 4. **`L_DIV` 根本没有整数路径。** 它一律 `val_as_double(a) / val_as_double(b)` 并返回 `VAL_FLOAT`，所以 `6/3` 是 `2.0`。而 AOT 的 `nv_div` 一直按**文档写明**的规则做（其 preamble 原文：*The interpreter yields an int when the division is exact and a float otherwise (4/2 prints 2, 7/2 prints 3.5, 6/4 prints 1.5)*）—— 即「精确整除留整数，有余数才转浮点」。是解释器从没实现过自己这条规则。现在 `L_DIV` 逐字镜像 `nv_div`（`ib == 0` 抛 `division_by_zero`；`ib != -1 && ia % ib == 0` 留整数；否则浮点；`ib == -1` 故意落浮点，因为 `INT64_MIN / -1` 会溢出），wasm 的 `TOK_SLASH` 改成同形状三分支。**`2.0 / 0` 和 `2 / 0.0` 三端仍都是 `inf`** —— 只有 intlike×intlike 的零才抛。
 5. **wasm 的关系运算无条件走 f64**（`src/compilation/wasm_backend.c` 约 `:1061-1067`），所以 `9007199254740993 > 9007199254740992` 只有 wasm 是错的。补了缺失的 `W_I64_LE_S 0x57` / `W_I64_GE_S 0x59`，加了 i64 精确快路径。
@@ -973,17 +973,17 @@ cmake --build "$BUILD_DIR" --clean-first -j"$JOBS" >"$log" 2>&1 || { cat "$log";
 
 `src/lint_mod.c:181` 的 `lint_add` 往 `LintBuf.lines[64][200]` 写调用方的 `char msg[320]`。这里没有「扩大」这个选项：`LintBuf` 已经是 12.8 KB，而且可能是栈上分配的。改成前缀 `snprintf` + 显式 clamp + `memcpy` 余量 + NUL —— **`msg` 完全不再走 `%s`**，编译器因此能证明边界。截断的是诊断正文，前缀（行号和 tag）始终完整。
 
-路径类的四处（`src/main.c:247`、`src/mod/verse_dist_mod.c:384`、`:839`（两处）、`:1297`）换成 `im_platform_path_join`：
+路径类的四处（`src/main.c:252`、`src/mod/verse_dist_mod.c:386`、`:839`（两处；今天分别在 839 与 840）、`:1305`）换成 `im_platform_path_join`：★ **这四个号由三笔平移，量各不相同** —— 写下时它们是 247 / 384 / 839 与 839 / 1297：`git show d6bc6a2^:src/main.c | sed -n '247p'` 印出 `snprintf(outPath, sizeof outPath, "%s/%s", outDir, name);`，`git show d6bc6a2:src/main.c | grep -n im_platform_path_join` 印出 251、`git show 46944f02:src/main.c | grep -n im_platform_path_join` 印出 252（先 4、再 1）；`src/mod/verse_dist_mod.c` 由 `d6bc6a2` 从 384 推到 386，而 1297 那一处先到 1298、后来到 1305（两次插入）。
 
 ```c
 int im_platform_path_join(char *buffer, size_t capacity, const char *base, const char *part);
 ```
 
-它在 `src/platform/platform.c:122-133`，装不下时返回 **-1**（`return (written < 0 || (size_t)written >= capacity) ? -1 : 0;`），同时会去掉 `base` 结尾和 `part` 开头多余的分隔符，并按平台选 `/` 或 `\`。
+它在 `src/platform/platform.c:139-150`，装不下时返回 **-1**（`return (written < 0 || (size_t)written >= capacity) ? -1 : 0;`），同时会去掉 `base` 结尾和 `part` 开头多余的分隔符，并按平台选 `/` 或 `\`。
 
 **为什么是拒绝而不是扩大缓冲区**：静默截断的路径会把文件写到**错误的位置** —— 那是数据损坏，而且是安静的；被拒绝的 join 只是一个被跳过的条目。调用方现在一律 `if (im_platform_path_join(...) != 0) continue;`。
 
-因为 `im_platform_path_join` 自己就按平台选分隔符，`src/main.c:247` 和 `src/mod/verse_dist_mod.c:384` 里那两段 `#ifdef _WIN32` 的 `/`→`\` 转换循环随之删掉。
+因为 `im_platform_path_join` 自己就按平台选分隔符，`src/main.c:252` 和 `src/mod/verse_dist_mod.c:386` 里那两段 `#ifdef _WIN32` 的 `/`→`\` 转换循环随之删掉。（两处由 `d6bc6a2` 与 `46944f02` 平移，量分别是 5 与 2 —— 量法与上一段同。）
 
 **这条约定值得单独记住**：本仓库原来的路径拼接是 `snprintf(dst, sizeof dst, "%s/%s", a, b)` —— 截断、且不告诉任何人。以后新写的路径拼接一律走 `im_platform_path_join`。
 
