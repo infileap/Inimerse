@@ -719,6 +719,24 @@ if (at) {
     copies.length ? `还有 ${copies.length} 处：第 ${copies.join('、')} 行` : '没有副本');
 }
 
+/* ---------------- ⑫ 守卫 ⑪ 的输入树 vs 今天那棵树：它会不会「因为看不见所以绿」 ----------------
+ * 守卫 ⑪ 的输入树是 `attribution.readAt` —— 一根**钉**。如果那份文件在那棵树上与今天
+ * 那棵树上不同，守卫读的就是一份旧副本：它绿，而它绿的理由是**它没看**。
+ * ★ 这不是假想的：`docs/` 整体在 `0217b34` 与今天之间动过 8 个文件、+605/−30。
+ * ★ 这一条把它变成一个会说话的数 —— 「看不见」与「没问题」在绿上长得一样，
+ *   而它们的处置相反（前者要重钉或改成指针，后者什么都不用做）。
+ */
+current = '覆盖：守卫 ⑪ 的输入树 vs 今天那棵树';
+{
+  const attrTree = (D.attribution && D.attribution.readAt) || D.ref;
+  const attrFile = (D.attribution && D.attribution.file) || 'docs/EIDOS_V06.md';
+  const same = docAtRef(attrTree, attrFile).text === docAtRef(MSR_SHA, attrFile).text;
+  check(`守卫 ⑪ 的输入树（${String(attrTree).slice(0, 7)}）上那份文件与今天那棵树上逐字相同`,
+    same,
+    same ? `逐字相同（${String(attrTree).slice(0, 7)} vs ${String(MSR_SHA).slice(0, 7)}）`
+         : `不同 ⇒ 它读的是 ${String(attrTree).slice(0, 7)}，今天是 ${String(MSR_SHA).slice(0, 7)} —— 台账可能落后，或这一根钉该改成指针`);
+}
+
 /* ---------------- 被禁字符串守卫 ---------------- */
 current = '全站文本';
 const BANNED = ['Inim', ' OS'].join('');   // 人类硬约束：任何地方不许出现
