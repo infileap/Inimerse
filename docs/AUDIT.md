@@ -3104,7 +3104,7 @@ $ git merge-base --is-ancestor c71ea00 5868940 →  是祖先（RC=0）
 $ git rev-parse --short v0.5.1              →  ceda774   （annotated）
 $ git rev-parse --short v0.5.1^{commit}     →  4e444dd
 $ git diff --stat 5868940 4e444dd           →  docs/STATUS.md | 2 +-   (1 insertion, 1 deletion)
-$ git rev-parse --short main                →  5868940   （未动）
+$ git rev-parse --short main                →  5868940   （读于该次测量）
 ```
 
 **`4e444dd` 的父是 `5868940`，tag 指的 commit 与 `main` 差一个文档提交。** 不写这句，读者会把「发布树」当成上面 A 里那个测量点 `c71ea00`。
