@@ -1335,7 +1335,7 @@ blast radius 为零（实测，不是推断）。
 
 **根因。** 引擎在启动时把 cwd 切到脚本目录（`chdir_to_script_dir`，`src/main.c`），此后所有相对路径都相对脚本目录。但 `make_abs_path` / `make_abs_path_loose` 用 `_fullpath` / `realpath` 做归一化，它们锚的是**进程当时的 cwd**；一旦引擎为了别的原因动过 cwd（或调用发生在 `chdir` 之前），两者就不一致了。修法是把**调用者给的**路径显式锚到「调用者的 cwd」（启动时记下的 `g_caller_cwd`），与进程 cwd 解耦。
 
-**同轮抓到的自伤回归。** 第一版改动把**所有**调用点都锚到调用者 cwd，其中一个是错的：`src/compiler/compiler.h:76` 的 `cur_dir` 在顶层是 `""`（`compiler_new` 对 `Compiler` 做 `memset`），`resolve_import_path("" , rel)` 原样返回 `rel`（`src/compiler/compiler.c:3008`），于是 `comp->dep_paths[i]` 可以是**相对路径**（`:3035`）—— 它是引擎自己产生的，语义基准是脚本目录。修法是新增 `make_abs_path_cwd()`（Windows 走不锚定的 `_fullpath`，POSIX 走 `make_abs_path_loose`），只把那一个调用点换过去。
+**同轮抓到的自伤回归。** 第一版改动把**所有**调用点都锚到调用者 cwd，其中一个是错的：`src/compiler/compiler.h:76` 的 `cur_dir` 在顶层是 `""`（`compiler_new` 对 `Compiler` 做 `memset`），`resolve_import_path("" , rel)` 原样返回 `rel`（`src/compiler/compiler.c:3008`），于是 `comp->dep_paths[i]` 可以是**相对路径**（`:3035`）—— 它是引擎自己产生的，语义基准是脚本目录。修法是新增 `make_abs_path_cwd()`（Windows 走不锚定的 `_fullpath`，POSIX 走 `make_abs_path_loose`），只把那一个调用点换过去。　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: 7656f3b3f3a4 -> main @ 711a339]
 
 **判据。** 除该点外，`make_abs_path*` / `chdir_to_script_dir` 的全部调用点拿的都是 `script` / `input` / `argv[2]` / `argv[3]`（完整清单见 `docs/BOARD.md` 第 161 行），锚调用者 cwd 是对的。mingw `-fsyntax-only src/main.c` RC=0；Linux `ctest -R "incremental|dep|compile|selfhost"` 4/4 通过。
 
@@ -2076,7 +2076,7 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 
 | 位置 | 实现 | 是否被注册 |
 |---|---|---|
-| `src/runtime/runtime.c:28` `builtin_random`（**修前**在 `:16`，那里现在是说明注释） | `int max = ...ival; rand() % max` | **否** —— `runtime_register_builtins`（`src/runtime/runtime.c:1771`）里没有这个名字 |
+| `src/runtime/runtime.c:28` `builtin_random`（**修前**在 `:16`，那里现在是说明注释） | `int max = ...ival; rand() % max` | **否** —— `runtime_register_builtins`（`src/runtime/runtime.c:1771`）里没有这个名字 　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: ab611342e656 -> main @ 711a339]|
 | `src/mod/io_mod.c:143` `builtin_random`（**修前**；那里现在是说明注释） | `push_int(vm, rand())`，**完全忽略实参** | 是（**修前** `src/mod/io_mod.c:322`；该行已删除） |
 
 `src/mod/io_mod.c` 只在 Windows 上编译（`CMakeLists.txt:431`），POSIX 侧由
@@ -2091,7 +2091,7 @@ POSIX 答 **0**（`posix_spi_meta` 只认 `VAL_INT` 与 `VAL_STRING`），WIN32 
 
 **修法（三处编辑）。**
 
-1. `src/runtime/runtime.c:28`（**修前** `:16`）的 `builtin_random` 补上 POSIX 已有的门：
+1. `src/runtime/runtime.c:28`（**修前** `:16`）的 `builtin_random` 补上 POSIX 已有的门：　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: ab611342e656 -> main @ 711a339]
    `push_int(vm, max > 0 ? rand() % max : 0);` —— `rand() % 0` 是整数除零。
 2. `src/runtime/runtime.c:1774` 在 `runtime_register_builtins` 里注册 `random`。
 3. 删掉 `src/mod/io_mod.c:143-147` 的副本与 `:322` 的注册行（两处都是**修前**行号）。
@@ -2843,7 +2843,7 @@ run5  init 2.1  listen 2265.2  port_available    8.3  connect    6.9  port_open 
 
 `im_socket_init` 恒为毫秒级；**慢的全是走名字解析的那几个调用**，`listen` 最重。探针一轮做 4 次解析（`im_socket_listen`、`im_socket_port_available`→`listen`、`im_socket_connect`、`im_socket_port_open`），长尾就是这 4 次的和。
 
-**机制。** `getaddrinfo()` **接受** `"127.0.0.1"` 与 `"::1"` 并原样返回，但它是**穿过完整解析路径**才做到的，而那条路径正是慢的那条（`src/platform/socket.c:82-98` 的注释已记：解析器不可达时它等的是系统自己的重试表，单位是分钟）。
+**机制。** `getaddrinfo()` **接受** `"127.0.0.1"` 与 `"::1"` 并原样返回，但它是**穿过完整解析路径**才做到的，而那条路径正是慢的那条（`src/platform/socket.c:82-98` 的注释已记：解析器不可达时它等的是系统自己的重试表，单位是分钟）。　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: bab466b51afa -> main @ 711a339]
 
 **修法。** `src/platform/socket.c` 新增 `addr_from_literal()`：`inet_pton`（WIN32 `InetPtonA`，同一个契约：1 成功 / 0 非法 / -1 出错，经 `IM_INET_PTON` 宏择一）先试 `AF_INET`、再试 `AF_INET6`，成功就直接填 `sockaddr_storage`。**两个解析入口都问同一个助手**：`resolve_addr`（`im_socket_listen` 走它）与 `resolve_addr_timed`（`im_socket_connect_timeout` 走它，且**在线程派生之前**）—— 否则「快路径」会变成 `listen` 一条规则、`connect` 另一条。空主机 / 主机名 / `AI_PASSIVE` 一律回落 `getaddrinfo`，行为不变。
 
@@ -4702,7 +4702,7 @@ if token in TARGETS and line[end:m.start()] == "":
 
 ★ **而 `-1` 是一个合法值**：真实失败也返回 `-1` ⇒ **调用方分不出「不支持」与「保存失败」** —— **一个不存在的能力，被一个在成功与失败的语言里都已经有主的值回答。**
 
-**五个名字逐条（`noble-zephyr` 数全了）**：`key_press` / `mouse_move` / `mouse_click` 三个在 `src/runtime/runtime_posix.c:1219-1221` 用 `vm_register_builtin` 注册；`load_params` / `save_params` 在 `:1264-1265` 用 `vm_register_builtin_full(…, 1 | CAP_IO, 0)` 注册。Windows 侧对应 `builtin_key_press` / `builtin_mouse_move` / `builtin_mouse_click`（`src/mod/io_mod.c:330-332`）与 `builtin_load_params` / `builtin_save_params`（`src/runtime/runtime.c:1907-1908`）。**五个一个都不在编译器那张 29 条内建名表里** ⇒ ★ **这一类只能走字符串池那条路到达** —— 实跑 `key_press(65, 1)` ⇒ 输出 `key_press=-1`，**RC=0，一个字都不报。**
+**五个名字逐条（`noble-zephyr` 数全了）**：`key_press` / `mouse_move` / `mouse_click` 三个在 `src/runtime/runtime_posix.c:1219-1221` 用 `vm_register_builtin` 注册；`load_params` / `save_params` 在 `:1264-1265` 用 `vm_register_builtin_full(…, 1 | CAP_IO, 0)` 注册。Windows 侧对应 `builtin_key_press` / `builtin_mouse_move` / `builtin_mouse_click`（`src/mod/io_mod.c:330-332`）与 `builtin_load_params` / `builtin_save_params`（`src/runtime/runtime.c:1907-1908`）。**五个一个都不在编译器那张 29 条内建名表里** ⇒ ★ **这一类只能走字符串池那条路到达** —— 实跑 `key_press(65, 1)` ⇒ 输出 `key_press=-1`，**RC=0，一个字都不报。**　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: 03279f7740f9 -> main @ 711a339]
 
 ★★ **「数全」的证据**：`posix_unsupported` 在整个 `src/` 与 `mods/` 里只有定义点加这五个注册点，另有一处**注释**（`src/runtime/vm_exec_builtin.c` 的抬头）。
 
@@ -4902,7 +4902,7 @@ void vm_throw_kind(VM *vm, const char *kind) {
 
 **为什么这是一个新形态。** 前面那些形态的病，**修好一处就少一处**；这一种的病，**每加一个调用方就多一处**。而它长得像「已经修过三次了」—— 三次都绿。与「一个不持有意见的函数，不能犯错，也不能报警」（§1.79 A）是同一族的反面：**那个是「没有人判断」，这个是「判断被搬到了每一个调用方，而搬走之后根还在」。**
 
-**规模（`noble-zephyr` 的读数，观测点 `5805538`）。** `val_as_double` 在 `src/` 有 **28 个调用点**（32 处文本命中减去声明、定义与两处注释）；`val_as_int` 有 **7 个**（`src/runtime/runtime_posix.c:841`/`:913`/`:1086`、`src/runtime/runtime.c:1291`/`:1672`/`:1767`、`src/mod/verse_dist_mod.c:1975`/`:2071`）⇒ **35 个，逐个有没有守卫【未读】。** ★ **一个根因在 `default` 里、而修复在调用方的病，它的剩余风险只能靠【数调用点】来估，不能靠【数已修的】。**
+**规模（`noble-zephyr` 的读数，观测点 `5805538`）。** `val_as_double` 在 `src/` 有 **28 个调用点**（32 处文本命中减去声明、定义与两处注释）；`val_as_int` 有 **7 个**（`src/runtime/runtime_posix.c:841`/`:913`/`:1086`、`src/runtime/runtime.c:1291`/`:1672`/`:1767`、`src/mod/verse_dist_mod.c:1975`/`:2071`）⇒ **35 个，逐个有没有守卫【未读】。** ★ **一个根因在 `default` 里、而修复在调用方的病，它的剩余风险只能靠【数调用点】来估，不能靠【数已修的】。**　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: f25aa5d3ba23 -> main @ 711a339]
 
 ### §1.80.1 挑第一个量时先问分辨力
 
@@ -5026,7 +5026,7 @@ else { double res = val_as_double(a) - val_as_double(b); … VAL_FLOAT … }
 
 ### §1.82.4 ★★ 更正数字的动作本身：同一个病的第四次，而这一次的「另一个量」是同一个命令在更窄范围上的输出
 
-★ 上一轮报的是「`val_as_double` 28 + `val_as_int` 7 = **35**」。★ 而那个 28 是 `grep` 的**行数减 4**，**28 正是 `src/vm/vm.c` 一个文件里的表达式数**。按「剥掉注释、再数调用表达式」重算 ⇒ **41 个表达式、分布在 4 个文件**（`src/vm/vm.c` 28+0、`src/runtime/runtime.c` 2+3、`src/runtime/runtime_posix.c` 3+3、`src/mod/verse_dist_mod.c` 0+2），★ 而上一轮那个脚本的 `FILES` **只有 3 个文件，漏了 `src/mod/verse_dist_mod.c:1975/2071`**。
+★ 上一轮报的是「`val_as_double` 28 + `val_as_int` 7 = **35**」。★ 而那个 28 是 `grep` 的**行数减 4**，**28 正是 `src/vm/vm.c` 一个文件里的表达式数**。按「剥掉注释、再数调用表达式」重算 ⇒ **41 个表达式、分布在 4 个文件**（`src/vm/vm.c` 28+0、`src/runtime/runtime.c` 2+3、`src/runtime/runtime_posix.c` 3+3、`src/mod/verse_dist_mod.c` 0+2），★ 而上一轮那个脚本的 `FILES` **只有 3 个文件，漏了 `src/mod/verse_dist_mod.c:1975/2071`**。　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: 80ddbfb937ae -> main @ 711a339]
 
 ★★ **判据（逐字，它给的）**：★ **「我把另一个量的值，贴上了一个更宽范围的标签。」**
 ★ 而**这是同一个病的第四次**，★ **而这一次的「另一个量」不是别的提交、别的树，是同一个命令在更窄范围上的输出** ⇒ ★ **这一族里最省事的一种犯错方式：先在一个文件上试，得到数，再把它当成全体的数。**

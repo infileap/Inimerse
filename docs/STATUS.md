@@ -2629,7 +2629,7 @@ internal error, please report: running "rustup.cargo" failed: cannot create tran
 
 **症状。** `contract_test.im:88` 的 `list set` 失败：`list(Z[1~3])` 打印 `[]`、`len(list(Z[1~3]))` 是 **0**、`[0]` 是 nil。
 
-**根因：两套索引约定被接在一起。** `VAL_ARRAY` **值**里存的是 **1-based 句柄**（构造点 `src/vm/vm.c:3240` 的 `value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL)`；读者都减一，见 `src/vm/vm.c:3275`、`:3323`、`:2447`），而整个 `vm_array_*` **函数族**收的是 **raw 池下标**（`vm_array_len(vm, idx)`，`src/vm/vm.c:789-795`）。`vm_set_to_array`（`src/vm/vm.c:1966`）**两条造数组的分支都以 `return aidx + 1;` 收尾**，而它的三个调用方全部按 raw 解释：`src/runtime/runtime_posix.c:19`（`len` 的集合分支，`vm_array_len(vm, a)`）、`:236`（`list`，`{ VAL_ARRAY, idx + 1 }`）、`src/runtime/runtime.c:134`（WIN32 的 `list`，`ival = r + 1`）。⇒ `list(<集合>)` 交回的是**池里的下一个数组**（刚新建、通常是空的）。
+**根因：两套索引约定被接在一起。** `VAL_ARRAY` **值**里存的是 **1-based 句柄**（构造点 `src/vm/vm.c:3240` 的 `value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL)`；读者都减一，见 `src/vm/vm.c:3275`、`:3323`、`:2447`），而整个 `vm_array_*` **函数族**收的是 **raw 池下标**（`vm_array_len(vm, idx)`，`src/vm/vm.c:789-795`）。`vm_set_to_array`（`src/vm/vm.c:1966`）**两条造数组的分支都以 `return aidx + 1;` 收尾**，而它的三个调用方全部按 raw 解释：`src/runtime/runtime_posix.c:19`（`len` 的集合分支，`vm_array_len(vm, a)`）、`:236`（`list`，`{ VAL_ARRAY, idx + 1 }`）、`src/runtime/runtime.c:134`（WIN32 的 `list`，`ival = r + 1`）。⇒ `list(<集合>)` 交回的是**池里的下一个数组**（刚新建、通常是空的）。　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: 0ff5359a08db -> main @ 711a339]
 
 | 探针 | 修前 | 修后 |
 | --- | --- | --- |

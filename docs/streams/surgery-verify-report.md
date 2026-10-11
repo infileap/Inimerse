@@ -243,7 +243,7 @@ error: unknown label 'SKIP'     [exit=1]
 
 ### A⑥ 生命周期面 —— **通过**
 
-`grep -rn 'be_bound' src/` 在 `6d9bb77` 上 = **0**，因此不存在指向已释放对象的残留名。更名覆盖全部生命周期位点：`vm.c:1339-1342`（grow：realloc + 新槽清零）、`vm.c:1355-1365`（clone：换出-换入-回填）、`vm.c:1398-1399`（init）、`vm.c:1561`（`vm_free` 释放并置 NULL），以及嵌套 `vm_exec` 的 `src/runtime/vm_exec_builtin.c:122-139`（`saved_be`/`saved_be_cap` 保存、`free`、恢复）。
+`grep -rn 'be_bound' src/` 在 `6d9bb77` 上 = **0**，因此不存在指向已释放对象的残留名。更名覆盖全部生命周期位点：`vm.c:1339-1342`（grow：realloc + 新槽清零）、`vm.c:1355-1365`（clone：换出-换入-回填）、`vm.c:1398-1399`（init）、`vm.c:1561`（`vm_free` 释放并置 NULL），以及嵌套 `vm_exec` 的 `src/runtime/vm_exec_builtin.c:122-139`（`saved_be`/`saved_be_cap` 保存、`free`、恢复）。　★ **同一个号上的内容在那两棵树之间变了**：号没有漂，是那一行换了；本行的坐标读于写下它的那一刻。[obs: c1c656ff9113 -> main @ 711a339]
 **诚实标注**：这一项我是**读 diff + grep**确认的，不是运行时复现的（没有构造 clone/嵌套 vm_exec 下的被约束全局用例）。**未独立验证**其运行时正确性。
 
 ---
