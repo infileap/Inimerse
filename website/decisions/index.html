@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>裁定台账 · Infiverse</title>
+<meta name="description" content="Inimerse / Infiverse 的设计裁定台账：每一条决定了什么、另一条路是什么、为什么没走、以及要推翻它需要什么。">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="../index.html">首页</a>
+      <a href="../games/index.html">在线游戏</a>
+      <a href="../videos/index.html">实机演示</a>
+      <a href="../tools/index.html">小工具</a>
+      <a href="../spec/index.html">规范</a>
+      <a href="index.html" aria-current="page">台账</a>
+      <a href="../about/index.html">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap">
+    <h1>裁定台账</h1>
+    <p class="lede">
+      一条一条地看：<b>决定了什么</b>、<b>另一条路是什么</b>、<b>为什么没走</b>、
+      以及 <b>要推翻它需要什么</b>。最后那一列是留给参与设计的 ——
+      一份只有结论的规范，读它的人只能遵守；有这一列，读它的人才能反对。
+    </p>
+
+    <div class="callout">
+      <strong>这一页的每条「为什么」都不是我编的。</strong>
+      它只来自 <code>docs/</code> 里已经写下的东西，而且每一句都带出处（文件 + 节号）。
+      docs 里没有记录备选的条目，那一栏会写「<b>docs 未记录备选</b>」，并附上
+      <b>我查过哪些文件、用什么筛法</b> —— 「未记录」是一个零，而一个零需要被归因。
+      <span class="badge badge--muted">不替它编</span>
+    </div>
+
+    <!-- ============================================================
+         内容位：状态图例 + 筛选
+         状态词表来自 data/decisions.js 的 statuses（不在页面里手写）
+         ============================================================ -->
+    <section class="section">
+      <h2>怎么看这一页</h2>
+      <div id="decisions-legend" class="legend"></div>
+      <div id="decisions-summary" class="callout callout--tight"></div>
+      <div id="decision-filter" class="filters"></div>
+    </section>
+
+    <!-- ============================================================
+         内容位：台账条目
+         渲染源 = ../data/decisions.js（window.INFIVERSE_DECISIONS）
+         ============================================================ -->
+    <section class="section">
+      <h2>条目</h2>
+      <div id="decision-list" class="decisions"></div>
+    </section>
+
+    <section class="section">
+      <h2>这一页读的是哪棵树</h2>
+      <div id="decisions-ref" class="callout callout--tight"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="../data/site.js"></script>
+<script src="../data/decisions.js"></script>
+<script src="../data/spec.js"></script>
+<script src="../assets/site.js"></script>
+</body>
+</html>

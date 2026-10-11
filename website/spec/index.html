@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>规范 · Infiverse</title>
+<meta name="description" content="Inimerse / Infiverse 的项目规范：语言、类型、线程、错误码、Eidos 与去 C 化设计，每一处「我们这样定了」旁边写着「另一条路是什么、为什么没走」。">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="../index.html">首页</a>
+      <a href="../games/index.html">在线游戏</a>
+      <a href="../videos/index.html">实机演示</a>
+      <a href="../tools/index.html">小工具</a>
+      <a href="index.html" aria-current="page">规范</a>
+      <a href="../decisions/index.html">台账</a>
+      <a href="../about/index.html">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap">
+    <h1>规范</h1>
+    <p class="lede">
+      这个项目按什么规则在长。每一份文档下面挂着它自己的裁定 ——
+      <b>每一处「我们这样定了」旁边，都写着「另一条路是什么、为什么没走」</b>。
+      没有那一栏，这就只是一份手册，而手册不让人参与设计。
+    </p>
+
+    <div class="callout">
+      <strong>三件先说清楚的事。</strong>
+      ① 这一页<b>不是</b>这些文档的正文，它是<b>索引</b>：每份文档的标题、口径、行数与文件头，
+      都<b>逐字</b>取自那份文件本身（带引文钉，改一个字就红）；
+      而<b>「本站概括」</b>那一行是我写的，页面上与逐字引文<b>分开显示</b> ——
+      概括与原文长得一样时，读者会以为概括也是原文。
+      ② 文档里的每一条裁定都标着<b>身份</b>：已裁 / 提案 / 待裁 / 未做。
+      ③ 每一条都带<b>出处</b>（文件 + 节号），并注明读的是<b>哪一棵树</b>。
+    </div>
+
+    <div class="callout callout--tight">
+      <strong>引用的规矩因文档而异，而这不是小事。</strong>
+      有的文档逐字要求<b>引节号、不要引行号</b>（因为它会被改动，行号会失效）；
+      而语言语法参考反过来 —— 它引的是<b>实现</b>（<code>路径:行号</code>），
+      在那里行号是<b>载荷</b>。页面上每份文档都标出它自己那条规矩。
+    </div>
+
+    <!-- ============================================================
+         内容位：文档 + 挂在它下面的裁定
+         渲染源 = ../data/spec.js（window.INFIVERSE_SPEC，文档级元信息）
+                + ../data/decisions.js（window.INFIVERSE_DECISIONS，裁定）
+         ============================================================ -->
+    <section class="section">
+      <h2>文档</h2>
+      <div id="spec-list" class="spec"></div>
+    </section>
+
+    <section class="section">
+      <h2>这一页读的是哪棵树</h2>
+      <div id="spec-ref" class="callout callout--tight"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="../data/site.js"></script>
+<script src="../data/decisions.js"></script>
+<script src="../data/spec.js"></script>
+<script src="../assets/site.js"></script>
+</body>
+</html>
