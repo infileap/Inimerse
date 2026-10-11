@@ -1,0 +1,14 @@
+// `VAL_BOOL` is a case in the numeric readers and answers 1 or 0, so unary
+// minus on a bool has to stay on the INTEGER path.  L_NEG tested
+// `v->type == VAL_INT` alone, so `-true` fell to the double branch and became
+// -1.0 -- a value that prints the same as the integer -1 and only separates
+// from it above 2^53: `-true + 9007199254740993` answered 9007199254740991
+// while `(0 - true) + 9007199254740993`, the same number on the binary path,
+// answered 9007199254740992.  The wasm backend's unary minus carried the same
+// single-tag test.  `int-add` is the already-correct binary row, kept so the
+// discriminating row is read next to a row that did not move.  Two smaller
+// observables of the same defect, both measured on the reverted build and both
+// asserted in CMakeLists.txt: `neg-add` is the double-path sum, and a bool read
+// as a double carries negative zero, so `str(-false)` answered `-0` where a
+// bare `say -false` printed `0`.  See docs/AUDIT.md 1.83.
+say "neg-ok -true=" + str(-true) + " -false=" + str(-false) + " int-add=" + str(true + 9007199254740993) + " neg-add=" + str(-true + 9007199254740993) + " bin-add=" + str((0 - true) + 9007199254740993) + " -2.5=" + str(-2.5)

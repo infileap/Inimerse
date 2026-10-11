@@ -1262,9 +1262,9 @@ static void cg_expr(Cg *cg, FnEnv *env, Buf *w, Expr *x, int dst_kind, int dst_s
                 if (cg->err[0]) return;
                 e_load_val(w, 0, KIND_FRAME, TEMP_BASE + depth);
                 e_trap_on_string(w);
-                e(w, W_LOCAL_GET); e_u(w, LOC_TAGA);
-                e_i32c(w, TAG_INT);
-                e(w, W_I32_EQ);
+                e_push_is_intlike(w, 0);     /* a bool carries 0/1 in its i64
+                                                payload, so it negates on the
+                                                integer path (src/vm/vm.c L_NEG) */
                 e(w, W_IF); e_u(w, 0x40);
                 e(w, W_LOCAL_GET); e_u(w, LOC_IA);
                 e_i64c(w, -9223372036854775807LL - 1);
