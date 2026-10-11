@@ -120,10 +120,19 @@ error: field `hp` has different defaults: `animal.hp = 10`, `pet.hp = 20`
 
 ### 3.2 「草案有 · 四家都没有」的格子 —— 本文件存在的理由
 
+★ **先说口径，因为这一节六格全是【零】，而零需要被归因。「四家都没有」与「我没在四家身上找到」在表里长得一样。**
+
+六格用的是**两种**证据，强度不同：
+
+- **键集枚举**（六格全用）：§2 里每个格式的键表都是**对真实输出跑 `sorted(obj.keys())` 得到的完整键集**，不是一个我按名字去找的候选清单。⇒ 「这个键不存在」的证据**就是那份键集本身**，它印在 §2 里，别人重跑同一条命令会得到同一份。
+- **值搜索**（R2 / R3 / R8 用）：那个名字**确实在输出里**，只是住在字符串值里 —— 逐字引在下面。⇒ 这三格不是「找不到」，是「**找到了，而它在一个不该被解析的地方**」。
+
+★ **两种证据各自的上界**：键集枚举只覆盖 **§2 列过的那些对象**（顶层 / 条目 / span / child / results / locations / physicalLocation / relatedLocations / artifacts / invocations / tool.driver）；**我没有枚举每一个嵌套对象的键**（`region`、`properties`、`toolExecutionNotifications`、gcc `rules[]` 的内部）。⇒ 严格的说法是「**在我列出的那些键空间里，没有任何一个键承载它**」，不是「四个实现的 JSON 里没有这个键」。
+
 - ★★ **R2（成员名）**：命令 `rustc --error-format=json q1.rs` ⇒ `message` 逐字 `multiple applicable items in scope`，**名字 `f` 不在任何结构化字段里**，只在 `rendered` 的 `^ multiple \`f\` found` 与人读标签里。
 - ★★ **R3（来源名）**：同一个命令 ⇒ 来源名 `A`/`B` 只出现在 child 的 `message` 逐字 `candidate #1 is defined in an impl of the trait \`A\` for the type \`S\`` 里。gcc 那边 `g++ -fdiagnostics-format=json q1.cpp` ⇒ child 的 `message` 逐字 `candidates are: ‘int Y::hp’`。★ **两家都只有散文。**
 - ★★ **R6（主 fix）**：`rustc` 的 `rendered` 里有那句「怎么写」，而**四个格式里没有任何一个字段承载它**（`suggested_replacement` 在 rustc 上承载的是 **R7 的备选**，不是主 fix）。
-- ★★★ **R7（备选 fix + 它选了谁）**：命令 `rustc --error-format=json q1.rs` ⇒ 两条 `help` child 的 `suggested_replacement` 逐字 `'A::f(&s)'` / `'B::f(&s)'`。★ **「它选了 A 还是 B」这件事，今天只能靠解析那个替换串** —— `spans[]` 里没有「trait 名」这个字段。
+- ★★★ **R7（备选 fix + 它选了谁）**：命令 `rustc --error-format=json q1.rs` ⇒ 两条 `help` child 的 `suggested_replacement` 逐字 `'A::f(&s)'` / `'B::f(&s)'`。★ **「它选了 A 还是 B」这件事，今天只能靠解析那个替换串** —— `spans[]` 里没有「trait 名」这个字段。★ 补一句免得被误读：**SARIF 规范里有 `fixes`，而这次两家都没发它** —— `results[]` 的键集里没有它（§2.3 / §2.4 的键表就是证据）。⇒ 所以这一格是「**这次这条诊断上没有**」，不是「SARIF 不支持」。
 - ★ **R8（两个默认值）**：`g++ -fdiagnostics-format=sarif-file q1.cpp` ⇒ `relatedLocations[0].physicalLocation.contextRegion.snippet.text` 逐字 `'struct Y { int hp = 20; };\n'`。★ **值在源码片段里，不在字段里** —— 而且这是四家里唯一一家把片段带上的。
 - ★★ **R9（逐字稳定文本）**：唯一给得出的是 `rustc` 的 `rendered`，而它是**人读渲染**。
 
@@ -232,7 +241,7 @@ clang++ -fsyntax-only -fdiagnostics-parseable-fixits q6.cpp
 clang++ -fdiagnostics-format=sarif q1.cpp -o /dev/null 2> clang.raw.sarif   # §5(c) 的反例
 ```
 
-★ `~/.cargo/bin/rustc` 是完整路径而不是 `rustc`：★ 本机 `rustc` 是 rustup 的 shim，直接调它会 `internal error, please report: running "rustup.rustc" failed: cannot create transient scope: DBus error`。
+★ **绕开 rustup 的 shim，用真二进制路径** —— 这一句是可照抄的，不是一条抱怨：本机 `command -v rustc` 给 `/snap/bin/rustc`（shim），直接调它逐字报 `internal error, please report: running "rustup.rustc" failed: cannot create transient scope: DBus error "org.freedesktop.DBus.Error.UnixProcessIdUnknown": [Failed to set unit properties: No such process]`；换成 `~/.cargo/bin/rustc` 就好。★ **这个形状在同一台机器上出现到第二次了**：一次是 `running "rustup.cargo" failed: cannot create transient scope`（当时让 `oauth_loop` 那个门禁阶段红过一次，定性是**环境问题、不是回归**；这一处由 `exact-otter` 转述），一次是这次的 `rustup.rustc`（本节实测）。⇒ ★ **「一条读数在一个环境里不可重跑」与「这条读数错了」是两件事，而它们在同一份报告里长得一样**；两个坑同一个修法。
 
 ---
 
