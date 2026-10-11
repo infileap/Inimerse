@@ -478,7 +478,7 @@ inimerse <script.inim> [参数]
 - **`.inim` 依赖尾块**（`src/compilation/deps.c`，133 行）：`deps_write_trailer(bc_path, DepEntry*, count, abi_version)` 追加每项 `le32 path_len` + `path` + 64 字节 SHA-256 hex，最后 16 字节 footer（`DEPS_TRAILER_MAGIC`、abi、count、trailer_len）；`deps_read` 从尾部 `-16` 读 footer 校验 magic，`count > 65536` 或 `path > 4096` 判非法。路径**相对产物目录**记录（`deps_bc_dirname` + `deps_relative_path`），以保证相同工程布局在任何宿主上哈希一致（可复现构建）。
 - **CTest**：`CMakeLists.txt` 共 **85** 个 `add_test(NAME ...)`。常用回归：`inim_regression`、`cli_incremental_regression`、`selfhost_benchmark`、`bindgen_regression`、`scan_tools_regression`、`wasm_backend_regression`、`release_verify_regression`；探针类：`jit_mode_probe`、`ed25519_probe`、`bytecode_capture_probe`、`verse_eventlog_probe`、`verse_layer_probe`、`verse_protocol_probe`、`verse_closed_loop`、`closure_probe`、`typeset_probe`、`enum_probe`、`error_types_probe`、`type_registry_probe`、`crp_session_probe`、`platform_probe`、`fiber_probe`、`process_probe`、`socket_probe`、`thread_probe`、`dir_probe`、`headless_probe`、`http_probe`、`hub_probe`、`wasm_probe`、`wasm_host`；协议/流程类：`hub_dist_regression`、`verse_pack_regression`、`node_discovery_regression`、`lease_handoff_regression`、`reconnect_generation_regression`、`economy_domain_regression`、`protocol_regression`、`replay_closure_regression`、`crp_session_flow_regression`。运行：`ctest --test-dir build --output-on-failure`。
 
-> ⚠️ **修正**：`docs/archive/inimerse_compile_guide.md` 列的"测试探针"中有 **`websocket_probe`**，但 `CMakeLists.txt` 里没有该 CTest（`websocket.c` 本身存在于 POSIX 平台源列表，属部分实现）。
+> ⚠️ **修正**：`docs/archive/inimerse_compile_guide.md` 列的"测试探针"中有 **`websocket_probe`**，但 `CMakeLists.txt` 里没有该 CTest（`websocket.c` 在 POSIX 平台源列表；握手与帧层读/写都有实现，而该探针实测以 `rc=124` 挂住 —— 等不到回显）。
 
 ### 10.5 JIT 与性能（必须按此口径陈述）
 
@@ -619,7 +619,7 @@ CTest：`verse_pack_regression` = `tools/verse_pack.test.py`（另有 `tools/vve
 |---|---|---|
 | TCP | ✅ **现役** | `src/headless_server.c`（Windows）/ `src/headless_server_posix.c`；CTest `headless_probe`。房间端口规律：`11510 + 10n`（`11510 ≤ port < 11700`），证据 `src/mod/server_mod_posix.c:24,36,82` |
 | HTTP | ✅ **现役** | verse hub / headless http api；引擎默认 `--http-port 11470`（`src/main.c:818,850`）；CTest `http_probe`、`hub_probe` |
-| WebSocket | ⬜ **预留** | 仅有 POSIX 基础握手 `src/platform/websocket.c`（部分实现）；协议帧未实现；**无 `websocket_probe` CTest** |
+| WebSocket | ⬜ **预留** | 握手与帧层读/写都已实现（`im_ws_accept` / `im_ws_read_text` / `im_ws_send_text` / `im_ws_send_pong`）；**探针等不到回显**（`websocket_probe` 实测 `rc=124`，观测点 `main @ 124a213`）；**无 `websocket_probe` CTest** |
 | UDP | ⬜ **预留**（NAT 打洞） | 无实现证据（POSIX 侧 `net_mod_posix.c` 也没有 `udp_*`） |
 | IPFS | ⬜ **预留**（`verse://ipfs/<cid>`，CID = SHA-256） | 无实现证据 |
 
