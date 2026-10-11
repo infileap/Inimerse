@@ -63,11 +63,19 @@ check('导出 INFIVERSE_DECISIONS', !!D);
 check('有 ref', !!(D && D.ref), D && D.ref);
 check('有 entries 且非空', !!(D && Array.isArray(D.entries) && D.entries.length), D && D.entries && D.entries.length);
 
+/* ★★ 一份文档上出现了【两批引文，读自两棵树】。
+   `ref` 是台账的主观测点；`e.readAt` 是这一条引文实际读自的那棵树。
+   ★ 为什么必须逐条：新裁的几条（§1.5 / §3.2 / §3.4 / §7.2 / §7.4）的原文
+     在主观测点那棵树上**根本不存在**；另有两条引的句子在那之后被**改写**过。
+   ★ 缓存键必须带 ref —— 只按文件名缓存会让「同一个文件的两棵树」互相顶掉。 */
 const docCache = new Map();
-function doc(file) {
-  if (!docCache.has(file)) docCache.set(file, docAt(D.ref, file));
-  return docCache.get(file);
+function docAtRef(ref, file) {
+  const k = `${ref}|${file}`;
+  if (!docCache.has(k)) docCache.set(k, docAt(ref, file));
+  return docCache.get(k);
 }
+function doc(file, ref) { return docAtRef(ref || D.ref, file); }
+function readAtOf(e) { return e.readAt || D.ref; }
 
 const seenIds = new Map();
 const SECTION_SOURCE = 'docs/ERROR_CODES_V06.md 开头与 docs/EIDOS_V06.md 文件头都逐字要求「引节号（§3.2、§5），不要引行号」';
@@ -90,7 +98,7 @@ for (const e of D.entries) {
   }
 
   if (!e.source || !e.source.file) continue;
-  const d = doc(e.source.file);
+  const d = doc(e.source.file, readAtOf(e));
 
   /* ① 节号存在 */
   const hit = sectionExists(d.text, e.source.section);
@@ -158,7 +166,7 @@ let stanceChecked = 0;
 let stanceSkipped = 0;
 for (const e of D.entries) {
   if (!e.source || !e.source.file) continue;
-  const d = doc(e.source.file);
+  const d = doc(e.source.file, readAtOf(e));
   const usesVocabulary = Object.keys(MARKER_STATUS).some((k) => d.text.includes(k));
   if (!usesVocabulary) { stanceSkipped++; continue; }
   const body = sectionBody(d.text, e.source.section);
@@ -364,6 +372,65 @@ for (const e of D.entries) {
     hit.length ? `引文里有「${hit.join('、')}」，而这一条是 ${r.built}` : '引文里没有实现状态的负面词');
 }
 
+/* ⑩ 「谁裁的」与「读自哪棵树」
+ * ★ ruledBy 是一个【出处】，不是一个装饰：它必须是 ruled，否则「谁裁的」这句话是空的。
+ * ★ readAt 必须是一个真实存在的提交 —— 否则「这条引文读自那棵树」这句话没有出处。
+ * ★ 真正的方向：**一条引文如果不在主观测点那棵树上成立，它就必须说出自己读自哪棵树。** */
+current = '出处：谁裁的 / 读自哪棵树';
+{
+  const humans = D.entries.filter((e) => e.ruledBy === 'human');
+  const notRuled = humans.filter((e) => e.status !== 'ruled');
+  check(`标了「人类裁定」的条目必须是 ruled（${humans.length} 条）`,
+    notRuled.length === 0,
+    notRuled.map((e) => `${e.id}=${e.status}`).join('、'));
+
+  for (const r of [...new Set(D.entries.filter((e) => e.readAt).map((e) => e.readAt))]) {
+    let ok = false, why = '';
+    try {
+      execFileSync('git', ['rev-parse', '--quiet', '--verify', `${r}^{commit}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+      ok = true;
+    } catch (err) { why = String((err && err.stderr) || err).trim().slice(0, 90); }
+    check(`readAt ${String(r).slice(0, 7)} 是一个真实存在的提交`, ok, why);
+    check(`readAt ${String(r).slice(0, 7)} 与主观测点不同（否则这个字段没有意义）`, r !== D.ref, r);
+  }
+
+  /* ★★ 这一条才是这一组的方向：不在主观测点上成立的引文，必须自带出处 */
+  const silent = D.entries.filter((e) => {
+    const t = docAtRef(D.ref, e.source.file).text;
+    return t.indexOf(e.source.quote) === -1 && !e.readAt;
+  });
+  check('引文不在主观测点上成立的条目，必须带 readAt（否则它没有出处）',
+    silent.length === 0, silent.map((e) => e.id).join('、'));
+
+  const claimed = D.entries.filter((e) => e.readAt).length;
+  const actual = D.entries.filter((e) => docAtRef(D.ref, e.source.file).text.indexOf(e.source.quote) === -1).length;
+  check('带 readAt 的条目数 = 引文在主观测点上不成立的条目数', claimed === actual, `${claimed} / ${actual}`);
+
+  /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
+     它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
+  const hq = D.humanRuled && D.humanRuled.source && D.humanRuled.source.quote;
+  if (hq) {
+    const secs = (hq.match(/§[0-9]+(?:\.[0-9]+)*/g) || []).slice().sort().join(',');
+    const idSecs = D.humanRuled.ids.map((i) => {
+      const e = D.entries.find((x) => x.id === i);
+      return e ? `§${e.source.section}` : `(缺 ${i})`;
+    }).sort().join(',');
+    check('humanRuled 那句话点名的节号，与 ids 的节号集合一致（不一致 ⇒ 那句话已经过期）',
+      secs === idSecs, `句子点名 ${secs} / ids 是 ${idSecs}`);
+
+    /* ★★ 那句话的后半句是「其余每一条仍是【提案】或【待裁】」。
+       它的载荷是「点名之外没有已裁」。用 ruledBy=human 去验它 ——
+       ★ 这句话在 exact-otter 的文档里，我不改它；但**我的数据不替它圆场**。 */
+    const listed = new Set(hq.match(/§[0-9]+(?:\.[0-9]+)*/g) || []);
+    const outside = D.entries.filter((e) => e.ruledBy === 'human' && !listed.has(`§${e.source.section}`));
+    check('那句「其余每一条仍是【提案】或【待裁】」还成立（点名之外还有已裁 ⇒ 它已经过期）',
+      outside.length === 0,
+      outside.length
+        ? `这句话点名的之外还有 ${outside.length} 条已裁：${outside.map((e) => `${e.id}(§${e.source.section})`).join('、')} —— 文档头那句话已经过期`
+        : '成立');
+  }
+}
+
 /* ---------------- 被禁字符串守卫 ---------------- */
 current = '全站文本';
 const BANNED = ['Inim', ' OS'].join('');   // 人类硬约束：任何地方不许出现
@@ -395,11 +462,13 @@ results.filter((r) => !r.ok).forEach((r) => {
 const docsTouched = new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean));
 console.log('');
 console.log(`条目数：${D.entries.length}`);
-console.log(`引文钉：${D.entries.length} 条，涉及 ${docsTouched.size} 个 docs 文件（读自 ref ${String(D.ref).slice(0, 7)}）`);
+const byRef = {};
+D.entries.forEach((e) => { const r = readAtOf(e); byRef[r] = (byRef[r] || 0) + 1; });
+console.log(`引文钉：${D.entries.length} 条，涉及 ${docsTouched.size} 个 docs 文件（读自 ${Object.keys(byRef).map((r) => `${String(r).slice(0, 7)} × ${byRef[r]}`).join(' / ')}）`);
 console.log(`节号钉：${D.entries.length} 个`);
 console.log(`身份一致：检查了 ${stanceChecked} 条，跳过 ${stanceSkipped} 条（词表 = 【已裁】/【已裁定】/【提案】/【待裁】/【未做】；标记看 标题+正文）`);
 console.log(`做到没有：${Object.keys(builtCount).map((k) => k + ' ' + builtCount[k]).join(' / ')}（引文里带实现状态负面词的条目 ${builtNegative} 条）`);
-console.log(`出处分级：humanRuled ${((D.humanRuled && D.humanRuled.ids) || []).length} 条`);
+console.log(`出处分级：ruledBy=human ${D.entries.filter((e) => e.ruledBy === 'human').length} 条（humanRuled 那个块是这套做法的出处，不是花名册）`);
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
 console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md，其中 ${marked.length} 份带标记`);
 console.log('');
