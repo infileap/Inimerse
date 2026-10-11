@@ -360,12 +360,71 @@ check('带身份标记、且在规范页清单里的文件，台账里至少有�
    只有把那些行列出来，这条边界才是可以被别人反驳的。
    而它必须每次运行都打印：**一次性的普查会过期，一条常驻的打印不会。** */
 const boundary = { marker: [], mention: [] };
-/* ★ 这个缝与 ATTRIBUTION_DOC 同源：**红对照要改的那一行，在别人的写域里。**
-   默认不设 ⇒ 行为不变（仍然读 D.ref）。它不消除那件事，它让那件事可以被测。 */
-const SCAN_OVERRIDE = process.env.MARKER_SCAN_FILE;
+
+/* ==================== 测试缝（一处写域边界留下的接口，不是一个调试开关）====================
+ * ★ 两个缝的存在理由是同一句话：**红对照要改的那一行，在别人的写域里。**
+ *   —— 红对照要「把文档里的一行改掉、看守卫是否红」，而那份文档不是我的写域，我不能改它。
+ *   缝不消除那件事，它让那件事可以被测。
+ * ★ 它们**不是调试开关**：调试开关改的是【行为】；这两个改的只是【读哪一份正文】，
+ *   而默认那一份永远来自一棵树（见下表），不是来自磁盘。
+ * ★★ 覆盖表 —— 一个缝一个文件，而**两个缝的默认树不是同一棵**：
+ *     MARKER_SCAN_FILE → docs/EIDOS_V06.md  默认读 MSR_SHA（`origin/main` 运行时解析，量的是现状）
+ *     ATTRIBUTION_DOC  → docs/EIDOS_V06.md  默认读 `attribution.readAt`（是那条断言的记录）
+ *   ⇒ ★ 所以「把它设成 `docs/EIDOS_V06.md` 在 `D.ref` 上的内容 ⇒ 读数与不设时相同」
+ *     这条验收**不成立**：`D.ref`（= `754403b`）是这两条**都不是**的那棵树。
+ *     正确的验收是【设成它自己的默认树上的内容】—— 见下面那条守卫，它对每个缝分别做。 */
+const SEAMS = {
+  MARKER_SCAN_FILE: {
+    file: 'docs/EIDOS_V06.md',
+    tree: () => MSR_SHA,
+    usedBy: '标记 / 提及 的分界扫描',
+  },
+  ATTRIBUTION_DOC: {
+    file: 'docs/EIDOS_V06.md',
+    tree: () => (D.attribution && D.attribution.readAt) || D.ref,
+    usedBy: '守卫 ⑪（谁裁的）',
+  },
+};
+/** 读一份正文：默认从【那棵树】读；只有当声明过的缝被设上、且它覆盖这个文件时才读磁盘。 */
+function seamText(envName, rel, fromTree) {
+  const spec = SEAMS[envName];
+  const p = process.env[envName];
+  if (p && spec && spec.file === rel) return fs.readFileSync(p, 'utf8');
+  return fromTree;
+}
+
+/* ★★ 可证明的默认不变（不是一个声明）。对**每一个**缝，按【它自己那棵树】做两向：
+     ① 不设 vs 设成它自己那棵树上的内容 ⇒ 读数必须逐字相同（且等于那棵树上的正文）；
+     ② 设成一份改过的副本 ⇒ 读数必须不同（证明这个缝真的在生效，而不是写在注释里）。
+   ★ 验收必须按各自那棵树做 —— 两个缝的默认树不是同一棵（见上面那张覆盖表）。 */
+{
+  const buildDir = path.join(HERE, '.build');
+  fs.mkdirSync(buildDir, { recursive: true });
+  for (const [name, spec] of Object.entries(SEAMS)) {
+    const tree = spec.tree();
+    const T = docAtRef(tree, spec.file).text;
+    const ownPath = path.join(buildDir, `seam-${name}-own.md`);
+    const mutPath = path.join(buildDir, `seam-${name}-mutated.md`);
+    fs.writeFileSync(ownPath, T);
+    fs.writeFileSync(mutPath, T.replace('【已裁】', '【已裁·改过】'));
+    const saved = process.env[name];
+    delete process.env[name];
+    const unset = seamText(name, spec.file, T);
+    process.env[name] = ownPath;
+    const same = seamText(name, spec.file, T);
+    process.env[name] = mutPath;
+    const changed = seamText(name, spec.file, T);
+    if (saved === undefined) delete process.env[name]; else process.env[name] = saved;
+    const tag = `${name}（${spec.usedBy}，默认树 ${String(tree).slice(0, 7)}）`;
+    check(`缝 ${tag}：不设时与设成【它自己那棵树上的内容】读数逐字相同`,
+      unset === same && same === T, unset === same ? '逐字相同' : '不同 ⇒ 这个缝在「设成同一个东西」时引入了差别');
+    check(`缝 ${tag}：设成一份改过的副本 ⇒ 读数确实变了（这个缝在生效）`,
+      changed !== unset, changed !== unset ? '变了' : '没变 ⇒ 这个缝不生效');
+  }
+}
+
 for (const rel of docFiles) {
-  const text = (SCAN_OVERRIDE && rel === 'docs/EIDOS_V06.md')
-    ? fs.readFileSync(SCAN_OVERRIDE, 'utf8') : docAtRef(MSR_SHA, rel).text;
+  const text = seamText('MARKER_SCAN_FILE', rel, docAtRef(MSR_SHA, rel).text);
   text.split('\n').forEach((l, i) => {
     for (const mk of Object.keys(MARKER_STATUS)) {
       if (l.indexOf(mk) === -1) continue;
@@ -540,8 +599,10 @@ if (at) {
      否则下一轮有人会把它当成一个普通的调试开关，而它其实是一处**写域边界**留下的接口。
      ★ 它只为红对照存在 —— 因为红对照要往文档里塞一句话，而那份文档是别人的写域。
      ★ 默认（不设这个变量）行为完全不变。 */
-  const seam = process.env.ATTRIBUTION_DOC;
-  const doc = seam ? { text: fs.readFileSync(seam, 'utf8') } : docAtRef(at.readAt, at.file);
+  /* ★ 这个缝与 `MARKER_SCAN_FILE` 同源，形状见上面那张覆盖表。
+     ★★ 它只为红对照存在 —— 因为红对照要往文档里塞一句话，而那份文档是别人的写域。
+     ★ 默认（不设这个变量）行为完全不变。 */
+  const doc = { text: seamText('ATTRIBUTION_DOC', at.file, docAtRef(at.readAt, at.file).text) };
   const lines = doc.text.split('\n');
 
   /* (a) 每一处【已裁】的节，台账里都要有一条已裁条目 —— 否则那一处身份没有出处。 */
