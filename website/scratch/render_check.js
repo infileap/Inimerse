@@ -53,6 +53,9 @@ const PAGES = [
   { key: 'videos', label: '实机演示', file: 'videos/index.html', slots: 1, containers: ['video-list', 'bili-account'] },
   { key: 'tools',  label: '小工具',   file: 'tools/index.html',  slots: 1, containers: [] },
   { key: 'about',  label: '关于',     file: 'about/index.html',  slots: 0, containers: [] },
+  { key: 'spec',     label: '规范', file: 'spec/index.html',     slots: 1, containers: ['spec-list', 'spec-ref'] },
+  { key: 'decisions', label: '台账', file: 'decisions/index.html', slots: 2,
+    containers: ['decision-list', 'decision-filter', 'decisions-legend', 'decisions-summary', 'decisions-ref'] },
 ];
 const DATA_FILES = ['data/site.js', 'data/videos.js', 'data/toys.js'];
 
@@ -71,6 +74,14 @@ class El {
     return this.children.map((c) => c.textContent).join('');
   }
   set textContent(v) { this.children = []; this._text = v == null ? '' : String(v); }
+  /* ★ 桩不解析 HTML。`innerHTML = ''` 只清空（与浏览器一致）；
+     赋一个**非空**字符串在桩里不会被解析 ⇒ 它只会静默地什么都不发生，
+     所以这里把它记下来，由断言判红（见「innerHTML 只被赋空串」那一条）。 */
+  set innerHTML(v) {
+    this.children = [];
+    this._text = '';
+    if (v) this._unparsedHTML = String(v);
+  }
   appendChild(c) { c.parent = this; this.children.push(c); return c; }
   removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
   replaceWith(n) {
@@ -201,15 +212,19 @@ function runPage(page, data, html) {
 
   const run = (rel) => vm.runInContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), sandbox, { filename: rel });
 
-  // 页面真实顺序：data/site.js -> data/videos.js -> data/toys.js -> assets/site.js
-  run(DATA_FILES[0]);
-  run(DATA_FILES[1]);
-  run(DATA_FILES[2]);
-  if (data) {                               // data === null ⇒ 不注入，用 data/*.js 自己现在的内容
-    sandbox.INFIVERSE_VIDEOS = data.videos;  // 注入本轮要测的数据
-    sandbox.INFIVERSE_TOYS = data.toys;
+  /* 按**页面自己引用的 script 顺序**跑 —— 浏览器就是这么做的。
+     ★ 原来是写死的 DATA_FILES 列表；那意味着「页面引了一个桩不知道的数据文件」
+     与「那个文件不存在」在桩里长得一样（都是没跑）。新页面引 decisions.js / spec.js，
+     写死的列表会静默漏掉它们。 */
+  for (const ref of refsIn(html).filter((r) => /\.js$/.test(r))) {
+    if (/assets\/site\.js$/.test(ref)) {
+      if (data) {                            // data === null ⇒ 不注入，用 data/*.js 自己现在的内容
+        sandbox.INFIVERSE_VIDEOS = data.videos;
+        sandbox.INFIVERSE_TOYS = data.toys;
+      }
+    }
+    run(resolveFrom(page.file, ref).replace(/^\//, ''));
   }
-  run('assets/site.js');
 
   return { hosts, sandbox, ids };
 }
@@ -608,6 +623,106 @@ currentPage = '在线游戏（真实数据 data/toys.js）';
   } else {
     check('有 Toy 记录时渲染成卡', tl.children.length === real.length, tl.children.length);
   }
+}
+
+/* ============================ 规范页 / 台账页（真实数据）============================
+ * ★ 这两页是这一笔的交付物本身。没有这一段，它们就是「没测到」，而不是「没问题」。
+ */
+currentPage = '台账（真实数据 data/decisions.js）';
+{
+  const page = PAGES.find((p) => p.key === 'decisions');
+  const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
+  const st = runPage(page, null, html);
+  const D = st.sandbox.INFIVERSE_DECISIONS;
+  const host = st.hosts['decision-list'];
+  const bar = st.hosts['decision-filter'];
+  const legend = st.hosts['decisions-legend'];
+  const summary = st.hosts['decisions-summary'];
+
+  check('台账页：渲染出的条目数 = 数据里的条目数',
+    host.children.length === D.entries.length, `${host.children.length} / ${D.entries.length}`);
+  check('台账页：图例覆盖了状态词表里的每一个状态',
+    legend.children.length === Object.keys(D.statuses).length,
+    `${legend.children.length} / ${Object.keys(D.statuses).length}`);
+  check('台账页：摘要写出了总条数',
+    summary.textContent.indexOf('共 ' + D.entries.length + ' 条') !== -1,
+    summary.textContent.slice(0, 40));
+  const cards = host.all((n) => n.tagName === 'ARTICLE');
+  check('台账页：每一条都带自己的 id 锚点（反馈要能落到具体一条上）',
+    cards.length === D.entries.length && cards.every((n) => !!n.id),
+    `${cards.filter((n) => n.id).length} / ${cards.length} 带 id`);
+  /* ★ 「docs 未记录备选」是一个零，而一个零必须带归因 —— 否则它与「我没找到」长得一样 */
+  const zeros = D.entries.filter((e) => !e.alternative);
+  if (zeros.length) {
+    const c = host.find((n) => n.id === zeros[0].id);
+    check(`台账页：${zeros.length} 条没有备选记录的，写「docs 未记录备选」并给出查过哪些文件`,
+      !!c && /docs 未记录备选/.test(c.textContent) && /PLAN_V06/.test(c.textContent),
+      c ? c.textContent.slice(0, 60) : '(找不到那张卡)');
+  }
+  /* ★ 引 PLAN_V07 的数字必须同时显示 §0.3 */
+  const v7 = D.entries.filter((e) => e.source && e.source.file === 'docs/PLAN_V07.md');
+  if (v7.length) {
+    const c = host.find((n) => n.id === v7[0].id);
+    check('台账页：引 PLAN_V07 的条目同时显示了 §0.3「数字都不是读数」',
+      !!c && /没有观测点/.test(c.textContent), c ? c.textContent.slice(0, 40) : '(找不到)');
+  }
+  /* ★ 出处分级：四条人类选的必须与其余「已裁」分得开 */
+  const marked = host.all((n) => /badge--human/.test(n.className)).length;
+  check('台账页：四条人类选定的带「人类选的」标记，与其余已裁分得开',
+    marked === D.humanRuled.ids.length, `${marked} / ${D.humanRuled.ids.length}`);
+  check('台账页：摘要里明说「已裁」不是一种、是两种',
+    /已裁」不是一种，是两种/.test(summary.textContent));
+
+  /* ★★ 状态转移：不是「按钮在了」，是「点了之后渲染出来的东西真的变了」 */
+  const k = Object.keys(D.statuses).find((s) => D.entries.some((e) => e.status === s));
+  const btn = bar.children.find((b) => b.textContent.indexOf(D.statuses[k].label) === 0);
+  check(`台账页：筛选栏里有「${D.statuses[k].label}」这个按钮`, !!btn);
+  if (btn) {
+    btn.click();
+    const want = D.entries.filter((e) => e.status === k).length;
+    const got = host.all((n) => n.tagName === 'ARTICLE');
+    check(`台账页：点「${D.statuses[k].label}」后只剩 ${want} 条，且每一条都是那个状态`,
+      got.length === want && got.every((n) => n.className.indexOf('decision--' + k) !== -1),
+      `渲染出 ${got.length} 条`);
+    bar.children[0].click();
+    check('台账页：点回「全部」后条数复原',
+      host.children.length === D.entries.length, host.children.length);
+  }
+}
+
+currentPage = '规范（真实数据 data/spec.js + data/decisions.js）';
+{
+  const page = PAGES.find((p) => p.key === 'spec');
+  const html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
+  const st = runPage(page, null, html);
+  const S = st.sandbox.INFIVERSE_SPEC;
+  const D = st.sandbox.INFIVERSE_DECISIONS;
+  const host = st.hosts['spec-list'];
+  const docs = host.all((n) => n.tagName === 'ARTICLE' && /spec-doc/.test(n.className));
+
+  check('规范页：渲染出的文档块数 = spec.js 里的文档数',
+    docs.length === S.docs.length, `${docs.length} / ${S.docs.length}`);
+  check('规范页：每份文档都写出了自己的标题',
+    S.docs.every((d) => host.textContent.indexOf(d.title.replace(/^#+\s*/, '')) !== -1));
+  check('规范页：每份文档都标出了它自己那条引用规矩（节号 / 行号）',
+    S.docs.every((d) => host.textContent.indexOf(d.cite) !== -1));
+  check('规范页：文档头的逐字引文真的在页面上',
+    S.docs.every((d) => d.headers.every((h) => host.textContent.indexOf(h.replace(/^>\s?/, '')) !== -1)));
+  check('规范页：本站概括与逐字引文是分开显示的（各有标签）',
+    /本站概括/.test(host.textContent) && /文件头逐字/.test(host.textContent));
+  const shown = host.all((n) => n.tagName === 'ARTICLE' && /decision--/.test(n.className)).length;
+  check(`规范页：${D.entries.length} 条裁定全部挂到了各自文档下面`,
+    shown === D.entries.length, `${shown} / ${D.entries.length}`);
+}
+
+currentPage = '站点脚本（结构）';
+{
+  const js = fs.readFileSync(path.join(ROOT, 'assets/site.js'), 'utf8');
+  const all = js.match(/\.innerHTML\s*=\s*[^;]+/g) || [];
+  const empty = all.filter((m) => /\.innerHTML\s*=\s*(''|"")\s*$/.test(m));
+  check('assets/site.js：innerHTML 只被赋空串（桩不解析 HTML，赋非空串在桩里会静默什么都不发生）',
+    all.length === empty.length,
+    all.filter((m) => empty.indexOf(m) === -1).join(' | '));
 }
 
 /* ============================ 报告 ============================ */
