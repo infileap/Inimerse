@@ -413,7 +413,9 @@ current = '出处：谁裁的 / 读自哪棵树';
     (e) => e.readAt && docAtRef(D.ref, e.source.file).text.indexOf(e.source.quote) !== -1);
   check('带 readAt 的条目，引文必须在主观测点上【真的不成立】（否则是多余标记）',
     redundant.length === 0,
-    redundant.length ? `多余的 readAt：${redundant.map((e) => `${e.id}@${String(e.readAt).slice(0, 7)}`).join('、')}` : '没有多余的');
+    redundant.length
+      ? `多余的 readAt：${redundant.map((e) => `${e.id}@${String(e.readAt).slice(0, 7)}`).join('、')}`
+      : '没有多余的（射程：只看每条条目自己的 source.quote 这一栏；builtSource.quote 与 builtAxes 那几份文档级引文不在本条射程内）');
 
   /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
      它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
@@ -427,16 +429,33 @@ current = '出处：谁裁的 / 读自哪棵树';
     check('humanRuled 那句话点名的节号，与 ids 的节号集合一致（不一致 ⇒ 那句话已经过期）',
       secs === idSecs, `句子点名 ${secs} / ids 是 ${idSecs}`);
 
-    /* ★★ 那句话的后半句是「其余每一条仍是【提案】或【待裁】」。
-       它的载荷是「点名之外没有已裁」。用 ruledBy=human 去验它 ——
-       ★ 这句话在 exact-otter 的文档里，我不改它；但**我的数据不替它圆场**。 */
-    const listed = new Set(hq.match(/§[0-9]+(?:\.[0-9]+)*/g) || []);
-    const outside = D.entries.filter((e) => e.ruledBy === 'human' && !listed.has(`§${e.source.section}`));
-    check('那句「其余每一条仍是【提案】或【待裁】」还成立（点名之外还有已裁 ⇒ 它已经过期）',
-      outside.length === 0,
-      outside.length
-        ? `这句话点名的之外还有 ${outside.length} 条已裁：${outside.map((e) => `${e.id}(§${e.source.section})`).join('、')} —— 文档头那句话已经过期`
-        : '成立');
+    /* ★★ 退役一条：原来这里有一条「那句『其余每一条仍是【提案】或【待裁】』还成立」。
+       ★ 它退役**不是因为它错了，是因为它盯的那句话没了** —— `3df3a9b` 把那个全称断言
+         换成了「未列出的条目，其身份以各自的标题标记为准」。★ 一次退役要说出来。
+       ★ 而换上去的那句话自己**仍记着一个总数**，所以新的守卫盯的是那个总数。 */
+  }
+
+  const hw = D.headerWatch;
+  if (hw) {
+    const doc = docAtRef(hw.readAt, hw.file);
+    check(`文件头改写后的新半句在 ${String(hw.readAt).slice(0, 7)} 上逐字存在`,
+      doc.text.indexOf(hw.quote) !== -1, hw.quote.slice(0, 36) + '…');
+
+    const CN = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+    const m = hw.countClaim.match(/的(.)条/);
+    const claimed = m ? CN[m[1]] : null;
+    const secs = new Set();
+    let cur = null;
+    doc.text.split('\n').forEach((l) => {
+      const h = l.match(/^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)/);
+      if (h) cur = h[1];
+      if (cur && l.indexOf(hw.countOf) !== -1) secs.add(cur);
+    });
+    check(`文件头那个总数（「${hw.countClaim}」= ${claimed}）与正文对得上`,
+      claimed === secs.size,
+      claimed === secs.size
+        ? `${claimed} 条，正文 ${secs.size} 节`
+        : `文件头说 ${claimed} 条，而正文有 ${secs.size} 节写着「${hw.countOf}」：${[...secs].map((s) => '§' + s).join('、')}`);
   }
 }
 
