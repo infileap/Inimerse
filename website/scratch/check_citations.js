@@ -146,7 +146,11 @@ current = '身份一致（台账 vs docs 原文）';
      ⇒ 剥完以标记开头 ⇒ 是**标记**。
    ★ 这条规则是**收窄**：⑧ 原来按整份文件 `match` 计数，于是把 AUDIT 里那句引用算成了一个标记，
      而它让一个 7930 行的审计档看起来像是「带身份标记的文档」。 */
-const stripLead = (l) => l.replace(/^[>#*★\s\d.\-—)–）]+/, '');
+/* ★ 补上 `⇒`：实测 `⇒ **【已裁】走 (a)。**`（§1.5 的节级标记，而 §1.5 的标题里没有标记）
+   与 `⇒ **【提案】…`（§2.2 同理）原来被判成【提及】—— 因为 `⇒` 不在剥头字符集里。
+   ★ 一个白名单式的剥头集合，它的漏项由【哪些符号会出现在标记前面】决定，
+     而那个集合没有任何东西在维护 —— 这一条是被一次全量普查找出来的。 */
+const stripLead = (l) => l.replace(/^[>#*★\s\d.\-—)–）⇒]+/, '');
 const isMarkerLine = (l, mk) => stripLead(l).startsWith(mk);
 
 const MARKER_STATUS = {
@@ -292,21 +296,18 @@ check('台账引用的每个 docs 文件都在规范页的文档清单里',
  */
 current = '覆盖：带身份标记的 docs 文件 vs 规范页清单';
 const MARKER_RE = /【已裁定?】|【提案】|【待裁】|【未做】/g;
-const docsDir = path.join(ROOT, 'docs');
-const docFiles = [];
-(function walkDocs(dir) {
-  for (const n of fs.readdirSync(dir)) {
-    const p = path.join(dir, n);
-    if (fs.statSync(p).isDirectory()) { walkDocs(p); continue; }
-    if (path.extname(n) === '.md') docFiles.push(p);
-  }
-})(docsDir);
+/* ★★ 这两问读的是**哪棵树**：原来是 `fs.readFileSync`（＝工作树里检出的那一份），
+   而同一个守卫的引文钉读的是 `git show <ref>:` —— **一个守卫同时读了两个树，而它不说。**
+   后果是可测的：同一份守卫在不同分支上给出不同的「带标记的文档」数，
+   而 `docs/` 是别人在推的，所以那个差不是我的改动造成的、也不会有人报错。
+   ⇒ 统一成读 `D.ref`（引文钉读的那棵树），并把 ref 印进报告。 */
+const docFiles = execFileSync('git', ['ls-tree', '-r', '--name-only', D.ref, 'docs/'], { cwd: ROOT, encoding: 'utf8' })
+  .split('\n').map((x) => x.trim()).filter((x) => x.endsWith('.md'));
 const ledgerFiles = new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean));
 const marked = [];
-for (const p of docFiles) {
-  const rel = path.relative(ROOT, p);
+for (const rel of docFiles) {
   const kinds = {};
-  fs.readFileSync(p, 'utf8').split('\n').forEach((l) => {
+  docAtRef(D.ref, rel).text.split('\n').forEach((l) => {
     Object.keys(MARKER_STATUS).forEach((mk) => { if (isMarkerLine(l, mk)) kinds[mk] = (kinds[mk] || 0) + 1; });
   });
   if (!Object.keys(kinds).length) continue;
@@ -324,6 +325,22 @@ check('带身份标记、且在规范页清单里的文件，台账里至少有�
   noLedger.length
     ? `台账里没有一条出自：${noLedger.map((x) => x.file).join('、')}（那几条裁定在台账页上一条都没有，而守卫会全绿）`
     : `${marked.filter((x) => x.inSpec).length} 个文件都有条目`);
+
+/* ★★ 把【分界】本身打印出来。
+   这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
+   只有把那些行列出来，这条边界才是可以被别人反驳的。
+   而它必须每次运行都打印：**一次性的普查会过期，一条常驻的打印不会。** */
+const boundary = { marker: [], mention: [] };
+for (const rel of docFiles) {
+  docAtRef(D.ref, rel).text.split('\n').forEach((l, i) => {
+    for (const mk of Object.keys(MARKER_STATUS)) {
+      if (l.indexOf(mk) === -1) continue;
+      const row = `${rel}:${i + 1} [${mk}] ${stripLead(l).slice(0, 76)}`;
+      (isMarkerLine(l, mk) ? boundary.marker : boundary.mention).push(row);
+      break;
+    }
+  });
+}
 
 /* ---------------- ⑨ 「做到没有」：被压掉的那一维 ----------------
  * 台账原来的 `ruled` 徽章同时声称了「裁过了」与（读者会默认的）「做到了」。
@@ -642,7 +659,9 @@ console.log('出处分级：' + Object.keys(AT.routes)
   + D.entries.filter((e) => e.source.file === AT.file && e.status === 'ruled' && !e.ruledBy).length + ' 条'
   + '（humanRuled 那个块是这套做法的出处，不是花名册）');
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
-console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md，其中 ${marked.length} 份带标记`);
+console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md（读自 ${String(D.ref).slice(0, 7)}），其中 ${marked.length} 份带标记`);
+console.log(`标记 / 提及的分界：标记 ${boundary.marker.length} 行 / 提及 ${boundary.mention.length} 行（判成提及的逐行在下面）`);
+boundary.mention.forEach((r) => console.log(`    · 提及  ${r}`));
 console.log('');
 console.log('  文件'.padEnd(32) + '各标记条数'.padEnd(44) + '在规范页清单里？ / 台账里有条目？');
 if (!marked.length) {
