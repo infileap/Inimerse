@@ -187,19 +187,21 @@ for (const e of D.entries) {
   }
 }
 
-/* ⑤ 出处分级：humanRuled 那四条必须真的存在、真的都是 ruled */
+/* ⑤ 出处分级：humanRuled 那一块是【那套做法的出处】，不是花名册。
+   ★ 原来这里逐条检查 `humanRuled.ids` 那四条存在且 ruled。★ 那个 `ids` 已退役
+     （理由见 `website/data/decisions.js` 里 `humanRuled` 的注释）：**它引的那句话不再点名了。**
+   ★ 「谁裁的」现在由每一条自己的 `ruledBy` 承担；文件头那条全称断言由下面
+     `headerWatch.universalClaim` 盯着。★ 一次退役要说出来 —— 退役与「它不红了」长得一样。 */
 current = '出处分级';
-check('humanRuled 存在（四条人类在 ask_user_question 上选的）', !!(D.humanRuled && D.humanRuled.ids));
-for (const id of (D.humanRuled && D.humanRuled.ids) || []) {
-  const e = D.entries.find((x) => x.id === id);
-  check(`${id} 在台账里存在且状态是 ruled`, !!e && e.status === 'ruled', e ? e.status : '条目不存在');
-}
 if (D.humanRuled && D.humanRuled.source) {
-  const d = doc(D.humanRuled.source.file);
+  const d = doc(D.humanRuled.source.file, D.humanRuled.source.readAt || D.ref);
   check('humanRuled 的出处引文逐字存在',
     d.text.indexOf(D.humanRuled.source.quote) !== -1,
     `找不到：「${String(D.humanRuled.source.quote).slice(0, 50)}…」`);
 }
+check('humanRuled 不再带 ids（那一栏已退役：它引的那句话不再点名）',
+  !(D.humanRuled && D.humanRuled.ids),
+  (D.humanRuled && D.humanRuled.ids) ? `还有 ids：${D.humanRuled.ids.join('、')}` : '没有 ids');
 
 /* ---------------- ⑥ 规范页的文档元信息：标题、行数、文件头引文都必须逐字 ----------------
  * `website/data/spec.js` 是手写的，而它里面混了两种东西：
@@ -419,21 +421,13 @@ current = '出处：谁裁的 / 读自哪棵树';
 
   /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
      它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
-  const hq = D.humanRuled && D.humanRuled.source && D.humanRuled.source.quote;
-  if (hq) {
-    const secs = (hq.match(/§[0-9]+(?:\.[0-9]+)*/g) || []).slice().sort().join(',');
-    const idSecs = D.humanRuled.ids.map((i) => {
-      const e = D.entries.find((x) => x.id === i);
-      return e ? `§${e.source.section}` : `(缺 ${i})`;
-    }).sort().join(',');
-    check('humanRuled 那句话点名的节号，与 ids 的节号集合一致（不一致 ⇒ 那句话已经过期）',
-      secs === idSecs, `句子点名 ${secs} / ids 是 ${idSecs}`);
+  /* ★★ 退役一条：原来这里有一条「humanRuled 那句话点名的节号，与 ids 的节号集合一致」。
+     ★ 它退役的理由与前一条同族，而且更彻底：**它比的两个东西都没了** ——
+       `af85fef` 把名字删了，`ids` 也随之退役。★ 一次退役要说出来。 */
 
     /* ★★ 退役一条：原来这里有一条「那句『其余每一条仍是【提案】或【待裁】』还成立」。
        ★ 它退役**不是因为它错了，是因为它盯的那句话没了** —— `3df3a9b` 把那个全称断言
-         换成了「未列出的条目，其身份以各自的标题标记为准」。★ 一次退役要说出来。
-       ★ 而换上去的那句话自己**仍记着一个总数**，所以新的守卫盯的是那个总数。 */
-  }
+         换成了「未列出的条目，其身份以各自的标题标记为准」。★ 一次退役要说出来。 */
 
   const hw = D.headerWatch;
   if (hw) {
@@ -441,21 +435,21 @@ current = '出处：谁裁的 / 读自哪棵树';
     check(`文件头改写后的新半句在 ${String(hw.readAt).slice(0, 7)} 上逐字存在`,
       doc.text.indexOf(hw.quote) !== -1, hw.quote.slice(0, 36) + '…');
 
-    const CN = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
-    const m = hw.countClaim.match(/的(.)条/);
-    const claimed = m ? CN[m[1]] : null;
-    const secs = new Set();
-    let cur = null;
-    doc.text.split('\n').forEach((l) => {
-      const h = l.match(/^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)/);
-      if (h) cur = h[1];
-      if (cur && l.indexOf(hw.countOf) !== -1) secs.add(cur);
-    });
-    check(`文件头那个总数（「${hw.countClaim}」= ${claimed}）与正文对得上`,
-      claimed === secs.size,
-      claimed === secs.size
-        ? `${claimed} 条，正文 ${secs.size} 节`
-        : `文件头说 ${claimed} 条，而正文有 ${secs.size} 节写着「${hw.countOf}」：${[...secs].map((s) => '§' + s).join('、')}`);
+    /* ★★ 再退役一条：接着换上来的那条「文件头那个总数（本文的四条【已裁】）与正文对得上」
+       也退役了 —— `af85fef` 把那个总数**连同那四个名字**一起删掉了。
+       ★ 理由同上：**它盯的那个东西没了。** ★ 一次退役要说出来。
+
+       ★★★ 而删掉一个总数，不等于删掉那句话里的**权威**：
+         `af85fef` 把它换成了**一条全称断言**（「本文【已裁】的条目，是……由人类……选定的」）。
+         ★ 全称断言比总数更难核，而这一条恰好**可核** —— 因为它管的那批条目在台账里
+           有 `status` 与 `ruledBy` 两个字段。所以新守卫盯的是那个全称断言。 */
+    const inScope = D.entries.filter((e) => e.source.file === hw.scopeFile && e.status === 'ruled');
+    const missing = inScope.filter((e) => e.ruledBy !== 'human');
+    check(`文件头那条全称断言「${hw.universalClaim}」在台账里没有反例`,
+      missing.length === 0,
+      missing.length
+        ? `${inScope.length} 条【已裁】里，有 ${missing.length} 条没有「人类选的」这个出处：${missing.map((e) => e.id).join('、')}`
+        : `${inScope.length} 条【已裁】全部有出处`);
   }
 }
 
