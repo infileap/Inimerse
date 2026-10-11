@@ -294,8 +294,8 @@ void vm_cur_set_sp(VM *vm, int sp) { (void)vm; if (g_cur_thread) g_cur_thread->s
    division_by_zero, `nil + 1` -> 1, `a["x"]` -> a[0].  See docs/AUDIT.md 1.86.
 
    `VAL_BOOL` is a case in both readers, not a fallthrough: a bool is numeric
-   here and answers 1 or 0, and that is deliberate (see `L_NEG`, which is the
-   one arithmetic site where the tag check and the value must agree).
+   here and answers 1 or 0, and `L_NEG` is where the tag must agree with the
+   value: a bool negates on the INTEGER path.  See the block at the end of file.
    --------------------------------------------------------------------------- */
 double val_as_double_coerce(const Value *v) {
     switch (v->type) {
@@ -3477,9 +3477,9 @@ static void vm_execute_thread(VmThread *t) {
         }
         L_NEG: {
             Value *v = &R[ins.r2];
-            if (v->type == VAL_INT) {
+            if (v->type == VAL_INT || v->type == VAL_BOOL) {
                 /* The only int64 negation that overflows is -(-2^63). */                long long neg;
-                if (__builtin_sub_overflow(0LL, (long long)v->ival, &neg)) {
+                if (__builtin_sub_overflow(0LL, val_as_int_coerce(v), &neg)) {
                     vm_throw_kind(vm, "numeric_overflow");
                     R = t->reg + t->base;
                     continue;
@@ -5464,4 +5464,44 @@ void vm_debug_builtins_register(VM *vm) {
    posix_gc_auto(): it also uses the coercing accessor, but because "is this
    value truthy" is a question every tag answers -- there is nothing to refuse
    and no borrowed guard.
+   --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   `-true` is an integer, and the interpreter and wasm must both say so.
+
+   `VAL_BOOL` is a case in the numeric readers and answers 1 or 0 (see the block
+   above val_as_double_coerce).  In arithmetic that puts a bool on the INTEGER
+   path -- and for unary minus it did not: L_NEG tested `v->type == VAL_INT`
+   alone, so `-true` fell to the double branch and became -1.0.  The binary path
+   had already been fixed for exactly this (see e_push_is_intlike in
+   src/compilation/wasm_backend.c: its comment states the rule and the
+   measurement); the unary path was not, and nothing in the repository said the
+   two sites were the same site.
+
+   Measured before the fix, on 124a213, one program, three columns -- AOT via
+   `build/aot-native translate` + `cc -O2`, wasm via `inimerse compile
+   --abi-target wasm` + `node tools/wasm_run.js`, interpreter via `inimerse
+   --no-mods run`:
+
+       expression                   interp            wasm              AOT
+       -true + 9007199254740993     9007199254740991  9007199254740991  9007199254740992
+       true * 9007199254740993      9007199254740993  9007199254740993  9007199254740993
+       -true                        -1                -1                -1
+       -false                       0                 0                 0
+       -2.5                         -2.5              -2.5              -2.5
+
+   Only the first row separates the columns: `-true` alone prints the same thing
+   whether it is the int -1 or the float -1.0, so a reading that stopped there
+   would call the three paths equal.  The binary row is already level because
+   that site was fixed earlier.
+
+   AOT is not "the right answer" here; it is the column with no second branch to
+   take.  src/compilation/aot_native.c's nv_neg is `if (a.t == NV_FLT) return
+   nv_flt(-a.f);`, and NV has only NV_INT and NV_FLT, so a bool is nv_int(1) and
+   there is nothing to get wrong.  The interpreter and wasm each had a branch,
+   and each took the other one.
+
+   This block is at the end of the file for the same reason the one above it is:
+   docs/ cites this file by line, the highest cited line is above this one, so
+   writing here moves no citation.
    --------------------------------------------------------------------------- */
