@@ -121,11 +121,27 @@ for (const e of D.entries) {
  *   节正文里有【已裁】 ⇒ status 必须是 ruled
  *   节正文里有【提案】 ⇒ status 必须是 proposal
  *   两者都没有      ⇒ status 不许是 ruled/proposal（不许替 docs 编一个身份）
- * ★ 标记看的是**节正文**，不是标题 —— 因为 §3.1/§3.3/§6.1 的标题里都没有这四个字。
+ * ★ 标记看的是**节标题 + 节正文**，两个都要看：
+ *   §3.1/§3.3/§6.1 的标题里没有这四个字（标记在正文里），
+ *   而 §1.6 的标记**就在标题里**（`### 1.6 【未做】`）—— 只看正文会把它整节漏掉。
+ * ★ 词表包含**异体拼写**：【已裁定】与【已裁】是同一个身份。
+ *   这一条不是假想的：`docs/TYPESET_V06.md` 用的是【已裁定】，而旧的 gate 只查【已裁】/【提案】
+ *   ⇒ 它被判定成「不用这套词表」而**整份跳过**，那三条裁定在台账里一条都没有，而守卫全绿。
  */
 current = '身份一致（台账 vs docs 原文）';
-const MARKER_STATUS = { '【已裁】': 'ruled', '【提案】': 'proposal' };
+const MARKER_STATUS = {
+  '【已裁】': 'ruled', '【已裁定】': 'ruled',
+  '【提案】': 'proposal', '【待裁】': 'undecided', '【未做】': 'notdone',
+};
 const NOT_A_STANCE = ['undecided', 'notdone', 'notdoing', 'discipline'];
+
+/** 取某节的标题行 */
+function sectionHeading(text, section) {
+  const esc = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^#{2,4}\\s+(?:★+\\s+)?${esc}\\.?(?![\\d])(?=[\\s．]|$).*$`, 'm');
+  const m = re.exec(text);
+  return m ? m[0] : '';
+}
 
 /** 取某节的正文：从标题行之后，到下一个标题为止 */
 function sectionBody(text, section) {
@@ -149,7 +165,8 @@ for (const e of D.entries) {
   if (body === null) { stanceSkipped++; continue; }
   stanceChecked++;
   current = `${e.id} 身份一致`;
-  const marks = Object.keys(MARKER_STATUS).filter((k) => body.includes(k));
+  const hay = sectionHeading(d.text, e.source.section) + '\n' + body;
+  const marks = Object.keys(MARKER_STATUS).filter((k) => hay.includes(k));
   if (marks.length === 0) {
     check(`§${e.source.section} 在 docs 里没有标身份 ⇒ 台账也不许把它读成裁定或提案`,
       NOT_A_STANCE.includes(e.status),
@@ -243,6 +260,110 @@ check('台账引用的每个 docs 文件都在规范页的文档清单里',
   missing.length === 0,
   missing.length ? `规范页缺：${missing.join('、')}（那些裁定在规范页上一条都不会显示）` : `${specFiles.size} 份文档`);
 
+/* ---------------- ⑧ ⑦ 的反方向：带身份标记的 docs 文件 vs 规范页清单 ----------------
+ * ⑦ 只挡了一个方向（台账 → 规范页的清单）。反方向是同一个机制的另一半：
+ * **一份自己带着身份标记的文档不在清单里 ⇒ 它那些标记在规范页上一条都不显示，而页面是完整的。**
+ * ★ 词表必须含**异体拼写**（【已裁定】与【已裁】同身份）—— 见 ④ 上面那段注释里的实例。
+ * ★ 第二问更要紧：**带标记、也在清单里、而台账里一条都没出自它的文件**。
+ *   `docs/TYPESET_V06.md` 就是这种：它有三条【已裁定】，而台账里 0 条出自它 ——
+ *   那三条裁定在台账页上一条都没有，而**守卫会全绿**。
+ */
+current = '覆盖：带身份标记的 docs 文件 vs 规范页清单';
+const MARKER_RE = /【已裁定?】|【提案】|【待裁】|【未做】/g;
+const docsDir = path.join(ROOT, 'docs');
+const docFiles = [];
+(function walkDocs(dir) {
+  for (const n of fs.readdirSync(dir)) {
+    const p = path.join(dir, n);
+    if (fs.statSync(p).isDirectory()) { walkDocs(p); continue; }
+    if (path.extname(n) === '.md') docFiles.push(p);
+  }
+})(docsDir);
+const ledgerFiles = new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean));
+const marked = [];
+for (const p of docFiles) {
+  const rel = path.relative(ROOT, p);
+  const m = fs.readFileSync(p, 'utf8').match(MARKER_RE) || [];
+  if (!m.length) continue;
+  const kinds = {};
+  m.forEach((x) => { kinds[x] = (kinds[x] || 0) + 1; });
+  marked.push({ file: rel, kinds, inSpec: specFiles.has(rel), inLedger: ledgerFiles.has(rel) });
+}
+const notInSpec = marked.filter((x) => !x.inSpec);
+check('带身份标记的 docs 文件都在规范页的文档清单里',
+  notInSpec.length === 0,
+  notInSpec.length
+    ? `不在清单里：${notInSpec.map((x) => x.file).join('、')}（那些标记在规范页上一条都不显示）`
+    : `${marked.length} 个带标记的文件，全部在清单里`);
+const noLedger = marked.filter((x) => x.inSpec && !x.inLedger);
+check('带身份标记、且在规范页清单里的文件，台账里至少有一条出自它',
+  noLedger.length === 0,
+  noLedger.length
+    ? `台账里没有一条出自：${noLedger.map((x) => x.file).join('、')}（那几条裁定在台账页上一条都没有，而守卫会全绿）`
+    : `${marked.filter((x) => x.inSpec).length} 个文件都有条目`);
+
+/* ---------------- ⑨ 「做到没有」：被压掉的那一维 ----------------
+ * 台账原来的 `ruled` 徽章同时声称了「裁过了」与（读者会默认的）「做到了」。
+ * 而仓库自己把「有没有代码」与「有没有测试盯着」写成两个问题，并明说这一层
+ * 与三分清单正交、**不许混用**（`docs/PLAN_V06.md` §1）。
+ * ★ 判据：一个状态徽章如果同时声称了「裁过了」与「做到了」，那么当其中一件不成立时，
+ *   它不会变红 —— 它会继续声称两件都成立。
+ * 这一守卫钉三件事：
+ *   ① `builtAxes.axes` / `.collision` 的节号存在、引文逐字；
+ *   ② `builtAxes.byFile` 的每个键都必须真的有条目（否则那条声明挂在空气上）；
+ *   ③ ★ 撞车不变式：条目的出处引文里如果写着实现状态的负面词，
+ *      那这一条**不许**是「做到了」。
+ */
+current = '做到没有（第二维度）';
+const NEGATIVE = ['未实现', '尚未实现', '没有任何实现', '尚未运行', '要改档', '没有开始'];
+const builtByFile = (D.builtAxes && D.builtAxes.byFile) || {};
+
+function resolvedBuilt(e) {
+  if (e.built) return { built: e.built, scope: e.builtScope || 'section', src: e.builtSource || null };
+  const b = builtByFile[e.source.file];
+  if (b) return { built: b.built, scope: b.scope || 'doc', src: b.source || null };
+  return { built: 'unknown', scope: null, src: null };
+}
+function pinBox(box, label) {
+  if (!box || !box.source) { check(`${label}：声明了出处`, false, '没有 source'); return; }
+  const d = docAt(D.ref, box.source.file);
+  check(`${label}：节号 §${box.source.section} 存在`, sectionExists(d.text, box.source.section),
+    `找不到 §${box.source.section}`);
+  check(`${label}：引文逐字存在`, d.text.indexOf(box.source.quote) !== -1,
+    `找不到：「${String(box.source.quote).slice(0, 50)}…」`);
+}
+if (D.builtAxes) {
+  pinBox(D.builtAxes.axes, 'builtAxes.axes');
+  pinBox(D.builtAxes.collision, 'builtAxes.collision');
+  for (const f of Object.keys(builtByFile)) {
+    pinBox(builtByFile[f], `builtAxes.byFile[${f}]`);
+    check(`builtAxes.byFile[${f}] 确实有条目挂在它上面`,
+      D.entries.some((e) => e.source.file === f),
+      '那份文档在台账里一条都没有 ⇒ 这条实现状态声明挂在空气上');
+  }
+}
+const builtCount = {};
+let builtNegative = 0;
+for (const e of D.entries) {
+  const r = resolvedBuilt(e);
+  builtCount[r.built] = (builtCount[r.built] || 0) + 1;
+  current = `${e.id} 做到没有`;
+  if (e.built === 'done') {
+    check(`${e.id}：声称「做到了」就必须带逐字出处`,
+      !!(e.builtSource && e.builtSource.quote), '没有 builtSource');
+  }
+  /* ★ haystack 必须包含**文档级**那条引文 —— 否则这一条对 EIDOS 那 15 条是空转的：
+     它们的实现状态来自 `builtAxes.byFile`，而负面词就在那条引文里。 */
+  const bf = builtByFile[e.source.file];
+  const cited = [e.source && e.source.quote, e.builtSource && e.builtSource.quote,
+                 bf && bf.source && bf.source.quote].filter(Boolean).join('\n');
+  const hit = NEGATIVE.filter((w) => cited.includes(w));
+  if (hit.length) builtNegative++;
+  check(`${e.id}：出处引文里写着「${hit.join(' / ') || '—'}」⇒ 不许声称「做到了」`,
+    !(hit.length && r.built === 'done'),
+    hit.length ? `引文里有「${hit.join('、')}」，而这一条是 ${r.built}` : '引文里没有实现状态的负面词');
+}
+
 /* ---------------- 被禁字符串守卫 ---------------- */
 current = '全站文本';
 const BANNED = ['Inim', ' OS'].join('');   // 人类硬约束：任何地方不许出现
@@ -276,9 +397,22 @@ console.log('');
 console.log(`条目数：${D.entries.length}`);
 console.log(`引文钉：${D.entries.length} 条，涉及 ${docsTouched.size} 个 docs 文件（读自 ref ${String(D.ref).slice(0, 7)}）`);
 console.log(`节号钉：${D.entries.length} 个`);
-console.log(`身份一致：检查了 ${stanceChecked} 条，跳过 ${stanceSkipped} 条（跳过的是那份文档不用【已裁】/【提案】这套括号词表的）`);
+console.log(`身份一致：检查了 ${stanceChecked} 条，跳过 ${stanceSkipped} 条（词表 = 【已裁】/【已裁定】/【提案】/【待裁】/【未做】；标记看 标题+正文）`);
+console.log(`做到没有：${Object.keys(builtCount).map((k) => k + ' ' + builtCount[k]).join(' / ')}（引文里带实现状态负面词的条目 ${builtNegative} 条）`);
 console.log(`出处分级：humanRuled ${((D.humanRuled && D.humanRuled.ids) || []).length} 条`);
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
+console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md，其中 ${marked.length} 份带标记`);
+console.log('');
+console.log('  文件'.padEnd(32) + '各标记条数'.padEnd(44) + '在规范页清单里？ / 台账里有条目？');
+if (!marked.length) {
+  console.log('  （找不到：今天没有任何 docs 文件带这套身份标记 —— 这句话本身就是结论）');
+} else {
+  marked.forEach((x) => console.log(
+    '  ' + x.file.padEnd(30)
+    + Object.keys(x.kinds).map((k) => k + '×' + x.kinds[k]).join(' ').padEnd(42)
+    + (x.inSpec ? '在清单里' : '★ 不在清单里')
+    + ' / ' + (x.inLedger ? '有条目' : '★ 台账里 0 条')));
+}
 console.log(`被禁字符串：扫描 ${scanned.length} 个文本文件`);
 console.log(`检查项：${results.length - bad.length}/${results.length} 通过`);
 if (bad.length) {

@@ -55,7 +55,7 @@ const PAGES = [
   { key: 'about',  label: '关于',     file: 'about/index.html',  slots: 0, containers: [] },
   { key: 'spec',     label: '规范', file: 'spec/index.html',     slots: 1, containers: ['spec-list', 'spec-ref'] },
   { key: 'decisions', label: '台账', file: 'decisions/index.html', slots: 2,
-    containers: ['decision-list', 'decision-filter', 'decisions-legend', 'decisions-summary', 'decisions-ref'] },
+    containers: ['decision-list', 'decision-filter', 'decisions-legend', 'decisions-summary', 'decisions-ref', 'decisions-axes'] },
 ];
 const DATA_FILES = ['data/site.js', 'data/videos.js', 'data/toys.js'];
 
@@ -672,6 +672,25 @@ currentPage = '台账（真实数据 data/decisions.js）';
     marked === D.humanRuled.ids.length, `${marked} / ${D.humanRuled.ids.length}`);
   check('台账页：摘要里明说「已裁」不是一种、是两种',
     /已裁」不是一种，是两种/.test(summary.textContent));
+
+  /* ★ 第二维度：「做到没有」—— 被 `ruled` 徽章压掉的那一维 */
+  const axesBox = st.hosts['decisions-axes'];
+  check('台账页：两轴横幅引了仓库自己那句「两层正交、不许混用」（逐字）',
+    axesBox.textContent.indexOf(D.builtAxes.axes.source.quote) !== -1);
+  check('台账页：两轴横幅引了那处撞车原句（逐字）',
+    axesBox.textContent.indexOf(D.builtAxes.collision.source.quote) !== -1);
+  const builtBadges = host.all((n) => /badge--built-/.test(n.className));
+  check('台账页：每一条都有「做到没有」这一维（不是只有「裁过了」）',
+    builtBadges.length === D.entries.length, `${builtBadges.length} / ${D.entries.length}`);
+  const claimedDone = host.all((n) => /badge--built-done/.test(n.className));
+  check('台账页：没有一条声称「做到了」',
+    claimedDone.length === 0, `${claimedDone.length} 条声称做到了`);
+  const eidos = D.entries.filter((e) => e.source.file === 'docs/EIDOS_V06.md').length;
+  check(`台账页：${eidos} 条 EIDOS 的条目显示「尚未做到」，并标明那是文档级声明`,
+    /尚未做到/.test(host.textContent) &&
+    /文档级声明，不是这一节自己的读数/.test(host.textContent));
+  check('台账页：没有实现状态的地方写「docs 未记录做到没有」，不留白',
+    /docs 未记录做到没有/.test(host.textContent));
 
   /* ★★ 状态转移：不是「按钮在了」，是「点了之后渲染出来的东西真的变了」 */
   const k = Object.keys(D.statuses).find((s) => D.entries.some((e) => e.status === s));
