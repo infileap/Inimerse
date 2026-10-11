@@ -219,7 +219,7 @@ grep -a -oE 'vm_register_builtin(_full|_safe)?\s*\(\s*\w+\s*,\s*"[^"]+"' <文件
   | sed 's/.*"\(.*\)"/\1/' | sort -u
 ```
 
-注册 API 定义：`vm_register_builtin(VM*, const char*, BuiltinFunc)`、`vm_register_builtin_full(vm, name, fn, flags, since)`、`vm_register_builtin_safe(...)`（`src/vm/vm.c:1493/1506/1517`）。
+注册 API 定义：`vm_register_builtin(VM*, const char*, BuiltinFunc)`、`vm_register_builtin_full(vm, name, fn, flags, since)`、`vm_register_builtin_safe(...)`（`src/vm/vm.c:1722/1746/1768`）。
 
 因为名称直接来自注册调用点，**表内每一条的状态都是"已实现"**；真正的差别是**平台可用性**（"仅 Windows"/"仅 POSIX"/"两侧"）。注册编排见 `src/main.c:571-593`：先 `runtime_register_builtins(&vm)`（`src/main.c:1066-1068`），再 core 模组（`isolate`/`lint`/`vm_debug_builtins`/`gui`/`result`/`io`/`net`/`json`/`server`/`say`/`identity`/`social`/`ai`/`record`/`replay`），最后 world 模组（`infiverse`/`verse_dist`/`build`，受 `--no-mods` 控制，`src/main.c:1096-1099`）。
 
