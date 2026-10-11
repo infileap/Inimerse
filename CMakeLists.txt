@@ -1531,3 +1531,25 @@ if(INIMERSE_PYTHON)
   add_test(NAME errors_cli_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --exit 0 --shape "asked, 0 failed -- the CLI is a view of g_errors" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_errors_cli.py $<TARGET_FILE:inimerse>)
   set_tests_properties(errors_cli_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "invariants")
 endif()
+
+# Unary minus on a bool.  `VAL_BOOL` answers 1 or 0 through the numeric
+# readers, so -true is the INTEGER -1; L_NEG tested `v->type == VAL_INT` alone
+# and fell to the double branch, which prints the same -1 and only separates
+# above 2^53.  Both FAIL clauses are pre-fix values measured on a build with
+# L_NEG reverted: `neg-add` is the double-path sum, and `-false=-0` is the same
+# defect visible at magnitude zero (the `str()` form keeps negative zero while
+# a bare `say -false` prints `0`).  The FAIL regex was checked both ways with
+# grep -E (matches pre-fix, not post-fix).  See docs/AUDIT.md §1.83.
+#
+# This block sits at the end of the file on purpose.  `docs/` cites
+# CMakeLists.txt by line and those numbers are anchored by the quoted text that
+# must sit at the cited line, so inserting a registration anywhere above the
+# highest cited line silently un-anchors every citation past it -- measured: a
+# nine-line block next to `union_member_tag_runtime` took the unanchored
+# reading from +11 to +21 against a ceiling of +12.  The highest line cited
+# below that point is in another lane's document, so the honest move is to
+# append here, after every citation, rather than to re-take those numbers.
+if(INIMERSE_PYTHON)
+add_test(NAME neg_bool_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "neg-ok -true=-1 -false=0 int-add=9007199254740994 neg-add=9007199254740992 bin-add=9007199254740992 -2.5=-2.5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/neg_bool_v06.im)
+set_tests_properties(neg_bool_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "neg-add=9007199254740991|bin-add=9007199254740991|-false=-0")
+endif()

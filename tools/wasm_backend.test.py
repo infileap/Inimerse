@@ -68,6 +68,15 @@ CASES = [
     # apart again.
     ("and_or_value", 'say true and false\nsay true or false\nsay 0 or 7\nsay 7 and 0\n'),
     ("not_value", 'say not 0\nsay not 1\nsay not (0 or 0)\n'),
+    # Unary minus on a bool: a bool is an integer-valued tag, so -true is the
+    # INTEGER -1 and the answer only separates from the double path above 2^53.
+    # This backend's unary minus carried the same single-tag test as the
+    # interpreter's L_NEG, so the two agreed on the wrong number and a
+    # wasm-vs-interpreter diff cannot see the bug at all.  The absolute value
+    # is pinned by vtest/neg_bool_v06.im; this case exists so the two sites
+    # cannot drift apart again.  See docs/AUDIT.md §1.83.
+    ("neg_bool", 'say -true + 9007199254740993\nsay (0 - true) + 9007199254740993\n'
+                 'say -true\nsay -false\nsay -2.5\n'),
 ]
 
 REJECT_CASES = [
