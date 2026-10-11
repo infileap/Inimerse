@@ -406,6 +406,15 @@ current = '出处：谁裁的 / 读自哪棵树';
   const actual = D.entries.filter((e) => docAtRef(D.ref, e.source.file).text.indexOf(e.source.quote) === -1).length;
   check('带 readAt 的条目数 = 引文在主观测点上不成立的条目数', claimed === actual, `${claimed} / ${actual}`);
 
+  /* ★★ 反方向。上面两条挡的是「不成立却不带 readAt」——
+     它们**不挡**「带了一个多余的 readAt」，而「后者今天不存在」与「后者不可能存在」
+     在读数上都是绿的。所以补这一条：带了 readAt，就必须真的在主观测点上不成立。 */
+  const redundant = D.entries.filter(
+    (e) => e.readAt && docAtRef(D.ref, e.source.file).text.indexOf(e.source.quote) !== -1);
+  check('带 readAt 的条目，引文必须在主观测点上【真的不成立】（否则是多余标记）',
+    redundant.length === 0,
+    redundant.length ? `多余的 readAt：${redundant.map((e) => `${e.id}@${String(e.readAt).slice(0, 7)}`).join('、')}` : '没有多余的');
+
   /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
      它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
   const hq = D.humanRuled && D.humanRuled.source && D.humanRuled.source.quote;
