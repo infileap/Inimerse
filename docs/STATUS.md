@@ -2503,7 +2503,7 @@ error: wasm MVP subset: function 'int' not found (builtins are not in the wasm M
 
 **O0（`and`/`or`）**：解释器 `src/compiler/compiler.c:648-672` 改为「跳转路径上 `result` 已知为真（and）/假（or），故 `OP_AND`/`OP_OR` 对两操作数求真值**恰好等于右操作数的真值**；短路路径发 `OP_LOADK_BOOL` 常量」——**短路被保留**（右子树只在被取路径上编译）。`selfhost/compiler.im:254-268` 同形状改写。wasm 的拒绝（原 `src/compilation/wasm_backend.c:1237-1240`）改为**复用已有的 `cg_cond`**（它本来就发真值且含短路）+ `e_store_bool_from_stack`；AOT 本来就是布尔、**未改**。
 
-**顺带抓出第二个既有真缺陷：wasm 的 `not` 是反的。** `cg_cond` 的 `TOK_NOT` 分支已经做了一次 `i32.eqz`，`cg_expr` 的 `TOK_NOT` 分支又调 `cg_cond` 再 `eqz` 一次 ⇒ 双重否定。六条 `not` 用例**全部恰好相反**（`not 0` 在 wasm 上打 `false`，而解释器与 AOT 都打 `true`）。`git diff` 证明该分支未被本次改动触及，**是既有缺陷**，只是从来没人同时跑两个后端所以没被发现。
+**顺带抓出第二个既有真缺陷：wasm 的 `not` 是反的（**当时**；今天已修，判据见 `docs/AUDIT.md` §1.28 那一节）。** `cg_cond` 的 `TOK_NOT` 分支已经做了一次 `i32.eqz`，`cg_expr` 的 `TOK_NOT` 分支又调 `cg_cond` 再 `eqz` 一次 ⇒ 双重否定。六条 `not` 用例**全部恰好相反**（`not 0` 在 wasm 上打 `false`，而解释器与 AOT 都打 `true`）。`git diff` 证明该分支未被本次改动触及，**是既有缺陷**，只是从来没人同时跑两个后端所以没被发现。
 
 **O1（`%`）**：`src/vm/vm.c` 的 `L_MOD` 有三重问题 —— 把两操作数窄化过 32 位 `int`（`2147483648 % 7` → **-2**，AOT `2`、wasm `1`）、**在截断之后**才判零（`7 % 0.5` 误报 `division_by_zero`，而真值 0 完全合法）、以及 `-2147483648 % -1` 实测 **rc=136 `Floating point exception`**（真崩溃，不是干净拒绝）。AOT 侧 `nv_div` 除零静默给 `inf` —— **AOT 此前完全没有错误机制**（`grep nv_error|nv_throw|nv_panic|abort()` 在 `src/compilation/aot_native.c` 零命中）。修法：VM 新增饱和转换 `im_dbl_to_i64()`、零检查**移到窄化之前**、`y == -1` 特判、结果超出 int32 时提升为 float（照抄 `L_NEG` 对 `INT_MIN` 的既有先例）；AOT 新增 `nv_die_division_by_zero()`；wasm 用 `e_trunc_sat_i64`（`0xFC 0x06`）替代 `e_trunc_sat_i32`。
 

@@ -93,7 +93,7 @@ if (op == TOK_AND || op == TOK_OR) {
 
 **爆炸半径（先测后改）**：`git ls-files '*.im'` 全量分类 —— 条件位置 71 处、值位置但两侧已是布尔 27 处、字符串/注释假命中 11 处、**真正会变的值选择只有 1 处**（`t_sugar_desugared.im:7` 的 `k = 0 or 1`，由 `k=1` 变 `k=true`；该文件被跟踪但不被任何 CTest 或门禁引用）。改后全量 CTest **106/106 通过、0 失败**。
 
-**顺带发现的第二个真缺陷**：写这个测试的当天，它抓出 **wasm 的 `not` 是反的** —— `cg_cond` 在 `TOK_NOT` 分支里已经做了一次 `i32.eqz`，`cg_expr` 的 `TOK_NOT` 分支又做了一次（双重否定），于是 `not 0` 在 wasm 上打印 `false`，而解释器与 AOT 都打印 `true`。**六条 `not` 用例全部恰好相反**。这是既有缺陷，与本次改动无关（`git diff` 可证 `cg_expr` 的 `TOK_NOT` 分支未被本次修改触及）。修法：删掉多余的那次 `eqz`（`src/compilation/wasm_backend.c:1217-1231`）。
+**顺带发现的第二个真缺陷**：写这个测试的当天，它抓出 **wasm 的 `not` 是反的**（**当时**） —— `cg_cond` 在 `TOK_NOT` 分支里已经做了一次 `i32.eqz`，`cg_expr` 的 `TOK_NOT` 分支又做了一次（双重否定），于是 `not 0` 在 wasm 上打印 `false`，而解释器与 AOT 都打印 `true`。**六条 `not` 用例全部恰好相反**。这**当时是**既有缺陷，与本次改动无关（`git diff` 可证 `cg_expr` 的 `TOK_NOT` 分支未被本次修改触及）。修法：删掉多余的那次 `eqz`（当时那里是 `src/compilation/wasm_backend.c:1217-1231`）。**今天已修** —— 判据：`grep -n 'Applying eqz again' src/compilation/wasm_backend.c` 命中那条注释，而 `cg_expr` 的 `TOK_NOT` 分支里不再有第二次 `eqz`。
 
 **为什么这个测试值钱**：它不是「再写一遍期望值」，而是**三个后端各跑一遍再互相比对**。`not` 那条在解释器和 AOT 上一直是对的，任何只测一个后端的测试都不会发现它。
 
@@ -1294,7 +1294,7 @@ blast radius 为零（实测，不是推断）。
 
 **诚实边界。** ① 本机 MSYS2 **没装 cmake.exe**，所以我做的是逐编译单元的 `-fsyntax-only`，不是完整 Windows 构建；完整证据（164/164 干净重建、`inimerse.exe` 链接成功）来自发布会话在**仓库外克隆**上的实测。② Linux 门禁**永远看不见**这一类缺陷：`tools/gate.sh` 跑在 Linux 上，glibc 没有 `<process.h>`，所以这道门禁此前红不了、以后也挡不住同类的 Windows-only 编译错 —— 能挡住它的只有 Windows CI，而 CI 自己红着的时候没人看。③ 编译修好之后 Windows 的 ctest 只有 **54/84**（30 项失败：9 项段错误、9 项超时、4 项 Failed、17 项 Not Run），那些是**运行时**缺陷，与本节无关，本轮**故意不修**（发布会话正在请用户决定是带已知问题发版还是修到全绿）。
 
-## §1.28 `vm_init` 是一张字段清单，清单漏了两个字段
+## §1.28 `vm_init` 是一张字段清单，清单漏了两个字段（**已修**；判据：`grep -n 'memset(vm, 0, sizeof(VM))' src/vm/vm.c`）
 
 **现象。** Windows 上 18 个 CTest 用例以 `0xC0000005` 段错误退出，栈完全相同：`rip=0x7ff7584c5673`，模块基址 `0x7ff7584a0000` ⇒ RVA `0x25673` ⇒ `prof_record_call+0x73`（函数入口 `0x140025600`）。`objdump -dS` 给出的故障指令是 `140025673: mov %ebx,0x8(%r12)`，对应 `src/compilation/profiler.c:101` 的 `fr->depth = depth;`，其中 `fr = &st->stack[st->stack_count++]`、`st = (ProfState*)vm->prof_state`。
 
@@ -4162,7 +4162,7 @@ check_orphan_fixtures rc=1   names vtest/orphan.im: True   names vtest/orphan.in
 - ★ **被执行（≠被断言）的只有 2 个，而其中一个每一轮都在跑**：**`mods/utils/main.im`** 被引擎**每次运行都自动加载**（它 `say "[mod] utils loaded"`、`say "[mod] self-check init=" + str(mod_init_time)`）⇒ **每一次 CTest 都在执行它**；**但没有任何断言** —— `grep -rn 'self-check init' --include='*.py' --include='*.js' --include='*.sh' CMakeLists.txt` = **0** ⇒ **把它输出的那个数从 42 改成 43，没有人会红。** ⇒ **「能跑」与「被观测」是两件事；这是「能跑但没人看」最纯的样本。** 另一个 `mods/debug/main.im` 只由 `inimerse debug <script.im>` 拼接（`src/main.c:1150-1157`），门禁里从不执行。
 - **有「别的观测者」的：0 个。** 其余 66 个的引用**全在 `docs/**` 的散文里**（`docs/HYGIENE.md` 的清单、`docs/streams/*`、STATUS/BOARD）—— **没有一行是可执行的东西**；`svprobe/sv_ctest.sh`/`sv_build_refs.sh` 受跟踪但**一个 `.im` 都不跑**（外部 worktree 的 `ctest`/`cmake` 驱动，且硬编码 `.worktrees/{sv-ref-prev,sv-ref-be,sv-ref-count,surgery-verify}`），`git grep 'sv_ctest\|sv_build_refs'`（排除 `svprobe/` 自身）= **空** ⇒ 没人调用。⇒ **这 70 个文件唯一的执行者，是人在终端里敲 `./build/inimerse <file>`。**
 - **真 rc（`timeout 15 ./build/inimerse <file>`，二进制 = 2026-10-06 16:03）**：**rc=0 = 38、rc=1 = 31、rc=124 = 1**；跑完 `git status --porcelain` 空。三栏分法：**真红 6** / **能跑但没人管 38** / **有意的红 26**（`be` 负向记录 17 + `meta_test` 的 `->` 1 + 平台门 7 + 超时 1）。⇒ **「38 个 rc=0」不是好消息**：它们没有任何断言，改坏了也没人知道。
-- **平台门 7 个是文档里已写明的**：`canvas_demo`/`projects/demo/main`/`es_200`/`es_400`/`es_800`/`es_1600` 报 `unknown builtin function 'gui_stage'`、`im2d_test` 报 `'im2d_init'`；两个内建都注册在 `src/mod/gui_mod.c`（`im2d_init` `:3851`），而 `gui_mod.c` **只在 `if(WIN32)` 里编译**；**`CMakeLists.txt:872-874` 自己逐字写着**「io_mod/gui_mod register str2int/noise2d/gui_*, and the **POSIX build stubs those modules out**, so calling them now throws "unknown builtin function"」⇒ **不是坏，是平台，而且这条已经被写下来了。**
+- **平台门 7 个是文档里已写明的**：`canvas_demo`/`projects/demo/main`/`es_200`/`es_400`/`es_800`/`es_1600` 报 `unknown builtin function 'gui_stage'`、`im2d_test` 报 `'im2d_init'`；两个内建都注册在 `src/mod/gui_mod.c`（`im2d_init` `:3851`），而 `gui_mod.c` **只在 `if(WIN32)` 里编译**；**`CMakeLists.txt:872-874` 自己逐字写着**「`io_mod/gui_mod register str2int/noise2d/gui_*, and the POSIX build stubs those`** modules out**, so calling them now throws "unknown builtin function"」⇒ **不是坏，是平台，而且这条已经被写下来了。**
 - ★ **一个新发现（独立于本轮主题）：引擎的中文错误信息是「双重编码后的 UTF-8 文本」，不是 GBK 字节。**（本节末尾有更正块；这句话的第一版把机制写反了。） `projects/host/main.im` 的 rc=1 报 `错误: 无法读取文件 'sync.im'`，**而它在终端里显示成 `閿欒: 鏃犳硶璇诲彇鏂囦欢 'sync.im'`** ⇒ 源文件里就是那串乱码字符本身，引擎原样打印（逐字节相同，无转换）——**终端是无辜的**。⇒ 与本档已登记的 **14 个含 U+FFFD 的文件**、**27 个非 UTF-8 文件**、**`src/compiler/compiler.c:2211` 被糊掉的注释**是同一层的三个入口：**这个仓库的编码不是一处坏了，是一条链上有多个地方各自坏过。**
 - **六个真红**（rc=1、不是记录、不是平台、不是超时）：`projects/host/main.im`（`错误: 无法读取文件 'sync.im'`，缺同级依赖）、`projects/set_comp_test.im`（`[exception] uncaught: comprehension: source set is not enumerable`）、`projects/tt1.im`（`[exception] uncaught: x`）、`examples/scripts/verse_biome_demo.im`（`Error: '+' is not defined for arrays/dicts (arr + [x] silently loses data; use push(arr, x…`）、`svprobe/label_old.im`（`error: unknown label 'SKIP'`）、`svprobe/p_colon_enforce.im`（`[exception] uncaught: type_mismatch`）。**它只判了前四个，后两个不下结论**（名字暗示有意，但没有 `be` 那批的抬头自述）—— **这是正确的留白。**
 - ★ **一条它自己标出的射程洞**：观测者只搜了**字面路径/文件名**（`git grep -F`）⇒ **靠拼接、变量、glob 到达这些文件的观测者搜不到**；它只额外手查了 `CMakeLists.txt` 的 `.im` 目标目录直方图来补这个洞，**没有**穷举 `file(GLOB)` 与 `.sh`。⇒ **与「按形状搜邻域」同族：一个按字面名建的输入集，它的射程就是「按字面名能到达的那些」。**
@@ -4202,7 +4202,7 @@ stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   loc
   - **结局二（池补到 27、`pool[26]="upper"` 真内建）⇒ rc=0、stdout=`ABCDEF`** —— 且它与结局一**被判别开了**：若静默返回栈顶应得 `abcdef`，实测 `ABCDEF` ⇒ **确实调用了 `upper` 而不是 `len`** ⇒ **静默调到另一个内建的直接证据。**
   - **结局三（池补到 27、`pool[26]="zzz_not_a_builtin"`）⇒ rc=1、`[exception] uncaught: unknown builtin function 'zzz_not_a_builtin'` at `ip=3`** —— **那个名字在用户程序里根本不存在** ⇒ **报错指向错误对象的直接证据。**
 - ⇒ **一句话：这条路径由数据可达，三种结局都不需要编译器参与；而 `src/vm/vm.c` 里那三个口子与「谁产生了那个 `r2`」无关。** ⇒ **判据：一条「今天不执行」的分支，它的可观测性不能只问「谁能构造出触发它的程序」—— 还要问「谁能构造出触发它的数据」。**
-- ★ **另一条判据：「差异」的第三种分类。** `selfhost/compiler.im` 的 `add_str` 不查重那条差异，答案既不是「理论差异」也不是「今天没被观测的差异」，而是 **「被工具明确声明为不比较的差异」**：`selfhost_codegen_parity`（`CMakeLists.txt:261-263`、`tools/selfhost_compare.py --check --engine <inimerse>`）记录 `bytecode_match`（`:182`）与 `ops_match`（`:183`），而 `ops_only`（`:88-98`）的 docstring 逐字「**Normalized bytecode: the opcode column only. Register numbers and constant-pool indices are allocation decisions the two compilers are free to make differently; the sequence of operations is what they have to agree on.**」，工具 docstring（`:19-22`）逐字「…**agree on behaviour but not on register allocation, so their bytecode streams legitimately differ. What must not differ is what the program prints.**」，`--check` **断言的只有运行输出**（`output_match`）⇒ **没人漏写测试；是那条测试自己划了界。** ⇒ **判据：说一条差异「没被观测」之前，先查有没有一条观测者明确声明不观测它 —— 那是两个不同的句子。**
+- ★ **另一条判据：「差异」的第三种分类。** `selfhost/compiler.im` 的 `add_str` 不查重那条差异，答案既不是「理论差异」也不是「今天没被观测的差异」，而是 **「被工具明确声明为不比较的差异」**：`selfhost_codegen_parity`（`CMakeLists.txt:261-263`、`tools/selfhost_compare.py --check --engine <inimerse>`）记录 `bytecode_match`（`:182`）与 `ops_match`（`:183`），而 `ops_only`（`:88-98`）的 docstring 逐字「**`Normalized bytecode: the opcode column only.` Register numbers and constant-pool indices are allocation decisions the two compilers are free to make differently; the sequence of operations is what they have to agree on.**」，工具 docstring（`:19-22`）逐字「…**agree on behaviour but not on register allocation, so their bytecode streams legitimately differ. What must not differ is what the program prints.**」，`--check` **断言的只有运行输出**（`output_match`）⇒ **没人漏写测试；是那条测试自己划了界。** ⇒ **判据：说一条差异「没被观测」之前，先查有没有一条观测者明确声明不观测它 —— 那是两个不同的句子。**
 
 **★ 更正块：上一条的机制写反了，而「写反」这件事本身给出了第二十条判据。**
 - **更正**：我上一轮写「输出的是 GBK 字节、被当 UTF-8 读」——**错**。逐字节比对：`src/compiler/compiler.c:3072` 的 `fprintf(stderr, "閿欒: 鏃犳硶璇诲彇鏂囦欢 '%s'\n", full);` 与引擎实际吐出的字节**到 `'%s'` 为止逐字节相同** ⇒ **中间没有任何转换，引擎把字面量原样打印**；终端也无辜。**真正的机制是双重编码**：`printf '鏃犳硶璇诲彇鏂囦欢' | iconv -f UTF-8 -t GBK` ⇒ **`无法读取文件`** ⇒ 原文的 UTF-8 字节曾被当成 GBK 解码、结果再存成 UTF-8。`git grep '无法读取文件' -- src/` = **0 命中**，**不是因为它不在，是因为它被糊过了**。
@@ -9304,3 +9304,70 @@ glad-falcon 的两件交付；V、W 来自 glad-falcon 与协调者的往返。
   而它的价值正是在两把都指向同一件事的时候归零。**
 - **L.** ★★ **一个中间产物里存着错数，任何读它的人都会得到那个错数 ——
   而那个文件的存在本身看起来像一次可复跑。**
+
+### §1.97 增补十九：空输出与没跑、分母的两个口径、以及「坐标越多读者越以为它被核过」
+
+本节承接增补十八。三条来源：一条车道的事故自陈、一条车道对「带坐标被当成可核」做的普查，
+以及**三处真引文的落法 + 三处时态的落法**（这一批由协调者落，读数在提交信息里）。
+**本节零个坐标、零个裸号、零个标记词。**
+
+#### 甲、空输出与没跑
+
+- **A.** ★★★★★ **收为判据：一条验证命令如果它的输出是【空】，它与【没跑】长得一模一样 ——
+  而读它的人会把空读成「命令被截断」。**
+- **B.** ★★★★ **一次用相对路径的写操作，会写到【进程的当前目录】而不是【你以为的那个树】——
+  而它的输出在另一个目录里跑，于是【印出空】。**
+  ⇒ ★ **处置：改文件的那条命令必须带工作目录，脚本里用绝对路径，`cd` 不写在同一条复合命令里。**
+- **C.** ★★★★ **一次「还原到 HEAD」的清理动作，会连带抹掉同一棵树里【别人】的未提交改动 ——
+  而它的输出只有一行 ` M` 变成空。**
+  ⇒ ★ **处置：追加之后立刻提交，把跑阶段的动作放到提交之后。**
+  ★ 实测：这个窗口在一分钟之内被走通过一次。
+
+#### 乙、一个分母的两个口径
+
+- **D.** ★★★★★ **收为判据：「这条断言可核吗」在句口径与行口径下是两个不同的问题，
+  而两个数都叫「只有坐标没有命令的断言数」。**
+  ★ 实测：句口径一千九百七十二含坐标、一百三十四带命令、一千八百三十八只有坐标；
+  行口径一千六百六十六 / 二百三十七 / 一千四百二十九。
+  ⇒ ★ **两把尺子的差是百分之二十八点六，而「带命令」的比例差一倍。**
+- **E.** ★★★★ **机制**：★ **一条命令通常与一个坐标落在同一【行】的不同【句】里** ——
+  ⇒ **行口径会把不同句的命令与坐标配成一对。**
+- **F.** ★★★★★ **一个分母的正确值，与一个分母的【误读值】，都要写下来；只写前者，下一个人还会算一次那个误读值。**
+  ★ 实测：真正在报告缺陷的是一百三十二，而那个大数读起来像「有一千八百三十八条断言不可核」。
+- **G.** ★★★ **一个分母如果它的成员由一份【词表】决定，那么那个数是词表的函数 ——
+  而词表本身没有任何仪器看它。**
+  ★ 实测：「带命令」由一份约七十个命令词的名单决定，**加一个词就会把一些句子从「只有坐标」移走。**
+
+#### 丙、三条料不到的形状
+
+- **H.** ★★★★ **收为判据：「不可核的断言」这个集合的定义里，必须先有「断言」——
+  而一个没有命题的单位，既不可核，也不「不可核」。**
+  ★ 实测：五十三个单位是纯指针（去掉坐标与标点后散文不超过六个字），**它们一个命题都没有。**
+- **I.** ★★★★★ **收为判据：坐标越多，读者越可能以为它被核过。**
+  ★ 实测：一条句子里有二十个坐标、另一条十三个、另一条十个，**而它一条命令都没有。**
+  ⇒ ★ **这一族最强的一种来源不是「有坐标」，是「坐标很多」。**
+- **J.** ★★★★ **收为判据：同一个名字下的两个数，如果它们的【单位】不同，
+  它们的比不是倍数，是两把尺子。**
+  ★ 实测：两个都叫「可定位不可核」的数差二点五倍，**而一个数的是版本行、一个数的是句。**
+- **K.** ★★★ **一个按命令名判「带命令」的尺子，会把一条带参数的调用与一条裸调用当成同一件事 ——
+  而「带命令」不等于「命令可跑」。**
+
+#### 丁、一个句子的判词可以有五种【非现状】的主语
+
+- **L.** ★★★★★ **收为判据：这一族的五个成员，全部是【一句话在语法上无法与一个现状陈述区分】的形态。**
+  ★ 五个成员：**① 一个 C 术语（「未定义行为」）② 一个完成体被当成现在时 ③ 一个反事实中间状态 ④ 一个否定句 ⑤ 一条被拒绝的方案。**
+- **M.** ★★★ **一个句子里的判词，它的主语可能是【一条被拒绝的方案】——
+  而它与【今天的事实】用同一套词。**
+- **N.** ★★★ **一条关于【被拒绝的方案会留下什么】的话，读起来与【今天代码是什么样】完全一样。**
+- **O.** ★★★ **修一句时态的最省动作是加一个限定词，而不是改写那句话** ——
+  ⇒ **它保住那句话作为【那一节的症状】的用处，而这是删掉它做不到的。**
+
+#### 戊、这一批的读数
+
+- **P.** ★★★ **三处真引文的落法一律是【给已经在那一行上的逐字原文加一对反引号】——
+  不改一个字、不动行数**；★ 三处的旧串在各自文件里唯一（已核）。
+- **Q.** ★★★★ **一个补法的作用面如果恰好等于它的目标数，那么它没有顺带托住别人 ——
+  而这一点必须被报出来，因为它排除了一个猜想。**
+  ★ 实测：三处改动让一个桶加了三、另一个桶减了三，**而两个桶之外的每一条读数逐字不动。**
+- **R.** ★★★ **一条修引用的改动不应该顺带改渲染** ——
+  ★ 实测：反引号紧贴粗体标记会让粗体从错误的地方开始，而那是**一次顺带的渲染改动**。
