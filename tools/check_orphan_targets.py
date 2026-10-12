@@ -30,9 +30,11 @@ The ruler matters, and the obvious ruler is wrong:
     `websocket_probe`.  Two of those were false.  A test's NAME is chosen by
     whoever writes the registration and need not resemble the target it runs:
     the tests are `literal_resolve_runtime` and `resolve_timeout_runtime`, and
-    both targets are run.  Only `websocket_probe` was real.  So this checker
-    matches the target that is *used* -- the first token after `COMMAND`, and
-    any `$<TARGET_FILE:...>` generator expression -- never the test name.
+    both targets are run.  The third one was real, and is not one any more: it
+    was registered once the probe stopped hanging (see `ALLOWED` below).  So
+    this checker matches the target that is *used* -- the first token after
+    `COMMAND`, and any `$<TARGET_FILE:...>` generator expression -- never the
+    test name.
 
 Honest bounds:
   - `COMMAND`'s first token is read textually.  A target reached through a
@@ -79,42 +81,19 @@ ROOT = HERE.parent
 # target is correct.  When the honest claim is instead "this is an omission
 # nobody has closed yet", write it down as the debt it is: an entry that reads
 # like a rule while recording a debt is how the debt outlives the reader.
-ALLOWED = {
-    "websocket_probe": (
-        "NOT an allowance -- a hanging test, recorded here so that the gate "
-        "stays green while the hang is unfixed; the alternative, leaving the "
-        "name unlisted, is a red line that reads as a finding about the frame "
-        "layer when the finding is about this probe never returning.  "
-        "The reason this entry replaces was false on both of its halves: "
-        "src/platform/websocket.c implements the frame layer (im_ws_accept, "
-        "im_ws_read_text, im_ws_send_text, im_ws_send_pong -- four functions; "
-        "read the file, the count moves), and src/platform/websocket_probe.c "
-        "asserts real things, six of them, ending in a byte-for-byte comparison "
-        "against 0x81 0x04 0x70 0x69 0x6e 0x67.  "
-        "The measured state, which is why this is not merely a registration "
-        "debt: the probe does not terminate.  Run it under the same 25s timeout "
-        "its siblings carry and it is killed -- rc=124 at 25.0s, with no output "
-        "at all, not even the success line it would otherwise print.  "
-        "Registering it today would therefore add a test that can only fail by "
-        "hanging, and this entry would still have to exist.  "
-        "Note how this one went bad, because it is the harder of the two ways an "
-        "exemption fails: the old reason did not merely become false over time, "
-        "which a grep can find -- it named the wrong cause from the start, and "
-        "'there is nothing to assert' and 'it asserts forever' look identical in "
-        "a table.  Only running the exempted thing tells the two apart.  "
-        "The condition that ends this entry: first make the probe terminate.  "
-        "Its siblings http_probe and hub_probe are registered in the same "
-        "`if(NOT WIN32)` block of CMakeLists.txt and carry the same "
-        "`platform;smoke;http` labels; `grep -n 'hub_probe' CMakeLists.txt` "
-        "beside `grep -n 'websocket_probe' CMakeLists.txt` is the whole "
-        "difference -- hub_probe has an add_executable( ) AND an add_test( ), "
-        "websocket_probe has only the first.  Then add an add_test( ) for it "
-        "beside hub_probe's, add its name to the set_tests_properties( ) call "
-        "that labels that group, and delete this entry.  That registration half "
-        "is a commit of its own: it moves EXP_CTEST in tools/gate.sh, and the "
-        "line-refs pin with it."
-    ),
-}
+# Empty, and the emptiness is a reading rather than an omission.  This table
+# held exactly one entry, `websocket_probe`, and it was a debt recorded in the
+# shape of a rule: the probe did not terminate, so registering it would have
+# added a test that could only fail by hanging.  Its stated condition was "first
+# make the probe terminate" -- and the condition has been met.  The probe
+# terminates (see src/platform/websocket_probe.c), it is registered beside its
+# siblings in CMakeLists.txt, and the very next run of this checker reported the
+# entry as excusing nothing, which is the check below doing its job.  An
+# allowance whose condition has been met is a guard no run can falsify, and it
+# hides the day the target stops being run.  If a real allowance is ever needed
+# again, put it here with the thing that runs instead -- not with the reason it
+# is allowed to go unrun.
+ALLOWED = {}
 
 
 def cmake_blocks(text, command):
