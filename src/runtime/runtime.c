@@ -147,10 +147,13 @@ static int builtin_len(VM *vm) {
 static int builtin_size(VM *vm) {
     if (vm_cur_sp(vm) < 0) return 0;
     Value *v = &vm_cur_stack(vm)[vm_cur_sp(vm)];
-    /* The SET branch mirrors posix_core_size().  The ARRAY branch below passes
-     * `vm_array_len(vm, v->ival - 1)` unguarded HERE -- the only one of this
-     * pair's six branches.  Nothing here guards it; three things elsewhere do,
-     * and they are named at the end of this file.  See docs/AUDIT.md 1.16. */
+    /* The SET branch mirrors posix_core_size().  The ARRAY branch below carried
+     * `vm_array_len(vm, v->ival - 1)` with no bounds check of its own until this
+     * change -- the only one of this pair's six branches, and the only one where
+     * the two platform copies could answer differently for an out-of-range slot
+     * (this copy said 0, posix_core_size() said nil).  It now carries the guard
+     * posix_core_size() has always had; the three things that used to hold it up
+     * instead are recorded at the end of this file.  See docs/AUDIT.md 1.16. */
     long long n = -1;
     if (v->type == VAL_SET) {
         if (v->ival >= 0 && v->ival < vm->setCount) {
@@ -159,7 +162,7 @@ static int builtin_size(VM *vm) {
             else { int a = vm_set_to_array(vm, v->ival); if (a >= 0) n = vm_array_len(vm, a); }
         }
     }
-    else if (v->type == VAL_ARRAY) n = vm_array_len(vm, v->ival - 1);
+    else if (v->type == VAL_ARRAY && v->ival > 0 && v->ival - 1 < vm->arrayCount) n = vm_array_len(vm, v->ival - 1);
     else if (v->type == VAL_DICT) { int a = v->ival - 1; if (a >= 0 && a < vm->arrayCount) n = vm_pool_slot(vm, a)->count / 2; }
     else if (v->type == VAL_STRING) n = (int)strlen(v->sval ? v->sval : "");
     else if (v->type == VAL_INT) n = v->ival;
@@ -2052,39 +2055,51 @@ static int builtin_shr(VM *vm) {
 }
 
 /* ---------------------------------------------------------------------------
- * The ARRAY branch of builtin_size above passes `vm_array_len(vm, v->ival - 1)`
- * with no bounds check of its own.  It is the only one of the six branches of
- * builtin_size / builtin_count without one -- and "without one" is a fact about
- * THIS LINE, not about the path.  Its safety is the joint product of three
- * things, none of which was written for it:
+ * HISTORY, closed: the ARRAY branch of builtin_size above used to pass
+ * `vm_array_len(vm, v->ival - 1)` with no bounds check of its own.  It was the
+ * only one of the six branches of builtin_size / builtin_count without one, and
+ * the only branch in that pair where the two platform copies could answer
+ * differently for an out-of-range slot: this copy went through vm_array_len,
+ * whose own check (src/vm/vm.c:940) turns an out-of-range index into 0, so
+ * size() answered 0; posix_core_size() (src/runtime/runtime_posix.c:44) had the
+ * guard, so its n stayed -1 and size() answered nil.  It now carries the same
+ * guard, and tools/size_array_branch_probe.py compiles both copies side by side
+ * and feeds them the same forged handles, so the claim is measured rather than
+ * asserted.
  *
- *   1. the producers, which is an input check on their side:
- *          src/runtime/runtime_posix.c:217   if (aidx < 0) { push_nil(vm); return 1; }
- *          src/runtime/runtime_posix.c:433   if (aidx < 0) { free(src); free(sep); push_nil(vm); return 1; }
- *          src/runtime/runtime_posix.c:466   if (aidx < 0) { free(s); push_nil(vm); return 1; }
- *      (19 sites build `{ .type = VAL_ARRAY, .ival = aidx + 1 }`; every one of
- *      them tests `aidx < 0` first.  `ival` is the pool index PLUS ONE, so a
- *      handle that exists was built from a real index.)
+ * Kept for the record, because it is why nothing caught it: the borrowed guards
+ * were the joint product of three things, none written for this branch --
  *
- *   2. the pool's allocation policy, which is a decision about capacity:
- *          src/vm/vm.c:786   idx = vm->arrayCount++;
- *          src/vm/vm.c:801   idx = vm->arrayCount++;
- *      `arrayCount` never decreases, and the recycle path (src/vm/vm.c:781-785,
- *      `array_free_list`) reuses an index that is already below it.
+ *   1. the producers, an input check on their side (every site that builds
+ *      `{ .type = VAL_ARRAY, .ival = aidx + 1 }` tests `aidx < 0` first; the
+ *      posix spellings of that test are at src/runtime/runtime_posix.c:217,
+ *      :433 and :466 -- read those lines from the file, the numbers move);
+ *   2. the pool's allocation policy: `idx = vm->arrayCount++` in vm_array_new,
+ *      and arrayCount never decreases, because the recycle path
+ *      (`array_free_list`) reuses an index already below it;
+ *   3. the accessor's own defensive check, `if (idx < 0 || idx >=
+ *      vm->arrayCount) return 0;` at src/vm/vm.c:940.
  *
- *   3. the accessor's own defensive check:
- *          src/vm/vm.c:940   if (idx < 0 || idx >= vm->arrayCount) return 0;
+ * Any one of the three changing its purpose would have flipped the conclusion,
+ * and nothing in the tree would have said so: no program written in the
+ * language could reach the branch out of range while all three held, which is
+ * exactly why the branch had no watcher and no test.  The guard is now this
+ * line's own, so the branch no longer depends on the three of them; the three
+ * still matter for every other reader of a raw pool index.
  *
- * So the right statement is not "no guard is needed here" but "the guard is in
- * three places, and it is nobody's job".  Any one of the three changing its
- * purpose flips the conclusion, and nothing in the tree would say so: there is
- * no test that reaches this branch with `v->ival - 1` outside
- * [0, arrayCount), because such a program could not be constructed while all
- * three hold.  What that means is that this line has no guard of its own AND no
- * watcher over the guards it borrows.
+ * STILL OPEN, same shape, NOT fixed here (reported to the lead): builtin_len
+ * (src/runtime/runtime.c:122-143) carries the identical unguarded ARRAY branch
+ * at :134, and so does its posix twin posix_core_len
+ * (src/runtime/runtime_posix.c:11-27, ARRAY branch first).  That pair does NOT
+ * diverge -- both copies answer 0 there, because posix_core_len's `n` starts at
+ * 0 and it pushes an int unconditionally -- so it is a missing guard in both
+ * copies rather than a platform disagreement.  It was left alone on purpose:
+ * one fix per instance, and a commit that fixed both would read as though this
+ * shape were finished.  tools/size_array_branch_probe.py measures it too, under
+ * a heading that says it is out of scope for that probe's verdict.
  *
  * Also, honestly scoped: the range check at src/vm/vm.c:940 cannot see a
  * handle that has been recycled underneath -- that yields a WRONG VALUE and not
- * an out-of-range index.  This branch's safety argument does not claim to cover
- * that case, and nothing here claims to have measured it.
+ * an out-of-range index.  Neither the fix nor the probe claims to cover that
+ * case, and nothing here claims to have measured it.
  * ------------------------------------------------------------------------- */
