@@ -74,14 +74,45 @@ ROOT = HERE.parent
 
 # Targets that are deliberately not run by any CTest, each with the thing that
 # runs instead.  Read the reason, not the name.
+#
+# Every entry here is an allowance, and an allowance claims that NOT running the
+# target is correct.  When the honest claim is instead "this is an omission
+# nobody has closed yet", write it down as the debt it is: an entry that reads
+# like a rule while recording a debt is how the debt outlives the reader.
 ALLOWED = {
     "websocket_probe": (
-        "not an omission but a state that is already written down: the WebSocket "
-        "frame layer is not implemented, so the probe has nothing to assert. "
-        "docs/API.md:481 lists it among the built binaries that are not CTest "
-        "registrations, and docs/API.md:622 marks the WebSocket row as "
-        "'reserved / protocol frames not implemented'.  Register it the day "
-        "there is a frame to parse."
+        "NOT an allowance -- a hanging test, recorded here so that the gate "
+        "stays green while the hang is unfixed; the alternative, leaving the "
+        "name unlisted, is a red line that reads as a finding about the frame "
+        "layer when the finding is about this probe never returning.  "
+        "The reason this entry replaces was false on both of its halves: "
+        "src/platform/websocket.c implements the frame layer (im_ws_accept, "
+        "im_ws_read_text, im_ws_send_text, im_ws_send_pong -- four functions; "
+        "read the file, the count moves), and src/platform/websocket_probe.c "
+        "asserts real things, six of them, ending in a byte-for-byte comparison "
+        "against 0x81 0x04 0x70 0x69 0x6e 0x67.  "
+        "The measured state, which is why this is not merely a registration "
+        "debt: the probe does not terminate.  Run it under the same 25s timeout "
+        "its siblings carry and it is killed -- rc=124 at 25.0s, with no output "
+        "at all, not even the success line it would otherwise print.  "
+        "Registering it today would therefore add a test that can only fail by "
+        "hanging, and this entry would still have to exist.  "
+        "Note how this one went bad, because it is the harder of the two ways an "
+        "exemption fails: the old reason did not merely become false over time, "
+        "which a grep can find -- it named the wrong cause from the start, and "
+        "'there is nothing to assert' and 'it asserts forever' look identical in "
+        "a table.  Only running the exempted thing tells the two apart.  "
+        "The condition that ends this entry: first make the probe terminate.  "
+        "Its siblings http_probe and hub_probe are registered in the same "
+        "`if(NOT WIN32)` block of CMakeLists.txt and carry the same "
+        "`platform;smoke;http` labels; `grep -n 'hub_probe' CMakeLists.txt` "
+        "beside `grep -n 'websocket_probe' CMakeLists.txt` is the whole "
+        "difference -- hub_probe has an add_executable( ) AND an add_test( ), "
+        "websocket_probe has only the first.  Then add an add_test( ) for it "
+        "beside hub_probe's, add its name to the set_tests_properties( ) call "
+        "that labels that group, and delete this entry.  That registration half "
+        "is a commit of its own: it moves EXP_CTEST in tools/gate.sh, and the "
+        "line-refs pin with it."
     ),
 }
 
