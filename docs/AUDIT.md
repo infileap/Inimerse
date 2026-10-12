@@ -4146,7 +4146,7 @@ check_orphan_fixtures rc=1   names vtest/orphan.im: True   names vtest/orphan.in
 - **④ 三分法的第四个格子**：`check_text_integrity` 把 **`ai_browser_diag.js`**（2556 字节、**0 个 NUL**）与 **`examples/legacy-ui/desktop.html`**（4880 字节、**0 个 NUL**）**算进「text file(s)」并放行** ⇒ **那个阶段的「text file(s)」是文件名的属性（`.js`/`.html` 在白名单里），不是字节的属性；而它的判据（NUL）与这个集合的名字正交。** 不是①解不开、不是②解出替换字符、不是③有 NUL，而是 **④扩展名说是文本、字节说不是、而判据两样都不问**。
 - **⑤ 一个不带 reason 的报告格式，会自己编一个**：`check_doc_paths` 的红对照逐字 `BROKEN  bad.md  ->  <unreadable: 'utf-8' codec ...>  (no such file)` —— 它的 `broken` 类型是 `(source, path)` **没有 reason 字段**，印的时候**硬拼了一句 `(no such file)`** ⇒ **一个存在但读不了的文件，被报成不存在的文件。** 对比 `check_links`：那边 `broken` 是三元组 `(source, target, why)`，印出来是 `<unreadable>  (utf-8 codec …)` —— **同一个形状，一个带 reason 一个不带，不带的那个就自己编了一个。**
 - **⑥ 知识在仓库里，不在输入集里**：`check_orphan_fixtures` 的 `*.im` glob **看不见 `.inim`**（红对照 `names vtest/orphan.inim : False`）；今天那唯一一个 `vtest/params_precompiled_v06.inim` 没被漏掉，**是因为有人把它的说明写进了旁边那条 `ALLOWED` 条目的正文里** ⇒ **下一个 `.inim` 不会有这种运气。** 仓库里今天共 **9 个 `.inim`**（`projects/` 7、`vtest/` 1、根 `nst2.inim` 1），**没有一个在任何检查器的输入集里。**
-- **⑦ 三种解码行为，各自的位置**：`strict`（`check_links.py:152`、`check_doc_paths.py:188` ⇒ 抛、进 `broken`、响）；`replace`（`check_test_ports.py:58`、`migrate_report.py:47`、`check_ignored_credentials.py:57` 及一批 `*.test.py` ⇒ 不抛、制造替换字符、**把失败伪装成数据**）；`surrogateescape`（`check_orphan_fixtures.py:104`/`:109`、`check_orphan_targets.py:142`、以及三个检查器**路径名**的解码 ⇒ 不抛也不替换、坏字节原样留在 `str` 里，**可逆**（`encode('utf-8','surrogateescape')` 能还原），但**下游任何 `print`/`json.dumps` 都会在写出时炸**）。
+- **⑦ 三种解码行为，各自的位置**：`strict`（`check_links.py:152`、`check_doc_paths.py:188` ⇒ 抛、进 `broken`、响）；`replace`（`check_test_ports.py:58`、`migrate_report.py:47`、`check_ignored_credentials.py:57` 及一批 `*.test.py` ⇒ 不抛、制造替换字符、**把失败伪装成数据**）；`surrogateescape`（`check_orphan_fixtures.py:104`/`:109`、`check_orphan_targets.py:173`、以及三个检查器**路径名**的解码 ⇒ 不抛也不替换、坏字节原样留在 `str` 里，**可逆**（`encode('utf-8','surrogateescape')` 能还原），但**下游任何 `print`/`json.dumps` 都会在写出时炸**）。
 - **⑧ 一条拒绝测量的理由（要进产物）**：它**没量** `src/compiler/compiler.c:2211` 那条被糊掉的注释与 `:2219` 无 `else` 分支的相邻性 —— 理由逐字：**「一个距离分布要有一个零模型」**（那个文件里有 619 个 U+FFFD、分散在很多行），**没有零模型，量出来的是「它们在同一屏里」，那不是判据。** ⇒ **一条「我没量」若写出理由，它的价值等于一次测量；写不出理由的「我没量」只是缺口。**
 - 它**独立复核了我的 14 个**（同一命令、逐文件计数**逐个相同**）⇒ 现在这个数有**三份独立读数**（我的、`docs/BOARD.md:150` 的、它的）。
 **★ 第十八个实例 + 四条判据（`vivid-anchor` 的，读数）。** 它普查了全仓 `OP_CALL_BUILTIN` 的发射点：`git grep -n 'OP_CALL_BUILTIN' 344a37b -- . ':!docs/' ':!future/'` 共 32 处，**非发射点 6 处**（`src/compiler/bytecode.h:19` 枚举、`src/vm/vm.c:3099` 分派、`src/vm/vm.c:5244` 反汇编器、`mods/debug/debug_mod.c:156` 反汇编器、`selfhost/compiler.im:35` 常量 `OP_CALL_BUILTIN = 27`）⇒ **发射点 26 个**：`src/compiler/compiler.c` **24 个** + `selfhost/compiler.im` **2 个**（`:377`、`:506`）。
@@ -4180,7 +4180,7 @@ names containing space/tab/newline = 2
 ⇒ 它已落在产物里：本档上一段与那笔提交信息都写着 `919` ⇒ **本档那处已更正为 917（分子不动）；提交信息改不了 ⇒ 登记为记录，不假装它没发生。**
 **★ 第八个形态：同一个通配符在两种工具里不是同一个集合（它自报，且它差点把它报成仓库缺陷）。** 它先看到 `git ls-files -- 'vtest/*.im'` = **79**、`glob.glob("vtest/*.im")` = **78**，形状是「一个受跟踪的 fixture 从工作区里消失了」；**实测那个文件在盘上（`vtest/params_sub/relative_script.im`，42 字节）** —— 差的是**两个不同的通配符**：**`git` 的 `*` 跨 `/`**（匹配子目录），**`glob` 的 `*` 不跨 `/`** ⇒ **79 与 78 是同一个集合被两种通配符量了两次。**
 ⇒ **准确说法**：检查器印的 `124` 是「**glob 看得见的**」，那个前缀下受跟踪的是 `125` ⇒ **差的那一个不是未跟踪的，是子目录里的、glob 看不见。今天它的输入集比仓库小 1，不是大。** 两个方向都存在，今天是「小」。
-**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:142`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:121` ⇒ `:211` `print` **stdout**，**原写 `:124`**）⇒ **会**。
+**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:173`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:121` ⇒ `:211` `print` **stdout**，**原写 `:124`**）⇒ **会**。
 ```
 stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   locale zh_CN.UTF-8
   print(s)                        -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 3: surrogates not allowed
@@ -9871,3 +9871,59 @@ glad-falcon 的两件交付；V、W 来自 glad-falcon 与协调者的往返。
 - **U.** ★★★ **裁定：先做【让输出行自带定义】（动零条引用），改名登记、时机由协调者定。**
   ★ 理由：★ **输出行是那一行唯一的读者入口，而那张表是那张表唯一的读者入口 ——
   两个入口都要能读懂**；★ **而改名会让「谁引用了这个类名」这个问题今天变得没有答案。**
+
+### §1.97 增补二十九：普查者写下的映射、一个零的两种读法、以及同一条缺陷的两个尺度
+
+本节承接增补二十八。来源：一条车道对同一件事做了第二次普查，而它第二次的尺子
+**也是自己写的**，于是它把自己第二次的假阳性也逐条读了。
+**本节零个坐标、零个裸号、零个标记词。**
+
+#### 甲、普查者写下的任何映射
+
+- **A.** ★★★★★ **收为判据：一个普查的【分母】如果来自普查者手写的一张表，
+  那么那张表就是普查里第一个没有被普查的东西。**
+- **B.** ★★★★★ **收为判据：那张表的失效方式，正是被普查的那个东西的失效方式。**
+  ★ 实测：那把尺子读错了接收者，于是它把「尺子读错了」报成了「语料里有六条缺口」——
+  ★ **而这两件事在输出里长得完全一样。**
+- **C.** ★★★★★ **收为判据：一把机械尺子如果要从调用里【猜】哪个实参是判词，
+  那么它猜错的那一次与「这条判据没有判词」在输出里一样 —— 而两者都会让分母变小。**
+- **D.** ★★★★ **收为判据（合并 A 与 C）：普查者写下的任何【映射】，
+  无论它是一张表还是一段提取逻辑，都是普查里第一个没有被普查的东西。**
+- **E.** ★★★★ **这一族今天有五个入口**：★ **被容器满足 / 被一句提到它的话满足 /
+  被另一处满足 / 被我的表指错接收者 / 被我的提取器猜错实参** ——
+  ★ **而第五个的宾语是【普查者自己的代码】。**
+- **F.** ★★★ **可执行的修法**：★ **凡是「谁读了什么」这个问题，答案必须在代码里，
+  不能在普查者的脑子里**；★ **实参不要猜，取【位置】上的实参。**
+- **G.** ★★★ **一个按【行里含某个符号】提取 needle 的提取器，会把那一行上【别的字符串】一起收进来 ——
+  而断言自己的名字与消息总是在那一行上。**
+
+#### 乙、一个零的两种读法
+
+- **H.** ★★★★ **收为判据：一个普查报零，可能意味着对象是干净的，
+  也可能意味着尺子的入口不在那个维度上 —— 而两者在报告里都是零。**
+  ★ **而这是这一族今天唯一一次【零被正确地读成了零】**：那把文本尺报零，
+  而报告写的是「这一族的入口不在文本上」，不是「这一族不存在」。
+- **I.** ★★★ **一个分母的假阳性，只有把它的成员逐条读完才发现；
+  而这个动作的可行性取决于那个分母有多大 —— 所以分母越小，尺子越不需要准。**
+
+#### 丙、同一条缺陷的两个尺度
+
+- **J.** ★★★★ **收为判据：同一条缺陷在两个不同的对象上可以有相差两个数量级的规模，
+  而两个数都是真的。**
+  ★ 实测：同一件事在文档侧二百零二组、在测试侧两条 ——
+  ★ **尺子不同、对象不同，而它们描述的是同一个病。**
+- **K.** ★★★ **推论：一个「规模」如果没有写明它是在哪个对象上量的，它会被读成那个病的规模。**
+
+#### 丁、合并与指针
+
+- **L.** ★★★★ **一次合并把一条引用打到另一个行上，而那个文件里的引用是【指针】——
+  指针必须更新到当前值，而记录保留原值。**
+  ★ 本节落笔时更新了两处，**行数中性**，两支仪器一个数都没动
+  （★ **那个目标不是行号检查器的两个成员之一 ⇒ 只有计数器会动，而计数没动**）。
+- **M.** ★★★★ **收为判据：一条只问「那一行存在吗」的检查器，
+  它的射程缺口只有在【有人真的动了那个文件】的时候才显形 ——
+  而显形的方式是【没有人发现】。**
+  ★ **处置：不要把那一次改动重做成行数中性** ——
+  ★ **做成行数中性等于替那条检查器掩盖它的射程缺口，而那个活样本是它唯一的价值。**
+- **N.** ★★★ **一次「两条分支各自需要先把主干合进来」的合并，会让第二条分支的第一份合并立刻过期**
+  —— ★ **而它过期的原因是第一条分支被合了，与第二条分支毫无关系。**
