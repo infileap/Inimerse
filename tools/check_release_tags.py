@@ -137,6 +137,49 @@ EXP_TAG_EXEMPTION_CLASSES = tuple(
     if c
 )
 
+# What each class name means, printed wherever the name is reported.  These
+# names are RELATIONS between the line and something else, and they read as
+# PROPERTIES of the line: `recollection` sounds like the document remembering
+# something, while what is measured is that this line stands in a relation to a
+# value that no longer holds.  A reader who takes the name for a property cannot
+# see that from the output, and the output is the only place this table has a
+# reader -- so the definition travels with the name instead of living only in
+# this comment.  Keep each entry to one line: it is printed once per exempted
+# binding.  Renaming a class is a separate question with its own cost (it makes
+# "who refers to this class name?" unanswerable for a while), so the name stays
+# and the line carries the meaning.
+TAG_EXEMPTION_MEANING = {
+    "fenced block": (
+        "the mention sits inside a fenced code block -- a quotation of form, "
+        "not an assertion about the tag"
+    ),
+    "quotation": (
+        "the line quotes another document: it carries a `docs/...` path AND a "
+        "quotation verb, so the claim belongs to that document, not to this one"
+    ),
+    "recollection": (
+        "the line recalls a value that no longer holds: it carries a record "
+        "marker AND the falsifier that makes the old value old, so it names "
+        "where the tag pointed THEN, not where it points now"
+    ),
+}
+
+
+def class_meaning(klass):
+    """The definition printed beside a class name.
+
+    A class reported without its definition is the defect this dict exists to
+    close, so an unlisted class says so rather than printing bare.
+    """
+    meaning = TAG_EXEMPTION_MEANING.get(klass)
+    if meaning is None:
+        return (
+            "no definition recorded for this class -- add one to "
+            "TAG_EXEMPTION_MEANING"
+        )
+    return meaning
+
+
 # How many lines a record marker and a falsifier may sit in to excuse a binding:
 # its own line, plus the same reach on each side.  A sentence that says "the tag
 # moved and this number is the old one" can put the marker above and the
@@ -340,8 +383,8 @@ def main():
     )
     for rel, lineno, name, sha, why in excluded:
         print(
-            "check_release_tags:   excluded %s:%d  `%s` -> `%s`  (%s)"
-            % (rel, lineno, name, sha, why)
+            "check_release_tags:   excluded %s:%d  `%s` -> `%s`  (%s: %s)"
+            % (rel, lineno, name, sha, why, class_meaning(why))
         )
     for rel, lineno, name in missing_tags:
         print(
@@ -388,7 +431,7 @@ def main():
                 "in this tree, and EXP_TAG_EXEMPTION_CLASSES still lists it -- a "
                 "class no run can exercise is a rule that stands guard in the "
                 "docstring only.  Delete the class, or find what it should have "
-                "caught." % klass
+                "caught.  What it measures: %s" % (klass, class_meaning(klass))
             )
             failed = True
     for klass in sorted(excused_by):
@@ -396,8 +439,8 @@ def main():
             print(
                 "check_release_tags: the %s exemption class exempted %d binding(s) "
                 "and EXP_TAG_EXEMPTION_CLASSES does not list it -- an exemption "
-                "nobody declared is one nobody decided on."
-                % (klass, excused_by[klass])
+                "nobody declared is one nobody decided on.  What it measures: %s"
+                % (klass, excused_by[klass], class_meaning(klass))
             )
             failed = True
     if len(checked) < EXP_TAG_BINDINGS:
