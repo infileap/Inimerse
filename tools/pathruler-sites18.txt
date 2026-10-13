@@ -1,0 +1,20 @@
+# the 18 sites the path ruler reports as 持分片 over the 64-site global-table
+# write corpus of src/vm/vm.c @ a22eb704 -- one <path>:<line> per line.
+src/runtime/runtime.c:1832
+src/runtime/runtime.c:1833
+src/vm/vm.c:1379
+src/vm/vm.c:1381
+src/vm/vm.c:1382
+src/vm/vm.c:1383
+src/vm/vm.c:1384
+src/vm/vm.c:1388
+src/vm/vm.c:2544
+src/vm/vm.c:2545
+src/vm/vm.c:2547
+src/vm/vm.c:3721
+src/vm/vm.c:3722
+src/vm/vm.c:3724
+src/vm/vm.c:3743
+src/vm/vm.c:4335
+src/vm/vm.c:4336
+src/vm/vm.c:4338
