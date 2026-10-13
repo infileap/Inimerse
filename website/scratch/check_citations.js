@@ -391,6 +391,96 @@ check('带身份标记、且在规范页清单里的文件，台账里至少有�
     ? `台账里没有一条出自：${noLedger.map((x) => x.file).join('、')}（那几条裁定在台账页上一条都没有，而守卫会全绿）`
     : `${marked.filter((x) => x.inSpec).length} 个文件都有条目`);
 
+/* ---------------- ⑭ 一条裁定的【射程】：概念筛 vs 写法清单 ----------------
+ * ★ ⑧ 问的是【文件】：带方括号那对记号的文件，在不在规范页清单里。
+ *   而它的绿只说明「那里没有方括号」，**不说明那里没有裁定** ——
+ *   实测：18 份没有任何守卫读的文档里，575 节里有 20 节在说某件事已经定了，
+ *   而其中 0 节用的是那对记号。
+ * ★ 所以 ⑭ 换一个形状：**先定义【一条裁定是什么】，再报出【它在多少节里出现】
+ *   与【我认了其中多少节】**。清单从「射程」降级成「我认得的写法」。
+ * ★★ 分层是**故意**的，理由写在这里：任何探测器都是某种词表，所以
+ *   「粗的那层」的职责是**多报**（概念的射程），「细的那层」的职责是**能叫出名字**。
+ *   而守卫的价值在【两个数的差】与【差里逐条是谁】—— 那才让这个词表可被证伪。
+ * ★ 家法（exact-otter 裁的）：**守卫不许改成「认词」** —— 裸词 `裁定` 命中 543 次，
+ *   其中大量是【讨论裁定】而不是【一条裁定】。所以粗筛也不是「出现这个词」：
+ *     · 正文认 `已裁` / `已决定`（**声称**），以及 `（…裁定` 这种**带归属的**说法；
+ *     · 单独一个 `裁定` 只有出现在**标题**里才算（标题是在给这一节定性）；
+ *     · ★ 而**请求**不算：标题里写着「需要人裁定」「待裁」「未定」的节是**在要一条裁定**，
+ *       不是**在声称有了一条** —— 实测它当场抓出 `docs/HANDOFF_INFIVERSE.md §4.3`
+ *       「**需要人裁定**：`count` 与 `size` 的处置」，而那一节正文逐字是「推荐（**未定**）」。
+ */
+current = '一条裁定的射程：概念筛 vs 写法清单';
+const CONCEPT_BODY_RE = /已裁|已决定|（[^）]{0,8}裁定/;
+const CONCEPT_HEAD_RE = /裁定/;
+/* ★ 只排除【在要一条裁定】的标题（「需要人裁定」「待裁」「要人裁」）。
+   ★★ `未定` **不排除** —— 实测 `docs/PLAN_V06.md §7` 的标题是「未定与冲突」，
+      而它的正文里逐字有一格 `| **已裁**，记在 §3.2 非目标 |`：
+      **一节在讲「哪些还没定」，不等于它没有在声称某件事已经定了。**
+      把 `未定` 放进排除词，会让那一节从概念里掉出去 —— 而它是差② 里最干净的一处。 */
+const CONCEPT_REQUEST_RE = /需要[^，。：；]{0,8}裁定|待裁|要人裁/;
+/* ★ 这张表就是原来那个「清单」降级之后的样子：**我认得的写法**，不是「射程」。 */
+const SPELLINGS = [
+  { name: '【已裁】', re: /【已裁】/ },
+  { name: '【已裁定】', re: /【已裁定】/ },
+  { name: '**已裁**', re: /\*\*已裁\*\*/ },
+  { name: '**已裁定**', re: /\*\*已裁定\*\*/ },
+  { name: '已裁定', re: /已裁定/ },
+  { name: '（人裁定）', re: /（人裁定）/ },
+  { name: '（用户裁定', re: /（用户裁定/ },
+  { name: '已决定', re: /已决定/ },
+];
+const SEC_RE = /^#{2,4}\s+(?:★+\s+)?(\d+(?:\.\d+)*)[.．：:]?\s*(.*)$/;
+const sectionsOfText = (text) => {
+  const out = [];
+  let cur = { id: '(文件头/无节)', heading: '(文件头/无节)', lines: [] };
+  text.split('\n').forEach((l) => {
+    const m = SEC_RE.exec(l);
+    if (m) { out.push(cur); cur = { id: m[1], heading: m[2].trim(), lines: [] }; }
+    else cur.lines.push(l);
+  });
+  out.push(cur);
+  return out.map((x) => ({ id: x.id, heading: x.heading, body: x.lines.join('\n') }));
+};
+const allSecs = [];
+for (const rel of docFiles) {
+  for (const x of sectionsOfText(docAtRef(MSR_SHA, rel).text)) allSecs.push({ file: rel, ...x });
+}
+const isConcept = (x) => !CONCEPT_REQUEST_RE.test(x.heading)
+  && (CONCEPT_BODY_RE.test(x.body) || CONCEPT_HEAD_RE.test(x.heading));
+const namesOf = (x) => SPELLINGS.filter((sp) => sp.re.test(x.body) || sp.re.test(x.heading)).map((sp) => sp.name);
+const concept = allSecs.filter(isConcept);
+const named = concept.filter((x) => namesOf(x).length);
+const unnamed = concept.filter((x) => !namesOf(x).length);
+const overreach = allSecs.filter((x) => namesOf(x).length && !isConcept(x));
+const outsideConcept = concept.filter((x) => !specFiles.has(x.file));
+
+check('⑭ 写法清单不能抓到概念筛抓不到的节（否则是清单在替概念做决定）',
+  overreach.length === 0,
+  overreach.length
+    ? `清单抓到而概念没抓：${overreach.slice(0, 5).map((x) => `${x.file} §${x.id}`).join('、')}`
+    : '清单 ⊆ 概念');
+/* ★ 验收①的实现：那 20 节（清单之外的文档里的裁定）**每次运行都逐条印出来，并标明叫不叫得出名字**。
+   这一条检查盯的是【那份打印本身】：印出来的条数必须等于抓到的条数 —— 打印被截断与「只有这么多」长得一样。 */
+const outsidePrinted = [];
+outsideConcept.forEach((x) => outsidePrinted.push(`   · ${x.file} §${x.id}  [${namesOf(x).join('/') || '★ 叫不出名字'}]  「${x.heading.slice(0, 52)}」`));
+check('⑭ 清单之外的文档里，概念筛抓到的节必须逐条印出来（打印被截断与「只有这么多」长得一样）',
+  outsidePrinted.length === outsideConcept.length,
+  `${outsidePrinted.length} / ${outsideConcept.length}`);
+const unnamedPrinted = [];
+unnamed.forEach((x) => unnamedPrinted.push(`   · ${x.file} §${x.id}  「${x.heading.slice(0, 52)}」`));
+
+info(`★ 一条裁定的射程：概念筛 **${concept.length}** 节（在 ${new Set(concept.map((x) => x.file)).size} 份文档里）／能叫出名字 **${named.length}** 节／差 **${unnamed.length}** 节`);
+info(`★ 其中落在规范页清单之外的：**${outsideConcept.length}** 节，分布在 **${new Set(outsideConcept.map((x) => x.file)).size}** 份文档里 ⇒ 「覆盖 ${specFiles.size} 份」是一个【射程声明】，不是一个【覆盖率】`);
+info(`★ 概念筛逐字：标题不含「需要…裁定/待裁/未定」，且（正文含 /已裁|已决定|（…裁定/ 或 标题含 /裁定/）`);
+const deadSpellings = SPELLINGS.filter((sp) => !allSecs.some((x) => sp.re.test(x.body) || sp.re.test(x.heading)));
+info(`★ 写法清单 ${SPELLINGS.length} 条：${SPELLINGS.map((x) => x.name).join(' ')}${deadSpellings.length ? ` —— ★ 其中**一次都没命中**的：${deadSpellings.map((x) => x.name).join(' ')}（我认得它，而它今天不存在：这是一个零，要归因）` : ''}`);
+info(`★ 清单之外的文档里，概念筛抓到的 ${outsideConcept.length} 节（逐条，含它叫不叫得出名字）：`);
+outsidePrinted.forEach((l) => info(l));
+if (unnamed.length) {
+  info(`★ 全库：概念筛抓到而写法清单叫不出名字的 ${unnamed.length} 节（逐条）：`);
+  unnamedPrinted.forEach((l) => info(l));
+}
+
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
