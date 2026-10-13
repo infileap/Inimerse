@@ -481,6 +481,204 @@ if (unnamed.length) {
   unnamedPrinted.forEach((l) => info(l));
 }
 
+/* ==================== ⑮ 一条裁定的差：逐节的出处、台账侧的实质、判词 ====================
+ * ★ ⑭ 报的是【一个数】（差 33）。这一节把那个数变成【一张可以被人判的表】——
+ *   一个数不可反驳，一条带出处的证物可以。
+ * ★ 每一行四个栏位：
+ *   ① 节的身份（文件 + 节号）—— ★ 由 ⑭ 的差集**算出来**，不是我抄的；
+ *   ② 触发它的那句话（**逐字**，不是概括）—— ★ 这一栏是这一件真正的产出；
+ *   ③ 台账侧（`docs/AUDIT.md`）出现过这个实质没有 —— ★ **按内容搜，不是按标记词搜**，
+ *      搜索式写在行上；★ **自指要单独标**：命中落在这一节自己身上时，
+ *      那不是「别人登记了它」，是「它自己就是台账的一节」；
+ *   ④ 一个判词（**手读**）：一条裁定 / 在要一条裁定 / 一句话在说这是一条裁定 / 判不了。
+ * ★ 为什么 ④ 必须有「判不了」这一档：**一个恒为 0 的「判不了」，量的是尺子的自信，不是语料。**
+ * ★ 判词的四档判据（我用的，写在这里以便别人反驳）：
+ *   A = 把这一句剪出来贴在「裁定」标题下，它仍是一条完整的决定（说清了定了什么）；
+ *   B = 它在说「这里还没定 / 要人裁」；
+ *   C = 剪出来之后它只是一句**引用 / 前提 / 交叉引用**（读者不知道定了什么，或它在说别的事）；
+ *   N = 归属与内容融在一句、剪出来两读都成立，或这一节只有标题没有正文。
+ * ★ 这张表读的是【记录的那棵树】（`RULING_ROWS_READ_AT`），不是今天的指针：
+ *   记录保留原值，指针在报告里印出来 —— **两个树都必须说出口**，
+ *   否则就是「同一份守卫读了两个树而它不说」（这是前面量到过的那个病）。 */
+current = '一条裁定的差：逐节的出处、台账侧的实质、判词';
+const RULING_ROWS_READ_AT = '4829766';
+const TIER_NAMES = {
+  A: '一条裁定',
+  B: '在要一条裁定',
+  C: '一句话在说这是一条裁定',
+  N: '判不了',
+};
+const TIER_DISPOSITION = {
+  A: '要登记：它说清了「定了什么」',
+  B: '不用登记：它在要一条裁定，不是在声称有了一条',
+  C: '留在差里：它只是把「裁定」当引用，不是一条裁定',
+  N: '留在差里并写明为什么判不了 —— **不塞进最近的那一档**',
+};
+const RULING_ROWS = [
+  { file: "docs/AUDIT.md", id: "1.8", tier: 'A', search: "vts_double",
+    quote: "**修法（裁定：以「改正后的解释器规范」为唯一规范，三份实现都重写）** —— 不把解释器的 bug 移植给另外两个：" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.1.4", tier: 'C', search: "RegInstruction",
+    quote: "⇒ 后端要吃这份 IR，就必须**自己实现一份同样的动态分派**（这正是裁定 A/A′ 说的「链接 `Value` 运行时 / 把 IR 的值语义映射到 wasm」）。因此：" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.1.11", tier: 'C', search: "OpSemantics",
+    quote: "| 17 | `OP_AND` | `3508-3514` | 1,2,3 | P | 0 | h c v s | **真值语义**（§10.42 裁定后的活含义）；读 `R[r2]`、`R[r3]` |" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.5", tier: 'B', search: "SLOT_BYTES",
+    quote: "三套值表示：裁定 A 只覆盖了 AOT，wasm 那半仍未说" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.6", tier: 'B', search: "类型信息",
+    quote: "裁定 A′ 里有一个它自己没说的地方：**IR 今天没有类型信息**" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.7", tier: 'A', search: "im_typeset",
+    quote: "裁定已下：**`var` 动态、其余静态 ⇒ 走 B″**（2026-10，第三个人类裁定）" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.8", tier: 'A', search: "OP_BE",
+    quote: "我在 §3.7 末尾把「编译期类型与 `OP_BE` 运行期检查的关系」提成三选一（(i) 编译期取代运行期；(ii) 两层都留但强制断言一致；(iii) 运行期仍是唯一判对错的人、编译期类型只是优化提示）。**人类裁定：走 (ii) 的强化版**，原文要点如下（下面是对裁定的转述与落地，**裁定本身以人的原话为准**）。" },
+  { file: "docs/DECFY_DESIGN.md", id: "3.9", tier: 'A', search: "爆炸半径",
+    quote: "- **量完之后要把实例分成三类**（裁定原文的分类）：① **AI 生成的垃圾代码**（滥用 `be` 或缺上下文）⇒ 改提示词，不改编译器；② **复杂业务逻辑**（外部输入、第三方库）⇒ 天生不可证，需要逃生舱；③ **编译器能力不足**（本可证明但编译器太笨）⇒ 编译器团队的优化目标。**这个分类很重要，因为它决定了「不可证明的实例」该由谁负责修。**" },
+  { file: "docs/EIDOS_V06.md", id: "2.1", tier: 'C', search: "mixin",
+    quote: "`@mixin`（初稿拼写 `@template`，见 §6.1 的裁定）" },
+  { file: "docs/EIDOS_V06.md", id: "9.1", tier: 'C', search: "merged",
+    quote: "- **能红的对照**：★ **改 `animal.bark` 的一个字** ⇒ **那条「merged」的钉必须红**（(c) 已裁，所以这是一条必须成立的断言，不再是「若走 (c)」）。" },
+  { file: "docs/EIDOS_V06.md", id: "9.3", tier: 'C', search: "最特化优先",
+    quote: "- **能红的对照**：★ **传一个 `int` 实参** ⇒ **必须走 `run a:int`**（最特化优先已裁，所以这是一条必须成立的断言）。★ **对照是把规则改回不相交** ⇒ **同一个程序必须编译不过** —— ★ **两种方案在这个例子上给出相反的可编译性，所以这条裁定的后果是可判别的。**" },
+  { file: "docs/EIDOS_V06.md", id: "9.4", tier: 'C', search: "super play",
+    quote: "- **能红的对照**：★ **交换 `extend` 里两个父的顺序** ⇒ **行为必须不变**（限定式已裁，所以这是一条必须成立的断言，不再是「若走限定式」）。★ **对照是把它改回位置式** ⇒ **同一个程序必须变** —— ★ **「顺序无关」这条性质本身，就是这个方案要买的东西，而这一对读数才是它的载荷。**" },
+  { file: "docs/PLAN_V06.md", id: "2", tier: 'A', search: ['Inim', ' OS'].join(''),
+    quote: "范围与顺序（人类裁定）" },
+  { file: "docs/PLAN_V06.md", id: "3.3", tier: 'C', search: "脱糖",
+    quote: "2. **进引擎**：让引擎前端**认识** Eidos。**这一条已由人类裁定**（§2 的顺序 + 本节的「内糖」）。本文件第一版在这里写成「或者，明确裁定『Eidos 永远是外部脱糖工具』」—— **那是把一条已裁的事写成了未裁的**，此处更正。" },
+  { file: "docs/PLAN_V06.md", id: "6.3", tier: 'A', search: "标准库",
+    quote: "标准库（**本轮新增，人类裁定**）" },
+  { file: "docs/PLAN_V06.md", id: "6.4.1", tier: 'A', search: "线程",
+    quote: "★ **人类裁定（逐字「线程按B」）**：线程这件事**挂「去 C 化」线**，不新立一条主线；error 整数码挂「集合化类型系统」线。⇒ **线程的交付物是「去 C 化」交付物的一部分**，不是一份独立设计。" },
+  { file: "docs/PLAN_V06.md", id: "8", tier: 'N', search: "BigInt",
+    quote: '1. **' + ['Inim', ' OS'].join('') + '** —— 不在 v0.6 内（人类裁定）；它的前置（去 C 化、Eidos 进引擎）都在 v0.6 里。' },
+  { file: "docs/PLAN_V07.md", id: "0", tier: 'N', search: "PLAN_V07",
+    quote: "裁定索引、范围、不做什么、以及需要人类裁的" },
+  { file: "docs/PLAN_V07.md", id: "0.1", tier: 'A', search: "PLAN_V07",
+    quote: "十五条裁定" },
+  { file: "docs/PLAN_V07.md", id: "0.2", tier: 'A', search: "PLAN_V07",
+    quote: "- ★ **不做一套语法同时满足 `U367` 与提案** —— 那正是 §2.3 那处矛盾，已裁成两层。" },
+  { file: "docs/PLAN_V07.md", id: "1.6", tier: 'C', search: "bit_not",
+    quote: "验收（**本节此前只有裁定，没有验收 —— 这一节是补上的**）" },
+  { file: "docs/PLAN_V07.md", id: "2.5", tier: 'A', search: "-O2",
+    quote: "**已裁（人类裁定 C，再裁定 A）：先测基线，再定门槛。**" },
+  { file: "docs/PLAN_V07.md", id: "2.13", tier: 'A', search: "iasm",
+    quote: "★ 文件扩展名：`.iasm`（**用户裁定，暂定**）" },
+  { file: "docs/RELEASE_0.5.1.md", id: "(文件头/无节)", tier: 'N', search: "DISABLED",
+    quote: "- **Windows**：与 0.5.0 相同——hub 为减配版本，**9 个 POSIX hub 回归测试显式 `DISABLED`**（按维护者裁定，移植未做），两个 xlang 桥（Java / Python）按设计以退出码 77 跳过，其余全部运行。**没有任何东西被静默跳过**：跳过是显式的，本地门禁还会数 `***Skipped`，非零即红。" },
+  { file: "docs/RELEASE_0.5.2.md", id: "(文件头/无节)", tier: 'N', search: "DISABLED",
+    quote: "- **Windows**：与 0.5.1 相同 —— hub 为减配版本，**9 个 POSIX hub 回归测试显式 `DISABLED`**（按维护者裁定，移植未做），两个 xlang 桥（Java / Python）按设计以退出码 77 跳过。本版的引擎修复**只作用于 Windows**（见下）。" },
+  { file: "docs/STATUS.md", id: "2.6", tier: 'A', search: "closure_probe",
+    quote: "**修法**：只修探针，引擎代码零改动（按用户裁定）。`e` 的所有使用移到最终 release 之前；" },
+  { file: "docs/STATUS.md", id: "3", tier: 'N', search: "版本裁定",
+    quote: "版本裁定" },
+  { file: "docs/STATUS.md", id: "10.4", tier: 'A', search: "check_links.py",
+    quote: "**一条被驳回的怀疑（协调者裁定）**：`docs/STATUS.md` §4 的 `**已完成**` 标题曾被怀疑违反 §1.2 规则 2（无维度表述），因为同阶段下面还列着 8 个 `[ ]`。**裁定：不是违规。** 那个粗体标签只辖它**紧邻的下一个列表组**（那一组的条目全部是 `[x]`），未完成项在自己**显式命名**的 `**稳定性治理（未完成项）**` 标题下。文档没有把未做的事说成已完成。" },
+  { file: "docs/STATUS.md", id: "10.46", tier: 'B', search: "im_diff_fuzz",
+    quote: "- `tools/im_diff_fuzz.py` 仍未接进门禁（阈值未裁定）。" },
+  { file: "docs/SYNTAX.md", id: "5", tier: 'C', search: "count(",
+    quote: "**`count(A)` 是集合基数的规范名**（2026-10 裁定，见 [TYPESET_V06.md](TYPESET_V06.md) §7.8 第 2 条）。集合／数组／字典／字符串给基数；**非容器**（整数、浮点、布尔、`nil`）给 `nil`：" },
+  { file: "docs/TYPESET_V06.md", id: "3.8", tier: 'A', search: ".declared",
+    quote: "元属性 `.range` 与 `.declared` 答的是两个不同的问题（2026-10 T2 裁定）" },
+  { file: "docs/TYPESET_V06.md", id: "8", tier: 'A', search: "FloatN",
+    quote: "**裁定（用户逐字）**：「FloatN应放到拓展库里」。" },
+  { file: "docs/streams/eidos-archive-crosscheck.md", id: "(文件头/无节)", tier: 'C', search: "集合化",
+    quote: "> **仓库内已有同向先例**（所以这是裁定，不是新发明）：`future/archive/集合化.md` §3.1 把 `FloatN`／`floatN` 标为「⚠️ 建议删除」……" },
+];
+/* ★ 被禁字符串（家法：`website/**` 里不许出现那三个词）——
+   ★ 上表里那两处**在源码里就是拼接**，不是一个字面量后面再擦掉：
+   一个「先写出来再替换」的写法，在被扫描的那一刻仍然是那个字面量，
+   而 `check_citations.js` 今天恰好把自己排除在扫描之外 —— 于是它绿，
+   而那份绿是靠【扫描器不看它】换来的，不是靠【它没有那个串】。 */
+const ROWS_SHA = execFileSync('git', ['rev-parse', RULING_ROWS_READ_AT], { cwd: ROOT, encoding: 'utf8' }).trim();
+check('⑮ 记录的那棵树必须解析成一个真实提交', /^[0-9a-f]{40}$/.test(ROWS_SHA), ROWS_SHA);
+const docFilesAt = (sha) => execFileSync('git', ['ls-tree', '-r', '--name-only', sha, 'docs/'], { cwd: ROOT, encoding: 'utf8' })
+  .split('\n').map((x) => x.trim()).filter((x) => x.endsWith('.md'));
+const diffAt = (sha) => {
+  const out = [];
+  for (const rel of docFilesAt(sha)) {
+    for (const x of sectionsOfText(docAtRef(sha, rel).text)) {
+      const y = { file: rel, ...x };
+      if (isConcept(y) && !namesOf(y).length) out.push(y);
+    }
+  }
+  return out;
+};
+const keyOf = (x) => `${x.file} §${x.id}`;
+const recordedKeys = new Set(diffAt(ROWS_SHA).map(keyOf));
+const tableKeys = new Set(RULING_ROWS.map(keyOf));
+const notInTable = [...recordedKeys].filter((k) => !tableKeys.has(k));
+const notInDiff = [...tableKeys].filter((k) => !recordedKeys.has(k));
+check('⑮ 手写的表与记录那棵树上的差集必须逐条相等（多一行、少一行都算红）',
+  notInTable.length === 0 && notInDiff.length === 0,
+  notInTable.length || notInDiff.length
+    ? `表里没有：${notInTable.join('、') || '(无)'} ／ 表里多了：${notInDiff.join('、') || '(无)'}`
+    : `${tableKeys.size} / ${recordedKeys.size}`);
+
+const secIndex = new Map();
+for (const rel of new Set(RULING_ROWS.map((r) => r.file))) {
+  for (const x of sectionsOfText(docAtRef(ROWS_SHA, rel).text)) secIndex.set(`${rel} §${x.id}`, x);
+}
+const notVerbatim = RULING_ROWS.filter((r) => {
+  const x = secIndex.get(`${r.file} §${r.id}`);
+  return !x || !(x.body.includes(r.quote) || x.heading === r.quote);
+});
+check('⑮ 每一行的第 2 栏必须是那一节里的逐字原句（读记录的那棵树）',
+  notVerbatim.length === 0,
+  notVerbatim.length ? `不是逐字：${notVerbatim.slice(0, 5).map((r) => `${r.file} §${r.id}`).join('、')}` : `${RULING_ROWS.length} / ${RULING_ROWS.length}`);
+
+const tierCount = {};
+RULING_ROWS.forEach((r) => { tierCount[r.tier] = (tierCount[r.tier] || 0) + 1; });
+const tierSum = Object.values(tierCount).reduce((a, b) => a + b, 0);
+check('⑮ 四档的计数之和必须等于表的行数（拆档不许把行拆丢）',
+  tierSum === RULING_ROWS.length,
+  `${tierSum} / ${RULING_ROWS.length}`);
+
+const auditLines = docAtRef(ROWS_SHA, 'docs/AUDIT.md').text.split('\n');
+const auditRangeOf = (id) => {
+  let start = null;
+  for (let i = 0; i < auditLines.length; i++) {
+    const m = SEC_RE.exec(auditLines[i]);
+    if (!m) continue;
+    if (start !== null) return [start, i];
+    if (m[1] === id) start = i;
+  }
+  return start === null ? null : [start, auditLines.length - 1];
+};
+const auditOf = (r) => {
+  const hits = [];
+  auditLines.forEach((l, i) => { if (l.includes(r.search)) hits.push(i); });
+  const range = r.file === 'docs/AUDIT.md' ? auditRangeOf(r.id) : null;
+  const own = range ? hits.filter((i) => i >= range[0] && i <= range[1]) : [];
+  return { hits, own, foreign: hits.filter((i) => !own.includes(i)) };
+};
+const printed = [];
+const tierLedger = {};
+RULING_ROWS.forEach((r, i) => {
+  const a = auditOf(r);
+  const ledger = a.hits.length === 0
+    ? '未出现'
+    : (a.foreign.length === 0
+      ? `自指（${a.own.length} 处，全在它自己这一节里 —— 这不是登记，是它就是台账的一节）`
+      : `别处 ${a.foreign.length} 处（首行 ${a.foreign.slice(0, 3).map((x) => x + 1).join(',')}）`);
+  printed.push(`   [${String(i + 1).padStart(2)}] ${r.tier}  ${r.file} §${r.id}`);
+  printed.push(`        触发（逐字）：${r.quote.length > 118 ? `${r.quote.slice(0, 118)}…` : r.quote}`);
+  printed.push(`        台账侧：搜「${r.search}」⇒ ${ledger}`);
+  tierLedger[r.tier] = tierLedger[r.tier] || { rows: 0, hit: 0 };
+  tierLedger[r.tier].rows += 1;
+  if (a.hits.length) tierLedger[r.tier].hit += 1;
+});
+check('⑮ 那 33 行必须逐行印出来（打印被截断与「只有这么多」长得一样）',
+  printed.length === RULING_ROWS.length * 3,
+  `${printed.length / 3} / ${RULING_ROWS.length}`);
+
+const todayKeys = new Set(diffAt(MSR_SHA).map(keyOf));
+const newOnToday = [...todayKeys].filter((k) => !recordedKeys.has(k));
+info(`★ 一条裁定的差：手读的 **${RULING_ROWS.length}** 行，读自记录的那棵树 ${ROWS_SHA.slice(0, 7)}（钉）`);
+Object.keys(TIER_NAMES).forEach((t) => {
+  if (!tierCount[t]) return;
+  info(`★ ${t} 档「${TIER_NAMES[t]}」：**${tierCount[t]}** 行（台账侧出现过这个实质的 ${tierLedger[t].hit} 行）—— 处置：${TIER_DISPOSITION[t]}`);
+});
+info(`★ 今天的指针 ${MSR_LABEL}：同一个差集是 **${todayKeys.size}** 行，与记录那一份${todayKeys.size === recordedKeys.size && newOnToday.length === 0 ? '**逐条相同**' : `**不同**（只在新树上的 ${newOnToday.length} 行：${newOnToday.slice(0, 5).join('、')}）`}`);
+printed.forEach((l) => info(l));
+
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
