@@ -1553,3 +1553,16 @@ if(INIMERSE_PYTHON)
 add_test(NAME neg_bool_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "neg-ok -true=-1 -false=0 int-add=9007199254740994 neg-add=9007199254740992 bin-add=9007199254740992 -2.5=-2.5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/neg_bool_v06.im)
 set_tests_properties(neg_bool_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "vm;language;regression" FAIL_REGULAR_EXPRESSION "neg-add=9007199254740991|bin-add=9007199254740991|-false=-0")
 endif()
+
+# The second registration to sit here, for the reason the block above records.
+# Measured for this one before choosing the placement: a single `add_test` line
+# put beside the other probe registrations (after line 224) took the
+# `check_line_refs` unanchored reading from +7 to +69 against a ceiling of +12
+# -- 62 citations of CMakeLists.txt past that point lost the text that held
+# them, and the line-refs stage went red.  Appending here moves no cited line.
+# `websocket_probe` is POSIX-only, so this stays inside `if(NOT WIN32)`, and the
+# label group is the one http_probe and hub_probe carry.
+if(NOT WIN32)
+add_test(NAME websocket_probe COMMAND websocket_probe)
+set_tests_properties(websocket_probe PROPERTIES TIMEOUT 30 LABELS "platform;smoke;http" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endif()
