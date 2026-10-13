@@ -698,6 +698,152 @@ A_ROWS.forEach((r) => {
 });
 printed.forEach((l) => info(l));
 
+/* ==================== ⑯ 一整族串，不是一个串 ====================
+ * ★ ⑮ 的第 3 栏是【我挑的一个串】，而我在报告里写了「挑串这件事本身没有判据」。
+ *   这一节把那个坦白做成制品：**不挑串，报一整族。**
+ * ★ 族的构造规则（**机械可得、写在下面、可以反驳**）：
+ *   输入 = 那一节的【标题】与【触发它的那句逐字原话】，两者都从记录树里取。
+ *   先做一次规范化：去掉 markdown 强调符 `**`、`__` 与反引号。
+ *     F1 = 标题（trim）—— ★ 标题是占位符 `(文件头/无节)` 时不加入：
+ *          那个占位符本身就是一个泛成员，它在台账里出现 7 次，全部与那一节无关。
+ *     F2 = 原话里所有反引号包起来的片段（去反引号）
+ *     F3 = 原话里所有长得像文件名的记号 [A-Za-z0-9_./-]+\.(md|py|js|ts|c|h|im|rs|cpp|sh|yml|json)
+ *     F4 = 原话里所有长度 ≥4 的连续汉字串（在标点/空白/ASCII 处切开）
+ *   合并 F1..F4，去重，丢掉长度 <2 的、纯数字的、以及一张 13 词的停用表。
+ * ★ 每个串报两个数：
+ *     命中数     = 台账里含这个串的行数；
+ *     实质命中数 = 含这个串**且**含这一节族里另一个成员的行数
+ *                  —— ★ 这是一个**代理**，不是一个定义：它答的是「这一行不只是带着这个词」。
+ * ★ 实质命中必须**打印出是哪个成员共现的** —— 否则读者看不见它为什么非零。
+ * ★ 自指单独扣出来：命中落在这一节自己的行范围内时（只有 `docs/AUDIT.md §1.8` 可能），
+ *   那不是登记，是**这一节自己匹配了自己**。 */
+current = '一整族串：每一节报两个数，而不是挑一个串';
+const FAMILY_RULE = [
+  'F1 = 标题（trim；占位符 (文件头/无节) 不加入）',
+  'F2 = 原话里所有反引号包起来的片段（去反引号）',
+  'F3 = 原话里所有长得像文件名的记号',
+  'F4 = 原话里所有长度 ≥4 的连续汉字串（在标点/空白/ASCII 处切开）',
+];
+const FAMILY_STOP = new Set(['的', '是', '在', '与', '和', '不', '了', '这', '那', '有', '也', '它', '而', '就']);
+const famNorm = (s) => s.replace(/\*\*/g, '').replace(/__/g, '').replace(/`/g, '');
+const familyOf = (heading, quote) => {
+  const out = new Set();
+  const add = (x) => {
+    const t = String(x).trim();
+    if (t.length >= 2 && !/^\d+$/.test(t) && !FAMILY_STOP.has(t)) out.add(t);
+  };
+  if (heading && heading !== '(文件头/无节)') add(heading);
+  for (const m of quote.matchAll(/`([^`]+)`/g)) add(m[1]);
+  const q = famNorm(quote);
+  for (const m of q.matchAll(/[A-Za-z0-9_./-]+\.(?:md|py|js|ts|c|h|im|rs|cpp|sh|yml|json)/g)) add(m[0]);
+  for (const m of q.matchAll(/[\u4e00-\u9fff]{4,}/g)) add(m[0]);
+  return [...out];
+};
+const famRows = RULING_ROWS.map((r) => {
+  const x = secIndex.get(`${r.file} §${r.id}`);
+  return { ...r, fam: familyOf(x ? x.heading : '', r.quote) };
+});
+const emptyFam = famRows.filter((r) => !r.fam.length);
+check('⑯ 每一节都必须算出一族非空的串（族的规则对每一节都要有输出）',
+  emptyFam.length === 0,
+  emptyFam.length ? `族为空：${emptyFam.map((r) => `${r.file} §${r.id}`).join('、')}` : `${famRows.length} / ${famRows.length}`);
+
+const famPer = famRows.map((r) => {
+  const range = r.file === 'docs/AUDIT.md' ? auditRangeOf(r.id) : null;
+  const per = r.fam.map((str) => {
+    const hits = [];
+    const subs = [];
+    auditLines.forEach((l, i) => {
+      if (!l.includes(str)) return;
+      hits.push(i);
+      const co = r.fam.filter((x) => x !== str && l.includes(x));
+      if (co.length) subs.push({ i, co });
+    });
+    const selfSubs = range ? subs.filter((s) => s.i >= range[0] && s.i <= range[1]) : [];
+    const foreignSubs = subs.filter((s) => !selfSubs.includes(s));
+    return { str, hits: hits.length, selfSubs, foreignSubs };
+  });
+  const hitSum = per.reduce((a, b) => a + b.hits, 0);
+  const foreign = per.reduce((a, b) => a + b.foreignSubs.length, 0);
+  const self = per.reduce((a, b) => a + b.selfSubs.length, 0);
+  return { ...r, per, hitSum, foreign, self };
+});
+const famHitTotal = famPer.reduce((a, b) => a + b.hitSum, 0);
+const famForeignTotal = famPer.reduce((a, b) => a + b.foreign, 0);
+const famSelfTotal = famPer.reduce((a, b) => a + b.self, 0);
+
+const famPrinted = [];
+famPer.forEach((r) => {
+  famPrinted.push(`   ${r.tier}  ${r.file} §${r.id}   族 ${r.fam.length}   命中 ${r.hitSum}   实质 ${r.foreign}${r.self ? `（自指另计 ${r.self}）` : ''}`);
+  r.per.forEach((p) => {
+    p.foreignSubs.forEach((s) => famPrinted.push(`        :${s.i + 1}  串「${p.str}」＋共现 ${s.co.slice(0, 3).map((x) => `「${x}」`).join('')}`));
+    p.selfSubs.forEach((s) => famPrinted.push(`        :${s.i + 1}  ★ 自指  串「${p.str}」＋共现 ${s.co.slice(0, 3).map((x) => `「${x}」`).join('')}`));
+  });
+});
+check('⑯ 每一节的族与它打出来的行数必须对上（打印被截断与「只有这么多」长得一样）',
+  famPrinted.filter((l) => !l.startsWith('        ')).length === famPer.length,
+  `${famPrinted.filter((l) => !l.startsWith('        ')).length} / ${famPer.length}`);
+check('⑯ 实质命中的行数必须等于打印出来的实质命中行数（一个数不许比它的证据大）',
+  famPrinted.filter((l) => l.startsWith('        ')).length === famForeignTotal + famSelfTotal,
+  `${famPrinted.filter((l) => l.startsWith('        ')).length} / ${famForeignTotal + famSelfTotal}`);
+
+const famFiring = famPer.filter((r) => r.foreign > 0 || r.self > 0);
+info(`★ 族规则（逐字，机械可得）：${FAMILY_RULE.join(' ／ ')}`);
+info(`★ 33 节 × 整族串：族大小合计 ${famPer.reduce((a, b) => a + b.fam.length, 0)}，命中合计 **${famHitTotal}**，实质命中合计 **${famForeignTotal}**（自指另计 ${famSelfTotal}）`);
+info(`★ 实质命中非零的节：${famFiring.length ? famFiring.map((r) => `${r.file} §${r.id}(${r.foreign}${r.self ? `+自指${r.self}` : ''})`).join('、') : '(无 —— 那么每一节的结论都是「这件事没被登记」)'}`);
+famPrinted.forEach((l) => info(l));
+/* ★★ ⑯ 的收尾两件：把实质命中**逐行判一遍**，以及把 `-O2` 那条负向对照做成可复跑的一对数。
+ * ★ 为什么要有第一件：族规则会**因为三种不同的理由**给出非零 ——
+ *   ① 自指（这一节就在被搜的那份文件里）；② 泛成员（`[ ]`、`docs/STATUS.md` 这种谁都能共现的串）；
+ *   ③ 同题不同事。**三个非零长得一样，而处置完全不同。** */
+const SUB_VERDICTS = [
+  { line: 1817, verdict: '泛成员假阳性', why: '`docs/STATUS.md`＋`[ ]` 在讲阶段一的两条待办，与 §10.4 那条裁定无关' },
+  { line: 4399, verdict: '被当作实例引用', why: '台账 C5 把 §3.3 当作「把已裁的事写成未裁」这条病的**实例**引用，不是登记 §3.3 那条裁定' },
+  { line: 480, verdict: '同题不同事', why: '在讲 `FloatN`/`floatN` 的格点语义与基数，不是那条「已有同向先例」' },
+  { line: 490, verdict: '同题不同事', why: '同上，`floatN` 含整数、`FloatN` 不含 —— 是同一段的下一行' },
+  { line: 10808, verdict: '真登记，但登记的是【另一件事】', why: '台账 §1.97 H 逐字记的是「（协调者裁定）」这条**归属发现**（★ 也就是上一件我报给协调者的那条），不是 §10.4 那条裁定本身' },
+];
+const foreignLines = [];
+famPer.forEach((r) => {
+  r.per.forEach((p) => p.foreignSubs.forEach((s) => { if (!foreignLines.includes(s.i + 1)) foreignLines.push(s.i + 1); }));
+});
+foreignLines.sort((a, b) => a - b);
+const verdictAt = (n) => SUB_VERDICTS.find((v) => v.line === n);
+const noVerdict = foreignLines.filter((n) => !verdictAt(n));
+const orphan = SUB_VERDICTS.filter((v) => !foreignLines.includes(v.line));
+check('⑯ 每一条非自指的实质命中都必须带一个逐行的判词（一个非零不许没有处置）',
+  noVerdict.length === 0,
+  noVerdict.length ? `没有判词：${noVerdict.join('、')}` : `${foreignLines.length} / ${foreignLines.length}`);
+check('⑯ 判词表里不许有孤儿（判了一条不存在的命中，与漏判一样坏）',
+  orphan.length === 0,
+  orphan.length ? `孤儿判词：${orphan.map((v) => v.line).join('、')}` : `${SUB_VERDICTS.length} / ${SUB_VERDICTS.length}`);
+info(`★ 非自指的实质命中 ${foreignLines.length} 行（去重后按行算），逐行判词：`);
+foreignLines.forEach((n) => {
+  const v = verdictAt(n);
+  // ★ 这条三元不是装饰：红对照 D 证明，直接解引用 `v` 会让「缺一条判词」变成一次**崩溃**，
+  //   而崩溃的 rc=1 与一条 FAIL 在只看 grep 的眼里长得一样 —— 检查根本没跑到。
+  info(v ? `   :${n}  ⇒ **${v.verdict}** —— ${v.why}` : `   :${n}  ⇒ **没有判词**（一条非零没有处置）`);
+});
+info('★ ⇒ 33 节里，**裁定被登记在台账里的节是 0 节**。唯一一处真正的登记是 :10808，而它登记的是**关于台账自身的那条发现**，不是差里那 33 节中的任何一条裁定。');
+
+/* ★★ 负向对照（协调者点名的那一条）：`docs/PLAN_V07.md §2.5`。
+ *   旧的挑串是 `-O2`；族里的实体词是 `先测基线` / `再定门槛`。两个都报两个数。 */
+const R25 = famPer.find((r) => r.file === 'docs/PLAN_V07.md' && r.id === '2.5');
+const countLines = (s) => auditLines.filter((l) => l.includes(s)).length;
+const ctrl = [{ str: '-O2', note: '旧的挑串（我挑的）' }]
+  .concat(R25.fam.map((s) => ({ str: s, note: '族成员' })))
+  .map((x) => ({ ...x, hits: countLines(x.str) }));
+check('⑯ 负向对照必须把两个数都印出来（一个数看不见 12 与 0 的差别）',
+  ctrl.every((x) => Number.isInteger(x.hits)),
+  ctrl.map((x) => `${x.str}:${x.hits}`).join(' '));
+info('★ 负向对照 docs/PLAN_V07.md §2.5（命中数 / 实质命中数）：');
+ctrl.forEach((x) => {
+  const p = R25.per.find((q) => q.str === x.str);
+  const sub = p ? p.foreignSubs.length + p.selfSubs.length : 0;
+  info(`   「${x.str}」（${x.note}）⇒ 命中 ${x.hits} ／ 实质 ${sub}`);
+});
+info('★ ⇒ **两个数一起掉**：旧的挑串 -O2 是 12/0（有射程、没有眼光），族里的实体词是 0/0（有眼光、没有射程）。');
+info(`★ ⇒ 这条对照**不可能在 §2.5 上通过**，因为「新串的实质那一栏必须非零」预设了这条裁定已经被登记 —— 而它没有。★ **一条对照不能预设它的结论。**`);
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
