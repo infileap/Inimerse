@@ -28,7 +28,7 @@
 
 ## 门禁新增
 
-2. **第十三个阶段 `orphan-targets`。** `tools/check_orphan_targets.py`（新，226 行）：**每一个 `add_executable` 出来的目标都必须被至少一条 CTest 跑到**。38 个目标里 **37 个被跑到、1 个有写明理由地豁免**（`websocket_probe` —— WebSocket 帧层未实现，探针没有可断言的东西，见 `docs/API.md` §「预留」两行）。它与 0.5.1 的 `orphan-fixtures` 是同族但方向相反：那个问「有没有输入没人跑」，这个问「有没有产物没人跑」。
+2. **第十三个阶段 `orphan-targets`。** `tools/check_orphan_targets.py`（新，226 行）：**每一个 `add_executable` 出来的目标都必须被至少一条 CTest 跑到**。38 个目标里 **37 个被跑到、1 个有写明理由地豁免**（`websocket_probe` —— WebSocket 帧层未实现，探针没有可断言的东西，见 `docs/API.md` §「预留」两行）。★ **本行是【记录】**：那个豁免理由的两半今天都不成立（帧层有实现；实情是「查了、永不返回」），而那个挂起已修、登记已追加 ⇒ 今天是 157 个注册、38 个全被跑到、0 个豁免。它与 0.5.1 的 `orphan-fixtures` 是同族但方向相反：那个问「有没有输入没人跑」，这个问「有没有产物没人跑」。
 
    造它的过程里有一条教训值得留在这里：**按测试名匹配目标名是错的尺子** —— `literal_resolve_probe` / `resolve_timeout_probe` 的测试名是 `literal_resolve_runtime` / `resolve_timeout_runtime`，第一次用错尺子误报了三个。现在它读的是 `$<TARGET_FILE:…>` 与 `add_test` 的真实引用关系。
 

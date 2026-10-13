@@ -3409,7 +3409,7 @@ check_orphan_targets: 38 add_executable( ) target(s) checked against 148 add_tes
 
 **`websocket_probe`。** 它被建（`CMakeLists.txt:222`）、被链接（`:223`）、被 include（`:224`），源列表里有 `src/platform/websocket_probe.c`，而 `tools/` 与 `.github/` 里没有任何东西引用它。
 
-**它不是新发现，也不需要修**：`docs/API.md:481` 已经记着「`CMakeLists.txt` 里没有该 CTest」，`docs/API.md:622` 的通道表把 WebSocket 行标为「⬜ **预留** … 协议帧未实现；**无 `websocket_probe` CTest**」。**登记为「已知未注册」，保留。** 判据不是「它有没有用」，而是「**它是不是唯一剩下的那个**」—— 38 个里 37 个被至少一个 CTest 跑。
+**它不是新发现，也不需要修**：`docs/API.md:481` 已经记着「`CMakeLists.txt` 里没有该 CTest」，`docs/API.md:622` 的通道表把 WebSocket 行标为「⬜ **预留** … 协议帧未实现；**无 `websocket_probe` CTest**」。**登记为「已知未注册」，保留。** 判据不是「它有没有用」，而是「**它是不是唯一剩下的那个**」—— 38 个里 37 个被至少一个 CTest 跑。★ **本行是【记录】**：写下这一行时它未注册；今天是挂起已修、登记已追加，读数是 157 个注册、38 个全被跑到、0 个豁免。
 
 ### C. 为什么这个集合从来没有被比过
 
@@ -3427,13 +3427,13 @@ check_orphan_targets: 38 add_executable( ) target(s) checked against 148 add_tes
 
 ### E. 一条什么都不豁免的豁免，是一句没有任何运行能证伪的话
 
-检查器里有一张 `ALLOWED` 表，唯一一项是 `websocket_probe` 及其理由。两次反向对照：
+检查器里有一张 `ALLOWED` 表，**当时**唯一一项是 `websocket_probe` 及其理由（★ **今天是**：那个豁免已删、表空着，上面写着为什么空着是读数而不是遗漏）。两次反向对照：
 
 ```
 $ # A：把 ALLOWED 的键改名，使查找落空
 check_orphan_targets: 2 problem(s) over 38 add_executable( ) target(s) checked (37 run by at least one CTest, 1 run by none):
-  websocket_probe: built, but no add_test( ) runs it (it is named 3 other time(s) in CMakeLists.txt). …
-  websocket_probe_renamed: listed in ALLOWED, but it is not an orphan (there is no such add_executable( ) target), so the allowance excuses nothing. …
+  websocket_probe: built, but no add_test( ) runs it (it is named 3 other time(s) in CMakeLists.txt). …（★ **本行是【记录】，而它今天是【再也产不出来】的**：登记之后这个目标不再是孤儿，前半句已不可能成立；后半段那个「还被提到 3 次」也随登记而变。）
+  websocket_probe_renamed: listed in ALLOWED, but it is not an orphan (there is no such add_executable( ) target), so the allowance excuses nothing. …（★ **本行是【记录】**：那次对照的宾语是「一个不存在的键」，而今天表里没有键可改名 —— 对照需要重述，不是重跑。）
 rc=1
 
 $ # B：把一个「已经被测试跑」的目标塞进 ALLOWED
@@ -4146,7 +4146,7 @@ check_orphan_fixtures rc=1   names vtest/orphan.im: True   names vtest/orphan.in
 - **④ 三分法的第四个格子**：`check_text_integrity` 把 **`ai_browser_diag.js`**（2556 字节、**0 个 NUL**）与 **`examples/legacy-ui/desktop.html`**（4880 字节、**0 个 NUL**）**算进「text file(s)」并放行** ⇒ **那个阶段的「text file(s)」是文件名的属性（`.js`/`.html` 在白名单里），不是字节的属性；而它的判据（NUL）与这个集合的名字正交。** 不是①解不开、不是②解出替换字符、不是③有 NUL，而是 **④扩展名说是文本、字节说不是、而判据两样都不问**。
 - **⑤ 一个不带 reason 的报告格式，会自己编一个**：`check_doc_paths` 的红对照逐字 `BROKEN  bad.md  ->  <unreadable: 'utf-8' codec ...>  (no such file)` —— 它的 `broken` 类型是 `(source, path)` **没有 reason 字段**，印的时候**硬拼了一句 `(no such file)`** ⇒ **一个存在但读不了的文件，被报成不存在的文件。** 对比 `check_links`：那边 `broken` 是三元组 `(source, target, why)`，印出来是 `<unreadable>  (utf-8 codec …)` —— **同一个形状，一个带 reason 一个不带，不带的那个就自己编了一个。**
 - **⑥ 知识在仓库里，不在输入集里**：`check_orphan_fixtures` 的 `*.im` glob **看不见 `.inim`**（红对照 `names vtest/orphan.inim : False`）；今天那唯一一个 `vtest/params_precompiled_v06.inim` 没被漏掉，**是因为有人把它的说明写进了旁边那条 `ALLOWED` 条目的正文里** ⇒ **下一个 `.inim` 不会有这种运气。** 仓库里今天共 **9 个 `.inim`**（`projects/` 7、`vtest/` 1、根 `nst2.inim` 1），**没有一个在任何检查器的输入集里。**
-- **⑦ 三种解码行为，各自的位置**：`strict`（`check_links.py:152`、`check_doc_paths.py:188` ⇒ 抛、进 `broken`、响）；`replace`（`check_test_ports.py:58`、`migrate_report.py:47`、`check_ignored_credentials.py:57` 及一批 `*.test.py` ⇒ 不抛、制造替换字符、**把失败伪装成数据**）；`surrogateescape`（`check_orphan_fixtures.py:104`/`:109`、`check_orphan_targets.py:173`、以及三个检查器**路径名**的解码 ⇒ 不抛也不替换、坏字节原样留在 `str` 里，**可逆**（`encode('utf-8','surrogateescape')` 能还原），但**下游任何 `print`/`json.dumps` 都会在写出时炸**）。
+- **⑦ 三种解码行为，各自的位置**：`strict`（`check_links.py:152`、`check_doc_paths.py:188` ⇒ 抛、进 `broken`、响）；`replace`（`check_test_ports.py:58`、`migrate_report.py:47`、`check_ignored_credentials.py:57` 及一批 `*.test.py` ⇒ 不抛、制造替换字符、**把失败伪装成数据**）；`surrogateescape`（`check_orphan_fixtures.py:104`/`:109`、`check_orphan_targets.py:152`、以及三个检查器**路径名**的解码 ⇒ 不抛也不替换、坏字节原样留在 `str` 里，**可逆**（`encode('utf-8','surrogateescape')` 能还原），但**下游任何 `print`/`json.dumps` 都会在写出时炸**）。
 - **⑧ 一条拒绝测量的理由（要进产物）**：它**没量** `src/compiler/compiler.c:2211` 那条被糊掉的注释与 `:2219` 无 `else` 分支的相邻性 —— 理由逐字：**「一个距离分布要有一个零模型」**（那个文件里有 619 个 U+FFFD、分散在很多行），**没有零模型，量出来的是「它们在同一屏里」，那不是判据。** ⇒ **一条「我没量」若写出理由，它的价值等于一次测量；写不出理由的「我没量」只是缺口。**
 - 它**独立复核了我的 14 个**（同一命令、逐文件计数**逐个相同**）⇒ 现在这个数有**三份独立读数**（我的、`docs/BOARD.md:150` 的、它的）。
 **★ 第十八个实例 + 四条判据（`vivid-anchor` 的，读数）。** 它普查了全仓 `OP_CALL_BUILTIN` 的发射点：`git grep -n 'OP_CALL_BUILTIN' 344a37b -- . ':!docs/' ':!future/'` 共 32 处，**非发射点 6 处**（`src/compiler/bytecode.h:19` 枚举、`src/vm/vm.c:3099` 分派、`src/vm/vm.c:5244` 反汇编器、`mods/debug/debug_mod.c:156` 反汇编器、`selfhost/compiler.im:35` 常量 `OP_CALL_BUILTIN = 27`）⇒ **发射点 26 个**：`src/compiler/compiler.c` **24 个** + `selfhost/compiler.im` **2 个**（`:377`、`:506`）。
@@ -4180,7 +4180,7 @@ names containing space/tab/newline = 2
 ⇒ 它已落在产物里：本档上一段与那笔提交信息都写着 `919` ⇒ **本档那处已更正为 917（分子不动）；提交信息改不了 ⇒ 登记为记录，不假装它没发生。**
 **★ 第八个形态：同一个通配符在两种工具里不是同一个集合（它自报，且它差点把它报成仓库缺陷）。** 它先看到 `git ls-files -- 'vtest/*.im'` = **79**、`glob.glob("vtest/*.im")` = **78**，形状是「一个受跟踪的 fixture 从工作区里消失了」；**实测那个文件在盘上（`vtest/params_sub/relative_script.im`，42 字节）** —— 差的是**两个不同的通配符**：**`git` 的 `*` 跨 `/`**（匹配子目录），**`glob` 的 `*` 不跨 `/`** ⇒ **79 与 78 是同一个集合被两种通配符量了两次。**
 ⇒ **准确说法**：检查器印的 `124` 是「**glob 看得见的**」，那个前缀下受跟踪的是 `125` ⇒ **差的那一个不是未跟踪的，是子目录里的、glob 看不见。今天它的输入集比仓库小 1，不是大。** 两个方向都存在，今天是「小」。
-**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:173`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:121` ⇒ `:211` `print` **stdout**，**原写 `:124`**）⇒ **会**。
+**★ `surrogateescape` 会不会被写出去：会，三条路径；而写出去时会炸 —— 实测。** 逐站点追用途：`check_orphan_fixtures.py:104`（`cmake` 只喂 `name in cmake`）、`:109`（`node_text` 只喂 `name in node_text`）、`check_orphan_targets.py:152`（`cmake` 只喂解析）⇒ **一个字都不进输出**；而 **三个检查器的路径名**（`check_text_integrity.py:120` ⇒ `:182` `print` **stdout** / `:170` `sys.exit` **stderr**；`check_links.py:103` ⇒ `:187`/`:189` `print` 与 `:176` `json.dumps(ensure_ascii=False)` **stdout**；`check_doc_paths.py:121` ⇒ `:211` `print` **stdout**，**原写 `:124`**）⇒ **会**。
 ```
 stdout encoding='utf-8' errors='strict'   stderr.errors='backslashreplace'   locale zh_CN.UTF-8
   print(s)                        -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 3: surrogates not allowed
@@ -6190,7 +6190,7 @@ say d              # {<function>: fn}   ← 存进去了
 
 **红对照 (b)：两条不成立，而它们坏的位置不同。**
 - **`vtest/range_metadata_probe_v06.im`**：豁免理由逐字说 `Registering it would add a green stage that cannot fail`。★ 而实测**它今天会红** —— rc=1，错误信息是 `be` 声明已被移除。★ **修法就在隔壁**：`vtest/be_removed_decl_v04.im` 已用 `PASS_REGULAR_EXPRESSION` 登记成负向夹具 ⇒ **不需要新机制。** ⇒ ★ **「一条不可能变红的记录」今天会红 —— 而豁免写的那个「不可能」是一个【能力】断言，而能力断言只能用运行来核。**
-- **`websocket_probe`**：豁免理由逐字说 `the WebSocket frame layer is not implemented, so the probe has nothing to assert`。★ **两半都不成立**：`src/platform/websocket.c` 的 `im_ws_read_text` / `im_ws_send_text` 读与写都在；`src/platform/websocket_probe.c`（19 行）有六处断言、末一处逐字节比对 `0x81 0x04 0x70 0x69 0x6e 0x67`（`"ping"`）。★ **实测 rc=124，25 秒未结束。**
+- **`websocket_probe`**：豁免理由逐字说 `the WebSocket frame layer is not implemented, so the probe has nothing to assert`。★ **两半都不成立**：`src/platform/websocket.c` 的 `im_ws_read_text` / `im_ws_send_text` 读与写都在；`src/platform/websocket_probe.c`（19 行）有六处断言、末一处逐字节比对 `0x81 0x04 0x70 0x69 0x6e 0x67`（`"ping"`）。★ **实测 rc=124，25 秒未结束**（★ **本行是【记录】**：写下这一行时那个挂起还在；今天它 122 毫秒返回 `websocket probe: ok`。）
 
 ★★★★ **判据（收，新）：豁免表里的理由有两种坏法，而它们要用两种方法找 —— 一种【变得不成立】（可被 grep 找到），另一种【一开始就把病因说错】（只能靠去跑一次那个被豁免的东西才能发现）。**
 
@@ -6501,7 +6501,7 @@ say d              # {<function>: fn}   ← 存进去了
 |---|---|---|
 | **跑得动（且理由今天为真）** | 8 | `check_orphan_fixtures` 的 3 条 fixture、`NO_FILE_TODAY`、`EXP_TAG_EXEMPTION_CLASSES`、`TARGETS`、`doc-paths` 三类、`.gitignore` 的 6 条 |
 | **跑得动（而理由今天为假）** | 1 | `range_metadata_probe_v06.im`（**rc=1**） |
-| **跑起来永不结束** | 1 | `websocket_probe`（**rc=124**） |
+| **跑起来永不结束** | 1 | `websocket_probe`（**rc=124**；★ **本行是【记录】**，今天它已修好并被登记成一条 CTest） |
 | **它不是一个可跑的东西** | 10 | `REQUIRED_SCOPES` 的十行（被豁免的是一棵**子树**） |
 
 ★★★ **它对我那条筛法（含能力否定词 ⇒ 待跑项）的更正，我全收**：**三类否定在 `grep` 上分不出来。**
