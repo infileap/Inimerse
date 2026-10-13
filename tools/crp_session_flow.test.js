@@ -140,7 +140,7 @@ async function main() {
       method: 'POST', body: JSON.stringify({ verse, peer, seq: 1, token, replay: true }),
     });
     const text = await res.text();
-    if (res.status === 200 && text.includes('snapshot_required')) { snap = text; break; }
+    if (res.status === 200 && text.includes('snapshot_required') && text.includes('"latest_seq":22')) { snap = text; break; }
     await new Promise(r => setTimeout(r, 50));
   }
   assert.ok(snap, 'expected snapshot_required once the request predates the window');
