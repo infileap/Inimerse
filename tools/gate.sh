@@ -152,6 +152,21 @@ EXP_CTEST="${EXP_CTEST:-157}"   # recounted off the merged tree by the commit be
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
 EXP_NODE="${EXP_NODE:-12}"
 
+# Where the panels suite's jsdom lives.  It is installed outside the repository,
+# at the location this stage's own failure text has always printed, so whether
+# the stage could see it used to be a property of the CALLER's environment and
+# not of the tree: one tree, one gate.sh, two verdicts, and the same label over
+# both.  Probe that one location here, so the stage label can say which of the
+# three paths was taken.  An explicit NODE_PATH still wins -- that is the caller
+# saying where, and it is also the only way left to reach the skip path on
+# purpose (point it at a directory that has no jsdom).
+NODE_SUITES_JSDOM="none -- no jsdom at $HOME/.local/inimerse-jsdom/node_modules"
+if [ -n "${NODE_PATH:-}" ]; then NODE_SUITES_JSDOM="$NODE_PATH (from NODE_PATH)"
+elif [ -f "$HOME/.local/inimerse-jsdom/node_modules/jsdom/package.json" ]; then
+  export NODE_PATH="$HOME/.local/inimerse-jsdom/node_modules"
+  NODE_SUITES_JSDOM="$NODE_PATH (probed)"
+fi
+
 run_stage() {
   local name="$1" wanted="$2"; shift 2
   if [ -n "$ONLY" ] && [ "$ONLY" != "$wanted" ]; then
@@ -614,7 +629,7 @@ STAGE_SPECS=(
   "ctest|ctest (expect ${EXP_CTEST}/${EXP_CTEST}, 0 skipped)|stage_ctest"
   "fuzz|differential fuzz (interp vs AOT, expect 0 findings)|stage_fuzz"
   "economy|economy migration (§43.5, expect 39/39)|stage_economy"
-  "node|node protocol suites (expect ${EXP_NODE} registered)|stage_node"
+  "node|node protocol suites (expect ${EXP_NODE} registered; jsdom ${NODE_SUITES_JSDOM})|stage_node"
   "plugin|dsh-inimerse plugin (offline + live)|stage_plugin"
   "oauth-loop|oauth_loop crate (expect 75/75)|stage_oauth_loop"
   "ignored-credentials|userdata ignore rules (default deny)|stage_ignored_credentials"
