@@ -911,6 +911,134 @@ regAll.forEach((h) => {
   info(`      原文（逐字）：${h.text.slice(0, 200)}`);
   info(`      族成员 ${h.fam.length}（实体 ${h.entity.length}）／裁定短语 ${h.phr.join('、')}／判词：**${v ? v.verdict : '（缺）'}**`);
 });
+
+/* ★★ ⑱ 判据 v2 —— 条件 3 从【那个制品的名字】换成【这一行有没有它自己的据】。
+ * 判据写在 `website/scratch/registration_rule.md` 的 v2 那一节（**上一笔** `f26a5c2`，
+ * 那一笔里没有实现、没有读数），这一笔只是跑它。
+ * ★ 为什么要有这一件：v1 的读数是「全量 1 条、留一法 0 条」⇒ 那把尺子量到的真阳性
+ *   是**它自己绕一圈回来的回音**；而红对照 A 说明根因是**条件 3 的全部载荷压在一个词上**。 */
+current = '判据 v2：一条记录 = 一个断言 + 它自己的据（条件 3 改成句法）';
+const REG_GROUND = ['★ 实测', '★ 载体', '★ 实例', '★ 出处', '★ 证据', '★ 根因'];
+const groundOf = (l) => REG_GROUND.filter((g) => l.includes(g));
+const hasGround = (l) => groundOf(l).length > 0;
+/** v2 的筛子。`off` 里每一项关掉一条条件 —— 关掉它是为了**量它是哪一条载荷**，不是为了放宽。 */
+const regScreen2 = (r, opts = {}) => {
+  const { excludeLine = null, off = {} } = opts;
+  const heading = regHeadingOf(r);
+  const range = r.file === 'docs/AUDIT.md' ? auditRangeOf(r.id) : null;
+  const out = [];
+  auditLines.forEach((l, i) => {
+    const n = i + 1;
+    if (excludeLine === n) return;                                        // 留一法
+    if (!off.self && range && n >= range[0] && n <= range[1]) return;     // 条件 4：不是自指
+    const fam = r.fam.filter((m) => l.includes(m));
+    const entity = fam.filter((m) => !isGenericMember(m, heading));
+    if (!off.fam && (fam.length < 2 || entity.length < 1)) return;        // 条件 1：是这一节
+    if (!off.phr && !REG_PHRASES.some((p) => l.includes(p))) return;      // 条件 2：在裁
+    if (!off.ground && !hasGround(l)) return;                             // 条件 3（v2，句法）：是一条记录
+    out.push({ n, fam, entity, phr: REG_PHRASES.filter((p) => l.includes(p)), ground: groundOf(l), text: l.trim() });
+  });
+  return out;
+};
+/** 分子：按**行**去重（判据那一份写死了单位是行 —— 筛子是按行扫的，分母与分子必须同一个单位）。 */
+const regLines2 = (opts = {}) => {
+  const map = new Map();
+  famRows.forEach((r) => regScreen2(r, opts).forEach((h) => {
+    if (!map.has(h.n)) map.set(h.n, { ...h, rows: [] });
+    map.get(h.n).rows.push(`${r.file} §${r.id}`);
+  }));
+  return [...map.values()].sort((a, b) => a.n - b.n);
+};
+const N2 = regLines2();
+/** 分母：`docs/AUDIT.md` 里【带据的行】的条数。★ 计数规则逐字写在判据那一份里。 */
+const D2 = auditLines.filter(hasGround).length;
+const D2NoPhrase = auditLines.filter((l) => hasGround(l) && !REG_PHRASES.some((p) => l.includes(p)));
+info(`★ 判据 v2（逐字，机械可得）：条件 3 = L 含至少一处据词 ${REG_GROUND.map((g) => `「${g}」`).join('／')}`);
+info(`★ 分母 D = \`docs/AUDIT.md\` 里【带据的行】的条数 = **${D2}** 行（单位是行，按 \\n 切、1-based）`);
+info(`★★ 分子 N = v2 的筛子在 33 节上打出的行（按行去重）= **${N2.length}** 行`);
+info(`★ 分子 / 分母 = ${N2.length} / ${D2}`);
+/* ★★ 载荷测量（不是红对照，是每次运行都印的一个读数）：
+ * 逐条关掉一个条件，看**验收②（`:4399` 必须在 N 之外）**会不会破 ——
+ * 会破的那一条就是**分开「登记」与「提及」的那条载荷**。 */
+const LOADBEARING = [
+  ['条件 1（是这一节）', { fam: true }],
+  ['条件 2（在裁）', { phr: true }],
+  ['条件 3（是一条记录）', { ground: true }],
+  ['条件 4（不是自指）', { self: true }],
+];
+const lbRead = LOADBEARING.map(([name, off]) => {
+  const s = regLines2({ off });
+  return { name, size: s.length, passes4399: s.some((h) => h.n === 4399) };
+});
+info('★ 载荷测量（逐条关掉一个条件 ⇒ 分子的大小 / `:4399` 是否进得来）：');
+lbRead.forEach((x) => info(`   关掉 ${x.name} ⇒ N = ${x.size}　\`:4399\` ${x.passes4399 ? '**进来了**（这条是载荷）' : '仍在外面'}`));
+const loadBearing = lbRead.filter((x) => x.passes4399);
+info(`★ ⇒ 分开「登记」与「提及」的载荷是：${loadBearing.length ? loadBearing.map((x) => `**${x.name}**`).join('、') : '（没有一条 —— 那就是说没有一条条件在挡 `:4399`）'}`);
+info(`★ ⇒ 而 v1 里挡住它的是【条件 3 的另一个版本：那一行有没有写那个制品的名字】 —— **不是同一条**。`);
+/* ★★ 那一件真正要的分母：台账里【在裁 + 带据】的行 ——
+ * 也就是「它在说自己记了一条裁定」这个问题的全集。条件 1 关掉：那 33 节是**分子那一侧的索引**，
+ * 拿它去筛分母会把「这一行和某一节共享族成员」当成「这一行在说它自己记了什么」——那是两个问题。 */
+const D2Phrase = regLines2({ off: { fam: true } });
+info(`★★ 分母之二（比 D 更贴题）：台账里【在裁 + 带据】的行 = **${D2Phrase.length}** 行`);
+D2Phrase.forEach((h) => info(`   :${h.n}  据词 ${h.ground.join('、')}／短语 ${h.phr.join('、')}　${h.text.slice(0, 110)}`));
+info(`★ ⇒ 33 节里被这把尺子认出的：**${N2.length}** 行；台账里本来就【在裁 + 带据】的有 **${D2Phrase.length}** 行。`);
+info(`★ ⇒ 覆盖率 = ${N2.length} / ${D2Phrase.length}`);
+const dset = new Set(D2Phrase.map((h) => h.n));
+check('⑷ 分子必须是分母的子集（分子里有而分母里没有的行 = 一个定义矛盾）',
+  N2.every((h) => dset.has(h.n)),
+  `${N2.filter((h) => dset.has(h.n)).length} / ${N2.length}`);
+/* ★ 特别档：带据、在记一件事、而**那件事不是一条裁定**。 */
+const pickSpecial = (pred) => D2NoPhrase.find(pred) || null;
+const specA = pickSpecial(() => true);
+const specB = pickSpecial((l) => l.includes('本节'));
+info(`★ 特别档【在记一件事，而那件事不是一条裁定】：D 里有 **${D2NoPhrase.length}** 处（带据、且不含任何一个裁定短语）。`);
+info(`   挑法一（D 里第一条这样的行）：${specA ? `\`:${auditLines.indexOf(specA) + 1}\`` : '（无）'}`);
+info(`   挑法二（其中第一条含「本节」的 —— 即「它在记我这一节是怎么写出来的」那一形状）：${specB ? `\`:${auditLines.indexOf(specB) + 1}\`` : '（无）'}`);
+[['挑法一', specA], ['挑法二', specB]].forEach(([tag, l]) => {
+  if (l) info(`   ${tag} 逐字：${l.trim().slice(0, 240)}`);
+});
+check('⑱ 验收①：`:10808` 必须在 N 里（★ 这是过拟合检验，它不能单独构成通过）',
+  N2.some((h) => h.n === 10808),
+  N2.some((h) => h.n === 10808) ? '在 N 里' : ':10808 不在 N 里 —— 新判据没接住那个已知真阳性');
+check('⑱ 验收②：`:4399` 必须在 N 之外（★ 而挡住它的必须不是那个词 —— 那个词已经不在判据里了）',
+  !N2.some((h) => h.n === 4399),
+  N2.some((h) => h.n === 4399) ? ':4399 通过了尺子 —— 尺子分不开「登记」与「提及」' : '在 N 之外');
+const N2_LOO = regLines2({ excludeLine: N2.length ? N2[0].n : null });
+/* ★ 验收③ 的写法有一个坑，我踩了第一版：写成 `N2.length === 0 || N2_LOO.length === N2.length - 1`
+ * 之后，**N = 1 会让它通过**（1 → 0 满足「少 1」），而「留一法归零」**正是这一件要抓的病**。
+ * 一条把病当成通过条件的检查，比没有这条检查更坏 —— 它会把 486/486 变成一句假话。
+ * ⇒ 判据是 **N ≥ 2 且 留一法 = N−1**（两个条件缺一不可）。 */
+check('⑱ 验收③：留一法之后 N 必须非零（扣掉一行 ⇒ 少 1，不是变成 0）',
+  N2.length >= 2 && N2_LOO.length === N2.length - 1,
+  `${N2.length} → ${N2_LOO.length}（扣掉 :${N2.length ? N2[0].n : '—'}）` +
+  (N2.length < 2 ? ' ← ★ N 只有 1，留一法之后**归零**：**这正是 v1 的那个病**' : ''));
+check('⑱ 验收④：分母必须印出来，且它的计数规则逐字写在判据那一份里',
+  D2 > 0 && fs.readFileSync(path.join(HERE, 'registration_rule.md'), 'utf8').includes('分母 D = `docs/AUDIT.md` 里【带据的行】的条数'),
+  `D = ${D2}`);
+check('⑱ 验收⑤：去掉那条载荷（条件 3）⇒ 验收② 必须变红',
+  lbRead.find((x) => x.name.startsWith('条件 3'))?.passes4399 === true,
+  lbRead.find((x) => x.name.startsWith('条件 3'))?.passes4399 ? '去掉条件 3 ⇒ `:4399` 进来了 ⇒ 验收② 会红' : '★ 去掉条件 3 它仍在外面 —— 那验收② 不是被条件 3 撑着的');
+check('⑱ 每一条 N 行都必须带逐字原文与至少一处据词',
+  N2.every((h) => h.text.length > 0 && h.ground.length > 0),
+  `${N2.filter((h) => h.text.length > 0 && h.ground.length > 0).length} / ${N2.length}`);
+check('⑱ 特别档必须印出一个逐字实例（一个档只有计数、没有实例，与没量过一样）',
+  D2NoPhrase.length === 0 || Boolean(specA),
+  `${D2NoPhrase.length} 处 / 实例 ${specA ? `:${auditLines.indexOf(specA) + 1}` : '（无）'}`);
+info('★ 逐条 N（含逐字原文、据词、以及它替哪几节打出来的）：');
+N2.forEach((h) => {
+  info(`   :${h.n}  ${h.rows.join('、')}`);
+  info(`      据词 ${h.ground.join('、')}／裁定短语 ${h.phr.length ? h.phr.join('、') : '（无）'}`);
+  info(`      原文（逐字）：${h.text.slice(0, 200)}`);
+});
+info(`★ 预言三（写在判据那一份里）：N ≥ 2 ⇒ ` + (N2.length >= 2 ? `**成立**（${N2.length}）` : `**落空**（${N2.length}）`));
+info(`★ 预言四（写在判据那一份里）：D ≥ 100 ⇒ ` + (D2 >= 100 ? `**成立**（${D2}）` : `**落空**（${D2}）`));
+info(`★ 预言五（写在判据那一份里）：v1 挡 \`:4399\` 的理由与 v2 的不是同一个 ⇒ ` +
+  (loadBearing.some((x) => x.name.startsWith('条件 3')) ? '**成立**（v1 靠那个词、v2 靠据词）' : '**落空**（挡住它的不是条件 3）'));
+info(`★ 预言六（写在判据那一份里，第三个实例）：\`:10820\` 不在 N 里 ⇒ ` +
+  (N2.some((h) => h.n === 10820) ? `**落空**（它进来了 —— 这是我这一件最值钱的一个反例）` : '**成立**'));
+check('⑱ 第三个实例必须核（判据那一份里写下了它会不在 N 里）',
+  !N2.some((h) => h.n === 10820),
+  N2.some((h) => h.n === 10820) ? ':10820 在 N 里 —— 见预言六的落空' : '在 N 之外');
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
