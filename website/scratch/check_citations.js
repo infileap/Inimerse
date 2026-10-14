@@ -1063,6 +1063,71 @@ info(`★ 预言六（写在判据那一份里，第三个实例）：\`:10820\`
 check('⑱ 第三个实例必须核（判据那一份里写下了它会不在 N 里）',
   !N2.some((h) => h.n === 10820),
   N2.some((h) => h.n === 10820) ? ':10820 在 N 里 —— 见预言六的落空' : '在 N 之外');
+
+/* ★★ 两栏并排（协调者 m00770 的派件）。
+ * ★ 甲栏 = 这一行【住在哪一节的屋檐下】—— 纯文件结构，**不看那 33 节**。
+ * ★ 乙栏 = 这一行【替哪几节打出来的】—— 从族成员取，**看那 33 节**。
+ * ★ 两栏不同的那些行才是这一件的东西：它们住在 A 节的屋檐下，而在替 B 节说话 ——
+ *   而那种行在只有一栏的世界里长得与其余的行一模一样。 */
+const headingAt = (n) => {
+  for (let i = n - 2; i >= 0; i--) {
+    const m = auditLines[i].match(/^#{2,4}\s+(.+?)\s*$/);
+    if (m) return { line: i + 1, title: m[1].replace(/\*\*/g, '').replace(/`/g, '').trim() };
+  }
+  return { line: null, title: '（文件头：无节）' };
+};
+/** 乙栏：这一行落在哪些节的族里（★ 用**同一把筛子**，不是新写一个判据）。 */
+const emitBy = new Map();
+famRows.forEach((r) => regScreen2(r).forEach((h) => {
+  if (!emitBy.has(h.n)) emitBy.set(h.n, []);
+  emitBy.get(h.n).push(r);
+}));
+const twoCol = D_ctx.map((x) => {
+  const A = headingAt(x.n);
+  const B = emitBy.get(x.n) || [];
+  const Bt = B.map((r) => `${r.file} §${r.id}`);
+  const Bhead = B.map((r) => regHeadingOf(r));
+  const tier = B.length === 0 ? '空' : (Bhead.length === 1 && Bhead[0] === A.title ? '同' : '异');
+  return { n: x.n, A, B, Bt, Bhead, tier, text: x.text };
+});
+info('★★ 两栏并排（甲栏 = 这一行住在哪一节的屋檐下，**不看那 33 节**；乙栏 = 它替哪几节打出来的，**看那 33 节**）：');
+let twoColPrinted = 0;
+twoCol.forEach((r) => { twoColPrinted++; info(`   :${r.n}　【甲】${r.A.line ? `:${r.A.line} ` : ''}${r.A.title}　【乙】${r.Bt.length ? r.Bt.join('、') : '（空）'}　【档】${r.tier}`); });
+check('⑲ 验收①：D_ctx 的每一行都印出两栏（印出的条数 = D_ctx 的条数）',
+  twoColPrinted === D_ctx.length,
+  `印出 ${twoColPrinted} 行 / D_ctx ${D_ctx.length} 行`);
+/* ③ 甲栏是一个真划分 */
+const byA = new Map();
+twoCol.forEach((r) => { if (!byA.has(r.A.title)) byA.set(r.A.title, []); byA.get(r.A.title).push(r.n); });
+info(`★ 按甲栏分组（${byA.size} 组）：`);
+let byASum = 0;
+[...byA.entries()].forEach(([k, ns]) => { byASum += ns.length; info(`   ${k}　→ ${ns.length} 行　${ns.map((n) => ':' + n).join('、')}`); });
+check('⑲ 验收③：甲栏的分组计数之和必须等于 11（一行只住在一个节里 ⇒ 这是一个真划分）',
+  byASum === D_ctx.length, `${byASum} / ${D_ctx.length}`);
+/* ② 两栏不同的行 */
+const tierDiff = twoCol.filter((r) => r.tier !== '同');
+info(`★ 验收②：两栏不同的行（档 = 异 或 空）= **${tierDiff.length}** 行，逐行印出：`);
+let tierDiffPrinted = 0;
+tierDiff.forEach((r) => { tierDiffPrinted++; info(`   :${r.n}【${r.tier}】甲=${r.A.title}　乙=${r.Bt.join('、') || '（空）'}　原文：${r.text.slice(0, 120)}`); });
+check('⑲ 验收②：两栏不同的行必须逐行印出（印出的条数 = 该档的条数）',
+  tierDiffPrinted === tierDiff.length, `印出 ${tierDiffPrinted} / ${tierDiff.length}`);
+/* ④ 乙栏落进 ≥2 档 */
+const multi = twoCol.filter((r) => r.B.length >= 2);
+info(`★ 验收④：乙栏落进 ≥2 档的行（一行替两个节说话）= **${multi.length}** 行`);
+multi.forEach((r) => info(`   :${r.n}　乙 = ${r.Bt.join('、')}`));
+/* ★ 特别档的零是什么零 */
+const nearMulti = D_ctx.filter((x) => {
+  const secs = new Set();
+  famRows.forEach((r) => { if (r.fam.some((m) => x.text.includes(m))) secs.add(`${r.file} §${r.id}`); });
+  return secs.size >= 2;
+});
+info(`★ 特别档的零是【真的没有】还是【判据不允许】：把门槛降到「这一行含某一节的 ≥1 个族成员」后，落进 ≥2 节的行 = **${nearMulti.length}** 行 ⇒ `
+  + (multi.length === 0
+      ? (nearMulti.length === 0
+          ? '**判据允许它，而这 11 行里一行都没有同时沾到两个节 ⇒ 真的没有**'
+          : '**判据允许它，而且有行沾到了两个节 ⇒ 是【条件 1 的 ≥2 个族成员】把它挡住了，不是判据不允许**')
+      : '（有实例）'));
+
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
