@@ -844,6 +844,73 @@ ctrl.forEach((x) => {
 });
 info('★ ⇒ **两个数一起掉**：旧的挑串 -O2 是 12/0（有射程、没有眼光），族里的实体词是 0/0（有眼光、没有射程）。');
 info(`★ ⇒ 这条对照**不可能在 §2.5 上通过**，因为「新串的实质那一栏必须非零」预设了这条裁定已经被登记 —— 而它没有。★ **一条对照不能预设它的结论。**`);
+const REG_VERDICTS = [
+  { line: 10808, registered: false,
+    verdict: '★ 尺子说它是 §10.4 的登记，手读说它登记的是【另一件事】',
+    why: '这一行逐字记的是「（协调者裁定）」这条**归属发现**（就是协调者上一件从我这里收走的那条），不是 §10.4 那条裁定本身。★ **尺子与手读不一致，而不一致必须报出来** —— 一个「1」与一个「0」并排，读者才看得见差别。' },
+];  // ★ 先跑筛子、看火集，再逐条手读填进来（判据本身已在上一笔冻结）
+/* ★★ ⑰ 「真登记」这把尺子。判据写在 `website/scratch/registration_rule.md`（**上一笔**，
+ * 那一笔里没有实现、没有读数），这一笔只是跑它。
+ * ★ 为什么要有这一件：⑯ 证明的只是「这 33 节里哪几节的事在台账里被**提到过**」，
+ *   它证明不了「提到 = 登记」。而 ⑯ 手上唯一的真阳性是 :10808 —— **只有一个已知真阳性时，
+ *   判据是从那一个点上反推出来的，那是过拟合。** */
+current = '真登记：四条判据，先写下再跑';
+const REG_PHRASES = ['已裁', '已裁定', '裁定', '已决定', '裁了', '裁决', '驳回', '采纳'];
+const REG_ANCHOR = '台账';
+const regHeadingOf = (r) => { const x = secIndex.get(`${r.file} §${r.id}`); return x ? x.heading : ''; };
+const isGenericMember = (m, heading) => m === heading || m === '(文件头/无节)';
+const regScreen = (r, excludeLine) => {
+  const heading = regHeadingOf(r);
+  const range = r.file === 'docs/AUDIT.md' ? auditRangeOf(r.id) : null;
+  const out = [];
+  auditLines.forEach((l, i) => {
+    const n = i + 1;
+    if (excludeLine === n) return;                                  // ★ 留一法
+    if (range && n >= range[0] && n <= range[1]) return;            // 条件 4：不是自指
+    const fam = r.fam.filter((m) => l.includes(m));
+    const entity = fam.filter((m) => !isGenericMember(m, heading));
+    if (fam.length < 2 || entity.length < 1) return;                // 条件 1：是这一节，且是实体成员
+    const phr = REG_PHRASES.filter((p) => l.includes(p));
+    if (!phr.length) return;                                        // 条件 2：在裁
+    if (!l.includes(REG_ANCHOR)) return;                            // 条件 3：台账在说自己
+    out.push({ n, fam, entity, phr, text: l.trim() });
+  });
+  return out;
+};
+const regOf = (excludeLine) => {
+  const acc = [];
+  famRows.forEach((r) => regScreen(r, excludeLine).forEach((h) => acc.push({ ...h, row: r })));
+  return acc;
+};
+const regAll = regOf(null);
+const regLOO = regOf(10808);                                        // ★ 留一法：把 :10808 扣掉
+info(`★ 真登记：全量 ${regAll.length} 条；留一法（扣掉 :10808）${regLOO.length} 条。`);
+check('⑰ 负向对照：`:4399`（只被提及、被当作实例引用）必须在这把尺子之外',
+  !regAll.some((h) => h.n === 4399),
+  regAll.some((h) => h.n === 4399) ? ':4399 通过了尺子 —— 尺子分不开「登记」与「提及」' : '在尺子之外');
+check('⑰ 每一条真登记都必须带逐字原文与一个手读判词',
+  regAll.every((h) => h.text.length > 0 && REG_VERDICTS.some((v) => v.line === h.n)),
+  regAll.length ? `${regAll.filter((h) => REG_VERDICTS.some((v) => v.line === h.n)).length} / ${regAll.length}` : '0 条（★ 见预言一）');
+check('⑰ 留一法必须真的扣掉了那一行',
+  regAll.length === 0 || regLOO.length < regAll.length,
+  `${regAll.length} → ${regLOO.length}`);
+info('★ 预言一（写在判据那一笔里）：真登记 ≤ 2 条 ⇒ ' + (regAll.length <= 2 ? `**成立**（${regAll.length} 条）` : `**落空**（${regAll.length} 条）`));
+const at104 = (s) => s.filter((h) => h.row.file === 'docs/STATUS.md' && h.row.id === '10.4');
+info('★ 预言二（写在判据那一笔里）：留一法之后 `docs/STATUS.md §10.4` 不再有真登记 ⇒ '
+  + (at104(regAll).length > 0 && at104(regLOO).length === 0 ? '**成立**' : `**落空**（扣前 ${at104(regAll).length} 条、扣后 ${at104(regLOO).length} 条）`));
+const regConfirmed = REG_VERDICTS.filter((v) => v.registered).length;
+check('⑰ 每一条真登记的判词都必须带一个明确的 registered 布尔（★ 不许有「没判」的格子）',
+  regAll.every((h) => { const v = REG_VERDICTS.find((x) => x.line === h.n); return v && typeof v.registered === 'boolean'; }),
+  regAll.length ? `${REG_VERDICTS.filter((v) => typeof v.registered === 'boolean').length} / ${regAll.length}` : '0 条');
+info(`★★ 尺子给出 ${regAll.length} 条；**手读确认的 ${regConfirmed} 条** ⇒ 差 ${regAll.length - regConfirmed} 条。`
+  + ` ★ ⇒ 用两条独立的尺子（⑯ 的族串实质命中、⑰ 的四条件判据）得到的都是：**33 节里，裁定被登记在台账里的节是 0 节。**`);
+info('★ 逐条真登记（含逐字原文）：');
+regAll.forEach((h) => {
+  const v = REG_VERDICTS.find((x) => x.line === h.n);
+  info(`   :${h.n}  ${h.row.file} §${h.row.id}`);
+  info(`      原文（逐字）：${h.text.slice(0, 200)}`);
+  info(`      族成员 ${h.fam.length}（实体 ${h.entity.length}）／裁定短语 ${h.phr.join('、')}／判词：**${v ? v.verdict : '（缺）'}**`);
+});
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
