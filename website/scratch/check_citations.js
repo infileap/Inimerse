@@ -987,6 +987,30 @@ const dset = new Set(D2Phrase.map((h) => h.n));
 check('⑷ 分子必须是分母的子集（分子里有而分母里没有的行 = 一个定义矛盾）',
   N2.every((h) => dset.has(h.n)),
   `${N2.filter((h) => dset.has(h.n)).length} / ${N2.length}`);
+
+/* ★★ 两个分母并排（协调者 m00738 的派件）。★ 注意它们与 `D2Phrase` 的关系：
+ * `D2Phrase` 走的是**筛子**（含条件 4 的自指排除），而 `D_all`/`D_ctx` 是**纯集合**（只看这一行本身）。
+ * ★ 两个数如果不同，那个差就是条件 4 在这批行上的脚印 —— 单独印出来。 */
+const D_all = auditLines.reduce((a, l, i) => { if (hasGround(l)) a.push({ n: i + 1, text: l.trim() }); return a; }, []);
+const D_ctx = D_all.filter((x) => REG_PHRASES.some((p) => x.text.includes(p)));
+const ctxSet = new Set(D_ctx.map((x) => x.n));
+const allSet = new Set(D_all.map((x) => x.n));
+info(`★★ 分母一 D_all（带据）= **${D_all.length}** 行；分母二 D_ctx（带据 ∧ 在裁）= **${D_ctx.length}** 行；差 = **${D_all.length - D_ctx.length}** 行`);
+info(`★ 而走筛子的那个分母 D2Phrase = ${D2Phrase.length} 行 ⇒ 条件 4（自指排除）在它上面的脚印 = **${D2Phrase.length - D_ctx.length}** 行`);
+info(`★ 覆盖率（对 D_ctx）= ${N2.length} / ${D_ctx.length}　★ 覆盖率（对 D_all）= ${N2.length} / ${D_all.length}`);
+info('★ 逐行印出 D_ctx（分母二，全部）：');
+D_ctx.forEach((x) => info(`   ctx :${x.n}  ${x.text.slice(0, 110)}`));
+const allNotCtx = D_all.filter((x) => !ctxSet.has(x.n));
+info(`★ 逐行印出 D_all \\ D_ctx（分母一减分母二 = 特别档，${allNotCtx.length} 行）：`);
+allNotCtx.forEach((x) => info(`   all :${x.n}  ${x.text.slice(0, 110)}`));
+/* ★★ 下面这一条**不是**一条检查，是一条读数 —— 而理由必须写下来：
+ * `D_ctx ⊆ D_all` 按构造恒真（D_ctx = D_all ∧ 短语）。把它写成 check 就是一条**恒真的检查**，
+ * 而恒真的检查只会把分母撞大（本车道的纪律）。★ 所以：**只印，不 check**。 */
+const ctxNotAll = D_ctx.filter((x) => !allSet.has(x.n));
+info(`★ 读数（**不是检查**）：|D_ctx \\ D_all| = **${ctxNotAll.length}** —— 按构造必须是 0，而它恒为 0，所以它不能当一条检查。`);
+info(`★ 读数：|D_all \\ D_ctx| = **${allNotCtx.length}**（= 特别档）；它占 D_all 的 **${((allNotCtx.length / D_all.length) * 100).toFixed(1)}%**`);
+check('⑷ 分子必须是 D_ctx 的子集', N2.every((h) => ctxSet.has(h.n)), `${N2.filter((h) => ctxSet.has(h.n)).length} / ${N2.length}`);
+check('⑷ 分子必须是 D_all 的子集', N2.every((h) => allSet.has(h.n)), `${N2.filter((h) => allSet.has(h.n)).length} / ${N2.length}`);
 /* ★ 特别档：带据、在记一件事、而**那件事不是一条裁定**。 */
 const pickSpecial = (pred) => D2NoPhrase.find(pred) || null;
 const specA = pickSpecial(() => true);
