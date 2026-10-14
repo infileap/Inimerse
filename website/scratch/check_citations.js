@@ -1197,6 +1197,70 @@ const pc = new Map();
 namedFine.forEach((k) => { const p = grpPrefix(k); if (p) pc.set(p, (pc.get(p) || 0) + 1); });
 info(`★ 而【组名前缀】不是唯一的：这 11 行用到的前缀 ${[...pc.entries()].map(([k, v]) => `${k}×${v}`).join('、') || '（无）'} ⇒ ★ 细组的身份必须是**整行**，不是前缀。`);
 
+/* ★★ 有界细组（协调者 m00897 的派件）：与上面的【无界】`fineAt` 并排，**只印、不换坐标**。
+ * ★ 成因：上一件的对照一证明 `fineAt` 是一个【无界的向上走】，它跨越 markdown 标题的边界 ——
+ *   于是同一行在「上面有没有一个标签」这件事上，可以从一个节一路走到另一个节去认领一个标签。
+ * ★ 有界版：走到【最近的 markdown 标题】就停 —— 因为粗组就是 markdown 标题，所以
+ *   「细组必须完整落在某个粗组里」这句话在有界版下才有机会为真。
+ * ★ 它不动 `headingAt`（甲栏）、不动 `fineAt`（无界细组）、不动任何已报的数。 */
+const fineAtBounded = (n) => {
+  for (let i = n - 2; i >= 0; i--) {
+    if (/^#{2,4}\s/.test(auditLines[i])) {
+      return { line: null, title: RESID, stoppedAt: i + 1, stoppedText: auditLines[i].trim(), steps: (n - 1) - i };
+    }
+    if (GRP_RE.test(auditLines[i])) {
+      return { line: i + 1, title: auditLines[i].replace(/^\*\*/, '').replace(/\*\*$/, '').trim(), stoppedAt: null, stoppedText: null, steps: (n - 1) - i };
+    }
+  }
+  return { line: null, title: RESID, stoppedAt: null, stoppedText: null, steps: n - 1 };
+};
+const four = D_ctx.map((x) => {
+  const A = headingAt(x.n);
+  const Fu = fineAt(x.n);
+  const Fb = fineAtBounded(x.n);
+  const B = (emitBy.get(x.n) || []).map((r) => `${r.file} §${r.id}`);
+  return { n: x.n, A, Fu, Fb, B, same: Fu.title === Fb.title };
+});
+info('★★ 有界与无界并排（粗 = markdown 标题；无界细组 = 一直往上找 `**X组 · …**`；有界细组 = 走到最近的 markdown 标题就停）：');
+let fourPrinted = 0;
+four.forEach((r) => { fourPrinted++; info(`   :${r.n}　【无界细组】${r.Fu.line ? `:${r.Fu.line} ` : ''}${r.Fu.title}　【有界细组】${r.Fb.line ? `:${r.Fb.line} ` : ''}${r.Fb.title}　【两格相同】${r.same ? '同' : '★异'}　【粗组】${r.A.line ? `:${r.A.line} ` : ''}${r.A.title}`); });
+check('㉑ 验收①：有界与无界两版并排、11 行一行不少（每行四格）',
+  fourPrinted === D_ctx.length, `印出 ${fourPrinted} / ${D_ctx.length}`);
+/* ② 相异的行数单独一个数 */
+const fourDiff = four.filter((r) => !r.same);
+info(`★ 验收②：两版【相异】的行数 = **${fourDiff.length}** / D_ctx = **${D_ctx.length}**（相异 = 「有界版把这一行的细组改掉了」）`);
+fourDiff.forEach((r) => info(`   ★ 相异：:${r.n}　无界 = ${r.Fu.title}　有界 = ${r.Fb.title}`));
+/* ③ 每一次「有界版改回（无细组）」都必须能指到粗组标题原文 */
+const backToResid = four.filter((r) => r.Fb.title === RESID && r.Fu.title !== RESID);
+info(`★ 验收③：有界版把细组改回【${RESID}】的行 = **${backToResid.length}** 行 —— 逐行指到它的粗组标题（原文）：`);
+backToResid.forEach((r) => info(`   :${r.n}　【原无界细组】${r.Fu.title}　⇒ 有界 = ${RESID}　【粗组标题】:${r.A.line} ${r.A.title}`));
+check('㉑ 验收③：每一行「有界版改回残余类」都能指到一个非空粗组标题',
+  backToResid.every((r) => r.A.line !== null && r.A.title && r.A.title !== '（文件头：无节）'),
+  `改回残余类的 ${backToResid.length} 行，其中粗组标题为空的 ${backToResid.filter((r) => r.A.line === null).length} 行`);
+/* ④ ★ 有界版必须让【不排除残余类】的粗化关系也为真 —— 若仍红，那个红是本件的头条 */
+const byFineB = new Map();
+four.forEach((r) => { if (!byFineB.has(r.Fb.title)) byFineB.set(r.Fb.title, []); byFineB.get(r.Fb.title).push(r); });
+const coarseOfB = new Map();
+byFineB.forEach((rows, k) => coarseOfB.set(k, new Set(rows.map((r) => r.A.title))));
+const crossB = [...byFineB.keys()].filter((k) => coarseOfB.get(k).size > 1);
+const sumB = [...byFineB.values()].reduce((a, v) => a + v.length, 0);
+info(`★ 验收④：有界版下的四级计数 —— 细组数 = **${byFineB.size}**／细组计数之和 = **${sumB}**；逐组：`);
+[...byFineB.entries()].forEach(([k, rows]) => info(`   ${k}　→ ${rows.length} 行，落在 ${coarseOfB.get(k).size} 个粗组里${coarseOfB.get(k).size > 1 ? '　★★ 跨粗组！' : ''}`));
+check('㉑ 验收④：有界版下【不排除残余类】也必须为真（每一个细组完整落在某个粗组里）',
+  crossB.length === 0,
+  `跨粗组的细组 = ${crossB.length} 个：${crossB.join('、') || '（无）'}`
+  + (crossB.length ? '　★★ 而这就是本件的头条：有界走改变不了它 ⇒ 这个假不是【尺子越界】造成的' : ''));
+/* ★ 特别档：有界版下从【具名细组】变回残余类的行 —— 是【步数不够】还是【真的没有】？ */
+info(`★ 特别档【有界版下变回 ${RESID}，而粗组标题就在上方】：${backToResid.length} 行 —— 逐行给【走了多少步】与【那个 span 里到底有没有 ${'`GRP_RE`'} 行】：`);
+backToResid.forEach((r) => {
+  const top = r.A.line || 1;
+  const span = auditLines.slice(top - 1, r.n - 1);
+  const grpInSpan = span.filter((l) => GRP_RE.test(l)).length;
+  info(`   :${r.n}　走了 ${r.Fb.steps} 步　停在 :${r.Fb.stoppedAt} 「${String(r.Fb.stoppedText || '').slice(0, 70)}」　span(${top}..${r.n - 1}) 里的 GRP_RE 行 = ${grpInSpan} ⇒ ${grpInSpan === 0 ? '真的没有细组（不是步数不够）' : '★ 步数不够'}`);
+});
+if (backToResid.length === 0) info(`   （0 行 —— 而这是一个【关于语料】的零：无界版在有界版的射程之内没有越界过）`);
+
+
 
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
@@ -1445,6 +1509,20 @@ if (at) {
   /* ★ 这个缝与 `MARKER_SCAN_FILE` 同源，形状见上面那张覆盖表。
      ★★ 它只为红对照存在 —— 因为红对照要往文档里塞一句话，而那份文档是别人的写域。
      ★ 默认（不设这个变量）行为完全不变。 */
+  /* ★★★ 登记（协调者 m00897 验收⑦）：**不改**。
+     `D.attribution` 的键是 `file / tree / askUserQuestion / retiredSentence / routes` —— **没有 `readAt`**。
+     ⇒ 这一行的 `at.readAt` 恒为 `undefined` ⇒ `docAt(undefined, 'docs/EIDOS_V06.md')`
+       ⇒ `git show undefined:docs/EIDOS_V06.md` ⇒ stderr 一行 `fatal: invalid object name 'undefined'.`
+       ⇒ **被 `docAt` 的 catch 接住，静默退回【工作树】**。
+     ★ 量过的三棵树（`docs/EIDOS_V06.md`）：
+       工作树 sha256 `bd2ca8f0…`（399 行）＝ `origin/main` 的那一份（逐字相同）；
+       `D.ref = 754403b` 那一份是 `6d849c74…`（354 行），从第 13 行第 687 字节起不同。
+     ★ 所以这一节今天【读对了】—— 而读对的原因是**一个静默回退恰好指向了正确的那棵树**。
+       ⇒ 它不会以「读数错了」的形式暴露，只会以「换一个 ref 之后读数变了」的形式暴露。
+     ★ 而「显然的修法」`at.readAt || D.ref` **是错的**：那会把它从 `origin/main` 挪到 `754403b`，读数会变。
+       正确的修法是解析它自己声明的 `at.tree`（`{kind:'pointer', resolve:'origin/main'}`，与 `MSR_SPEC`/`ATT_SPEC` 同形）。
+     ★ 两条判据：**一个用 stdout 判绿的检查，它的 stderr 是无人区**；
+       **一条静默回退如果恰好落在正确的那棵树上，它就不会以「读数错了」暴露，只会以「换一棵树读数变了」暴露。** */
   const doc = { text: seamText('ATTRIBUTION_DOC', at.file, docAtRef(at.readAt, at.file).text) };
   const lines = doc.text.split('\n');
 
