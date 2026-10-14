@@ -1260,6 +1260,52 @@ backToResid.forEach((r) => {
 });
 if (backToResid.length === 0) info(`   （0 行 —— 而这是一个【关于语料】的零：无界版在有界版的射程之内没有越界过）`);
 
+/* ★★ ㉒ 把残余类从「细组」里移出去，变成【未归类行数】（协调者 m01002 的派件）。
+ * ★ 判据文字写在做之前（见 `website/scratch/registration_rule.md` 的「㉒」一节，父提交可证）。
+ * ★ 理由：`（无细组）` 不是「细组这一级的一格」，它是【没有细组的那些行】的**并集** ——
+ *   一个并集没有「落在哪个粗组里」这件事 ⇒ ④ 的宾语如果是它，那句话在语法上就没有主语。
+ * ★ 三条派生处置：① 残余类不许进 ④ 的宾语；② 它与具名细组的计数【并排印、不相加】；
+ *   ③ ④ 改后的红/绿必须报出（若仍红，那条红是本件的新头条）。
+ * ★ 只印、不换坐标 —— 不动 `headingAt` / `fineAt` / `fineAtBounded` / `RULING_ROWS_READ_AT` / 条件 1 / 条件 3。 */
+const UNCL = RESID;
+/** ④ 的宾语：只取具名细组，逐版各一份。 */
+const namedOf = (m) => [...m.entries()].filter(([k]) => k !== UNCL);
+const crossOf = (m) => namedOf(m)
+  .filter(([, rows]) => new Set(rows.map((r) => r.A.title)).size > 1)
+  .map(([k]) => k);
+const namedU = namedOf(byFine);
+const namedB_ = namedOf(byFineB);
+const unclU = byFine.get(UNCL) || [];
+const unclB = byFineB.get(UNCL) || [];
+const crossU = crossOf(byFine);
+const crossB_ = crossOf(byFineB);
+info('★★ ㉒ 两个计数对象【并排印、不相加】（残余类 = 「没有细组的那些行」的并集，不是「细组这一级的一格」）：');
+info(`   【具名细组】无界版 ${namedU.length} 个／计数之和 = **${namedU.reduce((a, [, r]) => a + r.length, 0)}** 行　有界版 ${namedB_.length} 个／计数之和 = **${namedB_.reduce((a, [, r]) => a + r.length, 0)}** 行`);
+info(`   【未归类行数】无界版 = **${unclU.length}** 行　有界版 = **${unclB.length}** 行`);
+info(`   ★ 而这两栏【不相加】：具名细组的和 + 未归类行数不是一个【完备的分类】，它是两个不同的计数对象。`);
+check('㉒ 验收②：两个计数对象都印出，且【未归类行数】非零（非零才说明它不是一个空档，而是一个真的计数对象）',
+  unclU.length > 0 && unclB.length > 0 && namedU.length > 0,
+  `未归类 无界 ${unclU.length} / 有界 ${unclB.length}；具名 无界 ${namedU.length} / 有界 ${namedB_.length}`);
+/* ③ ④ 的宾语只剩具名细组 —— 改前 / 改后并排报 */
+info(`★ ㉒ 验收③：④ 的宾语（「每一个具名细组完整落在某个粗组里」）——`);
+info(`   【改前】宾语 = 具名细组 + 残余类 ⇒ 无界版：具名跨粗组 ${crossingNamed.length} 个、残余类 ${residualRows.length} 行跨 ${residualCoarse.size} 个粗组 ⇒ **${crossingNamed.length === 0 && residualRows.length === 0 ? '绿' : '红'}**`);
+info(`   【改后·无界版】宾语 = 具名细组（${namedU.length} 个）⇒ 跨粗组 ${crossU.length} 个 ⇒ **${crossU.length === 0 ? '绿' : '红'}**${crossU.length ? `：${crossU.join('、')}` : ''}`);
+info(`   【改后·有界版】宾语 = 具名细组（${namedB_.length} 个）⇒ 跨粗组 ${crossB_.length} 个 ⇒ **${crossB_.length === 0 ? '绿' : '红'}**${crossB_.length ? `：${crossB_.join('、')}` : ''}`);
+check('㉒ 验收③：改后 ④ 的宾语【只剩具名细组】，残余类不在其中',
+  !crossU.includes(UNCL) && !crossB_.includes(UNCL),
+  `无界版宾语里的跨粗组 = ${crossU.join('、') || '（无）'}；有界版 = ${crossB_.join('、') || '（无）'}`);
+check('㉒ 验收③（无界版）：改后 ④ 在基线上转绿（★ 若红，那条红是本件的新头条）',
+  crossU.length === 0,
+  crossU.length === 0 ? '绿 —— 具名细组各自落在一个粗组里'
+    : `★ 仍红：${crossU.join('、')} ⇒ ★ 本件的新头条：这条红不是残余类造成的`);
+check('㉒ 验收③（有界版）：改后 ④ 在基线上转绿',
+  crossB_.length === 0,
+  crossB_.length === 0 ? '绿' : `★ 仍红：${crossB_.join('、')}`);
+/* ⑥ 那个空的 every 的恒真性：继续写在报告里，也继续印在这里 */
+info(`★ ㉒ 验收⑥：\`㉑ 验收③\` 在基线上的通过是一个【空的 \`every\`】（0 行 ⇒ \`[].every(...) === true\`）`
+  + ` ⇒ ★ 它【按构造不可能失败】，全部信息量在对照那一跑。★ 这条恒真性继续写在报告里，不许以一个绿的姿态过去。`);
+
+
 
 
 /* ★★ 把【分界】本身打印出来。
