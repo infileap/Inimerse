@@ -1128,6 +1128,76 @@ info(`★ 特别档的零是【真的没有】还是【判据不允许】：把�
           : '**判据允许它，而且有行沾到了两个节 ⇒ 是【条件 1 的 ≥2 个族成员】把它挡住了，不是判据不允许**')
       : '（有实例）'));
 
+/* ★★ 两级分组（协调者 m00848 的派件）：粗 = markdown 标题；细 = 加粗组标签 `**X组 · …**`。
+ * ★ 只印、不换坐标 —— 上面那个 `headingAt` 仍然是甲栏，这一块只是把它的粒度问题变成第二个坐标。 */
+const GRP_RE = /^\*\*[^*]+组 · .+\*\*$/;
+const GRPX_RE = /^\*\*[^*]+组[^*]*\*\*$/;
+const BOLD_RE = /^\*\*[^*]+\*\*$/;
+const fineAt = (n) => {
+  for (let i = n - 2; i >= 0; i--) {
+    if (GRP_RE.test(auditLines[i])) return { line: i + 1, title: auditLines[i].replace(/^\*\*/, '').replace(/\*\*$/, '').trim() };
+  }
+  return { line: null, title: '（无细组）' };
+};
+const three = D_ctx.map((x) => {
+  const A = headingAt(x.n);
+  const F = fineAt(x.n);
+  const B = (emitBy.get(x.n) || []).map((r) => `${r.file} §${r.id}`);
+  return { n: x.n, A, F, B };
+});
+info('★★ 两级并排（粗 = markdown 标题；细 = 加粗组标签 `**X组 · …**`；乙 = 它替哪几节打出来的）：');
+let threePrinted = 0;
+three.forEach((r) => { threePrinted++; info(`   :${r.n}　【粗】${r.A.line ? `:${r.A.line} ` : ''}${r.A.title}　【细】${r.F.line ? `:${r.F.line} ` : ''}${r.F.title}　【乙】${r.B.length ? r.B.join('、') : '（空）'}`); });
+check('⑳ 验收①：两级分组都印、11 行一行不少（每行三格）',
+  threePrinted === D_ctx.length, `印出 ${threePrinted} / ${D_ctx.length}`);
+/* ② 那一行的三格 */
+const hThree = three.find((r) => r.n === 10808);
+info(`★ 验收②：\`:10808\` 的三格 = 【粗】${hThree ? hThree.A.title : '（缺）'}　【细】${hThree ? hThree.F.title : '（缺）'}　【乙】${hThree ? hThree.B.join('、') : '（缺）'}`);
+check('⑳ 验收②：`:10808` 的三格全填出来（住丁组、替 docs/STATUS.md §10.4）',
+  Boolean(hThree && hThree.F.title === '丁组 · 谁裁的' && hThree.B.join('、') === 'docs/STATUS.md §10.4'),
+  hThree ? `细=${hThree.F.title}／乙=${hThree.B.join('、') || '（空）'}` : '缺这一行');
+/* ④ 四级计数 */
+const byCoarse = new Map();
+three.forEach((r) => { if (!byCoarse.has(r.A.title)) byCoarse.set(r.A.title, []); byCoarse.get(r.A.title).push(r.n); });
+const byFine = new Map();
+three.forEach((r) => { if (!byFine.has(r.F.title)) byFine.set(r.F.title, []); byFine.get(r.F.title).push(r); });
+const coarseSum = [...byCoarse.values()].reduce((a, v) => a + v.length, 0);
+const fineSum = [...byFine.values()].reduce((a, v) => a + v.length, 0);
+info(`★ 验收④：粗组数 = **${byCoarse.size}**／细组数 = **${byFine.size}**／粗组计数之和 = **${coarseSum}**／细组计数之和 = **${fineSum}**`);
+check('⑳ 验收④：两个和都必须等于 11',
+  coarseSum === D_ctx.length && fineSum === D_ctx.length, `${coarseSum} / ${fineSum} vs ${D_ctx.length}`);
+/* ③ 粗化关系 */
+const coarseOfFine = new Map();
+byFine.forEach((rows, k) => coarseOfFine.set(k, new Set(rows.map((r) => r.A.title))));
+const RESID = '（无细组）';
+const namedFine = [...byFine.keys()].filter((k) => k !== RESID);
+const crossingNamed = namedFine.filter((k) => coarseOfFine.get(k).size > 1);
+const residualRows = byFine.get(RESID) || [];
+const residualCoarse = coarseOfFine.get(RESID) || new Set();
+info('★ 验收③：每一个细组必须完整落在某个粗组里（一级是另一级的粗化）—— 逐组：');
+[...byFine.entries()].forEach(([k, rows]) => info(`   ${k}　→ ${rows.length} 行，落在 ${coarseOfFine.get(k).size} 个粗组里${coarseOfFine.get(k).size > 1 ? '　★★ 跨粗组！' : ''}`));
+check('⑳ 验收③：每一个细组必须完整落在某个粗组里（一级是另一级的粗化）',
+  crossingNamed.length === 0 && residualRows.length === 0,
+  `具名细组跨粗组的 = ${crossingNamed.length} 个；残余类【${RESID}】= ${residualRows.length} 行、跨 ${residualCoarse.size} 个粗组`);
+check('⑳ 验收③ 的细读：把残余类排除之后，粗化关系成立（★ 它红了才是解析的问题）',
+  crossingNamed.length === 0,
+  `具名细组 ${namedFine.length} 个，跨粗组的 ${crossingNamed.length} 个`);
+/* 特别档 */
+const boldAll = auditLines.map((l, i) => ({ n: i + 1, l })).filter((x) => BOLD_RE.test(x.l));
+const boldGroup = boldAll.filter((x) => GRPX_RE.test(x.l));
+const grpNoDot = boldGroup.filter((x) => !GRP_RE.test(x.l));
+const boldNonGroup = boldAll.filter((x) => !GRPX_RE.test(x.l));
+info(`★ 特别档 A【细组跨两个粗组】：具名细组跨粗组 = **${crossingNamed.length}** 个`
+  + `${crossingNamed.length ? '' : '（0 —— 而它不是「没有」，是【残余类】把 ③ 弄红的）'}；残余类【${RESID}】= ${residualRows.length} 行、跨 **${residualCoarse.size}** 个粗组`);
+info(`★ 特别档 B【\`**…**\` 形状的加粗行不是组标签】：纯加粗行 ${boldAll.length} 条，其中组形（\`组…**\`）${boldGroup.length} 条、**非组形 ${boldNonGroup.length} 条**`);
+info(`★ 而组形里【没有 \` · \`】的有 **${grpNoDot.length}** 条 ⇒ ★ 严格正则（\`组 · \`）会把它们放过去，宽松正则（\`组…\`）会把它们收进来 —— 逐条：`);
+grpNoDot.forEach((x) => info(`   :${x.n} ${x.l.slice(0, 110)}`));
+const grpPrefix = (s) => (s.match(/^([^*]+?组) · /) || [])[1] || null;
+const pc = new Map();
+namedFine.forEach((k) => { const p = grpPrefix(k); if (p) pc.set(p, (pc.get(p) || 0) + 1); });
+info(`★ 而【组名前缀】不是唯一的：这 11 行用到的前缀 ${[...pc.entries()].map(([k, v]) => `${k}×${v}`).join('、') || '（无）'} ⇒ ★ 细组的身份必须是**整行**，不是前缀。`);
+
+
 /* ★★ 把【分界】本身打印出来。
    这一问的答案不是「这条规则判对了多少行」，是【它把哪些行判到了另一边】——
    只有把那些行列出来，这条边界才是可以被别人反驳的。
