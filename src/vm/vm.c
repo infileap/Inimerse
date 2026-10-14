@@ -3155,7 +3155,6 @@ static void vm_execute_thread(VmThread *t) {
         case OP_MAKE_FUNC: goto L_MAKE_FUNC;
         case OP_CALL_VALUE: goto L_CALL_VALUE;
         case OP_LOAD_CAPTURE: goto L_LOAD_CAPTURE;
-        case OP_STORE_CAPTURE: goto L_STORE_CAPTURE;
         case OP_RETURN: goto L_RETURN;
         case OP_IS_NIL: goto L_IS_NIL;
         case OP_THREAD_START: goto L_THREAD_START;
@@ -3995,10 +3994,6 @@ static void vm_execute_thread(VmThread *t) {
                 continue;
             }
             value_assign(&R[ins.r1], im_closure_env_get(t->closure_env, (size_t)ins.r2)); continue;
-        }
-L_STORE_CAPTURE: {
-            if (t->closure_env && ins.r2 >= 0 && (size_t)ins.r2 < im_closure_env_size(t->closure_env)) im_closure_env_set(t->closure_env, (size_t)ins.r2, &R[ins.r1]);
-            continue;
         }
 L_MAKE_FUNC: {
             ImClosureEnv *env = im_closure_env_new((size_t)ins.r3);
