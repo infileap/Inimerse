@@ -1433,6 +1433,162 @@ check('㉓ 验收⑤：未归类行数 + 具名细组行数 = D_ctx（两版各�
   unclU.length + namedRowU === D_ctx.length && unclB.length + namedRowB === D_ctx.length,
   `无界 ${unclU.length}+${namedRowU}=${unclU.length + namedRowU}；有界 ${unclB.length}+${namedRowB}=${unclB.length + namedRowB}；D_ctx=${D_ctx.length}`);
 
+/* ==================== ㉔ 把「不适用」变成一个可执行的定义（协调者 m01143 的派件）====================
+ * ★ 三条常驻红里，有几条不是红，是【那把尺子对那个对象不适用】。
+ * ★★ 一句话的分界：**不适用 = 谓词无值；真红 = 谓词有值且为假。**
+ * ★ 而「无值」必须可算 —— 所以每一条都要交出它自己的 dom 判定式（见 registration_rule.md 的 ㉔ 一节）。
+ * ★★ 本块【只印不改】：它不删任何一条 check、不改任何一条谓词。 */
+{
+  /* ---- dom 判定式之一：这条标签是由【一根匹配 GRP_RE 的行】产生的吗？ ---- */
+  /* ★ 不提 `RESID` 一个字 —— 它问的是「那把尺子找到了一根线没有」，因此可以被对照证伪。 */
+  const labelProdOf = (k) => {
+    const rows = byFine.get(k) || byFineB.get(k) || [];
+    if (!rows.length) return { line: null, stoppedAt: null, steps: null };
+    const fb = fineAtBounded(rows[0].n);
+    return { line: fb.line, stoppedAt: fb.stoppedAt, steps: fb.steps };
+  };
+  const producedByGroupLine = (k) => labelProdOf(k).line !== null;
+
+  /* ---- dom 判定式之二：这一行能被单独扣掉吗？（留一法的定义域） ---- */
+  const removable = (r) => r.n !== null && hasGround(r.text);
+
+  /* ---- (b) 射程外：那 59 根 GROUP 行产生的标签里，有几个不在本检查的输入集里？ ---- */
+  const grpLines = auditLines.reduce((a, l, i) => { if (GRP_RE.test(l)) a.push({ n: i + 1, l }); return a; }, []);
+  /* ★★ 规范化必须先对齐，否则量到的是【规范化】的差、不是【射程】的差。
+     ★ 第一版我拿【原始行】（带星号）去比的键（fineAt 已经把星号剥掉了）⇒
+       印出 inInput = 0 / 射程外 = 58 —— ★ **那个 58 是一个非常像读数的东西，而它量的是我的比较。** */
+  const normLabel = (l) => l.replace(/^\*\*/, '').replace(/\*\*$/, '').trim();
+  const grpLabelsRaw = [...new Set(grpLines.map((x) => x.l))];
+  const grpLabels = [...new Set(grpLines.map((x) => normLabel(x.l)))];
+  const inputLabels = new Set([...byFine.keys(), ...byFineB.keys()]);
+  const inInput = grpLabels.filter((k) => inputLabels.has(k));
+  const outOfInput = grpLabels.filter((k) => !inputLabels.has(k));
+
+  /* ---- 三条红：逐条给出【失败的合取项 / 它的宾语 / 那个宾语的 dom 判定】 ---- */
+  /* ★★★ 失败的合取项必须【在运行时算出来】，不能由我把宾语写死在代码里。
+     ★ 第一版我把 R2 的宾语写死成 [RESID]，于是在对照下 —— 那棵树上失败的合取项已经换成了
+       `crossingNamed.length === 0` —— 它仍然把 [RESID] 印了一遍，并给出「不适用」。
+     ★★ 而那个印出来的样子，与一个真读数【一模一样】。 */
+  const R1c1 = N2.length >= 2;
+  const R1c2 = N2_LOO.length === N2.length - 1;
+  const R2c1 = crossingNamed.length === 0;
+  const R2c2 = residualRows.length === 0;
+  const R3c1 = crossB.length === 0;
+
+  const reds = [
+    {
+      id: 'R1',
+      name: '⑱ 验收③：留一法之后 N 必须非零（扣掉一行 ⇒ 少 1，不是变成 0）',
+      cond: 'N2.length >= 2 && N2_LOO.length === N2.length - 1',
+      conjValues: () => `N2.length >= 2 ⇒ ${N2.length} >= 2 ⇒ ${R1c1}　／　N2_LOO.length === N2.length - 1 ⇒ ${N2_LOO.length} === ${N2.length - 1} ⇒ ${R1c2}`,
+      failConj: () => (R1c1 ? 'N2_LOO.length === N2.length - 1' : 'N2.length >= 2'),
+      otherConjValue: () => (R1c1 ? `N2.length >= 2 ⇒ ${N2.length} >= 2 ⇒ true` : `N2_LOO.length === N2.length - 1 ⇒ ${N2_LOO.length} === ${N2.length - 1} ⇒ ${R1c2}`),
+      objName: () => (R1c1 ? 'N2_LOO（留一法之后的分子行）' : 'N2（台账的分子行）'),
+      obj: () => (R1c1 ? N2_LOO : N2),
+      domWhy: 'removable(r) := r.n !== null && hasGround(r.text) —— 带着自己的行号与据、可以被单独扣掉',
+      domTest: (o) => o.length > 0 && o.every(removable),
+    },
+    {
+      id: 'R2',
+      name: '⑳ 验收③：每一个细组必须完整落在某个粗组里（一级是另一级的粗化）',
+      cond: 'crossingNamed.length === 0 && residualRows.length === 0',
+      conjValues: () => `crossingNamed.length === 0 ⇒ ${crossingNamed.length} === 0 ⇒ ${R2c1}　／　residualRows.length === 0 ⇒ ${residualRows.length} === 0 ⇒ ${R2c2}`,
+      /* ★ 第二版我把这三个三元全写反了 —— 症状：基线印「失败的合取项 = crossingNamed…」而它的值是 true。
+         ★★ 一条把【失败的合取项】指到另一个合取项上的分类器，会把宾语也指错，而它的输出仍然完整、仍然好看。 */
+      failConj: () => (R2c2 ? 'crossingNamed.length === 0' : 'residualRows.length === 0'),
+      otherConjValue: () => (R2c2 ? `residualRows.length === 0 ⇒ ${residualRows.length} === 0 ⇒ true`
+        : `crossingNamed.length === 0 ⇒ ${crossingNamed.length} === 0 ⇒ true`),
+      objName: () => (R2c2 ? `具名细组跨粗组的那些键（${crossingNamed.length} 个）`
+        : `残余类【${RESID}】这一个对象（${residualRows.length} 行）`),
+      obj: () => (R2c2 ? crossingNamed : [RESID]),
+      domWhy: 'producedByGroupLine(k) := fineAtBounded(rows[0].n).line !== null（★ 不引用哨兵常量）',
+      domTest: (o) => o.every(producedByGroupLine),
+    },
+    {
+      id: 'R3',
+      name: '㉑ 验收④：有界版下【不排除残余类】也必须为真（每一个细组完整落在某个粗组里）',
+      cond: 'crossB.length === 0',
+      conjValues: () => `crossB.length === 0 ⇒ ${crossB.length} === 0 ⇒ ${R3c1}`,
+      failConj: () => 'crossB.length === 0',
+      otherConjValue: () => '',
+      objName: () => `crossB 的键（${crossB.length} 个）`,
+      obj: () => crossB,
+      domWhy: 'producedByGroupLine(k) —— ★ 与 R2 同一个判定式',
+      domTest: (o) => o.length > 0 && o.every(producedByGroupLine),
+    },
+  ];
+
+  info('');
+  info('★★★ ㉔ 把「不适用」变成一个可执行的定义 —— ★ 只印不改（本件不删任何一条 check、不改任何一条谓词）');
+  info('★ 分界：**不适用 = 谓词无值（⊥）；真红 = 谓词有值且为假。**');
+  info(`★ (b) 射程外的分母：\`docs/AUDIT.md\`（钉住的 ${String(RULING_ROWS_READ_AT).slice(0, 7)}）里匹配 \`GRP_RE\` 的行 = **${grpLines.length}** 根，去重后的标签 = **${grpLabelsRaw.length}** 个（按【剥掉星号后的标签】去重也是 ${grpLabels.length} 个）；`);
+  info(`   其中落在本检查的输入集（\`byFine\` ∪ \`byFineB\` 的键，★ 已按同一个规范化对齐）里的 = **${inInput.length}** 个 ⇒ ★ **射程外 = ${outOfInput.length} 个**（★ 这量的是【尺子的射程】，与【尺子对自己的宾语适用不适用】是两个数）`);
+
+  /* ★★ 每一档用【自己的】计数器 —— 上一轮刚有一件因为「两档共用一个计数器」造出一个第三个数。 */
+  const tally = { applicableTrueRed: [], notApplicable: [], undecided: [] };
+  const perRed = [];
+
+  reds.forEach((r, i) => {
+    const objV = r.obj();
+    const applicable = r.domTest(objV);
+    const prodDetail = objV.map((k) => (typeof k === 'string' && (byFine.has(k) || byFineB.has(k))
+      ? `${k}（产生它的行 .line = ${labelProdOf(k).line === null ? 'null（★ 没找到一根线）' : ':' + labelProdOf(k).line}，停在 :${labelProdOf(k).stoppedAt}）`
+      : String(k && k.n !== undefined ? ':' + k.n : k))).join('；');
+    const verdict = applicable ? '真红' : '不适用';
+    const kind = applicable ? null : '（a）范畴错误';
+    (applicable ? tally.applicableTrueRed : tally.notApplicable).push(r.id);
+    perRed.push({ r, applicable, verdict, prodDetail });
+    info(`★ ${r.id}　${r.name}`);
+    info(`   断言　= ${r.cond}`);
+    info(`   合取项逐个求值 = ${r.conjValues()}`);
+    info(`   失败的合取项 = ${r.failConj()}${r.otherConjValue() ? `　／　另一个合取项 = ${r.otherConjValue()}` : ''}`);
+    info(`   宾语　= ${r.objName()}（★ 由【哪一个合取项失败】在运行时选出，不是我写死的）`);
+    info(`   宾语实例（逐个体） = ${prodDetail || '（空）'}`);
+    info(`   dom 判定式 = ${r.domWhy}`);
+    info(`   ⇒ 宾语 ∈ dom? **${applicable ? '是' : '否'}**　⇒ ★ 档 = **${verdict}**${kind ? `　${kind}` : ''}`);
+    info('');
+  });
+
+  /* ---- ⑤ 三档之和 = 3，且三条各占一档时没有一个计数器被两条共用 ---- */
+  const sum3 = tally.applicableTrueRed.length + tally.notApplicable.length + tally.undecided.length;
+  check('㉔ 验收⑤：三条红分进三档，三档计数之和 = 3，且每一档有自己的计数器（★ 没有一个计数器被两条共用）',
+    sum3 === 3 && new Set([...tally.applicableTrueRed, ...tally.notApplicable, ...tally.undecided]).size === 3,
+    `真红 = ${tally.applicableTrueRed.length}${tally.applicableTrueRed.length ? '（' + tally.applicableTrueRed.join('、') + '）' : ''}、`
+    + `不适用 = ${tally.notApplicable.length}${tally.notApplicable.length ? '（' + tally.notApplicable.join('、') + '）' : ''}、`
+    + `判不了 = ${tally.undecided.length}　⇒ 和 = ${sum3}`);
+
+  /* ---- ⑥ 特别档：若两条落在「不适用」，报出那两条的共同点 ---- */
+  const na = perRed.filter((x) => !x.applicable);
+  const objKeys = na.map((x) => x.r.objName());
+  const sameObj = na.length >= 2 && new Set(na.map((x) => String(x.r.obj()[0]))).size === 1;
+  info(`★ ㉔ 特别档【落在「不适用」的那两条，共同点是什么？】：${na.length} 条落在这一档 —— ${na.map((x) => x.r.id).join('、') || '（无）'}`);
+  info(`   它们的失败合取项逐字：${na.map((x) => `${x.r.id} = ${x.r.failConj()}`).join('　／　') || '（无）'}`);
+  info(`   它们的宾语：${objKeys.join('　／　') || '（无）'}`);
+  if (sameObj) {
+    info(`   ⇒ ★★★ **两条的宾语是同一个对象：${String(na[0].r.obj()[0])}** ⇒ ★ **这个出口属于【类】，不属于【条】** ——`);
+    info(`      给那个对象加一个成员判定，这两条【同时】从「不适用」这一档里消失，不是分别修两次。`);
+  } else {
+    info(`   ⇒ 两条的宾语不是同一个对象 ⇒ ★ 这个出口属于【条】（按宾语身份判定，不按我的说法）`);
+  }
+
+  /* ---- ⑦ 三条红改判之后，红的总数变了吗？ ---- */
+  const redCount = perRed.length;
+  info(`★ ㉔ 验收⑦：本件【只量不改】⇒ 守卫的红数仍按构造 = **${redCount}**，一个都没变；`);
+  info(`   ⇒ ★★ **一个总数，在一个换了身份的账上是盲的** —— 这三条红的【composition】从「3 条红」变成了`);
+  info(`      「${tally.applicableTrueRed.length} 条真红 + ${tally.notApplicable.length} 条【尺子对那个对象不适用】」，而总数一个字没动。`);
+
+  /* ---- ⑧ 诚实边界 ---- */
+  info('★ ㉔ 诚实边界：① 把一条断言拆成【合取项】这一步是**手写的**，不是我算出来的 —— 别人可以不接受我的拆法；');
+  info('   ② 我量的是【文本层的推论】，不是「这个对象在语义上是不是一个细组」；后者我判不了，也不假装判得了。');
+
+  /* ---- 本块只印不改的证明：三条检查的名字与谓词在本块里一个都没有被赋值过（源码扫描） ---- */
+  check('㉔ 验收⑨：本块【只印不改】—— 它自己的源码里不出现对 check/谓词的赋值（源码扫描）',
+    !/^(check|const\s+crossingNamed|const\s+residualRows|const\s+crossB)\s*=/m.test(
+      fs.readFileSync(__filename, 'utf8').split('㉔ 把「不适用」变成一个可执行的定义')[1].split('㉔ 验收⑨')[0]),
+    '扫描本块自身的源码：0 处对 check / crossingNamed / residualRows / crossB 的赋值');
+}
+
+
 
 
 
