@@ -1283,10 +1283,15 @@ info('★★ ㉒ 两个计数对象【并排印、不相加】（残余类 = 「
 info(`   【具名细组】无界版 ${namedU.length} 个／计数之和 = **${namedU.reduce((a, [, r]) => a + r.length, 0)}** 行　有界版 ${namedB_.length} 个／计数之和 = **${namedB_.reduce((a, [, r]) => a + r.length, 0)}** 行`);
 info(`   【未归类行数】无界版 = **${unclU.length}** 行　有界版 = **${unclB.length}** 行`);
 info(`   ★ 而这两栏【不相加】：具名细组的和 + 未归类行数不是一个【完备的分类】，它是两个不同的计数对象。`);
-check('㉒ 验收②：两个计数对象都印出；★ 而「未归类行数非零」只在【对照没有把它清空】时成立'
-  + ' —— 对照下它必然红（那个对照的目的正是清空它），而那条红不是缺陷的读数',
-  unclU.length > 0 && unclB.length > 0 && namedU.length > 0,
-  `未归类 无界 ${unclU.length} / 有界 ${unclB.length}；具名 无界 ${namedU.length} / 有界 ${namedB_.length}`);
+/* ★★ 协调者 m01044 验收⑤：「非零」从一条【跨对照的检查】变成【基线读数栏里的一个值】。
+ * ★ 理由（上一件我自己量到的）：一条要求某个计数【非零】的检查，如果它的对照的目的正好是把它清零，
+ *   那么它在对照下必然红 —— 而那条红是【射程越过了对照的设计】，不是缺陷。
+ * ★ 处置：这一条从 `check` 降成 `info`（读数栏），它的载荷（那个【非零】）留在这一行里；
+ *   而它原来想守的那件事（两个计数对象是一个【真划分】）由 `㉓ 验收⑤` 那条 check 接着守 ——
+ *   ★ 那条 check 在基线与对照下都不红，因为它的载荷是【划分】，不是【非零】。 */
+info(`★ ㉒ 验收② 读数栏（★ 从 ${'`check`'} 降成 ${'`info`'} —— 它是一条【基线读数】，不是一条跨对照的检查）：`
+  + `　未归类 无界 = **${unclU.length}** / 有界 = **${unclB.length}**；具名 无界 = **${namedU.length}** / 有界 = **${namedB_.length}**`
+  + `　⇒ ★ 这两个计数对象【不相加】，而它们的和 = D_ctx 这件事由 ㉓ 验收⑤ 守着。`);
 /* ③ ④ 的宾语只剩具名细组 —— 改前 / 改后并排报 */
 info(`★ ㉒ 验收③：④ 的宾语（「每一个具名细组完整落在某个粗组里」）——`);
 info(`   【改前】宾语 = 具名细组 + 残余类 ⇒ 无界版：具名跨粗组 ${crossingNamed.length} 个、残余类 ${residualRows.length} 行跨 ${residualCoarse.size} 个粗组 ⇒ **${crossingNamed.length === 0 && residualRows.length === 0 ? '绿' : '红'}**`);
@@ -1306,6 +1311,127 @@ check('㉒ 验收③（有界版）：改后 ④ 在【基线】上转绿，并�
 /* ⑥ 那个空的 every 的恒真性：继续写在报告里，也继续印在这里 */
 info(`★ ㉒ 验收⑥：\`㉑ 验收③\` 在基线上的通过是一个【空的 \`every\`】（0 行 ⇒ \`[].every(...) === true\`）`
   + ` ⇒ ★ 它【按构造不可能失败】，全部信息量在对照那一跑。★ 这条恒真性继续写在报告里，不许以一个绿的姿态过去。`);
+
+/* ★★ ㉓ 把「越界」从布尔变成分布（协调者 m01044 的派件）。
+ * ★ 判据文字先落盘（见 `website/scratch/registration_rule.md` 的「㉓」一节，父提交可证）。
+ * ★ 只印、不换坐标 —— 不动 `headingAt` / `fineAt` / `fineAtBounded` / `RULING_ROWS_READ_AT` / 条件 1 / 条件 3。
+ * ★ 本件要回答的：上一件在【对照】上量到了 4 次越界，然后我把它推广到了基线（那一步被上一件自己证伪了）。
+ *   本件把「越界」从一个布尔变成一个【分布】—— 每一次越界走多少步、越过哪几根标题、差是多少。 */
+/** 只印、不改：给无界版补一份【计数版】走法。
+ *  ★ 它与 `fineAt` 是两份代码 ⇒ 本件要求它们逐字给出同一个 title（下面有一条检查盯这件事）——
+ *  否则我就是在用一个【看起来一样的】尺子，替掉原来那把。 */
+const fineAtCounted = (n) => {
+  let steps = 0;
+  const crossed = [];
+  for (let i = n - 2; i >= 0; i--) {
+    steps++;
+    if (/^#{2,4}\s/.test(auditLines[i])) crossed.push(i + 1);
+    if (GRP_RE.test(auditLines[i])) {
+      return {
+        line: i + 1,
+        title: auditLines[i].replace(/^\*\*/, '').replace(/\*\*$/, '').trim(),
+        steps, crossed,
+      };
+    }
+  }
+  return { line: null, title: RESID, steps, crossed };
+};
+const five = D_ctx.map((x) => {
+  const A = headingAt(x.n);
+  const Fc = fineAtCounted(x.n);
+  const Fb = fineAtBounded(x.n);
+  const byA = Fc.line !== null && Fb.stoppedAt !== null && Fc.line < Fb.stoppedAt;
+  const byB = Fb.title === RESID && Fc.title !== RESID;
+  return { n: x.n, A, Fc, Fb, byA, byB };
+});
+/* ①′ 计量版与 `fineAt` 必须逐字同 title —— 这是本件唯一的【关于尺子自己】的检查 */
+const countedMismatch = five.filter((r) => r.Fc.title !== fineAt(r.n).title);
+check('㉓ 验收①：计数版 `fineAtCounted` 与 `fineAt` 逐字给出同一个 title（★ 否则我换掉的是尺子）',
+  countedMismatch.length === 0,
+  `不一致的 ${countedMismatch.length} / ${D_ctx.length} 行${countedMismatch.length ? `：${countedMismatch.map((r) => `:${r.n}`).join('、')}` : ''}`);
+/* ② 两条定义必须同义 —— 不一致就是本件的头条 */
+const disagree = five.filter((r) => r.byA !== r.byB);
+check('㉓ 验收②：定义 A（无界认领的标签在有界停下的那根标题之上）与定义 B（有界说没有而无界说有）给出同一个集合',
+  disagree.length === 0,
+  disagree.length ? `★ 两定义不一致的 ${disagree.length} 行：${disagree.map((r) => `:${r.n}`).join('、')}` : '两条定义同义');
+const overruns = five.filter((r) => r.byB);
+/* ★★★ 读数一出来就暴露了我自己这个栏的一个射程缺陷：
+ *   【找到】与【未找到】是两种走法 —— 前者的 steps 是一个【局部量】，后者的 steps 等于【整份文件】。
+ *   ★ 我原来把它们印成同一个形状的数（`:6177 无界步数 6176`），于是「走到文件头」读起来像「走了 6176 步」。
+ *   ★ 处置：两种走法印成两种形状，并【只把【找到】的那些行放进那个差里】—— 差只对【越过一根标签之后】才有意义。 */
+const foundRows = five.filter((r) => r.Fc.line !== null);
+const notFoundRows = five.filter((r) => r.Fc.line === null);
+info(`★★ ㉓ 走法二态（★ 我原来把它印成一个数）：【找到一个具名标签】= **${foundRows.length}** 行；`
+  + `【一路走到文件头也没找到】= **${notFoundRows.length}** 行　⇒ 和 = ${foundRows.length + notFoundRows.length} / D_ctx = ${D_ctx.length}`);
+info('★ 逐行三格【步数（无界 / 有界）・越过的标题数・差】+ 它越过的那几根标题（行号 + 原文）：');
+five.forEach((r) => {
+  if (r.Fc.line === null) {
+    info(`   :${r.n}　【无界】★ 未找到（一路走到文件头，steps 会等于 ${r.n - 1} —— ★ 那不是步数，是文件高度）`
+      + `　【有界】${String(r.Fb.steps).padStart(3)} 步${r.Fb.stoppedAt ? ` 停在 :${r.Fb.stoppedAt}` : ''}`
+      + `　【越过标题数】不适用　【差】不适用　【越界?】否`);
+    return;
+  }
+  const d = r.Fc.steps - r.Fc.crossed.length;
+  info(`   :${r.n}　【步数】无界 ${String(r.Fc.steps).padStart(3)} / 有界 ${String(r.Fb.steps).padStart(3)}`
+    + `　【越过标题数】${r.Fc.crossed.length}　【差】${d}　【越界?】${r.byB ? '★是' : '否'}`);
+  /* ★★★ 明细必须给它一个上界：对照下有一行越过了 197 根标题，逐根印会把这份报告变成一片 1503 行的洪泛
+   *   （基线 826 行 → 对照 1503 行，+677 行全部来自这里）—— ★ 而它淹掉的正是它要解释的那三行。
+   *   ★ 处置：印【路径的形状】而不是每一根 —— 最靠近本行的 2 根 + 最靠近命中标签的 1 根 + 总数。
+   *   这是【只印、不换坐标】：它保留了「越过哪几根」这个问题的可反驳性，而不让报告的长度成为一个由语料决定的量。 */
+  const cr = r.Fc.crossed;
+  const head = cr.slice(-2);
+  const tail = cr.slice(0, 1);
+  if (cr.length === 0) {
+    info('        ★ 越过的标题 = 0 根（★ 这就是「0 次越界」的逐行形态 —— 一个 0 根的明细不印首末，它的首末是空的、读起来像「取不到」）');
+    return;
+  }
+  info(`        ★ 越过的标题共 ${cr.length} 根：最靠近本行的 2 根 `
+    + head.map((h) => `:${h}「${auditLines[h - 1].trim().slice(0, 60)}」`).join(' / ')
+    + `　最靠近命中标签的 1 根 ` + tail.map((h) => `:${h}「${auditLines[h - 1].trim().slice(0, 60)}」`).join(' / ')
+    + (cr.length > 3 ? `　（其余 ${cr.length - 3} 根省略 —— ★ 它们的行号区间是 :${cr[1]}..:${cr[cr.length - 3]}）` : ''));
+});
+/* ★ 一个真划分 + 它的载荷：差【只在找到的行上】才有意义 */
+check('㉓ 验收⑥：【找到】与【未找到】是一个真划分（不许把「走到文件头」算成一个步数）',
+  foundRows.length + notFoundRows.length === D_ctx.length
+  && notFoundRows.every((r) => r.Fc.steps === r.n - 1)
+  && foundRows.every((r) => r.Fc.steps < r.n - 1),
+  `找到 ${foundRows.length} + 未找到 ${notFoundRows.length} = ${foundRows.length + notFoundRows.length} / ${D_ctx.length}`
+  + `；★ 未找到的行里 steps === n−1 的 ${notFoundRows.filter((r) => r.Fc.steps === r.n - 1).length} / ${notFoundRows.length}（这一半按构造恒真）`);
+/* ★ 「步数 ≥ 越过的标题数」—— 按构造恒真，它的绿不是读数 */
+const stepGe = foundRows.filter((r) => r.Fc.steps >= r.Fc.crossed.length);
+check('㉓ 验收④：步数 ≥ 越过的标题数（★ 按构造恒真 —— 它的绿【不是】读数，载荷全在下面那个差上）',
+  stepGe.length === foundRows.length,
+  `${stepGe.length} / ${foundRows.length} 行满足（★ 构造上必然：每越过一根标题至少走一步）`);
+const diffs = [...new Set(foundRows.map((r) => r.Fc.steps - r.Fc.crossed.length))].sort((a, b) => a - b);
+info(`★ 验收⑤：那个【差】的分布（★ 只在【找到】的 ${foundRows.length} 行上取）= {${diffs.join(', ')}}`
+  + ` ⇒ ${diffs.length === 1
+    ? '差恒等于一个数 ⇒ 关系是【相等】（步数 = 越过标题数 + 那个常数）'
+    : '★ 差逐行不同 ⇒ 关系是【包含】而不是【相等】 —— ★ 而「无关」与「包含」在只印两个数的时候长得一样，把它们分开的就是这个差'}`);
+/* ★ 一条【有载荷】的检查：基线上【找到】的行里，越过的标题数必须是 0（= 「基线 0 次越界」的逐行形态） */
+const foundCrossed = foundRows.filter((r) => r.Fc.crossed.length > 0);
+check('㉓ 验收③（逐行形态）：基线上每一次【找到】都没有越过任何标题（对照下这一条必须变红）',
+  foundCrossed.length === 0,
+  foundCrossed.length ? `★ 越过的 ${foundCrossed.length} 行：${foundCrossed.map((r) => `:${r.n}`).join('、')}`
+    : `基线：${foundRows.length} 次【找到】，0 次越过（★ 对照下这一条必须变红 —— 那就是它的载荷）`);
+/* ③ ★ 「基线 0 次」是什么零 —— 必须给出【判据允许它】的证据，否则它是尺子的性质，不是语料的性质 */
+const stoppedAtHeading = five.filter((r) => r.Fb.stoppedAt !== null);
+info(`★★ 验收③：基线上越界 = **${overruns.length}** 次；★ 而这是【什么零】？—— `
+  + `有界版停在标题上的行 = ${stoppedAtHeading.length} 行，其中无界版仍然拿不到具名标签的 = `
+  + `${stoppedAtHeading.filter((r) => r.Fc.title === RESID).length} 行`);
+info(`   ⇒ ★ 判据【允许】这 ${stoppedAtHeading.length} 行越界（它们的上方的确有一根标题），而它们一次都没有越 —— `
+  + `所以这个零是【语料】的性质；★ 而它的这一半只有在【对照下同一个数变成 4】时才是一个读数。`);
+/* ⑧ 协调者追加：两个分母必须【并排印】，不许合成一个数 */
+info('★★ ㉓ 验收⑧：两个分母【并排印、不许合成一个数】（它们不是同一个定义换了个名字）：');
+info(`   【分母一 D_all（带据）】= **${D_all.length}** 行　【分母二 D_ctx（带据 ∧ 在裁）】= **${D_ctx.length}** 行　【差】= **${D_all.length - D_ctx.length}** 行`);
+/* ⑤ 「非零」的新形态：一条 check（两版都不红）+ 一条 info（读数栏里的值） */
+const namedRowU = namedU.reduce((a, [, r]) => a + r.length, 0);
+const namedRowB = namedB_.reduce((a, [, r]) => a + r.length, 0);
+info(`★ ㉓ 验收⑤ 读数栏（【不是检查】—— 未归类行数是基线的一个值，不许被当成一条跨对照的检查）：`
+  + `　未归类行数：无界 = **${unclU.length}** / 有界 = **${unclB.length}**`);
+check('㉓ 验收⑤：未归类行数 + 具名细组行数 = D_ctx（两版各一个【真划分】）'
+  + ' —— ★ 这一条在基线与对照下都不红，因为它的载荷是【划分】、不是【非零】',
+  unclU.length + namedRowU === D_ctx.length && unclB.length + namedRowB === D_ctx.length,
+  `无界 ${unclU.length}+${namedRowU}=${unclU.length + namedRowU}；有界 ${unclB.length}+${namedRowB}=${unclB.length + namedRowB}；D_ctx=${D_ctx.length}`);
 
 
 
