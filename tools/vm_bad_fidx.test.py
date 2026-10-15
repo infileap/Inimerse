@@ -20,11 +20,44 @@ import sys
 import tempfile
 from pathlib import Path
 
-# OP_CALL_FUNC = 34, OP_HALT = 33 (src/compiler/bytecode.h:8-23).  `funcs` is
-# empty, so fidx = 999 is out of range on every axis.
-PROBE = ('bc = {"code": [[34, 999, 0, 0], [33, 0, 0, 0]], '
-         '"strings": [], "floats": [], "funcs": []}\n'
-         'say vm_exec(bc)\n')
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from opcode_literals import HEADER, parse_enum  # noqa: E402
+
+
+def opcode(name):
+    """The number `src/compiler/bytecode.h` gives this member *now*.
+
+    This used to be two literals with their values in a comment, which meant
+    the probe borrowed its meaning from the enum as it stood the day the
+    comment was written.  Nothing re-checked the loan: deleting a member in
+    the middle of that enum moves every number after it, and this probe then
+    pointed at a different instruction -- so the test that exists to prove
+    `L_CALL_FUNC` refuses an out-of-range index stopped calling `L_CALL_FUNC`
+    at all, and reported the guard as broken instead of itself as stale.
+
+    Reading the header here is the whole guard.  If the header cannot be read
+    the run fails rather than falling back to a constant: a probe that cannot
+    see what it is probing is not a passing probe.
+    """
+    header = Path(__file__).resolve().parent.parent / HEADER
+    if not header.exists():
+        raise SystemExit(f'vm bad fidx: cannot read {HEADER}; refusing to fall '
+                         f'back to a hard-coded opcode number (an unmeasurable '
+                         f'tree is not a passing one)')
+    parsed = parse_enum(header.read_text(encoding='utf-8', errors='replace'))
+    if parsed is None:
+        raise SystemExit(f'vm bad fidx: {HEADER} does not parse as an opcode enum')
+    table = parsed[0]
+    if name not in table:
+        raise SystemExit(f'vm bad fidx: {HEADER} no longer declares {name}, so '
+                         f'this probe has nothing to point at')
+    return table[name]
+
+
+# `funcs` is empty, so fidx = 999 is out of range on every axis.
+PROBE = ('bc = {{"code": [[{}, 999, 0, 0], [{}, 0, 0, 0]], '
+         '"strings": [], "floats": [], "funcs": []}}\n'
+         'say vm_exec(bc)\n').format(opcode('OP_CALL_FUNC'), opcode('OP_HALT'))
 
 # The same shape with a real function: it must keep working, so that "the VM
 # refuses everything" cannot pass this test.
