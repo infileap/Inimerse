@@ -116,6 +116,10 @@ HONEST BOUNDARIES
 Exit status: 0 when no CTest-registered file borrows an opcode number, 1 when
 one does, 2 when the header cannot be read (an unmeasurable tree is not a
 passing one).
+
+--ref resolves the enum against a named revision instead of the working tree and
+reports the positions whose literal means a different member there.  It is off
+by default, and without it every line below is unchanged.
 """
 import argparse
 import re
@@ -223,16 +227,40 @@ def main():
     ap.add_argument('--only', action='append', default=None,
                     help='classify only these paths (repeatable); use to run '
                          'the two negative controls against the same header')
+    ap.add_argument('--ref', default=None, metavar='REV',
+                    help='resolve the enum against REV instead of the working '
+                         'tree, and report the positions whose literal means a '
+                         'different member there (default: off, output '
+                         'unchanged)')
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
-    header_text = read(root, HEADER)
-    if header_text is None:
+    head_text = read(root, HEADER)
+    if head_text is None:
         print(f'opcode_literals: cannot read {HEADER} under {root}', file=sys.stderr)
         return 2
+    head_parsed = parse_enum(head_text)
+    if head_parsed is None:
+        print(f'opcode_literals: {HEADER} does not parse as an opcode enum', file=sys.stderr)
+        return 2
+    _head_name_to_value, head_value_to_name = head_parsed
+
+    # --ref only moves where the enum is read from.  The corpus is still the
+    # working tree: the question is what a number written here means there.
+    if args.ref:
+        r = subprocess.run(['git', 'show', f'{args.ref}:{HEADER}'], cwd=root,
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f'opcode_literals: {args.ref} has no {HEADER} '
+                  f'(an unmeasurable tree is not a passing one)', file=sys.stderr)
+            return 2
+        header_text = r.stdout
+    else:
+        header_text = head_text
     parsed = parse_enum(header_text)
     if parsed is None:
-        print(f'opcode_literals: {HEADER} does not parse as an opcode enum', file=sys.stderr)
+        print(f'opcode_literals: {HEADER} does not parse as an opcode enum '
+              f'on {args.ref}', file=sys.stderr)
         return 2
     name_to_value, value_to_name = parsed
 
@@ -278,7 +306,8 @@ def main():
                                   'registered': Path(rel).name in registered,
                                   'reads_header': reads})
 
-    print(f'opcode_literals: header {HEADER} -> {len(name_to_value)} member(s)')
+    print(f'opcode_literals: header {HEADER} -> {len(name_to_value)} member(s)'
+          f'{f"  (read from {args.ref})" if args.ref else ""}')
     print()
 
     print(f'D1  written form: {len(written)} position(s) in '
@@ -344,6 +373,22 @@ def main():
           f'and so report no positions at all')
     for f in derived_files:
         print(f'    {f}')
+    moved = []
+    if args.ref:
+        moved = [r for r in positions
+                 if value_to_name.get(r['literal'])
+                 != head_value_to_name.get(r['literal'])]
+        print(f'D5  positions whose literal means a different member on '
+              f'{args.ref}: {len(moved)} of {len(positions)}')
+        for r in sorted(moved, key=lambda r: (r['file'], r['line'], r['literal'])):
+            print(f'    {r["file"]}:{r["line"]}  literal {r["literal"]:>3}'
+                  f'  -> {value_to_name.get(r["literal"], "<not a member>")} '
+                  f'on {args.ref}'
+                  f'   -> {head_value_to_name.get(r["literal"], "<not a member>")}'
+                  f' on the working tree'
+                  f'{"  [CTest-registered]" if r["registered"] else ""}')
+        print()
+
     print(f'verdict: {len(running)} borrowed opcode number(s) inside an '
           f'add_test( )-registered file.')
     if running:
@@ -351,7 +396,12 @@ def main():
         print('  does not pin the numbering changes what they mean, silently.')
         for r in running:
             print(f'    {r["file"]}:{r["line"]}  literal {r["literal"]}')
-    return 1 if running else 0
+    if moved:
+        print(f'  And {len(moved)} of them mean a different member on {args.ref}:')
+        print('  a number read off one tree and used as if it were this one.')
+        for r in sorted(moved, key=lambda r: (r['file'], r['line'], r['literal'])):
+            print(f'    {r["file"]}:{r["line"]}  literal {r["literal"]}')
+    return 1 if (running or moved) else 0
 
 
 if __name__ == '__main__':
