@@ -764,27 +764,52 @@ static void strpool_grow(VM *vm, struct StrPool *p) {
     p->mask = nmask;
 }
 
-const char *vm_intern(VM *vm, const char *s) {
+/* The str_pool critical section, without taking the lock: the caller is already
+ * inside it -- it holds global_lock whenever the pool is contended at all.
+ * `vm_intern` is the locking wrapper.
+ *
+ * Two entry points rather than one because three callers already hold
+ * global_lock for other reasons (vm_dict_get, L_INDEX_GET's dict branch, and --
+ * after the create loops moved to global_lock -- L_STORE_GLOBAL, L_BIND and
+ * vm_throw's var_idx arm).  For them the re-take was a self-deadlock on POSIX,
+ * where the VM mutex is NON-recursive (src/platform/platform.c:47); Windows'
+ * InitializeCriticalSection is re-entrant, which is why the defect was invisible
+ * there.
+ *
+ * contract: the caller holds global_lock if (and only if) it is in use, i.e. if
+ * (vm->active_threads > 1).  A caller that gates its own VM_LOCK on that same
+ * predicate may call this either way. */
+const char *vm_intern_locked(VM *vm, const char *s) {
     if (!s) return NULL;
     struct StrPool *p = vm->str_pool;
     if (!p) return NULL;
-    int need_lock = (vm->active_threads > 1);
-    if (need_lock) VM_LOCK(vm);
-    if (p->count >= VM_STR_POOL_LIMIT) { if (need_lock) VM_UNLOCK(vm); return NULL; }  /* 锟斤拷锟斤拷:锟斤拷锟矫凤拷锟斤拷锟斤�?strdup */
+    if (p->count >= VM_STR_POOL_LIMIT) return NULL;  /* caller must strdup */
     if (p->count * 2 >= p->cap) strpool_grow(vm, p);
     int i = (int)(fnv1a(s) & p->mask);
     while (p->slots[i]) {
-        if (strcmp(p->slots[i], s) == 0) { if (need_lock) VM_UNLOCK(vm); return p->slots[i]; }
+        if (strcmp(p->slots[i], s) == 0) return p->slots[i];
         i = (i + 1) & p->mask;
     }
     char *dup = strdup(s);
     p->slots[i] = dup;
     p->count++;
     vm->used_mem += (double)strlen(dup) + 1.0;
-    int over = (vm->limit_mem > 0.0 && vm->used_mem > vm->limit_mem);
-    if (need_lock) VM_UNLOCK(vm);
-    if (over) limit_abort(vm, "memory", vm->used_mem, vm->limit_mem);
+    /* limit_abort takes no locks of its own (flags + fprintf only), so it is safe
+       to call inside the critical section -- and it cannot be deferred here,
+       because this function does not own the unlock. */
+    if (vm->limit_mem > 0.0 && vm->used_mem > vm->limit_mem)
+        limit_abort(vm, "memory", vm->used_mem, vm->limit_mem);
     return dup;
+}
+
+const char *vm_intern(VM *vm, const char *s) {
+    if (!s) return NULL;
+    if (!vm->str_pool) return NULL;
+    int need_lock = (vm->active_threads > 1);
+    if (need_lock) VM_LOCK(vm);
+    const char *r = vm_intern_locked(vm, s);
+    if (need_lock) VM_UNLOCK(vm);
+    return r;
 }
 
 /* The single door to the array/dict pool: 71 call sites in src/ go through it,
@@ -964,7 +989,7 @@ Value vm_array_get(VM *vm, int idx, int i) {
     if (need_lock) VM_LOCK(vm);
     value_copy(&out, &vm_pool_slot(vm, idx)->items[i]);
     if (out.type == VAL_STRING && out.sval && out.ival != 1) {
-        const char *np = vm_intern(vm, out.sval);
+        const char *np = vm_intern_locked(vm, out.sval);
         if (np) { free(out.sval); out.sval = (char*)np; out.ival = 1; }
     }
     if (need_lock) VM_UNLOCK(vm);
@@ -1121,7 +1146,7 @@ Value vm_dict_get(VM *vm, int aidx, const Value *key) {
            interning is unavailable (pool limit) or the caller later frees it. */
         value_copy(&out, &a->items[i + 1]);
         if (out.type == VAL_STRING && out.sval && out.ival != 1) {
-            const char *np = vm_intern(vm, out.sval);
+            const char *np = vm_intern_locked(vm, out.sval);
             if (np) { free(out.sval); out.sval = (char*)np; out.ival = 1; }
         }
     }
@@ -1363,11 +1388,12 @@ extern void record_save_to_file(VM *vm, const char *path);
 
 /* ---------- dynamic globals ---------- */
 /* grow the globals + global_bound arrays to fit index `need` (0-based); zero-fills new slots.
-   Must be called with VM_LOCK held while other threads may be running (L_STORE_GLOBAL / L_BIND / vm_throw). */
+   Must be called with VM_LOCK (global_lock) held while other threads may be running.
+   Callers: L_STORE_GLOBAL / L_BIND / vm_throw (bytecode) and builtin_atomic_add /
+   builtin_atomic_set / posix_atomic_find (builtins) -- six sites, all holding global_lock.
+   Must NOT be called while holding a shard: it takes all VM_GLOBAL_SHARDS of them, so
+   shard -> (all shards) is a cycle.  Lock order: global_lock -> shards, never the reverse. */
 void vm_global_grow(VM *vm, int need) {
-    /* 鎵╁绉诲姩 globals 鏁扮粍鎸囬拡锛岄』鐙崰鍏ㄩ儴 16 鎶婂垎鐗囬攣�?
-       璋冪敤鏂瑰繀椤诲厛閲婃斁鑷繁鐨勫垎鐗囷紙閬垮厤浜ゅ弶绛夊緟姝婚攣锛夛紝grow 鍚庨噸鍙栥€?
-       global_locks[0] 鍒ょ┖锛歷m_init 鏃╂湡锛堥攣鍒濆鍖栧墠锛夎皟鐢ㄦ椂淇濇寔鏃犻攣�?*/
     if (need < 0) need = 0;
     if (need < vm->globalCap) return;
     if (vm->active_threads > 1 && vm->global_locks[0]) {
@@ -2535,10 +2561,13 @@ static void vm_throw(VM *vm, VmThread *t, Value *err) {
         t->sp = f->sp;
         t->base = f->base;
         if (f->var_idx >= 0) {
-            im_mutex_lock((ImMutex*)VM_GSHARD(vm, f->var_idx));
-            im_mutex_unlock((ImMutex*)VM_GSHARD(vm, f->var_idx));
-            vm_global_grow(vm, f->var_idx);   /* 鐙崰鍏ㄩ儴閿佹墿瀹癸紙姝ゆ椂鏈寔浠讳綍鍒嗙墖锛?*/
-            im_mutex_lock((ImMutex*)VM_GSHARD(vm, f->var_idx));
+            /* Same reason as L_STORE_GLOBAL / L_BIND: the write covers the run
+               [vm->globalCount, f->var_idx], which one shard cannot guard.  Take
+               global_lock (order: global_lock -> shards). */
+            VM_LOCK(vm);
+            if (f->var_idx >= vm->globalCap) {
+                vm_global_grow(vm, f->var_idx);   /* takes all 16 shards; nothing else is held */
+            }
             if (f->var_idx >= vm->globalCount) {
                 for (int i = vm->globalCount; i <= f->var_idx; i++) {
                     vm->globals[i].name = NULL;
@@ -2549,10 +2578,10 @@ static void vm_throw(VM *vm, VmThread *t, Value *err) {
             value_assign(&vm->globals[f->var_idx].val, err);
             Value *stored = &vm->globals[f->var_idx].val;
             if (stored->type == VAL_STRING && stored->sval && stored->ival != 1) {
-                const char *np = vm_intern(vm, stored->sval);
+                const char *np = vm_intern_locked(vm, stored->sval);
                 if (np) { free(stored->sval); stored->sval = (char*)np; stored->ival = 1; }
             }
-            im_mutex_unlock((ImMutex*)VM_GSHARD(vm, f->var_idx));
+            VM_UNLOCK(vm);
         } else if (f->ignore) {
             /* bare try (no catch): swallow + record into the debug slot (visible via dbg_var) */
             char ebuf[256];
@@ -3645,7 +3674,7 @@ static void vm_execute_thread(VmThread *t) {
                     if (aidx >= 0 && aidx < vm->arrayCount && i >= 0 && i * 2 < vm_pool_slot(vm, aidx)->count) {
                         value_copy(&v, &vm_pool_slot(vm, aidx)->items[i * 2]);
                         if (v.type == VAL_STRING && v.sval && v.ival != 1) {
-                            const char *np = vm_intern(vm, v.sval);
+                            const char *np = vm_intern_locked(vm, v.sval);
                             if (np) { free(v.sval); v.sval = (char*)np; v.ival = 1; }
                         }
                     }
@@ -3696,25 +3725,30 @@ static void vm_execute_thread(VmThread *t) {
             if (need_lock) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
             if (idx >= 0 && idx < vm->globalCount) {
                 value_assign(&R[ins.r1], &vm->globals[idx].val);
-                if (R[ins.r1].type == VAL_STRING && R[ins.r1].sval && R[ins.r1].ival != 1) {
-                    const char *np = vm_intern(vm, R[ins.r1].sval);
-                    if (np) { free(R[ins.r1].sval); R[ins.r1].sval = (char*)np; R[ins.r1].ival = 1; }
-                }
             } else {
                 value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
             }
             if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
+            /* Intern AFTER dropping the shard: vm_intern takes global_lock, and
+               shard -> global_lock is the reverse of the declared order.  R[] is
+               thread-local, so the value itself needs no guard. */
+            if (R[ins.r1].type == VAL_STRING && R[ins.r1].sval && R[ins.r1].ival != 1) {
+                const char *np = vm_intern(vm, R[ins.r1].sval);
+                if (np) { free(R[ins.r1].sval); R[ins.r1].sval = (char*)np; R[ins.r1].ival = 1; }
+            }
             continue;
         }
         L_STORE_GLOBAL: {
             int idx = ins.r1;
             int src_reg = ins.r2;
             int need_lock = (vm->active_threads > 1);
-            if (need_lock) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
+            /* Creation writes a RUN of slots [vm->globalCount, idx]; the single shard
+               VM_GSHARD(idx) would give us does not cover that run, so take
+               global_lock -- the lock the builtin create path takes.  Order:
+               global_lock -> shards. */
+            if (need_lock) VM_LOCK(vm);
             if (idx >= vm->globalCap) {
-                if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
-                vm_global_grow(vm, idx);   /* 鐙崰鍏ㄩ儴閿佹墿瀹癸紙姝ゆ椂鏈寔浠讳綍鍒嗙墖锛?*/
-                if (need_lock) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
+                vm_global_grow(vm, idx);   /* takes all 16 shards; nothing else is held */
             }
             if (idx >= vm->globalCount) {
                 for (int i = vm->globalCount; i <= idx; i++) {
@@ -3728,7 +3762,7 @@ static void vm_execute_thread(VmThread *t) {
             if (idx >= 0 && vm->global_bound[idx] > 0) {
                 int bidx = vm->global_bound[idx] - 1;
                 if (!set_contains(vm, bidx, &newv)) {
-                    if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
+                    if (need_lock) VM_UNLOCK(vm);   /* vm_throw_kind takes global_lock */
                     vm_throw_kind(vm, "type_mismatch");
                     R = t->reg + t->base;
                     value_free(&newv);
@@ -3736,13 +3770,13 @@ static void vm_execute_thread(VmThread *t) {
                 }
             }
             if (newv.type == VAL_STRING && newv.sval && newv.ival != 1) {
-                const char *np = vm_intern(vm, newv.sval);
+                const char *np = vm_intern_locked(vm, newv.sval);
                 if (np) { free(newv.sval); newv.sval = (char*)np; newv.ival = 1; }
             }
             value_free(&vm->globals[idx].val);
             vm->globals[idx].val = newv;
             if (idx < vm->record_meta_count) vm->record_meta[idx].dirty = 1;
-            if (need_lock) im_mutex_unlock((ImMutex*)VM_GSHARD(vm, idx));
+            if (need_lock) VM_UNLOCK(vm);
             continue;
         }
 
@@ -4325,11 +4359,17 @@ L_CALL_FUNC: {
             int setReg = ins.r2;
             int initReg = ins.r3;
             int sidx = (R[setReg].type == VAL_SET) ? R[setReg].ival : -1;
-            im_mutex_lock((ImMutex*)VM_GSHARD(vm, g));
-            if (g < 0) { im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g)); continue; }
-            im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
-            vm_global_grow(vm, g);   /* 鐙崰鍏ㄩ儴閿佹墿瀹癸紙姝ゆ椂鏈寔浠讳綍鍒嗙墖锛?*/
-            im_mutex_lock((ImMutex*)VM_GSHARD(vm, g));
+            /* Creation writes a RUN of slots [vm->globalCount, g].  The single shard
+               VM_GSHARD(g) would give us covers only the residue class of g, so it
+               cannot guard that run -- take global_lock, the same lock the builtin
+               create path takes and the only lock vm_global_grow's callers must hold.
+               Order: global_lock -> shards.  Nothing that takes global_lock is called
+               while a shard is held here. */
+            VM_LOCK(vm);
+            if (g < 0) { VM_UNLOCK(vm); continue; }
+            if (g >= vm->globalCap) {
+                vm_global_grow(vm, g);   /* takes all 16 shards; global_lock is already held */
+            }
             if (g >= vm->globalCount) {
                 for (int i = vm->globalCount; i <= g; i++) {
                     vm->globals[i].name = NULL;
@@ -4343,9 +4383,9 @@ L_CALL_FUNC: {
                 if (sidx >= 0 && !set_contains(vm, sidx, &init)) {
                     Value err;
                     err.type = VAL_STRING;
-                    err.sval = (char*)vm_intern(vm, "initial value out of range");
+                    err.sval = (char*)vm_intern_locked(vm, "initial value out of range");
                     err.ival = 1;
-                    im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
+                    VM_UNLOCK(vm);            /* vm_throw takes global_lock */
                     vm_throw(vm, t, &err);
                     R = t->reg + t->base;
                     continue;
@@ -4353,14 +4393,14 @@ L_CALL_FUNC: {
                     value_assign(&vm->globals[g].val, &init);
                     Value *stored = &vm->globals[g].val;
                     if (stored->type == VAL_STRING && stored->sval && stored->ival != 1) {
-                        const char *np = vm_intern(vm, stored->sval);
+                        const char *np = vm_intern_locked(vm, stored->sval);
                         if (np) { free(stored->sval); stored->sval = (char*)np; stored->ival = 1; }
                     }
                 }
             } else {
                 value_set(&vm->globals[g].val, VAL_NIL, 0, 0, NULL, NULL); /* uninitialized */
             }
-            im_mutex_unlock((ImMutex*)VM_GSHARD(vm, g));
+            VM_UNLOCK(vm);
             continue;
         }
 
