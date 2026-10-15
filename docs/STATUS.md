@@ -2407,7 +2407,7 @@ bc = {"code": [[34, 999, 0, 0], [33, 0, 0, 0]], "strings": [], "floats": [], "fu
 say vm_exec(bc)
 ```
 
-（`OP_CALL_FUNC` = 34、`OP_HALT` = 33，见 `src/compiler/bytecode.h:8-23`；`funcs` 为空 ⇒ `fidx = 999` 全面越界。）
+（`OP_CALL_FUNC` = 34、`OP_HALT` = 33，见 `src/compiler/bytecode.h:8-28`，写于 [obs: 7f3473a]；`funcs` 为空 ⇒ `fidx = 999` 全面越界。）
 
 | | 修复前 | 修复后 |
 | --- | --- | --- |
