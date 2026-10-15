@@ -22,24 +22,24 @@
 
 | # | 站点 | 所在函数 | 持的是 | 该行写的槽 | 判定 |
 |---|---|---|---|---|---|
-| 1 | `src/runtime/runtime.c:1832` | `builtin_atomic_set` | `idx` | `idx` | 是 |
-| 2 | `src/runtime/runtime.c:1833` | `builtin_atomic_set` | `idx` | `idx` | 是 |
-| 3 | `src/vm/vm.c:1379` | `vm_global_grow` | ALL | —（`realloc`） | 是（全分片） |
-| 4 | `src/vm/vm.c:1381` | `vm_global_grow` | ALL | `i` | 是（全分片） |
-| 5 | `src/vm/vm.c:1382` | `vm_global_grow` | ALL | `i` | 是（全分片） |
-| 6 | `src/vm/vm.c:1383` | `vm_global_grow` | ALL | `i` | 是（全分片） |
-| 7 | `src/vm/vm.c:1384` | `vm_global_grow` | ALL | `i` | 是（全分片） |
-| 8 | `src/vm/vm.c:1388` | `vm_global_grow` | ALL | —（`globalCap`） | 是（全分片） |
-| 9 | `src/vm/vm.c:2544` | `vm_throw` | `f->var_idx` | `i` | **否** |
-| 10 | `src/vm/vm.c:2545` | `vm_throw` | `f->var_idx` | `i` | **否** |
-| 11 | `src/vm/vm.c:2547` | `vm_throw` | `f->var_idx` | —（`globalCount`） | 同一语句的尾 |
-| 12 | `src/vm/vm.c:3721` | `vm_execute_thread` | `idx` | `i` | **否** |
-| 13 | `src/vm/vm.c:3722` | `vm_execute_thread` | `idx` | `i` | **否** |
-| 14 | `src/vm/vm.c:3724` | `vm_execute_thread` | `idx` | —（`globalCount`） | 同一语句的尾 |
-| 15 | `src/vm/vm.c:3743` | `vm_execute_thread` | `idx` | `idx` | 是 |
-| 16 | `src/vm/vm.c:4335` | `vm_execute_thread` | `g` | `i` | **否** |
-| 17 | `src/vm/vm.c:4336` | `vm_execute_thread` | `g` | `i` | **否** |
-| 18 | `src/vm/vm.c:4338` | `vm_execute_thread` | `g` | —（`globalCount`） | 同一语句的尾 |
+| 1 | `vm->globals[idx].val.type = VAL_INT;` | `builtin_atomic_set` | `idx` | `idx` | 是 |
+| 2 | `vm->globals[idx].val.sval = NULL;` | `builtin_atomic_set` | `idx` | `idx` | 是 |
+| 3 | `vm->globals = realloc(vm->globals, ...)` | `vm_global_grow` | ALL | —（`realloc`） | 是（全分片） |
+| 4 | 清填循环体第 1 行 `vm->globals[i].name = NULL;` | `vm_global_grow` | ALL | `i` | 是（全分片） |
+| 5 | 清填循环体第 2 行 `vm->globals[i].val.type = VAL_NIL;` | `vm_global_grow` | ALL | `i` | 是（全分片） |
+| 6 | 清填循环体第 3 行 `vm->globals[i].val.ival = 0;` | `vm_global_grow` | ALL | `i` | 是（全分片） |
+| 7 | 清填循环体第 4 行 `vm->globals[i].val.sval = NULL;` | `vm_global_grow` | ALL | `i` | 是（全分片） |
+| 8 | `vm->globalCap = nc;` | `vm_global_grow` | ALL | —（`globalCap`） | 是（全分片） |
+| 9 | 展开清理循环体第 1 行 `vm->globals[i].name = NULL;` | `vm_throw` | `f->var_idx` | `i` | **否** |
+| 10 | 展开清理循环体第 2 行 `vm->globals[i].val.type = VAL_NIL;` | `vm_throw` | `f->var_idx` | `i` | **否** |
+| 11 | `vm->globalCount = f->var_idx + 1;` | `vm_throw` | `f->var_idx` | —（`globalCount`） | 同一语句的尾 |
+| 12 | 建槽循环体第 1 行 `vm->globals[i].name = NULL;` | `vm_execute_thread` | `idx` | `i` | **否** |
+| 13 | 建槽循环体第 2 行 `vm->globals[i].val.type = VAL_NIL;` | `vm_execute_thread` | `idx` | `i` | **否** |
+| 14 | `vm->globalCount = idx + 1;` | `vm_execute_thread` | `idx` | —（`globalCount`） | 同一语句的尾 |
+| 15 | `vm->globals[idx].val = newv;` | `vm_execute_thread` | `idx` | `idx` | 是 |
+| 16 | 建槽循环体第 1 行 `vm->globals[i].name = NULL;` | `vm_execute_thread` | `g` | `i` | **否** |
+| 17 | 建槽循环体第 2 行 `vm->globals[i].val.type = VAL_NIL;` | `vm_execute_thread` | `g` | `i` | **否** |
+| 18 | `vm->globalCount = g + 1;` | `vm_execute_thread` | `g` | —（`globalCount`） | 同一语句的尾 |
 
 每行进入时的状态集由 `tools/pathruler.py` 给出，例如
 `src/vm/vm.c:3743  -> 持分片  持的是=idx  states=[frozenset(), frozenset({'idx'})]`
@@ -50,7 +50,7 @@
 - 上一件量过：「拿全部分片」这个类**只有 1 个成员**（`vm_global_grow`）。
 - 这一件以**站点**为单位复测：**6 个站点、1 个函数**。
 - 两个数不矛盾，因为分母不同：**1 是函数数，6 是站点数**。
-- 三处调用点（`src/vm/vm.c:2540`、`:3716`、`:4331`）在进入时**未持任何分片**
+- 三处调用点（`vm_throw` 展开时的扩容调用、`L_STORE_GLOBAL` 与 `L_BIND` 各自的建槽前扩容调用）在进入时**未持任何分片**
   （源码注释逐字：`独占全部锁扩容（此时未持任何分片）`），所以「全分片」从不与
   单把分片叠加。
 
@@ -76,8 +76,8 @@ if (X >= vm->globalCount) {
 都是在没有它们自己那把锁的情况下被写的**。
 
 对照：**同一条路径的另一半 —— 读侧** —— 取的正是自己那把。
-`L_LOAD_GLOBAL` 在 `src/vm/vm.c:3696` 取 `VM_GSHARD(vm, idx)`，其中
-`:3694 int idx = ins.r2;` —— **它读 `vm->globals[idx]` 就取 `idx` 的分片**。
+`L_LOAD_GLOBAL` 取 `VM_GSHARD(vm, idx)` 的那一行，其中
+`int idx = ins.r2;` 那一行 —— **它读 `vm->globals[idx]` 就取 `idx` 的分片**。
 所以读侧一对一，写侧一对多。
 
 `vm_global_grow` 面对**同一个问题**（连续区间）时的答案是**取全部 16 把**
