@@ -4562,7 +4562,7 @@ Error: typert: dsh-session-org#sessionOrgReviews/decideReview parameter id stric
 
 ★ **它与增补五 D（引文也带观测点）同族但不同**：D 说的是**引文会过期**（写下时对、后来错），这一条说的是**引文在它被搬去的那一刻就已经错了** —— **而两者的样子完全一样，因为「抄的人没抄时态」这个动作在两种情况下都发生了。** ⇒ D 的处方（要么重取、要么盖上「读于 `<sha>`」）**治得了这一条**，但 D 的诊断句治不了：**它不是「带着走的引文没有观测点」，是「带着走的引文没有带上它的时态」。**
 
-**★ 而它顺手给出了那条判据的第一次反面命中。** `d4b65c6` 的提交信息逐字：**`and`/`or` was one operator with three answers: the interpreter returned the deciding operand, AOT returned a boolean, and wasm refused to compile it at all. … The interpreter compiler, the .im bootstrap compiler and the wasm backend each changed; AOT already agreed.`** ⇒ **5 个实现点**（解释器编译器、解释器 VM、`selfhost/compiler.im`、AOT、wasm），而 **PLAN 只点了 2 个文件，且其中一个（`eval.im`）从来不在分歧里**。
+**★ 而它顺手给出了那条判据的第一次反面命中。** `d4b65c6` 的提交信息逐字：**`and`/`or` was one operator with three answers: the interpreter returned the deciding operand, AOT returned a boolean, and wasm refused to compile it at all. … The interpreter compiler, the .im bootstrap compiler and the wasm backend each changed; AOT already agreed.** ⇒ **5 个实现点**（解释器编译器、解释器 VM、`selfhost/compiler.im`、AOT、wasm），而 **PLAN 只点了 2 个文件，且其中一个（`eval.im`）从来不在分歧里**。
 ⇒ ★ **「两个决定点 vs 两个说法」这条判据，第一次被证伪的方向不是「把两个说法当成了两个决定点」，是「把两个文件当成了全部决定点」——按文件数建集得 2，按语义建集得 5。**
 
 **处置**：`docs/PLAN_V06.md` 那一句已按 `d4b65c6` 重取（**行数中性**，因为它被 `docs/streams/eidos-archive-crosscheck.md` 按行号引了 `:55`/`:207`/`:208`），正文改成 5 个实现点 + `eval.im` 从来不在分歧里 + 那句 `git show` 逐字。
