@@ -3145,7 +3145,6 @@ static void vm_execute_thread(VmThread *t) {
         case OP_JUMP_IF_TRUE: goto L_JUMP_IF_TRUE;
         case OP_CALL_BUILTIN: goto L_CALL_BUILTIN;
         case OP_PUSH_REG: goto L_PUSH_REG;
-        case OP_POP_REG: goto L_POP_REG;
         case OP_SAY: goto L_SAY;
         case OP_WAIT: goto L_WAIT;
         case OP_STOP: goto L_STOP;
@@ -3801,13 +3800,6 @@ static void vm_execute_thread(VmThread *t) {
                     break;
                 }
                 default: push_nil(vm);
-            }
-            continue;
-        }
-        L_POP_REG: {
-            if (t->sp >= 0) {
-                value_move(&R[ins.r1], &t->stack[t->sp]);
-                t->sp--;
             }
             continue;
         }
@@ -5304,7 +5296,6 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     case OP_CALL_FUNC:      snprintf(out, outsz, "CALL_FUNC f%d (args:%d, res:r%d)", ins->r1, ins->r3, ins->r2); return;
     case OP_RETURN:         snprintf(out, outsz, "RETURN r%d", ins->r1); return;
     case OP_PUSH_REG:       snprintf(out, outsz, "PUSH_REG r%d", ins->r1); return;
-    case OP_POP_REG:        snprintf(out, outsz, "POP_REG r%d", ins->r1); return;
     case OP_SAY:            snprintf(out, outsz, "SAY r%d", ins->r1); return;
     case OP_WAIT:           snprintf(out, outsz, "WAIT r%d", ins->r1); return;
     case OP_STOP:           snprintf(out, outsz, "STOP"); return;
