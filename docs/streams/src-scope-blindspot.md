@@ -27,10 +27,10 @@
 
 | 符号 | 定义（`344a37b`） | `src/` 内 | `src/` 外调用点 | 属于哪个模块 |
 |---|---|---|---|---|
-| `vm_register_builtin_safe` | `src/vm/vm.c:1721`（声明 `src/vm/vm.h:400`） | 2（定义+声明） | `mods/build/build_mod.c:741` | build |
-| `compiler_get_using_mods` | `src/compiler/compiler.c:3156` | 2 | `mods/build/build_mod.c:351` | build |
-| `vm_debug_threads` | `src/vm/vm.c:5129` | 2 | `mods/debug/debug_mod.c:604` | debug |
-| `vm_debug_jump` | `src/vm/vm.c:5072` | 2 | `mods/debug/debug_mod.c:593`、`:599` | debug |
+| `vm_register_builtin_safe` | `src/vm/vm.c:1721`（声明 `src/vm/vm.h:400`） | 2（定义+声明） | `mods/build/build_mod.c:741` | build | [obs: 344a37b]
+| `compiler_get_using_mods` | `src/compiler/compiler.c:3156` | 2 | `mods/build/build_mod.c:351` | build | [obs: 344a37b]
+| `vm_debug_threads` | `src/vm/vm.c:5129` | 2 | `mods/debug/debug_mod.c:604` | debug | [obs: 344a37b]
+| `vm_debug_jump` | `src/vm/vm.c:5072` | 2 | `mods/debug/debug_mod.c:593`、`:599` | debug | [obs: 344a37b]
 
 四个都是**导出的（非 `static`）**、都在 `src/` 内、**唯一调用者都在 `mods/`**。
 
@@ -44,12 +44,12 @@
 
 | 候选 | 排除理由（逐字） | 假阳性来源 |
 |---|---|---|
-| `builtin_gui_fullscreen` | `tools/check_text_integrity.py:12` 是一段**文档示例**：`$ grep -n 'gui_fullscreen' src/mod/gui_mod.c` / `1661:static int builtin_gui_fullscreen(VM *vm) {`；且它是 `static` | 文本在描述一次命中 |
-| `compile_index_set_chain` | `selfhost/compiler.im:393 func compile_index_set_chain(ctx, target, last_idx_expr, value) {` —— 自举编译器自己的同名函数 | 跨语言同名 |
-| `handle` | `tools/mcp_server.js:59 handle(msg);` —— JS 局部函数 | 跨语言同名 |
-| `vts_double` | `tools/aot_native.test.py:43` 是**注释**：`# interpreter's vts_double (src/vm/vm.c) exactly, …` | 文本在描述一次命中 |
-| `test_drain` | `tools/verse_closed_loop.test.py:134 def test_drain(root):` —— Python 测试函数 | 跨语言同名 |
-| `test_undo` | `tools/verse_closed_loop.test.py:146 def test_undo(root):` —— Python 测试函数 | 跨语言同名 |
+| `builtin_gui_fullscreen` | `tools/check_text_integrity.py:12` 是一段**文档示例**：`$ grep -n 'gui_fullscreen' src/mod/gui_mod.c` / `1661:static int builtin_gui_fullscreen(VM *vm) {`；且它是 `static` | 文本在描述一次命中 | [obs: 344a37b]
+| `compile_index_set_chain` | `selfhost/compiler.im:393 func compile_index_set_chain(ctx, target, last_idx_expr, value) {` —— 自举编译器自己的同名函数 | 跨语言同名 | [obs: 344a37b]
+| `handle` | `tools/mcp_server.js:59 handle(msg);` —— JS 局部函数 | 跨语言同名 | [obs: 344a37b]
+| `vts_double` | `tools/aot_native.test.py:43` 是**注释**：`# interpreter's vts_double (src/vm/vm.c) exactly, …` | 文本在描述一次命中 | [obs: 344a37b]
+| `test_drain` | `tools/verse_closed_loop.test.py:134 def test_drain(root):` —— Python 测试函数 | 跨语言同名 | [obs: 344a37b]
+| `test_undo` | `tools/verse_closed_loop.test.py:146 def test_undo(root):` —— Python 测试函数 | 跨语言同名 | [obs: 344a37b]
 
 ⇒ **一个按名字匹配的普查，它的假阳性有两种来源 —— 名字在别的目录里、以及名字在别的语言里；第二种不会因为扩大目录范围而消失。** 还有第三种，与前两种不同：**「命中」有两种 —— 真的命中，和一段文本在描述一次命中**（前两个候选属于这种）。
 
@@ -57,14 +57,14 @@
 
 | 符号 | 定义（`344a37b`） | `mods/` 内 | `mods/` 外的命中 | 性质 |
 |---|---|---|---|---|
-| `build_mod_register` | `mods/build/build_mod.c:739` | 1（定义） | `src/main.c:39`（声明）、**`src/main.c:592`（调用，在 `register_world_modules` 里）** | 宿主调 mod 的注册函数 |
-| `build_project_impl` | `mods/build/build_mod.c:611` | 1（定义） | `src/main.c:6`（声明）、**`src/main.c:1181`（调用）**、`src/platform/posix_stubs.c:9`（**POSIX 桩定义**） | 宿主调 mod 的实现，POSIX 侧用桩顶掉 |
+| `build_mod_register` | `mods/build/build_mod.c:739` | 1（定义） | `src/main.c:39`（声明）、**`src/main.c:592`（调用，在 `register_world_modules` 里）** | 宿主调 mod 的注册函数 | [obs: 344a37b]
+| `build_project_impl` | `mods/build/build_mod.c:611` | 1（定义） | `src/main.c:6`（声明）、**`src/main.c:1181`（调用）**、`src/platform/posix_stubs.c:9`（**POSIX 桩定义**） | 宿主调 mod 的实现，POSIX 侧用桩顶掉 | [obs: 344a37b]
 
 ⇒ **这条规律是双向的，但不是对称的**：反向只有 2 个，而且两个都是**设计好的宿主↔mod 接口**（各只有 1 个真实调用点，其余是声明或桩定义）；正向有 4 个，那才是盲区真正咬人的地方 —— 它们是 `src/` 自己的符号，只是恰好只有 `mods/` 在调。
 
 ## 6. 判据
 
-1. **只扫 `src/` 的「零调用点」普查会把 4 个活符号报成零**；一个边界错一次是疏忽，**同一个边界在同一行上错两次，说明那条边界从来没被写下来过**（`mods/build/build_mod.c:741` 先后纠正了同一个人的两个结论）。
+1. **只扫 `src/` 的「零调用点」普查会把 4 个活符号报成零**；一个边界错一次是疏忽，**同一个边界在同一行上错两次，说明那条边界从来没被写下来过**（`mods/build/build_mod.c:741` 先后纠正了同一个人的两个结论）。 [obs: 344a37b]
 2. **出现次数 ≥ 3 不证明可达**：`bytecode_check_compatible` 有 3 次出现，足以骗过一次按次数做的普查 —— 要读调用者。
 3. **「零」有两种**：从来没被调用过（设计）与曾经被调用过、后来断了（回归），今天的样子完全一样；**而一次 squash 会把前一种的「诞生时有没有调用者」变成不可观测的**。
 4. **按名字匹配的普查有三种假阳性**：名字在别的目录里、名字在别的语言里、以及一段文本在描述一次命中。第二种不会因为扩大目录范围而消失。
