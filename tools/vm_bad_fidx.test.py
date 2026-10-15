@@ -15,6 +15,7 @@ A passing run must (a) not crash and (b) exit non-zero, because the program is
 supposed to die reporting the invalid index.  Exit 0 would mean the call
 silently succeeded, and a signal would mean the guard is decorative again.
 """
+import os
 import subprocess
 import sys
 import tempfile
@@ -63,12 +64,79 @@ PROBE = ('bc = {{"code": [[{}, 999, 0, 0], [{}, 0, 0, 0]], '
 # refuses everything" cannot pass this test.
 CONTROL = 'func f() { return 7 }\nsay f()\n'
 
+# The tree this probe's numbers were authored on.  `opcode()` above stops this
+# file from CHOOSING its numbers; this asks whether the numbers it ends up with
+# still NAME the two instructions the probe was written to exercise.  Those are
+# two questions.  Deriving the number follows the enum wherever the enum moves,
+# so the guard above cannot go stale -- and that is exactly why it cannot notice
+# the day the number it derives means something else than the test means.
+#
+# Measured 2026-10-12: across all nine revisions that have touched the header,
+# 33 has always been OP_HALT and 34 has always been OP_CALL_FUNC, so this
+# tripwire reads 0 today.  A guard that is zero today is not the same as no
+# guard: this one is non-zero on the first revision that renumbers the middle
+# of the enum without pinning the numbering, which is the mistake it exists to
+# catch.  (That mistake has been made once -- deleting OP_POP_REG moved every
+# number from 30 up -- and it was caught, by four failing CTest cases, only
+# after the patch was built.)
+#
+# An EMPTY value turns the phase off and prints nothing, so a caller can ask for
+# this file's output to be byte-identical to the run before the phase existed
+# and measure with `cmp` that it got it.  Unset is not the same as empty: unset
+# takes the default and the phase runs.
+REF_TREE = os.environ.get('VM_BAD_FIDX_REF',
+                          '17b3ec5fc38ef7e9b153b013686401c8357f3a32')
+
 
 def run(engine, source, td, name):
     script = Path(td) / name
     script.write_text(source, encoding='utf-8')
     return subprocess.run([engine, '--no-mods', str(script)],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+
+
+def check_ref_tree(repo):
+    """Do the numbers this probe hands the engine still name what it names?
+
+    `git show REF_TREE:HEADER` gives the value->name table the numbers were read
+    off.  Each number the probe uses is looked up there and here; if the two
+    disagree, the probe is standing on a tree it was not written for, and the
+    instruction it exercises is not the one it was written to exercise.
+    """
+    if not REF_TREE:
+        return
+    show = subprocess.run(['git', 'show', f'{REF_TREE}:{HEADER}'], cwd=repo,
+                          capture_output=True, text=True, encoding='utf-8',
+                          errors='replace', check=False)
+    if show.returncode != 0:
+        raise SystemExit(
+            f'vm bad fidx: {REF_TREE} has no {HEADER}, so the tree this probe '
+            f'was authored on cannot be read -- an unmeasurable tree is not a '
+            f'passing one')
+    parsed = parse_enum(show.stdout)
+    if parsed is None:
+        raise SystemExit(
+            f'vm bad fidx: {HEADER} on {REF_TREE} does not parse as an opcode '
+            f'enum')
+    then = parsed[1]
+
+    here = parse_enum((repo / HEADER).read_text(encoding='utf-8',
+                                                errors='replace'))[1]
+    moved = []
+    for name in ('OP_CALL_FUNC', 'OP_HALT'):
+        value = opcode(name)
+        if then.get(value) != here.get(value):
+            moved.append((name, value, then.get(value), here.get(value)))
+    if moved:
+        lines = [f'    {name} is {value}: {there} on {REF_TREE[:9]}, '
+                 f'{now} here' for name, value, there, now in moved]
+        raise SystemExit(
+            'vm bad fidx: this probe hands the engine a number that no longer '
+            'names the instruction it was written to exercise, because the '
+            'numbering moved under it:\n' + '\n'.join(lines))
+    print(f'vm bad fidx: the two numbers still name OP_CALL_FUNC and OP_HALT '
+          f'on {REF_TREE[:9]} -- the enum has not been renumbered under this '
+          f'probe')
 
 
 def main():
@@ -119,6 +187,7 @@ def main():
             'meaning is borrowed from the enum and nothing re-checks it.  '
             'Read the header at run time instead (see opcode() above).\n  '
             + '\n  '.join(loans))
+    check_ref_tree(repo)
     print('vm bad fidx: ok (out-of-range call index refused, control call '
           'works, no CTest-registered file borrows an opcode number)')
 
