@@ -326,6 +326,7 @@ typedef struct DictHash {
 /* 锟斤拷锟斤拷夭锟斤拷锟斤拷锟??runtime 锟斤拷锟矫猴拷锟斤拷??VM 指锟斤拷使锟斤拷??*/
 ArrayObj *vm_pool_slot(VM *vm, int idx);
 const char *vm_intern(VM *vm, const char *s);
+const char *vm_intern_locked(VM *vm, const char *s);  /* caller is already inside the str_pool critical section */
 int  vm_array_new(VM *vm);
 void vm_array_push(VM *vm, int idx, const Value *v);
 void vm_array_set(VM *vm, int idx, int i, const Value *v);
@@ -377,9 +378,14 @@ int vm_truthy(const Value *v);
 
 #endif
 
-/* 鍒嗙墖閿侊細鍏ㄥ眬妲借闂儹鐐癸紙L_LOAD_GLOBAL / L_STORE_GLOBAL / L_BIND / vm_throw锛夈�?
-   鎸夊叏灞€绱㈠紩鍝堝笇鍒?16 鎶婇攣鈥斺€斾笉鍚屽彉閲忓苟琛岋紝鍚屽彉閲忎覆琛屻€?
-   global_lock锛堝垎鐗?涔嬪鐨勫崟閿侊級浠嶇敤浜庢暟缁?瀛楀吀/闆嗗�?瀛楃涓叉睜绛夐€氱敤涓寸晫鍖恒�?*/
+/* 分片锁：全局槽【已存在】的读改写热点（L_LOAD_GLOBAL，以及 builtin 侧 atomic_add /
+   atomic_set 的值路径）。按全局索引哈希到 16 把锁——不同变量并行，同变量串行。
+   ★ 创建环不走分片锁：一次创建写出的是一段连续槽 [vm->globalCount, X]，它跨越的分片数
+   与持有的分片数不必相等，所以创建环（L_STORE_GLOBAL / L_BIND / vm_throw 的 var_idx 支，
+   以及 builtin 侧三处）持 global_lock。
+   global_lock（分片之外的单锁）用于全局槽的创建与扩容，以及数组/字典/集合/字符串池等通用临界区。
+   锁序（唯一允许的方向）：global_lock -> 分片。持分片时禁止调用取 global_lock 的函数
+   （vm_intern / vm_throw* / 数组与字典池）；持 global_lock 时调用 vm_global_grow 是允许的。*/
 #define VM_GLOBAL_SHARDS 16
 #define VM_GSHARD(vm, idx) ((ImMutex*)((vm)->global_locks[((idx) & (VM_GLOBAL_SHARDS - 1))]))
 

@@ -1,0 +1,48 @@
+--- /tmp/redctl/vm.c.orig	2026-10-15 20:57:58.139929549 +0800
++++ src/vm/vm.c	2026-10-15 21:18:16.055266041 +0800
+@@ -769,7 +769,12 @@
+     struct StrPool *p = vm->str_pool;
+     if (!p) return NULL;
+     int need_lock = (vm->active_threads > 1);
+-    if (need_lock) VM_LOCK(vm);
++    if (need_lock) {
++        static long _w=0; long _c=__sync_add_and_fetch(&_w,1);
++        if (_c <= 5 || _c % 200000 == 0) { fprintf(stderr, "[CYCLE] interner: holds a shard, WANTS global_lock (call %ld)\n", _c); fflush(stderr); }
++        VM_LOCK(vm);
++        if (_c <= 5 || _c % 200000 == 0) { fprintf(stderr, "[CYCLE] interner: GOT global_lock (call %ld)\n", _c); fflush(stderr); }
++    }
+     if (p->count >= VM_STR_POOL_LIMIT) { if (need_lock) VM_UNLOCK(vm); return NULL; }  /* 锟斤拷锟斤拷:锟斤拷锟矫凤拷锟斤拷锟斤�?strdup */
+     if (p->count * 2 >= p->cap) strpool_grow(vm, p);
+     int i = (int)(fnv1a(s) & p->mask);
+@@ -1371,8 +1376,13 @@
+     if (need < 0) need = 0;
+     if (need < vm->globalCap) return;
+     if (vm->active_threads > 1 && vm->global_locks[0]) {
+-        for (int i = 0; i < VM_GLOBAL_SHARDS; i++)
++        fprintf(stderr, "[INSTR] GROW-ENTER need=%d active=%d: taking all %d shards\n", need, vm->active_threads, VM_GLOBAL_SHARDS);
++        fflush(stderr);
++        for (int i = 0; i < VM_GLOBAL_SHARDS; i++) {
++            fprintf(stderr, "[CYCLE] grower: holds global_lock, WANTS shard %d\n", i); fflush(stderr);
+             im_mutex_lock((ImMutex*)vm->global_locks[i]);
++            fprintf(stderr, "[CYCLE] grower: GOT shard %d\n", i); fflush(stderr);
++        }
+     }
+     int nc = vm->globalCap == 0 ? 64 : vm->globalCap;
+     while (nc <= need) nc *= 2;
+@@ -3707,6 +3717,7 @@
+             continue;
+         }
+         L_STORE_GLOBAL: {
++            { static long _n=0; long _c=__sync_add_and_fetch(&_n,1); if (_c <= 20 || _c % 500000 == 0) { fprintf(stderr, "[INSTR] STORE-ENTRY c=%ld idx=%d\n", _c, ins.r1); fflush(stderr); } }
+             int idx = ins.r1;
+             int src_reg = ins.r2;
+             int need_lock = (vm->active_threads > 1);
+@@ -3736,6 +3747,8 @@
+                 }
+             }
+             if (newv.type == VAL_STRING && newv.sval && newv.ival != 1) {
++                fprintf(stderr, "[INSTR] STORE-INTERN idx=%d active=%d: holds shard, about to want global_lock\n", idx, vm->active_threads);
++                fflush(stderr);
+                 const char *np = vm_intern(vm, newv.sval);
+                 if (np) { free(newv.sval); newv.sval = (char*)np; newv.ival = 1; }
+             }

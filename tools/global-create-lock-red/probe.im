@@ -1,0 +1,87 @@
+# global-create-lock-red / probe.im
+#
+# Reproduces the ABBA between the two ways this VM creates a global slot:
+#
+#   grower   : atomic_set(<a name nobody has used yet>, i)
+#              -> posix_atomic_find holds global_lock (VM_LOCK)
+#              -> vm_global_grow takes ALL 16 shards, ascending
+#              => holds global_lock, wants shard k
+#
+#   interner : payloadN = <a runtime-built string>      (N = 0..15, one shard each)
+#              -> L_STORE_GLOBAL holds shard(N)
+#              -> vm_intern wants global_lock (VM_LOCK)
+#              => holds shard k, wants global_lock
+#
+# Two threads, two facts.  No residue class and no shared slot is needed:
+# the cycle is between the two LOCKS, not between two variables.
+#
+# The `global payloadN` line is load-bearing.  Without it the assignment is a
+# thread LOCAL, L_STORE_GLOBAL never runs, vm_intern is never reached, and the
+# probe prints no-deadlock on BOTH trees -- a green that measured nothing.
+# See README.md, "the empty control".
+
+thread grower {
+    wait 0.5
+    global grow_seen
+    i = 0
+    while i < 400 {
+        atomic_set("grow_slot_name_" + i, i)
+        i = i + 1
+    }
+    grow_seen = 1
+    say "grower-done"
+    return 1
+}
+
+thread interner0  { global payload0  j0  = 0  while j0  < 400000 { payload0  = "padpadpadpadpadpadpadpad_" + j0   j0  = j0  + 1 }  say "interner0-done"  return 1 }
+thread interner1  { global payload1  j1  = 0  while j1  < 400000 { payload1  = "padpadpadpadpadpadpadpad_" + j1   j1  = j1  + 1 }  say "interner1-done"  return 1 }
+thread interner2  { global payload2  j2  = 0  while j2  < 400000 { payload2  = "padpadpadpadpadpadpadpad_" + j2   j2  = j2  + 1 }  say "interner2-done"  return 1 }
+thread interner3  { global payload3  j3  = 0  while j3  < 400000 { payload3  = "padpadpadpadpadpadpadpad_" + j3   j3  = j3  + 1 }  say "interner3-done"  return 1 }
+thread interner4  { global payload4  j4  = 0  while j4  < 400000 { payload4  = "padpadpadpadpadpadpadpad_" + j4   j4  = j4  + 1 }  say "interner4-done"  return 1 }
+thread interner5  { global payload5  j5  = 0  while j5  < 400000 { payload5  = "padpadpadpadpadpadpadpad_" + j5   j5  = j5  + 1 }  say "interner5-done"  return 1 }
+thread interner6  { global payload6  j6  = 0  while j6  < 400000 { payload6  = "padpadpadpadpadpadpadpad_" + j6   j6  = j6  + 1 }  say "interner6-done"  return 1 }
+thread interner7  { global payload7  j7  = 0  while j7  < 400000 { payload7  = "padpadpadpadpadpadpadpad_" + j7   j7  = j7  + 1 }  say "interner7-done"  return 1 }
+thread interner8  { global payload8  j8  = 0  while j8  < 400000 { payload8  = "padpadpadpadpadpadpadpad_" + j8   j8  = j8  + 1 }  say "interner8-done"  return 1 }
+thread interner9  { global payload9  j9  = 0  while j9  < 400000 { payload9  = "padpadpadpadpadpadpadpad_" + j9   j9  = j9  + 1 }  say "interner9-done"  return 1 }
+thread interner10 { global payload10 j10 = 0  while j10 < 400000 { payload10 = "padpadpadpadpadpadpadpad_" + j10  j10 = j10 + 1 }  say "interner10-done" return 1 }
+thread interner11 { global payload11 j11 = 0  while j11 < 400000 { payload11 = "padpadpadpadpadpadpadpad_" + j11  j11 = j11 + 1 }  say "interner11-done" return 1 }
+thread interner12 { global payload12 j12 = 0  while j12 < 400000 { payload12 = "padpadpadpadpadpadpadpad_" + j12  j12 = j12 + 1 }  say "interner12-done" return 1 }
+thread interner13 { global payload13 j13 = 0  while j13 < 400000 { payload13 = "padpadpadpadpadpadpadpad_" + j13  j13 = j13 + 1 }  say "interner13-done" return 1 }
+thread interner14 { global payload14 j14 = 0  while j14 < 400000 { payload14 = "padpadpadpadpadpadpadpad_" + j14  j14 = j14 + 1 }  say "interner14-done" return 1 }
+thread interner15 { global payload15 j15 = 0  while j15 < 400000 { payload15 = "padpadpadpadpadpadpadpad_" + j15  j15 = j15 + 1 }  say "interner15-done" return 1 }
+
+start grower
+start interner0
+start interner1
+start interner2
+start interner3
+start interner4
+start interner5
+start interner6
+start interner7
+start interner8
+start interner9
+start interner10
+start interner11
+start interner12
+start interner13
+start interner14
+start interner15
+join grower
+join interner0
+join interner1
+join interner2
+join interner3
+join interner4
+join interner5
+join interner6
+join interner7
+join interner8
+join interner9
+join interner10
+join interner11
+join interner12
+join interner13
+join interner14
+join interner15
+say "no-deadlock"
