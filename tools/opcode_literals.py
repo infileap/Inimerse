@@ -33,6 +33,18 @@ several `docs/` checks; that does not make it a test, and it does not make the
 opcode numbers quoted inside it run.  Only a path that appears as an argument
 of an `add_test(...)` command is executed by CTest.
 
+An equal number is not a loan.  The first draft counted thirteen positions and
+three of them borrowed nothing: `[1, 2, 3, 4]` in a prose table is a list, and
+`1.` opening a bullet is an ordinal -- both match a quadruple's shape and both
+happen to equal an enum value.  A number written where an opcode goes is a
+loan; a number that happens to equal one is a coincidence.  The `"code":` key
+is the difference the ruler can see, and requiring it is why the count is eight
+and not thirteen.
+
+A mention is not a carrier either.  This ruler spells `'vm_exec'` and `"code":`
+in its own patterns and docstring, so the D2 test selects it -- it describes
+the shape it hunts, and hands the engine nothing.
+
 THE DENOMINATORS
 ----------------
 D1  the *written* form: every tracked line matching `OP_<NAME> = <int>` or
@@ -44,6 +56,22 @@ D2  the *runnable* form: every tracked test-shaped file that hands a bytecode
 D3  the *positions*: inside a D2 file, each quadruple in the `code` array is
     one instruction and its first field is one opcode number.  D3 counts
     positions, not files, because one file can borrow twice.
+
+    A quadruple only counts when it sits on a line that also carries the
+    `"code":` key.  Without that, the first draft of this ruler counted the
+    list display `[1, 2, 3, 4]` in docs/AUDIT.md and docs/STATUS.md as two
+    borrowed opcode positions, and the ordered-list marker `1.` as a third.
+    A number that equals a member is not a loan; a number written where an
+    opcode goes is.  Requiring the `"code"` key is what tells them apart.
+
+D4  the *tree*: whether the line carrying a position names the tree it was
+    read on -- the family rule `tools/check_obs_markers.py` enforces on
+    citations, applied here to positions.  A record says which tree it was
+    read on; a pointer does not, and is read against HEAD.  A borrowed opcode
+    number that also fails to name its tree is a loan with no observation
+    point: nobody can re-read it, because nobody wrote down what to re-read.
+    This is reported as a reading, never as a failure -- see the honest
+    boundary below.
 
 THE VERDICT
 -----------
@@ -62,6 +90,29 @@ Every reported position prints BOTH numbers: the literal, and what the enum
 gives the name it claims today.  Equal today means the loan is currently good;
 it does not mean anything is watching it.
 
+HONEST BOUNDARIES
+-----------------
+  * The `derived` verdict rests on the ABSENCE of digits, not on the presence
+    of a read.  A position read from the header at run time leaves nothing to
+    find, so the ruler cannot enumerate it; the read detector is a weaker,
+    secondary signal and it misses the indirect spelling (a file that does
+    `from opcode_literals import HEADER` reads the header without naming the
+    path on any line the pattern sees).  The strong evidence is that there is
+    no number left.
+  * D4 is a reading, never a failure.  It reports a position whose line names
+    no tree; it does not say the line is wrong.  `docs/` prose is allowed to
+    point at HEAD -- that is what a pointer is -- and this tool does not decide
+    which pointers deserve a marker.  `tools/check_obs_markers.py` counts those
+    separately and is the authority on the marker's grammar, which is reused
+    here rather than reimplemented.
+  * D4 looks only at the line.  A tree named in a section heading, or within
+    thirty lines above, is not seen.  For the positions measured here that
+    changes nothing -- none of the three documents names a tree in any of those
+    places either -- but a reader applying this reading elsewhere should widen
+    it deliberately rather than assume it.
+  * The census counts positions, not files: one file can borrow twice, and
+    `docs/AUDIT.md` does.
+
 Exit status: 0 when no CTest-registered file borrows an opcode number, 1 when
 one does, 2 when the header cannot be read (an unmeasurable tree is not a
 passing one).
@@ -77,6 +128,11 @@ HEADER = 'src/compiler/bytecode.h'
 WRITTEN = re.compile(r'\b(OP_[A-Z0-9_]+)\s*(?:=|:|\()\s*(\d{1,3})\b')
 QUAD = re.compile(r'\[\s*(-?\d{1,3})\s*,\s*(-?\d{1,3})\s*,\s*(-?\d{1,3})\s*,\s*(-?\d{1,3})\s*\]')
 CODE_SHAPE = re.compile(r'"code"\s*:\s*\[|\[\[\s*-?\d{1,3}\s*,')
+CODE_ON_LINE = re.compile(r'''["']code["']\s*:''')
+
+# The tree-naming test is check_obs_markers.py's, reused rather than reinvented:
+# a revision token the operand of an `[obs: ...]` marker, and it resolves.
+OBS_MARKER = re.compile(r'\[obs:\s*([^\]]*)\]')
 
 # Reading the header means opening it, not naming it.  These are the call
 # shapes that actually consume it; `bytecode.h` may still appear in a comment.
@@ -115,6 +171,25 @@ def parse_enum(text):
         value_to_name.setdefault(nxt, name)
         nxt += 1
     return name_to_value, value_to_name
+
+
+def names_tree(line, root):
+    """Does this line say which tree its number was read on?  The criterion is
+    check_obs_markers.py's, not a tense word: the operand of an `[obs: ...]`
+    marker must resolve to a commit in this repository.  `[obs:]`, `[obs: ...]`
+    and `[obs: some prose]` all fail it -- a marker with no resolvable operand
+    is a switch that proves itself."""
+    for m in OBS_MARKER.finditer(line):
+        for tok in re.split(r'[\s,@]+|->', m.group(1)):
+            tok = tok.strip('`,()（）*')
+            if not tok:
+                continue
+            r = subprocess.run(['git', 'rev-parse', '--verify', '--quiet',
+                                tok + '^{commit}'], cwd=root,
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                return True
+    return False
 
 
 def tracked(root):
@@ -179,13 +254,27 @@ def main():
         text = read(root, rel)
         if text is None or 'vm_exec' not in text or not CODE_SHAPE.search(text):
             continue
+        # This ruler spells the shape it hunts -- `'vm_exec'` and `"code":` sit
+        # in its own patterns and docstring -- so it would otherwise be its own
+        # first carrier.  That is a mention, not an image: it hands the engine
+        # nothing.  The exemption is live and this is the measurement that says
+        # so (D2 reads 7 with it and 8 without).
+        if Path(rel).name == 'opcode_literals.py':
+            continue
         carriers.add(rel)
         reads = bool(READS_HEADER.search(text)) or (
             bool(HEADER_CONST.search(text)) and bool(READS_SOMETHING.search(text)))
         for lineno, line in enumerate(text.splitlines(), 1):
+            # A quadruple counts as a position only where an opcode goes.  The
+            # `"code"` key is what says so: `[1, 2, 3, 4]` in a prose table is
+            # a list, and `1.` opening a bullet is an ordinal, and both match
+            # QUAD's shape while borrowing nothing from the enum.
+            if not CODE_ON_LINE.search(line):
+                continue
             for m in QUAD.finditer(line):
                 positions.append({'file': rel, 'line': lineno,
                                   'literal': int(m.group(1)),
+                                  'names_tree': names_tree(line, root),
                                   'registered': Path(rel).name in registered,
                                   'reads_header': reads})
 
@@ -214,7 +303,9 @@ def main():
             bool(HEADER_CONST.search(text)) and bool(READS_SOMETHING.search(text)))
         print(f'    {f}')
         print(f'        add_test( ) argument: {Path(f).name in registered}'
-              f'   reads {HEADER} at run time: {reads}')
+              f'   reads {HEADER} at run time: {reads}'
+              f' (direct spelling only -- the indirect one, an import that '
+              f'holds the path in a name, is invisible here)')
     print()
 
     print(f'D3  opcode positions the ruler can see: {len(positions)} '
@@ -225,11 +316,24 @@ def main():
         print(f'    {r["file"]}:{r["line"]}  literal {r["literal"]:>3}'
               f'  -> {name} = {r["literal"]}   borrowed'
               f'   file reads header: {r["reads_header"]}'
+              f'   names its tree: {r["names_tree"]}'
               f'{"  [CTest-registered]" if r["registered"] else ""}')
     print()
 
     borrowed_all = [r for r in positions if not r['reads_header']]
     running = [r for r in borrowed_all if r['registered']]
+
+    print(f'D4  positions that name the tree they were read on: '
+          f'{sum(1 for r in positions if r["names_tree"])} of {len(positions)}')
+    unplaced = [r for r in positions if not r['names_tree']]
+    by_file = {}
+    for r in unplaced:
+        by_file.setdefault(r['file'], []).append(r)
+    for f in sorted(by_file):
+        rows = by_file[f]
+        print(f'    {f}: {len(rows)} position(s), none of them on a line '
+              f'carrying a resolvable [obs: <ref>]')
+    print()
     print(f'borrowed positions: {len(borrowed_all)}  '
           f'(of them, registered: {len(running)})')
     derived_files = sorted(f for f in carriers

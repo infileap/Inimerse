@@ -95,7 +95,32 @@ def main():
                 f'the control program (a real function call) stopped working: '
                 f'rc={c.returncode} stdout={c.stdout.strip()!r} '
                 f'stderr={c.stderr.strip()[-200:]!r}')
-    print('vm bad fidx: ok (out-of-range call index refused, control call works)')
+
+    # The fix above removes one loan.  This keeps the next one from being
+    # written unnoticed: the census is run here, inside a test CTest already
+    # executes, so it costs no new stage, no line in tools/gate.sh and no moved
+    # anchor.  A check wired into the gate instead would make every future edit
+    # to it pay the whole repository's line-anchor bill.
+    repo = Path(__file__).resolve().parent.parent
+    census = subprocess.run(
+        [sys.executable, str(repo / 'tools' / 'opcode_literals.py'),
+         '--root', str(repo)],
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        check=False)
+    if census.returncode == 2:
+        raise SystemExit('vm bad fidx: the opcode census could not read the '
+                         f'header -- an unmeasurable tree is not a passing '
+                         f'one\n{census.stdout.strip()[-400:]}')
+    if census.returncode != 0:
+        loans = [ln.strip() for ln in census.stdout.splitlines()
+                 if 'borrowed' in ln and 'CTest-registered' in ln]
+        raise SystemExit(
+            'a file CTest runs spells an opcode number as a literal, so its '
+            'meaning is borrowed from the enum and nothing re-checks it.  '
+            'Read the header at run time instead (see opcode() above).\n  '
+            + '\n  '.join(loans))
+    print('vm bad fidx: ok (out-of-range call index refused, control call '
+          'works, no CTest-registered file borrows an opcode number)')
 
 
 if __name__ == '__main__':
