@@ -159,7 +159,6 @@ static void disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
         snprintf(out, outsz, "CALL_BUILTIN r%d, %s (args:%d)", ins->r1, sn, ins->r3);
         return;
     case OP_PUSH_REG:       snprintf(out, outsz, "PUSH_REG r%d", ins->r1); return;
-    case OP_POP_REG:        snprintf(out, outsz, "POP_REG r%d", ins->r1); return;
     case OP_SAY:            snprintf(out, outsz, "SAY r%d", ins->r1); return;
     case OP_WAIT:           snprintf(out, outsz, "WAIT r%d", ins->r1); return;
     case OP_STOP:           snprintf(out, outsz, "STOP"); return;
