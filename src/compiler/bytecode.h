@@ -16,8 +16,13 @@ typedef enum {
     OP_INDEX_SET,           /* index set: reg[r1][r2] = reg[r3] */
     OP_LOAD_GLOBAL, OP_STORE_GLOBAL,
     OP_JUMP, OP_JUMP_IF_FALSE, OP_JUMP_IF_TRUE,
-    OP_CALL_BUILTIN, OP_PUSH_REG, OP_POP_REG,
-    OP_SAY, OP_WAIT, OP_STOP,
+    OP_CALL_BUILTIN, OP_PUSH_REG,
+    /* 29 is a hole: OP_POP_REG used to sit here.  The numbering after it is
+       an ABI -- .inim files are compiled bytecode whose opcode field is a raw
+       integer (see the note about appending at the end of this enum), and
+       vtest/params_precompiled_v06.inim is committed.  So the next member is
+       pinned explicitly instead of sliding down into the hole. */
+    OP_SAY = 30, OP_WAIT, OP_STOP,
     OP_HALT,
     /* custom functions (appended at end to keep old opcode numbers, DLL ABI compatible) */
     OP_CALL_FUNC,   /* call func: r1=func idx, r2=result reg, r3=argc (args popped from stack) */
