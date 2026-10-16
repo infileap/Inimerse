@@ -21,6 +21,17 @@ This check is deliberately narrow.  Ports handed to a *child process* (a hub
 started with `--port 0`, or a TCP port a suite passes down) are a different
 question with its own history in docs/STATUS.md 2.9; flagging those here would
 mean rewriting suites that are not part of this defect.
+
+Two rules about its own output, added after both were measured false:
+
+  * the success line carries its denominator.  It used to be a literal with no
+    number in it, so a directory holding no suite at all printed the same
+    sentence as this repository and exited 0.  A silent pass is at its strongest
+    not when it prints a zero but when the number never reaches the output --
+    and there is no number in a literal to read.
+  * an empty input set is not a passing input set.  It exits non-zero and names
+    the object it could not find, the way `tools/opcode_literals.py --ref
+    deadbeef...` refuses to call an unreadable tree a pass.
 """
 
 import os
@@ -53,8 +64,18 @@ def port_argument(address_tuple: str) -> str:
 
 def main():
     failures = []
+    suites = sorted(TOOLS.glob("*.test.py"))
 
-    for path in sorted(TOOLS.glob("*.test.py")):
+    if not suites:
+        print(
+            f"check_test_ports: no *.test.py under {TOOLS} -- the input set is "
+            f"empty, so there is nothing here for this check to be true about, "
+            f"and a check with nothing to check is not a passing check",
+            file=sys.stderr,
+        )
+        return 1
+
+    for path in suites:
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in SERVER.finditer(text):
             port = port_argument(m.group(2))
@@ -71,7 +92,10 @@ def main():
             print(f"  - {f}", file=sys.stderr)
         return 1
 
-    print("check_test_ports: ok (every in-process test server binds port 0)")
+    print(
+        f"check_test_ports: ok ({len(suites)} *.test.py scanned; every "
+        f"in-process test server binds port 0)"
+    )
     return 0
 
 
