@@ -1,0 +1,13 @@
+# acceptance set (headagent's three criteria), kept OUT of the ruler itself
+# ① the four sites the hand-correction fixed -- must come back 持分片
+src/vm/vm.c:3742
+src/vm/vm.c:3743
+src/vm/vm.c:4353
+src/vm/vm.c:4361
+# ③ known truly lock-free writes -- must come back 无分片
+src/vm/vm.c:1555
+src/runtime/runtime.c:1722
+src/runtime/runtime_posix.c:896
+src/vm/vm.c:5073
+src/vm/vm.c:5125
+src/vm/vm.c:5258
