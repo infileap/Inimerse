@@ -2014,6 +2014,387 @@ info(`㉗ 乙 · ★★ 这一栏的宾语：**「页面画不画那个徽章」
          「盯整份文件里**每一处**关于『谁裁的』的说法」—— 就是下面的 ⑪。
        ★ `headerWatch.universalClaim` 这一栏因此降级成**文档**（记下那句话曾经是什么）。 */
   }
+/* ══════════════════════ ㉘ 一个字段名有几个射程 ══════════════════════
+   协调者 m01541 的「甲（主项）」。判据在 website/scratch/registration_rule.md 的「㉘」一节，
+   先于本笔落盘（判据那一笔 = 8dd0d58，是 HEAD 的祖先）。
+   ★ 本块只印、不改数据；decisions.js 一个字节不动。                                  */
+
+/* ---- ① leaf 字段名 + 它的值 + 那个值的出处（file 与树） ---- */
+const T28_LEAF = (() => {
+  const out = [];
+  (function walk(v, p, ancFile, ancEntry) {
+    if (v === null || v === undefined) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, p, ancFile, ancEntry)); return; }
+    if (typeof v === 'object') {
+      const f = (typeof v.file === 'string') ? v : ancFile;
+      const en = (typeof v.id === 'string' && v.source) ? v : ancEntry;
+      for (const k of Object.keys(v)) walk(v[k], p ? p + '.' + k : k, f, en);
+      return;
+    }
+    const name = p.split('.').pop();
+    const file = ancFile ? ancFile.file : (ancEntry && ancEntry.source ? ancEntry.source.file : null);
+    const isRef = (name === 'seenOn' || name === 'readAt');
+    const tree = (ancFile && (ancFile.seenOn || ancFile.readAt)) || D.ref;
+    out.push({ p, name, value: String(v), file, ref: isRef ? String(v) : tree, ancPath: ancFile ? '有 file 的祖先' : '无' });
+  })(D, '', null, null);
+  return out;
+})();
+const T28_NAMES = Array.from(new Set(T28_LEAF.map((x) => x.name))).sort();
+const T28_BY_NAME = {};
+T28_LEAF.forEach((x) => { (T28_BY_NAME[x.name] = T28_BY_NAME[x.name] || []).push(x); });
+const T28_MULTI = T28_NAMES.filter((n) => new Set(T28_BY_NAME[n].map((x) => x.p)).size > 1);
+
+/* ---- ② 消费点：扫【本文件自己的源码】找定位器调用点 ---- */
+const T28_SELF = fs.readFileSync(__filename, 'utf8');
+const T28_SELF_LINES = T28_SELF.split('\n');
+/* 定位器清单（判据里逐字写着的那四条）。pos = 那个【以 .F 结尾的实参】在这条调用里的位置。 */
+const T28_LOCATORS = ['docAt', 'docAtRef', 'sectionExists', 'sectionOf'];
+/* 定位器自己的函数体：里面的实参是形参（file / ref / sectionText），不是字段路径 ⇒ 必须排除。 */
+const T28_FN_RANGES = (() => {
+  const out = [];
+  for (let i = 0; i < T28_SELF_LINES.length; i++) {
+    const m = /^\s*function\s+([A-Za-z_$][\w$]*)\s*\(/.exec(T28_SELF_LINES[i]);
+    if (!m || T28_LOCATORS.indexOf(m[1]) === -1) continue;
+    let depth = 0, started = false, end = i;
+    for (let j = i; j < T28_SELF_LINES.length; j++) {
+      for (const ch of T28_SELF_LINES[j]) { if (ch === '{') { depth++; started = true; } else if (ch === '}') depth--; }
+      if (started && depth === 0) { end = j; break; }
+    }
+    out.push({ fn: m[1], from: i + 1, to: end + 1 });
+  }
+  return out;
+})();
+const T28_IN_FN_BODY = (n) => T28_FN_RANGES.filter((r) => n >= r.from && n <= r.to).map((r) => r.fn);
+/* 顶层的逗号切分（不切括号里的逗号） */
+function t28SplitArgs(s) {
+  const out = []; let d = 0, cur = '';
+  for (const ch of s) {
+    if (ch === '(' || ch === '[' || ch === '{') d++;
+    if (ch === ')' || ch === ']' || ch === '}') d--;
+    if (ch === ',' && d === 0) { out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+/* 从一个实参表达式里取【字段名】：末尾的 .ident 或 ['ident']；取不到就是【变量/字面量】 */
+function t28FieldOf(expr) {
+  const e = expr.trim().replace(/\)+$/, '').replace(/\.text$/, '');
+  let m = /\.([A-Za-z_$][\w$]*)\s*$/.exec(e);
+  if (m) return m[1];
+  m = /\['([A-Za-z_$][\w$]*)'\]\s*$/.exec(e);
+  if (m) return m[1];
+  return null;
+}
+const T28_SITES = [];
+T28_SELF_LINES.forEach((line, i) => {
+  const n = i + 1;
+  if (/^\s*(?:\/\*|\*|\/\/)/.test(line)) return;
+  if (T28_IN_FN_BODY(n).length) return;
+  for (const fn of T28_LOCATORS) {
+    let idx = -1;
+    while ((idx = line.indexOf(fn + '(', idx + 1)) !== -1) {
+      if (new RegExp('function\\s+' + fn + '\\s*\\(').test(line)) continue;
+      const rest = line.slice(idx + fn.length + 1);
+      const args = t28SplitArgs(rest.replace(/\)\s*[;,)]?\s*$/, ''));
+      args.forEach((a, k) => {
+        const f = t28FieldOf(a);
+        if (f === null) { T28_SITES.push({ n, fn, pos: k, name: null, arg: a, why: '变量或字面量' }); return; }
+        if (T28_NAMES.indexOf(f) === -1) { T28_SITES.push({ n, fn, pos: k, name: null, arg: a, why: `末尾标识符 ${f} 不是本文件里的 leaf 字段名` }); return; }
+        T28_SITES.push({ n, fn, pos: k, name: f, arg: a });
+      });
+    }
+  }
+  /* 定位器 #4：…text.indexOf(<字段路径>) */
+  let idx = -1;
+  while ((idx = line.indexOf('.indexOf(', idx + 1)) !== -1) {
+    const rest = line.slice(idx + 9);
+    const args = t28SplitArgs(rest.replace(/\)\s*[;,)]?\s*$/, ''));
+    const f = t28FieldOf(args[0] || '');
+    if (f && T28_NAMES.indexOf(f) !== -1) T28_SITES.push({ n, fn: 'indexOf', pos: 0, name: f, arg: args[0] });
+  }
+});
+const T28_SITE_OK = T28_SITES.filter((s) => s.name);
+const T28_SITE_NO = T28_SITES.filter((s) => !s.name);
+
+/* ---- ③ 接受集：把该名字的全部值喂给那个定位器 ---- */
+function t28Accepts(site, rec) {
+  const file = rec.file || (D.ref ? 'docs/EIDOS_V06.md' : 'docs/EIDOS_V06.md');
+  try {
+    if (site.fn === 'docAt' || site.fn === 'docAtRef') {
+      if (site.pos === 0) {                       /* 这个值当【树】用 */
+        const r = docAtRef(rec.value, file);
+        return r.from.startsWith(rec.value + ':');
+      }
+      const r = docAtRef(rec.ref, rec.value);     /* 这个值当【文件】用 */
+      return !!r.from && r.from.indexOf(':') !== -1 && r.from.slice(0, r.from.indexOf(':')) === rec.ref;
+    }
+    if (site.fn === 'sectionExists') {
+      if (site.pos !== 1) return null;
+      return !!sectionExists(docAtRef(rec.ref, file).text, rec.value);
+    }
+    if (site.fn === 'sectionOf') {
+      if (site.pos !== 2) return null;
+      return !!sectionOf(rec.ref, file, rec.value);
+    }
+    if (site.fn === 'indexOf') {
+      return docAtRef(rec.ref, file).text.indexOf(rec.value) !== -1;
+    }
+  } catch (e) { return false; }
+  return null;
+}
+const T28_LOC_KEY = (s) => `${s.fn}@${s.n}·arg${s.pos}`;
+const T28_PER_NAME = T28_NAMES.map((nm) => {
+  const values = T28_BY_NAME[nm];
+  const sites = T28_SITE_OK.filter((s) => s.name === nm).filter((s) => {
+    /* 同一个定位器（同名同位置）只留一个代表调用点，但把全部调用点登记下来 */
+    return true;
+  });
+  const locs = Array.from(new Set(sites.map(T28_LOC_KEY)));
+  const acc = {};   /* 定位器键 -> 接受的值集合 */
+  locs.forEach((lk) => {
+    const s0 = sites.filter((s) => T28_LOC_KEY(s) === lk)[0];
+    const a = new Set();
+    let nNull = 0;
+    values.forEach((v) => {
+      const r = t28Accepts(s0, v);
+      if (r === true) a.add(v.value);
+      /* ★★ 缺陷 C（本件自己抓到）：`null` 是【这个定位器在这个实参位置上不适用】
+         （谓词无值 ⊥），不是「拒绝了那个值」。把 ⊥ 当成拒绝，会让一个
+         **从没被喂过节号** 的位置（`:1883`/`:1920` 的 `ri.seenOn || D.ref` 落在 arg0）
+         在一个它不负责的栏上被算成【拒绝】，从而捏出一个不存在的「两个射程」。
+         ⇒ ⊥ 的三态（㉔ 的定义：不适用 = 谓词无值）在这里必须被丢掉，而不是记成 false。 */
+      else if (r === null) nNull++;
+    });
+    acc[lk] = { site: s0, accept: a, total: values.length, nNull, applicable: nNull < values.length };
+  });
+  /* 同一个定位器名（不分位置）合并成一个接受集 —— 判据问的是「两个定位器」 */
+  const byFn = {};
+  Object.entries(acc).forEach(([lk, o]) => {
+    if (!o.applicable) return;            /* ★ ⊥：这个定位器对这个实参位置无话可说 ⇒ 不参与比较 */
+    const fn = o.site.fn;
+    byFn[fn] = byFn[fn] || { fns: [], accept: new Set(), total: values.length };
+    byFn[fn].fns.push(lk);
+    o.accept.forEach((x) => byFn[fn].accept.add(x));
+  });
+  return { name: nm, values, sites, locs, acc, byFn };
+});
+function t28Grade(r) {
+  const fns = Object.keys(r.byFn);
+  if (fns.length === 0) return { g: '③a', why: '没有一个定位器在按这个值定位（或定位器在这个实参位置上不适用）⇒ 我这把尺子只看定位器' };
+  const sets = fns.map((f) => r.byFn[f].accept);
+  const total = r.values.map((v) => v.value);
+  const all = new Set(total);
+  /* ★★ 缺陷 A（本件自己抓到，由预言 1 当场照出来）：判据的字面要求是「两个差集都非空」，
+     而那句话量的是【互不包含】—— 一个 **包含** 关系（前缀 ⊇ 精确）**不是一种接受集相同**，
+     它是**两个射程**，只是其中一个更宽。⇒ 档① 的条件改成【作为集合不相等】，
+     并把两种关系分开印（①a 互不包含 / ①b 一个包住另一个）。
+     ★ 改判据的理由：判据声称要量的是「真有两个射程」，而它写下的条件是「互不包含」——
+       两者不是同一件事，而 `section`（本族唯一已证的那一个）今天正好落在差别里。 */
+  for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      const onlyI = Array.from(sets[i]).filter((x) => !sets[j].has(x)).length;
+      const onlyJ = Array.from(sets[j]).filter((x) => !sets[i].has(x)).length;
+      if (onlyI > 0 && onlyJ > 0) {
+        return { g: '①', sub: '①a', why: `${fns[i]} 与 ${fns[j]} 的接受集互有对方没有的 ⇒ 互不包含（${onlyI} / ${onlyJ}）` };
+      }
+      if (onlyI > 0 || onlyJ > 0) {
+        const wide = onlyI > 0 ? fns[i] : fns[j];
+        const narrow = onlyI > 0 ? fns[j] : fns[i];
+        return { g: '①', sub: '①b', why: `${wide} 的接受集【包住】${narrow} 的（${wide} 多认 ${Math.max(onlyI, onlyJ)} 个）⇒ 包含，不是相同` };
+      }
+    }
+  }
+  const accept = new Set(); sets.forEach((s) => s.forEach((x) => accept.add(x)));
+  const rejected = Array.from(all).filter((x) => !accept.has(x));
+  /* ★★ 缺陷 B：这句话原来写「全部定位器的接受集相同，且 = 全部 N 个值」——
+     而它是在**并集**上算的 ⇒ 「相不相等」与「有没有被拒」被合并成一句，
+     于是它与同一份输出里逐定位器那一栏（79 / 39）**直接矛盾**，而两栏都完整、都好看。
+     ⇒ 拆成两句：先把「相等」按住（上面那个循环已经保证它——走到这里就是全都相等），
+       再单独说「有没有值被任何一个定位器拒掉」。 */
+  if (rejected.length === 0) return { g: '②', why: `${fns.join(' / ')} 的接受集【作为集合彼此相等】，且 = 全部 ${all.size} 个值（没有值被拒）` };
+  return { g: '③b', why: `接受集（并集）拒绝了 ${rejected.length} 个值 ⇒ 有别的东西在认它，而我没找到（★ 这是「我没找到」的证据，不是缺陷的证据）` };
+}
+T28_PER_NAME.forEach((r) => { r.grade = t28Grade(r); });
+const T28_TALLY = { '①': [], '②': [], '③a': [], '③b': [] };
+T28_PER_NAME.forEach((r) => T28_TALLY[r.grade.g].push(r));
+
+/* ---- 打印 ---- */
+info(`㉘ · ★ 分母（分母是谁定的：★ 由 decisions.js 的实际 key path 在运行时枚举，不是我手写的清单）：`);
+info(`　　leaf 字段名 = ${T28_NAMES.length} 个　` +
+  `其中【装载点 ≥2】的 = ${T28_MULTI.length} 个：${T28_MULTI.map((n) => n + '(' + new Set(T28_BY_NAME[n].map((x) => x.p)).size + ')').join(' ')}`);
+info(`　　★ 定位器清单 = 4 条（docAt/docAtRef、sectionExists、sectionOf、…text.indexOf(<字段路径>)）；` +
+  `扫描对象 = 本文件自己的源码（${T28_SELF_LINES.length} 行）；定位器自己的函数体已排除：` +
+  T28_FN_RANGES.map((r) => `${r.fn}():${r.from}-${r.to}`).join(' '));
+info(`　　★ 扫到的调用点 = ${T28_SITES.length} 个：能用字段名认领的 = ${T28_SITE_OK.length} 个；` +
+  `认领不了的 = ${T28_SITE_NO.length} 个（★ ${T28_SITE_NO.map((s) => `:${s.n} ${s.fn} 的 ${JSON.stringify(s.arg)}（${s.why}）`).join('；')}）`);
+info(`㉘ · ★ 三档（和必须 = 分母）：① 真有两个射程 = ${T28_TALLY['①'].length} ／ ` +
+  `② 只有一个射程 = ${T28_TALLY['②'].length} ／ ③a 没有定位器 = ${T28_TALLY['③a'].length} ／ ` +
+  `③b 有别的东西在认它（我没找到）= ${T28_TALLY['③b'].length}　` +
+  `和 = ${T28_TALLY['①'].length + T28_TALLY['②'].length + T28_TALLY['③a'].length + T28_TALLY['③b'].length} / ${T28_NAMES.length}`);
+check('㉘ 验收⑤：三档（四个计数器）之和 = 分母（真划分：一个名字只落进一档）',
+  T28_TALLY['①'].length + T28_TALLY['②'].length + T28_TALLY['③a'].length + T28_TALLY['③b'].length === T28_NAMES.length,
+  `${T28_TALLY['①'].length} + ${T28_TALLY['②'].length} + ${T28_TALLY['③a'].length} + ${T28_TALLY['③b'].length} = ${T28_TALLY['①'].length + T28_TALLY['②'].length + T28_TALLY['③a'].length + T28_TALLY['③b'].length} / ${T28_NAMES.length}`);
+/* ★★ 协调者 m01541 裁定 ② 的另一半：档① 今天有两种关系，而它们共享一个档名。
+   一个档的名字是一个论断 ⇒ 把两种关系分开印（①a 互不包含 / ①b 一个包住另一个）。 */
+{
+  const sub = { '①a': [], '①b': [] };
+  T28_TALLY['①'].forEach((r) => { (sub[r.grade.sub] = sub[r.grade.sub] || []).push(r.name); });
+  info(`㉘ · ★ 档① 的两种关系（★ 一个档的名字是一个论断，所以这两种必须分开印）：` +
+    `①a 互不包含 = ${(sub['①a'] || []).length} 个${(sub['①a'] || []).length ? '（' + sub['①a'].join('、') + '）' : ''}　／　` +
+    `①b 一个【包住】另一个 = ${(sub['①b'] || []).length} 个${(sub['①b'] || []).length ? '（' + sub['①b'].join('、') + '）' : ''}`);
+  /* ★ 自带证据：档① 的每一个名字，都要说得出它那对定位器里谁多认了谁几个 */
+  T28_TALLY['①'].forEach((r) => info(`　　[①${r.grade.sub.slice(1)}] ${r.name}：${r.grade.why}`));
+}
+/* ★★ 协调者 m01541 裁定 ②：两个射程【并排印】（射程不同的条目数 / 总数），常备。
+   ★ 这一条不引用 ㉗ 甲 的任何变量 —— 它直接从 D.entries 上数，
+     所以它在「㉗ 甲 换成别的东西」之后仍然印得出来。 */
+const T28_SPAN = (() => {
+  let diff = 0, same = 0, noRi = 0;
+  D.entries.forEach((e) => {
+    const a = e.ruledIn ? e.ruledIn.section : null;
+    const b = e.source ? e.source.section : null;
+    if (a === null) { noRi++; return; }
+    if (String(a).trim() !== String(b).trim()) diff++; else same++;
+  });
+  return { diff, same, noRi, n: D.entries.length };
+})();
+info(`㉘ · ★★ 常备（协调者裁定 ②）：【节标题全文】与【节号】两个射程并排印 —— ` +
+  `逐条比 entries.ruledIn.section（全文）与 entries.source.section（节号）：` +
+  `射程不同 = ${T28_SPAN.diff} / ${T28_SPAN.n}（同一条上两者逐字相同 = ${T28_SPAN.same}；无 ruledIn = ${T28_SPAN.noRi}）` +
+  `　★ 分母 = D.entries.length，由 decisions.js 的 entries 数组定，不是 docs 定的。`);
+check('㉘ 验收②（常备）：【节标题全文】与【节号】两个射程并排印，且【射程不同】这一栏非零',
+  T28_SPAN.diff + T28_SPAN.same + T28_SPAN.noRi === T28_SPAN.n,
+  `${T28_SPAN.diff} + ${T28_SPAN.same} + ${T28_SPAN.noRi} = ${T28_SPAN.diff + T28_SPAN.same + T28_SPAN.noRi} / ${T28_SPAN.n}　` +
+  `★ 射程不同 = ${T28_SPAN.diff}（★ 这一栏的名字是【不同】，它非零才说明两个射程真的分得开）`);
+check('㉘ 验收⑥：★ 过拟合检验 —— 已证过的那一个实例（section）必须落在档①',
+  T28_PER_NAME.filter((r) => r.name === 'section')[0].grade.g === '①',
+  `section 的档 = ${T28_PER_NAME.filter((r) => r.name === 'section')[0].grade.g}　依据：${T28_PER_NAME.filter((r) => r.name === 'section')[0].grade.why}`);
+
+/* 档①、档② 逐名四样：字段名 / 两处取值逐字 / 两处来源逐字 / 把两者分开的可执行判据 */
+info('㉘ · 档① 与 档② 逐名【四样】（★ 两处取值逐字 ／ 两处来源逐字 ／ 分开它们的可执行判据）：');
+['①', '②'].forEach((g) => {
+  T28_TALLY[g].forEach((r) => {
+    info(`　　[${g}${r.grade.sub ? r.grade.sub.slice(1) : ''}] 字段名 = ${r.name}　装载点 = ${new Set(r.values.map((v) => v.p)).size} 个、值 ${r.values.length} 个`);
+    Object.entries(r.byFn).forEach(([fn, o]) => {
+      const rej = Array.from(new Set(r.values.map((v) => v.value))).filter((x) => !o.accept.has(x));
+      info(`　　      定位器 ${fn}（调用点 ${o.fns.map((x) => ':' + x.split('@')[1].split('·')[0]).join(' ')}）` +
+        `　接受 ${o.accept.size} / ${new Set(r.values.map((v) => v.value)).size} 个不同值` +
+        (rej.length ? `　★ 拒绝的逐字：${rej.slice(0, 4).map((x) => JSON.stringify(String(x).slice(0, 40))).join(' ')}${rej.length > 4 ? ` …共 ${rej.length}` : ''}` : ''));
+    });
+    /* 两处取值的并排（★ 协调者裁定 ②：两个射程并排印） */
+    const uniqP = Array.from(new Set(r.values.map((v) => v.p)));
+    if (uniqP.length >= 2) {
+      const a = r.values.filter((v) => v.p === uniqP[0]);
+      const b = r.values.filter((v) => v.p === uniqP[1]);
+      info(`　　      ★ 并排（两处取值逐字）：${uniqP[0]} = ${JSON.stringify(a[0].value.slice(0, 52))}…（${a.length} 个值）`);
+      info(`　　      ★ 并排（两处取值逐字）：${uniqP[1]} = ${JSON.stringify(b[0].value.slice(0, 52))}…（${b.length} 个值）`);
+      info(`　　      ★ 并排（两处来源逐字）：${uniqP[0]} 读自 ${a[0].ref} ／ ${uniqP[1]} 读自 ${b[0].ref}`);
+      const same = new Set(a.map((v) => v.value)).size === 1 && new Set(b.map((v) => v.value)).size === 1 && a[0].value === b[0].value;
+      info(`　　      ★ 两处的【不同值的个数】：${uniqP[0]} → ${new Set(a.map((v) => v.value)).size} 个　${uniqP[1]} → ${new Set(b.map((v) => v.value)).size} 个　` +
+        `两处的值集合是否相同 = ${same ? '相同' : '不同'}`);
+    }
+  });
+});
+
+/* ---- ★ 两条路有没有交集（预言 4）：sectionOf 对 source.section ---- */
+const T28_CROSS = (() => {
+  const vals = T28_BY_NAME['section'].filter((v) => v.p === 'entries.source.section');
+  const accS = vals.filter((v) => t28Accepts({ fn: 'sectionOf', pos: 2 }, v) === true).length;
+  const accE = vals.filter((v) => t28Accepts({ fn: 'sectionExists', pos: 1 }, v) === true).length;
+  const ri = T28_BY_NAME['section'].filter((v) => v.p === 'entries.ruledIn.section');
+  const accRi_S = ri.filter((v) => t28Accepts({ fn: 'sectionOf', pos: 2 }, v) === true).length;
+  const accRi_E = ri.filter((v) => t28Accepts({ fn: 'sectionExists', pos: 1 }, v) === true).length;
+  /* ★ 反向的那一半：sectionExists 也拒了一些 —— 而「它拒了几个」不是「它不认前缀」，
+     是**它不认那两个 `§` 开头的拼写**。一个尺子拒了几个值，与它拒的是谁，是两句话。 */
+  const rejE = Array.from(new Set(vals.map((v) => v.value)))
+    .filter((x) => t28Accepts({ fn: 'sectionExists', pos: 1 }, vals.filter((v) => v.value === x)[0]) !== true);
+  return { n: vals.length, accS, accE, nRi: ri.length, accRi_S, accRi_E, rejE };
+})();
+info(`㉘ · ★★ 交叉喂食（两条路有没有交集）：` +
+  `把 entries.source.section 的 ${T28_CROSS.n} 个值喂给 sectionOf（按整条标题逐字）⇒ 接受 ${T28_CROSS.accS}；` +
+  `喂给 sectionExists（按前缀）⇒ 接受 ${T28_CROSS.accE}。`);
+info(`㉘ · ★ 而 sectionExists 拒的那 ${T28_CROSS.rejE.length} 个不同值（★ 与上面那两个"§"拼写的【个数】不是同一个数）：` +
+  `${T28_CROSS.rejE.map((x) => JSON.stringify(String(x).slice(0, 24))).join(' ')}`);
+info(`　　　　　　　　　　　　　　　　把 entries.ruledIn.section 的 ${T28_CROSS.nRi} 个值喂给 sectionOf ⇒ 接受 ${T28_CROSS.accRi_S}；` +
+  `喂给 sectionExists ⇒ 接受 ${T28_CROSS.accRi_E}。`);
+
+/* ---- ★ source.section 内部的两个拼写（读数，不改任何东西） ---- */
+const T28_SPELL = (() => {
+  const vals = Array.from(new Set(T28_BY_NAME['section'].filter((v) => v.p === 'entries.source.section').map((v) => v.value)));
+  const num = vals.filter((v) => /^\d+(\.\d+)*$/.test(v));
+  const sec = vals.filter((v) => v.charAt(0) === '§');
+  const other = vals.filter((v) => !/^\d+(\.\d+)*$/.test(v) && v.charAt(0) !== '§');
+  return { vals, num, sec, other };
+})();
+info(`㉘ · ★ 同一个装载点内部也有两个拼写（entries.source.section）：不同值 ${T28_SPELL.vals.length} 个 = ` +
+  `纯节号 ${T28_SPELL.num.length} 个（${T28_SPELL.num.slice(0, 3).map((x) => JSON.stringify(x)).join(' ')}…）／ ` +
+  `§+节名 ${T28_SPELL.sec.length} 个（${T28_SPELL.sec.map((x) => JSON.stringify(x)).join(' ')}）／ 其它 ${T28_SPELL.other.length} 个。`);
+
+/* ---- ③b 的逐名登记（★ 「我没找到」的证据） ---- */
+if (T28_TALLY['③b'].length) {
+  info('㉘ · ③b 逐名（★ 这些值是【有别的东西在认】的证据，不是缺陷的证据）：');
+  T28_TALLY['③b'].forEach((r) => info(`　　[③b] ${r.name.padEnd(16)} ${r.grade.why}`));
+}
+
+/* ---- ★ 四条预言对账 ---- */
+const T28_P = {
+  1: T28_PER_NAME.filter((r) => r.name === 'section')[0].grade.g === '①',
+  2: ['file', 'quote', 'readAt', 'seenOn'].every((n) => (T28_PER_NAME.filter((r) => r.name === n)[0] || { grade: {} }).grade.g === '②'),
+  3: T28_TALLY['③a'].length === T28_NAMES.length - 1 - 4,
+  4: T28_CROSS.accS === 0,
+};
+info(`㉘ · ★ 四条预言对账（半盲：形状在侦察里看过，这一问没量过）：` +
+  `预言 1（section = 档①）= ${T28_P[1] ? '成立' : '★ 不成立'}；` +
+  `预言 2（file/quote/readAt/seenOn = 档②）= ${T28_P[2] ? '成立' : '★ 不成立'}；` +
+  `预言 3（其余 = 档③a，预期 ${T28_NAMES.length - 5} 个）= ${T28_P[3] ? '成立' : '★ 不成立（实际 ' + T28_TALLY['③a'].length + '）'}；` +
+  `预言 4（sectionOf 对 source.section 的接受集 = 0）= ${T28_P[4] ? '成立' : '★ 不成立（实际 ' + T28_CROSS.accS + '）'}。`);
+
+/* ---- ★ 本件要回答的那一句 ---- */
+const T28_ANS = T28_TALLY['①'].filter((r) => r.name !== 'section').length;
+info(`㉘ · ★★★ 本件要回答的那一句：**这个文件里还有 ${T28_ANS} 个字段的名字比它的成员多了一个论断**。` +
+  (T28_ANS === 0
+    ? `（★ 已证的那一个 section 是唯一的 ⇒ 而「还有 0 个」与「我这把尺子只看得见定位器」是两句话 —— ` +
+      `第 2 句的证据是： ${T28_TALLY['③a'].length} 个名字一个定位器都没有。）`
+    : `　逐名：${T28_TALLY['①'].filter((r) => r.name !== 'section').map((r) => r.name).join(' ')}`));
+
+/* ---- 乙 · 空串 ruledBy（协调者 m01541 的小项） ---- */
+const PROBE_3 = { id: 'PROBE-3', status: 'ruled', title: '合成丙', ruledBy: '',
+  source: { file: 'docs/EIDOS_V06.md', section: '0', quote: '' },
+  ruledIn: { file: 'docs/EIDOS_V06.md', section: '0' } };
+const T28_BLANK = (() => {
+  const badge = !!PROBE_3.ruledBy;                 /* ★ 徽章的定义式 = site.js 那个 if (e.ruledBy) */
+  const hasKey = 'ruledBy' in PROBE_3;             /* ★ 判据自己的式子 */
+  const inCorpus = D.entries.filter((e) => e.ruledBy === '').length;
+  const routesKey = D.ruledByRoutes.map((r) => r.key);
+  return { badge, hasKey, inCorpus, routesKey };
+})();
+info(`㉘ 乙 · ★ 空串 ruledBy：造 PROBE-3 = {status:'ruled', ruledBy:''}（★ 只在内存里造）⇒ ` +
+  `【徽章的定义式】\`if (e.ruledBy)\` 求值 = ${T28_BLANK.badge}（⇒ 徽章${T28_BLANK.badge ? '画' : '不画'}）；` +
+  `【判据自己的式子】\`'ruledBy' in e\` = ${T28_BLANK.hasKey}　⇒ ★ 两个式子在【空串】这一个值上分道扬镳。`);
+info(`　　　　期望值来源 = website/assets/site.js 的 decisionCard 里那个 \`if (e.ruledBy)\`（★ 不是本件新写的任何东西）。` +
+  `　★ 而 entries[] 里 ruledBy === '' 的条数 = ${T28_BLANK.inCorpus} ⇒ **这条对照今天不咬语料，它咬的是定义式**；` +
+  `★「语料里这个值出现 ${T28_BLANK.inCorpus} 次」与「两条式子今天等价」是两句话。`);
+check('㉘ 乙：空串 ruledBy 上两条式子分道扬镳（徽章不画，而键在场）',
+  T28_BLANK.badge === false && T28_BLANK.hasKey === true,
+  `if (e.ruledBy) = ${T28_BLANK.badge}　'ruledBy' in e = ${T28_BLANK.hasKey}　语料里 ruledBy === '' 的条数 = ${T28_BLANK.inCorpus}`);
+
+/* ---- ① B 那一档的新名字（协调者裁定 ①）：用判据里新名字的证据重印 ---- */
+const T28_RENAME = (() => {
+  const b = tanC.B;                                  /* ㉗ 丙 的 B 档那 13 条 */
+  const a = tanA.one, c = tanA.two;                  /* ㉗ 甲 的档① 与 档② */
+  /* ★ 新名字的证据：档② 的每一条，它引的那一节的【测② 必须为真】（标题是类别名 ⇒ 不替这条说话） */
+  const withTwo = c.filter((r) => r.dl).length;
+  const oneWithOne = a.filter((r) => r.st.length && !r.dl).length;
+  return { n: b.length, a: a.length, c: c.length, withTwo, oneWithOne };
+})();
+info(`㉘ ① · ★ B 那一档的新名字（★ 旧名「方向相反」是错的）：`);
+info(`　　档 A = 「同一个节里两种说法并存」　${T28_RENAME.a} 条　★ 它的证据（每条都 测①真 ∧ 测②假）= ${T28_RENAME.oneWithOne} / ${T28_RENAME.a}`);
+info(`　　档 B = 「引的节不替这条说话」　${T28_RENAME.c} 条　★ 它的证据（每条都 测②真 —— 标题是类别名）= ${T28_RENAME.withTwo} / ${T28_RENAME.c}`);
+check('㉘ ①：★ B 的新名字有它的 11 条逐条背书（每条引的节都是 测②真）',
+  T28_RENAME.withTwo === T28_RENAME.c && T28_RENAME.c > 0,
+  `测②真的 = ${T28_RENAME.withTwo} / ${T28_RENAME.c}　★ 旧名「方向相反」的条数是 ${T28_RENAME.a}（只有这么多条真的是方向相反）`);
+
 }
 
 /* ---------------- ⑪ 谁裁的：按【整份文件】扫，不按某一行扫 ----------------
@@ -2267,6 +2648,7 @@ const scanned = [];
 check(`被禁字符串扫描了 ${scanned.length} 个文本文件`, scanned.length > 0, `${scanned.length} 个`);
 
 /* ---------------- 报告 ---------------- */
+
 const bad = results.filter((r) => !r.ok);
 results.filter((r) => !r.ok).forEach((r) => {
   console.log(`FAIL  [${r.where}] ${r.name}${r.detail ? '   ← ' + r.detail : ''}`);
