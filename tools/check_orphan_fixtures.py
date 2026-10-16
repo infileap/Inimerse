@@ -159,6 +159,36 @@ def main() -> int:
                 f"tools/node_suites/run_all.js, so no suite runs it."
             )
 
+    # Every tier above is built by globbing a directory.  A glob that matches
+    # nothing does not make this check fail -- it makes it vacuous, and a
+    # vacuous run prints the same success line a real one does.  So each tier
+    # carries the expression it was built from, and a tier of zero inputs is an
+    # error that names that expression rather than a pass.
+    #
+    # The success line below prints the two vtest globs as one sum, so this
+    # check is per-expression even where the display is per-tier: `vtest/*.im`
+    # reaching 0 would otherwise hide behind `vtest/*.inim` reaching 1.
+    empty_tiers = [
+        (label, pattern)
+        for label, pattern, names in (
+            ("vtest fixtures", "vtest/*.im", fixtures),
+            ("serialised programs", "vtest/*.inim", serialised),
+            ("python harnesses", "tools/*.test.py", py_tests),
+            ("node harnesses", "tools/*.test.js", js_tests),
+        )
+        if not names
+    ]
+    for label, pattern in empty_tiers:
+        print(
+            f"check_orphan_fixtures: the {label} tier is empty: `{pattern}` "
+            f"matched nothing under {ROOT}, so there is nothing here for this "
+            f"check to be true about, and a check with nothing to check is not "
+            f"a passing check",
+            file=sys.stderr,
+        )
+    if empty_tiers:
+        return 1
+
     if problems:
         print(
             f"check_orphan_fixtures: {len(problems)} orphaned input(s) out of "
