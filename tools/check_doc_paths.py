@@ -178,7 +178,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit a JSON report")
     args = ap.parse_args()
 
-    files = scan_files()
+    files = scan_files_checked()
     total = 0
     broken: list[tuple[str, str, str]] = []
     good: list[tuple[str, str]] = []
@@ -198,7 +198,7 @@ def main() -> int:
                 broken.append((rel, path, "no such file"))
 
     if args.json:
-        print(printable(json.dumps({
+        floor_guard(len(files), total); print(printable(json.dumps({
             "files": len(files),
             "references": total,
             "broken": [{"file": f, "path": p, "why": w} for f, p, w in broken],
@@ -210,6 +210,7 @@ def main() -> int:
         for rel, path, why in broken:
             print(printable(f"BROKEN  {rel}  ->  {path}  ({why})"))
         print()
+        floor_guard(len(files), total)
         print(f"check_doc_paths: {len(files)} markdown files, {total} backtick "
               f"`docs/…`/`future/…` .md references, {len(broken)} broken")
 
@@ -237,6 +238,91 @@ def printable(line: str) -> str:
     `replace`, which would turn an unreadable name into U+FFFD and hide it.
     """
     return line.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+
+
+# Both guards are defined after main(), for the reason in the comment above:
+# this file is cited by line number, and every one of those refs is above here.
+# main()'s two call sites change in place, so not one cited line moves.
+def scan_files_checked() -> list[str]:
+    """`scan_files`, refusing to pass when the input set is empty.
+
+    Measured before the change: four structurally different repositories all
+    print one byte-identical line and exit 0 --
+
+      check_doc_paths: 0 markdown files, 0 backtick `docs/…`/`future/…` .md
+      references, 0 broken
+
+    (sha256 7d02aa5a493cb5182d349055b9b11d58651cef1bbcb0a5dd238b484c187a7cb2
+    for all four), whether the cause is
+
+      a) an empty git repository,
+      b) a repository that tracks files but none of them Markdown,
+      c) docs/ existing and *containing* .md files that are untracked, so the
+         tracked-path filter at the end of scan_files() empties the list, or
+      d) README.md existing on disk but untracked.
+
+    (c) is the one that matters: the directory exists, it is not empty, it
+    holds the very files this checker exists to read, and the answer is still
+    `0 markdown files ... 0 broken`, exit 0.  `0 broken` reads as "every
+    reference was resolved" and as "no reference was looked at".
+
+    The guard sits after the filter rather than at the listing, because the
+    filter is the second place the set can be emptied and only the end of the
+    pipeline sees both.  Exit 2, so "could not run" is distinguishable from
+    exit 1 "ran and found something"; the pre-existing git-failure paths in
+    tracked_paths() exit 1, the same code a broken reference gets, and are left
+    alone here.
+    """
+    files = scan_files()
+    if not files:
+        print(
+            "check_doc_paths: the markdown input set is empty: README.md plus "
+            "the .md entries of docs/ and future/, kept only where `git "
+            "ls-files -z -- README.md docs future` tracks them, yielded no "
+            f"documents at all under {REPO_ROOT} -- there is nothing here for "
+            "this check to be true about, so there is nothing here for it to "
+            "be a passing check about either.  Exit 2 means it could not run; "
+            "exit 1 means it ran and found a broken reference.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return files
+
+
+def floor_guard(files_n: int, total: int) -> None:
+    """Refuse a report where the *reference* count is zero.
+
+    The input set being non-empty is not enough: the quantity this checker
+    exists to bound is `total`, and it can reach zero while `files_n` is
+    healthy.  Measured: a tree whose one tracked document says "see
+    `doc/x.md`" -- one character short of `docs/` -- prints
+
+      check_doc_paths: 1 markdown files, 0 backtick `docs/…`/`future/…` .md
+      references, 0 broken
+
+    and exits 0 (sha256 e90cbae45c301917306ed023b28a65320bd6c8ba44ee9ca11fd050d5b33db028),
+    which is the same line an unrelated tree prints when it contains no
+    reference at all.  One mis-typed character takes this repository's 1141
+    references to 0 and the check still says `0 broken`.
+
+    Placed at the print sites rather than at main()'s return, because a return
+    comes after the line is already on stdout; here nothing is printed first.
+    (--json goes through the same guard on the same line as its print.)
+
+    A floor of one, not a measured floor: this fires only when the count is
+    exactly zero, which is the one value that is never a legitimate reading of
+    "every reference resolved".
+    """
+    if total == 0:
+        print(
+            f"check_doc_paths: {files_n} markdown file(s) were read but they "
+            "contain zero backtick `docs/…`/`future/…` .md references, so "
+            "there is nothing here for this check to be true about.  Exit 2 "
+            "means it could not run; exit 1 means it ran and found a broken "
+            "reference.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":
