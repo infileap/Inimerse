@@ -188,11 +188,20 @@ def main() -> int:
         for rel, target, why in broken:
             print(printable(f"BROKEN  {rel}  ->  {target}  ({why})"))
         print()
+        floor_guard(len(files), total)
         print(f"check_links: {len(files)} markdown files, {total} links "
               f"({external} external, {anchor} anchors, {checked} local), "
               f"{len(broken)} broken")
 
-    return 1 if broken else 0
+    if broken:
+        return 1
+    # The --json body is already on stdout by now, so its refusal has to come
+    # from here: for a machine consumer the exit code is the contract, and 2
+    # says "this report is not a verdict" where 0 would say "all clear".
+    # (`:176` is the json print and is cited from docs/AUDIT.md:4183, so a
+    # guard could not be inserted above it without moving a cited line.)
+    floor_guard(len(files), total)
+    return 0
 
 
 # Defined after main() on purpose: this file is cited by line number from
@@ -259,6 +268,43 @@ def iter_markdown_files_checked() -> list[str]:
         )
         sys.exit(2)
     return files
+
+
+def floor_guard(files_n: int, total: int) -> None:
+    """Refuse a report where the *link* count is zero.
+
+    A non-empty input set is only the first of this line's three numbers:
+
+      check_links: 120 markdown files, 618 links (17 external, 0 anchors, 601
+      local), 0 broken
+
+    The quantity the check exists to bound is `total`, and it can reach zero
+    with `files_n` perfectly healthy.  Measured: a tree whose one tracked
+    document is plain prose with no links at all prints
+
+      check_links: 1 markdown files, 0 links (0 external, 0 anchors, 0 local),
+      0 broken
+
+    and exits 0 (sha256 46c17aed3f52da881b993fc69d5136f13d42e5d0e965cae65137d8ec5bf1f0e6).
+    `0 broken` reads as "every link resolved" and as "no link was looked at".
+    This is the same defect one pipeline stage past the input-set guard above,
+    and it is one stage past the letter of what was asked for; it is here
+    because leaving a measured hole open is worse than adding a line.
+
+    A floor of one, not a measured floor: it fires only at exactly zero, which
+    is the one value that is never a legitimate reading of "every link
+    resolved".  Placed at the print sites, not at main()'s return, because a
+    return runs after the line is already on stdout.
+    """
+    if total == 0:
+        print(
+            f"check_links: {files_n} markdown file(s) were read but they "
+            "contain zero links, so there is nothing here for this check to "
+            "be true about.  Exit 2 means it could not run; exit 1 means it "
+            "ran and found a broken link.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":
