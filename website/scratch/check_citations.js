@@ -1779,6 +1779,52 @@ current = '出处：谁裁的 / 读自哪棵树';
       ? `多余的 readAt：${redundant.map((e) => `${e.id}@${String(e.readAt).slice(0, 7)}`).join('、')}`
       : '没有多余的（射程：只看每条条目自己的 source.quote 这一栏；builtSource.quote 与 builtAxes 那几份文档级引文不在本条射程内）');
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ★★ 丙：页面上说「已裁」而它引的那一节的标题说「未定」的有多少条
+   ───────────────────────────────────────────────────────────────────────────
+   ★ 分母是谁定的：`status === 'ruled'` 的条目数 —— 它由 `website/data/decisions.js`
+     的 `status` 字段定，**不是 docs 定的**。换一份 docs，分母不动。
+   ★ 为什么要有这一条：一个徽章同时声称「裁过了」与（读者会默认的）「做到了」，
+     而当它引的那一节自己写着「未定」时，**两边都不报错**。
+   ★ 三档的真划分：A 出处节标题带裁定记号 / B 带【未定】记号 / C 两者都没有。
+     A + B + C 必须等于分母 —— 否则说明有一条落进了两档或零档。
+   ★★ 诚实边界：记号集是**人定的**。B 档不是「这些条目错了」，是
+     「**它们引的那一节的名字与它们的徽章不一致**」；哪一边对，要人去读那一节。
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RULED_MARKS = ['【已裁】', '（人裁定）', '（协调者裁定）', '裁定：', '已裁定', '已裁'];
+const NOTDONE_MARKS = ['未定', '未决', '需要人裁定', '需要人类裁'];
+const ruledEntries = D.entries.filter((e) => e.status === 'ruled');
+const tanC = { A: [], B: [], C: [] };
+ruledEntries.forEach((e) => {
+  const t = (e.ruledIn ? e.ruledIn.section : '') + '｜' + (e.source.section || '');
+  const ok = RULED_MARKS.filter((m) => t.indexOf(m) !== -1);
+  const no = NOTDONE_MARKS.filter((m) => t.indexOf(m) !== -1);
+  if (no.length && !ok.length) tanC.B.push({ id: e.id, sec: e.ruledIn ? e.ruledIn.section : '（无 ruledIn）', m: no.join(',') });
+  else if (ok.length) tanC.A.push({ id: e.id, sec: e.ruledIn ? e.ruledIn.section : '', m: ok.join(',') });
+  else tanC.C.push({ id: e.id, sec: e.ruledIn ? e.ruledIn.section : '（无 ruledIn）' });
+});
+info(`㉖ 丙的分母 = \`status === 'ruled'\` 的条目数 = ${ruledEntries.length}（台账共 ${D.entries.length} 条）—— ★ 分母由 website/data/decisions.js 的 status 字段定，不是 docs 定的`);
+info(`㉖ 丙的三档：A（出处节标题带裁定记号）= ${tanC.A.length} ／ B（带【未定】记号）= ${tanC.B.length} ／ C（两者都没有）= ${tanC.C.length}`);
+info(`㉖ 丙的分子 = B = ${tanC.B.length} / ${ruledEntries.length}　★ ${(100 * tanC.B.length / ruledEntries.length).toFixed(1)}% 的 \`ruled\` 条目，引的那一节的标题与它的徽章方向相反`);
+check('㉖ 丙：A + B + C = 分母（真划分：一条只落进一档）',
+  tanC.A.length + tanC.B.length + tanC.C.length === ruledEntries.length,
+  `${tanC.A.length} + ${tanC.B.length} + ${tanC.C.length} = ${tanC.A.length + tanC.B.length + tanC.C.length} / 分母 ${ruledEntries.length}`);
+info('㉖ B 档逐条（★ 这一档的读法是「节标题与徽章不一致」，不是「这一条错了」）：');
+tanC.B.forEach((r) => info(`　　${r.id.padEnd(16)} 记号【${r.m}】 ${r.sec.slice(0, 58)}`));
+info('㉖ C 档逐条（出处节标题不带任何裁定记号）：');
+tanC.C.forEach((r) => info(`　　${r.id.padEnd(16)} ${r.sec.slice(0, 62)}`));
+/* ★ 两个零必须分开写：「它是 0」与「我这把尺子看不见它」。 */
+info(`㉖ ★ 两个零分开写：C 档里【出处节标题真的没有任何记号】的 ${tanC.C.length} 条是「真的没有」；` +
+  `而「我这把尺子的记号集看不见它」这个可能**没有被排除** —— 记号集是人定的（${RULED_MARKS.length} 个裁定记号 + ${NOTDONE_MARKS.length} 个未定记号）。`);
+check('㉖ ★ 006：三条归属路线在数据里可读（不写死在渲染函数里）',
+  Array.isArray(D.ruledByRoutes) && D.ruledByRoutes.length >= 3
+    && D.ruledByRoutes.some((r) => r.key === 'relayed'),
+  `D.ruledByRoutes = ${(D.ruledByRoutes || []).map((r) => r.key).join(', ') || '（无）'}　★ site.js 必须从这一栏读，不写死在函数体里`);
+check('㉖ ★ 006：每条 ruled 条目都有 ruledIn（否则「裁定记在哪一节」在页面上是空白）',
+  ruledEntries.every((e) => e.ruledIn),
+  `缺 ruledIn 的 ruled 条目 = ${ruledEntries.filter((e) => !e.ruledIn).map((e) => e.id).join('、') || '（无）'}`);
+
   /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
      它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
   /* ★★ 退役一条：原来这里有一条「humanRuled 那句话点名的节号，与 ids 的节号集合一致」。

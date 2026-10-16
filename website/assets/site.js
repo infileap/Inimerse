@@ -203,6 +203,29 @@
     head.appendChild(el('code', 'source__where', e.source.file + ' §' + e.source.section));
     box.appendChild(head);
     box.appendChild(el('blockquote', 'source__quote', e.source.quote));
+    /* ★★ 出处节（`ruledIn`）与引文（`source`）是两件事：
+       引文说【这句话在哪、逐字如何】，出处节说【这条裁定被记在哪一节】。
+       两者可以指向不同的文件（例：裁定记在 `docs/AUDIT.md`，而引文在 `docs/HANDOFF_INFIVERSE.md`）。 */
+    if (e.ruledIn) {
+      var ri = el('p', 'source__ruledin');
+      ri.appendChild(el('span', 'source__label', '裁定记在'));
+      ri.appendChild(el('code', 'source__where', e.ruledIn.file + ' §' + e.ruledIn.section));
+      if (e.ruledIn.seenOn) {
+        ri.appendChild(el('span', 'muted', '（节名在 ' + String(e.ruledIn.seenOn).slice(0, 7) + ' 上看到；★ 只记节名、不记行号。）'));
+      }
+      box.appendChild(ri);
+    }
+    /* ★ 【裁定记在】与【登记在】是两件事：前者是这条裁定自己的小节，
+       后者是另一棵树上把它归档的那一节。★ 把一条裁定指到它的登记处，就是把它指到一个不是它的地方。 */
+    if (e.registeredIn) {
+      var rg = el('p', 'source__registeredin');
+      rg.appendChild(el('span', 'source__label', '登记在'));
+      rg.appendChild(el('code', 'source__where', e.registeredIn.file + ' §' + e.registeredIn.section));
+      if (e.registeredIn.seenOn) {
+        rg.appendChild(el('span', 'muted', '（读自 ' + String(e.registeredIn.seenOn).slice(0, 7) + '）'));
+      }
+      box.appendChild(rg);
+    }
     /* ★ 纪律 3：引 PLAN_V07 的数字，必须同时显示它 §0.3 那句 */
     if (e.source.file === 'docs/PLAN_V07.md' && D.planV07Note) {
       box.appendChild(el('p', 'source__warn',
@@ -257,12 +280,18 @@
        `human`（2026-10 在 `ask_user_question` 上选的）与 `earlier`（更早的一次裁定）。
        ★ 一个徽章只能压掉一个维度，所以按值渲染，而不是「是/不是人类选的」。 */
     if (e.ruledBy) {
-      var RULED_BY = {
-        human: ['badge--human', '人类在 ask_user_question 上选的'],
-        earlier: ['badge--route-earlier', '更早的一次裁定'],
-      };
-      var rb = RULED_BY[e.ruledBy] || ['badge--muted', '谁裁的：' + e.ruledBy];
-      head.appendChild(el('span', 'badge ' + rb[0], rb[1]));
+      /* ★★ 归属路线表从数据读（`D.ruledByRoutes`）。
+         它以前是写死在这个函数体里的一个对象字面量（只有两条），
+         而语料里逐字存在第三条（「（协调者裁定）」，`docs/STATUS.md` §10.4）。
+         ★ 判据：**一个写死在渲染函数里的对照表，它的集合无从数据里被量** ——
+         而它的缺口不会报错，只会在页面上把那一条降级成一个灰色小块。 */
+      var route = null;
+      (D.ruledByRoutes || []).forEach(function (r) { if (r.key === e.ruledBy) route = r; });
+      var label = route ? route.label : '谁裁的：' + e.ruledBy;
+      var cls = route ? route.badge : 'badge--muted';
+      var badge = el('span', 'badge ' + cls, label);
+      if (route && route.where) badge.title = '出处：' + route.where;
+      head.appendChild(badge);
     }
     card.appendChild(head);
 
@@ -409,6 +438,31 @@
       }
       host.appendChild(box);
     });
+
+    /* ★★ 「未归组」那一档 —— 一个按组处理行的渲染器，它会把不属于任何组的行《静默丢掉》，
+       而丢掉的方式是「页面上少了一块」——它不会报错。所以它必须被单独印出来。
+       ★ 判据：**一个只会「数对不上」的对照，它的修法可以是补一个组、也可以是把那一行藏起来 —— 两者在输出里长得一样。** */
+    if (D) {
+      var known = {};
+      S.docs.forEach(function (d) { known[d.file] = true; });
+      var orphans = D.entries.filter(function (e) { return !known[e.source.file]; });
+      /* ★ 它不叫 `spec-doc` —— 它不是一份文档，它是「不属于任何文档的那些行」。
+         ★ 判据：**把一个残余类放进被它残余掉的那个类里，那个类的计数就会多一——而它看起来像「多了一份文档」。** */
+      var ob = el('article', 'spec-orphans');
+      ob.id = 'spec-orphan';
+      ob.appendChild(el('h3', 'spec-doc__title', '未归组的裁定（' + orphans.length + ' 条）'));
+      ob.appendChild(el('p', 'spec-doc__meta',
+        '★ 这一档列的是「`source.file` 不在上面那份文档清单里」的条目。' +
+        '它为 0 时才说明上面那份清单是完整的。'));
+      if (orphans.length) {
+        ob.appendChild(el('p', 'muted',
+          '★ 它们之前会被静默丢掉 —— “' +
+          orphans.map(function (e) { return e.source.file; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join('、') +
+          '” 这几份文档不在 `website/data/spec.js` 的 `docs` 里。'));
+      }
+      orphans.forEach(function (e) { ob.appendChild(decisionCard(D, e)); });
+      host.appendChild(ob);
+    }
 
     var refBox = document.getElementById('spec-ref');
     if (refBox) {

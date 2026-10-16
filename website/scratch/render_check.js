@@ -745,6 +745,10 @@ currentPage = '规范（真实数据 data/spec.js + data/decisions.js）';
   const shown = host.all((n) => n.tagName === 'ARTICLE' && /decision--/.test(n.className)).length;
   check(`规范页：${D.entries.length} 条裁定全部挂到了各自文档下面`,
     shown === D.entries.length, `${shown} / ${D.entries.length}`);
+  /* ★ 本项把「数对不上」与「它们去了哪里」分开报。 */
+  const orphanTxt = host.all((n) => n.tagName === 'H3' && /未归组的裁定/.test(n.textContent)).map((n) => n.textContent)[0] || '';
+  check('规范页：未归组的裁定 = 0（一个按组渲染的页面必须把落在组外的行单独印出来）',
+    /（0）|（0 条）/.test(orphanTxt.replace(/s/g, '')) || orphanTxt.indexOf('0') !== -1, orphanTxt);
 }
 
 currentPage = '站点脚本（结构）';
