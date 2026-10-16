@@ -141,7 +141,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit a JSON report")
     args = ap.parse_args()
 
-    files = iter_markdown_files()
+    files = iter_markdown_files_checked()
     total = external = anchor = checked = 0
     broken: list[tuple[str, str, str]] = []   # (source, target, why)
     good: list[tuple[str, str]] = []
@@ -217,6 +217,48 @@ def printable(line: str) -> str:
     `replace`, which would turn an unreadable name into U+FFFD and hide it.
     """
     return line.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+
+
+# Also defined after main() on purpose, and for the same reason as printable()
+# above: this file is cited by line number (.gitignore `:80`, docs/AUDIT.md
+# `:39`, `:103`, `:152`, `:176`, `:187`, `:189`), so the guard goes below every
+# one of them rather than above line 103.  Only the call site in main() changes,
+# and it changes in place, so not one cited line moves.
+def iter_markdown_files_checked() -> list[str]:
+    """`iter_markdown_files`, refusing to pass when the input set is empty.
+
+    The input set is built by globbing -- `git ls-files -z -- *.md
+    *.markdown` -- so its size is a property of the repository's contents at
+    this moment, not of the pattern.  A repository where that glob matches
+    nothing is not a repository with no broken links; it is a repository where
+    this check has nothing to be true about, and both print the same line:
+
+        check_links: 0 markdown files, 0 links (0 external, 0 anchors, 0
+        local), 0 broken
+
+    `0 broken` reads as "every link was checked and held" and as "no link was
+    checked at all".  Measured: a repository tracking one `notes.txt` and no
+    Markdown prints exactly that line and exits 0.  That is the real exposure
+    -- narrowing, not an empty repository.
+
+    Exit 2, so "this check could not run" is distinguishable from exit 1,
+    "it ran and found something".  The pre-existing git-failure path above
+    (and the cannot-run path in iter_markdown_files) exits 1, the same code a
+    broken link gets; that is left alone here.
+    """
+    files = iter_markdown_files()
+    if not files:
+        print(
+            "check_links: the markdown input set is empty: "
+            "`git ls-files -z -- *.md *.markdown` matched nothing under "
+            f"{REPO_ROOT} -- there is nothing here for this check to be true "
+            "about, so there is nothing here for it to be a passing check "
+            "about either.  Exit 2 means it could not run; exit 1 means it ran "
+            "and found a broken link.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return files
 
 
 if __name__ == "__main__":
