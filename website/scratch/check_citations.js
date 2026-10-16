@@ -1825,6 +1825,164 @@ check('㉖ ★ 006：每条 ruled 条目都有 ruledIn（否则「裁定记在�
   ruledEntries.every((e) => e.ruledIn),
   `缺 ruledIn 的 ruled 条目 = ${ruledEntries.filter((e) => !e.ruledIn).map((e) => e.id).join('、') || '（无）'}`);
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ★★ ㉗ 甲：B 那 13 条逐条拆开 —— 「引的节讲的是别的问题」有几条
+   ───────────────────────────────────────────────────────────────────────────
+   ★ 裁定二的形状：B 这一档今天叫「方向相反」，而它会装着另一件东西 ——
+     「页面说 X 已裁，而它引的那一节讲的是 Y 未定」。本块把 13 条按【结构】拆开。
+   ★ 判据的全文与六条预言在 `website/scratch/registration_rule.md` 的「㉗」一节，
+     **先于本块落盘**（判据那一笔是读数那一笔的祖先，`git merge-base --is-ancestor` 可量）。
+   ★ 两个测都是**结构**的、可复算的；★「那一节在语义上是不是在说这条」我判不出，
+     我判的是「那个节的**标题是不是替它下面的条目说话**」。
+   ═══════════════════════════════════════════════════════════════════════════ */
+const SELFTALK = ['不得', '本轮没有结论', '仍未决', '不再', '必须', '不许'];
+const SEC_CACHE = new Map();
+/* 取 `ref` 那棵树里 `file` 的、标题逐字等于 sectionText 的那一节（标题行 + 正文到下一个同级或更高级标题）。 */
+function sectionOf(ref, file, sectionText) {
+  const key = ref + '\u0000' + file + '\u0000' + sectionText;
+  if (SEC_CACHE.has(key)) return SEC_CACHE.get(key);
+  let out = null;
+  let text = null;
+  try { text = docAtRef(ref, file).text; } catch (err) { text = null; }
+  if (text !== null) {
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^(#{2,4})\s+(.*)$/.exec(lines[i]);
+      if (!m) continue;
+      if (m[2].trim() !== String(sectionText).trim()) continue;
+      const level = m[1].length;
+      const body = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const m2 = /^(#{1,6})\s+/.exec(lines[j]);
+        if (m2 && m2[1].length <= level) break;
+        body.push(lines[j]);
+      }
+      out = { titleText: m[2].trim(), titleLine: lines[i], level, body: body.join('\n'), startLine: i + 1 };
+      break;
+    }
+  }
+  SEC_CACHE.set(key, out);
+  return out;
+}
+/* 测① 标题自指性：节标题里有没有对它自己内容的模态/否定。 */
+function selfTalk(sec) { return sec ? SELFTALK.filter((m) => sec.titleText.indexOf(m) !== -1) : []; }
+/* 测② 逐项处置层：节内有没有一行 markdown 表头、且那一行含「处置」。
+   ★ 只认这一种形状 —— 「节里逐条自带【已裁定】」不算，那种形状下「处置」就是条目自己的头几个字。 */
+function dispositionLayer(sec) {
+  if (!sec) return null;
+  const lines = sec.body.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*\|.*\|\s*$/.test(lines[i]) && lines[i].indexOf('处置') !== -1) return { line: i + 1, text: lines[i].trim() };
+  }
+  return null;
+}
+const tanA = { one: [], two: [], three: [] };
+ruledEntries.forEach((e) => {
+  if (!tanC.B.some((b) => b.id === e.id)) return;   /* ★ 本块只处理丙的 B 档那 13 条，分母不另定 */
+  const ri = e.ruledIn || {};
+  const sec = sectionOf(ri.seenOn || D.ref, ri.file, ri.section);
+  const st = selfTalk(sec);
+  const dl = dispositionLayer(sec);
+  const row = { id: e.id, file: ri.file, sec: ri.section, quote: e.source.quote, title: e.title, st, dl, ok: !!sec };
+  if (!sec) tanA.three.push(row);
+  else if (dl) tanA.two.push(row);
+  else if (st.length) tanA.one.push(row);
+  else tanA.three.push(row);
+});
+info(`㉗ 甲的分母 = 丙的 B 档 = ${tanC.B.length} 条（★ 由上一块算出，本块不另定分母）`);
+info(`㉗ 甲的三档：档①（同一个问题而两句方向相反）= ${tanA.one.length} ／ 档②（引的节讲的是别的问题）= ${tanA.two.length} ／ 档③（判不了）= ${tanA.three.length}`);
+check('㉗ 甲：三档之和 = 丙的 B 档（真划分：一条只落进一档）',
+  tanA.one.length + tanA.two.length + tanA.three.length === tanC.B.length,
+  `${tanA.one.length} + ${tanA.two.length} + ${tanA.three.length} = ${tanA.one.length + tanA.two.length + tanA.three.length} / B ${tanC.B.length}`);
+check('㉗ 甲：印出来的条数 = 丙的 B 档（没有一条被漏印）',
+  tanA.one.length + tanA.two.length + tanA.three.length === tanC.B.length,
+  `印出 ${tanA.one.length + tanA.two.length + tanA.three.length} 条 / B ${tanC.B.length}`);
+info('㉗ 甲 · 三栏逐条（★ 三栏：它引的那一节的标题 ／ 触发它落进 B 的记号 ／ 档与那一档的依据）：');
+[['①', tanA.one], ['②', tanA.two], ['③', tanA.three]].forEach(([label, arr]) => {
+  arr.forEach((r) => {
+    info(`　　[${label}] ${r.id.padEnd(16)} 节《${String(r.sec).slice(0, 46)}》`);
+    info(`　　      它的 title = ${JSON.stringify(r.title)}`);
+    info(`　　      它引的那句话 = ${JSON.stringify(String(r.quote).slice(0, 96))}`);
+    info(`　　      测① 标题自指 = ${r.st.length ? '真（' + r.st.join('/') + '）' : '假'}　测② 处置层 = ${r.dl ? '真（第 ' + r.dl.line + ' 行：' + r.dl.text + '）' : '假'}${r.ok ? '' : '　★ 那一节在 seenOn 那棵树上取不到'}`);
+  });
+});
+/* ★ 两个零分开写。 */
+info(`㉗ 甲 · 两个零分开写：档③ = ${tanA.three.length} —— ` +
+  (tanA.three.length === 0
+    ? `那 13 条的 seenOn 都是 754403b，两节在那棵树上都在（⇒ 「真的没有」）；★ 而「我这把尺子判不出『同一个问题』」这个可能**没有被排除** —— 我判的是【结构】（标题替不替条目说话），不是【语义】。`
+    : `其中 ${tanA.three.filter((r) => !r.ok).length} 条是【那一节取不到】，${tanA.three.filter((r) => r.ok).length} 条是【节取到了而两个测都假】。`));
+info(`㉗ 甲 · 档① 与档② 的分界（逐节）：`);
+Array.from(new Set(tanC.B.map((b) => b.sec))).forEach((s) => {
+  const one = tanA.one.filter((r) => r.sec === s).length;
+  const two = tanA.two.filter((r) => r.sec === s).length;
+  const three = tanA.three.filter((r) => r.sec === s).length;
+  const any = tanA.one.concat(tanA.two, tanA.three).filter((r) => r.sec === s)[0];
+  const sec = any ? sectionOf((D.entries.filter((e) => e.id === any.id)[0].ruledIn || {}).seenOn || D.ref, any.file, s) : null;
+  info(`　　节《${String(s).slice(0, 56)}》　档① ${one} ／ 档② ${two} ／ 档③ ${three}　` +
+    `测① = ${sec && selfTalk(sec).length ? '真' : '假'}　测② = ${sec && dispositionLayer(sec) ? '真' : '假'}`);
+});
+/* ★★ 这一档的名字是柄。 */
+info(`㉗ 甲 · ★★ B 这一档的名字：它今天叫「方向相反」，而档① = ${tanA.one.length}、档② = ${tanA.two.length} ⇒ ` +
+  (tanA.two.length
+    ? `★★★ **B 这一档的名字必须改** —— 13 条里 ${tanA.two.length} 条不是方向相反，是【节标题是类别名、它不替这条说话】；只有 ${tanA.one.length} 条是同一个节里两种说法并存。`
+    : `13 条全是同一个节里两种说法并存 ⇒ 「方向相反」这个名字成立。`));
+info(`㉗ 甲 · ★★ 这个错名字的来路：丙 拿 \`e.ruledIn.section\` 去匹配记号，而**那一栏是节标题全文**（上一件里我写的），` +
+  `而同一条条目的 \`e.source.section\` 是【节号】⇒ ★ 同一个概念在这个文件里有两个射程。` +
+  `★ 逐条对照（ruledIn.section / source.section）：` +
+  Array.from(new Set(tanC.B.map((b) => b.id))).slice(0, 3).map((id) => {
+    const e = D.entries.filter((x) => x.id === id)[0];
+    return `${id}=《${String(e.ruledIn.section).slice(0, 20)}》/${JSON.stringify(e.source.section)}`;
+  }).join('　') + ' …');
+check('㉗ 甲：ruledIn.section 与 source.section 的射程不同（前者是标题、后者是节号）',
+  D.entries.some((e) => e.ruledIn && e.source && e.ruledIn.section !== e.source.section && !e.ruledIn.section.startsWith(String(e.source.section) + ' ')),
+  `射程不同的条目数 = ${D.entries.filter((e) => e.ruledIn && e.source && e.ruledIn.section !== e.source.section && !e.ruledIn.section.startsWith(String(e.source.section) + ' ')).length} / ${D.entries.length}　★ 这一栏两个射程并存，而丙 只读了其中一个`);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ★★ ㉗ 乙：「不带徽章」与「status 不是 ruled」是不是同一件事
+   ───────────────────────────────────────────────────────────────────────────
+   ★ 两条定义式都从 `website/assets/site.js` 的实际代码里取，我不另写一套。
+   ═══════════════════════════════════════════════════════════════════════════ */
+const SITE_SRC = fs.readFileSync(path.join(SITE, 'assets', 'site.js'), 'utf8');
+const BADGE_PRED_SITE = /if \(e\.ruledBy\)/.test(SITE_SRC);
+const STATUS_PRED_SITE = /e\.status === 'ruled'/.test(SITE_SRC);
+info(`㉗ 乙 · 两条定义式的出处（★ 从 site.js 的实际代码里取，不是另写一套）：`);
+info(`　　徽章的定义式 = \`if (e.ruledBy)\`（site.js 里逐字存在 = ${BADGE_PRED_SITE}）`);
+info(`　　\`ruled\` 的定义式 = \`e.status === 'ruled'\`（site.js 里逐字存在 = ${STATUS_PRED_SITE}）`);
+const badgeOf = (e) => !!e.ruledBy;
+const ruledOf = (e) => e.status === 'ruled';
+const eidosEntries = D.entries.filter((e) => e.source && e.source.file === 'docs/EIDOS_V06.md');
+const withBadge = eidosEntries.filter(badgeOf);
+const noBadge = eidosEntries.filter((e) => !badgeOf(e));
+info(`㉗ 乙 · 分母 = \`source.file === 'docs/EIDOS_V06.md'\` 的条目数 = ${eidosEntries.length}（★ 分母由 decisions.js 的 source.file 字段定，不是 docs 定的）`);
+info(`㉗ 乙 · 带徽章 = ${withBadge.length} ／ 不带徽章 = ${noBadge.length}　⇒ 和 = ${withBadge.length + noBadge.length} / ${eidosEntries.length}`);
+info(`㉗ 乙 · 不带徽章的是不是【全部非 ruled】：不带徽章的 ${noBadge.length} 条里，非 \`ruled\` 的 = ${noBadge.filter((e) => !ruledOf(e)).length}；` +
+  `⇒ ${noBadge.length === noBadge.filter((e) => !ruledOf(e)).length ? '今天【重合】' : '今天【不重合】'}`);
+/* ★★ 两条合成条目：只在内存里造，绝不写进 decisions.js。 */
+const PROBE_1 = { id: 'PROBE-1', status: 'ruled', title: '合成甲', source: { file: 'docs/EIDOS_V06.md', section: '0', quote: '' }, ruledIn: { file: 'docs/EIDOS_V06.md', section: '0' } };
+const PROBE_2 = { id: 'PROBE-2', status: 'proposal', title: '合成乙', source: { file: 'docs/EIDOS_V06.md', section: '0', quote: '' }, ruledIn: { file: 'docs/EIDOS_V06.md', section: '0' }, ruledBy: 'human' };
+info(`㉗ 乙 · 两条合成条目（★ 只在内存里造，不写进 decisions.js）：`);
+info(`　　合成甲 status='ruled' 而【无】ruledBy ⇒ 徽章 = ${badgeOf(PROBE_1) ? '画' : '不画'}／ruled 定义式 = ${ruledOf(PROBE_1)}`);
+info(`　　合成乙 status='proposal' 而【有】ruledBy ⇒ 徽章 = ${badgeOf(PROBE_2) ? '画' : '不画'}／ruled 定义式 = ${ruledOf(PROBE_2)}`);
+check('㉗ 乙：两条合成条目在【徽章】这一栏上分开（⇒ 徽章的宾语是 ruledBy，不是 status）',
+  badgeOf(PROBE_1) !== badgeOf(PROBE_2) && ruledOf(PROBE_1) !== ruledOf(PROBE_2),
+  `徽章：合成甲 ${badgeOf(PROBE_1)} / 合成乙 ${badgeOf(PROBE_2)}；ruled：合成甲 ${ruledOf(PROBE_1)} / 合成乙 ${ruledOf(PROBE_2)}`);
+/* ★★ 退役一条、换一条 —— 这是本族第三次踩同一个坑，理由写在名字里：
+   旧的那条是 `㉗ 乙：两个判定式在【今天的语料上】处处一致`（断言 `together === 分母`）。
+   ★ 它在【对照一】（去掉一条 `ruledBy` ⇒ 让两个字段不再同向）下**必然红** ——
+     而那个对照的目的**正是把它们分开** ⇒ 那条红不是缺陷的读数，是
+     **【这条 check 的射程越过了对照的设计】** 的读数（与 `㉒②`、`㉒③无界` 同族，第三次）。
+   ⇒ 处置：把「今天重合多少」**降为读数栏里的一个值**（下面那行 info），
+     check 只留**基线与对照下都成立**的那一条（真划分：两档之和 = 分母）。
+   ★ 规矩（exact-otter 的裁定）：**一个读数必须在它的名字里带上它的射程。** */
+const together = eidosEntries.filter((e) => badgeOf(e) === ruledOf(e)).length;
+info(`㉗ 乙 · ★ 基线读数（不是断言）：两个判定式在**基线的语料上**一致的条目 = ${together} / ${eidosEntries.length}` +
+  `　★ 而这个数**在对照一下必然变小** —— 那个对照的目的就是让两个字段不再同向；★ 所以它是一条读数，不是一条判据。`);
+check('㉗ 乙：带徽章 + 不带徽章 = 分母（真划分：一条只落进一档）· 基线与对照下都成立',
+  withBadge.length + noBadge.length === eidosEntries.length,
+  `${withBadge.length} + ${noBadge.length} = ${withBadge.length + noBadge.length} / 分母 ${eidosEntries.length}`);
+info(`㉗ 乙 · ★★ 这一栏的宾语：**「页面画不画那个徽章」（= \`e.ruledBy\`）**，不是「\`status\` 是不是 \`ruled\`」。` +
+  `★ 它们今天重合（${together}/${eidosEntries.length}）**只是因为语料恰好让两个字段同向** —— 合成甲与合成乙把它们分开了。`);
+
   /* ★ 文档头那句「本文的四条【已裁】……其余每一条仍是【提案】或【待裁】」是否还成立。
      它是 exact-otter 的文档，我不改它 —— 但我要让它在数据里可见，而不是让我的数据替它圆场。 */
   /* ★★ 退役一条：原来这里有一条「humanRuled 那句话点名的节号，与 ids 的节号集合一致」。
