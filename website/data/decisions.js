@@ -58,6 +58,16 @@ window.INFIVERSE_DECISIONS = {
       },
     },
   },
+  /* ★★ 归属路线表 —— 它以前写死在 `assets/site.js` 的函数体里（只有两条），
+     而语料里逐字存在第三条。存在这里的理由：**一张写死在渲染函数里的对照表，它的集合无从数据里被量。**
+     ★ 另一条判据：一条归属路线在页面上真正需要的是【谁能判它】，而不是【它叫什么名字】。 */
+  ruledByRoutes: [
+    { key: 'human',   label: '人类在 ask_user_question 上选的', badge: 'badge--human',        scope: '人',   where: null },
+    { key: 'earlier', label: '更早的一次裁定',              badge: 'badge--route-earlier', scope: '台账自己', where: null },
+    { key: 'relayed', label: '协调者裁定（我转述）',      badge: 'badge--route-relayed', scope: '人以外的第三条路线',
+      where: 'docs/STATUS.md §10.4（逐字：「**一条被驳回的怀疑（协调者裁定）**」）' },
+    { key: 'coordinator', label: '（协调者裁定）字样本身',  badge: 'badge--route-relayed', scope: '词面', where: null },
+  ],
   altSearch: {
     files: [
       'docs/PLAN_V06.md',
@@ -247,6 +257,13 @@ window.INFIVERSE_DECISIONS = {
         section: '1.1',
         quote: '**被否掉的两条**：① **保持外糖**（「开放与封闭」只能在脱糖期**擦掉**、不能在编译期**守住**）；② **完整内建**（会让 Eidos 成为 VM 的一个新决定点，与去 C 化的方向直接对撞）。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '1.1 已经裁定过、而归档文档不知道的',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'EIDOS-1.3',
@@ -261,6 +278,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '1.3',
         quote: '★★ **【已裁】保留 `@unfold eidos extend A, B`；归档的 `eidos C: A + B` 作为一种【记录】留在归档原文里，不进入现行语法。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '1.3 ★ 归档里的 Mixin 与本文的 `@unfold` 是同一件事的两种拼写',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -277,6 +301,13 @@ window.INFIVERSE_DECISIONS = {
         section: '3.1',
         quote: '**(c) 静默合并，但【必须报出来】，且这个报告本身可被钉住。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '3.1 ★★★ 第一条：同名且相同 ⇒ 只保留一份',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'EIDOS-3.3',
@@ -292,6 +323,13 @@ window.INFIVERSE_DECISIONS = {
         section: '3.3',
         quote: '★★ **【已裁】取「最特化优先」。** 人类在 `ask_user_question` 上选的是它，三条独立的理由：',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '3.3 ★★★ 第三条：参数不同不算同名 —— 而「保证不存在重叠」有两个相反的答案',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'EIDOS-6.1',
@@ -306,6 +344,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '6.1',
         quote: '★★ **【已裁】改名 `@mixin`。** 人类在 `ask_user_question` 上选的是它。★ 理由：**将来真的想要泛型时，`@template` 已经被占了。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '6.1 `@template` 这个名字会被读错 —— 已改名 `@mixin`',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -323,6 +368,13 @@ window.INFIVERSE_DECISIONS = {
         section: '4',
         quote: '★★ **【已裁】`super` 必须带名字** —— `super pet.play`（或 `super(pet)`）。★ 人类在 `ask_user_question` 上选的是它。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '4. ★ `super` 必须限定 —— 已裁',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'EIDOS-1.5',
@@ -339,6 +391,13 @@ window.INFIVERSE_DECISIONS = {
         section: '1.5',
         quote: '★★★ **【已裁】语义是【违反时调 `on_violation`】—— 修复，不是【拒绝写入】。** 人类在 `ask_user_question` 上选的，而实测把它的语义也定死了：',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '1.5 ★ `invariant` 是唯一一条与「VM 不需要认识它」有张力的',
+        seenOn: '17571f7',
+      },
     },
     {
       id: 'EIDOS-2.2',
@@ -352,6 +411,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '2.2',
         quote: '⇒ **【提案】`@unfold` 由编译器执行，不是 `tools/` 里的一个脚本。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '2.2 `@unfold`',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -368,6 +434,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '3.2',
         quote: '★★★ **【已裁】诊断的形状照 `rustc --error-format=json` —— 它是一个树，而且比本节的草案多两样。** 人类在 `ask_user_question` 上选的。逐条实测（本机 `rustc 1.99.0`）：',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '3.2 ★★ 第二条：同名而不同 ⇒ 必须覆写',
+        seenOn: '17571f7',
       },
     },
     {
@@ -386,6 +459,13 @@ window.INFIVERSE_DECISIONS = {
         section: '3.4',
         quote: '★★★ **【已裁】字段与 §3.1 的方法走同一条规则：静默合并（两个字段都保留）+ 合并点报出 + 可钉住；而【无限定访问命中两个以上 = 编译错误】，不是静默取一个。** 人类在 `ask_user_question` 上选的。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '3.4 ★ 字段的合并规则与方法不同 —— 已裁：与 §3.1 同形',
+        seenOn: '17571f7',
+      },
     },
     {
       id: 'EIDOS-7.3',
@@ -400,6 +480,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '7.3',
         quote: '★ 理由：**「深度超限」是一个关于实现的读数，「这是一个环」是一个关于设计的读数** —— 前者让作者去调一个上限，后者让他去改结构。',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '7.3 循环展开检测',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -418,6 +505,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7.2',
         quote: '★★★ **【已裁】可传递。** 人类在 `ask_user_question` 上选的，两条独立的理由：',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '7.2 `@unfold` 可传递吗？—— 已裁：可传递，且链必须【拼接】而不是【拷贝】',
+        seenOn: '17571f7',
+      },
     },
     {
       id: 'EIDOS-7.4',
@@ -433,6 +527,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '7.4',
         quote: '★★★ **【已裁】能调用祖父，而它【不需要线性化】。** ★ 因为 `super` 的宾语是**一个名字**（`super pet.play`），不是**一个位置**。★ **名字指哪个祖先由名字定，不由「链上的下一个」定** ⇒ ★ **§7.2 与 §7.4 一起裁的结果是：链存在（可传递），而走链靠名字（不需要顺序算法）。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '7.4 ★ `super` 能不能调用祖父（§4 边界③）—— 已裁：能，因为 `super` 带名字',
+        seenOn: '17571f7',
       },
     },
     {
@@ -450,6 +551,13 @@ window.INFIVERSE_DECISIONS = {
         section: '8',
         quote: '★ **这一节计划与 `website/compare/` 那一页互为同一份内容的两个渲染**（★ **那一页今天【不存在】—— 这是一个计划，不是一个引用**）—— 如果那一页只做语法差异，它是一份说明书；**如果把「别的语言怎么解决封闭性」也做进去，它就是本文件缺的那一章。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '8. 与其他语言的关系（缺的那一半）',
+        seenOn: '17571f7',
+      },
     },
     {
       id: 'EIDOS-6.2',
@@ -466,6 +574,13 @@ window.INFIVERSE_DECISIONS = {
         section: '6.2',
         quote: '★★ **【已裁】保留 `@unfold eidos extend A, B`**（与 §1.3 同一条裁定）。★ **归档的 `+` 拼写不进入现行语法，作为【记录】留在归档原文里。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '6.2 与归档的拼写冲突 —— 已裁',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'EIDOS-1.6',
@@ -479,6 +594,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/EIDOS_V06.md',
         section: '1.6',
         quote: '**本文没有逐条判完归档的全部 15 节。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/EIDOS_V06.md',
+        section: '1.6 【未做】',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
 
@@ -496,6 +618,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7',
         quote: '**已裁（人类）：变成「内糖」—— 编译器认识它，VM 不需要。现状不变、方向变了；实施排在决定点清单与 IR 收敛之后。详见 §3.3**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-15',
@@ -511,6 +640,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7',
         quote: '**已裁（人类）：改成 `:` —— 而这已经是今天的现状，不是一次改动。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-16',
@@ -524,6 +660,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V06.md',
         section: '7',
         quote: '**已裁（人类）：两套都做，按有无索引分工（选项 C）**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -539,6 +682,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7',
         quote: '**已裁（人类裁定 A）：两个都留，把两个解析循环合成一个统一的优先级表。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-18',
@@ -552,6 +702,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V06.md',
         section: '7',
         quote: '**已裁（人类裁定 A）：`->` 只做 lambda；类型转换一律用函数形式。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -568,6 +725,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7',
         quote: '**已裁（人类裁定 A + 一条追加）：核心只加 `map`/`filter`/`reduce` 三个内建；其余扩展（`zip`/`each`/`find`/`any`/`all`/`sort_by`/`group_by`/`compose`/`curry`）进标准库**（新增 §6.3）。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-20',
@@ -581,6 +745,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V06.md',
         section: '7',
         quote: '**已裁（人类）：以函数形式提供，拼写与 Inim 汇编助记符一致（`bit_and`/`bit_or`/`bit_xor`/`bit_not`/`shl`/`shr`），归 v0.7，不进 v0.6。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -597,6 +768,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7',
         quote: '**已裁（人类，三条逐条回字母 + 一条追加）：① 语法不动（D）—— 保持今天的守卫式 `err(e) | e in FileError:`，只把成员从字符串换成整数码；②「每域 ≤ 16」两条守卫都要（C）—— 一条 CTest 数成员、`im_enum_create` 按 `IM_ENUM_U8` 拒绝越界；③ 旧的 1001–2307 不留（表里不设 `legacy_code` 一栏）；④ 追加一条：需要速查途径。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-6',
@@ -611,6 +789,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V06.md',
         section: '7',
         quote: '**已裁（人类裁定 A）：v0.6 不实现宏系统，但把它写成一条设计约束**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -627,6 +812,13 @@ window.INFIVERSE_DECISIONS = {
         section: '7',
         quote: '**已裁（人类裁定 A）：两说不是「不一致」，它们量的不是同一个东西 —— 记成两条读数，并把真问题写出来。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-12',
@@ -640,6 +832,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V06.md',
         section: '7',
         quote: '**已裁（人类裁定 A）：v0.6 只做与它重叠的那一半，元格式本身另立一条线。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '7. 未定与冲突（**不许在计划书里被抹平**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
 
@@ -657,6 +856,13 @@ window.INFIVERSE_DECISIONS = {
         section: '8',
         quote: '2. **不用「用 `.im` 重写」当修法** —— `docs/DECFY_DESIGN.md` 的结论；换成 `.im` 不消除分歧，只改变分歧发生在哪两个文件之间。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '8. 明确不做（v0.6）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-9.1',
@@ -671,6 +877,13 @@ window.INFIVERSE_DECISIONS = {
         section: '9',
         quote: '1. **每个交付项要有一条能在 `main` 上失败的进树回归**，并且**断言输出的值，不是退出码**（逐字依据见 §3.2）。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '9. 验收：怎么算做完了',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V06-9.2',
@@ -684,6 +897,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V06.md',
         section: '9',
         quote: '2. **每个读数带观测点**：数字旁边要么有 ref，要么它只是一个 delta。**绝对现值永远非法**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V06.md',
+        section: '9. 验收：怎么算做完了',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
 
@@ -701,6 +921,13 @@ window.INFIVERSE_DECISIONS = {
         section: '0.1',
         quote: '| `V1` | 位运算的形式 | **函数形式**，六个名字 `bit_and` `bit_or` `bit_xor` `bit_not` `shl` `shr`；拼写**跟汇编助记符走** | §1.1–§1.3 |',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V07.md',
+        section: '0.1 十五条裁定',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V07-V2',
@@ -714,6 +941,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V07.md',
         section: '0.1',
         quote: '| `V2` | 位运算的位宽与溢出 | **`Z` 任意精度**；位运算按**补码语义定义到无穷位**；★ **溢出问题不存在** | §1.5 |',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V07.md',
+        section: '0.1 十五条裁定',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -729,6 +963,13 @@ window.INFIVERSE_DECISIONS = {
         section: '0.1',
         quote: '| `V4` | 层二的名字 | **`@asm.phys`**（`raw` 被否：它已经是 `src/` 里一个类型的名字，而且读起来像「不安全」） | §2.3 |',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V07.md',
+        section: '0.1 十五条裁定',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V07-V12',
@@ -743,6 +984,13 @@ window.INFIVERSE_DECISIONS = {
         section: '0.1',
         quote: '| `V12` | **实施顺序** | **先位运算**（那条路自己开始、自己结束，不欠任何人一个问题；汇编线的第一个动作是等一个问题被回答） | §0.4 第 1 条、§4 |',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V07.md',
+        section: '0.1 十五条裁定',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'V07-0.4-4',
@@ -756,6 +1004,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/PLAN_V07.md',
         section: '0.4',
         quote: '**已裁定 A：三件都归 v0.6，v0.7 不碰**（`V15`）',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V07.md',
+        section: '0.4 需要人类裁的（四条；**四条全部已裁定 = A**）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
     {
@@ -772,6 +1027,13 @@ window.INFIVERSE_DECISIONS = {
         section: '0.3',
         quote: '这一节里的「零注册」「零用户」「零命中」都是**在写这份文件时量的一次**，**没有观测点、没有门禁盯着**。',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/PLAN_V07.md',
+        section: '0.3 这份文件里的数字都不是读数',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'TYPESET-7',
@@ -782,6 +1044,13 @@ window.INFIVERSE_DECISIONS = {
       whyNot: null,
       overturn: '把一条核心语义改成「必须调用求解器」⇒ 这一条不成立。而在它成立时，「核心自足」是一句能对着依赖清单核的话。',
       source: { file: 'docs/TYPESET_V06.md', section: '7', quote: '4. **【已裁定】谓词集合的可判定边界** = **简单计算 + 正则表达式**；常用集合库／SMT 求解器与形式化验证工具作**拓展库**接入，核心自足且不依赖它们——规范条文见 §3.3。' },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/TYPESET_V06.md',
+        section: '7. 逐条状态：已裁定与未决',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'TYPESET-7.8-1',
@@ -793,6 +1062,13 @@ window.INFIVERSE_DECISIONS = {
       overturn: '把「10 个文件 10 条语句」这个迁移面重新量一遍、并证明等价别名不会在别处复活 ⇒ 这一条就该重开。',
       flag: '★ 它躺在 `### 7.8 仍未决（本轮没有结论，不得当成已定）` 这一节里 —— 节标题说「仍未决」，而这一条标着【已裁定】。这是同一个徽章问题的另一种形态：节级身份与条级身份互相矛盾，而两边都不报错。',
       source: { file: 'docs/TYPESET_V06.md', section: '7.8', quote: '1. **【已裁定】`be` 的退役节奏 = 立即移除，不留等价别名**（2026-10，人类选择 B，**取代**更早的「保留为纯脱糖的等价别名」）。' },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/TYPESET_V06.md',
+        section: '7.8 仍未决（本轮没有结论，不得当成已定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'TYPESET-7.8-2',
@@ -804,6 +1080,13 @@ window.INFIVERSE_DECISIONS = {
       overturn: '「迁移面必须带 ref 报」这一条一旦不再被要求，这条裁定的边界就变了。',
       flag: '同 TYPESET-7.8-1：节标题说「仍未决」，而这一条标着【已裁定】。',
       source: { file: 'docs/TYPESET_V06.md', section: '7.8', quote: '2. **【已裁定】`count` 为规范名，`size` 对集合语境降为已弃用别名**（2026-10，人类选择「1、2」）。' },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/TYPESET_V06.md',
+        section: '7.8 仍未决（本轮没有结论，不得当成已定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
     },
     {
       id: 'AUDIT-1.97-6-H',
@@ -818,6 +1101,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/AUDIT.md',
         section: '§1.97 增补六',
         quote: '**H. 一个引用如果它的宾语已经有了一个稳定标识，那么再给它加一个易碎标识不是精确，\n是把正确性挂到一棵会上涨的树上。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补六：坐标与树、射程与点名、以及「反例被放进了例证里」',
+        seenOn: 'cd44604',
       },
     },
     {
@@ -834,6 +1124,13 @@ window.INFIVERSE_DECISIONS = {
         section: '§1.97 增补六',
         quote: '**K. 一个列表的长度，与写在它前面的那个数，是两件独立的事。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补六：坐标与树、射程与点名、以及「反例被放进了例证里」',
+        seenOn: 'cd44604',
+      },
     },
     {
       id: 'AUDIT-1.97-6-U',
@@ -848,6 +1145,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/AUDIT.md',
         section: '§1.97 增补六',
         quote: '**U. 一个守卫挂在打印机上，管不住抄写的人。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补六：坐标与树、射程与点名、以及「反例被放进了例证里」',
+        seenOn: 'cd44604',
       },
     },
     {
@@ -864,6 +1168,13 @@ window.INFIVERSE_DECISIONS = {
         section: '§1.97 增补六',
         quote: '**W. 一条验收判据可以因为【它引用的默认值后来动了】而失效——而它失效之后仍然读\n起来像一条正确的判据，因为它的形式没有变。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补六：坐标与树、射程与点名、以及「反例被放进了例证里」',
+        seenOn: 'cd44604',
+      },
     },
     {
       id: 'AUDIT-1.97-7-E',
@@ -878,6 +1189,13 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/AUDIT.md',
         section: '§1.97 增补七',
         quote: '**E. 一个【能变绿的错批】比一条不能变红的检查更坏。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补七：名字与定义、能变绿的错批、以及「差一格的坐标全绿」',
+        seenOn: 'cd44604',
       },
     },
     {
@@ -894,6 +1212,13 @@ window.INFIVERSE_DECISIONS = {
         section: '§1.97 增补七',
         quote: '**K. 一本只能追加的台账，它的每一节都是它写下那天的快照；而读者读到的是一份没有\n日期的现在时。**',
       },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补七：名字与定义、能变绿的错批、以及「差一格的坐标全绿」',
+        seenOn: 'cd44604',
+      },
     },
     {
       id: 'AUDIT-1.97-7-S',
@@ -908,6 +1233,354 @@ window.INFIVERSE_DECISIONS = {
         file: 'docs/AUDIT.md',
         section: '§1.97 增补七',
         quote: '**S. 凡一个只在失败路径上生成的数，必须有一个【不在失败路径上】的东西钉住它 ——\n否则那个数是一个断言，不是一个读数。**',
+      },
+      /* ★ 出处节与 `source.quote` 同命：它指的是【这条裁定被记在哪一节】。
+         ★ 只写节名、不写行号（行号会被下一笔提交弄假）；`seenOn` 是这个节名在哪棵树上看到的。 */
+      ruledIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补七：名字与定义、能变绿的错批、以及「差一格的坐标全绿」',
+        seenOn: 'cd44604',
+      },
+    },
+    {
+      id: 'HANDOFF-2.2',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '集合化类型系统成为 v0.6 目标',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.2 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '把集合化类型系统推后到 v0.7 或更远',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.2',
+        quote: '### 2.2 集合化类型系统成为 **v0.6 目标**（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.2 集合化类型系统成为 **v0.6 目标**（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.3',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '声明形状唯一化为 `名字: 集合表达式 [= 初值]`',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.3 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '允许 `名字 := 集合表达式` 这种第二种声明形状',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.3',
+        quote: '### 2.3 声明形状**唯一化**为 `名字: 集合表达式 [= 初值]`（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.3 声明形状**唯一化**为 `名字: 集合表达式 [= 初值]`（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.4',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '基数记法 = `count(A)`',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.4 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '用 `size(A)` / `|A|` / `#A` 等其他记法',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.4',
+        quote: '### 2.4 基数记法 = `count(A)`（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.4 基数记法 = `count(A)`（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.5',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '集合代数用四则运算符',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.5 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '用并集/交集/差集的具名函数',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.5',
+        quote: '### 2.5 集合代数用四则运算符（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.5 集合代数用四则运算符（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.6',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '谓词可判定边界 = 简单计算 + 正则；求解器/SMT 作拓展库',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.6 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '把求解器写进核心语义（“必须调用求解器”才算可判定）',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.6',
+        quote: '### 2.6 谓词：可判定边界 = 简单计算 + 正则表达式；求解器/SMT 作为**拓展库**（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.6 谓词：可判定边界 = 简单计算 + 正则表达式；求解器/SMT 作为**拓展库**（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.7',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '`@bits(n)` / `@bytes(n)` 后置',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.7 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '写成前置形式 `@bits(n) T`',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.7',
+        quote: '### 2.7 `@bits(n)` / `@bytes(n)` **后置**（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.7 `@bits(n)` / `@bytes(n)` **后置**（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.8',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '`Z` 的 BigInt 表示 = 立即数 + 溢出切堆对象',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.8 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '统一用堆对象表示（简单，但每个整数都过一次分配）',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.8',
+        quote: '### 2.8 `Z` 的 BigInt 表示 = 立即数 + 溢出切堆对象（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.8 `Z` 的 BigInt 表示 = 立即数 + 溢出切堆对象（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.9',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '`FloatN` / `floatN` 移出核心内置集合，改由拓展库提供',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.9 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '把浮点集合留在核心内置集合里',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.9',
+        quote: '### 2.9 `FloatN` / `floatN` 移出核心内置集合，改由**拓展库**提供（人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.9 `FloatN` / `floatN` 移出核心内置集合，改由**拓展库**提供（人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-2.10',
+      status: 'ruled',
+      ruledBy: 'human',
+      title: '内建函数收到无法解释的实参类型时（D14）',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §2.10 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '让所有内建函数统一抛 `type_mismatch`',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      flag: '★ 正文逐字：`⚠ **"操作共享状态就抛 / 只产出值就答定义值"这个切法本身没有被正式确认** —— 落地时按此窄条款处理，**不能外推成"引擎开始校验参数类型了"**。` ⇒ 这一条是【人裁过的窄条款】，而它自己说那个切法【没有被正式确认】。',
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.10',
+        quote: '### 2.10 内建函数收到无法解释的实参类型时（**D14**，人裁定）',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '2.10 内建函数收到无法解释的实参类型时（**D14**，人裁定）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-4.3',
+      status: 'proposal',
+      title: '`count` 与 `size` 的处置（标题逐字写着「需要人裁定」）',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §4.3 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '见 §2.4（本条是那条的另一半）',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      flag: '★★ 本条的 `status` 是 `proposal` 而不是 `ruled` —— ★ 它的正文逐字是「推荐（**未定**）：…」⇒ 它是在【要】一条裁定，不是在记一条裁定。★ 这与 `docs/AUDIT.md` 的 `§1.97 增补四十八` 甲组把它和另外十条并列登记为「人裁定」相冲突：**索引里它们是同一档，正文里它们是两档。**',
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '4.3',
+        quote: '### 4.3 **需要人裁定**：`count` 与 `size` 的处置',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '4.3 **需要人裁定**：`count` 与 `size` 的处置',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'HANDOFF-4.5',
+      status: 'proposal',
+      title: '`be` 退役节奏（标题逐字写着「**người 的**」）',
+      decided: '本条是 `docs/HANDOFF_INFIVERSE.md` §4.5 的标题本身；归属记号（若有）就写在那行标题里。',
+      alternative: '停在这里不动，让 `be` 与别名长期并存',
+      whyNot: '见该节正文；本台账不替它复述理由。',
+      overturn: null,
+      flag: '★★ 本条的 `status` 是 `proposal` —— ★ 正文逐字：「已裁定为"纯脱糖别名"（§2.3），但**迁移 19 个 `vtest/*.im`（全仓 42 行）的时机**没定。」⇒ 被裁的是别名，没定的是时机，而这一节问的是时机。★ 标题里那个 `người` 是越南语的「人」（`ườ` 是非中文非 ASCII 的走样串）。',
+      source: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '4.5',
+        quote: '### 4.5 **người 的**：`be` 退役节奏',
+      },
+      /* ★ 裁定记在【它自己的小节】里：归属记号（「（人裁定）」）就写在那行标题里。 */
+      ruledIn: {
+        file: 'docs/HANDOFF_INFIVERSE.md',
+        section: '4.5 **người 的**：`be` 退役节奏',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
+      },
+      /* ★ 而【登记】在另一棵树上的另一节 —— 两者不是同一件事：
+         把一条裁定指到它的登记处，就是把它指到一个不是它的地方。
+         ★ 登记那一节自己写的正确形状：「登记一条裁定的正确形状，是登记【谁裁的、裁了什么、在哪一节】」 */
+      registeredIn: {
+        file: 'docs/AUDIT.md',
+        section: '§1.97 增补四十八（登记：十一条人裁定的索引，以及其中三条带着今天为假的断言）',
+        seenOn: 'ecbce08',
+      },
+    },
+    {
+      id: 'RELAY-10.4',
+      status: 'ruled',
+      ruledBy: 'relayed',
+      title: '一条被驳回的怀疑（协调者裁定）：`docs/STATUS.md` §4 的 `**已完成**` 标题不违反 §1.2 规则 2',
+      decided: '那个粗体标签只辖它紧邻的下一个列表组；未完成项在自己显式命名的标题下。文档没有把未做的事说成已完成。',
+      alternative: '判成违规，并把 §4 的 `**已完成**` 标题改掉',
+      whyNot: '正文把它作为「一条被驳回的怀疑」记录下来 ⇒ 另一条路是【曾被认为成立、后被驳回】的那一条。',
+      overturn: null,
+      flag: '★★ 这是台账认得的第三条归属路线：`（协调者裁定）`。★ 它的出处是 `docs/STATUS.md` §10.4，**不是** `docs/AUDIT.md` —— 把一条裁定指到它不在的那棵树上，就是把它记成一条它不在的登记。',
+      source: {
+        file: 'docs/STATUS.md',
+        section: '10.4',
+        quote: '**一条被驳回的怀疑（协调者裁定）**：`docs/STATUS.md` §4 的 `**已完成**` 标题曾被怀疑违反 §1.2 规则 2（无维度表述），因为同阶段下面还列着 8 个 `[ ]`。**裁定：不是违规。** 那个粗体标签只辖它**紧邻的下一个列表组**（那一组的条目全部是 `[x]`），未完成项在自己**显式命名**的 `**稳定性治理（未完成项）**` 标题下。文档没有把未做的事说成已完成。',
+      },
+      ruledIn: {
+        file: 'docs/STATUS.md',
+        section: '10.4 文档口径复查（`docs-audit`）',
+        seenOn: '754403ba142d6f7830952f8150f3d8d08d8242a1',
       },
     },
   ],
