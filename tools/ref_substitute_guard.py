@@ -37,6 +37,29 @@ substitute repository and asks two questions:
 A file with no substitute construction at all is the worst case, not the
 safest one: it runs the mutation in the repository itself.
 
+The dilemma -- written here so the next person does not try to solve it in text
+-------------------------------------------------------------------------------
+This guard's own source contains the pattern it hunts: this docstring quotes
+`git tag | xargs -r git tag -d`, the `CONSTRUCTIONS` table spells the
+constructions out, and `--self-test` writes synthetic offenders as Python
+string literals.  So it reddens on itself, and it has done since the commit that
+introduced it; on the main branch the first thing it says about itself is
+`FAILED`.
+
+The same shape is therefore both an executable call and prose, and which one it
+is depends on whether that string is ever handed to something that executes it.
+**That is data flow, and data flow is not in the text.**  No amount of regex
+work settles it: stripping string literals and comments (a `tokenize` pass) does
+not separate the two, it only stops seeing one of them -- measured on this file,
+it drops every real call site along with the prose, trading a false positive for
+a false negative, and a false negative looks like a successful purge in the
+output.
+
+So the guard does not pretend to solve it.  It exempts **itself, by identity** --
+the resolved path of the running file -- and it prints that exemption, with its
+reason, on every run, green or red.  `self_identity()` carries the check that
+keeps this from becoming an exemption for anyone who merely mentions the guard.
+
 What this guard does **not** decide -- read this before trusting a green
 ------------------------------------------------------------------------
 `替身不是 git worktree` is necessary and **not sufficient**, so the guard prints
@@ -254,7 +277,44 @@ REACH_MISSED: list[str] = [
 ]
 
 
-def reach_lines() -> list[str]:
+def self_identity(root: str) -> str | None:
+    """The one path in this tree that is *this* file -- identity, not name.
+
+    This guard's own source contains the pattern it looks for: its docstring
+    quotes `git tag | xargs -r git tag -d`, its CONSTRUCTIONS table spells the
+    constructions, and `--self-test` writes synthetic offenders as Python
+    string literals.  So it reddens on itself, and it has done since the day it
+    was committed.
+
+    The exemption below is therefore keyed on the resolved path of the running
+    file and on nothing else.  That is checkable, and here is the check: copy
+    this source byte for byte to another path in the same repository and run
+    the guard -- the copy is a different file, it is judged, and it reddens.
+    An exemption keyed on the basename, on the string `ref_substitute_guard`,
+    or on the file's contents would exempt the copy too, and an exemption that
+    exempts a copy is not saying "this is me", it is saying "this is someone
+    who talks about me" -- which is every file that ever documents this guard.
+
+    Returns None when the path cannot be resolved; the caller then exempts
+    nothing.  An unresolvable identity is not a licence.
+    """
+    try:
+        me = os.path.realpath(__file__)
+        return os.path.relpath(me, os.path.realpath(root)).replace(os.sep, "/")
+    except (OSError, ValueError):
+        return None
+
+
+EXEMPT_WHY = (
+    "EXEMPT -- this guard does not ask this question about its own source, and "
+    "it says so on every run.  We can see it; we are choosing not to ask it.  "
+    "The exemption is by resolved path, so a byte-for-byte copy of this file at "
+    "any other path is judged and reddens -- if the copy came back exempt, the "
+    "exemption would be answering `who is talking` instead of `is this me`"
+)
+
+
+def reach_lines(exempt: list[str] | None = None) -> list[str]:
     lines = [
         f"ref_substitute_guard: reach -- {len(CONSTRUCTIONS)} substitute "
         f"construction(s) are in the table, each with its own refs/objects "
@@ -272,6 +332,25 @@ def reach_lines() -> list[str]:
     )
     for miss in REACH_MISSED:
         lines.append(f"    missed  {miss}")
+    # A third list, on its own line, never folded into `missed`.  A miss is a
+    # spelling the guard cannot see; an exemption is a file the guard can see
+    # and has decided not to ask about.  Filing one under the other makes an
+    # oversight and a decision read the same in the log -- the same shape as a
+    # miss list that carries one harmless entry.
+    if exempt:
+        lines.append(f"ref_substitute_guard: exempt -- {EXEMPT_WHY}")
+    for rel in (exempt or []):
+        lines.append(f"    exempt  {rel}")
+    _ex_paths = sorted({e.split(":", 1)[0] for e in (exempt or [])})
+    lines.append(
+        f"ref_substitute_guard: reach -- {len(_ex_paths)} path(s) exempt over "
+        f"{len(exempt or [])} call site(s), {len(CONSTRUCTIONS)} construction(s) "
+        f"in the table, {len(REACH_MISSED)} not in it.  Paths and sites are "
+        f"printed separately because `9 exempt` was this line's first draft and "
+        f"it was counting sites while saying paths.  Printed on every run, green "
+        f"or red: an exemption that only appears when something is red is "
+        f"indistinguishable from no exemption at all on a green run"
+    )
     lines.append(
         "ref_substitute_guard: reach -- so a green run asserts exactly this: "
         "among the spellings in the table, each file that mutates refs also "
@@ -382,12 +461,15 @@ def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[st
     unresolved: list[str] = []
     reds: list[tuple[str, int, str, str]] = []
     unreasoned: list[str] = []
+    exempt: list[str] = []
+    self_rel = self_identity(root)
     sites_judged = 0
     hits = 0
 
     def finish(rc: int, offs: list[str]) -> tuple[int, list[str], list[str], list[str]]:
         """Return the verdict, filling the ledger when one was asked for."""
         if ledger is not None:
+            ledger["exempt"] = list(exempt)
             ledger["reds"] = list(reds)
             ledger["unreasoned"] = list(unreasoned)
             ledger["reasoned"] = len(reds)
@@ -452,19 +534,31 @@ def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[st
                 f"substitute = {shown} -> {verdict}"
             )
             if ok is None or ok is False:
-                bad_here = bad_here or ok is False
-                key = reason_key("unresolved" if ok is None else "shares-state",
-                                 cname)
-                if STRIP_REASONS:
-                    key, why = "", ""
-                lines.append(f"      reason: {why or '<none>'}")
-                if key and why.strip():
-                    reds.append((rel, line_no, verdict, key))
+                if self_rel is not None and rel == self_rel:
+                    # Identity, not name.  Only the file that IS this file.
+                    # A copy at another path arrives here as a different `rel`
+                    # and falls through to the ordinary verdict below.
+                    exempt.append(f"{rel}:{line_no} ({verdict})")
                 else:
-                    unreasoned.append(f"{rel}:{line_no} ({verdict})")
+                    bad_here = bad_here or ok is False
+                    key = reason_key(
+                        "unresolved" if ok is None else "shares-state", cname)
+                    if STRIP_REASONS:
+                        key, why = "", ""
+                    lines.append(f"      reason: {why or '<none>'}")
+                    if key and why.strip():
+                        reds.append((rel, line_no, verdict, key))
+                    else:
+                        unreasoned.append(f"{rel}:{line_no} ({verdict})")
         if bad_here:
             offenders.append(rel)
-        elif any(pair(cons, ln)[0] == "far" for ln, _n, _o in exe):
+        elif not (self_rel is not None and rel == self_rel) and any(
+                pair(cons, ln)[0] == "far" for ln, _n, _o in exe):
+            # The `far` fallback is a verdict about the FILE, so it has to
+            # honour the same identity exemption its sites did: otherwise the
+            # guard files itself under "no construction near enough to answer",
+            # refuses to call the tree a pass, and exits 2 -- a green run reading
+            # as an inability to measure.
             unresolved.append(rel)
     lines.insert(0, (
         f"ref_substitute_guard: {len(files)} file(s) scanned under {root}/tools "
@@ -685,6 +779,33 @@ def self_test() -> int:
             "tools/far_init_worktree.py": "shares-state:worktree",
             "tools/unresolved_table.py": "unresolved:worktree",
         }
+        # ★ Condition ① of the exemption, as a control rather than a sentence:
+        # a byte-for-byte copy of THIS source at another path is a different
+        # file, so it must still be judged and must still redden.  If the copy
+        # came back exempt, the exemption would be keyed on content or on the
+        # basename, and it would be answering "is this someone who talks about
+        # the guard" -- which is every file that documents it.
+        with open(os.path.abspath(__file__), encoding="utf-8") as _fh:
+            self_src = _fh.read()
+        with open(os.path.join(tmp, "tools", "copy_of_guard.py"), "w",
+                  encoding="utf-8") as _fh:
+            _fh.write(self_src)
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+        rc4, text4, off4, led4 = run()
+        _copy_off = [o for o in off4 if o == "tools/copy_of_guard.py"]
+        _copy_ex = [e for e in led4.get("exempt", [])
+                    if e.startswith("tools/copy_of_guard.py")]
+        print(f"ref_substitute_guard: self-test copy-control rc={rc4} "
+              f"convicted={len(_copy_off)} exempted={len(_copy_ex)}")
+        want(bool(_copy_off) and not _copy_ex,
+             f"a byte-for-byte copy of this guard at tools/copy_of_guard.py came "
+             f"back convicted={len(_copy_off)} exempted={len(_copy_ex)}; the "
+             f"exemption must key on the identity of the running file, so a copy "
+             f"is judged.  An exemption that takes the copy with it is not "
+             f"saying `this is me`, it is saying `this mentions me`")
+        os.remove(os.path.join(tmp, "tools", "copy_of_guard.py"))
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+
         all_reds = led1["reds"] + led2["reds"] + led3["reds"]
         all_unreasoned = (led1["unreasoned"] + led2["unreasoned"]
                           + led3["unreasoned"])
@@ -748,8 +869,9 @@ def main() -> int:
     # wrapper a crash in the guard is read as a finding about the repository.
     # The contract says 2 is "could not measure"; the guard has to honour its
     # own contract or its verdicts are not distinguishable from its failures.
+    ledger: dict = {}
     try:
-        rc, lines, offenders, _ = scan(args.root)
+        rc, lines, offenders, _ = scan(args.root, ledger)
     except Exception as exc:  # noqa: BLE001 -- see above
         print(f"ref_substitute_guard: could not measure {args.root}: "
               f"{type(exc).__name__}: {exc}", file=sys.stderr)
@@ -769,7 +891,7 @@ def main() -> int:
     else:
         print("ref_substitute_guard: no file mutates refs through a substitute "
               "that shares them")
-    for line in reach_lines():
+    for line in reach_lines(ledger.get("exempt", [])):
         print(line)
     return rc
 
