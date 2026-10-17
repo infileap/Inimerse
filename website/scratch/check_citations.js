@@ -311,21 +311,21 @@ if (D.planV07Note) {
     `找不到：「${String(D.planV07Note.quote).slice(0, 50)}…」`);
 }
 
-/* ⑦ 覆盖：台账里每一个 source.file 都必须在规范页的文档清单里。
+/* ⑦ 覆盖：台账里每一个 source.file 都必须在手抄对照清单里。
  * 为什么需要它：规范页按「文档」分组渲染裁定 —— 一条裁定如果挂在规范页没有的文档上，
  * 它在那一页上**一条都不显示**，而页面上看不出少了什么（没有空位、没有计数）。
  * ★ 这一条不是假想的：PLAN_V06 / PLAN_V07 原先不在 spec.js 的清单里，
  *   而台账里最多的裁定正是出自那两份。 */
-current = '覆盖：台账的出处都在规范页的文档清单里';
+current = '覆盖：台账的出处都在手抄对照清单里';
 const specFiles = new Set(((S && S.docs) || []).map((x) => x.file));
 const missing = [...new Set(D.entries.map((e) => e.source && e.source.file).filter(Boolean))]
   .filter((f) => !specFiles.has(f));
-check('台账引用的每个 docs 文件都在规范页的文档清单里',
+check('台账引用的每个 docs 文件都在手抄对照清单里',
   missing.length === 0,
-  missing.length ? `规范页缺：${missing.join('、')}（那些裁定在规范页上一条都不会显示）` : `${specFiles.size} 份文档`);
+  missing.length ? `清单缺：${missing.join('、')}（那些裁定在规范页上一条都不会显示）` : `${specFiles.size} 份文档`);
 
 /* ---------------- ⑧ ⑦ 的反方向：带身份标记的 docs 文件 vs 规范页清单 ----------------
- * ⑦ 只挡了一个方向（台账 → 规范页的清单）。反方向是同一个机制的另一半：
+ * ⑦ 只挡了一个方向（台账 → 手抄对照清单）。反方向是同一个机制的另一半：
  * **一份自己带着身份标记的文档不在清单里 ⇒ 它那些标记在规范页上一条都不显示，而页面是完整的。**
  * ★ 词表必须含**异体拼写**（【已裁定】与【已裁】同身份）—— 见 ④ 上面那段注释里的实例。
  * ★ 第二问更要紧：**带标记、也在清单里、而台账里一条都没出自它的文件**。
@@ -379,20 +379,20 @@ for (const rel of docFiles) {
   marked.push({ file: rel, kinds, inSpec: specFiles.has(rel), inLedger: ledgerFiles.has(rel) });
 }
 const notInSpec = marked.filter((x) => !x.inSpec);
-check('带身份标记的 docs 文件都在规范页的文档清单里',
+check('带身份标记的 docs 文件都在手抄对照清单里',
   notInSpec.length === 0,
   notInSpec.length
     ? `不在清单里：${notInSpec.map((x) => x.file).join('、')}（那些标记在规范页上一条都不显示）`
     : `${marked.length} 个带标记的文件，全部在清单里`);
 const noLedger = marked.filter((x) => x.inSpec && !x.inLedger);
-check('带身份标记、且在规范页清单里的文件，台账里至少有一条出自它',
+check('带身份标记、且在手抄对照清单里的文件，台账里至少有一条出自它',
   noLedger.length === 0,
   noLedger.length
     ? `台账里没有一条出自：${noLedger.map((x) => x.file).join('、')}（那几条裁定在台账页上一条都没有，而守卫会全绿）`
     : `${marked.filter((x) => x.inSpec).length} 个文件都有条目`);
 
 /* ---------------- ⑭ 一条裁定的【射程】：概念筛 vs 写法清单 ----------------
- * ★ ⑧ 问的是【文件】：带方括号那对记号的文件，在不在规范页清单里。
+ * ★ ⑧ 问的是【文件】：带方括号那对记号的文件，在不在手抄对照清单里。
  *   而它的绿只说明「那里没有方括号」，**不说明那里没有裁定** ——
  *   实测：18 份没有任何守卫读的文档里，575 节里有 20 节在说某件事已经定了，
  *   而其中 0 节用的是那对记号。
@@ -470,7 +470,7 @@ const unnamedPrinted = [];
 unnamed.forEach((x) => unnamedPrinted.push(`   · ${x.file} §${x.id}  「${x.heading.slice(0, 52)}」`));
 
 info(`★ 一条裁定的射程：概念筛 **${concept.length}** 节（在 ${new Set(concept.map((x) => x.file)).size} 份文档里）／能叫出名字 **${named.length}** 节／差 **${unnamed.length}** 节`);
-info(`★ 其中落在规范页清单之外的：**${outsideConcept.length}** 节，分布在 **${new Set(outsideConcept.map((x) => x.file)).size}** 份文档里 ⇒ 「覆盖 ${specFiles.size} 份」是一个【射程声明】，不是一个【覆盖率】`);
+info(`★ 其中落在规范页清单之外的：**${outsideConcept.length}** 节，分布在 **${new Set(outsideConcept.map((x) => x.file)).size}** 份文档里 ⇒ 「清单里有 ${specFiles.size} 份」是一个【射程声明】，不是一个【覆盖率】`);
 info(`★ 概念筛逐字：标题不含「需要…裁定/待裁/未定」，且（正文含 /已裁|已决定|（…裁定/ 或 标题含 /裁定/）`);
 const deadSpellings = SPELLINGS.filter((sp) => !allSecs.some((x) => sp.re.test(x.body) || sp.re.test(x.heading)));
 info(`★ 写法清单 ${SPELLINGS.length} 条：${SPELLINGS.map((x) => x.name).join(' ')}${deadSpellings.length ? ` —— ★ 其中**一次都没命中**的：${deadSpellings.map((x) => x.name).join(' ')}（我认得它，而它今天不存在：这是一个零，要归因）` : ''}`);
@@ -3686,12 +3686,15 @@ console.log('出处分级：' + Object.keys(AT.routes)
   + '（humanRuled 那个块是这套做法的出处，不是花名册）');
 
 infos.forEach((x) => console.log(`  · ${x}`));
-console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
+console.log(`手抄对照清单：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`
+    + `　★★ 它先前叫「规范页元信息」；改名是因为**今天没有一条能被违反的规则在管这张清单** —— `
+    + `能被违反的那条（docs/*.md 恰好一层路径）排的理由是【路径层数】，与【该不该进这张清单】无关；`
+    + `另外两条（headers / role）是条目自己的字段 ⇒ 同义反复。见 website/data/spec.js 文件头`);
 console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md（读自 ${MSR_LABEL}），其中 ${marked.length} 份带标记`);
 console.log(`标记 / 提及的分界：标记 ${boundary.marker.length} 行 / 提及 ${boundary.mention.length} 行（判成提及的逐行在下面）`);
 boundary.mention.forEach((r) => console.log(`    · 提及  ${r}`));
 console.log('');
-console.log('  文件'.padEnd(32) + '各标记条数'.padEnd(44) + '在规范页清单里？ / 台账里有条目？');
+console.log('  文件'.padEnd(32) + '各标记条数'.padEnd(44) + '在手抄对照清单里？ / 台账里有条目？');
 if (!marked.length) {
   console.log('  （找不到：今天没有任何 docs 文件带这套身份标记 —— 这句话本身就是结论）');
 } else {

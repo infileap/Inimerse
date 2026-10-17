@@ -469,6 +469,10 @@
       refBox.appendChild(el('p', null,
         '文档元信息钉在 ref ' + S.ref + ' 上：' + S.docs.length +
         ' 份文档的标题、行数、文件头逐字，全部由 website/scratch/check_citations.js 核对。'));
+      /* ★★ 这张清单的名字是【手抄对照清单】，不是「规范页覆盖的文档」——
+         它没有任何一条能被违反的规则在管（见 website/data/spec.js 文件头的说明）。
+         它先前叫「规范页元信息」，改名是因为那个名字在暗示一份**覆盖率**，而它只是一张手抄清单。 */
+      refBox.appendChild(el('p', 'muted', '★ 手抄对照清单：它不是任何规则产生的 —— 今天没有一条能被违反的规则在管它。'));
       refBox.appendChild(el('p', 'muted',
         '★ 行数是一个会过期的数：它随下一笔提交变假 —— 而这一条会说话（守卫会红）。'));
     }
