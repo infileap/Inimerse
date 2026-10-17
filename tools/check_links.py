@@ -275,8 +275,19 @@ def floor_guard(files_n: int, total: int) -> None:
 
     A non-empty input set is only the first of this line's three numbers:
 
-      check_links: 120 markdown files, 618 links (17 external, 0 anchors, 601
+      check_links: N markdown files, 618 links (17 external, 0 anchors, 601
       local), 0 broken
+
+    All four numbers are computed from the tree, but they do not move together.
+    The first is a function of the file set -- how many tracked markdown files
+    there are -- and the other three are functions of the link graph inside
+    those files.  A tree can change the first without touching the rest: three
+    readings of this same line, taken on three different trees, gave 120, 137
+    and 126 for the first number and `618 links (17 external, 0 anchors, 601
+    local), 0 broken` for the rest, character for character.  That is why the
+    first number is `N` here: an example quoting a number the tree computes is
+    stale the next time a document is added, and a sha written into this file
+    would not fix it -- it would only move the staleness one level down.
 
     The quantity the check exists to bound is `total`, and it can reach zero
     with `files_n` perfectly healthy.  Measured: a tree whose one tracked
