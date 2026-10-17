@@ -99,8 +99,11 @@ ALLOWED = {}
 def cmake_blocks(text, command):
     """Yield the argument text of every `command( ... )`, paren-balanced.
 
-    Registrations and target declarations both span several lines here
-    (CMakeLists.txt:626-628, :670-672), so a line-oriented read is not enough.
+    Registrations and target declarations both span several lines here -- a
+    registration at CMakeLists.txt:626-628 and a declaration at :485-487 -- so a
+    line-oriented read is not enough.  The span this sentence used to name for
+    the declaration is a registration today, and it already was one on the day
+    the sentence was written: that pointer was never right, so nothing moved.
     """
     out = []
     for m in re.finditer(r"\b" + command + r"\s*\(", text):
