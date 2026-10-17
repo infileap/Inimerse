@@ -2461,6 +2461,29 @@ const T29_ONLY = T29_MAP.filter((c) => c.fields.some((f) => T29_TALLY['唯一'].
 info(`㉙ 甲 · ★★ 本件要回答的第二句：本分支的对照 = ${T29_MAP.length} 条（★ **这个分母是我定的**：我在这一条线上记下的负向对照）；` +
   `其中打在【唯一】字段上的 = ${T29_ONLY.length} 条` +
   (T29_ONLY.length ? `　逐条：${T29_ONLY.map((c) => c.id).join(' ')}` : ''));
+{
+  /* ★★ ㉚ 甲：「唯一」只是一个关于**出现次数**的读数，它**不**说明那个值域能被扰动。
+   * 实测：`askUserQuestion` 的值由 `ask_user_question` 改成 `ask_user` 之后，
+   * 在 `docs/EIDOS_V06.md` 上命中的位置**逐字没变**（11 个位置的清单全等）
+   * ⇒ 那个变异【没有改变任何一个输入】。
+   * ⇒ 判据：**一条变异如果没有改变任何一个输入，它红不红都不是读数 —— 它测的是变异本身。** */
+  /* ★★ 这里错了两次，两次都印出 undefined，而它【看起来像一条读数】：
+  *   第一版 `.map((x) => x.field)`、第二版 `.map((x) => x.name)` —— 而
+  *   `T29_TALLY[档]` 里装的就是**字段名本身**（`T29_TALLY[r.grade].push(r.name)`），
+  *   它不是对象数组。⇒ 判据：**一个「看起来像读数」的 undefined 不是数据缺失，是键写错了。** */
+const U30 = T29_TALLY['唯一'].slice();
+  const LOAD = { askUserQuestion: false, quote: true };
+  info(`㉚ 甲 · 两个【唯一】字段里，承载变异的 = ${U30.filter((f) => LOAD[f]).length} / ${U30.length}　`
+    + U30.map((f) => `${f}=${LOAD[f] ? '承载' : '不承载'}`).join('　'));
+  U30.forEach((f) => info(`　　${f}：${LOAD[f]
+    ? '★ 承载 —— 实测：把那一条 quote 的首字 `这` 改成 `末` ⇒ 守卫 5 红 / 628-633，新增的正是那一条、且只有那一条；还原后 sha256sum -c 印 OK'
+    : '★ 不承载 —— 实测：把值 ask_user_question 改成 ask_user ⇒ 守卫 4 红 → 4 红，一条都没动；在 docs/EIDOS_V06.md 上两个字面命中的是逐字相同的 11 个位置 [349,449,3776,6100,6984,8871,9709,10890,12067,12771,16476] ⇒ 这个变异没有改变任何一个输入'}`));
+  check('㉚ 甲：每一个【唯一】字段都必须就「它承不承载变异」给出实测过的结论，不许留空',
+    U30.every((f) => f in LOAD),
+    `没有结论的 = ${U30.filter((f) => !(f in LOAD)).join('、') || 0} 个　`
+    + '★ ㉙ 甲说「唯一字段只有 2 个、11 条对照一条都没打在它们上」；㉚ 甲要答的是「这 2 个里有几个真的能承载一条隔离对照」—— 答案是 1 个，不是 2 个。');
+}
+
 info('㉙ 甲 · 逐条对照 → 它打在哪个字段上：');
 T29_MAP.forEach((c) => info(
   `　　${c.id} 字段 = [${c.fields.join(',') || '（无）'}]　${c.where}　★ ${c.why}`));
@@ -2808,6 +2831,317 @@ check(`被禁字符串扫描了 ${scanned.length} 个文本文件`, scanned.leng
 
 /* ---------------- 报告 ---------------- */
 
+
+/* ══════════════════════ ㉚ 乙 一个参数次序能静默地量错对象 ══════════════════════
+ * ★ 判据见 website/scratch/registration_rule.md 的「㉚」一节（那一笔先落盘、零读数）。
+ *
+ * 本块做两件事，**两件都必须做**：
+ *   ① 【回查】本线全部调 git 的地方，逐处判「修订参数在 `--` 的哪一侧」，四档 + 求和的【分母】；
+ *   ② 【效力证明】—— 因为 ① 的答案今天 C 档 = 0，而 **C 档为 0 不构成判据**：
+ *      尺子今天看不见东西，可能因为世界干净，也可能因为尺子是瞎的。
+ *      ⇒ 必须单独证明这把尺子**能**看见差异，而且期望值必须来自**外部**。
+ */
+const G30 = (() => {
+  const SHAPES = ["execFileSync('git',[...])", 'git([...])', "git('a','b',...)"];
+
+  function match(src, open) {
+    const oc = src[open];
+    const cc = oc === '[' ? ']' : ')';
+    let depth = 0; let i = open; let mode = null;
+    while (i < src.length) {
+      const c = src[i]; const n = src[i + 1];
+      if (mode === null) {
+        if (c === "'" || c === '"' || c === '`') mode = c;
+        else if (c === '/' && n === '/') { mode = '//'; i++; }
+        else if (c === '/' && n === '*') { mode = '/*'; i++; }
+        else if (c === oc) depth++;
+        else if (c === cc) { depth--; if (depth === 0) return { body: src.slice(open + 1, i) }; }
+      } else if (mode === '//') { if (c === '\n') mode = null; }
+      else if (mode === '/*') { if (c === '*' && n === '/') { mode = null; i++; } }
+      else { if (c === '\\') i++; else if (c === mode) mode = null; }
+      i++;
+    }
+    return null;
+  }
+
+  function splitTop(s) {
+    const out = []; let cur = ''; let depth = 0; let mode = null;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (mode === null) {
+        if (c === "'" || c === '"' || c === '`') { mode = c; cur += c; }
+        else if (c === '(' || c === '[' || c === '{') { depth++; cur += c; }
+        else if (c === ')' || c === ']' || c === '}') { depth--; cur += c; }
+        else if (c === ',' && depth === 0) { out.push(cur.trim()); cur = ''; }
+        else cur += c;
+      } else { cur += c; if (c === '\\') { cur += s[++i] || ''; continue; } if (c === mode) mode = null; }
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+
+  function literalOf(tok) {
+    const m = /^(['"`])([\s\S]*)\1$/.exec(tok);
+    if (!m) return null;
+    if (m[1] === '`' && m[2].includes('${')) return null;
+    return m[2];
+  }
+
+  const sites = [];
+  const wrappers = [];   // ★ 单独一个分母，见下
+
+  function take(file, line, shape, argvRaw) {
+    const toks = splitTop(argvRaw);
+    const lits = toks.map(literalOf);
+    const dd = lits.indexOf('--');
+    const isRev = (t, l) => (l !== null ? /^[0-9a-f]{7,40}$/.test(l) : /(sha|ref|base|tip|rev|head)/i.test(t));
+    let afterRev = -1;
+    if (dd >= 0) for (let i = dd + 1; i < toks.length; i++) if (isRev(toks[i], lits[i])) { afterRev = i; break; }
+    let grade;
+    if (dd < 0) grade = 'A';
+    else if (afterRev >= 0) grade = 'C';
+    else grade = 'B';
+    sites.push({ file, line, shape, argv: toks.join(', '), grade });
+  }
+
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === '.build' || e.name === 'node_modules' || e.name === '.git') continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.js')) files.push(p);
+    }
+  })(HERE);
+
+  /* ★★ 这一段有过两版，两版都错，错法不同，都留在这里：
+   * 第一版：不处理字符串就扫 ⇒ 本块自己的 `SHAPES` 里那三个字符串字面量被本块的三个正则
+   *   各匹配一次 ⇒ 分母从 29 虚增到 **32**，多出来的那几条【argv 也被填上了】，
+   *   看起来和真的调用处一模一样。
+   *   ★★★ 而【这一段注释自己】就是第二次发作：我为了说明那个缺陷，把三个形状的原文
+   *   逐字抄在这里，于是扫描器把【注释里的抄本】也数成了调用处 ——
+   *   多出来的正是 `:2822`（SHAPES 那行）与 `:2896`（本行）。
+   *   ⇒ 判据：**一段用来警告某个缺陷的注释，如果它逐字包含了那个缺陷的样本，
+   *     它自己就又是一个样本。** 所以这段注释【不写那三个形状的原文】。
+   * 第二版：整个文件跑一个模式状态机把字符串挖空 ⇒ 分母掉到 **2**。原因是一个**正则字面量**
+   *   里的引号（`/^(['"`])(...)$/`）被当成了字符串的开头 ⇒ 它后面的整个文件都被挖空。
+   * ⇒ 判据：**一个全文件的词法状态机，会被它自己不认识的一种字面量带跑，而且它带跑的
+   *   方向是【静默地少算】，输出依旧自洽。**
+   * 第三版（现在这版）：只在**行内**判「这个匹配点是不是落在引号里」——
+   *   没有跨行的状态，所以一种它不认识的字面量最多影响一行，不会污染整个文件。 */
+  /* ★★ 这一支也修过一次。第一版只认 ' " `，于是把**模板串插值里的那个调用**
+   *   判成【文本】—— 而 `${…}` 里面是**代码**。后果同样是静默地少算一个真的调用处
+   *   （实测：`report_diff.js:65` 整条不见了，分母从 29 掉到 28）。
+   *   ★★★ 而这段注释的第一稿【又把样本逐字抄了进来】，于是本行自己变回了一个幽灵
+   *   ⇒ 分母 28 → 30（多出来的两条：`report_diff.js:65` 真的、本行假的）。
+   *   ⇒ 判据（第三次收到的同一条）：**一段用来警告某个缺陷的注释，如果它逐字包含了
+   *     那个缺陷的样本，它自己就又是一个样本。** 所以这段注释不写样本的原文。
+   *   ⇒ 判据（与正则字面量那次同族）：**一个行内的词法判定，不认识某一种构造时，
+   *     会静默地少算一个真的对象，而输出依旧自洽。** 修法 = 让 `` ` `` 模式认
+   *   `${` 与配对的 `}`：**插值里回到代码态**。 */
+  function quoteAt(line, idx) {
+    let mode = null;      /* ' " ` */
+    let depth = 0;        /* 模板串里 ${…} 的嵌套深度 */
+    for (let i = 0; i < idx && i < line.length; i++) {
+      const c = line[i];
+      if (mode === '`') {
+        if (c === '\\') i++;
+        else if (c === '`') mode = null;
+        else if (c === '$' && line[i + 1] === '{') { depth++; mode = null; i++; }
+      } else if (mode !== null) {
+        if (c === '\\') i++;
+        else if (c === mode) mode = null;
+      } else {
+        if (c === "'" || c === '"') mode = c;
+        else if (c === '`') mode = '`';
+        else if (depth > 0 && c === '}') { depth--; mode = '`'; }
+      }
+    }
+    return mode !== null;
+  }
+  function inString(src, idx) {
+    const ls = src.lastIndexOf('\n', idx - 1) + 1;
+    return quoteAt(src.slice(ls, idx), idx - ls);
+  }
+
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    const rel = path.relative(ROOT, f);
+    const ln = (idx) => src.slice(0, idx).split('\n').length;
+    let m;
+
+    const re1 = /execFileSync\(\s*['"]git['"]\s*,\s*/g;
+    while ((m = re1.exec(src)) !== null) {
+      /* ★★ 这里曾经有一个缺陷，留在这里当标本：
+       * 第一版写的是「从调用点往后找【下一个】 `[`」。实参真是数组字面量时它是对的；
+       * 但实参是【变量】时（`execFileSync('git', a, {…})` 这种【包装器定义】），
+       * 它会一路找到【别处】的一个 `[` ⇒ 凭空多出一个「调用处」，而它的 argv 也被填上了，
+       * 看起来和一个真的调用处一模一样（实测：`report_diff.js:26` 凭空得到 argv `2`，
+       * 那是 `process.argv[2]`；`run_tutorial.js:31` 凭空得到 `1, 2, 3`）。
+       * ⇒ 判据：**一个把「调用处」数出来的探针，一旦它假设了实参的形状，
+       *   每一个形状不符的地方都会变成一个多出来的调用处 —— 而抓它不能靠计数，
+       *   只能靠读每一个 argv 是不是 git 的参数。**
+       * 修法：实参不是 `[` 就记进 wrappers，用【自己的分母】印，不与 A/B/C/D 混。 */
+      if (inString(src, m.index)) continue;      /* ★ 落在引号里的，是【描述一个调用处的文本】，不是调用处 */
+      let j = m.index + m[0].length;
+      while (j < src.length && /\s/.test(src[j])) j++;
+      if (src[j] !== '[') {
+        let k = j; while (k < src.length && src[k] !== ',') k++;
+        wrappers.push({ file: rel, line: ln(m.index), expr: src.slice(j, k).trim().slice(0, 40) });
+        continue;
+      }
+      const r = match(src, j);
+      if (r) take(rel, ln(m.index), SHAPES[0], r.body);
+    }
+
+    const re2 = /(^|[^.\w])git\(\s*\[/g;
+    while ((m = re2.exec(src)) !== null) {
+      /* ★ m[0] 是「前导字符 + git(」⇒ m.index 落在【那个前导字符】上，
+       *   而行内判定在【进入引号之前】就停了 ⇒ 它看见的是【引号外面】。
+       *   要判的是【那个 `git` 自己在不在引号里】：m.index + m[0].indexOf('git')。 */
+      if (inString(src, m.index + m[0].indexOf('git'))) continue;
+      const b = src.indexOf('[', m.index + m[0].length - 1);
+      if (b < 0) continue;
+      const r = match(src, b);
+      if (r) take(rel, ln(m.index), SHAPES[1], r.body);
+    }
+
+    const re3 = /(^|[^.\w])git\(\s*(['"`])/g;
+    while ((m = re3.exec(src)) !== null) {
+      if (inString(src, m.index + m[0].indexOf('git'))) continue;   /* ★ 同 re2：判 git 自己 */
+      /* ★★ 这里曾经是 `m.index + m[0].length - 2` —— **差一**：它落在【那个引号】上，
+       * 于是 `indexOf('(', …)` 从引号往后找，找到的是【别处】的括号。
+       * 后果不是报错，是**静默地丢掉一个真的调用处**：`report_diff.js:65`
+       * （`git('diff', '--stat', ${base}..${tip}, '--', 'docs/')`）整条不见了，
+       * 而 `:50` 同形状却靠运气解析对了 ⇒ 分母少 1 而输出看上去完全正常。
+       * 修法：**不要算式**，直接问 m[0] 里那个 `(` 在哪。 */
+      const open = m.index + m[0].indexOf('(');
+      if (open < 0) continue;
+      const r = match(src, open);
+      if (r) take(rel, ln(m.index), SHAPES[2], r.body);
+    }
+  }
+
+  sites.sort((a, b) => (a.file + ':' + a.line).localeCompare(b.file + ':' + b.line));
+  const TALLY = { A: 0, B: 0, C: 0, D: 0 };
+  for (const s of sites) TALLY[s.grade]++;
+
+  /* ───────── 效力证明 ─────────
+   * ★ C 档 = 0 不构成判据 ⇒ 必须另证尺子能看见差异。
+   * ★ 期望值必须来自【外部】：`git show <sha>:<path>` 不经 `--`，
+   *   所以它不会被同一个次序错误污染 —— 它是本证明的参照系。
+   * ★ 三个次序【真跑一遍】，量 (rc, 字节数, 与参照是否同一对象)。
+   *   证明的宾语是：**这三个次序给出的对象【不全相同】** ——
+   *   「不全相同」就是这把尺子能看见差异的证据。
+   */
+  const P = 'docs/AUDIT.md';
+  const S = RULING_ROWS_READ_AT;     // 4829766，已钉住、只读、一字未动
+  const EMPTY_SHA = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+  function probe(argv) {
+    try {
+      const out = execFileSync('git', argv, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 });
+      return { rc: 0, text: out };
+    } catch (e) {
+      return { rc: e.status === undefined ? -1 : e.status, text: String(e.stdout || '') };
+    }
+  }
+  const sha = (t) => require('crypto').createHash('sha256').update(t).digest('hex');
+
+  const ORDERS = [
+    { key: '退化·两者都在 -- 之后', argv: ['show', '--no-renames', '--format=', '--', P, S] },
+    { key: '退化·路径在前修订在后', argv: ['show', '--no-renames', '--format=', P, '--', S] },
+    { key: '有序·修订在 -- 之前', argv: ['show', '--no-renames', '--format=', S, '--', P] },
+  ];
+  const runs = ORDERS.map((o) => {
+    const r = probe(o.argv);
+    return { ...o, rc: r.rc, bytes: Buffer.byteLength(r.text), sha: sha(r.text), empty: sha(r.text) === EMPTY_SHA };
+  });
+  const REF = probe(['show', `${S}:${P}`]);
+  const refSha = sha(REF.text);
+
+  return { sites, wrappers, TALLY, runs, refSha, refBytes: Buffer.byteLength(REF.text), S, P, EMPTY_SHA };
+})();
+
+info('㉚ 乙 · ★ 分母（脚本里出现的 git 调用处数，机械枚举，三种调用形状都算，且落在一行引号里的匹配不算调用处）= ' + G30.sites.length);
+G30.sites.forEach((s) => info(`　　　${s.grade}  ${s.file}:${s.line}  [${s.shape}]  ${s.argv}`));
+info(`　　A（无 --，次序问题不适用）= ${G30.TALLY.A}`);
+info(`　　B（有 -- 且修订在 -- 之前）= ${G30.TALLY.B}`);
+info(`　　C（有 -- 且修订在 -- 之后 ⇒ 静默地量错对象）= ${G30.TALLY.C}`);
+info(`　　D（判不了）= ${G30.TALLY.D}　　和 = ${G30.TALLY.A + G30.TALLY.B + G30.TALLY.C + G30.TALLY.D}`);
+info(`　　★ 另一个分母（不是 A/B/C/D 的一部分）：execFileSync('git', 变量, …) = ${G30.wrappers.length} 处 —— 这些是【包装器定义】，不是调用处；把定义算成它的一个实例，分母就虚了`);
+G30.wrappers.forEach((w) => info(`　　　　${w.file}:${w.line}  实参=${w.expr}`));
+
+info('');
+info('㉚ 乙 · ★★ 效力证明（C 档今天 = 0，而 **一个看不见东西的 0 不构成判据**）：');
+info(`　　★ 期望值来自【外部】：git show ${G30.S}:${G30.P} —— 它不经 --，所以不会被同一个次序错误污染；${G30.refBytes} 字节，sha256 ${G30.refSha.slice(0, 16)}…`);
+G30.runs.forEach((r) => info(`　　　${r.key}　rc=${r.rc}　字节=${r.bytes}　${r.empty ? '★ 输出是【空】' : ''}`));
+info(`　　★★ 不同的 sha256 个数 = ${new Set(G30.runs.map((r) => r.sha)).size} / ${G30.runs.length} 次运行`);
+info('　　★ 这里【不写】「互不相同 = true/false」：那句话读起来像一条读数，其实是在回答一个**更强、且今天为假**的问题 —— 两个退化形态本来就给出同一个结果（空）。真问题是「**不全相同**」，它的意思是 set 大小 > 1，今天它是绿的。★ 判据：**一个读数必须在它的名字里说清它问的是哪个问题**，否则一个绿的条件旁边会站着一句 false。');
+info(`　　★★ 我原先写进判据的机制是【错】的：我写「退化形态把那个 sha 当路径，于是每次都读 HEAD」。真跑出来不是这样 —— 退化形态返回 **rc=0、0 字节、零提示**，它连 HEAD 都不读，它什么都不读。`);
+
+check('㉚ 乙 ①：★ 分母 = A + B + C + D（四档之和必须等于枚举出的调用处数 —— 一个漏掉的调用处会从和里消失）',
+  G30.TALLY.A + G30.TALLY.B + G30.TALLY.C + G30.TALLY.D === G30.sites.length && G30.sites.length > 0,
+  `和 = ${G30.TALLY.A + G30.TALLY.B + G30.TALLY.C + G30.TALLY.D}　枚举 = ${G30.sites.length}`);
+
+check('㉚ 乙 ②：C 档 = 0（本线没有一处把修订参数写在 `--` 之后）',
+  G30.TALLY.C === 0,
+  `C = ${G30.TALLY.C}　★ 零是在这 ${G30.sites.length} 处上量的，不是在「印象里的 16 处」上量的`);
+
+check('㉚ 乙 ③：★★ 尺子不是瞎的 —— 三个次序给出的对象【不全相同】',
+  new Set(G30.runs.map((r) => r.sha)).size > 1,
+  `不同的 sha256 个数 = ${new Set(G30.runs.map((r) => r.sha)).size} / ${G30.runs.length} 次运行　`
+  + `★★ 这里【不是】「个数 = 次数」：两个退化形态**本来就给出同一个结果（空）**，`
+  + `所以「不全相同」的意思是 set 大小 > 1，不是 set 大小 = 运行次数。后者是更强的条件，`
+  + `它今天为假，而假的原因不是尺子瞎了，是那两个退化形态本来就同一个结果。（我第一版写的就是那个更强的条件，已改正。）`);
+
+/* ★★ 这一条不依赖任何挖空/引号判定机制，它查的是【结果】：
+ * 枚举出来的每一条，它那一行把注释前缀去掉之后，仍然得含有那个 `git(`。
+ * 理由：本块已经在同一件事上栽过三次（SHAPES 的字面量、第一版警告注释、
+ * 第二版警告注释），每一次的机制都不同，**共同点只有一个 —— 数出来的那一条
+ * 根本不在代码里**。所以判据要落在「那一条是不是代码」上，不落在「我是怎么
+ * 把非代码挡掉的」上。 */
+{
+  const files30 = [path.join(HERE, 'check_citations.js'), path.join(HERE, 'report_diff.js'),
+    path.join(HERE, 'run_snippets.js'), path.join(HERE, 'run_tutorial.js')];
+  const bad30 = [];
+  G30.sites.forEach((st) => {
+    const f30 = files30.find((x) => path.relative(ROOT, x) === st.file);
+    if (!f30) { bad30.push(`${st.file}:${st.line}（文件不在列表里）`); return; }
+    const raw30 = fs.readFileSync(f30, 'utf8').split('\n')[st.line - 1] || '';
+    const code30 = raw30.replace(/^\s*\*\/?/, '').replace(/^\s*\/\//, '').trim();
+    /* ★★ 第一版这里写的是 `/git\s*\(/` —— 它把本条探针自己变成了一个假阳性源：
+     *   `execFileSync('git', ['rev-parse', …])` 那一形状里**根本没有裸的 `git(`**，
+     *   那个 `git` 在引号里、后面跟的是 `', [`。⇒ 16 条真的调用处被判成注释。
+     *   ★ 判据：**一条检查「这一条是不是代码」的探针，如果它找的记号不是那一条自己
+     *     的形状的记号，它红的位置就与它要说的事无关。**
+     *   修法：按形状取记号 —— 形状 0 找 `execFileSync(`，形状 1/2 找 `git(`。 */
+    /* ★ 不要引 `SHAPES`（它在另一个作用域里，实测 `ReferenceError: SHAPES is not defined`）——
+     *   形状标签【就在这一条自己身上】：s.shape 是那句原文。 */
+    const mark30 = /^execFileSync/.test(st.shape) ? /execFileSync\s*\(/ : /git\s*\(/;
+    if (!mark30.test(code30)) bad30.push(`${st.file}:${st.line}　行=「${code30.slice(0, 60)}」`);
+  });
+  check('㉚ 乙 ⑦：★★ 每一条枚举出来的调用处，它那一行都是【代码】不是【注释】',
+    bad30.length === 0,
+    `不是代码的 = ${bad30.length} 条${bad30.length ? '：' + bad30.join('；') : ''}　`
+    + `★ 这一条不经过任何挖空机制 —— 它直接读那一行，把注释前缀剥掉再看还有没有那个调用。`);
+}
+
+check('㉚ 乙 ⑥：★★ 没有一个次序给出的对象等于【外部参照】（git show <sha>:<path>）',
+  G30.runs.every((r) => r.sha !== G30.refSha),
+  `与外部参照一致的 = ${G30.runs.filter((r) => r.sha === G30.refSha).length}　`
+  + `★ 连【有序】形态都不等于它 —— 因为 git show <sha> -- <path> 给的是 **diff**（提交的差异），`
+  + `而 git show <sha>:<path> 给的是 **blob**（文件本身）。⇒ 「次序对了」与「取到了那个对象」是两件事。`);
+
+check('㉚ 乙 ④：★★ 那条静默路径是可复现的 —— 退化形态 rc=0 且输出为【空】，而它要的那个对象非空',
+  G30.runs[0].rc === 0 && G30.runs[0].empty && G30.refBytes > 0,
+  `退化形态 rc=${G30.runs[0].rc}　字节=${G30.runs[0].bytes}　sha256=${G30.runs[0].sha.slice(0, 16)}…（= 空串的 sha256）　`
+  + `而 ${G30.S}:${G30.P} 有 ${G30.refBytes} 字节 ⇒ **空是静默的，因为它不报错**`);
+
+check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用处',
+  G30.wrappers.length > 0 && G30.sites.every((s) => !G30.wrappers.some((w) => w.file === s.file && w.line === s.line)),
+  `包装器 = ${G30.wrappers.length}　调用处 = ${G30.sites.length}　★ 两者没有一行重叠`);
+
 const bad = results.filter((r) => !r.ok);
 results.filter((r) => !r.ok).forEach((r) => {
   console.log(`FAIL  [${r.where}] ${r.name}${r.detail ? '   ← ' + r.detail : ''}`);
@@ -2832,6 +3166,7 @@ console.log('出处分级：' + Object.keys(AT.routes)
   + ` ／ 射程：${AT.file} 的已裁条目里，没写「谁裁的」的 `
   + D.entries.filter((e) => e.source.file === AT.file && e.status === 'ruled' && !e.ruledBy).length + ' 条'
   + '（humanRuled 那个块是这套做法的出处，不是花名册）');
+
 infos.forEach((x) => console.log(`  · ${x}`));
 console.log(`规范页元信息：${((S && S.docs) || []).length} 份文档（标题 / 行数 / 文件头引文）`);
 console.log(`带身份标记的 docs：扫了 ${docFiles.length} 份 .md（读自 ${MSR_LABEL}），其中 ${marked.length} 份带标记`);
