@@ -46,7 +46,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 
 ## 3. 门禁（`tools/gate.sh`）
 
-合入 main 前必须全绿。十五个阶段，任一失败即整体失败：
+合入 main 前必须全绿。十六个阶段，任一失败即整体失败（下表列十五行，缺 `obs-markers` 那一行；**那一行今天故意没有补**：补它会把本文件插入点以下的每一行往下推一格，而这个文件的行号被全仓引用，补行必须与改引用同批做 —— 见 AUDIT.md §1.97 增补一百一十五）：
 
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 ```bash
 tools/gate.sh                # 全量
 tools/gate.sh --fast         # 跳过 configure，复用已有 build/
-tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|node|plugin|oauth-loop|ignored-credentials|links|doc-paths|text-integrity|orphan-fixtures|orphan-targets|line-refs|release-tags
+tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|node|plugin|oauth-loop|ignored-credentials|links|doc-paths|text-integrity|orphan-fixtures|orphan-targets|line-refs|release-tags|obs-markers
 ```
 
 **门禁数字变了就必须同时改这张表和 [STATUS.md](STATUS.md) §1 的基线行**，否则下一个会话会拿旧数字当验收线。
