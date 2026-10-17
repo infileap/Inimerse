@@ -111,9 +111,11 @@ MUTATIONS: dict[str, tuple[str, str]] = {
         "printf 'cmake_minimum_required(VERSION 3.16)\\n' > CMakeLists.txt",
     ),
     "tools/check_release_tags.py": (
-        "remove docs/ and delete every tag in the substitute",
-        "git rm -q -r --cached --ignore-unmatch docs; "
-        "git tag | xargs -r git tag -d >/dev/null; true",
+        "a PRIVATE CLONE of this commit with docs/ unstaged -- a linked "
+        "worktree shares refs/tags with the main repository, so deleting a "
+        "tag there deletes the real one; this checker is the only one whose "
+        "substitute must not be a worktree",
+        "git rm -q -r --cached --ignore-unmatch docs",
     ),
     "tools/check_test_ports.py": (
         "move tools/*.test.py away (its input is TOOLS.glob('*.test.py'))",
@@ -200,11 +202,24 @@ def bare_tree(root: str, tmp: str, name: str, rel: str, narrow: bool) -> str:
     return dest
 
 
+# A linked worktree shares `.git` with the main repository, which means it
+# shares `refs/tags`.  Running `git tag -d` in one deletes the real tag -- this
+# tool did exactly that twice before it was caught.  Any mutation that touches
+# a ref therefore runs in a private clone instead.
+PRIVATE_CLONE = {"tools/check_release_tags.py"}
+
+
 def emptied_tree(root: str, tmp: str, name: str, ref: str, script: str,
-                 env: dict) -> str:
+                 env: dict, rel: str = "") -> str:
     dest = os.path.join(tmp, name)
-    subprocess.run(["git", "worktree", "add", "--detach", dest, ref],
-                   cwd=root, check=True, capture_output=True)
+    if rel in PRIVATE_CLONE:
+        subprocess.run(["git", "clone", "-q", "--shared", root, dest],
+                       cwd=tmp, check=True, capture_output=True)
+        subprocess.run(["git", "-C", dest, "checkout", "-q", ref],
+                       check=False, capture_output=True)
+    else:
+        subprocess.run(["git", "worktree", "add", "--detach", dest, ref],
+                       cwd=root, check=True, capture_output=True)
     subprocess.run(["bash", "-c", script], cwd=dest, check=False,
                    capture_output=True, env=env)
     return dest
@@ -252,8 +267,8 @@ def main(argv: list[str]) -> int:
                 bare_tree(root, tmp, "n_" + os.path.basename(rel), rel, True), rel, timeout)
             if script:
                 row["emptied"] = run_checker(
-                    emptied_tree(root, tmp, "e_" + os.path.basename(rel), ref, script,
-                                 env),
+                    emptied_tree(root, tmp, "e_" + os.path.basename(rel), ref,
+                                 script, env, rel),
                     rel, timeout)
             else:
                 row["emptied"] = None
