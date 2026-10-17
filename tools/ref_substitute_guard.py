@@ -144,8 +144,24 @@ ARGV_PUNCT = re.compile(r"['\"(),\[\]=]+")
 #                                      `none` -- red, but not for the reason
 #                                      its control declares
 #   INIMERSE_GUARD_STRIP_REASONS=1     reproduces a red that carries no reason
+#
+# The same shape applies to the exemption, and it is that switch's job to show
+# it: an exemption is a claim about TWO numbers -- the file is in the search
+# space, and the file is not asked.  Print only the second and the claim has
+# quietly become "the file is not in the search space", which is what a broken
+# search space prints.
+#
+#   INIMERSE_GUARD_SELF_OUT_OF_SCANNED=1
+#                                      reproduces that collapse: the guard's own
+#                                      file is dropped from `scanned` instead of
+#                                      merely not asked, so `scanned` reads 128
+#                                      and the exempt count reads 0 -- the
+#                                      exemption can no longer even say it
+#                                      exempted anything, and --self-test's
+#                                      denominator-control must redden
 NO_ARGV_FLATTEN = os.environ.get("INIMERSE_GUARD_NO_ARGV_FLATTEN") == "1"
 STRIP_REASONS = os.environ.get("INIMERSE_GUARD_STRIP_REASONS") == "1"
+SELF_OUT_OF_SCANNED = os.environ.get("INIMERSE_GUARD_SELF_OUT_OF_SCANNED") == "1"
 
 
 def flatten(line: str) -> str:
@@ -455,6 +471,16 @@ def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[st
     identical in a log.
     """
     files = tracked_files(root)
+    self_rel = self_identity(root)
+    if SELF_OUT_OF_SCANNED and self_rel:
+        # Negative control for the denominator rule, in the same family as
+        # INIMERSE_GUARD_NO_ARGV_FLATTEN and INIMERSE_GUARD_STRIP_REASONS:
+        # with this set the guard does the thing (b) must not do -- it drops
+        # its own file out of the search space instead of merely declining to
+        # ask it.  `scanned` then counts one fewer, the exempt count still
+        # says 1, and `--self-test`'s denominator-control must redden.  A rule
+        # that cannot be broken on demand is a sentence, not a guard.
+        files = [f for f in files if f != self_rel]
     lines: list[str] = []
     offenders: list[str] = []
     comment_only: list[str] = []
@@ -462,7 +488,6 @@ def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[st
     reds: list[tuple[str, int, str, str]] = []
     unreasoned: list[str] = []
     exempt: list[str] = []
-    self_rel = self_identity(root)
     sites_judged = 0
     hits = 0
 
@@ -470,6 +495,8 @@ def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[st
         """Return the verdict, filling the ledger when one was asked for."""
         if ledger is not None:
             ledger["exempt"] = list(exempt)
+            ledger["scanned"] = len(files)
+            ledger["scanned_self"] = self_rel in files
             ledger["reds"] = list(reds)
             ledger["unreasoned"] = list(unreasoned)
             ledger["reasoned"] = len(reds)
@@ -560,15 +587,23 @@ def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[st
             # refuses to call the tree a pass, and exits 2 -- a green run reading
             # as an inability to measure.
             unresolved.append(rel)
+    _ex_paths_n = len({e.split(":", 1)[0] for e in exempt})
     lines.insert(0, (
         f"ref_substitute_guard: {len(files)} file(s) scanned under {root}/tools "
         f"and {root}/.github; {hits} carry a ref-mutating spelling "
         f"({len(comment_only)} in a comment only); {sites_judged} call site(s) "
         f"judged, each against the construction nearest to it within "
-        f"{SITE_WINDOW} line(s), and {len(unresolved)} file(s) where no "
-        f"construction is near enough to answer -- the first number is the "
-        f"search space and it is printed because a search space of zero would "
-        f"make every verdict below vacuous"
+        f"{SITE_WINDOW} line(s); {_ex_paths_n} file(s) exempt over "
+        f"{len(exempt)} call site(s); and {len(unresolved)} file(s) where no "
+        f"construction is near enough to answer.  Two things about that "
+        f"denominator are printed on purpose: the guard's own file is "
+        f"{'in' if self_rel in files else 'NOT in'} it, and the exempt count is "
+        f"a separate number on the same line -- an exemption that also removed "
+        f"its own object from the denominator would turn `we are not asking "
+        f"this file` into `we cannot see this file`, and those two are not the "
+        f"same number anywhere downstream.  The first number is the search "
+        f"space and it is printed because a search space of zero would make "
+        f"every verdict below vacuous"
     ))
     if not files:
         lines.append(
@@ -805,6 +840,32 @@ def self_test() -> int:
              f"saying `this is me`, it is saying `this mentions me`")
         os.remove(os.path.join(tmp, "tools", "copy_of_guard.py"))
         subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+
+        # ★ The denominator control, and it is the second half of the same
+        # question condition ① asks.  The copy-control above shows the
+        # exemption is keyed on identity; this one shows the exemption did not
+        # also erase its object.  On this tree the guard's own file IS a tracked
+        # file, so it has to appear twice, as two different numbers on one run:
+        # once inside `scanned` (we can see it) and once as an exempt file (we
+        # are not asking it).  If the exemption also removed it from the
+        # denominator, the two collapse into one and `we are not asking this
+        # file` starts reading as `we cannot see this file` -- which is the
+        # same sentence a search space of zero prints.
+        real_led: dict = {}
+        scan(REPO_ROOT, real_led)
+        _real_ex = {e.split(":", 1)[0] for e in real_led.get("exempt", [])}
+        print(f"ref_substitute_guard: self-test denominator-control "
+              f"scanned={real_led.get('scanned')} "
+              f"self_in_scanned={real_led.get('scanned_self')} "
+              f"exempt_files={len(_real_ex)}")
+        want(real_led.get("scanned_self") is True and len(_real_ex) == 1,
+             f"on this tree the guard's own source came back "
+             f"self_in_scanned={real_led.get('scanned_self')} with "
+             f"{len(_real_ex)} exempt file(s); it must be inside the scanned "
+             f"denominator AND counted as exactly one exempt file.  `we are not "
+             f"asking this file` and `we cannot see this file` are two "
+             f"different readings of an exemption, and only the denominator "
+             f"tells them apart")
 
         all_reds = led1["reds"] + led2["reds"] + led3["reds"]
         all_unreasoned = (led1["unreasoned"] + led2["unreasoned"]
