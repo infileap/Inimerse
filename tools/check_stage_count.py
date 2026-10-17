@@ -680,6 +680,13 @@ def main(argv):
             "stages %d, neither %d."
             % (total, len(git_index), len(gate_stage), len(rest))
         )
+        print(
+            "check_stage_count:   this counts the ASCII word only.  The candidate "
+            "predicate above also matches the Chinese word for stage, so these "
+            "tokens and those locations are two different word sets: a line can "
+            "hold a candidate and no token here.  Printing the two side by side "
+            "without saying so reads as two faces of one object."
+        )
         for name, nlines, ntokens in per_sig:
             print(
                 "check_stage_count:   %-12s matches %3d line(s) and holds %3d of the "
