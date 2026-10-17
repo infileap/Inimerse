@@ -3270,6 +3270,256 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
     + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② ${todayKeys.length} ≠ ③ ${distinctFace}，那个「巧合」就消失了。`
     + `⇒ 判据：一个预测出来的巧合，先要检查它是【事实】还是【我那个定义】的产物。`);
 
+
+/* ── ㉜ 甲：把那一族的四个坑做成一把【尺子】 ──────────────────────────────
+   exact-otter 的判据（本件的定义）：
+     **被它数进去或被它排除掉的那一条，必须能被证明落在它声称的区间里。**
+   而今天骗过我的那一句是「没有东西被排除」—— ★ 它**不是证据**：
+     一个真的空区间说得出这句话，一个量错了区间也说得出这句话。
+   ⇒ 本尺子把「区间」印成【两对数】：作者声明的（declared）与查找器找到的（found）。
+     两者不等 ⇒ 这条检查红；两者相等且是真的空 ⇒ 绿。
+     **这就是第 4 条要求的那个区别所在的输出行。**
+
+   四个坑（每个都有一个开关，方便做「只有它红」的对照）：
+     ① 自扫描枚举：枚举会把它自己的样本数进去
+     ② 警告注释抄样本：一段警告注释如果逐字含那个样本，它自己就又是一个样本
+     ③ 行内引号 / 正则里的双斜杠：`/…\//…/` 里的 `//` 被当成行注释 ⇒ 实参表被读穿
+     ④ 查找器把自己当哨兵：`findIndex((l) => l.includes(SENTINEL))` 的那一行自己含哨兵
+   ★ 本块**不许**逐字写出那种调用的样子（那就是坑 ②）—— 所有样本都在下面的字符串字面量里，
+     而那一段在射程之外。 */
+{
+  /* 四个开关：全 false = 正常（四个坑都挡上）。对照时逐个翻 true。 */
+  const RULER_TOLERATE = { self: false, comment: false, regex: false, selffind: false };
+
+  const RULER_VERDICTS = [];
+  const SENT_BEG = '/*RULER-BEGIN*/';
+  const SENT_END = '/*RULER-END*/';
+
+  /* 行内引号 / 行注释 / 正则 的判定（坑 ③ 的挡法） */
+  function rlReStart(t, i) {
+    for (let j = i - 1; j >= 0; j--) {
+      const c = t[j];
+      if (c === ' ' || c === '\t') continue;
+      return '(,=:[!&|?{};+-*%~^<>\n'.indexOf(c) !== -1;
+    }
+    return true;
+  }
+  function rlInStr(t, i) {
+    const ls = t.lastIndexOf('\n', i - 1) + 1;
+    let q = null;
+    for (let j = ls; j < i; j++) {
+      const c = t[j];
+      if (q) { if (c === '\\') j++; else if (c === q) q = null; continue; }
+      if (c === '/' && t[j + 1] === '/') break;
+      if (c === '/' && rlReStart(t, j)) { const k = rlSkipRe(t, j); if (k < 0) break; j = k; continue; }
+      if (c === "'" || c === '"' || c === '`') q = c;
+    }
+    return q !== null;
+  }
+  function rlInComment(t, i) {
+    const ls = t.lastIndexOf('\n', i - 1) + 1;
+    const head = t.slice(ls, i);
+    if (head.indexOf('//') !== -1) return true;
+    const open = t.lastIndexOf('/*', i);
+    if (open === -1) return false;
+    const close = t.lastIndexOf('*/', i);
+    return open > close;
+  }
+  /* 跳过一段正则字面量：必须处理 `\` 转义与 `[...]` 字符类 ——
+     差一版把 `\/` 当成了结尾，于是整条实参表被读穿（这正是坑 ③ 的机制）。 */
+  function rlSkipRe(t, i) {
+    let cls = false;
+    for (let j = i + 1; j < t.length; j++) {
+      const d = t[j];
+      if (d === '\\') { j++; continue; }
+      if (d === '\n') return -1;
+      if (d === '[') cls = true;
+      else if (d === ']') cls = false;
+      else if (d === '/' && !cls) return j;
+    }
+    return -1;
+  }
+  function rlMatchParen(t, open) {
+    let d = 0, q = null;
+    for (let i = open; i < t.length; i++) {
+      const c = t[i];
+      if (q) { if (c === '\\') { i++; continue; } if (c === q) q = null; continue; }
+      /* ★★★ 次序就是坑 ③ 本身：`//` 与「正则的开头」是同一个字符，
+         谁先判，谁就决定了 `/^https?:\/\//` 里那两个斜杠的命运。
+         正常版：**先问「这是不是一个正则的开头」**，只有它不是、且紧跟着又一个 `/` 时才当行注释。
+         退化版（开关 true）：先判注释 ⇒ 正则里的 `//` 被当成行注释 ⇒ 跳过本行余下 ⇒ 实参表被读穿。 */
+      const isCmt = c === '/' && t[i + 1] === '/';
+      const isRe = c === '/' && !isCmt && rlReStart(t, i);
+      if (!RULER_TOLERATE.regex && isRe) { const j = rlSkipRe(t, i); if (j < 0) return -1; i = j; continue; }
+      if (isCmt) { while (i < t.length && t[i] !== '\n') i++; continue; }
+      if (c === '/' && t[i + 1] === '*') { i = t.indexOf('*/', i + 2); if (i < 0) return -1; i++; continue; }
+      /* ★ 退化版【不认正则字面量】—— 于是 `\/\/` 里那两个斜杠会被当成行注释的开头。
+         我上一版把退化版也接在 rlSkipRe 上，结果这个开关【什么都不改变】，
+         四个对照里它是唯一一个翻成 true 而红数一条没变的 —— 见提交信息。 */
+      /* （正常版在上面已经跳过了整段正则，走不到这里。） */
+      if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+      if (c === '(') d++;
+      else if (c === ')') { d--; if (d === 0) return i; }
+    }
+    return -1;
+  }
+  function rlSplitA(t) {
+    const out = []; let dep = 0, st = 0, q = null;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (q) { if (c === '\\') { i++; continue; } if (c === q) q = null; continue; }
+      if (c === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; continue; }
+      if (c === '/' && rlReStart(t, i)) { const j = rlSkipRe(t, i); if (j < 0) break; i = j; continue; }
+      if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+      if (c === '(' || c === '[' || c === '{') dep++;
+      else if (c === ')' || c === ']' || c === '}') dep--;
+      else if (c === ',' && dep === 0) { out.push(t.slice(st, i)); st = i + 1; }
+    }
+    out.push(t.slice(st));
+    return out.map((x) => x.trim());
+  }
+
+  /* ★ 尺子本体：给一段源码 + 作者【声明】的区间，返回它找到的区间与两边的判定。 */
+  function ruler(src, declaredBeg, declaredEnd, declLineOfBeg, declLineOfEnd) {
+    const lines = src.split('\n');
+    const CALL = 'check' + '(';
+    const foundBeg = lines.findIndex((l) => {
+      const hit = l.includes(SENT_BEG);
+      if (!hit) return false;
+      if (!RULER_TOLERATE.selffind) return /^\s*\/\*RULER-BEGIN\*\//.test(l); // ★ 只认整行以哨兵注释开头
+      return true;
+    });
+    const foundEnd = lines.findIndex((l) => {
+      const hit = l.includes(SENT_END);
+      if (!hit) return false;
+      if (!RULER_TOLERATE.selffind) return /^\s*\/\*RULER-END\*\//.test(l);
+      return true;
+    });
+
+    const outside = [], inside = [];
+    let ix = -1;
+    while ((ix = src.indexOf(CALL, ix + 1)) !== -1) {
+      const prev = ix > 0 ? src[ix - 1] : '';
+      if (/[A-Za-z0-9_$.]/.test(prev)) continue;
+      const ln = src.slice(0, ix).split('\n').length;
+      // ★ 顺序要紧：先判【字符串】（坑 ①：字符串里的样本），再判【注释】（坑 ②）
+      if (rlInStr(src, ix) && !RULER_TOLERATE.self) continue;
+      if (rlInComment(src, ix) && !RULER_TOLERATE.comment) continue;
+      const close = rlMatchParen(src, ix + CALL.length - 1);
+      const ok = close >= 0 && rlSplitA(src.slice(ix + CALL.length, close)).length >= 2;
+      if (!ok) { outside.push({ line: ln, why: '括号没配上或实参不足（坑 ③ 的形状）' }); continue; }
+      (ln > foundBeg + 1 && ln < foundEnd + 1 ? inside : outside).push({ line: ln, why: '' });
+    }
+
+    const bad = outside.filter((s) => s.why);
+    return {
+      declared: [declaredBeg, declaredEnd],
+      declLine: [declLineOfBeg, declLineOfEnd],
+      found: [foundBeg + 1, foundEnd + 1],
+      span: foundEnd - foundBeg,
+      inside, outside,
+      unpaired: bad,
+      intervalWrong: foundBeg + 1 !== declaredBeg || foundEnd + 1 !== declaredEnd,
+    };
+  }
+
+  /* ── 四个对照 + 一个反方向对照。每个都是【一段合成的源码 + 作者声明的区间】。 ──
+     ★ 所有样本都在这四个字符串里，它们**不在本块射程内**（射程由上面的哨兵圈定）。 */
+
+  // ① 自扫描枚举：枚举器自己的样本出现在源码里
+  const SRC_1 = [
+    SENT_BEG,
+    'const samples = ["' + ['check', '(', 'x, y, z)'].join('') + '"];   // ★ 枚举器自己的样本，落在射程内',
+    'check(' + "'a', true, `n=${1}`);",
+    SENT_END,
+    'check(' + "'c', true);",
+  ].join('\n');
+
+  // ② 警告注释抄样本：一段警告注释逐字含那个样本
+  const SRC_2 = [
+    SENT_BEG,
+    '// ★ 别把样本抄进注释，比如下面这一行 —— 而【这一行自己就是那个样本】：',
+    '// ' + 'check' + '(' + "'x', y, z) 这种形状",
+    'check(' + "'a', true, `n=${1}`);",
+    SENT_END,
+  ].join('\n');
+
+  // ③ 行内引号 / 正则里的双斜杠：`/^https?:\\/\\//` 里的 `//`
+  const SRC_3 = [
+    SENT_BEG,
+    'const re = /\\/\\//;   // ★ 一个含 `//` 的正则，落在射程内',
+    'check(' + "'url 是 http(s) 地址', !t || /^https?:\\/\\//.test(t.url || ''), t && t.url);",
+    SENT_END,
+  ].join('\n');
+
+  // ④ 查找器把自己当哨兵：查找器自己的那一行逐字含哨兵
+  const SRC_4 = [
+    'const beg = lines.findIndex((l) => l.includes(' + JSON.stringify(SENT_BEG) + '));',
+    SENT_BEG,
+    'check(' + "'a', true, `n=${1}`);",
+    SENT_END,
+  ].join('\n');
+
+  // ⑤ 反方向：一个【真的】空区间 —— 哨兵相邻，中间一条都没有
+  const SRC_5 = [
+    SENT_BEG,
+    SENT_END,
+    'check(' + "'a', true);",
+  ].join('\n');
+
+  /* 每个对照：作者【声明】的区间（源码里哨兵真正所在的行） */
+  /* ★★★ 每个对照都必须【声明三个数】。只断言「区间内 >= 1」是抓不住「数多了」的 ——
+     而那正是我第一次跑这四个对照时的病：三个开关翻成 true，红数一条都没变。 */
+  const cases = [
+    { n: '① 自扫描枚举', src: SRC_1, declBeg: 1, declEnd: 4, want: { inside: 1, outside: 1, unpaired: 0 },
+      why: '枚举器自己的样本（在字符串里）必须不被计数' },
+    { n: '② 警告注释抄样本', src: SRC_2, declBeg: 1, declEnd: 5, want: { inside: 1, outside: 0, unpaired: 0 },
+      why: '警告注释里的样本必须不被计数' },
+    { n: '③ 正则里的双斜杠', src: SRC_3, declBeg: 1, declEnd: 4, want: { inside: 1, outside: 0, unpaired: 0 },
+      why: '括号必须配上（不能读穿）' },
+    { n: '④ 查找器把自己当哨兵', src: SRC_4, declBeg: 2, declEnd: 4, want: { inside: 1, outside: 0, unpaired: 0 },
+      why: '声明的区间必须被找到' },
+    { n: '⑤ 反方向：真的空区间', src: SRC_5, declBeg: 1, declEnd: 2, want: { inside: 0, outside: 1, unpaired: 0 },
+      why: '真的空必须绿 —— 而它与「量错区间」的区别在【声明 vs 找到】那一对数上' },
+  ];
+
+  cases.forEach((c) => {
+    const r = ruler(c.src, c.declBeg, c.declEnd, c.declBeg, c.declEnd);
+    /* ★★★ 判据：三个数必须【逐字相等】—— 只断言「区间内 >= 1」抓不住「数多了」，
+       而多出来的那一条恰恰就是「被数进去的那一条不在它以为的地方」。 */
+    const pass = !r.intervalWrong
+      && r.inside.length === c.want.inside
+      && r.outside.length === c.want.outside
+      && r.unpaired.length === c.want.unpaired;
+
+    const verdict = pass ? '绿' : '★ 红';
+    RULER_VERDICTS.push(`　　${verdict}　${c.n}　声明 ${r.declared.join('..')} / 找到 ${r.found.join('..')}`
+      + `（区间对错 ${r.intervalWrong ? '★ 不对' : '对'}，区间内 ${r.inside.length}，括号没配上 ${r.unpaired.length}）`);
+    check(`㉜ 甲【尺子 · ${c.n}】被数进去或被排除掉的那一条，必须能证明落在它声称的区间里`,
+      pass,
+      `声明 = ${r.declared[0]}..${r.declared[1]}　找到 = ${r.found[0]}..${r.found[1]}（跨度 ${r.span} 行）`
+      + `　区间对错 = ${r.intervalWrong ? '★ 不对' : '对'}`
+      + `　区间内 = ${r.inside.length}（${r.inside.map((s) => ':' + s.line).join(' ') || '（无）'}）`
+      + `　区间外 = ${r.outside.length}（${r.outside.map((s) => ':' + s.line).join(' ') || '（无）'}）`
+      + `　括号没配上 = ${r.unpaired.length}`
+      + `　★ 声明的三个数 = 区间内 ${c.want.inside} / 区间外 ${c.want.outside} / 括号没配上 ${c.want.unpaired}`
+      + `　★ 要的是：${c.why}`
+      + `　★「没有东西被排除」不是证据 —— 证据是它左边这两对数。`);
+  });
+
+  /* ★ 一个把「真的空」与「量错了区间」分开印出来的读数（成功路径上也印）。 */
+  const r5 = ruler(SRC_5, 1, 2, 1, 2);
+  const r4bad = ruler(SRC_4, 2, 4, 2, 4);
+  info(`㉜ 甲【真的空 vs 量错区间 —— 区别在哪一行】`
+    + `\n　　　　真的空：声明 ${r5.declared.join('..')}　找到 ${r5.found.join('..')}　⇒ 两对相等　区间内 = ${r5.inside.length}　⇒ 绿`
+    + `\n　　　　量错的：声明 ${r4bad.declared.join('..')}　找到 ${r4bad.found.join('..')}　⇒ 两对【不等】　区间内 = ${r4bad.inside.length}　⇒ 红`
+    + `\n　　★ 区别就在「声明 vs 找到」那一对数上 —— 「区间内 = 0」这两行长得一模一样。`);
+  info(`㉜ 甲【五条判词逐字列在下面 —— 它们在成功路径上也看得见】（★ 这正是本件要治的那个病）\n`
+    + RULER_VERDICTS.join('\n'));
+  info(`㉜ 甲【四个开关的今天取值】= ${JSON.stringify(RULER_TOLERATE)}`
+    + `　★ 对照时逐个翻 true，每一次期望【只有本块的 check 红】。`);
+}
+
   /* CENSUS-BEGIN ── ㉛ 乙 ⑦：把「读数被送进一个只在失败时说话的信道」做成一个数 ──────
      exact-otter 的判据：这道普查的答案不许用「我读了源码」来交 ——
        要么给一条能让它变红的输入，要么给一条让它绿着也印出来的补丁。
