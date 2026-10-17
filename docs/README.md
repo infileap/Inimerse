@@ -52,7 +52,7 @@ node tools/node_suites/run_all.js    # 期望：node protocol suites: 11/11 pass
 
 ```bash
 tools/stream.sh new <slug>     # 建 .worktrees/<slug> 与分支 stream/<slug>
-tools/gate.sh                  # 十五个阶段：build + ctest + fuzz + economy + node + plugin + oauth-loop + ignored-credentials + links + doc-paths + text-integrity + orphan-fixtures + orphan-targets + line-refs + release-tags
+tools/gate.sh                  # 十六个阶段：build + ctest + fuzz + economy + node + plugin + oauth-loop + ignored-credentials + links + doc-paths + text-integrity + orphan-fixtures + orphan-targets + line-refs + release-tags + obs-markers
 ```
 
 每个会话开工前先读自己那条流的**作业单**：`docs/streams/<slug>.md`（已结项的作业单在文件头
@@ -60,6 +60,14 @@ tools/gate.sh                  # 十五个阶段：build + ctest + fuzz + econom
 门禁**串行跑**，不要两个一起跑——会撞端口，制造 §2.9 记的那种假失败。
 
 规则、任务板与交接格式见 [BOARD.md](BOARD.md)。
+
+`tools/ref_substitute_guard.py` 是一条**按需单跑**量器，不进 `tools/gate.sh`：它枚举 `tools/` 与
+`.github/` 里会改引用的调用点（删标签、改引用、删分支、gc、prune），逐个报出**离该调用点最近**
+的替身构造是共享引用/共享对象，还是各自私有。它不假称自己知道一件文件安不安全——「最近处没有
+构造」与「有构造但离得太远、看不出这一跑在哪个仓里」是两个不同的答案，后者输出 `UNRESOLVED`
+并以退出码 2 表示**量不出来**，不是通过。抓不到的写法与「构造表里没有」的构造各自成列印出，
+因为一支只认一种写法的守卫，绿只说明没有用那一种写法。`--self-test` 自带四条合成对照（argv
+列表写法的真凶、远处无关的 `git init`、替身建在 helper 里的命令表、必须保持绿的普通 clone）。
 
 ## 归档
 

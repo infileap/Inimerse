@@ -1,5 +1,11 @@
 # check_enc.ps1 - detect encoding status of one or more files (no Chinese literals inside)
 # usage: powershell -File check_enc.ps1 -paths file1,file2,...   or   -dir folder [-filter *.md]
+#
+# Excluded by tools/verdict_census.py -- which prints the exclusion next to its
+# denominator -- because it is not a checker (it renders no verdict line of its
+# own and no registered consumer reads its exit status), and that reason is
+# recorded here, at the exclusion, because its reader is whoever changes this
+# script rather than a reader of docs/.
 param([string[]]$paths, [string]$dir, [string]$filter = "*")
 function Test-File($f) {
   try {
