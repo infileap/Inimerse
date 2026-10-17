@@ -198,6 +198,24 @@ def describe(path: Path, offsets: list[int], limit: int = 3) -> list[str]:
 
 def main() -> int:
     paths = tracked_paths()
+    if not paths:
+        # Layer 1's own exit, carrying layer 1's own number.  Without this, an
+        # empty repository used to fall through to the allow-list message:
+        # with no tracked file at all every allow-list entry is unmatched by
+        # construction, so the run printed "the allow-list has 35 entry(ies)
+        # that no tracked file matches" -- layer 3's ledger, reported for
+        # layer 1's failure.  A sentence that reports an error has to report
+        # the account of its own layer.
+        sys.exit(
+            "check_text_integrity: 'git ls-files' reported 0 tracked path(s) "
+            f"under {REPO_ROOT}.\n"
+            "check_text_integrity: this check scans the repository's tracked "
+            "text files, so the number of tracked paths is the denominator of "
+            "every count below it; that number belongs to layer 1 and is "
+            "reported here rather than blamed on a later layer.\n"
+            "check_text_integrity: a scan that owns no file cannot report 0 "
+            "findings, so it refuses instead."
+        )
     text = [name for name in paths if is_text(name)]
 
     dead = unmatched_entries(paths)
@@ -229,13 +247,22 @@ def main() -> int:
         )
         return 1
 
-    if not text:
-        sys.exit(
-            "check_text_integrity: 'git ls-files' returned no text file at all, "
-            f"out of {len(paths)} tracked path(s).\n"
-            "check_text_integrity: a scan that owns nothing cannot report 0 "
-            "findings; refusing to pass."
-        )
+    # There is deliberately no `if not text:` floor here, and the comment that
+    # used to sit here said why: with `paths` non-empty, `text` cannot be
+    # empty.  Deleting the floor without moving its denominator would have left
+    # this file with no denominator at all, which is worse than a misattributed
+    # one -- so the denominator moved to the layer that can actually be empty.
+    # See the `if not paths:` exit in main(): the count of tracked paths is
+    # layer 1's own account, and layer 1 is the layer that goes to zero first.
+    #
+    # Two independent reasons the `if not text:` form stays unreachable:
+    # (1) Arithmetic: every entry of TEXT_SUFFIXES | TEXT_NAMES that is not in
+    # NO_FILE_TODAY would be unmatched, so the allow-list exit above fires first
+    # whenever `text` would be empty.  (2) Self-membership: this file is itself
+    # a tracked `.py`, so `text` contains it for as long as it is tracked.
+    # A floor that cannot be reached is indistinguishable in a log from a floor
+    # that passed, while carrying a count that reads like something is being
+    # counted -- which is why the denominator is on the reachable exit instead.
 
     offenders: list[tuple[str, list[int]]] = []
     for name in text:

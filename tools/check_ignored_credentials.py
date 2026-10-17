@@ -17,6 +17,12 @@ whitelisted back.  The fix for the next artifact is therefore already in place,
 but "already in place" is exactly the kind of claim that quietly stops being
 true -- so this check tests the default rather than the list.
 
+Every directory is examined or the check refuses.  The loop used to `continue`
+past a directory that did not exist and still print `len(USERDATA_DIRS)` on the
+success line, so a tree with none of the three present printed the same 103
+bytes as a healthy tree and exited 0 -- a number from the source where the line
+reads like a number from the tree, asserted about directories never opened.
+
 The load-bearing assertion is `probe_default_deny()`: a filename nobody has
 ever written must already be ignored.  Checking only the three known artifacts
 would pass against the old rules the moment someone added a fourth patch line,
@@ -69,10 +75,12 @@ def is_ignored(path):
 
 def main():
     failures = []
+    examined = 0
 
     for d in USERDATA_DIRS:
         if not os.path.isdir(os.path.join(REPO_ROOT, d)):
             continue
+        examined += 1
 
         # 1. The structural assertion: default deny.
         probe = f"{d}/{NEVER_WRITTEN}"
@@ -114,6 +122,30 @@ def main():
                     "is on its way into a commit."
                 )
 
+    # One line per named directory, each saying whether it was looked into.
+    # `3` in the success line used to be `len(USERDATA_DIRS)` -- a source-code
+    # literal -- while the loop above skips a directory that does not exist, so
+    # the number was never a count of anything it had seen.  The names are
+    # printed one per line for the same reason: "which one is missing" is a
+    # question about a directory, and an aggregate count cannot answer it.
+    per_dir = [
+        (d, os.path.isdir(os.path.join(REPO_ROOT, d))) for d in USERDATA_DIRS
+    ]
+    for d, present in per_dir:
+        print(f"  - {d}: {'examined' if present else 'NOT PRESENT -- not examined'}")
+
+    if not examined:
+        print(
+            "check_ignored_credentials: none of the "
+            f"{len(USERDATA_DIRS)} userdata dir(s) this check names exists under "
+            f"{REPO_ROOT}, so it examined 0 of them and has nothing here to be "
+            "true about -- a directory that is not there is not a directory "
+            "that denied anything.  Nothing below is a finding about the "
+            "repository; rc=1 here means the check could not run.",
+            file=sys.stderr,
+        )
+        return 1
+
     if failures:
         print("check_ignored_credentials: FAILED", file=sys.stderr)
         for f in failures:
@@ -122,8 +154,8 @@ def main():
 
     print(
         "check_ignored_credentials: ok "
-        f"({len(USERDATA_DIRS)} userdata dirs deny their contents by default, "
-        f".gitkeep still tracked)"
+        f"({examined} of {len(USERDATA_DIRS)} configured userdata dir(s) exist "
+        f"and deny their contents by default, .gitkeep still tracked)"
     )
     return 0
 
