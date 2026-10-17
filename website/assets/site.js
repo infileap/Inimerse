@@ -474,6 +474,216 @@
     }
   }
 
+
+  /* ══════════════════ 渐进教程 ══════════════════
+   * 渲染源 = data/tutorial.js（window.INFIVERSE_TUTORIAL），**生成物**，
+   * 每一步的 stdout / stderr / 退出码都是真跑出来的。
+   *
+   * ★ 本渲染器的三条纪律（前两条是全站通用的、第三条是本页特有的）：
+   *   1. **一个零也要印出来。** stdout 为空、stderr 为空、rc=0 —— 三个都是读数，
+   *      省略任何一个，读者就分不清「它是空的」与「我没印它」。
+   *   2. **cwd 与 flags 逐条印出来**，因为它们**改变读数**：同一个脚本换个 cwd
+   *      stdout 就不一样（见 t01c 与 t01b）。不印 cwd 的教程，读者复现不出来。
+   *   3. **`ok=false` 的步骤不许悄悄消失** —— 它要么被印成一个失败的步骤，
+   *      要么把它的条数印在顶上。悄悄丢掉正是「跑通了」与「在演示」混淆的地方。
+   */
+  function renderTutorial() {
+    var host = document.getElementById('tutorial-list');
+    if (!host) return;
+    var T = window.INFIVERSE_TUTORIAL;
+    if (!T) {
+      host.appendChild(el('p', 'muted',
+        'data/tutorial.js 没有加载 —— 这一页是按它渲染的，没有它这一页是空的。'));
+      return;
+    }
+
+    var meta = document.getElementById('tutorial-meta');
+    if (meta) {
+      var okN = T.steps.filter(function (s) { return s.ok; }).length;
+      meta.appendChild(el('p', null,
+        '产物钉在 ref ' + T.ref + '（' + T.ref_date + '）；引擎 ' + T.engine +
+        '；' + T.steps.length + ' 步，其中跑通的 ' + okN + ' 步。'));
+      meta.appendChild(el('p', 'muted',
+        '★ 这一页的每一格输出都由 ' + T.generated_by + ' 真跑出来，不要手改 data/tutorial.js。'));
+      /* ★ 一个「跑不通的步骤数」必须被印出来，哪怕它是 0 —— 它 0 的时候说明上面那条
+         「跑通的 N 步」等于全部；它非 0 的时候读者才知道少的是哪几步。 */
+      meta.appendChild(el('p', 'muted',
+        '★ 没通过生成器 ok 判定的步骤 = ' + T.failed.length +
+        (T.failed.length ? '（' + T.failed.map(function (f) { return f.id; }).join('、') + '）' : '') +
+        ' —— 它们**不出现在下面**，所以这个数必须印在顶上。'));
+      if (T.defaults) {
+        meta.appendChild(el('p', 'muted', '★ 默认参数 ' +
+          T.defaults.flags.join(' ') + ' —— ' + T.defaults.why));
+      }
+    }
+
+    T.steps.forEach(function (s, i) {
+      var card = el('article', 'tut-step');
+      card.id = 'step-' + s.id;
+
+      var h = el('h3', 'tut-step__title',
+        '第 ' + (i + 1) + ' 步 · ' + s.id + ' —— ' + s.teaches);
+      card.appendChild(h);
+
+      /* ---- 怎么跑：命令 + cwd + flags，三个都印 ---- */
+      var how = el('dl', 'tut-how');
+      how.appendChild(el('dt', null, '命令'));
+      how.appendChild(el('dd', null, s.cmd));
+      how.appendChild(el('dt', null, 'cwd'));
+      how.appendChild(el('dd', null, s.cwdNote + '（声明值 ' + JSON.stringify(s.cwd) + '）'));
+      how.appendChild(el('dt', null, '参数'));
+      how.appendChild(el('dd', null, s.flags.length ? s.flags.join(' ') : '（无）'));
+      card.appendChild(how);
+
+      /* ---- 源码 ---- */
+      if (s.src !== null) {
+        var srcBox = el('div', 'tut-block');
+        srcBox.appendChild(el('p', 'tut-block__label', '脚本（逐字）'));
+        var preS = el('pre', 'tut-pre');
+        preS.textContent = s.src;
+        srcBox.appendChild(preS);
+        card.appendChild(srcBox);
+      }
+
+      /* ---- 输出：stdout / stderr / 退出码，一个都不省 ---- */
+      var outBox = el('div', 'tut-block');
+      outBox.appendChild(el('p', 'tut-block__label', '真跑出来的输出'));
+
+      outBox.appendChild(el('p', 'tut-stream', 'stdout'));
+      var preO = el('pre', 'tut-pre');
+      /* ★ 空串印成「（空）」，不印成一块空白 —— 空白读起来像「这里没有东西」，
+         而「（空）」读起来像「这个流是空的」，后者才是读数。 */
+      preO.textContent = s.stdout === '' ? '（空）' : s.stdout;
+      if (s.stdout === '') preO.className += ' tut-pre--empty';
+      outBox.appendChild(preO);
+
+      outBox.appendChild(el('p', 'tut-stream', 'stderr'));
+      var preE = el('pre', 'tut-pre');
+      preE.textContent = s.stderr === '' ? '（空）' : s.stderr;
+      if (s.stderr === '') preE.className += ' tut-pre--empty';
+      outBox.appendChild(preE);
+
+      outBox.appendChild(el('p', 'tut-stream', '退出码'));
+      var rc = el('p', 'tut-rc' + (s.rc === 0 ? ' tut-rc--zero' : ' tut-rc--nonzero'));
+      rc.textContent = (s.rc === null ? '（没拿到）' : String(s.rc)) +
+        (s.rc === 0 ? '　—— 这一步不报错' : '　—— 这一步**报错**，而这就是它要教的');
+      outBox.appendChild(rc);
+      card.appendChild(outBox);
+
+      /* ---- 稳定化：逐条印规则，空也印 ---- */
+      var stab = el('p', 'muted',
+        '稳定化规则 = ' + (s.stabilized.length
+          ? s.stabilized.map(function (h) { return h.id + '×' + h.n; }).join('、')
+          : '（一个都没施加 ⇒ 上面的 stdout / stderr 字字原样）'));
+      card.appendChild(stab);
+
+      if (s.note) card.appendChild(el('p', 'callout callout--tight', s.note));
+      card.appendChild(el('p', 'muted',
+        '★ 「跑通了」与「演示了它说要演示的那件事」是两个判据 —— 本页每一步的 ' +
+        'stdout / stderr / cwd / 参数 四元组在全表里唯一，重复的那一对会被生成器点名。'));
+      host.appendChild(card);
+    });
+  }
+
+
+  /* ============================================================
+     渐进教程（website/tutorial/，渲染源 = data/tutorial.js）
+     ★ 本函数只做一件事：把 data/tutorial.js 里已经**真的跑出来**的四个读数
+       原样搬进 DOM。它不解释语法、不推断结果、不改写任何一行输出。
+     ★★ 「（空）」是硬规则：stdout 为空、stderr 为空都必须印出来。
+       一个被省略的零与一个真的零在页面上长得一样，而它们不是一回事。
+     ============================================================ */
+  function tutBox(label, text, extraClass) {
+    var box = el('div', 'tut-io__box');
+    var lab = el('div', 'tut-io__label');
+    lab.appendChild(el('span', null, label));
+    if (extraClass) lab.appendChild(el('span', null, extraClass));
+    box.appendChild(lab);
+    var body = el('pre', 'tut-io__body' + (text ? (extraClass === 'stderr' ? ' tut-io__body--err' : '') : ' tut-io__body--empty'),
+      text === '' ? '（空）' : text);
+    box.appendChild(body);
+    return box;
+  }
+
+  function renderTutorial() {
+    var host = document.getElementById('tutorial-list');
+    if (!host) return;
+    var T = window.INFIVERSE_TUTORIAL;
+
+    var meta = document.getElementById('tutorial-meta');
+    if (meta) {
+      if (!T) {
+        meta.appendChild(el('p', 'muted', '★ data/tutorial.js 没有加载 —— 这一页的每一步都从它来，没有它就一步也没有。'));
+        return;
+      }
+      meta.appendChild(el('p', null,
+        '共 ' + T.steps.length + ' 步，全部在本机真跑过：ok = ' + (T.steps.length - T.failed.length) +
+        '，不 ok = ' + T.failed.length + '。'));
+      meta.appendChild(el('p', 'tut-meta',
+        '读数的树 = ' + T.ref + '（' + T.ref_date + '）　引擎 = ' + T.engine +
+        '　生成器 = ' + T.generated_by));
+      meta.appendChild(el('p', 'tut-meta',
+        '★ 下面每一行的 stdout / stderr / rc 都是**生成器的原样记录**，不是抄来的、也不是手写的。' +
+        '重构引擎之后跑一遍生成器，与这里对不上就是它红了。'));
+    }
+
+    var frag = document.createDocumentFragment();
+    T.steps.forEach(function (s, i) {
+      var art = el('article', 'tut-step');
+      art.id = 'step-' + s.id;
+
+      var head = el('div', 'tut-step__head');
+      head.appendChild(el('span', 'tut-step__id', s.id));
+      head.appendChild(el('span', 'tut-step__teach', s.teaches));
+      head.appendChild(el('span', 'badge ' + (s.rc === 0 ? 'badge--built-done' : 'badge--built-partial'),
+        'rc = ' + s.rc));
+      art.appendChild(head);
+
+      /* cwd 是这一步的一个**变量**，不是装饰：它一变，输出就变（见 t01 / t01c / t01b）。 */
+      var where = el('p', 'tut-meta');
+      where.appendChild(el('span', null, '在哪儿跑：' + s.cwd));
+      where.appendChild(el('span', null, '　' + s.cwdNote));
+      art.appendChild(where);
+
+      art.appendChild(el('pre', 'tut-cmd', s.cmd));
+
+      /* ★ 键名叫 src，值是**源码正文**（生成器把 SRC[step.src] 塞进来的）；
+         argv 类的步骤没有源码，这里就什么都不画。 */
+      if (s.src) art.appendChild(el('pre', 'tut-source', s.src));
+
+      var io = el('div', 'tut-io');
+      io.appendChild(tutBox('stdout', s.stdout, 'stdout'));
+      io.appendChild(tutBox('stderr', s.stderr, 'stderr'));
+      art.appendChild(io);
+
+      if (s.note) art.appendChild(el('p', 'tut-note', s.note));
+      if (s.stabilized && s.stabilized.length) {
+        art.appendChild(el('p', 'tut-stab', '★ 已经消掉的不确定性：' + s.stabilized.join('、')));
+      } else {
+        art.appendChild(el('p', 'tut-stab', '★ 已经消掉的不确定性：（无）—— stdout / stderr 一个字都没动过。'));
+      }
+      frag.appendChild(art);
+    });
+    host.appendChild(frag);
+
+    var probe = document.getElementById('tutorial-probes');
+    if (probe) {
+      var d = T.diffProbe || {};
+      probe.appendChild(el('p', null, '★★ 两条反例是否真的与它们的对照不同：' + (d.allDifferent ? '成立' : '★ 不成立')));
+      (d.pairs || []).forEach(function (p) {
+        probe.appendChild(el('p', 'tut-meta',
+          p.id + '　stdout 相同 = ' + p.stdoutSame + '　stderr 相同 = ' + p.stderrSame +
+          '　cwd 相同 = ' + p.cwdSame + '　flags 相同 = ' + p.flagsSame));
+      });
+      probe.appendChild(el('p', 'tut-meta', d.why || ''));
+      var q = T.dupProbe || {};
+      probe.appendChild(el('p', null, '★ 四元组 (stdout, stderr, cwd, flags) 全表唯一：' + (q.clean ? '是' : '★ 否 ' + JSON.stringify(q.duplicates))));
+      probe.appendChild(el('p', 'tut-meta', q.why || ''));
+      probe.appendChild(el('p', 'muted', '★ 这两条探针是在第一版生成器**印出两笔一模一样的读数**之后补上的：' +
+        '一个只检查「命令跑通了」的生成器，对一个什么都没演示的步骤永远是绿的。'));
+    }
+  }
+
   function ready(fn) {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', fn);
@@ -485,6 +695,8 @@
     renderToys();
     renderDecisions();
     renderSpec();
+    renderTutorial();
+    renderTutorial();
     var y = document.getElementById('year');
     if (y) y.textContent = String(new Date().getFullYear());
 

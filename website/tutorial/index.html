@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>渐进教程 · Infiverse</title>
+<meta name="description" content="Inimerse 引擎的渐进教程：每一步都在本机真跑过，页面上的 stdout / stderr / 退出码是运行记录，不是抄来的。">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html">Infiverse <small>· Inimerse</small></a>
+    <nav class="site-nav">
+      <a href="../index.html">首页</a>
+      <a href="../games/index.html">在线游戏</a>
+      <a href="../videos/index.html">实机演示</a>
+      <a href="index.html" aria-current="page">教程</a>
+      <a href="../tools/index.html">小工具</a>
+      <a href="../spec/index.html">规范</a>
+      <a href="../decisions/index.html">台账</a>
+      <a href="../about/index.html">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap">
+    <h1>渐进教程</h1>
+    <p class="lede">
+      从「打印一行字」到「编译一个模块」，每一步都可以在这台机器上原样跑一遍。
+      这一页上的每一段输出都不是写上去的：它是生成器真跑一遍引擎之后记下来的。
+    </p>
+
+    <div class="callout">
+      <strong>每一步都必须能在本地跑通，而且必须真的演示它说要演示的那件事。</strong>
+      这是两个判据，不是同一个。一个只检查「命令跑通了」的生成器，对一个什么都没演示的步骤
+      永远是绿的 —— 本页底部的两条探针就是在生成器<em>印出两笔一模一样的读数</em>之后补上的。
+    </div>
+
+    <section class="section">
+      <h2>这份记录是什么</h2>
+      <div id="tutorial-meta"></div>
+    </section>
+
+    <!-- ============================================================
+         内容位：教程步骤
+         渲染源 = ../data/tutorial.js（window.INFIVERSE_TUTORIAL）
+         ★ 生成物 —— 不要手改；重新生成：node website/scratch/run_tutorial.js
+         ============================================================ -->
+    <section class="section">
+      <h2>从头开始</h2>
+      <p class="note">
+        每一步都印出四样东西：命令、在哪儿跑、stdout、stderr。空的也印 —— 「（空）」是一个零，
+        一个被省略的零与一个真的零在页面上长得一样，而它们不是一回事。
+      </p>
+      <div id="tutorial-list"></div>
+    </section>
+
+    <section class="section">
+      <h2>这两条探针</h2>
+      <p class="note">
+        教程的价值不在「十四步都跑通了」，而在**十四步各自演示了不同的东西**。所以生成器里
+        有两条关于它自己的探针。
+      </p>
+      <div id="tutorial-probes"></div>
+    </section>
+
+    <section class="section">
+      <h2>你自己跑一遍</h2>
+      <p class="note">下面两行就是这份记录的生成过程。第二条会把 <code>data/tutorial.js</code> 整个重写。</p>
+      <pre class="tut-cmd">cmake -S . -B build -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build build -j"$(nproc)"
+node website/scratch/run_tutorial.js</pre>
+      <p class="note">
+        ★ 注意 <code>-S</code> 后面那个 <code>.</code>：<code>cmake -B</code> 只决定**产物放哪**，
+        源树由 <code>-S</code> 定。把 <code>-B</code> 指到别处而 <code>-S</code> 留在原地，
+        会安静地编译另一棵树 —— 而结果看上去完全正常。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2>这一页没测过什么</h2>
+      <div class="callout">
+        <strong>没有真浏览器。</strong>
+        本机没装浏览器自动化工具，所以「这一页显示 X」的准确含义是「DOM stub 把 X 渲染进了它的 DOM」。
+        <b>stub 与真浏览器之间的差距没有被测过</b> —— 版式、换行、滚动都可能有出入。
+        这句话留在这里而不是删掉：它是一个**已知的未测面**，不是一个已经解决的问题。
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Infiverse · Inimerse —— 引擎与桌面客户端。</p>
+    <p>© <span id="year">2026</span></p>
+  </div>
+</footer>
+
+<script src="../data/site.js"></script>
+<script src="../data/tutorial.js"></script>
+<script src="../data/toys.js"></script>
+<script src="../assets/site.js"></script>
+</body>
+</html>

@@ -247,3 +247,30 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 .spec-doc__meta { margin: 0 0 14px; font-size: 12px; color: var(--fg-dim); }
 .spec-doc__count { margin: 16px 0 10px; font-size: 13px; color: var(--fg-dim); }
 .spec-doc .decision { margin-bottom: 14px; }
+
+/* ===== 渐进教程（website/tutorial/）=====
+   每一步都是一次**真的运行**，所以每一步都要有地方放它的四个读数：
+   rc / stdout / stderr / cwd。空的那个也必须印出来 —— 「空」是一个零，
+   一个零需要被看见；省略掉它，读者就分不清「没有输出」与「我没印这一栏」。 */
+.tut-meta { font-size: 13px; color: var(--fg-dim); margin: 10px 0 0; }
+.tut-step { border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 14px; margin: 18px 0; }
+.tut-step__head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.tut-step__id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 5px; padding: 1px 6px; }
+.tut-step__teach { font-weight: 600; font-size: 15px; }
+.tut-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  background: #0d1117; border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px 10px; margin: 10px 0 0; overflow-x: auto; white-space: pre; }
+.tut-io { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+.tut-io__box { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tut-io__label { font-size: 12px; color: var(--fg-dim); padding: 5px 9px; border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; gap: 8px; }
+.tut-io__body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  padding: 9px; margin: 0; white-space: pre-wrap; word-break: break-word; min-height: 34px; }
+.tut-io__body--empty { color: var(--fg-dim); font-style: italic; }
+.tut-io__body--err { color: #e88b8b; }
+.tut-note { font-size: 14px; margin: 12px 0 0; }
+.tut-source { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  background: #0d1117; border: 1px solid var(--line); border-radius: 6px;
+  padding: 9px 10px; margin: 10px 0 0; overflow-x: auto; white-space: pre; }
+.tut-stab { font-size: 12px; color: var(--fg-dim); margin: 10px 0 0; }
