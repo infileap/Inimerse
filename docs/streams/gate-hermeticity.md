@@ -19,7 +19,7 @@ $ git ls-files '*.md' | wc -l      # 78
 $ find . -name '*.md' -not -path './.git/*' | wc -l   # 325
 ```
 
-`tools/check_links.py:57-74` 的 `iter_markdown_files()` 用 `os.walk(REPO_ROOT)` 遍历工作区，
+`tools/check_links.py:57-74` 的 `iter_markdown_files()` **当时**用 `os.walk(REPO_ROOT)` 遍历工作区（已修复，见 §4），
 只靠一张 `SKIP_DIRS` / `SKIP_PREFIXES` 黑名单挡杂物（`.git`、`node_modules`、`.worktrees`、`build`、`.dshm-pr`…）。
 **黑名单漏掉的东西会直接把门禁判红**：本次是另一个会话在仓库根留下的研究用暂存目录 `.verify/`，
 它里面的 `README.md` 引用了 `SECURITY.md` / `GOVERNANCE.md` / `MAINTAINERS.md`（GitHub 社区健康文件，本仓库没有）。
@@ -35,7 +35,7 @@ $ find . -name '*.md' -not -path './.git/*' | wc -l   # 325
 
 ## 2. 现状事实（实测）
 
-- `tools/check_links.py`（168 行）导出/实现：`iter_markdown_files()`（`:57`，`os.walk` + 黑名单）、
+- `tools/check_links.py`（168 行）导出/实现：`iter_markdown_files()`（`:57`；**当时**是 `os.walk` + 黑名单，现为 `git ls-files`）、
   `targets_in(text)`（`:77`，先 `strip_code_fences` 再用 `INLINE_CODE_RE` 抹掉行内代码，然后收
   `INLINE_RE` 与 `ANGLE_RE`）、`classify(target)`（`:86`，返回 `external`/`anchor`/`path`）、`main()`（`:106`）。
   `main()` 对每个 `path` 类目标做 `os.path.normpath(os.path.join(REPO_ROOT, dirname(rel), path))`
