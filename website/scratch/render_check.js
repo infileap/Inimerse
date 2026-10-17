@@ -53,6 +53,8 @@ const PAGES = [
   { key: 'videos', label: '实机演示', file: 'videos/index.html', slots: 1, containers: ['video-list', 'bili-account'] },
   { key: 'tools',  label: '小工具',   file: 'tools/index.html',  slots: 1, containers: [] },
   { key: 'about',  label: '关于',     file: 'about/index.html',  slots: 0, containers: [] },
+  { key: 'tutorial', label: '教程',   file: 'tutorial/index.html', slots: 1,
+    containers: ['tutorial-meta', 'tutorial-list', 'tutorial-probes'] },
   { key: 'spec',     label: '规范', file: 'spec/index.html',     slots: 1, containers: ['spec-list', 'spec-ref'] },
   { key: 'decisions', label: '台账', file: 'decisions/index.html', slots: 2,
     containers: ['decision-list', 'decision-filter', 'decisions-legend', 'decisions-summary', 'decisions-ref', 'decisions-axes'] },
@@ -82,7 +84,17 @@ class El {
     this._text = '';
     if (v) this._unparsedHTML = String(v);
   }
-  appendChild(c) { c.parent = this; this.children.push(c); return c; }
+  /* ★ 文档片段：真浏览器里 appending 一个 fragment = appending 它的**孩子**。
+     桩原来没有它 —— 因为原来的七个渲染器都直接用宿主元素 append。教程页用了它
+     （一次 append 一整批步骤，避免十四次布局），于是桩必须在这一点上补上，
+     否则「教程页不抛异常」这一项量的就不是页面，而是桩缺了一个标准方法。 */
+  appendChild(c) {
+    if (c && c.__fragment) {
+      c.children.slice().forEach((k) => { k.parent = this; this.children.push(k); });
+      return c;
+    }
+    c.parent = this; this.children.push(c); return c;
+  }
   removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
   replaceWith(n) {
     const p = this.parent;
@@ -200,6 +212,12 @@ function runPage(page, data, html) {
   const document = {
     readyState: 'complete',
     createElement: (t) => new El(t),
+    /* ★ 桩的这一项是**后补的**：见 El.appendChild 的注释。 */
+    createDocumentFragment: () => {
+      const f = new El('#fragment');
+      f.__fragment = true;
+      return f;
+    },
     getElementById: (id) => (Object.prototype.hasOwnProperty.call(hosts, id) ? hosts[id] : null),
     addEventListener: () => {},
     currentScript: { src: ORIGIN + PREFIX + resolveFrom(page.file, scriptRef) },
