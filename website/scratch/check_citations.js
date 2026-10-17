@@ -1821,6 +1821,15 @@ check('㉖ ★ 006：三条归属路线在数据里可读（不写死在渲染�
   Array.isArray(D.ruledByRoutes) && D.ruledByRoutes.length >= 3
     && D.ruledByRoutes.some((r) => r.key === 'relayed'),
   `D.ruledByRoutes = ${(D.ruledByRoutes || []).map((r) => r.key).join(', ') || '（无）'}　★ site.js 必须从这一栏读，不写死在函数体里`);
+/* ★★ ㉛ 乙【对照】：同一条读数，**不改判据**，只是让它**绿着也印出来**。
+   改前：这条读数只活在 check 的第 3 个实参里 ⇒ 只在红的时候才被打印
+         （`FAIL [ … ] ㉖ ★ 006：… ← D.ruledByRoutes = human, earlier, relayed, coordinator　★ …`）
+   改后：同一份逐字读数在【成功路径上】也印一次 —— 判据一个字没动，红的条件一个字没动。
+   ★ 判据：一条只在失败时说话的检查，在它绿的时候什么都没说 ——
+     而「它绿」与「它检查过」在输出里同形。 */
+info(`㉖ ★ 006（成功路径上也印）【三条归属路线在数据里可读】= `
+  + `${Array.isArray(D.ruledByRoutes) ? (D.ruledByRoutes || []).map((r) => r.key).join(', ') : '（不是数组）'}`
+  + `　★ 与上面那条 check 的 detail 逐字同一份读数；★ 它绿的时候，这条 info 是唯一看得见它的地方。`);
 check('㉖ ★ 006：每条 ruled 条目都有 ruledIn（否则「裁定记在哪一节」在页面上是空白）',
   ruledEntries.every((e) => e.ruledIn),
   `缺 ruledIn 的 ruled 条目 = ${ruledEntries.filter((e) => !e.ruledIn).map((e) => e.id).join('、') || '（无）'}`);
@@ -3260,6 +3269,137 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
     + `★ 那个相等是【我把「外观」定义成 badge 一个字段】的产物，不是事实。`
     + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② ${todayKeys.length} ≠ ③ ${distinctFace}，那个「巧合」就消失了。`
     + `⇒ 判据：一个预测出来的巧合，先要检查它是【事实】还是【我那个定义】的产物。`);
+
+  /* CENSUS-BEGIN ── ㉛ 乙 ⑦：把「读数被送进一个只在失败时说话的信道」做成一个数 ──────
+     exact-otter 的判据：这道普查的答案不许用「我读了源码」来交 ——
+       要么给一条能让它变红的输入，要么给一条让它绿着也印出来的补丁。
+     ⇒ 本块自己解析自己的源码，并把解析器的四个已知坑都挡上：
+         ① 括号配对（不逐行匹配）
+         ② 行内引号判定（不跨行状态机 —— 本线吃过：一个正则字面量里的引号曾把整个文件挖空）
+         ③ 正则字面量里的双斜杠曾被当成行注释 ⇒ 那一次它把实参表读穿了，而输出的那一行看起来完全正常
+         ④ 它自己的样本 —— 本块**不许**逐字写出那种调用的样子；
+            射程用两个哨兵行圈出来并在【结果】上排除（不是猜）。
+     ★ 信道那一端是读出来的：全文件里 `.detail` 只被读一次，且那一次在 !r.ok 的循环里
+       ⇒ 它【只在红的时候说话】。 */
+  const CENSUS = (() => {
+    const SELF = __filename;
+    const s = fs.readFileSync(SELF, 'utf8');
+    const lines = s.split('\n');
+    /* ★★★ 第四次同一个笑话：`lines.findIndex((l) => l.includes('CENSUS-END'))` 返回的是
+       【查找器自己的那一行】—— 因为那一行的源码里逐字写着 'CENSUS-END'。
+       于是射程错了（3273..3289，而真哨兵在 3394），而且那个「射程内 = 0」的断言
+       **绿着**：它绿，是因为它量错了区间，不是因为没有被排除的东西。
+       ⇒ 修法：只认【整行以哨兵注释开头】的行（查找器自己那一行以 `const` 开头，不再匹配）。
+       ⇒ 判据：一个「排除」如果没有被观测到【发生过】，它就是假的 —— 而它绿着。 */
+    const cbeg = lines.findIndex((l) => /^\s*\/\* CENSUS-BEGIN/.test(l));
+    const cend = lines.findIndex((l) => /^\s*\/\* CENSUS-END/.test(l));
+
+    /* `/` 是正则的开始吗 —— 看它前面那个有效字符（标准启发式）。这是坑 ③ 的修法。 */
+    const reStart = (t, i) => {
+      for (let j = i - 1; j >= 0; j--) {
+        const c = t[j];
+        if (c === ' ' || c === '\t') continue;
+        return '(,=:[!&|?{};+-*%~^<>\n'.indexOf(c) !== -1;
+      }
+      return true;
+    };
+    const atLine = (t, i) => t.slice(0, i).split('\n').length;
+    const inStr = (t, i) => {
+      const ls = t.lastIndexOf('\n', i - 1) + 1;
+      let quote = null;
+      for (let j = ls; j < i; j++) {
+        const c = t[j];
+        if (quote) { if (c === '\\') j++; else if (c === quote) quote = null; continue; }
+        if (c === '/' && t[j + 1] === '/') break;
+        if (c === '/' && reStart(t, j)) { j = t.indexOf('/', j + 1); if (j < 0) break; continue; }
+        if (c === "'" || c === '"' || c === '`') quote = c;
+      }
+      return quote !== null;
+    };
+    const matchP = (t, open) => {
+      let d = 0, quote = null;
+      for (let i = open; i < t.length; i++) {
+        const c = t[i];
+        if (quote) { if (c === '\\') { i++; continue; } if (c === quote) quote = null; continue; }
+        if (c === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; continue; }
+        if (c === '/' && t[i + 1] === '*') { i = t.indexOf('*/', i + 2); if (i < 0) return -1; i++; continue; }
+        if (c === '/' && reStart(t, i)) { i = t.indexOf('/', i + 1); if (i < 0) return -1; continue; }
+        if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+        if (c === '(') d++;
+        else if (c === ')') { d--; if (d === 0) return i; }
+      }
+      return -1;
+    };
+    const splitA = (t) => {
+      const out = []; let depth = 0, start = 0, quote = null;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (quote) { if (c === '\\') { i++; continue; } if (c === quote) quote = null; continue; }
+        if (c === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; continue; }
+        if (c === '/' && reStart(t, i)) { i = t.indexOf('/', i + 1); if (i < 0) break; continue; }
+        if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+        if (c === '(' || c === '[' || c === '{') depth++;
+        else if (c === ')' || c === ']' || c === '}') depth--;
+        else if (c === ',' && depth === 0) { out.push(t.slice(start, i)); start = i + 1; }
+      }
+      out.push(t.slice(start));
+      return out.map((x) => x.trim());
+    };
+
+    const CALL = 'check' + '(';
+    const sites = [];
+    let inside = 0;
+    let ix = -1;
+    while ((ix = s.indexOf(CALL, ix + 1)) !== -1) {
+      const prev = ix > 0 ? s[ix - 1] : '';
+      if (/[A-Za-z0-9_$.]/.test(prev)) continue;
+      if (inStr(s, ix)) continue;
+      const ln = atLine(s, ix);
+      if (cbeg >= 0 && cend > cbeg && ln > cbeg + 1 && ln < cend + 1) { inside++; continue; }  // ★ ④
+      const close = matchP(s, ix + CALL.length - 1);
+      if (close < 0) continue;
+      const a = splitA(s.slice(ix + CALL.length, close));
+      if (a.length < 2) continue;
+      sites.push({
+        line: ln,
+        nameLit: /^['"`]/.test(a[0]),
+        name: /^['"`]/.test(a[0]) ? a[0].slice(1, -1) : null,
+        hasInterp: a.length >= 3 && a[2].includes('${')
+      });
+    }
+
+    const byName = new Map();
+    results.forEach((r) => { if (!byName.has(r.name)) byName.set(r.name, []); byName.get(r.name).push(r); });
+    const interp = sites.filter((x) => x.hasInterp);
+    let green = 0, red = 0, unresolved = 0;
+    for (const x of interp) {
+      const rs = x.nameLit ? byName.get(x.name) : null;
+      if (!rs || !rs.length) { unresolved++; continue; }
+      if (rs.every((r) => r.ok)) green++; else red++;
+    }
+    const winIdx = lines.findIndex((l) => l.includes("' ← ' + r.detail") || l.includes('.detail'));
+    return { SELF, sites, interp, green, red, unresolved, inside, cbeg, cend, winIdx };
+  })();
+
+  info(`㉛ 乙 ⑦【分母：本文件里 ${'check'} 调用总数】= ${CENSUS.sites.length}`
+    + `　（哨兵行 ${CENSUS.cbeg + 1} / ${CENSUS.cend + 1} 圈出的射程内被排除 = ${CENSUS.inside} 处）`);
+  info(`㉛ 乙 ⑦【第 3 个实参含 \${...} 插值 —— 读数被送进那个信道】= ${CENSUS.interp.length}`
+    + `　★ 信道那一端是读出来的：.detail 全文只在本文件第 ${CENSUS.winIdx + 1} 行被读一次，`
+    + `而那一行在 results.filter((r) => !r.ok) 的循环里 ⇒ 它【只在红的时候说话】。`);
+  info(`㉛ 乙 ⑦【其中今天【绿】的 ⇒ 它们今天什么都没说】= ${CENSUS.green}`
+    + `　（红 = ${CENSUS.red}，名字对不上 = ${CENSUS.unresolved}；和 = ${CENSUS.green + CENSUS.red + CENSUS.unresolved} / ${CENSUS.interp.length}）`
+    + ` ★ 这一行的分母是【今天真的执行到的】那些；上一行的分母是【源码里写着】的 —— 两个分母不是同一个数换了个名字。`);
+  info(`㉛ 乙 ⑦【对照：让一处绿着也印出来】= ㉖ ★ 006 那条「三条归属路线在数据里可读」旁边新加的 info()`
+    + `　★ 判据：一条只在失败时说话的检查，在它绿的时候什么都没说 —— 而「它绿」与「它检查过」在输出里同形。`);
+  info(`㉛ 乙 ⑦★ 全仓（不是本文件）：website/** 的 ${'check'} 调用 = 246，其中含插值 = 116`
+    + `　★ 这两个数由【另一个解析器】在另一个进程里量出（website/scratch/.build/probe_details.js），`
+    + `本块不复述它的结论、也不假装自己量了它 —— 记在这里是为了说明本块的分母只有它自己的 137-1 处。`);
+  check('㉛ 乙 ⑦：自扫描的枚举不许把自己数进去 —— ★ 而「排除了」必须是【被观测到发生过】的',
+    CENSUS.cbeg >= 0 && CENSUS.cend > CENSUS.cbeg && CENSUS.inside >= 1 && CENSUS.cend - CENSUS.cbeg > 100,
+    `哨兵行 = ${CENSUS.cbeg + 1} / ${CENSUS.cend + 1}（跨度 ${CENSUS.cend - CENSUS.cbeg} 行，必须 > 100）；`
+    + `射程内【确实被排除掉】的调用 = ${CENSUS.inside}（必须 >= 1，本块自己那条就在里面）`
+    + `　★ 上一版写成 === 0，而它绿着 —— 因为它量错了区间：查找器把自己那一行当成了哨兵。`);
+  /* CENSUS-END */
 }
 
 const bad = results.filter((r) => !r.ok);
