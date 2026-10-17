@@ -13,7 +13,12 @@ down nowhere" -- `all` is resolved from the STAGE_SPECS array and the summary
 counts its entries, so adding a stage is that array and nothing else.
 
 It is written down nowhere *in the gate*.  Elsewhere in this tree it is written
-down eighteen times.  A count that has been copied into a constant stops having
+down in the places the DECLARED list below names -- and that list, not a number
+in this sentence, is the count.  This sentence used to say "eighteen times": it
+was true when it was typed and false by the time two declarations were removed.
+A sentence that states a count as of today is one more place the count is
+written down, and nothing read this one.
+A count that has been copied into a constant stops having
 a reader, because "has a reader" and "has no reader" look the same in source --
 both are an assignment.  This check is that reader.
 
@@ -54,10 +59,21 @@ separate piece of work with its own denominator.
 
 EXIT CODES
 ----------
-  0  every declared location agrees with the derived count
-  1  a `must-equal` location disagrees, or a declared location is gone
+  0  every declared location agrees with the derived count, and no candidate is
+     git's `required: N stage(s)`
+  1  a `must-equal` location disagrees, or a declared location is gone, or a
+     candidate is git's `required: N stage(s)`
   2  the derived count could not be read -- this is the check failing to
      measure, NOT a verdict about any file
+
+WHY rc=1 HAS A THIRD WAY TO BE RED
+-----------------------------------
+A candidate whose own carrier is `required: N stage(s)` is not a claim about the
+gate at all, so it must not be a candidate.  Before this, those candidates fell
+into the "not declared here" count and were never judged: the check printed
+`0 red(s)`, and that zero was real, but it was not "there is no homograph" -- it
+was "the homograph is in the bucket that is not judged".  A green produced by
+where something sits is the same failure as a constant that has no reader.
 """
 
 import os
@@ -88,6 +104,38 @@ NUM_ANY = r"(?:%s|[0-9]+|[Ss]ixteen(?:th)?)" % CN_NUM
 # is why `每一阶段都通过（十六` read the `一` and reported the count as 1.
 N_NEAR_STAGE = re.compile(
     r"(?<![第每这那])(?P<n>%s)\s*(?:个)?\s*(?:阶段|stages?)" % NUM_ANY
+)
+
+# A number next to a stage word is a claim about the gate's stages -- except
+# when the word is git's.  `required: N stage(s)` is the gate counting the paths
+# a change touches (`git diff --cached --name-only`), and to a predicate that
+# only looks at adjacency it reads as a stage count.  It is the same word in the
+# same slot meaning a different thing, so no amount of widening the alternation
+# finds it.
+#
+# The signature carries `N` and `$n` as well as digits on purpose.  Digits cover
+# the ten places that PRINT the number; `N` and `$n` cover the five that print
+# the CODE that prints it.  A signature written for the output misses the
+# definition, and the definition lands in the residual -- which is where this
+# shape was, at 12 of 15, until a control run before the work started caught it.
+GIT_INDEX_STAGE = re.compile(r"required:\s*(?:[0-9]+|\$n|N)\s+stage\(s\)")
+
+# The same word as a verb: git asking what it would stage.
+GIT_VERB_STAGE = re.compile(r"would\s+(?:[a-z]+\s+)?stage\b")
+
+# Every `stage`/`stages` token, for the census below.
+STAGE_TOKEN = re.compile(r"\bstage(?:s)?\b")
+
+# The phrases that can only be the gate's stages.  Keyed on the PHRASE the token
+# sits in -- never on the line and never on the file.  A file-level attribute was
+# tried and is false: of the 106 tokens in tools/gate.sh only 11 are the gate's,
+# and of the 10 in tools/check_line_refs.py none are.
+GATE_STAGE_PHRASES = (
+    ("stages ran", re.compile(r"stages ran")),
+    ("N/M stages", re.compile(r"[0-9]+/[0-9]+ stages")),
+    ("STAGE_*", re.compile(r"\bSTAGE_(?:SPECS|NAMES|WANTED)\b")),
+    ("--only", re.compile(r"--only")),
+    ("stage(s)", re.compile(r"stage\(s\)")),
 )
 
 # kind, path, locate pattern, number pattern (None => N_NEAR_STAGE), why
@@ -316,7 +364,7 @@ def scan(root, derived, declared=None):
             reds += 1
 
     # --- the size of what was not read -----------------------------------
-    undeclared, considered = [], 0
+    undeclared, considered, homographs = [], 0, []
     for sub in SCAN_ROOTS:
         base = os.path.join(root, sub)
         for dirpath, dirnames, filenames in os.walk(base):
@@ -344,6 +392,23 @@ def scan(root, derived, declared=None):
                     considered += 1
                     if (rel, i) not in located:
                         undeclared.append("%s:%d" % (rel, i + 1))
+                    # A candidate is a claim about the gate's stages, so one
+                    # whose own carrier is git's `required: N stage(s)` is a
+                    # red.  Tested by SPAN CONTAINMENT, not by "the line holds
+                    # required:".  A line can hold two of them -- the ledger
+                    # line that reads `required: 15 stage(s)` and then
+                    # `required: 1 stage(s)` -- and a line-level test sees only
+                    # the first, which makes the second look like an unrelated
+                    # match.  That is how "should redden 5" was predicted for a
+                    # rule that reddens 8.
+                    git_spans = [g.span() for g in GIT_INDEX_STAGE.finditer(ln)]
+                    for m in N_NEAR_STAGE.finditer(ln):
+                        if any(s <= m.start() and m.end() <= e for s, e in git_spans):
+                            homographs.append(
+                                "%s:%d  col=%d  %r"
+                                % (rel, i + 1, m.start(), m.group(0))
+                            )
+    reds += len(homographs)
 
     ledger = {
         "derived": derived,
@@ -354,8 +419,21 @@ def scan(root, derived, declared=None):
         "reds": reds,
         "near_stage": considered,
         "undeclared": len(undeclared),
+        "homographs": len(homographs),
     }
     out.append("")
+    if homographs:
+        out.append(
+            "check_stage_count: %d candidate(s) are git's `required: N stage(s)` -- "
+            "the paths a change touches, not the gate's stages.  A candidate is a "
+            "claim about the gate, so each one is a red." % len(homographs)
+        )
+        for h in homographs:
+            out.append("  HOMOGRAPH %s" % h)
+    else:
+        out.append(
+            "check_stage_count: no candidate is git's `required: N stage(s)`."
+        )
     out.append(
         "check_stage_count: %s derives %d stage(s); %d location(s) declared "
         "(%d must-equal, %d record); %d agree, %d red(s)."
@@ -372,6 +450,80 @@ def scan(root, derived, declared=None):
             "check_stage_count:   first undeclared: %s" % ", ".join(undeclared[:8])
         )
     return (1 if reds else 0), out, ledger
+
+
+def token_census(root):
+    """Split every `stage`/`stages` token by the phrase it sits in.
+
+    Context, not a verdict: these tokens are not "a number written down", so
+    this section does not move the exit code.
+
+    It exists because "the gate's stages" was the RESIDUAL of the earlier
+    census -- everything that did not match a non-gate signature was counted as
+    the gate's, which is the same as saying "I found no other meaning", which is
+    the disease this file was written to treat.  A signature can be stated and
+    falsified; a residual cannot.
+
+    Known boundary, stated rather than hidden: the narrower a signature, the
+    more it misses, and the wider, the more it mislabels.  Two real gate-stage
+    tokens fall outside the signatures below -- the comment in tools/gate.sh
+    reading "print the stages that change forces", and the line in
+    tools/check_line_refs.py reading "The gate stage asserts DENOMINATORS".  A
+    sentence saying what a gate stage asserts landed in the bucket for tokens
+    with no denominator to assert anything about.
+    """
+    git_index, gate_stage, rest = [], [], []
+    sig_lines = {n: 0 for n, _ in GATE_STAGE_PHRASES}
+    sig_tokens = {n: 0 for n, _ in GATE_STAGE_PHRASES}
+    for sub in SCAN_ROOTS:
+        base = os.path.join(root, sub)
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [
+                d for d in dirnames if d not in (".git", "__pycache__", "node_modules")
+            ]
+            for name in filenames:
+                if not name.endswith(SCAN_SUFFIXES):
+                    continue
+                full = os.path.join(dirpath, name)
+                rel = os.path.relpath(full, root)
+                if rel == SELF_REL:
+                    continue
+                try:
+                    rows = _read(full).splitlines()
+                except OSError:
+                    continue
+                for i, ln in enumerate(rows):
+                    git_spans = [g.span() for g in GIT_INDEX_STAGE.finditer(ln)]
+                    git_spans += [g.span() for g in GIT_VERB_STAGE.finditer(ln)]
+                    gate_spans = [
+                        m.span() for _, p in GATE_STAGE_PHRASES for m in p.finditer(ln)
+                    ]
+                    tokens = list(STAGE_TOKEN.finditer(ln))
+                    # A signature can match a line and contain NONE of the
+                    # tokens it claims.  `--only` is a flag and never holds the
+                    # word; `STAGE_SPECS` is upper case and the token pattern is
+                    # not.  Counting matched LINES would give 69 and 42 for
+                    # those two, which is a number about lines wearing the label
+                    # of a number about words.
+                    for n, p in GATE_STAGE_PHRASES:
+                        if p.search(ln):
+                            sig_lines[n] += 1
+                            sp = [q.span() for q in p.finditer(ln)]
+                            sig_tokens[n] += sum(
+                                1
+                                for t in tokens
+                                if any(s <= t.start() and t.end() <= e for s, e in sp)
+                            )
+                    for m in tokens:
+                        where = "%s:%d col=%d" % (rel, i + 1, m.start())
+                        if any(s <= m.start() and m.end() <= e for s, e in git_spans):
+                            git_index.append(where)
+                        elif any(s <= m.start() and m.end() <= e for s, e in gate_spans):
+                            gate_stage.append(where)
+                        else:
+                            rest.append(where)
+    per_sig = [(n, sig_lines[n], sig_tokens[n]) for n, _ in GATE_STAGE_PHRASES]
+    return git_index, gate_stage, rest, per_sig
 
 
 def self_test():
@@ -511,6 +663,44 @@ def main(argv):
         )
     for ln in out:
         print(ln)
+
+    # Context, not a verdict: see token_census.  This section never moves rc.
+    try:
+        git_index, gate_stage, rest, per_sig = token_census(REPO_ROOT)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            "check_stage_count: the token census could not measure: %s: %s"
+            % (type(exc).__name__, exc)
+        )
+    else:
+        total = len(git_index) + len(gate_stage) + len(rest)
+        print(
+            "check_stage_count: the word itself, split by the phrase it sits in "
+            "(context, not a verdict): %d token(s) -- git's index %d, the gate's "
+            "stages %d, neither %d."
+            % (total, len(git_index), len(gate_stage), len(rest))
+        )
+        for name, nlines, ntokens in per_sig:
+            print(
+                "check_stage_count:   %-12s matches %3d line(s) and holds %3d of the "
+                "tokens it claims" % (name, nlines, ntokens)
+            )
+        print(
+            "check_stage_count:   a signature that matches many lines and holds no "
+            "token is a number about lines wearing the label of a number about words."
+        )
+        print(
+            "check_stage_count:   the per-signature counts overlap -- one token can "
+            "sit in two signatures' phrases -- while the split above is "
+            "first-match-wins, so they do not sum to the gate's-stages count."
+        )
+        print(
+            "check_stage_count:   boundary: two real gate-stage tokens sit outside "
+            "every signature above -- the comment in tools/gate.sh about the stages "
+            "a change forces, and the line in tools/check_line_refs.py about what a "
+            "gate stage asserts.  Narrower misses more, wider mislabels more, and "
+            "the corpus does not say how wide."
+        )
     if rc:
         print("check_stage_count: FAILED")
     return rc
