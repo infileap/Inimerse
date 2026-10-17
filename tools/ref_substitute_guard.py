@@ -37,6 +37,29 @@ substitute repository and asks two questions:
 A file with no substitute construction at all is the worst case, not the
 safest one: it runs the mutation in the repository itself.
 
+The dilemma -- written here so the next person does not try to solve it in text
+-------------------------------------------------------------------------------
+This guard's own source contains the pattern it hunts: this docstring quotes
+`git tag | xargs -r git tag -d`, the `CONSTRUCTIONS` table spells the
+constructions out, and `--self-test` writes synthetic offenders as Python
+string literals.  So it reddens on itself, and it has done since the commit that
+introduced it; on the main branch the first thing it says about itself is
+`FAILED`.
+
+The same shape is therefore both an executable call and prose, and which one it
+is depends on whether that string is ever handed to something that executes it.
+**That is data flow, and data flow is not in the text.**  No amount of regex
+work settles it: stripping string literals and comments (a `tokenize` pass) does
+not separate the two, it only stops seeing one of them -- measured on this file,
+it drops every real call site along with the prose, trading a false positive for
+a false negative, and a false negative looks like a successful purge in the
+output.
+
+So the guard does not pretend to solve it.  It exempts **itself, by identity** --
+the resolved path of the running file -- and it prints that exemption, with its
+reason, on every run, green or red.  `self_identity()` carries the check that
+keeps this from becoming an exemption for anyone who merely mentions the guard.
+
 What this guard does **not** decide -- read this before trusting a green
 ------------------------------------------------------------------------
 `替身不是 git worktree` is necessary and **not sufficient**, so the guard prints
@@ -108,6 +131,43 @@ MUTATORS: list[tuple[str, str, bool]] = [
 # detail: it means a command split across a helper's arguments is still missed.
 ARGV_PUNCT = re.compile(r"['\"(),\[\]=]+")
 
+# Two switches that exist ONLY so the controls can reproduce a defect in the
+# guard itself.  Neither can make the guard pass something it otherwise would:
+# one takes the reason off a red, the other makes a red happen for a different
+# reason than the control demonstrates.  `--self-test` must go red under both --
+# if either leaves it green, the required reason field is decoration and the
+# control that asserts it asserts nothing.
+#
+#   INIMERSE_GUARD_NO_ARGV_FLATTEN=1   reproduces v1: the argv-list spelling
+#                                      `['git','worktree','add']` is not
+#                                      matched, so that offender goes red as
+#                                      `none` -- red, but not for the reason
+#                                      its control declares
+#   INIMERSE_GUARD_STRIP_REASONS=1     reproduces a red that carries no reason
+#
+# The same shape applies to the exemption, and it is that switch's job to show
+# it: an exemption is a claim about TWO numbers -- the file is in the search
+# space, and the file is not asked.  Print only the second and the claim has
+# quietly become "the file is not in the search space", which is what a broken
+# search space prints.
+#
+#   INIMERSE_GUARD_SELF_OUT_OF_SCANNED=1
+#                                      reproduces that collapse: the guard's own
+#                                      file is dropped from `scanned` instead of
+#                                      merely not asked, so `scanned` reads 128
+#                                      and the exempt count reads 0 -- the
+#                                      exemption can no longer even say it
+#                                      exempted anything, and --self-test's
+#                                      denominator-control must redden
+NO_ARGV_FLATTEN = os.environ.get("INIMERSE_GUARD_NO_ARGV_FLATTEN") == "1"
+STRIP_REASONS = os.environ.get("INIMERSE_GUARD_STRIP_REASONS") == "1"
+SELF_OUT_OF_SCANNED = os.environ.get("INIMERSE_GUARD_SELF_OUT_OF_SCANNED") == "1"
+
+
+def flatten(line: str) -> str:
+    """The argv-flattened view `ARGV_PUNCT` documents, or the raw line."""
+    return line if NO_ARGV_FLATTEN else ARGV_PUNCT.sub(" ", line)
+
 # (name, pattern, private refs, private objects, why)
 CONSTRUCTIONS: list[tuple[str, str, bool, bool, str]] = [
     (
@@ -171,6 +231,40 @@ NONE_MARKER = ("none", "no substitute construction appears in this file; the "
                        "mutation runs against whatever repository the process "
                        "finds, which is this one when the tool is run here")
 
+
+def required_reasons() -> list[str]:
+    """Table entries that carry no reason.
+
+    The reason is a required field, and it is checked here rather than trusted.
+    An entry added to `CONSTRUCTIONS` without one would print a verdict whose
+    `reason:` line is empty -- and an empty reason and a reason that says
+    nothing read identically in a log.  A table that cannot say *why* an entry
+    is bad cannot be argued with, so this is reported as "could not measure"
+    (rc=2), never as a finding about any file.
+    """
+    missing = [
+        f"CONSTRUCTIONS[{name}] has no reason"
+        for name, _pattern, _refs, _objs, why in CONSTRUCTIONS
+        if not why.strip()
+    ]
+    missing += [
+        f"NONE_MARKER has no reason"
+        for _k in (NONE_MARKER[:1],)
+        if not NONE_MARKER[1].strip()
+    ]
+    return missing
+
+
+def reason_key(kind: str, construction: str) -> str:
+    """The short, machine-checkable half of a red's reason.
+
+    A red is `(verdict, key, prose)`.  The prose is for a reader; the key is what
+    a control can assert on, and it is what the self-test counts.  Both are
+    required: an assertion on the prose alone is an assertion on wording, and an
+    assertion on the verdict alone is an assertion on three letters.
+    """
+    return f"{kind}:{construction}"
+
 # How close a substitute construction has to be to a mutating call to count as
 # that call's substitute.  This window is load-bearing and is printed with every
 # run, because it decides the pairing: too wide and an unrelated isolating
@@ -199,7 +293,44 @@ REACH_MISSED: list[str] = [
 ]
 
 
-def reach_lines() -> list[str]:
+def self_identity(root: str) -> str | None:
+    """The one path in this tree that is *this* file -- identity, not name.
+
+    This guard's own source contains the pattern it looks for: its docstring
+    quotes `git tag | xargs -r git tag -d`, its CONSTRUCTIONS table spells the
+    constructions, and `--self-test` writes synthetic offenders as Python
+    string literals.  So it reddens on itself, and it has done since the day it
+    was committed.
+
+    The exemption below is therefore keyed on the resolved path of the running
+    file and on nothing else.  That is checkable, and here is the check: copy
+    this source byte for byte to another path in the same repository and run
+    the guard -- the copy is a different file, it is judged, and it reddens.
+    An exemption keyed on the basename, on the string `ref_substitute_guard`,
+    or on the file's contents would exempt the copy too, and an exemption that
+    exempts a copy is not saying "this is me", it is saying "this is someone
+    who talks about me" -- which is every file that ever documents this guard.
+
+    Returns None when the path cannot be resolved; the caller then exempts
+    nothing.  An unresolvable identity is not a licence.
+    """
+    try:
+        me = os.path.realpath(__file__)
+        return os.path.relpath(me, os.path.realpath(root)).replace(os.sep, "/")
+    except (OSError, ValueError):
+        return None
+
+
+EXEMPT_WHY = (
+    "EXEMPT -- this guard does not ask this question about its own source, and "
+    "it says so on every run.  We can see it; we are choosing not to ask it.  "
+    "The exemption is by resolved path, so a byte-for-byte copy of this file at "
+    "any other path is judged and reddens -- if the copy came back exempt, the "
+    "exemption would be answering `who is talking` instead of `is this me`"
+)
+
+
+def reach_lines(exempt: list[str] | None = None) -> list[str]:
     lines = [
         f"ref_substitute_guard: reach -- {len(CONSTRUCTIONS)} substitute "
         f"construction(s) are in the table, each with its own refs/objects "
@@ -217,6 +348,25 @@ def reach_lines() -> list[str]:
     )
     for miss in REACH_MISSED:
         lines.append(f"    missed  {miss}")
+    # A third list, on its own line, never folded into `missed`.  A miss is a
+    # spelling the guard cannot see; an exemption is a file the guard can see
+    # and has decided not to ask about.  Filing one under the other makes an
+    # oversight and a decision read the same in the log -- the same shape as a
+    # miss list that carries one harmless entry.
+    if exempt:
+        lines.append(f"ref_substitute_guard: exempt -- {EXEMPT_WHY}")
+    for rel in (exempt or []):
+        lines.append(f"    exempt  {rel}")
+    _ex_paths = sorted({e.split(":", 1)[0] for e in (exempt or [])})
+    lines.append(
+        f"ref_substitute_guard: reach -- {len(_ex_paths)} path(s) exempt over "
+        f"{len(exempt or [])} call site(s), {len(CONSTRUCTIONS)} construction(s) "
+        f"in the table, {len(REACH_MISSED)} not in it.  Paths and sites are "
+        f"printed separately because `9 exempt` was this line's first draft and "
+        f"it was counting sites while saying paths.  Printed on every run, green "
+        f"or red: an exemption that only appears when something is red is "
+        f"indistinguishable from no exemption at all on a green run"
+    )
     lines.append(
         "ref_substitute_guard: reach -- so a green run asserts exactly this: "
         "among the spellings in the table, each file that mutates refs also "
@@ -251,7 +401,7 @@ def comment_span(line: str) -> bool:
 
 def substitute_sites(text: str) -> list[tuple[int, str, str, bool, bool]]:
     """Every construction occurrence, as (line, name, why, prefs, pobjs)."""
-    flat = ARGV_PUNCT.sub(" ", text)
+    flat = flatten(text)
     out = []
     for name, pattern, prefs, pobjs, why in CONSTRUCTIONS:
         for m in re.finditer(pattern, flat):
@@ -265,7 +415,7 @@ def mutation_sites(text: str) -> tuple[list[tuple[int, str, bool]], list[tuple[i
     exe: list[tuple[int, str, bool]] = []
     com: list[tuple[int, str]] = []
     for i, line in enumerate(text.splitlines(), start=1):
-        flat = ARGV_PUNCT.sub(" ", line)
+        flat = flatten(line)
         for name, pattern, needs_objects in MUTATORS:
             if re.search(pattern, flat):
                 (com if comment_span(line) else exe).append(
@@ -308,21 +458,66 @@ def pair(sites, line: int) -> tuple[str, tuple | None, int | None]:
     return "near", best[1], best[0]
 
 
-def scan(root: str) -> tuple[int, list[str], list[str], list[str]]:
+def scan(root: str, ledger: dict | None = None) -> tuple[int, list[str], list[str], list[str]]:
+    """Judge every ref-mutating call site in the scanned set.
+
+    `ledger`, when given, is filled with this run's reds *and their reason keys*,
+    so that a caller (`--self-test`) can assert on the reason rather than on the
+    prose or on the three letters that spell the verdict.
+
+    A red is `(file, line, verdict, reason key)`.  The key is required: a red
+    that cannot name the table entry that makes it red is counted separately and
+    refuses the whole run, because `red` and `red for the reason it names` look
+    identical in a log.
+    """
     files = tracked_files(root)
+    self_rel = self_identity(root)
+    if SELF_OUT_OF_SCANNED and self_rel:
+        # Negative control for the denominator rule, in the same family as
+        # INIMERSE_GUARD_NO_ARGV_FLATTEN and INIMERSE_GUARD_STRIP_REASONS:
+        # with this set the guard does the thing (b) must not do -- it drops
+        # its own file out of the search space instead of merely declining to
+        # ask it.  `scanned` then counts one fewer, the exempt count still
+        # says 1, and `--self-test`'s denominator-control must redden.  A rule
+        # that cannot be broken on demand is a sentence, not a guard.
+        files = [f for f in files if f != self_rel]
     lines: list[str] = []
     offenders: list[str] = []
     comment_only: list[str] = []
     unresolved: list[str] = []
+    reds: list[tuple[str, int, str, str]] = []
+    unreasoned: list[str] = []
+    exempt: list[str] = []
     sites_judged = 0
     hits = 0
+
+    def finish(rc: int, offs: list[str]) -> tuple[int, list[str], list[str], list[str]]:
+        """Return the verdict, filling the ledger when one was asked for."""
+        if ledger is not None:
+            ledger["exempt"] = list(exempt)
+            ledger["scanned"] = len(files)
+            ledger["scanned_self"] = self_rel in files
+            ledger["reds"] = list(reds)
+            ledger["unreasoned"] = list(unreasoned)
+            ledger["reasoned"] = len(reds)
+            ledger["total_reds"] = len(reds) + len(unreasoned)
+        return rc, lines, offs, comment_only
+
+    missing_reasons = required_reasons()
+    if missing_reasons:
+        lines.append(
+            "ref_substitute_guard: a table entry below cannot say why it is "
+            "bad, so no verdict drawn from that table can be argued with: "
+            + "; ".join(missing_reasons)
+        )
+        return finish(2, [])
     for rel in files:
         try:
             with open(os.path.join(root, rel), "r", encoding="utf-8",
                       errors="replace") as fh:
                 text = fh.read()
         except OSError as exc:
-            return 2, [f"cannot read {rel}: {exc}"], [], []
+            return finish(2, [f"cannot read {rel}: {exc}"])
         cons = substitute_sites(text)
         exe, com = mutation_sites(text)
         if not exe and not com:
@@ -341,7 +536,8 @@ def scan(root: str) -> tuple[int, list[str], list[str], list[str]]:
             sites_judged += 1
             kind, site, dist = pair(cons, line_no)
             if kind == "none":
-                shown, why, ok = NONE_MARKER[0], NONE_MARKER[1], False
+                cname, why, ok = NONE_MARKER[0], NONE_MARKER[1], False
+                shown = cname
             elif kind == "far":
                 _l, cname, _why, _a, _b = site
                 shown = f"{cname} @line {site[0]} ({dist} line(s) away)"
@@ -364,24 +560,50 @@ def scan(root: str) -> tuple[int, list[str], list[str], list[str]]:
                 f"{' (objects only)' if needs_objects else ''}; nearest "
                 f"substitute = {shown} -> {verdict}"
             )
-            if ok is False:
-                bad_here = True
-                lines.append(f"      reason: {why}")
-            elif ok is None:
-                lines.append(f"      reason: {why}")
+            if ok is None or ok is False:
+                if self_rel is not None and rel == self_rel:
+                    # Identity, not name.  Only the file that IS this file.
+                    # A copy at another path arrives here as a different `rel`
+                    # and falls through to the ordinary verdict below.
+                    exempt.append(f"{rel}:{line_no} ({verdict})")
+                else:
+                    bad_here = bad_here or ok is False
+                    key = reason_key(
+                        "unresolved" if ok is None else "shares-state", cname)
+                    if STRIP_REASONS:
+                        key, why = "", ""
+                    lines.append(f"      reason: {why or '<none>'}")
+                    if key and why.strip():
+                        reds.append((rel, line_no, verdict, key))
+                    else:
+                        unreasoned.append(f"{rel}:{line_no} ({verdict})")
         if bad_here:
             offenders.append(rel)
-        elif any(pair(cons, ln)[0] == "far" for ln, _n, _o in exe):
+        elif not (self_rel is not None and rel == self_rel) and any(
+                pair(cons, ln)[0] == "far" for ln, _n, _o in exe):
+            # The `far` fallback is a verdict about the FILE, so it has to
+            # honour the same identity exemption its sites did: otherwise the
+            # guard files itself under "no construction near enough to answer",
+            # refuses to call the tree a pass, and exits 2 -- a green run reading
+            # as an inability to measure.
             unresolved.append(rel)
+    _ex_paths_n = len({e.split(":", 1)[0] for e in exempt})
     lines.insert(0, (
         f"ref_substitute_guard: {len(files)} file(s) scanned under {root}/tools "
         f"and {root}/.github; {hits} carry a ref-mutating spelling "
         f"({len(comment_only)} in a comment only); {sites_judged} call site(s) "
         f"judged, each against the construction nearest to it within "
-        f"{SITE_WINDOW} line(s), and {len(unresolved)} file(s) where no "
-        f"construction is near enough to answer -- the first number is the "
-        f"search space and it is printed because a search space of zero would "
-        f"make every verdict below vacuous"
+        f"{SITE_WINDOW} line(s); {_ex_paths_n} file(s) exempt over "
+        f"{len(exempt)} call site(s); and {len(unresolved)} file(s) where no "
+        f"construction is near enough to answer.  Two things about that "
+        f"denominator are printed on purpose: the guard's own file is "
+        f"{'in' if self_rel in files else 'NOT in'} it, and the exempt count is "
+        f"a separate number on the same line -- an exemption that also removed "
+        f"its own object from the denominator would turn `we are not asking "
+        f"this file` into `we cannot see this file`, and those two are not the "
+        f"same number anywhere downstream.  The first number is the search "
+        f"space and it is printed because a search space of zero would make "
+        f"every verdict below vacuous"
     ))
     if not files:
         lines.append(
@@ -389,7 +611,7 @@ def scan(root: str) -> tuple[int, list[str], list[str], list[str]]:
             "below can be judged and a guard with nothing to look at is not a "
             "passing guard"
         )
-        return 1, lines, ["<no tracked file under tools/ or .github/>"], []
+        return finish(1, ["<no tracked file under tools/ or .github/>"])
     if not hits:
         lines.append(
             "ref_substitute_guard: no file in the search space mutates refs "
@@ -405,15 +627,45 @@ def scan(root: str) -> tuple[int, list[str], list[str], list[str]]:
             f"softer `safe`: rc=2 means the guard could not measure, and an "
             f"unanswerable question is not a passing one"
         )
+    # The reason field is a required field, so it is accounted for and not
+    # merely printed.  A red whose reason is missing is not a weaker red: it is
+    # a red nobody can re-argue, and the run refuses to present it as a verdict.
+    total_reds = len(reds) + len(unreasoned)
+    lines.append(
+        f"ref_substitute_guard: reds -- {total_reds} red(s) in this run: "
+        f"{len(reds)} carry the reason their table entry declares, "
+        f"{len(unreasoned)} carry none.  This line exists because `red` and "
+        f"`red for the reason it names` are the same word in a log; what has to "
+        f"be asserted of a control is not `it went red` but `it went red for "
+        f"the reason it declares`"
+    )
+    if total_reds == 0:
+        lines.append(
+            "ref_substitute_guard: reds -- this run produces no red at all, so "
+            "the reason field above was exercised by nothing here.  `--self-"
+            "test` is where it is exercised, and it prints its own accounting "
+            "against the controls that declare a reason"
+        )
+    for site in unreasoned:
+        lines.append(
+            f"ref_substitute_guard: {site}: red with NO reason.  The verdict "
+            f"may be true and it still cannot be re-argued, and a red nobody "
+            f"can re-argue is a red nobody can check"
+        )
+    if unreasoned:
+        # Ahead of `offenders`: presenting a verdict the guard cannot justify
+        # under `FAILED` is the same defect as the guard that printed a file
+        # name while saying it could not measure.
+        return finish(2, [])
     if offenders:
-        return 1, lines, offenders, comment_only
+        return finish(1, offenders)
     if unresolved:
         # NOT `unresolved`: this slot is the offender list and main() prints it
         # under `FAILED`.  rc=2 means the guard could not measure, so naming a
         # file here would dress an "I cannot judge this" as a verdict -- the
         # same shape as the self-test that went red for the wrong reason.
-        return 2, lines, [], comment_only
-    return 0, lines, offenders, comment_only
+        return finish(2, [])
+    return finish(0, offenders)
 
 
 def self_test() -> int:
@@ -491,12 +743,13 @@ def self_test() -> int:
         subprocess.run(["git", "-C", tmp, "init", "-q"], check=True)
         subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
 
-        def run() -> tuple[int, str, list[str]]:
-            rc, lines, offenders, _ = scan(tmp)
+        def run() -> tuple[int, str, list[str], dict]:
+            ledger: dict = {}
+            rc, lines, offenders, _ = scan(tmp, ledger)
             for line in lines:
                 print(line)
             print(f"ref_substitute_guard: self-test rc={rc} offenders={offenders}")
-            return rc, "\n".join(lines), offenders
+            return rc, "\n".join(lines), offenders, ledger
 
         def want(cond: bool, msg: str) -> None:
             nonlocal bad
@@ -505,7 +758,7 @@ def self_test() -> int:
                 print(f"ref_substitute_guard: self-test FAILED -- {msg}",
                       file=sys.stderr)
 
-        rc, text, offenders = run()
+        rc, text, offenders, led1 = run()
         want(rc == 1, "the two worktree offenders did not turn the guard red")
         want(offenders == ["tools/far_init_worktree.py",
                            "tools/offender_worktree.py"],
@@ -531,7 +784,7 @@ def self_test() -> int:
         os.remove(far)
         os.remove(owt)
         subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
-        rc2, text2, off2 = run()
+        rc2, text2, off2, led2 = run()
         want(rc2 == 2 and off2 == [],
              f"with both offenders removed the verdict is rc={rc2} offenders="
              f"{off2}; rc must be 2 (could not measure) and the slot that main() "
@@ -545,18 +798,119 @@ def self_test() -> int:
 
         os.remove(unres)
         subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
-        rc3, text3, _ = run()
+        rc3, text3, _, led3 = run()
         want(rc3 == 0 and "SHARES STATE" not in text3 and "UNRESOLVED" not in text3,
              f"with every offender removed the guard is rc={rc3}, so the red "
              f"was not about the offenders")
+
+        # ---- the reason field, accounted for (letter 9, item 甲) --------------
+        # The denominator is the controls that DECLARE a reason; the numerator is
+        # the reds those controls produce.  A red whose key is not the declared
+        # one is counted as WRONG here -- not credited, not dropped, not
+        # averaged away.  Without this, `red` and `red for the reason it names`
+        # would be one word in the log and a decoration in the source.
+        declared = {
+            "tools/offender_worktree.py": "shares-state:worktree",
+            "tools/far_init_worktree.py": "shares-state:worktree",
+            "tools/unresolved_table.py": "unresolved:worktree",
+        }
+        # ★ Condition ① of the exemption, as a control rather than a sentence:
+        # a byte-for-byte copy of THIS source at another path is a different
+        # file, so it must still be judged and must still redden.  If the copy
+        # came back exempt, the exemption would be keyed on content or on the
+        # basename, and it would be answering "is this someone who talks about
+        # the guard" -- which is every file that documents it.
+        with open(os.path.abspath(__file__), encoding="utf-8") as _fh:
+            self_src = _fh.read()
+        with open(os.path.join(tmp, "tools", "copy_of_guard.py"), "w",
+                  encoding="utf-8") as _fh:
+            _fh.write(self_src)
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+        rc4, text4, off4, led4 = run()
+        _copy_off = [o for o in off4 if o == "tools/copy_of_guard.py"]
+        _copy_ex = [e for e in led4.get("exempt", [])
+                    if e.startswith("tools/copy_of_guard.py")]
+        print(f"ref_substitute_guard: self-test copy-control rc={rc4} "
+              f"convicted={len(_copy_off)} exempted={len(_copy_ex)}")
+        want(bool(_copy_off) and not _copy_ex,
+             f"a byte-for-byte copy of this guard at tools/copy_of_guard.py came "
+             f"back convicted={len(_copy_off)} exempted={len(_copy_ex)}; the "
+             f"exemption must key on the identity of the running file, so a copy "
+             f"is judged.  An exemption that takes the copy with it is not "
+             f"saying `this is me`, it is saying `this mentions me`")
+        os.remove(os.path.join(tmp, "tools", "copy_of_guard.py"))
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+
+        # ★ The denominator control, and it is the second half of the same
+        # question condition ① asks.  The copy-control above shows the
+        # exemption is keyed on identity; this one shows the exemption did not
+        # also erase its object.  On this tree the guard's own file IS a tracked
+        # file, so it has to appear twice, as two different numbers on one run:
+        # once inside `scanned` (we can see it) and once as an exempt file (we
+        # are not asking it).  If the exemption also removed it from the
+        # denominator, the two collapse into one and `we are not asking this
+        # file` starts reading as `we cannot see this file` -- which is the
+        # same sentence a search space of zero prints.
+        real_led: dict = {}
+        scan(REPO_ROOT, real_led)
+        _real_ex = {e.split(":", 1)[0] for e in real_led.get("exempt", [])}
+        print(f"ref_substitute_guard: self-test denominator-control "
+              f"scanned={real_led.get('scanned')} "
+              f"self_in_scanned={real_led.get('scanned_self')} "
+              f"exempt_files={len(_real_ex)}")
+        want(real_led.get("scanned_self") is True and len(_real_ex) == 1,
+             f"on this tree the guard's own source came back "
+             f"self_in_scanned={real_led.get('scanned_self')} with "
+             f"{len(_real_ex)} exempt file(s); it must be inside the scanned "
+             f"denominator AND counted as exactly one exempt file.  `we are not "
+             f"asking this file` and `we cannot see this file` are two "
+             f"different readings of an exemption, and only the denominator "
+             f"tells them apart")
+
+        all_reds = led1["reds"] + led2["reds"] + led3["reds"]
+        all_unreasoned = (led1["unreasoned"] + led2["unreasoned"]
+                          + led3["unreasoned"])
+        right = [r for r in all_reds if r[3] == declared.get(r[0])]
+        wrong = [r for r in all_reds if r[3] != declared.get(r[0])]
+        print(
+            f"ref_substitute_guard: self-test reason accounting -- "
+            f"{len(right) + len(wrong)} red(s) with a reason, over "
+            f"{len(declared)} control(s) that declare one: {len(right)} carried "
+            f"the reason its control declares, {len(wrong)} did not, and "
+            f"{len(all_unreasoned)} red(s) carried no reason at all.  The "
+            f"denominator is the controls and not the reds: a red whose reason "
+            f"nobody declared is counted below rather than credited here"
+        )
+        for rel, line_no, verdict, key in wrong:
+            print(
+                f"ref_substitute_guard: WRONG REASON {rel}:{line_no} -> "
+                f"{verdict} with key {key!r}, while its control declares "
+                f"{declared.get(rel)!r}"
+            )
+        for site in all_unreasoned:
+            print(f"ref_substitute_guard: NO REASON {site}")
+        # ★ The predicate is `every red carries its control's declared reason`,
+        # NOT `there are three of them`.  The first draft asserted
+        # `len(right) == 3` -- a literal standing for a number that is derived,
+        # which is the very shape item 乙 is out to enumerate, and it went red
+        # the moment a control grew a second call site.
+        want(all(r[0] in declared and r[3] == declared[r[0]] for r in all_reds)
+             and not all_unreasoned,
+             f"the reason accounting is {len(right)} right / {len(wrong)} wrong "
+             f"/ {len(all_unreasoned)} with no reason, over {len(declared)} "
+             f"declaring control(s); every red a declaring control produces has "
+             f"to carry that control's declared reason, and only a run that "
+             f"asserts the reason asserts anything")
 
         if bad == 0:
             print("ref_substitute_guard: self-test ok -- the argv-list worktree "
                   "offender is red BY THE WORKTREE REASON, the unrelated "
                   "far-away `git init` does not launder it, the command-table "
                   "row whose substitute lives in a helper is UNRESOLVED (rc=2) "
-                  "rather than safe, the plain clone is green, and removing "
-                  "every offender restores green")
+                  "rather than safe, the plain clone is green, removing every "
+                  f"offender restores green, and all {len(right)} red(s) over "
+                  f"{len(declared)} declaring control(s) carry the reason their "
+                  "control declares")
     return bad
 
 
@@ -576,8 +930,9 @@ def main() -> int:
     # wrapper a crash in the guard is read as a finding about the repository.
     # The contract says 2 is "could not measure"; the guard has to honour its
     # own contract or its verdicts are not distinguishable from its failures.
+    ledger: dict = {}
     try:
-        rc, lines, offenders, _ = scan(args.root)
+        rc, lines, offenders, _ = scan(args.root, ledger)
     except Exception as exc:  # noqa: BLE001 -- see above
         print(f"ref_substitute_guard: could not measure {args.root}: "
               f"{type(exc).__name__}: {exc}", file=sys.stderr)
@@ -597,7 +952,7 @@ def main() -> int:
     else:
         print("ref_substitute_guard: no file mutates refs through a substitute "
               "that shares them")
-    for line in reach_lines():
+    for line in reach_lines(ledger.get("exempt", [])):
         print(line)
     return rc
 
