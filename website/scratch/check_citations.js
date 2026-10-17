@@ -1821,6 +1821,15 @@ check('㉖ ★ 006：三条归属路线在数据里可读（不写死在渲染�
   Array.isArray(D.ruledByRoutes) && D.ruledByRoutes.length >= 3
     && D.ruledByRoutes.some((r) => r.key === 'relayed'),
   `D.ruledByRoutes = ${(D.ruledByRoutes || []).map((r) => r.key).join(', ') || '（无）'}　★ site.js 必须从这一栏读，不写死在函数体里`);
+/* ★★ ㉛ 乙【对照】：同一条读数，**不改判据**，只是让它**绿着也印出来**。
+   改前：这条读数只活在 check 的第 3 个实参里 ⇒ 只在红的时候才被打印
+         （`FAIL [ … ] ㉖ ★ 006：… ← D.ruledByRoutes = human, earlier, relayed, coordinator　★ …`）
+   改后：同一份逐字读数在【成功路径上】也印一次 —— 判据一个字没动，红的条件一个字没动。
+   ★ 判据：一条只在失败时说话的检查，在它绿的时候什么都没说 ——
+     而「它绿」与「它检查过」在输出里同形。 */
+info(`㉖ ★ 006（成功路径上也印）【三条归属路线在数据里可读】= `
+  + `${Array.isArray(D.ruledByRoutes) ? (D.ruledByRoutes || []).map((r) => r.key).join(', ') : '（不是数组）'}`
+  + `　★ 与上面那条 check 的 detail 逐字同一份读数；★ 它绿的时候，这条 info 是唯一看得见它的地方。`);
 check('㉖ ★ 006：每条 ruled 条目都有 ruledIn（否则「裁定记在哪一节」在页面上是空白）',
   ruledEntries.every((e) => e.ruledIn),
   `缺 ruledIn 的 ruled 条目 = ${ruledEntries.filter((e) => !e.ruledIn).map((e) => e.id).join('、') || '（无）'}`);
@@ -3142,42 +3151,94 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   G30.wrappers.length > 0 && G30.sites.every((s) => !G30.wrappers.some((w) => w.file === s.file && w.line === s.line)),
   `包装器 = ${G30.wrappers.length}　调用处 = ${G30.sites.length}　★ 两者没有一行重叠`);
 
-/* ═══ ㉛ 甲/乙 —— 徽章映射：一个枚举里两个不同的值映射到同一个外观 ══════════════
-   ★ exact-otter 28 号派。★ 本块只【读】：不动映射表、不动渲染、不动 render_check 的期望值。
-   ★★ 甲① 这条今天会【红】，而红就是它存在的理由 —— 一封「今天没问题」的报告靠分母，
-      而这一件靠映射表：只要 `coordinator` 出现一次，它依旧共用一个 badge。 */
+/* ═══ ㉛ 丙 —— 徽章映射：主判据换对象（从「不同的 class」换成「不同的外观」）══════
+   ★ exact-otter 30 号的裁决。★ 本块只【读】映射表；改【值】的动作一个字都没有。
+
+   ★★ 为什么把主判据换对象：一条对今天并不算错的事情发红的规则，会被学会忽略 ——
+      而它一旦被忽略，真正该红的那天也不会红。
+      ⇒ 丙① 今天必须是【绿的】（文字与 title 都不同），而它会在真正撞上的那天红。
+   ★ 外观的定义照 `site.js:292` 实际渲染的那三样（class ＋ 文字 ＋ title），
+      并把那三样【逐字印在判词旁边】。
+   ★★ `coordinator` 与 `relayed` 共用 class 是【有意的】—— 理由写在
+      `website/data/decisions.js` 那张表的 `coordinator` 那一行上（没有写下来的「有意的共用」，
+      下一个人会把它当成一个 bug 修掉）。 */
 {
   const ROUTES = D.ruledByRoutes || [];
 
-  /* ── 甲① 不同 key 不许映射到同一个 badge ── */
+  /* 外观 = 渲染那一行真正用到的东西。逐字对照 site.js：
+       :290  var label = route ? route.label : '谁裁的：' + e.ruledBy;
+       :291  var cls   = route ? route.badge : 'badge--muted';
+       :292  var badge = el('span', 'badge ' + cls, label);
+       :293  if (route && route.where) badge.title = '出处：' + route.where; */
+  const faceOf = (r) => `class=${r.badge}　文字=${JSON.stringify(r.label)}　title=${r.where ? '有(' + r.where + ')' : '无'}`;
+
+  const byFace = {};
+  ROUTES.forEach((r) => { (byFace[faceOf(r)] = byFace[faceOf(r)] || []).push(r.key); });
+  const faceClash = Object.keys(byFace).filter((f) => byFace[f].length > 1);
+
+  /* ── 丙① 主判据：不同的 key 必须【渲染】出不同的外观 ── */
+  check('㉛ 丙①：不同的 key 必须【渲染】出不同的外观（class ＋ 文字 ＋ title 三样，照 site.js:292 实际渲染的算）'
+    + '（否则「今天看见 N 种徽章」不是「有 N 条路线」）',
+    faceClash.length === 0,
+    faceClash.length
+      ? '外观逐字相同的 key：' + faceClash.map((f) => `【${f}】← ${byFace[f].join(' ＋ ')}`).join('；')
+      : `无。今天 ${ROUTES.length} 个 key 落到 ${Object.keys(byFace).length} 种外观，逐字：\n      `
+        + ROUTES.map((r) => `${r.key.padEnd(12)} ${faceOf(r)}`).join('\n      '));
+
+  /* ★★ 那三样必须【每次跑都印】—— 判词里的 detail 只在红时才打印，
+     而 丙① 今天正是绿的 ⇒ 只写在判词里，等于今天看不见它。 */
+  info(`㉛ 丙①【主判据今天的外观逐字】（判词里的同一份，绿的时候也要看得见）—— `
+    + `${ROUTES.length} 个 key 落到 ${Object.keys(byFace).length} 种外观：`
+    + ROUTES.map((r) => `
+      ${r.key.padEnd(12)} ${faceOf(r)}`).join(''));
+
+  /* ── 丙② 保留一个【数】，不保留一条红 ──
+     ★ 今天它 ≥ 1（relayed ＋ coordinator 共用 `badge--route-relayed`），
+       而那个共用是【有意的、写在表上的】—— 所以它必须是一个读数，不是一个红。 */
   const byBadge = {};
   ROUTES.forEach((r) => { (byBadge[r.badge] = byBadge[r.badge] || []).push(r.key); });
-  const collide = Object.keys(byBadge).filter((b) => byBadge[b].length > 1);
-  check('㉛ 甲①：不同的 key 必须映射到不同的 badge（一个枚举里两个值映射到同一个外观 ⇒「今天看见 N 种徽章」不是「有 N 条路线」）',
-    collide.length === 0,
-    collide.length
-      ? '共用同一个 badge 的 key：' + collide.map((b) => `badge「${b}」← ${byBadge[b].join(' ＋ ')}`).join('；')
-      : '无');
+  const badgeShared = Object.keys(byBadge).filter((b) => byBadge[b].length > 1);
+  info(`㉛ 丙②【共用同一个 class 的 key 组数】= ${badgeShared.length}`
+    + `（今天：${badgeShared.map((b) => `${b} ← ${byBadge[b].join(' ＋ ')}`).join('；') || '无'}）`
+    + `　★ 这是一个【读数】，不是一条红 —— 那个共用是有意的，理由写在 decisions.js 的 coordinator 那一行`);
 
-  /* ── 甲② 可见差异：量的是【外观】= (class ＋ 文字)，不是 class ──
-     ★★ 我上一轮只量了 `badge`（class）就宣布「页面上不会有任何可见变化」——
-        而渲染那一行把 `label` 当成了同一个元素的【内容】：site.js:290-292 逐字
-          :290  var label = route ? route.label : '谁裁的：' + e.ruledBy;
-          :291  var cls   = route ? route.badge : 'badge--muted';
-          :292  var badge = el('span', 'badge ' + cls, label);
-          :293  if (route && route.where) badge.title = '出处：' + route.where;
-     ⇒ 外观 = (cls, label) 这一对，而 where 还会额外影响 title。 */
+  /* ── 乙 ④⑤⑥：那张表的 badge 与 label 全仓各有几个消费者 + 那个计数处的失效模样 ──
+     ★ 逐字找的消费者（不含本块自己）：
+       badge ← website/assets/site.js:291  `var cls = route ? route.badge : 'badge--muted';`      1 处
+       label ← website/assets/site.js:290  `var label = route ? route.label : '谁裁的：' + e.ruledBy;`  1 处
+     ★★ 而 site.js:338 那个计数【不读这张表】：
+       `var human = D.entries.filter(function (e) { return e.ruledBy === 'human'; }).length;`
+       ⇒ 它写死了一个字面量。所以它【不会】把 4 个 key 印成 3 —— 它连表都不看。
+     ★★★ 它的失效模样（实测）：把表里的 key `human` 改名（值一个字不动）⇒
+       :338 仍然印 `human = 18 条`，而按 site.js:289（`r.key === e.ruledBy`）能找到 route 的只剩 4 条
+       ⇒ 同一页上「18 条是人类选的」与「0 个徽章」同时成立，而它们说的是同一件事。
+       ★ 这条漂移【不是没人看】：render_check.js 已经有一条抓它，对照下逐字报 `← 0 / 18`。 */
+  const consumers = { badge: ['website/assets/site.js:291'], label: ['website/assets/site.js:290'] };
+  const corpusKeys = {};
+  D.entries.forEach((e) => { if (e.ruledBy) corpusKeys[e.ruledBy] = (corpusKeys[e.ruledBy] || 0) + 1; });
+  const tableKeys = new Set(ROUTES.map((r) => r.key));
+  const orphans = Object.keys(corpusKeys).filter((k) => !tableKeys.has(k));
+  info(`㉛ 乙 ④【全仓消费者】badge → ${consumers.badge.length} 处（${consumers.badge.join('、')}）；`
+    + `label → ${consumers.label.length} 处（${consumers.label.join('、')}）`
+    + `　★ 本块自己那几处不算消费者，它们是读的人`);
+  info(`㉛ 乙 ⑤【那个计数处会不会把 4 个 key 印成 3】= 不会 —— 它不读那张表。`
+    + `逐字：site.js:338 \`var human = D.entries.filter(function (e) { return e.ruledBy === 'human'; }).length;\` `
+    + `★ 它写死了一个字面量 \`'human'\`。`
+    + `　今天【语料里出现、表里查不到的 key】= ${orphans.length}${orphans.length ? '（' + orphans.map((k) => k + '×' + corpusKeys[k]).join('、') + '）' : ''}`
+    + `　★ 它不是 0 的那天，:338 会继续印一个数，而徽章会全部退成 \`badge--muted\``);
+  info(`㉛ 乙 ⑥【那条漂移有人看】：render_check.js 有一条「带「人类选的」标记的条数 = 逐条 ruledBy=human 的条数」；`
+    + `把表里的 key 改名（值一个字不动）后，它逐字报 \`← 0 / 18\` —— 也就是 :338 那个数不动，而徽章数归零。`
+    + `⇒ 判据：**一个写死的字面量不是「读这张表」，所以表变了它不会变 —— 而它不报错，它只是与另一处读数分道扬镳。**`);
+
+  /* ── 甲② 可见差异：若那个 key 出现一次，页面会变吗 ── */
   const byKey = {};
   ROUTES.forEach((r) => { byKey[r.key] = r; });
-  const collideKeys = collide.reduce((a, b) => a.concat(byBadge[b]), []);
-  const faces = collideKeys.map((k) => `(class=${byKey[k].badge}; 文字=${JSON.stringify(byKey[k].label)}; title=${byKey[k].where ? '有' : '★ 无'})`);
-  const sameFace = collideKeys.length ? new Set(collideKeys.map((k) => byKey[k].badge + '\u0000' + byKey[k].label)).size : 0;
-  /* ★★ 这一条是【读数】，不是断言 —— 它回答「会不会看见」。
-     ★ 我上一轮只量了 class 就宣布「不会有任何可见变化」；而 site.js:292 把 label 当成了同一个元素的【内容】。
-     ⇒ 外观 = (class, label, title)。三个里只要有一个不同，它就是看得见的。 */
-  info(`㉛ 甲②【若 coordinator 出现一次，页面会变吗】= 会变，而且看得见`
-    + `（共用 badge 的 key 有 ${collideKeys.length} 个，它们落到 ${sameFace} 种不同的完整外观 ⇒ 同貌的组数 = ${collideKeys.length - sameFace}，即【没有任何两个是真正同貌的】）`
-    + `：` + faces.join('  vs  ')
+  const collideKeys = badgeShared.reduce((a, b) => a.concat(byBadge[b]), []);
+  info(`㉛ 甲②【若共用 class 的那些 key 各出现一次，页面会变吗】= `
+    + (collideKeys.length >= 2
+      ? `会变，而且看得见 —— 它们落到 ${new Set(collideKeys.map((k) => faceOf(byKey[k]))).size} 种不同的外观：`
+        + collideKeys.map((k) => `【${k}】` + faceOf(byKey[k])).join('  vs  ')
+      : '没有共用 class 的 key，这一问今天无载荷')
     + `　← 判据出处 = site.js:290-292（label 是元素的内容，badge 只是 class）与 site.js:293（where 只影响 title）`);
 
   /* ── 乙 三层各自独立的读（不许合并，和不相加）── */
@@ -3186,9 +3247,9 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   D.entries.forEach((e) => { if (e.ruledBy) counted[e.ruledBy] = (counted[e.ruledBy] || 0) + 1; });
   const todayKeys = Object.keys(counted);
   const distinctBadge = Object.keys(byBadge).length;
-  const distinctFace = new Set(ROUTES.map((r) => r.badge + '\u0000' + r.label)).size;
+  const distinctFace = Object.keys(byFace).length;
 
-  info(`㉛ 乙 ①【定义式允许】= ${allowedKeys} 个 key（human／earlier／relayed／coordinator）`
+  info(`㉛ 乙 ①【定义式允许】= ${allowedKeys} 个 key（${ROUTES.map((r) => r.key).join('／')}）`
     + ` ← 读 website/data/decisions.js:64 的 D.ruledByRoutes，${ROUTES.length} 行`);
   info(`㉛ 乙 ②【今天取到】= ${todayKeys.length} 个值`
     + `（${todayKeys.map((k) => k + '×' + counted[k]).join('、')}）`
@@ -3199,15 +3260,146 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   info(`㉛ 乙 ★★ 这三层之间的差不是减法：① ${allowedKeys} → ② ${todayKeys.length} → ③ ${distinctFace}。`
     + `第 2 个数来自【语料】（今天哪些 key 真出现过），第 3 个数来自【映射表】（哪些 (badge,label) 互不相同）。`
     + `★ 三行不相加。`);
-  info(`㉛ 乙 ★★ 自检（28 号要求：今天有没有两行相等）—— 有：`
+  info(`㉛ 乙 ★★ 自检（今天有没有两行相等）—— 有：`
     + `① ${allowedKeys} 与 ③ ${distinctFace} 相等，而【这不是巧合，是同一件事】：两者读的是同一张表，`
-    + `只要表里每一行的 (badge,label) 互不相同，① = ③ 就恒成立（今天是，所以 4 = 4）。`
+    + `只要表里每一行的 (badge,label) 互不相同，① = ③ 就恒成立（今天是，所以 ${allowedKeys} = ${distinctFace}）。`
     + `　而 ② ${todayKeys.length} 与 ③ ${distinctFace} 【不相等】—— 那才是【语料】与【映射表】的差：`
     + `coordinator 出现一次，② 会跟着语料变成 ${allowedKeys}，③ 仍然 ${distinctFace}（映射表没动）。`);
   info(`㉛ 乙 ★★ 撤回一个我先前的预测：我预告过「② 与 ③ 都是 3、那是巧合」——`
     + `★ 那个相等是【我把「外观」定义成 badge 一个字段】的产物，不是事实。`
-    + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② 3 ≠ ③ 4，那个「巧合」就消失了。`
+    + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② ${todayKeys.length} ≠ ③ ${distinctFace}，那个「巧合」就消失了。`
     + `⇒ 判据：一个预测出来的巧合，先要检查它是【事实】还是【我那个定义】的产物。`);
+
+  /* CENSUS-BEGIN ── ㉛ 乙 ⑦：把「读数被送进一个只在失败时说话的信道」做成一个数 ──────
+     exact-otter 的判据：这道普查的答案不许用「我读了源码」来交 ——
+       要么给一条能让它变红的输入，要么给一条让它绿着也印出来的补丁。
+     ⇒ 本块自己解析自己的源码，并把解析器的四个已知坑都挡上：
+         ① 括号配对（不逐行匹配）
+         ② 行内引号判定（不跨行状态机 —— 本线吃过：一个正则字面量里的引号曾把整个文件挖空）
+         ③ 正则字面量里的双斜杠曾被当成行注释 ⇒ 那一次它把实参表读穿了，而输出的那一行看起来完全正常
+         ④ 它自己的样本 —— 本块**不许**逐字写出那种调用的样子；
+            射程用两个哨兵行圈出来并在【结果】上排除（不是猜）。
+     ★ 信道那一端是读出来的：全文件里 `.detail` 只被读一次，且那一次在 !r.ok 的循环里
+       ⇒ 它【只在红的时候说话】。 */
+  const CENSUS = (() => {
+    const SELF = __filename;
+    const s = fs.readFileSync(SELF, 'utf8');
+    const lines = s.split('\n');
+    /* ★★★ 第四次同一个笑话：`lines.findIndex((l) => l.includes('CENSUS-END'))` 返回的是
+       【查找器自己的那一行】—— 因为那一行的源码里逐字写着 'CENSUS-END'。
+       于是射程错了（3273..3289，而真哨兵在 3394），而且那个「射程内 = 0」的断言
+       **绿着**：它绿，是因为它量错了区间，不是因为没有被排除的东西。
+       ⇒ 修法：只认【整行以哨兵注释开头】的行（查找器自己那一行以 `const` 开头，不再匹配）。
+       ⇒ 判据：一个「排除」如果没有被观测到【发生过】，它就是假的 —— 而它绿着。 */
+    const cbeg = lines.findIndex((l) => /^\s*\/\* CENSUS-BEGIN/.test(l));
+    const cend = lines.findIndex((l) => /^\s*\/\* CENSUS-END/.test(l));
+
+    /* `/` 是正则的开始吗 —— 看它前面那个有效字符（标准启发式）。这是坑 ③ 的修法。 */
+    const reStart = (t, i) => {
+      for (let j = i - 1; j >= 0; j--) {
+        const c = t[j];
+        if (c === ' ' || c === '\t') continue;
+        return '(,=:[!&|?{};+-*%~^<>\n'.indexOf(c) !== -1;
+      }
+      return true;
+    };
+    const atLine = (t, i) => t.slice(0, i).split('\n').length;
+    const inStr = (t, i) => {
+      const ls = t.lastIndexOf('\n', i - 1) + 1;
+      let quote = null;
+      for (let j = ls; j < i; j++) {
+        const c = t[j];
+        if (quote) { if (c === '\\') j++; else if (c === quote) quote = null; continue; }
+        if (c === '/' && t[j + 1] === '/') break;
+        if (c === '/' && reStart(t, j)) { j = t.indexOf('/', j + 1); if (j < 0) break; continue; }
+        if (c === "'" || c === '"' || c === '`') quote = c;
+      }
+      return quote !== null;
+    };
+    const matchP = (t, open) => {
+      let d = 0, quote = null;
+      for (let i = open; i < t.length; i++) {
+        const c = t[i];
+        if (quote) { if (c === '\\') { i++; continue; } if (c === quote) quote = null; continue; }
+        if (c === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; continue; }
+        if (c === '/' && t[i + 1] === '*') { i = t.indexOf('*/', i + 2); if (i < 0) return -1; i++; continue; }
+        if (c === '/' && reStart(t, i)) { i = t.indexOf('/', i + 1); if (i < 0) return -1; continue; }
+        if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+        if (c === '(') d++;
+        else if (c === ')') { d--; if (d === 0) return i; }
+      }
+      return -1;
+    };
+    const splitA = (t) => {
+      const out = []; let depth = 0, start = 0, quote = null;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (quote) { if (c === '\\') { i++; continue; } if (c === quote) quote = null; continue; }
+        if (c === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; continue; }
+        if (c === '/' && reStart(t, i)) { i = t.indexOf('/', i + 1); if (i < 0) break; continue; }
+        if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+        if (c === '(' || c === '[' || c === '{') depth++;
+        else if (c === ')' || c === ']' || c === '}') depth--;
+        else if (c === ',' && depth === 0) { out.push(t.slice(start, i)); start = i + 1; }
+      }
+      out.push(t.slice(start));
+      return out.map((x) => x.trim());
+    };
+
+    const CALL = 'check' + '(';
+    const sites = [];
+    let inside = 0;
+    let ix = -1;
+    while ((ix = s.indexOf(CALL, ix + 1)) !== -1) {
+      const prev = ix > 0 ? s[ix - 1] : '';
+      if (/[A-Za-z0-9_$.]/.test(prev)) continue;
+      if (inStr(s, ix)) continue;
+      const ln = atLine(s, ix);
+      if (cbeg >= 0 && cend > cbeg && ln > cbeg + 1 && ln < cend + 1) { inside++; continue; }  // ★ ④
+      const close = matchP(s, ix + CALL.length - 1);
+      if (close < 0) continue;
+      const a = splitA(s.slice(ix + CALL.length, close));
+      if (a.length < 2) continue;
+      sites.push({
+        line: ln,
+        nameLit: /^['"`]/.test(a[0]),
+        name: /^['"`]/.test(a[0]) ? a[0].slice(1, -1) : null,
+        hasInterp: a.length >= 3 && a[2].includes('${')
+      });
+    }
+
+    const byName = new Map();
+    results.forEach((r) => { if (!byName.has(r.name)) byName.set(r.name, []); byName.get(r.name).push(r); });
+    const interp = sites.filter((x) => x.hasInterp);
+    let green = 0, red = 0, unresolved = 0;
+    for (const x of interp) {
+      const rs = x.nameLit ? byName.get(x.name) : null;
+      if (!rs || !rs.length) { unresolved++; continue; }
+      if (rs.every((r) => r.ok)) green++; else red++;
+    }
+    const winIdx = lines.findIndex((l) => l.includes("' ← ' + r.detail") || l.includes('.detail'));
+    return { SELF, sites, interp, green, red, unresolved, inside, cbeg, cend, winIdx };
+  })();
+
+  info(`㉛ 乙 ⑦【分母：本文件里 ${'check'} 调用总数】= ${CENSUS.sites.length}`
+    + `　（哨兵行 ${CENSUS.cbeg + 1} / ${CENSUS.cend + 1} 圈出的射程内被排除 = ${CENSUS.inside} 处）`);
+  info(`㉛ 乙 ⑦【第 3 个实参含 \${...} 插值 —— 读数被送进那个信道】= ${CENSUS.interp.length}`
+    + `　★ 信道那一端是读出来的：.detail 全文只在本文件第 ${CENSUS.winIdx + 1} 行被读一次，`
+    + `而那一行在 results.filter((r) => !r.ok) 的循环里 ⇒ 它【只在红的时候说话】。`);
+  info(`㉛ 乙 ⑦【其中今天【绿】的 ⇒ 它们今天什么都没说】= ${CENSUS.green}`
+    + `　（红 = ${CENSUS.red}，名字对不上 = ${CENSUS.unresolved}；和 = ${CENSUS.green + CENSUS.red + CENSUS.unresolved} / ${CENSUS.interp.length}）`
+    + ` ★ 这一行的分母是【今天真的执行到的】那些；上一行的分母是【源码里写着】的 —— 两个分母不是同一个数换了个名字。`);
+  info(`㉛ 乙 ⑦【对照：让一处绿着也印出来】= ㉖ ★ 006 那条「三条归属路线在数据里可读」旁边新加的 info()`
+    + `　★ 判据：一条只在失败时说话的检查，在它绿的时候什么都没说 —— 而「它绿」与「它检查过」在输出里同形。`);
+  info(`㉛ 乙 ⑦★ 全仓（不是本文件）：website/** 的 ${'check'} 调用 = 246，其中含插值 = 116`
+    + `　★ 这两个数由【另一个解析器】在另一个进程里量出（website/scratch/.build/probe_details.js），`
+    + `本块不复述它的结论、也不假装自己量了它 —— 记在这里是为了说明本块的分母只有它自己的 137-1 处。`);
+  check('㉛ 乙 ⑦：自扫描的枚举不许把自己数进去 —— ★ 而「排除了」必须是【被观测到发生过】的',
+    CENSUS.cbeg >= 0 && CENSUS.cend > CENSUS.cbeg && CENSUS.inside >= 1 && CENSUS.cend - CENSUS.cbeg > 100,
+    `哨兵行 = ${CENSUS.cbeg + 1} / ${CENSUS.cend + 1}（跨度 ${CENSUS.cend - CENSUS.cbeg} 行，必须 > 100）；`
+    + `射程内【确实被排除掉】的调用 = ${CENSUS.inside}（必须 >= 1，本块自己那条就在里面）`
+    + `　★ 上一版写成 === 0，而它绿着 —— 因为它量错了区间：查找器把自己那一行当成了哨兵。`);
+  /* CENSUS-END */
 }
 
 const bad = results.filter((r) => !r.ok);

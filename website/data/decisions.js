@@ -66,6 +66,14 @@ window.INFIVERSE_DECISIONS = {
     { key: 'earlier', label: '更早的一次裁定',              badge: 'badge--route-earlier', scope: '台账自己', where: null },
     { key: 'relayed', label: '协调者裁定（我转述）',      badge: 'badge--route-relayed', scope: '人以外的第三条路线',
       where: 'docs/STATUS.md §10.4（逐字：「**一条被驳回的怀疑（协调者裁定）**」）' },
+    /* ★★ 这一行与上一行【共用 class `badge--route-relayed`】是【有意的】：
+       两者的差别【全部由 label（文字）与 title（where）承载】——
+         relayed     ：label「协调者裁定（我转述）」＋ where 给出 §10.4 的出处（⇒ 有 title）
+         coordinator ：label「（协调者裁定）字样本身」＋ where = null（⇒ 无 title）
+       ⇒ 判据：**一个「有意的共用」如果没写下来，下一个人会把它当成一个 bug 修掉；
+         而它写下来了，下一个人就知道该改的是哪一样（文字或 title），不是 class。**
+       ★ 守门的读法：不查「不同的 key 是否共用 class」（那是读数），
+         而查「不同的 key 是否渲染出相同的外观」（class ＋ 文字 ＋ title 三样）。 */
     { key: 'coordinator', label: '（协调者裁定）字样本身',  badge: 'badge--route-relayed', scope: '词面', where: null },
   ],
   altSearch: {
