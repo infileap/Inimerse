@@ -3142,6 +3142,74 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   G30.wrappers.length > 0 && G30.sites.every((s) => !G30.wrappers.some((w) => w.file === s.file && w.line === s.line)),
   `包装器 = ${G30.wrappers.length}　调用处 = ${G30.sites.length}　★ 两者没有一行重叠`);
 
+/* ═══ ㉛ 甲/乙 —— 徽章映射：一个枚举里两个不同的值映射到同一个外观 ══════════════
+   ★ exact-otter 28 号派。★ 本块只【读】：不动映射表、不动渲染、不动 render_check 的期望值。
+   ★★ 甲① 这条今天会【红】，而红就是它存在的理由 —— 一封「今天没问题」的报告靠分母，
+      而这一件靠映射表：只要 `coordinator` 出现一次，它依旧共用一个 badge。 */
+{
+  const ROUTES = D.ruledByRoutes || [];
+
+  /* ── 甲① 不同 key 不许映射到同一个 badge ── */
+  const byBadge = {};
+  ROUTES.forEach((r) => { (byBadge[r.badge] = byBadge[r.badge] || []).push(r.key); });
+  const collide = Object.keys(byBadge).filter((b) => byBadge[b].length > 1);
+  check('㉛ 甲①：不同的 key 必须映射到不同的 badge（一个枚举里两个值映射到同一个外观 ⇒「今天看见 N 种徽章」不是「有 N 条路线」）',
+    collide.length === 0,
+    collide.length
+      ? '共用同一个 badge 的 key：' + collide.map((b) => `badge「${b}」← ${byBadge[b].join(' ＋ ')}`).join('；')
+      : '无');
+
+  /* ── 甲② 可见差异：量的是【外观】= (class ＋ 文字)，不是 class ──
+     ★★ 我上一轮只量了 `badge`（class）就宣布「页面上不会有任何可见变化」——
+        而渲染那一行把 `label` 当成了同一个元素的【内容】：site.js:290-292 逐字
+          :290  var label = route ? route.label : '谁裁的：' + e.ruledBy;
+          :291  var cls   = route ? route.badge : 'badge--muted';
+          :292  var badge = el('span', 'badge ' + cls, label);
+          :293  if (route && route.where) badge.title = '出处：' + route.where;
+     ⇒ 外观 = (cls, label) 这一对，而 where 还会额外影响 title。 */
+  const byKey = {};
+  ROUTES.forEach((r) => { byKey[r.key] = r; });
+  const collideKeys = collide.reduce((a, b) => a.concat(byBadge[b]), []);
+  const faces = collideKeys.map((k) => `(class=${byKey[k].badge}; 文字=${JSON.stringify(byKey[k].label)}; title=${byKey[k].where ? '有' : '★ 无'})`);
+  const sameFace = collideKeys.length ? new Set(collideKeys.map((k) => byKey[k].badge + '\u0000' + byKey[k].label)).size : 0;
+  /* ★★ 这一条是【读数】，不是断言 —— 它回答「会不会看见」。
+     ★ 我上一轮只量了 class 就宣布「不会有任何可见变化」；而 site.js:292 把 label 当成了同一个元素的【内容】。
+     ⇒ 外观 = (class, label, title)。三个里只要有一个不同，它就是看得见的。 */
+  info(`㉛ 甲②【若 coordinator 出现一次，页面会变吗】= 会变，而且看得见`
+    + `（共用 badge 的 key 有 ${collideKeys.length} 个，它们落到 ${sameFace} 种不同的完整外观 ⇒ 同貌的组数 = ${collideKeys.length - sameFace}，即【没有任何两个是真正同貌的】）`
+    + `：` + faces.join('  vs  ')
+    + `　← 判据出处 = site.js:290-292（label 是元素的内容，badge 只是 class）与 site.js:293（where 只影响 title）`);
+
+  /* ── 乙 三层各自独立的读（不许合并，和不相加）── */
+  const allowedKeys = ROUTES.length;
+  const counted = {};
+  D.entries.forEach((e) => { if (e.ruledBy) counted[e.ruledBy] = (counted[e.ruledBy] || 0) + 1; });
+  const todayKeys = Object.keys(counted);
+  const distinctBadge = Object.keys(byBadge).length;
+  const distinctFace = new Set(ROUTES.map((r) => r.badge + '\u0000' + r.label)).size;
+
+  info(`㉛ 乙 ①【定义式允许】= ${allowedKeys} 个 key（human／earlier／relayed／coordinator）`
+    + ` ← 读 website/data/decisions.js:64 的 D.ruledByRoutes，${ROUTES.length} 行`);
+  info(`㉛ 乙 ②【今天取到】= ${todayKeys.length} 个值`
+    + `（${todayKeys.map((k) => k + '×' + counted[k]).join('、')}）`
+    + ` ← 读 D.entries 里带 ruledBy 的 ${todayKeys.reduce((n, k) => n + counted[k], 0)} 行，分母 = entries 总数 ${D.entries.length}`);
+  info(`㉛ 乙 ③【页面显现】= ${distinctFace} 种外观`
+    + `（若只按 badge 算则是 ${distinctBadge} 种）`
+    + ` ← 读同一张映射表：外观 = (badge,label)，因为 site.js:292 把 label 当成了元素的内容`);
+  info(`㉛ 乙 ★★ 这三层之间的差不是减法：① ${allowedKeys} → ② ${todayKeys.length} → ③ ${distinctFace}。`
+    + `第 2 个数来自【语料】（今天哪些 key 真出现过），第 3 个数来自【映射表】（哪些 (badge,label) 互不相同）。`
+    + `★ 三行不相加。`);
+  info(`㉛ 乙 ★★ 自检（28 号要求：今天有没有两行相等）—— 有：`
+    + `① ${allowedKeys} 与 ③ ${distinctFace} 相等，而【这不是巧合，是同一件事】：两者读的是同一张表，`
+    + `只要表里每一行的 (badge,label) 互不相同，① = ③ 就恒成立（今天是，所以 4 = 4）。`
+    + `　而 ② ${todayKeys.length} 与 ③ ${distinctFace} 【不相等】—— 那才是【语料】与【映射表】的差：`
+    + `coordinator 出现一次，② 会跟着语料变成 ${allowedKeys}，③ 仍然 ${distinctFace}（映射表没动）。`);
+  info(`㉛ 乙 ★★ 撤回一个我先前的预测：我预告过「② 与 ③ 都是 3、那是巧合」——`
+    + `★ 那个相等是【我把「外观」定义成 badge 一个字段】的产物，不是事实。`
+    + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② 3 ≠ ③ 4，那个「巧合」就消失了。`
+    + `⇒ 判据：一个预测出来的巧合，先要检查它是【事实】还是【我那个定义】的产物。`);
+}
+
 const bad = results.filter((r) => !r.ok);
 results.filter((r) => !r.ok).forEach((r) => {
   console.log(`FAIL  [${r.where}] ${r.name}${r.detail ? '   ← ' + r.detail : ''}`);
