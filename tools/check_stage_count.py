@@ -87,7 +87,7 @@ NUM_ANY = r"(?:%s|[0-9]+|[Ss]ixteen(?:th)?)" % CN_NUM
 # `这一阶段` name a position in a list, not how many stages there are -- and it
 # is why `每一阶段都通过（十六` read the `一` and reported the count as 1.
 N_NEAR_STAGE = re.compile(
-    r"(?<![第每这那])(?P<n>%s)\s*(?:个)?\s*(?:阶段|支|stages?)" % NUM_ANY
+    r"(?<![第每这那])(?P<n>%s)\s*(?:个)?\s*(?:阶段|stages?)" % NUM_ANY
 )
 
 # kind, path, locate pattern, number pattern (None => N_NEAR_STAGE), why
@@ -107,26 +107,19 @@ DECLARED = [
     ),
     ("must-equal", "docs/AUDIT.md", r"排在第 .+ 阶段之后", None, None),
     # --- record: a ledger line naming what the count was when written -----
-    (
-        "record",
-        "docs/AUDIT.md",
-        r"增补四十七（补记：同一棵树的两次全量门禁，以及第一次.+支全绿）",
-        None,
-        "an append-only ledger entry: it names the batch it records, and that batch is over",
-    ),
+    # Removed, not moved.  docs/AUDIT.md:10824 and :10832 spell the phrase
+    # "sixteen BRANCHES all green", and the character they use is this tree's
+    # branch word (see "one branch green", "that branch", "three branches read
+    # branch by branch").  It is not a stage word.  Both declarations were
+    # manufactured by it sitting in the stage-word alternation, which also
+    # manufactured 107 of 288 candidates.  Both keep their `16`: it was never
+    # the gate's stage count.
     (
         "record",
         "docs/AUDIT.md",
         r"带环境变量的那一次，.+支全绿",
-        None,
+        r"(?P<n>16)/16 stages ran",
         "an append-only ledger entry: it carries the run's own verbatim output as its evidence",
-    ),
-    (
-        "record",
-        "docs/AUDIT.md",
-        r".+支全绿是这一批里第一次",
-        None,
-        "an append-only ledger entry: it says which batch was the first, so it cannot be about a later one",
     ),
     (
         "record",
@@ -187,6 +180,7 @@ DECLARED = [
 ]
 
 SCAN_SUFFIXES = (".md", ".py", ".sh", ".js", ".ps1", ".mjs", ".cjs", ".yml", ".yaml")
+SELF_REL = "tools/check_stage_count.py"
 SCAN_ROOTS = ("docs", "tools", ".github")
 
 
@@ -338,13 +332,18 @@ def scan(root, derived, declared=None):
                     rows = _read(full).splitlines()
                 except OSError:
                     continue
+                if rel == SELF_REL:
+                    # Excluded from the COUNT as well as from the LIST.  The
+                    # count used to be taken before this skip, so the printed
+                    # denominator and the printed list were computed under two
+                    # different rules and differed by this file's own lines.
+                    continue
                 for i, ln in enumerate(rows):
                     if not N_NEAR_STAGE.search(ln):
                         continue
                     considered += 1
                     if (rel, i) not in located:
-                        if rel not in ("tools/check_stage_count.py",):
-                            undeclared.append("%s:%d" % (rel, i + 1))
+                        undeclared.append("%s:%d" % (rel, i + 1))
 
     ledger = {
         "derived": derived,
@@ -410,6 +409,16 @@ def self_test():
     ]
 
     failures, led0, led1, lines1 = [], None, None, []
+
+    # A homograph control.  This tree uses one character for "branch"; it was in
+    # the stage-word alternation, and that single unvalidated alternate
+    # manufactured 107 of 288 candidates and two declarations.  Undoing the
+    # removal must not be quiet, so a word carrying it is asserted NOT to be a
+    # candidate here.
+    if N_NEAR_STAGE.search("\u6211\u4eec\u652f\u6301\u4e09\u79cd\u5e73\u53f0"):
+        failures.append(
+            "the branch character is not a stage word: that word must not be a candidate"
+        )
     try:
         derived, _ = derive(root)
         rc0, lines0, led0 = scan(root, derived, synthetic)
