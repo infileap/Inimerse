@@ -108,7 +108,13 @@ R1=0  docs/streams/gate-hermeticity.md            R1=0  docs/streams/xlang-bridg
 ### ★ 还有一条：`render_check` 那条判据**量不出这件事**
 
 `render_check.js:754` 是 `check('规范页：渲染出的文档块数 = spec.js 里的文档数', docs.length === S.docs.length, …)`
-—— **等号两边都从 `spec.js` 来** ⇒ 它**永远是绿的**，无论清单对不对。
+—— ★★ **我原先在这里写「等号两边都从 `spec.js` 来」，那是错的**（而且我是在没读那一行的时候就断言的）：
+左边 `const docs = host.all((n) => n.tagName === 'ARTICLE' && /spec-doc/.test(n.className));` 是从
+**渲染出来的 DOM 节点**里数的，**不是从 `spec.js` 读的**。真正让这个等号恒成立的是 `website/assets/site.js`
+里 `S.docs.forEach(...)` 中 **`host.appendChild(box)` 是无条件执行的** ⇒ 一条数据必然产出一个
+`<article class="spec-doc">`。⇒ **结论（它绿不出信息）成立，理由是【那个渲染循环的保长度性质】，不是【两边同源】。**
+★ 判据：**「两边同源」与「一边是另一边的不变量」在输出里同形 —— 前者说的是【同一个数组读了两遍】
+（可以被数据打破），后者说的是【一个转换过程保长度】（只可以被那个渲染器的循环打破）。**
 ★ 同族（已裁定过的那条）：**两个读数只有在不共享前提时才互为对照。**
 
 ---
