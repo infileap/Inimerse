@@ -3142,42 +3142,94 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   G30.wrappers.length > 0 && G30.sites.every((s) => !G30.wrappers.some((w) => w.file === s.file && w.line === s.line)),
   `包装器 = ${G30.wrappers.length}　调用处 = ${G30.sites.length}　★ 两者没有一行重叠`);
 
-/* ═══ ㉛ 甲/乙 —— 徽章映射：一个枚举里两个不同的值映射到同一个外观 ══════════════
-   ★ exact-otter 28 号派。★ 本块只【读】：不动映射表、不动渲染、不动 render_check 的期望值。
-   ★★ 甲① 这条今天会【红】，而红就是它存在的理由 —— 一封「今天没问题」的报告靠分母，
-      而这一件靠映射表：只要 `coordinator` 出现一次，它依旧共用一个 badge。 */
+/* ═══ ㉛ 丙 —— 徽章映射：主判据换对象（从「不同的 class」换成「不同的外观」）══════
+   ★ exact-otter 30 号的裁决。★ 本块只【读】映射表；改【值】的动作一个字都没有。
+
+   ★★ 为什么把主判据换对象：一条对今天并不算错的事情发红的规则，会被学会忽略 ——
+      而它一旦被忽略，真正该红的那天也不会红。
+      ⇒ 丙① 今天必须是【绿的】（文字与 title 都不同），而它会在真正撞上的那天红。
+   ★ 外观的定义照 `site.js:292` 实际渲染的那三样（class ＋ 文字 ＋ title），
+      并把那三样【逐字印在判词旁边】。
+   ★★ `coordinator` 与 `relayed` 共用 class 是【有意的】—— 理由写在
+      `website/data/decisions.js` 那张表的 `coordinator` 那一行上（没有写下来的「有意的共用」，
+      下一个人会把它当成一个 bug 修掉）。 */
 {
   const ROUTES = D.ruledByRoutes || [];
 
-  /* ── 甲① 不同 key 不许映射到同一个 badge ── */
+  /* 外观 = 渲染那一行真正用到的东西。逐字对照 site.js：
+       :290  var label = route ? route.label : '谁裁的：' + e.ruledBy;
+       :291  var cls   = route ? route.badge : 'badge--muted';
+       :292  var badge = el('span', 'badge ' + cls, label);
+       :293  if (route && route.where) badge.title = '出处：' + route.where; */
+  const faceOf = (r) => `class=${r.badge}　文字=${JSON.stringify(r.label)}　title=${r.where ? '有(' + r.where + ')' : '无'}`;
+
+  const byFace = {};
+  ROUTES.forEach((r) => { (byFace[faceOf(r)] = byFace[faceOf(r)] || []).push(r.key); });
+  const faceClash = Object.keys(byFace).filter((f) => byFace[f].length > 1);
+
+  /* ── 丙① 主判据：不同的 key 必须【渲染】出不同的外观 ── */
+  check('㉛ 丙①：不同的 key 必须【渲染】出不同的外观（class ＋ 文字 ＋ title 三样，照 site.js:292 实际渲染的算）'
+    + '（否则「今天看见 N 种徽章」不是「有 N 条路线」）',
+    faceClash.length === 0,
+    faceClash.length
+      ? '外观逐字相同的 key：' + faceClash.map((f) => `【${f}】← ${byFace[f].join(' ＋ ')}`).join('；')
+      : `无。今天 ${ROUTES.length} 个 key 落到 ${Object.keys(byFace).length} 种外观，逐字：\n      `
+        + ROUTES.map((r) => `${r.key.padEnd(12)} ${faceOf(r)}`).join('\n      '));
+
+  /* ★★ 那三样必须【每次跑都印】—— 判词里的 detail 只在红时才打印，
+     而 丙① 今天正是绿的 ⇒ 只写在判词里，等于今天看不见它。 */
+  info(`㉛ 丙①【主判据今天的外观逐字】（判词里的同一份，绿的时候也要看得见）—— `
+    + `${ROUTES.length} 个 key 落到 ${Object.keys(byFace).length} 种外观：`
+    + ROUTES.map((r) => `
+      ${r.key.padEnd(12)} ${faceOf(r)}`).join(''));
+
+  /* ── 丙② 保留一个【数】，不保留一条红 ──
+     ★ 今天它 ≥ 1（relayed ＋ coordinator 共用 `badge--route-relayed`），
+       而那个共用是【有意的、写在表上的】—— 所以它必须是一个读数，不是一个红。 */
   const byBadge = {};
   ROUTES.forEach((r) => { (byBadge[r.badge] = byBadge[r.badge] || []).push(r.key); });
-  const collide = Object.keys(byBadge).filter((b) => byBadge[b].length > 1);
-  check('㉛ 甲①：不同的 key 必须映射到不同的 badge（一个枚举里两个值映射到同一个外观 ⇒「今天看见 N 种徽章」不是「有 N 条路线」）',
-    collide.length === 0,
-    collide.length
-      ? '共用同一个 badge 的 key：' + collide.map((b) => `badge「${b}」← ${byBadge[b].join(' ＋ ')}`).join('；')
-      : '无');
+  const badgeShared = Object.keys(byBadge).filter((b) => byBadge[b].length > 1);
+  info(`㉛ 丙②【共用同一个 class 的 key 组数】= ${badgeShared.length}`
+    + `（今天：${badgeShared.map((b) => `${b} ← ${byBadge[b].join(' ＋ ')}`).join('；') || '无'}）`
+    + `　★ 这是一个【读数】，不是一条红 —— 那个共用是有意的，理由写在 decisions.js 的 coordinator 那一行`);
 
-  /* ── 甲② 可见差异：量的是【外观】= (class ＋ 文字)，不是 class ──
-     ★★ 我上一轮只量了 `badge`（class）就宣布「页面上不会有任何可见变化」——
-        而渲染那一行把 `label` 当成了同一个元素的【内容】：site.js:290-292 逐字
-          :290  var label = route ? route.label : '谁裁的：' + e.ruledBy;
-          :291  var cls   = route ? route.badge : 'badge--muted';
-          :292  var badge = el('span', 'badge ' + cls, label);
-          :293  if (route && route.where) badge.title = '出处：' + route.where;
-     ⇒ 外观 = (cls, label) 这一对，而 where 还会额外影响 title。 */
+  /* ── 乙 ④⑤⑥：那张表的 badge 与 label 全仓各有几个消费者 + 那个计数处的失效模样 ──
+     ★ 逐字找的消费者（不含本块自己）：
+       badge ← website/assets/site.js:291  `var cls = route ? route.badge : 'badge--muted';`      1 处
+       label ← website/assets/site.js:290  `var label = route ? route.label : '谁裁的：' + e.ruledBy;`  1 处
+     ★★ 而 site.js:338 那个计数【不读这张表】：
+       `var human = D.entries.filter(function (e) { return e.ruledBy === 'human'; }).length;`
+       ⇒ 它写死了一个字面量。所以它【不会】把 4 个 key 印成 3 —— 它连表都不看。
+     ★★★ 它的失效模样（实测）：把表里的 key `human` 改名（值一个字不动）⇒
+       :338 仍然印 `human = 18 条`，而按 site.js:289（`r.key === e.ruledBy`）能找到 route 的只剩 4 条
+       ⇒ 同一页上「18 条是人类选的」与「0 个徽章」同时成立，而它们说的是同一件事。
+       ★ 这条漂移【不是没人看】：render_check.js 已经有一条抓它，对照下逐字报 `← 0 / 18`。 */
+  const consumers = { badge: ['website/assets/site.js:291'], label: ['website/assets/site.js:290'] };
+  const corpusKeys = {};
+  D.entries.forEach((e) => { if (e.ruledBy) corpusKeys[e.ruledBy] = (corpusKeys[e.ruledBy] || 0) + 1; });
+  const tableKeys = new Set(ROUTES.map((r) => r.key));
+  const orphans = Object.keys(corpusKeys).filter((k) => !tableKeys.has(k));
+  info(`㉛ 乙 ④【全仓消费者】badge → ${consumers.badge.length} 处（${consumers.badge.join('、')}）；`
+    + `label → ${consumers.label.length} 处（${consumers.label.join('、')}）`
+    + `　★ 本块自己那几处不算消费者，它们是读的人`);
+  info(`㉛ 乙 ⑤【那个计数处会不会把 4 个 key 印成 3】= 不会 —— 它不读那张表。`
+    + `逐字：site.js:338 \`var human = D.entries.filter(function (e) { return e.ruledBy === 'human'; }).length;\` `
+    + `★ 它写死了一个字面量 \`'human'\`。`
+    + `　今天【语料里出现、表里查不到的 key】= ${orphans.length}${orphans.length ? '（' + orphans.map((k) => k + '×' + corpusKeys[k]).join('、') + '）' : ''}`
+    + `　★ 它不是 0 的那天，:338 会继续印一个数，而徽章会全部退成 \`badge--muted\``);
+  info(`㉛ 乙 ⑥【那条漂移有人看】：render_check.js 有一条「带「人类选的」标记的条数 = 逐条 ruledBy=human 的条数」；`
+    + `把表里的 key 改名（值一个字不动）后，它逐字报 \`← 0 / 18\` —— 也就是 :338 那个数不动，而徽章数归零。`
+    + `⇒ 判据：**一个写死的字面量不是「读这张表」，所以表变了它不会变 —— 而它不报错，它只是与另一处读数分道扬镳。**`);
+
+  /* ── 甲② 可见差异：若那个 key 出现一次，页面会变吗 ── */
   const byKey = {};
   ROUTES.forEach((r) => { byKey[r.key] = r; });
-  const collideKeys = collide.reduce((a, b) => a.concat(byBadge[b]), []);
-  const faces = collideKeys.map((k) => `(class=${byKey[k].badge}; 文字=${JSON.stringify(byKey[k].label)}; title=${byKey[k].where ? '有' : '★ 无'})`);
-  const sameFace = collideKeys.length ? new Set(collideKeys.map((k) => byKey[k].badge + '\u0000' + byKey[k].label)).size : 0;
-  /* ★★ 这一条是【读数】，不是断言 —— 它回答「会不会看见」。
-     ★ 我上一轮只量了 class 就宣布「不会有任何可见变化」；而 site.js:292 把 label 当成了同一个元素的【内容】。
-     ⇒ 外观 = (class, label, title)。三个里只要有一个不同，它就是看得见的。 */
-  info(`㉛ 甲②【若 coordinator 出现一次，页面会变吗】= 会变，而且看得见`
-    + `（共用 badge 的 key 有 ${collideKeys.length} 个，它们落到 ${sameFace} 种不同的完整外观 ⇒ 同貌的组数 = ${collideKeys.length - sameFace}，即【没有任何两个是真正同貌的】）`
-    + `：` + faces.join('  vs  ')
+  const collideKeys = badgeShared.reduce((a, b) => a.concat(byBadge[b]), []);
+  info(`㉛ 甲②【若共用 class 的那些 key 各出现一次，页面会变吗】= `
+    + (collideKeys.length >= 2
+      ? `会变，而且看得见 —— 它们落到 ${new Set(collideKeys.map((k) => faceOf(byKey[k]))).size} 种不同的外观：`
+        + collideKeys.map((k) => `【${k}】` + faceOf(byKey[k])).join('  vs  ')
+      : '没有共用 class 的 key，这一问今天无载荷')
     + `　← 判据出处 = site.js:290-292（label 是元素的内容，badge 只是 class）与 site.js:293（where 只影响 title）`);
 
   /* ── 乙 三层各自独立的读（不许合并，和不相加）── */
@@ -3186,9 +3238,9 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   D.entries.forEach((e) => { if (e.ruledBy) counted[e.ruledBy] = (counted[e.ruledBy] || 0) + 1; });
   const todayKeys = Object.keys(counted);
   const distinctBadge = Object.keys(byBadge).length;
-  const distinctFace = new Set(ROUTES.map((r) => r.badge + '\u0000' + r.label)).size;
+  const distinctFace = Object.keys(byFace).length;
 
-  info(`㉛ 乙 ①【定义式允许】= ${allowedKeys} 个 key（human／earlier／relayed／coordinator）`
+  info(`㉛ 乙 ①【定义式允许】= ${allowedKeys} 个 key（${ROUTES.map((r) => r.key).join('／')}）`
     + ` ← 读 website/data/decisions.js:64 的 D.ruledByRoutes，${ROUTES.length} 行`);
   info(`㉛ 乙 ②【今天取到】= ${todayKeys.length} 个值`
     + `（${todayKeys.map((k) => k + '×' + counted[k]).join('、')}）`
@@ -3199,14 +3251,14 @@ check('㉚ 乙 ⑤：★ 包装器有自己的分母，且它不被算进调用�
   info(`㉛ 乙 ★★ 这三层之间的差不是减法：① ${allowedKeys} → ② ${todayKeys.length} → ③ ${distinctFace}。`
     + `第 2 个数来自【语料】（今天哪些 key 真出现过），第 3 个数来自【映射表】（哪些 (badge,label) 互不相同）。`
     + `★ 三行不相加。`);
-  info(`㉛ 乙 ★★ 自检（28 号要求：今天有没有两行相等）—— 有：`
+  info(`㉛ 乙 ★★ 自检（今天有没有两行相等）—— 有：`
     + `① ${allowedKeys} 与 ③ ${distinctFace} 相等，而【这不是巧合，是同一件事】：两者读的是同一张表，`
-    + `只要表里每一行的 (badge,label) 互不相同，① = ③ 就恒成立（今天是，所以 4 = 4）。`
+    + `只要表里每一行的 (badge,label) 互不相同，① = ③ 就恒成立（今天是，所以 ${allowedKeys} = ${distinctFace}）。`
     + `　而 ② ${todayKeys.length} 与 ③ ${distinctFace} 【不相等】—— 那才是【语料】与【映射表】的差：`
     + `coordinator 出现一次，② 会跟着语料变成 ${allowedKeys}，③ 仍然 ${distinctFace}（映射表没动）。`);
   info(`㉛ 乙 ★★ 撤回一个我先前的预测：我预告过「② 与 ③ 都是 3、那是巧合」——`
     + `★ 那个相等是【我把「外观」定义成 badge 一个字段】的产物，不是事实。`
-    + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② 3 ≠ ③ 4，那个「巧合」就消失了。`
+    + `把外观改回 site.js:292 真正渲染的 (class ＋ 文字) 之后，② ${todayKeys.length} ≠ ③ ${distinctFace}，那个「巧合」就消失了。`
     + `⇒ 判据：一个预测出来的巧合，先要检查它是【事实】还是【我那个定义】的产物。`);
 }
 
