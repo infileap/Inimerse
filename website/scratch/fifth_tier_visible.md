@@ -65,3 +65,16 @@ TypeError: Cannot read properties of undefined (reading 'ref')
 ## 五、产物留档（两个名字）
 - `website/scratch/fifth_tier_visible.md`（本文件）
 - `website/scratch/fifth_tier_visible_transcript.txt`（三条原始输出的逐字留档）
+
+## 六、★ 并命名第五档的实证（本件自己制造的）
+写这一件时，两个产物名里的第二个 `website/scratch/fifth_tier_visible_transcript.txt`
+**被 .gitignore 吃掉了** —— 实测：
+```
+$ git check-ignore -v website/scratch/fifth_tier_visible_transcript.txt
+.gitignore:9:*.txt	website/scratch/fifth_tier_visible_transcript.txt
+$ git ls-files -- website/scratch/fifth_tier_visible_transcript.txt
+（空）
+```
+⇒ **它在磁盘上、在报告里被指着名字、而【它一根字节都不在任何树上】。**
+⇒ 处置：**同内容另存为 `.md`**（受跟踪）留档 ⇒ 两个名字都留在了树上；`.txt` 那一份**仍然在磁盘上**，**仍不进任何树**。
+⇒ **顺带量到：第五档的成员数是【本件自己增加的】—— 一件关于「什么东西不会被别人看见」的报告，自己又造了一个不会被别人看见的东西。**（同族已裁定并署我名的：「一支仪器自己会进入它自己划的第五档」。）
