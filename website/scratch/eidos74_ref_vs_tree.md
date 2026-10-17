@@ -22,8 +22,35 @@
 { key:'relayed',     badge:'badge--route-relayed' }
 { key:'coordinator', badge:'badge--route-relayed' }
 ```
-⇒ **4 个 key → 3 个徽章。** ★ 如果 `coordinator` 哪天出现，**页面上不会有任何可见变化**。
-⇒ 判据：**一个枚举里两个不同的值映射到同一个外观 ⇒「今天看见 3 种徽章」不是「有 3 条路线」。**
+~~⇒ **4 个 key → 3 个徽章。** ★ 如果 `coordinator` 哪天出现，**页面上不会有任何可见变化**。~~
+~~⇒ 判据：**一个枚举里两个不同的值映射到同一个外观 ⇒「今天看见 3 种徽章」不是「有 3 条路线」。**~~
+
+### ✗ 上面这两行**已经被证伪** —— ★ 不静默改数，原样留着，并把推翻它的那一次测量写在这里
+
+**它原先写的是**（逐字，在本文件的 `fe3ef60` 那一版里）：
+> ⇒ **4 个 key → 3 个徽章。** ★ 如果 `coordinator` 哪天出现，**页面上不会有任何可见变化**。
+> ⇒ 判据：**一个枚举里两个不同的值映射到同一个外观 ⇒「今天看见 3 种徽章」不是「有 3 条路线」。**
+
+**被哪一次测量证伪**：㉛ 甲②（`1399780`）。它量的是 `website/assets/site.js` **实际渲染**的三样，逐字：
+```js
+:290  var label = route ? route.label : '谁裁的：' + e.ruledBy;
+:291  var cls   = route ? route.badge : 'badge--muted';
+:292  var badge = el('span', 'badge ' + cls, label);
+:293  if (route && route.where) badge.title = '出处：' + route.where;
+```
+⇒ **文字的来源是 `label`；`badge` 只是 class。** ⇒ **外观 = (class ＋ 文字 ＋ title) 三样，不是 class 一样。**
+
+**准确的说法**：
+
+- `relayed` 与 `coordinator` 的 **class 逐字相同**（都是 `badge--route-relayed`）—— **这一条仍然为真；上面第 20 行不用改。**
+- 但它们的 **`label` 不同**：「协调者裁定（我转述）」 / 「（协调者裁定）字样本身」。
+- 且 `relayed` 的 `where` 非 null（⇒ 有 `title`），而 `coordinator` 的 `where = null`（⇒ **无** `title`）。
+
+⇒ **如果 `coordinator` 哪天出现，页面上【会】有可见变化：文字变，且那个 title 提示整体消失。**
+★ **所以「今天看见 3 种徽章」这句话本身是错的** —— 今天（`coordinator` 0 行）页面上的外观数是 **4 个 key 各自的 4 种**；按 class 数才是 3。
+
+⇒ 修正后的判据：**一个枚举里两个不同的值映射到同一个【class】⇒「今天看见 N 种 class」不是「有 N 条路线」；而「外观」是三样（class ＋ 文字 ＋ title）—— 判据必须说自己量的是哪一样。**
+★ 这句话的推翻本身是这条记录的一部分：**一个枚举值到「外观」的映射，是一个我上一轮只量了一个字段就宣布的结论。**
 
 ★ 我**没有改**这一列。以上是读数。
 
