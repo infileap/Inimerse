@@ -822,7 +822,7 @@ tools/gate.sh          # 九个阶段，串行；不要并发跑，§2.9 的端�
 
 ### 10.8 门禁 `links` 阶段的封闭性（`gate-hermeticity`）
 
-**缺陷（实测）**：`tools/check_links.py:57-74` 的 `iter_markdown_files()` 用 `os.walk(REPO_ROOT)` 遍历**工作区**，只靠 `SKIP_DIRS`/`SKIP_PREFIXES` 黑名单挡杂物。另一个会话在仓库根留下的暂存目录 `.verify/`（未跟踪）里有一份引用 GitHub 社区健康文件（`SECURITY.md`/`GOVERNANCE.md`/`MAINTAINERS.md`）的 README，于是本仓库的门禁被判红：
+**缺陷（实测，修复前）**：`tools/check_links.py:57-74` 的 `iter_markdown_files()` **当时**用 `os.walk(REPO_ROOT)` 遍历**工作区**，只靠 `SKIP_DIRS`/`SKIP_PREFIXES` 黑名单挡杂物。另一个会话在仓库根留下的暂存目录 `.verify/`（未跟踪）里有一份引用 GitHub 社区健康文件（`SECURITY.md`/`GOVERNANCE.md`/`MAINTAINERS.md`）的 README，于是本仓库的门禁被判红：
 
 | 树 | 检查器 | `git ls-files '*.md' '*.markdown'` |
 | --- | --- | --- |
