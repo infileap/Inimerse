@@ -20,18 +20,43 @@ Three answers, and the middle one is the point:
   restates        this site says the same quantity again, somewhere else.  The
                   tree computes it, so one addition moves the truth and leaves
                   this copy behind -- and nothing compares the copy to the
-                  truth.  `agree` vs `stale` says whether it has happened yet.
+                  truth.  `agrees-with-tree` vs `disagrees-with-tree` says
+                  whether it has happened yet.
   no-counterpart  the tree does not compute this quantity at all.  It cannot
-                  go stale because nothing moves it, and it cannot be caught
+                  go obsolete because nothing moves it, and it cannot be caught
                   being wrong because nothing knows the answer.  This is the
                   same silence by a different route, so it is counted.
 
 A rewrite of a number that no one can contradict is not a smaller version of
 this problem; it is the same problem with the alarm disconnected.
 
-Exit codes follow the sibling instruments: 0 = measured, 1 = measured and the
-tree has a stale count, 2 = the census could not measure (a denominator of zero
-is a failure to read, never a clean tree).
+## The disagreeing count is two columns, and the label was the defect
+
+A `disagrees-with-tree` site inside an append-only ledger is not wrong.  It was
+true when it was written, and that file has never claimed anything else, so it
+does not go obsolete -- it *records*.  The same number anywhere else is a claim
+about now, and only a claim can be wrong.  **Tense is not in the text**, so the
+split cannot be read off the sites: it rests on the declared `RECORD_FILES`
+list, which is printed verbatim on every run with the reason each entry is on
+it, and an entry that excuses nothing is itself reported.
+
+## Exit codes
+
+0 = measured, 1 = measured and a **claim** disagrees with the tree, 2 = the
+census could not measure (a denominator of zero is a failure to read, never a
+clean tree).  A ledger record that disagrees does not by itself make the run
+red: putting history into the failure column is the same mistake the label
+made, one layer down.
+
+`--gate-columns` runs only the two columns that stay measurements under every
+reading -- the askers column and the NOT-counted column -- and is meant to be
+the only form a gate stage ever invokes:
+
+  0   both columns are empty: every quantity in the table has something that
+      reads it, and no same-shaped claim sits on a line that never names its
+      authority
+  1   either column is non-empty (the counts are printed)
+  2   the search space is empty, so neither column was measured at all
 
 --self-test builds a throwaway repository and asserts each of the three answers
 by name, so that a green run says which classes of site it found rather than
@@ -41,6 +66,7 @@ merely that it found none.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import subprocess
@@ -225,7 +251,7 @@ def quantities(root):
     return qs
 
 
-def scan(root):
+def scan(root, gate_columns=False):
     """Return (rc, lines, findings) for one root."""
     lines: list[str] = []
     files = _ls_files(root)
@@ -291,18 +317,138 @@ def scan(root):
                         elif val == q.truth:
                             klass = "restates-agree"
                         else:
-                            klass = "restates-stale"
+                            klass = "disagrees-with-tree"
                         findings.append({
                             "file": rel, "line": n, "quantity": q.name,
                             "claimed": val, "truth": q.truth, "class": klass,
                             "text": line.strip()[:110],
                         })
 
+    if gate_columns:
+        # ★ The only form a gate stage may invoke.  Under every reading of what
+        # this tool measures, exactly two columns are measurements of the tree
+        # rather than readings of tense: how many quantities in the table have
+        # nothing that reads them, and how many same-shaped claims sit on a line
+        # that never names the authority they are about.  The
+        # `disagrees-with-tree` split is excluded on purpose -- it rests on a
+        # declared list, and a gate stage built on a declaration goes red or
+        # green depending on who edits the declaration.
+        _unasked = [q.name for q in qs if not q.askers]
+        lines.append(
+            f"static_counts_census: --gate-columns over {len(denom)} tracked "
+            f".sh/.md/.py/.yml/.yaml file(s) (of {len(files)} tracked file(s)).  "
+            f"Only two columns are printed here, and both of them are "
+            f"measurements under every reading of this tool:"
+        )
+        lines.append(
+            f"static_counts_census: <asked> -- quantity(ies) in the table that "
+            f"nothing in this tree reads: {len(_unasked)}"
+            + (f" ({', '.join(_unasked)})" if _unasked else "")
+        )
+        lines.append(
+            f"static_counts_census: <not-counted> -- same-shaped claim(s) on a "
+            f"line that never names the authority they are about: {unanchored}"
+        )
+        lines.append(
+            "static_counts_census: exit 0 requires BOTH columns empty, and they "
+            "are reported separately so that one empty column can never be read "
+            "as a measured tree"
+        )
+        if not denom:
+            lines.append(
+                "static_counts_census: the search space is empty, so neither "
+                "column was measured and rc is 2 -- an empty denominator is not "
+                "a clean one"
+            )
+            return 2, lines, findings
+        return (1 if (_unasked or unanchored) else 0), lines, findings
+
+    # ★ The label was wrong; the number was not.  A count written into an
+    # append-only ledger was true when it was written and that file has never
+    # claimed anything else, so it does not go stale -- it *records*.  A count
+    # anywhere else is a claim about now, and only a claim can disagree with the
+    # tree.  Tense is not in the text: this split cannot be read off the sites
+    # themselves, so it rests on the declared list below, printed verbatim on
+    # every run, and every entry has to carry the reason it is on it.
+    # Following the rule `tools/check_orphan_targets.py` already applies to its
+    # own ALLOWED table, an entry that excuses nothing is itself reported.
+    RECORD_FILES: list[tuple[str, str]] = [
+        ("docs/AUDIT.md",
+         "append-only receipt ledger -- entries are appended and dated, and each "
+         "says what a run observed at that moment, so its numbers record a "
+         "measurement rather than claim anything about the tree as it is now"),
+        ("docs/STATUS.md",
+         "status log appended in place -- a later entry is added rather than an "
+         "earlier one edited, so each count is a snapshot of its own moment"),
+        ("docs/BOARD.md",
+         "board of record -- a row is closed with the numbers it was closed "
+         "with, and a closed row is history rather than a live assertion"),
+        ("docs/DECFY_DESIGN.md",
+         "design history -- it narrates choices at the time they were taken, so "
+         "its counts date from that decision and not from today"),
+    ]
+
+    def _record_reason(rel: str) -> str | None:
+        for _path, _why in RECORD_FILES:
+            if rel == _path:
+                return _why
+        return None
+
+    records = [f for f in findings if _record_reason(f["file"]) is not None]
+
+    # ★ A third kind, found by pointing this tool at its own source.  The
+    # literals inside a control's fixture are not claims about this tree and not
+    # records of it: they exist in order to be wrong, and the control asserts
+    # that they come back classified `disagrees-with-tree`.  Counting them as
+    # claims would put a control's own input into the failure column.
+    #
+    # ★★ They are declared BY REGION, not by file, and that is the whole point.
+    # Declaring the file would excuse every real claim written in it -- which is
+    # the same mistake as an exemption that also removes its object from the
+    # denominator, one size up.  So the declaration names a FUNCTION, the span
+    # is resolved from the tree with `ast`, and the resolved span is printed on
+    # every run.  A declaration that resolves to no site is reported exactly
+    # like an ALLOWED entry that excuses no orphan.
+    FIXTURE_REGIONS: list[tuple[str, str, str]] = [
+        ("tools/static_counts_census.py", "self_test",
+         "the body of --self-test writes `The tools/gate.sh table has 2 stages "
+         "and EXP_CTEST is 7 tests.` into a throwaway repository as the INPUT of "
+         "a control; that number is deliberately wrong, and the test asserts "
+         "that the census classes it `disagrees-with-tree`"),
+    ]
+
+    def _func_spans(path: str, func: str) -> list[tuple[int, int]]:
+        """Resolve a declared region from the tree; [] when it does not exist."""
+        try:
+            with open(path, encoding="utf-8") as _fh:
+                _tree = ast.parse(_fh.read())
+        except (OSError, SyntaxError):
+            return []
+        return [(node.lineno, getattr(node, "end_lineno", node.lineno))
+                for node in ast.walk(_tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == func]
+
+    def _fixture_region(rel: str, line_no: int) -> str | None:
+        for _path, _func, _why in FIXTURE_REGIONS:
+            if rel != _path:
+                continue
+            for _start, _end in _func_spans(os.path.join(root, _path), _func):
+                if _start <= line_no <= _end:
+                    return _why
+        return None
+
+    fixtures = [f for f in findings
+                if _fixture_region(f["file"], f["line"]) is not None]
+    claims = [f for f in findings
+              if _record_reason(f["file"]) is None
+              and _fixture_region(f["file"], f["line"]) is None]
+
     by_class: dict[str, int] = {}
     for f in findings:
         by_class[f["class"]] = by_class.get(f["class"], 0) + 1
-    computed = sum(v for k, v in by_class.items() if k.startswith("restates")
-                   or k == "is-pin")
+    computed = sum(v for k, v in by_class.items()
+                   if k in ("disagrees-with-tree", "restates-agree", "is-pin"))
     lines.append(
         f"static_counts_census: {len(findings)} site(s) that write down a "
         f"quantity, in {len({f['file'] for f in findings})} file(s), over a "
@@ -315,7 +461,7 @@ def scan(root):
         f"static_counts_census: {computed} of them restate a quantity this tree "
         f"actually computes, so one addition to that quantity moves the truth "
         f"under them: {by_class.get('is-pin', 0)} are the tree's own copy and a "
-        f"stage compares them, {by_class.get('restates-stale', 0)} already "
+        f"stage compares them, {by_class.get('disagrees-with-tree', 0)} already "
         f"disagree with it, {by_class.get('restates-agree', 0)} agree with it "
         f"today and are compared by nothing.  {by_class.get('no-counterpart', 0)} "
         f"write down a quantity the tree never computes at all, so they can "
@@ -329,6 +475,59 @@ def scan(root):
         f"which is a count of instruments that do not exist and not a count of "
         f"mistakes"
     )
+    # ★ The two columns, side by side, never merged.  Merging them was the first
+    # draft and it printed `314 counts disagree with the tree` -- a sentence
+    # about the tree, while 272 of those are sentences about other moments.
+    lines.append(
+        f"static_counts_census: the {by_class.get('disagrees-with-tree', 0)} "
+        f"disagreeing count(s) split in three and every part is printed: "
+        f"{len(records)} sit in a declared append-only ledger, where a number "
+        f"does not go stale -- it records; {len(fixtures)} sit inside a declared "
+        f"control's fixture, where a wrong number is the input rather than a "
+        f"defect; {len(claims)} sit anywhere else, where the same number is a "
+        f"claim about now and can be wrong.  They are not added together "
+        f"anywhere in this report"
+    )
+    lines.append(
+        "static_counts_census: declared ledger file(s) -- tense is not in the "
+        "text, so this split rests on a declared list and not on a reading.  "
+        "Every entry is printed with the reason it is on the list, and an entry "
+        "that excuses nothing is itself reported:"
+    )
+    for _path, _why in RECORD_FILES:
+        _n = sum(1 for _f in records if _f["file"] == _path)
+        lines.append(f"    ledger  {_path}  ({_n} site(s)) -- {_why}")
+        if _n == 0:
+            lines.append(
+                f"    ledger  {_path}  EXCUSES NOTHING -- no site in this run "
+                f"falls in it.  It is reported here for the same reason an "
+                f"ALLOWED entry that excuses no orphan is reported: a declared "
+                f"exemption that exempts nothing is a sentence, and a reader "
+                f"cannot tell it apart from one that is doing work"
+            )
+    lines.append(
+        "static_counts_census: declared fixture region(s) -- declared by "
+        "function and resolved from the tree, never by whole file, because a "
+        "file-level exemption would excuse every real claim written beside the "
+        "fixture:"
+    )
+    for _path, _func, _why in FIXTURE_REGIONS:
+        _here = [f for f in fixtures if f["file"] == _path]
+        _spans = _func_spans(os.path.join(root, _path), _func)
+        _where = (f"lines {_spans[0][0]}-{_spans[0][1]}" if _spans
+                  else "NOT RESOLVED")
+        lines.append(
+            f"    fixture  {_path}:{_func}  ({len(_here)} site(s) in this run, "
+            f"region {_where}) -- {_why}"
+        )
+        if not _spans or not _here:
+            lines.append(
+                f"    fixture  {_path}:{_func}  EXCUSES NOTHING -- the declared "
+                f"region either could not be resolved from the tree or holds no "
+                f"site in this run, so it is changing a number on paper only.  "
+                f"Reported for the same reason an ALLOWED entry that excuses no "
+                f"orphan is reported"
+            )
     # `nothing` is an answer, and it has to be printed as a named one.  A column
     # reading `2 asked / 6 not asked` is a sentence with no object: the reader
     # cannot tell a quantity guarded by a stage from one nobody has ever
@@ -361,15 +560,22 @@ def scan(root):
         f"count, arriving by the other door"
     )
     for f in findings:
-        if f["class"] in ("restates-stale", "no-counterpart"):
+        if f["class"] in ("disagrees-with-tree", "no-counterpart"):
             lines.append(
                 f"  {f['file']}:{f['line']}: {f['quantity']} = "
                 f"{f['claimed']} ({f['class']}"
                 + (f", tree says {f['truth']}" if f["truth"] is not None else "")
                 + f") -- {f['text']}"
             )
-    stale = by_class.get("restates-stale", 0)
-    return (1 if stale else 0), lines, findings
+
+    # ★ The exit code is driven by the claims column and not by the merged one.
+    # A ledger entry that disagrees with today's tree is not a defect: it was
+    # true when written and the file never claimed otherwise.  Making rc follow
+    # the merged number would put history in the failure column, which is the
+    # same mistake the label made, one layer down.
+    _disagreeing_claims = sum(
+        1 for _f in claims if _f["class"] == "disagrees-with-tree")
+    return (1 if _disagreeing_claims else 0), lines, findings
 
 
 def self_test() -> int:
@@ -410,14 +616,14 @@ def self_test() -> int:
          "classified restates-agree, so `agree` is not measured")
     want(all(f["claimed"] in (2, 7) for f in classes.get("restates-agree", [])),
          "a restates-agree site does not carry the number it restated")
-    want(len(classes.get("restates-stale", [])) == 1
-         and classes["restates-stale"][0]["claimed"] == 3,
-         "the site claiming three stages was not classified restates-stale, so "
+    want(len(classes.get("disagrees-with-tree", [])) == 1
+         and classes["disagrees-with-tree"][0]["claimed"] == 3,
+         "the site claiming three stages was not classified disagrees-with-tree, so "
          "the only class that can redden the tree is not measured")
     # ★ The anchor is not decoration, and this is the control that says so: a
     # claim of exactly the shape this census hunts, on a line that never names
     # the authority it is about.  It must NOT appear in `findings`.  Drop the
-    # anchor and this line becomes a third `restates-stale`, which is exactly
+    # anchor and this line becomes a third `disagrees-with-tree`, which is exactly
     # how a word-frequency count reads it.  A control that should have been
     # caught and was not is worth more than one that was.
     want(not any(f["file"] == "docs/one.md" and f["line"] == 3
@@ -476,6 +682,20 @@ def self_test() -> int:
          "the empty denominator was not named, so rc=2 arrives without the "
          "reader being able to tell it from a crash")
 
+    # ★ The declared-lists rule needs a control of its own, or a declaration is
+    # a sentence: an entry that excuses nothing must be REPORTED.  In the
+    # throwaway repository none of the declared ledger files exists and no
+    # declared fixture region holds a site, so every entry has to come back
+    # EXCUSES NOTHING -- and the number of those lines is asserted, not the bare
+    # fact that one of them exists somewhere.
+    _excuses = [ln for ln in lines if "EXCUSES NOTHING" in ln]
+    want(len(_excuses) == 5,
+         f"in a repository holding none of the declared ledger files and none "
+         f"of the declared fixture sites, {len(_excuses)} EXCUSES NOTHING "
+         f"line(s) were printed, not 5; a declared entry that exempts nothing "
+         f"and is not reported leaves the declaration changing the answer on "
+         f"paper only")
+
     print("static_counts_census: self-test ok -- the two agreeing sites are "
           "counted, the stale one is counted AND reddens the run, and deleting "
           "the tree's own copy of the quantity moves every site to "
@@ -487,6 +707,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=REPO_ROOT)
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument(
+        "--gate-columns", action="store_true",
+        help="print only the two columns that are measurements under every "
+             "reading (asked / not-counted); exit 0 requires both empty, 1 if "
+             "either is non-empty, 2 if the search space was empty")
     args = ap.parse_args()
     if args.self_test:
         return self_test()
@@ -496,7 +721,7 @@ def main() -> int:
               f"unmeasurable root is not an empty one", file=sys.stderr)
         return 2
     try:
-        rc, lines, _ = scan(root)
+        rc, lines, _ = scan(root, gate_columns=args.gate_columns)
     except Exception as exc:  # noqa: BLE001 -- the contract is 2, not a traceback
         print(f"static_counts_census: could not measure {root}: "
               f"{type(exc).__name__}: {exc}", file=sys.stderr)
