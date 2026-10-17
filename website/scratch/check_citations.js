@@ -2395,6 +2395,165 @@ check('㉘ ①：★ B 的新名字有它的 11 条逐条背书（每条引的�
   T28_RENAME.withTwo === T28_RENAME.c && T28_RENAME.c > 0,
   `测②真的 = ${T28_RENAME.withTwo} / ${T28_RENAME.c}　★ 旧名「方向相反」的条数是 ${T28_RENAME.a}（只有这么多条真的是方向相反）`);
 
+
+/* ══════════════════════ ㉙ 哪些对照才算隔离 ══════════════════════
+ * ★ 判据见 website/scratch/registration_rule.md 的「㉙」一节（那一笔先落盘、零读数）。
+ * ★ 本块的每一个数都在 HEAD 上读；`8736eb3` 是【本分支的分支点】。
+ * ═════════════════════════════════════════════════════════════════ */
+
+/* ---- 甲：每个有定位器的字段，它的定位器有几个调用点 ---- */
+const T29_BY_FIELD = (() => {
+  const m = {};
+  T28_SITE_OK.forEach((s) => { (m[s.name] = m[s.name] || []).push(s); });
+  return Object.keys(m).sort().map((name) => {
+    const raw = m[name].length;
+    const dedup = new Set(m[name].map((s) => `${s.fn}@arg${s.pos}`)).size;
+    const grade = raw === 1 ? '唯一' : (dedup === 1 ? '多个·去重后只有一个' : '多个·去重后仍多个');
+    return { name, raw, dedup, grade,
+      sites: m[name].map((s) => `${s.fn}(:${s.n},arg${s.pos})`).join(' ') };
+  });
+})();
+const T29_TALLY = { '唯一': [], '多个·去重后只有一个': [], '多个·去重后仍多个': [] };
+T29_BY_FIELD.forEach((r) => T29_TALLY[r.grade].push(r.name));
+
+info(`㉙ 甲 · 分母 = \`decisions.js\` 里【有定位器的 leaf 字段名】= ${T29_BY_FIELD.length} 个` +
+  `（★ 枚举方式 = 与 ㉘ 同一套 walk，运行时遍历，我不手写清单；` +
+  `★ 而 ㉘ 的全体是 ${T28_NAMES.length} 个 —— **两个分母不是同一个数换了个名字**：` +
+  `差的那 ${T28_NAMES.length - T29_BY_FIELD.length} 个是「一个定位器都没有」的名字。）`);
+info(`㉙ 甲 · 三档：唯一 = ${T29_TALLY['唯一'].length} ／ 多个·去重后只有一个 = ${T29_TALLY['多个·去重后只有一个'].length} ／ 多个·去重后仍多个 = ${T29_TALLY['多个·去重后仍多个'].length}`);
+check('㉙ 甲：三档之和 = 分母（真划分：一个字段只落进一档）',
+  Object.values(T29_TALLY).reduce((a, b) => a + b.length, 0) === T29_BY_FIELD.length,
+  `${Object.values(T29_TALLY).map((v) => v.length).join(' + ')} = ${T29_BY_FIELD.length} / 分母 ${T29_BY_FIELD.length}`);
+info('㉙ 甲 · 逐字段（去重前 / 去重后 两个数都印）：');
+T29_BY_FIELD.forEach((r) => info(
+  `　　${r.name.padEnd(18)} 去重前 = ${String(r.raw).padStart(2)}　去重后 = ${String(r.dedup).padStart(2)}　${r.grade}` +
+  `　★ ${r.sites}`));
+
+/* ---- 甲 · 第二问：本分支的对照，有几条打在一个「唯一」的字段上 ---- */
+/* ★ 分母 = 我在这条线上记下的负向对照（★ 这个分母是【我定的】，不是语料定的）。 */
+const T29_CTRLS = [
+  { id: '㉒② ', where: 'docs/AUDIT.md:9134（悬空提交，空行 → 临时节标题）', kind: 'doc-line' },
+  { id: '㉓④ ', where: 'docs/AUDIT.md:6176（悬空提交，空行 → 临时节标题）', kind: 'doc-line' },
+  { id: '㉔④ ', where: 'docs/AUDIT.md:6176（悬空 614cf99，同一行）', kind: 'doc-line' },
+  { id: '㉖一 ', where: 'decisions.js 的 V06-13.status（ruled → proposal）', kind: 'field', field: 'status' },
+  { id: '㉖二 ', where: '删 EIDOS-7.4 的 ruledIn 整块', kind: 'field', field: 'ruledIn' },
+  { id: '㉗一 ', where: '去掉 EIDOS-1.5 的 ruledBy', kind: 'field', field: 'ruledBy' },
+  { id: '㉗二 ', where: 'decisions.js 的 V06-13.status', kind: 'field', field: 'status' },
+  { id: '㉘一 ', where: 'check_citations.js:1700（删那一行的 sectionExists 调用）', kind: 'js-line', line: 1700 },
+  { id: '㉘二 ', where: 'check_citations.js:108（实参过一手变量）', kind: 'js-line', line: 108 },
+  { id: '㉘三 ', where: 'check_citations.js:108 与 :1700（都过一手变量）', kind: 'js-line', line: 108 },
+  { id: '㉘乙 ', where: 'PROBE-3（只在内存里造，不落盘）', kind: 'memory' },
+];
+const T29_MAP = T29_CTRLS.map((c) => {
+  if (c.kind === 'js-line') {
+    const hit = T28_SITES.filter((s) => s.n === c.line);
+    const names = Array.from(new Set(hit.map((s) => s.name).filter(Boolean)));
+    if (hit.length === 0) return { ...c, fields: [], why: `那一行不是本文件里的一个定位器调用点` };
+    return { ...c, fields: names, why: names.length ? `那一行是这些字段的定位器调用点` : `那一行是定位器调用点，但认不出字段名` };
+  }
+  if (c.kind === 'field') {
+    const known = T28_NAMES.indexOf(c.field) !== -1;
+    return { ...c, fields: known ? [c.field] : [], why: known ? `是 leaf 字段名` : `★ 不是 leaf 字段名（` + c.field + ` 是对象名，它的 leaf 是别的）` };
+  }
+  return { ...c, fields: [], why: c.kind === 'doc-line' ? `目标是 docs 的一行（协调者写域）` : `目标是内存里的合成对象` };
+});
+const T29_ONLY = T29_MAP.filter((c) => c.fields.some((f) => T29_TALLY['唯一'].indexOf(f) !== -1));
+info(`㉙ 甲 · ★★ 本件要回答的第二句：本分支的对照 = ${T29_MAP.length} 条（★ **这个分母是我定的**：我在这一条线上记下的负向对照）；` +
+  `其中打在【唯一】字段上的 = ${T29_ONLY.length} 条` +
+  (T29_ONLY.length ? `　逐条：${T29_ONLY.map((c) => c.id).join(' ')}` : ''));
+info('㉙ 甲 · 逐条对照 → 它打在哪个字段上：');
+T29_MAP.forEach((c) => info(
+  `　　${c.id} 字段 = [${c.fields.join(',') || '（无）'}]　${c.where}　★ ${c.why}`));
+check('㉙ 甲：每一条对照都给出「它打在哪个字段上」或「它不映射到任何字段」，不留空白',
+  T29_MAP.every((c) => Array.isArray(c.fields) && c.why),
+  `${T29_MAP.length} 条，其中映射到字段的 ${T29_MAP.filter((c) => c.fields.length).length} 条`);
+
+/* ---- 乙：「判据与读数同笔」变成一个数（从提交图上判） ---- */
+const T29_BASE = '8736eb3';
+const T29_COMMITS = (() => {
+  const shas = execFileSync('git', ['rev-list', '--reverse', `${T29_BASE}..HEAD`],
+    { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 }).trim().split('\n').filter(Boolean);
+  return shas.map((sha) => {
+    /* ★ 参数的次序在这里是载荷：`--` 之前是修订、之后是路径。
+     * 写反了（`-- <path> <sha>`）git 不报错，它把那个 sha 当成一个匹配不到任何文件的路径，
+     * 于是**每一次都读 HEAD** —— 24 笔全部收敛成同一份 diff，而输出看上去完全正常。
+     * 本件第一版就是这么错的（全 24 笔 R=74、P=0、档 A），下面那条「不同 R 值的个数 > 1」是它的探针。 */
+    const diffFor = (q) => execFileSync('git', ['show', '--no-renames', '--format=', sha, '--', q],
+      { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 });
+    const plusOf = (txt) => txt.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
+    const rulePlus = plusOf(diffFor('website/scratch/registration_rule.md'));
+    const codePlus = plusOf(diffFor('website/scratch/*.js'));
+    const R = rulePlus.filter((l) => l.slice(1).trim().length > 0).length;
+    const P = codePlus.filter((l) => /check\(|info\(/.test(l)).length;
+    return { sha, subj: execFileSync('git', ['show', '-s', '--format=%s', sha],
+      { cwd: ROOT, encoding: 'utf8' }).trim(), R, P,
+      hasR: R >= 1, hasP: P >= 1 };
+  });
+})();
+const t29Grade = (c) => (c.hasR && !c.hasP) ? 'A 判据先行'
+  : (c.hasR && c.hasP) ? 'B 判据与读数同笔'
+  : (!c.hasR && c.hasP) ? 'C 只有打印、判据不在这一笔里'
+  : 'D 判不了';
+T29_COMMITS.forEach((c) => { c.g = t29Grade(c); });
+const T29_T = { 'A 判据先行': [], 'B 判据与读数同笔': [], 'C 只有打印、判据不在这一笔里': [], 'D 判不了': [] };
+T29_COMMITS.forEach((c) => T29_T[c.g].push(c));
+/* ★ A 档的每一条，报下游那一笔（第一笔 P 为真的后裔）+ 祖先判定 */
+T29_T['A 判据先行'].forEach((c) => {
+  const i = T29_COMMITS.indexOf(c);
+  const down = T29_COMMITS.slice(i + 1).filter((x) => x.hasP)[0] || null;
+  let rc = null;
+  if (down) {
+    try { execFileSync('git', ['merge-base', '--is-ancestor', c.sha, down.sha], { cwd: ROOT }); rc = 0; }
+    catch (e) { rc = e.status; }
+  }
+  c.down = down; c.rc = rc;
+});
+info(`㉙ 乙 · 分母（★ 由 base 的 sha 定，不由「本分支」这个词定）= \`${T29_BASE}..HEAD\` 的提交数 = ${T29_COMMITS.length}`);
+info(`㉙ 乙 · 四档：A 判据先行 = ${T29_T['A 判据先行'].length} ／ B 判据与读数同笔 = ${T29_T['B 判据与读数同笔'].length} ／ ` +
+  `C 只有打印、判据不在这一笔里 = ${T29_T['C 只有打印、判据不在这一笔里'].length} ／ D 判不了 = ${T29_T['D 判不了'].length}`);
+check('㉙ 乙：四档之和 = 分母（★ 不是两档 —— 「和 = 22」只有在每一笔都住进那两档时才成立）',
+  Object.values(T29_T).reduce((a, b) => a + b.length, 0) === T29_COMMITS.length,
+  `${Object.values(T29_T).map((v) => v.length).join(' + ')} = ${T29_COMMITS.length}`);
+info('㉙ 乙 · 逐笔：');
+T29_COMMITS.forEach((c) => info(
+  `　　${c.sha.slice(0, 7)}　R = ${String(c.R).padStart(3)}　P = ${String(c.P).padStart(3)}　${c.g}` +
+  (c.g === 'A 判据先行'
+    ? `　⇒ 下游 ` + (c.down ? `${c.down.sha.slice(0, 7)}（is-ancestor rc=${c.rc}）` : '（下游没有打印笔）')
+    : '')));
+const T29_COUNTS = ['8736eb3', 'c195b4a', 'aca7efc'].map((b) => ({
+  base: b,
+  n: execFileSync('git', ['rev-list', '--count', `${b}..HEAD`], { cwd: ROOT, encoding: 'utf8' }).trim(),
+}));
+info(`㉙ 乙 · ★★ 「本分支有几笔」不是一个读数 —— 它是**分支点这个约定**的函数。三个 base 各一个数（★ 逐个数都印，不挑一个）：` +
+  T29_COUNTS.map((x) => `\`${x.base}..HEAD\` = ${x.n}`).join('　') +
+  `　⇒ ★ 协调者说的 22 对应的是 \`aca7efc\` 那个分支点（把开头两笔排除在外）；我从 \`8736eb3\` 数出来的是 ${T29_COMMITS.length}。` +
+  `**两个数没有谁对谁错，它们量的是两件事。**`);
+/* ★ 探针：上面那个次序缺陷（\`-- <path> <sha>\` ⇒ 每一次都读 HEAD）会让 24 笔的 R 全部相等。
+ * 这不靠眼睛看那一列，靠这一条断言。 */
+check('㉙ 乙：逐笔读数真的逐笔（★ 24 笔的 R 值不全相等 —— 这是「读错了树」的探针）',
+  new Set(T29_COMMITS.map((c) => c.R)).size > 1 && T29_COMMITS.some((c) => c.P > 0),
+  `不同的 R 值个数 = ${new Set(T29_COMMITS.map((c) => c.R)).size}　P > 0 的笔数 = ${T29_COMMITS.filter((c) => c.P > 0).length}`);
+check('㉙ 乙：A 档的每一笔都有下游打印笔，且 \`git merge-base --is-ancestor\` rc = 0',
+  T29_T['A 判据先行'].every((c) => c.down && c.rc === 0),
+  T29_T['A 判据先行'].map((c) => `${c.sha.slice(0, 7)}→${c.down ? c.down.sha.slice(0, 7) + '(rc=' + c.rc + ')' : '（无下游）'}`).join(' ') || '（A 档为空）');
+
+/* ---- 预言对账 ---- */
+const T29_P = {
+  1: T29_BY_FIELD.length < T28_NAMES.length,
+  2: T29_TALLY['唯一'].length >= 1,
+  3: T29_MAP.filter((c) => c.fields.length === 0).length > T29_MAP.length / 2,
+  4: T29_COMMITS.length !== 22,
+  5: T29_T['C 只有打印、判据不在这一笔里'].length > 0,
+  6: T29_T['D 判不了'].length === 0,
+};
+info(`㉙ · ★ 六条预言对账（半盲，写在判据那一笔里）：` +
+  `1 分母 < 全体 = ${T29_P[1] ? '成立' : '★ 不成立'}；` +
+  `2 唯一 ≥ 1 = ${T29_P[2] ? '成立' : '★ 不成立'}；` +
+  `3 无映射占多数 = ${T29_P[3] ? '成立' : '★ 不成立'}；` +
+  `4 和 ≠ 22 = ${T29_P[4] ? '成立' : '★ 不成立'}；` +
+  `5 C 档非空 = ${T29_P[5] ? '成立' : '★ 不成立'}；` +
+  `6 D 档 = 0 = ${T29_P[6] ? '成立' : '★ 不成立（实际 ' + T29_T['D 判不了'].length + '）'}。`);
+
 }
 
 /* ---------------- ⑪ 谁裁的：按【整份文件】扫，不按某一行扫 ----------------
