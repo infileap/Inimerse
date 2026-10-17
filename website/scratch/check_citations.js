@@ -470,7 +470,7 @@ const unnamedPrinted = [];
 unnamed.forEach((x) => unnamedPrinted.push(`   · ${x.file} §${x.id}  「${x.heading.slice(0, 52)}」`));
 
 info(`★ 一条裁定的射程：概念筛 **${concept.length}** 节（在 ${new Set(concept.map((x) => x.file)).size} 份文档里）／能叫出名字 **${named.length}** 节／差 **${unnamed.length}** 节`);
-info(`★ 其中落在规范页清单之外的：**${outsideConcept.length}** 节，分布在 **${new Set(outsideConcept.map((x) => x.file)).size}** 份文档里 ⇒ 「清单里有 ${specFiles.size} 份」是一个【射程声明】，不是一个【覆盖率】`);
+info(`★ 其中落在手抄对照清单之外的：**${outsideConcept.length}** 节，分布在 **${new Set(outsideConcept.map((x) => x.file)).size}** 份文档里 ⇒ 「清单里有 ${specFiles.size} 份」是一个【射程声明】，不是一个【覆盖率】`);
 info(`★ 概念筛逐字：标题不含「需要…裁定/待裁/未定」，且（正文含 /已裁|已决定|（…裁定/ 或 标题含 /裁定/）`);
 const deadSpellings = SPELLINGS.filter((sp) => !allSecs.some((x) => sp.re.test(x.body) || sp.re.test(x.heading)));
 info(`★ 写法清单 ${SPELLINGS.length} 条：${SPELLINGS.map((x) => x.name).join(' ')}${deadSpellings.length ? ` —— ★ 其中**一次都没命中**的：${deadSpellings.map((x) => x.name).join(' ')}（我认得它，而它今天不存在：这是一个零，要归因）` : ''}`);
