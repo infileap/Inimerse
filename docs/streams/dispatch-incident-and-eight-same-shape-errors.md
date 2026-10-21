@@ -172,3 +172,27 @@ $ git -C /home/sakiko/inimerse status --porcelain | wc -l
 1. 凡 `find`／`grep`／`rev-parse` 这类可能返回哨兵值的调用，**使用前把哨兵单独判一次并打印**；
 2. 结论里的每个数字，**必须能指到一条产出它的命令**，不许出现在 `echo` 的字面量里；
 3. 关键结论**至少两个独立来源**：`vivid-anchor` 这件事我核了四层（handle 账本 → 投影标题 → 会话目录 → 交接包多写法搜索）才敢下结论，单看任何一层都会引向错误答案。
+
+## 11. 第 9 例（`amber-badger` 自报，2026-10-21）：`git checkout -- <file>` 的右端是 HEAD，不是 `origin/main`
+
+**这一例不是我的观测，是 `amber-badger` 会话自己报上来的**，我复核后收进来。文件名里的 `eight` **不改** —— 改动只追加；改标题等于把已经引用过这个路径的地方全部弄失效，而那个代价比标题里少一个数更大。下面这篇的正文其实早就数不到 8（§9 说「追加两个」、§10 说「这七例」、标题说 eight），本节的编号按**实际顺序**取 9。
+
+**发生了什么。** 我建议它「把自己的改动还原，腾出主工作区」。它执行了 `git checkout -- CMakeLists.txt tools/gate.sh tools/check_frozen_identity.py tools/check_frozen_identity.test.py`。**它的 HEAD 当时落后 `origin/main` 7 个提交**，于是这几条命令把文件还原成了**旧版**，而不是主干版：
+
+```
+还原前  tools/check_frozen_identity.py       4fb467d8   （= origin/main ✓）
+还原后  tools/check_frozen_identity.py       278206c6   ← 退回到它自己 dbb3428 的 3 格旧版
+同样    tools/check_frozen_identity.test.py  9ba28e68 → a17fac44
+```
+
+**它没有丢任何东西**（新版一直在 `origin/main` 里），随后 `git merge --ff-only origin/main` 修正，五件逐字节等于远端、`porcelain=0`。
+
+**形状。** 与前八例同形，而且是同一族里最隐蔽的一支：**`git checkout -- <path>` 里的 `<path>` 不是「文件的内容」，是「索引里的那份内容」**；不带起点时，起点是 **HEAD** —— 不是 `origin/main`，也不是「我刚才看到的那份」。我给它的措辞「把改动还原」在**落后**的树上方向上正好相反：我想要的是「取主干那份」，它执行出来的是「取我脚下这份」。
+
+**护栏（增补一条，与 §10 的三条并列）。**
+
+4. 凡「把 X 变成 Y 的样子」的 git 命令，**必须把 Y 写成显式 ref**（`git checkout origin/main -- <paths>`、`git restore --source=origin/main -- <paths>`），**不能写成不带起点的 `--` 形式**；并且执行前先 `git rev-list --count HEAD..origin/main`，**非 0 时先 ff、再谈还原**。
+
+**为什么它值一条。** 前八例里没有一条是「命令做对了它被要求做的事，而那个要求本身是错的」。这一例是：**我的意图对、措辞错**，而措辞恰好落在一条会把工作区推向旧版的命令上。⇒ 协调者给别的会话下命令时，「还原」「同步」「对齐」这类**有方向**的动词，必须连着 ref 一起说；只要 ref 不在句子里，对方就只能猜起点，而猜出来的起点是 HEAD。
+
+**诚实边界。** 本节全部事实来自 `amber-badger` 会话的自报（含那两个 blob 前缀与「`porcelain=0`」），**我没有独立复现它还原前的那棵树**（它已经 ff 修正过了）；我独立确认的只有一件事：`f5c7369` 上那五件与 `origin/main` 逐字节相同、全量门禁 16/16。

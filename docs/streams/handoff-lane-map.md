@@ -4,8 +4,6 @@
 - **分支**：`stream/board-status-refresh`
 - **位置说明**：初版写在 `/home/sakiko/handoff-lane-map.md`（**仓库之外、无版本控制**），移入这里的理由同 [dispatch-incident-and-eight-same-shape-errors.md](dispatch-incident-and-eight-same-shape-errors.md) §9 第 8 例。
 
-# dsh-session-handoff 车道图与归档建议
-
 生成时间：2026-10-19 21:40 CST。所有数字都是本机实测（投影缓存 `~/.dsh/storages/session_projcache/`、`conversation_list`、`GET /api/handoff/status`）。
 
 ## 0. 已落地的止血配置（已验证热生效）
@@ -128,11 +126,26 @@ amber-badger 的 `goal-b4dd7762` 仍是 revision 2 / phase **paused**。`update_
 
 ### 6.5 工时估算（2026-10-20 18:05 实测口径）
 - 写节速率：10-20 `17:42→18:00` 落 5 节（`6aac364`/`12dd901`/`4e95db4`/`487ad58`/`3bf9b85`）≈ **3.6 分钟/节**；10-19 `20:40→21:18` 落 9 节 ≈ 4.2 分钟/节。
-- 欠账不收敛：最后 6 节（§1.180–§1.185）的戊栏固定 7 格里，仍欠的格数为 **4 / 7 / 4 / 5 / 5**，没有下降趋势；每节还新派 1–3 件 ⇒ 按现行规则是**净增待办**。
-- 三个不同量级：① 清当前积压（戊栏 4 件 + kestrel 的 `advisor:concern` + lantern 的 64 位摘要）≈ **2–4 h**；② 引擎自动轮天花板上界 = `maxGoalRounds 256 − roundsStarted 4` = 252 轮 × 3.6–10 分钟 ≈ **17–42 h**（到点自己停，但不是「做完」）；③ `docs/STATUS.md` 路线图 70 条大件（构建矩阵/POSIX 拆分/ABI v1…）**近 48 h 零勾选** ⇒ 天/周量级。
+- 欠账不收敛（**本节已于 2026-10-21 更正，原读数是错的**）：原先写的是「最后 6 节（§1.180–§1.185）的戊栏固定 7 格里，仍欠 **4 / 7 / 4 / 5 / 5**」。那串数字是**按关键词**（正则 `①-⑨` 与 `未交|零引用|待引|待写`）命中的计数，不是逐句读的读数 —— 而台账 §1.185 自己立的条正是「**按关键词收口的读数必须逐句读主语并给出逐字依据**」，所以那一串**违反了自己引用的规则，已废**（样本也只有 5 节，太薄）。逐句读过最后 3 节的戊栏后，事实是：**§1.185 的戊栏不是待办登记，是「合并与门禁登记」**（这正是先前列出「0」的原因：该节的栏序与前两节不同），所以「每节固定 7 格」这个前提本身就不成立；§1.183 与 §1.184 的 7 格里，**③⑤⑥ 三件明确写「已结」（真实收敛）**，**① 是「已交、待引」**（产物在盘、只缺台账引用），**② 真未交**，**④⑦ 零引用且无产物** ⇒ 欠的实质是 **4 格**，不是 5–7 格，而 3/7 已结是真的。
+- 比单节计数有力得多的是**停滞时长**：那七格在同一批节里逐节原样复制 —— 「把尺子的根换掉」首现于 `docs/AUDIT.md` 的增补二百出头那一带、「四档是标签不是划分」「手填的常数」更早，而「量某件事的那一件自己又做了一遍那件事」在几十节里逐字重印、位置只往后挪了百余行。**实际收敛动作极少**这个判断成立，但它由**同一句话被复制了多少节**支撑，不由「一格欠/已结」的计数支撑。
+- 三个不同量级：① 清当前积压（戊栏 4 件 + kestrel 的 `advisor:concern` + lantern 的 64 位摘要）≈ **2–4 h**；② 引擎自动轮天花板上界 = `maxGoalRounds 256 − roundsStarted 4` = 252 轮 × 3.6–10 分钟 ≈ **15–42 h**（**更正**：原写 17–42 h，下界是我算错的；`252 × 3.6 分钟 = 15.1 h`）（到点自己停，但不是「做完」）；③ `docs/STATUS.md` 路线图 70 条大件（构建矩阵/POSIX 拆分/ABI v1…）**近 48 h 零勾选** ⇒ 天/周量级。
 - 停摆变量：10-19 21:18 → 10-20 17:42 空了 20 小时，因为 goal 是 paused。**goal 不 active，墙钟不计。**
 
 ### 6.6 给人类的两条操作约束（advisor 提醒）
 1. 那句话要等 amber-badger **回到 idle** 再贴；turn 还在 running 时排队进去的人类消息可能被当成 follow-up，仍不满足 direct human turn 的判定。
 2. 贴完让它立刻用 `conversation_send` 回一句 goal 是否 active，再由我方从 projcache 的 `goal` 行独立核实，不要只信自述。
 3. Plan B：若 GUI 里直接发仍被同一条策略拒绝，就在该会话里**新建**一条 goal（而不是 edit 旧的 paused goal），绕开 revision/phase 相关守卫。
+
+### 6.7 「远端有那个提交」的判据，以及它的一条显式前提
+
+**判据（本会话实际用的三条，缺一不可）**：
+1. `git reflog show origin/main` —— 只认 `update by push` 那几条。本地跟踪引用**任何**一次成功的 fetch 都会前进，所以它单独**不能**证明推送成功（这一条我先前的判断是错的，已改）。
+2. `git ls-remote origin refs/heads/main` —— 返回**远端此刻的尖端**。
+3. `.git/FETCH_HEAD` —— 若为空，说明那次 `ls-remote` 没有顺带取回新对象，上面的读数不是某次 fetch 的残留。
+
+**显式前提（先前被我写成了既成事实，这里改正）**：`ls-remote` 只返回 main 的**尖端**。因此「更早的那些提交在远端」是**由祖先关系推出来的**，不是被直接观测到的 —— 它依赖「**没有人 force-push 改写过历史**」这一条。支持它的证据是 reflog 里那几条连续 `update by push`，但那**是支持，不是证明**。下一个会话读到这里时，应当把它当成前提，而不是当成已被独立验证过的事实。
+
+**谁能推，以及一次不能复现的失败**：
+- 本机 `sakiko`（uid 1000）**能推**：remote 是 `git@github.com:infileap/Inimerse.git`（ssh key），实测 `ssh -T git@github.com` → `Hi infileap! You've successfully authenticated, but GitHub does not provide shell access.`；本会话两次 `git push origin HEAD:main` 成功。
+- **`amber-badger` 报过自己的 fetch/push 全失败**，逐字是 `Bad owner or permissions on /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 与 `Permission denied (publickey)`。**本会话不能复现，也没有定位到根因**：那个路径是 `root:root` 的 `644` 符号链接，指向 `/usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf`（同样 `root:root`、`644`、807 字节），按 OpenSSH 的规则（只要求非他人可写）**不该被拒**；用户自己的 `~/.ssh/config` 是 `sakiko:sakiko` 的 `600`。
+- ⇒ 记录到此为止的事实是「**同一台机器上不同会话的 ssh 结果不同**」，**不是**「这台机器的 ssh 环境坏了」。若后续会话再撞到，第一个该做的是把当时的 `$HOME`、`id`、`ssh -v` 输出一起记下来 —— 本会话没有这三样，所以这一步**补做不了**，只能留给下一次复现。
