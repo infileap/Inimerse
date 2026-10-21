@@ -18,8 +18,18 @@ Three cells, each asserting a different exit code:
 Nothing here re-runs the generator and nothing writes into the checkout except a
 temp directory that is removed on exit.
 
+★ Why <product.json> is optional.  The first version required a real product on
+disk, which meant this test could not be registered in the suite: the only
+products carrying `frozen` + `four_piece` live under `.scratch/`, which is
+git-ignored, so a checked-out tree has nothing to point it at — and a test that
+cannot run where the gate runs is not a control.  With no argument the three
+cells are built from a SYNTHETIC product that reproduces the generator's own
+two-write shape (`frozen={}` first, then `frozen={…}` + `four_piece`), so the
+suite gets the three exit codes without needing a fixture.  Passing a real
+product still exercises the same three cells against real bytes.
+
 Usage:
-    python3 tools/check_frozen_identity.test.py <product.json> [--self-key NAME] [-v]
+    python3 tools/check_frozen_identity.test.py [<product.json>] [--self-key NAME] [-v]
 """
 import argparse
 import hashlib
@@ -32,6 +42,8 @@ import tempfile
 
 CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        'check_frozen_identity.py')
+DELTA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     'check_frozen_identity_delta.py')
 
 
 def run(args):
@@ -40,16 +52,73 @@ def run(args):
     return r.returncode, r.stdout + r.stderr
 
 
+def run_delta(args):
+    r = subprocess.run([sys.executable, DELTA] + args,
+                       capture_output=True, text=True)
+    return r.returncode, r.stdout + r.stderr
+
+
+def sha256(b):
+    return hashlib.sha256(b).hexdigest()
+
+
+def dump(o):
+    return json.dumps(o, ensure_ascii=False, indent=1).encode()
+
+
+def build_synthetic_product(path, key):
+    """Write a product with the generator's two-write shape, at `path`.
+
+    The generator (marks129.py:405-418) writes twice: first with `frozen={}`
+    and no `four_piece`, then again with both filled in.  So `frozen[<self>]`
+    must record the FIRST dump.  Reproducing that shape here is what lets the
+    three cells run in a tree that has no generated product in it.
+    """
+    body = {
+        'item': 'synthetic product for check_frozen_identity.test.py',
+        'criteria_file': {'path': '/synthetic/criteria.md'},
+        'answers': {'q1': [1, 2, 3], 'q2': {'n': 0, 'rows': []}},
+        'honest_boundary': 'synthetic: this fixture exists only to give the checker '
+                           'a product whose frozen[<self>] is the first dump',
+    }
+    first = dict(body, frozen={})
+    first_b = dump(first)
+    entries = {
+        key: {'path': '/synthetic/' + key, 'bytes': len(first_b),
+              'mtime': '1970-01-01T00:00:00.000000000',
+              'sha256': sha256(first_b)},
+        'other.py': {'path': '/synthetic/other.py', 'bytes': 11,
+                     'mtime': '1970-01-01T00:00:00.000000000',
+                     'sha256': sha256(b'other.py\n\n')},
+    }
+    product = dict(first)
+    product['frozen'] = entries
+    product['four_piece'] = {'pre': {'pwd': '/synthetic'}, 'post': {'pwd': '/synthetic'},
+                             'self_increment': {'n_py': 0}}
+    raw = dump(product)
+    with open(path, 'wb') as f:
+        f.write(raw)
+    return path
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('product', help='a real generated product json')
+    ap.add_argument('product', nargs='?', default=None,
+                    help='a real generated product json; omitted => build a '
+                         'synthetic one with the same two-write shape')
     ap.add_argument('--self-key', default=None,
                     help='key under "frozen" naming the product itself')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args(argv)
 
-    key = a.self_key or os.path.basename(a.product)
     tmp = tempfile.mkdtemp(prefix='frozen-identity-test-')
+    synthetic = a.product is None
+    if synthetic:
+        key = a.self_key or 'synthetic_product.json'
+        a.product = build_synthetic_product(os.path.join(tmp, key), key)
+    else:
+        key = a.self_key or os.path.basename(a.product)
+    print('SOURCE      %s' % ('synthetic fixture' if synthetic else a.product))
     cells = []
 
     def cell(name, want, args, must_contain=None):
@@ -89,6 +158,55 @@ def main(argv=None):
 
         # cell 2 / missing product
         cell('missing', 2, [os.path.join(tmp, 'no-such-file.json')], must_contain='NO_PRODUCT')
+
+        # cells 3-4 / the delta reproducer that the identity checker's docstring
+        # points at.  ★ It has to be run by something, or the number the docstring
+        # quotes is again a reading kept where nothing executes it.
+        #   cell 3: on the synthetic fixture the slope must come out at the value
+        #           *derived* from the product (4 here, 5 on marks129.json); a
+        #           hard-coded 5 is exactly what this cell exists to catch.
+        got, out = run_delta([a.product])
+        slope_line = [l for l in out.splitlines() if l.startswith('ABSOLUTE')]
+        derived = int(slope_line[0].rsplit('+', 1)[1].split()[0]) if slope_line else None
+        ok3 = got == 0 and derived is not None and ('expected slope %+d' % derived) in out
+        cells.append(('delta', 0, got, ok3))
+        print('%-10s want=%-2d got=%-2d %s (derived slope %s)'
+              % ('delta', 0, got, 'OK' if ok3 else 'BAD', derived))
+        if a.verbose or not ok3:
+            for line in out.rstrip().splitlines():
+                print('    ' + line)
+
+        #   cell 4: the derived slope must be *the product's*, not a constant.  Two
+        #           more frozen entries whose paths live under the product's own
+        #           recorded root must move the slope by exactly +2; if the script
+        #           returns the same number for both, it is quoting a constant.
+        #           ★ The added paths must be under that root, not under some fixed
+        #           "/synthetic" — the checker scopes its count to the root it reads
+        #           from the product, so a path outside it correctly contributes 0.
+        d2 = json.load(open(a.product, encoding='utf-8'))
+        root2 = None
+        for k in sorted(d2['frozen']):
+            p = d2['frozen'][k].get('path')
+            if isinstance(p, str):
+                root2 = p.rsplit('/', 1)[0]
+                break
+        for extra in ('a.py', 'b.py'):
+            d2['frozen'][extra] = {
+                'path': root2 + '/' + extra, 'bytes': 3,
+                'mtime': '1970-01-01T00:00:00.000000000',
+                'sha256': hashlib.sha256(b'x\n').hexdigest()}
+        wide = os.path.join(tmp, 'wider.json')
+        open(wide, 'w', encoding='utf-8').write(json.dumps(d2, ensure_ascii=False, indent=1))
+        got4, out4 = run_delta([wide])
+        slope4 = [l for l in out4.splitlines() if l.startswith('ABSOLUTE')]
+        derived4 = int(slope4[0].rsplit('+', 1)[1].split()[0]) if slope4 else None
+        ok4 = got4 == 0 and derived4 is not None and derived4 == derived + 2
+        cells.append(('delta-slope', 0, got4, ok4))
+        print('%-10s want=%-2d got=%-2d %s (two more paths => slope %s, was %s)'
+              % ('delta-slope', 0, got4, 'OK' if ok4 else 'BAD', derived4, derived))
+        if a.verbose or not ok4:
+            for line in out4.rstrip().splitlines():
+                print('    ' + line)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

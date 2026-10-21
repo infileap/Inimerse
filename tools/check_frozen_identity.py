@@ -23,8 +23,22 @@ itself (no re-run of the generator) and reports whether the identity holds:
     removed; must equal `frozen[<self>]`'s recorded bytes and sha256.
 
 It proves an *identity*, which is stronger than "the sizes differ by N bytes":
-that difference moves with path length (measured 1429/1449/1474/1576), so it is
-not a constant and must not be quoted as evidence.
+that difference moves with path length, so it is not a constant and must not be
+quoted as evidence.  Two readings, both re-derivable with
+`tools/check_frozen_identity_delta.py` (which substitutes whole root prefixes
+rather than padding individual strings):
+
+  - for the generated `.scratch/ident/marks/marks129.json`, delta = **1476 B**
+    at its recorded root of 42 characters;
+  - the slope is **+5 B per added root character** (1411/1446/1476/1486/1491/1591
+    at root lengths 29/36/42/44/45/65), because DUMP2 carries 6 absolute-path
+    strings where DUMP1 carries 1 — `criteria_file` contributes 0, the three
+    `frozen[*].path` contribute 3, the two `four_piece[*].pwd` contribute 2.
+
+The four numbers this paragraph used to quote (1429/1449/1474/1576) are retired:
+their copies are gone, they do not lie on the +5 slope (1474 and 1576 differ by
+2 from the nearest attainable value; 1429 and 1449 by more), and they disagree
+digit-for-digit with the ledger's own 1429/1449/1541/1574 for the same family.
 
 Usage
 -----
