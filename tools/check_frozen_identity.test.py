@@ -30,8 +30,14 @@ product still exercises the same three cells against real bytes.
 
 Usage:
     python3 tools/check_frozen_identity.test.py [<product.json>] [--self-key NAME] [-v]
+
+With no argument it builds a synthetic product, so it runs in a fresh checkout
+where the git-ignored .scratch/ tree is absent.  Exit codes: 0 every cell as
+expected, 1 some cell differed, 3 the given product path does not exist (an
+input fault, deliberately outside the 0/1/2 the cells themselves assert).
 """
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -101,6 +107,46 @@ def build_synthetic_product(path, key):
     return path
 
 
+def load_product(path):
+    """Pure classifier for a caller-supplied product.  No prints, no exits.
+
+    Returns (obj, outcome, marker):
+      ('ok',      '')                  obj is the parsed product
+      ('missing', 'INPUT_MISSING')     path is not a regular file
+      ('invalid', 'INPUT_BAD_JSON')    unreadable as JSON, or not an object
+      ('invalid', 'INPUT_NO_FROZEN')   no usable "frozen" mapping
+
+    A product whose "frozen" simply lacks the key you named is NOT classified
+    here: that is the checker's own verdict NO_FROZEN_SELF at rc 2, and calling
+    it an input fault would hide a real branch of the checker behind a
+    test-side refusal -- the same shape as the `missing` cell that once passed
+    because the checker was absent.  That path is asserted by the `no-self-key`
+    cell instead, so the harness cannot report a refusal it never saw.
+
+    Every one of these is an INPUT fault, and they all share the test's single
+    input code (3) while the marker says which one it was -- the same shape the
+    checker already uses for its verdict code 2, which covers NO_PRODUCT /
+    BAD_JSON / NO_FROZEN_SELF.  One code per CLASS, markers for the members:
+    codes are a shared resource and collide with somebody's expectation set,
+    markers are free and can be subdivided forever.
+
+    ★ This exists as a pure function so the three bad-input branches can be
+    EXECUTED by an in-process cell instead of being reasoned about -- and so
+    that no cell has to re-invoke this program recursively to reach them.
+    """
+    if not os.path.isfile(path):
+        return None, 'missing', 'INPUT_MISSING'
+    try:
+        obj = json.loads(open(path, encoding='utf-8').read())
+    except Exception:
+        return None, 'invalid', 'INPUT_BAD_JSON'
+    if not isinstance(obj, dict):
+        return None, 'invalid', 'INPUT_BAD_JSON'
+    if not isinstance(obj.get('frozen'), dict):
+        return None, 'invalid', 'INPUT_NO_FROZEN'
+    return obj, 'ok', ''
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('product', nargs='?', default=None,
@@ -111,6 +157,21 @@ def main(argv=None):
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args(argv)
 
+    # An unusable product from the caller is an INPUT fault, not a verdict, and
+    # it is classified by the pure function above.  Three branches reach here --
+    # no such file, not JSON, JSON without a usable "frozen" -- and before this
+    # guard the last two died in json.load / on d['frozen'] with a traceback and
+    # exit 1, which is the same code the checker uses to say "the identity does
+    # not hold".  The code is 3: the cells below assert the checker's verdict
+    # codes {0,1,2} and `missing` expects 2, so 2 here would move the collision
+    # up a floor instead of removing it.
+    if a.product is not None:
+        _obj, _outcome, _marker = load_product(a.product)
+        if _outcome != 'ok':
+            print('%s %s' % (_marker, a.product))
+            print('VERDICT input_%s' % _outcome)
+            return 3
+
     tmp = tempfile.mkdtemp(prefix='frozen-identity-test-')
     synthetic = a.product is None
     if synthetic:
@@ -118,6 +179,11 @@ def main(argv=None):
         a.product = build_synthetic_product(os.path.join(tmp, key), key)
     else:
         key = a.self_key or os.path.basename(a.product)
+    product_obj, _o, _m = load_product(a.product)
+    if _o != 'ok':                      # synthetic products are built above
+        print('%s %s' % (_m, a.product))
+        print('VERDICT input_%s' % _o)
+        return 3
     print('SOURCE      %s' % ('synthetic fixture' if synthetic else a.product))
     cells = []
 
@@ -139,12 +205,53 @@ def main(argv=None):
                 print('    ' + line)
 
     try:
+        # cell / input-classification: the bad-input branches are EXECUTED here,
+        # in process, against the pure classifier -- not reasoned about.  Before
+        # this cell, two of them (not JSON, JSON without a usable `frozen`) were
+        # only reachable by re-running this program from outside, and both died
+        # with a traceback and exit 1, i.e. they impersonated "the checker
+        # refused it".  Naming them as cases puts them inside the same command
+        # that reports pass=6/6, so they cannot go stale unnoticed.
+        bad = os.path.join(tmp, 'not-json.json')
+        open(bad, 'w', encoding='utf-8').write('this is not json\n')
+        nofr = os.path.join(tmp, 'no-frozen.json')
+        open(nofr, 'w', encoding='utf-8').write('{"item": "x"}\n')
+        adir = os.path.join(tmp, 'a-directory')
+        os.makedirs(adir, exist_ok=True)
+        cases = [
+            (os.path.join(tmp, 'not-there.json'), 'missing', 'INPUT_MISSING'),
+            # ★ A directory is the only probe that separates os.path.isfile from
+            # os.path.exists in the classifier's guard: with `exists` a directory
+            # clears the guard and dies inside open(), which the broad except
+            # turns into "bad JSON".  Without this case that regression leaves
+            # this file green at 7/7 and is only caught one layer out, by
+            # check_frozen_identity.cli.test.py -- so the case exists to keep the
+            # detection from resting on a single layer.  Acceptance: flipping
+            # isfile to exists must turn THIS cell red.
+            (adir, 'missing', 'INPUT_MISSING'),
+            (bad, 'invalid', 'INPUT_BAD_JSON'),
+            (nofr, 'invalid', 'INPUT_NO_FROZEN'),
+        ]
+        okc, gotc = True, []
+        for path, want_o, want_m in cases:
+            _x, o2, m2 = load_product(path)
+            gotc.append('%s / %s' % (o2, m2))
+            if (o2, m2) != (want_o, want_m):
+                okc = False
+        cells.append(('input-classify', 0, 0 if okc else 1, okc))
+        print('%-14s want=0  got=%d %s'
+              % ('input-classify', 0 if okc else 1, 'OK' if okc else 'BAD'))
+        if a.verbose or not okc:
+            for got_line, (path, want_o, want_m) in zip(gotc, cases):
+                print('    %-18s got=%-24s want=%s / %s'
+                      % (os.path.basename(path), got_line, want_o, want_m))
+
         # cell 0 / positive: the real product on disk
         cell('positive', 0, [a.product, '--self-key', key])
 
         # cell 1 / forged: frozen[<key>] rewritten to hold the *last* dump's own
         # bytes, so the checker must refuse the identity and exit 1.
-        d = json.load(open(a.product, encoding='utf-8'))
+        d = copy.deepcopy(product_obj)
         raw = json.dumps(d, ensure_ascii=False, indent=1).encode()
         if key in (d.get('frozen') or {}):
             d['frozen'][key] = {
@@ -155,6 +262,20 @@ def main(argv=None):
         open(forged, 'w', encoding='utf-8').write(
             json.dumps(d, ensure_ascii=False, indent=1))
         cell('forged', 1, [forged, '--self-key', key], must_contain='not_established')
+
+        # cell / no-self-key: the checker must answer its OWN verdict here, not
+        # the harness.  Taking a product whose frozen entries are named something
+        # else and asking for the original key reaches checker rc 2 /
+        # NO_FROZEN_SELF -- the path whose absence let a renamed forgery report
+        # "could not read" instead of "no such entry".  Asserting it here keeps
+        # that branch from being swallowed by the harness's input guard.
+        renamed = copy.deepcopy(product_obj)
+        renamed['frozen'] = {'some-other-name.json': next(iter(product_obj['frozen'].values()))}
+        rp = os.path.join(tmp, 'renamed.json')
+        open(rp, 'w', encoding='utf-8').write(
+            json.dumps(renamed, ensure_ascii=False, indent=1))
+        cell('no-self-key', 2, [rp, '--self-key', key],
+             must_contain='NO_FROZEN_SELF')
 
         # cell 2 / missing product
         cell('missing', 2, [os.path.join(tmp, 'no-such-file.json')], must_contain='NO_PRODUCT')
@@ -183,7 +304,7 @@ def main(argv=None):
         #           ★ The added paths must be under that root, not under some fixed
         #           "/synthetic" — the checker scopes its count to the root it reads
         #           from the product, so a path outside it correctly contributes 0.
-        d2 = json.load(open(a.product, encoding='utf-8'))
+        d2 = copy.deepcopy(product_obj)
         root2 = None
         for k in sorted(d2['frozen']):
             p = d2['frozen'][k].get('path')
