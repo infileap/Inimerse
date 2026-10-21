@@ -107,7 +107,7 @@ def build_synthetic_product(path, key):
     return path
 
 
-def load_product(path, self_key):
+def load_product(path):
     """Pure classifier for a caller-supplied product.  No prints, no exits.
 
     Returns (obj, outcome, marker):
@@ -115,7 +115,13 @@ def load_product(path, self_key):
       ('missing', 'INPUT_MISSING')     path is not a regular file
       ('invalid', 'INPUT_BAD_JSON')    unreadable as JSON, or not an object
       ('invalid', 'INPUT_NO_FROZEN')   no usable "frozen" mapping
-      ('invalid', 'INPUT_NO_SELF_KEY') "frozen" exists but has no self key
+
+    A product whose "frozen" simply lacks the key you named is NOT classified
+    here: that is the checker's own verdict NO_FROZEN_SELF at rc 2, and calling
+    it an input fault would hide a real branch of the checker behind a
+    test-side refusal -- the same shape as the `missing` cell that once passed
+    because the checker was absent.  That path is asserted by the `no-self-key`
+    cell instead, so the harness cannot report a refusal it never saw.
 
     Every one of these is an INPUT fault, and they all share the test's single
     input code (3) while the marker says which one it was -- the same shape the
@@ -138,8 +144,6 @@ def load_product(path, self_key):
         return None, 'invalid', 'INPUT_BAD_JSON'
     if not isinstance(obj.get('frozen'), dict):
         return None, 'invalid', 'INPUT_NO_FROZEN'
-    if self_key and self_key not in obj['frozen']:
-        return None, 'invalid', 'INPUT_NO_SELF_KEY'
     return obj, 'ok', ''
 
 
@@ -162,7 +166,7 @@ def main(argv=None):
     # codes {0,1,2} and `missing` expects 2, so 2 here would move the collision
     # up a floor instead of removing it.
     if a.product is not None:
-        _obj, _outcome, _marker = load_product(a.product, a.self_key)
+        _obj, _outcome, _marker = load_product(a.product)
         if _outcome != 'ok':
             print('%s %s' % (_marker, a.product))
             print('VERDICT input_%s' % _outcome)
@@ -175,7 +179,7 @@ def main(argv=None):
         a.product = build_synthetic_product(os.path.join(tmp, key), key)
     else:
         key = a.self_key or os.path.basename(a.product)
-    product_obj, _o, _m = load_product(a.product, key)
+    product_obj, _o, _m = load_product(a.product)
     if _o != 'ok':                      # synthetic products are built above
         print('%s %s' % (_m, a.product))
         print('VERDICT input_%s' % _o)
@@ -212,19 +216,14 @@ def main(argv=None):
         open(bad, 'w', encoding='utf-8').write('this is not json\n')
         nofr = os.path.join(tmp, 'no-frozen.json')
         open(nofr, 'w', encoding='utf-8').write('{"item": "x"}\n')
-        noself = os.path.join(tmp, 'no-self-key.json')
-        open(noself, 'w', encoding='utf-8').write(
-            json.dumps(product_obj, ensure_ascii=False, indent=1))
         cases = [
-            (os.path.join(tmp, 'not-there.json'), key,
-             'missing', 'INPUT_MISSING'),
-            (bad, key, 'invalid', 'INPUT_BAD_JSON'),
-            (nofr, key, 'invalid', 'INPUT_NO_FROZEN'),
-            (noself, 'not-a-key', 'invalid', 'INPUT_NO_SELF_KEY'),
+            (os.path.join(tmp, 'not-there.json'), 'missing', 'INPUT_MISSING'),
+            (bad, 'invalid', 'INPUT_BAD_JSON'),
+            (nofr, 'invalid', 'INPUT_NO_FROZEN'),
         ]
         okc, gotc = True, []
-        for path, sk, want_o, want_m in cases:
-            _x, o2, m2 = load_product(path, sk)
+        for path, want_o, want_m in cases:
+            _x, o2, m2 = load_product(path)
             gotc.append('%s / %s' % (o2, m2))
             if (o2, m2) != (want_o, want_m):
                 okc = False
@@ -232,7 +231,7 @@ def main(argv=None):
         print('%-14s want=0  got=%d %s'
               % ('input-classify', 0 if okc else 1, 'OK' if okc else 'BAD'))
         if a.verbose or not okc:
-            for got_line, (path, sk, want_o, want_m) in zip(gotc, cases):
+            for got_line, (path, want_o, want_m) in zip(gotc, cases):
                 print('    %-18s got=%-24s want=%s / %s'
                       % (os.path.basename(path), got_line, want_o, want_m))
 
@@ -252,6 +251,20 @@ def main(argv=None):
         open(forged, 'w', encoding='utf-8').write(
             json.dumps(d, ensure_ascii=False, indent=1))
         cell('forged', 1, [forged, '--self-key', key], must_contain='not_established')
+
+        # cell / no-self-key: the checker must answer its OWN verdict here, not
+        # the harness.  Taking a product whose frozen entries are named something
+        # else and asking for the original key reaches checker rc 2 /
+        # NO_FROZEN_SELF -- the path whose absence let a renamed forgery report
+        # "could not read" instead of "no such entry".  Asserting it here keeps
+        # that branch from being swallowed by the harness's input guard.
+        renamed = copy.deepcopy(product_obj)
+        renamed['frozen'] = {'some-other-name.json': next(iter(product_obj['frozen'].values()))}
+        rp = os.path.join(tmp, 'renamed.json')
+        open(rp, 'w', encoding='utf-8').write(
+            json.dumps(renamed, ensure_ascii=False, indent=1))
+        cell('no-self-key', 2, [rp, '--self-key', key],
+             must_contain='NO_FROZEN_SELF')
 
         # cell 2 / missing product
         cell('missing', 2, [os.path.join(tmp, 'no-such-file.json')], must_contain='NO_PRODUCT')
