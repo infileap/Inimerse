@@ -60,15 +60,21 @@ def main():
         nofr = os.path.join(tmp, 'no-frozen.json')
         open(nofr, 'w', encoding='utf-8').write('{"item": "x"}\n')
 
-        # ★ `a-directory` is the only probe that separates isfile from exists.
-        # Measured, not argued: changing the classifier's guard from
-        # os.path.isfile to os.path.exists leaves `check_frozen_identity.test.py`
-        # reporting pass=7/7 RC=0 -- all three of its probes (absent, not JSON,
-        # no usable frozen) still classify correctly -- while this file fails on
-        # a-directory alone, because a directory passes `exists`, reaches open(),
-        # raises IsADirectoryError and is swallowed into "bad JSON".  So this
-        # layer is not a second opinion on the in-process cells; for that
-        # regression it is the only detector.  Do not simplify it away.
+        # ★ `a-directory` is the probe that separates isfile from exists.
+        # Measured, not argued: when the classifier's guard was changed from
+        # os.path.isfile to os.path.exists, this file failed on a-directory
+        # alone -- a directory passes `exists`, reaches open(), raises
+        # IsADirectoryError and is swallowed into "bad JSON" -- while
+        # check_frozen_identity.test.py stayed GREEN at pass=7/7, because none of
+        # its probes was a directory.
+        #
+        # That made this layer the sole detector of the regression, which is a
+        # bad place for a single point to live, so a-directory was added to the
+        # in-process cases too.  Re-measured after the addition: the same
+        # mutation now turns the harness's own input-classify cell BAD as well,
+        # so both layers catch it and neither is the only one.  The two layers
+        # are kept because they fail for different reasons -- the in-process one
+        # reads a return value, this one reads an exit code and stdout.
         cases = [
             # (label, path, present?, want rc, want marker in stdout)
             ('no-such-file', missing, False, 3, 'INPUT_MISSING'),

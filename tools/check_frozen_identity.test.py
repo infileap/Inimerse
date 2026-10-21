@@ -216,8 +216,19 @@ def main(argv=None):
         open(bad, 'w', encoding='utf-8').write('this is not json\n')
         nofr = os.path.join(tmp, 'no-frozen.json')
         open(nofr, 'w', encoding='utf-8').write('{"item": "x"}\n')
+        adir = os.path.join(tmp, 'a-directory')
+        os.makedirs(adir, exist_ok=True)
         cases = [
             (os.path.join(tmp, 'not-there.json'), 'missing', 'INPUT_MISSING'),
+            # ★ A directory is the only probe that separates os.path.isfile from
+            # os.path.exists in the classifier's guard: with `exists` a directory
+            # clears the guard and dies inside open(), which the broad except
+            # turns into "bad JSON".  Without this case that regression leaves
+            # this file green at 7/7 and is only caught one layer out, by
+            # check_frozen_identity.cli.test.py -- so the case exists to keep the
+            # detection from resting on a single layer.  Acceptance: flipping
+            # isfile to exists must turn THIS cell red.
+            (adir, 'missing', 'INPUT_MISSING'),
             (bad, 'invalid', 'INPUT_BAD_JSON'),
             (nofr, 'invalid', 'INPUT_NO_FROZEN'),
         ]
