@@ -30,6 +30,11 @@ product still exercises the same three cells against real bytes.
 
 Usage:
     python3 tools/check_frozen_identity.test.py [<product.json>] [--self-key NAME] [-v]
+
+With no argument it builds a synthetic product, so it runs in a fresh checkout
+where the git-ignored .scratch/ tree is absent.  Exit codes: 0 every cell as
+expected, 1 some cell differed, 3 the given product path does not exist (an
+input fault, deliberately outside the 0/1/2 the cells themselves assert).
 """
 import argparse
 import hashlib
@@ -110,6 +115,21 @@ def main(argv=None):
                     help='key under "frozen" naming the product itself')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args(argv)
+
+    # A caller-supplied product that is not there is an INPUT fault, not a
+    # verdict.  Without this guard the script died inside json.load with a
+    # traceback and exited 1 -- the same code the checker uses to say "the
+    # identity does not hold", so "I was pointed at nothing" and "the checker
+    # refused it" were indistinguishable.
+    #
+    # The code must be 3, not 2: the cells below assert the checker's own verdict
+    # codes {0,1,2} and the `missing` cell expects 2, so reusing 2 here would move
+    # the collision up a floor rather than remove it.  A referee code has to lie
+    # OUTSIDE the set it is judging, or a new result silently matches a verdict.
+    if a.product is not None and not os.path.isfile(a.product):
+        print('INPUT_MISSING %s' % a.product)
+        print('VERDICT input_missing')
+        return 3
 
     tmp = tempfile.mkdtemp(prefix='frozen-identity-test-')
     synthetic = a.product is None
