@@ -32,6 +32,7 @@ Exit codes: 0 every branch as expected, 1 some branch differed.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -115,12 +116,24 @@ def main():
                 for line in out.rstrip().splitlines():
                     print('    ' + line)
 
-        # the healthy path must still be healthy through the same entry point
+        # The healthy path must still be healthy through the same entry point.
+        # ★ Do NOT assert the cell COUNT here.  This used to read
+        # `'pass=7/7' in out`, a hard-coded number, and that made a false red:
+        # adding one more PASSING cell to the harness -- a wholly legitimate,
+        # all-green change -- stopped the literal from appearing, so this cell
+        # reported BAD with rc 1 and pass=4/5, shaped exactly like a real
+        # regression.  Nothing forces this number to be updated, unlike
+        # EXP_CTEST, so it has to be phrased so that it needs no update.  The
+        # three conditions below are semantic: exit 0, the two numbers agree,
+        # and the verdict is the one that means every cell was as expected.
         got_rc, out = run([])
-        ok = got_rc == 0 and 'pass=7/7' in out
+        m = re.search(r'CELLS pass=(\d+)/(\d+)\b', out)
+        cells = m.group(0) if m else 'none'
+        verdict_ok = 'VERDICT all_cells_expected' in out
+        ok = got_rc == 0 and bool(m) and m.group(1) == m.group(2) and verdict_ok
         results.append(ok)
-        print('%-14s rc want=0 got=%d pass=7/7 in out=%s %s'
-              % ('healthy', got_rc, 'pass=7/7' in out, 'OK' if ok else 'BAD'))
+        print('%-14s rc want=0 got=%d cells=%s verdict_ok=%s %s'
+              % ('healthy', got_rc, cells, verdict_ok, 'OK' if ok else 'BAD'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
