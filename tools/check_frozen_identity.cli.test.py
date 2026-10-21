@@ -80,15 +80,35 @@ def main():
         #
         #   a-directory  BAD  -- the marker came back INPUT_BAD_JSON instead of
         #                       INPUT_MISSING.  This is this layer's own finding.
-        #   healthy      BAD  -- it asserts the harness exits 0 and prints
-        #                       pass=7/7, so it turns red whenever the harness is
-        #                       broken for ANY reason.  Upstream breakage dragging
-        #                       it down is not evidence about the classifier.
+        #   healthy      BAD  -- it asserts the harness exits 0 with a verdict of
+        #                       all_cells_expected and the two numbers in
+        #                       "CELLS pass=N/M" equal, so it turns red whenever
+        #                       the harness is broken for ANY reason.  Upstream
+        #                       breakage dragging it down is not evidence about
+        #                       the classifier.
         #
         # So `healthy` is a liveness assertion on the harness, not a second
         # opinion: it is the downstream indicator that the coupling above was
         # noticed at all.  Only cells whose expectation is independent of the
         # harness's overall exit status -- here a-directory -- are evidence.
+        #
+        # ★ And that cell has to be exercised in BOTH directions.  It once
+        # compared stdout against a hard-coded "pass=7/7", which made it a false
+        # red on any all-green change that added a cell; replacing that with a
+        # semantic assertion removes the false red, but a semantic assertion
+        # that is never run against real breakage can flip to a false GREEN,
+        # which is harder to notice.  Both directions measured on this cell:
+        #
+        #   one extra PASSING cell in the harness (all-green change)
+        #     harness  CELLS pass=8/8  RC=0   old hard-coded -> BAD (false red)
+        #                                     now            -> OK
+        #   os.path.isfile -> os.path.exists (a real regression)
+        #     harness  CELLS pass=6/7  RC=1   now            -> BAD
+        #              cells=CELLS pass=6/7 verdict_ok=False  rc want=0 got=1
+        #
+        # The second row is the load-bearing one: it rules out the de-numbered
+        # assertion having become vacuously true.  A negative control alone
+        # would not have shown that.
         cases = [
             # (label, path, present?, want rc, want marker in stdout)
             ('no-such-file', missing, False, 3, 'INPUT_MISSING'),
