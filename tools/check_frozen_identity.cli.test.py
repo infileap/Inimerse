@@ -71,10 +71,23 @@ def main():
         # That made this layer the sole detector of the regression, which is a
         # bad place for a single point to live, so a-directory was added to the
         # in-process cases too.  Re-measured after the addition: the same
-        # mutation now turns the harness's own input-classify cell BAD as well,
-        # so both layers catch it and neither is the only one.  The two layers
-        # are kept because they fail for different reasons -- the in-process one
-        # reads a return value, this one reads an exit code and stdout.
+        # mutation turns the harness's own input-classify cell BAD as well.
+        #
+        # ★ But read the two red cells here for what they are.  After that
+        # addition this file drops from 5/5 to 3/5 on the same mutation, and the
+        # two failures are NOT independent:
+        #
+        #   a-directory  BAD  -- the marker came back INPUT_BAD_JSON instead of
+        #                       INPUT_MISSING.  This is this layer's own finding.
+        #   healthy      BAD  -- it asserts the harness exits 0 and prints
+        #                       pass=7/7, so it turns red whenever the harness is
+        #                       broken for ANY reason.  Upstream breakage dragging
+        #                       it down is not evidence about the classifier.
+        #
+        # So `healthy` is a liveness assertion on the harness, not a second
+        # opinion: it is the downstream indicator that the coupling above was
+        # noticed at all.  Only cells whose expectation is independent of the
+        # harness's overall exit status -- here a-directory -- are evidence.
         cases = [
             # (label, path, present?, want rc, want marker in stdout)
             ('no-such-file', missing, False, 3, 'INPUT_MISSING'),
