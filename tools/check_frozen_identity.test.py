@@ -52,12 +52,20 @@ def main(argv=None):
     tmp = tempfile.mkdtemp(prefix='frozen-identity-test-')
     cells = []
 
-    def cell(name, want, args):
+    def cell(name, want, args, must_contain=None):
         got, out = run(args)
         ok = got == want
+        # ★ 只比退出码会让「程序根本没跑起来」冒充「正确地拒绝了坏输入」：
+        # a missing checker file and a NO_PRODUCT both exit non-zero, and the
+        # `missing` cell (want=2) would then pass for the wrong reason.  Every
+        # non-zero cell therefore also asserts the failure mode by name.
+        if ok and must_contain is not None and must_contain not in out:
+            ok = False
         cells.append((name, want, got, ok))
         print('%-10s want=%-2d got=%-2d %s' % (name, want, got, 'OK' if ok else 'BAD'))
         if a.verbose or not ok:
+            if must_contain is not None:
+                print('    must_contain %r -> %s' % (must_contain, must_contain in out))
             for line in out.rstrip().splitlines():
                 print('    ' + line)
 
@@ -77,10 +85,10 @@ def main(argv=None):
         forged = os.path.join(tmp, 'forged.json')
         open(forged, 'w', encoding='utf-8').write(
             json.dumps(d, ensure_ascii=False, indent=1))
-        cell('forged', 1, [forged, '--self-key', key])
+        cell('forged', 1, [forged, '--self-key', key], must_contain='not_established')
 
         # cell 2 / missing product
-        cell('missing', 2, [os.path.join(tmp, 'no-such-file.json')])
+        cell('missing', 2, [os.path.join(tmp, 'no-such-file.json')], must_contain='NO_PRODUCT')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
