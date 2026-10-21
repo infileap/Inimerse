@@ -60,6 +60,15 @@ def main():
         nofr = os.path.join(tmp, 'no-frozen.json')
         open(nofr, 'w', encoding='utf-8').write('{"item": "x"}\n')
 
+        # ★ `a-directory` is the only probe that separates isfile from exists.
+        # Measured, not argued: changing the classifier's guard from
+        # os.path.isfile to os.path.exists leaves `check_frozen_identity.test.py`
+        # reporting pass=7/7 RC=0 -- all three of its probes (absent, not JSON,
+        # no usable frozen) still classify correctly -- while this file fails on
+        # a-directory alone, because a directory passes `exists`, reaches open(),
+        # raises IsADirectoryError and is swallowed into "bad JSON".  So this
+        # layer is not a second opinion on the in-process cells; for that
+        # regression it is the only detector.  Do not simplify it away.
         cases = [
             # (label, path, present?, want rc, want marker in stdout)
             ('no-such-file', missing, False, 3, 'INPUT_MISSING'),
