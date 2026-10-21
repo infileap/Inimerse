@@ -1590,3 +1590,15 @@ if(INIMERSE_PYTHON)
 add_test(NAME frozen_identity_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_frozen_identity.test.py)
 set_tests_properties(frozen_identity_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;regression")
 endif()
+
+# check_frozen_identity.test.py asserts the pure input classifier in process, so
+# it cannot fail when that classifier stops being CALLED -- a cell that calls the
+# function is blind to a missing call, and the defect it was written for lived at
+# the three call sites.  This second file drives the harness as a subprocess and
+# reads its exit code and stdout, one level out.  Every case asserts its probe is
+# on disk before running, because a probe set that vanishes reports the same
+# thing as a probe set that passes.
+if(INIMERSE_PYTHON)
+add_test(NAME frozen_identity_cli_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_frozen_identity.cli.test.py)
+set_tests_properties(frozen_identity_cli_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;regression")
+endif()
