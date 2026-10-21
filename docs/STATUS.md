@@ -35,13 +35,13 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 
 ---
 
-## 2. 当前基线（2026-10-07 更新测试计数到 148；其余各项为 2026-10-01 实测。**表内数字除注明外均为 Linux 实测**；平台并列项见「全量测试」与「测试注册」两行 —— **不写行号**，行号会随本档增删漂移）
+## 2. 当前基线（2026-10-07 更新测试计数到 148；**2026-10-20 在 `069c316` 上重测，计数已走到 157**（见「全量测试」格）；其余各项为 2026-10-01 实测。**表内数字除注明外均为 Linux 实测**；平台并列项见「全量测试」与「测试注册」两行 —— **不写行号**，行号会随本档增删漂移）
 
 | 项目 | 实测值 | 证据 |
 | --- | --- | --- |
 | 版本 | `0.5.2` | `CMakeLists.txt:8`（源码中的版本）。**已发布点 = 发版说明落笔点 `751b2a0`**（`CMakeLists.txt:8` 升到 `0.5.2`、发版说明落笔，都在这一笔上；说明见 [RELEASE_0.5.2.md](RELEASE_0.5.2.md)）。**但这一笔不等于「四个版本生产点都说对了」的那棵树**：实测在 `751b2a0` 上 `CMakeLists.txt:8` = `0.5.2` ✅，而 `installer.iss:7` 仍是 `AppVersion=0.5.1`、`:13` 仍是不带版本号的 `InfiverseSetup`、`build_installer.ps1:25` 同 ⇒ **四个生产点只有 1 个对**；改对它们的是 `2cf072e`。**这一版没有任何一个提交同时说对四个** —— `751b2a0` 说对 1/4，而 4/4 的那棵树（`git rev-parse 'v0.5.2^{commit}'` 给出的那个）在发版**之后**。判据一条命令：`for p in CMakeLists.txt:8 installer.iss:7 installer.iss:13 build_installer.ps1:25; do git show <ref>:$p; done`，任一与 `CMakeLists.txt:8` 的版本不等 ⇒ 那个提交不是发版点。**本格不写 tag 当前指向哪个提交**：tag 是**可变指针**（本轮它被移动过两次，而移动在本地不留痕迹 —— `git reflog show v0.5.2` 返回空），要它就 `git rev-parse 'v0.5.2^{commit}'`；**也不要从它派生任何数**。本格初稿写过 `v0.5.2` → `0ebd68d` 与「到 0.5.2 发布点 **76**」：**前者在 tag 被移动后失效，后者是 `751b2a0` 上的值**（**记录一个曾经的绑定，不能写成绑定的形状**：`tools/check_release_tags.py` 按形状认绑定，分不出「断言」与「回忆」，扫一眼这一格的读者也分不出） —— 而写下它们的那一笔**当时确实是对的**，是后来的操作把它们改成了假的。这**不是** A（命令复现不出）、**不是** B（筛选条件错）、**也不是** C（自指），是第四种：**写下时对、之后被别人移动了被量的东西**。见 §1.74 E 段。上一个已发布点 `v0.5.1` = `4e444dd`；**两个不同的锚，别当同一个数**：`git rev-list --count 'v0.5.0^{commit}'..5868940` → **112**（到语言迁移交付点），`git rev-list --count 'v0.5.0^{commit}'..'v0.5.1^{commit}'` → **113**（到 0.5.1 发布点）；**0.5.2 的那个数一律带 ref 写**，例如「在 `751b2a0` 上量是 **76**」 |
 | 干净构建 | configure / build 均退出码 0，**35 warnings / 0 error** | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` |
-| 全量测试 | **148 / 148 真通过**（Linux），无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s。**按平台并列，且每个读数带自己的 ref**：本树（合并后的 `main`）Linux `Total Tests: 148` / `release/051-final` @ `c71ea00` （导出树 `ab70a71` 与它逐字相同，**两个 sha 都要写**：读数是在那棵导出树上取的，`c71ea00` 是它的工具链归属）上 Windows `ctest -N` 的 `Total Tests:` **131**（**122 是 ctest 汇总分母、120 是实跑，都不是 `Total Tests:`**；**`122 = 131 − 9`**：分母只排除 9 条 `(Disabled)`，2 条 `***Skipped` 仍在 122 里；见 §10.81） | `ctest --test-dir build -j$(nproc)`；Windows 读数见 §10.81（ucrt64，CI 同款工具链） |
+| 全量测试 | **148 / 148 真通过**（Linux，`8256924`/`6de3d9ad` 时点）；**2026-10-20 在 `069c316` 上重测为 157 / 157**（`ctest --test-dir build -j8` → 逐字 `100% tests passed, 0 tests failed out of 157`；`tools/gate.sh --jobs 6` 同一棵树 16/16 全过），无 `WILL_FAIL` 记账项；`-j12` 高争用单轮约 13 s。**按平台并列，且每个读数带自己的 ref**：本树（合并后的 `main`）Linux `Total Tests: 148` / `release/051-final` @ `c71ea00` （导出树 `ab70a71` 与它逐字相同，**两个 sha 都要写**：读数是在那棵导出树上取的，`c71ea00` 是它的工具链归属）上 Windows `ctest -N` 的 `Total Tests:` **131**（**122 是 ctest 汇总分母、120 是实跑，都不是 `Total Tests:`**；**`122 = 131 − 9`**：分母只排除 9 条 `(Disabled)`，2 条 `***Skipped` 仍在 122 里；见 §10.81） | `ctest --test-dir build -j$(nproc)`；Windows 读数见 §10.81（ucrt64，CI 同款工具链） |
 | 高争用稳定性 | §2.9 的端口窗口**已关闭**：hub 一律用内核分配端口（`--port 0 --http-port 0`），不再由 harness 猜号。`tools/ports_race_probe.py` 实测 1224 次启动 **5 → 0**（对照格「已修引擎但仍猜端口」为 **6**，证明竞态在 harness 而非引擎）。本行原来的「80 轮失败 1 轮」是**内核分配之前**的数字，未复测 | `python3 tools/ports_race_probe.py`；`for i in $(seq 80); do ctest --test-dir build -j12; done` |
 | 编译器诊断 | **35 条 warning，0 error**（§2.5 修复后干净重建日志） | 干净重建日志 |
 | 引擎代码 | `src/` **114** 个 `.c` + **51** 个 `.h`，合计 **53,547** 行（`.c` 单独 **50,706** 行） | 文件个数与行数是**两个量，各给自己的命令**：`find src -name '*.c' \| wc -l`、`find src -name '*.h' \| wc -l`；`find src \( -name '*.c' -o -name '*.h' \) \| xargs cat \| wc -l`。**原值 `101`/`49`/`48,753`/`46,120` 已陈**，且原来只给了一条**数行数**的命令却拿它当**文件个数**的出处 —— 引的证据与它证的命题不是同一个量（@ `0ebd68d` 重取） |
@@ -57,7 +57,7 @@ E0 概念 · E1 文字设计 · E2 静态样例 · E3 可运行原型 · E4 自�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 148（Linux；Windows 的 `Total Tests:` 是 **131**，汇总分母 122、实跑 120，见 §10.81）
+ctest --test-dir build --output-on-failure -j4      # 期望 100% tests passed, 0 failed out of 157（Linux；`069c316` 实测；此命令块里原写 148，那是 `8256924` 时点的读数）Windows 的 `Total Tests:` 是 **131**，汇总分母 122、实跑 120，见 §10.81）
 node tools/node_suites/run_all.js                    # JS 侧协议套件 12 个（不在 CTest 内）
 python3 tools/selfhost_bench.py --runs 5 --write-docs
 ```
