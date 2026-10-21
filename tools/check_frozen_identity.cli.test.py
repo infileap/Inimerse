@@ -69,6 +69,19 @@ def main():
         # check_frozen_identity.test.py stayed GREEN at pass=7/7, because none of
         # its probes was a directory.
         #
+        # ★ And this layer is the only thing standing between "the classifier is
+        # correct" and "the program still uses it".  Measured: with BOTH call
+        # sites in check_frozen_identity.test.py replaced by a naive
+        # json.load(open(...)), the in-process input-classify cell stays GREEN --
+        # it calls the pure function directly, so it cannot see this -- while all
+        # four bad-input cells here go BAD at rc want=3 got=1 and this file drops
+        # to 1/5 with the tracebacks printed.  That is the whole reason this
+        # file drives the entry point in a subprocess instead of importing it.
+        #
+        #   removed one of the two call sites only -> still 5/5, because the
+        #   other one classifies first; the guard is written twice, so a
+        #   single-site bypass changes no observable behaviour.
+        #
         # That made this layer the sole detector of the regression, which is a
         # bad place for a single point to live, so a-directory was added to the
         # in-process cases too.  Re-measured after the addition: the same
