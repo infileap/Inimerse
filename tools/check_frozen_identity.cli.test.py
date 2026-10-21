@@ -32,6 +32,7 @@ Exit codes: 0 every branch as expected, 1 some branch differed.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -71,10 +72,23 @@ def main():
         # That made this layer the sole detector of the regression, which is a
         # bad place for a single point to live, so a-directory was added to the
         # in-process cases too.  Re-measured after the addition: the same
-        # mutation now turns the harness's own input-classify cell BAD as well,
-        # so both layers catch it and neither is the only one.  The two layers
-        # are kept because they fail for different reasons -- the in-process one
-        # reads a return value, this one reads an exit code and stdout.
+        # mutation turns the harness's own input-classify cell BAD as well.
+        #
+        # ★ But read the two red cells here for what they are.  After that
+        # addition this file drops from 5/5 to 3/5 on the same mutation, and the
+        # two failures are NOT independent:
+        #
+        #   a-directory  BAD  -- the marker came back INPUT_BAD_JSON instead of
+        #                       INPUT_MISSING.  This is this layer's own finding.
+        #   healthy      BAD  -- it asserts the harness exits 0 and prints
+        #                       pass=7/7, so it turns red whenever the harness is
+        #                       broken for ANY reason.  Upstream breakage dragging
+        #                       it down is not evidence about the classifier.
+        #
+        # So `healthy` is a liveness assertion on the harness, not a second
+        # opinion: it is the downstream indicator that the coupling above was
+        # noticed at all.  Only cells whose expectation is independent of the
+        # harness's overall exit status -- here a-directory -- are evidence.
         cases = [
             # (label, path, present?, want rc, want marker in stdout)
             ('no-such-file', missing, False, 3, 'INPUT_MISSING'),
@@ -102,12 +116,24 @@ def main():
                 for line in out.rstrip().splitlines():
                     print('    ' + line)
 
-        # the healthy path must still be healthy through the same entry point
+        # The healthy path must still be healthy through the same entry point.
+        # ★ Do NOT assert the cell COUNT here.  This used to read
+        # `'pass=7/7' in out`, a hard-coded number, and that made a false red:
+        # adding one more PASSING cell to the harness -- a wholly legitimate,
+        # all-green change -- stopped the literal from appearing, so this cell
+        # reported BAD with rc 1 and pass=4/5, shaped exactly like a real
+        # regression.  Nothing forces this number to be updated, unlike
+        # EXP_CTEST, so it has to be phrased so that it needs no update.  The
+        # three conditions below are semantic: exit 0, the two numbers agree,
+        # and the verdict is the one that means every cell was as expected.
         got_rc, out = run([])
-        ok = got_rc == 0 and 'pass=7/7' in out
+        m = re.search(r'CELLS pass=(\d+)/(\d+)\b', out)
+        cells = m.group(0) if m else 'none'
+        verdict_ok = 'VERDICT all_cells_expected' in out
+        ok = got_rc == 0 and bool(m) and m.group(1) == m.group(2) and verdict_ok
         results.append(ok)
-        print('%-14s rc want=0 got=%d pass=7/7 in out=%s %s'
-              % ('healthy', got_rc, 'pass=7/7' in out, 'OK' if ok else 'BAD'))
+        print('%-14s rc want=0 got=%d cells=%s verdict_ok=%s %s'
+              % ('healthy', got_rc, cells, verdict_ok, 'OK' if ok else 'BAD'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
