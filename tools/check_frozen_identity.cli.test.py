@@ -69,6 +69,19 @@ def main():
         # check_frozen_identity.test.py stayed GREEN at pass=7/7, because none of
         # its probes was a directory.
         #
+        # ★ And this layer is the only thing standing between "the classifier is
+        # correct" and "the program still uses it".  Measured: with BOTH call
+        # sites in check_frozen_identity.test.py replaced by a naive
+        # json.load(open(...)), the in-process input-classify cell stays GREEN --
+        # it calls the pure function directly, so it cannot see this -- while all
+        # four bad-input cells here go BAD at rc want=3 got=1 and this file drops
+        # to 1/5 with the tracebacks printed.  That is the whole reason this
+        # file drives the entry point in a subprocess instead of importing it.
+        #
+        #   removed one of the two call sites only -> still 5/5, because the
+        #   other one classifies first; the guard is written twice, so a
+        #   single-site bypass changes no observable behaviour.
+        #
         # That made this layer the sole detector of the regression, which is a
         # bad place for a single point to live, so a-directory was added to the
         # in-process cases too.  Re-measured after the addition: the same
@@ -80,15 +93,35 @@ def main():
         #
         #   a-directory  BAD  -- the marker came back INPUT_BAD_JSON instead of
         #                       INPUT_MISSING.  This is this layer's own finding.
-        #   healthy      BAD  -- it asserts the harness exits 0 and prints
-        #                       pass=7/7, so it turns red whenever the harness is
-        #                       broken for ANY reason.  Upstream breakage dragging
-        #                       it down is not evidence about the classifier.
+        #   healthy      BAD  -- it asserts the harness exits 0 with a verdict of
+        #                       all_cells_expected and the two numbers in
+        #                       "CELLS pass=N/M" equal, so it turns red whenever
+        #                       the harness is broken for ANY reason.  Upstream
+        #                       breakage dragging it down is not evidence about
+        #                       the classifier.
         #
         # So `healthy` is a liveness assertion on the harness, not a second
         # opinion: it is the downstream indicator that the coupling above was
         # noticed at all.  Only cells whose expectation is independent of the
         # harness's overall exit status -- here a-directory -- are evidence.
+        #
+        # ★ And that cell has to be exercised in BOTH directions.  It once
+        # compared stdout against a hard-coded "pass=7/7", which made it a false
+        # red on any all-green change that added a cell; replacing that with a
+        # semantic assertion removes the false red, but a semantic assertion
+        # that is never run against real breakage can flip to a false GREEN,
+        # which is harder to notice.  Both directions measured on this cell:
+        #
+        #   one extra PASSING cell in the harness (all-green change)
+        #     harness  CELLS pass=8/8  RC=0   old hard-coded -> BAD (false red)
+        #                                     now            -> OK
+        #   os.path.isfile -> os.path.exists (a real regression)
+        #     harness  CELLS pass=6/7  RC=1   now            -> BAD
+        #              cells=CELLS pass=6/7 verdict_ok=False  rc want=0 got=1
+        #
+        # The second row is the load-bearing one: it rules out the de-numbered
+        # assertion having become vacuously true.  A negative control alone
+        # would not have shown that.
         cases = [
             # (label, path, present?, want rc, want marker in stdout)
             ('no-such-file', missing, False, 3, 'INPUT_MISSING'),
