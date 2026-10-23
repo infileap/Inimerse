@@ -42,8 +42,7 @@ def find_engine():
 # bind(0)/close() had a time-of-check/time-of-use window that made
 # hub_dist_regression fail under `ctest -j12` while passing in isolation.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from testports import (distinct_ports,  # noqa: E402
-                       start_hub_bound_ports,
+from testports import (start_hub_bound_ports,  # noqa: E402
                        wait_http_ping)
 
 
@@ -51,6 +50,66 @@ def wait_port(port, timeout=10.0):
     # Shared implementation in tools/testports.py -- these suites need the
     # /ping round trip, not merely a TCP accept (see testports.wait_http_ping).
     return wait_http_ping(port, timeout=timeout)
+
+
+# A directory observes health from a background probe, not on demand: the probe
+# re-reads every registered endpoint once per round and sleeps in ten 100 ms
+# slices between rounds (`node_probe_loop`, src/platform/http_posix.c), so an
+# advertisement is seen within about a second and a refused endpoint is
+# classified in that same round.  What is waited for below is therefore a fact
+# about the probe, and the budget is fifteen rounds of it -- slack for a loaded
+# machine, not a delay that stands in for evidence.
+HEALTH_ROUNDS = 15
+HEALTH_POLL_S = 0.25
+
+
+def classify_endpoint(port, timeout=0.5):
+    """Say what a connection to `port` does right now: refused or accepted."""
+    probe = socket.socket()
+    probe.settimeout(timeout)
+    try:
+        probe.connect(("127.0.0.1", port))
+        return "accepted"
+    except ConnectionRefusedError:
+        return "refused"
+    except OSError as exc:
+        return f"connect-error: {exc}"
+    finally:
+        probe.close()
+
+
+def wait_for_health(dir_port, ids, port_of=None):
+    """Wait until A and B report up and C reports down.
+
+    On timeout the error carries what the directory actually thought -- the
+    observed health dict, C's raw discover entry, a sample of the timeline and
+    what a connection to C's endpoint does at that moment -- instead of only
+    the value the assertion noticed, so a future failure diagnoses itself.
+    """
+    start = time.time()
+    deadline = start + HEALTH_ROUNDS
+    health, entries, timeline = {}, {}, []
+    while True:
+        _, disc = http_json(dir_port, "GET", "/node/discover")
+        data = json.loads(disc)
+        entries = {n["node_id"]: n for n in data["nodes"]}
+        health = {k: v["health"] for k, v in entries.items()}
+        timeline.append((round(time.time() - start, 2),
+                         health.get(ids["A"]), health.get(ids["B"]),
+                         health.get(ids["C"])))
+        if (health.get(ids["A"]) == "up" and health.get(ids["B"]) == "up"
+                and health.get(ids["C"]) == "down"):
+            return health
+        if time.time() >= deadline:
+            break
+        time.sleep(HEALTH_POLL_S)
+    step = max(1, len(timeline) // 5)
+    raise AssertionError(
+        "the directory did not report C down within %d probe rounds (%.1fs): "
+        "last health %r; C entry %r; C endpoint %s; window %s"
+        % (HEALTH_ROUNDS, time.time() - start, health, entries.get(ids["C"]),
+           classify_endpoint(port_of) if port_of is not None else "not checked",
+           timeline[::step]))
 
 
 def start_hub(engine, root, hub_dir):
@@ -117,11 +176,24 @@ def main():
 
         # The three hubs choose their own ports (`--port 0 --http-port 0`) and
         # report what the kernel assigned, so this suite no longer reserves --
-        # and therefore cannot mis-release -- a hub port.  The dead endpoint is
-        # the one number that must stay unbound: it is allocated once and never
-        # handed to a child, so nothing can take it in a release-to-bind window
-        # (and it is never derived by +1, which could land on a real hub).
-        dead_port = distinct_ports(1)[0]
+        # and therefore cannot mis-release -- a hub port.
+        #
+        # The dead endpoint used to be `distinct_ports(1)[0]`: a number that was
+        # free at the moment it was read and that nothing held afterwards.  That
+        # is not a dead endpoint, it is a guess that the number stays free for
+        # the whole run, and on a machine where sibling suites ask the kernel
+        # for ports it is a guess that loses: the probe then finds a live
+        # endpoint, and the suite dies at the health assertion after the full
+        # window (measured on this machine: a port taken by a hub reports `up`;
+        # a port taken by a listener that accepts and never answers leaves C
+        # `unknown` for ever, because the probe's read carries no deadline).
+        # Holding the number is what makes it dead: a socket that is *bound but
+        # never listens* keeps every other binder out (EADDRINUSE) while a
+        # connection to it is refused exactly like a stale node's endpoint --
+        # which is the fact the assertions below are about.
+        dead_sock = socket.socket()
+        dead_sock.bind(("127.0.0.1", 0))
+        dead_port = dead_sock.getsockname()[1]
         started = [start_hub(engine, root, root / f"universe{i}") for i in range(3)]
         hubs = [proc for proc, _http, _tcp in started]
         dir_port, node_a_port, node_b_port = (http for _proc, http, _tcp in started)
@@ -146,16 +218,8 @@ def main():
                 node_ids[name] = rc.stdout.decode().split("node=")[1].strip().split("\n")[0]
 
             # 1. discover reports observed health (up for A/B, down for the dead
-            #    endpoint); observation is asynchronous, so wait for it
-            health = {}
-            for attempt in range(60):
-                _, disc = http_json(dir_port, "GET", "/node/discover")
-                data = json.loads(disc)
-                health = {n["node_id"]: n["health"] for n in data["nodes"]}
-                if (health.get(node_ids["A"]) == "up" and health.get(node_ids["B"]) == "up"
-                        and health.get(node_ids["C"]) == "down"):
-                    break
-                time.sleep(0.25)
+            #    endpoint); observation is asynchronous, so wait for the fact
+            health = wait_for_health(dir_port, node_ids, port_of=dead_port)
             assert health.get(node_ids["A"]) == "up", health
             assert health.get(node_ids["B"]) == "up", health
             assert health.get(node_ids["C"]) == "down", health
@@ -254,6 +318,7 @@ def main():
             assert json.loads(auth)["authority"] == node_ids["A"], auth
             assert json.loads(auth)["generation"] == 3, auth
         finally:
+            dead_sock.close()
             for h in hubs:
                 h.terminate()
                 try:
