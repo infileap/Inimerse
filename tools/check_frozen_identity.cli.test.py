@@ -48,6 +48,29 @@ def run(args):
     return r.returncode, r.stdout + r.stderr
 
 
+def build_nameless_product(path):
+    """Write a valid product whose "frozen" does not contain its own basename.
+
+    Built from the harness's own fixture helper rather than hand-written, so the
+    only difference from `healthy` is the missing self key: if the fixture were
+    built by hand here, a cell failing for some unrelated reason would look like
+    the behaviour this case is about.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('_frozen_identity_harness',
+                                                  HARNESS)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    key = 'nameless.json'
+    mod.build_synthetic_product(path, key)
+    with open(path, encoding='utf-8') as f:
+        d = json.load(f)
+    d['frozen'].pop(key, None)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(d, ensure_ascii=False, indent=1))
+    return path
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix='frozen-identity-cli-')
     results = []
@@ -129,6 +152,25 @@ def main():
             ('not-json', bad, True, 3, 'INPUT_BAD_JSON'),
             ('no-frozen-key', nofr, True, 3, 'INPUT_NO_FROZEN'),
         ]
+        # ★ `nameless` is a VALID product whose "frozen" simply does not name
+        # itself, and it is deliberately NOT in the list above: it is not an input
+        # fault.  It is the shape that `load_product` refuses to classify (see its
+        # docstring) because calling it an input error would hide the checker's own
+        # NO_FROZEN_SELF behind a test-side refusal -- the "masking the verdict"
+        # defect that 699a88c fixed.  Asserted here, at the entry point, because
+        # the in-process no-self-key cell proves only that the checker can still
+        # say it, not that main() lets the run reach the checker.
+        #
+        # ★ Measured, and it is the reason this case exists: with a "valid JSON but
+        # no self key" product, main() ran the cells and failed some of them
+        # (rc 1, some_cells_failed).  A one-line mutation at the second call site
+        # -- classifying a missing self key as an input fault -- turned that into
+        # rc 3 INPUT_NO_SELF_KEY, and NOTHING registered here noticed: the harness
+        # stayed at pass=7/7 and this file stayed at 5/5, because none of its five
+        # branches carries a product that is valid but nameless.  This case is that
+        # missing branch.
+        nameless = os.path.join(tmp, 'nameless.json')
+        build_nameless_product(nameless)
         for label, path, present, want_rc, want_marker in cases:
             here = os.path.isfile(path) or os.path.isdir(path)
             if here != present:
@@ -145,6 +187,35 @@ def main():
             print('%-14s probe=%s rc want=%d got=%d marker=%s %s'
                   % (label, 'present' if present else 'absent',
                      want_rc, got_rc, want_marker, 'OK' if ok else 'BAD'))
+            if not ok:
+                for line in out.rstrip().splitlines():
+                    print('    ' + line)
+
+        # A valid-but-nameless product must reach the cells and fail some of them.
+        # ★ Three semantic conditions, no hard-coded count (see the healthy case
+        # below for why a literal number here is a false red waiting to happen):
+        #   (a) a CELLS line exists -- every failure shape of "crash" prints none,
+        #       so this separates "the cells said no" from "the program fell over";
+        #   (b) the two numbers DIFFER -- some cell really did fail;
+        #   (c) no input verdict was printed -- the door did not refuse it.
+        here = os.path.isfile(nameless)
+        if not here:
+            print('%-14s PROBE %s expected present got=absent -> BAD'
+                  % ('nameless', nameless))
+            results.append(False)
+        else:
+            got_rc, out = run([nameless])
+            m = re.search(r'CELLS pass=(\d+)/(\d+)\b', out)
+            cells = m.group(0) if m else 'none'
+            reached_cells = bool(m)
+            some_failed = bool(m) and m.group(1) != m.group(2)
+            not_refused = 'VERDICT input_' not in out
+            ok = got_rc == 1 and reached_cells and some_failed and not_refused
+            results.append(ok)
+            print('%-14s probe=present rc want=1 got=%d cells=%s '
+                  'reached_cells=%s refused=%s %s'
+                  % ('nameless', got_rc, cells, reached_cells,
+                     not not_refused, 'OK' if ok else 'BAD'))
             if not ok:
                 for line in out.rstrip().splitlines():
                     print('    ' + line)
