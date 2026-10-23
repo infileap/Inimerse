@@ -115,6 +115,40 @@ LICENSE  README.md  cordis.patch.yml  icon.svg  index.js  locale/{en,zh}.json  p
 
 另：`cordis.patch.yml` 里 `@deepseek-ai/dsh-web-app` 只在**一行注释**里出现（`# == @deepseek-ai/dsh-web-app, patched by billion-context`），不是引用。
 
+### 4.1 更正：「解析得到」这一列的口径必须写清起点是符号链接还是真身
+
+本文档初版写的是「从 dsh 安装目录 `require.resolve` 两个都成功」——**这句话口径不明，已被 `ivory-zephyr` 判为复现不了，他判得对**。同一个包、同一台机器，起点不同则结论相反：
+
+| 起点 | 结果 |
+|---|---|
+| 真身路径 `….pnpm/@deepseek-ai+dsh@0.2.1-rc.2_<hash>/node_modules/@deepseek-ai/dsh` + 裸 `require.resolve` | **成功** |
+| 符号链接路径 `…/node_modules/@deepseek-ai/dsh` + `require.resolve(…, {paths:[<该路径>]})` | **`MODULE_NOT_FOUND`** |
+
+原因是 pnpm 的隔离布局：这两个包的真身在 `.pnpm/@deepseek-ai+dsh@0.2.1-rc.2_<hash>/node_modules/@deepseek-ai/` 下以**符号链接**存在，而这一层是 `@deepseek-ai` 的**兄弟**目录、不是它的祖先。`paths` 选项不解析符号链接，只按给定路径逐级向上找 `node_modules`，因此永远不会进入 `.pnpm/<pkg>@<hash>/node_modules` 这一层；从真身进入时，Node 的查找链天然落在那里。
+
+逐条实测的搜索路径（`createRequire(installAnchor).resolve.paths('@deepseek-ai/dsh-base')` 前五项），第 3 项就是落点：
+
+```
+$V/.pnpm/@deepseek-ai+dsh@0.2.1-rc.2_<hash>/node_modules/@deepseek-ai/dsh/node_modules
+$V/.pnpm/@deepseek-ai+dsh@0.2.1-rc.2_<hash>/node_modules/@deepseek-ai/node_modules
+$V/.pnpm/@deepseek-ai+dsh@0.2.1-rc.2_<hash>/node_modules          ← 落点（含 dsh-base / dsh-web-app 两个符号链接）
+$V/.pnpm/node_modules
+$V
+```
+
+### 4.2 dsh 加载 bundle 的真实机制（不是 `require.resolve`）
+
+代码在 `@deepseek-ai/dsh-app-boot/lib/index.js`：
+
+- `:995 resolveBundleDir(binName, packageName, installAnchor, profileDir)` — 依次用两个锚：**先安装锚**（`installAnchor`＝dsh 应用包自己的 `package.json`），后 profile 目录；仍找不到就 **throw**：`cannot resolve profile bundle "<name>" from the dsh installation or <profileDir>; run 'dsh plugin --profile <p> install' if its dependency is not installed`。
+- `:976 packageDirFromAnchor(anchor, packageName)` — **不用 `require.resolve`**（注释逐字：`without depending on the package exporting ./package.json (require.resolve would need that)`），而是 `createRequire(anchor).resolve.paths(pkg)` 拿到搜索路径，逐项 `existsSync(join(candidate, "package.json"))`；注释同时写明 `existsSync` **会跟随 pnpm 隔离布局的符号链接**。
+- `:499` 起的设计注释逐字：`Module resolution is two-anchor by construction: a bundle name resolves first from the dsh installation (the launcher's own package), then from the profile directory.` —— 「安装优先」是契约，保证 `@deepseek-ai/dsh-base` 一类 in-box bundle **永远与运行的 dsh 同源**，不会取到 profile 里的副本。
+- `:538 reportSkippedBundles` — 只负责把 `profile.skippedBundles` 逐条写到 stderr；`skippedBundles` 的成因是**不兼容／已退役／不可读**，且加载期「nothing is printed」，由启动器每次启动调一次。
+
+复跑 `packageDirFromAnchor` 的等价实现（锚＝`@deepseek-ai/dsh` 的真身 `package.json`）：`dsh-base` 与 `dsh-web-app` 都解析到 `.pnpm/@deepseek-ai+dsh@…/node_modules/<包名>`；而**故意给一个不存在的包名**得到 `undefined`，即会走 throw 那条路。
+
+⇒ **「不打印 ≠ 加载成功」这个疑点因此闭合，而且闭合方式是两条不同的报错通道**：bundle **解析不到**是 `throw`（启动直接失败，根本不进 `skippedBundles`）；只有**解析得到但不兼容／退役／不可读**才会进 `skippedBundles`、才会打印 `skipping profile bundle`。所以「两个包既没打印 skip、又启动成功」在同一台机器上不可能同时由「解析失败」造成 —— 那会是一次启动崩溃，而不是一条静默。
+
 ---
 
 ## 5. PR #1 逐字事实
