@@ -189,6 +189,82 @@ def class_meaning(klass):
 # file did before the asymmetry was measured.
 TAG_WINDOW_LINES = 3
 
+# The window FINDS candidate markers.  It does not decide who they excuse, and
+# that is the difference: while it did, a marker anywhere in the window excused
+# every binding in it.  `docs/STATUS.md:42` is one line carrying two bindings --
+# a drifted record and a claim that is still true today -- and the record's
+# marker bought the claim a free pass it did not need.  A marker excuses at most
+# one binding, and it has to name it.
+#
+# It names a binding by sitting in the same CLAUSE as it, where a clause ends at
+# a sentence end or a table cell.  A marker on a line that carries bindings but
+# sits in a clause with none of them names nobody: it is REPORTED, not handed to
+# the nearest binding, because "nearest" is what put it back on the binding it
+# was not talking about.  A marker on a line that carries no binding at all falls
+# back to the nearest binding in the same paragraph -- a sentence is allowed to
+# put its marker on the line above and its falsifier on the line below, which is
+# what TAG_WINDOW_LINES reaches.
+CLAUSE_BREAKS = "。；！？|"
+
+
+def clause_span(line, pos):
+    """(start, end) of the clause of `line` containing offset `pos`."""
+    start = 0
+    for i, ch in enumerate(line):
+        if i >= pos:
+            break
+        if ch in CLAUSE_BREAKS:
+            start = i + 1
+    end = len(line)
+    for i in range(pos, len(line)):
+        if line[i] in CLAUSE_BREAKS:
+            end = i
+            break
+    return start, end
+
+
+def occurrences(text, word):
+    """Every offset `word` occurs at in `text`."""
+    at = text.find(word)
+    while at >= 0:
+        yield at
+        at = text.find(word, at + 1)
+
+
+def same_paragraph(a, b, lines):
+    """True when no blank line sits between 1-based lines `a` and `b`."""
+    lo, hi = (a, b) if a <= b else (b, a)
+    return all(lines[i - 1].strip() for i in range(lo, hi + 1))
+
+
+def names_binding(at, lno, span, lineno, lines, bindings_by_line):
+    """Does the marker at offset `at` on 1-based line `lno` name this binding?
+
+    `span` is the binding under test, on line `lineno`.  A marker names at most
+    one binding, so this is False for every other binding on the same line.
+    """
+    own = bindings_by_line.get(lno)
+    if own:
+        lo, hi = clause_span(lines[lno - 1], at)
+        inside = [
+            (abs(at - (a + e) // 2), (a, e)) for a, e in own if lo <= a and e <= hi
+        ]
+        if not inside:
+            return False
+        return min(inside)[1] == span
+    best = None
+    for other, spans in bindings_by_line.items():
+        if not same_paragraph(other, lno, lines):
+            continue
+        for a, e in spans:
+            key = (abs(other - lno), abs(at - (a + e) // 2))
+            if best is None or key < best[0]:
+                best = (key, other, (a, e))
+    if best is None:
+        return False
+    return best[1] == lineno and best[2] == span
+
+
 TAG_NAME = re.compile(r"^v(\d+)\.(\d+)\.(\d+)")
 # No `.` in the trailing class: `v0.5.0..5868940` is a range expression, and a
 # class that swallowed the `..` would report the whole range as a tag name.
@@ -270,7 +346,7 @@ def baseline_claim():
     return None
 
 
-def recollection(line, lines, lineno):
+def recollection(line, lines, lineno, span, bindings_by_line, witness):
     """Why this binding is not a claim, or None if it is one.
 
     The window is TAG_WINDOW_LINES lines centred on the binding, because a
@@ -278,12 +354,32 @@ def recollection(line, lines, lineno):
     the marker and the falsifier on either side of it.  This sentence and the
     failure message in main() have always promised both sides; the slice did
     not, and reached one line up instead of one line each way.
+
+    The window only finds candidates.  Whether a candidate excuses THIS binding
+    is decided by names_binding: a marker that names another binding, or names
+    none, does not excuse this one.  `witness` collects every candidate seen and
+    every one that named something, so the ones left over -- markers sitting in
+    a binding's window and talking about nothing -- can be reported instead of
+    silently excusing, or silently not excusing.
     """
     above = TAG_WINDOW_LINES // 2
     below = TAG_WINDOW_LINES - 1 - above
-    window = "\n".join(lines[max(0, lineno - 1 - above):lineno + below])
-    marked = [w for w in RECORD_MARKERS if w in window]
-    falsified = [w for w in FALSIFIER_MARKERS if w in window]
+    first = max(1, lineno - above)
+    last = min(len(lines), lineno + below)
+    marked = []
+    falsified = []
+    for lno in range(first, last + 1):
+        text = lines[lno - 1]
+        for word in RECORD_MARKERS + FALSIFIER_MARKERS:
+            for at in occurrences(text, word):
+                witness["candidates"].add((lno, at, word))
+                if not names_binding(at, lno, span, lineno, lines, bindings_by_line):
+                    continue
+                witness["attributed"].add((lno, at, word))
+                if word in RECORD_MARKERS:
+                    marked.append(word)
+                if word in FALSIFIER_MARKERS:
+                    falsified.append(word)
     if marked and falsified:
         return "recollection"
     if OTHER_DOC.search(line) and any(v in line for v in QUOTE_VERBS):
@@ -313,6 +409,7 @@ def main():
     checked = []          # (rel, lineno, tag, sha)
     excluded = []         # (rel, lineno, tag, sha, why)
     missing_tags = []     # (rel, lineno, name)
+    orphan_markers = []   # (rel, lineno, word) -- in a window, naming no binding
     mentions = 0
     skipped_major = 0
     excused_by = {}
@@ -325,6 +422,16 @@ def main():
             continue
         in_fence = False
         lines = text.split("\n")
+        # Every binding in the document, so a marker can be attributed to the one
+        # it names.  Built from the whole document and not from the window: a
+        # marker on the line above a binding falls back to the nearest binding in
+        # its paragraph, and that is a question about the document.
+        bindings_by_line = {}
+        for lno, ltext in enumerate(lines, 1):
+            spans = [(m.start(), m.end()) for m in BINDING.finditer(ltext)]
+            if spans:
+                bindings_by_line[lno] = spans
+        witness = {"candidates": set(), "attributed": set()}
         for lineno, line in enumerate(lines, 1):
             if FENCE.match(line):
                 in_fence = True if not in_fence else False
@@ -348,11 +455,28 @@ def main():
                 if in_fence:
                     excluded.append((rel, lineno, name, sha, "fenced block"))
                 else:
-                    why = recollection(line, lines, lineno)
+                    why = recollection(
+                        line,
+                        lines,
+                        lineno,
+                        (m.start(), m.end()),
+                        bindings_by_line,
+                        witness,
+                    )
                     if why:
                         excluded.append((rel, lineno, name, sha, why))
                     else:
                         checked.append((rel, lineno, name, sha))
+
+        # A marker that sits in a binding's window and names no binding is not
+        # exempting anything, and it is not doing nothing either: it is the shape
+        # a marker takes after it drifts off the sentence it was written for, and
+        # from here it would go on exempting whatever moved next to it.  Reported,
+        # not resolved -- resolving it is a document edit.
+        orphan_markers.extend(
+            (rel, lno, word)
+            for lno, _at, word in sorted(witness["candidates"] - witness["attributed"])
+        )
 
     # Counted from what was actually exempted, not incremented at the branch
     # that exempted it: a class can be reached from more than one place, and a
@@ -395,10 +519,20 @@ def main():
         print(
             "check_release_tags: %s:%d records `%s` -> `%s`, but `git rev-parse "
             "--short '%s^{commit}'` is `%s` today.  Read as a claim: no record "
-            "marker and no falsifier sit on this line or the lines next to it, "
-            "so this is taken as where the tag points now -- a recollection is "
-            "exempt, and this line is not written as one"
+            "marker and no falsifier NAME this binding, so this is taken as where "
+            "the tag points now -- a recollection is exempt, and this binding is "
+            "not written as one.  A marker on this line that names a different "
+            "binding does not excuse this one."
             % (rel, lineno, name, sha, name, known[name])
+        )
+    for rel, lineno, word in orphan_markers:
+        print(
+            "check_release_tags: %s:%d carries the marker `%s` inside a binding's "
+            "window, and it names no binding -- it is not exempting anything and "
+            "it is not doing nothing either: this is the shape a marker takes "
+            "after it drifts off the sentence it was written for, and from here "
+            "it would excuse whatever moves next to it.  Put it back on its "
+            "binding, or drop it." % (rel, lineno, word)
         )
     # The baseline is a copy of the newest tag, and this is what makes the copy
     # safe: a number nobody compares is a number that expires in silence.
@@ -423,7 +557,7 @@ def main():
             )
             baseline_failed = True
 
-    failed = bool(missing_tags or wrong) or baseline_failed
+    failed = bool(missing_tags or wrong or orphan_markers) or baseline_failed
     for klass in EXP_TAG_EXEMPTION_CLASSES:
         if excused_by.get(klass, 0) == 0:
             print(
