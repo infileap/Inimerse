@@ -146,7 +146,7 @@ FAILED=0
 # reported by ctest as "***Skipped" while the summary still reads "100% tests
 # passed, 0 tests failed out of N" -- so without this check the gate could go
 # green having verified nothing about the bridge.
-EXP_CTEST="${EXP_CTEST:-157}"   # recounted off the merged tree by the commit below, not inherited from either side; +1 when the serializer-cycle registration was added (150 -> 151), +1 for the error-domain width guard (153 -> 154), +1 for the neg-bool unary-minus regression (155 -> 156), +1 when websocket_probe stopped being built-but-unrun (156 -> 157)
+EXP_CTEST="${EXP_CTEST:-159}"   # recounted off the merged tree by the commit below, not inherited from either side; +1 when the serializer-cycle registration was added (150 -> 151), +1 for the error-domain width guard (153 -> 154), +1 for the neg-bool unary-minus regression (155 -> 156), +1 when websocket_probe stopped being built-but-unrun (156 -> 157), +1 when check_frozen_identity.test.py got the CTest it needed (157 -> 158)
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.

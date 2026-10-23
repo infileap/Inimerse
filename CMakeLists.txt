@@ -1566,3 +1566,39 @@ if(NOT WIN32)
 add_test(NAME websocket_probe COMMAND websocket_probe)
 set_tests_properties(websocket_probe PROPERTIES TIMEOUT 30 LABELS "platform;smoke;http" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
+
+# check_frozen_identity.py landed in dbb3428 with no CTest running its own test,
+# so `orphan-fixtures` went red on main and stayed red -- "a harness that
+# nothing invokes reports nothing, and cannot fail either".
+#
+# The harness is given no argument: it synthesises the product it needs, so no
+# fixture is committed for it.  That is deliberate.  A committed fixture would
+# be a hand-written constant standing in for the generator's output, and a hash
+# stored beside the bytes it describes proves only that the two were written
+# together.  The reading has to come from a product, not from a second copy of
+# the answer.  Five cells: positive / forged / missing / delta / delta-slope,
+# the last two re-deriving the byte-delta numbers quoted in the checker's
+# docstring through tools/check_frozen_identity_delta.py.
+#
+# Appended at the end for the reason the block above records: a registration put
+# beside the other python-test registrations (after line 272) added 10 lines in
+# the middle of a file that docs/ cites 60+ times by number, and
+# `check_line_refs` went from +12 to +62 unanchored against a ceiling of +12.
+# A line appended here moves no cited line, so the pin keeps measuring the
+# citations it was pinned against.
+if(INIMERSE_PYTHON)
+add_test(NAME frozen_identity_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_frozen_identity.test.py)
+set_tests_properties(frozen_identity_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;regression")
+endif()
+
+# check_frozen_identity.test.py asserts the pure input classifier in process, so
+# it cannot fail when that classifier stops being CALLED -- a cell that calls the
+# function is blind to a missing call, and the defect it was written for lived at
+# the three call sites.  This second file drives the harness as a subprocess and
+# reads its exit code and stdout, one level out.  Every case asserts its probe is
+# on disk before running, because a probe set that vanishes reports the same
+# thing as a probe set that passes.
+if(INIMERSE_PYTHON)
+add_test(NAME frozen_identity_cli_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_frozen_identity.cli.test.py)
+set_tests_properties(frozen_identity_cli_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;regression")
+endif()
