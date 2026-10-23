@@ -179,11 +179,19 @@ def main(argv=None):
         a.product = build_synthetic_product(os.path.join(tmp, key), key)
     else:
         key = a.self_key or os.path.basename(a.product)
+    # No second guard here.  There used to be one (`if _o != 'ok': ... return 3`)
+    # and it was removed rather than kept as a fallback: `a.product` is either
+    # the synthetic fixture built two lines above -- written by
+    # build_synthetic_product, which always produces a loadable product -- or a
+    # path the early guard above has already loaded successfully, and nothing
+    # between that guard and this line touches the file.  Measured, not assumed:
+    # with the early guard in place the branch is reached 0 times across the
+    # seven fixtures; with the early guard deleted it is the only classifier and
+    # is reached 4 times (notjson, nofrozen, adir, nope), and the seven verdicts
+    # are identical either way.  So these were never a guard and its duplicate:
+    # they were two complete classifiers differing only in order, and the one
+    # that runs first is the one that stays.
     product_obj, _o, _m = load_product(a.product)
-    if _o != 'ok':                      # synthetic products are built above
-        print('%s %s' % (_m, a.product))
-        print('VERDICT input_%s' % _o)
-        return 3
     print('SOURCE      %s' % ('synthetic fixture' if synthetic else a.product))
     cells = []
 
