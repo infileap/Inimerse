@@ -30,9 +30,24 @@ fi
 
 mapfile -t names < <(
   printf '%s\n' "$listing" |
-    sed -n 's/^[[:space:]]*Test[[:space:]]*#[0-9][0-9]*:[[:space:]]*//p'
+    sed -n 's/^[[:space:]]*Test[[:space:]]*#[0-9][0-9]*:[[:space:]]*//p' |
+    # Windows writes CRLF into a pipe.  A `\r` survives command substitution --
+    # it is stripped only at the end of the *last* line -- so every name comes
+    # out as `hub_dist_regression\r` and compares unequal to the same name
+    # without it.  That is not hypothetical: the first run of the exemption
+    # check on the Windows job reported all eleven declared entries as `no such
+    # registered test` while `ctest -N` printed every one of them.
+    tr -d '\r' |
+    # `ctest -N` marks a disabled test in the listing itself:
+    # `Test #3: hub_dist_regression (Disabled)`.  The name is what precedes the
+    # marker; leaving the marker on would make nine of the eleven Windows
+    # exemptions name tests that "do not exist", and -- worse -- the exemption
+    # check would then be comparing against a string no run ever prints.
+    # Note the missing `-n`: this substitution must print every line, and `-n`
+    # would print only the lines it changed -- one name out of three.
+    sed 's/[[:space:]]*(Disabled)$//'
 )
-registered="$(printf '%s\n' "$listing" | sed -n 's/^[[:space:]]*Total Tests:[[:space:]]*//p')"
+registered="$(printf '%s\n' "$listing" | tr -d '\r' | sed -n 's/^[[:space:]]*Total Tests:[[:space:]]*//p')"
 
 if [ "${#names[@]}" -eq 0 ]; then
   printf 'no tests collected from %s (ctest -N printed %s registered)\n' \

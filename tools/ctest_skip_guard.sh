@@ -74,7 +74,7 @@ declared() {
 }
 
 check_allowlist() {
-  local build_dir="$1" names_file failure=0 entries=0
+  local build_dir="$1" names_file failure=0 entries=0 shown_sample=0
   names_file="$(mktemp)"
   trap 'rm -f "$names_file"' RETURN
   if ! bash "${script_dir}/ctest_enumerate.sh" "$build_dir" > "$names_file"; then
@@ -86,6 +86,18 @@ check_allowlist() {
     entries=$((entries + 1))
     if ! grep -qxF "$name" "$names_file"; then
       printf 'exemption for %s: no such registered test\n' "$name" >&2
+      # Show what the registry did contain, once.  Without this the reader is
+      # told only that a name they can see in CMakeLists.txt does not exist,
+      # which sends them to look for a rename that did not happen; the Windows
+      # job's first run failed exactly this way and the cause was a trailing
+      # `\r`, invisible in both the message and the file.
+      if [ "$shown_sample" -eq 0 ]; then
+        shown_sample=1
+        printf '  collected instead (first 3): %s\n' \
+          "$(head -3 "$names_file" | tr '\r' '?' | paste -sd ', ' -)" >&2
+        printf '  a name that looks identical and compares unequal is a trailing CR, a\n' >&2
+        printf '  trailing space, or output read as CRLF\n' >&2
+      fi
       failure=1
     fi
     if [ -z "$reason" ]; then
@@ -120,6 +132,11 @@ check_disabled() {
   mapfile -t disabled < <(
     printf '%s\n' "$listing" |
       sed -n 's/^[[:space:]]*Test[[:space:]]*#[0-9][0-9]*:[[:space:]]*//p' |
+      # CRLF first: on Windows every line arrives with a trailing `\r`, so the
+      # `(Disabled)` suffix pattern below would not match at all and the count
+      # would read 0 -- a check reporting "nothing disabled" on a suite with
+      # nine disabled tests is the failure this mode exists to refuse.
+      tr -d '\r' |
       sed -n 's/[[:space:]]*(Disabled)$//p'
   )
   local name reason found
