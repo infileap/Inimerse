@@ -532,9 +532,16 @@ class Tree:
         self._batch = None
 
     def _git(self, *args: str) -> str:
+        # `encoding="utf-8"` is not decoration: without it `text=True` decodes
+        # with the locale's preferred encoding, so under `LC_ALL=C
+        # PYTHONUTF8=0` this checker died with `UnicodeDecodeError: 'ascii'
+        # codec can't decode byte 0xe5` while reading the very tree it was
+        # asked about -- a crash that says nothing about the tree.  Every read
+        # in this file pins its encoding (see `TREE.text`); this was the one
+        # path that let the caller's shell decide, and it decided wrongly.
         return subprocess.run(
             ["git", "-C", str(REPO_ROOT), *args],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", check=True,
         ).stdout
 
     def _tracked(self) -> set[str]:

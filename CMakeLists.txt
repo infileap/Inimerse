@@ -598,7 +598,7 @@ if(INIMERSE_BUILD_ENGINE)
     # --- compile + package the Java facade --------------------------------
     add_custom_command(OUTPUT "${XLANG_JAVA_STAMP}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${XLANG_JAVA_CLASSES_DIR}"
-      COMMAND "${XLANG_JAVA_HOME}/bin/javac" -d "${XLANG_JAVA_CLASSES_DIR}"
+      COMMAND "${XLANG_JAVA_HOME}/bin/javac" -encoding UTF-8 -d "${XLANG_JAVA_CLASSES_DIR}"
               "${XLANG_JAVA_SRC}" "${CMAKE_SOURCE_DIR}/src/bridge/InimerseBridgeMain.java"
       COMMAND "${CMAKE_COMMAND}" -E touch "${XLANG_JAVA_STAMP}"
       DEPENDS "${XLANG_JAVA_SRC}" "${CMAKE_SOURCE_DIR}/src/bridge/InimerseBridgeMain.java"
