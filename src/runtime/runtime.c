@@ -1065,7 +1065,20 @@ static const char *re_seq(const char *re, const char *s) {
             if (cont) return cont;
             if (count <= qmin) return NULL;
             count--;
-            t = pos[count - 1];
+            /* `pos` holds where each repetition ENDED, so the candidate with
+               one repetition fewer than `count` is pos[count - 1] -- except
+               when `count` reaches 0.  There is no "repetition zero ended at
+               ..." entry: with every repetition given back, the place to try
+               the continuation is the element's own start, `s`.  Reading
+               pos[count - 1] with count == 0 is pos[-1], one slot BEFORE the
+               array.  It read whatever sat there and handed it to re_seq as a
+               start position: on Windows that pointer was NULL and
+               `*s != '\0'` faulted with 0xC0000005 (the win-match ② crash);
+               anywhere else the bounds violation is silent and whichever value
+               happened to sit there decided the answer.  qmax == 0 is not
+               reachable here (count >= qmin + 1), so count is 0 only on this
+               path. */
+            t = (count > 0) ? pos[count - 1] : s;
         }
     }
 }
