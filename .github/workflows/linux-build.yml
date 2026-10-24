@@ -13,7 +13,26 @@ jobs:
     name: Repository invariants (no build)
     runs-on: ubuntu-24.04
     steps:
+      # Full history, and this is load-bearing: two of the stages below compare
+      # the tree against a named base commit rather than against itself --
+      # `line-refs` refuses to report a delta whose base it cannot resolve
+      # ("refusing to report a delta with no base"), and `obs-markers` resolves
+      # its own base the same way.  A depth-1 clone has exactly one commit, so
+      # both stages exit non-zero and this job can never be green; that is what
+      # it did for every run before 2026-10-24.
+      #
+      # Cost, measured once and therefore worth its tree: at fed8f55 a depth-1
+      # clone of this repo is 14 MiB of objects and 1 commit; after unshallowing
+      # it is 56 MiB of objects and 1821 commits (du -sh, this machine).  The
+      # counts are per-tree by construction -- do not carry them to another
+      # commit without re-counting.
+      #
+      # Tags are still not fetched, on purpose: `release-tags` is the one stage
+      # that needs them, and it stays out of this list (see below).
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: false
       - name: Gate stages that need no build
         run: |
           # This list is a copy of part of tools/gate.sh's stage registry, and
@@ -31,9 +50,10 @@ jobs:
           #                                              skip, and a skip is not
           #                                              a pass -- measured, see
           #                                              tools/gate.sh's own hint
-          #   release-tags                               git tags, which a
-          #                                              depth-1 checkout has
-          #                                              none of
+          #   release-tags                               git tags, which this
+          #                                              checkout deliberately
+          #                                              does not fetch
+          #                                              (fetch-tags: false)
           # run: the gate
           for stage in ignored-credentials links doc-paths text-integrity \
                        orphan-fixtures orphan-targets line-refs obs-markers; do
