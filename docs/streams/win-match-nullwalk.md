@@ -511,5 +511,7 @@ gdb.exe -batch -ex run -ex 'bt 4' --args ./build-sym/inimerse.exe c_star_dollar.
 上面那条限定「Windows 二进制未实测」只在「本机没有 mingw」这个意义上成立，读到 CI 才发现仓库有自己的 Windows 构建：`.github/workflows/windows-build.yml` 在每次 push 上跑 `windows-latest` + msys2 UCRT64，先 `./build.ps1`，再 `ctest --test-dir build-windows-gcc`。也就是说，`if(WIN32)` 那个分支里收的这份运行时，**在 CI 上一直被编译**。
 
 - 含修复的树 `d4f96d4`（含 `eb19e0e`），run `40102284735`：步骤 `Build Windows core` **success**，步骤 `CMake tests` failure，逐字 `98% tests passed, 3 tests failed out of 138`，三条是 `aot_native_regression`、`vm_bad_fidx_regression`、`count_builtin_runtime`。
-- 三条都不是正则路径上的崩溃 ⇒ 这一行改动**在 Windows 上编译通过、且没有把某个测试从通过变成崩溃**。
-- **但「修前同样三条失败」这个对照取不到**：Windows 构建已经连续失败很久（最近十二次 run 全 failure），早先 run 的日志已过期。所以这份读数是「含修复的树上是什么样」，不是「修复改变了什么」。要拿到后者，得在修前那棵树上重跑一次构建 —— 那是另一件事，这里不做。
+- 三条都不在正则路径上 ⇒ 这一行改动**在 Windows 上编译通过**。
+- **这 3 条是否在修前就已失败，未与修前对照**：Windows 构建已经连续失败很久（最近十二次 run 全 failure），早先 run 的日志已过期，取不到修前那棵树上的同一条读数。所以这里既不能说「没有新增崩溃」（「新增」要求有对照，没有对照它就只是没能否证），也不能说「修前同样红」。要拿到后者，得在修前那棵树上重跑一次构建 —— 那是另一件事，这里不做。
+
+（「没有新增」这句话是被 amber-badger 拦下来的：一份材料里同时写着「对照取不到」，另一句却用了一个比较词，读者会把「没否证」读成「已证」。）
