@@ -1,10 +1,24 @@
-# Tests allowed to exit 77 (CTest SKIP_RETURN_CODE) in CI.
+# Tests allowed to not run in CI, and why.
 #
 # This file is an exemption list for tools/ctest_skip_guard.sh, and it exists
-# because "skipped" and "passed" are the same thing to everything downstream:
-# ctest prints `***Skipped`, keeps the per-test exit code at 0, and the job
-# summary still says the suite passed.  A test that never runs is not a test
-# that passes, so an undeclared skip fails the job.
+# because "did not run" and "passed" are the same thing to everything
+# downstream.  ctest has two ways of not running a test, and it hides each one
+# differently:
+#
+#   ***Skipped             the test ran and exited with its SKIP_RETURN_CODE
+#                          (77); the per-test exit code is 0, and the test stays
+#                          inside the `out of N` denominator, so it is scored as
+#                          a pass.  Remedy: install what it needs.
+#   ***Not Run (Disabled)  the test carries `DISABLED TRUE`; ctest drops it from
+#                          the denominator altogether, so a run of 147
+#                          registered cases prints `out of 138` and the nine that
+#                          never ran are not counted as missing at all.  Remedy:
+#                          make the feature the test needs exist.
+#
+# Both mean the same claim -- it did not run -- and both need a declaration
+# here, so an undeclared one fails the job.  The guard prints which marker it
+# found; it never prints a pass rate, because "how much of the suite is
+# healthy" is not a quantity either marker can be folded into.
 #
 # Format: one test name per line, followed by `#` and a reason.
 #
@@ -17,8 +31,13 @@
 #   * a name without a reason after `#` fails the check -- "declared" is not
 #     the same as "justified".
 #
-# The list is empty on purpose.  Every skip this job can produce today is a
-# defect on this runner: the two xlang bridges skip when their prebuilt
-# toolchain is absent, and a fresh checkout never has it unless the job built
-# it.  Adding an entry is a decision to stop noticing that test in CI, so it
-# should be rare and each one should say what would make it unnecessary.
+# One entry covers either marker; the reason should say which one it is about
+# and what would make the entry unnecessary.  The list is empty on purpose.
+# Every skip this job can produce today is a defect on this runner: the two
+# xlang bridges skip when their prebuilt toolchain is absent, and a fresh
+# checkout never has it unless the job built it.  And no test registered by this
+# job on Linux carries `DISABLED TRUE` (`ctest -N` reports zero), so the disabled
+# arm of the guard has no live exemption today -- it is there for the Windows
+# shape, where nine POSIX-hub regressions are disabled by design.  Adding an
+# entry is a decision to stop noticing that test in CI, so it should be rare and
+# each one should say what would make it unnecessary.
