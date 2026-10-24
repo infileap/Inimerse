@@ -113,10 +113,31 @@ printf '%s\n' "$out"
 # something, so "matched" is measured, never assumed.
 selected="$(ctest --test-dir "$build_dir" -N -R "^${test_name}$" 2>/dev/null \
   | grep -cE '^[[:space:]]*Test +#[0-9]+' )"
+# The two ways `selected` can miss 1 are not the same wrong, so they do not
+# share a message or a token.  A reader told "the name is wrong" while the
+# pattern is only too wide goes and renames a test that is registered and
+# passing; a reader told "the pattern is not unique" while the name is misspelled
+# goes and narrows a regex that would still select nothing.  One token, one fix.
 if [ "$selected" -ne 1 ]; then
-  printf 'guard: matched=0 executed=0 skipped=0 disabled=0 failed=0 result=no-such-test\n' >&2
-  printf 'guard: -R "^%s$" selects %s test(s), not 1 -- the name is wrong, not the test\n' \
-    "$test_name" "$selected" >&2
+  if [ "$selected" -eq 0 ]; then
+    # Reached by a misspelled name (that is the `probe_dsiabled` cell proved in
+    # the throwaway project) and by a test that was renamed or deleted.  It is
+    # here because ctest answers a pattern that matches nothing with exit 0 and
+    # the same `No tests were found!!!` on stderr that a disabled test prints, so
+    # the step used to read as green.  Deleting this branch reinstates a silent
+    # pass -- the one thing this script exists to refuse.
+    printf 'guard: matched=0 executed=0 skipped=0 disabled=0 failed=0 result=no-such-test\n' >&2
+    printf 'guard: -R "^%s$" selects no test -- the name is wrong (misspelled, renamed or deleted), and no test ran\n' \
+      "$test_name" >&2
+  else
+    # Reached by a family pattern (`^probe_` over a project holding three).
+    # Every matching test exists; the step would run several of them under one
+    # name, so the number is the wrong one to read as "the test".
+    printf 'guard: matched=%s executed=0 skipped=0 disabled=0 failed=0 result=ambiguous-match\n' \
+      "$selected" >&2
+    printf 'guard: -R "^%s$" selects %s tests -- the name is not wrong, the pattern is not unique; this loop runs exactly one test per step, so tighten the pattern\n' \
+      "$test_name" "$selected" >&2
+  fi
   exit 3
 fi
 
