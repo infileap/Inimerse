@@ -21389,3 +21389,71 @@ ivory 上一封末尾写：「`tools/check_line_refs.py` 头部只剩 4 行余�
 ⑤本节不新增第三把尺子，只新增一轴：**输入单位**。
 
 **己、端点。** ①本节纯追加；端点对着落盘那一刻的 HEAD 现读：起点 21305 行、插入 86 行（其中 1 行为分节空行、正文 85 行）、删除零、终点 21391 行。②上一节 `65b931d` 的批号是第二百三十一批，本节是**第二百三十二批**。③本节全部读数出自三棵树（`987497d` 460 行、`8054c9a` 480 行、`65b931d` 21305 行）与六条模式（`[全角] `、`[全角]\n`、`[全角]\u3000`、`[全角]\s`、`^$`、`^$`＋`re.M`），行数按「至少命中一次的行」计；`check_line_refs.py` 的 pins 读数是该脚本自己印出来的，不是我对其输出的复述。
+
+## §1.322 增补三百五十四
+
+**题眼：「已进 CI」与「在 CI 上通过过」在表上同形。** 八阶段确实写进了 workflow，而承载它的那个 job 在最近 40 次运行里一次也没绿过；跳过守卫确实落地了，而它带来的第一个可核对事实是 —— 这条流水线已经连败 40 次。两句话都是真的，而它们指向的证据强度差得极远。
+
+**甲、三件落地的读数，按「谁量的」分栏。**
+
+| 项 | 读数 | 谁量的 |
+|---|---|---|
+| `907b093` 的父 | `e97831c` | 我（`git log --format='%H %P'`） |
+| `907b093` 四文件 numstat | `.github/workflows/linux-build.yml 19/2`、`docs/BOARD.md 1/1`、`tools/ctest_skip_guard.sh 127/0`、`tools/known-skips.txt 24/0` | 我 |
+| `3d06753` 的双亲 | `907b093`（CI 车道）＋`34698ed`（§1.319–§1.321） | 我 |
+| `3d06753` 对第一父的差异 | `253 0 docs/AUDIT.md`（＝95＋72＋86，正是那三节） | 我 |
+| `origin/main` | `3d06753e817367a3d6da44acdcb96c641a40c9aa` | 我（fetch 后 `rev-parse`） |
+| 两个新工具在该树 | `tools/ctest_skip_guard.sh`、`tools/known-skips.txt` 均在 | 我（`ls-tree`） |
+| 分支 `stream/ci-gate-static` 已删 | 逐字 `Deleted branch stream/ci-gate-static (was de203a1).` | **ivory 自报，我未独立复核** |
+
+⇒ 立条：**同一节里「我复核的」与「对方自报的」必须分栏，因为这两类在正文里长得一样。** 上一行那个「已删」若不标来源，读者会以为分支计数是我查的。
+
+**乙、缺省即设置：workflow 里 grep 不到 `fetch-depth`。**
+
+- `git show 3d06753:.github/workflows/linux-build.yml | grep -c fetch-depth` ＝ **0**；三处 `uses: actions/checkout@v7`（第 16、47、151 行）都没有写 `with:` 的深度。
+- 而失败日志逐字：`check_line_refs: EXP_LINE_REFS_BASE=1c6b3381f3db8b77ca90c53ae5737dfa3698624f cannot be resolved, or is not an ancestor of HEAD.`／`check_line_refs: refusing to report a delta with no base.`
+- 深度 1 不是谁写下的，是 `actions/checkout` 的**默认值**；它对判据的表现是：那个 base 在 CI 的本地仓库里根本不存在。
+
+⇒ 立条：**「文件里没写」不等于「没有生效」—— 缺省值是最难 grep 的配置。** 写一节「CI 怎么跑」时，必须分出「哪些行为来自文件、哪些来自工具的默认值」：前者可 grep，后者只能靠日志。
+
+这一条是对 ivory 那封的修正：它写「该 job 用 `fetch-depth: 1`」，而文件里 grep 不到这个键 —— 机制是默认值，不是设置。两句在结论上等价，在可核对性上不等价：前者被 `grep` 一查就假。
+
+**丙、是祖先 ≠ 取得到。**
+
+| 问法 | 读数（树 `3d06753`） |
+|---|---|
+| `git merge-base --is-ancestor 1c6b3381… HEAD` | **成立**（是祖先） |
+| `git rev-list --count 1c6b3381…3d06753` | **843** |
+| 同一棵树在 CI 上的打印 | `cannot be resolved, or is not an ancestor of HEAD` |
+
+⇒ 那一行把两件事写成了一个判断：条件「或是祖先」在本地仓库恒真，在深度 1 的检出里恒假 —— 而**两次打印的是同一句话**。
+
+⇒ 立条：**「是祖先」与「在这份检出里取得到」是两件事，深度是第三根轴。** 这与 §1.313 的树轴、§1.321 的输入单位轴同族：轴没写出来，两个不同的世界会给出同一个错误句。
+
+**丁、这条流水线已经连败 40 次（我独立复核）。**
+
+| 量 | 读数 |
+|---|---|
+| `gh run list --limit 40 --workflow "Linux build"` 的结论分布 | **40 全 failure** |
+| 窗口最早一次 | `2026-10-23T09:50:52Z` |
+| run `40086904983` @ `3d06753` 的 job | `linux-core` failure、`Repository invariants (no build)` failure、`wasm-probe` success（**该 run 的 json 只有这三个 job**） |
+| `linux-core` 失败逐字 | `test aot_native_regression exited 8`；`1/1 Test #35: aot_native_regression ......***Failed  Required regular expression not found. Regex=[aot_native\.test: [0-9]+ cases`；`##[error]aot_native_regression (rc=1)` |
+
+⇒ 立条：**一个从未绿过的检查，它的红不携带新信息**；但它的红也**不携带「这次没坏」的信息** —— 在这里红与绿都不是读数，因为区分「新坏」与「旧坏」需要另一件东西：上一次绿的时刻，而窗口内没有。
+
+⇒ 与 §1.310 丙栏成对：**绿不携带出处**（`4ba01c1` 上那次 16/16 绑的是旧树），**红不携带增量**（40 连败里任何一次红都叫「失败」，分不出是哪一天坏的）。
+
+**戊、「写进去了」「跑过了」「通过过了」是三件事，在表上都长得像「已进 CI」。**
+
+| 说法 | 我能核到的 | 强度 |
+|---|---|---|
+| 跳过守卫已落地 | 两个文件在该树；workflow 里 `if ! bash tools/ctest_skip_guard.sh --check-allowlist build; then` 与逐测试分支都在 | 树上证据 |
+| 守卫在 runner 上执行过 | 暂无独立复核（ivory 自报 `exemption list: 0 declared entr(ies), all registered and justified`） | 对方自报 |
+| 八阶段已写进 CI | workflow 里的 stage 列表与那句「`--only` 拒绝它不认识的阶段名」的注释都在该树 | 树上证据 |
+| 八阶段在 CI 上通过过 | **假** —— 承载它的 `repo-invariants` 在最近 40 次运行里从未 success | 反证 |
+
+⇒ 立条：**凡在账上写「已进 CI」，必须写明是「写进去了」「跑过了」还是「通过过了」；三者不能互相代付。** 这一栏是 §1.315「结论强度必须由它自己的核验方式给出」在流水线上的形态。
+
+**己、边界。** ①本节不改 `fetch-depth`、不动 `aot_native_regression`、不修 CI —— 前者改的是成本、后者改的是产品，两件都要人类点头；②本节不追溯改 §1.310 丙栏（那里记的是 `4ba01c1` 旧树绿，与本节的红是同一族的另一面，不合并）；③本节不复制 ivory 的守卫脚本、不评估其实现；④本节不把 ivory 自报的两条（分支删除、runner 上的豁免清单打印）升级为复核过的读数。
+
+**庚、端点。** ①本节纯追加：起点 21391 行、插入 68 行（其中 1 行为分节空行、正文 67 行）、删除零、终点 21459 行。②上一节 `34698ed` 的批号是第二百三十二批，本节是**第二百三十三批**。③本节读数出自三处：本地 `git`（树 `3d06753`）、`gh run view 40086904983` 与 `gh run list --limit 40 --workflow "Linux build"`、以及 ivory 自报（已分栏）。④本节唯一一处「引用别人的转述」是乙栏那句 fetch 命令的 `--depth=1`（ivory 复述日志），我只逐字核了失败行本身。
