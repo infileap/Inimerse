@@ -15,6 +15,14 @@ ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout
 ImSocket *im_socket_accept(ImSocket *listener);
 int im_socket_send(ImSocket *socket, const void *data, size_t length);
 int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity);
+/* Wait until the socket has bytes to read or the deadline passes: 1 readable,
+   0 timed out, -1 error.  timeout_ms < 0 waits without a deadline.  A blocking
+   recv() cannot express "the peer connected and then said nothing", which is a
+   failure mode, not a slow path. */
+int im_socket_wait_readable(ImSocket *socket, int timeout_ms);
+/* Monotonic milliseconds.  Lives here so a caller of the socket PAL can build a
+   deadline without also linking the platform layer. */
+uint64_t im_socket_now_ms(void);
 /* Peek one byte without consuming it: >0 data, 0 closed, -1 error/would-block. */
 int im_socket_peek(ImSocket *socket);
 int im_socket_set_nonblocking(ImSocket *socket, int enabled);

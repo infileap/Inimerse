@@ -1,4 +1,5 @@
 #include "socket.h"
+#include "http_client.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -86,6 +87,34 @@ static int request_body(int port, const char *request, char *out, size_t cap) {
     }
     return -1;
 }
+/* A listener that completes the TCP handshake and then says nothing.  A client
+ * with no read deadline waits here until the CTest timeout kills the probe
+ * (TIMEOUT 30 for this test), which is exactly the failure the bounded read
+ * exists to remove: one unresponsive endpoint must cost seconds, not a hang.
+ * The check is deliberately two-sided -- returning at once would mean the read
+ * was given no budget at all, which is a different defect. */
+static int silent_peer_case(void) {
+    ImSocket *listener = NULL;
+    int port = 0;
+    for (int attempt = 0; attempt < 16 && !listener; ++attempt) {
+        port = 21000 + (int)(((unsigned long)getpid() * 53UL + (unsigned long)time(NULL) + (unsigned long)attempt * 131UL) % 8000UL);
+        listener = im_socket_listen("127.0.0.1", (uint16_t)port, 4);
+    }
+    if (!listener) return 0;
+    char url[64];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/silent", port);
+    char body[256];
+    int status = 0;
+    uint64_t began = im_socket_now_ms();
+    int rc = im_http_request("GET", url, NULL, body, sizeof body, &status);
+    uint64_t elapsed = im_socket_now_ms() - began;
+    im_socket_close(listener);
+    printf("silent peer: rc=%d status=%d elapsed=%llums\n", rc, status, (unsigned long long)elapsed);
+    if (rc == 0) return 0;                       /* a silent peer is not a response */
+    if (elapsed < 1000) return 0;                /* returned before any budget was spent */
+    if (elapsed > 15000) return 0;               /* gave up only by accident of some other timeout */
+    return 1;
+}
 int main(void) {
     /* Spread probes across the ephemeral range so parallel CI jobs and quick
        reruns do not collide with a recently-closing listener. */
@@ -97,6 +126,13 @@ int main(void) {
        only for a caller that proves it may open a portal for that (verse, peer);
        with this unset the listener refuses every /portal outright. */
     setenv("CRP_ENROLL_SECRET", "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", 1);
+    /* Before the server starts, so the silent listener below cannot collide with
+       it and so a hang here is attributed to the client, not to the server. */
+    if (!silent_peer_case()) {
+        fprintf(stderr, "silent peer: the client did not abandon an unresponsive endpoint "
+                        "within its read budget\n");
+        return 19;
+    }
     int started = 0;
     for (int attempt = 0; attempt < 12 && !started; ++attempt) {
         started = verse_http_start(port);

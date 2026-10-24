@@ -39,7 +39,7 @@ void im_socket_shutdown(void) {}
  * file did not have before the bounded resolve moved onto a helper thread. */
 #include "thread.h"
 
-static uint64_t socket_now_ms(void) {
+uint64_t im_socket_now_ms(void) {
 #ifdef _WIN32
     return (uint64_t)GetTickCount64();
 #else
@@ -234,10 +234,10 @@ ImSocket *im_socket_connect_timeout(const char *host, uint16_t port, int timeout
 #else
         if (errno != EINPROGRESS) { close(fd); return NULL; }
 #endif
-        uint64_t deadline = socket_now_ms() + (uint64_t)timeout_ms;
+        uint64_t deadline = im_socket_now_ms() + (uint64_t)timeout_ms;
         int ready = 0;
         do {
-            uint64_t now = socket_now_ms();
+            uint64_t now = im_socket_now_ms();
             if (now >= deadline) { rc = 0; break; }
             uint64_t remain = deadline - now;
             fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
@@ -311,6 +311,45 @@ int im_socket_recv(ImSocket *socket, void *buffer, size_t capacity) {
     int n; do { n = (int)recv(socket->fd, buffer, capacity, 0); } while (n < 0 && errno == EINTR);
     return n;
 #endif
+}
+/* Waits for readability so a caller can bound a read the way connect_timeout
+ * bounds a connect.  select() is used rather than SO_RCVTIMEO because the
+ * deadline has to be recomputed on EINTR: recv()'s own timeout restarts on the
+ * retry, and a peer that dribbles one byte per interval would then never time
+ * out.  Returns 1 readable, 0 timed out, -1 error. */
+int im_socket_wait_readable(ImSocket *socket, int timeout_ms) {
+    if (!socket) return -1;
+#ifdef _WIN32
+    SOCKET fd = (SOCKET)socket->fd;
+#else
+    int fd = socket->fd;
+#endif
+    if (!socket_valid(fd)) return -1;
+    uint64_t deadline = timeout_ms >= 0 ? im_socket_now_ms() + (uint64_t)timeout_ms : 0;
+    for (;;) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv;
+        struct timeval *ptv = NULL;
+        if (timeout_ms >= 0) {
+            uint64_t now = im_socket_now_ms();
+            if (now >= deadline) return 0;
+            uint64_t remain = deadline - now;
+            tv.tv_sec = (long)(remain / 1000u);
+            tv.tv_usec = (long)(remain % 1000u) * 1000L;
+            ptv = &tv;
+        }
+#ifdef _WIN32
+        int rc = select(0, &rfds, NULL, NULL, ptv);
+        if (rc < 0) return -1;
+#else
+        int rc = select(fd + 1, &rfds, NULL, NULL, ptv);
+        if (rc < 0) { if (errno == EINTR) continue; return -1; }
+#endif
+        if (rc == 0) return 0;
+        return FD_ISSET(fd, &rfds) ? 1 : 0;
+    }
 }
 int im_socket_peek(ImSocket *socket) {
     if (!socket) return -1;

@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+/* A read needs a deadline for the same reason a connect does.  The connect is
+ * bounded at 5000 ms; until now the read was not, so an endpoint that accepted
+ * the connection and then said nothing held the caller in recv() forever.  Two
+ * numbers, because silence and slowness are different: IDLE is how long a
+ * single read may bring nothing new, TOTAL caps the whole response even when a
+ * peer keeps dribbling.  Both are deliberately short -- the callers are health
+ * observation and capability traffic, not large downloads. */
+#define IM_HTTP_READ_IDLE_MS 2000
+#define IM_HTTP_READ_TOTAL_MS 10000
+
 static int parse_url(const char *url, char *host, size_t hc, unsigned short *port, char *path, size_t pc) {
     if (!url || strncmp(url, "http://", 7) != 0) return -1;
     const char *p = url + 7, *slash = strchr(p, '/'); size_t n = slash ? (size_t)(slash - p) : strlen(p);
@@ -28,7 +38,21 @@ int im_http_request(const char *method, const char *url, const char *body, char 
     int n = snprintf(req, sizeof req, "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nContent-Length: %zu\r\nContent-Type: application/json\r\n\r\n%s", method, path, host, blen, body ? body : "");
     if (n < 0 || (size_t)n >= sizeof req) { im_socket_close(s); im_socket_shutdown(); return -1; }
     for (int sent = 0; sent < n;) { int k = im_socket_send(s, req + sent, (size_t)(n - sent)); if (k <= 0) { im_socket_close(s); im_socket_shutdown(); return -1; } sent += k; }
-    char raw[65536]; size_t used = 0; int k; while (used + 1 < sizeof raw && (k = im_socket_recv(s, raw + used, sizeof raw - used - 1)) > 0) used += (size_t)k; raw[used] = 0; im_socket_close(s); im_socket_shutdown();
+    char raw[65536]; size_t used = 0;
+    uint64_t deadline = im_socket_now_ms() + (uint64_t)IM_HTTP_READ_TOTAL_MS;
+    for (;;) {
+        if (used + 1 >= sizeof raw) break;
+        uint64_t now = im_socket_now_ms();
+        if (now >= deadline) break;
+        uint64_t remain = deadline - now;
+        int wait_ms = remain < (uint64_t)IM_HTTP_READ_IDLE_MS ? (int)remain : IM_HTTP_READ_IDLE_MS;
+        if (im_socket_wait_readable(s, wait_ms) <= 0) break;
+        int k = im_socket_recv(s, raw + used, sizeof raw - used - 1);
+        if (k <= 0) break;
+        used += (size_t)k;
+    }
+    raw[used] = 0;
+    im_socket_close(s); im_socket_shutdown();
     char *line_end = strstr(raw, "\r\n"); if (!line_end) return -1; if (status) sscanf(raw, "HTTP/%*s %d", status);
     char *content = strstr(raw, "\r\n\r\n"); if (!content) return -1; content += 4; size_t avail = used - (size_t)(content - raw); if (avail >= capacity) avail = capacity - 1; memcpy(response, content, avail); response[avail] = 0; return 0;
 }
