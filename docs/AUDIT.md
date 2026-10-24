@@ -21558,3 +21558,76 @@ gate: FAILED — do not merge.
 **戊、边界。** ①本节不改 workflow、不改 `tools/check_*`；②不替 ivory 推 `dc60d9a`、不替它决定 merge 顺序；③不评 amber 那两件；④不改 `§1.322`／`§1.323` 的正文，本节只作废「红 ⇒ 修无效」这个推论，不动作废那两节的读数。
 
 **己、端点。** ①本节纯追加：起点 21514 行、插入 46 行（其中 1 行分节空行、正文 45 行）、删除零，终点 **21560** 行。②上一节 `fed8f55` 是第二百三十四批，本节是**第二百三十五批**。③本节读数出自本地 `git`（树 `fed8f55`／`dc60d9a`／`aec0b95`）、`gh run list` 与 `gh run view --log-failed` 逐字、以及 ivory 自报（已分栏）。
+
+## §1.325 增补三百五十七
+
+**甲、题眼：第一次「通过过了」—— 同一条命令在一棵树上给数、在另一棵树上拒答；而 `main` 这个名字不是一棵树。**
+
+§1.324 结束时我看见的是 `fed8f55` 上的红。ivory 随后把修复与我的两节合进一棵树推了上去，run `40090014005` 上 `Repository invariants (no build)` 第一次绿 —— 那是四十连败窗口里这个 job 的第一次成功。这一节记那次绿，以及它顺带暴露的一件事：`1814` 不是树的量，是 ref 的量。
+
+| 项 | 读数 | 怎么量的 |
+|---|---|---|
+| run | **`40090014005`** | `gh run view --json headSha,conclusion,jobs` |
+| 树 | **`5e2c3a2`** | 同上，`headSha` |
+| 整体结论 | `failure` | 同上 |
+| job 数 | **3** | 同上，`.jobs | length` |
+| `wasm-probe` | `success` | 同上，逐条 |
+| `Repository invariants (no build)` | **`success`**（窗口内第一次） | 同上，逐条 |
+| `linux-core` | `failure` | 同上，逐条 |
+| `83a3ea5`（修复）是否树的祖先 | **yes** | `git merge-base --is-ancestor 83a3ea5 5e2c3a2` |
+
+**乙、绿的那一次留下了数；而「拒答」不是「失败」。**
+
+同一个阶段，`fed8f55` 上印的是 `refusing to report a delta with no base`，`5e2c3a2` 上印出了下面这些（逐字，剥掉 runner 时间戳）：
+
+```
+check_line_refs: pins -- explicit delta +12 (expect +12), unanchored delta +8 (ceiling +12).
+check_line_refs: readings -- explicit 185 (base 173), unanchored 570 (base 562), mis-labelled 0 (base 0).
+check_line_refs: held -- 602 total: own 61, borrowed 71, picked up 470; of those, held by another file 215.
+check_line_refs: out of range -- 23 reference(s) name a line that does not exist in the file they name.
+check_line_refs: base 1c6b3381f3db8b77ca90c53ae5737dfa3698624f is 849 commit(s) behind HEAD.
+base e3e97c71e is 774 commit(s) behind HEAD; pointer delta +173 (ceiling 211)
+```
+
+两棵树上唯一的结构差别，是那棵树能不能解析 base（`fetch-depth: 0`）。⇒ 一个阶段离开 base 时**拒答**，而不是报 0、也不是报上一次的值：拒答本身是一种读数，它说的是「我这把尺子现在没有基准」。**立条：阶段拒答与阶段给错数，在日志里长得完全不同；报告里不许把前者写成后者。**
+
+**丙、合并顺序那一格：被检验的树是第二次合并的树。**
+
+| 项 | 读数 | 怎么量的 |
+|---|---|---|
+| `83a3ea5` 的父 | `aec0b95`（与我的 `fed8f55` 兄弟） | `git log --format='%h %p' -1` |
+| `83a3ea5 ⊕ fed8f55` | **`64d7783`**（父＝`83a3ea5`＋`fed8f55`） | 同上 |
+| `64d7783 ⊕ 469fcde` | **`5e2c3a2`**（父＝`64d7783`＋`469fcde`） | 同上 |
+| 推送 | `469fcde..5e2c3a2`，**只推一次** | ivory 自报，我未复核推送日志 |
+| 两棵兄弟的互差 | `fed8f55..83a3ea5` / 反向 = 1 / 1 | `git rev-list --count` |
+
+⇒ CI 检验的既不是修复提交，也不是我的任何一节，而是两次合并之后的那棵树。**立条：先合谁不算错，错的是不写出先合了谁** —— 兄弟分支的修改集不相交，两种先后都不冲突，但只有一种先后被执行过。
+
+**丁、`main` 不是一棵树，是两个 ref。**
+
+| 项 | 读数 | 怎么量的 |
+|---|---|---|
+| `refs/heads/main` | **`e97831c`** | `git rev-parse refs/heads/main` |
+| `refs/remotes/origin/main` | **`5e2c3a2`** | `git rev-parse refs/remotes/origin/main` |
+| `rev-list --count e97831c` | **1814** | `git rev-list --count` |
+| `rev-list --count 5e2c3a2` | **1825** | 同上 |
+| `e97831c..5e2c3a2` | **11** | 同上 |
+| `1c6b3381..5e2c3a2` | **849** | 同上 |
+
+最后一行是对上文的交叉验证：日志说 `base 1c6b3381… is 849 commit(s) behind HEAD`，我本地量 `1c6b3381..5e2c3a2` 也是 849 ⇒ 那次 run 读的确实是 `5e2c3a2` 这棵树（与 `headSha` 独立对上）。
+
+ivory 自报的 `1814` 两处都复现不出，根因就在这张表里：共享主工作树跑在 detached HEAD 上，`refs/heads/main` 不随工作提交前进，于是 `clone --branch main` 拿到的是**十一个提交之前**的树，`rev-list --count` 自然给 1814。⇒ **不是数错了，是被数的东西不是「现在的树」**，这是 ③ 型（真读数、错位置）在 ref 层的样子。**立条：报一个「树上有多少提交」之前，先写你用哪个 ref 取树；`main` 这个名字在两处可以指两棵树，凡取树用 refspec 钉住（`refs/remotes/origin/main:refs/heads/sim`）。**
+
+**戊、`0 runs` 只能进「写进去了」栏。**
+
+§1.324 丙栏立过「`0 runs` 与『跑绿了』在列表上都表现为『没有红』」。ivory 把它补成可判定的写法：**`0 runs` 不能出现在「通过过了」栏，只能出现在「写进去了」栏**。⇒ 三栏（写进去了／跑过了／通过过了）不是三个形容词，是三道各自必须有读数的门；同一个事实只能落进它真正通过的那一栏。
+
+**己、`linux-core` 仍红：按用户裁定记缺口、不诊断。**
+
+逐字：`test aot_native_regression exited 8`／`1/1 Test #35: aot_native_regression ...***Failed  Required regular expression not found. Regex=[aot_native\.test: [0-9]+ cases`／`gated_run:   clause 1 of 1: 'aot_native\\.test: [0-9]+ cases' .......... no match`／`##[error]aot_native_regression (rc=1)`。
+
+它同时是本次 run 里唯一一件好事：`tools/ctest_skip_guard.sh` 的「真失败」分支第一次在 runner 上被执行到 —— 它照旧把失败报成 `(rc=1)`，没有把失败读成跳过、也没有读成通过。BOARD 上记的是「待诊断（人类裁定：记缺口，不诊断）」，并立了一句反面提醒：**本地 159/159 全绿不构成「测试是好的」的证据**，它只说明这台机器这套工具链上没红过一次。
+
+**庚、边界与端点。**
+
+①本节纯追加：起点 **21560** 行、插入 **73** 行（其中 1 行分节空行、正文 72 行）、删除零、终点 **21633** 行。②不诊断 `aot_native_regression`，不改 CI 配置，不动 `fetch-depth`（那是另一条车道已落地的修复）。③不追溯改 §1.324 甲栏那张表（它写的是当时那棵树的读数，且在它那棵树上成立）。④上一节 `469fcde` 是第二百三十五批，本节是**第二百三十六批**。⑤本节读数出自本地 `git`（树 `5e2c3a2`／`e97831c`）、`gh run view --json`、`gh run view --log --job 120860602549` 逐字，以及 ivory 自报的推送与合并顺序（已分栏标注）。
