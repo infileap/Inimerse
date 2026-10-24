@@ -221,7 +221,7 @@ done
 
 §7.4 给的 20 / 80 是**格子**的读数。要把「为什么是这几格」写成判据，格子这一层不够用：同一个格子会被进入量词环不止一次 —— `a*b*c` 的 `a` 是先外层一次、再内层一次，`x*y`/`ab` 则是对每个起始位置各一次。把外层那一次的下界与内层那一次的 `count` 拼到一起，就会拼出一次**根本不存在的调用**，而且每个数都真。所以下面是**一次调用一行**的全表：80 格一格不省，77 格各有 1–4 行调用记录，另 3 格根本没有调用行（见最后的三条 `—` 行）。
 
-表头三件：树 `444c5b8`（切片是它的 897–1092 行，196 行）；平台 Linux x86-64，`gcc -O0`，`gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0`，每格一个独立进程；产物在 `/tmp/recipe-check`，**不在仓库里** —— 这张表是黄线、§7.8 的口令是白线，两者都不能在仓库里留产物。
+表头三件：树 `444c5b8`（切片是它的 897–1092 行，196 行）；平台 Linux x86-64，`gcc -O0`，`gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0`，每格一个独立进程；产物曾位于 `/tmp/recipe-check`，**已不存，也不在仓库里** —— 这张表是黄线、§7.8 的口令是白线，两者都不能在仓库里留产物。
 
 量具只在那 196 行上加了五处 `fprintf(stderr, …)`，逻辑一处未改：进量词环时打 `Q cid qmin qmax count`；吃进的字符数不足下界时打 `U cid too_few`；每次回溯尝试打 `T cid cont`；上界检查前打 `B cid count`；读之前打 `I cid idx`。
 
@@ -505,3 +505,11 @@ gdb.exe -batch -ex run -ex 'bt 4' --args ./build-sym/inimerse.exe c_star_dollar.
 3. **切片是「这段源码配这个输入」。** 它不证明整台引擎在这个平台上会崩或不会崩（§6 已记过：Linux 上同一输入走的是 libc 那份）。
 
 **没有顺手做的三件事**：没动 `pos[4096]` 的尺寸（§5 已证伪 25 起崩不是它）；没把量词路径改成迭代（那是另一条缺陷，`f1a0461` 的注释自己就写着量词路径仍然递归）；没改 §11 的「没修」—— §11 记的是那份测量交付当时的边界，本节是另开的一笔。
+
+### 12.1 第二次核对：Windows 上这条路径一直有人编译（2026-10-24，ivory-zephyr 补）
+
+上面那条限定「Windows 二进制未实测」只在「本机没有 mingw」这个意义上成立，读到 CI 才发现仓库有自己的 Windows 构建：`.github/workflows/windows-build.yml` 在每次 push 上跑 `windows-latest` + msys2 UCRT64，先 `./build.ps1`，再 `ctest --test-dir build-windows-gcc`。也就是说，`if(WIN32)` 那个分支里收的这份运行时，**在 CI 上一直被编译**。
+
+- 含修复的树 `d4f96d4`（含 `eb19e0e`），run `40102284735`：步骤 `Build Windows core` **success**，步骤 `CMake tests` failure，逐字 `98% tests passed, 3 tests failed out of 138`，三条是 `aot_native_regression`、`vm_bad_fidx_regression`、`count_builtin_runtime`。
+- 三条都不是正则路径上的崩溃 ⇒ 这一行改动**在 Windows 上编译通过、且没有把某个测试从通过变成崩溃**。
+- **但「修前同样三条失败」这个对照取不到**：Windows 构建已经连续失败很久（最近十二次 run 全 failure），早先 run 的日志已过期。所以这份读数是「含修复的树上是什么样」，不是「修复改变了什么」。要拿到后者，得在修前那棵树上重跑一次构建 —— 那是另一件事，这里不做。
