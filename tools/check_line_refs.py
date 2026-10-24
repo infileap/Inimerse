@@ -560,7 +560,29 @@ class Tree:
     def text(self, rel: str) -> str:
         """Content, decoded the way the working-tree read decodes it."""
         if self.rev is None:
-            return (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+            try:
+                return (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+            except (UnicodeError, OSError) as exc:
+                # Ten tracked paths here are non-ASCII (`docs/archive/
+                # 工作台使用教程.md` and nine more), so a shell whose filesystem
+                # encoding is ASCII -- `LC_ALL=C PYTHONUTF8=0
+                # PYTHONCOERCECLOCALE=0` -- cannot even *encode the name* to
+                # open it: `open()` raises UnicodeEncodeError before a byte of
+                # content is read.  Left unhandled that is a traceback and exit
+                # 1, which this checker already uses for "references lost their
+                # holder" -- a setup failure must not wear a finding's exit
+                # code.  Exit 4 says "the environment cannot address this tree",
+                # names the path, and points at the one setting that fixes it.
+                print(
+                    f"check_line_refs: ENVIRONMENT -- cannot read {rel!r}: "
+                    f"{exc.__class__.__name__}: {exc}\n"
+                    "check_line_refs: ENVIRONMENT -- this is the shell, not the "
+                    "tree: the path cannot be encoded under the current "
+                    "filesystem encoding.  Re-run with PYTHONUTF8=1 or "
+                    "LC_ALL=C.UTF-8.  Exit 4 is not a reference finding.",
+                    file=sys.stderr,
+                )
+                sys.exit(4)
         return self._blob(rel).decode("utf-8", "replace")
 
     def docs(self) -> list[str]:
