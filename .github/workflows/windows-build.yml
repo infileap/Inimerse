@@ -32,6 +32,35 @@ jobs:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           ./build.ps1
+      # Before the suite, not after it.  Two reasons, and the second is the one
+      # that made this step exist:
+      #
+      #   1. `DISABLED TRUE` removes a test from the `out of N` denominator, so
+      #      this build's own summary -- `98% tests passed, 3 tests failed out of
+      #      138` for 147 registered cases -- cannot report the nine hub
+      #      regressions that never ran.  Reading the registry is the only way to
+      #      see them, and reading it before the run keeps a missing declaration
+      #      apart from a compiler failure: one is a fact about CMakeLists.txt,
+      #      the other needs the log.
+      #   2. The declarations live in tools/known-skips-windows.txt, which the
+      #      Linux job never consults.  `--check-disabled` refuses an undeclared
+      #      disabled test (exit 2) and also refuses a declaration that names no
+      #      registered test, so this list cannot rot into a licence nobody reads.
+      #
+      # `shell: bash` is Git Bash on this runner, which has bash 5 and inherits
+      # the Windows PATH -- so `ctest` resolves and `$PWD` is a POSIX path the
+      # allowlist check can open.  Do not move this to `shell: msys2 {0}`: that
+      # PATH is the UCRT64 tree and would not find CMake's ctest.
+      - name: Skip exemptions (Windows)
+        shell: bash
+        run: |
+          export INIMERSE_KNOWN_SKIPS="$PWD/tools/known-skips-windows.txt"
+          echo "::group::exemption list"
+          bash tools/ctest_skip_guard.sh --check-allowlist build-windows-gcc
+          echo "::endgroup::"
+          echo "::group::disabled tests"
+          bash tools/ctest_skip_guard.sh --check-disabled build-windows-gcc
+          echo "::endgroup::"
       - name: CMake tests
         shell: pwsh
         run: |

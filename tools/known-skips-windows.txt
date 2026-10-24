@@ -1,0 +1,49 @@
+# Tests the Windows build registers and does not run.
+#
+# This is the Windows counterpart of tools/known-skips.txt, and it exists
+# separately because the two platforms can disagree about a test without either
+# of them being wrong: `src/platform/http_posix.c` (the complete hub) is compiled
+# into the POSIX engine only, so the Windows engine links `src/mod/verse_dist_mod.c`
+# -- a reduced hub that answers `/ping`, `/v/<id>`, `/hub` and `/api/forge` and
+# hands every other path the 436-byte "Wrong port!" page.  Nine regressions drive
+# routes the reduced hub cannot serve, and CMakeLists.txt sets DISABLED TRUE on
+# them under `if(WIN32)` on purpose; the two language bridges skip because their
+# toolchains are not on that runner.
+#
+# Why this file is checked at all: ctest removes a `DISABLED TRUE` test from the
+# `out of N` denominator, so the Windows suite reports `98% tests passed, 3 tests
+# failed out of 138` for 147 registered cases, and the 9 that never ran are not
+# visible anywhere in that sentence.  `bash tools/ctest_skip_guard.sh
+# --check-disabled build-windows-gcc` with INIMERSE_KNOWN_SKIPS pointing here
+# turns "9 tests are silently switched off" into "9 declared, each with a reason"
+# -- and a tenth one added next month fails the job instead of shrinking the
+# denominator.
+#
+# Format: one `<test-name> # <reason>` per line.  The reason must say what would
+# make the entry unnecessary; an entry with no reason is refused, and an entry
+# naming a test that is not registered is refused (--check-allowlist does both,
+# and the Windows job runs it before the suite).
+#
+# This list is not a Linux list.  Do not add a name here to make the Linux job
+# green: on Linux those nine tests run, and an exemption that is never consulted
+# is the thing this guard exists to refuse.
+
+http_large_package_regression # drives the POSIX hub's /package body limit (src/platform/http_posix.c); the Windows engine links the reduced hub in src/mod/verse_dist_mod.c, which answers 436 bytes of "Wrong port!". Unnecessary once a Windows hub enforces the same body limit.
+crp_session_flow_regression # drives /session/* through the POSIX hub; the reduced hub has no session routes. Unnecessary once src/mod/verse_dist_mod.c serves /session/* and the CMakeLists if(WIN32) block stops disabling it.
+hub_dist_regression # drives /content/ and /node/* distribution through the POSIX hub; the reduced hub serves neither. Unnecessary once the Windows hub serves those routes.
+vverse_cross_regression # drives /v/<id> over the WebSocket portal, which only src/platform/http_posix.c implements. Unnecessary once the portal exists on Windows.
+node_discovery_regression # drives /node/* discovery; the reduced hub has no node routes. Unnecessary once src/mod/verse_dist_mod.c serves them.
+lease_handoff_regression # drives /session/* lease handoff; no session routes on the reduced hub. Unnecessary once those routes exist on Windows.
+reconnect_generation_regression # drives /session/* reconnect generations; no session routes on the reduced hub. Unnecessary once those routes exist on Windows.
+economy_domain_regression # drives /economy/*, which the reduced hub does not serve. Unnecessary once the Windows hub serves /economy/*.
+economy_migration_regression # drives /economy/* migration, which the reduced hub does not serve. Unnecessary once /economy/* exists on Windows.
+
+# The two below are `***Skipped`, not disabled: the test ran and called its
+# SKIP_RETURN_CODE because the runner has no Python or JDK for the bridge to
+# load.  They are listed here so that the day the Windows job moves to the
+# per-test loop (the mode that can see a skip), the declarations already exist
+# and the reason is already written.  Today the full-suite run reports them
+# inside the denominator and scores them as passed -- a skip is not a pass, and
+# that is why they are declared rather than tolerated.
+xlang_python_bridge # needs a Python the bridge can dlopen; the windows-latest image has none on PATH for the MSYS2 build tree. Unnecessary once the runner ships one, or once the test links the interpreter it was built against.
+xlang_java_bridge # needs a JDK and JAVA_HOME for the bridge; the windows-latest image has neither on PATH for the MSYS2 build tree. Unnecessary once the runner installs a JDK and the test can find it.

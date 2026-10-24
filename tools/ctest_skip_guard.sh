@@ -30,6 +30,19 @@
 #          one declared without a reason, is not an exemption but a licence
 #          nobody audits
 #
+#   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
+#       0  every test the registry reports as `(Disabled)` is declared
+#       1  `ctest -N` failed -- the check could not see the registry, so it
+#          says nothing about the tests; this is not exit 2, because "I could
+#          not look" and "I looked and found an undeclared one" are different
+#          findings and want different repairs
+#       2  a `DISABLED TRUE` test is not declared.  This is the mode the Windows
+#          job uses: it runs the whole suite in one `ctest` invocation, so there
+#          is no per-test step to hang a guard on, and a disabled property is
+#          the quietest way a test can stop existing -- ctest drops it from the
+#          denominator, so `147 registered` prints as `out of 138` and reads as
+#          a complete run.
+#
 # Override the exemption list with INIMERSE_KNOWN_SKIPS=<path> (the only reason
 # that knob exists is so the two branches below can be shown to be reachable).
 set -uo pipefail
@@ -87,6 +100,66 @@ check_allowlist() {
   printf 'exemption list: %s declared entr(ies), all registered and justified\n' "$entries"
   return 0
 }
+
+# Read the registry, not a run, and count the tests `(Disabled)`.  The Windows
+# job needs this shape: it runs all 147 cases inside one `ctest` invocation, so
+# the per-test branch above is never called there, and `DISABLED TRUE` is the
+# quietest way a test can stop existing -- ctest removes it from the `out of N`
+# denominator, so the 9 hub regressions read as a suite that ran 138 and left
+# nothing out.  Checking before the run also keeps the two findings apart: a
+# missing declaration is a fact about CMakeLists.txt and can be repaired without
+# reading compiler output.
+check_disabled() {
+  local build_dir="$1" listing
+  if ! listing="$(ctest --test-dir "$build_dir" -N 2>&1)"; then
+    printf 'cannot check the disabled set: ctest -N failed for %s\n%s\n' \
+      "$build_dir" "$listing" >&2
+    return 1
+  fi
+  local -a disabled=()
+  mapfile -t disabled < <(
+    printf '%s\n' "$listing" |
+      sed -n 's/^[[:space:]]*Test[[:space:]]*#[0-9][0-9]*:[[:space:]]*//p' |
+      sed -n 's/[[:space:]]*(Disabled)$//p'
+  )
+  local name reason found
+  local declared_count=0
+  local undeclared_count=0
+  for name in "${disabled[@]}"; do
+    [ -n "$name" ] || continue
+    found=''
+    while IFS=$'\t' read -r declared_name declared_reason; do
+      if [ "$declared_name" = "$name" ]; then
+        found="$declared_reason"
+        break
+      fi
+    done < <(declared)
+    if [ -n "$found" ]; then
+      declared_count=$((declared_count + 1))
+      printf 'guard: disabled test %s is declared: %s\n' "$name" "$found"
+      continue
+    fi
+    undeclared_count=$((undeclared_count + 1))
+    printf 'guard: disabled test %s is not declared in %s\n' "$name" "$allowlist" >&2
+    printf '  DISABLED TRUE removes it from the `out of N` denominator: the suite\n' >&2
+    printf '  prints a smaller N and reads as complete.  Make the feature it needs\n' >&2
+    printf '  exist, or declare it with a reason saying what would make the entry\n' >&2
+    printf '  unnecessary.\n' >&2
+  done
+  if [ "$undeclared_count" -ne 0 ]; then
+    printf 'guard: disabled=%s declared=%s undeclared=%s result=disabled-undeclared\n' \
+      "${#disabled[@]}" "$declared_count" "$undeclared_count" >&2
+    return 2
+  fi
+  printf 'guard: disabled=%s declared=%s undeclared=0 result=disabled-declared\n' \
+    "${#disabled[@]}" "$declared_count"
+  return 0
+}
+
+if [ "${1:-}" = "--check-disabled" ]; then
+  check_disabled "${2:-build}"
+  exit $?
+fi
 
 if [ "${1:-}" = "--check-allowlist" ]; then
   check_allowlist "${2:-build}"
