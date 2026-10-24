@@ -21631,3 +21631,61 @@ ivory 自报的 `1814` 两处都复现不出，根因就在这张表里：共享
 **庚、边界与端点。**
 
 ①本节纯追加：起点 **21560** 行、插入 **73** 行（其中 1 行分节空行、正文 72 行）、删除零、终点 **21633** 行。②不诊断 `aot_native_regression`，不改 CI 配置，不动 `fetch-depth`（那是另一条车道已落地的修复）。③不追溯改 §1.324 甲栏那张表（它写的是当时那棵树的读数，且在它那棵树上成立）。④上一节 `469fcde` 是第二百三十五批，本节是**第二百三十六批**。⑤本节读数出自本地 `git`（树 `5e2c3a2`／`e97831c`）、`gh run view --json`、`gh run view --log --job 120860602549` 逐字，以及 ivory 自报的推送与合并顺序（已分栏标注）。
+
+## §1.326 增补三百五十八
+
+**甲、题眼：一行修完之后，「修好了」有三个不同的量；而三个量都不需要端到端成立。**
+
+ivory 落地了 `pos[-1]` 那条真修：提交 **`eb19e0e`**（父 `5e2c3a2`），一行改动加一段注释 —— 回溯段 `t = pos[count - 1];` 改成 `t = (count > 0) ? pos[count - 1] : s;`。理由它写得比我准：`pos` 存的是每次重复**结束**的位置，零次重复那个候选（＝元素入口 `s`）在数组里没有槽位，`count == 0` 时读到的是数组前一槽。numstat `14 1 src/runtime/runtime.c`。
+
+它给的三条读数（**对方自报，我未复跑切片**）：
+
+| 量 | 修前 | 修后 |
+|---|---|---|
+| 崩 | 20/80 | **0/80** |
+| ASan `stack-buffer-overflow` 命中 | 20 | **0** |
+| 与 libc `REG_EXTENDED` oracle 一致 | 60/80（其余 20 崩） | **80/80**（原不崩的 60 格逐格同值） |
+
+两条限定它要求照原样记、不许合并成「已修」：①**门禁编译不到被改行** —— `CMakeLists.txt` 第 426 行是 `if(WIN32)`，Linux 编的是走 libc 的 `runtime_posix.c`；②**Windows 二进制未实测**（本机无 mingw）。⇒ 这是「切片编译 + 独立答案 oracle」级证据。**立条：切片级证据证明的是「这段逻辑在一个受控切片里对」，不是「这门语言在这台机器上对」；凡写「已修」必须同时写它在哪个靶子上被编译过。**
+
+**乙、第二个修复：连接有上限、收包没有上限。**
+
+`a301a4b`（父 `150c1f4`）numstat：`25 1 src/platform/http_client.c`、`36 0 src/platform/http_probe.c`、`42 3 src/platform/socket.c`、`8 0 src/platform/socket.h`、`2 1 docs/BOARD.md`。缺陷是 `im_http_request` 只给了连接上限（`im_socket_connect_timeout(host, port, 5000)`），收包是裸 `while (im_socket_recv(...) > 0)` ⇒ 握手成功后不说话的端点能让 `node_probe_loop` 整轮卡死。修法是 socket PAL 加 `im_socket_wait_readable(s, ms)`（select）与 `im_socket_now_ms()`，收包改成 **idle 2000 ms ／ 总预算 10000 ms** 双数，`http_probe` 加「沉默对端」格。它明说不用 `SO_RCVTIMEO`：recv 自带超时在 EINTR 重试时会重新计时，逐字节滴答的对端永远不会超时。
+
+三层证据它都给了：行为 `silent peer: rc=-1 status=0 elapsed=2003ms` 与 `ctest -R '^http_probe$'` 1/1；**能红**（同一驱动配未加界的旧循环 `timeout 12` → `RC=124` 被杀；配新循环 → `rc=-1`、`RC=0`）；CI run **`40098422071`**（树 `a301a4b`）。**立条：「沉默」与「慢」是两种失败，一个预算管不住两件**；而「能红」比「修后不崩」硬 —— 后者不区分「修好了」与「这条路径根本没跑」。
+
+**丙、CI 那一格我逐条核过。**
+
+| 项 | 读数 | 怎么量的 |
+|---|---|---|
+| run | `40098422071` | `gh run view --json headSha,conclusion,jobs` |
+| 树 | `a301a4b` | 同上 |
+| 整体 | `failure` | 同上 |
+| job | **3**：`Repository invariants (no build)` success／`wasm-probe` success／`linux-core` failure | 逐条 |
+| 唯一失败 | `##[error]aot_native_regression (rc=1)`，即既有缺口行 | 同上 |
+| `http_probe` | `Test #26: http_probe ... Passed 4.31 sec` | 该 run 日志 |
+
+`a301a4b` 的祖先链上同时有修复 `eb19e0e` 与我的 §1.325（`150c1f4` 是把 `eb19e0e` 与 `b932de6` 合的合并提交）⇒ 这次绿绑的树里两件都在。
+
+**丁、§1.305 戊栏那行：状态确实变了，但不是去改那一行。**
+
+旧值：`src/platform/http_client.c:31` 的 `im_socket_recv` 在 §1.309 己栏记为「未开行、等人类裁定」。人类 m05596 放行，`150c1f4`／`a301a4b` 已修。处置不是把旧节那句话改掉（已推送的节不改内容），而是由本节写「旧值 → 新值」，并点名 §1.305 与 §1.309 两处。**立条：状态栏不是可以原地改的字段 —— 它是一条读数，读数变了要新写一条，而不是把旧读数改成新读数；否则后来的人看不出它曾经是什么。**
+
+**戊、无锚余量已经用尽：+12 打在 +12 的天花板上。**
+
+| 项 | 读数 | 怎么量的 |
+|---|---|---|
+| `pins` | `explicit delta +12 (expect +12), unanchored delta +12 (ceiling +12)` | 在树 `a301a4b` 上跑 `tools/check_line_refs.py` |
+| `readings` | `explicit 185 (base 173), unanchored **574** (base 562), mis-labelled 0` | 同上 |
+| `out of range` | 23 | 同上 |
+| base 落后 | `1c6b3381… is 853 commit(s) behind HEAD` | 同上 |
+
+ivory 信里写的是「readings 185/572」，我量到 **574**，并且 run `40098422071` 的日志逐字也是 **574** ⇒ 差额 2 在它那张表里，不在树上。我不写「它错了」，写「我量的数与 run 日志同为 574」（同一个量的每个值都要带树，这已是第四例）。**立条：有天花板的量，用尽之后不许「先加再说」** —— 下一个无锚引用必须同时删一条，否则变红的是同一棵树下一个人；而这次的红会落在我的下一节上，所以本节自己先受这条管。
+
+**己、`aot_native_regression`：三个耗时，同一棵树同一天（对方自报，我未复跑）。**
+
+`***Timeout 300.04 sec`（刚开机、门禁 12 路并发）／`124.73 s Passed`（单独跑）／`102.35 s Passed`（机器空闲、随门禁跑）。⇒「本机 159/159 全绿」是**机器不忙**的读数，不是这条测试的性质。人类裁定仍是记缺口、不诊断，BOARD 已立 `aot-native-regression-ci` 行。**立条：耗时读数是负载的函数 —— 报耗时不报并发数，等于没报分母。**
+
+**庚、边界与端点。**
+
+①本节纯追加：起点 **21633** 行、插入 **58** 行（其中 1 行分节空行）、删除零、终点 **21691** 行。②不改 §1.305／§1.309 原文（按丙栏写成「旧值 → 新值」）。③不诊断 `aot_native_regression`、不改 CI 配置、不重跑 300 秒级的测试（那条留作对方自报）。④不动 amber 的作业单与其表。⑤上一节 `b932de6` 是第二百三十六批，本节是**第二百三十七批**。⑥本节读数出自本地 `git`（树 `eb19e0e`／`150c1f4`／`a301a4b`）、`gh run view --json`、run `40098422071` 的 job 日志逐字、树 `a301a4b` 上 `tools/check_line_refs.py` 的实测，以及 ivory 自报的切片读数与三个耗时（已分栏标注）。
