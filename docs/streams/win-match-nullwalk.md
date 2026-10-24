@@ -199,12 +199,18 @@ ASan 的定位逐字是 `regex_block.inc:172 in re_seq`；我切的是 `444c5b8`
 
 ### 7.8 复现命令
 
+模式表只用**单引号字面量**。这不是排版习惯：换成 `pats="a*b …"; for p in $pats`，引号会跟着消失，`[ab]*c` 会在传参前被展开成同目录里的文件名 —— 没有报错、没有警告，只是那几格跑的不是这个模式。两条：
+
+1. **模式必须是单引号字面量**，不经变量中转。
+2. **打印的必须是展开后的实参**（`printf '<%s>\n' "$p"`），不是源文本。`echo "$pats"` 在出事的那个格子里照样印 `[ab]*c` —— 它印的是**以为要跑的东西**，缺口正好被它盖住。
+
 ```sh
 git -C /home/sakiko/inimerse show 444c5b8:src/runtime/runtime.c | sed -n '897,1092p' > regex_block.inc
 gcc -std=c11 -g -O0                    -o one_inc  main.c
 gcc -std=c11 -g -O0 -fsanitize=address -o one_asan main.c
 for p in 'a*b' 'a?b' 'x*y' 'ab*' 'a*' 'a+b' 'a*c' '[ab]*c' 'a*b*c' '(ab)*c'; do
   for s in a ab aab x b abc aac c; do
+    printf '<%s> <%s>\n' "$p" "$s"
     ./one_inc  "$p" "$s" >/dev/null 2>&1; echo "$p $s raw_rc=$?"
     ./one_asan "$p" "$s" 2>&1 | grep -m1 'ERROR: AddressSanitizer'
   done
