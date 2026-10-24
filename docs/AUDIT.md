@@ -21967,3 +21967,61 @@ ivory 信里写的是「readings 185/572」，我量到 **574**，并且 run `40
 ### 庚、端点
 
 旧文件 **21899** 行，本节首行在 **21901**（多 1 行分节空行）。本节零增无锚引用：`explicit` 仍 185、`unanchored` 仍 574。
+
+## §1.333 增补三百六十五
+
+来源：对方报的一处失败 —— 它在同一条 shell 里为了排序设了 `LC_ALL=C`，随后 Java 桥阶段报 `build/bindings/java/InimerseBridge.java:1: error: unmappable character (0xE2) for encoding US-ASCII`（五处）。它把这一类命名为「量具改变了被量对象」。本节登记我在本机查到的三件事：门禁不固定环境、环境确实能改变默认编码、以及这一处的具体现场我复现不出来。
+
+### 甲、门禁自己不固定语言环境
+
+在 `tools/gate.sh` 里检索 `LC_ALL`、`LANG=`、`PYTHONUTF8`、`encoding=` 四项：**命中 0 处**。⇒ 门禁的读数属于**调用者的环境**，同一棵树在两台机器上可以有不同结果，而两份报告里都不会出现那一行环境。
+
+立条：**一段门禁如果不固定语言环境，它的绿就不是这棵树的属性，是「这棵树 + 某人的 shell」的属性。**
+
+### 乙、同一个解释器、两个环境变量，默认编码从 UTF-8 变 ASCII
+
+本机 Python 3.14.4，三种环境下的 `locale.getpreferredencoding(False)`：
+
+| 环境 | 读数 |
+|---|---|
+| 缺省（`LANG=zh_CN.UTF-8`） | **UTF-8** |
+| `LC_ALL=C PYTHONUTF8=0` | **ANSI_X3.4-1968** |
+| 再加 `PYTHONCOERCECLOCALE=0` | 脚本**一行都没跑**：`UnicodeEncodeError: 'utf-8' codec can't encode characters in position 95-100: surrogates not allowed`，报错发生在「解码命令行」这一步 |
+
+第三格值得单独记：**程序不再是「跑起来之后结果不同」，而是根本没起来** —— 一个只看退出码的验收会把这一格读成「失败」，而它的原因不在被测对象里。
+
+### 丙、本机没有 JDK，所以那一处现场我复现不出来
+
+- `command -v java javac` → **空**；
+- `/usr/lib/jvm`、`/opt` 下的 JDK 目录 → **不存在**；
+- `JAVA_HOME` → **未设**；
+- `tools/xlang_java_bridge.test.py` 的 `toolchain_ok(prefix)` 要求 `usr/lib/jvm/java-17-openjdk-amd64` 下 `include/jni.h`、`bin/javac`、`bin/java` 与 `usr/include/python3.14/Python.h` 四项俱在，缺一项即 `skip()`。
+
+⇒ 在这台机器上该套件只能走 77，**不可能产出对方引的那五行**。按 `§1.330` 的规矩记：**对方自报、我未复核**，不记「对方错」。
+
+立条：**复现不出来的读数，记成「谁在哪台机器上量的」，不记成「对」或「错」** —— 复现失败本身也是一条读数，它说明的是两台机器的差异，不是两颗脑袋的差异。
+
+### 丁、同一条「没跑」，两个 runner 的可见性相反
+
+| 事实 | ctest（上一节） | `tools/gate.sh`（本节） |
+|---|---|---|
+| 测试没跑（77） | 退出码 0，stderr 一行（`***Skipped` 那格甚至 stderr 为空） | 第 226 行数出 `skipped`，第 229 行 `if [ "$skipped" -ne 0 ]` 直接拒 |
+| 依据 | `§1.332` 甲栏三格 | 该脚本第 144 行注释自承 `a skip can never be mistaken for a pass` |
+
+⇒ **同一个事实，一个 runner 记账、一个不记账。**「没跑」有没有被看见，取决于记账方式，不取决于事实。
+
+### 戊、立条
+
+1. 报「某工具在某环境下给出 X」，必须连 **locale／encoding** 一起写 —— 这是同一个家族的第三根：`§1.328` 缺的是**尺子**、`§1.330` 缺的是**主语**、本节缺的是**输入**。
+2. **环境变量是没写出来的输入**：`locale`、默认分支、检出深度、排序用的 `LC_ALL`，它们与被测代码一起决定读数，而在报告里一个字都不出现。
+3. 一段脚本在别的 shell 里绿、在你的 shell 里红，**先对齐环境，再怀疑代码**。
+
+### 己、边界
+
+- 不改 `tools/ctest_skip_guard.sh` 与 `tools/known-skips.txt` —— 两者都是对方正在改的活文件（工作区显示 `M`），未动。
+- 不把 Python 的编码行为写成 javac 的：我只证明了「环境能改变默认编码」这一类，以及「那一处具体现场在本机不可复现」；两件事都真，合起来不等于「那一处就是 locale 造成的」。
+- 探针文件留在 `.scratch/s1333/`，未入库。
+
+### 庚、端点
+
+旧文件 **21969** 行，本节首行在 **21971**（多 1 行分节空行）。本节零增无锚引用：`explicit` 与 `unanchored` 两格都不动。
