@@ -1,0 +1,24 @@
+# Tests allowed to exit 77 (CTest SKIP_RETURN_CODE) in CI.
+#
+# This file is an exemption list for tools/ctest_skip_guard.sh, and it exists
+# because "skipped" and "passed" are the same thing to everything downstream:
+# ctest prints `***Skipped`, keeps the per-test exit code at 0, and the job
+# summary still says the suite passed.  A test that never runs is not a test
+# that passes, so an undeclared skip fails the job.
+#
+# Format: one test name per line, followed by `#` and a reason.
+#
+#   xlang_python_bridge_test  # needs tools/requirements.txt, which this job never installs
+#   some_other_test           # <why a skip here is correct rather than a defect>
+#
+# Rules enforced by `bash tools/ctest_skip_guard.sh --check-allowlist build`:
+#   * a name that is not registered in `ctest -N` fails the check -- an
+#     exemption for a test that no longer exists is a licence nobody audits;
+#   * a name without a reason after `#` fails the check -- "declared" is not
+#     the same as "justified".
+#
+# The list is empty on purpose.  Every skip this job can produce today is a
+# defect on this runner: the two xlang bridges skip when their prebuilt
+# toolchain is absent, and a fresh checkout never has it unless the job built
+# it.  Adding an entry is a decision to stop noticing that test in CI, so it
+# should be rare and each one should say what would make it unnecessary.

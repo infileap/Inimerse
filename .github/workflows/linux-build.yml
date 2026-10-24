@@ -90,9 +90,22 @@ jobs:
             exit 1
           fi
           mapfile -t TESTS < build/ctest-names.txt
+          # The exemption list is checked before anything runs, so an entry for
+          # a test that no longer exists -- or one with no reason -- fails the
+          # job instead of licensing a skip nobody looks at again.
+          if ! bash tools/ctest_skip_guard.sh --check-allowlist build; then
+            echo "::error title=skip exemptions::tools/known-skips.txt is not auditable"
+            exit 1
+          fi
           echo "running ${#TESTS[@]} registered CTest cases one at a time"
           for test_name in "${TESTS[@]}"; do
-            if ctest --test-dir build -R "^${test_name}$" --output-on-failure; then
+            # Refuse a skip.  A test that exits 77 is printed by ctest as
+            # `***Skipped`, keeps its own exit code at 0, and the summary still
+            # says the suite passed -- so branching on the exit code alone
+            # cannot tell a test that stopped running from one that kept
+            # passing.  See tools/ctest_skip_guard.sh for why this is the one
+            # place that reads the marker.
+            if bash tools/ctest_skip_guard.sh build "${test_name}"; then
               :
             else
               test_rc=$?
@@ -109,7 +122,11 @@ jobs:
                 echo "::error title=range_meta ctest::rc=${ctest_rc}; ${compact_ctest_output:0:900}"
                 echo "::endgroup::"
               fi
-              echo "::error title=CTest failed::${test_name} (rc=${test_rc})"
+              if [ "$test_rc" -eq 2 ]; then
+                echo "::error title=CTest skipped::${test_name} exited 77 without running -- fix the guard, or declare it in tools/known-skips.txt with a reason"
+              else
+                echo "::error title=CTest failed::${test_name} (rc=${test_rc})"
+              fi
               exit 1
             fi
           done
