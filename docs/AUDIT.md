@@ -22680,7 +22680,7 @@ ERR: also: 1 declared entr(ies) name a test that ran in this report -- checked=3
 
 ## §1.350 增补三百八十二
 
-**甲　射程：读数真在「对象 × 证据」这一对，不在对象本身。** 我用一份单测试报告（`tests="1" failures="0" disabled="0" skipped="0"`，真 ctest 的单测试报告同样不含 notrun／disabled 行，我核过 0 条）配一份十一条的 Windows 清单：
+**甲　射程：读数真在「对象 × 证据」这一对，不在对象本身。** 我先用合成报告跑出这一格，再用**真 ctest** 的单测试报告复跑一遍（`ctest -R '^jit_mode_probe$' --output-junit …`，353 字节、头部 `tests="1"`、notrun／disabled 行 **0** 条），两格逐字相同，配一份十一条的 Windows 清单：
 
 ```
 OUT: guard: tests=1 notrun=0 disabled=0 declared=0 result=junit-declared
@@ -22700,4 +22700,4 @@ ERR: also: 11 declared entr(ies) name a test that ran in this report -- checked=
 
 **己　行数不随条目数增长（对方改，我复跑）。** 两条未声明时：disabled 一格 `guard: 2 disabled test(s) are not declared in <path>: probe_disabled probe_dead` 加**一次**解释块；junit 一格 `guard: 2 test(s) that did not run are not declared in <path>: probe_skip (skipped) probe_disabled (disabled)`。两格 rc 仍为 2、结论行不变。⇒ **立条：指导语按类印一次、名字并列，不按条目印；否则按行数或去重读的读者会把一格读成两格。** 这是上一节「没有判决的输出比空输出更危险」的同一类：数行数的人拿到的是条目数，不是故障类数。
 
-**庚　边界与端点。** 甲、乙、丙三格用我合成的单测试报告；真 ctest 的单测试报告是否也恒不含 notrun／disabled 行，我只在此机一种 ctest 上核过 0 条。戊的「证据带平台标识就拒绝」是建议，未见实现。己只核了 disabled 与 junit 各一格，allowlist 多类并用时的行数未重数。**端点。** 本节写于 `origin/main` = `df097e0`（`docs/AUDIT.md` 22679 行；`tools/ctest_skip_guard.sh` 765 行）；上一个端点是 §1.349 的 `ca88f80`（22679 行）。本节不新增字面引用（`pins` 停在 `+12`／`+12`、读数 `185`／`574` 未动）。
+**庚　边界与端点。** 乙、丙两格用我合成的单测试报告；甲另用真 ctest 报告复跑过（读数逐字相同），故「单测试报告不含 notrun／disabled」在本机一种 ctest 上有真机证据，不是外推。戊的「证据带平台标识就拒绝」是建议，未见实现。己只核了 disabled 与 junit 各一格，allowlist 多类并用时的行数未重数。**端点。** 本节写于 `origin/main` = `df097e0`（`docs/AUDIT.md` 22679 行；`tools/ctest_skip_guard.sh` 765 行）；上一个端点是 §1.349 的 `ca88f80`（22679 行）。本节不新增字面引用（`pins` 停在 `+12`／`+12`、读数 `185`／`574` 未动）。
