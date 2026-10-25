@@ -1629,4 +1629,14 @@ set_tests_properties(selfhost_interpreter_runs PROPERTIES WORKING_DIRECTORY ${CM
 # under an ASAN build.
 add_test(NAME vm_arrays_big_shape COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "arrays=4950" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/selfhost/tests/_uaf_arrays.im)
 set_tests_properties(vm_arrays_big_shape PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "vm;smoke")
+# The self-hosted compiler against the C front-end, file by file.  Before the
+# rebase fix below, five of these disagreed only in how far a relative path had
+# been resolved: the C front-end changes into the script's directory, while a
+# program compiled and run by compiler.im resolved against the compiler's
+# directory, so `read_file("tests/prog1num.im")` read 15 bytes on one side and 0
+# on the other.  30/33 agree today; the three skipped files are the two
+# stage-DSL programs (no bytecode form to compare) and hw_test.im, which does a
+# live HTTP GET and therefore differs between two runs of the *same* binary.
+add_test(NAME selfhost_corpus_equivalent COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_corpus_probe.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(selfhost_corpus_equivalent PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "selfhost;regression")
 endif()

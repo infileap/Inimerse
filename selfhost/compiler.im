@@ -83,6 +83,27 @@ func join_path(dir, rel) {
     return dir + rel
 }
 
+# 被编译程序里的相对路径必须按「目标文件所在目录」解析。
+# C 前端在运行前切到脚本目录, 而 .im 编译器跑在自己的目录里, 于是同一条
+# read_file("tests/x.im") 在两边落到不同文件。编译期把常量路径重基。
+g_tgt_dir = ""
+
+func rebase_path(s) {
+    if len(s) == 0 { return s }
+    if s[0] == "/" { return s }
+    if g_tgt_dir == "" { return s }
+    return g_tgt_dir + s
+}
+
+func takes_path(name) {
+    if name == "read_file" { return 1 }
+    if name == "write_file" { return 1 }
+    if name == "list_dir" { return 1 }
+    if name == "mkdir" { return 1 }
+    if name == "run_file" { return 1 }
+    return 0
+}
+
 func expand_imports(stmts, path) {
     global g_loaded
     dir = dir_of(path)
@@ -365,6 +386,9 @@ func compile_expr(ctx, e) {
         if callee["t"] == "ident" {
             name = callee["v"]
             argn = len(e["args"])
+            if argn > 0 and takes_path(name) and e["args"][0]["t"] == "str" {
+                e["args"][0]["v"] = rebase_path(e["args"][0]["v"])
+            }
             for a in e["args"] {
                 r = compile_expr(ctx, a)
                 emit(ctx, OP_PUSH_REG, r, 0, 0)
@@ -799,6 +823,7 @@ func compile_program(stmts) {
 clargs = args()
 
 if clargs[0] == "--dump" {
+    g_tgt_dir = dir_of(clargs[1])
     stmts2 = parse_file(clargs[1])
     d = compile_program(stmts2)
     say "main:"
@@ -828,6 +853,7 @@ if len(src) == 0 {
     say "无法读取文件: " + tgt
     stop all
 }
+g_tgt_dir = dir_of(tgt)
 stmts = parse_file(tgt)
 data = compile_program(stmts)
 vm_exec(data)
