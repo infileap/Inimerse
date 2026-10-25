@@ -16,13 +16,20 @@
 # Usage:
 #   bash tools/ctest_skip_guard.sh <build-dir> <test-name>
 #       0  the test ran and passed, or did not run with a declared exemption
-#       1  the test ran and failed (its output is printed)
+#       1  the test ran and failed (its output is printed).  This is the number
+#          a step summary shows most often, so it carries only this meaning.
 #       2  the test did not run (skipped, or DISABLED) and is not declared in
 #          tools/known-skips.txt
 #       3  `-R '^name$'` does not match exactly one test -- the name is wrong,
 #          not the test.  ctest exits 0 in this case and prints the same
 #          `No tests were found!!!` a disabled test prints, so without this
 #          check a renamed test would read as a green step.
+#       20 the registry cannot be read at all: `ctest -N` failed, a wrong
+#          build directory, no ctest, no CMake cache.  "I could not look" is
+#          not "the name is wrong" (3) and not "the test failed" (1) -- a
+#          reader told 3 goes and renames a test that exists.
+#       21 the command line is wrong (no test name).  The reader's repair is
+#          in the caller, not in this repository.
 #
 #   bash tools/ctest_skip_guard.sh --check-allowlist <build-dir>
 #       0   every declared exemption names a registered test and gives a reason
@@ -35,6 +42,10 @@
 #           trailing `(Disabled)` suffix, whitespace and case are ignored.  The
 #           name is right and the reading is wrong, so the repair is in the
 #           parser
+#       20  the list could not be read, or the registry could not be enumerated,
+#           so nothing was checked.  Kept apart from 10: an entry without a
+#           reason is a fault in the file, a missing file is a fault in how it
+#           was invoked, and the two want different repairs
 #
 #   The allowlist mode deliberately does not reuse the per-test numbers.  Exit 3
 #   already means "the name is wrong, the test is fine" in the per-test mode; a
@@ -49,6 +60,8 @@
 #          says nothing about the tests; this is not exit 2, because "I could
 #          not look" and "I looked and found an undeclared one" are different
 #          findings and want different repairs
+#       20 `ctest -N` failed, or the exemption list could not be read -- the
+#          check could not look, which is not the same finding as 2
 #       2  a `DISABLED TRUE` test is not declared.  This is the mode the Windows
 #          job uses: it runs the whole suite in one `ctest` invocation, so there
 #          is no per-test step to hang a guard on, and a disabled property is
@@ -102,13 +115,26 @@ normalize_name() {
 }
 
 check_allowlist() {
-  local build_dir="$1" names_file failure=0 entries=0 shown_sample=0
+  local build_dir="$1" names_file declared_file failure=0 entries=0 shown_sample=0
   local missing=0 reading_fault=0 unusable=0
   names_file="$(mktemp)"
-  trap 'rm -f "$names_file"' RETURN
+  declared_file="$(mktemp)"
+  trap 'rm -f "$names_file" "$declared_file"' RETURN
+  # Read the list into a file and keep its exit code.  `done < <(declared)`
+  # cannot do this: the `||` would bind to the `while` loop, and a loop that
+  # runs zero times exits 0 -- so a missing list file produced
+  # `0 declared entr(ies), all registered and justified` and a green step.
+  # That is a false green in the one script whose purpose is to refuse them,
+  # and its trigger is ordinary: a wrong INIMERSE_KNOWN_SKIPS, the wrong
+  # working directory, a renamed file.
+  if ! declared > "$declared_file"; then
+    printf 'cannot read the exemption list %s -- nothing was checked; result=allowlist-unreadable\n' \
+      "$allowlist" >&2
+    return 20
+  fi
   if ! bash "${script_dir}/ctest_enumerate.sh" "$build_dir" > "$names_file"; then
-    printf 'cannot check the exemption list: enumeration failed; result=allowlist-unusable\n' >&2
-    return 10
+    printf 'cannot check the exemption list: enumeration failed -- nothing was checked; result=registry-unreadable\n' >&2
+    return 20
   fi
   local -a registry=()
   mapfile -t registry < "$names_file"
@@ -157,7 +183,7 @@ check_allowlist() {
       unusable=$((unusable + 1))
       failure=1
     fi
-  done < <(declared) || failure=1
+  done < "$declared_file"
   if [ "$failure" -ne 0 ]; then
     printf 'refusing the exemption list: %s entr(ies) checked in %s\n' "$entries" "$allowlist" >&2
     if [ "$reading_fault" -ne 0 ]; then
@@ -181,6 +207,16 @@ check_allowlist() {
       "$unusable" "$allowlist" >&2
     return 10
   fi
+  if [ "$entries" -eq 0 ]; then
+    # "Nothing is declared" and "everything declared is justified" are two
+    # facts, and only the second one is good news.  A list that reads as empty
+    # because the path is wrong would otherwise print the sentence a reader
+    # wants to see -- the same shape of lie the disabled mode prints when it
+    # sees no `(Disabled)` in a listing it read wrongly.
+    printf 'exemption list: 0 entr(ies) read from %s -- this list declares nothing;\n' "$allowlist"
+    printf '  result=allowlist-empty.  If you expected exemptions here, the path is wrong.\n'
+    return 0
+  fi
   printf 'exemption list: %s declared entr(ies), all registered and justified; result=allowlist-declared\n' "$entries"
   return 0
 }
@@ -196,10 +232,27 @@ check_allowlist() {
 check_disabled() {
   local build_dir="$1" listing
   if ! listing="$(ctest --test-dir "$build_dir" -N 2>&1)"; then
-    printf 'cannot check the disabled set: ctest -N failed for %s; result=disabled-unreadable\n%s\n' \
+    printf 'cannot check the disabled set: ctest -N failed for %s -- nothing was checked; result=registry-unreadable\n%s\n' \
       "$build_dir" "$listing" >&2
-    return 1
+    return 20
   fi
+  # Same reason as the allowlist mode: `done < <(declared)` swallows the exit
+  # code of a list that could not be read, and every disabled test would then
+  # be reported as undeclared -- a wrong answer with the right number (2).
+  local declared_file drc=0
+  declared_file="$(mktemp)"
+  trap 'rm -f "$declared_file"' RETURN
+  if ! declared > "$declared_file"; then
+    printf 'cannot read the exemption list %s -- nothing was checked; result=allowlist-unreadable\n' \
+      "$allowlist" >&2
+    return 20
+  fi
+  local -a declared_names=() declared_reasons=()
+  local dname dreason
+  while IFS=$'\t' read -r dname dreason; do
+    declared_names+=("$dname")
+    declared_reasons+=("$dreason")
+  done < "$declared_file"
   local -a disabled=()
   mapfile -t disabled < <(
     printf '%s\n' "$listing" |
@@ -211,18 +264,18 @@ check_disabled() {
       tr -d '\r' |
       sed -n 's/[[:space:]]*(Disabled)$//p'
   )
-  local name reason found
+  local name found i
   local declared_count=0
   local undeclared_count=0
   for name in "${disabled[@]}"; do
     [ -n "$name" ] || continue
     found=''
-    while IFS=$'\t' read -r declared_name declared_reason; do
-      if [ "$declared_name" = "$name" ]; then
-        found="$declared_reason"
+    for i in "${!declared_names[@]}"; do
+      if [ "${declared_names[$i]}" = "$name" ]; then
+        found="${declared_reasons[$i]}"
         break
       fi
-    done < <(declared)
+    done
     if [ -n "$found" ]; then
       declared_count=$((declared_count + 1))
       printf 'guard: disabled test %s is declared: %s\n' "$name" "$found"
@@ -273,7 +326,11 @@ test_name="${2:-}"
 if [ -z "$test_name" ]; then
   printf 'usage: bash tools/ctest_skip_guard.sh <build-dir> <test-name>\n' >&2
   printf '       bash tools/ctest_skip_guard.sh --check-allowlist <build-dir>\n' >&2
-  exit 1
+  # 21, not 1: this is the caller's mistake and every other 1 in this file is
+  # about code that ran.  Before the split, a CI step showing 1 could mean "the
+  # test failed" -- the most common reading -- or "the job passed no test name".
+  printf 'guard: result=usage\n' >&2
+  exit 21
 fi
 
 out="$(ctest --test-dir "$build_dir" -R "^${test_name}$" --output-on-failure 2>&1)"
@@ -286,8 +343,19 @@ printf '%s\n' "$out"
 # like a test that ran, which is the failure this whole script exists to refuse.
 # Count first: a guard that does not report must still be able to show it saw
 # something, so "matched" is measured, never assumed.
-selected="$(ctest --test-dir "$build_dir" -N -R "^${test_name}$" 2>/dev/null \
-  | grep -cE '^[[:space:]]*Test +#[0-9]+' )"
+selection="$(ctest --test-dir "$build_dir" -N -R "^${test_name}$" 2>&1)"
+selection_rc=$?
+if [ "$selection_rc" -ne 0 ]; then
+  # A wrong build directory, a missing CMake cache or a missing ctest all land
+  # here.  Counting what came back would read 0 matches and exit 3 -- "the name
+  # is wrong, the test is fine" -- which sends the reader to rename a test that
+  # exists.  The registry failing to open is a fact about the invocation.
+  printf 'guard: the registry could not be read for %s (ctest -N exited %s) -- nothing was checked; result=registry-unreadable\n' \
+    "$build_dir" "$selection_rc" >&2
+  printf '%s\n' "$selection" >&2
+  exit 20
+fi
+selected="$(printf '%s\n' "$selection" | grep -cE '^[[:space:]]*Test +#[0-9]+')"
 # The two ways `selected` can miss 1 are not the same wrong, so they do not
 # share a message or a token.  A reader told "the name is wrong" while the
 # pattern is only too wide goes and renames a test that is registered and

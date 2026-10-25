@@ -46,12 +46,13 @@ jobs:
       #      Linux job never consults.  `--check-disabled` refuses an undeclared
       #      disabled test (exit 2) and also refuses a declaration that names no
       #      registered test, so this list cannot rot into a licence nobody reads.
-      #   3. The allowlist mode uses its own numbers -- 10 unusable, 11 names no
-      #      registered test, 12 names one only after a misread -- because the
+      #   3. The allowlist mode uses its own numbers -- 10 unusable content, 11
+      #      names no registered test, 12 names one only after a misread, 20 the
+      #      list or the registry could not be read at all -- because the
       #      per-test numbers already mean other things here (3 is "the name is
-      #      wrong", which asks the opposite repair).  One number, one debt; the
-      #      failure lines also carry `result=allowlist-<token>` so a log search
-      #      does not have to trust a number.
+      #      wrong", which asks the opposite repair; 1 is "the test failed").
+      #      One number, one debt; every line also carries a `result=<token>` so
+      #      a log search does not have to trust a number.
       #
       # `shell: bash` is Git Bash on this runner, which has bash 5 and inherits
       # the Windows PATH -- so `ctest` resolves and `$PWD` is a POSIX path the
