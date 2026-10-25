@@ -307,6 +307,17 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|nod
 
 **为什么不能「用正则数一遍就有预算」**：按「文件名加冒号加行号」的字面数一遍得 42 处（行号小于 601 的 30 处、不小于的 12 处），而实测代价是 80 与 22——检查器认的锚是**同一行上可 grep 的字面**，不是手写正则里冒号后面的数字。可预算的前提是用检查器自己的锚定义，不是另起一把尺子。
 
+账单怎么量（两条命令，第二条不建不跑，几秒出数）：
+
+```bash
+python3 tools/check_line_refs.py   # readings -- explicit 185 (base 173), unanchored 574 (base 562)
+tools/gate.sh --only line-refs     # PASS，只跑这一阶段：不 configure、不编译、不跑测试
+```
+
+`readings --` 那行的 `unanchored` 就是这道预算的基数；插完再跑一次，差值就是这一笔。量账单不该比干活还贵，所以 `--only` 那条是本节推荐的第一条命令。
+
+这两个数是 `be97b0f` 上的（`explicit 185 (base 173), unanchored 574 (base 562)`）。写完本节之后再跑一次，同一条命令读到的是 `unanchored 573`、`pins -- unanchored delta +11 (ceiling +12)` —— **−1**，方向和机制我都没追到（`held 598 → 599`、`unanchored 574 → 573`，总数不变，正好一条从无锚变成有锚）。记在这里而不是把旧数改成新数：旧数在它自己的树上为真，而这一节讲的正是「读数会随写书这件事本身移动」。
+
 ## 9. 用机械口径普查台账里的断言之前，先记两个分母
 
 拿 `grep` 加脚本批量核验长台账里「某提交的父是某提交」这类断言，有两个坑，都出在**数**而不是出在**读**。下面两条各带一条可跑命令，且每条读数都带树号——这不是礼貌，而是因为第一条讲的就是「这个数会随台账生长而变」，不带树号的读数在下一节落盘时就自己作废：
@@ -375,3 +386,37 @@ guard: tests=147 notrun=2 disabled=9 declared=11 result=junit-declared
 `tools/ctest_skip_guard.sh` 每个模式只读 `$1`（模式）与 `$2`（参数），豁免清单只从 `INIMERSE_KNOWN_SKIPS` 或默认路径取，**从不看 argv**。于是 `--check-junit r.xml --allowlist my-list.txt` 会用默认清单跑完并印 `declared=11`、rc 0 —— 调用者以为自己指定了清单，工具一次都没打开它；同一份报告换成 env 指向只声明 1 条的清单就是 rc 2。两行的「通过」长得一样，差别只在调用者的信念里。
 
 **被忽略的参数与没有参数，在退出码上不可分。** 两件便宜的修法都做了，因为它们的代价是两行：多给的参数直接拒绝（`21`，`result=usage`）；并且每次运行都在 stderr 第一行印出**实际读到的清单路径**（`guard: exemption list is <path>`），让「我给了清单」与「它读了我的清单」不再是两个静默的替身。工具拒绝不认识的输入，比它默默忽略更能保住「通过」这个词的意思。
+
+两格都能自己跑出来（合成报告 `/tmp/sg2.xml`：`tests=3 notrun=1 disabled=1`；一条清单 `/tmp/list-one.txt` 的内容是 `probe_skip # only this one`）：
+
+```bash
+tools/ctest_skip_guard.sh --check-junit /tmp/sg2.xml --allowlist /tmp/list-one.txt; echo $?
+# --check-junit reads one argument; 4 were given and nothing would read the rest -- nothing was checked; result=usage
+# 21                                        ← 多给的参数被拒绝，不是被静默忽略
+
+INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /tmp/sg2.xml; echo $?
+# guard: tests=3 notrun=1 disabled=1 declared=1 undeclared=1 result=junit-undeclared
+# 2                                         ← declared=1 才是「它读了我的清单」
+```
+
+第二格是这一节唯一算得上证据的读数：`declared=1` 是那份清单里的条数。同一个参数位在默认清单上是 `declared=0`（这份报告里的两条测试名都不在 Windows 清单里），两行的「没通过」长得一样，差别只在 env 有没有被读到。
+
+## 13. 收尾：四件没结的事，和它们各自的命令
+
+这一节是这本册子的出口。列在这里的都不是「等着做」的活，而是**已经裁定要停在那里**的四件——每件带一条命令，任何人想推翻这个裁定，先跑命令，别先读结论。
+
+**一、Windows 上三条既有缺口。** `aot_native_regression`、`vm_bad_fidx_regression`、`count_builtin_runtime` 在 Windows CI 上不通过（`3221225725` = `0xC00000FD`，栈溢出）。人类裁定：**只记缺口，不诊断**。为什么这个裁定站得住：它们不在 lint 的射程里，`tools/ctest_skip_guard.sh --check-disabled build` 印 `registry=159 … disabled=0 declared=0 result=disabled-declared` —— 这三条在注册表里既不是 disabled 也不是 declared，所以「跳过清单是否过期」这条 Checks 永远不会替它们报警。
+
+**二、无锚余量 `+12/+12` 已用满。** `python3 tools/check_line_refs.py` 印 `pins -- explicit delta +12 (expect +12), unanchored delta +12 (ceiling +12)`，`readings -- explicit 185 (base 173), unanchored 574 (base 562)`。这不是待办清单，是一条**约束**：新写的锚必须自带锚点（四个形态之一），因为它已经没有余量可花。
+
+**三、`docs/AUDIT.md` 的 `§1.N` 台账链：只读不追。** 那份台账到 `§1.361`（`c5b883b`，22982 行，471 个 `## §1.N` 节）为止是**两个人交替写**的，每节都成立、都有价值，但没有终点——它每 30–60 分钟会长出一节新内容。裁定：本册子出这一节之后，那条链再长出新节也**不接新线索**，只在需要时当读数引用。要引用它的数就带上它的树号，因为它引的每个数都带树号，而树号会动。
+
+**四、这本册子自己的量法边界。** 谓词「整节有没有可跑命令」在同一份文件上能给出**三个**都对的数，差别只在「什么算一条命令」：
+
+| 谓词 | 缺命令的节 | 缺的是谁 |
+| --- | --- | --- |
+| 只数**行内反引号**里的命令 | 3 | §2／§8／§12 |
+| 加上**代码块**、只认动词表 | 1 | §12 |
+| 再加上**「路径即命令」**（`tools/*.sh`、`*.py`） | **0** | — |
+
+三节的命令全在代码块里，所以「补完就没缺口了」这句话在第一个谓词下不成立——它数的是一个**排版事实**，不是有没有人能重跑。第二格漏掉 §2／§8 是因为 `tools/stream.sh`、`tools/gate.sh` 不以动词开头；第三格补上之后才是本节真正想说的：**谓词的边界就是结论的边界**，换一个谓词就会换一个数，而三个数可以都对。报这类百分比时把谓词原文和它数到的东西一起报，否则读者拿到的只是一个排版结论。
