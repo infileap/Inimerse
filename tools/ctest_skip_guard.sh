@@ -92,6 +92,23 @@
 #          denominator, so `147 registered` prints as `out of 138` and reads as
 #          a complete run.
 #
+#   bash tools/ctest_skip_guard.sh --check-junit <report.xml>
+#       Reads the JUnit report a full-suite `ctest --output-junit` run wrote and
+#       refuses any test that did not run.  This is the second reader the Windows
+#       job needs: one `ctest` invocation cannot hang a guard on a per-test step,
+#       and a test that stops running makes the suite *smaller*, not redder --
+#       nine disabled tests leave the denominator (`147 registered` prints as
+#       `out of 138`) and two skipped ones stay in it counted as passing, so
+#       `98% tests passed` can describe a suite that is short eleven tests.
+#       0  every case marked `status="notrun"` or `status="disabled"` is declared
+#       2  one of them is not declared with a reason (`result=junit-undeclared`)
+#       20 the report cannot be read, its `tests="N"` header is missing, or the
+#          header disagrees with what this parser found -- an XML dialect change
+#          would otherwise shrink the parsed set to none and report "nothing was
+#          skipped, all declared" about a run that skipped eleven.  Agreement
+#          with the file's own footer is the same discipline as the `Total
+#          Tests:` check above, applied to a different footer.
+#
 # Override the exemption list with INIMERSE_KNOWN_SKIPS=<path> (the only reason
 # that knob exists is so the two branches below can be shown to be reachable).
 set -uo pipefail
@@ -112,12 +129,34 @@ declared() {
     /^[[:space:]]*#/ { next }
     {
       line = $0
+      # The list is `name # reason`.  A tab is accepted as the separator too,
+      # but the two sides must be split *before* trimming: `<TAB>looks-like-
+      # this` under a whole-line fallback would be trimmed into the name
+      # `looks-like-this`, which is not a registered test, and the reader would
+      # be sent to rename a test that is fine -- the real fault is that the
+      # name column is empty.  So: split at `#`, else at the first tab, else the
+      # whole line is a name with no reason.  An empty name side is reported as
+      # such (third column `noname`) instead of being filled with whatever the
+      # next column happens to hold -- a parser that repairs the data silently
+      # and then blames the other file is worse than one that refuses.
       hash = index(line, "#")
-      if (hash > 0) { name = substr(line, 1, hash - 1); reason = substr(line, hash + 1) }
-      else          { name = line;                      reason = "" }
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (hash > 0) {
+        left = substr(line, 1, hash - 1); reason = substr(line, hash + 1)
+      } else {
+        tab = index(line, "\t")
+        if (tab > 0) { left = substr(line, 1, tab - 1); reason = substr(line, tab + 1) }
+        else         { left = line;                      reason = "" }
+      }
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", left)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", reason)
-      printf "%s\t%s\n", name, reason
+      # A leading empty field cannot mark this row: the shell strips
+      # leading IFS whitespace when it reads, so `\t<text>` arrives as
+      # name=<text> --
+      # the same promotion this split exists to prevent, one layer down.  A
+      # sentinel in the name column is unambiguous, and every consumer tests
+      # the third column before it looks at the first.
+      if (left == "") printf "@@noname@@\t%s\tnoname\n", reason
+      else            printf "%s\t%s\t\n", left, reason
     }
   ' "$allowlist"
 }
@@ -139,7 +178,7 @@ normalize_name() {
 
 check_allowlist() {
   local build_dir="$1" names_file declared_file failure=0 entries=0 shown_sample=0
-  local missing=0 reading_fault=0 unusable=0
+  local missing=0 reading_fault=0 unusable=0 nameless=0
   names_file="$(mktemp)"
   declared_file="$(mktemp)"
   trap 'rm -f "$names_file" "$declared_file"' RETURN
@@ -161,7 +200,7 @@ check_allowlist() {
   # "checked two entries" from "checked eleven" -- and a check whose population
   # is invisible cannot be audited, only believed.  It is counted once, here,
   # and every line below carries it as `entries=<n>`.
-  entries="$(cut -f1 "$declared_file" | grep -c . || true)"
+  entries="$(grep -c . "$declared_file" || true)"
   if ! bash "${script_dir}/ctest_enumerate.sh" "$build_dir" > "$names_file"; then
     printf 'cannot check the exemption list: enumeration failed -- nothing was checked; entries=%s result=registry-unreadable\n' \
       "$entries" >&2
@@ -169,7 +208,15 @@ check_allowlist() {
   fi
   local -a registry=()
   mapfile -t registry < "$names_file"
-  while IFS=$'\t' read -r name reason; do
+  while IFS=$'\t' read -r name reason flag; do
+    if [ "${flag:-}" = "noname" ]; then
+      printf 'exemption list entry with no name: %q -- the name column is empty and\n' "$reason" >&2
+      printf '  the text after the separator is not a test name.  Write `name # reason`.\n' >&2
+      unusable=$((unusable + 1))
+      nameless=$((nameless + 1))
+      failure=1
+      continue
+    fi
     [ -n "$name" ] || continue
     if ! grep -qxF "$name" "$names_file"; then
       # Is this the same name read wrongly, or a name that is really gone?
@@ -234,8 +281,10 @@ check_allowlist() {
     # Nothing is missing and nothing was misread, so the list itself is the
     # problem: an entry without a reason is a licence nobody audits, and 1 is
     # the code that says "this file cannot be used", not "a test has gone".
-    printf 'exemption list: %s entr(ies) give no reason in %s; entries=%s unusable=%s result=allowlist-unusable\n' \
-      "$unusable" "$allowlist" "$entries" "$unusable" >&2
+    printf 'exemption list: %s entr(ies) cannot be used: %s give no reason in %s, %s have no\n' \
+      "$unusable" "$((unusable - nameless))" "$allowlist" "$nameless" >&2
+    printf '  name at all; entries=%s unusable=%s nameless=%s result=allowlist-unusable\n' \
+      "$entries" "$unusable" "$nameless" >&2
     return 10
   fi
   if [ "$entries" -eq 0 ]; then
@@ -278,6 +327,11 @@ check_disabled() {
     printf 'cannot read the exemption list %s -- nothing was checked; entries=0 result=allowlist-unreadable\n' \
       "$allowlist" >&2
     return 20
+  fi
+  if grep -q $'\tnoname$' "$declared_file"; then
+    printf 'the exemption list %s has entr(ies) with no name before the separator -- nothing was checked; entries=%s result=allowlist-unusable\n' \
+      "$allowlist" "$(grep -c . "$declared_file" || true)" >&2
+    return 10
   fi
   local -a declared_names=() declared_reasons=()
   local dname dreason
@@ -354,6 +408,102 @@ check_disabled() {
   return 0
 }
 
+check_junit() {
+  # Why this mode exists: on Windows the whole suite runs in one `ctest`
+  # invocation, so there is no per-test step to hang a guard on.  `ctest` prints
+  # `98% tests passed, 3 tests failed out of 138` for the Windows tree while the
+  # progress lines say 147 -- nine disabled tests leave the denominator and two
+  # skipped tests stay in it counted as passing.  A test that stops running is
+  # therefore invisible in both the exit code and the percentage: the run gets
+  # *smaller* and stays green.  The JUnit report is the only structured record
+  # of which tests did not run, and it survives a failing ctest, which is why
+  # this mode reads the report instead of the log.
+  local report="$1" declared_file cases_file
+  local entries=0 tests_count='' skipped_count='' disabled_count=''
+  local parsed_notrun=0 parsed_disabled=0 declared_count=0 undeclared=0
+  declared_file="$(mktemp)"
+  cases_file="$(mktemp)"
+  trap 'rm -f "$declared_file" "$cases_file"' RETURN
+
+  if ! declared > "$declared_file"; then
+    printf 'cannot read the exemption list %s -- nothing was checked; entries=0 result=allowlist-unreadable\n' \
+      "$allowlist" >&2
+    return 20
+  fi
+  entries="$(grep -c . "$declared_file" || true)"
+  if grep -q $'\tnoname$' "$declared_file"; then
+    printf 'the exemption list %s has entr(ies) with no name before the separator -- nothing was checked; entries=%s result=allowlist-unusable\n' \
+      "$allowlist" "$(grep -c . "$declared_file" || true)" >&2
+    return 10
+  fi
+  if [ ! -r "$report" ]; then
+    printf 'cannot read the test report %s -- nothing was checked; entries=%s result=junit-unreadable\n' \
+      "$report" "$entries" >&2
+    return 20
+  fi
+
+  # The report states its own population in the `<testsuite ...>` header:
+  # `tests="3" failures="0" disabled="1" skipped="1"`.  Read it, and then
+  # require the parser below to agree with it -- an XML dialect change would
+  # otherwise shrink the set of parsed cases to zero and this mode would report
+  # "nothing skipped, all declared" about a run that skipped eleven.
+  tests_count="$(grep -oE '(^|[[:space:]])tests="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)"
+  skipped_count="$(grep -oE '(^|[[:space:]])skipped="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)"
+  disabled_count="$(grep -oE '(^|[[:space:]])disabled="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)"
+  skipped_count="${skipped_count:-0}"
+  disabled_count="${disabled_count:-0}"
+  if ! printf '%s' "${tests_count:-}" | grep -qE '^[0-9]+$'; then
+    printf 'cannot read the test count from %s: no `tests="N"` in the suite header -- nothing was checked; entries=%s result=junit-unreadable\n' \
+      "$report" "$entries" >&2
+    return 20
+  fi
+
+  # `ctest` writes `status="notrun"` with a `<skipped/>` child for a test that
+  # returned SKIP_RETURN_CODE, and `status="disabled"` for a DISABLED property.
+  # Both mean "did not run"; they are kept apart only so the reading line can
+  # show why the suite is short.
+  grep -oE '<testcase name="[^"]*"[^>]*status="(notrun|disabled)"' "$report" 2>/dev/null \
+    | sed -E 's/^<testcase name="([^"]*)".*status="(notrun|disabled)".*$/\1\t\2/' > "$cases_file" || true
+  parsed_notrun="$(cut -f2 "$cases_file" | grep -cx 'notrun' || true)"
+  parsed_disabled="$(cut -f2 "$cases_file" | grep -cx 'disabled' || true)"
+  parsed_notrun="${parsed_notrun:-0}"
+  parsed_disabled="${parsed_disabled:-0}"
+
+  if [ "$parsed_notrun" -ne "$skipped_count" ] || [ "$parsed_disabled" -ne "$disabled_count" ]; then
+    printf 'the report says skipped=%s disabled=%s but this parser found notrun=%s disabled=%s -- the format changed, so nothing was checked; entries=%s result=junit-unreadable\n' \
+      "$skipped_count" "$disabled_count" "$parsed_notrun" "$parsed_disabled" "$entries" >&2
+    return 20
+  fi
+
+  local name status reason
+  while IFS=$'\t' read -r name status; do
+    [ -n "$name" ] || continue
+    if grep -qxF "$name" <(cut -f1 "$declared_file"); then
+      declared_count=$((declared_count + 1))
+      reason="$(grep -F "${name}"$'\t' "$declared_file" | head -1 | cut -f2)"
+      printf 'guard: %s test %s is declared: %s\n' \
+        "$([ "$status" = "notrun" ] && printf skipped || printf disabled)" "$name" "$reason"
+    else
+      undeclared=$((undeclared + 1))
+      printf 'guard: %s test %s is not declared in %s\n' \
+        "$([ "$status" = "notrun" ] && printf skipped || printf disabled)" "$name" "$allowlist" >&2
+    fi
+  done < "$cases_file"
+
+  if [ "$undeclared" -ne 0 ]; then
+    printf 'guard: tests=%s notrun=%s disabled=%s declared=%s undeclared=%s result=junit-undeclared\n' \
+      "$tests_count" "$parsed_notrun" "$parsed_disabled" "$declared_count" "$undeclared" >&2
+    return 2
+  fi
+  printf 'guard: tests=%s notrun=%s disabled=%s declared=%s result=junit-declared\n' \
+    "$tests_count" "$parsed_notrun" "$parsed_disabled" "$declared_count"
+  return 0
+}
+
+if [ "${1:-}" = "--check-junit" ]; then
+  check_junit "${2:?usage: --check-junit <report.xml>}"
+  exit $?
+fi
 if [ "${1:-}" = "--check-disabled" ]; then
   check_disabled "${2:-build}"
   exit $?

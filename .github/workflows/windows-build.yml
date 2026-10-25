@@ -68,6 +68,20 @@ jobs:
           echo "::group::disabled tests"
           bash tools/ctest_skip_guard.sh --check-disabled build-windows-gcc
           echo "::endgroup::"
+      # The suite above runs as one `ctest` invocation, so a test that stops
+      # running leaves no step behind: nine disabled tests drop out of the
+      # denominator and two skipped tests stay in it counted as passing, which
+      # is how this job can report `98% tests passed` about a suite that is
+      # short eleven tests.  This step reads the JUnit report the run wrote --
+      # present even when ctest exited non-zero -- and refuses any test that
+      # did not run without being declared.
+      - name: Tests that did not run (Windows)
+        if: always() && hashFiles('build-windows-gcc/ctest-results.xml') != ''
+        shell: bash
+        run: |
+          export INIMERSE_KNOWN_SKIPS="$PWD/tools/known-skips-windows.txt"
+          bash tools/ctest_skip_guard.sh --check-junit "build-windows-gcc/ctest-results.xml"
+
       - name: CMake tests
         shell: pwsh
         run: |
