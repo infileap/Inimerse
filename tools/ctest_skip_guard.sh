@@ -65,17 +65,25 @@
 #   digit, two owners" in the very table that claims to have ended it.  Two
 #   returns are process codes only because the dispatch converts them (`exit $?`
 #   after `check_allowlist`, after `check_disabled`).
-#   So: the nine process codes are 0 1 2 3 10 11 12 20 21, and a number that is
-#   only ever returned stays with the code, next to its call site.
+#   The reverse accident is a number documented with no code behind it: a dead
+#   cell.  A grep cannot find one -- it answers "how often does this digit
+#   appear", not "is the promise kept" -- so the check has to be pointed at the
+#   code: `sed -n '<line>p'` on the line a table cites must print a statement,
+#   not a comment.  This block documented 1 for `ctest -N` failing while the
+#   path returned 20; one cause, two numbers, and one of them unreachable.
+#   So: the nine process codes are 0 1 2 3 10 11 12 20 21, each one reachable,
+#   and a number that is only ever returned stays with the code, next to its
+#   call site.
 #
 #   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
 #       0  every test the registry reports as `(Disabled)` is declared
-#       1  `ctest -N` failed -- the check could not see the registry, so it
-#          says nothing about the tests; this is not exit 2, because "I could
-#          not look" and "I looked and found an undeclared one" are different
-#          findings and want different repairs
 #       20 `ctest -N` failed, or the exemption list could not be read -- the
-#          check could not look, which is not the same finding as 2
+#          check could not look, which is not the same finding as 2.  Both
+#          causes carry this one number: this file has exactly one "I could not
+#          look", so it has exactly one digit for it.  (An earlier revision
+#          documented 1 for the `ctest -N` case as well; no path ever returned
+#          it, so it was a dead cell promising a second number for the same
+#          debt -- see the note on process exits above.)
 #       2  a `DISABLED TRUE` test is not declared.  This is the mode the Windows
 #          job uses: it runs the whole suite in one `ctest` invocation, so there
 #          is no per-test step to hang a guard on, and a disabled property is
