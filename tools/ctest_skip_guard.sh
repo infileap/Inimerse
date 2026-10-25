@@ -82,6 +82,12 @@
 #
 #   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
 #       0  every test the registry reports as `(Disabled)` is declared
+#       10 the exemption list itself is unusable -- an entry with no reason, or
+#          one with nothing before the separator, so this mode refuses to look
+#          rather than guess which tests the list meant.  Same finding as 10 in
+#          the allowlist mode: repair the list, not the registry.  (This bullet
+#          was missing: the function has returned 10 since the nameless-entry
+#          check went in, and a reader who got 10 here had no line to read.)
 #       20 `ctest -N` failed, the count line is missing, or the exemption list
 #          could not be read -- the check could not look, which is not the same
 #          finding as 2.  All
@@ -107,6 +113,14 @@
 #       `98% tests passed` can describe a suite that is short eleven tests.
 #       0  every case marked `status="notrun"` or `status="disabled"` is declared
 #       2  one of them is not declared with a reason (`result=junit-undeclared`)
+#       10 the exemption list itself is unusable (no reason, or nothing before
+#          the separator), so this mode refuses to judge the report against a
+#          list it cannot read.  Added late: the function had returned 10 since
+#          the nameless-entry check, while this table listed only 0, 2 and 20 --
+#          the mirror image of a dead cell, a live code with no line to read.
+#          The token says `result=allowlist-unusable` in this mode too: it names
+#          the object (the list), not the mode that choked on it, so one grep for
+#          that token finds the finding wherever it happens.
 #       20 the report cannot be read, its `tests="N"` header is missing, or the
 #          header disagrees with what this parser found -- an XML dialect change
 #          would otherwise shrink the parsed set to none and report "nothing was
@@ -312,10 +326,22 @@ check_allowlist() {
     # Nothing is missing and nothing was misread, so the list itself is the
     # problem: an entry without a reason is a licence nobody audits, and 1 is
     # the code that says "this file cannot be used", not "a test has gone".
-    printf 'exemption list: %s entr(ies) cannot be used: %s give no reason in %s, %s have no\n' \
-      "$unusable" "$((unusable - nameless))" "$allowlist" "$nameless" >&2
-    printf '  name at all; entries=%s unusable=%s nameless=%s result=allowlist-unusable\n' \
-      "$entries" "$unusable" "$nameless" >&2
+    # One line per sub-class, each line starting with the subject.  A single
+    # sentence had to wrap at 80 columns, and the wrap put `entries=` and
+    # `result=` on a line beginning with "name at all" -- a reader grepping
+    # line by line got the token without the explanation, or the explanation
+    # without the counts.  Where a sentence breaks is a fact about the reading,
+    # not about typography, so no line depends on it now.
+    if [ "$((unusable - nameless))" -ne 0 ]; then
+      printf 'exemption list: %s entr(ies) give no reason in %s\n' \
+        "$((unusable - nameless))" "$allowlist" >&2
+    fi
+    if [ "$nameless" -ne 0 ]; then
+      printf 'exemption list: %s entr(ies) have no name at all (nothing before the separator) in %s\n' \
+        "$nameless" "$allowlist" >&2
+    fi
+    printf 'exemption list: %s entr(ies) cannot be used; entries=%s unusable=%s nameless=%s result=allowlist-unusable\n' \
+      "$unusable" "$entries" "$unusable" "$nameless" >&2
     return 10
   fi
   if [ "$entries" -eq 0 ]; then
@@ -324,8 +350,9 @@ check_allowlist() {
     # because the path is wrong would otherwise print the sentence a reader
     # wants to see -- the same shape of lie the disabled mode prints when it
     # sees no `(Disabled)` in a listing it read wrongly.
-    printf 'exemption list: 0 entr(ies) read from %s -- this list declares nothing;\n' "$allowlist"
-    printf '  entries=0 result=allowlist-empty.  If you expected exemptions here, the path is wrong.\n'
+    printf 'exemption list: 0 entr(ies) read from %s -- this list declares nothing; entries=0 result=allowlist-empty\n' \
+      "$allowlist"
+    printf '  if you expected exemptions here, the path is wrong\n'
     return 0
   fi
   printf 'exemption list: %s declared entr(ies), all registered and justified; entries=%s result=allowlist-declared\n' \

@@ -10,6 +10,16 @@
 # them under `if(WIN32)` on purpose; the two language bridges skip because their
 # toolchains are not on that runner.
 #
+# Names are compared after the surrounding whitespace is trimmed, so a name with
+# a trailing space matches and is repaired silently -- nothing in the output says
+# so.  Two other differences are *not* eaten: a trailing `(Disabled)` copied out
+# of a log, or a difference of case, is reported as a reading fault (10/11/12)
+# with a "the name is right and the reading is wrong" sentence.  The asymmetry is
+# deliberate: trimming cannot make a wrong name right (the characters that remain
+# still have to be the test's), while a suffix changes which string is being
+# asked about.  If that ever stops being true, this file is the place to say it,
+# because the output never will.
+#
 # Why this file is checked at all: ctest removes a `DISABLED TRUE` test from the
 # `out of N` denominator, so the Windows suite reports `98% tests passed, 3 tests
 # failed out of 138` for 147 registered cases, and the 9 that never ran are not
