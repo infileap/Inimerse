@@ -266,6 +266,28 @@ check_allowlist() {
       failure=1
     fi
   done < "$declared_file"
+  # The exit code can only carry one class, and the order is arbitrary in the
+  # sense that it had to be chosen: a misread (12) outranks a gap (11) because a
+  # listing read wrongly can also make a real gap look like a mismatch, and both
+  # outrank an unusable entry (10) because those two name something to repair in
+  # the repository.  What the code cannot say is that a *second* class was also
+  # seen in the same list -- so say it on its own line.  Without it a reader who
+  # gets 11 never learns that an entry beside it also lacks a reason.
+  report_others() {
+    local skipped_class="$1"
+    if [ "$skipped_class" != "misread" ] && [ "$reading_fault" -ne 0 ]; then
+      printf '  also: %s entr(ies) are a reading fault (misread) -- entries=%s misread=%s\n' \
+        "$reading_fault" "$entries" "$reading_fault" >&2
+    fi
+    if [ "$skipped_class" != "missing" ] && [ "$missing" -ne 0 ]; then
+      printf '  also: %s entr(ies) name no registered test (missing) -- entries=%s missing=%s\n' \
+        "$missing" "$entries" "$missing" >&2
+    fi
+    if [ "$skipped_class" != "unusable" ] && [ "$unusable" -ne 0 ]; then
+      printf '  also: %s entr(ies) cannot be used (unusable, %s with no name) -- entries=%s unusable=%s\n' \
+        "$unusable" "$nameless" "$entries" "$unusable" >&2
+    fi
+  }
   if [ "$failure" -ne 0 ]; then
     printf 'refusing the exemption list: %s entr(ies) checked in %s; entries=%s\n' "$entries" "$allowlist" "$entries" >&2
     if [ "$reading_fault" -ne 0 ]; then
@@ -276,11 +298,13 @@ check_allowlist() {
         "$reading_fault" >&2
       printf '  program did not see -- a reading fault, not a missing test; entries=%s misread=%s result=allowlist-misread\n' \
         "$entries" "$reading_fault" >&2
+      report_others misread
       return 12
     fi
     if [ "$missing" -ne 0 ]; then
       printf 'exemption list: %s entr(ies) name no registered test; entries=%s missing=%s result=allowlist-missing\n' \
         "$missing" "$entries" "$missing" >&2
+      report_others missing
       return 11
     fi
     # Nothing is missing and nothing was misread, so the list itself is the
