@@ -136,6 +136,19 @@
 #          with the file's own footer is the same discipline as the `Total
 #          Tests:` check above, applied to a different footer.
 #
+#   This mode also prints one reading the others cannot: `also: ... checked=N
+#   stale=K` names the declared entries whose test *ran* in this report, i.e.
+#   licences that outlived the condition they describe.  It is a reading, not a
+#   verdict -- the exit code does not move, and it is not printed at all when
+#   there is nothing to compare (a list with no entries has no denominator).
+#   The reading's subject is the pair (this list, this report), not the list, so
+#   at the endpoint -- every declared entry ran, stale == checked -- the same
+#   sentence would read as "all N are expired" and invite a deletion of N lines:
+#   it is replaced by a `scope=none` sentence that says the two do not form a
+#   pair and that "not this platform" is indistinguishable here from "N
+#   expired".  Both sentences are one line on purpose; a reading that folds
+#   across lines is a reading whose token can be separated from its subject.
+#
 # Override the exemption list with INIMERSE_KNOWN_SKIPS=<path> (the only reason
 # that knob exists is so the two branches below can be shown to be reachable).
 set -uo pipefail
@@ -589,7 +602,25 @@ check_junit() {
       stale=$((stale + 1))
     fi
   done < "$declared_file"
-  if [ "$stale" -ne 0 ]; then
+  # Endpoint: every declared entry ran, so this list and this report do not
+  # describe each other at all.  The wording has to change, because the plain
+  # sentence at the endpoint reads as "all N are expired, delete them" -- an
+  # irreversible action taken on a reading whose subject is the pair, not the
+  # list.  Still not a verdict: the exit code does not move.
+  #
+  # The endpoint has two sub-cases that look identical arithmetically and mean
+  # opposite things: a report where every declared test ran (another platform's
+  # report is the common cause), and a report where nothing ran at all
+  # (`tests="0"`, e.g. a filter that matched nothing).  In the second, "every
+  # declared entry ran here" is simply false, so it gets its own sentence.
+  local ran_cases=$(( $(grep -c '<testcase ' "$report" 2>/dev/null || true) - parsed_notrun - parsed_disabled ))
+  if [ "$stale" -ne 0 ] && [ "$ran_cases" -le 0 ]; then
+    printf 'also: no test ran in this report at all -- checked=%s stale=%s scope=none; every declared entry is absent from an empty evidence set, which says nothing about the entries.  Take no action on the list from this number alone\n' \
+      "$entries" "$stale" >&2
+  elif [ "$stale" -ne 0 ] && [ "$stale" -eq "$entries" ]; then
+    printf 'also: this report and this list do not form a pair -- checked=%s stale=%s scope=none; every declared entry names a test that ran here, which is also what a report from another platform looks like.  Nothing follows about the entries: this reading cannot tell "not this platform" from "%s expired", so take no action on the list from this number alone\n' \
+      "$entries" "$stale" "$stale" >&2
+  elif [ "$stale" -ne 0 ]; then
     printf 'also: %s declared entr(ies) name a test that ran in this report -- checked=%s stale=%s; a licence whose test stopped skipping fails nothing, and nobody else will notice it\n' \
       "$stale" "$entries" "$stale" >&2
   fi
