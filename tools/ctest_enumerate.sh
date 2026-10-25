@@ -60,4 +60,19 @@ if [ "${#names[@]}" -ne "${registered:-0}" ]; then
   exit 1
 fi
 
+# Print the shape of what was read, on the success path as well as on failure.
+# An empty or short enumeration has two causes -- a tree with fewer tests, or a
+# ruler that read the listing wrongly -- and the two look identical in a log:
+# both print a smaller number, and the short one is usually *not* a mismatch, so
+# the failure-only message never fires.  `%q` is what makes a `\r` or a trailing
+# space visible; a count alone would let `hub_dist_regression\r` read as a name.
+cr_lines="$(printf '%s\n' "$listing" | grep -c $'\r' || true)"
+if [ "${cr_lines:-0}" -gt 0 ]; then
+  cr_note="CR on ${cr_lines} line(s), stripped"
+else
+  cr_note="no CR in listing"
+fi
+printf 'ctest_enumerate: %s name(s), first %q, last %q, %s\n' \
+  "${#names[@]}" "${names[0]}" "${names[-1]}" "$cr_note" >&2
+
 printf '%s\n' "${names[@]}"

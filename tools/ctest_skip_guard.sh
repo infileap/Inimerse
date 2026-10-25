@@ -26,9 +26,17 @@
 #
 #   bash tools/ctest_skip_guard.sh --check-allowlist <build-dir>
 #       0  every declared exemption names a registered test and gives a reason
-#       1  one does not -- an exemption for a test that no longer exists, or
-#          one declared without a reason, is not an exemption but a licence
-#          nobody audits
+#       1  the exemption list itself is unusable -- an entry with no reason, or
+#          the enumeration failed, so the check could not look at all
+#       2  an entry names no registered test, and nothing nearby explains why:
+#          a rename, a deletion, or a typo.  The list or CMakeLists.txt has to
+#          change
+#       3  an entry names no registered test but matches one as soon as CR, a
+#          trailing `(Disabled)` suffix, whitespace and case are ignored.  The
+#          name is right and the reading is wrong, so the repair is in the
+#          parser.  This is the per-test mode's 3 one level up: there a wrong
+#          `-R` pattern made a passing test read as absent, here a wrong line
+#          makes a present test read as absent
 #
 #   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
 #       0  every test the registry reports as `(Disabled)` is declared
@@ -73,18 +81,58 @@ declared() {
   ' "$allowlist"
 }
 
+# Squash a name down to what a reader would call "the same name": line endings,
+# a `(Disabled)` marker, whitespace and case all removed.  Two names that are
+# equal here and unequal raw are a reading fault, not a naming fact -- and the
+# repair for a reading fault is in this file, not in the exemption list.  Without
+# this split the Windows job's first run reported eleven present tests as
+# "no such registered test" and sent the reader to look for renames that had not
+# happened.
+normalize_name() {
+  printf '%s' "$1" |
+    tr -d '\r' |
+    sed 's/[[:space:]]*(Disabled)$//' |
+    tr -d '[:space:]' |
+    tr '[:upper:]' '[:lower:]'
+}
+
 check_allowlist() {
   local build_dir="$1" names_file failure=0 entries=0 shown_sample=0
+  local missing=0 reading_fault=0 unusable=0
   names_file="$(mktemp)"
   trap 'rm -f "$names_file"' RETURN
   if ! bash "${script_dir}/ctest_enumerate.sh" "$build_dir" > "$names_file"; then
     printf 'cannot check the exemption list: enumeration failed\n' >&2
     return 1
   fi
+  local -a registry=()
+  mapfile -t registry < "$names_file"
   while IFS=$'\t' read -r name reason; do
     [ -n "$name" ] || continue
     entries=$((entries + 1))
     if ! grep -qxF "$name" "$names_file"; then
+      # Is this the same name read wrongly, or a name that is really gone?
+      local normalized near_miss=''
+      normalized="$(normalize_name "$name")"
+      local candidate
+      for candidate in "${registry[@]}"; do
+        if [ "$(normalize_name "$candidate")" = "$normalized" ]; then
+          near_miss="$candidate"
+          break
+        fi
+      done
+      if [ -n "$near_miss" ]; then
+        reading_fault=$((reading_fault + 1))
+        failure=1
+        printf 'exemption for %s: the registry does contain %q, but not %q\n' \
+          "$name" "$near_miss" "$name" >&2
+        printf '  these differ only by CR, a (Disabled) marker, whitespace or case:\n' >&2
+        printf '  the name is right and the reading is wrong.  Fix the parser that\n' >&2
+        printf '  produced %q -- do not edit the exemption list to match the bug.\n' "$name" >&2
+        continue
+      fi
+      missing=$((missing + 1))
+      failure=1
       printf 'exemption for %s: no such registered test\n' "$name" >&2
       # Show what the registry did contain, once.  Without this the reader is
       # told only that a name they can see in CMakeLists.txt does not exist,
@@ -98,15 +146,32 @@ check_allowlist() {
         printf '  a name that looks identical and compares unequal is a trailing CR, a\n' >&2
         printf '  trailing space, or output read as CRLF\n' >&2
       fi
-      failure=1
     fi
     if [ -z "$reason" ]; then
       printf 'exemption for %s: no reason given\n' "$name" >&2
+      unusable=$((unusable + 1))
       failure=1
     fi
   done < <(declared) || failure=1
   if [ "$failure" -ne 0 ]; then
     printf 'refusing the exemption list: %s entr(ies) checked in %s\n' "$entries" "$allowlist" >&2
+    if [ "$reading_fault" -ne 0 ]; then
+      # Exit 3 wins when both faults are present: the reading fault is the one
+      # that can hide the other, because a listing read wrongly can also make a
+      # real gap look like a name mismatch.
+      printf 'exemption list: %s entr(ies) name a test this registry has but this\n' \
+        "$reading_fault" >&2
+      printf '  program did not see -- a reading fault, not a missing test\n' >&2
+      return 3
+    fi
+    if [ "$missing" -ne 0 ]; then
+      return 2
+    fi
+    # Nothing is missing and nothing was misread, so the list itself is the
+    # problem: an entry without a reason is a licence nobody audits, and 1 is
+    # the code that says "this file cannot be used", not "a test has gone".
+    printf 'exemption list: %s entr(ies) give no reason in %s\n' \
+      "$unusable" "$allowlist" >&2
     return 1
   fi
   printf 'exemption list: %s declared entr(ies), all registered and justified\n' "$entries"
@@ -163,13 +228,26 @@ check_disabled() {
     printf '  exist, or declare it with a reason saying what would make the entry\n' >&2
     printf '  unnecessary.\n' >&2
   done
+  # The witness goes out on the success path too, and it has to: "nothing is
+  # disabled" and "this program saw nothing" print the same working line, and the
+  # second one is the failure this mode exists to catch.  A count with no shape
+  # cannot tell them apart, so print what the ruler itself saw -- how many tests
+  # the registry claims, and whether the listing arrived with CRs.
+  local registered cr_lines cr_note
+  registered="$(printf '%s\n' "$listing" | sed -n 's/^[[:space:]]*Total Tests:[[:space:]]*//p' | tr -d '\r' | head -1)"
+  cr_lines="$(printf '%s\n' "$listing" | grep -c $'\r' || true)"
+  if [ "${cr_lines:-0}" -gt 0 ]; then
+    cr_note="CR on ${cr_lines} line(s), stripped"
+  else
+    cr_note="no CR in listing"
+  fi
   if [ "$undeclared_count" -ne 0 ]; then
     printf 'guard: disabled=%s declared=%s undeclared=%s result=disabled-undeclared\n' \
       "${#disabled[@]}" "$declared_count" "$undeclared_count" >&2
     return 2
   fi
-  printf 'guard: disabled=%s declared=%s undeclared=0 result=disabled-declared\n' \
-    "${#disabled[@]}" "$declared_count"
+  printf 'guard: registry=%s registered, %s, disabled=%s declared=%s result=disabled-declared\n' \
+    "${registered:-?}" "$cr_note" "${#disabled[@]}" "$declared_count"
   return 0
 }
 
