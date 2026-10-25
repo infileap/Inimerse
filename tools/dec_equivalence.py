@@ -165,8 +165,11 @@ def main():
         print("  %-14s %s" % (name, where))
     independent = sorted(set(reimplemented) | set(same_name_areas["selfhost"])
                          | set(same_name_areas["modules"]))
-    print("independent script implementations    : %d  %s  %s"
+    print("independent candidates                : %d  %s  %s"
           % (len(independent), pct(len(independent)), independent))
+    print("  (candidates, not verified: pair each one against the C builtin with the same")
+    print("   inputs -- `python3 tools/dec_paired_probe.py` does that and found 0 of 4)")
+
     if dispatch_unknown:
         print("dispatch branches not in the registry : %s" % dispatch_unknown)
 
