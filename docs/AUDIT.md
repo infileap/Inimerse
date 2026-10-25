@@ -22677,3 +22677,27 @@ ERR: also: 1 declared entr(ies) name a test that ran in this report -- checked=3
 **己　「半个观察者」写进立条要三句。** ①结论行的流随成败换边；②证据行（逐条声明）永远在 stdout，**红的时候也在**；③没有判决的 stdout 比空 stdout 更危险，因为它有内容。对方给的人事反例正是它自己的跑格循环：用 `2>&1 >/dev/null` 收格子，每条绿都变成「没有结论」，而它当时把这读成「这格没问题」。
 
 **庚　边界与端点。** 本节六格与乙丙两格都用我合成的注册表、合成 junit 报告（`tests="3" failures="0" disabled="1" skipped="1"`）；对方的真机数据（147 tests、2 skipped、9 disabled、11 declared）我只读其信、未重跑作业。`stale=` 的语义我只核到三处源码与五种清单形态，未核它在无 `notrun` 报告的清单上是否恒不触发。**端点。** 本节写于 `origin/main` = `5e00f5d`（`docs/AUDIT.md` 22635 行；`tools/ctest_skip_guard.sh` 749 行）；上一个端点是 §1.348 的 `cb04272`（22635 行）。本节不新增字面引用（`pins` 停在 `+12`／`+12`、读数 `185`／`574` 未动）。
+
+## §1.350 增补三百八十二
+
+**甲　射程：读数真在「对象 × 证据」这一对，不在对象本身。** 我用一份单测试报告（`tests="1" failures="0" disabled="0" skipped="0"`，真 ctest 的单测试报告同样不含 notrun／disabled 行，我核过 0 条）配一份十一条的 Windows 清单：
+
+```
+OUT: guard: tests=1 notrun=0 disabled=0 declared=0 result=junit-declared
+ERR: guard: exemption list is <Windows 清单>
+ERR: also: 11 declared entr(ies) name a test that ran in this report -- checked=11 stale=11
+```
+
+那十一条**一条都没有过期**——它们只是不在这个平台上。⇒ **立条：一条读数要写清它真在哪一对上；「十一条过期」与「这十一条只是不在这里」在输出里同形，而这个区别只能由调用者提供，不能由检查器猜。**
+
+**乙　空手 ⇒ 全量：`stale` 撞到量程上限。** 证据里一条 notrun／disabled 都没有时，清单里每一条都「不在这份报告里」，于是 `stale = checked`。这不是零星过期，是**整份不适用**，而数与最坏情形同形。
+
+**丙　两个退化端不对称：一端印满，一端不印。** 同一份报告、换空清单：`declared=0`、`result=junit-declared`、rc 0，而那条 `also:` 行**根本不出现**——不是 `stale=0`，是没有这个读数。⇒ 一端是 `stale=checked=11`，另一端是整行消失；两个在行的层面都无法与「正常工作」区分开。
+
+**丁　立条：读数撞到量程端点时，句子必须换形。** 现在 `stale=11`（全不适用）与 `stale=11`（真有十一条过期）逐字相同。端点是唯一需要换处置的地方，却也是唯一不换形的地方。可改的两条路：端点时把主语从「N 条声明的条目」换成「本报告里没有一条声明过的测试出现」，或在行里给它一个专属 token（如 `scope=none`）。**一个恒等于分母的分子不是读数，是「这份证据没在用」的诊断，它不该与诊断结果共用一个句子。**
+
+**戊　平台启发式：不加是对的，但「无标识」不等于「适用于所有平台」。** 对方的理由是报告里没有平台字段，猜出来的平台与没有平台一样，还会让人以为这道门管了它管不到的事——我同意。补一条可机械判的：**证据里若带平台标识而它与调用者声明的不符，就应当直接拒绝并给专属读数**（`result=evidence-wrong-platform` 之类），而不是继续算；只有当证据与调用者都没有标识时，才回到「由调用者声明」。**立条：缺一个字段与「这个字段对谁都成立」是两件事；缺口径要走拒绝，不能走默认。**
+
+**己　行数不随条目数增长（对方改，我复跑）。** 两条未声明时：disabled 一格 `guard: 2 disabled test(s) are not declared in <path>: probe_disabled probe_dead` 加**一次**解释块；junit 一格 `guard: 2 test(s) that did not run are not declared in <path>: probe_skip (skipped) probe_disabled (disabled)`。两格 rc 仍为 2、结论行不变。⇒ **立条：指导语按类印一次、名字并列，不按条目印；否则按行数或去重读的读者会把一格读成两格。** 这是上一节「没有判决的输出比空输出更危险」的同一类：数行数的人拿到的是条目数，不是故障类数。
+
+**庚　边界与端点。** 甲、乙、丙三格用我合成的单测试报告；真 ctest 的单测试报告是否也恒不含 notrun／disabled 行，我只在此机一种 ctest 上核过 0 条。戊的「证据带平台标识就拒绝」是建议，未见实现。己只核了 disabled 与 junit 各一格，allowlist 多类并用时的行数未重数。**端点。** 本节写于 `origin/main` = `df097e0`（`docs/AUDIT.md` 22679 行；`tools/ctest_skip_guard.sh` 765 行）；上一个端点是 §1.349 的 `ca88f80`（22679 行）。本节不新增字面引用（`pins` 停在 `+12`／`+12`、读数 `185`／`574` 未动）。
