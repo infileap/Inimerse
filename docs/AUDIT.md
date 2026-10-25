@@ -22701,3 +22701,36 @@ ERR: also: 11 declared entr(ies) name a test that ran in this report -- checked=
 **己　行数不随条目数增长（对方改，我复跑）。** 两条未声明时：disabled 一格 `guard: 2 disabled test(s) are not declared in <path>: probe_disabled probe_dead` 加**一次**解释块；junit 一格 `guard: 2 test(s) that did not run are not declared in <path>: probe_skip (skipped) probe_disabled (disabled)`。两格 rc 仍为 2、结论行不变。⇒ **立条：指导语按类印一次、名字并列，不按条目印；否则按行数或去重读的读者会把一格读成两格。** 这是上一节「没有判决的输出比空输出更危险」的同一类：数行数的人拿到的是条目数，不是故障类数。
 
 **庚　边界与端点。** 乙、丙两格用我合成的单测试报告；甲另用真 ctest 报告复跑过（读数逐字相同），故「单测试报告不含 notrun／disabled」在本机一种 ctest 上有真机证据，不是外推。戊的「证据带平台标识就拒绝」是建议，未见实现。己只核了 disabled 与 junit 各一格，allowlist 多类并用时的行数未重数。**端点。** 本节写于 `origin/main` = `df097e0`（`docs/AUDIT.md` 22679 行；`tools/ctest_skip_guard.sh` 765 行）；上一个端点是 §1.349 的 `ca88f80`（22679 行）。本节不新增字面引用（`pins` 停在 `+12`／`+12`、读数 `185`／`574` 未动）。
+
+## §1.351 增补三百八十三：不可逆动作前的读数——端点的算术是两个值，证据是三种状态
+
+起点 `b5b6c5b`（父 `fce024a`／`593e759`），`docs/AUDIT.md` **22703** 行，量具 `tools/ctest_skip_guard.sh` **796** 行。对方按上一节的建议把端点换成主语、加了 `scope=none` 与「no action from this number alone」，并把端点拆成两个亚型（报告里一条都没跑／另一平台的报告每条都跑了）。我复核这两句，再量出第五格：**端点句的主语是清单条目，而判据依赖的是这些条目在「未运行集合」里的缺席**——两句说的不是同一件事。
+
+**甲　五格：同一分支，四次假一次真。** 清单与报告逐格换，全部本机实跑（报告为 XML，`tests="0"` 与 `tests="1"` 两种）：
+
+| 清单 | 报告 | entries | ran | absent | 走哪一支 | 该句真假 |
+|---|---|---|---|---|---|---|
+| Windows 11 条 | 零测试 | 11 | 0 | 11 | 「no test ran in this report at all」 | 真 |
+| Windows 11 条 | 单测试 | 11 | 0 | 11 | 「do not form a pair」 | **假** |
+| 两条（一条跑过、一条缺席） | 单测试 | 2 | 1 | 1 | 「do not form a pair」 | **假** |
+| 两条（tab 当分隔符） | 单测试 | 2 | 0 | 2 | 「do not form a pair」 | **假** |
+| 一条（正是报告里那条） | 单测试 | 1 | 1 | 0 | 「do not form a pair」 | 真 |
+
+第二支在五格里出现 **4** 次，只有最后一次为真。四格的 `checked` 与 `stale` 都等于清单条数，rc 全 **0**，`result=junit-declared` 一字不差——**差别只在那一句散文里**。
+
+**乙　机制：`stale` 把「跑过」与「报告里根本没有这个名字」并成一个键。** 判据是「这个声明的名字在未运行集合里找不到」（集合由 `status="notrun"` 与 `status="disabled"` 的用例构成）。于是三种原因同值：真的跑过了、名字拼错了、清单属于另一个平台、分隔符从「空格＋#」漂成了 tab——后三种都不是「跑过」。**立条：一个键有两个来源时，句子只能为其中一个负责。** 「do not form a pair」只该在**缺席**时用；「全部跑过」是清单过期，是另一句话、另一个动作。
+
+**丙　可机械判的修法：拆成三个数。** `declared=`（在未运行集合里）、`ran=`（报告里有这个名字且不是未运行）、`absent=`（报告里任何位置都没有这个名字）。三数须满足 `entries = declared + ran + absent`——五格逐格成立：11=0+0+11、2=0+1+1、2=0+0+2、1=0+1+0。有了这两个新数，端点句才可能只说自己在证明的那一半。
+
+**丁　不可逆动作前要量的是「引用还指着我以为的地方吗」。** `git rev-list --left-right --count main...origin/main` = **`0	93`**（本地 `main` 仍是 `e97831c`）。同一棵树上的两条恢复命令：
+
+- `git checkout main -- tools/ctest_enumerate.sh` ⇒ rc **0**、**输出为空**、78 行变 **48** 行、`tr -d` **2** 处变 **0** 处、staged `2	32`——那条「Windows writes CRLF」注释与两处 `tr -d '\r'` 一起被删掉；
+- `git checkout <sha> -- tools/ctest_enumerate.sh` ⇒ 仍是 78 行、仍是 2 处、staged 为空。
+
+两格的**成功输出完全相同**（都安静、都 rc 0、文件都确实变了），差别只在内容与 staged。⇒ **立条：删改之前要量的是 ahead/behind，不是内容数。** 内容数（几行、几条）在删除前后都会变，它证明不了「我删的是不是我以为的那一份」；`git status -sb` 的第一行 `## HEAD (no branch)` 只说游离头，不说「你手上这个 ref 落后」。
+
+**戊　三条可当场执行的：** ①恢复一律用 sha，不用分支名——分支是一个可以合法陈旧的指针，sha 不会；②`git diff --cached` 是告密者：若里面出现的是「别人的改动被撤掉」，那不是 restore，是 revert；③与端点同构——`checkout` 的成功输出与「恢复对了」同形，正如 `stale == checked` 与「十一条过期」同形。
+
+**己　退出码不动是对的。** 射程不进 rc：否则「跑在错误的平台上」与「清单真有错」又共用一个码，方向与 §1.341 相反地再撞一次。
+
+**庚　边界与端点。** 甲的五格全为本机实跑，但报告是合成的 XML（`tests="0"`／`tests="1"`），未在真 Windows 报告上复验；`scope=none` 与两句措辞是对方写的，我复核的是它的行为（五格 rc 0、句中无删除字样、主语已换）。`/tmp` 一说是**环境格**：对方在同一条路径上跨调用读到，我在本机读不到，所以「跨调用文件落在工作区内」是建议而不是结论。本节把 `docs/AUDIT.md` 从 **22703** 行写到落盘后的实测行数，父树 `b5b6c5b`、量具 796 行。
