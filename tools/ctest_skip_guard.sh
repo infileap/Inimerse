@@ -70,6 +70,14 @@
 #   digit, two owners" in the very table that claims to have ended it.  Two
 #   returns are process codes only because the dispatch converts them (`exit $?`
 #   after `check_allowlist`, after `check_disabled`).
+#   One token, one line.  `entries=` appears on exactly one line per run, and
+#   that line always carries a `result=`: it is the conclusion.  Lines that
+#   mention the denominator for context -- the "refusing the exemption list"
+#   announcement, and the `also:` lines that report a second fault class -- use
+#   `checked=` instead, because a reader who greps `entries=` and takes the
+#   first hit would otherwise pick up a sentence that says "2 were checked" and
+#   stop reading before the line that says both of them were broken.
+#
 #   The reverse accident is a number documented with no code behind it: a dead
 #   cell.  A grep cannot find one -- it answers "how often does this digit
 #   appear", not "is the promise kept" -- so the check has to be pointed at the
@@ -290,20 +298,26 @@ check_allowlist() {
   report_others() {
     local skipped_class="$1"
     if [ "$skipped_class" != "misread" ] && [ "$reading_fault" -ne 0 ]; then
-      printf '  also: %s entr(ies) are a reading fault (misread) -- entries=%s misread=%s\n' \
+      printf '  also: %s entr(ies) are a reading fault (misread) -- checked=%s misread=%s\n' \
         "$reading_fault" "$entries" "$reading_fault" >&2
     fi
     if [ "$skipped_class" != "missing" ] && [ "$missing" -ne 0 ]; then
-      printf '  also: %s entr(ies) name no registered test (missing) -- entries=%s missing=%s\n' \
+      printf '  also: %s entr(ies) name no registered test (missing) -- checked=%s missing=%s\n' \
         "$missing" "$entries" "$missing" >&2
     fi
     if [ "$skipped_class" != "unusable" ] && [ "$unusable" -ne 0 ]; then
-      printf '  also: %s entr(ies) cannot be used (unusable, %s with no name) -- entries=%s unusable=%s\n' \
+      printf '  also: %s entr(ies) cannot be used (unusable, %s with no name) -- checked=%s unusable=%s\n' \
         "$unusable" "$nameless" "$entries" "$unusable" >&2
     fi
   }
   if [ "$failure" -ne 0 ]; then
-    printf 'refusing the exemption list: %s entr(ies) checked in %s; entries=%s\n' "$entries" "$allowlist" "$entries" >&2
+    # No `entries=` here on purpose.  This line announces the refusal; the
+    # conclusion below carries the counts.  A reader who greps `entries=` must
+    # get exactly one line per run, and that line must be the one with a
+    # `result=` in it -- an announcement that also carries the denominator looks
+    # like a reading without a verdict, and "2 checked" alone says nothing about
+    # whether those 2 were fine.
+    printf 'refusing the exemption list: %s entr(ies) checked in %s\n' "$entries" "$allowlist" >&2
     if [ "$reading_fault" -ne 0 ]; then
       # Exit 12 wins when both faults are present: the reading fault is the one
       # that can hide the other, because a listing read wrongly can also make a
