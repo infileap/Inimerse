@@ -37,7 +37,7 @@ mapfile -t names < <(
     # without it.  That is not hypothetical: the first run of the exemption
     # check on the Windows job reported all eleven declared entries as `no such
     # registered test` while `ctest -N` printed every one of them.
-    cat |  # DRILL: name-side CR strip removed on purpose
+    tr -d '\r' |
     # `ctest -N` marks a disabled test in the listing itself:
     # `Test #3: hub_dist_regression (Disabled)`.  The name is what precedes the
     # marker; leaving the marker on would make nine of the eleven Windows
