@@ -30,7 +30,7 @@
 
 http_large_package_regression # drives the POSIX hub's /package body limit (src/platform/http_posix.c); the Windows engine links the reduced hub in src/mod/verse_dist_mod.c, which answers 436 bytes of "Wrong port!". Unnecessary once a Windows hub enforces the same body limit.
 crp_session_flow_regression # drives /session/* through the POSIX hub; the reduced hub has no session routes. Unnecessary once src/mod/verse_dist_mod.c serves /session/* and the CMakeLists if(WIN32) block stops disabling it.
-hub_dist_regression # drives /content/ and /node/* distribution through the POSIX hub; the reduced hub serves neither. Unnecessary once the Windows hub serves those routes.
+hub_dist_regression (Disabled) # drives /content/ and /node/* distribution through the POSIX hub; the reduced hub serves neither. Unnecessary once the Windows hub serves those routes.
 vverse_cross_regression # drives /v/<id> over the WebSocket portal, which only src/platform/http_posix.c implements. Unnecessary once the portal exists on Windows.
 node_discovery_regression # drives /node/* discovery; the reduced hub has no node routes. Unnecessary once src/mod/verse_dist_mod.c serves them.
 lease_handoff_regression # drives /session/* lease handoff; no session routes on the reduced hub. Unnecessary once those routes exist on Windows.
