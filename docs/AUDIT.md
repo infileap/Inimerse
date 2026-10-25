@@ -22500,3 +22500,35 @@ cannot read the registered count from build: no `Total Tests:` line -- nothing w
 **边界。** 这一节没有证明「`all()` 之后这一步一定跑」——Windows 上只见过一次 success；也没有证明 `ctest` 在**所有**非零退出下都写报告（只见过一次 `aot` 失败仍写出报告）。`--check-junit` 只读报告，不读构建日志，所以「报告里少了一条」与「那条测试根本没被排进套件」在它这一层同形——那是下一个方向。
 
 **端点。** 本节写于 `origin/main` = `1555852`（`docs/AUDIT.md` 22452 行，`tools/ctest_skip_guard.sh` 637 行）；上一个端点是 §1.343 的 `975f783`（22452 行）。本节不新增字面引用。
+
+## §1.345 增补三百七十七
+
+**甲　一个退出码只背一类故障，其余各类靠自己那一行。** 同一份清单里可以同时有「名字不在注册表」（11）与「条目没有理由」（10）；退出码只有一个位置，于是它必须选一个主人。对方按我上节那句「判定顺序本身是读数的一部分」改了实现，做法是：胜出类照旧进读数句，**非胜出类各打一行 `also:`，共用同一个分母**。我在它的树上复跑（合成注册表三个测试，清单两种坏行）：
+
+| 清单 | 退出码 | 读数句（胜出类） | 第二读者（`also:` 行） |
+|---|---|---|---|
+| `probe_gone # r` ＋ `probe_pass`（理由空） | 11 | `1 entr(ies) name no registered test; entries=2 missing=1 result=allowlist-missing` | `1 entr(ies) cannot be used (unusable, 0 with no name) -- entries=2 unusable=1` |
+| 同上 ＋ `<TAB>probe_disabled` | 11 | `missing=1`（`entries=3`） | `2 entr(ies) cannot be used (unusable, 1 with no name) -- entries=3 unusable=2` |
+
+⇒ **立条：退出码可以只背一类，但读数句与它的旁注必须背全部；「一共有几条坏」与「坏在哪一类」是同一个分母下的两个字段。** 我上节撞到的正是缺这一行时的样子：读者拿到 11，修完名字再跑一次，才发现旁边那行没写理由；两次运行之间他手上那条读数一直是「对的」。
+
+**乙　三个近失配与一个「看起来像近失配」的格。** 同一把尺子，四种只差一点的名字：
+
+| 清单行 | 退出码 | 读数 |
+|---|---|---|
+| `probe_pass` ＋尾随空格（有理由） | **0** | `1 declared entr(ies), all registered and justified; entries=1 result=allowlist-declared` |
+| `probe_pass(Disabled)` | **12** | `name a test this registry has but this program did not see -- a reading fault, not a missing test` |
+| `PROBE_PASS` | **12** | 同上 |
+| `nonexistent_test`（无理由） | 11 | `name no registered test`（`also:` 行缺席，因为另一类为 0） |
+
+第一格是新读数：**尾随空格被裁掉，于是不算读错**；它的回归表把「空格」与「后缀」并列记成 12，我这边空格跑到 0 去了。这两件事在实现上是相反方向：一个是「先裁剪再比较」（裁剪让名字相等），一个是「归一化后相等但原样不等」（判读错）。若把两者都写成「近失配」，读者会以为「多打一个空格」会红——它不会，只会被静默修正。**立条：能靠裁剪消掉的差异不该与「读法错」共用一个码；裁剪是修复，读错是警报。**
+
+**丙　注释里的数也是号码表的一行。** 我在 `tools/ctest_skip_guard.sh` 第 **294** 行读到 `# Exit 3 wins when both faults are present:`，而同一个分支的 `return` 是 **12**。号表的三处（头注释、分支注释、`return`）在这一个数上分叉，且 `grep` 数返回语句的办法**看不见**它——注释不是返回语句，死格也不是。这正是 §1.341「表里每个数字要指到一行会执行的代码」的反面：注释不指代码，所以注释里的数没有人核。**立条：数字出现在注释里时，它要么指到一个 `return`，要么不该写这个数字。**
+
+**丁　我上节报的「参数没人读」已修，我复核过。** 多余参数现在被拒：`--check-junit r.xml --allowlist y` → **21**，逐字 `--check-junit reads one argument; 4 were given and nothing would read the rest -- nothing was checked; result=usage`；每次运行 stderr 第一行印 **`guard: exemption list is <path>`**。两条一起做是对的：前者守住「不认识的输入不许静默通过」，后者守住「我以为它是从那儿读的」。若只做后者，读者还得自己逐行核对路径与预期是否一致；若只做前者，缺省清单仍可能不是他想的那份。
+
+**戊　对方提的「判据要有一个与被判对象独立的第二个计数器」，我收下并把它放在这一节的判据边上。** 它与我 §1.344 的 JUnit 头对账、与注册表的 `Total Tests:` 是同一族：胜出类之外必须有第二个读者，否则一个读者看不见自己的空集。差别只在这次第二个读者是**同一份输入的另一类**，不是另一份文件。两者都应写成「主判 + 副判」，副判不可省略。
+
+**边界。** 这一节全部读数来自我造的合成注册表（三个测试名）与合成清单，不是真机：真机上「哪一类胜出」还取决于注册表里到底有什么。丙那条注释分叉是我在树上读到的，未在真机触发（它只是文档错误，不影响任何退出码）。`also:` 行的出现条件是「另一类计数非零」，所以它**不能**用来证明「另一类为零」——那要读 `unusable=0` 这类字段。
+
+**端点。** 本节写于 `origin/main` = `3a50059`（`docs/AUDIT.md` 22502 行；`tools/ctest_skip_guard.sh` 691 行）；上一个端点是 §1.344 的 `5bcba12`（22502 行）。本节不新增字面引用。
