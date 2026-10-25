@@ -137,17 +137,24 @@
 #          Tests:` check above, applied to a different footer.
 #
 #   This mode also prints one reading the others cannot: `also: ... checked=N
-#   stale=K` names the declared entries whose test *ran* in this report, i.e.
-#   licences that outlived the condition they describe.  It is a reading, not a
-#   verdict -- the exit code does not move, and it is not printed at all when
-#   there is nothing to compare (a list with no entries has no denominator).
+#   stale=K ran=R absent=A` names the declared entries whose test *ran* in this
+#   report (R), i.e. licences that outlived the condition they describe, and the
+#   declared entries this report does not contain at all (A).  K = R + A, and
+#   the counts satisfy declared + ran + absent == entries, so a reader can check
+#   the line against itself.  It is a reading, not a verdict -- the exit code
+#   does not move, and it is not printed at all when there is nothing to compare
+#   (a list with no entries has no denominator).  The two halves are kept apart
+#   because they are different faults with one shared name: a name the evidence
+#   never heard of can be a typo, a separator that drifted, or a list from
+#   another platform, and none of those are expired licences.
 #   The reading's subject is the pair (this list, this report), not the list, so
-#   at the endpoint -- every declared entry ran, stale == checked -- the same
-#   sentence would read as "all N are expired" and invite a deletion of N lines:
-#   it is replaced by a `scope=none` sentence that says the two do not form a
-#   pair and that "not this platform" is indistinguishable here from "N
-#   expired".  Both sentences are one line on purpose; a reading that folds
-#   across lines is a reading whose token can be separated from its subject.
+#   at the endpoint -- every declared entry ran, stale == checked and absent ==
+#   0 -- the same sentence would read as "all N are expired" and invite a
+#   deletion of N lines: it is replaced by a `scope=none` sentence that says the
+#   two do not form a pair and that "not this platform" is indistinguishable
+#   here from "N expired".  Both sentences are one line on purpose; a reading
+#   that folds across lines is a reading whose token can be separated from its
+#   subject.
 #
 # Override the exemption list with INIMERSE_KNOWN_SKIPS=<path> (the only reason
 # that knob exists is so the two branches below can be shown to be reachable).
@@ -608,21 +615,39 @@ check_junit() {
   # irreversible action taken on a reading whose subject is the pair, not the
   # list.  Still not a verdict: the exit code does not move.
   #
-  # The endpoint has two sub-cases that look identical arithmetically and mean
-  # opposite things: a report where every declared test ran (another platform's
-  # report is the common cause), and a report where nothing ran at all
-  # (`tests="0"`, e.g. a filter that matched nothing).  In the second, "every
-  # declared entry ran here" is simply false, so it gets its own sentence.
+  # `stale` alone cannot carry that sentence: it counts "the declared name is not
+  # in the did-not-run set", which is true for a test that ran AND for a name this
+  # report has never heard of (a rename, a separator change, another platform).
+  # Those two are different faults, so the count is split:
+  #     declared + ran + absent == entries
+  # `absent` = the name appears nowhere in the report (no <testcase> at all),
+  # `ran` = stale - absent.  "Every declared entry names a test that ran here" is
+  # only sayable when absent == 0.
+  local absent=0 stale_name
+  while IFS=$'\t' read -r stale_name stale_reason; do
+    [ -n "$stale_name" ] || continue
+    grep -qxF "$stale_name" <(cut -f1 "$cases_file") && continue
+    if ! grep -qF "<testcase name=\"$stale_name\"" "$report" 2>/dev/null; then
+      absent=$((absent + 1))
+    fi
+  done < "$declared_file"
+  local ran=$((stale - absent))
   local ran_cases=$(( $(grep -c '<testcase ' "$report" 2>/dev/null || true) - parsed_notrun - parsed_disabled ))
   if [ "$stale" -ne 0 ] && [ "$ran_cases" -le 0 ]; then
-    printf 'also: no test ran in this report at all -- checked=%s stale=%s scope=none; every declared entry is absent from an empty evidence set, which says nothing about the entries.  Take no action on the list from this number alone\n' \
-      "$entries" "$stale" >&2
-  elif [ "$stale" -ne 0 ] && [ "$stale" -eq "$entries" ]; then
-    printf 'also: this report and this list do not form a pair -- checked=%s stale=%s scope=none; every declared entry names a test that ran here, which is also what a report from another platform looks like.  Nothing follows about the entries: this reading cannot tell "not this platform" from "%s expired", so take no action on the list from this number alone\n' \
-      "$entries" "$stale" "$stale" >&2
+    printf 'also: no test ran in this report at all -- checked=%s stale=%s ran=0 absent=%s scope=none; every declared entry is absent from an empty evidence set, which says nothing about the entries.  Take no action on the list from this number alone\n' \
+      "$entries" "$stale" "$absent" >&2
+  elif [ "$stale" -ne 0 ] && [ "$stale" -eq "$entries" ] && [ "$absent" -eq 0 ]; then
+    printf 'also: this report and this list do not form a pair -- checked=%s stale=%s ran=%s absent=0 scope=none; every declared entry names a test that ran here, which is also what a report from another platform looks like.  Nothing follows about the entries: this reading cannot tell "not this platform" from "%s expired", so take no action on the list from this number alone\n' \
+      "$entries" "$stale" "$ran" "$stale" >&2
+  elif [ "$stale" -ne 0 ] && [ "$absent" -eq "$entries" ]; then
+    printf 'also: this report contains none of the names this list declares -- checked=%s stale=%s ran=0 absent=%s scope=none; not one of them ran here either, so this is not an expiry report: a name that is spelled differently, a separator that changed, and a platform that never registers these tests all look like this.  Take no action on the list from this number alone\n' \
+      "$entries" "$stale" "$absent" >&2
+  elif [ "$stale" -ne 0 ] && [ "$absent" -ne 0 ]; then
+    printf 'also: checked=%s stale=%s ran=%s absent=%s scope=mixed; of the declared entr(ies): %s ran in this report, %s are names this report does not contain at all -- an expired licence and a name the evidence never heard of share one count here, so repair neither from this line alone\n' \
+      "$entries" "$stale" "$ran" "$absent" "$ran" "$absent" >&2
   elif [ "$stale" -ne 0 ]; then
-    printf 'also: %s declared entr(ies) name a test that ran in this report -- checked=%s stale=%s; a licence whose test stopped skipping fails nothing, and nobody else will notice it\n' \
-      "$stale" "$entries" "$stale" >&2
+    printf 'also: %s declared entr(ies) name a test that ran in this report -- checked=%s stale=%s ran=%s absent=0; a licence whose test stopped skipping fails nothing, and nobody else will notice it\n' \
+      "$stale" "$entries" "$stale" "$ran" >&2
   fi
   if [ "$undeclared" -ne 0 ]; then
     printf 'guard: tests=%s notrun=%s disabled=%s declared=%s undeclared=%s result=junit-undeclared\n' \
