@@ -151,19 +151,26 @@ check_allowlist() {
   # and its trigger is ordinary: a wrong INIMERSE_KNOWN_SKIPS, the wrong
   # working directory, a renamed file.
   if ! declared > "$declared_file"; then
-    printf 'cannot read the exemption list %s -- nothing was checked; result=allowlist-unreadable\n' \
+    printf 'cannot read the exemption list %s -- nothing was checked; entries=0 result=allowlist-unreadable\n' \
       "$allowlist" >&2
     return 20
   fi
+  # The denominator is a reading, not a detail of the sentence around it.
+  # `2 declared` and `11 declared` used to carry the same token and the same
+  # exit code, so a reader that greps `result=` or looks at rc could not tell
+  # "checked two entries" from "checked eleven" -- and a check whose population
+  # is invisible cannot be audited, only believed.  It is counted once, here,
+  # and every line below carries it as `entries=<n>`.
+  entries="$(cut -f1 "$declared_file" | grep -c . || true)"
   if ! bash "${script_dir}/ctest_enumerate.sh" "$build_dir" > "$names_file"; then
-    printf 'cannot check the exemption list: enumeration failed -- nothing was checked; result=registry-unreadable\n' >&2
+    printf 'cannot check the exemption list: enumeration failed -- nothing was checked; entries=%s result=registry-unreadable\n' \
+      "$entries" >&2
     return 20
   fi
   local -a registry=()
   mapfile -t registry < "$names_file"
   while IFS=$'\t' read -r name reason; do
     [ -n "$name" ] || continue
-    entries=$((entries + 1))
     if ! grep -qxF "$name" "$names_file"; then
       # Is this the same name read wrongly, or a name that is really gone?
       local normalized near_miss=''
@@ -208,26 +215,27 @@ check_allowlist() {
     fi
   done < "$declared_file"
   if [ "$failure" -ne 0 ]; then
-    printf 'refusing the exemption list: %s entr(ies) checked in %s\n' "$entries" "$allowlist" >&2
+    printf 'refusing the exemption list: %s entr(ies) checked in %s; entries=%s\n' "$entries" "$allowlist" "$entries" >&2
     if [ "$reading_fault" -ne 0 ]; then
       # Exit 3 wins when both faults are present: the reading fault is the one
       # that can hide the other, because a listing read wrongly can also make a
       # real gap look like a name mismatch.
       printf 'exemption list: %s entr(ies) name a test this registry has but this\n' \
         "$reading_fault" >&2
-      printf '  program did not see -- a reading fault, not a missing test; result=allowlist-misread\n' >&2
+      printf '  program did not see -- a reading fault, not a missing test; entries=%s misread=%s result=allowlist-misread\n' \
+        "$entries" "$reading_fault" >&2
       return 12
     fi
     if [ "$missing" -ne 0 ]; then
-      printf 'exemption list: %s entr(ies) name no registered test; result=allowlist-missing\n' \
-        "$missing" >&2
+      printf 'exemption list: %s entr(ies) name no registered test; entries=%s missing=%s result=allowlist-missing\n' \
+        "$missing" "$entries" "$missing" >&2
       return 11
     fi
     # Nothing is missing and nothing was misread, so the list itself is the
     # problem: an entry without a reason is a licence nobody audits, and 1 is
     # the code that says "this file cannot be used", not "a test has gone".
-    printf 'exemption list: %s entr(ies) give no reason in %s; result=allowlist-unusable\n' \
-      "$unusable" "$allowlist" >&2
+    printf 'exemption list: %s entr(ies) give no reason in %s; entries=%s unusable=%s result=allowlist-unusable\n' \
+      "$unusable" "$allowlist" "$entries" "$unusable" >&2
     return 10
   fi
   if [ "$entries" -eq 0 ]; then
@@ -237,10 +245,11 @@ check_allowlist() {
     # wants to see -- the same shape of lie the disabled mode prints when it
     # sees no `(Disabled)` in a listing it read wrongly.
     printf 'exemption list: 0 entr(ies) read from %s -- this list declares nothing;\n' "$allowlist"
-    printf '  result=allowlist-empty.  If you expected exemptions here, the path is wrong.\n'
+    printf '  entries=0 result=allowlist-empty.  If you expected exemptions here, the path is wrong.\n'
     return 0
   fi
-  printf 'exemption list: %s declared entr(ies), all registered and justified; result=allowlist-declared\n' "$entries"
+  printf 'exemption list: %s declared entr(ies), all registered and justified; entries=%s result=allowlist-declared\n' \
+    "$entries" "$entries"
   return 0
 }
 
@@ -266,7 +275,7 @@ check_disabled() {
   declared_file="$(mktemp)"
   trap 'rm -f "$declared_file"' RETURN
   if ! declared > "$declared_file"; then
-    printf 'cannot read the exemption list %s -- nothing was checked; result=allowlist-unreadable\n' \
+    printf 'cannot read the exemption list %s -- nothing was checked; entries=0 result=allowlist-unreadable\n' \
       "$allowlist" >&2
     return 20
   fi
