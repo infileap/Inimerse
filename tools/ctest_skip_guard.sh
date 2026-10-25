@@ -77,10 +77,11 @@
 #
 #   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
 #       0  every test the registry reports as `(Disabled)` is declared
-#       20 `ctest -N` failed, or the exemption list could not be read -- the
-#          check could not look, which is not the same finding as 2.  Both
-#          causes carry this one number: this file has exactly one "I could not
-#          look", so it has exactly one digit for it.  (An earlier revision
+#       20 `ctest -N` failed, the count line is missing, or the exemption list
+#          could not be read -- the check could not look, which is not the same
+#          finding as 2.  All
+#          three causes carry this one number: this file has exactly one "I
+#          could not look", so it has exactly one digit for it.  (An earlier revision
 #          documented 1 for the `ctest -N` case as well; no path ever returned
 #          it, so it was a dead cell promising a second number for the same
 #          debt -- see the note on process exits above.)
@@ -323,13 +324,24 @@ check_disabled() {
   else
     cr_note="no CR in listing"
   fi
+  # The witness is only a witness if the ruler could read its denominator.
+  # `ctest -N` prints `Total Tests: N` on the last line; if a future ctest stops
+  # printing it (or renames it), every count below still works and the check
+  # stays green while the line that says "what I saw" degrades to `registry=?`.
+  # "I could not read the denominator" is the same debt as "I could not read the
+  # registry", so it takes the same number.
+  if ! printf '%s' "${registered:-}" | grep -qE '^[0-9]+$'; then
+    printf 'cannot read the registered count from %s: no `Total Tests:` line -- nothing was checked; result=registry-count-unreadable\n%s\n' \
+      "$build_dir" "$listing" >&2
+    return 20
+  fi
   if [ "$undeclared_count" -ne 0 ]; then
     printf 'guard: disabled=%s declared=%s undeclared=%s result=disabled-undeclared\n' \
       "${#disabled[@]}" "$declared_count" "$undeclared_count" >&2
     return 2
   fi
   printf 'guard: registry=%s registered, %s, disabled=%s declared=%s result=disabled-declared\n' \
-    "${registered:-?}" "$cr_note" "${#disabled[@]}" "$declared_count"
+    "$registered" "$cr_note" "${#disabled[@]}" "$declared_count"
   return 0
 }
 
