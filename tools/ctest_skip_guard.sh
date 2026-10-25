@@ -562,6 +562,21 @@ check_junit() {
     fi
   done < "$cases_file"
 
+  # Same reverse direction as the disabled mode: a declared entry whose test
+  # ran in this report.  `--check-junit` can only catch "skipped but not
+  # declared"; this is the "declared but not skipped" half, and it is a reading,
+  # not a verdict, so the exit code stays where it was.
+  local stale=0 stale_name
+  while IFS=$'\t' read -r stale_name stale_reason; do
+    [ -n "$stale_name" ] || continue
+    if ! grep -qxF "$stale_name" <(cut -f1 "$cases_file"); then
+      stale=$((stale + 1))
+    fi
+  done < "$declared_file"
+  if [ "$stale" -ne 0 ]; then
+    printf 'also: %s declared entr(ies) name a test that ran in this report -- checked=%s stale=%s; a licence whose test stopped skipping fails nothing, and nobody else will notice it\n' \
+      "$stale" "$entries" "$stale" >&2
+  fi
   if [ "$undeclared" -ne 0 ]; then
     printf 'guard: tests=%s notrun=%s disabled=%s declared=%s undeclared=%s result=junit-undeclared\n' \
       "$tests_count" "$parsed_notrun" "$parsed_disabled" "$declared_count" "$undeclared" >&2
