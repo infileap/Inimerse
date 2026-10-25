@@ -37,7 +37,7 @@ mapfile -t names < <(
     # without it.  That is not hypothetical: the first run of the exemption
     # check on the Windows job reported all eleven declared entries as `no such
     # registered test` while `ctest -N` printed every one of them.
-    tr -d '\r' |
+    cat  # DRILL: CR stripping removed on purpose |
     # `ctest -N` marks a disabled test in the listing itself:
     # `Test #3: hub_dist_regression (Disabled)`.  The name is what precedes the
     # marker; leaving the marker on would make nine of the eleven Windows
@@ -47,7 +47,7 @@ mapfile -t names < <(
     # would print only the lines it changed -- one name out of three.
     sed 's/[[:space:]]*(Disabled)$//'
 )
-registered="$(printf '%s\n' "$listing" | tr -d '\r' | sed -n 's/^[[:space:]]*Total Tests:[[:space:]]*//p')"
+registered="$(printf '%s\n' "$listing" | cat  # DRILL: CR stripping removed on purpose | sed -n 's/^[[:space:]]*Total Tests:[[:space:]]*//p')"
 
 if [ "${#names[@]}" -eq 0 ]; then
   printf 'no tests collected from %s (ctest -N printed %s registered)\n' \
