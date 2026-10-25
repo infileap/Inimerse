@@ -22450,3 +22450,53 @@ cannot read the registered count from build: no `Total Tests:` line -- nothing w
 庚、端点
 
 端点：22380 → 22452（本节 72 行，其中 1 行分节空行）。
+
+## §1.344 增补三百七十六
+
+**甲　被跳过的步骤在三个产物里各是什么样。** 对方把 `--check-junit` 这一步先接在 `CMake tests` 之前，并给了 `if: always() && hashFiles('…ctest-results.xml') != ''`；报告是**同一次 job 的后一个步骤**才写出来的，于是条件恒假。两次 run 的步骤读数（我用 `gh api repos/{owner}/{repo}/actions/runs/<id>/jobs` 读 `steps[]`）：
+
+| run | 树 | 第 9 步 | 第 10 步 | 该 run 结论 |
+|---|---|---|---|---|
+| `40153533968` | `f621d14` | `Tests that did not run (Windows)` **skipped** | `CMake tests` failure | failure |
+| `40154575694` | `1555852` | `CMake tests` failure | `Tests that did not run (Windows)` **success** | failure |
+
+同一件事在另两个产物里**不留痕**：日志里根本没有那一行（把 `gh run view --job <id> --log` 的第二列去重，前者 12 个名字里没有它，后者有它并带 `guard: tests=147 notrun=2 disabled=9 declared=11 result=junit-declared`）；摘要与退出码里也不出现——整个 job 的退出码由别的步骤决定。所以「检查通过」与「检查从未发生」在**摘要与退出码**这一层不可分。
+
+**立条一：判断一步有没有跑，读它的 `conclusion`，不要读它的名字在不在。** 名字集合判据把两种不同的事压成同一件：步骤**未定义**（作者忘了加）与被**条件跳过**（加了但条件为假）。API 的 `steps[].conclusion` 给出 `skipped` 这一格，日志给不出；反过来，日志能给「它印了什么」，API 给不出。要判「跑了没有」用前者，要判「跑的结果说了什么」用后者。
+
+**立条二：守卫条件必须与被守卫的产物同时刻求值。** `hashFiles` 在步骤启动前求值，而被守卫的文件由同一 job 的后续步骤写出——这类守卫不是「检查报告是否存在」，而是「检查报告在上一步是否存在」，而它在结构上永远不存在。修法不在条件上，在三处：把这一步挪到产物步骤之后、去掉存在性守卫（`if: always()`）、让检查器自己把「读不到报告」报成 `result=junit-unreadable` 并退出 **20**。代价是构建早失败时这一步也红；这个代价要接，因为「什么都没查」必须可见。
+
+**乙　我把修好后的四种输入各跑了一次**（树 `1555852`，`tools/ctest_skip_guard.sh` 637 行，合成 JUnit 报告，`INIMERSE_KNOWN_SKIPS` 指向自建清单）：
+
+| 输入 | 退出码 | 读数 |
+|---|---|---|
+| `tests="147" skipped="2" disabled="9"`，11 条全声明 | 0 | `guard: tests=147 notrun=2 disabled=9 declared=11 result=junit-declared` |
+| 同上，删掉 `skip_b` 的声明 | 2 | `guard: skipped test skip_b is not declared in …` ＋ `declared=10 undeclared=1 result=junit-undeclared` |
+| 报告文件不存在 | 20 | `cannot read the test report … -- nothing was checked; entries=11 result=junit-unreadable` |
+| 删掉 `tests="147"` 头 | 20 | `cannot read the test count from …: no tests="N" in the suite header` |
+| 头写 `skipped="0"`、正文却有 2 条 `status="notrun"` | 20 | `the report says skipped=0 disabled=9 but this parser found notrun=2 disabled=9 -- the format changed` |
+
+最后两格是这一节最值钱的地方：**格式变了的时候，阅读者会报「零跳过」，而报告自己写着两条跳过**。要求解析结果与报告的头部计数逐项相等，就等于让两个独立的读者互相校对——单靠「解析到了什么」永远发现不了「什么都没解析到」。
+
+**丙　一个静默失效的参数，是我自己撞上的。** 我先按习惯写 `bash tools/ctest_skip_guard.sh --check-junit r.xml --allowlist my-list.txt`，读数 `declared=11`、退出 0。这个脚本没有人读 `--allowlist`：清单只从环境变量取（缺省是仓库自带那份）。同一份报告换成环境变量指向另一份只声明 1 条的清单，退出 **2**、`undeclared=1`。也就是说：
+
+- `--check-junit r.xml` ＋多余的 `--allowlist x` ⇒ 用**缺省清单**、退出 0；
+- `INIMERSE_KNOWN_SKIPS=x --check-junit r.xml` ⇒ 用**指定清单**、退出 2。
+
+两行的「通过」与「我指定了清单且它通过」在退出码与读数上同形，差别只在我以为生效了。**立条三：参数没被读，等于参数没被给——而这两件事在退出码上不可分，所以工具必须拒绝不认识的参数，或者至少印一行它读到的清单路径。** 只印一次路径就能救这一格，成本一行。
+
+**丁　名字列与两个码的先后。** 期望里「无理由」与「无名字」都归 `unusable`（10），但我第一次造格时用的是未注册的名字，于是先撞上 `missing`（11）：
+
+| 清单行（假注册表：3 个测试） | 退出码 | 第一条消息 |
+|---|---|---|
+| `probe_pass<TAB>` | 10 | `exemption for probe_pass: no reason given` |
+| `<TAB>probe_pass`（名字列空、文字是已注册名） | 10 | `exemption list entry with no name: probe_pass` |
+| `nonexistent_test<TAB>` | 11 | `exemption for nonexistent_test: no reason given` |
+
+第三格说明**判定顺序本身是读数的一部分**：同一行既「没有理由」又「名字不在注册表」，报 11 还是 10 由代码里先查哪一件决定。号表若要人一眼看懂，得把顺序写下来；不写，读者会把 10 与 11 当成两个独立事实。
+
+**戊　行首 tab 不是标记。** 对方提到 `read` 会吃掉行首的 IFS 空白（tab 属 IFS 空白），我复现：`printf '\tlooks-like-this\n' | { IFS=$'\t' read -r a b; printf '[%s][%s]\n' "$a" "$b"; }` 输出 `[looks-like-this][]`——空名字列在 `read` 这一层被抹平，于是「搬字」在下一层重演。所以空列必须靠**切分先于 trim**、并显式输出哨兵词与第三列 flag 才能保住；靠行首 tab 自己表达「这里没有名字」是不行的。
+
+**边界。** 这一节没有证明「`all()` 之后这一步一定跑」——Windows 上只见过一次 success；也没有证明 `ctest` 在**所有**非零退出下都写报告（只见过一次 `aot` 失败仍写出报告）。`--check-junit` 只读报告，不读构建日志，所以「报告里少了一条」与「那条测试根本没被排进套件」在它这一层同形——那是下一个方向。
+
+**端点。** 本节写于 `origin/main` = `1555852`（`docs/AUDIT.md` 22452 行，`tools/ctest_skip_guard.sh` 637 行）；上一个端点是 §1.343 的 `975f783`（22452 行）。本节不新增字面引用。
