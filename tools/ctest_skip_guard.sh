@@ -25,18 +25,23 @@
 #          check a renamed test would read as a green step.
 #
 #   bash tools/ctest_skip_guard.sh --check-allowlist <build-dir>
-#       0  every declared exemption names a registered test and gives a reason
-#       1  the exemption list itself is unusable -- an entry with no reason, or
-#          the enumeration failed, so the check could not look at all
-#       2  an entry names no registered test, and nothing nearby explains why:
-#          a rename, a deletion, or a typo.  The list or CMakeLists.txt has to
-#          change
-#       3  an entry names no registered test but matches one as soon as CR, a
-#          trailing `(Disabled)` suffix, whitespace and case are ignored.  The
-#          name is right and the reading is wrong, so the repair is in the
-#          parser.  This is the per-test mode's 3 one level up: there a wrong
-#          `-R` pattern made a passing test read as absent, here a wrong line
-#          makes a present test read as absent
+#       0   every declared exemption names a registered test and gives a reason
+#       10  the exemption list itself is unusable -- an entry with no reason, or
+#           the enumeration failed, so the check could not look at all
+#       11  an entry names no registered test, and nothing nearby explains why:
+#           a rename, a deletion, or a typo.  The list or CMakeLists.txt has to
+#           change
+#       12  an entry names no registered test but matches one as soon as CR, a
+#           trailing `(Disabled)` suffix, whitespace and case are ignored.  The
+#           name is right and the reading is wrong, so the repair is in the
+#           parser
+#
+#   The allowlist mode deliberately does not reuse the per-test numbers.  Exit 3
+#   already means "the name is wrong, the test is fine" in the per-test mode; a
+#   second meaning ("the name is right, the reading is wrong") is the opposite
+#   repair behind the same digit, and a reader -- or a log search -- cannot tell
+#   the two apart.  One number, one debt: the failure paths also print
+#   `result=<token>` so a CI log can be grepped without trusting the arithmetic.
 #
 #   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
 #       0  every test the registry reports as `(Disabled)` is declared
@@ -102,8 +107,8 @@ check_allowlist() {
   names_file="$(mktemp)"
   trap 'rm -f "$names_file"' RETURN
   if ! bash "${script_dir}/ctest_enumerate.sh" "$build_dir" > "$names_file"; then
-    printf 'cannot check the exemption list: enumeration failed\n' >&2
-    return 1
+    printf 'cannot check the exemption list: enumeration failed; result=allowlist-unusable\n' >&2
+    return 10
   fi
   local -a registry=()
   mapfile -t registry < "$names_file"
@@ -161,20 +166,22 @@ check_allowlist() {
       # real gap look like a name mismatch.
       printf 'exemption list: %s entr(ies) name a test this registry has but this\n' \
         "$reading_fault" >&2
-      printf '  program did not see -- a reading fault, not a missing test\n' >&2
-      return 3
+      printf '  program did not see -- a reading fault, not a missing test; result=allowlist-misread\n' >&2
+      return 12
     fi
     if [ "$missing" -ne 0 ]; then
-      return 2
+      printf 'exemption list: %s entr(ies) name no registered test; result=allowlist-missing\n' \
+        "$missing" >&2
+      return 11
     fi
     # Nothing is missing and nothing was misread, so the list itself is the
     # problem: an entry without a reason is a licence nobody audits, and 1 is
     # the code that says "this file cannot be used", not "a test has gone".
-    printf 'exemption list: %s entr(ies) give no reason in %s\n' \
+    printf 'exemption list: %s entr(ies) give no reason in %s; result=allowlist-unusable\n' \
       "$unusable" "$allowlist" >&2
-    return 1
+    return 10
   fi
-  printf 'exemption list: %s declared entr(ies), all registered and justified\n' "$entries"
+  printf 'exemption list: %s declared entr(ies), all registered and justified; result=allowlist-declared\n' "$entries"
   return 0
 }
 
@@ -189,7 +196,7 @@ check_allowlist() {
 check_disabled() {
   local build_dir="$1" listing
   if ! listing="$(ctest --test-dir "$build_dir" -N 2>&1)"; then
-    printf 'cannot check the disabled set: ctest -N failed for %s\n%s\n' \
+    printf 'cannot check the disabled set: ctest -N failed for %s; result=disabled-unreadable\n%s\n' \
       "$build_dir" "$listing" >&2
     return 1
   fi
