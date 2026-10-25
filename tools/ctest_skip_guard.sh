@@ -291,9 +291,11 @@ check_allowlist() {
   if [ "$failure" -ne 0 ]; then
     printf 'refusing the exemption list: %s entr(ies) checked in %s; entries=%s\n' "$entries" "$allowlist" "$entries" >&2
     if [ "$reading_fault" -ne 0 ]; then
-      # Exit 3 wins when both faults are present: the reading fault is the one
+      # Exit 12 wins when both faults are present: the reading fault is the one
       # that can hide the other, because a listing read wrongly can also make a
-      # real gap look like a name mismatch.
+      # real gap look like a name mismatch.  (This comment said "Exit 3" for a
+      # while after the allowlist numbers moved to 10/11/12; a comment is not a
+      # return statement, so nothing that counts `return` lines could catch it.)
       printf 'exemption list: %s entr(ies) name a test this registry has but this\n' \
         "$reading_fault" >&2
       printf '  program did not see -- a reading fault, not a missing test; entries=%s misread=%s result=allowlist-misread\n' \
