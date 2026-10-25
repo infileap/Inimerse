@@ -140,8 +140,17 @@
 #   stale=K ran=R absent=A` names the declared entries whose test *ran* in this
 #   report (R), i.e. licences that outlived the condition they describe, and the
 #   declared entries this report does not contain at all (A).  K = R + A, and
-#   the counts satisfy declared + ran + absent == entries, so a reader can check
-#   the line against itself.  It is a reading, not a verdict -- the exit code
+#   declared + ran + absent == entries holds by construction, not by test: the
+#   parser adds one to `declared` on the branch where grep finds the name in the
+#   did-not-run set and one to `stale` on the branch where it does not, so the
+#   equation is that one predicate written twice, and `ran` is defined as
+#   `stale - absent`.  It is printed so the *split* of the denominator is visible
+#   on one line, NOT as a self-check: an identity cannot fail.  What it would
+#   catch is a reader fault (a different file, a mis-parsed count line), and a
+#   second reader of the same list -- a plain line counter, which never looks at
+#   the report -- catches that better.  What no reader here catches is a list
+#   that is wrong but well formed: entries that should not be there, reasons that
+#   stopped being true.  It is a reading, not a verdict -- the exit code
 #   does not move, and it is not printed at all when there is nothing to compare
 #   (a list with no entries has no denominator).  The two halves are kept apart
 #   because they are different faults with one shared name: a name the evidence
