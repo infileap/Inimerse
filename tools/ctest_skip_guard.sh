@@ -54,6 +54,20 @@
 #   the two apart.  One number, one debt: the failure paths also print
 #   `result=<token>` so a CI log can be grepped without trusting the arithmetic.
 #
+#   That rule governs **process exits**, and this file contains two kinds of
+#   number that a table must not put in one column.  A process exit is what a
+#   caller can see -- it lands in a step summary or in `Process completed with
+#   exit code N`.  A function return is internal.  `declared()` returns 1 when
+#   the list is missing, and its call site turns that into 20 before the process
+#   exits, so that 1 never reaches a log; a table built from
+#   `grep -nE '^\s*(exit|return) [0-9]+'` -- 19 lines here, 12 returns and 7
+#   exits -- that lists 1 twice (this one, and `result=failed`) re-creates "one
+#   digit, two owners" in the very table that claims to have ended it.  Two
+#   returns are process codes only because the dispatch converts them (`exit $?`
+#   after `check_allowlist`, after `check_disabled`).
+#   So: the nine process codes are 0 1 2 3 10 11 12 20 21, and a number that is
+#   only ever returned stays with the code, next to its call site.
+#
 #   bash tools/ctest_skip_guard.sh --check-disabled <build-dir>
 #       0  every test the registry reports as `(Disabled)` is declared
 #       1  `ctest -N` failed -- the check could not see the registry, so it
