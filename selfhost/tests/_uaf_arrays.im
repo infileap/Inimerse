@@ -1,0 +1,23 @@
+# _uaf_arrays.im -- regression for the arrays_big realloc / inline_buf self-pointer bug.
+#
+# Small arrays keep their elements in ArrayObj.inline_buf, which lives inside the
+# ArrayObj, so `items` is a self-pointer.  Slots 0..4095 live in the fixed
+# vm->arrays block and never move; slots from 4096 up live in vm->arrays_big,
+# which vm_array_new() grows with realloc.  Until the rebase was added there,
+# every inline array in the moved block kept pointing at the freed block.
+#
+# 6000 arrays force arrays_big through two growths (1024 -> 2048) and leave the
+# first 1024 slots in the moved block; reading them afterwards is the bug.
+arrs = []
+i = 0
+while i < 6000 {
+    push(arrs, [i])
+    i = i + 1
+}
+s = 0
+i = 0
+while i < 100 {
+    s = s + arrs[i][0]
+    i = i + 1
+}
+say "arrays=" + str(s)

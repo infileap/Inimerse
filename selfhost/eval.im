@@ -30,7 +30,7 @@ func truthy(v) {
 
 # ---------- 类型与字符串化 ----------
 func to_str(v) {
-    tp = type(v)
+    tp = v.type
     if tp == "string" { return v }
     if tp == "int" or tp == "float" { return str(v) }
     if tp == "nil" { return "nil" }
@@ -317,7 +317,7 @@ func call_builtin(name, args) {
         push(args[0], args[1])
         return nil
     }
-    if name == "type" { return type(args[0]) }
+    if name == "type" { return args[0].type }
     if name == "has" { return has(args[0], args[1]) }
     if name == "int" { return int(args[0]) }
     if name == "float" { return float(args[0]) }

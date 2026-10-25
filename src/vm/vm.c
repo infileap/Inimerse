@@ -864,8 +864,23 @@ int vm_array_new(VM *vm) {
         int big = vm->arrayCount - 4096;
         if (big >= vm->bigCap) {
             int newCap = vm->bigCap == 0 ? 1024 : vm->bigCap * 2;
-            ArrayObj *nb = realloc(vm->arrays_big, (size_t)newCap * sizeof(ArrayObj));
+            ArrayObj *old = vm->arrays_big;
+            uintptr_t old_base = (uintptr_t)old;
+            uintptr_t old_end = old_base + (uintptr_t)vm->bigCap * sizeof(ArrayObj);
+            ArrayObj *nb = realloc(old, (size_t)newCap * sizeof(ArrayObj));
             if (!nb) { VM_UNLOCK(vm); return -1; }
+            /* A small array keeps its elements in inline_buf, which lives inside this
+             * block, so items == &inline_buf is a self-pointer. realloc may move the
+             * block; without rebasing those self-pointers every inline array in
+             * arrays_big keeps reading the freed block (heap-use-after-free). */
+            if (nb != old) {
+                intptr_t delta = (intptr_t)nb - (intptr_t)old;
+                for (int i = 0; i < vm->bigCap; i++) {
+                    uintptr_t it = (uintptr_t)nb[i].items;
+                    if (it >= old_base && it < old_end)
+                        nb[i].items = (Value *)(uintptr_t)((intptr_t)it + delta);
+                }
+            }
             vm->arrays_big = nb;
             memset(vm->arrays_big + vm->bigCap, 0, (size_t)(newCap - vm->bigCap) * sizeof(ArrayObj));
             vm->bigCap = newCap;

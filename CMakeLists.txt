@@ -1602,3 +1602,31 @@ if(INIMERSE_PYTHON)
 add_test(NAME frozen_identity_cli_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_frozen_identity.cli.test.py)
 set_tests_properties(frozen_identity_cli_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;regression")
 endif()
+
+# --- the self-hosted interpreter, first rung -------------------------------
+# Appended at the end of the file on purpose: docs/ cite CMakeLists.txt line
+# numbers (the highest today is 1362), so a test added higher up renumbers every
+# citation below it and the line-refs stage fills with unanchored numbers.
+#
+# selfhost/twofib15.im is the interpreter running fib(15).  Until 2026-10-25 it
+# could not run at all, for two reasons found one after the other: selfhost/eval.im
+# still called the pre-member-access `type(v)` (a keyword today, so the file did
+# not parse), and once that was fixed the run died with SIGSEGV at ~1270 inner
+# calls.  Cause: vm_array_new() realloc'd vm->arrays_big without rebasing the
+# inline_buf self-pointers of the small arrays that live inside it -- a
+# heap-use-after-free, found with an ASAN build.  fib(15) is 1973 inner calls, so
+# this test is both the interpreter smoke test and the crash regression.
+if(INIMERSE_PYTHON)
+add_test(NAME selfhost_interpreter_runs COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "fib15=610" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/selfhost/twofib15.im)
+set_tests_properties(selfhost_interpreter_runs PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "selfhost;regression")
+# The same bug with the interpreter out of the way: 6000 small arrays push
+# arrays_big through two growths, then the first 1024 slots -- now inside the
+# moved block -- are read back.  Deliberately NOT labelled regression: measured
+# against the pre-fix binary this printed the same `arrays=4950`, because glibc's
+# release allocator had not reused or unmapped the freed block yet, so the stale
+# read still returned the old bytes.  What fails without the fix is the
+# interpreter test above; this one is a shape check that becomes a real detector
+# under an ASAN build.
+add_test(NAME vm_arrays_big_shape COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "arrays=4950" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/selfhost/tests/_uaf_arrays.im)
+set_tests_properties(vm_arrays_big_shape PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "vm;smoke")
+endif()
