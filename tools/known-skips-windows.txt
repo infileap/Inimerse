@@ -65,9 +65,25 @@ economy_migration_regression # drives /economy/* migration, which the reduced hu
 # nine above are refused *before* the suite is built; the two below are refused
 # afterwards, from what actually happened.
 #
-# Still a gap, and it is the other direction: a test that *stops* skipping or
-# stops being disabled simply runs, and a run that fails is already red -- so
-# nothing here would notice an entry in this file that has become obsolete.  A
-# stale licence is the one thing this file cannot detect about itself.
+# The other direction, which used to be a gap: a test that *stops* skipping or
+# stops being disabled simply runs, and a run that fails is already red, so
+# nothing here noticed an entry that had become obsolete -- a stale licence was
+# the one thing this file could not detect about itself.  `--check-junit` now
+# counts those too, and prints them as a reading rather than a failure:
+#
+#   also: 2 declared entr(ies) name a test that ran in this report -- checked=11
+#     stale=2; a licence whose test stopped skipping fails nothing, and nobody
+#     else will notice it
+#
+# It stays a reading because a test can stop skipping for good reasons, and a
+# list that is only right on the platform it was written for would be useless
+# elsewhere.  That is also its limit.  `stale` compares this list against ONE
+# report, so a report from another platform makes every entry look expired:
+# measured on Linux with a one-test report and this file, the line reads
+# `checked=11 stale=11` -- eleven names, none of them on that platform.  The
+# number is true of the pair (this list, that report) and says nothing about the
+# licences themselves; only the Windows job's own report can answer that, and
+# nothing in the line distinguishes "meaningless here" from "eleven expired",
+# which is why the platform has to come from the caller.
 xlang_python_bridge # needs a Python the bridge can dlopen; the windows-latest image has none on PATH for the MSYS2 build tree. Unnecessary once the runner ships one, or once the test links the interpreter it was built against.
 xlang_java_bridge # needs a JDK and JAVA_HOME for the bridge; the windows-latest image has neither on PATH for the MSYS2 build tree. Unnecessary once the runner installs a JDK and the test can find it.

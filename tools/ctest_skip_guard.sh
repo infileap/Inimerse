@@ -425,6 +425,7 @@ check_disabled() {
   local name found i
   local declared_count=0
   local undeclared_count=0
+  local -a undeclared_names=()
   for name in "${disabled[@]}"; do
     [ -n "$name" ] || continue
     found=''
@@ -440,12 +441,20 @@ check_disabled() {
       continue
     fi
     undeclared_count=$((undeclared_count + 1))
-    printf 'guard: disabled test %s is not declared in %s\n' "$name" "$allowlist" >&2
-    printf '  DISABLED TRUE removes it from the `out of N` denominator: the suite\n' >&2
-    printf '  prints a smaller N and reads as complete.  Make the feature it needs\n' >&2
-    printf '  exist, or declare it with a reason saying what would make the entry\n' >&2
-    printf '  unnecessary.\n' >&2
+    undeclared_names+=("$name")
   done
+  # One explanation per class, then the names, then the count.  The first version
+  # printed the four-line reason under every undeclared name, so two names made
+  # eight lines and a reader who counts lines (or drops duplicates) saw one cell
+  # where there were two.  A reader should never have to divide by four.
+  if [ "$undeclared_count" -ne 0 ]; then
+    printf 'guard: %s disabled test(s) are not declared in %s: %s\n' \
+      "$undeclared_count" "$allowlist" "${undeclared_names[*]}" >&2
+    printf '  DISABLED TRUE removes a test from the `out of N` denominator: the\n' >&2
+    printf '  suite prints a smaller N and reads as complete.  Make the feature it\n' >&2
+    printf '  needs exist, or declare each name with a reason saying what would make\n' >&2
+    printf '  the entry unnecessary.\n' >&2
+  fi
   # The witness goes out on the success path too, and it has to: "nothing is
   # disabled" and "this program saw nothing" print the same working line, and the
   # second one is the failure this mode exists to catch.  A count with no shape
@@ -547,7 +556,8 @@ check_junit() {
     return 20
   fi
 
-  local name status reason
+  local name status reason kind
+  local -a undeclared_names=()
   while IFS=$'\t' read -r name status; do
     [ -n "$name" ] || continue
     if grep -qxF "$name" <(cut -f1 "$declared_file"); then
@@ -557,10 +567,16 @@ check_junit() {
         "$([ "$status" = "notrun" ] && printf skipped || printf disabled)" "$name" "$reason"
     else
       undeclared=$((undeclared + 1))
-      printf 'guard: %s test %s is not declared in %s\n' \
-        "$([ "$status" = "notrun" ] && printf skipped || printf disabled)" "$name" "$allowlist" >&2
+      kind="$([ "$status" = "notrun" ] && printf skipped || printf disabled)"
+      undeclared_names+=("$name ($kind)")
     fi
   done < "$cases_file"
+  # Same shape as the disabled mode: one line names them all, so the number of
+  # lines no longer depends on how many tests stopped running.
+  if [ "$undeclared" -ne 0 ]; then
+    printf 'guard: %s test(s) that did not run are not declared in %s: %s\n' \
+      "$undeclared" "$allowlist" "${undeclared_names[*]}" >&2
+  fi
 
   # Same reverse direction as the disabled mode: a declared entry whose test
   # ran in this report.  `--check-junit` can only catch "skipped but not
