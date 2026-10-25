@@ -22633,3 +22633,47 @@ exemption list: 2 entr(ies) cannot be used; entries=2 unusable=2 nameless=1 resu
 **边界。** 本节进码读数来自我合成的注册表与合成清单；对方 `1533115`／`e626393` 的改动我只读树上文件与实跑，未重跑它的真机作业。丙栏的「第 294 行现在是什么」是我在树上读到的，会随下一笔提交再变——本节刻意不再给行号，只给提交号与内容摘要。流的分野只在 `--check-allowlist` 一格里核过；其它模式（`--check-disabled`、`--check-junit`）的红格输出我未逐一分离流。
 
 **端点。** 本节写于 `origin/main` = `e626393`（`docs/AUDIT.md` 22610 行；`tools/ctest_skip_guard.sh` 734 行）；上一个端点是 §1.347 的 `e48aaf2`（22610 行）。本节不新增字面引用。
+
+## §1.349 增补三百八十一
+
+**甲　六格流表。** 上一节说过「哪一行算结论由流决定」，但只核了 allowlist 一格。对方把三个模式六格全分离了一遍，我用自己的合成注册表与合成报告逐格复跑，形态一致：
+
+| 格 | rc | stdout | stderr |
+|---|---|---|---|
+| allowlist 绿 | 0 | 结论行（`entries=11 … result=allowlist-declared`） | 声明行、枚举见证 |
+| allowlist 红 | 11 | **空** | 声明、逐条、信封、结论、`also:` |
+| disabled 绿 | 0 | 两条 `is declared` ＋ `registry=3 registered, no CR in listing, disabled=2 declared=2 result=disabled-declared` | 声明行 |
+| disabled 红 | 2 | **空** | 逐条未声明 ＋ 每格四行解释 ＋ 结论 |
+| junit 绿 | 0 | 两条 `is declared` ＋ `tests=3 notrun=1 disabled=1 declared=2 result=junit-declared` | 声明行 |
+| junit 红 | 2 | **空** | 逐条未声明、`also:`、结论 |
+
+⇒ 结论行随成败换边（绿 stdout、红 stderr），证据行与信封恒在 stderr，**逐条声明行恒在 stdout**。
+
+**乙　★红的 run 里 stdout 可以非空。** 上表的「红 ⇒ stdout 空」只在**全坏**时成立。清单混着一好一坏时：
+
+```
+OUT: guard: skipped test probe_skip is declared: r1
+ERR: guard: disabled test probe_disabled is not declared in list-mixed.txt
+ERR: also: 1 declared entr(ies) name a test that ran in this report -- checked=2 stale=1
+ERR: guard: tests=3 notrun=1 disabled=1 declared=1 undeclared=1 result=junit-undeclared
+```
+
+只收 stdout 的读者在这条红 run 上看到的是一行**真话、没有判决**，而且正好是他想听的那半句。⇒ **立条：没有判决的输出比空输出更危险，因为它有内容。** 判「这格过没过」只能看结论 token，不能看「有没有印东西」。
+
+**丙　★绿的 run 里 stderr 可以带非零读数。** 清单声明一条已经不再跳过的测试，其余全对：
+
+```
+rc=0
+OUT: … declared=2 result=junit-declared
+ERR: also: 1 declared entr(ies) name a test that ran in this report -- checked=3 stale=1; a licence whose test stopped skipping fails nothing
+```
+
+判决 token 说「全部已声明」，读数行说「有一张执照过期」。两句都真。⇒ **立条：判决绿不等于没有读数。** 只收 stdout 的读者会得到一条干净的绿——这与乙是同一个病的两个方向：**判决与读数不在同一个流里，任何只收一个流的读者都得到半个真相**。
+
+**丁　`stale=` 只挂在 junit，不挂 disabled，判据是「对对象为真」。** 清单是两个模式共用的，但 `--check-disabled` 的证据只覆盖「被禁用」一种状态：在 Windows 上它会把那两条 `skipped` 条目算成过期，印出 `stale=2`——**那个数对这个调用者为真，对这份清单为假**。⇒ **立条：读数必须对对象为真，不能只对调用者的视角为真；一条只有从某个观察者看才成立的数，与没有这个数一样。**
+
+**戊　同一件事在 disabled 模式里不是数，是静默。** 我实测：清单声明一条已不再被禁用的条目，`--check-disabled` 打 `disabled=1 declared=1 result=disabled-declared`、rc 0，对那条死执照**一个字都不印**。这不是「读数为零」，是「没有这个读数」——它的证据（注册表）里根本没有「已声明却不禁用」这个集合。⇒ 缺口的补法不是抄 `stale=` 过来，而是换一份能看见「这次跑了/被跳过」的证据（正是 junit 报告做的事）。**立条：反方向缺口能不能补，取决于有没有一份看得见反方向状态的证据，而不是取决于缺口的名字。**
+
+**己　「半个观察者」写进立条要三句。** ①结论行的流随成败换边；②证据行（逐条声明）永远在 stdout，**红的时候也在**；③没有判决的 stdout 比空 stdout 更危险，因为它有内容。对方给的人事反例正是它自己的跑格循环：用 `2>&1 >/dev/null` 收格子，每条绿都变成「没有结论」，而它当时把这读成「这格没问题」。
+
+**庚　边界与端点。** 本节六格与乙丙两格都用我合成的注册表、合成 junit 报告（`tests="3" failures="0" disabled="1" skipped="1"`）；对方的真机数据（147 tests、2 skipped、9 disabled、11 declared）我只读其信、未重跑作业。`stale=` 的语义我只核到三处源码与五种清单形态，未核它在无 `notrun` 报告的清单上是否恒不触发。**端点。** 本节写于 `origin/main` = `5e00f5d`（`docs/AUDIT.md` 22635 行；`tools/ctest_skip_guard.sh` 749 行）；上一个端点是 §1.348 的 `cb04272`（22635 行）。本节不新增字面引用（`pins` 停在 `+12`／`+12`、读数 `185`／`574` 未动）。
