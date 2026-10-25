@@ -329,3 +329,49 @@ tools/gate.sh --only links   # 只跑一个阶段：build|ctest|fuzz|economy|nod
 所以：**号表按「会不会进日志」分两类，进程码写全、返回码留给代码；两个同数字的路径若真都要进日志，就给其中一个换号（并从 10 起跳，躲开 1/2/3 这三笔老账），别共用。** 顺带一条：`allowlist` 模式当初写成 `3`，与逐测试模式的 `3` 正好是相反修法（一个要改名字、一个要改解析器），日志里无法分辨——这就是现在它用 10/11/12 的原因。
 
 反方向的事故是**死格**：表里写了一个数字，代码里没有任何路径返回它。这比撞号更难发现，因为它是文档多写了一句、代码没有少写一行——`grep` 只会回答「这个数字出现几次」，不会回答「这句承诺有没有人兑现」。查法只有一条：把表里每个数字都指到一行代码上（`sed -n '<行>p'` 打出来必须是语句，不是注释）。本仓就有一例：`--check-disabled` 的说明曾经为「`ctest -N` 看不到注册表」写了 `1`，而那条路径返回的是 `20`——同一个原因两个数字，其中一个没人产生。
+
+## 11. Windows 上「没跑」的两半，各需要一个步骤
+
+这个 job 一次 `ctest` 跑完整套，于是**测试没跑会让套件变小，而不是让它变红**：带 `DISABLED TRUE` 的用例被剔出分母（147 条进度行印成 `out of 138`），带 `SKIP_RETURN_CODE` 的用例留在分母里并被算作通过（`98% tests passed` 可以是「少了十一条测试」的绿）。退出码和百分比都不记录这件事，所以两半各要一步：
+
+- **跑之前**读注册表：`--check-disabled` 拒未声明的 Disabled 用例（读不到注册表是 `20`，看见了却没声明是 `2`——「看不见」与「看见未声明」必须分开）。
+- **跑之后**读 JUnit 报告：`--check-junit` 拒未声明的 notrun／disabled。报告由 `ctest --output-junit` 落盘，即使 ctest 退出非零它也写，所以失败的那次 run 同样会被检查。
+
+真机读数（树 `1555852`，run `40154575694`）：
+
+```
+guard: registry=147 registered, CR on 150 line(s), stripped, disabled=9 declared=9 result=disabled-declared
+guard: tests=147 notrun=2 disabled=9 declared=11 result=junit-declared
+```
+
+**★ 第一版接错了位置，而错法正是这两步要防的那一类。** 我把 JUnit 那一步插在 `CMake tests` **之前**，并给了 `if: always() && hashFiles('...ctest-results.xml') != ''`。`hashFiles` 在步骤启动前求值，那时报告还不存在 ⇒ 条件恒假 ⇒ 步骤被 skip。被跳过的步骤**在日志里不出现、在作业摘要与退出码里不出现**，于是「检查通过」与「检查从未发生」在读者那一侧不可分——比假绿更静，假绿至少留下一条报喜的行。run `40153533968` 就是见证：日志的步骤集合里没有 `Tests that did not run` 这一行，而同一次运行的 `Skip exemptions` 已经印出 `disabled=9 declared=9 result=disabled-declared`，说明前一步正常、后一步从未发生。
+
+**但它并不是「哪里都看不见」——API 里看得见，而且这一格分得开两件事。** `gh api repos/<owner>/<repo>/actions/runs/<id>/jobs --jq '.jobs[].steps[] | "\(.number). \(.name) => \(.conclusion)"'` 给的是：
+
+```
+40153533968 (f621d14)  8. Skip exemptions (Windows) => success
+                       9. Tests that did not run (Windows) => skipped
+                      10. CMake tests => failure
+40154575694 (1555852)  8. Skip exemptions (Windows) => success
+                       9. CMake tests => failure
+                      10. Tests that did not run (Windows) => success
+```
+
+所以判据要分两层，不能合并成一句「看那一行在不在日志里」：
+
+- 判**跑没跑**读 `steps[].conclusion`。只有它能分开「步骤没定义」（作者忘了加，改 yml）与「步骤被条件跳过」（加了、条件为假，改条件）——日志把那两件事压成同一件：都没有那一行。
+- 判**跑出了什么**读日志。
+
+顺带一格免费的证据：两次 run 里这一步的序号从 9 变成 10，位置挪动在 API 里也是读数。
+
+修法不是松开守卫条件，而是三件事一起做：放到产物步骤**之后**、删掉存在性守卫（无条件跑）、让检查器自己把「报告读不到」报成具名失败（`result=junit-unreadable`，`20`）。代价是构建早失败时这一步也会红；这是可接受的，因为第一个失败仍在日志上方，而「什么都没查」必须可见。
+
+判据（不看作业是否失败，只看那一行在不在）：`gh run view <id> --log | awk -F'\t' '{print $2}' | sort -u`。
+
+还剩一个**反方向**的缺口，写不出步骤：测试将来不再跳过，只是「跑起来了」，届时那份豁免清单里会多出一条没人用的执照，而没有任何一步会因此变红。**过期执照是这份清单唯一查不到自己的东西。**
+
+## 12. 参数没被读，等于参数没被给
+
+`tools/ctest_skip_guard.sh` 每个模式只读 `$1`（模式）与 `$2`（参数），豁免清单只从 `INIMERSE_KNOWN_SKIPS` 或默认路径取，**从不看 argv**。于是 `--check-junit r.xml --allowlist my-list.txt` 会用默认清单跑完并印 `declared=11`、rc 0 —— 调用者以为自己指定了清单，工具一次都没打开它；同一份报告换成 env 指向只声明 1 条的清单就是 rc 2。两行的「通过」长得一样，差别只在调用者的信念里。
+
+**被忽略的参数与没有参数，在退出码上不可分。** 两件便宜的修法都做了，因为它们的代价是两行：多给的参数直接拒绝（`21`，`result=usage`）；并且每次运行都在 stderr 第一行印出**实际读到的清单路径**（`guard: exemption list is <path>`），让「我给了清单」与「它读了我的清单」不再是两个静默的替身。工具拒绝不认识的输入，比它默默忽略更能保住「通过」这个词的意思。
