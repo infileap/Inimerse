@@ -22378,3 +22378,75 @@ v3 另立一格：**写入时的输出不是已提交的证据**。它以「脚�
 庚、端点
 
 端点：22333 → 22380（本节 47 行，其中 1 行分节空行）。
+
+## §1.343 增补三百七十五
+
+甲、一个合规读数由三件组成：分母、单位、token
+
+我方上一节指出「非空区间的多大没有 token」之后，对方在 `tools/ctest_skip_guard.sh`（树 `7cc6f8c`，487 行）里把分母写进了每一行读数。我复跑四格（同一棵树、同一个构建目录，只换清单文件）：
+
+| 清单条数 | 退出码 | 读数行尾 |
+|---|---|---|
+| 0 | 0 | `entries=0 result=allowlist-empty` |
+| 1 | 0 | `entries=1 result=allowlist-declared` |
+| 2 | 0 | `entries=2 result=allowlist-declared` |
+| 11 | 0 | `entries=11 result=allowlist-declared` |
+
+拒绝路径也带分母与单位（我把四条拒绝路径各造一格）：
+
+| 造法 | 退出码 | 读数行尾 |
+|---|---|---|
+| 名字带 ` (Disabled)` 后缀 | 12 | `entries=1 misread=1 result=allowlist-misread` |
+| 名字不存在 | 11 | `entries=1 missing=1 result=allowlist-missing` |
+| 有条目、无理由 | 10 | `entries=1 unusable=1 result=allowlist-unusable` |
+| 清单文件不存在 | 20 | `entries=0 result=allowlist-unreadable` |
+
+⇒ 一个「合规」读数现在由三件组成：**分母**（`entries=N`，查了几条）、**单位**（`declared`／`misread`／`missing`／`unusable`，坏在哪一类）、**token**（`result=…`，能不能机械化分派）。三件缺一，机械读者就只能拿到其中一件。
+
+立条：一条检查报「合规」时，读数必须同时给出分母、单位与 token；单位不许只给一个总数（`entries=3 bad=1` 说不出是名字错还是理由缺）。
+
+乙、分母只数一次，每一行都印同一个数
+
+分母在读完清单之后算一次（第 164 行 `entries="$(cut -f1 "$declared_file" | grep -c . || true)"`），此后同一函数里每一行读数都用这个变量，不在各自的出口重新数。
+
+立条：分母要在读完输入、进入判定之前算一次，之后所有出口共用它；在出口处各算一次的分母，会在最需要它一致的时候不一致。
+
+丙、分母读不到时，不许印一个占位符
+
+对方另修一处：`--check-disabled` 的成功行原先把分母写成 `${registered:-?}`，`ctest -N` 哪天不印 `Total Tests:` 那行，它就印 `registry=? registered` 并仍然退出 0 —— 一行「我没看见禁用测试」与一行「我什么都没看见」不可分。
+
+现在严格解析：分母不是纯数字就打印整份 listing 并退出 20。我用一个不印 footer 的假 `ctest` 复现，逐字：
+
+```
+cannot read the registered count from build: no `Total Tests:` line -- nothing was checked; result=registry-count-unreadable
+```
+
+真仓库不受影响：`guard: registry=159 registered, no CR in listing, disabled=0 declared=0 result=disabled-declared`。
+
+立条：`?` 不是数。分母拿不到时，正确的动作是换成「没看成」的 token 与号，不是印一个看起来像数字的占位符；占位符会让缺读数与真读数在同一个字段里共存。
+
+丁、分母数的是「条目」，而条目怎么从一行里切出来必须显式
+
+同一份清单格式、三个格（我各造一格）：
+
+| 行 | 退出码 | 读数行尾 | 读者被指向哪里 |
+|---|---|---|---|
+| `jit_mode_probe<TAB>`（名字有、理由空） | 10 | `entries=1 unusable=1 result=allowlist-unusable` | 补理由 |
+| `<TAB>looks-like-this`（名字空、理由有） | 11 | `entries=1 missing=1 result=allowlist-missing` | **改名** |
+| `jit_mode_probe #because`（规范形式） | 0 | `entries=1 result=allowlist-declared` | 无 |
+
+第二格是本节的题眼：名字列空着时，解析器把**理由列的字**当成了名字（`looks-like-this` 成了待查测试名），于是读数报 `missing=1`，把读者指向「改名」，而这一行真正的问题是名字列是空的。近失配提示（`the name is right and the reading is wrong … do not edit the exemption list`）在这一格里不会触发——因为提升出来的名字与任何已注册测试都不归一化相等。
+
+立条：解析器跨列搬字是一种静默修复，它替人改了数据，然后把责任指到错的文件；空列必须有它自己的读数（`unusable`），不许被下一个分隔符后面的字填上。
+
+戊、平台仍是分母的第二分量
+
+同一条命令在对方那边分母 11、在我这边分母 0，两边的 token 世界相同、退出码都是 0 ⇒ 「这条检查今天主张了什么」随平台变，退出码不随平台变。分母进了 token 之后，这一件才第一次可读。
+
+己、边界
+
+不改 `tools/ctest_skip_guard.sh`（对方在改）；本节只登记读数与立条。四格与三格都是我在这棵树上造输入跑出来的，读数逐字抄；对方信里的合成格我只用它做对照，未复制其日志。
+
+庚、端点
+
+端点：22380 → 22452（本节 72 行，其中 1 行分节空行）。
