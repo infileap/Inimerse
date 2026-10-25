@@ -28,8 +28,13 @@
 #          build directory, no ctest, no CMake cache.  "I could not look" is
 #          not "the name is wrong" (3) and not "the test failed" (1) -- a
 #          reader told 3 goes and renames a test that exists.
-#       21 the command line is wrong (no test name).  The reader's repair is
-#          in the caller, not in this repository.
+#       21 the command line is wrong (no test name, or more arguments than the
+#          mode reads).  The reader's repair is in the caller, not in this
+#          repository.  Extra arguments used to be ignored, which made
+#          `--check-junit r.xml --allowlist my-list.txt` pass on a list this
+#          script never opened; the exemption list comes from
+#          INIMERSE_KNOWN_SKIPS or the default path, never from argv, and the
+#          first line on stderr now says which file was actually read.
 #
 #   bash tools/ctest_skip_guard.sh --check-allowlist <build-dir>
 #       0   every declared exemption names a registered test and gives a reason
@@ -500,6 +505,31 @@ check_junit() {
   return 0
 }
 
+# A parameter nobody reads is a parameter nobody was given.  Every mode takes
+# the exemption list from INIMERSE_KNOWN_SKIPS or the default path and never
+# from argv, so `--check-junit r.xml --allowlist my-list.txt` used to pass on a
+# list the caller believed in and the script never opened: same rc 0, same
+# reading line, different file.  Two cheap repairs, both here: refuse extra
+# arguments instead of ignoring them (21), and say which file was actually read
+# so "I passed a list" cannot stay indistinguishable from "it read my list".
+case "${1:-}" in
+  --check-junit|--check-disabled|--check-allowlist)
+    if [ "$#" -gt 2 ]; then
+      printf '%s reads one argument; %s were given and nothing would read the rest -- nothing was checked; result=usage\n' \
+        "$1" "$#" >&2
+      exit 21
+    fi
+    ;;
+  *)
+    if [ "$#" -gt 2 ]; then
+      printf 'usage: bash tools/ctest_skip_guard.sh <build-dir> <test-name> -- %s argument(s) given; nothing was checked; result=usage\n' \
+        "$#" >&2
+      exit 21
+    fi
+    ;;
+esac
+
+printf 'guard: exemption list is %s\n' "$allowlist" >&2
 if [ "${1:-}" = "--check-junit" ]; then
   check_junit "${2:?usage: --check-junit <report.xml>}"
   exit $?
