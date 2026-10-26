@@ -1639,4 +1639,14 @@ set_tests_properties(vm_arrays_big_shape PROPERTIES WORKING_DIRECTORY ${CMAKE_SO
 # live HTTP GET and therefore differs between two runs of the *same* binary.
 add_test(NAME selfhost_corpus_equivalent COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_corpus_probe.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(selfhost_corpus_equivalent PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 180 LABELS "selfhost;regression")
+# Stage 3's fixed point, in the form this tree can hold today: the compiler the
+# engine runs and the compiler that compiler compiled must produce the same
+# bytes (docs/streams/dec-p3-observe.md).  A compiled compiler running its own
+# product twice is NOT in here, and the probe says why on its own output line
+# instead of skipping: the product is dec-artifact v1 text and nothing in this
+# tree loads that format, while the C artifact is INIMBC and the engine eats
+# it.  Registered rather than left to a probe run by hand, for the reason the
+# comment above selfhost_codegen_parity gives.
+add_test(NAME selfhost_selfcompile_fixedpoint COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_selfcompile_probe.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(selfhost_selfcompile_fixedpoint PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 endif()
