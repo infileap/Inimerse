@@ -3,7 +3,8 @@
 # 注意:
 #   1. 本语言字符串不做转义,引号内原样保留;"\n" 是字面反斜杠+n,
 #      真实控制字符用 chr() 生成
-#   2. 支持 # 行注释和 #[...] 块注释
+#   2. 支持 # 行注释和 #[...] 块注释; 也支持 // 行注释(与 C 前端一致,
+#      见 selfhost/compiler.im 里那六行 // 注释:自举词法器必须读得进自己的源码)
 #   3. 无 continue,用 elif 链组织互斥分支
 
 func is_digit(c) {
@@ -60,6 +61,13 @@ func lex(src) {
                 while pos < n and src[pos] != nl {
                     pos = pos + 1
                 }
+            }
+        } elif c == "/" and pos + 1 < n and src[pos + 1] == "/" {
+            # // 行注释:到行尾(与 C 前端一致;非 ASCII 字节一并跳过,
+            # 所以注释里写中文/§ 不会触发"无法识别的字符")
+            pos = pos + 2
+            while pos < n and src[pos] != nl {
+                pos = pos + 1
             }
         } elif is_alpha(c) {
             # 标识符 / 关键字

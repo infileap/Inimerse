@@ -824,6 +824,14 @@ clargs = args()
 
 if clargs[0] == "--dump" {
     g_tgt_dir = dir_of(clargs[1])
+    # 相对路径的基准是本编译器所在目录(引擎在运行前切到脚本目录),所以
+    # `--dump selfhost/compiler.im` 会去找 selfhost/selfhost/compiler.im 并落空。
+    # 落空时 parse_file 返回 [] 而编译出 main: + HALT 一个字的"空程序"、退出码仍是 0
+    # -- 空产物看起来和成功一模一样。这里先说清楚,不给静默空。
+    if len(read_file(clargs[1])) == 0 {
+        say "无法读取文件: " + clargs[1]
+        stop all
+    }
     stmts2 = parse_file(clargs[1])
     d = compile_program(stmts2)
     say "main:"

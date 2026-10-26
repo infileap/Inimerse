@@ -178,3 +178,26 @@ cd /home/sakiko/inimerse && python3 tools/dec_paired_probe.py
 第 2 级的原始读数是 **26/33 同、7 异**，而这 7 个里有 5 个是同一个原因：**被编译程序的相对路径按 `compiler.im` 所在目录解析，而不是按目标文件所在目录解析**。同一条 `read_file("tests/prog1num.im")`，C 前端印 `len=0`（它的基准是脚本所在的 `selfhost/tests/`），编译后执行印 `len=15`（基准是 `selfhost/`）。修法在编译期：`compiler.im` 记住 `dir_of(tgt)`，对 `read_file`/`write_file`/`list_dir`/`mkdir`/`run_file` 的**常量**路径参数按目标目录重基。修完 26→31；剩下 3 个按名字显式跳过，三条理由都不是编译器的：`broadcast_test.im`、`cat_game.im` 开头是 `stage 600, 400`，属于 C 前端走 GUI 管线的那套 stage DSL —— 它没有字节码形态，比较的不是回归而是一个还没实现的特性；`hw_test.im` 里有一句真 `http_get("http://example.com")`，**同一个二进制连跑两次内容就不同**（字节数相同、内容不同），拿两次运行比它量的是网络。
 
 边界：第 2 级比的是**同一份源码在两个前端下的运行结果**，不是「两个前端在语义上等价」。它只覆盖 `selfhost/tests/` 这 30 个程序，超出这个语料库的语法今天没有读数。第 3 级（自编译定点）比第 2 级强得多：它要求编译器把自己编译一遍、且编译出来的编译器还能编译同一个程序，今天这一级**一次都没跑过**。
+
+### 第 3 级的第一道门：自举词法器读不进编译器自己的源码（已修，`a1a1a9c` 之后）
+
+第 3 级一开始并不是「产物对不对」的问题，而是**连自己的输入都读不进去**。实测（修前）：
+
+```
+./build/inimerse selfhost/compiler.im --dump selfhost/compiler.im
+→ lexer error: 无法识别的字符 [�] 第 275 行
+→ parse error: 无法解析表达式 [/] pos=1288/1299 第275行      (退出码仍是 0)
+```
+
+原因是两套词法面不一致：`selfhost/lexer.im` 只认 `#` 行注释与 `#[...]#` 块注释（见该文件第 6 行的自述与 `:43`/`:45`/`:59` 的实现），而 `selfhost/compiler.im` 里有 6 行 `//` 注释（第 275、276、277、288、289、297 行，其中 275 行含 `§`）。C 前端的词法器接受 `//`——否则 `compiler.im` 根本加载不了——所以缺口在自举侧。对照实测：`# 中文注释`、`#[ block ]#`、`x = 3 # 行尾` 三种都干净通过，`// § …` 与 `// 中文…` 都报 `lexer error`；字符串里的中文没问题。
+
+修法选的是保真路线（不是把那 6 行改成 `#`）：在 `selfhost/lexer.im` 的注释分支里加 `//` 行注释，语义与 C 前端一致（到行尾，非 ASCII 字节一并跳过）。修后读数（同一棵树）：
+
+```
+./build/inimerse selfhost/compiler.im --dump "$PWD/selfhost/compiler.im"
+→ 6261 行，func: 54 条，lexer error / parse error 0 条，退出码 0
+```
+
+顺带修掉一个**静默空**：`--dump` 的相对路径基准是本编译器所在目录（引擎在运行前切到脚本目录），所以 `--dump selfhost/compiler.im` 会去找 `selfhost/selfhost/compiler.im`，落空后 `parse_file` 返回空列表、编译出 `main:` + `HALT` 一个字的「空程序」，而退出码仍是 0 —— **空产物与成功一模一样**。现在 `--dump` 分支先检查可读性，读不到就印 `无法读取文件: <path>`。要读仓库根相对路径时用绝对路径（`--dump "$PWD/selfhost/compiler.im"`）。
+
+边界：这一条只说明「自举词法器能读进自己的源码」，不说明它能读出与 C 前端相同的 AST；后者要等第 3 级的定点对拍给出读数。
