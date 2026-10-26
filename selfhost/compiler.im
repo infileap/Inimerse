@@ -819,6 +819,95 @@ func compile_program(stmts) {
     return {"code": mctx["code"], "strings": mctx["strings"], "floats": mctx["floats"], "funcs": g_funcs, "threads": g_threads}
 }
 
+# ---------- 产物序列化（--emit） ----------
+# 第 3 级（自编译定点）要比的是**完整产物**：--dump 只印指令，缺 strings/floats 池，
+# 而 OP_LOADK_STRING 的参数是池索引 —— 少了池，两份产物无法逐字节比较。
+# 这里把 compile_program 的返回值写成一份确定的文本：同一棵树、同一次编译，
+# 两次运行逐字节相同；不同树之间的差异因此可以被 diff 看见。
+# 格式（v1）：首行 dec-artifact v1；main/func/thread 各一段，段首行给三个长度，
+# 之后是池条目（`<seg> s <i> "<escaped>"`、`<seg> f <i> <repr>`）与指令
+# （`<seg> m <op,r1,r2,r3>`）。段的顺序 = 产物里的顺序，不排序。
+
+func esc_pool_str(s) {
+    bs = chr(92)
+    q = chr(34)
+    nl = chr(10)
+    tab = chr(9)
+    cr = chr(13)
+    out = ""
+    i = 0
+    while i < len(s) {
+        c = substr(s, i, 1)
+        if c == bs {
+            out = out + bs + bs
+        } elif c == q {
+            out = out + bs + q
+        } elif c == nl {
+            out = out + bs + "n"
+        } elif c == tab {
+            out = out + bs + "t"
+        } elif c == cr {
+            out = out + bs + "r"
+        } else {
+            out = out + c
+        }
+        i = i + 1
+    }
+    return out
+}
+
+func emit_pools(out, seg, strings, floats) {
+    i = 0
+    while i < len(strings) {
+        # 池条目里的引号用 chr(34) 拼:这门语言的字符串字面量不认反斜杠转义,
+        # 写成字面反斜杠加引号会让整份源码的解析错位(实测第 862 行报
+        # 「无法识别的字符 [\]」并把后续语句一起吃坏)。
+        push(out, seg + " s " + str(i) + " " + chr(34) + esc_pool_str(strings[i]) + chr(34))
+        i = i + 1
+    }
+    i = 0
+    while i < len(floats) {
+        push(out, seg + " f " + str(i) + " " + str(floats[i]))
+        i = i + 1
+    }
+}
+
+func emit_code(out, seg, code) {
+    i = 0
+    while i < len(code) {
+        push(out, seg + " m " + join(code[i], ","))
+        i = i + 1
+    }
+}
+
+func seg_header(seg, name, arity, d) {
+    if seg == "main" {
+        h = "main"
+    } else {
+        h = seg + " " + name + " " + str(arity)
+    }
+    h = h + " code=" + str(len(d["code"])) + " strings=" + str(len(d["strings"])) + " floats=" + str(len(d["floats"]))
+    return h
+}
+
+func render_artifact(d) {
+    out = ["dec-artifact v1"]
+    push(out, seg_header("main", "", 0, d))
+    emit_pools(out, "main", d["strings"], d["floats"])
+    emit_code(out, "main", d["code"])
+    for f in d["funcs"] {
+        push(out, seg_header("func", f["n"], f["a"], f))
+        emit_pools(out, "func", f["strings"], f["floats"])
+        emit_code(out, "func", f["code"])
+    }
+    for th in d["threads"] {
+        push(out, seg_header("thread", th["n"], th["a"], th))
+        emit_pools(out, "thread", th["strings"], th["floats"])
+        emit_code(out, "thread", th["code"])
+    }
+    return join(out, "\n") + "\n"
+}
+
 # ---------- 入口 ----------
 clargs = args()
 
@@ -844,6 +933,23 @@ if clargs[0] == "--dump" {
         say "thread:" + th["n"] + ":" + str(th["a"])
         for ins in th["code"] { say join(ins, ",") }
     }
+    stop all
+}
+
+if clargs[0] == "--emit" {
+    if len(clargs) < 3 {
+        say "用法: inimerse selfhost/compiler.im --emit <target.im> <out.txt>"
+        stop all
+    }
+    g_tgt_dir = dir_of(clargs[1])
+    if len(read_file(clargs[1])) == 0 {
+        say "无法读取文件: " + clargs[1]
+        stop all
+    }
+    stmts_e = parse_file(clargs[1])
+    d_e = compile_program(stmts_e)
+    write_file(clargs[2], render_artifact(d_e))
+    say "emitted " + clargs[2]
     stop all
 }
 

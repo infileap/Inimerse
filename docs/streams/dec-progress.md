@@ -201,3 +201,20 @@ cd /home/sakiko/inimerse && python3 tools/dec_paired_probe.py
 顺带修掉一个**静默空**：`--dump` 的相对路径基准是本编译器所在目录（引擎在运行前切到脚本目录），所以 `--dump selfhost/compiler.im` 会去找 `selfhost/selfhost/compiler.im`，落空后 `parse_file` 返回空列表、编译出 `main:` + `HALT` 一个字的「空程序」，而退出码仍是 0 —— **空产物与成功一模一样**。现在 `--dump` 分支先检查可读性，读不到就印 `无法读取文件: <path>`。要读仓库根相对路径时用绝对路径（`--dump "$PWD/selfhost/compiler.im"`）。
 
 边界：这一条只说明「自举词法器能读进自己的源码」，不说明它能读出与 C 前端相同的 AST；后者要等第 3 级的定点对拍给出读数。
+
+### 第 3 级的第二道门：`--dump` 不是产物（已加 `--emit`）
+
+`--dump` 只印指令行（`main:` / `3,1,0,0` / …），**没有 `strings`/`floats` 池**，而 `OP_LOADK_STRING` 与 `OP_LOADK_FLOAT` 的参数是池索引 —— 少了池，两份产物无法逐字节比较，定点也就无从谈起。现在加了另一种只读子命令：
+
+```
+./build/inimerse selfhost/compiler.im --emit "$PWD/selfhost/compiler.im" /tmp/artA.txt
+→ emitted /tmp/artA.txt
+```
+
+产物是一份确定的文本（`dec-artifact v1`）：`main` 段给 `code=/strings=/floats=` 三个长度，之后是池条目（`main s <i> "<escaped>"`、`main f <i> <repr>`）与指令（`main m <op,r1,r2,r3>`）；`func`/`thread` 各段同构，段序 = 产物里的顺序（不排序）。同一棵树、同一次编译，**两次运行逐字节相同**。
+
+读数（`selfhost/compiler.im` 编译它自己）：7799 行 / 132670 B / `main code=493 strings=87 floats=0`；`--dump` 的 6591 条指令在产物里**一条不缺**（`comm -23` 得 0）；带浮点字面量的 `prog1.im` 印出 `main f 0 1.5`。
+
+两条语言事实（都是这一节撞出来的，写下来省下一次调试）：①这门语言的字符串字面量**不认反斜杠转义**，池条目里的引号必须用 `chr(34)` 拼，写成字面反斜杠加引号会让整份源码的解析错位（实测报「无法识别的字符 [\]」并连带吃坏后续语句）；②`tag` 是保留字，不能当参数名（`expected 'parameter name', but got 'tag'`）。
+
+边界：`--emit` 只是把产物**印出来**，它不证明两份产物相等，也不证明产物能被重新执行 —— 定点对拍与「stage2 编译 stage1」属于第 3 级本身，仍无读数。
