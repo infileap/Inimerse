@@ -358,6 +358,17 @@ func compile_expr(ctx, e) {
                 return r
             }
         }
+        # 元属性 `x.type`(C 前端在 src/compiler/compiler.c:1114/1129/1172 把
+        # type/int/range/declared 这类成员编成同名内建调用)。这里只做 type:
+        # 不接这一支时 `v = [1]; v.type` 会被下面那行编成常量 false,
+        # 而 false 是个**合法读数**——程序照样跑完,读到的却是错的类型名。
+        if e["m"] == "type" {
+            o = compile_expr(ctx, e["o"])
+            emit(ctx, OP_PUSH_REG, o, 0, 0)
+            r = alloc_reg(ctx)
+            emit(ctx, OP_CALL_BUILTIN, r, add_str(ctx, "type"), 1)
+            return r
+        }
         r = alloc_reg(ctx)
         emit(ctx, OP_LOADK_BOOL, r, 0, 0)
         return r

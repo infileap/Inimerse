@@ -218,3 +218,38 @@ cd /home/sakiko/inimerse && python3 tools/dec_paired_probe.py
 两条语言事实（都是这一节撞出来的，写下来省下一次调试）：①这门语言的字符串字面量**不认反斜杠转义**，池条目里的引号必须用 `chr(34)` 拼，写成字面反斜杠加引号会让整份源码的解析错位（实测报「无法识别的字符 [\]」并连带吃坏后续语句）；②`tag` 是保留字，不能当参数名（`expected 'parameter name', but got 'tag'`）。
 
 边界：`--emit` 只是把产物**印出来**，它不证明两份产物相等，也不证明产物能被重新执行 —— 定点对拍与「stage2 编译 stage1」属于第 3 级本身，仍无读数。
+
+### 第 3 级的第三道门：语言面有多少是真的（`not`、`.type` 都曾读成「对」）
+
+第 3 级要编译的东西比语料更大：编译器自己、词法器、解释器。所以先量一遍**语言面**——每个构造写成一份最小程序，同一份源码走两条路（C 前端解释执行 vs 自举前端编译后执行），比 `(rc, stdout)`：
+
+```
+python3 tools/dec_construct_matrix.py --bin "$PWD/build/inimerse"
+→ dec-constructs: probes=30 same=28 differ=2 c-fails=0 sh-fails=0
+```
+
+`same` 的 28 个：`int-arithmetic`、`string-concat`、`array-literal`、`dict-literal`、`if-elif-else`、`while-loop`、`for-loop`、`func-call`、`recursion`、`global`、`import`、`stop-all`、`elif-chain`、`nested-dict-array`、`float-literal`、`bool-and-or`、`range-call`、`push-pop`、`thread`、`when-await`、`not-standalone`、`unary-minus`、`nil-compare`、`string-index`、`dict-iterate`、`break-loop`、`return-void`、`member-type`。
+
+这一轮修好两个差异，两个都值得记，因为**它们在修好之前都印出一个「合法读数」**：
+
+| 构造 | 修前自举侧 | 根因 | 修法 |
+|---|---|---|---|
+| `a and not b` | `MARK=true` **加两行 parse error** | `src/lexer/lexer.c:22` 有 `{"not", TOK_NOT}`，`selfhost/parser.im` 的 `parse_unary` 只认 `!`/`-` | `parse_unary` 加一支：`t["k"] == "id" and t["v"] == "not"` ⇒ `{"t":"un","op":"!","e":…}` |
+| `v.type` | `MARK=false`（rc 0，无错误） | `selfhost/compiler.im` 的 `member` 分支只认 `thread.running/paused/stopped/finished`，其余一律 `OP_LOADK_BOOL 0` | `member` 里 `m == "type"` 时把接收者压栈并 `OP_CALL_BUILTIN add_str(ctx,"type") 1`（C 前端在 `src/compiler/compiler.c:1114/1129/1172` 就是这么做的） |
+
+`v.type` 那条是这一节最重要的读数：**`false` 是一个合法类型名位上的合法值**，程序跑完、退出码 0、没有一行错误，只有和 C 前端并排看才发现读错了对象。`not` 那条反过来——错误印在 stdout 上、结论却仍然「对」，所以只读最后一行的读者会以为它对。
+
+剩下 2 个 `differ` 都是循环语句形态，**自举解析器根本没有这两个语句**：
+
+```
+repeat 3 { i = i + 1 }        # 计数循环:自举侧把 { 当字典字面量,报「期望 : 但得到 =」
+do { i = i + 1 } until i < 3  # 至少一次:同上
+```
+
+它们不挡第 3 级（`compiler.im`/`lexer.im`/`parser.im` 里一个都没用），但 `selfhost/tests/cat_game.im:47` 用了 `repeat 3 { clone }`——那个文件本来就在语料对拍里按「stage DSL」跳过。**所以它是缺口，不是阻塞**：缺口记在这里，作为独立任务（见任务板 `P6`），不塞进第 3 级。
+
+顺带两个方言事实（省下次调试）：`repeat` 是**计数**循环（`repeat 3 { … }`），`do { … } until cond` 才是「至少一次」；`repeat { … } until cond` 两种写法都不存在（C 前端报 `expected ':'`）。我第一版探针就是这么写错的，被 `c-fails` 档抓出来——那一档存在的意义就是「探针自己错」和「实现错」不要混成一个数。
+
+量具纪律一条：被引文件里插行会顶走别处的指针——本次 `selfhost/parser.im` 在 149 行后插 9 行、`selfhost/compiler.im` 在 360 行后插 11 行，`docs/BOARD.md` 两行旧账的 5 个指针因此落空，已改指到现行行并各带一句被引原文。
+
+边界：30 个探针是手写的**这个工具链用到的**构造，不是语言的构造全集；`same` 只说明这一份程序在两个前端下 `(rc, stdout)` 相同，不说明该构造被完整实现（例如元属性里 `x.range`/`x.int` 今天仍是常量 `false`，`member` 分支只接了 `type`）。

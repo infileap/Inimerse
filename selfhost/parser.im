@@ -147,6 +147,15 @@ func parse_unary(p) {
         e = parse_unary(p)
         return {"t": "un", "op": op, "e": e}
     }
+    # `not` 是关键字(见 src/lexer/lexer.c:22 的 {"not", TOK_NOT}),而自举词法器
+    # 只把它当普通标识符吐出来。这里按关键字认,语义与 C 前端的 `!` 一致 --
+    # 不认它的时候 `a and not b` 会在 parse_unary 之后报「期望 ) 但得到 [b]」,
+    # 而程序仍然跑出一个看着对的 MARK(错误只印在 stdout 上)。
+    if t["k"] == "id" and t["v"] == "not" {
+        adv(p)
+        e = parse_unary(p)
+        return {"t": "un", "op": "!", "e": e}
+    }
     return parse_postfix(p)
 }
 
