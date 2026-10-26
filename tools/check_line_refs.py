@@ -372,6 +372,7 @@ Usage:
                                                  the gate's mode: today that
                                                  is every one of them)
 """
+import hashlib
 import os
 import re
 import subprocess
@@ -877,8 +878,25 @@ def scan() -> dict:
                 if refs_here:
                     inline_lines += 1
 
+    # The input set's fingerprint: the 21 files whose text this reading came
+    # from, in name order, each as (name, sha256 of its text).  A reading line
+    # names its tree and its worktree state, and those say WHERE it was taken;
+    # they do not say WHAT was read.  Two trees can carry the same docs/ while
+    # the files being cited changed, and then the two readings differ with no
+    # visible cause -- this is the half of the identity the tree sha cannot hold.
+    _fingerprint = hashlib.sha256()
+    for _name in sorted(files):
+        _fingerprint.update(_name.encode())
+        _fingerprint.update(hashlib.sha256(TREE.text(_name).encode()).digest())
+    # ... and the files those lines cite, because a reading moves when either
+    # side moves: the citing text can stay byte-identical while the cited file
+    # grows, and that is how the counts changed on this very branch.
+    for _name in sorted(TARGETS):
+        _fingerprint.update(_name.encode())
+        _fingerprint.update(hashlib.sha256(TREE.text(_name).encode()).digest())
     return {
         "writings": writings, "explicit": explicit, "held": held,
+        "input_set_sha": _fingerprint.hexdigest(),
         "held_elsewhere": held_elsewhere, "no_anchor": no_anchor,
         "off_target": off_target, "out_of_range": out_of_range,
         "held_own": held_own, "held_borrowed": held_borrowed,
@@ -1008,6 +1026,14 @@ def main() -> int:
         f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
         f"{len(base['no_anchor'])}), mis-labelled {len(r['off_target'])} "
         f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} worktree={(_d:=len(subprocess.run(['git','-C',str(REPO_ROOT),'status','--porcelain'],capture_output=True,text=True,encoding='utf-8').stdout.splitlines())) and f'dirty({_d})' or 'clean'}."
+    )
+    # The reading's other half: which files it read.  tree= says when, this
+    # says what; a reader holding only the number has neither.  The digest
+    # covers the 21 docs/ files AND the two target files they cite, because a
+    # count moves when either side's text moves.
+    print(
+        f"check_line_refs: input-set={len(r['files'])} files "
+        f"sha256={r['input_set_sha'][:16]}."
     )
     # "held" is one word over three different pieces of evidence, and the
     # sentence a reader takes from it ("that number is held") is only true of
