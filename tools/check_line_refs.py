@@ -727,6 +727,17 @@ def scan() -> dict:
     mention_lines = 0
     inline_lines = 0
     files: set[str] = set()
+    # Every file whose lines the scan OPENED, not just the docs it cites from.
+    # lines_of() is the only read that can turn a number into "out of range",
+    # and that read happens for the citing doc's TARGET file -- which may be a
+    # source file no docs/ digest would ever cover.  Collected at the call site
+    # rather than inferred from the results: a number that is in range is a
+    # read too, and the digest has to cover reads, not findings.
+    owners: set[str] = set()
+
+    def _lines(rel: str) -> list[str] | None:
+        owners.add(rel)
+        return lines_of(rel)
 
     for rel in docs_markdown():
         text = TREE.text(rel)
@@ -760,7 +771,7 @@ def scan() -> dict:
                 for m, number, _owner in line_refs:
                     h = []
                     for _s, _e, token in mentions:
-                        target_lines = lines_of(token)
+                        target_lines = _lines(token)
                         if target_lines and 1 <= number <= len(target_lines):
                             if any(s in target_lines[number - 1] for s in spans):
                                 h.append(token)
@@ -800,7 +811,7 @@ def scan() -> dict:
                     # question from whether the number exists.  Moving those out
                     # of `no_anchor` too would have silently re-based the
                     # unanchored delta, which is pinned.
-                    owner_lines = lines_of(owner) if owner else None
+                    owner_lines = _lines(owner) if owner else None
                     if hits and owner_lines and number > len(owner_lines):
                         out_of_range.append(
                             (rel, lineno, number, owner, len(owner_lines))
@@ -828,7 +839,7 @@ def scan() -> dict:
                         holder_spans = []
                         for s in spans:
                             for token in hits:
-                                tl = lines_of(token)
+                                tl = _lines(token)
                                 if tl and 1 <= number <= len(tl) and s in tl[number - 1]:
                                     holder_spans.append(s)
                                     break
@@ -866,7 +877,7 @@ def scan() -> dict:
                         if not owner:
                             cited = "<no tracked file named before this number>"
                         else:
-                            target_lines = lines_of(owner)
+                            target_lines = _lines(owner)
                             cited = (
                                 target_lines[number - 1].strip()
                                 if target_lines and 1 <= number <= len(target_lines)
@@ -878,16 +889,30 @@ def scan() -> dict:
                 if refs_here:
                     inline_lines += 1
 
-    # The input set's fingerprint: the 21 files whose text this reading came
-    # from, in name order, each as (name, sha256 of its text).  A reading line
+    # The input set's fingerprint: every file whose text this reading came
+    # from, in name order, each as (name, sha256 of its lines).  A reading line
     # names its tree and its worktree state, and those say WHERE it was taken;
     # they do not say WHAT was read.  Two trees can carry the same docs/ while
     # the files being cited changed, and then the two readings differ with no
     # visible cause -- this is the half of the identity the tree sha cannot hold.
+    #
+    # It covers files AND owners, and the owners half is not optional: the scan
+    # grades a number by opening the file it names, and that read is what turns
+    # a citation into 'out of range' and takes it out of the held/unanchored
+    # counts entirely.  Measured on 71b3d61: truncating src/vm/vm.h 450 -> 100
+    # lines left explicit 185 and unanchored 571 untouched while out of range
+    # moved 23 -> 27 -- four citations re-graded, and a docs-only digest could
+    # not have said so.  Both halves are read through TREE.lines so that the
+    # digest and the grading read the same text.
     _fingerprint = hashlib.sha256()
-    for _name in sorted(files):
+    for _name in sorted(files | owners):
+        _body = TREE.lines(_name)
         _fingerprint.update(_name.encode())
-        _fingerprint.update(hashlib.sha256(TREE.text(_name).encode()).digest())
+        _fingerprint.update(
+            hashlib.sha256(
+                "\n".join(_body).encode() if _body is not None else b"<absent>"
+            ).digest()
+        )
     # ... and the files those lines cite, because a reading moves when either
     # side moves: the citing text can stay byte-identical while the cited file
     # grows, and that is how the counts changed on this very branch.
@@ -897,6 +922,10 @@ def scan() -> dict:
     return {
         "writings": writings, "explicit": explicit, "held": held,
         "input_set_sha": _fingerprint.hexdigest(),
+        "input_set_n": len(files | owners),
+        "input_set_citing": len(files),
+        "input_set_owners": len(owners),
+        "input_set_docs": len(TREE.docs()),
         "held_elsewhere": held_elsewhere, "no_anchor": no_anchor,
         "off_target": off_target, "out_of_range": out_of_range,
         "held_own": held_own, "held_borrowed": held_borrowed,
@@ -1028,12 +1057,24 @@ def main() -> int:
         f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} worktree={(_d:=len(subprocess.run(['git','-C',str(REPO_ROOT),'status','--porcelain'],capture_output=True,text=True,encoding='utf-8').stdout.splitlines())) and f'dirty({_d})' or 'clean'}."
     )
     # The reading's other half: which files it read.  tree= says when, this
-    # says what; a reader holding only the number has neither.  The digest
-    # covers the 21 docs/ files AND the two target files they cite, because a
-    # count moves when either side's text moves.
+    # says what; a reader holding only the number has neither.
+    #
+    # Two readings on 71b3d61 shaped these lines.  (a) The digest first covered
+    # only the docs, and a docs-only digest misses the owners -- see the note at
+    # the end of scan().  (b) The count was 21 and said 'files', which reads as
+    # '21 files were read'; 79 docs are read and 21 of them contribute a
+    # citation, so the second line says which 21 it means.  A reader who sees
+    # the digest unchanged must not conclude 'docs did not move': the honest
+    # sentence is 'no file that contributes to a reading moved'.
     print(
-        f"check_line_refs: input-set={len(r['files'])} files "
-        f"sha256={r['input_set_sha'][:16]}."
+        f"check_line_refs: inputs={r['input_set_n']} files, "
+        f"digest={r['input_set_sha'][:8]}."
+    )
+    print(
+        f"check_line_refs: inputs -- {r['input_set_citing']} citing docs of "
+        f"{r['input_set_docs']} docs read, plus {r['input_set_owners']} other "
+        "files the scan opened to grade their numbers; a doc that cites "
+        "nothing is not an input."
     )
     # "held" is one word over three different pieces of evidence, and the
     # sentence a reader takes from it ("that number is held") is only true of
