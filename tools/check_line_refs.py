@@ -1007,7 +1007,7 @@ def main() -> int:
         f"check_line_refs: readings -- explicit {r['explicit']} (base "
         f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
         f"{len(base['no_anchor'])}), mis-labelled {len(r['off_target'])} "
-        f"(base {len(base['off_target'])})."
+        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} worktree={(_d:=len(subprocess.run(['git','-C',str(REPO_ROOT),'status','--porcelain'],capture_output=True,text=True,encoding='utf-8').stdout.splitlines())) and f'dirty({_d})' or 'clean'}."
     )
     # "held" is one word over three different pieces of evidence, and the
     # sentence a reader takes from it ("that number is held") is only true of
