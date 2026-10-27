@@ -1707,5 +1707,12 @@ set_tests_properties(identifier_length PROPERTIES WORKING_DIRECTORY ${CMAKE_SOUR
 # pass.  The expected summary is written down with the tree it was read on.
 add_test(NAME selfhost_z3bounds_pin_selfcheck COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/z3bounds_selfcheck_pins.py)
 set_tests_properties(selfhost_z3bounds_pin_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+# The extent of the reading, made a measurement instead of a sentence: a
+# citation written outside docs/ must leave every number alone, and one written
+# inside must move one, or swept= is decoration.  Both directions run in a
+# throwaway worktree at HEAD, so the tree under test is never modified.  No
+# engine needed -- this is about which files the checker reads.
+add_test(NAME checker_scope COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/checker_scope.test.py)
+set_tests_properties(checker_scope PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 
 endif()

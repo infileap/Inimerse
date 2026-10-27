@@ -1147,11 +1147,12 @@ def main() -> int:
         ["git", "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
         capture_output=True, text=True, encoding="utf-8",
     ).stdout.strip() or "<git named no toplevel>"
+    _in_scope = ",".join(w for w in WRITINGS if r["writings"][w])
     print(
         f"check_line_refs: readings -- explicit {r['explicit']} (base "
         f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
         f"{len(base['no_anchor'])}), mis-labelled {len(r['off_target'])} "
-        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} repo={_repo_field} worktree={_wt_field}."
+        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} repo={_repo_field} worktree={_wt_field} swept={r['input_set_docs']} file(s) under docs/**/*.md targets={len(TARGETS)} writings={_in_scope}."
     )
     # The reading's other half: which files it read.  tree= says when, this
     # says what; a reader holding only the number has neither.
