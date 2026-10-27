@@ -206,7 +206,9 @@ T5 页 §11 的期望值跟着改，改的理由与改动同一个提交——�
 
 ## 10 树号与改动清单
 
-- 读数树：`f046f20`（父 `1699e3e` = 当时的 `origin/main`；工作树干净；`src/`、`selfhost/` 未动）。
+- 读数树：`2891d55`（本页 §11 那一节提交时的树；抬头写它是因为它能被检出——先前的 `f046f20`
+  是 `--amend` 之前的树，不在交付线上，见 §11.6）。父 `1699e3e` = 当时的 `origin/main`；工作树干净；
+  `src/`、`selfhost/` 未动。
 - 新文件：`tools/z3bounds/axiom_ledger.py`（344 行，纯 python3，无第三方依赖）、
   `docs/streams/dec-formal-axioms.readings.txt`（45 行逐字输出）。
 - 已改文件：`tools/z3bounds/gen_bounds_proof.py`（`--drop-axiom` 支持；`PINNED` 补回 A4 的第二条 pin；
