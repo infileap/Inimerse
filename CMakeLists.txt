@@ -1665,6 +1665,14 @@ set_tests_properties(selfhost_inimbc_outlet_fixedpoint PROPERTIES WORKING_DIRECT
 # alive is the fixture a later change quietly outgrows (see selfhost_codegen_parity).
 add_test(NAME selfhost_mirror_behavior COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_mirror_behavior_probe.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(selfhost_mirror_behavior PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+# The other half of the INIMBC cycle: what the writer emits is what the engine
+# reads back.  The expectations are the prover's pinned reading (tree 319fd35,
+# docs/streams/dec-formal-bounds-t4.md), not a number this file invents; on tree
+# d288dec they still read written=317 consumed=317 delta=0 trailer=92 file=417
+# fields_differing=0.  A missing engine or instrument is exit 2 with "not
+# registered: nothing was checked", never a silent pass.
+add_test(NAME selfhost_inimbc_writer_half COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_inimbc_writer_half.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(selfhost_inimbc_writer_half PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 
 # Two writes past the end of a thread's register window that a bytecode file
 # alone can arrange, both of which the model in docs/streams/dec-formal-bounds.md
