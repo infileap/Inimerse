@@ -248,22 +248,28 @@ T1 页不改写：它记录的是它那棵树上的事实。要判断"现在怎�
 它对**树的副本**做五次运行，副本写在临时目录里、各自提交进一个一次性 git 仓库（这样 GIT-BLOB
 那条路径也真的被走到），真实工作树一个字节都不动：
 
-    clean       副本原样                  -> 必须 exit 0，且生成的脚本 sha256 = 434b93d1d0508758
+    clean       副本原样                  -> 必须 exit 0，且生成的脚本 sha256 = dda5ff4a5fc75eb5
     line-shift  在 guard 行上方插一行      -> 必须 exit 2、点名被撞的那条 pin、out 路径不被创建
     char        在 guard 行里改一个字符    -> 必须 exit 2、点名那条 pin、已存在的 out 不被覆盖
     truncate    删掉 guard 行              -> 必须 exit 2、点名同一个位置、out 文件保持原样
-    unpinned    文件末尾追加一行（无 pin）  -> 必须 exit 0，且生成的脚本 sha256 仍是 434b93d1d0508758
+    unpinned    文件末尾追加一行（无 pin）  -> 必须 exit 0，且生成的脚本 sha256 仍是 dda5ff4a5fc75eb5
 
 读数（逐字）：
 
-    SELFCHECK-PIN|case=clean|expect=exit0+sha256=434b93d1d0508758+script_written|got=exit0+sha256=434b93d1d0508758+written|verdict=PASS
+    SELFCHECK-PIN|case=clean|expect=exit0+sha256=dda5ff4a5fc75eb5+script_written|got=exit0+sha256=dda5ff4a5fc75eb5+written|verdict=PASS
     SELFCHECK-PIN|case=line-shift|expect=exit2+named_line+out_not_created|got=exit2+named=src/vm/vm.c:3026+out=not_created|verdict=PASS
     （case=char 的行与 case=truncate 除 case 名外逐字相同：同样是 exit2、同样点名那一行、同样 sentinel_intact；
      同一行不重复引两次，读数以 TRUNCATE 这一行为准。）
     SELFCHECK-PIN|case=truncate|expect=exit2+named_line+out_sentinel_intact|got=exit2+named=src/vm/vm.c:4080+out=sentinel_intact|verdict=PASS
-    SELFCHECK-PIN|case=unpinned|expect=exit0+sha256=434b93d1d0508758+script_written|got=exit0+sha256=434b93d1d0508758+written|verdict=PASS
+    SELFCHECK-PIN|case=unpinned|expect=exit0+sha256=dda5ff4a5fc75eb5+script_written|got=exit0+sha256=dda5ff4a5fc75eb5+written|verdict=PASS
     SELFCHECK-PIN|summary|cases=5|pass=5|fail=0
 
+**这一格的基线 sha 换过一次，换的理由必须跟着走。** 上面那五行是 T6 当时在 `47b4d6d` 上的读数
+（`434b93d1d0508758`）。做 T7 的公理台账时，台账报出 A4 声明的第二条 pin（`src/vm/vm.c` 里 `push_int` 的 `sp >= 1023` 守卫，
+`push_int` 的 `sp >= 1023` 守卫）在 T5 那轮重打 pin 表时**掉出了 `PINNED`**，于是 33 条声明 pin
+里只有 32 条真的被查。把这条 pin 补回后，脚本头部多一行 pin 清单，模型指纹随之变成
+`dda5ff4a5fc75eb5`（`bytes=37648`）——**模型不是变松了，是多了一条被检查的 pin**；约束一个字符没动。
+这次基线是跟着"为什么"一起动的，不是为了让红变绿而动。
 三条纪律写在这里，因为它们各自对应一种"看起来绿了"的假象：
 
 1. **两个方向都要给**。四种漂移必须动（exit 2），末尾追一行无关注释必须**不动**（exit 0、sha 不变）。
