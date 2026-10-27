@@ -23456,3 +23456,34 @@ A 与 C 的 stderr 逐字：`fatal: ambiguous argument '<path>': unknown revisio
 **戊、四件产物（把「执行过」写成可查的）。** 一次调用要留四件，缺一即视为未执行：①**rc**；②**stderr 全文**（不是「有没有报错」，是那几行字）；③**状态读数**（动作的结果：`git ls-files -s`、`--stat`、`grep -c`）；④**这次调用是哪一次**——`cwd`、树号、命令行原文。前三件是结果，第四件才让事后的人知道量的是哪一版。
 
 **己、边界。** 甲栏四格全在同一棵树上当场跑，`tests="0"` 那份是我手写的合成 XML（不是 ctest 产物）；乙栏「丢两件才同形」是我逐格加 `2>/dev/null` 实测的结论，未穷尽所有调用方写法；丁栏的窄洞我读到了形状与算式，**没有构造出触发它的时序**（入口可读、644 行不可读），因此记为「形状成立、触发未复现」。
+
+## §1.377 增补四百零九：同一句话，两棵树
+
+上一节把「这次调用是哪一次」列为第四件产物；本节量它落地之后多出什么、少掉什么。
+
+**甲、同一句读数在两棵树上逐字相同。** 树 `cdc5f3d`（23458 行）与 `872410f`（23428 行），同一份 `tools/check_line_refs.py`：
+
+| 行 | `cdc5f3d` | `872410f` |
+|---|---|---|
+| 首句（输入集） | `690 line(s) in docs/ name a target` | `689 line(s) …` |
+| `writings` | `prefix 127, prefix-range 58, link+bare 1, bare 1010; explicit form 185` | 逐字相同 |
+| 锚 | `604 reference(s) held by the quoted text on their own line …` | 逐字相同 |
+| 无锚 | `571 with no anchor in any file their line names` | 逐字相同 |
+| 输入集 | `inputs=274 files, digest=425546d0` | `inputs=274 files, digest=eba254fc` |
+
+⇒ **三句结论与「274 份文件」完全一致，只有 digest 不同**。把这一行抄进任何页面，脱离树号之后它就是一句**在四棵树里都成立、也都不指向任何一棵**的话。
+
+**乙、一个命令能不能判「哪棵树」。** `git cat-file -e '<tree>:<path>'`：存在 → rc **0**；路径不在树里 → rc **128**；对象不存在 → 也 rc **128**。⇒ 它给一个比特，但**这个比特对两种失败同值**（路径缺席／对象缺席），所以要定案仍需 stderr 的文字——正是 §1.376 的最小可用集：命令、rc、stderr 三件。
+
+**丙、两套量具的输入集不同，两个数不是同一件事。** 同一棵树 `cdc5f3d`：
+
+| 量具 | 计数 | 印的原话 |
+|---|---|---|
+| `tools/check_line_refs.py` | **571** 条无锚 | `571 with no anchor in any file their line names` |
+| `tools/check_obs_markers.py` | **2413** 个 pointer | `pointers 2413` / `ungrammatical 0` / `base e3e97c71e is 925 commit(s) behind HEAD; pointer delta +179 (ceiling 211)` |
+
+前者只数 21 个文件里「指名某个靶」的行，后者全扫 `docs/**/*.md` 的引用。把 571 与 2413 并排读，会得到「一半引用没锚」这种不存在的比例。
+
+**丁、三条判据。** ①读数行若不带树号，就不能与任何一次调用绑定，事后不可判（故读数行末须有 `tree=`／`worktree=`）；②「已并入主树」这类句子必须带 **ref 名**，并附一条当场可跑的命令（`git cat-file -e origin/main:<path>`）；③两套量具的数不得并排引用，除非先写出各自的输入集。
+
+**戊、边界。** 甲栏两棵树我都当场跑过（同目录、同 python），首句差 1 是我上一节新增一行含靶名所致；乙栏 `cat-file` 的两种 128 我各跑一次；丙栏只读计数与原文，未逐条比对两套量具如何划分同一批引用；本节未测「读数行带树号」的实现（那是对方的形状，我只是引用）。
