@@ -31,6 +31,7 @@ proved-conditional 是这次补的第四个标签：P4/P5/P6 三条 sat 用它�
 - measured：本机 WSL 侧没有 z3；`/mnt/c/Python314/python.exe` 是 CPython 3.14.7 + z3 5.3.2。
 - measured：Windows 解释器只接受 **Windows 路径**参数（传 `/mnt/c/...` 会报 can not open file 加 UNC 路径），所以脚本用 `wslpath -w` 转换。
 - measured：17 个变体单次全部判定，耗时 0.001–0.006 s（timeout 20 s 未触发）。
+- measured：这条命令的可执行位在本克隆里是**索引事实，不是文件系统事实**——`core.fileMode=false`，所以 `chmod +x` 在文件系统上生效、在 git 里什么都不记录（`ls -l` 显示可执行，`ls-files -s` 仍是 100644），只有 `git add --chmod=+x` 才写库。本轮之前它正是 100644，即本页这句「一条命令」当时**跑不起来**（`Permission denied`），是我用 `bash` 代跑才没暴露。判据：带执行位的命令除按字面跑一遍，还要 `git ls-tree <tree> <path>` 核模式位。
 
 生成物是普通 z3py，可单独审阅：pin 表、公理表（每条公理旁边就是原文）、每个变体一段。
 本次生成的脚本 sha256 前 16 位 = `428494cc4c0c7829`，36876 字节（measured）。

@@ -113,13 +113,40 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 
 因此它不以 `unparsed` 收尾，而以**显式公理**进入模型：
 
-    A-FRAME:  ∀i. 0 <= frame_sp[i] < reg_cap        [asserted]
-    （写入点分散在帧建立与 SET_UPVALUE 等处，本轮未做全集枚举）
+    A-FRAME:  ∀i. -1 <= frame_sp[i] <= 1023      [写点 measured，区间下界继承 A4（asserted）]
 
-于是 T2 将来的结论只能是 `proved-conditional`：**若 A-FRAME 成立，则每个 op 执行前后 `sp` 落在 [0, reg_cap]**。
-**这与 T1 的 P4 是同一个形状**（P4 依赖 A7 `0<=param_slots<=1024` 与 A8 `base 对齐`）：
-两个靶子给出的结论强度一致，不存在一处很硬一处很软。
+枚举用同一个工具、同一条命令（词边界 `frame_sp`）：
 
+    FRAME-SP-BASELINE|lines=16|occurrences=16|classified=16|covered=YES|matcher=word-bounded
+    FRAME-SP-SUMMARY|element_writes=2|allocs=6|frees=5|decls=1|reads=1|comments=1|other=0
+    FRAME-SP-WRITE|src/vm/vm.c:2689|stores=t->sp
+    FRAME-SP-WRITE|src/vm/vm.c:4104|stores=t->sp
+
+元素写点总共**两处**，都存 `t->sp`：
+`src/vm/vm.c:2689  t->frame_sp[t->frame_count - 1] = t->sp;`（宿主侧 `vm_call_func_at`：先 `frame_count++`，再写同一格）；
+`src/vm/vm.c:4104  t->frame_sp[t->frame_count - 1] = t->sp;   /* save sp AFTER popping args */`（执行器 `L_CALL_FUNC`：弹完 argc 个实参之后）。
+其余 14 处是 6 次 `calloc`、5 次 `free`、1 条声明 `src/vm/vm.h:107  int *frame_sp;   /* save sp at call for correct return */`、1 次读 `src/vm/vm.c:4121  t->sp = t->frame_sp[t->frame_count - 1];`、1 条注释 `src/vm/vm.c:4103  /* frame_sp uses the same pre-increment frame slot as the other frame metadata. */`。
+
+**这个枚举否掉了我上一版公理的 0 下界**：两处写点存的都是 `t->sp`，所以帧槽的值域就是 `sp` 的值域，而 `sp` 可达 -1：
+
+    FRAME-SP-RANGE|element_writes=2|every_write_stores_t->sp=YES|sp_range=[-1,1023]|source=axiom A4|axiom_as_stated=0 <= frame_sp[i] < reg_cap|verdict=lower_bound_too_strong
+    FRAME-SP-WITNESS|path=src/vm/vm.c:4104|argc=1|sp_before=0|guard_at_4073=if (t->sp + 1 < argc) return 0|guard_refuses=NO(1<1 false)|after_one_pop=sp -1|frame_slot=-1|status=reachable_on_handcrafted_bytecode
+
+证人：`sp=0`、`argc=1`；4104 之前的守卫 `src/vm/vm.c:4073  if (t->sp + 1 < argc) {` 判 `sp + 1 < argc` 即 `1 < 1`，假，于是放行；4100–4101（`value_move(&FR[i + 1], &stack[t->sp]);` 与 `t->sp--;`）弹掉一个实参后 `sp--` 到 -1，4104 把 -1 存进帧槽；返回时 `src/vm/vm.c:4121` 恢复 `sp = -1`（空栈，合法）。
+**太强的公理不是保守，是让结论变空**：`0 <= frame_sp[i]` 会把「空栈返回」这条正常路径排除在模型之外，T2 若靠它证成，证的是一个到不了的状态。
+
+负对照两条，方向各自写清（「不变」和「变了」都可能说明匹配器坏了）：
+
+    FRAME-SP-NEGCTL|rename|frame_sp=>frameSp|element_writes=0|expected_drop=2|drop=2|name_exact=YES
+    FRAME-SP-NEGCTL|decoy|frameSp[]=|element_writes=2|unchanged=YES|matcher=word-bounded
+
+真形态改名 ⇒ 写点数**必须掉到 0**（掉到 0 才说明匹配是词边界而非前缀）；插入 `frameSp[] =` 这种错误形状 ⇒ 读数**必须不变**。两条都过。
+
+于是 T2 将来的结论形状不变，但依赖链换成了 A4：
+
+    proved-conditional：若 A4（-1 <= sp <= 1023）成立，则每次返回后 sp 落回合法栈顶。
+
+这与 T1 的 P4 是同一个形状（P4 依赖 A7 `0<=param_slots<=1024` 与 A8 `base 对齐`）：两个靶子的结论强度一致，不存在一处很硬一处很软。
 另五处写点在体外，单独印不丢：`3083`、`4806`（复位）、`4845`、`4885`（线程启动拷实参）、`4983`。
 18 体内 + 2 体外 dec = 20，对得上。
 
@@ -162,9 +189,9 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 
 ## 10. 树号、改动清单、没做的事
 
-- 树号：1042aed 为基线，产物提交在分支 `z3bounds-t1`（worktree `/tmp/wt-z3c`，已 `git worktree lock`）。
+- 树号：1042aed 为基线；本轮读数在 origin/main `4b41f59` 之上的分支 `z3bounds-t1` 取得（worktree `/tmp/wt-z3c`，已 `git worktree lock`）。本页所在提交号不写死，用 `git log -1 -- docs/streams/dec-formal-bounds-t2.md` 取——页内自指会随提交漂移。
 - 新增：`tools/z3bounds/extract_stack_effects.py`、`tools/z3bounds/reconcile_emit_dispatch.py`、本页。
   未改 `src/`、`selfhost/`、门禁脚本与 CTest 计数；本页不引门禁 TARGET 文件名，避免把本页纳入比对输入集。
 - 没做：栈平衡命题的建模与求解（等 A-FRAME 公理被接受）；`src/vm/vm.c:3025` 起的执行器外框（线程/任务切换路径）的枚举；
-  `asserted` 的 A-FRAME 写入点全集。
+  A4（`sp` 自身值域）的写入点全集——A-FRAME 的写点已枚举（2 处、都存 `t->sp`），仍标 asserted 的是 `sp` 的下界本身。
 - 复现：两条命令的末行 `SUMMARY` 与第 2、3、4、5、8 节读数逐字相同，退出码 0。
