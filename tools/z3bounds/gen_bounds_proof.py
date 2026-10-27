@@ -709,6 +709,8 @@ def self_check_pins(root):
     fails = results.count(False)
     print("SELFCHECK-PIN|summary|cases=%d|pass=%d|fail=%d"
           % (len(results), len(results) - fails, fails))
+    if fails:
+        print("SELFCHECK-PIN-FAILURE|红了先问：模型变了，还是 pin 漂了？两者都不是，才是工具坏了。")
     return 0 if fails == 0 else 1
 
 
