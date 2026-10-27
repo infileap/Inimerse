@@ -1665,4 +1665,18 @@ set_tests_properties(selfhost_inimbc_outlet_fixedpoint PROPERTIES WORKING_DIRECT
 # alive is the fixture a later change quietly outgrows (see selfhost_codegen_parity).
 add_test(NAME selfhost_mirror_behavior COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_mirror_behavior_probe.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(selfhost_mirror_behavior PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+
+# Two writes past the end of a thread's register window that a bytecode file
+# alone can arrange, both of which the model in docs/streams/dec-formal-bounds.md
+# names as independent: a call whose frame does not fit (the guard covered only
+# the first 8 registers of a 1024-register frame, so a base one frame short of
+# the window let the parameter loop run off the array) and a func_argc the
+# artifact can set to any int32, which the parameter loop then trusts.
+# The witnesses are built at run time -- the engine compiles a deep call chain,
+# and the test patches exactly that call's argc field in the image -- so what is
+# asserted is behaviour (the call must be refused; the process must survive),
+# not the layout of a Value array.  No z3: the gate has none, and a test that
+# skips where it cannot reach the solver would verify nothing.
+add_test(NAME vm_frame_bounds COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/vm_frame_bounds.test.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(vm_frame_bounds PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;regression")
 endif()
