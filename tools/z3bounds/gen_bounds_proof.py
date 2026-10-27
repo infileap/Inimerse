@@ -587,6 +587,40 @@ def pin_ok(want, got):
     return False
 
 
+def locate_root(explicit=None):
+    """Find the repo root from the tree, never from where this file happens to sit.
+
+    A reader holding only a sha has to be able to re-run a reading, so the default has to
+    describe the tree, not the directory the script was checked out into.  Returns
+    (root, problem); a problem is a sentence for stderr, never a traceback.
+    """
+    def usable(p):
+        return bool(p) and os.path.isdir(os.path.join(p, "src", "vm"))
+
+    if explicit:
+        p = os.path.abspath(explicit)
+        if usable(p):
+            return p, None
+        return None, "--root %s is not a repo root (no src/vm under it)" % explicit
+
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        r = subprocess.run(["git", "-C", here, "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and usable(r.stdout.strip()):
+            return os.path.abspath(r.stdout.strip()), None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    p = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        if usable(p):
+            return p, None
+        parent = os.path.dirname(p)
+        if parent == p:
+            return None, "cannot locate the repo root; --root is required"
+        p = parent
+
+
 def git_head(root):
     """The tree the pins were just checked against, as git reports it."""
     try:
@@ -896,6 +930,78 @@ def self_check_pin_table(root):
     return 0 if fails == 0 else 2
 
 
+def self_check_flag_modes(root):
+    """Negative control for the switches themselves.
+
+    Same rule as the pin table: a switch that is not run and a switch that passed must not
+    print the same thing.  Three modes are driven through the real CLI, so the cells are
+    counted by the process that would be counted in a reader's own run: single A is 5,
+    single B is 4, both is 9 -- and if any of those three numbers moves, this cell goes
+    red rather than quietly reporting the mode it happened to execute.
+    """
+    import tempfile
+    gen = os.path.abspath(__file__)
+    cases = []
+    with tempfile.TemporaryDirectory(prefix="z3flagmodes-") as td:
+        def run(flags, name):
+            out = os.path.join(td, name + "_out", "bounds_proof.py")
+            r = subprocess.run([sys.executable, gen, "--root", root, "--out", out] + flags,
+                               capture_output=True, text=True)
+            return r, (r.stdout or "") + (r.stderr or "")
+
+        r, text = run(["--self-check-pins"], "a")
+        ok = ("SELFCHECK-PIN|summary|cases=5|pass=5|fail=0" in text)
+        cases.append(("single-pins", "cells=5", "cells=5" if ok else "not 5", ok))
+
+        r, text = run(["--self-check-pin-table"], "b")
+        ok = ("PINSCHECK|summary|cases=4|pass=4|fail=0" in text)
+        cases.append(("single-pin-table", "cells=4", "cells=4" if ok else "not 4", ok))
+
+        r, text = run(["--self-check-pins", "--self-check-pin-table"], "ab")
+        has_a = "SELFCHECK-PIN|summary|cases=5|pass=5|fail=0" in text
+        has_b = "PINSCHECK|summary|cases=4|pass=4|fail=0" in text
+        has_all = "SELFCHECK-ALL|cells=9" in text
+        ok = has_a and has_b and has_all and r.returncode == 0
+        got = "cells=%d%s" % ((5 if has_a else 0) + (4 if has_b else 0),
+                               "+all" if has_all else "-nameless")
+        cases.append(("both-flags", "cells=9+SELFCHECK-ALL", got, ok))
+
+        # --quiet may silence commentary, not a measurement.
+        out = os.path.join(td, "quiet_out", "bounds_proof.py")
+        r = subprocess.run([sys.executable, gen, "--root", root, "--out", out, "--quiet"],
+                           capture_output=True, text=True)
+        text = (r.stdout or "") + (r.stderr or "")
+        has_pins = "PINS|files=5|pins=33" in text
+        cases.append(("quiet-keeps-pins", "PINS still printed",
+                      "PINS printed" if has_pins else "PINS swallowed",
+                      has_pins and r.returncode == 0))
+
+    # A reader outside the repo, with no --root: a sentence, never a traceback.
+    with tempfile.TemporaryDirectory(prefix="z3noroot-") as td2:
+        copy = os.path.join(td2, "gen_bounds_proof.py")
+        with open(gen, "rb") as src, open(copy, "wb") as dst:
+            dst.write(src.read())
+        out = os.path.join(td2, "out", "bounds_proof.py")
+        r = subprocess.run([sys.executable, copy, "--out", out], cwd=td2,
+                           capture_output=True, text=True)
+        err = r.stderr or ""
+        named = "cannot locate the repo root; --root is required" in err
+        trace = "Traceback" in err
+        ok = r.returncode == 2 and named and not trace
+        cases.append(("no-root-outside-repo", "exit2+named+no traceback",
+                      "exit%d+%s%s" % (r.returncode, "named" if named else "unnamed",
+                                        "+traceback" if trace else ""), ok))
+
+    fails = 0
+    for case, expect, got, ok in cases:
+        fails += 0 if ok else 1
+        print("FLAGMODES|case=%s|expect=%s|got=%s|verdict=%s"
+              % (case, expect, got, "PASS" if ok else "FAIL"))
+    total = len(cases)
+    print("FLAGMODES|summary|cases=%d|pass=%d|fail=%d" % (total, total - fails, fails))
+    return 0 if fails == 0 else 2
+
+
 def build_script(root, pins, digests, neg_lines, gen_sha, drop_axiom=None):
     out = []
     out.append('#!/usr/bin/env python3')
@@ -1018,8 +1124,9 @@ def build_script(root, pins, digests, neg_lines, gen_sha, drop_axiom=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default=os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))))
+    ap.add_argument("--root", default=None,
+                    help="repo root; default is resolved from the tree (git toplevel, then "
+                         "by walking up for src/vm), never from where the script was installed")
     ap.add_argument("--out")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--check-only", action="store_true")
@@ -1035,11 +1142,19 @@ def main():
     ap.add_argument("--drop-pin-entry", default=None, metavar="path:line",
                     help="negative control only: delete one entry from PINNED at load time, so "
                          "the completeness check can be driven through the real exit path")
+    ap.add_argument("--self-check-flag-modes", action="store_true",
+                    help="negative control for the switches: single A, single B and both "
+                         "must report 5 / 4 / 9 cells, and --quiet must not eat the PINS line")
     args = ap.parse_args()
-    if not args.out and not (args.self_check_pins or args.self_check_pin_table):
+    any_check = (args.self_check_pins or args.self_check_pin_table
+                 or args.self_check_flag_modes)
+    if not args.out and not any_check:
         ap.error("--out is required (except with a self-check)")
-    root = os.path.abspath(args.root)
-    if args.self_check_pins or args.self_check_pin_table:
+    root, problem = locate_root(args.root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    if any_check:
         # Both flags together used to return after the first one, so the second check
         # never ran and its silence looked like agreement.  Run every requested cell and
         # OR the exit codes; the single-flag output stays byte-identical, so a test that
@@ -1053,6 +1168,8 @@ def main():
         if both and not args.quiet:
             print("SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=both ask for a "
                   "refusal, neither is a skip")
+        if args.self_check_flag_modes:
+            rc |= self_check_flag_modes(root)
         return rc
     if args.drop_pin_entry:
         dpath, dline = args.drop_pin_entry.rsplit(":", 1)
@@ -1070,22 +1187,25 @@ def main():
     gen_path = os.path.abspath(__file__)
     with open(gen_path, "rb") as fh:
         gen_sha = hashlib.sha256(fh.read()).hexdigest()[:16]
+    # --quiet silences the commentary, never a measurement: the PINS count, the per-file
+    # digests and the guard-pin comparison all run in either mode.  A single reading that
+    # a "be quiet" flag can delete is a reading that a reader cannot quote.
+    head7 = git_head(root)
+    mismatched = guard_pins(PROPS, PINNED)
+    if mismatched:
+        for line in mismatched:
+            print("GUARD-PIN MISMATCH: " + line, file=sys.stderr)
+        return 2
     if not args.quiet:
         for path, lineno, text, _ok in pins:
             print("pin ok  %s:%d  %s" % (path, lineno, text[:96]))
         print("pin ok  negative: reg_cap in executor body at %r" % (neg,))
-        print("PINS|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
-              % (len(PINNED), held, EXPECT_PIN_COUNT, declared_n, len(missing)))
-        for path, dg in sorted(digests.items()):
-            print("sha256  %s  %s" % (dg[:16], path))
-        head7 = git_head(root)
-        mismatched = guard_pins(PROPS, PINNED)
-        if mismatched:
-            for line in mismatched:
-                print("GUARD-PIN MISMATCH: " + line, file=sys.stderr)
-            return 2
-        for path in sorted(digests):
-            print("GIT-BLOB|path=%s|blob=%s|head=%s" % (path, git_blob_sha(root, path), head7))
+    print("PINS|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
+          % (len(PINNED), held, EXPECT_PIN_COUNT, declared_n, len(missing)))
+    for path, dg in sorted(digests.items()):
+        print("sha256  %s  %s" % (dg[:16], path))
+    for path in sorted(digests):
+        print("GIT-BLOB|path=%s|blob=%s|head=%s" % (path, git_blob_sha(root, path), head7))
     script = build_script(root, pins, digests, neg, gen_sha, drop_axiom=args.drop_axiom)
     out = args.out
     d = os.path.dirname(os.path.abspath(out))
