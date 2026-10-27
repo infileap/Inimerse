@@ -563,7 +563,7 @@ class Tree:
         if self.rev is None:
             try:
                 return (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
-            except (UnicodeError, OSError) as exc:
+            except UnicodeError as exc:
                 # Ten tracked paths here are non-ASCII (`docs/archive/
                 # 工作台使用教程.md` and nine more), so a shell whose filesystem
                 # encoding is ASCII -- `LC_ALL=C PYTHONUTF8=0
@@ -581,6 +581,22 @@ class Tree:
                     "tree: the path cannot be encoded under the current "
                     "filesystem encoding.  Re-run with PYTHONUTF8=1 or "
                     "LC_ALL=C.UTF-8.  Exit 4 is not a reference finding.",
+                    file=sys.stderr,
+                )
+                sys.exit(4)
+            except OSError as exc:
+                # A path a document names is not in the tree any more: deleted,
+                # renamed, or never there.  That is a fact about the tree and
+                # nothing about the shell, so it must not print the encoding
+                # prescription -- until now one sentence covered both cases, and
+                # a reader whose file had simply been deleted was told to set
+                # PYTHONUTF8.  Exit stays 4: a setup fact, not a finding.
+                print(
+                    f"check_line_refs: ENVIRONMENT -- cannot read {rel!r}: "
+                    f"{exc.__class__.__name__}: {exc}\n"
+                    f"check_line_refs: ENVIRONMENT -- the file is not in the "
+                    f"tree -- check `git status -- {rel}` for whether it moved "
+                    "or was removed.  Exit 4 is not a reference finding.",
                     file=sys.stderr,
                 )
                 sys.exit(4)
@@ -945,14 +961,31 @@ def base_scan() -> tuple[dict, int]:
     because both are "this question cannot be answered as posed".
     """
     global TREE
+    # Two different refusals were one sentence until now.  "There is no
+    # repository here" and "the base is not behind HEAD" are not the same fact,
+    # and the second one was also the text for a worktree registration pruned
+    # out from under the checkout (tools/stream.sh:135) -- three causes, one
+    # paragraph, and the reader had to guess which.  Split, so each refusal
+    # names its own cause.
+    if subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--git-dir"],
+        capture_output=True,
+    ).returncode != 0:
+        print(
+            f"check_line_refs: not a git repository at {REPO_ROOT}; there is no "
+            "history to take a base from.\n"
+            "check_line_refs: refusing to report a delta with no base.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if subprocess.run(
         ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor",
          EXP_LINE_REFS_BASE, "HEAD"],
         capture_output=True,
     ).returncode != 0:
         print(
-            f"check_line_refs: EXP_LINE_REFS_BASE={EXP_LINE_REFS_BASE} cannot be "
-            "resolved, or is not an ancestor of HEAD.\n"
+            f"check_line_refs: base {EXP_LINE_REFS_BASE} is not an ancestor of "
+            "HEAD.\n"
             "check_line_refs: the pins are deltas against that tree; a base that "
             "is not behind this one makes the delta a comparison between two "
             "trees that are not on one line.\n"
@@ -1050,11 +1083,28 @@ def main() -> int:
         f"{EXP_LINE_REFS_DELTA:+d}), unanchored delta {unanchored_delta:+d} "
         f"(ceiling {EXP_LINE_REFS_UNANCHORED_DELTA_MAX:+d})."
     )
+    # worktree= counts entries and now names their contents by digest:
+    # "dirty(3)" in one checkout and "dirty(2)" in another were the same logical
+    # change, so a count without its constructor is not reproducible -- two
+    # readers measured 3 and 2 for one edit.  The unit is spelled out, and
+    # dirty-digest is sha256 of `git status --porcelain -z` exactly as git prints
+    # it (NUL-separated, unquoted): the same edit of docs/BOARD.md reads
+    # 00d2bb56051a in any checkout, and of docs/STATUS.md 31ae31885612.  A clean
+    # tree prints no digest; there is nothing to identify.
+    _wt = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "-z"],
+        capture_output=True,
+    ).stdout
+    _wt_field = (
+        f"dirty({_wt.count(bytes([0]))} entries) "
+        f"dirty-digest={hashlib.sha256(_wt).hexdigest()[:12]}"
+        if _wt else "clean"
+    )
     print(
         f"check_line_refs: readings -- explicit {r['explicit']} (base "
         f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
         f"{len(base['no_anchor'])}), mis-labelled {len(r['off_target'])} "
-        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} worktree={(_d:=len(subprocess.run(['git','-C',str(REPO_ROOT),'status','--porcelain'],capture_output=True,text=True,encoding='utf-8').stdout.splitlines())) and f'dirty({_d})' or 'clean'}."
+        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} worktree={_wt_field}."
     )
     # The reading's other half: which files it read.  tree= says when, this
     # says what; a reader holding only the number has neither.
@@ -1150,4 +1200,22 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # "git is not on PATH" is an environment fact, and until now it wore the
+    # exit code of a finding: subprocess raises FileNotFoundError, the traceback
+    # ends in the interpreter's own words, and the shell sees 1 -- the number
+    # this checker uses for "references lost their holder".  Measured with
+    # `env -i PATH=/nonexistent /usr/bin/python3 tools/check_line_refs.py`:
+    # 0 lines of stdout, 34 lines of traceback, exit 1.  One sentence and exit 4
+    # instead, because the classification layer was never reached at all: there
+    # was nothing to classify.
+    try:
+        sys.exit(main())
+    except FileNotFoundError as exc:
+        if (exc.filename or "") == "git":
+            print(
+                "check_line_refs: ENVIRONMENT -- git is not on PATH; nothing "
+                "was measured",
+                file=sys.stderr,
+            )
+            sys.exit(4)
+        raise
