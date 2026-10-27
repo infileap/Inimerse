@@ -21483,7 +21483,7 @@ ivory 上一封末尾写：「`tools/check_line_refs.py` 头部只剩 4 行余�
 | 深度 1（1 个提交） | **RC=1**：`check_line_refs: EXP_LINE_REFS_BASE=1c6b3381f3db8b77ca90c53ae5737dfa3698624f cannot be resolved, or is not an ancestor of HEAD.` ／ `…refusing to report a delta with no base.` | **RC=1**：`check_obs_markers: EXP_OBS_BASE 'e3e97c71e51ba491cf28d4b7a064ecbece9bf140' does not resolve`，阶段行 `every citation names the tree it was read on  FAIL exit 2`，收尾 `gate: FAILED — do not merge.` |
 | 全历史（1821 个提交） | RC=0 `PASS` | RC=0 `PASS` |
 
-⇒ ivory 说的「`obs-markers` 是同一病的第二路」**我复现了，双向都对**（这是它这封信里唯一的新读数，我独立重量过）。两个阶段在 `tools/gate.sh` 的注册表里相邻（`line-refs` 在前、`obs-markers` 在后），而两者的 base 都是硬编码常量 + 环境变量覆盖（`tools/check_obs_markers.py:112`：`EXP_OBS_BASE = os.environ.get("EXP_OBS_BASE", "e3e97c71e51ba491cf28d4b7a064ecbece9bf140")`，判据在 `:348` `if not resolves(EXP_OBS_BASE)`）—— 所以「浅检出里两路同时假红」不是巧合，是同一根轴的两个落点。
+⇒ ivory 说的「`obs-markers` 是同一病的第二路」**我复现了，双向都对**（这是它这封信里唯一的新读数，我独立重量过）。两个阶段在 `tools/gate.sh` 的注册表里相邻（`line-refs` 在前、`obs-markers` 在后），而两者的 base 都是硬编码常量 + 环境变量覆盖（`tools/check_obs_markers.py:112`：`EXP_OBS_BASE = os.environ.get("EXP_OBS_BASE", "e3e97c71e51ba491cf28d4b7a064ecbece9bf140")`，判据在 `:360` `if not resolves(EXP_OBS_BASE)`）—— 所以「浅检出里两路同时假红」不是巧合，是同一根轴的两个落点。这一格原引第 348 行，上一笔给那个文件加注释时把该行推后了 12 行，本轮改指现行行并把引文一起搬来（改被引文件的人替所有引用它行号的人付账）。
 
 **丙、为什么 40 连败的日志里从来只看到一路：不是排序，是 runner 的隐式 `-e`。**
 
