@@ -1159,17 +1159,26 @@ def main():
         # never ran and its silence looked like agreement.  Run every requested cell and
         # OR the exit codes; the single-flag output stays byte-identical, so a test that
         # pins those summary lines is unaffected.
-        both = args.self_check_pins and args.self_check_pin_table
         rc = 0
         if args.self_check_pin_table:
             rc |= self_check_pin_table(root)
         if args.self_check_pins:
             rc |= self_check_pins(root)
-        if both and not args.quiet:
-            print("SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=both ask for a "
-                  "refusal, neither is a skip")
         if args.self_check_flag_modes:
             rc |= self_check_flag_modes(root)
+        # The total is counted from the cells the run actually asked for: a combined line
+        # that says 9 while fourteen cells ran would be the same silent-skip disease one
+        # level up.
+        total = ((5 if args.self_check_pins else 0)
+                 + (4 if args.self_check_pin_table else 0)
+                 + (5 if args.self_check_flag_modes else 0))
+        if sum([bool(args.self_check_pins), bool(args.self_check_pin_table),
+                bool(args.self_check_flag_modes)]) > 1 and not args.quiet:
+            kinds = "+".join(k for k, on in (("pin-drift", args.self_check_pins),
+                                             ("completeness", args.self_check_pin_table),
+                                             ("flag-modes", args.self_check_flag_modes)) if on)
+            print("SELFCHECK-ALL|cells=%d|kinds=%s|note=every requested check runs, and none "
+                  "of them is a skip" % (total, kinds))
         return rc
     if args.drop_pin_entry:
         dpath, dline = args.drop_pin_entry.rsplit(":", 1)

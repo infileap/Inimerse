@@ -264,7 +264,7 @@ T5 页 §11 的期望值跟着改，改的理由与改动同一个提交——�
 同一轮还量到一个小缺陷，属于同一族：两个自检开关**同时**给的时候，第二个被静默跳过——
 因为分派处先 `return`。它不写在任何读数里，于是"没跑"和"跑了且通过"长得一样。
 改法是两个请求都跑、退出码按位或，单开关的输出逐字不变（否则钉住那行 summary 的测试会红）：
-`SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=both ask for a refusal, neither is a skip`。
+`SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=every requested check runs, and none of them is a skip`（数字按实际请求的格数累加：两种开关 9，三种 14——一条把 14 说成 9 的合计行，就是静默跳过换了一层楼）。
 判据同样一句话：**并排两个检查时，"都没报错"不是一个读数，要分别报。**
 
 ### 11.4 降级路径的实测格
@@ -298,3 +298,44 @@ T5 页 §11 的期望值跟着改，改的理由与改动同一个提交——�
 若不同，写明差在哪一行、为什么。读数不因为换了树而改，只有树号会被指认。
 
 这一节自身也守页内零 locator 的规矩：上面所有行号都留在 `readings.txt` 里，正文只写文件名与形状。
+
+## 12 命令、输出、与「我的机器」
+
+§11 证明了一张表能自证不完整；这一节说的是同一件事在**引文**上的翻版：一段「命令→输出」如果只在写它的那台机器上成立，它就不是读数，是回忆。ivory 复现 T8 时抓到两处，都是我引的。
+
+### 12.1 被静默模式吃掉的那一行
+
+T8 的信里我写：
+
+```
+python3 tools/z3bounds/gen_bounds_proof.py --out /tmp/t.py --quiet
+→ PINS|files=5|pins=33|expect=33|declared=19|missing_from_table=0
+```
+
+照抄三遍，一个字都没有——`PINS` 行被包在 `if not args.quiet:` 里面。这与 270 是同一族：**不是数错，是命令与它声称的输出对不上**。责任不在读者，在读数的形状：一条计数的读数不该被「安静」掉。
+
+改法不是把 `--quiet` 从引文里删掉（那样只是让引文变得能跑，读数仍然可以被一个开关删掉），而是让安静模式**只安静解释、不安静测量**：`--quiet` 现在只抑制逐条 `pin ok` 的旁白，`PINS`、`sha256`、`GIT-BLOB` 三行无论安静与否都印。一个「少说话」的开关能删掉的读数，就是读者引不动的东西。
+
+同一处还捞出一个更硬的：`GUARD-PIN MISMATCH` 的比对整块原来也在 `if not args.quiet:` 里，也就是说**安静模式下这道检查根本没跑**，而它的沉默与「跑过且通过」完全一样。现在比对在安静模式下也跑，红依然 exit 2。
+
+### 12.2 默认根必须来自树，不来自安装位置
+
+台账的 `--root` 默认值是 `os.path.dirname(HERE)`，而 `HERE` 是 `tools/z3bounds` ⇒ 默认根是 **`tools/`** 这个目录本身。这个默认值在任何树、任何工作目录下都错，只有显式传 `--root` 才活；我信里的降级格省了 `--root`，读者照抄得到一段裸 traceback（`FileNotFoundError: .../tools/src/vm/vm.h`）。
+
+病因比「少了参数」更硬：**默认路径若来自脚本安装位置，那么「只拿着一个 sha 的人」就永远复跑不了。** 两个工具现在都这样取根：先问 `git rev-parse --show-toplevel` 并验 `src/vm` 在不在；不行就从脚本所在目录逐级上溯找 `src/vm`；都找不到就打印一句 `cannot locate the repo root; --root is required` 并 exit 2——**不许 traceback**。显式传 `--root` 却指向没有 `src/vm` 的目录，同样具名拒绝。
+
+### 12.3 三条负控：开关自己也要有控制组
+
+§11 拿「删一条表项」当控制组，这一节把同样的做法用到开关上。`--self-check-flag-modes` 走真 CLI 五格：
+
+- 单开 A ⇒ `SELFCHECK-PIN|summary|cases=5`；
+- 单开 B ⇒ `PINSCHECK|summary|cases=4`；
+- 同开 ⇒ 两个 summary **都在**，外加 `SELFCHECK-ALL|cells=9`；
+- `--out … --quiet` ⇒ `PINS` 仍在；
+- 仓库外、无 `--root` ⇒ exit 2 + 具名 + 无 traceback。
+
+读数是 `FLAGMODES|summary|cases=5|pass=5|fail=0`。判据与 runner 的「`ctest -N` 在没跑门禁前是 168」是同一条：**一个不存在的测量与一个通过的测量，必须印出不同的东西**；三模式的格数 5 / 4 / 9 若有一个变了，这一格就红，而不是安静地报告「我这次恰好跑的那个模式」。
+
+### 12.4 抬头必须让只拿 sha 的人复跑
+
+`readings.txt` 的抬头原来写 `--root /tmp/wt-z3c`——那个目录读者没有，也不该有。现在抬头是「树的顶层 + 一条不含任何机器路径的命令」，并逐字记下与上一棵树（`2891d55`）的差别只有五条 unparsed 行号。**信里引的命令与抬头里的命令必须是同一条**：T8 那封信恰恰是它们不一样，这才是 270 的成因，而不是笔误。
