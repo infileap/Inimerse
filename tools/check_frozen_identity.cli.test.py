@@ -101,9 +101,20 @@ def main():
         # to 1/5 with the tracebacks printed.  That is the whole reason this
         # file drives the entry point in a subprocess instead of importing it.
         #
-        #   removed one of the two call sites only -> still 5/5, because the
-        #   other one classifies first; the guard is written twice, so a
-        #   single-site bypass changes no observable behaviour.
+        #   [then -- two guarded call sites; see the note below] removed one of the
+        #   two call sites only -> still 5/5, because the other one classifies
+        #   first; the guard was written twice, so a single-site bypass changed no
+        #   observable behaviour.
+        #
+        # ★ That was measured on a tree with two guards.  The second call site's
+        #   guard is gone now: tools/check_frozen_identity.test.py keeps only the
+        #   `load_product` call there, because the cells below need the parsed
+        #   object, and the early guard is the only classifier.  Measured before
+        #   removing it: an instrumented counter read 0 for that branch across
+        #   seven inputs, and deleting the EARLY guard instead made the same
+        #   counter read 4 -- so the two were two complete classifiers, not a
+        #   guard and its duplicate.  There is one guard today, and this file's
+        #   reason for existing is unchanged: it drives the entry point.
         #
         # That made this layer the sole detector of the regression, which is a
         # bad place for a single point to live, so a-directory was added to the
