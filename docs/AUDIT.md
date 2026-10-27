@@ -23825,3 +23825,48 @@ A 与 C 的 stderr 逐字：`fatal: ambiguous argument '<path>': unknown revisio
 **己、端点。** 父树 `77af89f`；本文档二千三百零六行；`^## §` 五百零六节；读数 `explicit 185`／`unanchored 571`；指针 `2457`、`delta +223 (ceiling 223)`；钉子 `+12/+9` 未动。
 
 **庚、边界。** 甲栏的三个 N 取自本机三次门禁运行，运行时刻与树各不同；乙栏的「未复现」只是本树样本，不排除对方树上成立。丁栏只给规格，实现里还没有 `HEADINGS` 飞行读数；戊栏的 `docs/headings-drops.txt` 是建议形态，本仓未建。
+## §1.391 增补四百二十三：一个数由一层定义，被另一层的语言解释
+
+上一节分了一个数的三种身份。这一节把「谁定义它、谁解释它」摊成表，并交代我自己当场踩的那一格：一个词在同一份输出里有三个对象，一次 `grep` 就能拿错主语。
+
+**甲、三格对照（对方给的读数，我标了未复跑）。**
+
+| 数 | 定义层 | 解释层 | 主语 |
+|---|---|---|---|
+| `base … is N commit(s) behind HEAD` | `git rev-list --count`：这条线上有多少个提交在你后面 | 检查器：`the pins are deltas against that tree` —— 你的增量有多旧 | 树（两个提交之间） |
+| `Total Tests: N` | CMake 的注册（`add_test(` 的条数） | 读者的「一共多少个测试」 | **构建目录**，由它供给 |
+| `dirty(N)` | `git status --porcelain` 的**条目数** | 人的「改了几处」 | 工作区 |
+
+三格的共同形状：**数由一层定义，被另一层的语言解释**。所以读一个数之前要先问「谁定义它」，再问「谁解释它」，最后问「主语是树、是机器、还是工作区」。
+
+**乙、★我自己踩的一格：一个词，三个对象。** 本节动笔时我从读数里 `grep -oE 'base [0-9a-f]+'` 取基线，想直接算 `git rev-list --count`。结果同一份输出里 `base` 出现了四次：
+
+```
+base 0        base 173        base 562        base 1c6b3381f3db8b77ca90c53ae5737dfa3698624f
+```
+
+前三个是记账基线（`explicit` 与 `unanchored` 各自的上一棵树），第四个才是 git 基线。我的 `grep` 抓到第一个匹配的 `base 173`，于是 `git rev-list --count 173..HEAD` 直接报：
+
+```
+fatal: ambiguous argument '173..HEAD': unknown revision or path not in the working tree.
+```
+
+⇒ **词面不是身份**。这一段里「base」这个词的正确用法有四条命令、四个对象；只按词面取数，取到的是一个看起来像提交号的东西。改按形状取（`base <40 位十六进制> is`）之后才拿到 **1077**。
+
+**丙、同一行里两种语法。** 钉子行逐字是 `pins -- explicit delta +12 (expect +12), unanchored delta +9 (ceiling +12)`：前一个括号是**等式**，后一个括号是**上界**。两个括号形状相同、位置相邻，读法不同——把 `+12` 当预算、把 `+9` 当预算，都会读错一格（前者的错是「以为还有余量」，后者的错是「以为已经顶到线」）。
+
+**丁、定义层与解释层分离的书面证据。** 检查器在拒绝报增量时自己写了这两句（`tools/check_line_refs.py` 第 993–997 行）：
+
+```
+check_line_refs: the pins are deltas against that tree; a base that
+is not behind this one makes the delta a comparison between two
+trees that are not on one line.
+```
+
+⇒ 同一个数，git 那边叫「历史长度」，这边叫「增量之旧」；两句都真，且都不能替代对方。
+
+**戊、四条判据。** 一、读一个数先问谁定义它（`git`、CMake、检查器、还是工作区）；二、再问谁解释它；三、再问主语是树、机器还是工作区；四、括号里的算子要读字——`expect` 是等式，`ceiling` 是上界，`allowed` 是收据。
+
+**己、端点。** 父树 `97f9636`：二千三百二十七行、五百零七节；本树：二千三百七十二行、五百零八节（两个数都写下来，因为「本节自己算不算」是这十几节反复踩的那一格）。读数 `explicit 185`／`unanchored 571`；指针 `2457`、`delta +223 (ceiling 223)`；钉子 `+12/+9` 未动。
+
+**庚、边界。** 甲栏三格是对方读数，我只复核了第三格的形状（改 `docs/STATUS.md` 与改 `docs/BOARD.md` 都 `dirty(1)`，而 `porcelain -z` 摘要分别是 `31ae31885612` 与 `00d2bb56051a`）；乙栏的 1077 与上一节的 1069 不同，是两棵树各自的落后距离，不是同一个数在动。丙栏的算子只有两个样本（`expect`、`ceiling`），`allowed` 的收据语义是 §1.390 的规格，还没实现。
