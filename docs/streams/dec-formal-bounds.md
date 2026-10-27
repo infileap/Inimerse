@@ -51,20 +51,20 @@ proved-conditional 是这次补的第四个标签：P4/P5/P6 三条 sat 用它�
 
 | id | 标签 | 锚点 | 当行原文 |
 |---|---|---|---|
-| A1 | measured | src/vm/vm.c:4511 | `            nt->reg = malloc(nt->reg_cap * sizeof(Value));` |
-| A1 | measured | src/vm/vm.h:73 | `#define VM_THREAD_REG_COUNT (2048 * 1024)` |
-| A2 | measured | src/vm/vm.c:4515 | `            nt->frame_code = calloc(nt->frame_cap, sizeof(Bytecode*));` |
-| A2 | measured | src/vm/vm.h:74 | `#define VM_MAX_FRAMES 2048` |
-| A3 | measured | src/vm/vm.h:82 | `#define VM_FRAME_REGS 1024` |
-| A3 | measured | src/vm/vm.c:4093 | `            t->base += FRAME_REGS;` |
-| A4 | measured | src/vm/vm.h:101 | `    Value stack[1024]; int sp;` |
-| A4 | measured | src/vm/vm.c:479 | `    if (g_cur_thread->sp >= 1023) return;` |
-| A5 | measured | src/compiler/bytecode.h:104 | `    struct Bytecode *funcs[1024];` |
-| A5 | measured | src/compiler/bytecode.c:274 | `    for (int i = 0; i < func_count && i < 1024; i++) {` |
-| A6 | measured | src/vm/vm.c:4095 | `            int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;` |
-| A7 | asserted | src/vm/vm.c:4097 | `                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);` |
-| A8 | measured | src/vm/vm.c:4125 | `                t->base = t->frame_base[t->frame_count];` |
-| A8 | measured | src/vm/vm.c:3084 | `                t->base = 0;` |
+| A1 | measured | src/vm/vm.c:4511 | `            nt->reg = malloc(nt->reg_cap * sizeof(Value));` [obs: 1042aed] |
+| A1 | measured | src/vm/vm.h:73 | `#define VM_THREAD_REG_COUNT (2048 * 1024)` [obs: 1042aed] |
+| A2 | measured | src/vm/vm.c:4515 | `            nt->frame_code = calloc(nt->frame_cap, sizeof(Bytecode*));` [obs: 1042aed] |
+| A2 | measured | src/vm/vm.h:74 | `#define VM_MAX_FRAMES 2048` [obs: 1042aed] |
+| A3 | measured | src/vm/vm.h:82 | `#define VM_FRAME_REGS 1024` [obs: 1042aed] |
+| A3 | measured | src/vm/vm.c:4093 | `            t->base += FRAME_REGS;` [obs: 1042aed] |
+| A4 | measured | src/vm/vm.h:101 | `    Value stack[1024]; int sp;` [obs: 1042aed] |
+| A4 | measured | src/vm/vm.c:479 | `    if (g_cur_thread->sp >= 1023) return;` [obs: 1042aed] |
+| A5 | measured | src/compiler/bytecode.h:104 | `    struct Bytecode *funcs[1024];` [obs: 1042aed] |
+| A5 | measured | src/compiler/bytecode.c:274 | `    for (int i = 0; i < func_count && i < 1024; i++) {` [obs: 1042aed] |
+| A6 | measured | src/vm/vm.c:4095 | `            int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;` [obs: 1042aed] |
+| A7 | asserted | src/vm/vm.c:4097 | `                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);` [obs: 1042aed] |
+| A8 | measured | src/vm/vm.c:4125 | `                t->base = t->frame_base[t->frame_count];` [obs: 1042aed] |
+| A8 | measured | src/vm/vm.c:3084 | `                t->base = 0;` [obs: 1042aed] |
 
 读出的公理：
 

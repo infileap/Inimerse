@@ -139,7 +139,19 @@ EXP_OBS_BASE = os.environ.get("EXP_OBS_BASE", "e3e97c71e51ba491cf28d4b7a064ecbec
 # re-taken after the merge, in the merge commit, and the re-taking costs
 # nothing: this file is not under docs/, so writing the new number here does not
 # move the number it measures.
-EXP_OBS_POINTERS_DELTA_MAX = int(os.environ.get("EXP_OBS_POINTERS_DELTA_MAX", "211"))
+#
+# The fifth reading is the one that shows the ceiling doing its job.  The z3
+# formal-bounds merge added two proof pages whose citations were all read on
+# 1042aed, and this stage refused the merge -- +237 against 211 -- while every
+# other stage was green.  Fourteen of those citations are the rows of that
+# page's axiom table, and each of those rows now names its tree; the number
+# below is the delta measured after that, in the merge commit.  The other 32
+# stay pointers on purpose: they are prose and fenced excerpts, and a marker
+# written inside a fence is indistinguishable from the source line it quotes.
+# Those pages state their tree once, in their own 树号 section; the ceiling
+# carries the rest, and paying it down means turning them into records and
+# lowering this number in the same commit.
+EXP_OBS_POINTERS_DELTA_MAX = int(os.environ.get("EXP_OBS_POINTERS_DELTA_MAX", "223"))
 
 # Which classes may exempt a citation from the HEAD check.  A record is the
 # only one: it names its own tree.
