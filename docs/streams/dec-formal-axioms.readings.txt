@@ -1,0 +1,47 @@
+# T7 axiom ledger -- verbatim output of: python3 tools/z3bounds/axiom_ledger.py --root /tmp/wt-z3c
+# tree: f046f20  (python3 3.14.4; mutation column ran z3 5.3.2 on /mnt/c/Python314/python.exe)
+AXIOMS|sites=18|extracted=9|unparsed=9
+unparsed|gen_bounds_proof.py:171|        a = self.add()
+unparsed|gen_bounds_proof.py:174|                return ("cmp", op, a, self.add())
+unparsed|gen_bounds_proof.py:306|            self.decls.append(name + " = z3.Bool(" + repr(canon) + ")")
+unparsed|gen_bounds_proof.py:376|#       asserted = written down because the code makes it true, not re-read here.
+unparsed|gen_bounds_proof.py:855|                    out.append("    s.add(" + g + ")  # " + ax[0] + " " + ax[1])
+unparsed|gen_bounds_proof.py:857|                out.append("    s.add(SIZE_AXIOM_%d)" % (idx + 1))
+unparsed|gen_bounds_proof.py:859|                out.append("    s.add(" + as_bool_py(txt, ctx) + ")  # variant axiom: " + txt)
+unparsed|gen_bounds_proof.py:863|                out.append("    s.add(z3.Not(guard))  # the guard rejecting is the path under test")
+unparsed|gen_bounds_proof.py:866|            out.append("    s.add(z3.Not(claim))")
+AXIOM|name=A1|status=vacuous|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:73|text=t->reg_cap == 2097152|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion
+AXIOM|name=A2|status=vacuous|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:74|text=t->frame_cap == 2048|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion
+AXIOM|name=A3|status=discharged|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:82|text=VM_FRAME_REGS == 1024|settles=P4|asis
+AXIOM|name=A4|status=vacuous|role=z3-model|scope=exhaustive|kind=measured|decl=src/vm/vm.h:101|text=t->sp >= -1 && t->sp <= 1023|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion (no z3 claim consumes it)|discharge-candidate=src/vm/vm.c:2576|why-not=the claim quantifies over all 36 write sites of t->sp in src/; the registry pins 2 of them, which is evidence about a site, not exhaustion
+AXIOM|name=A4|status=asserted|role=extraction-premise|scope=exhaustive|kind=measured|decl=src/vm/vm.h:101|text=t->sp >= -1 && t->sp <= 1023|discharge-candidate=src/vm/vm.c:2576|why-not=the claim quantifies over all 36 write sites of t->sp in src/; the registry pins 2 of them, which is evidence about a site, not exhaustion
+AXIOM|name=A5|status=discharged|role=z3-model|scope=pointwise|kind=measured|decl=src/compiler/bytecode.h:104|text=root->func_count >= 0 && root->func_count <= 1024|settles=P1|extent
+AXIOM|name=A6|status=vacuous|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.c:4096|text=param_slots == (root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc)|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion
+AXIOM|name=A7|status=discharged|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:82|text=param_slots >= 0 && param_slots <= 1024|settles=P4|asis
+AXIOM|name=A8|status=vacuous|role=z3-model|scope=exhaustive|kind=measured|decl=src/vm/vm.c:4094|text=t->base >= 0 && t->base % 1024 == 0|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion (no z3 claim consumes it)|discharge-candidate=src/vm/vm.c:2577|why-not=the claim quantifies over all 7 write sites of t->base in src/; the registry pins 3 of them, which is evidence about a site, not exhaustion
+MUTATE|axiom=A1|drop|verdict-changed=no|from=unchanged|to=unchanged|status=vacuous|variants=17
+MUTATE|axiom=A2|drop|verdict-changed=no|from=unchanged|to=unchanged|status=vacuous|variants=17
+MUTATE|axiom=A3|drop|verdict-changed=yes|from=unsat|to=sat|variant=P4|asis|changed=2
+MUTATE|axiom=A4|drop|verdict-changed=no|from=unchanged|to=unchanged|status=vacuous|variants=17
+MUTATE|axiom=A5|drop|verdict-changed=yes|from=unsat|to=sat|variant=P1|extent|changed=1
+MUTATE|axiom=A6|drop|verdict-changed=no|from=unchanged|to=unchanged|status=vacuous|variants=17
+MUTATE|axiom=A7|drop|verdict-changed=yes|from=unsat|to=sat|variant=P4|asis|changed=2
+MUTATE|axiom=A8|drop|verdict-changed=no|from=unchanged|to=unchanged|status=vacuous|variants=17
+CONDITIONAL|claim=P1|variant=asis|axioms=A1,A2,A3,A4,A5|discharge=closed
+CONDITIONAL|claim=P1|variant=extent|axioms=A1,A2,A3,A4,A5|discharge=closed
+CONDITIONAL|claim=P2|variant=asis|axioms=A1,A2,A3,A4,A5|discharge=closed
+CONDITIONAL|claim=P3|variant=asis|axioms=A1,A2,A3,A4,A5|discharge=closed
+CONDITIONAL|claim=P4|variant=asis|axioms=A1,A2,A3,A4,A5,A7,A8|discharge=closed
+CONDITIONAL|claim=P5|variant=asis|axioms=A1,A2,A3,A4,A5,A6,A7,A8|discharge=closed
+CONDITIONAL|claim=P6|variant=candidate_guard|axioms=A1,A2,A3,A4,A5|discharge=closed
+CONDITIONAL|claim=P7|variant=asis|axioms=A1,A2,A3,A4,A5|discharge=closed
+CONDITIONAL-SUMMARY|claims=8|open=0|all-asserted=8
+LEDGER|axioms=8|discharged=3|asserted=0|vacuous=5|mutation=measured|sites=18|extracted=9|unparsed=9
+AXIOM|name=A-FRAME|status=discharged|scope=exhaustive|kind=measured|decl=src/vm/vm.c:2690|writes=2|text=frame_sp slots stay inside the stack range
+MUTATE|axiom=A-FRAME|rename-token|verdict-changed=yes|from=element_writes=2|to=element_writes=0|instrument=extract_stack_effects
+CONDITIONAL|claim=T2-A-FRAME|variant=exhaustion|axioms=A-FRAME,A4|discharge=open|open-axioms=A4
+FRAME|FRAME-SP-WRITE|src/vm/vm.c:2690|stores=t->sp
+FRAME|FRAME-SP-WRITE|src/vm/vm.c:4112|stores=t->sp
+FRAME|FRAME-SP-NEGCTL|rename|frame_sp=>frameSp|element_writes=0|expected_drop=2|drop=2|name_exact=YES
+FRAME|FRAME-SP-NEGCTL|decoy|frameSp[]=|decoy_sites=1|element_writes=2|unchanged=YES|counted_as=0|matcher=word-bounded
+DEPENDS|axiom=A-FRAME|on=A4|why=both element writes store t->sp, so the frame slot range IS the sp range
