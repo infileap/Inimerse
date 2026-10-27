@@ -10,7 +10,7 @@ static int reg_peak = 0;
 static const char **lambda_outer_names = NULL;
 static int lambda_outer_count = 0;
 static int alloc_reg(void) { if (next_register >= 1024) { fprintf(stderr, "\n[error] registers overflow (>=1024), abort compile.\n"); exit(1); } if (next_register > reg_peak) reg_peak = next_register; return next_register++; }
-static void reset_regs(void) { next_register = 1; reg_peak = 0; }
+static void reset_regs(void) { next_register = 1; reg_peak = 0; } static void copy_ident(char *out, size_t cap, const char *start, size_t len, const char *what);
 
 /* 涓存椂鍙橀噺浼樺寲锟?
    - protect_reg(r)锛氭妸 r 鎻愬崌涓烘寔涔呭瘎瀛樺櫒锛堣法璇彞瀛樻椿锛屽寰幆鏁扮粍/缁撴潫鍊硷級
@@ -351,7 +351,7 @@ static void resolve_thread_gotos(Compiler *comp) {
 
 static void compile_func_body(Compiler *comp, Stmt *stmt) {
     char name[256];
-    snprintf(name, sizeof(name), "%.*s", (int)stmt->funcDef.name.length, stmt->funcDef.name.start);
+    copy_ident(name, sizeof(name), stmt->funcDef.name.start, stmt->funcDef.name.length, "function name");
     int fidx = register_func(comp, name);
     if (fidx < 0) return;
 
@@ -389,7 +389,7 @@ static void compile_func_body(Compiler *comp, Stmt *stmt) {
 
 static void compile_thread_body(Compiler *comp, Stmt *stmt) {
     char name[256];
-    snprintf(name, sizeof(name), "%.*s", (int)stmt->threadDef.name.length, stmt->threadDef.name.start);
+    copy_ident(name, sizeof(name), stmt->threadDef.name.start, stmt->threadDef.name.length, "thread name");
     int tidx = register_thread(comp, name);
     if (tidx < 0) return;
 
@@ -537,7 +537,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
         }
         case EXPR_IDENT: {
             char name[256];
-            snprintf(name, sizeof(name), "%.*s", (int)expr->identName.length, expr->identName.start);
+            copy_ident(name, sizeof(name), expr->identName.start, expr->identName.length, "variable name");
             int local = lookup_local(comp, name);
             if (local >= 0) { comp->last_temp = 0; return local; }
             for (int oi = 0; oi < lambda_outer_count; ++oi)
@@ -1447,7 +1447,7 @@ static void compile_case_pattern(Compiler *comp, int actual, Expr *pattern,
     if (pattern->type == EXPR_IDENT) {
         if (pattern->identName.length == 1 && pattern->identName.start[0] == '_') return;
         char name[256];
-        snprintf(name, sizeof(name), "%.*s", (int)pattern->identName.length, pattern->identName.start);
+        copy_ident(name, sizeof(name), pattern->identName.start, pattern->identName.length, "variable name");
         emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, name), actual, 0);
         return;
     }
@@ -2379,8 +2379,8 @@ case STMT_ASSIGN: {
                 }
             } else if (stmt->assignStmt.target && stmt->assignStmt.target->type == EXPR_IDENT) {
                 char name[256];
-                snprintf(name, sizeof(name), "%.*s", (int)stmt->assignStmt.target->identName.length,
-                         stmt->assignStmt.target->identName.start);
+                copy_ident(name, sizeof(name), stmt->assignStmt.target->identName.start,
+                           stmt->assignStmt.target->identName.length, "variable name");
                 int local = lookup_local(comp, name);
                 if (local >= 0) {
                     /* 灞€閮ㄥ彉閲忥紙鍑芥暟鍐咃級锛氱洿鎺ュ啓瀵勫瓨锟?*/
@@ -3027,11 +3027,11 @@ static void collect_decls(Compiler *comp, Program *prog) {
         Stmt *s = prog->stmts[i];
         if (s->type == STMT_FUNC) {
             char name[256];
-            snprintf(name, sizeof(name), "%.*s", (int)s->funcDef.name.length, s->funcDef.name.start);
+            copy_ident(name, sizeof(name), s->funcDef.name.start, s->funcDef.name.length, "function name");
             register_func(comp, name);
         } else if (s->type == STMT_THREAD_DEF) {
             char name[256];
-            snprintf(name, sizeof(name), "%.*s", (int)s->threadDef.name.length, s->threadDef.name.start);
+            copy_ident(name, sizeof(name), s->threadDef.name.start, s->threadDef.name.length, "thread name");
             register_thread(comp, name);
         } else if (s->type == STMT_IMPORT || s->type == STMT_INCLUDE) {
             char rel[512], ns[256], key[1100];
@@ -3167,3 +3167,21 @@ char *compiler_get_using_mods(Compiler *comp) {
     return buf;
                     release_temps(comp);
                 }
+
+
+/* Copy an identifier into a fixed-size buffer, or refuse it.
+   Every identifier that reaches a name table goes through a char[256]; snprintf
+   with "%.*s" silently cuts anything longer, so two names differing only at
+   byte 255 became one name.  The engine then answered rc=0 and printed a value
+   the program never assigned -- a silent wrong answer.  Refusing instead of
+   shortening turns that into a compile error that names the offender and the
+   amount by which it is over. */
+static void copy_ident(char *out, size_t cap, const char *start, size_t len, const char *what) {
+    if (len + 1 > cap) {
+        fprintf(stderr, "\n[error] identifier too long: the %s is %zu bytes, the limit is %zu; shorten it and recompile.\n",
+                what, len, cap - 1);
+        exit(1);
+    }
+    if (len > 0) memcpy(out, start, len);
+    out[len] = '\0';
+}
