@@ -2683,6 +2683,7 @@ static int vm_call_func_at(VM *vm, VmThread *t, int fidx, int argc, Value *argv)
     t->base += VM_FRAME_REGS;
     Value *FR = t->reg + t->base;
     int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;
+    if (param_slots > VM_FRAME_REGS) param_slots = VM_FRAME_REGS;   /* same unbounded count, same frame width */
     for (int k = 0; k < param_slots; k++)
         value_set(&FR[k + 1], VAL_NIL, 0, 0, NULL, NULL);
     for (int k = 0; k < argc; k++) value_assign(&FR[k + 1], &argv[k]);
@@ -4093,6 +4094,13 @@ L_CALL_FUNC: {
             t->base += FRAME_REGS;
             Value *FR = t->reg + t->base;
             int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;
+            /* func_argc is whatever the artifact says it is (it is written as an
+               int32 in the image and read back unvalidated), so a saved program
+               can ask for two million parameter slots in a 1024-register frame
+               and the zero-fill below walks off the register array.  A frame
+               holds at most VM_FRAME_REGS slots; past that there is nothing to
+               fill. */
+            if (param_slots > VM_FRAME_REGS) param_slots = VM_FRAME_REGS;
             for (int i = 0; i < param_slots; i++)
                 value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);
             /* 锟斤拷锟斤拷锟斤拷锟斤拷权锟斤拷栈转锟狡ｏ拷锟姐拷锟斤拷锟斤拷锟斤拷栈锟斤拷锟斤拷锟斤拷锟揭伙拷锟斤拷锟??*/
