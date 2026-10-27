@@ -5,10 +5,12 @@ The compiler copies every identifier through a 256-byte buffer.  A 256-byte name
 so the last byte disappears and two different globals collapse into one.  The engine answers rc=0
 and a wrong value: a silent wrong answer, which is the worst failure shape there is.
 
-The boundary is measured, not assumed: 255 bytes is allowed, 256 is refused.  Each case below is
-keyed to one of the seven copy sites (function name, thread name, global store, global load,
-identifier expression, assignment target, registration pass); a case that only exercised the
-assignment path would have left five sites unfixed and still passed.
+The first case is the one that was red before the fix, and it states both halves of the red:
+rc!=0 (the compiler refused) and the text "identifier too long" on stderr (it said why).  The
+second case pins the boundary from the other side: 255 bytes still compiles, and the two names
+still print 1 and 2 -- not 2 and 2.  The remaining cases cover the other copy sites (thread
+name, function name, local stores and loads), because a test that only exercised assignment
+would pass while five sites still truncated.
 """
 import argparse
 import os
@@ -47,12 +49,13 @@ def case_threadname(n):
 
 
 CASES = [
-    # (label, source factory, length, expectation)
-    ("global-255", case_globals, 255, {"rc": 0, "out_has": ["A=1", "B=2"]}),
+    # The red-first pair.  Order matters: the refusal is the assertion this test
+    # exists for, and the 255 case is the boundary that must not have moved.
     ("global-256", case_globals, 256, {"rc_nonzero": True, "err_has": "identifier too long"}),
+    ("global-255", case_globals, 255, {"rc": 0, "out_has": ["A=1", "B=2"]}),
     ("global-300", case_globals, 300, {"rc_nonzero": True, "err_has": "identifier too long"}),
-    ("local-255", case_locals, 255, {"rc": 0, "out_has": ["A=1", "B=2"]}),
     ("local-256", case_locals, 256, {"rc_nonzero": True, "err_has": "identifier too long"}),
+    ("local-255", case_locals, 255, {"rc": 0, "out_has": ["A=1", "B=2"]}),
     ("funcname-256", case_funcname, 256, {"rc_nonzero": True, "err_has": "identifier too long"}),
     ("threadname-256", case_threadname, 256, {"rc_nonzero": True, "err_has": "identifier too long"}),
 ]

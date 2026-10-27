@@ -3176,6 +3176,11 @@ char *compiler_get_using_mods(Compiler *comp) {
    the program never assigned -- a silent wrong answer.  Refusing instead of
    shortening turns that into a compile error that names the offender and the
    amount by which it is over. */
+/* cap is the BUFFER size (256) and cap - 1 is the character bound (255).  The
+   message names the character bound because that is the number a person counts
+   bytes against; the buffer holds those 255 characters plus the terminating
+   NUL.  Do not "fix" the message to say 256 -- that would be counting the
+   terminator as part of the name. */
 static void copy_ident(char *out, size_t cap, const char *start, size_t len, const char *what) {
     if (len + 1 > cap) {
         fprintf(stderr, "\n[error] identifier too long: the %s is %zu bytes, the limit is %zu; shorten it and recompile.\n",
