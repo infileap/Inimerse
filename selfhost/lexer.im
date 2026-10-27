@@ -1,8 +1,8 @@
 # lexer.im — inimerse 词法分析器(自举解释器第一部分)
 # Token = {"k": "id"|"num"|"str"|"op"|"eof", "v": 文本, "line": 行号}
 # 注意:
-#   1. 本语言字符串不做转义,引号内原样保留;"\n" 是字面反斜杠+n,
-#      真实控制字符用 chr() 生成
+#   1. 字符串解转义(与 C 前端一致):支持 \n \t \r \\ \" \0;其余反斜杠序列
+#      保持字面(反斜杠+字符);\0 之后截断,因为运行时字符串是 C 字符串
 #   2. 支持 # 行注释和 #[...] 块注释; 也支持 // 行注释(与 C 前端一致,
 #      见 selfhost/compiler.im 里那六行 // 注释:自举词法器必须读得进自己的源码)
 #   3. 无 continue,用 elif 链组织互斥分支
@@ -84,13 +84,57 @@ func lex(src) {
             }
             push(tokens, {"k": "num", "v": substr(src, bpos, pos - bpos), "line": line})
         } elif c == quote {
-            # 字符串(不做转义,原样保留)
+            # 字符串:解转义,与 C 前端(src/lexer/lexer.c)一致
+            # 支持 \n \t \r \\ \" \0;其余反斜杠序列保持字面(反斜杠+字符)
             pos = pos + 1
-            bpos = pos
-            while pos < n and src[pos] != quote {
-                pos = pos + 1
+            buf = ""
+            bs = chr(92)
+            dq = chr(34)
+            trunc = 0
+            while pos < n and src[pos] != quote and trunc == 0 {
+                ch = src[pos]
+                if ch == bs and pos + 1 < n {
+                    nxt = src[pos + 1]
+                    known = 1
+                    esc = ch
+                    if nxt == "n" {
+                        esc = chr(10)
+                    } elif nxt == "t" {
+                        esc = chr(9)
+                    } elif nxt == "r" {
+                        esc = chr(13)
+                    } elif nxt == bs {
+                        esc = bs
+                    } elif nxt == dq {
+                        esc = dq
+                    } elif nxt == "0" {
+                        # 运行时字符串是 C 字符串:\\0 之后的内容源码跑也看不到,
+                        # 这里直接截断,与 C 前端同观感
+                        trunc = 1
+                        known = 2
+                    } else {
+                        known = 0
+                    }
+                    if known == 1 {
+                        buf = buf + esc
+                        pos = pos + 2
+                    } elif known == 2 {
+                        pos = pos + 2
+                    } else {
+                        buf = buf + ch
+                        pos = pos + 1
+                    }
+                } else {
+                    buf = buf + ch
+                    pos = pos + 1
+                }
             }
-            push(tokens, {"k": "str", "v": substr(src, bpos, pos - bpos), "line": line})
+            if trunc == 1 {
+                while pos < n and src[pos] != quote {
+                    pos = pos + 1
+                }
+            }
+            push(tokens, {"k": "str", "v": buf, "line": line})
             if pos < n {
                 pos = pos + 1
             }

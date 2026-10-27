@@ -1656,4 +1656,13 @@ set_tests_properties(selfhost_selfcompile_fixedpoint PROPERTIES WORKING_DIRECTOR
 # the image reproduces itself: gen2 is produced by gen1, not by the source.
 add_test(NAME selfhost_inimbc_outlet_fixedpoint COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_inimbc_outlet_probe.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(selfhost_inimbc_outlet_fixedpoint PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+
+# The other half: artifacts can be identical while the programs they carry are
+# not, because the bootstrap's image used to drop "stop all" and to keep string
+# escapes undecoded.  This test runs each program three ways -- the engine on the
+# source, the C image, the bootstrap image -- and compares rc, stdout bytes and
+# stderr bytes.  Registered because a comparison that only a hand-run probe keeps
+# alive is the fixture a later change quietly outgrows (see selfhost_codegen_parity).
+add_test(NAME selfhost_mirror_behavior COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_mirror_behavior_probe.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(selfhost_mirror_behavior PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 endif()

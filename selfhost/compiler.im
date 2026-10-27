@@ -653,8 +653,8 @@ func compile_stmt(ctx, s) {
         return
     }
     if t == "tctrl" {
-        tidx = thread_idx(s["n"])
-        emit(ctx, OP_THREAD_CTRL, tidx, s["op"], 0)
+        # stop all 是线程控制而不是空语句:镜像里曾经是 no-op
+        emit_tctrl(ctx, s)
         return
     }
     if t == "join" {
@@ -1081,3 +1081,18 @@ stmts = parse_file(tgt)
 data = compile_program(stmts)
 vm_exec(data)
 stop all
+
+# stop all 是整程序停止(与 C 侧 parse 的 TOK_ALL -> STMT_STOP 对齐),
+# 不是线程控制。自举前端把它解析成 tctrl/name="all",compile_stmt 原先一律
+# 发 OP_THREAD_CTRL,镜像是 no-op —— 失败形态是"多印两行而 rc 仍 0"。
+# 这里按名字分诊:名字是 all 就发 OP_STOP,其余保持线程控制的既有语义。
+func emit_tctrl(ctx, s) {
+    if s["n"] == "all" {
+        emit(ctx, OP_STOP, 0, 0, 0)
+        return
+    }
+    tidx = thread_idx(s["n"])
+    emit(ctx, OP_THREAD_CTRL, tidx, s["op"], 0)
+    return
+}
+
