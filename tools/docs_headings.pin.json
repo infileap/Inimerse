@@ -1,6 +1,6 @@
 {
- "docs": 106,
- "headings": 1307,
+ "docs": 107,
+ "headings": 1318,
  "per_file": {
   "docs/API.md": 15,
   "docs/AUDIT.md": 510,
@@ -71,6 +71,7 @@
   "docs/streams/crp-in-engine.md": 8,
   "docs/streams/crp-portal-auth.md": 5,
   "docs/streams/crp-portal-postcheck.md": 5,
+  "docs/streams/dec-formal-axioms.md": 11,
   "docs/streams/dec-formal-bounds-t2.md": 11,
   "docs/streams/dec-formal-bounds-t3.md": 8,
   "docs/streams/dec-formal-bounds-t4.md": 11,
@@ -109,5 +110,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "6e41869"
+ "tree": "55e08dd"
 }
