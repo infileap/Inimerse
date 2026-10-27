@@ -1270,14 +1270,14 @@ static int posix_bit_or(VM *vm);
 static int posix_bit_xor(VM *vm);
 static int posix_bit_not(VM *vm);
 static int posix_shl(VM *vm);
-static int posix_shr(VM *vm);
+static int posix_shr(VM *vm); static int posix_write_bytes(VM *vm); /* binary-safe write_file sibling, defined at the end of this file */
 void runtime_register_builtins(VM *vm) {
     vm_register_builtin(vm, "random", posix_random);
     vm_register_builtin(vm, "sqrt", posix_sqrt);
     vm_register_builtin(vm, "time_ms", posix_time_ms);
     vm_register_builtin(vm, "sleep_ms", posix_sleep);
     vm_register_builtin(vm, "read_file", posix_read_file);
-    vm_register_builtin(vm, "write_file", posix_write_file);
+    vm_register_builtin(vm, "write_file", posix_write_file); vm_register_builtin(vm, "write_bytes", posix_write_bytes);
     vm_register_builtin(vm, "input", posix_input);
     vm_register_builtin(vm, "env", posix_env);
     vm_register_builtin(vm, "mkdir", posix_mkdir);
@@ -1443,3 +1443,32 @@ static int posix_shr(VM *vm) {
     r = (n >= 64) ? (a < 0 ? -1 : 0) : (a >> n);
     pop(vm); pop(vm); push_int(vm, r); return 1;
 }
+
+/* Binary-safe write: write_bytes(path, bytes).  The second argument is either
+ * an array of integers (each written as one byte, low 8 bits) or a string
+ * (written as its bytes, up to the first NUL -- the same limit write_file has
+ * today).  Returns the number of bytes written, or -1 when the file cannot be
+ * opened or the buffer cannot be allocated.  write_file cannot express a NUL
+ * byte at all (fputs + a NUL-terminated Value.sval), which is why an INIMBC
+ * image -- every int32 count carries NULs -- has no producer on this side yet. */
+static int posix_write_bytes(VM *vm) {
+    if (vm_cur_sp(vm) < 1) return 0;
+    Value data = vm_cur_stack(vm)[vm_cur_sp(vm)], path = vm_cur_stack(vm)[vm_cur_sp(vm)-1];
+    int n = 0, total = -1, ok = 1;
+    unsigned char *buf = NULL;
+    if (data.type == VAL_ARRAY) {
+        n = vm_array_len(vm, data.ival - 1);
+        if (n > 0) { buf = (unsigned char*)malloc((size_t)n); if (!buf) ok = 0; }
+        for (int i = 0; ok && i < n; i++) { Value e = vm_array_get(vm, data.ival - 1, i); buf[i] = (unsigned char)(e.type == VAL_INT ? e.ival : 0); }
+    } else if (data.type == VAL_STRING || data.type == VAL_NIL) {
+        n = data.sval ? (int)strlen(data.sval) : 0;
+        if (n > 0) { buf = (unsigned char*)malloc((size_t)n); if (!buf) ok = 0; else memcpy(buf, data.sval, (size_t)n); }
+    } else ok = 0;
+    FILE *f = ok ? fopen(path.sval ? path.sval : "", "wb") : NULL;
+    if (f) { if (fwrite(buf ? buf : (const unsigned char*)"", 1, (size_t)n, f) == (size_t)n) total = n; fclose(f); }
+    free(buf);
+    vm_cur_set_sp(vm, vm_cur_sp(vm) - 2);
+    push_int(vm, total);
+    return 1;
+}
+
