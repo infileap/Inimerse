@@ -107,6 +107,8 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 
 本节与下一节所有缩进块都是树 `d01f8db` 上的工具输出；每块紧上方那一句散文认领它的树号，块内不加 marker。（早先在 `ba075d0` 上取过同样的读数，`git diff --stat d01f8db HEAD -- src selfhost` 为空，所以两棵树上这些输出逐字相同；参考树写 `d01f8db` 不欠账。）
 
+本节（`## 7.` 到 `## 8.` 之间）共 **12 行缩进、6 个块**——这个数可核，但核对命令必须写成**行内**，写进缩进块就会被它自己数进去：`awk '/^## 7\./{f=1;next}/^## 8\./{f=0}f&&/^    [^ ]/{n++}END{print n}' docs/streams/dec-formal-bounds-t2.md` ⇒ 12。跨树复用读数的唯一证据是 `git diff --stat d01f8db HEAD -- src selfhost` **输出为空**（不是「我记得没改」）——所以上一条「两棵树共用同一个树号」是测出来的，不是省事的写法。
+
     unparsed=0    unparsed-expr=1
     UNPARSED-EXPR|src/vm/vm.c:4121|t->sp = t->frame_sp[t->frame_count - 1];
 
@@ -194,10 +196,19 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 
 ## 10. 树号、改动清单、没做的事
 
-- 树号：1042aed 为基线；本轮读数在 origin/main `4b41f59` 之上的分支 `z3bounds-t1` 取得（worktree `/tmp/wt-z3c`，已 `git worktree lock`），第 7 节 `frame_sp` 那批读数产生于树 `d01f8db`。本页所在提交号不写死，用 `git log -1 -- docs/streams/dec-formal-bounds-t2.md` 取——页内自指会随提交漂移。
+- 树号：1042aed 为基线；本轮读数在分支 `z3bounds-t1` 取得（该分支先后 rebase 到 `4b41f59`、`dfc5957`、`9a3e53a`）（worktree `/tmp/wt-z3c`，已 `git worktree lock`），第 7 节 `frame_sp` 那批读数产生于树 `d01f8db`。本页所在提交号不写死，用 `git log -1 -- docs/streams/dec-formal-bounds-t2.md` 取——页内自指会随提交漂移。
 - 页内 `[obs: <sha>]` 标记命名的是**这批读数被产生的那棵树**，不是合并时踩在哪棵树上；否则标记会随合并动作漂移，等于没标。
 - 新增：`tools/z3bounds/extract_stack_effects.py`、`tools/z3bounds/reconcile_emit_dispatch.py`、本页。
   未改 `src/`、`selfhost/`、门禁脚本与 CTest 计数；本页不引门禁 TARGET 文件名，避免把本页纳入比对输入集。
+- 姊妹页：T3 的探针表（三前端读数从源码重生成）见 `docs/streams/dec-formal-bounds-t3.md`。
 - 没做：栈平衡命题的建模与求解（等 A-FRAME 的上界那一半被接受）；`src/vm/vm.c:3025` 起的执行器外框（线程/任务切换路径）的枚举；
   A4（`sp` 自身值域）的写入点全集——A-FRAME 的写点已枚举（2 处、都存 `t->sp`），仍标 asserted 的是 A4 本身。
-- 自查命令（改被引文件时先跑）：`git grep -nE 'extract_stack_effects[.]py:' -- docs/ | wc -l` ⇒ 期望 0；非 0 就要改指并搬引文。  模式里拿 `[.]` 写那个点是刻意的：直接写点号，这一行自己就会成为命中，命令永远报 1——判据不能把自己算进去。- 复现：两条命令的末行 `SUMMARY` 与第 2、3、4、5、8 节读数逐字相同，退出码 0。
+- 自查命令（改被引文件时先跑）：`git grep -nE 'extract_stack_effects[.]py:' -- docs/ | wc -l` ⇒ 期望 0；非 0 就要改指并搬引文。  模式里拿 `[.]` 写那个点是刻意的：直接写点号，这一行自己就会成为命中，命令永远报 1——判据不能把自己算进去。
+
+  同族还有两格，一并记在这里，免得下一个人只记住模式、忘了原因：
+
+  1. **命令自己出现在被扫文件里**：脚注这一行写在 `docs/streams/dec-formal-bounds-t2.md`，而它扫的就是 `docs/`；
+  2. **判据的输入包含判据自身**：模式与「期望 0」住在同一个文件里。
+
+  通用修法只有两条：把模式写成字符类（`[.]`、`[a-z]`），或把期望写成「≤ 已知自命中数」并把那个自命中数与读数**一起印出来**。**不要靠人记得**——靠记忆的判据，换一个人就失效。
+- 复现：两条命令的末行 `SUMMARY` 与第 2、3、4、5、8 节读数逐字相同，退出码 0。
