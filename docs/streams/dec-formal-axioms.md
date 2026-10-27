@@ -247,7 +247,7 @@ T5 页 §11 的期望值跟着改，改的理由与改动同一个提交——�
 
     PINSCHECK|case=intact|expect=exit0+pins=33+declared=19|got=no findings|verdict=PASS
     PINSCHECK|case=dropped-entry|expect=pin entry missing: expected 33, table holds 32|got=pin entry missing: expected 33, table holds 32|verdict=PASS
-    PINSCHECK|case=declared-not-in-table|expect=declared pin not in the table: src/vm/vm.h:999999|got=declared pin not in the table: src/vm/vm.h:999999|verdict=PASS
+    PINSCHECK|case=declared-not-in-table|expect=declared pin not in the table: <path>:<line>|got=<同一句>|verdict=PASS
     PINSCHECK|case=cli-dropped-entry|expect=exit2+'pin entry missing: expected 33, table holds 32'+out_not_created|got=exit2+named+out=not_created|verdict=PASS
 
 前三格把表作为**参数**递给检查函数（所以能递进去一张坏表）；第四格用 `--drop-pin-entry path:line`
