@@ -3,10 +3,12 @@
 # walk up for src/vm), so a reader holding only this sha re-runs it without knowing where I work:
 #     python3 tools/z3bounds/axiom_ledger.py
 # tree: b890196  (python3 3.14.4; the mutation column ran z3 5.3.2 via /mnt/c/Python314/python.exe)
-# two-tree reading: the same command on 2891d55 (the T8 tree, an ancestor of this one) differs ONLY
-# in the five unparsed line numbers of gen_bounds_proof.py -- 967/969/971/975/978 -> 1073/1075/1077/
-# 1081/1084 -- because this commit inserted lines above them; every AXIOMS/AXIOM/MUTATE/CONDITIONAL
-# line is byte-identical (the diff shows that single hunk and nothing else).
+# two-tree reading, and it is also the proof of the fix: on 2891d55 (the T8 tree, an ancestor) this
+# very command DIES with a traceback, because there --root defaulted to tools/ -- so from that tree
+# alone nobody could re-run it without a path argument.  Given --root <top of that tree> instead, the
+# only difference from the block below is the five unparsed line numbers of gen_bounds_proof.py --
+# 967/969/971/975/978 -> 1073/1075/1077/1081/1084 -- because this commit inserted lines above them;
+# every AXIOMS/AXIOM/MUTATE/CONDITIONAL line is byte-identical (the diff is that single hunk, 5 < 5).
 AXIOMS|sites=18|extracted=9|unparsed=9
 unparsed|gen_bounds_proof.py:171|        a = self.add()
 unparsed|gen_bounds_proof.py:174|                return ("cmp", op, a, self.add())
