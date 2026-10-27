@@ -1,6 +1,6 @@
 {
- "docs": 105,
- "headings": 1301,
+ "docs": 106,
+ "headings": 1307,
  "per_file": {
   "docs/API.md": 15,
   "docs/AUDIT.md": 510,
@@ -66,6 +66,7 @@
   "docs/streams/be-removal.md": 6,
   "docs/streams/board-ten-rows-verification.md": 13,
   "docs/streams/builtin-platform-census.md": 10,
+  "docs/streams/checker-scope.md": 6,
   "docs/streams/count-size.md": 8,
   "docs/streams/crp-in-engine.md": 8,
   "docs/streams/crp-portal-auth.md": 5,
@@ -108,5 +109,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "9159df0"
+ "tree": "6e41869"
 }

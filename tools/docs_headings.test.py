@@ -65,11 +65,15 @@ def main() -> int:
         tail = added.stderr.strip().splitlines()
         refuse("could not create a throwaway worktree" + (": " + tail[-1] if tail else ""))
     try:
-        # The tool and its pin under test are the working copies, not HEAD's.
-        for rel in (TOOL, PIN):
-            if not (ROOT / rel).exists():
-                refuse(f"{rel} is missing from the tree under test")
-            shutil.copy2(ROOT / rel, tree / rel)
+        # The tool under test is the working copy -- a run should say what the
+        # version being committed does.  The PIN is not: it is a record of the
+        # committed documents, so it is read from HEAD along with them.  A pin
+        # that is newer than HEAD would measure a tree that does not exist yet.
+        if not (ROOT / TOOL).exists():
+            refuse(f"{TOOL} is missing from the tree under test")
+        shutil.copy2(ROOT / TOOL, tree / TOOL)
+        if not (tree / PIN).exists():
+            refuse(f"{PIN} is not in HEAD; the control reads the committed pair, so commit the pin first")
         if not shutil.which("git"):
             refuse("git left PATH")
     except SystemExit:
