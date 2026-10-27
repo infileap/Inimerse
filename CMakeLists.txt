@@ -1714,5 +1714,15 @@ set_tests_properties(selfhost_z3bounds_pin_selfcheck PROPERTIES WORKING_DIRECTOR
 # engine needed -- this is about which files the checker reads.
 add_test(NAME checker_scope COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/checker_scope.test.py)
 set_tests_properties(checker_scope PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+# The deletion blind spot: every ceiling in this repository bounds growth, so a
+# section that is removed -- and every reference it carried -- sits below all of
+# them and is invisible.  tools/check_docs_headings.py counts level-2 headings
+# under docs/ against tools/docs_headings.pin.json (per file, pinned with the
+# tree it was read on); removed > 0 is red, added > 0 is only printed.  The
+# controls below run in a throwaway worktree at HEAD: section deleted -> red and
+# named, whole document deleted -> removed equals that file pinned count, new
+# section -> still green.
+add_test(NAME docs_headings COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/docs_headings.test.py)
+set_tests_properties(docs_headings PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 
 endif()
