@@ -1679,4 +1679,15 @@ set_tests_properties(selfhost_mirror_behavior PROPERTIES WORKING_DIRECTORY ${CMA
 # skips where it cannot reach the solver would verify nothing.
 add_test(NAME vm_frame_bounds COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/vm_frame_bounds.test.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(vm_frame_bounds PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;regression")
+
+# Silent truncation, witnessed from the outside: every identifier the compiler
+# copies passes through a 256-byte buffer, so a 256-byte name loses its last
+# byte.  Two globals that differ only in that byte collapse into one, the engine
+# answers rc=0, and the program prints a value it never assigned.  The case set
+# pins the boundary (255 bytes allowed, 256 refused) and touches every copy
+# site -- function name, thread name, global store, global load, identifier
+# expression, assignment target -- because a test that only assigns would pass
+# while five sites still truncated.
+add_test(NAME identifier_length COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/identifier_truncation.test.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(identifier_length PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;regression")
 endif()
