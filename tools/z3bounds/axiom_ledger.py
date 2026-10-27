@@ -291,8 +291,13 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
     counts = {"discharged": 0, "asserted": 0, "vacuous": 0}
     for ax in axioms:
         counts[info[ax[0]]["status"]] += 1
-    print("LEDGER|axioms=%d|discharged=%d|asserted=%d|vacuous=%d|mutation=%s|sites=%d|extracted=%d|unparsed=%d"
-          % (len(axioms), counts["discharged"], counts["asserted"], counts["vacuous"],
+    # Without the mutation column nothing can be called vacuous, and printing
+    # vacuous=0 would read as "every axiom is load-bearing" -- the opposite of the
+    # truth, which is "this run could not tell".  The slot is therefore a word when
+    # the column is unmeasured, so no reader can add it up as a zero.
+    vacuous_cell = ("%d" % counts["vacuous"]) if measured else "unmeasured"
+    print("LEDGER|axioms=%d|discharged=%d|asserted=%d|vacuous=%s|mutation=%s|sites=%d|extracted=%d|unparsed=%d"
+          % (len(axioms), counts["discharged"], counts["asserted"], vacuous_cell,
              "measured" if measured else "unmeasured", len(sites), extracted, len(unparsed)))
 
     # --- A-FRAME: carried by the extraction instrument, not by the z3 registry ---------------
