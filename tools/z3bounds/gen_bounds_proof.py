@@ -1039,10 +1039,21 @@ def main():
     if not args.out and not (args.self_check_pins or args.self_check_pin_table):
         ap.error("--out is required (except with a self-check)")
     root = os.path.abspath(args.root)
-    if args.self_check_pin_table:
-        return self_check_pin_table(root)
-    if args.self_check_pins:
-        return self_check_pins(root)
+    if args.self_check_pins or args.self_check_pin_table:
+        # Both flags together used to return after the first one, so the second check
+        # never ran and its silence looked like agreement.  Run every requested cell and
+        # OR the exit codes; the single-flag output stays byte-identical, so a test that
+        # pins those summary lines is unaffected.
+        both = args.self_check_pins and args.self_check_pin_table
+        rc = 0
+        if args.self_check_pin_table:
+            rc |= self_check_pin_table(root)
+        if args.self_check_pins:
+            rc |= self_check_pins(root)
+        if both and not args.quiet:
+            print("SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=both ask for a "
+                  "refusal, neither is a skip")
+        return rc
     if args.drop_pin_entry:
         dpath, dline = args.drop_pin_entry.rsplit(":", 1)
         PINNED.get(dpath, {}).pop(int(dline), None)
