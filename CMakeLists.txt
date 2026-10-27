@@ -1649,4 +1649,11 @@ set_tests_properties(selfhost_corpus_equivalent PROPERTIES WORKING_DIRECTORY ${C
 # comment above selfhost_codegen_parity gives.
 add_test(NAME selfhost_selfcompile_fixedpoint COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_selfcompile_probe.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(selfhost_selfcompile_fixedpoint PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+
+# The other outlet: compiler.im writes INIMBC itself (--emit-inimbc) and the
+# engine loads what it writes, so a second generation of the compiler exists as
+# a program that runs rather than as text nothing can read.  The test is that
+# the image reproduces itself: gen2 is produced by gen1, not by the source.
+add_test(NAME selfhost_inimbc_outlet_fixedpoint COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/dec_inimbc_outlet_probe.py --bin $<TARGET_FILE:inimerse>)
+set_tests_properties(selfhost_inimbc_outlet_fixedpoint PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 endif()

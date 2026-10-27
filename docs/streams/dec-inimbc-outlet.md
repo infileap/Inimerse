@@ -83,3 +83,38 @@ B 要补的正是这一条，而这条属于文本格式的规格工作，不是
     cmp /tmp/q2.dec /tmp/q7.dec
 
 （/tmp/page2.inim 与 /tmp/conv.py 都是一次性原型，未入库；本页只记读数。）
+## 实施结果（A 落地，树 f393dda 之后）
+
+判定被采纳后按 A 实现，分两步提交：
+
+1. 运行时：内建 write_bytes（追加在 src/runtime/runtime_posix.c 末尾；原型与注册并进既有行，上方零新增行，
+   所以被引行号不位移）。第二参是 int 数组（每元素取低 8 位）或字符串（写到首个 NUL），返回写入字节数、
+   失败 -1。实测 NUL、0x80、0xff 都原样落盘。
+2. 自举侧：compiler.im 里的 render_inimbc 与 `--emit-inimbc <target.im> <out.inim>`，段顺序逐字节照
+   bytecode_write。浮点池仍不产：遇到浮点常量会打印「浮点池未实现」并停。
+
+读数（同一棵树、同一命令复跑）：
+
+    gen1-vs-gen2: same sha256=40a5298ea099ac05d23a521031e7ca7c37c4958743fe3d0600c7758c199c37af bytes=125685
+    artifact-format: selfhost=INIMBC 125685 bytes, c=INIMBC 125561 bytes
+
+gen1 是引擎跑源码的产物，gen2 是 gen1 这个镜像自己跑出来的产物 —— 环在自举产物本身上闭合，不再借 C 产物的道。
+已注册为 CTest selfhost_inimbc_outlet_fixedpoint（EXP_CTEST 163 -> 164，同行沿革注释）。
+
+## 两条保真缺口（实测：镜像的行为不等于源码路径的行为）
+
+1. stop all：自举前端把它解析成「线程控制」（selfhost/parser.im 的 431 行一带），C 侧的规则是先匹配 all
+   生成整程序停止（src/parser/parser.c 的 1781 行）。后果：自举镜像里 stop 语句是 no-op —— 程序
+   say "before" / stop all / say "after" 在镜像里连印两行，在 C 编译的产物里只印 before；镜像跑
+   `--emit-inimbc` 写完文件后还会贯穿到默认分支，多印一句「无法读取文件: --emit-inimbc」。
+2. 字符串转义：同一行 say "a\nb" 源码跑打印真换行，`--emit-inimbc` 出的镜像打印字面 a\nb。连带可见：
+   镜像 `--emit` 出的 dec-artifact 把段分隔写成字面反斜杠 n（149668 B、0 换行；源码路径 141363 B、8305 行，
+   差 8305 = 换行数）。
+
+两条都不是编码器引入的：换一个只含 say 的程序同样复现。修不修、怎么修由后续卡决定，本页只记读数。
+
+## 没验证的部分（本次新增）
+
+- 浮点池仍未实现，带浮点常量的源会停在「浮点池未实现」。
+- 镜像与 C 编译产物的行为差异只枚举了上面两条，没有系统扫；try 表与全局名表的结论沿用上一节。
+

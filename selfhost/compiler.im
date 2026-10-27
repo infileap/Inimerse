@@ -919,6 +919,82 @@ func render_artifact(d) {
     return join(out, "\n") + "\n"
 }
 
+# ---------- 出口：直接写 INIMBC（A 路线，判定见 docs/streams/dec-inimbc-outlet.md） ----------
+# 段格式逐字节照 src/compiler/bytecode.c 的 bytecode_write：小端 int32 计数，
+# 字符串池每条 = len(含结尾 NUL) + 字节 + NUL，浮点池每条 8 字节 double，
+# 指令每条 4 个 int32，函数段递归后再跟 argc 与名字（len 含 NUL），线程段同形，
+# try 表与全局名表各是一个计数。引擎的读侧 bytecode_read_file 只认这个顺序；
+# dec-artifact v1 是文本格式，引擎没有它的装载器，所以那条路走不到执行。
+# 浮点池还没有语言侧原语（要 double 的位模式），暂时不产：有浮点就说清楚并停。
+
+func any_floats(d) {
+    if len(d["floats"]) > 0 { return true }
+    for f in d["funcs"] { if any_floats(f) { return true } }
+    for th in d["threads"] { if any_floats(th) { return true } }
+    return false
+}
+
+func le_byte(v, k) {
+    return bit_and(shr(v, k * 8), 255)
+}
+
+func push_le32(out, v) {
+    push(out, le_byte(v, 0))
+    push(out, le_byte(v, 1))
+    push(out, le_byte(v, 2))
+    push(out, le_byte(v, 3))
+}
+
+func push_nt_str(out, s) {
+    push_le32(out, len(s) + 1)
+    i = 0
+    while i < len(s) {
+        push(out, ord(substr(s, i, 1)))
+        i = i + 1
+    }
+    push(out, 0)
+}
+
+func push_segment(out, d) {
+    push_le32(out, len(d["code"]))
+    push_le32(out, len(d["strings"]))
+    i = 0
+    while i < len(d["strings"]) {
+        push_nt_str(out, d["strings"][i])
+        i = i + 1
+    }
+    push_le32(out, 0)
+    i = 0
+    while i < len(d["code"]) {
+        ins = d["code"][i]
+        push_le32(out, ins[0])
+        push_le32(out, ins[1])
+        push_le32(out, ins[2])
+        push_le32(out, ins[3])
+        i = i + 1
+    }
+    push_le32(out, len(d["funcs"]))
+    for f in d["funcs"] {
+        push_segment(out, f)
+        push_le32(out, f["a"])
+        push_nt_str(out, f["n"])
+    }
+    push_le32(out, len(d["threads"]))
+    for th in d["threads"] {
+        push_segment(out, th)
+        push_le32(out, th["a"])
+        push_nt_str(out, th["n"])
+    }
+    push_le32(out, 0)
+    push_le32(out, 0)
+}
+
+func render_inimbc(d) {
+    out = [73, 78, 73, 77, 66, 67, 3, 0]
+    push_segment(out, d)
+    return out
+}
+
 # ---------- 入口 ----------
 clargs = args()
 
@@ -961,6 +1037,28 @@ if clargs[0] == "--emit" {
     d_e = compile_program(stmts_e)
     write_file(clargs[2], render_artifact(d_e))
     say "emitted " + clargs[2]
+    stop all
+}
+
+if clargs[0] == "--emit-inimbc" {
+    if len(clargs) < 3 {
+        say "用法: inimerse selfhost/compiler.im --emit-inimbc <target.im> <out.inim>"
+        stop all
+    }
+    if len(read_file(clargs[1])) == 0 {
+        say "无法读取文件: " + clargs[1]
+        stop all
+    }
+    g_tgt_dir = dir_of(clargs[1])
+    stmts_i = parse_file(clargs[1])
+    d_i = compile_program(stmts_i)
+    if any_floats(d_i) {
+        say "浮点池未实现: INIMBC 的 double 编码还没有语言侧原语"
+        stop all
+    }
+    bytes_i = render_inimbc(d_i)
+    n_i = write_bytes(clargs[2], bytes_i)
+    say "emitted-inimbc " + clargs[2] + " " + str(n_i) + " bytes"
     stop all
 }
 
