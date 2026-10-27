@@ -114,22 +114,189 @@ def pin_status(gen, root, axiom):
     return (not bad), bad, seen, declared, registered
 
 
-def write_sites(root, needle):
-    pat = re.compile(re.escape(needle) + r"\s*(\+=|\+\+|--|=(?!=))")
-    first, count = None, 0
+# --- write-site census (T10) --------------------------------------------------------------
+# The registry used to say, in prose, "the claim quantifies over all 36 write sites of t->sp;
+# the registry pins 2 of them".  Both numbers were wrong and neither could be re-run: the old
+# counter matched the needle as a SUBSTRING (t->sp inside nt->sp) and counted LINES, so two
+# writes on one line were one site.  This census counts occurrences, names every site, prints
+# the ones it cannot read as a direct assignment instead of folding them into the direct
+# column, and renders the why-not sentence from its own numbers.
+CENSUS_FIELDS = [("A4", "sp"), ("A8", "base")]
+CENSUS_CONSTANTS = ["R", "F"]
+CENSUS_SOURCE = "src/**/*.{c,h}"
+MEM_CALL_RE = re.compile(r"\b(memcpy|memmove|memset|bzero|bcopy)\s*\(")
+MACRO_CALL_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\s*\(")
+PIN_PHRASE = {"declaration": "the field declaration", "guard": "the push guard",
+              "write-site": "a write site", "read": "a read-only use"}
+
+
+def field_occ_re(field):
+    return re.compile(r"([A-Za-z_][A-Za-z0-9_]*)->" + re.escape(field) + r"\s*(\+\+|--|\+=|-=|=)(?!=)")
+
+
+def code_and_state(raw, in_block):
+    """Strip // and /* */ from one line, carrying block-comment state across lines.
+
+    A commented-out write is not a write site, and a scanner with no state would count a
+    whole commented-out block as code -- which is how a comment became a 'direct' site once.
+    """
+    out, i, n = [], 0, len(raw)
+    while i < n:
+        if in_block:
+            j = raw.find("*/", i)
+            if j == -1:
+                return "".join(out), True
+            i, in_block = j + 2, False
+            continue
+        j, k = raw.find("//", i), raw.find("/*", i)
+        if j == -1 and k == -1:
+            out.append(raw[i:])
+            break
+        if k == -1 or (j != -1 and j < k):
+            out.append(raw[i:j])
+            break
+        out.append(raw[i:k])
+        i, in_block = k + 2, True
+    return "".join(out), in_block
+
+
+def classify_line(field, receiver, raw, code=None):
+    """(kind, why, others) for one line and one field.
+
+    direct   -- <recv>->field <op> <expr>, and we can read the statement
+    indirect -- the field's address is taken, or a memory call takes it
+    unparsed -- a macro call may write the field through its argument
+    comment  -- the write shape exists only inside a comment
+    alias    -- another receiver writes the same field
+    none     -- no write-shaped use
+    """
+    if code is None:
+        code, _state = code_and_state(raw, False)
+    norm = r"->" + re.escape(field) + r"\b"
+    if re.search(norm, code) is None:
+        if re.search(norm, raw) is not None:
+            return "comment", "the write shape appears only inside a comment", []
+        return "none", None, []
+    hits = list(field_occ_re(field).finditer(code))
+    others = sorted({h.group(1) for h in hits if h.group(1) != receiver})
+    addr = re.search(r"(?<!&)&(?!&)\s*[A-Za-z_][A-Za-z0-9_]*" + norm, code) is not None
+    mem = MEM_CALL_RE.search(code) is not None
+    if any(h.group(1) == receiver for h in hits):
+        if addr:
+            return "indirect", "the address is taken, so the write happens through a pointer", others
+        if mem:
+            return "indirect", "a memory call takes the field", others
+        return "direct", None, others
+    if others:
+        return "alias", None, others
+    if addr:
+        return "indirect", "the address is taken, so the write happens through a pointer", []
+    if mem:
+        return "indirect", "a memory call takes the field", []
+    if MACRO_CALL_RE.search(code):
+        return "unparsed", "a macro call may write the field through its argument", []
+    return "none", None, []
+
+
+def census_field(mod, root, receiver, field, pinned):
+    """Every write-shaped use of one field, classified, pinned or named as unpinned."""
+    direct, unparsed, skipped, aliases = [], [], [], {}
     for base, _dirs, files in os.walk(os.path.join(root, "src")):
         for name in sorted(files):
             if not name.endswith((".c", ".h")):
                 continue
             path = os.path.join(base, name)
-            rel = os.path.relpath(path, root)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            in_block = False
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                for i, line in enumerate(fh, 1):
-                    if pat.search(line):
-                        count += 1
-                        if first is None:
-                            first = "%s:%d" % (rel, i)
-    return first, count
+                for i, raw in enumerate(fh, 1):
+                    line = raw.rstrip("\n")
+                    code, in_block = code_and_state(line, in_block)
+                    kind, why, others = classify_line(field, receiver, line, code)
+                    if kind == "none":
+                        continue
+                    if kind == "comment":
+                        skipped.append((rel, i, line.strip()))
+                        continue
+                    if kind == "alias":
+                        for other in others:
+                            key = other + "->" + field
+                            aliases[key] = aliases.get(key, 0) + 1
+                        continue
+                    want = pinned.get(rel, {}).get(i)
+                    ok = bool(want is not None and mod.pin_ok(want, line))
+                    row = dict(path=rel, line=i, kind=kind, why=why, pinned=ok, text=line.strip())
+                    (direct if kind == "direct" else unparsed).append(row)
+    rows = direct + unparsed
+    return dict(direct=direct, unparsed=unparsed, skipped=skipped, aliases=aliases,
+                sites=len(rows), pinned=len([r for r in rows if r["pinned"]]),
+                unpinned=len([r for r in rows if not r["pinned"]]))
+
+
+def pin_role(root, field, path, lineno, site_keys):
+    """What a declared pin actually names: the field's storage, its guard, or a write."""
+    if (path, lineno) in site_keys:
+        return "write-site"
+    line = read_line(root, path, lineno) or ""
+    if re.search(r"\b(int|size_t|unsigned|long|ptr_t)\b[^;=]*\b" + re.escape(field) + r"\s*(;|\[)", line):
+        return "declaration"
+    if re.search(r"->" + re.escape(field) + r"\s*(>=|<=|==|!=|>|<)", line):
+        return "guard"
+    return "read"
+
+
+def exhaustion_why(receiver, field, cens, cover, other, declared):
+    """The 'not exhausted' sentence, rendered from the census -- never written by hand."""
+    expr = receiver + "->" + field
+    why = ("the claim quantifies over all %d write sites of %s in src/; the pin table names %d "
+           "of them" % (cens["sites"], expr, cens["pinned"]))
+    if not cover:
+        why += (" -- all %d declared pins name %s, so they are evidence about the range, not "
+                "exhaustion" % (declared, " and ".join(other)))
+    elif not other:
+        why += (" -- all %d declared pins are write sites (%s), and the other %d sites stay "
+                "unnailed" % (declared, ", ".join(cover), cens["unpinned"]))
+    else:
+        why += (" -- %d of the %d declared pins are write sites (%s), while %s names no write, "
+                "so %d sites stay unnailed" % (len(cover), declared, ", ".join(cover),
+                                               " and ".join(other), cens["unpinned"]))
+    return why
+
+
+def emit_writesites(root, census):
+    """WRITESITES / WRITESITE / unparsed-write rows: the reach of each assumption, counted."""
+    print("WRITESITES-PINRULE|pinned=yes iff (path,line) is in the pin table and pin_ok(want,line) "
+          "holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss")
+    total = dict(sites=0, pinned=0, unpinned=0)
+    for ax_id, field in CENSUS_FIELDS:
+        cens = census[field]
+        expr = "t->" + field
+        print("WRITESITES|field=%s|sites=%d|direct=%d|unparsed=%d|pinned=%d|unpinned=%d|source=%s"
+              % (expr, cens["sites"], len(cens["direct"]), len(cens["unparsed"]),
+                 cens["pinned"], cens["unpinned"], CENSUS_SOURCE))
+        for row in cens["direct"] + cens["unparsed"]:
+            why = row["why"] or ("pin entry is verbatim-equal on this line" if row["pinned"]
+                                 else "no pin entry names this line")
+            print("WRITESITE|field=%s|at=%s:%d|kind=%s|pinned=%s|why=%s"
+                  % (expr, row["path"], row["line"], row["kind"],
+                     "yes" if row["pinned"] else "no", why))
+        for row in cens["unparsed"]:
+            print("unparsed-write|%s:%d|%s" % (row["path"], row["line"], row["text"]))
+        for rel, lineno, text in cens["skipped"]:
+            print("WRITESKIP|field=%s|at=%s:%d|kind=comment|raw=%s" % (expr, rel, lineno, text))
+        if cens["aliases"]:
+            print("WRITESITES-ALIAS|field=%s|others=%s|note=another receiver writes the same field; "
+                  "the claim is written against t only, so these are outside its scope by name, "
+                  "not by measurement"
+                  % (expr, ",".join("%s:%d" % (k, v) for k, v in sorted(cens["aliases"].items()))))
+        total["sites"] += cens["sites"]
+        total["pinned"] += cens["pinned"]
+        total["unpinned"] += cens["unpinned"]
+    for name in CENSUS_CONSTANTS:
+        print("WRITESITES|field=%s|sites=0|note=spec constant" % name)
+    print("WRITESITES-SUMMARY|fields=%d|sites=%d|pinned=%d|unpinned=%d|constants=%d"
+          % (len(CENSUS_FIELDS), total["sites"], total["pinned"], total["unpinned"],
+             len(CENSUS_CONSTANTS)))
 
 
 def run_script(py, script_unix):
@@ -156,25 +323,40 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
         print("unparsed|%s:%d|%s" % (os.path.basename(gen_path), idx, line))
 
     axioms = list(mod.AXIOMS)
+    census = {field: census_field(mod, root, "t", field, mod.PINNED) for _id, field in CENSUS_FIELDS}
     info = {}
     for ax in axioms:
         ax_id, title, kind, pins, text, basis = ax
         ok, bad, seen, declared, registered = pin_status(mod, root, ax)
         scope, var = SCOPE.get(ax_id, ("pointwise", None))
         cand, count = (None, 0)
+        cover, other = [], []
         if scope == "exhaustive" and var:
-            cand, count = write_sites(root, var)
+            receiver, field = var.split("->")
+            cens = census[field]
+            keys = {(r["path"], r["line"]) for r in cens["direct"] + cens["unparsed"]}
+            for path, lineno in pins:
+                role = pin_role(root, field, path, lineno, keys)
+                if role == "write-site":
+                    cover.append("%s:%d" % (os.path.basename(path), lineno))
+                else:
+                    other.append("%s %s:%d" % (PIN_PHRASE[role], os.path.basename(path), lineno))
+            count = cens["sites"]
+            cand = ("%s:%d" % (cens["direct"][0]["path"], cens["direct"][0]["line"])
+                    if cens["direct"] else None)
         if not ok:
             status = "asserted"
             why = ("%s; the pin is declared in the registry but the check never ran on it, "
                    "so the claim has one less witness than it advertises" % bad[0]
                    if "not in the pin table" in bad[0] else
                    "%s; the pinned line moved, so the claim must be re-read" % bad[0])
+            if scope == "exhaustive" and var:
+                why = why + " | " + exhaustion_why(receiver, field, census[field], cover, other,
+                                                   declared)
             cand = bad[0].split(";")[0]
         elif scope == "exhaustive":
             status = "asserted"
-            why = ("the claim quantifies over all %d write sites of %s in src/; the registry pins "
-                   "%d of them, which is evidence about a site, not exhaustion" % (count, var, declared))
+            why = exhaustion_why(receiver, field, census[field], cover, other, declared)
         else:
             status = "discharged"
             why = ""
@@ -300,6 +482,9 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
           % (len(axioms), counts["discharged"], counts["asserted"], vacuous_cell,
              "measured" if measured else "unmeasured", len(sites), extracted, len(unparsed)))
 
+    # --- write-site census: the reach of an assumption, as a number --------------------------
+    emit_writesites(root, census)
+
     # --- A-FRAME: carried by the extraction instrument, not by the z3 registry ---------------
     ex = os.path.join(root, "tools/z3bounds/extract_stack_effects.py")
     if not os.path.exists(ex):
@@ -332,6 +517,101 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
     return 0
 
 
+def self_check_writesites(gen_path, py_win):
+    """Five cells. The mutation cell is the one that proves the why-not sentence is rendered."""
+    me = os.path.abspath(__file__)
+
+    def run(extra):
+        res = subprocess.run([sys.executable, me, "--gen", gen_path, "--python", py_win] + extra,
+                             capture_output=True, text=True, timeout=1800)
+        return res.returncode, res.stdout
+
+    def field_rows(text):
+        found, counts = {}, {}
+        for line in text.split("\n"):
+            m = re.match(r"WRITESITES\|field=(\S+)\|sites=(\d+)\|direct=(\d+)\|unparsed=(\d+)\|"
+                         r"pinned=(\d+)\|unpinned=(\d+)\|", line)
+            if m:
+                found[m.group(1)] = [int(m.group(i)) for i in range(2, 7)]
+            m = re.match(r"WRITESITE\|field=([^|]+)\|", line)
+            if m:
+                counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+        return found, counts
+
+    cells = []
+    _rc, out = run([])
+    rows, n_rows = field_rows(out)
+    ok = bool(rows) and all(v[0] == v[1] + v[2] and n_rows.get(k, 0) == v[0]
+                            for k, v in rows.items())
+    cells.append(("identity", "sites == direct + unparsed and one WRITESITE row per site",
+                  ",".join("%s:%d/%d" % (k, v[0], n_rows.get(k, 0)) for k, v in sorted(rows.items())),
+                  ok))
+
+    _rc2, out2 = run(["--census-drop-pin", "src/vm/vm.c:4094"])
+    mrows, _ = field_rows(out2)
+    base, mut = rows.get("t->base"), mrows.get("t->base")
+    base_why = [l for l in out.split("\n") if l.startswith("AXIOM|name=A8|")]
+    mut_why = [l for l in out2.split("\n") if l.startswith("AXIOM|name=A8|")]
+    ok = bool(base and mut and base_why and mut_why
+              and mut[3] == base[3] - 1 and mut[4] == base[4] + 1
+              and base_why[0] != mut_why[0] and "names 2 of them" in mut_why[0])
+    cells.append(("pin-drop-mutation",
+                  "drop one write-site pin: pinned-1, unpinned+1, and A8's why-not now says "
+                  "'names 2 of them'",
+                  "pinned=%s->%s unpinned=%s->%s why-not-changed=%s"
+                  % (base[3] if base else "?", mut[3] if mut else "?",
+                     base[4] if base else "?", mut[4] if mut else "?",
+                     "yes" if base_why and mut_why and base_why[0] != mut_why[0] else "no"),
+                  ok))
+
+    a4 = [l for l in out.split("\n") if l.startswith("AXIOM|name=A4|")
+          and "role=extraction-premise" in l]
+    ok = (bool(a4) and "the field declaration vm.h:101" in a4[0]
+          and "the push guard vm.c:479" in a4[0])
+    cells.append(("pin-roles", "A4's why-not names what its two pins actually are",
+                  "declaration=%s guard=%s"
+                  % ("yes" if a4 and "the field declaration vm.h:101" in a4[0] else "no",
+                     "yes" if a4 and "the push guard vm.c:479" in a4[0] else "no"), ok))
+
+    tmp = tempfile.mkdtemp(prefix="ws_census_")
+    os.makedirs(os.path.join(tmp, "src", "vm"))
+    sample = "\n".join([
+        "void f(Thread *t) {",
+        "    memcpy(&t->sp, src, sizeof t->sp);",
+        "    void *p = (void *)(&t->sp);",
+        "    PUSH_SLOT(t->sp, 3);",
+        "    // t->sp = 99;  a commented-out write is not a site",
+        "    if (t->sp >= 0) return;",
+        "}",
+    ])
+    with open(os.path.join(tmp, "src", "vm", "x.c"), "w", encoding="utf-8") as fh:
+        fh.write(sample + "\n")
+    mod = load_gen(gen_path)
+    cens = census_field(mod, tmp, "t", "sp", mod.PINNED)
+    kinds = sorted(r["kind"] for r in cens["unparsed"])
+    ok = (kinds == ["indirect", "indirect", "unparsed"] and cens["sites"] == 3
+          and len(cens["skipped"]) == 1 and not cens["direct"])
+    cells.append(("indirect-shapes",
+                  "memcpy + address-taken + macro become indirect/unparsed; a read is not a site; "
+                  "a commented write is skipped",
+                  "kinds=%s sites=%d skipped=%d direct=%d"
+                  % (",".join(kinds) or "-", cens["sites"], len(cens["skipped"]),
+                     len(cens["direct"])), ok))
+
+    ok = ("WRITESITES|field=R|sites=0|note=spec constant" in out
+          and "WRITESITES|field=F|sites=0|note=spec constant" in out)
+    cells.append(("constants", "R and F are spec constants: sites=0 with a note, not an empty line",
+                  "R=%s F=%s" % ("yes" if "field=R|sites=0" in out else "no",
+                                 "yes" if "field=F|sites=0" in out else "no"), ok))
+
+    failed = 0
+    for name, expect, got, good in cells:
+        print("WRITECHECK|case=%s|expect=%s|got=%s|%s" % (name, expect, got, "PASS" if good else "FAIL"))
+        failed += 0 if good else 1
+    print("WRITECHECK|summary|cases=%d|pass=%d|fail=%d" % (len(cells), len(cells) - failed, failed))
+    return 2 if failed else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None,
@@ -340,8 +620,25 @@ def main():
     ap.add_argument("--gen", default=DEFAULT_GEN)
     ap.add_argument("--python", default=os.environ.get("PY_WIN", DEFAULT_PY_WIN),
                     help="Windows python with z3; only the mutation column needs it")
+    ap.add_argument("--census-drop-pin", default=None, metavar="PATH:LINE",
+                    help="drop one pin entry from the table for this run only: the negative "
+                         "control that shows the census numbers are read from the table")
+    ap.add_argument("--self-check-writesites", action="store_true",
+                    help="five cells: identity, pin-drop mutation, pin roles, indirect shapes, "
+                         "constants")
     args = ap.parse_args()
+    if args.self_check_writesites:
+        return self_check_writesites(os.path.abspath(args.gen), args.python)
     mod = load_gen(args.gen)
+    if args.census_drop_pin:
+        path, _, lineno = args.census_drop_pin.rpartition(":")
+        if path and lineno.isdigit() and int(lineno) in mod.PINNED.get(path, {}):
+            del mod.PINNED[path][int(lineno)]
+            print("CENSUS-MUTATION|dropped=%s:%s|effect=this run's pin table loses that line; "
+                  "no other table is touched" % (path, lineno))
+        else:
+            print("CENSUS-MUTATION|dropped=none|why=%s is not a pin entry in this tree"
+                  % args.census_drop_pin)
     # The default used to be dirname(HERE) -- i.e. tools/ -- which is wrong in every tree:
     # a reader holding only a sha got a FileNotFoundError on tools/src/vm/vm.h.  Ask the
     # tree instead, and refuse by name when there is no tree to ask.
