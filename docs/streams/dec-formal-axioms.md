@@ -206,7 +206,9 @@ T5 页 §11 的期望值跟着改，改的理由与改动同一个提交——�
 
 ## 10 树号与改动清单
 
-- 读数树：`f046f20`（父 `1699e3e` = 当时的 `origin/main`；工作树干净；`src/`、`selfhost/` 未动）。
+- 读数树：`2891d55`（本页 §11 那一节提交时的树；抬头写它是因为它能被检出——先前的 `f046f20`
+  是 `--amend` 之前的树，不在交付线上，见 §11.6）。父 `1699e3e` = 当时的 `origin/main`；工作树干净；
+  `src/`、`selfhost/` 未动。
 - 新文件：`tools/z3bounds/axiom_ledger.py`（344 行，纯 python3，无第三方依赖）、
   `docs/streams/dec-formal-axioms.readings.txt`（45 行逐字输出）。
 - 已改文件：`tools/z3bounds/gen_bounds_proof.py`（`--drop-axiom` 支持；`PINNED` 补回 A4 的第二条 pin；
@@ -214,3 +216,85 @@ T5 页 §11 的期望值跟着改，改的理由与改动同一个提交——�
   `docs/streams/dec-formal-bounds-t5.md`（§11 期望值与"基线为什么动"一段）。
 - 可复现性：同一命令连跑两次输出逐字相同（`cmp` 无差异）；本页自身的提交号不写进正文——自引用会漂，
   理由见 T2 页 §10。
+## 11 一张表怎么证明自己是完整的
+
+§8 记过 A4 那半个洞：`PINNED` 里少了 A4 的第二条 pin，于是 33 条声明只被检查了 32 条，而台账仍报
+"ok / discharged"。那一次是靠人眼的偶然发现，不是读数。这一节把它变成可跑的一格。
+
+判据一句话：**一张表的完整性不能由遍历表本身来证明。** 遍历 `PINNED` 的检查，对"表里少了东西"
+天生沉默——少的那条不会被访问，也就不会被抱怨。
+
+### 11.1 把期望写在表外
+
+`EXPECT_PIN_COUNT = 33` 是写在 `PINNED` 之外的常量，并注明：移动它必须与理由同一个提交
+（与本页 § 的"期望值是读数不是目标"同一条纪律）。检查往两个方向走，两个方向的参照物都在表外：
+
+- 条数：`held != EXPECT_PIN_COUNT` ⇒ `pin entry missing: expected 33, table holds 32`；
+- 声明：`AXIOMS` 与每个命题的 `guard_anchor` 声明的 pin，若表里没有 ⇒
+  `declared pin not in the table: <path>:<line>`。A4 那次掉的正是这一条：声明的 33 条里，表只认识 32 条。
+
+正常路径多一行读数（在"pin ok"之后、写脚本之前）：
+
+    PINS|files=5|pins=33|expect=33|declared=19|missing_from_table=0
+
+`files` 是涉及的源文件数，`pins` 是表里的条目数，`declared` 是被声明条的**去重**条数
+（19 条声明会展开到 33 个 pin：A4、A8 这类穷举型公理声明一组写点）。
+数不相等不是错，但两个数必须都在读数里——否则"表 33 条"和"被检查 33 条"会被混成一句。
+
+### 11.2 负控四格（含一格走真退出路径）
+
+进程内三格 + 真 CLI 一格，合计 `PINSCHECK|summary|cases=4|pass=4|fail=0`：
+
+    PINSCHECK|case=intact|expect=exit0+pins=33+declared=19|got=no findings|verdict=PASS
+    PINSCHECK|case=dropped-entry|expect=pin entry missing: expected 33, table holds 32|got=pin entry missing: expected 33, table holds 32|verdict=PASS
+    PINSCHECK|case=declared-not-in-table|expect=declared pin not in the table: <path>:<line>|got=<同一句>|verdict=PASS
+    PINSCHECK|case=cli-dropped-entry|expect=exit2+'pin entry missing: expected 33, table holds 32'+out_not_created|got=exit2+named+out=not_created|verdict=PASS
+
+前三格把表作为**参数**递给检查函数（所以能递进去一张坏表）；第四格用 `--drop-pin-entry path:line`
+走真进程，断言的是三件事同时成立：退出码 2、那句原话被印出来、**脚本没有被写出来**。
+只断言退出码会漏掉"退出码对但已经写了半个脚本"，只断言文本会漏掉"文本对但退出码 0"。
+
+### 11.3 为什么单开一个开关，而不是塞进旧自检
+
+`--self-check-pins` 的 summary 行 `SELFCHECK-PIN|summary|cases=5|pass=5|fail=0` 已经被 runner
+注册的测试钉住了。往那条自检里加格而改它的 cases 数，等于让别人的绿取决于我的改动；新开关
+`--self-check-pin-table` 有自己的 summary，旧的那条一字未动（读数仍是 5/5）。
+这也是"两个读数各自带地址"的一个具体用处：谁红，就知道是模型死了还是表缺了。
+
+同一轮还量到一个小缺陷，属于同一族：两个自检开关**同时**给的时候，第二个被静默跳过——
+因为分派处先 `return`。它不写在任何读数里，于是"没跑"和"跑了且通过"长得一样。
+改法是两个请求都跑、退出码按位或，单开关的输出逐字不变（否则钉住那行 summary 的测试会红）：
+`SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=both ask for a refusal, neither is a skip`。
+判据同样一句话：**并排两个检查时，"都没报错"不是一个读数，要分别报。**
+
+### 11.4 降级路径的实测格
+
+`--python /nonexistent/python` 跑一次（该格在没有 z3 的机器上也能跑）：
+
+    MUTATE|axiom=A7|drop|verdict-changed=unmeasured|from=-|to=-|note=no z3 interpreter at /nonexistent/python
+    LEDGER-UNMEASURED|why=no z3 interpreter at /nonexistent/python|effect=no axiom can be called vacuous in this run, so every status below is registry-only
+    LEDGER|axioms=8|discharged=6|asserted=2|vacuous=unmeasured|mutation=unmeasured|sites=18|extracted=9|unparsed=9
+
+判据两条：必须真的印出 `LEDGER-UNMEASURED`；`vacuous` 那个位置必须是**词**而不是 `0`。
+原来这一格印的是 `vacuous=0`，读者会把它读成"没有空转公理"，也就是"八条全部承重"——
+把"没量"读成"最强的结论"，这是降级路径最危险的读法。改成 `unmeasured` 后，同一格无法被误读。
+
+### 11.5 负控会污染它要检查的读数（本轮的实事故）
+
+幽灵声明写成字面量 `("A9", ...)` 时，台账的站点扫描把它当成第九条公理，读数变成
+`AXIOMS|sites=19|extracted=10`；改成 `tuple([...])` 构造后仍是 19/10——因为**注释里也写了那个字面形状**，
+而扫描器连注释一起扫。把注释改成不含该形状的措辞后回到 `sites=18|extracted=9`。
+
+教训与 §10 的"命令吃自己"同族，但方向相反：那边是判据把自己算进去，这里是**负控把自己算成被测对象**。
+可操作的规则：负控的形状不要写成被测对象的形状；写成形状之后，连解释这句的散文也要检查一遍。
+
+### 11.6 readings.txt 的抬头必须能被检出
+
+`docs/streams/dec-formal-axioms.readings.txt` 原来抬头写 `tree: f046f20`，而 `f046f20` 是
+`--amend` 之前的那棵树，`git merge-base --is-ancestor f046f20 9c13615` 非零——它不在交付线上，
+没人能 `git show` 到它。规则：**抬头写一个能被检出的树号**，否则"逐字输出"里的树号等于自证。
+
+改法不用改任何数字：在新树上重跑一遍，若两棵树读数逐字相同，就把"两棵树、一条读数"写进 § 的读数说明；
+若不同，写明差在哪一行、为什么。读数不因为换了树而改，只有树号会被指认。
+
+这一节自身也守页内零 locator 的规矩：上面所有行号都留在 `readings.txt` 里，正文只写文件名与形状。
