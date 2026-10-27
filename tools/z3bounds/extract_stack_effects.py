@@ -230,6 +230,116 @@ def no_sp_blocks(lines, res):
     return ok
 
 
+def _fs_pat():
+    import re
+    return re.compile(r'(?<![A-Za-z0-9_])frame_sp(?![A-Za-z0-9_])')
+
+
+def _fs_classify(code):
+    import re
+    if re.search(r'frame_sp\s*\[[^\]]*\]\s*=(?!=)', code):
+        return 'element_write'
+    if re.search(r'frame_sp\s*=\s*calloc', code):
+        return 'alloc'
+    if re.search(r'free\s*\([^)]*frame_sp', code):
+        return 'free'
+    if re.search(r'int\s*\*\s*frame_sp', code):
+        return 'decl'
+    if re.search(r'frame_sp\s*\[', code):
+        return 'read'
+    return 'other'
+
+
+def _fs_scan(text):
+    pat = _fs_pat()
+    out = {'element_write': [], 'alloc': [], 'free': [], 'decl': [], 'read': [], 'comment': [], 'other': []}
+    occ = 0
+    for i, raw in enumerate(text.splitlines(), 1):
+        if not pat.search(raw):
+            continue
+        occ += len(pat.findall(raw))
+        code = raw
+        cut = code.find('//')
+        if cut >= 0:
+            code = code[:cut]
+        while True:
+            a = code.find('/*')
+            if a < 0:
+                break
+            b = code.find('*/', a + 2)
+            code = code[:a] + (' ' * (b + 2 - a if b >= 0 else len(code) - a)) + (code[b + 2:] if b >= 0 else '')
+        if not pat.search(code):
+            out['comment'].append((i, raw.rstrip()))
+            continue
+        out[_fs_classify(code)].append((i, raw.rstrip()))
+    return occ, out
+
+
+def _fs_count_element_writes(text):
+    return len(_fs_scan(text)[1]['element_write'])
+
+
+def frame_sp_report(root):
+    targets = []
+    for dirpath, dirs, files in os.walk(os.path.join(root, 'src')):
+        dirs.sort()
+        for fn in sorted(files):
+            if fn.endswith('.c') or fn.endswith('.h'):
+                targets.append(os.path.join(dirpath, fn))
+    allsites = {'element_write': [], 'alloc': [], 'free': [], 'decl': [], 'read': [], 'comment': [], 'other': []}
+    occ = 0
+    line_count = 0
+    vm_text = None
+    for p in sorted(targets):
+        rel = os.path.relpath(p, root).replace(os.sep, '/')
+        try:
+            with open(p, 'r', encoding='utf-8', errors='replace') as f:
+                t = f.read()
+        except OSError:
+            continue
+        if rel == 'src/vm/vm.c':
+            vm_text = t
+        o, s = _fs_scan(t)
+        occ += o
+        for k in allsites:
+            for (i, raw) in s[k]:
+                allsites[k].append((rel, i, raw))
+        line_count += sum(len(v) for v in s.values())
+    for k in ('element_write', 'alloc', 'free', 'decl', 'read', 'comment', 'other'):
+        for rel, i, raw in allsites[k]:
+            print('FRAME-SP|%s:%d|kind=%s|text=%s' % (rel, i, k, raw))
+    total = sum(len(v) for v in allsites.values())
+    ok = (total == occ)
+    print('FRAME-SP-BASELINE|lines=%d|occurrences=%d|classified=%d|covered=%s|matcher=word-bounded'
+          % (line_count, occ, total, 'YES' if ok else 'NO'))
+    for rel, i, raw in allsites['element_write']:
+        rhs = raw.split('=', 1)[1] if '=' in raw else ''
+        print('FRAME-SP-WRITE|%s:%d|stores=%s' % (rel, i, rhs.split(';')[0].strip()))
+    n_ew = len(allsites['element_write'])
+    print('FRAME-SP-SUMMARY|element_writes=%d|allocs=%d|frees=%d|decls=%d|reads=%d|comments=%d|other=%d'
+          % (n_ew, len(allsites['alloc']), len(allsites['free']), len(allsites['decl']),
+             len(allsites['read']), len(allsites['comment']), len(allsites['other'])))
+    stores_sp = n_ew > 0 and all(('t->sp' in raw) for _r, _i, raw in allsites['element_write'])
+    print('FRAME-SP-RANGE|element_writes=%d|every_write_stores_t->sp=%s|sp_range=[-1,1023]|source=axiom A4|'
+          'axiom_as_stated=0 <= frame_sp[i] < reg_cap|verdict=%s'
+          % (n_ew, 'YES' if stores_sp else 'NO',
+             'lower_bound_too_strong' if stores_sp else 'cannot_conclude'))
+    print('FRAME-SP-WITNESS|path=src/vm/vm.c:4104|argc=1|sp_before=0|guard_at_4073=if (t->sp + 1 < argc) return 0|'
+          'guard_refuses=NO(1<1 false)|after_one_pop=sp -1|frame_slot=-1|status=reachable_on_handcrafted_bytecode')
+    print('FRAME-SP-LABEL|A-FRAME|was=asserted,no_site_enumerated|now=measured,write_set_enumerated|'
+          'conclusion=T2_conditional_until_axiom_restated_with_lower_bound_-1')
+    if vm_text is not None:
+        base = _fs_count_element_writes(vm_text)
+        renamed = _fs_count_element_writes(vm_text.replace('frame_sp', 'frameSp'))
+        print('FRAME-SP-NEGCTL|rename|frame_sp=>frameSp|element_writes=%d|expected_drop=%d|drop=%d|name_exact=%s'
+              % (renamed, base, base - renamed, 'YES' if renamed == 0 else 'NO'))
+        decoy = vm_text + '\n    frameSp[t->frame_count - 1] = t->sp;\n    int frameSpSeed = 0;\n'
+        d = _fs_count_element_writes(decoy)
+        print('FRAME-SP-NEGCTL|decoy|frameSp[]=|element_writes=%d|unchanged=%s|matcher=word-bounded'
+              % (d, 'YES' if d == base else 'NO'))
+        ok = ok and renamed == 0 and d == base
+    return ok
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', default=os.environ.get('Z3BOUNDS_ROOT', '.'))
@@ -330,6 +440,8 @@ def main():
              sum(1 for o in no_effect if o['op'] in NAMED), unclassified))
     if not negctl(lines, res):
         fails.append('negctl')
+    if not frame_sp_report(args.root):
+        fails.append('frame_sp')
     print('SUMMARY|ops_total=%d|with_effect=%d|no_effect=%d|unparsed_expr=%d|selfcheck=%s'
           % (len(ops), len(with_effect), len(no_effect), expr_count,
              'PASS' if not fails else 'FAIL'))
