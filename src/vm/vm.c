@@ -2674,7 +2674,7 @@ static int vm_call_func_at(VM *vm, VmThread *t, int fidx, int argc, Value *argv)
     Bytecode *root = vm->code;
     if (!root || !t) return 0;
     if (fidx < 0 || fidx >= root->func_count || !root->funcs[fidx]) return 0;
-    if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap) return 0;
+    if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap) return 0;
     t->frame_code[t->frame_count] = t->code;
     t->frame_ip[t->frame_count] = t->ip;
     t->frame_base[t->frame_count] = t->base;
@@ -4076,7 +4076,7 @@ L_CALL_FUNC: {
                 vm->last_error = 1;
                 continue;
             }
-            if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap) {
+            if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap) {
                 fprintf(stderr, "閿欒�? 绾跨▼甯ф爤婧㈠嚭锛堣秴杩?%d 甯э級\n", VM_MAX_FRAMES);
                 t->running = false;
                 vm->last_error = 1;
