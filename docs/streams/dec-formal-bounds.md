@@ -120,7 +120,7 @@ A8 是本轮补上的关键公理：没有它，求解器会给出 base = 209611
     命令: ./tools/z3bounds/run_bounds_proof.sh    变体 P4/asis, P4/fix_reserve_frame
     树号: f393dda
 
-最小反例：第 2046 层帧里发起一次 1024 实参的调用，4097 行的初始化循环写 FR[1024]，即 reg[2095104 + 1024] = reg[2097152] = reg[reg_cap]——**恰好越界一个 Value**。
+最小反例：第 2046 层帧里发起一次 1024 实参的调用，`src/vm/vm.c:4097`（`                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);`）的初始化循环写 FR[1024]，即 reg[2095104 + 1024] = reg[2097152] = reg[reg_cap]——**恰好越界一个 Value**。
 算术上不需要 1024 个实参：循环写 FR[1..param_slots]，落点 base + 1024 + param_slots；守卫只保证 base + 1032 < reg_cap。两者的差就是 1016 个槽（1024 - 8）。
 候选补丁把松量从 8 改成整帧宽（base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap）后，读数转 unsat。
 
@@ -170,13 +170,21 @@ sat 只说明"模型里有见证"。见证能不能站住，取决于它踩了�
 
 1. P4 的见证要 `param_slots = 1024`；
 2. 这个上界来自 **A7**（`0 <= param_slots <= 1024`），而 A7 是本页唯一一条 `asserted`，**未证**；
-3. A7 的上界恰好是 P5 证明代码里**没有**的东西：`func_argc` 经 `src/runtime/vm_exec_builtin.c:83` 不夹取就进了 VM。也就是说 A7 不描述代码，描述的是"若要越界最少，实参得被夹在 1024 以内"的最佳情形；实参越不受控，P4 的越界只会更多（P5/declared_2000 的 976 槽就是这个方向）；
+3. A7 的上界恰好是 P5 证明代码里**没有**的东西：`func_argc` 经 `src/runtime/vm_exec_builtin.c:83`（`            bc->func_argc[bc->func_count] = (av.type == VAL_INT) ? av.ival : 0;`）不夹取就进了 VM。也就是说 A7 不描述代码，描述的是"若要越界最少，实参得被夹在 1024 以内"的最佳情形；实参越不受控，P4 的越界只会更多（P5/declared_2000 的 976 槽就是这个方向）；
 4. P4 的见证还要 `base = 2095104`，这依赖 **A8**（base 是 1024 的倍数、且从 0 起每次 +1024、返回时从 frame_back 恢复）。没有 A8，求解器给的是 `base = 2096119` 这种不可达见证——反例为真，但讲不出"多深踩"；
 5. 因此 P4 的正确读法是：**若 A7、A8 成立，则 P4 的状态在模型内可达**。这与"P4 是缺陷"不是同一个命题。本页**没有给出可执行的指令序列**（2046 层递归在 .im 里是否可达本轮未实测），所以 P4 标 `proved-conditional`，不标 `proved`。
 
 同理：P5 标 `proved-conditional`（条件 A8 + `func_argc` 域可由字节码写入，后者有源码路径但未在 HEAD 构建上实测）；P6 标 `proved-conditional`（条件：操作数字段可由字节码写入）。P1、P2、P3、P7 是 `proved`：它们的见证不依赖任何 `asserted` 公理（P7 只用 A4，A4 带 pin）。
 
 P5 比 P4 硬在入口：一行 .im 源码 `vm_exec(字典)` 就能把 `func_argc` 填成任意整数（`src/runtime/vm_exec_builtin.c:83` 一处代码可见），而 P4 的 2046 层深调用是"若可达"。读者该信哪一半，由这条入口差决定。
+
+另外把"三处操作数都直接取值"也钉成引文（不是转述）：
+
+    src/runtime/vm_exec_builtin.c:60  if (m > 0) { x = vm_array_get(vm, ins.ival - 1, 0); op = (OpCode)((x.type == VAL_INT) ? x.ival : 0); }
+    src/runtime/vm_exec_builtin.c:61  if (m > 1) { x = vm_array_get(vm, ins.ival - 1, 1); r1 = (x.type == VAL_INT) ? x.ival : 0; }
+    src/runtime/vm_exec_builtin.c:62  if (m > 2) { x = vm_array_get(vm, ins.ival - 1, 2); r2 = (x.type == VAL_INT) ? x.ival : 0; }
+
+连 opcode 本身（:60）都不在枚举范围内做检查，这一条对 T2 也相关。
 
 可达性：vm_exec 把外部字典直接装配成字节码（src/runtime/vm_exec_builtin.c:61 与 :83 两处都不做 band 检查），所以 func_argc、r1、r2 这些域在语言层面就可得。P5 的越界因此不需要任何深层调用：一帧、一次调用、一个字典值即可。
 
@@ -193,7 +201,7 @@ P5 比 P4 硬在入口：一行 .im 源码 `vm_exec(字典)` 就能把 `func_arg
 
 ## 7. 红线：两处会变红的地方
 
-1. **pin 漂移**（实测）：把 4079 行的 "+ 8" 换成 "+ VM_FRAME_REGS"（即候选补丁本身）后，在**副本**上跑生成器，得到 `PIN FAILED: src/vm/vm.c:4079 pin drift`，退出码 2，且**不生成**脚本。本页的读数因此不可能悄悄变成"针对另一份代码"。
+1. **pin 漂移**（实测）：把 `src/vm/vm.c:4079`（`            if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap) {`）里的 `+ 8` 换成 `+ VM_FRAME_REGS`（即候选补丁本身）后，在**副本**上跑生成器，得到 `PIN FAILED: src/vm/vm.c:4079 pin drift`，退出码 2，且**不生成**脚本。本页的读数因此不可能悄悄变成"针对另一份代码"。
 2. **变异不红就是测量失败**：每个 proved 命题的变异读数必须是 sat，每个 finding 的候选补丁必须是 unsat；17 个变体任一不符，脚本以退出码 1 结束（本次 0）。
 
 ## 8. 树号与改动清单
