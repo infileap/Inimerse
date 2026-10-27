@@ -23637,3 +23637,34 @@ A 与 C 的 stderr 逐字：`fatal: ambiguous argument '<path>': unknown revisio
 **己、端点。** 本批读数：`explicit 185`／`unanchored 571`／`pins +12/+9`；门禁 16 阶段全 PASS；三格读数行均含 `tree=` 与 `worktree=` 两个字段。
 
 **庚、边界。** 甲栏两格是我本机实跑（同一 worktree 切两棵树），乙栏那一格也是实跑，但它证明的是「身份字段取 HEAD」，**不**证明量具会读工作树之外的东西；丙栏全部是对方读数，我只核了「两行同数」这一点。§1.382 丙栏的表述更正留在本节丁栏，原节不改。
+
+## §1.384 增补四百一十六：一个数证不了内容
+
+上一节我说 `worktree=` 「只给一个比特」，本节把那个括号拆开：它既不是比特也不是常量，是一个**省略了单位的计数**。而真正能区分内容的是哈希，不是计数。
+
+**甲、它是怎么来的（一行）。** 读数行里 `worktree=` 的值就是 `git status --porcelain` 的**行数**，空则印 `clean`：读的那一行逐字含 `len(subprocess.run(['git','-C',str(REPO_ROOT),'status','--porcelain'], …).stdout.splitlines())` 与 `dirty({_d})`。所以单位是「条目」，而条目由 git 折叠规则决定，不由改动本身决定。
+
+**乙、八格（我的构造，逐格复原；每格只改一处）。**
+
+| 改动 | `worktree=` |
+|---|---|
+| 一个文件改一处 | `dirty(1)` |
+| 两个文件各一处 | `dirty(2)` |
+| **一个文件改三处** | `dirty(1)` |
+| 一个未跟踪文件 | `dirty(1)` |
+| **新建目录 + 三个未跟踪文件** | `dirty(1)`（`git status --porcelain` 也只有 1 行：折叠成目录） |
+| 一个已暂存的新文件 | `dirty(1)` |
+| **未暂存的移动**（删一个 + 复制一个） | `dirty(3)` |
+| 已暂存的 `git mv` | `dirty(1)` |
+
+⇒ 同一个 `dirty(1)` 至少覆盖三种不同状态：改一处、改三处、新目录里三个文件。**计数没有单位，就没有内容。**
+
+**丙、决定性的一格：同数不同态。** 两个不同的单文件改动，`worktree=` 都是 `dirty(1)`，而把 `git status --porcelain -z` 的字节做摘要，两个状态分得开：改 `BOARD` 得 `00d2bb56051a`、改 `STATUS` 得 `31ae31885612`；干净树是空串的摘要 `e3b0c44298fc`。这两个值与我独立复现的对方读数额逐位相同。
+
+**丁、拒绝测量时，处方被写死了。** 把被扫的文档挪走再跑：rc **4**、stdout **0 行**、stderr 两行——第一行给病因与文件名（`cannot read 'docs/BOARD.md': FileNotFoundError`），第二行给的却是**诊断加处方**：`this is the shell, not the tree: the path cannot be encoded under the current filesystem encoding.  Re-run with PYTHONUTF8=1 or LC_ALL=C.UTF-8.` 按这个处方跑两遍（`PYTHONUTF8=1`、`LC_ALL=C.UTF-8`），rc 仍是 4、文本一字不差；把文件放回后 `ENVIRONMENT` 计数为 0。⇒ 那句「这不是引用发现」是对的、有价值的；但跟在后面的诊断与处方只对一个病因成立，被写成了常量。
+
+**戊、四条判据。** ①一个数证不了内容：要报内容就给哈希，并写明哈希的对象（这里是 `git status --porcelain -z` 的字节）；②计数必须带单位与折叠规则，否则同一格数字可对应多种状态；③拒绝测量时，「这不属于本类判据」这句可以写死，「病因是什么、怎么修」不能写死——处方要按病因分派，或干脆只给事实不给处方；④字段本身建议改成 `dirty(<n> entries)` 加 `dirty-digest=<12 位>`，与本仓 `inputs=<n> files, digest=…` 同族。
+
+**己、端点。** 本批读数：`explicit 185`／`unanchored 571`／`pins +12/+9`；门禁 16 阶段全 PASS。
+
+**庚、边界。** 乙栏八格是我本机同一 worktree 上逐格复原跑出的，其中「未暂存的移动」我用的构造是「先从索引删掉、再复制一份」，得 `dirty(3)`；对方用另一种构造得 `dirty(2)`——同一逻辑改动，两个数，正说明单位取决于构造。丙栏的两个摘要与我复现的对方读数逐位相同，但对方的工作树不是我这棵。丁栏只测了「文件不存在」一个病因，未测编码真的坏掉时那句处方是否有效。
