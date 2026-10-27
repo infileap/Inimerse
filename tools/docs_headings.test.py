@@ -11,7 +11,13 @@ shapes of a change:
                                                     number, not 1;
   * a new section added                          -> added > 0, still green,
                                                     because growth is what the
-                                                    ceilings already bound.
+                                                    ceilings already bound;
+  * a section added under a pin nobody updated   -> stale > 0, still green:
+                                                    an old baseline is a reading
+                                                    (HEADINGS|stale|...), never a
+                                                    verdict, so no lane pays a
+                                                    re-pin for another lane's
+                                                    commit.
 
 Each case restores the tree before the next one, and every run happens in a
 throwaway git worktree at HEAD: the tree under test is never modified.
@@ -35,6 +41,10 @@ HEADINGS = re.compile(
     r"^HEADINGS\|tree=([0-9a-f]{7}|<no tree>)\|base=(\d+)\|now=(\d+)\|removed=(\d+)\|added=(\d+)$",
     re.M,
 )
+STALE = re.compile(
+    r"^HEADINGS\|stale\|pin-tree=([0-9a-f]{7}|<unpinned>)\|head=([0-9a-f]{7}|<no tree>)\|behind=(\d+)$",
+    re.M,
+)
 
 
 def refuse(why: str) -> "NoReturn":
@@ -49,6 +59,12 @@ def read(text: str) -> dict | None:
         return None
     return {"tree": m.group(1), "base": int(m.group(2)), "now": int(m.group(3)),
             "removed": int(m.group(4)), "added": int(m.group(5))}
+
+
+def behind_of(text: str) -> int:
+    """Sections the pin has never seen, as the tool reports them; -1 when absent."""
+    m = STALE.search(text)
+    return int(m.group(3)) if m else -1
 
 
 def run(tree: Path) -> tuple[int, str, str]:
@@ -91,6 +107,9 @@ def main() -> int:
     doc = "docs/STATUS.md"
     whole = "docs/streams/dec-inimbc-outlet.md"
     try:
+        # Read the copy against the committed pin once: this run names the tree
+        # it measured and says how far the pin is behind.  Nothing here asserts
+        # anything about the pin's age -- stale-is-a-reading owns that question.
         rc, out, err = run(tree)
         base = read(out)
         if base is None:
@@ -99,12 +118,34 @@ def main() -> int:
                               capture_output=True, text=True).stdout.strip()
         named_tree = base["tree"] == (head or "<no tree>")
         print(f"docs-headings: base readings -- tree {base['tree']}, base {base['base']}, now {base['now']}, "
-              f"removed {base['removed']}, added {base['added']}, names-head={named_tree}; rc={rc}")
-        cases.append(("clean-tree", rc == 0 and base["removed"] == 0 and base["added"] == 0,
-                      f"rc={rc}, removed={base['removed']}, added={base['added']} (want rc=0 with nothing removed or added)"))
+              f"removed {base['removed']}, added {base['added']}, stale behind {behind_of(out)}, "
+              f"names-head={named_tree}; rc={rc}")
         cases.append(("reading-names-its-tree", named_tree,
                       f"tree={base['tree']} head={head or '<no tree>'} (want the reading to name the tree it measured)"))
 
+        # A control that measures deletion must not read an input that moves
+        # with other people's commits.  This case is that input, alone: a
+        # section is appended and the pin is NOT updated.  The tool must stay
+        # green -- nothing was removed -- and report the distance in the stale
+        # line.  Before this split the same shape reddened clean-tree, so every
+        # lane paid a re-pin plus a gate whenever another lane added a section
+        # (measured on c8bbe99 / 469a7b4 / 63d9344, all red on added=1).
+        snapshot = (tree / doc).read_text(encoding="utf-8")
+        (tree / doc).write_text(
+            snapshot + "\n## scope control: a section the pin has never seen\n\nadded on purpose\n",
+            encoding="utf-8")
+        rc, out, err = run(tree)
+        got = read(out)
+        stale = behind_of(out)
+        cases.append(("stale-is-a-reading", rc == 0 and got is not None and got["removed"] == 0 and stale >= 1,
+                      f"rc={rc}, removed={got['removed'] if got else 'none'}, stale behind={stale} "
+                      f"(want rc=0, removed=0, behind>=1: an old baseline is not a defect)"))
+        (tree / doc).write_text(snapshot, encoding="utf-8")
+
+        # The deletion cases below run against the pin as committed -- the stale
+        # one -- because deleting a section the pin already knows must be seen
+        # without anyone re-pinning first.  If they were only green after a
+        # re-pin, the pin would still be "the switch that turns the gate green".
         path = tree / doc
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines(keepends=True)
@@ -130,13 +171,25 @@ def main() -> int:
                       f"rc={rc}, removed={got['removed'] if got else 'none'} (want rc=1 and removed={whole_had}, the whole file counted)"))
         subprocess.run(["git", "-C", str(tree), "checkout", "--", whole], check=True)
 
-        grown = tree / doc
-        grown.write_text(grown.read_text(encoding="utf-8") + "\n## scope control: a section that was not there before\n\nadded on purpose\n",
-                         encoding="utf-8")
+        # Only now, after the deletion cases have run against the stale pin, pin
+        # the copy's own tree and confirm the stale reading drops to zero: a
+        # fresh pin reads behind=0, so the line cannot silently stop working.
+        # This --write-pin runs in the throwaway copy
+        # and never against the repository: the committed pin is written by the
+        # lane that merges, because the pin's subject is the tree that exists
+        # only after the fast-forward -- a lane author's pin is right on their
+        # tree and wrong on the merged one, and its failure looks exactly like
+        # "someone else's commit reddened me".
+        pin_run = subprocess.run([sys.executable, str(tree / TOOL), "--write-pin"],
+                                 cwd=str(tree), capture_output=True, text=True)
+        if pin_run.returncode != 0:
+            refuse(f"--write-pin failed in the throwaway copy: {pin_run.stderr.strip()[:200]}")
         rc, out, err = run(tree)
-        got = read(out)
-        cases.append(("section-added", rc == 0 and got is not None and got["added"] >= 1,
-                      f"rc={rc}, added={got['added'] if got else 'none'} (want rc=0 and added>=1): growth is what the ceilings bound, not this"))
+        fresh = read(out)
+        fresh_stale = behind_of(out)
+        cases.append(("clean-tree", rc == 0 and fresh is not None and fresh["removed"] == 0 and fresh_stale == 0,
+                      f"rc={rc}, removed={fresh['removed'] if fresh else 'none'}, stale behind={fresh_stale} "
+                      f"(want rc=0, removed=0, behind=0 right after re-pin; baseline freshness is not this case's question)"))
     finally:
         subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
         shutil.rmtree(holder, ignore_errors=True)

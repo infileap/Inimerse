@@ -15,7 +15,25 @@ a deliberate act (--write-pin) rather than a quiet side effect.
 
   removed > 0  ->  red.  A section vanished; a later reader will not know it
                    was ever there, and no ceiling will ever say so.
-  added   > 0  ->  printed, not red.  Growth is what the ceilings are for.
+  added   > 0  ->  printed, not red.  Growth is what the ceilings are for, and
+                   growth is also what the stale line below counts.
+
+The stale line answers a different question: how many sections exist now that
+the pin has never seen (HEADINGS|stale|...).  It is a reading, not a gate.  The
+verdict comes from removed alone, because a baseline that is merely old is not
+a defect -- and letting it redden means every lane pays a re-pin plus a full
+gate whenever another lane adds a section, which teaches everyone that a red
+here means "re-pin" rather than "look".  A measurement whose input moves with
+other people's commits is not a measurement of this tree.  Re-pinning stays a
+deliberate act; the stale line is how a reader sees it is due.
+
+One limit, stated rather than hidden: the comparison is by count per file, so
+while the pin is behind, a deletion and an addition of equal size in the same
+file cancel out and removed reads 0.  That window exists only between a commit
+that adds sections and the re-pin that follows it -- the pin is written by the
+lane that merges, on the tree the merge produced -- and the stale line is what
+says the window is open.  Measuring a deletion by identity instead of by count
+would close it; that is a change to the pin format, not to this verdict.
 """
 from __future__ import annotations
 
@@ -113,6 +131,10 @@ def main() -> int:
     tree_now = git("rev-parse", "--short=7", "HEAD").stdout.strip() or "<no tree>"
     print(f"HEADINGS|tree={tree_now}|base={base_total}|now={now_total}|removed={removed}|added={added}")
     print(f"HEADINGS|pin|tree={pin.get('tree', '<unpinned>')}|docs={pin.get('docs', '?')}|files={len(base_counts)}")
+    # How far the pin is behind HEAD, counted in sections.  Printed always, so
+    # that a fresh pin reads behind=0 and a reader can tell "nothing new" from
+    # "nothing measured"; it never touches the exit code.  See the docstring.
+    print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|behind={added}")
     for rel, b, n, kind in rows:
         print(f"HEADINGS|{kind}|{rel}|base={b}|now={n}")
     if len(rows) > 40:
