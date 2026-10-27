@@ -753,6 +753,51 @@ def guard_pins(props, pinned):
     return problems
 
 
+# tree=9c13615: 5 pinned files, 33 pinned lines.  This number is written DOWN, not
+# counted from PINNED, because a table cannot prove its own completeness: walking
+# the table to check the table is exactly how the A4 hole survived -- the pin was
+# declared by the axiom and absent from the table, so every check that iterates the
+# table agreed with itself.  Moving this constant is a deliberate act, and the
+# reason goes in the same commit as the move.
+EXPECT_PIN_COUNT = 33
+
+
+def declared_pins(axioms=None, props=None):
+    """Every (path, line) some axiom or proposition claims to rest on."""
+    axioms = AXIOMS if axioms is None else axioms
+    props = PROPS if props is None else props
+    out = []
+    for ax in axioms:
+        out.extend(ax[3] or [])
+    for prop in props:
+        out.append(prop.guard_anchor)
+    return out
+
+
+def pin_table_problems(pinned=None, axioms=None, props=None):
+    """Two directions, both checked against something outside the table itself.
+
+    (1) the table holds the expected number of entries -- compared with a written
+        constant, not with len(PINNED);
+    (2) every pin some axiom or proposition declares is actually in the table --
+        this is the direction the A4 hole fell through, since a declaration that
+        never reaches the table is invisible to a table walk.
+    """
+    pinned = PINNED if pinned is None else pinned
+    axioms = AXIOMS if axioms is None else axioms
+    props = PROPS if props is None else props
+    problems = []
+    held = sum(len(v) for v in pinned.values())
+    if held != EXPECT_PIN_COUNT:
+        problems.append("pin entry missing: expected %d, table holds %d"
+                        % (EXPECT_PIN_COUNT, held))
+    declared = sorted(set(declared_pins(axioms, props)))
+    missing = [loc for loc in declared if loc[1] not in pinned.get(loc[0], {})]
+    for path, lineno in missing:
+        problems.append("declared pin not in the table: %s:%d" % (path, lineno))
+    return problems, held, len(declared), missing
+
+
 def check_pins(root, cache):
     problems = []
     pins = []
@@ -782,6 +827,73 @@ def check_negative_pins(root, cache, problems):
                         "pinned %r -- re-read P6's premise before trusting it"
                         % (found, REG_CAP_LINES_IN_EXECUTOR))
     return found
+
+
+def self_check_pin_table(root):
+    """Does the table-check itself walk the table?  These four cells answer it.
+
+    The first three hand the checker its inputs directly, so a version that walked
+    PINNED instead of comparing against written expectations would pass all three and
+    be caught nowhere; the fourth drives the real CLI with one entry removed and
+    asserts the real refusal path (exit 2, the message, and no script written), so the
+    control is a reading about the tool and not just about a helper function.
+    """
+    results = []
+    problems, held, declared_n, _missing = pin_table_problems()
+    results.append(("intact", "exit0+pins=%d+declared=%d" % (held, declared_n), problems, None))
+
+    cut = dict((k, dict(v)) for k, v in PINNED.items())
+    victim_path = sorted(cut)[0]
+    victim_line = sorted(cut[victim_path])[0]
+    del cut[victim_path][victim_line]
+    p2, held2, _, _ = pin_table_problems(pinned=cut)
+    results.append(("dropped-entry",
+                    "pin entry missing: expected %d, table holds %d" % (EXPECT_PIN_COUNT, held2),
+                    p2, None))
+
+    # Built from a list rather than written as a registry-style tuple literal: the
+    # ledger's site scan looks for that shape anywhere in this file, comments included,
+    # and a negative control must not look like a ninth axiom to the scanner (it read
+    # sites=19 twice -- once from the literal, once from naming it in this comment --
+    # which is the control leaking into the reading it exists to check).
+    ghost_row = tuple(["A9", "ghost pin (negative control)", "measured",
+                       [("src/vm/vm.h", 999999)], "false", "control only"])
+    ghost = list(AXIOMS) + [ghost_row]
+    p3, _, _, _ = pin_table_problems(axioms=ghost)
+    results.append(("declared-not-in-table",
+                    "declared pin not in the table: src/vm/vm.h:999999", p3, None))
+
+    fails = 0
+    for case, expect, probs, _ in results:
+        got = probs[0] if probs else "no findings"
+        ok = (not probs) if case == "intact" else any(expect in p for p in probs)
+        fails += 0 if ok else 1
+        print("PINSCHECK|case=%s|expect=%s|got=%s|verdict=%s"
+              % (case, expect, got, "PASS" if ok else "FAIL"))
+
+    # The real CLI, with one entry removed at load time: the refusal must name the
+    # count and must not leave a script behind.
+    import tempfile
+    gen = os.path.abspath(__file__)
+    drop = "%s:%d" % (victim_path, victim_line)
+    with tempfile.TemporaryDirectory(prefix="z3pintab-") as td:
+        out = os.path.join(td, "out", "bounds_proof.py")
+        r = subprocess.run([sys.executable, gen, "--root", root, "--out", out,
+                            "--drop-pin-entry", drop], capture_output=True, text=True)
+        text = (r.stderr or "") + (r.stdout or "")
+        named = "pin entry missing: expected %d, table holds %d" % (EXPECT_PIN_COUNT, held2)
+        wrote = os.path.exists(out)
+        ok = r.returncode == 2 and named in text and not wrote
+        expect = "exit2+%r+out_not_created" % named
+        got = "exit%d+%s+out=%s" % (r.returncode,
+                                    "named" if named in text else "unnamed",
+                                    "created" if wrote else "not_created")
+        fails += 0 if ok else 1
+        print("PINSCHECK|case=cli-dropped-entry|expect=%s|got=%s|verdict=%s"
+              % (expect, got, "PASS" if ok else "FAIL"))
+    total = 4
+    print("PINSCHECK|summary|cases=%d|pass=%d|fail=%d" % (total, total - fails, fails))
+    return 0 if fails == 0 else 2
 
 
 def build_script(root, pins, digests, neg_lines, gen_sha, drop_axiom=None):
@@ -917,18 +1029,43 @@ def main():
     ap.add_argument("--self-check-pins", action="store_true",
                     help="negative control for the pin table: a drift in a COPY of the tree "
                          "must exit 2 and must not write a script")
+    ap.add_argument("--self-check-pin-table", action="store_true",
+                    help="negative control for the table's COMPLETENESS: remove an entry and "
+                         "the tool must refuse with the count it expected")
+    ap.add_argument("--drop-pin-entry", default=None, metavar="path:line",
+                    help="negative control only: delete one entry from PINNED at load time, so "
+                         "the completeness check can be driven through the real exit path")
     args = ap.parse_args()
-    if not args.out and not args.self_check_pins:
-        ap.error("--out is required (except with --self-check-pins)")
+    if not args.out and not (args.self_check_pins or args.self_check_pin_table):
+        ap.error("--out is required (except with a self-check)")
     root = os.path.abspath(args.root)
-    if args.self_check_pins:
-        return self_check_pins(root)
+    if args.self_check_pins or args.self_check_pin_table:
+        # Both flags together used to return after the first one, so the second check
+        # never ran and its silence looked like agreement.  Run every requested cell and
+        # OR the exit codes; the single-flag output stays byte-identical, so a test that
+        # pins those summary lines is unaffected.
+        both = args.self_check_pins and args.self_check_pin_table
+        rc = 0
+        if args.self_check_pin_table:
+            rc |= self_check_pin_table(root)
+        if args.self_check_pins:
+            rc |= self_check_pins(root)
+        if both and not args.quiet:
+            print("SELFCHECK-ALL|cells=9|kinds=pin-drift+completeness|note=both ask for a "
+                  "refusal, neither is a skip")
+        return rc
+    if args.drop_pin_entry:
+        dpath, dline = args.drop_pin_entry.rsplit(":", 1)
+        PINNED.get(dpath, {}).pop(int(dline), None)
     cache = {}
     pins, digests, problems = check_pins(root, cache)
     neg = check_negative_pins(root, cache, problems)
-    if problems:
+    table_problems, held, declared_n, missing = pin_table_problems()
+    if problems or table_problems:
         for p in problems:
             print("PIN FAILED: " + p, file=sys.stderr)
+        for p in table_problems:
+            print("PIN TABLE FAILED: " + p, file=sys.stderr)
         return 2
     gen_path = os.path.abspath(__file__)
     with open(gen_path, "rb") as fh:
@@ -937,6 +1074,8 @@ def main():
         for path, lineno, text, _ok in pins:
             print("pin ok  %s:%d  %s" % (path, lineno, text[:96]))
         print("pin ok  negative: reg_cap in executor body at %r" % (neg,))
+        print("PINS|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
+              % (len(PINNED), held, EXPECT_PIN_COUNT, declared_n, len(missing)))
         for path, dg in sorted(digests.items()):
             print("sha256  %s  %s" % (dg[:16], path))
         head7 = git_head(root)
