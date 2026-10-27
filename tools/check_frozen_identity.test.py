@@ -180,10 +180,18 @@ def main(argv=None):
     else:
         key = a.self_key or os.path.basename(a.product)
     product_obj, _o, _m = load_product(a.product)
-    if _o != 'ok':                      # synthetic products are built above
-        print('%s %s' % (_m, a.product))
-        print('VERDICT input_%s' % _o)
-        return 3
+    # No guard here: a product the caller cannot use is classified once, in the
+    # early guard above (`if a.product is not None:`).  This call site exists only
+    # for `product_obj`, which the cells below need.
+    #
+    # Why having no second guard is safe -- measured, not assumed: an instrumented
+    # copy counted how often this branch was reached before it was removed, across
+    # seven inputs (built fixture, healthy product, not JSON, JSON without
+    # "frozen", JSON without its own key, a directory, a non-existent path).  The
+    # counter read 0.  Deleting the early guard instead made the same counter read
+    # 4, with all seven inputs behaving identically either way -- so these were
+    # never "a guard and its duplicate", but two complete classifiers differing
+    # only in which runs first, one of which no input could reach.
     print('SOURCE      %s' % ('synthetic fixture' if synthetic else a.product))
     cells = []
 
