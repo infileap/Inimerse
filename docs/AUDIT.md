@@ -23693,3 +23693,36 @@ A 与 C 的 stderr 逐字：`fatal: ambiguous argument '<path>': unknown revisio
 **己、端点。** 本批读数：`explicit 185`／`unanchored 571`／`pins +12/+9`；门禁 16 阶段全 PASS。
 
 **庚、边界。** 第二格我用「`PATH` 里只留 python 的符号链接」造出，未测「git 存在但不可执行」；第三格我拷了 `docs/` 与 `CMakeLists.txt` 才得到 16 行，对方在同一病因下只拷了工具，得退出码 2 与三行 —— **同一个病因，读数取决于你带走了哪些文件**，这一条本身比任何单格都重要。第一、二格的 stdout 都是 0 行，第三格 16 行、第四格 0 行，均逐格确认。
+
+## §1.386 增补四百一十八：一个病因，六条红
+
+§1.385 的丙栏被对方一句话问倒了：它复现不出我那格的读数。本节先把它还原成两格对照，再解剖「六条断言」——因为那一格里 `FAILED (6 assertion(s))` 看起来像六笔债。
+
+**甲、先对齐命令，再对齐结论。** 对方问我「你的 `pwd`、拷贝目标、是否在仓库内部」。答案是：我把整棵树拷进了**当前 worktree 自己的子目录**（`.probe/notgit`），而 worktree 属于主仓。同一份文件、两个位置，两种读数：
+
+| 位置 | 退出码 | stdout | stderr |
+|---|---|---|---|
+| 拷到仓库外（`/tmp/nogitA`） | **2** | 0 行 | 2 行：`not a git repository at /tmp/nogitA; there is no history to take a base from.`／`refusing to report a delta with no base.` |
+| 拷到**仓库内**的子目录（`.probe/notgit`） | **1** | **16 行** | 0 行，末行 `FAILED (6 assertion(s)).` |
+
+⇒ 这是**第四种通道**：`git` 在、仓库也在，只是**不是你以为的那个仓库**——向上找到父仓后，它照常扫了一遍，把「输入集为空」当成一次真的测量失败。§1.385 庚栏那句「读数取决于你带走了哪些文件」应改为「**取决于拷贝落在哪个仓库里**」；文件本身没变。
+
+**乙、六条红解剖（格 B 的 stdout 逐条）。** 一共 16 行 `check_line_refs:` 输出，其中失败行六条，构成是：
+
+| 条 | 类别 | 数 |
+|---|---|---|
+| 输入集为空 | `the input set is empty … a failure and not a pass` | 1 |
+| 四种写法计数归零 | `no reference is written in the {prefix,prefix-range,link+bare,bare} form any more …` | **4** |
+| `explicit` 相对基准掉了 | `explicit-form references: +0 since base 1c6b3381… but EXP_LINE_REFS_DELTA is +12 …` | 1 |
+| `unanchored` 超天花板 | 本格未触发 | 0 |
+| `mis-labelled` | 本格未触发 | 0 |
+
+代码侧对上：失败累积只有 **5 个** `failures.append` 点，其中一个在 `for w in WRITINGS` 的循环里，而 `WRITINGS` 是四元组 ⇒ 上限 8 条。**一个病因（输入集为空）机械放大成六条红**：空集直接红一条；四种写法计数因为同一个输入集归零再红四条；`explicit` 从基准的 173 掉到 0、delta 变成 −173 而声明是 `+12`，再红一条。
+
+**丙、为什么这四条永远同进同退。** 四个写法计数都从同一份「输入集」派生，输入集空则四个全为 0；它们唯一的共同上游就是「扫描有没有拿到东西」，所以**四元组独立度是 1**。剩下 `explicit` 与 `unanchored` 是同一行 `pins` 的两个视图，整节被删或被加时也同进同退 ⇒ 六条红的独立病因数在这一格里是 **1**，在全盛情形下大约也只有 2。
+
+**丁、判据。** ①读「红了几条」必须同时给**独立病因数**，后者靠每条红带病因标识来数，不能靠人读；②一条病因能机械放大四条以上时，条数不是严重度；③`FAILED (N assertion(s))` 里的 `N` 是断言数，不是债数，写报告时不能当分母；④入口修好后（`git` 缺失 → 具名句与专属退出码），仍需区分「拒绝测量」与「量完发现债」这两类，别让前者的红进后者的计数。
+
+**戊、端点。** 本批读数：`explicit 185`／`unanchored 571`／`pins +12/+9`；门禁 16 阶段全 PASS。
+
+**己、边界。** 甲栏第二格我用「拷进 worktree 子目录」造出，未换其它父仓层级验证；乙栏计数来自那一格的 stdout 逐行 grep，不是人工阅读；`unanchored` 与 `mis-labelled` 两类在本格未触发，它们的触发条件与独立度未测。修后三格（`git` 缺失 → rc 4、一行「git is not on PATH; nothing was measured」；不在仓库里 → rc 2、两行；文件缺失 → 只给文件不在）我实测过，属对方补丁后的现行行为。
