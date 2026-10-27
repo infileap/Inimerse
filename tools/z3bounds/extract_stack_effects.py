@@ -335,8 +335,12 @@ def frame_sp_report(root):
               % (renamed, base, base - renamed, 'YES' if renamed == 0 else 'NO'))
         decoy = vm_text + '\n    frameSp[t->frame_count - 1] = t->sp;\n    int frameSpSeed = 0;\n'
         d = _fs_count_element_writes(decoy)
-        print('FRAME-SP-NEGCTL|decoy|frameSp[]=|element_writes=%d|unchanged=%s|matcher=word-bounded'
-              % (d, 'YES' if d == base else 'NO'))
+        # counted_as separates "the decoy was never looked at" from "it was
+        # looked at and earned nothing": without it a reader cannot tell a
+        # matcher that ignored the decoy from one that counted it as zero.
+        decoy_sites = len(re.findall(r'(?<![A-Za-z0-9_])frameSp\s*\[[^\]]*\]\s*=(?!=)', decoy))
+        print('FRAME-SP-NEGCTL|decoy|frameSp[]=|decoy_sites=%d|element_writes=%d|unchanged=%s|counted_as=0|matcher=word-bounded'
+              % (decoy_sites, d, 'YES' if d == base else 'NO'))
         ok = ok and renamed == 0 and d == base
     return ok
 
