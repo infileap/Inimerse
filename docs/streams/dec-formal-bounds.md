@@ -84,6 +84,8 @@ A8 是本轮补上的关键公理：没有它，求解器会给出 base = 209611
 
 每个命题五行：靶子 / 命题 / 读数 / 命令 / 树号。asis 是代码原样，其余是变异或候选补丁。
 
+**这一节的读数是修复前的读数**（树 `f393dda`，`src/vm/vm.c` blob `91a495cb`）：P4 的 asis=sat、P5 的 guard_fix_only=sat 都属于那棵树上的事实，本页不改写。main 上的两个修复（`c4d3db4` 整帧预留、`55d9526` 夹取 `param_slots`）之后，同一套命题在同一棵新树（`d064f8d`，blob `98889214`）上的复量见 `docs/streams/dec-formal-bounds-t5.md`：asis 翻 unsat，旧守卫变成红色变体 `prefix_guard_plus_8`=sat。**读数不跨树顶替**，要判断"现在怎么样"看 T5 页。
+
 ### P1 调用函数索引：唯一把 fidx 挡在 funcs[] 外的守卫
 
     靶子: src/vm/vm.c:4067  if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {

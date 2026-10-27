@@ -18,6 +18,7 @@ Windows interpreter only has to run it.
 """
 import argparse
 import hashlib
+import subprocess
 import json
 import os
 import re
@@ -27,24 +28,39 @@ import sys
 # pins: exactly what the model reads out of the tree
 # --------------------------------------------------------------------------
 PINNED = {
+    "src/compiler/bytecode.c": {
+        274: "    for (int i = 0; i < func_count && i < 1024; i++) {",
+    },
+    "src/compiler/bytecode.h": {
+        76: "    int r1;            /* target or source1 */",
+        79: "} RegInstruction;",
+        104: "    struct Bytecode *funcs[1024];",
+        106: "    int func_argc[1024];       /* argc of each function */",
+    },
+    "src/runtime/vm_exec_builtin.c": {
+        61: "                if (m > 1) { x = vm_array_get(vm, ins.ival - 1, 1); r1 = (x.type == VAL_INT) ? x.ival : 0; }",
+        83: "            bc->func_argc[bc->func_count] = (av.type == VAL_INT) ? av.ival : 0;",
+    },
     "src/vm/vm.c": {
-        4033: "            if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) {",
-        4067: "            if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {",
-        4073: "            if (t->sp + 1 < argc) {",
-        4079: "            if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap) {",
-        4093: "            t->base += FRAME_REGS;",
-        4095: "            int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;",
-        4096: "            for (int i = 0; i < param_slots; i++)",
-        4097: "                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);",
-        4099: "            for (int i = argc - 1; i >= 0; i--) {",
-        4100: "                value_move(&FR[i + 1], &t->stack[t->sp]);",
-        4101: "                t->sp--;",
-        4104: "            t->frame_sp[t->frame_count - 1] = t->sp;   /* save sp AFTER popping args */",
-        479: "    if (g_cur_thread->sp >= 1023) return;",
-        4511: "            nt->reg = malloc(nt->reg_cap * sizeof(Value));",
-        4515: "            nt->frame_code = calloc(nt->frame_cap, sizeof(Bytecode*));",
-        3025: "    Value *R = t->R;",
-        4513: "            nt->R = nt->reg;",
+        3026: "    Value *R = t->R;",
+        3085: "                t->base = 0;",
+        4034: "            if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) {",
+        4068: "            if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {",
+        4074: "            if (t->sp + 1 < argc) {",
+        4080: "            if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap) {",
+        4094: "            t->base += FRAME_REGS;",
+        4096: "            int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;",
+        4103: "            if (param_slots > VM_FRAME_REGS) param_slots = VM_FRAME_REGS;",
+        4104: "            for (int i = 0; i < param_slots; i++)",
+        4105: "                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);",
+        4107: "            for (int i = argc - 1; i >= 0; i--) {",
+        4108: "                value_move(&FR[i + 1], &t->stack[t->sp]);",
+        4109: "                t->sp--;",
+        4112: "            t->frame_sp[t->frame_count - 1] = t->sp;   /* save sp AFTER popping args */",
+        4133: "                t->base = t->frame_base[t->frame_count];",
+        4519: "            nt->reg = malloc(nt->reg_cap * sizeof(Value));",
+        4521: "            nt->R = nt->reg;",
+        4523: "            nt->frame_code = calloc(nt->frame_cap, sizeof(Bytecode*));",
     },
     "src/vm/vm.h": {
         73: "#define VM_THREAD_REG_COUNT (2048 * 1024)",
@@ -54,26 +70,13 @@ PINNED = {
         82: "#define VM_FRAME_REGS 1024",
         101: "    Value stack[1024]; int sp;",
     },
-    "src/compiler/bytecode.h": {
-        76: "    int r1;            /* target or source1 */",
-        79: "} RegInstruction;",
-        104: "    struct Bytecode *funcs[1024];",
-        106: "    int func_argc[1024];       /* argc of each function */",
-    },
-    "src/runtime/vm_exec_builtin.c": {
-        61: '                if (m > 1) { x = vm_array_get(vm, ins.ival - 1, 1); r1 = (x.type == VAL_INT) ? x.ival : 0; }',
-        83: "            bc->func_argc[bc->func_count] = (av.type == VAL_INT) ? av.ival : 0;",
-    },
-    "src/compiler/bytecode.c": {
-        274: "    for (int i = 0; i < func_count && i < 1024; i++) {",
-    },
 }
 
 # A negative pin: inside the executor body these are the only lines that
 # mention reg_cap.  If a register-index test is ever added, this set grows and
 # the generator stops instead of repeating an out-of-date "no guard" premise.
 EXECUTOR_SPAN = (3022, 4400)
-REG_CAP_LINES_IN_EXECUTOR = [4079]
+REG_CAP_LINES_IN_EXECUTOR = [4080]
 
 CASTS = {"size_t", "int", "long", "unsigned"}
 SIZE_FUNCS = {"im_closure_env_size"}
@@ -371,13 +374,13 @@ def as_bool_py(text, ctx):
 # kind: measured = a reading this run's command can reproduce;
 #       asserted = written down because the code makes it true, not re-read here.
 AXIOMS = [
-    ("A1", "reg_cap", "measured", [("src/vm/vm.h", 73), ("src/vm/vm.c", 4511)],
+    ("A1", "reg_cap", "measured", [("src/vm/vm.h", 73), ("src/vm/vm.c", 4519)],
      "t->reg_cap == 2097152",
      "VM_THREAD_REG_COUNT is (2048 * 1024) and the register file is malloc'd with reg_cap elements"),
-    ("A2", "frame_cap", "measured", [("src/vm/vm.h", 74), ("src/vm/vm.c", 4515)],
+    ("A2", "frame_cap", "measured", [("src/vm/vm.h", 74), ("src/vm/vm.c", 4523)],
      "t->frame_cap == 2048",
      "VM_MAX_FRAMES is 2048 and frame_code is calloc(frame_cap, ...)"),
-    ("A3", "frame width", "measured", [("src/vm/vm.h", 82), ("src/vm/vm.c", 4093)],
+    ("A3", "frame width", "measured", [("src/vm/vm.h", 82), ("src/vm/vm.c", 4094)],
      "VM_FRAME_REGS == 1024",
      "one call advances base by FRAME_REGS, which is VM_FRAME_REGS (vm.c:3026)"),
     ("A4", "stack extent", "measured", [("src/vm/vm.h", 101), ("src/vm/vm.c", 479)],
@@ -386,15 +389,16 @@ AXIOMS = [
     ("A5", "func_count band", "measured", [("src/compiler/bytecode.h", 104), ("src/compiler/bytecode.c", 274)],
      "root->func_count >= 0 && root->func_count <= 1024",
      "the funcs[] array is 1024 wide and the reader refuses indices >= 1024"),
-    ("A6", "param_slots definition", "measured", [("src/vm/vm.c", 4095)],
+    ("A6", "param_slots definition", "measured", [("src/vm/vm.c", 4096)],
      "param_slots == (root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc)",
      "the verbatim right-hand side of the declaration"),
-    ("A7", "frame width bounds param_slots", "asserted", [("src/vm/vm.h", 82), ("src/vm/vm.c", 4097)],
+    ("A7", "frame width bounds param_slots (the clamp)", "measured", [("src/vm/vm.h", 82), ("src/vm/vm.c", 4103)],
      "param_slots >= 0 && param_slots <= 1024",
-     "the callee init loop writes FR[1..param_slots]; this is the REGIME where a slot count "
-     "cannot exceed one frame width. It is not a code guarantee (P5 removes it)."),
+     "line 4103 clamps param_slots to VM_FRAME_REGS before the zero-fill loop, so the bound is "
+     "code and not a regime assumption: in T1/T2 this axiom was asserted, and the c6570169 fix "
+     "made it measured."),
     ("A8", "base is frame-aligned", "measured",
-     [("src/vm/vm.c", 4093), ("src/vm/vm.c", 4125), ("src/vm/vm.c", 3084)],
+     [("src/vm/vm.c", 4094), ("src/vm/vm.c", 4133), ("src/vm/vm.c", 3085)],
      "t->base >= 0 && t->base % 1024 == 0",
      "base starts at 0, advances by FRAME_REGS per call, and is restored from frame_base -- "
      "so every reachable base is a whole frame index"),
@@ -432,7 +436,7 @@ class Prop(object):
 PROPS = [
     Prop(
         "P1", "call-func index: the guard is the only thing between fidx and funcs[fidx]",
-        ("src/vm/vm.c", 4067),
+        ("src/vm/vm.c", 4068),
         "fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL",
         "fidx >= 0 && fidx < root->func_count",
         COMMON,
@@ -452,7 +456,7 @@ PROPS = [
     ),
     Prop(
         "P2", "closure slot: the (size_t) cast on the bound side is safe only because r2 < 0 is tested first",
-        ("src/vm/vm.c", 4033),
+        ("src/vm/vm.c", 4034),
         "!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)",
         "ins.r2 >= 0 && ins.r2 < im_closure_env_size(t->closure_env)",
         COMMON,
@@ -466,7 +470,7 @@ PROPS = [
     ),
     Prop(
         "P3", "frame write: frame_code[frame_count] is inside calloc(frame_cap)",
-        ("src/vm/vm.c", 4079),
+        ("src/vm/vm.c", 4080),
         "t->frame_count >= t->frame_cap",
         "t->frame_count < t->frame_cap",
         COMMON,
@@ -478,55 +482,61 @@ PROPS = [
         ],
     ),
     Prop(
-        "P4", "the call guard reserves 8 registers of the callee frame, not the 1024 it addresses",
-        ("src/vm/vm.c", 4079),
-        "t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
+        "P4", "the call guard reserves a whole child frame; the pre-fix +8 slack is now the red variant",
+        ("src/vm/vm.c", 4080),
+        "t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap",
         "t->base + VM_FRAME_REGS + param_slots < t->reg_cap",
         COMMON + ["A7", "A8"],
         [
-            Variant("asis", "sat", "finding",
-                    note="witness base = 2046*1024 = 2095104 (the deepest base the guard admits) "
-                         "with param_slots = 1024 -> the callee writes reg[2097152] = reg[reg_cap], "
-                         "exactly one Value past the file"),
-            Variant("fix_reserve_frame", "unsat", "candidate-fix",
-                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap",
-                    note="candidate: reserve the whole child frame instead of 8 slots"),
+            Variant("asis", "unsat", "proof",
+                    note="the guard's second conjunct now reserves VM_FRAME_REGS twice, so the last "
+                         "admitted base still leaves room for the callee's whole 1024-slot window"),
+            Variant("prefix_guard_plus_8", "sat", "mutant",
+                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
+                    note="the PRE-FIX guard, kept as the red reading: witness base = 2046*1024 = "
+                         "2095104 with param_slots = 1024 writes reg[2097152] = reg[reg_cap], exactly "
+                         "one Value past the file. Same model, only the guard differs, so the sat/unsat "
+                         "pair attributes the difference to the guard and to nothing else"),
         ],
-        story="The guard must keep base+FRAME_REGS+param_slots in range, and the callee addresses "
+        story="The guard must keep base + FRAME_REGS + param_slots in range, and the callee addresses "
               "FR[1..param_slots] with param_slots <= VM_FRAME_REGS (A7): reserving 8 slots cannot "
-              "cover a 1024-slot frame. The last admitted depth is 2046 frames, so the overflow "
-              "is exactly one slot at the boundary.",
+              "cover a 1024-slot frame. On the pre-fix tree this property was sat with a witness; the "
+              "fixed tree turns the same encoding unsat, which is the re-measurement T5 reports.",
     ),
     Prop(
-        "P5", "param_slots has no upper bound: func_argc comes out of the bytecode unvalidated",
-        ("src/vm/vm.c", 4095),
-        "t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
+        "P5", "param_slots is clamped to the frame width; without the clamp the guard fix alone is not enough",
+        ("src/vm/vm.c", 4080),
+        "t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap",
         "t->base + VM_FRAME_REGS + param_slots < t->reg_cap",
         COMMON + ["A6", "A8"],
         [
-            Variant("asis", "sat", "finding",
-                    note="witness base = 2095104 and func_argc >= 1024 -> param_slots >= 1024"),
-            Variant("declared_2000", "sat", "finding",
+            Variant("asis", "unsat", "proof",
+                    axioms=["A7"],
+                    note="the clamp at 4103 is the code that bounds param_slots (A7, measured), so "
+                         "under the fixed guard the init loop cannot leave the frame"),
+            Variant("no_clamp", "sat", "mutant",
+                    note="remove the clamp (A7) and the same guard still overflows: witness argc = "
+                         "2048, base = 2094080, so the zero-fill walks past reg_cap. The clamp is "
+                         "load-bearing"),
+            Variant("clamp_only_prefix_guard", "sat", "mutant",
+                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
+                    axioms=["A7"],
+                    note="clamp without the guard fix: still sat at base = 2095104, so the two fixes "
+                         "cover different halves -- P4 and P5 stay independent on the fixed tree too"),
+            Variant("declared_2000_prefix_guard", "sat", "mutant",
+                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
                     raw_axioms=["root->func_argc[fidx] == 2000"],
-                    note="the magnitude: a handcrafted func_argc of 2000 makes the init loop "
-                         "write 976 slots past the register file at the same depth"),
-            Variant("clamp_param_slots", "unsat", "candidate-fix",
-                    raw_axioms=["param_slots >= 0", "param_slots <= 1023"],
-                    note="candidate: clamp the slot count. This closes the index window, but it "
-                         "silently drops the trailing arguments; P4's guard fix keeps them"),
-            Variant("guard_fix_only", "sat", "candidate-fix-insufficient",
-                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap",
-                    note="the P4 guard fix is NOT enough here: with param_slots unconstrained a "
-                         "2048-slot call still overflows (witness argc = 2048, base = 2094080), "
-                         "so P5 is independent of P4 -- the slot count itself has to be bounded"),
+                    note="the magnitude on the pre-fix guard: a handcrafted func_argc of 2000 makes "
+                         "the init loop write 976 slots past the register file at the same depth"),
         ],
         story="bc_from_data copies func_argc out of the caller's dict with no band check and is "
               "reachable from .im through the vm_exec builtin (src/runtime/vm_exec_builtin.c:83). "
-              "A6 plus A8 alone do not bound param_slots; only A7 does, and A7 is an assumption.",
+              "A6 plus A8 alone do not bound param_slots; only the clamp (A7) does, and on the fixed "
+              "tree that clamp is measured code rather than an assumption.",
     ),
     Prop(
         "P6", "register operands: ins.r1 is an int with no guard, so R[ins.r1] is unchecked",
-        ("src/vm/vm.c", 3025),
+        ("src/vm/vm.c", 3026),
         "0",
         "ins.r1 >= 0 && ins.r1 < t->reg_cap",
         COMMON,
@@ -539,17 +549,17 @@ PROPS = [
                     note="candidate: reject the operand, the way the call index already is"),
         ],
         story="Absence premise, pinned negatively: inside the executor body the only line that "
-              "mentions reg_cap is the call guard at 4079, so R[ins.rN] has no bound at all.",
+              "mentions reg_cap is the call guard at 4080, so R[ins.rN] has no bound at all.",
     ),
     Prop(
         "P7", "argument pops: the sp+1 < argc guard is the only thing above the stack floor",
-        ("src/vm/vm.c", 4073),
+        ("src/vm/vm.c", 4074),
         "t->sp + 1 < argc",
         "t->sp + 1 - argc >= 0",
         COMMON,
         [
             Variant("asis", "unsat", "proof",
-                    note="the drain loop at 4099-4101 has no per-step floor test, so this guard "
+                    note="the drain loop at 4107-4109 has no per-step floor test, so this guard "
                          "carries the whole invariant"),
             Variant("drop_guard", "sat", "mutant",
                     guard="0",
@@ -574,6 +584,66 @@ def pin_ok(want, got):
         rest = got[len(want):]
         return rest.strip() == "" or (rest.lstrip().startswith("/*") and rest.rstrip().endswith("*/"))
     return False
+
+
+def git_head(root):
+    """The tree the pins were just checked against, as git reports it."""
+    try:
+        out = subprocess.run(["git", "-C", root, "rev-parse", "--short=7", "HEAD"],
+                             capture_output=True, text=True)
+        return out.stdout.strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def git_blob_sha(root, path):
+    """git's content address for the pinned file: sha1("blob <len>\\0" + bytes).
+
+    A line number plus its verbatim text still leaves one hole a reader cannot see
+    from the output: whether the bytes the pins were read from are the bytes the
+    proof model was built for.  The blob sha closes it by naming the content, and
+    it is stable across rebases that do not touch the file.
+    """
+    with open(os.path.join(root, path), "rb") as fh:
+        data = fh.read()
+    h = hashlib.sha1()
+    h.update(("blob %d" % len(data)).encode("ascii") + b"\0")
+    h.update(data)
+    return h.hexdigest()
+
+
+def guard_pins(props, pinned):
+    """Model text versus source text, for every proposition whose anchor is a guard.
+
+    A blob sha says which bytes were read; this line says whether the condition the
+    solver was given is one of them.  Without it a sat->unsat move could come from a
+    pin that drifted onto some other line that happens to be true.
+
+    `verbatim` = the pinned line is exactly "if (<model guard>) {";
+    `conjunct` = the model guard is one conjunct of the pinned line (P3 models only
+    the first conjunct of the call guard, on purpose);
+    `not-a-guard-anchor` = the premise is an absence, not a condition (P6: the anchor
+    is the R alias, and the absence claim is carried by the negative pin instead).
+    """
+    problems = []
+    for prop in props:
+        path, lineno = prop.guard_anchor
+        want = pinned.get(path, {}).get(lineno)
+        if want is None:
+            problems.append("%s: no pinned line at %s:%d" % (prop.pid, path, lineno))
+            continue
+        if not want.strip().startswith("if ("):
+            print("GUARD-PIN|%s|%s:%d|model_vs_source=not-a-guard-anchor|line=%s"
+                  % (prop.pid, path, lineno, want.strip()[:88]))
+            continue
+        verbatim = want.strip() == "if (" + prop.guard_text + ") {"
+        conjunct = prop.guard_text in want
+        verdict = "verbatim" if verbatim else ("conjunct" if conjunct else "DIFFER")
+        print("GUARD-PIN|%s|%s:%d|model_vs_source=%s|line=%s"
+              % (prop.pid, path, lineno, verdict, want.strip()[:88]))
+        if verdict == "DIFFER":
+            problems.append("%s: model %r is not in source %r" % (prop.pid, prop.guard_text, want))
+    return problems
 
 
 def check_pins(root, cache):
@@ -749,6 +819,14 @@ def main():
         print("pin ok  negative: reg_cap in executor body at %r" % (neg,))
         for path, dg in sorted(digests.items()):
             print("sha256  %s  %s" % (dg[:16], path))
+        head7 = git_head(root)
+        mismatched = guard_pins(PROPS, PINNED)
+        if mismatched:
+            for line in mismatched:
+                print("GUARD-PIN MISMATCH: " + line, file=sys.stderr)
+            return 2
+        for path in sorted(digests):
+            print("GIT-BLOB|path=%s|blob=%s|head=%s" % (path, git_blob_sha(root, path), head7))
     script = build_script(root, pins, digests, neg, gen_sha)
     out = args.out
     d = os.path.dirname(os.path.abspath(out))
