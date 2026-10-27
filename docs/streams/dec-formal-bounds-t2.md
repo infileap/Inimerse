@@ -105,6 +105,10 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 
 ## 7. unparsed 基线、A-FRAME 公理，与 T2 将来的结论强度
 
+本节与下一节所有缩进块都是树 `d01f8db` 上的工具输出；每块紧上方那一句散文认领它的树号，块内不加 marker。（早先在 `ba075d0` 上取过同样的读数，`git diff --stat d01f8db HEAD -- src selfhost` 为空，所以两棵树上这些输出逐字相同；参考树写 `d01f8db` 不欠账。）
+
+本节（`## 7.` 到 `## 8.` 之间）共 **12 行缩进、6 个块**——这个数可核，但核对命令必须写成**行内**，写进缩进块就会被它自己数进去：`awk '/^## 7\./{f=1;next}/^## 8\./{f=0}f&&/^    [^ ]/{n++}END{print n}' docs/streams/dec-formal-bounds-t2.md` ⇒ 12。跨树复用读数的唯一证据是 `git diff --stat d01f8db HEAD -- src selfhost` **输出为空**（不是「我记得没改」）——所以上一条「两棵树共用同一个树号」是测出来的，不是省事的写法。
+
     unparsed=0    unparsed-expr=1
     UNPARSED-EXPR|src/vm/vm.c:4121|t->sp = t->frame_sp[t->frame_count - 1];
 
@@ -129,7 +133,7 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 `src/vm/vm.c:4104  t->frame_sp[t->frame_count - 1] = t->sp;   /* save sp AFTER popping args */`（执行器 `L_CALL_FUNC`：弹完 argc 个实参之后）[obs: d01f8db]。
 其余 14 处是 6 次 `calloc`、5 次 `free`、1 条声明 `src/vm/vm.h:107  int *frame_sp;   /* save sp at call for correct return */`、1 次读 `src/vm/vm.c:4121  t->sp = t->frame_sp[t->frame_count - 1];`、1 条注释 `src/vm/vm.c:4103  /* frame_sp uses the same pre-increment frame slot as the other frame metadata. */`。[obs: d01f8db]
 
-**这个枚举否掉了我上一版公理的 0 下界**：两处写点存的都是 `t->sp`，所以帧槽的值域就是 `sp` 的值域，而 `sp` 可达 -1：
+**这个枚举否掉了我上一版公理的 0 下界**：两处写点存的都是 `t->sp`，所以帧槽的值域就是 `sp` 的值域，而 `sp` 可达 -1（下两行产生于 `d01f8db`）：
 
     FRAME-SP-RANGE|element_writes=2|every_write_stores_t->sp=YES|sp_range=[-1,1023]|source=axiom A4|axiom_as_stated=0 <= frame_sp[i] < reg_cap|verdict=lower_bound_too_strong
     FRAME-SP-WITNESS|path=src/vm/vm.c:4104|argc=1|sp_before=0|guard_at_4073=if (t->sp + 1 < argc) return 0|guard_refuses=NO(1<1 false)|after_one_pop=sp -1|frame_slot=-1|status=reachable_on_handcrafted_bytecode
@@ -137,7 +141,7 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 证人：`sp=0`、`argc=1`；4104 之前的守卫 `src/vm/vm.c:4073  if (t->sp + 1 < argc) {` 判 `sp + 1 < argc` 即 `1 < 1`，假，于是放行；4100–4101（`value_move(&FR[i + 1], &stack[t->sp]);` 与 `t->sp--;`）弹掉一个实参后 `sp--` 到 -1，4104 把 -1 存进帧槽；返回时 `src/vm/vm.c:4121` 恢复 `sp = -1`（空栈，合法）。[obs: d01f8db]
 **太强的公理不是保守，是让结论变空**：`0 <= frame_sp[i]` 会把「空栈返回」这条正常路径排除在模型之外，T2 若靠它证成，证的是一个到不了的状态。
 
-负对照两条，方向各自写清（「不变」和「变了」都可能说明匹配器坏了）：
+负对照两条，方向各自写清（「不变」和「变了」都可能说明匹配器坏了；下两行产生于 `d01f8db`）：
 
     FRAME-SP-NEGCTL|rename|frame_sp=>frameSp|element_writes=0|expected_drop=2|drop=2|name_exact=YES
     FRAME-SP-NEGCTL|decoy|frameSp[]=|decoy_sites=1|element_writes=2|unchanged=YES|counted_as=0|matcher=word-bounded
@@ -192,10 +196,19 @@ T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡
 
 ## 10. 树号、改动清单、没做的事
 
-- 树号：1042aed 为基线；本轮读数在 origin/main `4b41f59` 之上的分支 `z3bounds-t1` 取得（worktree `/tmp/wt-z3c`，已 `git worktree lock`），第 7 节 `frame_sp` 那批读数产生于树 `d01f8db`。本页所在提交号不写死，用 `git log -1 -- docs/streams/dec-formal-bounds-t2.md` 取——页内自指会随提交漂移。
+- 树号：1042aed 为基线；本轮读数在分支 `z3bounds-t1` 取得（该分支先后 rebase 到 `4b41f59`、`dfc5957`、`9a3e53a`）（worktree `/tmp/wt-z3c`，已 `git worktree lock`），第 7 节 `frame_sp` 那批读数产生于树 `d01f8db`。本页所在提交号不写死，用 `git log -1 -- docs/streams/dec-formal-bounds-t2.md` 取——页内自指会随提交漂移。
 - 页内 `[obs: <sha>]` 标记命名的是**这批读数被产生的那棵树**，不是合并时踩在哪棵树上；否则标记会随合并动作漂移，等于没标。
 - 新增：`tools/z3bounds/extract_stack_effects.py`、`tools/z3bounds/reconcile_emit_dispatch.py`、本页。
   未改 `src/`、`selfhost/`、门禁脚本与 CTest 计数；本页不引门禁 TARGET 文件名，避免把本页纳入比对输入集。
+- 姊妹页：T3 的探针表（三前端读数从源码重生成）见 `docs/streams/dec-formal-bounds-t3.md`。
 - 没做：栈平衡命题的建模与求解（等 A-FRAME 的上界那一半被接受）；`src/vm/vm.c:3025` 起的执行器外框（线程/任务切换路径）的枚举；
   A4（`sp` 自身值域）的写入点全集——A-FRAME 的写点已枚举（2 处、都存 `t->sp`），仍标 asserted 的是 A4 本身。
+- 自查命令（改被引文件时先跑）：`git grep -nE 'extract_stack_effects[.]py:' -- docs/ | wc -l` ⇒ 期望 0；非 0 就要改指并搬引文。  模式里拿 `[.]` 写那个点是刻意的：直接写点号，这一行自己就会成为命中，命令永远报 1——判据不能把自己算进去。
+
+  同族还有两格，一并记在这里，免得下一个人只记住模式、忘了原因：
+
+  1. **命令自己出现在被扫文件里**：脚注这一行写在 `docs/streams/dec-formal-bounds-t2.md`，而它扫的就是 `docs/`；
+  2. **判据的输入包含判据自身**：模式与「期望 0」住在同一个文件里。
+
+  通用修法只有两条：把模式写成字符类（`[.]`、`[a-z]`），或把期望写成「≤ 已知自命中数」并把那个自命中数与读数**一起印出来**。**不要靠人记得**——靠记忆的判据，换一个人就失效。
 - 复现：两条命令的末行 `SUMMARY` 与第 2、3、4、5、8 节读数逐字相同，退出码 0。
