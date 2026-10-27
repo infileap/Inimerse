@@ -23426,3 +23426,33 @@ A 与 C 的 stderr 逐字：`fatal: ambiguous argument '<path>': unknown revisio
 而我原始那条命令以 `2>/dev/null` 结尾——**那句 `fatal` 正是唯一会当场纠正我的读数，我把它丢了**，于是只剩「分母还是 81」这一个症状。
 
 立条：**静音的错误与没发生的动作同形**。任何 `2>/dev/null` 都须先证明该命令在正常路径上不写 stderr；把 stderr 当噪音丢掉，等于把「我错了」这条最便宜的反馈也一起丢掉。
+
+## §1.376 增补四百零八：谁能证明这条命令跑过
+
+本节的主例在本仓的门禁工具里：那三个失败**全部的信息只在 stderr**，而 stdout 恰好是 0 字节。
+
+**甲、同一格，取不同的流。** `tools/ctest_skip_guard.sh --check-junit <file>`，树 `1042aed`，guard 830 行：
+
+| 输入 | rc | stdout | stderr | stderr 首条判据句 |
+|---|---|---|---|---|
+| 不存在 | 20 | **0 B** | 189 B | `cannot read the test report … -- nothing was checked; entries=0 result=junit-unreadable` |
+| 零字节 | 20 | **0 B** | 有 | 同上（零字节按「读不出」处理） |
+| 无头 XML | 20 | **0 B** | 232 B | `cannot read the test count from …: no `tests="N"` in the suite header -- nothing was checked; entries=0 result=junit-unreadable` |
+| **结构完整、零用例**（`tests="0"`） | **0** | 68 B | 91 B | **没有判据句**；stdout 印 `guard: tests=0 notrun=0 disabled=0 declared=0 result=junit-declared` |
+
+两件事：①前三格的 stdout 都是 **0 字节**，全部信息在 stderr；②第四格不是失败——**一个结构完整但零用例的报告是绿的**，它印 `tests=0 … result=junit-declared`。所以「空」有两种：**读不出来**（20，stderr 才有话）与**读出来了但是零**（0，stdout 有话）。
+
+**乙、丢 stderr 之后还剩什么。** 同一格加 `2>/dev/null`：stdout **0 B**、rc **20**。再丢 rc（`|| true`、`; true`、`set +e`）就连判别力一起丢了：
+
+- 四种输入各自的 rc：不存在 **20**、零字节 **20**、无头 **20**、`tests="0"` **0** ⇒ **rc 是目前唯一还活着的那一件**；
+- 但 rc 只分「拒绝测量」与「测量完成」，**分不开是哪一种拒绝**（不存在／零字节／无头三格同为 20）。
+
+⇒ 「我跑过了，它什么都没说」「它拒绝测量」「一切正常」三者在**至少丢两件**（stderr + rc）之后才完全同形。这不是工具的缺点：它把判据放在 stderr 是为了不污染 stdout，做得对；哑掉它的是调用方的一句话。
+
+**丙、反面对照：同一个仓里写对了的一行。** `tools/gate.sh` 第 99 行 `JOBS="$(nproc 2>/dev/null || echo 4)"`——也丢 stderr，但**丢完立刻给一个具名的兜底值**，读的人看到 4 就知道走了兜底分支。⇒ 可以丢 stderr，但不得丢「我丢了」这件事。
+
+**丁、同一文件里的窄洞（算是本栏的乙例）。** `tools/ctest_skip_guard.sh` 第 644 行 `local ran_cases=$(( $(grep -c '<testcase ' "$report" 2>/dev/null || true) - parsed_notrun - parsed_disabled ))`：文件读不出来时 `grep -c` **印 `0`**（实测 rc 2，但 rc 被 `|| true` 吃掉、输出进算术），于是 `ran_cases = 0 - notrun - disabled` 可为负，下一句就会对一个**读不出来的文件**说「no test ran in this report at all … every case is absent」。入口那次可读性检查兜住了绝大多数情形，所以这是 TOCTOU 级的窄洞；但它的形状正是本节要说的事：`2>/dev/null || true` 同时删掉 rc 与诊断，只留下一个**能进算术的 0**。
+
+**戊、四件产物（把「执行过」写成可查的）。** 一次调用要留四件，缺一即视为未执行：①**rc**；②**stderr 全文**（不是「有没有报错」，是那几行字）；③**状态读数**（动作的结果：`git ls-files -s`、`--stat`、`grep -c`）；④**这次调用是哪一次**——`cwd`、树号、命令行原文。前三件是结果，第四件才让事后的人知道量的是哪一版。
+
+**己、边界。** 甲栏四格全在同一棵树上当场跑，`tests="0"` 那份是我手写的合成 XML（不是 ctest 产物）；乙栏「丢两件才同形」是我逐格加 `2>/dev/null` 实测的结论，未穷尽所有调用方写法；丁栏的窄洞我读到了形状与算式，**没有构造出触发它的时序**（入口可读、644 行不可读），因此记为「形状成立、触发未复现」。
