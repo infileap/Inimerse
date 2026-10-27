@@ -183,8 +183,19 @@ def main(argv=None):
     # and it was removed rather than kept as a fallback: `a.product` is either
     # the synthetic fixture built two lines above -- written by
     # build_synthetic_product, which always produces a loadable product -- or a
-    # path the early guard above has already loaded successfully, and nothing
-    # between that guard and this line touches the file.  Measured, not assumed:
+    # path the early guard above has already loaded successfully.
+    #
+    # What that does NOT cover (added when a reader pointed at the sentence that
+    # used to stand here -- "and nothing between that guard and this line touches
+    # the file"): (a) the two loads are two separate open() calls, so an outside
+    # writer can still swap the file in between; that case no longer maps to
+    # `INPUT_*`, it surfaces as an exception inside the cells below.  (b)
+    # build_synthetic_product always writes a loadable product, so the synthetic
+    # branch cannot reach a bad load either.  Both are "not reachable by a static
+    # input", which is what the counter below measured -- not "not reachable at
+    # all".
+    #
+    # Measured, not assumed:
     # with the early guard in place the branch is reached 0 times across the
     # seven fixtures; with the early guard deleted it is the only classifier and
     # is reached 4 times (notjson, nofrozen, adir, nope), and the seven verdicts
