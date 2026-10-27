@@ -334,15 +334,23 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default=os.path.dirname(HERE))
+    ap.add_argument("--root", default=None,
+                    help="repo root; default is resolved from the tree (git toplevel, then a "
+                         "walk up for src/vm), never from the directory this file is in")
     ap.add_argument("--gen", default=DEFAULT_GEN)
     ap.add_argument("--python", default=os.environ.get("PY_WIN", DEFAULT_PY_WIN),
                     help="Windows python with z3; only the mutation column needs it")
     args = ap.parse_args()
     mod = load_gen(args.gen)
+    # The default used to be dirname(HERE) -- i.e. tools/ -- which is wrong in every tree:
+    # a reader holding only a sha got a FileNotFoundError on tools/src/vm/vm.h.  Ask the
+    # tree instead, and refuse by name when there is no tree to ask.
+    root, problem = mod.locate_root(args.root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
     workdir = tempfile.mkdtemp(prefix="axiom_ledger_")
-    return emit_ledger(mod, os.path.abspath(args.root), os.path.abspath(args.gen),
-                       args.python, workdir)
+    return emit_ledger(mod, root, os.path.abspath(args.gen), args.python, workdir)
 
 
 if __name__ == "__main__":
