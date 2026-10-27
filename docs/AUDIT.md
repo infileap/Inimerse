@@ -23517,3 +23517,25 @@ A 与 C 的 stderr 逐字：`fatal: ambiguous argument '<path>': unknown revisio
 **戊、两句判据。** ①**成立**是命题的性质：换树、换 cwd、换人重跑都该给同一句话，才算成立。②**产生过**是环境的性质：这一格必须由一个具体进程、在给出 cwd 与树号的情况下印出来，且那个进程的 rc 不是上游管道末环节的（见上一节我把 `| head -1` 的 rc 读成 0 那一格）。
 
 **己、边界。** 甲栏我复跑了 `core.fileMode`、`ls-files -s`、`ls-tree`、`chmod +x` 后 `git status` 为空这四格；`100644`→`100755` 的转手是 `ae8835c`（对方的提交），我没重做那笔修复，只核了模式。丙栏是我这台机器的失败读数，不证明脚本本身有错。丁栏四格各跑一次；全零 sha 属于「合法形式、不存在对象」，与「名字不合法」是两类。
+
+## §1.379 增补四百一十一：同一句命令的在世条件
+
+上一节说「产生过」属于环境；本节把「环境」拆成三件可写下来的事实，并实测同一句命令在三种缺失下死成三种样子。
+
+**甲、一句命令，三条前提，三种死法。** 对象是 `tools/z3bounds/run_bounds_proof.sh`（页面 §1 只写「点斜杠直接跑」这一句）。树 `dfc5957`：
+
+| 缺哪件前提 | rc | 谁说的话 | 逐字 |
+|---|---|---|---|
+| 解释器不在 | **2** | **工具自己** | `run_bounds_proof: no interpreter at /nonexistent/python.exe` ＋ `run_bounds_proof: put the z3-carrying CPython path in PY_WIN=...` |
+| 工作目录不可写（默认值，本机 `/mnt/c` 只读） | 1 | **环境** | Python traceback 末行 `OSError: [Errno 30] Read-only file system: '…/z3probe/bounds_proof.py'` |
+| 工作目录不可写（指到 `/mnt/c/Windows/System32/zz-nope`） | 1 | **环境** | `mkdir: Read-only file system` |
+
+⇒ 三个前提里只有**解释器**被守卫（rc 2、具名变量、两行动作话）；另两个在 `set -euo pipefail` 下先死于 `mkdir -p` 或 python 的写文件，**工具那两行话一句都没轮到**。同一格前提在对方机器上印的是 `mkdir: Permission denied` ⇒ 连两台 WSL 之间，失败文本都不由工具决定。
+
+**乙、默认值里写着别人的账号。** 第 20–21 行：`PY_WIN=${PY_WIN:-/mnt/c/Python314/python.exe}`、`WORK_WSL=${WORK_WSL:-/mnt/c/Users/Lenovo/AppData/Local/Temp/z3probe}`。⇒ 这一句在除 `Lenovo` 之外的任何账号下都不是「照做即可」，而缺的正是「谁的解释器、哪个工作目录、那个目录可写」这三句——它们都在脚本里，页面上一句都没抄。
+
+**丙、四条判据。** ①命令块要能被人照做，必须写四件环境事实：**谁的解释器、哪个工作目录、那个目录可写、路径里不含特定账号**；②读数须与产生它的 host 一起记（§1.378 第三维），否则「成立」被读成「到处成立」；③「rc 非零」不等于「前提没满足」——工具的话（rc 2）与环境的话（rc 1）必须分开读，前者指得出变量名，后者只指得出 errno；④一个前提若没有守卫，它的失败文本由环境提供，工具作者对此没有署名权。
+
+**丁、端点。** 本批读数：`explicit 185`／`unanchored 572`／`pins +12/+10`（树 `dfc5957`）；对方报的 `+12/+9` 是它那棵树上的数，我在自己树上复跑得 `+10`，两格都真、基数不同——这一条按 §1.340 的规矩写明。
+
+**戊、边界。** 甲栏三格各自当场跑过（`PY_WIN=/nonexistent/python.exe`、默认值、`WORK_WSL=/mnt/c/Windows/System32/zz-nope`），工作目录与解释器都没被改动；我只测了「缺前提」，没测「前提都在」的那一格（本机 `/mnt/c` 只读，z3 路径不可用，故 rc 0 未复现）。乙栏只读默认值，不主张作者的意图。
