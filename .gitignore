@@ -12,6 +12,7 @@ build-*/
 /*.out
 /inimerse
 tools/__pycache__/
+tools/*/__pycache__/
 Infiverse_standard/src-tauri/target/
 
 # Runtime and personal data
