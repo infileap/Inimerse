@@ -249,7 +249,7 @@ def record_tree(operand):
 def main():
     argv = sys.argv[1:]
     ref = "HEAD"
-    docs_root = "docs"
+    docs_root = "docs"; _print_repo()
     while argv:
         a = argv.pop(0)
         if a == "--ref":
@@ -468,6 +468,30 @@ def main():
         return 1
     print("check_obs_markers: every citation names the tree it was read on")
     return 0
+
+
+def _print_repo():
+    """Say which repository the readings below come from.
+
+    Every git call in this file runs with cwd=ROOT, and git walks UP from
+    there: a copy of this tree placed inside another repository (a probe
+    directory under .probe/, a vendored subtree) is read against the OUTER
+    repository, and until this line existed nothing in the output said which
+    one was scanned.  The walk-up still happens and no exit code moves -- this
+    is a field, not a verdict.  When repo= and cwd= name different places, the
+    citations below were read in the first and asked for from the second, and
+    that is the difference between a finding and a mis-aimed probe.
+
+    Printed before the first refusal on purpose: the run that finds no
+    documents at all is exactly the run where "which repository was scanned?"
+    decides whether the refusal means anything.  Defined at the end and called
+    from main() so that nothing above it moves: docs/AUDIT.md cites this file's
+    constants and its EXP_OBS_BASE assertion by line number, and an insertion
+    above them silently moves that citation -- the drift this repository has
+    already paid for twice.
+    """
+    top = git("rev-parse", "--show-toplevel").stdout.strip()
+    print(f"check_obs_markers: repo={top or '<no worktree>'} cwd={os.getcwd()}")
 
 
 if __name__ == "__main__":
