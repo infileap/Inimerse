@@ -29,7 +29,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = "tools/check_docs_headings.py"
 PIN = "tools/docs_headings.pin.json"
-HEADINGS = re.compile(r"^HEADINGS\|base=(\d+)\|now=(\d+)\|removed=(\d+)\|added=(\d+)$", re.M)
+# The reading line names the tree it was measured on, so a reader cannot pair
+# these counts with another tree's sha; the pin line carries its own subject.
+HEADINGS = re.compile(
+    r"^HEADINGS\|tree=([0-9a-f]{7}|<no tree>)\|base=(\d+)\|now=(\d+)\|removed=(\d+)\|added=(\d+)$",
+    re.M,
+)
 
 
 def refuse(why: str) -> "NoReturn":
@@ -42,7 +47,8 @@ def read(text: str) -> dict | None:
     m = HEADINGS.search(text)
     if not m:
         return None
-    return {"base": int(m.group(1)), "now": int(m.group(2)), "removed": int(m.group(3)), "added": int(m.group(4))}
+    return {"tree": m.group(1), "base": int(m.group(2)), "now": int(m.group(3)),
+            "removed": int(m.group(4)), "added": int(m.group(5))}
 
 
 def run(tree: Path) -> tuple[int, str, str]:
@@ -89,9 +95,15 @@ def main() -> int:
         base = read(out)
         if base is None:
             refuse(f"the tool printed no HEADINGS line this control can read (rc={rc}): {err.strip()[:200]}")
-        print(f"docs-headings: base readings -- base {base['base']}, now {base['now']}, removed {base['removed']}, added {base['added']}; rc={rc}")
+        head = subprocess.run(["git", "-C", str(tree), "rev-parse", "--short=7", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        named_tree = base["tree"] == (head or "<no tree>")
+        print(f"docs-headings: base readings -- tree {base['tree']}, base {base['base']}, now {base['now']}, "
+              f"removed {base['removed']}, added {base['added']}, names-head={named_tree}; rc={rc}")
         cases.append(("clean-tree", rc == 0 and base["removed"] == 0 and base["added"] == 0,
                       f"rc={rc}, removed={base['removed']}, added={base['added']} (want rc=0 with nothing removed or added)"))
+        cases.append(("reading-names-its-tree", named_tree,
+                      f"tree={base['tree']} head={head or '<no tree>'} (want the reading to name the tree it measured)"))
 
         path = tree / doc
         text = path.read_text(encoding="utf-8")

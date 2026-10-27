@@ -105,8 +105,14 @@ def main() -> int:
             added += n - b
             rows.append((rel, b, n, "added"))
 
-    print(f"HEADINGS|base={base_total}|now={now_total}|removed={removed}|added={added}")
-    print(f"HEADINGS|pin|tree={pin.get('tree', '<unpinned>')}|docs={pin.get('docs', '?')}|files={len(files)}")
+    # One line, one subject.  The reading line names the tree it was measured on;
+    # the pin line reports only the pin's own counts.  The earlier shape paired
+    # tree= with files= taken from the working copy, so a reader comparing
+    # docs=<pinned> with swept=<now> was comparing two different trees without
+    # being told (measured in review: HEADINGS|pin|tree=6e41869|docs=106|files=107).
+    tree_now = git("rev-parse", "--short=7", "HEAD").stdout.strip() or "<no tree>"
+    print(f"HEADINGS|tree={tree_now}|base={base_total}|now={now_total}|removed={removed}|added={added}")
+    print(f"HEADINGS|pin|tree={pin.get('tree', '<unpinned>')}|docs={pin.get('docs', '?')}|files={len(base_counts)}")
     for rel, b, n, kind in rows:
         print(f"HEADINGS|{kind}|{rel}|base={b}|now={n}")
     if len(rows) > 40:
