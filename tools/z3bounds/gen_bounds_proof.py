@@ -1,0 +1,769 @@
+#!/usr/bin/env python3
+"""gen_bounds_proof.py -- WSL-side generator for the T1 bounded proofs.
+
+Rules (docs/streams/dec-formal-bounds.md):
+  1. A proof's object is a MODEL, so every model input is a PIN: a file:line
+     plus the verbatim line text.  The pin is checked against the tree on
+     every run; a drifted line aborts the generator instead of letting a stale
+     model keep proving things about code that has moved.
+  2. The three states stay separate: unsat = proved (inside this model),
+     sat = counterexample (a finding, not a proof), unknown = not proved.
+  3. Every proved claim ships a MUTANT of the proved object that must turn sat;
+     every finding ships a candidate PATCH that must turn unsat.  A reading
+     without its red (or green) counterpart is not connected to the code.
+
+The generated script is self-contained: it carries the pins, the axiom table
+(with the verbatim source line beside every axiom) and plain z3py.  The
+Windows interpreter only has to run it.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+
+# --------------------------------------------------------------------------
+# pins: exactly what the model reads out of the tree
+# --------------------------------------------------------------------------
+PINNED = {
+    "src/vm/vm.c": {
+        4033: "            if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) {",
+        4067: "            if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {",
+        4073: "            if (t->sp + 1 < argc) {",
+        4079: "            if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap) {",
+        4093: "            t->base += FRAME_REGS;",
+        4095: "            int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;",
+        4096: "            for (int i = 0; i < param_slots; i++)",
+        4097: "                value_set(&FR[i + 1], VAL_NIL, 0, 0, NULL, NULL);",
+        4099: "            for (int i = argc - 1; i >= 0; i--) {",
+        4100: "                value_move(&FR[i + 1], &t->stack[t->sp]);",
+        4101: "                t->sp--;",
+        4104: "            t->frame_sp[t->frame_count - 1] = t->sp;   /* save sp AFTER popping args */",
+        479: "    if (g_cur_thread->sp >= 1023) return;",
+        4511: "            nt->reg = malloc(nt->reg_cap * sizeof(Value));",
+        4515: "            nt->frame_code = calloc(nt->frame_cap, sizeof(Bytecode*));",
+        3025: "    Value *R = t->R;",
+        4513: "            nt->R = nt->reg;",
+    },
+    "src/vm/vm.h": {
+        73: "#define VM_THREAD_REG_COUNT (2048 * 1024)",
+        74: "#define VM_MAX_FRAMES 2048",
+        76: "#define VM_TASK_REG_COUNT 8192",
+        77: "#define VM_TASK_MAX_FRAMES 128",
+        82: "#define VM_FRAME_REGS 1024",
+        101: "    Value stack[1024]; int sp;",
+    },
+    "src/compiler/bytecode.h": {
+        76: "    int r1;            /* target or source1 */",
+        79: "} RegInstruction;",
+        104: "    struct Bytecode *funcs[1024];",
+        106: "    int func_argc[1024];       /* argc of each function */",
+    },
+    "src/runtime/vm_exec_builtin.c": {
+        61: '                if (m > 1) { x = vm_array_get(vm, ins.ival - 1, 1); r1 = (x.type == VAL_INT) ? x.ival : 0; }',
+        83: "            bc->func_argc[bc->func_count] = (av.type == VAL_INT) ? av.ival : 0;",
+    },
+    "src/compiler/bytecode.c": {
+        274: "    for (int i = 0; i < func_count && i < 1024; i++) {",
+    },
+}
+
+# A negative pin: inside the executor body these are the only lines that
+# mention reg_cap.  If a register-index test is ever added, this set grows and
+# the generator stops instead of repeating an out-of-date "no guard" premise.
+EXECUTOR_SPAN = (3022, 4400)
+REG_CAP_LINES_IN_EXECUTOR = [4079]
+
+CASTS = {"size_t", "int", "long", "unsigned"}
+SIZE_FUNCS = {"im_closure_env_size"}
+
+TOK_RE = re.compile(
+    r"\s*(?:(->|&&|\|\||==|!=|>=|<=|[<>+\-*/%!(),\[\].?:])|([A-Za-z_][A-Za-z0-9_]*)|([0-9]+))")
+
+
+def tokenize(text):
+    toks, pos = [], 0
+    while pos < len(text):
+        if text[pos:].strip() == "":
+            break
+        m = TOK_RE.match(text, pos)
+        if not m:
+            raise SystemExit("cannot tokenize near: " + text[pos:pos + 24])
+        pos = m.end()
+        if m.group(1):
+            toks.append(("op", m.group(1)))
+        elif m.group(2):
+            toks.append(("id", m.group(2)))
+        else:
+            toks.append(("num", int(m.group(3))))
+    return toks
+
+
+class Expr(object):
+    def __init__(self, text):
+        self.text = text
+        self.toks = tokenize(text)
+        self.i = 0
+        self.ast = self.cond()
+        if self.i != len(self.toks):
+            raise SystemExit("trailing tokens in: " + text)
+
+    def peek(self, k=0):
+        if self.i + k < len(self.toks):
+            return self.toks[self.i + k]
+        return (None, None)
+
+    def at_op(self, v):
+        t = self.peek()
+        return t[0] == "op" and t[1] == v
+
+    def at_id(self, v):
+        t = self.peek()
+        return t[0] == "id" and t[1] == v
+
+    def eat(self, v):
+        if self.at_op(v):
+            self.i += 1
+            return True
+        return False
+
+    def expect(self, v):
+        if not self.eat(v):
+            raise SystemExit("expected " + repr(v) + " in " + repr(self.text))
+
+    def cond(self):
+        a = self.lor()
+        if self.eat("?"):
+            b = self.cond()
+            self.expect(":")
+            c = self.cond()
+            return ("cond", a, b, c)
+        return a
+
+    def lor(self):
+        a = self.land()
+        while self.eat("||"):
+            a = ("or", a, self.land())
+        return a
+
+    def land(self):
+        a = self.eq()
+        while self.eat("&&"):
+            a = ("and", a, self.eq())
+        return a
+
+    def eq(self):
+        a = self.cmp()
+        while True:
+            if self.eat("=="):
+                a = ("eq", a, self.cmp())
+            elif self.eat("!="):
+                a = ("ne", a, self.cmp())
+            else:
+                return a
+
+    def cmp(self):
+        a = self.add()
+        for op in (">=", "<=", ">", "<"):
+            if self.eat(op):
+                return ("cmp", op, a, self.add())
+        return a
+
+    def add(self):
+        a = self.mul()
+        while True:
+            if self.eat("+"):
+                a = ("add", a, self.mul())
+            elif self.eat("-"):
+                a = ("sub", a, self.mul())
+            else:
+                return a
+
+    def mul(self):
+        a = self.unary()
+        while True:
+            if self.eat("*"):
+                a = ("mul", a, self.unary())
+            elif self.eat("/"):
+                a = ("div", a, self.unary())
+            elif self.eat("%"):
+                a = ("mod", a, self.unary())
+            else:
+                return a
+
+    def unary(self):
+        if self.eat("!"):
+            return ("not", self.unary())
+        if self.eat("-"):
+            return ("neg", self.unary())
+        if (self.at_op("(") and self.peek(1)[0] == "id"
+                and self.peek(1)[1] in CASTS and self.peek(2) == ("op", ")")):
+            typ = self.peek(1)[1]
+            self.i += 3
+            return ("cast", typ, self.unary())
+        return self.postfix(self.primary())
+
+    def primary(self):
+        t = self.peek()
+        if t[0] == "num":
+            self.i += 1
+            return ("num", t[1])
+        if t[0] == "id":
+            self.i += 1
+            return ("var", t[1])
+        if self.eat("("):
+            e = self.cond()
+            self.expect(")")
+            return e
+        raise SystemExit("unexpected token in " + repr(self.text))
+
+    def postfix(self, node):
+        while True:
+            if self.eat("->"):
+                t = self.peek()
+                self.i += 1
+                node = ("path", node, "->" + t[1])
+            elif self.eat("."):
+                t = self.peek()
+                self.i += 1
+                node = ("path", node, "." + t[1])
+            elif self.eat("["):
+                idx = self.cond()
+                self.expect("]")
+                node = ("index", node, idx)
+            elif self.eat("("):
+                args = []
+                if not self.at_op(")"):
+                    args.append(self.cond())
+                    while self.eat(","):
+                        args.append(self.cond())
+                self.expect(")")
+                node = ("call", node, args)
+            else:
+                return node
+
+
+def c_text(node):
+    tag = node[0]
+    if tag == "num":
+        return str(node[1])
+    if tag == "var":
+        return node[1]
+    if tag == "path":
+        return c_text(node[1]) + node[2]
+    if tag == "index":
+        return c_text(node[1]) + "[" + c_text(node[2]) + "]"
+    if tag == "call":
+        return c_text(node[1]) + "(" + ",".join(c_text(a) for a in node[2]) + ")"
+    if tag == "cast":
+        return "(" + node[1] + ")" + c_text(node[2])
+    if tag == "not":
+        return "!" + c_text(node[1])
+    if tag == "neg":
+        return "-" + c_text(node[1])
+    if tag == "cond":
+        return "(" + c_text(node[1]) + "?" + c_text(node[2]) + ":" + c_text(node[3]) + ")"
+    if tag in ("or", "and", "add", "sub", "mul", "div", "mod", "eq", "ne"):
+        sym = {"or": "||", "and": "&&", "add": "+", "sub": "-", "mul": "*",
+               "div": "/", "mod": "%", "eq": "==", "ne": "!="}[tag]
+        return "(" + c_text(node[1]) + sym + c_text(node[2]) + ")"
+    if tag == "cmp":
+        return "(" + c_text(node[2]) + node[1] + c_text(node[3]) + ")"
+    raise SystemExit("c_text: " + tag)
+
+
+def py_name(canon):
+    out = re.sub(r"[^0-9A-Za-z]+", "_", canon).strip("_")
+    if not out or out[0].isdigit():
+        out = "v_" + out
+    return out
+
+
+class Ctx(object):
+    def __init__(self):
+        self.ints = {}
+        self.bools = {}
+        self.sizes = {}
+        self.decls = []
+        self.extra = []
+
+    def int_var(self, canon):
+        if canon not in self.ints:
+            name = py_name(canon)
+            self.ints[canon] = name
+            self.decls.append(name + " = z3.Int(" + repr(canon) + ")")
+        return self.ints[canon]
+
+    def bool_atom(self, canon):
+        if canon not in self.bools:
+            name = "b_" + py_name(canon)
+            self.bools[canon] = name
+            self.decls.append(name + " = z3.Bool(" + repr(canon) + ")")
+        return self.bools[canon]
+
+    def size_var(self, canon):
+        if canon not in self.sizes:
+            name = "sz_" + py_name(canon)
+            self.sizes[canon] = name
+            self.decls.append(name + " = z3.Int(" + repr(canon) + ")")
+            self.extra.append(name + " >= 0")
+            self.extra.append(name + " < 9223372036854775808")
+        return self.sizes[canon]
+
+
+def emit(node, ctx, as_bool=False):
+    tag = node[0]
+    if tag == "num":
+        return str(node[1])
+    if tag == "var":
+        if node[1] == "NULL":
+            return "NULL"
+        canon = node[1]
+        return ctx.bool_atom(canon) if as_bool else ctx.int_var(canon)
+    if tag in ("path", "index", "call"):
+        canon = c_text(node)
+        if tag == "call":
+            head = c_text(node[1])
+            if head in SIZE_FUNCS:
+                return ctx.size_var(canon)
+        return ctx.bool_atom(canon) if as_bool else ctx.int_var(canon)
+    if tag == "not":
+        return "z3.Not(" + emit(node[1], ctx, True) + ")"
+    if tag == "or":
+        return "z3.Or(" + emit(node[1], ctx, True) + ", " + emit(node[2], ctx, True) + ")"
+    if tag == "and":
+        return "z3.And(" + emit(node[1], ctx, True) + ", " + emit(node[2], ctx, True) + ")"
+    if tag in ("eq", "ne"):
+        left, right = node[1], node[2]
+        if (left[0] == "var" and left[1] == "NULL") or (right[0] == "var" and right[1] == "NULL"):
+            other = right if left[0] == "var" and left[1] == "NULL" else left
+            atom = ctx.bool_atom(c_text(other))
+            return atom if tag == "eq" else "z3.Not(" + atom + ")"
+        op = "==" if tag == "eq" else "!="
+        return "(" + emit(left, ctx) + " " + op + " " + emit(right, ctx) + ")"
+    if tag == "cmp":
+        return "(" + emit(node[2], ctx) + " " + node[1] + " " + emit(node[3], ctx) + ")"
+    if tag in ("add", "sub", "mul", "div", "mod"):
+        op = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%"}[tag]
+        return "(" + emit(node[1], ctx) + " " + op + " " + emit(node[2], ctx) + ")"
+    if tag == "neg":
+        return "(-" + emit(node[1], ctx) + ")"
+    if tag == "cond":
+        return ("z3.If(" + emit(node[1], ctx, True) + ", " + emit(node[2], ctx)
+                + ", " + emit(node[3], ctx) + ")")
+    if tag == "cast":
+        inner = emit(node[2], ctx)
+        if node[1] == "size_t":
+            return ("z3.If(" + inner + " < 0, " + inner
+                    + " + 18446744073709551616, " + inner + ")")
+        return inner
+    raise SystemExit("emit: " + tag)
+
+
+def as_bool_py(text, ctx):
+    return emit(Expr(text).ast, ctx, True)
+
+
+# --------------------------------------------------------------------------
+# the axiom table
+# --------------------------------------------------------------------------
+# kind: measured = a reading this run's command can reproduce;
+#       asserted = written down because the code makes it true, not re-read here.
+AXIOMS = [
+    ("A1", "reg_cap", "measured", [("src/vm/vm.h", 73), ("src/vm/vm.c", 4511)],
+     "t->reg_cap == 2097152",
+     "VM_THREAD_REG_COUNT is (2048 * 1024) and the register file is malloc'd with reg_cap elements"),
+    ("A2", "frame_cap", "measured", [("src/vm/vm.h", 74), ("src/vm/vm.c", 4515)],
+     "t->frame_cap == 2048",
+     "VM_MAX_FRAMES is 2048 and frame_code is calloc(frame_cap, ...)"),
+    ("A3", "frame width", "measured", [("src/vm/vm.h", 82), ("src/vm/vm.c", 4093)],
+     "VM_FRAME_REGS == 1024",
+     "one call advances base by FRAME_REGS, which is VM_FRAME_REGS (vm.c:3026)"),
+    ("A4", "stack extent", "measured", [("src/vm/vm.h", 101), ("src/vm/vm.c", 479)],
+     "t->sp >= -1 && t->sp <= 1023",
+     "the stack is a fixed 1024-slot array and every push helper refuses at sp >= 1023"),
+    ("A5", "func_count band", "measured", [("src/compiler/bytecode.h", 104), ("src/compiler/bytecode.c", 274)],
+     "root->func_count >= 0 && root->func_count <= 1024",
+     "the funcs[] array is 1024 wide and the reader refuses indices >= 1024"),
+    ("A6", "param_slots definition", "measured", [("src/vm/vm.c", 4095)],
+     "param_slots == (root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc)",
+     "the verbatim right-hand side of the declaration"),
+    ("A7", "frame width bounds param_slots", "asserted", [("src/vm/vm.h", 82), ("src/vm/vm.c", 4097)],
+     "param_slots >= 0 && param_slots <= 1024",
+     "the callee init loop writes FR[1..param_slots]; this is the REGIME where a slot count "
+     "cannot exceed one frame width. It is not a code guarantee (P5 removes it)."),
+    ("A8", "base is frame-aligned", "measured",
+     [("src/vm/vm.c", 4093), ("src/vm/vm.c", 4125), ("src/vm/vm.c", 3084)],
+     "t->base >= 0 && t->base % 1024 == 0",
+     "base starts at 0, advances by FRAME_REGS per call, and is restored from frame_base -- "
+     "so every reachable base is a whole frame index"),
+]
+
+COMMON = ["A1", "A2", "A3", "A4", "A5"]
+
+
+class Variant(object):
+    def __init__(self, name, expect, kind, guard=None, claim=None,
+                 axioms=(), raw_axioms=(), note=""):
+        self.name = name
+        self.expect = expect
+        self.kind = kind
+        self.guard = guard
+        self.claim = claim
+        self.axioms = list(axioms)
+        self.raw_axioms = list(raw_axioms)
+        self.note = note
+
+
+class Prop(object):
+    def __init__(self, pid, title, guard_anchor, guard_text, claim, axioms,
+                 variants, story=""):
+        self.pid = pid
+        self.title = title
+        self.guard_anchor = guard_anchor
+        self.guard_text = guard_text
+        self.claim = claim
+        self.axioms = list(axioms)
+        self.variants = variants
+        self.story = story
+
+
+PROPS = [
+    Prop(
+        "P1", "call-func index: the guard is the only thing between fidx and funcs[fidx]",
+        ("src/vm/vm.c", 4067),
+        "fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL",
+        "fidx >= 0 && fidx < root->func_count",
+        COMMON,
+        [
+            Variant("asis", "unsat", "proof",
+                    note="the reject condition; its negation is the path that reaches funcs[fidx]"),
+            Variant("extent", "unsat", "proof",
+                    claim="fidx < 1024",
+                    note="guard + A5 (func_count <= 1024) is what bounds fidx by the array; "
+                         "the guard alone only bounds it by func_count"),
+            Variant("drop_count_check", "sat", "mutant",
+                    guard="fidx < 0 || root->funcs[fidx] == NULL",
+                    note="the shape AUDIT.md 1.3 found: dropping fidx >= root->func_count leaves "
+                         "sat, witness fidx = func_count = 0 (an empty function table)"),
+        ],
+        story="AUDIT.md 1.3's defect was this disjunct becoming a body instead of a guard.",
+    ),
+    Prop(
+        "P2", "closure slot: the (size_t) cast on the bound side is safe only because r2 < 0 is tested first",
+        ("src/vm/vm.c", 4033),
+        "!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)",
+        "ins.r2 >= 0 && ins.r2 < im_closure_env_size(t->closure_env)",
+        COMMON,
+        [
+            Variant("asis", "unsat", "proof",
+                    note="size_t is modelled as the two's-complement wrap of the int"),
+            Variant("strict_gt", "sat", "mutant",
+                    guard="!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 > im_closure_env_size(t->closure_env)",
+                    note="off-by-one: r2 == size then reads env slot size"),
+        ],
+    ),
+    Prop(
+        "P3", "frame write: frame_code[frame_count] is inside calloc(frame_cap)",
+        ("src/vm/vm.c", 4079),
+        "t->frame_count >= t->frame_cap",
+        "t->frame_count < t->frame_cap",
+        COMMON,
+        [
+            Variant("asis", "unsat", "proof", note="first conjunct of the call guard"),
+            Variant("strict_gt", "sat", "mutant",
+                    guard="t->frame_count > t->frame_cap",
+                    note="off-by-one: the write lands on frame_code[frame_cap]"),
+        ],
+    ),
+    Prop(
+        "P4", "the call guard reserves 8 registers of the callee frame, not the 1024 it addresses",
+        ("src/vm/vm.c", 4079),
+        "t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
+        "t->base + VM_FRAME_REGS + param_slots < t->reg_cap",
+        COMMON + ["A7", "A8"],
+        [
+            Variant("asis", "sat", "finding",
+                    note="witness base = 2046*1024 = 2095104 (the deepest base the guard admits) "
+                         "with param_slots = 1024 -> the callee writes reg[2097152] = reg[reg_cap], "
+                         "exactly one Value past the file"),
+            Variant("fix_reserve_frame", "unsat", "candidate-fix",
+                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap",
+                    note="candidate: reserve the whole child frame instead of 8 slots"),
+        ],
+        story="The guard must keep base+FRAME_REGS+param_slots in range, and the callee addresses "
+              "FR[1..param_slots] with param_slots <= VM_FRAME_REGS (A7): reserving 8 slots cannot "
+              "cover a 1024-slot frame. The last admitted depth is 2046 frames, so the overflow "
+              "is exactly one slot at the boundary.",
+    ),
+    Prop(
+        "P5", "param_slots has no upper bound: func_argc comes out of the bytecode unvalidated",
+        ("src/vm/vm.c", 4095),
+        "t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + 8 >= t->reg_cap",
+        "t->base + VM_FRAME_REGS + param_slots < t->reg_cap",
+        COMMON + ["A6", "A8"],
+        [
+            Variant("asis", "sat", "finding",
+                    note="witness base = 2095104 and func_argc >= 1024 -> param_slots >= 1024"),
+            Variant("declared_2000", "sat", "finding",
+                    raw_axioms=["root->func_argc[fidx] == 2000"],
+                    note="the magnitude: a handcrafted func_argc of 2000 makes the init loop "
+                         "write 976 slots past the register file at the same depth"),
+            Variant("clamp_param_slots", "unsat", "candidate-fix",
+                    raw_axioms=["param_slots >= 0", "param_slots <= 1023"],
+                    note="candidate: clamp the slot count. This closes the index window, but it "
+                         "silently drops the trailing arguments; P4's guard fix keeps them"),
+            Variant("guard_fix_only", "sat", "candidate-fix-insufficient",
+                    guard="t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap",
+                    note="the P4 guard fix is NOT enough here: with param_slots unconstrained a "
+                         "2048-slot call still overflows (witness argc = 2048, base = 2094080), "
+                         "so P5 is independent of P4 -- the slot count itself has to be bounded"),
+        ],
+        story="bc_from_data copies func_argc out of the caller's dict with no band check and is "
+              "reachable from .im through the vm_exec builtin (src/runtime/vm_exec_builtin.c:83). "
+              "A6 plus A8 alone do not bound param_slots; only A7 does, and A7 is an assumption.",
+    ),
+    Prop(
+        "P6", "register operands: ins.r1 is an int with no guard, so R[ins.r1] is unchecked",
+        ("src/vm/vm.c", 3025),
+        "0",
+        "ins.r1 >= 0 && ins.r1 < t->reg_cap",
+        COMMON,
+        [
+            Variant("asis", "sat", "finding",
+                    note="witness ins.r1 = -1 (one slot before the file); an .im-scale operand "
+                         "such as -5000000 is 160 MB before it, and R = t->R = t->reg"),
+            Variant("candidate_guard", "unsat", "candidate-fix",
+                    guard="ins.r1 < 0 || ins.r1 >= t->reg_cap",
+                    note="candidate: reject the operand, the way the call index already is"),
+        ],
+        story="Absence premise, pinned negatively: inside the executor body the only line that "
+              "mentions reg_cap is the call guard at 4079, so R[ins.rN] has no bound at all.",
+    ),
+    Prop(
+        "P7", "argument pops: the sp+1 < argc guard is the only thing above the stack floor",
+        ("src/vm/vm.c", 4073),
+        "t->sp + 1 < argc",
+        "t->sp + 1 - argc >= 0",
+        COMMON,
+        [
+            Variant("asis", "unsat", "proof",
+                    note="the drain loop at 4099-4101 has no per-step floor test, so this guard "
+                         "carries the whole invariant"),
+            Variant("drop_guard", "sat", "mutant",
+                    guard="0",
+                    note="remove the check: argc = sp+2 reads stack[-1]"),
+        ],
+    ),
+]
+
+
+def sanitize_source_lines(path, cache):
+    if path not in cache:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            cache[path] = fh.read().split("\n")
+    return cache[path]
+
+
+def pin_ok(want, got):
+    """Exact line text; a trailing comment is allowed, anything else is drift."""
+    if got == want:
+        return True
+    if got.startswith(want):
+        rest = got[len(want):]
+        return rest.strip() == "" or (rest.lstrip().startswith("/*") and rest.rstrip().endswith("*/"))
+    return False
+
+
+def check_pins(root, cache):
+    problems = []
+    pins = []
+    digests = {}
+    for path, lines in sorted(PINNED.items()):
+        full = os.path.join(root, path)
+        with open(full, "rb") as fh:
+            data = fh.read()
+        digests[path] = hashlib.sha256(data).hexdigest()
+        src = sanitize_source_lines(full, cache)
+        for lineno, want in sorted(lines.items()):
+            got = src[lineno - 1] if lineno <= len(src) else "<no such line>"
+            ok = pin_ok(want, got)
+            if not ok:
+                problems.append("%s:%d pin drift\n  pinned: %r\n  tree:   %r"
+                                % (path, lineno, want, got))
+            pins.append((path, lineno, got.strip(), ok))
+    return pins, digests, problems
+
+
+def check_negative_pins(root, cache, problems):
+    src = sanitize_source_lines(os.path.join(root, "src/vm/vm.c"), cache)
+    lo, hi = EXECUTOR_SPAN
+    found = [i for i in range(lo, hi + 1) if i <= len(src) and "reg_cap" in src[i - 1]]
+    if found != REG_CAP_LINES_IN_EXECUTOR:
+        problems.append("negative pin drift: reg_cap is mentioned in the executor body at %r, "
+                        "pinned %r -- re-read P6's premise before trusting it"
+                        % (found, REG_CAP_LINES_IN_EXECUTOR))
+    return found
+
+
+def build_script(root, pins, digests, neg_lines, gen_sha):
+    out = []
+    out.append('#!/usr/bin/env python3')
+    out.append('"""Generated by tools/z3bounds/gen_bounds_proof.py -- do not edit.')
+    out.append('')
+    out.append('Tree pins (verbatim line text checked against the tree by the generator):')
+    for path, lineno, text, _ok in pins:
+        out.append("  %s:%d  %s" % (path, lineno, text))
+    out.append('')
+    out.append('Negative pin: inside the executor body the only reg_cap mention is %r.' % (neg_lines,))
+    out.append('"""')
+    out.append('import json')
+    out.append('import sys')
+    out.append('import time')
+    out.append('import z3')
+    out.append('')
+    out.append('RESULTS = {}')
+    out.append('')
+    expect = {}
+    for prop in PROPS:
+        ctx = Ctx()
+        guard_ast = Expr(prop.guard_text).ast
+        claim_ast = Expr(prop.claim).ast
+        emit(guard_ast, ctx, True)
+        emit(claim_ast, ctx, True)
+        for ax in AXIOMS:
+            if ax[0] in prop.axioms:
+                as_bool_py(ax[4], ctx)
+        for var in prop.variants:
+            if var.guard:
+                as_bool_py(var.guard, ctx)
+            if var.claim:
+                as_bool_py(var.claim, ctx)
+            for ax in AXIOMS:
+                if ax[0] in var.axioms:
+                    as_bool_py(ax[4], ctx)
+            for txt in var.raw_axioms:
+                as_bool_py(txt, ctx)
+        out.append("# ------------------------------------------------------------------")
+        out.append("# " + prop.pid + ": " + prop.title)
+        if prop.story:
+            out.append("# " + prop.story)
+        out.append("# ------------------------------------------------------------------")
+        for line in ctx.decls:
+            out.append(line)
+        for idx, line in enumerate(ctx.extra):
+            out.append("SIZE_AXIOM_%d = (%s)" % (idx + 1, line))
+        out.append('')
+        for var in prop.variants:
+            gtext = var.guard or prop.guard_text
+            ctext = var.claim or prop.claim
+            ax_ids = prop.axioms + var.axioms
+            fn = "check_" + prop.pid + "_" + var.name
+            expect[prop.pid + "|" + var.name] = var.expect
+            out.append("# " + prop.pid + " / " + var.name + " (" + var.kind + ", expect " + var.expect + ")")
+            if var.note:
+                out.append("# " + var.note)
+            out.append("#   guard: " + gtext)
+            out.append("#   claim: " + ctext)
+            out.append("def " + fn + "():")
+            out.append("    s = z3.Solver()")
+            out.append("    s.set('timeout', 20000)")
+            for ax in AXIOMS:
+                if ax[0] in ax_ids:
+                    g = as_bool_py(ax[4], ctx)
+                    out.append("    s.add(" + g + ")  # " + ax[0] + " " + ax[1])
+            for idx in range(len(ctx.extra)):
+                out.append("    s.add(SIZE_AXIOM_%d)" % (idx + 1))
+            for txt in var.raw_axioms:
+                out.append("    s.add(" + as_bool_py(txt, ctx) + ")  # variant axiom: " + txt)
+            g = emit(Expr(gtext).ast, ctx, True)
+            if g != "0":
+                out.append("    guard = " + g)
+                out.append("    s.add(z3.Not(guard))  # the guard rejecting is the path under test")
+            c = emit(Expr(ctext).ast, ctx, True)
+            out.append("    claim = " + c)
+            out.append("    s.add(z3.Not(claim))")
+            out.append("    t0 = time.time()")
+            out.append("    r = s.check()")
+            out.append("    dt = time.time() - t0")
+            out.append("    verdict = 'sat' if r == z3.sat else ('unsat' if r == z3.unsat else 'unknown')")
+            out.append("    model = {}")
+            out.append("    if r == z3.sat:")
+            out.append("        m = s.model()")
+            out.append("        for name in " + repr(sorted(ctx.ints.values())) + ":")
+            out.append("            model[name] = str(m.eval(globals()[name], model_completion=True))")
+            out.append("        for name in " + repr(sorted(ctx.sizes.values())) + ":")
+            out.append("            model[name] = str(m.eval(globals()[name], model_completion=True))")
+            out.append("    RESULTS[%r] = (verdict, dt, model)" % (prop.pid + "|" + var.name,))
+            out.append("    print('RESULT|" + prop.pid + "|" + var.name + "|%s|%.3f' % (verdict, dt))")
+            out.append("    if model:")
+            out.append("        print('MODEL|" + prop.pid + "|" + var.name + "|' + json.dumps(model, sort_keys=True))")
+            out.append("    return verdict")
+            out.append('')
+    out.append("EXPECT = " + json.dumps(expect, indent=4, sort_keys=True))
+    out.append('')
+    out.append('def main():')
+    out.append('    print("z3 " + z3.get_version_string() + " py " + sys.version.split()[0])')
+    for prop in PROPS:
+        for var in prop.variants:
+            out.append("    check_" + prop.pid + "_" + var.name + "()")
+    out.append('    bad = 0')
+    out.append('    for key in sorted(EXPECT):')
+    out.append('        got = RESULTS[key][0]')
+    out.append('        ok = got == EXPECT[key]')
+    out.append('        if not ok:')
+    out.append('            bad += 1')
+    out.append('        print("VERDICT|%s|expect %s|got %s|%s" % (key, EXPECT[key], got, "PASS" if ok else "FAIL"))')
+    out.append('    print("SUMMARY|variants=%d|pass=%d|fail=%d" % (len(EXPECT), len(EXPECT) - bad, bad))')
+    out.append('    return 0 if bad == 0 else 1')
+    out.append('')
+    out.append('if __name__ == "__main__":')
+    out.append('    sys.exit(main())')
+    out.append('')
+    return "\n".join(out)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--check-only", action="store_true")
+    args = ap.parse_args()
+    root = os.path.abspath(args.root)
+    cache = {}
+    pins, digests, problems = check_pins(root, cache)
+    neg = check_negative_pins(root, cache, problems)
+    if problems:
+        for p in problems:
+            print("PIN FAILED: " + p, file=sys.stderr)
+        return 2
+    gen_path = os.path.abspath(__file__)
+    with open(gen_path, "rb") as fh:
+        gen_sha = hashlib.sha256(fh.read()).hexdigest()[:16]
+    if not args.quiet:
+        for path, lineno, text, _ok in pins:
+            print("pin ok  %s:%d  %s" % (path, lineno, text[:96]))
+        print("pin ok  negative: reg_cap in executor body at %r" % (neg,))
+        for path, dg in sorted(digests.items()):
+            print("sha256  %s  %s" % (dg[:16], path))
+    script = build_script(root, pins, digests, neg, gen_sha)
+    out = args.out
+    d = os.path.dirname(os.path.abspath(out))
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    if args.check_only:
+        print("generator ok: %d pins, %d propositions" % (len(pins), len(PROPS)))
+        return 0
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(script)
+    print("wrote %s  bytes=%d  sha256=%s"
+          % (out, len(script.encode("utf-8")),
+             hashlib.sha256(script.encode("utf-8")).hexdigest()[:16]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
