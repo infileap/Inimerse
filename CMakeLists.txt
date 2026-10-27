@@ -1698,4 +1698,14 @@ set_tests_properties(vm_frame_bounds PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE
 # while five sites still truncated.
 add_test(NAME identifier_length COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/identifier_truncation.test.py --bin $<TARGET_FILE:inimerse>)
 set_tests_properties(identifier_length PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;regression")
+# The prover's five pins, checked against the instrument itself instead of
+# against a promise: gen_bounds_proof.py --self-check-pins runs five cases
+# (clean / line-shift / char / truncate / unpinned), and each one asserts what
+# the instrument reports about a script it has just modified.  A wrapper, not a
+# direct registration, because python3 or git missing must say so and exit 2 --
+# not registered: nothing was checked -- rather than let ctest read a skip as a
+# pass.  The expected summary is written down with the tree it was read on.
+add_test(NAME selfhost_z3bounds_pin_selfcheck COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/z3bounds_selfcheck_pins.py)
+set_tests_properties(selfhost_z3bounds_pin_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+
 endif()
