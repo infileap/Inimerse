@@ -1,115 +1,170 @@
-# 有界证明 T2：字节码栈平衡的可抽性读数（执行器侧）
+# 有界证明 T2：字节码栈平衡——可抽性读数、判据形状与次腿对账
 
-本页是 T1（`docs/streams/dec-formal-bounds.md`，VM 索引守卫的 SMT 有界证明）的姊妹页。T1 证的是索引算术，T2 要先回答一个更前置的问题：**栈平衡的规则到底写在哪里、能不能机械抽出来**。
-本页只报抽取器的读数与已知盲区，不含栈平衡命题的证明——那一层要等次腿（emit 侧对账）落地后再写。
+本页是 T1（`docs/streams/dec-formal-bounds.md`，VM 索引守卫的 SMT 有界证明）的姊妹页。
+T1 证的是索引算术；T2 要先回答两个更前置的问题：**栈平衡的规则写在哪里、能不能机械抽出来**，
+以及**编译器发出的 op 是否恰好都有执行者、实参是否被读到**。
+本页报读数与判据形状，**不证栈平衡命题**——那一层要等下面第 7 节的公理被接受之后才成立。
 
 ## 0. 边界与标签
 
-沿用 T1 页的约定：`measured` = 本页命令可复现；`proved` = 求解器 unsat；`proved-conditional` = 模型内 sat 但见证要踩 `asserted` 公理或可达性假设；`asserted` = 写下来但本轮没重新读代码验证。本页没有 z3 参与，所以只有 `measured` 与 `asserted`。
+沿用 T1 页约定：`measured` = 本页命令可复现；`proved` = 求解器 unsat；
+`proved-conditional` = 模型内 sat 但见证要踩 `asserted` 公理或可达性假设；`asserted` = 写下来但本轮没重新读代码验证。
+本页只有 `measured` 与 `asserted`（没有 z3 参与），但第 7 节给出 T2 将来的结论形态是 `proved-conditional`。
+
 定位符约定同 T1：`path:line` 只有在同一行给出该行逐字原文时才算 pin，否则标 `unverified-locator`。
 
-## 1. 一条命令
+## 1. 两条命令
 
     python3 tools/z3bounds/extract_stack_effects.py
+    python3 tools/z3bounds/reconcile_emit_dispatch.py
 
-退出码：0 = 自检通过；1 = 自检不通过（抽取器自己数出的计数与独立 grep 基线不一致）；2 = 这棵树不像抽取器描述的那棵（找不到 dispatch 行）。
+退出码（两个工具同义）：0 = 自检/对照通过；1 = 判据自己先不一致（读数照印，不吞）；2 = 这棵树不像工具描述的那棵。
 末行读数必须形如 `SUMMARY|ops_total=67|with_effect=10|no_effect=57|unparsed_expr=1|selfcheck=PASS`（measured）。
 
 ## 2. 抽取法：两层跳转，不是一层
 
-实测：执行器不是 `case OP_X: { ... }`，而是**跳转派发**——
+实测：执行器不是 `case OP_X: { ... }`，而是**跳转派发**：
 
+    src/vm/vm.c:3160        switch (ins.op) {
     src/vm/vm.c:3161        case OP_MOV: goto L_MOV;
     src/vm/vm.c:3235        L_MOV:
 
-所以抽取要走两步：`case OP_X: goto L_Y;` 建 op→label 映射（实测 67 条），再以 `L_Y:` 块为 op 体，收集块内 `t->sp` 写点与前置守卫。
-块的终止边界取三者的最早者：下一个 label 行、下一个 `case OP_`、缩进小于 label 的 `}`。这条边界不是装饰——第一版没加它，最后一个 label 的块一直吃到文件尾，把 `src/vm/vm.c:4806` 与 `:4983` 的复位写进了某个 op 的效应里，读数因此虚高。
+而同一文件里还有**另一个** `case OP_` 世界——反汇编器：
 
-## 3. 四个数（本轮要求先印出来的）
+    src/vm/vm.c:5311        switch (ins->op) {
+    src/vm/vm.c:5312        case OP_MOV:            snprintf(out, outsz, "MOV r%d, r%d", ins->r1, ins->r2); return;
+
+所以 `grep -c 'case OP_'` = **114** 是**两种用途的并集**，而执行器只派发 **67** 个 op。
+这条读数现在由工具自己印出来，重推 114 的人会被它挡住：
+
+    SWITCHES|dispatch=1@3160..3232|dispatch_cases=67|head=switch (ins.op) {
+    SWITCHES|disasm=1@5311..5368|disasm_cases=47|head=switch (ins->op) {
+    SWITCHES|ops_total=67|labels=67|case_OP_lines=114|note=two_worlds:grep_case_OP_is_dispatch_plus_disasm
+
+块的终止边界取三者的最早者：下一个 label 行、下一个 `case OP_`、缩进小于 label 的 `}`。
+这条边界不是装饰——第一版没加它，最后一个 label 的块一直吃到文件尾，
+把 `src/vm/vm.c:4806` 与 `:4983` 的复位写进了某个 op 的效应里，读数因此虚高。
+
+## 3. 判据的形状：先印规则，再印读数
+
+读数的可信度不在数字，在**判据的形状**。同一类错误我已经犯过两次，两个方向：
+
+- 方向一（去重吃掉真形态）：`t->sp--` 与 `t->sp--]` 被旧归一化当成两种形状去重 ⇒ 少数（19 而非 20）。
+- 方向二（子串吃进假形态）：`nt->sp = -1;` 不加词边界就被 `t->sp` 匹配吃进 ⇒ 多数（7 而非 3）。
+
+同一个病在次腿又出现一次：`OP_POP_REG` 只出现在 `src/compiler/bytecode.h:20` 的注释里
+（`/* 29 is a hole: OP_POP_REG used to sit here.  The numbering after it is`），
+不做注释剥离就会报「编译得出、执行不了」——最危险的那一类结论。**形状没印出来的读数，读者无法复核。**
+
+所以工具现在先印判据：
+
+    NORMALIZE|dedupe=line-identity(each matching line counted once,no shape folding)|word-boundary=yes|patterns=dec:t->sp--,inc:t->sp++,assign:t->sp=<rhs>,read:t->sp
+
+并配两条**负对照**（比自检更硬：自检只证明「和我手数的一致」，负对照证明「判据不因无关改名而漂」）：
+
+    NEGCTL|unrelated-rename|nt->sp=>nnt->sp|dec=20|inc=5|assign_literal=3|unchanged=YES
+    NEGCTL|token-rename|t->sp--=>t->spX--|dec=0|expected_drop=20|drop=20|name_exact=YES
+    NEGCTL|decoy-sites|nt->sp_assign=4|counted_as_t->sp=0|matcher=word-bounded
+
+第二条要说明一句：把**真形态**改名成 `spX` 之后，正确判据的读数**必须减少**且减幅恰好等于改名处数（20）；
+若读数不变，说明匹配器在按 `->sp` 前缀匹配、把 `spX` 也算成了 `sp`——那才是词边界没修对。
+所以负对照分两类：无关改名「必须不变」，真形态改名「必须按点数减少」。
+
+## 4. 四个数
 
     EXEC|ops_total=67|ops_with_sp_effect=10|ops_no_effect_but_declared=57|reads=42
+    REASONS|register-only=48|delegates=1|read-only=1|named=7|unclassified=0
 
-- `ops_total=67`：执行器派发的 op 数。**注意这与 114 不同**：114 是全文件 `case OP_` 的行数，其中 47 行属于反汇编器那个 switch（`src/vm/vm.c:5312` 起，形如 `case OP_MOV:            snprintf(out, outsz, "MOV r%d, r%d", ins->r1, ins->r2); return;`）。我上一轮报 114 是抓全文件，属于口径错，这里更正为 67 + 47。
-- `ops_with_sp_effect=10`：有 `t->sp` 写点的 op：
+- `ops_with_sp_effect=10`：CALL_BUILTIN dec1(guard 3912)、CALL_FUNC dec1(guard 4073)、MAKE_FUNC dec1(guard 4043)、
+  NEW_ARRAY dec2(3625,3635)、NEW_DICT dec2(3653,3663)、NEW_SET dec2(none,4289)、
+  PUSH_REG inc5(3818,3827,3833,3839,3845)、RETURN =expr1、SET_INTERVAL dec4(4317)、THREAD_START dec5(4463,4475)。
+- `ops_no_effect_but_declared=57` 逐个点名，没有一条留成「不知道」：register-only 48、委托 1、只读 1、具名 7、**unclassified 0**。
+  具名七条：DECLARE limits-only(4184)、HALT terminates-run(4022)、STOP terminates-run(4019)、
+  JUMP control-flow-only(3797)、LOCK mutex-only(4700)、TRY_END exception-depth-only(4436)、YIELD task-yield-only(4027)。
 
-      OP_CALL_BUILTIN  dec x1  guard 3912   span 3857-3920
-      OP_CALL_FUNC     dec x1  guard 4073   span 4060-4115
-      OP_MAKE_FUNC     dec x1  guard 4043   span 4039-4055
-      OP_NEW_ARRAY     dec x2  guard 3625,3635
-      OP_NEW_DICT      dec x2  guard 3653,3663
-      OP_NEW_SET       dec x2  guard none,4289
-      OP_PUSH_REG      inc x5  guard 3818,3827,3833,3839,3845
-      OP_RETURN        =expr x1 guard none
-      OP_SET_INTERVAL  dec x4  guard 4317 x4
-      OP_THREAD_START  dec x5  guard 4463,4475 x4
+## 5. 两条 asserted 升成 measured：穷举，而不是引用
 
-- `ops_no_effect_but_declared=57`：没有 `t->sp` 写点的 op，**逐个点名**：48 个 `register-only`（只写 `R[]`/`FR[]`，不碰栈）、1 个 `delegates-to=L_CALL_FUNC`（`OP_CALL_VALUE`，块内 `goto L_CALL_FUNC;`）、1 个 `read-only`（`OP_TRY_START`，只读 `t->sp`）、7 个**手工命名**（下表，附证据行）、0 个 `unclassified`。
+`OP_DECLARE` 与 `OP_LOCK` 没有单行可引，但要证的是**「这一段不碰 `t->sp`」**，
+那是**穷举**命题，证据是**写点全集**，不是一行原文：
 
-      OP_DECLARE    limits-only                    src/vm/vm.c:4184
-      OP_HALT       terminates-run                 src/vm/vm.c:4022
-      OP_STOP       terminates-run                 src/vm/vm.c:4019
-      OP_JUMP       control-flow-only              src/vm/vm.c:3797
-      OP_LOCK       mutex-only                     src/vm/vm.c:4700
-      OP_TRY_END    exception-depth-only           src/vm/vm.c:4436
-      OP_YIELD      task-yield-only                src/vm/vm.c:4027
+    NO-SP|src/vm/vm.c:4184..4195|writes=vm->limit_inst,vm->limit_mem,vm->limit_threads,vm->limit_time,vm->limit_vram|locals=kind,v|sp_writes=0|source=extracted
+    NO-SP|src/vm/vm.c:4700..4715|writes=vm->mutex_count|locals=cs,midx|sp_writes=0|source=extracted
 
-这七条的原文（各取一行，全部逐字）：
+`sp_writes=0` 加写点全集，就是「不改栈」的证据形态。⇒ 七条里 5 条有逐字语句可引，
+2 条由写点全集支撑，`asserted` 只剩第 7 节那条真正的假设。
 
-    src/vm/vm.c:4022        t->running = false;
-    src/vm/vm.c:4019        t->running = false;
-    src/vm/vm.c:3797        t->ip = ins.r2;
-    src/vm/vm.c:4436        if (t->exc_depth > 0) t->exc_depth--;
-    src/vm/vm.c:4027        if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
+## 6. 自检：我自己那三个基线有两个是错的
 
-只有这五条能在同一行找到逐字的语句；`OP_DECLARE` 与 `OP_LOCK` 的判定来自整块（4184-4195 只碰 `vm->limit_*`；4700-4715 只碰互斥量），**没有单行可引**，所以它们的理由是 `asserted`，不是 `measured`。这是本页最该被挑的一处，先自己挑出来。
-
-## 4. 自检：我自己那三个基线有两个是错的
-
-上一轮我报给量方的基线是 `19 / 5 / 7`。抽取器跑出来是 `20 / 5 / 3`，逐条查过，**基线错，抽取器对**：
-
-- `dec`：19 → **20**。第 20 处是 `src/vm/vm.c:4044` 的 `Value *captured = &t->stack[t->sp--];`。我原来那条 grep 把 `t->sp[^;]*` 归一化后 `t->sp--` 与 `t->sp--]` 成了两种形状，去重时被算成 19 + 1，而我只看主形状。**归一化去重不是计数**。
-- `assign_literal`：7 → **3**。7 里有 4 处是 `nt->sp = -1;`——`nt->sp` 含子串 `t->sp`，正则不加词边界就一起数了。加 `(?<![A-Za-z0-9_])` 后只剩 `src/vm/vm.c:3083`、`:4806`、`:4983` 三处 `t->sp = -1;`。
-- `inc`：5，只有 `OP_PUSH_REG` 一处 op 内的五个分支（字符串/数组/字典/集合/函数各一个 `t->sp++`），前后一致。
-
-现在的自检读数（measured，三条全 PASS）：
+上轮报的 `19 / 5 / 7`，工具跑出 `20 / 5 / 3`，逐条查过：**基线错，工具对**（原因见第 3 节）。
+现在三条全 PASS：
 
     SELFCHECK|dec=20|baseline=20|PASS
     SELFCHECK|inc=5|baseline=5|PASS
     SELFCHECK|assign_literal=3|baseline=3|PASS
     SELFCHECK|in_body:dec=18|inc=5|assign_literal=0
 
-## 5. `unparsed` 基线：先报，不修到 0
+## 7. unparsed 基线、A-FRAME 公理，与 T2 将来的结论强度
 
     unparsed=0    unparsed-expr=1
     UNPARSED-EXPR|src/vm/vm.c:4121|t->sp = t->frame_sp[t->frame_count - 1];
 
-这一条**必须原样留着**：它是「返回时把 `sp` 恢复到调用者保存的那一格」，右值是表达式不是常量。把它写成「变更 +N」就等于替 T2 证明了「`frame_sp` 里存的一定是合法栈顶」——那正是命题的一半。它进 `unparsed-expr` 等当面讨论，不进效应表。
-另外，五处 `t->sp` 写点不在任何 op 体内，抽取器把它们单独印出来而不是丢掉：
+这一条**必须原样留着**：它是「返回时把 `sp` 恢复到调用者保存的那一格」，右值是表达式。
+折算成常量就等于替 T2 证明了「`frame_sp` 里存的一定是合法栈顶」——那正是命题的一半。
 
-    OUTSIDE|src/vm/vm.c:3083|assign_literal|t->sp = -1;
-    OUTSIDE|src/vm/vm.c:4806|assign_literal|t->ip = 0; t->sp = -1; t->base = 0; t->frame_count = 0;
-    OUTSIDE|src/vm/vm.c:4845|dec|for (int i = argc - 1; i >= 0; i--) { value_move(&nt->R[i + 1], &t->stack[t->sp]); t->sp--; }
-    OUTSIDE|src/vm/vm.c:4885|dec|（同上，对象换成 nt2）
-    OUTSIDE|src/vm/vm.c:4983|assign_literal|t->sp = -1;
+因此它不以 `unparsed` 收尾，而以**显式公理**进入模型：
 
-⇒ 18 + 2 = 20，全部对上。这些是复位路径与线程启动时拷贝实参的循环，不归任何 op 的效应。
+    A-FRAME:  ∀i. 0 <= frame_sp[i] < reg_cap        [asserted]
+    （写入点分散在帧建立与 SET_UPVALUE 等处，本轮未做全集枚举）
 
-## 6. 「不存在栈效应表」这条本身是读数
+于是 T2 将来的结论只能是 `proved-conditional`：**若 A-FRAME 成立，则每个 op 执行前后 `sp` 落在 [0, reg_cap]**。
+**这与 T1 的 P4 是同一个形状**（P4 依赖 A7 `0<=param_slots<=1024` 与 A8 `base 对齐`）：
+两个靶子给出的结论强度一致，不存在一处很硬一处很软。
 
-    grep -rn 'STACK_EFFECT\|stack_effect\|op_sp' src/vm src/compiler   ⇒ 0 命中
-    grep -rn 'stack_depth\|max_stack' src/compiler                        ⇒ 0 命中
+另五处写点在体外，单独印不丢：`3083`、`4806`（复位）、`4845`、`4885`（线程启动拷实参）、`4983`。
+18 体内 + 2 体外 dec = 20，对得上。
 
-⇒ 栈平衡的规则不在编译器声明里，只在执行器的命令式代码里（本页的 10 个 op + 5 处体外写点）。这也解释了为什么它一直没人证过：没有表可读，只能从源码抽。
-同时 `emit()` 只声明 `(op, r1, r2, r3)`（`src/compiler/compiler.c:434  static void emit(Bytecode *bc, OpCode op, int r1, int r2, int r3)`），指令落盘唯一处在 `src/compiler/bytecode.c:62  bc->code[bc->count++] = ins;`——所以「从 emit 点抽栈效应」这条路在源码层面就不存在。
+## 8. 次腿：emit 侧对账（集合差在前，参数在后）
 
-## 7. 次腿（emit 侧对账）与本页没做的事
+    EMIT|ops=67|dispatched=67|emit_sites=114|files=src/compiler/*.{c,h}
+    EMIT-DIFF|emitted_not_dispatched=0|dispatched_not_emitted=0
+    EXCLUDED|OP_POP_REG|prov=src/compiler/bytecode.h:20|why=only_in_comment|text=/* 29 is a hole: OP_POP_REG used to sit here.  The numbering after it is
+    MIRROR|enum_ops=47|not_in_dispatch=-|absent_from_mirror=20
+    ARGC-SUMMARY|checked=67|suspicious=0|note=r3=third_emit_arg_vs_ins.r3_reads
 
-- 次腿未做：每个 op 报「编译器发出的参数个数」与「执行器消费的个数」。样板已定：`src/vm/vm.c:4061  int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;` ↔ 块内 `for (int i = argc - 1; i >= 0; i--) { value_move(&FR[i + 1], &t->stack[t->sp]); t->sp--; }`。
-- 本页不证任何栈平衡命题：`OP_PUSH_REG` 的 `if (t->sp >= 1023) continue;` 与 `t->sp++` 是一对，但「所有路径都先测后写」属于 T2 的命题层，要等次腿给出参数计数之后才能建模。
-- 接缝（已写进 T1 页，这里复述）：`ins.r3` 与 `func_argc` 都没有上界，栈平衡的公理表不能悄悄假设「实参个数合理」，必须显式写成公理。
+- **集合差双向都是 0**：编译器能发出的 67 个 op 与执行器派发的 67 个 op 逐一对应，
+  没有「编出来没人执行」，也没有「派发了没人编」的死 op。这正是 `ops_total=67` 的邻域问题，
+  而它比栈平衡更接近真事故——编出来没人执行 = 静默丢弃。
+- 第 68 个命中是注释里的 `OP_POP_REG`（`bytecode.h:20`），剥离注释后集合才是 67。
+- `MIRROR`：`selfhost/` 镜像编译器的 op 枚举有 **47** 个，全部在派发集合里；
+  反过来有 **20** 个派发 op 不在镜像枚举中——这是**读数**，不是缺陷判定（镜像走内建/合成路径与否由镜像车道判断）。
+- 参数对账（第三段）：`r3_reads`（体内 `ins.r3` 读点，**沿 `goto` 委托传递**）对比 emit 的第三个实参。
+  `suspicious=0` 的判定分两型：执行器读 `r3` 但编译端永远喂字面 0；编译端喂了非零 `r3` 而执行器从不读。
 
-## 8. 树号与改动清单
+**这一段我自己先错三次，全部记在此处留证**：
 
-- 树号：1042aed（worktree /tmp/wt-z3c，已 `git worktree lock`）；本页与抽取器同批提交。
-- 新增：`tools/z3bounds/extract_stack_effects.py`、本页。未改 `src/`、`selfhost/`、门禁脚本与 CTest 计数。
-- 复现：`python3 tools/z3bounds/extract_stack_effects.py` 末行 `SUMMARY` 与 §3、§4 的读数逐字相同；退出码 0。
+1. 注释剥离函数把 `//` 换成**一个**空格（不是两个），长度不再保持，切片索引整体漂移 ⇒ 凭空造出 10 个「可疑」op。
+2. 参数下标差一位（`a[3]` 是 `r2` 不是 `r3`）⇒ 又造出一批。
+3. 没有沿委托走：`OP_CALL_VALUE` 的块体只是 `goto L_CALL_FUNC;`，argc 在目标块里读，
+   只数首块就会报「执行器忽略 r3」——恰好冤枉了唯一会转发 argc 的那个 op。
+
+修正后 `suspicious=0`。**先接受工具的错，才有资格报它的读数**；这也是判据形状同一课。
+
+## 9. 「不存在栈效应表」这条本身是读数
+
+    grep -rn 'STACK_EFFECT|stack_effect|op_sp' src/vm src/compiler  ⇒ 0 命中
+    grep -rn 'stack_depth|max_stack' src/compiler                   ⇒ 0 命中
+
+⇒ 栈平衡的规则不在编译器声明里，只在执行器的命令式代码里（本页 10 个 op + 5 处体外写点）。
+这也解释了为什么它一直没人证过：没有表可读，只能从源码抽。
+且 `src/compiler/compiler.c:434  static void emit(Bytecode *bc, OpCode op, int r1, int r2, int r3)` 与
+唯一落盘点 `src/compiler/bytecode.c:62  bc->code[bc->count++] = ins;` 说明：
+从 emit 点造效应表这条路在源码层不存在。
+
+## 10. 树号、改动清单、没做的事
+
+- 树号：1042aed 为基线，产物提交在分支 `z3bounds-t1`（worktree `/tmp/wt-z3c`，已 `git worktree lock`）。
+- 新增：`tools/z3bounds/extract_stack_effects.py`、`tools/z3bounds/reconcile_emit_dispatch.py`、本页。
+  未改 `src/`、`selfhost/`、门禁脚本与 CTest 计数；本页不引门禁 TARGET 文件名，避免把本页纳入比对输入集。
+- 没做：栈平衡命题的建模与求解（等 A-FRAME 公理被接受）；`src/vm/vm.c:3025` 起的执行器外框（线程/任务切换路径）的枚举；
+  `asserted` 的 A-FRAME 写入点全集。
+- 复现：两条命令的末行 `SUMMARY` 与第 2、3、4、5、8 节读数逐字相同，退出码 0。
