@@ -118,3 +118,40 @@ gen1 是引擎跑源码的产物，gen2 是 gen1 这个镜像自己跑出来的�
 - 浮点池仍未实现，带浮点常量的源会停在「浮点池未实现」。
 - 镜像与 C 编译产物的行为差异只枚举了上面两条，没有系统扫；try 表与全局名表的结论沿用上一节。
 
+
+## 两条根因落地（树 ee09dee）
+
+上一节的两条缺口按根因修，并先用一个量具把症状变成读数：tools/dec_mirror_behavior_probe.py 把同一个程序
+跑三路 —— 引擎直接跑源码、C 编译出的 INIMBC 镜像跑、自举编译器产出的 INIMBC 镜像跑 —— 比较 rc、stdout
+字节、stderr 字节（按字节比，行号只用来指首个差异）。每次运行都做两型变异自检：多一行、以及「行数相同
+但字节不同」，因为只比行数的比较器会在第二型上假绿。每格打印三路的 rc / 字节数 / stdout 前 3 行 /
+stderr 首行，复核不必重跑。
+
+修前在 31ccbe6 上（旧树 worktree、同一份量具、同一份 case 名单、引擎不变）：
+
+    mirror: cases=9 red=8 green=1
+
+红的 8 格：stop-all、escaped-newline、escaped-tab、escaped-backslash、escaped-quote、escaped-nul、
+emit-cli、float-pool。唯一绿的是 escape-unsupported —— 旧行为「不认识的转义按字面走」本来就是对的，
+这一格是**哨兵：恒绿是预期**，不许因为「它本来绿」就从名单里删掉。修后同一份名单：
+
+    mirror: cases=9 red=0 green=9
+
+修法（都不动其它被引行号）：
+
+1. stop all：compiler.im 的 tctrl 分支改成调 emit_tctrl，「all」下降为 OP_STOP，其他名字保留 thread 语义。
+   原地替换保持行数，另补一行注释——因为净少一行已经把别处引用顶成 unanchored +10，补回来才是 +9。
+2. 字符串转义：lexer.im 的字符串分支解码 \n \t \r \\ \" \0；未知序列保留「反斜杠+字符」；\0 截断到
+   引号（运行时字符串是 C 字符串）。C 侧词法器另有 \' 与 \xHH，自举侧**未实现**，未知序列按字面走。
+
+float-pool 这一格修后的行为写清：只印「浮点池未实现: INIMBC 的 double 编码还没有语言侧原语」，rc 0，
+**不产生产物文件** —— 用一个全新的 out 路径跑，跑完该路径不存在（是「没写」，不是「写了 0 字节」）。
+
+定点读数随代码变了，这是应该的（lexer 与 compiler 都改了）；以下是新基线，不是回归：
+
+    gen1-vs-gen2: same sha256=9b0604c612b1b5fcc8c30a1fb5234700b828a98a08952ca776920c3d4341ff97 bytes=127834
+    artifact-format: selfhost=INIMBC 127834 bytes, c=INIMBC 127749 bytes
+    stage1-vs-stage2: same sha256=9de12beb2eaf0183ff78eab9de17180e76d59b0165f8393c869aea9744c4df65 lines=8444 bytes=143726
+
+已注册为 CTest selfhost_mirror_behavior（EXP_CTEST 164 -> 165，同行沿革注释）。门禁在这一棵树上
+16/16、ctest 165/165、0 skipped，pins explicit +12 / unanchored +9。
