@@ -612,6 +612,106 @@ def git_blob_sha(root, path):
     return h.hexdigest()
 
 
+SELF_CHECK_EXPECT_SHA256 = "434b93d1d0508758"
+
+
+def self_check_pins(root):
+    """Negative control for the pin table: a drift must exit 2 and must not write a script.
+
+    The control perturbs a COPY of the tree, never the tree itself, and the copy is
+    committed into its own throwaway git repo so the GIT-BLOB path is exercised too.
+    Three drifts are used, all on the one line the propositions hang from: a line
+    inserted above it (every number now one too high), a character changed inside it,
+    and the line deleted (the numbers below it now point at their neighbours).
+    """
+    import shutil
+    import tempfile
+    exp = SELF_CHECK_EXPECT_SHA256
+    gen = os.path.abspath(__file__)
+    target = None
+    for lineno, text in sorted(PINNED["src/vm/vm.c"].items()):
+        if "VM_FRAME_REGS + VM_FRAME_REGS" in text:
+            target = (lineno, text)
+    if target is None:
+        print("SELFCHECK-PIN|refuse|why=the pinned guard line is not in PINNED", file=sys.stderr)
+        return 2
+    gl, _gtext = target
+    results = []
+    with tempfile.TemporaryDirectory(prefix="z3pin-") as td:
+        for case in ("clean", "line-shift", "char", "truncate", "unpinned"):
+            troot = os.path.join(td, case)
+            for path in sorted(PINNED):
+                dst = os.path.join(troot, path)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copyfile(os.path.join(root, path), dst)
+            vmc = os.path.join(troot, "src/vm/vm.c")
+            with open(vmc, "rb") as fh:
+                lines = fh.read().split(b"\n")
+            if case == "line-shift":
+                lines = [b"/* one line inserted above everything: every pinned number now points one line too high */"] + lines
+            elif case == "char":
+                lines[gl - 1] = lines[gl - 1].replace(b"frame_count", b"frame_count ", 1)
+            elif case == "truncate":
+                del lines[gl - 1]
+            elif case == "unpinned":
+                lines = lines + [b"/* an appended line that no pin points at */"]
+            with open(vmc, "wb") as fh:
+                fh.write(b"\n".join(lines))
+            subprocess.run(["git", "init", "-q"], cwd=troot, capture_output=True)
+            subprocess.run(["git", "-C", troot, "add", "-A"], capture_output=True)
+            subprocess.run(["git", "-C", troot, "-c", "user.email=pin@check",
+                            "-c", "user.name=pin", "commit", "-qm", case],
+                           capture_output=True)
+            out = os.path.join(troot, "out", "bounds_proof.py")
+            fresh = case == "line-shift"
+            sentinel = b"# SENTINEL: a drift must not touch this file\n"
+            if not fresh:
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                with open(out, "wb") as fh:
+                    fh.write(sentinel)
+            r = subprocess.run([sys.executable, gen, "--root", troot, "--out", out],
+                               capture_output=True, text=True)
+            named = ""
+            for line in (r.stderr or "").splitlines():
+                if line.startswith("PIN FAILED:"):
+                    named = line.split("PIN FAILED: ", 1)[1].split()[0]
+                    break
+            if fresh:
+                state = "not_created" if not os.path.exists(out) else "created"
+                sha = "-"
+                ok = r.returncode == 2 and named != "" and state == "not_created"
+                expect = "exit2+named_line+out_not_created"
+            elif case in ("clean", "unpinned"):
+                sha = "-"
+                if os.path.exists(out):
+                    with open(out, "rb") as fh:
+                        body = fh.read()
+                    sha = hashlib.sha256(body).hexdigest()[:16]
+                ok = r.returncode == 0 and sha == exp
+                expect = "exit0+sha256=%s+script_written" % exp
+            else:
+                with open(out, "rb") as fh:
+                    state = "sentinel_intact" if fh.read() == sentinel else "overwritten"
+                sha = "-"
+                ok = r.returncode == 2 and named != "" and state == "sentinel_intact"
+                expect = "exit2+named_line+out_sentinel_intact"
+            if case in ("clean", "unpinned"):
+                got = "exit%d+sha256=%s+%s" % (r.returncode, sha,
+                                               "written" if os.path.exists(out) else "absent")
+            else:
+                got = "exit%d+named=%s+out=%s" % (r.returncode, named or "none", state)
+            results.append(ok)
+            print("SELFCHECK-PIN|case=%s|expect=%s|got=%s|verdict=%s"
+                  % (case, expect, got, "PASS" if ok else "FAIL"))
+    print("SELFCHECK-PIN-DIRECTION|drift cases must exit 2, name the drifted pin, and leave the"
+          " out path untouched; only the clean case may write, and its sha256 must equal %s"
+          " -- a clean run whose sha moved means the model changed, not that the check got stricter" % exp)
+    fails = results.count(False)
+    print("SELFCHECK-PIN|summary|cases=%d|pass=%d|fail=%d"
+          % (len(results), len(results) - fails, fails))
+    return 0 if fails == 0 else 1
+
+
 def guard_pins(props, pinned):
     """Model text versus source text, for every proposition whose anchor is a guard.
 
@@ -798,11 +898,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))))
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--self-check-pins", action="store_true",
+                    help="negative control for the pin table: a drift in a COPY of the tree "
+                         "must exit 2 and must not write a script")
     args = ap.parse_args()
+    if not args.out and not args.self_check_pins:
+        ap.error("--out is required (except with --self-check-pins)")
     root = os.path.abspath(args.root)
+    if args.self_check_pins:
+        return self_check_pins(root)
     cache = {}
     pins, digests, problems = check_pins(root, cache)
     neg = check_negative_pins(root, cache, problems)

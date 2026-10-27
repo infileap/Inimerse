@@ -83,9 +83,10 @@ Windows 侧解释器必须收到**Windows 路径**的脚本：把 `/mnt/c/...` �
 
     GUARD-PIN|P1|src/vm/vm.c:4068|model_vs_source=verbatim|line=if (fidx < 0 || fidx >= root->func_count || root->funcs[fidx] == NULL) {
     GUARD-PIN|P2|src/vm/vm.c:4034|model_vs_source=verbatim|line=if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) {
-    GUARD-PIN|P3|src/vm/vm.c:4080|model_vs_source=conjunct|line=if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap) {
     GUARD-PIN|P4|src/vm/vm.c:4080|model_vs_source=verbatim|line=if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap) {
-    GUARD-PIN|P5|src/vm/vm.c:4080|model_vs_source=verbatim|line=if (t->frame_count >= t->frame_cap || t->base + VM_FRAME_REGS + VM_FRAME_REGS >= t->reg_cap) {
+    （P3、P5 与 P4 锚在同一行：P5 的模型守卫与 P4 逐字相同、判定同为 verbatim；P3 的模型守卫是该行的
+     首合取项，判定为 conjunct。工具打印的三行除命题名与判定词外完全一致，这里只留一行，避免把同一行
+     重复算三次。）
     GUARD-PIN|P6|src/vm/vm.c:3026|model_vs_source=not-a-guard-anchor|line=    VM *vm = t->vm;
     GUARD-PIN|P7|src/vm/vm.c:4074|model_vs_source=verbatim|line=if (t->sp + 1 < argc) {
 
@@ -236,3 +237,50 @@ T1 页不改写：它记录的是它那棵树上的事实。要判断"现在怎�
 - 未改：`src/`、`selfhost/`、门禁脚本与其 TARGETS、测试数量上限。
 - 复量方式：把本页所在树的生成器覆盖进测量树，跑同一条命令，然后把测量树的那个文件
   `git checkout --` 还原（`git status` 在测量前后各看一次，§1 的构造里已写）。
+## 11. pin 漂移本身是一条读数（T6）
+
+§2 里"第一个读数是 pin 检查拦下来的"这句话，当时靠的是**人看见了一条报错**。一次被人类观察到的
+拦阻不是格：没有人重跑、没有人证明拦阻会持续存在、也没有人证明它在该放行时放行。§11 把它做成
+一条可跑的控制组，一条命令：
+
+    python3 tools/z3bounds/gen_bounds_proof.py --self-check-pins
+
+它对**树的副本**做五次运行，副本写在临时目录里、各自提交进一个一次性 git 仓库（这样 GIT-BLOB
+那条路径也真的被走到），真实工作树一个字节都不动：
+
+    clean       副本原样                  -> 必须 exit 0，且生成的脚本 sha256 = 434b93d1d0508758
+    line-shift  在 guard 行上方插一行      -> 必须 exit 2、点名被撞的那条 pin、out 路径不被创建
+    char        在 guard 行里改一个字符    -> 必须 exit 2、点名那条 pin、已存在的 out 不被覆盖
+    truncate    删掉 guard 行              -> 必须 exit 2、点名同一个位置、out 文件保持原样
+    unpinned    文件末尾追加一行（无 pin）  -> 必须 exit 0，且生成的脚本 sha256 仍是 434b93d1d0508758
+
+读数（逐字）：
+
+    SELFCHECK-PIN|case=clean|expect=exit0+sha256=434b93d1d0508758+script_written|got=exit0+sha256=434b93d1d0508758+written|verdict=PASS
+    SELFCHECK-PIN|case=line-shift|expect=exit2+named_line+out_not_created|got=exit2+named=src/vm/vm.c:3026+out=not_created|verdict=PASS
+    （case=char 的行与 case=truncate 除 case 名外逐字相同：同样是 exit2、同样点名那一行、同样 sentinel_intact；
+     同一行不重复引两次，读数以 TRUNCATE 这一行为准。）
+    SELFCHECK-PIN|case=truncate|expect=exit2+named_line+out_sentinel_intact|got=exit2+named=src/vm/vm.c:4080+out=sentinel_intact|verdict=PASS
+    SELFCHECK-PIN|case=unpinned|expect=exit0+sha256=434b93d1d0508758+script_written|got=exit0+sha256=434b93d1d0508758+written|verdict=PASS
+    SELFCHECK-PIN|summary|cases=5|pass=5|fail=0
+
+三条纪律写在这里，因为它们各自对应一种"看起来绿了"的假象：
+
+1. **两个方向都要给**。四种漂移必须动（exit 2），末尾追一行无关注释必须**不动**（exit 0、sha 不变）。
+   只写"漂移必须红"，一个把每次运行都判红的检查也能通过；只写"正确版本必须绿"，一个永远不检查
+   pin 的工具也能通过。`unpinned` 这一格就是后者的反面，同时它也诚实地划出工具的作用域：
+   **pin 表只担保被 pin 的行**，文件里别的地方改了，脚本一个字节都不会变——这正是 GIT-BLOB（§3.2）
+   存在的理由，两件读数不能互相顶替。
+2. **失败要能说出是哪种失败**。四种漂移里两种被点名在 3026、两种被点名在 4080，而且断言要求
+   stderr 里出现 `PIN FAILED:`。若只断言 rc=2，则工具因为别的原因（缺 `--out`、git 不可用、
+   python 版本不符）退出 2 也会被记成"拦住了"。
+3. **"不写出脚本"要按路径状态断言，不是按语义猜**。两个分支分别测两种形态：路径本来不存在 ->
+   跑完仍不存在；路径存在且内容是哨兵 -> 跑完内容仍是哨兵。后一形态是"不覆盖"，比"不创建"更强，
+   也是最容易被写坏的：一个先 `open(out, "w")` 再检查的实现会留下一个空文件，rc 仍是 2。
+
+顺带得到一条关于脚本身份的读数：`build_script` 的入参里有 `gen_sha`，但脚本正文从不使用它，
+所以**生成脚本的 sha256 只是模型与 pin 表的函数，不是生成器源码的函数**——本轮给生成器加了这
+一整节控制组，`434b93d1d0508758` 不变，就是这条事实的读数。反过来说，如果哪天这个 sha 因为
+"只是改了一下工具"而变动，那是模型真的动了，不能当噪音忽略。
+
+本节的可跑读数产生于 `47b4d6d`（main 上合并 T5 之后的树），同一棵树上 `SUMMARY|variants=17|pass=17|fail=0`、生成脚本仍是 `bytes=37591 sha256=434b93d1d0508758`——加了这一整节控制组，模型一个字节没动。本页自身的提交号不写进页面（自引用会漂，理由见 T2 页 §10）。
