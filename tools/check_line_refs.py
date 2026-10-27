@@ -574,6 +574,7 @@ class Tree:
                 # holder" -- a setup failure must not wear a finding's exit
                 # code.  Exit 4 says "the environment cannot address this tree",
                 # names the path, and points at the one setting that fixes it.
+                _verdict_unmeasured()
                 print(
                     f"check_line_refs: ENVIRONMENT -- cannot read {rel!r}: "
                     f"{exc.__class__.__name__}: {exc}\n"
@@ -591,6 +592,7 @@ class Tree:
                 # prescription -- until now one sentence covered both cases, and
                 # a reader whose file had simply been deleted was told to set
                 # PYTHONUTF8.  Exit stays 4: a setup fact, not a finding.
+                _verdict_unmeasured()
                 print(
                     f"check_line_refs: ENVIRONMENT -- cannot read {rel!r}: "
                     f"{exc.__class__.__name__}: {exc}\n"
@@ -971,6 +973,7 @@ def base_scan() -> tuple[dict, int]:
         ["git", "-C", str(REPO_ROOT), "rev-parse", "--git-dir"],
         capture_output=True,
     ).returncode != 0:
+        _verdict_unmeasured()
         print(
             f"check_line_refs: not a git repository at {REPO_ROOT}; there is no "
             "history to take a base from.\n"
@@ -983,6 +986,7 @@ def base_scan() -> tuple[dict, int]:
          EXP_LINE_REFS_BASE, "HEAD"],
         capture_output=True,
     ).returncode != 0:
+        _verdict_unmeasured()
         print(
             f"check_line_refs: base {EXP_LINE_REFS_BASE} is not an ancestor of "
             "HEAD.\n"
@@ -1031,31 +1035,57 @@ def main() -> int:
         f"file their line names."
     )
 
-    failures = []
-    if not r["files"]:
-        failures.append(
-            "the input set is empty -- the sweep found nothing to check, which "
-            "is a failure and not a pass"
-        )
+    # Every cell this run measured, failing or not.  A red carries the
+    # assertion's identity (cause=) and the preconditions it needed
+    # (requires=): an independent cause is a failing cell whose every
+    # precondition held, and a failing cell whose precondition did not hold is
+    # consequential -- it is that earlier cause seen a second time.  Counting
+    # distinct cause= labels instead prints six where the answer is one
+    # (docs/AUDIT.md 1.387): one violated precondition makes six assertions red,
+    # and five of those are consequences rather than causes.
+    cells: list[dict] = []
+
+    def cell(cause: str, requires: list, failed: str | None) -> None:
+        cells.append({"cause": cause, "requires": requires, "failed": failed})
+
+    inputs_ok = bool(r["files"])
+    needs_inputs = [("input set non-empty", inputs_ok)]
+    cell(
+        "input-set-empty",
+        [],
+        None
+        if inputs_ok
+        else "the input set is empty -- the sweep found nothing to check, which "
+        "is a failure and not a pass",
+    )
     for w in WRITINGS:
-        if r["writings"][w] == 0:
-            failures.append(
-                f"no reference is written in the {w} form any more; a checker "
-                f"that has quietly become a prefix scan reports that nothing "
-                f"was missed while missing the shape it exists to find"
-            )
+        cell(
+            f"writing-missing:{w}",
+            needs_inputs,
+            None
+            if r["writings"][w]
+            else f"no reference is written in the {w} form any more; a checker "
+            f"that has quietly become a prefix scan reports that nothing "
+            f"was missed while missing the shape it exists to find",
+        )
     explicit_delta = r["explicit"] - base["explicit"]
     unanchored_delta = len(r["no_anchor"]) - len(base["no_anchor"])
-    if explicit_delta != EXP_LINE_REFS_DELTA:
+    if explicit_delta == EXP_LINE_REFS_DELTA:
+        cell("explicit-delta", needs_inputs, None)
+    else:
         moved = "shrank" if explicit_delta < EXP_LINE_REFS_DELTA else "grew"
-        failures.append(
+        cell(
+            f"explicit-delta-{moved}",
+            needs_inputs,
             f"explicit-form references: {explicit_delta:+d} since base "
             f"{EXP_LINE_REFS_BASE} ({base['explicit']} -> {r['explicit']}), but "
             f"EXP_LINE_REFS_DELTA is {EXP_LINE_REFS_DELTA:+d} -- the cited form "
-            f"{moved} without anyone saying so"
+            f"{moved} without anyone saying so",
         )
-    if unanchored_delta > EXP_LINE_REFS_UNANCHORED_DELTA_MAX:
-        failures.append(
+    cell(
+        "unanchored-over-ceiling",
+        needs_inputs,
+        (
             f"unanchored references: {unanchored_delta:+d} since base "
             f"{EXP_LINE_REFS_BASE} ({len(base['no_anchor'])} -> "
             f"{len(r['no_anchor'])}), over the ceiling "
@@ -1064,19 +1094,25 @@ def main() -> int:
             f"{unanchored_delta - EXP_LINE_REFS_UNANCHORED_DELTA_MAX} more "
             f"number(s) now have nothing holding them"
         )
+        if unanchored_delta > EXP_LINE_REFS_UNANCHORED_DELTA_MAX
+        else None,
+    )
 
     if len(r["off_target"]) > EXP_LINE_REFS_OFF_TARGET_MAX:
         shown = ", ".join(
             f"{rel}:{lineno} :{number} owner={owner or '<none>'}"
             for rel, lineno, number, owner in r["off_target"][:5]
         )
-        failures.append(
+        mis_labelled = (
             f"mis-labelled references: {len(r['off_target'])} reference(s) are "
             f"counted in the explicit form but their owner is not a file this "
             f"checker reads (ceiling EXP_LINE_REFS_OFF_TARGET_MAX="
             f"{EXP_LINE_REFS_OFF_TARGET_MAX}) -- the count and the label are two "
             f"different pieces of code, and they no longer agree.  First: {shown}"
         )
+    else:
+        mis_labelled = None
+    cell("mis-labelled-over-ceiling", needs_inputs, mis_labelled)
 
     print(
         f"check_line_refs: pins -- explicit delta {explicit_delta:+d} (expect "
@@ -1100,11 +1136,22 @@ def main() -> int:
         f"dirty-digest={hashlib.sha256(_wt).hexdigest()[:12]}"
         if _wt else "clean"
     )
+    # repo= is the repository git answers with, which is not the same fact as
+    # the directory this checker scanned: REPO_ROOT comes from the script's own
+    # path, so a copy of tools/ dropped into another checkout silently measures
+    # THAT checkout while reading the copied docs.  Measured: a copy under
+    # <worktree>/.probe/notgit reports the enclosing worktree here, and the
+    # citing docs it read are the copy's -- which is the whole reason the field
+    # exists.  tree= says when, repo= says where, inputs= says what.
+    _repo_field = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, encoding="utf-8",
+    ).stdout.strip() or "<git named no toplevel>"
     print(
         f"check_line_refs: readings -- explicit {r['explicit']} (base "
         f"{base['explicit']}), unanchored {len(r['no_anchor'])} (base "
         f"{len(base['no_anchor'])}), mis-labelled {len(r['off_target'])} "
-        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} worktree={_wt_field}."
+        f"(base {len(base['off_target'])}). tree={subprocess.run(['git','-C',str(REPO_ROOT),'rev-parse','--short=7','HEAD'],capture_output=True,text=True,encoding='utf-8').stdout.strip()} repo={_repo_field} worktree={_wt_field}."
     )
     # The reading's other half: which files it read.  tree= says when, this
     # says what; a reader holding only the number has neither.
@@ -1184,10 +1231,38 @@ def main() -> int:
         )
         return 1
 
-    if failures:
-        for f in failures:
-            print(f"check_line_refs: {f}")
-        print(f"check_line_refs: FAILED ({len(failures)} assertion(s)).")
+    # The aggregate.  measured_cells is the denominator the other numbers are
+    # fractions of, so it is a reading and not a constant: a run that measured
+    # six cells and a run that measured seven cannot be compared by assertions
+    # alone.  environment_cells counts the cells the environment refused to
+    # measure; they are not causes, and they are still counted.
+    assertions = [c for c in cells if c["failed"]]
+    causes = [c for c in assertions if all(ok for _n, ok in c["requires"])]
+    consequential = [
+        c for c in assertions if not all(ok for _n, ok in c["requires"])
+    ]
+    if len(causes) + len(consequential) != len(assertions):
+        print(
+            "check_line_refs: VERDICT arithmetic is broken -- causes + "
+            "consequential must equal assertions, and they do not, so no "
+            "aggregate is printed"
+        )
+        return 1
+    print(
+        f"VERDICT|assertions={len(assertions)}|causes={len(causes)}|"
+        f"consequential={len(consequential)}|measured_cells={len(cells)}|"
+        f"environment_cells=0|cause={causes[0]['cause'] if causes else 'none'}"
+    )
+    if assertions:
+        for c in assertions:
+            needs = "; ".join(
+                f"{name}={'true' if ok else 'false'}" for name, ok in c["requires"]
+            ) or "none"
+            print(
+                f"check_line_refs: {c['failed']} "
+                f"[cause={c['cause']} requires={needs}]"
+            )
+        print(f"check_line_refs: FAILED ({len(assertions)} assertion(s)).")
         return 1
 
     print(
@@ -1197,6 +1272,22 @@ def main() -> int:
         "something else is not caught here."
     )
     return 0
+
+
+def _verdict_unmeasured() -> None:
+    """The aggregate for a run the environment refused to take.
+
+    Exit 4 and exit 2 are not reference findings: nothing was classified, so
+    there are no assertions and no causes.  The one cell this run attempted --
+    the reading itself -- is counted as an environment cell instead, so the
+    number a reader compares across runs is present in every output, including
+    the ones with no measurement in them.  A refusal that prints nothing but a
+    sentence cannot be aggregated with the runs that did measure something.
+    """
+    print(
+        "VERDICT|assertions=0|causes=0|consequential=0|measured_cells=1|"
+        "environment_cells=1|cause=environment"
+    )
 
 
 if __name__ == "__main__":
@@ -1212,6 +1303,7 @@ if __name__ == "__main__":
         sys.exit(main())
     except FileNotFoundError as exc:
         if (exc.filename or "") == "git":
+            _verdict_unmeasured()
             print(
                 "check_line_refs: ENVIRONMENT -- git is not on PATH; nothing "
                 "was measured",
