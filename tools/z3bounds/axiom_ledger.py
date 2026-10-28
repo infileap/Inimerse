@@ -28,6 +28,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_GEN = os.path.join(HERE, "gen_bounds_proof.py")
 DEFAULT_PY_WIN = "/mnt/c/Python314/python.exe"
 
+
+def default_python():
+    """The interpreter the readings are produced with.
+
+    Prefer the one on THIS side when it carries z3: a POSIX interpreter keeps
+    the run inside the system it was started in, while the Windows exe crosses
+    the WSL boundary once per z3 call and the host endpoint protection reports
+    each launch as a blocked process.  The exe stays the fallback, so a box
+    without a local z3 behaves exactly as before.  PY_WIN still wins over both.
+    """
+    if os.environ.get("PY_WIN"):
+        return os.environ["PY_WIN"]
+    local = shutil.which("python3")
+    if local:
+        try:
+            probe = subprocess.run([local, "-c", "import z3"], capture_output=True, timeout=120)
+            if probe.returncode == 0:
+                return local
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return DEFAULT_PY_WIN
+
 # pointwise: the pinned lines fix the value.  exhaustive: the claim quantifies over every
 # write to a variable, so one or three pinned lines are evidence about a site, not exhaustion.
 SCOPE = {
@@ -1309,7 +1331,7 @@ def main():
                     help="repo root; default is resolved from the tree (git toplevel, then a "
                          "walk up for src/vm), never from the directory this file is in")
     ap.add_argument("--gen", default=DEFAULT_GEN)
-    ap.add_argument("--python", default=os.environ.get("PY_WIN", DEFAULT_PY_WIN),
+    ap.add_argument("--python", default=default_python(),
                     help="python with z3 for the mutation column; recorded in the readings header")
     ap.add_argument("--census-drop-pin", default=None, metavar="PATH:LINE",
                     help="drop one pin entry from the table for this run only: the negative "
