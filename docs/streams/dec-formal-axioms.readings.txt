@@ -1,27 +1,13 @@
-# Axiom ledger -- verbatim output, one command, one output, no path from my machine.
-# Run from the top of the tree; --root is resolved from the tree itself (git toplevel, then a
-# walk up for src/vm), so a reader holding only this sha re-runs it without knowing where I work:
-#     python3 tools/z3bounds/axiom_ledger.py
-# tree: f36d72c  (python3 3.14.4; the mutation column ran z3 5.3.2 via /mnt/c/Python314/python.exe)
-# Field names in the census changed this round: pinned=/unpinned= became
-# pinned-writesites=/unpinned-writesites=, and WRITESITES-SUMMARY gained role=coverage, because
-# the declared-pin count (33) and the write-site pinned count (4) were being read as one number
-# under one name.  Every count is the same count it was; only the label says which one it is.
-# The five unparsed line numbers below are the generator's OWN line numbers, not addresses in the
-# tree: any commit that inserts lines above them in that file moves them.  This round moved them
-# once more (1073 -> 1076 in the last hunk) when the flag-mode cell was fixed, which is why the
-# header names this tree and not the one before it.
-# two-tree reading, and it is also the proof of the T9 fix: on 2891d55 (the T8 tree, an ancestor)
-# this very command DIES with a traceback, because there --root defaulted to tools/ -- so from
-# that tree alone nobody could re-run it without a path argument.  Given --root <top of that tree>
-# instead, the only difference is the five unparsed line numbers of gen_bounds_proof.py --
-# 967/969/971/975/978 -> 1073/1075/1077/1081/1084 -- because a later commit inserted lines above
-# them; every AXIOMS/AXIOM/MUTATE/CONDITIONAL line is byte-identical (the diff is that one hunk,
-# 5 < 5).  The WRITESITES block below does not exist on that tree at all -- the census arrived
-# later -- so that comparison covers only the axiom families, and says so rather than pretending
-# the two outputs are the same file.
-# The drop-pin mutation output is deliberately NOT in this file: it is a second command, and this
-# file is one command one output.  Its reading is printed by --self-check-writesites.
+# Axiom ledger -- verbatim output.  One command writes this whole file, header and all.
+# Regenerate:  python3 tools/z3bounds/axiom_ledger.py --record-readings <this path>
+# Check:       python3 tools/z3bounds/axiom_ledger.py --check-readings <this path>
+# Run from the top of the tree: --root is resolved from the tree itself (git toplevel, then
+# a walk up for src/vm), so a reader holding only the tree line re-runs it anywhere.
+# The body is this program's stdout, unedited.  Prose about what the readings MEAN belongs
+# in the page beside this file: a sentence in a file cannot be checked by a command.
+# tree: 531e9ef
+# python: python3
+# --- body begins below this line ---
 AXIOMS|sites=18|extracted=9|unparsed=9
 unparsed|gen_bounds_proof.py:171|        a = self.add()
 unparsed|gen_bounds_proof.py:174|                return ("cmp", op, a, self.add())
@@ -107,7 +93,7 @@ WRITESITES-ALIAS|field=t->base|others=f->base:1|note=another receiver writes the
 WRITESITES|field=R|sites=0|note=spec constant
 WRITESITES|field=F|sites=0|note=spec constant
 WRITESITES-SUMMARY|role=coverage|fields=2|sites=37|pinned-writesites=4|unpinned-writesites=33|constants=2
-AXIOM|name=A-FRAME|status=discharged|scope=exhaustive|kind=measured|decl=src/vm/vm.c:2690|writes=2|text=frame_sp slots stay inside the stack range
+AXIOM|name=A-FRAME|status=discharged|role=extraction-instrument|scope=exhaustive|kind=measured|decl=src/vm/vm.c:2690|writes=2|text=frame_sp slots stay inside the stack range
 MUTATE|axiom=A-FRAME|rename-token|verdict-changed=yes|from=element_writes=2|to=element_writes=0|instrument=extract_stack_effects
 CONDITIONAL|claim=T2-A-FRAME|variant=exhaustion|axioms=A-FRAME,A4|discharge=open|open-axioms=A4
 FRAME|FRAME-SP-WRITE|src/vm/vm.c:2690|stores=t->sp

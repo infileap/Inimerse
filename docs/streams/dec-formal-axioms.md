@@ -42,12 +42,14 @@ python3 tools/z3bounds/axiom_ledger.py --root /tmp/wt-z3c
 读数树 `f046f20`（`git rev-parse --short=7 HEAD`），工作树干净（`git status --porcelain` 无输出），
 `python3 --version` = `Python 3.14.4`；变异列要用 Windows 解释器
 `/mnt/c/Python314/python.exe`（`z3 5.3.2`），脚本经 `wslpath -w` 换成交给它的
-Windows 路径——WSL 的 `python3` 没有 z3，这一点从 T1 起没变。
+Windows 路径——T1 时 WSL 的 `python3` 没有 z3，所以那一路要走 Windows；本机后来装了 z3 5.3.2，同一个切换器现在也接受命令名，并把 POSIX 解释器直接喂给脚本，两种解释器跑出的读数逐行相同（见 §14.6a）。
 
 退出码：`0` 台账完整（含"变异列未跑"的诚实降级，见 §3 第 3 条）；`2` 连生成器/树都读不到。
 
 逐字输出（45 行，树 `f046f20`）存在 `docs/streams/dec-formal-axioms.readings.txt`，
-下面是它的首行与末行，用来核对"读的是同一个东西"：
+下面是它的首行与末行，用来核对"读的是同一个东西"。
+
+这段构造描述是 T1 时代抄进去的：那 45 行与那个树号都属于当时。从 T12 起，那个文件的行数与树号由它自己的抬头负责（记录、校验、以及为什么必须这样，见 §14），本页不再转述——本页转过一次，就错过一次。
 
 ```
 AXIOMS|sites=18|extracted=9|unparsed=9
@@ -424,3 +426,80 @@ CENSUS-LANE|dropped=<path>:<line>|in-lane=A3,A8|rule=an axiom is in the lane iff
 这一节没有给 CTest 增加任何一格：`WRITECHECK` 是按需读数，不是门禁；注册与否是 runner 的队列点，§12.3 的示范格已经够它用了。
 
 
+
+## 14 读数文件是命令的产物，或者它就不是读数
+
+验收者的判据只有一句：**一份可以手抄的文件，迟早会被手抄错；它要么是命令的产物，要么它就不是读数。**
+
+在此之前，读数文件的抬头是 24 行手写散文：每一轮我复制它、改树号、改说明。T9 抓到过一次（抬头写了一个 `git show` 取不到的树），T11 又抓到一次（说明里引用的行号随上方插入而漂移）。两次的修法都只是"下次小心"。本节取消的是那个动作本身。
+
+### 14.1 记录：抬头与树由程序写
+
+```
+python3 tools/z3bounds/axiom_ledger.py --record-readings <path> --python python3
+READINGS-RECORD|path=<path>|tree=531e9ef|lines=103|body=93|rc=0
+```
+
+抬头 10 行（7 行规则散文 + 树 + 解释器 + 分隔行）由代码里的常量写，正文是**同一次运行的 stdout**，逐字，93 行。文件里不再有一句话是手写的，因此也没有一句话能过期而没人知道。
+
+脏树拒绝写：
+
+```
+READINGS-REFUSED|why=the worktree has uncommitted changes, so the header would name a tree that is not what printed|first-change=M <path>
+```
+
+退出码 2，且一个字节都不写。这条规矩当场抓到了我自己：第一次记录时工作树里正躺着上一次记录的旧文件，命令拒绝执行；我把它恢复成 HEAD 版本之后才记成。判据是**抬头指的那棵树必须包含打印它的东西**——未提交的改动让这句话为假。
+
+未跟踪文件不算脏（只查被跟踪的改动）：编辑器残渣不改变树里被跟踪的内容。这一条也有一个格子（14.3 的第五格）。
+
+### 14.2 校验：第一个不同的行被点名
+
+```
+python3 tools/z3bounds/axiom_ledger.py --check-readings <path> --python python3
+READINGS|same=yes|lines=93|tree=531e9ef|python=python3
+READINGS-DIFF|line=<n>|want=<文件里的那行>|got=<这棵树打印的那行>
+```
+
+先查抬头：树能解析、树是 HEAD 的祖先、且 `tools/z3bounds` 在这两个提交之间没有变（变了说明这份读数属于另一棵树）；解释器与抬头记录的必须一致。然后才逐行比正文。行号是**正文内**的行号，不是文件行号——这一点在 14.4 里咬了我一口。
+
+### 14.3 六个格子，四个是反例
+
+```
+READINGSCHECK|case=file-is-its-own-product|got=rc=0 lines=93|verdict=PASS
+READINGSCHECK|case=tamper-one-line|got=rc=1 line-named=yes|verdict=PASS
+READINGSCHECK|case=wrong-tree-header|got=rc=1 verdict=no|verdict=PASS
+READINGSCHECK|case=missing-file|got=rc=2 named=yes|verdict=PASS
+READINGSCHECK|case=untracked-junk-is-not-dirty|got=rc=0 written=yes|verdict=PASS
+READINGSCHECK|case=tracked-edit-refuses-to-record|got=rc=2 refused=yes written=no|verdict=PASS
+READINGSCHECK|summary|cases=6|pass=6|fail=0
+```
+
+两个"记录"格在 HEAD 的一次性 worktree 里跑，跑完 `worktree remove --force`：一个测试不应该把它正在测的那棵树弄脏。
+
+### 14.4 反例自己两次不合格——这是本节真正的主读数
+
+第一版 `tamper-one-line` 改的是正文的最后一行。正文最后一行是 `DEPENDS|…`，里面**没有数字**，于是文件逐字未变、校验返回 0，格子按"没点名"报红——它差一格就变成"什么都不改也算通过"的形状。改法不是换个位置，是按需要的性质选行（最后一个含数字字段的正文行），并额外断言改动确实发生。
+
+第二版仍然红：期望行号我算成了文件绝对行号，而 `READINGS-DIFF` 印的是正文行号，差着一个抬头。
+
+两条同一族：**控制组自己也是一个读数，它同样会抄错。** 一个不会失败的负控不是负控，它只是一句关于负控的记忆。14.3 里那条 `line-named=yes` 是这两次失败之后才得到的。
+
+### 14.5 为什么开关在台账上，不在生成器上
+
+来信的措辞是"让读数文件自己生成"。读数文件的正文是**台账的 stdout**，不是生成器的；把记录器挂在生成器上，就变成两个程序往同一个文件里写字，而没有一条命令能重跑整份文件。所以 `--record-readings` / `--check-readings` 是台账的开关。这是对措辞的更正，不是对目标的更改。
+
+### 14.6 顺手抓到的两个洞：解释器与 role
+
+（a）`--python` 原来只接受**存在的路径**，而默认值与文档里写的是一个命令名。本机实测 `--python python3` 会悄悄降级成"no z3 interpreter"，整列变异变成 unmeasured。现在命令名用 `shutil.which` 解析；并且 POSIX 解释器不再被 `wslpath -w` 换成一个 Windows 路径——把 Windows 路径交给 POSIX 解释器，与把 POSIX 路径交给 Windows 解释器一样，都是 file not found，而且报错长得像"脚本不存在"。改完之后，本机 WSL 侧的 z3 5.3.2 跑出 measured 列，与 Windows 解释器那次逐行相同：A3 的 `verdict-changed=yes|from=unsat|to=sat|variant=P4|asis|changed=2`，`LEDGER` 的 discharged=3 / asserted=0 / vacuous=5。**环境声明从此也是可核对的读数，而不是一句描述。**
+
+（b）自检新增两格：`role-is-first-field` 与 `census-sums`。前者抓到 `AXIOM|name=A-FRAME` 的三行**从不说自己扮演什么 role**——同一类洞：一行的身份没有写出来，读者只能靠上下文猜它是 z3 模型还是抽取工具的读数。现在它带 `role=extraction-instrument`。后者断言每一行与合计都满足 `pinned-writesites + unpinned-writesites == sites`，且合计的 sites 等于字段行之和、`fields=` 等于字段行数。
+
+读数：`WRITECHECK|summary|cases=8|pass=8|fail=0`，其中 `role-is-first-field` 得 `summary-first=role|summary-role=coverage|axioms-without-role=0`，`census-sums` 得 `fields=2|sums-ok=3`。
+
+一处必须写清的分寸：AXIOM 行的 `role` 是**一个**量的枚举值（z3-model / extraction-premise / extraction-instrument），不是两个读数同名。所以"role 必须是第一个字段"的强形式只适用于**合计行**（`PINS` 与 `WRITESITES-SUMMARY` 都已满足），对 AXIOM 行断言的是弱形式：不许有一行不说自己的 role。这条区分写在格子的 expect 文本里，而不是留在这一页。
+
+### 14.7 本页 §1 那段构造说明的位置
+
+§1 里"45 行、树 `f046f20`"是 T1 时代的构造描述。现在是 103 行（抬头 10 + 正文 93），作者已经从人换成程序：**以文件自己的抬头为准，不要以本页转述为准**——本页转述过一次，就错了一次。§1 顺带说的"WSL 的 python3 没有 z3"在本机也不再成立（见 14.6a）。
+
+这一节同样没有给 CTest 增加任何一格：`READINGSCHECK` 是按需读数；注册与否仍是 runner 的队列点。
