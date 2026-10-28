@@ -1,9 +1,9 @@
 {
  "docs": 107,
- "headings": 1338,
+ "headings": 1342,
  "per_file": {
   "docs/API.md": 15,
-  "docs/AUDIT.md": 525,
+  "docs/AUDIT.md": 529,
   "docs/BOARD.md": 13,
   "docs/DECFY_DESIGN.md": 12,
   "docs/EIDOS_V06.md": 11,
@@ -110,5 +110,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "5d4383b"
+ "tree": "420bf25"
 }
