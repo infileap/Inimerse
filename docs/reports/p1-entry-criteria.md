@@ -1,11 +1,11 @@
-# P1 入口条件：三条可执行判据（tree `a670a70`，分支 `p1-entry-noble-quartz`）
+# P1 入口条件：三条可执行判据（tree `9dd3ade`，分支 `p1-entry-noble-quartz`）
 
 ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可执行**判据，每条一个最小正例、一个最小反例，反例必须**今天就在树上变红**，且不动 main。
 
-这份报告给三条判据的实现、39 条手写角色表（已归 5 族）的出处、七组实测，以及四条结构性结果。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①。
+这份报告给三条判据的实现、39 条手写角色表（已归 5 族）的出处、八组实测，以及五条结构性结果。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①；第五条是**同一个约定修了一处、漏了一处**。
 
 - 判据实现：`tools/p1_roles.py`（纯标准库，`--vm <path>`，红则 rc=1，不 import `ir_spec`，不与任何自检共用提取代码）
-- 依据树：`a670a70`（ivory 修完三个打印器、把 ORDER 换成 REGS、并修了 `TRY_START` 之后；本分支已 rebase 到它）。旧树 `9a4db3b` 的读数不删，留在 §5.2 的对照表里；历史树 `0d6b6b7` 用来证明这三条判据能把当年那三个真实缺陷重新抓出来
+- 依据树：`9dd3ade`（ivory 修完三个打印器、把 ORDER 换成 REGS、修了 `TRY_START`，再修了 `THREAD_START` 与 `RECV` 的哨兵打印之后；本分支已 rebase 到它）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
 - 只读：没有改 `src/`，所有被改坏的 `vm.c` 都是 `.probe/` 下的拷贝，不进提交
 
 ## 1 判据的对象：一条打印行，不是一段 case 文本
@@ -130,32 +130,57 @@ P1-VERDICT|red|failed=C1:OP_TRY_START,C3:OP_TRY_START
 
 **边界上被排除的**（按 ivory 的裁定）：`RECORD` 单列 store 族（§3.4）、`SAY` 单列 output 族（§3.5）；`STOP/HALT/THROW/TRY_END/JUMP/RETURN/TRY_START` 属控制流与异常族（操作数是偏移与标志，没有线程槽）。
 
-**本批读数**（`vm.c` @ `a670a70`，即 rebase 之后）：
+**本批读数**（`vm.c` @ `9dd3ade`）：
 
 ```
-P1-C2|op=OP_THREAD_START|dst=r2|printed=none|missing=r2|effect=the-line-hides-the-register-it-writes
-P1-AMBIG|op=OP_RECV|slot=r2|kinds=register|sentinel(-1)
-P1-AMBIG|op=OP_THREAD_JOIN|slot=r2|kinds=register|sentinel(-1)
+P1-OPS|op=OP_RECV|printed-reg=r1,r2|printed-typed=-|printed-number=-|roles=dst:r1,src:r2,obj:-,imm:-
+P1-BRANCH|op=OP_RECV|calls=2|effect=the-register-set-is-the-union-of-the-branches
+P1-AMBIG|op=OP_RECV|slot=r2|kinds=register|sentinel(-1)|guarded=yes|effect=the-print-can-only-reach-the-register-glyph-when-the-slot-is-a-register
+P1-AMBIG|op=OP_THREAD_JOIN|slot=r2|kinds=register|sentinel(-1)|guarded=no|effect=the-sentinel-can-be-rendered-with-the-register-glyph
 P1-AMBIG-COUNT|n=2|effect=declared-but-not-judged
 P1-ROLES|declared=39/67|unmeasured=28
-P1-VERDICT|red|failed=C2:OP_THREAD_START
+P1-VERDICT|green|declared=39|unmeasured=28|note=an-unmeasured-op-is-not-a-passing-op
 ```
 
-（同一份表在 `9a4db3b` 上还多两条 `C1:OP_TRY_START`、`C3:OP_TRY_START`；对照见 §5.2。）
+同一份表、同一个工具，在三棵树上的读数（**红随树走，绿也随树走**）：
+
+| 树 | 判据红 | 哨兵命名 |
+| --- | --- | --- |
+| `9a4db3b` | `C1+C3:OP_TRY_START`，`C2:OP_THREAD_START` | `RECV`、`THREAD_JOIN` 各一条 |
+| `a670a70` | `C2:OP_THREAD_START` | 同上 |
+| `9dd3ade` | 无（green，39/67） | 同上，但 `RECV` 变成 `guarded=yes` |
+
+`9dd3ade` 是 ivory 的 `vm: THREAD_START shows the register it writes, RECV stops printing a sentinel as a register`——一条提交修了两处，正好给我两张不同的对照。
 
 三件新东西：
 
-**（一）本批抓到第二个真红：`THREAD_START` 把目的寄存器整个藏掉了。** handler `vm.c:4460` `int tidx = ins.r1, res = ins.r2, argc = ins.r3;`，随后 `vm.c:4500,4508,4544` 三处 `value_set(&R[res], …)` 把新线程的 id 写进 `r2`；发出处 `compiler.c:1992` `emit(..., OP_THREAD_START, tidx, alloc_reg(), 0)` 与 `compiler.c:2095` `emit(..., OP_THREAD_START, tidx, result, stmt->startStmt.argCount)`。而打印行 `THREAD_START t%d (args:%d)` 只印 `r1` 与 `r3`——**一个寄存器都不印**。这比 `RECORD` 更彻底：`RECORD` 至少印了 `r1,r2`，只是把 `r3` 漏了；`THREAD_START` 让读者完全看不出这条指令写了一个寄存器。修复是一行：格式串补 `, res=r%d` 并传 `ins->r2`。
+**（一）本批抓到第二个真红：`THREAD_START` 把目的寄存器整个藏掉了。** handler `vm.c:4460` `int tidx = ins.r1, res = ins.r2, argc = ins.r3;`，随后 `vm.c:4500,4508,4544` 三处 `value_set(&R[res], …)` 把新线程的 id 写进 `r2`；发出处 `compiler.c:1992` `emit(..., OP_THREAD_START, tidx, alloc_reg(), 0)` 与 `compiler.c:2095` `emit(..., OP_THREAD_START, tidx, result, stmt->startStmt.argCount)`。而打印行 `THREAD_START t%d (args:%d)` 只印 `r1` 与 `r3`——**一个寄存器都不印**。这比 `RECORD` 更彻底：`RECORD` 至少印了 `r1,r2`，只是把 `r3` 漏了；`THREAD_START` 让读者完全看不出这条指令写了一个寄存器。修复是一行：格式串补 `, res=r%d` 并传 `ins->r2`——`9dd3ade` 就是这么修的（`vm.c:5367` 现在是 `THREAD_START t%d (args:%d), res=r%d`）。**这条红变绿是树变了，不是判据松了**：同一条判据在 `a670a70` 上仍然是红的（§4 G 行）。
 
-**（二）哨兵槽从一个变成两个：`RECV` 与 `THREAD_JOIN` 的 `r2` 都是「寄存器或 −1」。**
+**（二）哨兵槽不是一个数量问题，是一个「打印行有没有先判断」的问题。**
 
-`RECV`：`compiler.c:2196-2197` `int timeout_reg = -1; if (stmt->recvStmt.timeout) timeout_reg = compile_expr(...);` → `emit(..., OP_RECV, result, timeout_reg, 0)`；handler `vm.c:4764` `if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);`。
+`RECV` 与 `THREAD_JOIN` 的 `r2` 都是「寄存器或 −1」：`RECV` 由 `compiler.c:2196-2197` `int timeout_reg = -1; if (stmt->recvStmt.timeout) timeout_reg = compile_expr(...);` 发出，handler `vm.c:4764` `if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);`；`THREAD_JOIN` 的 handler `vm.c:4653-4654` 同形，enum 注释 `src/compiler/bytecode.h:34` 明写 `r2=timeout reg(-1=infinite)`。
 
-`THREAD_JOIN`：handler `vm.c:4653-4654` `double timeout = -1.0; if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);`；enum 注释 `src/compiler/bytecode.h:34` 明写 `r2=timeout reg(-1=infinite)`。
+在 `a670a70` 上两条打印行都无条件印 `timeout=r%d`（`vm.c:5378`、`vm.c:5383`），于是「没有超时」会印出 `timeout=r-1`——一个不存在的寄存器。我做了一件当时没写下来、后来证明必须写下来的事：工具原本只读 case 里**第一个** `snprintf`（`PRINT_RE.search`），而 `9dd3ade` 恰好把 `RECV` 的打印改成两支：
 
-两条打印行（`vm.c:5383` `RECV r%d, timeout=r%d`、`vm.c:5378` `THREAD_JOIN t%d, timeout=r%d`）在「没有超时」的场合都会印出 `timeout=r-1`——一个不存在的寄存器。工具对它们的处置是**只命名、不判红**：`P1-AMBIG` 两条 + `P1-AMBIG-COUNT|n=2`。理由是判据说不清「该不该用 `r%d` 印一个可能不存在的寄存器」——那要在 §10 定：要么打印器学 `none`（一行条件），要么编码上把「无超时」与「有超时」分开。
+```c
+vm.c:5383  case OP_RECV:  if (ins->r2 < 0) snprintf(out, outsz, "RECV r%d, timeout=none", ins->r1);
+vm.c:5384              else snprintf(out, outsz, "RECV r%d, timeout=r%d", ins->r1, ins->r2); return;
+```
 
-**（三）理论上的一条后果改写了**：§5.1 的 ③ ⊆ ① 只在「每个 slot 恰好一个角色」时成立。现在这条前提有两处失效（`RECV.r2`、`THREAD_JOIN.r2`），而它们不是孤例，是**同一条编码约定**（负数表示「不等待」）在两个 opcode 上的落地——所以这不是词汇缺口，是**编码与字形之间缺一层换算**。判据能给的是命名，不能给的是裁定；裁定在 §10。
+只读第一支的读尺子于是在 `9dd3ade` 上把 `RECV` 判成绿——**这个绿来自「只读了那一支」**，不是来自「那一支没问题」。改成取 case 内所有 `snprintf` 的并集（并打出 `P1-BRANCH|calls=2`）之后，`r2` 回到寄存器集合里，问题才重新可见。
+
+接着是第二层，也是本批真正的收获：**同一个约定，一条修了，一条没修。**
+
+| opcode | 打印行 @ `9dd3ade` | 哨兵能不能印成寄存器 |
+| --- | --- | --- |
+| `RECV` | `vm.c:5383-5384` 先判 `ins->r2 < 0`，两支分开 | 不能（`guarded=yes`） |
+| `THREAD_JOIN` | `vm.c:5378` `THREAD_JOIN t%d, timeout=r%d` 无条件 | 能（`guarded=no`），仍会印 `r-1` |
+
+所以工具对哨兵的处置从「一条 AMBIG」改成读**打印调用前面有没有对这个槽的判断**（600 字符回看，判据之外的启发式，明确标注为读数不是判据）：`guarded=yes` 只说明「代码在印之前先决定了」，不说明决定是对的；`guarded=no` 则是可以直接指给人看的一句：**这条打印行能把 −1 印成寄存器。** 两条都不判红，仍计入 `P1-AMBIG-COUNT`。
+
+**（三）一条约定在两个 opcode 上落地，就有一半修不到的风险。** ivory 的 `9dd3ade` 顺手修了 `RECV`，而 `THREAD_JOIN` 是同一条约定（负数表示「不等待」）的第二个落点，`vm.c:5378` 今天还是无条件的。这不是我发现的第三条缺陷，而是「修一处」与「修一类」的差别：**一次修复如果只覆盖了它读到的那个落点，它与没修的区别只在那一个落点上。** 判据能做的是把剩下的落点一直印在读数里（`guarded=no`），做不到的是替人去数「还有几个落点」——那要么靠读完表，要么靠枚举编码约定。
+
+**（四）理论上的一条后果**：§5.1 的 ③ ⊆ ① 只在「每个 slot 恰好一个角色」时成立。这两个哨兵槽是前提失效处，但它们不是词汇缺口，是**编码与字形之间缺一层换算**：字形 `r%d` 只能表达「那里是个寄存器」，而编码用负数表达「那里没有寄存器」。判据能给的是命名，裁定在 §10。
 
 ### 3.3 第三批按族声明：资源族（2 条，本批新增 2 条）
 
@@ -187,7 +212,7 @@ ivory 裁它单列，理由：`dst` 在 `r3`，而 `r1` 是 store 选择子（`-
 
 它值得单列不是因为只有一个成员，而是因为 ② 对它天然成立（空集是任何集合的子集）——**② 在一族里全绿，可能只是因为那族没有 dst**。这是「族」这个概念在判据里唯一自带盲点的地方，写进 §7。
 
-## 4 七组实测
+## 4 八组实测
 
 全部在 `/tmp/wt-p1e`，命令 `python3 tools/p1_roles.py --vm <tree>`。
 
@@ -200,6 +225,9 @@ ivory 裁它单列，理由：`dst` 在 `r3`，而 `r1` 是 store 选择子（`-
 | E | B + 一行 | `OP_LOADK_INT` 把立即数印成 `r%d` | 1 | `C1:OP_LOADK_INT`、`C3:OP_LOADK_INT` |
 | F | `0d6b6b7` 历史树 | 无（同一份判据、同一张表、未改一字节） | 1 | `C2:OP_RECORD`、`C1:OP_THREAD_WAIT`、`C1:OP_TRY_START`、`C3:OP_TRY_START` |
 | G | `a670a70`（本分支 rebase 后的树） | 无（判据未改，表扩到 39 条） | 1 | `C2:OP_THREAD_START` |
+| H | `9dd3ade`（再 rebase 一次） | 无（判据未改，表仍是 39 条；工具读打印行的方式改了：并集 + 分支读数） | 0 | 无——**但这不是「树上没事了」**，见下 |
+| I | `9dd3ade` + 一行删除 | 在 `.probe/` 拷贝上删掉 `RECV` 的 `if (ins->r2 < 0)` 分支 | 0（**读数变、red 不变**） | `P1-AMBIG|op=OP_RECV|guarded=no` |
+| J | `9dd3ade` + 一行反转 | 把那个判断反过来（`< 0` → `> 0`），打印逻辑因此是错的 | 0（**读数和 I 相反、仍然绿**） | `guarded=yes`——判据说「有判断」，不说「判断对」 |
 
 A 的红（今天树上真实存在，不是我改出来的）：
 
@@ -210,7 +238,11 @@ P1-ROLES|declared=17/67|unmeasured=50
 P1-VERDICT|red|failed=C1:OP_TRY_START,C3:OP_TRY_START
 ```
 
-（A 的 transcript 取自 17 条角色表的版本；§3.1 之后为 `declared=30/67|unmeasured=37`，§3.2 之后为 `39/67|28`。**红随树走**：`9a4db3b` 上是 `C1+C3:OP_TRY_START`，`a670a70` 上只剩 `C2:OP_THREAD_START`——B 组的绿是探针拷贝上的绿，G 组的绿才是树上的绿，两者不能互相顶替。）
+（A 的 transcript 取自 17 条角色表的版本；§3.1 之后为 `declared=30/67|unmeasured=37`，§3.2 之后为 `39/67|28`。**红随树走**：`9a4db3b` 上是 `C1+C3:OP_TRY_START` 与 `C2:OP_THREAD_START`，`a670a70` 上只剩后者，`9dd3ade` 上两处都没有了——B 组的绿是探针拷贝上的绿，H 组的绿才是树上的绿，两者不能互相顶替。）
+
+I、J 两组是这一批唯一「绿着变读数」的实测：J 把判断反过来（`< 0` → `> 0`），打印语义已经错了，读数却回到 `guarded=yes`——**它只看得见「有没有判断」，看不见「判断对不对」**。这是引理级的一点，写进 §7。I 组则是：删掉那个判断之后 `P1-VERDICT` 仍然是 green（哨兵不属于三条判据），但 `RECV` 的 `guarded` 从 `yes` 翻成 `no`。**命名的东西不会因为不判红就没用**——它恰好是哨兵这类问题的唯一可观测面；反过来说，一处从 `guarded=yes` 退回 `guarded=no` 的改动，门禁不会响，只有这条读数会。
+
+H 组那句「无红」要读得窄一点：它说的是**三条判据在这 39 条声明上都通过了**。`P1-VERDICT` 自己的尾巴还带着 `note=an-unmeasured-op-is-not-a-passing-op`，而 `P1-AMBIG` 仍是两条、其中 `THREAD_JOIN` 是 `guarded=no`（§3.2 二）。全绿不等于都测过，也不等于命名的两条已经不是缺陷。
 
 F 的红（三个当年被发现的真实缺陷全部重现，每一条都带主语）：
 
@@ -252,7 +284,7 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 两条的对照组是 `DECLARE` 与 `SAY`：文档、SHAPE、handler、打印行四者一致，绿得可信。**不一致时绿不算证据，停止才算。**
 
-## 5 四条结构性结果
+## 5 五条结构性结果
 
 ### 5.1 ③ 在检测能力上不独立于 ①
 
@@ -272,6 +304,7 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 | --- | --- | --- |
 | `9a4db3b` | `C1:OP_TRY_START, C3:OP_TRY_START` | 我报的（§4 A 组） |
 | `a670a70` | 只剩 `C2:OP_THREAD_START` | ivory 的 `a670a70`「vm: TRY_START prints a frame variable index, not a register」 |
+| `9dd3ade` | 无红（green，39/67） | ivory 的 `9dd3ade`「vm: THREAD_START shows the register it writes, RECV stops printing a sentinel as a register」 |
 
 第二行是本分支 rebase 到 `a670a70` 之后**实跑**的，不是从第一行推出来的。B 组（探针拷贝上把 `var=r%d` 改成 `var=%d`）证明这条判据认得出这一类，它**不**证明树已经修好；树上的绿只能由树上跑出来的读数给。这条规矩也适用于后面所有族：**绿要带树号，红也要带树号。**
 
@@ -299,13 +332,23 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 | `TRY_START` 的 `r2` 是 frame 变量下标（`vm.c:5372`） | 有 `r%d` 字形但不是寄存器 |
 | `THREAD_START` 藏掉 `r2`（`vm.c:5367`） | 一行里唯一被写的寄存器恰好不被打印 |
 
-于是可以写下一个**可被证伪**的预期（tree `a670a70`）：
+于是可以写下一个**可被证伪**的预期（写在 tree `a670a70` 上，现读 `9dd3ade`）：
 
 > 若下一族的成员在形状上是异质的（同一族内 dst 位置不固定、或寄存器与下标混用同一槽），该族应至少报出一处红；若一个明确异质的族跑出全绿，先怀疑族被切错了，再怀疑判据看不见那一类。
 
 它可证伪的地方在于：**它给了你一个「本该红而绿」的失败形态**，而不是一句安慰。下一批的集合 / 区间族（`SET_ADD SET_INTERVAL NEW_SET NEW_ARRAY NEW_DICT`）正是天然的形状异质族——`SET_INTERVAL` 的 `r2` 是「string_pool 下标 | flags<<24」，`NEW_SET` 的 `r3` 是元素个数，`SET_ADD` 的 `r2` 是值寄存器——所以它被选作控制组：**如果它全绿，先别庆祝，那说明切族或判据有一处不对。**
 
 （反过来，§3.5 的 `SAY` 是「本该绿而绿」的对照：一族没有 dst，② 天然成立，那种绿什么也不证明。两个方向都要有样本，这个预期才算被检验过。）
+
+写完这句之后只过了一条提交：`9dd3ade` 把表里最后两处「形状不一致」补平了（`THREAD_START` 补印 `res=r%d`、`RECV` 分支打印），于是 `9dd3ade` 全绿。**这不是预期被证伪**——预期说的是「异质处该有红」，而那两处已经不异质了。它也不是预期被证实：证实的样本还没出现，下一个异质族（集合 / 区间）才是它的正式检验。这里只记一笔：预期在被检验之前就先被环境追平了一次，这种时候最容易误把「环境变了」当成「预期对了」。
+
+### 5.5 同一个约定修了一半：`RECV` 修了，`THREAD_JOIN` 没修
+
+`9dd3ade` 一条提交修了两处（`THREAD_START` 补 `res=r%d`、`RECV` 分两支打印），但「负数表示不等待」这条约定有两个落点，第二个落点 `THREAD_JOIN`（`vm.c:5378`）今天还是 `timeout=r%d` 无条件的。
+
+这不是「漏了一个 bug」那么简单。一次修复如果只改了它读到的那一处，**它和没修的区别只在那处**；而同一个约定通常同时在几处落地，读代码时只看得见你正读的那一处。判据给不出「还有几个落点」，它能给的是一条留在读数里的 `guarded=no`（§3.2 二），让人下次跑的时候还看得见。
+
+要把它变成能数的东西，得先枚举「编码约定」，再对每条约定问一遍「哪些 opcode 用了它」——那是 §10 的工作，不是三个判据的工作。这条结论与 §5.4 的可证伪预期是一对：**缺陷长在形状不一致处，而修复长在形状一致处**。
 
 ## 6 覆盖：39/67，没说到的 28 条不算通过
 
@@ -322,6 +365,9 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 - **一个族在 ② 上全绿，可能只说明那族没有 dst。** `SAY`（§3.5）就是这样的族：空集是任何集合的子集，② 对它恒真。所以「某族全绿」这句话里的绿，要分清是「查过并通过」还是「没有可查的对象」——§5.4 把这两个方向都写成了预期。
 - 它不判「条件写」。`RECORD` 的 `r3` 只在 `gidx != -1` 且命中时才被写（`vm.c:4206`、`vm.c:4243`），② 只问「声明的 dst 有没有出现在打印行里」，不问「这条路径一定写吗」。
 - 它不判文档与 handler 谁对。§4.1 的两条不一致，判据如实报「我按 handler 建行」，裁定权在 §10。
+- **一个 case 里分支打印时，读一支等于没读。** 现在取 case 内所有 `snprintf` 的并集，并打出 `P1-BRANCH|calls=N`；`9dd3ade` 就是靠这条才没被读成假绿（§3.2 二）。但并集只覆盖同一个 case 里的分支，如果哪天打印行被抽到一个 helper 里、由调用方拼字符串，这层就失效了。
+- **`guarded=yes` 只说明「印之前先判断了」，不说明判断对。** §4 J 组实测：把 `RECV` 的判断反过来（`ins->r2 < 0` → `> 0`），语义已经错了，读数仍回到 `guarded=yes`。它是「有没有一层换算」的观测面，不是换算正确性的判据。
+- **它数不了约定有几个落点。** §5.5 的 `THREAD_JOIN` 就是同一约定没被修到的那一半；工具能一直把 `guarded=no` 印出来，不能告诉你还有哪几处。
 
 ## 8 怎么跑
 

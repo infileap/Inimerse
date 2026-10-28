@@ -11,9 +11,19 @@ r2 is a thread index; OP_LOADK_I64's r2/r3 are two halves of one immediate).
   C2  a declared destination appears among the printed registers
   C3  a declared immediate never appears as a register token
 
-Printed tokens are read from the print call only (the snprintf inside a case),
-never from the whole case body: a case may compute (OP_CALL_BUILTIN resolves its
-name from ins->r2 before printing) and a computation is not a line.
+Printed tokens are read from the print calls only (the snprintf calls inside a
+case), never from the whole case body: a case may compute (OP_CALL_BUILTIN
+resolves its name from ins->r2 before printing) and a computation is not a line.
+
+When a case branches its print (OP_RECV prints "timeout=none" or "timeout=r%d"),
+the register set is the union over the branches: reading one branch would let a
+register hide in the branch the reader skips, and that green would come from the
+reader, not from the tree.
+
+A slot declared `sentinel` may hold a negative sentinel instead of a register.
+The tool names such a slot (P1-AMBIG) and reads whether the print call is behind a
+test on that slot (`guarded=yes|no`).  That reading says a conversion exists; it
+does not say the conversion is correct -- an inverted test still reads guarded=yes.
 """
 import argparse
 import re
@@ -128,19 +138,58 @@ def conversions(fmt):
 
 
 def printed_tokens(case_text):
-    m = PRINT_RE.search(case_text)
-    if not m:
+    """Every snprintf the case can reach, unioned.
+
+    A case that branches its print (vm.c 5383-5384 prints "timeout=none" or
+    "timeout=r%d") has one line with two shapes; reading only the first branch
+    would let a register hide in the branch the reader skips. The union is what
+    the line can say, which is what the criteria are about."""
+    ms = list(PRINT_RE.finditer(case_text))
+    if not ms:
         return None
-    fmt, rest = m.group(1), m.group(2)
-    args = split_args(rest.lstrip(",")) if rest.strip() else []
     toks = []
-    for n, (prefix, conv) in enumerate(conversions(fmt)):
-        slot = None
-        if n < len(args):
-            sm = SLOT_RE.match(args[n])
-            slot = "r" + sm.group(1) if sm else None
-        toks.append((prefix, conv, slot))
+    for m in ms:
+        fmt, rest = m.group(1), m.group(2)
+        args = split_args(rest.lstrip(",")) if rest.strip() else []
+        for n, (prefix, conv) in enumerate(conversions(fmt)):
+            slot = None
+            if n < len(args):
+                sm = SLOT_RE.match(args[n])
+                slot = "r" + sm.group(1) if sm else None
+            toks.append((prefix, conv, slot, m.start()))
     return toks
+
+
+def branch_guards(case_text, slot):
+    """Heuristic reading: does every call that prints `slot` as a register
+    sit behind a test on that same slot (600 chars of lookback)?
+
+    This is a reading, not a criterion. It can say the code visibly decides
+    before printing, which is enough to say a sentinel cannot reach the r%d
+    branch; it cannot say the decision is correct."""
+    out = []
+    for m in PRINT_RE.finditer(case_text):
+        fmt, rest = m.group(1), m.group(2)
+        args = split_args(rest.lstrip(",")) if rest.strip() else []
+        prints_slot = False
+        for n, (prefix, conv) in enumerate(conversions(fmt)):
+            if n < len(args) and prefix == "r" and conv in "diu":
+                sm = SLOT_RE.match(args[n])
+                if sm and "r" + sm.group(1) == slot:
+                    prints_slot = True
+        if not prints_slot:
+            continue
+        window = case_text[max(0, m.start() - 600):m.start()]
+        g = None
+        for gm in re.finditer(r"ins->r([123])", window):
+            tail = window[gm.end():gm.end() + 20]
+            if re.match(r"\s*(<=|>=|<|>|==|!=)", tail):
+                g = gm
+        if g is None or ("r" + g.group(1)) != slot:
+            out.append(False)
+        else:
+            out.append(True)
+    return out
 
 
 def read_cases(src):
@@ -166,12 +215,16 @@ def main():
 
     for op in sorted(declared):
         toks = printed_tokens(cases[op])
+        nprints = len(list(PRINT_RE.finditer(cases[op])))
+        if nprints > 1:
+            print("P1-BRANCH|op=%s|calls=%d|effect=the-register-set-is-the-union-of-the-branches"
+                  % (op, nprints))
         if toks is None:
             print("P1-NOPRINT|op=%s|effect=no-print-call-in-the-case" % op)
             bad.append("noprint:" + op)
             continue
         regs, typed, numbers = [], [], []
-        for prefix, conv, slot in toks:
+        for prefix, conv, slot, _at in toks:
             if not slot:
                 continue
             if prefix == "r" and conv in "diu":
@@ -213,9 +266,15 @@ def main():
         for r in sentinel:
             if r in regs:
                 ambig.append("AMBIG:" + op)
-                print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(-1)"
-                      "|why=the-print-cannot-express-both-cases-and-does-not-have-to-judge"
-                      % (op, r))
+                guards = branch_guards(cases[op], r)
+                if guards and all(guards):
+                    print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(-1)|guarded=yes"
+                          "|effect=the-print-can-only-reach-the-register-glyph-when-the-slot-is-a-register"
+                          % (op, r))
+                else:
+                    print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(-1)|guarded=no"
+                          "|effect=the-sentinel-can-be-rendered-with-the-register-glyph"
+                          % (op, r))
         if leak:
             print("P1-C3|op=%s|imm=%s|printed-reg=%s|leak=%s"
                   "|effect=an-immediate-printed-as-a-register"
