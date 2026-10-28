@@ -7,6 +7,11 @@ Readings (one per line, grep-able):
   MUTATE|axiom=..|drop|verdict-changed=yes|no|from=..|to=..|variant=..
   CONDITIONAL|claim=..|variant=..|axioms=..|discharge=open|closed
   CONDITIONAL-SUMMARY|claims=<n>|open=<k>|all-asserted=<k2>
+  USES|claim=..|variant=..|axioms=..|source=measured|why=<generated>
+  USES-GAP|missing=..|extra=..|rule=<the union equals the discharged set>
+  USES-CONFLICT|claim=..|declared=..|measured=..   (a declaration may be wider, never shorter)
+  USES-SUPERSET|claim=..|declared=..|measured=..|unused=..
+  USES-COST|claims=<n>|axioms=<n>|cells=<n>|runs=<n>|wall=..
 
 The status column needs no solver; the mutation column does and says so when it cannot.
 See docs/streams/dec-formal-axioms.md for why an axiom without a mutation test has the
@@ -22,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -318,6 +324,129 @@ def exhaustion_why(receiver, field, cens, cover, other, declared):
     return why
 
 
+def compute_uses(claims, mut_detail, from_declared=None):
+    """claim key -> sorted axiom ids whose single drop flips THIS claim's verdict.
+
+    Two claims of one property share a pid, so the key carries variant too.  With
+    from_declared given, the list is copied instead of measured -- that mode exists only as the
+    counter-proof that the measured reader reads something.
+    """
+    out = {}
+    for key in sorted(claims):
+        if from_declared is not None:
+            out[key] = sorted(from_declared[key])
+        else:
+            out[key] = [ax for ax in sorted(mut_detail) if key in mut_detail[ax]]
+    return out
+
+
+def emit_uses(info, claims, axioms, mut_detail, measured, controls, t0, n_variants):
+    """USES rows: which axioms a claim's verdict actually depends on.
+
+    The CONDITIONAL row already carried axioms=, but that list is written by hand in the
+    generator: it answers "which axioms did the author have in mind", not "which ones does the
+    verdict need".  Here the list is an observation -- drop one axiom, re-run every variant, and
+    if THIS claim's verdict moves, the claim uses that axiom.  source= is measured or nothing: a
+    USES row saying source=declared would be the hand-copied list again, wearing a measured word.
+    """
+    if not measured:
+        print("USES-SKIP|why=no interpreter could run the variants, so no axiom can be dropped and "
+              "no claim can be attributed; the declared list would be a copy, and a copy is not a "
+              "measurement")
+        return 0
+    problems = 0
+    from_declared = bool(controls.get("from_declared"))
+    declared = {k: list(v[0]) for k, v in claims.items()}
+    measured_uses = compute_uses(claims, mut_detail)
+    short = controls.get("declare_short")
+    if short:
+        if short not in declared:
+            print("USES-CONTROL|declare-short=%s|problem=no such claim|claims=%s"
+                  % (short, ",".join(sorted(declared))))
+            return 2
+        # Remove an axiom the claim is MEASURED to use -- popping a random element proves nothing,
+        # because a declared list may legitimately name axioms the verdict does not need.
+        cand = [a for a in measured_uses[short] if a in declared[short]]
+        if not cand:
+            print("USES-CONTROL|declare-short=%s|problem=the claim uses no axiom it also declares|"
+                  "measured=%s|declared=%s"
+                  % (short, ",".join(measured_uses[short]) or "none",
+                     ",".join(declared[short]) or "none"))
+            return 2
+        gone = cand[0]
+        declared[short].remove(gone)
+        print("USES-CONTROL|declare-short=%s|removed=%s|left=%s|why=this control removes an axiom "
+              "the verdict is measured to use, so the declaration is now short of a dependency"
+              % (short, gone, ",".join(declared[short]) or "none"))
+    uses = compute_uses(claims, mut_detail, from_declared=declared if from_declared else None)
+    if from_declared:
+        print("USES-READER|mode=declared|note=this reader copies the CONDITIONAL row, so it cannot "
+              "tell an axiom the claim uses from one it merely mentions; it is here as the "
+              "counter-proof that the measured reader reads something")
+    for key in sorted(uses):
+        pid, _, vname = key.partition("|")
+        used = uses[key]
+        if from_declared:
+            why = "copied from the CONDITIONAL row"
+        elif used:
+            why = "dropping %s flips this claim's verdict" % ",".join(used)
+        else:
+            why = "no single axiom drop flips this claim's verdict"
+        print("USES|claim=%s|variant=%s|axioms=%s|source=%s|why=%s"
+              % (pid, vname or "?", ",".join(used) or "none",
+                 "declared" if from_declared else "measured", why))
+    union = set()
+    for used in uses.values():
+        union |= set(used)
+    discharged = {ax[0] for ax in axioms if info[ax[0]]["status"] == "discharged"}
+    missing = sorted(discharged - union)
+    extra = sorted(union - discharged)
+    if from_declared:
+        print("USES-GAP|missing=not-checked|extra=not-checked|rule=a declared reader has no way to "
+              "notice a discharged axiom that nothing uses")
+    else:
+        print("USES-GAP|missing=%s|extra=%s|rule=the union of the USES rows equals the set of "
+              "DISCHARGED axioms -- set equality, not containment; a discharged axiom that no "
+              "claim uses is MISSING from the union, and a used axiom that is not discharged is "
+              "EXTRA in it"
+              % (",".join(missing) or "none", ",".join(extra) or "none"))
+        if missing or extra:
+            problems += 1
+    conflicts = 0
+    unused = 0
+    for key in sorted(uses):
+        if from_declared:
+            continue
+        pid, _, vname = key.partition("|")
+        used = set(uses[key])
+        dec = set(declared[key])
+        if used - dec:
+            conflicts += 1
+            print("USES-CONFLICT|claim=%s|variant=%s|declared=%s|measured=%s|rule=the declared list "
+                  "may name axioms this claim does not use, never omit one it does"
+                  % (pid, vname or "?", ",".join(sorted(dec)) or "none",
+                     ",".join(sorted(used)) or "none"))
+        elif dec - used:
+            unused += 1
+            print("USES-SUPERSET|claim=%s|variant=%s|declared=%s|measured=%s|unused=%s|note=a "
+                  "declared axiom the verdict does not need is information: the claim is weaker "
+                  "than its own declaration"
+                  % (pid, vname or "?", ",".join(sorted(dec)),
+                     ",".join(sorted(used)) or "none", ",".join(sorted(dec - used))))
+    if conflicts:
+        problems += 1
+    print("USES-SUMMARY|claims=%d|links=%d|unused-discharged=%d|conflicts=%d|gap=%s"
+          % (len(uses), len(union), len(missing), conflicts,
+             "yes" if (missing or extra) else "no"))
+    print("USES-COST|claims=%d|axioms=%d|cells=%d|runs=%d|variants-per-run=%d|wall=%.1fs|"
+          "note=one drop run yields every claim at once, so the %d cells cost no extra runs; "
+          "restricting to the %d discharged axioms would save runs today, but an axiom that is "
+          "asserted now could start flipping a claim later and its row would silently go missing"
+          % (len(uses), len(mut_detail), len(uses) * len(mut_detail), 1 + len(mut_detail),
+             n_variants, time.time() - t0, len(uses) * len(mut_detail), len(discharged)))
+    return 1 if problems else 0
+
+
 def emit_writesites(root, census):
     """WRITESITES / WRITESITE / unparsed-write rows: the reach of each assumption, counted."""
     # pinned-writesites=, not pinned=: the pin self-check also prints a counted number, and two
@@ -463,7 +592,7 @@ def mutation_lane(mod, path, lineno):
                   if any(p == path and n == lineno for p, n in ax[3]))
 
 
-def emit_ledger(mod, root, gen_path, py_win, workdir):
+def emit_ledger(mod, root, gen_path, py_win, workdir, controls=None):
     sites, unparsed = scan_sites(gen_path)
     extracted = len([s for s in sites if s[2] is not None])
     print("AXIOMS|sites=%d|extracted=%d|unparsed=%d" % (len(sites), extracted, len(unparsed)))
@@ -527,10 +656,13 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
         else:
             verds = base
     mutations = {}
+    mut_detail = {}
+    uses_t0 = time.time()
     for ax in axioms:
         ax_id = ax[0]
         if not measured:
             mutations[ax_id] = ("unmeasured", None, None, "no z3 interpreter at %s" % py_win, 0)
+            mut_detail[ax_id] = set()
             continue
         script = os.path.join(workdir, "drop_%s.py" % ax_id)
         subprocess.run([sys.executable, gen_path, "--root", root, "--out", script,
@@ -538,14 +670,31 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
         got, err = run_script(py_win, script)
         if got is None:
             mutations[ax_id] = ("unmeasured", None, None, err, 0)
+            mut_detail[ax_id] = set()
             continue
         changed = [(k, verds.get(k), got.get(k)) for k in sorted(verds) if verds.get(k) != got.get(k)]
+        # Every claim this drop moves, kept -- the first one is enough for the MUTATE row, but
+        # "which claims USE this axiom" is the whole set, and it must not be re-derived by hand.
+        mut_detail[ax_id] = {k for k, _b, _a in changed}
         if not changed:
             info[ax_id]["status"] = "vacuous"
             mutations[ax_id] = ("no", None, None, None, len(verds))
         else:
             k, before, after = changed[0]
             mutations[ax_id] = ("yes", before, after, k, len(changed))
+
+    # Control axioms: registered here, after the drop loop, so the generator never sees a name
+    # it does not know.  A control axiom is DECLARED discharged and nothing reads it, which is
+    # exactly the shape the USES gap has to catch (an axiom that counts as discharged but that
+    # no claim's verdict depends on).
+    for _name in (controls or {}).get("inject") or []:
+        axioms.append((_name, "injected control", "measured", [],
+                       "injected: no variant reads it", "control"))
+        info[_name] = dict(kind="measured", text="injected: no variant reads it", pins=[],
+                           seen=[], declared=0, registered=0, scope="pointwise",
+                           status="discharged", why="", cand=None, writes=0)
+        mutations[_name] = ("no", None, None, None, len(verds))
+        mut_detail[_name] = set()
 
     # --- AXIOM rows, after the mutation column so status is final -----------------------------
     for ax in axioms:
@@ -619,6 +768,10 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
     print("CONDITIONAL-SUMMARY|claims=%d|open=%d|all-asserted=%d"
           % (len(claims), n_open, len(claims) - n_open))
 
+    # --- USES: which axioms a claim's verdict actually depends on ----------------------------
+    uses_rc = emit_uses(info, claims, axioms, mut_detail, measured, controls or {}, uses_t0,
+                         len(verds))
+
     counts = {"discharged": 0, "asserted": 0, "vacuous": 0}
     for ax in axioms:
         counts[info[ax[0]]["status"]] += 1
@@ -663,7 +816,7 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
     for row in negs:
         print("FRAME|%s" % row)
     print("DEPENDS|axiom=A-FRAME|on=A4|why=both element writes store t->sp, so the frame slot range IS the sp range")
-    return 0
+    return uses_rc
 
 
 def self_check_writesites(gen_path, py_win):
@@ -1390,6 +1543,141 @@ def self_check_readings(gen_path, py, readings_path):
     return 2 if failed else 0
 
 
+def _uses_fields(line):
+    """Parse a key=value row into a dict -- position-free, so field ORDER cannot be frozen."""
+    out = {}
+    for part in line.split("|")[1:]:
+        k, _, v = part.partition("=")
+        out[k] = v
+    return out
+
+
+def self_check_uses(gen_path, py):
+    """Six cells: the identity, two RED controls, and two cells showing a declared reader is blind.
+
+    The counter-proof is the point: an implementation that reads the CONDITIONAL row would pass
+    the two declared-reader cells and fail nothing, because a copy cannot disagree with itself.
+    """
+    me = os.path.abspath(__file__)
+    cells = []
+
+    def run(tail):
+        res = subprocess.run([sys.executable, me, "--gen", gen_path, "--python", py] + tail,
+                             capture_output=True, text=True, timeout=3600)
+        return res.returncode, res.stdout + res.stderr
+
+    def uses_rows(out):
+        return [l for l in out.split("\n") if l.startswith("USES|")]
+
+    def statuses(out):
+        st = {}
+        for l in out.split("\n"):
+            if l.startswith("AXIOM|"):
+                f = _uses_fields(l)
+                if f.get("role", "z3-model") == "z3-model":
+                    st[f["name"]] = f["status"]
+        return st
+
+    def gap_of(out):
+        for l in out.split("\n"):
+            if l.startswith("USES-GAP|"):
+                f = _uses_fields(l)
+                return f.get("missing", "?"), f.get("extra", "?")
+        return None, None
+
+    rc, out = run([])
+    rows = uses_rows(out)
+    st = statuses(out)
+    used = set()
+    for l in rows:
+        a = _uses_fields(l).get("axioms", "none")
+        if a != "none":
+            used |= set(a.split(","))
+    dis = {k for k, v in st.items() if v == "discharged"}
+    miss, extra = gap_of(out)
+    cells.append(("uses-union-equals-discharged",
+                  "the union of the USES rows is exactly the set of discharged axioms, and the gap "
+                  "row says none/none",
+                  "rc=%d rows=%d axioms=%d union-miss=%s union-extra=%s gap=%s/%s"
+                  % (rc, len(rows), len(st), ",".join(sorted(dis - used)) or "none",
+                     ",".join(sorted(used - dis)) or "none", miss, extra),
+                  rc == 0 and bool(rows) and used == dis and miss == "none" and extra == "none"))
+
+    rc, out2 = run(["--uses-inject", "AXI9"])
+    rows2 = uses_rows(out2)
+    miss2, extra2 = gap_of(out2)
+    cells.append(("injected-unused-axiom-is-a-gap",
+                  "an axiom declared discharged that no variant reads leaves every USES row alone "
+                  "and turns the gap red: the union is now MISSING it (missing= names the gap in "
+                  "the direction the set equality actually runs)",
+                  "rc=%d rows-same=%s missing=%s extra=%s"
+                  % (rc, "yes" if rows2 == rows else "no", miss2, extra2),
+                  rc == 1 and rows2 == rows and "AXI9" in (miss2 or "") and extra2 == "none"))
+
+    rc, out3 = run(["--uses-inject", "AXI9", "--uses-from-declared"])
+    miss3, extra3 = gap_of(out3)
+    cells.append(("declared-reader-misses-the-gap",
+                  "the same injected axiom with the declared reader is NOT red: rc=0 and the gap is "
+                  "not checked, which is what makes the measured gap a measurement",
+                  "rc=%d gap=%s/%s reader=%s"
+                  % (rc, miss3, extra3,
+                     "declared" if "USES-READER|mode=declared" in out3 else "?"),
+                  rc == 0 and extra3 == "not-checked" and "USES-READER|mode=declared" in out3))
+
+    target = None
+    for l in rows:
+        f = _uses_fields(l)
+        if f.get("axioms", "none") != "none":
+            target = f["claim"] + "|" + f["variant"]
+            break
+    if target is None:
+        cells.append(("declared-list-too-short",
+                      "a claim with a measured dependency exists to shorten",
+                      "target=none-found", False))
+    else:
+        pid = target.split("|")[0]
+        rc, out4 = run(["--uses-declare-short", target])
+        con = [l for l in out4.split("\n") if l.startswith("USES-CONFLICT|")]
+        cells.append(("declared-list-too-short",
+                      "a declared list missing an axiom the verdict uses is a conflict, not a note",
+                      "rc=%d conflicts=%d names-claim=%s"
+                      % (rc, len(con), "yes" if any(pid in c for c in con) else "no"),
+                      rc == 1 and bool(con) and any(pid in c for c in con)))
+        rc, out5 = run(["--uses-declare-short", target, "--uses-from-declared"])
+        con5 = [l for l in out5.split("\n") if l.startswith("USES-CONFLICT|")]
+        cells.append(("declared-reader-misses-the-short-list",
+                      "the declared reader cannot notice that its own list is short: rc=0 and no "
+                      "conflict row",
+                      "rc=%d conflicts=%d" % (rc, len(con5)),
+                      rc == 0 and not con5))
+
+    mut = {}
+    for l in out.split("\n"):
+        if l.startswith("MUTATE|"):
+            f = _uses_fields(l)
+            mut[f.get("axiom")] = f.get("verdict-changed")
+    agree = all(mut.get(a) == "yes" for a in used)
+    cost = [l for l in out.split("\n") if l.startswith("USES-COST|")]
+    cf = _uses_fields(cost[0]) if cost else {}
+    ok_cost = (int(cf["runs"]) == 1 + len(st) and int(cf["cells"]) == len(rows) * len(st)
+               if cost else False)
+    cells.append(("attribution-agrees-with-the-mutation-column",
+                  "every axiom a USES row names has a MUTATE row saying verdict-changed=yes, and "
+                  "the cost row adds up (runs = 1 + axioms, cells = claims x axioms)",
+                  "agree=%s runs=%s cells=%s" % (agree, cf.get("runs"), cf.get("cells")),
+                  agree and ok_cost))
+
+    failed = 0
+    for name, expect, got, ok in cells:
+        print("USESCHECK|case=%s|expect=%s|got=%s|verdict=%s"
+              % (name, expect, got, "PASS" if ok else "FAIL"))
+        if not ok:
+            failed += 1
+    print("USESCHECK|summary|cases=%d|pass=%d|fail=%d"
+          % (len(cells), len(cells) - failed, failed))
+    return 2 if failed else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None,
@@ -1429,6 +1717,15 @@ def main():
                          "defaults, and the loud fallback when the local python3 has no z3")
     ap.add_argument("--self-check-readings", default=None, metavar="PATH",
                     help="six cells: the file is its own product, and five ways of being wrong")
+    ap.add_argument("--uses-inject", action="append", default=None, metavar="NAME",
+                    help="control: register an extra axiom declared discharged that no variant reads")
+    ap.add_argument("--uses-declare-short", default=None, metavar="CLAIM",
+                    help="control: drop one axiom from that claim's declared list")
+    ap.add_argument("--uses-from-declared", action="store_true",
+                    help="counter-proof reader: build USES from the CONDITIONAL row instead of measuring")
+    ap.add_argument("--self-check-uses", action="store_true",
+                    help="six cells for USES: the union identity, an injected unused axiom, a "
+                         "declared list made too short, and a declared reader that misses both")
     args = ap.parse_args()
     # The default must be a reading: which interpreter ran is a decision, and a decision that
     # nobody prints is a tradition.  stderr keeps it out of the compared body.
@@ -1441,6 +1738,8 @@ def main():
     if args.self_check_sides:
         return self_check_sides(os.path.abspath(args.gen), args.python, args.side_left,
                                 args.side_right)
+    if args.self_check_uses:
+        return self_check_uses(os.path.abspath(args.gen), args.python)
     if args.self_check_writesites:
         return self_check_writesites(os.path.abspath(args.gen), args.python)
     if args.side_equivalence:
@@ -1476,7 +1775,11 @@ def run_ledger(args, mod=None, root=None):
             print(problem, file=sys.stderr)
             return 2
     workdir = tempfile.mkdtemp(prefix="axiom_ledger_")
-    return emit_ledger(mod, root, os.path.abspath(args.gen), args.python, workdir)
+    controls = dict(inject=list(getattr(args, "uses_inject", None) or []),
+                    declare_short=getattr(args, "uses_declare_short", None),
+                    from_declared=bool(getattr(args, "uses_from_declared", False)))
+    return emit_ledger(mod, root, os.path.abspath(args.gen), args.python, workdir,
+                       controls=controls)
 
 
 if __name__ == "__main__":
