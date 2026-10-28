@@ -24468,7 +24468,41 @@ READING|name=pointers|value=2458|base=2234|delta=+224|limit=ceiling 223|scope=�
 
 `docs/AUDIT.md` 24410 → **24476** 行、节 515 → **516**；三份读数：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 573`（`delta +11`）；`swept=107`。
 
-### 己 边界
+### 己 节数账的射程：结构对，文字不在射程
+
+在 `docs/STATUS.md` 某一节的标题下加一句正文（**不加标题**）之后跑节数账：`HEADINGS|drift|added=1|removed=0|net=1` 不变（那 `+1` 仍只来自本节），rc **0**，且工具自己的最后一行逐字：
+
+```
+check_docs_headings: no pinned section is missing. A green here says nothing about whether the text under a surviving heading still says the same thing.
+```
+
+⇒ **「绿」只说明被钉住的节还在，不说明节里的字没变。** 这一句不是我改写的结论，是工具自己印的；用它当判据比转述硬。
+
+### 庚 分母在文件级，两本账各自独立
+
+一 删一节于 `docs/STATUS.md`、加一节于 `docs/AUDIT.md`（本节自己），三名字并列：
+
+| 读数 | 值 |
+|---|---|
+| `HEADINGS|tree=…|base=1335|now=1335|removed=1|added=1` | `net` 为 0 |
+| `HEADINGS|drift|added=1|removed=1|net=0` | 同一个 0 |
+| `HEADINGS|added|docs/AUDIT.md|base=522|now=523` | 加在哪 |
+| `HEADINGS|removed|docs/STATUS.md|base=74|now=73` | 删在哪 |
+| rc | **1**（`removed>0` 才红，`net=0` 不救） |
+
+⇒ **同一个 `net=0` 有两种过程**，只印 `net` 看不见过程；分母是**文件级**的，所以必须 `added=`／`removed=`／`net=` 三名字并列，读者才能自己看出「删了一节、加了一节」。
+
+二 两本账独立移动：本节写入的两处 `[obs: …]` 记录让 `records` 增加，而 `pointers` 全程 **2457** 不动；同一批编辑在 `check_line_refs` 那侧也让 `explicit 185`／`unanchored 573` 一动不动。⇒ **改文档能让一本账动、另两本完全不动**——这正是「同一份输出里三个数各数各的」的日常形态。
+
+三 `socket_probe` 的结构对照（只写结构，不写速率；速率是对方读数、我未构建复跑）：
+
+| | 修前（`eaf3695^`） | 修后（`eaf3695`） |
+|---|---|---|
+| 顺序 | 建 listener → 取自己的 port → `port_open(自己的 port)`（连一次立刻关）→ 放行 client → `accept` | 建 listener → 另建 throwaway（`im_socket_listen(…,0,1)`；为 NULL 时关 listener 并退 2）→ 取 `probe_port`（≤0 退 3）→ `port_open(probe_port)` → 关 throwaway → 再连自己的 client → `accept` 轮询（上限 2000 次，每次 1 ms） |
+
+**差别是「问谁」，不是「问几次」**：两次都会连一次、关一次，但修前那次连线排在**被测 listener 的 backlog** 里，修后它排在一条**用完就丢**的队列里。同一个断言，换个被问的对象，被测对象就不再与检查器抢同一条队列。
+
+### 辛 边界
 
 - 甲栏两格是**同一棵树**上的两次运行，改的只有 `--python`；甲二用的是 `/mnt/c/Python314/python.exe`（3.14.7），甲一是本机 `python3`（3.14.4），两者 z3 均为 5.3.2。
 - 乙栏的 `-z` 结论只覆盖「名字含非 ASCII 字节」这一种被转义的情况；名字含空格、反斜杠时的转义未逐项测。
@@ -24558,3 +24592,104 @@ READING|name=pointers|value=2458|base=2234|delta=+224|limit=ceiling 223|scope=�
 - 丙栏的 `find` 会数到未跟踪文件，这一点与它是否「对」无关——它数的是盘。
 - 丁栏的速率全部是对方读数（12 路 480 次、32 路 1920 次），我在本树上只核了结构（行序与 `port_open` 的「连一次就关」）；未构建复跑。
 - 本节所有命令都在 `.worktrees/audit-1400` 里、以 `7d28450` 为树跑；探针目录与探针文件跑完已删，`git status --porcelain` 回到 0 行。
+
+## §1.401 增补四百三十二：同一个差归零，两本账给出相反裁决
+
+**本节写的是：三本账有三套保鲜方式，而「差归零」这个动作在一本账里是允许的、在另一本账里是致命的。** 观测树 `3700162`；所有数字都能用本节给出的命令重跑。
+
+### 甲 三本账、三套保鲜
+
+| 账 | 存在哪里 | 谁写 | 老化方式 |
+|---|---|---|---|
+| 节数（`^## §`） | `tools/docs_headings.pin.json`（`docs`／`headings`／`per_file` 三层） | `python3 tools/check_docs_headings.py --write-pin` | 每次合并之后由人重钉（`1330`→`1331`→`1332`…） |
+| 指针（`pointers`） | **常量在源码里**：基准是提交 sha `e3e97c71e…`（`tools/check_obs_markers.py` 第 112 行），限额 `223`（同文件第 154 行）[obs: 3700162]；而**基准那一侧的数不存**，每次运行重扫基准树现算（同文件第 375–400 行） | 只能改代码 | 基准不动、被测树长高，差就变大 |
+| 行引用（`explicit`／`unanchored`） | 也是常量：基准 sha `1c6b3381…`（`tools/check_line_refs.py` 第 415 行）、`EXP_LINE_REFS_DELTA = 12`（同文件第 425 行，等式）、`EXP_LINE_REFS_UNANCHORED_DELTA_MAX = 12`（第 487 行，上限）[obs: 3700162] | 只能改代码 | 同上 |
+
+三种保鲜的差别不是风格：**一本能被一条命令改写，另两本只能被一次提交改写**；而且改写的代价不同——pin 改的是「基线」，常量改的是「基准是谁」。三本账全部经 `os.environ.get(...)` 读缺省，所以「存哪儿」并不限制谁能动它：**一个环境变量就能把任何一本的基准挪到别处，而文件里一个字都不必改。**
+
+### 乙 把基准挪到被测树上：一本转绿，一本转红
+
+同一棵树、同一份文档，只把基准 sha 换成 `HEAD`（`37001622aa…`）：
+
+| 账 | 默认基准 | 基准＝`HEAD` | rc |
+|---|---|---|---|
+| 指针 | `base e3e97c71e is 1075 commit(s) behind HEAD; pointer delta +223 (ceiling 223)`，`pointers 2457` | `base 37001622a is 0 commit(s) behind HEAD; pointer delta +0 (ceiling 223)`，`pointers 2457` | **0**（默认 0，挪后 0） |
+| 行引用 | `pins -- explicit delta +12 (expect +12), unanchored delta +11 (ceiling +12)`，rc 0 | `pins -- explicit delta +0 (expect +12), unanchored delta +0 (ceiling +12)`，`readings -- explicit 185 (base 185), unanchored 573 (base 573)`，rc **1** | 红 |
+
+行引用那一侧逐字：
+
+```
+check_line_refs: explicit-form references: +0 since base 37001622aa85a62527e3acd7d11f0c2a025b8cc3 (185 -> 185), but EXP_LINE_REFS_DELTA is +12 -- the cited form shrank without anyone saying so [cause=explicit-delta-shrank requires=input set non-empty=true]
+VERDICT|assertions=1|causes=1|consequential=0|measured_cells=8|environment_cells=0|cause=explicit-delta-shrank
+check_line_refs: FAILED (1 assertion(s)).
+```
+
+**同一个动作，一本账说「没事」，另一本说「有人删了东西」。** 指针那本是上界（`delta <= 223`），0 当然不超；行引用那本是等式（`delta == 12`），0 不等于 12 ⇒ 报「shrank without anyone saying so」。**两个裁决都对，因为它们量的是两件事**：一本问「长没长超」，一本问「还是不是原来那个数」。
+
+这一格比「两个数不一样」更硬：**它证明「差值」这个说法本身不完整**——差值必须带「基准是谁」和「判据是等式还是上界」，缺一件就能让同一棵树读出绿与红。
+
+### 丙 `--write-pin` 只写一本，另两本读数不动
+
+在 `docs/STATUS.md` 末尾加一节（`## §1.999 probe section`），先看三本账：
+
+| 时刻 | 节数账 | 指针账 | 行引用账 |
+|---|---|---|---|
+| 加节后、重钉前 | `HEADINGS|tree=3700162|base=1332|now=1336|removed=0|added=4`、`HEADINGS|pin|tree=0ec06b1|docs=107|files=107` | `pointers 2457`／`delta +223 (ceiling 223)` | `explicit delta +12 (expect +12)`、`unanchored delta +11 (ceiling +12)` |
+| 跑 `--write-pin` 后 | `HEADINGS|pin|tree=3700162|docs=107|headings=1336`；`git status --porcelain` 只有 **2** 行：` M docs/STATUS.md`、` M tools/docs_headings.pin.json` | `pointers 2457`（未动） | `explicit delta +12 (expect +12)`（未动） |
+
+`tools/docs_headings.pin.json` 的改动是 **4 行**：`headings` `1332`→`1336`，`docs/AUDIT.md` `519`→`522`，`docs/STATUS.md` `74`→`75`，以及 `per_file` 之外那一行 `pin` 的树号。
+
+⇒ **一条命令只能保鲜一本账。** 加一节会让「节数账」的 `now` 与 `base` 分开（`+4`），重钉之后它们又合上——而另两本账在整个过程里**一个字节都没动**，它们的基准不是文件，是提交 sha。这就解释了为什么本文档里两件「重钉」事情的代价不同：pin 的重钉是一条命令，基准的重钉必须是一次提交（并且要带走「为什么换基准」）。本次实验后 `git checkout --` 复原，`git status --porcelain` 回 0 行。
+
+### 丁 判据
+
+1. **报差值必须同时报三件**：基准是谁、被测是谁、判据是等式还是上界。只报 `+223` 是半个句子。
+2. **「差归零」不是「没问题」**：上界型判据对 0 无话可说，等式型判据对 0 立刻红。同一个 0，两本账给出相反裁决，而两个裁决都对。
+3. **账的存储位置决定谁能改它**：pin 文件能被一条命令改写，常量只能被一次提交改写；而两者都能被环境变量重定向，所以「写入权」不是「谁能改」。
+4. **保鲜是分账的**：加一节只动节数账；改一个数只动它自己那本；别用一本账的绿去推断另一本。
+5. **一条命令只保鲜一本**：`--write-pin` 之后仍要单独看另外两本的读数，因为它们没有「重钉」这个动作。
+
+### 戊 端点
+
+`docs/AUDIT.md` 24560 → **24695** 行、节 517 → **518**；三份读数：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 573`（`delta +11`）；`swept=107`。
+
+### 己 节数账的射程：结构对，文字不在射程
+
+在 `docs/STATUS.md` 某一节的标题下加一句正文（**不加标题**）之后跑节数账：`HEADINGS|drift|added=1|removed=0|net=1` 不变（那 `+1` 仍只来自本节），rc **0**，且工具自己的最后一行逐字：
+
+```
+check_docs_headings: no pinned section is missing. A green here says nothing about whether the text under a surviving heading still says the same thing.
+```
+
+⇒ **「绿」只说明被钉住的节还在，不说明节里的字没变。** 这一句不是我改写的结论，是工具自己印的；用它当判据比转述硬。
+
+### 庚 分母在文件级，两本账各自独立
+
+一 删一节于 `docs/STATUS.md`、加一节于 `docs/AUDIT.md`（本节自己），三名字并列：
+
+| 读数 | 值 |
+|---|---|
+| `HEADINGS|tree=…|base=1335|now=1335|removed=1|added=1` | `net` 为 0 |
+| `HEADINGS|drift|added=1|removed=1|net=0` | 同一个 0 |
+| `HEADINGS|added|docs/AUDIT.md|base=522|now=523` | 加在哪 |
+| `HEADINGS|removed|docs/STATUS.md|base=74|now=73` | 删在哪 |
+| rc | **1**（`removed>0` 才红，`net=0` 不救） |
+
+⇒ **同一个 `net=0` 有两种过程**，只印 `net` 看不见过程；分母是**文件级**的，所以必须 `added=`／`removed=`／`net=` 三名字并列，读者才能自己看出「删了一节、加了一节」。
+
+二 两本账独立移动：本节写入的两处 `[obs: …]` 记录让 `records` 增加，而 `pointers` 全程 **2457** 不动；同一批编辑在 `check_line_refs` 那侧也让 `explicit 185`／`unanchored 573` 一动不动。⇒ **改文档能让一本账动、另两本完全不动**——这正是「同一份输出里三个数各数各的」的日常形态。
+
+三 `socket_probe` 的结构对照（只写结构，不写速率；速率是对方读数、我未构建复跑）：
+
+| | 修前（`eaf3695^`） | 修后（`eaf3695`） |
+|---|---|---|
+| 顺序 | 建 listener → 取自己的 port → `port_open(自己的 port)`（连一次立刻关）→ 放行 client → `accept` | 建 listener → 另建 throwaway（`im_socket_listen(…,0,1)`；为 NULL 时关 listener 并退 2）→ 取 `probe_port`（≤0 退 3）→ `port_open(probe_port)` → 关 throwaway → 再连自己的 client → `accept` 轮询（上限 2000 次，每次 1 ms） |
+
+**差别是「问谁」，不是「问几次」**：两次都会连一次、关一次，但修前那次连线排在**被测 listener 的 backlog** 里，修后它排在一条**用完就丢**的队列里。同一个断言，换个被问的对象，被测对象就不再与检查器抢同一条队列。
+
+### 辛 边界
+
+- 乙栏的两次运行都在同一棵树上，只改环境变量 `EXP_OBS_BASE`／`EXP_LINE_REFS_BASE`；`37001622aa85a62527e3acd7d11f0c2a025b8cc3` 就是我跑这一节时的 HEAD。
+- 丙栏的 `--write-pin` 只在本地工作树里跑，跑完 `git checkout --` 复原；我没有把重钉结果提交（pin 归合并者）。
+- 甲栏的「不可能被命令改写」指仓库里的工具：任何常量都能被人手改，这里说的是**没有专门的命令**。
+- 三本账的缺省都能被环境变量覆盖，乙栏正是用这一点做的实验；这本身也说明「基准是谁」不是一个只读事实。
