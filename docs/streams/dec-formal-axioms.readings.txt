@@ -2,11 +2,15 @@
 # Run from the top of the tree; --root is resolved from the tree itself (git toplevel, then a
 # walk up for src/vm), so a reader holding only this sha re-runs it without knowing where I work:
 #     python3 tools/z3bounds/axiom_ledger.py
-# tree: d39e180  (python3 3.14.4; the mutation column ran z3 5.3.2 via /mnt/c/Python314/python.exe)
-# Field names in the census changed at this tree: pinned=/unpinned= became
+# tree: f36d72c  (python3 3.14.4; the mutation column ran z3 5.3.2 via /mnt/c/Python314/python.exe)
+# Field names in the census changed this round: pinned=/unpinned= became
 # pinned-writesites=/unpinned-writesites=, and WRITESITES-SUMMARY gained role=coverage, because
 # the declared-pin count (33) and the write-site pinned count (4) were being read as one number
 # under one name.  Every count is the same count it was; only the label says which one it is.
+# The five unparsed line numbers below are the generator's OWN line numbers, not addresses in the
+# tree: any commit that inserts lines above them in that file moves them.  This round moved them
+# once more (1073 -> 1076 in the last hunk) when the flag-mode cell was fixed, which is why the
+# header names this tree and not the one before it.
 # two-tree reading, and it is also the proof of the T9 fix: on 2891d55 (the T8 tree, an ancestor)
 # this very command DIES with a traceback, because there --root defaulted to tools/ -- so from
 # that tree alone nobody could re-run it without a path argument.  Given --root <top of that tree>
@@ -23,11 +27,11 @@ unparsed|gen_bounds_proof.py:171|        a = self.add()
 unparsed|gen_bounds_proof.py:174|                return ("cmp", op, a, self.add())
 unparsed|gen_bounds_proof.py:306|            self.decls.append(name + " = z3.Bool(" + repr(canon) + ")")
 unparsed|gen_bounds_proof.py:376|#       asserted = written down because the code makes it true, not re-read here.
-unparsed|gen_bounds_proof.py:1073|                    out.append("    s.add(" + g + ")  # " + ax[0] + " " + ax[1])
-unparsed|gen_bounds_proof.py:1075|                out.append("    s.add(SIZE_AXIOM_%d)" % (idx + 1))
-unparsed|gen_bounds_proof.py:1077|                out.append("    s.add(" + as_bool_py(txt, ctx) + ")  # variant axiom: " + txt)
-unparsed|gen_bounds_proof.py:1081|                out.append("    s.add(z3.Not(guard))  # the guard rejecting is the path under test")
-unparsed|gen_bounds_proof.py:1084|            out.append("    s.add(z3.Not(claim))")
+unparsed|gen_bounds_proof.py:1076|                    out.append("    s.add(" + g + ")  # " + ax[0] + " " + ax[1])
+unparsed|gen_bounds_proof.py:1078|                out.append("    s.add(SIZE_AXIOM_%d)" % (idx + 1))
+unparsed|gen_bounds_proof.py:1080|                out.append("    s.add(" + as_bool_py(txt, ctx) + ")  # variant axiom: " + txt)
+unparsed|gen_bounds_proof.py:1084|                out.append("    s.add(z3.Not(guard))  # the guard rejecting is the path under test")
+unparsed|gen_bounds_proof.py:1087|            out.append("    s.add(z3.Not(claim))")
 AXIOM|name=A1|status=vacuous|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:73|text=t->reg_cap == 2097152|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion
 AXIOM|name=A2|status=vacuous|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:74|text=t->frame_cap == 2048|drop-verdict=same|note=no variant reads it: dropping it leaves all 17 verdicts identical, so its claim is neither needed by nor weakening any conclusion
 AXIOM|name=A3|status=discharged|role=z3-model|scope=pointwise|kind=measured|decl=src/vm/vm.h:82|text=VM_FRAME_REGS == 1024|settles=P4|asis
