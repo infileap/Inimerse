@@ -5372,6 +5372,35 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     case OP_TRY_START:      snprintf(out, outsz, "TRY_START r%d", ins->r1); return;
     case OP_TRY_END:        snprintf(out, outsz, "TRY_END"); return;
     case OP_THROW:          snprintf(out, outsz, "THROW r%d", ins->r1); return;
+    /* The twenty that used to fall through to "OP_%d" and print a number.
+       Operand roles are taken from the dispatch handlers, not guessed: see the
+       L_* labels above (r1/r2/r3 mean the same thing here as there). */
+    case OP_THREAD_JOIN:    snprintf(out, outsz, "THREAD_JOIN t%d, timeout=r%d", ins->r1, ins->r2); return;
+    case OP_THREAD_WAIT:    snprintf(out, outsz, "THREAD_WAIT t%d, cond=r%d, timeout=r%d", ins->r1, ins->r2, ins->r3); return;
+    case OP_THREAD_STATE:   snprintf(out, outsz, "THREAD_STATE r%d, t%d, attr=%d", ins->r1, ins->r2, ins->r3); return;
+    case OP_LOCK:           snprintf(out, outsz, "LOCK l%d, %s", ins->r1, ins->r2 == 0 ? "lock" : "unlock"); return;
+    case OP_SEND:           snprintf(out, outsz, "SEND t%d, r%d", ins->r1, ins->r2); return;
+    case OP_RECV:           snprintf(out, outsz, "RECV r%d, timeout=r%d", ins->r1, ins->r2); return;
+    case OP_DECLARE:        snprintf(out, outsz, "DECLARE kind=%d, fp[%d]", ins->r1, ins->r2); return;
+    case OP_RECORD:         snprintf(out, outsz, "RECORD g%d, sidx=%d, meta=%d", ins->r1,
+                                     ins->r2 & 0xFFFF, (ins->r2 >> 16) & 0xFF); return;
+    case OP_NEW_SET:        snprintf(out, outsz, "NEW_SET r%d, n=%d", ins->r1, ins->r3); return;
+    case OP_SET_INTERVAL:
+        snprintf(out, outsz, "SET_INTERVAL r%d, \"%s\", flags=%d", ins->r1,
+                 (code->string_pool && (ins->r2 & 0xFFFFFF) >= 0 && (ins->r2 & 0xFFFFFF) < code->string_count && code->string_pool[ins->r2 & 0xFFFFFF])
+                     ? code->string_pool[ins->r2 & 0xFFFFFF] : "?",
+                 (unsigned int)ins->r2 >> 24);
+        return;
+    case OP_IN:             snprintf(out, outsz, "IN r%d, r%d in r%d", ins->r1, ins->r2, ins->r3); return;
+    case OP_MIN:            snprintf(out, outsz, "MIN r%d, r%d", ins->r1, ins->r2); return;
+    case OP_MAX:            snprintf(out, outsz, "MAX r%d, r%d", ins->r1, ins->r2); return;
+    case OP_BIND:           snprintf(out, outsz, "BIND g%d, set=r%d, init=r%d", ins->r1, ins->r2, ins->r3); return;
+    case OP_SET_ADD:        snprintf(out, outsz, "SET_ADD r%d, r%d", ins->r1, ins->r2); return;
+    case OP_THREAD_GOTO:    snprintf(out, outsz, "THREAD_GOTO t%d, off=%d", ins->r1, ins->r2); return;
+    case OP_YIELD:          snprintf(out, outsz, "YIELD"); return;
+    case OP_MAKE_FUNC:      snprintf(out, outsz, "MAKE_FUNC r%d, f%d, captures=%d", ins->r1, ins->r2, ins->r3); return;
+    case OP_CALL_VALUE:     snprintf(out, outsz, "CALL_VALUE r%d -> r%d (args:%d)", ins->r1, ins->r2, ins->r3); return;
+    case OP_LOAD_CAPTURE:   snprintf(out, outsz, "LOAD_CAPTURE r%d, #%d", ins->r1, ins->r2); return;
     default:                snprintf(out, outsz, "OP_%d", (int)ins->op); return;
     }
 }

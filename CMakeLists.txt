@@ -1764,8 +1764,9 @@ endif()
 # with every claim in it measured against this tree instead of remembered.  It
 # needs no built artifact and no node -- it reads src/compiler/bytecode.h and
 # src/vm/vm.c -- so it is registered outside the node block.  Today it asserts
-# that all 68 opcodes have an operand shape and that the interpreter still
-# dispatches all 68; the disassembler names 48 and that gap may only shrink.
+# that all 68 opcodes have an operand shape, that the interpreter still
+# dispatches all 68, and that the disassembler names all 68 and each prints its
+# own name; a gap may shrink but may not grow.
 add_test(NAME ir_spec_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "ir spec: ok \\([0-9]+ opcodes" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_spec.test.py)
 set_tests_properties(ir_spec_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "ir spec: ok \\([0-9]+ opcodes")

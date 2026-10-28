@@ -6,8 +6,8 @@ Two things are asserted, and nothing else:
 1. the table is a table of *this* tree: a member of `OpCode` with no operand
    shape, or a shape for an opcode the enum does not have, is a failure;
 2. no consumer lost an opcode it used to cover.  The disassembler names 48 of
-   the 68 opcodes today; that gap may shrink, and when it does the baseline in
-   tools/ir_spec.py must be lowered in the same commit.  It may not grow.
+   the 68 opcodes, and each names itself; a gap may shrink (lower the baseline
+   in the same commit) but may not grow.
 
 The checker's own checks are asserted first (`--self-check`), because a table
 that cannot go red has not been shown to be watching anything.
@@ -32,7 +32,7 @@ def main():
     selfcheck = run("--self-check")
     cases = [ln for ln in selfcheck.stdout.splitlines() if ln.startswith("IRCHECK|")]
     red = [ln for ln in cases if "|red=yes" in ln]
-    if selfcheck.returncode != 0 or len(cases) != 4 or len(red) != 4:
+    if selfcheck.returncode != 0 or len(cases) != 5 or len(red) != 5:
         print(f"ir spec: FAIL (self-check: {len(red)}/{len(cases)} mutations caught)")
         for ln in cases:
             print(ln)
@@ -54,8 +54,9 @@ def main():
     interp = fields.get("interp", "?")
     disasm = fields.get("disasm", "?")
     ops = dict(part.split("=", 1) for part in spec.split("|")[1:] if "=" in part).get("ops", "?")
-    print(f"ir spec: ok ({ops} opcodes, interp {interp}, disasm {disasm}, "
-          f"gap may only shrink)")
+    named = fields.get("disasm", "?")
+    print(f"ir spec: ok ({ops} opcodes, interp {interp}, disasm {named}, "
+          f"names agree)")
     return 0
 
 

@@ -22,9 +22,12 @@ declared  `SHAPE`: one operand shape per opcode, e.g. "r1 = r2 + r3" -- this is
           shape here is a hole in the table, reported as IR-SPEC|unshaped=...
 measured  `interp`  -- the opcode appears as a `case` in the interpreter's
                        dispatch switch (`switch (ins.op)`).
-          `disasm`  -- the opcode appears as a `case` in vm_disasm_ins; an
-                       opcode that does not falls through to "OP_%d", i.e. it
-                       prints a number instead of a name.
+          `disasm`  -- the opcode appears as a `case` in vm_disasm_ins and the
+                       format string it prints begins with the opcode's own
+                       name (a case that prints "ADD" for OP_SUB is worse than
+                       a case that prints a number: it is a wrong answer with
+                       the shape of a right one).  Coverage and name
+                       agreement are two separate readings.
 not now   `aot` / `wasm` -- both selectors are written against the AST, not
                        against this bytecode (docs/IR_DESIGN.md sections 3 and
                        7), so there is nothing to measure yet.  They become
@@ -36,6 +39,7 @@ READINGS
   IR-SPEC|ops=N|codes=LO..HI|hole=29|shaped=N|unshaped=<names>
   IR-ABI|version=3|abi=2|ops=N
   IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B|aot=na|wasm=na|selfhost=na
+  IR-DISASM|named=68/68|wrong-name=none
   IR-UNIMPLEMENTED|consumer=disasm|op=OP_X|effect=prints-a-number
 
 Exit 0 when every declared shape matches a member of the enum and every
@@ -62,7 +66,11 @@ RETIRED = {29: "OP_POP_REG"}
 # A gap may shrink (record it here in the same commit, so the improvement is
 # visible as a number instead of a claim) but it may not grow: a consumer that
 # used to name an opcode and stopped is a regression, not a new gap.
-BASELINE_MISSING = {"disasm": 20}
+#
+# disasm went 48 -> 68 (0 left) in the commit that gave the twenty unnamed
+# opcodes a name instead of "OP_%d": before that, a debugger looking at a
+# thread/set/closure instruction saw a number.
+BASELINE_MISSING = {"disasm": 0}
 
 # declared: opcode -> operand shape.  "r1 = r2 + r3" reads as: writes r1, reads
 # r2 and r3.  "ip = r2" is control flow.  "-" means no register operands at all.
@@ -138,13 +146,21 @@ SHAPE = {
 
 
 def declared_ops():
-    """Parse `typedef enum { ... } OpCode;` -- names, codes, and the hole."""
+    """Parse `typedef enum { ... } OpCode;` -- names, codes, and the hole.
+
+    Block comments are removed across line boundaries before anything is
+    counted: one of them names an opcode in prose ("A separate opcode rather
+    than a reuse of OP_LOADK_INT"), and a parser that strips comments line by
+    line reads that prose as a member -- 68 members instead of 67, with the
+    phantom carrying the code of the line it sat on.
+    """
     text = BYTECODE_H.read_text()
     body = text[text.index("typedef enum {") : text.index("} OpCode;")]
+    body = re.sub(r"/\*.*?\*/", " ", body, flags=re.S)
+    body = re.sub(r"//[^\n]*", " ", body)
     code = -1
     out = []
     for line in body.splitlines()[1:]:
-        line = line.split("/*")[0]
         for m in re.finditer(r"\b(OP_[A-Z0-9_]+)\b\s*(?:=\s*(\d+))?", line):
             code = int(m.group(2)) if m.group(2) else code + 1
             out.append((m.group(1), code))
@@ -155,6 +171,22 @@ def _cases(fn_text):
     return {m.group(1) for m in re.finditer(r"case (OP_[A-Z0-9_]+):", fn_text)}
 
 
+def _disasm_names(fn_text):
+    """opcode -> the name its format string prints first, e.g. OP_MOV -> MOV.
+
+    A case may be followed by several lines before its snprintf (a multi-line
+    argument list), so the search runs from the case to the next case.
+    """
+    out = {}
+    hits = [(m.start(), m.group(1)) for m in re.finditer(r"case (OP_[A-Z0-9_]+):", fn_text)]
+    for i, (start, name) in enumerate(hits):
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(fn_text)
+        m = re.search(r'snprintf\(out, outsz, "([A-Za-z0-9_]+)', fn_text[start:end])
+        if m:
+            out[name] = m.group(1)
+    return out
+
+
 def measured():
     """Coverage measured from the sources: interpreter dispatch and disassembler."""
     vm = VM_C.read_text()
@@ -162,8 +194,9 @@ def measured():
     dispatch = _cases(vm[start : vm.index("default:", start)])
 
     d = vm.index("static void vm_disasm_ins(")
-    disasm = _cases(vm[d : vm.index("default:", d)])
-    return {"interp": dispatch, "disasm": disasm}
+    disasm_fn = vm[d : vm.index("default:", d)]
+    return {"interp": dispatch, "disasm": _cases(disasm_fn),
+            "disasm_names": _disasm_names(disasm_fn)}
 
 
 def report(ops, shape, meas, out=sys.stdout, baseline=None):
@@ -206,6 +239,23 @@ def report(ops, shape, meas, out=sys.stdout, baseline=None):
         if len(missing) > base:
             bad.append(f"{consumer}:grew:{len(missing)}>{base}")
 
+    # The name each case prints must be the opcode's own name.  This is the
+    # check that keeps a copy-pasted case from answering confidently wrong.
+    wrong = []
+    for n in names:
+        printed = meas.get("disasm_names", {}).get(n)
+        if printed is None:
+            continue
+        if printed != n[len("OP_"):]:
+            wrong.append((n, printed))
+    for n, printed in wrong:
+        print(f"IR-WRONGNAME|op={n}|prints={printed}|effect=a-wrong-answer-in-the-shape-of-a-right-one",
+              file=out)
+    if wrong:
+        bad.append(f"disasm-names:{len(wrong)}")
+    print(f"IR-DISASM|named={len([n for n in names if n in meas['disasm']])}/{len(names)}"
+          f"|wrong-name={','.join(n for n, _ in wrong) or 'none'}", file=out)
+
     missing_disasm = [n for n in names if n not in meas["disasm"]]
     base_disasm = (baseline or BASELINE_MISSING).get("disasm", 0)
     print(f"IR-COVER|interp={len(names) - len([n for n in names if n not in meas['interp']])}/{len(names)}"
@@ -226,7 +276,7 @@ def main(argv):
         # stale shape, and a consumer that stopped naming one opcode.
         cases = []
         drop = [n for n, _ in ops if n in shape][0]
-        cases.append(("unshaped", dict(shape, **{}) and {k: v for k, v in shape.items() if k != drop}))
+        cases.append(("unshaped", {k: v for k, v in shape.items() if k != drop}))
         cases.append(("stale", dict(shape, **{"OP_THIS_IS_NOT_REAL": "r1 = 0"})))
         blind = dict(meas)
         worst = [n for n, _ in ops if n in meas["disasm"]][0]
@@ -243,6 +293,14 @@ def main(argv):
         ok = ok and bool(rc)
         rc = report(ops, shape, blind, out=open("/dev/null", "w"))
         print(f"IRCHECK|case=coverage|red={'yes' if rc else 'no'}|op={worst}", file=sys.stdout)
+        ok = ok and bool(rc)
+        swapped = dict(meas)
+        names_map = dict(meas.get("disasm_names", {}))
+        first, second = [n for n, _ in ops if n in names_map][:2]
+        names_map[first], names_map[second] = names_map[second], names_map[first]
+        swapped["disasm_names"] = names_map
+        rc = report(ops, shape, swapped, out=open("/dev/null", "w"))
+        print(f"IRCHECK|case=wrongname|red={'yes' if rc else 'no'}|op={first}<-{second}", file=sys.stdout)
         ok = ok and bool(rc)
         return 0 if ok else 1
 
