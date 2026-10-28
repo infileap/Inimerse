@@ -186,6 +186,60 @@ def _disasm_names(fn_text):
     return out
 
 
+def _regs(pattern, text):
+    """Registers named by `pattern`, in first-occurrence order, deduplicated."""
+    out = []
+    for m in re.finditer(pattern, text):
+        r = "r" + m.group(1)
+        if r not in out:
+            out.append(r)
+    return out
+
+
+DST_RE = (r"(?:R\[ins\.r([123])\]\s*(?:\.|[+\-*/%&|^]?=)"
+          r"|\w+\(&R\[ins\.r([123])\]|&R\[ins\.r([123])\])")
+
+
+def _dst_list(body):
+    """Registers written by the body: a store into R[ins.rN] or an &R[ins.rN] out-parameter."""
+    out = []
+    for m in re.finditer(DST_RE, body):
+        r = "r" + (m.group(1) or m.group(2) or m.group(3))
+        if r not in out:
+            out.append(r)
+    return out
+
+
+def _handler_order(body):
+    """The operand order the handler body itself implies: writes first, then reads.
+
+    The dispatcher's bodies read their sources and then store into the
+    destination, so first-occurrence order alone puts the destination last --
+    which is not what a disassembly line shows.  Registers that appear in a
+    write position (a store into `R[ins.rN]`, or a `&R[ins.rN]` out-parameter)
+    are taken as the destination; the rest keep their order.
+    """
+    dsts = _dst_list(body)
+    rest = []
+    for r in _regs(r"ins\.r([123])", body):
+        if r not in dsts:
+            rest.append(r)
+    return dsts + rest
+
+
+def _disasm_order(case_text):
+    return _regs(r"ins->r([123])", case_text)
+
+
+def _case_bodies(fn_text):
+    hits = [(m.start(), m.group(1)) for m in re.finditer(r"case (OP_[A-Z0-9_]+):", fn_text)]
+    out = {}
+    for i, (start, name) in enumerate(hits):
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(fn_text)
+        out[name] = fn_text[start:end]
+    return out
+
+
 def _handlers(vm):
     """opcode -> the text of its `L_X:` block.
 
@@ -222,7 +276,8 @@ def measured():
     d = vm.index("static void vm_disasm_ins(")
     disasm_fn = vm[d : vm.index("default:", d)]
     return {"interp": dispatch, "disasm": _cases(disasm_fn),
-            "disasm_names": _disasm_names(disasm_fn), "handlers": _handlers(vm)}
+            "disasm_names": _disasm_names(disasm_fn),
+            "disasm_cases": _case_bodies(disasm_fn), "handlers": _handlers(vm)}
 
 
 def report(ops, shape, meas, out=sys.stdout):
@@ -330,6 +385,54 @@ def report(ops, shape, meas, out=sys.stdout):
           f"|unconfirmed={','.join(n for n, _ in unconfirmed) or 'none'}"
           f"|no-handler={','.join(no_body) or 'none'}", file=out)
 
+    # The name of an instruction is not its operands: a case that prints ADD
+    # for OP_ADD but reads the registers in the wrong order is a wrong answer
+    # that every check above calls right.  The order the printer uses is
+    # compared to the order the handler body implies (destination first, then
+    # sources), which is a claim the printer cannot satisfy by agreeing with
+    # itself.  A register the printer invents is red; a register it omits is
+    # allowed only because an operand may print as an immediate -- the
+    # relative order of the ones it does print is not optional.
+    invent, disorder, no_dst = [], [], []
+    order_checked = 0
+    for n in names:
+        body = handlers.get(n)
+        case = meas.get("disasm_cases", {}).get(n)
+        if body is None or case is None:
+            continue
+        canon = _handler_order(body)
+        shown = _disasm_order(case)
+        if not shown or not canon:
+            continue
+        order_checked += 1
+        invented = [r for r in shown if r not in canon]
+        if invented:
+            invent.append((n, shown, canon))
+            continue
+        idx = [canon.index(r) for r in shown]
+        if idx != sorted(idx):
+            disorder.append((n, shown, canon))
+        elif _dst_list(body) and canon[0] == _dst_list(body)[0] and canon[0] not in shown:
+            no_dst.append((n, shown, canon))
+    for n, shown, canon in invent + disorder + no_dst:
+        print(f"IR-DISASM-OPERANDS|op={n}|prints={','.join(shown)}"
+              f"|handler-order={','.join(canon)}|effect=the-disassembly-names-the-instruction"
+              f"-and-then-lies-about-which-registers-it-reads", file=out)
+    for n, shown, canon in no_dst:
+        print(f"IR-DISASM-NODST|op={n}|prints={','.join(shown)}|dst={canon[0]}"
+              f"|effect=the-line-hides-the-register-the-instruction-writes", file=out)
+    # Not enforced yet, and the reading says so: the handler body does not
+    # declare which operand is a destination and which is an immediate, so an
+    # order derived from it would be a guess.  The list is printed anyway --
+    # silence reads as a pass, and this is the part of the table that is still
+    # unmeasured.  Turning it into a pass/fail needs the role triples (dst= /
+    # src= / imm=) that P1 of docs/IR_DESIGN.md asks the shape to declare.
+    print(f"IR-DISASM-ORDER|checked={order_checked}/{len(names)}|enforced=no"
+          f"|order-diff={','.join(n for n, _, _ in disorder) or 'none'}"
+          f"|invented={','.join(n for n, _, _ in invent) or 'none'}"
+          f"|hidden-dst={','.join(n for n, _, _ in no_dst) or 'none'}"
+          f"|why=operand-roles-are-not-declared-yet-see-IR_DESIGN-P1", file=out)
+
     missing_disasm = [n for n in names if n not in meas["disasm"]]
     print(f"IR-COVER|interp={len(names) - len([n for n in names if n not in meas['interp']])}/{len(names)}"
           f"|disasm={len(names) - len(missing_disasm)}/{len(names)}"
@@ -370,9 +473,30 @@ def main(argv):
                   and set(re.findall(r"\br([123])\b", shape[n]))]
         mut = dict(shape, **{forget[0]: "- (claims nothing)"})
         ok &= _check("shape-forgets", report(ops, mut, meas, out=open("/dev/null", "w")), forget[0])
+        # The order reading is not enforced, so it gets a detection test rather
+        # than an enforcement test: swap two operands in a case and the reading
+        # must name that opcode.  A reading nobody has ever seen move is not a
+        # measurement.
+        cases = dict(meas.get("disasm_cases", {}))
+        target = next((n for n in cases if "ins->r1" in cases[n] and "ins->r2" in cases[n]), None)
+        if target:
+            body = cases[target]
+            swapped = body.replace("ins->r1", "\0").replace("ins->r2", "ins->r1").replace("\0", "ins->r2")
+            got = _report_text(ops, shape, dict(meas, disasm_cases=dict(cases, **{target: swapped})))
+            line = next(l for l in got.splitlines() if l.startswith("IR-DISASM-ORDER|"))
+            caught = target in line.split("order-diff=")[1].split("|")[0].split(",")
+            print(f"IRCHECK|case=operand-order|red={'yes' if caught else 'no'}|op={target}", file=sys.stdout)
+            ok &= caught
         return 0 if ok else 1
 
     return report(ops, shape, meas)
+
+
+def _report_text(ops, shape, meas):
+    import io
+    buf = io.StringIO()
+    report(ops, shape, meas, out=buf)
+    return buf.getvalue()
 
 
 def _check(case, rc, op=None):

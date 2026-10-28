@@ -13,7 +13,7 @@ Two things are asserted, and nothing else:
    handler never touches, and a case whose printed name cannot be read is not
    evidence of a name.
 
-The checker's own checks are asserted first (`--self-check`), because a table
+The checker's own checks are asserted first (`--self-check`, seven mutations), because a table
 that cannot go red has not been shown to be watching anything.
 
     python3 tools/ir_spec.test.py
@@ -36,7 +36,7 @@ def main():
     selfcheck = run("--self-check")
     cases = [ln for ln in selfcheck.stdout.splitlines() if ln.startswith("IRCHECK|")]
     red = [ln for ln in cases if "|red=yes" in ln]
-    if selfcheck.returncode != 0 or len(cases) != 6 or len(red) != 6:
+    if selfcheck.returncode != 0 or len(cases) != 7 or len(red) != 7:
         print(f"ir spec: FAIL (self-check: {len(red)}/{len(cases)} mutations caught)")
         for ln in cases:
             print(ln)
