@@ -28,27 +28,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_GEN = os.path.join(HERE, "gen_bounds_proof.py")
 DEFAULT_PY_WIN = "/mnt/c/Python314/python.exe"
 
+def default_body_python():
+    """Resolve --python when the flag was NOT given, and say WHY that value.
 
-def default_python():
-    """The interpreter the readings are produced with.
-
-    Prefer the one on THIS side when it carries z3: a POSIX interpreter keeps
-    the run inside the system it was started in, while the Windows exe crosses
-    the WSL boundary once per z3 call and the host endpoint protection reports
-    each launch as a blocked process.  The exe stays the fallback, so a box
-    without a local z3 behaves exactly as before.  PY_WIN still wins over both.
+    A silent default is a tradition: on a machine with a working local z3 the ledger would
+    still launch the host exe (so the local z3 column was never the measured one), and a
+    recorded reading would name an interpreter nobody chose.  The decision is printed on
+    stderr on purpose -- it is a fact about THIS MACHINE, and the readings body (stdout) is
+    compared line by line between machines.
     """
-    if os.environ.get("PY_WIN"):
-        return os.environ["PY_WIN"]
+    env = os.environ.get("PY_WIN")
+    if env:
+        return env, "PY_WIN is set in the environment"
     local = shutil.which("python3")
     if local:
-        try:
-            probe = subprocess.run([local, "-c", "import z3"], capture_output=True, timeout=120)
-            if probe.returncode == 0:
-                return local
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return DEFAULT_PY_WIN
+        probe = subprocess.run([local, "-c", "import z3"], capture_output=True)
+        if probe.returncode == 0:
+            return local, "PY_WIN is unset and the local python3 imports z3"
+        return DEFAULT_PY_WIN, ("PY_WIN is unset and the local python3 cannot import z3, so the "
+                                "host exe is the only MEASURED side")
+    return DEFAULT_PY_WIN, "PY_WIN is unset and there is no local python3"
 
 # pointwise: the pinned lines fix the value.  exhaustive: the claim quantifies over every
 # write to a variable, so one or three pinned lines are evidence about a site, not exhaustion.
@@ -1076,8 +1075,27 @@ def side_equivalence(args):
     one, compared as text, with the first difference named.  A side that is not installed is
     NOT equivalent to the other side -- absence is not agreement.
     """
-    sides = [("left", args.side_left), ("right", args.side_right)]
+    # A comparison must first show that it compares two DIFFERENT things: two names for one
+    # interpreter would print same=yes forever and prove nothing.  Only the DEFAULTS are held
+    # to this -- an explicit pair of identical sides is the both-sides-identical control.
+    left_explicit = args.side_left is not None
+    right_explicit = args.side_right is not None
+    left = args.side_left if left_explicit else DEFAULT_PY_WIN
+    right = args.side_right if right_explicit else "python3"
+    sides = [("left", left), ("right", right)]
     probes = {name: interpreter_probe(py) for name, py in sides}
+    if not (left_explicit and right_explicit):
+        distinct = probes["left"]["identity"] != probes["right"]["identity"]
+        print("SIDES-DEFAULT|left=%s|right=%s|why-distinct=%s|from=%s|rule=at least one side "
+              "came from a default, so the two sides must differ or the comparison is refused"
+              % (probes["left"]["identity"], probes["right"]["identity"],
+                 "yes" if distinct else "no",
+                 "both defaults" if not (left_explicit or right_explicit) else "one default"))
+        if not distinct and probes["left"]["status"] == "ok":
+            print("SIDE-UNMEASURED|why=both sides resolve to the same interpreter (%s), so the "
+                  "comparison would compare one reading with itself; pass --side-left and "
+                  "--side-right to compare two" % probes["left"]["identity"], file=sys.stderr)
+            return 2
     broken = [name for name, _ in sides if probes[name]["status"] != "ok"]
     if broken:
         if any(probes[name]["status"] == "not found" for name in broken):
@@ -1091,11 +1109,11 @@ def side_equivalence(args):
               file=sys.stderr)
         return 2
 
-    got_left, problem = side_output(args, args.side_left)
+    got_left, problem = side_output(args, left)
     if got_left is None:
         print("SIDE-UNMEASURED|why=the left side did not run: %s" % problem, file=sys.stderr)
         return 2
-    got_right, problem = side_output(args, args.side_right, args.side_differ)
+    got_right, problem = side_output(args, right, args.side_differ)
     if got_right is None:
         print("SIDE-UNMEASURED|why=the right side did not run: %s" % problem, file=sys.stderr)
         return 2
@@ -1128,7 +1146,7 @@ def side_equivalence(args):
 
 
 def self_check_sides(gen_path, py, left=None, right=None):
-    """Four cells for the equivalence check itself: three of them must REFUSE to say "same".
+    """Seven cells for the equivalence check itself: six of them must REFUSE to say "same".
 
     A comparison whose only passing input is "two things that are in fact the same run" would
     pass a broken comparison too: the interesting cells are the ones where a real difference
@@ -1138,9 +1156,11 @@ def self_check_sides(gen_path, py, left=None, right=None):
     me = os.path.abspath(__file__)
     left = left or os.environ.get("PY_WIN", DEFAULT_PY_WIN)
 
-    def run(tail):
-        res = subprocess.run([sys.executable, me, "--gen", gen_path, "--python", py] + tail,
-                             capture_output=True, text=True, timeout=3600)
+    def run(tail, with_python=True, env=None):
+        cmd = [sys.executable, me, "--gen", gen_path]
+        if with_python:
+            cmd += ["--python", py]
+        res = subprocess.run(cmd + tail, capture_output=True, text=True, timeout=3600, env=env)
         return res.returncode, res.stdout + res.stderr
 
     tmp = tempfile.mkdtemp(prefix="sides_ctl_")
@@ -1186,6 +1206,51 @@ def self_check_sides(gen_path, py, left=None, right=None):
     cells.append(("both-sides-identical",
                   "the same interpreter twice is one reading with zero differing lines",
                   "rc=%d same-yes=%s" % (rc, bool(m)), rc == 0 and bool(m)))
+
+    # A comparison must first show it compares two DIFFERENT things.  Here one side comes from
+    # a default that resolves to the same file as the other: same=yes would be true about one
+    # run compared with itself.
+    rc, out = run(["--side-equivalence", "--side-left", "python3"])
+    named = "both sides resolve to the same interpreter" in out
+    no_same = "same=yes" not in out
+    cells.append(("degenerate-defaults",
+                  "a default that resolves to the same interpreter is refused by name, never "
+                  "passed as equivalence",
+                  "rc=%d named=%s no-same=%s" % (rc, named, no_same),
+                  rc == 2 and named and no_same))
+
+    # And the shipped defaults themselves must be two things (or refuse).  The forbidden shape
+    # is the one that reads as a proof: rc=0, same=yes, why-distinct=no.
+    rc, out = run(["--side-equivalence"])
+    printed = "SIDES-DEFAULT|" in out
+    forbidden = rc == 0 and "same=yes" in out and "why-distinct=no" in out
+    refused = rc == 2 and "not measured" in out
+    cells.append(("defaults-are-not-degenerate",
+                  "with no side flags the run either compares two distinct interpreters or "
+                  "refuses; same=yes with why-distinct=no is forbidden",
+                  "rc=%d printed=%s refused=%s forbidden=%s"
+                  % (rc, printed, refused, forbidden),
+                  printed and not forbidden and (rc == 0 or refused)))
+
+    # The interpreter default is a decision, and a decision nobody prints is a tradition: hide
+    # the local python3 behind a -S shim on PATH and the run must SAY it fell back to the host
+    # exe instead of quietly launching something else.
+    shim_dir = os.path.join(tmp, "path_shim")
+    os.makedirs(shim_dir, exist_ok=True)
+    shim = os.path.join(shim_dir, "python3")
+    shutil.copy(no_z3, shim)
+    carry = dict(os.environ)
+    carry.pop("PY_WIN", None)
+    carry["PATH"] = shim_dir + os.pathsep + carry.get("PATH", "")
+    rc, out = run([], with_python=False, env=carry)
+    said = "cannot import z3" in out and "host exe is the only MEASURED side" in out
+    measured = "mutation=measured" in out
+    cells.append(("no-local-z3-falls-back-loudly",
+                  "when the local python3 has no z3 the default falls back to the host exe AND "
+                  "says so (PY-SELECT), and the run is still measured",
+                  "rc=%d said=%s measured=%s"
+                  % (rc, "yes" if said else "no", "yes" if measured else "no"),
+                  rc == 0 and said and measured))
 
     failed = 0
     for name, expect, got, ok in cells:
@@ -1331,8 +1396,10 @@ def main():
                     help="repo root; default is resolved from the tree (git toplevel, then a "
                          "walk up for src/vm), never from the directory this file is in")
     ap.add_argument("--gen", default=DEFAULT_GEN)
-    ap.add_argument("--python", default=default_python(),
-                    help="python with z3 for the mutation column; recorded in the readings header")
+    ap.add_argument("--python", default=None,
+                    help="python with z3 for the mutation column; default is resolved and said "
+                         "out loud (PY-SELECT on stderr): PY_WIN, else a local python3 that "
+                         "imports z3, else the host exe")
     ap.add_argument("--census-drop-pin", default=None, metavar="PATH:LINE",
                     help="drop one pin entry from the table for this run only: the negative "
                          "control that shows the census numbers are read from the table")
@@ -1348,19 +1415,26 @@ def main():
     ap.add_argument("--side-equivalence", action="store_true",
                     help="run the ledger on two interpreters and compare the output line by "
                          "line: the claim that both sides agree is a reading, not a memory")
-    ap.add_argument("--side-left", default=os.environ.get("PY_WIN", DEFAULT_PY_WIN),
-                    help="left interpreter of --side-equivalence (default: the Windows exe)")
-    ap.add_argument("--side-right", default="python3",
-                    help="right interpreter of --side-equivalence (default: python3)")
+    ap.add_argument("--side-left", default=None,
+                    help="left interpreter of --side-equivalence (default: the host exe, i.e. "
+                         "the side a Windows box would run)")
+    ap.add_argument("--side-right", default=None,
+                    help="right interpreter of --side-equivalence (default: the local python3)")
     ap.add_argument("--side-differ", default=None, metavar="PATH:LINE",
                     help="control only: drop one pin entry on the RIGHT side, so the comparison "
                          "has a real difference to name")
     ap.add_argument("--self-check-sides", action="store_true",
-                    help="four cells for --side-equivalence: two absent/unmeasured sides, one "
-                         "real difference, and the identical case")
+                    help="seven cells for --side-equivalence: two absent/unmeasured sides, one "
+                         "real difference, the identical case, a degenerate default, the shipped "
+                         "defaults, and the loud fallback when the local python3 has no z3")
     ap.add_argument("--self-check-readings", default=None, metavar="PATH",
                     help="six cells: the file is its own product, and five ways of being wrong")
     args = ap.parse_args()
+    # The default must be a reading: which interpreter ran is a decision, and a decision that
+    # nobody prints is a tradition.  stderr keeps it out of the compared body.
+    if args.python is None:
+        args.python, why = default_body_python()
+        print("PY-SELECT|python=%s|why=%s" % (args.python, why), file=sys.stderr)
     if args.self_check_readings:
         return self_check_readings(os.path.abspath(args.gen), args.python,
                                    args.self_check_readings)

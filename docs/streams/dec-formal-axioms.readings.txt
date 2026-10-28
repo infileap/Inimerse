@@ -5,7 +5,7 @@
 # a walk up for src/vm), so a reader holding only the tree line re-runs it anywhere.
 # The body is this program's stdout, unedited.  Prose about what the readings MEAN belongs
 # in the page beside this file: a sentence in a file cannot be checked by a command.
-# tree: 4b28fac
+# tree: 33d40ba
 # python: /usr/bin/python3 (3.14.4, z3 5.3.2)
 # --- body begins below this line ---
 AXIOMS|sites=18|extracted=9|unparsed=9
