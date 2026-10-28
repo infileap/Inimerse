@@ -247,6 +247,32 @@ FAMILY_OWNER = {
 # that is agreement about an error, not an AOT/wasm gap, so an owner there would have
 # nothing to narrow.
 
+def family_owner(family, kinds=None):
+    """Who has to close this family's AOT/wasm side.
+
+    Three values, and the third one is DERIVED, never claimed in the table:
+
+      a name        -- a taker wrote itself in FAMILY_OWNER and named its condition;
+      `unassigned`  -- nobody has taken it, and it is not a no-gap family;
+      `no-gap`      -- every case in the family is refused with the same (rc, stdout)
+                       on all three backends and nothing diverged.  That is agreement
+                       about the program being outside the whole toolchain's subset,
+                       not one backend missing coverage, so there is nothing to own.
+
+    Why derive it instead of writing it in the table: the moment a backend starts
+    accepting one of these cases, the family is no longer all-refused and must fall
+    back to `unassigned` (or to the taker's name) on its own.  A hand-written
+    `no-gap` would keep claiming "nothing to do" while the coverage silently changed.
+    A family holding a pinned known-divergent entry is never `no-gap`: that pin is a
+    named gap with an owner question, not agreement.
+    """
+    claimed = FAMILY_OWNER.get(family, 'unassigned')
+    if claimed != 'unassigned':
+        return claimed
+    if kinds and kinds.count('refused-all') == len(kinds):
+        return 'no-gap'
+    return 'unassigned'
+
 KNOWN_DIVERGENT = {
     'ctrl-for-range':      'aot+wasm refuse: for-in over a range is outside the numeric / wasm MVP subset',
     'set-literal':         'aot+wasm refuse: a set literal is outside the numeric / wasm MVP subset',
@@ -457,7 +483,18 @@ def self_check():
             raise SystemExit('self-check failed: a non-design refusal was accepted as pinned')
     finally:
         del KNOWN_DIVERGENT['self-check-known']
-    print('THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,all-crashed')
+    # `no-gap` must be shown to FIRE, because no family in today's matrix is entirely
+    # refused: without this check the derived state would be dead code that reads as a
+    # clean answer.  Three shapes: all-refused derives `no-gap`, one drifting hit takes it
+    # back to `unassigned`, and a taker's name still wins over the derived value.
+    if family_owner('self-check-nogap', ['refused-all'] * 3) != 'no-gap':
+        raise SystemExit('self-check failed: an all-refused family did not derive no-gap')
+    if family_owner('self-check-nogap', ['refused-all'] * 2 + ['red']) != 'unassigned':
+        raise SystemExit('self-check failed: a divergent family was called no-gap')
+    if family_owner('set', ['refused-all'] * 3) != 'honest-island':
+        raise SystemExit('self-check failed: the derived state overrode a claimed owner')
+    print('THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,'
+          'all-crashed,no-gap-fires,no-gap-withdrawn,claim-wins')
 
 
 def main():
@@ -501,7 +538,7 @@ def main():
                          '%r (family %s, owner %s): %s.  Delete an entry only when the '
                          'backend really stopped refusing.'
                          % (len(KNOWN_DIVERGENT), ', '.join(sorted(KNOWN_DIVERGENT)),
-                            first, first_family, FAMILY_OWNER.get(first_family, 'unassigned'),
+                            first, first_family, family_owner(first_family),
                             KNOWN_DIVERGENT[first]))
 
     # A negative control points one (or all) of the legs at a binary that cannot run.
@@ -588,7 +625,7 @@ def main():
               '|refused-by=%s|diverged=%d'
               % (family, len(rows), kinds.count('answer'),
                  kinds.count('known') + kinds.count('refused-all'),
-                 FAMILY_OWNER.get(family, 'unassigned'),
+                 family_owner(family, kinds),
                  '+'.join(owner) or 'none', kinds.count('red')))
     if verbose:
         for name, _family, r in table:
