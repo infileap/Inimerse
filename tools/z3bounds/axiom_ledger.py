@@ -300,10 +300,18 @@ def emit_writesites(root, census):
 
 
 def run_script(py, script_unix):
-    win = subprocess.run(["wslpath", "-w", script_unix], capture_output=True, text=True)
-    if win.returncode != 0:
-        return None, "wslpath failed"
-    res = subprocess.run([py, win.stdout.strip()], capture_output=True, text=True, timeout=600)
+    # A POSIX interpreter (the WSL one) reads the WSL path as it is.  Only a
+    # Windows interpreter needs the path translated -- and only that case
+    # crosses the WSL->Windows boundary, which is what the host firewall
+    # reports as a blocked process launch on every single variant.
+    if py.endswith(".exe") or "\\" in py:
+        win = subprocess.run(["wslpath", "-w", script_unix], capture_output=True, text=True)
+        if win.returncode != 0:
+            return None, "wslpath failed"
+        script_arg = win.stdout.strip()
+    else:
+        script_arg = script_unix
+    res = subprocess.run([py, script_arg], capture_output=True, text=True, timeout=600)
     out = {}
     for line in res.stdout.split("\n"):
         if line.startswith("RESULT|"):
