@@ -1209,7 +1209,10 @@ def main():
         for path, lineno, text, _ok in pins:
             print("pin ok  %s:%d  %s" % (path, lineno, text[:96]))
         print("pin ok  negative: reg_cap in executor body at %r" % (neg,))
-    print("PINS|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
+    # role= is not decoration: the census prints a counted "pinned-writesites=" and the two
+    # numbers are different questions -- entries in the table vs write sites that carry one.
+    # Naming the role here is what keeps a reader from adding them or substituting one.
+    print("PINS|role=declared|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
           % (len(PINNED), held, EXPECT_PIN_COUNT, declared_n, len(missing)))
     for path, dg in sorted(digests.items()):
         print("sha256  %s  %s" % (dg[:16], path))

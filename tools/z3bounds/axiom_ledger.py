@@ -265,13 +265,18 @@ def exhaustion_why(receiver, field, cens, cover, other, declared):
 
 def emit_writesites(root, census):
     """WRITESITES / WRITESITE / unparsed-write rows: the reach of each assumption, counted."""
-    print("WRITESITES-PINRULE|pinned=yes iff (path,line) is in the pin table and pin_ok(want,line) "
-          "holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss")
+    # pinned-writesites=, not pinned=: the pin self-check also prints a counted number, and two
+    # different counts under one name is how a reader comes to think they are one.  Here the
+    # count is "how many write sites carry a pin"; there it is "how many pins the axioms declare".
+    print("WRITESITES-PINRULE|pinned-writesites=yes iff (path,line) is in the pin table and "
+          "pin_ok(want,line) holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never "
+          "a near miss")
     total = dict(sites=0, pinned=0, unpinned=0)
     for ax_id, field in CENSUS_FIELDS:
         cens = census[field]
         expr = "t->" + field
-        print("WRITESITES|field=%s|sites=%d|direct=%d|unparsed=%d|pinned=%d|unpinned=%d|source=%s"
+        print("WRITESITES|field=%s|sites=%d|direct=%d|unparsed=%d|pinned-writesites=%d|"
+              "unpinned-writesites=%d|source=%s"
               % (expr, cens["sites"], len(cens["direct"]), len(cens["unparsed"]),
                  cens["pinned"], cens["unpinned"], CENSUS_SOURCE))
         for row in cens["direct"] + cens["unparsed"]:
@@ -294,7 +299,8 @@ def emit_writesites(root, census):
         total["unpinned"] += cens["unpinned"]
     for name in CENSUS_CONSTANTS:
         print("WRITESITES|field=%s|sites=0|note=spec constant" % name)
-    print("WRITESITES-SUMMARY|fields=%d|sites=%d|pinned=%d|unpinned=%d|constants=%d"
+    print("WRITESITES-SUMMARY|role=coverage|fields=%d|sites=%d|pinned-writesites=%d|"
+          "unpinned-writesites=%d|constants=%d"
           % (len(CENSUS_FIELDS), total["sites"], total["pinned"], total["unpinned"],
              len(CENSUS_CONSTANTS)))
 
@@ -321,6 +327,17 @@ def run_script(py, script_unix):
     if not out:
         return None, (res.stderr.strip().split("\n") or [""])[-1][:200]
     return out, ""
+
+
+def mutation_lane(mod, path, lineno):
+    """Which axioms a dropped pin can reach: exactly those that declare it.
+
+    The lane is computed from the registry, not from a list of names someone remembered to
+    keep in step -- and it is printed, so "the mutation only touched what it declares" is a
+    reading with a number in it rather than an assumption about how the code is shaped.
+    """
+    return sorted(ax[0] for ax in mod.AXIOMS
+                  if any(p == path and n == lineno for p, n in ax[3]))
 
 
 def emit_ledger(mod, root, gen_path, py_win, workdir):
@@ -538,7 +555,7 @@ def self_check_writesites(gen_path, py_win):
         found, counts = {}, {}
         for line in text.split("\n"):
             m = re.match(r"WRITESITES\|field=(\S+)\|sites=(\d+)\|direct=(\d+)\|unparsed=(\d+)\|"
-                         r"pinned=(\d+)\|unpinned=(\d+)\|", line)
+                         r"pinned-writesites=(\d+)\|unpinned-writesites=(\d+)\|", line)
             if m:
                 found[m.group(1)] = [int(m.group(i)) for i in range(2, 7)]
             m = re.match(r"WRITESITE\|field=([^|]+)\|", line)
@@ -612,6 +629,118 @@ def self_check_writesites(gen_path, py_win):
                   "R=%s F=%s" % ("yes" if "field=R|sites=0" in out else "no",
                                  "yes" if "field=F|sites=0" in out else "no"), ok))
 
+    # --- cell: the mutation stays in its lane ------------------------------------------------
+    # The sharper question than "did A8 change" is "did anything else change".  The lane is
+    # computed from the registry: a pin can reach only the axioms that declare it.  A3 shares
+    # this very line (its second pin is the push guard), so A3 is IN the lane -- which is why
+    # this cell asserts the changed set EQUALS the lane, not that A8 alone moved.
+    #
+    # Dropping a pin also moves rows that merely MENTION an axiom's status: a CONDITIONAL row
+    # lists the axioms still open, and the LEDGER line counts them.  Those are consequences of
+    # the lane, not extra conclusions, so the cell checks them as derivations: every axiom that
+    # enters or leaves an open-axioms set must be in the lane, and the LEDGER's asserted count
+    # must move by exactly the number of lane axioms that left "discharged".
+    drop = "src/vm/vm.c:4094"
+    lane_path, _, lane_line = drop.rpartition(":")
+    lane = mutation_lane(load_gen(gen_path), lane_path, int(lane_line))
+
+    def index(text):
+        rows = dict(axiom={}, conditional={}, ledger=None, other=[])
+        for line in text.split("\n"):
+            m = re.match(r"AXIOM\|name=([^|]+)\|", line)
+            if m:
+                rows["axiom"][m.group(1)] = line
+                continue
+            if line.startswith("CONDITIONAL|"):
+                parts = dict(p.split("=", 1) for p in line.split("|")[1:] if "=" in p)
+                rows["conditional"][(parts.get("claim", "?"), parts.get("variant", "?"))] = parts
+                continue
+            if line.startswith("LEDGER|"):
+                rows["ledger"] = dict(p.split("=", 1) for p in line.split("|")[1:] if "=" in p)
+                continue
+            rows["other"].append(line)
+        return rows
+
+    def open_set(parts):
+        return set(filter(None, parts.get("open-axioms", "").split(",")))
+
+    b, a = index(out), index(out2)
+    problems = []
+    changed_axioms = sorted(k for k in b["axiom"] if b["axiom"].get(k) != a["axiom"].get(k))
+    if changed_axioms != lane:
+        problems.append("axioms-changed=%s lane=%s" % (",".join(changed_axioms), ",".join(lane)))
+
+    derived = 0
+    for key in sorted(set(b["conditional"]) | set(a["conditional"])):
+        was, now = open_set(b["conditional"].get(key, {})), open_set(a["conditional"].get(key, {}))
+        if was == now:
+            continue
+        derived += 1
+        if (was ^ now) - set(lane):
+            problems.append("conditional %s|%s gained/lost %s" % (key[0], key[1], ",".join(sorted((was ^ now) - set(lane)))))
+
+    # CONDITIONAL-SUMMARY is a total, and a total is only evidence if it is a sum.  Recompute it
+    # from the rows in both runs rather than trusting the line it prints.
+    def cond_total(rows):
+        # The summary is written by the props loop, so it counts claims of the form P<n>; the
+        # T2-A-FRAME row is printed by the frame section and is a different total.  Naming that
+        # shape is the whole reason this check can fail: a filter that quietly took "all" rows
+        # would have reported 9 while the line said 8 and nobody would know which was right.
+        conds = [c for k, c in rows["conditional"].items() if re.match(r"^P\d+$", k[0])]
+        return (len(conds),
+                sum(1 for c in conds if c.get("discharge") == "open"),
+                sum(1 for c in conds if not open_set(c)))
+
+    for tag, rows in (("before", b), ("after", a)):
+        pair = [l for l in rows["other"] if l.startswith("CONDITIONAL-SUMMARY|")]
+        if len(pair) != 1:
+            problems.append("%s: CONDITIONAL-SUMMARY not found" % tag)
+            continue
+        got = dict(x.split("=", 1) for x in pair[0].split("|")[1:] if "=" in x)
+        want = cond_total(rows)
+        if (got.get("claims"), got.get("open"), got.get("all-asserted")) != tuple(str(w) for w in want):
+            problems.append("%s: CONDITIONAL-SUMMARY says claims=%s open=%s all-asserted=%s, "
+                            "rows sum to %d/%d/%d"
+                            % (tag, got.get("claims"), got.get("open"), got.get("all-asserted"),
+                               want[0], want[1], want[2]))
+
+    lb, la = b["ledger"] or {}, a["ledger"] or {}
+    if lb.get("asserted") and la.get("asserted"):
+        moved = sum(1 for k in lane if "status=asserted" in a["axiom"][k]
+                    and "status=asserted" not in b["axiom"][k])
+        if int(la["asserted"]) - int(lb["asserted"]) != moved:
+            problems.append("ledger asserted %s->%s but %d lane axiom(s) moved"
+                            % (lb["asserted"], la["asserted"], moved))
+    else:
+        problems.append("ledger row missing")
+
+    # Census rows: exactly the dropped site, exactly one field, the summary, the two lane rows.
+    drop_rows = [l for l in a["other"] if l != "" and l not in b["other"]
+                 and not l.startswith("CENSUS-MUTATION|") and not l.startswith("CENSUS-LANE|")]
+    field_rows = sorted({l.split("|")[1] for l in drop_rows if l.startswith("WRITESITES|field=")})
+    site_rows = [l for l in drop_rows if l.startswith("WRITESITE|")]
+    rest = [l for l in drop_rows if not l.startswith(("WRITESITES|field=", "WRITESITES-SUMMARY|",
+                                                      "WRITESITE|", "CONDITIONAL-SUMMARY|"))]
+    derived += sum(1 for l in drop_rows if l.startswith("CONDITIONAL-SUMMARY|"))
+    if len(field_rows) != 1:
+        problems.append("field rows: %s" % ",".join(field_rows))
+    if not site_rows or any(("at=%s:%s|" % (lane_path, lane_line)) not in l for l in site_rows):
+        problems.append("site rows outside the dropped line")
+    if rest:
+        problems.append("unexplained row(s): " + rest[0][:60])
+    if not any(l.startswith("WRITESITES-SUMMARY|") for l in drop_rows):
+        problems.append("summary row did not move")
+
+    ok = not problems
+    cells.append(("mutation-stays-in-its-lane",
+                  "same command with and without the drop: changed axioms == the axioms that "
+                  "declare the dropped pin, and every other row moves only as a consequence",
+                  "lane=%s|axioms-changed=%s|derived-rows=%d|out-of-lane=%d"
+                  % (",".join(lane), ",".join(changed_axioms), derived, len(problems)),
+                  ok))
+    for why in problems:
+        print("WRITECHECK|case=mutation-stays-in-its-lane|detail=%s" % why)
+
     failed = 0
     for name, expect, got, good in cells:
         print("WRITECHECK|case=%s|expect=%s|got=%s|%s" % (name, expect, got, "PASS" if good else "FAIL"))
@@ -644,6 +773,9 @@ def main():
             del mod.PINNED[path][int(lineno)]
             print("CENSUS-MUTATION|dropped=%s:%s|effect=this run's pin table loses that line; "
                   "no other table is touched" % (path, lineno))
+            print("CENSUS-LANE|dropped=%s:%s|in-lane=%s|rule=an axiom is in the lane iff its "
+                  "registry pins include the dropped line"
+                  % (path, lineno, ",".join(mutation_lane(mod, path, int(lineno))) or "none"))
         else:
             print("CENSUS-MUTATION|dropped=none|why=%s is not a pin entry in this tree"
                   % args.census_drop_pin)
