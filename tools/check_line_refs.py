@@ -536,6 +536,25 @@ CITATIONS_PIN = REPO_ROOT / "tools" / "citations.pin.json"
 CITATIONS_EXEMPT = REPO_ROOT / "tools" / "citations.exempt.json"
 CITATIONS_SCOPE = "docs/**/*.md (tracked) + targets"
 
+# Kinds that may appear on a HOLD row whose matched line is not the cited
+# line.  Nothing produces them today: the hold rule is strictly same-line, so
+# distance is an IDENTITY field (it says which rule ran) rather than a reading
+# (it does not measure anything that varies).  A widened rule has to give up
+# the shape word for the reach word on the rows it widened, which is why one
+# field can carry both and why the check below needs no new field.
+WIDENED_HOLD_KINDS = ("neighbour", "window")
+
+# A held reference is only evidence when the report can say WHAT held it.  The
+# hold rule is "a quoted span on the citing line also appears on the cited
+# line", so the holder is a (file, span) pair and the matched line IS the cited
+# line: distance in a HOLD line is 0 by construction, printed anyway so that a
+# widened rule (a span within N lines) would have to report the distance it
+# accepted -- a report that cannot say 0 could not say 3 either.  Measured on
+# 8cc6d1f: 602 held, 602 attributed, 0 without a named holder.  kind is the
+# shape of the holding line (comment/example/prose), because a hold that came
+# from a comment nobody maintains is a different promise from one that came
+# from the code the number points into.
+
 PATHISH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]{1,6}")
 NUMBER = re.compile(r":(\d+)(?:-(\d+))?")
 SPAN = re.compile(r"`([^`\n]+)`")
@@ -753,6 +772,52 @@ def classify(line: str, mentions: list[tuple[int, int, str]], m: re.Match) -> st
     return "bare"
 
 
+def hold_matched(target_lines: list[str], number: int, spans) -> tuple | None:
+    """(span, matched line) for the first span that holds this number, or None.
+
+    The rule is deliberately strictly same-line: the evidence for "this number
+    exists" is a quoted string that appears on the cited line itself.  The
+    matched line is returned rather than assumed, so that a widened rule has to
+    report how far it reached instead of re-deriving it as the cited line --
+    with the old shape, distance would have been 0 no matter what rule ran,
+    which is how a field can be printed for years and measure nothing.
+    """
+    for s in spans:
+        if s in target_lines[number - 1]:
+            return (s, number)
+    return None
+
+
+def hold_line(rel: str, lineno: int, number: int, owner, grade: str,
+              holder: tuple) -> str:
+    """One reference's evidence, in a line a reader can check field by field."""
+    holder_file, holder_span, matched, kind = holder
+    return (
+        f"HOLD|ref={rel}:{lineno}|target={owner or '<none>'}:{number}"
+        f"|by={holder_span or '<none>'}@{rel}:{lineno}"
+        f"|matched={holder_file or '<none>'}:{matched}"
+        f"|distance={abs(number - matched)}|kind={kind}|grade={grade}"
+    )
+
+
+def holding_kind(text: str) -> str:
+    """What sort of line the holding text sits on, in the file that holds it.
+
+    comment is a line a compiler ignores, example is a line that quotes
+    something (a backtick or a string literal), and prose is everything else.
+    This is the shape of the EVIDENCE, not a grade: a hold that came from a
+    comment nobody maintains is a different promise from a hold that came from
+    the code the number points into, and a reader checking the claim needs to
+    know which one they were handed.
+    """
+    body = text.strip()
+    if body.startswith(("#", "//", "/*", "*", "--", ";", "<!--")):
+        return "comment"
+    if chr(96) in text or '"' in text or "'" in text:
+        return "example"
+    return "prose"
+
+
 def paragraphs(text: str) -> list[tuple[int, int, list[str]]]:
     """(first line, last line, lines) per run of non-blank lines, 1-based.
 
@@ -791,6 +856,8 @@ def scan() -> dict:
     held_borrowed = 0
     held_picked = 0
     held_rows: list[tuple] = []
+    held_attributed = 0
+    held_no_holder = 0
     no_anchor: list[tuple] = []
     off_target: list[tuple] = []
     out_of_range: list[tuple] = []
@@ -845,12 +912,20 @@ def scan() -> dict:
                 # knowable one number at a time.
                 holders = {}
                 for m, number, _owner in line_refs:
+                    # (token, span) pairs, not tokens: "held" is a claim about
+                    # a NUMBER, and the evidence for it is a quoted string that
+                    # appears on the cited line.  Keeping only the token threw
+                    # away the half of the evidence a reader needs to check the
+                    # claim, so a hold that came from free text on the line
+                    # looked exactly like a hold that came from the file's own
+                    # name -- which is the false green this carries away.
                     h = []
                     for _s, _e, token in mentions:
                         target_lines = _lines(token)
                         if target_lines and 1 <= number <= len(target_lines):
-                            if any(s in target_lines[number - 1] for s in spans):
-                                h.append(token)
+                            found = hold_matched(target_lines, number, spans)
+                            if found:
+                                h.append((token, found[0], found[1]))
                     holders[m.start()] = h
                 for m, number, owner in line_refs:
                     refs_here += 1
@@ -895,7 +970,7 @@ def scan() -> dict:
                         )
                     elif hits:
                         held += 1
-                        if owner not in hits:
+                        if owner not in [token for token, _s, _m in hits]:
                             held_elsewhere += 1
                         # Three grades of "held", because they are not the same
                         # evidence, and only the first one is what a reader
@@ -913,13 +988,8 @@ def scan() -> dict:
                         # do, and a lexical stand-in for it would be a new kind
                         # of false green.  Measured on 89ec77a: 4 of 585 are
                         # `own`.
-                        holder_spans = []
-                        for s in spans:
-                            for token in hits:
-                                tl = _lines(token)
-                                if tl and 1 <= number <= len(tl) and s in tl[number - 1]:
-                                    holder_spans.append(s)
-                                    break
+                        holder_spans = [s for _token, s, _m in hits]
+                        holder_pair = hits[0]
                         owner_text = None
                         for start, _e, token in mentions:
                             if token == owner:
@@ -937,7 +1007,21 @@ def scan() -> dict:
                         else:
                             grade = "picked up"
                             held_picked += 1
-                        held_rows.append((rel, lineno, number, owner, grade))
+                        holder_file, holder_span, matched = holder_pair
+                        _holding_lines = _lines(holder_file)
+                        _holding_kind = (
+                            holding_kind(_holding_lines[matched - 1])
+                            if _holding_lines and matched <= len(_holding_lines)
+                            else "unknown"
+                        )
+                        if holder_span:
+                            held_attributed += 1
+                        else:
+                            held_no_holder += 1
+                        held_rows.append(
+                            (rel, lineno, number, owner, grade,
+                             (holder_file, holder_span, matched, _holding_kind))
+                        )
                     else:
                         # The report says which file the number points at, so it
                         # has to use the position rule the owner already uses:
@@ -1006,6 +1090,7 @@ def scan() -> dict:
         "held_elsewhere": held_elsewhere, "no_anchor": no_anchor,
         "off_target": off_target, "out_of_range": out_of_range,
         "held_own": held_own, "held_borrowed": held_borrowed,
+        "held_attributed": held_attributed, "held_no_holder": held_no_holder,
         "held_picked": held_picked, "held_rows": held_rows,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
         "files": files, "citations": citations,
@@ -1122,10 +1207,12 @@ def main() -> int:
     args = sys.argv[1:]
     report = "--report" in args
     strict = "--strict" in args
+    holds_trace = "--holds" in args
     if "--write-citations-pin" in args:
         return write_citations_pin()
     base, behind = base_scan()
     r = scan()
+    r["holds_trace"] = holds_trace
 
     print(
         f"check_line_refs: {r['mention_lines']} line(s) in docs/ name a target; "
@@ -1177,6 +1264,47 @@ def main() -> int:
             f"that has quietly become a prefix scan reports that nothing "
             f"was missed while missing the shape it exists to find",
         )
+    # A held reference whose holder the checker cannot name is a number nobody
+    # is keeping, reported as kept.  The count it lives in is the one readers
+    # quote, so this is checked before any delta: a hold that cannot answer
+    # "who holds it" is not evidence, it is a coincidence that has not expired
+    # yet.
+    # distance is 0 today because the hold rule is "the span appears on the
+    # cited line"; the matched line IS the cited line.  It is an identity
+    # field, not a reading: it names which rule ran.  A rule widened to "a
+    # span within N lines" would hold references that today are reported as
+    # unreachable -- the false green this checker exists to refuse -- and the
+    # only row that would look different is a field nobody reads.  So a
+    # widened rule must say so in the row itself, and a distance with a shape
+    # word instead of a reach word is red.
+    _reaching = [
+        row
+        for row in r["held_rows"]
+        if row[5][2] is not None
+        and abs(row[2] - row[5][2]) != 0
+        and row[5][3] not in WIDENED_HOLD_KINDS
+    ]
+    cell(
+        "distance-without-a-widened-kind",
+        needs_inputs,
+        None
+        if not _reaching
+        else f"{len(_reaching)} reference(s) are held at a distance from the "
+        f"line they point at while their kind is {_reaching[0][5][3]!r}, not "
+        f"one of {WIDENED_HOLD_KINDS}: {_reaching[0][0]}:{_reaching[0][1]} -> "
+        f"{_reaching[0][3] or '<none>'}:{_reaching[0][2]} reads as "
+        f"{_reaching[0][5][3]!r} at {abs(_reaching[0][2] - _reaching[0][5][2])} "
+        "line(s). A rule that reached past the cited line must say it reached.",
+    )
+    cell(
+        "hold-without-attribution",
+        needs_inputs,
+        None
+        if not r["held_no_holder"]
+        else f"{r['held_no_holder']} reference(s) are counted as held and the "
+        "checker cannot name what holds them. Run with --holds to print one "
+        "line per reference; a HOLD line with by=<none> is the row.",
+    )
     explicit_delta = r["explicit"] - base["explicit"]
     unanchored_delta = len(r["no_anchor"]) - len(base["no_anchor"])
     if explicit_delta == EXP_LINE_REFS_DELTA:
@@ -1294,6 +1422,14 @@ def main() -> int:
         f"borrowed {r['held_borrowed']}, picked up {r['held_picked']}; "
         f"of those, held by another file {r['held_elsewhere']}."
     )
+    print(
+        f"HELD|total={r['held']}|own={r['held_own']}"
+        f"|borrowed={r['held_borrowed']}|picked={r['held_picked']}"
+        f"|attributed={r['held_attributed']}|by-none={r['held_no_holder']}"
+    )
+    for rel, lineno, number, owner, grade, holder in r["held_rows"]:
+        if r.get("holds_trace") or not holder[1]:
+            print(hold_line(rel, lineno, number, owner, grade, holder))
     if r["out_of_range"]:
         print(
             f"check_line_refs: out of range -- {len(r['out_of_range'])} "
@@ -1418,7 +1554,7 @@ def main() -> int:
         for grade in ("own", "borrowed", "picked up"):
             rows = sorted(x for x in r["held_rows"] if x[4] == grade)
             print(f"  held, {grade}: {len(rows)} row(s); first two:")
-            for rel, lineno, number, owner, _g in rows[:2]:
+            for rel, lineno, number, owner, _g, _h in rows[:2]:
                 print(f"      {rel}:{lineno}  :{number} ({owner})")
 
     if strict and r["no_anchor"]:

@@ -1735,6 +1735,13 @@ set_tests_properties(docs_headings PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_D
 # removals -> red.
 add_test(NAME citations COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/citations.test.py)
 set_tests_properties(citations PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+# A hold is evidence only when the report can name what held the number.  The
+# control builds a reference held only by free text on its line, moves that
+# text three lines, and -- in the third case -- mutates the tool to attribute
+# holds by the first span it sees, the implementation that would let the
+# second case pass.
+add_test(NAME holds COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/holds.test.py)
+set_tests_properties(holds PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 # The gate stamps the tree it measures, so a run cannot be attributed to the
 # wrong commit.  It also stamps the moment, in UTC with a Z, so a reader holding
 # an accident window can tell whether a reading came before or after it without
