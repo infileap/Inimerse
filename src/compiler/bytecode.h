@@ -11,7 +11,7 @@ typedef enum {
     OP_EQ, OP_NEQ, OP_LT, OP_GT, OP_LE, OP_GE,
     OP_AND, OP_OR,
     OP_NOT,                 /* logical not: r1 = !r2 */
-    OP_NEW_ARRAY,           /* new array: r1 = [reg[r2 .. r2+r3-1]] */
+    OP_NEW_ARRAY,           /* new array: r1 = array of the last r3 values on the stack (r2 unread) */
     OP_INDEX_GET,           /* index get: r1 = reg[r2][r3] */
     OP_INDEX_SET,           /* index set: reg[r1][r2] = reg[r3] */
     OP_LOAD_GLOBAL, OP_STORE_GLOBAL,
@@ -32,7 +32,7 @@ typedef enum {
     OP_THREAD_START,  /* start thread: r1=thread idx, r2=result reg, r3=argc */
     OP_THREAD_CTRL,   /* thread ctrl: r1=thread idx(-1=all), r2=op(ThreadOp), r3=0 */
     OP_THREAD_JOIN,   /* join: r1=thread idx, r2=timeout reg(-1=infinite), r3=0 */
-    OP_THREAD_WAIT,   /* thread wait: r1=thread idx, r2=cond reg(-1=seconds), r3=timeout reg(-1=none) */
+    OP_THREAD_WAIT,   /* thread wait: r1=thread idx, r2=seconds reg, r3=0 (the dispatcher never reads r3) */
     OP_THREAD_STATE,  /* thread state: r1=result reg, r2=thread idx, r3=attr(0run/1pause/2stop/3done) */
     OP_LOCK,          /* mutex: r1=lock idx, r2=0 lock / 1 unlock, r3=0 */
     OP_SEND,          /* send: r1=thread idx, r2=msg reg, r3=0 */
@@ -41,7 +41,7 @@ typedef enum {
     OP_EQK,           /* string const compare: r1 = (R[r2] == string_pool[r3]) */
     OP_NEQK,          /* string const not-equal: r1 = (R[r2] != string_pool[r3]) */
     OP_DECLARE,
-    OP_RECORD        /* resource declare: r1=kind(0=mem,1=threads,2=time,3=inst), r2=float_pool idx, r3=0 */,
+    OP_RECORD        /* record: r1=store gidx(-1=default), r2=packed(string idx | meta<<16), r3=result reg */,
     OP_MOD,          /* modulo: r1 = r2 % r3 (appended at end for ABI compat) */
     OP_NEW_SET,       /* new set: r1 = merge(stack[sp-1 .. sp-r3]) into a set object */
     OP_SET_INTERVAL,  /* interval: r1=result, r2=(string_pool idx of base set name)|(flags<<24), lo/hi popped from stack */

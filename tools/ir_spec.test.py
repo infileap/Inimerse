@@ -36,7 +36,7 @@ def main():
     selfcheck = run("--self-check")
     cases = [ln for ln in selfcheck.stdout.splitlines() if ln.startswith("IRCHECK|")]
     red = [ln for ln in cases if "|red=yes" in ln]
-    if selfcheck.returncode != 0 or len(cases) != 7 or len(red) != 7:
+    if selfcheck.returncode != 0 or len(cases) != 9 or len(red) != 9:
         print(f"ir spec: FAIL (self-check: {len(red)}/{len(cases)} mutations caught)")
         for ln in cases:
             print(ln)

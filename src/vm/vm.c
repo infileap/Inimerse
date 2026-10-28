@@ -5375,8 +5375,9 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     /* The twenty that used to fall through to "OP_%d" and print a number.
        Operand roles are taken from the dispatch handlers, not guessed: see the
        L_* labels above (r1/r2/r3 mean the same thing here as there). */
-    case OP_THREAD_JOIN:    snprintf(out, outsz, "THREAD_JOIN t%d, timeout=r%d", ins->r1, ins->r2); return;
-    case OP_THREAD_WAIT:    snprintf(out, outsz, "THREAD_WAIT t%d, timeout=r%d", ins->r1, ins->r2); return;
+    case OP_THREAD_JOIN:    if (ins->r2 < 0) snprintf(out, outsz, "THREAD_JOIN t%d, timeout=none", ins->r1);
+                            else snprintf(out, outsz, "THREAD_JOIN t%d, timeout=r%d", ins->r1, ins->r2); return;
+    case OP_THREAD_WAIT:    snprintf(out, outsz, "THREAD_WAIT t%d, sleep=r%d", ins->r1, ins->r2); return;
     case OP_THREAD_STATE:   snprintf(out, outsz, "THREAD_STATE r%d, t%d, attr=%d", ins->r1, ins->r2, ins->r3); return;
     case OP_LOCK:           snprintf(out, outsz, "LOCK l%d, %s", ins->r1, ins->r2 == 0 ? "lock" : "unlock"); return;
     case OP_SEND:           snprintf(out, outsz, "SEND t%d, r%d", ins->r1, ins->r2); return;

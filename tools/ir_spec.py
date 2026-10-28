@@ -96,7 +96,7 @@ SHAPE = {
     "OP_NOT": "r1 = !truth(r2)",
     "OP_EQK": "r1 = (r2 == string_pool[r3])",
     "OP_NEQK": "r1 = (r2 != string_pool[r3])",
-    "OP_NEW_ARRAY": "r1 = [R[r2 .. r2+r3-1]]",
+    "OP_NEW_ARRAY": "r1 = array of the last r3 values on the stack  [unused: r2]",
     "OP_NEW_DICT": "r1 = {r3 pairs from the stack}",
     "OP_NEW_SET": "r1 = merge(stack[sp-1 .. sp-r3])",
     "OP_SET_INTERVAL": "r1 = interval(string_pool[r2 & 0xffffff], lo/hi from the stack)",
@@ -111,7 +111,7 @@ SHAPE = {
     "OP_STORE_GLOBAL": "G[r1] = r2",
     "OP_BIND": "G[r1] = bind(set r2, init r3)",
     "OP_DECLARE": "declare(kind=r1, float_pool[r2])  [no register written]",
-    "OP_RECORD": "record(kind=r1, float_pool[r2])",
+    "OP_RECORD": "r3 = record into store gidx=r1, packed R[r2] (sidx | meta<<16)",
     "OP_JUMP": "ip = r2",
     "OP_JUMP_IF_FALSE": "if !truth(r1) ip = r2",
     "OP_JUMP_IF_TRUE": "if truth(r1) ip = r2",
@@ -130,13 +130,13 @@ SHAPE = {
     "OP_YIELD": "- (cooperative yield)",
     "OP_THREAD_START": "thread[r1] = start(func r2, argc=r3)",
     "OP_THREAD_CTRL": "control thread[r1] with op r2",
-    "OP_THREAD_JOIN": "join thread[r1] (timeout r2)",
-    "OP_THREAD_WAIT": "wait thread[r1] cond r2 timeout r3",
+    "OP_THREAD_JOIN": "join thread[r1], timeout R[r2] (-1 = infinite)",
+    "OP_THREAD_WAIT": "wait thread[r1] for R[r2] seconds  [unused: r3]",
     "OP_THREAD_STATE": "r1 = state(thread r2, attr r3)",
     "OP_THREAD_GOTO": "goto label r2 inside thread[r1]",
     "OP_LOCK": "lock[r1] = r2",
     "OP_SEND": "send thread[r1] msg r2",
-    "OP_RECV": "r1 = recv(timeout r2)",
+    "OP_RECV": "r1 = recv(timeout R[r2] | -1 = block forever)",
     "OP_TRY_START": "open try, handler var = r2  [r1 is emitted as 0 and never read]",
     "OP_TRY_END": "- (close try)",
     "OP_THROW": "throw r1",
@@ -373,6 +373,44 @@ def report(ops, shape, meas, out=sys.stdout):
             forgets.append((n, sorted(reads)))
         elif claims and not reads:
             unconfirmed.append((n, sorted(claims)))
+    # A shape may also say a slot is *unused*.  That claim has a truth value:
+    # if the handler reads the slot, the marker is stale and the shape is wrong
+    # in the other direction -- it now hides a live operand behind "unused".
+    stale_unused = []
+    for n in names:
+        body = handlers.get(n)
+        if body is None:
+            continue
+        reads = set("r" + x for x in re.findall(r"ins\.r([123])", body))
+        unused = set("r" + x for x in
+                     re.findall(r"\[unused:\s*r([123])\]", shape.get(n, "")))
+        for u in sorted(unused & reads):
+            stale_unused.append((n, u))
+    for n, u in stale_unused:
+        print(f"IR-SHAPE-UNUSED|op={n}|slot={u}|handler-reads-it=yes"
+              f"|effect=the-shape-calls-a-live-operand-unused", file=out)
+    if stale_unused:
+        bad.append(f"stale-unused:{len(stale_unused)}")
+
+    # Slots written as a bare digit ("cond r2") are neither a register glyph
+    # nor a plain immediate, so neither check above can see them: the shape
+    # check reads `rN`, the print check reads `r%d`.  Counted, not judged, with
+    # the reason on the line -- the same rule as IR-DISASM-REGS.
+    bare = []
+    for n in names:
+        body = handlers.get(n)
+        if body is None:
+            continue
+        reads = set("r" + x for x in re.findall(r"ins\.r([123])", body))
+        tokens = set("r" + x for x in re.findall(
+            r"\b(?:cond|timeout|op|attr|argc|count|res|base|kind|pair|sidx|meta)"
+            r"\s+r?([123])\b", shape.get(n, "")))
+        if tokens & reads:
+            bare.append(n)
+    print(f"IR-SHAPE-BARE|ops={','.join(bare) or 'none'}|count={len(bare)}"
+          f"|enforced=no|why=a-slot-written-as-a-bare-digit-is-neither-a-register-glyph"
+          f"-nor-an-immediate-so-neither-check-can-see-it", file=out)
+
     for n in no_body:
         print(f"IR-HANDLER|op={n}|effect=no-handler-body-found-in-the-dispatcher", file=out)
     for n, reads in forgets:
@@ -483,6 +521,27 @@ def main(argv):
                   and set(re.findall(r"\br([123])\b", shape[n]))]
         mut = dict(shape, **{forget[0]: "- (claims nothing)"})
         ok &= _check("shape-forgets", report(ops, mut, meas, out=open("/dev/null", "w")), forget[0])
+        # A shape that calls a live operand "unused" hides it the other way:
+        # the marker says nothing is there while the handler reads it.
+        live = [n for n in shape
+                if re.search(r"ins\.r2\b", meas["handlers"].get(n, ""))
+                and "[unused: r2]" not in shape[n]]
+        if live:
+            mut = dict(shape, **{live[-1]: shape[live[-1]] + "  [unused: r2]"})
+            ok &= _check("shape-calls-a-live-slot-unused", report(ops, mut, meas,
+                                                                out=open("/dev/null", "w")), live[-1])
+        # The bare-slot reading is also not enforced: write one slot as a bare
+        # digit and the reading must name that opcode.
+        hs = meas["handlers"]
+        cand = next((n for n in (o for o, _ in ops)
+                     if re.search(r"ins\.r2\b", hs.get(n, ""))
+                     and "R[r2]" in shape[n]), None)
+        if cand:
+            got = _report_text(ops, dict(shape, **{cand: shape[cand] + " timeout r2"}), meas)
+            line = next(l for l in got.splitlines() if l.startswith("IR-SHAPE-BARE|"))
+            named = cand in line.split("|ops=")[1].split("|")[0].split(",")
+            print(f"IRCHECK|case=bare-slot|red={'yes' if named else 'no'}|op={cand}", file=sys.stdout)
+            ok &= named
         # The operand reading is not enforced, so it gets a detection test
         # rather than an enforcement test: drop one register from a print line
         # and the reading must name that opcode.  A reading nobody has ever
