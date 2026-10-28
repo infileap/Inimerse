@@ -45,6 +45,19 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 | `OP_MOD` | dst=r1 src=r2,r3 | 3217 | 4252 | `vm.c:4256-4267` |
 | `OP_AND` | dst=r1 src=r2,r3 | 3180 | 3598 | `vm.c:3599-3602` |
 | `OP_MIN` | dst=r1 src=r2（reads_dst=no） | 3221 | 4357 | `vm.c:4358-4359`；`set_minmax` `vm.c:2477` 清 dst |
+| `OP_SUB` | dst=r1 src=r2,r3 | 3170 | 3444-3468 | `vm.c:3445` `a=&R[ins.r2], b=&R[ins.r3]`；`vm.c:3462` 写 `R[ins.r1]` |
+| `OP_MUL` | dst=r1 src=r2,r3 | 3171 | 3469-3493 | `vm.c:3470`；`vm.c:3487` 写 `R[ins.r1]` |
+| `OP_DIV` | dst=r1 src=r2,r3 | 3172 | 3494-3520 | `vm.c:3495`；`vm.c:3513` 写 `R[ins.r1]` |
+| `OP_NEG` | dst=r1 src=r2 | 3173 | 3521-3538 | `vm.c:3522` `v=&R[ins.r2]`；`vm.c:3530` 写 `R[ins.r1]` |
+| `OP_MAX` | dst=r1 src=r2 | 3222 | 4362-4366 | `vm.c:4363-4364` `set_minmax(vm, &src, &R[ins.r1], 1)` |
+| `OP_EQ` | dst=r1 src=r2,r3 | 3174 | 3539-3547 | `vm.c:3542-3545` |
+| `OP_NEQ` | dst=r1 src=r2,r3 | 3175 | 3548-3555 | `vm.c:3550-3553` |
+| `OP_LT` | dst=r1 src=r2,r3 | 3176 | 3556-3565 | `vm.c:3557,3562-3563` |
+| `OP_GT` | dst=r1 src=r2,r3 | 3177 | 3566-3575 | `vm.c:3567,3572-3573` |
+| `OP_LE` | dst=r1 src=r2,r3 | 3178 | 3576-3585 | `vm.c:3577,3582-3583` |
+| `OP_GE` | dst=r1 src=r2,r3 | 3179 | 3586-3597 | `vm.c:3587,3592-3593` |
+| `OP_NOT` | dst=r1 src=r2 | 3182 | 3612-3619 | `vm.c:3613-3615` |
+| `OP_IS_NIL` | dst=r1 src=r2 | 3203 | 4155-4158 | `vm.c:4156` |
 | `OP_INDEX_SET` | obj=r1 mutate key=r2 val=r3，无 dst | 3185 | 3717 | `vm.c:3718-3720` |
 | `OP_SAY` | src=r1 | 3193 | 3921 | `vm.c:3923` |
 | `OP_THREAD_STATE` | dst=r1 imm=r2,r3 | 3208 | 4692 | `vm.c:4693` |
@@ -57,6 +70,36 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 | `OP_MAKE_FUNC` | dst=r1 imm=r2,r3 | 3199 | — | `vm.c:4043` 捕获循环先读 r3 再读 r2 |
 
 `OP_THREAD_JOIN` 与 `OP_THREAD_WAIT` 在这一列上**看不出差别**：两者都打印 `timeout=r%d`，两者 `r2` 都真是寄存器。差别只在 handler 和发出处。这正是「打印行可读 ≠ 可判」的实例，也是下一节要记的错。
+
+### 3.1 第一批按族声明：纯寄存器算术 / 比较族（17 条，本批新增 13 条）
+
+分工按 ivory 的要求改成按族做：每批填完先写「这一族为什么这样分」，再由 `ir_spec.py` 的 `IR-SHAPE` / `IR-DISASM-REGS` 对一遍，这样一次只暴露一类错误。
+
+**族的判据（为什么是这 17 条）**：满足全部三条的 opcode 归此族——
+
+1. `dst` 恒为 `r1`，且 handler 在写它之前不读它（输出专用）；
+2. 操作数全是寄存器：没有立即数、没有 frame 变量下标、没有字符串池/表下标；
+3. 语义是纯值运算（算术或比较），不带容器、字符串、线程副作用。
+
+成员：`ADD MOD AND SUB MUL DIV NEG MIN MAX EQ NEQ LT GT LE GE NOT IS_NIL`。其中 `ADD/MOD/AND/MIN` 在第一批之前就已声明（当时作为正样本），所以本批实际新增 13 条——**族里有 17 条、本批新增 13 条**，这个差额留在表上，免得以后把「族」和「批次」当成同一个数。
+
+**边界上被排除的，以及为什么**（排除理由比包含理由更该写下来）：
+
+- `EQK` / `NEQK`：`r3` 是字符串池下标（`vm.c:4160` `int sidx = ins.r3;`），`r2` 是寄存器（`vm.c:4171`）。一个 opcode 里同时有寄存器与立即数，放进来会让「一族只暴露一类错误」失效；它们属于 K 族，且本来就在 `IR-DISASM-REGS` 的 `hidden=` 名单里。
+- `CONCAT` / `IN` / `BIND` / `INDEX_GET` / `NEW_*`：失败模式是「对象/下标写错」，不是「操作数角色写错」，属于容器族。
+- `MIN` / `MAX`：中间的 `set_minmax(vm, src, dst, isMax)` 会先把 `dst` 清成 nil（`vm.c:2477`），所以 `dst` 仍是输出专用，符合第 1 条；但它属于「需要理由才放进来的成员」，理由就是这一行。
+- `LT/GT/LE/GE` 的 handler 里 `val_orderable` 失败会走异常路径（`vm.c:3557` 等），但那是控制流不是操作数，不影响角色。
+
+**本批读数**（`vm.c` @ `9a4db3b`）：
+
+```
+P1-ROLES|declared=30/67|unmeasured=37
+P1-VERDICT|red|failed=C1:OP_TRY_START,C3:OP_TRY_START
+```
+
+13 条新行全部绿——这一族里打印行与 handler 逐条一致，没有新增缺陷；唯一的红仍是 `TRY_START`（ivory 已认领修复）。这条结果本身是有信息的：反汇编器在「形状统一」的 opcode 上是对的，错都出在形状不统一的地方（`CALL_FUNC` 的 dst 在 r2、`RECORD` 的 dst 在 r3、`TRY_START` 的下标在 r2）。
+
+**给交叉核对的一句话**：这一族的 `IR-SHAPE` 行若与上表不一致，先假定是我读错了族，而不是打印机错了——理由见 §5.3。
 
 ## 4 六组实测
 
@@ -79,6 +122,8 @@ P1-C3|op=OP_TRY_START|imm=r1,r2|printed-reg=r2|leak=r2|effect=an-immediate-print
 P1-ROLES|declared=17/67|unmeasured=50
 P1-VERDICT|red|failed=C1:OP_TRY_START,C3:OP_TRY_START
 ```
+
+（A 的 transcript 取自 17 条角色表的版本；§3.1 之后为 `declared=30/67|unmeasured=37`，红仍是同一条。）
 
 F 的红（三个当年被发现的真实缺陷全部重现，每一条都带主语）：
 
@@ -123,7 +168,7 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=r%d", 
 
 ## 6 覆盖：17/67，没说到的 50 条不算通过
 
-每次运行都打印 `P1-ROLES|declared=17/67|unmeasured=50` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。剩下 50 条要进入 P1，需要有人逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代（能自动化的只有「把候选行摆到人面前」）。
+每次运行都打印 `P1-ROLES|declared=30/67|unmeasured=37` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。剩下 37 条要进入 P1，需要按族逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代：第一族见 §3.1，`P1-ROLES` 从 17/67 走到 30/67。
 
 ## 7 这份判据不证明什么
 
