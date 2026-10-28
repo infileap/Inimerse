@@ -25629,7 +25629,13 @@ GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|load=20-hog x -j12|serial=
 GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|serial=absent|margin=na|why=RUN_SERIAL is not set, so this margin is not bought
 ```
 
-`cmake -B build` 重新配置一次（源码一字节未动）之后，同一句命令才印上面那条 `serial=yes|margin=20%`。两个数、同一棵树、差在一次配置：属性活在生成的 `CTestTestfile` 里。`measured-on=cf73746` 还提醒：`worst=23.91s` 是**在另一棵树上量的**，不是我这棵。据此有一条**规格（未实现）**：让读数行再印一个 `configured-at=`（`CTestTestfile` 的 mtime 或 cmake 记下的配置轮次），读者就能一眼看出「这两个数不是一次配置出来的」，不必靠 `serial=absent` 里那句 `why=` 反推。第二条同族证据来自对方（同一机制的另一半，未在本树复跑）：注册 `op_hot_regression` 后 `ctest -R op_hot_regression` 红（`cases=6 red=2`），`cmake --build build` 之后全绿 —— 那边是二进制旧，这边是配置旧，但两者都说明**构建目录是这门工具里的第二个主语**。
+`cmake -B build` 重新配置一次（源码一字节未动）之后，同一句命令才印上面那条 `serial=yes|margin=20%`。两个数、同一棵树、差在一次配置：属性活在生成的 `CTestTestfile` 里。`measured-on=cf73746` 还提醒：`worst=23.91s` 是**在另一棵树上量的**，不是我这棵。据此曾记下一条**规格**：读数行再印一个 `configured-at=`（`CTestTestfile` 的 mtime），读者就能一眼看出「这两个数不是一次配置出来的」。这条规格**已经实现**（`3976844`，`tools(gate): say which configure wrote the property the margin is read from`），本树 `aaa5741` 上同一句命令现在印：
+
+```
+GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|load=20-hog x -j12|serial=yes|margin=20%|basis=recorded under contention, not designed slack|configured-at=2026-10-28T15:38|measured-on=cf73746
+```
+
+⇒ 这一行现在有**两个来源各自带时刻**：`configured-at=` 是回答属性问题的那份 `CTestTestfile` 写下的时刻（我这次 configure 于 15:38），`measured-on=cf73746` 是最坏耗时被量出来的那棵树。规格自己带着时刻，就不必再靠正文里一句 `why=` 反推；而它仍然**修不了旧的构建目录**——stamp 只能让读者看见「这两个数不是一次配置出来的」，不能让它们相等。第二条同族证据来自对方（同一机制的另一半，未在本树复跑）：注册 `op_hot_regression` 后 `ctest -R op_hot_regression` 红（`cases=6 red=2`），`cmake --build build` 之后全绿 —— 那边是二进制旧，这边是配置旧，但两者都说明**构建目录是这门工具里的第二个主语**。
 
 ### 丁 判据
 
@@ -25652,7 +25658,7 @@ GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|serial=absent|margin=na|wh
 
 `docs/IR_DESIGN.md` 第 12 节把六条留给「人」决定，470 行设计里最贵的一句话是「本文档不替它决定」。这一节不替它决定，只把每条压成五行内能读完的一格：**两种选择各自成为什么、不做会怎样、谁能一句话拍板、拍错后返工的最小单位**。
 
-先给四个可复跑的读数（`tools/ir_spec.py`，树 `edb1bcd`，即本节 rebase 的基；我只改了这个文档，`tools/` 与源码一字节未动）：
+先给四个可复跑的读数（`tools/ir_spec.py`，树 `aaa5741`，即本节 rebase 的基；我只改了这个文档，`tools/` 与源码一字节未动）：
 
 ```
 IR-SPEC|ops=67|codes=0..67|hole=29|shaped=67|unshaped=none
@@ -25661,7 +25667,7 @@ IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none|budget=none|aot=na|wasm=n
 IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unexpected=OP_CALL_VALUE|hidden=OP_LOADK_STRING,OP_CALL_BUILTIN,OP_RECORD,OP_SET_INTERVAL,OP_LOADK_I64|compared=register-set-not-order|why=roles-are-not-declared-yet-immediates-and-goto-shared-bodies-look-like-mismatches-see-IR_DESIGN-P1
 ```
 
-**这四个数的主语是树，换树就换引文**：`hidden=` 的序列是 `a670a70` **8** → `cff9197` **7** → `7d0e6fd` **5**（本节的基 `edb1bcd` 与它同数），引用以本树读数为准。第一段（8→7）**差异未归因**：两棵树之间角色表与打印行都有变动，我没有逐项归因；我能核到的只到「哪一项不在列表里」为止——离开的是 `OP_THREAD_START`，而 `9dd3ade` 恰好改过它的打印行（现在印 `res=r%d`，同时把 `RECV` 的 `-1` 哨兵从 `timeout=r-1` 改成 `timeout=none`），两件事挨得很近，但这不是逐项归因，我不把它写成归因。第二段（7→5）我核到的也只是同一层：离开的是 `OP_EQK` 与 `OP_NEQK`，而 `7d0e6fd` 的提交信息说 `a declared register the print line hides is now a red`——我核的是「哪两项离开」，没有读那两个打印器的 diff，所以不写成「因为」某一行改对了。这一笔仍是「取数命令与树号必须写在同一行」的现场：同一串 `IR-*` 行在 `9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd`、`de2111c`、`9f1a589`、`edb1bcd` 上是三个不同的数。
+**这四个数的主语是树，换树就换引文**：`hidden=` 的序列是 `a670a70` **8** → `cff9197` **7** → `7d0e6fd` **5**（本节的基 `aaa5741` 与它同数），引用以本树读数为准。第一段（8→7）**差异未归因**：两棵树之间角色表与打印行都有变动，我没有逐项归因；我能核到的只到「哪一项不在列表里」为止——离开的是 `OP_THREAD_START`，而 `9dd3ade` 恰好改过它的打印行（现在印 `res=r%d`，同时把 `RECV` 的 `-1` 哨兵从 `timeout=r-1` 改成 `timeout=none`），两件事挨得很近，但这不是逐项归因，我不把它写成归因。第二段（7→5）我核到的也只是同一层：离开的是 `OP_EQK` 与 `OP_NEQK`，而 `7d0e6fd` 的提交信息说 `a declared register the print line hides is now a red`——我核的是「哪两项离开」，没有读那两个打印器的 diff，所以不写成「因为」某一行改对了。这一笔仍是「取数命令与树号必须写在同一行」的现场：同一串 `IR-*` 行在 `9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd`、`de2111c`、`9f1a589`、`edb1bcd`、`aaa5741` 上是三个不同的数。★ 这四棵树（`7d0e6fd`／`de2111c`／`9f1a589`／`edb1bcd`／`aaa5741`）上这几行逐字相同，但那是**同一个事实被五个树号盖章，不是五次独立的测量**——只换了基树、量具与源码都没变，写在这里是为了让读者能核「换树没有换数」，不是五份可相加的证据。
 
 
 **读数换过形状，请按这一版复跑**：这两行早先印的是 `baseline=disasm:0` 与一条按**顺序**比对反汇编行的读数；`9a4db3b` 把前者整个删掉（「预算」一词会让人以为还有一个可调的容忍度），把后者改成比**寄存器集合**——因为那个尺子本身在造假：`&R[ins.rN]` 是纯读却被当成目的，于是**同一个进步会同时在两个地方记两笔**。改完之后它立刻抓出三处真的印错（`TRY_START` 印 r1 而藏了 r2 的 catch 变量、`THREAD_WAIT` 印一个没人读的 r3、`RECORD` 藏了 `value_move` 写的 r3），三处都已修在本树。
@@ -25696,7 +25702,7 @@ IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unex
 
 ### 丁 端点
 
-本节测量树 `edb1bcd`（`origin/main`，我 rebase 的基；分支 `audit-ir-decisions` 上的 `tools/` 与源码与它一字节未动，我只改了这个文档）；四个读数是 `tools/ir_spec.py` 当场输出。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
+本节测量树 `aaa5741`（`origin/main`，我 rebase 的基；分支 `audit-ir-decisions` 上的 `tools/` 与源码与它一字节未动，我只改了这个文档）；四个读数是 `tools/ir_spec.py` 当场输出。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
 
 ### 戊 边界
 
