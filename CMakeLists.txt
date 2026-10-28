@@ -1770,3 +1770,10 @@ endif()
 add_test(NAME ir_spec_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "ir spec: ok \\([0-9]+ opcodes" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_spec.test.py)
 set_tests_properties(ir_spec_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "ir spec: ok \\([0-9]+ opcodes")
+# Registered here, after every line docs/ cites by number, for the same reason as
+# the line above: an insertion in the middle moves the citations that hold on this
+# file and turns them into unanchored references.  The census itself lives at the
+# end of src/vm/vm.c for the same reason.
+add_test(NAME op_hot_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/op_hot.test.py)
+set_tests_properties(op_hot_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "vm;regression" PASS_REGULAR_EXPRESSION "op_hot: cases=([0-9]+) red=0")
