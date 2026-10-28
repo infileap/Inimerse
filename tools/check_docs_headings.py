@@ -40,10 +40,19 @@ heading-identity format is a later change, named here and not yet in use.
 
 The stale line has no red bound, and never will.  A number that is both printed
 and, past some threshold, a verdict makes every reader guess which one they are
-looking at: behind=7 is not a defect, a missing section is, and that is what
-removed measures -- on its own, without asking how old the pin is.  When the
-pin is behind, a second line says so in words (HEADINGS|stale-warn|...); it
+looking at: a net change of 7 is not a defect, a missing section is, and that is
+what removed measures -- on its own, without asking how old the pin is.  When
+anything drifted, a second line says so in words (HEADINGS|stale-warn|...); it
 carries a note, not an exit code.
+
+Two questions have two names, because one number cannot answer both.  added is
+the sum of per-file positive differences -- "how many sections appeared" --
+and removed is the sum of negative ones; net is now - base -- "how far the
+total moved".  One file losing a section while another gains one gives
+added=1, removed=1, net=0, and it was exactly there that an earlier revision
+printed behind=added and claimed one section the pin never saw (found in review:
+the stale line was the added variable under a second name).  So the stale line
+prints net and the drift line prints all three.
 
 One limit, stated rather than hidden: the comparison is by count per file, so
 while the pin is behind, a deletion and an addition of equal size in the same
@@ -149,18 +158,30 @@ def main() -> int:
     tree_now = git("rev-parse", "--short=7", "HEAD").stdout.strip() or "<no tree>"
     print(f"HEADINGS|tree={tree_now}|base={base_total}|now={now_total}|removed={removed}|added={added}")
     print(f"HEADINGS|pin|tree={pin.get('tree', '<unpinned>')}|docs={pin.get('docs', '?')}|files={len(base_counts)}")
-    # How far the pin is behind HEAD, counted in sections, and which comparison
-    # that count comes from.  Printed always, so a fresh pin reads behind=0 and
-    # a reader can tell "nothing new" from "nothing measured"; it never touches
-    # the exit code, and there is deliberately no threshold at which it would.
-    print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|behind={added}"
+    # Net change in section count.  NOT added: added is the sum of per-file
+    # positive differences, so one file losing a section and another gaining one
+    # gives added=1, removed=1 and net=0 -- a "behind=1" there would claim one
+    # section the pin never saw while the pin's total and this tree's total are
+    # equal (found in review, tools/check_docs_headings.py around this print:
+    # behind was the added variable under a second name).
+    net = now_total - base_total
+    # One line, one subject: how far the pin's tree is from HEAD in net section
+    # count, and which comparison produced it.  Printed always, so a fresh pin
+    # reads net=0 and a reader can tell "nothing changed" from "nothing
+    # measured"; it never touches the exit code, and there is deliberately no
+    # threshold at which it would.
+    print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|net={net}"
           "|pin-format=v1|identity=per-file-count"
           "|identity-domain=per-file-count,per-heading-identity")
-    if added:
+    # Two questions, two names.  "did anything change" is added or removed;
+    # "how much did the total move" is net.  A reader who sums one and reads the
+    # other is the failure this line exists to prevent.
+    print(f"HEADINGS|drift|added={added}|removed={removed}|net={net}")
+    if added or removed:
         # Words instead of a threshold.  A reader who wants to know that the
         # baseline is old should be told so, not handed a verdict that cannot
         # separate "old baseline" from "missing section".
-        print(f"HEADINGS|stale-warn|behind={added}|note=this reading is old; the criterion does not depend on it")
+        print(f"HEADINGS|stale-warn|net={net}|note=this reading is old; the criterion does not depend on it")
     for rel, b, n, kind in rows:
         print(f"HEADINGS|{kind}|{rel}|base={b}|now={n}")
     if len(rows) > 40:
