@@ -1,11 +1,11 @@
-# P1 入口条件：三条可执行判据（tree `cff9197`，分支 `p1-entry-noble-quartz`）
+# P1 入口条件：三条可执行判据（tree `7d0e6fd`，分支 `p1-entry-noble-quartz`）
 
 ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可执行**判据，每条一个最小正例、一个最小反例，反例必须**今天就在树上变红**，且不动 main。
 
 这份报告给三条判据的实现、58 条手写角色表（已归 8 族）的出处、十六组实测，以及八条结构性结果。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①；第五条是**同一个约定修了一处、漏了一处**；第六条是**控制组跑出全绿，把 §5.4 的预期证伪了**——证伪落在一句具体的措辞上，不在结论上；第七条是**判据只朝一个方向看**：它抓「多印了一个寄存器」，不抓「少印了一个操作数」，而今天树上就有两条这样的指令（`EQK`/`NEQK`）；第八条是**形状对了、谓词仍可能错**——`RETURN` 的 nil 判据是 `> 0` 而不是 `< 0`，照邻居的形状修会修出一处新的假绿。
 
 - 判据实现：`tools/p1_roles.py`（纯标准库，`--vm <path>`，红则 rc=1，不 import `ir_spec`，不与任何自检共用提取代码）
-- 依据树：`cff9197`（在 `9dd3ade` 之后 main 又落了 opcode census，追加在 `vm.c` 末尾，`vm.c:5584` 以上一行未动，本族引用的行号因此未移；本分支已 rebase 到它，读数在 rebase 前后一致，见 §3.7 与 §4 M/N 组）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
+- 依据树：`7d0e6fd`（`cff9197` → `f9b93b6` → `7d0e6fd` 两次都是 ivory 在 main 上改打印器与形状，未动角色表；本分支已 rebase 到它，族 7 的读数从 `negative-timeout|guarded=1|unguarded=1` 变成 `guarded=2|unguarded=0`、`P1-PRINTSHORT` 归零——**两项都是上一封信里预告过的方向，不是我改出来的**，见 §4 Q 组；早期引用的行号仍是 `cff9197` 的坐标，见 §1 引用约定与 §3.7 与 §4 M/N 组）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
 - 只读：没有改 `src/`，所有被改坏的 `vm.c` 都是 `.probe/` 下的拷贝，不进提交
 - **引用约定（ivory `m05139` §3）**：打印行的主引用是 `case OP_X:` 这个符号，行号只是「在那棵树上的一次坐标」，不是证据。族 7 起按此执行；族 1–6 的表格里行号仍是主引用，因为那些行是在各自树上逐条核过的，改写成符号要重核一遍——记作待办，不假装已经做到。打印区正是最容易被插行的地方（ivory 两天内在这个区插了三次），所以这条约定的失效方向是「行号漂了、符号没漂」。
 
@@ -345,6 +345,7 @@ P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing
 | M | `cff9197` + 一行 | 给 `EQK` 的打印行补上被比较的寄存器（`r%d` + `ins->r2`） | 0 | `P1-PRINTSHORT-COUNT|n=2` → `n=1`：只 `EQK` 消失，`NEQK` 还在——读数按落点移动，是 op 级的 |
 | N | `cff9197` + 一行 | 把同一个槽印成 `@%d`（还是裸数字，换了个前缀） | 0 | `P1-PRINTSHORT` 仍点名 `OP_EQK:r2`——**它分不清「没印」与「印在别的命名空间」** |
 | O | `cff9197` 原样 | 无（表扩到 58 条：族 7 控制流/异常） | 0 | 无红——但 `P1-AMBIG` 由 2 变 3 且新增 `P1-GUARD` 两行：`OP_RETURN|slot=r1|sentinel(0,-1)|guarded=no`，见 §5.8 |
+| Q | `7d0e6fd`（main 又落两笔：`f9b93b6` 三处声明与两个哨兵打印器、`7d0e6fd` 形状侧判红 + `EQK`/`NEQK` 补印源寄存器） | 无（角色表一个字节没改，只 rebase） | 0 | 无红——**两项预告的读数各自到位**：`P1-PRINTSHORT` 从 2 归零（ivory 修了打印器）、`negative-timeout` 从 `guarded=1|unguarded=1` 变 `guarded=2|unguarded=0`（`THREAD_JOIN` 学会了两形态）；`non-positive-nil-result` 仍是 `sites=1|guarded=0|unguarded=1`，下一笔轮到它 |
 | P | `cff9197` + 一行「照邻居修」 | 给 `RETURN` 加 `ins->r1 < 0 ? "RETURN nil" : "RETURN r%d"`——谓词抄的是 `RECV` 的 `< 0` | 0（**读数变好、红不变**） | `P1-AMBIG|op=OP_RETURN|guarded=yes`、`P1-GUARD|convention=non-positive-nil-result|sites=1|guarded=1|unguarded=0`——**而 `RETURN r0` 还在，判据全绿** |
 
 A 的红（在 `9a4db3b` 上真实存在，不是我改出来的；那棵树已经不是今天的树，见 §5.2）：
@@ -440,7 +441,7 @@ L 组把这一条从散文变成读数：如果一个修的人**信了文档**�
 | 3 store | 1 | `conditional-write` | ② 只问「声明的 dst 有没有印」，不问「这条路径一定写吗」——`RECORD` 的 `r3` 只在命中时写（`vm.c:4243`） |
 | 4 output | 1 | `empty-dst-trivial` | `SAY` 没有 dst，② 对它恒真；这一族的绿最接近「没有可查的对象」 |
 | 5 构造 / 区间 | 5 | `storage-location` | 元素在值栈（`vm.c:3638`），判据看不见值的来源；`SET_ADD` 的 `obj`+`mutate` 只约束字形不约束别名 |
-| 6 K 形式 | 7 | `source-register-not-printed` | ① 只抓多印、② 只抓 dst，源寄存器漏印没有判据管（`EQK`/`NEQK` 的 `r2`；ivory 已按形状侧补判红，本表留档） |
+| 6 K 形式 | 7 | `source-register-not-printed` | ① 只抓多印、② 只抓 dst，源寄存器漏印没有判据管（`EQK`/`NEQK` 的 `r2`）。**此格已兑现**：ivory 在 `7d0e6fd` 用形状侧的 `IR-SHAPE-PRINTSHORT` 判红并修了打印器，我的 `P1-PRINTSHORT` 随之归零——两个独立读者在同一处收敛，这是本表唯一一格有跨读者证据的 |
 | 7 控制流 / 异常 | 9 | `predicate-boundary, shared-tail` | 哨兵谓词的边界（`> 0` vs `< 0`）判据看不见，`guarded=yes` 也照样绿（§4 P 组）；`CALL_VALUE` 的读数主语是它与 `CALL_FUNC` **共用的那条尾**，不是某一条指令 |
 
 这张表的意思只有一句：**每族的绿都有一个具体的「没问」，写出来比不写强，因为它让下一族的预期可以被证伪。**
@@ -560,7 +561,7 @@ M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只�
 
 P 组就是这条的反向实测：照邻居写 `< 0` 之后，`P1-AMBIG` 从 `guarded=no` 变成 `guarded=yes`，`P1-GUARD|non-positive-nil-result` 的 `unguarded` 从 1 降到 0，**而 `RETURN r0` 一个都没少，判据仍然全绿**。也就是说：`guarded=` 只看得见「印之前有一层换算」，看不见「算的是不是同一条边界」。这条与 §4 J 组（把判断反过来仍读 `guarded=yes`）是同一句话的两个实例，一个是运算符反了，一个是运算符对、**边界反了**。
 
-这一族还留下一条读数：`P1-GUARD|convention=...|sites=|guarded=|unguarded=`。它数的是**落点数**，不是缺陷数：约定还是一条，只是每个落点各自可能学会、也可能没学会。今天 `negative-timeout` 有 2 个落点（1 会 1 不会）、`non-positive-nil-result` 有 1 个落点（不会），所以修复会让 `unguarded` 下降，而 `sites` 不变。
+这一族还留下一条读数：`P1-GUARD|convention=...|sites=|guarded=|unguarded=`。它数的是**落点数**，不是缺陷数：约定还是一条，只是每个落点各自可能学会、也可能没学会。`cff9197` 上 `negative-timeout` 有 2 个落点（1 会 1 不会）、`non-positive-nil-result` 有 1 个落点（不会）。`7d0e6fd` 上第一条变成 `guarded=2|unguarded=0` 而 `sites` 仍是 2——**这正是「数落点不数缺陷」那句话的实测**：约定学会了，落点还在；`RETURN` 那一行仍是 `guarded=0|unguarded=1`，等下一笔。
 
 ## 6 覆盖：58/67，没说到的 9 条不算通过
 
