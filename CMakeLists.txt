@@ -1754,3 +1754,18 @@ add_test(NAME gate_attribution COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/to
 set_tests_properties(gate_attribution PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 
 endif()
+
+# Appended at the end of the file on purpose: docs/ cite CMakeLists.txt lines
+# above this point, so adding registrations in the middle would move twenty
+# cited line numbers and turn anchored references into unanchored ones (the
+# same trap as editing a pinned C file; see the gate's unanchored ceiling).
+
+# P0 of docs/IR_DESIGN.md: one table of register opcodes (tools/ir_spec.py),
+# with every claim in it measured against this tree instead of remembered.  It
+# needs no built artifact and no node -- it reads src/compiler/bytecode.h and
+# src/vm/vm.c -- so it is registered outside the node block.  Today it asserts
+# that all 68 opcodes have an operand shape and that the interpreter still
+# dispatches all 68; the disassembler names 48 and that gap may only shrink.
+add_test(NAME ir_spec_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "ir spec: ok \\([0-9]+ opcodes" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_spec.test.py)
+set_tests_properties(ir_spec_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "ir spec: ok \\([0-9]+ opcodes")
