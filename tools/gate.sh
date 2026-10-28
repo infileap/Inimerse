@@ -1077,10 +1077,40 @@ fi
 # leaves its logs behind; the next run against this BUILD_DIR replaces them.
 rm -f "$BUILD_DIR"/.gate-stage-*.log
 
+# The work tree is a shared thing this script cannot lock: in a check-out several
+# lanes can reach, HEAD is a shared variable, and a lane that runs
+# `git checkout --detach origin/main` mid-run leaves the working tree CLEAN -- so
+# `git status` cannot see what happened, and a twelve-minute run comes out with no
+# subject at all.  Measured: a gate was in flight when another lane checked out a
+# different commit in that same tree; `git push origin HEAD:main` then answered
+# "Everything up-to-date" (HEAD no longer pointed at the commit being pushed, and
+# it was recovered from the reflog), and the run's numbers belonged to no tree
+# that anyone could name.  The lock answers "two readers share this directory";
+# this answers "the tree I am measuring was swapped under me".  Different subject,
+# different sentence, different exit -- so the run stamps the tree it starts on.
+GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+GATE_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+echo "GATE|start|head=${GATE_START_HEAD:-<not a git tree>}|worktree=${GATE_WORKTREE:-<unknown>}"
+
 for _spec in "${STAGE_SPECS[@]}"; do
   _sel="${_spec%%|*}"; _rest="${_spec#*|}"
   run_stage "${_rest%%|*}" "$_sel" "${_rest#*|}"
 done
+
+# Re-read the same subject at the end.  A mismatch is not a failing stage and not
+# a test result: it says the numbers above are about more than one tree, so there
+# is nothing to attribute and no stage conclusion is printed at all.  Refusing to
+# re-run on its own is deliberate -- whether to spend another twelve minutes is a
+# human decision, and a gate that silently re-measured would hide how often this
+# happens.
+GATE_END_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+echo "GATE|end|head=${GATE_END_HEAD:-<not a git tree>}"
+if [ -n "$GATE_START_HEAD" ] && [ "$GATE_START_HEAD" != "$GATE_END_HEAD" ]; then
+  echo "gate: FAILED — the tree changed while this run was measuring it (start $GATE_START_HEAD -> end $GATE_END_HEAD); nothing here is attributable."
+  echo "gate: no stage result is printed: a stage result names a tree, and this run measured more than one."
+  echo "gate: not re-running automatically -- whether to measure again is a human decision."
+  exit 2
+fi
 
 # An --only value that matches no stage used to skip every stage, print
 # "gate: OK -- every stage passed." and exit 0: a green light from a run that
