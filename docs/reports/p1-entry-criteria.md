@@ -39,6 +39,8 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 
 其中 52 条已归族（族 1 算术 17、族 2a 线程 10、族 2b 资源 2、族 3 store 1、族 4 output 1、族 5 构造/区间 5、族 6 K 形式 7、族 7 控制流/异常 9），6 条是早期逐条声明、还没归族的：`MOV INDEX_SET TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`。`LOADK_INT` 与 `LOADK_I64` 原来也挂在这一组里，本批被族 6 收进去（§3.7）——**先声明、后归族是允许的，但两处都要写清，否则「族数」与「批次数」对不上就会被读成漏算**。剩下 6 条的形状各自都不符合任何已写的族规则，硬归族会正好制造出「族内形状不一致」，所以先挂着，下一批按「调用族 / 容器族」的边界理由再动。
 
+打包立即数（`SET_INTERVAL` 的 `r2`、`RECORD` 的 `r2`）**不是第九个族**，是这张表上的一列属性，由 `P1-PACKED` 登记（ivory-zephyr 裁，2026-10-28，理由见 §4.1(d)）。族仍按失败的后果切；「一个槽里有几个字段」不进判据。
+
 角色不按位置声明，因为位置在不同 opcode 上含义不同：`OP_CALL_FUNC` 的 dst 是 `r2`（`vm.c:4062`），`OP_RECORD` 的 dst 是 `r3`（`vm.c:4243`），`OP_THREAD_STATE` 的 `r2/r3` 是线程 id 与属性下标（`vm.c:4693`）。
 
 | opcode | 角色 | dispatch | handler | 读数出处 |
@@ -324,7 +326,7 @@ P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing
 
 这条最锋利的地方是**它不能被照抄的修法修好**：谁看着 `RECV` 的形状去修，会写 `ins->r1 < 0`，然后 `RETURN r0` 照旧存在。**判定的谓词必须抄 handler 自己那个测试（`> 0`），不能抄邻居的形状**——这是本族唯一一条「形状对了、谓词仍可能错」的证据，已写进 §5.8。
 
-## 4 十六组实测
+## 4 十七组实测
 
 全部在 `/tmp/wt-p1e`，命令 `python3 tools/p1_roles.py --vm <tree>`。
 
@@ -347,6 +349,7 @@ P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing
 | O | `cff9197` 原样 | 无（表扩到 58 条：族 7 控制流/异常） | 0 | 无红——但 `P1-AMBIG` 由 2 变 3 且新增 `P1-GUARD` 两行：`OP_RETURN|slot=r1|sentinel(0,-1)|guarded=no`，见 §5.8 |
 | Q | `7d0e6fd`（main 又落两笔：`f9b93b6` 三处声明与两个哨兵打印器、`7d0e6fd` 形状侧判红 + `EQK`/`NEQK` 补印源寄存器） | 无（角色表一个字节没改，只 rebase） | 0 | 无红——**两项预告的读数各自到位**：`P1-PRINTSHORT` 从 2 归零（ivory 修了打印器）、`negative-timeout` 从 `guarded=1|unguarded=1` 变 `guarded=2|unguarded=0`（`THREAD_JOIN` 学会了两形态）；`non-positive-nil-result` 仍是 `sites=1|guarded=0|unguarded=1`，下一笔轮到它 |
 | P | `cff9197` + 一行「照邻居修」 | 给 `RETURN` 加 `ins->r1 < 0 ? "RETURN nil" : "RETURN r%d"`——谓词抄的是 `RECV` 的 `< 0` | 0（**读数变好、红不变**） | `P1-AMBIG|op=OP_RETURN|guarded=yes`、`P1-GUARD|convention=non-positive-nil-result|sites=1|guarded=1|unguarded=0`——**而 `RETURN r0` 还在，判据全绿** |
+| R | `7d0e6fd` 原样 | 无（角色表未改；`P1-GUARD` 多了逐落点的谓词行，`P1-PACKED` 登记两个打包立即数） | 0 | 无红。读数：`P1-GUARD-SITE|convention=negative-timeout|op=OP_RECV|slot=r2|predicate="ins.r2 >= 0"|printer-predicate="ins->r2 < 0"|agrees=negated-branch`（`THREAD_JOIN` 同）、`P1-GUARD-SITE|convention=non-positive-nil-result|op=OP_RETURN|slot=r1|predicate="ins.r1 > 0 && ins.r1 < FRAME_REGS"|printer-predicate="none"|agrees=n/a`；聚合行 `negative-timeout|sites=2|guarded=2|unguarded=0|disagree=0`、`non-positive-nil-result|sites=1|guarded=0|unguarded=1|disagree=0`。**谓词现在是逐字的，所以「抄对了」与「抄了个同形的」第一次有了分别**——代价见 §5.8 末段的宏别名限制 |
 
 A 的红（在 `9a4db3b` 上真实存在，不是我改出来的；那棵树已经不是今天的树，见 §5.2）：
 
@@ -423,6 +426,8 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 两条都是「一个操作数槽承载两三个字段」，而我今天把它们分在两个族里，依据是**失败的后果不同**（`RECORD` 的失败是「写错了哪个槽」，`SET_INTERVAL` 的失败是「名字或标志错位」），**不是形状不同**。这两个轴（失败的后果 / 操作数的存储形态）交叉一次，同一种形状就会落在两个族里——**这正是我自己在 §5.6 里说的「族切错会让判据看不见那一类」。** 我不自己切，等 §10 裁：若按 ivory 的提法再切一刀「打包立即数族」，族 5 与族 3 都要重切；在那之前这两行都按「一个立即数槽」声明（`imm=r2`），工具不拆包，也不该在判据里拆——判据只知道 `r2` 是不是立即数，不知道立即数里面还有几个字段。
 
+**（d）的裁定（ivory-zephyr，2026-10-28）：不切新族，打包作为属性列。** 原话是**按失败后果切族 + 打包作为属性列**，并给了那句判据侧的理由：**工具不拆包，判据也不该拆**——「`r2` 是不是立即数」可判，「`r2` 里面有几个字段」不可判（与 `EQK` 的 `r3` 是 imm 同一个理由）。落地的形状不是读数、也不是红，而是两行登记：`P1-PACKED|op=OP_SET_INTERVAL|slot=r2|encoding=string-pool-idx(24) | flags(8)` 与 `P1-PACKED|op=OP_RECORD|slot=r2|encoding=string-pool-idx(16) | meta(16)`，外加一条自检：登记的那个槽若没在角色表里被声明成 `imm`，则 `declared-role=no` 并且**红**（`PACKED:<op>`）——属性列不许指向一个不存在的角色。这条自检把「属性」与「角色」绑在一起，于是它不是散文。
+
 `NEW_DICT` 的注释 `bytecode.h:40` 反过来写对了（`r2=0, r3=pair count (2*r3 values from stack)`），`ir_spec.py:100` 也写对了。所以这不是「注释全错」，是**注释只错了一条**——比全错更难发现，因为读者会从对的那两条推出剩下那一条也对。
 
 L 组把这一条从散文变成读数：如果一个修的人**信了文档**，给 `NEW_ARRAY` 补上 `base=r%d` 并传 `ins->r2`，判据立刻红（`P1-C1|op=OP_NEW_ARRAY|printed=r1,r2|declared=r1|extra=r2`，rc=1）——因为角色表里 `r2` 不是任何角色。**照文档修比照 handler 修先红**，这就是判据在两条权威打架时唯一能说的话：它不裁定谁对，但它让「照文档修」这条路当场响。
@@ -435,7 +440,7 @@ L 组把这一条从散文变成读数：如果一个修的人**信了文档**�
 
 | 族 | 条数 | `blind=` | 为什么它会绿 |
 | --- | --- | --- | --- |
-| 1 算术 / 比较 | 17 | `semantics` | 每个操作数都是值寄存器、dst 恒 `r1`，三条判据恰好都在射程内；绿=打印行与角色表一致，**不是求值正确**（`MIN` 的 `reads_dst=no` 是角色陈述，不是语义保证） |
+| 1 算术 / 比较 | 17 | `semantics, nil-ordering-in-MIN-MAX` | 每个操作数都是值寄存器、dst 恒 `r1`，三条判据恰好都在射程内；绿=打印行与角色表一致，**不是求值正确**（`MIN` 的 `reads_dst=no` 是角色陈述，不是语义保证）。`nil-ordering-in-MIN-MAX` 是 ivory 改的这一格：`set_minmax` 先清 dst 再比较（`vm.c:2476-2477`），所以 `MIN`/`MAX` 的绿最容易盖住「nil 与数怎么排」这一类 |
 | 2a 线程 | 10 | `which-thread, how-long` | `t%d` 与 `r%d` 都是非裸字形，判据只问「字形对不对」，不问「这个 id 指哪条线程、等多久」；哨兵槽由 `P1-AMBIG` 点名而不判 |
 | 2b 资源 | 2 | `which-resource` | `DECLARE`/`LOCK` 的下标是不是落在合法资源上，判据看不见（`DECLARE` 是四权威一致的控制行） |
 | 3 store | 1 | `conditional-write` | ② 只问「声明的 dst 有没有印」，不问「这条路径一定写吗」——`RECORD` 的 `r3` 只在命中时写（`vm.c:4243`） |
@@ -561,6 +566,10 @@ M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只�
 
 P 组就是这条的反向实测：照邻居写 `< 0` 之后，`P1-AMBIG` 从 `guarded=no` 变成 `guarded=yes`，`P1-GUARD|non-positive-nil-result` 的 `unguarded` 从 1 降到 0，**而 `RETURN r0` 一个都没少，判据仍然全绿**。也就是说：`guarded=` 只看得见「印之前有一层换算」，看不见「算的是不是同一条边界」。这条与 §4 J 组（把判断反过来仍读 `guarded=yes`）是同一句话的两个实例，一个是运算符反了，一个是运算符对、**边界反了**。
 
+**`guarded=` 现在带谓词文本（ivory `m05178` §2 的要求）。** 每个落点额外印一行 `P1-GUARD-SITE|convention=|op=|slot=|predicate="..."|printer-predicate="..."|agrees=`，其中 `predicate=` 是 handler 那一行的 `if (...)` 条件**逐字**抄下来，`printer-predicate=` 是打印分支自己那个比较，`agrees=` 取 `identity`（同一谓词）/ `negated-branch`（取反的分支，`>= 0` 与 `< 0` 是同一个边界）/ `no`（文本不同且不是取反）/ `n/a`（打印侧没有比较，或者看不出）。`7d0e6fd` 上 `negative-timeout` 的两个落点都是 `agrees=negated-branch`——**这正是「对」的形状**：打印器印的是反面那一支，它与 handler 同边界。`RETURN` 是 `printer-predicate="none"`、`agrees=n/a`，因为它的打印行还没学。
+
+这一列的已知限制，必须在它被当成证据之前写下来：**它比的是文本，不是值。** handler 写的是 `FRAME_REGS`（`src/vm/vm.c:4126`），而 `FRAME_REGS` 是 `enum { FRAME_REGS = VM_FRAME_REGS };`（`src/vm/vm.c:3027`），`#define VM_FRAME_REGS 1024`（`src/vm/vm.h:82`）——同一个值的两个拼法。ivory 新写的 `RETURN` 打印器用的是 `VM_FRAME_REGS`，于是它落地后这个落点会读成 `agrees=no`，尽管**谓词数值上完全一样**。这个 `no` 抓的是**改名，不是缺陷**。我不替它归一化：归一化恰好会盖住这一列存在的理由（抄错宏、抄错边界、抄错运算符都会表现为文本不同），但**每一处 `no` 都必须人看一眼再判**，不能说「`disagree>0` 就是有 bug」。
+
 这一族还留下一条读数：`P1-GUARD|convention=...|sites=|guarded=|unguarded=`。它数的是**落点数**，不是缺陷数：约定还是一条，只是每个落点各自可能学会、也可能没学会。`cff9197` 上 `negative-timeout` 有 2 个落点（1 会 1 不会）、`non-positive-nil-result` 有 1 个落点（不会）。`7d0e6fd` 上第一条变成 `guarded=2|unguarded=0` 而 `sites` 仍是 2——**这正是「数落点不数缺陷」那句话的实测**：约定学会了，落点还在；`RETURN` 那一行仍是 `guarded=0|unguarded=1`，等下一笔。
 
 ## 6 覆盖：58/67，没说到的 9 条不算通过
@@ -579,6 +588,7 @@ P 组就是这条的反向实测：照邻居写 `< 0` 之后，`P1-AMBIG` 从 `g
 - 它不判「条件写」。`RECORD` 的 `r3` 只在 `gidx != -1` 且命中时才被写（`vm.c:4206`、`vm.c:4243`），② 只问「声明的 dst 有没有出现在打印行里」，不问「这条路径一定写吗」。
 - 它不判文档与 handler 谁对。§4.1 的两条不一致，判据如实报「我按 handler 建行」，裁定权在 §10。
 - **一个 case 里分支打印时，读一支等于没读。** 现在取 case 内所有 `snprintf` 的并集，并打出 `P1-BRANCH|calls=N`；`9dd3ade` 就是靠这条才没被读成假绿（§3.2 二）。但并集只覆盖同一个 case 里的分支，如果哪天打印行被抽到一个 helper 里、由调用方拼字符串，这层就失效了。
+- **`agrees=` 比的是谓词文本，所以它同时抓「抄错」和「改名」。** §5.8 末段的 `FRAME_REGS` / `VM_FRAME_REGS` 就是后者：同值不同拼法读成 `no`。它的四种取值里只有 `no` 需要人判，`identity` 与 `negated-branch` 都还只是「文本对上了」——`(ins.r1 > 0)` 与 `(ins.r1 > 0 && ins.r1 < 1024)` 文本不同，但后者更严；反过来，两处文本完全一样而上下文里的 `FRAME_REGS` 被 `#undef` 过，它也读 `identity`。
 - **`guarded=yes` 只说明「印之前先判断了」，不说明判断对。** §4 J 组实测：把 `RECV` 的判断反过来（`ins->r2 < 0` → `> 0`），语义已经错了，读数仍回到 `guarded=yes`。它是「有没有一层换算」的观测面，不是换算正确性的判据。
 - **它数不了约定有几个落点。** §5.5 的 `THREAD_JOIN` 就是同一约定没被修到的那一半。`P1-GUARD|sites=/guarded=/unguarded=` 只数**已声明**的落点，所以它是一个下界：一个还没进角色表的槽不会是「没学会」，而是根本不在计数里——这与 §6 是同一句话。
 - **裸数字是 ③ 和我这条尺子共同的盲区，只是从两边看。** ivory 的 `IR-SHAPE-BARE` 报「一个槽被写成裸数字，既不是寄存器字形也不是立即数，两个检查都看不见」；我的 ③ 正是那两个检查之一。所以 `flags=%d`（`vm.c:5393` `(unsigned int)ins->r2 >> 24`）这类印法在我的判据里等于不存在，在它的读数里被点名为 bare。两边的补救都不是加判据，而是**把「一个槽一个名字」变成结构字段**（等 P1 做角色三元组时一起定）。
@@ -597,7 +607,7 @@ python3 tools/p1_roles.py                       # 默认 src/vm/vm.c，红则 rc
 python3 tools/p1_roles.py --vm /path/to/vm.c    # 任意树 / 拷贝
 ```
 
-输出是分行读数：`P1-OPS`（每行印了什么、声明了什么）、`P1-OPS-SENTINEL`、`P1-C1/C2/C3`（每条红带 `effect=`）、`P1-AMBIG`（哨兵槽点名，不判红）与 `P1-AMBIG-COUNT`、`P1-GUARD|convention=|sites=|guarded=|unguarded=`（数落点不数缺陷）、`P1-BRANCH|calls=N`（这个 case 有几个打印出口，并集才是这一行的读数）、`P1-PRINTSHORT`（声明了、handler 读了、打印行没印，命名不判）、`P1-ROLES`、`P1-UNMEASURED`、`P1-VERDICT`。不接 `tools/gate.sh`：一个检查要不要进门禁、以什么期望值进门禁，是门禁所有者的决定，不是这份报告的。
+输出是分行读数：`P1-OPS`（每行印了什么、声明了什么）、`P1-OPS-SENTINEL`、`P1-C1/C2/C3`（每条红带 `effect=`）、`P1-AMBIG`（哨兵槽点名，不判红）与 `P1-AMBIG-COUNT`、`P1-GUARD|convention=|sites=|guarded=|unguarded=|disagree=`（数落点不数缺陷）、`P1-GUARD-SITE|convention=|op=|slot=|predicate=|printer-predicate=|agrees=`（逐落点的谓词文本对照，`no` 要人判）、`P1-PACKED|op=|slot=|encoding=|declared-role=`（打包立即数的属性登记；槽没被声明成 `imm` 则红）、`P1-BRANCH|calls=N`（这个 case 有几个打印出口，并集才是这一行的读数）、`P1-PRINTSHORT`（声明了、handler 读了、打印行没印，命名不判）、`P1-ROLES`、`P1-UNMEASURED`、`P1-VERDICT`。不接 `tools/gate.sh`：一个检查要不要进门禁、以什么期望值进门禁，是门禁所有者的决定，不是这份报告的。
 
 ## 9 §10 建议的三句措辞
 

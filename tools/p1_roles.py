@@ -126,6 +126,133 @@ CONVENTIONS = [
 SENT_NOTE = {("OP_RECV", "r2"): "-1", ("OP_THREAD_JOIN", "r2"): "-1",
              ("OP_RETURN", "r1"): "0,-1"}
 
+# Slots whose immediate is PACKED: one field is a pool index, another is flags or
+# metadata.  A registration, not a criterion and not a red: the same encoding
+# appearing in two families prints the same string, so the crossing is visible
+# instead of remembered.  The tool does not unpack, and neither should a
+# criterion do it -- "is r2 an immediate" is decidable, "how many fields live
+# inside it" is not (same reason EQK r3 is imm, not a register).
+PACKED = [
+    ("OP_SET_INTERVAL", "r2", "string-pool-idx(24) | flags(8)"),
+    ("OP_RECORD", "r2", "string-pool-idx(16) | meta(16)"),
+]
+
+# A two-branch printer often tests the NEGATED branch: RECV prints
+# "timeout=none" when ins->r2 < 0 while the handler tests ins.r2 >= 0.  So
+# "the printer copied the handler test" looks, as text, like equality up to one
+# whole-comparison flip.
+FLIP_PAIRS = [("<=", ">"), (">=", "<"), ("==", "!="), ("!=", "=="),
+              ("<", ">="), (">", "<=")]
+
+
+def close_paren(text, at):
+    """Index of the ')' matching the '(' at `at`-1... i.e. just past it."""
+    depth, i = 1, at
+    while i < len(text) and depth:
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+        i += 1
+    return None if depth else i - 1
+
+
+def if_conditions(text):
+    """Every if(...) condition in `text`, as (end index, condition text)."""
+    out, i = [], 0
+    while True:
+        j = text.find("if", i)
+        if j < 0:
+            return out
+        k = j + 2
+        while k < len(text) and text[k] in " \t\n":
+            k += 1
+        if k < len(text) and text[k] == "(":
+            end = close_paren(text, k + 1)
+            if end is not None:
+                out.append((end, " ".join(text[k + 1:end].split())))
+                i = end + 1
+                continue
+        i = j + 2
+
+
+def if_condition_before(text, at, limit=600):
+    """The innermost if(...) condition ending before `at`, as written."""
+    start = max(0, at - limit)
+    found = None
+    for end, cond in if_conditions(text[start:at]):
+        found = cond
+    return found
+
+
+def test_on(cond, slot, arrow="->"):
+    """Does `cond` compare ins<arrow>slot with anything?"""
+    pat, idx = "ins" + arrow + slot, 0
+    while True:
+        p = cond.find(pat, idx)
+        if p < 0:
+            return False
+        q = p + len(pat)
+        while q < len(cond) and cond[q] == " ":
+            q += 1
+        if q < len(cond) and cond[q] in "<>=!":
+            return True
+        idx = p + 1
+
+
+def norm_pred(text):
+    if not text:
+        return None
+    return " ".join(text.split()).replace("ins->", "").replace("ins.", "").replace(" ", "")
+
+
+def flip_pred(text):
+    out, i = [], 0
+    while i < len(text):
+        for a, b in FLIP_PAIRS:
+            if text.startswith(a, i):
+                out.append(b)
+                i += len(a)
+                break
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def predicates_agree(handler, printer):
+    """identity | negated-branch | no | n/a.
+
+    A reading, not a criterion: it compares text modulo one whole-comparison
+    flip, so it catches an operator or a boundary copied from the neighbour
+    (the P group) and says nothing about predicates that are equivalent in a
+    way the text does not show."""
+    h, p = norm_pred(handler), norm_pred(printer)
+    if not h or not p:
+        return "n/a"
+    if h == p:
+        return "identity"
+    if flip_pred(p) == h:
+        return "negated-branch"
+    return "no"
+
+
+def handler_condition(src, op, slot):
+    """The handler's own test on `slot`, read verbatim from the interpreter case.
+
+    Read, not hand-copied: a transcribed predicate is a second copy of the
+    thing, and this report exists because second copies drift."""
+    head = src[:src.index("vm_disasm_ins(")]
+    label = "L_" + op[len("OP_"):] + ":"
+    at = head.find(label)
+    if at < 0 or head[at + len(label)] not in " \t\n{":
+        return None
+    for end, cond in if_conditions(head[at: at + 2500]):
+        if test_on(cond, slot, arrow="."):
+            return cond
+    return None
+
+
 CONV = set("diouxXeEfgGcsp")
 CASE_RE = re.compile(r"case\s+(OP_[A-Z0-9_]+)\s*:")
 PRINT_RE = re.compile(r"snprintf\(\s*out\s*,\s*outsz\s*,\s*\"((?:[^\"\\]|\\.)*)\"(.*?)\)\s*;", re.S)
@@ -208,7 +335,9 @@ def branch_guards(case_text, slot):
 
     This is a reading, not a criterion. It can say the code visibly decides
     before printing, which is enough to say a sentinel cannot reach the r%d
-    branch; it cannot say the decision is correct."""
+    branch. The condition text comes back too, so it can be compared with the
+    handler's own test -- "guarded" alone reads the same whether the operator
+    was copied or only the shape was."""
     out = []
     for m in PRINT_RE.finditer(case_text):
         fmt, rest = m.group(1), m.group(2)
@@ -221,16 +350,9 @@ def branch_guards(case_text, slot):
                     prints_slot = True
         if not prints_slot:
             continue
-        window = case_text[max(0, m.start() - 600):m.start()]
-        g = None
-        for gm in re.finditer(r"ins->r([123])", window):
-            tail = window[gm.end():gm.end() + 20]
-            if re.match(r"\s*(<=|>=|<|>|==|!=)", tail):
-                g = gm
-        if g is None or ("r" + g.group(1)) != slot:
-            out.append(False)
-        else:
-            out.append(True)
+        cond = if_condition_before(case_text, m.start())
+        guarded = bool(cond) and test_on(cond, slot)
+        out.append((bool(guarded), cond))
     return out
 
 
@@ -325,8 +447,15 @@ def main():
                 ambig.append("AMBIG:" + op)
                 note = SENT_NOTE.get((op, r), "-1")
                 guards = branch_guards(cases[op], r)
-                guarded = bool(guards and all(guards))
-                guard_stat[(op, r)] = guarded
+                guarded = bool(guards and all(g for g, _c in guards))
+                printer_cond = next((c for g, c in guards if c), None)
+                handler_cond = handler_condition(src, op, r)
+                guard_stat[(op, r)] = {
+                    "guarded": guarded,
+                    "handler": handler_cond,
+                    "printer": printer_cond,
+                    "agrees": predicates_agree(handler_cond, printer_cond) if guarded else "n/a",
+                }
                 if guarded:
                     print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(%s)|guarded=yes"
                           "|effect=the-print-can-only-reach-the-register-glyph-when-the-slot-is-a-register"
@@ -341,6 +470,14 @@ def main():
                   % (op, ",".join(imm), ",".join(sorted(set(regs))), ",".join(leak)))
             bad.append("C3:" + op)
 
+    for op, slot, enc in PACKED:
+        roles = ROLES.get(op)
+        if roles is None or slot not in roles.get("imm", []):
+            print("P1-PACKED|op=%s|slot=%s|encoding=%s|declared-role=no"
+                  "|effect=the-registration-says-immediate-and-the-role-table-does-not" % (op, slot, enc))
+            bad.append("PACKED:" + op)
+        else:
+            print("P1-PACKED|op=%s|slot=%s|encoding=%s|declared-role=imm" % (op, slot, enc))
     print("P1-ROLES|declared=%d/%d|unmeasured=%d" % (len(declared), len(cases), len(unmeasured)))
     if unmeasured:
         print("P1-UNMEASURED|ops=%s|effect=no-role-declared-no-claim-made" % ",".join(unmeasured))
@@ -350,10 +487,17 @@ def main():
         seen = [(o, s) for (o, s) in sites if (o, s) in guard_stat]
         if not seen:
             continue
-        guarded_n = sum(1 for k in seen if guard_stat[k])
-        print("P1-GUARD|convention=%s|sites=%d|guarded=%d|unguarded=%d"
+        guarded_n = sum(1 for k in seen if guard_stat[k]["guarded"])
+        disagree = sum(1 for k in seen if guard_stat[k]["agrees"] == "no")
+        for (o, s) in seen:
+            st = guard_stat[(o, s)]
+            print("P1-GUARD-SITE|convention=%s|op=%s|slot=%s"
+                  "|predicate=\"%s\"|printer-predicate=\"%s\"|agrees=%s"
+                  % (conv, o, s, st["handler"] or "none", st["printer"] or "none",
+                     st["agrees"]))
+        print("P1-GUARD|convention=%s|sites=%d|guarded=%d|unguarded=%d|disagree=%d"
               "|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed"
-              % (conv, len(seen), guarded_n, len(seen) - guarded_n))
+              % (conv, len(seen), guarded_n, len(seen) - guarded_n, disagree))
     if short:
         print("P1-PRINTSHORT-COUNT|n=%d|effect=declared-and-read-but-unprinted-named-not-judged"
               % len(short))
