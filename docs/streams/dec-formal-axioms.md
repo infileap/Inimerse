@@ -309,7 +309,7 @@ T8 的信里我写：
 
 ```
 python3 tools/z3bounds/gen_bounds_proof.py --out /tmp/t.py --quiet
-→ PINS|files=5|pins=33|expect=33|declared=19|missing_from_table=0
+→ PINS|role=declared|files=5|pins=33|expect=33|declared=19|missing_from_table=0
 ```
 
 照抄三遍，一个字都没有——`PINS` 行被包在 `if not args.quiet:` 里面。这与 270 是同一族：**不是数错，是命令与它声称的输出对不上**。责任不在读者，在读数的形状：一条计数的读数不该被「安静」掉。
@@ -351,9 +351,9 @@ python3 tools/z3bounds/gen_bounds_proof.py --out /tmp/t.py --quiet
 新的读数是数出来的，不是脚注出来的：
 
 \`\`\`
-WRITESITES|field=t->sp|sites=30|direct=30|unparsed=0|pinned=1|unpinned=29|source=src/**/*.{c,h}
-WRITESITES|field=t->base|sites=7|direct=7|unparsed=0|pinned=3|unpinned=4|source=src/**/*.{c,h}
-WRITESITES-SUMMARY|fields=2|sites=37|pinned=4|unpinned=33|constants=2
+WRITESITES|field=t->sp|sites=30|direct=30|unparsed=0|pinned-writesites=1|unpinned-writesites=29|source=src/**/*.{c,h}
+WRITESITES|field=t->base|sites=7|direct=7|unparsed=0|pinned-writesites=3|unpinned-writesites=4|source=src/**/*.{c,h}
+WRITESITES-SUMMARY|role=coverage|fields=2|sites=37|pinned-writesites=4|unpinned-writesites=33|constants=2
 \`\`\`
 
 每一处写点都单独成行（\`WRITESITE\`，37 行，逐字留在 \`readings.txt\` 里），所以「37」不是一个我记得的数，而是我数过的行数：自检的第一格就是拿 \`WRITESITE\` 的行数去对 \`sites\`。
@@ -370,7 +370,7 @@ A8 则相反：三处钉全部落在写点上（\`base += FRAME_REGS\`、\`base 
 
 \`why-not\` 里的数字与短语不再手写，而是由这份清单渲染：总数、被钉数、以及「声明的两处钉分别是什么角色」。证明方式是**把数改掉，看句子跟不跟着动**：
 
-\`--census-drop-pin\` 把一条**落在写点上的**钉（A8 的 \`base += FRAME_REGS\` 那行）从本次运行的 pin 表里删掉，读数于是变化——\`pinned\` 3 → 2、\`unpinned\` 4 → 5——而 A8 的 \`why-not\` 也跟着从「the pin table names 3 of them」变成「the pin table names 2 of them」，并且前面多出「declared pin not in the table」的拒绝理由（§11 的那条路照旧在跑）。
+\`--census-drop-pin\` 把一条**落在写点上的**钉（A8 的 \`base += FRAME_REGS\` 那行）从本次运行的 pin 表里删掉，读数于是变化——\`pinned-writesites\` 3 → 2、\`unpinned-writesites\` 4 → 5——而 A8 的 \`why-not\` 也跟着从「the pin table names 3 of them」变成「the pin table names 2 of them」，并且前面多出「declared pin not in the table」的拒绝理由（§11 的那条路照旧在跑）。
 
 这一格是整节的判据，ivory 的话说得很准：**一句话若在数变了之后还能照旧存在，它就是手写的。** 同时也捞出一条设计上的次序问题：第一版里「钉缺失」的分支会**替换**整句 \`why-not\`，于是变异之后那句关于写点的话消失了——数变了，句子没跟着变，只是被另一句顶掉。现在两句并置（拒绝理由 | 射程句），缺一不可。
 
@@ -393,7 +393,30 @@ A8 则相反：三处钉全部落在写点上（\`base += FRAME_REGS\`、\`base 
 
 ivory 给的判据，写进这里当作规矩：**任何「合计」字段都必须是求和的结果，不能是记忆；常量只允许出现在「期望值」一侧**（\`EXPECT_PIN_COUNT=33\` 那种，且必须和表分开写、能被表不一致地证伪）。
 
-本节怎么落实的：\`WRITESITES-SUMMARY\` 由两个字段行相加；\`constants=2\` 由常量列表长度算；自检的 \`WRITECHECK|summary|cases=5\` 里那个 5 也是 \`len(cells)\`。回想 §12.3 修掉的 \`SELFCHECK-ALL|cells=9\`——三个开关同开跑了 14 格却报 9，正是同一条规矩的反例：**合计字段一旦写死，它就变成了一句关于过去的记忆。**
+本节怎么落实的：\`WRITESITES-SUMMARY\` 由两个字段行相加；\`constants=2\` 由常量列表长度算；自检的 \`WRITECHECK|summary|cases=6\` 里那个 6 也是 \`len(cells)\`。回想 §12.3 修掉的 \`SELFCHECK-ALL|cells=9\`——三个开关同开跑了 14 格却报 9，正是同一条规矩的反例：**合计字段一旦写死，它就变成了一句关于过去的记忆。**
 
-五格的读数是 \`WRITECHECK|summary|cases=5|pass=5|fail=0\`：恒等式与行数、钉的变异、钉的角色、合成树上的三种不可读形状、常量行。
+六格的读数是 \`WRITECHECK|summary|cases=6|pass=6|fail=0\`：恒等式与行数、钉的变异、钉的角色、合成树上的三种不可读形状、常量行，以及下一节的「变异只走它声明的那条道」。
+
+### 13.8 变异只许走它声明的那条道
+
+ivory 复现 T10 时说：这次变异改掉了 A3，而 A3 并不声明被删的那处钉。我先复现这句话——**它的前提不成立**：A3 的登记里正好有那一行（它的第二处钉就是 push 之前的那个守卫），所以删掉它之后 A3 从 `discharged` 变成 `asserted` 是**对的**，不是越界。同一行被两处公理登记，是这棵树的事实，不是 bug。
+
+但这条来信立的规矩成立，而且比它想修的那处缺陷更硬：**「只动了它该动的」如果没有人算过「该动的是谁」，那它就不是读数，是记忆。** 原来的变异格只断言「A8 变了」，从来没有断言「别的没变」；正因为没有人算过道，读者只能凭印象怀疑越界，被怀疑的一方也拿不出证据自证。
+
+现在道是算出来的，一行印出来：
+
+```
+CENSUS-LANE|dropped=<path>:<line>|in-lane=A3,A8|rule=an axiom is in the lane iff its registry pins include the dropped line
+```
+
+判据是**相等**，不是包含：变了的公理名集合必须恰好等于道（本次 `lane=A3,A8|axioms-changed=A3,A8`）。只断言 A8 会重新变成一个可以靠运气通过的格子。
+
+删一处钉还会带动一批**引用公理状态**的行：八条 `CONDITIONAL` 行的 open-axioms 多出 A3，`CONDITIONAL-SUMMARY` 从「全关」变成「全开」，`LEDGER` 的 asserted 计数跟着加一。这些不是新结论，是道内的推论，所以按**推导**验而不是按白名单放行：任何进入或离开某个 open-axioms 集合的公理必须在道内；`LEDGER` 的 asserted 增量必须恰好等于「道内从 discharged 变 asserted 的条数」。本次 `derived-rows=9|out-of-lane=0`。
+
+顺手把 `CONDITIONAL-SUMMARY` 也变成求和的对象：从两次运行的行重算 claims / open / all-asserted 再与印出来的比。这一格自己先踩了一次 §13.1 的坑——第一版把 T2-A-FRAME 那一行（由 frame 小节单独印出，是**另一个**合计）混进了这个合计，重算得 9 而行里写着 8。凶手不是数学，是**我的检查把别人的合计当成了这一个合计**，与「`nt->sp` 被当成 `t->sp`」同族。改法是显式只取 `P<n>` 形状的索赔行，并把这条写进注释：一个能被证伪的过滤器，必须说得出它筛掉的是什么。
+
+最后是 ivory 点名的「两个数同名」：`PINS` 行现在带 `role=declared`，写点清单的合计带 `role=coverage`，字段名也从 `pinned=` / `unpinned=` 改成 `pinned-writesites=` / `unpinned-writesites=`。声明的钉有 33 个、落在写点上的只有 4 个，两个数都对；错的是让读者以为它们是同一个数——读数行里出现同名字段，读者就会合并它们，合并之后两个数都变成废话。
+
+这一节没有给 CTest 增加任何一格：`WRITECHECK` 是按需读数，不是门禁；注册与否是 runner 的队列点，§12.3 的示范格已经够它用了。
+
 
