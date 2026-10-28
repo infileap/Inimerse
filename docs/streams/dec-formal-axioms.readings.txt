@@ -2,7 +2,11 @@
 # Run from the top of the tree; --root is resolved from the tree itself (git toplevel, then a
 # walk up for src/vm), so a reader holding only this sha re-runs it without knowing where I work:
 #     python3 tools/z3bounds/axiom_ledger.py
-# tree: 84ea6e7  (python3 3.14.4; the mutation column ran z3 5.3.2 via /mnt/c/Python314/python.exe)
+# tree: d39e180  (python3 3.14.4; the mutation column ran z3 5.3.2 via /mnt/c/Python314/python.exe)
+# Field names in the census changed at this tree: pinned=/unpinned= became
+# pinned-writesites=/unpinned-writesites=, and WRITESITES-SUMMARY gained role=coverage, because
+# the declared-pin count (33) and the write-site pinned count (4) were being read as one number
+# under one name.  Every count is the same count it was; only the label says which one it is.
 # two-tree reading, and it is also the proof of the T9 fix: on 2891d55 (the T8 tree, an ancestor)
 # this very command DIES with a traceback, because there --root defaulted to tools/ -- so from
 # that tree alone nobody could re-run it without a path argument.  Given --root <top of that tree>
@@ -12,6 +16,8 @@
 # 5 < 5).  The WRITESITES block below does not exist on that tree at all -- the census arrived
 # later -- so that comparison covers only the axiom families, and says so rather than pretending
 # the two outputs are the same file.
+# The drop-pin mutation output is deliberately NOT in this file: it is a second command, and this
+# file is one command one output.  Its reading is printed by --self-check-writesites.
 AXIOMS|sites=18|extracted=9|unparsed=9
 unparsed|gen_bounds_proof.py:171|        a = self.add()
 unparsed|gen_bounds_proof.py:174|                return ("cmp", op, a, self.add())
@@ -49,8 +55,8 @@ CONDITIONAL|claim=P6|variant=candidate_guard|axioms=A1,A2,A3,A4,A5|discharge=clo
 CONDITIONAL|claim=P7|variant=asis|axioms=A1,A2,A3,A4,A5|discharge=closed
 CONDITIONAL-SUMMARY|claims=8|open=0|all-asserted=8
 LEDGER|axioms=8|discharged=3|asserted=0|vacuous=5|mutation=measured|sites=18|extracted=9|unparsed=9
-WRITESITES-PINRULE|pinned=yes iff (path,line) is in the pin table and pin_ok(want,line) holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss
-WRITESITES|field=t->sp|sites=30|direct=30|unparsed=0|pinned=1|unpinned=29|source=src/**/*.{c,h}
+WRITESITES-PINRULE|pinned-writesites=yes iff (path,line) is in the pin table and pin_ok(want,line) holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss
+WRITESITES|field=t->sp|sites=30|direct=30|unparsed=0|pinned-writesites=1|unpinned-writesites=29|source=src/**/*.{c,h}
 WRITESITE|field=t->sp|at=src/vm/vm.c:2576|kind=direct|pinned=no|why=no pin entry names this line
 WRITESITE|field=t->sp|at=src/vm/vm.c:3084|kind=direct|pinned=no|why=no pin entry names this line
 WRITESITE|field=t->sp|at=src/vm/vm.c:3628|kind=direct|pinned=no|why=no pin entry names this line
@@ -84,7 +90,7 @@ WRITESITE|field=t->sp|at=src/vm/vm.c:4991|kind=direct|pinned=no|why=no pin entry
 WRITESKIP|field=t->sp|at=src/runtime/runtime_posix.c:711|kind=comment|raw=*     if (t->sp >= 0) { value_move(&R[ins.r1], &t->stack[t->sp]); t->sp--; }
 WRITESKIP|field=t->sp|at=src/runtime/runtime_posix.c:713|kind=comment|raw=* and with t->sp == -1 that does not run either -- so R[ins.r1] KEEPS ITS OLD
 WRITESITES-ALIAS|field=t->sp|others=f->sp:1,g_cur_thread->sp:10,nt->sp:5,nt2->sp:1,vm->sp:1|note=another receiver writes the same field; the claim is written against t only, so these are outside its scope by name, not by measurement
-WRITESITES|field=t->base|sites=7|direct=7|unparsed=0|pinned=3|unpinned=4|source=src/**/*.{c,h}
+WRITESITES|field=t->base|sites=7|direct=7|unparsed=0|pinned-writesites=3|unpinned-writesites=4|source=src/**/*.{c,h}
 WRITESITE|field=t->base|at=src/vm/vm.c:2577|kind=direct|pinned=no|why=no pin entry names this line
 WRITESITE|field=t->base|at=src/vm/vm.c:2683|kind=direct|pinned=no|why=no pin entry names this line
 WRITESITE|field=t->base|at=src/vm/vm.c:3085|kind=direct|pinned=yes|why=pin entry is verbatim-equal on this line
@@ -96,7 +102,7 @@ WRITESKIP|field=t->base|at=src/vm/vm.c:2715|kind=comment|raw=Returns 1 if a func
 WRITESITES-ALIAS|field=t->base|others=f->base:1|note=another receiver writes the same field; the claim is written against t only, so these are outside its scope by name, not by measurement
 WRITESITES|field=R|sites=0|note=spec constant
 WRITESITES|field=F|sites=0|note=spec constant
-WRITESITES-SUMMARY|fields=2|sites=37|pinned=4|unpinned=33|constants=2
+WRITESITES-SUMMARY|role=coverage|fields=2|sites=37|pinned-writesites=4|unpinned-writesites=33|constants=2
 AXIOM|name=A-FRAME|status=discharged|scope=exhaustive|kind=measured|decl=src/vm/vm.c:2690|writes=2|text=frame_sp slots stay inside the stack range
 MUTATE|axiom=A-FRAME|rename-token|verdict-changed=yes|from=element_writes=2|to=element_writes=0|instrument=extract_stack_effects
 CONDITIONAL|claim=T2-A-FRAME|variant=exhaustion|axioms=A-FRAME,A4|discharge=open|open-axioms=A4
