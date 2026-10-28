@@ -518,17 +518,18 @@ READINGSCHECK|summary|cases=6|pass=6|fail=0
 
 两个解释器都真的启动了（一个 3.14.7，一个 3.14.4，z3 都是 5.3.2），各自完整跑一遍台账，93 行逐行比，0 行不同。这才叫「两侧一样」。
 
-### 15.3 四个格子，三个是反例
+### 15.3 七个格子，六个是反例
 
     SIDECHECK|case=one-side-not-installed|got=rc=2 named=True no-same=True|verdict=PASS
     SIDECHECK|case=side-without-z3|got=rc=2 named=True no-same=True|verdict=PASS
     SIDECHECK|case=one-side-differs|got=rc=1 first-diff-line=13 same=no=True|verdict=PASS
     SIDECHECK|case=both-sides-identical|got=rc=0 same-yes=True|verdict=PASS
-    SIDECHECK|summary|cases=4|pass=4|fail=0
+    SIDECHECK|case=degenerate-defaults|got=rc=2 named=True no-same=True|verdict=PASS
+    SIDECHECK|case=defaults-are-not-degenerate|got=rc=0 printed=True refused=False forbidden=False|verdict=PASS
+    SIDECHECK|case=no-local-z3-falls-back-loudly|got=rc=0 said=yes measured=yes|verdict=PASS
+    SIDECHECK|summary|cases=7|pass=7|fail=0
 
-第二格不靠伪造路径：它写一个 `sh` 垫片，内容是 `exec <真解释器> -S`。`-S` 跳过 site-packages，于是「解释器真的存在、但 import z3 真的失败」——这是一种**真实的**机器，不是假装的一种。
-
-第一格必须印 `not measured: only one side is installed` 且**不许**出现 `same=yes`：一侧不在时，被比较的不是两侧，而是一侧与一个空字符串。
+译成中文的规格：缺一侧不许算相同；有解释器但没有 z3 不许算相同；有真差别必须点名行号并 rc=1；同一个解释器两遍才允许 same=yes；**默认值解析成同一个解释器必须拒绝**；默认值要么真的是两个东西、要么拒绝；本机没有 z3 时默认回落必须出声。
 
 ### 15.4 会说话的负控
 
@@ -551,3 +552,27 @@ READINGSCHECK|summary|cases=6|pass=6|fail=0
 ### 15.7 这一节不证明什么
 
 `same=yes` 说的是**这一台机器、这个提交**上两边印出的文本相同。它不证明另两台机器也相同；它也不证明两个解释器的 z3 版本不同时会相同——那种差异会落在变异列上，而那是**机器的事实**，不是树的事实。所以 `--side-equivalence` 只回答一个问题：换一个解释器跑同一棵树，读数会不会变。本机的回答是不会。
+
+### 15.8 默认值自己也要是一条读数
+
+上一轮把「两侧一样」变成命令之后，还剩一个默认值没被问过：`--side-left` / `--side-right` 的缺省是**谁来比较**。缺省若解析成同一个解释器，这个命令就会永久地印 `same=yes`——它比较的是一次运行与它自己，而输出与一次真比较一模一样。所以：
+
+1. 只要有一侧来自默认值，就先印 `SIDES-DEFAULT|left=…|right=…|why-distinct=yes|no|from=both defaults|one default`，并且 `why-distinct=no` 时**拒绝**（`SIDE-UNMEASURED`，rc=2），而不是照旧比较。
+2. 命令随之变成「两侧都给定」或「都不给定」：前者是显式比较（允许同侧，那是 `both-sides-identical` 这一格），后者必须真是两台解释器。
+
+同一轮里 `--python` 的缺省也改了：它原本是 `os.environ.get("PY_WIN", DEFAULT_PY_WIN)`——本机 WSL 侧已经装了 z3 5.3.2，`PY_WIN` 却没设，于是台账**开箱**就走 Windows exe，本机的 z3 列从来没被当作测量列；而且任何一份读数文件换台机器开箱即红（「这份读数是用 X 生产的」）。现在缺省由 `default_body_python()` 决定（`PY_WIN` → 本机 `python3` 且能 `import z3` → 宿主 exe），并且把选择**印出来**：
+
+    PY-SELECT|python=/usr/bin/python3|why=PY_WIN is unset and the local python3 imports z3
+
+它走 **stderr**：这是**机器的事实**，而读数文件（stdout）是**树的事实**，要逐行比较。把机器的事实混进被比较的正文，两台机器就永远不可能相同。
+
+### 15.9 我自己引入的那个缺陷（这一轮最值得写的）
+
+把 `--side-left` 的缺省改成 `None` 之后，`side_equivalence()` 里那两行仍然写着 `side_output(args, args.side_left)`——于是两侧都拿 `None` 去跑，`resolve_python(None)` 解析不出解释器，整列变异**静默降级**成 `unmeasured`。两侧都是 unmeasured，输出逐字相同，`same=yes|differing=0` 堂堂正正地印了出来。
+
+唯一露出来的是**行数**：`lines=94` 而不是 93。那一行多出来的不是数据，是 `LEDGER-UNMEASURED` 的通报——降级自己留下了痕迹，而结论没有变。所以 `lines=` 这个字段在这一轮里不是装饰：它是唯一没有被降级污染的量，也是我发现自己把「两边都没测」写成「两边一致」的唯一线索。
+
+两条教训：
+
+- `same=yes` 只在**两侧都 measured** 时才有意义。判断「测了没有」不能靠读结论，要靠一个与结论无关的量（这里是行数，也可以是 `rc-left`/`rc-right` 与 `mutation=` 的组合）。
+- 改一个**参数缺省**时，要找的不是「哪里读了这个参数」，而是「哪里把参数原样传了下去」——`args.side_left` 在改名后仍然是个合法值（`None`），语法、类型、任何单侧运行都不会报错。现在两侧改用解析后的局部量，`None` 不可能再流进去。
