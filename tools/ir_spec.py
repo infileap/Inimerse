@@ -120,7 +120,7 @@ SHAPE = {
     "OP_CALL_VALUE": "r2 = dotted-call of r1 (argc=r3)",
     "OP_MAKE_FUNC": "r1 = closure(fn idx r2, captures from the stack)",
     "OP_LOAD_CAPTURE": "r1 = captured[r2]",
-    "OP_RETURN": "return r1",
+    "OP_RETURN": "return the value in r1 when it names a live slot, else nil",
     "OP_IS_NIL": "r1 = (r2 == nil)",
     "OP_PUSH_REG": "push R[r1]",
     "OP_SAY": "say r1",
