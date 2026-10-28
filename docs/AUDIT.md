@@ -24250,3 +24250,76 @@ ADDRESSES-OMITTED|<n>|why=headroom is 0
 - 本节四格都是临时追加再 `git checkout --` 复原测的，没有留下实验行；
 - `ADDRESSES-OMITTED` 是约定，**没有工具读它**（四元组已记）；把散文地址变成可校验对象（pin 表／按标题身份重算）是另一件工程，本节只给读数；
 - 「带主语就没有上限」只在**这一版量具**上成立；若记录也有了上界，本节给出的行可以直接复跑。
+
+
+## §1.397 增补四百二十九：读数的分子不在它写的那份材料里
+
+父树 `d6db9ca`（`docs/AUDIT.md` 24252 行、513 节、pin 1331）。本节的主证据是**同一棵树、`docs/` 一个字节没动**，只换了一个 target 文件的版本，而「无锚地址」的计数挪了两格。
+
+### 甲 ★ 一个靶文件的注释，改写另一份材料的读数
+
+同一棵树 `d6db9ca`，工作区里只把 `tools/gate.sh` 换成 `4765db1` 那版（旧版缺本节要引的锁与日志改动），然后两次读数：
+
+| 工作区里的 `tools/gate.sh` | `unanchored` | `held` | 分解 |
+|---|---|---|---|
+| `4765db1` 那版 | **571**（delta +9） | 604 | own 60／borrowed 71／picked up 473 |
+| `d6db9ca` 那版 | **573**（delta +11） | 602 | own 60／borrowed 73／picked up 469 |
+
+两次的 `explicit` 都是 185、`targets=2`、`swept=107 files`，`docs/` 一个字都没改。换回新版后 `worktree=clean`，读数回到 573／602。对方沿 first-parent 量的序列与此一致：`a765517`、`430f23f`、`6fe87f7`、`e59a9f0`、`4765db1` 全是 `unanchored 571 (base 562)`，到 `c3ef389`（只改 `tools/gate.sh`，`62 2`）才变 `573`；我复核了其中三点（`4765db1`／`c3ef389`／`d6db9ca`），逐字相同。
+
+机制：判「这条地址有没有锚」时，语料里**包含被引用的 target 文件本身**——引用 `tools/gate.sh` 某行的那些地址，它的「锚」就写在 `tools/gate.sh` 里。⇒ **改一个 target 文件的注释会移动「无锚地址」的计数，而 `docs/` 一个字节不用动。** 读数行的主语写着 `docs`（`swept=107 file(s) under docs/**/*.md`），可它的分子由别处决定。
+
+### 乙 边界：「在不在账上」由索引决定，不由文件存在决定
+
+扫描集是 `git tracked_set`（`tools/check_obs_markers.py:270` 与 `:377` 两处同源，树 `d6db9ca`）[obs: d6db9ca]。实测两格，同一个文件、一个字没改：
+
+| 状态 | docs 里的 markdown 文件数 | pointers | rc |
+|---|---|---|---|
+| 未跟踪（`docs/probe-untracked-397.md`，内含一条裸地址） | **107** | 2457（不动） | 0 |
+| `git add -N` 之后 | **108** | **2458** | **1** |
+
+⇒ 新页里写坏地址这件事，今天不在这道闸里；要让它进账，得先 `git add -N`。写作者若「先写后加」，中间那段时间这道闸是看不见这页的。
+
+### 丙 ★ 两个限额、两本账：余量取最小，而不是取你想引的那一本
+
+父树 `d6db9ca` 上同时有两句预算：
+
+```
+check_obs_markers: pointer delta +223 (ceiling 223)          ⇒ 指针余量 0
+check_line_refs:   unanchored delta +11 (ceiling +12)         ⇒ 无锚余量 1
+```
+
+往 `docs/AUDIT.md` 追加**一条**裸地址（引用靶文件的一行，无树标记），同一次改动让两本账各读各的：
+
+```
+check_obs_markers  rc=1   pointers 2458   delta +224  RED pointers grew by 224 against base e3e97c71e (2234 -> 2458); ceiling is 223 -- a new citation must name its tree
+check_line_refs    rc=1   explicit 186    explicit delta +13 (expect +12)   unanchored 574   unanchored delta +12 (ceiling +12)
+```
+
+三件事要分开说：① 指针那本账**余量 0**，所以第一条裸地址就已经红；② `unanchored` 恰好还剩一格（`+12` 仍在 `ceiling +12` 内，因为闸是 `delta > ceiling`）——**只读这一本账会得出「还能写一条」的错误结论**；③ 真正先红的是**第三本账**：`explicit delta +13 (expect +12)` 是**等式**不是上界，多一条靶文件地址就破。⇒ 「还能写几条」这句话，必须点名是哪一本账；不点名时，取余量最小的那本。
+
+### 丁 `ADDRESSES-OMITTED` 的裁定：约定，未实现，无读方
+
+`grep -rn 'ADDRESSES-OMITTED' tools/ | wc -l` = **0**（本树 `d6db9ca`）[obs: d6db9ca]。今天它是一个没人读的约定，**不进验收格**。对方给的三条硬要求，等哪天要把它做成格时逐条兑现：①数字由工具当场算，不许手写（手写的数迟早变成第二个写死的常量）；②行内带 `tree=`；③必须有一条负控（多写一个被挡下的地址 ⇒ 这个数必须跟着变）。三条成立之前，写法只有一种：**约定，未实现、无读方**。
+
+### 戊 判据
+
+1. **读数的分子由谁决定，要写下来。** 主语是 `docs`、分子由 target 文件决定时，只写主语等于把读者引到错的地方。
+2. **同一份输出里出现两个限额时，余量取最小**；「还能再写几条」必须点名哪一本账，否则答案会随引用哪一行而变。
+3. **「在不在账上」由索引决定**：未跟踪的页不进账，`git add -N` 才进。写作者与检查者的中间态要显式说出来，别让它变成「检查通过」。
+4. **约定不是判据。** 没有读方的行只能写成「约定，未实现」，一旦写成验收格，它就假装自己有判据的力量。
+5. **一个 target 文件的注释能移动另一段材料的读数**——这是「读数的主语不是阅读对象」的最强形态；它同时说明「`docs/` 没改」不能用来证明「读数没变」。
+
+### 己 端点
+
+- 父树 `d6db9ca`（`docs/AUDIT.md` 24252 行、513 节、pin 1331）；本节 24252 → 24325 行（+73）、513 → 514 节；
+- 量具：`python3 tools/check_obs_markers.py`（`records 227`／`pointers 2457`／`delta +223`／ceiling 223；本节落盘后 `records 228`、`pointers 2457` 未动）、`python3 tools/check_line_refs.py`（`pins -- explicit delta +12 (expect +12), unanchored delta +11 (ceiling +12)`；`held 602: own 60, borrowed 73, picked up 469`）；
+- 本节未改 `tools/` 下任何文件；pin 按单人写规则归合并者。
+
+### 庚 边界
+
+- 甲栏两次读数是**换文件测的**：`git checkout 4765db1 -- tools/gate.sh` 后测、再 `git checkout d6db9ca -- tools/gate.sh` 复原，最终 `worktree=clean`；
+- 乙栏的探针页已删（`git rm --cached` ＋ 删文件），复原后 `pointers 2457`；
+- 丙栏那一行实验地址已用 `git checkout -- docs/AUDIT.md` 复原；
+- `ADDRESSES-OMITTED` 仍是约定（无读方），本节只用一处读数证明它在工具里不存在；
+- 甲栏结论只覆盖「被引用的 target 文件参与锚判定」这一族；若哪天检查器的语料改成只扫 `docs/`，这格要重跑。
