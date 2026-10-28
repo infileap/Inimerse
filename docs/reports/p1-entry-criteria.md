@@ -20,7 +20,7 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 | `t%d` / `f%d` / `g%d` | 带类型的索引（线程 / 函数 / 全局） | `THREAD_JOIN t%d` |
 | 裸 `%d`（无字面前缀） | 立即数 / 表下标 | `RECORD g%d, sidx=%d` |
 
-**一个立即数被写成 `r%d`，它在理解上、也在机器上，就已经是「寄存器 r2」了**——这正是判据 ③ 要挡的事，也是今天树上唯一还红的地方。
+**一个立即数被写成 `r%d`，它在理解上、也在机器上，就已经是「寄存器 r2」了**——这正是判据 ③ 要挡的事，也是今天树上两处真红之一（另一处是 `THREAD_START` 把目的寄存器整个藏掉，见 §3.2）。
 
 ## 2 三条判据
 
@@ -68,6 +68,13 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 | `OP_CALL_FUNC` | dst=r2 imm=r1(fidx),r3(argc) | 3198 | — | `vm.c:4062` `res = ins.r2, argc = ins.r3` |
 | `OP_CALL_BUILTIN` | dst=r1 imm=r2,r3 | 3191 | 3858 | `vm.c:5355-5358` 只用 r2 取函数名 |
 | `OP_MAKE_FUNC` | dst=r1 imm=r2,r3 | 3199 | — | `vm.c:4043` 捕获循环先读 r3 再读 r2 |
+| `OP_THREAD_START` | dst=r2 imm=r1,r3 | 3204 | 4459-4546 | `vm.c:4460` `int tidx = ins.r1, res = ins.r2, argc = ins.r3;`；`vm.c:4500,4508,4544` `value_set(&R[res], …)`；发出处 `compiler.c:1992`、`compiler.c:2095` |
+| `OP_THREAD_CTRL` | imm=r1,r2 | 3205 | 4547-4611 | `vm.c:4548` `int tidx = ins.r1, op = ins.r2;` |
+| `OP_THREAD_GOTO` | imm=r1,r2 | 3228 | 4612-4645 | `vm.c:4613` `int tidx = ins.r1, off = ins.r2;` |
+| `OP_SEND` | imm=r1 src=r2 | 3210 | 4723-4760 | `vm.c:4724` `int tidx = ins.r1;`；`vm.c:4753` `value_copy(&v, &R[ins.r2])` |
+| `OP_RECV` | dst=r1 src=r2（r2 可为 −1 哨兵） | 3211 | 4761-4792 | `vm.c:4762` `int res = ins.r1;`；`vm.c:4764` `if (ins.r2 >= 0) … &R[ins.r2]`；`vm.c:4792` `value_move(&R[res], &out)`；发出处 `compiler.c:2197`（无超时时 `timeout_reg = -1`） |
+| `OP_WAIT` | src=r1 | 3194 | 3933-4027 | `vm.c:3934` `Value *v = &R[ins.r1];`；发出处 `compiler.c:2156` |
+| `OP_LOCK` | imm=r1,r2 | 3209 | 4708-4722 | `vm.c:4709` `int midx = ins.r1;`；`vm.c:4719` `if (ins.r2 == 0) …`；发出处 `compiler.c:2170-2179` |
 
 `OP_THREAD_JOIN` 与 `OP_THREAD_WAIT` 在这一列上**看不出差别**：两者都打印 `timeout=r%d`，两者 `r2` 都真是寄存器。差别只在 handler 和发出处。这正是「打印行可读 ≠ 可判」的实例，也是下一节要记的错。
 
@@ -100,6 +107,37 @@ P1-VERDICT|red|failed=C1:OP_TRY_START,C3:OP_TRY_START
 13 条新行全部绿——这一族里打印行与 handler 逐条一致，没有新增缺陷；唯一的红仍是 `TRY_START`（ivory 已认领修复）。这条结果本身是有信息的：反汇编器在「形状统一」的 opcode 上是对的，错都出在形状不统一的地方（`CALL_FUNC` 的 dst 在 r2、`RECORD` 的 dst 在 r3、`TRY_START` 的下标在 r2）。
 
 **给交叉核对的一句话**：这一族的 `IR-SHAPE` 行若与上表不一致，先假定是我读错了族，而不是打印机错了——理由见 §5.3。
+
+### 3.2 第二批按族声明：线程 / 资源族（10 条，本批新增 7 条）
+
+**族的判据（为什么是这 10 条）**：
+
+1. 操作对象是一个**资源槽**而不是值：线程（`t%d`）、互斥量（`l%d`）、邮箱的收发；
+2. 要么操作数是「资源 + 若干立即数字段」（控制码、偏移、标志），值寄存器最多一个；
+3. 语义改变的是调度 / 通信状态，不是寄存器里的值。
+
+成员：`THREAD_START THREAD_CTRL THREAD_GOTO SEND RECV WAIT LOCK`（本批新增 7）加已声明的 `THREAD_JOIN THREAD_WAIT THREAD_STATE`。
+
+**边界上被排除的**：`STOP/HALT/YIELD/THROW/TRY_END/JUMP/RETURN` 属控制流与异常族（操作数是偏移与标志，没有资源槽）；`SAY` 属字符串/IO 族；`RECORD` 已声明，但它的操作数是全局表下标 + 元数据、dst 在 `r3`，失败模式是「表下标写错」而不是「线程槽写错」，归表/存储族。
+
+**本批读数**（`vm.c` @ `9a4db3b`）：
+
+```
+P1-C2|op=OP_THREAD_START|dst=r2|printed=none|missing=r2|effect=the-line-hides-the-register-it-writes
+P1-AMBIG|op=OP_RECV|slot=r2|kinds=register|sentinel(-1)|why=the-print-cannot-express-both-cases
+P1-ROLES|declared=37/67|unmeasured=30
+P1-VERDICT|red|failed=C2:OP_THREAD_START,C1:OP_TRY_START,C3:OP_TRY_START
+```
+
+两件新东西：
+
+**（一）本批抓到第二个真红：`THREAD_START` 把目的寄存器整个藏掉了。** handler `vm.c:4460` `int tidx = ins.r1, res = ins.r2, argc = ins.r3;`，随后 `vm.c:4500,4508,4544` 三处 `value_set(&R[res], …)` 把新线程的 id 写进 `r2`；发出处 `compiler.c:1992` `emit(..., OP_THREAD_START, tidx, alloc_reg(), 0)` 与 `compiler.c:2095` `emit(..., OP_THREAD_START, tidx, result, stmt->startStmt.argCount)`。而打印行 `THREAD_START t%d (args:%d)` 只印 `r1` 与 `r3`——**一个寄存器都不印**。这比 `RECORD` 更彻底：`RECORD` 至少印了 `r1,r2`，只是把 `r3` 漏了；`THREAD_START` 让读者完全看不出这条指令写了一个寄存器。修复是一行：格式串补 `, res=r%d` 并传 `ins->r2`。
+
+**（二）`RECV` 的 `r2` 是「寄存器或 −1 哨兵」，这是第二个词汇缺口。** `compiler.c:2196-2197` `int timeout_reg = -1; if (stmt->recvStmt.timeout) timeout_reg = compile_expr(...);` → `emit(..., OP_RECV, result, timeout_reg, 0)`；handler `vm.c:4764` `if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);`。所以 `r2` 在一种情形下是寄存器，在另一种情形下是 −1 这个哨兵值，而打印行 `RECV r%d, timeout=r%d` 在无超时时会印出 `timeout=r-1`——一个不存在的寄存器。
+
+工具对它的处置是**只命名、不判红**：`P1-AMBIG|op=OP_RECV|slot=r2|kinds=register|sentinel(-1)`，计入 `P1-AMBIG-COUNT|effect=declared-but-not-judged`。理由是判据说不清「该不该用 `r%d` 印一个可能不存在的寄存器」——那要在 §10 定：要么打印器学 `none`（一行条件），要么编码上把「无超时」与「有超时」分开。
+
+**理论上的一条后果**：§5.1 的 ③ ⊆ ① 只在「每个 slot 恰好一个角色」时成立；`RECV` 这种 `register|sentinel` 槽正是前提失效的地方——在那里 ③ 重新变得独立（可以只违反命名纪律），但也正因此不能由判据替它判，只能命名。第三个词汇缺口（`INDEX_SET` 需要 `obj=/mutate=`、`CALL_FUNC` 的 dst 不在最左）仍然随表带着。
 
 ## 4 六组实测
 
@@ -143,9 +181,9 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 角色表里每个 slot 只有一个角色，所以 `imm ∩ (dst ∪ src ∪ obj) = ∅` 恒成立，于是 `imm ∩ REG ≠ ∅ ⇒ REG ⊄ dst ∪ src ∪ obj`——**任何违反 ③ 的行必然违反 ①**。实测 E 就是构造：想造一个「只红 ③」的反例造不出来，最干净的一条也必然带 `C1`。
 
-所以三条判据在**检测**上只有两条（① 与 ②），③ 的价值是**诊断命名**：它告诉修的人该把 `r%d` 改成 `%d`，而不是去改角色表。若要保留三条，③ 的措辞应写成命名纪律（「立即数与下标不得使用寄存器字形」），而不是并列的独立条件——否则它会看起来比实际多一条防线。
+（前提是每个 slot 恰好一个角色；`RECV` 的 `register|sentinel` 槽是前提失效处，见 §3.2 末段。）所以三条判据在**检测**上只有两条（① 与 ②），③ 的价值是**诊断命名**：它告诉修的人该把 `r%d` 改成 `%d`，而不是去改角色表。若要保留三条，③ 的措辞应写成命名纪律（「立即数与下标不得使用寄存器字形」），而不是并列的独立条件——否则它会看起来比实际多一条防线。
 
-### 5.2 今天树上还剩一处真红：`TRY_START`
+### 5.2 今天树上的第一处真红：`TRY_START`
 
 ```
 vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=r%d", ins->r2); return;
@@ -153,7 +191,7 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=r%d", 
 
 `ins->r2` 是 frame 变量下标（`compiler.c:2292` 的 `varIdx`，`vm.c:4440` 存进 `f->var_idx`），不是寄存器；印成 `r2` 之后，读到这一行的人和机器都会认为它是寄存器 2。修复是一行：`var=%d`——`RECORD` 的 `sidx=%d, meta=%d` 已经是这个写法，所以它不是新风格，是把第三个打印器已经做对的事做完。B 组实测：改这一行，17 条全绿。
 
-`THREAD_WAIT` 在 `9a4db3b` **不是**红的：它的 `r2` 真是寄存器（见 §6）。
+`THREAD_WAIT` 在 `9a4db3b` **不是**红的：它的 `r2` 真是寄存器（见 §5.3）。第二处真红（`THREAD_START` 藏 dst）是第二批按族声明时抓到的，见 §3.2。
 
 ### 5.3 我自己的角色表先错过一次
 
@@ -168,7 +206,7 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=r%d", 
 
 ## 6 覆盖：17/67，没说到的 50 条不算通过
 
-每次运行都打印 `P1-ROLES|declared=30/67|unmeasured=37` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。剩下 37 条要进入 P1，需要按族逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代：第一族见 §3.1，`P1-ROLES` 从 17/67 走到 30/67。
+每次运行都打印 `P1-ROLES|declared=37/67|unmeasured=30` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。剩下 30 条要进入 P1，需要按族逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代：族 1 见 §3.1、族 2 见 §3.2，`P1-ROLES` 从 17/67 走到 30/67 再走到 37/67。
 
 ## 7 这份判据不证明什么
 

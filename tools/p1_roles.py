@@ -46,6 +46,15 @@ ROLES = {
     "OP_GE":           {"dst": ["r1"], "src": ["r2", "r3"]},
     "OP_NOT":          {"dst": ["r1"], "src": ["r2"]},
     "OP_IS_NIL":       {"dst": ["r1"], "src": ["r2"]},
+    # --- family 2: thread / resource (the operand names a thread slot, mailbox
+    #     or mutex, not a value) ---
+    "OP_THREAD_START": {"dst": ["r2"], "imm": ["r1", "r3"]},
+    "OP_THREAD_CTRL":  {"imm": ["r1", "r2"]},
+    "OP_THREAD_GOTO":  {"imm": ["r1", "r2"]},
+    "OP_SEND":         {"imm": ["r1"], "src": ["r2"]},
+    "OP_RECV":         {"dst": ["r1"], "src": ["r2"], "sentinel": ["r2"]},
+    "OP_WAIT":         {"src": ["r1"]},
+    "OP_LOCK":         {"imm": ["r1", "r2"]},
     "OP_INDEX_SET":    {"obj": ["r1"], "mutate": True, "src": ["r2", "r3"]},
     "OP_SAY":          {"src": ["r1"]},
     "OP_THREAD_STATE": {"dst": ["r1"], "imm": ["r2", "r3"]},
@@ -144,6 +153,7 @@ def main():
     cases = read_cases(src)
 
     bad = []
+    ambig = []
     declared = [op for op in cases if op in ROLES]
     unmeasured = sorted(op for op in cases if op not in ROLES)
 
@@ -167,6 +177,8 @@ def main():
         dst = roles.get("dst", [])
         ordinary = dst + roles.get("src", []) + roles.get("obj", [])
         imm = roles.get("imm", [])
+        sentinel = roles.get("sentinel", [])
+        ordinary = ordinary + sentinel
 
         print("P1-OPS|op=%s|printed-reg=%s|printed-typed=%s|printed-number=%s"
               "|roles=dst:%s,src:%s,obj:%s,imm:%s"
@@ -174,6 +186,8 @@ def main():
                  ",".join(numbers) or "-", ",".join(dst) or "-",
                  ",".join(roles.get("src", [])) or "-", ",".join(roles.get("obj", [])) or "-",
                  ",".join(imm) or "-"))
+        if sentinel:
+            print("P1-OPS-SENTINEL|op=%s|slots=%s" % (op, ",".join(sentinel)))
 
         extra = sorted(set(r for r in regs if r not in ordinary))
         missing = [r for r in dst if r not in regs]
@@ -189,6 +203,12 @@ def main():
                   "|effect=the-line-hides-the-register-it-writes"
                   % (op, ",".join(dst), ",".join(sorted(set(regs))) or "none", ",".join(missing)))
             bad.append("C2:" + op)
+        for r in sentinel:
+            if r in regs:
+                ambig.append("AMBIG:" + op)
+                print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(-1)"
+                      "|why=the-print-cannot-express-both-cases-and-does-not-have-to-judge"
+                      % (op, r))
         if leak:
             print("P1-C3|op=%s|imm=%s|printed-reg=%s|leak=%s"
                   "|effect=an-immediate-printed-as-a-register"
@@ -198,6 +218,8 @@ def main():
     print("P1-ROLES|declared=%d/%d|unmeasured=%d" % (len(declared), len(cases), len(unmeasured)))
     if unmeasured:
         print("P1-UNMEASURED|ops=%s|effect=no-role-declared-no-claim-made" % ",".join(unmeasured))
+    if ambig:
+        print("P1-AMBIG-COUNT|n=%d|effect=declared-but-not-judged" % len(ambig))
     if bad:
         print("P1-VERDICT|red|failed=%s" % ",".join(bad))
         return 1
