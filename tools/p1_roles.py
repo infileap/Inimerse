@@ -316,7 +316,7 @@ def main():
     if unmeasured:
         print("P1-UNMEASURED|ops=%s|effect=no-role-declared-no-claim-made" % ",".join(unmeasured))
     if ambig:
-        print("P1-AMBIG-COUNT|n=%d|effect=declared-but-not-judged" % len(ambig))
+        print("P1-AMBIG-COUNT|n=%d|effect=declared-outside-what-the-three-criteria-can-see-read-guarded-for-the-printer" % len(ambig))
     if short:
         print("P1-PRINTSHORT-COUNT|n=%d|effect=declared-and-read-but-unprinted-named-not-judged"
               % len(short))

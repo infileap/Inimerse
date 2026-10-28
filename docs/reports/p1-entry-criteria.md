@@ -151,7 +151,7 @@ P1-OPS|op=OP_RECV|printed-reg=r1,r2|printed-typed=-|printed-number=-|roles=dst:r
 P1-BRANCH|op=OP_RECV|calls=2|effect=the-register-set-is-the-union-of-the-branches
 P1-AMBIG|op=OP_RECV|slot=r2|kinds=register|sentinel(-1)|guarded=yes|effect=the-print-can-only-reach-the-register-glyph-when-the-slot-is-a-register
 P1-AMBIG|op=OP_THREAD_JOIN|slot=r2|kinds=register|sentinel(-1)|guarded=no|effect=the-sentinel-can-be-rendered-with-the-register-glyph
-P1-AMBIG-COUNT|n=2|effect=declared-but-not-judged
+P1-AMBIG-COUNT|n=2|effect=declared-outside-what-the-three-criteria-can-see-read-guarded-for-the-printer
 P1-ROLES|declared=39/67|unmeasured=28
 P1-VERDICT|green|declared=39|unmeasured=28|note=an-unmeasured-op-is-not-a-passing-op
 ```
@@ -195,6 +195,8 @@ vm.c:5384              else snprintf(out, outsz, "RECV r%d, timeout=r%d", ins->r
 **（三）一条约定在两个 opcode 上落地，就有一半修不到的风险。** ivory 的 `9dd3ade` 顺手修了 `RECV`，而 `THREAD_JOIN` 是同一条约定（负数表示「不等待」）的第二个落点，`vm.c:5378` 今天还是无条件的。这不是我发现的第三条缺陷，而是「修一处」与「修一类」的差别：**一次修复如果只覆盖了它读到的那个落点，它与没修的区别只在那一个落点上。** 判据能做的是把剩下的落点一直印在读数里（`guarded=no`），做不到的是替人去数「还有几个落点」——那要么靠读完表，要么靠枚举编码约定。
 
 **（四）理论上的一条后果**：§5.1 的 ③ ⊆ ① 只在「每个 slot 恰好一个角色」时成立。这两个哨兵槽是前提失效处，但它们不是词汇缺口，是**编码与字形之间缺一层换算**：字形 `r%d` 只能表达「那里是个寄存器」，而编码用负数表达「那里没有寄存器」。判据能给的是命名，裁定在 §10。
+
+**ivory 的裁定（`m05023`）**：这算**编码层缺陷，不算 ③ 的违规**——③ 说的是「立即数别印成寄存器」，而这里 `r2` 在一种情形下**确实是寄存器**，判据分辨不出两种情形，拿 ③ 去红它等于让判据替编码层做决定；但保持原样也不行，`timeout=r-1` 是一个不存在的寄存器，所以**打印器要学「这一个 slot 有两种形态」**（`ins->r2 < 0 ? "timeout=none" : "timeout=r%d"`），而编码若改（分成两个 opcode 或两个字段）是 P3 之后的事。因此 `P1-AMBIG` 保持不判红，但读法改了：不是「声明了但不判」，而是**声明了、三条判据看不见、打印器已按两种形态分别命名**。裁定里那句话（我已照抄进 §10）：**③ 在这类槽上重新独立，但正因此不能由判据替它判。**
 
 ### 3.3 第三批按族声明：资源族（2 条，本批新增 2 条）
 
@@ -330,7 +332,7 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 `RECORD` 藏 dst（C2）、`THREAD_WAIT` 印 `r3`（`compiler.c:2130` 传的就是 0，C1）、`TRY_START` 印 `r1` 并把 frame 变量下标印成寄存器（C1+C3）。C 与 D 证明 ① 与 ② 各有独立的最小反例；E 见 §5.1。
 
-### 4.1 停下来报的三条：文档与 handler 对同一件事给了两个定义
+### 4.1 停下来报的四条：文档与 handler 对同一件事给了两个定义，或两条边界对同一形状给了两个名字
 
 按 ivory m04594 §4 的新规则：**两个定义都在、且都能自洽**时，停下来报，不自己改族（THREAD_WAIT 那次是「一边缺一个事实」，不是这一类）。这一批读 handler 时撞到三处，都是这个形状。我按 handler 建表——判据的职责是查「打印行与代码是否一致」，所以代码是对象、文档是旁证——但**不宣布文档错**，等裁定。
 
@@ -367,6 +369,16 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 | `ins.r2` | 全文件从不被读（`NEW_DICT`、`NEW_SET` 同样：`vm.c:3662`、`vm.c:4287`） |
 
 三处不一致里，这一处最危险，因为它的错法**在 P1 的方向上看着是对的**：一个照文档建的 MIR 会去读寄存器 `r2 .. r2+r3-1`，而 VM 读的是值栈——算术测试全绿，只有指针 / 数组测试才会暴露，而 P1 的等价性检验（原始字节 vs 重建字节）恰好不会区分二者。
+
+**（d）两条族边界对同一种形状给了两个名字：打包立即数。**（这一条不是文档与 handler 冲突，是**族边界**冲突，按 ivory `m05023` §3 的要求停下来报。）
+
+| opcode | 一个槽里塞了什么 | 拆法 | 今天所在族 |
+| --- | --- | --- | --- |
+| `SET_INTERVAL` | `r2 = (string idx) \| (flags << 24)`（`vm.c:4333-4335`） | 低 24 位下标 / 高 8 位标志 | 族 5 构造与区间 |
+| `RECORD` | `r2 = sidx \| (meta << 16)`（`vm.c:4204`，`sidx` 取 `vm.c:4210`） | 低 16 位 string 下标 / 高 8 位 meta | 族 3 存储 |
+| `DECLARE` | `r2` = `float_pool` 下标，**不打包** | — | 族 2b 资源 |
+
+两条都是「一个操作数槽承载两三个字段」，而我今天把它们分在两个族里，依据是**失败的后果不同**（`RECORD` 的失败是「写错了哪个槽」，`SET_INTERVAL` 的失败是「名字或标志错位」），**不是形状不同**。这两个轴（失败的后果 / 操作数的存储形态）交叉一次，同一种形状就会落在两个族里——**这正是我自己在 §5.6 里说的「族切错会让判据看不见那一类」。** 我不自己切，等 §10 裁：若按 ivory 的提法再切一刀「打包立即数族」，族 5 与族 3 都要重切；在那之前这两行都按「一个立即数槽」声明（`imm=r2`），工具不拆包，也不该在判据里拆——判据只知道 `r2` 是不是立即数，不知道立即数里面还有几个字段。
 
 `NEW_DICT` 的注释 `bytecode.h:40` 反过来写对了（`r2=0, r3=pair count (2*r3 values from stack)`），`ir_spec.py:100` 也写对了。所以这不是「注释全错」，是**注释只错了一条**——比全错更难发现，因为读者会从对的那两条推出剩下那一条也对。
 
