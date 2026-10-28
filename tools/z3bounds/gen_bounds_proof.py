@@ -971,7 +971,10 @@ def self_check_flag_modes(root):
         r = subprocess.run([sys.executable, gen, "--root", root, "--out", out, "--quiet"],
                            capture_output=True, text=True)
         text = (r.stdout or "") + (r.stderr or "")
-        has_pins = "PINS|files=5|pins=33" in text
+        # Judge the FIELDS, not the prefix: this cell is about whether a measurement survived
+        # --quiet, and pinning the exact opening of the line would turn any future field added to
+        # the front of PINS into a false red here (it did, when role=declared was added).
+        has_pins = bool(re.search(r"^PINS\|.*\bfiles=5\|pins=33\|", text, re.M))
         cases.append(("quiet-keeps-pins", "PINS still printed",
                       "PINS printed" if has_pins else "PINS swallowed",
                       has_pins and r.returncode == 0))
