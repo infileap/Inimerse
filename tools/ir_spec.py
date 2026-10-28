@@ -101,11 +101,11 @@ SHAPE = {
     "OP_NEW_SET": "r1 = merge(stack[sp-1 .. sp-r3])",
     "OP_SET_INTERVAL": "r1 = interval(string_pool[r2 & 0xffffff], lo/hi from the stack)",
     "OP_SET_ADD": "r1 = insert(r1, r2)  [r1 is the set and is mutated]",
-    "OP_IN": "r1 = (r2 in r3)",
+    "OP_IN": "R[r1] = (R[r2] in R[r3])",
     "OP_MIN": "r1 = min(r2)",
     "OP_MAX": "r1 = max(r2)",
-    "OP_INDEX_GET": "r1 = r2[r3]",
-    "OP_INDEX_SET": "r1[r2] = r3",
+    "OP_INDEX_GET": "R[r1] = R[r2][R[r3]]",
+    "OP_INDEX_SET": "R[r1][R[r2]] = R[r3]",
     "OP_CONCAT": "r1 = left-assoc fold(+) of R[r2 .. r2+r3-1]",
     "OP_LOAD_GLOBAL": "r1 = G[r2]",
     "OP_STORE_GLOBAL": "G[r1] = r2",
@@ -486,6 +486,16 @@ def report(ops, shape, meas, out=sys.stdout):
           f"|disasm={len(names) - len(missing_disasm)}/{len(names)}"
           f"|missing=disasm:{','.join(missing_disasm) or 'none'}"
           f"|budget=none|aot=na|wasm=na|selfhost=na", file=out)
+
+    # Slots whose role the vocabulary cannot say yet.  OP_CONCAT takes a base
+    # register plus a count and folds a range of registers; none of R[rN], a
+    # bare digit or the word "imm" describes that, so its shape can only be a
+    # sentence and the criteria can only check the endpoints it names.
+    vocab_gap = [("OP_CONCAT", "range", "fold(+) of R[r2 .. r2+r3-1]")]
+    for n, needs, today in vocab_gap:
+        print(f"IR-SHAPE-VOCAB|op={n}|needs={needs}|today={today}|enforced=no"
+              f"|why=the-role-vocabulary-has-no-word-for-a-ranged-operand-see-IR_DESIGN-P1",
+              file=out)
 
     # A slot the shape calls a register must be printed as a register.  This is
     # the other direction from IR-DISASM-REGS: that one asks whether a print
