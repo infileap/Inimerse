@@ -135,6 +135,12 @@ STAGE_NOTES=()
 # are all derived from that one array, so no two of them can drift apart.
 STAGE_WANTED=()
 FAILED=0
+# Which stages failed, in the order they ran, and where each one's log is.  Kept
+# apart from STAGE_RESULTS because the verdict line has to name its own subjects:
+# a reader who pastes "gate: FAILED" has nothing to act on, and the table that
+# would have told them is exactly what a paste throws away.
+FAILED_STAGE_NAMES=()
+FAILED_STAGE_LOGS=()
 
 # The number of registered CTest cases this gate expects.  It is *asserted*
 # below, not merely printed in the stage label: ctest exits 0 as long as no
@@ -177,18 +183,30 @@ run_stage() {
   echo "──────────────────────────────────────────────────────────────"
   echo "▶ $name"
   echo "──────────────────────────────────────────────────────────────"
-  local log; log="$(mktemp)"
+  # The stage log lives in BUILD_DIR, not in /tmp: a path named by the verdict
+  # line has to survive the run, and /tmp collides across worktrees whose stages
+  # have the same name.  A passing stage's log is deleted; a failing one is moved
+  # to a name derived from the stage, so the verdict line can point at it.
+  local log
+  log="$(mktemp "$BUILD_DIR/.gate-stage-XXXXXX.log")" || {
+    echo "gate: cannot create a stage log in $BUILD_DIR" >&2; exit 2; }
   "$@" 2>&1 | tee "$log"
   local rc="${PIPESTATUS[0]}"
+  local slug
+  slug="$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')"
   if [ "$rc" -eq 0 ]; then
     STAGE_NAMES+=("$name"); STAGE_RESULTS+=("PASS"); STAGE_NOTES+=("")
     echo "✔ $name"
+    rm -f "$log"
   else
+    local kept="$BUILD_DIR/.gate-stage-$slug.log"
+    mv -f "$log" "$kept"
     STAGE_NAMES+=("$name"); STAGE_RESULTS+=("FAIL"); STAGE_NOTES+=("exit $rc")
+    FAILED_STAGE_NAMES+=("$name"); FAILED_STAGE_LOGS+=("$kept")
     echo "✘ $name (exit $rc)"
+    echo "  log kept at $kept"
     FAILED=1
   fi
-  rm -f "$log"
   return 0
 }
 
@@ -1033,6 +1051,32 @@ if [ "$REQUIRED_FOR_SET" -eq 1 ]; then
   exit 0
 fi
 
+# `build/` is a shared writable resource, not a parameter.  Two gate.sh runs
+# share one build tree, one CTest registry, and one set of stage logs, so one
+# run's ledger can be edited by another: measured here, a second run deletes the
+# first run's kept log -- the file its verdict line names -- and a stage that
+# binds a fixed port has been red because a server on this machine already held
+# it.  A red like that says nothing about the tree it claims to measure, so
+# refuse instead of racing: the refusal names the directory, and two callers can
+# see they asked for the same one.
+GATE_LOCK="$BUILD_DIR/.gate.lock"
+mkdir -p "$BUILD_DIR" || { echo "gate: cannot create BUILD_DIR $BUILD_DIR" >&2; exit 2; }
+if ! command -v flock >/dev/null 2>&1; then
+  echo "gate: flock is not on PATH; refusing to measure $BUILD_DIR with no lock." >&2
+  echo "gate: install util-linux, or point BUILD_DIR at a directory only this run uses." >&2
+  exit 2
+fi
+exec 9>"$GATE_LOCK" || { echo "gate: cannot open $GATE_LOCK" >&2; exit 2; }
+if ! flock -n 9; then
+  echo "gate: another gate is running against $BUILD_DIR; refusing to measure a shared directory." >&2
+  exit 2
+fi
+# The stage logs are the ledger of THIS run: a path printed by a judgment line
+# has to name a file this run wrote, so the previous run's leftovers are removed
+# here rather than left to be mistaken for this run's evidence.  A run that fails
+# leaves its logs behind; the next run against this BUILD_DIR replaces them.
+rm -f "$BUILD_DIR"/.gate-stage-*.log
+
 for _spec in "${STAGE_SPECS[@]}"; do
   _sel="${_spec%%|*}"; _rest="${_spec#*|}"
   run_stage "${_rest%%|*}" "$_sel" "${_rest#*|}"
@@ -1068,6 +1112,22 @@ echo "════════════════════════�
 
 if [ "$FAILED" -ne 0 ]; then
   echo "gate: FAILED — do not merge."
+  # The verdict names its own subjects.  FAILED is a boolean and the table above
+  # is what a paste cuts off, so a run that says only "FAILED" hands the reader a
+  # question ("which stage?") that was already answered on disk.  An empty list
+  # here is the ledger disagreeing with the verdict -- refuse rather than print a
+  # sentence with a hole in it.
+  if [ "${#FAILED_STAGE_NAMES[@]}" -eq 0 ]; then
+    echo "gate: internal: FAILED is set but no stage is named; the ledger and the verdict disagree." >&2
+    exit 2
+  fi
+  _names=""
+  for _n in "${FAILED_STAGE_NAMES[@]}"; do _names="${_names:+$_names, }$_n"; done
+  echo "gate: failed stage(s): $_names"
+  echo "gate: each failed stage's log is kept at $BUILD_DIR/.gate-stage-<name>.log"
+  _kept=""
+  for _k in "${FAILED_STAGE_LOGS[@]}"; do _kept="${_kept:+$_kept }$_k"; done
+  echo "gate: kept: $_kept"
   exit 1
 fi
 if [ -n "$ONLY" ]; then
