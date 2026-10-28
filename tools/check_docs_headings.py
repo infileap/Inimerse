@@ -27,6 +27,13 @@ here means "re-pin" rather than "look".  A measurement whose input moves with
 other people's commits is not a measurement of this tree.  Re-pinning stays a
 deliberate act; the stale line is how a reader sees it is due.
 
+The stale line has no red bound, and never will.  A number that is both printed
+and, past some threshold, a verdict makes every reader guess which one they are
+looking at: behind=7 is not a defect, a missing section is, and that is what
+removed measures -- on its own, without asking how old the pin is.  When the
+pin is behind, a second line says so in words (HEADINGS|stale-warn|...); it
+carries a note, not an exit code.
+
 One limit, stated rather than hidden: the comparison is by count per file, so
 while the pin is behind, a deletion and an addition of equal size in the same
 file cancel out and removed reads 0.  That window exists only between a commit
@@ -131,10 +138,17 @@ def main() -> int:
     tree_now = git("rev-parse", "--short=7", "HEAD").stdout.strip() or "<no tree>"
     print(f"HEADINGS|tree={tree_now}|base={base_total}|now={now_total}|removed={removed}|added={added}")
     print(f"HEADINGS|pin|tree={pin.get('tree', '<unpinned>')}|docs={pin.get('docs', '?')}|files={len(base_counts)}")
-    # How far the pin is behind HEAD, counted in sections.  Printed always, so
-    # that a fresh pin reads behind=0 and a reader can tell "nothing new" from
-    # "nothing measured"; it never touches the exit code.  See the docstring.
-    print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|behind={added}")
+    # How far the pin is behind HEAD, counted in sections, and which comparison
+    # that count comes from.  Printed always, so a fresh pin reads behind=0 and
+    # a reader can tell "nothing new" from "nothing measured"; it never touches
+    # the exit code, and there is deliberately no threshold at which it would.
+    print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|behind={added}"
+          "|pin-format=v1|identity=per-file-count")
+    if added:
+        # Words instead of a threshold.  A reader who wants to know that the
+        # baseline is old should be told so, not handed a verdict that cannot
+        # separate "old baseline" from "missing section".
+        print(f"HEADINGS|stale-warn|behind={added}|note=this reading is old; the criterion does not depend on it")
     for rel, b, n, kind in rows:
         print(f"HEADINGS|{kind}|{rel}|base={b}|now={n}")
     if len(rows) > 40:

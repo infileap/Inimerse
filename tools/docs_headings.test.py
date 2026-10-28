@@ -42,7 +42,14 @@ HEADINGS = re.compile(
     re.M,
 )
 STALE = re.compile(
-    r"^HEADINGS\|stale\|pin-tree=([0-9a-f]{7}|<unpinned>)\|head=([0-9a-f]{7}|<no tree>)\|behind=(\d+)$",
+    r"^HEADINGS\|stale\|pin-tree=([0-9a-f]{7}|<unpinned>)\|head=([0-9a-f]{7}|<no tree>)\|behind=(\d+)"
+    r"\|pin-format=v1\|identity=per-file-count$",
+    re.M,
+)
+# The warning is a second line of words, on purpose: it is not a threshold, so
+# no reader has to guess whether a given behind= is a situation or a verdict.
+WARN = re.compile(
+    r"^HEADINGS\|stale-warn\|behind=(\d+)\|note=this reading is old; the criterion does not depend on it$",
     re.M,
 )
 
@@ -65,6 +72,12 @@ def behind_of(text: str) -> int:
     """Sections the pin has never seen, as the tool reports them; -1 when absent."""
     m = STALE.search(text)
     return int(m.group(3)) if m else -1
+
+
+def warn_behind(text: str) -> int:
+    """Behind count from the warning line, or -1 when the line is absent."""
+    m = WARN.search(text)
+    return int(m.group(1)) if m else -1
 
 
 def run(tree: Path) -> tuple[int, str, str]:
@@ -137,9 +150,15 @@ def main() -> int:
         rc, out, err = run(tree)
         got = read(out)
         stale = behind_of(out)
+        warned = warn_behind(out)
         cases.append(("stale-is-a-reading", rc == 0 and got is not None and got["removed"] == 0 and stale >= 1,
                       f"rc={rc}, removed={got['removed'] if got else 'none'}, stale behind={stale} "
                       f"(want rc=0, removed=0, behind>=1: an old baseline is not a defect)"))
+        # The warning says the same number in words and adds no verdict: it must
+        # be present exactly when the pin is behind, and it must not decide rc.
+        cases.append(("stale-warn-is-a-reading", rc == 0 and warned == stale and warned >= 1,
+                      f"rc={rc}, warning behind={warned}, stale behind={stale} "
+                      f"(want rc=0 and the warning to repeat the count, in words, without a threshold)"))
         (tree / doc).write_text(snapshot, encoding="utf-8")
 
         # The deletion cases below run against the pin as committed -- the stale
@@ -187,9 +206,11 @@ def main() -> int:
         rc, out, err = run(tree)
         fresh = read(out)
         fresh_stale = behind_of(out)
-        cases.append(("clean-tree", rc == 0 and fresh is not None and fresh["removed"] == 0 and fresh_stale == 0,
-                      f"rc={rc}, removed={fresh['removed'] if fresh else 'none'}, stale behind={fresh_stale} "
-                      f"(want rc=0, removed=0, behind=0 right after re-pin; baseline freshness is not this case's question)"))
+        cases.append(("clean-tree", rc == 0 and fresh is not None and fresh["removed"] == 0 and fresh_stale == 0
+                      and warn_behind(out) == -1,
+                      f"rc={rc}, removed={fresh['removed'] if fresh else 'none'}, stale behind={fresh_stale}, "
+                      f"warning behind={warn_behind(out)} (want rc=0, removed=0, behind=0 and no warning right after "
+                      f"re-pin; baseline freshness is not this case's question)"))
     finally:
         subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
         shutil.rmtree(holder, ignore_errors=True)
