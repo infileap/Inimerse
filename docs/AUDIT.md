@@ -25502,3 +25502,61 @@ git reflog -1                             → 010d528 HEAD@{0}   （逐字不变
 
 - 甲格只测「新增未跟踪文件」这一种工作区改动；改已跟踪文件的内容、`git add -p` 部分暂存未测。
 - 第五行「什么都没动」没有独立实验，它是甲乙两格取反的推论；我不把它写成读数，只写成这一句。
+
+## §1.418 增补四百四十九：一个常量与一个注册表
+
+上一节的两节写完、准备落盘时，门禁连红两次，两次都不是我的文档造成的。这一节把两次红写成读数：一次是**别人的常量没跟上注册表**，一次是**同一个测试在同一棵树上给了两个时间**。
+
+### 甲 三棵树，两处不动，一处红
+
+同一段检查在两棵树上逐字相同（`tools/gate.sh` 里那句 `grep -q "0 tests failed out of $EXP_CTEST"`），差别只在两个数：
+
+| 树 | `EXP_CTEST` 默认 | `CMakeLists.txt` 的 `add_test(` 计数 | ctest 实际印 | 结论 |
+|---|---|---|---|---|
+| `8cc6d1f` | **171** | **173** | `0 tests failed out of 173` | 红（我的第一次） |
+| `0caa587` | **173** | 173 | `0 tests failed out of 173` | 绿 |
+| `fbb2040` | **173** | **174** | — | 结构性红（我写下这一行时 `main` 就是这棵树） |
+
+`fbb2040` 比上一棵树只多一行 `add_test(NAME holds …)`，而 `EXP_CTEST` 停在 173。三行读数可以直接复跑：
+
+```
+git show <tree>:tools/gate.sh | grep -oE 'EXP_CTEST="\$\{EXP_CTEST:-[0-9]+' | grep -oE '[0-9]+$'
+git show <tree>:CMakeLists.txt | grep -c 'add_test('
+```
+
+### 乙 我的三次门禁，三种红
+
+| 命令 | rc | 红在哪 |
+|---|---|---|
+| `bash tools/gate.sh` | 1 | `gate: ctest did not report '0 tests failed out of 171'.` |
+| `EXP_CTEST=173 bash tools/gate.sh` | 1 | `28 - inim_regression (Timeout)` |
+| `EXP_CTEST=173 bash tools/gate.sh --jobs 2` | 0 | 16/16，`0 tests failed out of 173`，`Total Test time (real) = 108.12 sec` |
+
+第二次红的那一行是 `***Timeout 29.99 sec`，而 `CMakeLists.txt` 第 237 行给它的上限是 `TIMEOUT 30`。
+
+### 丙 同一个测试，两个时间
+
+```
+ctest -R '^inim_regression$'                     → 11.80 sec*proc，通过
+ctest -j12（门禁默认，nproc=12）                  → 29.99 sec，Timeout
+ctest -j2（门禁 --jobs 2）                        → 通过（全轮 173 项 108.12 秒）
+```
+
+同一个二进制、同一棵树、同一天。**11.8 秒与 30 秒之间只有 2.5 倍**，而门禁默认并行度就是 `nproc`（此机 12）；机器负载因子当时在 5 附近。所以「这条测试 30 秒够不够」这个问题**没有脱离并行度的答案**。
+
+### 丁 判据
+
+1. 一份断言「有 N 个测试」的常量，与产生 N 的注册表，必须在**同一笔**里改；否则合并者每合一次就欠一次账，而欠账的是**下一棵树**，不是他自己的。
+2. 合并者跑绿的那轮门禁只证明「他那棵树当时绿」，不证明下一棵树绿；两个人都跑绿、`main` 仍然红，是这套流程的常态而非异常。
+3. 超时值是一条判据，**判据要带主语**：`TIMEOUT 30` 的主语是「在什么并行度、什么负载下的这一次运行」，不是「这个测试的耗时」。
+4. 判「这次红是我的还是别人的」不要靠猜，两条命令：`git show <base>:tools/gate.sh` 里的常量，与 `git show <base>:CMakeLists.txt` 里的注册表计数。两者不等，红就与你无关。
+
+### 戊 端点
+
+本节测量树 `8cc6d1f`／`0caa587`／`fbb2040`；我自己的分支落在 `fbb2040` 之上，门禁用 `EXP_CTEST=174 --jobs 2`（常量归合并者，我不改）。
+
+### 己 边界
+
+- 未测 `inim_regression` 在 `-j2` 下的单测耗时（只测了整轮）；因此「负载使它超时」这条只有两个端点，没有中间点。
+- 未测其它 30 秒上限的测试（`verse_*_probe` 等）在同一并行度下是否也贴边。
+- 未改 `EXP_CTEST`：那是 `main` 的常量，我按约定只报不改。
