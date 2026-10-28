@@ -13,9 +13,12 @@ See docs/streams/dec-formal-axioms.md for why an axiom without a mutation test h
 same authority as a comment.
 """
 import argparse
+import contextlib
 import importlib.util
+import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,6 +48,36 @@ SITE_PATTERNS = [
 ]
 OWNER_RE = re.compile(r'\("(A\d+)"')
 REGISTRY_RE = re.compile(r'\("(A\d+)",')
+
+
+# --- reading lines: parse them, do not slice them -------------------------------------------
+# A reading line is KIND|k=v|k=v|...  Assertions go through parse_fields/keyed, never through a
+# literal prefix: a prefix test encodes field ORDER, so prepending role=declared to an otherwise
+# unchanged PINS line turned a self-check red while the reading itself was intact.  Two readings
+# that hold two different quantities also carry two role= values, and role is the FIRST field, so
+# a reader who does slice by text at least slices identity, not value.
+
+def parse_fields(line):
+    """KIND, {field: value}, [field order].  Values may contain '='; only the first one splits."""
+    parts = line.split("|")
+    fields, order = {}, []
+    for part in parts[1:]:
+        key, sep, value = part.partition("=")
+        if not sep:
+            continue
+        fields[key] = value
+        order.append(key)
+    return parts[0], fields, order
+
+
+def keyed(text, kind, **match):
+    """Every line of this kind whose named fields equal the given values, as (fields, order)."""
+    found = []
+    for line in text.splitlines():
+        k, fields, order = parse_fields(line)
+        if k == kind and all(fields.get(name) == value for name, value in match.items()):
+            found.append((fields, order))
+    return found
 
 
 def load_gen(path):
@@ -265,13 +298,18 @@ def exhaustion_why(receiver, field, cens, cover, other, declared):
 
 def emit_writesites(root, census):
     """WRITESITES / WRITESITE / unparsed-write rows: the reach of each assumption, counted."""
-    print("WRITESITES-PINRULE|pinned=yes iff (path,line) is in the pin table and pin_ok(want,line) "
-          "holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss")
+    # pinned-writesites=, not pinned=: the pin self-check also prints a counted number, and two
+    # different counts under one name is how a reader comes to think they are one.  Here the
+    # count is "how many write sites carry a pin"; there it is "how many pins the axioms declare".
+    print("WRITESITES-PINRULE|pinned-writesites=yes iff (path,line) is in the pin table and "
+          "pin_ok(want,line) holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never "
+          "a near miss")
     total = dict(sites=0, pinned=0, unpinned=0)
     for ax_id, field in CENSUS_FIELDS:
         cens = census[field]
         expr = "t->" + field
-        print("WRITESITES|field=%s|sites=%d|direct=%d|unparsed=%d|pinned=%d|unpinned=%d|source=%s"
+        print("WRITESITES|field=%s|sites=%d|direct=%d|unparsed=%d|pinned-writesites=%d|"
+              "unpinned-writesites=%d|source=%s"
               % (expr, cens["sites"], len(cens["direct"]), len(cens["unparsed"]),
                  cens["pinned"], cens["unpinned"], CENSUS_SOURCE))
         for row in cens["direct"] + cens["unparsed"]:
@@ -294,24 +332,39 @@ def emit_writesites(root, census):
         total["unpinned"] += cens["unpinned"]
     for name in CENSUS_CONSTANTS:
         print("WRITESITES|field=%s|sites=0|note=spec constant" % name)
-    print("WRITESITES-SUMMARY|fields=%d|sites=%d|pinned=%d|unpinned=%d|constants=%d"
+    print("WRITESITES-SUMMARY|role=coverage|fields=%d|sites=%d|pinned-writesites=%d|"
+          "unpinned-writesites=%d|constants=%d"
           % (len(CENSUS_FIELDS), total["sites"], total["pinned"], total["unpinned"],
              len(CENSUS_CONSTANTS)))
 
 
+def is_windows_python(py):
+    """A .exe (or an explicit drive path) needs a Windows path; a POSIX command does not.
+
+    Passing a Windows path to a POSIX interpreter is not a smaller mistake than passing a POSIX
+    path to a Windows one: both fail with a "file not found" that reads like a missing script.
+    """
+    return bool(py) and (py.lower().endswith(".exe") or re.match(r"^[A-Za-z]:[\\/]", py))
+
+
+def resolve_python(py):
+    """--python takes a command name or a path, and the flag must not care which one was given."""
+    if not py:
+        return ""
+    return py if os.path.exists(py) else (shutil.which(py) or "")
+
+
 def run_script(py, script_unix):
-    # A POSIX interpreter (the WSL one) reads the WSL path as it is.  Only a
-    # Windows interpreter needs the path translated -- and only that case
-    # crosses the WSL->Windows boundary, which is what the host firewall
-    # reports as a blocked process launch on every single variant.
-    if py.endswith(".exe") or "\\" in py:
+    # A POSIX interpreter (the WSL one) reads the WSL path as it is.  Only a Windows
+    # interpreter needs the path translated -- and only that case crosses the WSL->Windows
+    # boundary, which the host firewall reports as a blocked process launch on every variant.
+    script = script_unix
+    if is_windows_python(py):
         win = subprocess.run(["wslpath", "-w", script_unix], capture_output=True, text=True)
         if win.returncode != 0:
             return None, "wslpath failed"
-        script_arg = win.stdout.strip()
-    else:
-        script_arg = script_unix
-    res = subprocess.run([py, script_arg], capture_output=True, text=True, timeout=600)
+        script = win.stdout.strip()
+    res = subprocess.run([py, script], capture_output=True, text=True, timeout=600)
     out = {}
     for line in res.stdout.split("\n"):
         if line.startswith("RESULT|"):
@@ -321,6 +374,17 @@ def run_script(py, script_unix):
     if not out:
         return None, (res.stderr.strip().split("\n") or [""])[-1][:200]
     return out, ""
+
+
+def mutation_lane(mod, path, lineno):
+    """Which axioms a dropped pin can reach: exactly those that declare it.
+
+    The lane is computed from the registry, not from a list of names someone remembered to
+    keep in step -- and it is printed, so "the mutation only touched what it declares" is a
+    reading with a number in it rather than an assumption about how the code is shaped.
+    """
+    return sorted(ax[0] for ax in mod.AXIOMS
+                  if any(p == path and n == lineno for p, n in ax[3]))
 
 
 def emit_ledger(mod, root, gen_path, py_win, workdir):
@@ -375,7 +439,8 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
     # --- mutation column ---------------------------------------------------------------------
     base_script = os.path.join(workdir, "base.py")
     verds = {}
-    measured = bool(py_win and os.path.exists(py_win))
+    py_win = resolve_python(py_win)
+    measured = bool(py_win)
     if measured:
         subprocess.run([sys.executable, gen_path, "--root", root, "--out", base_script, "--quiet"],
                        check=True, capture_output=True, text=True)
@@ -496,7 +561,7 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
     # --- A-FRAME: carried by the extraction instrument, not by the z3 registry ---------------
     ex = os.path.join(root, "tools/z3bounds/extract_stack_effects.py")
     if not os.path.exists(ex):
-        print("AXIOM|name=A-FRAME|status=unmeasured|why-not=extractor not present")
+        print("AXIOM|name=A-FRAME|status=unmeasured|role=extraction-instrument|why-not=extractor not present")
         return 0
     res = subprocess.run([sys.executable, ex, "--root", root], capture_output=True, text=True,
                          timeout=300)
@@ -509,11 +574,11 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
         elif line.startswith("FRAME-SP-NEGCTL|"):
             negs.append(line)
     if not summary:
-        print("AXIOM|name=A-FRAME|status=unmeasured|why-not=extractor produced no FRAME-SP-SUMMARY")
+        print("AXIOM|name=A-FRAME|status=unmeasured|role=extraction-instrument|why-not=extractor produced no FRAME-SP-SUMMARY")
         return 0
     m = re.search(r"element_writes=(\d+)", summary)
     n = m.group(1) if m else "?"
-    print("AXIOM|name=A-FRAME|status=discharged|scope=exhaustive|kind=measured|decl=%s|writes=%s|text=frame_sp slots stay inside the stack range"
+    print("AXIOM|name=A-FRAME|status=discharged|role=extraction-instrument|scope=exhaustive|kind=measured|decl=%s|writes=%s|text=frame_sp slots stay inside the stack range"
           % (writes[0].split("|")[1] if writes else "?", n))
     print("MUTATE|axiom=A-FRAME|rename-token|verdict-changed=yes|from=element_writes=%s|to=element_writes=0|instrument=extract_stack_effects" % n)
     print("CONDITIONAL|claim=T2-A-FRAME|variant=exhaustion|axioms=A-FRAME,A4|discharge=open|open-axioms=A4")
@@ -526,7 +591,8 @@ def emit_ledger(mod, root, gen_path, py_win, workdir):
 
 
 def self_check_writesites(gen_path, py_win):
-    """Five cells. The mutation cell is the one that proves the why-not sentence is rendered."""
+    """Eight cells. The mutation cell proves the why-not sentence is rendered; the lane cell
+    proves the mutation only walked the axioms that declare the dropped pin."""
     me = os.path.abspath(__file__)
 
     def run(extra):
@@ -538,7 +604,7 @@ def self_check_writesites(gen_path, py_win):
         found, counts = {}, {}
         for line in text.split("\n"):
             m = re.match(r"WRITESITES\|field=(\S+)\|sites=(\d+)\|direct=(\d+)\|unparsed=(\d+)\|"
-                         r"pinned=(\d+)\|unpinned=(\d+)\|", line)
+                         r"pinned-writesites=(\d+)\|unpinned-writesites=(\d+)\|", line)
             if m:
                 found[m.group(1)] = [int(m.group(i)) for i in range(2, 7)]
             m = re.match(r"WRITESITE\|field=([^|]+)\|", line)
@@ -612,11 +678,410 @@ def self_check_writesites(gen_path, py_win):
                   "R=%s F=%s" % ("yes" if "field=R|sites=0" in out else "no",
                                  "yes" if "field=F|sites=0" in out else "no"), ok))
 
+    # --- cell: the mutation stays in its lane ------------------------------------------------
+    # The sharper question than "did A8 change" is "did anything else change".  The lane is
+    # computed from the registry: a pin can reach only the axioms that declare it.  A3 shares
+    # this very line (its second pin is the push guard), so A3 is IN the lane -- which is why
+    # this cell asserts the changed set EQUALS the lane, not that A8 alone moved.
+    #
+    # Dropping a pin also moves rows that merely MENTION an axiom's status: a CONDITIONAL row
+    # lists the axioms still open, and the LEDGER line counts them.  Those are consequences of
+    # the lane, not extra conclusions, so the cell checks them as derivations: every axiom that
+    # enters or leaves an open-axioms set must be in the lane, and the LEDGER's asserted count
+    # must move by exactly the number of lane axioms that left "discharged".
+    drop = "src/vm/vm.c:4094"
+    lane_path, _, lane_line = drop.rpartition(":")
+    lane = mutation_lane(load_gen(gen_path), lane_path, int(lane_line))
+
+    def index(text):
+        rows = dict(axiom={}, conditional={}, ledger=None, other=[])
+        for line in text.split("\n"):
+            m = re.match(r"AXIOM\|name=([^|]+)\|", line)
+            if m:
+                rows["axiom"][m.group(1)] = line
+                continue
+            if line.startswith("CONDITIONAL|"):
+                parts = dict(p.split("=", 1) for p in line.split("|")[1:] if "=" in p)
+                rows["conditional"][(parts.get("claim", "?"), parts.get("variant", "?"))] = parts
+                continue
+            if line.startswith("LEDGER|"):
+                rows["ledger"] = dict(p.split("=", 1) for p in line.split("|")[1:] if "=" in p)
+                continue
+            rows["other"].append(line)
+        return rows
+
+    def open_set(parts):
+        return set(filter(None, parts.get("open-axioms", "").split(",")))
+
+    b, a = index(out), index(out2)
+    problems = []
+    changed_axioms = sorted(k for k in b["axiom"] if b["axiom"].get(k) != a["axiom"].get(k))
+    if changed_axioms != lane:
+        problems.append("axioms-changed=%s lane=%s" % (",".join(changed_axioms), ",".join(lane)))
+
+    derived = 0
+    for key in sorted(set(b["conditional"]) | set(a["conditional"])):
+        was, now = open_set(b["conditional"].get(key, {})), open_set(a["conditional"].get(key, {}))
+        if was == now:
+            continue
+        derived += 1
+        if (was ^ now) - set(lane):
+            problems.append("conditional %s|%s gained/lost %s" % (key[0], key[1], ",".join(sorted((was ^ now) - set(lane)))))
+
+    # CONDITIONAL-SUMMARY is a total, and a total is only evidence if it is a sum.  Recompute it
+    # from the rows in both runs rather than trusting the line it prints.
+    def cond_total(rows):
+        # The summary is written by the props loop, so it counts claims of the form P<n>; the
+        # T2-A-FRAME row is printed by the frame section and is a different total.  Naming that
+        # shape is the whole reason this check can fail: a filter that quietly took "all" rows
+        # would have reported 9 while the line said 8 and nobody would know which was right.
+        conds = [c for k, c in rows["conditional"].items() if re.match(r"^P\d+$", k[0])]
+        return (len(conds),
+                sum(1 for c in conds if c.get("discharge") == "open"),
+                sum(1 for c in conds if not open_set(c)))
+
+    for tag, rows in (("before", b), ("after", a)):
+        pair = [l for l in rows["other"] if l.startswith("CONDITIONAL-SUMMARY|")]
+        if len(pair) != 1:
+            problems.append("%s: CONDITIONAL-SUMMARY not found" % tag)
+            continue
+        got = dict(x.split("=", 1) for x in pair[0].split("|")[1:] if "=" in x)
+        want = cond_total(rows)
+        if (got.get("claims"), got.get("open"), got.get("all-asserted")) != tuple(str(w) for w in want):
+            problems.append("%s: CONDITIONAL-SUMMARY says claims=%s open=%s all-asserted=%s, "
+                            "rows sum to %d/%d/%d"
+                            % (tag, got.get("claims"), got.get("open"), got.get("all-asserted"),
+                               want[0], want[1], want[2]))
+
+    lb, la = b["ledger"] or {}, a["ledger"] or {}
+    if lb.get("asserted") and la.get("asserted"):
+        moved = sum(1 for k in lane if "status=asserted" in a["axiom"][k]
+                    and "status=asserted" not in b["axiom"][k])
+        if int(la["asserted"]) - int(lb["asserted"]) != moved:
+            problems.append("ledger asserted %s->%s but %d lane axiom(s) moved"
+                            % (lb["asserted"], la["asserted"], moved))
+    else:
+        problems.append("ledger row missing")
+
+    # Census rows: exactly the dropped site, exactly one field, the summary, the two lane rows.
+    drop_rows = [l for l in a["other"] if l != "" and l not in b["other"]
+                 and not l.startswith("CENSUS-MUTATION|") and not l.startswith("CENSUS-LANE|")]
+    field_rows = sorted({l.split("|")[1] for l in drop_rows if l.startswith("WRITESITES|field=")})
+    site_rows = [l for l in drop_rows if l.startswith("WRITESITE|")]
+    rest = [l for l in drop_rows if not l.startswith(("WRITESITES|field=", "WRITESITES-SUMMARY|",
+                                                      "WRITESITE|", "CONDITIONAL-SUMMARY|"))]
+    derived += sum(1 for l in drop_rows if l.startswith("CONDITIONAL-SUMMARY|"))
+    if len(field_rows) != 1:
+        problems.append("field rows: %s" % ",".join(field_rows))
+    if not site_rows or any(("at=%s:%s|" % (lane_path, lane_line)) not in l for l in site_rows):
+        problems.append("site rows outside the dropped line")
+    if rest:
+        problems.append("unexplained row(s): " + rest[0][:60])
+    if not any(l.startswith("WRITESITES-SUMMARY|") for l in drop_rows):
+        problems.append("summary row did not move")
+
+    ok = not problems
+    cells.append(("mutation-stays-in-its-lane",
+                  "same command with and without the drop: changed axioms == the axioms that "
+                  "declare the dropped pin, and every other row moves only as a consequence",
+                  "lane=%s|axioms-changed=%s|derived-rows=%d|out-of-lane=%d"
+                  % (",".join(lane), ",".join(changed_axioms), derived, len(problems)),
+                  ok))
+    for why in problems:
+        print("WRITECHECK|case=mutation-stays-in-its-lane|detail=%s" % why)
+
+    # Two counts under one name is how a reader merges them, so the two carry two role= values and
+    # role sits FIRST: a reader who slices the line by text then slices identity, not value.  AXIOM
+    # rows are the stated exception -- their role is ONE quantity with enumerated values
+    # (z3-model / extraction-premise), not two readings sharing a name -- and the cell asserts the
+    # weaker thing that still matters there: no AXIOM row is silent about its role.
+    sums = keyed(out, "WRITESITES-SUMMARY")
+    axiom_roles = keyed(out, "AXIOM")
+    silent = [f.get("name", "?") for f, _order in axiom_roles if "role" not in f]
+    ok = (bool(sums) and sums[0][1][0] == "role" and sums[0][0].get("role") == "coverage"
+          and bool(axiom_roles) and not silent)
+    cells.append(("role-is-first-field",
+                  "the aggregate line that used to be confusable puts role= first, and no AXIOM "
+                  "row is silent about the role it plays",
+                  "summary-first=%s|summary-role=%s|axioms-without-role=%d"
+                  % (sums[0][1][0] if sums else "?",
+                     sums[0][0].get("role") if sums else "?",
+                     len(silent)),
+                  ok))
+
+    field_rows_ = keyed(out, "WRITESITES")
+    totals = keyed(out, "WRITESITES-SUMMARY")
+    bad = []
+    real = [(f, o) for f, o in field_rows_ if f.get("note") != "spec constant"]
+    for fields, _order in real:
+        if int(fields["pinned-writesites"]) + int(fields["unpinned-writesites"]) != int(fields["sites"]):
+            bad.append("%s: %s+%s!=%s" % (fields["field"], fields["pinned-writesites"],
+                                          fields["unpinned-writesites"], fields["sites"]))
+    for fields, _order in field_rows_:
+        if fields.get("note") == "spec constant" and fields.get("sites") != "0":
+            bad.append("%s: a spec constant with sites=%s" % (fields["field"], fields["sites"]))
+    if totals:
+        tf = totals[0][0]
+        if int(tf["pinned-writesites"]) + int(tf["unpinned-writesites"]) != int(tf["sites"]):
+            bad.append("summary: %s+%s!=%s" % (tf["pinned-writesites"],
+                                               tf["unpinned-writesites"], tf["sites"]))
+        if int(tf["sites"]) != sum(int(f["sites"]) for f, _o in real):
+            bad.append("summary sites %s != the sum of the field rows" % tf["sites"])
+        if int(tf["fields"]) != len(real):
+            bad.append("summary fields %s != %d field rows" % (tf["fields"], len(real)))
+    else:
+        bad.append("no WRITESITES-SUMMARY line")
+    for why in bad:
+        print("WRITECHECK|case=census-sums|detail=%s" % why)
+    cells.append(("census-sums",
+                  "on every row and on the total, pinned-writesites + unpinned-writesites == "
+                  "sites, and the total is the sum of the rows",
+                  "fields=%d|sums-ok=%d" % (len(real), 0 if bad else len(real) + (1 if totals else 0)),
+                  not bad))
+
     failed = 0
     for name, expect, got, good in cells:
         print("WRITECHECK|case=%s|expect=%s|got=%s|%s" % (name, expect, got, "PASS" if good else "FAIL"))
         failed += 0 if good else 1
     print("WRITECHECK|summary|cases=%d|pass=%d|fail=%d" % (len(cells), len(cells) - failed, failed))
+    return 2 if failed else 0
+
+
+# --- the readings file is a product, not a transcript --------------------------------------
+# A file that can be copied by hand will be copied wrong.  --record-readings writes this file
+# from a program run (header included), and --check-readings re-runs and diffs it.  Both flags
+# live HERE, on the ledger, because the file IS the ledger's stdout: putting the recorder on the
+# generator would mean two programs printing into one file and no single command to re-run.
+
+READINGS_HEADER = [
+    "# Axiom ledger -- verbatim output.  One command writes this whole file, header and all.",
+    "# Regenerate:  python3 tools/z3bounds/axiom_ledger.py --record-readings <this path>",
+    "# Check:       python3 tools/z3bounds/axiom_ledger.py --check-readings <this path>",
+    "# Run from the top of the tree: --root is resolved from the tree itself (git toplevel, then",
+    "# a walk up for src/vm), so a reader holding only the tree line re-runs it anywhere.",
+    "# The body is this program's stdout, unedited.  Prose about what the readings MEAN belongs",
+    "# in the page beside this file: a sentence in a file cannot be checked by a command.",
+]
+READINGS_TREE_PREFIX = "# tree: "
+READINGS_PY_PREFIX = "# python: "
+READINGS_HEADER_END = "# --- body begins below this line ---"
+
+
+def git(root, *argv):
+    return subprocess.run(["git", "-C", root] + list(argv), capture_output=True, text=True)
+
+
+def readings_body(args):
+    """The ledger's stdout, captured: the body a readings file is allowed to contain."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = run_ledger(args)
+    return rc, buf.getvalue()
+
+
+def readings_header(tree, py):
+    return READINGS_HEADER + [READINGS_TREE_PREFIX + tree, READINGS_PY_PREFIX + py,
+                              READINGS_HEADER_END]
+
+
+def record_readings(args, path):
+    mod = load_gen(args.gen)
+    root, problem = mod.locate_root(args.root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    head = git(root, "rev-parse", "--short=7", "HEAD")
+    if head.returncode != 0:
+        print("READINGS-REFUSED|why=there is no commit to attach these readings to",
+              file=sys.stderr)
+        return 2
+    # Tracked changes only: an editor's junk file does not make the readings wrong, but an
+    # uncommitted edit does -- the header would name a tree that does not contain what printed.
+    dirty = git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+    if dirty:
+        print("READINGS-REFUSED|why=the worktree has uncommitted changes, so the header would "
+              "name a tree that is not what printed|first-change=%s"
+              % dirty.splitlines()[0], file=sys.stderr)
+        return 2
+    tree = head.stdout.strip()
+    rc, body = readings_body(args)
+    text = "\n".join(readings_header(tree, args.python)) + "\n" + body
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print("READINGS-RECORD|path=%s|tree=%s|lines=%d|body=%d|rc=%d"
+          % (path, tree, len(text.splitlines()), len(body.splitlines()), rc))
+    return rc
+
+
+def check_readings(args, path):
+    if not os.path.exists(path):
+        print("READINGS-MISSING|path=%s|rule=an absent file is not a matching file" % path,
+              file=sys.stderr)
+        return 2
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    if READINGS_HEADER_END not in lines:
+        print("READINGS-REFUSED|why=no header end marker, so there is no header to check",
+              file=sys.stderr)
+        return 2
+    cut = lines.index(READINGS_HEADER_END)
+    tree = py = ""
+    for line in lines[:cut]:
+        if line.startswith(READINGS_TREE_PREFIX):
+            tree = line[len(READINGS_TREE_PREFIX):].strip()
+        elif line.startswith(READINGS_PY_PREFIX):
+            py = line[len(READINGS_PY_PREFIX):].strip()
+    mod = load_gen(args.gen)
+    root, problem = mod.locate_root(args.root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    head = git(root, "rev-parse", "--short=7", "HEAD").stdout.strip()
+    problems = []
+    if not tree:
+        problems.append("the header names no tree")
+    elif git(root, "rev-parse", "--verify", "--quiet", tree + "^{commit}").returncode != 0:
+        problems.append("header tree %s does not resolve in this tree" % tree)
+    elif git(root, "merge-base", "--is-ancestor", tree, "HEAD").returncode != 0:
+        problems.append("header tree %s is not an ancestor of HEAD (%s)" % (tree, head))
+    elif git(root, "diff", "--quiet", tree, "HEAD", "--", "tools/z3bounds").returncode != 0:
+        problems.append("tools/z3bounds changed between %s and HEAD (%s), so these readings "
+                        "belong to another tree" % (tree, head))
+    if py and py != args.python:
+        problems.append("these readings were produced with %s, this run uses %s"
+                        % (py, args.python))
+    if problems:
+        print("READINGS-TREE|header-tree=%s|header-python=%s|head=%s|verdict=no"
+              % (tree or "none", py or "none", head or "none"), file=sys.stderr)
+        for why in problems:
+            print("READINGS-TREE-FAIL|why=%s" % why, file=sys.stderr)
+        return 1
+    rc, body = readings_body(args)
+    want, got = lines[cut + 1:], body.splitlines()
+    for i in range(max(len(want), len(got))):
+        a = want[i] if i < len(want) else "<the file has no such line>"
+        b = got[i] if i < len(got) else "<the run printed no such line>"
+        if a != b:
+            print("READINGS-DIFF|line=%d|want=%s|got=%s|note=want is the line the file records, "
+                  "got is the line this tree prints" % (i + 1, a, b))
+            return 1
+    print("READINGS|same=yes|lines=%d|tree=%s|python=%s" % (len(got), tree, py or "none"))
+    return rc
+
+
+def self_check_readings(gen_path, py, readings_path):
+    """Six cells; four are negative controls, and every one runs the real CLI.
+
+    The readings file is produced by the program, so its checks must be too: a check that
+    agrees with a hand-edited file is not a check.  The two record cells run on a throwaway
+    worktree of HEAD, so neither of them can leave the tree they test dirty.
+    """
+    me = os.path.abspath(__file__)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(gen_path)))
+
+    def run(tail):
+        res = subprocess.run([sys.executable, me, "--gen", gen_path, "--python", py] + tail,
+                             capture_output=True, text=True, timeout=1800)
+        return res.returncode, res.stdout + res.stderr
+
+    cells = []
+    rc, out = run(["--check-readings", readings_path])
+    same = re.search(r"READINGS\|same=yes\|lines=(\d+)\|", out)
+    cells.append(("file-is-its-own-product", "the committed file re-runs to itself",
+                  "rc=%d lines=%s" % (rc, same.group(1) if same else "?"),
+                  rc == 0 and bool(same)))
+
+    tmp = tempfile.mkdtemp(prefix="readings_ctl_")
+    with open(readings_path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    cut = lines.index(READINGS_HEADER_END) if READINGS_HEADER_END in lines else -1
+
+    tampered = list(lines)
+    # Edit a NUMBER, not the shape: a check that only noticed malformed lines would pass a wrong
+    # value inside a well-formed line.  Pick the line by that property rather than by position --
+    # the last line of an output has no numbers in it, which is how this cell first passed while
+    # changing nothing at all.
+    target = -1
+    for i in range(len(tampered) - 1, cut, -1):
+        if re.search(r"=\d+", tampered[i]):
+            target = i
+            break
+    if target > cut:
+        tampered[target] = re.sub(r"=\d+", lambda m: "=%d" % (int(m.group(0)[1:]) + 1),
+                                  tampered[target], count=1)
+    path = os.path.join(tmp, "tampered.txt")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(tampered) + "\n")
+    rc, out = run(["--check-readings", path])
+    # The diff counts lines in the BODY, so a file index past the header end maps back by cut.
+    named = "READINGS-DIFF|line=%d|" % (target - cut) in out
+    cells.append(("tamper-one-line", "one edited body line is named by its line number",
+                  "rc=%d line-named=%s" % (rc, "yes" if named else "no"),
+                  rc == 1 and named and target > cut and tampered[target] != lines[target]))
+
+    broken = list(lines)
+    for i, line in enumerate(broken):
+        if line.startswith(READINGS_TREE_PREFIX):
+            broken[i] = READINGS_TREE_PREFIX + "0" * 7
+            break
+    path = os.path.join(tmp, "wrongtree.txt")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(broken) + "\n")
+    rc, out = run(["--check-readings", path])
+    cells.append(("wrong-tree-header", "a header naming a tree that is not here is refused",
+                  "rc=%d verdict=%s" % (rc, "no" if "verdict=no" in out else "?"),
+                  rc == 1 and "verdict=no" in out and "does not resolve" in out))
+
+    rc, out = run(["--check-readings", os.path.join(tmp, "not-here.txt")])
+    cells.append(("missing-file", "an absent file is not a matching file",
+                  "rc=%d named=%s" % (rc, "yes" if "READINGS-MISSING" in out else "no"),
+                  rc == 2 and "READINGS-MISSING" in out))
+
+    # A dirty TRACKED change must refuse to record (the header would name a tree that is not what
+    # printed); an untracked junk file must not count as dirty.  Both measured on a throwaway
+    # worktree of HEAD, so the cells cannot make the tree they test dirty.
+    wt = os.path.join(tmp, "wt")
+    made = git(root, "worktree", "add", "--detach", wt, "HEAD")
+    try:
+        if made.returncode != 0:
+            cells.append(("untracked-junk-is-not-dirty", "an untracked file does not block a record",
+                          "worktree-add failed: %s" % made.stderr.strip().splitlines()[:1], False))
+            cells.append(("tracked-edit-refuses-to-record", "an uncommitted edit is refused by name",
+                          "worktree-add failed", False))
+        else:
+            junk = os.path.join(wt, "editor-swap.tmp")
+            with open(junk, "w", encoding="utf-8") as fh:
+                fh.write("junk\n")
+            out_path = os.path.join(tmp, "record-untracked.txt")
+            rc, out = run(["--record-readings", out_path, "--root", wt])
+            wrote = os.path.exists(out_path)
+            cells.append(("untracked-junk-is-not-dirty",
+                          "an untracked file does not block a record",
+                          "rc=%d written=%s" % (rc, "yes" if wrote else "no"),
+                          rc == 0 and wrote and "READINGS-RECORD|" in out))
+
+            victim = os.path.join(wt, "tools", "z3bounds", "axiom_ledger.py")
+            with open(victim, "a", encoding="utf-8") as fh:
+                fh.write("\n# a tracked edit that is not committed\n")
+            out_path = os.path.join(tmp, "record-dirty.txt")
+            rc, out = run(["--record-readings", out_path, "--root", wt])
+            refused = "READINGS-REFUSED|" in out and "uncommitted changes" in out
+            cells.append(("tracked-edit-refuses-to-record",
+                          "an uncommitted edit is refused by name and nothing is written",
+                          "rc=%d refused=%s written=%s"
+                          % (rc, "yes" if refused else "no",
+                             "yes" if os.path.exists(out_path) else "no"),
+                          rc == 2 and refused and not os.path.exists(out_path)))
+    finally:
+        git(root, "worktree", "remove", "--force", wt)
+
+    failed = 0
+    for name, expect, got, good in cells:
+        print("READINGSCHECK|case=%s|expect=%s|got=%s|verdict=%s"
+              % (name, expect, got, "PASS" if good else "FAIL"))
+        failed += 0 if good else 1
+    print("READINGSCHECK|summary|cases=%d|pass=%d|fail=%d"
+          % (len(cells), len(cells) - failed, failed))
     return 2 if failed else 0
 
 
@@ -627,16 +1092,36 @@ def main():
                          "walk up for src/vm), never from the directory this file is in")
     ap.add_argument("--gen", default=DEFAULT_GEN)
     ap.add_argument("--python", default=os.environ.get("PY_WIN", DEFAULT_PY_WIN),
-                    help="Windows python with z3; only the mutation column needs it")
+                    help="python with z3 for the mutation column; recorded in the readings header")
     ap.add_argument("--census-drop-pin", default=None, metavar="PATH:LINE",
                     help="drop one pin entry from the table for this run only: the negative "
                          "control that shows the census numbers are read from the table")
+    ap.add_argument("--record-readings", default=None, metavar="PATH",
+                    help="write the readings file from this run: header, tree, and the body this "
+                         "program printed; refuses a worktree with uncommitted tracked changes")
+    ap.add_argument("--check-readings", default=None, metavar="PATH",
+                    help="re-run and diff a readings file line by line; exit 1 on the first "
+                         "difference, exit 2 when the file is absent")
     ap.add_argument("--self-check-writesites", action="store_true",
-                    help="five cells: identity, pin-drop mutation, pin roles, indirect shapes, "
-                         "constants")
+                    help="eight cells: identity, pin-drop mutation, pin roles, indirect shapes, "
+                         "constants, mutation lane, role-first fields, census sums")
+    ap.add_argument("--self-check-readings", default=None, metavar="PATH",
+                    help="six cells: the file is its own product, and five ways of being wrong")
     args = ap.parse_args()
+    if args.self_check_readings:
+        return self_check_readings(os.path.abspath(args.gen), args.python,
+                                   args.self_check_readings)
     if args.self_check_writesites:
         return self_check_writesites(os.path.abspath(args.gen), args.python)
+    if args.record_readings or args.check_readings:
+        if args.census_drop_pin:
+            print("READINGS-REFUSED|why=--census-drop-pin is a mutation, not a reading of the "
+                  "tree; a recorded reading must be what the tree prints unmodified",
+                  file=sys.stderr)
+            return 2
+        if args.record_readings:
+            return record_readings(args, args.record_readings)
+        return check_readings(args, args.check_readings)
     mod = load_gen(args.gen)
     if args.census_drop_pin:
         path, _, lineno = args.census_drop_pin.rpartition(":")
@@ -644,6 +1129,9 @@ def main():
             del mod.PINNED[path][int(lineno)]
             print("CENSUS-MUTATION|dropped=%s:%s|effect=this run's pin table loses that line; "
                   "no other table is touched" % (path, lineno))
+            print("CENSUS-LANE|dropped=%s:%s|in-lane=%s|rule=an axiom is in the lane iff its "
+                  "registry pins include the dropped line"
+                  % (path, lineno, ",".join(mutation_lane(mod, path, int(lineno))) or "none"))
         else:
             print("CENSUS-MUTATION|dropped=none|why=%s is not a pin entry in this tree"
                   % args.census_drop_pin)
@@ -654,6 +1142,17 @@ def main():
     if problem:
         print(problem, file=sys.stderr)
         return 2
+    return run_ledger(args, mod, root)
+
+
+def run_ledger(args, mod=None, root=None):
+    if mod is None:
+        mod = load_gen(args.gen)
+    if root is None:
+        root, problem = mod.locate_root(args.root)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
     workdir = tempfile.mkdtemp(prefix="axiom_ledger_")
     return emit_ledger(mod, root, os.path.abspath(args.gen), args.python, workdir)
 

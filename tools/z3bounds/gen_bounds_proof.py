@@ -971,7 +971,10 @@ def self_check_flag_modes(root):
         r = subprocess.run([sys.executable, gen, "--root", root, "--out", out, "--quiet"],
                            capture_output=True, text=True)
         text = (r.stdout or "") + (r.stderr or "")
-        has_pins = "PINS|files=5|pins=33" in text
+        # Judge the FIELDS, not the prefix: this cell is about whether a measurement survived
+        # --quiet, and pinning the exact opening of the line would turn any future field added to
+        # the front of PINS into a false red here (it did, when role=declared was added).
+        has_pins = bool(re.search(r"^PINS\|.*\bfiles=5\|pins=33\|", text, re.M))
         cases.append(("quiet-keeps-pins", "PINS still printed",
                       "PINS printed" if has_pins else "PINS swallowed",
                       has_pins and r.returncode == 0))
@@ -1209,7 +1212,10 @@ def main():
         for path, lineno, text, _ok in pins:
             print("pin ok  %s:%d  %s" % (path, lineno, text[:96]))
         print("pin ok  negative: reg_cap in executor body at %r" % (neg,))
-    print("PINS|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
+    # role= is not decoration: the census prints a counted "pinned-writesites=" and the two
+    # numbers are different questions -- entries in the table vs write sites that carry one.
+    # Naming the role here is what keeps a reader from adding them or substituting one.
+    print("PINS|role=declared|files=%d|pins=%d|expect=%d|declared=%d|missing_from_table=%d"
           % (len(PINNED), held, EXPECT_PIN_COUNT, declared_n, len(missing)))
     for path, dg in sorted(digests.items()):
         print("sha256  %s  %s" % (dg[:16], path))
