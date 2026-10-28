@@ -68,6 +68,13 @@ Usage:
                              [--verbose] [--jobs N] [--strict]
                              [--negative-control interp|aot|wasm|all [--cases N]]
     three_way_parity.test.py --self-check
+
+WHY THE NEGATIVE CONTROL IS NOT A CTEST.  It exits 0 when the harness goes red, so a
+reader who maps "non-zero == broken test" gets exactly the wrong signal, and one CTest
+that runs four controls would report four different meanings under one name.  It stays a
+flag, exercised by hand and by `--self-check`.  If it is ever registered, it needs its own
+test name (not this one) and a PASS_REGULAR_EXPRESSION on `harness-red=yes`, so that the
+control's own pass/fail is what the runner sees.
 """
 import os
 import subprocess
@@ -225,10 +232,20 @@ CASES = [
 FAMILY_OWNER = {
     'arith': 'unassigned', 'compare': 'unassigned', 'logic': 'unassigned',
     'divmod': 'unassigned', 'func': 'unassigned', 'control': 'unassigned',
-    'set': 'unassigned', 'interval': 'unassigned', 'closure': 'unassigned',
+    'set': 'honest-island', 'interval': 'unassigned', 'closure': 'unassigned',
     'thread': 'unassigned', 'declare': 'unassigned', 'record': 'unassigned',
     'exception': 'unassigned',
 }
+# honest-island claimed `set` on 2026-10-22, with the condition it has to meet: the three
+# pinned cases (set-literal, set-length, set-membership) go green only when the AOT and
+# the wasm backend both accept a set literal and `len`/`in` over it -- i.e. when
+# `expression kind 13` leaves aot_native.c's numeric-subset refusal and the wasm MVP
+# subset grows past "strings/collections need the interpreter".  Until then the pins turn
+# red before these cases can pass, so the pin is the alarm and this name is the owner.
+# `arith` and `divmod` are deliberately NOT claimed: their refused-by lists interp+aot+wasm
+# because all three refuse the SAME thing by design (int64 overflow; division by zero) --
+# that is agreement about an error, not an AOT/wasm gap, so an owner there would have
+# nothing to narrow.
 
 KNOWN_DIVERGENT = {
     'ctrl-for-range':      'aot+wasm refuse: for-in over a range is outside the numeric / wasm MVP subset',
@@ -478,10 +495,14 @@ def main():
         raise SystemExit('KNOWN_DIVERGENT names cases that do not exist: %s' % ', '.join(stale))
     if strict and KNOWN_DIVERGENT:
         print('THREE-WAY-STRICT|known=%d|result=FAIL' % len(KNOWN_DIVERGENT))
-        raise SystemExit('--strict: %d known-divergent entries remain (%s); the refusal '
-                         'surface must be empty before this passes.  Delete an entry only '
-                         'when the backend really stopped refusing.'
-                         % (len(KNOWN_DIVERGENT), ', '.join(sorted(KNOWN_DIVERGENT))))
+        first = sorted(KNOWN_DIVERGENT)[0]
+        first_family = next((f for n, f, _s in CASES if n == first), '?')
+        raise SystemExit('--strict: %d known-divergent entries remain (%s).  Start with '
+                         '%r (family %s, owner %s): %s.  Delete an entry only when the '
+                         'backend really stopped refusing.'
+                         % (len(KNOWN_DIVERGENT), ', '.join(sorted(KNOWN_DIVERGENT)),
+                            first, first_family, FAMILY_OWNER.get(first_family, 'unassigned'),
+                            KNOWN_DIVERGENT[first]))
 
     # A negative control points one (or all) of the legs at a binary that cannot run.
     # The harness must then report a disagreement and exit non-zero -- never "all three
