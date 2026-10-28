@@ -1764,9 +1764,9 @@ endif()
 # with every claim in it measured against this tree instead of remembered.  It
 # needs no built artifact and no node -- it reads src/compiler/bytecode.h and
 # src/vm/vm.c -- so it is registered outside the node block.  Today it asserts
-# that all 68 opcodes have an operand shape, that the interpreter still
-# dispatches all 68, and that the disassembler names all 68 and each prints its
-# own name; a gap may shrink but may not grow.
+# that all 67 opcodes (codes 0..67 with 29 retired) have an operand shape, that
+# the interpreter still dispatches all 67, and that the disassembler names all
+# 67 and each prints its own name; a gap may shrink but may not grow.
 add_test(NAME ir_spec_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "ir spec: ok \\([0-9]+ opcodes" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_spec.test.py)
 set_tests_properties(ir_spec_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "ir spec: ok \\([0-9]+ opcodes")
@@ -1777,3 +1777,22 @@ set_tests_properties(ir_spec_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOU
 add_test(NAME op_hot_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/op_hot.test.py)
 set_tests_properties(op_hot_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "vm;regression" PASS_REGULAR_EXPRESSION "op_hot: cases=([0-9]+) red=0")
+
+# One program, three backends (tools/three_way_parity.test.py): the interpreter,
+# the AOT backend and the wasm backend must agree on (exit status, last line of
+# stdout), and a refusal counts as an outcome.  The AOT numeric subset and the
+# wasm MVP subset refuse what the interpreter runs; those cases are a PIN in
+# KNOWN_DIVERGENT, not an excuse -- a case that stops diverging turns red and
+# asks for its entry to be deleted, so the refusal surface may only shrink.
+# Registered at the end of this file for the same reason as the two tests above:
+# an insertion in the middle moves the lines docs/ cites and turns anchored
+# references into unanchored ones.  Guarded by INIMERSE_NODE because the wasm
+# backend is the third opinion; outside the guard, set_tests_properties names a
+# test that does not exist and the whole configure step fails.
+if(INIMERSE_NODE)
+  add_test(NAME three_way_parity_regression
+           COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "three way parity: ok \\([0-9]+ cases" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/three_way_parity.test.py
+                   $<TARGET_FILE:inimerse> $<TARGET_FILE:aot-native>
+                   --node ${INIMERSE_NODE} --jobs 4)
+  set_tests_properties(three_way_parity_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "runtime;compiler;wasm;regression" PASS_REGULAR_EXPRESSION "three way parity: ok \\([0-9]+ cases")
+endif()
