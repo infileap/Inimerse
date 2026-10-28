@@ -105,14 +105,19 @@ def main() -> int:
         # refuses to pin a dirty one.
         shutil.copy2(ROOT / TOOL, tree / TOOL)
         subprocess.run(["git", "-C", str(tree), "add", "-A"], check=True)
+        # --allow-empty: once the tool is committed, the copy and HEAD agree, and
+        # a commit that stages nothing would fail with a message git writes to
+        # stdout.  The control does not need a difference, only a tree to name.
         committed = subprocess.run(
             ["git", "-C", str(tree), "-c", "user.name=citations-control",
-             "-c", "user.email=citations-control@invalid", "commit", "-q", "-m",
+             "-c", "user.email=citations-control@invalid", "commit", "-q",
+             "--allow-empty", "-m",
              "the tool under test, committed so the pin has a tree to name"],
             capture_output=True, text=True)
         if committed.returncode != 0:
+            said = (committed.stderr.strip() or committed.stdout.strip() or "no output")
             refuse("could not commit the tool under test in the throwaway copy: "
-                   + committed.stderr.strip()[:200])
+                   + said[:200])
         pin_run = run(tree, "--write-citations-pin")
         if pin_run[0] != 0:
             refuse("--write-citations-pin failed in the throwaway copy: " + pin_run[2].strip()[:200])
