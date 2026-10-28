@@ -25006,3 +25006,129 @@ HEADINGS|drift|added=0|removed=0|net=0
 - 实验在 `.worktrees/audit-1406` 里做，pin 与 `docs/STATUS.md` 都用 `git checkout --` 复原，**没有提交任何 pin 改动**（pin 归合并者写，见 §1.392 丙栏）。
 - 没测「`--write-pin` 在 `removed > 0` 时是否应该拒绝」——那是工具行为的设计问题，不是本节的读数。
 - 没测「多文件同时删」；丙格只删了一个节、只涉及一个文件。
+
+## §1.408 增补四百三十九：共享工作树里的 `HEAD` 是一个共享变量
+
+今天上午，主工作树 `/home/sakiko/inimerse` 被换掉了两次 `HEAD`：一次是我做的，一次是另一条车道做的。两次都**不是手滑**，都是为了**少写一个参数**。共同后果是同一件：别人正在跑的那次测量，结论没有主语。
+
+### 甲 两个机制
+
+**甲一：为了读一棵树的内容，用了 `checkout`。** 我想核远端那棵树的行数，写了 `git checkout -q --detach origin/main`，省的是 `git show origin/main:docs/AUDIT.md | wc -l` 那一条管道。reflog 逐字（对方读的）：
+
+```
+78df3e0 HEAD@{0}: checkout: moving from f297530… to origin/main
+f297530 HEAD@{1}: commit: docs headings: re-pin to 1340
+```
+
+后果三件：对方的重钉提交 `f297530` 从 `HEAD` 上被摘掉；`git push` 报 `Everything up-to-date`（**推了，但推的不是我以为的那棵树**）；那一轮十二分钟的门禁没有主语。那条提交最后是从 reflog 里捡回来的。
+
+**甲二：`&` 绑定的是整张命令表。** 另一条车道为了做「树在测量期间被换」的负控，写了一行 `cd .wt-h5 && ( gate… ) & sleep 10; cd … && git checkout --detach <sha>`。`&` 作用于整个 `cd X && ( … )` 列表，于是后面的 `sleep` 与 `checkout` 跑在**继承的工作目录**里——也就是主树。reflog 两行相隔 **2 分 17 秒**：
+
+```
+78df3e0 HEAD@{2026-10-28 17:31:38 +0800}: checkout: moving from e38a1a18cc… to 78df3e0
+e38a1a1 HEAD@{2026-10-28 17:33:55 +0800}: checkout: moving from 78df3e0ff… to e38a1a1
+```
+
+### 乙 我自己复现的两格（都在本地工作树里，没有碰主树）
+
+格一，`&` 不会把 `cd` 带到前台：
+
+```
+{ cd .worktrees/audit-1408 && echo "bg head: $(git rev-parse --short HEAD)"; } & sleep 1; echo "fg head: $(git rev-parse --short HEAD)"; pwd
+```
+
+逐字读数：`bg head: 78df3e0`、`fg head: e38a1a1`、`fg pwd : /home/sakiko/inimerse`。
+
+⇒ 一行里出现两个 `HEAD`：后台那次在 `.worktrees/audit-1408`，前台仍在主树。**`cd` 只活在子 shell 里**，所以紧跟在后面的 `checkout` 一定会落在主树——这正是甲二那起事故的形状。
+
+格二，读数进行中换树，`git status` 看不出来：
+
+```
+{ echo "start head: $(git rev-parse --short HEAD)"; sleep 6; echo "end head: $(git rev-parse --short HEAD)"; echo "dirty lines: $(git status --porcelain | wc -l)"; }   # 中途执行 checkout --detach 420bf25
+```
+
+逐字读数：`start head: 78df3e0`、`end head: 420bf25`、`dirty lines: 0`。
+
+⇒ 同一次读取里，起点与终点是两棵树，而**「工作区干净」印 0 行**。这条前置检查发现不了它：`checkout` 之后工作区是干净的，干净的是**另一棵树**。
+
+### 丙 检查器（已实现：`97bc96a`）
+
+那位合作者当天就把它落成了两行印记加一条判定：
+
+- 开跑时印 `GATE|start|head=<40 位 sha>|worktree=<toplevel>`，结束时再印 `GATE|end|head=<40 位 sha>`；
+- 两个值不同 ⇒ `rc=2`，判定行逐字 `gate: FAILED — the tree changed while this run was measuring it (start <a> -> end <b>); nothing here is attributable.`，并另起一行说明「不打印阶段结论」；**不自动重跑**。
+
+我实测到的是**印记那两行**：本轮门禁的第一行是 `GATE|start|head=<40 位>|worktree=/home/sakiko/inimerse/.worktrees/audit-1408`，最后一行的形状是 `GATE|end|head=<40 位>`，两者相同——一次有主语的运行。**判定格（中途换树 ⇒ `rc=2`）我没有复跑**，那是对方实测的：它把比较换成 `if false` 之后，同样一次中途 `checkout` 仍然打印 `gate: OK`——「绿灯但没有主语」，正是这条改动要去掉的东西。
+
+### 丁 判据
+
+1. **共享工作树里的 `HEAD` 是共享变量**：谁都可以读它，但只有主人可以移动它。
+2. **读一棵树的内容不需要移动它**：`git show <sha>:<path>`、`git cat-file <sha>:<path>`、`git grep <sha> -- <path>`，三条都不改 `HEAD`。
+3. **`&` 绑定整张命令表**：`cd X && ( … ) &` 只在子 shell 里生效；要在后台跑、又在别处操作，必须显式写 `( cd X && … ) &` 与独立的一次 `cd`。
+4. **「工作区干净」不是「主语干净」**：前者看文件，后者看 `HEAD`；一次 `checkout` 之后两者同时成立。
+5. **结论要带主语，而且要在跑完之后再核一次**：只在开头核，正好漏掉「跑的过程中被换」这一种。
+
+### 戊 端点
+
+`docs/AUDIT.md` 25008 → **25134** 行、节 524 → **526**（本节与 §1.409 一起提交）；三份读数（树 `97bc96a` 之上）：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 571`（`delta +9`）。
+
+### 己 边界
+
+- **它不改树的内容**：被换的树完整、干净、合法；错的只是「测量结论被贴到了另一棵树上」。
+- **它不违背 `pin` 单人写规则**：重钉的仍然是「合并者 + 合并后的树」那一条。反过来说，这一格第二次证明了为什么车道作者不该写 pin——作者的 pin 在他自己那棵树上永远是对的，在别人的树上只能靠运气（§1.392 丙栏那条反例的复现）。
+- 没测「两个 `checkout` 并发」；也没测 `git worktree lock` 能不能防住「别人在你的树里 `checkout`」（未验）。
+
+## §1.409 增补四百四十：三种失败，三种主语——同一个 `rc=2` 可以是三件事
+
+门禁现在有两种非零退出，加上这一条新的，一共三种失败。它们**共用一个整数**，却分别说着三件完全不同的事。读的人只看退出码，就会把「目录被两人共用」读成「测试失败」，或者把「树被换掉」读成「代码有问题」。
+
+### 甲 三行读数，三种主语
+
+| 判定行（逐字） | 谁错了 | 主语 | 我测到没有 |
+|---|---|---|---|
+| `gate: another gate is running against <build>; refusing to measure a shared directory.`（`rc=2`） | 目录被两人共用 | `build/` | **测到**（下节逐字） |
+| `✘ <name> (exit N)` ＋ `gate: FAILED — do not merge.`（`rc≠0`） | 某一段红了 | 那一段 | 未复跑（源码行由对方给出） |
+| `GATE|start|head` ≠ `GATE|end|head`（`rc=2`） | 测量期间树被换 | 那一次测量 | 印记行测到（`97bc96a`）；判定格未复跑，对方实测 |
+
+### 乙 我测到的那一格：`flock`
+
+第一次是**误撞**：我拿主树的 `build/` 跑门禁，而对方那轮门禁正占着它，于是：
+
+```
+gate: another gate is running against /home/sakiko/inimerse/build; refusing to measure a shared directory.
+gate_rc=2
+```
+
+复现：在同一个 `BUILD_DIR` 上同时起两个门禁，第二个立刻退出：`second_rc=2`，**没有打印任何阶段行**——它拒绝的是「测量」这件事，不是某一项检查。
+
+### 丙 为什么「不自动重跑」
+
+自动重跑会把「主语被换」的**频繁程度**藏起来：一次可见的失败被换成一次不可见的成功，于是「今天被换过两次」这种事实在读数里消失。三种失败里只有这一种是**跑完之后才知道判定是否成立**，所以它最不能重跑。
+
+### 丁 判据
+
+1. **一个 `rc` 不对应一件事**：三种主语共用一个 `2`，读的人必须看判定行。
+2. **判定行必须点名主语**：不点名时读者只能猜——这是 §1.395 乙栏那条（`;` 推、裁末行）在另一种失败上的复现。
+3. **算不出主语就当没测**：宁可拒绝打印阶段结论，也不要把「不知道测的是哪棵树」当成「通过」。
+4. **环境性失败不许自动重跑**：重跑不改变环境，只改变它被看见的次数。
+
+### 戊 附注：这一节的读数自己在动，而文档一个字没改
+
+写这两节的时候我 rebase 了一次，落到对方的 `97bc96a` 上（它实现上面那个检查器，只改 `tools/gate.sh`，**加 30 行**）。同一条命令、同一份文档，读数变了：
+
+| 什么时候 | `unanchored` | `delta` |
+|---|---|---|
+| rebase 之前（`e38a1a1`） | 573 | `+11 (ceiling +12)` |
+| rebase 之后（`97bc96a` 之上） | **571** | **`+9 (ceiling +12)`** |
+
+`docs/AUDIT.md` 一个字没动。动的是一份**靶文件**，而它在这本账的语料里（§1.397 甲栏量到的那件事：语料包含被引用的靶文件本身）。所以本节引用的三份读数必须带树号；拿 `573` 减 `571`，减出来的不是「我这节少写了两条」，是「别人的提交改了语料」。
+
+### 己 端点
+
+`docs/AUDIT.md` 25008 → **25134** 行、节 524 → **526**；三份读数（树 `97bc96a` 之上）：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 571`（`delta +9`）。
+
+### 庚 边界
+
+- 「某一段红了」那格**没有复跑**（要一整轮门禁）；它的判定行格式是对方给出的源码读数，我只记「未复跑」。
+- 「主语变了」的检查器已在 `97bc96a` 落地（`GATE|start`／`GATE|end` 两行）；我测到印记行，判定格是对方复跑的。
+- 本节不讨论「应该用哪个退出码」的设计问题，只记「同一个码现在对应三件事」这个现状。
