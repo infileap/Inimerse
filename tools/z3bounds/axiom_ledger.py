@@ -1445,7 +1445,11 @@ def self_check_sides(gen_path, py, left=None, right=None):
 
 
 def self_check_readings(gen_path, py, readings_path):
-    """Eight cells; six are negative controls, and every one runs the real CLI.
+    """Every cell runs the real CLI; the summary line prints how many ran.
+
+    This docstring deliberately states no count: a number written in prose is a memory, and this
+    series keeps deleting memories.  cases=N on the WRITECHECK/READINGSCHECK summary is summed
+    from the rows that actually ran.
 
     The readings file is produced by the program, so its checks must be too: a check that
     agrees with a hand-edited file is not a check.  The two record cells run on a throwaway
@@ -1544,7 +1548,11 @@ def self_check_readings(gen_path, py, readings_path):
     # the printing code.
     rc, out = run(["--check-readings", readings_path])
     field = re.search(r"\|body-md5=([0-9a-f]+)\|", out)
-    mine = body_digest(body)
+    # Deliberately NOT body_digest(body): that helper is the thing under test, and a check that
+    # reuses the implementation can only prove the two agree -- never that the rule in the field
+    # name was implemented.  Written out longhand from the definition instead (body lines joined
+    # with a single newline, no trailing newline, header excluded, first 12 hex digits).
+    mine = hashlib.md5(chr(10).join(body).encode("utf-8")).hexdigest()[:12]
     no_body = "AXIOMS|sites=" not in out and "USES-COST|" not in out
     cells.append(("body-md5-has-a-subject",
                   "the digest on the READINGS line is the md5 of the compared body, recomputed "
@@ -1553,6 +1561,20 @@ def self_check_readings(gen_path, py, readings_path):
                   "field=%s recomputed=%s check-prints-body=%s"
                   % (field.group(1) if field else "absent", mine, "no" if no_body else "yes"),
                   bool(field) and field.group(1) == mine and no_body))
+
+    # The digest must be the BODY's, not the file's and not the body-plus-one-newline's.  Both
+    # alternatives are real numbers a reader can compute for this same file -- a whole-file md5,
+    # and the md5sum value that differs only by the trailing newline -- so "the digest is about
+    # the body" is only a reading if those two are refused BY NAME.
+    with open(readings_path, "rb") as fh:
+        whole_file = hashlib.md5(fh.read()).hexdigest()[:12]
+    plus_newline = hashlib.md5((chr(10).join(body) + chr(10)).encode("utf-8")).hexdigest()[:12]
+    cells.append(("digest-subject-is-not-the-file",
+                  "the body digest differs from the whole file's and from the body plus a "
+                  "trailing newline's, so the field names a byte range and not merely a file",
+                  "field=%s whole-file=%s body+newline=%s"
+                  % (mine, whole_file, plus_newline),
+                  mine != whole_file and mine != plus_newline))
 
     # Editing the HEADER must change nothing: same=yes, same body digest.  Without this cell a
     # digest taken over the whole FILE would look identical on runs that never touch the header;
@@ -1821,8 +1843,9 @@ def main():
                          "real difference, the identical case, a degenerate default, the shipped "
                          "defaults, and the loud fallback when the local python3 has no z3")
     ap.add_argument("--self-check-readings", default=None, metavar="PATH",
-                    help="eight cells: the file is its own product, two guards that no machine "
-                         "fact entered the body, and five ways of being wrong")
+                    help="the file is its own product, guards that no machine fact entered the "
+                         "body, the digest's subject, and the ways of being wrong; the summary "
+                         "line prints how many cells ran")
     ap.add_argument("--uses-inject", action="append", default=None, metavar="NAME",
                     help="control: register an extra axiom declared discharged that no variant reads")
     ap.add_argument("--uses-declare-short", default=None, metavar="CLAIM",
