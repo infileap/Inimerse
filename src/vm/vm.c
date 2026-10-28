@@ -23,7 +23,7 @@
 static SetObj *vm_set_slot(VM *vm, int idx);
 int vm_set_new(VM *vm);
 static const char *builtin_set_name(int bi);
-static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68]; static void vm_op_hot_init(void);
+static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68], g_op_fetches; static void vm_op_hot_init(void);
 
 #ifdef _WIN32
 #include <windows.h>
@@ -3152,7 +3152,7 @@ static void vm_execute_thread(VmThread *t) {
     
 
 
-        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_OP_HOT asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; if (_op < 68) g_op_hits[_op]++; }
+        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; }
         if (t->is_task && t->budget > 0 && --t->budget == 0) {
             t->budget = VM_TASK_BUDGET;
             SwitchToFiber(t->fiber_sched);
@@ -5592,7 +5592,7 @@ void vm_debug_builtins_register(VM *vm) {
    --------------------------------------------------------------------------- */
 
 /* ---- opcode census (opt-in) ------------------------------------------
-   INIMERSE_OP_HOT=1 makes the interpreter count how many times each opcode
+   INIMERSE_HOT_OPS=1 makes the interpreter count how many times each opcode
    actually ran and print one OP-HOT| line per opcode at exit.  It is a
    census of what this process executed, not a claim about the other two
    ends: AOT lowers every opcode to inline C at build time, and wasm runs
@@ -5692,17 +5692,18 @@ static void vm_op_hot_dump(void) {
         if (!g_op_hits[i]) continue;
         total += g_op_hits[i];
         seen++;
-        printf("OP-HOT|op=%s|interp=%llu|aot=na|wasm=na|why=aot lifts the op into inline C and wasm runs in the host engine, so neither leaves a point in this process to count\n",
+        printf("OP-HOT|op=%s|interp=%llu|aot=na|wasm=na|why=aot flattens each op into inline C at build time, so a counter there would be counting a modified object; wasm executes inside the host engines process and this counter is not in it\n",
                g_op_names[i] ? g_op_names[i] : "#hole", g_op_hits[i]);
     }
     printf("OP-HOT|executed=%llu|opcodes=%d|source=interp|unmeasured=aot,wasm\n", total, seen);
+    printf("OP-HOT-TOTAL|fetches=%llu|rows=%llu|rows-match-fetches=%s|note=the rows and this count are taken at the same switch, so a disagreement is a dropped or doubled row, not a dead census\n", g_op_fetches, total, (g_op_fetches == total) ? "yes" : "no");
 }
 
 static void vm_op_hot_init(void) {
     const char *e;
     if (g_op_hot_asked) return;
     g_op_hot_asked = 1;
-    e = getenv("INIMERSE_OP_HOT");
+    e = getenv("INIMERSE_HOT_OPS");
     g_op_hot = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
     if (g_op_hot) atexit(vm_op_hot_dump);
 }
