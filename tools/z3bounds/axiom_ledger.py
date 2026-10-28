@@ -11,7 +11,8 @@ Readings (one per line, grep-able):
   USES-GAP|missing=..|extra=..|rule=<the union equals the discharged set>
   USES-CONFLICT|claim=..|declared=..|measured=..   (a declaration may be wider, never shorter)
   USES-SUPERSET|claim=..|declared=..|measured=..|unused=..
-  USES-COST|claims=<n>|axioms=<n>|cells=<n>|runs=<n>|wall=..
+  USES-COST|claims=<n>|axioms=<n>|cells=<n>|runs=<n>|variants-per-run=<n>|note=..
+  USES-COST-WALL|wall=..                       (stderr: a machine fact, not part of the body)
 
 The status column needs no solver; the mutation column does and says so when it cannot.
 See docs/streams/dec-formal-axioms.md for why an axiom without a mutation test has the
@@ -435,15 +436,28 @@ def emit_uses(info, claims, axioms, mut_detail, measured, controls, t0, n_varian
                      ",".join(sorted(used)) or "none", ",".join(sorted(dec - used))))
     if conflicts:
         problems += 1
+    # gap= carries ONE verdict, so it may not mean "there is a gap" in one mode and "nobody
+    # looked" in another: a reader who sees yes must be able to act on it, and a reader who sees
+    # no must be entitled to believe the question was asked.  The declared reader cannot notice a
+    # gap at all (its USES-GAP row says not-checked/not-checked), so its summary says the same
+    # word instead of borrowing the measured one.  Fixing this by making its rc non-zero would
+    # destroy the counter-proof, which needs the copy to be silently blind.
+    gap = "not-checked" if from_declared else ("yes" if (missing or extra) else "no")
     print("USES-SUMMARY|claims=%d|links=%d|unused-discharged=%d|conflicts=%d|gap=%s"
-          % (len(uses), len(union), len(missing), conflicts,
-             "yes" if (missing or extra) else "no"))
-    print("USES-COST|claims=%d|axioms=%d|cells=%d|runs=%d|variants-per-run=%d|wall=%.1fs|"
+          % (len(uses), len(union), len(missing), conflicts, gap))
+    print("USES-COST|claims=%d|axioms=%d|cells=%d|runs=%d|variants-per-run=%d|"
           "note=one drop run yields every claim at once, so the %d cells cost no extra runs; "
           "restricting to the %d discharged axioms would save runs today, but an axiom that is "
           "asserted now could start flipping a claim later and its row would silently go missing"
           % (len(uses), len(mut_detail), len(uses) * len(mut_detail), 1 + len(mut_detail),
-             n_variants, time.time() - t0, len(uses) * len(mut_detail), len(discharged)))
+             n_variants, len(uses) * len(mut_detail), len(discharged)))
+    # wall= is a MACHINE fact: the same tree took 2.5s, 2.7s and 3.3s on three runs.  Anything
+    # that changes between two runs of one tree cannot be compared line by line, so it goes to
+    # stderr -- out of the body that --record-readings archives.  The printed counts above are
+    # the part that a second run of the same tree must reproduce.
+    print("USES-COST-WALL|wall=%.1fs|role=machine-fact|note=kept out of the compared body: two "
+          "runs of one tree can differ here, and the readings file is compared line by line"
+          % (time.time() - t0,), file=sys.stderr)
     return 1 if problems else 0
 
 
@@ -1438,6 +1452,32 @@ def self_check_readings(gen_path, py, readings_path):
                   "rc=%d lines=%s" % (rc, same.group(1) if same else "?"),
                   rc == 0 and bool(same)))
 
+    # The defect this cell exists for: USES-COST used to carry wall=%.1fs, a number that differs
+    # between two runs of the same tree, so --check-readings went red on the first run of a tree
+    # it had just recorded (2.5s recorded, 3.0s printed) and the "same=yes" seen earlier was a
+    # coincidence of rounding.  A body is compared line by line, so it may hold only quantities
+    # a second run must reproduce; every machine fact belongs on stderr.
+    with open(readings_path, encoding="utf-8") as fh:
+        body_lines = fh.read().splitlines()
+    cut0 = body_lines.index(READINGS_HEADER_END) if READINGS_HEADER_END in body_lines else -1
+    body = body_lines[cut0 + 1:]
+    facts = [l for l in body if re.search(r"wall=|/usr/bin|/mnt/c/|python3 \(", l)]
+    rc, out = run(["--check-readings", readings_path])
+    second = rc
+    rc_run, out_run = run([])
+    wall_out = "USES-COST-WALL|wall=" in out_run
+    cells.append(("body-carries-no-machine-facts",
+                  "the recorded body holds no timing and no interpreter identity, while the same "
+                  "run still prints the timing -- on stderr, outside the compared body",
+                  "body-facts=%d wall-on-stderr=%s"
+                  % (len(facts), "yes" if wall_out else "no"),
+                  not facts and wall_out and rc_run == 0))
+    cells.append(("same-file-twice-both-same",
+                  "checking one tree twice in a row is green twice: a comparison that gets red on "
+                  "the second run was comparing the machine with itself, not the tree",
+                  "rc1=%d rc2=%d" % (second, rc),
+                  second == 0 and rc == 0))
+
     tmp = tempfile.mkdtemp(prefix="readings_ctl_")
     with open(readings_path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
@@ -1624,6 +1664,18 @@ def self_check_uses(gen_path, py):
                      "declared" if "USES-READER|mode=declared" in out3 else "?"),
                   rc == 0 and extra3 == "not-checked" and "USES-READER|mode=declared" in out3))
 
+    # One field name, one verdict.  gap=yes used to mean "there IS a gap" in measured mode and
+    # "nobody looked" in declared mode, with rc=0 beside it: three readings of one run that
+    # disagreed, and two ways of "fixing" it that each break something (a non-zero rc kills the
+    # counter-proof; believing gap=yes turns a copied list into a finding).
+    sums3 = [l for l in out3.split("\n") if l.startswith("USES-SUMMARY|")]
+    gap3 = _uses_fields(sums3[0]).get("gap") if sums3 else "?"
+    cells.append(("summary-does-not-say-yes-when-unchecked",
+                  "the summary's gap= field says not-checked in the mode where nothing was "
+                  "checked, so the word yes only ever means a measured gap",
+                  "rc=%d summary-gap=%s" % (rc, gap3),
+                  rc == 0 and gap3 == "not-checked"))
+
     target = None
     for l in rows:
         f = _uses_fields(l)
@@ -1716,16 +1768,20 @@ def main():
                          "real difference, the identical case, a degenerate default, the shipped "
                          "defaults, and the loud fallback when the local python3 has no z3")
     ap.add_argument("--self-check-readings", default=None, metavar="PATH",
-                    help="six cells: the file is its own product, and five ways of being wrong")
+                    help="eight cells: the file is its own product, two guards that no machine "
+                         "fact entered the body, and five ways of being wrong")
     ap.add_argument("--uses-inject", action="append", default=None, metavar="NAME",
                     help="control: register an extra axiom declared discharged that no variant reads")
     ap.add_argument("--uses-declare-short", default=None, metavar="CLAIM",
-                    help="control: drop one axiom from that claim's declared list")
+                    help="control: drop one axiom from that claim's declared list; CLAIM is a claim "
+                         "identity exactly as the USES row prints it, variant included, e.g. "
+                         "P4|asis -- an axiom name is not a claim and is refused")
     ap.add_argument("--uses-from-declared", action="store_true",
                     help="counter-proof reader: build USES from the CONDITIONAL row instead of measuring")
     ap.add_argument("--self-check-uses", action="store_true",
-                    help="six cells for USES: the union identity, an injected unused axiom, a "
-                         "declared list made too short, and a declared reader that misses both")
+                    help="seven cells for USES: the union identity, an injected unused axiom, a "
+                         "declared list made too short, a declared reader that misses both, and the "
+                         "summary field that must not say yes when nothing was checked")
     args = ap.parse_args()
     # The default must be a reading: which interpreter ran is a decision, and a decision that
     # nobody prints is a tradition.  stderr keeps it out of the compared body.
