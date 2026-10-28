@@ -469,8 +469,8 @@ READINGSCHECK|case=file-is-its-own-product|got=rc=0 lines=93|verdict=PASS
 READINGSCHECK|case=tamper-one-line|got=rc=1 line-named=yes|verdict=PASS
 READINGSCHECK|case=wrong-tree-header|got=rc=1 verdict=no|verdict=PASS
 READINGSCHECK|case=missing-file|got=rc=2 named=yes|verdict=PASS
-READINGSCHECK|case=untracked-junk-is-not-dirty|got=rc=0 written=yes|verdict=PASS
-READINGSCHECK|case=tracked-edit-refuses-to-record|got=rc=2 refused=yes written=no|verdict=PASS
+READINGSCHECK|case=untracked-junk-is-not-dirty|got=rc=0 written=yes fields=yes|verdict=PASS
+READINGSCHECK|case=tracked-edit-refuses-to-record|got=rc=2 refused=yes dirty=yes written=no|verdict=PASS
 READINGSCHECK|summary|cases=6|pass=6|fail=0
 ```
 
@@ -503,3 +503,51 @@ READINGSCHECK|summary|cases=6|pass=6|fail=0
 §1 里"45 行、树 `f046f20`"是 T1 时代的构造描述。现在是 103 行（抬头 10 + 正文 93），作者已经从人换成程序：**以文件自己的抬头为准，不要以本页转述为准**——本页转述过一次，就错了一次。§1 顺带说的"WSL 的 python3 没有 z3"在本机也不再成立（见 14.6a）。
 
 这一节同样没有给 CTest 增加任何一格：`READINGSCHECK` 是按需读数；注册与否仍是 runner 的队列点。
+
+## 15 「两侧一样」是一句结论，结论要么有命令，要么是口报
+
+### 15.1 一句没有守住的话
+
+上一轮为了绕开「主机防火墙拦住跨边界启动」，默认解释器从 Windows 侧的 exe 换成了本机 WSL 的 `python3`，并在信里写了一句：两侧读数一致。那句话是对的，但它是一个**关于两台机器的断言**，而当时没有任何东西在跑它：它既没有命令，也没有失败的可能。同一来源的判据在这条链上已经出现过三次（被 `--quiet` 吞掉的 `PINS`、在 `--quiet` 下**根本没执行**的守卫钉比对、被写死成 9 的 `SELFCHECK-ALL`），这次是第四次，只是换了说法——不是「检查被跳过」，而是「结论被口述」。
+
+### 15.2 命令与它印出来的那行
+
+    python3 tools/z3bounds/axiom_ledger.py --side-equivalence --side-left /mnt/c/Python314/python.exe --side-right python3
+
+    SIDE-EQUIV|left=/mnt/c/Python314/python.exe (3.14.7, z3 5.3.2)|right=/usr/bin/python3 (3.14.4, z3 5.3.2)|lines=93|same=yes|differing=0|rc-left=0|rc-right=0
+
+两个解释器都真的启动了（一个 3.14.7，一个 3.14.4，z3 都是 5.3.2），各自完整跑一遍台账，93 行逐行比，0 行不同。这才叫「两侧一样」。
+
+### 15.3 四个格子，三个是反例
+
+    SIDECHECK|case=one-side-not-installed|got=rc=2 named=True no-same=True|verdict=PASS
+    SIDECHECK|case=side-without-z3|got=rc=2 named=True no-same=True|verdict=PASS
+    SIDECHECK|case=one-side-differs|got=rc=1 first-diff-line=13 same=no=True|verdict=PASS
+    SIDECHECK|case=both-sides-identical|got=rc=0 same-yes=True|verdict=PASS
+    SIDECHECK|summary|cases=4|pass=4|fail=0
+
+第二格不靠伪造路径：它写一个 `sh` 垫片，内容是 `exec <真解释器> -S`。`-S` 跳过 site-packages，于是「解释器真的存在、但 import z3 真的失败」——这是一种**真实的**机器，不是假装的一种。
+
+第一格必须印 `not measured: only one side is installed` 且**不许**出现 `same=yes`：一侧不在时，被比较的不是两侧，而是一侧与一个空字符串。
+
+### 15.4 会说话的负控
+
+第一版的 `one-side-differs` 得 `first-diff-line=1`，而第 1 行是 `CENSUS-MUTATION`——负控**自己**的通报。于是「两侧不同」与「负控把自己印了出来」在输出上无法区分：一个只回显自己参数的比较，长得跟一个真读了数字的比较一模一样。改法是让注入的变异在那一侧**不出声**（丢钉子的通报关掉），差异于是只能落在数据行上：第一处不同落在第 13 行，A3 从 `discharged` 变 `asserted`；第 19 行是 A8 的 why-not 从「3 个」变「2 个」；第 28 行是 P1 从 `closed` 变 `open`。格子现在断言的不只是「rc=1」，还有「第一处不同的行号大于 1」——**差异必须落在被检查的对象上，不能落在这条命令的注脚上**。
+
+### 15.5 名字不是对象
+
+抬头里的 `python:` 从 `python3` 改成 `/usr/bin/python3 (3.14.4, z3 5.3.2)`。名字回答不了「这台机器上有没有 z3」，而整列变异的有无恰恰由它决定。校验侧因此也不再拿名字比名字：抬头里的解释器与本次运行的解析结果不同时，报的是一句**具名的不 同**（「这份读数是用 X 生产的，本次运行用的是 Y」），而不是把「机器不同」降级成「读数相同」。
+
+代价要写明：换一台机器，这份文件**注定**报这条不同。那正是这条规矩在正常工作——它说的就是「这份读数属于那台机器」。
+
+### 15.6 被忽略掉的决定也要是读数
+
+`READINGS-RECORD` 在**成功**时也把忽略掉的东西印出来：
+
+    READINGS-RECORD|path=<path>|tree=<sha>|lines=103|body=93|rc=0|dirty=no|untracked=ignored|first-change=none
+
+拒绝时印 `dirty=yes` 与第一个改动。这一条不是措辞：14.3 里那两个记录格现在断言这三个字段本身，删掉任何一个字段，格子就红——否则「未跟踪文件不算脏」只是 一句传统。
+
+### 15.7 这一节不证明什么
+
+`same=yes` 说的是**这一台机器、这个提交**上两边印出的文本相同。它不证明另两台机器也相同；它也不证明两个解释器的 z3 版本不同时会相同——那种差异会落在变异列上，而那是**机器的事实**，不是树的事实。所以 `--side-equivalence` 只回答一个问题：换一个解释器跑同一棵树，读数会不会变。本机的回答是不会。
