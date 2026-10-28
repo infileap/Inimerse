@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """P1 gate: mir_from_bytecode -> mir_to_bytecode must reproduce the container byte for byte.
 
-P1 is RELABEL-ONLY.  The criterion below is therefore not "the program still
-runs": it is "the bytes that come out are the bytes that went in".  A P1 prototype
-that folded a constant, reordered blocks or renumbered an operand would change
-those bytes, and this file is supposed to go red when it does.
+P1 is RELABEL-ONLY.  The criterion is therefore not "the program still runs": it
+is "the bytes that come out are the bytes that went in".  A P1 prototype that
+folded a constant, reordered blocks or renumbered an operand would change those
+bytes, and this file is supposed to go red when it does.
 
 What is compared, and what is not (read this before trusting a green run):
 
@@ -14,20 +14,27 @@ What is compared, and what is not (read this before trusting a green run):
     header, thread header, try entry and global name in the right order.
   * The dependency TRAILER (src/compilation/deps.c) is NOT part of Bytecode and
     cannot be regenerated; it is carried verbatim and counted separately
-    (`trailer_carried`).  The stream length is printed next to the file length so
-    identity is reported at the layer it holds.
+    (`trailer_carried`).  A whole-file `cmp` is therefore the conjunction
+    "stream rebuilt correctly AND trailer copied verbatim"; the stream length is
+    printed next to the file length so identity is reported at the layer it holds.
+  * The CORPUS is printed program by program (`MIR-CORPUS|...`).  Two totals one
+    apart differ by a digit to a reader, while "one program stopped being run"
+    and "one program that should not run started running" are different
+    accidents.  The expected list comes from `git ls-files`, not from the working
+    tree, so a program deleted on disk is still expected and is named as missing.
   * The NEGATIVE CONTROL is what makes the positive reading mean anything: two
     MIR-layer transformations that are NOT relabels (renumber an operand, swap
-    two instructions) must each produce a DIFFERENT file.  If one still
-    round-trips identically, the writer is copying rather than rebuilding and the
-    whole green run is void -- that is why a missed control exits 1.
+    two instructions) must each produce a DIFFERENT file, and two corpus
+    accidents (a program removed, a program made uncompilable) must each be
+    NAMED and exit non-zero.  A control that stays green exits 1 -- an unproven
+    control voids the reading above it instead of becoming a footnote.
 
-Usage: tools/mir_roundtrip.test.py [--keep DIR]
-Exit: 0 all identical and every control red, 1 any mismatch or a green control,
+Usage: tools/mir_roundtrip.test.py [--quiet] [--no-selfcheck]
+       [--simulate-missing REL] [--simulate-broken REL]     (test hooks)
+Exit: 0 all identical and every control red, 1 any mismatch / any green control,
       2 harness build failure.
 """
 import argparse
-import glob
 import os
 import shutil
 import subprocess
@@ -43,6 +50,37 @@ INCLUDES = ["-Isrc/compiler", "-Isrc/common", "-Isrc", "-Isrc/platform", "-Isrc/
 # files instead of four: the test compiles the harness it needs.
 FLAGS = ["-std=gnu11", "-O1", "-g", "-DMIR_ROUNDTRIP_MAIN", "-Wall", "-Wextra"]
 
+IM_PATTERNS = ["vtest/*.im", "examples/**/*.im"]
+INIM_PATTERNS = ["*.inim", "projects/*.inim", "vtest/*.inim", "examples/**/*.inim"]
+
+# Programs that are SUPPOSED not to compile: negative frontend tests, where the
+# language is meant to reject them.  Declared here instead of tolerated
+# silently -- a compile failure outside this set is a corpus gap and is named.
+EXPECTED_UNCOMPILABLE = {
+    "vtest/be_removed_assign_v04.im",
+    "vtest/be_removed_bare_v04.im",
+    "vtest/be_removed_decl_v04.im",
+    "vtest/finally_continue_control_flow_probe_v04.im",
+    "vtest/finally_control_flow_probe_v04.im",
+    "vtest/finally_goto_control_flow_probe_v04.im",
+    "vtest/member_on_nonname_v06.im",
+    "vtest/range_metadata_probe_v06.im",
+}
+
+# .inim files the engine's own reader refuses (older format version).  Declared
+# for the same reason: "unreadable" must be an asserted fact, not a bucket that
+# quietly absorbs whatever fails.
+EXPECTED_UNREADABLE_INIM = {
+    "nst2.inim",
+    "projects/exc_test.inim",
+    "projects/set_comp_test.inim",
+    "projects/set_test.inim",
+    "projects/t1.inim",
+    "projects/tt4.inim",
+    "projects/tt6.inim",
+    "projects/tt7.inim",
+}
+
 
 def build_harness():
     cmd = ["gcc"] + FLAGS + INCLUDES + ["-o", HARNESS] + SRC
@@ -56,7 +94,6 @@ def build_harness():
 
 
 def parse(stdout):
-    """(tag -> first record), (tag -> list of records)."""
     first, many = {}, {}
     for line in stdout.splitlines():
         parts = line.split("|")
@@ -72,144 +109,184 @@ def parse(stdout):
     return first, many
 
 
-def run_one(inim, workdir, tag, extra=None):
-    out = os.path.join(workdir, tag + ".rt.inim")
-    cmd = [HARNESS, inim, out] + (extra or [])
-    p = subprocess.run(cmd, capture_output=True, text=True)
+def run_one(inim, out_dir, tag, extra=None):
+    out = os.path.join(out_dir, tag + ".rt.inim")
+    p = subprocess.run([HARNESS, inim, out] + (extra or []), capture_output=True, text=True)
     first, many = parse(p.stdout)
     return p.returncode, first, many, p.stdout + p.stderr
 
 
-def compile_im(im, workdir):
-    out = os.path.join(workdir, os.path.basename(im)[:-3] + ".inim")
-    p = subprocess.run([os.path.join(ROOT, "build", "inimerse"), "compile", im, out],
+def compile_im(rel, workdir):
+    out = os.path.join(workdir, os.path.basename(rel)[:-3] + ".inim")
+    p = subprocess.run([os.path.join(ROOT, "build", "inimerse"), "compile", rel, out],
                        cwd=ROOT, capture_output=True, text=True)
     return out if p.returncode == 0 and os.path.exists(out) else None
 
 
-def report_group(name, rows):
-    """rows: list of (label, rc, first, raw). Returns (n, bytes, differ, skipped)."""
-    n = total_bytes = differ = skipped = 0
-    for label, rc, first, raw in rows:
-        ident = first.get("ORIG-IDENTICAL", {})
+def tracked(patterns):
+    p = subprocess.run(["git", "ls-files", "--"] + patterns, cwd=ROOT,
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return []
+    return sorted(set(x for x in p.stdout.splitlines() if x))
+
+
+def discover():
+    return tracked(IM_PATTERNS), tracked(INIM_PATTERNS)
+
+
+def collect(sim_missing=None, sim_broken=None):
+    workdir = tempfile.mkdtemp(prefix="mir-rt-")
+    ims, inims = discover()
+    rows, declared, gaps = [], set(), []
+
+    for rel in ims:
+        if rel == sim_missing:
+            gaps.append((rel, "not-in-run"))            # hook: pretend deleted
+            continue
+        if rel in EXPECTED_UNCOMPILABLE:
+            declared.add(rel)
+            continue
+        if rel == sim_broken:
+            gaps.append((rel, "compile-failed"))       # hook: pretend broken
+            continue
+        built = compile_im(rel, workdir)
+        if not built:
+            gaps.append((rel, "compile-failed"))
+            continue
+        rc, first, many, raw = run_one(built, workdir, "a%d" % len(rows))
+        rows.append({"label": rel, "set": "compiled", "path": built,
+                     "rc": rc, "first": first, "many": many, "raw": raw})
+
+    for rel in inims:
+        if rel == sim_missing:
+            gaps.append((rel, "not-in-run"))
+            continue
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            gaps.append((rel, "not-on-disk"))
+            continue
+        rc, first, many, raw = run_one(path, workdir, "b%d" % len(rows))
         if "read failed" in raw:
-            skipped += 1
-            print("MIR-SKIP-UNREADABLE|file=%s" % label)
+            if rel in EXPECTED_UNREADABLE_INIM:
+                declared.add(rel)
+                continue
+            gaps.append((rel, "unreadable"))
             continue
-        n += 1
-        total_bytes += int(ident.get("bytes_orig", "0") or 0)
-        if rc == 0 and ident.get("differ") == "0":
-            continue
-        differ += 1
-        print("MIR-MISMATCH|file=%s|rc=%d|differ=%s" % (label, rc, ident.get("differ", "?")))
-        for line in raw.splitlines():
-            if line.startswith(("ORIG-", "IR-SIZE")):
-                print("  " + line)
-    print("MIR-IDENTICAL|set=%s|programs=%d|bytes=%d|differ=%d|skip_unreadable=%d"
-          % (name, n, total_bytes, differ, skipped))
-    return n, total_bytes, differ, skipped
+        rows.append({"label": rel, "set": "precompiled", "path": path,
+                     "rc": rc, "first": first, "many": many, "raw": raw})
+
+    return rows, declared, gaps, len(ims) + len(inims), workdir
+
+
+def report(rows, declared, gaps, expected):
+    stats = {}
+    for row in rows:
+        ident = row["first"].get("ORIG-IDENTICAL", {})
+        grp = row["set"]
+        st = stats.setdefault(grp, {"n": 0, "bytes": 0, "differ": 0, "carried": 0})
+        st["n"] += 1
+        st["bytes"] += int(ident.get("bytes_orig", "0") or 0)
+        if row["first"].get("ORIG-TRAILER", {}).get("bytes", "0") not in ("0", None):
+            st["carried"] += 1
+        differ = ident.get("differ", "?")
+        print("MIR-CORPUS|program=%s|bytes=%s|differ=%s|set=%s"
+              % (row["label"], ident.get("bytes_orig", "0"), differ, grp))
+        if not (row["rc"] == 0 and differ == "0"):
+            st["differ"] += 1
+            print("MIR-MISMATCH|file=%s|rc=%d|differ=%s" % (row["label"], row["rc"], differ))
+            for line in row["raw"].splitlines():
+                if line.startswith(("ORIG-", "IR-SIZE")):
+                    print("  " + line)
+
+    for grp in ("compiled", "precompiled"):
+        st = stats.get(grp, {"n": 0, "bytes": 0, "differ": 0, "carried": 0})
+        print("MIR-IDENTICAL|set=%s|programs=%d|bytes=%d|differ=%d"
+              % (grp, st["n"], st["bytes"], st["differ"]))
+    tot = {k: sum(st.get(k, 0) for st in stats.values())
+           for k in ("n", "bytes", "differ", "carried")}
+    print("MIR-ROUNDTRIP|files=%d|identical=%d|differ=%d|trailer_carried=%d"
+          % (tot["n"], tot["n"] - tot["differ"], tot["differ"], tot["carried"]))
+
+    for rel, why in gaps:
+        print("MIR-CORPUS-MISSING|program=%s|why=%s" % (rel, why))
+    for rel in sorted(declared):
+        print("MIR-CORPUS-DECLARED|program=%s" % rel)
+    print("MIR-CORPUS-CHECK|expected=%d|measured=%d|declared=%d|missing=%d"
+          % (expected, tot["n"], len(declared), len(gaps)))
+    return tot["differ"], tot["n"], len(gaps)
+
+
+def mir_controls(rows):
+    controls, target = [], None
+    for row in rows:
+        funcs = [f for f in row["many"].get("IR-FUNC", [])
+                 if int(f.get("ninsns", "0") or 0) >= 4]
+        if funcs:
+            target = (row, str(funcs[0]["id"]))
+            break
+    if not target:
+        return controls
+    row, fid = target
+    outdir = tempfile.mkdtemp(prefix="mir-neg-")
+    for name, extra in (("renumber-op", ["--perturb", fid, "1", "0", "25"]),
+                        ("renumber-dst", ["--perturb", fid, "1", "1", "99"]),
+                        ("swap-1-2", ["--swap", fid, "1", "2"])):
+        rc, first, many, raw = run_one(row["path"], outdir, name, extra)
+        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
+        controls.append((name, "red", "red" if d not in ("0", None) else "green", d))
+    shutil.rmtree(outdir, ignore_errors=True)
+    return controls
+
+
+def corpus_controls(victim):
+    out = []
+    for hook, why in (("--simulate-missing", "not-in-run"),
+                      ("--simulate-broken", "compile-failed")):
+        p = subprocess.run([sys.executable, os.path.abspath(__file__), hook, victim,
+                            "--no-selfcheck", "--quiet"],
+                           cwd=ROOT, capture_output=True, text=True)
+        named = ("MIR-CORPUS-MISSING|program=%s|why=%s" % (victim, why)) in p.stdout
+        ok = (p.returncode != 0) and named
+        out.append((hook.lstrip("-"), "red", "red" if ok else "green",
+                    "rc=%d|named=%d" % (p.returncode, 1 if named else 0)))
+    return out
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--keep", default=None, help="keep the working directory here")
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--no-selfcheck", action="store_true")
+    ap.add_argument("--simulate-missing", default=None, metavar="REL")
+    ap.add_argument("--simulate-broken", default=None, metavar="REL")
     args = ap.parse_args()
 
     if not build_harness():
         return 2
 
-    workdir = args.keep or tempfile.mkdtemp(prefix="mir-rt-")
-    os.makedirs(workdir, exist_ok=True)
+    rows, declared, gaps, expected, workdir = collect(args.simulate_missing, args.simulate_broken)
+    differ, measured, nmissing = report(rows, declared, gaps, expected)
 
-    # Group A: .im sources compiled by this run (AST -> compile, today's path).
-    compiled_rows = []
-    for im in sorted(glob.glob(os.path.join(ROOT, "vtest", "*.im")) +
-                     glob.glob(os.path.join(ROOT, "examples", "*.im"))):
-        label = os.path.relpath(im, ROOT)
-        built = compile_im(label, workdir)
-        if not built:
-            print("MIR-SKIP-COMPILE|file=%s" % label)
-            continue
-        rc, first, many, raw = run_one(built, workdir, "a%d" % len(compiled_rows))
-        compiled_rows.append((label, rc, first, raw))
-
-    # Group B: .inim already in the tree -- nothing in this run built them.
-    precompiled_rows = []
-    seen = set()
-    for inim in sorted(glob.glob(os.path.join(ROOT, "**", "*.inim"), recursive=True)):
-        # compare the path RELATIVE to ROOT: when this runs inside a worktree the
-        # absolute path itself contains "/.worktrees/", so filtering on the
-        # absolute path would silently drop every artifact and report programs=0.
-        rel = os.path.relpath(inim, ROOT)
-        if rel.startswith(".worktrees/") or rel.startswith(".scratch/") or rel.startswith("build/"):
-            continue
-        if inim in seen:
-            continue
-        seen.add(inim)
-        label = rel
-        rc, first, many, raw = run_one(inim, workdir, "b%d" % len(precompiled_rows))
-        precompiled_rows.append((label, rc, first, raw, many))
-
-    n_a, b_a, d_a, s_a = report_group("compiled", compiled_rows)
-    n_b, b_b, d_b, s_b = report_group("precompiled", [(r[0], r[1], r[2], r[3]) for r in precompiled_rows])
-
-    carried = 0
-    for row in compiled_rows + [(r[0], r[1], r[2], r[3]) for r in precompiled_rows]:
-        if row[2].get("ORIG-TRAILER", {}).get("bytes", "0") not in ("0", None):
-            carried += 1
-    print("MIR-ROUNDTRIP|files=%d|identical=%d|differ=%d|skip_unreadable=%d|trailer_carried=%d"
-          % (n_a + n_b, (n_a - d_a) + (n_b - d_b), d_a + d_b, s_a + s_b, carried))
-
-    # ---- negative control: P1 is relabel-only, so a non-relabel must go red --
-    # Pick a program and a function big enough to mutate, from the harness's own
-    # per-function report rather than by assuming function 0 is large.
-    target = None
-    for label, rc, first, raw, many in precompiled_rows:
-        funcs = [f for f in many.get("IR-FUNC", []) if int(f.get("ninsns", "0") or 0) >= 4]
-        if funcs:
-            fid = int(funcs[0]["id"])
-            target = (label, None, fid)
-            break
-    if target is None:
-        for row in compiled_rows:
-            label = row[0]
-            path = os.path.join(workdir, os.path.basename(label)[:-3] + ".inim")
-            rc, first, many, raw = run_one(path, workdir, "probe")
-            funcs = [f for f in many.get("IR-FUNC", []) if int(f.get("ninsns", "0") or 0) >= 4]
-            if funcs:
-                target = (label, path, int(funcs[0]["id"]))
-                break
-
-    controls = []   # (case, want, got, differ)
-    if target:
-        label, path, fid = target
-        if path is None:
-            path = os.path.join(ROOT, label)
-        # (a) renumber one operand: an operand change is not a relabel
-        rc, first, many, raw = run_one(path, workdir, "neg-renum",
-                                       ["--perturb", str(fid), "1", "0", "25"])
-        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
-        controls.append(("renumber-op", "red", "red" if d not in ("0", None) else "green", d))
-        # (b) perturb a destination register
-        rc, first, many, raw = run_one(path, workdir, "neg-dst",
-                                       ["--perturb", str(fid), "1", "1", "99"])
-        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
-        controls.append(("renumber-dst", "red", "red" if d not in ("0", None) else "green", d))
-        # (c) swap two instructions: the clearest form of "not a relabel"
-        rc, first, many, raw = run_one(path, workdir, "neg-swap",
-                                       ["--swap", str(fid), "1", "2"])
-        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
-        controls.append(("swap-1-2", "red", "red" if d not in ("0", None) else "green", d))
+    controls = mir_controls(rows)
     for case, want, got, d in controls:
         print("MIR-NEGCTL|case=%s|want=%s|got=%s|differ=%s" % (case, want, got, d))
     red = sum(1 for c in controls if c[2] == "red")
-    print("MIR-NEGCTL|controls=%d|red=%d|green=%d|target=%s"
-          % (len(controls), red, len(controls) - red, target[0] if target else "none"))
+    print("MIR-NEGCTL|controls=%d|red=%d|green=%d" % (len(controls), red, len(controls) - red))
 
-    if args.keep is None:
-        shutil.rmtree(workdir, ignore_errors=True)
+    ctl = []
+    if not args.no_selfcheck and rows:
+        victim = sorted(r["label"] for r in rows)[0]
+        ctl = corpus_controls(victim)
+        for case, want, got, detail in ctl:
+            print("MIR-CORPUSCTL|case=%s|want=%s|got=%s|%s" % (case, want, got, detail))
+        cred = sum(1 for c in ctl if c[2] == "red")
+        print("MIR-CORPUSCTL|controls=%d|red=%d|green=%d|victim=%s"
+              % (len(ctl), cred, len(ctl) - cred, victim))
 
-    ok = (d_a == 0 and d_b == 0 and n_a > 0 and len(controls) == 3 and red == 3)
+    shutil.rmtree(workdir, ignore_errors=True)
+    ok = (differ == 0 and measured > 0 and nmissing == 0
+          and len(controls) == 3 and red == 3
+          and (args.no_selfcheck or (len(ctl) == 2 and all(c[2] == "red" for c in ctl))))
     print("MIR-VERDICT|%s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
