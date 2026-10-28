@@ -5369,7 +5369,7 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     case OP_NEW_DICT:       snprintf(out, outsz, "NEW_DICT r%d, pairs=%d", ins->r1, ins->r3); return;
     case OP_EQK:            snprintf(out, outsz, "EQK r%d, \"%s\"", ins->r1, (ins->r3 >= 0 && ins->r3 < code->string_count && code->string_pool[ins->r3]) ? code->string_pool[ins->r3] : "?"); return;
     case OP_NEQK:           snprintf(out, outsz, "NEQK r%d, \"%s\"", ins->r1, (ins->r3 >= 0 && ins->r3 < code->string_count && code->string_pool[ins->r3]) ? code->string_pool[ins->r3] : "?"); return;
-    case OP_TRY_START:      snprintf(out, outsz, "TRY_START catch var=r%d", ins->r2); return;
+    case OP_TRY_START:      snprintf(out, outsz, "TRY_START catch var=%d", ins->r2); return;
     case OP_TRY_END:        snprintf(out, outsz, "TRY_END"); return;
     case OP_THROW:          snprintf(out, outsz, "THROW r%d", ins->r1); return;
     /* The twenty that used to fall through to "OP_%d" and print a number.
