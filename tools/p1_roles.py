@@ -90,6 +90,15 @@ ROLES = {
     "OP_CALL_FUNC":    {"dst": ["r2"], "imm": ["r1", "r3"]},
     "OP_CALL_BUILTIN": {"dst": ["r1"], "imm": ["r2", "r3"]},
     "OP_MAKE_FUNC":    {"dst": ["r1"], "imm": ["r2", "r3"]},
+    # --- family 6: k-forms (the non-register operand is a pool index or a
+    #     literal, so the failure mode is "which constant", and dst is r1 in
+    #     every member; EQK/NEQK also read a source register, and their print
+    #     line does not show it -- see P1-PRINTSHORT) ---
+    "OP_LOADK_FLOAT":  {"dst": ["r1"], "imm": ["r2"]},
+    "OP_LOADK_STRING": {"dst": ["r1"], "imm": ["r2"]},
+    "OP_LOADK_BOOL":   {"dst": ["r1"], "imm": ["r2"]},
+    "OP_EQK":          {"dst": ["r1"], "src": ["r2"], "imm": ["r3"]},
+    "OP_NEQK":         {"dst": ["r1"], "src": ["r2"], "imm": ["r3"]},
 }
 
 CONV = set("diouxXeEfgGcsp")
@@ -218,6 +227,7 @@ def main():
 
     bad = []
     ambig = []
+    short = []
     declared = [op for op in cases if op in ROLES]
     unmeasured = sorted(op for op in cases if op not in ROLES)
 
@@ -271,6 +281,19 @@ def main():
                   "|effect=the-line-hides-the-register-it-writes"
                   % (op, ",".join(dst), ",".join(sorted(set(regs))) or "none", ",".join(missing)))
             bad.append("C2:" + op)
+        # 1 only forbids a register the roles do not declare; it says nothing
+        # about an operand the roles declare and the line never shows.  2 covers
+        # that direction for dst only, so a hidden source is named here and not
+        # judged: the three criteria cannot see it.
+        for role_name in ("src", "obj"):
+            for r in roles.get(role_name, []):
+                if r in regs:
+                    continue
+                print("P1-PRINTSHORT|op=%s|slot=%s|role=%s|printed=%s"
+                      "|effect=declared-and-read-but-not-printed-the-line-hides-an-operand"
+                      % (op, r, role_name, ",".join(sorted(set(regs))) or "none"))
+                short.append("SHORT:" + op + ":" + r)
+
         for r in sentinel:
             if r in regs:
                 ambig.append("AMBIG:" + op)
@@ -294,6 +317,9 @@ def main():
         print("P1-UNMEASURED|ops=%s|effect=no-role-declared-no-claim-made" % ",".join(unmeasured))
     if ambig:
         print("P1-AMBIG-COUNT|n=%d|effect=declared-but-not-judged" % len(ambig))
+    if short:
+        print("P1-PRINTSHORT-COUNT|n=%d|effect=declared-and-read-but-unprinted-named-not-judged"
+              % len(short))
     if bad:
         print("P1-VERDICT|red|failed=%s" % ",".join(bad))
         return 1
