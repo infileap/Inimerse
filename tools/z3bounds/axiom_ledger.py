@@ -997,20 +997,27 @@ def self_check_readings(gen_path, py, readings_path):
     cut = lines.index(READINGS_HEADER_END) if READINGS_HEADER_END in lines else -1
 
     tampered = list(lines)
-    target = len(tampered) - 1
-    if target > cut >= 0:
-        # Edit a NUMBER, not the shape: a check that only notices malformed lines would pass
-        # this otherwise, and the point is that a well-formed line with a wrong value is caught.
+    # Edit a NUMBER, not the shape: a check that only noticed malformed lines would pass a wrong
+    # value inside a well-formed line.  Pick the line by that property rather than by position --
+    # the last line of an output has no numbers in it, which is how this cell first passed while
+    # changing nothing at all.
+    target = -1
+    for i in range(len(tampered) - 1, cut, -1):
+        if re.search(r"=\d+", tampered[i]):
+            target = i
+            break
+    if target > cut:
         tampered[target] = re.sub(r"=\d+", lambda m: "=%d" % (int(m.group(0)[1:]) + 1),
                                   tampered[target], count=1)
     path = os.path.join(tmp, "tampered.txt")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(tampered) + "\n")
     rc, out = run(["--check-readings", path])
-    named = "READINGS-DIFF|line=%d|" % (target + 1) in out
+    # The diff counts lines in the BODY, so a file index past the header end maps back by cut.
+    named = "READINGS-DIFF|line=%d|" % (target - cut) in out
     cells.append(("tamper-one-line", "one edited body line is named by its line number",
                   "rc=%d line-named=%s" % (rc, "yes" if named else "no"),
-                  rc == 1 and named and tampered[target] != lines[target]))
+                  rc == 1 and named and target > cut and tampered[target] != lines[target]))
 
     broken = list(lines)
     for i, line in enumerate(broken):
