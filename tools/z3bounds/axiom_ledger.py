@@ -14,6 +14,7 @@ same authority as a comment.
 """
 import argparse
 import contextlib
+import copy
 import importlib.util
 import io
 import os
@@ -352,6 +353,60 @@ def resolve_python(py):
     if not py:
         return ""
     return py if os.path.exists(py) else (shutil.which(py) or "")
+
+
+def interpreter_probe(py):
+    """What a --python value actually is, not what it is called.
+
+    A command name is not an object: python3 on another machine is another interpreter, and
+    possibly another z3.  The readings carry the resolved path, its version and the z3 version,
+    so two machines can be compared without appealing to a habit.
+    """
+    real = resolve_python(py)
+    if not real:
+        return dict(status="not found", identity="%s (not found)" % py, version="", z3="")
+    probe = ("import sys\n"
+             "v = sys.version.split()[0]\n"
+             "try:\n"
+             "    import z3\n"
+             "    z = z3.get_version_string()\n"
+             "except Exception:\n"
+             "    z = 'absent'\n"
+             "print(v + ' ' + z)")
+    try:
+        res = subprocess.run([real, "-c", probe], capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return dict(status="did not answer", identity="%s (did not answer)" % real,
+                    version="", z3="")
+    out = (res.stdout.strip().splitlines() or [""])[-1]
+    parts = out.split()
+    if res.returncode != 0 or len(parts) != 2:
+        return dict(status="did not answer", identity="%s (did not answer)" % real,
+                    version="", z3="")
+    version, z3v = parts
+    return dict(status=("no z3" if z3v == "absent" else "ok"),
+                identity="%s (%s, z3 %s)" % (real, version, z3v), version=version, z3=z3v)
+
+
+def interpreter_identity(py):
+    return interpreter_probe(py)["identity"]
+
+
+def apply_census_drop(mod, spec, emit=True):
+    """Drop one pin entry for this run only; True when the spec named a real entry."""
+    path, _, lineno = spec.rpartition(":")
+    if not (path and lineno.isdigit() and int(lineno) in mod.PINNED.get(path, {})):
+        if emit:
+            print("CENSUS-MUTATION|dropped=none|why=%s is not a pin entry in this tree" % spec)
+        return False
+    del mod.PINNED[path][int(lineno)]
+    if emit:
+        print("CENSUS-MUTATION|dropped=%s:%s|effect=this run's pin table loses that line; "
+              "no other table is touched" % (path, lineno))
+        print("CENSUS-LANE|dropped=%s:%s|in-lane=%s|rule=an axiom is in the lane iff its "
+              "registry pins include the dropped line"
+              % (path, lineno, ",".join(mutation_lane(mod, path, int(lineno))) or "none"))
+    return True
 
 
 def run_script(py, script_unix):
@@ -900,15 +955,16 @@ def record_readings(args, path):
     dirty = git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
     if dirty:
         print("READINGS-REFUSED|why=the worktree has uncommitted changes, so the header would "
-              "name a tree that is not what printed|first-change=%s"
-              % dirty.splitlines()[0], file=sys.stderr)
+              "name a tree that is not what printed|dirty=yes|untracked=ignored|"
+              "first-change=%s" % dirty.splitlines()[0], file=sys.stderr)
         return 2
     tree = head.stdout.strip()
     rc, body = readings_body(args)
-    text = "\n".join(readings_header(tree, args.python)) + "\n" + body
+    text = "\n".join(readings_header(tree, interpreter_identity(args.python))) + "\n" + body
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
-    print("READINGS-RECORD|path=%s|tree=%s|lines=%d|body=%d|rc=%d"
+    print("READINGS-RECORD|path=%s|tree=%s|lines=%d|body=%d|rc=%d|dirty=no|"
+          "untracked=ignored|first-change=none"
           % (path, tree, len(text.splitlines()), len(body.splitlines()), rc))
     return rc
 
@@ -947,9 +1003,10 @@ def check_readings(args, path):
     elif git(root, "diff", "--quiet", tree, "HEAD", "--", "tools/z3bounds").returncode != 0:
         problems.append("tools/z3bounds changed between %s and HEAD (%s), so these readings "
                         "belong to another tree" % (tree, head))
-    if py and py != args.python:
+    mine = interpreter_identity(args.python)
+    if py and py != args.python and py != mine:
         problems.append("these readings were produced with %s, this run uses %s"
-                        % (py, args.python))
+                        % (py, mine))
     if problems:
         print("READINGS-TREE|header-tree=%s|header-python=%s|head=%s|verdict=no"
               % (tree or "none", py or "none", head or "none"), file=sys.stderr)
@@ -965,8 +1022,158 @@ def check_readings(args, path):
             print("READINGS-DIFF|line=%d|want=%s|got=%s|note=want is the line the file records, "
                   "got is the line this tree prints" % (i + 1, a, b))
             return 1
-    print("READINGS|same=yes|lines=%d|tree=%s|python=%s" % (len(got), tree, py or "none"))
+    print("READINGS|same=yes|lines=%d|tree=%s|python=%s"
+          % (len(got), tree, py or "none"))
     return rc
+
+
+def side_output(args, py, drop=None):
+    """One full ledger run, captured; the only difference between sides is the interpreter."""
+    side = copy.copy(args)
+    side.python = py
+    mod = load_gen(side.gen)
+    root, problem = mod.locate_root(side.root)
+    if problem:
+        return None, problem
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        if drop:
+            # Silent on purpose: the control must differ in the LEDGER'S rows, not in a notice
+            # announcing itself.  A first difference at line 1 would let a comparison that only
+            # echoes its own flag look like one that read a number.
+            apply_census_drop(mod, drop, emit=False)
+        rc = run_ledger(side, mod, root)
+    return (rc, buf.getvalue()), ""
+
+
+def side_equivalence(args):
+    """One command on two interpreters, compared line by line.
+
+    "Both sides print the same thing" was an assertion about a machine, quoted from memory.
+    It becomes a reading here: the same ledger run on the left interpreter and on the right
+    one, compared as text, with the first difference named.  A side that is not installed is
+    NOT equivalent to the other side -- absence is not agreement.
+    """
+    sides = [("left", args.side_left), ("right", args.side_right)]
+    probes = {name: interpreter_probe(py) for name, py in sides}
+    broken = [name for name, _ in sides if probes[name]["status"] != "ok"]
+    if broken:
+        if any(probes[name]["status"] == "not found" for name in broken):
+            why = "not measured: only one side is installed"
+        else:
+            why = ("not measured: the %s interpreter cannot import z3, so its mutation column "
+                   "would be unmeasured; comparing it with a measured side reports the machine, "
+                   "not the tree" % " and ".join(broken))
+        print("SIDE-UNMEASURED|why=%s|left=%s|right=%s"
+              % (why, probes["left"]["identity"], probes["right"]["identity"]),
+              file=sys.stderr)
+        return 2
+
+    got_left, problem = side_output(args, args.side_left)
+    if got_left is None:
+        print("SIDE-UNMEASURED|why=the left side did not run: %s" % problem, file=sys.stderr)
+        return 2
+    got_right, problem = side_output(args, args.side_right, args.side_differ)
+    if got_right is None:
+        print("SIDE-UNMEASURED|why=the right side did not run: %s" % problem, file=sys.stderr)
+        return 2
+
+    left_rc, left_text = got_left
+    right_rc, right_text = got_right
+    a, b = left_text.splitlines(), right_text.splitlines()
+    total = max(len(a), len(b))
+    differing = 0
+    for i in range(total):
+        x = a[i] if i < len(a) else "<the left side printed no such line>"
+        y = b[i] if i < len(b) else "<the right side printed no such line>"
+        if x != y:
+            differing += 1
+            if differing <= 3:
+                print("SIDE-DIFF|line=%d|left=%s|right=%s" % (i + 1, x, y))
+    # When the difference was injected on purpose, say so and name it: a reader who sees
+    # same=no must be able to tell "these two trees disagree" from "this control made one differ".
+    made = "|right-mutation=%s" % args.side_differ if args.side_differ else ""
+    if differing:
+        print("SIDE-EQUIV|left=%s|right=%s|lines=%d|same=no|differing=%d|rc-left=%d|"
+              "rc-right=%d%s"
+              % (probes["left"]["identity"], probes["right"]["identity"], total, differing,
+                 left_rc, right_rc, made))
+        return 1
+    print("SIDE-EQUIV|left=%s|right=%s|lines=%d|same=yes|differing=0|rc-left=%d|rc-right=%d%s"
+          % (probes["left"]["identity"], probes["right"]["identity"], total, left_rc, right_rc,
+             made))
+    return 0
+
+
+def self_check_sides(gen_path, py, left=None, right=None):
+    """Four cells for the equivalence check itself: three of them must REFUSE to say "same".
+
+    A comparison whose only passing input is "two things that are in fact the same run" would
+    pass a broken comparison too: the interesting cells are the ones where a real difference
+    exists and the command has to name it, and the ones where a side is absent and the command
+    must not turn absence into agreement.
+    """
+    me = os.path.abspath(__file__)
+    left = left or os.environ.get("PY_WIN", DEFAULT_PY_WIN)
+
+    def run(tail):
+        res = subprocess.run([sys.executable, me, "--gen", gen_path, "--python", py] + tail,
+                             capture_output=True, text=True, timeout=3600)
+        return res.returncode, res.stdout + res.stderr
+
+    tmp = tempfile.mkdtemp(prefix="sides_ctl_")
+    # An interpreter that is installed but has no z3: -S skips site-packages, so the import
+    # fails for a real reason on a real path, instead of a fabricated error string.
+    no_z3 = os.path.join(tmp, "python_no_z3")
+    with open(no_z3, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\nexec %s -S \"$@\"\n" % sys.executable)
+    os.chmod(no_z3, 0o755)
+
+    cells = []
+    rc, out = run(["--side-equivalence", "--side-left", left, "--side-right",
+                   "/nonexistent/python3"])
+    said = "not measured: only one side is installed" in out
+    no_same = "same=yes" not in out
+    cells.append(("one-side-not-installed",
+                  "a side that is not installed exits 2 by name and never says same",
+                  "rc=%d named=%s no-same=%s" % (rc, said, no_same),
+                  rc == 2 and said and no_same))
+
+    rc, out = run(["--side-equivalence", "--side-left", left, "--side-right", no_z3])
+    named = ("cannot import z3" in out)
+    no_same = "same=yes" not in out
+    cells.append(("side-without-z3",
+                  "an installed side with no z3 exits 2 by name and never says same",
+                  "rc=%d named=%s no-same=%s" % (rc, named, no_same),
+                  rc == 2 and named and no_same))
+
+    rc, out = run(["--side-equivalence", "--side-left", left, "--side-right", py,
+                   "--side-differ", "src/vm/vm.c:4094"])
+    first = re.search(r"SIDE-DIFF\|line=(\d+)\|", out)
+    # The first difference must be a DATA row (the census/axiom line that moved), not the
+    # control's own announcement: line 1 only means the control echoed itself.
+    line_no = int(first.group(1)) if first else 0
+    cells.append(("one-side-differs",
+                  "a difference in the ledger rows is named by line, and rc is 1 not 0",
+                  "rc=%d first-diff-line=%d same=no=%s"
+                  % (rc, line_no, "same=no" in out),
+                  rc == 1 and line_no > 1 and "same=no" in out))
+
+    rc, out = run(["--side-equivalence", "--side-left", py, "--side-right", py])
+    m = re.search(r"SIDE-EQUIV\|[^\n]*same=yes\|differing=0", out)
+    cells.append(("both-sides-identical",
+                  "the same interpreter twice is one reading with zero differing lines",
+                  "rc=%d same-yes=%s" % (rc, bool(m)), rc == 0 and bool(m)))
+
+    failed = 0
+    for name, expect, got, ok in cells:
+        print("SIDECHECK|case=%s|expect=%s|got=%s|verdict=%s"
+              % (name, expect, got, "PASS" if ok else "FAIL"))
+        if not ok:
+            failed += 1
+    print("SIDECHECK|summary|cases=%d|pass=%d|fail=%d"
+          % (len(cells), len(cells) - failed, failed))
+    return 0 if failed == 0 else 2
 
 
 def self_check_readings(gen_path, py, readings_path):
@@ -1055,10 +1262,16 @@ def self_check_readings(gen_path, py, readings_path):
             out_path = os.path.join(tmp, "record-untracked.txt")
             rc, out = run(["--record-readings", out_path, "--root", wt])
             wrote = os.path.exists(out_path)
+            # The ignored-file decision must itself be a printed field, not a tradition: assert
+            # all three fields, so deleting one of them turns this cell red rather than silent.
+            fields = ("dirty=no", "untracked=ignored", "first-change=none")
+            printed = all(f in out for f in fields)
             cells.append(("untracked-junk-is-not-dirty",
-                          "an untracked file does not block a record",
-                          "rc=%d written=%s" % (rc, "yes" if wrote else "no"),
-                          rc == 0 and wrote and "READINGS-RECORD|" in out))
+                          "an untracked file does not block a record, and the record line says "
+                          "what it ignored",
+                          "rc=%d written=%s fields=%s"
+                          % (rc, "yes" if wrote else "no", "yes" if printed else "no"),
+                          rc == 0 and wrote and "READINGS-RECORD|" in out and printed))
 
             victim = os.path.join(wt, "tools", "z3bounds", "axiom_ledger.py")
             with open(victim, "a", encoding="utf-8") as fh:
@@ -1066,12 +1279,17 @@ def self_check_readings(gen_path, py, readings_path):
             out_path = os.path.join(tmp, "record-dirty.txt")
             rc, out = run(["--record-readings", out_path, "--root", wt])
             refused = "READINGS-REFUSED|" in out and "uncommitted changes" in out
+            # The refusal names the reason AND the state that caused it: dirty=yes is the reading
+            # that tells a reader the check ran, not that the flag was ignored.
+            says_dirty = "dirty=yes" in out
             cells.append(("tracked-edit-refuses-to-record",
-                          "an uncommitted edit is refused by name and nothing is written",
-                          "rc=%d refused=%s written=%s"
-                          % (rc, "yes" if refused else "no",
+                          "an uncommitted edit is refused by name, said dirty=yes, and nothing "
+                          "is written",
+                          "rc=%d refused=%s dirty=%s written=%s"
+                          % (rc, "yes" if refused else "no", "yes" if says_dirty else "no",
                              "yes" if os.path.exists(out_path) else "no"),
-                          rc == 2 and refused and not os.path.exists(out_path)))
+                          rc == 2 and refused and says_dirty
+                          and not os.path.exists(out_path)))
     finally:
         git(root, "worktree", "remove", "--force", wt)
 
@@ -1105,14 +1323,32 @@ def main():
     ap.add_argument("--self-check-writesites", action="store_true",
                     help="eight cells: identity, pin-drop mutation, pin roles, indirect shapes, "
                          "constants, mutation lane, role-first fields, census sums")
+    ap.add_argument("--side-equivalence", action="store_true",
+                    help="run the ledger on two interpreters and compare the output line by "
+                         "line: the claim that both sides agree is a reading, not a memory")
+    ap.add_argument("--side-left", default=os.environ.get("PY_WIN", DEFAULT_PY_WIN),
+                    help="left interpreter of --side-equivalence (default: the Windows exe)")
+    ap.add_argument("--side-right", default="python3",
+                    help="right interpreter of --side-equivalence (default: python3)")
+    ap.add_argument("--side-differ", default=None, metavar="PATH:LINE",
+                    help="control only: drop one pin entry on the RIGHT side, so the comparison "
+                         "has a real difference to name")
+    ap.add_argument("--self-check-sides", action="store_true",
+                    help="four cells for --side-equivalence: two absent/unmeasured sides, one "
+                         "real difference, and the identical case")
     ap.add_argument("--self-check-readings", default=None, metavar="PATH",
                     help="six cells: the file is its own product, and five ways of being wrong")
     args = ap.parse_args()
     if args.self_check_readings:
         return self_check_readings(os.path.abspath(args.gen), args.python,
                                    args.self_check_readings)
+    if args.self_check_sides:
+        return self_check_sides(os.path.abspath(args.gen), args.python, args.side_left,
+                                args.side_right)
     if args.self_check_writesites:
         return self_check_writesites(os.path.abspath(args.gen), args.python)
+    if args.side_equivalence:
+        return side_equivalence(args)
     if args.record_readings or args.check_readings:
         if args.census_drop_pin:
             print("READINGS-REFUSED|why=--census-drop-pin is a mutation, not a reading of the "
@@ -1124,17 +1360,7 @@ def main():
         return check_readings(args, args.check_readings)
     mod = load_gen(args.gen)
     if args.census_drop_pin:
-        path, _, lineno = args.census_drop_pin.rpartition(":")
-        if path and lineno.isdigit() and int(lineno) in mod.PINNED.get(path, {}):
-            del mod.PINNED[path][int(lineno)]
-            print("CENSUS-MUTATION|dropped=%s:%s|effect=this run's pin table loses that line; "
-                  "no other table is touched" % (path, lineno))
-            print("CENSUS-LANE|dropped=%s:%s|in-lane=%s|rule=an axiom is in the lane iff its "
-                  "registry pins include the dropped line"
-                  % (path, lineno, ",".join(mutation_lane(mod, path, int(lineno))) or "none"))
-        else:
-            print("CENSUS-MUTATION|dropped=none|why=%s is not a pin entry in this tree"
-                  % args.census_drop_pin)
+        apply_census_drop(mod, args.census_drop_pin)
     # The default used to be dirname(HERE) -- i.e. tools/ -- which is wrong in every tree:
     # a reader holding only a sha got a FileNotFoundError on tools/src/vm/vm.h.  Ask the
     # tree instead, and refuse by name when there is no tree to ask.
