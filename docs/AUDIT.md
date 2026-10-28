@@ -24878,3 +24878,131 @@ tmpfs on /tmp type tmpfs (rw,nosuid,nodev,relatime,mode=755,uid=1000,gid=1000)
 - `device:inode` 的可比性限于同一台机器同一次启动（重启后 inode 可被复用），本节没测重启；
 - 摘要那一行**未跑**，表格里已标「未跑」，不当作已验证；
 - 本节不讨论「如何检测文件被替换」的通用方法（如 `stat -c '%Y'`＋摘要组合），只给这条判据本身。
+
+## §1.406 增补四百三十七：摘要答的是「同一串字节」，不是「同一份文件」
+
+§1.405 甲表格里「内容摘要」那一行写的是「未跑」。那位合作者指出：它是四行里**唯一跨机器可比**的判据，一行就够，值得跑。本节把它跑完，并给出它与 `%d:%i` 的分工。
+
+### 甲 三个文件，同一串字节
+
+三份内容都是 24 字节的同一句 `identity-is-not-content`（含结尾换行）。
+
+| 文件 | `stat -c '%d:%i %s'` | `sha256sum`（前 12 位） | 说明 |
+|---|---|---|---|
+| `.probe-digest/a.txt` | `2096:109469 24` | `db30a0cfb579` | 工作区，跨两次调用都在 |
+| `.probe-digest/b.txt` | `2096:109699 24` | `db30a0cfb579` | 同内容，另一个文件 |
+| `/tmp/dig-1406.txt`（第一次调用） | `101:2 24` | `db30a0cfb579` | `/tmp` 里那一份 |
+| `/tmp/dig-1406.txt`（第二次调用重建） | `101:2 24` | `db30a0cfb579` | **号被复用** |
+| `.probe-digest/c.txt`（把末尾的 `t` 改成 `T`） | `2096:107086 24` | `58f87b2449c0` | 大小一样，摘要全变 |
+
+### 乙 两次调用之间发生了什么
+
+- 第一次调用写的 `/tmp/dig-1406.txt`，在第二次调用里 `ls: cannot access '/tmp/dig-1406.txt': No such file or directory`（§1.404 那格的重演）。
+- 同一时刻 `.probe-digest/a.txt` 仍是 `2096:109469`，摘要仍是 `db30a0cfb579`。
+- 在第二次调用里按同样的字节重建 `/tmp/dig-1406.txt`，得到的号是 **`101:2`**——与消失前**同一个号**。
+
+### 丙 三件事互相独立
+
+1. **「同一串字节」**：摘要相同——`a`／`b`／`/tmp` 三处完全一致。
+2. **「同一份文件」**：`%d:%i` 相同——只有 `a.txt` 在两次调用之间保住了这个号。
+3. **「这一份曾经活过」**：两次调用都有读数；`/tmp` 那一份没有，它只有「一次写、一次重建」。
+
+### 丁 号被复用，是本节最容易读错的一格
+
+`101:2` 在第一次调用与重建后相同。但那不是「同一个文件活过来」，是**同一个号被分给了另一个文件**——内容相同只是因为我们按同样的字节写进去。所以：
+
+- 「号相同」不证明「没变」；
+- 「号相同 + 摘要相同」在同一个世界里才够说明「还是它」；
+- 在一个世界已经换掉的情况下（`/tmp` 那一侧），任何一项都救不回来。
+
+### 戊 判据
+
+1. **摘要答「是不是同一串字节」，`%d:%i` 答「是不是同一份文件」**：两个问题不能互答，交叉引用就是这一类错误的来源。
+2. **摘要跨机器可比，`%d:%i` 不能**：后者只在同一台机器、同一次启动内有意义（重启后号可被复用）。
+3. **摘要相同不证明「只发生过一次」**：重建的同一串字节与原来不可区分——这是它的定义，也是它的局限。要证明「发生过一次」，得靠世界外的东西（时间戳、日志、别人也看到了）。
+4. **代价不同**：摘要要读过一遍内容，`%d:%i` 是常数时间；按要回答的问题选，不按「哪个更硬」选。
+5. **「未跑」要么跑掉，要么保留**：表格里写「未跑」，读者就知道这一行不能引用。
+
+### 己 端点
+
+`docs/AUDIT.md` 24880 → **25008** 行、节 522 → **524**（本节与 §1.407 一起提交）；三份读数：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 573`（`delta +11`）。
+
+### 庚 边界
+
+- 没测重启之后 `device:inode` 是否被复用（只在本节里看到同一次启动内的复用）；
+- 没测「同一路径上内容相同、元数据不同」的文件（如同一字节、不同 `mtime`／权限）；
+- `.probe-digest/` 与 `/tmp/dig-1406.txt` 已删；`/tmp` 那一份在下一个世界自然不存在。
+
+## §1.407 增补四百三十八：重钉是维护，不是修复——除非账上少了一个数
+
+那位合作者这轮重钉之后说了一句准确的话：「**重钉是为了让 pin 跟上真值，不是为了消红**——重钉是维护，不是修复。」本节把它跑成四格：**在 `removed == 0` 的树上，这句话完全成立；账上少了一个数时，重钉会把判决从 1 改回 0，并且把那个数从账本里抹掉。**
+
+### 甲 加节：绿着，但账老了
+
+在 `78df3e0` 的树上加一节之后（pin 还是 1338）：
+
+```
+HEADINGS|tree=78df3e0|base=1338|now=1341|removed=0|added=3
+HEADINGS|stale|pin-tree=5d4383b|head=78df3e0|net=3|pin-format=v1|identity=per-file-count
+HEADINGS|drift|added=3|removed=0|net=3
+HEADINGS|stale-warn|net=3|note=this reading is old; the criterion does not depend on it
+HEADINGS|added|docs/AUDIT.md|base=525|now=528
+```
+
+`rc=0`。**加节不会让门禁变红**，只会让 `stale-warn` 出现——这正是那位合作者做的那条改动（判据只看 `removed`，陈旧只印一行）。
+
+### 乙 重钉：绿 → 绿
+
+同一棵树上写 pin：输出只有一行 `HEADINGS|pin|tree=78df3e0|docs=107|headings=1341`。再跑一次：
+
+```
+HEADINGS|tree=78df3e0|base=1341|now=1341|removed=0|added=0
+HEADINGS|stale|pin-tree=78df3e0|head=78df3e0|net=0|pin-format=v1|identity=per-file-count
+HEADINGS|drift|added=0|removed=0|net=0
+```
+
+`rc=0`，`stale-warn` 行消失。判断没变（一直是 0），变的是「账还新不新」——**这就是「维护」的实证**。
+
+### 丙 删节：红
+
+把 `docs/STATUS.md` 里一个二级标题改成三级（等于让那个节消失），pin 还原成 1338：
+
+```
+HEADINGS|tree=78df3e0|base=1338|now=1339|removed=1|added=2
+HEADINGS|removed|docs/STATUS.md|base=74|now=73
+```
+
+`rc=1`，并且 stderr 逐字：
+
+> `check_docs_headings: 1 level-2 heading(s) that the pin records are gone. A ceiling cannot see a deletion -- it only bounds growth -- so this is measured against the pinned counts instead. If the removal was meant, re-pin deliberately with --write-pin and say so in the commit; if it was not, restore the section.`
+
+### 丁 在红的树上重钉：红 → 绿，且账本失去记忆
+
+在这棵**已经红了**的树上写 pin：pin 里 `docs/STATUS.md` 从 74 变成 73、`headings` 变成 1339。再跑一次：
+
+```
+HEADINGS|tree=78df3e0|base=1339|now=1339|removed=0|added=0
+HEADINGS|drift|added=0|removed=0|net=0
+```
+
+`rc=0`。**`74` 这个数从此不在任何一行读数里出现。**
+
+所以这一格既证明「重钉能消红」（在那位合作者的语义里它不该消红），也证明它**不留痕**。工具自己是知道的——丙格那段 stderr 里写着「If the removal was meant, re-pin deliberately with `--write-pin` and say so in the commit」：**它把痕迹的存放位置指定在提交信息里**，因为读数里已经没有位置了。
+
+### 戊 判据
+
+1. **「重钉是维护」只在 `removed == 0` 时成立**；引这句话必须带这个前提，否则它会把删节也一起说成维护。
+2. **`removed > 0` 的树上重钉就是修复**：它把 `rc=1` 改成 `rc=0`，并抹掉账上的旧数。
+3. **先看 `removed`，再决定重不重钉**：先重钉再看，就永远看不到那一格；顺序错了，这一格的存在性与你的操作互斥。
+4. **删得合理就在提交信息里写明删了什么**——这是工具指定的唯一痕迹位置，也是后来的人唯一能查的地方。
+5. **账本只记得最近一次 pin**：「这里曾经有 74 节」不在任何读数里。§1.389 说的是「删节看得见」，本节补的是：**删完再重钉就看不见了**。
+
+### 己 端点
+
+`docs/AUDIT.md` 24880 → **25008** 行、节 522 → **524**；三份读数：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 573`（`delta +11`）。
+
+### 庚 边界
+
+- 实验在 `.worktrees/audit-1406` 里做，pin 与 `docs/STATUS.md` 都用 `git checkout --` 复原，**没有提交任何 pin 改动**（pin 归合并者写，见 §1.392 丙栏）。
+- 没测「`--write-pin` 在 `removed > 0` 时是否应该拒绝」——那是工具行为的设计问题，不是本节的读数。
+- 没测「多文件同时删」；丙格只删了一个节、只涉及一个文件。
