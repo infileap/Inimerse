@@ -7,6 +7,7 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 - 判据实现：`tools/p1_roles.py`（纯标准库，`--vm <path>`，红则 rc=1，不 import `ir_spec`，不与任何自检共用提取代码）
 - 依据树：`cff9197`（在 `9dd3ade` 之后 main 又落了 opcode census，追加在 `vm.c` 末尾，`vm.c:5584` 以上一行未动，本族引用的行号因此未移；本分支已 rebase 到它，读数在 rebase 前后一致，见 §3.7 与 §4 M/N 组）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
 - 只读：没有改 `src/`，所有被改坏的 `vm.c` 都是 `.probe/` 下的拷贝，不进提交
+- **引用约定（ivory `m05139` §3）**：打印行的主引用是 `case OP_X:` 这个符号，行号只是「在那棵树上的一次坐标」，不是证据。族 7 起按此执行；族 1–6 的表格里行号仍是主引用，因为那些行是在各自树上逐条核过的，改写成符号要重核一遍——记作待办，不假装已经做到。打印区正是最容易被插行的地方（ivory 两天内在这个区插了三次），所以这条约定的失效方向是「行号漂了、符号没漂」。
 
 ## 1 判据的对象：一条打印行，不是一段 case 文本
 
@@ -36,7 +37,7 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 
 ## 3 角色表：58 条，逐条指到 handler 行
 
-其中 43 条已归族（族 1 算术 17、族 2a 线程 10、族 2b 资源 2、族 3 store 1、族 4 output 1、族 5 构造/区间 5、族 6 K 形式 7），6 条是早期逐条声明、还没归族的：`MOV INDEX_SET TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`。`LOADK_INT` 与 `LOADK_I64` 原来也挂在这一组里，本批被族 6 收进去（§3.7）——**先声明、后归族是允许的，但两处都要写清，否则「族数」与「批次数」对不上就会被读成漏算**。剩下 6 条的形状各自都不符合任何已写的族规则，硬归族会正好制造出「族内形状不一致」，所以先挂着，下一批按「调用族 / 容器族」的边界理由再动。
+其中 52 条已归族（族 1 算术 17、族 2a 线程 10、族 2b 资源 2、族 3 store 1、族 4 output 1、族 5 构造/区间 5、族 6 K 形式 7、族 7 控制流/异常 9），6 条是早期逐条声明、还没归族的：`MOV INDEX_SET TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`。`LOADK_INT` 与 `LOADK_I64` 原来也挂在这一组里，本批被族 6 收进去（§3.7）——**先声明、后归族是允许的，但两处都要写清，否则「族数」与「批次数」对不上就会被读成漏算**。剩下 6 条的形状各自都不符合任何已写的族规则，硬归族会正好制造出「族内形状不一致」，所以先挂着，下一批按「调用族 / 容器族」的边界理由再动。
 
 角色不按位置声明，因为位置在不同 opcode 上含义不同：`OP_CALL_FUNC` 的 dst 是 `r2`（`vm.c:4062`），`OP_RECORD` 的 dst 是 `r3`（`vm.c:4243`），`OP_THREAD_STATE` 的 `r2/r3` 是线程 id 与属性下标（`vm.c:4693`）。
 
@@ -49,15 +50,15 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 | `OP_LOADK_BOOL` | dst=r1 imm=r2 | 3167 | 3271 | `vm.c:3272` `ins.r2 ? 1 : 0`；打印 `vm.c:5330` |
 | `OP_EQK` | dst=r1 src=r2 imm=r3 | 3213 | 4159 | `vm.c:4160` `int sidx = ins.r3;`；`vm.c:4171` `Value opv = R[ins.r2];`；`vm.c:4172` 写 `R[ins.r1]`；打印 `vm.c:5370` **只印 r1** |
 | `OP_NEQK` | dst=r1 src=r2 imm=r3 | 3214 | 4175 | 同构：`vm.c:4187` 读 `R[ins.r2]`，`vm.c:4188` 写 `R[ins.r1]`；打印 `vm.c:5371` **只印 r1** |
-| `OP_JUMP` | imm=r2 | 3188 | 3798-3800 | `vm.c:3799` `t->ip = ins.r2;`（`r2` 是字节码偏移，不是值）；打印 `vm.c:5352` `"JUMP %d"`，裸数字 |
-| `OP_JUMP_IF_FALSE` | src=r1 imm=r2 | 3189 | 3801-3805 | `vm.c:3802` `!vm_truthy(&R[ins.r1])`；`vm.c:3803` 跳 `ins.r2`；打印 `vm.c:5353` `r%d, %d` |
-| `OP_JUMP_IF_TRUE` | src=r1 imm=r2 | 3190 | 3806-3810 | 同构：`vm.c:3807` `vm_truthy(&R[ins.r1])`；打印 `vm.c:5354` |
-| `OP_RETURN` | src=r1，**`r1` 是哨兵槽（`0`/`−1` = nil）** | 3202 | 4123-4152 | `vm.c:4126` `if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];` 否则 `ret` = nil；打印 `vm.c:5360` **无条件** `"RETURN r%d"` |
-| `OP_THROW` | src=r1 | 3226 | 4448-4451 | `vm.c:4449` `vm_throw(vm, t, &R[ins.r1]);`；打印 `vm.c:5374` `"THROW r%d"` |
-| `OP_STOP` | 无操作数 | 3195 | 4020-4022 | `vm.c:4021` `t->running = false;`；打印 `vm.c:5364` `"STOP"` |
-| `OP_HALT` | 无操作数 | 3196 | 4023-4025 | 同 `STOP`；打印 `vm.c:5365` `"HALT"` |
-| `OP_TRY_END` | 无操作数 | 3225 | 4444-4446 | `vm.c:4445` `if (t->exc_depth > 0) t->exc_depth--;`；打印 `vm.c:5373` `"TRY_END"` |
-| `OP_CALL_VALUE` | dst=r2 src=r1 imm=r3 | 3200 | 4056-4060（落到 `L_CALL_FUNC` 4062） | `vm.c:4057` `R[ins.r1].type != VAL_FUNCTION`——`r1` 是**寄存器里的函数值**；`vm.c:4062` `res = ins.r2, argc = ins.r3`；打印 `vm.c:5403` |
+| `OP_JUMP` | imm=r2 | 3188 | 3798-3800 | `vm.c:3799` `t->ip = ins.r2;`（`r2` 是字节码偏移，不是值）；打印 `case OP_JUMP:`（`vm.c:5352`）`"JUMP %d"`，裸数字 |
+| `OP_JUMP_IF_FALSE` | src=r1 imm=r2 | 3189 | 3801-3805 | `vm.c:3802` `!vm_truthy(&R[ins.r1])`；`vm.c:3803` 跳 `ins.r2`；打印 `case OP_JUMP_IF_FALSE:`（`vm.c:5353`）`r%d, %d` |
+| `OP_JUMP_IF_TRUE` | src=r1 imm=r2 | 3190 | 3806-3810 | 同构：`vm.c:3807` `vm_truthy(&R[ins.r1])`；打印 `case OP_JUMP_IF_TRUE:`（`vm.c:5354`） |
+| `OP_RETURN` | src=r1，**`r1` 是哨兵槽（`0`/`−1` = nil）** | 3202 | 4123-4152 | `vm.c:4126` `if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];` 否则 `ret` = nil；打印 `case OP_RETURN:`（`vm.c:5360`）**无条件** `"RETURN r%d"` |
+| `OP_THROW` | src=r1 | 3226 | 4448-4451 | `vm.c:4449` `vm_throw(vm, t, &R[ins.r1]);`；打印 `case OP_THROW:`（`vm.c:5374`）`"THROW r%d"` |
+| `OP_STOP` | 无操作数 | 3195 | 4020-4022 | `vm.c:4021` `t->running = false;`；打印 `case OP_STOP:`（`vm.c:5364`）`"STOP"` |
+| `OP_HALT` | 无操作数 | 3196 | 4023-4025 | 同 `STOP`；打印 `case OP_HALT:`（`vm.c:5365`）`"HALT"` |
+| `OP_TRY_END` | 无操作数 | 3225 | 4444-4446 | `vm.c:4445` `if (t->exc_depth > 0) t->exc_depth--;`；打印 `case OP_TRY_END:`（`vm.c:5373`）`"TRY_END"` |
+| `OP_CALL_VALUE` | dst=r2 src=r1 imm=r3 | 3200 | 4056-4060（落到 `L_CALL_FUNC` 4062） | `vm.c:4057` `R[ins.r1].type != VAL_FUNCTION`——`r1` 是**寄存器里的函数值**；`vm.c:4062` `res = ins.r2, argc = ins.r3`；打印 `case OP_CALL_VALUE:`（`vm.c:5403`） |
 | `OP_LOADK_I64` | dst=r1 imm=(r2,r3) | 3164 | 3242 | `vm.c:3247-3250` |
 | `OP_ADD` | dst=r1 src=r2,r3 | 3168 | 3276 | `vm.c:3277` |
 | `OP_MOD` | dst=r1 src=r2,r3 | 3217 | 4252 | `vm.c:4256-4267` |
@@ -304,6 +305,8 @@ P1-VERDICT|green|declared=49|unmeasured=18|note=an-unmeasured-op-is-not-a-passin
 3. 无操作数的成员（`STOP` `HALT` `TRY_END`，以及族 2a 的 `YIELD`）是这一族的零点：打印行里出现任何字形都是 ① 的违规；
 4. `CALL_VALUE` 是这一族里唯一有 dst 的成员，而且它给出「表按 opcode 建、不按位置建」的最硬证据：同一个 `r1` 在 `CALL_VALUE` 里是**寄存器里的函数值**（`vm.c:4057`），`goto L_CALL_FUNC` 之后在 `CALL_FUNC` 里才是 func 下标（`vm.c:4062` `int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;`）。**一个位置两种角色，跨 opcode 变化，任何「按位置推角色」的解析器都会在这里错。**
 
+还有一层要标出来（ivory `m05139` 末段）：`CALL_VALUE` 的 **handler 读数主语是它和 `CALL_FUNC` 共用的那条尾**（`L_CALL_FUNC`，`vm.c:4061-`），不是某一条指令。我的判据只读打印行，而两条指令各有自己的 `case`（`case OP_CALL_FUNC:` `vm.c:5359`、`case OP_CALL_VALUE:` `vm.c:5403`），所以**字形不共享、语义共享**。这意味着：若这条尾将来把 `res` 从 `r2` 改成别的槽，两行打印都会同时变成错的，而我的读数会独立地红两次——**两条红说的是同一件事，这不是两份证据**。
+
 **不在这一族的**：`TRY_START`（它是 frame 变量下标 + 范围声明，属资源/声明一侧，且 dst 在 `r2` 的 frame 槽）、`SET_INTERVAL`（构造族）、`THROW` 的**目标**（异常处理器由 `vm_throw` 按 exc 栈决定，没有操作数可查）。
 
 **本批的读数**（`vm.c` @ `cff9197`）：
@@ -427,6 +430,21 @@ L 组把这一条从散文变成读数：如果一个修的人**信了文档**�
 
 ## 5 八条结构性结果
 
+### 5.0 各族盲区总表（ivory `m05139` §4 的要求：绿的读者要能自己看到它没问什么）
+
+| 族 | 条数 | `blind=` | 为什么它会绿 |
+| --- | --- | --- | --- |
+| 1 算术 / 比较 | 17 | `semantics` | 每个操作数都是值寄存器、dst 恒 `r1`，三条判据恰好都在射程内；绿=打印行与角色表一致，**不是求值正确**（`MIN` 的 `reads_dst=no` 是角色陈述，不是语义保证） |
+| 2a 线程 | 10 | `which-thread, how-long` | `t%d` 与 `r%d` 都是非裸字形，判据只问「字形对不对」，不问「这个 id 指哪条线程、等多久」；哨兵槽由 `P1-AMBIG` 点名而不判 |
+| 2b 资源 | 2 | `which-resource` | `DECLARE`/`LOCK` 的下标是不是落在合法资源上，判据看不见（`DECLARE` 是四权威一致的控制行） |
+| 3 store | 1 | `conditional-write` | ② 只问「声明的 dst 有没有印」，不问「这条路径一定写吗」——`RECORD` 的 `r3` 只在命中时写（`vm.c:4243`） |
+| 4 output | 1 | `empty-dst-trivial` | `SAY` 没有 dst，② 对它恒真；这一族的绿最接近「没有可查的对象」 |
+| 5 构造 / 区间 | 5 | `storage-location` | 元素在值栈（`vm.c:3638`），判据看不见值的来源；`SET_ADD` 的 `obj`+`mutate` 只约束字形不约束别名 |
+| 6 K 形式 | 7 | `source-register-not-printed` | ① 只抓多印、② 只抓 dst，源寄存器漏印没有判据管（`EQK`/`NEQK` 的 `r2`；ivory 已按形状侧补判红，本表留档） |
+| 7 控制流 / 异常 | 9 | `predicate-boundary, shared-tail` | 哨兵谓词的边界（`> 0` vs `< 0`）判据看不见，`guarded=yes` 也照样绿（§4 P 组）；`CALL_VALUE` 的读数主语是它与 `CALL_FUNC` **共用的那条尾**，不是某一条指令 |
+
+这张表的意思只有一句：**每族的绿都有一个具体的「没问」，写出来比不写强，因为它让下一族的预期可以被证伪。**
+
 ### 5.1 ③ 在检测能力上不独立于 ①
 
 角色表里每个 slot 只有一个角色，所以 `imm ∩ (dst ∪ src ∪ obj) = ∅` 恒成立，于是 `imm ∩ REG ≠ ∅ ⇒ REG ⊄ dst ∪ src ∪ obj`——**任何违反 ③ 的行必然违反 ①**。实测 E 就是构造：想造一个「只红 ③」的反例造不出来，最干净的一条也必然带 `C1`。
@@ -528,7 +546,9 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 
 我倾向第二条，但它与 ② 重叠（② 是 `dst` 的特例），所以若 §10 采纳，应当写成 ② 的一般化——**「声明的角色槽 ⊆ 打印行」，`dst` 只是其中一类**——而不是第四条并列的判据。
 
-M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只有 `EQK` 那一行消失，`NEQK` 还在）；N 证明 `P1-PRINTSHORT` 分不清「没印」与「印在别的命名空间」——它报的是「这个槽没有以寄存器字形出现」，不是「这个槽没有被印」。
+M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只有 `EQK` 那一行消失，`NEQK` 还在）；N 证明 `P1-PRINTSHORT` 分不清「没印」与「印在别的命名空间」——它报的是「这个槽没有以寄存器字形出现」，
+
+**同一个类，ivory 那边也有一条读数，两条不要数两遍**（它 `m05139` §2 的原话）：`IR-DISASM-REGS` 的 `hidden=` 名单是 op 级点名，`compared=register-set-not-order` + `why=` 说的是同一件事。两者的差别值得写清：**它的 `hidden=` 含合法的「不印」**（`LOADK_STRING` 的 `r2` 是池下标，印的是字符串本身），**我的 `P1-PRINTSHORT` 只覆盖「已声明且 handler 真读」的槽**——所以我的名单是它的子集，但每一条背后都有一句角色声明。两边都只能当读数、不能判红；判红的入口在形状侧（它新加的 `IR-SHAPE-PRINTSHORT`：形状用 `R[rN]` 声明过的槽，打印行里必须出现 `ins->rN`）。不是「这个槽没有被印」。
 
 ### 5.8 形状对了，谓词仍可能错：`RETURN` 的 nil 是「非正」，不是「小于零」
 
