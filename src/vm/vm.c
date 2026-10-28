@@ -23,7 +23,7 @@
 static SetObj *vm_set_slot(VM *vm, int idx);
 int vm_set_new(VM *vm);
 static const char *builtin_set_name(int bi);
-static void value_assign(Value *dst, const Value *src);
+static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68]; static void vm_op_hot_init(void);
 
 #ifdef _WIN32
 #include <windows.h>
@@ -3021,7 +3021,7 @@ void gc_collect(VM *vm) {
 }
 
 static void vm_execute_thread(VmThread *t) {
-    g_cur_thread = t;
+    g_cur_thread = t; vm_op_hot_init();
     VM *vm = t->vm;
     Value *R = t->R;
     enum { FRAME_REGS = VM_FRAME_REGS };
@@ -3152,7 +3152,7 @@ static void vm_execute_thread(VmThread *t) {
     
 
 
-        RegInstruction ins = t->code->code[t->ip++];
+        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_OP_HOT asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; if (_op < 68) g_op_hits[_op]++; }
         if (t->is_task && t->budget > 0 && --t->budget == 0) {
             t->budget = VM_TASK_BUDGET;
             SwitchToFiber(t->fiber_sched);
@@ -5584,3 +5584,119 @@ void vm_debug_builtins_register(VM *vm) {
    docs/ cites this file by line, the highest cited line is above this one, so
    writing here moves no citation.
    --------------------------------------------------------------------------- */
+
+/* ---- opcode census (opt-in) ------------------------------------------
+   INIMERSE_OP_HOT=1 makes the interpreter count how many times each opcode
+   actually ran and print one OP-HOT| line per opcode at exit.  It is a
+   census of what this process executed, not a claim about the other two
+   ends: AOT lowers every opcode to inline C at build time, and wasm runs
+   inside the host engine, so neither leaves a point in this process to
+   count.  They read aot=na / wasm=na with that reason instead of 0 -- 0
+   would say "never executed", which is a different sentence from "not
+   measured here".  The reading carries no exit code, so a census run can
+   never fail a gate by counting something it did not expect.
+
+   The names are the OpCode enum in its own order, because the opcode field
+   is a raw integer (.inim ABI): index == opcode value, and 29 is the hole
+   the removed OP_POP_REG left.  Two typedefs below turn a grown enum into
+   a build error, so an appended opcode cannot quietly become #hole in the
+   reading.  The 68 literal appears in the forward declaration, the bounds
+   check and the table's own assert because the declaration has to exist
+   before the table does; the asserts are what keep the three in step. */
+static const char *const g_op_names[] = {
+    "OP_MOV",
+    "OP_LOADK_INT",
+    "OP_LOADK_FLOAT",
+    "OP_LOADK_STRING",
+    "OP_LOADK_BOOL",
+    "OP_ADD",
+    "OP_SUB",
+    "OP_MUL",
+    "OP_DIV",
+    "OP_NEG",
+    "OP_EQ",
+    "OP_NEQ",
+    "OP_LT",
+    "OP_GT",
+    "OP_LE",
+    "OP_GE",
+    "OP_AND",
+    "OP_OR",
+    "OP_NOT",
+    "OP_NEW_ARRAY",
+    "OP_INDEX_GET",
+    "OP_INDEX_SET",
+    "OP_LOAD_GLOBAL",
+    "OP_STORE_GLOBAL",
+    "OP_JUMP",
+    "OP_JUMP_IF_FALSE",
+    "OP_JUMP_IF_TRUE",
+    "OP_CALL_BUILTIN",
+    "OP_PUSH_REG",
+    NULL,
+    "OP_SAY",
+    "OP_WAIT",
+    "OP_STOP",
+    "OP_HALT",
+    "OP_CALL_FUNC",
+    "OP_RETURN",
+    "OP_IS_NIL",
+    "OP_THREAD_START",
+    "OP_THREAD_CTRL",
+    "OP_THREAD_JOIN",
+    "OP_THREAD_WAIT",
+    "OP_THREAD_STATE",
+    "OP_LOCK",
+    "OP_SEND",
+    "OP_RECV",
+    "OP_NEW_DICT",
+    "OP_EQK",
+    "OP_NEQK",
+    "OP_DECLARE",
+    "OP_RECORD",
+    "OP_MOD",
+    "OP_NEW_SET",
+    "OP_SET_INTERVAL",
+    "OP_IN",
+    "OP_MIN",
+    "OP_MAX",
+    "OP_BIND",
+    "OP_TRY_START",
+    "OP_TRY_END",
+    "OP_THROW",
+    "OP_SET_ADD",
+    "OP_THREAD_GOTO",
+    "OP_CONCAT",
+    "OP_YIELD",
+    "OP_MAKE_FUNC",
+    "OP_CALL_VALUE",
+    "OP_LOAD_CAPTURE",
+    "OP_LOADK_I64",
+};
+typedef char vm_op_hot_table_covers_the_enum[
+    (OP_LOADK_I64 + 1 == 68) ? 1 : -1];
+typedef char vm_op_hot_table_has_a_name_per_slot[
+    (sizeof(g_op_names) / sizeof(g_op_names[0]) == 68) ? 1 : -1];
+
+static void vm_op_hot_dump(void) {
+    unsigned long long total = 0;
+    int seen = 0;
+    int i;
+    for (i = 0; i < 68; i++) {
+        if (!g_op_hits[i]) continue;
+        total += g_op_hits[i];
+        seen++;
+        printf("OP-HOT|op=%s|interp=%llu|aot=na|wasm=na|why=aot lifts the op into inline C and wasm runs in the host engine, so neither leaves a point in this process to count\n",
+               g_op_names[i] ? g_op_names[i] : "#hole", g_op_hits[i]);
+    }
+    printf("OP-HOT|executed=%llu|opcodes=%d|source=interp|unmeasured=aot,wasm\n", total, seen);
+}
+
+static void vm_op_hot_init(void) {
+    const char *e;
+    if (g_op_hot_asked) return;
+    g_op_hot_asked = 1;
+    e = getenv("INIMERSE_OP_HOT");
+    g_op_hot = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+    if (g_op_hot) atexit(vm_op_hot_dump);
+}

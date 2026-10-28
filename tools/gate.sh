@@ -1100,11 +1100,32 @@ GATE_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # what the sha comparison was added to end.
 GATE_START_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "GATE|start|head=${GATE_START_HEAD:-<not a git tree>}|worktree=${GATE_WORKTREE:-<unknown>}|at=$GATE_START_AT"
-
+# The ctest row s label is written here, not declared in STAGE_SPECS: registered
+# is a property of the build tree, readable only after configure/build ran, and it
+# must sit on the same line as expect -- a reader has to be able to see the two
+# counts disagree without leaving the log.  The skip count is absent on purpose:
+# it is a property of the run, so stage_ctest reads it from its own output and
+# prints "gate: ctest reported N skipped test(s)"; a literal 0 here would look
+# like the two measurements beside it and reach nothing.  stage_ctest asserts the
+# summary count too; this is the other source, printed not asserted, because a
+# doc quotes that assert comment verbatim and prose wins over a count.
 for _spec in "${STAGE_SPECS[@]}"; do
   _sel="${_spec%%|*}"; _rest="${_spec#*|}"
-  run_stage "${_rest%%|*}" "$_sel" "${_rest#*|}"
+  _label="${_rest%%|*}"
+  if [ "$_sel" = "ctest" ]; then
+    CTEST_REGISTERED="$(ctest --test-dir "$BUILD_DIR" -N 2>/dev/null | sed -n 's/^ *Total Tests: *//p' | tail -1)"
+    _label="ctest (expect ${EXP_CTEST}, registered ${CTEST_REGISTERED:-<unreadable>}, skipped n/a)"
+  fi
+  run_stage "$_label" "$_sel" "${_rest#*|}"
 done
+
+# The contention margin of the tests RUN_SERIAL protects.  Printed, never asserted:
+# tools/gate_attr_readings.py recomputes it from the TIMEOUT this build tree declares
+# and from tools/gate_attrs.recorded.json, so raising the limit moves the margin
+# instead of leaving a number behind that reads as designed slack.  The recorded
+# file names the load and the tree each time was measured on (the same test alone
+# takes 4.90s, which is the point of printing the load beside the margin).
+python3 "$REPO_ROOT/tools/gate_attr_readings.py" --test-dir "$BUILD_DIR"
 
 # Re-read the same subject at the end.  A mismatch is not a failing stage and not
 # a test result: it says the numbers above are about more than one tree, so there
