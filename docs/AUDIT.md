@@ -24091,3 +24091,76 @@ elif n > b:
 - 我只写规格，**没改工具**；修法（`behind` 改成 `net` 或按标题身份重算、缺席改名）归 runner。
 - 本节所有「pin」写入都发生在一次性工作树里且未提交；`tools/docs_headings.pin.json` 的正式值仍由合并者写。
 - 甲栏那次测量依赖「先让基线新鲜」，也就是工作树内写过 pin；读者若在旧 pin 上重跑，会看到 `added` 多出上一节带来的 +1，那不是同一格。
+
+## §1.395 增补四百二十七：判定行与命令，都不带自己的输入
+
+§1.394 说的是一个数被借去回答另一个问题。本节说另一半：**产生这个数的那句命令、和判它红绿的那一行，都不带自己的输入。** 两个实例，一个是我刚测的缺省值，一个是昨夜我自己踩的门禁红。
+
+### 甲 缺省值是策略，不是细节
+
+`tools/z3bounds/axiom_ledger.py` 里 `--python` 的缺省由 `default_python()` 给出（树 `97c3a7d`）。逐格实测：
+
+| 格 | 构造 | 返回值 |
+|---|---|---|
+| A | 原样 | `/usr/bin/python3`（本机该解释器 `import z3` 成功） |
+| B | `PY_WIN=/usr/bin/python3` | `/usr/bin/python3` |
+| C | `PY_WIN=/mnt/c/Python314/python.exe` | `/mnt/c/Python314/python.exe`（`PY_WIN` 胜） |
+| D | `PATH` 上没有 `python3` | `/mnt/c/Python314/python.exe`（第 30 行写死的 Windows 路径，**回落不打印**） |
+
+身份是字符串，不是一次成功探测：`interpreter_identity('/nonexistent/python.exe')` 印的是 `/nonexistent/python.exe (not found)`。而它参与的那条判据（读数文件头与本次运行比较）据此判红绿。同一棵树、同一份读数文件：
+
+```
+--check-readings（默认）        rc=0
+READINGS|same=yes|lines=93|tree=97c3a7d|python=/usr/bin/python3 (3.14.4, z3 5.3.2)
+
+--check-readings --python /mnt/c/Python314/python.exe   rc=1
+READINGS-TREE|header-tree=97c3a7d|header-python=/usr/bin/python3 (3.14.4, z3 5.3.2)|head=97c3a7d|verdict=no
+READINGS-TREE-FAIL|why=these readings were produced with /usr/bin/python3 (3.14.4, z3 5.3.2), this run uses /mnt/c/Python314/python.exe (3.14.7, z3 5.3.2)
+```
+
+`tree` 相同、`head` 相同、判词是「这些读数是在另一个解释器下产生的」——而**两个解释器都在同一台机器上**（3.14.4 与 3.14.7，z3 同为 5.3.2）。这条判据的意图是「机器不同必须说出来」，这两格证明它分不开「换了一台机器」与「换了一个缺省值」；补丁版本差一位即算「另一台机器」。
+
+第二件事更重：`default_python()` 自己住在 `tools/z3bounds/` 里，**改这个缺省就是改 `tools/z3bounds`**，于是已记录的读数文件立刻红，理由换成 `tools/z3bounds changed between 4b28fac and HEAD (97c3a7d), so these readings belong to another tree`。⇒ 改缺省值的代价不是一次重跑，是**所有历史读数作废**。这就是「缺省值是策略」的意思：它同时决定会不会跨边界、新机器上是否开箱即红、以及旧读数还算不算数。
+
+### 乙 判定行不带它判的是谁
+
+`tools/gate.sh` 里，每阶段的日志用 `local log; log="$(mktemp)"` 建、阶段结束 `rm -f "$log"` 删（第 180 与 191 行）⇒ **阶段日志结束即删**；阶段名只在失败那行的 `echo "✘ $name (exit $rc)"` 出现一次（第 188 行）；`STAGE`／`RESULT` 全表在第 1064–1068 行打印；第 1069 行才印 `gate: FAILED — do not merge.`。第 182 行的 `rc="${PIPESTATUS[0]}"` 取自阶段本身——这一句是对的，问题只在下游。
+
+我昨夜的现场：`bash tools/gate.sh 2>&1 | tail -3` → 末行 `gate: FAILED — do not merge.`；而同一条命令里门禁与 `git push` 用 `;` 相连，**推送照样执行**。之后同一棵树（`2a9bd2a`，工作区干净）再跑两次，两次 `16/16`。三条可复核的事实：① 判定行不点名阶段；② 我用 `| tail` 把唯一带阶段名的那一行切掉了；③ 我在判定与动作之间放了管道和分号。**只有 ③ 是我的失手，①② 是工具的形状。**
+
+### 丙 共享目录从不说「有人在用」
+
+`BUILD_DIR` 缺省是仓库下的 `build`；该脚本里 `flock` 与锁文件的计数都是 **0**；阶段日志落 `/tmp`，两棵树同名阶段会撞名。⇒ 一棵树报绿，可能是另一条车道正在同一个 `build` 里跑；我见过同树同工具在隔离树全绿、在主树四段红，也见过同一棵树跑一轮门禁后 `ctest -N` 从 168 变 169。
+
+### 丁 判据
+
+1. **判定与动作之间不许有管道**：退出码来自进程，不来自文本末行。要看文本先把输出落文件（`bash tools/gate.sh > /tmp/gate-x.log 2>&1; echo rc=$?`），用退出码决定推不推、用文件做归因。
+2. **报红必须带三件**：树号、工作区是否干净、`build` 此刻有没有别人在用。缺第三件只能写「未测」；三件齐全而阶段未指名，只能写「未归因」。
+3. **「间歇性」不是观测**：同一输入两种输出才叫间歇；两次运行有两个不同输入时，正确记法是「未归因」。
+4. **缺省值要在读数里现身**：回落路径必须打印；否则读者只能从失败里倒推用了解释器。
+
+### 戊 规格（已发 runner，未实现）
+
+```
+gate: failed stage(s): <名字1>, <名字2>
+gate: each failed stage's log is kept at <BUILD_DIR>/.gate-stage-<name>.log
+```
+
+①`gate: FAILED — do not merge.` 逐字保留（docs 引过它），其后追加上述两行；②失败时保留阶段日志（`rm -f` 只在 PASS 时执行），`mktemp` 改落 `BUILD_DIR`；③开头 `flock -n "$BUILD_DIR/.gate.lock"`，拿不到即 `gate: another gate is running against <BUILD_DIR>; refusing to measure a shared directory.` 并 `exit 2`。三件在本树**都未实现**，本节只写规格。
+
+### 己 端点
+
+| 项 | 读数 |
+|---|---|
+| 树 | `97c3a7d`（本节写作时的 `origin/main`） |
+| `docs/AUDIT.md` | 24093 → **24166** 行（+73） |
+| 节 | 511 → 512 |
+| pin | 1329（合并者落，本节未碰） |
+| pointers | 2457，`delta +223`（ceiling 223），**恰贴天花板** |
+
+### 庚 边界
+
+- 我那次红**未归因**：不是「间歇性」，两次全绿一次全红的差别我说不出是哪个输入不同（阶段日志已被删）。按丁栏第 3 条，这一格只能记成未归因。
+- 不据此说读数文件那条判据错：机器不同必须说出来，这一条照旧；本节只说它分不开换机器与换缺省值。
+- 甲栏的 3.14.4／3.14.7 是当时那台机器上的读数，不可当常量引用。
+- **本节的引用形状被账本约束**：指针 2457 = 基准 2234 + 223，恰等于天花板，因此本节对靶文件只写「第 N 行」的散文，不写「文件:行」；若下一节也只能这样写，说明天花板已经被当作排版规则在用——那是缺口，不是设计。
