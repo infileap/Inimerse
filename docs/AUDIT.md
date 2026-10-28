@@ -24693,3 +24693,114 @@ check_docs_headings: no pinned section is missing. A green here says nothing abo
 - 丙栏的 `--write-pin` 只在本地工作树里跑，跑完 `git checkout --` 复原；我没有把重钉结果提交（pin 归合并者）。
 - 甲栏的「不可能被命令改写」指仓库里的工具：任何常量都能被人手改，这里说的是**没有专门的命令**。
 - 三本账的缺省都能被环境变量覆盖，乙栏正是用这一点做的实验；这本身也说明「基准是谁」不是一个只读事实。
+
+## §1.402 增补四百三十三：基准不在这一份拷贝里
+
+**一个差最起码要两个端点，而端点是两棵树；如果其中一棵不在这份拷贝里，那个差就不是「0」，是「没有」。** 本节用一个 `--depth=1` 的克隆检验这句：两份账本在被问到「相对谁」时，是印一个数，还是拒绝。
+
+### 甲 浅克隆里那个基准不可达
+
+```
+$ git clone --depth=1 file:///home/sakiko/inimerse .probe-depth1
+$ cd .probe-depth1 && git rev-parse --is-shallow-repository
+true
+$ git rev-parse --short HEAD
+eb33e5c
+$ git cat-file -e e3e97c71e^{commit}
+fatal: Not a valid object name e3e97c71e^{commit}
+$ echo $?
+128
+```
+
+**基准那一侧的一个字节都不在这份拷贝里**——不是「同一个提交的内容不同」，是这个提交名解不出来。
+
+### 乙 指针账：拒绝，不是印 0
+
+```
+$ python3 tools/check_obs_markers.py
+check_obs_markers: EXP_OBS_BASE 'e3e97c71e51ba491cf28d4b7a064ecbece9bf140' does not resolve
+check_obs_markers: repo=/home/sakiko/inimerse/.probe-depth1 cwd=/home/sakiko/inimerse/.probe-depth1
+$ echo $?
+2
+```
+
+它**没有印 `pointers`，也没有印 `delta`**：两行都在说「基准解不出来」，然后 rc 2。这正是那条负控该有的样子——**「解不出来」不能退化成「差是 0」**。
+
+### 丙 行引用账：同样拒绝，且把「为什么」写全
+
+```
+$ python3 tools/check_line_refs.py
+check_line_refs: base 1c6b3381f3db8b77ca90c53ae5737dfa3698624f is not an ancestor of HEAD.
+check_line_refs: the pins are deltas against that tree; a base that is not behind this one makes the delta a comparison between two trees that are not on one line.
+check_line_refs: refusing to report a delta with no base.
+VERDICT|assertions=0|causes=0|consequential=0|measured_cells=1|environment_cells=1|cause=environment
+$ echo $?
+2
+```
+
+注意那句 **`measured_cells=1|environment_cells=1|cause=environment`**：这一格被记成「环境不成立、没测」，而不是「测出 0」。§1.388 定的那个分母在这里第一次派上用场——**没测的格不进 `causes`，进 `environment_cells`**，读者不会把它误读成「测量通过」。
+
+### 丁 判据
+
+1. **「解不出来」与「等于 0」必须由 rc 分开**：基准不可达 ⇒ rc ≠ 0 且不印数；若印了 `delta +0`，那就是「拿不存在的基准算出确定的差」，比红更坏。
+2. **拒绝要说出是哪一端缺**：`does not resolve`／`is not an ancestor of HEAD` 两句分别指出「名字解不出」与「有这个名字但不在这条线上」。
+3. **没测 ≠ 通过**：`assertions=0` 配 `environment_cells=1` 才完整；只有 `assertions=0` 会被读成「没有断言要跑」。
+4. **克隆深度是读数的一部分**：同一个仓库，`--depth=1` 与完整克隆会给这两份账本不同的 rc。报 rc 必须同时报「这份拷贝有多深」，否则别人复跑不出你的红。
+
+### 戊 端点
+
+观测树 `eb33e5c`（浅克隆里的 HEAD；主仓 `origin/main` 当时是 `76ee6a5`）；本节落盘前的 `docs/AUDIT.md` 行数与节数见 §1.403 端点（两节一起提交）。
+
+### 己 边界
+
+- 克隆建在 `.probe-depth1`（仓库内、`docs/` 之外，未被任何账本扫描），测完即删；
+- 关于「要不要把浅克隆当成日常环境」：不是本节的话题，本节只记「这两份账本在缺基准时选择拒绝」；
+- 两处源码行为我读的是**输出**，没有读实现：事实是「rc 2 且不印数」，不是「它用了哪个 API 判存在性」。
+
+## §1.403 增补四百三十四：同一个路径，两次调用之间
+
+**「文件不存在」这句话，在能给出它之前，要先知道自己在哪个世界。** 本节记一个与账面无关、但会让所有「先写后读」的纪律失效的环境事实：同一台机器上，`/tmp` 里的文件在两次工具调用之间消失，而挂载点本身没变。
+
+### 甲 两格对照
+
+| 文件 | 第一次调用写入 | 第二次调用读 |
+|---|---|---|
+| `.probe-tmp/ws.txt`（工作区） | `ws-1793171701739717820` | **读到**，内容逐字相同 |
+| `/tmp/ns.txt` | `tmp-…`（写入成功，`ls -l` 可见） | `cat: /tmp/ns.txt: No such file or directory` |
+
+同一对调用、同一台机器、同一个用户：工作区里的文件跨调用存活，`/tmp` 里的不。
+
+### 乙 挂载点本身没变
+
+两次调用各印一次 `/tmp` 的身份：
+
+```
+$ stat -c '%d %i' /tmp
+101 1
+$ mount | grep -E ' /tmp '
+tmpfs on /tmp type tmpfs (ro,nosuid,nodev,size=8118676k,nr_inodes=1048576)
+tmpfs on /tmp type tmpfs (rw,nosuid,nodev,relatime,mode=755,uid=1000,gid=1000)
+```
+
+设备号与 inode 两次相同（`101 1`），挂载行两次相同（一条只读、一条读写叠在同一路径上）。⇒ **不是「换了个 /tmp」，是同一个挂载点上新的一次世界**；路径与挂载身份都不足以证明「这是我上次写的那个文件」。
+
+### 丙 更正 §1.395 的归因
+
+§1.395 庚栏把一次 `/tmp` 观测写成「写它的进程活得比读它的人短」。观察没错（同一个路径，前一个进程写、后一个进程读不到），**归因错了**：这里没有「进程活得短」，前一次写入是成功返回的，`ls -l` 当场就能看见；消失发生在两次调用之间。更准的说法：**每次工具调用可能各自是一个一次性环境**。本节就是这条的实测，然后用它改写 §1.395 那一格。
+
+### 丁 判据
+
+1. **跨步骤的交接面只能用工作区（或 `BUILD_DIR`）**：`/tmp` 适合一次调用内部的中间文件。
+2. **「文件不存在」至少有三个原因**：没写成功、写在了别处、写在另一个世界里——错误文本不区分它们，所以读数要自己带「我在哪棵树、哪个目录」。
+3. **同一个挂载身份不等于同一份内容**：比 inode 不能证明文件还是那份文件。
+4. **落盘日志与读数文件同一待遇**：门禁的阶段日志、读数记录、探针输出，凡是要在下一步读的，都不放 `/tmp`。这正是 §1.395 戊栏记的那条规格（失败时保留日志并落 `BUILD_DIR`）在环境层面的另一半理由。
+
+### 戊 端点
+
+`docs/AUDIT.md` 24695 → **24806** 行、节 518 → **520**；三份读数：`pointers 2457`（`delta +223`）、`explicit 185`（`delta +12`）、`unanchored 573`（`delta +11`）。
+
+### 己 边界
+
+- 这是**本机这套工具链**的实测（每次调用一个临时命名空间），不推广成「`/tmp` 不可靠」的一般结论：`tmpfs` 的行为本身是规范内的。
+- 没有测「哪些调用共享同一个世界」（后台任务与前台调用是否同一空间未验）；本节只记「两次顺序调用之间不共享」。
+- 实验文件已删（`.probe-tmp`、`/tmp` 里的那份在下一个世界自然不存在）。
