@@ -5,7 +5,7 @@
 # a walk up for src/vm), so a reader holding only the tree line re-runs it anywhere.
 # The body is this program's stdout, unedited.  Prose about what the readings MEAN belongs
 # in the page beside this file: a sentence in a file cannot be checked by a command.
-# tree: 33d40ba
+# tree: 53d716a
 # python: /usr/bin/python3 (3.14.4, z3 5.3.2)
 # --- body begins below this line ---
 AXIOMS|sites=18|extracted=9|unparsed=9
@@ -44,6 +44,25 @@ CONDITIONAL|claim=P5|variant=asis|axioms=A1,A2,A3,A4,A5,A6,A7,A8|discharge=close
 CONDITIONAL|claim=P6|variant=candidate_guard|axioms=A1,A2,A3,A4,A5|discharge=closed
 CONDITIONAL|claim=P7|variant=asis|axioms=A1,A2,A3,A4,A5|discharge=closed
 CONDITIONAL-SUMMARY|claims=8|open=0|all-asserted=8
+USES|claim=P1|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P1|variant=extent|axioms=A5|source=measured|why=dropping A5 flips this claim's verdict
+USES|claim=P2|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P3|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P4|variant=asis|axioms=A3,A7|source=measured|why=dropping A3,A7 flips this claim's verdict
+USES|claim=P5|variant=asis|axioms=A3,A7|source=measured|why=dropping A3,A7 flips this claim's verdict
+USES|claim=P6|variant=candidate_guard|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P7|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES-GAP|missing=none|extra=none|rule=the union of the USES rows equals the set of DISCHARGED axioms -- set equality, not containment; a discharged axiom that no claim uses is MISSING from the union, and a used axiom that is not discharged is EXTRA in it
+USES-SUPERSET|claim=P1|variant=asis|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P1|variant=extent|declared=A1,A2,A3,A4,A5|measured=A5|unused=A1,A2,A3,A4|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P2|variant=asis|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P3|variant=asis|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P4|variant=asis|declared=A1,A2,A3,A4,A5,A7,A8|measured=A3,A7|unused=A1,A2,A4,A5,A8|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P5|variant=asis|declared=A1,A2,A3,A4,A5,A6,A7,A8|measured=A3,A7|unused=A1,A2,A4,A5,A6,A8|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P6|variant=candidate_guard|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P7|variant=asis|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUMMARY|claims=8|links=3|unused-discharged=0|conflicts=0|gap=no
+USES-COST|claims=8|axioms=8|cells=64|runs=9|variants-per-run=17|note=one drop run yields every claim at once, so the 64 cells cost no extra runs; restricting to the 3 discharged axioms would save runs today, but an axiom that is asserted now could start flipping a claim later and its row would silently go missing
 LEDGER|axioms=8|discharged=3|asserted=0|vacuous=5|mutation=measured|sites=18|extracted=9|unparsed=9
 WRITESITES-PINRULE|pinned-writesites=yes iff (path,line) is in the pin table and pin_ok(want,line) holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss
 WRITESITES|field=t->sp|sites=30|direct=30|unparsed=0|pinned-writesites=1|unpinned-writesites=29|source=src/**/*.{c,h}

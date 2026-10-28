@@ -576,3 +576,197 @@ READINGSCHECK|summary|cases=6|pass=6|fail=0
 
 - `same=yes` 只在**两侧都 measured** 时才有意义。判断「测了没有」不能靠读结论，要靠一个与结论无关的量（这里是行数，也可以是 `rc-left`/`rc-right` 与 `mutation=` 的组合）。
 - 改一个**参数缺省**时，要找的不是「哪里读了这个参数」，而是「哪里把参数原样传了下去」——`args.side_left` 在改名后仍然是个合法值（`None`），语法、类型、任何单侧运行都不会报错。现在两侧改用解析后的局部量，`None` 不可能再流进去。
+
+## 16 用到的公理是测出来的，不是声明的
+
+CONDITIONAL 那一行一直带着一个 `axioms=` 名单。它看起来像结论，其实是**作者的意图**：写的人记得这几条公理参与了这条 claim 的证明，就把它写上。没有一行代码验证过它，也没有任何一次失败会因为它写错而发生。
+
+于是这一件事以前是这样处理的：我在信里说「T1 的证明只靠 A3、A5、A7」，ivory 去核，核完了互相点头。两边都没有说谎，但这句话在树上没有对应的量——它是一句**口报**。
+
+这一节把它换成一个数：把每条公理单独拆掉，重跑全部 17 个变体；某条 claim 的判定变了，这条 claim 就用到了这条公理。用到就是「判定变了」，没有别的判据。
+
+### 16.1 命令与读数
+
+从树顶跑：
+
+`
+python3 tools/z3bounds/axiom_ledger.py
+`
+
+八条 claim 的实测依赖：
+
+`
+USES|claim=P1|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P1|variant=extent|axioms=A5|source=measured|why=dropping A5 flips this claim's verdict
+USES|claim=P2|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P3|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P4|variant=asis|axioms=A3,A7|source=measured|why=dropping A3,A7 flips this claim's verdict
+USES|claim=P5|variant=asis|axioms=A3,A7|source=measured|why=dropping A3,A7 flips this claim's verdict
+USES|claim=P6|variant=candidate_guard|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES|claim=P7|variant=asis|axioms=none|source=measured|why=no single axiom drop flips this claim's verdict
+USES-GAP|missing=none|extra=none|rule=the union of the USES rows equals the set of DISCHARGED axioms -- set equality, not containment; a discharged axiom that no claim uses is MISSING from the union, and a used axiom that is not discharged is EXTRA in it
+USES-SUMMARY|claims=8|links=3|unused-discharged=0|conflicts=0|gap=no
+USES-COST|claims=8|axioms=8|cells=64|runs=9|variants-per-run=17|wall=3.3s|note=one drop run yields every claim at once, so the 64 cells cost no extra runs; restricting to the 3 discharged axioms would save runs today, but an axiom that is asserted now could start flipping a claim later and its row would silently go missing
+`
+
+读法只有三句：**判定动了才算用到**；**并集必须等于 discharged 集合**；**声明可以比实测宽，不能比实测窄**。
+
+### 16.2 全集相等，不是包含
+
+`USES-GAP` 的判据是**相等**。这一条比它看起来严格，方向也不太直觉：
+
+- 一条 **discharged** 的公理，如果没有任何 claim 用到它，它就从并集里**缺**了 —— 差集印在 `missing=` 一侧。这正是「一条被算作已解除、但其实谁也不需要」的样子，也是这一格真正想抓的东西：一条可以整条删掉的公理，被登记成「已解除」，等于把证据记在了没人读的那一页。
+- 反过来，一条 claim 用到、但状态不是 discharged 的公理，会出现在 `extra=` 一侧。那种情况说明变异列证明了它的必要性，而登记表不承认它已解除 —— 这时要看的是登记表，不是这一行。
+
+我一开始把 `missing` 与 `extra` 写反了：注入一条「声明为 discharged、没人读」的公理时，我断言 `extra=AXI9`，实测却是 `missing=AXI9`。错的是断言，不是工具 —— 集合相等只有一种方向，被判据写下来的方向才是真的方向。ivory 的委任信里写的也是 `extra`，回信里点名了这一处，因为它和 T8 那次「负控写成了被测物的形状」是同一类：**用直觉的词汇描述一个集合关系，然后在断言里把这个直觉焊死。**
+
+### 16.3 声明比实测宽了 15 倍
+
+八条 CONDITIONAL 行合计声明 **45** 条公理，实测只有 **3** 条连接（并集 `A3,A5,A7`）。逐条看：
+
+`
+USES-SUPERSET|claim=P1|variant=extent|declared=A1,A2,A3,A4,A5|measured=A5|unused=A1,A2,A3,A4|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P4|variant=asis|declared=A1,A2,A3,A4,A5,A7,A8|measured=A3,A7|unused=A1,A2,A4,A5,A8|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+USES-SUPERSET|claim=P5|variant=asis|declared=A1,A2,A3,A4,A5,A6,A7,A8|measured=A3,A7|unused=A1,A2,A4,A5,A6,A8|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
+`
+
+其余五行（P1 的 asis、P2、P3、P6、P7）实测是 `none`：**单独拆掉任何一条公理，它们的判定都不动。** 这五行不是「没有公理」的意思 —— 它们的意思是「这五条 claim 的判定不由单条公理决定」，可能因为它们的结论由求解器的模型直接读出，也可能因为它们的假设被别人的判定挡在前面。这两种情况在这一列里长得一样，所以这一列只敢说「单条拆掉不动」，不敢说「不需要任何公理」。
+
+这份宽声明不是错误，是**信息**：它说明登记表里的名单一直比实际需要宽一个数量级，而宽的那部分从来没有代价 —— 直到有人想删掉一条公理，才发现名单不能回答「删了会不会塌」。现在能回答了：删 A1、A2、A4、A6、A8 不会动任何 claim 的判定（它们本来就被判 vacuous，这里从另一侧确认了同一件事）；删 A3、A5、A7 会动，动的正是上表里点名的那几行。
+
+### 16.4 四个负控与一个反证
+
+`
+USESCHECK|case=uses-union-equals-discharged|expect=the union of the USES rows is exactly the set of discharged axioms, and the gap row says none/none|got=rc=0 rows=8 axioms=8 union-miss=none union-extra=none gap=none/none|verdict=PASS
+USESCHECK|case=injected-unused-axiom-is-a-gap|expect=an axiom declared discharged that no variant reads leaves every USES row alone and turns the gap red: the union is now MISSING it (missing= names the gap in the direction the set equality actually runs)|got=rc=1 rows-same=yes missing=AXI9 extra=none|verdict=PASS
+USESCHECK|case=declared-reader-misses-the-gap|expect=the same injected axiom with the declared reader is NOT red: rc=0 and the gap is not checked, which is what makes the measured gap a measurement|got=rc=0 gap=not-checked/not-checked reader=declared|verdict=PASS
+USESCHECK|case=declared-list-too-short|expect=a declared list missing an axiom the verdict uses is a conflict, not a note|got=rc=1 conflicts=1 names-claim=yes|verdict=PASS
+USESCHECK|case=declared-reader-misses-the-short-list|expect=the declared reader cannot notice that its own list is short: rc=0 and no conflict row|got=rc=0 conflicts=0|verdict=PASS
+USESCHECK|case=attribution-agrees-with-the-mutation-column|expect=every axiom a USES row names has a MUTATE row saying verdict-changed=yes, and the cost row adds up (runs = 1 + axioms, cells = claims x axioms)|got=agree=True runs=9 cells=64|verdict=PASS
+USESCHECK|summary|cases=6|pass=6|fail=0
+`
+
+反证是中间那两行：`--uses-from-declared` 让 USES 直接抄 CONDITIONAL 名单。对同样的两条坏输入（一条没人读的 discharged 公理、一份被故意缩短的声明），它**两条都不红，rc=0**。一个抄名单的实现永远不会和自己的名单吵架 —— 所以那两格 PASS 不是「它做对了」，而是「它证明了另一条路是瞎的」。这条反证在 `USESCHECK` 里占两格，是这一节里唯一一处把「错误实现」当成读数印出来的地方。
+
+负控自己也错了两次，两次都值得写：
+
+- 第一版让 `--uses-declare-short` 在这条 claim 的声明里**随便弹掉一个元素**。实测 rc=0、`conflicts=0` 于是这一格红。原因不是工具没查，而是弹掉的那个公理本来就不被用到：声明里 45 条有 42 条是宽出来的，随机弹一条，最可能弹中的就是那条宽的。改成「弹掉一条**实测用到**的公理」之后才红。这就是 T13 那条纪律的第二次应用：负控必须选一个**机制坏掉就一定会变**的输入，而不是一个碰巧会变的输入。
+- 第二版才轮到方向上那个错（见 16.2）。两次都是**断言错、工具对**，而两次都是我先怀疑工具。
+
+### 16.5 成本：9 次跑，64 个格子
+
+`USES-COST` 说清楚了三件事：格子数 64（8 条 claim × 8 条公理）、实际跑数 9（1 次基线 + 8 次各拆一条）、整段 3.3 秒。64 个格子只花 9 次跑，因为**一次拆解同时给出全部 claim 的判定变化**：拆 A3 的那次跑，八条 claim 的判定都在输出里，归因只是把它们逐条取出来。所以「逐条 claim 归因」这件事没有额外成本，成本是「每条公理一次跑」。
+
+能不能只跑那 3 条 discharged 的？今天可以（省 5 次跑，约 2 秒）。不做，因为一条今天处于 asserted 的公理，明天补上证据、或者被别人的改动牵进某个判定时，它的 USES 行会**静静地不存在**——而「没有这一行」在读数里和「这一行是 none」长得一模一样。8 条公理的一次全跑比一个需要记得去扩的名单便宜。
+
+### 16.6 它不证明什么
+
+- 一次只拆一条，所以抓到的只有**单条充分性**：某条公理单独拆掉就让判定翻面。两条公理**合起来**才必要的情况（拆任意一条都不动、拆两条才塌），这一列看不见。要抓它得做组合拆分，成本是 C(8,2)=28 次跑起，而且组合爆炸不会停在二元。
+- 「判定变了」是**求解器的判定变了**，不是「语义上真的依赖」。z3 的 sat/unsat 是对编码的回答；一条公理可能因为编码的方式被用到，也可能因为编码冗余而写进去却不影响判定。所以这一列的正确读法是「在**这个编码**里，这条判定需要这条公理」，而不是「这条定理在数学上依赖这条公理」。
+- `none` 那五行同样只敢说「单条拆掉不动」。它们既可能真的不依赖单条公理，也可能依赖一个被别人的判定先挡住的公理 —— 这一列分不开这两种情形。**这两种情形在你想删公理时的动作完全不同**：前者可以直接删，后者删了会在别人的判定上塌下来，而这一列对两者印的是同一行。
+
+这一节和 T13 的那一节是同一个动作：把「两侧一样」从信里搬进命令；这一次搬的是「用到哪几条」。两次的判据都是同一句 —— 一句结论要么有命令，要么就是口报。
+
+
+## 17 进了逐行比较的东西，必须换一台机器也不变
+
+### 17.1 一条会重复红的读数
+
+同一棵树、同一台机器、几秒内连跑三次 `--check-readings`：
+
+```
+run1 rc=1  1 diff  got wall=2.5s
+run2 rc=1  1 diff  got wall=2.7s
+run3 rc=1  1 diff  got wall=2.5s
+```
+
+唯一一处差异是 `READINGS-DIFF|line=55`，落在成本行上：`want=wall=3.0s`、`got=wall=2.5s`，除 `wall=` 之外逐字相同。把文件里的 `wall=3.0s` 改成 `99.9s` 也照样红，说明比较是逐字节的，没有把 `wall` 排除在外。
+
+所以此前那句 `READINGS|same=yes|lines=112` 是**巧合**：那一次耗时恰好也打印成 `3.0s`。「规则保证的对」与「巧合造成的对」，区别只在换一次运行还成不成立。一份装机器事实的正文，探的不是内容漂移，是机器身份。
+
+根因在设计层：`USES-COST` 一行里混了两种量。`cells=64|runs=9|variants-per-run=17` 是树的，`wall=3.3s` 是机器的（同树三跑：3.2s / 2.9s / 2.6s；更早一次 6.6s）。一行里装机器事实，逐行比较就必然跟着机器走。
+
+### 17.2 修法：机器事实搬到 stderr，不进正文
+
+成本行只留计数；耗时另起一行 `USES-COST-WALL` 走 stderr。这与 §15 的 `PY-SELECT` 是同一条规则：**机器事实不进被比较的正文**。
+
+顺带一条：`#` 开头的行在本实现里并不特殊 —— 正文就是 stdout，注释照进档案，所以「把 wall 注释掉」不是修法，搬出正文才是。
+
+三跑的结果：
+
+```
+06bca6ffd182   wall=3.2s
+06bca6ffd182   wall=2.9s
+06bca6ffd182   wall=2.6s
+```
+
+正文逐字节相同，耗时在旁边变。记录后连查两次都印 `READINGS|same=yes|lines=112|tree=a462296`。
+
+判据一句话：**能进逐行比较的，只有「换一台机器也不变」的量。**
+
+### 17.3 缺陷二：一个字段名，两个判词
+
+声明读取器跑 `--uses-from-declared --uses-inject AXI9` 时曾经同时印出：
+
+```
+USES-GAP|missing=not-checked|extra=not-checked|rule=a declared reader has no way to notice a discharged axiom that nothing uses
+USES-SUMMARY|claims=8|links=8|unused-discharged=1|conflicts=0|gap=yes
+```
+
+`rc=0`。三处读数里有一处是错的，而这个字段名同时承担了两个判词：`gap=yes` 在实测模式里是「确实有缺口」，在声明模式里是「不知道」。两种「修法」都通向坏结果 —— 把声明模式的 rc 改成非零，反证格当场失效（反证要的正是「抄名单读不出缺口」）；相信 `gap=yes`，等于把一份抄来的名单当成发现。
+
+现在两种模式各自说自己的话：
+
+```
+声明模式  USES-GAP|missing=not-checked|extra=not-checked|...
+          USES-SUMMARY|claims=8|links=8|unused-discharged=1|conflicts=0|gap=not-checked   rc=0
+实测模式  USES-GAP|missing=AXI9|extra=none|...
+          USES-SUMMARY|claims=8|links=3|unused-discharged=1|conflicts=0|gap=yes             rc=1
+```
+
+「这个字段能不能被相信」由字段值本身回答，不由读者去查模式。
+
+### 17.4 两个新格，一个旧格变严
+
+- `body-carries-no-machine-facts`：记录下来的正文里没有 `wall=`、没有解释器身份，而同一次运行仍在 stderr 印出耗时。两半都要成立 —— 只查「正文干净」会漏掉「耗时被删掉了」。
+- `same-file-twice-both-same`：同一棵树连查两次都绿。缺陷的形态正是「第一次就红、第二次还红」，所以这个格不能只查一次。
+- `summary-does-not-say-yes-when-unchecked`（`USESCHECK` 第七格）：声明模式的 `gap=` 必须是 `not-checked`。
+
+### 17.5 `--uses-declare-short` 收的是 claim 身份
+
+例如 `P4|asis`。按公理名传会得到 `rc=2` 与 `problem=no such claim` —— 这不是缺陷，是「身份」与「名字」的区别：一个 claim 的身份包含它的变体名。这一条已写进 help，因为它靠猜是猜不出来的。
+
+### 17.6 这一节不证明什么
+
+这一节证明的是「正文里没有机器事实」，不证明耗时被记录过：耗时现在只在 stderr，任何档案都不留，要看就重跑。`body-carries-no-machine-facts` 靠关键字判定，若有人把 `wall` 搬到第三个地方（日志文件、环境变量），这一格看不见 —— 它守的是正文，不是整台机器。
+
+### 17.7 摘要也要带主语
+
+我上一轮写信报「正文是三跑的 md5 `06bca6ffd182`」，ivory 照这句话去核对，算出来是 `40f9ff8f02d7`。两个都对，因为它们算的不是同一份字节：它拿的是 `--check-readings` 的 stdout（那里只有判词，没有正文），我拿的是档案正文。一句话里的一个摘要，读者无法判断它是对哪一份字节算的 —— 这与我上一轮在 T13 修的是同一个病：**名字不是对象，摘要也不是对象**。
+
+修法与 `wall=` 同源：让数自带主语。
+
+```
+READINGS|same=yes|lines=112|body-md5=134d4cd85e36|tree=53d716a|python=/usr/bin/python3 (3.14.4, z3 5.3.2)
+```
+
+定义写在字段名里：`body-md5` 是**被比较的正文各行**用单个换行连接后的 md5，不带结尾换行，不含以 `#` 开头的抬头行。同一条规则也用到了记录行：`READINGS-RECORD|...|body=112|body-md5=134d4cd85e36|...`。
+
+于是同一份档案现在有三个数，各有各的主语，都不许互相替代：
+
+| 数 | 算什么 | 谁印 |
+|---|---|---|
+| `134d4cd85e36` | 正文 112 行，单换行连接，无结尾换行，无抬头 | `body-md5=` 字段 |
+| `06bca6ffd182` | 同 112 行加结尾换行（`md5sum` 的算法） | 手工 `md5sum` |
+| `40f9ff8f02d7` | `--check-readings` 的 stdout | 没有字段，也不该有 |
+
+第三个不是缺陷，是提醒：**任何能算出摘要的命令都值得问一句「它对哪一份字节算的」**。前两个的差别只有一个结尾换行——差异小到没人会注意到，正好是「摘要需要主语」最好的例子。
+
+### 17.8 两格：摘要必须能被独立重算
+
+- `body-md5-has-a-subject`：这一格**从档案正文自己重算** md5，再与命令打印的字段比；同时断言 `--check-readings` 的 stdout 里没有正文（`check-prints-body=no`）。第二半是必要的：若这条命令会把正文印出来，字段就可能只是正文的副本，重算也就证明不了它是摘要。读数：`field=134d4cd85e36 recomputed=134d4cd85e36 check-prints-body=no`。
+- `header-edit-is-not-a-body-change`：改掉抬头里的一行散文，仍须 `same=yes` 且摘要不变，读数 `rc=0 edited=yes same-digest=yes`。这一格挑的是「只有整文件摘要才会不变」的输入：对任何从未改过抬头的运行，整文件摘要与正文摘要一样恒定，差异只在这类输入上才现形。
+
+`READINGSCHECK` 因此从八格变成十格：`READINGSCHECK|summary|cases=10|pass=10|fail=0`。两格都走真实 CLI，没有一格是「我把字段加上去了所以它是对的」。
+
+这一节不证明的是：摘要说的是「这些字节是这样」，不是「这些字节是对的」。一份被整体替换、且替换者也被记录下来的正文，`body-md5` 会老老实实地跟着变——它守的是一致性，不是正确性。
