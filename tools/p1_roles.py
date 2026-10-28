@@ -99,7 +99,32 @@ ROLES = {
     "OP_LOADK_BOOL":   {"dst": ["r1"], "imm": ["r2"]},
     "OP_EQK":          {"dst": ["r1"], "src": ["r2"], "imm": ["r3"]},
     "OP_NEQK":         {"dst": ["r1"], "src": ["r2"], "imm": ["r3"]},
+    # --- family 7: control-flow and exception family (the non-register operand
+    #     is a bytecode offset, not a value; STOP/HALT/TRY_END take no operand at
+    #     all; RETURN's r1 is a result register OR 0/-1 meaning nil, which makes
+    #     it the second slot in the tree carrying a non-register encoding) ---
+    "OP_JUMP":          {"imm": ["r2"]},
+    "OP_JUMP_IF_FALSE": {"src": ["r1"], "imm": ["r2"]},
+    "OP_JUMP_IF_TRUE":  {"src": ["r1"], "imm": ["r2"]},
+    "OP_RETURN":        {"src": ["r1"], "sentinel": ["r1"]},
+    "OP_THROW":         {"src": ["r1"]},
+    "OP_STOP":          {},
+    "OP_HALT":          {},
+    "OP_TRY_END":       {},
+    "OP_CALL_VALUE":    {"dst": ["r2"], "src": ["r1"], "imm": ["r3"]},
 }
+
+# One encoding convention usually has more than one landing site, and the count
+# belongs to the convention, not to the defects: "negative means none" is one
+# convention with two sites, while RETURN is a different one (0 or -1 means nil).
+CONVENTIONS = [
+    ("negative-timeout", [("OP_RECV", "r2"), ("OP_THREAD_JOIN", "r2")]),
+    ("non-positive-nil-result", [("OP_RETURN", "r1")]),
+]
+
+# What the non-register encoding is, per slot, for the P1-AMBIG line.
+SENT_NOTE = {("OP_RECV", "r2"): "-1", ("OP_THREAD_JOIN", "r2"): "-1",
+             ("OP_RETURN", "r1"): "0,-1"}
 
 CONV = set("diouxXeEfgGcsp")
 CASE_RE = re.compile(r"case\s+(OP_[A-Z0-9_]+)\s*:")
@@ -227,6 +252,7 @@ def main():
 
     bad = []
     ambig = []
+    guard_stat = {}
     short = []
     declared = [op for op in cases if op in ROLES]
     unmeasured = sorted(op for op in cases if op not in ROLES)
@@ -297,15 +323,18 @@ def main():
         for r in sentinel:
             if r in regs:
                 ambig.append("AMBIG:" + op)
+                note = SENT_NOTE.get((op, r), "-1")
                 guards = branch_guards(cases[op], r)
-                if guards and all(guards):
-                    print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(-1)|guarded=yes"
+                guarded = bool(guards and all(guards))
+                guard_stat[(op, r)] = guarded
+                if guarded:
+                    print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(%s)|guarded=yes"
                           "|effect=the-print-can-only-reach-the-register-glyph-when-the-slot-is-a-register"
-                          % (op, r))
+                          % (op, r, note))
                 else:
-                    print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(-1)|guarded=no"
+                    print("P1-AMBIG|op=%s|slot=%s|kinds=register|sentinel(%s)|guarded=no"
                           "|effect=the-sentinel-can-be-rendered-with-the-register-glyph"
-                          % (op, r))
+                          % (op, r, note))
         if leak:
             print("P1-C3|op=%s|imm=%s|printed-reg=%s|leak=%s"
                   "|effect=an-immediate-printed-as-a-register"
@@ -317,6 +346,14 @@ def main():
         print("P1-UNMEASURED|ops=%s|effect=no-role-declared-no-claim-made" % ",".join(unmeasured))
     if ambig:
         print("P1-AMBIG-COUNT|n=%d|effect=declared-outside-what-the-three-criteria-can-see-read-guarded-for-the-printer" % len(ambig))
+    for conv, sites in CONVENTIONS:
+        seen = [(o, s) for (o, s) in sites if (o, s) in guard_stat]
+        if not seen:
+            continue
+        guarded_n = sum(1 for k in seen if guard_stat[k])
+        print("P1-GUARD|convention=%s|sites=%d|guarded=%d|unguarded=%d"
+              "|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed"
+              % (conv, len(seen), guarded_n, len(seen) - guarded_n))
     if short:
         print("P1-PRINTSHORT-COUNT|n=%d|effect=declared-and-read-but-unprinted-named-not-judged"
               % len(short))

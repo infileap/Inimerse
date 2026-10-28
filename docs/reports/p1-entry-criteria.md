@@ -2,7 +2,7 @@
 
 ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可执行**判据，每条一个最小正例、一个最小反例，反例必须**今天就在树上变红**，且不动 main。
 
-这份报告给三条判据的实现、49 条手写角色表（已归 7 族）的出处、十三组实测，以及七条结构性结果。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①；第五条是**同一个约定修了一处、漏了一处**；第六条是**控制组跑出全绿，把 §5.4 的预期证伪了**——证伪落在一句具体的措辞上，不在结论上；第七条是**判据只朝一个方向看**：它抓「多印了一个寄存器」，不抓「少印了一个操作数」，而今天树上就有两条这样的指令（`EQK`/`NEQK`）。
+这份报告给三条判据的实现、58 条手写角色表（已归 8 族）的出处、十五组实测，以及八条结构性结果。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①；第五条是**同一个约定修了一处、漏了一处**；第六条是**控制组跑出全绿，把 §5.4 的预期证伪了**——证伪落在一句具体的措辞上，不在结论上；第七条是**判据只朝一个方向看**：它抓「多印了一个寄存器」，不抓「少印了一个操作数」，而今天树上就有两条这样的指令（`EQK`/`NEQK`）；第八条是**形状对了、谓词仍可能错**——`RETURN` 的 nil 判据是 `> 0` 而不是 `< 0`，照邻居的形状修会修出一处新的假绿。
 
 - 判据实现：`tools/p1_roles.py`（纯标准库，`--vm <path>`，红则 rc=1，不 import `ir_spec`，不与任何自检共用提取代码）
 - 依据树：`cff9197`（在 `9dd3ade` 之后 main 又落了 opcode census，追加在 `vm.c` 末尾，`vm.c:5584` 以上一行未动，本族引用的行号因此未移；本分支已 rebase 到它，读数在 rebase 前后一致，见 §3.7 与 §4 M/N 组）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
@@ -34,7 +34,7 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 
 三条都只测**打印行**，不测语义。
 
-## 3 角色表：49 条，逐条指到 handler 行
+## 3 角色表：58 条，逐条指到 handler 行
 
 其中 43 条已归族（族 1 算术 17、族 2a 线程 10、族 2b 资源 2、族 3 store 1、族 4 output 1、族 5 构造/区间 5、族 6 K 形式 7），6 条是早期逐条声明、还没归族的：`MOV INDEX_SET TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`。`LOADK_INT` 与 `LOADK_I64` 原来也挂在这一组里，本批被族 6 收进去（§3.7）——**先声明、后归族是允许的，但两处都要写清，否则「族数」与「批次数」对不上就会被读成漏算**。剩下 6 条的形状各自都不符合任何已写的族规则，硬归族会正好制造出「族内形状不一致」，所以先挂着，下一批按「调用族 / 容器族」的边界理由再动。
 
@@ -49,6 +49,15 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 | `OP_LOADK_BOOL` | dst=r1 imm=r2 | 3167 | 3271 | `vm.c:3272` `ins.r2 ? 1 : 0`；打印 `vm.c:5330` |
 | `OP_EQK` | dst=r1 src=r2 imm=r3 | 3213 | 4159 | `vm.c:4160` `int sidx = ins.r3;`；`vm.c:4171` `Value opv = R[ins.r2];`；`vm.c:4172` 写 `R[ins.r1]`；打印 `vm.c:5370` **只印 r1** |
 | `OP_NEQK` | dst=r1 src=r2 imm=r3 | 3214 | 4175 | 同构：`vm.c:4187` 读 `R[ins.r2]`，`vm.c:4188` 写 `R[ins.r1]`；打印 `vm.c:5371` **只印 r1** |
+| `OP_JUMP` | imm=r2 | 3188 | 3798-3800 | `vm.c:3799` `t->ip = ins.r2;`（`r2` 是字节码偏移，不是值）；打印 `vm.c:5352` `"JUMP %d"`，裸数字 |
+| `OP_JUMP_IF_FALSE` | src=r1 imm=r2 | 3189 | 3801-3805 | `vm.c:3802` `!vm_truthy(&R[ins.r1])`；`vm.c:3803` 跳 `ins.r2`；打印 `vm.c:5353` `r%d, %d` |
+| `OP_JUMP_IF_TRUE` | src=r1 imm=r2 | 3190 | 3806-3810 | 同构：`vm.c:3807` `vm_truthy(&R[ins.r1])`；打印 `vm.c:5354` |
+| `OP_RETURN` | src=r1，**`r1` 是哨兵槽（`0`/`−1` = nil）** | 3202 | 4123-4152 | `vm.c:4126` `if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];` 否则 `ret` = nil；打印 `vm.c:5360` **无条件** `"RETURN r%d"` |
+| `OP_THROW` | src=r1 | 3226 | 4448-4451 | `vm.c:4449` `vm_throw(vm, t, &R[ins.r1]);`；打印 `vm.c:5374` `"THROW r%d"` |
+| `OP_STOP` | 无操作数 | 3195 | 4020-4022 | `vm.c:4021` `t->running = false;`；打印 `vm.c:5364` `"STOP"` |
+| `OP_HALT` | 无操作数 | 3196 | 4023-4025 | 同 `STOP`；打印 `vm.c:5365` `"HALT"` |
+| `OP_TRY_END` | 无操作数 | 3225 | 4444-4446 | `vm.c:4445` `if (t->exc_depth > 0) t->exc_depth--;`；打印 `vm.c:5373` `"TRY_END"` |
+| `OP_CALL_VALUE` | dst=r2 src=r1 imm=r3 | 3200 | 4056-4060（落到 `L_CALL_FUNC` 4062） | `vm.c:4057` `R[ins.r1].type != VAL_FUNCTION`——`r1` 是**寄存器里的函数值**；`vm.c:4062` `res = ins.r2, argc = ins.r3`；打印 `vm.c:5403` |
 | `OP_LOADK_I64` | dst=r1 imm=(r2,r3) | 3164 | 3242 | `vm.c:3247-3250` |
 | `OP_ADD` | dst=r1 src=r2,r3 | 3168 | 3276 | `vm.c:3277` |
 | `OP_MOD` | dst=r1 src=r2,r3 | 3217 | 4252 | `vm.c:4256-4267` |
@@ -270,7 +279,7 @@ P1-VERDICT|green|declared=44|unmeasured=23|note=an-unmeasured-op-is-not-a-passin
 
 **为什么 `MOV` / `LOAD_GLOBAL` / `PUSH_REG` / `INDEX_GET` 不在这一族**：`MOV` 没有非寄存器操作数（纯寄存器搬运）；`LOAD_GLOBAL`/`STORE_GLOBAL` 的下标指向一个**全局单元**，失败模式是「哪个命名空间 / 哪个全局」，属于容器族；`PUSH_REG` 把寄存器压到值栈，没有池；`INDEX_GET` 是容器取元素。**一个下标指向常量，和指向一个容器，不是同一种失败。**
 
-**本批读数**（`vm.c` @ `cff9197`）：
+**本批读数**（`vm.c` @ `cff9197`，**该批时点**，不是当前读数——族 7 之后当前读数是 58/67，见 §3.8）：
 
 ```
 P1-PRINTSHORT|op=OP_EQK|slot=r2|role=src|printed=r1|effect=declared-and-read-but-not-printed-the-line-hides-an-operand
@@ -284,7 +293,35 @@ P1-VERDICT|green|declared=49|unmeasured=18|note=an-unmeasured-op-is-not-a-passin
 
 注：`LOADK_FLOAT` 印的是 `#%d`（池下标），不是值本身——这不是错，是这一族的正常形态：反汇编器指常量池，不解析浮点值；而 `LOADK_STRING` 解析出字符串本身并加引号。两种做法都在「非寄存器字形」一边，③ 对它们都无事可做。
 
-## 4 十三组实测
+### 3.8 第八批按族声明：控制流与异常族（9 条，本批全部新增；`YIELD` 已声明在族 2a）
+
+先写边界理由：这一族的失败模式是「跳到哪、停在哪、抛给谁」——非寄存器操作数是**字节码偏移**（不是一个值），跳错了不会报错，会跳进另一条指令的中间继续执行；而无操作数的成员连偏移都没有，它们的失败是「该停的地方没停」。
+
+**族的判据（为什么是这 9 条）**：
+
+1. 非寄存器操作数是字节码偏移，且必须印成裸数字：`JUMP`/`JUMP_IF_FALSE`/`JUMP_IF_TRUE` 的 `r2`（`vm.c:3799`、`vm.c:3803`、`vm.c:3808`），打印行 `vm.c:5352-5354` 三条都是 `%d`；
+2. 条件跳转的**被测寄存器**是 `r1`（`vm.c:3802` `!vm_truthy(&R[ins.r1])`、`vm.c:3807` `vm_truthy(&R[ins.r1])`），必须印成 `r%d`；`THROW` 的 `r1` 同理（`vm.c:4449`）；
+3. 无操作数的成员（`STOP` `HALT` `TRY_END`，以及族 2a 的 `YIELD`）是这一族的零点：打印行里出现任何字形都是 ① 的违规；
+4. `CALL_VALUE` 是这一族里唯一有 dst 的成员，而且它给出「表按 opcode 建、不按位置建」的最硬证据：同一个 `r1` 在 `CALL_VALUE` 里是**寄存器里的函数值**（`vm.c:4057`），`goto L_CALL_FUNC` 之后在 `CALL_FUNC` 里才是 func 下标（`vm.c:4062` `int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;`）。**一个位置两种角色，跨 opcode 变化，任何「按位置推角色」的解析器都会在这里错。**
+
+**不在这一族的**：`TRY_START`（它是 frame 变量下标 + 范围声明，属资源/声明一侧，且 dst 在 `r2` 的 frame 槽）、`SET_INTERVAL`（构造族）、`THROW` 的**目标**（异常处理器由 `vm_throw` 按 exc 栈决定，没有操作数可查）。
+
+**本批的读数**（`vm.c` @ `cff9197`）：
+
+```
+P1-AMBIG|op=OP_RETURN|slot=r1|kinds=register|sentinel(0,-1)|guarded=no|effect=the-sentinel-can-be-rendered-with-the-register-glyph
+P1-GUARD|convention=negative-timeout|sites=2|guarded=1|unguarded=1|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed
+P1-GUARD|convention=non-positive-nil-result|sites=1|guarded=0|unguarded=1|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed
+P1-ROLES|declared=58/67|unmeasured=9
+P1-AMBIG-COUNT|n=3|effect=declared-outside-what-the-three-criteria-can-see-read-guarded-for-the-printer
+P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing-op
+```
+
+**本批的真发现：`RETURN` 是第二个哨兵槽，但它的判定条件不是「小于 0」。** `vm.c:4126` 的测试是 `ins.r1 > 0`——**非正**即 nil，`−1` 只是注释里的写法；而编译器在没有返回值时发的是 `OP_RETURN, 0`（`compiler.c:379`、`compiler.c:2874`）。于是每一处裸 `return` 在反汇编里都印成 `RETURN r0`：读者会以为「返回寄存器 0 的值」，实际意思是「返回 nil」。
+
+这条最锋利的地方是**它不能被照抄的修法修好**：谁看着 `RECV` 的形状去修，会写 `ins->r1 < 0`，然后 `RETURN r0` 照旧存在。**判定的谓词必须抄 handler 自己那个测试（`> 0`），不能抄邻居的形状**——这是本族唯一一条「形状对了、谓词仍可能错」的证据，已写进 §5.8。
+
+## 4 十五组实测
 
 全部在 `/tmp/wt-p1e`，命令 `python3 tools/p1_roles.py --vm <tree>`。
 
@@ -304,6 +341,7 @@ P1-VERDICT|green|declared=49|unmeasured=18|note=an-unmeasured-op-is-not-a-passin
 | L | `9dd3ade` + 一行「照文档修」 | 给 `NEW_ARRAY` 的打印行补 `base=r%d` 并传 `ins->r2`（`bytecode.h:14` 的说法） | 1 | `C1:OP_NEW_ARRAY`（`extra=r2`）——**照文档修会比照 handler 修先红** |
 | M | `cff9197` + 一行 | 给 `EQK` 的打印行补上被比较的寄存器（`r%d` + `ins->r2`） | 0 | `P1-PRINTSHORT-COUNT|n=2` → `n=1`：只 `EQK` 消失，`NEQK` 还在——读数按落点移动，是 op 级的 |
 | N | `cff9197` + 一行 | 把同一个槽印成 `@%d`（还是裸数字，换了个前缀） | 0 | `P1-PRINTSHORT` 仍点名 `OP_EQK:r2`——**它分不清「没印」与「印在别的命名空间」** |
+| O | `cff9197` 原样 | 无（表扩到 58 条：族 7 控制流/异常） | 0 | 无红——但 `P1-AMBIG` 由 2 变 3 且新增 `P1-GUARD` 两行：`OP_RETURN|slot=r1|sentinel(0,-1)|guarded=no`，见 §5.8 |
 
 A 的红（在 `9a4db3b` 上真实存在，不是我改出来的；那棵树已经不是今天的树，见 §5.2）：
 
@@ -386,13 +424,15 @@ L 组把这一条从散文变成读数：如果一个修的人**信了文档**�
 
 三条的对照组是 `DECLARE` 与 `SAY`：文档、SHAPE、handler、打印行四者一致，绿得可信。**不一致时绿不算证据，停止才算。**
 
-## 5 七条结构性结果
+## 5 八条结构性结果
 
 ### 5.1 ③ 在检测能力上不独立于 ①
 
 角色表里每个 slot 只有一个角色，所以 `imm ∩ (dst ∪ src ∪ obj) = ∅` 恒成立，于是 `imm ∩ REG ≠ ∅ ⇒ REG ⊄ dst ∪ src ∪ obj`——**任何违反 ③ 的行必然违反 ①**。实测 E 就是构造：想造一个「只红 ③」的反例造不出来，最干净的一条也必然带 `C1`。
 
-（前提是每个 slot 恰好一个角色；`RECV` 的 `register|sentinel` 槽是前提失效处，见 §3.2 末段。）所以三条判据在**检测**上只有两条（① 与 ②），③ 的价值是**诊断命名**：它告诉修的人该把 `r%d` 改成 `%d`，而不是去改角色表。若要保留三条，③ 的措辞应写成命名纪律（「立即数与下标不得使用寄存器字形」），而不是并列的独立条件——否则它会看起来比实际多一条防线。
+（前提是每个 slot 恰好一个角色；`RECV` 的 `register|sentinel` 槽是前提失效处，见 §3.2 末段。）
+
+**这个例外是被有意保留的，不是待修项。** ivory 的裁定（`m05059`）：拆编码（新增一个「无超时」的 opcode）会让「每槽一角色」普遍成立，于是 ③ ⊆ ① 里那个例外消失——**那会把一条判据的边界证据一起抹掉**。现在这条例外是 §5.1 里最有价值的一句，因为它标出了三条判据的共同前提；为了少两行打印把它消掉，等于为了让证明好看而删掉反例。编码分层记为 P3 事项，理由是 `bytecode.h` 的 opcode 编号被 `.inim` 逐字节承载（`vtest/params_precompiled_v06.inim` 已入库，只能追加、空号退休），**是 ABI 而不是「打不了」**。所以三条判据在**检测**上只有两条（① 与 ②），③ 的价值是**诊断命名**：它告诉修的人该把 `r%d` 改成 `%d`，而不是去改角色表。若要保留三条，③ 的措辞应写成命名纪律（「立即数与下标不得使用寄存器字形」），而不是并列的独立条件——否则它会看起来比实际多一条防线。
 
 ### 5.2 `TRY_START`：两棵树，两个读数（绿不预支）
 
@@ -466,6 +506,8 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 
 > 一族在打印命名空间里同质（每条把 dst 印成 `r%d`、把不是值的东西印成裸数字），即使操作数的**存放位置**（寄存器 / 值栈 / 常量池）在族内不一致，三条判据也会全绿。所以「全绿」只说明打印行与角色表一致，不说明这一族被理解过。族的分界应按**打印命名空间**切；存放位置是另一条轴，写在族理由里，不进判据。
 
+> 判据看得见的是**打印字形**，不是存放位置；所以「全绿」的结论只能是「打印行与角色表一致」，不能是「这一族被理解过」。族按打印命名空间切；存放位置（寄存器 / 值栈 / 常量池）是另一条轴，写在族理由里，不进判据。
+
 这也解释了 §3.6 为什么坚持留下 `SET_ADD`：它让这一族在打印命名空间上仍然同质（`r%d, r%d`），却在角色上异质（`obj` + `mutate`，没有 dst）。两个轴分开之后才看得清是哪个轴让预期失效——如果把 `SET_ADD` 踢出去，这一族在两个轴上都同质，「预期被证伪」这句话就无从说起。
 
 第三个后果，也是这一批唯一新增的盲点：**③ 只看得见「原样印出的立即数」**。`SET_INTERVAL` 的 `flags=%d` 实参是 `(unsigned int)ins->r2 >> 24`，不是 `ins->r2`，分词器归不到槽，于是「一个打包下标被拆成两段印出来」在 ③ 里等于不存在。这不是判据的漏洞，是 ③ 的定义：它管「立即数用了寄存器字形」，不管「立即数怎么被拆开印」（§7）。
@@ -487,11 +529,21 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 
 M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只有 `EQK` 那一行消失，`NEQK` 还在）；N 证明 `P1-PRINTSHORT` 分不清「没印」与「印在别的命名空间」——它报的是「这个槽没有以寄存器字形出现」，不是「这个槽没有被印」。
 
-## 6 覆盖：49/67，没说到的 18 条不算通过
+### 5.8 形状对了，谓词仍可能错：`RETURN` 的 nil 是「非正」，不是「小于零」
 
-每次运行都打印 `P1-ROLES|declared=49/67|unmeasured=18` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。
+`RETURN` 与 `RECV`/`THREAD_JOIN` 是同一个**槽可以承载两种形态**的结构，但它们的谓词不同：`RECV` 的判定是 `ins.r2 < 0`（`vm.c:4764`），`RETURN` 的判定是 `ins.r1 > 0`（`vm.c:4126`）。也就是说 `RETURN` 的非寄存器值域是 `{0, −1}`，**`0` 也在里面**。
 
-覆盖率走过的路：17/67 → 30/67（族 1）→ 37/67（线程+资源的初版，未拆族）→ 39/67（拆族后新增 `YIELD`、`DECLARE`）→ 44/67（族 5 构造/区间新增 5 条）→ **49/67**（族 6 K 形式新增 5 条）。剩下 18 条要进入 P1，仍需按族逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代。当前未归族的是 `MOV INDEX_SET TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`（§3 开头，6 条；`LOADK_INT` 与 `LOADK_I64` 本批已归入族 6），以及控制流与异常族（`JUMP JUMP_IF_FALSE JUMP_IF_TRUE RETURN STOP HALT THROW TRY_END CALL_VALUE`，9 条）、字符串/IO 与容器族（`CONCAT IN BIND INDEX_GET OR PUSH_REG LOAD_GLOBAL STORE_GLOBAL LOAD_CAPTURE`，9 条）。
+而编译器没有返回值时发的正是 `OP_RETURN, 0`（`compiler.c:379`、`compiler.c:2874`），于是树上每一处裸 `return` 在反汇编里都印成 `RETURN r0`——读起来像「返回寄存器 0 的值」，实际是「返回 nil」。
+
+这条的结构价值在于：**照邻居的形状修，会修错。** 谁看着 `RECV` 写 `ins->r1 < 0 ? "RETURN nil" : "RETURN r%d"`，`RETURN r0` 照旧存在，而 `guarded=yes` 会让 `P1-AMBIG` 读起来像已处理。谓词必须抄 handler 自己那个测试（`> 0`），不能抄邻居的运算符。**形状是同一种，谓词不是——所以「同一约定」这个说法要精确到「同一个槽形态」，而不是「同一个判断式」。**
+
+这一族还留下一条读数：`P1-GUARD|convention=...|sites=|guarded=|unguarded=`。它数的是**落点数**，不是缺陷数：约定还是一条，只是每个落点各自可能学会、也可能没学会。今天 `negative-timeout` 有 2 个落点（1 会 1 不会）、`non-positive-nil-result` 有 1 个落点（不会），所以修复会让 `unguarded` 下降，而 `sites` 不变。
+
+## 6 覆盖：58/67，没说到的 9 条不算通过
+
+每次运行都打印 `P1-ROLES|declared=58/67|unmeasured=9` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。
+
+覆盖率走过的路：17/67 → 30/67（族 1）→ 37/67（线程+资源的初版，未拆族）→ 39/67（拆族后新增 `YIELD`、`DECLARE`）→ 44/67（族 5 构造/区间新增 5 条）→ 49/67（族 6 K 形式新增 5 条）→ **58/67**（族 7 控制流/异常新增 9 条）。剩下 9 条要进入 P1，仍需按族逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代。当前未归族的是 `MOV INDEX_SET TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`（§3 开头，6 条），以及字符串/IO 与容器族（`CONCAT IN BIND INDEX_GET OR PUSH_REG LOAD_GLOBAL STORE_GLOBAL LOAD_CAPTURE`，9 条中的 3 条仍未声明——下一族就是它自己）。
 
 ## 7 这份判据不证明什么
 
@@ -504,7 +556,9 @@ M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只�
 - 它不判文档与 handler 谁对。§4.1 的两条不一致，判据如实报「我按 handler 建行」，裁定权在 §10。
 - **一个 case 里分支打印时，读一支等于没读。** 现在取 case 内所有 `snprintf` 的并集，并打出 `P1-BRANCH|calls=N`；`9dd3ade` 就是靠这条才没被读成假绿（§3.2 二）。但并集只覆盖同一个 case 里的分支，如果哪天打印行被抽到一个 helper 里、由调用方拼字符串，这层就失效了。
 - **`guarded=yes` 只说明「印之前先判断了」，不说明判断对。** §4 J 组实测：把 `RECV` 的判断反过来（`ins->r2 < 0` → `> 0`），语义已经错了，读数仍回到 `guarded=yes`。它是「有没有一层换算」的观测面，不是换算正确性的判据。
-- **它数不了约定有几个落点。** §5.5 的 `THREAD_JOIN` 就是同一约定没被修到的那一半；工具能一直把 `guarded=no` 印出来，不能告诉你还有哪几处。
+- **它数不了约定有几个落点。** §5.5 的 `THREAD_JOIN` 就是同一约定没被修到的那一半。`P1-GUARD|sites=/guarded=/unguarded=` 只数**已声明**的落点，所以它是一个下界：一个还没进角色表的槽不会是「没学会」，而是根本不在计数里——这与 §6 是同一句话。
+- **裸数字是 ③ 和我这条尺子共同的盲区，只是从两边看。** ivory 的 `IR-SHAPE-BARE` 报「一个槽被写成裸数字，既不是寄存器字形也不是立即数，两个检查都看不见」；我的 ③ 正是那两个检查之一。所以 `flags=%d`（`vm.c:5393` `(unsigned int)ins->r2 >> 24`）这类印法在我的判据里等于不存在，在它的读数里被点名为 bare。两边的补救都不是加判据，而是**把「一个槽一个名字」变成结构字段**（等 P1 做角色三元组时一起定）。
+- **我的尺子也只看得见 `snprintf(out, outsz, ...)` 这一种出口。** ivory 在 `docs/IR_DESIGN.md` §14 自陈过同一件事：它的交叉校验用正则抽形状、用 `ins\.rN` 抽 handler，于是两边都抽不到的东西读起来像没问题。我的 `PRINT_RE` 只匹配这一种调用形态，任何一个不走它的打印路径对我都是隐形的；`P1-BRANCH|calls=N` 是我给这件事留的唯一痕迹（它说「我读了 N 个出口」，不说「一共只有 N 个」）。
 - **它看不见值栈。** `NEW_ARRAY`/`NEW_DICT`/`NEW_SET` 的元素与 `SET_INTERVAL` 的界值都在值栈上（`vm.c:3638`、`vm.c:3666`、`vm.c:4302`、`vm.c:4331-4332`），判据只看打印字形，所以「这条指令的输入在哪」不在射程内。§5.6 就是这个盲点的样本：一族可以全绿，而它的操作数一个字都不在寄存器里。
 - **③ 只看得见原样印出的立即数。** 实参一旦被算术改写（`ins->r2 >> 24`、`ins->r2 & 0xFFFFFF`），它就不再归属任何槽，那个立即数在 ③ 里等于不存在。`SET_INTERVAL` 的 `flags=%d` 和 `"%s"` 都是这样逃掉的。
 - **「某族全绿」这句话有第三种读法**（前两种见上一条 `SAY`：查过并通过 / 没有可查的对象）。第三种是「那族的不一致不在打印字形上」——§5.6。
@@ -519,7 +573,7 @@ python3 tools/p1_roles.py                       # 默认 src/vm/vm.c，红则 rc
 python3 tools/p1_roles.py --vm /path/to/vm.c    # 任意树 / 拷贝
 ```
 
-输出是分行读数：`P1-OPS`（每行印了什么、声明了什么）、`P1-C1/C2/C3`（每条红带 `effect=`）、`P1-ROLES`、`P1-UNMEASURED`、`P1-VERDICT`。不接 `tools/gate.sh`：一个检查要不要进门禁、以什么期望值进门禁，是门禁所有者的决定，不是这份报告的。
+输出是分行读数：`P1-OPS`（每行印了什么、声明了什么）、`P1-OPS-SENTINEL`、`P1-C1/C2/C3`（每条红带 `effect=`）、`P1-AMBIG`（哨兵槽点名，不判红）与 `P1-AMBIG-COUNT`、`P1-GUARD|convention=|sites=|guarded=|unguarded=`（数落点不数缺陷）、`P1-BRANCH|calls=N`（这个 case 有几个打印出口，并集才是这一行的读数）、`P1-PRINTSHORT`（声明了、handler 读了、打印行没印，命名不判）、`P1-ROLES`、`P1-UNMEASURED`、`P1-VERDICT`。不接 `tools/gate.sh`：一个检查要不要进门禁、以什么期望值进门禁，是门禁所有者的决定，不是这份报告的。
 
 ## 9 §10 建议的三句措辞
 
