@@ -663,7 +663,79 @@ USESCHECK|summary|cases=6|pass=6|fail=0
 
 - 一次只拆一条，所以抓到的只有**单条充分性**：某条公理单独拆掉就让判定翻面。两条公理**合起来**才必要的情况（拆任意一条都不动、拆两条才塌），这一列看不见。要抓它得做组合拆分，成本是 C(8,2)=28 次跑起，而且组合爆炸不会停在二元。
 - 「判定变了」是**求解器的判定变了**，不是「语义上真的依赖」。z3 的 sat/unsat 是对编码的回答；一条公理可能因为编码的方式被用到，也可能因为编码冗余而写进去却不影响判定。所以这一列的正确读法是「在**这个编码**里，这条判定需要这条公理」，而不是「这条定理在数学上依赖这条公理」。
-- `none` 那五行同样只敢说「单条拆掉不动」。它们既可能真的不依赖单条公理，也可能依赖一个被别人的判定先挡住的公理 —— 这一列分不开这两种情形。
+- `none` 那五行同样只敢说「单条拆掉不动」。它们既可能真的不依赖单条公理，也可能依赖一个被别人的判定先挡住的公理 —— 这一列分不开这两种情形。**这两种情形在你想删公理时的动作完全不同**：前者可以直接删，后者删了会在别人的判定上塌下来，而这一列对两者印的是同一行。
 
 这一节和 T13 的那一节是同一个动作：把「两侧一样」从信里搬进命令；这一次搬的是「用到哪几条」。两次的判据都是同一句 —— 一句结论要么有命令，要么就是口报。
 
+
+## 17 进了逐行比较的东西，必须换一台机器也不变
+
+### 17.1 一条会重复红的读数
+
+同一棵树、同一台机器、几秒内连跑三次 `--check-readings`：
+
+```
+run1 rc=1  1 diff  got wall=2.5s
+run2 rc=1  1 diff  got wall=2.7s
+run3 rc=1  1 diff  got wall=2.5s
+```
+
+唯一一处差异是 `READINGS-DIFF|line=55`，落在成本行上：`want=wall=3.0s`、`got=wall=2.5s`，除 `wall=` 之外逐字相同。把文件里的 `wall=3.0s` 改成 `99.9s` 也照样红，说明比较是逐字节的，没有把 `wall` 排除在外。
+
+所以此前那句 `READINGS|same=yes|lines=112` 是**巧合**：那一次耗时恰好也打印成 `3.0s`。「规则保证的对」与「巧合造成的对」，区别只在换一次运行还成不成立。一份装机器事实的正文，探的不是内容漂移，是机器身份。
+
+根因在设计层：`USES-COST` 一行里混了两种量。`cells=64|runs=9|variants-per-run=17` 是树的，`wall=3.3s` 是机器的（同树三跑：3.2s / 2.9s / 2.6s；更早一次 6.6s）。一行里装机器事实，逐行比较就必然跟着机器走。
+
+### 17.2 修法：机器事实搬到 stderr，不进正文
+
+成本行只留计数；耗时另起一行 `USES-COST-WALL` 走 stderr。这与 §15 的 `PY-SELECT` 是同一条规则：**机器事实不进被比较的正文**。
+
+顺带一条：`#` 开头的行在本实现里并不特殊 —— 正文就是 stdout，注释照进档案，所以「把 wall 注释掉」不是修法，搬出正文才是。
+
+三跑的结果：
+
+```
+06bca6ffd182   wall=3.2s
+06bca6ffd182   wall=2.9s
+06bca6ffd182   wall=2.6s
+```
+
+正文逐字节相同，耗时在旁边变。记录后连查两次都印 `READINGS|same=yes|lines=112|tree=a462296`。
+
+判据一句话：**能进逐行比较的，只有「换一台机器也不变」的量。**
+
+### 17.3 缺陷二：一个字段名，两个判词
+
+声明读取器跑 `--uses-from-declared --uses-inject AXI9` 时曾经同时印出：
+
+```
+USES-GAP|missing=not-checked|extra=not-checked|rule=a declared reader has no way to notice a discharged axiom that nothing uses
+USES-SUMMARY|claims=8|links=8|unused-discharged=1|conflicts=0|gap=yes
+```
+
+`rc=0`。三处读数里有一处是错的，而这个字段名同时承担了两个判词：`gap=yes` 在实测模式里是「确实有缺口」，在声明模式里是「不知道」。两种「修法」都通向坏结果 —— 把声明模式的 rc 改成非零，反证格当场失效（反证要的正是「抄名单读不出缺口」）；相信 `gap=yes`，等于把一份抄来的名单当成发现。
+
+现在两种模式各自说自己的话：
+
+```
+声明模式  USES-GAP|missing=not-checked|extra=not-checked|...
+          USES-SUMMARY|claims=8|links=8|unused-discharged=1|conflicts=0|gap=not-checked   rc=0
+实测模式  USES-GAP|missing=AXI9|extra=none|...
+          USES-SUMMARY|claims=8|links=3|unused-discharged=1|conflicts=0|gap=yes             rc=1
+```
+
+「这个字段能不能被相信」由字段值本身回答，不由读者去查模式。
+
+### 17.4 两个新格，一个旧格变严
+
+- `body-carries-no-machine-facts`：记录下来的正文里没有 `wall=`、没有解释器身份，而同一次运行仍在 stderr 印出耗时。两半都要成立 —— 只查「正文干净」会漏掉「耗时被删掉了」。
+- `same-file-twice-both-same`：同一棵树连查两次都绿。缺陷的形态正是「第一次就红、第二次还红」，所以这个格不能只查一次。
+- `summary-does-not-say-yes-when-unchecked`（`USESCHECK` 第七格）：声明模式的 `gap=` 必须是 `not-checked`。
+
+### 17.5 `--uses-declare-short` 收的是 claim 身份
+
+例如 `P4|asis`。按公理名传会得到 `rc=2` 与 `problem=no such claim` —— 这不是缺陷，是「身份」与「名字」的区别：一个 claim 的身份包含它的变体名。这一条已写进 help，因为它靠猜是猜不出来的。
+
+### 17.6 这一节不证明什么
+
+这一节证明的是「正文里没有机器事实」，不证明耗时被记录过：耗时现在只在 stderr，任何档案都不留，要看就重跑。`body-carries-no-machine-facts` 靠关键字判定，若有人把 `wall` 搬到第三个地方（日志文件、环境变量），这一格看不见 —— 它守的是正文，不是整台机器。

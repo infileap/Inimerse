@@ -5,7 +5,7 @@
 # a walk up for src/vm), so a reader holding only the tree line re-runs it anywhere.
 # The body is this program's stdout, unedited.  Prose about what the readings MEAN belongs
 # in the page beside this file: a sentence in a file cannot be checked by a command.
-# tree: 0dcedc3
+# tree: a462296
 # python: /usr/bin/python3 (3.14.4, z3 5.3.2)
 # --- body begins below this line ---
 AXIOMS|sites=18|extracted=9|unparsed=9
@@ -62,7 +62,7 @@ USES-SUPERSET|claim=P5|variant=asis|declared=A1,A2,A3,A4,A5,A6,A7,A8|measured=A3
 USES-SUPERSET|claim=P6|variant=candidate_guard|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
 USES-SUPERSET|claim=P7|variant=asis|declared=A1,A2,A3,A4,A5|measured=none|unused=A1,A2,A3,A4,A5|note=a declared axiom the verdict does not need is information: the claim is weaker than its own declaration
 USES-SUMMARY|claims=8|links=3|unused-discharged=0|conflicts=0|gap=no
-USES-COST|claims=8|axioms=8|cells=64|runs=9|variants-per-run=17|wall=3.0s|note=one drop run yields every claim at once, so the 64 cells cost no extra runs; restricting to the 3 discharged axioms would save runs today, but an axiom that is asserted now could start flipping a claim later and its row would silently go missing
+USES-COST|claims=8|axioms=8|cells=64|runs=9|variants-per-run=17|note=one drop run yields every claim at once, so the 64 cells cost no extra runs; restricting to the 3 discharged axioms would save runs today, but an axiom that is asserted now could start flipping a claim later and its row would silently go missing
 LEDGER|axioms=8|discharged=3|asserted=0|vacuous=5|mutation=measured|sites=18|extracted=9|unparsed=9
 WRITESITES-PINRULE|pinned-writesites=yes iff (path,line) is in the pin table and pin_ok(want,line) holds|judge=gen_bounds_proof.pin_ok|note=a drifted line is no, never a near miss
 WRITESITES|field=t->sp|sites=30|direct=30|unparsed=0|pinned-writesites=1|unpinned-writesites=29|source=src/**/*.{c,h}
