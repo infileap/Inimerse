@@ -25613,6 +25613,24 @@ set_tests_properties Can not find test to add properties to: wasm_probe
 
 这条也解释了为什么处置该取 `RUN_SERIAL`／`RESOURCE_LOCK` 而不是抬上限：抬上限解决的是「这一次」，而属性解决的是「它不该和别人抢核」——那是它的性质，不是这一次的运气。
 
+**对方读数（同一棵树，未在本树复跑）**：树 `9a4db3b` 上 `-j nproc` 下 `inim_regression` 超时、`--jobs 4` 下通过。我原来写的是「两次之间没有任何代码改动」——那是**断言，不是证据**，改写成我能核的形式：**两次运行都被同一棵 `9a4db3b` 盖过章**（两份输出的 `head=` 是同一个 40 位 sha；树号相同我也只核到这一层，两次之间工作区有没有被动过我给不出证据）。这是这一族最短的证明——同一个测试、同一棵树、只换了并行度与当时机器上的负载，结论就相反；它与我上面四行表同向，但不构成我的实测。
+
+**更强的证据不是我加一句断言，而是别人记下的读数**：`main` 上的 `tools/gate_attr_readings.py` 在 `cff9197` 上印
+
+```
+GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|load=20-hog x -j12|serial=yes|margin=20%|basis=recorded under contention, not designed slack|measured-on=cf73746
+```
+
+它的记录（`tools/gate_attrs.recorded.json`）在同一棵树上只翻 `RUN_SERIAL`：12 路外部负载下 `RUN_SERIAL` 关 **26.99 秒**、开 **16.45 秒**；20 路外部负载下关着就撞上限（`rc=8`，175 项里红 1 项——即 29.99 秒那一格）、开着 **23.91 秒**；独跑 **4.90 秒**。⇒ 超时的自变量是负载与调度，不是代码，而这组对照的每一格都带 `load=` 与 `measured-on=`。
+
+**这条读数的主语是构建目录，不是源码树**（这一格是我实测的）：我的工作树停在 `cff9197`（`CMakeLists.txt` 第 237 行已经带 `RUN_SERIAL TRUE`），但 `build/` 是在它之前配置的，于是同一句命令印
+
+```
+GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|serial=absent|margin=na|why=RUN_SERIAL is not set, so this margin is not bought
+```
+
+`cmake -B build` 重新配置一次（源码一字节未动）之后，同一句命令才印上面那条 `serial=yes|margin=20%`。两个数、同一棵树、差在一次配置：属性活在生成的 `CTestTestfile` 里。`measured-on=cf73746` 还提醒：`worst=23.91s` 是**在另一棵树上量的**，不是我这棵。据此有一条**规格（未实现）**：让读数行再印一个 `configured-at=`（`CTestTestfile` 的 mtime 或 cmake 记下的配置轮次），读者就能一眼看出「这两个数不是一次配置出来的」，不必靠 `serial=absent` 里那句 `why=` 反推。第二条同族证据来自对方（同一机制的另一半，未在本树复跑）：注册 `op_hot_regression` 后 `ctest -R op_hot_regression` 红（`cases=6 red=2`），`cmake --build build` 之后全绿 —— 那边是二进制旧，这边是配置旧，但两者都说明**构建目录是这门工具里的第二个主语**。
+
 ### 丁 判据
 
 1. 说「某棵树红」时，写「**哪棵树 ＋ 哪个默认环境**」；只写树会被读成树的属性。
@@ -25634,15 +25652,21 @@ set_tests_properties Can not find test to add properties to: wasm_probe
 
 `docs/IR_DESIGN.md` 第 12 节把六条留给「人」决定，470 行设计里最贵的一句话是「本文档不替它决定」。这一节不替它决定，只把每条压成五行内能读完的一格：**两种选择各自成为什么、不做会怎样、谁能一句话拍板、拍错后返工的最小单位**。
 
-先给三个可复跑的读数（`tools/ir_spec.py`，树 `124cb81`）：
+先给四个可复跑的读数（`tools/ir_spec.py`，树 `edb1bcd`，即本节 rebase 的基；我只改了这个文档，`tools/` 与源码一字节未动）：
 
 ```
 IR-SPEC|ops=67|codes=0..67|hole=29|shaped=67|unshaped=none
 IR-ABI|version=3|abi=2|ops=67
-IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none|baseline=disasm:0|aot=na|wasm=na|selfhost=na
+IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none|budget=none|aot=na|wasm=na|selfhost=na
+IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unexpected=OP_CALL_VALUE|hidden=OP_LOADK_STRING,OP_CALL_BUILTIN,OP_RECORD,OP_SET_INTERVAL,OP_LOADK_I64|compared=register-set-not-order|why=roles-are-not-declared-yet-immediates-and-goto-shared-bodies-look-like-mismatches-see-IR_DESIGN-P1
 ```
 
-已成立的三件：67 个 opcode 都有形状、都能被反汇编器按自己的名字印出、都在解释器分派里；`29` 是退役的 `OP_POP_REG`。仍是 `na` 的三件：AOT、wasm、自举写侧都还没有对着 MIR 量。
+**这四个数的主语是树，换树就换引文**：`hidden=` 的序列是 `a670a70` **8** → `cff9197` **7** → `7d0e6fd` **5**（本节的基 `edb1bcd` 与它同数），引用以本树读数为准。第一段（8→7）**差异未归因**：两棵树之间角色表与打印行都有变动，我没有逐项归因；我能核到的只到「哪一项不在列表里」为止——离开的是 `OP_THREAD_START`，而 `9dd3ade` 恰好改过它的打印行（现在印 `res=r%d`，同时把 `RECV` 的 `-1` 哨兵从 `timeout=r-1` 改成 `timeout=none`），两件事挨得很近，但这不是逐项归因，我不把它写成归因。第二段（7→5）我核到的也只是同一层：离开的是 `OP_EQK` 与 `OP_NEQK`，而 `7d0e6fd` 的提交信息说 `a declared register the print line hides is now a red`——我核的是「哪两项离开」，没有读那两个打印器的 diff，所以不写成「因为」某一行改对了。这一笔仍是「取数命令与树号必须写在同一行」的现场：同一串 `IR-*` 行在 `9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd`、`de2111c`、`9f1a589`、`edb1bcd` 上是三个不同的数。
+
+
+**读数换过形状，请按这一版复跑**：这两行早先印的是 `baseline=disasm:0` 与一条按**顺序**比对反汇编行的读数；`9a4db3b` 把前者整个删掉（「预算」一词会让人以为还有一个可调的容忍度），把后者改成比**寄存器集合**——因为那个尺子本身在造假：`&R[ins.rN]` 是纯读却被当成目的，于是**同一个进步会同时在两个地方记两笔**。改完之后它立刻抓出三处真的印错（`TRY_START` 印 r1 而藏了 r2 的 catch 变量、`THREAD_WAIT` 印一个没人读的 r3、`RECORD` 藏了 `value_move` 写的 r3），三处都已修在本树。
+
+已成立的四件：67 个 opcode 都有形状、都能被反汇编器按自己的名字印出、都在解释器分派里、都在表里有处理器；`29` 是退役的 `OP_POP_REG`。仍是 `na` 的三件：AOT、wasm、自举写侧都还没有对着 MIR 量。**未测量的四件点名了**（`OP_STOP`、`OP_HALT`、`OP_TRY_END`、`OP_YIELD`），因为它们不在打印语句里，所以 63+4=67：分母不是「全部通过」的意思，分子也不是。
 
 这六条的共同点是**它们的落点都是「表里有没有一个字段」**，不是「代码怎么写」。这也是为什么拍板成本是一句话，而返工成本是表的一列。
 
@@ -25655,7 +25679,7 @@ IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none|baseline=disasm:0|aot=na|
 | **异常/线程进不进 v1 表** | 进表，`flags` 标 `IR_F_TERMINATOR`／`IR_F_MAY_THROW`，P1–P4 不覆盖 | 不进表：表外留下分派分支，五处写死的病保留一个口子 | `IR-COVER` 的 `missing=` 无法表达「故意不覆盖」，读者会把缺口当漏测 | 管异常与线程语义的人：「它们进表，但 P1–P4 不实现」 | 表加 flags 字段 + 两个消费者读它；错在 flags 语义，不在布局 |
 | **`.im` 写侧直接吃 MIR 吗** | 只吃编号表：写侧继续手写编号（今天如此），MIR 演进不牵动写侧 | 直接吃 MIR：写侧立刻获得语义；绑到字节布局，MIR 一变写侧跟着改 | 编号表与 MIR 之间没有校验，`selfhost` 一列永远是 `na` | 自举写侧的所有者：「写侧只认编号，不认布局」 | 一个「编号→MIR」最小验证器并给 `IR-ABI` 加一列；不是改布局 |
 | **静态专用 opcode 要不要 `static_only`** | 进表 + 字段：`IR-COVER` 可按模式过滤，静态模式生产点为 0 这件事才可测 | 只靠注释：下一个人 grep 不到，静态模式的生产点会回来 | 表与注释分叉，而注释不进任何读数 | 静态模式（AOT）的所有者：「它在表里，但带 `static_only=True`」 | 一个字段 + 一条读数 |
-| **`OpSemantics` 源用 Python 还是 C** | Python：与 `tools/mod_spec.py` 一致、生成器好写；构建期多一个依赖 | C 源 + Python 校验器：构建期无新依赖；生成器只能做很浅的元编程，校验器要手写 | 表用 C 手写，五处仍各自手写——生成器没地方生成 | 构建/CI 的所有者：「构建期能不能保证有一个 python3」 | 表文件的源语言 + 生成器；错的是「把表翻译一遍」，不是「重写设计」 |
+| **`OpSemantics` 源用 Python 还是 C** —— **已定（Python）**，见本节己栏 | Python：与 `tools/mod_spec.py` 一致、生成器好写；构建期多一个依赖 | C 源 + Python 校验器：构建期无新依赖；生成器只能做很浅的元编程，校验器要手写 | 表用 C 手写，五处仍各自手写——生成器没地方生成 | 构建/CI 的所有者：「构建期能不能保证有一个 python3」 | 表文件的源语言 + 生成器；错的是「把表翻译一遍」，不是「重写设计」 |
 
 ### 乙 为什么六条都能用一句话拍
 
@@ -25672,11 +25696,30 @@ IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none|baseline=disasm:0|aot=na|
 
 ### 丁 端点
 
-本节测量树 `124cb81`（我的分支 `audit-ir-decisions`，父 `426ceef`）；三个读数是 `tools/ir_spec.py` 当场输出，未改任何一行代码或表。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节。
+本节测量树 `edb1bcd`（`origin/main`，我 rebase 的基；分支 `audit-ir-decisions` 上的 `tools/` 与源码与它一字节未动，我只改了这个文档）；四个读数是 `tools/ir_spec.py` 当场输出。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
 
 ### 戊 边界
 
 - 「选 A/B 会成为什么」是**引用设计档的判断**加我今天读到的三行读数，不是我实现后测出来的；本文档没有实现任何一行，这一点与设计档一致。
 - 「拍错后返工的最小单位」是我的估计，不是实测：没有真的拍错一次再量返工量。
 - 未核 P0 之外的 P1–P6 现状；`aot=na|wasm=na|selfhost=na` 只说明「今天没有对着 MIR 的量具」，不说明三个消费者没有被写过。
-- 未替任何人做决定；六条仍是待裁定。
+- **「形状怎么写」不在本节六条里，它在设计档 §14；这一笔把指路改过去，因为那个位置终于有内容了。** `cff9197` 上 §14 已落地（`894d59e`），写着三件：形状今天**只能证伪、不能证明完整**；它看不见的三件事（寄存器与立即数不分、次数与角色不分、印出的顺序不查）；转正条件是形状从散文改成角色三元组 `dst=`／`src=`／`imm=`，属 P1 入口——并且把 `checked=63/67` 与 `unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD` 写成必须连起来读（63+4=67）。上一版这里写的是「§14 还没落地，我不先指一个到不了的位置」；落地后同一笔改成指路，这是那条规矩的收尾。证据仍是本节引的那行 `IR-DISASM-REGS`。两个例子：①`IR-DISASM-REGS` 的 `checked=63/67` 与 `unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD` 要连起来读——分子分母都不是「全部通过」的意思时，要写成两个句子，没量的点名，否则 63/67 会被读成 94% 覆盖率；②同一条读数的 `unexpected=OP_CALL_VALUE` 是按标签切片造成的**假红**（它的 `res/argc` 在 `goto L_CALL_FUNC` 共享尾里读），红到底是判据的结论还是切片的产物，必须能在同一行里分开说。
+- 一条判据的经验：**判据若以「出现了哪些符号」为单位，纯读与纯写会合并；以「谁写了它」为单位才不会**——前者会让一条改动同时在两处记两笔，而这和我们前面拆的几类方向相反：那些是「一个数被借去答另一个问题」，这一类是「一次改动被数了两遍」，症状相同：两个数同时在动，而只有一件事发生过。
+- 未替任何人做决定；**五条**仍是待裁定（第六条已定，见己栏）。
+
+### 己 已定的一条：`OpSemantics` 的源用 Python
+
+设计档第 12 节第 6 条在这棵树上已经写着决定，不是本节替它写的：
+
+```
+6. **`OpSemantics` 的源用 Python 还是 C**。本文档选 Python（与 `mod_spec` 一致、生成器容易写），
+   代价是构建期多一个 Python 依赖；如果 CI 环境不允许，退化为 C 源 + 一个 Python 校验器。
+```
+
+合并者也单独定了一次，理由与语言偏好无关：`tools/mod_spec.py` 这个先例已经跑通「单一权威 + 由它生成用例 + sha 进读数」，而 C 版表会让「改一行规则」变成一次重编译——没人会为了对一行散文重编译，于是那条规则会在表外再手写一遍，正是这六条要治的病。
+
+同一节里还有一处**标题与条目互相矛盾**：该节标题写着「需要人拍板，本文档不替它决定」，而第 6 条已经说「本文档选 Python」。所以「已定」在这里有两层意思——条目已定，**标题还没收窄**。读者若只看标题会以为六条全未决，只看第 6 条会以为六条全已决；两处都错。收窄标题是合并者的活（把「本文档不替它决定」改成「已定一条，其余五条待你们决定」一类的写法），本节只记这个矛盾，不替它改。
+
+判据：一条裁定的状态要能在**同一个文件里自洽**——「已定」若只写在一节的表格里、而来源文件仍声明未定，那不是已定，是两处各说一次。
+
+这条判据的代价在读者一侧，合并者说过一句更准的：**两处不一致时，读者会去信更容易改的那一处，最后留下的是文档而不是事实**。表格比标题好改，所以表格会被改成「已定」，而标题会留着「不替它决定」——于是事实（谁定的、凭什么）留在没人读的那一处。所以这里的顺序不是「先改表、后改标题」，是**同一棵树里两处同时落地**；在它落地之前，这一栏只算记录矛盾，不算记下决定。
