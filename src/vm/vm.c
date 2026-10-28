@@ -5364,7 +5364,7 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     case OP_STOP:           snprintf(out, outsz, "STOP"); return;
     case OP_HALT:           snprintf(out, outsz, "HALT"); return;
     case OP_IS_NIL:         snprintf(out, outsz, "IS_NIL r%d, r%d", ins->r1, ins->r2); return;
-    case OP_THREAD_START:   snprintf(out, outsz, "THREAD_START t%d (args:%d)", ins->r1, ins->r3); return;
+    case OP_THREAD_START:   snprintf(out, outsz, "THREAD_START t%d (args:%d), res=r%d", ins->r1, ins->r3, ins->r2); return;
     case OP_THREAD_CTRL:    snprintf(out, outsz, "THREAD_CTRL t%d, op=%d", ins->r1, ins->r2); return;
     case OP_NEW_DICT:       snprintf(out, outsz, "NEW_DICT r%d, pairs=%d", ins->r1, ins->r3); return;
     case OP_EQK:            snprintf(out, outsz, "EQK r%d, \"%s\"", ins->r1, (ins->r3 >= 0 && ins->r3 < code->string_count && code->string_pool[ins->r3]) ? code->string_pool[ins->r3] : "?"); return;
@@ -5380,7 +5380,8 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     case OP_THREAD_STATE:   snprintf(out, outsz, "THREAD_STATE r%d, t%d, attr=%d", ins->r1, ins->r2, ins->r3); return;
     case OP_LOCK:           snprintf(out, outsz, "LOCK l%d, %s", ins->r1, ins->r2 == 0 ? "lock" : "unlock"); return;
     case OP_SEND:           snprintf(out, outsz, "SEND t%d, r%d", ins->r1, ins->r2); return;
-    case OP_RECV:           snprintf(out, outsz, "RECV r%d, timeout=r%d", ins->r1, ins->r2); return;
+    case OP_RECV:           if (ins->r2 < 0) snprintf(out, outsz, "RECV r%d, timeout=none", ins->r1);
+                            else snprintf(out, outsz, "RECV r%d, timeout=r%d", ins->r1, ins->r2); return;
     case OP_DECLARE:        snprintf(out, outsz, "DECLARE kind=%d, fp[%d]", ins->r1, ins->r2); return;
     case OP_RECORD:         snprintf(out, outsz, "RECORD g%d, sidx=%d, meta=%d, res=r%d", ins->r1,
                                      ins->r2 & 0xFFFF, (ins->r2 >> 16) & 0xFF, ins->r3); return;
