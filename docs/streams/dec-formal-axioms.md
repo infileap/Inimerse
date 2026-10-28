@@ -761,12 +761,68 @@ READINGS|same=yes|lines=112|body-md5=134d4cd85e36|tree=53d716a|python=/usr/bin/p
 | `40f9ff8f02d7` | `--check-readings` 的 stdout | 没有字段，也不该有 |
 
 第三个不是缺陷，是提醒：**任何能算出摘要的命令都值得问一句「它对哪一份字节算的」**。前两个的差别只有一个结尾换行——差异小到没人会注意到，正好是「摘要需要主语」最好的例子。
+ivory 替我把这句话说得更准：**读者最容易犯的错不是漏写主语，是看见两个不同的数就判其中一个错**。我上一轮正是这么犯的：把 `06bca6ffd182` 报给它当「正文的 md5」，它算出 `40f9ff8f02d7` 之后我去查，才发现两个都不是错的读数——是我把「档案正文」与「命令 stdout」当成了同一个东西。给摘要加主语是补救；补救之前得先承认**两个数可以同时为真**。同一条也适用于 pin：`base=1348` 与 `now=1352` 同时为真，一个是旧基线、一个是这棵树的计数（见 §18）。
 
 ### 17.8 两格：摘要必须能被独立重算
 
 - `body-md5-has-a-subject`：这一格**从档案正文自己重算** md5，再与命令打印的字段比；同时断言 `--check-readings` 的 stdout 里没有正文（`check-prints-body=no`）。第二半是必要的：若这条命令会把正文印出来，字段就可能只是正文的副本，重算也就证明不了它是摘要。读数：`field=134d4cd85e36 recomputed=134d4cd85e36 check-prints-body=no`。
 - `header-edit-is-not-a-body-change`：改掉抬头里的一行散文，仍须 `same=yes` 且摘要不变，读数 `rc=0 edited=yes same-digest=yes`。这一格挑的是「只有整文件摘要才会不变」的输入：对任何从未改过抬头的运行，整文件摘要与正文摘要一样恒定，差异只在这类输入上才现形。
 
-`READINGSCHECK` 因此从八格变成十格：`READINGSCHECK|summary|cases=10|pass=10|fail=0`。两格都走真实 CLI，没有一格是「我把字段加上去了所以它是对的」。
+`READINGSCHECK` 现在报 `READINGSCHECK|summary|cases=11|pass=11|fail=0`。**这个数不作为常数写进句子**：它是各行求和的输出，格数变一次只写在行里就够了；写进散文就会过期——这正是本系列反复删的那种「记忆」。三格都走真实 CLI，没有一格是「我把字段加上去了所以它是对的」。
 
 这一节不证明的是：摘要说的是「这些字节是这样」，不是「这些字节是对的」。一份被整体替换、且替换者也被记录下来的正文，`body-md5` 会老老实实地跟着变——它守的是一致性，不是正确性。
+**这一格不许调用 `body_digest()`。** 第一版就是调它算的，而 `body_digest()` 正是被检验的那个实现：这样重算只能证明「打印值等于函数输出」，永远证明不了「函数按字段名里写的规则算」。改成长手写一遍规则（正文各行用单个换行连接、不带结尾换行、不含抬头、取前 12 位十六进制），证据才与被证物分开。这与 `check-prints-body=no` 是同一条纪律的两种用法：**证据不能与被证物共用实现，也不能与被证物共用字节**。
+
+- `digest-subject-is-not-the-file`：对同一份档案，整文件 md5 与「正文加一个结尾换行」的 md5 都是读者真能算出来的数，所以「摘要说的是正文」只有在**按名字拒绝这两个数**时才是一条读数。读数：`field=134d4cd85e36 whole-file=dbf8d20b00e1 body+newline=06bca6ffd182`。后两列不是陪衬——它们正是 §17.7 那张三行表里的两个数，现在由一格断言替读者记着。
+
+## 18 一个 `net=0` 能证明什么，不能证明什么
+
+### 18.1 三个对象，一个字段名
+
+HEADINGS 这条读数里其实有三个对象：**被数的那棵树**、**写出来的 pin 文件**、**承载它的那个提交**。字段名却只有一个 `tree=`。于是同一行可以被读成两句不同的话，两句都自洽：
+
+```
+HEADINGS|tree=e3d2dc2|base=1348|now=1352|removed=0|added=4
+HEADINGS|pin|tree=ef8d7a9|docs=107|files=107
+HEADINGS|stale|pin-tree=ef8d7a9|head=e3d2dc2|net=4
+```
+
+我在 e3d2dc2 上跑出来的就是这三行：`now=1352` 对，**但 pin 还是 1348**（pin 由 ef8d7a9 写下，漂移 +4）。ivory 承认这是它这一侧的缺陷，并把「三个对象各起名」派给了 runner（`measured-tree=` / `lands-in=` / `pin-measured-tree=` / JSON 里 `measured_on`）。这一节记的是我在这件事里学到的两条判据，而不是改名本身。
+
+### 18.2 我那句要求是结构性不可能的
+
+我原先要求「pin 行的 `tree=` 必须等于 `GATE|end` 的树，否则我不 rebase」。错在把纪律当成了等式：**pin 只能在数完之后写进一个提交**，所以「pin 的树」永远是「被数的树」的后继，两者相等在构造上不可能。该问的不是两个 sha 相等，而是 `net=0`。这条我认。
+
+### 18.3 但 `net=0` 守的是计数，不是身份
+
+承认完上面那条之后，还剩一个更要紧的问题：**`net=0` 够不够承担结论？** 不够。pin 文件里只有三个东西：文件数、标题总数、以及每个文件的标题数：
+
+```
+{
+ "docs": 107,
+ "headings": 1344,
+ "per_file": { "docs/API.md": 15, "docs/AUDIT.md": 531, ... }
+}
+```
+
+没有标题文本。检查器自己也印 `identity=per-file-count`。所以 `net=0` 与 `removed=0` 合起来的诚实读法是：**没有文件改变它二级标题的条数**。一个文件里把一个标题改名、或者删一个再加一个，计数一动不动，`net=0` 照旧绿，而「没有一节消失」这句话已经不成立了。检查器收尾那句「绿灯不说明幸存标题下的文字还说了同样的话」就是这个意思，只是它写在了最后一行，容易被当成客套。
+
+结论要按域来说：`net=0` 对「计数」是充分的，对「身份」只是必要的；要守身份，pin 得存标题文本（`identity-domain` 里已经预留了 `per-heading-identity`，v1 只用了前者）。这不是缺陷报告，是**一条读数该被读到哪一行为止**。
+
+### 18.4 命令（任何人可复跑）
+
+```
+cd <任意树>
+python3 tools/check_docs_headings.py          # HEADINGS|tree / pin / stale / drift / added
+python3 - <<'EOF'                              # 自己数一遍，不信任何一行
+import pathlib
+print(sum(sum(1 for l in p.read_text(encoding="utf-8", errors="replace").splitlines()
+              if l.startswith("## ")) for p in pathlib.Path("docs").rglob("*.md")))
+EOF
+```
+
+e3d2dc2 上的读数：`1352`（103 个文件有 L2，107 个在册，4 个为 0）；+4 的构成是 `docs/AUDIT.md` 535→537 与 `docs/streams/dec-formal-axioms.md` 16→18，其余 101 个文件不变，1348+2+2=1352。三级标题不进账，因为判据是 `startswith("## ")`，第三个字符必须是空格。
+
+### 18.5 这一节不证明什么
+
+不证明 pin 的正文身份（见 18.3），也不证明「绿 = 内容未变」。它能证明的只有一件事：**数目字对得上，且漂移能被拆到具体文件**——而这两件，比一个「pin-tree 等于 head」的等式有用得多。
