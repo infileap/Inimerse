@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """P1 gate: mir_from_bytecode -> mir_to_bytecode must reproduce the container byte for byte.
 
+P1 is RELABEL-ONLY.  The criterion below is therefore not "the program still
+runs": it is "the bytes that come out are the bytes that went in".  A P1 prototype
+that folded a constant, reordered blocks or renumbered an operand would change
+those bytes, and this file is supposed to go red when it does.
+
 What is compared, and what is not (read this before trusting a green run):
 
   * The bytecode STREAM is regenerated from IrInsn -- mir_to_bytecode never
@@ -9,15 +14,17 @@ What is compared, and what is not (read this before trusting a green run):
     header, thread header, try entry and global name in the right order.
   * The dependency TRAILER (src/compilation/deps.c) is NOT part of Bytecode and
     cannot be regenerated; it is carried verbatim and counted separately
-    (`trailer_carried`).  A run that reports stream identity and a carried
-    trailer is not hiding a mismatch: the stream length is printed.
-  * The negative control matters as much as the positive one: a perturbed MIR
-    must produce a DIFFERENT file.  If a perturbation still round-trips
-    identically, the writer is copying rather than rebuilding and the positive
-    result proves nothing.
+    (`trailer_carried`).  The stream length is printed next to the file length so
+    identity is reported at the layer it holds.
+  * The NEGATIVE CONTROL is what makes the positive reading mean anything: two
+    MIR-layer transformations that are NOT relabels (renumber an operand, swap
+    two instructions) must each produce a DIFFERENT file.  If one still
+    round-trips identically, the writer is copying rather than rebuilding and the
+    whole green run is void -- that is why a missed control exits 1.
 
-Usage: tools/mir_roundtrip.test.py [--jobs N] [--keep DIR]
-Exit: 0 all identical, 1 any mismatch, 2 harness build failure.
+Usage: tools/mir_roundtrip.test.py [--keep DIR]
+Exit: 0 all identical and every control red, 1 any mismatch or a green control,
+      2 harness build failure.
 """
 import argparse
 import glob
@@ -49,7 +56,8 @@ def build_harness():
 
 
 def parse(stdout):
-    out = {"size": {}, "identical": {}, "trailer": {}, "diff": {}}
+    """(tag -> first record), (tag -> list of records)."""
+    first, many = {}, {}
     for line in stdout.splitlines():
         parts = line.split("|")
         if not parts:
@@ -59,16 +67,17 @@ def parse(stdout):
             if "=" in item:
                 k, v = item.split("=", 1)
                 kv[k] = v
-        out.setdefault(tag, kv)
-        if tag in ("IR-SIZE", "ORIG-IDENTICAL", "ORIG-TRAILER", "ORIG-STREAM", "ORIG-DIFF"):
-            out[tag] = kv
-    return out
+        first.setdefault(tag, kv)
+        many.setdefault(tag, []).append(kv)
+    return first, many
 
 
-def run_one(inim, workdir, tag):
+def run_one(inim, workdir, tag, extra=None):
     out = os.path.join(workdir, tag + ".rt.inim")
-    p = subprocess.run([HARNESS, inim, out], capture_output=True, text=True)
-    return p.returncode, parse(p.stdout), p.stdout + p.stderr
+    cmd = [HARNESS, inim, out] + (extra or [])
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    first, many = parse(p.stdout)
+    return p.returncode, first, many, p.stdout + p.stderr
 
 
 def compile_im(im, workdir):
@@ -76,6 +85,29 @@ def compile_im(im, workdir):
     p = subprocess.run([os.path.join(ROOT, "build", "inimerse"), "compile", im, out],
                        cwd=ROOT, capture_output=True, text=True)
     return out if p.returncode == 0 and os.path.exists(out) else None
+
+
+def report_group(name, rows):
+    """rows: list of (label, rc, first, raw). Returns (n, bytes, differ, skipped)."""
+    n = total_bytes = differ = skipped = 0
+    for label, rc, first, raw in rows:
+        ident = first.get("ORIG-IDENTICAL", {})
+        if "read failed" in raw:
+            skipped += 1
+            print("MIR-SKIP-UNREADABLE|file=%s" % label)
+            continue
+        n += 1
+        total_bytes += int(ident.get("bytes_orig", "0") or 0)
+        if rc == 0 and ident.get("differ") == "0":
+            continue
+        differ += 1
+        print("MIR-MISMATCH|file=%s|rc=%d|differ=%s" % (label, rc, ident.get("differ", "?")))
+        for line in raw.splitlines():
+            if line.startswith(("ORIG-", "IR-SIZE")):
+                print("  " + line)
+    print("MIR-IDENTICAL|set=%s|programs=%d|bytes=%d|differ=%d|skip_unreadable=%d"
+          % (name, n, total_bytes, differ, skipped))
+    return n, total_bytes, differ, skipped
 
 
 def main():
@@ -88,82 +120,98 @@ def main():
 
     workdir = args.keep or tempfile.mkdtemp(prefix="mir-rt-")
     os.makedirs(workdir, exist_ok=True)
-    cleaned = args.keep is None
 
-    cases = []          # (label, path)
+    # Group A: .im sources compiled by this run (AST -> compile, today's path).
+    compiled_rows = []
     for im in sorted(glob.glob(os.path.join(ROOT, "vtest", "*.im")) +
                      glob.glob(os.path.join(ROOT, "examples", "*.im"))):
-        built = compile_im(os.path.relpath(im, ROOT), workdir)
-        if built:
-            cases.append((os.path.relpath(im, ROOT), built))
-    # artifacts that were not produced by this run: a precompiled .inim is the
-    # more interesting case, because nothing in this run built it
+        label = os.path.relpath(im, ROOT)
+        built = compile_im(label, workdir)
+        if not built:
+            print("MIR-SKIP-COMPILE|file=%s" % label)
+            continue
+        rc, first, many, raw = run_one(built, workdir, "a%d" % len(compiled_rows))
+        compiled_rows.append((label, rc, first, raw))
+
+    # Group B: .inim already in the tree -- nothing in this run built them.
+    precompiled_rows = []
+    seen = set()
     for inim in sorted(glob.glob(os.path.join(ROOT, "**", "*.inim"), recursive=True)):
-        cases.append((os.path.relpath(inim, ROOT), inim))
+        # compare the path RELATIVE to ROOT: when this runs inside a worktree the
+        # absolute path itself contains "/.worktrees/", so filtering on the
+        # absolute path would silently drop every artifact and report programs=0.
+        rel = os.path.relpath(inim, ROOT)
+        if rel.startswith(".worktrees/") or rel.startswith(".scratch/") or rel.startswith("build/"):
+            continue
+        if inim in seen:
+            continue
+        seen.add(inim)
+        label = rel
+        rc, first, many, raw = run_one(inim, workdir, "b%d" % len(precompiled_rows))
+        precompiled_rows.append((label, rc, first, raw, many))
 
-    total = identical = failed = carried = skipped = 0
-    tot_funcs = tot_insns = tot_threads = tot_try = tot_wide = 0
-    for idx, (label, path) in enumerate(cases):
-        rc, rec, raw = run_one(path, workdir, "c%d" % idx)
-        total += 1
-        size = rec.get("IR-SIZE", {})
-        tot_funcs += int(size.get("funcs", 0) or 0)
-        tot_insns += int(size.get("insns", 0) or 0)
-        tot_threads += int(size.get("threads", 0) or 0)
-        tot_try += int(size.get("try", 0) or 0)
-        tot_wide += int(size.get("wide_ops", 0) or 0)
-        if rec.get("ORIG-TRAILER", {}).get("bytes", "0") not in ("0", None):
+    n_a, b_a, d_a, s_a = report_group("compiled", compiled_rows)
+    n_b, b_b, d_b, s_b = report_group("precompiled", [(r[0], r[1], r[2], r[3]) for r in precompiled_rows])
+
+    carried = 0
+    for row in compiled_rows + [(r[0], r[1], r[2], r[3]) for r in precompiled_rows]:
+        if row[2].get("ORIG-TRAILER", {}).get("bytes", "0") not in ("0", None):
             carried += 1
-        ident = rec.get("ORIG-IDENTICAL", {})
-        if rc == 0 and ident.get("differ") == "0":
-            identical += 1
-        elif "read failed" in raw:
-            # Not a MIR result: the engine's own bytecode_read_file rejects it
-            # (older format version / not a bytecode container at all).  Counted
-            # separately so the total never claims more coverage than it has.
-            skipped += 1
-            print("MIR-SKIP-UNREADABLE|file=%s" % label)
-        else:
-            failed += 1
-            print("MIR-MISMATCH|file=%s|rc=%d" % (label, rc))
-            for line in raw.splitlines():
-                if line.startswith(("ORIG-", "IR-SIZE")):
-                    print("  " + line)
-
     print("MIR-ROUNDTRIP|files=%d|identical=%d|differ=%d|skip_unreadable=%d|trailer_carried=%d"
-          % (total, identical, failed, skipped, carried))
-    print("MIR-COVERAGE|funcs=%d|insns=%d|threads=%d|try=%d|wide_ops=%d"
-          % (tot_funcs, tot_insns, tot_threads, tot_try, tot_wide))
+          % (n_a + n_b, (n_a - d_a) + (n_b - d_b), d_a + d_b, s_a + s_b, carried))
 
-    # ---- negative control -------------------------------------------------
-    # Pick a case with insns to perturb.  A perturbation that still round-trips
-    # means the writer copied instead of rebuilt.
-    neg_ok = 0
-    neg_bad = 0
+    # ---- negative control: P1 is relabel-only, so a non-relabel must go red --
+    # Pick a program and a function big enough to mutate, from the harness's own
+    # per-function report rather than by assuming function 0 is large.
     target = None
-    for label, path in cases:
-        rc, rec, raw = run_one(path, workdir, "probe")
-        if int(rec.get("IR-SIZE", {}).get("insns", "0") or 0) >= 4:
-            target = (label, path)
+    for label, rc, first, raw, many in precompiled_rows:
+        funcs = [f for f in many.get("IR-FUNC", []) if int(f.get("ninsns", "0") or 0) >= 4]
+        if funcs:
+            fid = int(funcs[0]["id"])
+            target = (label, None, fid)
             break
-    if target:
-        for field, value, name in ((0, 25, "op"), (1, 99, "dst"), (2, 7, "r2")):
-            out = os.path.join(workdir, "neg-%s.inim" % name)
-            p = subprocess.run([HARNESS, target[1], out, "--perturb", "0", "3", str(field), str(value)],
-                               capture_output=True, text=True)
-            differ = parse(p.stdout).get("ORIG-IDENTICAL", {}).get("differ", "0")
-            if differ not in ("0", None):
-                neg_ok += 1
-            else:
-                neg_bad += 1
-                print("MIR-NEGCTL-MISS|field=%s|value=%d|file=%s" % (name, value, target[0]))
-    print("MIR-NEGCTL|fields_tested=%d|broke_identity=%d|did_not=%d"
-          % (neg_ok + neg_bad, neg_ok, neg_bad))
+    if target is None:
+        for row in compiled_rows:
+            label = row[0]
+            path = os.path.join(workdir, os.path.basename(label)[:-3] + ".inim")
+            rc, first, many, raw = run_one(path, workdir, "probe")
+            funcs = [f for f in many.get("IR-FUNC", []) if int(f.get("ninsns", "0") or 0) >= 4]
+            if funcs:
+                target = (label, path, int(funcs[0]["id"]))
+                break
 
-    if cleaned:
+    controls = []   # (case, want, got, differ)
+    if target:
+        label, path, fid = target
+        if path is None:
+            path = os.path.join(ROOT, label)
+        # (a) renumber one operand: an operand change is not a relabel
+        rc, first, many, raw = run_one(path, workdir, "neg-renum",
+                                       ["--perturb", str(fid), "1", "0", "25"])
+        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
+        controls.append(("renumber-op", "red", "red" if d not in ("0", None) else "green", d))
+        # (b) perturb a destination register
+        rc, first, many, raw = run_one(path, workdir, "neg-dst",
+                                       ["--perturb", str(fid), "1", "1", "99"])
+        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
+        controls.append(("renumber-dst", "red", "red" if d not in ("0", None) else "green", d))
+        # (c) swap two instructions: the clearest form of "not a relabel"
+        rc, first, many, raw = run_one(path, workdir, "neg-swap",
+                                       ["--swap", str(fid), "1", "2"])
+        d = first.get("ORIG-IDENTICAL", {}).get("differ", "0")
+        controls.append(("swap-1-2", "red", "red" if d not in ("0", None) else "green", d))
+    for case, want, got, d in controls:
+        print("MIR-NEGCTL|case=%s|want=%s|got=%s|differ=%s" % (case, want, got, d))
+    red = sum(1 for c in controls if c[2] == "red")
+    print("MIR-NEGCTL|controls=%d|red=%d|green=%d|target=%s"
+          % (len(controls), red, len(controls) - red, target[0] if target else "none"))
+
+    if args.keep is None:
         shutil.rmtree(workdir, ignore_errors=True)
 
-    return 0 if (failed == 0 and neg_bad == 0 and neg_ok > 0) else 1
+    ok = (d_a == 0 and d_b == 0 and n_a > 0 and len(controls) == 3 and red == 3)
+    print("MIR-VERDICT|%s" % ("PASS" if ok else "FAIL"))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

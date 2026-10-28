@@ -379,10 +379,17 @@ int main(int argc, char **argv) {
         return 2;
     }
     const char *in = argv[1], *out = argv[2];
-    int pid = -1, pidx = -1, pfield = -1;
+    int pid = -1, pidx = -1, pfield = -1, pidx2 = -1;
     long pval = 0;
+    int mode = 0;   /* 1 = perturb one field, 2 = swap two instructions */
     if (argc >= 8 && strcmp(argv[3], "--perturb") == 0) {
+        mode = 1;
         pid = atoi(argv[4]); pidx = atoi(argv[5]); pfield = atoi(argv[6]); pval = atol(argv[7]);
+    } else if (argc >= 7 && strcmp(argv[3], "--swap") == 0) {
+        /* P1 is relabel-only: any reordering is NOT a relabel, so the criterion
+           must reject it.  This is the "abuse" control the task asks for. */
+        mode = 2;
+        pid = atoi(argv[4]); pidx = atoi(argv[5]); pidx2 = atoi(argv[6]);
     }
 
     Bytecode *bc = bytecode_read_file(in);
@@ -417,11 +424,20 @@ int main(int argc, char **argv) {
     IrModule *m = mir_from_bytecode(bc);
     if (!m) { fprintf(stderr, "MIR-ERROR|from_bytecode failed: %s\n", in); return 1; }
 
-    if (pid >= 0) {
+    if (mode == 1) {
         if (mir_perturb(m, pid, pidx, pfield, (int32_t)pval) != 0) {
             fprintf(stderr, "MIR-ERROR|perturb rejected\n");
             return 1;
         }
+    } else if (mode == 2) {
+        if (pid < 0 || pid >= m->nfuncs || pidx < 0 || pidx2 < 0 ||
+            pidx >= m->funcs[pid].ninsns || pidx2 >= m->funcs[pid].ninsns) {
+            fprintf(stderr, "MIR-ERROR|swap rejected\n");
+            return 1;
+        }
+        IrInsn tmp = m->funcs[pid].insns[pidx];
+        m->funcs[pid].insns[pidx] = m->funcs[pid].insns[pidx2];
+        m->funcs[pid].insns[pidx2] = tmp;
     }
 
     int max_fn_insns = 0;
@@ -431,6 +447,12 @@ int main(int argc, char **argv) {
            m->nfuncs, total_insns, ops_used, max_fn_insns, m->nkstr, m->nkfloat,
            n_threads, n_try, n_wide);
     printf("IR-EFFECTS|may_throw=0|may_alloc=0|pure=0|note=no-generator-yet\n");
+    /* per-function shape, so the negative control can pick a function that is
+       big enough to mutate instead of guessing that function 0 is */
+    for (int i = 0; i < m->nfuncs; i++) {
+        printf("IR-FUNC|id=%d|ninsns=%d|nblocks=%d|argc=%d\n",
+               i, m->funcs[i].ninsns, m->funcs[i].nblocks, m->funcs[i].argc);
+    }
 
     long oa = 0;
     unsigned char *orig = slurp(in, &oa);
