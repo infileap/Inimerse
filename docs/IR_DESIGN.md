@@ -107,7 +107,8 @@
 
 四条规则：
 
-1. **只允许②层的代码知道目标是 C 还是 wasm**；①层与语义无关，只做规范化。
+1. **只允许②层的代码知道目标是 C 还是 wasm**；①层与语义无关。P1 里①层只做**重标号**（规范
+   化留到 P2 之后，判据见第 10 节末尾），这样"逐字节等价"才是可达的判据。
 2. **①层之外的任何地方不许出现"运算 + 类型 + 错误"的三元组**。要么查表，要么报错。
 3. 反汇编器与 `.im` 写侧**只读表**，不读 MIR 结构——它们的对象是编码，不是语义。
 4. 每个消费者在编译期声明它覆盖了哪些 opcode；**未覆盖必须在构建时红，不许运行期 fail**。
@@ -370,13 +371,27 @@ boundary="mod-rule-v1"   # 该 op 的边界行为由哪个 spec 定义
 
 | 期 | 动作 | 可证伪判据 | 回退点 |
 | --- | --- | --- | --- |
-| P0 | 建 `ir_spec.py` 与原样表：把今天 46 个 `OP_*` 与 69 个 dispatch 标签**逐一对应或标 retired** | `IR-SPEC|ops=46`+`IR-COVER|interp=46`；`unmapped=0` 或逐项点名 | 无行为改动，回退=删表 |
-| P1 | 抽出 MIR 构建器：编译器主体改为 AST→MIR→编码 | 字节码**逐字节等价**：`ORIG-IDENTICAL|files=|bytes=|differ=`；预编译 `.inim` 仍可执行 | 保留旧路径，开关 `INIM_IR_BUILD=0` |
+| P0 | 建 `ir_spec.py` 与原样表：67 个 `OP_*` 与解释器 dispatch 逐一对应，空号标 retired（**已完成**，`426ceef`） | `IR-SPEC|ops=67`+`IR-COVER|interp=67/67|disasm=67/67`；每个形状由处理器体证实（`IR-SHAPE|forgets=none|unconfirmed=none`） | 无行为改动，回退=删表 |
+| P1 | 抽出 MIR 构建器，**只做重标号**：编译器主体改为 AST→MIR→编码，MIR 层不折叠、不重排、不改号 | 字节码**逐字节等价**：`ORIG-IDENTICAL|files=|bytes=|differ=`，且预编译 `.inim` 仍可执行 | 保留旧路径，开关 `INIM_IR_BUILD=0` |
 | P2 | 解释器改表驱动 dispatch | `IR-COVER|interp=46|missing=`；差分绿；`default` 是 abort | 开关回旧 switch |
 | P3 | AOT 改吃 MIR | `IR-COVER|aot=` 的 `missing` 与表一致；`fail(g, …)` 站点数从 17 降到 0；差分绿 | 开关回 `emit_expr` |
 | P4 | wasm 改吃 MIR | `WASM-TEMPS` 读数存在且 `disagree=0`；槽表与 §6.2 一致 | 开关回 `cg_expr` |
-| P5 | 反汇编器表驱动 | `DISASM|named=46|total=46` | 表回退 |
+| P5 | 反汇编器表驱动 | `IR-DISASM|cases=67/67|names-checked=67/67` | 表回退 |
 | P6 | `.im` 写侧表驱动 | `INIMBC-OPS|mismatch=0`；`MIRROR` 仍 `delta=0` | 手写常量表回退 |
+
+**P1 的判据为什么是"重标号"（2026-10-28 定）。** 设计里第 3 节的层①写着"只做规范化"，而规范化
+必然改字节（折叠常量、重排块、改号），于是"逐字节等价"与"层①做规范化"是互相否定的两条要求。
+本仓选前者：**P1 的 MIR 层只允许重标号**——同一顺序、同一 opcode、同一编号，只把 `RegInstruction`
+换成带类型与角色的 `IrInsn`，再从 `IrInsn` 编回去。这样"逐字节等价"是可达的最强判据，且一旦有人
+在 MIR 层偷偷加了优化，它立刻红。真正的规范化是 P2 之后的事，那时判据换成差分（同语料
+`(rc, 末行 stdout)` 相同），而不是字节。
+
+**P1 比什么、比多少（同一定）。** ①**码流**：`bytecode` 子命令的 dump（`main:`/`func:`/`thread:`
+三段）逐行比——它是纯数字、可逐字比对；②**容器**：已入库的 `.inim`（9 个）用 `cmp` 整文件比，
+因为池、全局名表、`try_entries`、编号表都不在 dump 里；容器的比较只在同一棵树、同一 flags、
+同一绝对路径下有效（`.inim` 尾部带主源与每个 import 的 SHA-256）。③**语料**：全量不抽样——399
+个 `*.im` 全部过一遍，`files=` 必须等于语料数；没跑到要记为 `unmeasured` 并点名，不是 `same`。
+④**负控**：交换两条独立指令必须 `differ>0` 且点名；把判据改成"只比退出码"必须变绿。
 
 每期的纪律：
 
