@@ -21,6 +21,7 @@ same authority as a comment.
 import argparse
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import io
 import os
@@ -1127,6 +1128,18 @@ def readings_header(tree, py):
                               READINGS_HEADER_END]
 
 
+def body_digest(lines):
+    """The digest of exactly the bytes the check compares: the body, never the header.
+
+    A digest without a subject is not an object.  Ivory computed md5 over the *check command's
+    stdout* (40f9ff8f02d7) and compared it with the archive body (06bca6ffd182): same file, two
+    numbers, because --check-readings prints a verdict and not the body.  So every number this
+    module prints names its subject in the field name: body-md5 is the md5 of the compared body
+    lines joined with a newline, with the header lines excluded.
+    """
+    return hashlib.md5(chr(10).join(lines).encode("utf-8")).hexdigest()[:12]
+
+
 def record_readings(args, path):
     mod = load_gen(args.gen)
     root, problem = mod.locate_root(args.root)
@@ -1151,9 +1164,10 @@ def record_readings(args, path):
     text = "\n".join(readings_header(tree, interpreter_identity(args.python))) + "\n" + body
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
-    print("READINGS-RECORD|path=%s|tree=%s|lines=%d|body=%d|rc=%d|dirty=no|"
+    print("READINGS-RECORD|path=%s|tree=%s|lines=%d|body=%d|body-md5=%s|rc=%d|dirty=no|"
           "untracked=ignored|first-change=none"
-          % (path, tree, len(text.splitlines()), len(body.splitlines()), rc))
+          % (path, tree, len(text.splitlines()), len(body.splitlines()),
+             body_digest(body.splitlines()), rc))
     return rc
 
 
@@ -1210,8 +1224,8 @@ def check_readings(args, path):
             print("READINGS-DIFF|line=%d|want=%s|got=%s|note=want is the line the file records, "
                   "got is the line this tree prints" % (i + 1, a, b))
             return 1
-    print("READINGS|same=yes|lines=%d|tree=%s|python=%s"
-          % (len(got), tree, py or "none"))
+    print("READINGS|same=yes|lines=%d|body-md5=%s|tree=%s|python=%s"
+          % (len(got), body_digest(got), tree, py or "none"))
     return rc
 
 
@@ -1431,7 +1445,7 @@ def self_check_sides(gen_path, py, left=None, right=None):
 
 
 def self_check_readings(gen_path, py, readings_path):
-    """Six cells; four are negative controls, and every one runs the real CLI.
+    """Eight cells; six are negative controls, and every one runs the real CLI.
 
     The readings file is produced by the program, so its checks must be too: a check that
     agrees with a hand-edited file is not a check.  The two record cells run on a throwaway
@@ -1523,6 +1537,45 @@ def self_check_readings(gen_path, py, readings_path):
     cells.append(("missing-file", "an absent file is not a matching file",
                   "rc=%d named=%s" % (rc, "yes" if "READINGS-MISSING" in out else "no"),
                   rc == 2 and "READINGS-MISSING" in out))
+
+    # The digest must name its subject.  This cell recomputes the md5 from the FILE's body and
+    # compares it with the field the command printed: a value copied from somewhere else (the
+    # check command's own stdout, say) cannot survive that, because the recomputation never sees
+    # the printing code.
+    rc, out = run(["--check-readings", readings_path])
+    field = re.search(r"\|body-md5=([0-9a-f]+)\|", out)
+    mine = body_digest(body)
+    no_body = "AXIOMS|sites=" not in out and "USES-COST|" not in out
+    cells.append(("body-md5-has-a-subject",
+                  "the digest on the READINGS line is the md5 of the compared body, recomputed "
+                  "here from the file, and the check prints no body for it to have been copied "
+                  "from",
+                  "field=%s recomputed=%s check-prints-body=%s"
+                  % (field.group(1) if field else "absent", mine, "no" if no_body else "yes"),
+                  bool(field) and field.group(1) == mine and no_body))
+
+    # Editing the HEADER must change nothing: same=yes, same body digest.  Without this cell a
+    # digest taken over the whole FILE would look identical on runs that never touch the header;
+    # the difference only shows when the header moves and the body does not.
+    hdr = list(lines)
+    for i in range(0, cut):
+        if hdr[i] and not hdr[i].startswith("# tree:") and not hdr[i].startswith("# python:"):
+            hdr[i] = hdr[i] + " (edited prose, body untouched)"
+            break
+    path = os.path.join(tmp, "headeredited.txt")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(chr(10).join(hdr) + chr(10))
+    rc, out = run(["--check-readings", path])
+    field2 = re.search(r"\|body-md5=([0-9a-f]+)\|", out)
+    edited = hdr != lines
+    cells.append(("header-edit-is-not-a-body-change",
+                  "an edited header prose line leaves same=yes and the same body digest, so the "
+                  "number is the body's digest and not the file's",
+                  "rc=%d edited=%s same-digest=%s"
+                  % (rc, "yes" if edited else "no",
+                     "yes" if field2 and field2.group(1) == mine else "no"),
+                  rc == 0 and edited and bool(field2) and field2.group(1) == mine
+                  and "same=yes" in out))
 
     # A dirty TRACKED change must refuse to record (the header would name a tree that is not what
     # printed); an untracked junk file must not count as dirty.  Both measured on a throwaway
