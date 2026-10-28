@@ -66,6 +66,7 @@ REFUSAL side, so:
 Usage:
     three_way_parity.test.py <inimerse> <aot-native> [--node NODE] [--wasm-runner PATH]
                              [--verbose] [--jobs N] [--strict]
+                             [--negative-control interp|aot|wasm|all [--cases N]]
     three_way_parity.test.py --self-check
 """
 import os
@@ -217,6 +218,18 @@ CASES = [
 # Nothing here is a defect: the numeric subset and the wasm MVP subset are documented
 # boundaries (src/compilation/aot_native.c says "outside the numeric subset" itself).
 # The rows exist so that "how wide is the refusal" has a number and a repro.
+# Who owns closing the AOT/wasm side of each family.  `unassigned` is a real answer, not
+# a missing one: the column exists so the question "who shrinks this refusal" has a place
+# in the reading, and so an empty owner can never be mistaken for nobody having asked.
+# Fill one line in when a family gets a taker; the reading then names them.
+FAMILY_OWNER = {
+    'arith': 'unassigned', 'compare': 'unassigned', 'logic': 'unassigned',
+    'divmod': 'unassigned', 'func': 'unassigned', 'control': 'unassigned',
+    'set': 'unassigned', 'interval': 'unassigned', 'closure': 'unassigned',
+    'thread': 'unassigned', 'declare': 'unassigned', 'record': 'unassigned',
+    'exception': 'unassigned',
+}
+
 KNOWN_DIVERGENT = {
     'ctrl-for-range':      'aot+wasm refuse: for-in over a range is outside the numeric / wasm MVP subset',
     'set-literal':         'aot+wasm refuse: a set literal is outside the numeric / wasm MVP subset',
@@ -359,6 +372,13 @@ def judge(name, runs):
     # the report would nominate the healthy backend as the odd one out (a dead interpreter
     # blamed the AOT).  Crashes are counted as deviations below, not as values.
     survivors = [b for b in BACKENDS if runs[b][0] != EXIT_CRASH]
+    if not survivors:
+        # Nothing answered: that is three legs dying, not three backends agreeing.  It has
+        # to be reported as lines, because an empty survivor set otherwise falls through the
+        # majority code with zero deviations and the run prints disagree=0 and exits 0.
+        return (['THREE-WAY-DIFF|case=%s|backend=%s|want=%r|got=%r|rc=%r|basis=all-crashed|why=%s'
+                 % (name, b, '<no leg answered>', runs[b][1], runs[b][0], runs[b][3] or '-')
+                 for b in BACKENDS], [], 'diverge')
     counts = {}
     for b in survivors or BACKENDS:
         counts[(runs[b][0], runs[b][1])] = counts.get((runs[b][0], runs[b][1]), 0) + 1
@@ -394,6 +414,13 @@ def self_check():
     refused = {'interp': fake(0, '1'),
                'aot': fake(1, '', REFUSAL_MARKER['aot']),
                'wasm': fake(1, '', REFUSAL_MARKER['wasm'])}
+    # The hazard the negative control exists for: three legs that all died have the SAME
+    # (rc, out) pair, so a judge that compares tuples reports agreement.  A dead engine
+    # must never be able to turn the matrix green.
+    all_dead = {b: fake(EXIT_CRASH, '') for b in BACKENDS}
+    if judge('self-check-all-crashed', all_dead)[2] == 'agree':
+        raise SystemExit('self-check failed: three crashed legs were accepted as agreement')
+
     if judge('self-check-refused', refused)[2] != 'diverge':
         raise SystemExit('self-check failed: a refusal beside an answer was accepted')
     KNOWN_DIVERGENT['self-check-known'] = 'aot+wasm refuse: fabricated pin'
@@ -413,7 +440,7 @@ def self_check():
             raise SystemExit('self-check failed: a non-design refusal was accepted as pinned')
     finally:
         del KNOWN_DIVERGENT['self-check-known']
-    print('THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason')
+    print('THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,all-crashed')
 
 
 def main():
@@ -434,6 +461,12 @@ def main():
             runner = argv[i + 1]
     verbose = '--verbose' in argv
     strict = '--strict' in argv
+    negctl = None
+    for i, a in enumerate(argv):
+        if a == '--negative-control':
+            negctl = argv[i + 1]
+    if negctl is not None and negctl != 'all' and negctl not in BACKENDS:
+        raise SystemExit('--negative-control wants %s or all' % '|'.join(BACKENDS))
     jobs = 1
     for i, a in enumerate(argv):
         if a == '--jobs':
@@ -450,13 +483,27 @@ def main():
                          'when the backend really stopped refusing.'
                          % (len(KNOWN_DIVERGENT), ', '.join(sorted(KNOWN_DIVERGENT))))
 
+    # A negative control points one (or all) of the legs at a binary that cannot run.
+    # The harness must then report a disagreement and exit non-zero -- never "all three
+    # agreed", which is what three identical failures look like to a tuple comparison.
+    leg = {}
+    cases = CASES
+    if negctl:
+        nctl = 3
+        for i, a in enumerate(argv):
+            if a == '--cases':
+                nctl = max(1, int(argv[i + 1]))
+        cases = CASES[:nctl]
+        for b in (BACKENDS if negctl == 'all' else (negctl,)):
+            leg[b] = '/nonexistent/im-%s' % b
+
     def run_case(i, td):
-        src = CASES[i][2]
+        src = cases[i][2]
         tag = 'c%02d' % i
         return {
-            'interp': via_interpreter(engine, src, td, tag),
-            'aot': via_native(engine, aot, src, td, tag),
-            'wasm': via_wasm(engine, node, runner, src, td, tag),
+            'interp': via_interpreter(leg.get('interp', engine), src, td, tag),
+            'aot': via_native(engine, leg.get('aot', aot), src, td, tag),
+            'wasm': via_wasm(engine, leg.get('wasm', node), runner, src, td, tag),
         }
 
     diffs, known, pins, shrink = [], [], [], []
@@ -465,10 +512,10 @@ def main():
         if jobs > 1:
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=jobs) as pool:
-                results = list(pool.map(lambda i: run_case(i, td), range(len(CASES))))
+                results = list(pool.map(lambda i: run_case(i, td), range(len(cases))))
         else:
-            results = [run_case(i, td) for i in range(len(CASES))]
-        for (name, family, _src), runs in zip(CASES, results):
+            results = [run_case(i, td) for i in range(len(cases))]
+        for (name, family, _src), runs in zip(cases, results):
             table.append((name, family, runs))
             by_family.setdefault(family, []).append((name, runs))
             lines, known_lines, state = judge(name, runs)
@@ -502,7 +549,7 @@ def main():
     answered = sum(1 for _n, _f, r in table if kind_of(_n, r) == 'answer')
     refused_all = sum(1 for _n, _f, r in table if kind_of(_n, r) == 'refused-all')
     print('THREE-WAY|rule=parity-v1|cases=%d|families=%d|%s|disagree=%d'
-          % (len(CASES), families, flags, len(diffs) + len(pins)))
+          % (len(cases), families, flags, len(diffs) + len(pins)))
     # Agreement reached by all three REFUSING is a different fact from agreement on an
     # answer; say which is which instead of letting one number cover both.
     print('THREE-WAY-SHAPE|answered-by-all=%d|refused-by-all=%d|known-divergent=%d'
@@ -513,9 +560,14 @@ def main():
         owner = [b for b in BACKENDS
                  if any(k in ('known', 'refused-all', 'red') and r[b][0] != 0
                         for (n, r), k in zip(rows, kinds))]
-        print('THREE-WAY-FAMILY|family=%s|cases=%d|agreed=%d|refused=%d|owner=%s|diverged=%d'
+        # `owner` is who must close this family on the AOT/wasm side (unassigned is a
+        # real answer); `refused-by` is which backends refuse it today.  Two columns,
+        # because "nobody owns it" and "the backends refuse it" are different facts.
+        print('THREE-WAY-FAMILY|family=%s|cases=%d|agreed=%d|refused=%d|owner=%s'
+              '|refused-by=%s|diverged=%d'
               % (family, len(rows), kinds.count('answer'),
                  kinds.count('known') + kinds.count('refused-all'),
+                 FAMILY_OWNER.get(family, 'unassigned'),
                  '+'.join(owner) or 'none', kinds.count('red')))
     if verbose:
         for name, _family, r in table:
@@ -527,12 +579,22 @@ def main():
             print(line)
     for line in diffs + pins + shrink:
         print(line)
+    if negctl:
+        red = len(diffs) + len(pins) + len(shrink)
+        if red:
+            print('THREE-WAY-NEGCTL|leg=%s|cases=%d|harness-red=yes|disagree=%d|result=PASS'
+                  % (negctl, len(cases), red))
+            raise SystemExit(0)
+        print('THREE-WAY-NEGCTL|leg=%s|cases=%d|harness-red=NO|disagree=0|result=FAIL'
+              '|why=a broken %s leg was reported as agreement'
+              % (negctl, len(cases), negctl))
+        raise SystemExit(1)
     if diffs or pins or shrink:
         raise SystemExit('three way parity: %d case(s) diverge (%d unexplained, %d pin drift, '
                          '%d known-divergent entry to remove)'
                          % (len(diffs) + len(pins) + len(shrink), len(diffs), len(pins), len(shrink)))
     print('three way parity: ok (%d cases, %d families, 3 backends agree)'
-          % (len(CASES), families))
+          % (len(cases), families))
 
 if __name__ == '__main__':
     main()
