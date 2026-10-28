@@ -1,0 +1,40 @@
+{
+  "schema": "gate-attr-recorded/v1",
+  "note": "Worst observed wall time for a stage-guarded test under a stated external load, on a stated tree. These are recorded measurements, not designed budgets: the margin they imply is contention margin, and tools/gate_attr_readings.py recomputes it against the TIMEOUT the build tree declares, so raising the timeout moves the margin instead of leaving this number to mean 'enough'.",
+  "rows": [
+    {
+      "test": "inim_regression",
+      "worst_s": 23.91,
+      "load": "20-hog x -j12",
+      "measured_on": "cf73746",
+      "method": "same tree, only CTestTestfile regenerated to toggle RUN_SERIAL; 175 tests racing at -j12",
+      "also": [
+        {
+          "load": "none (alone)",
+          "worst_s": 4.9
+        },
+        {
+          "load": "6-hog x -j12, RUN_SERIAL on",
+          "worst_s": 9.72
+        },
+        {
+          "load": "6-hog x -j12, RUN_SERIAL off",
+          "worst_s": 19.65
+        },
+        {
+          "load": "12-hog x -j12, RUN_SERIAL on",
+          "worst_s": 16.45
+        },
+        {
+          "load": "12-hog x -j12, RUN_SERIAL off",
+          "worst_s": 26.99
+        },
+        {
+          "load": "20-hog x -j12, RUN_SERIAL off",
+          "worst_s": 30,
+          "outcome": "Timeout"
+        }
+      ]
+    }
+  ]
+}
