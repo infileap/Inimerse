@@ -1724,5 +1724,16 @@ set_tests_properties(checker_scope PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_D
 # section -> still green.
 add_test(NAME docs_headings COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/docs_headings.test.py)
 set_tests_properties(docs_headings PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+# The second deletion blind spot: a citation written as a bare number can be
+# removed without moving the pinned explicit delta (that pin holds the prefix
+# form) and without raising a ceiling.  tools/check_line_refs.py counts every
+# cited address against tools/citations.pin.json and reddens when one is gone,
+# unless tools/citations.exempt.json names that citation and says why -- a
+# receipt, not a blanket allowance.  The controls run in a throwaway worktree at
+# HEAD: one explicit citation removed -> red, one bare number removed -> red and
+# named, the same removal excused by a receipt -> green, allowed larger than the
+# removals -> red.
+add_test(NAME citations COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/citations.test.py)
+set_tests_properties(citations PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 
 endif()

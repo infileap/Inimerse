@@ -373,10 +373,12 @@ Usage:
                                                  is every one of them)
 """
 import hashlib
+import json
 import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -509,6 +511,30 @@ EXP_LINE_REFS_OFF_TARGET_MAX = int(
 # the first two and none of the others, which is exactly the failure this list
 # exists to catch.
 WRITINGS = ("prefix", "prefix-range", "link+bare", "bare")
+
+# A count of the citations themselves, and the one thing it forbids is a
+# DECREASE.  The two pins above bound growth (an explicit delta, a ceiling on
+# the unanchored delta) and hold one equality; a reference that simply
+# disappears moves neither.  Measured on 97bc96a: rewriting docs/BOARD.md's
+# citation of tools/aot_native.test.py:132 as prose reads unanchored
+# 571 -> 570 and exits 0 -- one fewer address is cited, and every pin still
+# holds.  A shrinking citation count is not a shrinking debt, it is shrinking
+# coverage, and shrinking coverage always needs more explanation than
+# shrinking debt.
+#
+# The baseline is a pin on a COMMITTED tree (tools/citations.pin.json, written
+# by whoever lands a docs change), not a delta against the ancient
+# EXP_LINE_REFS_BASE: a delta against a base 1100 commits back is dominated by
+# history nobody in this branch wrote, while "this tree cites N addresses and
+# the last pinned tree cited more" is a statement about one action.  A removal
+# may still be accepted, but only as a RECEIPT: a file that names each removed
+# citation, says why, and whose allowed count equals the number actually
+# removed (tools/citations.exempt.json).  A receipt for a removal that did not
+# happen is a red as well, because a receipt nobody cancels becomes a standing
+# licence.
+CITATIONS_PIN = REPO_ROOT / "tools" / "citations.pin.json"
+CITATIONS_EXEMPT = REPO_ROOT / "tools" / "citations.exempt.json"
+CITATIONS_SCOPE = "docs/**/*.md (tracked) + targets"
 
 PATHISH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]{1,6}")
 NUMBER = re.compile(r":(\d+)(?:-(\d+))?")
@@ -650,6 +676,32 @@ def docs_markdown() -> list[str]:
     return TREE.docs()
 
 
+def citation_id(rel: str, number: int, owner: "str | None") -> str:
+    """The name a receipt uses for one citation: where, which number, whom."""
+    return f"{rel}|{number}|{owner or '<none>'}"
+
+
+def read_json_or(path: Path, what: str) -> "dict | None":
+    """The file's JSON, or None when there is no such file.
+
+    A JSON file that exists and cannot be read is not "absent": the baseline
+    or the receipt is the only thing standing between a removal and a green
+    run, so a parse error is an environment refusal (exit 4), not a missing
+    file to shrug at.
+    """
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(
+            f"check_line_refs: cannot read {what} at {path}: {exc}; nothing "
+            "was measured",
+            file=sys.stderr,
+        )
+        raise SystemExit(4)
+
+
 def file_mentions(line: str) -> list[tuple[int, int, str]]:
     """(start, end, path) for every tracked repo file named on this line."""
     found = []
@@ -745,6 +797,12 @@ def scan() -> dict:
     mention_lines = 0
     inline_lines = 0
     files: set[str] = set()
+    # One identity per reference, in the form a receipt can name: the citing
+    # document, the number, and the file the number is attributed to.  Line
+    # numbers are deliberately NOT part of it -- a citation that moves down a
+    # page is the same address, and a total that fell because a paragraph was
+    # rewritten above it would be a false red.
+    citations: list[tuple] = []
     # Every file whose lines the scan OPENED, not just the docs it cites from.
     # lines_of() is the only read that can turn a number into "out of range",
     # and that read happens for the citing doc's TARGET file -- which may be a
@@ -797,6 +855,7 @@ def scan() -> dict:
                 for m, number, owner in line_refs:
                     refs_here += 1
                     files.add(rel)
+                    citations.append((rel, number, owner))
                     writing = classify(line, mentions, m)
                     writings[writing] += 1
                     if writing.startswith("prefix"):
@@ -949,7 +1008,7 @@ def scan() -> dict:
         "held_own": held_own, "held_borrowed": held_borrowed,
         "held_picked": held_picked, "held_rows": held_rows,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
-        "files": files,
+        "files": files, "citations": citations,
     }
 
 
@@ -1011,10 +1070,60 @@ def base_scan() -> tuple[dict, int]:
     return r, int(behind)
 
 
+def write_citations_pin() -> int:
+    """Pin the citation count of the COMMITTED tree, and refuse to pin a dirty one.
+
+    The pin's subject is a tree, so a pin taken over uncommitted edits would
+    name a tree that does not exist and a count that no other reader can
+    reproduce -- the same mistake as a pin newer than HEAD.
+    """
+    head = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    if head.returncode != 0:
+        print(
+            "check_line_refs: REFUSED|--write-citations-pin needs a git HEAD; "
+            "the pin names a tree, and there is none here",
+            file=sys.stderr,
+        )
+        return 2
+    dirty = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "-z"],
+        capture_output=True,
+    ).stdout
+    if dirty:
+        print(
+            "check_line_refs: REFUSED|the worktree is dirty; a pin taken here "
+            "would name a tree that no commit contains. Commit first.",
+            file=sys.stderr,
+        )
+        return 2
+    r = scan()
+    rows = sorted(citation_id(*row) for row in r["citations"])
+    body = {
+        "tree": head.stdout.strip(),
+        "citations": len(rows),
+        "scope": CITATIONS_SCOPE,
+        "writing": list(WRITINGS),
+        "rows": rows,
+    }
+    CITATIONS_PIN.write_text(
+        json.dumps(body, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+    )
+    print(
+        f"CITATIONS|pin|tree={head.stdout.strip()[:7]}|citations={len(rows)}"
+        f"|docs={len(r['files'])}|scope={CITATIONS_SCOPE}"
+    )
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     report = "--report" in args
     strict = "--strict" in args
+    if "--write-citations-pin" in args:
+        return write_citations_pin()
     base, behind = base_scan()
     r = scan()
 
@@ -1196,6 +1305,93 @@ def main() -> int:
         f"check_line_refs: base {EXP_LINE_REFS_BASE} is {behind} commit(s) "
         f"behind HEAD."
     )
+
+    # ---- the monotonic count --------------------------------------------
+    # Everything above bounds growth or holds one equality; none of them can
+    # see a reference that simply vanished, because a removal of one citation
+    # does not move an explicit DELTA (the base shrinks by the same 1) and does
+    # not raise a ceiling.  This one answers a different question -- "does
+    # this tree still cite at least as many addresses as the last pinned
+    # one?" -- and answers it with a receipt for any exception.
+    citations_now = Counter(citation_id(*row) for row in r["citations"])
+    ids_base_of_pin = list((read_json_or(CITATIONS_PIN, "the citation pin") or {}).get("rows") or [])
+    ids_base = Counter(ids_base_of_pin)
+    now_total = sum(citations_now.values())
+    base_total = sum(ids_base.values())
+    gone = sorted((ids_base - citations_now).elements())
+    appeared = sorted((citations_now - ids_base).elements())
+    removed, added = len(gone), len(appeared)
+    _tree_short = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short=7", "HEAD"],
+        capture_output=True, text=True, encoding="utf-8",
+    ).stdout.strip() or "<no tree>"
+    print(
+        f"CITATIONS|base={base_total}|now={now_total}|removed={removed}"
+        f"|added={added}|tree={_tree_short}|scope={CITATIONS_SCOPE}"
+        f"|writing={','.join(WRITINGS)}"
+    )
+    _pin = read_json_or(CITATIONS_PIN, "the citation pin")
+    if _pin:
+        print(
+            f"CITATIONS|pin|tree={str(_pin.get('tree', '<unpinned>'))[:7]}"
+            f"|citations={_pin.get('citations', '<absent>')}|rows={base_total}"
+        )
+    for _name in gone[:20]:
+        print(f"CITATIONS|removed|{_name}")
+    # The receipt is judged before the removal it applies to: a receipt is a
+    # claim about a number, and the first thing to check is that the claim
+    # adds up.  Absence is not neutral here -- an absent receipt is a claim of
+    # zero, which is exactly the reading a silent removal wants.
+    _receipt = read_json_or(CITATIONS_EXEMPT, "the citation exemption receipt")
+    allowed = int((_receipt or {}).get("allowed") or 0)
+    items = list((_receipt or {}).get("items") or [])
+    receipt_problems: list[str] = []
+    if allowed != removed:
+        receipt_problems.append(
+            f"allowed={allowed} but {removed} citation(s) were removed"
+        )
+    if _receipt is not None:
+        if len(items) != allowed:
+            receipt_problems.append(
+                f"allowed={allowed} but {len(items)} item(s) are named"
+            )
+        for _item in items:
+            _name = str(_item.get("identity", "<unnamed>"))
+            if not _item.get("why"):
+                receipt_problems.append(f"item {_name} gives no reason")
+            if _name in citations_now:
+                receipt_problems.append(
+                    f"item {_name} is still cited; a receipt may only exempt a "
+                    "citation that is gone"
+                )
+            if _name not in ids_base:
+                receipt_problems.append(
+                    f"item {_name} was never in the pinned count"
+                )
+    if not _pin:
+        cell(
+            "citations-pin-missing",
+            needs_inputs,
+            f"no citation baseline at {CITATIONS_PIN}: the monotonic count has "
+            "nothing to be monotonic against, so a removal here would read only "
+            "as a smaller total. Run --write-citations-pin on a committed tree.",
+        )
+    elif removed and receipt_problems:
+        cell(
+            "citations-shrunk",
+            needs_inputs,
+            f"citations: {base_total} -> {now_total}, {removed} removed and "
+            f"{added} added; first removed: {gone[0]}. A shrinking citation "
+            "count is shrinking coverage, not shrinking debt. "
+            + "; ".join(receipt_problems),
+        )
+    elif removed:
+        print(
+            f"CITATIONS|exempted|removed={removed}|allowed={allowed}"
+            f"|receipt={CITATIONS_EXEMPT}"
+        )
+    elif receipt_problems:
+        cell("citations-stale-receipt", needs_inputs, "; ".join(receipt_problems))
 
     if report:
         by_unit: dict[tuple, list] = {}
