@@ -68,6 +68,14 @@ ROLES = {
     "OP_RECV":         {"dst": ["r1"], "src": ["r2"], "sentinel": ["r2"]},
     "OP_WAIT":         {"src": ["r1"]},
     "OP_YIELD":        {},
+    # --- family 5: constructor / interval family (the non-register operand is
+    #     not a value operand at all: it is an element count or a packed
+    #     string-pool index, and the element values travel on the value stack)
+    "OP_NEW_ARRAY":    {"dst": ["r1"], "imm": ["r3"]},
+    "OP_NEW_DICT":     {"dst": ["r1"], "imm": ["r3"]},
+    "OP_NEW_SET":      {"dst": ["r1"], "imm": ["r3"]},
+    "OP_SET_INTERVAL": {"dst": ["r1"], "imm": ["r2"]},
+    "OP_SET_ADD":      {"obj": ["r1"], "mutate": True, "src": ["r2"]},
     # --- family 2b: resource family (the operand names a mutex or a resource
     #     limit; the failure mode is "which resource does this index point at") ---
     "OP_LOCK":         {"imm": ["r1", "r2"]},
