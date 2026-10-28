@@ -1,59 +1,38 @@
 #!/usr/bin/env python3
-"""`%` and `/` must mean the same thing on all three backends (docs/AUDIT.md §1.6).
+"""`%` must mean the same thing on all three backends -- and the rule lives in ONE place.
 
-Before this test existed the three backends disagreed on 9 of the 16 cases in
-TABLE below.  The interpreter narrowed `%` operands through `int`, so
-`3000000000 % 7` read -2 (x86-64 `cvttsd2si` returns INT_MIN for an
-out-of-range double) and `-2147483648 % -1` died with SIGFPE (rc 136).  The
-native backend had no error path at all, so a zero divisor quietly produced 0
-or inf.  The wasm backend truncated through the *saturating* i32 conversion, so
-3000000000 became INT32_MAX and `3000000000 % 7` yielded 1.
+The rule is not written here any more.  It is `tools/mod_spec.py` (`MOD_RULE`), which
+holds it as executable Python; this file only *runs* the case matrix that spec
+generates and compares each backend against it.  Before that, the rule was written
+out four times -- interpreter, native `kPreamble`, wasm emission, and this test's own
+hand-written `TABLE` -- and one of those copies was wrong: a NaN divisor printed 7 on
+two backends and was refused on the third, and a NaN dividend printed -1, -1 and 0.
 
-The agreed rule, asserted here:
+What a mismatch means, and why each shape is a distinct diagnosis:
 
-  * `%` truncates both operands toward zero to 64 bits and takes the remainder.
-  * If the truncated DIVISOR is zero -- `5 % 0`, `7 % 0.5`, `7 % 0.0` -- the
-    program is refused with `division_by_zero`.  The test is on the value the
-    user wrote, not on the narrowed one, so `7 % 0.5` is a refusal and not a
-    bogus "0".
-  * `x % -1` is 0 (and never LLONG_MIN % -1, which is UB and traps).
-  * A result that does not fit the interpreter's 32-bit int payload is
-    promoted to float, exactly as L_NEG already does for INT_MIN.  `%` values
-    agree; the *type* is O2's problem, not O1's.
-  * `/` with both operands int and a zero divisor is also refused.
+  * a signal -- the guard is decorative again;
+  * exit 0 where the rule refuses -- that backend accepts what the other two reject;
+  * two different values -- two implementations, one rule: one of them is not the rule;
+  * a value where the rule refuses, with a non-zero exit -- worse than agreement: the
+    backend printed an answer and then failed.
 
-A refusal counts only when all three backends exit non-zero and none of them
-died from a signal: a signal means a guard is decorative again, and exit 0
-means the backend accepted something the other two rejected.
+`--self-check` proves the harness can fail: it tampers with one expectation and
+requires a red result.  A harness that cannot be made to fail is a description of the
+implementations, not a test of them.
 """
 import case_counts
 import os
-import subprocess
 import sys
+import subprocess
 import tempfile
 from pathlib import Path
 
-REFUSED = object()
+import mod_spec
 
-# (expression, expected stdout line) -- REFUSED means every backend must refuse.
-TABLE = [
-    ("7 % 3",                     "1"),
-    ("-7 % 3",                    "-1"),
-    ("7 % -3",                    "1"),
-    ("-7 % -3",                   "-1"),
-    ("2.5 % 1",                   "0"),
-    ("7 % 0.5",                   REFUSED),   # truncated divisor is 0
-    ("5 % 0",                     REFUSED),
-    ("7 % 0.0",                   REFUSED),
-    ("3000000000 % 7",            "4"),
-    ("2147483648 % 7",            "2"),
-    ("7 % 3000000000",            "7"),
-    ("10 % 4294967296",           "10"),
-    ("7000000000 % 4000000000",   "3000000000"),  # > int32: promoted to float
-    ("-2147483648 % -1",          "0"),           # used to be SIGFPE
-    ("5 / 0",                     REFUSED),
-    ("7.0 / 0",                   "inf"),
-]
+REFUSED = mod_spec.REFUSED
+
+# Generated, never typed: (expression, expected) comes from tools/mod_spec.py.
+TABLE = mod_spec.matrix()
 
 EXIT_CRASH = 'crashed'
 
@@ -109,7 +88,48 @@ def via_wasm(engine, node, runner, src, td, tag):
     return r.returncode, last_line(r.stdout)
 
 
+def judge(expr, want, got):
+    """Return failure lines for one case; `got` maps backend -> (rc, out)."""
+    bad = []
+    for who, (rc, out) in got.items():
+        if rc == EXIT_CRASH:
+            bad.append('%s: %s died from a signal -- a guard is decorative again'
+                       % (expr, who))
+            continue
+        if want is REFUSED:
+            if rc == 0:
+                bad.append('%s: %s accepted it (printed %r) where the rule refuses'
+                           % (expr, who, out))
+        else:
+            if rc != 0:
+                bad.append('%s: %s refused (rc=%s, %r) but the rule says %r'
+                           % (expr, who, rc, out, want))
+            elif out != want:
+                bad.append('%s: %s printed %r, the rule says %r'
+                           % (expr, who, out, want))
+    vals = set((rc, out) for rc, out in got.values())
+    if len(vals) > 1 and not bad:
+        bad.append('%s: backends disagree -- %s' % (expr, {k: v for k, v in got.items()}))
+    return bad
+
+
+def self_check():
+    """Tamper with one expectation and require the judge to notice."""
+    expr, want = TABLE[1]
+    tampered = REFUSED if want is not REFUSED else '12345'
+    printed = '' if want is REFUSED else want
+    bad = judge(expr, tampered, {'interpreter': (0, printed)})
+    if not bad:
+        print('MODCHECK|case=tampered-expectation|red=no|why=judge accepted a wrong expectation')
+        raise SystemExit('self-check failed: the judge cannot fail')
+    print('MODCHECK|case=tampered-expectation|red=yes|expectation=%r|outcome=%d line(s)'
+          % (tampered, len(bad)))
+
+
 def main():
+    if '--self-check' in sys.argv:
+        self_check()
+        return
     if len(sys.argv) < 3:
         raise SystemExit('usage: mod_semantics.test.py <inimerse> <aot-native> '
                          '[--node NODE] [--wasm-runner PATH]')
@@ -133,36 +153,27 @@ def main():
                 'aot':         via_native(engine, aot, src, td, tag),
                 'wasm':        via_wasm(engine, node, runner, src, td, tag),
             }
-            for who, (rc, out) in got.items():
-                if rc == EXIT_CRASH:
-                    bad.append('%s: %s died from a signal -- a guard is '
-                               'decorative again' % (expr, who))
-                    continue
-                if want is REFUSED:
-                    if rc == 0:
-                        bad.append('%s: %s accepted it (printed %r) where the '
-                                   'other backends refuse' % (expr, who, out))
-                else:
-                    if rc != 0:
-                        bad.append('%s: %s refused (rc=%s, %r) but the answer '
-                                   'is %r' % (expr, who, rc, out, want))
-                    elif out != want:
-                        bad.append('%s: %s printed %r, expected %r'
-                                   % (expr, who, out, want))
-            if not any(b.startswith(expr + ':') for b in bad):
-                vals = set((rc, out) for rc, out in got.values())
-                if len(vals) > 1:
-                    bad.append('%s: backends disagree -- %s'
-                               % (expr, {k: v for k, v in got.items()}))
+            bad.extend(judge(expr, want, got))
 
+    info = mod_spec.summarise()
+    print('MOD-PARITY|rule=%s|spec-sha=%s|cases=%d|refused=%d|backends=3|disagree=%d'
+          % (info['spec'], info['sha'], info['cases'], info['refused'], len(bad)))
     if bad:
         for line in bad:
             print('FAIL ' + line)
         raise SystemExit('%d of %d cases not at the agreed semantics'
                          % (len(bad), len(TABLE)))
-    case_counts.count(__file__, lambda m: len(m.TABLE), 0,
+    # The matrix is generated from tools/mod_spec.py, so this harness has 12 more
+    # rows than the hand-written table did at the case-count base (28 vs 16).
+    # A case count is a decision: the delta moves in the same commit as the reason.
+    case_counts.count(__file__, lambda m: len(m.TABLE), 12,
                       'mod semantics boundary cases')
-    case_counts.expect_labels(__file__, 'mod semantics boundary cases')
+    # The identities moved too, and that is the point: five hand-written rows are
+    # gone (the two INT32_MIN cases, `5 / 0`, `7 % 3000000000`, `7.0 / 0`) and
+    # seventeen are generated by the spec.  Declared here rather than discovered,
+    # because a swap is exactly what a total cannot see.
+    case_counts.expect_labels(__file__, 'mod semantics boundary cases',
+                              expected_added=17, expected_removed=5)
     print('mod semantics: ok (%d boundary cases, interpreter/aot/wasm all agree)'
           % len(TABLE))
 

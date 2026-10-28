@@ -1260,12 +1260,12 @@ static void vts_int(char *buf, int bufsz, long long v) {
     while (n > 0 && pos < bufsz - 1) buf[pos++] = tmp[--n];
     buf[pos] = '\0';
 }
-/* Truncate a double toward zero WITHOUT invoking UB when it falls outside the
-   int64 range (C11 6.3.1.4p1).  x86-64 `cvttsd2si` returns INT64_MIN for every
-   out-of-range input, which is how the old `(int)da % bi` turned 3000000000
-   into -2 and 7000000000 into INT_MIN.  See docs/AUDIT.md §1.6. */
+/* Truncate a double toward zero WITHOUT UB outside the int64 range (C11
+   6.3.1.4p1), with ONE answer for NaN: 0, per tools/mod_spec.py MOD_RULE.  The
+   old cast gave INT64_MIN to both, so `x % (0/0)` printed 7 here while the wasm
+   backend refused it.  Line count kept on purpose: pins cite these lines. §1.6 */
 static long long im_dbl_to_i64(double d) {
-    if (d >= 9223372036854775808.0) return LLONG_MAX;
+    if (d != d) return 0; if (d >= 9223372036854775808.0) return LLONG_MAX;
     if (d < -9223372036854775808.0) return LLONG_MIN;
     return (long long)d;                       /* C truncates toward zero */
 }
