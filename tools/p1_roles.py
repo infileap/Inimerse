@@ -124,19 +124,29 @@ ROLES = {
     "OP_HALT":          {},
     "OP_TRY_END":       {},
     "OP_CALL_VALUE":    {"dst": ["r2"], "src": ["r1"], "imm": ["r3"]},
+    # --- family 9: global-slot family (the non-register operand is a SLOT NUMBER
+    #     in the global table, not a literal and not a container: the failure mode
+    #     is "which cell", and it is the same failure as a container index only in
+    #     name -- a wrong cell number reads or writes another cell, it does not
+    #     address another object.  BIND's r3 is a register OR -1 meaning "no initial
+    #     value", which makes it the third landing site of "negative means none") ---
+    "OP_LOAD_GLOBAL":  {"dst": ["r1"], "imm": ["r2"]},
+    "OP_STORE_GLOBAL": {"src": ["r2"], "imm": ["r1"]},
+    "OP_BIND":         {"src": ["r2", "r3"], "sentinel": ["r3"], "imm": ["r1"]},
 }
 
 # One encoding convention usually has more than one landing site, and the count
 # belongs to the convention, not to the defects: "negative means none" is one
 # convention with two sites, while RETURN is a different one (0 or -1 means nil).
 CONVENTIONS = [
-    ("negative-timeout", [("OP_RECV", "r2"), ("OP_THREAD_JOIN", "r2")]),
+    ("negative-means-none", [("OP_RECV", "r2"), ("OP_THREAD_JOIN", "r2"),
+                             ("OP_BIND", "r3")]),
     ("non-positive-nil-result", [("OP_RETURN", "r1")]),
 ]
 
 # What the non-register encoding is, per slot, for the P1-AMBIG line.
 SENT_NOTE = {("OP_RECV", "r2"): "-1", ("OP_THREAD_JOIN", "r2"): "-1",
-             ("OP_RETURN", "r1"): "0,-1"}
+             ("OP_BIND", "r3"): "-1", ("OP_RETURN", "r1"): "0,-1"}
 
 # Slots whose immediate is PACKED: one field is a pool index, another is flags or
 # metadata.  A registration, not a criterion and not a red: the same encoding

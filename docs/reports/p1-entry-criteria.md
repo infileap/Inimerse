@@ -1,11 +1,11 @@
-# P1 入口条件：三条可执行判据（tree `de2111c`，分支 `p1-entry-noble-quartz`）
+# P1 入口条件：三条可执行判据（tree `edb1bcd`，分支 `p1-entry-noble-quartz`）
 
 ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可执行**判据，每条一个最小正例、一个最小反例，反例必须**今天就在树上变红**，且不动 main。
 
-这份报告给三条判据的实现、62 条手写角色表（已归 9 族，另 5 条散行）的出处、二十组实测，以及九条结构性结果（最新一条是 §5.9：**判据比较的是集合，不是对应关系，同类槽互换它看不出来**）。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①；第五条是**同一个约定修了一处、漏了一处**；第六条是**控制组跑出全绿，把 §5.4 的预期证伪了**——证伪落在一句具体的措辞上，不在结论上；第七条是**判据只朝一个方向看**：它抓「多印了一个寄存器」，不抓「少印了一个操作数」，而今天树上就有两条这样的指令（`EQK`/`NEQK`）；第八条是**形状对了、谓词仍可能错**——`RETURN` 的 nil 判据是 `> 0` 而不是 `< 0`，照邻居的形状修会修出一处新的假绿。
+这份报告给三条判据的实现、65 条手写角色表（已归 10 族，另 5 条散行）的出处、二十一组实测，以及九条结构性结果（最新一条是 §5.9：**判据比较的是集合，不是对应关系，同类槽互换它看不出来**）。其中一条是**我自己的角色表先错了一次**，被同一条判据按 handler 抓回来；另一条说明 ③ 在检测能力上并不独立于 ①；第五条是**同一个约定修了一处、漏了一处**；第六条是**控制组跑出全绿，把 §5.4 的预期证伪了**——证伪落在一句具体的措辞上，不在结论上；第七条是**判据只朝一个方向看**：它抓「多印了一个寄存器」，不抓「少印了一个操作数」，而今天树上就有两条这样的指令（`EQK`/`NEQK`）；第八条是**形状对了、谓词仍可能错**——`RETURN` 的 nil 判据是 `> 0` 而不是 `< 0`，照邻居的形状修会修出一处新的假绿。
 
 - 判据实现：`tools/p1_roles.py`（纯标准库，`--vm <path>`，红则 rc=1，不 import `ir_spec`，不与任何自检共用提取代码）
-- 依据树：`7d0e6fd`（本分支在族 8 交付时一次 rebase 到它，上一棵是 `7d0e6fd`。`cff9197` → `f9b93b6` → `7d0e6fd` → `de2111c` 几次都是 ivory 在 main 上改打印器与形状，未动角色表；本分支已 rebase 到它，族 7 的读数从 `negative-timeout|guarded=1|unguarded=1` 变成 `guarded=2|unguarded=0`、`P1-PRINTSHORT` 归零——**两项都是上一封信里预告过的方向，不是我改出来的**，见 §4 Q 组；早期引用的行号仍是 `cff9197` 的坐标，见 §1 引用约定与 §3.7 与 §4 M/N 组）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
+- 依据树：`edb1bcd`（族 9 交付时一次 rebase 到它；`de2111c` 之后 ivory 又落了两笔——`9f1a589` 让 `RETURN` 的打印器与 handler 用同一个词、`edb1bcd` 把容器三条形状抬成 `R[rN]` 并给 `CONCAT` 一个 `IR-SHAPE-VOCAB` 读数。上一棵是 `7d0e6fd`。`cff9197` → `f9b93b6` → `7d0e6fd` → `de2111c` 几次都是 ivory 在 main 上改打印器与形状，未动角色表；本分支已 rebase 到它，族 7 的读数从 `negative-timeout|guarded=1|unguarded=1` 变成 `guarded=2|unguarded=0`、`P1-PRINTSHORT` 归零——**两项都是上一封信里预告过的方向，不是我改出来的**，见 §4 Q 组；早期引用的行号仍是 `cff9197` 的坐标，见 §1 引用约定与 §3.7 与 §4 M/N 组）。旧树的读数不删：`9a4db3b` 与 `a670a70` 的对照留在 §5.2，历史树 `0d6b6b7` 用来证明三条判据能把当年那三个真实缺陷重新抓出来
 - 只读：没有改 `src/`，所有被改坏的 `vm.c` 都是 `.probe/` 下的拷贝，不进提交
 - **引用约定（ivory `m05139` §3）**：打印行的主引用是 `case OP_X:` 这个符号，行号只是「在那棵树上的一次坐标」，不是证据。族 7 起按此执行；族 1–6 的表格里行号仍是主引用，因为那些行是在各自树上逐条核过的，改写成符号要重核一遍——记作待办，不假装已经做到。打印区正是最容易被插行的地方（ivory 两天内在这个区插了三次），所以这条约定的失效方向是「行号漂了、符号没漂」。
 
@@ -35,9 +35,9 @@ ivory 在 m04411 §6 要的是：把 §10 的 P1 入口条件写成三条**可�
 
 三条都只测**打印行**，不测语义。
 
-## 3 角色表：62 条，逐条指到 handler 行
+## 3 角色表：65 条，逐条指到 handler 行
 
-其中 57 条已归族（族 1 算术 18、族 2a 线程 10、族 2b 资源 2、族 3 store 1、族 4 output 2、族 5 构造/区间 5、族 6 K 形式 7、族 7 控制流/异常 9、族 8 容器访问 3），5 条是早期逐条声明、还没归族的：`MOV TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`（`INDEX_SET` 本轮被族 8 收进去，见 §3.9）。`LOADK_INT` 与 `LOADK_I64` 原来也挂在这一组里，本批被族 6 收进去（§3.7）——**先声明、后归族是允许的，但两处都要写清，否则「族数」与「批次数」对不上就会被读成漏算**。剩下 6 条的形状各自都不符合任何已写的族规则，硬归族会正好制造出「族内形状不一致」，所以先挂着，下一批按「调用族 / 容器族」的边界理由再动。
+其中 60 条已归族（族 1 算术 18、族 2a 线程 10、族 2b 资源 2、族 3 store 1、族 4 output 2、族 5 构造/区间 5、族 6 K 形式 7、族 7 控制流/异常 9、族 8 容器访问 3、族 9 全局槽 3），5 条是早期逐条声明、还没归族的：`MOV TRY_START CALL_FUNC CALL_BUILTIN MAKE_FUNC`（`INDEX_SET` 本轮被族 8 收进去，见 §3.9）。`LOADK_INT` 与 `LOADK_I64` 原来也挂在这一组里，本批被族 6 收进去（§3.7）——**先声明、后归族是允许的，但两处都要写清，否则「族数」与「批次数」对不上就会被读成漏算**。剩下 6 条的形状各自都不符合任何已写的族规则，硬归族会正好制造出「族内形状不一致」，所以先挂着，下一批按「调用族 / 容器族」的边界理由再动。
 
 打包立即数（`SET_INTERVAL` 的 `r2`、`RECORD` 的 `r2`）**不是第九个族**，是这张表上的一列属性，由 `P1-PACKED` 登记（ivory-zephyr 裁，2026-10-28，理由见 §4.1(d)）。族仍按失败的后果切；「一个槽里有几个字段」不进判据。
 
@@ -316,6 +316,8 @@ P1-VERDICT|green|declared=49|unmeasured=18|note=an-unmeasured-op-is-not-a-passin
 ```
 P1-AMBIG|op=OP_RETURN|slot=r1|kinds=register|sentinel(0,-1)|guarded=no|effect=the-sentinel-can-be-rendered-with-the-register-glyph
 P1-GUARD|convention=negative-timeout|sites=2|guarded=1|unguarded=1|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed
+
+（这一行是 `a670a70` 上的历史读数，当时约定还叫 `negative-timeout`。族 9 的 `BIND` 把同一个编码用在「没有初值」上之后，名字改成 `negative-means-none`，`sites=2` → `3`，见 §3.10。）
 P1-GUARD|convention=non-positive-nil-result|sites=1|guarded=0|unguarded=1|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed
 P1-ROLES|declared=58/67|unmeasured=9
 P1-AMBIG-COUNT|n=3|effect=declared-outside-what-the-three-criteria-can-see-read-guarded-for-the-printer
@@ -339,6 +341,9 @@ P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing
 | `OP_INDEX_GET` | dst=r1 obj=r2 src=r3 | `L_INDEX_GET:` `vm.c:3676-3677` `Value *obj = &R[ins.r2]; Value *idxv = &R[ins.r3];`，`vm.c:3680` 写 `R[ins.r1]`；打印 `case OP_INDEX_GET:` `INDEX_GET r%d, r%d[r%d]` |
 | `OP_INDEX_SET` | obj=r1 mutate=True src=r2,r3 | `L_INDEX_SET:` `vm.c:3718-3720`；打印 `case OP_INDEX_SET:` `INDEX_SET r%d[r%d] = r%d`。（`INDEX_SET` 原本是散行，本批被族收进去） |
 | `OP_IN` | dst=r1 src=r2 obj=r3 | `L_IN:` `vm.c:4352` `Value la = R[ins.r2], rb = R[ins.r3];` → `set_contains_or_subset(vm, &la, &rb)`（`vm.c:2381`：`b` 是集合时查 `a ∈ b`），`vm.c:4354` 写 `R[ins.r1]`；打印 `case OP_IN:` `IN r%d, r%d in r%d` |
+| `OP_LOAD_GLOBAL` | dst=r1 imm=r2（全局槽号） | `case OP_LOAD_GLOBAL:`（`vm.c:3186`） | `L_LOAD_GLOBAL:` `vm.c:3736-3753`，`vm.c:3737` `int idx = ins.r2;`，`vm.c:3740` 写 `R[ins.r1]`（越界则 `vm.c:3742` 置 nil） | 打印 `case OP_LOAD_GLOBAL:`（`vm.c:5354`）`LOAD_GLOBAL r%d, [%d]` |
+| `OP_STORE_GLOBAL` | src=r2 imm=r1（全局槽号） | `case OP_STORE_GLOBAL:`（`vm.c:3187`） | `L_STORE_GLOBAL:` `vm.c:3755-3795`，`vm.c:3756-3757` `int idx = ins.r1; int src_reg = ins.r2;`，`vm.c:3776` `value_copy(&newv, &R[src_reg])` | 打印 `case OP_STORE_GLOBAL:`（`vm.c:5355`）`STORE_GLOBAL [%d] = r%d` |
+| `OP_BIND` | src=r2,r3 imm=r1（全局槽号） sentinel=r3 | `case OP_BIND:`（`vm.c:3223`） | `L_BIND:` `vm.c:4367-4410`，`vm.c:4368-4371` `int g = ins.r1; int setReg = ins.r2; int initReg = ins.r3;`，`vm.c:4391` `if (initReg >= 0)`（-1 = 无初值）；发出点 `compiler.c:2273` `emit(..., OP_BIND, g, setReg, initReg)`，`initReg = -1` 在 `compiler.c:2270` | 打印 `case OP_BIND:`（`vm.c:5404`）`BIND g%d, set=r%d, init=r%d` |
 
 **为什么 `IN` 值得单列**：它是这一族里唯一**容器不在最左**的成员（`obj=r3`），而且它的打印行把「针」和「容器」用 `in` 这个词分开了——**这是全树唯一一条打印行自带角色语义的指令**，恰好也是唯一一条不靠位置就能读出角色的。`r2 in r3` 与 `r2` 查 `r3` 是同一件事，但前者不依赖读者记得「容器槽在哪个位置」。
 
@@ -357,9 +362,28 @@ P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing
 
 **ivory 的交叉核与它那一侧的变化（`m05350` 一）**：它 `tools/ir_spec.py` 的 `SHAPE` 与我的角色表在这三条上**逐槽一致**（`INDEX_GET` = `R[r1] = R[r2][R[r3]]`、`INDEX_SET` = `R[r1][R[r2]] = R[r3]`、`IN` = `R[r1] = (R[r2] in R[r3])`），并把这三条从裸数字抬成 `R[rN]` 字形，于是 `IR-SHAPE-PRINTSHORT` 开始替它们守打印行——**这三条原本就印全了，所以改完是绿的；绿不变，但从此谁少印一个，红会自己出来**。它还把我那句「`IN` 是全树唯一自带角色词的打印行」记成 §10 的**角色可见性正例**，与反例 `CALL_VALUE`（同一位置跨 opcode 换角色）成对，并给了判据侧的意思：**一个词就能让位置不必被记住**，将来 P1 定角色三元组时，新写法若让 `IN` 变得不比现在清楚，那就是写错了。
 
-（诚实标注：`m05350` 说这一笔「过门禁就推」，我写这段时 `origin/main` 是 `9f1a589`，其 `tools/ir_spec.py:104,107-108` 仍是 `r1 = (r2 in r3)` / `r1 = r2[r3]` / `r1[r2] = r3`，即**字形升级已宣布、尚未在这棵树上**。按本报告自己的规矩，未落地的修复不预支绿；它的效果要等那一笔推上去之后重新实测。）
+（这条现在**已实测**，不再只是标注：我 rebase 到 `edb1bcd`（ivory 的「ir_spec: the three container-access shapes speak in registers…」）后自己跑了 `python3 tools/ir_spec.py`，`IR-SHAPE-PRINTSHORT` **一条都没有**（`IR-SHAPE|checked=67/67|forgets=none|unconfirmed=none|no-handler=none`，rc=0），三条形状已分别是 `R[r1] = (R[r2] in R[r3])` / `R[r1] = R[r2][R[r3]]` / `R[r1][R[r2]] = R[r3]`。**绿带树号**：`edb1bcd` 上这三条是「形状声明了寄存器、打印行全印了」，与 `9f1a589` 上的「形状还没抬字形」是两件事，两棵树各记各的。）
 
-## 4 二十组实测
+### 3.10 第九批按族声明：全局槽族（3 条，本批新增 3 条）
+
+**先写边界理由**（ivory `m04594` ④）。
+
+**为什么这 3 条是一族**：`LOAD_GLOBAL`、`STORE_GLOBAL`、`BIND` 的失败后果是同一种——**「哪一格」**。写错槽号 = 读/写另一格全局；把 `STORE_GLOBAL` 的槽号当寄存器用 = 写到随机一格；`BIND` 把初值寄存器写成槽号 = 绑错集合。这三种都只在**全局表**这一类容器上发生。
+
+**族规则（一句话）**：恰好一个全局槽号，**槽号占一个立即数位**（打印成 `[%d]` 或 `g%d`，不是 `r%d`）；值操作数是寄存器；`LOAD_GLOBAL` 有 dst，`STORE_GLOBAL`/`BIND` 没有 dst（它们写的是全局表，不是寄存器）。
+
+**ivory 要求写进理由的那句话（`m05471` 四）**：这个 `imm` **不是字面量，是槽位号**。将来若有人把全局槽从「编号」改成「寄存器里的容器」，**这一族整族失效，失效点就在这句话上**——所以它写在这里而不只是写在注释里。
+
+**`BIND` 的 `r3`：同一约定的第三个落点**。`compiler.c:2270` 在没有初值时发 `initReg = -1`，`vm.c:4391` 用 `if (initReg >= 0)` 判定，而打印行 `BIND g%d, set=r%d, init=r%d` 无条件印成 `init=r-1`。它与 `RECV`/`THREAD_JOIN` 是**同一个编码约定**：「负数表示这个功能不存在」。于是本报告的约定读数改了名：`negative-timeout` → **`negative-means-none`**（三个落点：`RECV r2`、`THREAD_JOIN r2`、`BIND r3`），因为第三个落点不是超时；**名字如果还叫 timeout，它就会假装覆盖一个它没描述的位置**。改名的代价是旧读数对不上，收益是这个名字现在只说它数得清的事。
+
+**踢出去的**：
+
+- `LOAD_CAPTURE`（`vm.c:4033-4041`，`r2` 是闭包环境下标，`< 0` 或越界则取 nil）：容器是**闭包环境**，不是全局表。下一个单独的族（捕获槽）。**它是同一约定的第四个落点**，但落点归属由容器决定，不由编码决定。
+- `CALL_FUNC` / `CALL_BUILTIN` / `MAKE_FUNC`：元数是**计数**，不是槽号——ivory 提醒这可能是「计数不是值」这个问题的第三例（`m05471` 四），所以下一族（调用与元数）先写边界理由再动表。
+
+**本批读数**（树 `edb1bcd`，rebase 后实跑）：`P1-ROLES|declared=65/67|unmeasured=2`、`P1-VERDICT|green`、rc=0；新增 `P1-AMBIG|op=OP_BIND|slot=r3|kinds=register|sentinel(-1)|guarded=no`（`P1-AMBIG-COUNT|n=4`），`P1-GUARD|convention=negative-means-none|sites=3|guarded=2|unguarded=1|disagree=0`。
+
+## 4 二十一组实测
 
 全部在 `/tmp/wt-p1e`，命令 `python3 tools/p1_roles.py --vm <tree>`。
 
@@ -386,6 +410,7 @@ P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing
 | S | `de2111c`（`origin/main`，`RETURN` 修好落地）用 `--vm` 指向从 `git show` 取出的 `vm.c` 副本，不 rebase | 无（族 8 在同一轮声明，见 §3.9） | 0 | **预测的 `no` 到了**：`P1-GUARD-SITE|convention=non-positive-nil-result|op=OP_RETURN|slot=r1|predicate="ins.r1 > 0 && ins.r1 < FRAME_REGS"|printer-predicate="ins->r1 > 0 && ins->r1 < VM_FRAME_REGS"|agrees=no`，聚合行 `sites=1|guarded=1|unguarded=0|disagree=1`（`sites` 没变、`unguarded` 归零，正是上一封信预告的两件事）。另有两行值得记：`P1-OPS|op=OP_RETURN|printed-reg=r1|printed-typed=-|printed-number=r1` 与 `P1-BRANCH|op=OP_RETURN|calls=2`——**nil 那一支把这个槽印成裸数字**，于是同一个槽在同一行里带两种字形；`P1-AMBIG|op=OP_RETURN|...|guarded=yes` |
 | T | `9f1a589`（`origin/main`，ivory 让打印器与 handler 用**同一个词**） | 无 | 0 | **第二个预告方向也到了**：`P1-GUARD-SITE|convention=non-positive-nil-result|op=OP_RETURN|slot=r1|predicate="ins.r1 > 0 && ins.r1 < FRAME_REGS"|printer-predicate="ins->r1 > 0 && ins->r1 < FRAME_REGS"|agrees=identity`，聚合行 `sites=1|guarded=1|unguarded=0|disagree=1 → disagree=0`；`sites` 仍为 1、`guarded` 仍为 1（**落点数不因修好而变少**）。它让我不追 rebase，所以这次也是 `git show` 副本上的测量（`/tmp/vm_9f1a589.c`）；两处 `enum { FRAME_REGS = VM_FRAME_REGS };` 都在（`vm.c:3027`、`vm.c:5321`） |
 | U | `9f1a589` 上跑 `.probe/p1_roles_swap.py`——角色表 COPY 里只把 `OP_IN` 声明成 `obj=r2, src=r3`（真相是 `obj=r3, src=r2`，两个槽**互换**） | 0（WARN：读数里 `roles=dst:r1,src:r3,obj:r2` 照样印出来，判据不看它与印出位置的对应） | `P1-VERDICT|green\|declared=62` | **探针打在表上，绿在树上**：`P1-OPS|op=OP_IN|printed-reg=r1,r2,r3|roles=dst:r1,src:r3,obj:r2`，`rc=0`。三条判据比较的是**集合**（印出 ⊆ 声明、dst ⊆ 印出），不是**对应关系**，所以任何两个同类寄存器的角色在表里互换都不会红。见 §5.9 |
+| V | `edb1bcd`（`origin/main`，容器三条形状抬成 `R[rN]`、`CONCAT` 有了 VOCAB 读数），rebase 后实跑 | 族 9 在同一轮声明（见 §3.10） | 0 | `P1-ROLES|declared=65/67|unmeasured=2`，`P1-VERDICT|green`。同树我自己跑 `python3 tools/ir_spec.py` 复核 ivory 的说法：`IR-SHAPE|checked=67/67|forgets=none|unconfirmed=none|no-handler=none`、`IR-SHAPE-PRINTSHORT` **一条都没有**、`IR-SHAPE-VOCAB|op=OP_CONCAT|needs=range` 一条在、`IR-SHAPE-BARE|ops=OP_THREAD_CTRL,OP_THREAD_STATE|count=2`。**三种读数（我的 PRINTSHORT 归零、它的 PRINTSHORT 未触发、形状 67/67 无遗忘）各自带树号，互不顶替。** |
 
 A 的红（在 `9a4db3b` 上真实存在，不是我改出来的；那棵树已经不是今天的树，见 §5.2）：
 
@@ -485,6 +510,7 @@ L 组把这一条从散文变成读数：如果一个修的人**信了文档**�
 | 6 K 形式 | 7 | `source-register-not-printed` | ① 只抓多印、② 只抓 dst，源寄存器漏印没有判据管（`EQK`/`NEQK` 的 `r2`）。**此格已兑现**：ivory 在 `7d0e6fd` 用形状侧的 `IR-SHAPE-PRINTSHORT` 判红并修了打印器，我的 `P1-PRINTSHORT` 随之归零——两个独立读者在同一处收敛，这是本表唯一一格有跨读者证据的 |
 | 7 控制流 / 异常 | 9 | `predicate-boundary, shared-tail` | 哨兵谓词的边界（`> 0` vs `< 0`）判据看不见，`guarded=yes` 也照样绿（§4 P 组）；`CALL_VALUE` 的读数主语是它与 `CALL_FUNC` **共用的那条尾**，不是某一条指令 |
 | 8 容器访问 | 3 | `key-vs-container, swap-among-registers` | 三个槽全是寄存器且都印全了，所以 ①②③ 全绿；判据看不见「r2 真的是容器、r3 真的是键」，也看不见两者在表里被互换（§5.9 实测） |
+| 9 全局槽 | 3 | `which-cell, slot-number-vs-container` | 判据只问「槽号有没有用寄存器字形」和「dst 有没有印」，不问这个号指的是哪一格；整族的成立前提是「全局槽是编号不是寄存器里的容器」，谁改了这个表示，族就失效而判据不会红 |
 
 这张表的意思只有一句：**每族的绿都有一个具体的「没问」，写出来比不写强，因为它让下一族的预期可以被证伪。**
 
@@ -597,6 +623,8 @@ vm.c:5372  case OP_TRY_START:   snprintf(out, outsz, "TRY_START catch var=%d", i
 
 M/N 组是它的边界：M 证明读数按落点移动（只修 `EQK`，就只有 `EQK` 那一行消失，`NEQK` 还在）；N 证明 `P1-PRINTSHORT` 分不清「没印」与「印在别的命名空间」——它报的是「这个槽没有以寄存器字形出现」，
 
+**这条的失效方向，ivory 要求原样写进 §5.7 与 §10 两处（`m05471` 二.3）**：`集合相等 ≠ 对应关系相等`。所以「三槽全绿」只等于「印出的东西和声明的角色是同一批」，不等于「第 k 个记号是第 k 个角色」。
+
 **同一个类，ivory 那边也有一条读数，两条不要数两遍**（它 `m05139` §2 的原话）：`IR-DISASM-REGS` 的 `hidden=` 名单是 op 级点名，`compared=register-set-not-order` + `why=` 说的是同一件事。两者的差别值得写清：**它的 `hidden=` 含合法的「不印」**（`LOADK_STRING` 的 `r2` 是池下标，印的是字符串本身），**我的 `P1-PRINTSHORT` 只覆盖「已声明且 handler 真读」的槽**——所以我的名单是它的子集，但每一条背后都有一句角色声明。两边都只能当读数、不能判红；判红的入口在形状侧（它新加的 `IR-SHAPE-PRINTSHORT`：形状用 `R[rN]` 声明过的槽，打印行里必须出现 `ins->rN`）。不是「这个槽没有被印」。
 
 ### 5.8 形状对了，谓词仍可能错：`RETURN` 的 nil 是「非正」，不是「小于零」
@@ -630,6 +658,8 @@ ivory 的裁决把这件事从解释改成消除（`m05266` 一）：**不加 `a
 
 **同一个槽在同一行里带两种字形是合法的**：S 组的 `RETURN` 在 nil 支印 `RETURN nil (slot %d)`，于是这个槽既是寄存器字形又出现在裸数字里。「一个槽一个名字」是约定，不是事实——它成立的地方是「一次判定只用一个字形」，而一条指令分两支说两件事时，两支各用一个字形是对的。
 
+**`negative-means-none` 现在有三个落点，而它的名字被改过一次。** 族 9 的 `BIND` 把 `-1` 用在「没有初值」上（`compiler.c:2270`、`vm.c:4391`），与 `RECV`/`THREAD_JOIN` 的超时是同一个编码。旧名 `negative-timeout` 会让读者以为三个落点都是超时，所以改名，代价是旧读数对不上：`sites=2` → **`sites=3`**，`guarded=2|unguarded=1`（`BIND` 的打印器还没学会这一支，`init=r-1` 照印）。**约定名要能被它数的落点全部描述**，否则它就是在替一个它没描述的位置担保。
+
 这一族还留下一条读数：`P1-GUARD|convention=...|sites=|guarded=|unguarded=`。它数的是**落点数**，不是缺陷数：约定还是一条，只是每个落点各自可能学会、也可能没学会。`cff9197` 上 `negative-timeout` 有 2 个落点（1 会 1 不会）、`non-positive-nil-result` 有 1 个落点（不会）。`7d0e6fd` 上第一条变成 `guarded=2|unguarded=0` 而 `sites` 仍是 2——**这正是「数落点不数缺陷」那句话的实测**：约定学会了，落点还在；`RETURN` 那一行仍是 `guarded=0|unguarded=1`，等下一笔。`9f1a589` 上它也学会了：两条约定各自 `guarded=sites|unguarded=0`，`disagree` 从 1 归零——**同一条约定在两天里从 0/1 走到 1/1，落点数一次没变过**。
 
 ### 5.9 判据比较的是集合，不是对应关系：同类槽互换，绿不变
@@ -649,13 +679,13 @@ ivory 的裁决把这件事从解释改成消除（`m05266` 一）：**不加 `a
 
 修法方向不在这一层：P1 的角色三元组如果带**位置对应**（第 k 个印出的记号 ↔ 第 k 个声明的槽），这条盲区就自动消失；在那之前，报告里这条只能写成「没问」，不能写成「通过」。**绿的字面意思是「没发现多印、少印 dst、imm 冒充寄存器」，不是「槽的命名对了」。**
 
-## 6 覆盖：62/67，没说到的 5 条不算通过
+## 6 覆盖：65/67，没说到的 2 条不算通过
 
-每次运行都打印 `P1-ROLES|declared=62/67|unmeasured=5` 与 `P1-UNMEASURED|ops=...`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。
+每次运行都打印 `P1-ROLES|declared=65/67|unmeasured=2` 与 `P1-UNMEASURED|ops=OP_CONCAT,OP_LOAD_CAPTURE`。一个没有被声明角色的 opcode **不是通过**，它只是没有被声明；这是这份判据与「67/67 全绿」之间唯一不能糊过去的差别。
 
-覆盖率走过的路：17/67 → 30/67（族 1）→ 37/67（线程+资源的初版，未拆族）→ 39/67（拆族后新增 `YIELD`、`DECLARE`）→ 44/67（族 5 构造/区间新增 5 条）→ 49/67（族 6 K 形式新增 5 条）→ 58/67（族 7 控制流/异常新增 9 条）→ **62/67**（族 8 容器访问新增 2 条，另补收 `OR`、`PUSH_REG` 与 `INDEX_SET` 归族）。剩下 5 条要进入 P1，仍需按族逐条从 handler 体读出 `dst/src/obj/imm`——这是语义动作，判据不能替代。
+覆盖率走过的路：17/67 → 30/67（族 1）→ 37/67（线程+资源的初版，未拆族）→ 39/67（拆族后新增 `YIELD`、`DECLARE`）→ 44/67（族 5 构造/区间新增 5 条）→ 49/67（族 6 K 形式新增 5 条）→ 58/67（族 7 控制流/异常新增 9 条）→ 62/67（族 8 容器访问新增 2 条，另补收 `OR`、`PUSH_REG` 与 `INDEX_SET` 归族）→ **65/67**（族 9 全局槽新增 3 条）。剩下 2 条是 `OP_CONCAT`（`IR-SHAPE-VOCAB` 说词不够：需要一个表示「寄存器区间」的词，ivory 把它判给 P1 的 MIR 操作数表示）与 `OP_LOAD_CAPTURE`（捕获槽，同一 `negative-means-none` 约定的第四个落点，容器是闭包环境）。**两条都由别人裁定过的原因挡着，不是我没读**——这正是「覆盖率不是完成度」的实例。
 
-剩下的 5 条已经能看见族：`BIND LOAD_GLOBAL STORE_GLOBAL` 是**全局槽**族（槽里装的是格子编号，打印成 `g%d` 或 `[%d]`，且 `STORE_GLOBAL` 把下标放在左边、源放在右边——这**不是**次序不一致，按 `m05350` §3 的规则它是「存值」句式，与 `INDEX_SET` 成对，见 §5.0 表下）；`CONCAT` 是**变长操作数**族，它的 `r2` 是一段寄存器的起点而不是一个槽（`vm.c:3332`、`vm.c:5332`），而**当前的角色词汇里没有「寄存器区间」**，所以它不是难读，是词不够用——ivory 在 `m05350` §2 把「缺一个词」本身做成了读数 `IR-SHAPE-VOCAB|op=OP_CONCAT|needs=range|...|enforced=no`，并定了规则：**VOCAB 出现时，那一条的 unmeasured 不许被读成「没问题」**（与我这边 `P1-UNMEASURED|an-unmeasured-op-is-not-a-passing-op` 是同一句话的两个方向：我这边是「没测」，它那边是「词不够，想测也没法写」）。加不加 `range=(base,count)` 它不这一轮拍，理由是形状该由 P1 的 MIR 操作数表示决定（定长域 ⇒ 两个字；变长列表 ⇒ 一个类），现在加可能把多余的词写进要长期维护的表；`LOAD_CAPTURE` 是**捕获槽**族（`#%d` 闭包环境下标）。`CALL_FUNC`/`CALL_BUILTIN`/`MAKE_FUNC` 三条仍在散行里，它们的失败后果是「哪个函数、几个参数」，下一个族就是它。
+剩下的 2 条不是「还没读到」，是**被裁定挡着**：`OP_CONCAT`——形状里缺少一个表示寄存器区间的词（`IR-SHAPE-VOCAB|needs=range`），ivory 判它等 P1 的 MIR 操作数表示定下来再给词，所以现在写 `range=` 只会多一个长期要养的词；`OP_LOAD_CAPTURE`——`r2` 是闭包环境下标（`vm.c:4033-4041`，`< 0` 或越界取 nil），容器与全局表不同族，它是 `negative-means-none` 的第四个落点。**族 9 交付后，剩下的每一条都带一个别人的名字**：这不是进度好看，是说我不能再多声明一条而不先回答那个词。
 
 ## 7 这份判据不证明什么
 
@@ -696,5 +726,15 @@ python3 tools/p1_roles.py --vm /path/to/vm.c    # 任意树 / 拷贝
 3. **命名纪律**：立即数、frame 变量下标、表下标一律不得使用 `r%d` 字形；这条不是第四条防线（它被 ① 蕴含），它是给修复者的指路牌。
 
 **4. 对位是第四条，但现在写不了**：前三条判的是**集合**，所以表里两个同类的槽互换它看不出来（§5.9 的 U 组实测）。§10 若要收「结构等价」，必须再加一句「印出的第 k 个记号 ↔ 声明的第 k 个槽」；这一句在没有 P1 的 MIR 操作数表示之前无法执行，所以现在只能登记为**已知缺口**，不能算进那三条。
+
+### 9.1 这条「已知缺口」进 §10 的写法（ivory-zephyr 裁，`m05471` 二：收，但必须带过期条件）
+
+1. **它叫「已知缺口」，不叫第四条判据。** 判据要能红，这一条今天不能，所以它进 §10 的**「未测量」区**，不进判据表。
+2. **过期条件写死**：当 67 条形状里的每一条都把所有寄存器槽写成 `R[rN]` 之后，这条缺口要么变成一条判据（序列对应），要么被证明不需要（如果那时 P1 的结构字段已经带位置）。**没有过期条件的缺口会变成永久豁免。**
+3. **它的失效方向要写明**：`集合相等 ≠ 对应关系相等`，所以「三槽全绿」只等于「印出的东西和声明的角色是同一批」，不等于「第 k 个记号是第 k 个角色」。
+
+**为什么不现在就补（ivory 的实测，`edb1bcd`）**：它按「形状里 `R[rN]` 的出现顺序 vs 打印行里 `ins->rN` 的出现顺序」比了一次——形状里用了字形的 opcode **11/67**，序列不一致 **6 条**（`OP_THREAD_JOIN` 形状 r2 / 打印 r2 r1；`OP_THREAD_WAIT` r2 / r1 r2；`OP_RECV` r2 / r2 r1；`OP_EQK` r2 / r1 r2 r3；`OP_NEQK` 同；`OP_RECORD` r2 / r1 r2 r3）。**这 6 条没有一条是打印器错**：形状只给「值得标出来的那一个槽」加了字形（`EQK` 的形状是 `r1 = (R[r2] == string_pool[r3])`，`r1` 还是裸的），比出来是「形状短、打印长」，不是「两边顺序不同」。把这 6 条判红，红的主语是「形状不完整」，重演的就是那次 21 条假红的坑。
+
+**所以补这一格的真正前置动作是：把形状里的寄存器槽写全。** 而这件活不能机械做——一个裸数字到底是寄存器还是立即数，正是词表还不肯回答的那个问题（`LOAD_GLOBAL` 的 `r2` 是格子编号、`LOAD_CAPTURE` 的 `r2` 是捕获下标、`SET_INTERVAL` 的 `r2` 是打包立即数）。**这就是这一格判给 P1 而不是判给 disasm 自己的理由。**
 
 三条合起来仍然只是「打印行 vs 声明」。把 P1 的入口判据说成「结构等价」是不成立的——那要等 MIR 有自己的角色声明、并且两份声明能互相证伪。
