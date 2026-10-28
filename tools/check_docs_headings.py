@@ -27,6 +27,17 @@ here means "re-pin" rather than "look".  A measurement whose input moves with
 other people's commits is not a measurement of this tree.  Re-pinning stays a
 deliberate act; the stale line is how a reader sees it is due.
 
+The warning is a word, not a number: warned is one of {none, stale}, and nothing
+else.  Absence has a name; a sentinel such as -1 would make a reader guess
+whether it means "no warning" or "miscounted", and that ambiguity already cost
+one round of review.
+
+The identity field is likewise a name, and the reading line lists both kinds
+that exist -- per-file-count and per-heading-identity -- so a reader sees what
+comparison was used and what the alternative is without opening this file.  Pin
+format v1 stores counts, so the applied value is per-file-count today; the
+heading-identity format is a later change, named here and not yet in use.
+
 The stale line has no red bound, and never will.  A number that is both printed
 and, past some threshold, a verdict makes every reader guess which one they are
 looking at: behind=7 is not a defect, a missing section is, and that is what
@@ -143,7 +154,8 @@ def main() -> int:
     # a reader can tell "nothing new" from "nothing measured"; it never touches
     # the exit code, and there is deliberately no threshold at which it would.
     print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|behind={added}"
-          "|pin-format=v1|identity=per-file-count")
+          "|pin-format=v1|identity=per-file-count"
+          "|identity-domain=per-file-count,per-heading-identity")
     if added:
         # Words instead of a threshold.  A reader who wants to know that the
         # baseline is old should be told so, not handed a verdict that cannot

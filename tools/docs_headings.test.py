@@ -43,7 +43,7 @@ HEADINGS = re.compile(
 )
 STALE = re.compile(
     r"^HEADINGS\|stale\|pin-tree=([0-9a-f]{7}|<unpinned>)\|head=([0-9a-f]{7}|<no tree>)\|behind=(\d+)"
-    r"\|pin-format=v1\|identity=per-file-count$",
+    r"\|pin-format=v1\|identity=([a-z-]+)\|identity-domain=([a-z,-]+)$",
     re.M,
 )
 # The warning is a second line of words, on purpose: it is not a threshold, so
@@ -52,6 +52,12 @@ WARN = re.compile(
     r"^HEADINGS\|stale-warn\|behind=(\d+)\|note=this reading is old; the criterion does not depend on it$",
     re.M,
 )
+# Absence has a name, not a number: warned is one of these two values and never
+# a third.  A -1 sentinel already made one reviewer ask "no warning, or a
+# miscount?" -- the same ambiguity as a threshold that is also a reading.
+WARN_PRESENT = re.compile(r"^HEADINGS\|stale-warn\|", re.M)
+WARN_DOMAIN = ("none", "stale")
+IDENTITIES = ("per-file-count", "per-heading-identity")
 
 
 def refuse(why: str) -> "NoReturn":
@@ -74,10 +80,27 @@ def behind_of(text: str) -> int:
     return int(m.group(3)) if m else -1
 
 
-def warn_behind(text: str) -> int:
-    """Behind count from the warning line, or -1 when the line is absent."""
+def warn_of(text: str) -> str:
+    """One of WARN_DOMAIN: "stale" when the warning line is there and shaped as
+    promised, "none" when it is absent, and "malformed" when it is there but not
+    shaped as promised -- a third value the test must never accept."""
+    if not WARN_PRESENT.search(text):
+        return "none"
+    return "stale" if WARN.search(text) else "malformed"
+
+
+def warn_count(text: str) -> "int | None":
+    """The count the warning repeats; None when there is no warning line."""
     m = WARN.search(text)
-    return int(m.group(1)) if m else -1
+    return int(m.group(1)) if m else None
+
+
+def identity_of(text: str) -> tuple[str, tuple[str, ...]]:
+    """The applied comparison name and the alternative names the line lists."""
+    m = STALE.search(text)
+    if not m:
+        return "", ()
+    return m.group(4), tuple(m.group(5).split(","))
 
 
 def run(tree: Path) -> tuple[int, str, str]:
@@ -132,6 +155,7 @@ def main() -> int:
         named_tree = base["tree"] == (head or "<no tree>")
         print(f"docs-headings: base readings -- tree {base['tree']}, base {base['base']}, now {base['now']}, "
               f"removed {base['removed']}, added {base['added']}, stale behind {behind_of(out)}, "
+              f"warning {warn_of(out)}, "
               f"names-head={named_tree}; rc={rc}")
         cases.append(("reading-names-its-tree", named_tree,
                       f"tree={base['tree']} head={head or '<no tree>'} (want the reading to name the tree it measured)"))
@@ -150,15 +174,25 @@ def main() -> int:
         rc, out, err = run(tree)
         got = read(out)
         stale = behind_of(out)
-        warned = warn_behind(out)
+        warned = warn_of(out)
+        applied, alternatives = identity_of(out)
         cases.append(("stale-is-a-reading", rc == 0 and got is not None and got["removed"] == 0 and stale >= 1,
                       f"rc={rc}, removed={got['removed'] if got else 'none'}, stale behind={stale} "
                       f"(want rc=0, removed=0, behind>=1: an old baseline is not a defect)"))
-        # The warning says the same number in words and adds no verdict: it must
-        # be present exactly when the pin is behind, and it must not decide rc.
-        cases.append(("stale-warn-is-a-reading", rc == 0 and warned == stale and warned >= 1,
-                      f"rc={rc}, warning behind={warned}, stale behind={stale} "
-                      f"(want rc=0 and the warning to repeat the count, in words, without a threshold)"))
+        # The warning says the same number in words and adds no verdict: it is
+        # present exactly when the pin is behind, its name comes from a domain of
+        # two, and it does not decide rc.  "none" is a name, not a -1: absence
+        # must be said, not encoded.
+        cases.append(("stale-warn-is-a-reading", rc == 0 and warned == "stale" and warn_count(out) == stale
+                      and stale >= 1,
+                      f"rc={rc}, warning={warned} (domain {WARN_DOMAIN}), warning count={warn_count(out)}, "
+                      f"stale behind={stale} (want rc=0, warned=stale repeating the count, without a threshold)"))
+        # The reading line says which comparison produced the count and names the
+        # alternative that is not in use yet, so a reader never has to open the
+        # source to learn what kind of comparison they are reading.
+        cases.append(("identity-names-both-kinds", applied == "per-file-count" and alternatives == IDENTITIES,
+                      f"identity={applied}, identity-domain={','.join(alternatives)} "
+                      f"(want identity=per-file-count inside the domain {IDENTITIES})"))
         (tree / doc).write_text(snapshot, encoding="utf-8")
 
         # The deletion cases below run against the pin as committed -- the stale
@@ -207,9 +241,9 @@ def main() -> int:
         fresh = read(out)
         fresh_stale = behind_of(out)
         cases.append(("clean-tree", rc == 0 and fresh is not None and fresh["removed"] == 0 and fresh_stale == 0
-                      and warn_behind(out) == -1,
+                      and warn_of(out) == "none",
                       f"rc={rc}, removed={fresh['removed'] if fresh else 'none'}, stale behind={fresh_stale}, "
-                      f"warning behind={warn_behind(out)} (want rc=0, removed=0, behind=0 and no warning right after "
+                      f"warning={warn_of(out)} (want rc=0, removed=0, behind=0 and no warning right after "
                       f"re-pin; baseline freshness is not this case's question)"))
     finally:
         subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
