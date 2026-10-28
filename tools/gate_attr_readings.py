@@ -9,6 +9,13 @@ instead, the margin would survive somebody raising TIMEOUT and keep saying
 "20%" about a budget that no longer exists -- the same half-a-reading that
 `skipped 0` was: shaped like the two measurements beside it, actually a literal.
 
+The line also carries configured-at=, the mtime of the CTestTestfile.cmake that
+answered about properties.  A property lives in that generated file, not in the
+source tree, so a build/ configured before RUN_SERIAL was written keeps
+answering "absent" while the source reads "TRUE" -- and the worst time recorded
+earlier and the limit read now then come from two different configurations.  The
+stamp cannot fix a stale build tree; it lets the reader see one.
+
 Nothing here carries an exit code.  A margin is a reading; when it cannot be
 taken the line says why and the run continues, because an absent reading that
 raises would be a criterion in disguise.
@@ -16,9 +23,12 @@ raises would be a criterion in disguise.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,24 +61,46 @@ def margin_percent(limit_s: float, worst_s: float) -> int:
     return int(round((limit_s - worst_s) / limit_s * 100))
 
 
-def render(row: dict, props: dict | None, why: str) -> str:
+def configured_at(test_dir: Path) -> str:
+    """When the build tree that answers about properties was generated.
+
+    A property is not in the source tree, it is in the CTestTestfile.cmake that
+    a configure wrote: add RUN_SERIAL to CMakeLists.txt and a build/ configured
+    before that edit keeps answering "absent".  The two numbers on the line --
+    the limit read from the tree and the worst time recorded earlier -- can then
+    come from two different configurations, and the reader cannot tell from the
+    line.  A stamp cannot fix a stale build tree; it lets the reader see one.
+    """
+    stamp_file = Path(test_dir) / "CTestTestfile.cmake"
+    try:
+        moment = stamp_file.stat().st_mtime
+    except OSError:
+        return "<no CTestTestfile.cmake>"
+    return datetime.datetime.fromtimestamp(
+        moment, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
+
+def render(row: dict, props: dict | None, why: str,
+           stamp: str = "<not read>") -> str:
     test = row["test"]
     head = f"GATE-ATTR|test={test}"
     if props is None:
-        return f"{head}|margin=na|why={why}"
+        return f"{head}|margin=na|why={why}|configured-at={stamp}"
     serial = "yes" if props.get("RUN_SERIAL") else "absent"
     raw_limit = props.get("TIMEOUT")
     if raw_limit in (None, ""):
-        return f"{head}|serial={serial}|margin=na|why=the test declares no TIMEOUT"
+        return (f"{head}|serial={serial}|margin=na"
+                f"|why=the test declares no TIMEOUT|configured-at={stamp}")
     limit_s = float(raw_limit)
     worst_s = float(row["worst_s"])
     if serial != "yes":
         return (f"{head}|limit={limit_s:g}s|worst={worst_s:g}s|serial=absent"
-                f"|margin=na|why=RUN_SERIAL is not set, so this margin is not bought")
+                f"|margin=na|why=RUN_SERIAL is not set, so this margin is not bought"
+                f"|configured-at={stamp}")
     return (f"{head}|limit={limit_s:g}s|worst={worst_s:g}s|load={row['load']}"
             f"|serial={serial}|margin={margin_percent(limit_s, worst_s)}%"
             f"|basis=recorded under contention, not designed slack"
-            f"|measured-on={row['measured_on']}")
+            f"|configured-at={stamp}|measured-on={row['measured_on']}")
 
 
 def load_recorded() -> tuple[list[dict] | None, str]:
@@ -98,7 +130,23 @@ def selftest() -> int:
             if part.startswith(name + "="):
                 return part.split("=", 1)[1]
         return "<absent>"
+    def stamp_of_temp():
+        with tempfile.TemporaryDirectory() as where:
+            made = Path(where) / "CTestTestfile.cmake"
+            made.write_text("# generated\n")
+            moment = datetime.datetime(
+                2026, 10, 28, 15, 12, 45, tzinfo=datetime.timezone.utc).timestamp()
+            os.utime(made, (moment, moment))
+            return configured_at(Path(where))
+
+    def missing_stamp():
+        with tempfile.TemporaryDirectory() as where:
+            return configured_at(Path(where))
+
     checks = [
+        ("the stamp is the generated file's mtime, truncated to the minute",
+         stamp_of_temp() == "2026-10-28T15:12" and missing_stamp() == "<no CTestTestfile.cmake>",
+         f"{stamp_of_temp()} from mtime 2026-10-28T15:12:45Z; a tree without one reads {missing_stamp()}"),
         ("margin follows the declared limit",
          field(at_30, "margin") == "20%" and field(at_60, "margin") == "60%",
          f"30s -> {field(at_30, 'margin')}, 60s -> {field(at_60, 'margin')}"),
@@ -132,9 +180,10 @@ def main() -> int:
     if rows is None:
         print(f"GATE-ATTR|refused|why={why}")
         return 0
+    stamp = configured_at(Path(args.test_dir))
     for row in rows:
         props, prop_why = read_props(Path(args.test_dir), row["test"])
-        print(render(row, props, prop_why))
+        print(render(row, props, prop_why, stamp))
     return 0
 
 
