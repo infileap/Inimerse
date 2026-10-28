@@ -227,8 +227,15 @@ def _handler_order(body):
     return dsts + rest
 
 
-def _disasm_order(case_text):
-    return _regs(r"ins->r([123])", case_text)
+def _disasm_regs(case_text):
+    """Registers the case actually prints.
+
+    Only the print statement counts.  Scanning the whole case body picks up
+    scratch reads (CALL_BUILTIN resolves a name through ins->r2 before it
+    prints r1/r3), which is the ruler inventing a disagreement.
+    """
+    lines = [l for l in case_text.splitlines() if "snprintf(" in l or "printf(" in l]
+    return _regs(r"ins->r([123])", "\n".join(lines))
 
 
 def _case_bodies(fn_text):
@@ -393,45 +400,48 @@ def report(ops, shape, meas, out=sys.stdout):
     # itself.  A register the printer invents is red; a register it omits is
     # allowed only because an operand may print as an immediate -- the
     # relative order of the ones it does print is not optional.
-    invent, disorder, no_dst = [], [], []
-    order_checked = 0
+    # What the printer claims about an instruction's operands, checked against
+    # what the handler body touches.  Order is deliberately not compared: a
+    # register machine has no natural operand order, only roles, and the roles
+    # are not declared yet (see P1 of docs/IR_DESIGN.md).  The set is the part
+    # that is already decidable, and it is the part that catches a printer
+    # which hides the register the instruction writes.
+    invent, hidden, unmeasured = [], [], []
+    regs_checked = 0
     for n in names:
         body = handlers.get(n)
         case = meas.get("disasm_cases", {}).get(n)
-        if body is None or case is None:
+        if body is None or case is None or n in meas.get("no_handler", ()):
+            unmeasured.append(n)
             continue
-        canon = _handler_order(body)
-        shown = _disasm_order(case)
-        if not shown or not canon:
+        seen = _regs(r"ins\.r([123])", body)
+        hop = re.search(r"goto (L_[A-Z0-9_]+)", body)
+        if hop:
+            seen += _regs(r"ins\.r([123])", handlers.get(hop.group(1), ""))
+        seen = list(dict.fromkeys(seen))
+        shown = _disasm_regs(case)
+        if not shown or not seen:
+            unmeasured.append(n)
             continue
-        order_checked += 1
-        invented = [r for r in shown if r not in canon]
-        if invented:
-            invent.append((n, shown, canon))
-            continue
-        idx = [canon.index(r) for r in shown]
-        if idx != sorted(idx):
-            disorder.append((n, shown, canon))
-        elif _dst_list(body) and canon[0] == _dst_list(body)[0] and canon[0] not in shown:
-            no_dst.append((n, shown, canon))
-    for n, shown, canon in invent + disorder + no_dst:
-        print(f"IR-DISASM-OPERANDS|op={n}|prints={','.join(shown)}"
-              f"|handler-order={','.join(canon)}|effect=the-disassembly-names-the-instruction"
-              f"-and-then-lies-about-which-registers-it-reads", file=out)
-    for n, shown, canon in no_dst:
-        print(f"IR-DISASM-NODST|op={n}|prints={','.join(shown)}|dst={canon[0]}"
-              f"|effect=the-line-hides-the-register-the-instruction-writes", file=out)
-    # Not enforced yet, and the reading says so: the handler body does not
-    # declare which operand is a destination and which is an immediate, so an
-    # order derived from it would be a guess.  The list is printed anyway --
-    # silence reads as a pass, and this is the part of the table that is still
-    # unmeasured.  Turning it into a pass/fail needs the role triples (dst= /
-    # src= / imm=) that P1 of docs/IR_DESIGN.md asks the shape to declare.
-    print(f"IR-DISASM-ORDER|checked={order_checked}/{len(names)}|enforced=no"
-          f"|order-diff={','.join(n for n, _, _ in disorder) or 'none'}"
-          f"|invented={','.join(n for n, _, _ in invent) or 'none'}"
-          f"|hidden-dst={','.join(n for n, _, _ in no_dst) or 'none'}"
-          f"|why=operand-roles-are-not-declared-yet-see-IR_DESIGN-P1", file=out)
+        regs_checked += 1
+        extra = [r for r in shown if r not in seen]
+        miss = [r for r in seen if r not in shown]
+        if extra:
+            invent.append((n, shown, seen))
+        if miss:
+            hidden.append((n, shown, seen))
+    for n, shown, seen in invent:
+        print(f"IR-DISASM-OPERANDS|op={n}|prints={','.join(shown)}|handler={','.join(seen)}"
+              f"|effect=the-line-names-a-register-the-instruction-does-not-touch", file=out)
+    for n, shown, seen in hidden:
+        print(f"IR-DISASM-HIDDEN|op={n}|prints={','.join(shown)}|handler={','.join(seen)}"
+              f"|effect=the-line-hides-a-register-the-instruction-reads-or-writes", file=out)
+    print(f"IR-DISASM-REGS|checked={regs_checked}/{len(names)}"
+          f"|unmeasured={','.join(unmeasured) or 'none'}"
+          f"|unexpected={','.join(n for n, _, _ in invent) or 'none'}"
+          f"|hidden={','.join(n for n, _, _ in hidden) or 'none'}"
+          f"|compared=register-set-not-order"
+          f"|why=roles-are-not-declared-yet-immediates-and-goto-shared-bodies-look-like-mismatches-see-IR_DESIGN-P1", file=out)
 
     missing_disasm = [n for n in names if n not in meas["disasm"]]
     print(f"IR-COVER|interp={len(names) - len([n for n in names if n not in meas['interp']])}/{len(names)}"
@@ -473,19 +483,24 @@ def main(argv):
                   and set(re.findall(r"\br([123])\b", shape[n]))]
         mut = dict(shape, **{forget[0]: "- (claims nothing)"})
         ok &= _check("shape-forgets", report(ops, mut, meas, out=open("/dev/null", "w")), forget[0])
-        # The order reading is not enforced, so it gets a detection test rather
-        # than an enforcement test: swap two operands in a case and the reading
-        # must name that opcode.  A reading nobody has ever seen move is not a
-        # measurement.
+        # The operand reading is not enforced, so it gets a detection test
+        # rather than an enforcement test: drop one register from a print line
+        # and the reading must name that opcode.  A reading nobody has ever
+        # seen move is not a measurement.
         cases = dict(meas.get("disasm_cases", {}))
-        target = next((n for n in cases if "ins->r1" in cases[n] and "ins->r2" in cases[n]), None)
+        target = next((n for n in cases if "ins->r2" in cases[n]), None)
         if target:
-            body = cases[target]
-            swapped = body.replace("ins->r1", "\0").replace("ins->r2", "ins->r1").replace("\0", "ins->r2")
-            got = _report_text(ops, shape, dict(meas, disasm_cases=dict(cases, **{target: swapped})))
-            line = next(l for l in got.splitlines() if l.startswith("IR-DISASM-ORDER|"))
-            caught = target in line.split("order-diff=")[1].split("|")[0].split(",")
-            print(f"IRCHECK|case=operand-order|red={'yes' if caught else 'no'}|op={target}", file=sys.stdout)
+            def _drop(text):
+                lines = text.splitlines(True)
+                for i, l in enumerate(lines):
+                    if ("snprintf(" in l or "printf(" in l) and "ins->r2" in l:
+                        lines[i] = l.replace("ins->r2", "0", 1)
+                        break
+                return "".join(lines)
+            got = _report_text(ops, shape, dict(meas, disasm_cases=dict(cases, **{target: _drop(cases[target])})))
+            line = next(l for l in got.splitlines() if l.startswith("IR-DISASM-REGS|"))
+            caught = target in line.split("|hidden=")[1].split("|")[0].split(",")
+            print(f"IRCHECK|case=operand-set|red={'yes' if caught else 'no'}|op={target}", file=sys.stdout)
             ok &= caught
         return 0 if ok else 1
 

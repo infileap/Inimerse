@@ -435,7 +435,7 @@ IR-EFFECTS|may_throw=|may_alloc=|pure=
 
 ---
 
-## 12. 待裁定问题（需要人拍板，本文档不替它决定）
+## 12. 待裁定问题（六条里第 6 条已定，其余五条本文档不替人决定）
 
 1. **MIR 是否 SSA**。本文档按"非 SSA"写（§4.2）。改成 SSA 会让类型推断更容易、让优化更自然，
    但要在 VM 的帧语义上引入 phi，且 `RegInstruction` 不再能直接承载编码。
@@ -447,7 +447,8 @@ IR-EFFECTS|may_throw=|may_alloc=|pure=
    收益是写侧立刻获得语义；代价是 MIR 一旦演进，写侧要跟着改。
 5. **是否允许"静态模式专用 opcode"**（如 `OP_BE`）进表并成为长期成员。§3.9 的目标是它在静态
    模式下生产点为 0；如果它长期存在，表里要有一个 `static_only=True` 的字段，而不是靠注释。
-6. **`OpSemantics` 的源用 Python 还是 C**。本文档选 Python（与 `mod_spec` 一致、生成器容易写），
+6. **`OpSemantics` 的源用 Python 还是 C**。**已定：Python**（本节标题的"不替人决定"指其余五条）。
+   本文档选 Python（与 `mod_spec` 一致、生成器容易写），
    代价是构建期多一个 Python 依赖；如果 CI 环境不允许，退化为 C 源 + 一个 Python 校验器。
 
 ---
