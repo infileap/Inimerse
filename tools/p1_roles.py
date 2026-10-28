@@ -46,22 +46,29 @@ ROLES = {
     "OP_GE":           {"dst": ["r1"], "src": ["r2", "r3"]},
     "OP_NOT":          {"dst": ["r1"], "src": ["r2"]},
     "OP_IS_NIL":       {"dst": ["r1"], "src": ["r2"]},
-    # --- family 2: thread / resource (the operand names a thread slot, mailbox
-    #     or mutex, not a value) ---
+    # --- family 2a: thread family (the operand names a thread or a mailbox on
+    #     one; the failure mode is "which thread, and how long to wait") ---
     "OP_THREAD_START": {"dst": ["r2"], "imm": ["r1", "r3"]},
     "OP_THREAD_CTRL":  {"imm": ["r1", "r2"]},
     "OP_THREAD_GOTO":  {"imm": ["r1", "r2"]},
+    "OP_THREAD_JOIN":  {"imm": ["r1"], "src": ["r2"], "sentinel": ["r2"]},
+    "OP_THREAD_WAIT":  {"imm": ["r1"], "src": ["r2"]},
+    "OP_THREAD_STATE": {"dst": ["r1"], "imm": ["r2", "r3"]},
     "OP_SEND":         {"imm": ["r1"], "src": ["r2"]},
     "OP_RECV":         {"dst": ["r1"], "src": ["r2"], "sentinel": ["r2"]},
     "OP_WAIT":         {"src": ["r1"]},
+    "OP_YIELD":        {},
+    # --- family 2b: resource family (the operand names a mutex or a resource
+    #     limit; the failure mode is "which resource does this index point at") ---
     "OP_LOCK":         {"imm": ["r1", "r2"]},
+    "OP_DECLARE":      {"imm": ["r1", "r2"]},
     "OP_INDEX_SET":    {"obj": ["r1"], "mutate": True, "src": ["r2", "r3"]},
-    "OP_SAY":          {"src": ["r1"]},
-    "OP_THREAD_STATE": {"dst": ["r1"], "imm": ["r2", "r3"]},
-    "OP_THREAD_JOIN":  {"imm": ["r1"], "src": ["r2"]},
-    "OP_THREAD_WAIT":  {"imm": ["r1"], "src": ["r2"]},
     "OP_TRY_START":    {"imm": ["r1", "r2"]},
+    # --- family 3: store family, one member (r1 is a store selector and the
+    #     destination is r3: the premise "dst is r1" is already false here) ---
     "OP_RECORD":       {"dst": ["r3"], "imm": ["r1", "r2"]},
+    # --- family 4: output family, one member (no destination at all) ---
+    "OP_SAY":          {"src": ["r1"]},
     "OP_CALL_FUNC":    {"dst": ["r2"], "imm": ["r1", "r3"]},
     "OP_CALL_BUILTIN": {"dst": ["r1"], "imm": ["r2", "r3"]},
     "OP_MAKE_FUNC":    {"dst": ["r1"], "imm": ["r2", "r3"]},
