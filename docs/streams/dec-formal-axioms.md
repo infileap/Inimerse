@@ -417,6 +417,10 @@ CENSUS-LANE|dropped=<path>:<line>|in-lane=A3,A8|rule=an axiom is in the lane iff
 
 最后是 ivory 点名的「两个数同名」：`PINS` 行现在带 `role=declared`，写点清单的合计带 `role=coverage`，字段名也从 `pinned=` / `unpinned=` 改成 `pinned-writesites=` / `unpinned-writesites=`。声明的钉有 33 个、落在写点上的只有 4 个，两个数都对；错的是让读者以为它们是同一个数——读数行里出现同名字段，读者就会合并它们，合并之后两个数都变成废话。
 
+改名还顺手弄红了**另一格**，值得记：`--self-check-flag-modes` 的 `quiet-keeps-pins` 格原来找的是字面前缀 `PINS|files=5|pins=33`；我在行首加上 `role=declared` 之后它找不到，于是「安静模式保留了读数」这一格报红——而读数其实还在。这不是改名的噪音，是**前缀判据把字段顺序偷偷写进了契约**：往后追加字段它照过，往前加就红，一个看起来对称的写法藏着不对称的行为。现在那一格按「`PINS|` 之后出现 `files=5|pins=33`」判，同样的判断，不再附带顺序假设。
+
+两个数同名最贵的代价因此不是读者误解，而是**所有按字面读这两行的地方都跟着脆**：本次它只弄红了一格按需自检，但同一个格子在门禁里就是一次假红，或者更糟——一次假绿（前缀对上了，后面接的却是另一个数）。
+
 这一节没有给 CTest 增加任何一格：`WRITECHECK` 是按需读数，不是门禁；注册与否是 runner 的队列点，§12.3 的示范格已经够它用了。
 
 
