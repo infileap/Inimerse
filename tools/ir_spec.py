@@ -94,8 +94,8 @@ SHAPE = {
     "OP_AND": "r1 = truth(r2) and truth(r3)  [boolean, short-circuit at the front end]",
     "OP_OR": "r1 = truth(r2) or truth(r3)",
     "OP_NOT": "r1 = !truth(r2)",
-    "OP_EQK": "r1 = (r2 == string_pool[r3])",
-    "OP_NEQK": "r1 = (r2 != string_pool[r3])",
+    "OP_EQK": "r1 = (R[r2] == string_pool[r3])",
+    "OP_NEQK": "r1 = (R[r2] != string_pool[r3])",
     "OP_NEW_ARRAY": "r1 = array of the last r3 values on the stack  [unused: r2]",
     "OP_NEW_DICT": "r1 = {r3 pairs from the stack}",
     "OP_NEW_SET": "r1 = merge(stack[sp-1 .. sp-r3])",
@@ -486,6 +486,27 @@ def report(ops, shape, meas, out=sys.stdout):
           f"|disasm={len(names) - len(missing_disasm)}/{len(names)}"
           f"|missing=disasm:{','.join(missing_disasm) or 'none'}"
           f"|budget=none|aot=na|wasm=na|selfhost=na", file=out)
+
+    # A slot the shape calls a register must be printed as a register.  This is
+    # the other direction from IR-DISASM-REGS: that one asks whether a print
+    # line shows something the handler does not read, this one asks whether a
+    # declared register is hidden from the reader.  It covers only the slots a
+    # shape writes with the R[rN] glyph: a bare digit may be an immediate, and
+    # those are counted separately by IR-SHAPE-BARE.
+    printed_short = []
+    for n in names:
+        case = meas.get("disasm_cases", {}).get(n)
+        if case is None:
+            continue
+        slots = set("r" + x for x in re.findall(r"R\[r([123])\]", shape.get(n, "")))
+        printed = set("r" + x for x in re.findall(r"ins->r([123])", case))
+        for miss in sorted(slots - printed):
+            printed_short.append((n, miss))
+    for n, miss in printed_short:
+        print(f"IR-SHAPE-PRINTSHORT|op={n}|declared={miss}|printed-not"
+              f"|effect=a-register-the-shape-declares-is-hidden-from-the-reader", file=out)
+    if printed_short:
+        bad.append(f"prints-short:{len(printed_short)}")
     return 0 if not bad else 1
 
 
@@ -541,6 +562,18 @@ def main(argv):
             line = next(l for l in got.splitlines() if l.startswith("IR-SHAPE-BARE|"))
             named = cand in line.split("|ops=")[1].split("|")[0].split(",")
             print(f"IRCHECK|case=bare-slot|red={'yes' if named else 'no'}|op={cand}", file=sys.stdout)
+            ok &= named
+        # A register the shape declares must be printed; dropping it from the
+        # print line has to red, otherwise "prints short" is unenforced.
+        cases0 = dict(meas.get("disasm_cases", {}))
+        tgt = next((n for n in cases0 if "ins->r2" in cases0[n]
+                    and "R[r2]" in shape.get(n, "")), None)
+        if tgt:
+            got = _report_text(ops, shape, dict(meas, disasm_cases=dict(
+                cases0, **{tgt: cases0[tgt].replace("ins->r2, ", "", 1)})))
+            named = any(l.startswith("IR-SHAPE-PRINTSHORT|")
+                        and ("op=" + tgt + "|") in l for l in got.splitlines())
+            print(f"IRCHECK|case=prints-short|red={'yes' if named else 'no'}|op={tgt}", file=sys.stdout)
             ok &= named
         # The operand reading is not enforced, so it gets a detection test
         # rather than an enforcement test: drop one register from a print line
