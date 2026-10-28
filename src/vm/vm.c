@@ -5401,7 +5401,8 @@ static void vm_disasm_ins(Bytecode *code, int ip, char *out, size_t outsz) {
     case OP_IN:             snprintf(out, outsz, "IN r%d, r%d in r%d", ins->r1, ins->r2, ins->r3); return;
     case OP_MIN:            snprintf(out, outsz, "MIN r%d, r%d", ins->r1, ins->r2); return;
     case OP_MAX:            snprintf(out, outsz, "MAX r%d, r%d", ins->r1, ins->r2); return;
-    case OP_BIND:           snprintf(out, outsz, "BIND g%d, set=r%d, init=r%d", ins->r1, ins->r2, ins->r3); return;
+    case OP_BIND:           if (ins->r3 >= 0) snprintf(out, outsz, "BIND g%d, set=r%d, init=r%d", ins->r1, ins->r2, ins->r3);
+                            else snprintf(out, outsz, "BIND g%d, set=r%d, init=none", ins->r1, ins->r2); return;
     case OP_SET_ADD:        snprintf(out, outsz, "SET_ADD r%d, r%d", ins->r1, ins->r2); return;
     case OP_THREAD_GOTO:    snprintf(out, outsz, "THREAD_GOTO t%d, off=%d", ins->r1, ins->r2); return;
     case OP_YIELD:          snprintf(out, outsz, "YIELD"); return;
