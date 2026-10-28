@@ -23940,3 +23940,84 @@ check_line_refs: base 1c6b3381f3db8b77ca90c53ae5737dfa3698624f is 1104 commit(s)
 ⇒ 丙栏订正为：规则是提议；**本笔是它的反例，不是它的实施**。从 `58a5b29` 起 `tools/docs_headings.pin.json` 归对方（合并者）维护，我只写文档、不写 pin。
 
 另补一句我庚栏漏掉的：`1029` 与 `1104` 的差 **75** 不是「进展」，是两个**不同基准**之间的历史长度差；把两个 `behind` 相减读成「我说的旧了 75 个提交」是这一族最常见的误读。
+
+## §1.393 增补四百二十五：一个数既被印又被当判据
+
+从 `333ccce` 起，`tools/docs_headings.py` 那一套口子改了：`clean-tree` 在副本里**先** `--write-pin` 再断言，`stale` 是独立读数，门禁只闸 `removed>0`。本节记我在 `333ccce` 上量到的四组数。
+
+### 甲 一行三个数，只有一个判决（实测，树 `333ccce`）
+
+| 我做的事 | rc | `removed` | `added` | `stale behind` |
+|---|---|---|---|---|
+| 原样跑 | 0 | 0 | 0 | 0 |
+| 文件尾加一节 `## §9.999 probe` | **0** | 0 | **1** | **1** |
+| 把 `## §1.392 …` 改成 `### §1.392 …`（真删一节） | **1** | **1** | 0 | 0 |
+| `git checkout -- docs/AUDIT.md` 恢复 | 0 | 0 | 0 | 0 |
+
+三行读数里只有 `removed` 进 rc：加节 rc 0（并逐字打出 `HEADINGS|tree=333ccce|base=1325|now=1326|removed=0|added=1`），删节 rc 1 并逐字打出 `check_docs_headings: 1 level-2 heading(s) that the pin records are gone. A ceiling cannot see a deletion -- it only bounds growth -- so this is measured against the pinned counts instead.`。
+
+### 乙 ★ `stale` 那一行印的是 `added` 这个变量本身（同一份源码，相隔五行）
+
+同一份源码里两行相邻的 `print`：上面那行印主读数，下面那行印 stale，逐字：
+
+```python
+print(f"HEADINGS|tree={tree_now}|base={base_total}|now={now_total}|removed={removed}|added={added}")
+print(f"HEADINGS|stale|pin-tree={pin.get('tree', '<unpinned>')}|head={tree_now}|behind={added}")
+```
+
+`behind={added}` ——**不是重算，是同一个变量换个名字再印一次**。所以我三格实测里 `added` 与 `stale behind` 永远同值（0/0、1/1、0/0、0/0）。第二个名字换来的不是新数字，是**两个主语**：`pin-tree=` 与 `head=`。这也是 §1.383 那条「身份字段取 HEAD 不取内容」的同一族：一行读数里「数」和「这个数是关于谁的」是两件事。
+
+### 丙 第四个例子：一个数既是情况又是判决（在两棵树上各量一次）
+
+前三个例子（`delta` 是上界、`dirty(1)` 同数两态、`EXP_CTEST` 主语是 `build/`）都在讲「同一个数可以是不同的东西」。这一族还有第四形态：**同一个数既被印出来当情况，又被拿来当判决**。
+
+`stale` 恒 `rc=0` 的理由写在该文件的文件头注释里，逐字：`It is a reading, not a gate. The verdict comes from removed alone, because a baseline that is merely old is not`。判据：**一个数一旦同时出现在「输出」和「退出码」两个位置，读它的人就分不清「这是情况」还是「这是判决」**——因为两者在字形上完全一样，都是 `HEADINGS|…`。
+
+这一格我量了两次，两次读数不同，两次都记：
+
+- 在 **`333ccce`** 上：加一节后 `stale behind=1`、`rc=0`，而 `grep -c 'stale-warn'` = **0**——工具只印 `HEADINGS|stale|…`，没有任何一行「提醒」。
+- 在 **`5ffd654`** 上（`tools(docs): a reading never carries an exit code; the stale warning is words, not a threshold`）：同一格现在多印一行，逐字 `HEADINGS|stale-warn|behind=1|note=this reading is old; the criterion does not depend on it`，而 `rc` 仍是 **0**。⇒ 「想让人注意旧 pin 就印第二行带 note，不带退出码」从提议变成了实测行为。
+
+**同一个数第三次换名字**：这一格里有三个字段印同样的 `1`——`added=1`、`stale|behind=1`、`stale-warn|behind=1`；三个名字换来的全是主语与语气，不是一个新测量。另有一个反向的坑：`stale-warn` 在不该提醒时印 `behind=-1`（自测 `clean-tree` 那格逐字 `warning behind=-1`），那不是「负一节」，是「没有提醒」的哨兵值——**负一不能被当成计数读**。
+
+### 丁 我复跑了对方的自测（两棵树，命令与输出都在）
+
+```
+$ python3 tools/docs_headings.test.py
+docs-headings: base readings -- tree 333ccce, base 1325, now 1325, removed 0, added 0, stale behind 0, names-head=True; rc=0
+docs-headings: reading-names-its-tree -- ok: tree=333ccce head=333ccce
+docs-headings: stale-is-a-reading -- ok: rc=0, removed=0, stale behind=1 (want rc=0, removed=0, behind>=1: an old baseline is not a defect)
+docs-headings: section-deleted -- ok: rc=1, removed=1, file named=True (want rc=1, removed>=1, docs/STATUS.md named; dropped '## 1. 口径')
+docs-headings: section-restored -- ok: rc=0, removed=0
+docs-headings: document-deleted -- ok: rc=1, removed=12
+docs-headings: clean-tree -- ok: rc=0, removed=0, stale behind=0 (want rc=0, removed=0, behind=0 right after re-pin; baseline freshness is not this case's question)
+docs-headings: cases=6 red=0 green=6 -- none
+```
+
+上面这份是 **`333ccce`** 上的：末行 `cases=6 red=0 green=6`。同一套自测我在 **`5ffd654`** 上又跑一次，末行变成 `cases=7 red=0 green=7`，新增那格逐字 `stale-warn-is-a-reading`，而 `clean-tree` 那格的末尾也从 `behind=0` 变成 `behind=0, warning behind=-1`（重钉后连提醒都不该有）。⇒ 我能引的最硬一句是：**加了 `## §` 不重钉也不会红**——不是承诺，是这两行读数。注意 `section-deleted` 那格的 `dropped '## 1. 口径'` 说明它删的是 `docs/STATUS.md` 的第 1 节，不是 AUDIT。
+
+### 戊 四条判据
+
+1. **判据只该有一个人**：`removed` 是判决，`added`／`stale` 是情况；把 `added` 也写进判据，`clean-tree` 就会被别人的提交染红（这正是 `333ccce` 改掉的那件事）。
+2. **一个数印两次，必须换主语不换数**：`behind={added}` 是允许的形态，但读的人必须能从字段名看出「这两个名字说的是同一件事」——否则会以为是两条独立证据。
+3. **提醒不能靠退出码**：`stale-warn` 那行带 note、不带 rc（`5ffd654` 实测）；把 `stale` 也拿去 `sys.exit(1)`，就等于让「基线旧了」和「文档被删了」共用一个判决。
+4. **记账要写「今天是什么」与「提议是什么」两栏**：本节丙栏的提议（第二行 warn）今天不存在，`grep -c 'stale-warn'` = 0 就是它的证据。
+
+### 己 端点
+
+| 项 | 读数 |
+|---|---|
+| 树 | 实测在 **`333ccce`** 与 **`5ffd654`** 两棵树上各一次；本节落盘的父树见提交记录 |
+| `docs/AUDIT.md` | 23942 → **24016** 行（+74），节 509 → **510** |
+| 本节所在 | `docs/AUDIT.md`（`## §1.393` 一节，钉子在 `tools/docs_headings.pin.json`，归合并者） |
+| 量具 | `tools/check_docs_headings.py`、`tools/docs_headings.test.py` |
+| 自测 | `333ccce`: `cases=6 red=0 green=6`；`5ffd654`: `cases=7 red=0 green=7` |
+| 我的实测格 | 4（原样／加节／删节／恢复）在两棵树上各一轮，另 `stale-warn` 计数 2 格（0 与 1） |
+
+落盘前我又 rebase 到合并者的重钉树 **`b2da9ac`**（pin **1326**、`pin-tree=2b74827`）：同一格读数第三次复现——`added=1`、`stale|behind=1`、`stale-warn|behind=1`、`rc=0`。这是我与对方分工后的第一次：**我加节、对方重钉、门禁不因加节而红**。读者若把上面三棵树的 `behind` 数相减，会得到「进展」的错觉——它们各自对自己的 pin，不可相减（§1.392 辛 的同一教训）。
+
+### 庚 边界
+
+- 本节**不写 pin**：`## §1.393` 使 `added=1`、`stale behind=1`，重钉由合并者做；我只负责让门禁不因「加了一节」而红（`333ccce` 之后它不会红）。
+- 丙栏的「第二行 `stale-warn`」在 `333ccce` 上不存在（计数 0），在 `5ffd654` 上已实现（计数 1）——两个读数都写在这里，谁引用都不该只引一半。
+- 丁栏两个 `cases=` 都是对方自测的读数，我在两棵树上各复跑一次；若对方再改 `docs_headings.test.py`，这两行都要重跑。`behind=-1` 是哨兵不是计数。
