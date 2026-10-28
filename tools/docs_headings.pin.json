@@ -1,6 +1,6 @@
 {
- "docs": 107,
- "headings": 1352,
+ "docs": 108,
+ "headings": 1367,
  "per_file": {
   "docs/API.md": 15,
   "docs/AUDIT.md": 537,
@@ -10,6 +10,7 @@
   "docs/ERROR_CODES_V06.md": 8,
   "docs/HANDOFF_INFIVERSE.md": 5,
   "docs/HYGIENE.md": 12,
+  "docs/IR_DESIGN.md": 15,
   "docs/PLAN_V06.md": 12,
   "docs/PLAN_V07.md": 6,
   "docs/README.md": 5,
@@ -110,5 +111,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "e3d2dc2"
+ "tree": "e506fed"
 }
