@@ -1735,5 +1735,15 @@ set_tests_properties(docs_headings PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_D
 # removals -> red.
 add_test(NAME citations COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/citations.test.py)
 set_tests_properties(citations PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
+# The gate stamps the tree it measures, so a run cannot be attributed to the
+# wrong commit.  It also stamps the moment, in UTC with a Z, so a reader holding
+# an accident window can tell whether a reading came before or after it without
+# leaving the log.  The moment decides nothing: start vs end is still the sha.
+# Controls: both stamps carry a moment and it advances, a shifted local time zone
+# does not reach the stamp, a regex written before at= existed still matches as a
+# prefix, and stripping at= reddens the stamp cases while the compatibility case
+# stays green.
+add_test(NAME gate_attribution COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gate_attribution.test.py)
+set_tests_properties(gate_attribution PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "selfhost;regression")
 
 endif()

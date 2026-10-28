@@ -1090,7 +1090,16 @@ rm -f "$BUILD_DIR"/.gate-stage-*.log
 # different sentence, different exit -- so the run stamps the tree it starts on.
 GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 GATE_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-echo "GATE|start|head=${GATE_START_HEAD:-<not a git tree>}|worktree=${GATE_WORKTREE:-<unknown>}"
+# The stamp carries the moment as well as the subject, because "was this run
+# before or after that window" is a question a sha cannot answer: a reader would
+# have to leave the log and run date -u and git reflog themselves.  UTC, to the
+# second, with a Z -- two stamps then compare as strings, and no reader has to
+# convert a time zone in their head.  The moment is NOT a criterion: start vs end
+# is still decided by the sha alone.  Judging anything on the clock would let a
+# system clock jump become a new intermittent red, and intermittent red is exactly
+# what the sha comparison was added to end.
+GATE_START_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "GATE|start|head=${GATE_START_HEAD:-<not a git tree>}|worktree=${GATE_WORKTREE:-<unknown>}|at=$GATE_START_AT"
 
 for _spec in "${STAGE_SPECS[@]}"; do
   _sel="${_spec%%|*}"; _rest="${_spec#*|}"
@@ -1103,8 +1112,20 @@ done
 # re-run on its own is deliberate -- whether to spend another twelve minutes is a
 # human decision, and a gate that silently re-measured would hide how often this
 # happens.
+#
+# What the two moments can and cannot settle.  They place this run in time, so a
+# reader holding an accident window can say "this reading began after it" without
+# leaving the log.  They add no criterion, and they do not turn the log into a
+# proof: git reflog records HEAD moving, so it holds no line for
+# git checkout -- <path>, which rewrites files and leaves HEAD where it was.  A
+# clean reflog therefore covers exactly one kind of accident -- the tree HEAD
+# swapped under a run -- and says nothing about a file edited in place; for that
+# kind the evidence is worktree= plus a before/after digest, not the reflog.  A
+# reader who takes a clean reflog to mean "the reading is clean" is reading it one
+# accident too broadly.
 GATE_END_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
-echo "GATE|end|head=${GATE_END_HEAD:-<not a git tree>}"
+GATE_END_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "GATE|end|head=${GATE_END_HEAD:-<not a git tree>}|at=$GATE_END_AT"
 if [ -n "$GATE_START_HEAD" ] && [ "$GATE_START_HEAD" != "$GATE_END_HEAD" ]; then
   echo "gate: FAILED — the tree changed while this run was measuring it (start $GATE_START_HEAD -> end $GATE_END_HEAD); nothing here is attributable."
   echo "gate: no stage result is printed: a stage result names a tree, and this run measured more than one."
