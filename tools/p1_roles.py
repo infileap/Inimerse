@@ -43,6 +43,9 @@ ROLES = {
     "OP_MIN":          {"dst": ["r1"], "src": ["r2"]},
     # --- family 1: pure-register arithmetic / comparison (no immediate operand,
     #     no table index, dst never read as an input) ---
+    #     OP_OR is admitted by the same rule and was simply missed when the
+    #     family-1 batch was taken; the omission is recorded, not backfilled.
+    "OP_OR":           {"dst": ["r1"], "src": ["r2", "r3"]},
     "OP_SUB":          {"dst": ["r1"], "src": ["r2", "r3"]},
     "OP_MUL":          {"dst": ["r1"], "src": ["r2", "r3"]},
     "OP_DIV":          {"dst": ["r1"], "src": ["r2", "r3"]},
@@ -80,13 +83,22 @@ ROLES = {
     #     limit; the failure mode is "which resource does this index point at") ---
     "OP_LOCK":         {"imm": ["r1", "r2"]},
     "OP_DECLARE":      {"imm": ["r1", "r2"]},
+    # --- family 8: container access family (exactly one container slot and one
+    #     key slot; the failure mode is "which container, which key, and whether
+    #     the write goes through it".  IN reads a needle in r2 and a container in
+    #     r3, so the container is not always the leftmost operand) ---
+    "OP_INDEX_GET":    {"dst": ["r1"], "obj": ["r2"], "src": ["r3"]},
     "OP_INDEX_SET":    {"obj": ["r1"], "mutate": True, "src": ["r2", "r3"]},
+    "OP_IN":           {"dst": ["r1"], "src": ["r2"], "obj": ["r3"]},
     "OP_TRY_START":    {"imm": ["r1", "r2"]},
     # --- family 3: store family, one member (r1 is a store selector and the
     #     destination is r3: the premise "dst is r1" is already false here) ---
     "OP_RECORD":       {"dst": ["r3"], "imm": ["r1", "r2"]},
     # --- family 4: output family, one member (no destination at all) ---
     "OP_SAY":          {"src": ["r1"]},
+    #     OP_PUSH_REG is admitted by the same rule (a source value, no destination
+    #     anywhere): it hands one register to the output stream, SAY formats one.
+    "OP_PUSH_REG":     {"src": ["r1"]},
     "OP_CALL_FUNC":    {"dst": ["r2"], "imm": ["r1", "r3"]},
     "OP_CALL_BUILTIN": {"dst": ["r1"], "imm": ["r2", "r3"]},
     "OP_MAKE_FUNC":    {"dst": ["r1"], "imm": ["r2", "r3"]},
