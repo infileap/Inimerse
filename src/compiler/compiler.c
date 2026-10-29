@@ -3,14 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include "mir.h"   /* P1: IrInsn / IrModule -- the wiring helpers at the end of this file */
 static int next_register = 1;
 static int lambda_counter = 0;
 static int reg_peak = 0;
 static const char **lambda_outer_names = NULL;
 static int lambda_outer_count = 0;
 static int alloc_reg(void) { if (next_register >= 1024) { fprintf(stderr, "\n[error] registers overflow (>=1024), abort compile.\n"); exit(1); } if (next_register > reg_peak) reg_peak = next_register; return next_register++; }
-static void reset_regs(void) { next_register = 1; reg_peak = 0; } static void copy_ident(char *out, size_t cap, const char *start, size_t len, const char *what);
+static void reset_regs(void) { next_register = 1; reg_peak = 0; } static void copy_ident(char *out, size_t cap, const char *start, size_t len, const char *what); static void wire_emit(Bytecode *bc, OpCode op, int r1, int r2, int r3); static void patch_r2(Bytecode *bc, int idx, int value); static int wire_r1(Bytecode *bc, int idx); static void wire_finish(Compiler *comp);
 
 /* 涓存椂鍙橀噺浼樺寲锟?
    - protect_reg(r)锛氭妸 r 鎻愬崌涓烘寔涔呭瘎瀛樺櫒锛堣法璇彞瀛樻椿锛屽寰幆鏁扮粍/缁撴潫鍊硷級
@@ -310,7 +310,7 @@ static void resolve_labels(Compiler *comp) {
             fprintf(stderr, "error: unknown label '%s'\n", pt->label);
             exit(1);
         }
-        comp->curBC->code[pt->jump_pos].r2 = off;
+        patch_r2(comp->curBC, pt->jump_pos, off);
     }
     /* store label table into bytecode (for thread-goto / debug) */
     if (comp->labelCount > 0) {
@@ -332,7 +332,7 @@ static void resolve_thread_gotos(Compiler *comp) {
     for (int i = 0; i < comp->patchCount; i++) {
         LabelPatch *pt = &comp->patches[i];
         if (pt->kind != 2) continue;
-        int tidx = comp->mainBC->code[pt->jump_pos].r1;
+        int tidx = wire_r1(comp->mainBC, pt->jump_pos);
         if (tidx < 0 || tidx >= comp->mainBC->thread_count || comp->mainBC->threads[tidx] == NULL) {
             fprintf(stderr, "error: thread %d not compiled\n", tidx);
             exit(1);
@@ -345,7 +345,7 @@ static void resolve_thread_gotos(Compiler *comp) {
             fprintf(stderr, "error: label '%s' not found in thread %s\n", pt->label, comp->mainBC->thread_names[tidx] ? comp->mainBC->thread_names[tidx] : "?");
             exit(1);
         }
-        comp->mainBC->code[pt->jump_pos].r2 = off;
+        patch_r2(comp->mainBC, pt->jump_pos, off);
     }
 }
 
@@ -432,14 +432,14 @@ static int lookup_builtin(Compiler *comp, const char *name) {
 }
 
 static void emit(Bytecode *bc, OpCode op, int r1, int r2, int r3) {
-    if (bc->count >= bc->capacity) {
-        bc->capacity = bc->capacity == 0 ? 32 : bc->capacity * 2;
-        bc->code = realloc(bc->code, bc->capacity * sizeof(RegInstruction));
-    }
-    bc->code[bc->count].op = op;
-    bc->code[bc->count].r1 = r1;
-    bc->code[bc->count].r2 = r2;
-    bc->code[bc->count].r3 = r3;
+    /* P1: this no longer writes a RegInstruction.  It appends one IrInsn, and
+       mir_to_bytecode() turns the IrInsn arrays into the stream once the unit is
+       compiled (wire_finish, called at the end of compiler_compile).  Every jump
+       fix-up in this file goes through patch_r2() so the target lands in the same
+       IrInsn.  Bytecode.count still counts instructions: forward jumps are patched
+       to an offset read from it, so it has to advance in lockstep with the wire.
+       That lockstep is why this function keeps bc->count++ as its last statement. */
+    wire_emit(bc, op, r1, r2, r3);
     /* debug line table: record instruction offset at every source-line change */
     if (bc->cur_line > 0 && (bc->dbg_count == 0 || bc->dbg_lines[bc->dbg_count - 1].line != bc->cur_line)) {
         if (bc->dbg_count == bc->dbg_cap) {
@@ -603,7 +603,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             int jnext = comp->curBC->count;
             emit(comp->curBC, OP_JUMP_IF_FALSE, condReg, 0, 0);
             emit(comp->curBC, OP_SET_ADD, result, xReg, 0);
-            comp->curBC->code[jnext].r2 = comp->curBC->count;
+            patch_r2(comp->curBC, jnext, comp->curBC->count);
             emit(comp->curBC, OP_ADD, iReg, iReg, oneReg);
             emit(comp->curBC, OP_JUMP, 0, loopStart, 0);
             int jskip = comp->curBC->count;
@@ -616,9 +616,9 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 emit(comp->curBC, OP_THROW, errReg, 0, 0);
             }
             int doneOff = comp->curBC->count;
-            comp->curBC->code[jnil].r2 = throwOff;
-            comp->curBC->code[jskip].r2 = doneOff;
-            comp->curBC->code[jdone].r2 = doneOff;
+            patch_r2(comp->curBC, jnil, throwOff);
+            patch_r2(comp->curBC, jskip, doneOff);
+            patch_r2(comp->curBC, jdone, doneOff);
             release_to(comp, w0);
             comp->last_temp = 1;
             return result;
@@ -650,7 +650,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 emit(comp->curBC, OP_JUMP_IF_FALSE, nil, 0, 0);
                 int right = compile_expr(comp, expr->binary.right);
                 emit(comp->curBC, OP_MOV, result, right, 0);
-                comp->curBC->code[keep].r2 = comp->curBC->count;
+                patch_r2(comp->curBC, keep, comp->curBC->count);
                 comp->last_temp = 1;
                 return result;
             }
@@ -691,9 +691,9 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 emit(comp->curBC, OP_JUMP, 0, 0, 0);
                 /* Short-circuited: the deciding operand settled the answer, so
                    it is the constant opposite of the jump condition. */
-                comp->curBC->code[jmp_short].r2 = comp->curBC->count;
+                patch_r2(comp->curBC, jmp_short, comp->curBC->count);
                 emit(comp->curBC, OP_LOADK_BOOL, result, is_and ? 0 : 1, 0);
-                comp->curBC->code[jmp_end].r2 = comp->curBC->count;
+                patch_r2(comp->curBC, jmp_end, comp->curBC->count);
                 release_to(comp, r_wm);  /* 鍙冲瓙鏍戜复鏃跺凡娑堣垂 */
                 comp->last_temp = 1;
                 return result;
@@ -863,7 +863,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 }
                 prev = right;
             }
-            for (int i = 0; i < expr->chain.count - 2; i++) comp->curBC->code[jumps[i]].r2 = comp->curBC->count;
+            for (int i = 0; i < expr->chain.count - 2; i++) patch_r2(comp->curBC, jumps[i], comp->curBC->count);
             free(jumps); comp->last_temp = 1; return result;
         }
         case EXPR_CALL: {
@@ -1097,7 +1097,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
                 int value = alloc_reg();
                 emit(comp->curBC, OP_INDEX_GET, value, object, key);
                 emit(comp->curBC, OP_MOV, result, value, 0);
-                comp->curBC->code[skip].r2 = comp->curBC->count;
+                patch_r2(comp->curBC, skip, comp->curBC->count);
                 comp->last_temp = 1;
                 return result;
             }
@@ -1312,7 +1312,7 @@ static int compile_expr(Compiler *comp, Expr *expr) {
             int skip = comp->curBC->count; emit(comp->curBC, OP_JUMP_IF_TRUE, ok, 0, 0);
             compile_active_finally(comp);
             emit(comp->curBC, OP_RETURN, value, 0, 0);
-            comp->curBC->code[skip].r2 = comp->curBC->count;
+            patch_r2(comp->curBC, skip, comp->curBC->count);
             int unwrapped = emit_builtin_call(comp, "result_value", value, 1);
             comp->last_temp = 1; return unwrapped;
         }
@@ -1361,7 +1361,7 @@ static void compile_index_set_chain(Compiler *comp, Expr *target, Expr *value) {
         emit(comp->curBC, OP_JUMP_IF_FALSE, isn, 0, 0); /* 锟?nil 璺宠繃鍒涘缓 */
         emit(comp->curBC, OP_NEW_ARRAY, tmp, 0, 0);
         emit(comp->curBC, OP_INDEX_SET, arr, idx, tmp);
-        comp->curBC->code[jf].r2 = comp->curBC->count;
+        patch_r2(comp->curBC, jf, comp->curBC->count);
         arr = tmp;
     }
     int last_idx = compile_expr(comp, idxs[depth - 1]);
@@ -1789,12 +1789,12 @@ case STMT_WITH: {
                     snprintf(alias, sizeof(alias), "%.*s", (int)br->alias.length, br->alias.start);
                     entry_pc = comp->curBC->count;
                     emit(comp->curBC, OP_STORE_GLOBAL, register_global(comp, alias), subj, 0);
-                    for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = entry_pc;
+                    for (int ji = 0; ji < body_jcount; ji++) patch_r2(comp->curBC, body_jumps[ji], entry_pc);
                 }
                 if (br->guard) {
                     int guard_start = comp->curBC->count;
                     if (entry_pc < 0)
-                        for (int ji = 0; ji < body_jcount; ji++) comp->curBC->code[body_jumps[ji]].r2 = guard_start;
+                        for (int ji = 0; ji < body_jcount; ji++) patch_r2(comp->curBC, body_jumps[ji], guard_start);
                     if (result_bind >= 0 && result_field) {
                         int value = alloc_reg();
                         emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
@@ -1817,7 +1817,7 @@ case STMT_WITH: {
                 } else {
                     body_start = comp->curBC->count;
                 }
-                if (br->guard && guard_true >= 0) comp->curBC->code[guard_true].r2 = body_start;
+                if (br->guard && guard_true >= 0) patch_r2(comp->curBC, guard_true, body_start);
                 if (!br->guard && result_bind >= 0 && result_field) {
                     int value = alloc_reg();
                     emit(comp->curBC, OP_PUSH_REG, subj, 0, 0);
@@ -1831,17 +1831,17 @@ case STMT_WITH: {
                 add_break(&end_jumps, &end_count, je);
                 if (!br->guard) {
                     for (int i = 0; i < body_jcount; i++)
-                        comp->curBC->code[body_jumps[i]].r2 = entry_pc >= 0 ? entry_pc : body_start;
+                        patch_r2(comp->curBC, body_jumps[i], entry_pc >= 0 ? entry_pc : body_start);
                 }
                 for (int i = 0; i < skip_count; i++)
-                    comp->curBC->code[skip_jumps[i]].r2 = comp->curBC->count; /* next branch */
+                    patch_r2(comp->curBC, skip_jumps[i], comp->curBC->count); /* next branch */
                 for (int i = 0; i < guard_skip_count; i++)
-                    comp->curBC->code[guard_skips[i]].r2 = comp->curBC->count;
+                    patch_r2(comp->curBC, guard_skips[i], comp->curBC->count);
                 free(body_jumps); free(skip_jumps); free(guard_skips);
                 release_temps(comp);
             }
             for (int i = 0; i < end_count; i++)
-                comp->curBC->code[end_jumps[i]].r2 = comp->curBC->count; /* case end */
+                patch_r2(comp->curBC, end_jumps[i], comp->curBC->count); /* case end */
             free(end_jumps);
             release_temps(comp);
             break;
@@ -1930,11 +1930,11 @@ case STMT_WITH: {
                     compile_stmt(comp, stmt->guiStmt.body[i], &breaks, &bcount);
                 emit(comp->curBC, OP_JUMP, 0, start, 0);
                 int end = comp->curBC->count;
-                comp->curBC->code[jf].r2 = end;
+                patch_r2(comp->curBC, jf, end);
                 /* fix: bare break inside forever must jump to loop end,
                    not offset 0 (was unpatched -> ip reset to 0) */
                 for (int k = 0; k < bcount; k++)
-                    comp->curBC->code[breaks[k]].r2 = end;
+                    patch_r2(comp->curBC, breaks[k], end);
                 free(breaks);
                 release_temps(comp);
                 break;
@@ -2156,8 +2156,8 @@ case STMT_WITH: {
                 emit(comp->curBC, OP_WAIT, f, 0, 0);
                 emit(comp->curBC, OP_JUMP, 0, loop, 0);
                 int wake = comp->curBC->count;
-                comp->curBC->code[jtrue].r2 = wake;
-                if (jout >= 0) comp->curBC->code[jout].r2 = wake;
+                patch_r2(comp->curBC, jtrue, wake);
+                if (jout >= 0) patch_r2(comp->curBC, jout, wake);
                 emit(comp->curBC, OP_THREAD_CTRL, tidx, THREAD_OP_RESUME, 0);
             }
             break;
@@ -2307,7 +2307,7 @@ case STMT_WITH: {
             for (int i = 0; i < stmt->tryStmt.handlerCount; i++)
                 compile_stmt(comp, stmt->tryStmt.handler[i], break_list, break_count_ptr);
             comp->finally_depth--;
-            comp->curBC->code[tjo].r2 = comp->curBC->count;
+            patch_r2(comp->curBC, tjo, comp->curBC->count);
             for (int i = 0; i < stmt->tryStmt.finallyCount; i++)
                 compile_stmt(comp, stmt->tryStmt.finallyBody[i], break_list, break_count_ptr);
             if (finally_error_idx >= 0) {
@@ -2316,7 +2316,7 @@ case STMT_WITH: {
                 emit(comp->curBC, OP_THROW, rethrow, 0, 0);
                 /* Normal completion must skip both the cleanup exception
                    rethrow and the exception-only finally entry. */
-                comp->curBC->code[tjo].r2 = comp->curBC->count;
+                patch_r2(comp->curBC, tjo, comp->curBC->count);
             }
             /* bare try (no catch): mark ignore=1 so the VM records swallowed exceptions into the debug slot */
             bytecode_add_try(comp->curBC, tstart, tend, tcatch, varIdx, stmt->tryStmt.handlerCount == 0 ? 1 : 0);
@@ -2465,11 +2465,11 @@ case STMT_ASSIGN: {
                 compile_stmt(comp, stmt->ifStmt.thenBody[i], break_list, break_count_ptr);
             int jo = comp->curBC->count;
             emit(comp->curBC, OP_JUMP, 0, 0, 0);
-            comp->curBC->code[jf].r2 = comp->curBC->count;
+            patch_r2(comp->curBC, jf, comp->curBC->count);
             if (stmt->ifStmt.elseBody)
                 for (int i = 0; i < stmt->ifStmt.elseCount; i++)
                     compile_stmt(comp, stmt->ifStmt.elseBody[i], break_list, break_count_ptr);
-            comp->curBC->code[jo].r2 = comp->curBC->count;
+            patch_r2(comp->curBC, jo, comp->curBC->count);
             release_temps(comp);
             break;
         }
@@ -2487,11 +2487,11 @@ case STMT_ASSIGN: {
                 compile_stmt(comp, stmt->whileStmt.body[i], &my_breaks, &my_bc);
             emit(comp->curBC, OP_JUMP, 0, loopStart, 0);
             int exit = comp->curBC->count;
-            comp->curBC->code[jout].r2 = exit;
+            patch_r2(comp->curBC, jout, exit);
             for (int i = 0; i < my_bc; i++)
-                comp->curBC->code[my_breaks[i]].r2 = exit;
+                patch_r2(comp->curBC, my_breaks[i], exit);
             for (int i = 0; i < my_cc; i++)
-                comp->curBC->code[my_cont[i]].r2 = loopStart;
+                patch_r2(comp->curBC, my_cont[i], loopStart);
             free(my_breaks);
             free(my_cont);
             comp->cont_list = saved_cl; comp->cont_count = saved_cc;
@@ -2560,11 +2560,11 @@ case STMT_ASSIGN: {
                 }
                 emit(comp->curBC, OP_JUMP, 0, loopStart, 0);
                 int exit = comp->curBC->count;
-                comp->curBC->code[jout].r2 = exit;
+                patch_r2(comp->curBC, jout, exit);
                 for (int i = 0; i < my_bc; i++)
-                    comp->curBC->code[my_breaks[i]].r2 = exit;
+                    patch_r2(comp->curBC, my_breaks[i], exit);
                 for (int i = 0; i < my_cc; i++)
-                    comp->curBC->code[my_cont[i]].r2 = contTarget;
+                    patch_r2(comp->curBC, my_cont[i], contTarget);
                 free(my_cont);
                 comp->cont_list = saved_cl; comp->cont_count = saved_cc;
                 free(my_breaks);
@@ -2650,11 +2650,11 @@ case STMT_ASSIGN: {
             }
             emit(comp->curBC, OP_JUMP, 0, loopStart, 0);
             int exit = comp->curBC->count;
-            comp->curBC->code[jout].r2 = exit;
+            patch_r2(comp->curBC, jout, exit);
             for (int i = 0; i < my_bc; i++)
-                comp->curBC->code[my_breaks[i]].r2 = exit;
+                patch_r2(comp->curBC, my_breaks[i], exit);
             for (int i = 0; i < my_cc; i++)
-                comp->curBC->code[my_cont[i]].r2 = contTarget;
+                patch_r2(comp->curBC, my_cont[i], contTarget);
             free(my_cont);
             comp->cont_list = saved_cl; comp->cont_count = saved_cc;
             free(my_breaks);
@@ -2701,11 +2701,11 @@ case STMT_ASSIGN: {
             }
             emit(comp->curBC, OP_JUMP, 0, loopStart, 0);
             int exit = comp->curBC->count;
-            comp->curBC->code[jout].r2 = exit;
+            patch_r2(comp->curBC, jout, exit);
             for (int i = 0; i < my_bc; i++)
-                comp->curBC->code[my_breaks[i]].r2 = exit;
+                patch_r2(comp->curBC, my_breaks[i], exit);
             for (int i = 0; i < my_cc; i++)
-                comp->curBC->code[my_cont[i]].r2 = contTarget;
+                patch_r2(comp->curBC, my_cont[i], contTarget);
 
 
             free(my_breaks);
@@ -2729,9 +2729,9 @@ case STMT_ASSIGN: {
             emit(comp->curBC, OP_JUMP_IF_FALSE, cond, loopStart, 0);
             int exit = comp->curBC->count;
             for (int i = 0; i < my_bc; i++)
-                comp->curBC->code[my_breaks[i]].r2 = exit;
+                patch_r2(comp->curBC, my_breaks[i], exit);
             for (int i = 0; i < my_cc; i++)
-                comp->curBC->code[my_cont[i]].r2 = contTarget;
+                patch_r2(comp->curBC, my_cont[i], contTarget);
             free(my_breaks);
             free(my_cont);
             comp->cont_list = saved_cl; comp->cont_count = saved_cc;
@@ -2753,11 +2753,11 @@ case STMT_ASSIGN: {
             emit(comp->curBC, OP_WAIT, wait_reg, 0, 0);
             emit(comp->curBC, OP_JUMP, 0, loopStart, 0);
             int exit = comp->curBC->count;
-            comp->curBC->code[jout].r2 = exit;
+            patch_r2(comp->curBC, jout, exit);
             for (int i = 0; i < my_bc; i++)
-                comp->curBC->code[my_breaks[i]].r2 = exit;
+                patch_r2(comp->curBC, my_breaks[i], exit);
             for (int i = 0; i < my_cc; i++)
-                comp->curBC->code[my_cont[i]].r2 = loopStart;
+                patch_r2(comp->curBC, my_cont[i], loopStart);
             free(my_cont);
             comp->cont_list = saved_cl; comp->cont_count = saved_cc;
             free(my_breaks);
@@ -3129,7 +3129,7 @@ void compiler_compile(Compiler *comp, Program *prog) {
             emit(comp->curBC, OP_LOADK_FLOAT, wr, bytecode_add_float(comp->curBC, 0.1), 0);
             emit(comp->curBC, OP_WAIT, wr, 0, 0);
             emit(comp->curBC, OP_JUMP, 0, start, 0);
-            comp->curBC->code[jf].r2 = comp->curBC->count;
+            patch_r2(comp->curBC, jf, comp->curBC->count);
         } else {
             emit(comp->curBC, OP_HALT, 0, 0, 0);
         }
@@ -3147,7 +3147,7 @@ void compiler_compile(Compiler *comp, Program *prog) {
         comp->mainBC->global_name_count = comp->globalCount;
         for (int i = 0; i < comp->globalCount; i++)
             comp->mainBC->global_names[i] = comp->globals[i].name ? strdup(comp->globals[i].name) : strdup("?");
-    }
+    } wire_finish(comp);
 }
 
 
@@ -3189,4 +3189,186 @@ static void copy_ident(char *out, size_t cap, const char *start, size_t len, con
     }
     if (len > 0) memcpy(out, start, len);
     out[len] = '\0';
+}
+
+/* -------- P1 wiring: the compiler emits IrInsn, mir_to_bytecode makes the stream --------
+
+   This block is at the END of the file on purpose.  docs/ cites
+   src/compiler/compiler.c by line number, so a function added at the top would move
+   every citation below it onto different code (tools/check_line_refs.py counts
+   movement; it says itself that it cannot see a number that still points at the
+   wrong line).  For the same reason the file gains no new #include line: line 6
+   used to be blank and now holds mir.h, and the prototypes ride on line 13.
+
+   WHAT IS WIRED, AND WHAT IS STILL CARRIED
+   emit() appends an IrInsn instead of a RegInstruction; every jump fix-up calls
+   patch_r2() so its target lands in that same IrInsn; compiler_compile() ends by
+   calling wire_finish(), which wraps the container in an IrModule and asks
+   mir_to_bytecode() for the stream.  The stream is then put back on the container
+   this compiler has always returned, so everything that has no MIR field (labels,
+   thread flags, capture names, the debug line table, main_flags) is carried, not
+   rebuilt -- that is DEVIATION 3 in src/compiler/mir.h, and the bytes that change
+   hands here are exactly the ones mir_to_bytecode regenerated: code/count/capacity,
+   per node. */
+#include "mir.h"   /* see "no new #include line" above */
+
+typedef struct { Bytecode *bc; IrInsn *ins; int n, cap; } WireBuf;
+static WireBuf *g_wires = NULL;
+static int g_nwire = 0, g_wcap = 0;
+
+static WireBuf *wire_for(Bytecode *bc) {
+    for (int i = 0; i < g_nwire; i++)
+        if (g_wires[i].bc == bc) return &g_wires[i];
+    if (g_nwire == g_wcap) {
+        g_wcap = g_wcap ? g_wcap * 2 : 8;
+        g_wires = (WireBuf *)realloc(g_wires, (size_t)g_wcap * sizeof(WireBuf));
+        if (!g_wires) { fprintf(stderr, "[error] out of memory (wire table)\n"); exit(1); }
+    }
+    WireBuf *w = &g_wires[g_nwire++];
+    w->bc = bc; w->ins = NULL; w->n = 0; w->cap = 0;
+    return w;
+}
+
+/* The one place instructions are appended.  The conversion to IrInsn is the same
+   one mir.c does when it reads a container (build_insns): a value that does not fit
+   int16_t keeps its full width in imm/wide behind IR_F_WIDE_A/B.  Refusing rather
+   than truncating is the point of DEVIATION 1 -- a silent 16-bit cut would make the
+   stream differ and the readouts would blame the relabel. */
+static void wire_emit(Bytecode *bc, OpCode op, int r1, int r2, int r3) {
+    if (r1 < -32768 || r1 > 32767) {
+        fprintf(stderr, "[error] r1=%d does not fit IrInsn.dst (16 bits); see DEVIATION 1 in src/compiler/mir.h\n", r1);
+        exit(1);
+    }
+    WireBuf *w = wire_for(bc);
+    if (w->n == w->cap) {
+        w->cap = w->cap ? w->cap * 2 : 32;
+        w->ins = (IrInsn *)realloc(w->ins, (size_t)w->cap * sizeof(IrInsn));
+        if (!w->ins) { fprintf(stderr, "[error] out of memory (wire instructions)\n"); exit(1); }
+    }
+    IrInsn *o = &w->ins[w->n++];
+    memset(o, 0, sizeof(*o));
+    o->op = (uint16_t)op;
+    o->dst = (int16_t)r1;
+    o->a = (int16_t)r2;
+    o->b = (int16_t)r3;
+    if (r2 < -32768 || r2 > 32767) { o->flags |= IR_F_WIDE_A; o->imm = r2; }
+    if (r3 < -32768 || r3 > 32767) { o->flags |= IR_F_WIDE_B; o->wide = r3; }
+    o->type = IR_T_UNKNOWN;
+}
+
+/* Jump fix-ups: an offset is only known after the target has been emitted, and it
+   has to reach the IrInsn the stream will be regenerated from -- writing it into a
+   RegInstruction array that no longer feeds the stream would drop the target. */
+static void patch_r2(Bytecode *bc, int idx, int value) {
+    WireBuf *w = wire_for(bc);
+    if (idx < 0 || idx >= w->n) {
+        fprintf(stderr, "[error] jump fix-up at %d is outside the %d instruction(s) emitted so far\n", idx, w->n);
+        exit(1);
+    }
+    IrInsn *o = &w->ins[idx];
+    o->a = (int16_t)value;
+    if (value < -32768 || value > 32767) { o->flags |= IR_F_WIDE_A; o->imm = value; }
+    else { o->flags &= (uint8_t)~IR_F_WIDE_A; o->imm = 0; }
+}
+
+/* OP_THREAD_GOTO carries the thread index in r1; resolve_thread_gotos reads it back
+   before the stream exists, so it reads the IrInsn rather than a missing array. */
+static int wire_r1(Bytecode *bc, int idx) {
+    WireBuf *w = wire_for(bc);
+    if (idx < 0 || idx >= w->n) {
+        fprintf(stderr, "[error] operand read at %d is outside the %d instruction(s) emitted so far\n", idx, w->n);
+        exit(1);
+    }
+    return (int)w->ins[idx].dst;
+}
+
+/* DFS order must be the one mir.c uses: self, then funcs, then threads.  mir_to_bytecode
+   walks the container in that order, so a different order would hand a function's
+   instructions to another function's header. */
+static int wire_nodes(const Bytecode *bc) {
+    int n = 1;
+    for (int i = 0; i < bc->func_count; i++) n += wire_nodes(bc->funcs[i]);
+    for (int i = 0; i < bc->thread_count; i++) n += wire_nodes(bc->threads[i]);
+    return n;
+}
+
+static void wire_fill(IrModule *m, const Bytecode *bc, int *cursor) {
+    IrFunc *f = &m->funcs[(*cursor)++];
+    WireBuf *w = wire_for((Bytecode *)bc);
+    f->id = *cursor - 1;
+    f->argc = 0;
+    f->insns = w->ins;      /* ownership moves into the module */
+    f->ninsns = w->n;
+    f->cap = w->cap;
+    f->blocks = NULL;
+    f->nblocks = 0;
+    f->nregs = 0;
+    f->ret = IR_T_UNKNOWN;
+    f->effects = 0;
+    w->ins = NULL; w->n = 0; w->cap = 0;
+    for (int i = 0; i < bc->func_count; i++) wire_fill(m, bc->funcs[i], cursor);
+    for (int i = 0; i < bc->thread_count; i++) wire_fill(m, bc->threads[i], cursor);
+}
+
+/* Move the regenerated stream onto the container that carries everything else. */
+static void wire_splice(Bytecode *dst, Bytecode *src) {
+    for (int i = 0; i < dst->func_count; i++) wire_splice(dst->funcs[i], src->funcs[i]);
+    for (int i = 0; i < dst->thread_count; i++) wire_splice(dst->threads[i], src->threads[i]);
+    free(dst->code);
+    dst->code = src->code;
+    dst->count = src->count;
+    dst->capacity = src->capacity;
+    src->code = NULL;
+    src->count = 0;
+    src->capacity = 0;
+}
+
+static void wire_finish(Compiler *comp) {
+    Bytecode *bc = comp->mainBC;
+    if (!bc || g_nwire == 0) return;   /* nothing was compiled */
+    int total = wire_nodes(bc);
+    IrModule *m = (IrModule *)calloc(1, sizeof(IrModule));
+    if (!m) { fprintf(stderr, "[error] out of memory (IrModule)\n"); exit(1); }
+    m->funcs = (IrFunc *)calloc((size_t)total, sizeof(IrFunc));
+    if (!m->funcs) { fprintf(stderr, "[error] out of memory (IrFunc)\n"); exit(1); }
+    m->bc = bc;
+    m->nfuncs = total;
+    m->nfuncs_main = 1 + bc->func_count;
+    m->kint = NULL;      /* DEVIATION 2: the encoding has no int pool */
+    m->nkint = 0;
+    m->kfloat = bc->float_pool;
+    m->nkfloat = bc->float_count;
+    m->kstr = NULL;      /* mir_to_bytecode reads pools from m->bc */
+    m->nkstr = 0;
+    int cursor = 0;
+    wire_fill(m, bc, &cursor);
+    if (cursor != total) {
+        fprintf(stderr, "[error] MIR node count %d does not match the container's %d\n", cursor, total);
+        exit(1);
+    }
+
+    /* Negative control for tools/mir_wired.test.py: change one IrInsn field between
+       here and mir_to_bytecode, so the readouts have to go red and name the program.
+       Off unless INIMERSE_MIR_PERTURB=id:idx:field:value is set. */
+    const char *perturb = getenv("INIMERSE_MIR_PERTURB");
+    if (perturb) {
+        int id = -1, idx = -1, field = -1, val = 0;
+        if (sscanf(perturb, "%d:%d:%d:%d", &id, &idx, &field, &val) != 4 ||
+            mir_perturb(m, id, idx, field, (int32_t)val) != 0) {
+            fprintf(stderr, "[error] INIMERSE_MIR_PERTURB='%s': expected id:idx:field:value, and a real instruction\n", perturb);
+            exit(1);
+        }
+        fprintf(stderr, "MIR-WIRED-PERTURB|id=%d|idx=%d|field=%d|value=%d\n", id, idx, field, val);
+    }
+
+    Bytecode *rt = mir_to_bytecode(m);
+    if (!rt) { fprintf(stderr, "[error] mir_to_bytecode returned NULL\n"); exit(1); }
+    wire_splice(bc, rt);
+    bytecode_free(rt);
+    free(rt);
+    mir_free(m);        /* frees the IrInsn arrays that moved into the module */
+    for (int i = 0; i < g_nwire; i++) free(g_wires[i].ins);
+    free(g_wires);
+    g_wires = NULL;
+    g_nwire = g_wcap = 0;
 }
