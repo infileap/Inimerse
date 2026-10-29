@@ -20,6 +20,10 @@ declared  `SHAPE`: one operand shape per opcode, e.g. "r1 = r2 + r3" -- this is
           the authority for what an opcode *means* structurally (destination,
           sources, whether it moves control).  A member of `OpCode` with no
           shape here is a hole in the table, reported as IR-SPEC|unshaped=...
+measured  `handler=`-- the label the dispatcher's case jumps to, read out of
+                       `case OP_X: goto L_Y;`.  The column is measured, never
+                       typed: sixty-seven hand-written label names would be a
+                       second copy of the dispatch, and the copy is what rots.
 measured  `interp`  -- the opcode appears as a `case` in the interpreter's
                        dispatch switch (`switch (ins.op)`).
           `disasm`  -- the opcode appears as a `case` in vm_disasm_ins and the
@@ -39,6 +43,8 @@ READINGS
   IR-SPEC|ops=N|codes=LO..HI|hole=29|shaped=N|unshaped=<names>
   IR-ABI|version=3|abi=2|ops=N
   IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B|aot=na|wasm=na|selfhost=na
+  IR-TABLE|rows=N|handlers-named=N|mismatch=M
+  IR-TABLE-SHADOW|switched=N|readers=none|why=<every opcode still arrives through a case>
   IR-DISASM|cases=N/N|names-checked=N/N|names-unreadable=<names>|wrong-name=<names>
   IR-UNIMPLEMENTED|consumer=disasm|op=OP_X|effect=prints-a-number
 
@@ -274,6 +280,25 @@ def _handlers(vm):
     return out
 
 
+def _dispatch_targets(vm):
+    """opcode -> the label its case jumps to: `case OP_X: goto L_Y;`.
+
+    This is the table's `handler=` column, and it is taken from the source for
+    the same reason the shapes are measured against the handler bodies: the
+    reading must describe *this* tree.  Taken from the dispatch, though, it
+    cannot be a copy of the dispatch -- what it can be is stale or broken, and
+    the two ways that happens are counted in report(): a case that jumps to a
+    label no body defines, and a case that jumps to a label that is not its own
+    (renamed or shared, which is how an opcode quietly starts executing another
+    opcode's body).  Both are invisible to IR-COVER, which only asks whether a
+    case exists at all.
+    """
+    start = vm.index("switch (ins.op)")
+    end = vm.index("default:", start)
+    return {m.group(1): m.group(2) for m in
+            re.finditer(r"case (OP_[A-Z0-9_]+):\s*goto (L_[A-Z0-9_]+);", vm[start:end])}
+
+
 def measured():
     """Coverage measured from the sources: dispatch, disassembler, handlers."""
     vm = VM_C.read_text()
@@ -284,10 +309,11 @@ def measured():
     disasm_fn = vm[d : vm.index("default:", d)]
     return {"interp": dispatch, "disasm": _cases(disasm_fn),
             "disasm_names": _disasm_names(disasm_fn),
-            "disasm_cases": _case_bodies(disasm_fn), "handlers": _handlers(vm)}
+            "disasm_cases": _case_bodies(disasm_fn), "handlers": _handlers(vm),
+            "targets": _dispatch_targets(vm)}
 
 
-def report(ops, shape, meas, out=sys.stdout):
+def report(ops, shape, meas, out=sys.stdout, handler_table=None):
     names = [n for n, _ in ops]
     codes = [c for _, c in ops]
     holes = sorted(set(range(min(codes), max(codes) + 1)) - set(codes))
@@ -487,6 +513,49 @@ def report(ops, shape, meas, out=sys.stdout):
           f"|missing=disasm:{','.join(missing_disasm) or 'none'}"
           f"|budget=none|aot=na|wasm=na|selfhost=na", file=out)
 
+    # The handler column: one row per opcode, and the value is the label the
+    # dispatcher's case jumps to.  Two ways that stops describing this tree --
+    # a case that reaches no body, and a case that runs another opcode's body --
+    # are both invisible to IR-COVER, which only asks whether a case exists.
+    # This table is read by nobody yet (the shadow line below says so), and a
+    # table nobody reads is exactly the one allowed to drift, so it is measured
+    # rather than believed.
+    targets = dict(handler_table if handler_table is not None
+                   else meas.get("targets", {}))
+    bodies = {"L_" + k[3:] for k in meas.get("handlers", {})}
+    named, mismatch, shared, renamed = 0, [], {}, []
+    for n in names:
+        label, own = targets.get(n), "L_" + n[3:]
+        if label is None:
+            mismatch.append((n, "none", own, "the-row-has-no-handler-at-all"))
+        elif label not in bodies:
+            mismatch.append((n, label, own, "the-case-jumps-to-a-label-no-body-defines"))
+        else:
+            named += 1
+            shared.setdefault(label, []).append(n)
+            if label != own:
+                if own in bodies:
+                    mismatch.append((n, label, own,
+                                     "the-case-runs-another-opcodes-body"))
+                else:
+                    renamed.append((n, label, own))
+    print(f"IR-TABLE|rows={len(names)}|handlers-named={named}|mismatch={len(mismatch)}", file=out)
+    for n, got, want, effect in mismatch:
+        print(f"IR-TABLE-MISMATCH|op={n}|handler={got}|expected={want}|effect={effect}", file=out)
+    for label, holders in sorted(shared.items()):
+        if len(holders) > 1:
+            print(f"IR-TABLE-SHARED|handler={label}|ops={','.join(holders)}"
+                  f"|effect=one-body-serves-several-opcodes", file=out)
+    for n, got, own in renamed:
+        print(f"IR-TABLE-RENAMED|op={n}|handler={got}|expected={own}"
+              f"|effect=the-opcodes-own-label-is-gone-so-this-is-a-rename-not-a-cross-jump",
+              file=out)
+    print(f"IR-TABLE-SHADOW|switched={len(targets)}|readers=none"
+          f"|why=the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case",
+          file=out)
+    if mismatch:
+        bad.append(f"handler-table:{len(mismatch)}")
+
     # Slots whose role the vocabulary cannot say yet.  OP_CONCAT takes a base
     # register plus a count and folds a range of registers; none of R[rN], a
     # bare digit or the word "imm" describes that, so its shape can only be a
@@ -604,15 +673,31 @@ def main(argv):
             caught = target in line.split("|hidden=")[1].split("|")[0].split(",")
             print(f"IRCHECK|case=operand-set|red={'yes' if caught else 'no'}|op={target}", file=sys.stdout)
             ok &= caught
+        # The handler column says which label each case jumps to.  The mutation
+        # is not a typo in a hand-written table -- it is a dispatch that sends
+        # one opcode into another opcode's body, which is the failure a table of
+        # handlers exists to catch.  It must red *and name the opcode*: a count
+        # that goes up without saying which row is wrong is not evidence.
+        tmap = dict(meas.get("targets", {}))
+        moved = next((n for n, _ in ops if tmap.get(n)), None)
+        donor = next((n for n in tmap if n != moved), None)
+        if moved and donor:
+            got = _report_text(ops, shape, meas,
+                               handler_table=dict(tmap, **{moved: tmap[donor]}))
+            named = any(l.startswith("IR-TABLE-MISMATCH|") and ("op=" + moved + "|") in l
+                        for l in got.splitlines())
+            print(f"IRCHECK|case=handler-table|red={'yes' if named else 'no'}|op={moved}",
+                  file=sys.stdout)
+            ok &= named
         return 0 if ok else 1
 
     return report(ops, shape, meas)
 
 
-def _report_text(ops, shape, meas):
+def _report_text(ops, shape, meas, handler_table=None):
     import io
     buf = io.StringIO()
-    report(ops, shape, meas, out=buf)
+    report(ops, shape, meas, out=buf, handler_table=handler_table)
     return buf.getvalue()
 
 
