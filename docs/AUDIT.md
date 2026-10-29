@@ -25708,7 +25708,15 @@ IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unex
 
 ### 丁 端点
 
-本节测量树 `7075477`（`origin/main`；分支 `audit-ir-decisions` 上的 `tools/` 与源码与它一字节未动，我只改了这个文档）；四个读数是 `tools/ir_spec.py` 在该树上的当场输出，树号与读数在同一次调用里记下。三本账（指针／行引用／节数）与围栏的当场值不在这里预支：它们由这一笔提交前后的门禁打印，判据是 `git rev-parse HEAD` 与 `GATE|start|head=` 同一个 40 位 sha——**读数的主语是树，写在这里的树号必须与门禁盖章的那棵是同一棵**，所以这一节只声明身份，不复述门禁随后会印的数。另有一族读数（`THREE-WAY`／`THREE-WAY-HARNESS`／`THREE-WAY-SELFCHECK`）由合并者提供，标**对方读数，本节未复跑**。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
+本节测量树 `7075477`（`origin/main`；分支 `audit-ir-decisions` 上的 `tools/` 与源码与它一字节未动，我只改了这个文档）；四个读数是 `tools/ir_spec.py` 在该树上的当场输出，树号与读数在同一次调用里记下。三本账（指针／行引用／节数）与围栏的当场值不在这里预支：它们由这一笔提交前后的门禁打印，判据是 `git rev-parse HEAD` 与 `GATE|start|head=` 同一个 40 位 sha——**读数的主语是树，写在这里的树号必须与门禁盖章的那棵是同一棵**，所以这一节只声明身份，不复述门禁随后会印的数。另有三行读数由合并者在其树上跑出，本节按**对方读数**收（`measured-by=ivory-zephyr|re-run-by-me=no`），树号写它**测量时**那一棵 `7075477`，不是本节的落盘树——两者之间只有本节对文档的改动，但既然我没有复跑，就不给它们编本树的树号：
+
+```
+THREE-WAY|rule=parity-v1|cases=35|families=13|interp=ok|aot=ok|wasm=ok|disagree=0
+THREE-WAY-HARNESS|leg=wasm-runner|problem=not found at /tmp/scratch/parity/wasm_run.js|result=NOT-RUN
+THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,all-crashed,no-gap-fires,no-gap-withdrawn,claim-wins
+```
+
+这三行的全部价值在它们的**形状差别**：器械缺失印 `NOT-RUN`（rc=2，且不产分歧行），而「全部 case 分歧」产 `disagree=`＝腿数×案数——两种形状都用「没测到」四个字概括时，一次搬动就会被读成十七处语义分歧。它与本节反复在拆的那一族同形：**同一个结论有两种成因时，读数必须把它们印成两行**，因为只有一个看起来像结论。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
 
 ### 戊 边界
 
