@@ -227,14 +227,23 @@ def main():
             print('PAGE|%s|tree=%s|odd=%d|fence_lines=%d|fence_backticks=%d|inline_escapes=%d|swallowed=%d' %
                   (name, sha, r['odd'], r['fence_lines'], r['fence_backticks'], r['inline'], r['swallowed']))
     escaped_total = totals['fence_backticks'] + totals['inline']
-    print('FENCES|tree=%s|files=%d|odd=%d|fence_lines=%d|fence_backticks=%d|inline_escapes=%d|escaped_total=%d|swallowed=%d' %
-          (sha, len(pairs), totals['odd'], totals['fence_lines'], totals['fence_backticks'], totals['inline'], escaped_total, totals['swallowed']))
     pages = sum(1 for _n, t in pairs if scan_text(t, _n)['inline'])
+    escaped_pages = [n for n, t in pairs if scan_text(t, n)['inline']]
     print('INLINE|pages=%d|occurrences=%d|unit=backtick-occurrences|gated=no' % (pages, totals['inline']))
-    print('UNITS|escaped_total=fence_backticks+inline_escapes|check=%d=%d+%d|verdict=%s' %
+    print('FENCES|tree=%s|files=%d|odd=%d|fence_lines=%d|fence_backticks=%d|inline_escapes=%d|escaped_total=%d|swallowed=%d|escaped_pages=%d|escaped_paths=%s' %
+          (sha, len(pairs), totals['odd'], totals['fence_lines'], totals['fence_backticks'], totals['inline'], escaped_total, totals['swallowed'],
+           len(escaped_pages), ','.join(escaped_pages) if escaped_pages else 'none'))
+    # The identity check is arithmetic on the totals above: it can only fail if
+    # the printer is wrong, never if a page is wrong.  It is therefore reported
+    # with its own word (identity=) and does not decide the exit code -- the
+    # verdict does, and the verdict reads only the two structural totals.
+    print('UNITS|escaped_total=fence_backticks+inline_escapes|check=%d=%d+%d|identity=%s' %
           (escaped_total, totals['fence_backticks'], totals['inline'],
-           'PASS' if escaped_total == totals['fence_backticks'] + totals['inline'] else 'FAIL'))
-    return 0 if not findings else 1
+           'ok' if escaped_total == totals['fence_backticks'] + totals['inline'] else 'broken'))
+    structural = totals['odd'] + totals['swallowed']
+    print('FENCES-VERDICT|odd=%d|swallowed=%d|verdict=%s' %
+          (totals['odd'], totals['swallowed'], 'PASS' if structural == 0 else 'FAIL'))
+    return 0 if structural == 0 else 1
 
 
 if __name__ == '__main__':
