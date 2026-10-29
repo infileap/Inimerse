@@ -5723,9 +5723,53 @@ typedef char g_ir_handler_covers_the_enum[(OP_LOADK_I64 + 1 == 68) ? 1 : -1];
 typedef char g_ir_handler_has_a_slot_per_op[(sizeof(g_ir_handler) == 68) ? 1 : -1];
 
 static unsigned long long g_ir_sw[68], g_ir_tb[68], g_ir_diffs, g_ir_unmapped;
+static unsigned long long g_ir_goto[68];
+static unsigned long long g_ir_bodies[68][2];
 static char g_ir_prog[1024];
 static unsigned g_ir_first_op, g_ir_first_tb, g_ir_first_sw;
 static int g_ir_first_ip = -1;
+static const char *vm_ir_op_name(unsigned op) {
+    static char buf[16];
+    if (op < 68 && g_op_names[op] && g_op_names[op][0]) return g_op_names[op];
+    snprintf(buf, sizeof buf, "op%d", (int)op);
+    return buf;
+}
+
+static int vm_ir_split_ops(char *buf, size_t cap) {
+    int op, n = 0;
+    for (op = 0; op < 68; op++) {
+        int bits = __builtin_popcountll(g_ir_bodies[op][0]) + __builtin_popcountll(g_ir_bodies[op][1]);
+        if (bits > 1) { n++; if (buf && cap) snprintf(buf, cap, "%s%s", n > 1 ? "," : "", vm_ir_op_name((unsigned)op)); }
+    }
+    return n;
+}
+
+static unsigned long long vm_ir_goto_total(void) {
+    int op; unsigned long long n = 0;
+    for (op = 0; op < 68; op++) n += g_ir_goto[op];
+    return n;
+}
+
+static void vm_ir_dump_splits(void) {
+    int op, i;
+    for (op = 0; op < 68; op++) {
+        int bits = __builtin_popcountll(g_ir_bodies[op][0]) + __builtin_popcountll(g_ir_bodies[op][1]);
+        char bodies[256] = "";
+        if (bits <= 1) continue;
+        for (i = 0; i < 68; i++) {
+            int hi = i >> 6, lo = i & 63;
+            if (!(g_ir_bodies[op][hi] & (1ULL << lo))) continue;
+            const char *nm = vm_ir_op_name((unsigned)i);
+            char lbuf[32];
+            snprintf(lbuf, sizeof lbuf, "L_%s", strncmp(nm, "OP_", 3) == 0 ? nm + 3 : nm);
+            snprintf(bodies + strlen(bodies), sizeof bodies - strlen(bodies), "%s%s",
+                     bodies[0] ? "," : "", lbuf);
+        }
+        printf("IR-TABLE-SPLIT|op=%s|bodies=%s|dispatched=%llu|entered-by-goto=%llu|effect=the-opcode-is-served-by-more-than-one-body\n",
+               vm_ir_op_name((unsigned)op), bodies, g_ir_sw[op], g_ir_goto[op]);
+    }
+}
+
 static void vm_ir_same_dump(void);
 
 void vm_ir_table_note_prog(const char *p) {
@@ -5737,12 +5781,6 @@ void vm_ir_table_note_prog(const char *p) {
     g_ir_prog[n] = 0;
 }
 
-static const char *vm_ir_op_name(unsigned op) {
-    static char buf[16];
-    if (op < 68 && g_op_names[op] && g_op_names[op][0]) return g_op_names[op];
-    snprintf(buf, sizeof buf, "op%d", (int)op);
-    return buf;
-}
 
 static int vm_ir_op_by_name(const char *name) {
     int i;
@@ -5776,8 +5814,11 @@ static void vm_ir_probe(unsigned op, unsigned body, int ip) {
     int from_dispatch;
     if (!g_ir_init_done) { vm_ir_same_init(); g_ir_disp = 1; }
     from_dispatch = g_ir_disp; g_ir_disp = 0;
-    if (!g_ir_same || !from_dispatch) return;
-    if (op >= 68 || g_ir_handler[op] == 255) { g_ir_unmapped++; return; }
+    if (!g_ir_same) return;
+    if (op >= 68) { g_ir_unmapped++; return; }
+    if (body < 128) g_ir_bodies[op][body >> 6] |= 1ULL << (body & 63);
+    if (!from_dispatch) { g_ir_goto[op]++; return; }
+    if (g_ir_handler[op] == 255) { g_ir_unmapped++; return; }
     g_ir_sw[op]++;
     if (g_ir_handler[op] == (unsigned char)body) { g_ir_tb[op]++; return; }
     g_ir_diffs++;
@@ -5796,8 +5837,9 @@ static void vm_ir_same_dump(void) {
                vm_ir_op_name((unsigned)op), g_ir_tb[op], g_ir_sw[op],
                (g_ir_tb[op] == g_ir_sw[op]) ? "none" : "yes");
     }
-    printf("IR-TABLE-SAME|opcodes=67|compared=%d|table=%llu|switch=%llu|mismatch=%llu\n",
-           seen, tsum, ssum, g_ir_diffs);
+    printf("IR-TABLE-SAME|opcodes=67|compared=%d|unseen=%d|basis=the-corpus-never-executed-them|table=%llu|switch=%llu|mismatch=%llu|split-ops=%d|goto-entries=%llu\n",
+           seen, 67 - seen, tsum, ssum, g_ir_diffs, vm_ir_split_ops(NULL, (size_t)0), vm_ir_goto_total());
+    vm_ir_dump_splits();
     if (g_ir_diffs) {
         if (g_ir_first_ip >= 0 && g_ir_prog[0])
             printf("IR-TABLE-DIFF|op=%s|prog=%s|ip=%d|table=%s|switch=%s|effect=the-table-routes-this-opcode-to-another-body\n",
