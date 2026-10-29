@@ -25658,9 +25658,9 @@ GATE-ATTR|test=inim_regression|limit=30s|worst=23.91s|load=20-hog x -j12|serial=
 
 `docs/IR_DESIGN.md` 第 12 节把六条留给「人」决定，470 行设计里最贵的一句话是「本文档不替它决定」。这一节不替它决定，只把每条压成五行内能读完的一格：**两种选择各自成为什么、不做会怎样、谁能一句话拍板、拍错后返工的最小单位**。
 
-先给四个可复跑的读数（`tools/ir_spec.py`，树 `7075477`＝`git rev-parse HEAD` 的当场输出；本节只改这个文档，`tools/` 与源码一字节未动）：
+先给四个可复跑的读数（`tools/ir_spec.py`，树 `fb116dc`＝`git rev-parse HEAD` 的当场输出；本节只改这个文档，`tools/` 与源码一字节未动）：
 
-`7075477` 与本节上一版的基 `aaa5741` 之间隔着十一笔（P1 原型与它的三条滥用控制、三路对照矩阵、`mir_roundtrip_regression` 的注册），但 `tools/ir_spec.py` 在这两棵树上一字节未动（`git diff aaa5741..7075477 -- tools/ir_spec.py` 输出 **0 行**），所以下面这四行**逐字相同**——这不是四次独立测量，是同一份量具在两个树号上盖章，与本节正文那条「多个树号盖章不等于多份证据」同形。工具在 `7075477` 上共印 **15 行**，本节只引其中四行；另外十一行（`IR-RETIRED`、`IR-DISASM`、`IR-SHAPE-BARE`、`IR-SHAPE`、`IR-DISASM-OPERANDS`、五条逐 opcode 的 `IR-DISASM-HIDDEN`、`IR-SHAPE-VOCAB`）不是这一节要裁的六条，故不在此重复。
+`fb116dc` 与本节上一版的基 `aaa5741` 之间隔着十四笔（P1 原型与它的三条滥用控制、三路对照矩阵、`mir_roundtrip_regression` 的注册、P1 本体 `8a13678`、`mir_wired_regression` 的注册 `fb116dc`），但 `tools/ir_spec.py` 在这些树上**一字节未动**（`git diff aaa5741..fb116dc -- tools/ir_spec.py` 输出 **0 行**），所以下面这四行**逐字相同**——这不是四次独立测量，是同一份量具在两个树号上盖章，与本节正文那条「多个树号盖章不等于多份证据」同形。工具在 `7075477` 与 `fb116dc` 上各印 **15 行**，本节只引其中四行；另外十一行（`IR-RETIRED`、`IR-DISASM`、`IR-SHAPE-BARE`、`IR-SHAPE`、`IR-DISASM-OPERANDS`、五条逐 opcode 的 `IR-DISASM-HIDDEN`、`IR-SHAPE-VOCAB`）不是这一节要裁的六条，故不在此重复。
 
 ```
 IR-SPEC|ops=67|codes=0..67|hole=29|shaped=67|unshaped=none
@@ -25671,7 +25671,9 @@ IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unex
 
 **`IR-COVER` 这一行也没换，而那不是「忘了更新」**：`aot=na|wasm=na|selfhost=na` 仍是「消费者不存在」的意思，不是 `0/67`。照本节与合并者定下的合约，`na` 要同行带理由并点名消费者，能数之后 `0/67` 才合法、且那时 `missing=` 必须点名缺哪几条——今天三个消费者连能数的那一步都没到，所以这一行保持原样正是它该有的值。读数不变与读数过期是两件事：前者要能说出「为什么不变」（量具那侧 `tools/ir_spec.py` 一字节未动），后者只要一次取数就够了。
 
-**本笔唯一被换掉的数是门禁常量**：`EXP_CTEST` 由 `177` 改成 `178`，与 `mir_roundtrip_regression`（P1 的「只换表示」守卫：94 个程序经 `IrModule` 往返后逐字节相同）的注册**同一笔**落地。三个数一起核得平：门禁脚本第 155 行的默认值 `178`、注册表里 `add_test(` 的计数 `178`、`ctest -N` 末行 `Total Tests: 178`。这是 §1.418 那条判据（常量与注册表必须同笔改）的第七个点（`171`／`173`／`174`／`175`／`176`／`177`／`178`），也是它第一次由合并者在同一笔里做全——前六格里有五格是事后补的，这一格不是。
+**被换掉的那个数是门禁常量，而它不是我这一笔换的**：`EXP_CTEST` 由 `178` 改成 `179`，与 `mir_wired_regression`（P1 的接线守卫：把整个语料编译两遍、逐字节比对，harness 从记录里那次提交自建基线，门禁不需要第二次检出）的注册**同一笔**落地——那笔是合并者的 `fb116dc`，本节只改文档。三个数在我 rebase 到的这棵树上一起核得平：`sed -n '155p' tools/gate.sh` 的默认值 `179`、`grep -c 'add_test(' CMakeLists.txt` 的 `179`、`ctest -N` 末行 `Total Tests: 179`（配好 `build/` 后当场跑）。这是 §1.418 那条判据（常量与注册表必须同笔改）的第八个点（`171`／`173`／`174`／`175`／`176`／`177`／`178`／`179`），前七格里五格是事后补的，`178` 与 `179` 这两格不是。
+
+同族的第二个数是 `check_line_refs` 的 `unanchored`：`567` → **`566`**（树 `fb116dc`，`pins -- explicit delta +12 (expect +12), unanchored delta +4 (ceiling +12)`）。它**不是涨**，是 `src/compiler/compiler.c` 的改动让一条旧引用重新落在了它自己那行里；引用时带树号，`567` 是 `7075477` 上的值。
 
 **这四个数的主语是树，换树就换引文**：`hidden=` 的序列是 `a670a70` **8** → `cff9197` **7** → `7d0e6fd` **5**（本节的基 `aaa5741` 与它同数），引用以本树读数为准。第一段（8→7）**差异未归因**：两棵树之间角色表与打印行都有变动，我没有逐项归因；我能核到的只到「哪一项不在列表里」为止——离开的是 `OP_THREAD_START`，而 `9dd3ade` 恰好改过它的打印行（现在印 `res=r%d`，同时把 `RECV` 的 `-1` 哨兵从 `timeout=r-1` 改成 `timeout=none`），两件事挨得很近，但这不是逐项归因，我不把它写成归因。第二段（7→5）我核到的也只是同一层：离开的是 `OP_EQK` 与 `OP_NEQK`，而 `7d0e6fd` 的提交信息说 `a declared register the print line hides is now a red`——我核的是「哪两项离开」，没有读那两个打印器的 diff，所以不写成「因为」某一行改对了。这一笔仍是「取数命令与树号必须写在同一行」的现场：同一串 `IR-*` 行在 `9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd`、`de2111c`、`9f1a589`、`edb1bcd`、`aaa5741` 上是三个不同的数。★ 这四棵树（`7d0e6fd`／`de2111c`／`9f1a589`／`edb1bcd`／`aaa5741`）上这几行逐字相同，但那是**同一个事实被五个树号盖章，不是五次独立的测量**——只换了基树、量具与源码都没变，写在这里是为了让读者能核「换树没有换数」，不是五份可相加的证据。
 
@@ -25708,7 +25710,7 @@ IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unex
 
 ### 丁 端点
 
-本节测量树 `7075477`（`origin/main`；分支 `audit-ir-decisions` 上的 `tools/` 与源码与它一字节未动，我只改了这个文档）；四个读数是 `tools/ir_spec.py` 在该树上的当场输出，树号与读数在同一次调用里记下。三本账（指针／行引用／节数）与围栏的当场值不在这里预支：它们由这一笔提交前后的门禁打印，判据是 `git rev-parse HEAD` 与 `GATE|start|head=` 同一个 40 位 sha——**读数的主语是树，写在这里的树号必须与门禁盖章的那棵是同一棵**，所以这一节只声明身份，不复述门禁随后会印的数。另有三行读数由合并者在其树上跑出，本节按**对方读数**收（`measured-by=ivory-zephyr|re-run-by-me=no`），树号写它**测量时**那一棵 `7075477`，不是本节的落盘树——两者之间只有本节对文档的改动，但既然我没有复跑，就不给它们编本树的树号：
+本节测量树 `fb116dc`（P1 上主线后的 `origin/main`；我的分支只改了这个文档，`tools/` 与源码与它一字节未动）；四个读数是 `tools/ir_spec.py` 在该树上的当场输出，树号与读数在同一次调用里记下。三本账（指针／行引用／节数）与围栏的当场值不在这里预支：它们由这一笔提交前后的门禁打印，判据是 `git rev-parse HEAD` 与 `GATE|start|head=` 同一个 40 位 sha——**读数的主语是树，写在这里的树号必须与门禁盖章的那棵是同一棵**，所以这一节只声明身份，不复述门禁随后会印的数。另有三行读数由合并者在其树上跑出，本节按**对方读数**收（`measured-by=ivory-zephyr|re-run-by-me=no`），树号写它**测量时**那一棵 `7075477`，不是本节的落盘树——两者之间只有本节对文档的改动，但既然我没有复跑，就不给它们编本树的树号：
 
 ```
 THREE-WAY|rule=parity-v1|cases=35|families=13|interp=ok|aot=ok|wasm=ok|disagree=0
@@ -25716,7 +25718,9 @@ THREE-WAY-HARNESS|leg=wasm-runner|problem=not found at /tmp/scratch/parity/wasm_
 THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,all-crashed,no-gap-fires,no-gap-withdrawn,claim-wins
 ```
 
-这三行的全部价值在它们的**形状差别**：器械缺失印 `NOT-RUN`（rc=2，且不产分歧行），而「全部 case 分歧」产 `disagree=`＝腿数×案数——两种形状都用「没测到」四个字概括时，一次搬动就会被读成十七处语义分歧。它与本节反复在拆的那一族同形：**同一个结论有两种成因时，读数必须把它们印成两行**，因为只有一个看起来像结论。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
+这三行的全部价值在它们的**形状差别**：器械缺失印 `NOT-RUN`（rc=2，且不产分歧行），而「全部 case 分歧」产 `disagree=`＝腿数×案数——两种形状都用「没测到」四个字概括时，一次搬动就会被读成十七处语义分歧。它与本节反复在拆的那一族同形：**同一个结论有两种成因时，读数必须把它们印成两行**，因为只有一个看起来像结论。`9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd` 上这四行**不是同一个数**：`a670a70` 修的是 `TRY_START` 印 frame 变量而不是寄存器（落在 `unmeasured`/`hidden` 之外，四行逐字不变），`9dd3ade` 修的是 `THREAD_START` 的打印行与 `RECV` 的哨兵（`hidden=` 8→7），`cff9197` 与 `9dd3ade` 在这四行上相同，`7d0e6fd` 修 `EQK`/`NEQK` 的打印器（`hidden=` 7→5），`de2111c`、`7d0e6fd`、`9f1a589`、`edb1bcd` 在这四行上相同（`RETURN` 与 `CONCAT` 那几笔落在它们之外）。★ 同一族还有第四个：`MIR-WIRED|set=compiled|programs=93|bytes=<b>|differ=0|bytes-scope=this-checkout|note=compiled-output-embeds-the-source-path`。合并者读到 `259635`、PTC 读到 `259914`，**两个都对**——产物里嵌了检出路径，目录名长度差 3 字节 × 93 个程序。所以 `bytes=` 不能当「语料大小」引用，它自带 `bytes-scope=this-checkout`；引用它时树与 scope 一起写，否则读的人会以为其中一个是错的。
+
+设计档的六条原文引自 `docs/IR_DESIGN.md` 第 12 节，其中第 6 条已写着决定（见己栏）。
 
 ### 戊 边界
 
