@@ -25691,6 +25691,25 @@ HEADINGS|drift|added=0|removed=0|net=0
 
 **pin 里写的树号不是 `HEAD`，而这不是矛盾**：pin 记的是「这些计数取自哪棵树」（这里 `c94b599`，即 §1.421 那一笔），`HEAD` 是重钉那一笔（`639a429`）；两者内容一样这件事，由 `stale|net=0` 与 `drift|net=0` 说，而不是由两个树号相等说。反过来说，`net` 不为 0 时它就是那两个树号之间的**差**——所以「pin 的树号等于 `HEAD`」不是判据，`net` 才是。这一笔也说明一件早就该说的事：**给一节加标题的人不一定是重钉的人**，而重钉一旦延后，`stale` 行就一直是红的，红得对。同一个红在这里有两个意思——「门禁坏了」与「还有一个人没做的事」——区分它们的不是颜色，是那行字说的是不是「差多少」：`stale` 带 `net`，所以它读起来是待办；不带数的红只能读成故障。
 
+**P2 的第一件量具在 `3668c01` 上多出两行读数，而两行都是新行、没有旧行可替**：
+
+```
+IR-TABLE|rows=67|handlers-named=67|mismatch=0
+IR-TABLE-SHADOW|switched=67|readers=none|why=the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case
+```
+
+`IR-COVER` 那四行一字未变（`IR-TABLE` 只加行、不改既有行）。★ `readers=none` 的主语是**dispatch 路径**，不是整个程序：harness 自己就会从表里读（下面运行时那条的 `table=` 列就是它读出来的）。同一个 `none` 站在两种主语中间，正是这个仓库踩过一次的坑（`na` 与 `0/67` 那次），所以这里把主语写在行上而不是留给读者猜。
+
+运行时那条要跑二进制（`INIMERSE_IR_TABLE=1 ./build/inimerse` 跑基准 `cpu1`[obs: 3668c01]），它印十三条逐 opcode 行加一条汇总：
+
+```
+IR-TABLE-SAME|op=OP_MOV|table=300000001|switch=300000001|first-diff=none
+IR-TABLE-SAME|op=OP_LOADK_INT|table=600000004|switch=600000004|first-diff=none
+IR-TABLE-SAME|opcodes=67|compared=13|table=3000000030|switch=3000000030|mismatch=0
+```
+
+两个分母必须分开读：`opcodes=67` 是**表里有多少条**，`compared=13` 是**这个程序真的执行到了几条**——`mismatch=0` 只对这 13 条成立，读成「67 条都在运行时验过」就把分母换掉了。而 `table=3000000030` 是**同一个 opcode 被算了多少次**的和（这个程序的主循环把 `MOV` 跑了三亿次），不是「三亿个不同的 opcode」：这个计数器数的是次数，不是种类。
+
 同族的第二个数是 `check_line_refs` 的 `unanchored`：`567` → **`566`**（树 `fb116dc`，`pins -- explicit delta +12 (expect +12), unanchored delta +4 (ceiling +12)`）。它**不是涨**，是 `src/compiler/compiler.c` 的改动让一条旧引用重新落在了它自己那行里；引用时带树号，`567` 是 `7075477` 上的值。
 
 **这四个数的主语是树，换树就换引文**：`hidden=` 的序列是 `a670a70` **8** → `cff9197` **7** → `7d0e6fd` **5**（本节的基 `aaa5741` 与它同数），引用以本树读数为准。第一段（8→7）**差异未归因**：两棵树之间角色表与打印行都有变动，我没有逐项归因；我能核到的只到「哪一项不在列表里」为止——离开的是 `OP_THREAD_START`，而 `9dd3ade` 恰好改过它的打印行（现在印 `res=r%d`，同时把 `RECV` 的 `-1` 哨兵从 `timeout=r-1` 改成 `timeout=none`），两件事挨得很近，但这不是逐项归因，我不把它写成归因。第二段（7→5）我核到的也只是同一层：离开的是 `OP_EQK` 与 `OP_NEQK`，而 `7d0e6fd` 的提交信息说 `a declared register the print line hides is now a red`——我核的是「哪两项离开」，没有读那两个打印器的 diff，所以不写成「因为」某一行改对了。这一笔仍是「取数命令与树号必须写在同一行」的现场：同一串 `IR-*` 行在 `9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd`、`de2111c`、`9f1a589`、`edb1bcd`、`aaa5741` 上是三个不同的数。★ 这四棵树（`7d0e6fd`／`de2111c`／`9f1a589`／`edb1bcd`／`aaa5741`）上这几行逐字相同，但那是**同一个事实被五个树号盖章，不是五次独立的测量**——只换了基树、量具与源码都没变，写在这里是为了让读者能核「换树没有换数」，不是五份可相加的证据。
