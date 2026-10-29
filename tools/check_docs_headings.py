@@ -109,9 +109,31 @@ def heading_counts(files: list[str]) -> dict[str, int]:
     return counts
 
 
+def counts_at(tree: str, files: list[str]) -> dict[str, int]:
+    """Count level-2 headings as committed at `tree`.
+
+    This is the only reading that can falsify the pin's `tree` field: the pin
+    claims its numbers were taken on that tree, and a claim about a tree is
+    checked by going back to that tree, not by trusting the field.
+    """
+    proc = git("rev-parse", "--verify", f"{tree}^{{commit}}")
+    if proc.returncode != 0:
+        refuse(f"the pin names tree {tree!r} and this repository cannot resolve it; the pin's numbers are then a claim about nothing readable. Either the pin is wrong or the history was rewritten.", 4)
+    out: dict[str, int] = {}
+    for rel in files:
+        shown = git("show", f"{tree}:{rel}")
+        if shown.returncode != 0:
+            out[rel] = 0      # absent at that tree: a deletion, and the pin says so by counting it
+            continue
+        out[rel] = sum(1 for line in shown.stdout.splitlines() if line.startswith("## "))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--write-pin", action="store_true", help="record the current counts as the baseline")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="let --write-pin record counts from uncommitted docs (the pin's tree then never had them)")
     args = ap.parse_args()
 
     files = docs_files()
@@ -120,12 +142,21 @@ def main() -> int:
 
     if args.write_pin:
         tree = git("rev-parse", "--short=7", "HEAD").stdout.strip() or "<no tree>"
+        # ★ A pin written from a dirty docs tree records counts that tree never
+        # had: --write-pin reads the counts from the working copy but names HEAD,
+        # and the check below then compares the pin against itself instead of
+        # against the tree.  Measured in review: a pin said tree=7075477 while
+        # carrying 1373 headings that only existed uncommitted, and nothing went
+        # red because nothing ever went back to that tree.
+        dirty = [ln for ln in git("status", "--porcelain", "--", "docs").stdout.splitlines() if ln.strip()]
+        if dirty and not args.allow_dirty:
+            refuse(f"--write-pin would record counts from {len(dirty)} uncommitted docs path(s), and then name tree {tree!r}, which never had them. Commit the docs first; if the uncommitted state is deliberate, pass --allow-dirty and say in the commit why the pin's tree cannot be read.", 3)
         PIN.write_text(
             json.dumps({"tree": tree, "docs": len(files), "headings": now_total, "per_file": now},
                        ensure_ascii=False, indent=1, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        print(f"HEADINGS|pin|tree={tree}|docs={len(files)}|headings={now_total}")
+        print(f"HEADINGS|pin|tree={tree}|docs={len(files)}|headings={now_total}|dirty=no")
         return 0
 
     if not PIN.exists():
@@ -136,6 +167,19 @@ def main() -> int:
         refuse(f"cannot read the baseline pin: {exc.__class__.__name__}: {exc}", 4)
     base_counts: dict[str, int] = pin["per_file"]
     base_total = int(pin["headings"])
+
+    # ★ The pin names a tree, so go back to that tree and count.  A green here
+    # says the pin's numbers are the numbers that tree has; it says nothing about
+    # whether HEAD still matches (removed/added below answer that).  Without this
+    # line the pin's `tree` field was decoration: it was printed, never read.
+    pin_tree = pin.get("tree", "<unpinned>")
+    at_tree = counts_at(pin_tree, sorted(set(base_counts) | set(files)))
+    wrong = sorted((rel, int(base_counts.get(rel, 0)), at_tree.get(rel, 0))
+                   for rel in set(base_counts) | set(files)
+                   if int(base_counts.get(rel, 0)) != at_tree.get(rel, 0))
+    print(f"HEADINGS|pin-tree|tree={pin_tree}|counted={len(at_tree)}|mismatch={len(wrong)}")
+    for rel, pinned, actual in wrong:
+        print(f"HEADINGS|pin-tree-mismatch|{rel}|pin={pinned}|tree={actual}")
 
     rows = []
     removed = 0
@@ -187,6 +231,15 @@ def main() -> int:
     if len(rows) > 40:
         print(f"HEADINGS|note|{len(rows) - 40} more file(s) with a change not shown")
 
+    if wrong:
+        print(
+            f"check_docs_headings: {len(wrong)} file(s) where the pin's numbers are not what the pin's own "
+            f"tree {pin_tree!r} counts. The pin is then two claims that cannot both be true, and net/drift "
+            "above are computed against the half that was never checked. Re-pin on a clean tree: "
+            "`python3 tools/check_docs_headings.py --write-pin` (it refuses a dirty docs tree for this reason).",
+            file=sys.stderr,
+        )
+        return 1
     if removed:
         print(
             f"check_docs_headings: {removed} level-2 heading(s) that the pin records are gone. "
