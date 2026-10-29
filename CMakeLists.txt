@@ -417,7 +417,7 @@ if(INIMERSE_BUILD_ENGINE)
     src/types/typeset.c src/types/enum.c src/types/error_types.c src/types/registry.c
     src/vm/closure.c
     src/lexer/lexer.c src/parser/parser.c
-    src/compiler/bytecode.c src/compiler/compiler.c
+    src/compiler/bytecode.c src/compiler/compiler.c src/compiler/mir.c
     src/compilation/checksum.c src/compilation/deps.c src/compilation/profiler.c src/compilation/debug_info.c src/compilation/wasm_backend.c
     src/vm/vm.c src/vm/params_v2.c src/vm/jit_mode.c
     # `vm_exec` is registered by BOTH runtimes (runtime.c on WIN32,
