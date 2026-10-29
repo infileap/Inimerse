@@ -41,6 +41,16 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.environ.get("INIMERSE_BIN") or os.path.join(ROOT, "build", "inimerse")
 BASE = os.environ.get("INIMERSE_BASE")
+
+# The commit the wiring is based on.  Written down because "whatever build you
+# happened to have" is not a baseline: the assertion is that the pre-wiring and
+# the wired compiler emit the same bytes, and a binary from some other commit
+# makes "same" mean nothing.  When INIMERSE_BASE is absent the harness builds
+# this commit itself (bootstrap_baseline), so the reading is reproducible on a
+# machine that has only this checkout -- otherwise registering it in CTest
+# would mean either a silent skip or a permanently red stage.
+BASE_COMMIT = "fdb55bb5745fd20a151aeb0aa4e5cf4c33fd8748"
+BASELINE_DIR = os.path.join(ROOT, "build", "p1-baseline")
 HARNESS = os.path.join(tempfile.gettempdir(), "mir_wired_harness")
 SRC = ["src/compiler/mir.c", "src/compiler/bytecode.c",
        "src/compilation/deps.c", "src/platform/platform.c"]
@@ -243,6 +253,33 @@ def negative_control(workdir, sample):
     return {"program": sample, "base": len(a), "wired": len(b)}, None
 
 
+def bootstrap_baseline():
+    """Build BASE_COMMIT into build/p1-baseline and return the binary path.
+
+    Cached: a second run reuses the binary and says so.  A build failure is a
+    red cell that names the failing step (never a skip), because a baseline that
+    silently went missing is exactly the reading this cell exists to refuse.
+    """
+    binp = os.path.join(BASELINE_DIR, "build", "inimerse")
+    if os.path.exists(binp):
+        return binp, "cached"
+    src = os.path.join(BASELINE_DIR, "src")
+    if not os.path.isdir(src):
+        p = subprocess.run(["git", "worktree", "add", "--detach", src, BASE_COMMIT],
+                           cwd=ROOT, capture_output=True, text=True)
+        if p.returncode != 0:
+            return None, "worktree-add-failed: " + (p.stdout + p.stderr).strip().splitlines()[-1:]
+    for step in (["cmake", "-S", src, "-B", os.path.join(BASELINE_DIR, "build"),
+                  "-DCMAKE_BUILD_TYPE=Release"],
+                 ["cmake", "--build", os.path.join(BASELINE_DIR, "build"), "-j", "8"]):
+        p = subprocess.run(step, cwd=src, capture_output=True, text=True)
+        if p.returncode != 0:
+            return None, "baseline-build-failed: " + (p.stdout + p.stderr).strip().splitlines()[-1:]
+    if not os.path.exists(binp):
+        return None, "baseline-binary-missing-after-build"
+    return binp, "built"
+
+
 def main():
     if not os.path.exists(BIN):
         print("mir_wired: cases=0 red=1 green=0")
@@ -254,11 +291,15 @@ def main():
     anc = subprocess.run(["git", "merge-base", "--is-ancestor", "fdb55bb", "HEAD"],
                          cwd=ROOT, capture_output=True, text=True)
     print("MIR-WIRED|base-commit-is-ancestor=%s" % ("yes" if anc.returncode == 0 else "no"))
+    global BASE
     if not BASE or not os.path.exists(BASE):
-        print("mir_wired: cases=0 red=1 green=0")
-        print("MIR-WIRED|set=compiled|differ=na|why=no-baseline-binary"
-              "|hint=INIMERSE_BASE must point at a build of fdb55bb, the commit this branch is based on")
-        return 2
+        BASE, how = bootstrap_baseline()
+        print("MIR-WIRED-BASELINE|commit=%s|how=%s|path=%s"
+              % (BASE_COMMIT[:7], how, BASE or "-"))
+        if not BASE:
+            print("mir_wired: cases=0 red=1 green=0")
+            print("MIR-WIRED|set=compiled|differ=na|why=no-baseline-binary|detail=%s" % how)
+            return 2
     print("MIR-WIRED|baseline=%s" % BASE)
 
     workdir = tempfile.mkdtemp(prefix="mir-wired-")
@@ -266,7 +307,14 @@ def main():
     inims = tracked(INIM_PATTERNS)
 
     rows, declared, gaps, total_bytes, differ = corpus_compiled(workdir)
+    # bytes= is the total over this run only: the compiled .inim embeds the
+    # source path, so the same corpus totals differently in a checkout with a
+    # different directory name (measured: .worktrees/p1-base -> 259914,
+    # .worktrees/p1v2 -> 259635, a delta of exactly 3 bytes x 93 programs).
+    # Quote it with the tree it was measured on; never compare it across
+    # checkouts.  differ= is the comparable number.
     print("MIR-WIRED|set=compiled|programs=%d|bytes=%d|differ=%d"
+          "|bytes-scope=this-checkout|note=compiled-output-embeds-the-source-path"
           % (len(rows), total_bytes, differ))
     for rel, why in gaps:
         print("MIR-GAP|set=compiled|file=%s|why=%s" % (rel, why))

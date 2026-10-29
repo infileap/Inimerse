@@ -1810,3 +1810,12 @@ endif()
 add_test(NAME mir_roundtrip_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mir_roundtrip.test.py)
 set_tests_properties(mir_roundtrip_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "MIR-VERDICT\\|PASS")
+
+# Registered at the end of the file on purpose: docs/ cite CMakeLists.txt:NNN by
+# line number, and an insertion in the middle moves every one of them.
+# The wiring harness builds its own baseline (commit fdb55bb) into
+# build/p1-baseline on first run, so this needs no second checkout and no
+# env var; a failed baseline build is a red cell that names the step.
+add_test(NAME mir_wired_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mir_wired.test.py $<TARGET_FILE:inimerse>)
+set_tests_properties(mir_wired_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "mir_wired: cases=4 red=0")
