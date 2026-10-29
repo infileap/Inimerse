@@ -57,6 +57,11 @@ REFUSAL side, so:
     run with a non-empty KNOWN_DIVERGENT says "still refused", not "consistent" --
     a shrinking refusal surface and a passing matrix are the same output until the
     entry is deleted.
+  * `no-gap` means NO DISAGREEMENT WAS MEASURED, not "no defect": the three legs are
+    not three independent judges -- they share one language definition and one set of
+    builtin tables, so a constant or a grammar decision that all three inherited the
+    same way reads as `no-gap`.  It earns "not worth a person's week to narrow", never
+    "checked and correct".
   * `--strict` is for that handover: with it a non-empty KNOWN_DIVERGENT is itself a
     failure.  Turn it on once the backends are supposed to have closed the gap (the
     P3/P4 migration), so the matrix cannot keep going green on a stale boundary.
