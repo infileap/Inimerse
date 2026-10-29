@@ -25673,6 +25673,20 @@ IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unex
 
 **被换掉的那个数是门禁常量，而它不是我这一笔换的**：`EXP_CTEST` 由 `178` 改成 `179`，与 `mir_wired_regression`（P1 的接线守卫：把整个语料编译两遍、逐字节比对，harness 从记录里那次提交自建基线，门禁不需要第二次检出）的注册**同一笔**落地——那笔是合并者的 `fb116dc`，本节只改文档。三个数在我 rebase 到的这棵树上一起核得平：`sed -n '155p' tools/gate.sh` 的默认值 `179`、`grep -c 'add_test(' CMakeLists.txt` 的 `179`、`ctest -N` 末行 `Total Tests: 179`（配好 `build/` 后当场跑）。这是 §1.418 那条判据（常量与注册表必须同笔改）的第八个点（`171`／`173`／`174`／`175`／`176`／`177`／`178`／`179`），前七格里五格是事后补的，`178` 与 `179` 这两格不是。
 
+**它还变了一次，仍然不是我这一笔换的**：`179` → **`180`**，随 PTC 的 `tools/ir_table_same.test.py` 注册落地（`c25aa477`；那条 `+1` 注释的原文是「+1 when the interpreter's opcode table started answering every fetch beside the switch, so a table that drifts from the dispatch is caught while the dispatch still exists (179 -> 180, added by the commit that registered tools/ir_table_same.test.py)」）。三个数在树 `639a429` 上一起核得平：`sed -n '155p' tools/gate.sh` 的默认值 `180`、`grep -c 'add_test(' CMakeLists.txt` 的 `180`、`ctest -N` 末行 `Total Tests: 180`（`cmake -B build` 之后当场跑）。这是 §1.418 那条判据的第九个点（`171`／`173`／`174`／`175`／`176`／`177`／`178`／`179`／`180`）。
+
+**同一棵树上还有一处换数，而换的人不是我**：§1.421 加了一节标题，节数 `1373` → `1374`，于是重钉落成 `639a429`。它在树 `639a429` 上的当场读数是：
+
+```
+HEADINGS|pin-tree|tree=c94b599|counted=108|mismatch=0
+HEADINGS|pin|tree=c94b599|docs=108|files=108
+HEADINGS|tree=639a429|base=1374|now=1374|removed=0|added=0
+HEADINGS|stale|pin-tree=c94b599|head=639a429|net=0
+HEADINGS|drift|added=0|removed=0|net=0
+```
+
+**pin 里写的树号不是 `HEAD`，而这不是矛盾**：pin 记的是「这些计数取自哪棵树」（这里 `c94b599`，即 §1.421 那一笔），`HEAD` 是重钉那一笔（`639a429`）；两者内容一样这件事，由 `stale|net=0` 与 `drift|net=0` 说，而不是由两个树号相等说。反过来说，`net` 不为 0 时它就是那两个树号之间的**差**——所以「pin 的树号等于 `HEAD`」不是判据，`net` 才是。这一笔也说明一件早就该说的事：**给一节加标题的人不一定是重钉的人**，而重钉一旦延后，`stale` 行就一直是红的，红得对。
+
 同族的第二个数是 `check_line_refs` 的 `unanchored`：`567` → **`566`**（树 `fb116dc`，`pins -- explicit delta +12 (expect +12), unanchored delta +4 (ceiling +12)`）。它**不是涨**，是 `src/compiler/compiler.c` 的改动让一条旧引用重新落在了它自己那行里；引用时带树号，`567` 是 `7075477` 上的值。
 
 **这四个数的主语是树，换树就换引文**：`hidden=` 的序列是 `a670a70` **8** → `cff9197` **7** → `7d0e6fd` **5**（本节的基 `aaa5741` 与它同数），引用以本树读数为准。第一段（8→7）**差异未归因**：两棵树之间角色表与打印行都有变动，我没有逐项归因；我能核到的只到「哪一项不在列表里」为止——离开的是 `OP_THREAD_START`，而 `9dd3ade` 恰好改过它的打印行（现在印 `res=r%d`，同时把 `RECV` 的 `-1` 哨兵从 `timeout=r-1` 改成 `timeout=none`），两件事挨得很近，但这不是逐项归因，我不把它写成归因。第二段（7→5）我核到的也只是同一层：离开的是 `OP_EQK` 与 `OP_NEQK`，而 `7d0e6fd` 的提交信息说 `a declared register the print line hides is now a red`——我核的是「哪两项离开」，没有读那两个打印器的 diff，所以不写成「因为」某一行改对了。这一笔仍是「取数命令与树号必须写在同一行」的现场：同一串 `IR-*` 行在 `9a4db3b`、`a670a70`、`9dd3ade`、`cff9197`、`7d0e6fd`、`de2111c`、`9f1a589`、`edb1bcd`、`aaa5741` 上是三个不同的数。★ 这四棵树（`7d0e6fd`／`de2111c`／`9f1a589`／`edb1bcd`／`aaa5741`）上这几行逐字相同，但那是**同一个事实被五个树号盖章，不是五次独立的测量**——只换了基树、量具与源码都没变，写在这里是为了让读者能核「换树没有换数」，不是五份可相加的证据。
