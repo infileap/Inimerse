@@ -156,7 +156,13 @@ def main() -> int:
                        ensure_ascii=False, indent=1, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        print(f"HEADINGS|pin|tree={tree}|docs={len(files)}|headings={now_total}|dirty=no")
+        # The flag has to be measured, not declared: island ran this with one
+        # uncommitted docs line and got `headings=1374 ... dirty=no` -- the only
+        # entry allowed to pin a dirty tree was the one printing "clean".  A
+        # receipt that cannot say "yes" is not a receipt.
+        print(f"HEADINGS|pin|tree={tree}|docs={len(files)}|headings={now_total}"
+              f"|dirty={'yes' if dirty else 'no'}"
+              f"|counts={'working-copy' if dirty else 'tree'}")
         return 0
 
     if not PIN.exists():
@@ -180,6 +186,38 @@ def main() -> int:
     print(f"HEADINGS|pin-tree|tree={pin_tree}|counted={len(at_tree)}|mismatch={len(wrong)}")
     for rel, pinned, actual in wrong:
         print(f"HEADINGS|pin-tree-mismatch|{rel}|pin={pinned}|tree={actual}")
+    if wrong:
+        # ★ Before the head-drift block, not after it.  island measured the old
+        # order: drift printed `added=0|removed=0|net=0` and *then* rc=1, so a
+        # reader who greps drift sees a clean 0/0 above a red exit, and the two
+        # claims are about different halves of the pin.  A mismatch means the
+        # pin's own numbers are unusable, so nothing below is computed from them.
+        print(
+            f"check_docs_headings: {len(wrong)} file(s) where the pin's numbers are not what the pin's own "
+            f"tree {pin_tree!r} counts. The pin is then two claims that cannot both be true, and nothing "
+            "below was computed, because it would be computed against the half that was never checked. "
+            "Re-pin on a clean tree: `python3 tools/check_docs_headings.py --write-pin` "
+            "(it refuses a dirty docs tree for this reason).",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ★ A total that is used as a baseline but never recomputed from its own
+    # parts is a number that is printed and judged and unchecked.  orchid measured
+    # it: bump `headings` by one, leave `per_file` alone, and the pin-tree
+    # mismatch stays 0 while `base=` and `drift|net=` both move by one -- so the
+    # drift line then reports a difference that the per-file rows do not have.
+    base_sum = sum(int(v) for v in base_counts.values())
+    print(f"HEADINGS|pin-total|headings={base_total}|sum-per-file={base_sum}|mismatch={base_total != base_sum}")
+    if base_total != base_sum:
+        print(
+            f"check_docs_headings: the pin's total is {base_total} but its per-file rows sum to {base_sum}. "
+            "The total is the baseline that drift and net are computed against, so one of the two is a claim "
+            "about a count this pin cannot support. Re-pin on a clean tree: "
+            "`python3 tools/check_docs_headings.py --write-pin`.",
+            file=sys.stderr,
+        )
+        return 1
 
     rows = []
     removed = 0
