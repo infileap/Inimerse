@@ -1829,4 +1829,4 @@ set_tests_properties(mir_wired_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_S
 # line number, and an insertion in the middle would unanchor them.
 add_test(NAME ir_table_same_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_table_same.test.py)
-set_tests_properties(ir_table_same_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 600 LABELS "vm;regression" PASS_REGULAR_EXPRESSION "ir_table_same: cases=9 red=0")
+set_tests_properties(ir_table_same_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 600 LABELS "vm;regression" PASS_REGULAR_EXPRESSION "ir_table_same: cases=10 red=0")
