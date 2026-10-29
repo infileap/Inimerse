@@ -1796,3 +1796,17 @@ if(INIMERSE_NODE)
                    --node ${INIMERSE_NODE} --jobs 4)
   set_tests_properties(three_way_parity_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "runtime;compiler;wasm;regression" PASS_REGULAR_EXPRESSION "three way parity: ok \\([0-9]+ cases")
 endif()
+
+# P1 relabel-only gate (tools/mir_roundtrip.test.py): take every compiled program's
+# bytecode, turn it into an IrModule (src/compiler/mir.c) and turn it back, and
+# require the bytes to match -- same order, same opcodes, same numbers.  "differ=0"
+# is the whole claim of P1: the MIR layer may relabel, it may not decide anything.
+# The three abuse controls (renumber an op, renumber a dst, swap two operands) each
+# have to go red, and the corpus itself is a declared list: a program that vanishes
+# names itself instead of shrinking the run.  Registered at the end of this file for
+# the same reason as the tests above (an insertion in the middle moves the lines
+# docs/ cites).  Not guarded by INIMERSE_NODE: the MIR path compiles the corpus with
+# the interpreter only, and the harness is built with the host gcc from mir.c.
+add_test(NAME mir_roundtrip_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mir_roundtrip.test.py)
+set_tests_properties(mir_roundtrip_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "MIR-VERDICT\\|PASS")
