@@ -25756,3 +25756,30 @@ THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,a
 判据：一条裁定的状态要能在**同一个文件里自洽**——「已定」若只写在一节的表格里、而来源文件仍声明未定，那不是已定，是两处各说一次。这条现在有闭包：`89177b7` 让「两处」变成一处，本节不再需要记矛盾，只记**六条都在它该在的地方**，且每条带着「什么情况下该重新考虑」——最后一项不是免责声明：一条没有过期条件的决定，会在它已经不对的那天继续被引用。
 
 这条判据的代价在读者一侧，合并者说过一句更准的：**两处不一致时，读者会去信更容易改的那一处，最后留下的是文档而不是事实**。表格比标题好改，所以表格会被改成「已定」，而标题会留着「不替它决定」——于是事实（谁定的、凭什么）留在没人读的那一处。所以这里的顺序不是「先改表、后改标题」，是**同一棵树里两处同时落地**；在它落地之前，这一栏只算记录矛盾，不算记下决定。
+
+## §1.421 增补四百五十二：一个检查器的 rc 数的是 finding，不是围栏
+
+`tools/check_md_fences.py` 在 `fb116dc` 上是这样的：干净树上 `rc=1`，而同一份输出里的判决行是 `UNITS|escaped_total=fence_backticks+inline_escapes|check=144=6+138|verdict=PASS`。`rc` 与它自己印的判决不一致，原因是源码末行 `return 0 if not findings else 1`——**它数的是「有没有任何 finding」，不是「围栏坏没坏」**；那两条 finding 都在证明者（prover）那一侧：`FINDING|docs/streams/dec-formal-axioms.md:355|kind=escaped|fence written with backslashes: the page shows a literal fence` 与同文件 `:359`，`kind` 叫 `escaped`，而 `escaped` 不阻断渲染[obs: fb116dc]。`grep -c 'check_md_fences' tools/gate.sh` 当时是 **0**：这个检查器既不在门禁里，红着也不会有人知道，于是「复跑到 0 findings」这条诉求在不动那一页时**达不到**。
+
+`a3f6914` 把判决词拆开，同一棵树（`a3f6914`，干净工作树，检出在 `.worktrees/tmp-fence` 上以 `--detach` 打开）：
+
+```
+INLINE|pages=4|occurrences=138|unit=backtick-occurrences|gated=no
+FENCES|tree=a3f6914|files=108|odd=0|fence_lines=2|fence_backticks=6|inline_escapes=138|escaped_total=144|swallowed=0|escaped_pages=4|escaped_paths=docs/AUDIT.md,docs/BOARD.md,docs/STATUS.md,docs/streams/dec-formal-axioms.md
+UNITS|escaped_total=fence_backticks+inline_escapes|check=144=6+138|identity=ok
+FENCES-VERDICT|odd=0|swallowed=0|verdict=PASS
+```
+
+逐字旧行 → 新行：`UNITS|escaped_total=fence_backticks+inline_escapes|check=144=6+138|verdict=PASS` → `…|identity=ok`（值域 `ok|broken`）；新增 `FENCES-VERDICT|odd=0|swallowed=0|verdict=PASS`；`FENCES|…|swallowed=0` 追加 `escaped_pages=4|escaped_paths=…`；干净树 `rc`：`1` → **`0`**。`rc` 现在由 `structural = odd + swallowed` 算（`return 0 if structural == 0 else 1`），`FINDING` 行照印但不参与判决。`--self-test` 五格仍全 PASS（`NEGCTL|case=clean|expected=0/0/0|got=0/0/0|verdict=PASS` 起）。
+
+★**`rc` 变了不代表页面变好了**：改前改后是同一棵树、同样 144 个转义反引号、同样两条 finding。变的是「被判的是什么」——`finding` 数（含可见即可接受的 `escaped`）换成结构总量（`odd` + `swallowed`）。这类「同一棵树、不同 rc」的读数，只有把判据一起写出来才有意义；单看 `1 → 0` 会被读成「修好了两处」。
+
+本节另外两条实测，都是**别人的读数没有覆盖到的形状**，记在这里供以后的人判断：
+
+一、**`identity=` 抓不住数错**。源码里 `escaped_total = totals['fence_backticks'] + totals['inline']`，而 `UNITS` 行比较的是 `escaped_total == totals['fence_backticks'] + totals['inline']`——同一个表达式的两处拷贝，只要打印器没被改过就恒为 `ok`。所以 `identity=ok` 不证明扫描对了：即使每个计数器都数错，它照样是 `ok`。它是「加法没被改坏」的自证，不是「页面没问题」的见证。
+
+二、**`escaped_pages` 与 `escaped_paths` 同源，所以只在序列化那一层会分叉**。两者都来自同一个列表（`len(escaped_pages)` 与 `','.join(escaped_pages)`），值上不可能矛盾；但**路径里若含逗号，印出来的名单会长于印出来的数**：我在 `/tmp` 副本里放了一页 `docs/a,b.md`（带两个行内转义反引号）后读到 `escaped_pages=1|escaped_paths=docs/a,b.md`，按逗号一切得到 **2** 条。今天仓库里没有这种路径，所以这不是缺陷，是**序列化的边界**：要真需要一条会红的判据，形状是 `FENCES-ESCAPED|pages=N|from-pages=N|basis=re-aggregated`——从 `PAGE|` 行再数一遍，那是独立见证；数自己明细里已经数过的东西，不算。
+
+★第三条最要紧，**它是给即将进门的 stage 看的**：脚本在解析失败时是抛异常，不是印一行坏读数——我把一页 `chmod 000` 后跑，得到 `rc=1`、`PermissionError: [Errno 13] Permission denied`，而 `grep -c '^UNITS|'` = **0**、`FENCES-VERDICT` 也一行没有。所以门禁那一处若只写「读到 `verdict=PASS` 就算过」，**读不到判决行时必须判红**，否则异常会读成「无事可判」。今天这个检查器还不在门禁里（`grep -c 'check_md_fences' tools/gate.sh` = 0），这一条要在它进门之前就定下来。
+
+边界：本节只记 `a3f6914` 上这一支检查器的形状，不主张它已经覆盖「页面能不能读」；`INLINE|…|gated=no` 自己写着不参与判决，`escaped_pages=4` 与两条 `FINDING` 是**两个问题两个数**（前者数「含转义围栏的页」，后者数「围栏被写成字面量的页」），同屏出现不是打架。`docs/streams/dec-formal-axioms.md:355`／`:359` 属证明者的页，本节只引用、不改动[obs: fb116dc]。
