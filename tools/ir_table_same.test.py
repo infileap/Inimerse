@@ -31,7 +31,7 @@ ENV = "INIMERSE_IR_TABLE"
 MUT = "INIMERSE_IR_TABLE_MUTATE"
 
 ROW = re.compile(r"^IR-TABLE-SAME\|op=([A-Z0-9_#]+)\|table=(\d+)\|switch=(\d+)\|first-diff=(none|yes)$")
-SUM = re.compile(r"^IR-TABLE-SAME\|opcodes=(\d+)\|compared=(\d+)\|unseen=(\d+)\|basis=([a-z-]+)\|table=(\d+)\|switch=(\d+)\|mismatch=(\d+)\|split-ops=(\d+)\|goto-entries=(\d+)$")
+SUM = re.compile(r"^IR-TABLE-SAME\|opcodes=(\d+)\|compared=(\d+)\|unseen=(\d+)\|basis=([a-z-]+)\|table=(\d+)\|switch=(\d+)\|mismatch=(\d+)\|split-ops-seen=(\d+)\|split-ops-known=(na|\d+)\|split-basis=([a-z-]+)\|why=([a-z-]+)\|goto-entries=(\d+)$")
 SPLIT = re.compile(r"^IR-TABLE-SPLIT\|op=([A-Z0-9_]+)\|bodies=([A-Z0-9_,]+)\|dispatched=([A-Za-z0-9_]+)\|goto=([A-Za-z0-9_]+)\|dispatches=(\d+)\|goto-entries=(\d+)\|effect=(.+)$")
 DIFF = re.compile(r"^IR-TABLE-DIFF\|op=([A-Z0-9_]+)\|prog=(.+?)\|ip=(\d+)\|table=([A-Z0-9_]+)\|switch=([A-Z0-9_]+)\|effect=(.+)$")
 
@@ -79,8 +79,9 @@ def readout(text):
             summary = dict(opcodes=int(m.group(1)), compared=int(m.group(2)),
                            unseen=int(m.group(3)), basis=m.group(4),
                            table=int(m.group(5)), switch=int(m.group(6)),
-                           mismatch=int(m.group(7)), split_ops=int(m.group(8)),
-                           goto_entries=int(m.group(9)))
+                           mismatch=int(m.group(7)), split_ops_seen=int(m.group(8)),
+                           split_ops_known=m.group(9), split_basis=m.group(10),
+                           goto_entries=int(m.group(12)))
             continue
         m = SPLIT.match(line)
         if m:
@@ -220,7 +221,7 @@ def cell_split_is_named():
           and hit[0]["dispatched"] == "L_CALL_VALUE"
           and hit[0]["goto"] == "L_CALL_FUNC"
           and hit[0]["by_goto"] >= 1 and hit[0]["dispatch_count"] >= 1
-          and summary["split_ops"] >= 1 and summary["goto_entries"] >= 1
+          and summary["split_ops_seen"] >= 1 and summary["split_ops_known"] == "na" and summary["goto_entries"] >= 1
           and summary["mismatch"] == 0 and not diffs)
     if not ok:
         return False, "split rows=%d" % len(splits)
