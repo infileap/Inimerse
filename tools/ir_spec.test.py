@@ -11,9 +11,13 @@ Two things are asserted, and nothing else:
 3. every declared shape is confirmed by the handler body that implements it:
    a shape may neither forget a register the handler reads nor claim one the
    handler never touches, and a case whose printed name cannot be read is not
-   evidence of a name.
+   evidence of a name;
+4. the handler column is a column of *this* tree: every opcode's case must jump
+   to a label a body defines and to its own label, never to another opcode's.
+   IR-TABLE-SHADOW says in the same run that no reader consumes the table yet,
+   so this is a measurement of the dispatch, not of a table in use.
 
-The checker's own checks are asserted first (`--self-check`, seven mutations), because a table
+The checker's own checks are asserted first (`--self-check`, eleven mutations), because a table
 that cannot go red has not been shown to be watching anything.
 
     python3 tools/ir_spec.test.py
@@ -36,7 +40,7 @@ def main():
     selfcheck = run("--self-check")
     cases = [ln for ln in selfcheck.stdout.splitlines() if ln.startswith("IRCHECK|")]
     red = [ln for ln in cases if "|red=yes" in ln]
-    if selfcheck.returncode != 0 or len(cases) != 10 or len(red) != 10:
+    if selfcheck.returncode != 0 or len(cases) != 11 or len(red) != 11:
         print(f"ir spec: FAIL (self-check: {len(red)}/{len(cases)} mutations caught)")
         for ln in cases:
             print(ln)
@@ -54,14 +58,23 @@ def main():
         print(got.stderr.strip())
         return 1
 
+    table = next((ln for ln in lines if ln.startswith("IR-TABLE|")), "")
+    if not table or "|mismatch=0" not in table:
+        print("ir spec: FAIL (the handler column does not describe this dispatcher)")
+        for ln in lines:
+            if ln.startswith(("IR-TABLE", "IR-COVER|")):
+                print(ln)
+        return 1
+
     fields = dict(part.split("=", 1) for part in cover.split("|")[1:] if "=" in part)
     interp = fields.get("interp", "?")
     disasm = fields.get("disasm", "?")
     shape = next((ln for ln in lines if ln.startswith("IR-SHAPE|")), "")
     ops = dict(part.split("=", 1) for part in spec.split("|")[1:] if "=" in part).get("ops", "?")
     checked = dict(part.split("=", 1) for part in shape.split("|")[1:] if "=" in part).get("checked", "?")
+    tfields = dict(part.split("=", 1) for part in table.split("|")[1:] if "=" in part)
     print(f"ir spec: ok ({ops} opcodes, interp {interp}, disasm {disasm}, "
-          f"shapes {checked})")
+          f"shapes {checked}, handlers {tfields.get('handlers-named', '?')})")
     return 0
 
 
