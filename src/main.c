@@ -308,7 +308,7 @@ static int load_and_run(VM *vm, const char *path) {
     if (plen > 5 && strcmp(path + plen - 5, ".inim") == 0) {
         Bytecode *bc = bytecode_read_file(path);
         if (!bc) { if (g_err_json) { main_err_json("io", path, "recompile the .inim with buildc (old format)"); return 1; } fprintf(stderr, "error: cannot load bytecode '%s' (old format? recompile with buildc)\n", path); return 1; }
-        vm_load_bytecode(vm, bc);
+        vm_load_bytecode(vm, bc); vm_ir_table_note_prog(path);
         /* params AFTER the bytecode, not before.  vm_load_bytecode rebinds globals by
          * POSITION (src/vm/vm.c:1435-1440 frees globals[i].name and strdups the bytecode's
          * own name into that slot, never touching .val).  Loading params first therefore
@@ -336,7 +336,7 @@ static int load_and_run(VM *vm, const char *path) {
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);
     compiler_compile(comp, prog);
     Bytecode *bc = compiler_get_main_bytecode(comp);
-    vm_load_bytecode(vm, bc);
+    vm_load_bytecode(vm, bc); vm_ir_table_note_prog(path);
     vm_run(vm);
     compiler_free(comp);
     if (vm->last_error) return 1;
@@ -369,7 +369,7 @@ static int load_and_run_source(VM *vm, const char *src, const char *display) {
         if (vm->globals[i].name) register_global(comp, vm->globals[i].name);
     compiler_compile(comp, prog);
     Bytecode *bc = compiler_get_main_bytecode(comp);
-    vm_load_bytecode(vm, bc);
+    vm_load_bytecode(vm, bc); if (display) vm_ir_table_note_prog(display);
     vm_run(vm);
     compiler_free(comp);
     if (vm->last_error) return 1;

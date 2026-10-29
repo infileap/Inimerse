@@ -23,7 +23,7 @@
 static SetObj *vm_set_slot(VM *vm, int idx);
 int vm_set_new(VM *vm);
 static const char *builtin_set_name(int bi);
-static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68], g_op_fetches; static void vm_op_hot_init(void);
+static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68], g_op_fetches; static void vm_op_hot_init(void); static void vm_ir_probe(unsigned op, unsigned body, int ip); void vm_ir_table_note_prog(const char *p); static int g_ir_same, g_ir_init_done, g_ir_disp;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -3152,7 +3152,7 @@ static void vm_execute_thread(VmThread *t) {
     
 
 
-        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; }
+        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; } if (g_ir_same || !g_ir_init_done) g_ir_disp = 1;
         if (t->is_task && t->budget > 0 && --t->budget == 0) {
             t->budget = VM_TASK_BUDGET;
             SwitchToFiber(t->fiber_sched);
@@ -3233,13 +3233,13 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 锟斤拷锟斤拷锟狡讹拷 ---------- */
-        L_MOV:
+        L_MOV: vm_ir_probe((unsigned)ins.op, OP_MOV, t->ip - 1);
             value_assign(&R[ins.r1], &R[ins.r2]);
             continue;
-        L_LOADK_INT:
+        L_LOADK_INT: vm_ir_probe((unsigned)ins.op, OP_LOADK_INT, t->ip - 1);
             { Value v = { .type = VAL_INT, .ival = ins.r2, .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
-        L_LOADK_I64:
+        L_LOADK_I64: vm_ir_probe((unsigned)ins.op, OP_LOADK_I64, t->ip - 1);
             /* r2 = low 32 bits, r3 = high 32, both read as UNSIGNED halves.  The
                emitter in src/compiler/compiler.c only uses this opcode for values
                outside int32, so OP_LOADK_INT above keeps its legacy meaning.
@@ -3249,10 +3249,10 @@ static void vm_execute_thread(VmThread *t) {
                                               ((unsigned long long)(unsigned int)ins.r3 << 32)),
                           .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
-        L_LOADK_FLOAT:
+        L_LOADK_FLOAT: vm_ir_probe((unsigned)ins.op, OP_LOADK_FLOAT, t->ip - 1);
             { Value v = { .type = VAL_FLOAT, .fval = t->code->float_pool[ins.r2], .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
-        L_LOADK_STRING: {
+        L_LOADK_STRING: { vm_ir_probe((unsigned)ins.op, OP_LOADK_STRING, t->ip - 1);
             int sidx = ins.r2;
             const char *s = NULL;
             if (sidx >= 0 && sidx < t->code->string_count && t->code->str_interned) {
@@ -3268,12 +3268,12 @@ static void vm_execute_thread(VmThread *t) {
             value_assign(&R[ins.r1], &v);
             continue;
         }
-        L_LOADK_BOOL:
+        L_LOADK_BOOL: vm_ir_probe((unsigned)ins.op, OP_LOADK_BOOL, t->ip - 1);
             { Value v = { .type = VAL_BOOL, .ival = ins.r2 ? 1 : 0, .sval = NULL, .ptr = NULL }; value_assign(&R[ins.r1], &v); }
             continue;
 
         /* ---------- 锟斤拷锟斤拷 ---------- */
-        L_ADD: {
+        L_ADD: { vm_ir_probe((unsigned)ins.op, OP_ADD, t->ip - 1);
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_ARRAY || b->type == VAL_ARRAY || a->type == VAL_DICT || b->type == VAL_DICT) {
                 fprintf(stderr, "Error: '+' is not defined for arrays/dicts (arr + [x] silently loses data; use push(arr, x) instead)\n");
@@ -3324,7 +3324,7 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_CONCAT: {
+        L_CONCAT: { vm_ir_probe((unsigned)ins.op, OP_CONCAT, t->ip - 1);
             /* chain concat: r1 = left-assoc fold(+) of R[r2 .. r2+r3-1].
                Same per-step semantics as L_ADD; all-string chains allocate once.
                Results are always marked heap-owned (ival=0), so later stack/global
@@ -3441,7 +3441,7 @@ static void vm_execute_thread(VmThread *t) {
         concat_threw:   /* the fold overflowed; the throw is already queued */
             continue;
         }
-        L_SUB: {
+        L_SUB: { vm_ir_probe((unsigned)ins.op, OP_SUB, t->ip - 1);
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_SET || b->type == VAL_SET) {
                 int n = -1;
@@ -3466,7 +3466,7 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_MUL: {
+        L_MUL: { vm_ir_probe((unsigned)ins.op, OP_MUL, t->ip - 1);
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (a->type == VAL_SET || b->type == VAL_SET) {
                 int n = -1;
@@ -3491,7 +3491,7 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_DIV: {
+        L_DIV: { vm_ir_probe((unsigned)ins.op, OP_DIV, t->ip - 1);
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (val_is_intlike(a) && val_is_intlike(b)) {
                 long long ia = val_i64(a), ib = val_i64(b);
@@ -3518,7 +3518,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_FLOAT, 0, res, NULL, NULL);
             continue;
         }
-        L_NEG: {
+        L_NEG: { vm_ir_probe((unsigned)ins.op, OP_NEG, t->ip - 1);
             Value *v = &R[ins.r2];
             if (v->type == VAL_INT || v->type == VAL_BOOL) {
                 /* The only int64 negation that overflows is -(-2^63). */                long long neg;
@@ -3536,7 +3536,7 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 锟饺斤拷 ---------- */
-        L_EQ: {
+        L_EQ: { vm_ir_probe((unsigned)ins.op, OP_EQ, t->ip - 1);
             /* 注锟解：锟斤拷锟斤拷值锟斤拷写锟斤拷锟斤拷锟絩esult 锟斤拷锟杰革拷锟斤拷 left锟斤拷锟斤拷写锟斤拷锟斤拷染锟斤拷锟斤拷锟斤拷锟斤拷 */
             int eqres;
             if (R[ins.r2].type == VAL_SET && R[ins.r3].type == VAL_SET)
@@ -3545,7 +3545,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_BOOL, eqres, 0, NULL, NULL);
             continue;
         }
-        L_NEQ: {
+        L_NEQ: { vm_ir_probe((unsigned)ins.op, OP_NEQ, t->ip - 1);
             int eq;
             if (R[ins.r2].type == VAL_SET && R[ins.r3].type == VAL_SET)
                 eq = set_equal(vm, R[ins.r2].ival, R[ins.r3].ival);
@@ -3553,7 +3553,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_BOOL, !eq ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_LT: {
+        L_LT: { vm_ir_probe((unsigned)ins.op, OP_LT, t->ip - 1);
             if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
                 vm_throw_kind(vm, "type_mismatch");
                 R = t->reg + t->base;
@@ -3563,7 +3563,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_BOOL, (c < 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_GT: {
+        L_GT: { vm_ir_probe((unsigned)ins.op, OP_GT, t->ip - 1);
             if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
                 vm_throw_kind(vm, "type_mismatch");
                 R = t->reg + t->base;
@@ -3573,7 +3573,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_BOOL, (c > 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_LE: {
+        L_LE: { vm_ir_probe((unsigned)ins.op, OP_LE, t->ip - 1);
             if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
                 vm_throw_kind(vm, "type_mismatch");
                 R = t->reg + t->base;
@@ -3583,7 +3583,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_BOOL, (c <= 0) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_GE: {
+        L_GE: { vm_ir_probe((unsigned)ins.op, OP_GE, t->ip - 1);
             if (!val_orderable(&R[ins.r2], &R[ins.r3])) {
                 vm_throw_kind(vm, "type_mismatch");
                 R = t->reg + t->base;
@@ -3595,21 +3595,21 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 锟竭硷拷 ---------- */
-        L_AND: {
+        L_AND: { vm_ir_probe((unsigned)ins.op, OP_AND, t->ip - 1);
             Value va = R[ins.r2], vb = R[ins.r3];
             int a = vm_truthy(&va);
             int b = vm_truthy(&vb);
             value_set(&R[ins.r1], VAL_BOOL, (a && b) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_OR: {
+        L_OR: { vm_ir_probe((unsigned)ins.op, OP_OR, t->ip - 1);
             Value va = R[ins.r2], vb = R[ins.r3];
             int a = vm_truthy(&va);
             int b = vm_truthy(&vb);
             value_set(&R[ins.r1], VAL_BOOL, (a || b) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_NOT: {
+        L_NOT: { vm_ir_probe((unsigned)ins.op, OP_NOT, t->ip - 1);
             Value *v = &R[ins.r2];
             int truth = vm_truthy(v);
             value_set(&R[ins.r1], VAL_BOOL, truth ? 0 : 1, 0, NULL, NULL);
@@ -3617,7 +3617,7 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 锟斤拷锟斤拷 ---------- */
-        L_NEW_ARRAY: {
+        L_NEW_ARRAY: { vm_ir_probe((unsigned)ins.op, OP_NEW_ARRAY, t->ip - 1);
             int aidx = vm_array_new(vm);
             if (aidx < 0) {
                 /* 锟斤拷锟斤拷:锟斤拷锟斤拷栈锟斤拷元锟斤拷锟劫凤拷??nil,锟斤拷锟斤拷栈锟斤拷??*/
@@ -3645,7 +3645,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL);
             continue;
         }
-        L_NEW_DICT: {
+        L_NEW_DICT: { vm_ir_probe((unsigned)ins.op, OP_NEW_DICT, t->ip - 1);
             int aidx = vm_array_new(vm);
             if (aidx < 0) {
                 /* 锟斤拷锟斤拷:锟斤拷锟斤拷栈锟斤拷 2*n 锟斤拷元锟斤拷锟劫凤拷锟斤拷 nil,锟斤拷锟斤拷栈锟斤拷??*/
@@ -3672,7 +3672,7 @@ static void vm_execute_thread(VmThread *t) {
             value_set(&R[ins.r1], VAL_DICT, aidx + 1, 0, NULL, NULL);
             continue;
         }
-        L_INDEX_GET: {
+        L_INDEX_GET: { vm_ir_probe((unsigned)ins.op, OP_INDEX_GET, t->ip - 1);
             Value *obj = &R[ins.r2];
             Value *idxv = &R[ins.r3];
             if (obj->type == VAL_ARRAY) {
@@ -3714,7 +3714,7 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_INDEX_SET: {
+        L_INDEX_SET: { vm_ir_probe((unsigned)ins.op, OP_INDEX_SET, t->ip - 1);
             Value *obj = &R[ins.r1];
             Value *idxv = &R[ins.r2];
             Value *valv = &R[ins.r3];
@@ -3733,7 +3733,7 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 全锟街憋拷锟斤拷 ---------- */
-        L_LOAD_GLOBAL: {
+        L_LOAD_GLOBAL: { vm_ir_probe((unsigned)ins.op, OP_LOAD_GLOBAL, t->ip - 1);
             int idx = ins.r2;
             int need_lock = (vm->active_threads > 1);
             if (need_lock) im_mutex_lock((ImMutex*)VM_GSHARD(vm, idx));
@@ -3752,7 +3752,7 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_STORE_GLOBAL: {
+        L_STORE_GLOBAL: { vm_ir_probe((unsigned)ins.op, OP_STORE_GLOBAL, t->ip - 1);
             int idx = ins.r1;
             int src_reg = ins.r2;
             int need_lock = (vm->active_threads > 1);
@@ -3795,22 +3795,22 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 锟斤拷锟斤拷??---------- */
-        L_JUMP:
+        L_JUMP: vm_ir_probe((unsigned)ins.op, OP_JUMP, t->ip - 1);
             t->ip = ins.r2;
             continue;
-        L_JUMP_IF_FALSE: {
+        L_JUMP_IF_FALSE: { vm_ir_probe((unsigned)ins.op, OP_JUMP_IF_FALSE, t->ip - 1);
             int cond = !vm_truthy(&R[ins.r1]);
             if (cond) t->ip = ins.r2;
             continue;
         }
-        L_JUMP_IF_TRUE: {
+        L_JUMP_IF_TRUE: { vm_ir_probe((unsigned)ins.op, OP_JUMP_IF_TRUE, t->ip - 1);
             int cond = vm_truthy(&R[ins.r1]);
             if (cond) t->ip = ins.r2;
             continue;
         }
 
         /* ---------- 栈锟斤拷??---------- */
-        L_PUSH_REG: {
+        L_PUSH_REG: { vm_ir_probe((unsigned)ins.op, OP_PUSH_REG, t->ip - 1);
             Value *v = &R[ins.r1];
             switch (v->type) {
                 case VAL_INT:   push_int(vm, v->ival); break;
@@ -3855,7 +3855,7 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 锟斤拷锟矫猴拷锟斤拷锟斤拷锟斤拷 ---------- */
-        L_CALL_BUILTIN: {
+        L_CALL_BUILTIN: { vm_ir_probe((unsigned)ins.op, OP_CALL_BUILTIN, t->ip - 1);
             /* r2 = 锟斤拷锟斤拷锟斤拷锟斤拷锟街凤拷锟斤拷锟截碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街诧拷锟揭ｏ拷锟斤拷锟斤拷注锟斤拷顺锟斤拷影锟斤拷??*/
             const char *name = (ins.r2 >= 0 && ins.r2 < t->code->string_count)
                                ? t->code->string_pool[ins.r2] : NULL;
@@ -3918,7 +3918,7 @@ static void vm_execute_thread(VmThread *t) {
         }
 
         /* ---------- 系统 ---------- */
-        L_SAY: {
+        L_SAY: { vm_ir_probe((unsigned)ins.op, OP_SAY, t->ip - 1);
             char buf[1024];
             value_to_string(vm, &R[ins.r1], buf, sizeof(buf), 0);
             {
@@ -3930,7 +3930,7 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_WAIT: {
+        L_WAIT: { vm_ir_probe((unsigned)ins.op, OP_WAIT, t->ip - 1);
             Value *v = &R[ins.r1];
             double seconds = (v->type == VAL_INT) ? (double)v->ival :
                              (v->type == VAL_FLOAT) ? v->fval : 0.0;
@@ -4017,27 +4017,27 @@ static void vm_execute_thread(VmThread *t) {
             }
             continue;
         }
-        L_STOP:
+        L_STOP: vm_ir_probe((unsigned)ins.op, OP_STOP, t->ip - 1);
             t->running = false;
             continue;
-        L_HALT:
+        L_HALT: vm_ir_probe((unsigned)ins.op, OP_HALT, t->ip - 1);
             t->running = false;
             continue;
 
         /* ---------- 锟皆讹拷锟藉函锟斤拷锟斤�??---------- */
-                L_YIELD: {
+                L_YIELD: { vm_ir_probe((unsigned)ins.op, OP_YIELD, t->ip - 1);
             /* task: cooperatively hand control back to the scheduler (non-task: no-op) */
             if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
             continue;
         }
-        L_LOAD_CAPTURE: {
+        L_LOAD_CAPTURE: { vm_ir_probe((unsigned)ins.op, OP_LOAD_CAPTURE, t->ip - 1);
             if (!t->closure_env || ins.r2 < 0 || (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) {
                 value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
                 continue;
             }
             value_assign(&R[ins.r1], im_closure_env_get(t->closure_env, (size_t)ins.r2)); continue;
         }
-L_MAKE_FUNC: {
+L_MAKE_FUNC: { vm_ir_probe((unsigned)ins.op, OP_MAKE_FUNC, t->ip - 1);
             ImClosureEnv *env = im_closure_env_new((size_t)ins.r3);
             if (!env) { t->running = false; vm->last_error = 1; continue; }
             for (int ci = ins.r3 - 1; ci >= 0; --ci) {
@@ -4053,12 +4053,12 @@ L_MAKE_FUNC: {
             value_set(&R[ins.r1], VAL_FUNCTION, ins.r2, 0, NULL, fn);
             continue;
         }
-L_CALL_VALUE: {
+L_CALL_VALUE: { vm_ir_probe((unsigned)ins.op, OP_CALL_VALUE, t->ip - 1);
             if (R[ins.r1].type != VAL_FUNCTION) { fprintf(stderr, "error: value is not callable\n"); t->running = false; vm->last_error = 1; continue; }
             call_fidx_override = im_closure_function_index(im_closure_from_value(&R[ins.r1]));
             goto L_CALL_FUNC;
         }
-L_CALL_FUNC: {
+L_CALL_FUNC: { vm_ir_probe((unsigned)ins.op, OP_CALL_FUNC, t->ip - 1);
             int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1, res = ins.r2, argc = ins.r3;
             /* This guard must be unconditional.  It used to be the body of a
              * stray `if (... strncmp(root->func_names[fidx], "h", 1) == 0)`, so
@@ -4120,7 +4120,7 @@ L_CALL_FUNC: {
             if (vm->prof_enabled) prof_record_call(vm, t->frame_count, root->func_names[fidx]);
             continue;
         }
-        L_RETURN: {
+        L_RETURN: { vm_ir_probe((unsigned)ins.op, OP_RETURN, t->ip - 1);
             if (vm->prof_enabled) prof_record_return(vm, t->frame_count);
             Value ret;
             if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1];
@@ -4152,11 +4152,11 @@ L_CALL_FUNC: {
             continue;
         }
 
-        L_IS_NIL: {
+        L_IS_NIL: { vm_ir_probe((unsigned)ins.op, OP_IS_NIL, t->ip - 1);
             value_set(&R[ins.r1], VAL_BOOL, (R[ins.r2].type == VAL_NIL) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_EQK: {
+        L_EQK: { vm_ir_probe((unsigned)ins.op, OP_EQK, t->ip - 1);
             int sidx = ins.r3;
             const char *s = NULL;
             if (sidx >= 0 && sidx < t->code->string_count && t->code->str_interned) {
@@ -4172,7 +4172,7 @@ L_CALL_FUNC: {
             value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_NEQK: {
+        L_NEQK: { vm_ir_probe((unsigned)ins.op, OP_NEQK, t->ip - 1);
             int sidx = ins.r3;
             const char *s = NULL;
             if (sidx >= 0 && sidx < t->code->string_count && t->code->str_interned) {
@@ -4189,7 +4189,7 @@ L_CALL_FUNC: {
             continue;
         }
 
-        L_DECLARE: {
+        L_DECLARE: { vm_ir_probe((unsigned)ins.op, OP_DECLARE, t->ip - 1);
             int kind = ins.r1;
             double v = (ins.r2 >= 0 && ins.r2 < t->code->float_count) ? t->code->float_pool[ins.r2] : 0.0;
             if (kind == 0) vm->limit_mem = (vm->limit_mem > 0.0 && vm->limit_mem < v) ? vm->limit_mem : v;
@@ -4200,7 +4200,7 @@ L_CALL_FUNC: {
             continue;
         }
 
-        L_RECORD: {
+        L_RECORD: { vm_ir_probe((unsigned)ins.op, OP_RECORD, t->ip - 1);
             int gidx = ins.r1;
             int packed = ins.r2;
             if (gidx == -1) { vm->record_default_store = packed &3; continue; }
@@ -4249,7 +4249,7 @@ L_CALL_FUNC: {
 
 
 
-        L_MOD: {
+        L_MOD: { vm_ir_probe((unsigned)ins.op, OP_MOD, t->ip - 1);
             Value *a = &R[ins.r2], *b = &R[ins.r3];
             if (val_is_intlike(a) && val_is_intlike(b)) {
                 long long ia = val_i64(a), ib = val_i64(b);
@@ -4283,7 +4283,7 @@ L_CALL_FUNC: {
             value_set(&R[ins.r1], VAL_INT, r, 0, NULL, NULL);
             continue;
         }
-        L_NEW_SET: {
+        L_NEW_SET: { vm_ir_probe((unsigned)ins.op, OP_NEW_SET, t->ip - 1);
             int n = ins.r3;
             int sidx = vm_set_new(vm);
             if (sidx < 0) {
@@ -4312,7 +4312,7 @@ L_CALL_FUNC: {
             value_set(&R[ins.r1], VAL_SET, sidx, 0, NULL, NULL);
             continue;
         }
-        L_SET_INTERVAL: {
+        L_SET_INTERVAL: { vm_ir_probe((unsigned)ins.op, OP_SET_INTERVAL, t->ip - 1);
             if (t->sp < 1) { value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL); continue; }
             /* A bound that is not a number refuses the interval, and it refuses
                the way the guard above refuses: with nil, not with a throw.
@@ -4348,23 +4348,23 @@ L_CALL_FUNC: {
             value_set(&R[ins.r1], VAL_SET, sidx, 0, NULL, NULL);
             continue;
         }
-        L_IN: {
+        L_IN: { vm_ir_probe((unsigned)ins.op, OP_IN, t->ip - 1);
             Value la = R[ins.r2], rb = R[ins.r3];
             int res = set_contains_or_subset(vm, &la, &rb) ? 1 : 0;
             value_set(&R[ins.r1], VAL_BOOL, res, 0, NULL, NULL);
             continue;
         }
-        L_MIN: {
+        L_MIN: { vm_ir_probe((unsigned)ins.op, OP_MIN, t->ip - 1);
             Value src = R[ins.r2];
             set_minmax(vm, &src, &R[ins.r1], 0);
             continue;
         }
-        L_MAX: {
+        L_MAX: { vm_ir_probe((unsigned)ins.op, OP_MAX, t->ip - 1);
             Value src = R[ins.r2];
             set_minmax(vm, &src, &R[ins.r1], 1);
             continue;
         }
-        L_BIND: {
+        L_BIND: { vm_ir_probe((unsigned)ins.op, OP_BIND, t->ip - 1);
             int g = ins.r1;
             int setReg = ins.r2;
             int initReg = ins.r3;
@@ -4417,7 +4417,7 @@ L_CALL_FUNC: {
 
 
         /* ---------- 锟竭筹拷 ---------- */
-        L_TRY_START: {
+        L_TRY_START: { vm_ir_probe((unsigned)ins.op, OP_TRY_START, t->ip - 1);
             TryEntry *te = NULL;
             if (t->code && t->code->try_count > 0) {
                 int want = t->ip - 1;
@@ -4441,22 +4441,22 @@ L_CALL_FUNC: {
             f->ignore = te->ignore;
             continue;
         }
-        L_TRY_END: {
+        L_TRY_END: { vm_ir_probe((unsigned)ins.op, OP_TRY_END, t->ip - 1);
             if (t->exc_depth > 0) t->exc_depth--;
             continue;
         }
-        L_THROW: {
+        L_THROW: { vm_ir_probe((unsigned)ins.op, OP_THROW, t->ip - 1);
             vm_throw(vm, t, &R[ins.r1]);
             R = t->reg + t->base;
             continue;
         }
-        L_SET_ADD: {
+        L_SET_ADD: { vm_ir_probe((unsigned)ins.op, OP_SET_ADD, t->ip - 1);
             Value *sv = &R[ins.r1];
             if (sv->type == VAL_SET) vm_set_add(vm, sv->ival, &R[ins.r2]);
             continue;
         }
 
-        L_THREAD_START: {
+        L_THREAD_START: { vm_ir_probe((unsigned)ins.op, OP_THREAD_START, t->ip - 1);
             int tidx = ins.r1, res = ins.r2, argc = ins.r3;
             if (tidx < 0 || tidx >= root->thread_count || root->threads[tidx] == NULL) {
                 fprintf(stderr, "閿欒�? 鏃犳晥绾跨▼绱㈠�?%d\n", tidx);
@@ -4544,7 +4544,7 @@ L_CALL_FUNC: {
             value_set(&R[res], VAL_INT, 0, 0, NULL, NULL);
             continue;
         }
-        L_THREAD_CTRL: {
+        L_THREAD_CTRL: { vm_ir_probe((unsigned)ins.op, OP_THREAD_CTRL, t->ip - 1);
             int tidx = ins.r1, op = ins.r2;
             if (tidx == -1) {
                 /* stop/pause/... all */
@@ -4609,7 +4609,7 @@ L_CALL_FUNC: {
             }
             continue;
         }
-        L_THREAD_GOTO: {
+        L_THREAD_GOTO: { vm_ir_probe((unsigned)ins.op, OP_THREAD_GOTO, t->ip - 1);
             int tidx = ins.r1, off = ins.r2;
             Bytecode *root2 = vm->code;
             if (tidx < 0 || tidx >= root2->thread_count || root2->threads[tidx] == NULL) {
@@ -4643,7 +4643,7 @@ L_CALL_FUNC: {
             continue;
         }
 
-        L_THREAD_JOIN: {
+        L_THREAD_JOIN: { vm_ir_probe((unsigned)ins.op, OP_THREAD_JOIN, t->ip - 1);
             int tidx = ins.r1;
             VmThread *tt = (tidx >= 0 && tidx < VM_MAX_THREADS) ? vm->threads[tidx] : NULL;
             if (!tt) {
@@ -4669,7 +4669,7 @@ L_CALL_FUNC: {
             }
             continue;
         }
-        L_THREAD_WAIT: {
+        L_THREAD_WAIT: { vm_ir_probe((unsigned)ins.op, OP_THREAD_WAIT, t->ip - 1);
             /* worker.wait N锟斤拷锟斤拷停目锟斤拷锟斤拷??N 锟诫（锟斤拷时锟皆讹拷锟街革�??*/
             int tidx = ins.r1;
             VmThread *wtt = (tidx >= 0 && tidx < VM_MAX_THREADS) ? vm->threads[tidx] : NULL;
@@ -4689,7 +4689,7 @@ L_CALL_FUNC: {
             }
             continue;
         }
-        L_THREAD_STATE: {
+        L_THREAD_STATE: { vm_ir_probe((unsigned)ins.op, OP_THREAD_STATE, t->ip - 1);
             int tidx = ins.r2, prop = ins.r3;
             bool val = false;
             VmThread *tt = (tidx >= 0 && tidx < VM_MAX_THREADS) ? vm->threads[tidx] : NULL;
@@ -4705,7 +4705,7 @@ L_CALL_FUNC: {
             value_set(&R[ins.r1], VAL_BOOL, val ? 1 : 0, 0, NULL, NULL);
             continue;
         }
-        L_LOCK: {
+        L_LOCK: { vm_ir_probe((unsigned)ins.op, OP_LOCK, t->ip - 1);
             int midx = ins.r1;
             ImMutex *cs;
             VM_LOCK(vm);
@@ -4720,7 +4720,7 @@ L_CALL_FUNC: {
             else im_mutex_unlock(cs);
             continue;
         }
-        L_SEND: {
+        L_SEND: { vm_ir_probe((unsigned)ins.op, OP_SEND, t->ip - 1);
             int tidx = ins.r1;
             VmThread *tt = (tidx >= 0 && tidx < VM_MAX_THREADS) ? vm->threads[tidx] : NULL;
             if (!tt) {
@@ -4758,7 +4758,7 @@ L_CALL_FUNC: {
                 if (tt->is_task && tt->blocked && !tt->wake_at) { tt->blocked = 0; }
                 continue;
         }
-        L_RECV: {
+        L_RECV: { vm_ir_probe((unsigned)ins.op, OP_RECV, t->ip - 1);
             int res = ins.r1;
             double timeout = -1.0;
             if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);
@@ -5707,4 +5707,109 @@ static void vm_op_hot_init(void) {
     e = getenv("INIMERSE_HOT_OPS");
     g_op_hot = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
     if (g_op_hot) atexit(vm_op_hot_dump);
+}
+
+/* ---------- IR-TABLE same-run (P2): the table and the switch answer each fetch twice ---------- */
+static unsigned char g_ir_handler[68] = {
+
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    24, 25, 26, 27, 28, 255, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+    60, 61, 62, 63, 64, 65, 66, 67
+};
+typedef char g_ir_handler_covers_the_enum[(OP_LOADK_I64 + 1 == 68) ? 1 : -1];
+typedef char g_ir_handler_has_a_slot_per_op[(sizeof(g_ir_handler) == 68) ? 1 : -1];
+
+static unsigned long long g_ir_sw[68], g_ir_tb[68], g_ir_diffs, g_ir_unmapped;
+static char g_ir_prog[1024];
+static unsigned g_ir_first_op, g_ir_first_tb, g_ir_first_sw;
+static int g_ir_first_ip = -1;
+static void vm_ir_same_dump(void);
+
+void vm_ir_table_note_prog(const char *p) {
+    size_t n;
+    if (!p || !*p) return;
+    n = strlen(p);
+    if (n >= sizeof g_ir_prog) n = sizeof g_ir_prog - 1;
+    memcpy(g_ir_prog, p, n);
+    g_ir_prog[n] = 0;
+}
+
+static const char *vm_ir_op_name(unsigned op) {
+    static char buf[16];
+    if (op < 68 && g_op_names[op] && g_op_names[op][0]) return g_op_names[op];
+    snprintf(buf, sizeof buf, "op%d", (int)op);
+    return buf;
+}
+
+static int vm_ir_op_by_name(const char *name) {
+    int i;
+    for (i = 0; i < 68; i++)
+        if (strcmp(g_op_names[i] ? g_op_names[i] : "#hole", name) == 0) return i;
+    return -1;
+}
+
+static void vm_ir_same_init(void) {
+    const char *e, *mu, *eq;
+    g_ir_init_done = 1;
+    e = getenv("INIMERSE_IR_TABLE");
+    g_ir_same = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+    if (!g_ir_same) return;
+    mu = getenv("INIMERSE_IR_TABLE_MUTATE");
+    if (mu && (eq = strchr(mu, '=')) != NULL) {
+        char from[32], to[32];
+        size_t n = (size_t)(eq - mu);
+        int fi, ti;
+        if (n > 0 && n < sizeof from && strlen(eq + 1) < sizeof to) {
+            memcpy(from, mu, n); from[n] = 0;
+            snprintf(to, sizeof to, "%s", eq + 1);
+            fi = vm_ir_op_by_name(from); ti = vm_ir_op_by_name(to);
+            if (fi >= 0 && ti >= 0) g_ir_handler[fi] = (unsigned char)ti;
+        }
+    }
+    atexit(vm_ir_same_dump);
+}
+
+static void vm_ir_probe(unsigned op, unsigned body, int ip) {
+    int from_dispatch;
+    if (!g_ir_init_done) { vm_ir_same_init(); g_ir_disp = 1; }
+    from_dispatch = g_ir_disp; g_ir_disp = 0;
+    if (!g_ir_same || !from_dispatch) return;
+    if (op >= 68 || g_ir_handler[op] == 255) { g_ir_unmapped++; return; }
+    g_ir_sw[op]++;
+    if (g_ir_handler[op] == (unsigned char)body) { g_ir_tb[op]++; return; }
+    g_ir_diffs++;
+    if (g_ir_first_ip < 0) { g_ir_first_op = op; g_ir_first_tb = g_ir_handler[op]; g_ir_first_sw = body; g_ir_first_ip = ip; }
+}
+
+static void vm_ir_same_dump(void) {
+    int op, seen = 0;
+    unsigned long long tsum = 0, ssum = 0;
+    if (!g_ir_same) return;
+    for (op = 0; op < 68; op++) {
+        if (g_ir_sw[op] == 0 && g_ir_tb[op] == 0) continue;
+        seen++;
+        tsum += g_ir_tb[op]; ssum += g_ir_sw[op];
+        printf("IR-TABLE-SAME|op=%s|table=%llu|switch=%llu|first-diff=%s\n",
+               vm_ir_op_name((unsigned)op), g_ir_tb[op], g_ir_sw[op],
+               (g_ir_tb[op] == g_ir_sw[op]) ? "none" : "yes");
+    }
+    printf("IR-TABLE-SAME|opcodes=67|compared=%d|table=%llu|switch=%llu|mismatch=%llu\n",
+           seen, tsum, ssum, g_ir_diffs);
+    if (g_ir_diffs) {
+        if (g_ir_first_ip >= 0 && g_ir_prog[0])
+            printf("IR-TABLE-DIFF|op=%s|prog=%s|ip=%d|table=%s|switch=%s|effect=the-table-routes-this-opcode-to-another-body\n",
+                   vm_ir_op_name(g_ir_first_op), g_ir_prog, g_ir_first_ip,
+                   vm_ir_op_name(g_ir_first_tb), vm_ir_op_name(g_ir_first_sw));
+        else if (g_ir_first_ip >= 0)
+            printf("IR-TABLE-DIFF|op=%s|prog=na|why=the-running-code-came-in-memory-and-no-loader-named-a-file|ip=%d|table=%s|switch=%s|effect=the-table-routes-this-opcode-to-another-body\n",
+                   vm_ir_op_name(g_ir_first_op), g_ir_first_ip,
+                   vm_ir_op_name(g_ir_first_tb), vm_ir_op_name(g_ir_first_sw));
+        else
+            printf("IR-TABLE-DIFF|op=na|prog=na|ip=na|effect=a-probe-was-entered-with-no-matching-table-slot\n");
+    }
+    if (g_ir_unmapped)
+        printf("IR-TABLE-UNMAPPED|fetches=%llu|why=the-table-has-no-slot-for-what-arrived-at-a-body\n", g_ir_unmapped);
 }
