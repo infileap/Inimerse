@@ -25691,28 +25691,37 @@ HEADINGS|drift|added=0|removed=0|net=0
 
 **pin 里写的树号不是 `HEAD`，而这不是矛盾**：pin 记的是「这些计数取自哪棵树」（这里 `c94b599`，即 §1.421 那一笔），`HEAD` 是重钉那一笔（`639a429`）；两者内容一样这件事，由 `stale|net=0` 与 `drift|net=0` 说，而不是由两个树号相等说。反过来说，`net` 不为 0 时它就是那两个树号之间的**差**——所以「pin 的树号等于 `HEAD`」不是判据，`net` 才是。这一笔也说明一件早就该说的事：**给一节加标题的人不一定是重钉的人**，而重钉一旦延后，`stale` 行就一直是红的，红得对。同一个红在这里有两个意思——「门禁坏了」与「还有一个人没做的事」——区分它们的不是颜色，是那行字说的是不是「差多少」：`stale` 带 `net`，所以它读起来是待办；不带数的红只能读成故障。
 
-**P2 的第一件量具在 `3668c01` 上多出两行读数，而两行都是新行、没有旧行可替**（下面按 `236c348` 抄，理由见本段末的换格）：
+**P2 的第一件量具在 `3668c01` 上多出两行读数，而两行都是新行、没有旧行可替**（下面按 `ce8582d` 抄，理由见本段末的换格）：
 
 ```
 IR-TABLE|rows=67|handlers-named=67|mismatch=0|source=table
 IR-TABLE-SHADOW|switched=67|readers=none|why=the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case
+IR-TABLE-SPLIT-KNOWN|ops=OP_CALL_VALUE|count=1|basis=a-body-that-jumps-into-another-body-serves-its-opcode-from-two-places
 ```
 
-`IR-COVER` 那四行一字未变（`IR-TABLE` 只加行、不改既有行）。★ `readers=none` 的主语是**dispatch 路径**，不是整个程序：harness 自己就会从表里读（下面运行时那条的 `table=` 列就是它读出来的）。同一个 `none` 站在两种主语中间，正是这个仓库踩过一次的坑（`na` 与 `0/67` 那次），所以这里把主语写在行上而不是留给读者猜。
+`IR-COVER` 那四行一字未变（`IR-TABLE` 只加行、不改既有行）：`interp=67/67|disasm=67/67|missing=disasm:none|budget=none|aot=na|wasm=na|selfhost=na`。★ `readers=none` 的主语是**dispatch 路径**，不是整个程序：harness 自己就会从表里读（下面运行时那条的 `table=` 列就是它读出来的）。同一个 `none` 站在两种主语中间，正是这个仓库踩过一次的坑（`na` 与 `0/67` 那次），所以这里把主语写在行上而不是留给读者猜。
 
-**这两行之间换过一次格**：`3668c01` 上是 `IR-TABLE|rows=67|handlers-named=67|mismatch=0`（三格），`236c348` 上末尾多出 `|source=table`（四格，量具改成去读那张表），而 `IR-TABLE-SHADOW` 在两次之间**一字未变**。加在行尾的一个字段最容易漏：两棵树的行数一样、行长不一样，只数「有没有多行」的核法看不见它。所以两行都按 `236c348` 重抄一遍，而不是在前一笔的引文后面补一句「后来又加了」。
+**第三行与第二行的主语不一样，这一点必须写下来**：`IR-TABLE-SPLIT-KNOWN` 是**静态事实**（量具从源码里算出「哪些 opcode 会被多于一个 body 服务」，`basis=` 就是这个意思），而下面那几条 `IR-TABLE-SAME` 是**跑出来的事实**（这一次运行里真的走了哪几条）。前者的 `count=1` 说的是全表，后者的 `split-ops-*` 说的是这一跑——同一个 `OP_CALL_VALUE`，一个印在静态行上、一个印在运行行上，读者若把两行当同一句话读，就会把「表里知道有一个分裂」读成「这次跑到了一个分裂」。
 
-运行时那条要跑二进制（`INIMERSE_IR_TABLE=1 ./build/inimerse` 跑基准 `cpu1`[obs: 236c348]），它印十三条逐 opcode 行加一条汇总：
+**这三行之间换过两次**：`3668c01` 上是 `IR-TABLE|rows=67|handlers-named=67|mismatch=0`（三格），`236c348` 上末尾多出 `|source=table`（四格，量具改成去读那张表），`ce8582d` 上两行**逐字未变**、只新增了 `IR-TABLE-SPLIT-KNOWN` 那一行（因为表改存标号地址，量具才有东西可读）。加在行尾的一个字段最容易漏：两棵树的行数一样、行长不一样，只数「有没有多行」的核法看不见它。所以两行都按 `ce8582d` 重抄一遍，而不是在前一笔的引文后面补一句「后来又加了」。
+
+运行时那条要跑二进制（`INIMERSE_IR_TABLE=1 ./build/inimerse` 跑基准 `cpu1`[obs: ce8582d]），它印十三条逐 opcode 行加一条汇总：
 
 ```
 IR-TABLE-SAME|op=OP_MOV|table=300000001|switch=300000001|first-diff=none
 IR-TABLE-SAME|op=OP_LOADK_INT|table=600000004|switch=600000004|first-diff=none
-IR-TABLE-SAME|opcodes=67|compared=13|unseen=54|basis=the-corpus-never-executed-them|table=3000000030|switch=3000000030|mismatch=0|split-ops=0|goto-entries=0
+IR-TABLE-SAME|opcodes=67|compared=13|unseen=54|basis=the-corpus-never-executed-them|table=3000000030|switch=3000000030|mismatch=0|split-ops-seen=0|split-ops-known=na|split-basis=this-run-only|why=a-body-that-jumps-into-another-body-is-a-source-fact-so-the-gauge-prints-the-set-of-opcodes-it-knows-to-be-split|goto-entries=0
 ```
 
 **三个分母必须分开读**：`opcodes=67` 是**表里有多少条**，`compared=13` 是**这个程序真的执行到了几条**，`unseen=54` 是余下的那部分——而且它不是「通过」，`basis=the-corpus-never-executed-them` 把这个理由写在同一行上，所以 `mismatch=0` 只对这 13 条成立，读成「67 条都在运行时验过」就把分母换掉了。而 `table=3000000030` 是**同一个 opcode 被算了多少次**的和（这个程序的主循环把 `MOV` 跑了三亿次），不是「三亿个不同的 opcode」：这个计数器数的是次数，不是种类。
 
-★ `split-ops=` 与 `goto-entries=` 的主语是**本次运行**，不是全表：这一跑是 `split-ops=0|goto-entries=0`，而 PTC 的测试语料读出 `split-ops=1|goto-entries=4`，两个都对——他的语料真的 `goto` 进了共享体，`cpu1.im` 不执行 `OP_CALL_VALUE`（整份程序里一次都不出现）。也正因如此，这一跑里 **`IR-TABLE-SPLIT` 一行都不出现**：缺席不是「没有分裂」，是「这只程序没走到会印它的那条路」。ivory 已要求 PTC 给这两格加限定字段，落地后这句引文再改。
+★ `split-ops-seen=` 与 `goto-entries=` 的主语是**本次运行**，`split-basis=this-run-only` 就写在行上；而「全表里哪些 opcode 会被分裂」这件事这一行印不出来，所以它印 `split-ops-known=na` 并把 `why=` 指向来源（静态行 `IR-TABLE-SPLIT-KNOWN`）——**一个 `na` 必须点名出处，否则它和「没有」同形**。这一跑是 `split-ops-seen=0|split-ops-known=na|goto-entries=0`，而 `vtest/composition_v04.im` 上（同一棵树）是 `compared=14|table=57|split-ops-seen=1|goto-entries=4` 并且**真的印出第四行**：
+
+```
+IR-TABLE-SPLIT|op=OP_CALL_VALUE|bodies=L_CALL_FUNC,L_CALL_VALUE|dispatched=L_CALL_VALUE|goto=L_CALL_FUNC|dispatches=4|goto-entries=4|effect=the-opcode-is-served-by-more-than-one-body
+```
+
+所以 `cpu1.im` 上「`IR-TABLE-SPLIT` 一行都不出现」仍然成立，而它现在有对照：**缺席不是「没有分裂」，是「这只程序没走到会印它的那条路」**——`cpu1.im` 整份程序里 `CALL_VALUE` 一次都不出现。ivory 还要求下一笔给这行加 `known-at=`（`na` 的出处要写进值里），那笔没交，本页不预先写它会是什么形状。
 
 同族的第二个数是 `check_line_refs` 的 `unanchored`：`567` → **`566`**（树 `fb116dc`，`pins -- explicit delta +12 (expect +12), unanchored delta +4 (ceiling +12)`）。它**不是涨**，是 `src/compiler/compiler.c` 的改动让一条旧引用重新落在了它自己那行里；引用时带树号，`567` 是 `7075477` 上的值。
 
