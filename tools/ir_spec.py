@@ -297,18 +297,44 @@ def _switch_targets(vm):
 
 
 def _table_slots(vm):
-    """The handler table's own initializer: one byte per opcode, 255 = hole.
+    """The dispatch table's own initializer: one label address per opcode.
 
-    This is what the gauge reads once the dispatcher stops switching: the
-    table is the dispatch, so measuring the cases would measure a thing that
-    is no longer there.  Parsed from the source for the same reason the cases
-    were -- the reading has to describe this tree, not a copy of it.
+    `[OP_MOV] = &&L_MOV,` -- the address of the body, taken inside the
+    function, which is the only place a label address can be taken.  This is
+    the table that becomes the dispatch, so the gauge has to read it rather
+    than the cases: the cases are what is on its way out, and a gauge still
+    reading them would go on printing a number about a thing that is gone.
+    Parsed from the source for the same reason the cases were -- the reading
+    has to describe this tree, not a copy of it.
     """
-    m = re.search(r"static unsigned char g_ir_handler\[68\]\s*=\s*\{(.*?)\};", vm, re.S)
+    m = re.search(r"static void \*g_ir_body\[68\] = \{(.*?)\};", vm, re.S)
     if m is None:
         return None
-    return [int(x) for x in re.findall(r"\b(\d{1,3})\b", m.group(1))]
+    body = m.group(1)
+    return {mm.group(1): mm.group(2) for mm in
+            re.finditer(r"\[(OP_[A-Z0-9_]+)\] = &&(L_[A-Z0-9_]+)", body)}
 
+
+def _split_known(vm):
+    """Opcodes whose body can be entered from two places, read off the source.
+
+    A body that ends in `goto L_OTHER;` runs another opcode body while the
+    instruction is still this opcode, so its opcode is served from two
+    places: its own case, and that goto.  This is a source fact, so it cannot
+    be a runtime count -- the runtime can only report what a run happened to
+    see (split-ops-seen), and a run that never executes the opcode would
+    otherwise read as "no opcode is split".
+    """
+    known, cur = set(), None
+    for line in vm.splitlines():
+        m = re.search(r"(?:^|[}]\s*)(L_[A-Z0-9_]+):", line)
+        if m:
+            cur = m.group(1)
+        for g in re.finditer(r"goto (L_[A-Z0-9_]+);", line):
+            if cur is None or g.group(1) == cur:
+                continue
+            known.add("OP_" + cur[2:])
+    return known
 
 def _dispatch_targets(vm):
     """opcode -> the label its case jumps to: `case OP_X: goto L_Y;`.
@@ -341,7 +367,7 @@ def measured():
             "disasm_names": _disasm_names(disasm_fn),
             "disasm_cases": _case_bodies(disasm_fn), "handlers": _handlers(vm),
             "targets": _switch_targets(vm), "switch_targets": _switch_targets(vm),
-            "table_slots": _table_slots(vm)}
+            "table_slots": _table_slots(vm), "split_known": _split_known(vm)}
 
 
 def report(ops, shape, meas, out=sys.stdout, handler_table=None):
@@ -554,18 +580,10 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None):
     # The table is the gauge's source now.  Reading the cases would describe a
     # dispatcher that is on its way out, and once it is gone it would describe
     # nothing while still printing a number.
-    slots = handler_table if isinstance(handler_table, list) else meas.get("table_slots")
+    slots = handler_table if isinstance(handler_table, dict) else meas.get("table_slots")
     switched = len(meas.get("switch_targets", meas.get("targets", {})))
-    if isinstance(handler_table, dict):
-        targets, source = dict(handler_table), "table"
-    elif slots is not None and len(slots) >= 68:
-        by_code = {c: n for n, c in ops}
-        targets, source = {}, "table"
-        for i, v in enumerate(slots):
-            n = by_code.get(i)
-            if n is None:
-                continue  # a hole in the enum has no row to name
-            targets[n] = ("L_" + by_code[v][3:]) if v in by_code else None
+    if isinstance(slots, dict) and slots:
+        targets, source = dict(slots), "table"
     else:
         targets, source = dict(meas.get("targets", {})), "switch"
     bodies = {"L_" + k[3:] for k in meas.get("handlers", {})}
@@ -602,6 +620,10 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None):
            if readers == "table"
            else "the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case")
     print(f"IR-TABLE-SHADOW|switched={switched}|readers={readers}|why={why}", file=out)
+    known_split = sorted(meas.get("split_known") or ())
+    split_names = ",".join(known_split) or "none"
+    print(f"IR-TABLE-SPLIT-KNOWN|ops={split_names}|count={len(known_split)}"
+          f"|basis=a-body-that-jumps-into-another-body-serves-its-opcode-from-two-places", file=out)
     if mismatch:
         bad.append(f"handler-table:{len(mismatch)}")
 
@@ -745,11 +767,9 @@ def main(argv):
         # table alone must still produce a whole IR-TABLE, with switched=0 and
         # readers=table -- otherwise the gauge dies on the same commit that
         # removes what it used to measure.
-        by_code = {n: c for n, c in ops}
-        slots = list(meas.get("table_slots") or [])
-        if slots and "OP_ADD" in by_code and "OP_SUB" in by_code:
-            bent = list(slots)
-            bent[by_code["OP_ADD"]] = by_code["OP_SUB"]
+        slots = dict(meas.get("table_slots") or {})
+        if "OP_ADD" in slots and "OP_SUB" in slots:
+            bent = dict(slots, **{"OP_ADD": slots["OP_SUB"]})
             got = _report_text(ops, shape, dict(meas, table_slots=bent))
             lines = got.splitlines()
             named = any(l.startswith("IR-TABLE-MISMATCH|") and "op=OP_ADD|" in l for l in lines)
