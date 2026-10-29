@@ -373,7 +373,7 @@ boundary="mod-rule-v1"   # 该 op 的边界行为由哪个 spec 定义
 | --- | --- | --- | --- |
 | P0 | 建 `ir_spec.py` 与原样表：67 个 `OP_*` 与解释器 dispatch 逐一对应，空号标 retired（**已完成**，`426ceef`） | `IR-SPEC|ops=67`+`IR-COVER|interp=67/67|disasm=67/67`；每个形状由处理器体证实（`IR-SHAPE|forgets=none|unconfirmed=none`） | 无行为改动，回退=删表 |
 | P1 | 抽出 MIR 构建器，**只做重标号**：编译器主体改为 AST→MIR→编码，MIR 层不折叠、不重排、不改号 | 字节码**逐字节等价**：`ORIG-IDENTICAL|files=|bytes=|differ=`，且预编译 `.inim` 仍可执行 | 保留旧路径，开关 `INIM_IR_BUILD=0` |
-| P2 | 解释器改表驱动 dispatch | `IR-COVER|interp=46|missing=`；差分绿；`default` 是 abort | 开关回旧 switch |
+| P2 | 解释器改表驱动 dispatch | `IR-COVER|interp=67/67|missing=`（分母是 opcode 数 67，与改前同一坐标系）**且** `IR-TABLE|mismatch=0`、`IR-TABLE-SHADOW|readers=table`；差分绿；`default` 是 abort | 开关回旧 switch |
 | P3 | AOT 改吃 MIR | `IR-COVER|aot=` 的 `missing` 与表一致；`fail(g, …)` 站点数从 17 降到 0；差分绿 | 开关回 `emit_expr` |
 | P4 | wasm 改吃 MIR | `WASM-TEMPS` 读数存在且 `disagree=0`；槽表与 §6.2 一致 | 开关回 `cg_expr` |
 | P5 | 反汇编器表驱动 | `IR-DISASM|cases=67/67|names-checked=67/67` | 表回退 |
