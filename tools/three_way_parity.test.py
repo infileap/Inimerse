@@ -560,6 +560,22 @@ def main():
         for b in (BACKENDS if negctl == 'all' else (negctl,)):
             leg[b] = '/nonexistent/im-%s' % b
 
+    # Instruments, not results.  If one of the three binaries (or the wasm runner) cannot
+    # be found, every case "diverges" and the reading looks like a semantic finding --
+    # seventeen unexplained differences -- when what actually happened is that the harness
+    # was moved or pointed at the wrong place.  A measured matrix must never report a
+    # disagreement it caused itself.  Skipped while a negative control is asking for a
+    # missing binary on purpose.
+    if negctl is None:
+        for what, path in (('interpreter', engine), ('aot-native', aot),
+                           ('wasm-runner', runner)):
+            if os.sep not in path:  # a bare command name: let PATH resolve it
+                continue
+            if not os.path.exists(path):
+                print('THREE-WAY-HARNESS|leg=%s|problem=not found at %s|result=NOT-RUN'
+                      % (what, path))
+                raise SystemExit(2)
+
     def run_case(i, td):
         src = cases[i][2]
         tag = 'c%02d' % i
