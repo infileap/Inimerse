@@ -43,8 +43,8 @@ READINGS
   IR-SPEC|ops=N|codes=LO..HI|hole=29|shaped=N|unshaped=<names>
   IR-ABI|version=3|abi=2|ops=N
   IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B|aot=na|wasm=na|selfhost=na
-  IR-TABLE|rows=N|handlers-named=N|mismatch=M
-  IR-TABLE-SHADOW|switched=N|readers=none|why=<every opcode still arrives through a case>
+  IR-TABLE|rows=N|handlers-named=N|mismatch=M|source=table
+  IR-TABLE-SHADOW|switched=N|readers=<table|none>|why=<who consumes the table today>
   IR-DISASM|cases=N/N|names-checked=N/N|names-unreadable=<names>|wrong-name=<names>
   IR-UNIMPLEMENTED|consumer=disasm|op=OP_X|effect=prints-a-number
 
@@ -280,6 +280,36 @@ def _handlers(vm):
     return out
 
 
+def _switch_targets(vm):
+    """opcode -> the label its case jumps to, or {} when no switch is left.
+
+    Read separately from the handler table on purpose: this is the count of
+    cases in this tree, and after the table takes over dispatch it has to fall
+    to zero while the table's rows stay up.  One number cannot say both.
+    """
+    try:
+        start = vm.index("switch (ins.op)")
+    except ValueError:
+        return {}
+    end = vm.index("default:", start)
+    return {m.group(1): m.group(2) for m in
+            re.finditer(r"case (OP_[A-Z0-9_]+):\s*goto (L_[A-Z0-9_]+);", vm[start:end])}
+
+
+def _table_slots(vm):
+    """The handler table's own initializer: one byte per opcode, 255 = hole.
+
+    This is what the gauge reads once the dispatcher stops switching: the
+    table is the dispatch, so measuring the cases would measure a thing that
+    is no longer there.  Parsed from the source for the same reason the cases
+    were -- the reading has to describe this tree, not a copy of it.
+    """
+    m = re.search(r"static unsigned char g_ir_handler\[68\]\s*=\s*\{(.*?)\};", vm, re.S)
+    if m is None:
+        return None
+    return [int(x) for x in re.findall(r"\b(\d{1,3})\b", m.group(1))]
+
+
 def _dispatch_targets(vm):
     """opcode -> the label its case jumps to: `case OP_X: goto L_Y;`.
 
@@ -310,7 +340,8 @@ def measured():
     return {"interp": dispatch, "disasm": _cases(disasm_fn),
             "disasm_names": _disasm_names(disasm_fn),
             "disasm_cases": _case_bodies(disasm_fn), "handlers": _handlers(vm),
-            "targets": _dispatch_targets(vm)}
+            "targets": _switch_targets(vm), "switch_targets": _switch_targets(vm),
+            "table_slots": _table_slots(vm)}
 
 
 def report(ops, shape, meas, out=sys.stdout, handler_table=None):
@@ -520,8 +551,23 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None):
     # This table is read by nobody yet (the shadow line below says so), and a
     # table nobody reads is exactly the one allowed to drift, so it is measured
     # rather than believed.
-    targets = dict(handler_table if handler_table is not None
-                   else meas.get("targets", {}))
+    # The table is the gauge's source now.  Reading the cases would describe a
+    # dispatcher that is on its way out, and once it is gone it would describe
+    # nothing while still printing a number.
+    slots = handler_table if isinstance(handler_table, list) else meas.get("table_slots")
+    switched = len(meas.get("switch_targets", meas.get("targets", {})))
+    if isinstance(handler_table, dict):
+        targets, source = dict(handler_table), "table"
+    elif slots is not None and len(slots) >= 68:
+        by_code = {c: n for n, c in ops}
+        targets, source = {}, "table"
+        for i, v in enumerate(slots):
+            n = by_code.get(i)
+            if n is None:
+                continue  # a hole in the enum has no row to name
+            targets[n] = ("L_" + by_code[v][3:]) if v in by_code else None
+    else:
+        targets, source = dict(meas.get("targets", {})), "switch"
     bodies = {"L_" + k[3:] for k in meas.get("handlers", {})}
     named, mismatch, shared, renamed = 0, [], {}, []
     for n in names:
@@ -539,7 +585,8 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None):
                                      "the-case-runs-another-opcodes-body"))
                 else:
                     renamed.append((n, label, own))
-    print(f"IR-TABLE|rows={len(names)}|handlers-named={named}|mismatch={len(mismatch)}", file=out)
+    print(f"IR-TABLE|rows={len(names)}|handlers-named={named}|mismatch={len(mismatch)}"
+          f"|source={source}", file=out)
     for n, got, want, effect in mismatch:
         print(f"IR-TABLE-MISMATCH|op={n}|handler={got}|expected={want}|effect={effect}", file=out)
     for label, holders in sorted(shared.items()):
@@ -550,9 +597,11 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None):
         print(f"IR-TABLE-RENAMED|op={n}|handler={got}|expected={own}"
               f"|effect=the-opcodes-own-label-is-gone-so-this-is-a-rename-not-a-cross-jump",
               file=out)
-    print(f"IR-TABLE-SHADOW|switched={len(targets)}|readers=none"
-          f"|why=the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case",
-          file=out)
+    readers = "table" if (source == "table" and switched == 0) else "none"
+    why = ("the-dispatcher-no-longer-switches-so-every-opcode-arrives-through-the-table"
+           if readers == "table"
+           else "the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case")
+    print(f"IR-TABLE-SHADOW|switched={switched}|readers={readers}|why={why}", file=out)
     if mismatch:
         bad.append(f"handler-table:{len(mismatch)}")
 
@@ -689,6 +738,29 @@ def main(argv):
             print(f"IRCHECK|case=handler-table|red={'yes' if named else 'no'}|op={moved}",
                   file=sys.stdout)
             ok &= named
+        # The gauge now reads the table, so two facts have to be shown that the
+        # old gauge could not show.  (a) The table OP_ADD slot points at OP_SUB
+        # while every case still says goto L_ADD: a gauge reading the cases stays
+        # green, one reading the table names OP_ADD.  (b) The switch is gone: the
+        # table alone must still produce a whole IR-TABLE, with switched=0 and
+        # readers=table -- otherwise the gauge dies on the same commit that
+        # removes what it used to measure.
+        by_code = {n: c for n, c in ops}
+        slots = list(meas.get("table_slots") or [])
+        if slots and "OP_ADD" in by_code and "OP_SUB" in by_code:
+            bent = list(slots)
+            bent[by_code["OP_ADD"]] = by_code["OP_SUB"]
+            got = _report_text(ops, shape, dict(meas, table_slots=bent))
+            lines = got.splitlines()
+            named = any(l.startswith("IR-TABLE-MISMATCH|") and "op=OP_ADD|" in l for l in lines)
+            from_table = any(l.startswith("IR-TABLE|") and "|source=table" in l for l in lines)
+            gone = _report_text(ops, shape, dict(meas, switch_targets={}))
+            survives = any(l.startswith("IR-TABLE-SHADOW|switched=0|readers=table")
+                           for l in gone.splitlines())
+            red = named and from_table and survives
+            print(f"IRCHECK|case=gauge-reads-the-table|red={'yes' if red else 'no'}|op=OP_ADD",
+                  file=sys.stdout)
+            ok &= red
         return 0 if ok else 1
 
     return report(ops, shape, meas)

@@ -17,7 +17,7 @@ Two things are asserted, and nothing else:
    IR-TABLE-SHADOW says in the same run that no reader consumes the table yet,
    so this is a measurement of the dispatch, not of a table in use.
 
-The checker's own checks are asserted first (`--self-check`, eleven mutations), because a table
+The checker's own checks are asserted first (`--self-check`, twelve mutations), because a table
 that cannot go red has not been shown to be watching anything.
 
     python3 tools/ir_spec.test.py
@@ -40,7 +40,7 @@ def main():
     selfcheck = run("--self-check")
     cases = [ln for ln in selfcheck.stdout.splitlines() if ln.startswith("IRCHECK|")]
     red = [ln for ln in cases if "|red=yes" in ln]
-    if selfcheck.returncode != 0 or len(cases) != 11 or len(red) != 11:
+    if selfcheck.returncode != 0 or len(cases) != 12 or len(red) != 12:
         print(f"ir spec: FAIL (self-check: {len(red)}/{len(cases)} mutations caught)")
         for ln in cases:
             print(ln)

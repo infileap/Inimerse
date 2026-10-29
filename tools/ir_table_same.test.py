@@ -32,7 +32,7 @@ MUT = "INIMERSE_IR_TABLE_MUTATE"
 
 ROW = re.compile(r"^IR-TABLE-SAME\|op=([A-Z0-9_#]+)\|table=(\d+)\|switch=(\d+)\|first-diff=(none|yes)$")
 SUM = re.compile(r"^IR-TABLE-SAME\|opcodes=(\d+)\|compared=(\d+)\|unseen=(\d+)\|basis=([a-z-]+)\|table=(\d+)\|switch=(\d+)\|mismatch=(\d+)\|split-ops=(\d+)\|goto-entries=(\d+)$")
-SPLIT = re.compile(r"^IR-TABLE-SPLIT\|op=([A-Z0-9_]+)\|bodies=([A-Z0-9_,]+)\|dispatched=(\d+)\|entered-by-goto=(\d+)\|effect=(.+)$")
+SPLIT = re.compile(r"^IR-TABLE-SPLIT\|op=([A-Z0-9_]+)\|bodies=([A-Z0-9_,]+)\|dispatched=([A-Za-z0-9_]+)\|goto=([A-Za-z0-9_]+)\|dispatches=(\d+)\|goto-entries=(\d+)\|effect=(.+)$")
 DIFF = re.compile(r"^IR-TABLE-DIFF\|op=([A-Z0-9_]+)\|prog=(.+?)\|ip=(\d+)\|table=([A-Z0-9_]+)\|switch=([A-Z0-9_]+)\|effect=(.+)$")
 
 
@@ -85,7 +85,8 @@ def readout(text):
         m = SPLIT.match(line)
         if m:
             splits.append(dict(op=m.group(1), bodies=m.group(2).split(","),
-                               dispatched=int(m.group(3)), by_goto=int(m.group(4))))
+                               dispatched=m.group(3), goto=m.group(4),
+                               dispatch_count=int(m.group(5)), by_goto=int(m.group(6))))
             continue
         m = DIFF.match(line)
         if m:
@@ -211,8 +212,14 @@ def cell_split_is_named():
     if summary is None:
         return False, "no summary"
     hit = [s for s in splits if s["op"] == "OP_CALL_VALUE"]
+    # The row has to name both legs, not count them: which body the case sent
+    # it to, and which body the goto landed in.  A count says the two legs
+    # differ; the names say where the second one is.
     ok = (bool(hit) and "L_CALL_VALUE" in hit[0]["bodies"]
-          and "L_CALL_FUNC" in hit[0]["bodies"] and hit[0]["by_goto"] >= 1
+          and "L_CALL_FUNC" in hit[0]["bodies"]
+          and hit[0]["dispatched"] == "L_CALL_VALUE"
+          and hit[0]["goto"] == "L_CALL_FUNC"
+          and hit[0]["by_goto"] >= 1 and hit[0]["dispatch_count"] >= 1
           and summary["split_ops"] >= 1 and summary["goto_entries"] >= 1
           and summary["mismatch"] == 0 and not diffs)
     if not ok:

@@ -5725,6 +5725,7 @@ typedef char g_ir_handler_has_a_slot_per_op[(sizeof(g_ir_handler) == 68) ? 1 : -
 static unsigned long long g_ir_sw[68], g_ir_tb[68], g_ir_diffs, g_ir_unmapped;
 static unsigned long long g_ir_goto[68];
 static unsigned long long g_ir_bodies[68][2];
+static unsigned char g_ir_disp_body[68], g_ir_goto_body[68];
 static char g_ir_prog[1024];
 static unsigned g_ir_first_op, g_ir_first_tb, g_ir_first_sw;
 static int g_ir_first_ip = -1;
@@ -5750,6 +5751,11 @@ static unsigned long long vm_ir_goto_total(void) {
     return n;
 }
 
+static void vm_ir_body_name(unsigned body, char *out, size_t cap) {
+    const char *nm = vm_ir_op_name(body);
+    snprintf(out, cap, "L_%s", strncmp(nm, "OP_", 3) == 0 ? nm + 3 : nm);
+}
+
 static void vm_ir_dump_splits(void) {
     int op, i;
     for (op = 0; op < 68; op++) {
@@ -5759,14 +5765,22 @@ static void vm_ir_dump_splits(void) {
         for (i = 0; i < 68; i++) {
             int hi = i >> 6, lo = i & 63;
             if (!(g_ir_bodies[op][hi] & (1ULL << lo))) continue;
-            const char *nm = vm_ir_op_name((unsigned)i);
             char lbuf[32];
-            snprintf(lbuf, sizeof lbuf, "L_%s", strncmp(nm, "OP_", 3) == 0 ? nm + 3 : nm);
+            vm_ir_body_name((unsigned)i, lbuf, sizeof lbuf);
             snprintf(bodies + strlen(bodies), sizeof bodies - strlen(bodies), "%s%s",
                      bodies[0] ? "," : "", lbuf);
         }
-        printf("IR-TABLE-SPLIT|op=%s|bodies=%s|dispatched=%llu|entered-by-goto=%llu|effect=the-opcode-is-served-by-more-than-one-body\n",
-               vm_ir_op_name((unsigned)op), bodies, g_ir_sw[op], g_ir_goto[op]);
+        {
+            char dbuf[32] = "na", gbuf[32] = "na";
+            const char *why = NULL;
+            if (g_ir_disp_body[op] != 255) vm_ir_body_name(g_ir_disp_body[op], dbuf, sizeof dbuf);
+            if (g_ir_goto_body[op] != 255) vm_ir_body_name(g_ir_goto_body[op], gbuf, sizeof gbuf);
+            if (g_ir_disp_body[op] == 255) why = "no-case-arrived-with-this-opcode-in-this-run";
+            else if (g_ir_goto_body[op] == 255) why = "no-goto-entered-this-opcode-in-this-run";
+            printf("IR-TABLE-SPLIT|op=%s|bodies=%s|dispatched=%s|goto=%s|dispatches=%llu|goto-entries=%llu|effect=the-opcode-is-served-by-more-than-one-body%s%s\n",
+                   vm_ir_op_name((unsigned)op), bodies, dbuf, gbuf, g_ir_sw[op], g_ir_goto[op],
+                   why ? "|why=" : "", why ? why : "");
+        }
     }
 }
 
@@ -5792,6 +5806,8 @@ static int vm_ir_op_by_name(const char *name) {
 static void vm_ir_same_init(void) {
     const char *e, *mu, *eq;
     g_ir_init_done = 1;
+    memset(g_ir_disp_body, 255, sizeof g_ir_disp_body);
+    memset(g_ir_goto_body, 255, sizeof g_ir_goto_body);
     e = getenv("INIMERSE_IR_TABLE");
     g_ir_same = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
     if (!g_ir_same) return;
@@ -5817,9 +5833,14 @@ static void vm_ir_probe(unsigned op, unsigned body, int ip) {
     if (!g_ir_same) return;
     if (op >= 68) { g_ir_unmapped++; return; }
     if (body < 128) g_ir_bodies[op][body >> 6] |= 1ULL << (body & 63);
-    if (!from_dispatch) { g_ir_goto[op]++; return; }
+    if (!from_dispatch) {
+        g_ir_goto[op]++;
+        if (g_ir_goto_body[op] == 255) g_ir_goto_body[op] = (unsigned char)body;
+        return;
+    }
     if (g_ir_handler[op] == 255) { g_ir_unmapped++; return; }
     g_ir_sw[op]++;
+    if (g_ir_disp_body[op] == 255) g_ir_disp_body[op] = (unsigned char)body;
     if (g_ir_handler[op] == (unsigned char)body) { g_ir_tb[op]++; return; }
     g_ir_diffs++;
     if (g_ir_first_ip < 0) { g_ir_first_op = op; g_ir_first_tb = g_ir_handler[op]; g_ir_first_sw = body; g_ir_first_ip = ip; }
