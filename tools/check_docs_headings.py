@@ -208,7 +208,14 @@ def main() -> int:
     # mismatch stays 0 while `base=` and `drift|net=` both move by one -- so the
     # drift line then reports a difference that the per-file rows do not have.
     base_sum = sum(int(v) for v in base_counts.values())
-    print(f"HEADINGS|pin-total|headings={base_total}|sum-per-file={base_sum}|mismatch={base_total != base_sum}")
+    # ★ `mismatch=False` here means the pin agrees with itself, and nothing more.
+    # orchid measured why that matters: a pin written with --allow-dirty has
+    # matching total and rows (every internal check green) and differs from its
+    # tree only in the one place this line does not look -- so the token is
+    # spelled out, or the next reader takes an internal-consistency reading for
+    # a verdict on the pin.
+    print(f"HEADINGS|pin-total|headings={base_total}|sum-per-file={base_sum}"
+          f"|mismatch={base_total != base_sum}|basis=internal-consistency-only|attested-by=pin-tree")
     if base_total != base_sum:
         print(
             f"check_docs_headings: the pin's total is {base_total} but its per-file rows sum to {base_sum}. "
