@@ -25675,6 +25675,10 @@ IR-DISASM-REGS|checked=63/67|unmeasured=OP_STOP,OP_HALT,OP_TRY_END,OP_YIELD|unex
 
 **它还变了一次，仍然不是我这一笔换的**：`179` → **`180`**，随 PTC 的 `tools/ir_table_same.test.py` 注册落地（`c25aa477`；那条 `+1` 注释的原文是「+1 when the interpreter's opcode table started answering every fetch beside the switch, so a table that drifts from the dispatch is caught while the dispatch still exists (179 -> 180, added by the commit that registered tools/ir_table_same.test.py)」）。三个数在树 `639a429` 上一起核得平：`sed -n '155p' tools/gate.sh` 的默认值 `180`、`grep -c 'add_test(' CMakeLists.txt` 的 `180`、`ctest -N` 末行 `Total Tests: 180`（`cmake -B build` 之后当场跑）。这是 §1.418 那条判据的第九个点（`171`／`173`／`174`／`175`／`176`／`177`／`178`／`179`／`180`）。
 
+**那条 `+1` 注释链本身也是一条读数，而它断过一次**：在 `639a429` 上，`tools/gate.sh` 第 155 行的链在 `178 → 179` 这一段断了——`…the P1 relabel-only gate got a` 后面没有宾语、也没有 `(178 -> 179, added by …)`，下一段直接跳到 `179 → 180`（合并时两人各写半句，接缝处吞掉了一格）。`da8c279` 补回：`…got a registered test that refuses to call an unmeasured relabel a relabel (178 -> 179, added by the commit that registered tools/mir_wired.test.py)`；三个数仍同笔同值（`EXP_CTEST` 的 `180`、`add_test(` 的 `180`、`ctest -N` 的 `180`），只有链被补全，所以**计数那一侧从头到尾没有红过**。
+
+这就是它值得单独记的理由：这条链有主语（`EXP_CTEST` 的值），有量纲（哪一笔加了什么、从几到几），**而它断了不改变任何一个数**。于是 `net=0` 能说「什么都没变」，说不出「交代这些数来历的那句话还完整吗」。断口只在有人顺着链往回走、走到 `178` 想找它的邻居时才出现——读者需要一个终点，所以这里记的是「`639a429` 上断、`da8c279` 上补回」，不是「曾经有问题」。
+
 **同一棵树上还有一处换数，而换的人不是我**：§1.421 加了一节标题，节数 `1373` → `1374`，于是重钉落成 `639a429`。它在树 `639a429` 上的当场读数是：
 
 ```
@@ -25685,7 +25689,7 @@ HEADINGS|stale|pin-tree=c94b599|head=639a429|net=0
 HEADINGS|drift|added=0|removed=0|net=0
 ```
 
-**pin 里写的树号不是 `HEAD`，而这不是矛盾**：pin 记的是「这些计数取自哪棵树」（这里 `c94b599`，即 §1.421 那一笔），`HEAD` 是重钉那一笔（`639a429`）；两者内容一样这件事，由 `stale|net=0` 与 `drift|net=0` 说，而不是由两个树号相等说。反过来说，`net` 不为 0 时它就是那两个树号之间的**差**——所以「pin 的树号等于 `HEAD`」不是判据，`net` 才是。这一笔也说明一件早就该说的事：**给一节加标题的人不一定是重钉的人**，而重钉一旦延后，`stale` 行就一直是红的，红得对。
+**pin 里写的树号不是 `HEAD`，而这不是矛盾**：pin 记的是「这些计数取自哪棵树」（这里 `c94b599`，即 §1.421 那一笔），`HEAD` 是重钉那一笔（`639a429`）；两者内容一样这件事，由 `stale|net=0` 与 `drift|net=0` 说，而不是由两个树号相等说。反过来说，`net` 不为 0 时它就是那两个树号之间的**差**——所以「pin 的树号等于 `HEAD`」不是判据，`net` 才是。这一笔也说明一件早就该说的事：**给一节加标题的人不一定是重钉的人**，而重钉一旦延后，`stale` 行就一直是红的，红得对。同一个红在这里有两个意思——「门禁坏了」与「还有一个人没做的事」——区分它们的不是颜色，是那行字说的是不是「差多少」：`stale` 带 `net`，所以它读起来是待办；不带数的红只能读成故障。
 
 同族的第二个数是 `check_line_refs` 的 `unanchored`：`567` → **`566`**（树 `fb116dc`，`pins -- explicit delta +12 (expect +12), unanchored delta +4 (ceiling +12)`）。它**不是涨**，是 `src/compiler/compiler.c` 的改动让一条旧引用重新落在了它自己那行里；引用时带树号，`567` 是 `7075477` 上的值。
 
