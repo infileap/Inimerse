@@ -1819,3 +1819,14 @@ set_tests_properties(mir_roundtrip_regression PROPERTIES WORKING_DIRECTORY ${CMA
 add_test(NAME mir_wired_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mir_wired.test.py $<TARGET_FILE:inimerse>)
 set_tests_properties(mir_wired_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "mir_wired: cases=4 red=0")
+
+# The interpreter now answers every fetch twice: once through the switch that
+# dispatched it and once through the opcode table.  This test measures the two
+# against each other on the whole corpus, and asserts the cells that would make
+# agreement meaningless (silent when not asked, zero means off, only what ran is
+# counted, a broken input prints no rows).  It lives at the end of the file for
+# the same reason as the registrations above it: docs/ cites CMakeLists.txt by
+# line number, and an insertion in the middle would unanchor them.
+add_test(NAME ir_table_same_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_table_same.test.py)
+set_tests_properties(ir_table_same_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 600 LABELS "vm;regression" PASS_REGULAR_EXPRESSION "ir_table_same: cases=9 red=0")
