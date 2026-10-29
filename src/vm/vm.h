@@ -408,7 +408,7 @@ void pop(VM *vm);
 Value *top(VM *vm);
 
 void vm_init(VM *vm);
-void vm_load_bytecode(VM *vm, Bytecode *bc);
+void vm_load_bytecode(VM *vm, Bytecode *bc); void vm_ir_table_note_prog(const char *p);
 void vm_run(VM *vm);
 void vm_free(VM *vm);
 void vm_register_builtin(VM *vm, const char *name, BuiltinFunc func);
