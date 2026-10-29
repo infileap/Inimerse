@@ -8,7 +8,7 @@
 #                              (build|ctest|fuzz|economy|node|plugin|oauth-loop|
 #                               ignored-credentials|links|doc-paths|text-integrity|
 #                               orphan-fixtures|orphan-targets|line-refs|
-#                               release-tags|obs-markers)
+#                               release-tags|obs-markers|fences)
 #                              `orphan-targets` asks whether a target is run, not
 #                              whether it was compiled here: a target can be run
 #                              by a CTest and still be named only inside a
@@ -660,7 +660,7 @@ STAGE_SPECS=(
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
   "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
   "release-tags|sha a document records for a tag, against the tag today|stage_release_tags"
-  "obs-markers|every citation names the tree it was read on|stage_obs_markers"
+  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -729,7 +729,7 @@ REQUIRED_SCOPES=(
   #   stage_release_tags runs tools/check_release_tags.py, which walks docs/ the
   #   same way; and what it compares those documents against is `git tag -l`,
   #   which is not a path at all, so no call site could have named it.
-  "docs/*|links doc-paths line-refs release-tags obs-markers"
+  "docs/*|links doc-paths line-refs release-tags obs-markers fences"
   # src/* -- no reader.  src/ is read by the compiler, and a compiler is not a
   #   path named in this file.  fuzz and economy read a built engine, plugin the
   #   shipped plugin, ctest the binaries; none of them names a source file.
@@ -1090,6 +1090,46 @@ rm -f "$BUILD_DIR"/.gate-stage-*.log
 # that anyone could name.  The lock answers "two readers share this directory";
 # this answers "the tree I am measuring was swapped under me".  Different subject,
 # different sentence, different exit -- so the run stamps the tree it starts on.
+stage_fences() {
+  # The first stage in this file whose verdict comes from a WORD the tool printed
+  # rather than from its exit status.  tools/check_md_fences.py's rc counts
+  # findings of any kind -- including the escaped backticks that are reported and
+  # are not defects -- so on a clean tree it exited 1 while its own verdict said
+  # PASS.  Reading rc here would re-introduce exactly that: a stage that is red
+  # about a tree the checker called clean.  The word had to become its own name
+  # before it got a reader, which is why the tool landed first (a3f6914) and this
+  # stage second.
+  #
+  # Both components are printed whether the stage passes or fails, and one at a
+  # time: a log that says "fences failed" makes the reader open the tool; a log
+  # that says "odd=0 swallowed=1" does not.  The escaped counters are named in the
+  # failure text only to say they are NOT the criterion.
+  local out rc vline verdict odd swallowed
+  rc=0
+  # GATE_FENCES_ROOT exists so the two directions can be shown without editing the
+  # tree this stage is about: a copy carrying only escaped backticks must be green,
+  # and the same copy plus one unclosed fence must be red with odd=1.
+  out="$(python3 "$REPO_ROOT/tools/check_md_fences.py" --root "${GATE_FENCES_ROOT:-$REPO_ROOT}" 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  vline="$(printf '%s\n' "$out" | grep '^FENCES-VERDICT|' | tail -1)"
+  if [ -z "$vline" ]; then
+    echo "gate: fences: the tool printed no FENCES-VERDICT line (rc=$rc)." >&2
+    echo "gate: fences: there is no word to read, so this stage refuses instead of reading the status." >&2
+    return 2
+  fi
+  verdict="$(printf '%s\n' "$vline" | sed -n 's/.*|verdict=\([A-Za-z]*\)$/\1/p')"
+  odd="$(printf '%s\n' "$vline" | sed -n 's/.*|odd=\([0-9]*\)|.*/\1/p')"
+  swallowed="$(printf '%s\n' "$vline" | sed -n 's/.*|swallowed=\([0-9]*\)|.*/\1/p')"
+  if [ "$verdict" != "PASS" ]; then
+    echo "gate: fences: verdict=$verdict odd=$odd swallowed=$swallowed" >&2
+    echo "gate: fences: the verdict line was: $vline" >&2
+    echo "gate: fences: odd and swallowed are the criterion; escaped backtick occurrences are reported and do not fail this stage." >&2
+    echo "gate: fences: the tool's exit status (rc=$rc) was not read." >&2
+    return 1
+  fi
+  echo "gate: fences: verdict=PASS odd=$odd swallowed=$swallowed; exit status rc=$rc was not read, and an escaped-only run may carry rc=1 and still be green here."
+}
+
 GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 GATE_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # The stamp carries the moment as well as the subject, because "was this run
