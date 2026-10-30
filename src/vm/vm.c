@@ -23,7 +23,7 @@
 static SetObj *vm_set_slot(VM *vm, int idx);
 int vm_set_new(VM *vm);
 static const char *builtin_set_name(int bi);
-static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68], g_op_fetches; static void vm_op_hot_init(void); static void vm_ir_probe(unsigned op, unsigned body, void *self, int ip); void vm_ir_table_note_prog(const char *p); static int g_ir_same, g_ir_init_done, g_ir_disp; static void **g_ir_tab; static void vm_ir_table_ready(void); static int vm_ir_slot_op(void *addr);
+static void value_assign(Value *dst, const Value *src); /* opcode census: the type is here so the hot path can see it, the table and the reading are at the end of this file; both stay on this line so no citation below them moves. */ static int g_op_hot, g_op_hot_asked; static unsigned long long g_op_hits[68], g_op_fetches; static void vm_op_hot_init(void); static void vm_ir_probe(unsigned op, unsigned body, void *self, int ip); void vm_ir_table_note_prog(const char *p); static int g_ir_same, g_ir_init_done, g_ir_dispatch_src;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -3152,85 +3152,85 @@ static void vm_execute_thread(VmThread *t) {
     
 
 
-        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; } if (g_ir_same || !g_ir_init_done) g_ir_disp = 1; static void *g_ir_body[68] = { [OP_MOV] = &&L_MOV, [OP_LOADK_INT] = &&L_LOADK_INT, [OP_LOADK_I64] = &&L_LOADK_I64, [OP_LOADK_FLOAT] = &&L_LOADK_FLOAT, [OP_LOADK_STRING] = &&L_LOADK_STRING, [OP_LOADK_BOOL] = &&L_LOADK_BOOL, [OP_ADD] = &&L_ADD, [OP_CONCAT] = &&L_CONCAT, [OP_SUB] = &&L_SUB, [OP_MUL] = &&L_MUL, [OP_DIV] = &&L_DIV, [OP_NEG] = &&L_NEG, [OP_EQ] = &&L_EQ, [OP_NEQ] = &&L_NEQ, [OP_LT] = &&L_LT, [OP_GT] = &&L_GT, [OP_LE] = &&L_LE, [OP_GE] = &&L_GE, [OP_AND] = &&L_AND, [OP_OR] = &&L_OR, [OP_NOT] = &&L_NOT, [OP_NEW_ARRAY] = &&L_NEW_ARRAY, [OP_INDEX_GET] = &&L_INDEX_GET, [OP_INDEX_SET] = &&L_INDEX_SET, [OP_LOAD_GLOBAL] = &&L_LOAD_GLOBAL, [OP_STORE_GLOBAL] = &&L_STORE_GLOBAL, [OP_JUMP] = &&L_JUMP, [OP_JUMP_IF_FALSE] = &&L_JUMP_IF_FALSE, [OP_JUMP_IF_TRUE] = &&L_JUMP_IF_TRUE, [OP_CALL_BUILTIN] = &&L_CALL_BUILTIN, [OP_PUSH_REG] = &&L_PUSH_REG, [OP_SAY] = &&L_SAY, [OP_WAIT] = &&L_WAIT, [OP_STOP] = &&L_STOP, [OP_HALT] = &&L_HALT, [OP_YIELD] = &&L_YIELD, [OP_CALL_FUNC] = &&L_CALL_FUNC, [OP_MAKE_FUNC] = &&L_MAKE_FUNC, [OP_CALL_VALUE] = &&L_CALL_VALUE, [OP_LOAD_CAPTURE] = &&L_LOAD_CAPTURE, [OP_RETURN] = &&L_RETURN, [OP_IS_NIL] = &&L_IS_NIL, [OP_THREAD_START] = &&L_THREAD_START, [OP_THREAD_CTRL] = &&L_THREAD_CTRL, [OP_THREAD_JOIN] = &&L_THREAD_JOIN, [OP_THREAD_WAIT] = &&L_THREAD_WAIT, [OP_THREAD_STATE] = &&L_THREAD_STATE, [OP_LOCK] = &&L_LOCK, [OP_SEND] = &&L_SEND, [OP_RECV] = &&L_RECV, [OP_NEW_DICT] = &&L_NEW_DICT, [OP_EQK] = &&L_EQK, [OP_NEQK] = &&L_NEQK, [OP_DECLARE] = &&L_DECLARE, [OP_RECORD] = &&L_RECORD, [OP_MOD] = &&L_MOD, [OP_NEW_SET] = &&L_NEW_SET, [OP_SET_INTERVAL] = &&L_SET_INTERVAL, [OP_IN] = &&L_IN, [OP_MIN] = &&L_MIN, [OP_MAX] = &&L_MAX, [OP_BIND] = &&L_BIND, [OP_TRY_START] = &&L_TRY_START, [OP_TRY_END] = &&L_TRY_END, [OP_THROW] = &&L_THROW, [OP_SET_ADD] = &&L_SET_ADD, [OP_THREAD_GOTO] = &&L_THREAD_GOTO, }; typedef char g_ir_body_has_a_slot_per_op[(sizeof g_ir_body / sizeof g_ir_body[0]) == 68 ? 1 : -1]; if (!g_ir_tab) { g_ir_tab = g_ir_body; vm_ir_table_ready(); } typedef char g_ir_body_covers_the_enum[(OP_LOADK_I64 + 1 == 68) ? 1 : -1];
+        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; } if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1; /* ir-table: the entry below came from the dispatcher; the probe consumes this */ if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1;
         if (t->is_task && t->budget > 0 && --t->budget == 0) {
             t->budget = VM_TASK_BUDGET;
             SwitchToFiber(t->fiber_sched);
         }
-        
-        switch (ins.op) {
-        case OP_MOV: goto L_MOV;
-        case OP_LOADK_INT: goto L_LOADK_INT;
-        case OP_LOADK_I64: goto L_LOADK_I64;
-        case OP_LOADK_FLOAT: goto L_LOADK_FLOAT;
-        case OP_LOADK_STRING: goto L_LOADK_STRING;
-        case OP_LOADK_BOOL: goto L_LOADK_BOOL;
-        case OP_ADD: goto L_ADD;
-        case OP_CONCAT: goto L_CONCAT;
-        case OP_SUB: goto L_SUB;
-        case OP_MUL: goto L_MUL;
-        case OP_DIV: goto L_DIV;
-        case OP_NEG: goto L_NEG;
-        case OP_EQ: goto L_EQ;
-        case OP_NEQ: goto L_NEQ;
-        case OP_LT: goto L_LT;
-        case OP_GT: goto L_GT;
-        case OP_LE: goto L_LE;
-        case OP_GE: goto L_GE;
-        case OP_AND: goto L_AND;
-        case OP_OR: goto L_OR;
-        case OP_NOT: goto L_NOT;
-        case OP_NEW_ARRAY: goto L_NEW_ARRAY;
-        case OP_INDEX_GET: goto L_INDEX_GET;
-        case OP_INDEX_SET: goto L_INDEX_SET;
-        case OP_LOAD_GLOBAL: goto L_LOAD_GLOBAL;
-        case OP_STORE_GLOBAL: goto L_STORE_GLOBAL;
-        case OP_JUMP: goto L_JUMP;
-        case OP_JUMP_IF_FALSE: goto L_JUMP_IF_FALSE;
-        case OP_JUMP_IF_TRUE: goto L_JUMP_IF_TRUE;
-        case OP_CALL_BUILTIN: goto L_CALL_BUILTIN;
-        case OP_PUSH_REG: goto L_PUSH_REG;
-        case OP_SAY: goto L_SAY;
-        case OP_WAIT: goto L_WAIT;
-        case OP_STOP: goto L_STOP;
-        case OP_HALT: goto L_HALT;
-        case OP_YIELD: goto L_YIELD;
-        case OP_CALL_FUNC: goto L_CALL_FUNC;
-        case OP_MAKE_FUNC: goto L_MAKE_FUNC;
-        case OP_CALL_VALUE: goto L_CALL_VALUE;
-        case OP_LOAD_CAPTURE: goto L_LOAD_CAPTURE;
-        case OP_RETURN: goto L_RETURN;
-        case OP_IS_NIL: goto L_IS_NIL;
-        case OP_THREAD_START: goto L_THREAD_START;
-        case OP_THREAD_CTRL: goto L_THREAD_CTRL;
-        case OP_THREAD_JOIN: goto L_THREAD_JOIN;
-        case OP_THREAD_WAIT: goto L_THREAD_WAIT;
-        case OP_THREAD_STATE: goto L_THREAD_STATE;
-        case OP_LOCK: goto L_LOCK;
-        case OP_SEND: goto L_SEND;
-        case OP_RECV: goto L_RECV;
-        case OP_NEW_DICT: goto L_NEW_DICT;
-        case OP_EQK: goto L_EQK;
-        case OP_NEQK: goto L_NEQK;
-        case OP_DECLARE: goto L_DECLARE;
-        case OP_RECORD: goto L_RECORD;
-        case OP_MOD: goto L_MOD;
-        case OP_NEW_SET: goto L_NEW_SET;
-        case OP_SET_INTERVAL: goto L_SET_INTERVAL;
-        case OP_IN: goto L_IN;
-        case OP_MIN: goto L_MIN;
-        case OP_MAX: goto L_MAX;
-        case OP_BIND: goto L_BIND;
-        case OP_TRY_START: goto L_TRY_START;
-        case OP_TRY_END: goto L_TRY_END;
-        case OP_THROW: goto L_THROW;
-        case OP_SET_ADD: goto L_SET_ADD;
-        case OP_THREAD_GOTO: goto L_THREAD_GOTO;
-            default:
-                fprintf(stderr, "[vm] bad opcode %d at ip %d\n", ins.op, t->ip - 1);
-                t->running = false;
-                continue;
-        }
+        /* The table is the dispatcher: one row per opcode, each the address of the body that serves it. */
+        static void *g_ir_body[68] = {
+        [OP_MOV] = &&L_MOV,
+        [OP_LOADK_INT] = &&L_LOADK_INT,
+        [OP_LOADK_I64] = &&L_LOADK_I64,
+        [OP_LOADK_FLOAT] = &&L_LOADK_FLOAT,
+        [OP_LOADK_STRING] = &&L_LOADK_STRING,
+        [OP_LOADK_BOOL] = &&L_LOADK_BOOL,
+        [OP_ADD] = &&L_ADD,
+        [OP_CONCAT] = &&L_CONCAT,
+        [OP_SUB] = &&L_SUB,
+        [OP_MUL] = &&L_MUL,
+        [OP_DIV] = &&L_DIV,
+        [OP_NEG] = &&L_NEG,
+        [OP_EQ] = &&L_EQ,
+        [OP_NEQ] = &&L_NEQ,
+        [OP_LT] = &&L_LT,
+        [OP_GT] = &&L_GT,
+        [OP_LE] = &&L_LE,
+        [OP_GE] = &&L_GE,
+        [OP_AND] = &&L_AND,
+        [OP_OR] = &&L_OR,
+        [OP_NOT] = &&L_NOT,
+        [OP_NEW_ARRAY] = &&L_NEW_ARRAY,
+        [OP_INDEX_GET] = &&L_INDEX_GET,
+        [OP_INDEX_SET] = &&L_INDEX_SET,
+        [OP_LOAD_GLOBAL] = &&L_LOAD_GLOBAL,
+        [OP_STORE_GLOBAL] = &&L_STORE_GLOBAL,
+        [OP_JUMP] = &&L_JUMP,
+        [OP_JUMP_IF_FALSE] = &&L_JUMP_IF_FALSE,
+        [OP_JUMP_IF_TRUE] = &&L_JUMP_IF_TRUE,
+        [OP_CALL_BUILTIN] = &&L_CALL_BUILTIN,
+        [OP_PUSH_REG] = &&L_PUSH_REG,
+        [OP_SAY] = &&L_SAY,
+        [OP_WAIT] = &&L_WAIT,
+        [OP_STOP] = &&L_STOP,
+        [OP_HALT] = &&L_HALT,
+        [OP_YIELD] = &&L_YIELD,
+        [OP_CALL_FUNC] = &&L_CALL_FUNC,
+        [OP_MAKE_FUNC] = &&L_MAKE_FUNC,
+        [OP_CALL_VALUE] = &&L_CALL_VALUE,
+        [OP_LOAD_CAPTURE] = &&L_LOAD_CAPTURE,
+        [OP_RETURN] = &&L_RETURN,
+        [OP_IS_NIL] = &&L_IS_NIL,
+        [OP_THREAD_START] = &&L_THREAD_START,
+        [OP_THREAD_CTRL] = &&L_THREAD_CTRL,
+        [OP_THREAD_JOIN] = &&L_THREAD_JOIN,
+        [OP_THREAD_WAIT] = &&L_THREAD_WAIT,
+        [OP_THREAD_STATE] = &&L_THREAD_STATE,
+        [OP_LOCK] = &&L_LOCK,
+        [OP_SEND] = &&L_SEND,
+        [OP_RECV] = &&L_RECV,
+        [OP_NEW_DICT] = &&L_NEW_DICT,
+        [OP_EQK] = &&L_EQK,
+        [OP_NEQK] = &&L_NEQK,
+        [OP_DECLARE] = &&L_DECLARE,
+        [OP_RECORD] = &&L_RECORD,
+        [OP_MOD] = &&L_MOD,
+        [OP_NEW_SET] = &&L_NEW_SET,
+        [OP_SET_INTERVAL] = &&L_SET_INTERVAL,
+        [OP_IN] = &&L_IN,
+        [OP_MIN] = &&L_MIN,
+        [OP_MAX] = &&L_MAX,
+        [OP_BIND] = &&L_BIND,
+        [OP_TRY_START] = &&L_TRY_START,
+        [OP_TRY_END] = &&L_TRY_END,
+        [OP_THROW] = &&L_THROW,
+        [OP_SET_ADD] = &&L_SET_ADD,
+        [OP_THREAD_GOTO] = &&L_THREAD_GOTO,
+        };
+        typedef char g_ir_body_has_a_slot_per_op[(sizeof g_ir_body / sizeof g_ir_body[0]) == 68 ? 1 : -1];
+            void *ir_body_next = g_ir_body[(unsigned)ins.op];
+            if (!ir_body_next) { fprintf(stderr, "[vm] bad opcode %d at ip %d\n", ins.op, t->ip - 1); t->running = false; continue; }
+            g_ir_dispatch_src = 1; goto *ir_body_next;
 
         /* ---------- 锟斤拷锟斤拷锟狡讹拷 ---------- */
         L_MOV: vm_ir_probe((unsigned)ins.op, OP_MOV, &&L_MOV, t->ip - 1);
@@ -5709,17 +5709,24 @@ static void vm_op_hot_init(void) {
     if (g_op_hot) atexit(vm_op_hot_dump);
 }
 
-/* ---------- IR-TABLE same-run (P2): the table and the switch answer each fetch twice ---------- */
-static int g_ir_tab_ready;
-static int g_ir_mut_from = -1, g_ir_mut_to = -1;
-
-static unsigned long long g_ir_sw[68], g_ir_tb[68], g_ir_diffs, g_ir_unmapped;
+/* ---------- IR-TABLE (P2): the table is the dispatcher, and the gauge reads what ran ---------- */
+static unsigned long long g_ir_sw[68];
 static unsigned long long g_ir_goto[68];
 static unsigned long long g_ir_bodies[68][2];
 static unsigned char g_ir_disp_body[68], g_ir_goto_body[68];
 static char g_ir_prog[1024];
-static unsigned g_ir_first_op, g_ir_first_tb, g_ir_first_sw;
-static int g_ir_first_ip = -1;
+static int g_ir_threads;
+
+/* The table's addresses are label addresses that only exist inside the function,
+   and its size is a fact about the enum; a table that stops covering the enum
+   would dispatch a hole, so the build fails instead of the program. */
+typedef char g_ir_body_covers_the_enum[(OP_LOADK_I64 + 1 == 68) ? 1 : -1];
+
+/* The last tree that still had a switch.  A readout that stops answering a
+   question has to name the tree where the question could still be asked, or a
+   reader cannot tell "no longer measured" from "never measured". */
+#define IR_TABLE_SINCE "ce8582d"
+
 static const char *vm_ir_op_name(unsigned op) {
     static char buf[16];
     if (op < 68 && g_op_names[op] && g_op_names[op][0]) return g_op_names[op];
@@ -5731,7 +5738,7 @@ static int vm_ir_split_ops(char *buf, size_t cap) {
     int op, n = 0;
     for (op = 0; op < 68; op++) {
         int bits = __builtin_popcountll(g_ir_bodies[op][0]) + __builtin_popcountll(g_ir_bodies[op][1]);
-        if (bits > 1) { n++; if (buf && cap) snprintf(buf, cap, "%s%s", n > 1 ? "," : "", vm_ir_op_name((unsigned)op)); }
+        if (bits > 1) { n++; if (buf && cap) snprintf(buf + strlen(buf), cap - strlen(buf), "%s%s", n > 1 ? "," : "", vm_ir_op_name((unsigned)op)); }
     }
     return n;
 }
@@ -5766,7 +5773,7 @@ static void vm_ir_dump_splits(void) {
             const char *why = NULL;
             if (g_ir_disp_body[op] != 255) vm_ir_body_name(g_ir_disp_body[op], dbuf, sizeof dbuf);
             if (g_ir_goto_body[op] != 255) vm_ir_body_name(g_ir_goto_body[op], gbuf, sizeof gbuf);
-            if (g_ir_disp_body[op] == 255) why = "no-case-arrived-with-this-opcode-in-this-run";
+            if (g_ir_disp_body[op] == 255) why = "no-dispatch-arrived-with-this-opcode-in-this-run";
             else if (g_ir_goto_body[op] == 255) why = "no-goto-entered-this-opcode-in-this-run";
             printf("IR-TABLE-SPLIT|op=%s|bodies=%s|dispatched=%s|goto=%s|dispatches=%llu|goto-entries=%llu|effect=the-opcode-is-served-by-more-than-one-body%s%s\n",
                    vm_ir_op_name((unsigned)op), bodies, dbuf, gbuf, g_ir_sw[op], g_ir_goto[op],
@@ -5786,42 +5793,8 @@ void vm_ir_table_note_prog(const char *p) {
     g_ir_prog[n] = 0;
 }
 
-
-static int vm_ir_op_by_name(const char *name) {
-    int i;
-    for (i = 0; i < 68; i++)
-        if (strcmp(g_op_names[i] ? g_op_names[i] : "#hole", name) == 0) return i;
-    return -1;
-}
-
-static int vm_ir_slot_op(void *addr) {
-    int i;
-    for (i = 0; i < 68; i++) if (g_ir_tab && g_ir_tab[i] == addr) return i;
-    return -1;
-}
-
-static void vm_ir_table_ready(void) {
-    const char *mu, *eq;
-    char from[32], to[32];
-    size_t n;
-    int fi, ti;
-    if (g_ir_tab_ready) return;
-    g_ir_tab_ready = 1;
-    mu = getenv("INIMERSE_IR_TABLE_MUTATE");
-    if (!mu || (eq = strchr(mu, '=')) == NULL) return;
-    n = (size_t)(eq - mu);
-    if (n == 0 || n >= sizeof from || strlen(eq + 1) >= sizeof to) return;
-    memcpy(from, mu, n); from[n] = 0;
-    snprintf(to, sizeof to, "%s", eq + 1);
-    fi = vm_ir_op_by_name(from); ti = vm_ir_op_by_name(to);
-    if (fi < 0 || ti < 0 || !g_ir_tab[ti]) return;
-    g_ir_tab[fi] = g_ir_tab[ti];
-    g_ir_mut_from = fi; g_ir_mut_to = ti;
-    fprintf(stderr, "IR-TABLE-MUTATE|op=%s|now-served-by=%s|effect=the-negative-control-makes-the-table-evert-this-opcode-into-another-body\n", from, to);
-}
-
 static void vm_ir_same_init(void) {
-    const char *e, *mu, *eq;
+    const char *e;
     g_ir_init_done = 1;
     memset(g_ir_disp_body, 255, sizeof g_ir_disp_body);
     memset(g_ir_goto_body, 255, sizeof g_ir_goto_body);
@@ -5831,60 +5804,45 @@ static void vm_ir_same_init(void) {
     atexit(vm_ir_same_dump);
 }
 
+/* A body is entered two ways: by the dispatch, which is the table, and by a goto
+   from another body, which is a source fact the table cannot express.  The probe
+   counts what ran and which of the two ways it came in by, and it does not
+   compare the table to anything any more -- there is nothing left for it to
+   disagree with.  The flag is set at the fetch and consumed on the next entry,
+   so a body reached by goto is not counted as a dispatch. */
 static void vm_ir_probe(unsigned op, unsigned body, void *self, int ip) {
     int from_dispatch;
-    if (!g_ir_init_done) { vm_ir_same_init(); g_ir_disp = 1; }
-    from_dispatch = g_ir_disp; g_ir_disp = 0;
+    (void)self; (void)ip;
+    if (!g_ir_init_done) { vm_ir_same_init(); g_ir_dispatch_src = 1; }
+    from_dispatch = g_ir_dispatch_src; g_ir_dispatch_src = 0;
+    if (body == OP_THREAD_START) g_ir_threads = 1;
     if (!g_ir_same) return;
-    if (op >= 68) { g_ir_unmapped++; return; }
+    if (op >= 68) return;
     if (body < 128) g_ir_bodies[op][body >> 6] |= 1ULL << (body & 63);
     if (!from_dispatch) {
         g_ir_goto[op]++;
         if (g_ir_goto_body[op] == 255) g_ir_goto_body[op] = (unsigned char)body;
         return;
     }
-    if (!g_ir_tab || !g_ir_tab[op]) { g_ir_unmapped++; return; }
     g_ir_sw[op]++;
     if (g_ir_disp_body[op] == 255) g_ir_disp_body[op] = (unsigned char)body;
-    if (g_ir_tab[op] == self) { g_ir_tb[op]++; return; }
-    g_ir_diffs++;
-    if (g_ir_first_ip < 0) {
-        int slot = vm_ir_slot_op(g_ir_tab[op]);
-        g_ir_first_op = op; g_ir_first_sw = body; g_ir_first_ip = ip;
-        g_ir_first_tb = (op == (unsigned)g_ir_mut_from) ? (unsigned)g_ir_mut_to
-                                                        : (slot < 0 ? 255u : (unsigned)slot);
-    }
 }
 
 static void vm_ir_same_dump(void) {
-    int op, seen = 0;
-    unsigned long long tsum = 0, ssum = 0;
     if (!g_ir_same) return;
-    for (op = 0; op < 68; op++) {
-        if (g_ir_sw[op] == 0 && g_ir_tb[op] == 0) continue;
-        seen++;
-        tsum += g_ir_tb[op]; ssum += g_ir_sw[op];
-        printf("IR-TABLE-SAME|op=%s|table=%llu|switch=%llu|first-diff=%s\n",
-               vm_ir_op_name((unsigned)op), g_ir_tb[op], g_ir_sw[op],
-               (g_ir_tb[op] == g_ir_sw[op]) ? "none" : "yes");
-    }
-    printf("IR-TABLE-SAME|opcodes=67|compared=%d|unseen=%d|basis=the-corpus-never-executed-them|table=%llu|switch=%llu|mismatch=%llu|split-ops-seen=%d|split-ops-known=na|split-basis=this-run-only|why=a-body-that-jumps-into-another-body-is-a-source-fact-so-the-gauge-prints-the-set-of-opcodes-it-knows-to-be-split|goto-entries=%llu\n",
-           seen, 67 - seen, tsum, ssum, g_ir_diffs, vm_ir_split_ops(NULL, (size_t)0), vm_ir_goto_total());
+    printf("IR-TABLE-SAME|compared=na|why=no-switch-left-to-compare-with|since=%s"
+           "|prog=%s|opcodes=67|split-ops-seen=%d|split-ops-known=na"
+           "|known-at=IR-TABLE-SPLIT-KNOWN (tools/ir_spec.py)|split-basis=this-run-only"
+           "|split-why=a-body-that-jumps-into-another-body-is-a-source-fact-so-the-gauge-prints-the-set-of-opcodes-it-knows-to-be-split"
+           "|goto-entries=%llu|threads=%s|counts=%s"
+           "|counts-why=%s\n",
+           IR_TABLE_SINCE,
+           g_ir_prog[0] ? g_ir_prog : "na|prog-why=the-running-code-came-in-memory-and-no-loader-named-a-file",
+           vm_ir_split_ops(NULL, (size_t)0), vm_ir_goto_total(),
+           g_ir_threads ? "yes" : "no", g_ir_threads ? "sampled" : "exact",
+           g_ir_threads ? "the-counter-is-incremented-without-atomicity-and-the-program-spawns-threads"
+                        : "this-program-spawns-no-threads-so-nothing-can-race-the-counter");
     vm_ir_dump_splits();
-    if (g_ir_diffs) {
-        if (g_ir_first_ip >= 0 && g_ir_prog[0])
-            printf("IR-TABLE-DIFF|op=%s|prog=%s|ip=%d|table=%s|switch=%s|effect=the-table-routes-this-opcode-to-another-body\n",
-                   vm_ir_op_name(g_ir_first_op), g_ir_prog, g_ir_first_ip,
-                   vm_ir_op_name(g_ir_first_tb), vm_ir_op_name(g_ir_first_sw));
-        else if (g_ir_first_ip >= 0)
-            printf("IR-TABLE-DIFF|op=%s|prog=na|why=the-running-code-came-in-memory-and-no-loader-named-a-file|ip=%d|table=%s|switch=%s|effect=the-table-routes-this-opcode-to-another-body\n",
-                   vm_ir_op_name(g_ir_first_op), g_ir_first_ip,
-                   vm_ir_op_name(g_ir_first_tb), vm_ir_op_name(g_ir_first_sw));
-        else
-            printf("IR-TABLE-DIFF|op=na|prog=na|ip=na|effect=a-probe-was-entered-with-no-matching-table-slot\n");
-    }
-    if (g_ir_unmapped)
-        printf("IR-TABLE-UNMAPPED|fetches=%llu|why=the-table-has-no-slot-for-what-arrived-at-a-body\n", g_ir_unmapped);
 }
 
 /* the table's addresses are label addresses, which can only be taken inside the function;

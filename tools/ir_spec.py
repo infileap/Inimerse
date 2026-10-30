@@ -349,7 +349,11 @@ def _dispatch_targets(vm):
     opcode's body).  Both are invisible to IR-COVER, which only asks whether a
     case exists at all.
     """
-    start = vm.index("switch (ins.op)")
+    try:
+        start = vm.index("switch (ins.op)")
+    except ValueError:
+        # No switch left: the table is the dispatch, so its rows are the answers.
+        return dict(_table_slots(vm) or {})
     end = vm.index("default:", start)
     return {m.group(1): m.group(2) for m in
             re.finditer(r"case (OP_[A-Z0-9_]+):\s*goto (L_[A-Z0-9_]+);", vm[start:end])}
@@ -358,8 +362,14 @@ def _dispatch_targets(vm):
 def measured():
     """Coverage measured from the sources: dispatch, disassembler, handlers."""
     vm = VM_C.read_text()
-    start = vm.index("switch (ins.op)")
-    dispatch = _cases(vm[start : vm.index("default:", start)])
+    slots = _table_slots(vm)
+    if isinstance(slots, dict) and slots:
+        # The dispatch is the table.  Counting cases here would keep printing a
+        # coverage number about a dispatcher this tree no longer has.
+        dispatch = set(slots)
+    else:
+        start = vm.index("switch (ins.op)")
+        dispatch = _cases(vm[start : vm.index("default:", start)])
 
     d = vm.index("static void vm_disasm_ins(")
     disasm_fn = vm[d : vm.index("default:", d)]
@@ -749,17 +759,25 @@ def main(argv):
         # one opcode into another opcode's body, which is the failure a table of
         # handlers exists to catch.  It must red *and name the opcode*: a count
         # that goes up without saying which row is wrong is not evidence.
-        tmap = dict(meas.get("targets", {}))
-        moved = next((n for n, _ in ops if tmap.get(n)), None)
-        donor = next((n for n in tmap if n != moved), None)
+        # The switch is gone from this tree, so the case-side path only exists
+        # for older trees -- and a path nobody exercises is a path nobody knows
+        # the state of.  The control is an injected case map with one opcode
+        # moved into another opcode's body: the gauge must take source=switch
+        # and still name that opcode.
+        bodies = {"L_" + k[3:] for k in meas.get("handlers", {})}
+        switchy = {n: "L_" + n[3:] for n, _ in ops if ("L_" + n[3:]) in bodies}
+        moved = next(iter(switchy), None)
+        donor = next((n for n in switchy if n != moved), None)
         if moved and donor:
-            got = _report_text(ops, shape, meas,
-                               handler_table=dict(tmap, **{moved: tmap[donor]}))
+            got = _report_text(ops, shape, dict(meas, table_slots=None,
+                                               targets=dict(switchy, **{moved: switchy[donor]})))
+            lines_ = got.splitlines()
             named = any(l.startswith("IR-TABLE-MISMATCH|") and ("op=" + moved + "|") in l
-                        for l in got.splitlines())
-            print(f"IRCHECK|case=handler-table|red={'yes' if named else 'no'}|op={moved}",
+                        for l in lines_)
+            from_switch = any(l.startswith("IR-TABLE|") and "|source=switch" in l for l in lines_)
+            print(f"IRCHECK|case=switch-side-still-reds|red={'yes' if (named and from_switch) else 'no'}|op={moved}",
                   file=sys.stdout)
-            ok &= named
+            ok &= bool(named and from_switch)
         # The gauge now reads the table, so two facts have to be shown that the
         # old gauge could not show.  (a) The table OP_ADD slot points at OP_SUB
         # while every case still says goto L_ADD: a gauge reading the cases stays
