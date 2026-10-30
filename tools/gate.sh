@@ -1124,10 +1124,10 @@ stage_fences() {
     echo "gate: fences: verdict=$verdict odd=$odd swallowed=$swallowed" >&2
     echo "gate: fences: the verdict line was: $vline" >&2
     echo "gate: fences: odd and swallowed are the criterion; escaped backtick occurrences are reported and do not fail this stage." >&2
-    echo "gate: fences: the tool's exit status (rc=$rc) was not read." >&2
+    echo "gate: fences: the tool's exit status was rc=$rc; it was read and printed here, and it did not decide this stage." >&2
     return 1
   fi
-  echo "gate: fences: verdict=PASS odd=$odd swallowed=$swallowed; exit status rc=$rc was not read, and an escaped-only run may carry rc=1 and still be green here."
+  echo "gate: fences: verdict=PASS odd=$odd swallowed=$swallowed; decided by the verdict word, not by the exit status (rc=$rc was read and printed)."
 }
 
 GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
