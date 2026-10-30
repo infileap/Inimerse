@@ -25872,3 +25872,48 @@ FENCES-VERDICT|odd=0|swallowed=0|verdict=PASS
 ★第三条最要紧，**它是给即将进门的 stage 看的**：脚本在解析失败时是抛异常，不是印一行坏读数——我把一页 `chmod 000` 后跑，得到 `rc=1`、`PermissionError: [Errno 13] Permission denied`，而 `grep -c '^UNITS|'` = **0**、`FENCES-VERDICT` 也一行没有。所以门禁那一处若只写「读到 `verdict=PASS` 就算过」，**读不到判决行时必须判红**，否则异常会读成「无事可判」。今天这个检查器还不在门禁里（`grep -c 'check_md_fences' tools/gate.sh` = 0），这一条要在它进门之前就定下来。
 
 边界：本节只记 `a3f6914` 上这一支检查器的形状，不主张它已经覆盖「页面能不能读」；`INLINE|…|gated=no` 自己写着不参与判决，`escaped_pages=4` 与两条 `FINDING` 是**两个问题两个数**（前者数「含转义围栏的页」，后者数「围栏被写成字面量的页」），同屏出现不是打架。`docs/streams/dec-formal-axioms.md:355`／`:359` 属证明者的页，本节只引用、不改动[obs: fb116dc]。
+
+### 壬 第一个「判据不是退出码」的阶段：`fences` 在 `ea7aa58` 上门禁（16 → 17）
+
+上一节末段定的那条（读不到判决行时必须判红）在 `ea7aa58` 上落地。本树（`ea7aa58` 加本节之前的那笔文档提交，`37723a0`）复量四行逐字：
+
+```
+INLINE|pages=4|occurrences=138|unit=backtick-occurrences|gated=no
+FENCES|tree=37723a0|files=108|odd=0|fence_lines=2|fence_backticks=6|inline_escapes=138|escaped_total=144|swallowed=0|escaped_pages=4|escaped_paths=docs/AUDIT.md,docs/BOARD.md,docs/STATUS.md,docs/streams/dec-formal-axioms.md
+UNITS|escaped_total=fence_backticks+inline_escapes|check=144=6+138|identity=ok
+FENCES-VERDICT|odd=0|swallowed=0|verdict=PASS
+```
+
+两条 `FINDING`（`docs/streams/dec-formal-axioms.md` 第 355 行与第 359 行）照印，`rc=0`。整轮门禁 **17/17**（原 16，`ea7aa58`）：`gate: OK — every stage passed (17/17 stages ran)`，`ctest` stage 报 `expect 181, registered 181` 与 `100% tests passed, 0 tests failed out of 181`，`GATE|start|head=37723a00d6b5a8298b4f98eabe5261a34ce50294|at=2026-10-30T12:37:12Z` 与 `GATE|end|head=37723a00d6b5a8298b4f98eabe5261a34ce50294|at=2026-10-30T12:44:00Z` 同 sha。该 stage 在日志里三行逐字：
+
+```
+▶ fences (verdict=PASS expected, odd=0 swallowed=0)
+gate: fences: verdict=PASS odd=0 swallowed=0; decided by the verdict word, not by the exit status (rc=0 was read and printed).
+✔ fences (verdict=PASS expected, odd=0 swallowed=0)
+```
+
+★这一段值得记的不是它绿了，而是**它为什么仍然可被检验**。`a3f6914` 之后 `rc` 由 `odd + swallowed` 算，于是 `rc` 与判决词成了同一个函数——**没有任何构造能让两者分歧**，「造一个让它们分歧的测试」这件事在数学上就此做不出来。剩下的唯一性质是**没有回落**：能证明「读的是词」的控制不是 `rc≠0`，而是**把词拿掉**。
+
+四格控制我自己跑了（把该 stage 的函数体抠出来，`REPO_ROOT` 指向一个只有桩工具与空 `docs/` 的临时目录，桩用 Python 写，逐格只换桩的正文）[obs: ea7aa58]：
+
+一、桩印 `FENCES-VERDICT|odd=0|swallowed=0|verdict=PASS` 而 `sys.exit(1)` ⇒ **stage 返回 0（绿）**。这一格是我加的、不在别人给的清单里，而它正好是当初出问题那棵树的形状：`rc=1`、判决 `PASS`、stage 绿。
+
+二、桩印 `FENCES-VERDICT|odd=1|swallowed=0|verdict=FAIL` 而 `sys.exit(0)` ⇒ **返回 1（红）**，失败信息点名 `odd=` 与 `swallowed=`，并印「the tool's exit status was rc=0; it was read and printed here, and it did not decide this stage」。
+
+三、桩只印 `TREE|…` 而 `sys.exit(1)` ⇒ **返回 2（拒判）**：「the tool printed no FENCES-VERDICT line (rc=1)」与「there is no word to read, so this stage refuses instead of reading the status」。
+
+四、桩抛 `PermissionError`、一行没印 ⇒ **返回 2（拒判）**，同上两句。⇒「词缺席」与「工具炸了」走同一条路，不退回读状态。
+
+★同一笔里那句话被它自己推翻了，也记下来。旧句逐字是 `…; exit status rc=$rc was not read, and an escaped-only run may carry rc=1 and still be green here.`，新句是 `…; decided by the verdict word, not by the exit status (rc=$rc was read and printed).`。**代码第一件事就是 `|| rc=$?`：`rc` 被读了，只是不做决定。** 旧句让读者推论「这个阶段不可能退化成读 `rc`」，而唯一的屏障是**没有任何一行去比较它**——那是一行缺席的代码，不是一个被保证的性质；旧句后半「escaped-only 可能带 `rc=1`」在 `a3f6914` 之后也不再描述任何东西。
+
+边界：本节只说这一支 stage 的形状。它绿不代表 108 页读得对（上一节：`identity=` 抓不住数错、`--self-test` 是构造样本），也不代表证明者那两条 `FINDING` 会有人处理。
+
+### 癸 P3 第一笔落地后：pin 没有第二读者、`differ=0` 的同词两主语
+
+P3 第一笔（`48f53fd` → `3e03ecd` → `4a0908e`）落在主线上，而 `IR-COVER` 那一格仍是 `aot=na`（`aot_native` 的读数还没有消费者，第二笔才换数）。我在 `ea7aa58` 上核到两件它信里没有的：
+
+一、**`--check-pin` 今天没有任何读者。** 注册的 CTest 跑的是 `tools/aot_cover.test.py` **不带任何 flag**，`PASS_REGULAR_EXPRESSION` 只认末尾那行 `aot_cover: cases=… accepted=…`；`tools/gate.sh` 里 `aot` 只出现在 `EXP_CTEST` 的注释、`aot_native.test.py` 的注释与差分模糊测试的提示里，没有这个工具；全仓搜 `check-pin` 只命中工具自己与它自己的帮助文本。而那个帮助文本自己写着：**a pin nobody re-runs is a constant, not a reading**。我手跑一次：`IR-AOT-PIN|tree=48f53fdcbbe812f567b6d4a0e42ef1f828406c73|head=37723a00d6b5a8298b4f98eabe5261a34ce50294|covered=30|recomputed=30|of=67|corpus-pin=0/101|corpus-now=0/101|numbers-match=yes|tree-moved=yes|basis=the-quoted-number-is-compared-and-the-tree-is-reported-separately`、`rc=0`。⇒ 回算这条路存在，但**今天它是手动的**；`tools/aot_cover.pin.json` 此刻是一个常量。这与本节辛栏②是同一条判据：新增一个「取自某处」的字段，同笔要有把它算回去的东西——工具有了，读者还没有[obs: ea7aa58]。
+
+二、**`differ=0` 与两条 `IR-AOT-DIVERGENCE|…|state=still-diverges` 同屏**：`differ` 只收**没被写下来的**差异（`IR-AOT-DIFF`），已声明的分歧另算另印，而它们确实还在分（`func_no_return`：`interp-out='nil\n'` 对 `native-out='0\n'`；`global_write_from_func`：`'5\n2\n'` 对 `'7\n7\n'`）。⇒ 同一个词两个主语：读者把 `differ=0` 读成「没有差异」，它说的是「没有我们没写下来的差异」。建议形状与庚栏同一条：**在那一行印出已声明的条数**（例如 `declared-diverge=2`），或把两条分歧的摘要并进同一行——否则那一格的读者会得到一个比事实好看的数。`IR-AOT-MISSING` 的 `count=37` 与 `covered=30` 相加正是 67，这一侧是平的[obs: ea7aa58]。
+
+顺带记第二个「pin 的树号 == HEAD 不是判据」的实例：`IR-AOT-PIN` 同屏印 `numbers-match=yes` 与 `tree-moved=yes`，`IR-AOT-PIN-DRIFT|effect=the-pin-names-an-earlier-tree-and-its-numbers-still-describe-this-one|note=a-commit-cannot-name-itself|strict=--check-pin-tree`，而 `rc` 由 `numbers-match` 决定（那条命令 `rc=0`）。与 `HEADINGS|stale|net=` 并看：**一个数不会因为它记的来历过期而变错，而一个提交也没法写下它自己的 sha**[obs: ea7aa58]。
