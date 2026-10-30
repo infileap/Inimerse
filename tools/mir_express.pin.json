@@ -1,0 +1,23 @@
+{
+  "tree": "a2dfe15a579ae9620400137496b7e8dc9001aefd",
+  "dropped": [
+    "capture-table",
+    "label-table",
+    "string-intern",
+    "thread-flags"
+  ],
+  "alias": [
+    "func-name",
+    "global-names",
+    "thread-section",
+    "try-table"
+  ],
+  "field": [
+    "func-argc"
+  ],
+  "absent": [
+    "int-pool"
+  ],
+  "block_index_width": 2,
+  "note": "regenerate with tools/mir_express.test.py --pin. The dropped set is what the regeneration silently loses today; the test compares against this file, so the finding is recorded rather than re-litigated on every run."
+}

@@ -1880,3 +1880,14 @@ set_tests_properties(aot_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_S
 add_test(NAME aot_cover_selfcheck_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_cover self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_cover.test.py --self-check)
 set_tests_properties(aot_cover_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;regression")
+# What the MIR can represent is a property of mir.h/mir.c, so it is measured
+# rather than remembered: the field probe asks the compiler (offsetof either
+# compiles or it does not) and the copy probe RUNS the regeneration with a
+# planted value in each container table.  Four states fall out -- field, alias,
+# dropped, absent -- and `dropped` is the one this file exists for: a table the
+# container has, the IR does not, and the regeneration never copies, which the
+# roundtrip cannot see because those tables are memory-only and never encoded.
+# Registered like its neighbours: gated_run, no PASS_REGULAR_EXPRESSION.
+add_test(NAME mir_express_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "mir_express self-check: ok \\([0-9]+ checks\\)" --shape "mir_express: items=[0-9]+ dropped=[0-9]+" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mir_express.test.py --gate)
+set_tests_properties(mir_express_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "ir;regression")
