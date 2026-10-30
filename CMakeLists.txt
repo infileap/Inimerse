@@ -1830,3 +1830,11 @@ set_tests_properties(mir_wired_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_S
 add_test(NAME ir_table_same_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_table_same.test.py)
 set_tests_properties(ir_table_same_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 600 LABELS "vm;regression" PASS_REGULAR_EXPRESSION "ir_table_same: cases=10 red=0")
+
+# Measured, not asserted: the native path is judged by running the programs the
+# translator accepts and comparing stdout with the interpreter's.  The numbers
+# are pinned to a tree and the pin is recomputed on demand, so a stale pin is a
+# red cell rather than a quote someone has to remember was old.
+add_test(NAME aot_cover_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_cover.test.py)
+set_tests_properties(aot_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;regression" PASS_REGULAR_EXPRESSION "aot_cover: cases=[0-9]+ accepted")
