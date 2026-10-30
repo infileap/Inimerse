@@ -3152,7 +3152,7 @@ static void vm_execute_thread(VmThread *t) {
     
 
 
-        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; } if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1; /* ir-table: the entry below came from the dispatcher; the probe consumes this */ if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1;
+        RegInstruction ins = t->code->code[t->ip++];  /* census, off unless INIMERSE_HOT_OPS asked */ if (g_op_hot) { unsigned _op = (unsigned)ins.op; g_op_fetches++; if (_op < 68) g_op_hits[_op]++; } if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1; /* ir-table: the address the probe will compare against is the one the dispatcher took; consumed once below */
         if (t->is_task && t->budget > 0 && --t->budget == 0) {
             t->budget = VM_TASK_BUDGET;
             SwitchToFiber(t->fiber_sched);
