@@ -54,7 +54,8 @@ READINGS
 --------
   IR-SPEC|ops=N|codes=LO..HI|hole=29|shaped=N|unshaped=<names>
   IR-ABI|version=3|abi=2|ops=N
-  IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B,aot:OP_C|budget=none
+  IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B,aot:OP_C
+              |missing-basis=disasm:this-tree,aot:aot_cover.pin.json|budget=none
           |aot=C/N|wasm=na|selfhost=na
   IR-AOT-COVER|covered=C|of=N|pin-tree=<sha>|via=<pin file>|basis=...|not-a-capability-count=yes
   IR-AOT-PIN|tree=<sha>|head=<sha>|covered=C|recomputed=<N|na>|of=N
@@ -700,6 +701,7 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None, pin=None):
     print(f"IR-COVER|interp={len(names) - len([n for n in names if n not in meas['interp']])}/{len(names)}"
           f"|disasm={len(names) - len(missing_disasm)}/{len(names)}"
           f"|missing=disasm:{','.join(missing_disasm) or 'none'},aot:{','.join(aot['list']) or 'none'}"
+          f"|missing-basis=disasm:this-tree,aot:{PIN.name}"
           f"|budget=none|aot={aot_field}|wasm=na|selfhost=na", file=out)
     # The fraction above is a file's claim, so the file is read out loud: which
     # tree it was measured on, that its numerator counts opcodes a differential

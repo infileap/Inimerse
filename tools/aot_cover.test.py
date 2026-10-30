@@ -26,6 +26,7 @@ in words that the corpus was measured and everything in it was declined.
 Readings:
   IR-AOT-COVER|corpus=inline-cases:N,repo:A/B|repo-rejected=R
               |repo-rejected-why=...|accepted=N|refused=N|differ=N
+              |declared-diverge=K
               |covered=C|of=67|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts
   IR-AOT-OPCODE|op=OP_X|seen-in=N|verdict=covered|missing
   IR-AOT-MISSING|ops=...|count=N|because=no-accepted-program-executes-them
@@ -182,16 +183,61 @@ def main():
             if trc == 0:
                 repo_accepted += 1
 
+    def divergence_report():
+        # Defined above the summary so the summary can say how many of the
+        # declared cases are still diverging; the lines themselves are printed
+        # below, where they have always been.
+        div_lines = []
+        # The divergence list is the other half of the same question: a program the
+        # translator accepts and the native binary gets WRONG, with the expected
+        # difference written down.  It is not a coverage cell -- nothing there is
+        # counted as covered -- but a reader of the fraction deserves to know how
+        # many accepted programs are known to disagree and where.  A case that
+        # starts AGREEING is also reported: the list has then gone stale, and a
+        # stale divergence list quietly excuses a difference that no longer exists.
+        for name, src, want_im, want_native in getattr(mod, "DIVERGENCE", []):
+            safe = "div_" + re.sub(r"[^A-Za-z0-9_]", "_", name)
+            script = tmp / (safe + ".im")
+            script.write_text(src)
+            cfile = tmp / (safe + ".c")
+            exe = tmp / (safe + ".bin")
+            trc, _o, _e = run([str(aot), "translate", str(script), str(cfile)], ROOT)
+            if trc != 0:
+                div_lines.append(
+                    "IR-AOT-DIVERGENCE|case=%s|state=translator-refused-it-now|known=declared"
+                    % name)
+                continue
+            crc, _o, _e = run([args.cc, "-O2", "-o", str(exe), str(cfile)], ROOT)
+            if crc != 0:
+                div_lines.append("IR-AOT-DIVERGENCE|case=%s|state=cc-failed|known=declared" % name)
+                continue
+            irc, iout, _e = run([str(interp), "--no-mods", "run", str(script)], ROOT)
+            nrc, nout, _e = run([str(exe)], ROOT)
+            state = ("still-diverges" if (iout != nout or irc != nrc)
+                     else "now-agrees-so-the-list-is-stale")
+            div_lines.append(
+                "IR-AOT-DIVERGENCE|case=%s|state=%s|interp-out=%s|native-out=%s"
+                "|declared-interp=%s|declared-native=%s"
+                % (name, state, repr(iout)[-24:], repr(nout)[-24:],
+                   repr(want_im)[-24:], repr(want_native)[-24:]))
+        diverging = sum(1 for l in div_lines if "|state=still-diverges|" in l)
+        return div_lines, diverging
+    div_lines, declared_diverge = divergence_report()
+
     covered = sorted(op for op in OPCODES if op in seen)
     missing = sorted(op for op in OPCODES if op not in seen)
     repo_rejected = len(repo_progs) - repo_accepted
+    # differ= counts only the differences that are NOT written down; the declared
+    # list is the other half of the same question, so how many of its cases still
+    # diverge rides on this line rather than on a reader memory of it.
     print("IR-AOT-COVER|corpus=inline-cases:%d,repo:%d/%d|repo-rejected=%d"
           "|repo-rejected-why=no-tracked-program-is-inside-the-numeric-subset"
-          "|accepted=%d|refused=%d|differ=%d|covered=%d|of=%d"
+          "|accepted=%d|refused=%d|differ=%d|declared-diverge=%d|covered=%d|of=%d"
           "|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts"
           "|not-a-capability-count=yes"
           % (len(cases), repo_accepted, len(repo_progs), repo_rejected,
-             len(accepted), len(refused), len(differ), len(covered), len(OPCODES)))
+             len(accepted), len(refused), len(differ), declared_diverge,
+             len(covered), len(OPCODES)))
     for op in covered:
         print("IR-AOT-OPCODE|op=%s|seen-in=%d|verdict=covered" % (op, len(seen[op])))
     for op in missing:
@@ -203,38 +249,10 @@ def main():
     for name, msg in refused:
         print("IR-AOT-REFUSED|case=%s|why=%s" % (name, msg))
 
-    # The divergence list is the other half of the same question: a program the
-    # translator accepts and the native binary gets WRONG, with the expected
-    # difference written down.  It is not a coverage cell -- nothing there is
-    # counted as covered -- but a reader of the fraction deserves to know how
-    # many accepted programs are known to disagree and where.  A case that
-    # starts AGREEING is also reported: the list has then gone stale, and a
-    # stale divergence list quietly excuses a difference that no longer exists.
-    for name, src, want_im, want_native in getattr(mod, "DIVERGENCE", []):
-        safe = "div_" + re.sub(r"[^A-Za-z0-9_]", "_", name)
-        script = tmp / (safe + ".im")
-        script.write_text(src)
-        cfile = tmp / (safe + ".c")
-        exe = tmp / (safe + ".bin")
-        trc, _o, _e = run([str(aot), "translate", str(script), str(cfile)], ROOT)
-        if trc != 0:
-            print("IR-AOT-DIVERGENCE|case=%s|state=translator-refused-it-now|known=declared"
-                  % name)
-            continue
-        crc, _o, _e = run([args.cc, "-O2", "-o", str(exe), str(cfile)], ROOT)
-        if crc != 0:
-            print("IR-AOT-DIVERGENCE|case=%s|state=cc-failed|known=declared" % name)
-            continue
-        irc, iout, _e = run([str(interp), "--no-mods", "run", str(script)], ROOT)
-        nrc, nout, _e = run([str(exe)], ROOT)
-        state = ("still-diverges" if (iout != nout or irc != nrc)
-                 else "now-agrees-so-the-list-is-stale")
-        print("IR-AOT-DIVERGENCE|case=%s|state=%s|interp-out=%s|native-out=%s"
-              "|declared-interp=%s|declared-native=%s"
-              % (name, state, repr(iout)[-24:], repr(nout)[-24:],
-                 repr(want_im)[-24:], repr(want_native)[-24:]))
-    print("aot_cover: cases=%d accepted=%d refused=%d differ=%d"
-          % (len(cases), len(accepted), len(refused), len(differ)))
+    for _div_line in div_lines:
+        print(_div_line)
+    print("aot_cover: cases=%d accepted=%d refused=%d differ=%d declared-diverge=%d"
+          % (len(cases), len(accepted), len(refused), len(differ), declared_diverge))
 
     if args.pin:
         PIN.write_text(json.dumps({
