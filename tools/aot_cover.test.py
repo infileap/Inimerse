@@ -259,18 +259,34 @@ def main():
             return 1
         stored = json.loads(PIN.read_text())
         here = head_sha()
-        match = (stored.get("tree") == here
-                 and stored.get("covered") == len(covered)
-                 and stored.get("of") == len(OPCODES))
+        # Two questions, two fields -- they are not the same question and they
+        # cannot share a verdict.  What a reader quotes is `covered`/`of`; the
+        # tree is where those numbers were measured.  A pin cannot name the
+        # commit that contains it (the sha is a function of the content), so
+        # requiring tree == HEAD makes `match=no` the permanent state of every
+        # clean tree, and a red that is always on is a red nobody reads.
+        # The verdict therefore follows the numbers, and tree drift is reported
+        # as its own token -- the same split docs_headings.pin.json needed
+        # (HEADINGS|pin-tree|mismatch= vs HEADINGS|stale|net=).
+        numbers_match = (stored.get("covered") == len(covered)
+                         and stored.get("of") == len(OPCODES))
+        tree_moved = stored.get("tree") != here
         print("IR-AOT-PIN|tree=%s|head=%s|covered=%d|recomputed=%d|of=%d"
-              "|corpus-pin=%d/%d|corpus-now=%d/%d|match=%s"
+              "|corpus-pin=%d/%d|corpus-now=%d/%d"
+              "|numbers-match=%s|tree-moved=%s|basis=the-quoted-number-is-compared"
+              "-and-the-tree-is-reported-separately"
               % (stored.get("tree"), here, stored.get("covered", -1), len(covered),
                  len(OPCODES),
                  (stored.get("corpus") or {}).get("repo_accepted", -1),
                  (stored.get("corpus") or {}).get("repo_total", -1),
                  repo_accepted, len(repo_progs),
-                 "yes" if match else "no"))
-        if not match:
+                 "yes" if numbers_match else "no",
+                 "yes" if tree_moved else "no"))
+        if tree_moved and numbers_match:
+            print("IR-AOT-PIN-DRIFT|effect=the-pin-names-an-earlier-tree-and-its-numbers"
+                  "-still-describe-this-one|note=a-commit-cannot-name-itself|"
+                  "strict=--check-pin-tree")
+        if not numbers_match:
             print("IR-AOT-PIN-STALE|effect=the-numbers-a-reader-would-quote-no-longer-"
                   "describe-this-tree|fix=rerun-with---pin")
             return 1
