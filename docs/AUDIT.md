@@ -25917,3 +25917,39 @@ P3 第一笔（`48f53fd` → `3e03ecd` → `4a0908e`）落在主线上，而 `IR
 二、**`differ=0` 与两条 `IR-AOT-DIVERGENCE|…|state=still-diverges` 同屏**：`differ` 只收**没被写下来的**差异（`IR-AOT-DIFF`），已声明的分歧另算另印，而它们确实还在分（`func_no_return`：`interp-out='nil\n'` 对 `native-out='0\n'`；`global_write_from_func`：`'5\n2\n'` 对 `'7\n7\n'`）。⇒ 同一个词两个主语：读者把 `differ=0` 读成「没有差异」，它说的是「没有我们没写下来的差异」。建议形状与庚栏同一条：**在那一行印出已声明的条数**（例如 `declared-diverge=2`），或把两条分歧的摘要并进同一行——否则那一格的读者会得到一个比事实好看的数。`IR-AOT-MISSING` 的 `count=37` 与 `covered=30` 相加正是 67，这一侧是平的[obs: ea7aa58]。
 
 顺带记第二个「pin 的树号 == HEAD 不是判据」的实例：`IR-AOT-PIN` 同屏印 `numbers-match=yes` 与 `tree-moved=yes`，`IR-AOT-PIN-DRIFT|effect=the-pin-names-an-earlier-tree-and-its-numbers-still-describe-this-one|note=a-commit-cannot-name-itself|strict=--check-pin-tree`，而 `rc` 由 `numbers-match` 决定（那条命令 `rc=0`）。与 `HEADINGS|stale|net=` 并看：**一个数不会因为它记的来历过期而变错，而一个提交也没法写下它自己的 sha**[obs: ea7aa58]。
+
+### 子 同一张注册上的两个判据：被忽略的那个不报错，它只是不再做决定
+
+这段由一个现场引来：合并者要把 `--check-pin` 加进注册时发现，**只加 flag 是装饰**——注册上已经有一条按输出判的属性，而它优先于退出码。我把它从「至少两处」做成一张完整的表，并把「谁真的会被取消」判定到**逐工具**。
+
+一、**普查这张表**（`ea7aa58`）：`grep -c 'PASS_REGULAR_EXPRESSION' CMakeLists.txt` = **31** 行；逐块解析 `add_test` 与 `set_tests_properties` 得到 **181** 个注册，其中带该属性 **27** 个，按命令分只有两种主语：
+
+- **10 个注册的命令跑 `tools/*.py` 验证器**（属性行分别在 `CMakeLists.txt` 的第 285／390／403／1772／1779／1797／1812／1821／1832／1840 行）：`aot_native_regression`、`mod_semantics_regression`、`logic_semantics_regression`、`ir_spec_regression`、`three_way_parity_regression`（这五个经 `tools/gated_run.py` 包装），`op_hot_regression`、`mir_roundtrip_regression`、`mir_wired_regression`、`ir_table_same_regression`、`aot_cover_regression`（这五个直跑）。
+- **17 个注册的命令直接跑被测程序**（`collection_comprehension_runtime` 一族等）——那里**文本本来就是判据**，被测程序本来就可能以 0 退出。
+- 另有 **5 个**同时带 `FAIL_REGULAR_EXPRESSION`，是「两个正则」的第三种形状。
+
+二、CMake 自己的原话（逐字）：`The test output (stdout or stderr) must match this regular expression for the test to pass. The process exit code is ignored.` 例外只有三类：超过 `TIMEOUT` 仍失败；段错误、信号、堆错误可能仍失败；同段还提醒，包一层命令来跑会丢掉 `CROSSCOMPILING_EMULATOR` 与 `TEST_LAUNCHER` 的自动处理[obs: ea7aa58]。
+
+三、**机制的最小控制**：同一棵树、同一个注册 `aot_cover_regression`，桩照**真工具的印刷顺序**写（先印 `aot_cover: cases=86 accepted=86 refused=0 differ=1`、再印分歧行、最后 `sys.exit(1)`），只动一行：
+
+| 那一行 | ctest 结果 |
+|---|---|
+| 属性在（`ea7aa58` 原样） | `Test #181: aot_cover_regression ....... Passed 0.06 sec`／`100% tests passed, 0 tests failed out of 1` |
+| 属性删掉、其余一字不动、重新配置 | `Test #181: aot_cover_regression ....... ***Failed 0.05 sec`／`0% tests passed, 1 tests failed out of 1` |
+
+`gated_run.py` 会让取消更彻底：它把子进程的输出原样重印进自己的报告，所以对经它包装的那五个，正则连「报告自己是否满足形状」这一关也挡不住（第三问挡的是「报告自己的措辞像形状行」，挡不住「报告引了子进程原话」）[obs: ea7aa58]。
+
+四、**「带两个判据」不等于「被取消」**——只有当**失败的那次运行仍会印出被匹配的那行**时，属性才真正接管。逐工具读印刷顺序，今天真的会被取消的只有**两个**：
+
+- `aot_cover_regression`：摘要行在 `tools/aot_cover.test.py` 的第 236 行印，而失败发生在它之后——第 259 行 pin 数字不符、第 292 行语料不符、第 294 行 `return 1 if differ else 0`。⇒ 失败那次的输出照样匹配 `aot_cover: cases=[0-9]+ accepted`。
+- `aot_native_regression`：摘要行在第 388 行印、`return 1 if failures else 0` 在第 392 行。⇒ 失败那次的输出照样匹配 `aot_native\.test: [0-9]+ cases`。
+
+其余八个不是这个形状：`ir_spec.test.py` 的失败路径在第 47／59／67 行**先** `return 1`，ok 行在第 76 行、紧接着 `return 0`，所以**只有成功才印**；`mod_semantics`（第 164 行先 `raise SystemExit`，ok 行在第 177 行）、`logic_semantics`（第 306／第 316 行）、`three_way_parity`（第 670／第 675 行）同形；`op_hot`／`ir_table_same`／`mir_wired` 的正则自带 `red=0`，`mir_roundtrip` 的正则要 `MIR-VERDICT|PASS`，**失败那次根本印不出可匹配的行**。
+
+⇒ 用桩证明「机制存在」时，桩要照真工具的**印刷顺序**写；拿一个「先印 ok 行再失败」的假桩去证明某个具体注册是坏的，证明不了——那不是它的形状。合并者给的 `ir_spec_regression` 那一格正是这样：机制成立，而那个注册今天是自洽的[obs: ea7aa58]。
+
+五、**修法的射程**：要动的是那两个；其余八个删属性之前要逐格确认工具在失败路径上真的返回非 0（`mod_semantics`／`logic_semantics`／`three_way_parity` 用 `raise SystemExit`，`ir_spec`／`aot_native`／`aot_cover` 用 `sys.exit(main())`，直跑的四个失败分支 `return 1` 或 `sys.exit(2)`）。**只按「同时带了两个」自动删，会删掉判据**：那 17 个直跑被测程序的注册里，文本是唯一的判据[obs: ea7aa58]。
+
+六、判据形状（可迁移）：不要问「有没有两个判据」，要问「**哪一个在失败时仍然算数**」。这与辛栏②是同一条判据的两面：新增一个能取代旧判据的东西时，旧判据必须同笔消失，或同笔被判为「只在成功时才印」。
+
+边界：本节只说这张表在 `ea7aa58` 上的形状与「谁会赢」的判法；去掉属性是合并者车道上的修复，落地后本节按新树重数。附带一条量具的坑：解析 `add_test` 块时朴素的括号计数器会被引号里的转义括号（如 `"mod semantics: ok \\([0-9]+ boundary cases"`）带偏，我第一版因此只解析出 55 个块、2 处属性（真值 181／27）；这台表要在跳过引号内容的扫描器上做。
