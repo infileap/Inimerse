@@ -1866,3 +1866,17 @@ set_tests_properties(ir_table_same_regression PROPERTIES WORKING_DIRECTORY ${CMA
 add_test(NAME aot_cover_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_cover: cases=[0-9]+ accepted" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_cover.test.py --check-pin)
 set_tests_properties(aot_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;regression")
+
+# The refusal histogram IR-AOT-COVER prints is decoded from the translator's own
+# stderr, and a decoder is exactly the kind of code that keeps printing confident
+# names after the header it reads has changed shape.  Its self-check replays the
+# decoder over messages the translator really emits, over a kind number outside
+# the header's range, over a line it has never seen, and over the completeness
+# assertion with a bucket deliberately missing -- reading no build output and no
+# corpus, so a bent decoder is red in the cheapest test in this file.  Registered
+# the same way as aot_cover_regression above, and for the same reason: no
+# PASS_REGULAR_EXPRESSION, because the report a matcher would be pointed at
+# carries the program's own output.
+add_test(NAME aot_cover_selfcheck_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_cover self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_cover.test.py --self-check)
+set_tests_properties(aot_cover_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;regression")

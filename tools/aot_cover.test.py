@@ -20,23 +20,37 @@ fine today and is still missing from the 86 in-tree cases.
 
 The corpus is printed with both of its halves.  No repository program is inside
 the subset right now (every tracked .im and .inim is refused), so a fraction
-printed alone would read as coverage of the repository; repo-rejected-why says
-in words that the corpus was measured and everything in it was declined.
+printed alone would read as coverage of the repository.  Why each one was
+declined is not a sentence written down in this file: the histogram beside the
+fraction is decoded from the translator's own stderr, one bucket per distinct
+cause, and the buckets are asserted to account for every refusal.  A cause that
+belongs to the frontend is counted under its own stage -- a program the parser
+refused never reached the backend, and printing it as a numeric-subset refusal
+would credit the backend with a decision it did not make.  The MIR route, when
+it becomes a route of its own, gets its own reading (IR-AOT-MIR): it is a second
+translator, not another bucket of this one.
 
 Readings:
   IR-AOT-COVER|corpus=inline-cases:N,repo:A/B|repo-rejected=R
-              |repo-rejected-why=...|accepted=N|refused=N|differ=N
+              |repo-rejected-stages=frontend-parse:F,numeric-subset:B
+              |repo-rejected-causes=K|repo-rejected-unparsed=U
+              |accepted=N|refused=N|differ=N
               |declared-diverge=K
               |covered=C|of=67|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts
   IR-AOT-OPCODE|op=OP_X|seen-in=N|verdict=covered|missing
   IR-AOT-MISSING|ops=...|count=N|because=no-accepted-program-executes-them
   IR-AOT-DIFF|case=NAME|first-diff=stdout|exit|cc|footprint|detail=...
   IR-AOT-REFUSED|case=NAME|why=...
+  IR-AOT-REPO-REJECTED|n=N|stage=frontend|numeric-subset|unparsed|why=cause
 
 Exit 0 when every accepted program prints the same bytes; 1 when one differs
 (named, because a silent divergence is the one thing this path must never ship);
 2 when a prerequisite is missing.  A refusal is never a failure: it is the
 translator declining, counted and reported.
+
+--self-check runs the decoder and the completeness assertion against messages
+the translator does and does not emit, where the second kind is the point of
+running it at all; it needs no build and measures no corpus.
 """
 import argparse
 import importlib.util
@@ -51,6 +65,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "tools" / "aot_native.test.py"
 PIN = ROOT / "tools" / "aot_cover.pin.json"
+AST_H = ROOT / "src" / "parser" / "ast.h"
 OP_HOT = re.compile(r"^OP-HOT[|]op=(OP_[A-Z0-9_]+)[|]interp=([0-9]+)[|]")
 
 OPCODES = """OP_MOV OP_LOADK_INT OP_LOADK_FLOAT OP_LOADK_STRING OP_LOADK_BOOL
@@ -106,6 +121,153 @@ def footprint(interp, script):
     return rc, ops
 
 
+def enum_members(name, text=None):
+    """The members of a `typedef enum { ... } name;` in src/parser/ast.h, by value.
+
+    The histogram names a kind as expr:EXPR_STRING, which is only a reading
+    while the number is resolved against the declaration that gives it its
+    meaning.  A table copied into this file would be one more claim about
+    another file's source, and it would keep printing after the header changed,
+    so the declaration is read here -- and when it has been edited into a shape
+    this does not understand, the caller refuses instead of guessing.
+    """
+    if text is None:
+        text = AST_H.read_text() if AST_H.is_file() else ""
+    # [^{}]* and not .*?: an unanchored non-greedy body would start at the FIRST
+    # typedef enum in the header and swallow the structs after it, turning a
+    # successful search into a body this refuses -- the wrong answer twice over.
+    m = re.search(r"typedef\s+enum\s*\{([^{}]*)\}\s*" + re.escape(name) + r"\s*;",
+                  text, re.S)
+    if not m:
+        return None
+    body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+    body = re.sub(r"//[^\n]*", "", body)
+    toks = [t.strip() for t in body.split(",")]
+    while toks and not toks[-1]:
+        toks.pop()
+    if not toks or not all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t) for t in toks):
+        return None
+    return {i: t for i, t in enumerate(toks)}
+
+
+def normalized(msg):
+    """The message with the parts that vary from case to case blanked out.
+
+    A name or a line number differs between two programs that hit the same
+    wall; keeping them would turn one cause into as many buckets as there are
+    names, which reads as a longer list of problems than the corpus has.  What
+    was blanked is printed as <name> or <N>, so a bucket still says that these
+    were the translator's own words and not a summary written here.
+    """
+    m = re.sub(r"'[^']*'", "<name>", msg)
+    m = re.sub(r'"[^"]*"', "<name>", m)
+    m = re.sub(r"\d+", "<N>", m)
+    return m.strip()
+
+
+def classify(last_line, exprs, stmts):
+    """(stage, cause) for one refusal, decoded from the message itself.
+
+    The two kind numbers are the message's own, resolved against the header; a
+    number outside the declaration's range is named unknown-kind-N rather than
+    dropped, because a decoder that invents a name for it would report a
+    construct that does not exist.  Anything not recognised here goes to
+    unparsed: rather than into a stage that would then be overstating itself.
+    """
+    m = re.match(r"aot_native: expression kind (\d+) is outside the numeric subset",
+                 last_line)
+    if m:
+        n = int(m.group(1))
+        return "numeric-subset", "expr:" + exprs.get(n, "unknown-kind-%d" % n)
+    m = re.match(r"aot_native: statement kind (\d+) is outside the numeric subset",
+                 last_line)
+    if m:
+        n = int(m.group(1))
+        return "numeric-subset", "stat:" + stmts.get(n, "unknown-kind-%d" % n)
+    if re.match(r"Error\b", last_line):
+        return "frontend", "parse-error"
+    if last_line.startswith("aot_native:"):
+        return "numeric-subset", normalized(last_line[len("aot_native:"):].strip())
+    return "unparsed", normalized(last_line)[:90] or "<no message>"
+
+
+def histogram_is_complete(hist, rejected):
+    """True when the buckets account for every refusal, not for most of them.
+
+    A histogram that quietly drops the messages it could not place reads as a
+    smaller and cleaner set of causes than the corpus has, and the fraction it
+    sits beside would then be explained by a list that does not add up, so the
+    sum is checked rather than assumed.
+    """
+    total = sum(hist.values())
+    if total == rejected:
+        return True, "buckets sum to %d == repo-rejected" % rejected
+    return False, "buckets sum to %d but repo-rejected is %d" % (total, rejected)
+
+
+def self_check():
+    """Exercise the decoder where it can be seen failing.
+
+    Nothing here needs a build: the decoder and the completeness assertion are
+    fed messages the translator does emit and messages it must not pretend to
+    understand, including a kind number outside the header's range.  Exit 0 when
+    every check held, 1 with the failing check on stderr.
+    """
+    checks = [0]
+
+    def check(what, got, want):
+        checks[0] += 1
+        if got != want:
+            print("aot_cover self-check: FAIL -- %s\n  want %r\n  got  %r"
+                  % (what, want, got), file=sys.stderr)
+            sys.exit(1)
+
+    exprs = enum_members("ExprType")
+    stmts = enum_members("StmtType")
+    check("ExprType readable from src/parser/ast.h", exprs is not None, True)
+    check("StmtType readable from src/parser/ast.h", stmts is not None, True)
+    check("EXPR_STRING is kind 2", exprs.get(2), "EXPR_STRING")
+    check("EXPR_LIST is kind 10", exprs.get(10), "EXPR_LIST")
+    check("EXPR_LAMBDA is kind 17", exprs.get(17), "EXPR_LAMBDA")
+    check("STMT_THREAD_DEF is kind 6", stmts.get(6), "STMT_THREAD_DEF")
+    check("STMT_TYPE is kind 39", stmts.get(39), "STMT_TYPE")
+    check("STMT_TRY is kind 45", stmts.get(45), "STMT_TRY")
+
+    samples = [
+        ("aot_native: expression kind 2 is outside the numeric subset",
+         ("numeric-subset", "expr:EXPR_STRING")),
+        ("aot_native: statement kind 39 is outside the numeric subset",
+         ("numeric-subset", "stat:STMT_TYPE")),
+        ("aot_native: expression kind 999 is outside the numeric subset",
+         ("numeric-subset", "expr:unknown-kind-999")),
+        ("Error at line 5: `be` declarations were removed (docs/SYNTAX.md 6.3)",
+         ("frontend", "parse-error")),
+        ("aot_native: call to 'atomic_set' is not a user-defined function in this program",
+         ("numeric-subset",
+          "call to <name> is not a user-defined function in this program")),
+        ("aot_native: variable 'nil' is used but never assigned in this program",
+         ("numeric-subset", "variable <name> is used but never assigned in this program")),
+        ("a line this decoder has never seen",
+         ("unparsed", "a line this decoder has never seen")),
+        ("", ("unparsed", "<no message>")),
+    ]
+    for line, want in samples:
+        check("classify(%r, header)" % (line[:48],), classify(line, exprs, stmts), want)
+
+    check("a declaration edited into a shape this cannot read is refused",
+          enum_members("ExprType", "typedef enum { EXPR_A = 1, EXPR_B } ExprType;"), None)
+    check("a header that declares another enum is refused, not answered from memory",
+          enum_members("ExprType", "typedef enum { EXPR_A, EXPR_B } StmtType;"), None)
+
+    ok, _why = histogram_is_complete({"numeric-subset:expr:EXPR_STRING": 3}, 4)
+    check("a histogram that drops one refusal is refused", ok, False)
+    ok, _why = histogram_is_complete({"numeric-subset:expr:EXPR_STRING": 4}, 4)
+    check("a histogram that accounts for every refusal passes", ok, True)
+
+    print("aot_cover self-check: ok (%d checks)" % checks[0])
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--build", default=str(ROOT / "build"))
@@ -116,7 +278,15 @@ def main():
     ap.add_argument("--check-pin", action="store_true",
                     help="re-run the measurement and compare it with tools/aot_cover.pin.json;"
                          " a pin nobody re-runs is a constant, not a reading")
+    ap.add_argument("--self-check", action="store_true",
+                    help="check the refusal decoder against messages it must and must not"
+                         " recognise; needs no build and measures no corpus")
     args = ap.parse_args()
+
+    # Before the prerequisites below, on purpose: the decoder is this file's own
+    # code and it has to be checkable in a tree where nothing has been built.
+    if args.self_check:
+        return self_check()
 
     build = Path(args.build)
     interp = build / "inimerse"
@@ -172,16 +342,31 @@ def main():
     # so the denominators agree without a second opinion about what "the corpus"
     # means.
     repo_progs, repo_accepted = [], 0
+    repo_hist = {}
     if not args.no_repo:
+        exprs = enum_members("ExprType")
+        stmts = enum_members("StmtType")
+        if exprs is None or stmts is None:
+            refuse("src/parser/ast.h does not declare ExprType/StmtType in a shape this"
+                   " reads; the histogram names kinds from that declaration, and a name"
+                   " guessed instead of read is not a reading")
         tracked = subprocess.run(
             ["git", "ls-files", "--", "vtest/*.im", "examples/**/*.im"],
             cwd=str(ROOT), capture_output=True, text=True)
         repo_progs = [ROOT / rel for rel in tracked.stdout.split() if rel]
         for p in repo_progs:
             cfile = tmp / ("repo_" + re.sub(r"[^A-Za-z0-9_]", "_", p.name) + ".c")
-            trc, _o, _e = run([str(aot), "translate", str(p), str(cfile)], ROOT)
+            trc, _o, terrs = run([str(aot), "translate", str(p), str(cfile)], ROOT)
             if trc == 0:
                 repo_accepted += 1
+                continue
+            # stderr was thrown away here before this commit; the last line of it
+            # is the only place the reason exists, and a reason nobody reads is
+            # the sentence this reading used to print from memory instead.
+            tail = (terrs or "").strip().splitlines()
+            stage, cause = classify(tail[-1] if tail else "", exprs, stmts)
+            key = "%s:%s" % (stage, cause)
+            repo_hist[key] = repo_hist.get(key, 0) + 1
 
     def divergence_report():
         # Defined above the summary so the summary can say how many of the
@@ -227,15 +412,27 @@ def main():
     covered = sorted(op for op in OPCODES if op in seen)
     missing = sorted(op for op in OPCODES if op not in seen)
     repo_rejected = len(repo_progs) - repo_accepted
+    # The reasons are counted, so they have to add up to the count they explain:
+    # a bucket that was never printed is not one this line can be missing.
+    complete, complete_why = histogram_is_complete(repo_hist, repo_rejected)
+    if not complete:
+        refuse("the refusal histogram does not account for the corpus: " + complete_why)
+
+    def stage_count(stage):
+        return sum(n for k, n in repo_hist.items() if k.split(":", 1)[0] == stage)
+
     # differ= counts only the differences that are NOT written down; the declared
     # list is the other half of the same question, so how many of its cases still
     # diverge rides on this line rather than on a reader memory of it.
     print("IR-AOT-COVER|corpus=inline-cases:%d,repo:%d/%d|repo-rejected=%d"
-          "|repo-rejected-why=no-tracked-program-is-inside-the-numeric-subset"
+          "|repo-rejected-stages=frontend-parse:%d,numeric-subset:%d"
+          "|repo-rejected-causes=%d|repo-rejected-unparsed=%d"
           "|accepted=%d|refused=%d|differ=%d|declared-diverge=%d|covered=%d|of=%d"
           "|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts"
           "|not-a-capability-count=yes"
           % (len(cases), repo_accepted, len(repo_progs), repo_rejected,
+             stage_count("frontend"), stage_count("numeric-subset"),
+             len(repo_hist), stage_count("unparsed"),
              len(accepted), len(refused), len(differ), declared_diverge,
              len(covered), len(OPCODES)))
     for op in covered:
@@ -248,11 +445,19 @@ def main():
         print("IR-AOT-DIFF|case=%s|first-diff=%s|detail=%s" % (name, why, detail))
     for name, msg in refused:
         print("IR-AOT-REFUSED|case=%s|why=%s" % (name, msg))
+    # One line per cause, most common first: a reader of the fraction above is
+    # owed the reasons themselves and not only their number, and these keys are
+    # printed verbatim because they are the ones the assertion just summed.
+    for key in sorted(repo_hist, key=lambda k: (-repo_hist[k], k)):
+        stage, cause = key.split(":", 1)
+        print("IR-AOT-REPO-REJECTED|n=%d|stage=%s|why=%s" % (repo_hist[key], stage, cause))
 
     for _div_line in div_lines:
         print(_div_line)
     print("aot_cover: cases=%d accepted=%d refused=%d differ=%d declared-diverge=%d"
-          % (len(cases), len(accepted), len(refused), len(differ), declared_diverge))
+          " repo-rejected-buckets=%d/%d"
+          % (len(cases), len(accepted), len(refused), len(differ), declared_diverge,
+             sum(repo_hist.values()), repo_rejected))
 
     if args.pin:
         PIN.write_text(json.dumps({
