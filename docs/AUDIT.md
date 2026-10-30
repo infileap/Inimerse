@@ -25691,37 +25691,49 @@ HEADINGS|drift|added=0|removed=0|net=0
 
 **pin 里写的树号不是 `HEAD`，而这不是矛盾**：pin 记的是「这些计数取自哪棵树」（这里 `c94b599`，即 §1.421 那一笔），`HEAD` 是重钉那一笔（`639a429`）；两者内容一样这件事，由 `stale|net=0` 与 `drift|net=0` 说，而不是由两个树号相等说。反过来说，`net` 不为 0 时它就是那两个树号之间的**差**——所以「pin 的树号等于 `HEAD`」不是判据，`net` 才是。这一笔也说明一件早就该说的事：**给一节加标题的人不一定是重钉的人**，而重钉一旦延后，`stale` 行就一直是红的，红得对。同一个红在这里有两个意思——「门禁坏了」与「还有一个人没做的事」——区分它们的不是颜色，是那行字说的是不是「差多少」：`stale` 带 `net`，所以它读起来是待办；不带数的红只能读成故障。
 
-**P2 的第一件量具在 `3668c01` 上多出两行读数，而两行都是新行、没有旧行可替**（下面按 `ce8582d` 抄，理由见本段末的换格）：
+**P2 的第一件量具在 `3668c01` 上多出两行读数，而两行都是新行、没有旧行可替**（下面按收尾树 `d99b1fa` 抄，理由见本段末的换格）：
 
 ```
 IR-TABLE|rows=67|handlers-named=67|mismatch=0|source=table
-IR-TABLE-SHADOW|switched=67|readers=none|why=the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case
+IR-TABLE-SHADOW|switched=0|readers=table|why=the-dispatcher-no-longer-switches-so-every-opcode-arrives-through-the-table
 IR-TABLE-SPLIT-KNOWN|ops=OP_CALL_VALUE|count=1|basis=a-body-that-jumps-into-another-body-serves-its-opcode-from-two-places
 ```
 
-`IR-COVER` 那四行一字未变（`IR-TABLE` 只加行、不改既有行）：`interp=67/67|disasm=67/67|missing=disasm:none|budget=none|aot=na|wasm=na|selfhost=na`。★ `readers=none` 的主语是**dispatch 路径**，不是整个程序：harness 自己就会从表里读（下面运行时那条的 `table=` 列就是它读出来的）。同一个 `none` 站在两种主语中间，正是这个仓库踩过一次的坑（`na` 与 `0/67` 那次），所以这里把主语写在行上而不是留给读者猜。
+`IR-COVER` 那四行一字未变：`interp=67/67|disasm=67/67|missing=disasm:none|budget=none|aot=na|wasm=na|selfhost=na`。
+
+★ **`IR-TABLE-SHADOW` 这一行整句都换了，而它换的正是这个仓库记了半个月的那件事**：`ce8582d` 上是 `switched=67|readers=none|why=the-dispatcher-still-switches-on-ins.op-so-every-opcode-arrives-through-a-case`，`d99b1fa` 上是 `switched=0|readers=table|why=the-dispatcher-no-longer-switches-so-every-opcode-arrives-through-the-table`。三个字段一起翻：**数从 67 到 0、主语从 `none` 到 `table`、连 `why=` 那句解释也换成了它的反面**。这不是「值更新」，是这一行从头到尾在说另一件事——`readers=none` 的主语曾是 **dispatch 路径**（不是整个程序，harness 自己一直在读表），现在那条路径本身不存在了，所以 `none` 与 `table` 之间不是量的差别。
 
 **第三行与第二行的主语不一样，这一点必须写下来**：`IR-TABLE-SPLIT-KNOWN` 是**静态事实**（量具从源码里算出「哪些 opcode 会被多于一个 body 服务」，`basis=` 就是这个意思），而下面那几条 `IR-TABLE-SAME` 是**跑出来的事实**（这一次运行里真的走了哪几条）。前者的 `count=1` 说的是全表，后者的 `split-ops-*` 说的是这一跑——同一个 `OP_CALL_VALUE`，一个印在静态行上、一个印在运行行上，读者若把两行当同一句话读，就会把「表里知道有一个分裂」读成「这次跑到了一个分裂」。
 
-**这三行之间换过两次**：`3668c01` 上是 `IR-TABLE|rows=67|handlers-named=67|mismatch=0`（三格），`236c348` 上末尾多出 `|source=table`（四格，量具改成去读那张表），`ce8582d` 上两行**逐字未变**、只新增了 `IR-TABLE-SPLIT-KNOWN` 那一行（因为表改存标号地址，量具才有东西可读）。加在行尾的一个字段最容易漏：两棵树的行数一样、行长不一样，只数「有没有多行」的核法看不见它。所以两行都按 `ce8582d` 重抄一遍，而不是在前一笔的引文后面补一句「后来又加了」。
+**这三行之间换过三次，而最后一次是「行数减少」**：`3668c01` 上是 `IR-TABLE|rows=67|handlers-named=67|mismatch=0`（三格），`236c348` 上末尾多出 `|source=table`（四格），`ce8582d` 上两行逐字未变、只新增 `IR-TABLE-SPLIT-KNOWN`，`d99b1fa` 上**整行改口**（见上）。加在行尾的一个字段最容易漏：两棵树的行数一样、行长不一样，只数「有没有多行」的核法看不见它。所以三行都按 `d99b1fa` 重抄一遍，而不是在前一笔的引文后面补一句「后来又改了」。
 
-运行时那条要跑二进制（`INIMERSE_IR_TABLE=1 ./build/inimerse` 跑基准 `cpu1`[obs: ce8582d]），它印十三条逐 opcode 行加一条汇总：
+运行时那条要跑二进制（`INIMERSE_IR_TABLE=1 ./build/inimerse` 跑基准 `cpu1`[obs: d99b1fa]），它现在**只印一行**——逐 opcode 那十三条不见了：
 
 ```
-IR-TABLE-SAME|op=OP_MOV|table=300000001|switch=300000001|first-diff=none
-IR-TABLE-SAME|op=OP_LOADK_INT|table=600000004|switch=600000004|first-diff=none
-IR-TABLE-SAME|opcodes=67|compared=13|unseen=54|basis=the-corpus-never-executed-them|table=3000000030|switch=3000000030|mismatch=0|split-ops-seen=0|split-ops-known=na|split-basis=this-run-only|why=a-body-that-jumps-into-another-body-is-a-source-fact-so-the-gauge-prints-the-set-of-opcodes-it-knows-to-be-split|goto-entries=0
+IR-TABLE-SAME|compared=na|why=no-switch-left-to-compare-with|since=ce8582d|prog=examples/bench/cpu1.im|opcodes=67|split-ops-seen=0|split-ops-known=na|known-at=IR-TABLE-SPLIT-KNOWN (tools/ir_spec.py)|split-basis=this-run-only|split-why=a-body-that-jumps-into-another-body-is-a-source-fact-so-the-gauge-prints-the-set-of-opcodes-it-knows-to-be-split|goto-entries=0|threads=no|counts=exact|counts-why=this-program-spawns-no-threads-so-nothing-can-race-the-counter
 ```
 
-**三个分母必须分开读**：`opcodes=67` 是**表里有多少条**，`compared=13` 是**这个程序真的执行到了几条**，`unseen=54` 是余下的那部分——而且它不是「通过」，`basis=the-corpus-never-executed-them` 把这个理由写在同一行上，所以 `mismatch=0` 只对这 13 条成立，读成「67 条都在运行时验过」就把分母换掉了。而 `table=3000000030` 是**同一个 opcode 被算了多少次**的和（这个程序的主循环把 `MOV` 跑了三亿次），不是「三亿个不同的 opcode」：这个计数器数的是次数，不是种类。
+**这行最重要的一格是 `compared=na`**：`why=no-switch-left-to-compare-with|since=ce8582d` 说明它**不再有第二个说法**——switch 删掉了，没有东西可比。所以它是「无从比对」，不是「比对通过」。这一格与本节前面那条「`na` 必须点名出处」是同一件事的第三个实例：一个 `na` 若只写「没有」，读者会当成「没问题」；这里把**为什么没有**（`why=`）和**从哪棵树起没有**（`since=`）都压在同一个值旁边。同一行里 `threads=` 与 `counts=` 也是这一族：单线程程序印 `threads=no|counts=exact`（定值），多线程程序印 `threads=yes|counts=sampled`（只能当同一量级，`counts-why=the-counter-is-incremented-without-atomicity-and-the-program-spawns-threads`）——**`exact` 与 `sampled` 不是同一件事的两种写法，是两种可信度**，引用这一格时必须带上 `threads=`。
 
-★ `split-ops-seen=` 与 `goto-entries=` 的主语是**本次运行**，`split-basis=this-run-only` 就写在行上；而「全表里哪些 opcode 会被分裂」这件事这一行印不出来，所以它印 `split-ops-known=na` 并把 `why=` 指向来源（静态行 `IR-TABLE-SPLIT-KNOWN`）——**一个 `na` 必须点名出处，否则它和「没有」同形**。这一跑是 `split-ops-seen=0|split-ops-known=na|goto-entries=0`，而 `vtest/composition_v04.im` 上（同一棵树）是 `compared=14|table=57|split-ops-seen=1|goto-entries=4` 并且**真的印出第四行**：
+★ `split-ops-seen=` 与 `goto-entries=` 的主语是**本次运行**，`split-basis=this-run-only` 就写在行上；而「全表里哪些 opcode 会被分裂」这件事这一行印不出来，所以它印 `split-ops-known=na`，并由 `known-at=IR-TABLE-SPLIT-KNOWN (tools/ir_spec.py)` 点名出处——这一格是上一版还欠着的那半句，现在补上了。这一跑是 `split-ops-seen=0|goto-entries=0`，而 `vtest/composition_v04.im` 上（同一棵树）是 `split-ops-seen=1|goto-entries=4` 并且**真的印出第二行**：
 
 ```
 IR-TABLE-SPLIT|op=OP_CALL_VALUE|bodies=L_CALL_FUNC,L_CALL_VALUE|dispatched=L_CALL_VALUE|goto=L_CALL_FUNC|dispatches=4|goto-entries=4|effect=the-opcode-is-served-by-more-than-one-body
 ```
 
-所以 `cpu1.im` 上「`IR-TABLE-SPLIT` 一行都不出现」仍然成立，而它现在有对照：**缺席不是「没有分裂」，是「这只程序没走到会印它的那条路」**——`cpu1.im` 整份程序里 `CALL_VALUE` 一次都不出现。ivory 还要求下一笔给这行加 `known-at=`（`na` 的出处要写进值里），那笔没交，本页不预先写它会是什么形状。
+所以 `cpu1.im` 上「`IR-TABLE-SPLIT` 一行都不出现」仍然成立，而它现在有对照：**缺席不是「没有分裂」，是「这只程序没走到会印它的那条路」**——`cpu1.im` 整份程序里 `CALL_VALUE` 一次都不出现。
+
+**「逐 opcode 行消失」这件事本身也要写下来**，因为它是这一节最容易读错的一处：`ce8582d` 上跑 `cpu1.im` 印 13 条 `IR-TABLE-SAME|op=…|table=N|switch=N|first-diff=none` 加 1 条汇总；`d99b1fa` 上只有 1 条汇总、逐 opcode 行 **0 条**（`grep -c '^IR-TABLE-SAME|op='` = 0）。原因不是「量具退化了」，而是那 13 条的内容就是「表与 switch 逐条相等」——第二方没了，这条判据就没有对象。**一条读数消失，可以是「判据不再适用」，也可以是「量具坏了」；区分它们的还是那个 `why=`。**
+
+★ **同一棵树里还有一处「三道网都没看见」的重复，而它和本节前面那条「行数不变、行长变化」是同一族**：`src/vm/vm.c` 第 3155 行的取指语句在 rebase 接缝处被写了两遍——同一个赋值、同一个条件，一遍在注释前、一遍在注释后：
+
+```
+… if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1; /* … */ if (g_ir_same || !g_ir_init_done) g_ir_dispatch_src = 1;
+```
+
+产物完全正确（两遍写的是同一个值），所以**门禁绿、等价性绿、自检绿**——没有任何一条判据问「同一行是不是把一件事做了两遍」。`d99b1fa` 删掉一份并复验：文件仍 **5853** 行、`3234..5711` 与改前**逐字节相同**（`vm.c:NNN` 的锚全部不动）、40 个 `vtest/*.im` 在 switch 构建与 table 构建下 stdout 与退出码 `differ=0`。这一笔的 diff 是 `1 file changed, 1 insertion(+), 1 deletion(-)`——**一个字符级的重复，用任何「行数／节数／差值」型判据都看不见**，只能靠人读那一行。
+
+三件事到这里连成一句：**判据只数行，就看不见格（行尾多一个字段）；只问结果，就看不见重复（同一行做两遍）；只问有没有行，就看不见判据还有没有对象（第二方删掉后那 13 条消失）。** 它们都不是缺陷的形状，而是**判据的射程**的形状。
 
 同族的第二个数是 `check_line_refs` 的 `unanchored`：`567` → **`566`**（树 `fb116dc`，`pins -- explicit delta +12 (expect +12), unanchored delta +4 (ceiling +12)`）。它**不是涨**，是 `src/compiler/compiler.c` 的改动让一条旧引用重新落在了它自己那行里；引用时带树号，`567` 是 `7075477` 上的值。
 
