@@ -32,17 +32,36 @@ measured  `interp`  -- the opcode appears as a `case` in the interpreter's
                        a case that prints a number: it is a wrong answer with
                        the shape of a right one).  Coverage and name
                        agreement are two separate readings.
-not now   `aot` / `wasm` -- both selectors are written against the AST, not
-                       against this bytecode (docs/IR_DESIGN.md sections 3 and
-                       7), so there is nothing to measure yet.  They become
-                       measurable in P3/P4, when those selectors take MIR.
-          `selfhost`-- the bootstrap writer's number table is P6.
+quoted    `aot`    -- the native path is still written against the AST, but it
+                       has a measurement that does not live here: every case
+                       tools/aot_native.test.py accepts *and* agrees with the
+                       interpreter on is a program the AOT path has been shown
+                       to compute, and the opcodes executed there are counted by
+                       tools/aot_cover.test.py.  Re-running that takes about 100
+                       seconds -- the whole timeout of the test that runs this
+                       file -- so this reading quotes the pin and checks that the
+                       pin still describes this tree.  IR-AOT-PIN says whether
+                       anything recomputed it in this run (INIMERSE_AOT_RECOMPUTE);
+                       a fraction quoted from a file and a fraction remeasured
+                       here are two different readings, and the second one is
+                       named as such rather than assumed.
+not now   `wasm` / `selfhost` -- those consumers are written against the AST
+                       (docs/IR_DESIGN.md sections 3 and 7) and have no
+                       measurement at all: there is nothing to quote, so they
+                       stay `na`, which is "not a consumer yet", not "0/67".
 
 READINGS
 --------
   IR-SPEC|ops=N|codes=LO..HI|hole=29|shaped=N|unshaped=<names>
   IR-ABI|version=3|abi=2|ops=N
-  IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B|aot=na|wasm=na|selfhost=na
+  IR-COVER|interp=N/N|disasm=N/N|missing=disasm:OP_A,OP_B,aot:OP_C|budget=none
+          |aot=C/N|wasm=na|selfhost=na
+  IR-AOT-COVER|covered=C|of=N|pin-tree=<sha>|via=<pin file>|basis=...|not-a-capability-count=yes
+  IR-AOT-PIN|tree=<sha>|head=<sha>|covered=C|recomputed=<N|na>|of=N
+            |numbers-match=<yes|no|na>|tree-moved=<yes|no>|pin-lists-agree=<yes|no>
+            |inputs-moved=N|basis=...
+  IR-AOT-PIN-BROKEN|field=<field>|why=<what disagrees>|effect=...
+  IR-AOT-PIN-INPUTS|moved=<files>|effect=...
   IR-TABLE|rows=N|handlers-named=N|mismatch=M|source=table
   IR-TABLE-SHADOW|switched=N|readers=<table|none>|why=<who consumes the table today>
   IR-DISASM|cases=N/N|names-checked=N/N|names-unreadable=<names>|wrong-name=<names>
@@ -55,13 +74,35 @@ table and requires the mutation to be caught (a checker that cannot go red has
 not been shown to work).
 """
 
+import json
+import os
 import re
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BYTECODE_H = ROOT / "src" / "compiler" / "bytecode.h"
 VM_C = ROOT / "src" / "vm" / "vm.c"
+
+# The AOT fraction is not measured here: it is written by the tool that owns the
+# measurement (tools/aot_cover.test.py), which translates every accepted case,
+# compiles it and runs it twice -- about 100 seconds, which is the whole timeout
+# of the test that runs this file.  So this reading *quotes* the pin and checks
+# that the pin still describes this tree, and says out loud where the number is
+# recomputed.  The two questions are kept apart the same way the pin's own
+# checker had to keep them apart: whether the file's lists contradict its own
+# numbers is a self-consistency failure (red here), while whether the numbers
+# still describe this tree can only be answered by re-running the measurement
+# (INIMERSE_AOT_RECOMPUTE) -- and a number nobody re-ran is printed as
+# recomputed=na rather than assumed.
+PIN = Path(os.environ.get("INIMERSE_AOT_PIN") or (ROOT / "tools" / "aot_cover.pin.json"))
+AOT_COVER = ROOT / "tools" / "aot_cover.test.py"
+# What the pinned number is a function of: a pin measured before one of these
+# moved is a number about an earlier tree, and a reader can see that for free.
+AOT_INPUTS = ("src/compilation/aot_native.c", "src/compilation/aot_native_tool.c",
+              "tools/aot_native.test.py", "src/compiler/bytecode.h")
 
 # Codes the enum no longer defines but the numbering remembers.  The gap is not
 # free space: OP_SAY is pinned to 30 because committed .inim files carry raw
@@ -380,7 +421,86 @@ def measured():
             "table_slots": _table_slots(vm), "split_known": _split_known(vm)}
 
 
-def report(ops, shape, meas, out=sys.stdout, handler_table=None):
+def _git(*args):
+    p = subprocess.run(["git", *args], cwd=str(ROOT), capture_output=True, text=True)
+    return p.returncode, p.stdout.strip()
+
+
+def head_sha():
+    rc, out = _git("rev-parse", "HEAD")
+    return out if rc == 0 else "<not a git tree>"
+
+
+def _val(x):
+    return "none" if x is None else str(x)
+
+
+def aot_pin(names, pin=None):
+    """(fields, problems): the pinned fraction, and how it stops describing this tree.
+
+    A pin is a file, so it can disagree with itself: the fraction it quotes can
+    stop matching the lists it ships in the same file, or name opcodes this tree
+    does not declare.  Those are cheap, local, and red here.  Whether the numbers
+    still describe *this tree* is a different question, and only a re-run answers
+    it -- see aot_recompute().
+    """
+    if pin is None:
+        if not PIN.is_file():
+            return ({"covered": None, "of": None, "list": [], "tree": None},
+                    [("missing-file", "there is no %s to read the fraction from" % PIN.name)])
+        try:
+            pin = json.loads(PIN.read_text())
+        except ValueError as e:
+            return ({"covered": None, "of": None, "list": [], "tree": None},
+                    [("unreadable-file", str(e)[:90])])
+    covered, of = pin.get("covered"), pin.get("of")
+    seen, gone = list(pin.get("covered_ops") or []), list(pin.get("missing_ops") or [])
+    problems = []
+    if covered != len(seen):
+        problems.append(("covered", "claims %s covered opcodes and lists %d"
+                         % (_val(covered), len(seen))))
+    if of != len(seen) + len(gone):
+        problems.append(("of", "says %s opcodes and its two lists hold %d"
+                         % (_val(of), len(seen) + len(gone))))
+    if of != len(names):
+        problems.append(("denominator", "says %s opcodes and this tree declares %d"
+                         % (_val(of), len(names))))
+    unknown = [o for o in seen + gone if o not in set(names)]
+    if unknown:
+        problems.append(("unknown-op", "names %d opcode(s) this tree does not declare: %s"
+                         % (len(unknown), ",".join(unknown[:4]))))
+    both = sorted(set(seen) & set(gone))
+    if both:
+        problems.append(("in-both-lists", ",".join(both[:4])))
+    return {"covered": covered, "of": of, "list": gone, "tree": pin.get("tree")}, problems
+
+
+def aot_recompute():
+    """Re-run the measurement that owns the pin, when the caller asks for it.
+
+    (fields, why): fields is None when nothing was re-run.  Unset or 0 means "do
+    not re-run", and the reading then says recomputed=na instead of quoting a
+    number nobody recomputed.  A value of 1 runs the real tool; anything else is
+    run as a command, which is how a stub can stand in for it in a control.
+    """
+    want = os.environ.get("INIMERSE_AOT_RECOMPUTE")
+    if not want or want == "0":
+        return None, None
+    cmd = ([sys.executable, str(AOT_COVER), "--check-pin"] if want == "1"
+           else shlex.split(want))
+    try:
+        d = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        return None, "the-recompute-did-not-finish-inside-1800s"
+    except OSError as e:
+        return None, "the-recompute-could-not-be-started: %s" % str(e)[:60]
+    line = next((l for l in d.stdout.splitlines() if l.startswith("IR-AOT-PIN|")), "")
+    if not line:
+        return None, "the-recompute-printed-no-IR-AOT-PIN-line"
+    return dict(p.split("=", 1) for p in line.split("|")[1:] if "=" in p), None
+
+
+def report(ops, shape, meas, out=sys.stdout, handler_table=None, pin=None):
     names = [n for n, _ in ops]
     codes = [c for _, c in ops]
     holes = sorted(set(range(min(codes), max(codes) + 1)) - set(codes))
@@ -575,10 +695,61 @@ def report(ops, shape, meas, out=sys.stdout, handler_table=None):
           f"|why=roles-are-not-declared-yet-immediates-and-goto-shared-bodies-look-like-mismatches-see-IR_DESIGN-P1", file=out)
 
     missing_disasm = [n for n in names if n not in meas["disasm"]]
+    aot, aot_problems = aot_pin(names, pin)
+    aot_field = "na" if aot_problems else "%s/%s" % (aot["covered"], aot["of"])
     print(f"IR-COVER|interp={len(names) - len([n for n in names if n not in meas['interp']])}/{len(names)}"
           f"|disasm={len(names) - len(missing_disasm)}/{len(names)}"
-          f"|missing=disasm:{','.join(missing_disasm) or 'none'}"
-          f"|budget=none|aot=na|wasm=na|selfhost=na", file=out)
+          f"|missing=disasm:{','.join(missing_disasm) or 'none'},aot:{','.join(aot['list']) or 'none'}"
+          f"|budget=none|aot={aot_field}|wasm=na|selfhost=na", file=out)
+    # The fraction above is a file's claim, so the file is read out loud: which
+    # tree it was measured on, that its numerator counts opcodes a differential
+    # test actually ran (not opcodes the translator mentions), and whether
+    # anything recomputed it in this run.  A fraction alone cannot be told from
+    # a constant.
+    print(f"IR-AOT-COVER|covered={_val(aot['covered'])}|of={_val(aot['of'])}"
+          f"|pin-tree={_val(aot['tree'])[:7]}|via={PIN.name}"
+          f"|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts"
+          f"|not-a-capability-count=yes", file=out)
+    for field, why in aot_problems:
+        print(f"IR-AOT-PIN-BROKEN|field={field}|why={why}"
+              f"|effect=the-fraction-a-reader-quotes-does-not-describe-this-tree", file=out)
+    if aot_problems:
+        bad.append(f"aot-pin:{len(aot_problems)}")
+    here = head_sha()
+    tree = aot["tree"]
+    rc_git, changed = (_git("diff", "--name-only", "%s..HEAD" % tree, "--", *AOT_INPUTS)
+                       if tree else (1, ""))
+    moved_inputs = [f for f in changed.splitlines() if f] if rc_git == 0 else []
+    rec, why = aot_recompute()
+    tree_moved = "yes" if tree and tree != here else "no"
+    lists_agree = "no" if aot_problems else "yes"
+
+    def pinrow(recomputed, numbers, basis):
+        return (f"IR-AOT-PIN|tree={_val(tree)[:7]}|head={here[:7]}"
+                f"|covered={_val(aot['covered'])}|recomputed={recomputed}"
+                f"|of={_val(aot['of'])}|numbers-match={numbers}"
+                f"|tree-moved={tree_moved}|pin-lists-agree={lists_agree}"
+                f"|inputs-moved={len(moved_inputs)}|basis={basis}")
+
+    if rec is not None:
+        numbers = rec.get("numbers-match", "?")
+        print(pinrow(_val(rec.get("recomputed")), numbers,
+                     "the-pin-was-re-run-by-the-tool-that-owns-the-measurement")
+              + "|recomputed-by=tools/aot_cover.test.py--check-pin", file=out)
+        if numbers != "yes":
+            print(f"IR-AOT-PIN-STALE|numbers-match={numbers}"
+                  f"|effect=the-numbers-a-reader-would-quote-do-not-describe-this-tree"
+                  f"|fix=re-run-tools/aot_cover.test.py---pin", file=out)
+            bad.append("aot-pin-stale")
+    else:
+        print(pinrow("na", "na",
+                     "recomputed-by-tools/aot_cover.test.py--check-pin-which-costs-about-100s"
+                     "-and-this-reading-does-not-repeat-it")
+              + (("|why=" + why) if why else ""), file=out)
+    if moved_inputs:
+        print(f"IR-AOT-PIN-INPUTS|moved={','.join(moved_inputs)}"
+              f"|effect=the-number-was-measured-before-these-moved-so-it-describes-an-earlier-tree",
+              file=out)
 
     # The handler column: one row per opcode, and the value is the label the
     # dispatcher's case jumps to.  Two ways that stops describing this tree --
@@ -679,7 +850,20 @@ def main(argv):
         # Each mutation must be caught.  Five are input-side (the table lies);
         # the sixth is the one this table used to be blind to -- a shape that
         # forgets registers its own handler reads.
+        #
+        # The AOT fraction is quoted from a file, and a file that contradicts
+        # itself would redden *every* cell below for that one reason: the cells
+        # would then all look like they had caught their own mutation while none
+        # of them had.  So the pin is checked once, up front, and its own cell
+        # carries the verdict.  The recomputation is also switched off here: it
+        # costs about 100 seconds and there is one of it, not thirteen.
+        os.environ.pop("INIMERSE_AOT_RECOMPUTE", None)
+        real_pin = json.loads(PIN.read_text()) if PIN.is_file() else None
+        _, pin_problems = aot_pin([n for n, _ in ops], real_pin)
         ok = True
+        if pin_problems:
+            print("IRCHECK|case=aot-pin-is-self-consistent|red=no|op=none", file=sys.stdout)
+            ok = False
         drop = [n for n, _ in ops if n in shape][0]
         mutated = {k: v for k, v in shape.items() if k != drop}
         ok &= _check("unshaped", report(ops, mutated, meas, out=open("/dev/null", "w")))
@@ -799,15 +983,28 @@ def main(argv):
             print(f"IRCHECK|case=gauge-reads-the-table|red={'yes' if red else 'no'}|op=OP_ADD",
                   file=sys.stdout)
             ok &= red
+        # The AOT fraction is a file's number, so the file's own lists are the
+        # only thing between a reader and a number that describes nothing.  Bend
+        # the count away from the list it ships with: the reading must refuse to
+        # quote it and name the field that disagrees.
+        if real_pin:
+            bent_pin = dict(real_pin, covered=(real_pin.get("covered") or 0) + 1)
+            lines = _report_text(ops, shape, meas, pin=bent_pin).splitlines()
+            named = any(l.startswith("IR-AOT-PIN-BROKEN|field=covered|") for l in lines)
+            refused = any(l.startswith("IR-COVER|") and "|aot=na|" in l for l in lines)
+            red = named and refused
+            print(f"IRCHECK|case=aot-pin-broken-is-refused|red={'yes' if red else 'no'}|op=none",
+                  file=sys.stdout)
+            ok &= red
         return 0 if ok else 1
 
     return report(ops, shape, meas)
 
 
-def _report_text(ops, shape, meas, handler_table=None):
+def _report_text(ops, shape, meas, handler_table=None, pin=None):
     import io
     buf = io.StringIO()
-    report(ops, shape, meas, out=buf, handler_table=handler_table)
+    report(ops, shape, meas, out=buf, handler_table=handler_table, pin=pin)
     return buf.getvalue()
 
 
