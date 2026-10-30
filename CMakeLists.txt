@@ -278,11 +278,11 @@ if(INIMERSE_PYTHON)
   # stdout byte for byte; out-of-subset programs must be REFUSED rather than
   # mistranslated.  The two pinned divergences assert both sides exactly, so
   # fixing one (or letting the gap widen) fails here and demands a decision.
-  # It needs a working `cc`, which the engine build already required.
+  # It needs a working `cc`, already required.  No PASS_REGULAR_EXPRESSION here -- see the note above ir_spec_regression.
   add_test(NAME aot_native_regression
            COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_native\\.test: [0-9]+ cases" --
                    ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_native.test.py --build ${CMAKE_BINARY_DIR} --cc ${CMAKE_C_COMPILER})
-  set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression" PASS_REGULAR_EXPRESSION "aot_native\\.test: [0-9]+ cases")
+  set_tests_properties(aot_native_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "compiler;aot;regression")
   add_test(NAME scan_tools_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/scan_tools.test.py)
   set_tests_properties(scan_tools_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "compiler;regression")
   add_test(NAME replay_closure_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/replay.test.py)
@@ -1767,6 +1767,29 @@ endif()
 # that all 67 opcodes (codes 0..67 with 29 retired) have an operand shape, that
 # the interpreter still dispatches all 67, and that the disassembler names all
 # 67 and each prints its own name; a gap may shrink but may not grow.
+# PASS_REGULAR_EXPRESSION takes precedence over the process exit code
+# (cmake --help-property PASS_REGULAR_EXPRESSION: "The process exit code is
+# ignored"), so where a registration runs tools/gated_run.py -- which asks the
+# exit code, the shape, and whether its own report can satisfy the shape -- a
+# regex beside it cannot add a judgement; it can only replace gated_run's.  Two
+# registrations did exactly that and are repaired in this commit:
+# aot_native_regression and aot_cover_regression.  In both, the line the regex
+# matches is printed unconditionally, before the failure branch returns 1, and
+# gated_run echoes the child's output into its report, so the regex matched even
+# when gated_run had just printed FAIL on the exit code.  Measured before the
+# property came off: a pin bent on purpose (covered=31 against a list of 30) left
+# aot_cover_regression reporting Passed while the tool exited 1, and a stub that
+# printed "aot_native.test: 1 cases (0 equivalence, ...), 1 failures" and exited
+# 1 left aot_native_regression reporting Passed.
+#
+# The three other registrations that carry both were checked and are left alone:
+# tools/mod_semantics.test.py, tools/logic_semantics.test.py and
+# tools/three_way_parity.test.py all raise SystemExit on failure, and
+# tools/ir_spec.test.py (this one) returns 1 from every failure branch, so none
+# of them prints its ok line on a failing run and the property is inert.  Their
+# safety rests on the order of two statements, which is why the rule is written
+# here once: the property may not sit next to gated_run, and a registration that
+# moves its ok line above its failure branch would be the third instance.
 add_test(NAME ir_spec_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "ir spec: ok \\([0-9]+ opcodes" -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/ir_spec.test.py)
 set_tests_properties(ir_spec_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression" PASS_REGULAR_EXPRESSION "ir spec: ok \\([0-9]+ opcodes")
@@ -1834,7 +1857,12 @@ set_tests_properties(ir_table_same_regression PROPERTIES WORKING_DIRECTORY ${CMA
 # Measured, not asserted: the native path is judged by running the programs the
 # translator accepts and comparing stdout with the interpreter's.  The numbers
 # are pinned to a tree and the pin is recomputed on demand, so a stale pin is a
-# red cell rather than a quote someone has to remember was old.
+# red cell rather than a quote someone has to remember was old.  --check-pin is
+# what makes the pin a reading instead of a constant: the run has already paid
+# for the measurement, so the comparison costs a file read, and gated_run's
+# --exit 0 is what makes a bent pin red (see the note above ir_spec_regression
+# for why no PASS_REGULAR_EXPRESSION may sit here -- with one, the tool exited 1
+# on a bent pin and CTest still reported Passed).
 add_test(NAME aot_cover_regression
-         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_cover.test.py)
-set_tests_properties(aot_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;regression" PASS_REGULAR_EXPRESSION "aot_cover: cases=[0-9]+ accepted")
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_cover: cases=[0-9]+ accepted" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_cover.test.py --check-pin)
+set_tests_properties(aot_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;regression")
