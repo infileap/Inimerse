@@ -25912,7 +25912,7 @@ gate: fences: verdict=PASS odd=0 swallowed=0; decided by the verdict word, not b
 
 P3 第一笔（`48f53fd` → `3e03ecd` → `4a0908e`）落在主线上，而 `IR-COVER` 那一格仍是 `aot=na`（`aot_native` 的读数还没有消费者，第二笔才换数）。我在 `ea7aa58` 上核到两件它信里没有的：
 
-一、**`--check-pin` 今天没有任何读者。** 注册的 CTest 跑的是 `tools/aot_cover.test.py` **不带任何 flag**，`PASS_REGULAR_EXPRESSION` 只认末尾那行 `aot_cover: cases=… accepted=…`；`tools/gate.sh` 里 `aot` 只出现在 `EXP_CTEST` 的注释、`aot_native.test.py` 的注释与差分模糊测试的提示里，没有这个工具；全仓搜 `check-pin` 只命中工具自己与它自己的帮助文本。而那个帮助文本自己写着：**a pin nobody re-runs is a constant, not a reading**。我手跑一次：`IR-AOT-PIN|tree=48f53fdcbbe812f567b6d4a0e42ef1f828406c73|head=37723a00d6b5a8298b4f98eabe5261a34ce50294|covered=30|recomputed=30|of=67|corpus-pin=0/101|corpus-now=0/101|numbers-match=yes|tree-moved=yes|basis=the-quoted-number-is-compared-and-the-tree-is-reported-separately`、`rc=0`。⇒ 回算这条路存在，但**今天它是手动的**；`tools/aot_cover.pin.json` 此刻是一个常量。这与本节辛栏②是同一条判据：新增一个「取自某处」的字段，同笔要有把它算回去的东西——工具有了，读者还没有[obs: ea7aa58]。
+一、**`--check-pin` 今天没有任何读者。** 注册的 CTest 跑的是 `tools/aot_cover.test.py` **不带任何 flag**，`PASS_REGULAR_EXPRESSION` 只认末尾那行 `aot_cover: cases=… accepted=…`；`tools/gate.sh` 里 `aot` 只出现在 `EXP_CTEST` 的注释、`aot_native.test.py` 的注释与差分模糊测试的提示里，没有这个工具；全仓搜 `check-pin` 只命中工具自己与它自己的帮助文本。而那个帮助文本自己写着：**a pin nobody re-runs is a constant, not a reading**。我手跑一次：`IR-AOT-PIN|tree=48f53fdcbbe812f567b6d4a0e42ef1f828406c73|head=37723a00d6b5a8298b4f98eabe5261a34ce50294|covered=30|recomputed=30|of=67|corpus-pin=0/101|corpus-now=0/101|numbers-match=yes|tree-moved=yes|basis=the-quoted-number-is-compared-and-the-tree-is-reported-separately`、`rc=0`。⇒ 回算这条路存在，但**今天它是手动的**；`tools/aot_cover.pin.json` 此刻是一个常量。这与本节辛栏②是同一条判据：新增一个「取自某处」的字段，同笔要有把它算回去的东西——工具有了，读者还没有[obs: ea7aa58]。**这一句在 `4f666d2` 之后要改口：见丑栏六——读者接上了。**
 
 二、**`differ=0` 与两条 `IR-AOT-DIVERGENCE|…|state=still-diverges` 同屏**：`differ` 只收**没被写下来的**差异（`IR-AOT-DIFF`），已声明的分歧另算另印，而它们确实还在分（`func_no_return`：`interp-out='nil\n'` 对 `native-out='0\n'`；`global_write_from_func`：`'5\n2\n'` 对 `'7\n7\n'`）。⇒ 同一个词两个主语：读者把 `differ=0` 读成「没有差异」，它说的是「没有我们没写下来的差异」。建议形状与庚栏同一条：**在那一行印出已声明的条数**（例如 `declared-diverge=2`），或把两条分歧的摘要并进同一行——否则那一格的读者会得到一个比事实好看的数。`IR-AOT-MISSING` 的 `count=37` 与 `covered=30` 相加正是 67，这一侧是平的[obs: ea7aa58]。
 
@@ -25953,3 +25953,50 @@ P3 第一笔（`48f53fd` → `3e03ecd` → `4a0908e`）落在主线上，而 `IR
 六、判据形状（可迁移）：不要问「有没有两个判据」，要问「**哪一个在失败时仍然算数**」。这与辛栏②是同一条判据的两面：新增一个能取代旧判据的东西时，旧判据必须同笔消失，或同笔被判为「只在成功时才印」。
 
 边界：本节只说这张表在 `ea7aa58` 上的形状与「谁会赢」的判法；去掉属性是合并者车道上的修复，落地后本节按新树重数。附带一条量具的坑：解析 `add_test` 块时朴素的括号计数器会被引号里的转义括号（如 `"mod semantics: ok \\([0-9]+ boundary cases"`）带偏，我第一版因此只解析出 55 个块、2 处属性（真值 181／27）；这台表要在跳过引号内容的扫描器上做。
+
+### 丑 那张表在 `785195d` 上重数：计数问构建系统，归类要回文本
+
+合并者把修复推上主线（`ea7aa58 → ed61ac5 → 4f666d2 → 785195d`，`gate: OK — every stage passed (17/17 stages ran)`、`100% tests passed, 0 tests failed out of 181`），子栏那张表按合约重数。**重数这次自己出了一次错，先记它。**
+
+一、**计数换量具：问构建系统，不问文本。**
+
+```
+cmake -S . -B build/census && ctest --test-dir build/census --show-only=json-v1
+tests[].properties 里有 PASS_REGULAR_EXPRESSION；tests[].command 里含 gated_run.py
+```
+
+在 `785195d` 上逐字：
+
+| 项 | 数 |
+|---|---|
+| registered tests | **181** |
+| 带 `PASS_REGULAR_EXPRESSION` | **25** |
+| 命令含 `gated_run.py` | **77** |
+| 带 `FAIL_REGULAR_EXPRESSION` | **40**（其中与前一项同带 **5**） |
+| **两项同带（BOTH）** | **4**：`mod_semantics_regression`、`logic_semantics_regression`、`ir_spec_regression`、`three_way_parity_regression` |
+
+子栏那三组数（27 带属性／10 跑验证器／17 直跑）是**文本解析**所得，而 27 数的是「匹配到的行数」；同一条命令在 `785195d` 上数到 **33** 行，因为新注记自己就三次提到这个词。⇒ **文本解析只许定位，不许计数**：问「多少个注册带了某属性」走 JSON，问「哪一行」才读文本。25 与 27 之差，正是被摘掉的那两处属性。
+
+二、**我这一次把量具用错了，读数是上一棵树的。** 我先跑 `cmake -S /home/sakiko/inimerse -B build`（源目录指到主检出，不是这个工作树）——它 **rc=1**；而我随后照旧跑 `ctest --test-dir build --show-only=json-v1`，**旧缓存照样回答**，给出 27／76／5，`aot_native_regression` 还在 BOTH 里。改成 `cmake -S "$PWD" -B build/census`（rc=0）才得到 25／77／4。判据：**配置失败不等于没有读数**——旧 build 目录会继续答，而答案属于上一棵树；量数前先看那一步的 rc，rc 非 0 就别读数。
+
+三、**JSON 有一处自己的盲区。** 25 个带属性的注册里，**16 个的 `tests[].command` 是空的**：它们用裸名 `inimerse` 注册（全文件 14 行），其余 72 行用 `$<TARGET_FILE:inimerse>`。⇒ 按 `command` 过滤「谁跑了 `gated_run`」会**静默漏掉**这 16 个（今天它们恰好都不跑 `gated_run`，所以 BOTH=4 不受影响）。判据：**计数问构建系统，归类要回文本**；把裸名改成 `$<TARGET_FILE:inimerse>`，JSON 自己就够了[obs: 785195d]。
+
+四、**三格控制，跑在真注册上**（树 = 我 rebase 后的分支，只多一层文档）：
+
+| 那一行 | ctest |
+|---|---|
+| 健康 pin、真工具 | `Test #181: aot_cover_regression ............. Passed 53.22 sec` |
+| 弯曲 pin（`covered=31` 对名单 30） | `Test #181: aot_cover_regression .............***Failed 50.37 sec` |
+| 桩印 `aot_cover: cases=86 accepted=86 refused=0 differ=1` 后 `exit 1` | `***Failed 0.10 sec` |
+
+第三格是子栏三节那一格的**反面**：同一个桩、同一棵树，属性在时是 `Passed 0.06 sec`，摘掉属性后是 `***Failed 0.10 sec` ⇒ **退出码的判决回来了**。证据逐字：`build/evidence/aot-cover-controls.txt`[obs: 785195d]。
+
+五、**两笔的来源要分开写。** `aot=na → 30/67` 来自 `ed61ac5`（`ir spec: quote the aot fraction, and check the file it came from`）；`missing-basis=disasm:this-tree,aot:aot_cover.pin.json` 来自 `785195d`。我上一封把「分数有了」与「两半来源写清了」当成同一笔，是错的——合并者更正，我以 `git log -S` 复核。现树逐字：
+
+```
+IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none,aot:OP_BIND,…|missing-basis=disasm:this-tree,aot:aot_cover.pin.json|budget=none|aot=30/67|wasm=na|selfhost=na
+```
+
+六、**癸栏那句要在这里改口。** `--check-pin` 在 `4f666d2` 之后**有读者了**：注册改走 `gated_run.py --shape "aot_cover: cases=[0-9]+ accepted" --exit 0 -- … tools/aot_cover.test.py --check-pin`，判决由 `gated_run` 的退出码给（属性已摘）。癸栏描述的是 `ea7aa58` 上的形状，那段读数不改，但要在这里指一下现树。
+
+边界：本节数的是注册表本身（`ctest --show-only=json-v1` 的字段），不数「谁真的会红」——那是子栏四节逐工具读印刷顺序的事，两件事各有一把尺子。行号在本节只作定位，且**写成「第 N 行」而不写成一条引用**（写成 `文件:行` 就是多记一条被引用的行号，这正是本节在讲的那类「顺手的引用」，门禁会把它数进去）：`CMakeLists.txt` 的第 285 行（`aot_native` 的属性确已不在，且仍是一行）、第 1866 到 1868 行（`aot_cover` 走了 `gated_run`，属性只剩 `WORKING_DIRECTORY/TIMEOUT/LABELS`）、第 1793 与第 1795 行（`ir_spec` 的属性仍在）、第 1770 到 1792 行（注记 13 行 → 23 行，**1770 之后整体下移 10 行**；`docs/` 里按行号引用这个文件的写法，最大那条落在第 1362 行、落在 1770 之后的一条也没有 ⇒ 这次位移不动任何一条引用）[obs: 785195d]。
