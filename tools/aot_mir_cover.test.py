@@ -231,6 +231,46 @@ def case_ops(body):
     return {m.group(1) for m in CASE_OP.finditer(body or "")}
 
 
+def indexed_ops(emitter_body):
+    """The opcodes whose emitter case reads a pool / global / function / label index.
+
+    Read one case at a time, so the answer is about that opcode's own body: the
+    emitter indexes c->node->float_pool, c->gnames, c->fnnames / child_ids and the
+    jump label.  An opcode that only moves registers cannot have an out-of-range
+    operand, so it needs no check in prescan -- which is why prescan covering FEWER
+    opcodes than the emitter is correct, not a gap.
+    """
+    out = set()
+    for m in CASE_OP.finditer(emitter_body or ""):
+        start = m.end()
+        nxt = CASE_OP.search(emitter_body, start)
+        chunk = emitter_body[start:nxt.start() if nxt else len(emitter_body)]
+        if re.search(r"\b(float_pool|gnames|fnnames|child_ids)\s*\[|goto L%d", chunk):
+            out.add(m.group(1))
+    return out
+
+
+def prescan_problems(prescan_cases, indexed):
+    """What the operand check has to cover, and the direction that bites.
+
+    The failure this exists for is an opcode added to the emitter whose operands
+    are then validated by nobody: the program still lowers, the coverage ledger
+    still balances, and the only thing that changed is that an out-of-range index
+    now reaches generated C instead of being refused with a detail.  So every
+    indexed opcode the emitter can produce must appear in prescan's switch.
+    """
+    problems = []
+    missing = sorted(indexed - prescan_cases)
+    if missing:
+        problems.append("the emitter reads an index for %s but prescan checks no "
+                       "operand for it" % ",".join(missing))
+    dead = sorted(prescan_cases - indexed - {"OP_PUSH_REG"})
+    if dead:
+        problems.append("prescan checks %s, which the emitter does not index"
+                        % ",".join(dead))
+    return problems
+
+
 def lowering_problems(table_ops, emitter_ops, of_ops, reported):
     """The two questions the lowering's own tables have to agree on.
 
@@ -300,6 +340,14 @@ def self_check():
            len(fixture_drift("b", "a", "same", "same")), 1)
     expect("a fixture that is no longer a copy of the tracked file is drift",
            len(fixture_drift("a", "a", "fixture", "tracked")), 1)
+    expect("an indexed emitter case with no operand check is caught",
+           len(prescan_problems({"OP_A"}, {"OP_A", "OP_B"})), 1)
+    expect("prescan covering fewer opcodes than the emitter is correct",
+           prescan_problems({"OP_A"}, {"OP_A"}), [])
+    expect("prescan checking an opcode the emitter never indexes is caught",
+           len(prescan_problems({"OP_A", "OP_Z"}, {"OP_A"})), 1)
+    expect("the argument-stack case needs no index and is not a dead branch",
+           prescan_problems({"OP_A", "OP_PUSH_REG"}, {"OP_A"}), [])
     expect("a table entry the encoding does not declare is caught",
            len(lowering_problems({"OP_A", "OP_Z"}, {"OP_A", "OP_Z"},
                                  ["OP_A", "OP_Z"], {"OP_A"})), 1)
@@ -551,6 +599,20 @@ def main():
     # printed, each with its basis, and the two tables that must agree are asked.
     lowering = lowering_problems(table_ops, emitter_ops, of_ops, emittable)
     problems.extend(lowering)
+    # A third list, and a third question: which opcodes' operands does ANYBODY
+    # check before the generated C indexes a pool or jumps to a label?
+    prescan_cases = case_ops(function_body(src, "static int prescan("))
+    indexed = indexed_ops(function_body(src, "static int emit_one("))
+    operand = prescan_problems(prescan_cases, indexed)
+    problems.extend(operand)
+    print("IR-AOT-MIR-OPERANDS|indexed=%d|prescanned=%d|checked=%d"
+          "|basis=case-labels-in-aot_mir.c's-emit_one-that-read-a-pool-global-"
+          "function-or-label-index-versus-the-cases-in-prescan"
+          "|missing=(%s)|dead=(%s)|agree=%s"
+          % (len(indexed), len(prescan_cases), len(indexed & prescan_cases),
+             ",".join(sorted(indexed - prescan_cases)) or "none",
+             ",".join(sorted(prescan_cases - indexed - {"OP_PUSH_REG"})) or "none",
+             "yes" if not operand else "no"))
     print("IR-AOT-MIR-LOWERING|handles=%d|of=%d|unknown=%d"
           "|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one"
           "|table=%d|emitter=%d|reported=%d|agree=%s"
