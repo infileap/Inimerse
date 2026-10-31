@@ -1958,3 +1958,18 @@ if(WIN32)
 else()
   target_link_libraries(aot-mir PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
 endif()
+
+
+# A pin names the tree its numbers were measured on, and "the object is in my
+# database" is not "a reader can find it": after a rebase or a force-push the
+# object still resolves locally while no ref holds it, so the pin's numbers go on
+# recomputing and matching beside a tree that is absent from every other clone.
+# More than one checker has to ask that question and two of them got it wrong in
+# the same way, so it lives in tools/pin_tree.py and this test measures the
+# module: the dangling case is built on purpose with git commit-tree inside a
+# private temporary directory, instead of waited for.  Registered like its
+# neighbours -- gated_run, no PASS_REGULAR_EXPRESSION, because the report a
+# matcher would be pointed at carries the program's own output.
+add_test(NAME pin_tree_selftest_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "PIN-TREE-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/pin_tree.py --self-test)
+set_tests_properties(pin_tree_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")

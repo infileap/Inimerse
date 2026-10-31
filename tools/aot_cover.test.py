@@ -60,12 +60,28 @@ Readings:
   IR-AOT-DIFF|case=NAME|first-diff=stdout|exit|cc|footprint|detail=...
   IR-AOT-REFUSED|case=NAME|why=...
   IR-AOT-REPO-REJECTED|n=N|stage=frontend|numeric-subset|unparsed|why=cause
+  IR-AOT-PIN|tree=..|head=..|covered=C|recomputed=R|of=67|...|numbers-match=..
+            |tree-moved=..
+  IR-AOT-PIN-TREE|tree=..|resolves=yes|no|refs=N|reachable=yes|no|head=..
+  IR-AOT-PIN-TREE-PROBLEM|a reader cannot look up what was measured
+
+The pin names the tree its fraction was measured on, and the tree is a separate
+question from the fraction: a commit cannot write down its own sha, so the pin
+always names an earlier tree and `tree-moved` is the normal state of a clean
+tree.  The verdict therefore follows the numbers -- except when the recorded tree
+is not something a reader can look up at all.  Resolvable is not lookable: after
+a rebase or a force-push the object stays in the local database until gc while no
+ref holds it, so `--check-pin` recomputes matching numbers beside a tree that is
+absent from every other clone.  That case fails `--check-pin` (tools/pin_tree.py,
+one home for the question) rather than printing a note beside a PASS: a pin a
+reader cannot open is not a pin, whatever numbers it carries.
 
 Exit 0 when every accepted program prints the same bytes; 1 when one differs
-(named, because a silent divergence is the one thing this path must never ship);
-2 when a prerequisite is missing -- including a "private" directory that turned
-out to be running a prelude after all.  A refusal is never a failure: it is the
-translator declining, counted and reported.
+(named, because a silent divergence is the one thing this path must never ship),
+or when the pin names a tree nobody can look up; 2 when a prerequisite is
+missing -- including a "private" directory that turned out to be running a
+prelude after all.  A refusal is never a failure: it is the translator declining,
+counted and reported.
 
 --self-check runs the decoder and the completeness assertion against messages
 the translator does and does not emit, where the second kind is the point of
@@ -82,6 +98,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# The question "can a reader look this sha up" is asked by every tool that pins a
+# tree, and it was asked wrong in the same way in more than one of them, so it
+# has one home rather than a copy per checker.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pin_tree  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "tools" / "aot_native.test.py"
@@ -382,6 +404,26 @@ def self_check():
     ok, _why = histogram_is_complete({"numeric-subset:expr:EXPR_STRING": 4}, 4)
     check("a histogram that accounts for every refusal passes", ok, True)
 
+    # The pin's tree is a question about refs, and the fixture answers it in both
+    # directions: a commit a ref holds, and one built by commit-tree that no ref
+    # holds -- the state a rebase leaves behind, made on purpose.  The cells use
+    # the fixture rather than this checkout's HEAD, because HEAD here is often a
+    # commit that has not been pushed yet, and a self-test that goes red for the
+    # tree it is running in is a self-test nobody keeps.
+    fx = pin_tree.fixture()
+    check("a pin's tree that a ref holds is not a problem",
+          pin_tree.problems(fx["held"], fx["root"]), [])
+    check("a pin's tree that no ref holds is a problem, stated once",
+          len(pin_tree.problems(fx["dangling"], fx["root"])), 1)
+    check("...and the reason is reachability, not resolvability",
+          "held by no ref" in pin_tree.problems(fx["dangling"], fx["root"])[0], True)
+    check("...while that same commit does resolve in the database that made it",
+          pin_tree.state(fx["dangling"], fx["root"])["type"], "commit")
+    check("the reading a --check-pin prints says reachable=no for it",
+          pin_tree.reading("IR-AOT-PIN-TREE", fx["dangling"], fx["root"], head="h"),
+          "IR-AOT-PIN-TREE|tree=%s|resolves=yes|refs=0|reachable=no|head=h" % fx["dangling"])
+    check("a field that names nothing is refused", len(pin_tree.problems("", ROOT)), 1)
+
     print("aot_cover self-check: ok (%d checks)" % checks[0])
     return 0
 
@@ -584,6 +626,7 @@ def main():
           % (len(cases), len(accepted), len(refused), len(differ), declared_diverge,
              sum(repo_hist.values()), repo_rejected))
 
+    pin_tree_bad = False
     if args.pin:
         PIN.write_text(json.dumps({
             "tree": head_sha(),
@@ -600,6 +643,15 @@ def main():
                      "the same measurement instead of trusting the number."),
         }, indent=2) + "\n")
         print("aot_cover: pin written to %s (tree=%s)" % (PIN, head_sha()))
+        # The pin has to name a tree a reader can look up, and that is a question
+        # about refs, not about this database -- asked here as well as in
+        # --check-pin, because a pin written on a detached commit nobody has
+        # pushed is born unreadable and the writer is the one who can fix it.
+        here = head_sha()
+        print(pin_tree.reading("IR-AOT-PIN-TREE", here, ROOT, head=here))
+        for why in pin_tree.problems(here, ROOT):
+            print("IR-AOT-PIN-TREE-PROBLEM|" + why)
+            pin_tree_bad = True
 
     if args.check_pin:
         if not PIN.is_file():
@@ -619,6 +671,12 @@ def main():
         numbers_match = (stored.get("covered") == len(covered)
                          and stored.get("of") == len(OPCODES))
         tree_moved = stored.get("tree") != here
+        # Before the numbers, the tree--because the numbers cannot report this
+        # one: they recompute and match just as well beside a tree no ref holds.
+        print(pin_tree.reading("IR-AOT-PIN-TREE", stored.get("tree"), ROOT, head=here))
+        tree_problems = pin_tree.problems(stored.get("tree"), ROOT)
+        for why in tree_problems:
+            print("IR-AOT-PIN-TREE-PROBLEM|" + why)
         print("IR-AOT-PIN|tree=%s|head=%s|covered=%d|recomputed=%d|of=%d"
               "|corpus-pin=%d/%d|corpus-now=%d/%d"
               "|numbers-match=%s|tree-moved=%s|basis=the-quoted-number-is-compared"
@@ -637,9 +695,10 @@ def main():
         if not numbers_match:
             print("IR-AOT-PIN-STALE|effect=the-numbers-a-reader-would-quote-no-longer-"
                   "describe-this-tree|fix=rerun-with---pin")
+        if tree_problems or not numbers_match:
             return 1
 
-    return 1 if differ else 0
+    return 1 if (differ or pin_tree_bad) else 0
 
 
 if __name__ == "__main__":
