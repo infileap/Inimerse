@@ -68,13 +68,11 @@ CASES = ROOT / "tools" / "aot_native.test.py"
 AOT_PIN = ROOT / "tools" / "aot_cover.pin.json"
 PIN = ROOT / "tools" / "aot_mir_cover.pin.json"
 
-# The control's expected answer.  The repository root carries a tracked
-# params.params (speed = 42 / title = "hello"); compiled and run in the same VM
-# it contributes exactly these opcodes to the census.  A delta that is not
-# exactly this set means the control did not run, or the cwd is feeding the
-# interpreter something else as well -- either way the exclusion below is not
-# proven and the run must be red.
-PRELUDE_OPS = frozenset(["OP_LOADK_INT", "OP_LOADK_STRING", "OP_STORE_GLOBAL", "OP_HALT"])
+# The prelude text, and only the text: the control's expected opcode set is
+# measured by running this program on its own (see prelude_control), because a
+# set copied in here would stay "right" after the prelude changed and could not
+# tell a prelude that grew from a delta that shrank.
+PRELUDE_TEXT = 'speed = 42\ntitle = "hello"\n'
 
 CODEGEN = re.compile(r"^IR-MIR-CODEGEN[|](.*)$")
 CONSERVE = re.compile(r"^IR-MIR-CONSERVE[|](.*)$")
@@ -158,39 +156,6 @@ def prelude_delta(with_foot, without_foot):
     return frozenset(op for op, n in with_foot.items() if n > without_foot.get(op, 0))
 
 
-def tree_state(sha):
-    """What a reader can do with the sha a pin records: resolve it, and find it.
-
-    A pin is read by someone who was not there when it was written, so the sha in
-    it has to name something they can look up.  `git cat-file` answers the first
-    half; `git for-each-ref --contains` answers the second, and the second is the
-    one that survives a rebase or a force-push -- the object stays in the local
-    database until gc, while no ref holds it and no clone has it at all."""
-    if not sha or not isinstance(sha, str):
-        return {"type": None, "refs": []}
-    t = subprocess.run(["git", "cat-file", "-t", sha], cwd=str(ROOT),
-                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    if t.returncode != 0:
-        return {"type": None, "refs": []}
-    r = subprocess.run(["git", "for-each-ref", "--contains", sha, "--format=%(refname)"],
-                       cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    refs = []
-    if r.returncode == 0:
-        refs = [ln for ln in r.stdout.decode("utf-8", "replace").split("\n") if ln.strip()]
-    return {"type": t.stdout.decode("utf-8", "replace").strip(), "refs": refs}
-
-
-def pin_tree_problems(sha):
-    """The reasons a recorded tree is not something a reader can look up."""
-    st = tree_state(sha)
-    if st["type"] != "commit":
-        return ["the pin records tree=%s, which does not resolve to a commit here -- a reader "
-                "cannot look up what was measured" % sha]
-    if not st["refs"]:
-        return ["the pin records tree=%s, which resolves but is held by no ref -- it survives "
-                "only as a dangling object and is absent from a fresh clone" % sha]
-    return []
-
 
 def self_check():
     """The ledger arithmetic and the two parsers, on inputs whose answer is
@@ -223,9 +188,11 @@ def self_check():
     expect("prelude-delta",
            sorted(prelude_delta({"OP_A": 2, "OP_B": 1}, {"OP_A": 1})), ["OP_A", "OP_B"])
     expect("prelude-delta-empty", list(prelude_delta({"OP_A": 1}, {"OP_A": 1})), [])
-    expect("prelude-set-is-what-the-control-expects",
-           sorted(PRELUDE_OPS), ["OP_HALT", "OP_LOADK_INT", "OP_LOADK_STRING", "OP_STORE_GLOBAL"])
-    expect("a sha nobody can look up is not a pin", len(pin_tree_problems("0" * 40)), 1)
+    expect("the prelude's opcode set is measured, not copied into this file",
+           [ln for ln in Path(__file__).read_text().splitlines()
+            if ln.startswith("PRELUDE_OPS")], [])
+    head = head_sha()
+    expect("a sha nobody can look up is not a pin", len(pin_tree.problems("0" * 40, ROOT)), 1)
     # The two cells below used to assert this about this checkout's own HEAD, and
     # that is an assertion about where the file happens to be running rather than
     # about the mechanism.  Between `git commit` and `git push` -- and in any
@@ -248,26 +215,35 @@ def self_check():
 
 def prelude_control(interp, verbose):
     """Same program, two cwds, one with the prelude file and one without.  The
-    delta must be exactly the prelude's opcode set: that is what makes
-    'excluded=yes' below a measurement instead of an assumption."""
+    delta must be exactly the set of opcodes the prelude executes when it is run
+    as a program of its own -- measured here, not copied into this file.  That is
+    what makes 'excluded=yes' below a measurement instead of an assumption."""
     with_dir = Path(tempfile.mkdtemp(prefix="aot_mir_prelude_"))
     no_dir = Path(tempfile.mkdtemp(prefix="aot_mir_noprelude_"))
-    (with_dir / "params.params").write_text('speed = 42\ntitle = "hello"\n')
+    (with_dir / "params.params").write_text(PRELUDE_TEXT)
     for d in (with_dir, no_dir):
         (d / "ctrl.im").write_text("say 1\n")
+    # The same text in the clean directory, where nothing preloads anything:
+    # this census is the prelude alone.
+    (no_dir / "prelude.im").write_text(PRELUDE_TEXT)
     env = dict(os.environ, INIMERSE_HOT_OPS="1")
     env.pop("INIMERSE_IR_TABLE", None)
     _rc1, out1, _e1 = run([interp, "--no-mods", "run", with_dir / "ctrl.im"], with_dir, env)
     _rc2, out2, _e2 = run([interp, "--no-mods", "run", no_dir / "ctrl.im"], no_dir, env)
-    f1, f2 = hot(out1), hot(out2)
+    _rc3, out3, _e3 = run([interp, "--no-mods", "run", no_dir / "prelude.im"], no_dir, env)
+    f1, f2, alone = hot(out1), hot(out2), hot(out3)
     delta = prelude_delta(f1, f2)
-    exact = delta == PRELUDE_OPS
-    print("IR-AOT-PRELUDE-CONTROL|cwd=with|executed=%d|cwd=without|executed=%d|delta=(%s)|exact=%s"
-          % (sum(f1.values()), sum(f2.values()), ",".join(sorted(delta)), "yes" if exact else "no"))
+    expected = frozenset(alone)
+    exact = delta == expected
+    print("IR-AOT-PRELUDE-CONTROL|cwd=with|executed=%d|cwd=without|executed=%d|delta=(%s)"
+          "|expected-from=the-prelude-run-as-a-program|expected=(%s)|prelude-executed=%d|exact=%s"
+          % (sum(f1.values()), sum(f2.values()), ",".join(sorted(delta)),
+             ",".join(sorted(expected)), sum(alone.values()), "yes" if exact else "no"))
     if verbose:
-        print("IR-AOT-PRELUDE-CONTROL-OPS|with=(%s)|without=(%s)"
+        print("IR-AOT-PRELUDE-CONTROL-OPS|with=(%s)|without=(%s)|prelude-alone=(%s)"
               % (",".join("%s:%d" % (k, v) for k, v in sorted(f1.items())),
-                 ",".join("%s:%d" % (k, v) for k, v in sorted(f2.items()))))
+                 ",".join("%s:%d" % (k, v) for k, v in sorted(f2.items())),
+                 ",".join("%s:%d" % (k, v) for k, v in sorted(alone.items()))))
     return exact
 
 
@@ -448,14 +424,11 @@ def main():
             PIN.write_text(json.dumps(live, indent=2) + "\n")
             print("IR-AOT-MIR-PIN|wrote=%s|covered=%d|of=%d" % (PIN.relative_to(ROOT), len(covered),
                                                                len(aot_covered)))
-            wrote_problems = pin_tree_problems(live["tree"])
+            wrote_problems = pin_tree.problems(live["tree"], ROOT)
             problems.extend(wrote_problems)
             if wrote_problems:
                 pin_ok = False
-            st = tree_state(live["tree"])
-            print("IR-AOT-MIR-PIN-TREE|tree=%s|resolves=%s|refs=%d|reachable=%s|head=%s"
-                  % (live["tree"], "yes" if st["type"] == "commit" else "no", len(st["refs"]),
-                     "yes" if st["refs"] else "no", live["tree"]))
+            print(pin_tree.reading("IR-AOT-MIR-PIN-TREE", live["tree"], ROOT, head=live["tree"]))
     elif PIN.exists():
         old = json.loads(PIN.read_text())
         same = (old.get("covered") == live["covered"] and old.get("of") == live["of"]
@@ -466,11 +439,8 @@ def main():
               % (old.get("tree"), live["tree"], live["of"], live["covered"], old.get("covered"),
                  "yes" if same else "no",
                  "yes" if old.get("tree") != live["tree"] else "no"))
-        st = tree_state(old.get("tree"))
-        print("IR-AOT-MIR-PIN-TREE|tree=%s|resolves=%s|refs=%d|reachable=%s|head=%s"
-              % (old.get("tree"), "yes" if st["type"] == "commit" else "no", len(st["refs"]),
-                 "yes" if st["refs"] else "no", live["tree"]))
-        tree_problems = pin_tree_problems(old.get("tree"))
+        print(pin_tree.reading("IR-AOT-MIR-PIN-TREE", old.get("tree"), ROOT, head=live["tree"]))
+        tree_problems = pin_tree.problems(old.get("tree"), ROOT)
         problems.extend(tree_problems)
         if tree_problems:
             # A pin a reader cannot look up is not a holding pin, whatever the

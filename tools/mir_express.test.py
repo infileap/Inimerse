@@ -444,11 +444,19 @@ def self_check(cc, tmp):
           "not-yet")
     check("a table with no runtime site at all is a no",
           probe_mod.needed_by_aot([], covered), "no")
-    # And the mapping itself is read off the dispatcher, not guessed from the name:
-    # 67 of the 68 opcode rows name a label, so a tree whose table had been gutted
-    # would answer differently here rather than silently keeping the same answer.
-    check("the dispatcher's own table supplied the label-to-opcode mapping",
-          len(probe_mod.dispatch_labels(ROOT)) >= 60, True)
+    # And the mapping itself is read off the dispatcher, not guessed from the name.
+    # A lower bound here would be blind to the failure this very reading warns
+    # about -- a numerator growing while nothing looks at the denominator -- so
+    # this is an equation: every assignment line in the table becomes exactly one
+    # entry, every entry comes from such a line, and an unparsed assignment line
+    # would show up as a surplus rather than being silently dropped.
+    vm_c = open(os.path.join(ROOT, "src", "vm", "vm.c")).read()
+    assigns = [ln for ln in vm_c.splitlines() if "= &&" in ln]
+    matched = [ln for ln in assigns if probe_mod.DISPATCH_RE.search(ln)]
+    table = probe_mod.dispatch_labels(ROOT)
+    check("the dispatcher's table supplied one entry per assignment line and no more",
+          (len(assigns), len(matched), len(table)),
+          (len(matched), len(matched), len(matched)))
     check("a read site's opcode comes from that mapping, not from its spelling",
           [r["op"] for r in labels["runtime"] if r["ctx"] == "L_RECV"][:1], ["OP_RECV"])
 
