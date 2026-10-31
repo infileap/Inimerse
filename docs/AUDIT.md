@@ -26000,3 +26000,35 @@ IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none,aot:OP_BIND,…|missing-b
 六、**癸栏那句要在这里改口。** `--check-pin` 在 `4f666d2` 之后**有读者了**：注册改走 `gated_run.py --shape "aot_cover: cases=[0-9]+ accepted" --exit 0 -- … tools/aot_cover.test.py --check-pin`，判决由 `gated_run` 的退出码给（属性已摘）。癸栏描述的是 `ea7aa58` 上的形状，那段读数不改，但要在这里指一下现树。
 
 边界：本节数的是注册表本身（`ctest --show-only=json-v1` 的字段），不数「谁真的会红」——那是子栏四节逐工具读印刷顺序的事，两件事各有一把尺子。行号在本节只作定位，且**写成「第 N 行」而不写成一条引用**（写成 `文件:行` 就是多记一条被引用的行号，这正是本节在讲的那类「顺手的引用」，门禁会把它数进去）：`CMakeLists.txt` 的第 285 行（`aot_native` 的属性确已不在，且仍是一行）、第 1866 到 1868 行（`aot_cover` 走了 `gated_run`，属性只剩 `WORKING_DIRECTORY/TIMEOUT/LABELS`）、第 1793 与第 1795 行（`ir_spec` 的属性仍在）、第 1770 到 1792 行（注记 13 行 → 23 行，**1770 之后整体下移 10 行**；`docs/` 里按行号引用这个文件的写法，最大那条落在第 1362 行、落在 1770 之后的一条也没有 ⇒ 这次位移不动任何一条引用）[obs: 785195d]。
+
+### 寅 一条判据可以被一个「不说话的替身」换掉——共享临时路径，与共享路径之前的那个 inode
+
+`ab562e9` 修的是两个 MIR 测试把辅助二进制建在 `/tmp` 的**固定名**上（`os.path.join(tempfile.gettempdir(), "<name>")`）。合并者量到的是三个工作树并发时的一死一错；我这里要记的是它**不需要并发**的那一半，因为它才是「判据被换掉」的形状。
+
+一、**并发时的三种结局**（合并者给的现场，`2026-10-30`，三个工作树同跑同一套）：`p3mir rc=0 MIR-VERDICT|PASS`；`verify rc=1 PermissionError: [Errno 13] Permission denied: '/tmp/mir_roundtrip_harness'`（无判决、无断言）；`a5 rc=1 MIR-CORPUSCTL|case=simulate-missing|want=red|got=green` 然后 `MIR-VERDICT|FAIL`。第二行最难看的地方不是它红了，是它**红得没有主语**——那一次运行里没有任何一行说「判据是什么」；第三行更糟：**控制组跑在一个被覆盖的二进制上，然后报告「没问题」**。
+
+二、**不需要并发的路径**：`tools/mir_roundtrip.test.py` 的控制组用 `subprocess` 把自己再跑一遍，而子进程的 `main()` 第一句就是 `build_harness()` ⇒ 父与子在单线程运行里已经在抢同一个路径。这不是「多线程才有的偶发」，是**同一次运行内部的两次写**。
+
+三、**修法今天在树上的形状**（`ab562e9` 之后，逐行）：
+
+- `tools/mir_roundtrip.test.py` 第 48 行：`HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_roundtrip_harness-"), "mir_roundtrip_harness")`
+- `tools/mir_wired.test.py` 第 57 行：`HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_wired_harness-"), "mir_wired_harness")`
+- 新增 `tools/check_shared_tmp.py`（扫 `tools/*.py`，禁 `os.path.join(tempfile.gettempdir(), "<固定名>")`），门禁加第 **18** 个阶段 `shared-tmp|artifacts built at a path every process shares (expect 0)`。
+
+四、**这条守卫自己的三格，我实跑过**（`ab562e9`，110 个 `*.py`）：
+
+| 格 | 输出 | rc |
+|---|---|---|
+| 现树 | `check_shared_tmp: ok (110 *.py scanned; every artifact a suite builds lands in a directory that suite created)` | **0** |
+| 把共享路径塞回去（副本里放一个 `HARNESS = os.path.join(tempfile.gettempdir(), "fake_harness")`） | `check_shared_tmp: FAILED` ＋ 逐行点名（文件:行、那个名字、以及为什么并发会覆盖正在执行的文件） | **1** |
+| 输入集为空（副本目录里只有检查器自己） | `check_shared_tmp: 1 file(s) under …/tools and none of them is an input -- the input set is empty, so there is nothing here for this check to be true about` | **1** |
+
+第三格是这条守卫里最值得抄的一句：**空输入集不是通过的输入集**；而且它先数文件、再排自己——只有「文件数非 0 而输入数 0」才会走到那句，`TOOLS` 里一个 `*.py` 都没有时走的是另一句（`no *.py under …`）。两句各自点名，读者不会把两种空当成一种。
+
+五、**这一笔的「零位移」我按合并者的口径独立验了**：`diff <(git show <旧树>:tools/gate.sh | head -768) <(git show ab562e9:tools/gate.sh | head -768)` ⇒ **只有两行**（第 663 行与第 743 行，**同一行内容变长**），第 768 行**逐字相同**；新增的 17 行整块落在第 1130 行之后。⇒ 它没有把被 `docs/` 引用的行推后，这正是丑栏那句「改一个被文档按行号引用的文件前，先量最大被引行号」的**执行版**：不仅要量，还要在每一条被引行之前证明零位移。
+
+六、`EXP_CTEST` 随之 **181 → 182**（三个数在 `ab562e9` 上一致：默认值 `182`、`grep -c 'add_test('` = `182`、`ctest -N` 末行 `Total Tests: 182`），阶段数 **17 → 18**。这是 §1.418 那条判据的第十个点（`171`／`173`／`174`／`175`／`176`／`177`／`178`／`179`／`180`／`181`／`182`）。
+
+七、**登记表的读法要跟着改一处**：`ctest --show-only=json-v1` 在 `ab562e9` 上给 182 注册／25 带 `PASS_REGULAR_EXPRESSION`／78 含 `gated_run.py`／40 带 `FAIL_REGULAR_EXPRESSION`／**BOTH 仍 4**（`mod_semantics`／`logic_semantics`／`ir_spec`／`three_way_parity`）。`command` 字段为空的仍是 **45 个**（25 个带属性的里有 **16 个**）⇒ 丑栏那条盲区**没有随这一笔变化**，归类仍然要回文本[obs: ab562e9]。
+
+边界：本节只记这一笔与守卫的形状，不断言「并发问题已经全清」——它清的是**这一种**共享（`gettempdir()` 下的固定名）；其它共享方式（固定的 `/tmp` 子目录名、进程间约定的锁文件、跨工作树共用的 build 目录）不在它扫的范围里，`check_shared_tmp.py` 的正则也只认那一种写法。
