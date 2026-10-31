@@ -79,10 +79,23 @@ CONSERVE = re.compile(r"^IR-MIR-CONSERVE[|](.*)$")
 NOTYET = re.compile(r"^IR-MIR-NOT-YET[|]op=(OP_[A-Z0-9_]+)[|]n=(\d+)$")
 REFUSED = re.compile(r"^IR-MIR-REFUSED[|]why=([^|]*)[|]detail=(.*)$")
 SUBSET = re.compile(r"^IR-MIR-SUBSET[|]emits=(\d+)[|]ops=\((.*)\)$")
+CASE_OP = re.compile(r"case (OP_[A-Z0-9_]+):")
 # The real census line carries more fields than the two that matter here
 # (op=, interp=, then aot=/wasm=/why=), so the tail is optional -- but the
 # opcode and the count are not.  Validated against a captured line below.
 HOT = re.compile(r"^OP-HOT[|]op=(OP_[A-Z0-9_]+)[|]interp=(\d+)(?:[|].*)?$")
+
+
+def declared_ops():
+    """The opcodes the encoding declares, read from the enum that declares them.
+
+    Not a list kept here: tools/ir_spec.py already parses `typedef enum { ... }
+    OpCode;` and counts 68 entries / 67 distinct names, and a second parser would
+    be a second answer to the same question."""
+    spec = importlib.util.spec_from_file_location("ir_spec", ROOT / "tools" / "ir_spec.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return {name for name, _code in mod.declared_ops()}
 
 
 def load_cases():
@@ -156,6 +169,60 @@ def prelude_delta(with_foot, without_foot):
     return frozenset(op for op, n in with_foot.items() if n > without_foot.get(op, 0))
 
 
+def function_body(text, signature):
+    """The brace-delimited body of one function, by signature.
+
+    Scoped on purpose: `case OP_*` also appears in the emitter and in this file,
+    so a grep over the translation unit would compare a set with itself and call
+    it agreement.  The two sets that matter are in two named bodies.
+    """
+    i = text.find(signature)
+    if i < 0:
+        return None
+    j = text.find("{", i)
+    if j < 0:
+        return None
+    depth = 0
+    for k in range(j, len(text)):
+        if text[k] == "{":
+            depth += 1
+        elif text[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[j:k + 1]
+    return None
+
+
+def case_ops(body):
+    """The distinct opcodes a switch body names in `case OP_X:` labels."""
+    return {m.group(1) for m in CASE_OP.finditer(body or "")}
+
+
+def lowering_problems(table_ops, emitter_ops, of_ops, reported):
+    """The two questions the lowering's own tables have to agree on.
+
+    `table` is which opcodes the register-model switch claims to lower (op_regs),
+    `emitter` is which ones the code generator actually has a body for, and
+    `reported` is what the tool prints as its subset.  A case added to the emitter
+    and not to the table makes the reading call a real lowering unable to emit, and
+    the coverage ledger stays balanced while it happens -- which is precisely the
+    failure this repository has already met twice.
+    """
+    problems = []
+    if table_ops != emitter_ops:
+        problems.append("the read table and the emitter disagree: table-only=%s emitter-only=%s"
+                        % (",".join(sorted(table_ops - emitter_ops)) or "none",
+                           ",".join(sorted(emitter_ops - table_ops)) or "none"))
+    if reported != table_ops:
+        problems.append("the tool reports %d opcodes but the table names %d"
+                        % (len(reported), len(table_ops)))
+    outside = table_ops - set(of_ops)
+    if outside:
+        problems.append("the table names opcodes the encoding does not declare: %s"
+                        % ",".join(sorted(outside)))
+    return problems
+
+
 
 def self_check():
     """The ledger arithmetic and the two parsers, on inputs whose answer is
@@ -174,6 +241,29 @@ def self_check():
     expect("ledger-overlap", len(ledger(["OP_A", "OP_B"], ["OP_A", "OP_B"], ["OP_B"])), 2)
     expect("ledger-sum", ledger(["OP_A", "OP_B"], ["OP_A"], []) != [], True)
     expect("ledger-foreign", ledger(["OP_A", "OP_B"], ["OP_A", "OP_Z"], ["OP_B"]) != [], True)
+    # `case OP_*` is also in the emitter and in this file, so the two sets are
+    # taken from named function bodies; a whole-file scan would compare a set
+    # with itself and call that agreement.
+    two = ("static int op_regs(int op) { switch (op) { case OP_A: return 1; "
+           "case OP_B: return 1; default: return -1; } }\n"
+           "static int emit_one(void) { switch (op) { case OP_A: return 0; "
+           "case OP_B: return 0; default: return 1; } }")
+    expect("the two sets are read out of their own bodies",
+           (sorted(case_ops(function_body(two, "static int op_regs(int op)") )),
+            sorted(case_ops(function_body(two, "static int emit_one(")))),
+           (["OP_A", "OP_B"], ["OP_A", "OP_B"]))
+    expect("agreement is silent",
+           lowering_problems({"OP_A", "OP_B"}, {"OP_A", "OP_B"},
+                             ["OP_A", "OP_B"], {"OP_A", "OP_B"}), [])
+    expect("a case added to the emitter and not to the table is caught",
+           len(lowering_problems({"OP_A", "OP_B"}, {"OP_A", "OP_B", "OP_C"},
+                                 ["OP_A", "OP_B", "OP_C"], {"OP_A", "OP_B"})), 1)
+    expect("a table entry the emitter never serves is caught",
+           len(lowering_problems({"OP_A", "OP_B"}, {"OP_A"}, ["OP_A", "OP_B"],
+                                 {"OP_A", "OP_B"})), 1)
+    expect("a table entry the encoding does not declare is caught",
+           len(lowering_problems({"OP_A", "OP_Z"}, {"OP_A", "OP_Z"},
+                                 ["OP_A", "OP_Z"], {"OP_A"})), 1)
     expect("parse-ops", parse_ops("(OP_A,OP_B)"), ["OP_A", "OP_B"])
     real = ("OP-HOT|op=OP_EQ|interp=3|aot=na|wasm=na|why=aot flattens each op into inline C at "
             "build time, so a counter there would be counting a modified object; wasm executes "
@@ -381,11 +471,38 @@ def main():
         print("IR-AOT-MIR-MISSING|op=%s|why=%s" % (op, why))
     problems.extend(ledger(aot_covered, covered, missing))
 
+
     print("IR-AOT-MIR|accepted=%d|refused=%d|same-as-interpreter=%d|of=%d|emittable=%d"
           "|corpus=inline-cases:%d|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none"
           % (accepted, refused, equivalent, len(aot_covered), len(emittable), len(cases)))
     print("IR-AOT-MIR-COVER|covered=%d|of=%d|denominator=tools/aot_cover.pin.json:covered_ops"
           "|coverage-claim=none" % (len(covered), len(aot_covered)))
+
+    # `of` above is the DYNAMIC denominator borrowed from another question: the
+    # opcodes this corpus executed.  The static one -- of all 67 opcodes the
+    # encoding declares, how many this lowering can lower at all -- is a different
+    # number, and printing only the first reads as 100% of the second.  Both are
+    # printed, each with its basis, and the two tables that must agree are asked.
+    src = (ROOT / "src" / "compilation" / "aot_mir.c").read_text()
+    table_ops = case_ops(function_body(src, "static int op_regs(int op)"))
+    emitter_ops = case_ops(function_body(src, "static int emit_one("))
+    of_ops = declared_ops()
+    lowering = lowering_problems(table_ops, emitter_ops, of_ops, emittable)
+    problems.extend(lowering)
+    print("IR-AOT-MIR-LOWERING|handles=%d|of=%d|unknown=%d"
+          "|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one"
+          "|table=%d|emitter=%d|reported=%d|agree=%s"
+          % (len(table_ops), len(of_ops), len(of_ops) - len(table_ops),
+             len(table_ops), len(emitter_ops), len(emittable),
+             "yes" if not lowering else "no"))
+    # `missing` is scoped to the pin's covered set, and after a corpus change it
+    # can legitimately be empty while the lowering still cannot emit most of the
+    # encoding.  An empty list printed alone reads as "nothing is missing"; the
+    # denominators ride beside it so it cannot be read that way.
+    print("IR-AOT-MIR-MISSING-SCOPE|of=%d|scope=the-opcodes-tools/aot_cover.pin.json"
+          "-says-the-AST-route-executed|not-the-%d-the-encoding-declares"
+          "|lowering-unknown=%d"
+          % (len(aot_covered), len(of_ops), len(of_ops) - len(table_ops)))
     print("IR-AOT-MIR-OPS|covered=(%s)" % ",".join(covered))
 
     live = {
