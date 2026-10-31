@@ -25848,7 +25848,7 @@ THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,a
 
 ### 辰 M-a：MIR 能表示什么，以及它的再生悄悄丢了什么
 
-这一栏记的是一套**已经落地、但文档里还没有读者**的读数。量具是 `tools/mir_express.test.py`（`MIR-EXPRESS` 只在这一个文件里印；`MIR-UNCOMPARED` 在 `tools/mir_roundtrip.test.py` 第 313 行），注册在 `CMakeLists.txt` 第 1891 到 1893 行，走 `gated_run.py`、**不带** `PASS_REGULAR_EXPRESSION`。树 `e9f830d` 与本节所在那棵树（`05ea9f0`）上逐字相同——两棵树之间 `tools/` 一字节未动（`git diff e9f830d 05ea9f0 --stat` 只列 `docs/AUDIT.md`）[obs: e9f830d]。
+这一栏记的是一套**已经落地、但文档里还没有读者**的读数。量具是 `tools/mir_express.test.py`（`MIR-EXPRESS` 只在这一个文件里印；`MIR-UNCOMPARED` 在 `tools/mir_roundtrip.test.py` 里印），注册在 `CMakeLists.txt` 第 1891 到 1893 行，走 `gated_run.py`、**不带** `PASS_REGULAR_EXPRESSION`。**本节的行号与读数都是 `e9f830d` 上的**：写下它时它与我的分支尖 `05ea9f0` 在 `tools/` 上逐字相同（`git diff e9f830d 05ea9f0 --stat` 只列 `docs/AUDIT.md`），但它合入 `main` 更晚，`tools/mir_roundtrip.test.py` 在那之后从 324 行长成 344 行（`b375111`／`218d510`／`f9399b0`／`1941eb9`）⇒ 本节的数字只对 `e9f830d` 负责，凡「被指的内容还在、行号已变」处，本节一律改用**词面定位**而不是数字[obs: e9f830d]。
 
 十项，四种 `state=`：
 
@@ -25878,7 +25878,7 @@ MIR-EXPRESS-PIN|tree=a2dfe15|head=e9f830d|dropped=4|pinned=4|dropped-match=yes|k
 
 **另一把尺子量的是同一个缺口**：同跑的 `tools/mir_roundtrip.test.py` 印 `MIR-UNCOMPARED|fields=capture_names,capture_count,labels,label_count,thread_flags,dbg_lines,str_interned|why=the-container-format-does-not-write-them|effect=green-here-does-not-mean-they-are-equal|and=these-are-nonetheless-live: compiler.c-fills-labels-and-capture_names,vm.c-reads-label_count-at-run-time`，同一次运行还印 `MIR-NEGCTL|controls=3|red=3|green=0`、`MIR-CORPUSCTL|controls=2|red=2|green=0|victim=examples/bench/cpu1.im`、`MIR-VERDICT|PASS`[obs: e9f830d]。
 
-这两把尺子**量的不是同一个集合**：七个字段今天全是活的（`src/` 下按成员访问计数：`capture_names` 3 个文件、`capture_count` 同 3、`labels` 2、`label_count` 同 2、`thread_flags` 3、`dbg_lines` 3、`str_interned` 2），而 `mir_express` 的十项里 `capture_count` 与 `dbg_lines` **根本不在**（它量的是容器里的四张表，`capture-table`／`label-table`／`thread-flags`／`string-intern`）。也就是说：**同一个缺口，两把尺子各照了一个投影，谁也不覆盖谁**。而 `MIR-UNCOMPARED` 那七个字段名是 `tools/mir_roundtrip.test.py` 第 313 行的**写死常量**，不是量出来的——它的 `why=` 与 `and=` 指向的是源码事实（「`bytecode_write` 不 fwrite 它们，但 `compiler.c` 会填 `labels` 与 `capture_names`，`vm.c` 运行时会读 `label_count`」），不是这一次的测量结果。
+这两把尺子**量的不是同一个集合**：七个字段今天全是活的（`src/` 下按成员访问计数：`capture_names` 3 个文件、`capture_count` 同 3、`labels` 2、`label_count` 同 2、`thread_flags` 3、`dbg_lines` 3、`str_interned` 2），而 `mir_express` 的十项里 `capture_count` 与 `dbg_lines` **根本不在**（它量的是容器里的四张表，`capture-table`／`label-table`／`thread-flags`／`string-intern`）。也就是说：**同一个缺口，两把尺子各照了一个投影，谁也不覆盖谁**。而 `MIR-UNCOMPARED` 那七个字段名是 `tools/mir_roundtrip.test.py` 里印它那一条 `print` 的**写死常量**，不是量出来的——它的 `why=` 与 `and=` 指向的是源码事实（「`bytecode_write` 不 fwrite 它们，但 `compiler.c` 会填 `labels` 与 `capture_names`，`vm.c` 运行时会读 `label_count`」），不是这一次的测量结果。
 
 **边界**：这一栏只记 `e9f830d` 上的读数形状与它自己印出的口径，不主张 MIR 路线今天能做什么；`in-memory-uses=` 数的是 `src/` 下按成员访问命中的**文件数**（`in_memory_uses()` 在源码第 226 到 252 行，排除定义载体两文件与 `bytecode.[ch]`、`mir.[ch]`），`consumer=` 数的是**访问该成员的源文件数**并只列前三个文件名（`consumers_of()` 在第 117 到 144 行），两者口径不同、都只数文件不数处数，所以「`consumer=7`」说的是「七个文件碰过它」，不是「七处」。`docs/` 全树搜 `MIR-EXPRESS` 与 `MIR-UNCOMPARED` **今天没有读者**——这一栏就是它的第一个读者；它读到的数若与合并者后来在别的树上量的不同，以那一棵树为准，且**换树就换引文**。
 
@@ -26047,11 +26047,12 @@ IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none,aot:OP_BIND,…|missing-b
 
 二、**不需要并发的路径**：`tools/mir_roundtrip.test.py` 的控制组用 `subprocess` 把自己再跑一遍，而子进程的 `main()` 第一句就是 `build_harness()` ⇒ 父与子在单线程运行里已经在抢同一个路径。这不是「多线程才有的偶发」，是**同一次运行内部的两次写**。
 
-三、**修法今天在树上的形状**（`ab562e9` 之后，逐行）：
+三、**修法在 `ab562e9` 上的形状**（逐行；下面两个行号是**那棵树上的**）：
 
-- `tools/mir_roundtrip.test.py` 第 48 行：`HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_roundtrip_harness-"), "mir_roundtrip_harness")`
-- `tools/mir_wired.test.py` 第 57 行：`HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_wired_harness-"), "mir_wired_harness")`
+- `tools/mir_roundtrip.test.py` 在 `ab562e9` 上第 48 行：`HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_roundtrip_harness-"), "mir_roundtrip_harness")`
+- `tools/mir_wired.test.py` 在 `ab562e9` 上第 57 行：`HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_wired_harness-"), "mir_wired_harness")`
 - 新增 `tools/check_shared_tmp.py`（扫 `tools/*.py`，禁 `os.path.join(tempfile.gettempdir(), "<固定名>")`），门禁加第 **18** 个阶段 `shared-tmp|artifacts built at a path every process shares (expect 0)`。
+- **这两处后来都换过形**——`ab562e9` 只解决了「固定名」（每个进程一个自己的目录），没解决「每个进程各建一份」：`b375111` 改成一层树自己的目录（`_HARNESS_DIR = tempfile.mkdtemp(prefix="mir-roundtrip-")` ＋ `HARNESS = os.path.join(_HARNESS_DIR, "mir_roundtrip_harness")`，`mir_wired` 同形），`218d510` 再把 `mir_roundtrip` 改成 `HARNESS = _harness_path()`（父进程建好、子进程靠 `MIR_HARNESS` 复用）。⇒ 上面那两个行号只对 `ab562e9` 负责；在 `078bacd` 上，`tools/mir_roundtrip.test.py` 里那一句在第 **72** 行（`HARNESS = _harness_path()`）、`tools/mir_wired.test.py` 里那一句在第 **63** 行（`HARNESS = os.path.join(_HARNESS_DIR, "mir_wired_harness")`）[obs: 078bacd]。
 
 四、**这条守卫自己的三格，我实跑过**（`ab562e9`，110 个 `*.py`）：
 
@@ -26116,6 +26117,19 @@ MKDTEMP      = re.compile(r"tempfile\.mkdtemp\(")           # the sanctioned cal
 三面的共同判据是同一句：**一条判据的可信度不由它印的成功行决定，而由「它看不见什么」决定**；而「它看不见什么」永远不会印在成功行上。
 
 六、登记表在这一棵上重数（`ac5a11c`，`cmake -S "$PWD" -B build/census` rc=0 之后 `ctest --test-dir build/census --show-only=json-v1`）：`registered=183`、`PASS_REGULAR_EXPRESSION=25`、`gated_run.py=79`、`FAIL_REGULAR_EXPRESSION=40`、**BOTH 仍 4**、`command` 为空的 **45**（带属性的里 **16**）；`EXP_CTEST` 182 → **183**（默认值／`add_test(`／`ctest -N` 三数一致），阶段仍 **18**（这一笔改模式不改阶段数）。
+
+七、★**我在这条守卫上另量到四个窄口**（在 `e9f830d` 上逐条复现，合并者逐条复核成立；行号一律词面写，理由见丑栏）：
+
+| # | 写法（都是合法 Python） | 命中 | 机制 |
+|---|---|---|---|
+| ① | `d = tempfile.mkdtemp(prefix="ok_d"); h = os.path.join(tempfile.gettempdir(), "fixed_h")`——两条语句挤在**同一物理行** | **漏** | 豁免是**行级**的：检测循环里 `if MKDTEMP.search(line): continue` 把**整行** `continue` 掉，不看这一行里还有没有别的写法；同一内容分成两行则命中 1 |
+| ② | `HELP = "…tempfile.mkdtemp(prefix=…)…"; h = os.path.join(tempfile.gettempdir(), "fixed_h")`——字符串里出现 `mkdtemp` | **漏** | 豁免判断读的是**挖掉注释、但没挖字符串**的那份掩码 ⇒ docstring／字符串里的那个词反而成了一把盾；把字符串里那个词去掉则命中 1 |
+| ③ | `b = os.path.join(tempfile.`⏎`    gettempdir(), "fixed_b")`——调用跨**物理行** | **漏** | 模式逐行匹配，跨行的调用看不见（`os.path.join(` 跨行、而 `tempfile.gettempdir()` 仍在同一行时仍会被抓） |
+| ④ | `os.path.join('/tmp', 'fixed_n')`——`/tmp` 后**没有斜杠** | **漏** | `TMP_LITERAL` 要求 `"/tmp/"` 带尾斜杠；写成 `'/tmp/'` 或字面量 `"/tmp/fixed_n"` 才报 |
+
+④ 不是假想：真仓库里就有两行共享路径没被它报——`tools/check_inimbc_writer_half.py` 第 85 行（`workdir = args.workdir or os.path.join('/tmp', 'inimbc-writer-half')`，**默认注册的那条测试**就走到它，注册在 `CMakeLists.txt` 第 1674 到 1675 行）与第 150 行（在 `self_check_refusals()` 里，只有带 `--self-check-refusals` 时才走到，而默认注册不带这个旗标）；两者的落盘在下面几行：第 94 行与第 151 行的 `os.makedirs(workdir, exist_ok=True)`。这是**绝对路径**，所以名字是**跨工作树共享**的，而门禁的 ctest 是 `-j` 并行（`tools/gate.sh` 第 242 行）——`ab562e9` 量到的「三个工作树同跑这套时一死一错」正是这一形状。⇒ **守卫的绿没有覆盖这一族**，而这一族正是它自己存在的理由。
+
+同时记**正面的那一半**：把 `MKDTEMP` 改回「点与括号之间紧贴」的版本，`tempfile . mkdtemp ( prefix="/tmp/x" )` 这种合法写法会被**误报**（理由是那一行里有个 `"/tmp/`）⇒ 合并者那句「`MKDTEMP` 宽化必须与豁免范围一起改」成立；**我建议把豁免从「行」收到「语句」**（同一行里既出现 `mkdtemp` 又出现共享路径时，前者不豁免后者）。合并者给了三条硬要求：(1) 豁免只限「真正建目录的那一次调用」所在的**那一个语句**；(2) 豁免判断必须用挖掉字符串的那份掩码；(3) 跨行调用要么改成语句级解析、要么**明确记为窄口写进页**。他认领的次序是：先修 `stage_shared_tmp` 只读判决、不读退出码（改 `tools/gate.sh`），再修 ①②④（顺带把 `TMP_LITERAL` 放宽成「`/tmp` 后跟路径分隔符或字符串结束」），③ **只记进本节、这一笔不修**。⇒ 本节到 ④ 为止记的都是**修之前**的形状；按本节自己的规矩，修完之后要**换树就换引文**，另记一次读数。
 
 边界：本节只记「分母 + 模式」这一对，不主张模式宽到没有假阳性——宽化会把注释与 docstring 一起抓进来，所以 `ac5a11c` 同时做了两份掩码（调用在挖空字符串那份找、字面量在未挖空那份找）；那是它的解法，不是唯一解法。残余窄口我按「今天的 `tools/` 里没有」记，不按「已经安全」记。
 
