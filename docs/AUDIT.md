@@ -25950,7 +25950,7 @@ P3 第一笔（`48f53fd` → `3e03ecd` → `4a0908e`）落在主线上，而 `IR
 
 一、**`--check-pin` 今天没有任何读者。** 注册的 CTest 跑的是 `tools/aot_cover.test.py` **不带任何 flag**，`PASS_REGULAR_EXPRESSION` 只认末尾那行 `aot_cover: cases=… accepted=…`；`tools/gate.sh` 里 `aot` 只出现在 `EXP_CTEST` 的注释、`aot_native.test.py` 的注释与差分模糊测试的提示里，没有这个工具；全仓搜 `check-pin` 只命中工具自己与它自己的帮助文本。而那个帮助文本自己写着：**a pin nobody re-runs is a constant, not a reading**。我手跑一次：`IR-AOT-PIN|tree=48f53fdcbbe812f567b6d4a0e42ef1f828406c73|head=37723a00d6b5a8298b4f98eabe5261a34ce50294|covered=30|recomputed=30|of=67|corpus-pin=0/101|corpus-now=0/101|numbers-match=yes|tree-moved=yes|basis=the-quoted-number-is-compared-and-the-tree-is-reported-separately`、`rc=0`。⇒ 回算这条路存在，但**今天它是手动的**；`tools/aot_cover.pin.json` 此刻是一个常量。这与本节辛栏②是同一条判据：新增一个「取自某处」的字段，同笔要有把它算回去的东西——工具有了，读者还没有[obs: ea7aa58]。**这一句在 `4f666d2` 之后要改口：见丑栏六——读者接上了。**
 
-二、**`differ=0` 与两条 `IR-AOT-DIVERGENCE|…|state=still-diverges` 同屏**：`differ` 只收**没被写下来的**差异（`IR-AOT-DIFF`），已声明的分歧另算另印，而它们确实还在分（`func_no_return`：`interp-out='nil\n'` 对 `native-out='0\n'`；`global_write_from_func`：`'5\n2\n'` 对 `'7\n7\n'`）。⇒ 同一个词两个主语：读者把 `differ=0` 读成「没有差异」，它说的是「没有我们没写下来的差异」。建议形状与庚栏同一条：**在那一行印出已声明的条数**（例如 `declared-diverge=2`），或把两条分歧的摘要并进同一行——否则那一格的读者会得到一个比事实好看的数。`IR-AOT-MISSING` 的 `count=37` 与 `covered=30` 相加正是 67，这一侧是平的[obs: ea7aa58]。
+二、**`differ=0` 与两条 `IR-AOT-DIVERGENCE|…|state=still-diverges` 同屏**：`differ` 只收**没被写下来的**差异（`IR-AOT-DIFF`），已声明的分歧另算另印，而它们确实还在分（`func_no_return`：`interp-out='nil\n'` 对 `native-out='0\n'`；`global_write_from_func`：`'5\n2\n'` 对 `'7\n7\n'`）。⇒ 同一个词两个主语：读者把 `differ=0` 读成「没有差异」，它说的是「没有我们没写下来的差异」。建议形状与庚栏同一条：**在那一行印出已声明的条数**（例如 `declared-diverge=2`），或把两条分歧的摘要并进同一行——否则那一格的读者会得到一个比事实好看的数。`IR-AOT-MISSING` 的 `count=37` 与 `covered=30` 相加正是 67，这一侧是平的[obs: ea7aa58]。**这一句在 `70b49e1` 之后要改口：两个数是 38 与 29，相加仍是 67——平的是加法，不是那两个数，见辰栏。**
 
 顺带记第二个「pin 的树号 == HEAD 不是判据」的实例：`IR-AOT-PIN` 同屏印 `numbers-match=yes` 与 `tree-moved=yes`，`IR-AOT-PIN-DRIFT|effect=the-pin-names-an-earlier-tree-and-its-numbers-still-describe-this-one|note=a-commit-cannot-name-itself|strict=--check-pin-tree`，而 `rc` 由 `numbers-match` 决定（那条命令 `rc=0`）。与 `HEADINGS|stale|net=` 并看：**一个数不会因为它记的来历过期而变错，而一个提交也没法写下它自己的 sha**[obs: ea7aa58]。
 
@@ -26032,6 +26032,8 @@ tests[].properties 里有 PASS_REGULAR_EXPRESSION；tests[].command 里含 gated
 ```
 IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none,aot:OP_BIND,…|missing-basis=disasm:this-tree,aot:aot_cover.pin.json|budget=none|aot=30/67|wasm=na|selfhost=na
 ```
+
+**这一块在 `70b49e1` 之后要改口：现树在这一行读 `aot=29/67`，`missing` 里多一个 `OP_LOADK_STRING`——那一个 opcode 不是任何被接受的程序执行的，是解释器从当前目录读到的 `params.params` 前奏执行的，见辰栏。**
 
 六、**癸栏那句要在这里改口。** `--check-pin` 在 `4f666d2` 之后**有读者了**：注册改走 `gated_run.py --shape "aot_cover: cases=[0-9]+ accepted" --exit 0 -- … tools/aot_cover.test.py --check-pin`，判决由 `gated_run` 的退出码给（属性已摘）。癸栏描述的是 `ea7aa58` 上的形状，那段读数不改，但要在这里指一下现树。
 
@@ -26116,3 +26118,23 @@ MKDTEMP      = re.compile(r"tempfile\.mkdtemp\(")           # the sanctioned cal
 六、登记表在这一棵上重数（`ac5a11c`，`cmake -S "$PWD" -B build/census` rc=0 之后 `ctest --test-dir build/census --show-only=json-v1`）：`registered=183`、`PASS_REGULAR_EXPRESSION=25`、`gated_run.py=79`、`FAIL_REGULAR_EXPRESSION=40`、**BOTH 仍 4**、`command` 为空的 **45**（带属性的里 **16**）；`EXP_CTEST` 182 → **183**（默认值／`add_test(`／`ctest -N` 三数一致），阶段仍 **18**（这一笔改模式不改阶段数）。
 
 边界：本节只记「分母 + 模式」这一对，不主张模式宽到没有假阳性——宽化会把注释与 docstring 一起抓进来，所以 `ac5a11c` 同时做了两份掩码（调用在挖空字符串那份找、字面量在未挖空那份找）；那是它的解法，不是唯一解法。残余窄口我按「今天的 `tools/` 里没有」记，不按「已经安全」记。
+
+### 辰 被测量的是那个程序，还是它坐在里面的那个目录——`covered=30` 里有一个 opcode 不属于任何被接受的程序
+
+一、**`IR-AOT-COVER` 那一行的分子，与它自己写在同行末尾的 basis，不是同一个问题。** 逐字：`…|covered=30|of=67|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts|not-a-capability-count=yes`。basis 说的是「解释器在**被翻译器接受的程序**上执行过哪些 opcode」；而那 30 个里有**一个**，`OP_LOADK_STRING`，不是任何被接受的程序执行的。它是解释器的**前奏**执行的。机制：解释器在跑它被要求跑的那个程序**之前**，先从**当前目录**读 `params.params`（`src/main.c` 的第 286 行），把它编译并 `vm_run()`（`src/vm/vm.c` 的第 5129 行），**同一个 VM、同一次运行、同一份 `INIMERSE_HOT_OPS` 计数**；而仓库根上有一个**被 git 跟踪的** `params.params`（27 字节，两行 `speed = 42` / `title = "hello"`）。所以那个量具当时读的是「这个目录里的文件执行了什么」。
+
+二、**两侧都量了，不是推理。** 同一批 86 个 inline 用例：根上并集 30、在**没有 `params.params` 的目录**里并集 29、差集**恰好** `['OP_LOADK_STRING']`。单点：`say 1` 在仓库根 ⇒ `OP-HOT|executed=8|opcodes=5`，在空目录 ⇒ `executed=3|opcodes=3`。前奏**自己**当程序跑（空目录、绝对路径）⇒ `executed=5|opcodes=4` = `OP_LOADK_INT,OP_LOADK_STRING,OP_STORE_GLOBAL,OP_HALT`。而 `OP_LOADK_STRING` **不可能**来自一个被接受的程序：被接受的子集是 int/float/bool，带字符串字面量的程序一律被翻译器拒绝。
+
+三、★**同一族缺陷在这棵树上是三个调用点，不是一个。** `tools/aot_cover.test.py` 里 `footprint()` 现在在第 152 行（第 156 行取私有目录），但**两处等价性运行**当时也在仓库根上跑解释器：第 428 行（决定语料那句 `differ`）与第 504 行（决定已声明分歧那句 `still-diverges`）。第二处尤其要命：解释器带着前奏塞进去的全局 `speed`/`title`，去和**没有前奏的** native 二进制比字节——那不是「翻译对不对」的判据，那是两个环境的判据。第二个文件是 `tools/op_hot.test.py`，第 80 行那个 `cwd=str(ROOT)`：而它的**整个主题**就是这份计数。
+
+四、**它为什么一直是绿的：那些格子断言的是关系，不是计数。** 逐字：`census-names-each-op-and-totals ok: OP_SAY=2, 3 opcode(s), executed=5`（改前是 `executed=8`）、`census-grows-with-the-work ok: OP_SAY 1 -> 3, executed 3 -> 7`（改前是 `3 -> 8`）。每一条只问「这一格比那一格大」、「同一个 opcode 计了两次」——**没有一条写过分母**，所以前奏多带进来的 opcode 从任何一条断言里都看不见；十格全绿。这与卯栏是同一句话换个位置：分母与模式是同一个读数的两半，而这里的两半是「分子」与「它声称自己在测量什么」。
+
+五、**修法：把「排除了什么」也变成读数，并且要能反过来红。** 两个文件都改成在**私有空目录**里跑解释器，各印两行。前奏那一行逐字：`IR-AOT-PRELUDE|file=params.params|present=yes|own-opcodes=OP_HALT,OP_LOADK_INT,OP_LOADK_STRING,OP_STORE_GLOBAL|n=4|excluded=yes|cwd=private`（前奏自己的 opcode 集合，是跑它自己量出来的，不是抄的）。控制那行逐字：`IR-AOT-PRELUDE-CTL|probe=say 1|at-root=OP_HALT,OP_LOADK_INT,OP_LOADK_STRING,OP_SAY,OP_STORE_GLOBAL|at-private=OP_HALT,OP_LOADK_INT,OP_SAY|diff=OP_LOADK_STRING,OP_STORE_GLOBAL|own=…|verdict=PASS`。控制是**两向**的：文件在而差集为空 ⇒ `excluded=no` 加 `refuse()`（rc=2，因为「私有目录不私有」意味着下面每一格都不是它声称的那种读数）；文件不在而差集非空 ⇒ 同样 refuse（当前目录里还有别的东西在跑，而它没有被点名）。`op_hot` 那边新加一格 `the-census-is-of-the-program-not-the-directory`（第 239 行起），要求差集**恰好等于**「前奏有而程序自己不执行」的 opcode 集合——这就是我向 PTC 提的那条**守恒等式**的同一形状：一个词要么落进这里、要么落进那里，加起来必须等于总数。
+
+六、**重钉，两格控制。** 改前 `--check-pin` 逐字 `covered=30|recomputed=29|numbers-match=no`，rc=1；`--pin` 之后逐字 `covered=29|recomputed=29|numbers-match=yes|tree-moved=no`，rc=0。pin 里 `covered=29`、`missing_ops` 37 → 38、两表相加仍是 67、`OP_LOADK_STRING` 从 `covered_ops` 移进 `missing_ops`。下游逐字：`IR-COVER|…|missing=disasm:none,aot:OP_BIND,…,OP_LOADK_STRING,…|aot=29/67` 与 `IR-AOT-PIN|…|covered=29|recomputed=na|of=67|numbers-match=na|pin-lists-agree=yes`。
+
+七、**同一笔里还有「第二份数字」。** `tools/ir_spec.test.py` 第 128 行那个桩把 `covered=30` 写死在测试里（替掉 100 秒的重算）。它现在从 pin 里读（第 131 行）：一个把被检数字抄第二遍的测试，正是「这个数只有一个家」要防的东西——而它下一次无声过期时，测试仍然是绿的，因为那个桩印的是它自己的字，不是被检的那个数。
+
+八、**这一节要改的口（本节之前的两处）：** 丑栏那句「`IR-AOT-MISSING` 的 `count=37` 与 `covered=30` 相加正是 67」，与丑栏五节那段引的「现树逐字」`aot=30/67`——都是 `785195d` 上的读数，在 `70b49e1` 之后应读 38 与 29、`aot=29/67`。我在那两处各留了一句改口。**平的是加法，不是那两个数**[obs: 70b49e1]。
+
+边界：本节只主张「分子里曾经有一个不属于该 basis 的 opcode，已经修掉，且现在有一个能反过来红的控制守着它」，不主张 29 是「AOT 能算什么」的度量——那一行自己印着 `not-a-capability-count=yes`，这是它第二次需要这句话。也不主张「跑在私有目录里」是唯一修法：在 C 侧给前奏单开一份计数同样能修，但那要在解释器里再加一层，而这里两处半修已经足够且可测。行号在本节只作定位，写成「第 N 行」而不写成一条引用（写成 `文件:行` 就是多记一条被引用的行号，门禁会把它数进去，这正是丑栏边界那句在讲的事）。
