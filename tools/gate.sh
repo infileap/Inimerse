@@ -660,7 +660,7 @@ STAGE_SPECS=(
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
   "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
   "release-tags|sha a document records for a tag, against the tag today|stage_release_tags"
-  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences"
+  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences" "shared-tmp|artifacts built at a path every process shares (expect 0)|stage_shared_tmp"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -740,7 +740,7 @@ REQUIRED_SCOPES=(
   "vtest/*|ctest orphan-fixtures"
   # tools/*.test.py, tools/*.test.js -- same shape as vtest/*: ctest names no
   #   path, and the orphan checker globs the pattern itself.
-  "tools/*.test.py|ctest orphan-fixtures"
+  "tools/*.test.py|ctest orphan-fixtures shared-tmp"
   "tools/*.test.js|ctest orphan-fixtures"
   # tools/node_suites/* -- reader named, subtree not.  stage_node runs
   #   tools/node_suites/run_all.js, and no line in this file lists the suites
@@ -1128,6 +1128,23 @@ stage_fences() {
     return 1
   fi
   echo "gate: fences: verdict=PASS odd=$odd swallowed=$swallowed; decided by the verdict word, not by the exit status (rc=$rc was read and printed)."
+}
+
+stage_shared_tmp() {
+  # The sibling of stage_test_ports: a suite that binds a reserved port races
+  # another suite; a suite that builds an artifact at one path shared by every
+  # process races everything, including itself.  Measured on 2026-10-30 with
+  # three worktrees at once: one run died with PermissionError [Errno 13] on
+  # the shared harness, another's corpus control silently passed on the
+  # overwritten binary.  Nothing here reads an exit status: the checker prints
+  # its own sentence, with its denominator, and an empty input set refuses.
+  local out
+  out="$(python3 "$REPO_ROOT/tools/check_shared_tmp.py" 2>&1)"
+  printf '%s\n' "$out"
+  case "$out" in
+    *"check_shared_tmp: ok ("*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"

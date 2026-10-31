@@ -51,7 +51,10 @@ BASE = os.environ.get("INIMERSE_BASE")
 # would mean either a silent skip or a permanently red stage.
 BASE_COMMIT = "fdb55bb5745fd20a151aeb0aa4e5cf4c33fd8748"
 BASELINE_DIR = os.path.join(ROOT, "build", "p1-baseline")
-HARNESS = os.path.join(tempfile.gettempdir(), "mir_wired_harness")
+# One directory per process: the shared /tmp path was overwritten by
+# concurrent worktrees and by this suite's own subprocess re-entry, and the
+# loser died with PermissionError [Errno 13] (see tools/check_shared_tmp.py).
+HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_wired_harness-"), "mir_wired_harness")
 SRC = ["src/compiler/mir.c", "src/compiler/bytecode.c",
        "src/compilation/deps.c", "src/platform/platform.c"]
 INCLUDES = ["-Isrc/compiler", "-Isrc/common", "-Isrc", "-Isrc/platform", "-Isrc/compilation"]
