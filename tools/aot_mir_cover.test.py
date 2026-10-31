@@ -56,6 +56,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+# "Can a reader look this sha up?" is asked by every tool that pins a tree, and
+# this file's own copy of the answer is now only used by --pin/--check-pin; the
+# self-check asks the shared module, because a second copy of a predicate is a
+# second thing to keep true.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pin_tree  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "tools" / "aot_native.test.py"
 AOT_PIN = ROOT / "tools" / "aot_cover.pin.json"
@@ -218,11 +225,20 @@ def self_check():
     expect("prelude-delta-empty", list(prelude_delta({"OP_A": 1}, {"OP_A": 1})), [])
     expect("prelude-set-is-what-the-control-expects",
            sorted(PRELUDE_OPS), ["OP_HALT", "OP_LOADK_INT", "OP_LOADK_STRING", "OP_STORE_GLOBAL"])
-    head = head_sha()
     expect("a sha nobody can look up is not a pin", len(pin_tree_problems("0" * 40)), 1)
-    expect("the sha a pin would record resolves and is held by a ref",
-           (tree_state(head)["type"] == "commit" and len(tree_state(head)["refs"]) > 0), True)
-    expect("a lookable sha produces no problem", pin_tree_problems(head), [])
+    # The two cells below used to assert this about this checkout's own HEAD, and
+    # that is an assertion about where the file happens to be running rather than
+    # about the mechanism.  Between `git commit` and `git push` -- and in any
+    # worktree left on a detached HEAD -- the commit a pin would record is held by
+    # no ref yet, which is the ordinary state of the tree a gate is run on, so the
+    # cells went red there and the gate could only go green *after* the push it was
+    # supposed to gate (measured on 81ae27d: refs=0, both failed).  The fixture
+    # builds the two states the assertion is actually about, in a repository of
+    # its own: one commit a ref holds, one commit nothing holds.
+    fx = pin_tree.fixture()
+    expect("a sha a ref holds is a pin", pin_tree.problems(fx["held"], fx["root"]), [])
+    expect("...and a sha no ref holds is not, however resolvable it is",
+           len(pin_tree.problems(fx["dangling"], fx["root"])), 1)
     if bad:
         print("aot_mir_cover self-check: FAIL -- " + "; ".join(bad))
         return 1
