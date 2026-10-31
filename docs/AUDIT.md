@@ -25922,6 +25922,44 @@ MIR-EXPRESS-PIN|tree=a2dfe15|head=486a2b4|dropped=4|pinned=4|dropped-match=yes|k
 
 **边界**：本节只记 `2658099` 上的形状与它自己印出的口径。三列不互相替代——`reader=(`…`)` 是**文件清单**、`reader-count=` 是那些文件的**个数**、`in-memory-uses=` 是读写两列的**并集文件数**（不是处数，也不是 `reader-count` 的别名）；`writer=` 是编译器抓到写它的文件，与 `reader=` 不相交也不互补（`string-intern` 的读写都在 `src/vm/vm.c` 一个文件里）。`docs/` 全树搜 `MIR-EXPRESS` 与 `MIR-UNCOMPARED` 在本节写下的这一刻仍**只有这两节是读者**。读数若与合并者在别的树上量的不同，以那一棵树为准，且**换树就换引文**。
 
+### 午 词面形不是「不计入账」，是**两把尺子都不认它**——所以它漂了也没人知道；而 pin 的树号有两个身份：对得上、查得到
+
+前一节把辰栏那两处「第 313 行」改成词面形，理由是引用账的指针**贴着天花板**（`pointers 2457`、`pointer delta +223 (ceiling 223)`），再添一条 `文件:数字` 就越界。这个理由本身没错，但它只说了**代价**那一半；这一节补上**另一半**，并给一个可以直接当判据用的量。树：`fc93d18`（我这一支）；`docs/` 下 107 个 tracked md。
+
+**先把它写成一句话**：冒号形会被两把尺子过度看见（`tools/check_obs_markers.py` 的 `CITATION` 只认 `path:数字`；`tools/check_line_refs.py` 的 `TARGETS` 只有两个文件），而**词面形「第 N 行」两把尺子都不数**——它既不进引用账（所以不占天花板），也不进漂移告警（所以**被指的文件长了一行就没人知道**）。同一个写法，在两种尺子上恰好落在两个相反的位置：一边太吵，一边全哑。
+
+**它的体量（本节自己量的，可复跑）**：
+
+| 那一格 | 数 |
+|---|---|
+| 词面形出现的行 / 处 | **235 行 / 348 处**（107 个 md） |
+| 这 348 处里，上下文（前后约 45 字）**点了树号**的 | **17** |
+| ……**点了文件名**的 | **117** |
+| ……**两边都没点**的 | **224** |
+| 收紧到「会想让它红」的那一族：行内有文件名 + 行内**无任何树号** + 词面形**不在反引号代码段里** | **84 行** |
+| 这 84 行里带 `[obs: …]` 标记的 | **0** |
+| ★带 `[obs: …]` 标记的行里，词面形出现在 | **6 行 / 13 处** |
+| 那 13 处里，行内点了树号的 | **13（全部）** |
+
+★最后两格是本节**唯一让人松一口气**的数：**「带标记的段落里出现不带树号的词面位置引用」今天一次都没有**。这决定了下一句该怎么说。
+
+**所以「先做检查器」这个方向对，但按合并者原来那句话的形状做，它会一落地就是绿的**：`marked section has a word-form line reference with no tree named` 今天命中 **0**——一条在落地那天就绿、也不会有事的规则，就是没人会读的规则（本节前面几栏反复写到这一点）。可行的形状是对**全树**的：`word-form line reference whose line names no tree`，起点 **84**，与 `pointers`／`unanchored` 一样配一个「债务上限 + 同笔下调」的常数；那 84 条要逐条按内容取树号，**不是批量替换**（批量替换等于把 84 条真位置全变成同一棵树的位置，其中必然有错）。三个口径（17／117／224 与 84）都在上表里，挑哪一个都能复跑。
+
+★**同族第二件：pin 的树号有两个身份，而只有一个有词**。`MIR-EXPRESS-PIN` 的 `tree=a2dfe15` 解决的是「**对得上**」（`dropped-match=yes`，四张 live 对四张 pinned）；读者真正要问的第二件事是「**查得到**」——在一个全新的 clone 里，那个 sha 还在不在。这两件事在同一个字段里，而 `tools/check_obs_markers.py` 只有第一个词（`resolves()` 就是 `git rev-parse --verify`），它问的是「本地解析得了吗」，不问「有没有 ref 持有」。`tools/pin_tree.py` 补的正是第二个词：
+
+```
+PIN-TREE|tree=a2dfe15|resolves=yes|refs=1|reachable=yes|head=a2dfe15
+PIN-TREE|tree=b30314e|resolves=yes|refs=0|reachable=no|head=b30314e
+PIN-TREE-PROBLEM|the pin records tree=b30314e, which resolves but is held by no ref -- it survives only as a dangling object and is absent from a fresh clone
+```
+
+- `a2dfe15` **今天 reachable（`refs=1`）**，唯一的持有者是本地分支 `refs/heads/p3mir-merge` ⇒「那个分支一删它就没了」是**真实风险、不是今天的状态**；我上一节写 `tree=a2dfe15` 时没写「reachable」，读者无法从那一行知道它靠一个本地分支活着。
+- `b30314e` 是反例，两份证据都成立：`refs=0`；以及 `docs/streams/dec-formal-bounds-t4.md` 在 `b30314e` 上的 blob 是 `709e6eef…`、在 `3db03ff` 上是 `466c248a…`，我把带过这个文件的 commit 全列了一遍，只有 `466c248a` 与更早的 `84d3a891`，**`709e6eef` 没有任何可达 commit 带它** ⇒ **换一个 sha 保存不了原意**，那 12 处 `[obs: b30314e]` 的处置（改引文／重记一次／记一笔说明）只能由那一页的作者定，我不越界改别人的页。
+
+**判据（两条，都可跑）**：①凡写位置，先问「读者拿什么去核它」——冒号形拿引用账去核，词面形**没人去核**，所以词面形必须自带树号（「在 `ab562e9` 上第 48 行」），这一条本节不写成建议而写成规矩。②凡写树号，问两句：「**对得上吗**」（数字对不对）与「**查得到吗**」（有没有 ref 持有）——一个字段装两道题，就是本节前面几栏说的「同一个名字装两个意思」；`reachable=` 必须与 `tree=` 同一行出现，否则读者会把「解析得了」读成「还查得到」。
+
+边界：本节只量 `docs/` 下 git 跟踪的 107 个 md（未跟踪的新页不在分母里，`check_obs_markers` 的输入集也是 `tracked_set`），所以 235／348 是「已跟踪文档里」的数；`84` 那一格依赖「行内有文件名」这个近似判据（我按 `文件名.扩展名` 认，路径片段也算），换一个更严的路径判据会缩小它，**这一格是上界不是等式**。`b30314e` 的 blob 结论只覆盖我列到的那些 commit，不覆盖 forks 或别人机器上的本地提交。本次量的三个脚本只在会话里跑过、没有进树——它们没有 `--self-test`，也没有注册，因此**本节的三张表都是「跑过一次的读数」，不是「每次都会重算的读数」**。
+
 ## §1.421 增补四百五十二：一个检查器的 rc 数的是 finding，不是围栏
 
 `tools/check_md_fences.py` 在 `fb116dc` 上是这样的：干净树上 `rc=1`，而同一份输出里的判决行是 `UNITS|escaped_total=fence_backticks+inline_escapes|check=144=6+138|verdict=PASS`。`rc` 与它自己印的判决不一致，原因是源码末行 `return 0 if not findings else 1`——**它数的是「有没有任何 finding」，不是「围栏坏没坏」**；那两条 finding 都在证明者（prover）那一侧：`FINDING|docs/streams/dec-formal-axioms.md:355|kind=escaped|fence written with backslashes: the page shows a literal fence` 与同文件 `:359`，`kind` 叫 `escaped`，而 `escaped` 不阻断渲染[obs: fb116dc]。`grep -c 'check_md_fences' tools/gate.sh` 当时是 **0**：这个检查器既不在门禁里，红着也不会有人知道，于是「复跑到 0 findings」这条诉求在不动那一页时**达不到**。
