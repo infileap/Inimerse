@@ -55,10 +55,16 @@ TOOLS = REPO_ROOT / "tools"
 # about a tree that shares three other ways -- so the rule is now: any mention of
 # the temp directory that is not immediately a mkdtemp() call, and any literal
 # /tmp path.  mkdtemp() is the fix, so it is the one thing excluded by name.
-TEMPDIR_CALL = re.compile(r"tempfile\.gettempdir\(\s*\)")   # forms 1, 3, 4
-TMP_LITERAL = re.compile(r"(?<![\w.])[\"']/tmp/")              # form 2
+# Whitespace between the tokens is legal Python and invisible to a pattern that
+# spells the dots and parens tightly.  orchid measured two such spellings on
+# ac5a11c -- `tempfile.gettempdir ()` and `tempfile . gettempdir ( )` -- both
+# compile, both build a shared path, and both were reported ok with the
+# denominator printed.  So every separator here is \s* and the dot is escaped
+# with optional space around it, not written as a bare dot.
+TEMPDIR_CALL = re.compile(r"tempfile\s*\.\s*gettempdir\s*\(\s*\)")   # forms 1, 3, 4
+TMP_LITERAL = re.compile(r"(?<![\w.])[\"']/tmp/")                        # form 2
 # The sanctioned call: it CREATES a directory instead of naming a shared one.
-MKDTEMP = re.compile(r"tempfile\.mkdtemp\(")
+MKDTEMP = re.compile(r"tempfile\s*\.\s*mkdtemp\s*\(")
 
 REASON = (
     "builds an artifact at a path shared by every process on the machine. "
