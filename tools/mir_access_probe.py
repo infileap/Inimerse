@@ -344,6 +344,76 @@ def is_instrument(rel):
     return any(rel.startswith(p) for p in SELF_PREFIXES)
 
 
+def class_sites(seen, write_lines, container_files, instrument_files):
+    """Partition observed sites into exactly one class each, by a stated order.
+
+    The classes describe the MEASUREMENT, not the code: a site is `instrument`
+    or `container` because of the FILE it sits in (both sets are named in the
+    reading), otherwise a `writer` because the const pass caught it assigning,
+    otherwise a `reader` because the rename pass caught it accessing.  Anything
+    no predicate matched is `unknown`, and `overlap` counts the sites more than
+    one predicate matched -- so the precedence above is a measured fact rather
+    than a tie-break nobody wrote down."""
+    classes = {"reader": [], "writer": [], "container": [], "instrument": [],
+               "unknown": []}
+    overlap = []
+    for (f, l) in sorted(seen):
+        preds = []
+        if f in instrument_files:
+            preds.append("instrument")
+        if f in container_files:
+            preds.append("container")
+        if (f, l) in write_lines:
+            preds.append("writer")
+        else:
+            preds.append("reader")
+        if len(preds) > 1:
+            overlap.append(((f, l), preds))
+        classes[preds[0]].append((f, l))
+    return {"classes": classes, "overlap": overlap}
+
+
+def textual_sites(root, files, members):
+    """member -> {(file, line)} for every member-shaped mention, comments removed.
+
+    A second instrument, deliberately unlike the first: the two compiler passes
+    see only what parses, this sees only what is written (and this runs on the
+    ORIGINAL tree, while the passes run on the rewritten copy).  It is here to
+    name the mentions the passes did not account for, not to overrule them: an
+    access the rename pass did not report is not an access through the container
+    under measurement (another struct can carry a member of the same name), and
+    a file that did not compile contributes nothing but mentions."""
+    pats = {m: re.compile(r"(?:->|\.)" + re.escape(m) + r"(?![A-Za-z0-9_])")
+            for m in members}
+    out = {m: set() for m in members}
+    for rel in files:
+        try:
+            src = open(os.path.join(root, rel), errors="ignore").read()
+        except OSError:
+            continue
+        for i, line in enumerate(strip_comments(src).splitlines(), 1):
+            for m, p in pats.items():
+                if p.search(line):
+                    out[m].add((rel, i))
+    return out
+
+
+def unseen_reason(rel, fatal_files, soft_files):
+    """Why a member-shaped MENTION is not one of this member's measured sites.
+
+    Three answers, and the split is the one a reader needs: a clean file the
+    compiler read to the end and stayed silent about is the ordinary case of
+    another struct carrying a member of the same name; a file that did not
+    compile to the end, or did not compile at all, could still hold a real
+    access the pass never saw.  Only the first is safe to summarise as a count.
+    """
+    if rel in fatal_files:
+        return "file-not-scanned"
+    if rel in soft_files:
+        return "file-had-errors"
+    return "other-struct"
+
+
 def run_probe(cc, root=None, members=None, workers=8):
     """Measure the tree at root.  Never leaves a copy behind."""
     root = root or ROOT
@@ -372,6 +442,10 @@ def run_probe(cc, root=None, members=None, workers=8):
         soft = sorted(f for f, (rc, err) in baseline.items()
                       if rc != 0 and "fatal error" not in err)
         live = [f for f in files if f not in set(fatal)]
+        fatal_set = set(fatal)
+        # Read off the original tree, before the header is rewritten: the copy
+        # is about to stop being the tree a reader would grep.
+        text = textual_sites(root, files, wanted)
 
         with open(tree_header, "w") as f:
             f.write(rewrite_header(original, parsed, wanted, "rename"))
@@ -402,7 +476,10 @@ def run_probe(cc, root=None, members=None, workers=8):
                 writes.setdefault(mem, []).append((file_, line, col, msg))
 
         out = {"members": {}, "unscanned": {"fatal": fatal, "soft": soft},
-               "scanned": len(live), "unattributed-writes": unattributed}
+               "scanned": len(live), "unattributed-writes": unattributed,
+               # The whole member set, so a reading that measures nine of them
+               # can say so instead of implying it measured the container.
+               "container-members": sorted(parsed)}
         covered, aot_tree = aot_covered(root)
         label_ops = dispatch_labels(root)
         out["aot"] = {"pin": AOT_PIN, "tree": aot_tree, "labels": len(label_ops),
@@ -427,7 +504,30 @@ def run_probe(cc, root=None, members=None, workers=8):
                                            if f == RUNTIME_FILE
                                            and (f, l) not in write_lines])
             for ctx in ctxs:
-                ctx["op"] = label_ops.get(ctx["ctx"]) if ctx["ctx"] else None
+                if ctx["ctx"] is None:
+                    ctx["where"], ctx["op"] = "loader", None
+                elif ctx["ctx"] in label_ops:
+                    ctx["where"], ctx["op"] = "dispatch", label_ops[ctx["ctx"]]
+                else:
+                    # A label the dispatcher's own table does not carry: the
+                    # site maps to no opcode.  Named as unknown and counted,
+                    # never dropped -- a missing mapping must not read as a
+                    # site that was never read.
+                    ctx["where"], ctx["op"] = "unknown", None
+            read_lines_m = sorted({(f, l) for (f, l, _c) in read_sites_m})
+            write_lines_m = sorted({(f, l) for (f, l, _c, _m) in write_sites_m})
+            seen = sorted(set(read_lines_m) | set(write_lines_m))
+            part = class_sites(seen, set(write_lines_m), set(EXCLUDED_CONTAINER),
+                               set(SELF_EXCLUDED))
+            # Why a written mention is NOT one of this member's sites.  The two
+            # that could hide a real access -- a file the pass could not read to
+            # the end, and a file it never parsed -- are named per site; a clean
+            # file the compiler looked at and stayed silent about is the ordinary
+            # case of another struct carrying a member of the same name, and only
+            # its count is printed.
+            unseen = [{"site": "%s:%d" % s,
+                       "why": unseen_reason(s[0], fatal_set, set(soft))}
+                      for s in sorted(text.get(mem, set()) - set(seen))]
             out["members"][mem] = {
                 "reader": readers,
                 "writer": writers,
@@ -441,6 +541,15 @@ def run_probe(cc, root=None, members=None, workers=8):
                                              if f in all_read or f in raw_writes),
                 "runtime": ctxs,
                 "needed-by-aot": needed_by_aot(ctxs, covered),
+                "conservation": {
+                    "sites": ["%s:%d" % s for s in seen],
+                    "classes": {k: ["%s:%d" % s for s in v]
+                                for k, v in part["classes"].items()},
+                    "overlap": [{"site": "%s:%d" % s, "classes": c}
+                                 for s, c in part["overlap"]],
+                    "textual": len(text.get(mem, set())),
+                    "unseen": unseen,
+                },
             }
         return out
     finally:

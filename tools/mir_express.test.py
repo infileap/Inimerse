@@ -36,6 +36,36 @@ Readings:
   MIR-EXPRESS-NEW|item=NAME|effect=...        a loss the pin did not record
   MIR-EXPRESS-FIXED|item=NAME|effect=...      a recorded loss that no longer happens
   MIR-EXPRESS-PIN-STALE|effect=...|fix=...
+  MIR-EXPRESS-CONSERVE|item=NAME|member=..|sites=N|reader=A|writer=B|container=C
+                      |instrument=D|unknown=U|overlap=K
+                      |equation=reader+writer+container+instrument+unknown=sites
+                      |holds=yes|no|textual=T|not-in-measurement=S|other-struct=O
+                      |file-had-errors=E|file-not-scanned=U
+  MIR-EXPRESS-CONSERVE-ELSEWHERE|item=NAME|member=..|site=file:line|why=file-had-errors
+                                 |file-not-scanned
+  MIR-EXPRESS-CONSERVE-SCOPE|members=N|of=M|why=the-equation-is-over-the-members-this-
+                             reading-measures ...
+  MIR-EXPRESS-AOT-MODE|yes=N|not-yet=M|no=K|n/a=X|why=...
+  MIR-EXPRESS-AOT-SITES|item=NAME|dispatch=N|loader=N|unknown=N|not-mapped=(...)
+
+  The equation is what keeps the two columns from being a story: every site this
+  measurement observed must land in exactly ONE class -- instrument and container
+  by the FILE it sits in (both file sets are named in MIR-EXPRESS-EXCLUDED), a
+  writer when the const pass caught it assigning, a reader otherwise -- and the
+  five counts must add up to the site count, or the run is refused with rc=2.
+  unknown is a class on purpose: a site no class claimed is reported, never
+  dropped, because a dropped site makes the uncovered part look smaller.
+  A second, independent instrument (a textual scan of the same names) then has to
+  account for every mention the passes did NOT report: a mention in a clean file
+  the compiler read to the end is another struct carrying a member of the same
+  name (counted), while a mention in a file that did not compile, or did not
+  compile to the end, could still be a real access and is named one by one.
+  The equation is over the members this reading MEASURES (the nine tables in
+  ITEMS); CONSERVE-SCOPE says how many the container has and does not claim the
+  rest.  Measuring all of them is possible but the const pass cannot attribute
+  16 of the array-element writes when every member is in scope (two candidate
+  names per gcc message), so the nine measured members are the reading's scope
+  and the other names are not silently included.
 
   reader   files the COMPILER caught accessing the member (tools/mir_access_probe.py)
   writer   files the COMPILER caught writing it
@@ -438,6 +468,50 @@ def self_check(cc, tmp):
     check("a row that is not dropped belongs to neither column",
           len(r_items) + len(q_items), 2)
 
+    # The four classes are a partition of the MEASURED sites, so they have to be
+    # bendable by the site alone: a fold that always answered the same thing,
+    # or a site counted twice, would look identical in the report.  And a
+    # mention the passes did not report has to say WHY it is not a site --
+    # "another struct has a member of this name" and "the file never compiled"
+    # are the same count and not the same fact.
+    bent = probe_mod.class_sites({("r.c", 1), ("w.c", 2), ("c.c", 3), ("i.c", 4)},
+                                 {("w.c", 2)}, {"c.c"}, {"i.c"})
+    check("every observed site lands in exactly one class",
+          sorted(len(v) for v in bent["classes"].values()), [0, 1, 1, 1, 1])
+    check("a site in a container file is the container's",
+          bent["classes"]["container"], [("c.c", 3)])
+    check("a site the const pass caught assigning is a writer",
+          bent["classes"]["writer"], [("w.c", 2)])
+    check("a plain access is a reader", bent["classes"]["reader"], [("r.c", 1)])
+    check("a site more than one class claimed is named in overlap",
+          sorted(s for s, _p in bent["overlap"]), [("c.c", 3), ("i.c", 4)])
+    both = probe_mod.class_sites({("tools/mir_express_probe.c", 9)},
+                                 {("tools/mir_express_probe.c", 9)}, set(),
+                                 {"tools/mir_express_probe.c"})
+    check("the instrument is the instrument's class even when it writes",
+          both["classes"]["instrument"], [("tools/mir_express_probe.c", 9)])
+    check("that overlap is named rather than silently tie-broken",
+          len(both["overlap"]), 1)
+    check("a mention in a file that never compiled says so",
+          probe_mod.unseen_reason("x.c", {"x.c"}, {"y.c"}), "file-not-scanned")
+    check("a mention in a file with compile errors says so",
+          probe_mod.unseen_reason("y.c", {"x.c"}, {"y.c"}), "file-had-errors")
+    check("a mention in a clean file is the other-struct case",
+          probe_mod.unseen_reason("z.c", {"x.c"}, {"y.c"}), "other-struct")
+    # And the live reading must satisfy the same equation it prints.
+    check("every measured member's sites land in exactly one class",
+          [m for m in access["members"].values()
+           if sum(len(m["conservation"]["classes"][k])
+                  for k in ("reader", "writer", "container", "instrument", "unknown"))
+           != len(m["conservation"]["sites"])], [])
+    check("no measured site fell into no class",
+          [m["conservation"]["classes"]["unknown"] for m in access["members"].values()
+           if m["conservation"]["classes"]["unknown"]], [])
+    check("no write site was left unclaimed by every member",
+          access["unattributed-writes"], [])
+    check("the reading can say how many members it did NOT measure",
+          len(access["container-members"]) >= len(CONTAINER_MEMBERS), True)
+
     print("mir_express self-check: ok (%d checks)" % checks[0])
     return 0
 
@@ -533,6 +607,7 @@ def main():
                              "state": "absent", "reader": [], "writer": [],
                              "reader-count": 0, "self-excluded": [],
                              "container-excluded": [], "needed-by-aot": "n/a",
+                             "member": None, "conservation": None,
                              "runtime": [], "writes-section": "n/a",
                              "in-memory-uses": 0})
                 continue
@@ -573,7 +648,9 @@ def main():
                 state = "alias"
             else:
                 state = "dropped"
-            rows.append({"item": item, "field": fdef, "move": moved,
+            rows.append({"item": item, "member": container_member,
+                         "conservation": info.get("conservation"),
+                         "field": fdef, "move": moved,
                          "state": state, "reader": readers, "writer": info["writer"],
                          "reader-count": len(readers),
                          "self-excluded": info["self-excluded-hit"],
@@ -644,6 +721,90 @@ def main():
                          else "the-container-format-writes-it-and-the-regeneration-did-not"
                               "-copy-it"))
 
+        # ---- the site equation ----------------------------------------------
+        # Every member this reading measures must have its observed sites
+        # partitioned by the four classes the reading names (plus unknown for a
+        # site no class claimed), with the counts adding up to the site count.
+        # The classes describe the MEASUREMENT, not the code: container and
+        # instrument are file sets named in MIR-EXPRESS-EXCLUDED, writer is what
+        # the const pass caught assigning, reader is the rest.  A second,
+        # independent instrument (a textual scan) then has to account for every
+        # mention the passes did not report -- and the two mentions that could
+        # hide a real access (a file that did not compile, or did not compile to
+        # the end) are named one by one rather than summarised.
+        strict_problems = []
+        measured = 0
+        for row in rows:
+            cons = row.get("conservation")
+            if not cons:
+                continue
+            measured += 1
+            cl = cons["classes"]
+            nsites = len(cons["sites"])
+            total = sum(len(cl[k]) for k in ("reader", "writer", "container",
+                                             "instrument", "unknown"))
+            holds = total == nsites
+            unseen = cons["unseen"]
+            why_count = {}
+            for u in unseen:
+                why_count[u["why"]] = why_count.get(u["why"], 0) + 1
+            print("MIR-EXPRESS-CONSERVE|item=%s|member=%s|sites=%d|reader=%d|writer=%d"
+                  "|container=%d|instrument=%d|unknown=%d|overlap=%d"
+                  "|equation=reader+writer+container+instrument+unknown=sites"
+                  "|holds=%s|textual=%d|not-in-measurement=%d|other-struct=%d"
+                  "|file-had-errors=%d|file-not-scanned=%d"
+                  % (row["item"], row["member"], nsites, len(cl["reader"]),
+                     len(cl["writer"]), len(cl["container"]), len(cl["instrument"]),
+                     len(cl["unknown"]), len(cons["overlap"]),
+                     "yes" if holds else "no", cons["textual"], len(unseen),
+                     why_count.get("other-struct", 0),
+                     why_count.get("file-had-errors", 0),
+                     why_count.get("file-not-scanned", 0)))
+            for u in unseen:
+                if u["why"] != "other-struct":
+                    print("MIR-EXPRESS-CONSERVE-ELSEWHERE|item=%s|member=%s|site=%s|why=%s"
+                          % (row["item"], row["member"], u["site"], u["why"]))
+            if not holds:
+                strict_problems.append("%s: the classes cover %d of %d observed site(s)"
+                                       % (row["member"], total, nsites))
+            if cl["unknown"]:
+                strict_problems.append("%s: %d site(s) fell into no class (%s)"
+                                       % (row["member"], len(cl["unknown"]),
+                                          ",".join("%s:%d" % s for s in cl["unknown"])))
+        whole = access.get("container-members") or []
+        print("MIR-EXPRESS-CONSERVE-SCOPE|members=%d|of=%d|why=the-equation-is-over-the-"
+              "members-this-reading-measures; the-reading-does-not-claim-the-other-%d"
+              % (measured, len(whole), max(0, len(whole) - measured)))
+        for w in (access.get("unattributed-writes") or []):
+            print("MIR-EXPRESS-CONSERVE-UNATTRIBUTED|site=%s|candidates=(%s)"
+                  % (w["site"], ",".join(w["candidates"])))
+            strict_problems.append("%s: a write site no member's equation took"
+                                   % w["site"])
+        mode = {}
+        for row in rows:
+            mode[row["needed-by-aot"]] = mode.get(row["needed-by-aot"], 0) + 1
+        print("MIR-EXPRESS-AOT-MODE|yes=%d|not-yet=%d|no=%d|n/a=%d|why=the-three-answers"
+              "-to-needed-by-aot-are-printed-together-because-a-quote-of-the-yes-count-"
+              "without-the-other-two-is-the-sentence-that-reads-like-nothing-is-left"
+              % (mode.get("yes", 0), mode.get("not-yet", 0),
+                 mode.get("no", 0), mode.get("n/a", 0)))
+        for row in rows:
+            if not row["runtime"]:
+                continue
+            where = {}
+            for r in row["runtime"]:
+                where[r.get("where")] = where.get(r.get("where"), 0) + 1
+            unmapped = ["%s@%s" % (r["site"], r["ctx"]) for r in row["runtime"]
+                        if r.get("where") == "unknown"]
+            print("MIR-EXPRESS-AOT-SITES|item=%s|dispatch=%d|loader=%d|unknown=%d"
+                  "|not-mapped=(%s)"
+                  % (row["item"], where.get("dispatch", 0), where.get("loader", 0),
+                     where.get("unknown", 0), ",".join(unmapped) or "none"))
+            if unmapped:
+                strict_problems.append("%s: %d read site(s) under a label the dispatcher's"
+                                       " own table does not carry (%s)"
+                                       % (row["item"], len(unmapped), ",".join(unmapped)))
+
         width = width_probe(args.cc, tmp)
         if width is None:
             print("mir_express: REFUSED|the block-index width probe would not build",
@@ -664,6 +825,17 @@ def main():
                  counts.get("dropped", 0), counts.get("absent", 0),
                  ",".join(sorted(red)) or "none",
                  ",".join(sorted(red_quiet)) or "none"))
+        # A reading whose own sites do not fall into exactly one class, or whose
+        # writes are claimed by no member, is not a reading -- and it must not
+        # reach --pin, where it would freeze the defect as the expectation.
+        if strict_problems:
+            for why in strict_problems:
+                print("mir_express: REFUSED|%s" % why, file=sys.stderr)
+            print("mir_express: REFUSED|the site equation does not hold (%d problem(s));"
+                  " every observed site of a measured member must land in exactly one"
+                  " of reader/writer/container/instrument, or be named as unknown"
+                  % len(strict_problems), file=sys.stderr)
+            return 2
         if args.pin:
             write_pin(rows, width)
             return 0
