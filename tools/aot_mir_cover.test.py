@@ -151,6 +151,40 @@ def prelude_delta(with_foot, without_foot):
     return frozenset(op for op, n in with_foot.items() if n > without_foot.get(op, 0))
 
 
+def tree_state(sha):
+    """What a reader can do with the sha a pin records: resolve it, and find it.
+
+    A pin is read by someone who was not there when it was written, so the sha in
+    it has to name something they can look up.  `git cat-file` answers the first
+    half; `git for-each-ref --contains` answers the second, and the second is the
+    one that survives a rebase or a force-push -- the object stays in the local
+    database until gc, while no ref holds it and no clone has it at all."""
+    if not sha or not isinstance(sha, str):
+        return {"type": None, "refs": []}
+    t = subprocess.run(["git", "cat-file", "-t", sha], cwd=str(ROOT),
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if t.returncode != 0:
+        return {"type": None, "refs": []}
+    r = subprocess.run(["git", "for-each-ref", "--contains", sha, "--format=%(refname)"],
+                       cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    refs = []
+    if r.returncode == 0:
+        refs = [ln for ln in r.stdout.decode("utf-8", "replace").split("\n") if ln.strip()]
+    return {"type": t.stdout.decode("utf-8", "replace").strip(), "refs": refs}
+
+
+def pin_tree_problems(sha):
+    """The reasons a recorded tree is not something a reader can look up."""
+    st = tree_state(sha)
+    if st["type"] != "commit":
+        return ["the pin records tree=%s, which does not resolve to a commit here -- a reader "
+                "cannot look up what was measured" % sha]
+    if not st["refs"]:
+        return ["the pin records tree=%s, which resolves but is held by no ref -- it survives "
+                "only as a dangling object and is absent from a fresh clone" % sha]
+    return []
+
+
 def self_check():
     """The ledger arithmetic and the two parsers, on inputs whose answer is
     known -- including inputs the ledger has to reject."""
@@ -184,6 +218,11 @@ def self_check():
     expect("prelude-delta-empty", list(prelude_delta({"OP_A": 1}, {"OP_A": 1})), [])
     expect("prelude-set-is-what-the-control-expects",
            sorted(PRELUDE_OPS), ["OP_HALT", "OP_LOADK_INT", "OP_LOADK_STRING", "OP_STORE_GLOBAL"])
+    head = head_sha()
+    expect("a sha nobody can look up is not a pin", len(pin_tree_problems("0" * 40)), 1)
+    expect("the sha a pin would record resolves and is held by a ref",
+           (tree_state(head)["type"] == "commit" and len(tree_state(head)["refs"]) > 0), True)
+    expect("a lookable sha produces no problem", pin_tree_problems(head), [])
     if bad:
         print("aot_mir_cover self-check: FAIL -- " + "; ".join(bad))
         return 1
@@ -393,6 +432,14 @@ def main():
             PIN.write_text(json.dumps(live, indent=2) + "\n")
             print("IR-AOT-MIR-PIN|wrote=%s|covered=%d|of=%d" % (PIN.relative_to(ROOT), len(covered),
                                                                len(aot_covered)))
+            wrote_problems = pin_tree_problems(live["tree"])
+            problems.extend(wrote_problems)
+            if wrote_problems:
+                pin_ok = False
+            st = tree_state(live["tree"])
+            print("IR-AOT-MIR-PIN-TREE|tree=%s|resolves=%s|refs=%d|reachable=%s|head=%s"
+                  % (live["tree"], "yes" if st["type"] == "commit" else "no", len(st["refs"]),
+                     "yes" if st["refs"] else "no", live["tree"]))
     elif PIN.exists():
         old = json.loads(PIN.read_text())
         same = (old.get("covered") == live["covered"] and old.get("of") == live["of"]
@@ -403,6 +450,17 @@ def main():
               % (old.get("tree"), live["tree"], live["of"], live["covered"], old.get("covered"),
                  "yes" if same else "no",
                  "yes" if old.get("tree") != live["tree"] else "no"))
+        st = tree_state(old.get("tree"))
+        print("IR-AOT-MIR-PIN-TREE|tree=%s|resolves=%s|refs=%d|reachable=%s|head=%s"
+              % (old.get("tree"), "yes" if st["type"] == "commit" else "no", len(st["refs"]),
+                 "yes" if st["refs"] else "no", live["tree"]))
+        tree_problems = pin_tree_problems(old.get("tree"))
+        problems.extend(tree_problems)
+        if tree_problems:
+            # A pin a reader cannot look up is not a holding pin, whatever the
+            # numbers in it say.  --check-pin is the mode that promises the pin
+            # is usable, so this fails it there rather than printing a note.
+            pin_ok = False
         if not same:
             problems.append("the live coverage does not match %s -- re-pin deliberately with --pin "
                             "if the change is intended" % PIN.relative_to(ROOT))
