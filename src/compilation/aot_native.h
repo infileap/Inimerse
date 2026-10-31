@@ -52,4 +52,10 @@ const char *aot_native_last_error(void);
 /* One-line description of the accepted subset, for docs and diagnostics. */
 const char *aot_native_subset_description(void);
 
+/* The value runtime (NV, nv_int/nv_flt/nv_boo, nv_add/nv_sub/nv_mul/nv_div/
+   nv_mod, the comparisons, nv_tru/nv_neg/nv_not, nv_say) as the exact text every
+   generated translation unit embeds.  Exported so that a second code generator
+   can share it instead of keeping a copy that drifts; aot_mir is that consumer. */
+const char *aot_native_preamble(void);
+
 #endif /* AOT_NATIVE_H */

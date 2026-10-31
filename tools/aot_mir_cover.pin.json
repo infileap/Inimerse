@@ -1,0 +1,56 @@
+{
+  "tree": "f15997d07a0cb7d43eb7f9982655e1d481f84bf0",
+  "covered": 29,
+  "of": 30,
+  "of-source": "tools/aot_cover.pin.json:covered_ops (read, not copied: the two routes must not drift apart, and the two pins are never added)",
+  "corpus": {
+    "inline_cases": 86,
+    "accepted": 86,
+    "refused": 0,
+    "same-stdout-and-rc-as-interpreter": 86
+  },
+  "covered_ops": [
+    "OP_ADD",
+    "OP_AND",
+    "OP_CALL_FUNC",
+    "OP_DIV",
+    "OP_EQ",
+    "OP_GE",
+    "OP_GT",
+    "OP_HALT",
+    "OP_JUMP",
+    "OP_JUMP_IF_FALSE",
+    "OP_JUMP_IF_TRUE",
+    "OP_LE",
+    "OP_LOADK_BOOL",
+    "OP_LOADK_FLOAT",
+    "OP_LOADK_I64",
+    "OP_LOADK_INT",
+    "OP_LOAD_GLOBAL",
+    "OP_LT",
+    "OP_MOD",
+    "OP_MOV",
+    "OP_MUL",
+    "OP_NEG",
+    "OP_NEQ",
+    "OP_NOT",
+    "OP_PUSH_REG",
+    "OP_RETURN",
+    "OP_SAY",
+    "OP_STORE_GLOBAL",
+    "OP_SUB"
+  ],
+  "missing_ops": [
+    "OP_LOADK_STRING"
+  ],
+  "coverage-claim": "none",
+  "basis": "mir-emitted-ops-union-over-the-corpus",
+  "note": [
+    "regenerate with tools/aot_mir_cover.test.py --pin.  The fraction a",
+    "reader sees in IR-AOT-MIR is this file.  coverage-claim=none says",
+    "what the number is not: covering the corpus is not covering the",
+    "lowering, which is why emittable= and the missing reasons are",
+    "recorded next to it, and why the denominator is read from the AST",
+    "route's pin instead of being written down twice."
+  ]
+}

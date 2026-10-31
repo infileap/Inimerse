@@ -314,6 +314,10 @@ static const char *kPreamble =
 "}\n"
 "\n";
 
+/* The preamble, as text, for the second consumer.  Returning kPreamble
+   rather than a copy is the whole point: one value runtime, embedded twice. */
+const char *aot_native_preamble(void) { return kPreamble; }
+
 /* -------------------------------------------------------------- pre-passes */
 
 static void collect_locals(Gen *g, Stmt **body, int n);

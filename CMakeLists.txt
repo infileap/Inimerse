@@ -1906,3 +1906,55 @@ set_tests_properties(mir_express_regression PROPERTIES WORKING_DIRECTORY ${CMAKE
 add_test(NAME shared_tmp_selftest_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "SHARED-TMP-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_shared_tmp.py --self-test)
 set_tests_properties(shared_tmp_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
+
+
+# The second front end: C generated from the MIR (src/compiler/mir.h) instead of
+# from the AST.  Its corpus is aot_native's own equivalence list, so "accepted"
+# means the first front end already took the program; every file the second one
+# writes must carry a conserving equation (emitted + not-yet == insns), every byte
+# difference between the two generated files must fall inside a closed reason set,
+# and one operand is perturbed through mir_perturb() to prove the generated C reads
+# its operands at all -- a generator that ignores them passes everything else.
+add_test(NAME aot_mir_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir.test.py --build ${CMAKE_BINARY_DIR} --tool $<TARGET_FILE:aot-mir>)
+set_tests_properties(aot_mir_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "compiler;aot;regression" PASS_REGULAR_EXPRESSION "IR-MIR-VERDICT\\|PASS")
+
+# Coverage of the second front end, with the first front end's denominator: the
+# corpus is aot_native's own equivalence list, the denominator is READ from
+# tools/aot_cover.pin.json (never copied, and the two pins are never added), and
+# the reading carries coverage-claim=none plus the lowering's emittable set, so it
+# cannot be read as a claim about programs the corpus does not contain.  It also
+# proves its own prelude exclusion: the same program is run in a cwd with and
+# without params.params and the delta must be exactly the prelude's opcodes.
+add_test(NAME aot_mir_cover_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_cover.test.py --build ${CMAKE_BINARY_DIR} --check-pin)
+set_tests_properties(aot_mir_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;compiler;regression" PASS_REGULAR_EXPRESSION "IR-AOT-MIR-VERDICT\\|PASS")
+# The ledger arithmetic and the two parsers, on inputs whose answer is known --
+# including the ones the ledger has to reject.  No build output, no corpus.
+add_test(NAME aot_mir_cover_selfcheck_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "aot_mir_cover self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_cover.test.py --self-check)
+set_tests_properties(aot_mir_cover_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;regression")
+
+# ---------------------------------------------------------------------------
+# aot-mir: the same lower-to-C, driven by the MIR instead of the AST.  Same
+# engine library, own main(), and the same value-runtime text (shared verbatim
+# through aot_native_preamble(), not copied).  The two routes must agree byte for
+# byte on the programs both accept; that comparison is the point of the second
+# front end, not a coincidence to hope for.
+#
+# Declared here, at the end, rather than beside aot-native: docs/ cite
+# CMakeLists.txt by line number, and an insertion in the middle moves every one of
+# them at once.  The line-refs stage counts that damage, and it did -- this block
+# cost +37 unanchored references while it sat above aot-native.  Appending shifts
+# nothing that is already written down.
+add_executable(aot-mir
+  src/compilation/aot_mir.c
+  src/compilation/aot_mir_tool.c
+  src/compilation/aot_native.c)
+target_link_libraries(aot-mir PRIVATE inimerse_engine)
+if(WIN32)
+  target_link_libraries(aot-mir PRIVATE m winhttp crypt32 gdi32 winmm msimg32
+    windowscodecs ole32 ws2_32 comdlg32 shell32 shlwapi iphlpapi)
+else()
+  target_link_libraries(aot-mir PRIVATE m Threads::Threads ${CMAKE_DL_LIBS})
+endif()
