@@ -109,6 +109,16 @@ EXPECTED_UNREADABLE_INIM = {
 
 
 def build_harness():
+    # A harness the parent already built is reused, not rebuilt.  This suite
+    # re-enters itself twice (the two corpus controls), and each child's main()
+    # starts here, so without this the same four translation units were compiled
+    # three times per run -- measured with a gcc shim on PATH: 3 invocations,
+    # about a second of gcc each, for one binary.  The path comes from the
+    # parent through MIR_HARNESS; it is private to that run, so reusing it
+    # cannot reintroduce the shared-path race.
+    if os.environ.get("MIR_HARNESS") and os.path.isfile(HARNESS):
+        print("MIR-HARNESS|reused=1|path=%s" % HARNESS)
+        return True
     cmd = ["gcc"] + FLAGS + INCLUDES + ["-o", HARNESS] + SRC
     p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if p.returncode != 0:
