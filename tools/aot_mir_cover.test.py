@@ -463,6 +463,12 @@ def main():
             print("IR-AOT-MIR-CASE|prog=%s|accepted=yes|dyn=%d|emitted=%d|superset=yes"
                   % (name, len(dyn), len(emitted)))
 
+    # The lowering's own tables, read once and used by every line below.
+    src = (ROOT / "src" / "compilation" / "aot_mir.c").read_text()
+    table_ops = case_ops(function_body(src, "static int op_regs(int op)"))
+    emitter_ops = case_ops(function_body(src, "static int emit_one("))
+    of_ops = declared_ops()
+
     covered = sorted(o for o in aot_covered if o in corpus_ops)
     missing = sorted(o for o in aot_covered if o not in corpus_ops)
     for op in missing:
@@ -471,10 +477,15 @@ def main():
         print("IR-AOT-MIR-MISSING|op=%s|why=%s" % (op, why))
     problems.extend(ledger(aot_covered, covered, missing))
 
-
+    # `emittable=30` standing alone reads as "this lowering handles everything the
+    # corpus reached".  It handles 30 of the 67 opcodes the encoding declares, so the
+    # static denominator rides in the same line: a reader who must open another file
+    # to learn what the 30 is out of will not open it.
     print("IR-AOT-MIR|accepted=%d|refused=%d|same-as-interpreter=%d|of=%d|emittable=%d"
+          "|of-ops=%d|not-emittable=%d"
           "|corpus=inline-cases:%d|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none"
-          % (accepted, refused, equivalent, len(aot_covered), len(emittable), len(cases)))
+          % (accepted, refused, equivalent, len(aot_covered), len(emittable),
+             len(of_ops), len(of_ops) - len(table_ops), len(cases)))
     print("IR-AOT-MIR-COVER|covered=%d|of=%d|denominator=tools/aot_cover.pin.json:covered_ops"
           "|coverage-claim=none" % (len(covered), len(aot_covered)))
 
@@ -483,10 +494,6 @@ def main():
     # encoding declares, how many this lowering can lower at all -- is a different
     # number, and printing only the first reads as 100% of the second.  Both are
     # printed, each with its basis, and the two tables that must agree are asked.
-    src = (ROOT / "src" / "compilation" / "aot_mir.c").read_text()
-    table_ops = case_ops(function_body(src, "static int op_regs(int op)"))
-    emitter_ops = case_ops(function_body(src, "static int emit_one("))
-    of_ops = declared_ops()
     lowering = lowering_problems(table_ops, emitter_ops, of_ops, emittable)
     problems.extend(lowering)
     print("IR-AOT-MIR-LOWERING|handles=%d|of=%d|unknown=%d"
