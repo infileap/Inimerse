@@ -26032,3 +26032,51 @@ IR-COVER|interp=67/67|disasm=67/67|missing=disasm:none,aot:OP_BIND,…|missing-b
 七、**登记表的读法要跟着改一处**：`ctest --show-only=json-v1` 在 `ab562e9` 上给 182 注册／25 带 `PASS_REGULAR_EXPRESSION`／78 含 `gated_run.py`／40 带 `FAIL_REGULAR_EXPRESSION`／**BOTH 仍 4**（`mod_semantics`／`logic_semantics`／`ir_spec`／`three_way_parity`）。`command` 字段为空的仍是 **45 个**（25 个带属性的里有 **16 个**）⇒ 丑栏那条盲区**没有随这一笔变化**，归类仍然要回文本[obs: ab562e9]。
 
 边界：本节只记这一笔与守卫的形状，不断言「并发问题已经全清」——它清的是**这一种**共享（`gettempdir()` 下的固定名）；其它共享方式（固定的 `/tmp` 子目录名、进程间约定的锁文件、跨工作树共用的 build 目录）不在它扫的范围里，`check_shared_tmp.py` 的正则也只认那一种写法。
+
+### 卯 分母 + 模式是同一个读数的两半：分母越大，模式窄这件事越像覆盖率
+
+`ab562e9` 的守卫印 `check_shared_tmp: ok (111 *.py scanned; every artifact a suite builds lands in a directory that suite created)`，而它的模式第一版只认一种写法。合并者用四行 fixture 量出这件事，我在这里把它记成一条判据，并补两个我自己量到的边界。
+
+一、**四个同族写法，第一版只命中第一个**：
+
+| 写法 | 第一版 | `ac5a11c` 之后 |
+|---|---|---|
+| `os.path.join(tempfile.gettempdir(), "fixed_a")` | 命中 | 命中 |
+| `"/tmp/fixed_b"` | 漏 | 命中（`TMP_LITERAL`） |
+| `f"{tempfile.gettempdir()}/fixed_c"` | 漏 | 命中（`TEMPDIR_CALL`） |
+| `tempfile.gettempdir() + "/fixed_d"` | 漏 | 命中（`TEMPDIR_CALL`） |
+
+后面那两个之所以能被同一支模式抓住，是因为它们都含**同一个函数调用**；而第二个是**字符串里的字面量**，只能由另一支模式抓。⇒ 缺陷住在两个地方：**调用**在代码里，**字面量**在字符串里，一个掩码看不见两者。
+
+二、**我按 `ac5a11c` 的源码核了它现在用的三支模式**（`tools/check_shared_tmp.py` 第 58／59／61 行）：
+
+```
+TEMPDIR_CALL = re.compile(r"tempfile\.gettempdir\(\s*\)")   # forms 1, 3, 4
+TMP_LITERAL  = re.compile(r"(?<![\w.])[\"']/tmp/")          # form 2
+MKDTEMP      = re.compile(r"tempfile\.mkdtemp\(")           # the sanctioned call
+```
+
+四行 fixture 逐格都点名（`:2`／`:3`／`:4`／`:5`），`mkdtemp` 那行不点名，**一条引了旧写法的注释也不点名**（我单独造了只含注释的 fixture，`ok (1 *.py scanned…)`，rc=0）。
+
+三、★**我量到它的两个残余窄口，都是合法 Python**：
+
+| 写法 | 合法？ | 命中？ |
+|---|---|---|
+| `os.path.join(tempfile.gettempdir (), "x")`（括号前一个空格） | 是（`py_compile` 通过） | **漏** |
+| `os.path.join(tempfile . gettempdir ( ) , "x")`（点与括号周围有空格） | 是 | **漏** |
+
+原因是 `TEMPDIR_CALL` 要求 `tempfile` 与 `gettempdir` 之间是一个**紧贴的点**、`gettempdir` 与 `(` 之间没有空白。⇒ 这不是「又一种写法」，而是**同一支模式自己的空白敏感性**；它对「格式化后的代码」与「手工重排过的代码」都会静默。今天的 `tools/` 里没有这两种写法，所以守卫是绿的；但它的绿与「110 个文件里没有共享路径」之间，还隔着这一层。
+
+四、**合并者在这一笔里踩的第三脚，是这一族最值得抄的**：它用 `" ".join(tokens)` 重建行去找 `tempfile.gettempdir()`，于是源码里那个调用被重建成 `tempfile . gettempdir ( )`，**装在四种坏写法上的 fixture 全绿**。它自己写下的是「只验真仓库是绿的，永远发现不了它」。这条与我上面那个残余窄口是同一个机制：**读法改一个字，判据就改一次主语，而分母与成功行一字未改**[obs: ac5a11c]。
+
+五、**这一族现在有三面，我按合并者的说法记全**（原来我只记了第 2 面）：
+
+1. **判据失去对象**：第二方被删掉，逐 opcode 那 13 行不再出现（`d99b1fa`）；
+2. **判据的对象被换成不说话的替身**：竞态里那个被覆盖的二进制，控制组照样报告没问题（`ab562e9` 前）；
+3. **判据的读法被自己换掉**：`" ".join` 那次，模式看不见它要找的东西，而分母与成功行一字未改（`ac5a11c`）。
+
+三面的共同判据是同一句：**一条判据的可信度不由它印的成功行决定，而由「它看不见什么」决定**；而「它看不见什么」永远不会印在成功行上。
+
+六、登记表在这一棵上重数（`ac5a11c`，`cmake -S "$PWD" -B build/census` rc=0 之后 `ctest --test-dir build/census --show-only=json-v1`）：`registered=183`、`PASS_REGULAR_EXPRESSION=25`、`gated_run.py=79`、`FAIL_REGULAR_EXPRESSION=40`、**BOTH 仍 4**、`command` 为空的 **45**（带属性的里 **16**）；`EXP_CTEST` 182 → **183**（默认值／`add_test(`／`ctest -N` 三数一致），阶段仍 **18**（这一笔改模式不改阶段数）。
+
+边界：本节只记「分母 + 模式」这一对，不主张模式宽到没有假阳性——宽化会把注释与 docstring 一起抓进来，所以 `ac5a11c` 同时做了两份掩码（调用在挖空字符串那份找、字面量在未挖空那份找）；那是它的解法，不是唯一解法。残余窄口我按「今天的 `tools/` 里没有」记，不按「已经安全」记。
