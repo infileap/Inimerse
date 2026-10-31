@@ -207,8 +207,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--self-test", action="store_true",
                     help="ask the two questions of fixtures whose answer is known")
-    ap.add_argument("--check", action="append", default=[], metavar="SHA",
-                    help="print the reading for this sha and fail if it is not lookable")
+    # nargs="+" with action="append" so both spellings work: `--check a b c`, the
+    # one the sweep uses, and a repeated `--check a --check b`.  The first version
+    # took exactly one value per flag, so a sweep written from the docstring
+    # (`--check <sha1> <sha2>`) died on "unrecognized arguments" -- a usage the
+    # docs promised and the parser did not accept, reported by noble-orchid
+    # against the module rather than against her own command line.
+    ap.add_argument("--check", nargs="+", action="append", default=[], metavar="SHA",
+                    help="print the reading for each sha and fail if any is not lookable")
     args = ap.parse_args()
 
     if args.self_test:
@@ -217,7 +223,12 @@ def main():
     if args.check:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         bad = 0
-        for sha in args.check:
+        # nargs="+" makes each occurrence a list and action="append" makes it a
+        # list of lists, so flatten before iterating: `--check a b` arrives as
+        # [["a","b"]] and `--check a --check b` as [["a"],["b"]], and both have
+        # to mean the same thing.  Without this the sweep printed one row whose
+        # "tree" field was the Python repr of the whole list.
+        for sha in [s for group in args.check for s in group]:
             print(reading("PIN-TREE", sha, root))
             for why in problems(sha, root):
                 print("PIN-TREE-PROBLEM|" + why)
