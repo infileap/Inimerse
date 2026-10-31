@@ -27,8 +27,8 @@ Readings:
   MIR-EXPRESS|item=NAME|field=..|move=..|state=..|writes-section=..
              |reader=(FILES)|reader-count=N|writer=(FILES)|self-excluded=(FILES)
              |container-excluded=(FILES)|needed-by-aot=yes|no|not-yet|n/a
-             |in-memory-uses=N
-  MIR-EXPRESS-AOT|item=NAME|needed-by-aot=..|runtime-readers=(file:line@L_OP,...)
+             |in-memory-uses=N|in-memory-uses-basis=files-named-by-the-compiler
+  MIR-EXPRESS-AOT|item=NAME|needed-by-aot=..|runtime-readers=(file@line@L_OP,...)
                  |basis=tools/aot_cover.pin.json:covered_ops
   MIR-EXPRESS-WIDTH|item=block-index|width=2|max-insns=32767|overflow=refuse|effect=...
   MIR-EXPRESS-SUMMARY|items=N|field=F|alias=A|dropped=D|absent=X|red=NAMES|green=QUIET-NAMES
@@ -41,13 +41,22 @@ Readings:
                       |equation=reader+writer+container+instrument+unknown=sites
                       |holds=yes|no|textual=T|not-in-measurement=S|other-struct=O
                       |file-had-errors=E|file-not-scanned=U
-  MIR-EXPRESS-CONSERVE-ELSEWHERE|item=NAME|member=..|site=file:line|why=file-had-errors
+  MIR-EXPRESS-CONSERVE-ELSEWHERE|item=NAME|member=..|site=file@line|why=file-had-errors
                                  |file-not-scanned
   MIR-EXPRESS-CONSERVE-SCOPE|members=N|of=M|why=the-equation-is-over-the-members-this-
                              reading-measures ...
   MIR-EXPRESS-AOT-MODE|yes=N|not-yet=M|no=K|n/a=X|why=...
   MIR-EXPRESS-AOT-SITES|item=NAME|dispatch=N|loader=N|unknown=N|not-mapped=(...)
-
+  MIR-EXPRESS-CITATION|readings=N|shape=REGEX|hits=N|holds=yes|no|why=...
+  MIR-EXPRESS-CITATION-HIT|token=FILE@LINE|in=READING-NAME
+       A site rides as `file@line`, never as `file:line`: this repository reads the
+       latter as a citation of the tree a measurement was taken on, and a reading is
+       copied out verbatim (measured 2026-11-01: one such field pasted into a page
+       turned the docs pointer check red).  The whole set printed by one run is
+       scanned at the end, so the next field with that shape fails here.
+       `in-memory-uses` counts FILES the compiler named, and it used to count access
+       sites; the two numbers are both self-consistent and not comparable across
+       trees, so the basis travels with the number instead of living in a docstring.
   The equation is what keeps the two columns from being a story: every site this
   measurement observed must land in exactly ONE class -- instrument and container
   by the FILE it sits in (both file sets are named in MIR-EXPRESS-EXCLUDED), a
@@ -60,12 +69,13 @@ Readings:
   the compiler read to the end is another struct carrying a member of the same
   name (counted), while a mention in a file that did not compile, or did not
   compile to the end, could still be a real access and is named one by one.
-  The equation is over the members this reading MEASURES (the nine tables in
-  ITEMS); CONSERVE-SCOPE says how many the container has and does not claim the
-  rest.  Measuring all of them is possible but the const pass cannot attribute
-  16 of the array-element writes when every member is in scope (two candidate
-  names per gcc message), so the nine measured members are the reading's scope
-  and the other names are not silently included.
+  The equation is over the members this reading MEASURES -- the container members
+  ITEMS names, not the container: CONSERVE-SCOPE counts both, taking `of` from the
+  parsed member list rather than from a number written here, and says how many it
+  does not claim.  Measuring every member is possible, but the const pass then
+  cannot attribute some array-element writes -- each gcc message names two
+  candidates at once -- and those are printed one by one as CONSERVE-UNATTRIBUTED
+  instead of being folded into a total nobody can check.
 
   reader   files the COMPILER caught accessing the member (tools/mir_access_probe.py)
   writer   files the COMPILER caught writing it
@@ -299,6 +309,45 @@ def write_pin(rows, width):
     print("mir_express: pin written to %s (tree=%s)" % (_pin_path(), _head_sha()))
 
 
+CITATION_SHAPE = re.compile(r"[A-Za-z0-9_./-]+:[0-9]+")
+_READINGS = []
+
+
+def reading(text):
+    """Every line this tool prints as a READING goes through here.
+
+    One field at a time is how the second hostile one got in: a reading is quoted
+    into docs verbatim, and this repository reads `file:line` as a citation of the
+    tree the line was measured on.  A reading says where a measurement happened,
+    which is not the same claim, so the whole set is checked in one place at the
+    end (citation_problems) instead of relying on each new field to remember."""
+    _READINGS.append(text)
+    print(text)
+    return text
+
+
+def site_token(site):
+    """A site as a reading may carry it: `file@line`, never `file:line`."""
+    return str(site).replace(":", "@", 1)
+
+
+def citation_problems(lines):
+    """The readings that contain this repository's citation syntax.
+
+    Measured 2026-11-01: `runtime-readers=(src/vm/vm.c:2685@loader,...)` was copied
+    into a page verbatim and check_obs_markers went red -- the line was read as a
+    pointer at a tree, and the two obvious repairs diverge (one adds `[obs: <sha>]`
+    to the reading, which turns a reading into a citation of the tree it sits in).
+    The fix is the separator, and the guard is this: the tool scans the lines it
+    printed, so the next field with the same shape fails here rather than in docs."""
+    out = []
+    for line in lines:
+        head = line.split("|", 1)[0]
+        for m in CITATION_SHAPE.finditer(line):
+            out.append({"token": m.group(0), "in": head})
+    return out
+
+
 def check_pin(rows, width):
     """Two questions, two fields: do the categories hold, and did the pin move.
 
@@ -309,7 +358,7 @@ def check_pin(rows, width):
     """
     path = _pin_path()
     if not os.path.isfile(path):
-        print("MIR-EXPRESS-PIN|pin=<missing>|match=no|why=no-pin-file-to-compare-with")
+        reading("MIR-EXPRESS-PIN|pin=<missing>|match=no|why=no-pin-file-to-compare-with")
         return 1
     with open(path) as f:
         pin = json.load(f)
@@ -322,19 +371,19 @@ def check_pin(rows, width):
     # known-broken= says why a green gate is green: these tables ARE broken today,
     # and the run is green because the breakage was recorded rather than because
     # it went away.  Without this, `gate: OK` reads as "these four are fine".
-    print("MIR-EXPRESS-PIN|tree=%s|head=%s|dropped=%d|pinned=%d|dropped-match=%s"
+    reading("MIR-EXPRESS-PIN|tree=%s|head=%s|dropped=%d|pinned=%d|dropped-match=%s"
           "|known-broken=%d|since=%s|tree-moved=%s"
           % ((pin.get("tree") or "?")[:7], _head_sha()[:7], len(live), len(pinned),
              "yes" if ok else "no", len(pinned), (pin.get("tree") or "?")[:7],
              "yes" if moved else "no"))
     for item in added:
-        print("MIR-EXPRESS-NEW|item=%s|effect=a-table-the-regeneration-now-loses"
+        reading("MIR-EXPRESS-NEW|item=%s|effect=a-table-the-regeneration-now-loses"
               "-that-the-pin-did-not-record" % item)
     for item in fixed:
-        print("MIR-EXPRESS-FIXED|item=%s|effect=the-pin-names-a-loss-that-no"
+        reading("MIR-EXPRESS-FIXED|item=%s|effect=the-pin-names-a-loss-that-no"
               "-longer-happens-so-the-pin-is-stale" % item)
     if not ok:
-        print("MIR-EXPRESS-PIN-STALE|effect=the-recorded-loss-set-no-longer"
+        reading("MIR-EXPRESS-PIN-STALE|effect=the-recorded-loss-set-no-longer"
               "-describes-this-tree|fix=rerun-with---pin-once-the-change-is"
               "-explained")
     return 0 if ok else 1
@@ -600,7 +649,7 @@ def main():
         # Which files were taken out, named once and by name: a set in the source
         # would leave the exclusions to be inferred, and the whole point of this
         # column is that the count is not the instrument counting itself.
-        print("MIR-EXPRESS-EXCLUDED|container=(%s)|instruments=(%s)|why=the-container-"
+        reading("MIR-EXPRESS-EXCLUDED|container=(%s)|instruments=(%s)|why=the-container-"
               "defines-the-member-and-a-probe-that-plants-a-value-in-every-table-touches-"
               "every-table"
               % (",".join(_access_probe().EXCLUDED_CONTAINER),
@@ -682,7 +731,7 @@ def main():
                     and row["writes-section"] == "no":
                 contradictions.append((row["item"], "not-in-the-file-and-nothing-reads-it-either"))
         for item, why in contradictions:
-            print("MIR-EXPRESS-CONTRADICTION|item=%s|why=%s" % (item, why))
+            reading("MIR-EXPRESS-CONTRADICTION|item=%s|why=%s" % (item, why))
 
         covered_ops = set()
         aot_pin_path = os.path.join(ROOT, "tools", "aot_cover.pin.json")
@@ -690,9 +739,10 @@ def main():
             covered_ops = set(json.load(open(aot_pin_path)).get("covered_ops") or [])
 
         for row in rows:
-            print("MIR-EXPRESS|item=%s|field=%s|move=%s|state=%s|writes-section=%s"
+            reading("MIR-EXPRESS|item=%s|field=%s|move=%s|state=%s|writes-section=%s"
                   "|reader=(%s)|reader-count=%d|writer=(%s)|self-excluded=(%s)"
                   "|container-excluded=(%s)|needed-by-aot=%s|in-memory-uses=%d"
+                  "|in-memory-uses-basis=files-named-by-the-compiler"
                   % (row["item"], row["field"], row["move"], row["state"],
                      row["writes-section"],
                      ",".join(row["reader"]) or "none", row["reader-count"],
@@ -707,10 +757,10 @@ def main():
                 # about the future; "under L_THREAD_START, which the AOT corpus has
                 # never run" is a reading of today.
                 ops = list(dict.fromkeys(r["op"] for r in row["runtime"]))
-                print("MIR-EXPRESS-AOT|item=%s|needed-by-aot=%s|runtime-readers=(%s)"
+                reading("MIR-EXPRESS-AOT|item=%s|needed-by-aot=%s|runtime-readers=(%s)"
                       "|covered=(%s)|uncovered=(%s)|basis=%s"
                       % (row["item"], row["needed-by-aot"],
-                         ",".join(dict.fromkeys("%s@%s" % (r["site"], r["ctx"] or "loader")
+                         ",".join(dict.fromkeys("%s@%s" % (site_token(r["site"]), r["ctx"] or "loader")
                                                 for r in row["runtime"])) or "none",
                          ",".join(o for o in ops if o in covered_ops) or "none",
                          ",".join((o or "loader-outside-the-dispatch")
@@ -722,7 +772,7 @@ def main():
                 # The field is format-writes=, not by-format=: "by-format=no" reads
                 # as "not the format's doing", which is the opposite of what a
                 # writes-section=no means here.
-                print("MIR-EXPRESS-WHY|item=%s|format-writes=%s|regeneration-copies=no|effect=%s"
+                reading("MIR-EXPRESS-WHY|item=%s|format-writes=%s|regeneration-copies=no|effect=%s"
                       % (row["item"], row["writes-section"],
                          "nothing-could-have-copied-it-the-container-format-does-not-write"
                          "-this-section" if row["writes-section"] == "no"
@@ -756,7 +806,7 @@ def main():
             why_count = {}
             for u in unseen:
                 why_count[u["why"]] = why_count.get(u["why"], 0) + 1
-            print("MIR-EXPRESS-CONSERVE|item=%s|member=%s|sites=%d|reader=%d|writer=%d"
+            reading("MIR-EXPRESS-CONSERVE|item=%s|member=%s|sites=%d|reader=%d|writer=%d"
                   "|container=%d|instrument=%d|unknown=%d|overlap=%d"
                   "|equation=reader+writer+container+instrument+unknown=sites"
                   "|holds=%s|textual=%d|not-in-measurement=%d|other-struct=%d"
@@ -770,8 +820,8 @@ def main():
                      why_count.get("file-not-scanned", 0)))
             for u in unseen:
                 if u["why"] != "other-struct":
-                    print("MIR-EXPRESS-CONSERVE-ELSEWHERE|item=%s|member=%s|site=%s|why=%s"
-                          % (row["item"], row["member"], u["site"], u["why"]))
+                    reading("MIR-EXPRESS-CONSERVE-ELSEWHERE|item=%s|member=%s|site=%s|why=%s"
+                          % (row["item"], row["member"], site_token(u["site"]), u["why"]))
             if not holds:
                 strict_problems.append("%s: the classes cover %d of %d observed site(s)"
                                        % (row["member"], total, nsites))
@@ -780,18 +830,18 @@ def main():
                                        % (row["member"], len(cl["unknown"]),
                                           ",".join("%s:%d" % s for s in cl["unknown"])))
         whole = access.get("container-members") or []
-        print("MIR-EXPRESS-CONSERVE-SCOPE|members=%d|of=%d|why=the-equation-is-over-the-"
+        reading("MIR-EXPRESS-CONSERVE-SCOPE|members=%d|of=%d|why=the-equation-is-over-the-"
               "members-this-reading-measures; the-reading-does-not-claim-the-other-%d"
               % (measured, len(whole), max(0, len(whole) - measured)))
         for w in (access.get("unattributed-writes") or []):
-            print("MIR-EXPRESS-CONSERVE-UNATTRIBUTED|site=%s|candidates=(%s)"
-                  % (w["site"], ",".join(w["candidates"])))
+            reading("MIR-EXPRESS-CONSERVE-UNATTRIBUTED|site=%s|candidates=(%s)"
+                  % (site_token(w["site"]), ",".join(w["candidates"])))
             strict_problems.append("%s: a write site no member's equation took"
                                    % w["site"])
         mode = {}
         for row in rows:
             mode[row["needed-by-aot"]] = mode.get(row["needed-by-aot"], 0) + 1
-        print("MIR-EXPRESS-AOT-MODE|yes=%d|not-yet=%d|no=%d|n/a=%d|why=the-three-answers"
+        reading("MIR-EXPRESS-AOT-MODE|yes=%d|not-yet=%d|no=%d|n/a=%d|why=the-three-answers"
               "-to-needed-by-aot-are-printed-together-because-a-quote-of-the-yes-count-"
               "without-the-other-two-is-the-sentence-that-reads-like-nothing-is-left"
               % (mode.get("yes", 0), mode.get("not-yet", 0),
@@ -802,9 +852,9 @@ def main():
             where = {}
             for r in row["runtime"]:
                 where[r.get("where")] = where.get(r.get("where"), 0) + 1
-            unmapped = ["%s@%s" % (r["site"], r["ctx"]) for r in row["runtime"]
+            unmapped = ["%s@%s" % (site_token(r["site"]), r["ctx"]) for r in row["runtime"]
                         if r.get("where") == "unknown"]
-            print("MIR-EXPRESS-AOT-SITES|item=%s|dispatch=%d|loader=%d|unknown=%d"
+            reading("MIR-EXPRESS-AOT-SITES|item=%s|dispatch=%d|loader=%d|unknown=%d"
                   "|not-mapped=(%s)"
                   % (row["item"], where.get("dispatch", 0), where.get("loader", 0),
                      where.get("unknown", 0), ",".join(unmapped) or "none"))
@@ -819,7 +869,7 @@ def main():
                   file=sys.stderr)
             return 2
         cap = 2 ** (8 * width - 1) - 1
-        print("MIR-EXPRESS-WIDTH|item=block-index|width=%d|max-insns=%d|overflow=refuse"
+        reading("MIR-EXPRESS-WIDTH|item=block-index|width=%d|max-insns=%d|overflow=refuse"
               "|effect=a-longer-function-is-refused-by-mir_from_bytecode-rather-than-truncated-"
               "so-the-MIR-route-will-one-day-refuse-what-the-AST-route-accepts" % (width, cap))
 
@@ -827,12 +877,34 @@ def main():
         for row in rows:
             counts[row["state"]] = counts.get(row["state"], 0) + 1
         red, red_quiet = split_dropped(rows)
-        print("MIR-EXPRESS-SUMMARY|items=%d|field=%d|alias=%d|dropped=%d|absent=%d"
+        reading("MIR-EXPRESS-SUMMARY|items=%d|field=%d|alias=%d|dropped=%d|absent=%d"
               "|red=%s|green=%s"
               % (len(rows), counts.get("field", 0), counts.get("alias", 0),
                  counts.get("dropped", 0), counts.get("absent", 0),
                  ",".join(sorted(red)) or "none",
                  ",".join(sorted(red_quiet)) or "none"))
+        # This repository reads `file:line` as a citation of a tree, and a reading is
+        # copied out verbatim: one field at a time is how the second hostile one got
+        # in (see citation_problems).  So the shape is checked over the whole set this
+        # run printed, not over the field somebody remembered to check.
+        hits = citation_problems(_READINGS)
+        cite_line = ("MIR-EXPRESS-CITATION|readings=%d|shape=%s|hits=%d|holds=%s"
+                     "|why=this-repository-reads-file:line-as-a-citation, so a reading-"
+                     "line-that-carries-one-is-quoted-into-docs-as-a-pointer-at-a-tree-"
+                     "nobody-named"
+                     % (len(_READINGS), CITATION_SHAPE.pattern, len(hits),
+                        "yes" if not hits else "no"))
+        reading(cite_line)
+        hostile = ["MIR-EXPRESS-CITATION-HIT|token=%s|in=%s"
+                   % (h["token"].replace(":", "@"), h["in"]) for h in hits]
+        for hl in hostile:
+            reading(hl)
+        for h in hits:
+            strict_problems.append("the reading %s carries '%s', which this repository"
+                                   " reads as a citation of the tree it was measured on"
+                                   % (h["in"], h["token"]))
+        if citation_problems([cite_line] + hostile):
+            strict_problems.append("the citation reading itself carries the citation shape")
         # A reading whose own sites do not fall into exactly one class, or whose
         # writes are claimed by no member, is not a reading -- and it must not
         # reach --pin, where it would freeze the defect as the expectation.
