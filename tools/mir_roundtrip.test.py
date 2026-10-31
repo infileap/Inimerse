@@ -65,6 +65,7 @@ def _harness_path():
         return given
     if _OWN_DIR is None:
         _OWN_DIR = tempfile.mkdtemp(prefix="mir_roundtrip_harness-")
+        atexit.register(shutil.rmtree, _OWN_DIR, True)
     return os.path.join(_OWN_DIR, "mir_roundtrip_harness")
 
 
