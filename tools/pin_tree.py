@@ -195,6 +195,38 @@ def self_test():
            "TOK|tree=%s|resolves=yes|refs=%d|reachable=yes|head=%s"
            % (fx["held"], len(held["refs"]), fx["held"]))
 
+    # The documented sweep form has to stay accepted, and both spellings have to
+    # mean the same thing.  Tested at the parser, not through main(): main() reads
+    # the real repository's refs, so calling it with fixture shas would fail for
+    # "the sha does not resolve here" -- green by the wrong reason, which is the
+    # shape this batch is about.  Without this cell the fix for "`--check a b`
+    # was rejected" is a fix nobody would notice breaking again.
+    def checks_of(argv):
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--check", nargs="+", action="append", default=[])
+        # A parser that rejects the documented form calls sys.exit, and an exit
+        # here would take the whole self-test down before any cell could report:
+        # the run would be red, but by dying rather than by naming a failed
+        # expectation, and "red by dying" is not what this file says its cells do.
+        # Caught, the cell below is the thing that says red -- measured: with
+        # nargs removed the two cells report red and the verdict is FAIL|red=2,
+        # instead of the process exiting 2 with the last cell printed ok.
+        # A refusal comes back as a list, not as a string: returning a string
+        # would be flattened by the caller into one "sha" per character (measured:
+        # got=['<', 'p', 'a', 'r', ...]), and a cell whose name says "takes several
+        # shas" would then be red for a reason that has nothing to do with how many
+        # shas it takes.  One element, and the cell fails on the element count.
+        try:
+            return ap.parse_args(argv).check
+        except SystemExit:
+            return [["<parser refused %r>" % (argv,)]]
+
+    for label, argv in (("--check takes several shas at once",
+                         ["--check", "a", "b"]),
+                        ("--check repeated is the same as --check once with several",
+                         ["--check", "a", "--check", "b"])):
+        expect(label, [s for g in checks_of(argv) for s in g], ["a", "b"])
+
     print("PIN-TREE-SELFTEST-VERDICT|cases=%d|red=%d|verdict=%s"
           % (len(cases), len(bad), "FAIL" if bad else "PASS"))
     if bad:
@@ -203,13 +235,19 @@ def self_test():
     return 0
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--self-test", action="store_true",
                     help="ask the two questions of fixtures whose answer is known")
-    ap.add_argument("--check", action="append", default=[], metavar="SHA",
-                    help="print the reading for this sha and fail if it is not lookable")
-    args = ap.parse_args()
+    # nargs="+" with action="append" so both spellings work: `--check a b c`, the
+    # one the sweep uses, and a repeated `--check a --check b`.  The first version
+    # took exactly one value per flag, so a sweep written from the docstring
+    # (`--check <sha1> <sha2>`) died on "unrecognized arguments" -- a usage the
+    # docs promised and the parser did not accept, reported by noble-orchid
+    # against the module rather than against her own command line.
+    ap.add_argument("--check", nargs="+", action="append", default=[], metavar="SHA",
+                    help="print the reading for each sha and fail if any is not lookable")
+    args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
@@ -217,7 +255,12 @@ def main():
     if args.check:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         bad = 0
-        for sha in args.check:
+        # nargs="+" makes each occurrence a list and action="append" makes it a
+        # list of lists, so flatten before iterating: `--check a b` arrives as
+        # [["a","b"]] and `--check a --check b` as [["a"],["b"]], and both have
+        # to mean the same thing.  Without this the sweep printed one row whose
+        # "tree" field was the Python repr of the whole list.
+        for sha in [s for group in args.check for s in group]:
             print(reading("PIN-TREE", sha, root))
             for why in problems(sha, root):
                 print("PIN-TREE-PROBLEM|" + why)
