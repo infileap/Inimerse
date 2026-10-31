@@ -1,7 +1,7 @@
 {
-  "tree": "f15997d07a0cb7d43eb7f9982655e1d481f84bf0",
+  "tree": "e2a6655d108404c16e15bdb6c652cc7ef172fde0",
   "covered": 29,
-  "of": 30,
+  "of": 29,
   "of-source": "tools/aot_cover.pin.json:covered_ops (read, not copied: the two routes must not drift apart, and the two pins are never added)",
   "corpus": {
     "inline_cases": 86,
@@ -40,9 +40,7 @@
     "OP_STORE_GLOBAL",
     "OP_SUB"
   ],
-  "missing_ops": [
-    "OP_LOADK_STRING"
-  ],
+  "missing_ops": [],
   "coverage-claim": "none",
   "basis": "mir-emitted-ops-union-over-the-corpus",
   "note": [

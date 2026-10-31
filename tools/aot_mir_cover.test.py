@@ -231,7 +231,11 @@ def main():
     if args.self_check:
         return self_check()
 
-    build = Path(args.build)
+    # --build may arrive relative (a hand run from the repository root, or a
+    # test that passes "build"), and the corpus runs in a private cwd: resolving
+    # it there would make every tool look missing.  Resolve it here, where ROOT
+    # is known.
+    build = (ROOT / args.build) if not os.path.isabs(args.build) else Path(args.build)
     interp = build / "inimerse"
     mir_tool = build / "aot-mir"
     for tool in (interp, mir_tool):
