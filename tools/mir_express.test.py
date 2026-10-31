@@ -24,7 +24,12 @@ Both halves of that sentence are answered by measurement, neither by grep:
          somebody adds a comment or moves the copy into a helper.
 
 Readings:
-  MIR-EXPRESS|item=NAME|field=yes|no|n/a|move=yes|no|n/a|state=field|alias|dropped|absent|consumer=WHO
+  MIR-EXPRESS|item=NAME|field=..|move=..|state=..|writes-section=..
+             |reader=(FILES)|reader-count=N|writer=(FILES)|self-excluded=(FILES)
+             |container-excluded=(FILES)|needed-by-aot=yes|no|not-yet|n/a
+             |in-memory-uses=N
+  MIR-EXPRESS-AOT|item=NAME|needed-by-aot=..|runtime-readers=(file:line@L_OP,...)
+                 |basis=tools/aot_cover.pin.json:covered_ops
   MIR-EXPRESS-WIDTH|item=block-index|width=2|max-insns=32767|overflow=refuse|effect=...
   MIR-EXPRESS-SUMMARY|items=N|field=F|alias=A|dropped=D|absent=X|red=NAMES|green=NAMES
   MIR-EXPRESS-PIN|tree=SHA|head=SHA|dropped=N|pinned=N|dropped-match=yes|no|tree-moved=yes|no
@@ -32,14 +37,26 @@ Readings:
   MIR-EXPRESS-FIXED|item=NAME|effect=...      a recorded loss that no longer happens
   MIR-EXPRESS-PIN-STALE|effect=...|fix=...
 
+  reader   files the COMPILER caught accessing the member (tools/mir_access_probe.py)
+  writer   files the COMPILER caught writing it
   field    the IR holds it                          (IrFunc.argc)
   alias    no field, and the regeneration really copies it (func names, threads, try, globals)
   dropped  no field, the container has it, nothing copies it (capture, labels, thread flags, intern cache)
   absent   not in the IR and not in the encoding either (the int constant pool, DEVIATION 2)
 
-dropped is a finding and not a footnote: it is red when the item has a consumer
-inside this repository, and consumer=none says out loud that nothing reads it
-today -- because "nobody reads it today" and "it may be thrown away" differ.
+dropped is a finding and not a footnote: it is red when something outside the
+container and the carrier reads the table (reader-count > 0), and reader-count=0
+says out loud that nothing reads it today -- because "nobody reads it today" and
+"it may be thrown away" differ.
+
+The reader/writer columns used to be a regular expression over the source, and a
+name is not a type: "comp->labels" is a LabelDef list, not this container's
+label table.  So the columns now come from tools/mir_access_probe.py, which renames
+and then const-ifies each member in a throwaway copy of the tree and lets the
+compiler name the sites.  needed-by-aot is grounded the same way -- in a site, not
+in a name: every read site under src/vm is mapped to the dispatch label it sits
+under and checked against the AOT route's own covered opcodes, so "not-yet" says
+which opcode that route has never run rather than what it might support one day.
 
 THE PIN, AND WHY THERE IS ONE
 -----------------------------
@@ -63,6 +80,7 @@ held; 1 when the finding moved or a control failed; 2 when a probe will not buil
 (a probe that cannot run is not a reading of zero items).
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -80,11 +98,11 @@ ENGINE_LIBS = ["-lm", "-lpthread", "-ldl"]
 
 # item, which IR type would hold it, which member name, the CONTAINER member whose
 # readers decide the verdict, and which probe line reports whether the copy happens.
-# The consumer column is computed, not written: a consumer is a source file outside
-# the two files that DEFINE the container (bytecode.c/bytecode.h) and outside the
-# carrier (mir.c) that touches the member.  Writing "consumer=aot_native when it
-# emits closures" into a table would be a claim about the future; measuring it says
-# what is true today, and today is the only thing this file can be a reading of.
+# The reader/writer columns are computed, not written: they are the files the
+# COMPILER named when the access probe renamed and then const-ified that member in a
+# throwaway copy of this tree.  Writing "reader=aot_native when it emits closures"
+# into a table would be a claim about the future; measuring it says what is true
+# today, and today is the only thing this file can be a reading of.
 ITEMS = [
     ("func-name", "IrFunc", "name", "func_names", "func-name"),
     ("func-argc", "IrFunc", "argc", "func_argc", "func-argc"),
@@ -97,50 +115,35 @@ ITEMS = [
     ("string-intern", "IrModule", "str_interned", "str_interned", "string-intern"),
     ("int-pool", None, None, None, None),
 ]
+CONTAINER_MEMBERS = [item[3] for item in ITEMS if item[3]]
 
-# Who reads a table is a fact about the source, and the way to keep it from
-# being a claim is to ask the tree instead of writing a column:
+# Who reads a table is a fact about the source, and the way to keep it from being
+# a claim is to ask the COMPILER instead of writing a column:
 #
-#   consumers  files that ACCESS the member.  A probe that names the member to
-#              ask about it, and the two files that DEFINE it, are not readers.
-#   live       compiler.c's wire_splice installs only the instruction stream, so
-#              a table the regeneration drops also never reaches the running
-#              container on the P1 path -- which is the path every program takes.
+#   reader  files the rename pass caught accessing the member through a Bytecode
+#   writer  files the const pass caught writing it
 #
-# A dropped table that has readers is red; one without readers is still a
-# finding, and neither sentence is allowed to stand in for the other.
-NOT_A_CONSUMER = {"src/compiler/mir.c", "src/compiler/mir.h",
-                  "src/compiler/bytecode.c", "src/compiler/bytecode.h",
-                  "tools/mir_express.test.py", "tools/mir_express_probe.c"}
+# The exclusions are named on every row rather than implied by a set here:
+# bytecode.[ch] DEFINES the container and mir.[ch] is the carrier under
+# measurement, and the instruments are named because a probe that plants a value
+# in every table touches every table -- a gauge that stamps itself counted is not
+# a reading of who reads the table.  Both lists are printed (self-excluded=,
+# container-excluded=) so which files were taken out, and which of them actually
+# hit, is visible rather than inferred.
+
+_ACCESS_PROBE = None
 
 
-def consumers_of(member):
-    """Files outside the container and the carrier that ACCESS the member.
-
-    Member access, not the bare word: a bare word matches unrelated identifiers
-    (ast.h has its own `.labels`, the parser label list), and a reader a table
-    does not have is worse than no count at all.
-    """
-    if not member:
-        return []
-    hits = []
-    for base in ("src", "tools", "selfhost"):
-        for dirpath, _dirs, files in os.walk(os.path.join(ROOT, base)):
-            for name in files:
-                if not name.endswith((".c", ".h", ".py", ".im", ".js")):
-                    continue
-                rel = os.path.relpath(os.path.join(dirpath, name), ROOT)
-                if rel in NOT_A_CONSUMER:
-                    continue
-                try:
-                    text = open(os.path.join(dirpath, name), errors="ignore").read()
-                except OSError:
-                    continue
-                for m in re.finditer(r"(?:->|[.])([A-Za-z_][A-Za-z0-9_]*)", text):
-                    if m.group(1) == member:
-                        hits.append(rel)
-                        break
-    return hits
+def _access_probe():
+    """tools/mir_access_probe.py, loaded by path (tools/ is not a package)."""
+    global _ACCESS_PROBE
+    if _ACCESS_PROBE is None:
+        path = os.path.join(ROOT, "tools", "mir_access_probe.py")
+        spec = importlib.util.spec_from_file_location("mir_access_probe", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _ACCESS_PROBE = mod
+    return _ACCESS_PROBE
 
 
 def compile_c(cc, tmp, body, name, extra_srcs=(), libs=()):
@@ -222,34 +225,6 @@ def written_sections():
         out.add(m.group(1))
     return out
 
-
-def in_memory_uses(member):
-    """How many production files outside both carriers ACCESS the member.
-
-    A table the file format does not write is still a table the compiler fills
-    and the VM reads: `labels` is written by compiler.c and read by vm.c today.
-    So "not in the file" is not "nobody cares", and the count is what tells the
-    two apart.  bytecode.[ch] defines it and mir.[ch] is the carrier being
-    measured, so neither is a reader for this purpose.
-    """
-    if not member:
-        return 0, []
-    hits = []
-    pat = re.compile(r"(?:->|[.])" + re.escape(member) + r"\b")
-    for dirpath, _d, files in os.walk(os.path.join(ROOT, "src")):
-        for name in files:
-            if not name.endswith((".c", ".h")):
-                continue
-            rel = os.path.relpath(os.path.join(dirpath, name), ROOT)
-            if rel in NOT_A_CONSUMER:
-                continue
-            try:
-                text = open(os.path.join(dirpath, name), errors="ignore").read()
-            except OSError:
-                continue
-            if pat.search(text):
-                hits.append(rel)
-    return len(hits), hits
 
 def _pin_path():
     return os.path.join(ROOT, "tools", "mir_express.pin.json")
@@ -384,6 +359,64 @@ def self_check(cc, tmp):
             neutered[m.group(1)] = m.group(2)
     check("a carrier that stops copying is caught", neutered.get("global-names"), "no")
 
+    # The reader/writer columns are a COMPILER reading now, and the three ways the
+    # regex reading lied are the three controls -- each one is a way the old column
+    # could have printed a number that was not a reading of anything.
+    probe_mod = _access_probe()
+    access = probe_mod.run_probe(cc, ROOT, CONTAINER_MEMBERS)
+    labels = access["members"]["labels"]
+    # 1  a NAME is not a TYPE.  compiler.c has its own `labels` -- a LabelDef list
+    #    reached through comp->labels -- so a reading that counts the word would
+    #    blame the reader.  The const pass must blame the one real write, and it is
+    #    the assignment peer named: compiler.c:322, comp->curBC->labels = le.  If a
+    #    regex ever comes back, this row turns red before the count does.
+    check("the same member name on another struct is not blamed for a write",
+          labels["writer"], ["src/compiler/compiler.c"])
+    check("the table the runtime really reads is seen as read",
+          "src/vm/vm.c" in labels["reader"], True)
+    # 2  the instrument must not be in the count it produces.  The access probe
+    #    plants a value in every table to measure it, so it touches all nine and
+    #    must appear in none of them -- and the hit list proves it touched them
+    #    rather than never having been compiled at all.
+    check("the instrument is in no reader or writer column",
+          [f for m in access["members"].values()
+           for f in m["reader"] + m["writer"] if f.startswith("tools/mir_express")], [])
+    check("the instrument really did touch the tables it is excluded from",
+          all("tools/mir_express_probe.c" in m["self-excluded-hit"]
+              for m in access["members"].values()), True)
+    # 3  a member that does not exist must be REFUSED, not answered with zero
+    #    readers: "there is no such member" and "nothing reads it" are different
+    #    facts, and a probe that cannot say the first cannot be trusted on the second.
+    try:
+        probe_mod.run_probe(cc, ROOT, ["no_such_member_here"])
+        refused = False
+    except RuntimeError:
+        refused = True
+    check("a member that does not exist is refused, not counted as unread",
+          refused, True)
+    # 4  needed-by-aot is a judgement about a SITE, so it must be bendable both
+    #    ways by the site alone -- a fold that always answered the same thing would
+    #    look identical in the report.
+    covered = {"OP_LOADK_STRING"}
+    check("a site under an opcode the route has run is a yes",
+          probe_mod.needed_by_aot([{"site": "x", "ctx": "L_LOADK_STRING",
+                                    "op": "OP_LOADK_STRING"}], covered), "yes")
+    check("a site under an opcode the route has never run is a not-yet",
+          probe_mod.needed_by_aot([{"site": "x", "ctx": "L_EQK", "op": "OP_EQK"}],
+                                  covered), "not-yet")
+    check("a site the dispatch table does not cover at all is a not-yet",
+          probe_mod.needed_by_aot([{"site": "x", "ctx": None, "op": None}], covered),
+          "not-yet")
+    check("a table with no runtime site at all is a no",
+          probe_mod.needed_by_aot([], covered), "no")
+    # And the mapping itself is read off the dispatcher, not guessed from the name:
+    # 67 of the 68 opcode rows name a label, so a tree whose table had been gutted
+    # would answer differently here rather than silently keeping the same answer.
+    check("the dispatcher's own table supplied the label-to-opcode mapping",
+          len(probe_mod.dispatch_labels(ROOT)) >= 60, True)
+    check("a read site's opcode comes from that mapping, not from its spelling",
+          [r["op"] for r in labels["runtime"] if r["ctx"] == "L_RECV"][:1], ["OP_RECV"])
+
     print("mir_express self-check: ok (%d checks)" % checks[0])
     return 0
 
@@ -430,19 +463,46 @@ def main():
                   file=sys.stderr)
             return 2
 
+        # One sweep answers all nine tables: the access probe renames and then
+        # const-ifies every member in a throwaway copy of this tree and lets the
+        # compiler name the sites.  Two compiler passes over the tree, about two
+        # seconds, and no regex anywhere in the reading.
+        try:
+            access = _access_probe().run_probe(args.cc, ROOT, CONTAINER_MEMBERS)
+        except RuntimeError as e:
+            print("mir_express: REFUSED|the access probe would not run: %s" % e,
+                  file=sys.stderr)
+            print("mir_express: a probe that cannot run is not a reading of zero tables",
+                  file=sys.stderr)
+            return 2
+        # Which files were taken out, named once and by name: a set in the source
+        # would leave the exclusions to be inferred, and the whole point of this
+        # column is that the count is not the instrument counting itself.
+        print("MIR-EXPRESS-EXCLUDED|container=(%s)|instruments=(%s)|why=the-container-"
+              "defines-the-member-and-a-probe-that-plants-a-value-in-every-table-touches-"
+              "every-table"
+              % (",".join(_access_probe().EXCLUDED_CONTAINER),
+                 ",".join(_access_probe().SELF_EXCLUDED)))
+
         rows, red, red_quiet = [], [], []
         for item, owner, member, container_member, probe_key in ITEMS:
             if owner is None:
                 # DEVIATION 2: the encoding has no int constant pool at all, so
                 # neither a field nor a copy is missing -- the pool does not exist.
                 rows.append({"item": item, "field": "no", "move": "n/a",
-                             "state": "absent", "consumer": "none", "readers": [],
-                             "writes-section": "n/a", "in-memory-uses": 0,
-                             "in-memory-readers": []})
+                             "state": "absent", "reader": [], "writer": [],
+                             "reader-count": 0, "self-excluded": [],
+                             "container-excluded": [], "needed-by-aot": "n/a",
+                             "runtime": [], "writes-section": "n/a",
+                             "in-memory-uses": 0})
                 continue
-            readers = consumers_of(container_member)
-            consumer = ("none" if not readers
-                        else "%d file(s): %s" % (len(readers), ",".join(readers[:3])))
+            info = access["members"].get(container_member)
+            if info is None:
+                # A missing answer must not read as zero readers.
+                print("mir_express: REFUSED|the access probe has no reading for %s" % item,
+                      file=sys.stderr)
+                return 2
+            readers = info["reader"]
             fdef, why = field_probe(args.cc, tmp, owner, member)
             if fdef == "probe-failed":
                 print("mir_express: REFUSED|the field probe for %s would not build: %s"
@@ -455,7 +515,11 @@ def main():
                 return 2
             written = written_sections()
             by_format = container_member not in written
-            uses, users = in_memory_uses(container_member)
+            # "Nothing touches it" is now a count of FILES the compiler named, and
+            # it is the union of both columns: a table vm.c only WRITES still has a
+            # reader's problem waiting for it, and one vm.c only READS was written
+            # somewhere else.
+            uses = len(set(readers) | set(info["writer"]))
             # state answers ONE question: does the regeneration carry it?  The
             # format fact rides beside it (writes-section=) because collapsing the
             # two loses one of them: by-format=yes means the container FILE never
@@ -470,9 +534,14 @@ def main():
             else:
                 state = "dropped"
             rows.append({"item": item, "field": fdef, "move": moved,
-                         "state": state, "consumer": consumer, "readers": readers,
+                         "state": state, "reader": readers, "writer": info["writer"],
+                         "reader-count": len(readers),
+                         "self-excluded": info["self-excluded-hit"],
+                         "container-excluded": info["container-excluded"],
+                         "needed-by-aot": info["needed-by-aot"],
+                         "runtime": info["runtime"],
                          "writes-section": "no" if by_format else "yes",
-                         "in-memory-uses": uses, "in-memory-readers": users})
+                         "in-memory-uses": uses})
             if state == "dropped":
                 # Red when something outside the carrier and the container reads
                 # the table the regeneration drops.  A dropped table nothing reads
@@ -497,11 +566,40 @@ def main():
         for item, why in contradictions:
             print("MIR-EXPRESS-CONTRADICTION|item=%s|why=%s" % (item, why))
 
+        covered_ops = set()
+        aot_pin_path = os.path.join(ROOT, "tools", "aot_cover.pin.json")
+        if os.path.isfile(aot_pin_path):
+            covered_ops = set(json.load(open(aot_pin_path)).get("covered_ops") or [])
+
         for row in rows:
             print("MIR-EXPRESS|item=%s|field=%s|move=%s|state=%s|writes-section=%s"
-                  "|in-memory-uses=%d|consumer=%s"
+                  "|reader=(%s)|reader-count=%d|writer=(%s)|self-excluded=(%s)"
+                  "|container-excluded=(%s)|needed-by-aot=%s|in-memory-uses=%d"
                   % (row["item"], row["field"], row["move"], row["state"],
-                     row["writes-section"], row["in-memory-uses"], row["consumer"]))
+                     row["writes-section"],
+                     ",".join(row["reader"]) or "none", row["reader-count"],
+                     ",".join(row["writer"]) or "none",
+                     ",".join(row["self-excluded"]) or "none",
+                     ",".join(row["container-excluded"]) or "none",
+                     row["needed-by-aot"], row["in-memory-uses"]))
+            if row["needed-by-aot"] != "n/a":
+                # The answer rides on a SITE: which read site in the runtime, under
+                # which dispatch label, and whether the AOT route has ever executed
+                # that opcode.  "Yes, one day, when it supports closures" is a claim
+                # about the future; "under L_THREAD_START, which the AOT corpus has
+                # never run" is a reading of today.
+                ops = list(dict.fromkeys(r["op"] for r in row["runtime"]))
+                print("MIR-EXPRESS-AOT|item=%s|needed-by-aot=%s|runtime-readers=(%s)"
+                      "|covered=(%s)|uncovered=(%s)|basis=%s"
+                      % (row["item"], row["needed-by-aot"],
+                         ",".join(dict.fromkeys("%s@%s" % (r["site"], r["ctx"] or "loader")
+                                                for r in row["runtime"])) or "none",
+                         ",".join(o for o in ops if o in covered_ops) or "none",
+                         ",".join((o or "loader-outside-the-dispatch")
+                                  for o in ops if o not in covered_ops) or "none",
+                         "src/vm/vm.c's-own-dispatch-table-[OP_X]=&&L_X-maps-each-read-site-"
+                         "to-an-opcode-and-tools/aot_cover.pin.json:covered_ops-says-whether-"
+                         "the-AOT-corpus-has-ever-executed-it"))
             if row["state"] == "dropped":
                 # The field is format-writes=, not by-format=: "by-format=no" reads
                 # as "not the format's doing", which is the opposite of what a
