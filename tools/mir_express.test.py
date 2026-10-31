@@ -31,7 +31,7 @@ Readings:
   MIR-EXPRESS-AOT|item=NAME|needed-by-aot=..|runtime-readers=(file:line@L_OP,...)
                  |basis=tools/aot_cover.pin.json:covered_ops
   MIR-EXPRESS-WIDTH|item=block-index|width=2|max-insns=32767|overflow=refuse|effect=...
-  MIR-EXPRESS-SUMMARY|items=N|field=F|alias=A|dropped=D|absent=X|red=NAMES|green=NAMES
+  MIR-EXPRESS-SUMMARY|items=N|field=F|alias=A|dropped=D|absent=X|red=NAMES|green=QUIET-NAMES
   MIR-EXPRESS-PIN|tree=SHA|head=SHA|dropped=N|pinned=N|dropped-match=yes|no|tree-moved=yes|no
   MIR-EXPRESS-NEW|item=NAME|effect=...        a loss the pin did not record
   MIR-EXPRESS-FIXED|item=NAME|effect=...      a recorded loss that no longer happens
@@ -43,6 +43,11 @@ Readings:
   alias    no field, and the regeneration really copies it (func names, threads, try, globals)
   dropped  no field, the container has it, nothing copies it (capture, labels, thread flags, intern cache)
   absent   not in the IR and not in the encoding either (the int constant pool, DEVIATION 2)
+  red      dropped, and something outside the carrier still reads it -- the alarm
+  green    dropped, and nothing reads it: "this is not carried" is a different
+           sentence from "this is breaking something today".  It is its own
+           column because a green computed as red + red_quiet can never differ
+           from red, so it would report nothing at all.
 
 dropped is a finding and not a footnote: it is red when something outside the
 container and the carrier reads the table (reader-count > 0), and reader-count=0
@@ -417,8 +422,43 @@ def self_check(cc, tmp):
     check("a read site's opcode comes from that mapping, not from its spelling",
           [r["op"] for r in labels["runtime"] if r["ctx"] == "L_RECV"][:1], ["OP_RECV"])
 
+    # The summary's two columns mean two different things, so they are held to
+    # that: a dropped table something reads is the alarm, one nothing reads is
+    # the quiet column, and the quiet one must be able to be empty instead of
+    # being the alarm repeated.  A green computed as red + red_quiet is a column
+    # that cannot differ from red -- which is exactly what this check exists for.
+    synthetic = [{"item": "alarm", "state": "dropped", "reader": ["src/x.c"]},
+                 {"item": "quiet", "state": "dropped", "reader": []},
+                 {"item": "kept", "state": "field", "reader": []}]
+    r_items, q_items = split_dropped(synthetic)
+    check("a dropped table something reads is the alarm column", r_items, ["alarm"])
+    check("a dropped table nothing reads gets its own column, not a copy of the alarm one",
+          q_items, ["quiet"])
+    check("the two columns cannot overlap", sorted(set(r_items) & set(q_items)), [])
+    check("a row that is not dropped belongs to neither column",
+          len(r_items) + len(q_items), 2)
+
     print("mir_express self-check: ok (%d checks)" % checks[0])
     return 0
+
+
+def split_dropped(rows):
+    """The dropped rows, split by whether anything still reads the table.
+
+    `red` is the alarm: a table the regeneration drops that something outside
+    the carrier reads.  The quiet half is still a finding, but a different one
+    -- not carried, rather than breaking something today -- and it is the only
+    thing the `green=` column may contain.  Deriving both here, instead of
+    appending to one list or the other inside the collection loop, is what lets
+    the self-check hold the split to its properties: the columns are disjoint,
+    and the quiet one is allowed to be empty.
+    """
+    red, quiet = [], []
+    for row in rows:
+        if row["state"] != "dropped":
+            continue
+        (red if row["reader"] else quiet).append(row["item"])
+    return red, quiet
 
 
 def main():
@@ -484,7 +524,7 @@ def main():
               % (",".join(_access_probe().EXCLUDED_CONTAINER),
                  ",".join(_access_probe().SELF_EXCLUDED)))
 
-        rows, red, red_quiet = [], [], []
+        rows = []
         for item, owner, member, container_member, probe_key in ITEMS:
             if owner is None:
                 # DEVIATION 2: the encoding has no int constant pool at all, so
@@ -542,13 +582,6 @@ def main():
                          "runtime": info["runtime"],
                          "writes-section": "no" if by_format else "yes",
                          "in-memory-uses": uses})
-            if state == "dropped":
-                # Red when something outside the carrier and the container reads
-                # the table the regeneration drops.  A dropped table nothing reads
-                # is still a finding -- but the finding is "this is not carried",
-                # not "this is breaking something today", and the two belong to
-                # different sentences.
-                (red if readers else red_quiet).append(item)
 
         # Cross-column consistency, asserted rather than eyeballed: a table the
         # regeneration carries cannot be one the format does not write, and a
@@ -624,12 +657,13 @@ def main():
         counts = {}
         for row in rows:
             counts[row["state"]] = counts.get(row["state"], 0) + 1
+        red, red_quiet = split_dropped(rows)
         print("MIR-EXPRESS-SUMMARY|items=%d|field=%d|alias=%d|dropped=%d|absent=%d"
               "|red=%s|green=%s"
               % (len(rows), counts.get("field", 0), counts.get("alias", 0),
                  counts.get("dropped", 0), counts.get("absent", 0),
-                 ",".join(red) or "none",
-                 ",".join(sorted(red + red_quiet)) or "none"))
+                 ",".join(sorted(red)) or "none",
+                 ",".join(sorted(red_quiet)) or "none"))
         if args.pin:
             write_pin(rows, width)
             return 0
