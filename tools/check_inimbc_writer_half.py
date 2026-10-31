@@ -24,9 +24,12 @@ Registration belongs to the runner (CMakeLists.txt + EXP_CTEST); this file does 
 itself.
 """
 import argparse
+import atexit
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 # Pinned reading. Source: docs/streams/dec-formal-bounds-t4.md, tree 319fd35:
 #   BYTES|case=real:hello.inim|written=317|consumed=317|delta=0|trailer=92|file=417
@@ -51,6 +54,21 @@ def refuse(why):
 
 def run(cmd, cwd):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+
+
+def own_dir(prefix):
+    """A directory this process created, removed when it exits.
+
+    The fixed name under /tmp was one path for every worktree and every
+    concurrent process on the machine, so a parallel gate -- or this suite's
+    own subprocess re-entry -- overwrote the image while another run was
+    reading it.  tools/check_shared_tmp.py is the guard; this is the fix it
+    asks for.  The directory is private to this process, so it is removed on
+    exit rather than left behind for the next run to trip over.
+    """
+    d = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, d, True)
+    return d
 
 
 def kv(line):
@@ -82,7 +100,7 @@ def mirror_reading(mirror, image):
 def check(args):
     root = os.path.abspath(args.root)
     binary = args.bin if os.path.isabs(args.bin) else os.path.join(root, args.bin)
-    workdir = args.workdir or os.path.join('/tmp', 'inimbc-writer-half')
+    workdir = args.workdir or own_dir('inimbc-writer-half-')
     mirror = args.mirror or os.path.join(root, 'tools', 'z3bounds', 'check_inimbc_roundtrip.py')
 
     print('TEST|name=inimbc-writer-half|scope=writer-half|proves=buildc output is readable by the engine')
@@ -147,8 +165,7 @@ def self_check_refusals(args):
     ok = True
     root = os.path.abspath(args.root)
     binary = args.bin if os.path.isabs(args.bin) else os.path.join(root, args.bin)
-    workdir = os.path.join('/tmp', 'inimbc-writer-half-refusal')
-    os.makedirs(workdir, exist_ok=True)
+    workdir = own_dir('inimbc-writer-half-refusal-')
     scratch = os.path.join(workdir, 'truncated.inim')
 
     cases = []
