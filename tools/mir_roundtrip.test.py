@@ -43,24 +43,32 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# A harness binary per PROCESS, in a directory of its own.
+# One directory per process: the shared /tmp path was overwritten by
+# concurrent worktrees and by this suite's own subprocess re-entry, and the
+# loser died with PermissionError [Errno 13] (see tools/check_shared_tmp.py).
 #
-# This used to be one fixed name in tempfile.gettempdir(), which is /tmp on
-# Linux and is shared by every worktree on the machine.  The gate runs ctest
-# with --jobs 4, so two of these tests can run gcc -o <same path> at the same
-# time: the later build overwrites the binary the earlier run is executing, and
-# that run then reads bytes from a program it did not build.  Measured on the
-# merged tree: mir_roundtrip_regression failed in a parallel gate with
-# "Required regular expression not found. Regex=[MIR-VERDICT|PASS" while the
-# same test passed three times in a row when run alone.
-#
-# The race is not new -- it is as old as these files -- but the registrations
-# added beside it (aot_cover 93 s, mir_express 3 s) widened the window until it
-# started landing.  A fixed path plus a shared directory plus parallelism is a
-# race at any name.
-_HARNESS_DIR = tempfile.mkdtemp(prefix="mir-roundtrip-")
-atexit.register(shutil.rmtree, _HARNESS_DIR, True)
-HARNESS = os.path.join(_HARNESS_DIR, "mir_roundtrip_harness")
+# A directory per process is not the same as a build per process.  This suite
+# re-enters itself through subprocess (corpus_controls below), and the child's
+# main() starts with build_harness(), so the old code compiled the same harness
+# three times per run -- once for the parent and once for each of the two
+# controls -- a second of gcc apiece, and each child's private directory was a
+# second copy for the duration of its own run.  The parent now passes the path
+# it built through MIR_HARNESS; a child reuses it when the file is there and
+# builds its own when it is not, so a child started by hand still works.
+_OWN_DIR = None
+
+
+def _harness_path():
+    global _OWN_DIR
+    given = os.environ.get("MIR_HARNESS")
+    if given and os.path.isfile(given):
+        return given
+    if _OWN_DIR is None:
+        _OWN_DIR = tempfile.mkdtemp(prefix="mir_roundtrip_harness-")
+    return os.path.join(_OWN_DIR, "mir_roundtrip_harness")
+
+
+HARNESS = _harness_path()
 SRC = ["src/compiler/mir.c", "src/compiler/bytecode.c",
        "src/compilation/deps.c", "src/platform/platform.c"]
 INCLUDES = ["-Isrc/compiler", "-Isrc/common", "-Isrc", "-Isrc/platform", "-Isrc/compilation"]
@@ -261,9 +269,10 @@ def corpus_controls(victim):
     out = []
     for hook, why in (("--simulate-missing", "not-in-run"),
                       ("--simulate-broken", "compile-failed")):
+        env = dict(os.environ, MIR_HARNESS=HARNESS)
         p = subprocess.run([sys.executable, os.path.abspath(__file__), hook, victim,
                             "--no-selfcheck", "--quiet"],
-                           cwd=ROOT, capture_output=True, text=True)
+                           cwd=ROOT, capture_output=True, text=True, env=env)
         named = ("MIR-CORPUS-MISSING|program=%s|why=%s" % (victim, why)) in p.stdout
         ok = (p.returncode != 0) and named
         out.append((hook.lstrip("-"), "red", "red" if ok else "green",
