@@ -47,6 +47,7 @@ Usage:
                                        [--limit N] [--self-check] [-v]
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -73,6 +74,17 @@ PIN = ROOT / "tools" / "aot_mir_cover.pin.json"
 # set copied in here would stay "right" after the prelude changed and could not
 # tell a prelude that grew from a delta that shrank.
 PRELUDE_TEXT = 'speed = 42\ntitle = "hello"\n'
+
+# What the tracked params.params contained when this expectation was pinned.
+# The control above measures the prelude's opcode set by running it, which is
+# strictly better than remembering it -- and strictly blind in one direction:
+# grow the prelude and BOTH sides of the comparison grow together, so a delta
+# that is exactly right is still exactly right. Measured 2026-11-01: appending
+# `pi = 1.5` to params.params left the control at exact=yes (delta and expected
+# each gained OP_LOADK_FLOAT). This digest is the missing denominator -- it does
+# not care what the prelude executes, only whether the file is still the one the
+# number was measured against.
+PARAMS_PINNED_SHA256 = "f3e7b7dbc58475a4090e477727f7fca8f8db0c1b8a7e37bc822e73a233319377"
 
 CODEGEN = re.compile(r"^IR-MIR-CODEGEN[|](.*)$")
 CONSERVE = re.compile(r"^IR-MIR-CONSERVE[|](.*)$")
@@ -162,6 +174,27 @@ def ledger(of_ops, covered, missing):
         problems.append("buckets do not reconstruct the denominator")
     if len(covered) + len(missing) != len(set(of_ops)):
         problems.append("covered + missing != of")
+    return problems
+
+
+def fixture_drift(tracked_sha, pinned_sha, fixture_text, tracked_text):
+    """Why the fixture stopped being a copy of the file it claims to be.
+
+    The control runs its own `params.params` so that it never depends on the
+    checkout -- and that is exactly how it can drift from it: a prelude grown in
+    the tree and a fixture left behind both agree with themselves.  Two facts
+    are checked, and they fail differently: the tracked file's digest (which is
+    the file a reader would look at) and the fixture's text (which is what the
+    corpus actually ran).  Either one moving is drift, and the digest is the one
+    that cannot be argued with."""
+    problems = []
+    if tracked_sha != pinned_sha:
+        problems.append("the tracked params.params is no longer the file this"
+                         " expectation was measured against (sha256 %s, pinned %s)"
+                         % (tracked_sha[:16], pinned_sha[:16]))
+    if fixture_text != tracked_text:
+        problems.append("the control's fixture is not a copy of the tracked"
+                         " params.params, so it measures a prelude nobody ships")
     return problems
 
 
@@ -261,6 +294,12 @@ def self_check():
     expect("a table entry the emitter never serves is caught",
            len(lowering_problems({"OP_A", "OP_B"}, {"OP_A"}, ["OP_A", "OP_B"],
                                  {"OP_A", "OP_B"})), 1)
+    expect("a tracked fixture that still matches its digest is no drift",
+           fixture_drift("a", "a", "same", "same"), [])
+    expect("a grown prelude is drift even though the control would recompute it",
+           len(fixture_drift("b", "a", "same", "same")), 1)
+    expect("a fixture that is no longer a copy of the tracked file is drift",
+           len(fixture_drift("a", "a", "fixture", "tracked")), 1)
     expect("a table entry the encoding does not declare is caught",
            len(lowering_problems({"OP_A", "OP_Z"}, {"OP_A", "OP_Z"},
                                  ["OP_A", "OP_Z"], {"OP_A"})), 1)
@@ -329,12 +368,28 @@ def prelude_control(interp, verbose):
           "|expected-from=the-prelude-run-as-a-program|expected=(%s)|prelude-executed=%d|exact=%s"
           % (sum(f1.values()), sum(f2.values()), ",".join(sorted(delta)),
              ",".join(sorted(expected)), sum(alone.values()), "yes" if exact else "no"))
+    tracked = (ROOT / "params.params")
+    tracked_text = tracked.read_text() if tracked.exists() else ""
+    drift = fixture_drift(hashlib.sha256(tracked_text.encode()).hexdigest(),
+                          PARAMS_PINNED_SHA256, PRELUDE_TEXT, tracked_text)
+    print("IR-AOT-PRELUDE-FIXTURE|tracked-sha256=%s|pinned-sha256=%s|matches=%s"
+          "|fixture-is-a-copy=%s|own-opcodes=%d|basis=the-digest-not-what-it-executes"
+          % (hashlib.sha256(tracked_text.encode()).hexdigest()[:16],
+             PARAMS_PINNED_SHA256[:16],
+             "yes" if not drift else "no",
+             "yes" if PRELUDE_TEXT == tracked_text else "no",
+             len(expected)))
+    for why in drift:
+        print("IR-AOT-PRELUDE-FIXTURE-DRIFT|why=%s" % " ".join(why.split()))
     if verbose:
         print("IR-AOT-PRELUDE-CONTROL-OPS|with=(%s)|without=(%s)|prelude-alone=(%s)"
               % (",".join("%s:%d" % (k, v) for k, v in sorted(f1.items())),
                  ",".join("%s:%d" % (k, v) for k, v in sorted(f2.items())),
                  ",".join("%s:%d" % (k, v) for k, v in sorted(alone.items()))))
-    return exact
+    # The control's own comparison is one fact; whether the fixture is still the
+    # file it claims to be is another, and only the second one can see the
+    # prelude growing.  The verdict requires both.
+    return exact and not drift
 
 
 def main():
