@@ -118,12 +118,17 @@ def main():
             print("ir spec: FAIL (a pin that contradicts itself still produced a fraction)")
             return 1
         # ... and a recomputation's verdict is read: a stub stands in for the
-        # 100-second measurement so the wiring is exercised both ways.
+        # 100-second measurement so the wiring is exercised both ways.  Its
+        # numbers are read out of the pin rather than written here: a stub that
+        # hard-codes the fraction is a second copy of the number this test exists
+        # to make sure has only one home, and it would go stale in silence the
+        # next time the measurement moves (it did: covered 30 -> 29).
         stub = Path(tmp) / "stub.py"
         for verdict in ("no", "yes"):
-            stub.write_text("print('IR-AOT-PIN|tree=0000000|head=0000000|covered=30"
-                            "|recomputed=%s|of=67|numbers-match=%s|tree-moved=no"
-                            "|basis=stub')\n" % (verdict, verdict))
+            stub.write_text("print('IR-AOT-PIN|tree=0000000|head=0000000|covered=%d"
+                            "|recomputed=%s|of=%d|numbers-match=%s|tree-moved=no"
+                            "|basis=stub')\n"
+                            % (pin["covered"], verdict, pin["of"], verdict))
             r = subprocess.run([sys.executable, str(TOOL)], cwd=ROOT, capture_output=True,
                                text=True,
                                env=dict(os.environ,

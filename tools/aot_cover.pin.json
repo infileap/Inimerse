@@ -1,6 +1,6 @@
 {
-  "tree": "48f53fdcbbe812f567b6d4a0e42ef1f828406c73",
-  "covered": 30,
+  "tree": "a867571247004ace2d170fa309b436d1c8033a88",
+  "covered": 29,
   "of": 67,
   "corpus": {
     "inline_cases": 86,
@@ -24,7 +24,6 @@
     "OP_LOADK_FLOAT",
     "OP_LOADK_I64",
     "OP_LOADK_INT",
-    "OP_LOADK_STRING",
     "OP_LOAD_GLOBAL",
     "OP_LT",
     "OP_MOD",
@@ -50,6 +49,7 @@
     "OP_INDEX_GET",
     "OP_INDEX_SET",
     "OP_IS_NIL",
+    "OP_LOADK_STRING",
     "OP_LOAD_CAPTURE",
     "OP_LOCK",
     "OP_MAKE_FUNC",

@@ -15,9 +15,20 @@ counting.  It compares the per-op rows against a fetch counter taken at the same
 switch, so a dropped or doubled row disagrees; it deliberately does not claim to
 prove the switch itself was reached, which is what the silence cells and the
 monotonic cell cover instead.
+
+The census is of one program, and the interpreter has a prelude: run from a
+directory that has a params.params in it, the interpreter loads that file first
+(src/main.c:286) and compiles and vm_run()s it in the same VM (src/vm/vm.c:5129),
+so its opcodes are counted in the same census as the script's.  Every cell here
+therefore runs in a private directory that holds no params.params, and one cell
+measures that this is true rather than asserting it: it takes the same census at
+the repository root and privately, and requires the difference to be exactly the
+opcodes of params.params that the program does not itself execute.
 """
+import atexit
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +37,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.environ.get("INIMERSE_BIN") or (ROOT / "build" / "inimerse"))
 ENV = "INIMERSE_HOT_OPS"
+PARAMS = ROOT / "params.params"
 
 OP_LINE = re.compile(
     r"^OP-HOT\|op=([A-Z0-9_#]+)\|interp=(\d+)\|aot=na\|wasm=na\|why=(.+)$")
@@ -41,14 +53,31 @@ def refuse(why):
     sys.exit(2)
 
 
-def run(script, ask=True, value="1"):
+_CWD = None
+
+
+def private_cwd():
+    """A directory that holds no params.params -- see the module docstring.
+
+    Called by every run below, so the census is of the script and not of the
+    directory the script happens to sit in.
+    """
+    global _CWD
+    if _CWD is None:
+        _CWD = tempfile.mkdtemp(prefix="op-hot-cwd-")
+        atexit.register(shutil.rmtree, _CWD, True)
+    return _CWD
+
+
+def run(script, ask=True, value="1", cwd=None):
     """Run one script through the built interpreter and return stdout, stderr, rc."""
     env = dict(os.environ)
     env.pop(ENV, None)
     if ask:
         env[ENV] = value
     done = subprocess.run([str(BIN), "--no-mods", "run", str(script)],
-                          capture_output=True, text=True, env=env, cwd=str(ROOT))
+                          capture_output=True, text=True, env=env,
+                          cwd=str(private_cwd() if cwd is None else cwd))
     return done.stdout, done.stderr, done.returncode
 
 
@@ -206,6 +235,46 @@ def main():
         if first != second:
             return False, "two runs of the same script printed different censuses"
         return True, "identical lines on both runs (%d line(s))" % first.count("OP-HOT|")
+
+    @case("the-census-is-of-the-program-not-the-directory")
+    def _():
+        """params.params in the cwd runs first and shares the census.
+
+        Measured, not asserted: the same program is censused at the repository
+        root and in the private directory, and the difference must be exactly the
+        opcodes params.params has that the program does not run itself.  When the
+        file is not there at all the difference must be empty, and that direction
+        is what says nothing *else* in the directory is being executed.
+        """
+        probe = Path(tmp) / "probe-no-strings.im"
+        probe.write_text("a = 1\nsay a\n")
+        private, _e, _r = run(probe)
+        at_root, _e2, _r2 = run(probe, cwd=ROOT)
+        a, b = census(private), census(at_root)
+        if a is None or b is None:
+            return False, "a census line was missing on one of the two directories"
+        own = {}
+        if PARAMS.is_file():
+            src, _e3, _r3 = run(PARAMS)
+            got = census(src)
+            if got is None:
+                return False, ("params.params ran with no census, so what it contributes"
+                               " to a census taken beside it is unmeasured")
+            own = got[0]
+        diff = set(b[0]) - set(a[0])
+        want = set(own) - set(a[0])
+        if not PARAMS.is_file() and diff:
+            return False, ("no params.params in the tree, yet the two directories differ by %s"
+                           " -- something else in the cwd is being executed" % ",".join(sorted(diff)))
+        if PARAMS.is_file() and not diff:
+            return False, ("params.params is in the tree and both censuses read the same %d opcode(s):"
+                           " the private directory is not private" % len(a[0]))
+        if diff != want:
+            return False, ("the directories differ by %s, but params.params minus the program is %s"
+                           % (",".join(sorted(diff)) or "nothing", ",".join(sorted(want)) or "nothing"))
+        return True, ("params.params %s contributes %s; %d opcode(s) privately, %d at the root"
+                      % ("present" if PARAMS.is_file() else "absent",
+                         ",".join(sorted(diff)) or "nothing", len(a[0]), len(b[0])))
 
     red = 0
     for name, fn in cases:

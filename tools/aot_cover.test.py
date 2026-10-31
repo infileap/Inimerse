@@ -30,6 +30,20 @@ would credit the backend with a decision it did not make.  The MIR route, when
 it becomes a route of its own, gets its own reading (IR-AOT-MIR): it is a second
 translator, not another bucket of this one.
 
+"Over programs the translator accepts" is the whole basis, and the interpreter
+has a prelude: it loads params.params out of the *current directory* before it
+runs the program it was asked to run (src/main.c:286, then src/vm/vm.c:5129
+compiles that file and vm_run()s it), in the same VM, sharing the opcode census.
+The repository root has a tracked params.params, so a census taken there
+answered "what did this directory's files execute".  It reported 30 opcodes over
+the 86 inline cases; the same corpus in a directory with no params.params
+reports 29, and the one that differed, OP_LOADK_STRING, cannot come from an
+accepted program at all (the accepted subset is int/float/bool, so a program
+with a string literal is refused).  The interpreter therefore runs in a private
+directory that holds no params.params, and IR-AOT-PRELUDE states what was
+excluded while IR-AOT-PRELUDE-CTL measures that the exclusion happened -- an
+exclusion asserted instead of measured is the same defect one layer up.
+
 Readings:
   IR-AOT-COVER|corpus=inline-cases:N,repo:A/B|repo-rejected=R
               |repo-rejected-stages=frontend-parse:F,numeric-subset:B
@@ -37,6 +51,10 @@ Readings:
               |accepted=N|refused=N|differ=N
               |declared-diverge=K
               |covered=C|of=67|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts
+  IR-AOT-PRELUDE|file=params.params|present=yes|no|own-opcodes=...|n=N
+                |excluded=yes|no|cwd=private
+  IR-AOT-PRELUDE-CTL|probe=PROGRAM|at-root=...|at-private=...|diff=...
+                    |own=...|verdict=PASS|FAIL
   IR-AOT-OPCODE|op=OP_X|seen-in=N|verdict=covered|missing
   IR-AOT-MISSING|ops=...|count=N|because=no-accepted-program-executes-them
   IR-AOT-DIFF|case=NAME|first-diff=stdout|exit|cc|footprint|detail=...
@@ -45,7 +63,8 @@ Readings:
 
 Exit 0 when every accepted program prints the same bytes; 1 when one differs
 (named, because a silent divergence is the one thing this path must never ship);
-2 when a prerequisite is missing.  A refusal is never a failure: it is the
+2 when a prerequisite is missing -- including a "private" directory that turned
+out to be running a prelude after all.  A refusal is never a failure: it is the
 translator declining, counted and reported.
 
 --self-check runs the decoder and the completeness assertion against messages
@@ -53,10 +72,12 @@ the translator does and does not emit, where the second kind is the point of
 running it at all; it needs no build and measures no corpus.
 """
 import argparse
+import atexit
 import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -109,16 +130,93 @@ def run(cmd, cwd, env=None, timeout=300):
         return "timeout", "", ""
 
 
-def footprint(interp, script):
+_CWD = None
+
+
+def private_cwd():
+    """A directory that holds no params.params, so only the program runs.
+
+    The interpreter loads params.params from the current directory before the
+    program it was asked to run (src/main.c:286), compiles it and vm_run()s it
+    in the same VM (src/vm/vm.c:5129), so its opcodes share the same census.
+    The repository root has a tracked params.params; running there measures the
+    directory, not the program.
+    """
+    global _CWD
+    if _CWD is None:
+        _CWD = tempfile.mkdtemp(prefix="aot_cover.cwd.")
+        atexit.register(shutil.rmtree, _CWD, True)
+    return _CWD
+
+
+def footprint(interp, script, cwd=None):
     env = dict(os.environ, INIMERSE_HOT_OPS="1")
     env.pop("INIMERSE_IR_TABLE", None)
-    rc, out, _err = run([str(interp), "--no-mods", "run", str(script)], ROOT, env)
+    if cwd is None:
+        cwd = private_cwd()
+    rc, out, _err = run([str(interp), "--no-mods", "run", str(script)], cwd, env)
     ops = {}
     for line in out.splitlines():
         m = OP_HOT.match(line)
         if m and int(m.group(2)) > 0:
             ops[m.group(1)] = int(m.group(2))
     return rc, ops
+
+
+PROBE_PROGRAM = "say 1\n"
+
+
+def prelude_report(interp):
+    """What the prelude would have added, and the control that it no longer does.
+
+    Both halves are measured rather than asserted: the opcode set of
+    params.params itself, run as an ordinary program from the private directory
+    (where it is not also the prelude), and the difference between a census of
+    one tiny program taken at the repository root and one taken privately.  That
+    difference is the control.  If params.params is there and the difference is
+    empty, the private directory is not private, which means the fraction
+    printed below is the contaminated one -- so that case refuses instead of
+    printing a number under a basis it does not have.
+    """
+    pf = ROOT / "params.params"
+    present = pf.is_file()
+    own = {}
+    if present:
+        _rc, own = footprint(interp, pf)
+    probe = Path(tempfile.mkdtemp(prefix="aot_cover.probe.")) / "probe.im"
+    probe.write_text(PROBE_PROGRAM)
+    _rc, at_root = footprint(interp, probe, cwd=ROOT)
+    _rc, at_private = footprint(interp, probe, cwd=private_cwd())
+    diff = sorted(set(at_root) - set(at_private))
+    if present and not diff:
+        print("IR-AOT-PRELUDE|file=params.params|present=yes|own-opcodes=%s|n=%d"
+              "|excluded=no|cwd=private" % (",".join(sorted(own)) or "none", len(own)))
+        print("IR-AOT-PRELUDE-CTL|probe=%s|at-root=%s|at-private=%s|diff=none"
+              "|own=%s|verdict=FAIL"
+              % (PROBE_PROGRAM.strip(), ",".join(sorted(at_root)),
+                 ",".join(sorted(at_private)), ",".join(sorted(own)) or "none"))
+        refuse("params.params is in the tree and the private directory did not"
+               " exclude it: the probe census is the same in both (%d opcodes),"
+               " so the census below is not the census it says it is"
+               % len(at_root))
+    if not present and diff:
+        print("IR-AOT-PRELUDE|file=params.params|present=no|own-opcodes=none|n=0"
+              "|excluded=yes|cwd=private")
+        print("IR-AOT-PRELUDE-CTL|probe=%s|at-root=%s|at-private=%s|diff=%s"
+              "|own=none|verdict=FAIL"
+              % (PROBE_PROGRAM.strip(), ",".join(sorted(at_root)),
+                 ",".join(sorted(at_private)), ",".join(diff)))
+        refuse("there is no params.params in the tree, yet the two directories"
+               " disagree by %s: something else in the current directory is being"
+               " executed, and it is not named here" % ",".join(diff))
+    print("IR-AOT-PRELUDE|file=params.params|present=%s|own-opcodes=%s|n=%d"
+          "|excluded=yes|cwd=private"
+          % ("yes" if present else "no", ",".join(sorted(own)) or "none", len(own)))
+    print("IR-AOT-PRELUDE-CTL|probe=%s|at-root=%s|at-private=%s|diff=%s|own=%s"
+          "|verdict=PASS"
+          % (PROBE_PROGRAM.strip(), ",".join(sorted(at_root)),
+             ",".join(sorted(at_private)), ",".join(diff) or "none",
+             ",".join(sorted(own)) or "none"))
 
 
 def enum_members(name, text=None):
@@ -296,6 +394,11 @@ def main():
     if not CASES.is_file():
         refuse("no case list at %s" % CASES)
 
+    # Before the corpus, on purpose: it costs three runs, and if the private
+    # directory is not private then every number below is about to be measured
+    # in an environment this file does not claim to measure in.
+    prelude_report(interp)
+
     mod = load_cases()
     cases = [(n, src) for n, src, _want in mod.EQUIVALENCE]
     if args.limit:
@@ -321,7 +424,8 @@ def main():
         if crc != 0:
             differ.append((name, "cc", (cerr or "").strip()[-120:]))
             continue
-        irc, iout, _e = run([str(interp), "--no-mods", "run", str(script)], ROOT)
+        irc, iout, _e = run([str(interp), "--no-mods", "run", str(script)],
+                            private_cwd())
         nrc, nout, _e = run([str(exe)], ROOT)
         if irc != nrc or iout != nout:
             where = "exit" if irc != nrc else "stdout"
@@ -396,7 +500,8 @@ def main():
             if crc != 0:
                 div_lines.append("IR-AOT-DIVERGENCE|case=%s|state=cc-failed|known=declared" % name)
                 continue
-            irc, iout, _e = run([str(interp), "--no-mods", "run", str(script)], ROOT)
+            irc, iout, _e = run([str(interp), "--no-mods", "run", str(script)],
+                                private_cwd())
             nrc, nout, _e = run([str(exe)], ROOT)
             state = ("still-diverges" if (iout != nout or irc != nrc)
                      else "now-agrees-so-the-list-is-stale")
