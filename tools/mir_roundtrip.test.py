@@ -35,6 +35,7 @@ Exit: 0 all identical and every control red, 1 any mismatch / any green control,
       2 harness build failure.
 """
 import argparse
+import atexit
 import os
 import shutil
 import subprocess
@@ -42,10 +43,24 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# One directory per process: the shared /tmp path was overwritten by
-# concurrent worktrees and by this suite's own subprocess re-entry, and the
-# loser died with PermissionError [Errno 13] (see tools/check_shared_tmp.py).
-HARNESS = os.path.join(tempfile.mkdtemp(prefix="mir_roundtrip_harness-"), "mir_roundtrip_harness")
+# A harness binary per PROCESS, in a directory of its own.
+#
+# This used to be one fixed name in tempfile.gettempdir(), which is /tmp on
+# Linux and is shared by every worktree on the machine.  The gate runs ctest
+# with --jobs 4, so two of these tests can run gcc -o <same path> at the same
+# time: the later build overwrites the binary the earlier run is executing, and
+# that run then reads bytes from a program it did not build.  Measured on the
+# merged tree: mir_roundtrip_regression failed in a parallel gate with
+# "Required regular expression not found. Regex=[MIR-VERDICT|PASS" while the
+# same test passed three times in a row when run alone.
+#
+# The race is not new -- it is as old as these files -- but the registrations
+# added beside it (aot_cover 93 s, mir_express 3 s) widened the window until it
+# started landing.  A fixed path plus a shared directory plus parallelism is a
+# race at any name.
+_HARNESS_DIR = tempfile.mkdtemp(prefix="mir-roundtrip-")
+atexit.register(shutil.rmtree, _HARNESS_DIR, True)
+HARNESS = os.path.join(_HARNESS_DIR, "mir_roundtrip_harness")
 SRC = ["src/compiler/mir.c", "src/compiler/bytecode.c",
        "src/compilation/deps.c", "src/platform/platform.c"]
 INCLUDES = ["-Isrc/compiler", "-Isrc/common", "-Isrc", "-Isrc/platform", "-Isrc/compilation"]
@@ -290,6 +305,17 @@ def main():
     ok = (differ == 0 and measured > 0 and nmissing == 0
           and len(controls) == 3 and red == 3
           and (args.no_selfcheck or (len(ctl) == 2 and all(c[2] == "red" for c in ctl))))
+    # Green here means "the bytes that go into the file and come back out are the
+    # same".  Seven container tables are not in those bytes at all -- bytecode_write
+    # does not fwrite them -- so this green says nothing about them, and several of
+    # them are filled and read while compiling.  Saying which ones are OUTSIDE the
+    # denominator is the difference between "it passed" and "it was not asked".
+    print("MIR-UNCOMPARED|fields=capture_names,capture_count,labels,label_count,"
+          "thread_flags,dbg_lines,str_interned"
+          "|why=the-container-format-does-not-write-them"
+          "|effect=green-here-does-not-mean-they-are-equal"
+          "|and=these-are-nonetheless-live: compiler.c-fills-labels-and-capture_names,"
+          "vm.c-reads-label_count-at-run-time")
     print("MIR-VERDICT|%s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 

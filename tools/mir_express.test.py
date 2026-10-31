@@ -309,9 +309,14 @@ def check_pin(rows, width):
     fixed = [i for i in pinned if i not in live]
     ok = not added and not fixed
     moved = pin.get("tree") != _head_sha()
-    print("MIR-EXPRESS-PIN|tree=%s|head=%s|dropped=%d|pinned=%d|dropped-match=%s|tree-moved=%s"
+    # known-broken= says why a green gate is green: these tables ARE broken today,
+    # and the run is green because the breakage was recorded rather than because
+    # it went away.  Without this, `gate: OK` reads as "these four are fine".
+    print("MIR-EXPRESS-PIN|tree=%s|head=%s|dropped=%d|pinned=%d|dropped-match=%s"
+          "|known-broken=%d|since=%s|tree-moved=%s"
           % ((pin.get("tree") or "?")[:7], _head_sha()[:7], len(live), len(pinned),
-             "yes" if ok else "no", "yes" if moved else "no"))
+             "yes" if ok else "no", len(pinned), (pin.get("tree") or "?")[:7],
+             "yes" if moved else "no"))
     for item in added:
         print("MIR-EXPRESS-NEW|item=%s|effect=a-table-the-regeneration-now-loses"
               "-that-the-pin-did-not-record" % item)
