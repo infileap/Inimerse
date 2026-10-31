@@ -25846,6 +25846,42 @@ THREE-WAY-SELFCHECK|red=yes|checked=agree,split,refused,pin,pin-without-reason,a
 
 这条判据的代价在读者一侧，合并者说过一句更准的：**两处不一致时，读者会去信更容易改的那一处，最后留下的是文档而不是事实**。表格比标题好改，所以表格会被改成「已定」，而标题会留着「不替它决定」——于是事实（谁定的、凭什么）留在没人读的那一处。所以这里的顺序不是「先改表、后改标题」，是**同一棵树里两处同时落地**；在它落地之前，这一栏只算记录矛盾，不算记下决定。
 
+### 辰 M-a：MIR 能表示什么，以及它的再生悄悄丢了什么
+
+这一栏记的是一套**已经落地、但文档里还没有读者**的读数。量具是 `tools/mir_express.test.py`（`MIR-EXPRESS` 只在这一个文件里印；`MIR-UNCOMPARED` 在 `tools/mir_roundtrip.test.py` 第 313 行），注册在 `CMakeLists.txt` 第 1891 到 1893 行，走 `gated_run.py`、**不带** `PASS_REGULAR_EXPRESSION`。树 `e9f830d` 与本节所在那棵树（`05ea9f0`）上逐字相同——两棵树之间 `tools/` 一字节未动（`git diff e9f830d 05ea9f0 --stat` 只列 `docs/AUDIT.md`）[obs: e9f830d]。
+
+十项，四种 `state=`：
+
+```
+MIR-EXPRESS|item=func-name|field=no|move=yes|state=alias|writes-section=yes|in-memory-uses=5|consumer=7 file(s): src/main.c,src/compiler/compiler.c,src/vm/vm.c
+MIR-EXPRESS|item=func-argc|field=yes|move=yes|state=field|writes-section=yes|in-memory-uses=4|consumer=7 file(s): src/main.c,src/compiler/compiler.c,src/vm/vm.c
+MIR-EXPRESS|item=thread-section|field=no|move=yes|state=alias|writes-section=yes|in-memory-uses=7|consumer=8 file(s): src/main.c,src/compiler/compiler.c,src/vm/vm.c
+MIR-EXPRESS|item=try-table|field=no|move=yes|state=alias|writes-section=yes|in-memory-uses=1|consumer=2 file(s): src/vm/vm.c,tools/z3bounds/check_inimbc_roundtrip.py
+MIR-EXPRESS|item=global-names|field=no|move=yes|state=alias|writes-section=yes|in-memory-uses=4|consumer=5 file(s): src/main.c,src/compiler/compiler.c,src/vm/vm.c
+MIR-EXPRESS|item=capture-table|field=no|move=no|state=dropped|writes-section=no|in-memory-uses=2|consumer=2 file(s): src/compiler/compiler.c,src/compiler/bytecode_capture_probe.c
+MIR-EXPRESS|item=label-table|field=no|move=no|state=dropped|writes-section=no|in-memory-uses=2|consumer=2 file(s): src/compiler/compiler.c,src/vm/vm.c
+MIR-EXPRESS|item=thread-flags|field=no|move=no|state=dropped|writes-section=no|in-memory-uses=2|consumer=2 file(s): src/compiler/compiler.c,src/vm/vm.c
+MIR-EXPRESS|item=string-intern|field=no|move=no|state=dropped|writes-section=no|in-memory-uses=1|consumer=1 file(s): src/vm/vm.c
+MIR-EXPRESS|item=int-pool|field=no|move=n/a|state=absent|writes-section=n/a|in-memory-uses=0|consumer=none
+MIR-EXPRESS-WIDTH|item=block-index|width=2|max-insns=32767|overflow=refuse|effect=a-longer-function-is-refused-by-mir_from_bytecode-rather-than-truncated-so-the-MIR-route-will-one-day-refuse-what-the-AST-route-accepts
+MIR-EXPRESS-SUMMARY|items=10|field=1|alias=4|dropped=4|absent=1|red=capture-table,label-table,thread-flags,string-intern|green=capture-table,label-table,string-intern,thread-flags
+MIR-EXPRESS-PIN|tree=a2dfe15|head=e9f830d|dropped=4|pinned=4|dropped-match=yes|known-broken=4|since=a2dfe15|tree-moved=yes
+```
+
+三种口径各答一件事，**合起来读就会互相顶掉**：`field=` 由编译器回答（探针做 `offsetof(<owner>, <member>)`，编译得过就是有字段），`move=` 由运行回答（`tools/mir_express_probe.c` 在每张容器表里种一个特征值，建视图、调 `mir_to_bytecode`，看它出没出来），`state=` 是前两者的合成——有字段是 `field`，没字段但再生真复制了是 `alias`，两样都没有是 `dropped`，连编码里也没有是 `absent`（`int-pool`）。
+
+**`writes-section=` 与 `state=` 为什么必须分开**：源码第 459 到 465 行写着「state answers ONE question: does the regeneration carry it? The format fact rides beside it (writes-section=) because collapsing the two loses one of them: by-format=yes means the container FILE never had this section, and a table can be dropped while carrying that fact — nothing could have copied it. Merging them into the state would let a reader conclude that fixing the format fixes the regeneration, and it would not.」——**「文件格式没写这一段」与「再生没复制这一段」是两件事**，四张 `dropped` 表恰好两件都成立（`writes-section=no`），而 `field=no|move=no|state=dropped|writes-section=no` 这一格若被读成一句「表丢了」，就丢掉了「不是格式的错」这半句。`writes-section=` 的判据是 `written_sections()` 在 `src/compiler/bytecode.c` 里找 `fwrite(&bc-><name>`。
+
+★**`SUMMARY` 的 `red=` 与 `green=` 今天是同一份名单**：源码第 533 与 534 行分别是 `",".join(red)` 与 `",".join(sorted(red + red_quiet))`，而第 482 行的分流是 `(red if readers else red_quiet).append(item)`——**没有读者的 `dropped` 表进 `red_quiet`**。我按工具同口径复算（`consumers_of()` 的排除表在源码第 112 到 114 行），四张 `dropped` 表的 `readers` **全部非空**（capture-table 2、label-table 2、thread-flags 2、string-intern 1）⇒ `red_quiet` 恒空 ⇒ 两格必然相同，印出来就是四个名字一字不差同序。所以「绿」这一格**今天没有可分辨的内容**：源码第 478 到 481 行的意图是「有人的表是红的，没人的表安静地算一个发现」，但当四张表都有人读时，两格印的是同一句话。
+
+★**`MIR-EXPRESS-PIN` 的树号不是 `HEAD`，而这不是矛盾**：`tree=a2dfe15`、`head=e9f830d`、`tree-moved=yes`、`dropped-match=yes`、`known-broken=4`。这是本节第二次出现的同一族形状（前一次是 `HEADINGS|stale|net=`）：**「pin 的树号 == HEAD」不是判据，数字对得上才是**。源码第 311 行 `moved = pin.get("tree") != _head_sha()` 只印 token、不参与判决；判决是 `dropped-match=`（四张 live 对四张 pinned）。`known-broken=4` 是那句「为什么这次是绿的」的说明：这些表**今天确实是坏的**，绿是因为坏被记下来了，不是因为它自己好了。
+
+**另一把尺子量的是同一个缺口**：同跑的 `tools/mir_roundtrip.test.py` 印 `MIR-UNCOMPARED|fields=capture_names,capture_count,labels,label_count,thread_flags,dbg_lines,str_interned|why=the-container-format-does-not-write-them|effect=green-here-does-not-mean-they-are-equal|and=these-are-nonetheless-live: compiler.c-fills-labels-and-capture_names,vm.c-reads-label_count-at-run-time`，同一次运行还印 `MIR-NEGCTL|controls=3|red=3|green=0`、`MIR-CORPUSCTL|controls=2|red=2|green=0|victim=examples/bench/cpu1.im`、`MIR-VERDICT|PASS`[obs: e9f830d]。
+
+这两把尺子**量的不是同一个集合**：七个字段今天全是活的（`src/` 下按成员访问计数：`capture_names` 3 个文件、`capture_count` 同 3、`labels` 2、`label_count` 同 2、`thread_flags` 3、`dbg_lines` 3、`str_interned` 2），而 `mir_express` 的十项里 `capture_count` 与 `dbg_lines` **根本不在**（它量的是容器里的四张表，`capture-table`／`label-table`／`thread-flags`／`string-intern`）。也就是说：**同一个缺口，两把尺子各照了一个投影，谁也不覆盖谁**。而 `MIR-UNCOMPARED` 那七个字段名是 `tools/mir_roundtrip.test.py` 第 313 行的**写死常量**，不是量出来的——它的 `why=` 与 `and=` 指向的是源码事实（「`bytecode_write` 不 fwrite 它们，但 `compiler.c` 会填 `labels` 与 `capture_names`，`vm.c` 运行时会读 `label_count`」），不是这一次的测量结果。
+
+**边界**：这一栏只记 `e9f830d` 上的读数形状与它自己印出的口径，不主张 MIR 路线今天能做什么；`in-memory-uses=` 数的是 `src/` 下按成员访问命中的**文件数**（`in_memory_uses()` 在源码第 226 到 252 行，排除定义载体两文件与 `bytecode.[ch]`、`mir.[ch]`），`consumer=` 数的是**访问该成员的源文件数**并只列前三个文件名（`consumers_of()` 在第 117 到 144 行），两者口径不同、都只数文件不数处数，所以「`consumer=7`」说的是「七个文件碰过它」，不是「七处」。`docs/` 全树搜 `MIR-EXPRESS` 与 `MIR-UNCOMPARED` **今天没有读者**——这一栏就是它的第一个读者；它读到的数若与合并者后来在别的树上量的不同，以那一棵树为准，且**换树就换引文**。
+
 ## §1.421 增补四百五十二：一个检查器的 rc 数的是 finding，不是围栏
 
 `tools/check_md_fences.py` 在 `fb116dc` 上是这样的：干净树上 `rc=1`，而同一份输出里的判决行是 `UNITS|escaped_total=fence_backticks+inline_escapes|check=144=6+138|verdict=PASS`。`rc` 与它自己印的判决不一致，原因是源码末行 `return 0 if not findings else 1`——**它数的是「有没有任何 finding」，不是「围栏坏没坏」**；那两条 finding 都在证明者（prover）那一侧：`FINDING|docs/streams/dec-formal-axioms.md:355|kind=escaped|fence written with backslashes: the page shows a literal fence` 与同文件 `:359`，`kind` 叫 `escaped`，而 `escaped` 不阻断渲染[obs: fb116dc]。`grep -c 'check_md_fences' tools/gate.sh` 当时是 **0**：这个检查器既不在门禁里，红着也不会有人知道，于是「复跑到 0 findings」这条诉求在不动那一页时**达不到**。
