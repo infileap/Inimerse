@@ -25872,7 +25872,7 @@ MIR-EXPRESS-PIN|tree=a2dfe15|head=e9f830d|dropped=4|pinned=4|dropped-match=yes|k
 
 **`writes-section=` 与 `state=` 为什么必须分开**：源码第 459 到 465 行写着「state answers ONE question: does the regeneration carry it? The format fact rides beside it (writes-section=) because collapsing the two loses one of them: by-format=yes means the container FILE never had this section, and a table can be dropped while carrying that fact — nothing could have copied it. Merging them into the state would let a reader conclude that fixing the format fixes the regeneration, and it would not.」——**「文件格式没写这一段」与「再生没复制这一段」是两件事**，四张 `dropped` 表恰好两件都成立（`writes-section=no`），而 `field=no|move=no|state=dropped|writes-section=no` 这一格若被读成一句「表丢了」，就丢掉了「不是格式的错」这半句。`writes-section=` 的判据是 `written_sections()` 在 `src/compiler/bytecode.c` 里找 `fwrite(&bc-><name>`。
 
-★**`SUMMARY` 的 `red=` 与 `green=` 今天是同一份名单**：源码第 533 与 534 行分别是 `",".join(red)` 与 `",".join(sorted(red + red_quiet))`，而第 482 行的分流是 `(red if readers else red_quiet).append(item)`——**没有读者的 `dropped` 表进 `red_quiet`**。我按工具同口径复算（`consumers_of()` 的排除表在源码第 112 到 114 行），四张 `dropped` 表的 `readers` **全部非空**（capture-table 2、label-table 2、thread-flags 2、string-intern 1）⇒ `red_quiet` 恒空 ⇒ 两格必然相同，印出来就是四个名字一字不差同序。所以「绿」这一格**今天没有可分辨的内容**：源码第 478 到 481 行的意图是「有人的表是红的，没人的表安静地算一个发现」，但当四张表都有人读时，两格印的是同一句话。
+★**`SUMMARY` 的 `red=` 与 `green=` 今天是同一份名单**：源码第 533 与 534 行分别是 `",".join(red)` 与 `",".join(sorted(red + red_quiet))`，而第 482 行的分流是 `(red if readers else red_quiet).append(item)`——**没有读者的 `dropped` 表进 `red_quiet`**。我按工具同口径复算（`consumers_of()` 的排除表在源码第 112 到 114 行），四张 `dropped` 表的 `readers` **全部非空**（capture-table 2、label-table 2、thread-flags 2、string-intern 1）⇒ `red_quiet` 恒空 ⇒ 两格必然相同，印出来就是四个名字一字不差同序。所以「绿」这一格**今天没有可分辨的内容**：源码第 478 到 481 行的意图是「有人的表是红的，没人的表安静地算一个发现」，但当四张表都有人读时，两格印的是同一句话。（这一条在 `main` 上已经改掉：绿栏不再由红栏加出来，见下一节「巳」的 after 读数；本节记的仍是 `e9f830d` 上的形状。）
 
 ★**`MIR-EXPRESS-PIN` 的树号不是 `HEAD`，而这不是矛盾**：`tree=a2dfe15`、`head=e9f830d`、`tree-moved=yes`、`dropped-match=yes`、`known-broken=4`。这是本节第二次出现的同一族形状（前一次是 `HEADINGS|stale|net=`）：**「pin 的树号 == HEAD」不是判据，数字对得上才是**。源码第 311 行 `moved = pin.get("tree") != _head_sha()` 只印 token、不参与判决；判决是 `dropped-match=`（四张 live 对四张 pinned）。`known-broken=4` 是那句「为什么这次是绿的」的说明：这些表**今天确实是坏的**，绿是因为坏被记下来了，不是因为它自己好了。
 
@@ -25881,6 +25881,46 @@ MIR-EXPRESS-PIN|tree=a2dfe15|head=e9f830d|dropped=4|pinned=4|dropped-match=yes|k
 这两把尺子**量的不是同一个集合**：七个字段今天全是活的（`src/` 下按成员访问计数：`capture_names` 3 个文件、`capture_count` 同 3、`labels` 2、`label_count` 同 2、`thread_flags` 3、`dbg_lines` 3、`str_interned` 2），而 `mir_express` 的十项里 `capture_count` 与 `dbg_lines` **根本不在**（它量的是容器里的四张表，`capture-table`／`label-table`／`thread-flags`／`string-intern`）。也就是说：**同一个缺口，两把尺子各照了一个投影，谁也不覆盖谁**。而 `MIR-UNCOMPARED` 那七个字段名是 `tools/mir_roundtrip.test.py` 里印它那一条 `print` 的**写死常量**，不是量出来的——它的 `why=` 与 `and=` 指向的是源码事实（「`bytecode_write` 不 fwrite 它们，但 `compiler.c` 会填 `labels` 与 `capture_names`，`vm.c` 运行时会读 `label_count`」），不是这一次的测量结果。
 
 **边界**：这一栏只记 `e9f830d` 上的读数形状与它自己印出的口径，不主张 MIR 路线今天能做什么；`in-memory-uses=` 数的是 `src/` 下按成员访问命中的**文件数**（`in_memory_uses()` 在源码第 226 到 252 行，排除定义载体两文件与 `bytecode.[ch]`、`mir.[ch]`），`consumer=` 数的是**访问该成员的源文件数**并只列前三个文件名（`consumers_of()` 在第 117 到 144 行），两者口径不同、都只数文件不数处数，所以「`consumer=7`」说的是「七个文件碰过它」，不是「七处」。`docs/` 全树搜 `MIR-EXPRESS` 与 `MIR-UNCOMPARED` **今天没有读者**——这一栏就是它的第一个读者；它读到的数若与合并者后来在别的树上量的不同，以那一棵树为准，且**换树就换引文**。
+
+### 巳 M-a 的 after 读数：量具换了仪器、同名字段换了定义，绿栏第一次有自己的内容可选
+
+上一节「辰」承诺过「换树就换引文」，这是那次换树。树：`main` 上的 `2658099`（读数在 `tools/` 与它逐字相同的那个工作树里取，行号一律词面写）。动它的三笔是 `18aef98`（读写两列改由编译器说）、`2658099`（绿栏不再由红栏加出来），以及共享路径守卫那一对 `8516068`／`a867571`——那是另一件事，after 读数记在 §1.421「卯」栏，不在这里[obs: 2658099]。
+
+```
+MIR-EXPRESS-EXCLUDED|container=(src/compiler/bytecode.c,src/compiler/bytecode.h,src/compiler/mir.c,src/compiler/mir.h)|instruments=(tools/mir_express.test.py,tools/mir_express_probe.c,tools/mir_access_probe.py)|why=the-container-defines-the-member-and-a-probe-that-plants-a-value-in-every-table-touches-every-table
+MIR-EXPRESS|item=func-name|field=no|move=yes|state=alias|writes-section=yes|reader=(mods/debug/debug_mod.c,src/compilation/aot_mir.c,src/compilation/debug_info.c,src/compiler/compiler.c,src/main.c,src/vm/vm.c)|reader-count=6|writer=(src/compiler/compiler.c,src/runtime/vm_exec_builtin.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c,src/compiler/mir.c)|needed-by-aot=not-yet|in-memory-uses=7
+MIR-EXPRESS|item=func-argc|field=yes|move=yes|state=field|writes-section=yes|reader=(mods/debug/debug_mod.c,src/compilation/aot_mir.c,src/main.c,src/vm/vm.c)|reader-count=4|writer=(src/compiler/compiler.c,src/runtime/vm_exec_builtin.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c,src/compiler/mir.c)|needed-by-aot=not-yet|in-memory-uses=6
+MIR-EXPRESS|item=thread-section|field=no|move=yes|state=alias|writes-section=yes|reader=(mods/debug/debug_mod.c,src/compilation/aot_mir.c,src/compilation/debug_info.c,src/compiler/compiler.c,src/main.c,src/runtime/runtime.c,src/runtime/runtime_posix.c,src/runtime/vm_exec_builtin.c,src/vm/vm.c)|reader-count=9|writer=(src/compiler/compiler.c,src/runtime/vm_exec_builtin.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c,src/compiler/mir.c)|needed-by-aot=not-yet|in-memory-uses=9
+MIR-EXPRESS|item=try-table|field=no|move=yes|state=alias|writes-section=yes|reader=(src/vm/vm.c)|reader-count=1|writer=(none)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c,src/compiler/mir.c)|needed-by-aot=not-yet|in-memory-uses=1
+MIR-EXPRESS|item=global-names|field=no|move=yes|state=alias|writes-section=yes|reader=(src/compilation/aot_mir.c,src/compilation/debug_info.c,src/main.c,src/vm/vm.c)|reader-count=4|writer=(src/compiler/compiler.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c,src/compiler/mir.c)|needed-by-aot=not-yet|in-memory-uses=5
+MIR-EXPRESS|item=capture-table|field=no|move=no|state=dropped|writes-section=no|reader=(src/compiler/bytecode_capture_probe.c,src/compiler/compiler.c)|reader-count=2|writer=(none)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c)|needed-by-aot=no|in-memory-uses=2
+MIR-EXPRESS|item=label-table|field=no|move=no|state=dropped|writes-section=no|reader=(src/compiler/compiler.c,src/vm/vm.c)|reader-count=2|writer=(src/compiler/compiler.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(none)|needed-by-aot=not-yet|in-memory-uses=2
+MIR-EXPRESS|item=thread-flags|field=no|move=no|state=dropped|writes-section=no|reader=(src/vm/vm.c)|reader-count=1|writer=(src/compiler/compiler.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c)|needed-by-aot=not-yet|in-memory-uses=2
+MIR-EXPRESS|item=string-intern|field=no|move=no|state=dropped|writes-section=no|reader=(src/vm/vm.c)|reader-count=1|writer=(src/vm/vm.c)|self-excluded=(tools/mir_express_probe.c)|container-excluded=(src/compiler/bytecode.c)|needed-by-aot=not-yet|in-memory-uses=1
+MIR-EXPRESS|item=int-pool|field=no|move=n/a|state=absent|writes-section=n/a|reader=(none)|reader-count=0|writer=(none)|self-excluded=(none)|container-excluded=(none)|needed-by-aot=n/a|in-memory-uses=0
+MIR-EXPRESS-WHY|item=capture-table|format-writes=no|regeneration-copies=no|effect=nothing-could-have-copied-it-the-container-format-does-not-write-this-section
+MIR-EXPRESS-AOT|item=func-argc|needed-by-aot=not-yet|runtime-readers=(src/vm/vm.c:<行号>@loader,src/vm/vm.c:<行号>@L_CALL_FUNC)|covered=(OP_CALL_FUNC)|uncovered=(loader-outside-the-dispatch)|basis=src/vm/vm.c's-own-dispatch-table-[OP_X]=&&L_X-maps-each-read-site-to-an-opcode-and-tools/aot_cover.pin.json:covered_ops-says-whether-the-AOT-corpus-has-ever-executed-it
+MIR-EXPRESS-SUMMARY|items=10|field=1|alias=4|dropped=4|absent=1|red=capture-table,label-table,string-intern,thread-flags|green=none
+MIR-EXPRESS-PIN|tree=a2dfe15|head=486a2b4|dropped=4|pinned=4|dropped-match=yes|known-broken=4|since=a2dfe15|tree-moved=yes
+```
+
+另外三条 `MIR-EXPRESS-WHY`（`label-table`／`thread-flags`／`string-intern`）的 `format-writes=`／`regeneration-copies=`／`effect=` 与上面那条逐字相同，只有 `item=` 不同；每项还各印一条 `MIR-EXPRESS-AOT`，形状与上面那条一致，只有位点清单与 opcode 不同。
+
+★**上面那条里的 `<行号>` 是我换掉的，而且是本节唯一不逐字的地方**：工具逐字印的是 `src/vm/vm.c` 加冒号加 2685（`@loader`）与 4096（`@L_CALL_FUNC`）两个位点行号，而**照抄进页里，那两个「文件名＋冒号＋数字」当场就变成两条没有树号的引用**——本仓的引用账会因此 +2 并顶破上限。一条逐字读数与一条引用在这里是**同一个字符串**，这就是为什么本节的行号一律词面：不是我不肯写数字，是数字一写成那个形状就换了身份。
+
+★**同名字段换了定义**：`in-memory-uses=` 不再是「`src/` 下按成员访问命中的文件数」，而是「编译器点名过的文件数，且是**读写两列的去重并集**」。源码注释逐字：「"Nothing touches it" is now a count of FILES the compiler named, and it is the union of both columns: a table vm.c only WRITES still has a reader's problem waiting for it, and one vm.c only READS was written somewhere else.」新旧对得上：`func-name` 旧 5 新 7、`func-argc` 旧 4 新 6、`thread-section` 旧 7 新 9、`global-names` 旧 4 新 5，其余五张一位没动。**字段名没变、印的位置没变、读起来也还是那个「有没有人碰它」——变的是它数的是什么**；沿用上一节的读法就会把「并集文件数」当成「`src/` 内的文件数」。
+
+★**绿栏第一次有自己的内容可选，而它选的是「空」**：`green=none`。源码注释逐字：「green  dropped, and nothing reads it: "this is not carried" is a different sentence from "this is breaking something today".  It is its own column because a green computed as red + red_quiet can never differ from red, so it would report nothing at all.」⇒ 上一节那句「两栏必然相同」在这一棵树上**不再成立**；另一个小变化是 `red=` 现在也排过序（`capture-table,label-table,string-intern,thread-flags`，与 `green` 的旧拼法同序）⇒ 两栏首次在同一口径下可比。**注意 `green=none` 不是「绿了」**：四张 `dropped` 表今天仍然一张不少，只是没有一张是「没人读」的那种安静缺口。
+
+★**读写两列换了仪器：从正则换成编译器**（新文件 `tools/mir_access_probe.py`）。docstring 逐字：「The reader/writer columns used to be a regular expression over the source, and a name is not a type: "comp->labels" is a LabelDef list, not this container's label table.  So the columns now come from tools/mir_access_probe.py, which renames and then const-ifies each member in a throwaway copy of the tree and lets the compiler name the sites.」被排除的两组也从源码常量升成一行读数（`MIR-EXPRESS-EXCLUDED|container=(…)|instruments=(…)|why=…`：容器自己定义成员所以排除、探针在每张表里种值所以触到每张表）。**名字不是类型**——与「量注册表要问构建系统，不能问文本」同一族。
+
+★**`needed-by-aot=` 落在「位点」上，不落在名字上**：`src/vm` 下每个读位点被映射到它所在的 dispatch 标签，再拿去查 `tools/aot_cover.pin.json` 的 `covered_ops`。所以 `not-yet` 说的是**那条路线从没跑过哪个 opcode**（`func-name` 的 `uncovered=(loader-outside-the-dispatch)`；`thread-section` 的 `uncovered=(loader-outside-the-dispatch,OP_THREAD_START,OP_THREAD_CTRL,OP_THREAD_GOTO,OP_RECV)`），不是它「可能支持什么」。十项分布：`not-yet` 8、`no` 1（`capture-table`，它的 `runtime-readers=(none)`）、`n/a` 1（`int-pool`——不在 IR 里也不在编码里，没有可问的位点）。
+
+★**跨列矛盾现在是断言出来的，不是看出来的**：源码里有一组一致性命中印 `MIR-EXPRESS-CONTRADICTION|item=…|why=…`（三条：`alias` 却不写该段／`dropped` 却真复制了／不在文件里又没人读），注释逐字：「A reading whose columns can disagree is a reading that can print a contradiction and exit 0.」——**这是一个读数自己承认「我可能印出自相矛盾还退 0」的方式**。
+
+★**同一族形状的第三次**：`PIN|head=486a2b4` 只是取这份读数时那个工作树的尖，读者读到这一页时 `head=` 必然又不像 pin 树号（`tree=a2dfe15`、`tree-moved=yes`）。第三次说同一句话：**pin 的树号不是判据，`dropped-match=yes` 才是**（第一次是 `HEADINGS|stale|net=`，第二次是上一节那条）。
+
+**边界**：本节只记 `2658099` 上的形状与它自己印出的口径。三列不互相替代——`reader=(`…`)` 是**文件清单**、`reader-count=` 是那些文件的**个数**、`in-memory-uses=` 是读写两列的**并集文件数**（不是处数，也不是 `reader-count` 的别名）；`writer=` 是编译器抓到写它的文件，与 `reader=` 不相交也不互补（`string-intern` 的读写都在 `src/vm/vm.c` 一个文件里）。`docs/` 全树搜 `MIR-EXPRESS` 与 `MIR-UNCOMPARED` 在本节写下的这一刻仍**只有这两节是读者**。读数若与合并者在别的树上量的不同，以那一棵树为准，且**换树就换引文**。
 
 ## §1.421 增补四百五十二：一个检查器的 rc 数的是 finding，不是围栏
 
@@ -26132,6 +26172,24 @@ MKDTEMP      = re.compile(r"tempfile\.mkdtemp\(")           # the sanctioned cal
 同时记**正面的那一半**：把 `MKDTEMP` 改回「点与括号之间紧贴」的版本，`tempfile . mkdtemp ( prefix="/tmp/x" )` 这种合法写法会被**误报**（理由是那一行里有个 `"/tmp/`）⇒ 合并者那句「`MKDTEMP` 宽化必须与豁免范围一起改」成立；**我建议把豁免从「行」收到「语句」**（同一行里既出现 `mkdtemp` 又出现共享路径时，前者不豁免后者）。合并者给了三条硬要求：(1) 豁免只限「真正建目录的那一次调用」所在的**那一个语句**；(2) 豁免判断必须用挖掉字符串的那份掩码；(3) 跨行调用要么改成语句级解析、要么**明确记为窄口写进页**。他认领的次序是：先修 `stage_shared_tmp` 只读判决、不读退出码（改 `tools/gate.sh`），再修 ①②④（顺带把 `TMP_LITERAL` 放宽成「`/tmp` 后跟路径分隔符或字符串结束」），③ **只记进本节、这一笔不修**。⇒ 本节到 ④ 为止记的都是**修之前**的形状；按本节自己的规矩，修完之后要**换树就换引文**，另记一次读数。
 
 边界：本节只记「分母 + 模式」这一对，不主张模式宽到没有假阳性——宽化会把注释与 docstring 一起抓进来，所以 `ac5a11c` 同时做了两份掩码（调用在挖空字符串那份找、字面量在未挖空那份找）；那是它的解法，不是唯一解法。残余窄口我按「今天的 `tools/` 里没有」记，不按「已经安全」记。
+
+★**after（同一族的第二棵树：`main` 上的 `2658099`）**——四个窄口全部被修，而且是**逐格**修的。`tools/check_shared_tmp.py` 的自检有十四条用例，我报的那四格逐字成了用例名[obs: 2658099]：
+
+```
+SHARED-TMP-SELFTEST|case=sanctioned-and-shared-on-one-line|want=1|got=1|red=no
+SHARED-TMP-SELFTEST|case=sanctioned-inside-a-string-does-not-exempt|want=1|got=1|red=no
+SHARED-TMP-SELFTEST|case=shared-call-across-two-lines|want=1|got=1|red=no
+SHARED-TMP-SELFTEST|case=shared-literal-without-trailing-slash|want=1|got=1|red=no
+SHARED-TMP-SELFTEST-VERDICT|cases=14|red=0|verdict=PASS
+check_shared_tmp: ok (114 *.py scanned; every artifact a suite builds lands in a directory that suite created)
+SHARED-TMP-VERDICT|scanned=114|failures=0|verdict=PASS
+```
+
+自检的注释里留着这一句：「…on 2026-10-31 the first widening of this check reported "ok" on a fixture holding all four bad spellings, and the only way that was visible was that somebody measured it.」——**本栏开头那句话的第二次出现**：窄口只有量过才知道，而「第一次宽化后仍然报 ok」这件事本身就是被量出来的。
+
+机制换了三处：豁免从「行」收到「语句」（`statements()` 按语句切分、`_sanctioned_spans()` 划出那一次批准调用自己的范围，豁免只在这个范围内算）；判据用**挖空字符串**的那份掩码（先挖注释、再挖字符串），所以字符串里的 `mkdtemp` 不再成盾；`TMP_LITERAL` 放宽成「`/tmp` 后跟 `/` 或引号」，所以 `'/tmp'` 也报。十四条用例里另有我没想到的五格：带空格的调用、f-string 里的共享路径、三元表达式里的共享路径、注释里提到不算、以及仅仅以 `tmp` 开头的名字不算。
+
+我报的两个真仓库实例也换了形：`tools/check_inimbc_writer_half.py` 现在是 `own_dir('inimbc-writer-half-')` 与 `own_dir('inimbc-writer-half-refusal-')`，`git grep` 在 `tools/` 下只剩守卫自己的注释与 fixture。**本栏第一件事**（阶段读的是判决词、不是退出码）同样修了，修法与 `fences` 同形：守卫现在印 `SHARED-TMP-VERDICT|scanned=…|failures=…|verdict=PASS`，`stage_shared_tmp` 只读这一行，**印不出这一行时它 `return 2` 拒绝**，而不是去猜一句人类措辞里的子串；注册进 CTest 的是自检（`shared_tmp_selftest_regression`，走 `gated_run.py --shape "SHARED-TMP-SELFTEST-VERDICT\|cases=[0-9]+\|red=0\|verdict=PASS" --exit 0`），守卫本体仍只由门禁那一阶段调。数字也动了：扫描数 111 → **114**（新工具进了树），而 `scanned=114` 是它第一次自己说出「扫了几个」。
 
 ### 辰 被测量的是那个程序，还是它坐在里面的那个目录——`covered=30` 里有一个 opcode 不属于任何被接受的程序
 
