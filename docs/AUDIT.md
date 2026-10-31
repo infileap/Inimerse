@@ -25987,6 +25987,40 @@ FENCES-VERDICT|odd=0|swallowed=0|verdict=PASS
 
 边界：本节只记 `a3f6914` 上这一支检查器的形状，不主张它已经覆盖「页面能不能读」；`INLINE|…|gated=no` 自己写着不参与判决，`escaped_pages=4` 与两条 `FINDING` 是**两个问题两个数**（前者数「含转义围栏的页」，后者数「围栏被写成字面量的页」），同屏出现不是打架。`docs/streams/dec-formal-axioms.md:355`／`:359` 属证明者的页，本节只引用、不改动[obs: fb116dc]。
 
+### 未 三件都是「名字与它管的事错位」：格名比缺陷宽、绿的理由也错了、几个由一个字符一个字符地回答
+
+这一节记的三件**不是三个偶发**，是同一个错位在三个位置上的三次观测：**一个名字（格名、调用、返回值）管的事，与它的读者以为它管的事，不是同一件**。三件都在 `9ecf88c` 上量过；量具是 `tools/pin_tree.py` 的两格自检与它自己的解析器。
+
+**第一件：格名比缺陷宽 ⇒ 两格红不是更严格，是格名太宽**。把 `--check` 的 `nargs="+"` 去掉之后，自检的两格红侧是**一格红一格绿**：
+
+```
+case=--check takes several shas at once|want=['a','b']|got=["<parser refused ['--check','a','b']>"]|red=yes
+case=--check repeated is the same as --check once with several|want=['a','b']|got=['a','b']|red=no
+```
+
+这**正确**，不是侥幸：`action="append"` 本来就接受重复形，两种写法只在 `nargs` 上分歧 ⇒ 一格测得到、一格测不到。若两格都红，红的人就分不清是 `nargs` 坏了还是 `append` 坏了——**格名比缺陷宽的时候，它测的不是那个缺陷，而是「一整个功能坏了」。**
+
+★**我把合并者那条更硬的话量了一遍**（他说「用 fixture 只一格红，用 checkout 的 HEAD 可能两格都红」）。用**同一套**解析器（有没有 `nargs` 各跑一遍）、**同一对**格子，只换形状是 `'a','b'` 还是真 sha：
+
+| 输入 | 有 `nargs="+"` | 无 `nargs` | 红格数 |
+|---|---|---|---|
+| fixture：`a`／`b` | 两格都 `['a','b']` | `["<parser refused ['--check','a','b']>"]` ＋ `['a','b']` | **1** |
+| 真 sha：`8d4208a`／`9ecf88c` | 两格都 `['8d4208a','9ecf88c']` | `["<parser refused […]>"]` ＋ `['8','d','4','2','0','8','a','9','e','c','f','8','8','c']` | **2** |
+
+⇒ 两格红**不是因为更严格**，是因为**第二格也落进了「字符串被逐字符展开」那个坑**（见第三件）：真 sha 是**多字符**的，`'a'` 与 `'b'` 是**单字符**的，所以同一个缺陷在第一格里只是「解析被拒」，在第二格里变成「14 个『sha』」——**红格数随输入的字符长度变化**。一条判据的红格数不该由测试数据的长度决定。
+
+**第二件：绿的理由也错了——不是没测到，是测到了别的对象**。`tools/pin_tree.py` 自检里那句注释逐字写着：「Tested at the parser, not through `main()`: `main()` reads the real repository's refs, so calling it with fixture shas would fail for "the sha does not resolve here" -- green by the wrong reason, which is the shape this batch is about.」⇒ 若把自检写成「调 `main()` 验 `main`」，那一格拿 fixture 的 sha 进去会**失败**（对象不可解析），而它若换个写法反而会**通过**（真仓的 sha 当然解析得了）——**同一格在两种数据上给出相反答案，而两个答案都不是关于「它接不接受多个 sha」的**。
+
+这条比「没测到」难发现，因为它的输出**和真绿一模一样**（`red=no`）；而「没测到」至少会因为分母为零而拒绝（本仓已有先例：空输入集不是通过的输入集）。**判据：一格若不是在测它名字说的那件事，它宁可印 `measured=no`，也不许印 `red=no`。**
+
+**第三件：字符串当返回值 ⇒ 「几个」由一个字符一个字符地回答**。第一版的失败理由是**字符串**，被调用方 `[s for g in got for s in g]` 展开 ⇒ `got=['<','p','a','r',…]`。源码注释逐字：「A refusal comes back as a list, not as a string: returning a string would be flattened by the caller into one "sha" per character … and a cell whose name says "takes several shas" would then be red for a reason that has nothing to do with how many shas it takes.」⇒ **名字说「接受多个」，而失败理由与「几个」无关**：一个字符被当成一个 sha，于是「几个」这个量被 `len(字符串)` 回答了。
+
+★**这三件与前两节的两个例子合起来是五个，够成一类**：`in-memory-uses=`（同名字段换了定义，两串数都自洽）、`pin` 的树号（一个字段装「对得上」与「查得到」两道题）、格名比缺陷宽、绿的理由也错了、字符串让 `len()` 回答「几个」。**共同形状：一个名字承担了两种回答，而两种回答在同一个输出里长得一样。**
+
+**为什么这一族难**：它不是算错，是**答非所问**——每一格都印了东西、每一行都有值、rc 也都对，唯一不对的是「这一格在回答哪个问题」。所以它只能靠**换输入**（fixture ↔ 真 sha）、**换位置**（parser ↔ `main()`）、**换返回类型**（字符串 ↔ 一元素列表）这三种扰动暴露，而三种扰动的共同点是：**对象的形状一换，红的格数就变**。
+
+边界：本节只记 `9ecf88c` 上 `tools/pin_tree.py` 那两格的两种观测与它自己的注释，不主张这两格已覆盖「`--check` 的所有用法」（它测的是**解析**，不测 `main()` 真的扫不扫得动）；第一张表里「无 `nargs` 那列」是我用同一份解析器在会话里复刻的（不是改树跑出来的），因此它是**读数**，不是**回归测试**；`8d4208a` 只是当时那棵工作树的尖，它随我 rebase 会变，而表里那 14 个字符的形状不随它变（真 sha 都长这样）。
+
 ### 壬 第一个「判据不是退出码」的阶段：`fences` 在 `ea7aa58` 上门禁（16 → 17）
 
 上一节末段定的那条（读不到判决行时必须判红）在 `ea7aa58` 上落地。本树（`ea7aa58` 加本节之前的那笔文档提交，`37723a0`）复量四行逐字：
