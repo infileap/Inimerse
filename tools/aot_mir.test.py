@@ -278,6 +278,129 @@ def perturb_case(mir_tool, workdir, name, src_path, base_c, verbose):
 
 BASE_STDOUT = [None]
 
+# The negative control has to reach BOTH wide operand slots.  mir_perturb
+# writes `a`/`b` and clears the matching IR_F_WIDE_* flag, so an instruction
+# whose real operand lives in `imm`/`wide` is the only place where the merged
+# reader (ir_insn_r2/ir_insn_r3) can be told apart from a reader of `a`/`b`:
+# perturb alone would pass either way, because both change `a`.
+WIDE_CONTROLS = [
+    # 40000 does not fit the int16 field, so the compiler parks it in `imm`
+    # and sets IR_F_WIDE_A; mir_perturb field 2 writes `a` and clears it.
+    ("wide-imm-slot", "say 40000\n", "OP_LOADK_INT", 2, "imm", "40000"),
+    # 2**53+1 = 0x20000000000001, so LOADK_I64's high word 0x200000 = 2097152
+    # does not fit either and lives in `wide`; field 3 writes `b` and clears it.
+    # The number the C must carry is the reassembled one: a lowering that read
+    # `b` (the truncated high word, 0) would print 1 instead.
+    ("wide-wide-slot", "say 9007199254740993\n", "OP_LOADK_I64", 3, "wide",
+     "9007199254740993"),
+]
+
+
+def wide_controls(mir_tool, interp, workdir, verbose):
+    """Run the out-of-int16 operand controls and report them one per line.
+
+    Each control asks three things: the lowering put the NUMBER THE PROGRAM MEANS
+    in the C (so the wide slot really was read -- a reader of the truncated
+    `a`/`b` field would print something else), perturbing that slot moves the C,
+    and the executable's answer moves with it while the unperturbed one still
+    agrees with the interpreter.  A control that only asked the middle question
+    would pass a generator that read `a` -- the truncated field -- and dropped
+    `imm`."""
+    problems = []
+    lines = []
+    total = slot_in_c = c_changed = moved_out = same_as_interp = 0
+    for name, src, op, field, slot, literal in WIDE_CONTROLS:
+        total += 1
+        s = Path(workdir) / (name + ".im")
+        s.write_text(src)
+        c0 = Path(workdir) / (name + ".c")
+        c1 = Path(workdir) / (name + ".p.c")
+        rc, out, err = run([mir_tool, "dump", s], workdir)
+        pick = None
+        if rc == 0:
+            for raw in out.splitlines():
+                m = INSN.match(raw.strip())
+                if not m:
+                    continue
+                f, idx, o = int(m.group(1)), int(m.group(2)), m.group(3)
+                r2, r3 = int(m.group(5)), int(m.group(6))
+                if f == 0 and o == op:
+                    v = r2 if field == 2 else r3
+                    if v > 32767 or v < -32768:
+                        pick = (idx, v)
+                        break
+        if pick is None:
+            problems.append("%s: no %s in main carries an operand outside int16, so the"
+                            " %s slot was never exercised" % (name, op, slot))
+            lines.append("IR-MIR-WIDE|control=%s|op=%s|slot=%s|found=no"
+                         % (name, op, slot))
+            continue
+        idx, was = pick
+        now = was + 1
+        rc0, o0, e0 = run([mir_tool, "translate", s, c0], workdir)
+        if rc0 != 0:
+            problems.append("%s: the unperturbed lowering was refused: %s"
+                            % (name, (e0 or o0).strip()[:160]))
+            continue
+        text0 = c0.read_text()
+        in_c = literal in text0
+        slot_in_c += 1 if in_c else 0
+        if not in_c:
+            problems.append("%s: the C does not carry %s, so the %s slot (value %d) was"
+                            " not read" % (name, literal, slot, was))
+        rc1, o1, e1 = run([mir_tool, "translate", "--perturb", "0", str(idx),
+                           str(field), str(now), s, c1], workdir)
+        if rc1 != 0:
+            problems.append("%s: the perturbed lowering was refused: %s"
+                            % (name, (e1 or o1).strip()[:160]))
+            continue
+        did_move = c1.read_text() != text0
+        c_changed += 1 if did_move else 0
+        if not did_move:
+            problems.append("%s: perturbing the %s slot (%d -> %d) changed no C"
+                            % (name, slot, was, now))
+        rc_i, out_i, _ei = run([interp, "--no-mods", "run", s], workdir)
+        exe0 = Path(workdir) / (name + ".exe")
+        exe1 = Path(workdir) / (name + ".p.exe")
+        rc_c0, _c, ec0 = run(["cc", "-O2", "-o", exe0, c0], workdir)
+        rc_c1, _c1, ec1 = run(["cc", "-O2", "-o", exe1, c1], workdir)
+        same = moved = "no-file"
+        if rc_c0 == 0 and rc_c1 == 0:
+            rc_r0, out0, _r0 = run([exe0], workdir)
+            rc_r1, out1, _r1 = run([exe1], workdir)
+            same = "yes" if (out0 == out_i and rc_r0 == rc_i) else "no"
+            moved = "yes" if (out1 != out0 or rc_r1 != rc_r0) else "no"
+            if same == "yes":
+                same_as_interp += 1
+            else:
+                problems.append("%s: the unperturbed lowering answers %r, the interpreter %r"
+                                % (name, out0, out_i))
+            if moved == "yes":
+                moved_out += 1
+            else:
+                problems.append("%s: the %s slot moved in the C but not in the answer"
+                                % (name, slot))
+        else:
+            problems.append("%s: cc failed (plain=%s perturbed=%s): %s %s"
+                            % (name, rc_c0, rc_c1, (ec0 or "")[:160], (ec1 or "")[:160]))
+        line = ("IR-MIR-WIDE|control=%s|op=%s|slot=%s|field=%d|func=0|idx=%d|was=%d|now=%d"
+                "|beyond-int16=yes|means=%s|literal-in-c=%s|c-changed=%s"
+                "|unperturbed-same-as-interpreter=%s"
+                "|stdout-changed=%s"
+                % (name, op, slot, field, idx, was, now, literal,
+                   "yes" if in_c else "no",
+                   "yes" if did_move else "no", same, moved))
+        lines.append(line)
+        if verbose:
+            print(line)
+    for line in lines:
+        print(line)
+    print("IR-MIR-WIDE-CONTROL|controls=%d|literal-in-c=%d|c-changed=%d|stdout-changed=%d"
+          "|unperturbed-same-as-interpreter=%d|why=the-operand-does-not-fit-int16-so-it"
+          "-lives-in-imm-or-wide-and-a-reader-of-a-or-b-alone-would-print-the-truncated-field"
+          % (total, slot_in_c, c_changed, moved_out, same_as_interp))
+    return problems
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -394,6 +517,8 @@ def main():
             perturb_fail += cf
             stdout_changes += sc
             problems.extend(probs)
+
+    problems.extend(wide_controls(mir_tool, interp, workdir, args.verbose))
 
     print("IR-MIR-COVER|corpus=inline-cases:%d|accepted=%d|refused=%d|differ=%d|conserved=%d"
           "|c-identical=%d|c-diff=%d|reasons=%s|perturbed=%d|perturb-c-changed-failures=%d"
