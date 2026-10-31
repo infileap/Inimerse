@@ -1891,3 +1891,18 @@ set_tests_properties(aot_cover_selfcheck_regression PROPERTIES WORKING_DIRECTORY
 add_test(NAME mir_express_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "mir_express self-check: ok \\([0-9]+ checks\\)" --shape "mir_express: items=[0-9]+ dropped=[0-9]+" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/mir_express.test.py --gate)
 set_tests_properties(mir_express_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "ir;regression")
+# The guard against shared temporary paths has a self-test, because a widened
+# pattern is a pattern that may have widened into uselessness: on 2026-10-31
+# the first widening of tools/check_shared_tmp.py reported "ok" on a fixture
+# holding all four bad spellings, and the only way that was visible was that
+# somebody measured it.  The self-test is the cheapest place to keep measuring
+# it -- it runs the detector over fourteen one-line fixtures and prints, for
+# each, how many findings it wanted and how many it got.  The scan itself is
+# the gate's 18th stage (shared-tmp), which reads the tool's verdict WORD
+# rather than its exit status; this test is the OTHER half -- the one that
+# says the detector still detects.  Registered like its neighbours: gated_run,
+# no PASS_REGULAR_EXPRESSION, because the report a matcher would be pointed at
+# carries the program's own output.
+add_test(NAME shared_tmp_selftest_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "SHARED-TMP-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_shared_tmp.py --self-test)
+set_tests_properties(shared_tmp_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
