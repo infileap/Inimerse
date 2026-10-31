@@ -45,9 +45,20 @@ TOOLS = REPO_ROOT / "tools"
 # `tempfile.gettempdir()` joined with a literal name.  The name may be built by
 # concatenation (`"name-" + tag`), so the literal may be empty -- what matters is
 # that the *directory* is the shared one.
-SHARED = re.compile(
-    r"os\.path\.join\(\s*tempfile\.gettempdir\(\s*\)\s*,\s*(?:f?[\"']([^\"']*)[\"'])?"
-)
+# Four spellings of the same mistake, all measured on 2026-10-31 with a fixture
+# holding one line of each; the first pattern caught only line 1 of 4:
+#   1  os.path.join(tempfile.gettempdir(), "name")
+#   2  "/tmp/name"
+#   3  f"{tempfile.gettempdir()}/name"
+#   4  tempfile.gettempdir() + "/name"
+# A pattern that only knows the first is a pattern that reports "nothing shared"
+# about a tree that shares three other ways -- so the rule is now: any mention of
+# the temp directory that is not immediately a mkdtemp() call, and any literal
+# /tmp path.  mkdtemp() is the fix, so it is the one thing excluded by name.
+TEMPDIR_CALL = re.compile(r"tempfile\.gettempdir\(\s*\)")   # forms 1, 3, 4
+TMP_LITERAL = re.compile(r"(?<![\w.])[\"']/tmp/")              # form 2
+# The sanctioned call: it CREATES a directory instead of naming a shared one.
+MKDTEMP = re.compile(r"tempfile\.mkdtemp\(")
 
 REASON = (
     "builds an artifact at a path shared by every process on the machine. "
@@ -59,6 +70,71 @@ REASON = (
     "tempfile.mkdtemp(prefix=...) and join the artifact name onto that."
 )
 
+
+def code_lines(text):
+    """({lineno: line without comments}, {lineno: line without comments or strings}).
+
+    The widened pattern matches a mention of the temp directory wherever it
+    appears, and the first run of it reddened tools/mir_roundtrip.test.py:48 -- a
+    COMMENT explaining the removed defect.  A check that flags its own
+    explanation teaches people to delete the explanation, which is the opposite
+    of what this file is for.
+
+    Blanking (not dropping) is what makes this work: `tokenize` gives exact
+    columns, so a line keeps its punctuation in code and loses it inside a
+    comment or a string -- `note = "/tmp/x"` is one code line whose string is
+    invisible, while `p = "/tmp/x" / "y"` keeps the operator.  Reconstructing the
+    line by joining tokens instead turns `tempfile.gettempdir()` into
+    `tempfile . gettempdir ( )`, which the pattern cannot see; measured, and it
+    made this check report ok on a fixture holding all four bad spellings.
+    """
+    import io
+    import tokenize
+
+    masked = [list(ln) for ln in text.splitlines()]
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type != tokenize.COMMENT:
+                continue
+            (sr, sc), (er, ec) = tok.start, tok.end
+            for ln in range(sr, er + 1):
+                if not (0 <= ln - 1 < len(masked)):
+                    continue
+                row = masked[ln - 1]
+                a = sc if ln == sr else 0
+                b = ec if ln == er else len(row)
+                for i in range(a, min(b, len(row))):
+                    row[i] = " "
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # A file this cannot tokenize is still a file with lines; blank whole
+        # comment lines only, rather than reporting nothing about it.
+        return {i: ln for i, ln in enumerate(text.splitlines(), 1)
+                if not ln.lstrip().startswith("#")}
+    # Two masks, because the two defects live in different places: a call to
+    # tempfile.gettempdir() is CODE, while a literal "/tmp/x" is a STRING.  One
+    # mask that blanks both (or neither) misses one of the two by construction.
+    uncommented = {i: "".join(row) for i, row in enumerate(masked, 1)
+                   if "".join(row).strip()}
+    no_strings = {}
+    for i, row in uncommented.items():
+        no_strings[i] = row
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type != tokenize.STRING:
+                continue
+            (sr, sc), (er, ec) = tok.start, tok.end
+            for ln in range(sr, er + 1):
+                if ln not in no_strings:
+                    continue
+                row = list(no_strings[ln])
+                a = sc if ln == sr else 0
+                b = ec if ln == er else len(row)
+                for k in range(a, min(b, len(row))):
+                    row[k] = " "
+                no_strings[ln] = "".join(row)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass
+    return uncommented, no_strings
 
 def main():
     failures = []
@@ -79,12 +155,25 @@ def main():
         if path.name.startswith("check_shared_tmp"):
             continue  # this file quotes the pattern in its own docstring
         scanned += 1
-        for m in SHARED.finditer(text):
-            line = text[: m.start()].count("\n") + 1
-            failures.append(
-                f"{os.path.relpath(path, REPO_ROOT)}:{line}: {m.group(0).strip()} "
-                f"-> {m.group(1)!r} {REASON}"
-            )
+        uncommented, no_strings = code_lines(text)
+        seen = set()
+        for lineno, line in uncommented.items():
+            if MKDTEMP.search(line):
+                continue
+            # gettempdir() is code, so it is looked for where strings are blank;
+            # a literal /tmp path is a string, so it is looked for where they are
+            # not.  Both ignore comments.
+            for pattern, hay in ((TEMPDIR_CALL, no_strings.get(lineno, "")),
+                                 (TMP_LITERAL, line)):
+                for m in pattern.finditer(hay):
+                    key = (lineno, m.group(0))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    failures.append(
+                        f"{os.path.relpath(path, REPO_ROOT)}:{lineno}: "
+                        f"{m.group(0).strip()!r} in {line.strip()[:90]!r} -- {REASON}"
+                    )
 
     if scanned == 0:
         # The guard above counts files before this check excludes itself, so a
