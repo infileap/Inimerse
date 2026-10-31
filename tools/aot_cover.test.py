@@ -52,7 +52,7 @@ Readings:
               |declared-diverge=K
               |covered=C|of=67|basis=opcodes-executed-by-the-interpreter-over-programs-the-translator-accepts
   IR-AOT-PRELUDE|file=params.params|present=yes|no|own-opcodes=...|n=N
-                |excluded=yes|no|cwd=private
+                |expected-opcodes=...|matches=yes|no|excluded=yes|no|cwd=private
   IR-AOT-PRELUDE-CTL|probe=PROGRAM|at-root=...|at-private=...|diff=...
                     |own=...|verdict=PASS|FAIL
   IR-AOT-OPCODE|op=OP_X|seen-in=N|verdict=covered|missing
@@ -165,6 +165,18 @@ def footprint(interp, script, cwd=None):
 
 PROBE_PROGRAM = "say 1\n"
 
+# What the tracked params.params contributes, written down as a constant.
+# Measuring it (own, below) says what the file does today; comparing it against
+# this set says whether anyone has changed it.  The two are not redundant, and
+# the constant is the stronger half: if the file gains an opcode and this set is
+# not updated, every other number here still agrees with itself -- the gap
+# between the two directories grows by exactly what the file gained, so the
+# control below passes while describing a file nobody declared.  A pin that
+# fails loudly on an edit is worth more than a measurement that follows one
+# quietly.  Changing params.params is allowed; changing it without saying so is
+# what this refuses.
+PARAMS_OPS = frozenset(["OP_HALT", "OP_LOADK_INT", "OP_LOADK_STRING", "OP_STORE_GLOBAL"])
+
 
 def prelude_report(interp):
     """What the prelude would have added, and the control that it no longer does.
@@ -209,14 +221,22 @@ def prelude_report(interp):
         refuse("there is no params.params in the tree, yet the two directories"
                " disagree by %s: something else in the current directory is being"
                " executed, and it is not named here" % ",".join(diff))
+    matches = not present or frozenset(own) == PARAMS_OPS
     print("IR-AOT-PRELUDE|file=params.params|present=%s|own-opcodes=%s|n=%d"
-          "|excluded=yes|cwd=private"
-          % ("yes" if present else "no", ",".join(sorted(own)) or "none", len(own)))
+          "|expected-opcodes=%s|matches=%s|excluded=yes|cwd=private"
+          % ("yes" if present else "no", ",".join(sorted(own)) or "none", len(own),
+             ",".join(sorted(PARAMS_OPS)), "yes" if matches else "no"))
     print("IR-AOT-PRELUDE-CTL|probe=%s|at-root=%s|at-private=%s|diff=%s|own=%s"
           "|verdict=PASS"
           % (PROBE_PROGRAM.strip(), ",".join(sorted(at_root)),
              ",".join(sorted(at_private)), ",".join(diff) or "none",
              ",".join(sorted(own)) or "none"))
+    if not matches:
+        refuse("params.params no longer contributes the opcodes this file pins:"
+               " expected %s, measured %s -- the exclusion above still holds, but"
+               " the thing being excluded is not the one named in PARAMS_OPS, so"
+               " update that constant and let a commit say the file changed"
+               % (",".join(sorted(PARAMS_OPS)), ",".join(sorted(own)) or "none"))
 
 
 def enum_members(name, text=None):
