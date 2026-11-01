@@ -176,7 +176,7 @@ def census_reachable(tool, root):
     five candidate roots -- examples, tests, bench, mods, tools -- of which three
     exist, and printed `basis=dump-over-every-.im-in-the-repo` next to the
     resulting count.  The label was the lie, not the number: those three hold
-    35 of the repo's 399 .im files, and over that fifth of the corpus 24 of the
+    35 of the repo's 399 .im files, and over those 35 files 24 of the
     67 opcodes look unreachable -- which is exactly the "fix the denominator"
     conclusion a census is supposed to rule OUT.  A narrowed census does not
     fail loudly; it under-reports reachability and reads as evidence.
@@ -235,7 +235,7 @@ def census_scope(tracked, walked, skipped):
 _MISSING = object()
 
 
-def broken_reading(shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
+def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
                    subset=_MISSING):
     """The single predicate main() turns into PASS/FAIL.
 
@@ -256,6 +256,10 @@ def broken_reading(shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
             raise TypeError("broken_reading: no %s given -- the verdict has to "
                             "name all four ingredients, not the convenient ones"
                             % name)
+        if value is None:
+            raise TypeError("broken_reading: %s=None -- None is what forgetting "
+                            "an ingredient looks like; pass the empty list when "
+                            "there is nothing there" % name)
     return bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
 
 
@@ -502,8 +506,8 @@ def main():
     # A claimed case that no program drives IS broken, not "in progress":
     # the claim is what a reader trusts, and a label nothing reaches makes the
     # claim false while every number beside it stays plausible.
-    broken = broken_reading(shell_problems(mentions, walks), scope,
-                            unreachable, subset_probs)
+    broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
+                            unreachable=unreachable, subset=subset_probs)
     ok = not broken
     for p in problems:
         print("IR-WASM-MIR-PROBLEM|" + p)
@@ -562,20 +566,24 @@ def self_check():
     expect("untracked files found by the walk are wider, not wrong",
            census_scope(399, 410, CENSUS_SKIP), [])
     expect("a narrowed census breaks the reading through the verdict itself",
-           broken_reading([], census_scope(399, 35, CENSUS_SKIP), set(), []), True)
+           broken_reading(shell=[], scope=census_scope(399, 35, CENSUS_SKIP),
+                          unreachable=set(), subset=[]), True)
     expect("a wide census leaves the verdict to the other three",
-           broken_reading([], census_scope(399, 399, CENSUS_SKIP), set(), []), False)
+           broken_reading(shell=[], scope=census_scope(399, 399, CENSUS_SKIP),
+                          unreachable=set(), subset=[]), False)
     # One cell per ingredient.  The predicate is a symmetric OR, so an argument
     # passed in the wrong order is not a defect -- but an ingredient main() stops
     # passing is, and that stays invisible while only the scope branch is tested.
     expect("a shell that never drove the MIR path breaks the reading",
-           broken_reading(["no-mir-path"], [], set(), []), True)
+           broken_reading(shell=["no-mir-path"], scope=[], unreachable=set(),
+                          subset=[]), True)
     expect("a claimed opcode nothing can reach breaks the reading",
-           broken_reading([], [], {"OP_Z"}, []), True)
+           broken_reading(shell=[], scope=[], unreachable={"OP_Z"}, subset=[]), True)
     expect("a subset naming an undeclared opcode breaks the reading",
-           broken_reading([], [], set(), ["work-queue-names-OP_NOT_REAL"]), True)
+           broken_reading(shell=[], scope=[], unreachable=set(),
+                          subset=["work-queue-names-OP_NOT_REAL"]), True)
     expect("four silent ingredients break nothing",
-           broken_reading([], [], set(), []), False)
+           broken_reading(shell=[], scope=[], unreachable=set(), subset=[]), False)
 
     def raises(fn):
         try:
@@ -584,8 +592,14 @@ def self_check():
         except TypeError:
             return True
 
-    expect("a verdict that was passed three of four ingredients refuses to answer",
-           raises(lambda: broken_reading([], [], set())), True)
+    # Two moments of the same defect: the signature is keyword-only, so an
+    # unnamed ingredient is refused before the body runs; the sentinel and the
+    # None check refuse a call that spells the name and leaves the value out.
+    expect("a verdict that does not name every ingredient refuses to answer",
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set())), True)
+    expect("a verdict handed None where a list belongs refuses too",
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
+                                         subset=None)), True)
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
