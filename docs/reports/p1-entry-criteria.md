@@ -184,7 +184,7 @@ P1-VERDICT|green|declared=39|unmeasured=28|note=an-unmeasured-op-is-not-a-passin
 
 **（二）哨兵槽不是一个数量问题，是一个「打印行有没有先判断」的问题。**
 
-`RECV` 与 `THREAD_JOIN` 的 `r2` 都是「寄存器或 −1」：`RECV` 由 `compiler.c:2196-2197` `int timeout_reg = -1; if (stmt->recvStmt.timeout) timeout_reg = compile_expr(...);` 发出，handler `L_RECV:` （`edb1bcd` 第 4764 行） `if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);`；`THREAD_JOIN` 的 handler `L_THREAD_JOIN:` （`edb1bcd` 第 4653-4654 行） 同形，enum 注释 `src/compiler/bytecode.h:34` 明写 `r2=timeout reg(-1=infinite)`。
+`RECV` 与 `THREAD_JOIN` 的 `r2` 都是「寄存器或 −1」：`RECV` 由 `compiler.c:2196-2197` `int timeout_reg = -1; if (stmt->recvStmt.timeout) timeout_reg = compile_expr(...);` 发出，handler `L_RECV:` （`edb1bcd` 第 4764 行） `if (ins.r2 >= 0) timeout = val_as_double(vm, &R[ins.r2]);`；`THREAD_JOIN` 的 handler `L_THREAD_JOIN:` （`edb1bcd` 第 4653-4654 行） 同形，enum 注释 `src/compiler/bytecode.h`（`edb1bcd` 第 34 行）明写 `r2=timeout reg(-1=infinite)`。
 
 在 `a670a70` 上两条打印行都无条件印 `timeout=r%d`（`case OP_TRY_END:` （`edb1bcd` 第 5378 行）、`case OP_THREAD_JOIN:` （`edb1bcd` 第 5383 行）），于是「没有超时」会印出 `timeout=r-1`——一个不存在的寄存器。我做了一件当时没写下来、后来证明必须写下来的事：工具原本只读 case 里**第一个** `snprintf`（`PRINT_RE.search`），而 `9dd3ade` 恰好把 `RECV` 的打印改成两支：
 
@@ -316,13 +316,13 @@ P1-VERDICT|green|declared=49|unmeasured=18|note=an-unmeasured-op-is-not-a-passin
 ```
 P1-AMBIG|op=OP_RETURN|slot=r1|kinds=register|sentinel(0,-1)|guarded=no|effect=the-sentinel-can-be-rendered-with-the-register-glyph
 P1-GUARD|convention=negative-timeout|sites=2|guarded=1|unguarded=1|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed
-
-（这一行是 `a670a70` 上的历史读数，当时约定还叫 `negative-timeout`。族 9 的 `BIND` 把同一个编码用在「没有初值」上之后，名字改成 `negative-means-none`，`sites=2` → `3`，见 §3.10。）
 P1-GUARD|convention=non-positive-nil-result|sites=1|guarded=0|unguarded=1|effect=this-counts-landing-sites-not-defects-and-it-goes-down-as-they-are-fixed
 P1-ROLES|declared=58/67|unmeasured=9
 P1-AMBIG-COUNT|n=3|effect=declared-outside-what-the-three-criteria-can-see-read-guarded-for-the-printer
 P1-VERDICT|green|declared=58|unmeasured=9|note=an-unmeasured-op-is-not-a-passing-op
 ```
+
+**上面块里那行 `convention=negative-timeout` 是 `a670a70` 上的历史读数**（这句注解原先写在代码块内，被 `fences` 判据判为 `kind=swallowed` 之后移到块外）：当时约定还叫 `negative-timeout`；族 9 的 `BIND` 把同一个编码用在「没有初值」上之后，名字改成 `negative-means-none`，`sites=2` → `3`，见 §3.10。
 
 **本批的真发现：`RETURN` 是第二个哨兵槽，但它的判定条件不是「小于 0」。** `L_RETURN:` （`edb1bcd` 第 4126 行） 的测试是 `ins.r1 > 0`——**非正**即 nil，`−1` 只是注释里的写法；而编译器在没有返回值时发的是 `OP_RETURN, 0`（`compiler.c:379`、`compiler.c:2874`）。于是每一处裸 `return` 在反汇编里都印成 `RETURN r0`：读者会以为「返回寄存器 0 的值」，实际意思是「返回 nil」。
 
@@ -447,7 +447,7 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 | 权威 | 说什么 |
 | --- | --- |
-| enum 注释 `src/compiler/bytecode.h:35` | `r1=thread idx, r2=cond reg(-1=seconds), r3=timeout reg(-1=none)` |
+| enum 注释 `src/compiler/bytecode.h`（`edb1bcd` 第 35 行） | `r1=thread idx, r2=cond reg(-1=seconds), r3=timeout reg(-1=none)` |
 | `ir_spec` 的 SHAPE 行 | `wait thread[r1] cond r2 timeout r3` |
 | handler `L_THREAD_WAIT:` （`edb1bcd` 第 4672-4691 行） | 只读 `ins.r1` 与 `ins.r2`（`L_THREAD_WAIT:` （`edb1bcd` 第 4678 行）、`L_THREAD_WAIT:` （`edb1bcd` 第 4685 行） 两处 `val_as_double(vm, &R[ins.r2])`），**`r3` 一次都没读** |
 | 打印行 `case OP_THROW:` （`edb1bcd` 第 5379 行） | `THREAD_WAIT t%d, timeout=r%d`，印 `r1`、`r2`，不印 `r3` |
@@ -458,7 +458,7 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 | 权威 | 说什么 |
 | --- | --- |
-| enum 注释 `src/compiler/bytecode.h:44` | `/* resource declare: r1=kind(0=mem,1=threads,2=time,3=inst), r2=float_pool idx, r3=0 */` |
+| enum 注释 `src/compiler/bytecode.h`（`edb1bcd` 第 44 行） | `/* resource declare: r1=kind(0=mem,1=threads,2=time,3=inst), r2=float_pool idx, r3=0 */` |
 | `ir_spec` 的 SHAPE 行 | `record(kind=r1, float_pool[r2])` |
 | `DECLARE` 的 handler `L_DECLARE:` （`edb1bcd` 第 4193-4199 行） | 恰好就是这段文字：`kind = ins.r1`、`float_pool[ins.r2]`、五个 kind |
 | `RECORD` 的 handler `L_RECORD:` （`edb1bcd` 第 4204-4243 行） | `gidx = ins.r1`、`packed = ins.r2`（`sidx` 取自 **string_pool**，`L_RECORD:` （`edb1bcd` 第 4210 行））、**写 `R[ins.r3]`** |
@@ -469,8 +469,8 @@ P1-VERDICT|red|failed=C2:OP_RECORD,C1:OP_THREAD_WAIT,C1:OP_TRY_START,C3:OP_TRY_S
 
 | 权威 | 说什么 |
 | --- | --- |
-| enum 注释 `src/compiler/bytecode.h:14` | `new array: r1 = [reg[r2 .. r2+r3-1]]` |
-| `ir_spec` 的 SHAPE 行 `tools/ir_spec.py:99` | `r1 = [R[r2 .. r2+r3-1]]` |
+| enum 注释 `src/compiler/bytecode.h`（`edb1bcd` 第 14 行） | `new array: r1 = [reg[r2 .. r2+r3-1]]` |
+| `ir_spec` 的 SHAPE 行 `tools/ir_spec.py`（`edb1bcd` 第 99 行） | `r1 = [R[r2 .. r2+r3-1]]` |
 | handler `L_NEW_ARRAY:` （`edb1bcd` 第 3634 行）、`L_NEW_ARRAY:` （`edb1bcd` 第 3636-3638 行） | `int n = ins.r3;` / `int base = t->sp - (n - 1); vm_array_push_n(vm, aidx, &t->stack[base], n);`——元素来自**值栈** |
 | 打印行 `case OP_GE:` （`edb1bcd` 第 5347 行） | `NEW_ARRAY r%d, n=%d`（`ins->r1`、`ins->r3`），`r2` 从不出现 |
 | `ins.r2` | 全文件从不被读（`NEW_DICT`、`NEW_SET` 同样：`L_NEW_DICT:` （`edb1bcd` 第 3662 行）、`L_NEW_SET:` （`edb1bcd` 第 4287 行）） |
@@ -641,7 +641,7 @@ P 组就是这条的反向实测：照邻居写 `< 0` 之后，`P1-AMBIG` 从 `g
 
 这一列的已知限制，必须在它被当成证据之前写下来：**它比的是文本，不是值。**
 
-先在 §4 S 组把预测兑现：`de2111c` 上 `agrees=no`、`disagree=1`，与我上一封信预告的一字不差（`sites` 不变、`unguarded` 归零）。但**这个 `no` 的主语我一开始写错了**，错在承重的那一半：我说它是「同一个值的两个拼法」（改名），实际是 `FRAME_REGS` 位于 `static void vm_execute_thread(VmThread *t)`（`src/vm/`vm_execute_thread()` （`edb1bcd` 第 3024 行））**函数体内**的局部 `enum { FRAME_REGS = VM_FRAME_REGS };`（`src/vm/`vm_execute_thread()` （`edb1bcd` 第 3027 行），四空格缩进），而 `#define VM_FRAME_REGS 1024` 在 `src/vm/vm.h:82`。打印器在另一个函数里，**那个词对它根本不可见**——它不是抄错，也不是改名，是**可见性**。读数本身没骗人（`no` 是对的），是我给红安了错主语；这与 §5.3「一条红的主语可能是表」同一种失效。
+先在 §4 S 组把预测兑现：`de2111c` 上 `agrees=no`、`disagree=1`，与我上一封信预告的一字不差（`sites` 不变、`unguarded` 归零）。但**这个 `no` 的主语我一开始写错了**，错在承重的那一半：我说它是「同一个值的两个拼法」（改名），实际是 `FRAME_REGS` 位于 `static void vm_execute_thread(VmThread *t)`（`vm_execute_thread()` （`edb1bcd` 第 3024 行））**函数体内**的局部 `enum { FRAME_REGS = VM_FRAME_REGS };`（`vm_execute_thread()` （`edb1bcd` 第 3027 行），四空格缩进），而 `#define VM_FRAME_REGS 1024` 在 `src/vm/vm.h`（`edb1bcd` 第 82 行）。打印器在另一个函数里，**那个词对它根本不可见**——它不是抄错，也不是改名，是**可见性**。读数本身没骗人（`no` 是对的），是我给红安了错主语；这与 §5.3「一条红的主语可能是表」同一种失效。
 
 ivory 的裁决把这件事从解释改成消除（`m05266` 一）：**不加 `alias=` 列，而是让打印器自己声明同一个局部别名** `enum { FRAME_REGS = VM_FRAME_REGS };`，于是两侧逐字相同，`agrees=` 变成 `identity`——**差异不是被解释掉的，是被消除掉的**。它给的一般规则（原样收进此处，作为本判据的取值纪律）：
 
