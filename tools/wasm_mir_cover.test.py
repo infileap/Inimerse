@@ -81,8 +81,13 @@ def run(cmd, cwd=None, timeout=300):
 def function_body(text, signature):
     """The brace body of one function, by signature.
 
-    Scoped on purpose: `case OP_*` appears in two functions of the same file, so
-    a whole-file scan would compare a set with itself and call it agreement.
+    Scoped on purpose: `case OP_*` labels also appear in this file's other
+    functions -- the emitter carries them too -- so a whole-file scan would
+    compare a set with itself and call it agreement.  Which body to read is a
+    property of the caller's question, not of the file, so the scope belongs in
+    this signature.  Naming the other functions would be a count wearing a
+    name's clothes: a third one carrying a case label makes the list wrong, and
+    the argument for scoping stays exactly the same.
     """
     i = text.find(signature)
     if i < 0:
