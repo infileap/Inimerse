@@ -31,6 +31,9 @@ from the corpus is named with which of the two it is.
 
 Readings:
   IR-AOT-MIR|accepted=N|refused=0|same-as-interpreter=N|of=M|corpus=...
+  IR-AOT-MIR-REFUSED|why=prerequisite-missing|tool=...|effect=...
+      Printed on stdout, not only on stderr, and exits 2: `RC=0` with no stdout is
+      the shape of "the check passed", so a missing build must not produce it.
   IR-AOT-MIR-COVER|covered=N|of=M|denominator=...|basis=...|coverage-claim=none
   IR-AOT-MIR-OPS|covered=(OP_A,OP_B,...)
   IR-AOT-MIR-MISSING|op=OP_X|why=not-emittable-by-this-lowering|emittable-but-not-exercised-by-the-corpus
@@ -92,6 +95,9 @@ NOTYET = re.compile(r"^IR-MIR-NOT-YET[|]op=(OP_[A-Z0-9_]+)[|]n=(\d+)$")
 REFUSED = re.compile(r"^IR-MIR-REFUSED[|]why=([^|]*)[|]detail=(.*)$")
 SUBSET = re.compile(r"^IR-MIR-SUBSET[|]emits=(\d+)[|]ops=\((.*)\)$")
 CASE_OP = re.compile(r"case (OP_[A-Z0-9_]+):")
+# The exit code every prerequisite refusal uses.  Named once, so the promise can
+# be asserted instead of restated.
+REFUSED_RC = 2
 # The real census line carries more fields than the two that matter here
 # (op=, interp=, then aot=/wasm=/why=), so the tail is optional -- but the
 # opcode and the count are not.  Validated against a captured line below.
@@ -378,6 +384,11 @@ def self_check():
            len(detector_problems({"OP_A"}, set())), 1)
     expect("a detector that saw both sides is silent",
            detector_problems({"OP_A"}, {"OP_A"}), [])
+    # "Not run" and "ran and found nothing" must not share an exit code.  The
+    # promise is checked here as a promise, because the case it guards is the one
+    # where nobody reads the output at all.
+    expect("a missing prerequisite exits 2, not 0",
+           REFUSED_RC, 2)
     expect("a table entry the encoding does not declare is caught",
            len(lowering_problems({"OP_A", "OP_Z"}, {"OP_A", "OP_Z"},
                                  ["OP_A", "OP_Z"], {"OP_A"})), 1)
@@ -492,13 +503,22 @@ def main():
     build = (ROOT / args.build) if not os.path.isabs(args.build) else Path(args.build)
     interp = build / "inimerse"
     mir_tool = build / "aot-mir"
+    # A refusal and a pass must not share an exit code, and they must not share a
+    # silence either: `RC=0` with no output on stdout is the shape of "the check
+    # passed", so a prerequisite that is missing says so on stdout as well, in the
+    # reading vocabulary, and exits 2.  Measured 2026-11-01 by peer, who read an
+    # empty result on an unbuilt tree as "his check found nothing wrong".
     for tool in (interp, mir_tool):
         if not tool.exists():
             print("aot_mir_cover: REFUSED|missing %s -- build it first" % tool, file=sys.stderr)
+            print("IR-AOT-MIR-REFUSED|why=prerequisite-missing|tool=%s|effect=the-corpus-was-"
+                  "not-run-so-nothing-below-was-measured" % tool)
             return 2
     if not AOT_PIN.exists():
         print("aot_mir_cover: REFUSED|missing %s -- the denominator is read from it"
               % AOT_PIN, file=sys.stderr)
+        print("IR-AOT-MIR-REFUSED|why=prerequisite-missing|tool=%s|effect=there-is-no-"
+              "denominator-so-no-fraction-can-be-reported" % AOT_PIN)
         return 2
 
     aot = json.loads(AOT_PIN.read_text())
