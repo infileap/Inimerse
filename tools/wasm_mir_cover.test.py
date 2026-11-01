@@ -170,9 +170,10 @@ def census_reachable(tool, root):
     the wrong thing: a driver gap means write a better test, an unreachable
     opcode means the denominator is wrong.
 
-    It reads the WHOLE repo, and says so in three numbers instead of one:
-    `files=` walked, `dumped=` that the front end accepted, `failed=` that it
-    rejected.  An earlier version of this function took a hand-picked list of
+    It reads the WHOLE repo, and prints every number it counted instead of one
+    count: `files=` walked, `dumped=` that the front end accepted, `failed=` that
+    it rejected, `reachable=` the opcodes some program drives, and `enum=` the
+    denominator those are out of.  An earlier version took a hand-picked list of
     five candidate roots -- examples, tests, bench, mods, tools -- of which three
     exist, and printed `basis=dump-over-every-.im-in-the-repo` next to the
     resulting count.  The label was the lie, not the number: those three hold
@@ -467,13 +468,14 @@ def main():
         elif cls == "unreachable":
             unreachable.add(op)
             print("IR-WASM-MIR-STATE|op=%s|class=unreachable|fix=fix-the-denominator" % op)
-    # The census line carries its own four numbers, because `reachable` alone is
-    # not a reading: without `dumped`/`failed` next to it, a census that read a
-    # fifth of the corpus and a census that read all of it print the same shape.
+    # The census line carries every number it counted, because `reachable`
+    # alone is not a reading: without `dumped`/`failed`/`enum` next to it, a
+    # census that read part of the corpus and one that read all of it print the
+    # same shape.
     print("IR-WASM-MIR-CENSUS|files=%d|dumped=%d|failed=%d|reachable=%d|enum=%d"
           "|basis=dump-over-every-.im-under-the-repo-root"
           % (nfiles, ndumped, nfailed, len(reachable), len(enum_ops)))
-    # ...and the walk's own breadth is a fifth number with its own instrument:
+    # ...and the walk's own breadth is a separate number with its own instrument:
     # an index that did not walk anywhere.  Without this, a skip list that grew
     # by one directory produces a smaller census with the same shape.
     print("IR-WASM-MIR-CENSUS-SCOPE|index=%s|walked=%d|shortfall=%s|skipped=(%s)"
