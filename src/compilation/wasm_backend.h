@@ -31,11 +31,25 @@
 #define INIMERSE_WASM_BACKEND_H
 
 #include "../parser/ast.h"
+#include "../compiler/mir.h"
 
 /* Compile prog to output_path (.wasm). Returns 0 on success; -1 with a
    message in wasm_backend_last_error() when the program uses constructs
    outside the MVP subset (rejection is explicit, never silent). */
 int wasm_compile_program(Program *prog, const char *output_path);
+
+/* The same, from the instruction stream instead of the syntax tree.  Two
+   entry points on purpose: while both exist they can disprove each other, and
+   a consumer that only ever sees one of them is not evidence that the IR is an
+   IR.  The MIR path covers a subset (see wasm_mir_cases); everything outside it
+   is refused by opcode name rather than approximated. */
+int wasm_compile_mir(const IrModule *m, const char *output_path);
+
+/* How many opcodes the MIR path has a body for, and which -- asked of the
+   generator rather than restated by the caller. */
+int wasm_mir_case_count(void);
+const char *wasm_mir_cases(void);
+
 const char *wasm_backend_last_error(void);
 
 #endif /* INIMERSE_WASM_BACKEND_H */

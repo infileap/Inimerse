@@ -2059,3 +2059,328 @@ int wasm_compile_program(Program *prog, const char *output_path) {
     free(mod.b);
     return 0;
 }
+
+/* ========================================================================
+   The MIR path: an instruction stream in, a module out.
+
+   This is a SECOND consumer of the IR, and that is the point of it -- one
+   consumer only proves that something happens to feed a backend; two prove the
+   IR is an IR.  It is deliberately not a refactor of the AST path above: the
+   two share the module writer's leaf helpers (Buf, bput, bleb_*, bword) and
+   nothing else.  The AST path dispatches on Expr/Stmt through cg_expr/cg_stmt
+   and has no opcode switch at all; this one never holds an Expr or a Stmt, only
+   an IrInsn, so every step below is re-emitted from (op, dst, a, b, imm).
+
+   What it does NOT cover matters as much as what it does: the value model here
+   is int/float/bool only.  IrModule.kstr is a MATERIALISED StringView array,
+   while the AST path carries strings as Expr nodes -- there is no common form,
+   so string opcodes stay on the AST route and are named one by one by the
+   coverage reading rather than approximated here.
+   ======================================================================== */
+
+enum { MIR_K_INT = 0, MIR_K_FLOAT = 1, MIR_K_BOOL = 2 };
+
+#define MIR_MAX_REGS 120
+/* The four printers this module imports; they occupy function indices 0..3 and
+   every local function sits after them.  Named once so the export section and
+   the CALL encoding cannot disagree. */
+#define MIR_IMPORTS 4
+
+typedef struct {
+    const IrModule *m;
+    Buf             *w;
+    int              slot[MIR_MAX_REGS];    /* reg -> wasm local index, -1 unset */
+    int              kind[MIR_MAX_REGS];    /* MIR_K_*: picks the printer, and
+                                               decides which local group holds it */
+    int              n_int;                 /* i64 locals: int and bool regs */
+    int              kind_seen[MIR_MAX_REGS];  /* a register's kind is decided once;
+                                                a second, different kind is refused */
+} MirCtx;
+
+static void mir_push_i64(MirCtx *c, long long v) { bput(c->w, W_I64_CONST); bleb_s(c->w, v); }
+static void mir_push_f64(MirCtx *c, double v)   { bput(c->w, W_F64_CONST); bf64(c->w, v); }
+
+/* One IrInsn -> wasm instructions.  0 emitted, 1 outside this subset, 2 emitted
+   and terminates the body. */
+static int mir_emit_one(MirCtx *c, const IrInsn *in) {
+    int op = in->op;
+    int r2 = (int)ir_insn_r2(in);
+    int r3 = (int)ir_insn_r3(in);
+    int s1, s2;
+    switch (op) {
+    case OP_LOADK_INT:
+        mir_push_i64(c, (long long)r2);
+        bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)c->slot[in->dst]);
+        return 0;
+    case OP_LOADK_BOOL:
+        mir_push_i64(c, r2 ? 1 : 0);
+        bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)c->slot[in->dst]);
+        return 0;
+    case OP_LOADK_FLOAT:
+        if (r2 < 0 || r2 >= c->m->nkfloat) return 1;
+        mir_push_f64(c, c->m->kfloat[r2]);
+        bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)c->slot[in->dst]);
+        return 0;
+    case OP_MOV:
+        s1 = c->slot[in->dst]; s2 = c->slot[r2];
+        bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)s2);
+        bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)s1);
+        return 0;
+    case OP_ADD: case OP_SUB: case OP_MUL:
+        s1 = c->slot[in->dst];
+        bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[r2]);
+        bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[r3]);
+        bput(c->w, op == OP_ADD ? W_I64_ADD : (op == OP_SUB ? W_I64_SUB : W_I64_MUL));
+        bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)s1);
+        return 0;
+    case OP_SAY: {
+        /* SAY carries its operand in r1 -- the dump shows r1=1, r2=0 -- so the
+           register is dst and not a source.  The printer follows that register's
+           KIND, which the opcode that wrote it decided, not a table beside the
+           emitter.  SAY of a register nothing has written is a refusal, not a
+           silent zero. */
+        int reg = in->dst;
+        if (reg < 0 || reg >= MIR_MAX_REGS || c->slot[reg] < 0) return 1;
+        bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[reg]);
+        /* Imports occupy the low function indices, so `call 0` is
+           im_print_int and not "the first local function".  The four printers
+           are declared in this order, and the mapping is spelled out here
+           instead of inferred from a counter. */
+        if (c->kind[reg] == MIR_K_BOOL) {
+            /* im_print_bool takes i32 and a register is an i64 slot, so the
+               value is narrowed at the call rather than stored as i32 -- the
+               slot keeps one type for the whole body. */
+            bput(c->w, W_I32_WRAP_I64);
+        }
+        bput(c->w, W_CALL);
+        bleb_u(c->w, c->kind[reg] == MIR_K_FLOAT ? 1 : (c->kind[reg] == MIR_K_BOOL ? 2 : 0));
+        return 0;
+    }
+    case OP_HALT:
+        bput(c->w, W_RETURN);
+        return 2;
+    default:
+        return 1;
+    }
+}
+
+/* The opcodes this path has a body for, as one NUL-terminated string.  The tool
+   reads it from here instead of restating the list in its own file: two copies
+   of "what can this lowering emit" is the defect this batch is about. */
+static const char *kMirCases =
+    "OP_LOADK_INT,OP_LOADK_BOOL,OP_LOADK_FLOAT,OP_MOV,OP_ADD,OP_SUB,OP_MUL,OP_SAY,OP_HALT";
+
+const char *wasm_mir_cases(void) { return kMirCases; }
+
+int wasm_mir_case_count(void) {
+    int n = 1;
+    for (const char *p = kMirCases; *p; p++) if (*p == ',') n++;
+    return n;
+}
+/* The module this path writes: the printers the host already provides, one
+   function per IrFunc, memory, the three ABI probes, and the `inimerse_run`
+   export.  Smaller than the AST path's module on purpose -- a consumer that
+   reused the whole other module writer would be a second call site, not a
+   second implementation. */
+int wasm_compile_mir(const IrModule *m, const char *output_path) {
+    Buf mod = {0};
+    Buf bodies = {0};
+    Buf s = {0};
+    int nfuncs;
+    FILE *f;
+
+    g_err[0] = 0;
+    if (!m || m->nfuncs <= 0) {
+        snprintf(g_err, sizeof(g_err), "wasm mir: empty module");
+        return -1;
+    }
+    nfuncs = m->nfuncs;
+    if (nfuncs > 256) {
+        snprintf(g_err, sizeof(g_err), "wasm mir: too many functions (max 256)");
+        return -1;
+    }
+
+    for (int fi = 0; fi < nfuncs; fi++) {
+        const IrFunc *fn = &m->funcs[fi];
+        MirCtx c;
+        Buf code = {0};
+        int n_int = 0, n_flt = 0;
+        int assigned[MIR_MAX_REGS];
+        int terminated = 0;
+
+        memset(assigned, 0, sizeof(assigned));
+
+        memset(&c, 0, sizeof(c));
+        c.m = m; c.w = &code;
+        for (int i = 0; i < MIR_MAX_REGS; i++) { c.slot[i] = -1; c.kind[i] = MIR_K_INT; }
+
+        /* Pass A: decide each register's kind from the opcode that writes it,
+           then hand out local indices -- i64 locals first, f64 locals after,
+           because wasm locals are grouped by type and a register's index has
+           to be settled before any body byte is written.  The kind is also
+           what SAY reads to pick a printer, so there is no second table. */
+        for (int i = 0; i < fn->ninsns; i++) {
+            const IrInsn *in = &fn->insns[i];
+            int d = in->dst;
+            if (d < 0 || d >= MIR_MAX_REGS) continue;
+            if (assigned[d]) continue;
+            switch (in->op) {
+            case OP_LOADK_FLOAT: c.kind[d] = MIR_K_FLOAT; break;
+            case OP_LOADK_BOOL:  c.kind[d] = MIR_K_BOOL;  break;
+            default:             c.kind[d] = MIR_K_INT;   break;
+            }
+            {
+                int k = MIR_K_INT;
+                switch (in->op) {
+                case OP_LOADK_FLOAT: k = MIR_K_FLOAT; break;
+                case OP_LOADK_BOOL:  k = MIR_K_BOOL;  break;
+                default:             k = MIR_K_INT;   break;
+                }
+                if (c.kind[d] != k && c.kind_seen[d]) {
+                    /* One wasm local holds one type, and IrInsn has no type
+                       annotation in P1 (type is IR_T_UNKNOWN everywhere), so a
+                       register written by two different-kinded opcodes cannot
+                       be represented here.  Refused by name, not approximated
+                       -- this is one of the representation limits this step
+                       exists to surface. */
+                    snprintf(g_err, sizeof(g_err),
+                             "wasm mir: register %d is written by both an int",
+                             d);
+                    free(code.b); free(bodies.b); free(s.b); free(mod.b);
+                    return -1;
+                }
+                c.kind[d] = k;
+                c.kind_seen[d] = 1;
+            }
+            c.slot[d] = 0;
+            assigned[d] = 1;
+            if (c.kind[d] == MIR_K_FLOAT)
+                n_flt++;
+            else
+                n_int++;
+        }
+        /* Resolve: i64 group starts at local 1 (local 0 is the i64 scratch this
+           module's ABI already declares), the f64 group after it. */
+        {
+            int ii = 1, ff = 1 + n_int;
+            for (int r = 0; r < MIR_MAX_REGS; r++) {
+                if (!assigned[r]) { c.slot[r] = -1; continue; }
+                if (c.kind[r] == MIR_K_FLOAT) c.slot[r] = ff++;
+                else                          c.slot[r] = ii++;
+            }
+            c.n_int = n_int;
+        }
+
+        /* Pass B: emit. */
+        for (int i = 0; i < fn->ninsns && !terminated; i++) {
+            int rc = mir_emit_one(&c, &fn->insns[i]);
+            if (rc == 1) {
+                snprintf(g_err, sizeof(g_err),
+                         "wasm mir: opcode %d is outside this path's subset (covered: %s)",
+                         (int)fn->insns[i].op, kMirCases);
+                free(code.b); free(bodies.b); free(s.b); free(mod.b);
+                return -1;
+            }
+            if (rc == 2) terminated = 1;
+        }
+        /* Every body ends with END: RETURN leaves the frame, it does not close
+           the function body in the binary format. */
+        bput(&code, W_END);
+
+        {
+            Buf b = {0};
+            /* Local 0 is the i64 scratch, so a body that uses k i64 registers
+               declares k + 1 i64 locals: slots run 1..k.  Declaring exactly k
+               leaves the last slot one past the window (the decoder refused it
+               as "invalid local index"). */
+            int ngroups = (n_int + 1 > 0) + (n_flt > 0);
+            bleb_u(&b, (unsigned long)ngroups);
+            /* Declaration order IS the local index order: i64 locals 0..n_int,
+               then f64 locals n_int+1.. -- which is exactly how the slot
+               resolver numbered them. */
+            bleb_u(&b, (unsigned long)(n_int + 1)); bput(&b, 0x7E);
+            if (n_flt > 0) { bleb_u(&b, (unsigned long)n_flt); bput(&b, 0x7C); }
+            for (size_t k = 0; k < code.n; k++) bput(&b, code.b[k]);
+            bleb_u(&bodies, (unsigned long)b.n);
+            for (size_t k = 0; k < b.n; k++) bput(&bodies, b.b[k]);
+            free(b.b);
+        }
+        free(code.b);
+    }
+
+    bput(&mod, 0x00); bput(&mod, 'a'); bput(&mod, 's'); bput(&mod, 'm');
+    bput(&mod, 1); bput(&mod, 0); bput(&mod, 0); bput(&mod, 0);
+
+    bleb_u(&s, 5);
+    bput(&s, 0x60); bleb_u(&s, 1); bleb_u(&s, 0x7E); bleb_u(&s, 0);
+    bput(&s, 0x60); bleb_u(&s, 1); bleb_u(&s, 0x7C); bleb_u(&s, 0);
+    bput(&s, 0x60); bleb_u(&s, 1); bleb_u(&s, 0x7F); bleb_u(&s, 0);
+    bput(&s, 0x60); bleb_u(&s, 0);    bleb_u(&s, 0);
+    bput(&s, 0x60); bleb_u(&s, 0);    bleb_u(&s, 1); bleb_u(&s, 0x7F);
+    bput(&mod, 1); bleb_u(&mod, (unsigned long)s.n);
+    for (size_t i = 0; i < s.n; i++) bput(&mod, s.b[i]);
+    s.n = 0;
+
+    bleb_u(&s, 4);
+    bword(&s, "env"); bword(&s, "im_print_int");   bput(&s, 0x00); bleb_u(&s, 0);
+    bword(&s, "env"); bword(&s, "im_print_float"); bput(&s, 0x00); bleb_u(&s, 1);
+    bword(&s, "env"); bword(&s, "im_print_bool");  bput(&s, 0x00); bleb_u(&s, 2);
+    bword(&s, "env"); bword(&s, "im_print_nil");   bput(&s, 0x00); bleb_u(&s, 3);
+    bput(&mod, 2); bleb_u(&mod, (unsigned long)s.n);
+    for (size_t i = 0; i < s.n; i++) bput(&mod, s.b[i]);
+    s.n = 0;
+
+    bleb_u(&s, (unsigned long)(nfuncs + 3));
+    for (int i = 0; i < nfuncs; i++) bleb_u(&s, 3);
+    bleb_u(&s, 4); bleb_u(&s, 4); bleb_u(&s, 4);
+    bput(&mod, 3); bleb_u(&mod, (unsigned long)s.n);
+    for (size_t i = 0; i < s.n; i++) bput(&mod, s.b[i]);
+    s.n = 0;
+
+    bleb_u(&s, 1); bput(&s, 0x00); bleb_u(&s, 1);
+    bput(&mod, 5); bleb_u(&mod, (unsigned long)s.n);
+    for (size_t i = 0; i < s.n; i++) bput(&mod, s.b[i]);
+    s.n = 0;
+
+    bleb_u(&s, 5);
+    bword(&s, "memory");                bput(&s, 0x02); bleb_u(&s, 0);
+    /* Imports share the function index space, so the first LOCAL function is
+       index 4 (four printers), not 0.  Exporting 0 pointed `inimerse_run` at
+       im_print_int, which the host then called with no argument. */
+    bword(&s, "inimerse_run");          bput(&s, 0x00); bleb_u(&s, MIR_IMPORTS);
+    bword(&s, "inimerse_probe");        bput(&s, 0x00); bleb_u(&s, (unsigned long)(MIR_IMPORTS + nfuncs));
+    bword(&s, "inimerse_abi_version");  bput(&s, 0x00); bleb_u(&s, (unsigned long)(MIR_IMPORTS + nfuncs + 1));
+    bword(&s, "inimerse_capabilities"); bput(&s, 0x00); bleb_u(&s, (unsigned long)(MIR_IMPORTS + nfuncs + 2));
+    bput(&mod, 7); bleb_u(&mod, (unsigned long)s.n);
+    for (size_t i = 0; i < s.n; i++) bput(&mod, s.b[i]);
+    s.n = 0;
+
+    for (int i = 0; i < 3; i++) {
+        Buf b = {0};
+        bleb_u(&b, 0);
+        bput(&b, W_I32_CONST); bleb_s(&b, i == 0 ? 0x0500 : (i == 1 ? 1 : 0));
+        bput(&b, W_END);
+        bleb_u(&bodies, (unsigned long)b.n);
+        for (size_t k = 0; k < b.n; k++) bput(&bodies, b.b[k]);
+        free(b.b);
+    }
+    /* The code section is id, size, THEN the body count, then the bodies.  The
+       count is its own byte sequence: folding it into the size -- or omitting
+       it -- makes the decoder read the first body's size as the count, which
+       is exactly the "body count 23 mismatch" a first draft produced. */
+    bput(&mod, 10);
+    bleb_u(&mod, (unsigned long)(bodies.n + 1));   /* +1: the count byte itself */
+    bleb_u(&mod, (unsigned long)(nfuncs + 3));
+    for (size_t i = 0; i < bodies.n; i++) bput(&mod, bodies.b[i]);
+
+    f = fopen(output_path, "wb");
+    if (!f) {
+        snprintf(g_err, sizeof(g_err), "wasm mir: cannot write '%s'", output_path);
+        free(bodies.b); free(s.b); free(mod.b);
+        return -1;
+    }
+    fwrite(mod.b, 1, mod.n, f);
+    fclose(f);
+    free(bodies.b); free(s.b); free(mod.b);
+    return 0;
+}

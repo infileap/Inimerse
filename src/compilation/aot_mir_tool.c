@@ -21,6 +21,7 @@
 #include "aot_mir.h"
 #include "compiler.h"
 #include "parser.h"
+#include "wasm_backend.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -98,6 +99,27 @@ int main(int argc, char **argv) {
                        f, i, aot_mir_op_name(in->op), in->dst, ir_insn_r2(in), ir_insn_r3(in), fn->argc);
             }
         }
+        return 0;
+    }
+
+    if (strcmp(argv[1], "wasm") == 0) {
+        /* The second consumer: the same IrModule, lowered by the wasm backend
+           instead of the C one.  A consumer that cannot be pointed at the IR
+           without going through the AST is not a second consumer. */
+        if (argc < 4) { usage(); return 2; }
+        IrModule *m = module_of(argv[2]);
+        if (!m) return 1;
+        if (wasm_compile_mir(m, argv[3]) != 0) {
+            printf("IR-WASM-MIR-REFUSED|why=%s|path=mir" NL, wasm_backend_last_error());
+            return 1;
+        }
+        printf("IR-WASM-MIR-EMIT|in=%s|out=%s|funcs=%d|insns=%d|cases=%d|path=mir-opcode-stream" NL,
+               argv[2], argv[3], m->nfuncs, total_insns(m), wasm_mir_case_count());
+        return 0;
+    }
+
+    if (strcmp(argv[1], "wasm-cases") == 0) {
+        printf("IR-WASM-MIR-CASES|n=%d|ops=(%s)" NL, wasm_mir_case_count(), wasm_mir_cases());
         return 0;
     }
 
