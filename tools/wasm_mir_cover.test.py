@@ -254,7 +254,7 @@ _MISSING = object()
 
 
 def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
-                   subset=_MISSING, rows=_MISSING):
+                   subset=_MISSING, rows=_MISSING, orphans=_MISSING):
     """The single predicate main() turns into PASS/FAIL.
 
     It is a pure function so the WIRING can be measured too: each argument is a
@@ -263,24 +263,38 @@ def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
     leave open whether main() consults them -- and a cell cannot see main's
     call site at all.
 
-    So the five ingredients have no defaults worth having: leaving one out raises
+    So the six ingredients have no defaults worth having: leaving one out raises
     instead of silently contributing nothing.  That is the one shape a check can
     enforce here, because "the caller forgot an argument" must be louder than a
     green verdict, not quieter.
     """
     for name, value in (("shell", shell), ("scope", scope),
                         ("unreachable", unreachable), ("subset", subset),
-                        ("rows", rows)):
+                        ("rows", rows), ("orphans", orphans)):
         if value is _MISSING:
             raise TypeError("broken_reading: no %s given -- the verdict has to "
-                            "name all five ingredients, not the convenient ones"
+                            "name all six ingredients, not the convenient ones"
                             % name)
         if value is None:
             raise TypeError("broken_reading: %s=None -- None is what forgetting "
                             "an ingredient looks like; pass the empty list when "
                             "there is nothing there" % name)
     return (bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
-            or bool(rows))
+            or bool(rows) or bool(orphans))
+
+
+def orphan_problems(problems, carried, progress):
+    """Printed defect lines that no ingredient of the verdict carries.
+
+    broken_reading is a symmetric OR over the lists main() hands it, so a
+    problem that is printed but not one of those lists is a line the verdict
+    cannot see: the reading says FAIL nowhere while the evidence sits in its
+    own output.  `carried` is the union of the ingredient lists and `progress`
+    is the incompleteness that is reported on purpose, without failing.
+    """
+    have = set(carried)
+    known = set(progress)
+    return [p for p in problems if p not in have and p not in known]
 
 
 def walk_class(driven, reachable):
@@ -627,9 +641,33 @@ def main():
     # A claimed case that no program drives IS broken, not "in progress":
     # the claim is what a reader trusts, and a label nothing reaches makes the
     # claim false while every number beside it stays plausible.
+    # Every printed PROBLEM has to ride an ingredient of the verdict, or the
+    # reading fails on a line it cannot see.  This is the failure the docstring
+    # above predicted and no cell could catch: import_problems was extended into
+    # problems and left out of the OR, so a module whose every exported index was
+    # off by one printed a PROBLEM and still said PASS with rc=0.
+    carried = (shell_problems(mentions, walks) + list(scope) + subset_probs
+               + row_problems)
+    # The only printed problem that is progress rather than a defect: an
+    # opcode this subset does not implement yet.  It is named here, not matched
+    # by a prefix guess, so a new progress line has to be added deliberately.
+    # It is spelled with the same expression table_problems uses, so equality
+    # holds by construction and a wording drift there turns into an orphan here
+    # instead of silently becoming progress.
+    missing_ops = enum_ops - impl_mir
+    progress = ["impl=mir has no case for %d of the %d declared opcodes (first: %s)"
+                % (len(missing_ops), len(enum_ops),
+                   ",".join(sorted(missing_ops)[:4]))] if missing_ops else []
+    orphans = orphan_problems(problems, carried, progress)
+    print("IR-WASM-MIR-PROBLEM-SCOPE|printed=%d|carried=%d|progress=%d|orphans=%d"
+          "|basis=every-printed-defect-must-ride-an-ingredient-of-the-verdict"
+          "|an-orphan-is-a-line-the-verdict-cannot-see"
+          % (len(problems), len(carried), len(progress), len(orphans)))
+    for p in orphans:
+        print("IR-WASM-MIR-ORPHAN|" + p)
     broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
                             unreachable=unreachable, subset=subset_probs,
-                            rows=row_problems)
+                            rows=row_problems, orphans=orphans)
     ok = not broken
     for p in problems:
         print("IR-WASM-MIR-PROBLEM|" + p)
@@ -708,22 +746,23 @@ def self_check():
            census_scope(399, 410, CENSUS_SKIP), [])
     expect("a narrowed census breaks the reading through the verdict itself",
            broken_reading(shell=[], scope=census_scope(399, 35, CENSUS_SKIP),
-                          unreachable=set(), subset=[], rows=[]), True)
+                          unreachable=set(), subset=[], rows=[], orphans=[]), True)
     expect("a wide census leaves the verdict to the other four",
            broken_reading(shell=[], scope=census_scope(399, 399, CENSUS_SKIP),
-                          unreachable=set(), subset=[], rows=[]), False)
+                          unreachable=set(), subset=[], rows=[], orphans=[]), False)
     # One cell per ingredient.  The predicate is a symmetric OR, so an argument
     # passed in the wrong order is not a defect -- but an ingredient main() stops
     # passing is, and that stays invisible while only the scope branch is tested.
     expect("a shell that never drove the MIR path breaks the reading",
            broken_reading(shell=["no-mir-path"], scope=[], unreachable=set(),
-                          subset=[], rows=[]), True)
+                          subset=[], rows=[], orphans=[]), True)
     expect("a claimed opcode nothing can reach breaks the reading",
            broken_reading(shell=[], scope=[], unreachable={"OP_Z"}, subset=[],
-                          rows=[]), True)
+                          rows=[], orphans=[]), True)
     expect("a subset naming an undeclared opcode breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(),
-                          subset=["work-queue-names-OP_NOT_REAL"], rows=[]), True)
+                          subset=["work-queue-names-OP_NOT_REAL"], rows=[],
+                          orphans=[]), True)
     # The ingredient the driver table added: a row states an answer, and the
     # reading is broken when the program does not reproduce it.  Until this
     # ingredient existed the third column could say "999" while every number
@@ -731,10 +770,23 @@ def self_check():
     expect("a row whose stated answer is not reproduced breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
                           rows=["the row for OP_ADD says the interpreter prints '3' "
-                                "but it printed '999'"]), True)
-    expect("five silent ingredients break nothing",
+                                "but it printed '999'"], orphans=[]), True)
+    # The ingredient whose whole job is to be the last one: a printed defect that
+    # no ingredient carries.  import_problems was exactly that -- it printed
+    # "MIR_IMPORTS is 5 but the module imports 4" while the verdict said PASS.
+    expect("a defect line no ingredient carries breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
-                          rows=[]), False)
+                          rows=[], orphans=["MIR_IMPORTS is 5 but the module imports 4"]),
+           True)
+    expect("an orphan is one that no carried list holds",
+           orphan_problems(["d1", "d2"], ["d1"], []), ["d2"])
+    expect("a defect already carried is not an orphan",
+           orphan_problems(["d1"], ["d1"], []), [])
+    expect("the progress note is reported without being an orphan",
+           orphan_problems(["note"], [], ["note"]), [])
+    expect("six silent ingredients break nothing",
+           broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
+                          rows=[], orphans=[]), False)
 
     def raises(fn):
         try:
@@ -750,7 +802,7 @@ def self_check():
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set())), True)
     expect("a verdict handed None where a list belongs refuses too",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
-                                         subset=None)), True)
+                                         subset=None, orphans=[])), True)
     expect("a verdict that names every ingredient but the driver table refuses",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
                                          subset=[])), True)
