@@ -196,6 +196,52 @@ def census_reachable(tool, root):
     return seen, files, dumped, failed
 
 
+def tracked_im_count(root):
+    """How many .im files the git INDEX says this tree carries.
+
+    Deliberately not the census's own walk: the point is to have a second
+    instrument that does not share the walk's blind spot.  A tree with no index
+    returns -1 rather than 0, because "I could not look" and "there is nothing
+    there" are different readings.
+    """
+    rc, out, _ = run(["git", "-C", str(root), "ls-files", "--", "*.im"])
+    if rc != 0:
+        return -1
+    return sum(1 for line in out.splitlines() if line.strip())
+
+
+def census_scope(tracked, walked, skipped):
+    """Whether the walk covered the corpus the census claims to have read.
+
+    `files=` is produced by the very walk it describes, so a walk that stops
+    early prints a smaller `files=` and the line keeps its shape -- this is the
+    defect the hand-picked `roots` list had, one level up.  The index is an
+    instrument that does not run this walk, so the two can be compared instead
+    of trusting each other.
+
+    A SHORTFALL is a failure: the skip list is hiding corpus, and every reach
+    answer computed below it was computed over a narrowed language.  Extra files
+    (an untracked probe, a new example) make the census wider, which is never
+    wrong.
+    """
+    if tracked < 0 or walked >= tracked:
+        return []
+    return ["the census walked %d .im files but the index holds %d: skipping %s hides "
+            "corpus, so every unreachable verdict below was computed over the part "
+            "that was read" % (walked, tracked, ",".join(skipped) or "nothing")]
+
+
+def broken_reading(shell, scope, unreachable, subset):
+    """The single predicate main() turns into PASS/FAIL.
+
+    It is a pure function so the WIRING can be measured too: each argument is a
+    list of problems, and the question is whether one non-empty list is enough
+    to call the reading broken.  A check that only tested the ingredients would
+    leave open whether main() consults them.
+    """
+    return bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
+
+
 def walk_class(driven, reachable):
     """The three answers the two columns give, as a pure function.
 
@@ -342,6 +388,10 @@ def main():
     # judgment about where the corpus lives and this number must not depend on
     # that judgment -- see census_reachable's note.
     reachable, nfiles, ndumped, nfailed = census_reachable(tool, ROOT)
+    # The scope of that walk is itself a reading, and the walk cannot certify
+    # its own breadth -- see census_scope.
+    ntracked = tracked_im_count(ROOT)
+    scope = census_scope(ntracked, nfiles, CENSUS_SKIP)
     observed = set()
     gaps = set()
     unreachable = set()
@@ -402,6 +452,16 @@ def main():
     print("IR-WASM-MIR-CENSUS|files=%d|dumped=%d|failed=%d|reachable=%d|enum=%d"
           "|basis=dump-over-every-.im-under-the-repo-root"
           % (nfiles, ndumped, nfailed, len(reachable), len(enum_ops)))
+    # ...and the walk's own breadth is a fifth number with its own instrument:
+    # an index that did not walk anywhere.  Without this, a skip list that grew
+    # by one directory produces a smaller census with the same shape.
+    print("IR-WASM-MIR-CENSUS-SCOPE|index=%s|walked=%d|shortfall=%s|skipped=(%s)"
+          "|basis=git-index-vs-this-walk|agree=%s"
+          % ("unreadable" if ntracked < 0 else str(ntracked), nfiles,
+             "unknown" if ntracked < 0 else max(0, ntracked - nfiles),
+             ",".join(CENSUS_SKIP),
+             "unknown" if ntracked < 0 else ("yes" if not scope else "no")))
+    problems.extend(scope)
     # The three classes decide differently: unreachable is a WRONG READING
     # (the denominator counts something no program can produce), driver-gap is
     # missing coverage, and both are reported even though only the first is a
@@ -414,7 +474,8 @@ def main():
     print("IR-WASM-MIR-SUBSET|moved=(%s)|still-on-ast=(%s)|unknown-in-enum=(%s)"
           % (",".join(sorted(moved)), ",".join(still_on_ast),
              ",".join(sorted(set(still_on_ast) - enum_ops)) or "none"))
-    problems.extend(subset_problems(still_on_ast, enum_ops))
+    subset_probs = subset_problems(still_on_ast, enum_ops)
+    problems.extend(subset_probs)
 
     # Two verdicts, deliberately: a BROKEN reading (no MIR path at all, a walk
     # that never happened, an opcode named that does not exist) is a failure
@@ -424,9 +485,8 @@ def main():
     # A claimed case that no program drives IS broken, not "in progress":
     # the claim is what a reader trusts, and a label nothing reaches makes the
     # claim false while every number beside it stays plausible.
-    broken = (bool(shell_problems(mentions, walks))
-              or bool(unreachable)
-              or bool(subset_problems(still_on_ast, enum_ops)))
+    broken = broken_reading(shell_problems(mentions, walks), scope,
+                            unreachable, subset_probs)
     ok = not broken
     for p in problems:
         print("IR-WASM-MIR-PROBLEM|" + p)
@@ -474,12 +534,20 @@ def self_check():
            walk_class(False, False), "unreachable")
     expect("a driven opcode is ok however reachable it looks",
            walk_class(True, True), "ok")
-    expect("reachable but undriven is a driver gap, not a failure",
-           walk_class(False, True), "driver-gap")
-    expect("undriven and unreachable means the denominator is wrong",
-           walk_class(False, False), "unreachable")
-    expect("a driven opcode is ok whatever the census says",
-           walk_class(True, True), "ok")
+    # These three were a second copy of the walk_class trio above, worded a
+    # little differently: repeated cells inflate the check count and make the
+    # suite look broader than it is.  They now test the census's SCOPE, which
+    # had no cell at all.
+    expect("a walk that read fewer files than the index holds is caught",
+           len(census_scope(399, 35, CENSUS_SKIP)), 1)
+    expect("a walk that read every tracked file is silent",
+           census_scope(399, 399, CENSUS_SKIP), [])
+    expect("untracked files found by the walk are wider, not wrong",
+           census_scope(399, 410, CENSUS_SKIP), [])
+    expect("a narrowed census breaks the reading through the verdict itself",
+           broken_reading([], census_scope(399, 35, CENSUS_SKIP), set(), []), True)
+    expect("a wide census leaves the verdict to the other three",
+           broken_reading([], census_scope(399, 399, CENSUS_SKIP), set(), []), False)
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
