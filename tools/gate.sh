@@ -660,7 +660,7 @@ STAGE_SPECS=(
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
   "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
   "release-tags|sha a document records for a tag, against the tag today|stage_release_tags"
-  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences" "shared-tmp|artifacts built at a path every process shares (expect 0)|stage_shared_tmp"
+  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences" "shared-tmp|artifacts built at a path every process shares (expect 0)|stage_shared_tmp" "word-refs|word-form line references that name no tree (ceiling held)|stage_word_refs"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -1169,6 +1169,49 @@ stage_shared_tmp() {
     return 1
   fi
   echo "gate: shared-tmp: verdict=PASS scanned=$scanned failures=$failures; decided by the verdict word, not by the exit status (rc=$rc was read and printed)."
+}
+
+stage_word_refs() {
+  # The sibling of line-refs and obs-markers, for the third way docs/ names a
+  # line: "第 N 行".  Neither of those two rulers sees that form -- line-refs
+  # counts path:digit into its two targets, and obs-markers' citation grammar is
+  # also path:digit -- so a word-form reference can drift to another line, or to
+  # another tree, and nothing goes red.  Measured: a page named line 313 of
+  # tools/mir_roundtrip.test.py twice and line 48/57 twice; the file had grown to
+  # 344 lines and none of those four numbers still pointed at what the sentence
+  # said.  The gate was green throughout.
+  #
+  # Like fences and shared-tmp, this stage reads a verdict WORD and not the exit
+  # status: the tool's rc says "there is something to report", and its verdict
+  # line says whether the something is a debt over the ceiling.  GATE_WORD_REFS_ROOT
+  # points it at a copy, so both directions can be shown without editing the tree
+  # the stage is about.
+  local out rc vline verdict lines occ withtree offenders baseline
+  rc=0
+  # GATE_WORD_REFS_BASELINE lets a fixture copy name its own ceiling: the pinned
+  # 87 belongs to this tree, and a copy with one offender would pass against it.
+  local extra
+  extra=""
+  if [ -n "${GATE_WORD_REFS_BASELINE:-}" ]; then extra="--baseline $GATE_WORD_REFS_BASELINE"; fi
+  out="$(python3 "$REPO_ROOT/tools/check_word_refs.py" --root "${GATE_WORD_REFS_ROOT:-$REPO_ROOT}" $extra 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  vline="$(printf '%s\n' "$out" | grep '^WORD-REF|' | tail -1)"
+  if [ -z "$vline" ]; then
+    echo "gate: word-refs: the tool printed no WORD-REF line (rc=$rc)." >&2
+    echo "gate: word-refs: there is no word to read, so this stage refuses instead of reading the status." >&2
+    return 2
+  fi
+  verdict="$(printf '%s\n' "$vline" | sed -n 's/.*|verdict=\([A-Za-z]*\)$/\1/p')"
+  offenders="$(printf '%s\n' "$vline" | sed -n 's/.*|file-no-tree=\([0-9]*\)|.*/\1/p')"
+  baseline="$(printf '%s\n' "$vline" | sed -n 's/.*|baseline=\([0-9]*\)|.*/\1/p')"
+  if [ "$verdict" != "PASS" ]; then
+    echo "gate: word-refs: verdict=$verdict offenders=$offenders baseline=$baseline" >&2
+    echo "gate: word-refs: the verdict line was: $vline" >&2
+    echo "gate: word-refs: name the tree each number was read on (an [obs:] marker, or the revision), or point at the symbol instead of the line." >&2
+    echo "gate: word-refs: the tool's exit status was rc=$rc; it was read and printed here, and it did not decide this stage." >&2
+    return 1
+  fi
+  echo "gate: word-refs: verdict=PASS offenders=$offenders baseline=$baseline; decided by the verdict word, not by the exit status (rc=$rc was read and printed)."
 }
 
 GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
