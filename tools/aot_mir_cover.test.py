@@ -98,6 +98,8 @@ CASE_OP = re.compile(r"case (OP_[A-Z0-9_]+):")
 # The exit code every prerequisite refusal uses.  Named once, so the promise can
 # be asserted instead of restated.
 REFUSED_RC = 2
+# The verdict shape: a reading token, not a diagnostic sentence with a pipe in it.
+REFUSAL_SHAPE = re.compile(r"^IR-[A-Z0-9-]+-REFUSED\|[^|]+\|")
 # The real census line carries more fields than the two that matter here
 # (op=, interp=, then aot=/wasm=/why=), so the tail is optional -- but the
 # opcode and the count are not.  Validated against a captured line below.
@@ -389,6 +391,17 @@ def self_check():
     # where nobody reads the output at all.
     expect("a missing prerequisite exits 2, not 0",
            REFUSED_RC, 2)
+    # And the verdict goes to ONE stream.  Two shapes exist in this repository
+    # today -- aot_cover refuses on stderr (a caller watching stdout sees nothing),
+    # this file used to refuse on both (the same sentence twice) -- and neither lets
+    # one reader get the verdict and the detail.  Verdict on stdout, diagnostics on
+    # stderr, asserted here so the next refusal cannot drift back.
+    expect("the refusal line is a verdict, so it carries the verdict shape",
+           REFUSAL_SHAPE.search("IR-AOT-MIR-REFUSED|why=prerequisite-missing|"
+                                "tool=/x/build/inimerse|effect=none") is not None, True)
+    expect("...and a diagnostics line is not mistaken for one",
+           REFUSAL_SHAPE.search("aot_mir_cover: REFUSED|missing /x -- build it first")
+           , None)
     expect("a table entry the encoding does not declare is caught",
            len(lowering_problems({"OP_A", "OP_Z"}, {"OP_A", "OP_Z"},
                                  ["OP_A", "OP_Z"], {"OP_A"})), 1)
@@ -505,21 +518,21 @@ def main():
     mir_tool = build / "aot-mir"
     # A refusal and a pass must not share an exit code, and they must not share a
     # silence either: `RC=0` with no output on stdout is the shape of "the check
-    # passed", so a prerequisite that is missing says so on stdout as well, in the
-    # reading vocabulary, and exits 2.  Measured 2026-11-01 by peer, who read an
-    # empty result on an unbuilt tree as "his check found nothing wrong".
+    # passed".  So a missing prerequisite prints ONE line on stdout, in the reading
+    # vocabulary, and exits 2 -- and it prints nothing on stderr, because stderr is
+    # for diagnostics (a traceback, a per-file problem) and a verdict is not one.
+    # Peer measured 2026-11-01 that aot_cover puts its refusal on stderr (stdout 0
+    # lines) and that this file put it on BOTH; neither shape lets one reader see
+    # both the verdict and the detail, and the second one repeats it.
+    def refuse(tool, effect):
+        print("IR-AOT-MIR-REFUSED|why=prerequisite-missing|tool=%s|effect=%s" % (tool, effect))
+        return REFUSED_RC
+
     for tool in (interp, mir_tool):
         if not tool.exists():
-            print("aot_mir_cover: REFUSED|missing %s -- build it first" % tool, file=sys.stderr)
-            print("IR-AOT-MIR-REFUSED|why=prerequisite-missing|tool=%s|effect=the-corpus-was-"
-                  "not-run-so-nothing-below-was-measured" % tool)
-            return 2
+            return refuse(tool, "the-corpus-was-not-run-so-nothing-below-was-measured")
     if not AOT_PIN.exists():
-        print("aot_mir_cover: REFUSED|missing %s -- the denominator is read from it"
-              % AOT_PIN, file=sys.stderr)
-        print("IR-AOT-MIR-REFUSED|why=prerequisite-missing|tool=%s|effect=there-is-no-"
-              "denominator-so-no-fraction-can-be-reported" % AOT_PIN)
-        return 2
+        return refuse(AOT_PIN, "there-is-no-denominator-so-no-fraction-can-be-reported")
 
     aot = json.loads(AOT_PIN.read_text())
     aot_covered = list(aot["covered_ops"])
