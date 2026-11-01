@@ -154,7 +154,13 @@ def table_problems(impl_cases, enum_ops):
     return problems
 
 
-def census_reachable(tool, roots):
+# Directories that hold COPIES of the corpus rather than corpus: every worktree
+# carries its own examples/, so walking into one double-counts files and makes
+# the census slower without making it wider.  build/ holds generated .im output.
+CENSUS_SKIP = ("build", ".worktrees", ".scratch", ".git", "node_modules")
+
+
+def census_reachable(tool, root):
     """Which opcodes a SOURCE CENSUS can produce -- an instrument independent of
     the walk.
 
@@ -163,18 +169,31 @@ def census_reachable(tool, roots):
     DRIVER, not about the language, and confusing the two sends a reader to fix
     the wrong thing: a driver gap means write a better test, an unreachable
     opcode means the denominator is wrong.
+
+    It reads the WHOLE repo, and says so in three numbers instead of one:
+    `files=` walked, `dumped=` that the front end accepted, `failed=` that it
+    rejected.  An earlier version of this function took a hand-picked list of
+    four roots and printed `basis=dump-over-every-.im-in-the-repo` next to the
+    resulting count.  The label was the lie, not the number: the four roots hold
+    35 of the repo's 399 .im files, and over that fifth of the corpus 24 of the
+    67 opcodes look unreachable -- which is exactly the "fix the denominator"
+    conclusion a census is supposed to rule OUT.  A narrowed census does not
+    fail loudly; it under-reports reachability and reads as evidence.
     """
     seen = set()
-    files = 0
-    for root in roots:
-        for p in sorted(Path(root).rglob("*.im")):
-            files += 1
-            rc, out, _ = run([tool, "dump", p])
-            if rc != 0:
-                continue
-            for m in re.finditer(r"op=(OP_[A-Z0-9_]+)", out):
-                seen.add(m.group(1))
-    return seen, files
+    files = dumped = failed = 0
+    for p in sorted(Path(root).rglob("*.im")):
+        if any(part in CENSUS_SKIP for part in p.relative_to(root).parts):
+            continue
+        files += 1
+        rc, out, _ = run([tool, "dump", p])
+        if rc != 0 or not out.strip():
+            failed += 1
+            continue
+        dumped += 1
+        for m in re.finditer(r"op=(OP_[A-Z0-9_]+)", out):
+            seen.add(m.group(1))
+    return seen, files, dumped, failed
 
 
 def walk_class(driven, reachable):
@@ -318,12 +337,11 @@ def main():
     # real entry point, compared with the interpreter on exit status and the
     # last line printed.  "Compiles" is not "computes".
     # The census runs FIRST and over the whole corpus: it answers "can this
-    # language reach the opcode", independently of my driver.
-    # Roots chosen by what EXISTS: a missing root would make the census look
-    # thorough while reading nothing.
-    roots = [d for d in (ROOT / "examples", ROOT / "tests", ROOT / "bench",
-                         ROOT / "mods", ROOT / "tools") if d.is_dir()]
-    reachable, nfiles = census_reachable(tool, roots)
+    # language reach the opcode", independently of my driver.  It walks ROOT
+    # rather than a hand-picked list of subdirectories, because a list is a
+    # judgment about where the corpus lives and this number must not depend on
+    # that judgment -- see census_reachable's note.
+    reachable, nfiles, ndumped, nfailed = census_reachable(tool, ROOT)
     observed = set()
     gaps = set()
     unreachable = set()
@@ -378,8 +396,12 @@ def main():
         elif cls == "unreachable":
             unreachable.add(op)
             print("IR-WASM-MIR-STATE|op=%s|class=unreachable|fix=fix-the-denominator" % op)
-    print("IR-WASM-MIR-CENSUS|files=%d|reachable=%d|basis=dump-over-every-.im-in-the-repo"
-          % (nfiles, len(reachable)))
+    # The census line carries its own four numbers, because `reachable` alone is
+    # not a reading: without `dumped`/`failed` next to it, a census that read a
+    # fifth of the corpus and a census that read all of it print the same shape.
+    print("IR-WASM-MIR-CENSUS|files=%d|dumped=%d|failed=%d|reachable=%d|enum=%d"
+          "|basis=dump-over-every-.im-under-the-repo-root"
+          % (nfiles, ndumped, nfailed, len(reachable), len(enum_ops)))
     # The three classes decide differently: unreachable is a WRONG READING
     # (the denominator counts something no program can produce), driver-gap is
     # missing coverage, and both are reported even though only the first is a
