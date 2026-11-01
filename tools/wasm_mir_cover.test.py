@@ -55,14 +55,14 @@ WALK_CASES = [
     # `say +5` lowers to LOADK_INT, MOV, SAY, HALT -- every one of them on the
     # moved set -- and the MIR path answers it.
     #
-    # Two previous beliefs were wrong here, and both were about WHERE a construct
-    # can reach an opcode rather than about the opcode.  An assignment inside a
-    # function body emits OP_MOV (`func f(){ x = 1; return x }`) but needs
-    # CALL_FUNC and RETURN to run, which this path does not lower; a top-level
-    # assignment compiles to STORE_GLOBAL instead.  From those two I concluded the
-    # driver was impossible until functions were on MIR, and shipped OP_MOV as a
-    # permanent driver gap.  It was not impossible: I had not asked which of the
-    # emission sites runs at top level.
+    # Both beliefs I had written down here were about WHERE a construct can reach
+    # an opcode rather than about the opcode: that OP_MOV comes from an assignment
+    # inside a function body (`func f(){ x = 1; return x }`), which needs
+    # CALL_FUNC and RETURN to run -- neither lowered here; and that a top-level
+    # assignment compiles to STORE_GLOBAL.  From those I concluded the driver was
+    # impossible until functions were on MIR, and shipped OP_MOV as a permanent
+    # driver gap.  It was not impossible: I had not read the emission site that
+    # runs at top level.
     ("OP_MOV",         "say +5\n",                 "5"),
     ("OP_ADD",         "say 1 + 2\n",               "3"),
     ("OP_SUB",         "say 10 - 4\n",              "6"),
@@ -458,10 +458,11 @@ def main():
         # An opcode is DRIVEN when a program reached it AND the answer matched.
         # A reachable opcode whose answer does not match is a driver gap, printed
         # rather than counted either way -- and a gap is a claim about my drivers,
-        # not about the language.  OP_MOV sat in this column for a while because
-        # I had looked at the two emission sites that need a function body and
-        # stopped there; the site that runs at top level was three hundred lines
-        # later in the same switch.
+        # not about the language.  OP_MOV sat in this column while I had only read
+        # the emission sites that need a function body; the one that runs at top
+        # level is EXPR_UNARY's arm whose body is
+        # `emit(comp->curBC, OP_MOV, r, operand, 0)`, and I had not read it.
+        # No count-word belongs here: the sites drift, and an ordinal drifts worse.
         reach = op in reachable
         cls = walk_class(driven, reach)
         print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=%s|reachable=%s|class=%s|%s"
