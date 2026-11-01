@@ -1981,3 +1981,12 @@ set_tests_properties(pin_tree_selftest_regression PROPERTIES WORKING_DIRECTORY $
 add_test(NAME word_refs_selftest_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "WORD-REF-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_word_refs.py --self-test)
 set_tests_properties(word_refs_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
+
+# p1_roles measures the interpreter's operand roles against what its disassembler
+# prints, and it also refuses a report whose citations are bare line numbers.
+# Its input is src/vm/vm.c, which changes by commit -- so this is registered like
+# its neighbours (gated_run pins the verdict shape, no PASS_REGULAR_EXPRESSION)
+# rather than pointed at the report, which docs/ edits legitimately move.
+add_test(NAME p1_roles_selftest_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "P1-ROLES-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/p1_roles.py --self-test)
+set_tests_properties(p1_roles_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
