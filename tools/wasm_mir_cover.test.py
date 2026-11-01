@@ -173,8 +173,9 @@ def census_reachable(tool, root):
     It reads the WHOLE repo, and says so in three numbers instead of one:
     `files=` walked, `dumped=` that the front end accepted, `failed=` that it
     rejected.  An earlier version of this function took a hand-picked list of
-    four roots and printed `basis=dump-over-every-.im-in-the-repo` next to the
-    resulting count.  The label was the lie, not the number: the four roots hold
+    five candidate roots -- examples, tests, bench, mods, tools -- of which three
+    exist, and printed `basis=dump-over-every-.im-in-the-repo` next to the
+    resulting count.  The label was the lie, not the number: those three hold
     35 of the repo's 399 .im files, and over that fifth of the corpus 24 of the
     67 opcodes look unreachable -- which is exactly the "fix the denominator"
     conclusion a census is supposed to rule OUT.  A narrowed census does not
@@ -231,14 +232,30 @@ def census_scope(tracked, walked, skipped):
             "that was read" % (walked, tracked, ",".join(skipped) or "nothing")]
 
 
-def broken_reading(shell, scope, unreachable, subset):
+_MISSING = object()
+
+
+def broken_reading(shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
+                   subset=_MISSING):
     """The single predicate main() turns into PASS/FAIL.
 
     It is a pure function so the WIRING can be measured too: each argument is a
     list of problems, and the question is whether one non-empty list is enough
     to call the reading broken.  A check that only tested the ingredients would
-    leave open whether main() consults them.
+    leave open whether main() consults them -- and a cell cannot see main's
+    call site at all.
+
+    So the four ingredients have no defaults worth having: leaving one out raises
+    instead of silently contributing nothing.  That is the one shape a check can
+    enforce here, because "the caller forgot an argument" must be louder than a
+    green verdict, not quieter.
     """
+    for name, value in (("shell", shell), ("scope", scope),
+                        ("unreachable", unreachable), ("subset", subset)):
+        if value is _MISSING:
+            raise TypeError("broken_reading: no %s given -- the verdict has to "
+                            "name all four ingredients, not the convenient ones"
+                            % name)
     return bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
 
 
@@ -548,6 +565,27 @@ def self_check():
            broken_reading([], census_scope(399, 35, CENSUS_SKIP), set(), []), True)
     expect("a wide census leaves the verdict to the other three",
            broken_reading([], census_scope(399, 399, CENSUS_SKIP), set(), []), False)
+    # One cell per ingredient.  The predicate is a symmetric OR, so an argument
+    # passed in the wrong order is not a defect -- but an ingredient main() stops
+    # passing is, and that stays invisible while only the scope branch is tested.
+    expect("a shell that never drove the MIR path breaks the reading",
+           broken_reading(["no-mir-path"], [], set(), []), True)
+    expect("a claimed opcode nothing can reach breaks the reading",
+           broken_reading([], [], {"OP_Z"}, []), True)
+    expect("a subset naming an undeclared opcode breaks the reading",
+           broken_reading([], [], set(), ["work-queue-names-OP_NOT_REAL"]), True)
+    expect("four silent ingredients break nothing",
+           broken_reading([], [], set(), []), False)
+
+    def raises(fn):
+        try:
+            fn()
+            return False
+        except TypeError:
+            return True
+
+    expect("a verdict that was passed three of four ingredients refuses to answer",
+           raises(lambda: broken_reading([], [], set())), True)
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
