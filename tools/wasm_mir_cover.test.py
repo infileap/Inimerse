@@ -49,16 +49,21 @@ WALK_CASES = [
     ("OP_LOADK_INT",   "say 7\n",                   "7"),
     ("OP_LOADK_BOOL",  "say true\n",                "true"),
     ("OP_LOADK_FLOAT", "say 1.5\n",                 "1.5"),
-    # OP_MOV IS reachable.  An assignment INSIDE a function body followed by a
-    # return emits it (func f(){ x = 1; return x }); a TOP-LEVEL assignment
-    # compiles to STORE_GLOBAL instead.  My first driver wrote the assignment at
-    # top level and I read "my driver missed it" as "nothing reaches it" --
-    # that is driver-gap, not unreachable, and it is the distinction this file
-    # now draws with the census column below.
-    # This driver must emit OP_MOV without also requiring CALL_FUNC (34) or
-    # RETURN, which this path does not lower yet.  `x = a` inside a function body
-    # still needs a call to run, so the driver goes through the interpreter and
-    # only the MIR side is checked for emission -- see the driven= column.
+    # OP_MOV is drivable at top level: unary plus on a non-temporary operand
+    # allocates a register and copies the operand into it (EXPR_UNARY in
+    # src/compiler/compiler.c, the `else emit(OP_MOV, r, operand)` arm), so
+    # `say +5` lowers to LOADK_INT, MOV, SAY, HALT -- every one of them on the
+    # moved set -- and the MIR path answers it.
+    #
+    # Two previous beliefs were wrong here, and both were about WHERE a construct
+    # can reach an opcode rather than about the opcode.  An assignment inside a
+    # function body emits OP_MOV (`func f(){ x = 1; return x }`) but needs
+    # CALL_FUNC and RETURN to run, which this path does not lower; a top-level
+    # assignment compiles to STORE_GLOBAL instead.  From those two I concluded the
+    # driver was impossible until functions were on MIR, and shipped OP_MOV as a
+    # permanent driver gap.  It was not impossible: I had not asked which of the
+    # emission sites runs at top level.
+    ("OP_MOV",         "say +5\n",                 "5"),
     ("OP_ADD",         "say 1 + 2\n",               "3"),
     ("OP_SUB",         "say 10 - 4\n",              "6"),
     ("OP_MUL",         "say 3 * 5\n",               "15"),
@@ -451,9 +456,12 @@ def main():
             detail = "why=%s" % ((out_e + err_e).strip().splitlines()[0][:100]
                                   if (out_e + err_e).strip() else "-")
         # An opcode is DRIVEN when a program reached it AND the answer matched.
-        # For OP_MOV the answer cannot match yet (the program that produces it
-        # also needs CALL_FUNC, which this path does not lower), so it is
-        # reported as a driver gap rather than silently counted either way.
+        # A reachable opcode whose answer does not match is a driver gap, printed
+        # rather than counted either way -- and a gap is a claim about my drivers,
+        # not about the language.  OP_MOV sat in this column for a while because
+        # I had looked at the two emission sites that need a function body and
+        # stopped there; the site that runs at top level was three hundred lines
+        # later in the same switch.
         reach = op in reachable
         cls = walk_class(driven, reach)
         print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=%s|reachable=%s|class=%s|%s"
