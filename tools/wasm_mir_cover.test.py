@@ -27,6 +27,14 @@ Readings:
             two numbers above are the reconciliation -- the ingredient that
             made a deleted driver turn the verdict red instead of moving a
             label nobody checked.
+  IR-WASM-MIR-KIND-CONFLICT|rows=N|writes=W|conflicts=C|type-checks=T|
+            type-conflicts=TC|clash-rows=R|basis=...|agree=yes|no
+            two counters from the emitter, printed on both its paths: writes is
+            what the value-type check looked at, conflicts what it caught.  A
+            check that stopped running prints writes=0, which is the same shape
+            as a clean run unless the write count rides on the line.  R is
+            checked against a pinned literal, not against the table it was
+            counted from.
   IR-WASM-MIR-PROBLEM-SCOPE|printed=N|carried=M|orphans=K|basis=...|rule=...
   IR-WASM-MIR-VERDICT|PASS|FAIL|...|moved=(claim)|driven=(measured)|...
 
@@ -48,6 +56,15 @@ CASE_OP = re.compile(r"case (OP_[A-Z0-9_]+):")
 CASE_RE = re.compile(r"^IR-WASM-MIR-CASES[|]n=(\d+)[|]ops=\((.*)\)$")
 EMIT_RE = re.compile(r"^IR-WASM-MIR-EMIT[|](.*)$")
 REFUSED_RC = 2
+# The value-type clash boundary is exercised by exactly this many WALK rows, and
+# that number is a pinned literal on purpose.  Deriving it from the table would
+# be the tautology this batch already hit once: delete the row and the
+# expectation shrinks with it, so the emitter's clash counter goes unexercised
+# and the reading stays green.  A literal turns "the boundary stopped being
+# measured" into a red word, and adding a second clash row reddens until this
+# number is updated with it.
+EXPECT_CLASH_ROWS = 1
+CONFLICT_RE = re.compile(r"^IR-WASM-MIR-KIND-CONFLICT[|]writes=(\d+)[|]conflicts=(\d+)[|]type-checks=(\d+)[|]type-conflicts=(\d+)[|]")
 
 # One program per claimed opcode.  Each computes something the interpreter also
 # computes, so `same=yes` means the MIR path answered, not that it compiled.
@@ -86,6 +103,15 @@ WALK_CASES = [
     # two refusal messages existed and no program in the corpus ever reached
     # them, which is a declared boundary nobody had measured.
     ("OP_ADD",         "say 1.5 + true\n",        ("refused", "mixes a float operand")),
+    # The register-clash form: one register written as integer and then as
+    # float.  Before claim_slot the emitter had no dst-kind check on the
+    # LOADK_FLOAT path at all, so this program produced a module that node
+    # rejected with "local.set[0] expected type i64, found f64.const of type
+    # f64" -- a message naming an instruction index and saying nothing about the
+    # source program or which opcode created the integer.  The row declares the
+    # refusal, and the substring it names is the one that identifies the writer.
+    ("OP_ADD",         "say 1 + 2\nsay 1.5 + 2.5\n",
+                       ("refused", "was made integer by OP_LOADK_INT")),
     ("OP_MUL",         "say 3 * 5\n",               "15"),
     ("OP_SAY",         "say 1\n",                   "1"),
     ("OP_HALT",        "say 0\n",                   "0"),
@@ -289,7 +315,7 @@ _MISSING = object()
 
 def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
                    subset=_MISSING, rows=_MISSING, claims=_MISSING,
-                   orphans=_MISSING):
+                   kinds=_MISSING, orphans=_MISSING):
     """The single predicate main() turns into PASS/FAIL.
 
     It is a pure function so the WIRING can be measured too: each argument is a
@@ -309,7 +335,7 @@ def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
     """
     for name, value in (("shell", shell), ("scope", scope),
                         ("unreachable", unreachable), ("subset", subset),
-                        ("rows", rows), ("claims", claims),
+                        ("rows", rows), ("claims", claims), ("kinds", kinds),
                         ("orphans", orphans)):
         if value is _MISSING:
             raise TypeError("broken_reading: no %s given -- the verdict has to "
@@ -320,7 +346,7 @@ def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
                             "an ingredient looks like; pass the empty list when "
                             "there is nothing there" % name)
     return (bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
-            or bool(rows) or bool(claims) or bool(orphans))
+            or bool(rows) or bool(claims) or bool(kinds) or bool(orphans))
 
 
 def orphan_problems(problems, carried):
@@ -339,6 +365,73 @@ def orphan_problems(problems, carried):
     """
     have = set(carried)
     return [p for p in problems if p not in have]
+
+
+def kind_problems(runs, clashes, declared):
+    """The value-type claims the emitter records, checked against what it printed.
+
+    runs is [(label, returncode, counters)], counters being the tuple the tool
+    prints on its own IR-WASM-MIR-KIND-CONFLICT line -- or None when that line is
+    absent.  clashes is the number of rows the emitter refused because one
+    register had already been claimed by another value type.
+
+    The counters exist because a check that stops running and a check that
+    passes look identical from the outside: both print no refusal.  Printing the
+    number of writes it checked is what tells the two apart, so a run that emits
+    a module without recording a single claim is a problem here, not a silence.
+    """
+    problems = []
+    missing = [label for label, _rc, ctr in runs if ctr is None]
+    if missing:
+        problems.append(
+            "the emitter printed no value-type counter for %d row(s) (%s); a "
+            "counter nobody prints is a check nobody can falsify"
+            % (len(missing), ",".join(missing)))
+    silent = [label for label, rc, ctr in runs
+              if ctr is not None and rc == 0 and ctr[0] == 0]
+    if silent:
+        problems.append(
+            "the emitter accepted %d program(s) while claiming no register at all "
+            "(%s): the check was skipped, not passed"
+            % (len(silent), ",".join(silent)))
+    if clashes != declared:
+        problems.append(
+            "the driver table declared %d value-type clash row(s) and the emitter "
+            "refused %d: the counter that makes this check falsifiable is exercised "
+            "by that row, and a pinned number is what stops the expectation shrinking "
+            "with the table" % (declared, clashes))
+    found = [label for label, _rc, ctr in runs if ctr is not None and ctr[1] > 0]
+    if len(found) < clashes:
+        problems.append(
+            "the emitter refused %d program(s) because one register was claimed by "
+            "two value types, but its own counter recorded %d (%s)"
+            % (clashes, len(found), ",".join(found) or "none"))
+    lies = [label for label, _rc, ctr in runs if ctr is not None and ctr[3] > 0]
+    if lies:
+        problems.append(
+            "a builder labelled an instruction with a value type the opcode "
+            "contradicts (%s); the derived kind and the declared type cannot both "
+            "be true, and the counter that catches it has to stay exercised"
+            % ",".join(lies))
+    return problems
+
+
+def label_gap(type_checks):
+    """The ir->type cross-check counted its runs; zero runs is not agreement.
+
+    Its sibling counter pair rides on the KIND-CONFLICT line, where a check that
+    stops asking shows up as writes=0.  The label half fails the opposite way:
+    it cannot ask yet, because every one of the places that build an IrInsn
+    writes IR_T_UNKNOWN, so the arm has never executed for any program.  A zero
+    left alone on that line reads as "checked, found nothing", which is the same
+    shape as the OP_MOV case label that claimed the emitter handled a move no
+    program could reach.  So it prints in the progress channel instead.
+    """
+    if type_checks == 0:
+        return ("the ir->type cross-check ran 0 times: every instruction the "
+                "builder produces is labelled IR_T_UNKNOWN, so the label arm is "
+                "unexercised rather than passing")
+    return None
 
 
 def row_stated(rc_e, reason, got, want):
@@ -604,6 +697,8 @@ def main():
     # row whose answer the interpreter does not reproduce is a BROKEN reading,
     # while "58 opcodes are not moved yet" is only incompleteness.
     row_problems = []
+    kind_runs = []
+    clash_rows = []
     for op, n, src_text, want in rows:
         executed += 1
         rows_by_op[op] = n
@@ -613,6 +708,14 @@ def main():
         rc_e, out_e, err_e = run([tool, "wasm", p, w])
         reason_lines = (out_e + err_e).strip().splitlines()
         reason = reason_lines[0] if reason_lines else "-"
+        ctr = None
+        for ln in reason_lines:
+            m = CONFLICT_RE.match(ln.strip())
+            if m:
+                ctr = tuple(int(x) for x in m.groups())
+        kind_runs.append(("%s row %d" % (op, n), rc_e, ctr))
+        if "one wasm local holds one value type" in (out_e + err_e):
+            clash_rows.append("%s row %d" % (op, n))
         driven = False
         if rc_e == 0:
             rc_i, out_i, _ = run([interp, "--no-mods", "run", p])
@@ -638,6 +741,30 @@ def main():
         stated_by_op.setdefault(op, []).append((ok, kind))
         print("IR-WASM-MIR-WALK-ROW|op=%s|row=%d|src=%r|%s"
               % (op, n, src_text, detail))
+
+    # The counters ride in one reading of their own.  Both halves are printed:
+    # writes is what the check looked at, conflicts is what it caught.  A check
+    # that stopped running reports writes=0 and no conflict, which is the same
+    # shape as a clean run unless the write count is on the line.
+    kind_probs = kind_problems(kind_runs, len(clash_rows), EXPECT_CLASH_ROWS)
+    kw = sum((ctr[0] for _l, _rc, ctr in kind_runs if ctr), 0)
+    kc = sum((ctr[1] for _l, _rc, ctr in kind_runs if ctr), 0)
+    tk = sum((ctr[2] for _l, _rc, ctr in kind_runs if ctr), 0)
+    tkc = sum((ctr[3] for _l, _rc, ctr in kind_runs if ctr), 0)
+    print("IR-WASM-MIR-KIND-CONFLICT|rows=%d|writes=%d|conflicts=%d|type-checks=%d"
+          "|type-conflicts=%d|clash-rows=%d|basis=every-register-write-claims-a-"
+          "value-type-and-the-count-is-printed-on-both-paths|agree=%s"
+          % (len(kind_runs), kw, kc, tk, tkc, len(clash_rows),
+             "yes" if not kind_probs else "no"))
+    problems.extend(kind_probs)
+    # The second pair on that line is a different kind of claim: the ir->type
+    # cross-check cannot run until the builder starts labelling instructions, and
+    # all four places that build an IrInsn write IR_T_UNKNOWN.  type-checks=0 is
+    # therefore an arm that never executed, and it says so in the progress
+    # channel rather than leaving a zero that reads as "checked, found nothing".
+    gap = label_gap(tk)
+    if gap:
+        print("IR-WASM-MIR-NOT-YET|" + gap)
 
     # EVERY claimed opcode gets a line, whether or not this file has a driver for
     # it: a claimed case with no driver is the thing the reader most needs told,
@@ -760,8 +887,13 @@ def main():
     # above predicted and no cell could catch: import_problems was extended into
     # problems and left out of the OR, so a module whose every exported index was
     # off by one printed a PROBLEM and still said PASS with rc=0.
+    # carried is the union of the ingredient lists, and it has to stay the union:
+    # the value-type ingredient was added to the OR but not to this line at
+    # first, so its one PROBLEM printed, the verdict failed through it, and
+    # PROBLEM-SCOPE still said orphans=1 -- a defect line the tool reported as
+    # invisible while it was the thing turning the reading red.
     carried = (shell_problems(mentions, walks) + list(scope) + subset_probs
-               + row_problems + claim_probs)
+               + row_problems + claim_probs + kind_probs)
     orphans = orphan_problems(problems, carried)
     print("IR-WASM-MIR-PROBLEM-SCOPE|printed=%d|carried=%d|orphans=%d"
           "|basis=every-printed-PROBLEM-must-ride-an-ingredient-of-the-verdict"
@@ -772,7 +904,7 @@ def main():
     broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
                             unreachable=unreachable, subset=subset_probs,
                             rows=row_problems, claims=claim_probs,
-                            orphans=orphans)
+                            orphans=orphans, kinds=kind_probs)
     ok = not broken
     for p in problems:
         print("IR-WASM-MIR-PROBLEM|" + p)
@@ -864,23 +996,23 @@ def self_check():
            census_scope(399, 410, CENSUS_SKIP), [])
     expect("a narrowed census breaks the reading through the verdict itself",
            broken_reading(shell=[], scope=census_scope(399, 35, CENSUS_SKIP),
-                          unreachable=set(), subset=[], rows=[], claims=[], orphans=[]), True)
+                          unreachable=set(), subset=[], rows=[], claims=[], orphans=[], kinds=[]), True)
     expect("a wide census leaves the verdict to the other four",
            broken_reading(shell=[], scope=census_scope(399, 399, CENSUS_SKIP),
-                          unreachable=set(), subset=[], rows=[], claims=[], orphans=[]), False)
+                          unreachable=set(), subset=[], rows=[], claims=[], orphans=[], kinds=[]), False)
     # One cell per ingredient.  The predicate is a symmetric OR, so an argument
     # passed in the wrong order is not a defect -- but an ingredient main() stops
     # passing is, and that stays invisible while only the scope branch is tested.
     expect("a shell that never drove the MIR path breaks the reading",
            broken_reading(shell=["no-mir-path"], scope=[], unreachable=set(),
-                          subset=[], rows=[], claims=[], orphans=[]), True)
+                          subset=[], rows=[], claims=[], orphans=[], kinds=[]), True)
     expect("a claimed opcode nothing can reach breaks the reading",
            broken_reading(shell=[], scope=[], unreachable={"OP_Z"}, subset=[],
-                          rows=[], claims=[], orphans=[]), True)
+                          rows=[], claims=[], orphans=[], kinds=[]), True)
     expect("a subset naming an undeclared opcode breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(),
                           subset=["work-queue-names-OP_NOT_REAL"], rows=[],
-                          claims=[], orphans=[]), True)
+                          claims=[], orphans=[], kinds=[]), True)
     # The ingredient the driver table added: a row states an answer, and the
     # reading is broken when the program does not reproduce it.  Until this
     # ingredient existed the third column could say "999" while every number
@@ -888,13 +1020,13 @@ def self_check():
     expect("a row whose stated answer is not reproduced breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
                           rows=["the row for OP_ADD says the interpreter prints '3' "
-                                "but it printed '999'"], claims=[], orphans=[]), True)
+                                "but it printed '999'"], claims=[], orphans=[], kinds=[]), True)
     # The ingredient whose whole job is to be the last one: a printed defect that
     # no ingredient carries.  import_problems was exactly that -- it printed
     # "MIR_IMPORTS is 5 but the module imports 4" while the verdict said PASS.
     expect("a defect line no ingredient carries breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
-                          rows=[], claims=[], orphans=["MIR_IMPORTS is 5 but the module imports 4"]),
+                          rows=[], claims=[], orphans=["MIR_IMPORTS is 5 but the module imports 4"], kinds=[]),
            True)
     expect("an orphan is one that no carried list holds",
            orphan_problems(["d1", "d2"], ["d1"]), ["d2"])
@@ -904,7 +1036,7 @@ def self_check():
            orphan_problems(["note"], []), ["note"])
     expect("six silent ingredients break nothing",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
-                          rows=[], claims=[], orphans=[]), False)
+                          rows=[], claims=[], orphans=[], kinds=[]), False)
     # A row declares one of two things: an answer, or a refusal.  Both are
     # statements, and before this helper existed only the first could be true --
     # a legal refusal was recorded as a false statement and the opcode it certifies
@@ -947,7 +1079,7 @@ def self_check():
     expect("an undriven claimed opcode breaks the verdict",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
                           rows=[], claims=walked_problems({"OP_ADD", "OP_MUL"},
-                                                       {"OP_ADD"}), orphans=[]),
+                                                       {"OP_ADD"}), orphans=[], kinds=[]),
            True)
 
     def raises(fn):
@@ -961,17 +1093,17 @@ def self_check():
     # unnamed ingredient is refused before the body runs; the sentinel and the
     # None check refuse a call that spells the name and leaves the value out.
     expect("a verdict that does not name every ingredient refuses to answer",
-           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(), claims=[])), True)
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(), claims=[], kinds=[])), True)
     expect("a verdict handed None where a list belongs refuses too",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
-                                         subset=None, claims=[], orphans=[])), True)
+                                         subset=None, claims=[], orphans=[], kinds=[])), True)
     expect("a verdict that names every ingredient but the driver table refuses",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
-                                         subset=[], claims=[])), True)
+                                         subset=[], claims=[], kinds=[])), True)
     expect("claims is an ingredient the verdict cannot be silent about",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
                                         subset=[], rows=[], claims=None,
-                                        orphans=[])), True)
+                                        orphans=[], kinds=[])), True)
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
@@ -982,6 +1114,26 @@ def self_check():
            len(subset_problems(["OP_NOT_REAL"], {"OP_A"})), 1)
     expect("cases are read from a named function body, not the file",
            case_ops("case OP_A: case OP_B:") == {"OP_A", "OP_B"}, True)
+    expect("a row that emitted a module without claiming one register is caught",
+           len(kind_problems([("OP_A row 1", 0, (0, 0, 0, 0))], 0, 0)), 1)
+    expect("a register clash the emitter refused with its counter agrees",
+           kind_problems([("OP_A row 1", 1, (4, 1, 0, 0))], 1, 1), [])
+    expect("a clash refused while the counter says none is caught",
+           len(kind_problems([("OP_A row 1", 1, (4, 0, 0, 0))], 1, 1)), 1)
+    expect("a builder whose label contradicts the opcode is caught",
+           len(kind_problems([("OP_A row 1", 1, (0, 0, 1, 1))], 0, 0)), 1)
+    expect("a row with no counter line at all is caught",
+           len(kind_problems([("OP_A row 1", 0, None)], 0, 0)), 1)
+    expect("a clash row that vanished from the table is caught by the pinned number",
+           len(kind_problems([("OP_A row 1", 0, (4, 0, 0, 0))], 0, 1)), 1)
+    expect("the value-type counter is an ingredient the verdict cannot be silent about",
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
+                                         subset=[], rows=[], claims=[],
+                                         orphans=[])), True)
+    expect("a cross-check that never ran prints as not-yet rather than agreement",
+           bool(label_gap(0)), True)
+    expect("a cross-check that ran and found nothing says nothing",
+           label_gap(4), None)
     expect("a missing prerequisite exits 2, not 0", REFUSED_RC, 2)
 
     if bad:

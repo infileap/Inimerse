@@ -442,6 +442,13 @@ void vm_debug_jump(VM *vm, const char *thread_name, const char *label);
 void vm_debug_var(VM *vm, const char *mode);
 void vm_debug_threads(VM *vm);
 
+/* The one opcode-name table in the tree.  It lives in the VM because that is
+   where a compile-time assert ties it to the OpCode enum (g_ir_body_covers_the_
+   enum); other front ends -- the wasm backend's refusals, the AOT/MIR readings --
+   ask this instead of carrying their own copies of the same 67 strings.  An
+   opcode outside the enum answers "op%d", not a hole and not NULL. */
+const char *vm_opcode_name(unsigned op);
+
 /* script-debugger / mod-script support (replaces debug_mod.dll) */
 int  vm_exec_script_file(VM *vm, const char *path);  /* parse+compile+run a .im file, keep its bytecode alive */
 void vm_debug_builtins_register(VM *vm);              /* dbg_* builtins for .im debuggers */

@@ -5734,6 +5734,8 @@ static const char *vm_ir_op_name(unsigned op) {
     return buf;
 }
 
+const char *vm_opcode_name(unsigned op) { return vm_ir_op_name(op); }
+
 static int vm_ir_split_ops(char *buf, size_t cap) {
     int op, n = 0;
     for (op = 0; op < 68; op++) {

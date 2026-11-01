@@ -111,10 +111,21 @@ int main(int argc, char **argv) {
         if (!m) return 1;
         if (wasm_compile_mir(m, argv[3]) != 0) {
             printf("IR-WASM-MIR-REFUSED|why=%s|path=mir" NL, wasm_backend_last_error());
+            printf("IR-WASM-MIR-KIND-CONFLICT|writes=%d|conflicts=%d|type-checks=%d|"
+                   "type-conflicts=%d|basis=every-register-write-claims-a-value-type" NL,
+                   wasm_mir_kind_writes(), wasm_mir_kind_conflicts(),
+                   wasm_mir_type_checks(), wasm_mir_type_conflicts());
             return 1;
         }
         printf("IR-WASM-MIR-EMIT|in=%s|out=%s|funcs=%d|insns=%d|cases=%d|path=mir-opcode-stream" NL,
                argv[2], argv[3], m->nfuncs, total_insns(m), wasm_mir_case_count());
+        /* The pair that makes the value-type check falsifiable: writes checked
+           and conflicts found are printed on the same line, so a check that
+           stops running shows up as writes=0 rather than as a clean zero. */
+        printf("IR-WASM-MIR-KIND-CONFLICT|writes=%d|conflicts=%d|type-checks=%d|"
+               "type-conflicts=%d|basis=every-register-write-claims-a-value-type" NL,
+               wasm_mir_kind_writes(), wasm_mir_kind_conflicts(),
+               wasm_mir_type_checks(), wasm_mir_type_conflicts());
         return 0;
     }
 

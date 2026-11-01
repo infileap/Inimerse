@@ -50,6 +50,15 @@ int wasm_compile_mir(const IrModule *m, const char *output_path);
 int wasm_mir_case_count(void);
 const char *wasm_mir_cases(void);
 
+/* How many register writes this MIR lowering checked for a value-type conflict,
+   and how many it found.  The pair is the reading: a lowering that stops asking
+   prints writes=0, and a conflict that goes unreported leaves the two numbers
+   equal while the emitted module fails at validation instead. */
+int wasm_mir_kind_writes(void);
+int wasm_mir_kind_conflicts(void);
+int wasm_mir_type_checks(void);
+int wasm_mir_type_conflicts(void);
+
 const char *wasm_backend_last_error(void);
 
 #endif /* INIMERSE_WASM_BACKEND_H */

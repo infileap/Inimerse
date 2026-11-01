@@ -15,6 +15,7 @@
  *   env.im_print_nil() / env.im_error(i32)
  * Unsupported constructs are rejected at compile time with line numbers. */
 #include "wasm_backend.h"
+#include "../vm/vm.h"
 #include "../parser/ast.h"
 #include "../parser/parser.h"
 #include <stdarg.h>
@@ -226,6 +227,9 @@ typedef struct {
     char err[512];
     int line;
 } Cg;
+
+static int g_kind_writes, g_kind_conflicts;
+static int g_type_checks, g_type_conflicts;
 
 static char g_err[512];
 const char *wasm_backend_last_error(void) { return g_err; }
@@ -2093,12 +2097,46 @@ typedef struct {
     int              kind[MIR_MAX_REGS];    /* MIR_K_*: picks the printer, and
                                                decides which local group holds it */
     int              n_int;                 /* i64 locals: int and bool regs */
-    int              kind_seen[MIR_MAX_REGS];  /* a register's kind is decided once;
-                                                a second, different kind is refused */
+    int              kind_op[MIR_MAX_REGS];    /* the opcode that decided it, so a
+                                                refusal can name both instructions */
 } MirCtx;
 
 static void mir_push_i64(MirCtx *c, long long v) { bput(c->w, W_I64_CONST); bleb_s(c->w, v); }
 static void mir_push_f64(MirCtx *c, double v)   { bput(c->w, W_F64_CONST); bf64(c->w, v); }
+
+/* One wasm local holds one value type, and every instruction that writes a
+   register makes a claim about that type before it emits the store.  The store
+   itself proves nothing: it keeps whatever the previous instruction pushed, so
+   an f64 constant stored into an i64 local is a valid instruction stream and an
+   invalid module.  The engine then reports function #4 and "local.set[0]
+   expected type i64" -- an instruction index and nothing about the program, so
+   this refusal has to happen here and it has to name the instruction that
+   disagreed, not just the register.
+
+   Both counters are part of the reading rather than decoration: writes checked
+   and conflicts found are printed together, so a lowering that stops asking
+   shows writes=0 instead of looking clean.
+
+   The comparison always has an answer to compare against: Pass A hands every
+   register it assigns a kind before any body byte is written, and a register
+   outside that range never reaches this path, which is what the bound below is
+   for.  An instruction that would have to compare against "no kind yet" cannot
+   be built. */
+static int claim_slot(MirCtx *c, int dst, int kind, int op) {
+    if (dst < 0 || dst >= MIR_MAX_REGS) return 0;
+    g_kind_writes++;
+    if ((c->kind[dst] == MIR_K_FLOAT) != (kind == MIR_K_FLOAT)) {
+        g_kind_conflicts++;
+        snprintf(g_err, sizeof(g_err),
+                 "wasm mir: register %d was made %s by %s, and %s "
+                 "writes %s into it; one wasm local holds one value type",
+                 dst, c->kind[dst] == MIR_K_FLOAT ? "float" : "integer",
+                 vm_opcode_name(c->kind_op[dst]), vm_opcode_name(op),
+                 kind == MIR_K_FLOAT ? "a float" : "an integer");
+        return 3;
+    }
+    return 0;
+}
 
 /* One IrInsn -> wasm instructions.  0 emitted, 1 outside this subset, 2 emitted
    and terminates the body, 3 refused with a reason already written to g_err. */
@@ -2109,19 +2147,28 @@ static int mir_emit_one(MirCtx *c, const IrInsn *in) {
     int s1, s2;
     switch (op) {
     case OP_LOADK_INT:
+        if (claim_slot(c, in->dst, MIR_K_INT, op)) return 3;
         mir_push_i64(c, (long long)r2);
         bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)c->slot[in->dst]);
         return 0;
     case OP_LOADK_BOOL:
+        if (claim_slot(c, in->dst, MIR_K_INT, op)) return 3;
         mir_push_i64(c, r2 ? 1 : 0);
         bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)c->slot[in->dst]);
         return 0;
     case OP_LOADK_FLOAT:
         if (r2 < 0 || r2 >= c->m->nkfloat) return 1;
+        if (claim_slot(c, in->dst, MIR_K_FLOAT, op)) return 3;
         mir_push_f64(c, c->m->kfloat[r2]);
         bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)c->slot[in->dst]);
         return 0;
     case OP_MOV:
+        /* A move is a write too: copying a float register into an integer slot
+           is the same invalid module as a direct float store, reached by a
+           longer route.  The source has to exist first -- a move from a
+           register nothing wrote used to read slot[-1]. */
+        if (r2 < 0 || r2 >= MIR_MAX_REGS || c->slot[r2] < 0) return 1;
+        if (claim_slot(c, in->dst, c->kind[r2], op)) return 3;
         s1 = c->slot[in->dst]; s2 = c->slot[r2];
         bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)s2);
         bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)s1);
@@ -2136,21 +2183,17 @@ static int mir_emit_one(MirCtx *c, const IrInsn *in) {
            by name instead of emitted into a module that only fails later. */
         int fa = (c->kind[r2] == MIR_K_FLOAT);
         int fb = (c->kind[r3] == MIR_K_FLOAT);
-        int fd = (c->kind[in->dst] == MIR_K_FLOAT);
+        /* No separate dst check here: claim_slot below already compares the
+           kind this instruction is about to write against the one the register
+           was given, which is the same comparison and one that also counts. */
         if (fa != fb) {
             snprintf(g_err, sizeof(g_err),
-                     "wasm mir: opcode %d mixes a float operand (register %d) with a "
+                     "wasm mir: %s mixes a float operand (register %d) with a "
                      "non-float one (register %d); no single wasm instruction computes it",
-                     op, fa ? r2 : r3, fa ? r3 : r2);
+                     vm_opcode_name(op), fa ? r2 : r3, fa ? r3 : r2);
             return 3;
         }
-        if (fa != fd) {
-            snprintf(g_err, sizeof(g_err),
-                     "wasm mir: opcode %d computes a %s value into register %d, which "
-                     "the opcode that first wrote it made %s",
-                     op, fa ? "float" : "integer", in->dst, fd ? "float" : "integer");
-            return 3;
-        }
+        if (claim_slot(c, in->dst, fa ? MIR_K_FLOAT : MIR_K_INT, op)) return 3;
         s1 = c->slot[in->dst];
         bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[r2]);
         bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[r3]);
@@ -2200,6 +2243,11 @@ static const char *kMirCases =
 
 const char *wasm_mir_cases(void) { return kMirCases; }
 
+int wasm_mir_kind_writes(void) { return g_kind_writes; }
+int wasm_mir_kind_conflicts(void) { return g_kind_conflicts; }
+int wasm_mir_type_checks(void) { return g_type_checks; }
+int wasm_mir_type_conflicts(void) { return g_type_conflicts; }
+
 int wasm_mir_case_count(void) {
     int n = 1;
     for (const char *p = kMirCases; *p; p++) if (*p == ',') n++;
@@ -2218,6 +2266,8 @@ int wasm_compile_mir(const IrModule *m, const char *output_path) {
     FILE *f;
 
     g_err[0] = 0;
+    g_kind_writes = g_kind_conflicts = 0;
+    g_type_checks = g_type_conflicts = 0;
     if (!m || m->nfuncs <= 0) {
         snprintf(g_err, sizeof(g_err), "wasm mir: empty module");
         return -1;
@@ -2257,30 +2307,37 @@ int wasm_compile_mir(const IrModule *m, const char *output_path) {
             case OP_LOADK_BOOL:  c.kind[d] = MIR_K_BOOL;  break;
             default:             c.kind[d] = MIR_K_INT;   break;
             }
-            {
-                int k = MIR_K_INT;
-                switch (in->op) {
-                case OP_LOADK_FLOAT: k = MIR_K_FLOAT; break;
-                case OP_LOADK_BOOL:  k = MIR_K_BOOL;  break;
-                default:             k = MIR_K_INT;   break;
-                }
-                if (c.kind[d] != k && c.kind_seen[d]) {
-                    /* One wasm local holds one type, and IrInsn has no type
-                       annotation in P1 (type is IR_T_UNKNOWN everywhere), so a
-                       register written by two different-kinded opcodes cannot
-                       be represented here.  Refused by name, not approximated
-                       -- this is one of the representation limits this step
-                       exists to surface. */
+            /* Cross-check, never precedence: if the builder labelled this
+               instruction's result, the label and the opcode have to agree.  A
+               fallback order would let a wrong builder outvote a correct
+               derivation, which is the shape this batch exists to remove --
+               and it would make a disagreement agent silently green. */
+            if (in->type != IR_T_UNKNOWN) {
+                int labelled_float = (in->type == IR_T_FLOAT);
+                g_type_checks++;
+                if (labelled_float != (c.kind[d] == MIR_K_FLOAT)) {
+                    g_type_conflicts++;
                     snprintf(g_err, sizeof(g_err),
-                             "wasm mir: register %d is written by both an int",
-                             d);
+                             "wasm mir: %s writes register %d as %s, but the "
+                             "builder labelled the instruction %s; the derived kind and "
+                             "the declared type cannot both be true",
+                             vm_opcode_name(in->op), d, c.kind[d] == MIR_K_FLOAT ? "float" : "integer",
+                             labelled_float ? "float" : "integer");
                     free(code.b); free(bodies.b); free(s.b); free(mod.b);
                     return -1;
                 }
-                c.kind[d] = k;
-                c.kind_seen[d] = 1;
             }
-            c.slot[d] = 0;
+            c.kind_op[d] = in->op;
+            /* This loop is where a register's kind is decided, and it stops
+               after the first write: `assigned` sends later writes away without
+               looking at them.  That is reachable and wanted -- the kind has to
+               be settled before local indices are handed out -- and it is why
+               the second, disagreeing write is caught in Pass B by claim_slot,
+               which sees every write instead of only the first one.  A duplicate
+               of this switch used to sit right here and refuse when its answer
+               disagreed with the one above; the two were textually identical and
+               this loop visits a register once, so that refusal never fired for
+               any program. */
             assigned[d] = 1;
             if (c.kind[d] == MIR_K_FLOAT)
                 n_flt++;

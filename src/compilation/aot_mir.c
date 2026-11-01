@@ -22,6 +22,7 @@
  *    instruction turns it red instead of staying invisible.
  */
 #include "aot_mir.h"
+#include "../vm/vm.h"
 #include "aot_native.h"     /* aot_native_preamble(): one value runtime, not two */
 
 #include <stdarg.h>
@@ -153,81 +154,17 @@ static void print_conserve(void) {
 
 /* --------------------------------------------------------------- opcodes */
 
+/* This file used to carry its own 67-entry copy of the opcode strings, identical
+   to the VM's table string for string and asserted by nothing.  The names now
+   come from the VM, which is the only place a compile-time assert ties them to
+   the enum; the out-of-enum answer stays "OP_UNKNOWN" here because every call
+   site in this file is describing an instruction it already read. */
 static const char *op_name(int op) {
-    static const char *n[256];
-    static int ready = 0;
-    if (!ready) {
-        ready = 1;
-        n[OP_MOV] = "OP_MOV";
-        n[OP_LOADK_INT] = "OP_LOADK_INT";
-        n[OP_LOADK_FLOAT] = "OP_LOADK_FLOAT";
-        n[OP_LOADK_STRING] = "OP_LOADK_STRING";
-        n[OP_LOADK_BOOL] = "OP_LOADK_BOOL";
-        n[OP_ADD] = "OP_ADD";
-        n[OP_SUB] = "OP_SUB";
-        n[OP_MUL] = "OP_MUL";
-        n[OP_DIV] = "OP_DIV";
-        n[OP_NEG] = "OP_NEG";
-        n[OP_EQ] = "OP_EQ";
-        n[OP_NEQ] = "OP_NEQ";
-        n[OP_LT] = "OP_LT";
-        n[OP_GT] = "OP_GT";
-        n[OP_LE] = "OP_LE";
-        n[OP_GE] = "OP_GE";
-        n[OP_AND] = "OP_AND";
-        n[OP_OR] = "OP_OR";
-        n[OP_NOT] = "OP_NOT";
-        n[OP_NEW_ARRAY] = "OP_NEW_ARRAY";
-        n[OP_INDEX_GET] = "OP_INDEX_GET";
-        n[OP_INDEX_SET] = "OP_INDEX_SET";
-        n[OP_LOAD_GLOBAL] = "OP_LOAD_GLOBAL";
-        n[OP_STORE_GLOBAL] = "OP_STORE_GLOBAL";
-        n[OP_JUMP] = "OP_JUMP";
-        n[OP_JUMP_IF_FALSE] = "OP_JUMP_IF_FALSE";
-        n[OP_JUMP_IF_TRUE] = "OP_JUMP_IF_TRUE";
-        n[OP_CALL_BUILTIN] = "OP_CALL_BUILTIN";
-        n[OP_PUSH_REG] = "OP_PUSH_REG";
-        n[OP_SAY] = "OP_SAY";
-        n[OP_WAIT] = "OP_WAIT";
-        n[OP_STOP] = "OP_STOP";
-        n[OP_HALT] = "OP_HALT";
-        n[OP_CALL_FUNC] = "OP_CALL_FUNC";
-        n[OP_RETURN] = "OP_RETURN";
-        n[OP_IS_NIL] = "OP_IS_NIL";
-        n[OP_THREAD_START] = "OP_THREAD_START";
-        n[OP_THREAD_CTRL] = "OP_THREAD_CTRL";
-        n[OP_THREAD_JOIN] = "OP_THREAD_JOIN";
-        n[OP_THREAD_WAIT] = "OP_THREAD_WAIT";
-        n[OP_THREAD_STATE] = "OP_THREAD_STATE";
-        n[OP_LOCK] = "OP_LOCK";
-        n[OP_SEND] = "OP_SEND";
-        n[OP_RECV] = "OP_RECV";
-        n[OP_NEW_DICT] = "OP_NEW_DICT";
-        n[OP_EQK] = "OP_EQK";
-        n[OP_NEQK] = "OP_NEQK";
-        n[OP_DECLARE] = "OP_DECLARE";
-        n[OP_RECORD] = "OP_RECORD";
-        n[OP_MOD] = "OP_MOD";
-        n[OP_NEW_SET] = "OP_NEW_SET";
-        n[OP_SET_INTERVAL] = "OP_SET_INTERVAL";
-        n[OP_IN] = "OP_IN";
-        n[OP_MIN] = "OP_MIN";
-        n[OP_MAX] = "OP_MAX";
-        n[OP_BIND] = "OP_BIND";
-        n[OP_TRY_START] = "OP_TRY_START";
-        n[OP_TRY_END] = "OP_TRY_END";
-        n[OP_THROW] = "OP_THROW";
-        n[OP_SET_ADD] = "OP_SET_ADD";
-        n[OP_THREAD_GOTO] = "OP_THREAD_GOTO";
-        n[OP_CONCAT] = "OP_CONCAT";
-        n[OP_YIELD] = "OP_YIELD";
-        n[OP_MAKE_FUNC] = "OP_MAKE_FUNC";
-        n[OP_CALL_VALUE] = "OP_CALL_VALUE";
-        n[OP_LOAD_CAPTURE] = "OP_LOAD_CAPTURE";
-        n[OP_LOADK_I64] = "OP_LOADK_I64";
+    if (op >= 0 && op <= 255) {
+        const char *n = vm_opcode_name((unsigned)op);
+        if (n && n[0] == 'O' && n[1] == 'P') return n;
     }
-    if (op < 0 || op > 255 || !n[op]) return "OP_UNKNOWN";
-    return n[op];
+    return "OP_UNKNOWN";
 }
 
 /* Which of r1/r2/r3 name registers, read one dispatch body at a time from
