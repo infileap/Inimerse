@@ -22,7 +22,13 @@ Readings:
   IR-WASM-MIR-TABLE|impl=program|mir|cases=N|enum=M|agree=yes|no
   IR-WASM-MIR-SUBSET|moved=(...)|still-on-ast=(...)|unknown-in-enum=(none)
   IR-WASM-MIR-DIFF|op=X|ast=yes|no|mir=yes|no|why=...
-  IR-WASM-MIR-VERDICT|PASS|FAIL|...
+  IR-WASM-MIR-CLAIMS|claimed=N|driven=M|undriven=(...)|basis=...|agree=yes|no
+            the case string is a claim; the walk is the measurement, and the
+            two numbers above are the reconciliation -- the ingredient that
+            made a deleted driver turn the verdict red instead of moving a
+            label nobody checked.
+  IR-WASM-MIR-PROBLEM-SCOPE|printed=N|carried=M|orphans=K|basis=...|rule=...
+  IR-WASM-MIR-VERDICT|PASS|FAIL|...|moved=(claim)|driven=(measured)|...
 
 Exit 0 when every reading holds, 1 when a comparison disagrees, 2 when a
 prerequisite is missing (build first).
@@ -282,7 +288,8 @@ _MISSING = object()
 
 
 def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
-                   subset=_MISSING, rows=_MISSING, orphans=_MISSING):
+                   subset=_MISSING, rows=_MISSING, claims=_MISSING,
+                   orphans=_MISSING):
     """The single predicate main() turns into PASS/FAIL.
 
     It is a pure function so the WIRING can be measured too: each argument is a
@@ -291,24 +298,29 @@ def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
     leave open whether main() consults them -- and a cell cannot see main's
     call site at all.
 
-    So the six ingredients have no defaults worth having: leaving one out raises
+    So the ingredients have no defaults worth having: leaving one out raises
     instead of silently contributing nothing.  That is the one shape a check can
     enforce here, because "the caller forgot an argument" must be louder than a
     green verdict, not quieter.
+
+    The seventh is claims, and it is the one the WALK labels could plead: a
+    claimed opcode with no driver printed stated=wrong or class=driver-gap on a
+    line and still passed, because neither label entered problems.
     """
     for name, value in (("shell", shell), ("scope", scope),
                         ("unreachable", unreachable), ("subset", subset),
-                        ("rows", rows), ("orphans", orphans)):
+                        ("rows", rows), ("claims", claims),
+                        ("orphans", orphans)):
         if value is _MISSING:
             raise TypeError("broken_reading: no %s given -- the verdict has to "
-                            "name all six ingredients, not the convenient ones"
-                            % name)
+                            "name every ingredient it consults, not the "
+                            "convenient ones" % name)
         if value is None:
             raise TypeError("broken_reading: %s=None -- None is what forgetting "
                             "an ingredient looks like; pass the empty list when "
                             "there is nothing there" % name)
     return (bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
-            or bool(rows) or bool(orphans))
+            or bool(rows) or bool(claims) or bool(orphans))
 
 
 def orphan_problems(problems, carried):
@@ -372,8 +384,9 @@ def walk_class(driven, reachable):
       not driven + reachable  -> driver-gap   (write a better test)
       not driven + unreachable-> unreachable  (the denominator is wrong)
 
-    A claimed case that was never driven is NOT automatically broken: whether it
-    is broken depends on a fact the walk cannot supply on its own.
+    The label is a suggested repair, not a verdict: brokenness is decided by
+    main's claims ingredient, which compares a claim against a measurement, and
+    this function cannot see either.
     """
     if driven:
         return "ok"
@@ -681,6 +694,19 @@ def main():
              len(unclaimed_rows(WALK_CASES, moved))))
     problems.extend(walk_probs)
     row_problems.extend(walk_probs)
+    # walked_problems was defined in this file and called by nobody: its own
+    # docstring said the case string is a CLAIM and the walk is the
+    # MEASUREMENT, and with no call site that sentence left no trace in the
+    # verdict.  Measured, deleting one WALK_CASES row moved one opcode to
+    # class=driver-gap and the run still said PASS|moved=9 -- the tool vouching
+    # for a claim it had never tested.
+    claim_probs = walked_problems(moved, observed)
+    print("IR-WASM-MIR-CLAIMS|claimed=%d|driven=%d|undriven=(%s)|basis="
+          "the-case-string-is-a-claim-the-walk-is-the-measurement|agree=%s"
+          % (len(moved), len(observed),
+             ",".join(sorted(moved - observed)) or "none",
+             "yes" if not claim_probs else "no"))
+    problems.extend(claim_probs)
     # The census line carries every number it counted, because `reachable`
     # alone is not a reading: without `dumped`/`failed`/`enum` next to it, a
     # census that read part of the corpus and one that read all of it print the
@@ -698,11 +724,16 @@ def main():
              ",".join(CENSUS_SKIP),
              "unknown" if ntracked < 0 else ("yes" if not scope else "no")))
     problems.extend(scope)
-    # The three classes decide differently: unreachable is a WRONG READING
-    # (the denominator counts something no program can produce), driver-gap is
-    # missing coverage, and both are reported even though only the first is a
-    # failure.  A single "never driven ⇒ broken" rule would have called the
-    # reachable OP_MOV broken, which is exactly the false conclusion to avoid.
+    # The classes are labels on one measurement, not votes on the verdict.
+    # unreachable says the denominator counts something no program can produce;
+    # driver-gap says the opcode is reachable and no row for it drove anything.
+    # Neither label decides PASS: the claims ingredient does, because it is the
+    # one place that knows a claimed case from a measured one.  This comment
+    # used to argue the opposite -- that a never-driven case is not
+    # automatically broken, and that ruling so would falsely call the reachable
+    # OP_MOV broken.  OP_MOV ended up proving the reverse twice: once as a
+    # driver-gap that was only a missing driver (fixed by writing one), and once
+    # as the case where deleting a driver left PASS|moved=9 standing.
     print("IR-WASM-MIR-CLASS|driven=%d|driver-gap=%d|unreachable=%d|claimed=%d"
           % (len(observed), len(gaps), len(unreachable), len(moved)))
 
@@ -720,14 +751,17 @@ def main():
     # the work takes.  `--gate` is what separates them.
     # A claimed case that no program drives IS broken, not "in progress":
     # the claim is what a reader trusts, and a label nothing reaches makes the
-    # claim false while every number beside it stays plausible.
+    # claim false while every number beside it stays plausible.  That is why
+    # the claims ingredient exists, and why the comment beside CLASS above had
+    # to go: it said the opposite, and a reader who believed it would have
+    # relaxed the one check that catches the state it described.
     # Every printed PROBLEM has to ride an ingredient of the verdict, or the
     # reading fails on a line it cannot see.  This is the failure the docstring
     # above predicted and no cell could catch: import_problems was extended into
     # problems and left out of the OR, so a module whose every exported index was
     # off by one printed a PROBLEM and still said PASS with rc=0.
     carried = (shell_problems(mentions, walks) + list(scope) + subset_probs
-               + row_problems)
+               + row_problems + claim_probs)
     orphans = orphan_problems(problems, carried)
     print("IR-WASM-MIR-PROBLEM-SCOPE|printed=%d|carried=%d|orphans=%d"
           "|basis=every-printed-PROBLEM-must-ride-an-ingredient-of-the-verdict"
@@ -737,14 +771,19 @@ def main():
         print("IR-WASM-MIR-ORPHAN|" + p)
     broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
                             unreachable=unreachable, subset=subset_probs,
-                            rows=row_problems, orphans=orphans)
+                            rows=row_problems, claims=claim_probs,
+                            orphans=orphans)
     ok = not broken
     for p in problems:
         print("IR-WASM-MIR-PROBLEM|" + p)
-    print("IR-WASM-MIR-VERDICT|%s|shell-mentions=%d|walks=%s|moved=%d|enum=%d"
-          "|agree-program=%s|incomplete=%d|gate=%s"
+    # moved is the CLAIM (the generator's published case string) and driven is
+    # what ran; printing only the first let a FAILing run still headline 9 while
+    # 8 had answered, which is the same shape as the defect this line closes.
+    print("IR-WASM-MIR-VERDICT|%s|shell-mentions=%d|walks=%s|moved=%d|driven=%d"
+          "|enum=%d|agree-program=%s|incomplete=%d|gate=%s"
           % ("PASS" if ok else "FAIL", mentions, "yes" if walks else "no", len(moved),
-             len(enum_ops), "yes" if impl_program == enum_ops else "no",
+             len(observed), len(enum_ops),
+             "yes" if impl_program == enum_ops else "no",
              len(enum_ops) - len(moved), "enforced" if args.gate else "reported"))
     if not ok:
         return 1
@@ -825,23 +864,23 @@ def self_check():
            census_scope(399, 410, CENSUS_SKIP), [])
     expect("a narrowed census breaks the reading through the verdict itself",
            broken_reading(shell=[], scope=census_scope(399, 35, CENSUS_SKIP),
-                          unreachable=set(), subset=[], rows=[], orphans=[]), True)
+                          unreachable=set(), subset=[], rows=[], claims=[], orphans=[]), True)
     expect("a wide census leaves the verdict to the other four",
            broken_reading(shell=[], scope=census_scope(399, 399, CENSUS_SKIP),
-                          unreachable=set(), subset=[], rows=[], orphans=[]), False)
+                          unreachable=set(), subset=[], rows=[], claims=[], orphans=[]), False)
     # One cell per ingredient.  The predicate is a symmetric OR, so an argument
     # passed in the wrong order is not a defect -- but an ingredient main() stops
     # passing is, and that stays invisible while only the scope branch is tested.
     expect("a shell that never drove the MIR path breaks the reading",
            broken_reading(shell=["no-mir-path"], scope=[], unreachable=set(),
-                          subset=[], rows=[], orphans=[]), True)
+                          subset=[], rows=[], claims=[], orphans=[]), True)
     expect("a claimed opcode nothing can reach breaks the reading",
            broken_reading(shell=[], scope=[], unreachable={"OP_Z"}, subset=[],
-                          rows=[], orphans=[]), True)
+                          rows=[], claims=[], orphans=[]), True)
     expect("a subset naming an undeclared opcode breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(),
                           subset=["work-queue-names-OP_NOT_REAL"], rows=[],
-                          orphans=[]), True)
+                          claims=[], orphans=[]), True)
     # The ingredient the driver table added: a row states an answer, and the
     # reading is broken when the program does not reproduce it.  Until this
     # ingredient existed the third column could say "999" while every number
@@ -849,13 +888,13 @@ def self_check():
     expect("a row whose stated answer is not reproduced breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
                           rows=["the row for OP_ADD says the interpreter prints '3' "
-                                "but it printed '999'"], orphans=[]), True)
+                                "but it printed '999'"], claims=[], orphans=[]), True)
     # The ingredient whose whole job is to be the last one: a printed defect that
     # no ingredient carries.  import_problems was exactly that -- it printed
     # "MIR_IMPORTS is 5 but the module imports 4" while the verdict said PASS.
     expect("a defect line no ingredient carries breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
-                          rows=[], orphans=["MIR_IMPORTS is 5 but the module imports 4"]),
+                          rows=[], claims=[], orphans=["MIR_IMPORTS is 5 but the module imports 4"]),
            True)
     expect("an orphan is one that no carried list holds",
            orphan_problems(["d1", "d2"], ["d1"]), ["d2"])
@@ -865,7 +904,7 @@ def self_check():
            orphan_problems(["note"], []), ["note"])
     expect("six silent ingredients break nothing",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
-                          rows=[], orphans=[]), False)
+                          rows=[], claims=[], orphans=[]), False)
     # A row declares one of two things: an answer, or a refusal.  Both are
     # statements, and before this helper existed only the first could be true --
     # a legal refusal was recorded as a false statement and the opcode it certifies
@@ -894,6 +933,22 @@ def self_check():
                row_stated(0, "-", "4", ("refused", "mixes a float operand")),
                row_stated(1, "some other reason", "", ("refused", "mixes a float operand")),
                row_stated(1, "no such opcode", "", "4"))), True)
+    # walked_problems was dead code in this file until the claims ingredient fed
+    # it: the reconciliations below are its three shapes, so a future silent
+    # claim cannot hide behind a green verdict.
+    expect("a claimed case that never ran is a problem",
+           walked_problems({"OP_ADD", "OP_MUL"}, {"OP_ADD"}),
+           ["1 claimed case(s) were never driven to an answer: OP_MUL"])
+    expect("a driven opcode missing from the claim is a problem too",
+           walked_problems({"OP_ADD"}, {"OP_ADD", "OP_NEQ"}),
+           ["1 opcode(s) ran but are not in the claimed set: OP_NEQ"])
+    expect("a claim and its measurement agree in silence",
+           walked_problems({"OP_ADD"}, {"OP_ADD"}), [])
+    expect("an undriven claimed opcode breaks the verdict",
+           broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
+                          rows=[], claims=walked_problems({"OP_ADD", "OP_MUL"},
+                                                       {"OP_ADD"}), orphans=[]),
+           True)
 
     def raises(fn):
         try:
@@ -906,13 +961,17 @@ def self_check():
     # unnamed ingredient is refused before the body runs; the sentinel and the
     # None check refuse a call that spells the name and leaves the value out.
     expect("a verdict that does not name every ingredient refuses to answer",
-           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set())), True)
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(), claims=[])), True)
     expect("a verdict handed None where a list belongs refuses too",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
-                                         subset=None, orphans=[])), True)
+                                         subset=None, claims=[], orphans=[])), True)
     expect("a verdict that names every ingredient but the driver table refuses",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
-                                         subset=[])), True)
+                                         subset=[], claims=[])), True)
+    expect("claims is an ingredient the verdict cannot be silent about",
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
+                                        subset=[], rows=[], claims=None,
+                                        orphans=[])), True)
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
