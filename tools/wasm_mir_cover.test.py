@@ -254,7 +254,7 @@ _MISSING = object()
 
 
 def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
-                   subset=_MISSING):
+                   subset=_MISSING, rows=_MISSING):
     """The single predicate main() turns into PASS/FAIL.
 
     It is a pure function so the WIRING can be measured too: each argument is a
@@ -263,22 +263,24 @@ def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
     leave open whether main() consults them -- and a cell cannot see main's
     call site at all.
 
-    So the four ingredients have no defaults worth having: leaving one out raises
+    So the five ingredients have no defaults worth having: leaving one out raises
     instead of silently contributing nothing.  That is the one shape a check can
     enforce here, because "the caller forgot an argument" must be louder than a
     green verdict, not quieter.
     """
     for name, value in (("shell", shell), ("scope", scope),
-                        ("unreachable", unreachable), ("subset", subset)):
+                        ("unreachable", unreachable), ("subset", subset),
+                        ("rows", rows)):
         if value is _MISSING:
             raise TypeError("broken_reading: no %s given -- the verdict has to "
-                            "name all four ingredients, not the convenient ones"
+                            "name all five ingredients, not the convenient ones"
                             % name)
         if value is None:
             raise TypeError("broken_reading: %s=None -- None is what forgetting "
                             "an ingredient looks like; pass the empty list when "
                             "there is nothing there" % name)
-    return bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
+    return (bool(shell) or bool(scope) or bool(unreachable) or bool(subset)
+            or bool(rows))
 
 
 def walk_class(driven, reachable):
@@ -332,6 +334,58 @@ def import_problems(declared_offset, import_count):
                 % (declared_offset, import_count, import_count - declared_offset)]
     return []
 
+
+def walk_rows(rows):
+    """Every row of the driver table, with its per-opcode index.
+
+    A table keyed by the opcode cannot hold two forms of one opcode, and a dict
+    keyed on it drops the second silently -- that is how adding the float form of
+    OP_ADD stopped the integer driver from running without moving a single
+    reading.  Rows are a list and this is the only place that numbers them, so a
+    reading cannot disagree with the table about how many rows exist.
+    """
+    seen = {}
+    numbered = []
+    for op, src, want in rows:
+        n = seen.get(op, 0) + 1
+        seen[op] = n
+        numbered.append((op, n, src, want))
+    return numbered
+
+
+def unclaimed_rows(rows, moved_ops):
+    """Rows naming an opcode no claim covers: executed, but certifying nothing."""
+    return [op for op, _src, _want in rows if op not in moved_ops]
+
+
+def duplicate_rows(rows):
+    """Rows that run the same program for the same opcode -- one is redundant."""
+    seen = {}
+    dup = []
+    for op, src, _want in rows:
+        key = (op, src)
+        if seen.get(key):
+            dup.append(op)
+        seen[key] = True
+    return dup
+
+
+def walk_scope(rows, moved_ops):
+    """Problems with the driver table itself, rather than with what it measured."""
+    problems = []
+    bad = unclaimed_rows(rows, moved_ops)
+    if bad:
+        problems.append(
+            "wasm mir: %d row(s) of WALK_CASES name an opcode that is not in the moved "
+            "subset (%s), so they were executed but certify nothing"
+            % (len(bad), ",".join(sorted(bad))))
+    dup = duplicate_rows(rows)
+    if dup:
+        problems.append(
+            "wasm mir: %d row(s) of WALK_CASES repeat a program already run for the "
+            "same opcode (%s), so the table claims more rows than it measures"
+            % (len(dup), ",".join(sorted(dup))))
+    return problems
 
 def subset_problems(still_on_ast, enum_ops):
     """The work queue has to be made of real names.
@@ -435,12 +489,60 @@ def main():
     gaps = set()
     unreachable = set()
     work = tempfile.mkdtemp(prefix="wasm_mir_walk_")
-    drivers = {op: (text, want) for op, text, want in WALK_CASES}
+    # Rows, not a dict keyed on the opcode.  A dict silently drops a second form
+    # of the same opcode -- which is what happened when the float form of OP_ADD
+    # was added: the integer driver stopped running and no reading moved, so the
+    # blindness only switched operand kind.  Every row is executed here, and the
+    # rows-for-unclaimed-opcodes count is separate, because a row nobody walks is
+    # a claim nobody checks.
+    rows = walk_rows(WALK_CASES)
+    executed = 0
+    ok_by_op = {}
+    rows_by_op = {}
+    stated_by_op = {}
+    # The driver table's own demands, kept separate from the progress notes: a
+    # row whose answer the interpreter does not reproduce is a BROKEN reading,
+    # while "58 opcodes are not moved yet" is only incompleteness.
+    row_problems = []
+    for op, n, src_text, want in rows:
+        executed += 1
+        rows_by_op[op] = n
+        p = Path(work) / ("%s_%d.im" % (op, n))
+        p.write_text(src_text)
+        w = Path(work) / ("%s_%d.wasm" % (op, n))
+        rc_e, out_e, err_e = run([tool, "wasm", p, w])
+        driven = False
+        detail = ""
+        if rc_e == 0:
+            rc_i, out_i, _ = run([interp, "--no-mods", "run", p])
+            rc_w, out_w, _err_w = run(["node", ROOT / "tools" / "wasm_run.js", w])
+            got = out_i.strip().splitlines()[-1] if out_i.strip() else ""
+            got_w = out_w.strip().splitlines()[-1] if out_w.strip() else ""
+            driven = (got_w == got) and (rc_w == rc_i)
+            # The third column is an ANSWER, and until it is compared it is
+            # decoration: a table that states what the interpreter prints while
+            # the reading only checks "the two routes agree" would keep passing
+            # after the corpus stopped meaning what the table says.
+            if got != want.strip():
+                why = ("wasm mir: the row for %s says the interpreter prints %r but "
+                       "it printed %r" % (op, want, got))
+                problems.append(why)
+                row_problems.append(why)
+            detail = "interp=%r|wasm=%r|want=%r" % (got, got_w, want)
+        else:
+            first = (out_e + err_e).strip().splitlines()
+            detail = "why=%s" % (first[0][:100] if first else "-")
+        ok_by_op.setdefault(op, []).append(driven)
+        stated_by_op.setdefault(op, []).append(
+            got == want.strip() if rc_e == 0 else False)
+        print("IR-WASM-MIR-WALK-ROW|op=%s|row=%d|src=%r|%s"
+              % (op, n, src_text, detail))
+
     # EVERY claimed opcode gets a line, whether or not this file has a driver for
     # it: a claimed case with no driver is the thing the reader most needs told,
     # and skipping it would leave the claim looking driven.
     for op in sorted(moved):
-        if op not in drivers:
+        if op not in rows_by_op:
             reach = op in reachable
             cls = walk_class(False, reach)
             print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=no|reachable=%s|class=%s"
@@ -450,35 +552,21 @@ def main():
                 "write-a-driver" if cls == "driver-gap" else "fix-the-denominator"))
             (gaps if cls == "driver-gap" else unreachable).add(op)
             continue
-        src_text, want = drivers[op]
-        p = Path(work) / (op + ".im")
-        p.write_text(src_text)
-        w = Path(work) / (op + ".wasm")
-        rc_e, out_e, err_e = run([tool, "wasm", p, w])
-        driven = False
-        detail = ""
-        if rc_e == 0:
-            rc_i, out_i, _ = run([interp, "--no-mods", "run", p])
-            rc_w, out_w, _err_w = run(["node", ROOT / "tools" / "wasm_run.js", w])
-            driven = (out_w.strip() == out_i.strip()) and (rc_w == rc_i)
-            detail = "interp=%r|wasm=%r" % (
-                out_i.strip().splitlines()[-1] if out_i.strip() else "",
-                out_w.strip().splitlines()[-1] if out_w.strip() else "")
-        else:
-            detail = "why=%s" % ((out_e + err_e).strip().splitlines()[0][:100]
-                                  if (out_e + err_e).strip() else "-")
-        # An opcode is DRIVEN when a program reached it AND the answer matched.
-        # A reachable opcode whose answer does not match is a driver gap, printed
-        # rather than counted either way -- and a gap is a claim about my drivers,
-        # not about the language.  OP_MOV sat in this column while I had only read
-        # the emission sites that need a function body; the one that runs at top
-        # level is EXPR_UNARY's arm whose body is
-        # `emit(comp->curBC, OP_MOV, r, operand, 0)`, and I had not read it.
-        # No count-word belongs here: the sites drift, and an ordinal drifts worse.
+        # An opcode is DRIVEN only when EVERY row for it agrees with the
+        # interpreter: the claim is about the opcode, and the opcode has as many
+        # forms as the table gave it.
+        driven = all(ok_by_op[op])
+        rows_ok = sum(1 for ok in ok_by_op[op] if ok)
         reach = op in reachable
         cls = walk_class(driven, reach)
-        print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=%s|reachable=%s|class=%s|%s"
-              % (op, "yes" if driven else "no", "yes" if reach else "no", cls, detail))
+        # driven asks whether the two routes agree; stated asks whether the
+        # table third column survives the run. They are different questions,
+        # and a row that states the wrong answer must not hide behind driven=yes.
+        stated = all(stated_by_op.get(op, [False]))
+        print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=%s|reachable=%s|class=%s"
+              "|rows=%d|rows-agree=%d|stated=%s"
+              % (op, "yes" if driven else "no", "yes" if reach else "no", cls,
+                 rows_by_op[op], rows_ok, "ok" if stated else "wrong"))
         if driven:
             observed.add(op)
         elif cls == "driver-gap":
@@ -489,6 +577,16 @@ def main():
         elif cls == "unreachable":
             unreachable.add(op)
             print("IR-WASM-MIR-STATE|op=%s|class=unreachable|fix=fix-the-denominator" % op)
+    # The table is a claim about what WILL be run, so the count that ran is a
+    # reading of its own: rows == executed would be true by construction, and
+    # what a reader needs instead is how many rows name an opcode nobody claims.
+    walk_probs = walk_scope(WALK_CASES, moved)
+    print("IR-WASM-MIR-WALK-SCOPE|rows=%d|executed=%d|ops=%d|unclaimed=%d"
+          "|basis=every-row-of-WALK_CASES-ran|a-row-for-an-unclaimed-opcode-checks-nothing"
+          % (len(rows), executed, len(rows_by_op),
+             len(unclaimed_rows(WALK_CASES, moved))))
+    problems.extend(walk_probs)
+    row_problems.extend(walk_probs)
     # The census line carries every number it counted, because `reachable`
     # alone is not a reading: without `dumped`/`failed`/`enum` next to it, a
     # census that read part of the corpus and one that read all of it print the
@@ -530,7 +628,8 @@ def main():
     # the claim is what a reader trusts, and a label nothing reaches makes the
     # claim false while every number beside it stays plausible.
     broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
-                            unreachable=unreachable, subset=subset_probs)
+                            unreachable=unreachable, subset=subset_probs,
+                            rows=row_problems)
     ok = not broken
     for p in problems:
         print("IR-WASM-MIR-PROBLEM|" + p)
@@ -578,6 +677,25 @@ def self_check():
            walk_class(False, False), "unreachable")
     expect("a driven opcode is ok however reachable it looks",
            walk_class(True, True), "ok")
+    # The driver table's own shape.  The first cell is the control against the
+    # defect this file just fixed: a dict keyed on the opcode keeps one row of a
+    # two-row opcode, and the dictionary comprehension that used to build it did
+    # exactly that -- silently, with no reading moving.
+    two_rows = [("OP_ADD", "say 1 + 2\n", "3"), ("OP_ADD", "say 1.5 + 2.5\n", "4")]
+    expect("rows keep both forms of one opcode",
+           len(walk_rows(two_rows)), 2)
+    expect("a dict keyed on the opcode keeps one of them -- the trap being avoided",
+           len({op: (s, w) for op, s, w in two_rows}), 1)
+    expect("a row for an opcode nobody claims is caught by name",
+           len(unclaimed_rows([("OP_NOT_CLAIMED", "say 1\n", "1")], {"OP_ADD"})), 1)
+    expect("rows for claimed opcodes are not called unclaimed",
+           unclaimed_rows(two_rows, {"OP_ADD"}), [])
+    expect("a repeated program for one opcode is caught",
+           len(duplicate_rows(two_rows + [two_rows[0]])), 1)
+    expect("distinct programs for one opcode are not called duplicates",
+           duplicate_rows(two_rows), [])
+    expect("a table of claimed, distinct rows is silent",
+           walk_scope(two_rows, {"OP_ADD"}), [])
     # These three were a second copy of the walk_class trio above, worded a
     # little differently: repeated cells inflate the check count and make the
     # suite look broader than it is.  They now test the census's SCOPE, which
@@ -590,23 +708,33 @@ def self_check():
            census_scope(399, 410, CENSUS_SKIP), [])
     expect("a narrowed census breaks the reading through the verdict itself",
            broken_reading(shell=[], scope=census_scope(399, 35, CENSUS_SKIP),
-                          unreachable=set(), subset=[]), True)
-    expect("a wide census leaves the verdict to the other three",
+                          unreachable=set(), subset=[], rows=[]), True)
+    expect("a wide census leaves the verdict to the other four",
            broken_reading(shell=[], scope=census_scope(399, 399, CENSUS_SKIP),
-                          unreachable=set(), subset=[]), False)
+                          unreachable=set(), subset=[], rows=[]), False)
     # One cell per ingredient.  The predicate is a symmetric OR, so an argument
     # passed in the wrong order is not a defect -- but an ingredient main() stops
     # passing is, and that stays invisible while only the scope branch is tested.
     expect("a shell that never drove the MIR path breaks the reading",
            broken_reading(shell=["no-mir-path"], scope=[], unreachable=set(),
-                          subset=[]), True)
+                          subset=[], rows=[]), True)
     expect("a claimed opcode nothing can reach breaks the reading",
-           broken_reading(shell=[], scope=[], unreachable={"OP_Z"}, subset=[]), True)
+           broken_reading(shell=[], scope=[], unreachable={"OP_Z"}, subset=[],
+                          rows=[]), True)
     expect("a subset naming an undeclared opcode breaks the reading",
            broken_reading(shell=[], scope=[], unreachable=set(),
-                          subset=["work-queue-names-OP_NOT_REAL"]), True)
-    expect("four silent ingredients break nothing",
-           broken_reading(shell=[], scope=[], unreachable=set(), subset=[]), False)
+                          subset=["work-queue-names-OP_NOT_REAL"], rows=[]), True)
+    # The ingredient the driver table added: a row states an answer, and the
+    # reading is broken when the program does not reproduce it.  Until this
+    # ingredient existed the third column could say "999" while every number
+    # stayed put and the verdict stayed green.
+    expect("a row whose stated answer is not reproduced breaks the reading",
+           broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
+                          rows=["the row for OP_ADD says the interpreter prints '3' "
+                                "but it printed '999'"]), True)
+    expect("five silent ingredients break nothing",
+           broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
+                          rows=[]), False)
 
     def raises(fn):
         try:
@@ -623,6 +751,9 @@ def self_check():
     expect("a verdict handed None where a list belongs refuses too",
            raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
                                          subset=None)), True)
+    expect("a verdict that names every ingredient but the driver table refuses",
+           raises(lambda: broken_reading(shell=[], scope=[], unreachable=set(),
+                                         subset=[])), True)
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
