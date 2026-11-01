@@ -2101,7 +2101,7 @@ static void mir_push_i64(MirCtx *c, long long v) { bput(c->w, W_I64_CONST); bleb
 static void mir_push_f64(MirCtx *c, double v)   { bput(c->w, W_F64_CONST); bf64(c->w, v); }
 
 /* One IrInsn -> wasm instructions.  0 emitted, 1 outside this subset, 2 emitted
-   and terminates the body. */
+   and terminates the body, 3 refused with a reason already written to g_err. */
 static int mir_emit_one(MirCtx *c, const IrInsn *in) {
     int op = in->op;
     int r2 = (int)ir_insn_r2(in);
@@ -2126,13 +2126,41 @@ static int mir_emit_one(MirCtx *c, const IrInsn *in) {
         bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)s2);
         bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)s1);
         return 0;
-    case OP_ADD: case OP_SUB: case OP_MUL:
+    case OP_ADD: case OP_SUB: case OP_MUL: {
+        /* The mnemonic does not decide the instruction -- the operand KINDS do.
+           `say 1.5 + 2.5` dumps as LOADK_FLOAT, LOADK_FLOAT, OP_ADD and this
+           branch used to emit i64.add over two f64 slots; the engine then rejects
+           the module ("i64.add[0] expected type i64, found local.get of type
+           f64"), which names the instruction and nothing about the source.  A
+           mixed pair has no single wasm instruction at all, so it is refused here
+           by name instead of emitted into a module that only fails later. */
+        int fa = (c->kind[r2] == MIR_K_FLOAT);
+        int fb = (c->kind[r3] == MIR_K_FLOAT);
+        int fd = (c->kind[in->dst] == MIR_K_FLOAT);
+        if (fa != fb) {
+            snprintf(g_err, sizeof(g_err),
+                     "wasm mir: opcode %d mixes a float operand (register %d) with a "
+                     "non-float one (register %d); no single wasm instruction computes it",
+                     op, fa ? r2 : r3, fa ? r3 : r2);
+            return 3;
+        }
+        if (fa != fd) {
+            snprintf(g_err, sizeof(g_err),
+                     "wasm mir: opcode %d computes a %s value into register %d, which "
+                     "the opcode that first wrote it made %s",
+                     op, fa ? "float" : "integer", in->dst, fd ? "float" : "integer");
+            return 3;
+        }
         s1 = c->slot[in->dst];
         bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[r2]);
         bput(c->w, W_LOCAL_GET); bleb_u(c->w, (unsigned long)c->slot[r3]);
-        bput(c->w, op == OP_ADD ? W_I64_ADD : (op == OP_SUB ? W_I64_SUB : W_I64_MUL));
+        if (fa)
+            bput(c->w, op == OP_ADD ? W_F64_ADD : (op == OP_SUB ? W_F64_SUB : W_F64_MUL));
+        else
+            bput(c->w, op == OP_ADD ? W_I64_ADD : (op == OP_SUB ? W_I64_SUB : W_I64_MUL));
         bput(c->w, W_LOCAL_SET); bleb_u(c->w, (unsigned long)s1);
         return 0;
+    }
     case OP_SAY: {
         /* SAY carries its operand in r1 -- the dump shows r1=1, r2=0 -- so the
            register is dst and not a source.  The printer follows that register's
@@ -2278,6 +2306,14 @@ int wasm_compile_mir(const IrModule *m, const char *output_path) {
                 snprintf(g_err, sizeof(g_err),
                          "wasm mir: opcode %d is outside this path's subset (covered: %s)",
                          (int)fn->insns[i].op, kMirCases);
+                free(code.b); free(bodies.b); free(s.b); free(mod.b);
+                return -1;
+            }
+            if (rc == 3) {
+                /* The emitter wrote the reason itself.  Overwriting it with the
+                   subset message would say "outside the subset" about an opcode
+                   that IS in the subset -- what has no instruction is the
+                   operand-kind pair, and that is the sentence worth reading. */
                 free(code.b); free(bodies.b); free(s.b); free(mod.b);
                 return -1;
             }

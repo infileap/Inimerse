@@ -66,6 +66,13 @@ WALK_CASES = [
     ("OP_MOV",         "say +5\n",                 "5"),
     ("OP_ADD",         "say 1 + 2\n",               "3"),
     ("OP_SUB",         "say 10 - 4\n",              "6"),
+    # The float form of the same opcode.  Without this case OP_ADD was "moved"
+    # on the strength of its integer form alone: `say 1.5 + 2.5` emitted
+    # i64.add over f64 slots and the engine rejected the module at instantiation
+    # (i64.add[0] expected type i64, found local.get of type f64), so the moved
+    # claim had a scope nobody had written down.  This case is that scope: one
+    # driver per operand-kind form that can reach the opcode.
+    ("OP_ADD",         "say 1.5 + 2.5\n",           "4"),
     ("OP_MUL",         "say 3 * 5\n",               "15"),
     ("OP_SAY",         "say 1\n",                   "1"),
     ("OP_HALT",        "say 0\n",                   "0"),
