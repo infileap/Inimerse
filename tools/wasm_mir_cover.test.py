@@ -73,6 +73,13 @@ WALK_CASES = [
     # claim had a scope nobody had written down.  This case is that scope: one
     # driver per operand-kind form that can reach the opcode.
     ("OP_ADD",         "say 1.5 + 2.5\n",           "4"),
+    # The third form of the same opcode: a mixed pair, which no single wasm
+    # instruction can compute.  The row declares the refusal, so a lowering that
+    # correctly refuses certifies the boundary; a lowering that silently emits
+    # something turns stated=wrong and the reading says so.  Before this row the
+    # two refusal messages existed and no program in the corpus ever reached
+    # them, which is a declared boundary nobody had measured.
+    ("OP_ADD",         "say 1.5 + true\n",        ("refused", "mixes a float operand")),
     ("OP_MUL",         "say 3 * 5\n",               "15"),
     ("OP_SAY",         "say 1\n",                   "1"),
     ("OP_HALT",        "say 0\n",                   "0"),
@@ -162,13 +169,34 @@ def table_problems(impl_cases, enum_ops):
         if outside:
             problems.append("impl=%s names opcodes the encoding does not declare: %s"
                             % (impl, ",".join(sorted(outside))))
+    return problems
+
+
+def table_gaps(impl_cases, enum_ops):
+    """What an implementation does not implement yet -- progress, not a defect.
+
+    This used to be the second half of table_problems, printed under the PROBLEM
+    prefix and then exempted from the verdict by a name list in main().  A
+    PROBLEM line that cannot fail the verdict is a permanent green channel:
+    whoever edits main() adds one more name and no reading moves.  The fix is
+    the prefix: an incomplete implementation prints as IR-WASM-MIR-NOT-YET and
+    never joins the problem channel, so "PROBLEM printed" and "verdict FAIL"
+    stay one fact instead of two conventions.
+
+    Missing opcodes are still counted per implementation, never as a union:
+    {A} and {B} union to {A,B}, which would make "each half done" and "both
+    complete" the same number.
+    """
+    gaps = []
+    for impl, ops in impl_cases.items():
+        if not ops:
+            continue
         missing = enum_ops - ops
         if missing:
-            problems.append("impl=%s has no case for %d of the %d declared opcodes%s"
-                            % (impl, len(missing), len(enum_ops),
-                               " (first: %s)" % ",".join(sorted(missing)[:4])
-                               if missing else ""))
-    return problems
+            gaps.append("impl=%s has no case for %d of the %d declared opcodes%s"
+                        % (impl, len(missing), len(enum_ops),
+                           " (first: %s)" % ",".join(sorted(missing)[:4])))
+    return gaps
 
 
 # Directories that hold COPIES of the corpus rather than corpus: every worktree
@@ -283,18 +311,58 @@ def broken_reading(*, shell=_MISSING, scope=_MISSING, unreachable=_MISSING,
             or bool(rows) or bool(orphans))
 
 
-def orphan_problems(problems, carried, progress):
+def orphan_problems(problems, carried):
     """Printed defect lines that no ingredient of the verdict carries.
 
     broken_reading is a symmetric OR over the lists main() hands it, so a
     problem that is printed but not one of those lists is a line the verdict
     cannot see: the reading says FAIL nowhere while the evidence sits in its
-    own output.  `carried` is the union of the ingredient lists and `progress`
-    is the incompleteness that is reported on purpose, without failing.
+    own output.  Carried is the union of the ingredient lists.
+
+    There is deliberately no allow-list here.  An allow-list is a channel that
+    stays green forever: a line added to it prints and cannot fail, and no cell
+    can see that the list grew.  A line that is not a defect is printed under a
+    prefix that is not PROBLEM, which is a structural answer rather than a
+    convention maintained by whoever edits main().
     """
     have = set(carried)
-    known = set(progress)
-    return [p for p in problems if p not in have and p not in known]
+    return [p for p in problems if p not in have]
+
+
+def row_stated(rc_e, reason, got, want):
+    """What one driver row says, and whether the run reproduced it.
+
+    Returns (ok, kind, problem).  kind is "refused" for a row that declares the
+    lowering MUST reject the program and "value" for a row that declares an
+    answer.  The distinction exists because a legal refusal was being recorded as
+    a false statement: with only ok/wrong, rc_e != 0 meant wrong no matter why,
+    so a row that exists to pin a declared boundary turned stated=wrong and the
+    opcode it certifies fell back to driver-gap with the advice write-a-driver,
+    i.e. go change a driver that is correct.
+
+    A refusal row carries its reason as ("refused", substring), so the row states
+    WHICH refusal it expects rather than just "some error".
+    """
+    refused_want = isinstance(want, tuple) and want and want[0] == "refused"
+    if rc_e == 0:
+        if refused_want:
+            return (False, "refused",
+                    "the row declares that the lowering must refuse this"
+                    " program (%r) but it emitted a module" % (want[1],))
+        if got != want.strip():
+            return (False, "value",
+                    "the row says the interpreter prints %r but it printed %r"
+                    % (want, got))
+        return (True, "value", None)
+    if refused_want:
+        if want[1] in reason:
+            return (True, "refused", None)
+        return (False, "refused",
+                "the row declares the refusal %r and the lowering refused"
+                " with %r instead" % (want[1], reason))
+    return (False, "value",
+            "the row states %r but the lowering refused the program: %r"
+            % (want, reason))
 
 
 def walk_class(driven, reachable):
@@ -475,6 +543,11 @@ def main():
     # step's subject and demanding it would be asking it to become the same
     # implementation, which is the thing the two entry points exist to avoid.
     problems.extend(table_problems({"mir": impl_mir}, enum_ops))
+    # An incomplete implementation is progress, so it never enters the problem
+    # channel: it prints as NOT-YET, and the invariant PROBLEM-printed <=> verdict-FAIL
+    # stays structural instead of depending on a name list.
+    for gap in table_gaps({"mir": impl_mir}, enum_ops):
+        print("IR-WASM-MIR-NOT-YET|" + gap)
 
     # The import count is read from the same source as the offset constant, so
     # adding a printer fails here instead of at a host that gets `undefined`.
@@ -525,30 +598,31 @@ def main():
         p.write_text(src_text)
         w = Path(work) / ("%s_%d.wasm" % (op, n))
         rc_e, out_e, err_e = run([tool, "wasm", p, w])
+        reason_lines = (out_e + err_e).strip().splitlines()
+        reason = reason_lines[0] if reason_lines else "-"
         driven = False
-        detail = ""
         if rc_e == 0:
             rc_i, out_i, _ = run([interp, "--no-mods", "run", p])
             rc_w, out_w, _err_w = run(["node", ROOT / "tools" / "wasm_run.js", w])
             got = out_i.strip().splitlines()[-1] if out_i.strip() else ""
             got_w = out_w.strip().splitlines()[-1] if out_w.strip() else ""
-            driven = (got_w == got) and (rc_w == rc_i)
-            # The third column is an ANSWER, and until it is compared it is
-            # decoration: a table that states what the interpreter prints while
-            # the reading only checks "the two routes agree" would keep passing
-            # after the corpus stopped meaning what the table says.
-            if got != want.strip():
-                why = ("wasm mir: the row for %s says the interpreter prints %r but "
-                       "it printed %r" % (op, want, got))
-                problems.append(why)
-                row_problems.append(why)
+            route_ok = (got_w == got) and (rc_w == rc_i)
             detail = "interp=%r|wasm=%r|want=%r" % (got, got_w, want)
         else:
-            first = (out_e + err_e).strip().splitlines()
-            detail = "why=%s" % (first[0][:100] if first else "-")
+            got = ""
+            route_ok = False
+            detail = "why=%s" % reason[:100]
+        ok, kind, why = row_stated(rc_e, reason, got, want)
+        # A declared refusal is agreement when it actually refuses: the lowering
+        # delivered what the row says it must deliver.
+        driven = route_ok if kind == "value" else ok
+        if why:
+            # The opcode and the row travel with the message, because two rows
+            # of one opcode are exactly the case this table now supports.
+            problems.append("row %d for %s: %s" % (n, op, why))
+            row_problems.append(problems[-1])
         ok_by_op.setdefault(op, []).append(driven)
-        stated_by_op.setdefault(op, []).append(
-            got == want.strip() if rc_e == 0 else False)
+        stated_by_op.setdefault(op, []).append((ok, kind))
         print("IR-WASM-MIR-WALK-ROW|op=%s|row=%d|src=%r|%s"
               % (op, n, src_text, detail))
 
@@ -576,11 +650,17 @@ def main():
         # driven asks whether the two routes agree; stated asks whether the
         # table third column survives the run. They are different questions,
         # and a row that states the wrong answer must not hide behind driven=yes.
-        stated = all(stated_by_op.get(op, [False]))
+        kinds = stated_by_op.get(op, [])
+        if not all(ok for ok, _kind in kinds):
+            stated = "wrong"
+        elif all(kind == "refused" for _ok, kind in kinds):
+            stated = "refused"
+        else:
+            stated = "ok"
         print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=%s|reachable=%s|class=%s"
               "|rows=%d|rows-agree=%d|stated=%s"
               % (op, "yes" if driven else "no", "yes" if reach else "no", cls,
-                 rows_by_op[op], rows_ok, "ok" if stated else "wrong"))
+                 rows_by_op[op], rows_ok, stated))
         if driven:
             observed.add(op)
         elif cls == "driver-gap":
@@ -648,21 +728,11 @@ def main():
     # off by one printed a PROBLEM and still said PASS with rc=0.
     carried = (shell_problems(mentions, walks) + list(scope) + subset_probs
                + row_problems)
-    # The only printed problem that is progress rather than a defect: an
-    # opcode this subset does not implement yet.  It is named here, not matched
-    # by a prefix guess, so a new progress line has to be added deliberately.
-    # It is spelled with the same expression table_problems uses, so equality
-    # holds by construction and a wording drift there turns into an orphan here
-    # instead of silently becoming progress.
-    missing_ops = enum_ops - impl_mir
-    progress = ["impl=mir has no case for %d of the %d declared opcodes (first: %s)"
-                % (len(missing_ops), len(enum_ops),
-                   ",".join(sorted(missing_ops)[:4]))] if missing_ops else []
-    orphans = orphan_problems(problems, carried, progress)
-    print("IR-WASM-MIR-PROBLEM-SCOPE|printed=%d|carried=%d|progress=%d|orphans=%d"
-          "|basis=every-printed-defect-must-ride-an-ingredient-of-the-verdict"
-          "|an-orphan-is-a-line-the-verdict-cannot-see"
-          % (len(problems), len(carried), len(progress), len(orphans)))
+    orphans = orphan_problems(problems, carried)
+    print("IR-WASM-MIR-PROBLEM-SCOPE|printed=%d|carried=%d|orphans=%d"
+          "|basis=every-printed-PROBLEM-must-ride-an-ingredient-of-the-verdict"
+          "|rule=a-PROBLEM-line-exists-exactly-when-the-verdict-says-FAIL"
+          % (len(problems), len(carried), len(orphans)))
     for p in orphans:
         print("IR-WASM-MIR-ORPHAN|" + p)
     broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
@@ -703,12 +773,21 @@ def self_check():
            len(shell_problems(3, False)), 1)
     expect("a path that exists and was driven is silent",
            shell_problems(3, True), [])
-    expect("an implementation missing an opcode is not agreement",
-           len(table_problems({"program": {"OP_A"}, "mir": {"OP_A", "OP_B"}}, {"OP_A", "OP_B"})) > 0, True)
+    expect("an implementation missing an opcode is counted against it",
+           len(table_gaps({"program": {"OP_A"}, "mir": {"OP_A", "OP_B"}}, {"OP_A", "OP_B"})) > 0, True)
     expect("a union that happens to be complete is still not agreement",
-           len(table_problems({"program": {"OP_A"}, "mir": {"OP_B"}}, {"OP_A", "OP_B"})) > 0, True)
+           len(table_gaps({"program": {"OP_A"}, "mir": {"OP_B"}}, {"OP_A", "OP_B"})) > 0, True)
+    # ...and incompleteness cannot reach the problem channel: it is printed under
+    # its own prefix, so the invariant PROBLEM <=> FAIL is structural, not a
+    # convention kept by whoever edits main().
+    expect("an incomplete implementation is not a table defect",
+           table_problems({"mir": {"OP_A"}}, {"OP_A", "OP_B"}), [])
+    expect("incomplete implementations are still counted, per impl",
+           len(table_gaps({"mir": {"OP_A"}}, {"OP_A", "OP_B"})), 1)
     expect("an implementation naming an undeclared opcode is caught",
-           len(table_problems({"program": {"OP_Z"}}, {"OP_A"})), 2)   # undeclared + missing
+           len(table_problems({"program": {"OP_Z"}}, {"OP_A"})), 1)   # the missing one is a gap
+    expect("...and its missing opcode is counted as progress, not as a defect",
+           len(table_gaps({"program": {"OP_Z"}}, {"OP_A"})), 1)
     expect("reachable but undriven is a driver gap, not a failure",
            walk_class(False, True), "driver-gap")
     expect("undriven and unreachable means the denominator is wrong",
@@ -779,14 +858,42 @@ def self_check():
                           rows=[], orphans=["MIR_IMPORTS is 5 but the module imports 4"]),
            True)
     expect("an orphan is one that no carried list holds",
-           orphan_problems(["d1", "d2"], ["d1"], []), ["d2"])
+           orphan_problems(["d1", "d2"], ["d1"]), ["d2"])
     expect("a defect already carried is not an orphan",
-           orphan_problems(["d1"], ["d1"], []), [])
-    expect("the progress note is reported without being an orphan",
-           orphan_problems(["note"], [], ["note"]), [])
+           orphan_problems(["d1"], ["d1"]), [])
+    expect("a line that nobody carries is an orphan even when it was printed as progress",
+           orphan_problems(["note"], []), ["note"])
     expect("six silent ingredients break nothing",
            broken_reading(shell=[], scope=[], unreachable=set(), subset=[],
                           rows=[], orphans=[]), False)
+    # A row declares one of two things: an answer, or a refusal.  Both are
+    # statements, and before this helper existed only the first could be true --
+    # a legal refusal was recorded as a false statement and the opcode it certifies
+    # fell back to driver-gap with the advice to write a driver that already worked.
+    expect("a value row the interpreter reproduces is ok",
+           row_stated(0, "-", "4", "4")[:2], (True, "value"))
+    expect("a value row that prints something else is wrong",
+           row_stated(0, "-", "5", "4")[0], False)
+    expect("a declared refusal that refuses as declared is ok",
+           row_stated(1, "mixes a float operand", "", ("refused", "mixes a float operand"))[:2],
+           (True, "refused"))
+    expect("a refusal row the lowering emitted instead is wrong",
+           row_stated(0, "-", "4", ("refused", "mixes a float operand"))[0], False)
+    expect("a refusal for a different reason is wrong",
+           row_stated(1, "some other reason", "", ("refused", "mixes a float operand"))[0],
+           False)
+    expect("a value row the lowering refused is a statement not delivered",
+           row_stated(1, "no such opcode", "", "4")[0], False)
+    # The closure that orphans cannot provide on its own: every not-ok row has to
+    # carry a problem, because the WALK line label (stated=wrong / driver-gap) is
+    # printed, not scanned.  A not-ok row without a message would be a defect
+    # label that no reading can fail on -- the same hole one level down.
+    expect("every not-ok row carries a problem, so orphans can see it",
+           all(len(case) == 3 and case[2] is not None for case in (
+               row_stated(0, "-", "5", "4"),
+               row_stated(0, "-", "4", ("refused", "mixes a float operand")),
+               row_stated(1, "some other reason", "", ("refused", "mixes a float operand")),
+               row_stated(1, "no such opcode", "", "4"))), True)
 
     def raises(fn):
         try:
