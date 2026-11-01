@@ -250,6 +250,27 @@ def indexed_ops(emitter_body):
     return out
 
 
+def detector_problems(indexed, prescanned):
+    """Whether the index detector looked at anything at all.
+
+    `indexed` is counted by matching a spelling -- `float_pool[`, `gnames[`,
+    `goto L%d` -- inside each emitter case.  That is a reading of today's source,
+    and it goes quiet the day the emitter reads a pool through a helper: the set
+    becomes empty, `indexed - prescanned` is still empty, and every line below
+    stays green while nothing is being measured.  "Found nothing" and "there is
+    nothing to find" are the same shape and not the same fact, so the detector
+    has to say out loud that it found something."""
+    problems = []
+    if not indexed:
+        problems.append("the detector found no indexed emitter case at all: either the "
+                       "emitter stopped indexing (then this reading measures nothing) or "
+                       "it indexes through a spelling this detector does not match")
+    if not prescanned:
+        problems.append("prescan has no case labels: the operand check has either moved "
+                       "out of this function or stopped existing")
+    return problems
+
+
 def prescan_problems(prescan_cases, indexed):
     """What the operand check has to cover, and the direction that bites.
 
@@ -348,6 +369,15 @@ def self_check():
            len(prescan_problems({"OP_A", "OP_Z"}, {"OP_A"})), 1)
     expect("the argument-stack case needs no index and is not a dead branch",
            prescan_problems({"OP_A", "OP_PUSH_REG"}, {"OP_A"}), [])
+    # A detector that found nothing does not get to report agreement: the day the
+    # emitter reads a pool through a helper, `indexed` is empty and every subset
+    # claim below it stays green while nothing is measured.
+    expect("a detector that saw no indexed case at all is a failure",
+           len(detector_problems(set(), {"OP_A"})), 1)
+    expect("a detector that saw nothing on the prescan side is a failure",
+           len(detector_problems({"OP_A"}, set())), 1)
+    expect("a detector that saw both sides is silent",
+           detector_problems({"OP_A"}, {"OP_A"}), [])
     expect("a table entry the encoding does not declare is caught",
            len(lowering_problems({"OP_A", "OP_Z"}, {"OP_A", "OP_Z"},
                                  ["OP_A", "OP_Z"], {"OP_A"})), 1)
@@ -605,14 +635,20 @@ def main():
     indexed = indexed_ops(function_body(src, "static int emit_one("))
     operand = prescan_problems(prescan_cases, indexed)
     problems.extend(operand)
+    # A subset claim is only as good as the detector that produced the set, so the
+    # detector reports whether it found anything rather than leaving an empty set
+    # to look like agreement.
+    detector = detector_problems(indexed, prescan_cases)
+    problems.extend(detector)
     print("IR-AOT-MIR-OPERANDS|indexed=%d|prescanned=%d|checked=%d"
           "|basis=case-labels-in-aot_mir.c's-emit_one-that-read-a-pool-global-"
           "function-or-label-index-versus-the-cases-in-prescan"
-          "|missing=(%s)|dead=(%s)|agree=%s"
+          "|missing=(%s)|dead=(%s)|detector-saw=%s|agree=%s"
           % (len(indexed), len(prescan_cases), len(indexed & prescan_cases),
              ",".join(sorted(indexed - prescan_cases)) or "none",
              ",".join(sorted(prescan_cases - indexed - {"OP_PUSH_REG"})) or "none",
-             "yes" if not operand else "no"))
+             "yes" if not detector else "no",
+             "yes" if not (operand or detector) else "no"))
     print("IR-AOT-MIR-LOWERING|handles=%d|of=%d|unknown=%d"
           "|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one"
           "|table=%d|emitter=%d|reported=%d|agree=%s"
