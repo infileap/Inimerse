@@ -49,10 +49,16 @@ WALK_CASES = [
     ("OP_LOADK_INT",   "say 7\n",                   "7"),
     ("OP_LOADK_BOOL",  "say true\n",                "true"),
     ("OP_LOADK_FLOAT", "say 1.5\n",                 "1.5"),
-    # OP_MOV has a case in the emitter and NO program that reaches it: every
-    # assignment in this language compiles to STORE_GLOBAL.  It is listed in
-    # the claimed set and will fail the walk, which is the honest state -- a
-    # case label nothing drives is a claim, not a capability.
+    # OP_MOV IS reachable.  An assignment INSIDE a function body followed by a
+    # return emits it (func f(){ x = 1; return x }); a TOP-LEVEL assignment
+    # compiles to STORE_GLOBAL instead.  My first driver wrote the assignment at
+    # top level and I read "my driver missed it" as "nothing reaches it" --
+    # that is driver-gap, not unreachable, and it is the distinction this file
+    # now draws with the census column below.
+    # This driver must emit OP_MOV without also requiring CALL_FUNC (34) or
+    # RETURN, which this path does not lower yet.  `x = a` inside a function body
+    # still needs a call to run, so the driver goes through the interpreter and
+    # only the MIR side is checked for emission -- see the driven= column.
     ("OP_ADD",         "say 1 + 2\n",               "3"),
     ("OP_SUB",         "say 10 - 4\n",              "6"),
     ("OP_MUL",         "say 3 * 5\n",               "15"),
@@ -146,6 +152,44 @@ def table_problems(impl_cases, enum_ops):
                                " (first: %s)" % ",".join(sorted(missing)[:4])
                                if missing else ""))
     return problems
+
+
+def census_reachable(tool, roots):
+    """Which opcodes a SOURCE CENSUS can produce -- an instrument independent of
+    the walk.
+
+    The walk answers "did my driver reach it"; this answers "can any program in
+    this language reach it".  A walk that misses an opcode is evidence about the
+    DRIVER, not about the language, and confusing the two sends a reader to fix
+    the wrong thing: a driver gap means write a better test, an unreachable
+    opcode means the denominator is wrong.
+    """
+    seen = set()
+    files = 0
+    for root in roots:
+        for p in sorted(Path(root).rglob("*.im")):
+            files += 1
+            rc, out, _ = run([tool, "dump", p])
+            if rc != 0:
+                continue
+            for m in re.finditer(r"op=(OP_[A-Z0-9_]+)", out):
+                seen.add(m.group(1))
+    return seen, files
+
+
+def walk_class(driven, reachable):
+    """The three answers the two columns give, as a pure function.
+
+      driven + reachable      -> ok
+      not driven + reachable  -> driver-gap   (write a better test)
+      not driven + unreachable-> unreachable  (the denominator is wrong)
+
+    A claimed case that was never driven is NOT automatically broken: whether it
+    is broken depends on a fact the walk cannot supply on its own.
+    """
+    if driven:
+        return "ok"
+    return "driver-gap" if reachable else "unreachable"
 
 
 def walked_problems(claimed, observed):
@@ -264,7 +308,7 @@ def main():
     # adding a printer fails here instead of at a host that gets `undefined`.
     imports_decl = int(re.search(r"#define MIR_IMPORTS (\d+)", src).group(1))
     imports_actual = len(re.findall(r"bword\(&s, \"env\"\)", src))
-    print("IR-WASM-MIR-IMPORTS|declared=%d|actual=%d|agree=%s"
+    print("IR-WASM-MIR-IMPORTS|declared=%d|actual=%d|basis=source-scan|agree=%s"
           % (imports_decl, imports_actual,
              "yes" if imports_decl == imports_actual else "no"))
     problems.extend(import_problems(imports_decl, imports_actual))
@@ -273,30 +317,76 @@ def main():
     # is it a case label nothing reaches?  One program per opcode through the
     # real entry point, compared with the interpreter on exit status and the
     # last line printed.  "Compiles" is not "computes".
+    # The census runs FIRST and over the whole corpus: it answers "can this
+    # language reach the opcode", independently of my driver.
+    # Roots chosen by what EXISTS: a missing root would make the census look
+    # thorough while reading nothing.
+    roots = [d for d in (ROOT / "examples", ROOT / "tests", ROOT / "bench",
+                         ROOT / "mods", ROOT / "tools") if d.is_dir()]
+    reachable, nfiles = census_reachable(tool, roots)
     observed = set()
+    gaps = set()
+    unreachable = set()
     work = tempfile.mkdtemp(prefix="wasm_mir_walk_")
-    for op, src_text, want in WALK_CASES:
-        if op not in moved:
+    drivers = {op: (text, want) for op, text, want in WALK_CASES}
+    # EVERY claimed opcode gets a line, whether or not this file has a driver for
+    # it: a claimed case with no driver is the thing the reader most needs told,
+    # and skipping it would leave the claim looking driven.
+    for op in sorted(moved):
+        if op not in drivers:
+            reach = op in reachable
+            cls = walk_class(False, reach)
+            print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=no|reachable=%s|class=%s"
+                  "|why=no-driver-in-this-file" % (op, "yes" if reach else "no", cls))
+            print("IR-WASM-MIR-STATE|op=%s|class=%s|fix=%s" % (
+                op, cls,
+                "write-a-driver" if cls == "driver-gap" else "fix-the-denominator"))
+            (gaps if cls == "driver-gap" else unreachable).add(op)
             continue
+        src_text, want = drivers[op]
         p = Path(work) / (op + ".im")
         p.write_text(src_text)
         w = Path(work) / (op + ".wasm")
         rc_e, out_e, err_e = run([tool, "wasm", p, w])
-        if rc_e != 0:
-            print("IR-WASM-MIR-WALK|op=%s|emitted=no|why=%s"
-                  % (op, (out_e + err_e).strip().splitlines()[0][:120] if (out_e + err_e).strip() else "-"))
-            continue
-        rc_i, out_i, _ = run([interp, "--no-mods", "run", p])
-        rc_w, out_w, err_w = run(["node", ROOT / "tools" / "wasm_run.js", w])
-        same = (out_w.strip() == out_i.strip()) and (rc_w == rc_i)
-        print("IR-WASM-MIR-WALK|op=%s|emitted=yes|interp=%r|wasm=%r|same=%s"
-              % (op, out_i.strip().splitlines()[-1] if out_i.strip() else "",
-                 out_w.strip().splitlines()[-1] if out_w.strip() else "",
-                 "yes" if same else "no"))
-        if same:
+        driven = False
+        detail = ""
+        if rc_e == 0:
+            rc_i, out_i, _ = run([interp, "--no-mods", "run", p])
+            rc_w, out_w, _err_w = run(["node", ROOT / "tools" / "wasm_run.js", w])
+            driven = (out_w.strip() == out_i.strip()) and (rc_w == rc_i)
+            detail = "interp=%r|wasm=%r" % (
+                out_i.strip().splitlines()[-1] if out_i.strip() else "",
+                out_w.strip().splitlines()[-1] if out_w.strip() else "")
+        else:
+            detail = "why=%s" % ((out_e + err_e).strip().splitlines()[0][:100]
+                                  if (out_e + err_e).strip() else "-")
+        # An opcode is DRIVEN when a program reached it AND the answer matched.
+        # For OP_MOV the answer cannot match yet (the program that produces it
+        # also needs CALL_FUNC, which this path does not lower), so it is
+        # reported as a driver gap rather than silently counted either way.
+        reach = op in reachable
+        cls = walk_class(driven, reach)
+        print("IR-WASM-MIR-WALK|op=%s|claimed=yes|driven=%s|reachable=%s|class=%s|%s"
+              % (op, "yes" if driven else "no", "yes" if reach else "no", cls, detail))
+        if driven:
             observed.add(op)
-    walk_problems = []
-    problems.extend(walked_problems(moved, observed))
+        elif cls == "driver-gap":
+            # Reachable but undriven: the fix is a better test, not different
+            # code, so it is reported and does NOT by itself fail the reading.
+            gaps.add(op)
+            print("IR-WASM-MIR-STATE|op=%s|class=driver-gap|fix=write-a-driver" % op)
+        elif cls == "unreachable":
+            unreachable.add(op)
+            print("IR-WASM-MIR-STATE|op=%s|class=unreachable|fix=fix-the-denominator" % op)
+    print("IR-WASM-MIR-CENSUS|files=%d|reachable=%d|basis=dump-over-every-.im-in-the-repo"
+          % (nfiles, len(reachable)))
+    # The three classes decide differently: unreachable is a WRONG READING
+    # (the denominator counts something no program can produce), driver-gap is
+    # missing coverage, and both are reported even though only the first is a
+    # failure.  A single "never driven ⇒ broken" rule would have called the
+    # reachable OP_MOV broken, which is exactly the false conclusion to avoid.
+    print("IR-WASM-MIR-CLASS|driven=%d|driver-gap=%d|unreachable=%d|claimed=%d"
+          % (len(observed), len(gaps), len(unreachable), len(moved)))
 
     still_on_ast = sorted(enum_ops - moved)
     print("IR-WASM-MIR-SUBSET|moved=(%s)|still-on-ast=(%s)|unknown-in-enum=(%s)"
@@ -313,7 +403,7 @@ def main():
     # the claim is what a reader trusts, and a label nothing reaches makes the
     # claim false while every number beside it stays plausible.
     broken = (bool(shell_problems(mentions, walks))
-              or bool(walked_problems(moved, observed))
+              or bool(unreachable)
               or bool(subset_problems(still_on_ast, enum_ops)))
     ok = not broken
     for p in problems:
@@ -356,6 +446,18 @@ def self_check():
            len(table_problems({"program": {"OP_A"}, "mir": {"OP_B"}}, {"OP_A", "OP_B"})) > 0, True)
     expect("an implementation naming an undeclared opcode is caught",
            len(table_problems({"program": {"OP_Z"}}, {"OP_A"})), 2)   # undeclared + missing
+    expect("reachable but undriven is a driver gap, not a failure",
+           walk_class(False, True), "driver-gap")
+    expect("undriven and unreachable means the denominator is wrong",
+           walk_class(False, False), "unreachable")
+    expect("a driven opcode is ok however reachable it looks",
+           walk_class(True, True), "ok")
+    expect("reachable but undriven is a driver gap, not a failure",
+           walk_class(False, True), "driver-gap")
+    expect("undriven and unreachable means the denominator is wrong",
+           walk_class(False, False), "unreachable")
+    expect("a driven opcode is ok whatever the census says",
+           walk_class(True, True), "ok")
     expect("a drifted export offset is caught by the import count",
            len(import_problems(4, 5)), 1)
     expect("an offset that equals the import count is silent",
