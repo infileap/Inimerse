@@ -1973,3 +1973,11 @@ endif()
 add_test(NAME pin_tree_selftest_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "PIN-TREE-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/pin_tree.py --self-test)
 set_tests_properties(pin_tree_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
+
+# The word-refs checker is the sibling of line-refs and obs-markers for the third
+# way docs/ names a line: 第 N 行.  Neither of those two rulers sees that form, so
+# the checker's own checks are registered here for the same reason pin_tree's are:
+# a checker that has never been shown to go red is a checker nobody can quote.
+add_test(NAME word_refs_selftest_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "WORD-REF-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_word_refs.py --self-test)
+set_tests_properties(word_refs_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
