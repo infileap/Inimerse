@@ -27,14 +27,32 @@ Readings:
             two numbers above are the reconciliation -- the ingredient that
             made a deleted driver turn the verdict red instead of moving a
             label nobody checked.
+  IR-WASM-MIR-CENSUS|files=N|dumped=N|failed=N|reachable=N|enum=N|basis=...
+  IR-WASM-MIR-CENSUS-FAIL|failed=N|classified=N|undeclared=N|declared=(...)|
+            by-class=(...)|basis=...|agree=yes|no
+            `failed` on the line above is a count with no meaning of its own: a
+            fixture the front end is meant to refuse and a valid program that
+            stopped parsing produce the same number.  So every rejection is
+            matched against a declared reason class, and the ones matching
+            nothing are printed as PROBLEM and carried by the verdict.  Without
+            that, a program that fails is worth one point of `reachable` and no
+            verdict moves.  The classes are identities rather than a pinned
+            total, because a pinned total reddens when a fixture is added and
+            stays green when a program stops parsing.
   IR-WASM-MIR-KIND-CONFLICT|rows=N|writes=W|conflicts=C|type-checks=T|
-            type-conflicts=TC|clash-rows=R|basis=...|agree=yes|no
+            type-conflicts=TC|clash-rows=R|kind-agree=...|type-agree=...|basis=...
+            |agree=yes|no|n/a
             two counters from the emitter, printed on both its paths: writes is
             what the value-type check looked at, conflicts what it caught.  A
             check that stopped running prints writes=0, which is the same shape
             as a clean run unless the write count rides on the line.  R is
             checked against a pinned literal, not against the table it was
-            counted from.
+            counted from.  Each arm is scored on its own and the line keeps
+            three words: yes means it ran and agreed, no means it ran (or its
+            counts contradict) and disagreed, and n/a means the arm has never
+            executed so there is nothing it could agree with.  One n/a arm keeps
+            the whole line from stamping yes -- type-checks has been 0 for every
+            program in P1, and a zero is not a pass.
   IR-WASM-MIR-PROBLEM-SCOPE|printed=N|carried=M|orphans=K|basis=...|rule=...
   IR-WASM-MIR-VERDICT|PASS|FAIL|...|moved=(claim)|driven=(measured)|...
 
@@ -236,6 +254,54 @@ def table_gaps(impl_cases, enum_ops):
 # the census slower without making it wider.  build/ holds generated .im output.
 CENSUS_SKIP = ("build", ".worktrees", ".scratch", ".git", "node_modules")
 
+# Every dump that fails has to fail for a reason this line declares.  A class is
+# a claim about WHY the front end may refuse a file: old `be` syntax, a cyclic
+# import, a genuine syntax error, a finally it will not compile.  A file that
+# fails for any OTHER reason -- a crash, an unreadable include, a program that
+# is simply valid -- is a defect in the census, because its opcodes leave the
+# evidence without leaving a trace: `reachable` loses a member and `failed`
+# goes up by one, and the verdict does not move.
+#
+# The class list is identities rather than a count on purpose.  "failed=37"
+# alone is the same number whether those 37 are fixtures or whether a real
+# program broke, and a pinned count cannot tell the two apart either -- it
+# reddens when a fixture is added and stays green when a program stops parsing.
+CENSUS_FAIL_CLASSES = (
+    ("be-removed", re.compile(r"`be` declarations were removed")),
+    ("circular-import", re.compile(r"circular import")),
+    ("parse-error", re.compile(r"expected .*but got|expected .*name")),
+    ("finally-control-flow",
+     re.compile(r"(break|continue|goto) is not allowed in finally cleanup")),
+    ("unknown-label", re.compile(r"unknown label")),
+    ("member-on-nonname", re.compile(r"on something that is not a name")),
+)
+
+
+def census_fail_class(message, classes=CENSUS_FAIL_CLASSES):
+    """The declared class this rejection belongs to, or None if none covers it."""
+    for name, pattern in classes:
+        if pattern.search(message):
+            return name
+    return None
+
+
+def census_fail_problems(failures, classes=CENSUS_FAIL_CLASSES):
+    """Rejections with no declared reason: the census measured, then lost it.
+
+    Each entry of failures is (path, message).  Returns one problem per
+    unclassified file, naming the file and the message verbatim, because the
+    reader has to decide whether the program is invalid or the instrument is.
+    """
+    problems = []
+    for path, message in failures:
+        if census_fail_class(message, classes) is None:
+            problems.append(
+                "wasm mir: %s failed to dump for no declared reason (%r); a "
+                "valid program that fails here leaves the census without a "
+                "trace -- reachable shrinks by its opcodes and nothing goes red"
+                % (path, message))
+    return problems
+
 
 def census_reachable(tool, root):
     """Which opcodes a SOURCE CENSUS can produce -- an instrument independent of
@@ -258,21 +324,40 @@ def census_reachable(tool, root):
     67 opcodes look unreachable -- which is exactly the "fix the denominator"
     conclusion a census is supposed to rule OUT.  A narrowed census does not
     fail loudly; it under-reports reachability and reads as evidence.
+
+    Relative imports resolve against the working directory, and this repo's .im
+    files do not agree on one: `scripts/app.im` imports `utils.im` from beside
+    itself, `projects/host/main.im` imports `sync.im` from the repo root.  A
+    single cwd therefore rejects valid programs and books them as failures --
+    measured at 51 before this was noticed, 37 after two layouts are tried.  The
+    retry is not a rescue for broken files: a file that dumps under neither
+    layout is still a failure, and still has to name a declared reason.
     """
     seen = set()
-    files = dumped = failed = 0
+    files = dumped = 0
+    failures = []
     for p in sorted(Path(root).rglob("*.im")):
         if any(part in CENSUS_SKIP for part in p.relative_to(root).parts):
             continue
         files += 1
-        rc, out, _ = run([tool, "dump", p])
-        if rc != 0 or not out.strip():
-            failed += 1
+        out = None
+        # Two layouts, not one: see the docstring above.  Successful dump wins;
+        # if neither succeeds the file is a failure either way.
+        for cwd, name in ((str(root), str(p)), (str(p.parent), p.name)):
+            rc, text, _ = run([tool, "dump", name], cwd=cwd)
+            if rc == 0 and text.strip():
+                out = text
+                break
+        if out is None:
+            rcs, text, err = run([tool, "dump", str(p)], cwd=str(root))
+            message = ("%s\n%s" % (text or "", err or "")).strip().splitlines()
+            failures.append((str(p.relative_to(root)),
+                             message[0] if message else "(no output)"))
             continue
         dumped += 1
         for m in re.finditer(r"op=(OP_[A-Z0-9_]+)", out):
             seen.add(m.group(1))
-    return seen, files, dumped, failed
+    return seen, files, dumped, failures
 
 
 def tracked_im_count(root):
@@ -381,6 +466,15 @@ def kind_problems(runs, clashes, declared):
     a module without recording a single claim is a problem here, not a silence.
     """
     problems = []
+    problems.extend(kind_side_problems(runs, clashes, declared))
+    problems.extend(type_side_problems(runs))
+    return problems
+
+
+def kind_side_problems(runs, clashes, declared):
+    """Disagreements about the WRITE half: did every claim get checked, and did
+    the tally match the table that was supposed to exercise it."""
+    problems = []
     missing = [label for label, _rc, ctr in runs if ctr is None]
     if missing:
         problems.append(
@@ -406,6 +500,13 @@ def kind_problems(runs, clashes, declared):
             "the emitter refused %d program(s) because one register was claimed by "
             "two value types, but its own counter recorded %d (%s)"
             % (clashes, len(found), ",".join(found) or "none"))
+    return problems
+
+
+def type_side_problems(runs):
+    """Disagreements about the LABEL half: a builder that labelled an
+    instruction with a value type its opcode contradicts."""
+    problems = []
     lies = [label for label, _rc, ctr in runs if ctr is not None and ctr[3] > 0]
     if lies:
         problems.append(
@@ -414,6 +515,73 @@ def kind_problems(runs, clashes, declared):
             "be true, and the counter that catches it has to stay exercised"
             % ",".join(lies))
     return problems
+
+
+def arm_agreement(problems, exercised):
+    """One arm of the value-type line, with three answers instead of two.
+
+    `agree=yes` is a statement about a comparison, so it needs two sides: the
+    check ran `exercised` times and disagreed `problems` times.  An arm that has
+    never executed cannot agree -- it has nothing to disagree with.  Printing
+    that zero as `yes` is the shape this batch keeps hitting: a zero on a
+    reading rendered as a pass.  So a zero denominator and no problems is
+    `n/a`, which is the honest word, and the whole line's `agree` inherits it.
+
+    Problems still win at a zero denominator: if the arm has not run AND the
+    counts are inconsistent, the reading is broken, not merely unexercised.
+    """
+    if problems:
+        return "no"
+    return "yes" if exercised else "n/a"
+
+
+def combine_agreement(*arms):
+    """`no` if any arm disagreed, `n/a` if any arm was never exercised."""
+    if any(a == "no" for a in arms):
+        return "no"
+    return "n/a" if any(a == "n/a" for a in arms) else "yes"
+
+
+KIND_WIRING = re.compile(
+    r"^\s*kind_agree, type_agree, line_agree = kind_agreement\(kind_runs, "
+    r"clash_rows\)$", re.M)
+
+
+def kind_line_wiring(text):
+    """main() must print what kind_agreement returns, not words it typed.
+
+    This is a peg, and the reason it has to exist is that the honest version
+    failed: arm_agreement and combine_agreement had cells, the reading still
+    printed agree=yes with type-checks=0, and every cell stayed green -- because
+    the cells call the functions and only main() decides whether the line does.
+    Replacing that one call with a literal tuple reproduced the whole defect
+    with a PASS verdict and 74 green checks, which is the strongest possible
+    argument that the call site needs a check of its own.
+    """
+    if KIND_WIRING.search(text):
+        return []
+    return ["the KIND-CONFLICT line's three words are not computed by "
+            "kind_agreement(kind_runs, clash_rows); the cells can test that "
+            "function but only main's call site decides whether the line prints "
+            "it, and printing them inline is how type-checks=0 stamped agree=yes"]
+
+
+def kind_agreement(runs, clash_rows):
+    """The three words the KIND-CONFLICT line prints, in one place.
+
+    They used to be computed inline in main(), which meant a self-check cell
+    could test the arithmetic but not whether the line still used it -- the same
+    shape as a guard nobody calls.  Here the caller and the cell take the same
+    function, so the cell can assert the whole line's answer for a run whose
+    label arm never executed.
+    """
+    kind_agree = arm_agreement(
+        kind_side_problems(runs, len(clash_rows), EXPECT_CLASH_ROWS),
+        sum((ctr[0] for _l, _rc, ctr in runs if ctr), 0))
+    type_agree = arm_agreement(
+        type_side_problems(runs),
+        sum((ctr[2] for _l, _rc, ctr in runs if ctr), 0))
+    return kind_agree, type_agree, combine_agreement(kind_agree, type_agree)
 
 
 def label_gap(type_checks):
@@ -673,7 +841,7 @@ def main():
     # rather than a hand-picked list of subdirectories, because a list is a
     # judgment about where the corpus lives and this number must not depend on
     # that judgment -- see census_reachable's note.
-    reachable, nfiles, ndumped, nfailed = census_reachable(tool, ROOT)
+    reachable, nfiles, ndumped, nfailures = census_reachable(tool, ROOT)
     # The scope of that walk is itself a reading, and the walk cannot certify
     # its own breadth -- see census_scope.
     ntracked = tracked_im_count(ROOT)
@@ -751,11 +919,13 @@ def main():
     kc = sum((ctr[1] for _l, _rc, ctr in kind_runs if ctr), 0)
     tk = sum((ctr[2] for _l, _rc, ctr in kind_runs if ctr), 0)
     tkc = sum((ctr[3] for _l, _rc, ctr in kind_runs if ctr), 0)
+    kind_agree, type_agree, line_agree = kind_agreement(kind_runs, clash_rows)
     print("IR-WASM-MIR-KIND-CONFLICT|rows=%d|writes=%d|conflicts=%d|type-checks=%d"
-          "|type-conflicts=%d|clash-rows=%d|basis=every-register-write-claims-a-"
-          "value-type-and-the-count-is-printed-on-both-paths|agree=%s"
-          % (len(kind_runs), kw, kc, tk, tkc, len(clash_rows),
-             "yes" if not kind_probs else "no"))
+          "|type-conflicts=%d|clash-rows=%d|kind-agree=%s|type-agree=%s"
+          "|basis=every-register-write-claims-a-value-type-and-the-count-is-"
+          "printed-on-both-paths|agree=%s"
+          % (len(kind_runs), kw, kc, tk, tkc, len(clash_rows), kind_agree,
+             type_agree, line_agree))
     problems.extend(kind_probs)
     # The second pair on that line is a different kind of claim: the ir->type
     # cross-check cannot run until the builder starts labelling instructions, and
@@ -840,7 +1010,26 @@ def main():
     # same shape.
     print("IR-WASM-MIR-CENSUS|files=%d|dumped=%d|failed=%d|reachable=%d|enum=%d"
           "|basis=dump-over-every-.im-under-the-repo-root"
-          % (nfiles, ndumped, nfailed, len(reachable), len(enum_ops)))
+          % (nfiles, ndumped, len(nfailures), len(reachable), len(enum_ops)))
+    # `failed` is a number with no meaning of its own: a fixture the front end is
+    # meant to refuse and a valid program that stopped parsing are the same count.
+    # So every rejection is matched against a declared reason, and the ones that
+    # match nothing are the ingredient.  Without this, a program that fails is
+    # worth exactly one point of `reachable`, and no verdict notices.
+    fail_probs = census_fail_problems(nfailures)
+    by_class = {}
+    for _path, message in nfailures:
+        name = census_fail_class(message) or "undeclared"
+        by_class[name] = by_class.get(name, 0) + 1
+    declared_classes = [name for name, _p in CENSUS_FAIL_CLASSES]
+    print("IR-WASM-MIR-CENSUS-FAIL|failed=%d|classified=%d|undeclared=%d"
+          "|declared=(%s)|by-class=(%s)|basis=every-rejection-matches-a-declared-reason"
+          "|agree=%s"
+          % (len(nfailures), len(nfailures) - len(fail_probs), len(fail_probs),
+             ",".join(declared_classes),
+             ",".join("%s:%d" % (n, by_class.get(n, 0)) for n in declared_classes),
+             "yes" if not fail_probs else "no"))
+    problems.extend(fail_probs)
     # ...and the walk's own breadth is a separate number with its own instrument:
     # an index that did not walk anywhere.  Without this, a skip list that grew
     # by one directory produces a smaller census with the same shape.
@@ -901,7 +1090,15 @@ def main():
           % (len(problems), len(carried), len(orphans)))
     for p in orphans:
         print("IR-WASM-MIR-ORPHAN|" + p)
-    broken = broken_reading(shell=shell_problems(mentions, walks), scope=scope,
+    broken = broken_reading(shell=shell_problems(mentions, walks),
+                            # scope carries both halves of the census's own
+                            # integrity: the breadth of the walk (index vs
+                            # walked) and the reasons its rejections give.  A
+                            # rejection no declared class covers is printed as a
+                            # PROBLEM and carried here, so it cannot ride as a
+                            # number on the census line while the verdict stays
+                            # green.
+                            scope=scope + fail_probs,
                             unreachable=unreachable, subset=subset_probs,
                             rows=row_problems, claims=claim_probs,
                             orphans=orphans, kinds=kind_probs)
@@ -1134,6 +1331,52 @@ def self_check():
            bool(label_gap(0)), True)
     expect("a cross-check that ran and found nothing says nothing",
            label_gap(4), None)
+    # A zero denominator is not agreement.  These three cells are the whole
+    # point: the label arm has never run, and the line has to say n/a rather
+    # than print a zero and call it green.
+    expect("an arm that never ran is n/a, not yes", arm_agreement([], 0), "n/a")
+    expect("an arm that ran and disagreed with nothing is yes",
+           arm_agreement([], 4), "yes")
+    expect("an arm that never ran but whose counts contradict is still broken",
+           arm_agreement(["counts disagree"], 0), "no")
+    expect("one n/a arm keeps the whole line from stamping yes",
+           combine_agreement("yes", "n/a"), "n/a")
+    expect("two agreeing arms stamp yes", combine_agreement("yes", "yes"), "yes")
+    expect("a broken arm is broken even next to an unexercised one",
+           combine_agreement("no", "n/a"), "no")
+    # The line's own answer, through the function main() prints with: a clean
+    # write arm plus a label arm that has never run is n/a, and no number of
+    # green cells about the arithmetic changes that.
+    # ...and the cell for the peg, because a cell that only tests the pure
+    # function cannot see main's call site: replacing that one line with a
+    # literal tuple reproduced agree=yes next to type-checks=0 with a PASS
+    # verdict and every other check green.
+    src = Path(__file__).read_text()
+    expect("the reading's agreement is wired through the function the cells test",
+           kind_line_wiring(src), [])
+    expect("...and that peg is not vacuous: a line typed by hand is caught",
+           len(kind_line_wiring(src.replace(
+               "kind_agree, type_agree, line_agree = kind_agreement(kind_runs, clash_rows)",
+               'kind_agree, type_agree, line_agree = ("yes", "yes", "yes")'))), 1)
+    expect("a clean run with an unexercised label arm does not stamp the line yes",
+           kind_agreement([("OP_A row 1", 1, (4, 1, 0, 0))],
+                          ["OP_A row 2"])[2], "n/a")
+    # ...and her second point: `failed` is a count with no meaning until every
+    # rejection names a reason.  A fixture the front end is meant to refuse and
+    # a valid program that stopped parsing are the same number on that line.
+    expect("a rejection for a declared reason is not a problem",
+           census_fail_problems([("a.im", "Error at line 2: `be` declarations "
+                                          "were removed")]), [])
+    expect("a rejection for no declared reason is a problem",
+           len(census_fail_problems([("a.im", "Segmentation fault (core dumped)")])), 1)
+    expect("a reason is matched by class, not by file",
+           census_fail_class("[error] circular import: 'nscyc_a.im' as 'a'"),
+           "circular-import")
+    expect("an undeclared reason reaches the verdict, not just the print",
+           broken_reading(shell=[], scope=census_fail_problems(
+                              [("a.im", "Segmentation fault")]),
+                          unreachable=set(), subset=[], rows=[], claims=[],
+                          orphans=[], kinds=[]), True)
     expect("a missing prerequisite exits 2, not 0", REFUSED_RC, 2)
 
     if bad:
