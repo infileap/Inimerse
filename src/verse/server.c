@@ -195,7 +195,27 @@ static int run_upp(VlServer *s) {
                 rc = upp_refuse("cannot serialize the 'verse' payload");
                 break;
             }
-            int stop = vl_server_handle(s, req.data ? req.data : "{}", resp, VL_LINE_MAX);
+            /* The plain transport reads a request with fgets() bounded by
+             * VL_LINE_MAX, so a Layer request has a bound whether or not the
+             * envelope has room for more.  Accepting a 400 KiB request here
+             * only because this path can read it would make the envelope more
+             * than a carrier, and the same scenario would answer differently
+             * depending on which transport read it.  The refusal is named
+             * because the plain path's is not: fgets() there truncates at the
+             * reader and the Layer reports a parse error at an offset nobody
+             * wrote (docs/STATUS.md #10.10 found the same shape for replies). */
+            size_t reqlen = strlen(req.data ? req.data : "{}");
+            if (reqlen >= VL_LINE_MAX) {
+                char why[160];
+                snprintf(why, sizeof why,
+                         "'verse' payload is %zu bytes, past the Layer's %d-byte "
+                         "request bound", reqlen, VL_LINE_MAX - 1);
+                upp_buf_free(&req);
+                vj_free(msg);
+                rc = upp_refuse(why);
+                break;
+            }
+            int stop = vl_server_handle(s, req.data, resp, VL_LINE_MAX);
             upp_buf_free(&req);
 
             UppBuf frame;

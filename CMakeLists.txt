@@ -76,6 +76,19 @@ add_test(NAME verse_closed_loop
   COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
           ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_closed_loop.test.py
           $<TARGET_FILE:inim-client>)
+# The `--upp` transport half.  The test asserts an equality -- one scenario
+# read through both transports produces the same lines -- and the refusals the
+# envelope adds on top of upp.h; its own comparator gets a self-check because
+# an equality between two empty transcripts would otherwise be green forever.
+add_test(NAME verse_upp_transport
+  COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
+          ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
+          $<TARGET_FILE:inim-client>)
+set_tests_properties(verse_upp_transport PROPERTIES TIMEOUT 90 LABELS "protocol;upp;verse")
+add_test(NAME verse_upp_transport_selfcheck
+  COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
+          --self-check)
+set_tests_properties(verse_upp_transport_selfcheck PROPERTIES TIMEOUT 30 LABELS "protocol;upp;verse")
 # P1 increment 4: engine-side UPP -- universal plugin protocol framing (JSONL,
 # 1 MiB frame cap, hello/welcome negotiation) and the session state machine.
 # src/verse/upp_probe.c asserts the boundary cases offline; the

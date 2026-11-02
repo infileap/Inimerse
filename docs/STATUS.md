@@ -4136,3 +4136,55 @@ AssertionError: {'7f11e493…': 'up', '9f56c34b…': 'up', '244a9c2d…': 'unkno
 2. 失败签名本流**只见到 `unknown` 这一种**，**没有**见到「C 报 `up`」。
 3. 22 次全绿说明它**不是**确定性红，**不说明它罕见到可以忽略** —— §2.9 那个窗口当年也是约 80 轮 1 轮。
 4. 本流**没有**用 80 轮重复去测它的真实频率；上面那个「22 次」是随手的重跑次数，**不是频率的读数**。
+
+### 10.35 UPP 接入传输层：一次「信封是唯一差别」的等值测量（`upp-transport`）
+
+**核实先于动手。** [BOARD.md](BOARD.md) 的 `upp-in-engine` 行当时的「遗留边界」写了两条：`timestamp` 只收整数、尚未接入 `inim-server`/`inim-client` 传输层。开工前逐条实测：
+
+| 主张 | 实测命令 | 结果 |
+|---|---|---|
+| 传输层未接入 | `grep -n "upp" src/verse/server.c src/verse/client.c` | 两文件零命中 ⇒ **成立**，本流做这一条 |
+| `timestamp` 只收整数 | `sed -n '/int upp_session_apply/,/^}/p' src/verse/upp.c`（heartbeat 分支） | 判定用 `json_min` 的整数路径，非整数即拒 ⇒ **成立**，不在本流范围 |
+
+**做了什么。** `inim-server --upp` 与 `inim-client --upp`：同一会话，外面套 UPP 信封（`src/verse/upp.h`）。Layer 协议一个字没改 —— 请求以 `verse` 帧 `payload` 的**原始 JSON 文本**进出，所以两种模式只差信封。判据就是这条等值本身，且它是**被断言**的（`tools/verse_upp_transport.test.py`，CTest 名 `verse_upp_transport`）。
+
+| 判据 | 读数 | 复跑 |
+|---|---|---|
+| 同一 scenario 走两种传输，响应行逐字相同 | `23` 条断言时 5 行全同；加大请求后共 `29` 条断言 | `INIM_SERVER_BIN=build/inim-server python3 tools/verse_upp_transport.test.py build/inim-client` |
+| 等值不是「两边都没输出」 | 响应行数 == 请求行数（5/5、4/4） | 同上 |
+| Layer 自己的拒绝穿过信封 | 首行两模式都是 `{"code":"no_session",...}` | 同上 |
+| 比较器是活的（多一个 `put` 必须不等） | `first_difference >= 0` | 同上 |
+| 60 KiB 请求（超 `VL_LINE_MAX/2`，界内）两模式同答、且 `ok:true` | 逐字相同 | 同上 |
+| 比较器自身可被反驳 | `--self-check`：`6` 条，含空对空比较返回「相等」这一陷阱的显式断言 | `python3 tools/verse_upp_transport.test.py --self-check`（CTest 名 `verse_upp_transport_selfcheck`） |
+
+**信封新增的四条拒绝**（`upp.h` 本身不决定、由传输决定；全部是拒绝而不是尽力而为）：
+
+| 情形 | 退出码 | stderr 原文（节选） |
+|---|---|---|
+| `start` 之前收到 `verse` 帧 | `4` | `upp refused: 'verse' frame while the session is init, not running` |
+| 未知帧类型 | `4` | `upp refused: unknown frame type 'nope'` |
+| 这一行根本不是帧 | `4` | `upp refused: ...`（`upp_decode_line` 的原因） |
+| 与服务器不同 abi 的 `hello` | `5` | `upp hello refused: ...` |
+| `payload` 超过 Layer 的请求上界 | `4` | `upp refused: 'verse' payload is 400046 bytes, past the Layer's 65535-byte request bound` |
+
+**反向判据（三个控制，逐个实测，恢复后全绿）。** 每一条都改**实现**而不是改断言，看断言是否真的红：
+
+| 控制（改实现） | 修复前（控制态） | 修复后（出厂态） |
+|---|---|---|
+| A：服务器直接把 Layer 响应写出去，不发信封 | `28 checks, 7 FAILURES`（等值、退出码、60 KiB 三组全红） | `29 checks, 0 failures` |
+| B：删掉「只有 RUNNING 才收 `verse`」 | `29 checks, 3 FAILURES`（`verse` before start 被**答复**而不是拒绝） | 同上 |
+| C：删掉 payload 的请求上界 | `29 checks, 3 FAILURES`（超界请求被**提交**） | 同上 |
+
+**本流顺带修掉的两处既有缺陷**（都在 `src/verse/client.c`，都属于「静默」这一类）：
+
+1. **scenario 行读器静默截断**：`slurp()` 原来用 `char buf[VL_LINE_MAX]` + `fgets`，超过 64 KiB 的一行被**截断**而不是读整；截断后的半个 JSON 仍是一行，服务器答 `malformed`、客户端退 `0` —— 报错里的偏移量指向一个写请求的人从没写过的位置。改成按需增长。同一形状在本档 §10.10 已记过一次（那次是**回复**被截断）。
+2. **`stop` 帧与 `bye` 的竞争**：Layer 的 `bye` 让服务器自己退场，客户端随后那条礼节性 `stop` 帧可能撞上已退出的子进程，默认 `SIGPIPE` 处置把客户端**杀死在打印完所有响应之后**（实测 `-13`，且是间歇的）。改成 POSIX 上忽略 `SIGPIPE`：写失败是这里想要的行为。Windows 无此信号，那一半不受影响。
+
+**诚实边界。**
+
+1. **只在本机 Linux 实测。** Windows 那半（`child_spawn` 里 `cmdline_append` 追加 `--upp`）**只编译过、没运行过** —— 本机无法确认 `CreateProcessA` 那条路径。这是「被报告的代码」而不是「已验证的行为」。
+2. **plain 传输的 64 KiB 行读器仍在。** `vl_server_handle()` 没有长度上界，上界住在 `run_plain()` 的 `fgets(line, VL_LINE_MAX, stdin)` 里。超过 65535 字节的请求在 plain 侧被**截断**，Layer 报 `unterminated string at offset 65535`；UPP 侧按**同一条上界点名拒绝**。⇒ 两种传输在超界处的**措辞**不同，语义相同（都拒）。本流**没有**修 plain 那一半：修它等于把 Layer 的请求上界从行读器搬进 `protocol.c`，那是协议暴露面的改动，不属于「接传输层」。**下一步**：把上界变成 `protocol.c` 里一个可被引用的常量，两半共用，plain 侧也就从截断变点名。
+3. **1 MiB 帧没有被测到边界本身。** 实际测到的是 60 KiB（提交路径）与 100 KiB（拒绝路径）；`UPP_MAX_FRAME_BYTES` 只用来说明缓冲区大小从哪来，不是一个被验证的上界。
+4. `timestamp` 仍只收整数（§10.1 的遗留边界，未在本流动）。
+5. **未接网络层**：UPP 仍只在 stdin/stdout 上跑，没有 WebSocket/套接字那一半；`crp_ws_client.js` 的客户端与它无关。
+6. **`stop` 帧是尽力而为。** 忽略 `SIGPIPE` 之后，对已退出的 peer 发 `stop` 会静默失败 —— 这是设计，不是遗漏：会话已经在 `bye` 处结束，那条 `stop` 只是替「没有 `bye` 的场景」收尾。

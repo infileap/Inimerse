@@ -25,27 +25,69 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
 #include "upp.h"
 
 #define VL_LINE_MAX (64 * 1024)
 
+/* Read the scenario into one string per line.
+ *
+ * The buffer grows instead of living on the stack at VL_LINE_MAX.  A scenario
+ * line that was longer than that used to be *truncated* rather than read --
+ * and the truncation was silent, because a cut-off JSON object is still a
+ * line: the server answered `malformed` and the client exited 0, so the only
+ * sign was an error message pointing at an offset the scenario writer never
+ * wrote.  That is the same shape as docs/STATUS.md #10.10 (a large payload
+ * dropped in silence); here the payload is the request. */
 static int slurp(FILE *in, char ***out_lines) {
     size_t cap = 16, n = 0;
     char **lines = (char **)malloc(cap * sizeof *lines);
     if (!lines) return -1;
-    char buf[VL_LINE_MAX];
-    while (fgets(buf, sizeof buf, in)) {
-        size_t len = strlen(buf);
-        while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = '\0';
-        if (len == 0) continue;
-        if (n == cap) {
-            cap *= 2;
-            char **tmp = (char **)realloc(lines, cap * sizeof *lines);
-            if (!tmp) { free(lines); return -1; }
-            lines = tmp;
+
+    size_t room = VL_LINE_MAX, len = 0;
+    char *buf = (char *)malloc(room);
+    if (!buf) { free(lines); return -1; }
+
+    for (;;) {
+        if (room - len < 2) {
+            size_t grown = room * 2;
+            char *tmp = (char *)realloc(buf, grown);
+            if (!tmp) { free(buf); free(lines); return -1; }
+            buf = tmp;
+            room = grown;
         }
-        lines[n++] = strdup(buf);
+        if (!fgets(buf + len, (int)(room - len), in)) break;
+        len += strlen(buf + len);
+        if (len && buf[len - 1] == '\n') {
+            while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = '\0';
+            if (len) {
+                if (n == cap) {
+                    cap *= 2;
+                    char **tmp = (char **)realloc(lines, cap * sizeof *lines);
+                    if (!tmp) { free(buf); free(lines); return -1; }
+                    lines = tmp;
+                }
+                lines[n++] = strdup(buf);
+            }
+            len = 0;
+        }
     }
+    if (len) {                                   /* last line without a newline */
+        while (len && (buf[len - 1] == '\r')) buf[--len] = '\0';
+        if (len) {
+            if (n == cap) {
+                cap *= 2;
+                char **tmp = (char **)realloc(lines, cap * sizeof *lines);
+                if (!tmp) { free(buf); free(lines); return -1; }
+                lines = tmp;
+            }
+            lines[n++] = strdup(buf);
+        }
+    }
+    free(buf);
     *out_lines = lines;
     return (int)n;
 }
@@ -452,6 +494,16 @@ int main(int argc, char **argv) {
         return 70;
     }
     size_t respcap = upp ? UPP_MAX_FRAME_BYTES + 2 : VL_LINE_MAX;
+
+#ifndef _WIN32
+    /* The child ends the session on the Layer's own `bye` and exits, so the
+     * courtesy `stop` frame below can race with that exit.  Without this the
+     * default SIGPIPE disposition kills the client with -13 *after* it has
+     * printed every response, which turns a correct run into a crash and made
+     * this test intermittently red.  A failed write is what we want here:
+     * nothing is left to tell a peer that has already gone. */
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     int status = 0;
     if (upp) {
