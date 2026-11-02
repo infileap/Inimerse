@@ -57,9 +57,12 @@ set(VL_CORE_SOURCES
 add_executable(verse_protocol_probe src/verse/protocol_probe.c ${VL_CORE_SOURCES})
 target_include_directories(verse_protocol_probe PRIVATE src/verse src/common)
 add_test(NAME verse_protocol_probe COMMAND verse_protocol_probe)
-add_executable(inim-server src/verse/server.c ${VL_CORE_SOURCES})
+# The two transport halves of P1: `--upp` puts the same session behind the UPP
+# envelope, so both binaries link upp.c and json_min.c (upp.h includes the latter).
+add_executable(inim-server src/verse/server.c src/verse/upp.c ${VL_CORE_SOURCES})
 target_include_directories(inim-server PRIVATE src/verse src/common)
-add_executable(inim-client src/verse/client.c)
+add_executable(inim-client src/verse/client.c src/verse/upp.c src/verse/json_min.c)
+target_include_directories(inim-client PRIVATE src/verse src/common)
 # Locate the test interpreter before the first add_test that needs it.  The
 # interpreter is not called python3 everywhere: on Windows it is python.exe, and
 # a hardcoded `python3` makes the test die with "no such file or directory".
