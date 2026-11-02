@@ -4187,4 +4187,5 @@ AssertionError: {'7f11e493…': 'up', '9f56c34b…': 'up', '244a9c2d…': 'unkno
 3. **1 MiB 帧没有被测到边界本身。** 实际测到的是 60 KiB（提交路径）与 100 KiB（拒绝路径）；`UPP_MAX_FRAME_BYTES` 只用来说明缓冲区大小从哪来，不是一个被验证的上界。
 4. `timestamp` 仍只收整数（§10.1 的遗留边界，未在本流动）。
 5. **未接网络层**：UPP 仍只在 stdin/stdout 上跑，没有 WebSocket/套接字那一半；`crp_ws_client.js` 的客户端与它无关。
-6. **`stop` 帧是尽力而为。** 忽略 `SIGPIPE` 之后，对已退出的 peer 发 `stop` 会静默失败 —— 这是设计，不是遗漏：会话已经在 `bye` 处结束，那条 `stop` 只是替「没有 `bye` 的场景」收尾。
+6. **这一笔把 line-refs 的余量用光了。** 接线要加三行到 `CMakeLists.txt`，而 `docs/` 用行号引用它比引用任何别的文件都多：三行插在中间，`check_line_refs.py` 的 unanchored delta 就从 +11 走到 +87，判决当场点名 `unanchored-over-ceiling`。改成在文件末尾追加（`target_include_directories` 可以在目标存在之后再说，两处 `add_executable` 只在原有行内加源码），读完是 **+12，天花板也是 +12** —— 合上了，但**一格余量都没有**。这是这一笔的成本，不是留给下一笔的钱：日后往 `CMakeLists.txt` 中间添一行，或者往 docs 里加一条指不到锚的 `file:NNN`，都会先撞在这条天花板上。
+7. **`stop` 帧是尽力而为。** 忽略 `SIGPIPE` 之后，对已退出的 peer 发 `stop` 会静默失败 —— 这是设计，不是遗漏：会话已经在 `bye` 处结束，那条 `stop` 只是替「没有 `bye` 的场景」收尾。
