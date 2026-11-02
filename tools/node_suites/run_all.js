@@ -23,6 +23,7 @@ const SUITES = [
   'crp_relay.test.js',
   'crp_client.test.js',
   'crp_ws_client.test.js',
+  'crp_wire_neg.test.js',
   'vverse_pack.test.js',
   'vverse_validate.test.js',
   // The eight entries above are the UPP/CRP/.vverse protocol suites.  These

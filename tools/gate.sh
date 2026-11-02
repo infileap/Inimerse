@@ -158,7 +158,7 @@ EXP_CTEST="${EXP_CTEST:-191}"   # recounted off the merged tree by the commit be
 
 # The JS suite count, asserted for the same reason as EXP_CTEST: a suite dropped
 # from tools/node_suites/run_all.js SUITES must not leave a green stage behind.
-EXP_NODE="${EXP_NODE:-12}"
+EXP_NODE="${EXP_NODE:-13}"   # 12 -> 13 when the CRP wire-level negative controls stopped being a driver kept in .scratch/ and became a suite (added by the commit that added tools/crp_wire_neg.test.js -- until then the four refusals were seen by a hand-run probe, which is "I looked once", not "the gate looks every time")
 
 # Where the panels suite's jsdom lives.  It is installed outside the repository,
 # at the location this stage's own failure text has always printed, so whether
