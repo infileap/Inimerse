@@ -266,21 +266,72 @@ CENSUS_SKIP = ("build", ".worktrees", ".scratch", ".git", "node_modules")
 # alone is the same number whether those 37 are fixtures or whether a real
 # program broke, and a pinned count cannot tell the two apart either -- it
 # reddens when a fixture is added and stays green when a program stops parsing.
+# The keyword table is read from the lexer rather than restated here: a Python
+# copy of it would be a second source of truth that drifts the moment a keyword
+# is added, and the classification below turns on whether a token IS a keyword.
+def lexer_keywords(root=ROOT):
+    """Every word src/lexer/lexer.c turns into a token, read from the table."""
+    text = (Path(root) / "src/lexer/lexer.c").read_text()
+    return set(re.findall(r'\{"([a-z_]+)",\s*TOK_[A-Z_]+\}', text))
+
+
+def but_got(message):
+    """The (expected, got) pair a parser rejection prints, or (None, None)."""
+    m = re.search(r"expected '([^']*)', but got '([^']*)'", message)
+    return (m.group(1), m.group(2)) if m else (None, None)
+
+
+# Each class is ONE sentence of language intent, not a syntax-school name.  That
+# is the criterion a class has to meet: a rejection belongs here when somebody
+# can say why the language refuses it, and a rejection that needs two different
+# sentences is two classes.  The previous version satisfied neither -- it had a
+# single `parse-error` bucket, so "you may not shadow a builtin" (measured: a
+# fresh `func max(a, b)` file lands there, because `max` is a lexer keyword) sat
+# in the same cell as `be` remnants and old `type` declarations.
+#
+# A class is (name, predicate).  The predicate takes the message and returns
+# True when this rejection is explained by that intent.
 CENSUS_FAIL_CLASSES = (
-    ("be-removed", re.compile(r"`be` declarations were removed")),
-    ("circular-import", re.compile(r"circular import")),
-    ("parse-error", re.compile(r"expected .*but got|expected .*name")),
+    ("removed-be",
+     lambda m: "`be` declarations were removed" in m),
+    # `type Name = ...` is gone, and it is the only construct that asks for a
+    # "type name" -- so that expected-kind identifies the removed form everywhere
+    # it appears, including when the file that fails is an importer of one.
+    ("removed-type-decl",
+     lambda m: but_got(m)[0] == "type name"),
+    # `->TYPE` casts are gone; the type keyword is no longer an expression.
+    ("removed-cast",
+     lambda m: but_got(m)[0] == "expression"
+     and but_got(m)[1] in ("float", "int", "str", "bool")),
+    # `type(x)` was a builtin call; the keyword kept its token, so it now lands
+    # where an expression is expected.
+    ("removed-builtin-call",
+     lambda m: but_got(m) == ("expression", "type")),
+    # Anonymous `func(...) { }` as a value is gone.
+    ("removed-anon-func",
+     lambda m: but_got(m)[0] == "expression" and but_got(m)[1] in ("func", "fn")),
+    # A statement keyword whose body the grammar stopped accepting, so the
+    # parser reports the token that comes after it (`global count` -> `=`).
+    ("removed-statement",
+     lambda m: but_got(m) == ("expression", "=")),
+    # The live rule: a builtin's name may not be declared by the program.  The
+    # evidence is that the rejected token IS in the lexer table, not that the
+    # message contains the word "max".
+    ("reserved-name",
+     lambda m: but_got(m)[0] == "function name"
+     and but_got(m)[1] is not None and but_got(m)[1] in lexer_keywords()),
+    ("circular-import", lambda m: "circular import" in m),
     ("finally-control-flow",
-     re.compile(r"(break|continue|goto) is not allowed in finally cleanup")),
-    ("unknown-label", re.compile(r"unknown label")),
-    ("member-on-nonname", re.compile(r"on something that is not a name")),
+     lambda m: bool(re.search(r"(break|continue|goto) is not allowed in finally cleanup", m))),
+    ("unknown-label", lambda m: "unknown label" in m),
+    ("member-on-nonname", lambda m: "on something that is not a name" in m),
 )
 
 
 def census_fail_class(message, classes=CENSUS_FAIL_CLASSES):
     """The declared class this rejection belongs to, or None if none covers it."""
-    for name, pattern in classes:
-        if pattern.search(message):
+    for name, matches in classes:
+        if matches(message):
             return name
     return None
 
@@ -336,6 +387,12 @@ def census_reachable(tool, root):
     seen = set()
     files = dumped = 0
     failures = []
+    # Files that only dumped under the SECOND layout.  Printed, not absorbed: a
+    # count of evidence obtained by choosing a working directory is the same
+    # kind of hidden fact as a basis string that names a wider read than the one
+    # performed, and the reviewer who checked it counted 14 where the message
+    # said 13.
+    retried = []
     for p in sorted(Path(root).rglob("*.im")):
         if any(part in CENSUS_SKIP for part in p.relative_to(root).parts):
             continue
@@ -343,10 +400,13 @@ def census_reachable(tool, root):
         out = None
         # Two layouts, not one: see the docstring above.  Successful dump wins;
         # if neither succeeds the file is a failure either way.
-        for cwd, name in ((str(root), str(p)), (str(p.parent), p.name)):
+        for attempt, (cwd, name) in enumerate(
+                ((str(root), str(p)), (str(p.parent), p.name))):
             rc, text, _ = run([tool, "dump", name], cwd=cwd)
             if rc == 0 and text.strip():
                 out = text
+                if attempt:
+                    retried.append(str(p.relative_to(root)))
                 break
         if out is None:
             rcs, text, err = run([tool, "dump", str(p)], cwd=str(root))
@@ -357,7 +417,7 @@ def census_reachable(tool, root):
         dumped += 1
         for m in re.finditer(r"op=(OP_[A-Z0-9_]+)", out):
             seen.add(m.group(1))
-    return seen, files, dumped, failures
+    return seen, files, dumped, failures, retried
 
 
 def tracked_im_count(root):
@@ -841,7 +901,7 @@ def main():
     # rather than a hand-picked list of subdirectories, because a list is a
     # judgment about where the corpus lives and this number must not depend on
     # that judgment -- see census_reachable's note.
-    reachable, nfiles, ndumped, nfailures = census_reachable(tool, ROOT)
+    reachable, nfiles, ndumped, nfailures, nretried = census_reachable(tool, ROOT)
     # The scope of that walk is itself a reading, and the walk cannot certify
     # its own breadth -- see census_scope.
     ntracked = tracked_im_count(ROOT)
@@ -914,7 +974,14 @@ def main():
     # writes is what the check looked at, conflicts is what it caught.  A check
     # that stopped running reports writes=0 and no conflict, which is the same
     # shape as a clean run unless the write count is on the line.
-    kind_probs = kind_problems(kind_runs, len(clash_rows), EXPECT_CLASH_ROWS)
+    # The reading checks its own wiring.  This was only a --self-check cell at
+    # first, and the reviewer ran the experiment that showed why that is not
+    # enough: replacing the call below with a literal tuple left --self-check
+    # red but the READING green -- agree=yes next to type-checks=0, PROBLEM-SCOPE
+    # printed=0, VERDICT PASS.  A peg that only a flag runs is a peg the default
+    # run does not have.
+    kind_probs = (kind_problems(kind_runs, len(clash_rows), EXPECT_CLASH_ROWS)
+                  + kind_line_wiring(Path(__file__).read_text()))
     kw = sum((ctr[0] for _l, _rc, ctr in kind_runs if ctr), 0)
     kc = sum((ctr[1] for _l, _rc, ctr in kind_runs if ctr), 0)
     tk = sum((ctr[2] for _l, _rc, ctr in kind_runs if ctr), 0)
@@ -1009,8 +1076,9 @@ def main():
     # census that read part of the corpus and one that read all of it print the
     # same shape.
     print("IR-WASM-MIR-CENSUS|files=%d|dumped=%d|failed=%d|reachable=%d|enum=%d"
-          "|basis=dump-over-every-.im-under-the-repo-root"
-          % (nfiles, ndumped, len(nfailures), len(reachable), len(enum_ops)))
+          "|cwd-retried=%d|basis=dump-over-every-.im-under-the-repo-root"
+          % (nfiles, ndumped, len(nfailures), len(reachable), len(enum_ops),
+             len(nretried)))
     # `failed` is a number with no meaning of its own: a fixture the front end is
     # meant to refuse and a valid program that stopped parsing are the same count.
     # So every rejection is matched against a declared reason, and the ones that
@@ -1081,8 +1149,14 @@ def main():
     # first, so its one PROBLEM printed, the verdict failed through it, and
     # PROBLEM-SCOPE still said orphans=1 -- a defect line the tool reported as
     # invisible while it was the thing turning the reading red.
-    carried = (shell_problems(mentions, walks) + list(scope) + subset_probs
-               + row_problems + claim_probs + kind_probs)
+    # ...and the census's rejection ingredient went missing from exactly this
+    # line when it was added: scope carries breadth, fail_probs carries reasons,
+    # broken_reading took scope + fail_probs and this union took scope alone, so
+    # dropping a declared class printed a PROBLEM, failed the verdict, and
+    # PROBLEM-SCOPE said carried=0|orphans=1 about the line causing the failure.
+    # Same defect a third time, in the same file, so it now reads as one term:
+    carried = (shell_problems(mentions, walks) + list(scope) + fail_probs
+               + subset_probs + row_problems + claim_probs + kind_probs)
     orphans = orphan_problems(problems, carried)
     print("IR-WASM-MIR-PROBLEM-SCOPE|printed=%d|carried=%d|orphans=%d"
           "|basis=every-printed-PROBLEM-must-ride-an-ingredient-of-the-verdict"

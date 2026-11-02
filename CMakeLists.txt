@@ -1929,6 +1929,20 @@ set_tests_properties(aot_mir_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOU
 add_test(NAME aot_mir_cover_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_cover.test.py --build ${CMAKE_BINARY_DIR} --check-pin)
 set_tests_properties(aot_mir_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;compiler;regression" PASS_REGULAR_EXPRESSION "IR-AOT-MIR-VERDICT\\|PASS")
+# The MIR->wasm coverage reading.  It was written, run by hand, quoted in commit
+# messages, and never registered -- so "189/189 green" said nothing about it, and
+# the peg that checks the reading's own wiring only ran under --self-check.  The
+# census walks every .im in the tree through aot-mir in both include layouts, so
+# it needs the build directory and a long timeout; the verdict it must print is
+# the same PASS the hand runs showed.
+add_test(NAME wasm_mir_cover_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_mir_cover.test.py --build ${CMAKE_BINARY_DIR})
+set_tests_properties(wasm_mir_cover_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;wasm;regression" PASS_REGULAR_EXPRESSION "IR-WASM-MIR-VERDICT\\|PASS")
+# Its self-check, including the cells that pin the reading's own call site.
+add_test(NAME wasm_mir_cover_selfcheck_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "wasm_mir self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_mir_cover.test.py --self-check)
+set_tests_properties(wasm_mir_cover_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;regression")
+
 # The ledger arithmetic and the two parsers, on inputs whose answer is known --
 # including the ones the ledger has to reject.  No build output, no corpus.
 add_test(NAME aot_mir_cover_selfcheck_regression
