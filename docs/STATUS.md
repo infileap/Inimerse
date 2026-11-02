@@ -4190,3 +4190,5 @@ wire_neg: 13 checks, 0 failures
 3. `PORTAL` 只做认证，**不做逐 (verse, peer) 授权**：拿到 token 的一对能否访问另一对，仍由发送方自觉（§7.7 的缺口）。BOARD 的 `crp-in-engine` 行早已记这条遗留边界，本流没有改变它。
 4. `crosscheck` 的 115 条与 §10.6 写的 101 条**不是矛盾**：101 是 `json_min` 扩项之前的语料数，今天实测 115。同理，`docs/` 里每一处 ctest 计数都带自己的时点。
 5. **本笔只动文档**，不改 `EXP_CTEST` / `EXP_NODE`，也不改 `CMakeLists.txt`，因此 pin 与计数不该动；全套门禁读数见本笔的回报（若合并时基线又推进，以门禁日志为准，不以本节文字为准）。
+
+**补记（本笔自己撞出来的红）：文档改动也是门禁输入。** 本笔声明「只动文档」，仍一度把 `ctest #171 docs_headings` 打红：`tools/docs_headings.pin.json` 钉着 `headings=1374`，新增的 `§10.100` 把它推到 1375，于是「删一节」那两条用例拿到 `removed=0`（删完正好等于旧基线，删与加互相抵消）。修法不是改测试，是 `python3 tools/check_docs_headings.py --write-pin` 重钉。而**重钉本身还有一条陷阱**：`--write-pin` 记录的是当时的 HEAD，若随后 `--amend`，被记录的那棵树就不再是任何提交的祖先 —— pin 指向悬空对象，`git gc --prune` 之后一棵**干净**的树会红，且报错把人引向「历史被改写」。本笔先 amend（到 `890dfa1`）才发现，于是把 pin 重钉到 `59dbc9a` 并**单独提交一笔**，判据是 `git merge-base --is-ancestor <pin.tree> HEAD`（实测 `REACHABLE`）。⇒ **「只动文档」是关于 diff 的陈述，不是关于门禁输入的陈述**：`headings` 计数就是被这 1 个小节亲手从 1374 推到 1375 的。
