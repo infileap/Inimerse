@@ -660,9 +660,9 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 **路线图上的下一步**：
 
 1. ~~UPP 本地参考协议与 Verse manifest。~~ **引擎侧已实现**（§10.1）；剩余边界是 `timestamp` 只收整数、以及尚未接入 `inim-server`/`inim-client` 传输层。
-2. CRP `FIND` / `PORTAL` 回环和签名校验。**仍未实现**；`upp-in-engine` 合入 `main` 后已解阻塞（见 [BOARD.md](BOARD.md) 的 `crp-in-engine` 行）。
-3. ~~`.vverse` 打包、预览、下载与启动。~~ **引擎侧打包器已实现**（§10.2）；剩余是 `.im`/CLI 入口（`vverse-cli`）与 hub 对 >64 KiB 包的静默截断（`hub-large-package`）。
-4. GitHub/Bilibili OAuth token 交换和资料绑定。
+2. CRP `FIND` / `PORTAL` 回环和签名校验。~~**仍未实现**~~ **今天不成立：§10.6 那句成立**。四项分开核过（§10.100）：`FIND`、`PORTAL`、`SIGNAL`、签名校验都在**跨进程**的真实交换里跑通（闭回环 31 次交换 0 失败、`crp_probe` 185 checks / 0 failures、`crp_engine_crosscheck` 115 records text-identical），且四个负控件逐个 403（篡改签名得 `invalid capability token`、错密钥铸的 token、别人的 token、替另一对签的 proof）。原句是 §10.6 落地**之前**的陈述，没有被一起改掉 —— 两句话同时挂在本文档里是这次裁决的对象。**剩余边界不在回环本身**：`PORTAL` 只做认证不做逐 (verse, peer) 授权（§7.7），`/friends` `/content` `/package` 三端点仍未实现（见 [BOARD.md](BOARD.md) 的 `crp-in-engine` 行）。
+3. ~~`.vverse` 打包、预览、下载与启动。~~ **引擎侧打包器已实现**（§10.2）；剩余只是 `.im`/CLI 入口（`vverse-cli`）。~~与 hub 对 >64 KiB 包的静默截断（`hub-large-package`）~~ —— 截断已在 `578eb95` 修掉，今天复验（§10.100）：66560 字节的包在 `/v`、`/package`、`/content`、`POST /package/fork` 四条出口上**要么完整送达、要么显式 413**，而恰好 65536 字节仍 `200` 全量（边界是 `size > cap`，不是 `>=`）。
+4. GitHub/Bilibili OAuth token 交换和资料绑定。**分两半，只有一半成立**（§10.100 末节只做评估、不写代码）：GitHub 侧**已是端到端**并经用户实机验证（`linked_accounts.json` 重写、`access_token` 40 位、`GET api.github.com/user` → `200 login=infileap`，见 §10.34/§10.36）；Bilibili 侧**只有代码级端点**（authorize 与 token endpoint 都写了，`device_code_endpoint()` 对 bilibili 返回 `None`），**没有注册过的应用、没有一次真机往返**，`linked_accounts.json` 的读取侧也未端到端验 —— 前置依赖在仓库之外，不能自己拍板。
 5. Verse Forge 第一批时空/物理/蓝图面板。
 
 ### 9.3 多智能体协调桥接层（`设计未实现`）
@@ -4136,3 +4136,57 @@ AssertionError: {'7f11e493…': 'up', '9f56c34b…': 'up', '244a9c2d…': 'unkno
 2. 失败签名本流**只见到 `unknown` 这一种**，**没有**见到「C 报 `up`」。
 3. 22 次全绿说明它**不是**确定性红，**不说明它罕见到可以忽略** —— §2.9 那个窗口当年也是约 80 轮 1 轮。
 4. 本流**没有**用 80 轮重复去测它的真实频率；上面那个「22 次」是随手的重跑次数，**不是频率的读数**。
+
+## §10.100 路线图第 2 条那句「仍未实现」是落地之前的陈述：CRP 回环、签名校验与 413 的今天读数（路线图 #2）
+
+**裁决先说：成立的是 §10.6，不是 §9.2 第 2 条。** §9.2 第 2 条写「CRP `FIND` / `PORTAL` 回环和签名校验 **仍未实现**」，§10.6 记录引擎侧线层已落地；两句话同时挂在这份文档里自相矛盾。今天在 `d6ef39f` 的 worktree（`stream/crp-loopback`，based on 基线 `d6ef39f81088940dcb3eaa13f97faf9efe9fc269`）上用**真二进制**复核，四项逐一跑通，且四个负控件逐个 403 ⇒ **§10.6 成立，§9.2 第 2 条不成立**（它是 §10.6 落地之前的陈述，没有被一起改掉）。
+
+**判据（两句话）**：① 交换必须跨**进程边界** —— 驱动进程起真 `build/crp-hub`、用真 socket 走协议，不复用引擎内 `verse_crp_probe` 的断言；② 失败签名必须被**拒** —— 负控件要红，且红的是「拒」，不是「没跑到」。
+
+**命令与读数（全部在本流 worktree 重跑，不是转述）**：
+
+```
+$ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
+BUILD_EXIT=0
+$ ctest --test-dir build -R crp
+100% tests passed, 0 tests failed out of 5
+$ ./build/verse_crp_probe
+crp_probe: 185 checks, 0 failures
+$ node tools/crp_engine_crosscheck.js ./build/verse_crp_probe
+crp_engine_crosscheck: 115 records, text-identical
+$ INIM_CRP_HUB_BIN=./build/crp-hub python3 tools/crp_closed_loop.test.py ./build/crp-peer
+| crp_peer: 31 exchanges, 0 failures
+| hub: {"ok":true,"served":1,"exchanges":30,"bye":true}
+crp_closed_loop: 19 checks, 0 failures
+$ node .scratch/crp_wire_neg.js ./build/crp-hub
+wire_neg: 13 checks, 0 failures
+```
+
+闭回环转录逐行统计（`| >>` 31 行对 `| <<` 31 行）：状态码 `200×14 / 202×3 / 400×3 / 403×7 / 404×3 / 409×1`；按 op 计 `find×3 / portal×7 / signal×8 / resume×6 / revoke×1 / status×2 / register×3 / bye×1`。
+
+**四项分列表**（不合成一句「CRP 做完了」）：
+
+| 项 | 今天是否覆盖 | 跨进程证据 | 负控件（必须红） |
+|---|---|---|---|
+| `FIND` | 覆盖 | 闭回环 `find×3`（全库、`DEM` 小写匹配、空库）；线级探针 `query=dem` → `200`、`items=1` | 空库 `find` 返回空列表不报错（这是语义选择，不是安全负控，见边界 2） |
+| `PORTAL` | 覆盖 | 闭回环 `portal×7`，有效 proof → `200` 并铸出 capability token | 无 auth / 错 auth / **替另一对（`demo`, `other-peer`）签的 proof** → `403` |
+| `SIGNAL` | 覆盖 | 闭回环 `signal×8`；探针有效 token → `202` | **签名末字符翻转** → `403`，`error` 逐字 `invalid capability token`；**错密钥铸的 token** → `403`；**别人的 token 发 signal** → `403` |
+| 签名校验（resume / revoke / 过期） | 覆盖 | 探针 `resume` 有效 → `200`；闭回环 `revoke×1` 后再用 → `403`、乱序 resume → `409` | 签名篡改 → `403`；revoke 后重放 → `403`；乱序 → `409` |
+
+**§9.2 第 3 条复验（`hub-large-package`）**：`578eb95` 已修，今天用两条互不依赖的尺子复验：① `python3 tools/http_large_package.test.py` → `LARGE_PKG_EXIT=0`、31 条 `ok`、末行 `all checks passed`（part 1 覆盖 `/v`、`/package`、`/content`、`POST /package/fork` 四条出口，外加「恰好 65536 仍须全量」「被拒的 fork 不在盘上留截断副本」「UDP 对超大包不发任何东西」）；② 本流自己起 hub 用 curl 读：`GET /v/small` → `200` / `100 B`、`GET /v/exact`（65536 B）→ `200` / `65536 B`、`GET /v/big`（66560 B）→ `413` / `57 B`，body 逐字 `{"error":"package_too_large","size":66560,"limit":65536}`。⇒「要么完整送达、要么显式 413」今天成立，且边界是 `size > cap` 而非 `>=`。
+
+**§9.2 第 4 条：只评估，不写代码**（涉及外部凭据，不能自己拍板）：
+
+- **GitHub 侧：成立，而且是端到端的。** 不是「代码里有」：用户实机走过一次回调路径，`linked_accounts.json` 被重写、`access_token` 是 `gho_…` 40 位、`scope read:user user:email`，拿它打 `GET https://api.github.com/user` 得 `200 / login=infileap`（§10.34、§10.36）。
+- **Bilibili 侧：只有代码级端点，没有一次真机往返。** `Infiverse_standard/oauth_loop/src/lib.rs` 里 authorize 与 token endpoint 都写了（后者是 `https://passport.bilibili.com/oauth2/token`），但 `device_code_endpoint()` 对 bilibili 返回 `None`（不编造官方不存在的端点）；仓库里没有任何 Bilibili 开放平台应用注册记录，也没有真机授权往返的读数。
+- **前置依赖**：B 站侧需要一个已注册的开放平台应用（client id/secret 或扫码授权），这在仓库之外、不能由本流造出来；另外 `linked_accounts.json` 的**读取侧**（谁在何时读它、绑定关系被谁消费）没有端到端验过。
+- **可做与不可做**：可做的是把「Bilibili 侧缺什么」写成可验收清单（应用注册、回调白名单、device flow 是否开放）；不可做的是替用户注册应用，或替它编造一个端点。
+
+**反向判据（若它其实没覆盖，哪个读数会变）**：把 `crp_capability_verify` 改成恒真，「签名末字符翻转」「错密钥」「别人的 token」「替另一对签的 proof」这四条负控件必须变成 `200`；若变红的是探针而不是协议，探针没牙；若协议没变而套件仍绿，说明那四条根本没被跑到。**本流没有做这个变异实验**（见边界 1、4），所以上表证明的是「今天跑到了、答案是拒」，不是「这个拒在结构上不可绕过」。
+
+**诚实边界。**
+1. **线级探针是本流今天写的一次性驱动，没有进 CTest，也没有进 node 套件**：它留在 `.scratch/`，随树不交付。⇒「四个负控件要红」目前的证据是**我看过一次**，不是**门禁每次都看**。这正是本仓反复记的那类缺陷（一个断言没人跑就等于没断言）；它的解是把探针挪进 `tools/` 并挂进 node 套件的 `SUITES`（那要动 `EXP_NODE`，必须与表同一笔），本笔**没做**，列为下一笔。
+2. `FIND` 只覆盖 4 次调用（闭回环 3 次 + 探针 1 次）：查询语义（大小写、排序、`limit`/`cursor`、更宽的匹配面）没有逐格覆盖。
+3. `PORTAL` 只做认证，**不做逐 (verse, peer) 授权**：拿到 token 的一对能否访问另一对，仍由发送方自觉（§7.7 的缺口）。BOARD 的 `crp-in-engine` 行早已记这条遗留边界，本流没有改变它。
+4. `crosscheck` 的 115 条与 §10.6 写的 101 条**不是矛盾**：101 是 `json_min` 扩项之前的语料数，今天实测 115。同理，`docs/` 里每一处 ctest 计数都带自己的时点。
+5. **本笔只动文档**，不改 `EXP_CTEST` / `EXP_NODE`，也不改 `CMakeLists.txt`，因此 pin 与计数不该动；全套门禁读数见本笔的回报（若合并时基线又推进，以门禁日志为准，不以本节文字为准）。
