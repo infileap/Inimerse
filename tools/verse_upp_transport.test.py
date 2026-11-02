@@ -25,8 +25,12 @@ import subprocess
 import sys
 import tempfile
 
-CLIENT = sys.argv[1] if len(sys.argv) > 1 else "inim-client"
-SELF_CHECK = "--self-check" in sys.argv[2:]
+# `--self-check` needs no binaries, so it may be passed as the only argument;
+# taking argv[1] as the client path unconditionally made the CTest that runs
+# exactly that form try to execute a program called "--self-check".
+_argv = [a for a in sys.argv[1:] if a != "--self-check"]
+SELF_CHECK = "--self-check" in sys.argv[1:]
+CLIENT = _argv[0] if _argv else "inim-client"
 SERVER = os.environ.get("INIM_SERVER_BIN", "inim-server")
 
 checks = 0

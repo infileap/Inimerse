@@ -57,12 +57,9 @@ set(VL_CORE_SOURCES
 add_executable(verse_protocol_probe src/verse/protocol_probe.c ${VL_CORE_SOURCES})
 target_include_directories(verse_protocol_probe PRIVATE src/verse src/common)
 add_test(NAME verse_protocol_probe COMMAND verse_protocol_probe)
-# The two transport halves of P1: `--upp` puts the same session behind the UPP
-# envelope, so both binaries link upp.c and json_min.c (upp.h includes the latter).
 add_executable(inim-server src/verse/server.c src/verse/upp.c ${VL_CORE_SOURCES})
 target_include_directories(inim-server PRIVATE src/verse src/common)
 add_executable(inim-client src/verse/client.c src/verse/upp.c src/verse/json_min.c)
-target_include_directories(inim-client PRIVATE src/verse src/common)
 # Locate the test interpreter before the first add_test that needs it.  The
 # interpreter is not called python3 everywhere: on Windows it is python.exe, and
 # a hardcoded `python3` makes the test die with "no such file or directory".
@@ -76,19 +73,6 @@ add_test(NAME verse_closed_loop
   COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
           ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_closed_loop.test.py
           $<TARGET_FILE:inim-client>)
-# The `--upp` transport half.  The test asserts an equality -- one scenario
-# read through both transports produces the same lines -- and the refusals the
-# envelope adds on top of upp.h; its own comparator gets a self-check because
-# an equality between two empty transcripts would otherwise be green forever.
-add_test(NAME verse_upp_transport
-  COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
-          ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
-          $<TARGET_FILE:inim-client>)
-set_tests_properties(verse_upp_transport PROPERTIES TIMEOUT 90 LABELS "protocol;upp;verse")
-add_test(NAME verse_upp_transport_selfcheck
-  COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
-          --self-check)
-set_tests_properties(verse_upp_transport_selfcheck PROPERTIES TIMEOUT 30 LABELS "protocol;upp;verse")
 # P1 increment 4: engine-side UPP -- universal plugin protocol framing (JSONL,
 # 1 MiB frame cap, hello/welcome negotiation) and the session state machine.
 # src/verse/upp_probe.c asserts the boundary cases offline; the
@@ -2011,3 +1995,28 @@ set_tests_properties(pin_tree_selftest_regression PROPERTIES WORKING_DIRECTORY $
 add_test(NAME word_refs_selftest_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "WORD-REF-SELFTEST-VERDICT\\|cases=[0-9]+\\|red=0\\|verdict=PASS" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_word_refs.py --self-test)
 set_tests_properties(word_refs_selftest_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
+
+
+target_include_directories(inim-client PRIVATE src/verse src/common)
+# ---------------------------------------------------------------------------
+# P1 increment 5, and these three lines live at the foot of the file for a
+# measured reason.  docs/ name CMakeLists.txt by line number throughout, and a
+# registration inserted in the middle moves every cited address below it out
+# from under the quoted text that held it: measured, the unanchored delta went
+# +11 to +87 against a ceiling of +12, and the checker named it.  Appending
+# cannot move a line that already exists, so the numbers docs/ trust stay put
+# -- the same discipline that makes a citation an address rather than a guess.
+# ---------------------------------------------------------------------------
+# The `--upp` transport half.  The test asserts an equality -- one scenario
+# read through both transports produces the same lines -- and the refusals the
+# envelope adds on top of upp.h; its own comparator gets a self-check because
+# an equality between two empty transcripts would otherwise be green forever.
+add_test(NAME verse_upp_transport
+  COMMAND ${CMAKE_COMMAND} -E env INIM_SERVER_BIN=$<TARGET_FILE:inim-server>
+          ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
+          $<TARGET_FILE:inim-client>)
+set_tests_properties(verse_upp_transport PROPERTIES TIMEOUT 90 LABELS "protocol;upp;verse")
+add_test(NAME verse_upp_transport_selfcheck
+  COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
+          --self-check)
+set_tests_properties(verse_upp_transport_selfcheck PROPERTIES TIMEOUT 30 LABELS "protocol;upp;verse")
