@@ -33,6 +33,24 @@ SELF_CHECK = "--self-check" in sys.argv[1:]
 CLIENT = _argv[0] if _argv else "inim-client"
 SERVER = os.environ.get("INIM_SERVER_BIN", "inim-server")
 
+# A hand run is the form a reader uses first, and the first thing it did wrong
+# was raise `FileNotFoundError(2, 'No such file or directory')` -- a message
+# that names neither the binary nor the fact that CTest, not this file, sets
+# INIM_SERVER_BIN.  Name the missing half before anything is spawned, so a run
+# that measured nothing says so instead of reporting a stage that failed.
+if not SELF_CHECK:
+    for path, label, hint in (
+        (CLIENT, "client", "argv[1] is its path"),
+        (SERVER, "server", "INIM_SERVER_BIN names it"),
+    ):
+        if not (os.path.isfile(path) or shutil.which(path)):
+            print(
+                f"verse_upp_transport: REFUSED|no {label} binary at {path!r} "
+                f"({hint}); this run measured nothing",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
 checks = 0
 failures = []
 
