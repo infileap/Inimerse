@@ -1155,3 +1155,35 @@ PY
 2. wasm 的 **general** 路径（`:940-961`）反而先截断到 i32，**与 AOT 不一致**。
 
 ⇒ 准确的表述是「wasm 与 AOT 在 `%` 的 int%int 路径上一致」，而不是「wasm 与 AOT 一致」。
+
+---
+
+### 0.5.0 2026-11 复核：三条计数已实测确认，一条结构性论断被追平一半（`@ 793dac9`）
+
+本节由协调层在 `main @ 793dac9` 上重测，**只做读数与更正，不改任何源码**。读数分两类，**读码结论与实测结论分开标注**：
+
+| 复核项 | 上一版怎么写的 | 今天实测 | 类型 |
+| --- | --- | --- | --- |
+| §1.1 `and`/`or` 六点布尔 | 0 值 : 6 布尔（按 `d4b65c6` 推定） | **六点逐个读码全为布尔**（`compiler.c` `BOOLEAN semantics` 注释、`selfhost/compiler.im`、`vm.c` 的 `vm_truthy`+`VAL_BOOL`、`aot_native.c` 的 `nv_tru`、`wasm_backend.c` 的 `cg_cond`、`selfhost/eval.im` 的 `truthy`）；**且三后端同答**：`python3 tools/logic_semantics.test.py ./build/inimerse ./build/aot-native` → `logic semantics: ok (64 cases …; interpreter/aot/wasm all agree)`，`delta +0 (expect +0)` | **[读码 + 实测]** |
+| §1.2 `%` 的 wasm 发射点 | 2 处（`:938`/`:960`） | **3 处**：`src/compilation/wasm_backend.c` 里 `W_I64_REM_S` 的三个发射点（宏定义在同文件 `:157`）；实测 `10%3=1`、`-10%3=-1`、`10%-3=1`、`2147483648%3=2` ⇒ 64 位、截断向零，三后端一致 | **[实测]** |
+| §1.3 宽度契约 | `Value` 仍 32 字节、整数载荷已 64 位 | `src/vm/vm.h` 的 `_Static_assert(sizeof(Value) == 32, … (§2(a) …))` 逐字在（紧随其下几行），且注释直接援引本档；同一 struct 里整数槽是 `union { long long ival; double fval; }` | **[实测]** |
+| §0.5 表「§3 IR 收敛未做」 | 「后端今天仍各自遍历 AST，结构成因一点没动」；`emit_from_bytecode` 零命中 | **这句只在 AST 路线上成立，在 IR 路线上已被追平一半**：见下 | **[读码 + 实测]** |
+
+**关于 §3：`aot_native.c` 与 `wasm_backend.c` 的 opcode/AST 之比已不再是「0 与 1」那个读数。** 按 `grep -cE '\bExpr ?\*'` 与 `grep -cE '\bOP_[A-Z]'` 实测（`@ 793dac9`）：
+
+| 文件 | `Expr*` 引用 | `OP_*` 引用 | 形态 |
+| --- | --- | --- | --- |
+| `src/vm/vm.c` | 1 | 278 | **纯字节码**（解释器，本来如此） |
+| `src/compilation/aot_mir.c` | **0** | **59** | **纯字节码**（新的 C 后端路线） |
+| `src/compilation/aot_native.c` | 3 | 0 | 纯 AST（旧路线，未动） |
+| `src/compilation/wasm_backend.c` | 12 | **14** | **混合**：AST 主路线 + 一条消费 `IrInsn` 的子路径 |
+
+**计数陷阱（这一条本身值得留档）**：用宽正则数 AST 引用会**把 `last_error` 当成 `ast_`**。`aot_mir.c` 里 `aot_mir_last_error`/`last_insns`/`last_not_yet` 三个符号让 `grep -E 'ast_'` 报出 3 个假阳性，真实 `Expr*` 引用是 **0**；`aot_native.c` 的 4 里也有 1 个是 `last_error`。⇒ **在 C 里数「某个类型被引用几次」，正则必须带词边界并锚在类型用法上，不能数裸子串。**
+
+**两条路线的实测状态**：
+
+- **C 后端路线已在门禁里**：`CMakeLists.txt` 里注册的 `aot_mir_regression` 与 `aot_mir_cover_regression` 两条 CTest。读数 `IR-AOT-MIR-LOWERING|handles=30|of=67|unknown=37`、`IR-AOT-MIR-VERDICT|PASS|accepted=86|covered=29|missing=0|refused=0|same-as-interpreter=86`。⇒ **30/67 已 lowering，其余 37 个是明确登记为 unknown 的，不是静默分歧。**
+- **wasm 后端路线已能跑，但没有任何测试覆盖它**：`src/compilation/wasm_backend.c` 的 `mir_emit_one()` 吃 `IrInsn`，入口 `wasm_compile_mir()` 由 `src/compilation/aot_mir_tool.c` 的 `wasm` 子命令（`aot-mir wasm`，输入 `.im`、输出 `.wasm`）驱动；实测 `IR-WASM-MIR-EMIT|funcs=1|insns=5|cases=9|path=mir-opcode-stream` 并真的写出 wasm，`IR-WASM-MIR-KIND-CONFLICT|writes=3|conflicts=0`。子集是 9 个 opcode（`wasm_mir_cases()`；`src/compilation/wasm_backend.h` 的头注释逐字写着「MIR path covers a subset」）。**但 `grep` 遍 `tools/*.py` 与 `CMakeLists.txt`：这个子命令没有任何测试调用**，只有 `aot-mir` 工具的人手命令能到。⇒ 按本仓的老话，**「能跑」与「被门禁看着跑」是两件事**，这条目前是前者。**这是本轮最该记的一条**：它不是坏消息（结构已经存在），但它是一个**没有牙齿的先例**——写文档时不能把它算成「已收敛」。
+- **旧 AST 路线未动**：`aot_native.c` 仍 3 处 `Expr*`、0 处 opcode；`wasm_backend.c` 主路径仍是 AST。⇒ §3 的整体目标（所有后端消费同一 IR）**没做完**，只是第一次有了两个可运行的部分样板。
+
+**关于 `docs/archive/RELEASE_0.5.0.md:48` 的那句承诺** [obs: 793dac9]：该文是**历史快照**，按 `docs/STATUS.md` §命名规则第 6 条（归档件不受引用有效性约束）**不回改**。今天的事实是：那句「All backends (interpreter, AOT, Wasm) share the same bytecode format」在 **0.5.0 当时**是承诺；**今天兑现了一半**——`aot_mir.c` 是纯字节码后端（在门禁里），wasm 侧有 `IrInsn` 子路径（无测试覆盖），而 `aot_native.c` 与 wasm 主路径仍是 AST 进。**去向写在这里，归档件不动。**
