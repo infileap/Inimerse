@@ -383,6 +383,16 @@ def census_reachable(tool, root):
     measured at 51 before this was noticed, 37 after two layouts are tried.  The
     retry is not a rescue for broken files: a file that dumps under neither
     layout is still a failure, and still has to name a declared reason.
+
+    The list of files walked comes from the INDEX, and that is a correction, not
+    a convenience: the walk used to rglob the filesystem, so a git-ignored
+    `.verify/` holding six broken programs was enough to print FAIL on a
+    checkout whose tracked corpus was intact -- while the same commit printed
+    PASS in a clean worktree, and `cwd-retried` read 14 there and 15 here.  A
+    measurement that moves with what happens to be lying around is not a
+    measurement of the tree.  Files the index does not carry are still COUNTED
+    (as `off-index=`), because leaving a decision off the line makes it
+    indistinguishable from a count nobody took.
     """
     seen = set()
     files = dumped = 0
@@ -393,8 +403,36 @@ def census_reachable(tool, root):
     # performed, and the reviewer who checked it counted 14 where the message
     # said 13.
     retried = []
-    for p in sorted(Path(root).rglob("*.im")):
-        if any(part in CENSUS_SKIP for part in p.relative_to(root).parts):
+    # The corpus is what the TREE carries, not what happens to be lying on the
+    # disk.  The walk used to rglob the filesystem; `.verify/` is a git-ignored
+    # scratch directory, and six broken programs in it were enough to turn this
+    # verdict red on a checkout whose tracked corpus was intact -- while the same
+    # commit printed PASS in a clean worktree, and `cwd-retried` read 14 there
+    # and 15 here.  A reading that changes with what happens to be lying around
+    # is a reading of the machine, not of the tree, so the index supplies the
+    # list of files walked.
+    #
+    # What the index does NOT carry is printed as `off-index=`: excluding files
+    # is a decision, and a decision that is not on the line is indistinguishable
+    # from a count that was never taken.  The basis string carries the same
+    # obligation in the other direction -- an exported tree with no `.git` cannot
+    # consult an index, falls back to the filesystem walk, and says so, because a
+    # measurement that changed its object without saying so in the log is a
+    # measurement nobody can compare with the last one.
+    mode = GIT_INDEX if git_index_present(root) else FILESYSTEM
+    tracked_files = tracked_im_files(root) if mode == GIT_INDEX else None
+    disk = [q.relative_to(root).as_posix()
+            for q in sorted(Path(root).rglob("*.im"))
+            if not any(part in CENSUS_SKIP for part in q.relative_to(root).parts)]
+    walk, excluded = corpus_to_walk(mode, tracked_files, disk)
+    for rel in walk:
+        p = Path(root) / rel
+        if not p.exists():
+            # In the index and gone from disk: not walked here, and the scope
+            # line books the difference rather than this loop counting it twice.
+            # That difference is a FAILURE, not a rounding: the index says the
+            # tree carries this file and the disk says it does not, so neither
+            # one can be trusted for the breadth of this walk.
             continue
         files += 1
         out = None
@@ -417,7 +455,7 @@ def census_reachable(tool, root):
         dumped += 1
         for m in re.finditer(r"op=(OP_[A-Z0-9_]+)", out):
             seen.add(m.group(1))
-    return seen, files, dumped, failures, retried
+    return seen, files, dumped, failures, retried, excluded, mode
 
 
 def tracked_im_count(root):
@@ -434,7 +472,76 @@ def tracked_im_count(root):
     return sum(1 for line in out.splitlines() if line.strip())
 
 
-def census_scope(tracked, walked, skipped):
+def tracked_im_files(root):
+    """The .im files the index carries, relative to `root`; None when there is no index."""
+    rc, out, _ = run(["git", "-C", str(root), "ls-files", "--", "*.im"])
+    if rc != 0:
+        return None
+    return sorted(line.strip() for line in out.splitlines() if line.strip())
+
+
+def off_index(disk, tracked):
+    """Files on disk that the index does not carry: present, printed, not walked."""
+    known = set(tracked)
+    return sorted(rel for rel in disk if rel not in known)
+
+
+# The two things a walk can be a walk OF.  Printed on the census line, because a
+# reader comparing two readings has to know whether both measured the tree.
+GIT_INDEX = "index"
+FILESYSTEM = "filesystem"
+
+
+def git_index_present(root):
+    """Whether `root` is the top of a git work tree, i.e. owns an index of this corpus.
+
+    `rev-parse --is-inside-work-tree` is not enough: any scratch directory inside
+    a checkout answers "true" while `ls-files` reports the PARENT repository's
+    tracked files, so an exported (or copied) tree sitting under a checkout would
+    be walked as zero files and agree with itself -- measured: a `git archive`
+    export inside `.scratch/` printed `files=0 ... index=0|walked=0|shortfall=0`
+    and a PASS verdict while 399 `.im` files sat unread beside it.  Asking for the
+    work-tree top and comparing it with `root` is the question that distinguishes
+    "this directory has an index" from "some ancestor has one".
+    """
+    rc, out, _ = run(["git", "-C", str(root), "rev-parse", "--show-toplevel"])
+    if rc != 0:
+        return False
+    try:
+        return Path(out.strip()).resolve() == Path(root).resolve()
+    except OSError:
+        return False
+
+
+def corpus_to_walk(mode, tracked_files, disk):
+    """The files this census walks, and the ones it books instead of walking.
+
+    Returns `(walk, off_index)`; `off_index` is None when no such count exists.
+
+    In `GIT_INDEX` mode the walk is exactly the files the index carries.
+    That is what makes the verdict a statement about the tree: a broken program
+    in a git-ignored scratch directory no longer reddens a checkout whose tracked
+    corpus is intact, while a tracked program that is broken is still walked and
+    still has to name a declared reason or fail.  A tracked file that is missing
+    from the disk is a SHORTFALL (see census_scope): the index says the tree
+    carries it, the disk says otherwise, and neither can then certify the breadth
+    of the walk.
+
+    In `FILESYSTEM` mode there is no index to consult -- this repo's Windows
+    readings were taken on `git archive` exports, which have no `.git` (docs/AUDIT.md
+    §1.65, docs/BOARD.md ctest row).  There the walk stays on the filesystem,
+    exactly as before this change, and the basis string says which of the two
+    objects was measured.  Falling back is not the same as refusing, and saying so
+    is not the same as being silent about it.
+    """
+    if mode == FILESYSTEM:
+        return list(disk), None
+    if tracked_files is None:
+        return [], None
+    return list(tracked_files), off_index(disk, tracked_files)
+
+
+def census_scope(tracked, walked, skipped, mode=GIT_INDEX):
     """Whether the walk covered the corpus the census claims to have read.
 
     `files=` is produced by the very walk it describes, so a walk that stops
@@ -444,11 +551,29 @@ def census_scope(tracked, walked, skipped):
     of trusting each other.
 
     A SHORTFALL is a failure: the skip list is hiding corpus, and every reach
-    answer computed below it was computed over a narrowed language.  Extra files
-    (an untracked probe, a new example) make the census wider, which is never
-    wrong.
+    answer computed below it was computed over a narrowed language.  The same
+    reading covers a file the index carries but the disk does not (`walked`
+    falls one short): a walk whose breadth cannot be certified is not evidence.
+    Extra files (an untracked probe, a new example) make the census wider, which
+    is never wrong -- but they are not corpus, they are printed as `off-index=`,
+    and they are not walked, because a walk that counted them turned a
+    git-ignored `.verify/` into a red verdict on an intact tree.  An index that
+    could not be read is a refusal too: "I could not look" must not print as
+    "there is nothing there", because a census over zero files agrees with itself.
+
+    `mode=FILESYSTEM` asserts nothing about breadth and says so by returning []:
+    with no index there is no second instrument, and inventing a bound out of the
+    walk's own count would be the defect this function exists to catch.  The
+    census line prints that basis, so the reading is still comparable with the
+    next one.
     """
-    if tracked < 0 or walked >= tracked:
+    if mode == FILESYSTEM:
+        return []
+    if tracked < 0:
+        return ["the census could not read the git index, so it cannot say which "
+                ".im files this tree carries: walking the filesystem instead "
+                "measures the machine, not the tree"]
+    if walked >= tracked:
         return []
     return ["the census walked %d .im files but the index holds %d: skipping %s hides "
             "corpus, so every unreachable verdict below was computed over the part "
@@ -901,11 +1026,15 @@ def main():
     # rather than a hand-picked list of subdirectories, because a list is a
     # judgment about where the corpus lives and this number must not depend on
     # that judgment -- see census_reachable's note.
-    reachable, nfiles, ndumped, nfailures, nretried = census_reachable(tool, ROOT)
+    (reachable, nfiles, ndumped, nfailures, nretried,
+     noffindex, cmode) = census_reachable(tool, ROOT)
     # The scope of that walk is itself a reading, and the walk cannot certify
-    # its own breadth -- see census_scope.
-    ntracked = tracked_im_count(ROOT)
-    scope = census_scope(ntracked, nfiles, CENSUS_SKIP)
+    # its own breadth -- see census_scope.  With no index (an exported tree)
+    # there is no second instrument to compare against, so the count is -1 and
+    # the scope function declines to assert anything; the basis string below
+    # says which object was measured.
+    ntracked = tracked_im_count(ROOT) if cmode == GIT_INDEX else -1
+    scope = census_scope(ntracked, nfiles, CENSUS_SKIP, mode=cmode)
     observed = set()
     gaps = set()
     unreachable = set()
@@ -1074,11 +1203,17 @@ def main():
     # The census line carries every number it counted, because `reachable`
     # alone is not a reading: without `dumped`/`failed`/`enum` next to it, a
     # census that read part of the corpus and one that read all of it print the
-    # same shape.
+    # same shape.  `off-index` is `n/a` where no such count exists (a filesystem
+    # walk in an exported tree), and `basis` names the object measured: two
+    # readings can only be compared once a reader can see they measured the same
+    # thing.
     print("IR-WASM-MIR-CENSUS|files=%d|dumped=%d|failed=%d|reachable=%d|enum=%d"
-          "|cwd-retried=%d|basis=dump-over-every-.im-under-the-repo-root"
+          "|cwd-retried=%d|off-index=%s|basis=%s"
           % (nfiles, ndumped, len(nfailures), len(reachable), len(enum_ops),
-             len(nretried)))
+             len(nretried),
+             "n/a" if noffindex is None else str(len(noffindex)),
+             "dump-over-every-.im-the-index-carries" if cmode == GIT_INDEX
+             else "dump-over-every-.im-on-disk (no git index: exported tree)"))
     # `failed` is a number with no meaning of its own: a fixture the front end is
     # meant to refuse and a valid program that stopped parsing are the same count.
     # So every rejection is matched against a declared reason, and the ones that
@@ -1102,10 +1237,12 @@ def main():
     # an index that did not walk anywhere.  Without this, a skip list that grew
     # by one directory produces a smaller census with the same shape.
     print("IR-WASM-MIR-CENSUS-SCOPE|index=%s|walked=%d|shortfall=%s|skipped=(%s)"
-          "|basis=git-index-vs-this-walk|agree=%s"
+          "|basis=%s|agree=%s"
           % ("unreadable" if ntracked < 0 else str(ntracked), nfiles,
              "unknown" if ntracked < 0 else max(0, ntracked - nfiles),
              ",".join(CENSUS_SKIP),
+             "git-index-vs-this-walk" if cmode == GIT_INDEX
+             else "disk-walk-no-index (nothing to compare it with)",
              "unknown" if ntracked < 0 else ("yes" if not scope else "no")))
     problems.extend(scope)
     # The classes are labels on one measurement, not votes on the verdict.
@@ -1265,6 +1402,31 @@ def self_check():
            census_scope(399, 399, CENSUS_SKIP), [])
     expect("untracked files found by the walk are wider, not wrong",
            census_scope(399, 410, CENSUS_SKIP), [])
+    expect("a file on disk that the index does not carry is excluded, not walked",
+           off_index(["a.im", "b.im"], ["a.im"]), ["b.im"])
+    expect("an index that cannot be read refuses to call an empty census agreement",
+           len(census_scope(-1, 399, CENSUS_SKIP)), 1)
+    # The cells below pin the correction itself: the walk's list comes from the
+    # index, so the verdict stops moving with what happens to be lying on the
+    # disk -- and the one case that must still fail (a tracked file that is
+    # broken) is the case the walk list keeps.
+    expect("the walk takes its list from the index, not from the disk",
+           corpus_to_walk(GIT_INDEX, ["kept.im"], ["kept.im", "stray.im"]),
+           (["kept.im"], ["stray.im"]))
+    expect("a tracked program is walked even when it is the one that is broken",
+           corpus_to_walk(GIT_INDEX, ["broken.im"], ["broken.im"])[0], ["broken.im"])
+    expect("a file the index carries and the disk does not is a shortfall",
+           len(census_scope(400, 399, CENSUS_SKIP)), 1)
+    expect("an exported tree walks the disk and books no off-index count",
+           corpus_to_walk(FILESYSTEM, None, ["a.im", "b.im"]), (["a.im", "b.im"], None))
+    expect("a filesystem walk does not borrow the index's bound",
+           census_scope(-1, 399, CENSUS_SKIP, mode=FILESYSTEM), [])
+    # A directory that merely lives under a checkout must not be read with the
+    # checkout's index: that reading walks zero files and agrees with itself.
+    expect("the checkout owns an index of its own", git_index_present(ROOT), True)
+    with tempfile.TemporaryDirectory() as td:
+        expect("a directory with no index of its own is walked from the disk",
+               git_index_present(td), False)
     expect("a narrowed census breaks the reading through the verdict itself",
            broken_reading(shell=[], scope=census_scope(399, 35, CENSUS_SKIP),
                           unreachable=set(), subset=[], rows=[], claims=[], orphans=[], kinds=[]), True)
