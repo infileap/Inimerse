@@ -4262,6 +4262,7 @@ BOARD 的 `agent-bridge-round2`（`63fef73`）决断②把这条缺口收成一�
 - **整份作废而不是逐行挑**：同一 `(verse, peer)` 出现两行、字段数不对、`capabilities` 里有未知值、secret 字段为空——任一命中就整份不用，全拒。轮换做到一半和手滑写重，运维都该看见，而不是被 first-wins 悄悄掩掉（`R2` 那笔欠账就是同一种形状的病）。
 - **两种拒绝逐字节相同**：未登记 pair 与证明错都返回同一段 `{"error":"invalid enrollment proof"}`，成因只进 hub 的 stderr（`cause=unregistered-pair` / `bad-proof` / `admissions-duplicate` / …）。判据不是断言「都是 403」，是抓原始字节（状态行 + 除 `Date` 外的全部头 + body）逐字节比较，并且有一条**元判据**：把文案改成 `pair not admitted` 之后它必须红——证明这个断言本身是活的。
 - **准入先于注册表**：只有被准入的 pair 才走得到「verse 是否注册过」这一步，所以 404 只留给「被允许访问、但这个 verse 没注册」；一个未登记的 pair 连 verse 存不存在都问不出来。
+- **两处 404 变成 403，是上一条的必然结果，不是顺手改的**：`{verse, peer}` 里有一个不是字符串（`{"verse":5,"peer":null}`）、或者整个 peer 缺席，都**不构成一对**，因而在表里查不到——它们走的是「未登记」那条路，拿到的就是与证明错逐字节相同的 403。旧行为给它们 404（`verse not found`），那等于告诉调用方「你这个 verse 名我不认识」，而这条消息对未登记的双方本来都该是不可说的。受影响的既有断言两处：`http_probe` 的 wildcard 用例从「要求 404」改成「要求 403 且 body 是 `invalid enrollment proof`」（它真正要测的「非字符串铸不出通配令牌」不变）；`crp_peer` 的 `portal without peer` 从 404 改 403。`reconnect_generation` 里 `v-unregistered` **仍是 404**（被准入、只是没注册），另加一条未登记的 `v-stranger` 断言 403 **且响应与无 auth 逐字节相同**——这两条一起才说明 404 没有被扩用成侧信道。
 - **`CRP_ENROLL_SECRET` 变成死的事实**：表启用后它不参与任何判定，env 在场也不放行未登记 pair。这是不兼容变更，所以迁移说明写死：登记行先沿用旧全局密钥 ⇒ 客户端零改动；**撤掉它是收尾，不是可选**。
 - **比较两侧都常时**：文案相同而耗时不同一样是 oracle，HMAC 比对用常时比较（参考实现 `crypto.timingSafeEqual`，引擎侧同义实现）。
 - 表里 secret 是明文：加载时 `stat` 一次，组内/其他可读只记 `cause=admissions-perms-loose` **不拒**——警告让运维看见自己的文件是 644，而不是替他把服务器关掉。
