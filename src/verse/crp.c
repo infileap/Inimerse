@@ -714,8 +714,8 @@ typedef struct {
 } CrpVerse;
 
 struct CrpRegistry {
-    char       *secret;
-    char       *enroll_secret;  /* NULL/empty: /portal is fail-closed */
+    char          *secret;
+    CrpAdmissions *admissions;  /* the only thing that admits a /portal pair */
     long long   token_ttl_ms;
     long long   registry_ttl_ms;
     long long   max_revoked;
@@ -776,11 +776,10 @@ CrpRegistry *crp_registry_new(const CrpRegistryConfig *cfg) {
     r->secret = (char *)malloc(strlen(cfg->secret) + 1);
     if (!r->secret) { free(r); return NULL; }
     strcpy(r->secret, cfg->secret);
-    if (cfg->enroll_secret && cfg->enroll_secret[0]) {
-        r->enroll_secret = (char *)malloc(strlen(cfg->enroll_secret) + 1);
-        if (!r->enroll_secret) { free(r->secret); free(r); return NULL; }
-        strcpy(r->enroll_secret, cfg->enroll_secret);
-    }
+    /* cfg->enroll_secret is deliberately NOT copied: it decides nothing now.
+     * The table below is the only thing that admits a pair. */
+    r->admissions = crp_admissions_new(cfg->admissions, cfg->nadmissions, cfg->admissions_path);
+    if (!r->admissions) { free(r->secret); free(r); return NULL; }
     r->token_ttl_ms = cfg->token_ttl_ms > 0 ? cfg->token_ttl_ms : CRP_DEFAULT_TOKEN_TTL_MS;
     r->registry_ttl_ms = cfg->registry_ttl_ms > 0 ? cfg->registry_ttl_ms : CRP_DEFAULT_REGISTRY_TTL_MS;
     r->max_revoked = cfg->max_revoked > 0 ? cfg->max_revoked : CRP_DEFAULT_MAX_REVOKED;
@@ -791,7 +790,7 @@ CrpRegistry *crp_registry_new(const CrpRegistryConfig *cfg) {
 void crp_registry_free(CrpRegistry *r) {
     if (!r) return;
     free(r->secret);
-    free(r->enroll_secret);
+    crp_admissions_free(r->admissions);
     for (size_t i = 0; i < r->nverses; i++) vj_free(r->verses[i].obj);
     free(r->verses);
     for (size_t i = 0; i < r->nsessions; i++) {
@@ -1021,6 +1020,7 @@ CrpResult crp_registry_find(CrpRegistry *r, const char *q) {
     return res;
 }
 
+
 int crp_enroll_proof(const char *enroll_secret, const VjVal *verse,
                      const VjVal *peer, CrpBuf *out) {
     if (!enroll_secret || !enroll_secret[0] || !out) return -1;
@@ -1071,14 +1071,28 @@ CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *p
     /* /portal is the only authorization entry point -- every other capability
      * endpoint trusts the token it mints -- so nothing is minted and no session
      * is touched until the caller proves it may open a portal for this pair.
-     * Both refusals come BEFORE the registry is inspected, so an unproven
-     * caller cannot even learn whether the verse exists. */
-    if (!r || !r->enroll_secret || !r->enroll_secret[0])
-        return res_error(403, "portal enrollment is not configured");
-    if (!crp_enroll_check(r->enroll_secret, verse, peer, auth))
-        return res_error(403, "invalid enrollment proof");
-
+     *
+     * Two refusals, ONE shape: an unregistered pair and a proof that does not
+     * verify return the same status, the same headers and the same body (and
+     * are compared in constant time), because a refusal that names its reason
+     * is an enumeration oracle.  The cause goes to the log.  Both come BEFORE
+     * the registry is inspected, so an unproven caller cannot learn whether the
+     * verse exists either. */
+    if (!r) return res_error(403, "invalid enrollment proof");
     const char *vstr = (verse && verse->type == VJ_STR) ? verse->s : NULL;
+    const char *pstr = (peer && peer->type == VJ_STR) ? peer->s : NULL;
+    const char *cause = NULL;
+    CrpBuf pair_secret;
+    upp_buf_init(&pair_secret);
+    int admitted = crp_admissions_lookup(r->admissions, vstr, pstr, &pair_secret, &cause);
+    int proven = admitted && crp_enroll_check(pair_secret.data, verse, peer, auth);
+    upp_buf_free(&pair_secret);
+    if (!proven) {
+        fprintf(stderr, "crp_registry: portal refused cause=%s\n",
+                admitted ? "bad-proof" : (cause ? cause : "unregistered-pair"));
+        return res_error(403, "invalid enrollment proof");
+    }
+
     /* The portal's scope is a pair of non-empty strings, and the verse must be
      * one this registry holds: `registry_has_verse` is the C shape of the
      * reference's `verses.has(p.verse)`, and the peer test mirrors its
@@ -1086,7 +1100,9 @@ CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *p
      * names no scope -- the token's claim is what every later request is
      * matched against -- so it is refused with the reference's own 404 rather
      * than minted with a claim no string request could match.  Nothing is
-     * minted and no session is touched before this. */
+     * minted and no session is touched before this.  Note that this runs AFTER
+     * the admissions test: only a pair the table admits may discover whether
+     * its verse exists. */
     if (!vstr || !registry_has_verse(r, vstr) || !vj_truthy(peer) ||
         peer->type != VJ_STR || !peer->s || !peer->s[0])
         return res_error(404, "verse not found");
@@ -1106,7 +1122,6 @@ CrpResult crp_registry_portal(CrpRegistry *r, const VjVal *verse, const VjVal *p
     /* The peer is a non-empty string by the precondition above, so the session
      * key is that very string: there is no coercion left for the two sides to
      * disagree about. */
-    const char *pstr = peer->s;
     CrpSession *s = registry_get_session(r, vstr, pstr);
     if (s) {
         im_crp_session_apply(&s->sess, "start", 0, 0, NULL);
@@ -1328,4 +1343,295 @@ void crp_registry_status_json(const CrpRegistry *r, CrpBuf *out) {
     upp_buf_puts(out, "],\"revoked\":");
     upp_buf_put_ll(out, (long long)r->nrevoked);
     upp_buf_putc(out, '}');
+}
+
+/* ---- portal admissions: one table, one source, fail-closed ---------------
+ * The hub holds the table; a caller holds the secret of ONE line and proves
+ * possession of it over (verse, peer).  Knowing another pair's secret, or the
+ * old hub-wide CRP_ENROLL_SECRET, buys nothing: the table -- not a shared
+ * string -- decides who may open a portal.
+ *
+ * One source, chosen once: the in-memory array when the config supplies it,
+ * otherwise one path.  An unreadable path is an empty table, never a reason to
+ * read something else, because "misconfigured pointer -> quietly read the
+ * default file -> old table lets people through" is the worst kind of silence.
+ *
+ * A malformed line, a pair written twice (a half-finished rotation or a typo --
+ * first-wins and last-wins are both wrong, which is the R2 disease), or an
+ * unknown capability value voids the WHOLE table: it refuses everything rather
+ * than admitting the part that happened to parse.
+ *
+ * This parser is a line-for-line mirror of parseAdmissions() in
+ * tools/crp_relay.js: the crosscheck corpus pins the two answers against each
+ * other, so any divergence here shows up as a record mismatch rather than as a
+ * behaviour difference nobody notices.
+ */
+typedef struct {
+    char *verse;
+    char *peer;
+    char *secret;
+} CrpAdmitLine;
+
+struct CrpAdmissions {
+    CrpAdmitLine *lines;
+    size_t        nlines, cap_lines;
+    char         *path;          /* owned; NULL when the table is in memory */
+    char          cause[64];     /* why it is unusable; empty when it is fine */
+    int           usable;
+};
+
+static void admissions_clear(CrpAdmissions *a) {
+    for (size_t i = 0; i < a->nlines; i++) {
+        free(a->lines[i].verse);
+        free(a->lines[i].peer);
+        free(a->lines[i].secret);
+    }
+    free(a->lines);
+    a->lines = NULL;
+    a->nlines = a->cap_lines = 0;
+}
+
+static void admissions_void(CrpAdmissions *a, const char *cause) {
+    admissions_clear(a);
+    a->usable = 0;
+    snprintf(a->cause, sizeof a->cause, "%s", cause);
+}
+
+static char *admissions_dup(const char *s, size_t n) {
+    char *p = (char *)malloc(n + 1);
+    if (!p) return NULL;
+    if (n) memcpy(p, s, n);
+    p[n] = '\0';
+    return p;
+}
+
+static int admissions_blank(char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f';
+}
+
+static int admissions_capability_known(const char *c) { return strcmp(c, "signal") == 0; }
+
+static void admissions_trim(const char **s, size_t *n) {
+    while (*n && admissions_blank(**s)) { (*s)++; (*n)--; }
+    while (*n && admissions_blank((*s)[*n - 1])) (*n)--;
+}
+
+static int admissions_push(CrpAdmissions *a, const char *v, size_t vn,
+                           const char *p, size_t pn, const char *sec, size_t sn) {
+    for (size_t i = 0; i < a->nlines; i++) {
+        if (a->lines[i].verse && strlen(a->lines[i].verse) == vn && !memcmp(a->lines[i].verse, v, vn) &&
+            strlen(a->lines[i].peer) == pn && !memcmp(a->lines[i].peer, p, pn)) {
+            admissions_void(a, "admissions-duplicate");
+            return -1;
+        }
+    }
+    if (a->nlines == a->cap_lines) {
+        size_t cap = a->cap_lines ? a->cap_lines * 2 : 8;
+        CrpAdmitLine *grow = (CrpAdmitLine *)realloc(a->lines, cap * sizeof *grow);
+        if (!grow) { admissions_void(a, "admissions-unreadable"); return -1; }
+        a->lines = grow;
+        a->cap_lines = cap;
+    }
+    CrpAdmitLine *l = &a->lines[a->nlines];
+    l->verse = admissions_dup(v, vn);
+    l->peer = admissions_dup(p, pn);
+    l->secret = admissions_dup(sec, sn);
+    if (!l->verse || !l->peer || !l->secret) {
+        free(l->verse); free(l->peer); free(l->secret);
+        admissions_void(a, "admissions-unreadable");
+        return -1;
+    }
+    a->nlines++;
+    return 0;
+}
+
+/* Check the capabilities column: empty is allowed, each value must be one this
+ * build knows.  An unknown value voids the table (fail-closed) rather than
+ * being carried around unenforced. */
+static int admissions_check_capabilities(CrpAdmissions *a, const char *caps, size_t cn) {
+    size_t i = 0;
+    while (i < cn) {
+        while (i < cn && (caps[i] == ',' || admissions_blank(caps[i]))) i++;
+        size_t start = i;
+        while (i < cn && caps[i] != ',') i++;
+        const char *one = caps + start;
+        size_t len = i - start;
+        admissions_trim(&one, &len);
+        if (!len) continue;
+        char name[32];
+        if (len >= sizeof name) { admissions_void(a, "admissions-unknown-capability"); return -1; }
+        memcpy(name, one, len);
+        name[len] = '\0';
+        if (!admissions_capability_known(name)) { admissions_void(a, "admissions-unknown-capability"); return -1; }
+    }
+    return 0;
+}
+
+static int admissions_parse(CrpAdmissions *a, const char *text, size_t len) {
+    size_t pos = 0;
+    while (pos <= len) {
+        size_t end = pos;
+        while (end < len && text[end] != '\n') end++;
+        const char *line = text + pos;
+        size_t n = end - pos;
+        pos = end + 1;
+        if (n && line[n - 1] == '\r') n--;
+        /* Trailing spaces are formatting, trailing tabs are not: a tab would
+         * change the field count, and the field count is a judgement. */
+        while (n && line[n - 1] == ' ') n--;
+        int blank = 1;
+        for (size_t i = 0; i < n; i++) if (!admissions_blank(line[i])) { blank = 0; break; }
+        if (blank) continue;
+        size_t first = 0;
+        while (first < n && admissions_blank(line[first])) first++;
+        if (first < n && line[first] == '#') continue;
+        const char *f[5];
+        size_t fl[5];
+        int nf = 0;
+        size_t at = 0;
+        while (nf < 5) {
+            size_t sto = at;
+            while (at < n && line[at] != '\t') at++;
+            f[nf] = line + sto;
+            fl[nf] = at - sto;
+            nf++;
+            if (at >= n) break;
+            at++;
+        }
+        if (nf != 4) { admissions_void(a, "admissions-malformed"); return -1; }
+        const char *v = f[0], *p = f[1], *sec = f[2], *caps = f[3];
+        size_t vn = fl[0], pn = fl[1], sn = fl[2], cn = fl[3];
+        admissions_trim(&v, &vn);
+        admissions_trim(&p, &pn);
+        admissions_trim(&caps, &cn);
+        if (!vn || !pn || !sn) { admissions_void(a, "admissions-malformed"); return -1; }
+        if (admissions_check_capabilities(a, caps, cn) != 0) return -1;
+        if (admissions_push(a, v, vn, p, pn, sec, sn) != 0) return -1;
+    }
+    return 0;
+}
+
+static char *admissions_read_file(const char *path, size_t *len_out, const char **cause) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        /* One cause for "cannot read", not two.  The reference distinguishes
+         * ENOENT from the rest; here the difference would be a log word only,
+         * and `#include <errno.h>` costs a line at the top of this file -- which
+         * every `crp.c:N` citation in docs/ would then have to follow.  A
+         * citation moved for a log word is the wrong trade (see the note in
+         * docs/STATUS.md 10.101 about lines added above cited addresses). */
+        *cause = "admissions-unreadable";
+        return NULL;
+    }
+    size_t cap = 4096, len = 0;
+    char *buf = (char *)malloc(cap);
+    while (buf) {
+        if (len == cap) {
+            char *grow = (char *)realloc(buf, cap * 2);
+            if (!grow) { free(buf); fclose(f); *cause = "admissions-unreadable"; return NULL; }
+            buf = grow;
+            cap *= 2;
+        }
+        size_t got = fread(buf + len, 1, cap - len, f);
+        len += got;
+        if (got == 0) break;
+    }
+    int bad = ferror(f);
+    fclose(f);
+    if (!buf || bad) { free(buf); *cause = "admissions-unreadable"; return NULL; }
+    *len_out = len;
+    return buf;
+}
+
+CrpAdmissions *crp_admissions_new(const CrpAdmission *entries, size_t nentries, const char *path) {
+    CrpAdmissions *a = (CrpAdmissions *)calloc(1, sizeof *a);
+    if (!a) return NULL;
+    a->usable = 1;
+    if (entries) {
+        for (size_t i = 0; i < nentries; i++) {
+            const CrpAdmission *e = &entries[i];
+            if (!e->verse || !*e->verse || !e->peer || !*e->peer || !e->secret || !*e->secret) {
+                admissions_void(a, "admissions-malformed");
+                return a;
+            }
+            for (size_t k = 0; k < e->ncapabilities; k++) {
+                if (!e->capabilities || !e->capabilities[k] || !admissions_capability_known(e->capabilities[k])) {
+                    admissions_void(a, "admissions-unknown-capability");
+                    return a;
+                }
+            }
+            if (admissions_push(a, e->verse, strlen(e->verse), e->peer, strlen(e->peer),
+                                e->secret, strlen(e->secret)) != 0)
+                return a;
+        }
+        return a;
+    }
+    if (!path || !*path) {
+        snprintf(a->cause, sizeof a->cause, "%s", "admissions-unreadable");
+        return a;   /* empty table: every request is refused */
+    }
+    a->path = admissions_dup(path, strlen(path));
+    const char *cause = NULL;
+    size_t len = 0;
+    char *text = admissions_read_file(path, &len, &cause);
+    if (!text) {
+        snprintf(a->cause, sizeof a->cause, "%s", cause ? cause : "admissions-unreadable");
+        return a;   /* no fallback: the chosen source is the only source */
+    }
+    admissions_parse(a, text, len);
+    free(text);
+    return a;
+}
+
+CrpAdmissions *crp_admissions_from_text(const char *text) {
+    CrpAdmissions *a = (CrpAdmissions *)calloc(1, sizeof *a);
+    if (!a) return NULL;
+    a->usable = 1;
+    admissions_parse(a, text ? text : "", text ? strlen(text) : 0);
+    return a;
+}
+
+void crp_admissions_describe(CrpAdmissions *a, CrpBuf *out) {
+    upp_buf_puts(out, "cause=");
+    upp_buf_puts(out, (a && a->cause[0]) ? a->cause : "-");
+    upp_buf_puts(out, "|n=");
+    upp_buf_put_ll(out, a ? (long long)a->nlines : 0);
+    if (a) {
+        for (size_t i = 0; i < a->nlines; i++) {
+            upp_buf_puts(out, "|");
+            upp_buf_puts(out, a->lines[i].verse);
+            upp_buf_putc(out, '\t');
+            upp_buf_puts(out, a->lines[i].peer);
+            upp_buf_putc(out, '\t');
+            upp_buf_puts(out, a->lines[i].secret);
+        }
+    }
+}
+
+void crp_admissions_free(CrpAdmissions *a) {
+    if (!a) return;
+    admissions_clear(a);
+    free(a->path);
+    free(a);
+}
+
+int crp_admissions_lookup(CrpAdmissions *a, const char *verse, const char *peer,
+                          CrpBuf *secret, const char **cause) {
+    if (cause) *cause = "unregistered-pair";
+    if (!a) {
+        if (cause) *cause = "admissions-unreadable";
+        return 0;
+    }
+    if (!a->usable) {
+        if (cause) *cause = a->cause[0] ? a->cause : "admissions-unreadable";
+        return 0;
+    }
+    if (!verse || !peer) return 0;   /* a member that is not a string names no pair */
+    for (size_t i = 0; i < a->nlines; i++) {
+        if (strcmp(a->lines[i].verse, verse) == 0 && strcmp(a->lines[i].peer, peer) == 0) {
+            if (secret) upp_buf_puts(secret, a->lines[i].secret);
+            return 1;
+        }
+    }
+    return 0;
 }

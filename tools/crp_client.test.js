@@ -2,11 +2,15 @@
 const assert = require('node:assert/strict');
 const { createRelay } = require('./crp_relay');
 const { CrpClient } = require('./crp_client');
-/* The hub holds the enrollment secret; the client has to present a proof made
- * with the same one.  Both sides default to CRP_ENROLL_SECRET, and a hub with
- * no enrollment secret refuses every /portal outright (see crp_relay.test.js). */
+/* The hub holds the admissions table; the client proves the secret on its own
+ * pair's line.  The client still defaults to CRP_ENROLL_SECRET for that secret,
+ * but the hub decides from the table: a pair with no line is refused with the
+ * same body as a bad proof (see crp_relay.test.js). */
 const ENROLL = 'client-suite-enroll-secret';
-const { server, sessions } = createRelay({ enrollSecret: ENROLL });
+const PAIRS = [
+  { verse: 'demo', peer: 'peer', secret: ENROLL, capabilities: ['signal'] },
+];
+const { server, sessions } = createRelay({ admissions: PAIRS });
 server.listen(0, async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
   try {

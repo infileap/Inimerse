@@ -660,7 +660,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 **路线图上的下一步**：
 
 1. ~~UPP 本地参考协议与 Verse manifest。~~ **引擎侧已实现**（§10.1）；剩余边界是 `timestamp` 只收整数、以及尚未接入 `inim-server`/`inim-client` 传输层。
-2. CRP `FIND` / `PORTAL` 回环和签名校验。~~**仍未实现**~~ **今天不成立：§10.6 那句成立**。四项分开核过（§10.100）：`FIND`、`PORTAL`、`SIGNAL`、签名校验都在**跨进程**的真实交换里跑通（闭回环 31 次交换 0 失败、`crp_probe` 185 checks / 0 failures、`crp_engine_crosscheck` 115 records text-identical），且四个负控件逐个 403（篡改签名得 `invalid capability token`、错密钥铸的 token、别人的 token、替另一对签的 proof）。原句是 §10.6 落地**之前**的陈述，没有被一起改掉 —— 两句话同时挂在本文档里是这次裁决的对象。**剩余边界不在回环本身**：`PORTAL` 只做认证不做逐 (verse, peer) 授权（§7.7）。`/friends`、`/content`、`/package` 三个端点**今天都在**：`src/platform/http_posix.c` 的路由里有 GET/POST `/friends`、`GET /content/`、`GET /package/`、`POST /package/fork` 与 `GET /packages`（原先这里记的是「三端点仍未实现」，已按代码更新），见 [BOARD.md](BOARD.md) 的 `crp-in-engine` 行。
+2. CRP `FIND` / `PORTAL` 回环和签名校验。~~**仍未实现**~~ **今天不成立：§10.6 那句成立**。四项分开核过（§10.100）：`FIND`、`PORTAL`、`SIGNAL`、签名校验都在**跨进程**的真实交换里跑通（闭回环 31 次交换 0 失败、`crp_probe` 185 checks / 0 failures、`crp_engine_crosscheck` 115 records text-identical —— 本流把解析边角语料并进来后是 128 条，见 §10.102），且四个负控件逐个 403（篡改签名得 `invalid capability token`、错密钥铸的 token、别人的 token、替另一对签的 proof）。原句是 §10.6 落地**之前**的陈述，没有被一起改掉 —— 两句话同时挂在本文档里是这次裁决的对象。**这条边界已在本流收掉**：`PORTAL` 的签发现在先过一张 per-`(verse, peer)` 准入表，未登记的 pair 与证明错的 pair 拿到的响应逐字节相同（§10.102）。`/friends`、`/content`、`/package` 三个端点**今天都在**：`src/platform/http_posix.c` 的路由里有 GET/POST `/friends`、`GET /content/`、`GET /package/`、`POST /package/fork` 与 `GET /packages`（原先这里记的是「三端点仍未实现」，已按代码更新），见 [BOARD.md](BOARD.md) 的 `crp-in-engine` 行。
 3. ~~`.vverse` 打包、预览、下载与启动。~~ **引擎侧打包器已实现**（§10.2），`.im` 侧入口也已通：`verse_pack` builtin 在 `src/mod/verse_dist_mod.c`，由 `src/lobby_online_src.im` 调用，参考 CLI `node tools/vverse_pack.js preview|unpack` 能把同一份包读回来；原先记的「剩余只是 `.im`/CLI 入口（`vverse-cli`）」已按代码更新。~~与 hub 对 >64 KiB 包的静默截断（`hub-large-package`）~~ —— 截断已在 `578eb95` 修掉，今天复验（§10.100）：66560 字节的包在 `/v`、`/package`、`/content`、`POST /package/fork` 四条出口上**要么完整送达、要么显式 413**，而恰好 65536 字节仍 `200` 全量（边界是 `size > cap`，不是 `>=`）。
 4. GitHub/Bilibili OAuth token 交换和资料绑定。**分两半，只有一半成立**（§10.100 末节只做评估、不写代码）：GitHub 侧**已是端到端**并经用户实机验证（`linked_accounts.json` 重写、`access_token` 40 位、`GET api.github.com/user` → `200 login=infileap`，见 §10.34/§10.36）；Bilibili 侧**只有代码级端点**（authorize 与 token endpoint 都写了，`device_code_endpoint()` 对 bilibili 返回 `None`），**没有注册过的应用、没有一次真机往返**，`linked_accounts.json` 的读取侧也未端到端验 —— 前置依赖在仓库之外，不能自己拍板。
 5. Verse Forge 第一批时空/物理/蓝图面板。
@@ -672,7 +672,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 - 状态：**`设计未实现` / E1** —— 只有设计，没有实现。判定依据：`grep -rn "commitment" src/ --include=*.c --include=*.h -i` 零命中（rc=1），`grep -rniE "\bagent" src/` 同样零命中。
 - 代码改动：**零**。本项不需要 `CMakeLists.txt`，也不需要动 `src/**`。
 - 挂靠点：§4 阶段四「AI 居民与训练沙盒」的 `强制 AI 标识与权限边界，避免将 AI 伪装成人类玩家。`（阶段出口条件见该节末）。
-- 已知前提缺口（**不是**「已具备」）：CRP `PORTAL` 的签发侧只有**调用方认证**、没有 per-`(verse, peer)` **授权**（文档 §7.7，`crp-portal-auth` `40f6094` 之后），因此 `UPDATE = PORTAL + SIGNAL` 的映射**今天仍只是形式上的**。
+- 已知前提（**本流之后不再是缺口**）：CRP `PORTAL` 的签发侧过去只有**调用方认证**、没有 per-`(verse, peer)` **授权**（§7.7，`crp-portal-auth` `40f6094` 之后）。本流（`portal-per-pair`）把证明输入换成 hub 持有的一张表：每个 `(verse, peer)` 一行、一行一把 secret，未登记的 pair 连「这个 verse 存不存在」都问不出来（§10.102）。`UPDATE = PORTAL + SIGNAL` 的映射因此第一次有了可查的准入，而不是形式上的。
 - 主要未决项：智能体的身份没有已验证的载体（文档 §7.9）；`REJECT` 落账的 cell 语义；§7.1 的 64 事件环不落盘。
 - 可重复的验收命令（验证的是**底座**；桥接层自身没有可运行的验收，这正是 `设计未实现` 的含义）：
 
@@ -4248,3 +4248,26 @@ wire_neg: 13 checks, 0 failures
 
 **别动数字，动脚。** `EXP_LINE_REFS_UNANCHORED_DELTA_MAX` 是债的账本，不是配置项：它可以用环境变量覆盖，而「设一个环境变量把它修绿」正是那段注释禁止的动作。要腾余量只有两条路 —— 修一条 unanchored 引用（把债还掉），或者把插行改成末尾追加（把脚走对）。
 7. **`stop` 帧是尽力而为。** 忽略 `SIGPIPE` 之后，对已退出的 peer 发 `stop` 会静默失败 —— 这是设计，不是遗漏：会话已经在 `bye` 处结束，那条 `stop` 只是替「没有 `bye` 的场景」收尾。
+
+## §10.102 per-`(verse, peer)` 授权：把「谁允许谁」变成一张可读的表（portal-per-pair）
+
+BOARD 的 `agent-bridge-round2`（`63fef73`）决断②把这条缺口收成一句话：**最小形态 = 把 `/portal` 的证明输入从「两个自选字符串」扩为「hub 持有的 per-pair 注册项」**（per-pair secret + per-pair `capabilities`）。同一份决断里还有一条约束，本流是按它设计的：**未登记的 pair 与证明错的 pair 必须不可区分（都是 403）**，否则 404 就成了枚举 oracle。
+
+**今天之前**：证明是 HMAC(全局密钥, `verse` + `\0` + `peer`)。它证明的是「这个 pair 知道那把全局密钥」——认证成立；签发侧的 scope 只被**记录**、从没和「谁允许谁」比过 ——授权不成立。缺的不是校验，是**一张表**。
+
+**本流做了什么**（参考实现与引擎两侧同一套语义）：
+
+- 一张 TSV：`verse \t peer \t secret \t capabilities`，`#` 注释与空行忽略，`\t` 必须恰好 4 段。`capabilities` 本轮只认 `signal`（见边界第一条），为空即无能力。
+- **单一来源，跨级不回退**：`CRP_ADMISSIONS_FILE` 与 hub 目录下的 `portal_admissions.tsv` 二选一，选不中就是**空表**，绝不降级到另一个来源——「文件配错就悄悄用默认路径放行」是这一层最坏的失败。
+- **整份作废而不是逐行挑**：同一 `(verse, peer)` 出现两行、字段数不对、`capabilities` 里有未知值、secret 字段为空——任一命中就整份不用，全拒。轮换做到一半和手滑写重，运维都该看见，而不是被 first-wins 悄悄掩掉（`R2` 那笔欠账就是同一种形状的病）。
+- **两种拒绝逐字节相同**：未登记 pair 与证明错都返回同一段 `{"error":"invalid enrollment proof"}`，成因只进 hub 的 stderr（`cause=unregistered-pair` / `bad-proof` / `admissions-duplicate` / …）。判据不是断言「都是 403」，是抓原始字节（状态行 + 除 `Date` 外的全部头 + body）逐字节比较，并且有一条**元判据**：把文案改成 `pair not admitted` 之后它必须红——证明这个断言本身是活的。
+- **准入先于注册表**：只有被准入的 pair 才走得到「verse 是否注册过」这一步，所以 404 只留给「被允许访问、但这个 verse 没注册」；一个未登记的 pair 连 verse 存不存在都问不出来。
+- **`CRP_ENROLL_SECRET` 变成死的事实**：表启用后它不参与任何判定，env 在场也不放行未登记 pair。这是不兼容变更，所以迁移说明写死：登记行先沿用旧全局密钥 ⇒ 客户端零改动；**撤掉它是收尾，不是可选**。
+- **比较两侧都常时**：文案相同而耗时不同一样是 oracle，HMAC 比对用常时比较（参考实现 `crypto.timingSafeEqual`，引擎侧同义实现）。
+- 表里 secret 是明文：加载时 `stat` 一次，组内/其他可读只记 `cause=admissions-perms-loose` **不拒**——警告让运维看见自己的文件是 644，而不是替他把服务器关掉。
+
+**读数**（本流 worktree 实跑）：`crp_probe` **185 checks / 0 failures**；`crp_engine_crosscheck` **128 records, text-identical**（原 115 + 13 条解析边角语料：空串、纯空行、纯注释、正常、secret 含空格、CRLF、空 `capabilities`、字段不足、空 verse、未知 capability、重复 pair、尾随空格、前导空白+注释）；闭回环 **31 次交换 / 0 失败**（peer 侧 19 项驱动判据 0 失败）；`crp_session_flow`、`reconnect_generation`、`crp_relay.test.js`、`crp_client.test.js`、`crp_wire_neg.test.js`（13/0）全绿。
+
+**诚实边界**：①`capabilities` 目前是**占位**——只认 `signal`、不参与判定，「per-pair 能力」这一半决断②还没有消费者；②secret 明文落盘，权限只警告；③表在进程内加载一次，**没有热加载**（改表要重启 hub），也没有 pair 台账与所有者表——「谁登记了谁」仍然只在文件里；④Windows 半侧只编译不运行；⑤没有签名链，也不做每 verse 一把所有者密钥。
+
+**迁移**：写表（每对一行、secret 沿用旧全局密钥）→ 客户端不必改（同一 HMAC 算法、同一 secret）→ 起 hub 验证同一 pair 从 403 变 200 → **从环境里撤掉 `CRP_ENROLL_SECRET`**（留着不参与判定，但会让人以为还有一条全局通道）。

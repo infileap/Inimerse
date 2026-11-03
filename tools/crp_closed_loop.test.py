@@ -17,7 +17,10 @@ Env:   INIM_CRP_HUB_BIN  path to crp-hub (set by CTest)
 """
 import json
 import os
+import atexit
+import shutil
 import subprocess
+import tempfile
 import sys
 
 PEER = sys.argv[1] if len(sys.argv) > 1 else "crp-peer"
@@ -26,11 +29,12 @@ HUB = os.environ.get("INIM_CRP_HUB_BIN", "crp-hub")
 # Same secret and frozen clock as src/verse/crp_probe.c, so the whole transcript
 # is reproducible byte for byte.
 SECRET = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-# The hub-side enrollment secret that gates POST /portal.  It is deliberately a
-# different secret from the one that signs capability tokens: a token admits a
-# caller to /signal, whereas the enrollment proof decides who may be issued a
-# token at all.  Both processes read it from the environment, and neither would
-# mint a portal token without it.
+# The secret on this pair's line of the hub's admissions table -- and, during a
+# migration, the same string the old hub-wide CRP_ENROLL_SECRET used to hold.
+# It is deliberately different from the token-signing secret: a token admits a
+# caller to /signal, whereas the admissions line decides who may be issued a
+# token at all.  The hub reads the table, not the variable: the variable is only
+# how the caller knows which secret to prove.
 ENROLL = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
 NOW = 1767225600000  # 2026-01-01T00:00:00Z
 
@@ -46,7 +50,24 @@ def check(cond, label, detail=""):
 
 
 def main():
-    env = dict(os.environ, CRP_ENROLL_SECRET=ENROLL)
+    # The hub is handed exactly one source: a table written here, named by
+    # CRP_ADMISSIONS_FILE.  ("nope" is admitted without being registered, so the
+    # 404 branch -- only an admitted pair may learn its verse is unknown -- is
+    # still reachable.)
+    tdir = tempfile.mkdtemp(prefix="crp-admissions-")
+    atexit.register(shutil.rmtree, tdir, ignore_errors=True)
+    admissions = os.path.join(tdir, "portal_admissions.tsv")
+    with open(admissions, "w", encoding="utf-8") as fh:
+        fh.write("# portal admissions (closed loop)\n")
+        # crp-peer defaults its id to "peer-a" when argv[4] is omitted, and this
+        # driver omits it: the admitted pairs follow the peer the run actually
+        # speaks as.
+        fh.write(f"demo\tpeer-a\t{ENROLL}\tsignal\n")
+        fh.write(f"nope\tpeer-a\t{ENROLL}\tsignal\n")
+        # The second peer the transcript opens a portal as; it must be admitted
+        # too, or "a different peer gets a different token" cannot be reached.
+        fh.write(f"demo\tpeer-b\t{ENROLL}\tsignal\n")
+    env = dict(os.environ, CRP_ENROLL_SECRET=ENROLL, CRP_ADMISSIONS_FILE=admissions)
     hub = subprocess.Popen(
         [HUB, "0", SECRET, str(NOW)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -81,16 +102,22 @@ def main():
         check(out.count('"frameText"') >= 8,
               "peer: sent real CRP frames over the socket",
               out.count('"frameText"'))
-        # The portal caller had to prove who it is: three well-formed requests
-        # with an absent, malformed and mismatched proof were all refused.
-        check(out.count("invalid enrollment proof") == 3,
-              "hub: refused absent, malformed and mismatched enrollment proofs",
+        # The portal caller had to prove who it is: four well-formed requests --
+        # absent, malformed and mismatched proofs, plus one naming no peer at all
+        # (which names no pair, so admission refuses it) -- were all refused, and
+        # all with the same body: the reason goes to the hub's log, not to the
+        # caller.
+        check(out.count("invalid enrollment proof") == 4,
+              "hub: refused absent, malformed, mismatched and peerless enrollment",
               out.count("invalid enrollment proof"))
         check('"sessions":0' in out,
               "hub: refused portals created no session", out.count('"sessions":0'))
         for status, want, label in (
-            (403, 7, "capability token or enrollment proof refused"),
-            (404, 3, "unknown verse or missing peer refused"),
+            (403, 8, "capability token or enrollment proof refused"),
+            # One fewer 404 than before: a request naming no peer is now an
+            # unregistered pair (403) rather than a shape error (404), because
+            # admission is decided before the shape is inspected.
+            (404, 2, "unknown verse refused"),
             (409, 1, "out-of-order resume refused"),
             (400, 3, "malformed request refused"),
             (202, 3, "signals accepted"),

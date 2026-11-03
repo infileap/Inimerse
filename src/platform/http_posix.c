@@ -315,6 +315,29 @@ static int portal_verse_registered(const char *id) {
     for (int i = 0; i < g_verse_count; ++i) if (!strcmp(g_verses[i], id)) return 1;
     return 0;
 }
+/* The portal admissions table: read ONCE, from exactly one source -- the
+ * CRP_ADMISSIONS_FILE override, else the hub directory's
+ * portal_admissions.tsv.  There is no fallback between them: a misconfigured
+ * override means an empty table, not "read the default one instead".  The hub
+ * directory is the startup root (INIMERSE_HUB_DIR), never the working directory
+ * of an individual request. */
+static CrpAdmissions *portal_admissions_table(void) {
+    static CrpAdmissions *table;
+    static int loaded;
+    if (!loaded) {
+        const char *file = getenv("CRP_ADMISSIONS_FILE");
+        char path[512];
+        if (!file || !*file) {
+            const char *root = getenv("INIMERSE_HUB_DIR");
+            if (!root || !*root) root = "./universe";
+            snprintf(path, sizeof path, "%s/portal_admissions.tsv", root);
+            file = path;
+        }
+        table = crp_admissions_new(NULL, 0, file);
+        loaded = 1;
+    }
+    return table;
+}
 static int valid_hash(const char *h) { if (!h || strlen(h) != 64) return 0; for (int i = 0; i < 64; ++i) if (!((h[i] >= '0' && h[i] <= '9') || (h[i] >= 'a' && h[i] <= 'f'))) return 0; return 1; }
 static const char *find_ci(const char *haystack, const char *needle) {
     size_t n = strlen(needle); if (!n) return haystack;
@@ -2057,7 +2080,6 @@ reattach_done: ;
                reader: the request line and the headers are not part of the
                document the proof covers, and vj_parse decodes escapes and
                whitespace exactly as src/verse/crp.c does for the same bytes. */
-            const char *enroll = getenv("CRP_ENROLL_SECRET");
             const char *bodyp = strstr(req, "\r\n\r\n");
             char jerr[128] = "";
             VjVal *pbody;
@@ -2067,8 +2089,25 @@ reattach_done: ;
                listener and src/verse/crp.c cannot disagree about escapes,
                whitespace or String() coercion: a body that parses there parses
                here, and a proof accepted there is accepted here. */
-            if (!enroll || !*enroll) { status = 403; body = "{\"error\":\"portal enrollment is not configured\"}\n"; }
-            else if (!crp_enroll_check(enroll, vj_get(pbody, "verse"), vj_get(pbody, "peer"), vj_get(pbody, "auth"))) { status = 403; body = "{\"error\":\"invalid enrollment proof\"}\n"; }
+            /* One refusal shape for both failures: an unregistered pair and a
+               proof that does not verify answer with the same bytes, so the
+               refusal cannot be used to enumerate pairs or verses.  The older
+               hub-wide CRP_ENROLL_SECRET decides nothing here any more -- a
+               pair is admitted by its own line in the table, or not at all. */
+            const VjVal *adv = vj_get(pbody, "verse");
+            const VjVal *adp = vj_get(pbody, "peer");
+            const char *adm_verse = (adv && adv->type == VJ_STR) ? adv->s : NULL;
+            const char *adm_peer = (adp && adp->type == VJ_STR) ? adp->s : NULL;
+            const char *adm_cause = NULL;
+            CrpBuf adm_secret;
+            upp_buf_init(&adm_secret);
+            int admitted = crp_admissions_lookup(portal_admissions_table(), adm_verse, adm_peer, &adm_secret, &adm_cause);
+            int proven = admitted && crp_enroll_check(adm_secret.data, adv, adp, vj_get(pbody, "auth"));
+            upp_buf_free(&adm_secret);
+            if (!proven) {
+                fprintf(stderr, "portal: refused cause=%s\n", admitted ? "bad-proof" : (adm_cause ? adm_cause : "unregistered-pair"));
+                status = 403; body = "{\"error\":\"invalid enrollment proof\"}\n";
+            }
             else {
                 const VjVal *vv = vj_get(pbody, "verse");
                 const VjVal *pv = vj_get(pbody, "peer");

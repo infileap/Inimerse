@@ -1,0 +1,55 @@
+portal: per-pair admissions replace the hub-wide enrollment secret
+
+/portal used to accept a proof that one caller knew one hub-wide secret, which
+means the holder could mint a token for ANY (verse, peer).  The proof still has
+the same shape -- base64url(HMAC-SHA256(secret, verse + "\0" + peer)) -- but the
+secret now comes from that pair's own line in an admissions table the hub holds.
+Knowing another pair's secret, or the old hub-wide variable, buys nothing.
+
+One table, one source, no fallback: CRP_ADMISSIONS_FILE, else
+<hub>/portal_admissions.tsv.  An unreadable or unparsable table is an EMPTY
+table, never a reason to consult the other source, because "the file is
+misconfigured so we quietly read the default one" is the worst failure this
+layer can have.  A malformed line, an unknown capability value, a blank field,
+or the same pair written twice voids the WHOLE file: a half-finished rotation
+and a typo both have to be visible, and first-wins/last-wins would hide them --
+which is exactly the R2 disease already on the books.
+
+An unregistered pair and a bad proof are indistinguishable: same status, same
+headers, same body, compared in constant time on both sides.  The cause goes to
+the hub's stderr (cause=unregistered-pair / bad-proof / admissions-duplicate /
+...), never to the caller, because a refusal that names its reason is an
+enumeration oracle.  Admission is decided BEFORE the registry test, so a pair
+with no line cannot learn whether a verse exists; only an admitted pair reaches
+the reference's 404 for "verse not registered".
+
+CRP_ENROLL_SECRET is dead fact: it decides nothing, and migration ends by
+removing it.  A registration line reuses it as that pair's secret, so migrating
+clients do not change a byte; that is also why removing it is the finish line
+rather than an optional tidy-up.
+
+The admissions parser exists twice (tools/crp_relay.js parseAdmissions and
+crp_admissions_parse in src/verse/crp.c) because the reference is the judge and
+the engine is the defendant.  The crosscheck corpus pins them against each other
+on 13 parsing edge cases -- blank lines, comments, CRLF, trailing spaces, too few
+fields, an empty capabilities column, an unknown capability, a duplicate pair,
+a secret containing a space -- so a divergence shows up as a record mismatch
+instead of as behaviour nobody notices.
+
+Readings, all in this worktree:
+  crp_probe                    185 checks, 0 failures
+  crp_engine_crosscheck        128 records, text-identical   (was 115; +13
+                               parsing-edge cases)
+  crp_closed_loop              19 checks, 0 failures  (31 exchanges)
+  crp_wire_neg                 13 checks, 0 failures
+  crp_relay.test.js            ok
+  crp_client.test.js           ok
+  crp_session / reconnect      ok
+
+Line-reference discipline: the new admissions block was first written in the
+middle of src/verse/crp.c, which pushed crp_registry_portal and the event-ring
+block down and took the unanchored delta from +12 to +16 -- over a ceiling with
+zero margin.  Moving the block to the end of the file and dropping an #include
+that cost a line at the top brought it back to +12/+12 without touching a single
+doc citation.  That is the rule already written in this repo: a line added above
+a cited address is a citation moved.

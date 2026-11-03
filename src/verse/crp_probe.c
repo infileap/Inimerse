@@ -30,9 +30,23 @@
 #include "sha256.h"
 
 #define PROBE_SECRET "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-/* The portal enrollment secret, deliberately different from PROBE_SECRET: the
- * proof key and the token-signing key must not be the same secret. */
+/* The per-pair portal secret, deliberately different from PROBE_SECRET: the
+ * proof key and the token-signing key must not be the same secret.  It is no
+ * longer a hub-wide string: each admitted (verse, peer) line carries its own,
+ * and only the line's bearer can prove it. */
 #define PROBE_ENROLL_SECRET "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+
+/* The table this probe admits, mirroring the reference's admissions.  'nope'
+ * is admitted without being registered, which is what keeps the 404 branch
+ * reachable: admission is checked first, so only an admitted pair may discover
+ * whether its verse exists. */
+static const char *const PROBE_CAPS[] = { "signal" };
+static const CrpAdmission PROBE_ADMISSIONS[] = {
+    { "demo", "peer-1", PROBE_ENROLL_SECRET, PROBE_CAPS, 1 },
+    { "demo", "peer-2", PROBE_ENROLL_SECRET, PROBE_CAPS, 1 },
+    { "nope", "peer-1", PROBE_ENROLL_SECRET, PROBE_CAPS, 1 },
+};
+#define PROBE_ADMISSION_COUNT (sizeof PROBE_ADMISSIONS / sizeof PROBE_ADMISSIONS[0])
 /* 2026-01-01T00:00:00Z; the same instant the crosscheck driver freezes. */
 #define PROBE_NOW    1767225600000LL
 
@@ -643,7 +657,8 @@ static void test_registry(void) {
     CrpRegistryConfig cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.secret = PROBE_SECRET;
-    cfg.enroll_secret = PROBE_ENROLL_SECRET;
+    cfg.admissions = PROBE_ADMISSIONS;
+    cfg.nadmissions = PROBE_ADMISSION_COUNT;
     cfg.now_ms = PROBE_NOW;
     CrpRegistry *r = crp_registry_new(&cfg);
     check(r != NULL, "registry created", NULL);
@@ -725,19 +740,21 @@ static void test_registry(void) {
     check_int(crp_registry_session_count(r), sessions_before, "refused portals created no session");
     check_int(crp_registry_session_count(r), 0, "refused portals left the session count at zero");
 
-    /* FAIL-CLOSED default: a registry with no enrollment secret never mints,
-     * even for a registered verse and a well-formed proof. */
+    /* FAIL-CLOSED default: a registry with no admissions never mints, even for
+     * a registered verse and a well-formed proof -- and it refuses with the SAME
+     * bytes as a bad proof, because an empty table must not have a shape of its
+     * own ("is enrollment even configured" would become a probe). */
     {
         CrpRegistryConfig nocfg;
         memset(&nocfg, 0, sizeof nocfg);
         nocfg.secret = PROBE_SECRET;
         nocfg.now_ms = PROBE_NOW;
         CrpRegistry *rn = crp_registry_new(&nocfg);
-        check(rn != NULL, "registry created without an enrollment secret", NULL);
+        check(rn != NULL, "registry created without admissions", NULL);
         CrpResult nr = crp_registry_portal(rn, &V_DEMO, &V_PEER1, &A_DEMO);
-        check_int(nr.status, 403, "portal fail-closed without an enrollment secret");
-        check_str(body_of(&nr), "{\"error\":\"portal enrollment is not configured\"}",
-                  "portal fail-closed body");
+        check_int(nr.status, 403, "portal fail-closed without admissions");
+        check_str(body_of(&nr), "{\"error\":\"invalid enrollment proof\"}",
+                  "portal fail-closed body is the bad-proof body");
         crp_result_free(&nr);
         check_int(crp_registry_session_count(rn), 0, "fail-closed portal created no session");
         crp_registry_free(rn);
@@ -748,7 +765,7 @@ static void test_registry(void) {
     check_str(body_of(&res), "{\"error\":\"verse not found\"}", "portal unknown verse body");
     crp_result_free(&res);
     res = crp_registry_portal(r, &V_DEMO, NULL, &A_NO_PEER);
-    check_int(res.status, 404, "portal without peer");
+    check_int(res.status, 403, "portal without peer is an unregistered pair");
     check_int(crp_registry_session_count(r), 0, "portal without peer created no session");
     crp_result_free(&res);
     res = crp_registry_portal(r, &V_DEMO, &V_PEER1, &A_DEMO);
@@ -1046,7 +1063,7 @@ static void emit_record(int n, const char *op, int ok, const char *error,
  * mutated by every registry op, exactly like the relay's Maps. */
 typedef struct {
     const char *secret;
-    const char *enroll_secret;  /* NULL/empty: every relay_portal is fail-closed */
+    const char *admissions_path;  /* NULL/empty: the table is empty, so every relay_portal is refused */
     long long   now;
     CrpRegistry *reg;
 } TranscriptCtx;
@@ -1056,7 +1073,7 @@ static CrpRegistry *ctx_registry(TranscriptCtx *ctx) {
         CrpRegistryConfig cfg;
         memset(&cfg, 0, sizeof cfg);
         cfg.secret = ctx->secret;
-        cfg.enroll_secret = ctx->enroll_secret;
+        cfg.admissions_path = ctx->admissions_path;
         cfg.now_ms = ctx->now;
         ctx->reg = crp_registry_new(&cfg);
     }
@@ -1153,6 +1170,17 @@ static void run_op(const VjVal *op, TranscriptCtx *ctx, int n) {
         CrpResult res = crp_registry_register(ctx_registry(ctx), vj_get(op, "payload"));
         emit_http(n, name, &res);
         crp_result_free(&res);
+    } else if (strcmp(name, "admissions_parse") == 0) {
+        /* The corpus pins the two parsers against each other on every edge
+         * case, so the description has to be canonical: cause, line count, and
+         * the accepted lines in order. */
+        CrpAdmissions *a = crp_admissions_from_text(vj_str(vj_get(op, "table"), ""));
+        CrpBuf out;
+        upp_buf_init(&out);
+        crp_admissions_describe(a, &out);
+        emit_record(n, name, 1, NULL, out.data, 0, 0);
+        upp_buf_free(&out);
+        crp_admissions_free(a);
     } else if (strcmp(name, "relay_find") == 0) {
         CrpResult res = crp_registry_find(ctx_registry(ctx), vj_str(vj_get(op, "q"), ""));
         emit_http(n, name, &res);
@@ -1192,7 +1220,7 @@ static void run_op(const VjVal *op, TranscriptCtx *ctx, int n) {
     upp_buf_free(&out);
 }
 
-static int transcript(const char *path, const char *secret, const char *enroll_secret,
+static int transcript(const char *path, const char *secret, const char *admissions_path,
                       long long now) {
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -1206,7 +1234,7 @@ static int transcript(const char *path, const char *secret, const char *enroll_s
     TranscriptCtx ctx;
     memset(&ctx, 0, sizeof ctx);
     ctx.secret = secret;
-    ctx.enroll_secret = enroll_secret;
+    ctx.admissions_path = admissions_path;
     ctx.now = now;
     crp_set_now(now);
     while ((len = getline(&line, &cap, f)) > 0) {
@@ -1233,20 +1261,20 @@ static int transcript(const char *path, const char *secret, const char *enroll_s
 int main(int argc, char **argv) {
     const char *corpus = NULL;
     const char *secret = PROBE_SECRET;
-    const char *enroll_secret = PROBE_ENROLL_SECRET;
+    const char *admissions_path = NULL;
     long long now = PROBE_NOW;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--transcript") == 0 && i + 1 < argc) corpus = argv[++i];
         else if (strcmp(argv[i], "--secret") == 0 && i + 1 < argc) secret = argv[++i];
-        else if (strcmp(argv[i], "--enroll-secret") == 0 && i + 1 < argc) enroll_secret = argv[++i];
+        else if (strcmp(argv[i], "--admissions") == 0 && i + 1 < argc) admissions_path = argv[++i];
         else if (strcmp(argv[i], "--now") == 0 && i + 1 < argc) now = atoll(argv[++i]);
         else {
             fprintf(stderr, "usage: crp_probe [--transcript <corpus.jsonl>] [--secret <hex>]"
-                            " [--enroll-secret <hex>] [--now <ms>]\n");
+                            " [--admissions <portal_admissions.tsv>] [--now <ms>]\n");
             return 2;
         }
     }
-    if (corpus) return transcript(corpus, secret, enroll_secret, now);
+    if (corpus) return transcript(corpus, secret, admissions_path, now);
 
     test_base64url();
     test_hmac();

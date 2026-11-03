@@ -36,12 +36,41 @@ const SECRET = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
  * PROBE_ENROLL_SECRET in src/verse/crp_probe.c and ENROLL in
  * tools/crp_closed_loop.test.py. */
 const ENROLL_SECRET = 'ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100';
+/* The admissions table both sides are handed.  'nope' is admitted without ever
+ * being registered, which is what keeps the 404 branch reachable: admission is
+ * decided first, so only an admitted pair may learn whether its verse exists. */
+const ADMISSIONS_TSV =
+  ['# portal admissions', '', `demo\tpeer-a\t${ENROLL_SECRET}\tsignal`, `demo\tpeer-b\t${ENROLL_SECRET}\tsignal`, `nope\tpeer-a\t${ENROLL_SECRET}\tsignal`, ''].join('\n');
+const ADMISSIONS = [
+  { verse: 'demo', peer: 'peer-a', secret: ENROLL_SECRET, capabilities: ['signal'] },
+  { verse: 'demo', peer: 'peer-b', secret: ENROLL_SECRET, capabilities: ['signal'] },
+  { verse: 'nope', peer: 'peer-a', secret: ENROLL_SECRET, capabilities: ['signal'] },
+];
+
+/* The parsing-edge group: every table below must be read the same way by both
+ * parsers.  A difference is a record mismatch, not a silent divergence nobody
+ * notices -- which is the point of putting them in the corpus at all. */
+const PARSE_TABLES = [
+  '',
+  '\n\n',
+  '# only a comment\n',
+  'demo\tp1\tsec\tsignal\n',
+  'demo\tp1\tsec with space\tsignal\n',
+  'demo\tp1\tsec\tsignal\r\n',
+  'demo\tp1\tsec\t\n',
+  'demo\tp1\tsec\n',
+  'demo\t\tsec\tsignal\n',
+  'demo\tp1\tsec\tsignal,teleport\n',
+  'demo\tp1\ta\tsignal\ndemo\tp1\tb\tsignal\n',
+  'demo\tp1\tsec\tsignal   \n',
+  '   \n#c\ndemo\tp1\t a b \tsignal\n',
+];
 
 let CLOCK = NOW;
 Date.now = () => CLOCK;
 
 const ref = require('./crp_reference.js');
-const { createRelay } = require('./crp_relay.js');
+const { createRelay, parseAdmissions, describeAdmissions } = require('./crp_relay.js');
 
 /* ---- the two reference helpers the relay keeps private ------------------- */
 
@@ -388,6 +417,14 @@ const CORPUS = [
   { req: { op: 'now', ms: NOW + 1800001 }, run: () => { CLOCK = NOW + 1800001; return { ok: true, error: null, out: null, result: null }; } },
   { req: { op: 'relay_find' }, run: () => http('GET', '/find') },
   { req: { op: 'relay_find', q: 'demo' }, run: () => http('GET', `/find?q=${encodeURIComponent('demo')}`) },
+
+  /* ---- admissions parsing ---------------------------------------------- */
+  /* Both parsers are handed the same table text and must describe it the same
+   * way: cause, accepted line count, then the accepted lines in order. */
+  ...PARSE_TABLES.map(table => ({
+    req: { op: 'admissions_parse', table },
+    run: () => ({ ok: true, error: null, out: describeAdmissions(parseAdmissions(table)), result: null }),
+  })),
 ];
 
 function bigRoundTrip(n) {
@@ -406,7 +443,9 @@ async function main() {
     process.exit(2);
   }
 
-  relay = createRelay({ secret: SECRET, enrollSecret: ENROLL_SECRET });
+  const admissionsFile = path.join(os.tmpdir(), `crp_admissions_${process.pid}.tsv`);
+  fs.writeFileSync(admissionsFile, ADMISSIONS_TSV);
+  relay = createRelay({ secret: SECRET, admissions: ADMISSIONS });
   await new Promise(resolve => relay.server.listen(0, '127.0.0.1', resolve));
   const port = relay.server.address().port;
   http = (method, url, body) => request(port, method, url, body);
@@ -414,11 +453,12 @@ async function main() {
   const tmp = path.join(os.tmpdir(), `crp_corpus_${process.pid}.jsonl`);
   fs.writeFileSync(tmp, CORPUS.map(e => JSON.stringify(e.req)).join('\n') + '\n');
 
-  const proc = spawnSync(probe, ['--transcript', tmp, '--secret', SECRET, '--enroll-secret', ENROLL_SECRET, '--now', String(NOW)], {
+  const proc = spawnSync(probe, ['--transcript', tmp, '--secret', SECRET, '--admissions', admissionsFile, '--now', String(NOW)], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
   fs.unlinkSync(tmp);
+  fs.unlinkSync(admissionsFile);
   if (proc.status !== 0) {
     console.error(`crp_engine_crosscheck: probe exited ${proc.status}\n${proc.stderr}`);
     process.exit(1);

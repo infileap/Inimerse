@@ -305,9 +305,10 @@ static int serve_connection(int fd, CrpRegistry *r, int *exchanges) {
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: crp-hub <port> <secret-hex> [now-ms]\n"
-                        "       /portal stays fail-closed (403) unless the\n"
-                        "       CRP_ENROLL_SECRET environment variable is set\n"
-                        "       to the pre-shared enrollment secret.\n");
+                        "       /portal is decided by the admissions table: the\n"
+                        "       file named by CRP_ADMISSIONS_FILE, else\n"
+                        "       <INIMERSE_HUB_DIR|./universe>/portal_admissions.tsv.\n"
+                        "       An unreadable table refuses every request (403).\n");
         return 2;
     }
     int port = atoi(argv[1]);
@@ -347,9 +348,21 @@ int main(int argc, char **argv) {
     CrpRegistryConfig cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.secret = secret;
-    /* Fail-closed: with CRP_ENROLL_SECRET unset the registry has no enrollment
-     * secret and every /portal request is refused with 403. */
-    cfg.enroll_secret = getenv("CRP_ENROLL_SECRET");
+    /* One source, chosen here and nowhere else: the explicit
+     * CRP_ADMISSIONS_FILE, else the hub directory's table.  There is no fallback
+     * between them -- a misconfigured override is an empty table, not a reason
+     * to read the default one -- and no table at all refuses every /portal
+     * request with the same bytes as a bad proof.  CRP_ENROLL_SECRET is dead
+     * here: a pair is admitted by its own line or not at all. */
+    const char *admissions_file = getenv("CRP_ADMISSIONS_FILE");
+    char admissions_path[512];
+    if (!admissions_file || !*admissions_file) {
+        const char *hub_dir = getenv("INIMERSE_HUB_DIR");
+        if (!hub_dir || !*hub_dir) hub_dir = "./universe";
+        snprintf(admissions_path, sizeof admissions_path, "%s/portal_admissions.tsv", hub_dir);
+        admissions_file = admissions_path;
+    }
+    cfg.admissions_path = admissions_file;
     cfg.now_ms = now;
     CrpRegistry *r = crp_registry_new(&cfg);
     if (!r) {

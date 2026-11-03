@@ -68,7 +68,15 @@ def main():
         # Kernel-assigned hub ports, read back from the engine's own startup
         # lines: nothing is reserved here, so there is no release/bind window
         # for another suite's pool to take a number in (docs/STATUS.md 2.9).
-        env = dict(os.environ, CRP_ENROLL_SECRET=ENROLL)
+        # One source, named explicitly: the pair the flow below speaks as.  The
+        # hub reads this table; CRP_ENROLL_SECRET is only how the caller knows
+        # which secret to prove.
+        admissions = root / "portal_admissions.tsv"
+        admissions.write_text(f"# portal admissions (session flow)\n"
+                              f"verse-replay\tpeer-replay\t{ENROLL}\tsignal\n",
+                              encoding="utf-8")
+        env = dict(os.environ, CRP_ENROLL_SECRET=ENROLL,
+                   CRP_ADMISSIONS_FILE=str(admissions))
         proc, _tcp_port, http_port = start_hub_bound_ports(
             [str(engine), "--headless", "--port", "0", "--http-port", "0",
              "hub.im"],

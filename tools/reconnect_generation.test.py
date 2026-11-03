@@ -67,6 +67,16 @@ def start_hub(engine, root, hub_dir):
     """
     script = root / f"{hub_dir.name}.im"
     script.write_text('say "hub"\nwait 120\n', encoding="utf-8")
+    # The hub's one table: the pair this suite opens a portal as.  It lives in
+    # the hub directory, which is the source the engine resolves when
+    # CRP_ADMISSIONS_FILE is unset -- "v-unregistered" is deliberately absent,
+    # so the refusal below has to come from admission.
+    hub_dir.mkdir(parents=True, exist_ok=True)
+    admissions = hub_dir / "portal_admissions.tsv"
+    admissions.write_text(f"# portal admissions (reconnect)\n"
+                          f"v1\tp1\t{ENROLL}\tsignal\n"
+                          f"v-unregistered\tp1\t{ENROLL}\tsignal\n",
+                          encoding="utf-8")
     env = dict(os.environ, INIMERSE_HUB_DIR=str(hub_dir),
                CRP_ENROLL_SECRET=ENROLL)
     proc, tcp_port, http_port = start_hub_bound_ports(
@@ -144,9 +154,18 @@ def main():
                                  hashlib.sha256).digest()).rstrip(b"=").decode()
             status, no_auth = http_json(dir_port, "POST", "/portal", {"verse": "v1", "peer": "p1"})
             assert status == 403, (status, no_auth)
-            # A proof is not enough on its own: /portal mints only for a verse
-            # this hub registered (the reference's `verses.has(p.verse)`), so an
-            # unregistered verse is refused with 404 and /register lifts it.
+            # Admission is decided before the registry is inspected.  A pair with
+            # no line in the table cannot even learn whether its verse exists: it
+            # gets the same 403 body as a bad proof, so a stranger and a
+            # mistaken caller are the same answer.
+            status, stranger = http_json(dir_port, "POST", "/portal", {
+                "verse": "v-stranger", "peer": "p1",
+                "auth": enroll_proof("v-stranger", "p1")})
+            assert status == 403, (status, stranger)
+            assert stranger == no_auth, (stranger, no_auth)
+            # An admitted pair whose verse this hub never registered is the only
+            # one that reaches the registry test, and it gets the reference's 404:
+            # /register is what lifts that.
             status, unreg = http_json(dir_port, "POST", "/portal", {
                 "verse": "v-unregistered", "peer": "p1",
                 "auth": enroll_proof("v-unregistered", "p1")})

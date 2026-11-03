@@ -1,7 +1,42 @@
 'use strict';
 const http = require('node:http');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const wsClients = new Set();
+
+const parseAdmissions = text => {
+const table = new Map();
+for (let raw of String(text).split('\n')) {
+  if (raw.endsWith('\r')) raw = raw.slice(0, -1);
+  const line = raw.replace(/ +$/, '');
+  if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+  const fields = line.split('\t');
+  if (fields.length !== 4) return { table: null, cause: 'admissions-malformed' };
+  const verse = fields[0].trim(), peer = fields[1].trim(), secret = fields[2], capsRaw = fields[3].trim();
+  if (!verse || !peer || !secret) return { table: null, cause: 'admissions-malformed' };
+  const capabilities = capsRaw === '' ? [] : capsRaw.split(',').map(c => c.trim()).filter(Boolean);
+  for (const c of capabilities) if (!ADMISSION_CAPABILITIES.has(c)) return { table: null, cause: 'admissions-unknown-capability' };
+  const key = `${verse}\0${peer}`;
+  if (table.has(key)) return { table: null, cause: 'admissions-duplicate' };
+  table.set(key, { verse, peer, secret, capabilities });
+}
+return { table, cause: null };
+};
+
+/* The capability values this build knows.  An admission line naming anything
+ * else voids the whole table (see parseAdmissions). */
+const ADMISSION_CAPABILITIES = new Set(['signal']);
+
+/* Canonical description, byte-identical to crp_admissions_describe() in
+ * src/verse/crp.c: cause, line count, then each accepted line.  The crosscheck
+ * corpus compares this string, so the two parsers are pinned against each other
+ * on every edge case rather than merely "both parse the happy path". */
+function describeAdmissions(result) {
+  const parts = [`cause=${result.cause || '-'}`, `n=${result.table ? result.table.size : 0}`];
+  if (result.table) for (const line of result.table.values()) parts.push([line.verse, line.peer, line.secret].join('\t'));
+  return parts.join('|');
+}
 
 function createRelay(options = {}) {
   const verses = new Map();
@@ -19,17 +54,71 @@ function createRelay(options = {}) {
   const checkToken = (token, verse, peer, capability) => { try { const [body, sig] = String(token).split('.'); const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url'); if (!body || !sig || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false; const p = JSON.parse(Buffer.from(body, 'base64url')); return p.verse === verse && p.peer === peer && p.exp > Date.now() && p.capabilities.includes(capability); } catch { return false; } };
   /* /portal is the only authorization entry point: every other capability
      endpoint trusts the token it mints, so the token *is* the authorization.
-     The caller must therefore prove it may open a portal for (verse, peer)
-     before any is issued. The proof is an HMAC over the pair, keyed by a
-     hub-side pre-shared enrollment secret that is deliberately DISTINCT from
-     the token-signing secret above: leaking one must not yield the other.
-     FAIL-CLOSED: with no enrollment secret configured, /portal refuses every
-     request, so the default cannot be "open" by accident. */
-  const enrollSecret = options.enrollSecret || process.env.CRP_ENROLL_SECRET || '';
-  const enrollProof = (verse, peer) => crypto.createHmac('sha256', enrollSecret).update(`${verse}\0${peer}`).digest('base64url');
-  const enrollOk = (auth, verse, peer) => {
-    if (!enrollSecret || typeof auth !== 'string') return false;
-    const got = Buffer.from(auth); const want = Buffer.from(enrollProof(verse, peer));
+     The caller proves it may open a portal for (verse, peer) with an HMAC over
+     the pair, keyed by the secret of THAT pair's registration entry -- the hub
+     holds the table, the caller holds one line's secret.  Knowing some other
+     pair's secret (or the old hub-wide CRP_ENROLL_SECRET, which now decides
+     nothing) buys nothing.
+
+     FAIL-CLOSED and SINGLE-SOURCED.  The table comes from exactly one place,
+     chosen once at startup: options.admissions, else CRP_ADMISSIONS_FILE, else
+     <hub>/portal_admissions.tsv where <hub> is the startup root or
+     INIMERSE_HUB_DIR.  If the chosen source cannot be read the table is empty
+     and every request is refused -- there is NO fallback to another source,
+     because "file misconfigured -> quietly use the default path -> old table
+     lets people through" is the worst kind of silence.
+
+     A malformed file is an empty table, not a partial one: a pair written
+     twice (rotation half-done, or a typo -- first-wins and last-wins are both
+     wrong, and R2 is that disease already on the books), a line without four
+     fields, a field of blanks, and an unknown capability value all void the
+     whole file.  Group/other-readable is only a warning: plaintext secrets on
+     disk are an honest boundary, and the operator should be able to see it.
+
+     UNREGISTERED PAIR AND BAD PROOF ARE INDISTINGUISHABLE: same status, same
+     headers, same body, and constant-time comparison so the timing agrees too.
+     The cause goes to the log, never to the response -- a distinguishable
+     refusal turns 404 into an enumeration oracle.  For the same reason the
+     admissions test runs BEFORE the registry test: an unregistered pair must
+     not learn whether a verse exists. */
+  const ENROLL_REFUSED = Object.freeze({ error: 'invalid enrollment proof' });
+  const hubDir = options.hubDir || process.env.INIMERSE_HUB_DIR || path.join(process.cwd(), 'universe');
+  const admissionsSource =
+    options.admissions !== undefined
+      ? 'options.admissions'
+      : process.env.CRP_ADMISSIONS_FILE
+        ? process.env.CRP_ADMISSIONS_FILE
+        : path.join(hubDir, 'portal_admissions.tsv');
+  const logRefusal = cause => console.error(`crp_relay: portal refused cause=${cause}`);
+  let admissionsCache = null;
+  const loadAdmissions = () => {
+    if (admissionsSource === 'options.admissions') {
+      const list = Array.isArray(options.admissions) ? options.admissions : [];
+      const text = list
+        .map(e => [e.verse, e.peer, e.secret, Array.isArray(e.capabilities) ? e.capabilities.join(',') : String(e.capabilities || '')].join('\t'))
+        .join('\n');
+      return { ...parseAdmissions(text), basis: admissionsSource };
+    }
+    let st;
+    try { st = fs.statSync(admissionsSource); }
+    catch (e) {
+      const cause = e && e.code === 'ENOENT' ? 'admissions-missing' : 'admissions-unreadable';
+      return { table: new Map(), cause, basis: admissionsSource };
+    }
+    const stamp = `${st.mtimeMs}:${st.size}`;
+    if (admissionsCache && admissionsCache.stamp === stamp) return admissionsCache.value;
+    if ((st.mode & 0o044) !== 0) console.error('crp_relay: portal admissions cause=admissions-perms-loose');
+    let value;
+    try { value = { ...parseAdmissions(fs.readFileSync(admissionsSource, 'utf8')), basis: admissionsSource }; }
+    catch { value = { table: new Map(), cause: 'admissions-unreadable', basis: admissionsSource }; }
+    admissionsCache = { stamp, value };
+    return value;
+  };
+  const enrollProof = (verse, peer, pairSecret) =>
+    crypto.createHmac('sha256', pairSecret).update(`${verse}\0${peer}`).digest('base64url');
+  const enrollOk = (auth, verse, peer, pairSecret) => {
+    if (typeof auth !== 'string' || typeof pairSecret !== 'string' || !pairSecret) return false;
+    const got = Buffer.from(auth); const want = Buffer.from(enrollProof(verse, peer, pairSecret));
     return got.length === want.length && crypto.timingSafeEqual(got, want);
   };
   const tokenTtlMs = options.tokenTtlMs || 5 * 60 * 1000;
@@ -77,8 +166,13 @@ function createRelay(options = {}) {
       }
       if (req.method === 'POST' && req.url === '/portal') {
         const p = await read(req);
-        if (!enrollSecret) return json(res, 403, { error: 'portal enrollment is not configured' });
-        if (!enrollOk(p.auth, p.verse, p.peer)) return json(res, 403, { error: 'invalid enrollment proof' });
+        const admissions = loadAdmissions();
+        if (!admissions.table) { logRefusal(admissions.cause); return json(res, 403, ENROLL_REFUSED); }
+        const entry = typeof p.verse === 'string' && typeof p.peer === 'string'
+          ? admissions.table.get(`${p.verse}\0${p.peer}`)
+          : undefined;
+        if (!entry) { logRefusal('unregistered-pair'); return json(res, 403, ENROLL_REFUSED); }
+        if (!enrollOk(p.auth, p.verse, p.peer, entry.secret)) { logRefusal('bad-proof'); return json(res, 403, ENROLL_REFUSED); }
         /* The portal's scope is a pair of non-empty strings, and the verse must
            be one this hub has registered: `verses.has(p.verse)` is the
            reference's registry test.  A member that is not a string names no
@@ -87,7 +181,8 @@ function createRelay(options = {}) {
            gets the same 404 as an unregistered verse, before anything is
            minted.  The engine asks the same question with the same answer
            (src/verse/crp.c registry_has_verse + a VJ_STR peer test), which is
-           what the relay_portal corpus records pin. */
+           what the relay_portal corpus records pin.  This runs AFTER the
+           admissions test on purpose: see the note above. */
         if (typeof p.verse !== 'string' || !verses.has(p.verse) || typeof p.peer !== 'string' || !p.peer)
           return json(res, 404, { error: 'verse not found' });
         const token = makeToken(p.verse, p.peer); return json(res, 200, { token, verse: p.verse, peer: p.peer, expires: Date.now() + tokenTtlMs });
@@ -185,8 +280,8 @@ function createRelay(options = {}) {
     });
     socket.on('close', () => wsClients.delete(socket)); socket.on('error', () => wsClients.delete(socket));
   });
-  return { server, verses, friends, sessions, packages, checkToken, revoked, wsClients };
+  return { server, verses, friends, sessions, packages, checkToken, revoked, wsClients, loadAdmissions, enrollProof };
 }
 
 if (require.main === module) createRelay().server.listen(Number(process.env.CRP_PORT || 8787), () => console.log('CRP relay listening'));
-module.exports = { createRelay };
+module.exports = { createRelay, parseAdmissions, describeAdmissions };

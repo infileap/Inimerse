@@ -179,14 +179,60 @@ typedef struct {
 
 void crp_result_free(CrpResult *r);
 
+/* One line of the portal admissions table: the hub holds the table, the caller
+ * holds one line's secret.  `capabilities` is validated but not enforced yet
+ * (see docs/streams/portal-per-pair.md), and an unknown value voids the whole
+ * table rather than being quietly kept. */
+typedef struct {
+    const char *verse;
+    const char *peer;
+    const char *secret;
+    const char *const *capabilities;
+    size_t      ncapabilities;
+} CrpAdmission;
+
+/* The portal admissions table, loaded once from exactly one source: the
+ * in-memory array when it is non-NULL, otherwise `path`.  There is no fallback
+ * between the two -- an unreadable source is an empty table, never a reason to
+ * read the other one.  A malformed line, a pair written twice, or an unknown
+ * capability voids the whole table: it refuses everything rather than admitting
+ * a half-parsed one. */
+typedef struct CrpAdmissions CrpAdmissions;
+
+CrpAdmissions *crp_admissions_new(const CrpAdmission *entries, size_t nentries, const char *path);
+/* Parse one TSV body, exactly as the reference's parseAdmissions() does.  Used
+ * by the crosscheck, whose corpus pins the two parsers against each other on
+ * every edge case: blank lines, comments, CRLF, trailing spaces, too few
+ * fields, an empty capabilities column, an unknown capability, and a pair
+ * written twice. */
+CrpAdmissions *crp_admissions_from_text(const char *text);
+/* Canonical description of a parsed table, byte-identical to the reference's
+ * own: "cause=<cause|->|n=<lines>|verse	peer	secret|...". */
+void           crp_admissions_describe(CrpAdmissions *a, CrpBuf *out);
+void           crp_admissions_free(CrpAdmissions *a);
+
+/* 1 when (verse, peer) has a line in the table -- `secret` then carries that
+ * line's secret -- and 0 otherwise, with `*cause` naming why for the log.  A
+ * NULL verse or peer (a member that is not a string) names no pair and is
+ * never admitted. */
+int crp_admissions_lookup(CrpAdmissions *a, const char *verse, const char *peer,
+                          CrpBuf *secret, const char **cause);
+
 typedef struct {
     const char *secret;          /* required; its UTF-8 bytes are the HMAC key */
-    /* Optional; enables POST /portal.  The pre-shared enrollment secret a
-     * caller must prove possession of before a capability token is minted for
-     * (verse, peer).  Deliberately distinct from `secret` so that leaking the
-     * token key does not also grant portal enrollment.  NULL or empty means
-     * fail-closed: every /portal request is refused (403), never opened. */
+    /* DEPRECATED AND DEAD: the hub-wide enrollment secret no longer decides
+     * anything.  Portal admission comes from `admissions`/`admissions_path`
+     * below; a request naming an unregistered pair is refused even when this
+     * variable is set.  Kept so existing callers still compile, and so the
+     * migration can remove it deliberately rather than by accident. */
     const char *enroll_secret;
+    /* The admissions table: `admissions` wins when non-NULL (tests and
+     * embedding), otherwise `admissions_path` is read once at creation.  When
+     * both are absent the table is empty and every /portal request is refused
+     * with the same body as a bad proof. */
+    const CrpAdmission *admissions;
+    size_t              nadmissions;
+    const char         *admissions_path;
     long long   token_ttl_ms;    /* <= 0: CRP_DEFAULT_TOKEN_TTL_MS   */
     long long   registry_ttl_ms; /* <= 0: CRP_DEFAULT_REGISTRY_TTL_MS */
     long long   max_revoked;     /* <= 0: CRP_DEFAULT_MAX_REVOKED     */

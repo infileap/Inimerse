@@ -122,10 +122,27 @@ int main(void) {
     setenv("INIMERSE_STATE_FILE", "/tmp/inimerse_http_probe_state", 1);
     remove("/tmp/inimerse_http_probe_state");
     setenv("CRP_TOKEN_TTL", "1", 1);
-    /* The hub-side portal enrollment secret.  /portal mints a capability token
-       only for a caller that proves it may open a portal for that (verse, peer);
-       with this unset the listener refuses every /portal outright. */
-    setenv("CRP_ENROLL_SECRET", "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", 1);
+    /* The portal admissions table.  /portal mints a capability token only for a
+       pair that has a line here and proves it holds that line's secret; with no
+       table the listener refuses every /portal with the same bytes as a bad
+       proof.  The file is written before the listener starts, because the table
+       is read once -- there is no hot reload to wait for. */
+    setenv("CRP_ADMISSIONS_FILE", "/tmp/inimerse_http_probe_admissions.tsv", 1);
+    {
+        FILE *admissions = fopen("/tmp/inimerse_http_probe_admissions.tsv", "wb");
+        if (admissions) {
+            /* Two lines, and the second one is why this file needs a table at
+               all: `ghost` is ADMITTED but never registered, which is the only
+               way to reach the registry's 404.  A pair with no line is refused
+               earlier, with the bad-proof body, so it can never learn whether a
+               verse exists. */
+            fprintf(admissions, "v1\tp1\t%s\tsignal\n",
+                    "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100");
+            fprintf(admissions, "ghost\tp1\t%s\tsignal\n",
+                    "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100");
+            fclose(admissions);
+        }
+    }
     /* Before the server starts, so the silent listener below cannot collide with
        it and so a hang here is attributed to the client, not to the server. */
     if (!silent_peer_case()) {
@@ -193,8 +210,13 @@ int main(void) {
     snprintf(wild_body, sizeof wild_body, "{\"verse\":5,\"peer\":null,\"auth\":\"%s\"}", wild_proof);
     snprintf(wild_req, sizeof wild_req, "POST /portal HTTP/1.1\r\nHost: localhost\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s", strlen(wild_body), wild_body);
     if (request_body(port, wild_req, wild_res, sizeof wild_res) < 0) { verse_http_stop(); return 16; }
-    if (!strstr(wild_res, "404 Not Found")) {
-        fprintf(stderr, "non-string portal scope was not refused: %s\n", wild_res);
+    /* A member that is not a string names no pair, so it is not in the
+       admissions table and it gets the SAME refusal as a bad proof -- not a 404
+       that would tell the caller whether such a verse exists.  The old check
+       wanted 404 here; requiring 403 is the stricter reading, and the wildcard
+       mint below is what this case is really about. */
+    if (!strstr(wild_res, "403 Forbidden") || !strstr(wild_res, "invalid enrollment proof")) {
+        fprintf(stderr, "non-string portal scope was not refused as an unregistered pair: %s\n", wild_res);
         verse_http_stop(); return 17;
     }
     char wild_token[64] = {0};
@@ -207,8 +229,10 @@ int main(void) {
         verse_http_stop(); return 18;
     }
     /* A valid proof is not enough on its own: the verse must be one this hub
-       registered.  `ghost` never was, so a correct proof for it is refused with
-       the reference's own 404 and mints nothing. */
+       registered.  `ghost` is admitted by the table but was never registered, so
+       a correct proof for it is refused with the reference's own 404 and mints
+       nothing.  (A pair with no line at all never gets this far: it is refused
+       with the bad-proof body, which is the point of checking admission first.) */
     char ghost_proof[128] = {0}, ghost_body[256], ghost_req[512], ghost_res[512] = {0};
     verse_portal_proof("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", "ghost", "p1", ghost_proof, sizeof ghost_proof);
     snprintf(ghost_body, sizeof ghost_body, "{\"verse\":\"ghost\",\"peer\":\"p1\",\"auth\":\"%s\"}", ghost_proof);

@@ -177,8 +177,11 @@ static const char *frame_text_of(CrpBuf *raw) {
 }
 
 /* The enrollment proof a caller must present to open a portal for
- * (verse, peer): base64url(HMAC-SHA256(enroll, String(verse) + "\0" +
- * String(peer))), byte-identical to tools/crp_relay.js enrollProof().  A NULL
+ * (verse, peer): base64url(HMAC-SHA256(<this pair's secret>, String(verse) +
+ * "\0" + String(peer))), byte-identical to tools/crp_relay.js enrollProof().
+ * The secret is the one on THIS pair's line of the hub's admissions table: the
+ * old hub-wide CRP_ENROLL_SECRET no longer decides anything, it merely happens
+ * to be the same string during a migration.  A NULL
  * argument means the member was absent from the request, which JS String()
  * coerces to "undefined" -- so the proof for a request with no peer is the
  * proof over the literal "undefined".  Never returns NULL. */
@@ -234,8 +237,10 @@ static VjVal *peer_call(Peer *p, const char *req, const char *label) {
 int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr, "usage: crp-peer <port> <secret-hex> <now-ms> [peer-id]\n"
-                        "       CRP_ENROLL_SECRET must be set to the hub's portal\n"
-                        "       enrollment secret; /portal is fail-closed without it.\n");
+                        "       CRP_ENROLL_SECRET must be set to this pair's secret\n"
+                        "       (the hub admits the pair only if its admissions\n"
+                        "       table has a matching line); /portal is otherwise\n"
+                        "       refused with the same bytes as a bad proof.\n");
         return 2;
     }
     int port = atoi(argv[1]);
@@ -244,8 +249,8 @@ int main(int argc, char **argv) {
     const char *self = argc > 4 ? argv[4] : "peer-a";
     const char *enroll = getenv("CRP_ENROLL_SECRET");
     if (!enroll || !enroll[0]) {
-        fprintf(stderr, "crp-peer: CRP_ENROLL_SECRET is required: /portal cannot be "
-                        "opened without the enrollment secret\n");
+        fprintf(stderr, "crp-peer: CRP_ENROLL_SECRET is required: it is this pair's "
+                        "secret, and /portal cannot be opened without it\n");
         return 2;
     }
 
@@ -392,7 +397,11 @@ int main(int argc, char **argv) {
     jo_str(&pl, "auth", proof_of(enroll, "demo", NULL, authbuf, sizeof authbuf));
     jreq(&req, "portal", jo_done(&pl), NULL);
     resp = peer_call(&p, req.data, "portal without peer");
-    want_status(&p, resp, 404, "portal without peer");
+    /* Admission is decided before the shape is inspected: a request with no peer
+     * names no pair, so it is an unregistered pair and gets the same refusal as
+     * a bad proof.  It does NOT get the 404 that would tell it the verse
+     * exists. */
+    want_status(&p, resp, 403, "portal without peer");
     vj_free(resp);
     upp_buf_free(&req);
 

@@ -40,6 +40,7 @@
  * Run standalone: node tools/crp_wire_neg.test.js [path/to/crp-hub]
  */
 const net = require('node:net');
+const os = require('node:os');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -82,8 +83,14 @@ async function main() {
       ' -- build it first (cmake --build build), or pass its path / set INIM_CRP_HUB_BIN.');
     process.exit(2);
   }
+  /* One source for the hub's portal admissions: a table written here.  The pair
+   * below is the only one admitted, so "a proof for another pair" has something
+   * to be refused against.  CRP_ENROLL_SECRET stays in the environment on
+   * purpose -- it is dead now, and the checks below prove it stays dead. */
+  const admissions = path.join(os.tmpdir(), `wire_neg_admissions_${process.pid}.tsv`);
+  fs.writeFileSync(admissions, `demo\twire-peer\t${ENROLL}\tsignal\n`);
   const hub = spawn(HUB, ['0', SECRET, String(NOW)],
-    { env: { ...process.env, CRP_ENROLL_SECRET: ENROLL }, stdio: ['ignore', 'pipe', 'pipe'] });
+    { env: { ...process.env, CRP_ENROLL_SECRET: ENROLL, CRP_ADMISSIONS_FILE: admissions }, stdio: ['ignore', 'pipe', 'pipe'] });
   let hubErr = '';
   hub.stderr.on('data', (d) => { hubErr += d; });
   const port = await new Promise((res, rej) => {
