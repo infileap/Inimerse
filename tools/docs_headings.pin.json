@@ -1,6 +1,6 @@
 {
- "docs": 108,
- "headings": 1376,
+ "docs": 109,
+ "headings": 1385,
  "per_file": {
   "docs/API.md": 15,
   "docs/AUDIT.md": 543,
@@ -18,7 +18,7 @@
   "docs/RELEASE_0.5.1.md": 6,
   "docs/RELEASE_0.5.2.md": 7,
   "docs/REQUIREMENTS_ANALYSIS.md": 10,
-  "docs/STATUS.md": 76,
+  "docs/STATUS.md": 77,
   "docs/SYNTAX.md": 9,
   "docs/THREADS_V06.md": 7,
   "docs/TYPESET_V06.md": 10,
@@ -95,6 +95,7 @@
   "docs/streams/json-min-nul-escape.md": 8,
   "docs/streams/marketplace-entry-draft.md": 9,
   "docs/streams/marketplace-watch-facts.md": 8,
+  "docs/streams/portal-per-pair.md": 8,
   "docs/streams/repo-hygiene.md": 8,
   "docs/streams/shard-identity-ruler.md": 7,
   "docs/streams/src-scope-blindspot.md": 7,
@@ -111,5 +112,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "e144641"
+ "tree": "cb64ddb"
 }
