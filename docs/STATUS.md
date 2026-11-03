@@ -4192,7 +4192,7 @@ wire_neg: 13 checks, 0 failures
 5. **第一笔只动文档**，不改 `EXP_CTEST` / `EXP_NODE`，也不改 `CMakeLists.txt`，因此 pin 与计数不该动。**第二笔只动 `EXP_NODE`（12→13）与 `tools/node_suites/run_all.js`、`tools/gate.sh`、`docs/BOARD.md` 的表**，仍不碰 `CMakeLists.txt`、不动 `EXP_CTEST`：`gate.sh` 里的值是**原地替换**，行数不变，所以 `docs/` 里指向 `gate.sh:<N>` 的 pin 全部不位移。全套门禁读数见本笔的回报（若合并时基线又推进，以门禁日志为准，不以本节文字为准）。
 
 **补记（本笔自己撞出来的红）：文档改动也是门禁输入。** 本笔声明「只动文档」，仍一度把 `ctest #171 docs_headings` 打红：`tools/docs_headings.pin.json` 钉着 `headings=1374`，新增的 `§10.100` 把它推到 1375，于是「删一节」那两条用例拿到 `removed=0`（删完正好等于旧基线，删与加互相抵消）。修法不是改测试，是 `python3 tools/check_docs_headings.py --write-pin` 重钉。而**重钉本身还有一条陷阱**：`--write-pin` 记录的是当时的 HEAD，若随后 `--amend`，被记录的那棵树就不再是任何提交的祖先 —— pin 指向悬空对象，`git gc --prune` 之后一棵**干净**的树会红，且报错把人引向「历史被改写」。本笔先 amend（到 `890dfa1`）才发现，于是把 pin 重钉到 `59dbc9a` 并**单独提交一笔**，判据是 `git merge-base --is-ancestor <pin.tree> HEAD`（实测 `REACHABLE`）。⇒ **「只动文档」是关于 diff 的陈述，不是关于门禁输入的陈述**：`headings` 计数就是被这 1 个小节亲手从 1374 推到 1375 的。
-### 10.35 UPP 接入传输层：一次「信封是唯一差别」的等值测量（`upp-transport`）
+## §10.101 UPP 接入传输层：一次「信封是唯一差别」的等值测量（`upp-transport`）
 
 **核实先于动手。** [BOARD.md](BOARD.md) 的 `upp-in-engine` 行当时的「遗留边界」写了两条：`timestamp` 只收整数、尚未接入 `inim-server`/`inim-client` 传输层。开工前逐条实测：
 

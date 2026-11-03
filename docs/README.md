@@ -40,10 +40,10 @@ build/inim-server root main            # 从 stdin 读 canonical-JSON 请求行�
 build/inim-client root main scenario  # fork 一个 inim-server 子进程并按剧本驱动它
 ```
 
-JS 侧协议测试不在 CTest 内，由门禁的 `node` 阶段统一跑（11 个套件）：
+JS 侧协议测试不在 CTest 内，由门禁的 `node` 阶段统一跑（13 个套件）：
 
 ```bash
-node tools/node_suites/run_all.js    # 期望：node protocol suites: 11/11 passed
+node tools/node_suites/run_all.js    # 期望：node protocol suites: 13/13 passed
 ```
 
 ## 多会话工作
