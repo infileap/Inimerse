@@ -30,11 +30,14 @@
 准入表 = 一组 `(verse, peer) -> { secret, capabilities }`，**由 hub 持有**。
 
 - 证明式形状**不变**：`base64url(HMAC-SHA256(pair_secret, String(verse) + "\0" + String(peer)))`。变的只有密钥来源：一把全局密钥 → 这一对登记的那把。客户端逻辑不必改，改的是它拿哪把密钥。
-- 表来源（**权重从高到低，同级不混用**，禁止隐式合并）：
-  1. `options.admissions`（仅库内/测试；给参考实现嵌入方）；
-  2. 环境变量 `CRP_ADMISSIONS_FILE` 指的文件；
-  3. `$INIMERSE_HUB_DIR/portal_admissions.tsv`（默认 `./universe/portal_admissions.tsv`）。
-  引擎侧只认 2/3。**没有通配**：一条 `(verse, peer)` 一行，`*` 不当通配解释（拒绝写进日志，不静默跳过）。
+- **`CRP_ENROLL_SECRET` 变成死的事实**：表一旦启用，它**不再参与任何判定**（env 在场也不放行未登记 pair）。这是不兼容变更，写进 §8 与 STATUS，不许只说「迁移后客户端不用改」。
+- **常时比较两侧都做**：文案相同、耗时不同一样是 oracle。
+- 表来源**只有一个，选定之后跨级也不许回退**（协调者裁定，比「同级不混用」更硬）：`options.admissions`（仅嵌入/测试）→ 环境变量 `CRP_ADMISSIONS_FILE` → hub 目录下的 `portal_admissions.tsv`。一旦选中某个来源，**读不到就是空表全拒**（日志 `cause=admissions-unreadable`），**绝不降级到下一个来源** —— 否则「文件配错 ⇒ 悄悄用默认路径 ⇒ 拿旧表放行」是最坏的一种静默。
+- **hub 目录只有一个来源**：进程启动时确定的 root，或 `INIMERSE_HUB_DIR`，二者取其一；**判定路径里不许猜 cwd**。解析不到 ⇒ 空表全拒。
+- **同一个 `(verse, peer)` 写两行 ⇒ 整份文件作废 + 全拒 + 日志 `cause=admissions-duplicate`**。不做 first-wins 也不做 last-wins：两行两把 secret 的含义是「轮换做到一半」或「有人手滑」，两种都该让运维看见。`R2`（`vj_get` first-wins vs `JSON.parse` last-wins）就是同一形状的病，别在新代码里再种一次。
+- **未知 `capabilities` 值 ⇒ 整份作废**（fail-closed）。不许静默接受垃圾值再说「反正本轮不参与判定」。
+- 加载时 `stat` 一次权限：**group/other 可读 ⇒ 只记日志 `cause=admissions-perms-loose`，不拒绝**。明文 secret 落盘是诚实边界，那就让运维看得见自己的文件是 644。
+- **两侧解析必须逐字一致**：JS 与 C 各写一遍 TSV 解析，这是本流最大的分歧源；`tools/crp_engine_crosscheck.js` 语料要加**解析边角组**：空行、`#` 注释、CRLF、行尾空格、字段不足 4、`capabilities` 空字段、未知 capability 值、secret 含空格（不含 tab）。
 - 文件格式（TSV；`#` 注释、空行忽略）：`verse \t peer \t secret \t capabilities(逗号分隔，可空)`。**本轮 `capabilities` 只解析、不参与判定**（见 §8.1）。
 - 热加载：每次 `/portal` 先 `stat`（`mtime`+`size`），变了才重读；**读失败 ⇒ 空表（fail-closed）**，日志记 `cause=admissions-unreadable`。不保留上一版——那会让写坏的文件静默续命旧权限。
 
@@ -45,7 +48,7 @@
 
 ## 4. 判据（正向 5 条；每条负向 403 都要有一个 200 读数陪着）
 
-1. **空表全拒 + 逐字节不可区分**：不带任何表起 relay（默认起法），`(demo,p1)` 用旧全局密钥算出**合法形状**的 proof ⇒ `403`。再把同一请求改成 proof 末尾翻一位（证明无效）⇒ 再一个 `403`。抓两份响应的**原始字节**（状态行 + 全部头 + body，逐字节；`fetch` 拿不到状态行与原始头，所以用裸 socket 或 `http.request` 读 `rawHeaders` + body 缓冲）整体 `assert.deepStrictEqual`，必须相同。**不许只断言 `status === 403`**。
+1. **空表全拒 + 逐字节不可区分**：不带任何表起 relay（默认起法），`(demo,p1)` 用旧全局密钥算出**合法形状**的 proof ⇒ `403`。再把同一请求改成 proof 末尾翻一位（证明无效）⇒ 再一个 `403`。抓两份响应的**原始字节**整体比对，必须相同。**比较口径写死**：状态行 + **除 `Date` 外的全部响应头** + body，逐字节；`Date` 单独断言格式合法（秒级时间戳，两次请求跨秒必不同，不排除它就是一条会在 CI 上间歇红、然后被「顺手放宽」的判据）。`fetch` 拿不到状态行与原始头，用裸 socket 或 `http.request` 读 `rawHeaders` + body 缓冲。**不许只断言 `status === 403`**。
 2. **元判据（证明上面那条断言是活的）**：把拒绝文案改成 `pair not admitted` 后重跑 ⇒ 判据 1 必须**红**。同时断言日志里 `cause=` 两个值分别出现（证明「不可区分」不是靠把信息全丢了换来的）。
 3. **登记后同一 pair 由 403 变 200**：按 §6 写一行（secret = 升级前那把全局密钥），同一请求 ⇒ `200`，`verse`/`peer` 回显逐字相同、`expires ∈ [now, now+ttl]`。**这条要真跑，不许写在注释里当承诺。**
 4. **未登记 pair 一律 403（哪怕持有旧全局密钥）**：`(demo,p2)` 用旧全局密钥算出合法形状 proof ⇒ 403，且字节与判据 1 相同。
@@ -69,6 +72,7 @@
 3. 重启 hub（或等一次 `stat` 变化；relay 与引擎都按 `stat` 重读，文件热加载不需要重启进程）。
 4. 判据：升级前 200 的 pair，照做后**同一请求仍 200**；任何没写进表的 pair 即使知道旧全局密钥也 403。
 5. 之后按需逐对轮换 secret（本轮**不做**轮换工具，只说明「改这一行 + 同步给该 peer 的客户端」）。
+6. **把 `CRP_ENROLL_SECRET` 从环境里撤掉。撤掉是收尾，不是可选** —— 留着它虽已不参与判定，但会让人以为还有一条全局通道。
 
 ## 7. 写域与门禁口径
 
@@ -86,4 +90,5 @@
 3. **准入表是运维提供的静态事实**：无所有者、无审批流、无租约与吊销。§7.7 里说「权限的第一块」，不说「权限做完了」。
 4. **`R2` 重复 JSON 键仍不调和**（`vj_get` first-wins vs `JSON.parse` last-wins），`src/common/**` 本波硬禁碰，本流不碰。
 5. **Windows 半侧只编译不运行**（判定面是 HMAC + 文件读取，但只有 POSIX 树跑测试）。
-6. **热加载一致性边界**：`stat` 变化才重读，两次 `/portal` 之间可能落在旧表上；这是有意的（不引入锁），但要写在文档里。
+6. **`CRP_ENROLL_SECRET` 的行为变更**：启用准入表之后它不再参与判定，且**撤掉它是迁移收尾**（不是可选）。
+7. **热加载一致性边界**：`stat` 变化才重读，两次 `/portal` 之间可能落在旧表上；这是有意的（不引入锁），但要写在文档里。
