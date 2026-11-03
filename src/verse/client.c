@@ -14,30 +14,80 @@
  * pipe pair on Windows -- and everything above that (argument parsing, the
  * request loop, the crash directive, the exit code) is shared, so the two
  * platforms cannot drift apart in what they send or in what they print.
+ *
+ * `--upp` puts the same scenario behind a UPP transport (src/verse/upp.h): the
+ * server child is spawned with `--upp`, the client negotiates a hello/start,
+ * and every scenario line travels as the raw JSON text of a `verse` frame's
+ * `payload`.  What the scenario means is identical in both modes; only the
+ * envelope differs, and the exit code of the child is still the one reported.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
+#include "upp.h"
+
 #define VL_LINE_MAX (64 * 1024)
 
+/* Read the scenario into one string per line.
+ *
+ * The buffer grows instead of living on the stack at VL_LINE_MAX.  A scenario
+ * line that was longer than that used to be *truncated* rather than read --
+ * and the truncation was silent, because a cut-off JSON object is still a
+ * line: the server answered `malformed` and the client exited 0, so the only
+ * sign was an error message pointing at an offset the scenario writer never
+ * wrote.  That is the same shape as docs/STATUS.md #10.10 (a large payload
+ * dropped in silence); here the payload is the request. */
 static int slurp(FILE *in, char ***out_lines) {
     size_t cap = 16, n = 0;
     char **lines = (char **)malloc(cap * sizeof *lines);
     if (!lines) return -1;
-    char buf[VL_LINE_MAX];
-    while (fgets(buf, sizeof buf, in)) {
-        size_t len = strlen(buf);
-        while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = '\0';
-        if (len == 0) continue;
-        if (n == cap) {
-            cap *= 2;
-            char **tmp = (char **)realloc(lines, cap * sizeof *lines);
-            if (!tmp) { free(lines); return -1; }
-            lines = tmp;
+
+    size_t room = VL_LINE_MAX, len = 0;
+    char *buf = (char *)malloc(room);
+    if (!buf) { free(lines); return -1; }
+
+    for (;;) {
+        if (room - len < 2) {
+            size_t grown = room * 2;
+            char *tmp = (char *)realloc(buf, grown);
+            if (!tmp) { free(buf); free(lines); return -1; }
+            buf = tmp;
+            room = grown;
         }
-        lines[n++] = strdup(buf);
+        if (!fgets(buf + len, (int)(room - len), in)) break;
+        len += strlen(buf + len);
+        if (len && buf[len - 1] == '\n') {
+            while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = '\0';
+            if (len) {
+                if (n == cap) {
+                    cap *= 2;
+                    char **tmp = (char **)realloc(lines, cap * sizeof *lines);
+                    if (!tmp) { free(buf); free(lines); return -1; }
+                    lines = tmp;
+                }
+                lines[n++] = strdup(buf);
+            }
+            len = 0;
+        }
     }
+    if (len) {                                   /* last line without a newline */
+        while (len && (buf[len - 1] == '\r')) buf[--len] = '\0';
+        if (len) {
+            if (n == cap) {
+                cap *= 2;
+                char **tmp = (char **)realloc(lines, cap * sizeof *lines);
+                if (!tmp) { free(buf); free(lines); return -1; }
+                lines = tmp;
+            }
+            lines[n++] = strdup(buf);
+        }
+    }
+    free(buf);
     *out_lines = lines;
     return (int)n;
 }
@@ -83,7 +133,7 @@ static void cmdline_append(char *buf, size_t cap, size_t *len, const char *arg) 
 }
 
 static int child_spawn(Child *c, const char *server, const char *root, const char *verse_id,
-                       FILE **to_child, FILE **from_child) {
+                       int upp, FILE **to_child, FILE **from_child) {
     c->proc = NULL;
     c->has_exit_code = 0;
 
@@ -108,6 +158,7 @@ static int child_spawn(Child *c, const char *server, const char *root, const cha
     size_t len = 0;
     cmd[0] = '\0';
     cmdline_append(cmd, sizeof cmd, &len, server);
+    if (upp) cmdline_append(cmd, sizeof cmd, &len, "--upp");
     cmdline_append(cmd, sizeof cmd, &len, root);
     cmdline_append(cmd, sizeof cmd, &len, verse_id);
 
@@ -182,7 +233,7 @@ typedef struct Child {
 } Child;
 
 static int child_spawn(Child *c, const char *server, const char *root, const char *verse_id,
-                       FILE **to_child, FILE **from_child) {
+                       int upp, FILE **to_child, FILE **from_child) {
     c->pid = -1;
 
     /* the child inherits its half of two pipes: we write to child_in[1] and
@@ -204,7 +255,8 @@ static int child_spawn(Child *c, const char *server, const char *root, const cha
         dup2(from_child_fd[1], STDOUT_FILENO);
         close(to_child_fd[0]); close(to_child_fd[1]);
         close(from_child_fd[0]); close(from_child_fd[1]);
-        execlp(server, server, root, verse_id, (char *)NULL);
+        if (upp) execlp(server, server, "--upp", root, verse_id, (char *)NULL);
+        else     execlp(server, server, root, verse_id, (char *)NULL);
         fprintf(stderr, "inim-client: cannot exec '%s'\n", server);
         _exit(127);
     }
@@ -237,18 +289,170 @@ static void child_close(Child *c) { (void)c; }
 
 #endif /* _WIN32 */
 
+/* -------------------------------------------------------------- UPP client */
+
+/* The manifest this client announces in its hello.  The server validates it
+ * with upp_validate_manifest(), the same function the reference validates with,
+ * so the five fields it insists on are present even though this client reads
+ * none of them: this client has no files, claims no capabilities, and speaks
+ * exactly ABI 1. */
+#define UPP_CLIENT_MANIFEST                                                     \
+    "{\"id\":\"inim-client\",\"name\":\"inim-client\",\"version\":\"1.0.0\","   \
+    "\"engine\":\"inimerse\",\"entry\":\"verse\",\"abi\":1,\"abiRange\":\"1\"," \
+    "\"files\":{},\"capabilities\":[]}"
+
+static int upp_write(FILE *to, const UppBuf *b) {
+    if (!b->data) return -1;
+    fprintf(to, "%s\n", b->data);
+    fflush(to);
+    return 0;
+}
+
+/* Read one line from the child and strip its terminator into `buf`. */
+static int upp_read_line(FILE *from, char *buf, size_t cap) {
+    if (!fgets(buf, (int)cap, from)) return -1;
+    size_t len = strlen(buf);
+    while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = '\0';
+    return 0;
+}
+
+/* Negotiate a session: hello, read the welcome, start, one heartbeat.  Both
+ * halves of the envelope are exercised here rather than in the loop, so a
+ * refusal names the phase that refused. */
+static int upp_negotiate(FILE *child_in, FILE *child_out, char *resp, size_t cap,
+                         char *err, size_t errlen) {
+    UppBuf b;
+    upp_buf_init(&b);
+    VjVal *manifest = vj_parse(UPP_CLIENT_MANIFEST, err, errlen);
+    if (!manifest) {
+        fprintf(stderr, "inim-client: upp manifest is unparseable: %s\n", err);
+        upp_buf_free(&b);
+        return 70;
+    }
+    int rc = upp_frame_hello(&b, "client", manifest, NULL, err, errlen);
+    vj_free(manifest);
+    if (rc != 0) {
+        fprintf(stderr, "inim-client: cannot build the upp hello: %s\n", err);
+        upp_buf_free(&b);
+        return 70;
+    }
+    rc = upp_write(child_in, &b);
+    upp_buf_free(&b);
+    if (rc != 0) { fprintf(stderr, "inim-client: cannot send the upp hello\n"); return 141; }
+
+    if (upp_read_line(child_out, resp, cap) != 0) {
+        fprintf(stderr, "inim-client: server closed the stream before the welcome\n");
+        return 141;
+    }
+    VjVal *msg = upp_decode_line(resp, strlen(resp), err, errlen);
+    if (!msg) {
+        fprintf(stderr, "inim-client: unreadable welcome frame: %s\n", err);
+        return 142;
+    }
+    const VjVal *typev = vj_get(msg, "type");
+    const char *type = (typev && typev->type == VJ_STR && typev->s) ? typev->s : "";
+    if (strcmp(type, "welcome") != 0) {
+        fprintf(stderr, "inim-client: hello was refused (frame '%s')\n", type);
+        vj_free(msg);
+        return 143;
+    }
+    vj_free(msg);
+
+    /* start + heartbeat: the server only accepts `verse` frames from a running
+     * session, so these are not decorative -- without them every request below
+     * would be refused as out of order. */
+    upp_buf_init(&b);
+    if (upp_frame_start(&b, "verse", NULL, err, errlen) != 0) {
+        fprintf(stderr, "inim-client: cannot build the upp start: %s\n", err);
+        upp_buf_free(&b);
+        return 70;
+    }
+    rc = upp_write(child_in, &b);
+    upp_buf_free(&b);
+    if (rc != 0) { fprintf(stderr, "inim-client: cannot send the upp start\n"); return 141; }
+
+    upp_buf_init(&b);
+    if (upp_frame_heartbeat(&b, 1, upp_now_ms(), err, errlen) != 0) {
+        fprintf(stderr, "inim-client: cannot build a upp heartbeat: %s\n", err);
+        upp_buf_free(&b);
+        return 70;
+    }
+    rc = upp_write(child_in, &b);
+    upp_buf_free(&b);
+    if (rc != 0) { fprintf(stderr, "inim-client: cannot send a upp heartbeat\n"); return 141; }
+    return 0;
+}
+
+/* 0: the response text is in `out`; 1: the child closed the stream;
+ * 2: the frame or the request it carried was unusable. */
+static int upp_call(FILE *child_in, FILE *child_out, const char *request,
+                    char *out, size_t outcap, char *resp, size_t cap,
+                    char *err, size_t errlen) {
+    UppBuf f;
+    upp_buf_init(&f);
+    if (upp_frame_build(&f, "verse", NULL, request, err, errlen) != 0) {
+        fprintf(stderr, "inim-client: cannot build a verse frame: %s\n", err);
+        upp_buf_free(&f);
+        return 2;
+    }
+    int rc = upp_write(child_in, &f);
+    upp_buf_free(&f);
+    if (rc != 0) { fprintf(stderr, "inim-client: cannot send a verse frame\n"); return 1; }
+
+    if (upp_read_line(child_out, resp, cap) != 0) return 1;
+    VjVal *msg = upp_decode_line(resp, strlen(resp), err, errlen);
+    if (!msg) {
+        fprintf(stderr, "inim-client: unreadable response frame: %s\n", err);
+        return 2;
+    }
+    const VjVal *typev = vj_get(msg, "type");
+    const char *type = (typev && typev->type == VJ_STR && typev->s) ? typev->s : "";
+    if (strcmp(type, "verse") != 0) {
+        fprintf(stderr, "inim-client: expected a 'verse' frame, got '%s'\n", type);
+        vj_free(msg);
+        return 2;
+    }
+    const VjVal *payload = vj_get(msg, "payload");
+    if (!payload) {
+        fprintf(stderr, "inim-client: 'verse' frame without a payload\n");
+        vj_free(msg);
+        return 2;
+    }
+    UppBuf text;
+    upp_buf_init(&text);
+    if (upp_json_write(&text, payload) != 0 || !text.data || strlen(text.data) >= outcap) {
+        fprintf(stderr, "inim-client: the response payload does not fit\n");
+        upp_buf_free(&text);
+        vj_free(msg);
+        return 2;
+    }
+    memcpy(out, text.data, strlen(text.data) + 1);
+    upp_buf_free(&text);
+    vj_free(msg);
+    return 0;
+}
+
 /* ------------------------------------------------------------------- main */
 
 int main(int argc, char **argv) {
     const char *server = getenv("INIM_SERVER_BIN");
+    int upp = 0;
     int argi = 1;
 
-    if (argc > argi + 1 && strcmp(argv[argi], "--server") == 0) {
-        server = argv[argi + 1];
-        argi += 2;
+    for (;;) {
+        if (argi + 1 < argc && strcmp(argv[argi], "--server") == 0) {
+            server = argv[argi + 1];
+            argi += 2;
+        } else if (strcmp(argv[argi], "--upp") == 0) {
+            upp = 1;
+            argi++;
+        } else {
+            break;
+        }
     }
     if (argc < argi + 2) {
-        fprintf(stderr, "usage: inim-client [--server <path>] <root> <verse_id> [scenario]\n");
+        fprintf(stderr, "usage: inim-client [--server <path>] [--upp] <root> <verse_id> "
+                        "[scenario]\n");
         return 64;
     }
     const char *root = argv[argi];
@@ -271,42 +475,102 @@ int main(int argc, char **argv) {
     Child child;
     memset(&child, 0, sizeof child);
     FILE *child_in = NULL, *child_out = NULL;
-    if (child_spawn(&child, server, root, verse_id, &child_in, &child_out) != 0) return 70;
+    if (child_spawn(&child, server, root, verse_id, upp, &child_in, &child_out) != 0) return 70;
     setvbuf(child_in, NULL, _IOLBF, 0);
 
+    /* A UPP frame may be up to 1 MiB, so its envelope needs a buffer that a
+     * plain protocol line does not; the response text itself stays bounded by
+     * VL_LINE_MAX in both modes. */
+    char *resp = (char *)malloc(upp ? UPP_MAX_FRAME_BYTES + 2 : VL_LINE_MAX);
+    char *text = (char *)malloc(VL_LINE_MAX);
+    char err[UPP_ERR_MAX];
+    err[0] = '\0';
+    if (!resp || !text) {
+        fprintf(stderr, "inim-client: out of memory\n");
+        child_kill(&child);
+        child_wait(&child, NULL);
+        child_close(&child);
+        free(resp); free(text);
+        return 70;
+    }
+    size_t respcap = upp ? UPP_MAX_FRAME_BYTES + 2 : VL_LINE_MAX;
+
+#ifndef _WIN32
+    /* The child ends the session on the Layer's own `bye` and exits, so the
+     * courtesy `stop` frame below can race with that exit.  Without this the
+     * default SIGPIPE disposition kills the client with -13 *after* it has
+     * printed every response, which turns a correct run into a crash and made
+     * this test intermittently red.  A failed write is what we want here:
+     * nothing is left to tell a peer that has already gone. */
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
     int status = 0;
+    if (upp) {
+        status = upp_negotiate(child_in, child_out, resp, respcap, err, sizeof err);
+        if (status != 0) goto done;
+    }
+
     for (int i = 0; i < nlines; i++) {
         if (lines[i][0] == '#') {
             if (strncmp(lines[i], "#crash", 6) == 0) {
                 fflush(child_in);
                 child_kill(&child);
                 child_wait(&child, NULL);
+                child_close(&child);
                 fprintf(stdout, "#crash: server killed\n");
                 fflush(stdout);
+                for (int k = 0; k < nlines; k++) free(lines[k]);
+                free(lines);
+                free(resp); free(text);
                 return 137;
             }
             continue;
         }
-        fprintf(child_in, "%s\n", lines[i]);
-        fflush(child_in);
 
-        char resp[VL_LINE_MAX];
-        if (!fgets(resp, sizeof resp, child_out)) {
-            fprintf(stderr, "inim-client: server closed the stream early\n");
-            status = 141;
-            break;
+        if (upp) {
+            int rc = upp_call(child_in, child_out, lines[i], text, VL_LINE_MAX,
+                              resp, respcap, err, sizeof err);
+            if (rc == 1) {
+                fprintf(stderr, "inim-client: server closed the stream early\n");
+                status = 141;
+                break;
+            }
+            if (rc != 0) { status = 142; break; }
+            printf("%s\n", text);
+            fflush(stdout);
+        } else {
+            fprintf(child_in, "%s\n", lines[i]);
+            fflush(child_in);
+            if (upp_read_line(child_out, text, VL_LINE_MAX) != 0) {
+                fprintf(stderr, "inim-client: server closed the stream early\n");
+                status = 141;
+                break;
+            }
+            printf("%s\n", text);
+            fflush(stdout);
         }
-        size_t len = strlen(resp);
-        while (len && (resp[len - 1] == '\n' || resp[len - 1] == '\r')) resp[--len] = '\0';
-        printf("%s\n", resp);
-        fflush(stdout);
     }
 
+    /* A UPP session that stops without a `stop` frame leaves the peer waiting
+     * for a state it will never reach, so the end of a scenario is signalled
+     * explicitly.  It carries no response, which is why it sits outside the
+     * request loop. */
+    if (upp && status == 0) {
+        UppBuf b;
+        upp_buf_init(&b);
+        if (upp_frame_stop(&b, "end of scenario", err, sizeof err) == 0) upp_write(child_in, &b);
+        upp_buf_free(&b);
+    }
+
+done:
     fclose(child_in);
     int code = 0;
     if (child_wait(&child, &code) == 0 && code != 0 && status == 0) status = code;
     child_close(&child);
 
+    free(resp);
+    free(text);
     for (int i = 0; i < nlines; i++) free(lines[i]);
     free(lines);
     return status;

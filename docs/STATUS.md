@@ -4192,3 +4192,59 @@ wire_neg: 13 checks, 0 failures
 5. **第一笔只动文档**，不改 `EXP_CTEST` / `EXP_NODE`，也不改 `CMakeLists.txt`，因此 pin 与计数不该动。**第二笔只动 `EXP_NODE`（12→13）与 `tools/node_suites/run_all.js`、`tools/gate.sh`、`docs/BOARD.md` 的表**，仍不碰 `CMakeLists.txt`、不动 `EXP_CTEST`：`gate.sh` 里的值是**原地替换**，行数不变，所以 `docs/` 里指向 `gate.sh:<N>` 的 pin 全部不位移。全套门禁读数见本笔的回报（若合并时基线又推进，以门禁日志为准，不以本节文字为准）。
 
 **补记（本笔自己撞出来的红）：文档改动也是门禁输入。** 本笔声明「只动文档」，仍一度把 `ctest #171 docs_headings` 打红：`tools/docs_headings.pin.json` 钉着 `headings=1374`，新增的 `§10.100` 把它推到 1375，于是「删一节」那两条用例拿到 `removed=0`（删完正好等于旧基线，删与加互相抵消）。修法不是改测试，是 `python3 tools/check_docs_headings.py --write-pin` 重钉。而**重钉本身还有一条陷阱**：`--write-pin` 记录的是当时的 HEAD，若随后 `--amend`，被记录的那棵树就不再是任何提交的祖先 —— pin 指向悬空对象，`git gc --prune` 之后一棵**干净**的树会红，且报错把人引向「历史被改写」。本笔先 amend（到 `890dfa1`）才发现，于是把 pin 重钉到 `59dbc9a` 并**单独提交一笔**，判据是 `git merge-base --is-ancestor <pin.tree> HEAD`（实测 `REACHABLE`）。⇒ **「只动文档」是关于 diff 的陈述，不是关于门禁输入的陈述**：`headings` 计数就是被这 1 个小节亲手从 1374 推到 1375 的。
+### 10.35 UPP 接入传输层：一次「信封是唯一差别」的等值测量（`upp-transport`）
+
+**核实先于动手。** [BOARD.md](BOARD.md) 的 `upp-in-engine` 行当时的「遗留边界」写了两条：`timestamp` 只收整数、尚未接入 `inim-server`/`inim-client` 传输层。开工前逐条实测：
+
+| 主张 | 实测命令 | 结果 |
+|---|---|---|
+| 传输层未接入 | `grep -n "upp" src/verse/server.c src/verse/client.c` | 两文件零命中 ⇒ **成立**，本流做这一条 |
+| `timestamp` 只收整数 | `sed -n '/int upp_session_apply/,/^}/p' src/verse/upp.c`（heartbeat 分支） | 判定用 `json_min` 的整数路径，非整数即拒 ⇒ **成立**，不在本流范围 |
+
+**做了什么。** `inim-server --upp` 与 `inim-client --upp`：同一会话，外面套 UPP 信封（`src/verse/upp.h`）。Layer 协议一个字没改 —— 请求以 `verse` 帧 `payload` 的**原始 JSON 文本**进出，所以两种模式只差信封。判据就是这条等值本身，且它是**被断言**的（`tools/verse_upp_transport.test.py`，CTest 名 `verse_upp_transport`）。
+
+| 判据 | 读数 | 复跑 |
+|---|---|---|
+| 同一 scenario 走两种传输，响应行逐字相同 | `23` 条断言时 5 行全同；加大请求后共 `29` 条断言 | `INIM_SERVER_BIN=build/inim-server python3 tools/verse_upp_transport.test.py build/inim-client` |
+| 等值不是「两边都没输出」 | 响应行数 == 请求行数（5/5、4/4） | 同上 |
+| Layer 自己的拒绝穿过信封 | 首行两模式都是 `{"code":"no_session",...}` | 同上 |
+| 比较器是活的（多一个 `put` 必须不等） | `first_difference >= 0` | 同上 |
+| 60 KiB 请求（超 `VL_LINE_MAX/2`，界内）两模式同答、且 `ok:true` | 逐字相同 | 同上 |
+| 比较器自身可被反驳 | `--self-check`：`6` 条，含空对空比较返回「相等」这一陷阱的显式断言 | `python3 tools/verse_upp_transport.test.py --self-check`（CTest 名 `verse_upp_transport_selfcheck`） |
+
+**信封新增的四条拒绝**（`upp.h` 本身不决定、由传输决定；全部是拒绝而不是尽力而为）：
+
+| 情形 | 退出码 | stderr 原文（节选） |
+|---|---|---|
+| `start` 之前收到 `verse` 帧 | `4` | `upp refused: 'verse' frame while the session is init, not running` |
+| 未知帧类型 | `4` | `upp refused: unknown frame type 'nope'` |
+| 这一行根本不是帧 | `4` | `upp refused: ...`（`upp_decode_line` 的原因） |
+| 与服务器不同 abi 的 `hello` | `5` | `upp hello refused: ...` |
+| `payload` 超过 Layer 的请求上界 | `4` | `upp refused: 'verse' payload is 400046 bytes, past the Layer's 65535-byte request bound` |
+
+**反向判据（三个控制，逐个实测，恢复后全绿）。** 每一条都改**实现**而不是改断言，看断言是否真的红：
+
+| 控制（改实现） | 修复前（控制态） | 修复后（出厂态） |
+|---|---|---|
+| A：服务器直接把 Layer 响应写出去，不发信封 | `28 checks, 7 FAILURES`（等值、退出码、60 KiB 三组全红） | `29 checks, 0 failures` |
+| B：删掉「只有 RUNNING 才收 `verse`」 | `29 checks, 3 FAILURES`（`verse` before start 被**答复**而不是拒绝） | 同上 |
+| C：删掉 payload 的请求上界 | `29 checks, 3 FAILURES`（超界请求被**提交**） | 同上 |
+
+**本流顺带修掉的两处既有缺陷**（都在 `src/verse/client.c`，都属于「静默」这一类）：
+
+1. **scenario 行读器静默截断**：`slurp()` 原来用 `char buf[VL_LINE_MAX]` + `fgets`，超过 64 KiB 的一行被**截断**而不是读整；截断后的半个 JSON 仍是一行，服务器答 `malformed`、客户端退 `0` —— 报错里的偏移量指向一个写请求的人从没写过的位置。改成按需增长。同一形状在本档 §10.10 已记过一次（那次是**回复**被截断）。
+2. **`stop` 帧与 `bye` 的竞争**：Layer 的 `bye` 让服务器自己退场，客户端随后那条礼节性 `stop` 帧可能撞上已退出的子进程，默认 `SIGPIPE` 处置把客户端**杀死在打印完所有响应之后**（实测 `-13`，且是间歇的）。改成 POSIX 上忽略 `SIGPIPE`：写失败是这里想要的行为。Windows 无此信号，那一半不受影响。
+
+**诚实边界。**
+
+1. **只在本机 Linux 实测。** Windows 那半（`child_spawn` 里 `cmdline_append` 追加 `--upp`）**只编译过、没运行过** —— 本机无法确认 `CreateProcessA` 那条路径。这是「被报告的代码」而不是「已验证的行为」。
+2. **plain 传输的 64 KiB 行读器仍在。** `vl_server_handle()` 没有长度上界，上界住在 `run_plain()` 的 `fgets(line, VL_LINE_MAX, stdin)` 里。超过 65535 字节的请求在 plain 侧被**截断**，Layer 报 `unterminated string at offset 65535`；UPP 侧按**同一条上界点名拒绝**。⇒ 两种传输在超界处的**措辞**不同，语义相同（都拒）。本流**没有**修 plain 那一半：修它等于把 Layer 的请求上界从行读器搬进 `protocol.c`，那是协议暴露面的改动，不属于「接传输层」。**下一步**：把上界变成 `protocol.c` 里一个可被引用的常量，两半共用，plain 侧也就从截断变点名。
+3. **1 MiB 帧没有被测到边界本身。** 实际测到的是 60 KiB（提交路径）与 100 KiB（拒绝路径）；`UPP_MAX_FRAME_BYTES` 只用来说明缓冲区大小从哪来，不是一个被验证的上界。
+4. `timestamp` 仍只收整数（§10.1 的遗留边界，未在本流动）。
+5. **未接网络层**：UPP 仍只在 stdin/stdout 上跑，没有 WebSocket/套接字那一半；`crp_ws_client.js` 的客户端与它无关。
+6. **这一笔把 line-refs 的余量用光了。** 接线要加三行到 `CMakeLists.txt`，而 `docs/` 用行号引用它比引用任何别的文件都多：三行插在中间，`check_line_refs.py` 的 unanchored delta 就从 +11 走到 +87，判决当场点名 `unanchored-over-ceiling`。改成在文件末尾追加（`target_include_directories` 可以在目标存在之后再说，两处 `add_executable` 只在原有行内加源码），读完是 **+12，天花板也是 +12** —— 合上了，但**一格余量都没有**。这是这一笔的成本，不是留给下一笔的钱：日后往 `CMakeLists.txt` 中间添一行，或者往 docs 里加一条指不到锚的 `file:NNN`，都会先撞在这条天花板上。下一个人动手前该先读到的一句是提交 `6248dfc` 的标题：
+
+> a line added above a cited address is a citation moved
+
+**别动数字，动脚。** `EXP_LINE_REFS_UNANCHORED_DELTA_MAX` 是债的账本，不是配置项：它可以用环境变量覆盖，而「设一个环境变量把它修绿」正是那段注释禁止的动作。要腾余量只有两条路 —— 修一条 unanchored 引用（把债还掉），或者把插行改成末尾追加（把脚走对）。
+7. **`stop` 帧是尽力而为。** 忽略 `SIGPIPE` 之后，对已退出的 peer 发 `stop` 会静默失败 —— 这是设计，不是遗漏：会话已经在 `bye` 处结束，那条 `stop` 只是替「没有 `bye` 的场景」收尾。

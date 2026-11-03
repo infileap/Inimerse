@@ -1,6 +1,6 @@
 {
- "tree": "4eae0e1a4f174419e2ab42f8d97bbe71ac6a1d21",
- "citations": 1196,
+ "tree": "324f41fd330745d4570537c71b95b89721f2d795",
+ "citations": 1198,
  "scope": "docs/**/*.md (tracked) + targets",
  "writing": [
   "prefix",
@@ -137,7 +137,9 @@
   "docs/AUDIT.md|3359|tools/gate.sh",
   "docs/AUDIT.md|34|CMakeLists.txt",
   "docs/AUDIT.md|34|CMakeLists.txt",
+  "docs/AUDIT.md|355|docs/streams/dec-formal-axioms.md",
   "docs/AUDIT.md|356|tools/gate.sh",
+  "docs/AUDIT.md|359|docs/streams/dec-formal-axioms.md",
   "docs/AUDIT.md|360|tools/check_obs_markers.py",
   "docs/AUDIT.md|3624|tools/gate.sh",
   "docs/AUDIT.md|3642|docs/STATUS.md",
