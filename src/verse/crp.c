@@ -777,7 +777,13 @@ CrpRegistry *crp_registry_new(const CrpRegistryConfig *cfg) {
     if (!r->secret) { free(r); return NULL; }
     strcpy(r->secret, cfg->secret);
     /* cfg->enroll_secret is deliberately NOT copied: it decides nothing now.
-     * The table below is the only thing that admits a pair. */
+     * The table below is the only thing that admits a pair.
+     *
+     * The blank line that used to sit here is kept on purpose: an earlier draft
+     * deleted it, which moved every line below by one and took three citations
+     * in docs/BOARD.md's agent-bridge row from held to unanchored -- a ceiling
+     * with zero margin.  A line removed above a cited address is a citation
+     * moved, exactly like one added. */
     r->admissions = crp_admissions_new(cfg->admissions, cfg->nadmissions, cfg->admissions_path);
     if (!r->admissions) { free(r->secret); free(r); return NULL; }
     r->token_ttl_ms = cfg->token_ttl_ms > 0 ? cfg->token_ttl_ms : CRP_DEFAULT_TOKEN_TTL_MS;
