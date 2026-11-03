@@ -3,11 +3,11 @@
 **状态**：进行中
 **分支**：`stream/portal-admission`（worktree `.worktrees/portal-admission`），base `main@58e1a6b`
 **认领**：eager-juniper（协调者）
-**来源**：`docs/BOARD.md:130` `agent-bridge-round2`（`63fef73`）决断 ②，板上原话：
+**来源**：`docs/BOARD.md:130` [obs: 58e1a6b] `agent-bridge-round2`（`63fef73`）决断 ②，板上原话：
 > per-`(verse, peer)` 授权：**收**，最小形态 = 把 `/portal` 证明输入从「两个自选字符串」扩为「hub 持有的 per-pair 注册项」（per-pair secret + per-pair `capabilities`）；并**发现一条新约束**：未登记 pair 与证明错**必须不可区分（都 403）**，否则 404 变成枚举 oracle。判据方与引擎必须同一次改动落地，故本轮零代码。
 
 **冲突域（别人别碰）**：`tools/crp_relay.js`、`tools/crp_relay.test.js`、`tools/crp_engine_crosscheck.js`、`src/verse/crp.c`、`src/verse/crp.h`、`src/platform/http_posix.c`、`tools/crp_client.js`、`tools/crp_session.test.py`、`tools/crp_closed_loop.test.py`、`tools/crp_wire_neg.test.js`、`tools/reconnect_generation.test.py`、`tools/node_suites/crp_session_flow.test.js`、`tools/node_suites/crp_client.test.js`、`docs/streams/portal-per-pair.md`
-**禁碰**：`src/verse/client.c`、`src/verse/server.c`（UPP 传输层刚落地，别回去踩）、`src/common/**`（`vj_get` 的 R2 重复键问题本波硬禁碰，见 `docs/STATUS.md:1043`）、`docs/AUDIT.md`、`tools/vverse_*`、`src/mod/verse_dist_mod.c`
+**禁碰**：`src/verse/client.c`、`src/verse/server.c`（UPP 传输层刚落地，别回去踩）、`src/common/**`（`vj_get` 的 R2 重复键问题本波硬禁碰，见 `docs/STATUS.md:1043` [obs: 58e1a6b]）、`docs/AUDIT.md`、`tools/vverse_*`、`src/mod/verse_dist_mod.c`
 
 > 这不是重开 `crp-portal-auth`（`40f6094`）或 `crp-portal-postcheck`（`d565253`）的决定。那两条交付的是**调用方认证**（知道 hub 级共享 secret）与 scope／注册表收紧，并且**有意没做** per-pair 授权——把这条写成了决断 ② 的「收」。本流补的就是那一半。**wire 格式不变**。
 
@@ -16,13 +16,13 @@
 ## 1. 今天的机制（开工前自己复现并贴读数）
 
 - 判据方 `tools/crp_relay.js`：`enrollProof(verse, peer) = HMAC-SHA256(CRP_ENROLL_SECRET, verse + "\0" + peer)`（`:27`），`enrollOk` 只比这一个值（`:30`）。⇒ **知道那把全局密钥 = 可以为任意 pair 算证明**。
-- 引擎：`src/verse/crp.c:1057` `crp_enroll_check(enroll_secret, verse, peer, auth)` —— 四个输入全是「库给的全局密钥 + 请求里的两个自选字符串」。
-- 监听器 `/portal`（`src/platform/http_posix.c:2060-2102`）：`:2070` 未配密钥 ⇒ `403 {"error":"portal enrollment is not configured"}`；`:2071` 证明错 ⇒ `403 {"error":"invalid enrollment proof"}`；`:2083` verse 非字符串／未注册 ⇒ `404 {"error":"verse not found"}`；`:2087-2097` 铸 `posix-<hex>` + `expires=now+ttl` + `token_register(issued, now+ttl, scope_verse, scope_peer)`。
+- 引擎：`src/verse/crp.c:1057` [obs: 58e1a6b] `crp_enroll_check(enroll_secret, verse, peer, auth)` —— 四个输入全是「库给的全局密钥 + 请求里的两个自选字符串」。
+- 监听器 `/portal`（`src/platform/http_posix.c:2060-2102` [obs: 58e1a6b]）：`:2070` 未配密钥 ⇒ `403 {"error":"portal enrollment is not configured"}`；`:2071` 证明错 ⇒ `403 {"error":"invalid enrollment proof"}`；`:2083` verse 非字符串／未注册 ⇒ `404 {"error":"verse not found"}`；`:2087-2097` 铸 `posix-<hex>` + `expires=now+ttl` + `token_register(issued, now+ttl, scope_verse, scope_peer)`。
 - `g_verses[128][128]`（`:75`）由 `/register` 运行时填（`:1988-1989`），不验身份、无所有者；`portal_verse_registered()`（`:313-317`）只 `strcmp`；peer 是任意非空串。⇒ **认证成立，授权不成立**：今天不存在「这一对被允许」这个事实。
 
 复现三条（开工前贴给我）：
 1. 带 `CRP_ENROLL_SECRET=X` 起 relay，为 `(demo,p1)` 与 `(demo,p2)` 各算 proof ⇒ **两条都 200**（要收的缺口）。
-2. 不配 `CRP_ENROLL_SECRET` ⇒ 全 403（既有 fail-closed 先例，`tools/crp_relay.test.js:66`）。
+2. 不配 `CRP_ENROLL_SECRET` ⇒ 全 403（既有 fail-closed 先例，`tools/crp_relay.test.js:66` [obs: 58e1a6b]）。
 3. 引擎侧同两条都 200。
 
 ## 2. 设计（最小形态，不改 wire 形状）
