@@ -447,4 +447,12 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 **这类读数的另一条硬规矩**：任何门禁读数**必须连 `GATE|start|head=<sha>` 那行一起报**。同一台机器上多个执行体并行时，两条 `19/19 stages ran` 从后面几行**分不出来是谁的**，树号是唯一能把读数和树绑起来的东西。缺 head sha 的读数视为无效读数。
 
-**协调层的一条卫生规矩**：`build/` 是共享主树里的**冲突域**。两个门禁并行时，第二个会被 `flock` 挡下并以 `exit 2` 退出，而它打印的 `another gate is running against …` **不含持有者**——在 `--unshare-pid` 沙箱里跑的执行体（比如自检会话）**根本看不到外面谁占着**，于是最坏的处置出现了：把锁删掉。正确处置有两种：把 `BUILD_DIR` 指到自己的目录（`tools/gate.sh` 认这个变量），或者报「谁占着」让协调者排期；**不要删锁**，删锁等于把「并发检测」这个机制本身废掉。
+**协调层的一条卫生规矩**：`build/` 是共享主树里的**冲突域**。两个门禁并行时，第二个会被 `flock` 挡下并以 `exit 2` 退出，而它打印的 `another gate is running against …` **不含持有者**——在 `--unshare-pid` 沙箱里跑的执行体（比如自检会话）**根本看不到外面谁占着**，于是最坏的处置出现了：把锁删掉。**不要删锁**，删锁等于把「并发检测」这个机制本身废掉。正确处置是报「谁占着」让协调者排期，或者在自己的 worktree 里跑。
+
+**`BUILD_DIR` 不是隔离手段，这一条是本清单付学费换来的。** 它只隔离 `build` 与 `ctest` 两个阶段（`stage_build`／`stage_ctest` 用 `BUILD_DIR`），而 `REPO_ROOT` 是「`gate.sh` 所在目录的父目录」，**与 `BUILD_DIR` 无关**；`tools/im_diff_fuzz.py` 的 `--interpreter` 默认值是 `REPO/"build"/"inimerse"`。⇒ 用 `BUILD_DIR=<别处>` 跑，构建产物进了 `<别处>`，而 `fuzz`／`economy`／`node`／`plugin` 仍去 `$REPO_ROOT/build` 拿引擎。
+
+**它失败的方向是最坏的那个**：不是红，是**绿**。实测两个时间戳 —— 主树 `build/inimerse` 12:35、`build-coord/inimerse` 12:39 —— 隔离那次跑用的是 **12:35 那个**，于是「用旧二进制验收新代码」被印成 `19/19 stages ran`。所以：
+
+1. **在哪个 worktree 干活，就用那个 worktree 自己的 `build/`**。这是 `gate.sh` 的设计预期，也是唯一安全解。
+2. **`BUILD_DIR` 只用于同一个 worktree 内的隔离**（同树并行两跑），不能跨 worktree 冒充隔离。
+3. **反向判据**（本节实测过，两条）：把 `build/inimerse` 删掉再 `--only fuzz` ⇒ 红、`engine not found at …/build/inimerse`、`exit 1`；**即使在 `BUILD_DIR` 指向的目录里放一份完好的 `inimerse` 与 `aot-native`，同一条命令仍红** ⇒ 证明该阶段确实不看 `BUILD_DIR`。恢复二进制后复跑 ⇒ `exit 0`。
