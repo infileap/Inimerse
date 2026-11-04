@@ -453,7 +453,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
     recon.word-refs-baseline=87
     recon.ctest-count=193
 
-| 7 | 读回收据 | `rc=0`、`RECON\|tokens=5\|keys-measured=5\|keys-unresolved=0`、每个 token 的值都是从树上读回来的 | **把任意一个 token 的值改错 ⇒ 第 7 行必红**；把 key 拼错 ⇒ 红且说「这个 key 没有解算器」（key 集封闭）；同一个 key 两个值 ⇒ 红。**这是本节的元判据**：它决定前六行是「有牙的清单」还是「只读文档」—— 2026-11-04 实测过没有它时的状态：把 `ctest-count` 那格改成「今天都是 192」，七个 docs 检查器全部 `rc=0`，没有一个吭声 |
+| 7 | 读回收据 | `rc=0`、`RECON\|tokens=5\|tokens-read-back=5\|tokens-unknown=0\|tokens-resolver-failed=0\|closed=yes`（`tokens` 等于三项之和；不闭环就自己报 PROBLEM）、每个 token 的值都是从树上读回来的 | **把任意一个 token 的值改错 ⇒ 第 7 行必红**；把 key 拼错 ⇒ 红且说「这个 key 没有解算器」（key 集封闭）；同一个 key 两个值 ⇒ 红。**这是本节的元判据**：它决定前六行是「有牙的清单」还是「只读文档」—— 2026-11-04 实测过没有它时的状态：把 `ctest-count` 那格改成「今天都是 192」，七个 docs 检查器全部 `rc=0`，没有一个吭声 |
 
 **这类读数的另一条硬规矩**：任何门禁读数**必须连 `GATE|start|head=<sha>` 那行一起报**。同一台机器上多个执行体并行时，两条 `19/19 stages ran` 从后面几行**分不出来是谁的**，树号是唯一能把读数和树绑起来的东西。缺 head sha 的读数视为无效读数。
 

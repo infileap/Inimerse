@@ -123,8 +123,10 @@ def tokens_in(text):
 def judge(tokens):
     """(assertions, problems, measured) -- the whole check, no printing."""
     assertions, problems, measured = [], [], []
+    books = {"tokens": 0, "unknown": 0, "resolver-failed": 0}
     seen = {}
     for key, value, lineno in tokens:
+        books["tokens"] += 1
         if key in seen and seen[key][0] != value:
             problems.append(
                 "§14 line %d: two tokens for %shave different values (%d and %d)"
@@ -138,12 +140,14 @@ def judge(tokens):
                 "set is closed so a typo cannot pass as an unchecked word"
                 % (lineno, key)
             )
+            books["unknown"] += 1
             continue
         measured_ok, actual, why = resolve()
         agree = value == actual
         assertions.append((key, value, actual, measured_ok and agree, why))
         measured.append(key)
         if not measured_ok:
+            books["resolver-failed"] += 1
             problems.append(
                 "§14 line %d: 'recon.%s=%d' -- the resolver for this key failed "
                 "(%s), so this number is not measured at all"
@@ -154,7 +158,7 @@ def judge(tokens):
                 "§14 line %d: 'recon.%s=%d' but the tree says %d (%s)"
                 % (lineno, key, value, actual, why)
             )
-    return assertions, problems, measured
+    return assertions, problems, measured, books
 
 
 def self_check():
@@ -174,27 +178,29 @@ def self_check():
     toks = tokens_in("| `recon.ctest-count=999` |")
     expect("a token outside §14 is not found", len(toks), 0)
     toks = scan_tokens("| `recon.no-such-key=1` |")
-    a, p, _ = judge(toks)
+    a, p, _, books = judge(toks)
     expect("an unknown key is a problem", len(p), 1)
     expect("and it is not counted as a measurement", len(a), 0)
+    expect("and it is booked as unknown, so the summary can close", books["unknown"], 1)
     toks = scan_tokens(
         "| `recon.ctest-count=193` |\n| `recon.ctest-count=194` |\n"
     )
-    a, p, _ = judge(toks)
+    a, p, _, _ = judge(toks)
     expect("two values for one key is two problems (duplicate, mismatch)", len(p), 2)
     toks = scan_tokens("| `recon.ctest-count=%d` |" % key_ctest_count()[1])
-    a, p, _ = judge(toks)
+    a, p, _, _ = judge(toks)
     expect("the tree's own value passes", (len(p), a[0][3]), (0, True))
     toks = scan_tokens("| `recon.ctest-count=1` |")
-    a, p, _ = judge(toks)
+    a, p, _, _ = judge(toks)
     expect("a wrong value fails", len(p), 1)
     expect("and names both numbers", "but the tree says" in p[0], True)
     KEYS["zz-broken"] = lambda: (False, 0, "rc=1|checker=pretends-to-run")
     toks = scan_tokens("| `recon.zz-broken=0` |")
-    a, p, _ = judge(toks)
+    a, p, _, books = judge(toks)
     del KEYS["zz-broken"]
     expect("a failing resolver is a problem", len(p), 1)
     expect("and says the number is not measured", "not measured at all" in p[0], True)
+    expect("and it is booked as resolver-failed", books["resolver-failed"], 1)
 
     ok = 0
     for name, _, got, want in checks:
@@ -211,7 +217,7 @@ def main():
         return self_check()
     text = BOARD.read_text()
     toks = tokens_in(text)
-    assertions, problems, measured = judge(toks)
+    assertions, problems, measured, books = judge(toks)
     for key, expected, actual, ok, why in assertions:
         print(
             "RECON|key=%s|expected=%d|actual=%d|ok=%s|%s"
@@ -220,12 +226,23 @@ def main():
     for p in problems:
         print("RECON-PROBLEM|" + p)
     unresolved = [k for k in KEYS if k not in measured]
+    read_back = books["tokens"] - books["unknown"] - books["resolver-failed"]
+    close = books["tokens"] == read_back + books["unknown"] + books["resolver-failed"]
     print(
-        "RECON|tokens=%d|keys-measured=%d|keys-unresolved=%d|basis=every-number-"
-        "§14-claims-is-read-back-from-the-tree" % (len(toks), len(measured), len(unresolved))
+        "RECON|tokens=%d|tokens-read-back=%d|tokens-unknown=%d|tokens-resolver-failed=%d"
+        "|keys-measured=%d|keys-unresolved=%d|closed=%s"
+        "|equation=tokens=tokens-read-back+tokens-unknown+tokens-resolver-failed"
+        "|basis=every-number-§14-claims-is-read-back-from-the-tree"
+        % (books["tokens"], read_back, books["unknown"], books["resolver-failed"],
+           len({k for k in measured}), len(unresolved), "yes" if close else "no")
     )
     if unresolved:
         print("RECON-NOT-YET|no §14 entry to check for: %s" % ",".join(sorted(unresolved)))
+    if not close:
+        print("RECON-PROBLEM|the summary line does not close: %d token(s) are "
+              "neither read back, nor unknown, nor resolver-failed"
+              % (books["tokens"] - read_back - books["unknown"] - books["resolver-failed"]))
+        problems.append("summary-line-not-closed")
     if assertions and all(a[3] for a in assertions) and not problems:
         print("VERDICT|PASS|measured=%d" % len(assertions))
         return 0
