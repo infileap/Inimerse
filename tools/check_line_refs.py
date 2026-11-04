@@ -1208,10 +1208,19 @@ def main() -> int:
     report = "--report" in args
     strict = "--strict" in args
     holds_trace = "--holds" in args
+    why = "--why" in args
     if "--write-citations-pin" in args:
         return write_citations_pin()
     base, behind = base_scan()
     r = scan()
+    if why:
+        # A pin that reds on a count without naming the row tells the reader
+        # that something moved and nothing about what.  Printed before the
+        # verdicts on purpose: on a red run the verdict line comes early and
+        # the rows are what the reader came for.  Only when asked, because
+        # 571 rows of "nothing holds this" bury the pins.
+        for rel, lineno, _first, _last, number, target, cited in r["no_anchor"]:
+            print(f"UNANCHORED|{rel}:{lineno} -> {target}:{number} | {cited}")
     r["holds_trace"] = holds_trace
 
     print(
