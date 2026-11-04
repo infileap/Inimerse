@@ -445,6 +445,16 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 **已知缺口（写在这里，因为不写就会有人把它当成已覆盖）**：同一个实验对第 3 条**不成立** —— 把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha，`check_line_refs.py` 仍然 `rc=0`、`VERDICT|assertions=0`，而且照样打印 `every pin held`。原因是那一份 pin 的 `tree` 在本树里只被**打印**、从没被 `rev-parse` 过；比对用的是 pin 里的行数组，与树无关。⇒ **两份 pin 的可靠性今天不对等**，「被点名的树可达」这条判据对 `headings` 成立、对 `citations` 只是印在纸上。补齐它是一笔独立的改动（要动检查器本身，不能在「用被改的东西验它自己」的那一轮里顺手做）。
 
+上面六行里可测的数字各带一个 token，由 `tools/check_reconciliation.py` 读回树里比对：
+
+    recon.headings-docs=111
+    recon.explicit-delta=12
+    recon.citations-cases=8
+    recon.word-refs-baseline=87
+    recon.ctest-count=193
+
+| 7 | 读回收据 | `rc=0`、`RECON\|tokens=5\|keys-measured=5\|keys-unresolved=0`、每个 token 的值都是从树上读回来的 | **把任意一个 token 的值改错 ⇒ 第 7 行必红**；把 key 拼错 ⇒ 红且说「这个 key 没有解算器」（key 集封闭）；同一个 key 两个值 ⇒ 红。**这是本节的元判据**：它决定前六行是「有牙的清单」还是「只读文档」—— 2026-11-04 实测过没有它时的状态：把 `ctest-count` 那格改成「今天都是 192」，七个 docs 检查器全部 `rc=0`，没有一个吭声 |
+
 **这类读数的另一条硬规矩**：任何门禁读数**必须连 `GATE|start|head=<sha>` 那行一起报**。同一台机器上多个执行体并行时，两条 `19/19 stages ran` 从后面几行**分不出来是谁的**，树号是唯一能把读数和树绑起来的东西。缺 head sha 的读数视为无效读数。
 
 **元判据：这份清单自己今天没有牙，而且这是量出来的，不是猜的。** 一条清单最容易退化成的东西，是一份**只读文档** —— 它写下期望值，却没有东西去比对那些期望值。上面六条量的是仓库，没有一条量这张表。

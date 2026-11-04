@@ -660,7 +660,7 @@ STAGE_SPECS=(
   "orphan-targets|executables that no CTest runs (expect 0)|stage_orphan_targets"
   "line-refs|line numbers docs/ cites in CMakeLists.txt / gate.sh (pins held)|stage_line_refs"
   "release-tags|sha a document records for a tag, against the tag today|stage_release_tags"
-  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences" "shared-tmp|artifacts built at a path every process shares (expect 0)|stage_shared_tmp" "word-refs|word-form line references that name no tree (ceiling held)|stage_word_refs"
+  "obs-markers|every citation names the tree it was read on|stage_obs_markers" "fences|fences (verdict=PASS expected, odd=0 swallowed=0)|stage_fences" "shared-tmp|artifacts built at a path every process shares (expect 0)|stage_shared_tmp" "word-refs|word-form line references that name no tree (ceiling held)|stage_word_refs" "recon|reconciliation checklist (§14: every recon token read back from the tree)|stage_recon"
 )
 for _spec in "${STAGE_SPECS[@]}"; do
   STAGE_WANTED+=("${_spec%%|*}")
@@ -1213,7 +1213,6 @@ stage_word_refs() {
   fi
   echo "gate: word-refs: verdict=PASS offenders=$offenders baseline=$baseline; decided by the verdict word, not by the exit status (rc=$rc was read and printed)."
 }
-
 GATE_START_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 GATE_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # The stamp carries the moment as well as the subject, because "was this run
@@ -1242,6 +1241,7 @@ for _spec in "${STAGE_SPECS[@]}"; do
     CTEST_REGISTERED="$(ctest --test-dir "$BUILD_DIR" -N 2>/dev/null | sed -n 's/^ *Total Tests: *//p' | tail -1)"
     _label="ctest (expect ${EXP_CTEST}, registered ${CTEST_REGISTERED:-<unreadable>}, skipped n/a)"
   fi
+stage_recon() { python3 "$REPO_ROOT/tools/check_reconciliation.py" || return 1; }
   run_stage "$_label" "$_sel" "${_rest#*|}"
 done
 
