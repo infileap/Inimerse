@@ -174,7 +174,8 @@ def tokens_in(text):
 def judge(tokens):
     """(assertions, problems, measured) -- the whole check, no printing."""
     assertions, problems, measured = [], [], []
-    books = {"tokens": 0, "unknown": 0, "resolver-failed": 0}
+    books = {"tokens": 0, "unknown": 0, "resolver-failed": 0,
+             "tree-disagrees": 0}
     seen = {}
     for key, value, lineno in tokens:
         books["tokens"] += 1
@@ -220,7 +221,18 @@ def judge(tokens):
         agree = value == actual
         assertions.append((key, value, actual, measured_ok and agree, why))
         measured.append(key)
-        if not measured_ok:
+        if not measured_ok and "three-numbers-disagree" in why:
+            # The tree contradicts itself: the number exists, three sources
+            # name three values.  That is not "nobody computed it" -- the same
+            # bucket for both was the defect two rounds ago in another shape.
+            books["tree-disagrees"] += 1
+            problems.append(
+                "§14 line %d: 'recon.%s=%d' -- the tree contradicts itself "
+                "(%s): not a missing origin but a broken tree, and the reading "
+                "cannot be trusted until the three sources agree"
+                % (lineno, key, value, why)
+            )
+        elif not measured_ok:
             books["resolver-failed"] += 1
             problems.append(
                 "§14 line %d: 'recon.%s=%d' -- the resolver for this key failed "
@@ -307,7 +319,6 @@ def self_check():
     expect("two values for one key is two problems (duplicate, mismatch)", len(p), 2)
     toks = scan_tokens("| `recon.ctest-count=%d` |" % key_ctest_count()[1])
     a, p, _, _ = judge(toks)
-    expect("the tree's own value passes", (len(p), one([r[3] for r in a])), (0, True))
     # The book believes [3] is a verdict and [1] is a count.  Those are claims
     # about arity and about slots, so they get their own cells -- and the red
     # line prints the first offender rather than a set that only says "not 5".
@@ -322,6 +333,7 @@ def self_check():
             type(one(_kc[2:3])).__name__),
            (3, "bool", "int", "str"))
 
+    expect("the tree's own value passes", (len(p), one([r[3] for r in a])), (0, True))
     toks = scan_tokens("| `recon.ctest-count=1` |")
     a, p, _, _ = judge(toks)
     expect("a wrong value fails", len(p), 1)
@@ -354,6 +366,14 @@ def self_check():
     expect("and says the number is not measured", "not measured at all" in one(p), True)
     expect("and it is booked as resolver-failed", books["resolver-failed"], 1)
     t_broken = one(p)
+    KEYS["zz-disagree"] = lambda: (False, 0, "add_test=1|ctest-N=2|EXP_CTEST=3|three-numbers-disagree")
+    toks = scan_tokens("| `recon.zz-disagree=0` |")
+    a, p, _, books = judge(toks)
+    del KEYS["zz-disagree"]
+    expect("a tree that contradicts itself is its own bucket, not a missing origin",
+           (books["tree-disagrees"], books["resolver-failed"]), (1, 0))
+    expect("and says the tree contradicts itself rather than that nobody computed it",
+           "contradicts itself" in one(p) and "not measured at all" not in one(p), True)
     # Same bucket, different sentences: downstream distinguishes these only by
     # their words, and words with no assertion drift.  So the four sentences
     # must be four, and each must name the line it was read on -- "there is a
@@ -418,22 +438,28 @@ def main():
     for p in problems:
         print("RECON-PROBLEM|" + p)
     unresolved = [k for k in KEYS if k not in measured]
-    read_back = books["tokens"] - books["unknown"] - books["resolver-failed"]
-    close = books["tokens"] == read_back + books["unknown"] + books["resolver-failed"]
+    read_back = (books["tokens"] - books["unknown"] - books["resolver-failed"]
+                 - books["tree-disagrees"])
+    close = (books["tokens"] == read_back + books["unknown"]
+             + books["resolver-failed"] + books["tree-disagrees"])
     print(
         "RECON|tokens=%d|tokens-read-back=%d|tokens-unknown=%d|tokens-resolver-failed=%d"
-        "|keys-measured=%d|keys-unresolved=%d|closed=%s"
+        "|tokens-tree-disagrees=%d|keys-measured=%d|keys-unresolved=%d|closed=%s"
         "|equation=tokens=tokens-read-back+tokens-unknown+tokens-resolver-failed"
+        "+tokens-tree-disagrees"
         "|basis=every-number-§14-claims-is-read-back-from-the-tree"
         % (books["tokens"], read_back, books["unknown"], books["resolver-failed"],
+           books["tree-disagrees"],
            len({k for k in measured}), len(unresolved), "yes" if close else "no")
     )
     if unresolved:
         print("RECON-NOT-YET|no §14 entry to check for: %s" % ",".join(sorted(unresolved)))
     if not close:
         print("RECON-PROBLEM|the summary line does not close: %d token(s) are "
-              "neither read back, nor unknown, nor resolver-failed"
-              % (books["tokens"] - read_back - books["unknown"] - books["resolver-failed"]))
+              "neither read back, nor unknown, nor resolver-failed, nor "
+              "tree-disagrees"
+              % (books["tokens"] - read_back - books["unknown"]
+                 - books["resolver-failed"] - books["tree-disagrees"]))
         problems.append("summary-line-not-closed")
     if assertions and all(a[3] for a in assertions) and not problems:
         print("VERDICT|PASS|measured=%d" % len(assertions))
