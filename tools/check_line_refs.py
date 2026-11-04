@@ -1472,6 +1472,34 @@ def main() -> int:
             f"CITATIONS|pin|tree={str(_pin.get('tree', '<unpinned>'))[:7]}"
             f"|citations={_pin.get('citations', '<absent>')}|rows={base_total}"
         )
+    # The pin records two things: rows (which this checker compares against) and
+    # the tree those rows were read on.  Until now only the rows were used,
+    # so a pin could name a commit this repository cannot resolve and still
+    # print "every pin held" -- a baseline nobody can reproduce is a number
+    # about no tree.  Two falsifiable outcomes are asserted below: a pin
+    # naming an unresolvable sha, and a pin naming an object that resolves but
+    # is not a commit (a blob carries no docs tree to have counted).
+    if _pin:
+        _pin_tree = str(_pin.get("tree") or "")
+        _resolved = ""
+        if _pin_tree:
+            _p = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet",
+                 _pin_tree + "^{commit}"],
+                capture_output=True, text=True, encoding="utf-8",
+            )
+            _resolved = (_p.stdout or "").strip()
+        cell(
+            "citations-pin-tree-unreachable",
+            [],
+            None if _resolved else (
+                f"the pin names tree {_pin_tree or '<absent>'!r}, and this "
+                "repository cannot resolve it to a commit; the count it holds "
+                "is a number about no tree, so no reading here can be compared "
+                "to it. Run --write-citations-pin on a committed tree."
+            ),
+        )
+
     for _name in gone[:20]:
         print(f"CITATIONS|removed|{_name}")
     # The receipt is judged before the removal it applies to: a receipt is a

@@ -443,7 +443,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 **反向自检（每次改这份清单都要跑一遍，它才是清单可信的原因）**：把上面第 2 条 pin 的 `tree` 换成 `deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`，**第 2 条必须红**（实测 `rc=4`）。
 
-**已知缺口（写在这里，因为不写就会有人把它当成已覆盖）**：同一个实验对第 3 条**不成立** —— 把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha，`check_line_refs.py` 仍然 `rc=0`、`VERDICT|assertions=0`，而且照样打印 `every pin held`。原因是那一份 pin 的 `tree` 在本树里只被**打印**、从没被 `rev-parse` 过；比对用的是 pin 里的行数组，与树无关。⇒ **两份 pin 的可靠性今天不对等**，「被点名的树可达」这条判据对 `headings` 成立、对 `citations` 只是印在纸上。补齐它是一笔独立的改动（要动检查器本身，不能在「用被改的东西验它自己」的那一轮里顺手做）。
+**这一条现在对两份 pin 都成立（2026-11-04 补齐）**：同一个实验——把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha——`check_line_refs.py` 现在 `rc=1`、`VERDICT|assertions=1|causes=1|cause=citations-pin-tree-unreachable`，并且点名那个 sha 与「这份 pin 内的计数不是一个关于任何树的数」。另加一条反向判据：把 `tree` 换成一个**能解析但不是提交**的对象（`git hash-object CMakeLists.txt` 得到的 blob），也必须红、同一 cause —— 只查「有没有这个对象」会漏掉「这个对象不是一棵 docs 树」。`headings` 那份的失败样例仍是 `rc=4`（它把不可解的 pin 当环境问题，两侧的码不同但都是红的）。⇒ 两份 pin 的可靠性现在对等：**被点名的树必须可达，且必须是一棵提交**。
 
 上面六行里可测的数字各带一个 token，由 `tools/check_reconciliation.py` 读回树里比对：
 
