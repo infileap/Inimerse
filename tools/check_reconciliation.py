@@ -108,6 +108,13 @@ KEYS = {
 }
 
 
+def one(xs):
+    """First element, or "" -- a self-check cell must report a named failure
+    even when the thing it looked at is empty.  Indexing one(p) directly turned
+    a regression into an IndexError traceback: red, but with no name."""
+    return xs[0] if xs else ""
+
+
 def scan_tokens(body):
     """Every recon token in `body`, as (key, value, line-number)."""
     out = []
@@ -208,8 +215,9 @@ def self_check():
     expect("and it is not counted as a measurement", len(a), 0)
     expect("and it is booked as unknown, so the summary can close", books["unknown"], 1)
     expect("and names the unknown key, not a failing resolver",
-           "has no resolver in this tool" in p[0]
-           and "resolver for this key failed" not in p[0], True)
+           "has no resolver in this tool" in one(p)
+           and "the resolver it names does not exist" not in one(p), True)
+    t_unknown = one(p)
     toks = scan_tokens(
         "| `recon.ctest-count=193` |\n| `recon.ctest-count=194` |\n"
     )
@@ -217,11 +225,11 @@ def self_check():
     expect("two values for one key is two problems (duplicate, mismatch)", len(p), 2)
     toks = scan_tokens("| `recon.ctest-count=%d` |" % key_ctest_count()[1])
     a, p, _, _ = judge(toks)
-    expect("the tree's own value passes", (len(p), a[0][3]), (0, True))
+    expect("the tree's own value passes", (len(p), one([r[3] for r in a])), (0, True))
     toks = scan_tokens("| `recon.ctest-count=1` |")
     a, p, _, _ = judge(toks)
     expect("a wrong value fails", len(p), 1)
-    expect("and names both numbers", "but the tree says" in p[0], True)
+    expect("and names both numbers", "but the tree says" in one(p), True)
     KEYS["zz-missing-resolver"] = "zz_no_such_function"
     toks = scan_tokens("| `recon.zz-missing-resolver=0` |")
     a, p, _, books = judge(toks)
@@ -229,7 +237,8 @@ def self_check():
     expect("a renamed resolver is booked, not crashed", books["resolver-failed"], 1)
     expect("and is not confused with an undeclared key", books["unknown"], 0)
     expect("and says the resolver it names does not exist",
-           "the resolver it names does not exist" in p[0], True)
+           "the resolver it names does not exist" in one(p), True)
+    t_renamed = one(p)
 
     KEYS["zz-raises"] = lambda: 1 // 0
     toks = scan_tokens("| `recon.zz-raises=0` |")
@@ -239,14 +248,25 @@ def self_check():
     expect("and is booked as resolver-failed, not unknown",
            (books["resolver-failed"], books["unknown"]), (1, 0))
     expect("and says it threw rather than that the key is missing",
-           "threw ZeroDivisionError" in p[0] and "has no resolver" not in p[0], True)
+           "threw ZeroDivisionError" in one(p) and "has no resolver" not in one(p), True)
+    t_raises = one(p)
     KEYS["zz-broken"] = lambda: (False, 0, "rc=1|checker=pretends-to-run")
     toks = scan_tokens("| `recon.zz-broken=0` |")
     a, p, _, books = judge(toks)
     del KEYS["zz-broken"]
     expect("a failing resolver is a problem", len(p), 1)
-    expect("and says the number is not measured", "not measured at all" in p[0], True)
+    expect("and says the number is not measured", "not measured at all" in one(p), True)
     expect("and it is booked as resolver-failed", books["resolver-failed"], 1)
+    t_broken = one(p)
+    # Same bucket, different sentences: downstream distinguishes these only by
+    # their words, and words with no assertion drift.  So the four sentences
+    # must be four, and each must name the line it was read on -- "there is a
+    # PROBLEM" is not the property being claimed.
+    expect("four ways a number goes missing print four different sentences",
+           len({t_unknown, t_renamed, t_raises, t_broken}), 4)
+    expect("and each sentence names the §14 line it was read on",
+           all("§14 line " in x for x in
+               (t_unknown, t_renamed, t_raises, t_broken)), True)
 
     ok = 0
     for name, _, got, want in checks:
