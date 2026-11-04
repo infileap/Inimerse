@@ -144,7 +144,7 @@ POSIX = 只有原语（于是 `.type` 裸写）。★ **两处都不是「少写
 （`peek_next(p).type != TOK_LPAREN`）。
 ★ 决定点数：`join(arr, sep)` **2 个**（`src/runtime/runtime.c:1880` 与
 `src/runtime/runtime_posix.c:1243`）；`thread_await`/`thread_result`/`thread_release` **1 个**
-（`src/mod/result_mod.c:232-234`，而该文件同时在 `CMakeLists.txt` 的两个平台清单里）。
+（`src/mod/result_mod.c:232-234`——`vm_register_builtin(vm, "thread_result", result_thread_result);`、`vm_register_builtin(vm, "thread_await", result_thread_await);`、`vm_register_builtin(vm, "thread_release", result_thread_release);` 那三行，而该文件同时在 `CMakeLists.txt` 的两个平台清单里）。
 
 ### §2.7 一个我自己量错、由别人更正的读数
 
