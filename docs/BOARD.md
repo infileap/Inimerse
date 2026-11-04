@@ -445,6 +445,8 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 **这一条现在对两份 pin 都成立（2026-11-04 补齐）**：同一个实验——把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha——`check_line_refs.py` 现在 `rc=1`、`VERDICT|assertions=1|causes=1|cause=citations-pin-tree-unreachable`，并且点名那个 sha 与「这份 pin 内的计数不是一个关于任何树的数」。另加一条反向判据：把 `tree` 换成一个**能解析但不是提交**的对象（`git hash-object CMakeLists.txt` 得到的 blob），也必须红、同一 cause —— 只查「有没有这个对象」会漏掉「这个对象不是一棵 docs 树」。`headings` 那份的失败样例仍是 `rc=4`（它把不可解的 pin 当环境问题，两侧的码不同但都是红的）。⇒ 两份 pin 的可靠性现在对等：**被点名的树必须可达，且必须是一棵提交**。
 
+**一条仓规，写在这里因为它现在有门禁在守：红不等于有名。** 一次 `traceback` 与一次 `FAIL -- <句子>: want … got …` 在退出码上都是非零，在信息上是两回事：前者让下一个读者去读工具的源码，后者直接告诉他是哪一句错了。所以元判据那两格守这条线：①**任何格子不许直接索引列表** —— 形状检查在任何一格跑之前做，所以把 `p[0]` 放回任意一格，红是一句带名字的 `FAIL`，不是异常；②一个会抛异常的格子必须被转成点名句子（`guarded()` 自证：`builtin.IndexError: list index out of range`）。控制：把索引放回去 → `rc=1`、`FAIL -- a cell in this harness indexes a list directly…`；还原 → `ok (23 checks)`。理由是这条不是风格问题：崩溃与点名在退出码上是同一个数，在能不能被追责上不是。
+
 上面六行里可测的数字各带一个 token，由 `tools/check_reconciliation.py` 读回树里比对：
 
     recon.headings-docs=111

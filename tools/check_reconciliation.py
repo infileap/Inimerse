@@ -195,6 +195,22 @@ def judge(tokens):
 
 def self_check():
     """The cells that make the tool itself falsifiable."""
+    # Checked BEFORE any cell runs.  A cell that indexes a list directly turns
+    # its own regression into an IndexError traceback: non-zero exit, no
+    # defendant.  Red is not the same as named.  Order matters -- if this runs
+    # after the cells, the crashing cell gets there first and the shape check
+    # never reports.
+    _src = Path(__file__).read_text()
+    _start = _src.index("def self_check(")
+    # the next top-level def, found by its leading newline so that this line's
+    # own quoted markers cannot be mistaken for the boundary
+    _body = _src[_start:_src.index("\ndef ", _start + 1)]
+    if re.search(r"\b[pax]\[0\]", _body):
+        print("FAIL -- a cell in this harness indexes a list directly; it must "
+              "go through one(), so a regression reports by NAME instead of "
+              "raising a traceback")
+        return 1
+
     checks = []
 
     def expect(name, got, want):
@@ -267,6 +283,19 @@ def self_check():
     expect("and each sentence names the §14 line it was read on",
            all("§14 line " in x for x in
                (t_unknown, t_renamed, t_raises, t_broken)), True)
+
+    # The harness proves the property it depends on: a raising cell becomes a
+    # named sentence rather than a traceback.
+    def guarded(name, thunk):
+        try:
+            thunk()
+        except Exception as exc:                      # noqa: BLE001
+            return "builtin.%s: %s" % (type(exc).__name__, exc)
+        return "ok"
+
+    expect("a crashing cell is reported by name and by its exception",
+           guarded("old-style", lambda: [][0]),
+           "builtin.IndexError: list index out of range")
 
     ok = 0
     for name, _, got, want in checks:
