@@ -111,17 +111,23 @@ KEYS = {
 
 # Every place this file takes element N of something, booked by hand.  A
 # positional read can be empty, so each one needs a reason here and a reviewer
-# reads that reason in the diff.  The book is the assertion: a new read
+# reads that reason in the diff.
+#
+# THE RULE FOR A REASON: a reason may assert structure only if an assertion
+# backs it.  "It is the 5-tuple's [3]" is a claim about arity, so there is a
+# cell that measures arity and prints the first answer whose length disagrees.
+# A reason with no such backing must say so in the words "unverified: relies
+# on the construction site" -- ugly and honest beats pretty and false (this
+# file already carried "[1] is the value half" about a 3-tuple for a day).  The book is the assertion: a new read
 # anywhere in the file -- helper included -- changes it and the change is visible.
 POSITIONAL_READS = {
-    "xs[0]": 1,      # one(): the single place that decides what an empty list means
+    "xs[0]": 1,      # one(): guarded by the ternary's own test, "xs[0] if xs else ''"
     "[][0]": 1,      # guarded(): proves a crash becomes a named sentence, not a traceback
-    "seen[key]": 2,  # scan_tokens: the book itself, keyed; a lookup, but a live one
-    "book[text]": 1, # positional_reads' own accumulator; it exists only after a key is found
-    "r[3]": 1,       # comprehension over the answer tuples: an element, not a container
-    "a[3]": 1,       # main(): every answer is a 4-tuple, indexed inside a comprehension
-    "key_ctest_count()[1]": 3,  # the resolver returns (count, value); [1] is the value half
-    "seen[key][0]": 2,          # scan_tokens keeps key -> [first value, conflicts]
+    "book[text]": 1, # positional_reads' accumulator: book.get writes the key on the same line
+    "r[3]": 1,       # judge() appends 5-tuples; [3] is the verdict slot (arity is a cell)
+    "a[3]": 1,       # the same 5-tuples in main(), indexed inside a comprehension
+    "key_ctest_count()[1]": 3,  # returns (agree, count, text); [1] is the count (arity is a cell)
+
 }
 
 
@@ -172,12 +178,15 @@ def judge(tokens):
     seen = {}
     for key, value, lineno in tokens:
         books["tokens"] += 1
-        if key in seen and seen[key][0] != value:
+        # The record is a named pair, not a 2-tuple read by position: the
+        # construction now says what [0] used to mean, and a reader (or a
+        # later edit) cannot swap the slots without the name disagreeing.
+        prior = seen.setdefault(key, {"value": value, "line": lineno})
+        if prior["value"] != value:
             problems.append(
                 "§14 line %d: two tokens for %shave different values (%d and %d)"
-                % (lineno, key + " ", seen[key][0], value)
+                % (lineno, key + " ", prior["value"], value)
             )
-        seen.setdefault(key, (value, lineno))
         resolve = KEYS.get(key)
         if resolve is None:
             problems.append(
@@ -299,6 +308,20 @@ def self_check():
     toks = scan_tokens("| `recon.ctest-count=%d` |" % key_ctest_count()[1])
     a, p, _, _ = judge(toks)
     expect("the tree's own value passes", (len(p), one([r[3] for r in a])), (0, True))
+    # The book believes [3] is a verdict and [1] is a count.  Those are claims
+    # about arity and about slots, so they get their own cells -- and the red
+    # line prints the first offender rather than a set that only says "not 5".
+    _bad = [row for row in a if len(row) != 5]
+    expect("every answer is the 5-tuple the book indexes, and the first one that "
+           "is not prints itself",
+           (len(_bad), repr(one(_bad))[:80] if _bad else ""), (0, ""))
+    _kc = key_ctest_count()
+    expect("the ctest resolver is (agree, count, text), and the slots hold what "
+           "the book names them",
+           (len(_kc), type(one(_kc[0:1])).__name__, type(one(_kc[1:2])).__name__,
+            type(one(_kc[2:3])).__name__),
+           (3, "bool", "int", "str"))
+
     toks = scan_tokens("| `recon.ctest-count=1` |")
     a, p, _, _ = judge(toks)
     expect("a wrong value fails", len(p), 1)
