@@ -447,9 +447,18 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 **这类读数的另一条硬规矩**：任何门禁读数**必须连 `GATE|start|head=<sha>` 那行一起报**。同一台机器上多个执行体并行时，两条 `19/19 stages ran` 从后面几行**分不出来是谁的**，树号是唯一能把读数和树绑起来的东西。缺 head sha 的读数视为无效读数。
 
+**符号名也是锚，而且是一种无牙的锚。** 本节早先的写法给 `gate.sh` 的构建/ctest 三处和 fuzz 的默认引擎各写了行号，citations 的 `explicit` 当场从 `+12` 跳到 `+13`、红在 `explicit-delta-grew` —— **在讲「行号会漂」的这一节里写行号，被自己的检查器抓住了**。改成命名锚之后回到 `+12`。但命名锚只解决「会漂」，不解决「会不会写错」：同一段里把 `--engine` 写成了 `--interpreter`，而**没有任何东西为此变红** —— citations 数的是引用形态，不验符号是否存在。
+
+⇒ 所以这一节的规矩是两条，缺一条都不完整：
+
+1. **行号锚会被 citations 抓（有牙）**，所以在上文已给出判据的地方不要再写行号；
+2. **符号锚不会被任何检查器抓（无牙）**，所以它只能**从一条真能跑的命令的输出里粘**，不能凭记忆写。本节两个符号锚的出处：`python3 tools/im_diff_fuzz.py --help` 印 `--engine ENGINE` 与 `--translator TRANSLATOR`（`--interpreter` 零命中，实测被 `--help` 的 usage 行直接否掉）；`stage_build`／`stage_ctest` 出自 `tools/gate.sh` 里的函数名。
+
+一份清单的价值不只在它抓到了什么，也在它抓不到什么 —— 第 1 条抓住了本节作者，第 2 条没有，两件事写在一起才是这份清单的真实边界。
+
 **协调层的一条卫生规矩**：`build/` 是共享主树里的**冲突域**。两个门禁并行时，第二个会被 `flock` 挡下并以 `exit 2` 退出，而它打印的 `another gate is running against …` **不含持有者**——在 `--unshare-pid` 沙箱里跑的执行体（比如自检会话）**根本看不到外面谁占着**，于是最坏的处置出现了：把锁删掉。**不要删锁**，删锁等于把「并发检测」这个机制本身废掉。正确处置是报「谁占着」让协调者排期，或者在自己的 worktree 里跑。
 
-**`BUILD_DIR` 不是隔离手段，这一条是本清单付学费换来的。** 它只隔离 `build` 与 `ctest` 两个阶段（`stage_build`／`stage_ctest` 用 `BUILD_DIR`），而 `REPO_ROOT` 是「`gate.sh` 所在目录的父目录」，**与 `BUILD_DIR` 无关**；`tools/im_diff_fuzz.py` 的 `--interpreter` 默认值是 `REPO/"build"/"inimerse"`。⇒ 用 `BUILD_DIR=<别处>` 跑，构建产物进了 `<别处>`，而 `fuzz`／`economy`／`node`／`plugin` 仍去 `$REPO_ROOT/build` 拿引擎。
+**`BUILD_DIR` 不是隔离手段，这一条是本清单付学费换来的。** 它只隔离 `build` 与 `ctest` 两个阶段（`stage_build`／`stage_ctest` 用 `BUILD_DIR`），而 `REPO_ROOT` 是「`gate.sh` 所在目录的父目录」，**与 `BUILD_DIR` 无关**；`tools/im_diff_fuzz.py` 的 `--engine` 默认值是 `REPO/"build"/"inimerse"`。⇒ 用 `BUILD_DIR=<别处>` 跑，构建产物进了 `<别处>`，而 `fuzz`／`economy`／`node`／`plugin` 仍去 `$REPO_ROOT/build` 拿引擎。
 
 **它失败的方向是最坏的那个**：不是红，是**绿**。实测两个时间戳 —— 主树 `build/inimerse` 12:35、`build-coord/inimerse` 12:39 —— 隔离那次跑用的是 **12:35 那个**，于是「用旧二进制验收新代码」被印成 `19/19 stages ran`。所以：
 
