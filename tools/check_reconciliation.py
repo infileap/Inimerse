@@ -27,6 +27,7 @@ Usage:
     python3 tools/check_reconciliation.py --self-check
 """
 
+import ast
 import re
 import subprocess
 import sys
@@ -106,6 +107,38 @@ KEYS = {
     "citations-cases": "key_citations_cases",
     "explicit-delta": "key_explicit_delta",
 }
+
+
+# Every place this file takes element N of something, booked by hand.  A
+# positional read can be empty, so each one needs a reason here and a reviewer
+# reads that reason in the diff.  The book is the assertion: a new read
+# anywhere in the file -- helper included -- changes it and the change is visible.
+POSITIONAL_READS = {
+    "xs[0]": 1,      # one(): the single place that decides what an empty list means
+    "[][0]": 1,      # guarded(): proves a crash becomes a named sentence, not a traceback
+    "seen[key]": 2,  # scan_tokens: the book itself, keyed; a lookup, but a live one
+    "book[text]": 1, # positional_reads' own accumulator; it exists only after a key is found
+    "r[3]": 1,       # comprehension over the answer tuples: an element, not a container
+    "a[3]": 1,       # main(): every answer is a 4-tuple, indexed inside a comprehension
+    "key_ctest_count()[1]": 3,  # the resolver returns (count, value); [1] is the value half
+    "seen[key][0]": 2,          # scan_tokens keeps key -> [first value, conflicts]
+}
+
+
+def positional_reads(src):
+    """The multiset of `name[int]` reads in a source text, from its syntax tree."""
+    book = {}
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Subscript):
+            continue
+        sl = node.slice
+        if isinstance(sl, ast.Slice):
+            continue                      # a read of a range, not of element N
+        if isinstance(sl, ast.Constant) and isinstance(sl.value, str):
+            continue                      # a named lookup (books["tokens"]), not positional
+        text = re.sub(r"\s+", " ", ast.get_source_segment(src, node) or "")
+        book[text] = book.get(text, 0) + 1
+    return book
 
 
 def one(xs):
@@ -200,21 +233,32 @@ def self_check():
     # defendant.  Red is not the same as named.  Order matters -- if this runs
     # after the cells, the crashing cell gets there first and the shape check
     # never reports.
-    _src = Path(__file__).read_text()
-    _start = _src.index("def self_check(")
-    # the next top-level def, found by its leading newline so that this line's
-    # own quoted markers cannot be mistaken for the boundary
-    _body = _src[_start:_src.index("\ndef ", _start + 1)]
-    if re.search(r"\b[pax]\[0\]", _body):
-        print("FAIL -- a cell in this harness indexes a list directly; it must "
-              "go through one(), so a regression reports by NAME instead of "
-              "raising a traceback")
+    # Positional element reads are BOOKED, not pattern-matched.  The previous
+    # check grepped one shape (p[0]) and missed _p[0], row[0], row[1], row[-1]
+    # and every helper outside this function -- calm-forge measured all four
+    # variants as green, which means the check named its own last mistake
+    # rather than this class.  The book below is taken from the syntax tree of
+    # the whole file, so a new positional read anywhere (helper included)
+    # changes the book and the book has to be edited in the same diff.  The
+    # question the check answers is not "does it look like p[0]" but "did
+    # anyone write down every place we take element N of something".
+    _live = positional_reads(Path(__file__).read_text())
+    if _live != POSITIONAL_READS:
+        _diff = sorted(
+            "%s=%d here/%s booked" % (k, _live.get(k, 0), POSITIONAL_READS.get(k, "-"))
+            for k in set(_live) | set(POSITIONAL_READS)
+            if _live.get(k, 0) != POSITIONAL_READS.get(k, 0)
+        )
+        print("FAIL -- positional reads changed and nobody booked them: %s; a "
+              "positional read can be empty, so it belongs on POSITIONAL_READS "
+              "with a reason or behind one()" % "; ".join(_diff))
         return 1
 
     checks = []
 
     def expect(name, got, want):
         checks.append((name, got == want, got, want))
+        LAST_CELL["cell"] = name
 
     sample = (
         "%s counts\n| 6 | cmd | `recon.ctest-count=%d` | — |\n"
@@ -222,7 +266,20 @@ def self_check():
     )
     toks = tokens_in(sample)
     expect("a token in §14 is found", len(toks), 1)
-    expect("and it carries key and value", toks[0][:2], ("ctest-count", key_ctest_count()[1]))
+    expect("and it carries key and value", one(toks)[:2], ("ctest-count", key_ctest_count()[1]))
+    # The book must see the class, not one shape: a helper (not the slice the
+    # old check used), an underscore name, and an index other than 0.
+    expect("a helper's positional read is booked",
+           positional_reads("def helper():\n    row = ['a']\n    return row[0]\n"),
+           {"row[0]": 1})
+    expect("an underscore name is booked, not skipped by a word boundary",
+           positional_reads("x = _p[0]\n"), {"_p[0]": 1})
+    expect("an index other than zero is booked",
+           positional_reads("x = row[-1]\n"), {"row[-1]": 1})
+    expect("slices are reads of a different kind and stay out of the book",
+           positional_reads("x = toks[1:3]\n"), {})
+
+
     toks = tokens_in("| `recon.ctest-count=999` |")
     expect("a token outside §14 is not found", len(toks), 0)
     toks = scan_tokens("| `recon.no-such-key=1` |")
@@ -297,19 +354,36 @@ def self_check():
            guarded("old-style", lambda: [][0]),
            "builtin.IndexError: list index out of range")
 
-    ok = 0
-    for name, _, got, want in checks:
-        if got == want:
-            ok += 1
-        else:
+    failed = []
+    for name, passed, got, want in checks:
+        if not passed:
+            failed.append(name)
             print("FAIL -- %s: want %r got %r" % (name, want, got))
-    print("check_reconciliation self-check: ok (%d checks)" % ok)
-    return 0 if ok == len(checks) else 1
+    if failed:
+        # printing "ok (N checks)" next to a named FAIL told the reader the
+        # harness passed while exit was 1 -- one of the two had to go
+        print("FAIL -- %d of %d checks failed" % (len(failed), len(checks)))
+        return 1
+    print("check_reconciliation self-check: ok (%d checks)" % len(checks))
+    return 0
+
+
+LAST_CELL = {"cell": ""}
 
 
 def main():
     if "--self-check" in sys.argv:
-        return self_check()
+        # A cell that raises prints a traceback: the same exit code as a named
+        # FAIL, with none of the information.  This turns every escape into the
+        # one sentence it can still earn -- plus the last cell that did report,
+        # which is where in the list the crash happened.
+        try:
+            return self_check()
+        except Exception as exc:  # noqa: BLE001 -- that is the point of the net
+            print("FAIL -- the self-check crashed while reading the cell after "
+                  "%r: %s: %s" % (LAST_CELL["cell"] or "(before the first cell)",
+                                  type(exc).__name__, exc))
+            return 1
     text = BOARD.read_text()
     toks = tokens_in(text)
     assertions, problems, measured, books = judge(toks)
