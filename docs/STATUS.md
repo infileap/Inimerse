@@ -2949,7 +2949,7 @@ char *sval;
 void *ptr;
 ```
 
-实测 `sizeof` 前后都是 32，`type`/`sval`/`ptr` 的偏移不变（`ival` 与 `fval` 共用偏移 8）。`CMakeLists.txt:19-20` 是 C11，匿名 union 合法。wasm 后端**本来就是这样**的（`src/compilation/wasm_backend.c:66` 的 `SLOT_BYTES 16` 注释即 `[tag i32 @+0][pad][i64 payload @+8]`），所以 AOT 的 `NV` 完全没动，只有 VM 和 wasm 要改。顺带一提，改完之后 `grep -n 'Value v; .*v\.fval = 0' src/` 这类「同时给 `ival` 和 `fval` 赋值」的位置全部失效（两者现在是同一块存储），全仓 28 个文件里那些 5 字段的位置初始化 `{VAL_NIL, 0, 0, NULL, NULL}` 都要去掉中间那个 `0` —— 这是本次 diff 里最大的一片机械改动。
+实测 `sizeof` 前后都是 32，`type`/`sval`/`ptr` 的偏移不变（`ival` 与 `fval` 共用偏移 8）。`CMakeLists.txt:19-20` 是 C11，匿名 union 合法。wasm 后端**本来就是这样**的（`src/compilation/wasm_backend.c:67` 的 `SLOT_BYTES 16` 注释即 `[tag i32 @+0][pad][i64 payload @+8]`），所以 AOT 的 `NV` 完全没动，只有 VM 和 wasm 要改。顺带一提，改完之后 `grep -n 'Value v; .*v\.fval = 0' src/` 这类「同时给 `ival` 和 `fval` 赋值」的位置全部失效（两者现在是同一块存储），全仓 28 个文件里那些 5 字段的位置初始化 `{VAL_NIL, 0, 0, NULL, NULL}` 都要去掉中间那个 `0` —— 这是本次 diff 里最大的一片机械改动。
 
 ### 四、逐条：加宽之后才暴露的六处
 

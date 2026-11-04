@@ -496,7 +496,7 @@ EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # number again needs its own commit and the same kind of argument that raised
 # it the first time; lowering it needs none, because the tree just proved it.
 EXP_LINE_REFS_UNANCHORED_DELTA_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "4")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "2")
 )
 
 # The one pin here that is not about how many references there are, but about
