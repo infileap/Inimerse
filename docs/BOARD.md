@@ -46,7 +46,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 
 ## 3. 门禁（`tools/gate.sh`）
 
-合入 main 前必须全绿。十六个阶段，任一失败即整体失败（下表列十五行，缺 `obs-markers` 那一行；**那一行今天故意没有补**：补它会把本文件插入点以下的每一行往下推一格，而这个文件的行号被全仓引用，补行必须与改引用同批做 —— 见 AUDIT.md §1.97 增补一百一十五）：
+合入 main 前必须全绿。十六个阶段，任一失败即整体失败（下表列十五行，缺 `obs-markers` 那一行；**那一行今天故意没有补**：补它会把本文件插入点以下的每一行往下推一格，而这个文件的行号被全仓引用，补行必须与改引用同批做 —— 见 AUDIT.md §1.97 增补一百一十五）：合入前后要量哪几样、每样能被什么证伪，见 §14 的六条清单；本节只讲阶段口径，不重复那边的读数。
 
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
@@ -424,3 +424,27 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 | 再加上**「路径即命令」**（`tools/*.sh`、`*.py`） | **0** | — |
 
 三节的命令全在代码块里，所以「补完就没缺口了」这句话在第一个谓词下不成立——它数的是一个**排版事实**，不是有没有人能重跑。第二格漏掉 §2／§8 是因为 `tools/stream.sh`、`tools/gate.sh` 不以动词开头；第三格补上之后才是本节真正想说的：**谓词的边界就是结论的边界**，换一个谓词就会换一个数，而三个数可以都对。报这类百分比时把谓词原文和它数到的东西一起报，否则读者拿到的只是一个排版结论。
+
+
+## 14. 合并前后的对账清单：六条命令，以及每条能被什么证伪
+
+本节的用途只有一个：**每一次合并前后，用同一把尺子量同一批东西**，让「这一次合并有没有动到别人的行号 / 别人的 pin」变成一个可以当场回答的问题，而不是事后追查。
+
+**判据的形状（这一条最容易被误用）**：比的是「被点名的树可达」+「检查器 `rc=0`」，**不是**「pin 里的值等于某笔提交」。pin 是**某棵树上的读数**，主线往前走它就该往前走；把 pin 值当成「应该等于某笔」会造出一条每次合并都必须改的断言，而一条必须每次改的断言，等于没有断言。两份 pin 里存的都是**数**（`headings` 计数、`citations` 行数）与**一棵树**：树是「这些数在哪棵树上量的」，不是「这些数必须一直等于它」。
+
+| # | 命令 | 期望读数 | 能被什么证伪 |
+| --- | --- | --- | --- |
+| 1 | `git fetch --prune origin` 然后 `git rev-parse origin/main` | 一个 sha，且与 `git ls-remote origin refs/heads/main` 逐字相同 | 网络已更新而本地没 `fetch` ⇒ 读到的是**缓存**。这不是假读数，是**过期的真读数**，也是本轮真实发生过的一次误报 |
+| 2 | `python3 tools/check_docs_headings.py` | `rc=0`、`HEADINGS\|pin-tree\|…\|mismatch=0`、`HEADINGS\|tree=<sha>\|base=N\|now=N\|removed=0\|added=0` | 往 pin 的 `tree` 里写一个不存在的 sha ⇒ **`rc=4`** 并打印 `the pin names tree '…' and this repository cannot resolve it`。这一格是**活的**，实测过 |
+| 3 | `python3 tools/check_line_refs.py` | `rc=0`、`pins -- explicit delta +12 (expect +12)`、`unanchored delta` **≤ `ceiling +12`**、`VERDICT\|assertions=0`、`CITATIONS\|removed=0`（除非同笔带收据） | 往 `docs/` 里任何被引文件的上方插一行 ⇒ `unanchored` 上涨；**实测**在 `docs/BOARD.md` §3 插一行会从 `+9` 推到 `+12` 之上（丢 5 条锚，全在 `docs/AUDIT.md` 引 BOARD 的那两行上）⇒ 所以「插行要算账」是这一格在量的东西 |
+| 4 | `python3 tools/citations.test.py` | `rc=0`、`cases=8 red=0 green=8` | 这是**检查器自己的自检**：删掉一条裸引用、伪造收据、把收据名指向仍活着的引用 —— 8 个用例各红一次即证伪 |
+| 5 | `python3 tools/check_word_refs.py` | `rc=0`、`WORD-REF\|…\|baseline=N\|verdict=PASS`，且 `offenders` 等于 `baseline` | 新增一条「点名了文件却不说树」的引用 ⇒ `offenders` 超过 `baseline` ⇒ 阶段红 |
+| 6 | `grep -c "add_test(" CMakeLists.txt` 与 `ctest --test-dir build -N \| tail -1` 与 `grep -n 'EXP_CTEST=' tools/gate.sh` | **三个数必须相等**（今天都是 193） | 其中任一处单独变化 ⇒ 有一个 `add_test(` 掉了或 `EXP_CTEST` 没跟上。`ctest` 在全跳过时也退 0，所以**条数必须是断言而不是标签** |
+
+**反向自检（每次改这份清单都要跑一遍，它才是清单可信的原因）**：把上面第 2 条 pin 的 `tree` 换成 `deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`，**第 2 条必须红**（实测 `rc=4`）。
+
+**已知缺口（写在这里，因为不写就会有人把它当成已覆盖）**：同一个实验对第 3 条**不成立** —— 把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha，`check_line_refs.py` 仍然 `rc=0`、`VERDICT|assertions=0`，而且照样打印 `every pin held`。原因是那一份 pin 的 `tree` 在本树里只被**打印**、从没被 `rev-parse` 过；比对用的是 pin 里的行数组，与树无关。⇒ **两份 pin 的可靠性今天不对等**，「被点名的树可达」这条判据对 `headings` 成立、对 `citations` 只是印在纸上。补齐它是一笔独立的改动（要动检查器本身，不能在「用被改的东西验它自己」的那一轮里顺手做）。
+
+**这类读数的另一条硬规矩**：任何门禁读数**必须连 `GATE|start|head=<sha>` 那行一起报**。同一台机器上多个执行体并行时，两条 `19/19 stages ran` 从后面几行**分不出来是谁的**，树号是唯一能把读数和树绑起来的东西。缺 head sha 的读数视为无效读数。
+
+**协调层的一条卫生规矩**：`build/` 是共享主树里的**冲突域**。两个门禁并行时，第二个会被 `flock` 挡下并以 `exit 2` 退出，而它打印的 `another gate is running against …` **不含持有者**——在 `--unshare-pid` 沙箱里跑的执行体（比如自检会话）**根本看不到外面谁占着**，于是最坏的处置出现了：把锁删掉。正确处置有两种：把 `BUILD_DIR` 指到自己的目录（`tools/gate.sh` 认这个变量），或者报「谁占着」让协调者排期；**不要删锁**，删锁等于把「并发检测」这个机制本身废掉。
