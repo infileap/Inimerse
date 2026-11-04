@@ -39,6 +39,11 @@ const rawPost = (port, urlPath, body) => new Promise((resolve, reject) => {
   });
   req.on('error', reject); req.end(payload);
 });
+// The Date header is the clock, not the protocol: two refusals one
+// second apart are the same refusal.  rawPost already keeps `date` out of
+// `headers`; this keeps it out of comparisons too, so the assertion below
+// stays about what the server answered rather than when it answered.
+const withoutDate = r => ({ statusLine: r.statusLine, headers: r.headers, body: r.body });
 const listen = async relay => { await new Promise(r => relay.server.listen(0, r)); return relay.server.address().port; };
 const tmpAdmissions = text => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crp-admissions-'));
@@ -92,9 +97,9 @@ server.listen(0, async () => {
     assert.equal(badProof.statusLine, 'HTTP/1.1 403 Forbidden');
     assert.equal(badProof.body, '{"error":"invalid enrollment proof"}');
     assert.match(badProof.date, /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/);
-    assert.deepEqual(await rawPost(port, '/portal', { verse: 'demo', peer: 'p3', auth: proof('demo', 'p3') }), badProof);
-    assert.deepEqual(await rawPost(port, '/portal', { verse: 'nobody', peer: 'p1', auth: proof('nobody', 'p1') }), badProof);
-    assert.deepEqual(await rawPost(port, '/portal', { verse: 'demo', peer: 'p1' }), badProof);
+    assert.deepEqual(withoutDate(await rawPost(port, '/portal', { verse: 'demo', peer: 'p3', auth: proof('demo', 'p3') })), withoutDate(badProof));
+    assert.deepEqual(withoutDate(await rawPost(port, '/portal', { verse: 'nobody', peer: 'p1', auth: proof('nobody', 'p1') })), withoutDate(badProof));
+    assert.deepEqual(withoutDate(await rawPost(port, '/portal', { verse: 'demo', peer: 'p1' })), withoutDate(badProof));
     assert.equal((await post('/portal', { verse: 'missing', peer: 'p1', auth: proof('missing', 'p1') })).status, 404);
     // The portal's scope is a pair of non-empty strings, so a member that is
     // not a string names no scope at all: it is refused with the same 404 as an
@@ -111,7 +116,7 @@ server.listen(0, async () => {
       { verse: 'demo', peer: '', auth: proof('demo', '') },
     ]) {
       assert.equal((await post('/portal', body)).status, 403);
-      assert.deepEqual(await rawPost(port, '/portal', body), badProof);
+      assert.deepEqual(withoutDate(await rawPost(port, '/portal', body)), withoutDate(badProof));
     }
     assert.equal(sessions.size, sessionsBefore);
     assert.equal((await post('/portal', { verse: 'demo', peer: 'p1' })).status, 403);
