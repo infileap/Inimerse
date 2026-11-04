@@ -1212,6 +1212,100 @@ def write_citations_pin() -> int:
     return 0
 
 
+def git_out(*argv: str) -> "tuple[int, str]":
+    """Run git in this repository and give back (returncode, stdout stripped)."""
+    _p = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *argv],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    return _p.returncode, (_p.stdout or "").strip()
+
+
+def committed_pin_tree() -> str:
+    """The tree the pin names in HEAD, so a red line can say what was replaced.
+
+    A failure sentence about a pin must stand on its own: a reader looking at
+    one line has no copy of the pin it used to be, so the number that was
+    replaced has to be printed next to the number that replaced it.
+    """
+    _rc, body = git_out("show", "HEAD:" + str(CITATIONS_PIN.relative_to(REPO_ROOT)))
+    try:
+        return str((json.loads(body) or {}).get("tree") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
+def pin_tree_problem(value) -> "tuple[str, str]":
+    """(cause, sentence) for a pin's tree field; ("", "") when it resolves.
+
+    `rev-parse <sha>^{tree}` and `cat-file -e <sha>^{tree}` answer rc=1 for
+    both a sha this repository never had and an object that exists and is not
+    a tree, so neither of them can tell the two failures apart.  Asking for
+    the object's type first (`cat-file -t`) separates them: empty output and
+    rc=1 means no such object; `blob` means the object is real and the pin
+    points at something that carries no docs tree.  Only the first form is
+    "the pin is a number about nothing"; the second is a pin about a leaf.
+    """
+    want = str(value or "").strip()
+    if not want:
+        return (
+            "citations-pin-tree-absent",
+            "the pin names no tree at all, so the count it holds is a number "
+            "about no tree and no reading here can be compared to it. Run "
+            "--write-citations-pin on a committed tree.",
+        )
+    _rc, kind = git_out("cat-file", "-t", want)
+    if _rc != 0 or not kind:
+        return (
+            "citations-pin-tree-unreachable",
+            f"tree-unresolved={want[:7]}: the pin names {want!r} and this "
+            "repository has no such object, so the count it holds is a number "
+            "about no tree. Run --write-citations-pin on a committed tree.",
+        )
+    if kind in ("commit", "tree"):
+        return "", ""
+    return (
+        "citations-pin-object-not-a-tree",
+        f"tree-unresolved={want[:7]}: the pin names {want!r} and that object "
+        f"exists but is a {kind}, which carries no docs tree, so the count it "
+        "holds is a number about no tree rather than a number about an older "
+        "one. Run --write-citations-pin on a committed tree.",
+    )
+
+
+def self_check() -> int:
+    """The pin-tree verdicts have to be able to say no; this proves they do."""
+    fails: "list[str]" = []
+    checks = 0
+
+    def expect(label: str, got, want) -> None:
+        nonlocal checks
+        checks += 1
+        ok = got == want if not callable(want) else bool(want(got))
+        if not ok:
+            fails.append(f"{label}: want {want} got {got!r}")
+
+    _rc, head = git_out("rev-parse", "HEAD")
+    expect("a commit this repository has is no problem",
+           pin_tree_problem(head)[1], "")
+    expect("a sha this repository never had is a problem",
+           pin_tree_problem("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")[1],
+           lambda s: s.startswith("tree-unresolved=deadbee") and "no such object" in s)
+    _rc, blob = git_out("hash-object", "CMakeLists.txt")
+    expect("an object that exists but is not a tree is its own problem",
+           pin_tree_problem(blob)[1],
+           lambda s: s.startswith("tree-unresolved=") and "is a blob" in s)
+    expect("a pin with no tree field is a problem of its own",
+           pin_tree_problem("")[0], "citations-pin-tree-absent")
+    for name in fails:
+        print(f"FAIL -- {name}")
+    if fails:
+        print(f"check_line_refs self-check: FAIL -- {len(fails)} of {checks} checks failed")
+        return 1
+    print(f"check_line_refs self-check: ok ({checks} checks)")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     report = "--report" in args
@@ -1220,6 +1314,8 @@ def main() -> int:
     why = "--why" in args
     if "--write-citations-pin" in args:
         return write_citations_pin()
+    if "--self-check" in args:
+        return self_check()
     base, behind = base_scan()
     r = scan()
     if why:
@@ -1505,26 +1601,33 @@ def main() -> int:
     # about no tree.  Two falsifiable outcomes are asserted below: a pin
     # naming an unresolvable sha, and a pin naming an object that resolves but
     # is not a commit (a blob carries no docs tree to have counted).
+    # The pin records two things: rows (which this checker compares against) and
+    # the tree those rows were read on.  Until now only the rows were used, so a
+    # pin could name a commit this repository cannot resolve and still print
+    # "every pin held" -- a baseline nobody can reproduce is a number about no
+    # tree.  Three failures are now told apart rather than merged: the file is
+    # missing (this tree never had a baseline), the field is missing (the pin
+    # was written badly), the object is missing or is not a tree (the baseline
+    # points at something that cannot hold the rows it claims).  A file that
+    # is absent and a field that is absent are different repairs.
     if _pin:
-        _pin_tree = str(_pin.get("tree") or "")
-        _resolved = ""
-        if _pin_tree:
-            _p = subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet",
-                 _pin_tree + "^{commit}"],
-                capture_output=True, text=True, encoding="utf-8",
-            )
-            _resolved = (_p.stdout or "").strip()
-        cell(
-            "citations-pin-tree-unreachable",
-            [],
-            None if _resolved else (
-                f"the pin names tree {_pin_tree or '<absent>'!r}, and this "
-                "repository cannot resolve it to a commit; the count it holds "
-                "is a number about no tree, so no reading here can be compared "
-                "to it. Run --write-citations-pin on a committed tree."
-            ),
+        _cause, _problem = pin_tree_problem(_pin.get("tree"))
+    else:
+        _cause, _problem = (
+            "citations-pin-file-absent",
+            f"{CITATIONS_PIN.relative_to(REPO_ROOT)} is not in this tree at all, "
+            "so no count in this repository can be compared to the baseline it "
+            "would have held. Run --write-citations-pin on a committed tree.",
         )
+    if _problem:
+        _want = str((_pin or {}).get("tree") or "")
+        _committed = committed_pin_tree()
+        if _committed and _committed != _want:
+            _problem += (
+                f" The committed pin named {_committed[:7]}, this one names "
+                f"{_want[:7] if _want else '<absent>'}."
+            )
+    cell(_cause, [], _problem)
 
     for _name in gone[:20]:
         print(f"CITATIONS|removed|{_name}")

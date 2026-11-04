@@ -443,7 +443,21 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 **反向自检（每次改这份清单都要跑一遍，它才是清单可信的原因）**：把上面第 2 条 pin 的 `tree` 换成 `deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`，**第 2 条必须红**（实测 `rc=4`）。
 
-**这一条现在对两份 pin 都成立（2026-11-04 补齐）**：同一个实验——把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha——`check_line_refs.py` 现在 `rc=1`、`VERDICT|assertions=1|causes=1|cause=citations-pin-tree-unreachable`，并且点名那个 sha 与「这份 pin 内的计数不是一个关于任何树的数」。另加一条反向判据：把 `tree` 换成一个**能解析但不是提交**的对象（`git hash-object CMakeLists.txt` 得到的 blob），也必须红、同一 cause —— 只查「有没有这个对象」会漏掉「这个对象不是一棵 docs 树」。`headings` 那份的失败样例仍是 `rc=4`（它把不可解的 pin 当环境问题，两侧的码不同但都是红的）。⇒ 两份 pin 的可靠性现在对等：**被点名的树必须可达，且必须是一棵提交**。
+**这一条现在对两份 pin 都成立，而且两份是各自红、各用各的码（2026-11-04 补齐）**：同一个实验——把 `tools/citations.pin.json` 的 `tree` 换成同一个假 sha——两份 pin 给出的是**两种性质的失败**：`check_docs_headings.py` 报 `rc=4`（没有东西可比：pin 一不可解，那一整轮就没有分母），`check_line_refs.py` 报 `rc=1`、`VERDICT|assertions=1|causes=1|cause=citations-pin-tree-unreachable`（有一个断言失效）。**码不同不是不一致，是它们不可互换的证据**：一份是环境不可用、一份是发现。两份都红，都点名那个 sha，都说「这份 pin 内的计数不是一个关于任何树的数」。
+
+`check_line_refs.py` 把 pin 的失败**分成三种，各自一个 cause**，因为它们要的修法不同：
+
+| cause | 触发 | 它说的是 |
+| --- | --- | --- |
+| `citations-pin-tree-unreachable` | `git cat-file -t <sha>` 空输出且非零 | 这棵树在本仓库从来没有过 ⇒ pin 是一个关于无的读数 |
+| `citations-pin-object-not-a-tree` | `cat-file -t` 回 `blob`（或别的非 commit/tree 类型） | 对象真实存在，但它是叶子、撑不起一份 docs 树计数 |
+| `citations-pin-tree-absent` / `citations-pin-file-absent` | 字段没了 / 整份 pin 文件不在树里 | pin 写坏了 / 这棵树少了一件东西 —— 两件不同的东西 |
+
+**为什么问类型而不是直接剥树**：`git rev-parse <sha>^{tree}` 与 `cat-file -e <sha>^{tree}` 对「本仓没有这个对象」与「对象存在但不是树」**同形**（都只给 `rc=1`），一条命令分不出这两类失败；`cat-file -t` 才分得出。实测：真 pin 的 `tree` 是 `commit`、`HEAD^{tree}` 剥得出、blob 的 `^{tree}` 给 `expected tree type, but the object dereferences to blob type`。
+
+失败行**自带原值**：从 `HEAD:tools/citations.pin.json` 读回那一份的 `tree`，印成 `The committed pin named 6c4cc82, this one names deadbee.` —— 读到这一行的人手里没有原 pin，两个 sha 必须在同一行。
+
+**已知边界（同一句话也写在 `docs/streams/checker-scope.md`）**：解析 `tree` **只证明那棵对象在这个仓库里存在，不证明 pin 里的计数是在它上面读的**。实测这一条：把 `tree` 换成 `1c6b338…^{tree}`（真实存在、与这份 pin 的计数无关的老树）⇒ **`rc=0` 全绿** —— 这正是「验到了不存在的东西也照样绿」的反面，也是这条判据的诚实地板。
 
 **一条仓规，写在这里因为它现在有门禁在守：红不等于有名。** 一次 `traceback` 与一次 `FAIL -- <句子>: want … got …` 在退出码上都是非零，在信息上是两回事：前者让下一个读者去读工具的源码，后者直接告诉他是哪一句错了。所以元判据那两格守这条线：①**任何格子不许直接索引列表** —— 形状检查在任何一格跑之前做，所以把 `p[0]` 放回任意一格，红是一句带名字的 `FAIL`，不是异常；②一个会抛异常的格子必须被转成点名句子（`guarded()` 自证：`builtin.IndexError: list index out of range`）。控制：把索引放回去 → `rc=1`、`FAIL -- a cell in this harness indexes a list directly…`；还原 → `ok (23 checks)`。理由是这条不是风格问题：崩溃与点名在退出码上是同一个数，在能不能被追责上不是。
 

@@ -79,3 +79,23 @@ docs-headings: cases=5 red=0 green=5 -- none
 - 标题计数只认 ATX 二级标题（`## ` 开头）；用下划线式标题、或者把标题写在代码块里的文档，它不数。
 - `swept=` 报的是文件数，不是行数；某份文档变大变小，只要引用没有新增越界，读数不动。
 - 临时 worktree 里的控制测试需要 git 与 python；两者缺一，工具拒绝执行（`not registered: nothing was checked`），不会被当成绿。
+
+## 6. pin 的树可达 ≠ 计数可信
+
+`tools/citations.pin.json` 的两个字段是分开的两件事：`rows` 是基线内容，`tree` 是那些行**在哪棵树上**读的。`check_line_refs.py` 现在会把 `tree` 解析成这个仓库里真实存在的对象。
+
+**这一节能做到什么**：证明那个 sha 在本仓库里存在，且类型是 commit 或 tree。
+
+**这一节做不到什么（诚实地板）**：解析成功**不证明** pin 里的计数是在**它上面**读的。实测这条边界：把 `tree` 换成 `1c6b3381f3db8b77ca90c53ae5737dfa3698624f^{tree}`（真实存在、与这份 pin 的计数毫无关系的老树）⇒ **`rc=0`，全绿**。这跟 `withoutDate` 那个教训是同一族、方向相反：那次是「把期望改坏两侧一起坏，测了等于没测」；这次是「验到了一件真实存在的东西，但验的不是该验的那件事」。
+
+要真验「计数是在这棵树上读的」，得**重算一遍**：回到那个 sha、按同样规则重扫 `rows`、与 pin 做多集比较。那是重钉（`--write-citations-pin`）在做的事，不是这一格。
+
+**三种失败各自的修法不同**（区分它们，是因为一句「pin 有问题」会让人去修错地方）：
+
+| cause | 它说的是 | 修法 |
+| --- | --- | --- |
+| `citations-pin-tree-unreachable` | 本仓库从来没有这个对象 | 找对 sha，或 `--write-citations-pin` 重钉 |
+| `citations-pin-object-not-a-tree` | 对象在，但类型是 blob 之类，撑不起 docs 树 | 换成一个 commit 或 `HEAD` |
+| `citations-pin-tree-absent` / `citations-pin-file-absent` | 字段没了 / 整份 pin 不在树里 | pin 写坏了，与「这棵树少了一件东西」是两件事 |
+
+**为什么问类型而不是直接剥树**：`git rev-parse <sha>^{tree}` 与 `git cat-file -e <sha>^{tree}` 对「对象不存在」与「存在但不是树」给出**同形**结果（都只 `rc=1`），一条命令分不开这两类失败；`cat-file -t` 才分得开。
