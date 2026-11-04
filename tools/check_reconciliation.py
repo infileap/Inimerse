@@ -94,12 +94,17 @@ def key_explicit_delta():
     return rc == 0 and n >= 0, n, "rc=%d|checker=check_line_refs.py" % rc
 
 
+# The registry holds NAMES, not function objects.  A rename of a resolver used
+# to crash this file at import time, before anything was measured: the reading
+# then did not exist at all, which is not the same as "this key cannot be
+# computed" and is not what a gate should have to guess.  Looking the name up
+# when the key is judged turns that into a booked resolver-failed.
 KEYS = {
-    "ctest-count": key_ctest_count,
-    "word-refs-baseline": key_word_refs_baseline,
-    "headings-docs": key_headings_docs,
-    "citations-cases": key_citations_cases,
-    "explicit-delta": key_explicit_delta,
+    "ctest-count": "key_ctest_count",
+    "word-refs-baseline": "key_word_refs_baseline",
+    "headings-docs": "key_headings_docs",
+    "citations-cases": "key_citations_cases",
+    "explicit-delta": "key_explicit_delta",
 }
 
 
@@ -142,7 +147,27 @@ def judge(tokens):
             )
             books["unknown"] += 1
             continue
-        measured_ok, actual, why = resolve()
+        resolve = (resolve if callable(resolve)
+                   else globals().get(resolve))
+        if resolve is None:
+            books["resolver-failed"] += 1
+            problems.append(
+                "§14 line %d: 'recon.%s=%d' -- the key is registered here but "
+                "the resolver it names does not exist; a missing resolver is a "
+                "number nobody computed, not a key nobody declared"
+                % (lineno, key, value)
+            )
+            continue
+        try:
+            measured_ok, actual, why = resolve()
+        except Exception as exc:                      # noqa: BLE001 -- a resolver
+            books["resolver-failed"] += 1             # that throws is a number
+            problems.append(                          # this tool cannot read, and
+                "§14 line %d: 'recon.%s=%d' -- the resolver for this key threw "
+                "%s: %s, so this number is not measured at all"
+                % (lineno, key, value, type(exc).__name__, exc)
+            )
+            continue
         agree = value == actual
         assertions.append((key, value, actual, measured_ok and agree, why))
         measured.append(key)
@@ -182,6 +207,9 @@ def self_check():
     expect("an unknown key is a problem", len(p), 1)
     expect("and it is not counted as a measurement", len(a), 0)
     expect("and it is booked as unknown, so the summary can close", books["unknown"], 1)
+    expect("and names the unknown key, not a failing resolver",
+           "has no resolver in this tool" in p[0]
+           and "resolver for this key failed" not in p[0], True)
     toks = scan_tokens(
         "| `recon.ctest-count=193` |\n| `recon.ctest-count=194` |\n"
     )
@@ -194,6 +222,24 @@ def self_check():
     a, p, _, _ = judge(toks)
     expect("a wrong value fails", len(p), 1)
     expect("and names both numbers", "but the tree says" in p[0], True)
+    KEYS["zz-missing-resolver"] = "zz_no_such_function"
+    toks = scan_tokens("| `recon.zz-missing-resolver=0` |")
+    a, p, _, books = judge(toks)
+    del KEYS["zz-missing-resolver"]
+    expect("a renamed resolver is booked, not crashed", books["resolver-failed"], 1)
+    expect("and is not confused with an undeclared key", books["unknown"], 0)
+    expect("and says the resolver it names does not exist",
+           "the resolver it names does not exist" in p[0], True)
+
+    KEYS["zz-raises"] = lambda: 1 // 0
+    toks = scan_tokens("| `recon.zz-raises=0` |")
+    a, p, _, books = judge(toks)
+    del KEYS["zz-raises"]
+    expect("a resolver that throws is one problem", len(p), 1)
+    expect("and is booked as resolver-failed, not unknown",
+           (books["resolver-failed"], books["unknown"]), (1, 0))
+    expect("and says it threw rather than that the key is missing",
+           "threw ZeroDivisionError" in p[0] and "has no resolver" not in p[0], True)
     KEYS["zz-broken"] = lambda: (False, 0, "rc=1|checker=pretends-to-run")
     toks = scan_tokens("| `recon.zz-broken=0` |")
     a, p, _, books = judge(toks)
