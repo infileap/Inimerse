@@ -486,8 +486,17 @@ EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # A ceiling, not an equality: it says "this much unanchored growth is a debt
 # somebody wrote down", and the debt is paid by fixing the references, not by
 # lowering the number to whatever today happens to be.
+#
+# A RATCHET, on top of that: the ceiling only ever moves DOWN, and only in the
+# commit that pays a reference.  A ceiling that stays where it was after a
+# repayment is not a ceiling, it is headroom -- measured on this very branch:
+# five references paid took the delta from +9 to +4, and the old ceiling of
+# +12 said nothing about it, so putting all five back would also have said
+# nothing (`rc=0` with `unanchored delta +9 (ceiling +12)`).  Raising this
+# number again needs its own commit and the same kind of argument that raised
+# it the first time; lowering it needs none, because the tree just proved it.
 EXP_LINE_REFS_UNANCHORED_DELTA_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "12")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "4")
 )
 
 # The one pin here that is not about how many references there are, but about
@@ -1217,10 +1226,18 @@ def main() -> int:
         # A pin that reds on a count without naming the row tells the reader
         # that something moved and nothing about what.  Printed before the
         # verdicts on purpose: on a red run the verdict line comes early and
-        # the rows are what the reader came for.  Only when asked, because
-        # 571 rows of "nothing holds this" bury the pins.
-        for rel, lineno, _first, _last, number, target, cited in r["no_anchor"]:
+        # the rows are what the reader came for.
+        #
+        # Only the references that are NOT already unanchored on the base tree
+        # are printed: 566 rows of "nothing holds this" is the whole corpus,
+        # and a reader who is here because the delta moved needs the rows the
+        # delta is made of, not every row the pin has ever seen.
+        _base_rows = {(b[0], b[4], b[5]) for b in base["no_anchor"]}
+        _new = [x for x in r["no_anchor"] if (x[0], x[4], x[5]) not in _base_rows]
+        for rel, lineno, _first, _last, number, target, cited in _new:
             print(f"UNANCHORED|{rel}:{lineno} -> {target}:{number} | {cited}")
+        print(f"WHY|printed={len(_new)}|unanchored-total={len(r['no_anchor'])}"
+              f"|basis=not-on-base-tree|base={EXP_LINE_REFS_BASE}")
     r["holds_trace"] = holds_trace
 
     print(
