@@ -235,6 +235,48 @@ def mirval_assert_problems(text):
 #                            answers false) and mv_not (`not nil` is true).  Any
 #                            of them handing nil to nv_* would abort instead of
 #                            printing.
+#
+# The last three are strings on the COMPARISON side -- a different entry from
+# the printing trio above, because printing a string was `mv_say`'s branch while
+# comparing one is `mv_eq`/`mv_ne`'s.  Before they existed, `s = "hi"` /
+# `t = "ho"` / `say s == t` passed prescan (OP_EQ is in the lowering table),
+# compiled with cc, and then DIED AT RUN TIME with SIGABRT and empty stdout:
+# `mv_eq` had no MV_STR arm, so `mv_as_nv(MV_STR)` reached `mv_tag_to_nv`'s
+# `abort()`.  The interpreter answers `false`.  Accepted + compiled + crashed,
+# while the answer was known -- that is the shape this list refuses to live with.
+#
+#   mir_loadk_string_eq       equal and unequal between two strings, both
+#                             outcomes (`==` and `!=`).  Byte compared, so a
+#                             route that compared pointers only, answered
+#                             "not equal" always, or printed the operands would
+#                             redden the same way a crash does.  The rule copied
+#                             is src/vm/vm.c:417 (same-type string: pointer fast
+#                             path, then strcmp with a NULL payload normalised
+#                             to "").
+#   mir_loadk_string_eq_number
+#                             a string against a NUMBER.  The interpreter's
+#                             val_eq falls through its type-dispatch
+#                             (src/vm/vm.c:414) to the int/float/bool coercion
+#                             block (:425-427) and then to `return false`
+#                             (:428), so `s == 1` is false and `s != 1` is true.
+#                             This is the case that stops the string arm from
+#                             becoming a strcmp against a coerced 0, and the one
+#                             that makes "dispatch on TYPE first, then compare
+#                             CONTENT" a measured property rather than a rule in
+#                             a comment.  Both an int and a float operand are in
+#                             it: the coercion block is one rule, and a string
+#                             arm that only knew ints would still be wrong.
+#   mir_loadk_string_truthiness
+#                             a string in the truth positions (`if`, `not`) --
+#                             `mv_tru` had the SAME hole as `mv_eq`
+#                             (`mv_as_nv(MV_STR)` -> abort), and vm_truthy's
+#                             `default: return 1` (src/vm/vm.c:400) is the rule
+#                             it must follow: every string is TRUE, including the
+#                             empty one (measured: `not ""` is false and
+#                             `if "" {}` takes the true branch).  It gets its own
+#                             case rather than a line in the other two because
+#                             an arm without a criterion is exactly the debt
+#                             docs/STATUS.md 10.105 writes down.
 MIR_ONLY = [
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
@@ -243,6 +285,13 @@ MIR_ONLY = [
     ("mir_nil_coalesce", 'say nosuchglobal ?? 2\n'),
     ("mir_nil_print_truthiness",
      'say nosuchglobal\nif nosuchglobal { say "T" } else { say "F" }\nsay not nosuchglobal\n'),
+    ("mir_loadk_string_eq",
+     's = "hi"\nt = "ho"\nsay s == t\nsay s == s\nsay s != t\nsay t != t\n'),
+    ("mir_loadk_string_eq_number",
+     's = "hi"\nsay s == 1\nsay s != 1\nsay s == 1.5\nsay s != 1.5\n'),
+    ("mir_loadk_string_truthiness",
+     's = "hi"\ne = ""\nif s { say "T" } else { say "F" }\n'
+     'if e { say "T" } else { say "F" }\nsay not s\n'),
 ]
 
 
