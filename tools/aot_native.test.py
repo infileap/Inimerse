@@ -185,9 +185,35 @@ EQUIVALENCE = [
 # not hidden: both the interpreter's output and the native output are asserted
 # exactly, so the gap cannot silently widen and *fixing* one of them makes this
 # test fail loudly and demand a promotion into EQUIVALENCE.
+#
+# Promotion needs a shared root with docs/DECFY_DESIGN.md §1.1 (the six and/or
+# decision points) or §1.2 (the three %-sites).  A case that cannot be promoted
+# says so in a `why_not_same_root=` comment: which axis it actually lives on,
+# and why unifying those nine points would leave it standing.  The reason is a
+# COMMENT and not a fifth tuple element -- three readers unpack exactly four
+# fields (this file, tools/case_counts.py, tools/aot_cover.test.py), and a
+# fifth would break all three to record something none of them judge.
 DIVERGENCE = [
     # The interpreter returns nil when a function falls off the end; the tagged
     # NV value has no nil tag, so the codegen returns a zeroed NV.
+    #
+    # why_not_same_root=value-representation.  NV's tag space is closed at three
+    # members -- NV_INT 0 / NV_FLT 1 / NV_BOO 2 (src/compilation/aot_native.c
+    # lines 175-177, struct at 174, on 28af734) -- so "no value" has no tag to
+    # be, and the first tag is what it decays into: the function epilogue emits
+    # `return nv_int(0)` (aot_native.c:691).  The decay is not only at the
+    # return: nv_tru() (:193) branches on NV_FLT and otherwise trusts `a.i`, so
+    # a nil-valued NV also reads as false/zero wherever the value is observed.
+    # §1.1's six points decide HOW and/or produce a boolean; §1.2's three decide
+    # HOW WIDE the remainder is.  Unify all nine and nil still has nowhere to
+    # live here, so this case survives them -- which is the "same root" question,
+    # answered no.  The nearest section is not one of the two the criterion
+    # names: §1.3 counts this very struct as the AOT half of a representation
+    # split, but §1.3's axis is WIDTH (int32 vs int64) and "may it be nil?" is a
+    # KIND -- a 64-bit NV is no closer to holding nil than a 32-bit one.
+    # Removal is scheduled, not achieved: DECFY_DESIGN §6 step 2 has the native
+    # backend eat the IR/Value semantics, which replaces NV wholesale; this case
+    # leaves the list then.  Until that lands, it is a real divergence.
     ("func_no_return",
      "func nothing() { x = 1 }\nsay nothing()\n",
      "nil\n", "0\n"),
@@ -196,6 +222,25 @@ DIVERGENCE = [
     # ASSIGNING to it inside a function does not write the global in the
     # interpreter (the name becomes local, so `g = g + 5` reads nil, and
     # nil + 5 is 5).  The codegen resolves the declared global and writes it.
+    #
+    # why_not_same_root=name-resolution-and-scope.  The two sides disagree about
+    # which cell the name `g` denotes, before any value exists.  Interpreter: a
+    # name assigned in a function body is local unless the body declares it --
+    # src/compiler/compiler.c:2393 takes the in_function branch, :2395 writes
+    # the global only when lookup_global_decl() finds a `global g` INSIDE the
+    # body, and :2406 otherwise allocates a local.  Native: collect_globals()
+    # (aot_native.c:349-363) walks TOP-LEVEL statements only and makes every
+    # top-level assignment target a global (:358), with no in_function notion at
+    # all, so the emitted code writes the global the interpreter left alone.
+    # Measured on 28af734, and the measurement is what makes SCOPE the cause
+    # rather than arithmetic: adding `global g` inside the body makes the
+    # interpreter print 7/7 -- the native answer -- while the translator emits a
+    # BYTE-IDENTICAL .c for both programs (`diff` clean).  One .c file, two
+    # interpreter outputs; no operator is involved anywhere.
+    # §1.1/§1.2 both decide how a value is computed once the operands are
+    # chosen; this is settled earlier, so unifying all nine points cannot move
+    # it.  Unlike the case above there is no adjudicated fix, so this one is
+    # not scheduled for removal either -- it is simply open.
     ("global_write_from_func",
      "global g\ng = 2\nfunc bump() { g = g + 5\nreturn g }\nsay bump()\nsay g\n",
      "5\n2\n", "7\n7\n"),
