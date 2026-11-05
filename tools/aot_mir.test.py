@@ -111,8 +111,13 @@ PREAMBLE_MARKERS = ("nv_die_division_by_zero", "nv_fmt_double", "static void nv_
 # only read `NV`, the MIR route's globals were invisible to it and the
 # compound bucket below could no longer be attributed to a real set
 # difference.  Reading both is not a tolerance: MV_INT and NV_INT are both 0,
-# so the two initializer spellings denote the same value.
-GLOBAL_DECL = re.compile(r"^static (?:NV|MirVal) (g_\w+) = \{ (?:NV_INT|MV_INT), 0, 0 \};$")
+# so the two initializer spellings denote the same value.  The MIR spelling then
+# gained a second initializer -- MV_NIL, because a global read before its first
+# store is nil and not the integer 0 -- which is a difference in VALUE and not
+# in NAME, so it is admitted here: this regex answers "which names" and must
+# keep answering it when the initializer changes, or the globals it filters out
+# become invisible again and the bucket silently loses a case.
+GLOBAL_DECL = re.compile(r"^static (?:NV|MirVal) (g_\w+) = \{ (?:NV_INT|MV_INT|MV_NIL), 0, 0 \};$")
 CODEGEN = re.compile(r"^IR-MIR-CODEGEN[|](.*)$")
 CONSERVE = re.compile(r"^IR-MIR-CONSERVE[|](.*)$")
 NOTYET = re.compile(r"^IR-MIR-NOT-YET[|]op=(OP_[A-Z0-9_]+)[|]n=(\d+)$")

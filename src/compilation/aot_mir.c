@@ -87,6 +87,7 @@ static const char *const kMirValBlock =
 "#define MV_FLT 1   /* = VAL_FLOAT */\n"
 "#define MV_STR 2   /* = VAL_STRING -- constructible only as a resident constant */\n"
 "#define MV_BOO 3   /* = VAL_BOOL -- 3, not NV's 2; see the tag pair below */\n"
+"#define MV_NIL 5   /* = VAL_NIL -- the value NV cannot spell; see MV_NIL below */\n"
 "\n"
 "/* The placeholder's own test: these are compiled into every generated file,\n"
 "   and tools/aot_mir.test.py compiles every generated file with the system\n"
@@ -105,10 +106,15 @@ static const char *const kMirValBlock =
 "   MV_BOO 3.  int and float agree; bool does not, so it is translated here\n"
 "   and nowhere else.  A tag with no NV counterpart stops the program rather\n"
 "   than answering with NV_BOO's number, which would be a silent wrong\n"
-"   answer.  MV_STR is one of those: NV has no string payload, so mv_as_nv()\n"
-"   must abort on a string rather than hand back an integer -- which is why\n"
-"   the one place a string is printed is mv_say() below, not the shared\n"
-"   exit. */\n"
+"   answer.  MV_STR is the first of those: NV has no string payload, so\n"
+"   mv_as_nv() must abort on a string rather than hand back an integer -- which\n"
+"   is why the one place a string is printed is mv_say() below, not the shared\n"
+"   exit.  MV_NIL is the second: NV has three tags and none of them is nil,\n"
+"   which used to make a nil indistinguishable from the NUMBER 0 the generated\n"
+"   globals were initialised with (see MV_NIL below).  Each of the two gets its\n"
+"   own arms in exactly those adapters a value can enter, and every adapter\n"
+"   WITHOUT such an arm still stops the program instead of answering with\n"
+"   NV_BOO's number -- an abort, never a silent wrong answer. */\n"
 "static inline int mv_tag_from_nv(int t) {\n"
 "    switch (t) { case NV_INT: return MV_INT; case NV_FLT: return MV_FLT;\n"
 "                 case NV_BOO: return MV_BOO; default: abort(); }\n"
@@ -134,25 +140,103 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* MV_NIL -- the value the interpreter has and NV has no name for.\n"
+" *\n"
+" * WHY IT EXISTS.  Every global the interpreter creates starts as VAL_NIL,\n"
+" * and a name that was never assigned compiles to OP_LOAD_GLOBAL with index\n"
+" * -1, for which the dispatch answers value_set(..., VAL_NIL, ...).  This\n"
+" * route answered that programme with a REFUSAL: prescan rejected the\n"
+" * instruction ('global index -1 out of range'), and the file it did emit\n"
+" * initialised every global with { MV_INT, 0, 0 } -- the integer zero.  So\n"
+" * `say nosuchglobal == nil` printed true in the interpreter and the same\n"
+" * program could not be translated here at all, and the false equivalence\n"
+" * between 0 and nil sat where a difference should have been visible.  Zero is\n"
+" * a FALSE EQUIVALENCE: it is falsy like nil, but it prints '0' where nil\n"
+" * prints 'nil', and `x == nil` and `x == 0` are two answers, not one.\n"
+" *\n"
+" * WHAT IT ADDS.  One tag (MV_NIL = 5, Value's VAL_NIL) whose payload is all\n"
+" * zeroes, a constructor, and the arms nil can actually enter: equality\n"
+" * (mv_eq/mv_ne, where nil equals only nil), truthiness (mv_tru, where\n"
+" * vm_truthy says nil is false), `not` (mv_not, defined through mv_tru so the\n"
+" * one truth-value rule keeps one owner), the opcode OP_IS_NIL (mv_is_nil),\n"
+" * and one branch of the print exit (mv_say).  The producer is likewise a\n"
+" * single one: OP_LOAD_GLOBAL with index -1, plus the globals initialiser.\n"
+" * Index -1 is not a magic number here -- it is the compiler's own spelling of\n"
+" * 'unresolved', the same -1 the emitter reads, and the only value it takes.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER.\n"
+" *  - Arithmetic and ordering on a nil (mv_add/mv_lt and the rest).  The\n"
+" *    interpreter raises type_mismatch there; this route has no exception\n"
+" *    mechanism yet, so mv_as_nv() stops the program.  Loud, never a number --\n"
+" *    but it is NOT the interpreter's answer, and closing it needs the\n"
+" *    exception opcodes (the C class in docs/streams/aot-mir-value.md).\n"
+" *  - nil as a container: INDEX_GET on nil, nil in a dict/list, nil returned\n"
+" *    from a call.  Those opcodes are outside this subset, so a nil this block\n"
+" *    cannot receive is a nil it need not define.\n"
+" *  - A STORE to an unresolved global.  Only OP_LOAD_GLOBAL accepts -1;\n"
+" *    OP_STORE_GLOBAL still refuses a negative index, because the interpreter\n"
+" *    creates the global on assignment and this route has no table to create\n"
+" *    it in.\n"
+" *\n"
+" * DELETE CONDITION (decidable, not a wish).  Delete this tag, the constructor\n"
+" * and every nil arm in the commit that gives the shared NV a nil tag and a\n"
+" * nv_say branch for it: then mv_nil() becomes mv_from_nv(nv_nil()), the other\n"
+" * arms collapse into the same delegation every operation above already uses,\n"
+" * and the test is that the string 'MV_NIL' no longer occurs in this block at\n"
+" * all (grep -c over kMirValBlock == 0).  Deleting it earlier, while NV still\n"
+" * has three tags, leaves those adapters with no answer for a value the\n"
+" * emitter produces, which is the shape this block exists to name.\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases mir_nil_vs_zero,\n"
+" * mir_nil_coalesce and mir_nil_print_truthiness compare bytes against the\n"
+" * interpreter; the first exists precisely so that answering nil with 0 is a\n"
+" * red criterion rather than a disagreement nobody looked at. */\n"
+"static inline MirVal mv_nil(void) {\n"
+"    MirVal r;\n"
+"    r.type = MV_NIL;\n"
+"    r.ival = 0;\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* Every operation below is the nv_* one, reached through the field moves\n"
-"   above: the delegating body IS the claim that the runtime is single. */\n"
+"   above: the delegating body IS the claim that the runtime is single.  The\n"
+"   exceptions are the arms that name MV_NIL, each one spelled the way the\n"
+"   interpreter's own val_* spells it for VAL_NIL, because nv_* has no nil to\n"
+"   spell: mv_is_nil (the OP_IS_NIL test itself), the equality pair (nil equals\n"
+"   only nil), and truthiness (vm_truthy says nil is false).  A further nil\n"
+"   rule would be a second rule, so nil does NOT get its own `not`: mv_not\n"
+"   goes through mv_tru, and vm_truthy stays the only truth rule.  The print\n"
+"   exit is the one arm outside this list -- mv_say, whose nil branch prints\n"
+"   the word the interpreter prints. */\n"
 "static inline MirVal mv_int(long long x) { return mv_from_nv(nv_int(x)); }\n"
 "static inline MirVal mv_flt(double x)    { return mv_from_nv(nv_flt(x)); }\n"
 "static inline MirVal mv_boo(int x)       { return mv_from_nv(nv_boo(x)); }\n"
+"static inline MirVal mv_is_nil(MirVal a) { return mv_boo(a.type == MV_NIL); }\n"
+"static inline int mv_tru(MirVal a) {\n"
+"    if (a.type == MV_NIL) return 0;   /* vm_truthy: VAL_NIL is false, and only it */\n"
+"    return nv_tru(mv_as_nv(a));\n"
+"}\n"
 "static inline MirVal mv_neg(MirVal a) { return mv_from_nv(nv_neg(mv_as_nv(a))); }\n"
-"static inline MirVal mv_not(MirVal a) { return mv_from_nv(nv_not(mv_as_nv(a))); }\n"
+"static inline MirVal mv_not(MirVal a) { return mv_boo(!mv_tru(a)); }\n"
 "static inline MirVal mv_add(MirVal a, MirVal b) { return mv_from_nv(nv_add(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_sub(MirVal a, MirVal b) { return mv_from_nv(nv_sub(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_mul(MirVal a, MirVal b) { return mv_from_nv(nv_mul(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_div(MirVal a, MirVal b) { return mv_from_nv(nv_div(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_mod(MirVal a, MirVal b) { return mv_from_nv(nv_mod(mv_as_nv(a), mv_as_nv(b))); }\n"
-"static inline MirVal mv_eq(MirVal a, MirVal b) { return mv_from_nv(nv_eq(mv_as_nv(a), mv_as_nv(b))); }\n"
-"static inline MirVal mv_ne(MirVal a, MirVal b) { return mv_from_nv(nv_ne(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_eq(MirVal a, MirVal b) {\n"
+"    if (a.type == MV_NIL || b.type == MV_NIL) return mv_boo(a.type == b.type);\n"
+"    return mv_from_nv(nv_eq(mv_as_nv(a), mv_as_nv(b)));\n"
+"}\n"
+"static inline MirVal mv_ne(MirVal a, MirVal b) {\n"
+"    if (a.type == MV_NIL || b.type == MV_NIL) return mv_boo(a.type != b.type);\n"
+"    return mv_from_nv(nv_ne(mv_as_nv(a), mv_as_nv(b)));\n"
+"}\n"
 "static inline MirVal mv_lt(MirVal a, MirVal b) { return mv_from_nv(nv_lt(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_le(MirVal a, MirVal b) { return mv_from_nv(nv_le(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_gt(MirVal a, MirVal b) { return mv_from_nv(nv_gt(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_ge(MirVal a, MirVal b) { return mv_from_nv(nv_ge(mv_as_nv(a), mv_as_nv(b))); }\n"
-"static inline int mv_tru(MirVal a) { return nv_tru(mv_as_nv(a)); }\n"
 "\n"
 "/* A string constant.  RESIDENT, not owned: the argument is always a C string\n"
 "   literal -- an array with static storage duration that nobody frees -- and\n"
@@ -177,12 +261,17 @@ static const char *const kMirValBlock =
 " * WHY IT EXISTS.  The shared preamble's nv_say(NV a) has exactly three\n"
 " * branches: NV_BOO prints true/false, NV_FLT prints through nv_fmt_double,\n"
 " * and everything else prints printf(\"%lld\", a.i).  NV is\n"
-" * `{int t; long long i; double f;}`, so it has nowhere to put a string, and\n"
-" * `say s` cannot be lowered through the shared exit at all -- mv_as_nv()\n"
-" * aborts on MV_STR by design (see the tag pair above).\n"
+" * `{int t; long long i; double f;}`, so it has nowhere to put a string and\n"
+" * no tag for nil, and neither `say s` nor `say nil` can be lowered through the\n"
+" * shared exit at all -- mv_as_nv() aborts on MV_STR and MV_NIL by design (see\n"
+" * the tag pair above).\n"
 " *\n"
-" * WHAT IT ADDS.  Exactly one branch: a resident string.  Every other tag is\n"
-" * handed to nv_say(mv_as_nv(a)), so integer, float and bool formatting keep\n"
+" * WHAT IT ADDS.  Exactly two branches, one per tag NV cannot carry: a resident\n"
+" * string (the string itself, not a formatted integer), and the three letters\n"
+" * the interpreter prints for VAL_NIL (its say-op prints the literal word `nil`\n"
+" * where it prints a number, so the word is the answer, not a formatting rule).\n"
+" * Every other tag is handed to nv_say(mv_as_nv(a)), so integer, float and bool\n"
+" * formatting keep\n"
 " * one implementation.  Formatting those again here would be a second runtime\n"
 " * in shadow, which is the thing the whole MirVal block exists to avoid.\n"
 " *\n"
@@ -193,12 +282,15 @@ static const char *const kMirValBlock =
 " * whatever integer happens to sit in ival.\n"
 " *\n"
 " * DELETE CONDITION (decidable, not a wish).  Delete this function in the\n"
-" * commit where nv_say() learns strings -- then the string branch belongs in\n"
-" * the shared exit and both routes print through it -- or in the commit that\n"
-" * completes P3 and leaves one printer for the route\n"
+" * commit where nv_say() learns BOTH tags -- strings and nil -- then both\n"
+" * branches belong in the shared exit and both routes print through it (the\n"
+" * decidable form: `grep -c MV_NIL` and `grep -c MV_STR` over this block fall\n"
+" * to 0 apart from the two #define lines) -- or in the commit that completes P3\n"
+" * and leaves one printer for the route\n"
 " * (docs/streams/aot-mir-value.md section 4).  A print exit that outlives its\n"
 " * reason is the debt this comment exists to date. */\n"
 "static inline void mv_say(MirVal a) {\n"
+"    if (a.type == MV_NIL) { printf(\"nil\\n\"); return; }\n"
 "    if (a.type == MV_STR) {\n"
 "        if (a.ival == 1 && a.sval) { printf(\"%s\\n\", a.sval); return; }\n"
 "        abort();   /* a dynamic string: nothing in this subset constructs one */\n"
@@ -390,6 +482,7 @@ static int op_regs(int op) {
     case OP_EQ: case OP_NEQ: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
     case OP_AND: case OP_OR: return R1 | R2 | R3;
     case OP_NEG: case OP_NOT: return R1 | R2;
+    case OP_IS_NIL: return R1 | R2;   /* reads r2, writes the BOOL in r1 */
     case OP_LOAD_GLOBAL: return R1;
     case OP_STORE_GLOBAL: return R2;
     case OP_JUMP: return 0;
@@ -646,6 +739,19 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
             case OP_LOAD_GLOBAL:
             case OP_STORE_GLOBAL: {
                 int ix = (op == OP_LOAD_GLOBAL) ? ir_insn_r2(in) : in->dst;
+                /* Index -1 is not an out-of-range operand: it is the compiler's
+                   spelling of an UNRESOLVED global, and the interpreter answers
+                   it with VAL_NIL (src/vm/vm.c's L_LOAD_GLOBAL: `if (idx < 0)
+                   value_set(..., VAL_NIL, ...)`).  It used to be refused here,
+                   which turned the difference between nil and the integer 0 the
+                   generated globals were initialised with into an invisible
+                   refusal -- the program never even reached the emitter.
+                   Accepting it is one instruction: the emitter writes mv_nil()
+                   and NO name, so there is no gnames[] lookup and no g_gref
+                   entry to miss.  Only OP_LOAD_GLOBAL takes it: a STORE needs a
+                   global to store into, and this route has no table to create
+                   one in, so a negative index there stays a refusal. */
+                if (op == OP_LOAD_GLOBAL && ix == -1) break;
                 if (ix < 0 || ix >= root->global_name_count || ix >= g_gref_n)
                     return bad("container=%d insn=%d global index %d out of range (count=%d)",
                                f, i, ix, root->global_name_count);
@@ -763,7 +869,14 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_OR:           buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) || mv_tru(v[%d]));", r1, r2, r3); return 0;
     case OP_NEG:          buf_fmt(b, "    v[%d] = mv_neg(v[%d]);", r1, r2); return 0;
     case OP_NOT:          buf_fmt(b, "    v[%d] = mv_not(v[%d]);", r1, r2); return 0;
-    case OP_LOAD_GLOBAL:  buf_fmt(b, "    v[%d] = %s;", r1, c->gnames[w2]); return 0;
+    case OP_IS_NIL:       buf_fmt(b, "    v[%d] = mv_is_nil(v[%d]);", r1, r2); return 0;
+    case OP_LOAD_GLOBAL:
+        /* Index -1 has no name to look up: gnames[] is built from the globals
+           prescan saw REFERENCED, and an unresolved global is referenced by
+           nobody.  Indexing it would be the emitter guessing, so the value is
+           spelled out instead -- nil, which is what the interpreter answers. */
+        if (w2 == -1) { buf_fmt(b, "    v[%d] = mv_nil();", r1); return 0; }
+        buf_fmt(b, "    v[%d] = %s;", r1, c->gnames[w2]); return 0;
     case OP_STORE_GLOBAL: buf_fmt(b, "    %s = v[%d];", c->gnames[r1], r2); return 0;
     case OP_JUMP:         buf_fmt(b, "    goto L%d;", w2); return 0;
     case OP_JUMP_IF_FALSE: buf_fmt(b, "    if (!mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
@@ -954,9 +1067,17 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
        common prefix and the first difference lands on the register type. */
     buf_str(&out, kMirValBlock);
 
+    /* nil, not 0.  The interpreter creates every global as VAL_NIL
+       (src/vm/vm.c: value_set(..., VAL_NIL, ...) when the globals table is
+       built), and this file used to spell that default { MV_INT, 0, 0 } -- a
+       FALSE EQUIVALENCE, dated here: a global read before its first store
+       answered '0' here and 'nil' in the interpreter, so `x == nil` and
+       `x == 0` came back swapped for the same x and `say x` printed the wrong
+       word.  Zero is falsy like nil, which is exactly why the mistake survived
+       comparison-only programs and needed mir_nil_vs_zero to be written down. */
     for (int i = 0; i < root->global_name_count; i++) {
         if (!gnames[i]) continue;
-        buf_fmt(&out, "static MirVal %s = { MV_INT, 0, 0 };" NL, gnames[i]);
+        buf_fmt(&out, "static MirVal %s = { MV_NIL, 0, 0 };" NL, gnames[i]);
     }
     buf_str(&out, NL);
 
