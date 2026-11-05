@@ -3466,7 +3466,7 @@ Windows 构建从 `39ddabd`（2026-10-02）起一直红，最后一次绿是 `a2
 
 **修法（三处，互不相关）。** ① 仓库头改名 `src/platform/process.h` → `src/platform/im_process.h`（`git mv`），更新 5 个 C 引用点与 3 处文档反引号引用；没选 `#include_next`，因为那是 GCC 专有扩展，而改名是纯标准 C。② `getline` 与上面无关 —— mingw-w64 的 `<stdio.h>` 里 `getline` **零出现**（MINGW64 与 UCRT64 两个 sysroot 都是 0），所以新增 `src/common/probe_compat.h` 提供 Windows 本地 shim（`fgets` + `realloc`），而不是把两个探针从 Windows 构建里排除。③ `src/common/vverse_pack.c` 的 `VV_STAT` 是 `_stat`，而 `_stat` 展开为 `_stat64i32`（`_mingw_stat64.h:22`），填的却是 `struct stat`，加 `VV_STAT_T` 修正。
 
-**验证。** 直接调用 Windows 侧工具链 `/mnt/c/msys64/mingw64/bin/gcc.exe`（gcc 16.1.0）：对全部 `src/**/*.c` 做 `-fsyntax-only` 只筛 `implicit declaration`，修复前命中 5 处，修复后只剩 `src/platform/http_probe.c:93` 的 `setenv`，而它在 `CMakeLists.txt:202` 的 `if(NOT WIN32)` 里、不参与 Windows 构建。受影响编译单元逐个 PASS。发布会话在仓库外克隆上完成 164/164 干净重建、`inimerse.exe` 链接成功。
+**验证。** 直接调用 Windows 侧工具链 `/mnt/c/msys64/mingw64/bin/gcc.exe`（gcc 16.1.0）：对全部 `src/**/*.c` 做 `-fsyntax-only` 只筛 `implicit declaration`，修复前命中 5 处，修复后只剩 `src/platform/http_probe.c:122` 的 `setenv`，而它在 `CMakeLists.txt:202` 的 `if(NOT WIN32)` 里、不参与 Windows 构建。受影响编译单元逐个 PASS。发布会话在仓库外克隆上完成 164/164 干净重建、`inimerse.exe` 链接成功。
 
 **门禁实测（`.verify/v31/gate_win.log`）：** `GATE_RC=0`，`gate: OK — every stage passed.`，十阶段全 PASS，`warnings: 0` / `errors: 0`，`100% tests passed, 0 tests failed out of 120`、0 跳过，差分模糊测试钉住 `(0 DIVERGE, 0 THREW, 0 untranslated)`，`check_links: 93 markdown files, 412 links (17 external, 0 anchors, 395 local), 0 broken`，`check_doc_paths: 16 markdown files, 433 backtick 引用, 0 broken`。**没有新增 CTest，`EXP_CTEST` 保持 120** —— 本轮只动头文件位置与两个宏，不新增可执行行为。
 
