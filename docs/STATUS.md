@@ -4272,3 +4272,41 @@ BOARD 的 `agent-bridge-round2`（`63fef73`）决断②把这条缺口收成一�
 **诚实边界**：①`capabilities` 目前是**占位**——只认 `signal`、不参与判定，「per-pair 能力」这一半决断②还没有消费者；②secret 明文落盘，权限只警告；③表在进程内加载一次，**没有热加载**（改表要重启 hub），也没有 pair 台账与所有者表——「谁登记了谁」仍然只在文件里；④Windows 半侧只编译不运行；⑤没有签名链，也不做每 verse 一把所有者密钥。
 
 **迁移**：写表（每对一行、secret 沿用旧全局密钥）→ 客户端不必改（同一 HMAC 算法、同一 secret）→ 起 hub 验证同一 pair 从 403 变 200 → **从环境里撤掉 `CRP_ENROLL_SECRET`**（留着不参与判定，但会让人以为还有一条全局通道）。
+## §10.103 MIR 侧的第一个字符串常量：驻留、零分配、一个打印出口（aot-mir-value，A 类首项）
+
+作业单 `docs/streams/aot-mir-value.md` 的 §3 只要求 `OP_LOADK_STRING` 一通，§5 与 §6 把落法与诚实边界写死了。本流交付它，并把上一流那句「6 条断言常驻」从**承诺**变成**测量**。
+
+**两笔提交**：笔一让 `tools/aot_mir.test.py` 读每一条生成产物的文本、逐条点名 6 条布局断言（缺哪条报哪条），反向控制是把 `offsetof(MirVal, ptr) == 24` 从模板里删掉并确认判据红且点名；笔二落地 `OP_LOADK_STRING` 与三个 MIR-only 用例。
+
+**落法（§5 甲）**：字符串常量是**驻留**的静态 C 字面量，`ival = 1` 打驻留标记，与本 VM 已有的 `VAL_STRING` 约定同源；**零分配、零拷贝、无所有者**。`ival` 同字段两义是 VM 已有债，本流沿用并在生成代码的注释里写明，不新造干净字段。不碰 `NEW_ARRAY`/`NEW_DICT`/`NEW_SET`/`INDEX_*`/`CONCAT`。
+
+**打印（§4 丙的后果）**：共享 preamble 的 `nv_say` 只有三个分支且 `NV` 没有字符串载荷，`mv_as_nv` 对 `MV_STR` 按设计中止。因此本流新增**恰好一个** MIR 侧打印出口 `mv_say`：**只有驻留字符串**走自己的分支，其余所有 tag 一律 `nv_say(mv_as_nv(a))` —— 整数/浮点/布尔的格式化仍只有一份实现，重实现会变成「影子里的第二套运行时」。它不是许可，而是第二笔诚实欠账：删除条件写在注释里（`nv_say` 学会字符串，或完成 P3 后只剩一个打印器）。
+
+**读数（本流 worktree 实跑，逐字）**
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=3|mir-only-same-as-interpreter=3
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)
+IR-AOT-MIR|accepted=89|refused=0|same-as-interpreter=89|of=29|emittable=31|of-ops=67|not-emittable=36|corpus=inline-cases:86|mir-only-cases:3|beyond-ast-denominator=1|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-LOWERING|handles=31|of=67|unknown=36|table=31|emitter=31|reported=31|agree=yes
+IR-AOT-MIR-BEYOND|ops=(OP_LOADK_STRING)|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR-VERDICT|PASS|tree=6469528d33bc6b7bde35645ebed75002e0b99a81|accepted=89|of=29|covered=29|missing=0|refused=0|same-as-interpreter=89|prelude-excluded=yes|beyond-ast-denominator=1
+```
+
+`same-as-interpreter` 由 86 涨到 89；`handles` 由 30 涨到 31、`unknown` 由 37 降到 36。
+
+**与作业单 §3 判据 2 的偏差（要说的那条）**：作业单期望 `ir_spec` 的 `aot N/67` 上涨并报值。它没有涨，仍是 29/67，而且**不是漏做**：这个分母测的是「解释器在 86 例 AST 语料上**实际执行过**的 opcode」，而 AST 路线对每个字符串程序都是编译期拒绝（expression kind 2 is outside the numeric subset），所以任何字符串程序都进不了那份语料，分母也永远不会因为本步而涨。把 MIR-only 的 opcode 塞进 `of` 或塞进那个 pin，会让 `missing` 变成空话（仓库里已把「改分母使其自洽」记成一种陷阱）。因此本流**不动那个分数**，另开一行 `IR-AOT-MIR-BEYOND` 与 pin 里的 `beyond-ast-denominator`：**同一个 opcode 可以在这条路线被计数，却不在那条路线的分母里**，两件事各有各的行。
+
+**`OP_OR` 是顺手撞见的另一件事**：`bool_or` 与两条 `or_result_*` 的 lowering 里都有 `OP_OR`，而解释器一次都没执行过它（短路 `JUMP_IF_TRUE` 直接跨过去了），所以它既不在 `covered` 里、也不是本流的功劳，单列 `IR-AOT-MIR-UNEXECUTED`。这是**语料的缺口**，不是 lowering 的缺陷；把它算进 covered 就是拿没跑过的 opcode 记账。
+
+**诚实边界（作业单 §6 逐条）**
+
+1. 字符串所有权语义是**沿用不是新建**：驻留标记来自 VM 既有约定，本步不引入引用计数、也不解决「谁释放非驻留字符串」——AOT 产物今天没有释放路径。非驻留字符串要等 `OP_CONCAT`，那一步才产生新字符串，必须给释放策略。
+2. `OP_LOADK_STRING` 通了**不等于字符串语义通了**：`say` 打印、`==` 比较、`concat` 拼接是三件事，本步只交付第一件。
+3. C 类 14 个 opcode 与值表示无关（线程/调度/异常），本步不碰。
+4. 生成代码里那份值类型是**结构兼容的拷贝**，不是 `src/vm/vm.h` 那一份；两边靠 `same-as-interpreter` 与 6 条布局断言绑住，不靠 `#include`。
+5. Windows 半侧：本步只动 lowering 与 preamble 文本，产物在 Windows 上未运行（沿用既有边界）。
+6. 新增边界：**一个打印出口覆盖不到的东西**——`ival != 1` 的字符串。本子集没有 opcode 能造出它，所以遇到它 `mv_say` 选择中止而不是打印 `ival` 里的整数；等 `OP_CONCAT` 落地时，这里必须先有决定。
+7. 新增边界：`IR-MIR-LAYOUT-ASSERT` 读的是**生成出来的文本**，不是编译器真的求过值的那 6 条断言。它抓的是「模板丢了一条」，抓不到「`offsetof` 与真实布局在别的编译器/别的 ABI 上不一致」——后者只有编译失败能抓，且只有构建过才知道。
+

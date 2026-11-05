@@ -71,6 +71,12 @@ ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "tools" / "aot_native.test.py"
 AOT_PIN = ROOT / "tools" / "aot_cover.pin.json"
 PIN = ROOT / "tools" / "aot_mir_cover.pin.json"
+# The MIR route's own test owns the cases the AST route cannot lower (a string
+# expression is refused there: "expression kind 2 is outside the numeric
+# subset").  The list is imported rather than copied, so the case this file
+# counts and the case tools/aot_mir.test.py compares byte for byte can never
+# become two different programs.
+MIR_TEST = ROOT / "tools" / "aot_mir.test.py"
 
 # The prelude text, and only the text: the control's expected opcode set is
 # measured by running this program on its own (see prelude_control), because a
@@ -124,6 +130,21 @@ def load_cases():
     sys.path.insert(0, str(ROOT / "tools"))
     spec.loader.exec_module(mod)
     return mod
+
+
+def load_mir_only():
+    """The cases tools/aot_mir.test.py says the AST route cannot lower.
+
+    Read out of that module (executing its top level only) so there is one
+    owner of the list.  Returning them separately, never folded into the
+    shared `cases`, is the point: they change what the MIR route demonstrates
+    without moving the AST route's denominator, and the two numbers stay
+    distinguishable on the readings."""
+    spec = importlib.util.spec_from_file_location("aot_mir_cases", MIR_TEST)
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(ROOT / "tools"))
+    spec.loader.exec_module(mod)
+    return list(mod.MIR_ONLY)
 
 
 def head_sha():
@@ -243,17 +264,23 @@ def indexed_ops(emitter_body):
     """The opcodes whose emitter case reads a pool / global / function / label index.
 
     Read one case at a time, so the answer is about that opcode's own body: the
-    emitter indexes c->node->float_pool, c->gnames, c->fnnames / child_ids and the
-    jump label.  An opcode that only moves registers cannot have an out-of-range
-    operand, so it needs no check in prescan -- which is why prescan covering FEWER
-    opcodes than the emitter is correct, not a gap.
+    emitter indexes a pool (c->node->float_pool, c->node->string_pool), c->gnames,
+    c->fnnames / child_ids and the jump label.  An opcode that only moves registers
+    cannot have an out-of-range operand, so it needs no check in prescan -- which is
+    why prescan covering FEWER opcodes than the emitter is correct, not a gap.
+
+    A pool is matched as `something_pool[` rather than by the two names that
+    existed when this was written.  The spelling list used to be closed, so
+    OP_LOADK_STRING read its pool and the detector called the prescan case "dead"
+    -- the check was right and the reader was blind.  Any pool a later opcode
+    adds is now seen without editing this function.
     """
     out = set()
     for m in CASE_OP.finditer(emitter_body or ""):
         start = m.end()
         nxt = CASE_OP.search(emitter_body, start)
         chunk = emitter_body[start:nxt.start() if nxt else len(emitter_body)]
-        if re.search(r"\b(float_pool|gnames|fnnames|child_ids)\s*\[|goto L%d", chunk):
+        if re.search(r"\b(\w+_pool|gnames|fnnames|child_ids)\s*\[|goto L%d", chunk):
             out.add(m.group(1))
     return out
 
@@ -261,7 +288,7 @@ def indexed_ops(emitter_body):
 def detector_problems(indexed, prescanned):
     """Whether the index detector looked at anything at all.
 
-    `indexed` is counted by matching a spelling -- `float_pool[`, `gnames[`,
+    `indexed` is counted by matching a spelling -- `*_pool[`, `gnames[`,
     `goto L%d` -- inside each emitter case.  That is a reading of today's source,
     and it goes quiet the day the emitter reads a pool through a helper: the set
     becomes empty, `indexed - prescanned` is still empty, and every line below
@@ -549,9 +576,14 @@ def main():
         return 2
 
     mod = load_cases()
-    cases = [(n, src) for n, src, _want in mod.EQUIVALENCE]
+    shared = [(n, src) for n, src, _want in mod.EQUIVALENCE]
     if args.limit:
-        cases = cases[:args.limit]
+        shared = shared[:args.limit]
+    # The MIR-only cases are always run: they are few, and they are the only
+    # programs in which this route lowers something the AST route cannot.  --limit
+    # is a knob for the shared corpus's runtime, not for the claim.
+    mir_only = load_mir_only()
+    cases = shared + mir_only
 
     workdir = Path(tempfile.mkdtemp(prefix="aot_mir_cover_"))
     prelude_excluded = not (workdir / "params.params").exists()
@@ -569,7 +601,15 @@ def main():
 
     accepted = refused = equivalent = 0
     corpus_ops = set()
+    # `corpus_ops` is what the lowered streams CONTAIN; these two are what the
+    # interpreter EXECUTED.  The two are not the same question -- a short-circuit
+    # jump means a case can lower an opcode no run ever reaches -- and treating
+    # them as one is how "beyond the AST denominator" would get the wrong reason
+    # attached to an opcode.
+    executed_ops = set()
+    mir_only_executed = set()
     problems = []
+    mir_only_names = {name for name, _src in mir_only}
     for name, src in cases:
         s = workdir / (name + ".im")
         s.write_text(src)
@@ -603,6 +643,9 @@ def main():
             continue
         emitted = set(parse_ops(gen.get("generated", "()")))
         corpus_ops |= emitted
+        executed_ops.update(dyn)
+        if name in mir_only_names:
+            mir_only_executed.update(dyn)
         for op, count in sorted(dyn.items()):
             if op not in emitted:
                 problems.append("%s: the interpreter executed %s %d time(s) but the MIR stream "
@@ -643,15 +686,49 @@ def main():
         print("IR-AOT-MIR-MISSING|op=%s|why=%s" % (op, why))
     problems.extend(ledger(aot_covered, covered, missing))
 
-    # `emittable=30` standing alone reads as "this lowering handles everything the
-    # corpus reached".  It handles 30 of the 67 opcodes the encoding declares, so the
+    # What this route lowers BEYOND the AST denominator.  `covered` is a subset
+    # of the AST pin by construction -- the ledger above refuses an opcode the
+    # denominator does not name -- so an opcode only the MIR route can reach
+    # cannot be pushed into the fraction without changing what the fraction is
+    # about.  It is named instead, on its own line, with its own basis: the
+    # interpreter executed it on a MIR-only case and the lowered stream carries
+    # it.  Not folded into `of`, because the two denominators answer different
+    # questions and "the two pins are never added".
+    beyond = sorted(mir_only_executed - set(aot_covered))
+    for op in beyond:
+        if op not in emittable:
+            problems.append("%s was executed on a MIR-only case and the lowered stream carries"
+                            " it, but the tool does not report it as emittable" % op)
+    print("IR-AOT-MIR-BEYOND|ops=(%s)|basis=opcodes-the-interpreter-executed-on-the-MIR-only-"
+          "cases-and-the-lowered-streams-contain"
+          "|in-ast-denominator=no|counted-in-covered=no|emittable=%s"
+          % (",".join(beyond) or "none",
+             "yes" if all(o in emittable for o in beyond) else "no"))
+
+    # A different mismatch asks a different question: an opcode a SHARED case lowers
+    # but no interpreter run executes, because a short-circuit jump walks around it.
+    # OP_OR is that opcode today (bool_or / or_result_mod lower it; the runs take the
+    # jump).  Not a defect of the lowering -- the stream is right -- but the corpus's
+    # "same as the interpreter" claim says nothing about it, so a reader who finds it
+    # in a generated file gets the line instead of an implied guarantee.
+    unexecuted = sorted(corpus_ops - set(aot_covered) - executed_ops)
+    print("IR-AOT-MIR-UNEXECUTED|ops=(%s)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-"
+          "that-no-interpreter-run-of-the-corpus-executed"
+          "|in-ast-denominator=no|counted-in-covered=no|emittable=%s"
+          % (",".join(unexecuted) or "none",
+             "yes" if all(o in emittable for o in unexecuted) else "no"))
+
+    # `emittable=31` standing alone reads as "this lowering handles everything the
+    # corpus reached".  It handles 31 of the 67 opcodes the encoding declares, so the
     # static denominator rides in the same line: a reader who must open another file
-    # to learn what the 30 is out of will not open it.
+    # to learn what the 31 is out of will not open it.
     print("IR-AOT-MIR|accepted=%d|refused=%d|same-as-interpreter=%d|of=%d|emittable=%d"
           "|of-ops=%d|not-emittable=%d"
-          "|corpus=inline-cases:%d|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none"
+          "|corpus=inline-cases:%d|mir-only-cases:%d|beyond-ast-denominator=%d"
+          "|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none"
           % (accepted, refused, equivalent, len(aot_covered), len(emittable),
-             len(of_ops), len(of_ops) - len(table_ops), len(cases)))
+             len(of_ops), len(of_ops) - len(table_ops), len(shared), len(mir_only),
+             len(beyond)))
     print("IR-AOT-MIR-COVER|covered=%d|of=%d|denominator=tools/aot_cover.pin.json:covered_ops"
           "|coverage-claim=none" % (len(covered), len(aot_covered)))
 
@@ -704,10 +781,17 @@ def main():
         "of": len(aot_covered),
         "of-source": "tools/aot_cover.pin.json:covered_ops (read, not copied: the two routes "
                      "must not drift apart, and the two pins are never added)",
-        "corpus": {"inline_cases": len(cases), "accepted": accepted, "refused": refused,
+        "corpus": {"inline_cases": len(shared), "mir_only_cases": len(mir_only),
+                   "accepted": accepted, "refused": refused,
                    "same-stdout-and-rc-as-interpreter": equivalent},
         "covered_ops": covered,
         "missing_ops": missing,
+        # Not a numerator and not a denominator: the opcodes this route lowers
+        # that the AST route cannot reach at all, measured on the MIR-only cases.
+        # Kept out of covered_ops because the ledger refuses an opcode the AST
+        # denominator does not name, and kept in the pin because it is a claim
+        # about this route that must not quietly disappear when a case is edited.
+        "beyond-ast-denominator": beyond,
         "coverage-claim": "none",
         "basis": "mir-emitted-ops-union-over-the-corpus",
         "note": [
@@ -717,6 +801,11 @@ def main():
             "lowering, which is why emittable= and the missing reasons are",
             "recorded next to it, and why the denominator is read from the AST",
             "route's pin instead of being written down twice.",
+            "covered/of is about the SHARED corpus only.  Programs the AST route",
+            "refuses (a string expression is one) are measured on their own and",
+            "reported as beyond-ast-denominator=, because folding their opcodes",
+            "into `of` would make the fraction a statement about a corpus the",
+            "first front end cannot run -- and would make `missing` vacuous.",
         ],
     }
 
@@ -743,7 +832,8 @@ def main():
         old = json.loads(PIN.read_text())
         same = (old.get("covered") == live["covered"] and old.get("of") == live["of"]
                 and old.get("covered_ops") == live["covered_ops"]
-                and old.get("missing_ops") == live["missing_ops"])
+                and old.get("missing_ops") == live["missing_ops"]
+                and (old.get("beyond-ast-denominator") or []) == live["beyond-ast-denominator"])
         pin_ok = same or not args.check_pin
         print("IR-AOT-MIR-PIN|tree=%s|head=%s|of=%s|covered=%s|pinned-covered=%s|match=%s|tree-moved=%s"
               % (old.get("tree"), live["tree"], live["of"], live["covered"], old.get("covered"),
@@ -772,9 +862,10 @@ def main():
         print("IR-AOT-MIR-PROBLEM|" + line)
     ok = green and pin_ok
     print("IR-AOT-MIR-VERDICT|%s|tree=%s|accepted=%d|of=%d|covered=%d|missing=%d|refused=%d"
-          "|same-as-interpreter=%d|prelude-excluded=%s"
+          "|same-as-interpreter=%d|prelude-excluded=%s|beyond-ast-denominator=%d"
           % ("PASS" if ok else "FAIL", live["tree"], accepted, live["of"], len(covered),
-             len(missing), refused, equivalent, "yes" if prelude_excluded else "no"))
+             len(missing), refused, equivalent, "yes" if prelude_excluded else "no",
+             len(beyond)))
     return 0 if ok else 1
 
 

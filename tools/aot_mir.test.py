@@ -58,8 +58,15 @@ Readings:
               basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every
               -generated-file-read-off-the-emitted-text
   IR-MIR-LAYOUT-ASSERT-MISS|case=NAME|missing=(NAME,NAME)
+  IR-MIR-MIR-ONLY|case=NAME|mir=accepted|cc=ok|exec=same|diff|rc=..|bytes=N|stdout-hex=...
+      Programs the AST route cannot lower (a string expression is refused there),
+      so they cannot be shared cases; they are compared with the interpreter
+      BYTE for byte and the hex rides on the line, because a string case is
+      where a byte difference plausibly hides.
   IR-MIR-COVER|corpus=inline-cases:N|accepted=N|refused=N|differ=N|conserved=N
               |c-identical=N|c-diff=N|reasons=identical:N,mir-register-shape:N,...
+              |perturbed=N|perturb-c-changed-failures=N|perturb-stdout-changes=N
+              |mir-only-cases=N|mir-only-same-as-interpreter=N
   IR-MIR-VERDICT|PASS|FAIL|...
 
 The layout-assertion reading is the measurement of a promise the previous
@@ -165,6 +172,45 @@ def mirval_assert_problems(text):
     "the emitter stopped carrying offsetof(sval)" is the whole value of the
     measurement, and a bare pattern-not-found cannot tell the two apart."""
     return [name for name, needle in MIRVAL_ASSERTS if needle not in text]
+
+
+# Programs the AST route cannot lower AT ALL, so they cannot join the shared
+# corpus: aot_native refuses a string expression ("expression kind 2 is outside
+# the numeric subset"), and both this file's shared loop and the cover test
+# require an AST file for every shared case.  They are still judged by the same
+# oracle -- the interpreter -- and by the same EXECUTED property; only the
+# AST-file comparison is inapplicable, because there is no second file.
+#
+# The list has ONE owner and the cover test imports it (tools/aot_mir_cover
+# .test.py: load_mir_only()), so the parity case and the coverage case can never
+# drift into being two different programs.
+#
+# The second case is the byte-level one: `\t` and `\n` are REAL bytes by the time
+# the lexer finishes, so a lowering that put the two characters `\` `t` in the
+# C string would print them and this case would notice.  The third exercises the
+# escape writer's other arms in one line -- quote, backslash, a `?` that a C11
+# translator may still read as a trigraph, and a byte >= 0x7f, which buf_c_string
+# writes as octal so the generated literal stays pure ASCII and cannot be
+# re-encoded on the way through the compiler.
+MIR_ONLY = [
+    ("mir_loadk_string", 's = "hi"\nsay s\n'),
+    ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
+    ("mir_loadk_string_quotes", 'say "q\\"z \\\\ back ??= mid \u4e2d"\n'),
+]
+
+
+def run_bytes(cmd, cwd):
+    """run(), keeping stdout as BYTES.
+
+    The shared corpus compares decoded text, which is fine for numbers.  A
+    string case is where a byte difference most plausibly hides, so these cases
+    are compared as bytes and the reading carries the hex."""
+    try:
+        d = subprocess.run([str(c) for c in cmd], cwd=str(cwd), capture_output=True,
+                           timeout=300)
+        return d.returncode, d.stdout, d.stderr
+    except subprocess.TimeoutExpired:
+        return "timeout", b"", b""
 
 
 class Unclassifiable(Exception):
@@ -629,6 +675,51 @@ def main():
 
     problems.extend(wide_controls(mir_tool, interp, workdir, args.verbose))
 
+    # ------------------------------------------------------------ MIR-only cases
+    #
+    # Same oracle, no AST file: EXECUTED is the property that applies, and it is
+    # byte equality.  `say` itself is where the second print exit lives
+    # (mv_say in kMirValBlock carries exactly one string branch), so these
+    # programs are also the only corpus that can catch that branch falling back
+    # to nv_say -- which would print an integer or abort, never the string.
+    mir_only_ran = mir_only_same = 0
+    for name, src in MIR_ONLY:
+        s = Path(workdir) / (name + ".im")
+        s.write_text(src)
+        mir_c = Path(workdir) / (name + ".mir.c")
+        exe_m = Path(workdir) / (name + ".mir.exe")
+        rc_m, om, em = run([mir_tool, "translate", s, mir_c], workdir)
+        got = parse_mir_out(om)
+        mir_only_ran += 1
+        if rc_m != 0:
+            why = got["refused"][0] if got["refused"] else "no IR-MIR-REFUSED line"
+            notyet = ",".join("%s:%d" % (op, n) for op, n in got["notyet"])
+            problems.append("%s: the MIR route refused a case this list exists to measure: %s (%s)"
+                            % (name, why, notyet or (em or "").strip()[:120]))
+            print("IR-MIR-MIR-ONLY|case=%s|mir=refused|why=%s" % (name, why))
+            continue
+        cons = got["conserve"] or {}
+        if cons.get("holds") != "yes":
+            problems.append("%s: IR-MIR-CONSERVE does not hold: %s" % (name, cons))
+        miss = mirval_assert_problems(mir_c.read_text())
+        if miss:
+            problems.append("%s: missing layout assertions (%s)" % (name, ",".join(miss)))
+        rc_c, _o, ec = run(["cc", "-O2", "-o", exe_m, mir_c], workdir)
+        if rc_c != 0:
+            problems.append("%s: cc failed: %s" % (name, (ec or "")[:200]))
+            continue
+        rc_i, out_i, _ei = run_bytes([interp, "--no-mods", "run", s], workdir)
+        rc_r, out_r, _e2 = run_bytes([exe_m], workdir)
+        same = (out_r == out_i) and (rc_r == rc_i)
+        mir_only_same += 1 if same else 0
+        if not same:
+            problems.append("%s: the MIR route printed %r rc=%s, the interpreter %r rc=%s"
+                            % (name, out_r, rc_r, out_i, rc_i))
+            print("IR-MIR-EXEC-DIFF|case=%s|interp-rc=%s|mir-rc=%s|interp-out=%r|mir-out=%r"
+                  % (name, rc_i, rc_r, out_i, out_r))
+        print("IR-MIR-MIR-ONLY|case=%s|mir=accepted|cc=ok|exec=%s|rc=%s|bytes=%d|stdout-hex=%s"
+              % (name, "same" if same else "diff", rc_r, len(out_r), out_r.hex()))
+
     print("IR-MIR-LAYOUT-ASSERT|files=%d|need=%d|files-complete=%d|missing=(%s)"
           "|basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every-generated"
           "-file-read-off-the-emitted-text"
@@ -636,17 +727,19 @@ def main():
              ",".join(sorted(layout_missing)) or "none"))
     print("IR-MIR-COVER|corpus=inline-cases:%d|accepted=%d|refused=%d|differ=%d|conserved=%d"
           "|c-identical=%d|c-diff=%d|reasons=%s|perturbed=%d|perturb-c-changed-failures=%d"
-          "|perturb-stdout-changes=%d"
+          "|perturb-stdout-changes=%d|mir-only-cases=%d|mir-only-same-as-interpreter=%d"
           % (len(cases), accepted, refused, differ, conserved, c_identical, c_diff,
              ",".join("%s:%d" % (r, reasons[r]) for r in DIFF_REASONS),
-             perturbed, perturb_fail, stdout_changes))
+             perturbed, perturb_fail, stdout_changes,
+             mir_only_ran, mir_only_same))
     for line in unclassifiable:
         print("IR-MIR-C-UNCLASSIFIED|" + line)
     for line in problems:
         print("IR-MIR-PROBLEM|" + line)
 
     ok = (differ == 0 and not problems and not unclassifiable and conserved == accepted
-          and perturb_fail == 0 and stdout_changes > 0 and perturbed > 0)
+          and perturb_fail == 0 and stdout_changes > 0 and perturbed > 0
+          and mir_only_same == len(MIR_ONLY))
     if c_identical == 0 and c_diff > 0:
         ok = ok  # a corpus where every file differs is not itself a failure
     print("IR-MIR-VERDICT|%s|tree=%s|accepted=%d|refused=%d|differ=%d|c-identical=%d|c-diff=%d"

@@ -85,7 +85,7 @@ static const char *const kMirValBlock =
 "\n"
 "#define MV_INT 0   /* = VAL_INT */\n"
 "#define MV_FLT 1   /* = VAL_FLOAT */\n"
-"#define MV_STR 2   /* = VAL_STRING -- numbered, not yet constructible */\n"
+"#define MV_STR 2   /* = VAL_STRING -- constructible only as a resident constant */\n"
 "#define MV_BOO 3   /* = VAL_BOOL -- 3, not NV's 2; see the tag pair below */\n"
 "\n"
 "/* The placeholder's own test: these are compiled into every generated file,\n"
@@ -105,7 +105,10 @@ static const char *const kMirValBlock =
 "   MV_BOO 3.  int and float agree; bool does not, so it is translated here\n"
 "   and nowhere else.  A tag with no NV counterpart stops the program rather\n"
 "   than answering with NV_BOO's number, which would be a silent wrong\n"
-"   answer -- OP_LOADK_STRING must add its own direction to this pair. */\n"
+"   answer.  MV_STR is one of those: NV has no string payload, so mv_as_nv()\n"
+"   must abort on a string rather than hand back an integer -- which is why\n"
+"   the one place a string is printed is mv_say() below, not the shared\n"
+"   exit. */\n"
 "static inline int mv_tag_from_nv(int t) {\n"
 "    switch (t) { case NV_INT: return MV_INT; case NV_FLT: return MV_FLT;\n"
 "                 case NV_BOO: return MV_BOO; default: abort(); }\n"
@@ -150,7 +153,58 @@ static const char *const kMirValBlock =
 "static inline MirVal mv_gt(MirVal a, MirVal b) { return mv_from_nv(nv_gt(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_ge(MirVal a, MirVal b) { return mv_from_nv(nv_ge(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline int mv_tru(MirVal a) { return nv_tru(mv_as_nv(a)); }\n"
-"static inline void mv_say(MirVal a) { nv_say(mv_as_nv(a)); }\n"
+"\n"
+"/* A string constant.  RESIDENT, not owned: the argument is always a C string\n"
+"   literal -- an array with static storage duration that nobody frees -- and\n"
+"   `ival = 1` is the marker the interpreter itself uses for exactly that\n"
+"   (src/vm/vm.h:229, src/vm/vm.c:227: VAL_STRING with ival == 1 is an\n"
+"   interned string, and every free site in the runtime skips ival == 1).\n"
+"   Zero allocation, zero copying, and no owner to leak.\n"
+"   `ival` carrying both a payload and a residency flag is debt the VM already\n"
+"   carries; this route follows that convention instead of inventing a cleaner\n"
+"   field that nothing else in the runtime has. */\n"
+"static inline MirVal mv_str(const char *s) {\n"
+"    MirVal r;\n"
+"    r.type = MV_STR;\n"
+"    r.ival = 1;                 /* 1 = resident (static storage), 0 = not */\n"
+"    r.sval = (char *)s;         /* never written through; see above */\n"
+"    r.ptr  = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
+"/* THE ONE MIR-SIDE PRINT EXIT -- the second honest debt in this block.\n"
+" *\n"
+" * WHY IT EXISTS.  The shared preamble's nv_say(NV a) has exactly three\n"
+" * branches: NV_BOO prints true/false, NV_FLT prints through nv_fmt_double,\n"
+" * and everything else prints printf(\"%lld\", a.i).  NV is\n"
+" * `{int t; long long i; double f;}`, so it has nowhere to put a string, and\n"
+" * `say s` cannot be lowered through the shared exit at all -- mv_as_nv()\n"
+" * aborts on MV_STR by design (see the tag pair above).\n"
+" *\n"
+" * WHAT IT ADDS.  Exactly one branch: a resident string.  Every other tag is\n"
+" * handed to nv_say(mv_as_nv(a)), so integer, float and bool formatting keep\n"
+" * one implementation.  Formatting those again here would be a second runtime\n"
+" * in shadow, which is the thing the whole MirVal block exists to avoid.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER.  A string that is not resident (ival != 1).  No\n"
+" * emittable opcode builds one -- CONCAT, INDEX_GET, NEW_ARRAY and the rest\n"
+" * are outside this subset -- so an MV_STR with ival != 1 is a value this\n"
+" * route cannot have produced, and it stops the program instead of printing\n"
+" * whatever integer happens to sit in ival.\n"
+" *\n"
+" * DELETE CONDITION (decidable, not a wish).  Delete this function in the\n"
+" * commit where nv_say() learns strings -- then the string branch belongs in\n"
+" * the shared exit and both routes print through it -- or in the commit that\n"
+" * completes P3 and leaves one printer for the route\n"
+" * (docs/streams/aot-mir-value.md section 4).  A print exit that outlives its\n"
+" * reason is the debt this comment exists to date. */\n"
+"static inline void mv_say(MirVal a) {\n"
+"    if (a.type == MV_STR) {\n"
+"        if (a.ival == 1 && a.sval) { printf(\"%s\\n\", a.sval); return; }\n"
+"        abort();   /* a dynamic string: nothing in this subset constructs one */\n"
+"    }\n"
+"    nv_say(mv_as_nv(a));\n"
+"}\n"
 "\n";
 
 /* A register index beyond this is refused rather than turned into a C array
@@ -185,6 +239,37 @@ static void buf_str(Buf *b, const char *s) {
     memcpy(b->d + b->len, s, n);
     b->len += n;
     b->d[b->len] = 0;
+}
+
+/* One pool string as the BODY of a C string literal, byte for byte.
+
+   The bytes have to survive the compiler: a quote or a backslash would end or
+   corrupt the literal, a control byte (a tab, a newline -- both of which a
+   source program writes as \t and \n, and the lexer turns into the real bytes)
+   must come back as an escape, and every byte >= 0x7f becomes a three-digit
+   octal escape so the literal is pure ASCII and cannot be re-encoded on the way
+   through the compiler.  Octal rather than \xNN because \x consumes every
+   following hex digit ("\x09" followed by 'b' would be the byte 0x9b), and
+   '?' is escaped because a C11 translator may still implement trigraphs, where
+   "??!" is a legal sequence inside a string literal. */
+static void buf_c_string(Buf *b, const char *s) {
+    for (const unsigned char *p = (const unsigned char *)s; p && *p; p++) {
+        char tmp[8];
+        unsigned char ch = *p;
+        if (ch == '"')  { buf_str(b, "\\\""); continue; }
+        if (ch == '\\') { buf_str(b, "\\\\"); continue; }
+        if (ch == '\n') { buf_str(b, "\\n");  continue; }
+        if (ch == '\t') { buf_str(b, "\\t");  continue; }
+        if (ch == '\r') { buf_str(b, "\\r");  continue; }
+        if (ch == '?')  { buf_str(b, "\\?");  continue; }
+        if (ch < 0x20 || ch >= 0x7f) {
+            snprintf(tmp, sizeof tmp, "\\%03o", (unsigned)ch);
+            buf_str(b, tmp);
+            continue;
+        }
+        tmp[0] = (char)ch; tmp[1] = 0;
+        buf_str(b, tmp);
+    }
 }
 
 static void buf_fmt(Buf *b, const char *fmt, ...) {
@@ -292,13 +377,15 @@ static const char *op_name(int op) {
    src/vm/vm.c.  R1 is the destination for every opcode here; the exceptions
    are named explicitly (OP_STORE_GLOBAL's r1 is a global index, OP_CALL_FUNC's
    r1 is a function index, OP_LOAD_GLOBAL's r2 and OP_JUMP's r2 are indices and
-   targets).  Returns -1 for an opcode this generator does not emit. */
+   targets, OP_LOADK_STRING's r2 is a string-pool index).  Returns -1 for an
+   opcode this generator does not emit. */
 enum { R1 = 1, R2 = 2, R3 = 4 };
 
 static int op_regs(int op) {
     switch (op) {
     case OP_MOV: return R1 | R2;
     case OP_LOADK_INT: case OP_LOADK_FLOAT: case OP_LOADK_BOOL: case OP_LOADK_I64: return R1;
+    case OP_LOADK_STRING: return R1;
     case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD:
     case OP_EQ: case OP_NEQ: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
     case OP_AND: case OP_OR: return R1 | R2 | R3;
@@ -540,6 +627,22 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                f, i, ix, node->float_count);
                 break;
             }
+            case OP_LOADK_STRING: {
+                /* r2 indexes the CONTAINER's string pool, exactly as
+                   OP_LOADK_FLOAT's r2 indexes its float pool: the emitter reads
+                   `node->string_pool`, so the bound has to be `node`, not the
+                   module's root container.  A NULL slot is an operand the
+                   emitter cannot turn into a literal, so it is a refusal with a
+                   detail rather than a jump into the emitter. */
+                int32_t ix = ir_insn_r2(in);
+                if (ix < 0 || ix >= node->string_count)
+                    return bad("container=%d insn=%d string pool index %d out of range (count=%d)",
+                               f, i, ix, node->string_count);
+                if (!node->string_pool || !node->string_pool[ix])
+                    return bad("container=%d insn=%d string pool entry %d is NULL",
+                               f, i, ix);
+                break;
+            }
             case OP_LOAD_GLOBAL:
             case OP_STORE_GLOBAL: {
                 int ix = (op == OP_LOAD_GLOBAL) ? ir_insn_r2(in) : in->dst;
@@ -633,6 +736,18 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     }
     case OP_LOADK_BOOL:   buf_fmt(b, "    v[%d] = mv_boo(%d);", r1, w2 ? 1 : 0); return 0;
     case OP_LOADK_FLOAT:  buf_fmt(b, "    v[%d] = mv_flt(%.17g);", r1, c->node->float_pool[w2]); return 0;
+    case OP_LOADK_STRING: {
+        /* The pool string is emitted INLINE as a C string literal: the literal's
+           array has static storage duration, so mv_str's resident marker is
+           honest and there is no allocation and no copy.  buf_c_string writes
+           the BODY only (escapes and no quotes), so the byte string the
+           interpreter interned and this file carries are the same bytes -- a
+           tab is a tab, not the two characters `\` `t`. */
+        buf_fmt(b, "    v[%d] = mv_str(\"", r1);
+        buf_c_string(b, c->node->string_pool[w2]);
+        buf_str(b, "\");");
+        return 0;
+    }
     case OP_ADD:          buf_fmt(b, "    v[%d] = mv_add(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_SUB:          buf_fmt(b, "    v[%d] = mv_sub(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_MUL:          buf_fmt(b, "    v[%d] = mv_mul(v[%d], v[%d]);", r1, r2, r3); return 0;
