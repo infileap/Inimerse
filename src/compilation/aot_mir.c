@@ -7,10 +7,12 @@
  *    driven by the opcode, so a wrong operand role is a bug here, not a
  *    coincidence of the source text.
  *
- *  - Registers become one flat NV v[N] array per container, because the MIR has
- *    no named locals.  N is derived from the operands the instructions actually
- *    use plus one slot per parameter, never from a claim in the module: mir.h
- *    says nregs is 0 in P1 and that deriving it there would be inference.
+ *  - Registers become one flat MirVal v[N] array per container, because the MIR
+ *    has no named locals.  MirVal is the interpreter's Value layout by name
+ *    (see kMirValBlock below), not a second value runtime.  N is derived from
+ *    the operands the instructions actually use plus one slot per parameter,
+ *    never from a claim in the module: mir.h says nregs is 0 in P1 and that
+ *    deriving it there would be inference.
  *
  *  - Parameters arrive in registers 1..argc.  That is read from the runtime:
  *    src/vm/vm.c's L_CALL_FUNC copies the popped arguments into FR[i + 1], so
@@ -33,6 +35,123 @@
 /* One backslash escape for the whole file: emitted lines end with this rather
    than carrying a literal \n inside every format string. */
 #define NL "\n"
+
+/* The MIR route's register type, appended AFTER the shared preamble
+ * (aot_native_preamble()), never inside it: kPreamble keeps one owner and one
+ * byte-identical copy in both routes.  Appending rather than splicing is also
+ * what keeps tools/aot_mir.test.py's classify() honest -- it takes the two
+ * routes' first differing line and requires the shared prefix to still carry
+ * all three preamble markers (nv_die_division_by_zero, nv_fmt_double,
+ * nv_say); a block inserted between them would break that reading.
+ *
+ * docs/streams/aot-mir-value.md §4 rules out 甲 (a private second Value
+ * runtime) as two runtimes for one language.  This is 丙: a distinct NAME for
+ * Value's layout whose every operation delegates to the nv_* helper the
+ * preamble already defines, so the runtime stays single and the name carries
+ * a dated delete condition instead of an aspiration. */
+static const char *const kMirValBlock =
+"/* --------------------------------------------------------------- MirVal\n"
+" * The value a MIR register holds.  Byte-for-byte the layout of the\n"
+" * interpreter's Value (src/vm/vm.h:22-49): `int type`, an anonymous union\n"
+" * of `long long ival` / `double fval`, `char *sval`, `void *ptr`; 32 bytes,\n"
+" * not NV's 24.  This is a NAME for that layout, not a second value\n"
+" * runtime: every operation below hands its operands to the nv_* helper the\n"
+" * shared preamble already defined, so division-by-zero, overflow,\n"
+" * comparison and printing still have exactly one implementation.\n"
+" *\n"
+" * Why not keep NV: NV has three tags (aot_native.c:175-177) and Value has\n"
+" * ten (src/vm/vm.h:22).  Eight MIR opcodes stay unlowered for want of the\n"
+" * payload fields NV does not have (string, nil, array, dict, set), so\n"
+" * narrowing registers to NV is what made them unknowable, not what made\n"
+" * them hard.  The tag numbers below are Value's, so a register this route\n"
+" * writes means to the interpreter what the interpreter means by it.\n"
+" *\n"
+" * DELETE CONDITION (decidable, not a wish): delete this whole block --\n"
+" * typedef, tags, asserts and every mv_* adapter -- in the commit where\n"
+" * aot_native stops lowering ASTs and starts consuming the IR too, i.e. the\n"
+" * commit that completes P3 (docs/streams/aot-mir-value.md §4 丙).  That\n"
+" * commit leaves kPreamble with one consumer, so the struct moves into the\n"
+" * preamble and this copy has no reason to exist; deleting it earlier, while\n"
+" * the second consumer still lowers ASTs, is the fork this block avoids.\n"
+" */\n"
+"#include <stddef.h>   /* offsetof */\n"
+"\n"
+"typedef struct {\n"
+"    int type;\n"
+"    union { long long ival; double fval; };   /* anonymous union, C11 6.7.2.1 */\n"
+"    char *sval;\n"
+"    void *ptr;\n"
+"} MirVal;\n"
+"\n"
+"#define MV_INT 0   /* = VAL_INT */\n"
+"#define MV_FLT 1   /* = VAL_FLOAT */\n"
+"#define MV_STR 2   /* = VAL_STRING -- numbered, not yet constructible */\n"
+"#define MV_BOO 3   /* = VAL_BOOL -- 3, not NV's 2; see the tag pair below */\n"
+"\n"
+"/* The placeholder's own test: these are compiled into every generated file,\n"
+"   and tools/aot_mir.test.py compiles every generated file with the system\n"
+"   cc, so a layout that drifts from Value stops the generated program from\n"
+"   building instead of letting it print a confident wrong answer. */\n"
+"_Static_assert(sizeof(MirVal) == 32,\n"
+"               \"MirVal must be 32 bytes: Value's size (src/vm/vm.h:47)\");\n"
+"_Static_assert(offsetof(MirVal, type) == 0, \"MirVal.type at Value.type's offset\");\n"
+"_Static_assert(offsetof(MirVal, ival) == 8, \"MirVal.ival at Value.ival's offset\");\n"
+"_Static_assert(offsetof(MirVal, fval) == 8, \"MirVal.fval shares ival's union slot, as in Value\");\n"
+"_Static_assert(offsetof(MirVal, sval) == 16, \"MirVal.sval at Value.sval's offset\");\n"
+"_Static_assert(offsetof(MirVal, ptr) == 24, \"MirVal.ptr at Value.ptr's offset\");\n"
+"\n"
+"/* The tag pair is the only place where the two numberings meet: NV_INT 0 /\n"
+"   NV_FLT 1 / NV_BOO 2 (aot_native.c:175-177) against MV_INT 0 / MV_FLT 1 /\n"
+"   MV_BOO 3.  int and float agree; bool does not, so it is translated here\n"
+"   and nowhere else.  A tag with no NV counterpart stops the program rather\n"
+"   than answering with NV_BOO's number, which would be a silent wrong\n"
+"   answer -- OP_LOADK_STRING must add its own direction to this pair. */\n"
+"static inline int mv_tag_from_nv(int t) {\n"
+"    switch (t) { case NV_INT: return MV_INT; case NV_FLT: return MV_FLT;\n"
+"                 case NV_BOO: return MV_BOO; default: abort(); }\n"
+"}\n"
+"static inline int mv_tag_to_nv(int t) {\n"
+"    switch (t) { case MV_INT: return NV_INT; case MV_FLT: return NV_FLT;\n"
+"                 case MV_BOO: return NV_BOO; default: abort(); }\n"
+"}\n"
+"\n"
+"static inline MirVal mv_from_nv(NV a) {\n"
+"    MirVal r;\n"
+"    r.type = mv_tag_from_nv(a.t);\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;   /* no emitted opcode has a payload to put here yet */\n"
+"    if (a.t == NV_FLT) r.fval = a.f; else r.ival = a.i;\n"
+"    return r;\n"
+"}\n"
+"static inline NV mv_as_nv(MirVal a) {\n"
+"    NV r;\n"
+"    r.t = mv_tag_to_nv(a.type);\n"
+"    if (r.t == NV_FLT) { r.i = 0;     r.f = a.fval; }\n"
+"    else               { r.i = a.ival; r.f = 0.0;    }\n"
+"    return r;\n"
+"}\n"
+"\n"
+"/* Every operation below is the nv_* one, reached through the field moves\n"
+"   above: the delegating body IS the claim that the runtime is single. */\n"
+"static inline MirVal mv_int(long long x) { return mv_from_nv(nv_int(x)); }\n"
+"static inline MirVal mv_flt(double x)    { return mv_from_nv(nv_flt(x)); }\n"
+"static inline MirVal mv_boo(int x)       { return mv_from_nv(nv_boo(x)); }\n"
+"static inline MirVal mv_neg(MirVal a) { return mv_from_nv(nv_neg(mv_as_nv(a))); }\n"
+"static inline MirVal mv_not(MirVal a) { return mv_from_nv(nv_not(mv_as_nv(a))); }\n"
+"static inline MirVal mv_add(MirVal a, MirVal b) { return mv_from_nv(nv_add(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_sub(MirVal a, MirVal b) { return mv_from_nv(nv_sub(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_mul(MirVal a, MirVal b) { return mv_from_nv(nv_mul(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_div(MirVal a, MirVal b) { return mv_from_nv(nv_div(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_mod(MirVal a, MirVal b) { return mv_from_nv(nv_mod(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_eq(MirVal a, MirVal b) { return mv_from_nv(nv_eq(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_ne(MirVal a, MirVal b) { return mv_from_nv(nv_ne(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_lt(MirVal a, MirVal b) { return mv_from_nv(nv_lt(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_le(MirVal a, MirVal b) { return mv_from_nv(nv_le(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_gt(MirVal a, MirVal b) { return mv_from_nv(nv_gt(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_ge(MirVal a, MirVal b) { return mv_from_nv(nv_ge(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline int mv_tru(MirVal a) { return nv_tru(mv_as_nv(a)); }\n"
+"static inline void mv_say(MirVal a) { nv_say(mv_as_nv(a)); }\n"
+"\n";
 
 /* A register index beyond this is refused rather than turned into a C array
    that would be hundreds of megabytes.  The interpreter's frames are far below
@@ -96,9 +215,11 @@ static int   g_globals_renamed;
 
 /* The compiler registers these names into the global table before it has seen
    any source (src/compiler/compiler.c:2894-2901, "must match vm.c vm_init
-   order").  They hold set objects.  NV carries int/float/bool only, so a
-   program that reads one is outside this subset: it is refused by name rather
-   than lowered to an integer that would be quietly wrong. */
+   order").  They hold set objects.  MirVal has the payload fields a set needs
+   (sval/ptr) but no emitted opcode builds one yet, so a global seeded here
+   would read as a zeroed payload -- a program that touches one is outside this
+   subset and is refused by name rather than lowered to an integer that would
+   be quietly wrong. */
 static const char *const kPresetGlobals[23] = {
     "N","Z","Z+","Z-",
     "Float1","float1","Float2","float2","Float3","float3","Float4","float4",
@@ -503,42 +624,42 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     int32_t w2 = ir_insn_r2(in), w3 = ir_insn_r3(in);
     switch (op) {
     case OP_MOV:          buf_fmt(b, "    v[%d] = v[%d];", r1, r2); return 0;
-    case OP_LOADK_INT:    buf_fmt(b, "    v[%d] = nv_int(%dLL);", r1, w2); return 0;
+    case OP_LOADK_INT:    buf_fmt(b, "    v[%d] = mv_int(%dLL);", r1, w2); return 0;
     case OP_LOADK_I64: {
         long long v = (long long)((unsigned long long)(unsigned int)w2 |
                                   ((unsigned long long)(unsigned int)w3 << 32));
-        buf_fmt(b, "    v[%d] = nv_int(%lldLL);", r1, v);
+        buf_fmt(b, "    v[%d] = mv_int(%lldLL);", r1, v);
         return 0;
     }
-    case OP_LOADK_BOOL:   buf_fmt(b, "    v[%d] = nv_boo(%d);", r1, w2 ? 1 : 0); return 0;
-    case OP_LOADK_FLOAT:  buf_fmt(b, "    v[%d] = nv_flt(%.17g);", r1, c->node->float_pool[w2]); return 0;
-    case OP_ADD:          buf_fmt(b, "    v[%d] = nv_add(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_SUB:          buf_fmt(b, "    v[%d] = nv_sub(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_MUL:          buf_fmt(b, "    v[%d] = nv_mul(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_DIV:          buf_fmt(b, "    v[%d] = nv_div(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_MOD:          buf_fmt(b, "    v[%d] = nv_mod(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_EQ:           buf_fmt(b, "    v[%d] = nv_eq(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_NEQ:          buf_fmt(b, "    v[%d] = nv_ne(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_LT:           buf_fmt(b, "    v[%d] = nv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_GT:           buf_fmt(b, "    v[%d] = nv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_LE:           buf_fmt(b, "    v[%d] = nv_le(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_GE:           buf_fmt(b, "    v[%d] = nv_ge(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_AND:          buf_fmt(b, "    v[%d] = nv_boo(nv_tru(v[%d]) && nv_tru(v[%d]));", r1, r2, r3); return 0;
-    case OP_OR:           buf_fmt(b, "    v[%d] = nv_boo(nv_tru(v[%d]) || nv_tru(v[%d]));", r1, r2, r3); return 0;
-    case OP_NEG:          buf_fmt(b, "    v[%d] = nv_neg(v[%d]);", r1, r2); return 0;
-    case OP_NOT:          buf_fmt(b, "    v[%d] = nv_not(v[%d]);", r1, r2); return 0;
+    case OP_LOADK_BOOL:   buf_fmt(b, "    v[%d] = mv_boo(%d);", r1, w2 ? 1 : 0); return 0;
+    case OP_LOADK_FLOAT:  buf_fmt(b, "    v[%d] = mv_flt(%.17g);", r1, c->node->float_pool[w2]); return 0;
+    case OP_ADD:          buf_fmt(b, "    v[%d] = mv_add(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_SUB:          buf_fmt(b, "    v[%d] = mv_sub(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_MUL:          buf_fmt(b, "    v[%d] = mv_mul(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_DIV:          buf_fmt(b, "    v[%d] = mv_div(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_MOD:          buf_fmt(b, "    v[%d] = mv_mod(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_EQ:           buf_fmt(b, "    v[%d] = mv_eq(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_NEQ:          buf_fmt(b, "    v[%d] = mv_ne(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_GE:           buf_fmt(b, "    v[%d] = mv_ge(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_AND:          buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) && mv_tru(v[%d]));", r1, r2, r3); return 0;
+    case OP_OR:           buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) || mv_tru(v[%d]));", r1, r2, r3); return 0;
+    case OP_NEG:          buf_fmt(b, "    v[%d] = mv_neg(v[%d]);", r1, r2); return 0;
+    case OP_NOT:          buf_fmt(b, "    v[%d] = mv_not(v[%d]);", r1, r2); return 0;
     case OP_LOAD_GLOBAL:  buf_fmt(b, "    v[%d] = %s;", r1, c->gnames[w2]); return 0;
     case OP_STORE_GLOBAL: buf_fmt(b, "    %s = v[%d];", c->gnames[r1], r2); return 0;
     case OP_JUMP:         buf_fmt(b, "    goto L%d;", w2); return 0;
-    case OP_JUMP_IF_FALSE: buf_fmt(b, "    if (!nv_tru(v[%d])) goto L%d;", r1, w2); return 0;
-    case OP_JUMP_IF_TRUE:  buf_fmt(b, "    if (nv_tru(v[%d])) goto L%d;", r1, w2); return 0;
-    case OP_PUSH_REG:     buf_fmt(b, "    nvargs[asp++] = v[%d];", r1); return 0;
+    case OP_JUMP_IF_FALSE: buf_fmt(b, "    if (!mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
+    case OP_JUMP_IF_TRUE:  buf_fmt(b, "    if (mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
+    case OP_PUSH_REG:     buf_fmt(b, "    mvargs[asp++] = v[%d];", r1); return 0;
     case OP_CALL_FUNC: {
         int fidx = r1, res = r2, argc = w3;
         int callee = c->nodes[0].child_ids ? c->nodes[0].child_ids[fidx] : -1;
-        buf_fmt(b, "    v[%d] = %s(", res, callee >= 0 ? c->fnnames[callee] : "nv_missing_callee");
+        buf_fmt(b, "    v[%d] = %s(", res, callee >= 0 ? c->fnnames[callee] : "mv_missing_callee");
         for (int k = 0; k < argc; k++)
-            buf_fmt(b, "%snvargs[asp-%d]", k ? ", " : "", argc - k);
+            buf_fmt(b, "%smvargs[asp-%d]", k ? ", " : "", argc - k);
         buf_str(b, ");");
         if (argc > 0) buf_fmt(b, " asp -= %d;", argc);
         return 0;
@@ -546,9 +667,9 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_RETURN:
         if (c->nodes[c->id].is_main) { buf_str(b, "    return 0;"); return 0; }
         if (r1 > 0) buf_fmt(b, "    return v[%d];", r1);
-        else buf_str(b, "    return nv_int(0);");
+        else buf_str(b, "    return mv_int(0);");
         return 0;
-    case OP_SAY:          buf_fmt(b, "    nv_say(v[%d]);", r1); return 0;
+    case OP_SAY:          buf_fmt(b, "    mv_say(v[%d]);", r1); return 0;
     case OP_HALT:
         if (c->nodes[c->id].is_main) buf_str(b, "    return 0;");
         else buf_str(b, "    fflush(stdout); exit(0);");
@@ -620,15 +741,15 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
     if (nodes[id].is_main) {
         buf_str(out, "int main(void) {" NL);
     } else {
-        buf_fmt(out, "static NV %s(", fnnames[id]);
+        buf_fmt(out, "static MirVal %s(", fnnames[id]);
         if (argc == 0) buf_str(out, "void");
-        for (int k = 0; k < argc; k++) buf_fmt(out, "%sNV a%d", k ? ", " : "", k);
+        for (int k = 0; k < argc; k++) buf_fmt(out, "%sMirVal a%d", k ? ", " : "", k);
         buf_str(out, ") {" NL);
     }
-    buf_fmt(out, "    NV v[%d];" NL, nregs);
-    buf_fmt(out, "    for (int i = 0; i < %d; i++) v[i] = nv_int(0);" NL, nregs);
+    buf_fmt(out, "    MirVal v[%d];" NL, nregs);
+    buf_fmt(out, "    for (int i = 0; i < %d; i++) v[i] = mv_int(0);" NL, nregs);
     if (has_args) {
-        buf_fmt(out, "    NV nvargs[%d];" NL, nregs);
+        buf_fmt(out, "    MirVal mvargs[%d];" NL, nregs);
         buf_str(out, "    int asp = 0;" NL);
     }
     for (int k = 0; k < argc; k++) buf_fmt(out, "    v[%d] = a%d;" NL, k + 1, k);
@@ -637,7 +758,7 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
     buf_free(&body);
 
     if (nodes[id].is_main) buf_str(out, "    return 0;" NL "}" NL);
-    else buf_str(out, "    return nv_int(0);" NL "}" NL NL);
+    else buf_str(out, "    return mv_int(0);" NL "}" NL NL);
     g_funcs++;
     g_emitted += emitted;
     return 0;
@@ -713,18 +834,22 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
 
     buf_str(&out, aot_native_preamble());
     buf_str(&out, NL);
+    /* Appended, never spliced: the shared preamble stays byte-identical in
+       both routes, so classify() in tools/aot_mir.test.py still finds its
+       common prefix and the first difference lands on the register type. */
+    buf_str(&out, kMirValBlock);
 
     for (int i = 0; i < root->global_name_count; i++) {
         if (!gnames[i]) continue;
-        buf_fmt(&out, "static NV %s = { NV_INT, 0, 0 };" NL, gnames[i]);
+        buf_fmt(&out, "static MirVal %s = { MV_INT, 0, 0 };" NL, gnames[i]);
     }
     buf_str(&out, NL);
 
     for (int i = 1; i < m->nfuncs; i++) {
         int argc = nodes[i].argc;
-        buf_fmt(&out, "static NV %s(", fnnames[i]);
+        buf_fmt(&out, "static MirVal %s(", fnnames[i]);
         if (argc == 0) buf_str(&out, "void");
-        for (int k = 0; k < argc; k++) buf_fmt(&out, "%sNV", k ? ", " : "");
+        for (int k = 0; k < argc; k++) buf_fmt(&out, "%sMirVal", k ? ", " : "");
         buf_str(&out, ");" NL);
     }
     buf_str(&out, NL);
