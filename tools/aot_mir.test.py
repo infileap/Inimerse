@@ -192,10 +192,52 @@ def mirval_assert_problems(text):
 # translator may still read as a trigraph, and a byte >= 0x7f, which buf_c_string
 # writes as octal so the generated literal stays pure ASCII and cannot be
 # re-encoded on the way through the compiler.
+#
+# The other three are `nil`, and they are here for a reason that is the opposite
+# of the string trio's.  `nil` is not a literal in this language -- there is no
+# OP_LOADK_NIL and src/compiler/compiler.c has no case for the identifier -- so
+# the ONLY way to reach it is an UNRESOLVED GLOBAL: `nil` and `nosuchglobal`
+# both compile to OP_LOAD_GLOBAL with the index -1, and the interpreter answers
+# VAL_NIL for that index (src/vm/vm.c L_LOAD_GLOBAL calls value_set(..., VAL_NIL, ...)).
+# The AST route refuses those programs outright ("variable 'nosuchglobal' is
+# used but never assigned"), so the value the interpreter has and the AST route
+# has no name for is the one this route used to refuse at prescan -- a refusal
+# that hid a DIFFERENCE instead of naming one.
+#
+# Why three and not one:
+#   mir_nil_vs_zero          `x == nil` is TRUE and `x == 0` is FALSE for the
+#                            same x.  A route that answered the unresolved
+#                            global with the integer 0 -- which is exactly what
+#                            the generated file used to initialise its globals
+#                            with -- prints the two answers swapped.  The case is
+#                            byte-compared against the interpreter AND prints its
+#                            own stdout-hex, so it asserts the value rather than
+#                            agreeing that something ran.
+#   mir_nil_coalesce         `??` is the only form that REACHES OP_IS_NIL in a
+#                            program this subset accepts.  The compiler emits it
+#                            at four sites (src/compiler/compiler.c:648 `??`,
+#                            :578 set comprehension, :1082 safe member `?.`,
+#                            :1359 nested index assignment); the other three sit
+#                            behind opcodes this subset cannot emit
+#                            (OP_CALL_BUILTIN/OP_INDEX_GET/OP_NEW_ARRAY), so such
+#                            a program is refused whole and never runs the opcode.
+#                            "only `??` compiles to OP_IS_NIL" would be a claim
+#                            a `grep -n OP_IS_NIL src/compiler/` of 4 contradicts.
+#                            If the global were 0 the program prints 0 instead of 2.
+#   mir_nil_print_truthiness reaches the three adapters a nil VALUE can enter
+#                            besides comparison: mv_say (printing `nil`), mv_tru
+#                            (an `if` on nil, which the interpreter's vm_truthy
+#                            answers false) and mv_not (`not nil` is true).  Any
+#                            of them handing nil to nv_* would abort instead of
+#                            printing.
 MIR_ONLY = [
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
     ("mir_loadk_string_quotes", 'say "q\\"z \\\\ back ??= mid \u4e2d"\n'),
+    ("mir_nil_vs_zero", 'say nosuchglobal == nil\nsay nosuchglobal == 0\n'),
+    ("mir_nil_coalesce", 'say nosuchglobal ?? 2\n'),
+    ("mir_nil_print_truthiness",
+     'say nosuchglobal\nif nosuchglobal { say "T" } else { say "F" }\nsay not nosuchglobal\n'),
 ]
 
 
