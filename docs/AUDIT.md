@@ -6540,7 +6540,7 @@ say d              # {<function>: fn}   ← 存进去了
 
 ### ★★★★ `--required-for` 没有调用点 —— 「更强的那一份不在任何自动路径上」的第四次
 
-★ `REQUIRED_SCOPES` 那十行的第三栏 = **「它不是一个可跑的东西」**，而它的可跑形式是 `--required-for` ⇒ ★ **实测：`--required-for` 在任何自动化里都没有调用点**（`git grep -n 'required-for' -- .github tools CMakeLists.txt` 去掉 `gate.sh` 自身后，只命中 `tools/check_line_refs.py:12`/`:16`/`:255` —— **全是注释**）。
+★ `REQUIRED_SCOPES` 那十行的第三栏 = **「它不是一个可跑的东西」**，而它的可跑形式是 `--required-for` ⇒ ★ **实测：`--required-for` 在任何自动化里都没有调用点**（`git grep -n 'required-for' -- .github tools CMakeLists.txt` 去掉 `gate.sh` 自身后共四处：`tools/check_line_refs.py:12`/`:16`/`:296` 三处模块 docstring，加 `tools/README.md` 的用法行 —— **没有一处是调用点**）。
 
 ⇒ ★★★★ **判据（收，新）：仓库里方向性最好的那个比较器，只在人手敲时存在。**
 

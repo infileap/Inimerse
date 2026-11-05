@@ -1,0 +1,9 @@
+{
+ "allowed": 1,
+ "items": [
+  {
+   "identity": "docs/AUDIT.md|255|tools/check_line_refs.py",
+   "why": "docs/AUDIT.md:6543 enumerates the --required-for docstring by number; that docstring stood at :255 when the sentence was written (db5ba51) and stands at :296 today (+41). The citation was re-pointed to :296, so the old identity is gone while the count is unchanged -- a re-target, not lost coverage."
+  }
+ ]
+}
