@@ -30,7 +30,7 @@ next:
                      prefix runs through the whole shared value runtime, and the
                      first difference lies in how containers and instructions
                      are spelled: the AST route has named locals and structured
-                     statements, the MIR route has a flat NV v[] and labels.
+                     statements, the MIR route has a flat MirVal v[] and labels.
                  mir-register-shape+mir-internal-globals  the same, and the two
                      global declaration sets differ, because the compiler keeps
                      globals of its own (a repeat counter, say) that no AST ever
@@ -85,7 +85,15 @@ DIFF_REASONS = ("identical", "mir-register-shape", "mir-register-shape+mir-inter
 # to aot_mir through aot_native_preamble() so there is one copy of it.
 PREAMBLE_MARKERS = ("nv_die_division_by_zero", "nv_fmt_double", "static void nv_say(NV a)")
 
-GLOBAL_DECL = re.compile(r"^static NV (g_\w+) = \{ NV_INT, 0, 0 \};$")
+# Each route declares its globals with its own register type: the AST route
+# `static NV`, the MIR route `static MirVal` (kMirValBlock in aot_mir.c, which
+# is byte-for-byte the interpreter's Value).  The comparison below is about
+# which NAMES each route carries, so it has to read both spellings -- while it
+# only read `NV`, the MIR route's globals were invisible to it and the
+# compound bucket below could no longer be attributed to a real set
+# difference.  Reading both is not a tolerance: MV_INT and NV_INT are both 0,
+# so the two initializer spellings denote the same value.
+GLOBAL_DECL = re.compile(r"^static (?:NV|MirVal) (g_\w+) = \{ (?:NV_INT|MV_INT), 0, 0 \};$")
 CODEGEN = re.compile(r"^IR-MIR-CODEGEN[|](.*)$")
 CONSERVE = re.compile(r"^IR-MIR-CONSERVE[|](.*)$")
 NOTYET = re.compile(r"^IR-MIR-NOT-YET[|]op=(OP_[A-Z0-9_]+)[|]n=(\d+)$")
