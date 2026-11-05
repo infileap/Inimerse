@@ -4310,3 +4310,61 @@ IR-AOT-MIR-VERDICT|PASS|tree=6469528d33bc6b7bde35645ebed75002e0b99a81|accepted=8
 6. 新增边界：**一个打印出口覆盖不到的东西**——`ival != 1` 的字符串。本子集没有 opcode 能造出它，所以遇到它 `mv_say` 选择中止而不是打印 `ival` 里的整数；等 `OP_CONCAT` 落地时，这里必须先有决定。
 7. 新增边界：`IR-MIR-LAYOUT-ASSERT` 读的是**生成出来的文本**，不是编译器真的求过值的那 6 条断言。它抓的是「模板丢了一条」，抓不到「`offsetof` 与真实布局在别的编译器/别的 ABI 上不一致」——后者只有编译失败能抓，且只有构建过才知道。
 
+## §10.104 「默认值是整数 0」是一次假等价：`MV_NIL` 与未解析全局（aot-mir-value，A 类第二项）
+
+### 这笔债的来源与日期
+
+**来源**：`kMirValBlock` 落地寄存器类型的那一步。生成文件里全局默认写的是 `static MirVal g_x = { MV_INT, 0, 0 };`，而解释器把每个全局建成 `VAL_NIL`（`src/vm/vm.c` 造全局表时 `value_set(..., VAL_NIL, ...)`）。**日期**：2026-11-05 本流把它改成 `{ MV_NIL, 0, 0 }`，并在这一节把「曾是假等价」写下来。
+
+为什么这是个**假**等价而不是小瑕疵：0 与 nil 只在「假值」这一件事上一致。实测（把 `mv_nil` 的 tag 临时改成 `MV_INT` 的那一刻，也就是「默认值曾是整数 0」的等价物）：`say nosuchglobal == 0` 解释器是 `false`、生成文件是 `true`；`say nosuchglobal ?? 2` 解释器打 `2`、生成文件打 `0`；`say nosuchglobal` 解释器打 `nil`、生成文件打 `0`。而 `say nosuchglobal == nil` 两边都打 `true`——**恰恰因为 nil 被当成了同一个 0，这一条看不出差别**，能看出差别的永远是「拿 nil 去当 0 用」的那一半（`== 0`、`??`、`say`）。凡是用比较结果的程序都在比较两个不同的东西，而当时的判据一条都看不见它——因为 MIR 路线在 **prescan 就拒译**了：
+
+```
+IR-MIR-REFUSED|why=illegal-operand|detail=container=0 insn=0 global index -1 out of range (count=23)
+```
+
+拒绝把「差异」改写成「看不见」：程序连编都编不出来，`same-as-interpreter` 里当然也没有它。所以本流的三笔顺序是判据先行。
+
+### nil 的真入口是「未解析全局」
+
+这个语言**没有 nil 字面量**：`nil` 和从未赋值的名字一样，都编译成 `OP_LOAD_GLOBAL` 且 `r2 = -1`（`-1` 是编译器对「未解析」的拼法），解释器对该索引明确回 `VAL_NIL`。所以「nil 语义」的判据必须同时覆盖 `-1` 这条加载路径与 `OP_IS_NIL` 这条运算符路径。
+
+`OP_IS_NIL` 在编译器里有 **4 个发射点**（`grep -n OP_IS_NIL src/compiler/` 实测）：`src/compiler/compiler.c:648` [obs: 2979f55]（`TOK_QUESTION`，即 `??`）、`:578`（`EXPR_SETCOMP`，`OP_CALL_BUILTIN list` 之后）、`:1082`（`EXPR_MEMBER` 的安全成员 `?.`）、`:1359`（嵌套 `INDEX_GET` 的中间层判 nil）。后三处各自要发 `OP_CALL_BUILTIN` / `OP_INDEX_GET` / `OP_NEW_ARRAY` 这类本子集不可发射的 opcode，所以**能被本子集接受并运行的**程序里，`OP_IS_NIL` 只可能来自 `??`（`x ?? y`）；另外三种写法是整程序被拒译，而不是走到 `OP_IS_NIL`。四处行号是在 `2979f55` 上读的、本流没有碰 `src/compiler/`，所以写成 record 而不是 pointer——这条线上 pointer 计数已经贴着上限，一格余量都没有。
+
+### 三笔
+
+| 笔 | 内容 | 反向判据 |
+| --- | --- | --- |
+| 一 | `MIR_ONLY` 加三个用例（`mir_nil_vs_zero` / `mir_nil_coalesce` / `mir_nil_print_truthiness`），按字节比 stdout、并印 `stdout-hex` | 实现前必须是红的：`IR-MIR-MIR-ONLY|case=mir_nil_vs_zero|mir=refused|why=illegal-operand` + `IR-MIR-VERDICT|FAIL`（实测如此） |
+| 二 | `MV_NIL` + `mv_nil`/`mv_is_nil` + 四个 nil 直臂；prescan 接受 `LOAD_GLOBAL idx == -1`；`OP_IS_NIL` 走 `mv_is_nil`；全局默认改 nil | 把 `idx == -1` 的接受改回拒译 → 红回同一句点名 `global index -1 out of range` |
+| 三 | 读数同步（pin 重记） | — |
+
+`idx < -1` 仍是拒译且点名具体值：它不可能来自编译器，来自它就说明上游坏了。`OP_STORE_GLOBAL` 也不接受负索引——赋值会**创建**全局，而这条路线没有可创建的表。
+
+### 为什么 nil 不是第五个打印出口
+
+打印仍走 `nv_say` 语义：`mv_say` 里 nil 只多一个分支（打印解释器自己也打的字面 `nil`），其余一切照旧委托。`not` 也没有自己的臂——`mv_not = mv_boo(!mv_tru(a))`，`vm_truthy` 仍是唯一的真假规则；`mv_eq`/`mv_ne`/`mv_tru` 各有恰好一个 nil 臂，因为 `nv_*` 根本没有 nil 可交。**臂的数量是 3 个适配器（`mv_eq` / `mv_ne` / `mv_tru`）+ 1 个打印分支（`mv_say`）= 4 个 nil 臂**（`mv_is_nil` 是判据本身，不是 nil 值上的适配），每个都在注释里带可判定的删除条件（`nv_say` 同时学会字符串与 nil，或 P3 完成后只剩一个打印器；判据是 `MV_NIL` 在该块内计数归零）。
+
+### 读数（本流 worktree 实跑，逐字）
+
+```
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=6|mir-only-same-as-interpreter=6
+IR-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=32|of=67|unknown=35|table=32|emitter=32|reported=32|agree=yes
+IR-AOT-MIR-BEYOND|ops=(OP_IS_NIL,OP_LOADK_STRING)|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=92|of=29|covered=29|missing=0|refused=0|same-as-interpreter=92|prelude-excluded=yes|beyond-ast-denominator=2
+```
+
+`tree=` 三处填的是本流笔二的提交 sha，此处留字段名而不写死：**一份文档不能含有装载它自己那次提交的哈希**，写死就会在改一个字之后变成一句假话（两条 pin 的 `tree` 字段是同一个问题的另一面，它们由脚本在干净的树上重记，不是手写）。
+
+`handles` 31 → 32（`OP_IS_NIL`；`OP_LOAD_GLOBAL` 本来就在表里，接受 `-1` 不新增 opcode），`unknown` 36 → 35。`reasons` 三个桶的**名字与计数都没变**，这是必须守住的：新增覆盖不许动分词逻辑。`same-as-interpreter` 89 → 92（三个 nil 用例）。
+
+### 诚实边界
+
+1. `nil` 的**算术与比较**（`nil + 1`、`nil < 1`）解释器抛 `type_mismatch`，本路线没有异常机制，于是 `mv_as_nv` 中止。中止是响的不是对的；关掉它要 C 类异常 opcode。
+2. `nil` 作为**容器**（`INDEX_GET`、dict、list、函数返回值）不在本子集，本步不定义。
+3. 生成文件里的全局**默认**是 nil 了，但 `OP_STORE_GLOBAL` 仍只认同一个已存在的全局名；「赋值创建全局」这件事这条路线没有。
+4. `MV_NIL` 的 tag 号 5 来自 `Value`（`src/vm/vm.h`），与 `NV` 的三 tag 无关；`mv_tag_to_nv` 对它默认 `abort()`，这是**故意**的第四个守卫。
+5. 判据只认三个用例。它们是反例族里最小的三个，不是全集：`??` 之后接算术、nil 进函数参数都没有用例，属下一格。
+6. **顺带量到的一个活洞（本笔不修，留给下一格）**：`s = "hi"` / `t = "ho"` / `say s == t` 编译成 `OP_EQ r2/r3`，prescan **接受**，生成的 C 运行 `RUN_RC=134`（SIGABRT）——`mv_eq` 没有 `MV_STR` 臂，`mv_as_nv(MV_STR)` 走 `mv_tag_to_nv` 的 `abort()`；而同一比较的常量形式 `s == "hi"` 走 `OP_EQK` 被 prescan 拒译（`NOT-YET`）。即「常量形式安全拒、变量形式接受后崩」的不对称。解释器对前者打印 `false`。本子集还没有字符串相等语义（`OP_LOADK_STRING` 只承诺「驻留、零分配、可打印」），这一条是下一格的入口，不是本笔的读数。
+
