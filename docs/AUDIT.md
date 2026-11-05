@@ -5295,7 +5295,7 @@ say d
 
 ### §1.86.6 射程与诚实边界
 
-① 只读、未改 `src/`、未开分支；② 解释器实测在 `build/inimerse`（mtime 2026-10-08 21:40:19）上跑，`src/` 其后未变；wasm 走 `compile --abi-target wasm` + `node tools/wasm_run.js`，AOT 走 `build/aot-native translate` + `cc -O2`（`tools/aot_native.test.py:291` 的同一配方）；③ **来源③ 那一列的 wasm 值是今天这一版生成的 `.wasm` 跑出来的，没有把 wasm 那条链的每一步都读透**（只读了三处与它自己的注释）；④ **来源④ 只测了 `nil` 与字符串键两种形态**，`float` 键 / `bool` 键 / `set` 键没测；⑤ 每段只跑一次，**没有做「重复跑是否稳定」的检查**；⑥ **「同一份文件里另一个站点」这个事实本身（两个行号）不是这些片段证明的**，片段证明的是**症状**，行号那一半要读码。
+① 只读、未改 `src/`、未开分支；② 解释器实测在 `build/inimerse`（mtime 2026-10-08 21:40:19）上跑，`src/` 其后未变；wasm 走 `compile --abi-target wasm` + `node tools/wasm_run.js`，AOT 走 `build/aot-native translate` + `cc -O2`（`tools/aot_native.test.py:336` 的同一配方）；③ **来源③ 那一列的 wasm 值是今天这一版生成的 `.wasm` 跑出来的，没有把 wasm 那条链的每一步都读透**（只读了三处与它自己的注释）；④ **来源④ 只测了 `nil` 与字符串键两种形态**，`float` 键 / `bool` 键 / `set` 键没测；⑤ 每段只跑一次，**没有做「重复跑是否稳定」的检查**；⑥ **「同一份文件里另一个站点」这个事实本身（两个行号）不是这些片段证明的**，片段证明的是**症状**，行号那一半要读码。
 
 ## §1.87 指向 `tools/*.py` 的行号引用：88 条里 43 条指错，而 `line-refs` 从来不守这一族
 

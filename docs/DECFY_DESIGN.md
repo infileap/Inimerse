@@ -923,7 +923,7 @@ static inline int nv_tru(NV a) { return a.t == NV_FLT ? (int)(a.f != 0.0) : (int
 2. 原判据②「故意改错 `vm_truthy()` 一格必须变红」——**无对象**：非标量在两侧都跑不起来，没有尚未被钉的行为可钉。
 3. 原判据③「`selfhost_compare` 的 skipped 数不增加」——**无需触发**（未新增覆盖）。
 
-⇒ **1.5a 的正确记录是「已核实：wasm 真值语义与 `vm_truthy()` 一致；非标量未实现且被诚实拒绝」，而不是「做完了」。** 关键区分（实现会话要求照此记）：三个 `grep -c` 的 **0 是「该特性不存在」，不是「存在但没接上」**；而且**拒绝这一侧是有牙的**——`tools/aot_native.test.py:211` 的 `REFUSAL` 十条（含 `list_literal`/`dict_literal`/`index_access`/`builtin_call`）与 `tools/wasm_backend.test.py:74` 的 `REJECT_CASES`（`("strings", 'say "hello"\n', "strings are not supported")`）⇒ **今天不存在「静默答错」的路径**。
+⇒ **1.5a 的正确记录是「已核实：wasm 真值语义与 `vm_truthy()` 一致；非标量未实现且被诚实拒绝」，而不是「做完了」。** 关键区分（实现会话要求照此记）：三个 `grep -c` 的 **0 是「该特性不存在」，不是「存在但没接上」**；而且**拒绝这一侧是有牙的**——`tools/aot_native.test.py:257` 的 `REFUSAL` 十条（含 `list_literal`/`dict_literal`/`index_access`/`builtin_call`）与 `tools/wasm_backend.test.py:74` 的 `REJECT_CASES`（`("strings", 'say "hello"\n', "strings are not supported")`）⇒ **今天不存在「静默答错」的路径**。
 
 **顺带记录一处「一个情形两个答案、只记了一个」（不是缺陷级，但形状正是本档在追的那个）。** wasm 对「程序里出现字符串」有**两条不同的拒绝消息**：`say "hi"` → `src/compilation/wasm_backend.c:1429` 的 `strings are not supported by the wasm MVP subset`（**已钉**）；`s = "hi"` → `:1353` 的 `expression type %d not supported by wasm MVP subset (strings/collections need the interpreter)`（**未钉**）。两条都拒绝、都退出 1，故不是缺陷；已交由 `vivid-anchor`（`tools/*.test.py` 是它的 lane）。
 
