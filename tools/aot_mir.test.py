@@ -54,9 +54,21 @@ Readings:
   IR-MIR-REFUSED|case=NAME|why=...|not-yet=OP_X:count,...
   IR-MIR-EXEC-DIFF|case=NAME|side=mir|ast|interp|rc=..|stdout=...
   IR-MIR-PERTURB|case=NAME|func=F|idx=I|field=2|was=V|now=W|c-changed=yes|stdout-changed=yes
+  IR-MIR-LAYOUT-ASSERT|files=N|need=6|files-complete=N|missing=(NAME,NAME)|
+              basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every
+              -generated-file-read-off-the-emitted-text
+  IR-MIR-LAYOUT-ASSERT-MISS|case=NAME|missing=(NAME,NAME)
   IR-MIR-COVER|corpus=inline-cases:N|accepted=N|refused=N|differ=N|conserved=N
               |c-identical=N|c-diff=N|reasons=identical:N,mir-register-shape:N,...
   IR-MIR-VERDICT|PASS|FAIL|...
+
+The layout-assertion reading is the measurement of a promise the previous
+commit could only state: every generated file carries the six assertions that
+hold MirVal to Value's layout, and the test now reads them off the file it
+already compiled instead of trusting the template.  `need=6` rides on the line
+so a reader can see the denominator without opening the source, and a missing
+assertion is named (never a bare pattern-not-found), because "the check is
+broken" and "the emitter dropped offsetof(sval)" must not read the same.
 
 Exit 0 when every accepted program agrees, every generated file conserves, every
 difference is in the closed set and the control fired; 1 when any of those is
@@ -100,6 +112,59 @@ NOTYET = re.compile(r"^IR-MIR-NOT-YET[|]op=(OP_[A-Z0-9_]+)[|]n=(\d+)$")
 REFUSED = re.compile(r"^IR-MIR-REFUSED[|]why=([^|]*)[|]detail=(.*)$")
 INSN = re.compile(r"^IR-MIR-INSN[|]func=(\d+)[|]idx=(\d+)[|]op=(OP_[A-Z0-9_]+)"
                   r"[|]r1=(-?\d+)[|]r2=(-?\d+)[|]r3=(-?\d+)[|]argc=(\d+)$")
+
+# The six layout assertions kMirValBlock (src/compilation/aot_mir.c) writes into
+# every generated file.  Until this check existed they were a PROMISE: nothing
+# read a generated file looking for them, so deleting one -- or changing 32 to
+# 24 -- left all 86 cases green, because the C still compiles and the
+# interpreter is still right.  The negative control that proved they matter
+# (`==32` -> `==24`, every case red on `static assertion failed`) was run by
+# hand, once, and left no trace in the tree; a measurement nobody repeats is an
+# anecdote, and the next commit to edit the template would not know.
+#
+# What this check has teeth for: an assertion ABSENT from the emitted text.  It
+# is read off the artifact the compiler consumed (mir_text), not off the C
+# source that generates it, so a template that stops emitting the block -- an
+# `#if`, an early return, a block spliced into a preamble that swallows it --
+# is caught where the promise is actually made.  The needle is the whole
+# statement, message included, so an edit of the message is a named miss as
+# well rather than a silent pass.
+#
+# What it does NOT cover: whether the assertions MEAN anything.  Six lines
+# nobody compiles prove nothing; the teeth are in the compile step this test
+# already runs on every case (`cc -O2`), so an assertion that stops holding
+# stops the build.  Nor does it compare the text against src/vm/vm.h:
+# `sizeof(Value) == 32` is asserted there by the interpreter's own
+# `_Static_assert`, and a copy of that number here would be a second owner of
+# one fact.  It also cannot tell a deleted assertion from a reworded one: the
+# needle is the whole line, so an intentional rename reddens too.  That is the
+# intended cost of naming the missing assertion instead of matching a loose
+# shape -- a reworded assertion is a decision, and it should cost a diff here.
+MIRVAL_ASSERTS = (
+    ("sizeof(MirVal)==32",
+     '_Static_assert(sizeof(MirVal) == 32,\n'
+     '               "MirVal must be 32 bytes: Value\'s size (src/vm/vm.h:47)");'),
+    ("offsetof(type)==0",
+     '_Static_assert(offsetof(MirVal, type) == 0, "MirVal.type at Value.type\'s offset");'),
+    ("offsetof(ival)==8",
+     '_Static_assert(offsetof(MirVal, ival) == 8, "MirVal.ival at Value.ival\'s offset");'),
+    ("offsetof(fval)==8",
+     '_Static_assert(offsetof(MirVal, fval) == 8, "MirVal.fval shares ival\'s union slot,'
+     ' as in Value");'),
+    ("offsetof(sval)==16",
+     '_Static_assert(offsetof(MirVal, sval) == 16, "MirVal.sval at Value.sval\'s offset");'),
+    ("offsetof(ptr)==24",
+     '_Static_assert(offsetof(MirVal, ptr) == 24, "MirVal.ptr at Value.ptr\'s offset");'),
+)
+
+
+def mirval_assert_problems(text):
+    """Which of the six layout assertions a generated file is missing, by name.
+
+    Names, not a boolean: the difference between "this check is broken" and
+    "the emitter stopped carrying offsetof(sval)" is the whole value of the
+    measurement, and a bare pattern-not-found cannot tell the two apart."""
+    return [name for name, needle in MIRVAL_ASSERTS if needle not in text]
 
 
 class Unclassifiable(Exception):
@@ -225,6 +290,25 @@ def self_check(verbose):
         ok = False
     except Unclassifiable:
         print("IR-MIR-SELFCHECK|what=runtime-varies|got=unclassifiable|want=unclassifiable|ok")
+
+    # The layout-assertion check, asked both ways: a complete block passes, and
+    # a block with one assertion removed is a NAMED miss.  The second cell is
+    # the one that matters -- a checker that can only say "not found" is what
+    # this measurement exists to replace.
+    checks += 1
+    complete = "".join(needle + "\n" for _name, needle in MIRVAL_ASSERTS)
+    got = mirval_assert_problems(complete)
+    print("IR-MIR-SELFCHECK|what=layout-assertions-all-present|got=%s|want=none|%s"
+          % (",".join(got) or "none", "ok" if not got else "WRONG"))
+    ok &= not got
+    checks += 1
+    victim_name, victim_text = MIRVAL_ASSERTS[-1]
+    one_deleted = complete.replace(victim_text + "\n", "")
+    got = mirval_assert_problems(one_deleted)
+    print("IR-MIR-SELFCHECK|what=layout-assertion-deleted|deleted=%s|got=%s|want=%s|%s"
+          % (victim_name, ",".join(got) or "none", victim_name,
+             "ok" if got == [victim_name] else "WRONG"))
+    ok &= got == [victim_name]
     print("IR-MIR-SELFCHECK|checks=%d|verdict=%s" % (checks, "PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
@@ -454,6 +538,8 @@ def main():
     problems = []
     unclassifiable = []
     perturbed = perturb_fail = stdout_changes = 0
+    layout_files = layout_complete = 0
+    layout_missing = set()
 
     for name, src in cases:
         s = Path(workdir) / (name + ".im")
@@ -505,6 +591,21 @@ def main():
 
         ast_text = ast_c.read_text()
         mir_text = mir_c.read_text()
+        # Read the layout assertions off the file that was just compiled, not off
+        # the template that wrote it: the promise is about the artifact, and an
+        # artifact is what a generator can silently stop producing.
+        layout_files += 1
+        miss = mirval_assert_problems(mir_text)
+        if miss:
+            layout_missing.update(miss)
+            print("IR-MIR-LAYOUT-ASSERT-MISS|case=%s|missing=(%s)" % (name, ",".join(miss)))
+            problems.append("%s: the generated C carries %d of the %d MirVal layout assertions"
+                            " and is missing (%s), so this file would be compiled without the"
+                            " layout pin"
+                            % (name, len(MIRVAL_ASSERTS) - len(miss), len(MIRVAL_ASSERTS),
+                               ",".join(miss)))
+        else:
+            layout_complete += 1
         try:
             reason, line = classify(ast_text, mir_text)
         except Unclassifiable as exc:
@@ -528,6 +629,11 @@ def main():
 
     problems.extend(wide_controls(mir_tool, interp, workdir, args.verbose))
 
+    print("IR-MIR-LAYOUT-ASSERT|files=%d|need=%d|files-complete=%d|missing=(%s)"
+          "|basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every-generated"
+          "-file-read-off-the-emitted-text"
+          % (layout_files, len(MIRVAL_ASSERTS), layout_complete,
+             ",".join(sorted(layout_missing)) or "none"))
     print("IR-MIR-COVER|corpus=inline-cases:%d|accepted=%d|refused=%d|differ=%d|conserved=%d"
           "|c-identical=%d|c-diff=%d|reasons=%s|perturbed=%d|perturb-c-changed-failures=%d"
           "|perturb-stdout-changes=%d"
