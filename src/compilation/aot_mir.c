@@ -1114,22 +1114,22 @@ static int emit_one(Ctx *c, Buf *b, int i) {
      * false" -- so one owner answers the register form and the constant form,
      * and a rule that is ever wrong is wrong in one place.  The rules copied
      * from the interpreter, with the lines they were copied from:
-     *   - operand ROLES: src/vm/vm.c:4159-4174 (L_EQK) builds `sv.type =
+     *   - operand ROLES: src/vm/vm.c:4159-4173 (L_EQK) builds `sv.type =
      *     VAL_STRING` and interns the container pool entry at `code->string_pool`
-     *     index sidx (`vm_intern(vm, code->string_pool + sidx)` at :4161), takes
+     *     index sidx (`vm_intern(vm, code->string_pool + sidx)` at :4164-4166), takes
      *     `Value opv = R[ins.r2]`, and stores
      *     `value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 1 : 0, ...)`.
-     *     src/vm/vm.c:4177-4191 (L_NEQK) is the same shape with `? 0 : 1`.  So
+     *     src/vm/vm.c:4175-4189 (L_NEQK) is the same shape with `? 0 : 1`.  So
      *     r2 is the VALUE and r3 is the CONSTANT; they are not interchangeable
      *     names and this arm does not treat them as such.
      *   - the comparison itself: src/vm/vm.c:413 `bool val_eq(const Value *a,
      *     const Value *b)`, :414 the same-type gate, :415/:416 int/float,
      *     :417 `if (a->type == VAL_STRING) return (a->sval == b->sval) ? true :
      *     strcmp(a->sval ? a->sval : "", b->sval ? b->sval : "") == 0;`,
-     *     :419 bool, :420 nil, :425-427 coercion for INT/FLOAT/BOOL pairs only,
+     *     :418 bool, :419 nil, :425-427 coercion for INT/FLOAT/BOOL pairs only,
      *     :428 `return false`.
      *   - `!=` is val_eq NEGATED (the interpreter spells that negation itself
-     *     at :4177-4191), which is why this arm calls mv_ne(v, c) -- alias
+     *     at :4175-4189), which is why this arm calls mv_ne(v, c) -- alias
      *     `!mv_tru(mv_eq(v, c))` -- rather than a strcmp with the opposite sign.
      * Zero allocation: the constant is a C string literal with static storage
      * duration, mv_str marks it resident (ival=1), so mv_eq takes the pointer
@@ -1139,7 +1139,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
      * WHAT IT DOES NOT COVER -- each MEASURED on this tree, and each stays
      * refused or aborted rather than answered:
      *   - a NON-RESIDENT constant.  The pool entry is not a Value: it is bytes
-     *     the interpreter interns at run time (src/vm/vm.c:4161 vm_intern over
+     *     the interpreter interns at run time (src/vm/vm.c:4164-4166 vm_intern over
      *     the pool entry) and this route emits as a literal mv_str marks
      *     resident.  So `ival != 1` cannot originate here; if a future
      *     opcode puts a non-resident string into r2, mv_eq's impossible-state
