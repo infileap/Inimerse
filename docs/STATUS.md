@@ -4691,3 +4691,179 @@ IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=97|of=29|covered=29|missing=0
 4. **快路是代价不是语义**（第五节第二段），判据看不见它；这条不对称被写下来而不是被藏起来。
 5. 用例十二条输出覆盖四条运算符、两个方向、等值对，但**不是全集**：字符串 vs nil、字符串 vs 数组/字典、`strcmp` 前缀相同（"abc" vs "abd"）的中间字节差异、空串 `""` 与 `""` 相比都没有独立用例，属下一格。
 6. 没有新增打印出口、没有新增 `reasons` 桶、没有为了让读数好看而加 lowering case；`OP_CONCAT` / 容器 / 异常 / 并发**一律没碰**（各自的下一格）。
+
+## §10.108 常量形式的字符串相等：`OP_EQK` / `OP_NEQK` 两条臂（aot-mir-value，A 类第六项）
+
+§10.105 结尾那句「**常量形式仍拒译，变量形式现在正确。**」是一处**被写下、当时故意没修**的不对称（那一格的原话是「先记不顺手修」）。本节就是那一格：`s == t`（变量形式，`OP_EQ`）在 §10.105 已经被答对，`s == "hi"`（常量形式，`OP_EQK`）仍然停在 `unsupported-opcode`。§10.105 的叙述**不改写**——它是历史上的正确记录——本节把它覆盖为**已由本节关闭**，下面是关闭之后的读数。
+
+WHY IT EXISTS，用一句话说清楚：**`op_regs` 是一个「哪些操作数是寄存器」的掩码**，而 `OP_EQK` 的 r1/r2 是寄存器、**r3 是字符串池下标**（不是寄存器）。登记进 lowering 表就等于承诺「这个 opcode 的每个操作数我都在 prescan 里验过、在 emit_one 里读对了」，而 §10.105 只给了一个三寄存器形状的 `OP_EQ`：常量形式的第三操作数换了**种类**，于是没有一条现成的检查能接住它，它就被留在了 `unsupported-opcode` 那边。判据也因此在「同一条规则、两种拼法」上不对称——一种被答对，一种被拒。
+
+### 一、判据先行（实现之前，逐字）
+
+`tools/aot_mir.test.py` 的 `MIR_ONLY`（第 379 行，[obs: d537593]）加四例，按字节比 stdout：
+
+| 用例 | 源码 | 它咬的是什么 |
+| --- | --- | --- |
+| `mir_eqk_string` | `s = "hi"` / `say s == "hi"` / `say s == "ho"` | `OP_EQK` 的内容比较两向：真值一对、假值一对 |
+| `mir_eqk_string_ne` | `s = "hi"` / `say s != "hi"` / `say s != "ho"` | `OP_NEQK` 是**另一条臂**，不是 `OP_EQK` 换个壳 |
+| `mir_eqk_number` | `say 1 == 1` / `say 1 != 1` / `say true == true` | **必要条件**：数值/布尔常量的行为必须**不变**，否则就是「把整个 `OP_EQK` 写错」而不是「只加字符串臂」 |
+| `mir_eqk_string_cross` | `s = "hi"` / `say "hi" == s` / `say "ho" == s` | 常量在**左边**：证明判据咬的是**方向**（哪一侧是池下标、哪一侧是寄存器） |
+
+实现之前的原始行（`python3 tools/aot_mir.test.py --build build`，`IR-MIR-VERDICT|FAIL`）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_eqk_string|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_eqk_string_ne|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_eqk_number|mir=accepted|cc=ok|exec=same|rc=0|bytes=16|stdout-hex=747275650a66616c73650a747275650a
+IR-MIR-MIR-ONLY|case=mir_eqk_string_cross|mir=refused|why=unsupported-opcode
+IR-MIR-PROBLEM|mir_eqk_string: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_EQK:2)
+IR-MIR-PROBLEM|mir_eqk_string_ne: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_NEQK:2)
+IR-MIR-PROBLEM|mir_eqk_string_cross: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_EQK:2)
+IR-MIR-VERDICT|FAIL|tree=df7cfbd68607841e98e140451889cb8b1cb9add9|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+（`OP_EQK:2` / `OP_NEQK:2` 是这两例里各有两条比较指令，不是一条。）`mir_eqk_number` 在实现前就是绿的，这是**故意**的：它是必要条件，绿着才有资格说「我只加了字符串臂」。
+
+### 二、两种拼法是同一条指令
+
+实测字节码（`./build/inimerse --no-mods run selfhost/compiler.im --dump`，格式 `op,r1,r2,r3`）：
+
+```
+s == "hi"  ->  3,1,0,0 / 23,0,1,0 / 22,1,0,0 / 46,2,1,1 / 30,2,0,0 / 33,0,0,0
+"hi" == s  ->  3,1,0,0 / 23,0,1,0 / 22,1,0,0 / 46,2,1,1 / 30,2,0,0 / 33,0,0,0
+```
+
+**逐字节相同**：编译器无论常量写在左还是右，都把字面量放进 r3、把另一边编成寄存器（`src/compiler/compiler.c` 第 700–719 行 [obs: df7cfbd]）。所以这两例在 lowering 侧是**同一个输入**，`mir_eqk_string_cross` 咬的不是「左右顺序」这个语法位置，而是**这条臂读对没读对 r2 与 r3 的角色**——第五节的反向判据 (b) 就红在它身上。
+
+### 三、照抄解释器（一行一行）
+
+解释器的规则是现成的、明确的（`src/vm/vm.c` [obs: df7cfbd]）：
+
+| 情形 | 解释器（`src/vm/vm.c` 第 413–428 行，`val_eq` [obs: df7cfbd]） | 本节照抄成 |
+| --- | --- | --- |
+| 同型、都是字符串 | `a->sval == b->sval` 为真即 `true`，否则 `strcmp`，空指针归一成 `""`（第 417 行 [obs: df7cfbd]） | `mv_eq` 的串臂（指针快路 → `strcmp`），与 §10.105 同一条 |
+| 字符串 vs 数值/布尔 | 同型块（第 414 行 [obs: df7cfbd]）挡住；强转块（第 425–427 行 [obs: df7cfbd]）只认 INT/FLOAT/BOOL 的组合；其余 `return false`（第 428 行 [obs: df7cfbd]） | 常量侧**恒为** `MV_STR`，所以跨类型的答案由 `mv_eq` 已有的类型分流给出，不在本节重新发明 |
+| `OP_EQK` 的常量从哪来 | `int sidx = ins.r3;` … `vm_intern(vm, t->code->string_pool[sidx])`，带 `str_interned` 缓存（第 4159–4173 行 [obs: df7cfbd]） | `mv_str(c->node->string_pool[w3])`：**同一个池**，`mv_str` 只做驻留（`ival = 1`，见 `kMirValBlock`） |
+| `OP_EQK` 比完写回 | `Value opv = R[ins.r2];` 然后 `value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 1 : 0, …)`（第 4171–4172 行 [obs: df7cfbd]） | `v[r1] = mv_eq(v[r2], mv_str(...))` |
+| `OP_NEQK` | 同一段抄一遍，最后**取反**：`val_eq(&opv, &sv) ? 0 : 1`（第 4175–4189 行 [obs: df7cfbd]） | `mv_ne(v[r2], mv_str(...))`；`mv_ne` 的串臂是 `!mv_tru(mv_eq(…))`，内容规则仍然只有一个所有者 |
+
+`val_eq` 对字符串**先比指针再比内容**这条快路也照抄：`mv_str` 造出的常量来自池，`OP_LOADK_STRING` 造的运行时串也来自同一个池，同一条字面量在两个寄存器里是同一个指针，所以快路在这条臂上是真的会命中的，不是装饰。
+
+### 四、实现（三处，各管一件事）
+
+```c
+/* src/compilation/aot_mir.c，op_regs：r3 是池下标，不是寄存器 */
+case OP_EQK:
+case OP_NEQK:
+    return R1 | R2;                    /* 只声明两个寄存器；池界在 prescan 里验 */
+
+/* prescan：池下标按「本容器」的池验，而不是按寄存器上限 */
+case OP_EQK:
+case OP_NEQK: {
+    int32_t ix = ir_insn_r3(in);
+    if (ix < 0 || ix >= node->string_count) return bad(...);
+    if (!node->string_pool || !node->string_pool[ix]) return bad(...);
+}
+
+/* emit_one：两条 case 分开写，各自一行代码 */
+case OP_EQK: {
+    buf_fmt(b, "    v[%d] = mv_eq(v[%d], mv_str(\"", r1, r2);
+    buf_c_string(b, c->node->string_pool[w3]);
+    buf_str(b, "\"));");
+    return 0;
+}
+case OP_NEQK: { … mv_ne … }
+```
+
+三处的分工是判据逼出来的，两处踩过的边记在这里，免得下一格再踩：
+
+1. **`case OP_EQK: case OP_NEQK:` 不能写在同一行**。`IR-AOT-MIR-OPERANDS|…` 的操作数探测器按 case chunk 归属，两个标签共用一个 chunk 时它的内容只归最后一个标签，于是 `OP_EQK` 变成「prescan 验了、emit_one 却不读它的索引」的**死 case**，判据红成 `prescan checks OP_EQK, which the emitter does not index`。拆成两条独立的 case 才干净——而且本来就该拆，两条臂是两段代码。
+2. **债务注释里别写带方括号的池表达式**。探测器用 `\b(\w+_pool|…)\s*\[` 找「这个 case 读了索引」，注释里一句 `code->string_pool[sidx]` 会被算成 `OP_NEQ` 的索引，于是红成「`OP_NEQ` 读了索引但 prescan 没验它的操作数」。改成不带方括号的写法（「`code->string_pool` 的第 sidx 项」）就没事。注释的措辞被迫服从判据，这条**不理想**，但比放宽判据好。
+
+债务注释（`emit_one` 的 `case OP_EQK:` 上方，约 127 行）分成五段，逐段是：
+
+- **WHY IT EXISTS**：一种拼法被拒、一种被答对；`op_regs` 的寄存器语义接不住「第三操作数是池下标」；§10.105 只登记了三寄存器的 `OP_EQ`。
+- **WHAT IT ADDS**：`handles=34` 里的两条——`OP_EQK`/`OP_NEQK`，各自一个 case，各自一个池界检查，**不新增 opcode、不新增打印出口、零分配**（`mv_str` 只把指针包成 `MirVal`，`strcmp` 读驻留字面量）。
+- **WHAT IT DOES NOT COVER**：见第八节，逐条是量到的，不是猜的。
+- **DELETE CONDITION（可判定）**：在给共享 `NV` 加字符串 tag、把字符串比较移出「池下标」编码的那笔（`mv_eq` 自己注释里点名的 P3 步）里，删掉这两条 case 和 `mv_eq` 的串臂；此后编译器不再发 `OP_EQK`，`grep -c OP_EQK src/compiler/compiler.c` 为 0 [obs: df7cfbd]，两种拼法**按构造**同路。早于那笔删掉，这处不对称立刻回来。
+- **MEASURED BY**：`mir_eqk_string` / `mir_eqk_string_ne` / `mir_eqk_string_cross` 三例按字节比 stdout，实现前全红，反向判据见第五节；`handles=34` 与 `IR-AOT-MIR-COVER|covered=29|of=29` 是它没越界的读数。
+
+### 五、反向判据（两次注入，非对称，都还原了）
+
+注入前先 `grep -n` 印原件（`v[%d] = mv_eq(v[%d], mv_str(\"` 那一行），两份原件副本在 `.scratch/aot_mir.c.keep`；还原证据 `grep -c INJECTED` → 0、`BUILD_EXIT=0`、判据回绿。
+
+**(a) 让内容比较恒真**（`v[r1] = mv_boo(1); /* INJECTED */`，替掉 `mv_eq` 调用）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_eqk_string|mir=accepted|cc=ok|exec=diff|rc=0|bytes=10|stdout-hex=747275650a747275650a
+IR-MIR-MIR-ONLY|case=mir_eqk_string_cross|mir=accepted|cc=ok|exec=diff|rc=0|bytes=10|stdout-hex=747275650a747275650a
+IR-MIR-PROBLEM|mir_eqk_string: the MIR route printed b'true\ntrue\n' rc=0, the interpreter b'true\nfalse\n' rc=0
+IR-MIR-PROBLEM|mir_eqk_string_cross: the MIR route printed b'true\ntrue\n' rc=0, the interpreter b'true\nfalse\n' rc=0
+IR-MIR-VERDICT|FAIL|tree=e5f737c1af00f955ae4b9b5ed1dfe4b83d06748e|…
+```
+
+`mir_eqk_string_ne` 与 `mir_eqk_number` **保持绿**：这次只注入了 `OP_EQK`，`OP_NEQK` 的臂没被碰——判据能分清两条臂，说明它不是靠一个大故障同时污染期望与实际。
+
+**(b) 把常量的取法读错一次**（`c->node->string_pool[w2]`，把**寄存器字段**当池下标，`/* INJECTED: roles swapped */`）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_eqk_string|mir=accepted|cc=ok|exec=diff|rc=0|bytes=12|stdout-hex=66616c73650a66616c73650a
+IR-MIR-MIR-ONLY|case=mir_eqk_string_cross|mir=accepted|cc=ok|exec=diff|rc=0|bytes=12|stdout-hex=66616c73650a66616c73650a
+IR-MIR-PROBLEM|mir_eqk_string: the MIR route printed b'false\nfalse\n' rc=0, the interpreter b'true\nfalse\n' rc=0
+IR-MIR-PROBLEM|mir_eqk_string_cross: the MIR route printed b'false\nfalse\n' rc=0, the interpreter b'true\nfalse\n' rc=0
+IR-MIR-VERDICT|FAIL|…
+```
+
+**红的是 `mir_eqk_string_cross`**，正是那条为「方向」写的用例。
+
+**一条量出来的更正**：我原以为「方向」可以靠「把左右操作数调错一次」来咬，实测**做不到**——`mv_eq` 的相等是对称的，而两种拼法的流**逐字节相同**（第二节），所以「左右调换」这个注入在字节上看不见。真正能红在交叉用例上的是**角色**：r2 是寄存器（放值）、r3 是池下标（放常量）。第五节 (b) 注入的就是这个角色错位。这条更正比一次「注入→红」重要：它说明判据咬的是**取法的正确性**，不是拼法的左右。
+
+### 六、读数（本节 worktree 实跑，逐字；`rm -rf build` 后干净重建，读数在最后一笔源码改动 `d537593` 上重跑）
+
+```
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)|basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every-generated-file-read-off-the-emitted-text
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=15|mir-only-same-as-interpreter=15
+IR-MIR-VERDICT|PASS|tree=d53759393bc1304d2f9bdb640c60629851f7a574|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=34|of=67|unknown=33|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=34|emitter=34|reported=34|agree=yes
+IR-AOT-MIR|accepted=101|refused=0|same-as-interpreter=101|of=29|emittable=34|of-ops=67|not-emittable=33|corpus=inline-cases:86|mir-only-cases:15|beyond-ast-denominator=4|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+IR-AOT-MIR-PIN|tree=a0460b2100b654adcbd47364c452d5d0056402b8|head=d53759393bc1304d2f9bdb640c60629851f7a574|of=29|covered=29|pinned-covered=29|match=yes|tree-moved=yes
+IR-AOT-MIR-VERDICT|PASS|tree=d53759393bc1304d2f9bdb640c60629851f7a574|accepted=101|of=29|covered=29|missing=0|refused=0|same-as-interpreter=101|prelude-excluded=yes|beyond-ast-denominator=4
+```
+
+必须守住的不变量：`handles` **32 → 34**（正好是 `OP_EQK`/`OP_NEQK` 两条，多一条就说明动了不该动的）；`same-as-interpreter` **97 → 101**（只涨没掉）；`covered` 仍 `29/29`（两条臂不在 AST 路线的 29 个 opcode 里，所以 `beyond-ast-denominator` **2 → 4**，这是「涨了但账算得清」）；`reasons` 三个桶**名字与计数逐字不变**（`identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4`）；`mir-only-cases` **11 → 15**。
+
+### 七、笔
+
+| 笔 | 内容 | 反向判据 |
+| --- | --- | --- |
+| 一（`136a23b`） | `MIR_ONLY` 四例：`mir_eqk_string`/`mir_eqk_string_ne`/`mir_eqk_number`/`mir_eqk_string_cross` + 用例上方的说明 | 实现前全红（第一节原文；`mir_eqk_number` 绿着，作必要条件） |
+| 二（`e5f737c`） | 三处实现 + 五段债务注释 + `kMirValBlock` 那句转成过去时（历史不改写，只把「曾经」说清楚） | 第五节 (a)(b) 两次注入 |
+| 三（`a0460b2`） | 债务注释里三条**先写后量**的话改成量到的（纯注释：`git show` 逐行是 `*`） | — |
+| 四（`a872fff`） | `tools/aot_mir_cover.pin.json` 重记（tree + 计数；`--pin` 工具写的，`covered` 列表一字未动） | — |
+| 五（`d537593`） | 债务注释里六处 `src/vm/vm.c` 的行号**读错**（凭记忆写的），重读原文逐个改对（纯注释） | — |
+| 六（本节） | `docs/STATUS.md` 的 §10.108（覆盖 §10.105 那处不对称，不改写历史） | — |
+
+第三笔值得写明白：注释里原来写「NaN 不可达」「容器拒绝 n=11」「非驻留串要等一个未来 opcode」，量完之后三条**全错**——NaN 是可达的（`0.0/0.0` 在本路线不 abort，两边都答 `false`），容器那条是 `n=10` 且 `why=illegal-operand`（不是 `unsupported-opcode`），非驻留串今天就有（`+`），它在 `mv_add` 里更早就崩。**注释里的数字不许先写后量**，这一笔就是补那个差额。
+
+第五笔是同一种病的另一种形态：`src/vm/vm.c` 的行号是**凭记忆**写的，六处全偏了几行（`L_EQK` 结束在 4173 不是 4174、`L_NEQK` 在 4175–4189 不是 4177–4191、`vm_intern` 那处在 4164–4166 不是 4161、`VAL_BOOL`/`VAL_NIL` 是 418/419 不是 419/420）。一条以「这条规则抄自第 N 行」为全部论证的注释，只值那个 N；猜来的 N 就是债。重读原文后逐处改对。
+
+### 八、诚实边界（逐条是量到的）
+
+1. **常量对容器**（`a = [1, 2]` / `say a == "hi"`）：解释器答 `false`（`src/vm/vm.c` 第 428 行 [obs: df7cfbd]）；本路线**拒译**——`IR-MIR-REFUSED|why=illegal-operand|detail=container=0 leaves the argument stack unbalanced: asp=2`、`IR-AOT-MIR-REFUSED|…|n=10`，`exit 1`，**没有半截答案**。原因不是本节的臂，而是**没有任何可发射的 opcode 造得出容器**：`OP_NEW_ARRAY`/`OP_NEW_DICT`/`OP_NEW_SET` 都不在 lowering 表里（这正是 `handles=34` 而不是 37 的那笔账）。属于本子集外，拒译是诚实的。
+2. **非驻留串作比较值**（`r2` 侧）：今天唯一能造出它的是字符串 `+`（`s = "a" + "b"`），而它在**本节之前**就是坏的——生成程序死在 `mv_add` 里（`RUN_RC=134`，stdout 空，`mv_as_nv` 没有 `MV_STR` 臂）。所以非驻留串**到不了** `r2`；真到了，`mv_eq` 的守卫 `abort()`，不静默给答案。属于本子集外（字符串算术是另一格）。
+3. **`-0.0` / NaN**：`say -0.0 == "hi"` / `!=` 两边都 `false`/`true`；`say (0.0/0.0) == "hi"` 两边都 `false`。NaN 在本路线**可达**，且因为「浮点对字符串永不强转」（第 414/425-428 行 [obs: df7cfbd]）答案与「NaN 不等于一切」无关——它不是数值路径。
+4. **跨容器 / 全局常量形状**：非 root 容器**能用**——`func f(a) { return a == "hi" }` 对的是**函数自己的池**（prescan 用 `node->string_count`，emit 用 `c->node->string_pool`），与解释器逐字节相同；未定义全局（`nosuchglobal == "hi"`）两边都 `false`/`true`（`L_LOAD_GLOBAL` 的 idx=-1 给 nil，走 `mv_eq` 的 nil 臂）。
+5. **大池下标**：5000 条字面量先把池撑到 ~5001，`OP_EQK` 的 r3 **越过了 `REG_LIMIT`（4096）**，仍然逐字节相同（`IR-MIR-CONSERVE|insns=10009|emitted=10009|holds=yes`）。这就是第四节第 2 处为什么按 `string_count` 验、而不是按寄存器上限验。
+6. **池里放空指针**：编译器不会这么发（字面量必然非空），但 prescan 仍**拒绝**——`vm_intern(NULL)` 在解释器里会退化成 `""`（第 4169–4170 行 [obs: df7cfbd]），本路线不去模仿那条退化路径，宁可拒译。
+7. **两种拼法的字节相同**这条性质是**本节的判据的一部分**：如果哪天编译器开始按左右区分 r3（比如把常量编成寄存器），`mir_eqk_string_cross` 会先红。它今天红不了，因为差异不存在——这一点在第五节「一条量出来的更正」里说过。
+
+**今天还会失败/会拒译的 `OP_EQK` 常量形状**，逐条（属于本子集外的一并注明）：
+
+- 常量对**容器**（数组/字典/集合）：**拒译**（`illegal-operand`，没有容器构造 opcode）。本子集外。
+- 常量对**非驻留串值**（`+` 串出来的）：生成程序在 `mv_add` 里 **SIGABRT**，早于比较。本子集外（字符串算术）。
+- 常量对**函数值**（`f == "hi"`，`OP_LOAD_FUNC` 之类）：`VAL_FUNCTION` 的相等按 `ptr`，但本路线没有可发射的函数值 opcode，会拒译。本子集外。
+- 常量对**非 root 容器的外部捕获**（闭包/upvalue 里的字符串）：本子集没有闭包，会拒译。本子集外。
+- 常量在 **`OP_EQK` 的宽池形状**（池下标 ≥ 32767，走 `IR_F_WIDE_B`）：代码路径上 `.scratch` 里量了 5001 这一档（不用宽字段），32767 以上没有实际量过，注释里也没声称过——**没有测量就不写结论**。
+
+容器、异常、并发、`OP_CONCAT`：**一笔没碰**。
