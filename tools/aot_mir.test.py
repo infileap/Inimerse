@@ -179,6 +179,63 @@ def mirval_assert_problems(text):
     return [name for name, needle in MIRVAL_ASSERTS if needle not in text]
 
 
+# The ALLOCATION reading (IR-MIR-ALLOCS), the one thing the byte criterion
+# structurally cannot see.  tools/aot_mir.test.py compares stdout bytes and an
+# exit code against the interpreter; a run that leaked every buffer it ever
+# malloc'd, or freed one twice, satisfies both.  mv_free_all() in kMirValBlock
+# therefore prints, on stderr at program exit, how many blocks the program was
+# handed, how many the exit sweep released, how many survived it (must be 0)
+# and how many bytes it requested over its whole life.
+#
+# The assertion is an EXACT (allocs, bytes) PAIR per case, not just live == 0.
+# That is the part with teeth: `live` is computed as allocs - freed inside the
+# one sweep that also computes it, so a site that mallocs WITHOUT registering
+# would leave all three counters at 0 and report a perfectly clean reading --
+# the leak this instrument exists to name would be the one leak it cannot see.
+# An exact expected count turns that into a named red (case, expected, actual),
+# and a second exact number (bytes) keeps the check honest about SIZE: a count
+# alone cannot tell seven 4-byte buffers from seven 40-byte ones.
+ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|bytes=(\d+)$",
+                       re.M)
+
+# case name -> (allocs, bytes), the numbers the criterion DEMANDS.  A case not
+# listed must allocate nothing, which is the reading for every case in this list
+# that touches no string `+`.  mir_add_string_concat's 7 blocks are the seven
+# concatenations its source performs, and its 33 bytes are their la + lb + 1
+# sizes at the lengths that program actually reaches: (2+2+1) + (2+1+1) +
+# (1+2+1) + (2+2+1) + (2+0+1) + (2+2+1) + (4+2+1) = 5+4+4+5+3+5+7.
+ALLOCS_EXPECT = {
+    "mir_add_string_concat": (7, 33),
+}
+ALLOCS_DEFAULT = (0, 0)
+
+
+def allocs_problems(text, case):
+    """Which ways this run's allocation reading disagrees with the criterion.
+
+    Named, not a boolean: the difference between "the instrument never
+    reported", "a block survived the sweep" and "the program allocated a
+    different number of blocks than the criterion demands" is the whole value
+    of the measurement, and a bare pass/fail cannot tell the three apart."""
+    m = ALLOCS_RE.search(text or "")
+    want_allocs, want_bytes = ALLOCS_EXPECT.get(case, ALLOCS_DEFAULT)
+    if not m:
+        return ["%s: the generated program printed no IR-MIR-ALLOCS line, so this run measured "
+                "no allocation and no lifetime (the criterion demands allocs=%d|bytes=%d)"
+                % (case, want_allocs, want_bytes)]
+    allocs, freed, live, nbytes = (int(g) for g in m.groups())
+    out = []
+    if live != 0:
+        out.append("%s: LEAK -- live=%d block(s) survived the exit sweep (allocs=%d, freed=%d, "
+                   "%d byte(s) requested in all); the criterion says the sweep must leave none"
+                   % (case, live, allocs, freed, nbytes))
+    if allocs != want_allocs or nbytes != want_bytes:
+        out.append("%s: allocation count off -- got allocs=%d|bytes=%d, the criterion demands "
+                   "allocs=%d|bytes=%d (a site that mallocs without registering reports 0|0)"
+                   % (case, allocs, nbytes, want_allocs, want_bytes))
+    return out
+
+
 # Programs the AST route cannot lower AT ALL, so they cannot join the shared
 # corpus: aot_native refuses a string expression ("expression kind 2 is outside
 # the numeric subset"), and both this file's shared loop and the cover test
@@ -351,6 +408,39 @@ MIR_ONLY = [
      's = "hi"\nt = "ho"\nsay s < t\nsay s <= t\nsay s > t\nsay s >= t\n'
      'say t < s\nsay t <= s\nsay t > s\nsay t >= s\n'
      'say s <= s\nsay s >= s\nsay s < s\nsay s > s\n'),
+    # The first case in this list whose ANSWER DOES NOT EXIST WITHOUT THE HEAP.
+    # `s + t` is a NEW buffer every time (the interpreter's L_ADD mallocs
+    # la + lb + 1 and marks the result heap-owned with ival == 0), so this case
+    # is also the first one the allocation reading has anything to say about:
+    # ALLOCS_EXPECT demands 7 blocks and 33 bytes from it, and every other case
+    # in this list must still report 0|0.
+    #
+    # Why each line is here, one by one:
+    #   `s + t`       both operands resident, both variables -- the hole itself.
+    #   `s + "x"`     a resident constant on the RIGHT; stops an arm that only
+    #                 handles two globals.
+    #   `"x" + s`     a resident constant on the LEFT; stops the same arm from
+    #                 assuming the left operand is the variable.
+    #   `s + s`       the same buffer twice; a concat that appended in place
+    #                 would corrupt both operands instead of building a new one.
+    #   `s + ""`      the empty resident string on the right; nothing may
+    #                 short-circuit to `a` here, because a copy is what the
+    #                 interpreter makes and ival would then mean two things.
+    #   `u = s + t` / `say u`   the result survives a store into a global and a
+    #                 later load -- i.e. it is a value, not a print-time trick.
+    #   `say u + s`   a heap-owned string as an OPERAND of another concat.
+    #   `say s` / `say t` after all of the above: concatenation does not mutate
+    #                 its operands (the interpreter copies; an append-in-place
+    #                 implementation would print something else here).
+    # Mixed-type `+` (`s + 1`, `1 + "7"`) is deliberately NOT in this case: the
+    # interpreter stringifies BOTH sides by one rule, which is a new class of
+    # print exit and not part of this step; that boundary is written down in
+    # docs/STATUS.md and stays an abort until it has its own criterion.
+    ("mir_add_string_concat",
+     's = "hi"\nt = "ho"\n'
+     'say s + t\nsay s + "x"\nsay "x" + s\nsay s + s\nsay s + ""\n'
+     'u = s + t\nsay u\nsay u + s\n'
+     'say s\nsay t\n'),
 ]
 
 
@@ -510,6 +600,32 @@ def self_check(verbose):
           % (victim_name, ",".join(got) or "none", victim_name,
              "ok" if got == [victim_name] else "WRONG"))
     ok &= got == [victim_name]
+    # The allocation reading, asked four ways, because it has four ways to be
+    # wrong and a boolean would merge them: a clean reading passes; a block
+    # that survived the sweep is a NAMED leak carrying the case and the counts;
+    # a count that does not match the criterion is a different NAMED problem
+    # (this is the shape a site that mallocs without registering produces -- it
+    # reports 0|0, i.e. it looks clean); and a run that printed no reading at
+    # all is a third problem again.  The second and third cells are what make
+    # this a checker rather than a formality: without them "not found" is the
+    # only verdict it could ever give.
+    checks += 1
+    for what, text, want_kind in (
+            ("allocs-clean", "IR-MIR-ALLOCS|allocs=7|freed=7|live=0|bytes=33\n", None),
+            ("allocs-leak", "IR-MIR-ALLOCS|allocs=7|freed=6|live=1|bytes=33\n", "LEAK"),
+            ("allocs-count-off", "IR-MIR-ALLOCS|allocs=6|freed=6|live=0|bytes=30\n",
+             "allocation count off"),
+            ("allocs-missing", "", "printed no IR-MIR-ALLOCS line")):
+        checks += 1
+        got = allocs_problems(text, "mir_add_string_concat")
+        if want_kind is None:
+            hit = not got
+        else:
+            hit = len(got) == 1 and want_kind in got[0] and "mir_add_string_concat" in got[0]
+        print("IR-MIR-SELFCHECK|what=%s|got=%s|want=%s|%s"
+              % (what, "none" if not got else got[0].split(":")[0], want_kind or "none",
+                 "ok" if hit else "WRONG"))
+        ok &= hit
     print("IR-MIR-SELFCHECK|checks=%d|verdict=%s" % (checks, "PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
@@ -864,7 +980,7 @@ def main():
             problems.append("%s: cc failed: %s" % (name, (ec or "")[:200]))
             continue
         rc_i, out_i, _ei = run_bytes([interp, "--no-mods", "run", s], workdir)
-        rc_r, out_r, _e2 = run_bytes([exe_m], workdir)
+        rc_r, out_r, er = run_bytes([exe_m], workdir)
         same = (out_r == out_i) and (rc_r == rc_i)
         mir_only_same += 1 if same else 0
         if not same:
@@ -872,6 +988,27 @@ def main():
                             % (name, out_r, rc_r, out_i, rc_i))
             print("IR-MIR-EXEC-DIFF|case=%s|interp-rc=%s|mir-rc=%s|interp-out=%r|mir-out=%r"
                   % (name, rc_i, rc_r, out_i, out_r))
+        # The allocation reading, taken from the SAME run whose stdout was just
+        # compared.  stderr is where mv_free_all() prints it, which is the one
+        # channel this criterion does not read.  A run that stopped on a guard
+        # never reached atexit, so it reports `reported=no`: the exit-code
+        # problem above is that red, and this reading must not turn a crash into
+        # a second, quieter one.
+        er_text = er.decode("utf-8", "replace") if isinstance(er, bytes) else (er or "")
+        want = ALLOCS_EXPECT.get(name, ALLOCS_DEFAULT)
+        got = ALLOCS_RE.search(er_text)
+        if rc_r == 0:
+            problems.extend(allocs_problems(er_text, name))
+            if got:
+                print("IR-MIR-ALLOCS|case=%s|reported=yes|allocs=%s|freed=%s|live=%s|bytes=%s"
+                      "|expect-allocs=%d|expect-bytes=%d|ok=%s"
+                      % (name, got.group(1), got.group(2), got.group(3), got.group(4),
+                         want[0], want[1], "yes" if not allocs_problems(er_text, name) else "no"))
+            else:
+                print("IR-MIR-ALLOCS|case=%s|reported=no|why=exited-0-but-printed-no-line"
+                      "|expect-allocs=%d|expect-bytes=%d|ok=no" % (name, want[0], want[1]))
+        else:
+            print("IR-MIR-ALLOCS|case=%s|reported=no|why=rc=%s" % (name, rc_r))
         print("IR-MIR-MIR-ONLY|case=%s|mir=accepted|cc=ok|exec=%s|rc=%s|bytes=%d|stdout-hex=%s"
               % (name, "same" if same else "diff", rc_r, len(out_r), out_r.hex()))
 
