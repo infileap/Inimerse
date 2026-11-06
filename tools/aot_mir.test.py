@@ -204,8 +204,16 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # concatenations its source performs, and its 33 bytes are their la + lb + 1
 # sizes at the lengths that program actually reaches: (2+2+1) + (2+1+1) +
 # (1+2+1) + (2+2+1) + (2+0+1) + (2+2+1) + (4+2+1) = 5+4+4+5+3+5+7.
+#
+# mir_concat_chain's 6 blocks are its SIX chains, one block each -- that is the
+# whole point of the fold, and it is where a pairwise fold would differ without
+# one byte of stdout changing: (3-1) + (11-1) + (4-1) + (3-1) + (3-1) + (3-1) =
+# 21 blocks, not 6.  The 66 bytes are the la+...+1 sums at the lengths that
+# program actually reaches: (2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1)
+# + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
     "mir_add_string_concat": (7, 33),
+    "mir_concat_chain": (6, 66),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -441,6 +449,55 @@ MIR_ONLY = [
      'say s + t\nsay s + "x"\nsay "x" + s\nsay s + s\nsay s + ""\n'
      'u = s + t\nsay u\nsay u + s\n'
      'say s\nsay t\n'),
+    # The CONCAT CHAIN.  A chain is not N-1 concatenations: the interpreter's
+    # L_CONCAT sums every segment's length, checks the sum for overflow with the
+    # same predicate a pair would use, allocates ONE buffer and memcpys each
+    # segment in order.  So the NUMBER of blocks is the criterion: every chain
+    # here must produce ONE block, not sum(nops - 1).  That count is what
+    # separates "fold" from "call the pair routine until the operands run out",
+    # and no stdout comparison can see the difference.
+    #
+    # Why each line is here, one by one:
+    #   `a + b + c`             three resident operands; the flat case.  Compiled
+    #                           as ONE OP_CONCAT over 3 registers, not as
+    #                           (a+b)+c, which would be an OP_ADD and then an
+    #                           OP_ADD against a heap-owned left.
+    #   `a + "|" + b + "|" + c + "|" + d + "|" + e + "|" + f`   eleven operands:
+    #                           a chain long enough that a per-pair fold is ten
+    #                           blocks where the criterion says one.  It also puts
+    #                           five RESIDENT literals BETWEEN variables, which
+    #                           stops an arm that assumes at most two operands are
+    #                           variables.
+    #   `a + b + "" + c`        the empty string in the MIDDLE of a chain.  A
+    #                           0-length segment adds 0 bytes to the sum but is
+    #                           still an operand, so a fold that short-circuits
+    #                           `x + ""` into `x` here would print the right bytes
+    #                           from a WRONG buffer; the block count would look
+    #                           right, which is why bytes is read as well.
+    #   `u = a + b + c`         a chain result stored in a global...
+    #   `say u`                 ...and printed: a value, not a print-time trick.
+    #   `u == v` / `u != v`     the chain result as an operand of a COMPARISON
+    #                           against a resident string, so the buffer is a real
+    #                           string and not a temporary only say() can read.
+    #                           Variables, not an `== "aabbcc"`: a constant
+    #                           comparison is OP_EQK/OP_NEQK, another arm.
+    #   `"z" + u + ""`          a HEAP-OWNED chain result (u) in the middle of
+    #                           another chain, empty string after it.  nops=3 and
+    #                           one operand is already registry-owned: this line's
+    #                           buffer must be new and must not absorb u.
+    #   `u + u + u`             the same owned buffer three times: an arm that
+    #                           appended in place would corrupt u and print a
+    #                           different sum.
+    #   `say a` / `say b`       the originals are untouched by all of the above.
+    ("mir_concat_chain",
+     'a = "aa"\nb = "bb"\nc = "cc"\nd = "dd"\ne = "ee"\nf = "ff"\n'
+     'say a + b + c\n'
+     'say a + "|" + b + "|" + c + "|" + d + "|" + e + "|" + f\n'
+     'say a + b + "" + c\n'
+     'u = a + b + c\nv = "aabbcc"\n'
+     'say u\nsay u == v\nsay u != v\n'
+     'say "z" + u + ""\nsay u + u + u\n'
+     'say a\nsay b\n'),
 ]
 
 
