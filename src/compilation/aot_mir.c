@@ -463,7 +463,7 @@ static const char *const kMirValBlock =
 " * was answered -- one question, two spellings, one answer and one refusal.\n"
 " * That hole is CLOSED by the OP_EQK/OP_NEQK arm in emit_one below, which keeps\n"
 " * this one rule (it calls mv_eq/mv_ne rather than repeating the content\n"
-" * comparison) and docs/STATUS.md 10.108 records the closure.  The sentence\n"
+" * comparison) and docs/STATUS.md 10.109 records the closure.  The sentence\n"
 " * stays in past tense on purpose: it is a record of what this note did NOT\n"
 " * cover at the time.\n"
 " *\n"
