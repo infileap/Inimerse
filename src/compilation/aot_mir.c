@@ -984,10 +984,79 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (argc > 0) buf_fmt(b, " asp -= %d;", argc);
         return 0;
     }
+    /* THE IMPLICIT RETURN IS nil, NOT INTEGER 0 -- the debt this arm used to
+     * pay for by answering a question nobody asked.  Five parts, same shape as
+     * the mv_eq note in the block above: WHY / WHAT IT ADDS / WHAT IT DOES NOT
+     * COVER / DELETE CONDITION / MEASURED BY.
+     *
+     * WHY.  `func n() { x = 1 }` with `say n()` does NOT refuse: the compiler
+     * emits OP_RETURN with r1 == 0 (measured, 6 instructions), and the old arm
+     * below emitted `return mv_int(0);` for that shape.  The interpreter
+     * answers NIL for it -- src/vm/vm.c:4126-4127, the L_RETURN test is
+     * `ins.r1 > 0 && ins.r1 < FRAME_REGS`, and both a bare `return` and
+     * falling out of the function end take the else branch that sets
+     * VAL_NIL.  So this was a SILENT wrong answer: `cc` succeeded, the
+     * binary exited 0, and the only visible difference from the interpreter
+     * was one stdout byte (`0` instead of `nil`).  A crash announces itself; a
+     * wrong value with a success exit code does not, and that is the whole
+     * reason this entry exists.  The C epilogue emitted at the end of every
+     * function (emit_container, below) carried the SAME answer and is fixed
+     * here in the same commit: it is the fall-through defence for a body whose
+     * last instruction is not OP_RETURN, and a defence that answers the wrong
+     * value is not a defence.
+     *
+     * WHY IT CANNOT BE "THE REGISTER IS ALREADY ZERO".  Every function starts
+     * with `for (i...) v[i] = mv_int(0)` and mv_from_nv leaves sval/ptr zero
+     * and copies the tag into .type -- and MV_INT is the tag whose numeric
+     * value is 0.  So a MirVal that was never written READS as integer 0, and
+     * the old arm's `mv_int(0)` was indistinguishable from reading an empty
+     * register.  That coincidence is exactly what a silent-default bug is
+     * made of (docs/STATUS.md 10.104 closed the same shape for GLOBALS).  The
+     * fix therefore does not touch the register initialiser -- it stays
+     * mv_int(0) so an unwritten register stays deterministic -- and it emits
+     * an explicit `return mv_nil();` so that the RETURN VALUE no longer
+     * depends on which bits a zeroed slot happens to mean.
+     *
+     * WHAT IT ADDS.  Two emit sites change answer, no new opcode, no new
+     * print exit, no change to what any other operation means:
+     *   - this arm, for OP_RETURN with r1 == 0 (implicit end and bare return);
+     *   - the non-main epilogue in emit_container, for a body with no trailing
+     *     OP_RETURN at all.
+     * Paths WITH a value (r1 > 0, `return e`) are untouched: `return x` was
+     * always right and the arm above still copies the register as-is.
+     *
+     * WHAT IT DOES NOT COVER.  Deliberately:
+     *   - main's `return 0;` is int main(void)'s PROCESS EXIT CODE, not an
+     *     Inimerse value; it does not go through MirVal and is not this hole.
+     *   - The register initialiser stays mv_int(0) (see above).  If a future
+     *     opcode reads a register the emitter never wrote, that read still
+     *     means integer 0; nothing in the current subset does, and making the
+     *     slots nil instead would change a question this entry did not ask.
+     *   - `func m() { }` and `func b() { return }` are the same OP_RETURN r1=0
+     *     shape and are covered by the same change; they are in the criterion
+     *     precisely so that "only the non-empty body got fixed" cannot pass.
+     *
+      * DELETE CONDITION (decidable): the commit that gives the shared NV a nil
+     * tag and moves the return value's nil into the IR, in which case this arm
+     * emits `return mv_from_nv(nv_nil())` / delegates like every numeric
+     * operation.  Mechanical check for "the old answer is gone": a `grep -n`
+     * over src/compilation/aot_mir.c for the emitted-Cstring prefix of a
+     * function return of integer 0 -- a double quote, four spaces, then that
+     * return -- returns ZERO lines today (this note does not spell the pattern
+     * out, so it cannot match itself).  Any hit is an emitted function return
+     * of the old answer, i.e. the condition is not met.  The register
+     * initialiser writes `v[i] = mv_int(0);`, which has no closing quote where
+     * the prefix needs one, so it cannot mask a returning site.
+     *
+     * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case mir_implicit_return
+     * (non-empty body, empty body, bare return) compares BYTES against the
+     * interpreter.  Before this change it reddened as
+     * interp-out=b'nil\nnil\nnil\n' vs mir-out=b'0\n0\n0\n' with BOTH rc=0 --
+     * the receipt for "an exit code cannot see this hole". */
     case OP_RETURN:
         if (c->nodes[c->id].is_main) { buf_str(b, "    return 0;"); return 0; }
         if (r1 > 0) buf_fmt(b, "    return v[%d];", r1);
-        else buf_str(b, "    return mv_int(0);");
+        else buf_str(b, "    return mv_nil();");
         return 0;
     case OP_SAY:          buf_fmt(b, "    mv_say(v[%d]);", r1); return 0;
     case OP_HALT:
@@ -1078,7 +1147,7 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
     buf_free(&body);
 
     if (nodes[id].is_main) buf_str(out, "    return 0;" NL "}" NL);
-    else buf_str(out, "    return mv_int(0);" NL "}" NL NL);
+    else buf_str(out, "    return mv_nil();" NL "}" NL NL);   /* fall-through: nil, see the OP_RETURN note */
     g_funcs++;
     g_emitted += emitted;
     return 0;

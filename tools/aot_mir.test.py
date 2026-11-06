@@ -277,6 +277,25 @@ def mirval_assert_problems(text):
 #                             case rather than a line in the other two because
 #                             an arm without a criterion is exactly the debt
 #                             docs/STATUS.md 10.105 writes down.
+#   mir_implicit_return
+#                             a function that falls out of its end, a function
+#                             with an EMPTY body, and a BARE `return` -- all
+#                             three are one opcode shape: the compiler emits
+#                             `OP_RETURN` with r1 == 0 (measured on
+#                             `func n() { x = 1 }`: 6 instructions, the last
+#                             `OP_RETURN r1=0`), and the interpreter answers nil
+#                             for all three (src/vm/vm.c:4126-4127: the
+#                             `ins.r1 > 0 && ins.r1 < FRAME_REGS` test is false,
+#                             so the VAL_NIL branch runs).  The MIR route used
+#                             to answer integer 0 here -- SILENTLY: `cc`
+#                             succeeded, the binary exited 0, and the only
+#                             visible difference was one stdout byte.  That is
+#                             why this case is byte-compared like every other
+#                             one: an exit code cannot see this hole.  Three
+#                             shapes in one case rather than three cases, because
+#                             they redden together and one decision fixes them;
+#                             a case carrying only the empty body would not say
+#                             that the non-empty body has the same hole.
 MIR_ONLY = [
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
@@ -292,6 +311,9 @@ MIR_ONLY = [
     ("mir_loadk_string_truthiness",
      's = "hi"\ne = ""\nif s { say "T" } else { say "F" }\n'
      'if e { say "T" } else { say "F" }\nsay not s\n'),
+    ("mir_implicit_return",
+     'func n() { x = 1 }\nsay n()\nfunc m() { }\nsay m()\n'
+     'func b() { return }\nsay b()\n'),
 ]
 
 

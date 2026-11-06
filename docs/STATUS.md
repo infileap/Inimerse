@@ -4480,3 +4480,97 @@ IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=95|of=29|covered=29|missing=0
 4. `mv_tru` 的串臂**没有驻留守卫**，因为它不读载荷——`vm_truthy` 的 `default: return 1` 对任何字符串 tag 都成立，加守卫只会在一个不需要判据的地方造一条假规矩。
 5. 判据只认三个用例，是反例族里最小的三个，不是全集：空串与非空串的 `!=`、两个内容相同但不同字面量的串（`s == "h" + "i"` 之类当前语法也到不了）、`not (s == t)` 的组合都没有用例，属下一格。
 6. 这一笔**没有**新增打印出口（`mv_say` 未动）、没有新增 `reasons` 桶、没有动 `covered` 的分母，也没有为了让读数好看而加 lowering case。
+
+## §10.106 「返回值默认是整数 0」：同一个假等价在 `return` 这条路径上（aot-mir-value，A 类第四项）
+
+### 一、这笔债的来源与日期
+
+**来源**：`src/compilation/aot_mir.c` 里 `emit_one` 的 `OP_RETURN` 臂。它第一次出现是 **`1dec5e6`（2026-11-01，"aot_mir: a C translation unit generated from the IrInsn stream"）**，当时写的是 `return nv_int(0)`；**`8b796dd`（2026-11-05，"registers hold MirVal"）**把同一个位置原地改成 `return mv_int(0)`——**只换了字形，换的是同一个答案**。本流 **2026-11-06** 把它改成 `return mv_nil()`，并把「曾是假等价」写在这里。
+
+**与 §10.104 的关系**：同一类假等价，不同的路径。§10.104 修的是**全局**的默认值（生成文件里 `static MirVal g_x = { MV_INT, 0, 0 };`，解释器把每个全局建成 `VAL_NIL`）；本节修的是**返回值**。两处的错误机制都是「把一个没有值的位置读成整数 0」，区别只是那个位置叫 `g_x` 还是叫函数掉出末尾。
+
+**与零初始化的关系（这是它为什么安静的技术原因）**：生成函数开头是 `for (int i = 0; i < nregs; i++) v[i] = mv_int(0);`，而 `mv_from_nv` 把 tag 抄进 `.type`、把 `.sval`/`.ptr` 清零；`MV_INT` 的 tag 数值恰好是 **0**。所以**一个从没写过的寄存器读出来就是整数 0**，旧臂的 `mv_int(0)` 与「读一个空寄存器」在字节上不可区分。换句话说：这不是「忘了写一个分支」，而是「寄存器形状本身让一个缺失的分支看起来像有答案」——这就是 `docs/STATUS.md` §10.104 记的那种假等价在返回值路径上的同一张脸。
+
+### 二、复现（修之前的原始读数，2026-11-06）
+
+```im
+func n() { x = 1 }
+say n()
+```
+
+- 解释器：打印 `nil`，`INTERP_RC=0`。
+- MIR 路线**接受并编译**：`TRANSLATE_RC=0`，`IR-MIR-CODEGEN|…|regs-max=3|emits=32|generated=(OP_MOV,OP_LOADK_INT,OP_SAY,OP_HALT,OP_CALL_FUNC,OP_RETURN)`，`IR-MIR-CONSERVE|insns=6|emitted=6|not-yet=0|holds=yes|bytes=134`，`IR-AOT-MIR-OK`。
+- 生成体（今天逐字；修之前这里两处都是 `return mv_int(0);`，`IR-MIR-CONSERVE` 的 `bytes` 由 134 变成 133）：
+
+```c
+static MirVal fn_n(void) {
+    MirVal v[3];
+    for (int i = 0; i < 3; i++) v[i] = mv_int(0);
+L0:
+    v[2] = mv_int(1LL);
+    v[1] = v[2];
+    return mv_nil();
+L3: ;
+    return mv_nil();
+}
+```
+- `cc -O2` 通过（`CC_RC=0`），**运行 rc=0、stdout 是 `0`**。两边退出码都是 0——**没有任何人看得见这个错**，除了 stdout 的那一个字节。
+- 实现前的判据红原文（`tools/aot_mir.test.py` 的 `mir_implicit_return` 用例）：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_implicit_return|interp-rc=0|mir-rc=0|interp-out=b'nil\nnil\nnil\n'|mir-out=b'0\n0\n0\n'
+IR-MIR-MIR-ONLY|case=mir_implicit_return|mir=accepted|cc=ok|exec=diff|rc=0|bytes=6|stdout-hex=300a300a300a
+IR-MIR-VERDICT|FAIL|tree=2f71413…|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+三个形状在同一个用例里：`func n() { x = 1 }`（非空体掉出末尾）、`func m() { }`（空体）、`func b() { return }`（裸 `return`）。三种形状是**同一个 opcode 形状**：编译器对它们都发 `OP_RETURN` 且 `r1 == 0`（实测 6 条指令、最后一条 `OP_RETURN r1=0`），所以它们一起红、一起绿；一个只带空体的用例会说不出「非空体有同一个洞」这句话。
+
+### 三、裁定：显式返回 nil，不靠「寄存器恰好是 0」
+
+规则不是本节发明的，是照抄解释器。`src/vm/vm.c` 第 4123–4130 行的 `L_RETURN`：`if (ins.r1 > 0 && ins.r1 < FRAME_REGS) ret = R[ins.r1]; else { ret.type = VAL_NIL; ret.ival = 0; ret.sval = NULL; }`。**裸 `return` 与「掉出末尾」在解释器里共用同一个 else 分支**，所以两者的答案是同一个 nil。
+
+因此这一笔只改两个发射点、不新增概念：
+
+- `emit_one` 的 `OP_RETURN` 臂：`r1 == 0` 时发射 `return mv_nil();`（`r1 > 0` 的 `return e` 原样不动——它一直是对的）。
+- `emit_container` 的非 main 尾声：同样发射 `return mv_nil();`。它是「函数体最后一条不是 `OP_RETURN`」的兜底；**兜底答错就不算兜底**，所以两处同笔。
+- 寄存器初始化 `v[i] = mv_int(0)` **保留**：它让「读一个没写过的寄存器」保持确定；本节只让**返回值**不再依赖它。
+- main 的 `return 0;` 不动：那是 `int main(void)` 的**进程退出码**，不是 Inimerse 值，也不经过 `MirVal`。
+
+债务注释写在 `emit_one` 里该臂的正上方（WHY / 为什么不能靠"寄存器已经是 0" / ADDS / NOT COVER / 可判定 DELETE CONDITION / MEASURED BY），删除条件是「P3 把 nil 搬进 IR、该臂改发射 `mv_from_nv(nv_nil())`」那一笔：机械判据是对 `src/compilation/aot_mir.c` 用 grep 查"函数返回整数 0 的生成串前缀"零命中（注释本身不写全该 pattern，所以不会自匹配）；任何命中都说明旧的发射点还在。
+
+### 四、反向判据（不对称）
+
+把发射的 `return mv_nil()` 改回 `return mv_int(0)`（只改 `OP_RETURN` 臂这一处，解释器基线现场重算，两侧不同时动），重建 `BUILD_EXIT=0` 后判据**真红**：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_implicit_return|interp-rc=0|mir-rc=0|interp-out=b'nil\nnil\nnil\n'|mir-out=b'0\n0\n0\n'
+IR-MIR-VERDICT|FAIL|…
+```
+
+还原后 `grep -c INJECTED` 为 0、`BUILD_EXIT=0`、该用例回到 `exec=same|bytes=12|stdout-hex=6e696c0a6e696c0a6e696c0a`（`nil\nnil\nnil\n`），`IR-MIR-VERDICT|PASS`。这证明判据咬的是**返回值这一个答案**，不是字符串路线或布局断言整体故障。
+
+### 五、读数（本流 worktree 实跑，逐字，笔一之后）
+
+```
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=10|mir-only-same-as-interpreter=10
+IR-MIR-VERDICT|PASS|tree=<笔一 sha>|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=32|of=67|unknown=35|table=32|emitter=32|reported=32|agree=yes
+IR-AOT-MIR-BEYOND|ops=(OP_IS_NIL,OP_LOADK_STRING)|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR|accepted=96|refused=0|same-as-interpreter=96|of=29|emittable=32|of-ops=67|not-emittable=35|corpus=inline-cases:86|mir-only-cases=10|beyond-ast-denominator=2
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+IR-AOT-MIR-VERDICT|PASS|tree=<笔一 sha>|accepted=96|of=29|covered=29|missing=0|refused=0|same-as-interpreter=96|prelude-excluded=yes|beyond-ast-denominator=2
+```
+
+`tree=` 仍留字段名而不写死，理由同 §10.104：一份文档不能装载它自己那次提交的哈希。
+
+必须守住的不变量：`same-as-interpreter` **95 → 96**（只涨没掉，一个新用例一条），拒绝仍 0；`handles` **32 不变**（`OP_RETURN` 本来就在 lowering 表里，nil 不是新 opcode）；`reasons` 三个桶**名字与计数逐字不变**；`covered` 仍 `29/29`。`mir-only-cases` **9 → 10**。
+
+### 六、诚实边界
+
+1. `return e` 路径**未动**且一直正确；本节只改 `r1 == 0` 的两处发射。裸 `return` 与掉出末尾同形同答案，这是解释器第 4123–4130 行同一个分支说的，不是本节定的。
+2. **生成 main 的结尾仍是 `return 0;`**：那是进程退出码。若有人把两处 `return 0` 当成同一个洞去"顺手统一"，会把退出码改成 nil，那是另一个决定。
+3. 寄存器初始化仍是 `mv_int(0)`：万一将来有 opcode 读一个从没写过的寄存器，它仍表示整数 0。当前子集没有这样的读；改它属于另一个决定，不在本节。
+4. **字符串的序关系（`s < t`）仍是活洞**（§10.105 诚实边界第 1 项已记），本笔没碰，下一笔。
+5. 判据只认三种形状，不是全集：`return` 之后还有指令（末尾不可达）、递归里的隐式返回、`return` 在 `if` 分支里、`??` 与隐式返回的组合都没有用例，属下一格。
+6. 没有新增打印出口、没有新增 `reasons` 桶、没有为了让读数好看而加 lowering case。
