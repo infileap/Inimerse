@@ -4368,3 +4368,115 @@ IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=92|of=29|covered=29|missing=0
 5. 判据只认三个用例。它们是反例族里最小的三个，不是全集：`??` 之后接算术、nil 进函数参数都没有用例，属下一格。
 6. **顺带量到的一个活洞（本笔不修，留给下一格）**：`s = "hi"` / `t = "ho"` / `say s == t` 编译成 `OP_EQ r2/r3`，prescan **接受**，生成的 C 运行 `RUN_RC=134`（SIGABRT）——`mv_eq` 没有 `MV_STR` 臂，`mv_as_nv(MV_STR)` 走 `mv_tag_to_nv` 的 `abort()`；而同一比较的常量形式 `s == "hi"` 走 `OP_EQK` 被 prescan 拒译（`NOT-YET`）。即「常量形式安全拒、变量形式接受后崩」的不对称。解释器对前者打印 `false`。本子集还没有字符串相等语义（`OP_LOADK_STRING` 只承诺「驻留、零分配、可打印」），这一条是下一格的入口，不是本笔的读数。
 
+
+## §10.105 字符串比较：`mv_eq` 的 `MV_STR` 臂，与「常量形式仍拒译、变量形式现在正确」这处不对称（aot-mir-value，A 类第三项）
+
+§10.104 的诚实边界第 6 项把下面这条洞写成了「下一格的入口」。本节是那一格：它不是新发现，是**已经量到、已经记下来、然后按「实现而不是拒译」关掉**的那一条。
+
+### 一、复现（修之前的原始读数，2026-11-06）
+
+```im
+s = "hi"
+t = "ho"
+say s == t
+```
+
+修复前的三句话，逐条：
+
+- 解释器有明确答案：`./build/inimerse eq.im` → 打印 `false`，`INTERP_RC=0`。
+- MIR 路线**接受**：`./build/aot-mir translate eq.im eq.c` → `TRANSLATE_RC=0`，`IR-MIR-CONSERVE|insns=9|emitted=9|holds=yes|bytes=186`、`IR-AOT-MIR-OK`。
+- `cc -O2` 通过（`CC_RC=0`），**然后运行时死**：`RUN_RC=134`（`Aborted` / SIGABRT），**stdout 为空**。
+
+即「程序被接受、编译通过、跑起来崩，而解释器早就答了」。这比拒译更坏：拒译是诚实的，这个是路线替一个**已知答案**报了错，而且报的是一个信号的形状，不是一句话。
+
+**根因与来源**：`MV_STR` 是 `Value` 的 tag 5（`src/vm/vm.h`），`nv` 只有三个 tag（int/double/bool）。`mv_eq` 只有 nil 臂，于是 `mv_as_nv(MV_STR)` 落到 `mv_tag_to_nv` 的 `default: abort()`。那个 `default` 是 **2026-11-06 上线的 `MirVal` 布局那笔（提交 `8b796dd`，"aot_mir: registers hold MirVal, the Value layout by name"）**引入的，它的本意是「tag 表上不可能出现的值一律停」——§10.104 诚实边界第 4 项当时就是这么写的。**守卫本身没错，错的是它替一个能被执行的 tag 兜了底**：`OP_LOADK_STRING` 能造出 `MV_STR`，而 prescan 接受 `OP_EQ`，于是「不可能态」这个前提在字符串身上是假的。判据不成立时，`abort()` 就从「守卫」变成了「缺失分支的替身」。
+
+### 二、裁定：实现，不是拒译
+
+`val_eq` 对字符串的规则是明确的、写在解释器里的，而且**先比指针再比内容**：
+
+| 情形 | 解释器规则（`src/vm/vm.c` 第 413–428 行，`val_eq`） | 本节照抄成 |
+| --- | --- | --- |
+| 同型、都是字符串 | `a->sval == b->sval` 为真即 `true`，否则 `strcmp`，空指针归一成 `""`（第 417 行） | 指针快路 → `strcmp` |
+| 字符串 vs 数值 | 同型块（第 414 行）挡住，数值强转块（第 425–427 行）只认 INT/FLOAT/BOOL 的组合，其余走 `return false`（第 428 行） | 先按**类型**分流，非字符串一律 `false` |
+| 字符串的真假 | `vm_truthy` 的 `default: return 1`（第 400 行） | 字符串恒真，空串也是真 |
+| `!=` | 与 `==` 是同一次 `val_eq` 的取反（第 3552–3553 行） | `mv_ne` 的串臂 = `!mv_tru(mv_eq(a,b))`，内容规则只有一个所有者 |
+
+语义是明确的，所以拒译等于把「已经存在的答案」藏在 `unsupported-opcode` 后面。但边界写死，就三件事：
+
+- **只对驻留字符串做 `strcmp`**（`ival == 1 && sval`）；这条路线里 `mv_str` 只做驻留，造不出非驻留串，真遇到就 `abort()`——那是**不可能态的守卫**，不是缺失分支的能力，注释里逐字写着。
+- **先类型、后内容**：字符串不塞进数值比较路径。`s == 1` 是 `false`、`s != 1` 是 `true`，这不是猜的，是上表第 414/425–428 行。
+- **零分配、不新开打印出口**：`strcmp` 读的是驻留字面量，不拷贝。
+
+### 三笔
+
+| 笔 | 内容 | 反向判据 |
+| --- | --- | --- |
+| 一（`b10ae79`） | `MIR_ONLY` 加三个用例：`mir_loadk_string_eq`（四个真值：`==`/`!=` 各两种）、`mir_loadk_string_eq_number`（字符串对 int 与 float）、`mir_loadk_string_truthiness`（`if`/`not`） | 实现前必须是红的，实测 `IR-MIR-EXEC-DIFF|case=mir_loadk_string_eq|interp-rc=0|mir-rc=-6|interp-out=b'false\ntrue\ntrue\nfalse\n'|mir-out=b''` + `IR-MIR-VERDICT|FAIL` |
+| 二 | `mv_eq`/`mv_ne` 各**恰好一个**串臂、`mv_tru` 一个串臂，带债务注释（WHY / ADDS / NOT COVER / DELETE CONDITION / MEASURED BY） | 把内容比较改成恒 `true` → 只有 `mir_loadk_string_eq` 变红（`b'true\ntrue\nfalse\nfalse\n'` 对 `b'false\ntrue\ntrue\nfalse\n'`），另两例仍 `same`；把串臂删掉 → 红回 SIGABRT 形态（`mir-rc=-6`、`stdout-hex=` 空）；两次注入都只动 MIR 侧、解释器基线现场重算，是**非对称**的 |
+| 三 | 读数同步 + 本节 | — |
+
+反向判据判据本身也量过不对称：**「把内容比较改成恒 true」时 `s == s` 仍是 `true`**（指针快路还在），红的是 `s == t` 这一格；`mir_loadk_string_eq_number` 与 `mir_loadk_string_truthiness` 保持 `same`。这说明这条判据咬的是**内容比较**这一格，而不是「字符串这条路线整体」，也就说明它不是靠一个大范围故障同时污染期望与实际。
+
+### 字符串臂（生成文件里逐字长这样）
+
+```c
+static inline int mv_tru(MirVal a) {
+    if (a.type == MV_NIL) return 0;   /* vm_truthy: VAL_NIL is false, and only it */
+    if (a.type == MV_STR) return 1;   /* vm_truthy's `default: return 1` ... */
+    return nv_tru(mv_as_nv(a));
+}
+static inline MirVal mv_eq(MirVal a, MirVal b) {
+    if (a.type == MV_NIL || b.type == MV_NIL) return mv_boo(a.type == b.type);
+    if (a.type == MV_STR || b.type == MV_STR) {
+        if (a.type != b.type) return mv_boo(0);   /* val_eq:414/425-427/428 */
+        if (a.ival != 1 || b.ival != 1 || !a.sval || !b.sval) abort();  /* guard */
+        if (a.sval == b.sval) return mv_boo(1);   /* val_eq:417 pointer fast path */
+        return mv_boo(strcmp(a.sval, b.sval) == 0);
+    }
+    return mv_from_nv(nv_eq(mv_as_nv(a), mv_as_nv(b)));
+}
+static inline MirVal mv_ne(MirVal a, MirVal b) {
+    if (a.type == MV_NIL || b.type == MV_NIL) return mv_boo(a.type != b.type);
+    if (a.type == MV_STR || b.type == MV_STR) return mv_boo(!mv_tru(mv_eq(a, b)));
+    return mv_from_nv(nv_ne(mv_as_nv(a), mv_as_nv(b)));
+}
+```
+
+**删除条件（可判定）**：P3 那笔把 `Value` 的比较语义搬进 IR、并给共享的 `NV` 一个字符串 payload 时删掉这三个臂；判据是机械的——`kMirValBlock` 内 `grep -c 'a.ival != 1'` 归零，且 `MV_STR` 不再出现在该块除 tag `#define`、`mv_str()`、`mv_say` 打印分支之外的地方。删早了（`NV` 还没有字符串载荷时）等于让 emitter 产出的值重新没有答案，也就是本节开头那个信号。
+
+### 读数（本流 worktree 实跑，逐字）
+
+```
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=9|mir-only-same-as-interpreter=9
+IR-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=32|of=67|unknown=35|table=32|emitter=32|reported=32|agree=yes
+IR-AOT-MIR-BEYOND|ops=(OP_IS_NIL,OP_LOADK_STRING)|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR|accepted=95|refused=0|same-as-interpreter=95|of=29|emittable=32|of-ops=67|not-emittable=35|corpus=inline-cases:86|mir-only-cases=9|beyond-ast-denominator=2
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=95|of=29|covered=29|missing=0|refused=0|same-as-interpreter=95|prelude-excluded=yes|beyond-ast-denominator=2
+```
+
+`tree=` 仍留字段名而不写死，理由同 §10.104：一份文档不能装载它自己那次提交的哈希。
+
+三个必须守住的不变量，逐条：
+
+- `same-as-interpreter` **92 → 95，只涨没掉**（三个新用例，每个一条）。拒绝的仍然是 0。
+- `handles` **32 不变**：`OP_EQ`/`OP_NEQ` 本来就在 lowering 表里，字符串不是新 opcode；为了涨数字加 case 是本节明确不做的事。
+- `reasons` 三个桶**名字与计数逐字不变**（`identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4`）：新增语义不许动分词。`covered` 仍 `29/29`，分母是 AST 语料，没有动。
+
+### 仍然存在、明确记录的不对称（不是默默留着）
+
+**常量形式仍拒译，变量形式现在正确。** `s == "hi"` 与 `"hi" == "ho"` 由编译器发成 `OP_EQK`（`src/compiler/compiler.c` 第 703–716 行），本子集没有这个 opcode，prescan 给 `IR-MIR-NOT-YET|op=OP_EQK|n=1` + `IR-MIR-REFUSED|why=unsupported-opcode`——**安全拒译**；而 `s == t` 走 `OP_EQ`，现在打印与解释器逐字节相同的 `false`。同一个问题，两种拼写，一个答案在、一个答案没有。
+
+本节选择**记录**而不是顺手修，理由是可判定的三条：①本笔的边界是「`mv_eq`/`mv_ne` 各恰好一个串臂」，加 `OP_EQK` 是给 lowering 表加一个 opcode，那是另一个决定（它会让 `handles` 从 32 变 33，而本节把「`handles` 不变」写成了不变量）；②`OP_EQK` 需要自己的判据（常量在左、常量在右、字符串常量与数值常量的 `OP_EQK`/`OP_NEQK` 两两组合，目前一条用例都没有）；③它现在是**拒译**而不是崩溃，所以它不是「响亮但不对」，坏处有限。**下一格**：要么给 `OP_EQK`/`OP_NEQK` 实现（规则就是本条 `val_eq`，`mv_eq` 已经在，`EQK` 只是把常量装进寄存器再走同一条路），要么把它们也写进拒译理由表并给出判据；两条都可以，**留着不说不行**，这就是本节存在的第二理由。
+
+### 诚实边界
+
+1. **字符串的序关系（`s < t`、`<=`、`>`、`>=`）仍是活洞，本笔不修**。解释器对它有规定（`val_orderable` 在第 443 行说字符串对可比，第 449–451 行先比指针再 `strcmp`），但 `mv_lt`/`mv_le`/`mv_gt`/`mv_ge` 仍直接委托 `nv_*`，所以 `s < t` 被 prescan **接受**、编译通过、运行时 SIGABRT（`RUN_RC=134`），而解释器打印 `true`/`false`。**形状与本笔开头那条一模一样**，是下一格的入口。它没在本笔关掉，是因为「恰好一个臂」的边界只覆盖相等与真假；把它顺手塞进来会让这一笔同时改两族语义、一条反向判据管两个结论。
+2. **非驻留字符串**（`ival != 1` 或 `sval` 为空）在串臂里 `abort()`。这是守卫不是能力：`mv_str` 只做驻留，本路线造不出来；真造出来了，宁可停也不读 `sval` 里碰巧躺着的东西。
+3. **字符串与容器**（阵列/dict/set 的比较、字符串做 set/dict 的 key）、大小写折叠、Unicode 归一、locale collation **一概不覆盖**。这些 opcode 不在本子集。
+4. `mv_tru` 的串臂**没有驻留守卫**，因为它不读载荷——`vm_truthy` 的 `default: return 1` 对任何字符串 tag 都成立，加守卫只会在一个不需要判据的地方造一条假规矩。
+5. 判据只认三个用例，是反例族里最小的三个，不是全集：空串与非空串的 `!=`、两个内容相同但不同字面量的串（`s == "h" + "i"` 之类当前语法也到不了）、`not (s == t)` 的组合都没有用例，属下一格。
+6. 这一笔**没有**新增打印出口（`mv_say` 未动）、没有新增 `reasons` 桶、没有动 `covered` 的分母，也没有为了让读数好看而加 lowering case。
