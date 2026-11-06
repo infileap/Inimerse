@@ -457,10 +457,15 @@ static const char *const kMirValBlock =
 " * along.  That is worse than a refusal: a REFUSAL is honest, while this was a\n"
 " * program the route ACCEPTED, compiled, and killed while the answer existed.\n"
 " * The hole was in mv_ne and in mv_tru too (`if s {}` aborted the same way),\n"
-" * so the three arms are one change.  Note the asymmetry that remains and is\n"
-" * written up in docs/STATUS.md 10.105: the CONSTANT form `s == \"hi\"` still\n"
-" * refuses safely (OP_EQK, unsupported here), so the same question is refused\n"
-" * in one spelling and answered correctly in the other.\n"
+" * so the three arms are one change.  NOTE the asymmetry this note USED to\n"
+" * carry: the CONSTANT form `s == \"hi\"` (OP_EQK/OP_NEQK, the literal in the\n"
+" * instruction rather than in a register) was refused while the variable form\n"
+" * was answered -- one question, two spellings, one answer and one refusal.\n"
+" * That hole is CLOSED by the OP_EQK/OP_NEQK arm in emit_one below, which keeps\n"
+" * this one rule (it calls mv_eq/mv_ne rather than repeating the content\n"
+" * comparison) and docs/STATUS.md 10.108 records the closure.  The sentence\n"
+" * stays in past tense on purpose: it is a record of what this note did NOT\n"
+" * cover at the time.\n"
 " *\n"
 " * WHAT IT ADDS.  One arm per adapter, dispatched on TYPE first and on\n"
 " * CONTENT second -- never a string inside the numeric path.  The rules are\n"
@@ -885,6 +890,15 @@ static int op_regs(int op) {
     case OP_MOV: return R1 | R2;
     case OP_LOADK_INT: case OP_LOADK_FLOAT: case OP_LOADK_BOOL: case OP_LOADK_I64: return R1;
     case OP_LOADK_STRING: return R1;
+    case OP_EQK: case OP_NEQK:
+        /* r3 is a STRING POOL INDEX, not a register -- the same split
+           OP_LOADK_STRING has, where r2 is a pool index and not a register.
+           Reading it as a register bound would cap the pool at REG_LIMIT (and
+           would silently accept a pool index that happens to be small); not
+           validating it at all would hand generated C an out-of-range
+           subscript.  So only r1/r2 are registers here and the pool bound is
+           checked in prescan, next to OP_LOADK_STRING's own bound. */
+        return R1 | R2;
     case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD:
     case OP_EQ: case OP_NEQ: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
     case OP_AND: case OP_OR: return R1 | R2 | R3;
@@ -1143,6 +1157,27 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                f, i, ix);
                 break;
             }
+            case OP_EQK:
+            case OP_NEQK: {
+                /* r3 indexes the CONTAINER's STRING POOL -- the operand that
+                   carries the constant -- exactly as OP_LOADK_STRING's r2 does,
+                   so the bound is `node->string_count` and not REG_LIMIT, and
+                   it is `node` (the container this instruction lives in) and
+                   not the module's root: a function body has its own pool.  A
+                   NULL slot has no literal to emit, so it is refused with a
+                   detail here rather than reached inside the emitter.  This is
+                   the check the cover test's operand detector insists on: an
+                   emitter case that reads a pool without a prescan case lets an
+                   out-of-range index through into generated C. */
+                int32_t ix = ir_insn_r3(in);
+                if (ix < 0 || ix >= node->string_count)
+                    return bad("container=%d insn=%d string pool index %d out of range (count=%d)",
+                               f, i, ix, node->string_count);
+                if (!node->string_pool || !node->string_pool[ix])
+                    return bad("container=%d insn=%d string pool entry %d is NULL",
+                               f, i, ix);
+                break;
+            }
             case OP_LOAD_GLOBAL:
             case OP_STORE_GLOBAL: {
                 int ix = (op == OP_LOAD_GLOBAL) ? ir_insn_r2(in) : in->dst;
@@ -1268,6 +1303,157 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_MOD:          buf_fmt(b, "    v[%d] = mv_mod(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_EQ:           buf_fmt(b, "    v[%d] = mv_eq(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_NEQ:          buf_fmt(b, "    v[%d] = mv_ne(v[%d], v[%d]);", r1, r2, r3); return 0;
+    /* THE CONSTANT SPELLING OF STRING EQUALITY -- the asymmetry docs/STATUS.md
+     * 10.105 RECORDED ("先记不顺手修") and this arm closes.  Same five-part
+     * structure as the mv_eq note in kMirValBlock: WHY IT EXISTS / WHAT IT ADDS
+     * / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED BY.
+     *
+     * WHY IT EXISTS.  The compiler does not keep `s == "hi"` as "compare s with
+     * a string": it lowers the CONSTANT into the instruction.  In
+     * src/compiler/compiler.c:700-719 it picks the string literal as `lit` and
+     * the other side as `other`, compiles `other` into a register, adds the
+     * literal to the container's string pool and emits OP_EQK/OP_NEQK with
+     * r1=result, r2=the other side's register, r3=the pool index.  Both
+     * spellings therefore become ONE stream (measured: `s == "hi"` and
+     * `"hi" == s` dump `3,1,0,0 / 23,0,1,0 / 22,1,0,0 / 46,2,1,1 / 30,2,0,0 /
+     * 33,0,0,0` byte for byte -- r2 and r3 are the two OPERAND ROLES, and the
+     * question "which spelling" has already been erased by then).  Before this
+     * arm op_regs answered -1 for OP_EQK and OP_NEQK, so the whole program was
+     * REFUSED with `unsupported-opcode` (`IR-MIR-NOT-YET|op=OP_EQK|n=1`,
+     * `IR-AOT-MIR-REFUSED|why=unsupported-opcode: see IR-MIR-NOT-YET|n=6`)
+     * while the variable spelling `s == t` -- OP_EQ, one opcode over -- was
+     * accepted and answered `true`.  The refusal was honest and that is not
+     * the problem: the problem is that one QUESTION was refused or answered
+     * depending on which opcode the compiler happened to choose for it, and
+     * the interpreter had the answer all along.  A refusal that hides an
+     * existing answer behind a compiler detail is the same defect as a wrong
+     * answer, one exit code quieter.
+     *
+     * WHAT IT ADDS.  Two cases and NO second copy of the content rule: the
+     * value comes from register r2, the constant from the container's string
+     * pool at r3 emitted inline as a resident literal (exactly as
+     * OP_LOADK_STRING emits its pool entry, buf_c_string writes the BODY only,
+     * so a tab is a tab and not `\` `t`), and the comparison is DELEGATED to
+     * mv_eq / mv_ne.  mv_eq's string arm already IS the interpreter's rule --
+     * pointer fast path then strcmp, and "a string against any non-string is
+     * false" -- so one owner answers the register form and the constant form,
+     * and a rule that is ever wrong is wrong in one place.  The rules copied
+     * from the interpreter, with the lines they were copied from:
+     *   - operand ROLES: src/vm/vm.c:4159-4173 (L_EQK) builds `sv.type =
+     *     VAL_STRING` and interns the container pool entry at `code->string_pool`
+     *     index sidx (`vm_intern(vm, code->string_pool + sidx)` at :4164-4166), takes
+     *     `Value opv = R[ins.r2]`, and stores
+     *     `value_set(&R[ins.r1], VAL_BOOL, val_eq(&opv, &sv) ? 1 : 0, ...)`.
+     *     src/vm/vm.c:4175-4189 (L_NEQK) is the same shape with `? 0 : 1`.  So
+     *     r2 is the VALUE and r3 is the CONSTANT; they are not interchangeable
+     *     names and this arm does not treat them as such.
+     *   - the comparison itself: src/vm/vm.c:413 `bool val_eq(const Value *a,
+     *     const Value *b)`, :414 the same-type gate, :415/:416 int/float,
+     *     :417 `if (a->type == VAL_STRING) return (a->sval == b->sval) ? true :
+     *     strcmp(a->sval ? a->sval : "", b->sval ? b->sval : "") == 0;`,
+     *     :418 bool, :419 nil, :425-427 coercion for INT/FLOAT/BOOL pairs only,
+     *     :428 `return false`.
+     *   - `!=` is val_eq NEGATED (the interpreter spells that negation itself
+     *     at :4175-4189), which is why this arm calls mv_ne(v, c) -- alias
+     *     `!mv_tru(mv_eq(v, c))` -- rather than a strcmp with the opposite sign.
+     * Zero allocation: the constant is a C string literal with static storage
+     * duration, mv_str marks it resident (ival=1), so mv_eq takes the pointer
+     * fast path when the value IS the same resident literal and strcmp
+     * otherwise.  No copy, no intern, no new print exit, no new opcode.
+     *
+     * WHAT IT DOES NOT COVER -- each MEASURED on this tree, and each stays
+     * refused or aborted rather than answered:
+     *   - a NON-RESIDENT constant.  The pool entry is not a Value: it is bytes
+     *     the interpreter interns at run time (src/vm/vm.c:4164-4166 vm_intern over
+     *     the pool entry) and this route emits as a literal mv_str marks
+     *     resident.  So `ival != 1` cannot originate here; if a future
+     *     opcode puts a non-resident string into r2, mv_eq's impossible-state
+     *     guard abort()s instead of answering -- deliberately not downgraded
+     *     to false, because a silent answer for a value the route cannot have
+     *     produced is how the next entry of this kind gets written.
+     *   - a CONSTANT AGAINST A CONTAINER (`arr == "hi"`).  The compiler DOES
+     *     emit OP_EQK for it -- the literal side is chosen regardless of the
+     *     other side's type -- but the opcode that would build the array is
+     *     outside this subset, so prescan refuses the program before this arm
+     *     is reached.  MEASURED on `a = [1, 2]` / `say a == "hi"`:
+     *     `IR-MIR-REFUSED|why=illegal-operand|detail=container=0 leaves the
+     *     argument stack unbalanced: asp=2` and
+     *     `IR-AOT-MIR-REFUSED|...|why=illegal-operand: ...|n=10`, exit 1, no
+     *     partial answer.  The interpreter answers false (:428); this route
+     *     refuses, which is honest about a capability it does not have.  It is
+     *     not answered from this arm because NO emittable opcode builds a
+     *     container tag: OP_NEW_ARRAY, OP_NEW_DICT and OP_NEW_SET are all
+     *     absent from the lowering table (the same measurement that makes
+     *     handles 34 and not 37).
+     *   - FLOAT -0.0 / NaN as the compared value.  MEASURED: `say -0.0 == "hi"`
+     *     / `say -0.0 != "hi"` answer false/true on BOTH routes, and so does
+     *     `say (0.0/0.0) == "hi"` -- NaN IS reachable here (division by zero
+     *     does not abort this route; the shared runtime's
+     *     nv_die_division_by_zero is NOT on this path), and a float never
+     *     coerces against a string (:414 gates the block and :425-427 lists
+     *     only INT/FLOAT/BOOL pairs), so NaN against a string constant is
+     *     false rather than the "false for everything" a NaN comparison would
+     *     give on the numeric path.  This is a property of mv_eq's existing
+     *     arm, not of this one, so the probe lives in .scratch and not in the
+     *     corpus.
+     *   - a NON-RESIDENT string VALUE (the compared side, r2).  MEASURED: the
+     *     only opcode that would build one is string `+` (`s = "a" + "b"`), and
+     *     that is outside this subset for a reason that PRE-DATES this arm --
+     *     the generated program dies in mv_add, before any comparison:
+     *     `say s` after `s = "a" + "b"` exits 134 (SIGABRT, empty stdout) on
+     *     this tree, because mv_as_nv has no MV_STR arm.  So a non-resident
+     *     string cannot reach r2 here; if a later opcode produces one, mv_eq's
+     *     impossible-state guard abort()s instead of answering.
+     *   - a POOL INDEX that is large.  MEASURED and it WORKS: a program with
+     *     5000 string literals before the comparison puts the constant at pool
+     *     index ~5001, i.e. past REG_LIMIT (4096) -- the index a register bound
+     *     would refuse -- and the comparison still answers byte-identically.
+     *     This is why r3 is bounded by `node->string_count` in prescan and not
+     *     by the register check.
+     *   - a constant in a NON-ROOT container.  MEASURED and it WORKS: `func
+     *     f(a) { return a == "hi" }` lowers the OP_EQK of the function body
+     *     against the FUNCTION's own pool (prescan's bound is
+     *     `node->string_count`, not the root's, and the emitter reads
+     *     `c->node->string_pool`) and answers identically to the interpreter.
+     *     It has no corpus case because it would move readings unrelated to
+     *     this question; the boundary is recorded here instead of implied.
+     *   - a constant against a value read from an UNRESOLVED global
+     *     (`nosuchglobal == "hi"`, L_LOAD_GLOBAL's idx == -1).  MEASURED and
+     *     it WORKS: nil against a string is false, and `!=` is true, on both
+     *     routes -- mv_eq's MV_NIL arm, unchanged by this lowering.
+     *
+     * DELETE CONDITION (decidable, not a wish): delete these two cases together
+     * with mv_eq's string arm, in the commit that gives the shared NV a string
+     * tag and moves string comparison out of the container-pool encoding (the
+     * P3 step named in mv_eq's own note).  Then the compiler stops emitting
+     * OP_EQK (`grep -c OP_EQK src/compiler/compiler.c` is 0) and the two
+     * spellings take one path by construction.  Deleting them earlier puts the
+     * asymmetry back exactly as it was: one spelling answered, the other
+     * refused.
+     *
+     * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases mir_eqk_string,
+     * mir_eqk_string_ne and mir_eqk_string_cross compare stdout BYTES against
+     * the interpreter; all three were red before this arm as
+     * `IR-MIR-MIR-ONLY|case=...|mir=refused|why=unsupported-opcode`.  The
+     * fourth, mir_eqk_number, is the necessary condition: numeric and boolean
+     * constant comparison still lowers through OP_EQ and must not move --
+     * it is what stops this arm from being written into the numeric path.  And
+     * tools/aot_mir_cover.test.py counts OP_EQK/OP_NEQK into handles=34, and
+     * because these cases read a pool its operand detector requires the prescan
+     * case above: removing that check reddens the cover test rather than
+     * silently letting an out-of-range pool index reach generated C. */
+    case OP_EQK: {
+        buf_fmt(b, "    v[%d] = mv_eq(v[%d], mv_str(\"", r1, r2);
+        buf_c_string(b, c->node->string_pool[w3]);
+        buf_str(b, "\"));");
+        return 0;
+    }
+    case OP_NEQK: {
+        buf_fmt(b, "    v[%d] = mv_ne(v[%d], mv_str(\"", r1, r2);
+        buf_c_string(b, c->node->string_pool[w3]);
+        buf_str(b, "\"));");
+        return 0;
+    }
     case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); return 0;

@@ -386,6 +386,53 @@ def allocs_problems(text, case):
 #                             here would demand a fake answer (silent false) in
 #                             exchange for the crash, which is exactly what the
 #                             ordering arm refuses to do.
+#
+# The next four are the CONSTANT spelling of the same question -- the one the
+# compiler answers with OP_EQK/OP_NEQK instead of OP_EQ/OP_NEQ, and the one
+# docs/STATUS.md 10.105 recorded as "refused on this route while the variable
+# spelling was answered".  None of them existed before, so the route's refusal
+# was invisible in the readings: a refusal is counted, compared, and then
+# dropped, and `refused=0` said nothing about a program nobody wrote.
+#
+#   mir_eqk_string            the EQUALITY answer from a constant: `s == "hi"`
+#                             (true) and `s == "ho"` (false).  Two truth values
+#                             on purpose -- a route that answered the literal
+#                             comparison as `true` unconditionally reddens on
+#                             the second line, and the interpreter baseline is
+#                             recomputed in the same run.
+#   mir_eqk_string_ne         the same for OP_NEQK (`s != "hi"` false,
+#                             `s != "ho"` true).  Separate from the equality
+#                             case because OP_NEQK is a SECOND opcode with its
+#                             own dispatch body (the note in
+#                             src/compilation/aot_mir.c names both): one opcode
+#                             can be lowered correctly while its sibling is
+#                             not, and a case carrying only `==` would not see
+#                             it.
+#   mir_eqk_number            THE NECESSARY CONDITION, not an eqk case: with no
+#                             string operand in sight the compiler emits
+#                             OP_EQ/OP_NEQ (measured: `1 == 1` / `1 != 1` /
+#                             `true == true` lower with OP_EQ alone), so this
+#                             case says what must NOT change -- numeric and
+#                             boolean constant comparison.  It is here because
+#                             the failure it guards is the plausible one: an
+#                             OP_EQK arm written into the NUMERIC path would
+#                             answer the string cases by comparison of a
+#                             coerced 0, and the way to notice is a case whose
+#                             expected bytes prove the numeric route still
+#                             compares numbers as numbers.
+#   mir_eqk_string_cross      the constant on the LEFT (`"hi" == s`, `"ho" == s`).
+#                             This is the direction case: the compiler
+#                             NORMALISES both spellings into one stream
+#                             (measured on this tree: `s == "hi"` and
+#                             `"hi" == s` both dump `3,1,0,0 / 23,0,1,0 /
+#                             22,1,0,0 / 46,2,1,1 / 30,2,0,0 / 33,0,0,0`, byte
+#                             for byte the same), so what the criterion can bite
+#                             here is where the LITERAL's VALUE comes from --
+#                             the container's string pool at r3 -- versus the
+#                             value at register r2.  A route that read the pool
+#                             index as a register reddens here, and the case
+#                             exists so that "which operand is the constant" is
+#                             measured rather than assumed.
 MIR_ONLY = [
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
@@ -441,6 +488,13 @@ MIR_ONLY = [
      'say s + t\nsay s + "x"\nsay "x" + s\nsay s + s\nsay s + ""\n'
      'u = s + t\nsay u\nsay u + s\n'
      'say s\nsay t\n'),
+    # The constant spelling: OP_EQK / OP_NEQK, plus the numeric control that
+    # must not change and the constant-on-the-left direction case.  See the
+    # block above MIR_ONLY for what each one is the criterion OF.
+    ("mir_eqk_string", 's = "hi"\nsay s == "hi"\nsay s == "ho"\n'),
+    ("mir_eqk_string_ne", 's = "hi"\nsay s != "hi"\nsay s != "ho"\n'),
+    ("mir_eqk_number", 'say 1 == 1\nsay 1 != 1\nsay true == true\n'),
+    ("mir_eqk_string_cross", 's = "hi"\nsay "hi" == s\nsay "ho" == s\n'),
 ]
 
 
