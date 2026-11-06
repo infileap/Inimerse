@@ -4843,6 +4843,7 @@ IR-AOT-MIR-VERDICT|PASS|tree=d53759393bc1304d2f9bdb640c60629851f7a574|accepted=1
 | 四（`a872fff`） | `tools/aot_mir_cover.pin.json` 重记（tree + 计数；`--pin` 工具写的，`covered` 列表一字未动） | — |
 | 五（`d537593`） | 债务注释里六处 `src/vm/vm.c` 的行号**读错**（凭记忆写的），重读原文逐个改对（纯注释） | — |
 | 六（本节） | `docs/STATUS.md` 的 §10.108（覆盖 §10.105 那处不对称，不改写历史） | — |
+| 七（`365bc8e`） | `tools/docs_headings.pin.json` 重记：本节加了一个 `##` 节，`docs/STATUS.md` 的计数 82 → 83、总数 1406 → 1407 | — |
 
 第三笔值得写明白：注释里原来写「NaN 不可达」「容器拒绝 n=11」「非驻留串要等一个未来 opcode」，量完之后三条**全错**——NaN 是可达的（`0.0/0.0` 在本路线不 abort，两边都答 `false`），容器那条是 `n=10` 且 `why=illegal-operand`（不是 `unsupported-opcode`），非驻留串今天就有（`+`），它在 `mv_add` 里更早就崩。**注释里的数字不许先写后量**，这一笔就是补那个差额。
 
