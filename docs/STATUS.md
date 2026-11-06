@@ -4574,3 +4574,120 @@ IR-AOT-MIR-VERDICT|PASS|tree=<笔一 sha>|accepted=96|of=29|covered=29|missing=0
 4. **字符串的序关系（`s < t`）仍是活洞**（§10.105 诚实边界第 1 项已记），本笔没碰，下一笔。
 5. 判据只认三种形状，不是全集：`return` 之后还有指令（末尾不可达）、递归里的隐式返回、`return` 在 `if` 分支里、`??` 与隐式返回的组合都没有用例，属下一格。
 6. 没有新增打印出口、没有新增 `reasons` 桶、没有为了让读数好看而加 lowering case。
+
+## §10.107 字符串的序关系：四条臂，与「混合类型的序仍是未定义的 aborted 边界」（aot-mir-value，A 类第五项）
+
+### 一、这笔债的来源与日期
+
+**来源**：`src/compilation/aot_mir.c` 里的 `mv_lt`/`mv_le`/`mv_gt`/`mv_ge` 四条适配臂。数值比较的委托形态第一次出现是 **`1dec5e6`（2026-11-01，"aot_mir: a C translation unit generated from the IrInsn stream"）**，当时是 `nv_lt(a, b)` 直接进 `nv_*`；**`8b796dd`（2026-11-05，"registers hold MirVal"）**把它们原地包成 `mv_from_nv(nv_lt(mv_as_nv(a), mv_as_nv(b)))`——**指令位置没变，仍是四条一行委托，也仍是同一个洞**：`nv_*` 没有字符串 tag，`mv_as_nv` 把一个字符串硬塞进数值通道，撞上 `mv_tag_to_nv` 的 `default: abort()`。本节 **2026-11-06** 给这四条臂各加一个字符串分支，规则照抄解释器。
+
+**与 §10.105 的关系**：同一类洞，同一条路线上紧挨着的下一格。§10.105 修的是 `==`/`!=`/真假的字符串臂，它的诚实边界第 1 项把 `s < t` 明确记成「仍是活洞、下一笔」；本节就是那一笔。**§10.106 第六节第 4 项（「字符串的序关系仍是活洞」）在本节关闭**——那句话是写它当时的记录，不改写历史。
+
+### 二、复现（修之前的原始读数，2026-11-06）
+
+```im
+s = "hi"
+t = "ho"
+say s < t
+```
+
+- 解释器：打印 `true`，`INTERP_RC=0`。
+- MIR 路线**接受并编译**：`TRANSLATE_RC=0`，`IR-AOT-MIR-OK`，`IR-MIR-CODEGEN|…|generated=(OP_MOV,OP_LOADK_STRING,OP_LT,OP_LOAD_GLOBAL,OP_STORE_GLOBAL,OP_SAY,OP_HALT)`，`IR-MIR-CONSERVE|insns=10|emitted=10|not-yet=0|holds=yes|bytes=204`。
+- `cc -O2` 通过（`CC_RC=0`），**运行 `RUN_RC=134`（SIGABRT）、stdout 空**。
+- 实现前的判据红原文（`tools/aot_mir.test.py` 的 `mir_loadk_string_order` 用例，十二条输出覆盖四条运算符、两个方向与等值对）：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_loadk_string_order|interp-rc=0|mir-rc=-6|interp-out=b'true\ntrue\nfalse\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\n'|mir-out=b''
+IR-MIR-MIR-ONLY|case=mir_loadk_string_order|mir=accepted|cc=ok|exec=diff|rc=-6|bytes=0|stdout-hex=
+IR-MIR-VERDICT|FAIL|tree=2f71413…|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+注意 `mir-rc=-6`：harness 把「被信号杀死」报成负的 signal 号，而这条路线是**先被接受、再在运行时死掉**的——比崩溃更糟的是它通过了 prescan 与 codegen 两道门。
+
+### 三、裁定：实现，规则照抄 `src/vm/vm.c` 第 443 行与第 449–451 行
+
+不是本节发明的规则，是**读出来照抄**的：
+
+- **`src/vm/vm.c` 第 443 行**（`val_orderable`）：同型字符串对**是可比较的**（即解释器对这个问句本来就有答案；拒译等于藏起一个已有的答案）。
+- **`src/vm/vm.c` 第 449–451 行**（`val_cmp` 的同型字符串分支）：先比 `sval` **指针**（`if (a->sval == b->sval) return 0;`，第 450 行的快路），指针不同才 `strcmp`（第 451 行），NULL 载荷按空串读。
+
+实现只加**一条内容规则**与**四个符号**，因为规则是一条规则、四条运算符只差问哪个符号：
+
+```c
+static inline int mv_str_cmp(MirVal a, MirVal b) {
+    if (a.type != MV_STR || b.type != MV_STR) abort();  /* 混合类型：见下 */
+    if (a.ival != 1 || b.ival != 1 || !a.sval || !b.sval) abort();  /* 不可能态守卫 */
+    if (a.sval == b.sval) return 0;   /* val_cmp:450 指针快路 */
+    return strcmp(a.sval, b.sval);    /* val_cmp:451 */
+}
+static inline MirVal mv_lt(MirVal a, MirVal b) {
+    if (a.type == MV_STR || b.type == MV_STR) return mv_boo(mv_str_cmp(a, b) < 0);
+    return mv_from_nv(nv_lt(mv_as_nv(a), mv_as_nv(b)));
+}
+/* mv_le / mv_gt / mv_ge 同形，符号换成 <= 0 / > 0 / >= 0 */
+```
+
+- **零分配**：`strcmp` 只读驻留载荷，不产生新串、不复制、没有所有权问题。
+- **不加新打印出口**：本节的答案全部经由已有的 `mv_boo` 与 `say`。
+- **NULL 归一化的那一半照抄不了也不假装照抄**：解释器 `val_cmp` 把 NULL 载荷读成空串，那是因为它允许 NULL；本路线的驻留守卫（`ival != 1 || !sval`）先停住，所以那个分支在这里**不可达**，所以与 `mv_eq` 一样写成 abort 而不是静默空串。
+- 债务注释写在该 helper 正上方（WHY / ADDS / NOT COVER / 可判定 DELETE CONDITION / MEASURED BY）。删除条件是**实验而非愿望**：删掉 `mv_str_cmp` 与四条臂、恢复一行 `nv_*` 委托，重建后跑 `mir_loadk_string_order`——**绿**说明 `nv_*` 已经拥有该规则、臂可以永久删除；**红（SIGABRT）**说明 `NV` 仍无字符串载荷，提前删就是本节命名的那个崩溃。
+
+### 四、边界：混合类型的序仍是未定义的 aborted 边界（**这是写死的**）
+
+`s = "hi"` 之后 `say s < 1`，两条路线实测（2026-11-06）：
+
+- 解释器：`[exception] uncaught: type_mismatch`，`INTERP_RC=1`。第 443 行说得很清楚：一对值可比较**当且仅当**「两个都是字符串」或「两个都是数值」。
+- 本路线：`TRANSLATE_RC=0`、`CC_RC=0`、`MIR_RUN_RC=134`（SIGABRT）、stdout `0` 字节。
+
+本路线**没有异常机制**（C 类那一格还没做），所以没有可能复现「拒绝」这个答案。两个假的替代答案都比一次停止更坏：
+
+- 静默 `false`/`true` ⇒ 一个退出码为 0 的错答，正是 §10.106 刚刚关掉的那一类**静默**错答；
+- 拒绝编译 ⇒ 把一个运行时类型事实挪到静态门禁，把「类型错了」说成「语法不支持」。
+
+因此 `mv_str_cmp` 对混合对 **abort**：它是一条**未定义边界守卫**，说的是「这个问句在本路线上没有答案」，不是「少了某个分支」。这条边界写进了注释与本节，**不许**被后来的人用常量答案"修"掉。
+
+### 五、反向判据（不对称，且第二段本身是一个诚实结论）
+
+**(1) 内容规则注入**：把 `return strcmp(a.sval, b.sval);` 改成恒 `return 0;`（只动 `mv_str_cmp` 这一处，`grep -n` 先印原件在 402 行，解释器基线现算，两侧不同时动），`INJ_HITS=1`、`BUILD_EXIT=0` 后判据**真红**：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_loadk_string_order|interp-rc=0|mir-rc=0|interp-out=b'true\ntrue\nfalse\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\n'|mir-out=b'false\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\n'
+IR-MIR-VERDICT|FAIL|…
+```
+
+红色的内容读得出来：`<` 与 `>` 全部答 `false`、`<=` 与 `>=` 全部答 `true`——「所有字符串都相等」。
+
+**(2) 删掉指针快路**（`if (a.sval == b.sval) return 0;` 那一行）重建后判据**仍然绿**：
+
+```
+IR-MIR-MIR-ONLY|case=mir_loadk_string_order|mir=accepted|cc=ok|exec=same|rc=0|bytes=66|stdout-hex=747275650a…66616c73650a
+IR-MIR-VERDICT|PASS|…
+```
+
+这不是判据的缺陷被容忍，而是**判据能看见什么、不能看见什么的诚实记录**：快路是**代价**（`s <= s` 少一次 `strcmp`），不是**语义**（`strcmp("hi","hi") == 0` 给出同一个答案）。按字节比对答案的判据**结构上**看不见它。所以这段的结论写成两半：内容规则被注入会被咬住；快路被删不会被咬住，而后者是**故意接受**的——若要守住快路，需要的是一个计数/时序类判据，那是另一格。
+
+还原后 `grep -c INJECTED` 为 0、`grep -n` 快路回到 403 行、`BUILD_EXIT=0`、用例回到 `exec=same|bytes=66`（十二条逐字 `true,true,false,false,false,false,true,true,true,true,false,false`），`IR-MIR-VERDICT|PASS`。
+
+### 六、读数（本流 worktree 实跑，逐字，笔二之后）
+
+```
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=11|mir-only-same-as-interpreter=11
+IR-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=32|of=67|unknown=35|table=32|emitter=32|reported=32|agree=yes
+IR-AOT-MIR-BEYOND|ops=(OP_IS_NIL,OP_LOADK_STRING)|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR|accepted=97|refused=0|same-as-interpreter=97|of=29|emittable=32|of-ops=67|not-emittable=35|corpus=inline-cases:86|mir-only-cases=11|beyond-ast-denominator=2
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=97|of=29|covered=29|missing=0|refused=0|same-as-interpreter=97|prelude-excluded=yes|beyond-ast-denominator=2
+```
+
+必须守住的不变量：`same-as-interpreter` **96 → 97**（只涨没掉）；`handles` **32 不变**（`OP_LT/OP_LE/OP_GT/OP_GE` 本来就在 lowering 表里，字符串分支不新增 opcode）；`reasons` 三个桶**名字与计数逐字不变**；`covered` 仍 `29/29`；`mir-only-cases` **10 → 11**。
+
+### 七、诚实边界
+
+1. **混合类型的序没有答案**：`s < 1`、`1 < s`、`s < nil` 在本路线是 SIGABRT（守卫），不是 false、不是拒绝编译。这是本节第四节的全部内容，也是本节唯一"没有修好"的东西——因为它需要异常机制，不是需要一条比较规则。
+2. **只有驻留串**：`ival == 1` 且 `sval` 非空是本节的前提；真出现非驻留串，`mv_str_cmp` 守卫 abort（不可能态），不静默当空串。
+3. 没有 locale/Unicode 折叠：`strcmp` 比字节，与解释器 `val_cmp` 一致；解释器也没做折叠，所以这里不是"少做了一步"。
+4. **快路是代价不是语义**（第五节第二段），判据看不见它；这条不对称被写下来而不是被藏起来。
+5. 用例十二条输出覆盖四条运算符、两个方向、等值对，但**不是全集**：字符串 vs nil、字符串 vs 数组/字典、`strcmp` 前缀相同（"abc" vs "abd"）的中间字节差异、空串 `""` 与 `""` 相比都没有独立用例，属下一格。
+6. 没有新增打印出口、没有新增 `reasons` 桶、没有为了让读数好看而加 lowering case；`OP_CONCAT` / 容器 / 异常 / 并发**一律没碰**（各自的下一格）。

@@ -296,6 +296,39 @@ def mirval_assert_problems(text):
 #                             they redden together and one decision fixes them;
 #                             a case carrying only the empty body would not say
 #                             that the non-empty body has the same hole.
+#   mir_loadk_string_order
+#                             the ORDERING pair on strings (`<`, `<=`, `>`,
+#                             `>=`).  Same shape as the equality hole: prescan
+#                             ACCEPTS it (OP_LT/OP_LE/OP_GT/OP_GE are all in the
+#                             lowering table), cc compiles it, and the binary
+#                             used to die with SIGABRT and EMPTY stdout while
+#                             the interpreter answered true/false -- because
+#                             mv_lt/mv_le/mv_gt/mv_ge handed
+#                             mv_as_nv(MV_STR) to nv_*, and mv_tag_to_nv's
+#                             `default: abort()` is a guard, not a capability.
+#                             The rule copied is the interpreter's, and it is
+#                             the SAME val_cmp the equality arm uses:
+#                             src/vm/vm.c:443 says a same-type string pair is
+#                             orderable, :449-451 compares pointer first and
+#                             then strcmp with a NULL payload normalised to "".
+#                             `strcmp(a,b) < 0` etc. is the whole answer -- no
+#                             allocation, no new print exit.
+#                             Variance, not one truth value: both directions
+#                             (hi<ho true, ho<hi false), all four operators,
+#                             and an EQUAL pair (s <= s / s >= s true, s < s /
+#                             s > s false) so that the pointer fast path is
+#                             exercised and not just content comparison.  A
+#                             route that answered a constant, or only knew
+#                             `<`, reddens here.
+#                             NOT in the case, deliberately: a string against a
+#                             non-string (`s < 1`).  The interpreter raises
+#                             `uncaught: type_mismatch` (rc=1) and this route
+#                             has no exception mechanism, so that stays an
+#                             ABORTED boundary -- documented in the arm's debt
+#                             note and in docs/STATUS.md 10.107.  Putting it
+#                             here would demand a fake answer (silent false) in
+#                             exchange for the crash, which is exactly what the
+#                             ordering arm refuses to do.
 MIR_ONLY = [
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
@@ -314,6 +347,10 @@ MIR_ONLY = [
     ("mir_implicit_return",
      'func n() { x = 1 }\nsay n()\nfunc m() { }\nsay m()\n'
      'func b() { return }\nsay b()\n'),
+    ("mir_loadk_string_order",
+     's = "hi"\nt = "ho"\nsay s < t\nsay s <= t\nsay s > t\nsay s >= t\n'
+     'say t < s\nsay t <= s\nsay t > s\nsay t >= s\n'
+     'say s <= s\nsay s >= s\nsay s < s\nsay s > s\n'),
 ]
 
 
