@@ -4691,3 +4691,147 @@ IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=97|of=29|covered=29|missing=0
 4. **快路是代价不是语义**（第五节第二段），判据看不见它；这条不对称被写下来而不是被藏起来。
 5. 用例十二条输出覆盖四条运算符、两个方向、等值对，但**不是全集**：字符串 vs nil、字符串 vs 数组/字典、`strcmp` 前缀相同（"abc" vs "abd"）的中间字节差异、空串 `""` 与 `""` 相比都没有独立用例，属下一格。
 6. 没有新增打印出口、没有新增 `reasons` 桶、没有为了让读数好看而加 lowering case；`OP_CONCAT` / 容器 / 异常 / 并发**一律没碰**（各自的下一格）。
+
+## §10.108 字符串拼接：堆所有权第一次进入这条路线（aot-mir-value，A 类第六项）
+
+### 一、这笔债的来源与日期
+
+**来源**：`src/compilation/aot_mir.c` 里 `mv_add` 的一行委托 —— `mv_from_nv(nv_add(mv_as_nv(a), mv_as_nv(b)))`。数值 `+` 的委托形态第一次出现是 **`1dec5e6`（2026-11-01，"aot_mir: a C translation unit generated from the IrInsn stream"）**；**`8b796dd`（2026-11-05，"registers hold MirVal"）**把它原地包成 MirVal 形态 —— **指令位置没变、仍是一行委托、仍是同一个洞**：`nv_*` 没有字符串 tag，`mv_as_nv` 把一个字符串硬塞进数值通道，撞上 `mv_tag_to_nv` 的 `default: abort()`。本节 **2026-11-06** 给它加字符串分支。
+
+**与 §10.105 / §10.106 / §10.107 的关系**：同一类洞，同一条路线上紧挨着的下一格。但这一格和前三格**不是同一类修法**：§10.105 的字符串来自 `OP_LOADK_STRING`（驻留字面量，`ival == 1`，零分配），§10.107 的序关系只读驻留串；本节第一次**造出**一个解释器里靠 `malloc` 才存在的答案，因此也是**堆所有权第一次进入这条路线**。这不是加固一个已有的不变量，是**引入一个新的不变量**，本节把它写下来：谁拥有、谁释放、什么时候释放、以及这些都不在寄存器里。
+
+### 二、复现（修之前的原始读数，2026-11-06）
+
+```im
+s = "hi"
+t = "ho"
+say s + t
+say s + "x"
+```
+
+- 解释器：打印 `hiho` / `hix`，`INTERP_RC=0`。
+- MIR 路线**接受并编译**：`TRANSLATE_RC=0`、`IR-AOT-MIR-OK`、`IR-MIR-CODEGEN|insns=13|regs-max=3|emits=32|generated=(OP_LOADK_STRING,OP_ADD,OP_LOAD_GLOBAL,OP_STORE_GLOBAL,OP_SAY,OP_HALT)`、`IR-MIR-CONSERVE|insns=13|emitted=13|not-yet=0|holds=yes|bytes=277`。
+- `cc -O2` 通过（`CC_EXIT=0`），**运行 `RUN_RC=134`（SIGABRT）、stdout 空**。
+- 实现前（笔一 `08c1d6a` 的树）的判据红原文，用例 `mir_add_string_concat`：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_add_string_concat|interp-rc=0|mir-rc=-6|interp-out=b'hiho\nhix\nxhi\nhihi\nhi\nhiho\nhihohi\nhi\nho\n'|mir-out=b''
+IR-MIR-ALLOCS|case=mir_add_string_concat|reported=no|why=rc=-6
+IR-MIR-PROBLEM|mir_add_string_concat: the MIR route printed b'' rc=-6, the interpreter b'hiho\nhix\nxhi\nhihi\nhi\nhiho\nhihohi\nhi\nho\n' rc=0
+IR-MIR-VERDICT|FAIL|tree=08c1d6a2f8e61b5759a2631c1def0928e4a9bb2b|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+### 三、裁定：判据先立，仪器同一笔，实现一笔
+
+**判据先立**（笔一 `08c1d6a`）。新的 `MIR_ONLY` 用例 `mir_add_string_concat` 只比 stdout 字节，覆盖七件事：`s + t`（两条不同字面量的拼接）、`s + "x"`（右操作数是字面量，左是变量）、`"x" + s`（方向反过来）、`s + s`（同一操作数两次，两侧同一指针）、`s + ""`（空右操作数）、`u = s + t` 之后 `say u` 与 `say u + s`（结果先落变量（走 `OP_MOV`）再被再拼一次）、以及**拼接不改操作数**（拼完之后再 `say s` / `say t`，两条原文）。混合类型（`s + 1`、`1 + "7"`）**不进**这条判据，理由见第七节第 1 项。
+
+**仪器必须在实现之前或同一笔**（同一笔 `08c1d6a`）。判据按字节比 stdout，**结构上看不见分配与生命周期**：双释放／泄漏在它面前照样绿。所以笔一在生成的 TU 里加了 `IR-MIR-ALLOCS|allocs=N|freed=N|live=N|bytes=N`，由生成程序自己在退出时打到 **stderr**（stdout 必须保持与解释器逐字节可比，所以读数不能上 stdout），并在工具里断言：
+
+- 行**必须存在**（缺失本身是红，不是静默的 0）；
+- `live == 0`（退出清扫不许留下任何一块，红要**点名用例**并报出剩余块数与请求字节数）；
+- `allocs|bytes` 与一张**预写死的表**逐字相等（`ALLOCS_EXPECT`），这条才是牙齿：`live = allocs - freed` 由同一次清扫自己算，所以一个**绕开登记**的 `malloc` 会报出干净的 `0|0|0`，只有「这个用例必须分配 7 次、33 字节」才抓得住它。
+
+仪器自己也有反向判据（第五节）：把 `live == 0` 的断言改成恒过，或把登记那一行删掉，红要消失／出现，逐字贴出来。
+
+### 四、实现（笔二）
+
+**照抄的那几行**（`src/vm/vm.c` 的 `L_ADD` 字符串分支；本节只抄它，不发明规则）：
+
+```
+   :3291  if (a->type == VAL_STRING || b->type == VAL_STRING) {
+   :3304      size_t la = strlen(sa), lb = strlen(sb);
+   :3305      char *nb = malloc(la + lb + 1);
+   :3306      if (!nb) nb = strdup("");
+   :3307      else { memcpy(nb, sa, la); memcpy(nb+la, sb, lb); nb[la+lb] = 0; }
+   :3308      value_set(&R[ins.r1], VAL_STRING, 0, 0, nb, NULL);
+```
+
+第三个参数**就是 `ival == 0`**：解释器对「算出来的串」用 `ival = 0`（堆拥有），对驻留串用 `ival = 1`（不拥有、不释放）。本路线沿用同一条约定，于是 `ival` 在两条路线里都只剩**驻留／释放标记**这一个含义。溢出检查**抄链式路径、不抄 `L_ADD` 的遗漏**：解释器的 `L_CONCAT` 在 `:3351` 查 `if (total > (size_t)-1 - l - 1)` 而 `L_ADD` 的 `:3305` 根本没查，本路线按两操作数拼出同一个表达式（`la > (size_t)-1 - lb - 1`）并 abort —— **抄检查、不抄遗漏**。
+
+生成的 TU 里新增（全部在 `kMirValBlock` 内，追加不拼接，所以 `classify()` 的共同前缀与三个 preamble marker 不受影响）：
+
+```c
+static inline MirVal mv_str_concat(MirVal a, MirVal b) {
+    if (!a.sval || !b.sval) abort();            /* no state this route builds */
+    size_t la = strlen(a.sval), lb = strlen(b.sval);
+    if (la > (size_t)-1 - lb - 1) abort();      /* copy chain's check, not L_ADD's omission */
+    char *nb = mv_alloc(la + lb + 1);           /* registered, swept at exit */
+    memcpy(nb, a.sval, la);
+    memcpy(nb + la, b.sval, lb);
+    nb[la + lb] = 0;
+    MirVal r;
+    r.type = MV_STR;
+    r.ival = 0;      /* heap-owned: value_set(..., VAL_STRING, 0, 0, nb, NULL) */
+    r.sval = nb;
+    r.ptr  = 0;
+    return r;
+}
+static inline MirVal mv_add(MirVal a, MirVal b) {
+    if (a.type == MV_STR || b.type == MV_STR) {
+        if (a.type != MV_STR || b.type != MV_STR) abort();   /* MIXED PAIR */
+        return mv_str_concat(a, b);
+    }
+    return mv_from_nv(nv_add(mv_as_nv(a), mv_as_nv(b)));
+}
+```
+
+**所有权方案：程序级登记表，不是 per-register 所有权。** 生成代码里每个寄存器写都是裸赋值 `v[i] = expr`，`emit_one` 有几十个发射点，没有 `value_set` 那样的唯一咽喉；若只让 `OP_ADD` 一处「拥有」，`OP_MOV`（`v[1] = v[2]`）会浅拷贝堆指针 ⇒ 两个拥有者 ⇒ 双释放。所以「拥有」不放在寄存器里，放在一张程序级链表里：`mv_alloc()` malloc 后把指针登记进 `mv_blocks`，`atexit` 注册的 `mv_free_all()` 在程序退出时一次性释放全部并打印读数。双释放因此在结构上不可能（每个块只被登记表释放一次），而代价是中间值一律活到程序退出（第七节第 4 项）。
+
+**两处守卫同步放宽（可预期的联动，做在笔二并点名）**。`mv_eq` / `mv_str_cmp` / `mv_say` 原先靠「本路线造不出非驻留串」这个前提守住 `ival != 1 ⇒ abort`；拼接一存在，这个前提当场失效，所以三处守卫改成只查**载荷**（`sval` 非空），`ival` 只剩释放标记的作用。本节写下的判据只有 `mir_add_string_concat` 一条，但放宽本身另有实测（第七节末）：`s + t == c`、`s + t != d`、`s + t < c`、`w = s + t; say w == c; say w` 的 MIR stdout 与解释器逐字节相同（除解释器的模块加载前言），读数 `IR-MIR-ALLOCS|allocs=4|freed=4|live=0|bytes=20`。
+
+### 五、反向判据（每一笔至少一次，非对称）
+
+**笔一（仪器）**。注入 I1：删掉登记表那一行 `mv_blocks = e;`（块被分配、但永远扫不到），并在 `main` 前言后加一行 `mv_alloc(16)`（故意漏登记一次）。`BUILD_EXIT=0`、`MIR_EXIT=1`：
+
+```
+IR-MIR-ALLOCS|case=mir_loadk_string|reported=yes|allocs=1|freed=0|live=1|bytes=16|expect-allocs=0|expect-bytes=0|ok=no
+IR-MIR-PROBLEM|mir_loadk_string: LEAK -- live=1 block(s) survived the exit sweep (allocs=1, freed=0, 16 byte(s) requested in all); the criterion says the sweep must leave none
+IR-MIR-PROBLEM|mir_loadk_string: allocation count off -- got allocs=1|bytes=16, the criterion demands allocs=0|bytes=0 (a site that mallocs without registering reports 0|0)
+```
+
+注入 I2（在 I1 之上）：把 `if live != 0:` 改成 `if live > 999:`（把断言做成恒过）。重跑后 `IR-MIR-ALLOCS` 那行**逐字不变**（`live=1` 照旧），但 `grep -c "LEAK --"` 变成 **0**：**命名泄漏的是断言，不是读数**。这正是不对称的地方 —— 读数不会自己变红，断言是唯一的牙齿。
+
+**笔二（实现）**。注入 A：把 `return mv_str_concat(a, b);` 改成 `return mv_int(0);`（把拼接答案做成常量）。`BUILD_EXIT=0`、`MIR_EXIT=1`：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_add_string_concat|interp-rc=0|mir-rc=-6|interp-out=b'hiho\nhix\nxhi\nhihi\nhi\nhiho\nhihohi\nhi\nho\n'|mir-out=b''
+IR-MIR-ALLOCS|case=mir_add_string_concat|reported=no|why=rc=-6
+IR-MIR-PROBLEM|mir_add_string_concat: the MIR route printed b'' rc=-6, the interpreter b'hiho\nhix\nxhi\nhihi\nhi\nhiho\nhihohi\nhi\nho\n' rc=0
+```
+
+（红的原因不是「字节不同」四个字：`u` 成了整数，后面 `say u + s` 就是混合类型对，`mv_add` 的混合守卫 abort；stdout 因为 `abort` 不跑 `atexit` 而被整块丢弃 —— 这也顺带证明「守卫停止不打印读数」是设计而不是丢了输出。）注入 B：只删掉登记那一行 `mv_blocks = e;`（分配照旧、清扫扫不到）：
+
+```
+IR-MIR-ALLOCS|case=mir_add_string_concat|reported=yes|allocs=7|freed=0|live=7|bytes=33|expect-allocs=7|expect-bytes=33|ok=no
+IR-MIR-PROBLEM|mir_add_string_concat: LEAK -- live=7 block(s) survived the exit sweep (allocs=7, freed=0, 33 byte(s) requested in all); the criterion says the sweep must leave none
+```
+
+这一次 **stdout 字节完全对**（七条答案逐字正确），只有 `IR-MIR-ALLOCS` 红 —— 这是「判据按字节比看不见分配与生命周期」的现场证据：同一次运行里，答案全对、泄漏 7 块 33 字节。还原后 `grep -c INJECTED` 为 0（两个文件各一次）、`BUILD_EXIT=0`、`IR-MIR-ALLOCS|case=mir_add_string_concat|…|allocs=7|freed=7|live=0|bytes=33|ok=yes`、`IR-MIR-VERDICT|PASS`、`IR-MIR-PROBLEM` 计数 0。
+
+### 六、读数（本流 worktree 实跑，逐字，笔二之后）
+
+```
+IR-MIR-ALLOCS|case=mir_add_string_concat|reported=yes|allocs=7|freed=7|live=0|bytes=33|expect-allocs=7|expect-bytes=33|ok=yes
+IR-MIR-MIR-ONLY|case=mir_add_string_concat|mir=accepted|cc=ok|exec=same|rc=0|bytes=39|stdout-hex=6869686f0a6869780a7868690a686968690a68690a6869686f0a6869686f68690a68690a686f0a
+IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=12|mir-only-same-as-interpreter=12
+IR-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=32|of=67|unknown=35|table=32|emitter=32|reported=32|agree=yes
+IR-AOT-MIR|accepted=98|refused=0|same-as-interpreter=98|of=29|emittable=32|of-ops=67|not-emittable=35|corpus=inline-cases:86|mir-only-cases:12|beyond-ast-denominator=2
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+IR-AOT-MIR-VERDICT|PASS|tree=<笔二 sha>|accepted=98|of=29|covered=29|missing=0|refused=0|same-as-interpreter=98|prelude-excluded=yes|beyond-ast-denominator=2
+```
+
+必须守住的不变量：`same-as-interpreter` **97 → 98**（只涨没掉）；`handles` **32 不变**（`OP_ADD` 本来就在 lowering 表里，字符串分支不新增 opcode）；`reasons` 三个桶**名字与计数逐字不变**；`covered` 仍 `29/29`；`mir-only-cases` **11 → 12**；`beyond-ast-denominator` 仍 2。
+
+### 七、诚实边界
+
+1. **混合类型的 `+` 仍是 SIGABRT，不是答案。** 解释器对 `s + 1` 走「两侧按同一规则串化」（那份注释自己写着 `1 + "7"` 曾经静默答 `"7"` 而 1 消失、exit 0）；照抄它就是在本路线新开一类**打印出口**，而且照抄的是一条历史上有静默错答的规则。所以 `mv_add` 对混合对直接 abort，并且**不进判据**（判据不许声称覆盖它）。
+2. **空右操作数不短路。** `s + ""` 照样分配一份拷贝（判据按 3 字节记账）。短路成 `return a` 会把「驻留字面量」和「拥有块」混成同一个指针，清扫时 `free` 一个字面量 —— 这是结构性错误，所以宁可多分配 3 字节。
+3. **OOM 与解释器分歧，写下来。** 解释器在 `:3306` 用 `nb = strdup("")` 静默给空串（而 strdup 自己也是 malloc，真没堆时它照样给 NULL），`s + t` 于是答出 `""` —— 静默错答、exit 0。本路线改为 abort（`mv_alloc` OOM 也 abort）：**分歧是故意的**，宁可无输出也不给一个错的串。
+4. **登记表在循环里线性增长。** 它是记账不是所有权，所以循环里每拼一次就多一块、活到程序退出。实测（本节新增读数，本流 worktree）：`s = "x"` 后 `while i < 200 { s = s + "y" … }` ⇒ `IR-MIR-ALLOCS|allocs=200|freed=200|live=0|bytes=20500`；同样程序 `i < 1000` ⇒ `IR-MIR-ALLOCS|allocs=1000|freed=1000|live=0|bytes=502500`。字节是长度之和，所以 N 次拼接长串是 **O(N²／2)** 的滞留量（1000 次 ≈ 490 KiB 活到退出），**不是泄漏**（`live=0`），但也不是「零分配」——本路线的「零分配」不变量从此只在**没有 `+`** 的程序里成立。
+5. **`OP_MOV` 浅拷贝共享指针。** `w = s + t` 让 `w` 与临时寄存器指向同一块；因为没有任何寄存器「拥有」，两个名字共享一个指针是安全的（不会双释放），代价是**覆盖寄存器不回收内存**：中间值只能等到退出。这也是为什么本方案能不做 per-register 所有权就敢落地。
+6. **函数返回拥有串**。实测 `func jn(a, b) { return a + b }` + `say jn("hi","ho")` + `say jn(jn("a","b"),"c")` ⇒ stdout `hiho` / `abc`，`IR-MIR-ALLOCS|allocs=3|freed=3|live=0|bytes=12`。被调者的寄存器数组随 `return` 消失，块却仍被登记表持有 ⇒ 不悬垂、不双释放；代价同上：返回的串只能活到程序退出。
+7. **per-register 所有权没有做，而且这是本节的 DELETE CONDITION。** 落地那笔要删除登记表与 `mv_free_all`，机械检查写成：生成 TU 里 `mv_free_all` 的引用计数为 0、`mv_set(` 出现次数等于寄存器写点数。
+8. **`OP_CONCAT` 没碰。** 链式拼接（一次为整条链分配）是另一格，本节判据与本节任何一句话都不声称覆盖它；容器、异常、并发同样没碰。
+9. **判据结构上看不见的那一半。** 字节判据看不见「谁拥有」，`IR-MIR-ALLOCS` 的精确 `allocs|bytes` 把「绕开登记」变成了红，`live` 把「登记了但没释放」变成红；但「登记了、释放了、却释放了两次」在这套记账里不产生任何读数（真实双释放要靠 glibc 的 abort 才看得见）——本节靠的是结构上不可能，不是靠判据看得见。
