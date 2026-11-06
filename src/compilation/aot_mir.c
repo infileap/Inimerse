@@ -1150,19 +1150,41 @@ static int emit_one(Ctx *c, Buf *b, int i) {
      *     emit OP_EQK for it -- the literal side is chosen regardless of the
      *     other side's type -- but the opcode that would build the array is
      *     outside this subset, so prescan refuses the program before this arm
-     *     is reached.  Measured: `IR-AOT-MIR-REFUSED|...|n=11` on the array
-     *     program, exit 1, no partial answer.  The interpreter answers false
-     *     (:428); this route refuses, which is honest about a capability it
-     *     does not have.  It is not answered from this arm because no
-     *     emittable opcode can produce a container tag to compare against.
-     *   - FLOAT -0.0 / NaN as the compared value.  Measured: `say -0.0 == "hi"`
-     *     and `say -0.0 != "hi"` answer false/true on BOTH routes (a float
-     *     never coerces against a string: :414 gates the block, :425-427 lists
-     *     only INT/FLOAT/BOOL pairs).  NaN is UNREACHABLE on this route: every
-     *     division by zero dies in the shared runtime (nv_die_division_by_zero)
-     *     before a comparison, so `0.0/0.0` never becomes a value here.  This
-     *     is a property of mv_eq's existing arm, not of this one -- the probe
-     *     lives in .scratch, not in the corpus.
+     *     is reached.  MEASURED on `a = [1, 2]` / `say a == "hi"`:
+     *     `IR-MIR-REFUSED|why=illegal-operand|detail=container=0 leaves the
+     *     argument stack unbalanced: asp=2` and
+     *     `IR-AOT-MIR-REFUSED|...|why=illegal-operand: ...|n=10`, exit 1, no
+     *     partial answer.  The interpreter answers false (:428); this route
+     *     refuses, which is honest about a capability it does not have.  It is
+     *     not answered from this arm because NO emittable opcode builds a
+     *     container tag: OP_NEW_ARRAY, OP_NEW_DICT and OP_NEW_SET are all
+     *     absent from the lowering table (the same measurement that makes
+     *     handles 34 and not 37).
+     *   - FLOAT -0.0 / NaN as the compared value.  MEASURED: `say -0.0 == "hi"`
+     *     / `say -0.0 != "hi"` answer false/true on BOTH routes, and so does
+     *     `say (0.0/0.0) == "hi"` -- NaN IS reachable here (division by zero
+     *     does not abort this route; the shared runtime's
+     *     nv_die_division_by_zero is NOT on this path), and a float never
+     *     coerces against a string (:414 gates the block and :425-427 lists
+     *     only INT/FLOAT/BOOL pairs), so NaN against a string constant is
+     *     false rather than the "false for everything" a NaN comparison would
+     *     give on the numeric path.  This is a property of mv_eq's existing
+     *     arm, not of this one, so the probe lives in .scratch and not in the
+     *     corpus.
+     *   - a NON-RESIDENT string VALUE (the compared side, r2).  MEASURED: the
+     *     only opcode that would build one is string `+` (`s = "a" + "b"`), and
+     *     that is outside this subset for a reason that PRE-DATES this arm --
+     *     the generated program dies in mv_add, before any comparison:
+     *     `say s` after `s = "a" + "b"` exits 134 (SIGABRT, empty stdout) on
+     *     this tree, because mv_as_nv has no MV_STR arm.  So a non-resident
+     *     string cannot reach r2 here; if a later opcode produces one, mv_eq's
+     *     impossible-state guard abort()s instead of answering.
+     *   - a POOL INDEX that is large.  MEASURED and it WORKS: a program with
+     *     5000 string literals before the comparison puts the constant at pool
+     *     index ~5001, i.e. past REG_LIMIT (4096) -- the index a register bound
+     *     would refuse -- and the comparison still answers byte-identically.
+     *     This is why r3 is bounded by `node->string_count` in prescan and not
+     *     by the register check.
      *   - a constant in a NON-ROOT container.  MEASURED and it WORKS: `func
      *     f(a) { return a == "hi" }` lowers the OP_EQK of the function body
      *     against the FUNCTION's own pool (prescan's bound is
@@ -1170,6 +1192,10 @@ static int emit_one(Ctx *c, Buf *b, int i) {
      *     `c->node->string_pool`) and answers identically to the interpreter.
      *     It has no corpus case because it would move readings unrelated to
      *     this question; the boundary is recorded here instead of implied.
+     *   - a constant against a value read from an UNRESOLVED global
+     *     (`nosuchglobal == "hi"`, L_LOAD_GLOBAL's idx == -1).  MEASURED and
+     *     it WORKS: nil against a string is false, and `!=` is true, on both
+     *     routes -- mv_eq's MV_NIL arm, unchanged by this lowering.
      *
      * DELETE CONDITION (decidable, not a wish): delete these two cases together
      * with mv_eq's string arm, in the commit that gives the shared NV a string
