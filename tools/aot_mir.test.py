@@ -685,7 +685,55 @@ MIR_ONLY = [
      's = "hi"\ni = 0\nsay s[i]\nj = 1\nsay s[j]\nk = 2\nsay s[k]\n'
      'm = 0 - 1\nsay s[m]\n'),
     ("mir_container_index_type_mismatch",
-     'a = [7, 8, 9]\nsay a[nosuchglobal]\n')
+     'a = [7, 8, 9]\nsay a[nosuchglobal]\n'),
+    # OP_MIN / OP_MAX, the SET REDUCTIONS -- not an arithmetic pair.  Read the
+    # handlers before the names: `L_MIN`/`L_MAX` (src/vm/vm.c:4357) call
+    # `set_minmax(vm, &R[ins.r2], &R[ins.r1], 0/1)` and `set_minmax`
+    # (src/vm/vm.c:2476) begins by answering VAL_NIL; it only looks at the
+    # operand when `src->type == VAL_SET`, and there it folds a set's int/float
+    # elements (exact long long for int-like, double otherwise) or its strings
+    # (strcmp), refusing a mix of string and number.  There is no two-operand
+    # min: `min(1, 2)` is the interval-SET spelling, compiled into
+    # OP_SET_INTERVAL (TOK_MIN in src/lexer/lexer.c:47, the UNARY rule at
+    # src/parser/parser.c:640).
+    #
+    # MirVal has no set tag (MV_INT 0, MV_FLT 1, MV_BOO 3, MV_NIL 5, MV_STR), and
+    # every producer of one is refused by prescan BEFORE OP_MIN is reached:
+    # OP_NEW_SET / OP_SET_INTERVAL are not lowered, the 23 preset set globals are
+    # refused by name (src/compilation/aot_mir.c:1306), and a literal `min(1, 2)`
+    # leaves the argument stack unbalanced (asp=2).  Measured on this tree, not
+    # recalled: `p = 1, 2, 3` + `say min(p)` refuses with "illegal-operand ...
+    # leaves the argument stack unbalanced: asp=3" and `say min(Z)` with "global
+    # 1 is the preset set global 'Z'".  So on every stream this route accepts
+    # the operand is a non-set and the interpreter's own answer is VAL_NIL --
+    # exactly, by the handler's first statement.  The value-domain argument
+    # itself lives in the emitter note in src/compilation/aot_mir.c; these cases
+    # are what it looks like from outside, and they are the ones that go red if
+    # that agreement breaks (reversed direction, an operand read from the wrong
+    # register, a popped register).
+    #
+    # WHAT THESE COVER: ints of both signs; the i32/i64 boundary values (no
+    # arithmetic is done, so nothing here can overflow); floats including -0.0
+    # (stdout prints `0` either way, so the SIGN is not observable through this
+    # route -- and -0.0 as a set ELEMENT cannot even be written, `p = -0.0, 0.0`
+    # is a parse error); a scalar string, which answers nil and NOT the string,
+    # and never the strcmp rule (that rule only exists for set ELEMENTS); nil
+    # itself; and `min(x)`/`max(q)` on stored variables, the spelling whose
+    # operand comes from OP_LOAD_GLOBAL instead of a literal.
+    # NaN is NOT covered and cannot be: the only way to make one is a builtin
+    # call (`sqrt(-1)` prints `nan`), OP_CALL_BUILTIN is not lowered, and a set
+    # literal holding a variable (`p = 0.0, q`) is refused with asp imbalance
+    # before OP_MIN.  That is the honest boundary, recorded in STATUS 10.112.
+    ("mir_minmax_int", 'say min(5)\nsay max(5)\nsay min(-7)\nsay max(-7)\n'),
+    ("mir_minmax_boundary",
+     'say min(2147483647)\nsay max(-2147483648)\n'
+     'say min(9223372036854775807)\nsay max(-9223372036854775807)\n'),
+    ("mir_minmax_float",
+     'say min(-0.0)\nsay max(-0.0)\nsay min(0.5)\nsay max(-0.25)\nsay min(0.0)\n'),
+    ("mir_minmax_string", 'say min("b")\nsay max("b")\nsay min("")\n'),
+    ("mir_minmax_nil", 'say min(nil)\nsay max(nil)\n'),
+    ("mir_minmax_var", 'x = 3\nq = -2\nsay min(x)\nsay max(q)\n'),
+
 ]
 
 
