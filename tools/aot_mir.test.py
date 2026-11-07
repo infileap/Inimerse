@@ -228,6 +228,26 @@ ALLOCS_EXPECT = {
     "mir_container_index_get": (1, 256),
     "mir_container_index_edges": (1, 256),
     "mir_container_new_array_empty": (1, 256),
+    # OP_IN itself allocates NOTHING -- mv_in reads the pool and calls the
+    # equality pair.  These five numbers are the array literals the programs
+    # happen to contain, MEASURED before they were written down: the pool holds
+    # 8 slots of 32 bytes on first use and grows by DOUBLING, and the old block
+    # is swept at exit instead of freed during the run, so a case whose distinct
+    # literals need more than 16 slots reports three blocks --
+    # 8+16+32 slots = 256+512+1024 bytes = 1792 -- and freed equals allocs.
+    # mir_in_string's only container is one 3-slot ["a","b"] literal, so it
+    # allocates the FIRST pool block alone (256); its strings are resident in
+    # the string pool and cost no block.  mir_in_scalar has no container literal
+    # at all, and 0|0 is the zero this arm proves: had mv_in allocated per test,
+    # it would show up here and nowhere else in these five.
+    "mir_in_array_hit": (3, 1792),
+    "mir_in_array_miss": (3, 1792),
+    "mir_in_string": (1, 256),
+    "mir_in_scalar": (0, 0),
+    # 1728 would be 8+16 slots; this case carries enough distinct literals
+    # ([1,2,3], [x-1,x], [[1],[2]], [1], [2], [1]) to cross into the 32-slot
+    # block, which is the growth point, not a second allocation rule.
+    "mir_in_computed": (3, 1792),
     # The string arm of OP_INDEX_GET builds ONE 2-byte block per character it
     # actually returns (src/vm/vm.c:3706-3709 strdup's a one-character buffer;
     # this route's mv_alloc does the same): reads 0 and 1 answer 'h' and 'i',
@@ -733,6 +753,106 @@ MIR_ONLY = [
     ("mir_minmax_string", 'say min("b")\nsay max("b")\nsay min("")\n'),
     ("mir_minmax_nil", 'say min(nil)\nsay max(nil)\n'),
     ("mir_minmax_var", 'x = 3\nq = -2\nsay min(x)\nsay max(q)\n'),
+
+    # ---- OP_IN, and what the interpreter's own handler answers -------------
+    #
+    # The operand order is copied, not guessed: src/compiler/compiler.c:727 emits
+    # `emit(comp->curBC, OP_IN, result, left, right)` and the VM reads it as
+    # `set_contains_or_subset(vm, &R[ins.r2], &R[ins.r3])` writing R[ins.r1]
+    # (src/vm/vm.c:4351-4356).  So r2 is `x`, r3 is the container, r1 gets a
+    # VAL_BOOL.  src/compiler/bytecode.h:48 spells it "in: r1 = (r2 in r3)".
+    #
+    # The answers below are the handler's, in this order: `b` VAL_SET ->
+    # subset-or-member against a set (src/vm/vm.c:2381, the first two arms);
+    # `b` VAL_ARRAY -> `a` VAL_ARRAY is a SUBSET by val_eq
+    # (src/vm/vm.c:2386-2390, an empty `a` answers 1 and a malformed handle
+    # answers 1 too), `a` VAL_SET is a finite-set subset (:2392-2404), anything
+    # else is membership by val_eq (:2406-2411); `b` anything else (a DICT, a
+    # string, an int, nil) -> `return 0` at src/vm/vm.c:2417-2420.  That last
+    # line is why mir_in_string is NOT a substring test and a dict is NOT a key
+    # test: the interpreter has no such arm, and a lowering that invented one
+    # would print `true` where the interpreter prints `false`.
+    #
+    # val_eq itself (src/vm/vm.c:413) is one rule: same-tag gate first, then
+    # VAL_ARRAY/VAL_DICT compare `ival`, i.e. the HANDLE -- array equality is
+    # IDENTITY, not element-wise -- and int/float/bool coerce through
+    # `l == (long long)r` (:425-427).  mir_in_array_hit's `1.0 in [1, 2]`
+    # (true) and mir_in_computed's `[x - 1] in c` (false even though the values
+    # are equal) are the two halves of that one rule, and they are the lines a
+    # value-wise array equality would flip.
+    #
+    # WHAT THESE COVER: the array membership arm with int, string, nil and
+    # float-vs-int elements; an ARRAY operand (the subset arm, both true and
+    # false, including NESTED arrays compared by identity); an empty operand
+    # (subset true) against an empty container (member false); the string arm
+    # -- the spelling `"b" in "abc"` a user may reach for, answered false by
+    # the handler (:2417), with a real one-element array on the line above it so
+    # a route that confused "a string is a container" with "a string is a
+    # member" cannot pass both halves at once (`not` too); the scalar arm; and
+    # computed operands (both sides through arithmetic, through a variable, and
+    # inside `if`/`not`), so the registers are not literal constants.
+    #
+    # WHAT THEY CANNOT COVER: a dict or a set.  Both are STRUCTURAL: prescan
+    # refuses the program before OP_IN is reached -- `d = {"k": 1}` refuses with
+    # "container=0 leaves the argument stack unbalanced: asp=2" (OP_NEW_DICT's
+    # pops are not counted), a set literal `p = 1, 2, 3` with asp=3, and the 23
+    # preset set globals by name (the 'Z' check in src/compilation/aot_mir.c).
+    # So on every stream this route accepts, the L_IN set arm is unreachable and
+    # its array arm sees integers, strings, nil, floats, bools and handles --
+    # named in docs/STATUS.md §10.115, not silently assumed.
+    #
+    # mir_in_computed's LAST line, `say [1] != c[0]`, is the OP_NEQ spelling of
+    # the array-identity row the subset line above needs: without that arm the
+    # two spellings would answer `==` (`[1] == [1]` false) and stop the program
+    # on `!=` -- the asymmetry the equality note in src/compilation/aot_mir.c
+    # exists to refuse.  It sits in this case because a membership test is what
+    # made the row reachable at all.
+    ("mir_in_array_hit",
+     'a = [1, 2, 3]\n'
+     'say 2 in [1, 2, 3]\n'
+     'say 2 in a\n'
+     'say "b" in ["a", "b"]\n'
+     'say nil in [nil, 1]\n'
+     'say 1.0 in [1, 2]\n'
+     'say [1, 2] in [1, 2, 3]\n'
+     'say [] in [1, 2, 3]\n'),
+    ("mir_in_array_miss",
+     'a = [1, 2, 3]\n'
+     'say 5 in [1, 2, 3]\n'
+     'say 5 in a\n'
+     'say "bc" in ["a", "b"]\n'
+     'say 2.5 in [1, 2]\n'
+     'say [1, 4] in [1, 2, 3]\n'
+     'say 7 in []\n'
+     'say [1, 2] in []\n'),
+    ("mir_in_string",
+     'say "b" in "abc"\n'
+     'say "abc" in "abc"\n'
+     'say "" in "abc"\n'
+     'say "" in ""\n'
+     'say "b" in ["a", "b"]\n'
+     'say not ("b" in "abc")\n'),
+    ("mir_in_scalar",
+     'say 1 in 5\n'
+     'say 1.0 in 5\n'
+     'say nil in 5\n'
+     'say 1 in nil\n'
+     'say "a" in 1\n'
+     'say true in 1.5\n'),
+    ("mir_in_computed",
+     'a = [1, 2, 3]\n'
+     'x = 1 + 2\n'
+     'say x in a\n'
+     'say (x - 1) in a\n'
+     'say (x * 2) in a\n'
+     'b = [x - 1, x]\n'
+     'say x in b\n'
+     'if x in a { say "T" } else { say "F" }\n'
+     'say not (x in b)\n'
+     'c = [[1], [2]]\n'
+     'say [x - 1] in c\n'
+     'say x in c\n'
+     'say [1] != c[0]\n'),
 
 ]
 

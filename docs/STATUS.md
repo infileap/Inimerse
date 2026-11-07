@@ -5605,3 +5605,173 @@ IR-MIR-PROBLEM|mir_minmax_boundary: allocation count off -- got allocs=0|bytes=0
 11. **`unknown=30` 没动。** `of=67` 的分母没变，剩下 30 个未知 opcode 是别的债，本节不声称碰过。
 12. **引用形式**：本节的引用一律是 `路径:行号` 形（不是「第 N 行」的散文形），所以不需要树戳；若将来有人改成散文形，必须带 `[obs: cdd5a11]` 这样的树戳。
 
+
+
+## §10.115 `OP_IN` 是**容器类型分派**，不是「算出一个布尔」——这一格补的是「非数组容器一律假」（aot-mir-container，A 类第十一项）
+
+这一节补 `OP_IN`（成员测试：`x in a`）。它看起来像「算一个布尔」，实际不是：解释器的 `L_IN` 只做一次转发，全部语义在被转发到的那个函数里，而那个函数**按右操作数的类型分派**。所以这一格不是「补一个比较」，是「补一张分派表」；表里有两格在这条路线上**结构上不可达**，这两格必须写明理由，不能假装补了。
+
+### 一、这笔债从哪来
+
+基线上（`f7a7dc0`）`OP_IN` 在「未降低」账本里。它的表现不是「答错」，是**整条拒译**：
+
+```
+a = [1, 2, 3]
+say 2 in a
+```
+
+旁边的数组字面量已经降低（`OP_NEW_ARRAY`）、`say` 也已经降低，但 `OP_IN` 没有发射器，于是整条程序 `why=unsupported-opcode`。这类「被邻居挡住」的格子正是 A 类账本要一格一格清的原因。
+
+操作数与语义，三处原文：
+
+- 布局 `src/compiler/bytecode.h:48` —— `in: r1 = (r2 in r3)`：`r1` 收结果布尔，`r2` 是**元素**，`r3` 是**容器**。 [obs: f8cc5af]
+- 编译器同形的一处 `src/compiler/compiler.c:727` —— `emit(comp->curBC, OP_IN, result, left, right)`。 [obs: f8cc5af]
+- 执行 `src/vm/vm.c:4351-4356` —— `L_IN` 读 `R[ins.r2]`/`R[ins.r3]`，调 `set_contains_or_subset(vm, &la, &rb)`，把结果写成 `VAL_BOOL`。 [obs: f8cc5af]
+
+所以答案不在 `L_IN` 里，在 `set_contains_or_subset` 里（`src/vm/vm.c:2381`）。 [obs: f8cc5af] 它的分派顺序是我要照抄的形状：
+
+1. `b` 是**集合**（`:2382-2395`）：`a` 数组 → 逐个 `set_contains`；`a` 集合 → `set_subset`；否则 `set_contains(b, a)`。
+2. `b` 是**数组**（`:2397` 起）：`a` 数组 → **子集**，逐元素 `val_eq`（`:2403-2413`）；`a` 集合 → 逐个 `val_eq`；否则 → **成员**，`val_eq(a, &items[j])`（`:2425-2428`）。
+3. 其余一律 `return 0`（`:2432`）。
+
+这三条的语义在 MIR 线上一条都不能发明。尤其是第 2 条的**元素比较**用的是 `val_eq`（`src/vm/vm.c:413`）。 [obs: f8cc5af] 而 `val_eq` 的数组行是**身份**比较：`if (a->type == VAL_ARRAY) return a->ival == b->ival;`（`:420`）——`[1] == [1]` 是 false，`x == x` 是 true。这一行不是我的选择，是 `val_eq` 自己写的。
+
+### 二、解释器给什么答案：逐组合实测，不是推导
+
+下面每一条都在本树上跑过解释器（不是从上面的代码推导出来的）。这张表的用处是：它把「这条路上不可达的那两格」跟「真的会答错的格子」分开。
+
+| 表达式 | 解释器 | 为什么 |
+| --- | --- | --- |
+| `2 in [1, 2, 3]` | true | `b` 数组、`a` 标量 → 成员，`val_eq` |
+| `5 in [1, 2, 3]` | false | 成员未命中 |
+| `[1, 2] in [1, 2, 3]` | true | 子集，逐元素 `val_eq` |
+| `[1, 4] in [1, 2, 3]` | false | 子集缺元素 |
+| `[] in [1, 2, 3]` | true | 空集是任何集合的子集（`:2405-2406`）|
+| `7 in []` / `[1, 2] in []` | false | 空容器里什么都找不到 |
+| `1.0 in [1, 2]` | true | `val_eq` 的数族互比按 `double`（`:425-427`）|
+| `2.5 in [1, 2]` | false | 同上，逐值比 |
+| `1.5 in [1]` | false | **不是截断**：`double` 比较，`1.5 != 1.0` |
+| `true in [1]` / `0 in [false]` | true | bool 与数按 1/0 互比（同上）|
+| `nil in [nil, 1]` | true | nil 与 nil 相等 |
+| `x in [x]` | true | 同一句柄 |
+| `"b" in ["a", "b"]` | true | 字符串按 `strcmp` |
+| `"bc" in ["a", "b"]` | false | 不是子串判定，是整元素相等 |
+| `[1] in [[1], [2]]` | false | 数组按**身份**，元素是新句柄 |
+| `"b" in "abc"` | false | **没有子串语义**：`b` 不是数组也不是集合 → `:2432` |
+| `"abc" in "abc"` | false | 同上，即使一模一样 |
+| `1 in 5` / `1.0 in 5` / `nil in 5` / `"a" in 1` | false | 标量右操作数一律假 |
+| `"k" in {"k": 1}` | false | 字典**不是键集合**：也是 `:2432` |
+| `2 in {1, 2, 3}` | true | 整数集合走 i64 二分（`src/vm/vm.c:2020`）。 [obs: f8cc5af] |
+| `2.0 in {1, 2, 3}` | false | **二分只认 `VAL_INT`**：浮点不进 i64 查找，线性 `val_eq` 又没命中 |
+| `2 in {2.0, 3.0}` | true | 非整数集合走线性 `val_eq` |
+
+这张表里最重要的是两行：`"b" in "abc"` 是 **false**（没有子串），`"k" in {"k": 1}` 也是 **false**（字典没有键测试）。「直觉上该是 true」的两条恰恰是解释器的答案，而这条路线要搬的是**解释器的答案**，不是直觉。
+
+### 三、判据先立：五条 `MIR_ONLY`，先红
+
+在 `tools/aot_mir.test.py` 的 `MIR_ONLY` 里加五例（程序原文在测试文件里，这里只记形状）：`mir_in_array_hit`（七行命中，含浮点/bool/nil/字符串/数组⊆数组/空数组）、`mir_in_array_miss`（七行未命中）、`mir_in_string`（六行：四真二假，含 `not (x in "abc")`）、`mir_in_scalar`（六行标量右操作数）、`mir_in_computed`（十行：元素是算出来的、容器是变量、数组作元素、还有一行 `say [1] != c[0]`）。
+
+先跑的原文（本节所有读数都是跑出来的，不是预期的）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_in_array_hit|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_in_array_miss|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_in_string|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_in_scalar|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_in_computed|mir=refused|why=unsupported-opcode
+IR-MIR-PROBLEM|mir_in_array_hit: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_IN:7)
+IR-MIR-PROBLEM|mir_in_array_miss: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_IN:7)
+IR-MIR-PROBLEM|mir_in_string: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_IN:6)
+IR-MIR-PROBLEM|mir_in_scalar: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_IN:6)
+IR-MIR-PROBLEM|mir_in_computed: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_IN:8)
+IR-MIR-VERDICT|FAIL|tree=f7a7dc0e42b621daea609f0d03b42c2291a1cb75|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`MIR_EXIT=1`。注意每例的 `(OP_IN:n)` 各自是 7/7/6/6/8，不是同一个数字：五条程序确实各走各的形状。
+
+### 四、改动：六处，每处一个理由
+
+1. **`op_regs`：`case OP_IN: return R1 | R2 | R3;`**（`src/compilation/aot_mir.c:1395`）。 [obs: f8cc5af] 三个操作数都是寄存器，没有池下标、没有元素个数、没有偏移。
+2. **`prescan` 不加 `case OP_IN`。** 这是**故意的**，理由不是省事：`tools/aot_mir_cover.test.py` 的 operand 检测器把 `case OP_X:` 读成「该 opcode 核一个索引」，一个不核任何索引的 case 会红成 `dead=(OP_IN)|agree=no`（`OP_CONCAT`/`OP_NEW_ARRAY`/`OP_INDEX_GET` 写在外面就是同一个原因）。本节的读数里 `dead=(none)|agree=yes`（第九节）。
+3. **`emit_one`：一行**（`src/compilation/aot_mir.c:2078`）： [obs: f8cc5af] `case OP_IN: buf_fmt(b, "    v[%d] = mv_in(v[%d], v[%d]);", r1, r2, r3); return 0;`。
+4. **`mv_in`**（`src/compilation/aot_mir.c:1094`）。 [obs: f8cc5af] 臂的顺序照抄 `set_contains_or_subset`：数组对数组是子集（空 `a` 为真），数组对标量是成员，其余是 false。零分配：只读池、调 `mv_eq`，从不造值。
+5. **`mv_eq`/`mv_ne` 的数组行**（`src/compilation/aot_mir.c:753`、`:760`）。 [obs: f8cc5af] 这处**不是顺手改的**，是必需的：子集臂要比较的元素本身可以是数组（`[[1], [2]]` 是本路线自己造的），而旧的 `mv_eq` 走到 `nv_eq(mv_as_nv(...))`，`mv_as_nv` 在 `MV_ARR` 上 `abort()` —— 于是程序**被接受、编译、再在运行时被杀**，无 stdout，比拒译更难解释。`val_eq` 的数组行（身份，`:420`）本来就是解释器的规则，两条写法（`in` 与 `==`/`!=`）必须同一行，否则 `say [1] == [1]` 答 false 而 `say [1] != c[0]` 直接停。
+6. **`#define MV_ARR 6` 上移**（`src/compilation/aot_mir.c:91`）。 [obs: f8cc5af] **实测发现的**：生成的 C 按块顺序编译，而等号对在前、容器块在后，`cc` 报 `error: 'MV_ARR' undeclared (first use in this function)`。上移到标签组旁边是唯一的修法（不是把等号对往下移，因为 `mv_in` 两样都要）。
+
+### 五、分配账本：先量后写
+
+`OP_IN` 本体**零分配**。五次读数（先跑出来，之后才写进 `ALLOCS_EXPECT`）：
+
+| 用例 | allocs | bytes |
+| --- | --- | --- |
+| `mir_in_array_hit` | 3 | 1792 |
+| `mir_in_array_miss` | 3 | 1792 |
+| `mir_in_string` | 1 | 256 |
+| `mir_in_scalar` | 0 | 0 |
+| `mir_in_computed` | 3 | 1792 |
+
+为什么是这些数：容器字面量放进 `MV` 项池，首次用 8 槽 × 32 字节 = 256 字节，之后**倍增**（8→16→32 槽），旧块运行期不释放、退出时统一清扫，所以 `freed` 恒等于 `allocs`。三个 1792 的用例字面量超过 16 槽 → 走到 32 槽那块（256+512+1024）。`mir_in_string` 的容器只有一个 3 槽 `["a","b"]`，只吃第一块（256）；它的字符串走**驻留串池**，不花块。`mir_in_scalar` 没有容器字面量，`0|0` 就是这一格的零：如果 `mv_in` 每次测试都分配，它会先在这一行露出来。
+
+### 六、反向判据（非对称，两次）
+
+**① 命中判成未命中**（把成员循环换成恒 `mv_boo(0)`）：`mir_in_array_hit` 的 stdout 字节必变，`mir_in_string` 的第 5 行（`"b" in ["a","b"]`）也跟着变：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_in_array_hit|interp-rc=0|mir-rc=0|interp-out=b'true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n'|mir-out=b'false\nfalse\nfalse\nfalse\nfalse\ntrue\ntrue\n'
+IR-MIR-PROBLEM|mir_in_array_hit: the MIR route printed b'false\nfalse\nfalse\nfalse\nfalse\ntrue\ntrue\n' rc=0, the interpreter b'true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n' rc=0
+IR-MIR-MIR-ONLY|case=mir_in_array_hit|mir=accepted|cc=ok|exec=diff|rc=0|bytes=40|stdout-hex=66616c73650a66616c73650a66616c73650a66616c73650a66616c73650a747275650a747275650a
+```
+
+`MIR_EXIT=1`。**注意 rc 两边都是 0、只有字节不同** —— 只看 rc 的判据在这里会假绿。
+
+**② 未命中冠以命中**（成员循环末尾的 `return mv_boo(0)` 改 `mv_boo(1)`）：这次命中的是**另一例**，`mir_in_array_hit` 保持绿：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_in_array_miss|interp-rc=0|mir-rc=0|interp-out=b'false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n'|mir-out=b'true\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\n'
+IR-MIR-PROBLEM|mir_in_array_miss: the MIR route printed b'true\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\n' rc=0, the interpreter b'false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n' rc=0
+IR-MIR-VERDICT|FAIL|tree=f7a7dc0e42b621daea609f0d03b42c2291a1cb75|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+**复原**（两次都在工作树上改回，`grep -c INJECTED` 对两个文件都读 `0`）：
+
+```
+[BUILD_EXIT=0]
+[MIR_EXIT=0]
+122          # grep -c "exec=same" .scratch/restore.log
+IR-MIR-VERDICT|PASS|tree=f7a7dc0e42b621daea609f0d03b42c2291a1cb75|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+工具里没有叫 `INJECTED` 的计数读数（`grep -rn INJECTED tools/ --include=*.py` 在本树上是零命中），所以「计数归一」在这里的证据只能这几行复原读数，不是某个数字。
+
+### 七、没做什么（逐条）
+
+1. **集合容器臂没做**（`b` 是 `VAL_SET`）。不是忘了，是**结构不可达**：`OP_NEW_SET`/`OP_SET_INTERVAL` 未降低，23 个预设集合全局按名拒，集合字面量把参数栈弄不平衡（实测 `p = 1, 2, 3` + 成员测试在 `asp=3` 处拒；`say 2 in Z` 在 `Z` 名字上拒）。所以解释器那条「`2 in {1,2,3}` 走二分」的路径到不了 `mv_in`，本节不写集合臂、也不声称支持。
+2. **字典容器臂没做**。`d = {"k": 1}` + `say "k" in d` 在 `OP_IN` **之前**就拒（`OP_NEW_DICT` 的 pop 不计 `asp`），而且解释器对这个程序本来就答 false（`:2432`），字典在解释器里不是键集合。
+3. **子串语义没做**。解释器没有，`"b" in "abc"` 是 false（第二节实测）；「补一个更像人想的语义」会让这条路线的答案和它要重现的答案分道。
+4. **集合⊆数组 / 无限集⊆数组** 这两个臂没做，同上不可达。
+5. **`mv_tru(MV_ARR)` 仍然 `abort()`**：`if a {}` 拿数组当条件还是停程序。这是 `OP_JUMP_IF` 的债，不是等号的，也不是成员测试的。
+6. **数组打印、数组排序（`OP_LT` 那对）**没动，仍是 `mv_as_nv` 的债。
+7. **没有常量折叠**：`say 2 in [1, 2]` 走的就是 `LOADK` → `NEW_ARRAY` → `OP_IN` 的同一条路径，没有特判。
+8. **`OP_NEW_DICT` 的 `asp` 不平衡问题**没顺手改：它是既有形状（`OP_NEW_SET` 同形），本节只记录它挡住了字典容器。
+
+### 八、诚实边界
+
+1. **被接受的每条流里，`L_IN` 只会走数组臂。** 这是本节最强的边界，也是最该写清的：不是「集合答不对」，是「集合根本到不了这里」。读者若看到 `2 in p` 拒译，正确的读法是第七节第 1 条，不是本节的 bug。
+2. **数组相等是身份，不是逐元素。** `[1] == [1]` false、`x == x` true、`[1] in [[1],[2]]` false —— 这三条都是解释器的规则（`:420`），不是我选的。逐元素相等会在这三处全部答反，且 `mir_in_computed` 的 `[x - 1] in c` 一行会跟着反。
+3. **`b` 的坏句柄分支是死代码**（`:2399`）：`mv_arr_new` 从不构造坏句柄，所以这行只是照抄解释器的活槽检查（也抄了 `mv_arr_get` 的同形检查），不是这条路线的语义。
+4. **`a` 的坏句柄分支答 true**（`:2406`）：解释器对「数组的池下标越界」在子集测试里答 1（空数组视为子集），照抄；同样不可达。
+5. **字符串池是驻留的**，所以 `"b" in ["a","b"]` 这类比较走指针快路径与 `strcmp` 两条都可以；本节的读数不区分它们（两条都对，且 `val_eq` 自己就是这个形状）。
+6. **两个反向判据都只改「比较那一句」**，没有改臂的顺序，也没有改类型分派 —— 也就是说它们测的是「值有没有真的被比」，不是「分派表对不对」。分派表本身的直接判据是第二节的语义表 + 五条字节判据（容器类型错了，五条里必有一条字节不同）。
+7. **本节不声称覆盖 `OP_INDEX_SET`**（容器写入），那是下一格；`OP_IN` 与它无交集。
+
+### 九、计数器与主线关系
+
+本节的读数（都在本节的代码提交上跑出来）：
+
+- `IR-AOT-MIR-LOWERING|handles=40|of=67|unknown=27|table=40|emitter=40|reported=40|agree=yes`（基线 39|67|28）。
+- `IR-AOT-MIR-OPERANDS|indexed=10|prescanned=11|checked=10|missing=(none)|dead=(none)|detector-saw=yes|agree=yes`。
+- `IR-AOT-MIR-COVER|covered=29|of=29`，`IR-AOT-MIR-VERDICT|PASS|accepted=122|same-as-interpreter=122|missing=0|refused=0|beyond-ast-denominator=11`。
+- `IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=1|ok=1|expect=1`（未变：本次没有新增「应该被拒」的用例）。
+- `IR-AOT-MIR-PIN|match=no|tree-moved=yes` 在本分支上是**正当的**（pin 树早于本节代码），收尾按仓库惯例 `--pin` 重钉。
+
+本节按派工建在 `f7a7dc0` 上，**不 push、不 rebase、不动 main**。本分支出身的那棵树（`f7a7dc0`）带着上一笔合并留下的残留：一行 `@@PIN-GATE@@` 和半截冲突标记；本节照派工没有改动它，合并在 `03bacff` 里把它清掉了（清理笔同时补了 `tools/check_text_integrity.py` 的一格检查，见 `2dba43b`），所以本节在这次合并之后的行里不再有那几行。
