@@ -289,6 +289,17 @@ ALLOCS_EXPECT = {
     # listed so the table says so on purpose.
     "mir_index_set_edges": (0, 0),
     "mir_index_set_negative": (0, 0),
+    # The throw pair ends on an exception too, so like the cases just above
+    # their reading is `reported=no|why=rc=1` and no count is consulted; listed
+    # so the table says so on purpose.  The numbers are MEASURED from the
+    # generated programs' own IR-MIR-ALLOCS line (both print allocs=0|freed=0
+    # |live=0|bytes=0 after the message): every say() operand here is a
+    # resident literal, and a throw allocates nothing, so the exit sweep has
+    # no block to sweep.  A route that boxed the thrown value, or that copied
+    # the message into a buffer to print it, lands on a different pair and
+    # this row is where that would have been said.
+    "mir_throw_uncaught_top": (0, 0),
+    "mir_throw_uncaught_cross": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -316,6 +327,57 @@ def allocs_problems(text, case):
         out.append("%s: allocation count off -- got allocs=%d|bytes=%d, the criterion demands "
                    "allocs=%d|bytes=%d (a site that mallocs without registering reports 0|0)"
                    % (case, allocs, nbytes, want_allocs, want_bytes))
+    return out
+
+
+# THE STDERR CHANNEL, and it is a CONTAINMENT predicate on purpose -- these
+# NAMED SUBSTRINGS must appear, nothing about the tail or the order is claimed.
+#
+# WHY NOT BYTE EQUALITY.  stderr is NOT a channel the two routes ever promised
+# to spell the same, and one ALREADY-PINNED GREEN case proves it:
+# mir_container_index_type_mismatch (the entry below, in MIR_ONLY) has stopped
+# with rc=1 on both routes since it landed, and the two texts differ today in
+# three places -- the interpreter prints a LEADING BLANK LINE and the
+# `  at ip=11 frames=0` ledger line, this route prints neither, and this route
+# appends the `IR-MIR-ALLOCS|...` line that atexit(mv_free_all) writes.  A
+# byte-equality instrument would have been red on the day it landed, on a case
+# that is green, which is the cheapest way to make an instrument get deleted.
+# So the question is asked the way the two routes actually agree: does the
+# message that the thrown VALUE decides appear, and no other message does.
+#
+# WHY THE EXCLUSION IS A SEPARATE TABLE.  `"[exception] uncaught: boom" not in
+# er` is a NEGATIVE claim, and folding it into the positive tuple would make
+# one cell answer two questions.  The second throw case carries BOTH: its own
+# message must be present and the FIRST case's message must be absent --
+# a route whose OP_THROW arm printed a constant would satisfy the first and
+# fail the second, and a route that printed nothing fails the first.  One
+# table of positives cannot see "printed the wrong throw's word".
+STDERR_EXPECT = {
+    "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
+    "mir_throw_uncaught_cross": ("[exception] uncaught: from-func",),
+}
+STDERR_EXCLUDE = {
+    "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
+}
+
+
+def stderr_problems(text, case):
+    """Which ways this run's stderr disagrees with the containment criterion."""
+    need = STDERR_EXPECT.get(case)
+    if need is None:
+        return []
+    forbid = STDERR_EXCLUDE.get(case, ())
+    out = []
+    for want in need:
+        if want not in (text or ""):
+            out.append("%s: stderr does not contain %r, so the thrown value never reached"
+                       " the message the criterion demands (got %r)"
+                       % (case, want, (text or "")[:160]))
+    for banned in forbid:
+        if banned in (text or ""):
+            out.append("%s: stderr CONTAINS %r, a message belonging to a DIFFERENT throw -- "
+                       "the arm answered a constant instead of the register's value (got %r)"
+                       % (case, banned, (text or "")[:160]))
     return out
 
 
@@ -516,7 +578,56 @@ def allocs_problems(text, case):
 #                             index as a register reddens here, and the case
 #                             exists so that "which operand is the constant" is
 #                             measured rather than assumed.
+#
+# THE THROW PAIR -- the first two programs here whose ANSWER is an EXIT CODE and
+# a stderr line rather than stdout bytes.  Before them, `throw` was refused whole
+# by the pre-scan (`OP_THROW` had no lowering case), which is honest but says
+# nothing about the observable contract; the interpreter's contract is measured
+# in /home/sakiko/inimerse/.scratch/ruling-exceptions.md §4.1 and copied:
+# uncaught throw -> the program's stdout SO FAR, `[exception] uncaught: <value>`
+# on stderr, rc 1 (src/vm/vm.c:2639-2643, `vm->last_error = 1` at :2662-2663).
+#
+#   mir_throw_uncaught_top     `say "a" / throw "boom" / say "b"` -- the TOP
+#                             level throw.  Three properties in one file, and
+#                             each has a failure it names: stdout is exactly
+#                             `a\n` (the `say "b"` after the throw must NOT run
+#                             -- a lowering that printed it would be answering
+#                             a control-flow question wrongly), rc is 1 (a
+#                             route that exited 0 or aborted at 134 is a
+#                             different kind of wrong), and stderr CONTAINS
+#                             `[exception] uncaught: boom` (STDERR_EXPECT, a
+#                             containment predicate, not equality -- see the
+#                             table's own note for the pinned green case whose
+#                             two stderrs already differ).
+#   mir_throw_uncaught_cross   `func f() { throw "from-func" }` called from main
+#                             with no handler.  The throw happens INSIDE a
+#                             container, so the exit is taken from a function's
+#                             body, not main's -- and the message proves WHICH
+#                             value was thrown: it must say `from-func`, and
+#                             STDERR_EXCLUDE demands that `boom` (the other
+#                             case's word) does NOT appear.  That exclusion is
+#                             the criterion against the plausible fake: an arm
+#                             that emitted `mv_die_uncaught(mv_str("boom"))`
+#                             satisfies every positive substring and both
+#                             stdout checks while answering nothing about its
+#                             operand.  A single throw case could not see it.
+#                             What this case does NOT claim: the interpreter's
+#                             `  at ip=2 frames=1 -> ip=3` ledger is NOT
+#                             reproduced (this route has no bytecode ip or
+#                             frame ledger), and the two routes' stderr tails
+#                             differ by the ALLOCS line on purpose.
+#
+# Neither case can join the shared corpus: the AST route refuses both programs
+# (a string expression is outside the numeric subset), so there is no second
+# generated file to compare against -- the interpreter remains the only oracle,
+# which is the same reason every case in this list is MIR-only.
 MIR_ONLY = [
+    # The throw pair goes FIRST because it is the only entry whose criterion
+    # reads the STDERR channel and the exit code, and a reader who scans this
+    # list should meet the exception case before the many length questions.
+    ("mir_throw_uncaught_top", 'say "a"\nthrow "boom"\nsay "b"\n'),
+    ("mir_throw_uncaught_cross",
+     'func f() {\n    throw "from-func"\n}\nsay "before"\nf()\nsay "after"\n'),
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
     ("mir_loadk_string_quotes", 'say "q\\"z \\\\ back ??= mid \u4e2d"\n'),
@@ -973,11 +1084,73 @@ MIR_ONLY = [
 # class of hole every MIR_ONLY comment above exists to close.  So the pre-scan
 # refuses the program whole, with a why a reader can grep for; the interpreter
 # keeps answering nil, and the reading prints BOTH facts.
+#
+# mir_try_no_throw is the NEGATIVE CRITERION for the throw step, and it is the
+# reason OP_THROW could land as one arm instead of three.  The program contains
+# a `try`/`catch` and NO throw at all: `say "a"` behind a try, a catch that
+# would say "c", then `say "d"`.  The interpreter answers rc=0, stdout `a\nd\n`,
+# empty stderr (measured, ruling-exceptions.md §4.1 p14) -- the catch body never
+# runs because nothing is thrown.  This route refuses it whole today, with
+# why=unsupported-opcode and OP_TRY_START/OP_TRY_END on the not-yet line.
+#
+# THE POINT IS THAT THIS MUST STAY RED AFTER THE THROW STEP.  The cheap way to
+# make `throw` "work" is to teach the arm to exit when a try frame is open; that
+# turns this program from a NAMED refusal into `a\n[exception] uncaught: ...`,
+# rc=1 -- a wrong answer carrying an exit code, which is strictly worse than an
+# honest refusal (ruling-exceptions.md §5 item 6).  So the criterion is not in
+# MIR_ONLY (which would demand it run) but here, and the side table below says
+# exactly which opcodes the refusal must still be ABOUT: both TRY opcodes
+# present, OP_THROW ABSENT.  That absence is what proves the refusal happens
+# at the try pair and not because some throw somewhere was un-lowered.
 MIR_ONLY_REFUSE = {
     "mir_container_const_oob": (
         'a = [1, 2, 3]\nsay a[3]\n',
         "index-out-of-range-constant"),
+    "mir_try_no_throw": (
+        'try {\n    say "a"\n} catch (e) {\n    say "c"\n}\nsay "d"\n',
+        "unsupported-opcode"),
 }
+
+# THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
+#
+# A `why=unsupported-opcode` refusal alone says "something here is not lowered";
+# the not-yet line that accompanies it names the opcodes.  Both are needed, and
+# they answer different questions: the why says the refusal is this route's
+# decision (not the interpreter's answer), the not-yet list says WHAT it is still
+# about.  For mir_try_no_throw the second half is the whole criterion --
+# OP_TRY_START and OP_TRY_END must be in it (the try pair is still un-emitted)
+# and OP_THROW must NOT be (the throw step lowered it, so a refusal that still
+# named it would be a leftover, and a program refused "because of throw" would
+# be the exact shape the try arm must not create).  Entries are (must-contain,
+# must-not-contain) over the opcode names parse_mir_out() found.
+MIR_ONLY_REFUSE_NOTYET = {
+    "mir_try_no_throw": (
+        ("OP_TRY_START", "OP_TRY_END"),
+        ("OP_THROW",),
+    ),
+}
+
+
+def notyet_problems(notyet, case):
+    """Which ways this refusal's not-yet list disagrees with the side table."""
+    spec = MIR_ONLY_REFUSE_NOTYET.get(case)
+    if spec is None:
+        return []
+    need, forbid = spec
+    seen = {op for op, _n in notyet}
+    out = []
+    for op in need:
+        if op not in seen:
+            out.append("%s: the refusal's not-yet list does not name %s (got %s), so the program"
+                       " is no longer being refused for the try pair the criterion is about"
+                       % (case, op, ",".join(sorted(seen)) or "none"))
+    for op in forbid:
+        if op in seen:
+            out.append("%s: the refusal's not-yet list still names %s (got %s) -- that opcode is"
+                       " lowered on this tree, so a refusal that names it is not the refusal this"
+                       " case is the criterion OF"
+                       % (case, op, ",".join(sorted(seen)) or "none"))
+    return out
 
 
 def run_bytes(cmd, cwd):
@@ -1161,6 +1334,58 @@ def self_check(verbose):
         print("IR-MIR-SELFCHECK|what=%s|got=%s|want=%s|%s"
               % (what, "none" if not got else got[0].split(":")[0], want_kind or "none",
                  "ok" if hit else "WRONG"))
+        ok &= hit
+    # The STDERR instrument, asked both ways and with its EXCLUSION as a cell
+    # of its own: the containment predicate must pass on the interpreter's real
+    # shape (message + ledger + ALLOCS tail), fail when the message is absent,
+    # and fail when the WRONG throw's word is the one printed.  A checker that
+    # only ran one positive cell could not tell an arm that answered
+    # `mv_str("boom")` from one that read its register, which is exactly the
+    # hole STDERR_EXCLUDE exists to close.
+    for what, text, want_clean in (
+            ("stderr-contains",
+             "[exception] uncaught: boom\n  at ip=4 frames=0\n"
+             "IR-MIR-ALLOCS|allocs=0|freed=0|live=0|bytes=0\n", True),
+            ("stderr-no-message", "a\n", False),
+            ("stderr-wrong-word",
+             "[exception] uncaught: boom\n", None)):
+        checks += 1
+        if what == "stderr-contains":
+            got = stderr_problems(text, "mir_throw_uncaught_top")
+        elif what == "stderr-no-message":
+            got = stderr_problems(text, "mir_throw_uncaught_top")
+        else:
+            got = stderr_problems(text, "mir_throw_uncaught_cross")
+        if want_clean is True:
+            hit = not got
+        elif want_clean is False:
+            hit = len(got) == 1 and "does not contain" in got[0]
+        else:
+            # The wrong-word cell fails BOTH ways at once: `from-func` is absent
+            # AND `boom` is present, and two named problems is the right reading
+            # -- an instrument that saw only one of them would leave one
+            # direction of the fake unmeasured.
+            hit = len(got) == 2 and any("CONTAINS" in g for g in got)
+        print("IR-MIR-SELFCHECK|what=%s|got=%s|want=%s|%s"
+              % (what, "none" if not got else got[0].split(":")[0],
+                 "clean" if want_clean is True else ("missing" if want_clean is False
+                 else "leaked-word"), "ok" if hit else "WRONG"))
+        ok &= hit
+    # The NOT-YET side table, same shape: the try pair present and OP_THROW
+    # absent is clean; naming OP_THROW is a failure; losing one try opcode is
+    # a failure in the OTHER direction (the refusal stopped being about the
+    # pair) -- two directions, because a refusal can leak either way.
+    for what, notyet, want_ok in (
+            ("notyet-try-only", [("OP_TRY_START", 1), ("OP_TRY_END", 1)], True),
+            ("notyet-names-throw", [("OP_TRY_START", 1), ("OP_TRY_END", 1),
+                                    ("OP_THROW", 1)], False),
+            ("notyet-lost-try-end", [("OP_TRY_START", 1)], False)):
+        checks += 1
+        got = notyet_problems(notyet, "mir_try_no_throw")
+        hit = (not got) if want_ok else (len(got) == 1)
+        print("IR-MIR-SELFCHECK|what=%s|got=%s|want=%s|%s"
+              % (what, "none" if not got else got[0].split(":")[0],
+                 "clean" if want_ok else "one-named-problem", "ok" if hit else "WRONG"))
         ok &= hit
     print("IR-MIR-SELFCHECK|checks=%d|verdict=%s" % (checks, "PASS" if ok else "FAIL"))
     return 0 if ok else 1
@@ -1545,6 +1770,20 @@ def main():
                       "|expect-allocs=%d|expect-bytes=%d|ok=no" % (name, want[0], want[1]))
         else:
             print("IR-MIR-ALLOCS|case=%s|reported=no|why=rc=%s" % (name, rc_r))
+        # The STDERR reading, taken from the same run.  It is a CONTAINMENT
+        # predicate (STDERR_EXPECT carries the named substrings and the note
+        # above it says why equality is not the criterion); the exit code alone
+        # cannot see a program that stopped silently, and the stdout comparison
+        # cannot see which VALUE the throw carried.
+        sp = stderr_problems(er_text, name)
+        if name in STDERR_EXPECT:
+            problems.extend(sp)
+            print("IR-MIR-STDERR|case=%s|need=(%s)|forbidden=(%s)|missing=(%s)|leaked=(%s)|ok=%s"
+                  % (name, ",".join(STDERR_EXPECT[name]),
+                     ",".join(STDERR_EXCLUDE.get(name, ())) or "none",
+                     ",".join(w for w in STDERR_EXPECT[name] if w not in er_text) or "none",
+                     ",".join(w for w in STDERR_EXCLUDE.get(name, ()) if w in er_text) or "none",
+                     "yes" if not sp else "no"))
         print("IR-MIR-MIR-ONLY|case=%s|mir=accepted|cc=ok|exec=%s|rc=%s|bytes=%d|stdout-hex=%s"
               % (name, "same" if same else "diff", rc_r, len(out_r), out_r.hex()))
 
@@ -1578,6 +1817,23 @@ def main():
                             % (name, why, want_why))
         else:
             ref_ok += 1
+        # The not-yet side table: a refusal is a claim about WHICH opcodes are
+        # missing, and `why=unsupported-opcode` with no opcode names would
+        # accept a program being refused for a reason nobody wrote down.  For
+        # mir_try_no_throw this is the negative criterion that keeps the try
+        # pair out (see MIR_ONLY_REFUSE_NOTYET's note).
+        np = notyet_problems(got.get("notyet") or [], name)
+        if name in MIR_ONLY_REFUSE_NOTYET:
+            problems.extend(np)
+            need, forbid = MIR_ONLY_REFUSE_NOTYET[name]
+            seen = {op for op, _n in (got.get("notyet") or [])}
+            print("IR-MIR-NOTYET-CRITERION|case=%s|need=(%s)|forbid=(%s)|seen=(%s)"
+                  "|missing=(%s)|leaked=(%s)|ok=%s"
+                  % (name, ",".join(need), ",".join(forbid) or "none",
+                     ",".join(sorted(seen)) or "none",
+                     ",".join(op for op in need if op not in seen) or "none",
+                     ",".join(op for op in forbid if op in seen) or "none",
+                     "yes" if not np else "no"))
         print("IR-MIR-MIR-ONLY-REFUSED|case=%s|mir=%s|why=%s|expect=%s|ok=%s"
               "|interp-rc=%s|interp-out=%r|stdout-bytes=%d|stdout-hex=%s"
               % (name, "refused" if rc_m != 0 else "accepted", why, want_why,
