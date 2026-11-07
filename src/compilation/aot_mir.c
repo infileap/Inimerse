@@ -754,6 +754,167 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* THE FIRST CONTAINER THIS ROUTE BUILDS -- a heap ARRAY plus the read-only\n"
+" * index that takes a value back out of it (OP_NEW_ARRAY / OP_INDEX_GET).\n"
+" * Same note structure as the two blocks above: WHY / WHAT IT ADDS / WHAT IT\n"
+" * DOES NOT COVER / DELETE CONDITION / MEASURED BY.\n"
+" *\n"
+" * WHY IT EXISTS.  Until this pair, every value this route produced lived in a\n"
+" * register, and a program that built an array was refused whole: the\n"
+" * interpreter answered `say [1, 2, 3][1]` and this route had a name for\n"
+" * neither opcode (both were IR-MIR-NOT-YET, and the array's elements left the\n"
+" * argument stack unbalanced at prescan).  An array literal is the first value\n"
+" * whose answer NEEDS memory, so this is also the first container the\n"
+" * allocation instrument measures.\n"
+" *\n"
+" * WHAT IT ADDS.  One tag, MV_ARR = VAL_ARRAY, and Value's OWN array row\n"
+" * copied rather than re-invented: ival is the array's POOL INDEX and sval and\n"
+" * ptr are NULL, which is exactly what src/vm/vm.c:3644 writes --\n"
+" * `value_set(&R[ins.r1], VAL_ARRAY, aidx + 1, 0, NULL, NULL)` -- so an MV_ARR\n"
+" * value is byte-for-byte the VAL_ARRAY value a translator may move into a\n"
+" * Value.  The 32 bytes cannot carry the element COUNT (the interpreter keeps\n"
+" * that in its ArrayObj), so the count lives in the POOL SLOT IMMEDIATELY\n"
+" * BEFORE the array's first item and pool[ival] is item 0: the same pointer\n"
+" * relation ArrayObj's aidx has, with the header in the pool instead of in the\n"
+" * value.  mv_arr_new and mv_arr_get are the only two readers of that slot.\n"
+" * Growth doubles into a new mv_alloc block and leaves the old block to the\n"
+" * exit sweep; there is no free list yet and this route reclaims nothing\n"
+" * mid-run, which is mv_str_concat's debt word for word (a loop that builds N\n"
+" * arrays allocates as the pool grows and frees once, at exit).\n"
+" *\n"
+" * WHAT IT DOES NOT COVER, each named by the thing that would need it:\n"
+" *   - OP_INDEX_SET is not emitted, so no program on this route can store INTO\n"
+" *     an array; a literal is read-only for its whole life, which is also why\n"
+" *     the pool is never re-indexed.\n"
+" *   - OP_NEW_DICT and OP_NEW_SET are not emitted, and prescan refuses the\n"
+" *     preset `set` global by name, so no DICT can reach this pool.  mv_arr_get\n"
+" *     answers a container that is neither array nor string with nil, which is\n"
+" *     the interpreter's own else branch (src/vm/vm.c:3712-3714) and the right\n"
+" *     answer for nil, an int, a float and a bool; for a dict it would be the\n"
+" *     WRONG answer, so a dict container is unreachable here rather than\n"
+" *     handled here, and docs/STATUS.md says so.\n"
+" *   - `say a` -- printing a container -- is a STOP, not an answer: mv_say\n"
+" *     hands every tag but nil and string to nv_say through mv_as_nv, and\n"
+" *     mv_tag_to_nv aborts on MV_ARR where the interpreter prints a bracketed\n"
+" *     list.  That is a print-exit class of its own, recorded in docs/STATUS.md\n"
+" *     with this step, not silently answered.\n"
+" *   - vm_array_get's intern step (src/vm/vm.c:1006-1009: a non-resident string\n"
+" *     read back out of an array becomes the interned one) is NOT reproduced.\n"
+" *     There is no intern table on this route; the bytes printed are identical,\n"
+" *     and the only thing interning changed was string IDENTITY, which no MIR\n"
+" *     path can observe (mv_eq compares string payloads through mv_str_cmp).\n"
+" *\n"
+" * DELETE CONDITION (decidable).  Delete this block in the commit where the\n"
+" * route's registers ARE the VM's registers, so arrays are read through\n"
+" * vm_array_get and `grep -c mv_arrmem` over this block falls to 0 -- or in the\n"
+" * commit that gives Value's array row a home in this route\n"
+" * (docs/streams/aot-mir-value.md section 4).  A container runtime that\n"
+" * outlives its reason is the debt this comment exists to date.\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's container cases, byte-compared against\n"
+" * the interpreter: mir_container_new_array (element 0, every element, both\n"
+" * ends, a negative subscript and one past the end), mir_container_index_get\n"
+" * (a literal reached through a register, and a nested literal read through a\n"
+" * register), mir_container_index_edges (a float subscript truncating, a bool\n"
+" * subscript, a zero-element literal, nil out of range), mir_container_string_index\n"
+" * (the string container's one-character read, both directions), and\n"
+" * mir_container_index_type_mismatch (nil as a subscript: the interpreter's\n"
+" * type_mismatch leaves stdout empty and exits 1, and this route stops with the\n"
+" * same rc and the same words).  The refusal criterion mir_container_const_oob\n"
+" * demands that a CONSTANT out-of-range subscript is refused before generation,\n"
+" * with its own why.  ALLOCS_EXPECT carries the pool's own (allocs, bytes) pair,\n"
+" * measured first and written down after.\n"
+" */\n"
+"\n"
+"#define MV_ARR 6   /* = VAL_ARRAY -- ival is a POOL INDEX, as Value's row has */\n"
+"\n"
+"static MirVal *mv_arrmem = 0;   /* the item pool: one flat block, doubled */\n"
+"static int mv_arrcap = 0, mv_arrused = 0;\n"
+"\n"
+"static inline MirVal mv_arr_new(int n, const MirVal *items) {\n"
+"    int want = mv_arrused + n + 1;             /* 1 count slot, then n items */\n"
+"    if (want > mv_arrcap) {\n"
+"        int cap = mv_arrcap ? mv_arrcap : 8;\n"
+"        while (cap < want) cap *= 2;\n"
+"        MirVal *fresh = (MirVal *)mv_alloc(sizeof(MirVal) * (size_t)cap);\n"
+"        for (int i = 0; i < mv_arrused; i++) fresh[i] = mv_arrmem[i];\n"
+"        mv_arrmem = fresh;                     /* old block: swept at exit */\n"
+"        mv_arrcap = cap;\n"
+"    }\n"
+"    MirVal r;\n"
+"    r.type = MV_ARR;\n"
+"    r.ival = mv_arrused + 1;                   /* item 0 sits at pool[ival] */\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    mv_arrmem[r.ival - 1] = mv_int(n);         /* the count, one slot before */\n"
+"    for (int i = 0; i < n; i++) mv_arrmem[r.ival + i] = items[i];\n"
+"    mv_arrused = want;\n"
+"    return r;\n"
+"}\n"
+"\n"
+"/* val_as_double's classification (src/vm/vm.c:323-334), without a VM to throw\n"
+"   into.  int, float and bool are numbers there; nil, string and array call\n"
+"   vm_throw_kind(\"type_mismatch\") and read nothing, and an uncaught throw\n"
+"   prints NOTHING on stdout and exits 1 (measured: `say a[nosuchglobal]` prints\n"
+"   the exception on stderr, stdout empty, rc 1).  This route has no exception\n"
+"   mechanism, so the classification is reproduced as a STOP carrying the\n"
+"   interpreter's rc and the interpreter's words -- NOT as a silent 0, which\n"
+"   would print a number the interpreter never prints.  Prescan cannot decide\n"
+"   this for a variable subscript: a register's tag is only knowable when a\n"
+"   constant was loaded into it, and the refusal that would hide the\n"
+"   interpreter's answer is not the refusal this route makes.\n"
+"   The interpreter checks `idxv->type == VAL_INT` first and calls\n"
+"   val_as_double for everything else (src/vm/vm.c:3679, :3702); the two agree\n"
+"   on every tag, so one tag table serves both opcodes. */\n"
+"static inline int mv_index_i32(MirVal a) {\n"
+"    switch (a.type) {\n"
+"    case MV_INT:   return (int)a.ival;\n"
+"    case MV_FLT:   return (int)a.fval;\n"
+"    case MV_BOO:   return a.ival ? 1 : 0;\n"
+"    default:       break;            /* MV_NIL / MV_STR / MV_ARR: vm.c:328 */\n"
+"    }\n"
+"    fprintf(stderr, \"[exception] uncaught: type_mismatch\\n\");\n"
+"    exit(1);\n"
+"    return 0;   /* not reached: exit is noreturn.  Spelled so a compiler that\n"
+"                   does not say so still cannot hand back a silent 0. */\n"
+"}\n"
+"\n"
+"static inline MirVal mv_arr_get(MirVal obj, MirVal idxv) {\n"
+"    int i = mv_index_i32(idxv);   /* converted BEFORE the container is looked at:\n"
+"                                     a bad subscript is type_mismatch even when\n"
+"                                     the array is empty (src/vm/vm.c:3678-3680) */\n"
+"    if (obj.type == MV_ARR) {\n"
+"        int iv = (int)obj.ival;\n"
+"        if (iv < 1 || iv > mv_arrused) return mv_nil();   /* not a live slot */\n"
+"        int n = (int)mv_arrmem[iv - 1].ival;              /* the count header */\n"
+"        if (i < 0 || i >= n) return mv_nil();             /* src/vm/vm.c:1002 */\n"
+"        return mv_arrmem[iv + i];\n"
+"    }\n"
+"    if (obj.type == MV_STR) {\n"
+"        /* The other container this subset can hold, answered the way\n"
+"           src/vm/vm.c:3700-3711 answers it: a negative subscript counts from\n"
+"           the end, out of range on either side is nil, and a hit is a NEW\n"
+"           one-character string (strdup(buf) there, mv_alloc(2) here -- ival 0,\n"
+"           heap-owned, swept at exit).  A loop of these allocates per read\n"
+"           exactly as the interpreter does. */\n"
+"        int la = (int)strlen(obj.sval ? obj.sval : \"\");\n"
+"        if (i < 0) i += la;\n"
+"        if (obj.sval && i >= 0 && i < la) {\n"
+"            char *nb = (char *)mv_alloc(2);\n"
+"            MirVal r;\n"
+"            nb[0] = obj.sval[i];\n"
+"            nb[1] = 0;\n"
+"            r.type = MV_STR;\n"
+"            r.ival = 0;\n"
+"            r.sval = nb;\n"
+"            r.ptr  = 0;\n"
+"            return r;\n"
+"        }\n"
+"        return mv_nil();\n"
+"    }\n"
+"    return mv_nil();   /* every other container: src/vm/vm.c:3712-3714 */\n"
+"}\n"
+"\n"
 "/* THE ONE MIR-SIDE PRINT EXIT -- the second honest debt in this block.\n"
 " *\n"
 " * WHY IT EXISTS.  The shared preamble's nv_say(NV a) has exactly three\n"
@@ -891,6 +1052,16 @@ static unsigned char *g_gref;        /* per-global: some instruction touches it 
 static int   g_gref_n;
 static int   g_globals_renamed;
 
+/* The `why` a prescan refusal carries.  One family ("illegal-operand") covers
+   every operand this route cannot emit, but a refusal whose reason a reader
+   can NAME is worth more than one family name, and the criterion needs to
+   tell them apart: a program refused because a constant subscript is outside
+   a length this route can prove is refused for a different reason than one
+   whose pool index is out of range.  Every check resets it to the family name
+   except the ones that set it themselves, so a new check cannot inherit
+   another check's why by accident. */
+static const char *g_prescan_why = "illegal-operand";
+
 /* The compiler registers these names into the global table before it has seen
    any source (src/compiler/compiler.c:2894-2901, "must match vm.c vm_init
    order").  They hold set objects.  MirVal has the payload fields a set needs
@@ -988,6 +1159,26 @@ static int op_regs(int op) {
            subscript.  So only r1/r2 are registers here and the pool bound is
            checked in prescan, next to OP_LOADK_STRING's own bound. */
         return R1 | R2;
+    /* OP_NEW_ARRAY's operand layout, READ OUT of the handler rather than
+       guessed: r1 is the register the array value lands in, r3 is the element
+       COUNT (a NUMBER, not a register -- treating it as a register bound would
+       accept a pool index as an array length), and r2 is not read at all
+       (src/vm/vm.c:3620-3647 reads ins.r1 and ins.r3 only; the compiler
+       hard-codes the 0 operand: src/compiler/compiler.c:1047 emits
+       `OP_NEW_ARRAY, r, 0, expr->list.count`).  The ELEMENTS are not registers
+       of this instruction either: the compiler pushes each one
+       (src/compiler/compiler.c:1042-1045) and only the count survives here,
+       which is why the interpreter reads them off its own argument stack. */
+    case OP_NEW_ARRAY: return R1;
+    /* OP_INDEX_GET reads r2 (the container) and r3 (the subscript) and writes
+       r1: `R[ins.r1] = ...`, src/vm/vm.c:3675-3716, where the handler's own
+       first two lines are `Value *obj = &R[ins.r2]; Value *idxv = &R[ins.r3];`.
+       The compiler emits `emit(OP_INDEX_GET, r, arr, idx)`
+       (src/compiler/compiler.c:1067-1068) with idx the register the subscript
+       was compiled into, and it is r3 that the handler reads; bytecode.h:15
+       spells the same three operands in one line of comment.  So r3 is a real
+       register bound here even though that comment's bracket writes r1. */
+    case OP_INDEX_GET: return R1 | R2 | R3;
     case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD:
     case OP_EQ: case OP_NEQ: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
     case OP_AND: case OP_OR: return R1 | R2 | R3;
@@ -1198,6 +1389,174 @@ static char **build_func_names(const Node *nodes, int n) {
     return out;
 }
 
+/* --------------------------------------------------- provable subscripts */
+
+/* What this route can PROVE about one register in a straight line of
+   instructions, and the only two users of it: the length of an array a
+   register holds, and the integer value a register holds.  Kept per container,
+   cleared at every JOIN POINT -- a block label and every jump target -- because
+   a label can be reached with two different values in the same register, and
+   knowledge that survived a join would be a lie the refusal below acts on.
+   File scope and static: REG_LIMIT is a compile-time bound here, so a table
+   that is never allocated is a table that cannot leak on the refusal paths
+   this file takes; the global half is bounded by KS_GLOBALS just below, and
+   its soundness rule (a call clears it) lives there too. */
+static unsigned char ks_klen_ok[REG_LIMIT];
+static int           ks_klen_val[REG_LIMIT];
+static unsigned char ks_kint_ok[REG_LIMIT];
+static long long     ks_kint_val[REG_LIMIT];
+/* The same two facts, keyed by GLOBAL id instead of by register, because a
+   constant that travels through `a = [1, 2, 3]` and is read back as `a[3]` is
+   just as provable as the literal-in-place spelling and is the shape a reader
+   actually writes.  Soundness is the whole difficulty: a global's contents can
+   be rewritten by any call, so every OP_CALL_FUNC CLEARS this table (a call
+   this pass cannot see into must invalidate exactly what it could touch), and
+   an OP_STORE_GLOBAL overwrites the entry with the knowledge of its source
+   register -- unknown source, unknown entry.  What survives is only what one
+   straight line between two such events proves, which is the same claim the
+   register tables make.  Bounded by KS_GLOBALS: an id beyond it is simply not
+   tracked, which can only make this pass refuse LESS, never wrongly refuse. */
+#define KS_GLOBALS 4096
+static unsigned char ks_gklen_ok[KS_GLOBALS];
+static int           ks_gklen_val[KS_GLOBALS];
+
+static void ks_reset(void) {
+    memset(ks_klen_ok, 0, sizeof ks_klen_ok);
+    memset(ks_klen_val, 0, sizeof ks_klen_val);
+    memset(ks_kint_ok, 0, sizeof ks_kint_ok);
+    memset(ks_kint_val, 0, sizeof ks_kint_val);
+    memset(ks_gklen_ok, 0, sizeof ks_gklen_ok);
+    memset(ks_gklen_val, 0, sizeof ks_gklen_val);
+}
+
+/* A call may store any global, so it forgets every array length known through
+   one.  Register knowledge is untouched: a callee cannot write the caller's
+   registers, only globals. */
+static void ks_globals_clobbered(void) {
+    memset(ks_gklen_ok, 0, sizeof ks_gklen_ok);
+    memset(ks_gklen_val, 0, sizeof ks_gklen_val);
+}
+
+/* The ONE refusal this route makes before it generates anything, about a
+   subscript: a CONSTANT index outside a length the same straight line proves.
+   `say [7, 8, 9][3]` -- or the same program spelled `a = [1, 2, 3]` then
+   `say a[3]`, which the global table above makes just as provable -- cannot
+   read anything the interpreter's answer (nil) would
+   not also be, and the interpreter DOES answer it -- so why refuse instead of
+   generating a read that mv_arr_get answers nil?  Because the criterion for
+   this step is "a bound a reader can see is impossible is refused before
+   generation" (the same shape OP_LOADK_STRING's pool bound has), and because
+   a constant subscript is exactly the case a reader can see it in.  What is
+   NOT refused is anything this pass cannot prove: a variable subscript is
+   answered at run time with the interpreter's rc (mv_arr_get), because a
+   refusal there would hide an answer that exists.
+   The negative half is the same rule: an ARRAY does not wrap a negative
+   subscript (src/vm/vm.c:1002 answers nil for i < 0), so a constant -1 is
+   just as provably outside as a constant 3 is.  A STRING container does wrap
+   (src/vm/vm.c:3705 `if (i < 0) i = len + i;`), and this check cannot see a
+   string length at all -- only array lengths are tracked -- so a constant
+   negative subscript on a string is left to the runtime, which answers it
+   correctly.
+   Returns 0 or -1 (g_detail and g_prescan_why say which). */
+static int prescan_constant_subscripts(const IrFunc *fn, int f) {
+    int n = fn->ninsns;
+    if (n <= 0) return 0;
+    unsigned char *join = calloc((size_t)n + 1, 1);
+    if (!join) return bad("container=%d: out of memory for the join table", f);
+    join[0] = 1;
+    for (int b = 0; b < fn->nblocks; b++) {
+        int s = fn->blocks[b].start;
+        if (s >= 0 && s <= n) join[s] = 1;
+    }
+    for (int i = 0; i < n; i++) {
+        int op = fn->insns[i].op;
+        if (op != OP_JUMP && op != OP_JUMP_IF_FALSE && op != OP_JUMP_IF_TRUE) continue;
+        int32_t t = ir_insn_r2(&fn->insns[i]);
+        if (t >= 0 && t <= n) join[t] = 1;
+    }
+    ks_reset();
+    for (int i = 0; i < n; i++) {
+        const IrInsn *in = &fn->insns[i];
+        int op = in->op;
+        int mask = op_regs(op);
+        if (join[i]) ks_reset();
+        if (mask < 0) continue;
+        if ((mask & R1) && in->dst >= 0 && in->dst < REG_LIMIT) {
+            /* Any store to a register ends what we knew about its contents.
+               Invalidation comes BEFORE the arms below, so the arms' own
+               `set` calls are the last word about the register they write. */
+            ks_klen_ok[in->dst] = 0;
+            ks_kint_ok[in->dst] = 0;
+        }
+        switch (op) {
+        case OP_LOADK_INT:
+            ks_kint_ok[in->dst] = 1;
+            ks_kint_val[in->dst] = ir_insn_r2(in);
+            break;
+        case OP_LOADK_I64: {
+            long long v = (long long)((unsigned long long)(unsigned int)ir_insn_r2(in) |
+                                      ((unsigned long long)(unsigned int)ir_insn_r3(in) << 32));
+            ks_kint_ok[in->dst] = 1;
+            ks_kint_val[in->dst] = v;
+            break;
+        }
+        case OP_NEW_ARRAY: {
+            /* The count is r3 (op_regs' note).  A non-negative count is already
+               guaranteed by the operand pass; the length is what this pass
+               needs next to the subscript. */
+            ks_klen_ok[in->dst] = 1;
+            ks_klen_val[in->dst] = (int)ir_insn_r3(in);
+            break;
+        }
+        case OP_STORE_GLOBAL: {
+            /* r1 is the GLOBAL id, r2 the source register (op_regs returns R2
+               for this op for exactly that reason, and the emitter writes
+               `gnames[r1] = v[r2]`).  The entry takes the source's knowledge
+               verbatim; unknown source, unknown entry. */
+            int gid = in->dst, src = in->a;
+            if (gid >= 0 && gid < KS_GLOBALS) {
+                int known = (src >= 0 && src < REG_LIMIT) ? ks_klen_ok[src] : 0;
+                ks_gklen_ok[gid] = (unsigned char)known;
+                ks_gklen_val[gid] = known ? ks_klen_val[src] : 0;
+            }
+            break;
+        }
+        case OP_LOAD_GLOBAL: {
+            /* The register half of the same fact: -1 is the unresolved global
+               the emitter spells out as nil, and it knows nothing. */
+            int gid = in->a, dst = in->dst;
+            if (dst >= 0 && dst < REG_LIMIT && gid >= 0 && gid < KS_GLOBALS && ks_gklen_ok[gid]) {
+                ks_klen_ok[dst] = 1;
+                ks_klen_val[dst] = ks_gklen_val[gid];
+            }
+            break;
+        }
+        case OP_CALL_FUNC:
+            ks_globals_clobbered();
+            break;
+        case OP_INDEX_GET: {
+            int rcont = in->a, ridx = in->b;   /* r2 = container, r3 = subscript */
+            if (rcont < 0 || rcont >= REG_LIMIT || ridx < 0 || ridx >= REG_LIMIT) break;
+            if (!ks_klen_ok[rcont] || !ks_kint_ok[ridx]) break;
+            long long k = ks_kint_val[ridx];
+            int len = ks_klen_val[rcont];
+            if (k < 0 || k >= len) {
+                free(join);
+                g_prescan_why = "index-out-of-range-constant";
+                return bad("container=%d insn=%d constant subscript %lld is outside the %d element(s) "
+                           "of the array built into register %d",
+                           f, i, k, len, rcont);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    free(join);
+    return 0;
+}
+
 /* --------------------------------------------------------------- pre-scan */
 
 /* Two jobs, deliberately in one pass so they cannot disagree:
@@ -1249,6 +1608,48 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d op=%s last operand register %d out of range "
                                "(first=%d count=%d)", f, i, op_name(op), in->a + nops - 1, in->a, nops);
             }
+            /* The container pair is checked HERE and not in the switch below, and
+               that placement is itself a claim worth stating: every case label
+               in this switch exists because its emitter reads a POOL, GLOBAL,
+               FUNCTION or LABEL index, and the coverage test's operand detector
+               (tools/aot_mir_cover.test.py:288-327) reads the switch's labels
+               against the emitter's indexed arms in both directions.  Neither
+               of these two opcodes reads such an index -- OP_NEW_ARRAY's r3 is
+               an ELEMENT COUNT (op_regs' note; the emitter turns it into a
+               stack offset) and OP_INDEX_GET's three operands are plain
+               registers -- so a case label here would be a label the detector
+               calls dead, which is a true reading of the wrong question.  The
+               bounds they do need are the arm's own: the count versus the
+               pool's register bound, and the count versus the argument stack.
+               OP_NEW_ARRAY is the argument stack's consumer, and the one that
+               makes OP_PUSH_REG a CONSUMED operand rather than a leak: the
+               elements were pushed one at a time by the compiler
+               (src/compiler/compiler.c:1042-1045, `emit(OP_PUSH_REG, ...)` per
+               element) and the count in r3 says how many of them this
+               instruction takes (src/vm/vm.c:3637-3642 reads them back as
+               `base = t->sp - (n - 1)`, so the FIRST push is element 0).
+               Bound first, then consume -- an n larger than asp is a refusal,
+               not a negative stack. */
+            if (op == OP_NEW_ARRAY) {
+                int n = ir_insn_r3(in);
+                if (n < 0 || n >= REG_LIMIT)
+                    return bad("container=%d insn=%d element count %d out of range", f, i, n);
+                if (asp < n)
+                    return bad("container=%d insn=%d argument stack underflows: asp=%d elements=%d",
+                               f, i, asp, n);
+                asp -= n;
+                continue;
+            }
+            /* OP_INDEX_GET has nothing to check in this pass: its operands are
+               registers (bounded above), and the one thing a reader can prove
+               about them -- a CONSTANT subscript outside a length the same
+               straight line proves -- is checked by prescan_constant_subscripts
+               below, which needs this container's whole instruction list.  The
+               RUNTIME half is mv_arr_get's, deliberately: the interpreter
+               answers an out-of-range read (nil) and a non-numeric subscript
+               (type_mismatch, rc 1), so refusing those here would hide answers
+               that exist. */
+            if (op == OP_INDEX_GET) continue;
             switch (op) {
             case OP_LOADK_FLOAT: {
                 int32_t ix = ir_insn_r2(in);
@@ -1351,6 +1752,11 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
         }
         if (asp != 0)
             return bad("container=%d leaves the argument stack unbalanced: asp=%d", f, asp);
+        /* Runs after the operand pass so that a pool bound or a register bound
+           is still reported first: the readings the existing corpus pinned
+           must not move because a new check took the earlier turn. */
+        if (prescan_constant_subscripts(fn, f) != 0)
+            return -1;
     }
     for (int op = 0; op < 256; op++) if (g_notyet_by_op[op]) kinds++;
     return kinds;
@@ -1594,6 +2000,51 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         buf_str(b, "\"));");
         return 0;
     }
+    /* THE CONTAINER PAIR -- the first two opcodes on this route whose answer
+     * lives in the heap instead of in a register, and the two that a reader
+     * should be able to check against the interpreter's handlers line by line.
+     *
+     * WHY IT EXISTS.  Before this commit both opcodes were un-emittable, so
+     * `say [1, 2, 3][1]` was refused whole.  Worse than un-emittable: the
+     * elements arrive as OP_PUSH_REG (src/compiler/compiler.c:1042-1045) and
+     * nothing consumed them, so prescan's balance check refused the program on
+     * the argument stack before it ever reached "unsupported opcode" --
+     * measured, `IR-MIR-MIR-ONLY|case=mir_container_new_array|mir=refused|`
+     * `why=illegal-operand`, detail `container=0 leaves the argument stack
+     * unbalanced: asp=3`, while the EMPTY literal (no pushes) was refused as
+     * `why=unsupported-opcode (OP_NEW_ARRAY:1,OP_INDEX_GET:1)`.  One refusal
+     * for a reason that named the wrong thing is exactly the shape this file's
+     * notes exist to pin.
+     *
+     * WHAT IT ADDS.  OP_NEW_ARRAY consumes w3 slots of mvargs, in push order,
+     * into mv_arr_new -- element 0 is the FIRST push, which is the interpreter's
+     * order (`base = t->sp - (n - 1)`, src/vm/vm.c:3637-3642).  OP_INDEX_GET is
+     * one call to mv_arr_get, which carries the interpreter's classification
+     * (mv_index_i32) and both its container arms.  r2 is NOT the count: op_regs'
+     * note records that r3 is, and that is why this arm reads w3 where a
+     * register number would be expected.
+     *
+     * WHAT IT DOES NOT COVER.  OP_INDEX_SET, OP_NEW_DICT and OP_NEW_SET stay
+     * un-emitted and are named in docs/STATUS.md's boundary section for this
+     * step; the container block above says what the array runtime does not
+     * reproduce (interning, dict containers, printing a container).
+     *
+     * MEASURED BY.  tools/aot_mir.test.py's container cases compare stdout
+     * BYTES against the interpreter (mir_container_new_array, _index_get,
+     * _index_edges, _string_index, _index_type_mismatch), and the refusal
+     * criterion mir_container_const_oob demands the prescan refusal with
+     * `why=index-out-of-range-constant`.  Before this arm the four accepted
+     * ones were red in the two shapes quoted above; after it they are
+     * `mir=accepted|exec=same`.  ALLOCS_EXPECT's container entries are the pool
+     * bytes, measured and then written down. */
+    case OP_NEW_ARRAY: {
+        int n = w3;                     /* the element COUNT: see op_regs' note */
+        if (n == 0) { buf_fmt(b, "    v[%d] = mv_arr_new(0, 0);", r1); return 0; }
+        buf_fmt(b, "    v[%d] = mv_arr_new(%d, mvargs + asp - %d); asp -= %d;",
+                r1, n, n, n);
+        return 0;
+    }
+    case OP_INDEX_GET: buf_fmt(b, "    v[%d] = mv_arr_get(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); return 0;
@@ -1719,10 +2170,31 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
     int nregs = container_nregs(fn, argc);
     if (nregs > g_regs_max) g_regs_max = nregs;
 
+    /* The argument stack is sized here by the DEEPEST it gets, not by nregs:
+       nregs bounds the operand of any single push, while `mvargs` has to hold
+       every push not yet consumed.  OP_NEW_ARRAY consumes w3 of them
+       (prescan proved it cannot underflow) and it also makes has_args true
+       even when no OP_PUSH_REG appears in a different container's arm -- an
+       array literal's elements ARE argument-stack entries. */
     int has_args = 0;
+    int asp_deepest = 0, asp_now = 0;
     for (int i = 0; i < fn->ninsns; i++) {
-        int op = fn->insns[i].op;
-        if (op == OP_PUSH_REG || op == OP_CALL_FUNC) has_args = 1;
+        const IrInsn *in = &fn->insns[i];
+        int op = in->op;
+        if (op == OP_PUSH_REG) {
+            has_args = 1;
+            asp_now++;
+            if (asp_now > asp_deepest) asp_deepest = asp_now;
+            continue;
+        }
+        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY) {
+            int n = ir_insn_r3(in);
+            if (n > 0) {
+                if (op == OP_NEW_ARRAY) has_args = 1;
+                asp_now -= n;
+                if (asp_now < 0) asp_now = 0;   /* prescan already refused this */
+            }
+        }
     }
 
     unsigned char *need = calloc((size_t)fn->ninsns + 1, 1);
@@ -1785,7 +2257,8 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
        must not arm it, or a call would register a second sweep. */
     if (nodes[id].is_main) buf_str(out, "    atexit(mv_free_all);" NL);
     if (has_args) {
-        buf_fmt(out, "    MirVal mvargs[%d];" NL, nregs);
+        int nargs = asp_deepest > nregs ? asp_deepest : nregs;
+        buf_fmt(out, "    MirVal mvargs[%d];" NL, nargs);
         buf_str(out, "    int asp = 0;" NL);
     }
     for (int k = 0; k < argc; k++) buf_fmt(out, "    v[%d] = a%d;" NL, k + 1, k);
@@ -1808,6 +2281,7 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
     g_insns = g_emitted = g_notyet = g_funcs = g_regs_max = 0;
     g_body_bytes = 0;
     g_detail[0] = 0;
+    g_prescan_why = "illegal-operand";   /* every refusal starts in the family */
     snprintf(g_err, sizeof g_err, "no error");
 
     if (!out_path) { set_err("no output path"); return 0; }
@@ -1846,7 +2320,10 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
 
     int kinds = prescan(m, nodes, root, NULL, NULL);
     if (kinds < 0) {
-        refuse("illegal-operand", g_detail);
+        /* The family name unless a check named its own reason (see
+           g_prescan_why): "index-out-of-range-constant" is the one refusal this
+           step adds, and the criterion compares that word, not the detail. */
+        refuse(g_prescan_why, g_detail);
         print_conserve();
         goto done;
     }

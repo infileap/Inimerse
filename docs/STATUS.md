@@ -5266,3 +5266,171 @@ gate: OK — every stage passed (20/20 stages ran).
 ```
 
 `match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 4 项 beyond 名单一致）；`tree-moved=yes` 是**预期**的：pin 的 `tree` 记的是「这一读数在哪个提交上取」，重记 pin 的那一笔在它后面，读数本身不动。这条用例的 `UNEXECUTED|ops=(none)` 在门禁里被**重算**了一次（cover 回归跑同一套用例），不是本节手工贴的。
+
+## §10.112 容器最小闭环第一步：`OP_NEW_ARRAY` 与只读的 `OP_INDEX_GET`（aot-mir-container，A 类第九项）
+
+前九节（§10.101–§10.109）走的都是**标量与字符串**。容器这条路今天不是「答错了」，是**整条路不存在**：MIR 路线里凡是建数组的程序都停在 `unsupported-opcode`，而它的邻居——参数栈——会先把翻译器绊倒。本节要的是**最小闭环的第一步**：`[1, 2, 3]` 建得出来、`a[1]` 按字节读得对、越界与非整数下标与解释器同分类。`INDEX_SET`、`NEW_DICT`、`NEW_SET` 一笔没碰，它们是下一节的事。
+
+WHY IT EXISTS，用一句话说清楚：**数组的构造在 MIR 路线里是一条「参数栈协议」而不是一条「操作数协议」**——编译器把元素逐个 `PUSH_REG` 上参数栈，再发一条只带目标寄存器与元素个数的 `OP_NEW_ARRAY`（`src/compiler/compiler.c:1042-1047` [obs: 1d5cfd1]），而 MIR 路线没有参数栈这个设施，`prescan` 因此只看见「栈进了三个、没人取」，于是它用最保守的理由拒掉整个容器。要接住它，得同时补三样东西：一个能放容器的值、一个按元素顺序取走参数的 emit 出口、以及「读下标」那条**分类**语义（整数/浮点/布尔/其它四类，`src/vm/vm.c:3678-3680` [obs: 1d5cfd1]）。任何一样缺了，读数就会以「拒译」或「字节不同」的形态红回来。
+
+### 一、判据先行（实现之前，逐字）
+
+`tools/aot_mir.test.py` 的 `MIR_ONLY` 加七例（逐个打印元素、边界下标、嵌套容器、空数组、字符串下标、非整数下标、类型错），另加一张反向表 `MIR_ONLY_REFUSE`（一例：常量越界下标**必须被拒译**，并且拒译理由必须叫 `index-out-of-range-constant`）。七例都在 `exec=same` 上判：`tools/aot_mir.test.py:1038` 把 **rc 与 stdout 一起比**（[obs: 1d5cfd1]），不是「看起来差不多」。
+
+| 用例 | 源码 | 它咬的是什么 |
+| --- | --- | --- |
+| `mir_container_new_array` | `a = [1, 2, 3]` / `say a[0]` / `say a[1]` / `say a[2]` | 建数组 + 三个下标各读一次，逐字节 |
+| `mir_container_new_array_mixed` | `a = ["hi", 2, true]` / 三行 `say` | 混合元素类型：串、整数、布尔都要原样出来 |
+| `mir_container_index_get` | `b = [[5, 6], [7]]` / `say b[0][1]` 等 | 嵌套容器：`b[0]` 本身是一次读，`[1]` 是第二次 |
+| `mir_container_index_edges` | `a = [7, 8, 9]` / `i = -1` / `say a[i]` / `i = 3` / `say a[i]` / `i = 1.9` / `say a[i]` / `i = true` / `say a[i]` | 运行期边界：负下标答 nil、越界答 nil、浮点下标截断、布尔当 0/1 |
+| `mir_container_new_array_empty` | `a = []` / `i = 0` / `say a[i]` | 零元素数组与它的越界读 |
+| `mir_container_string_index` | `s = "hi"` / `say s[0]` / `say s[1]` / `say s[2]` / `say s[-1]` | 第二种容器：字符串下标（负下标回卷，命中出一字节新串） |
+| `mir_container_index_type_mismatch` | `a = [7, 8, 9]` / `say a[nosuchglobal]` | **不是**静默 0：解释器走 type_mismatch（rc=1、无 stdout），本路线必须同 rc 同空输出 |
+| `mir_container_const_oob`（反向） | `a = [1, 2, 3]` / `say a[3]` | 常量越界下标**必须被拒译**，理由必须是 `index-out-of-range-constant` |
+
+判据**先**写、实现**后**做；实现之前，在裸基线（`src/compilation/aot_mir.c` 是 `1d5cfd1` 的原件）上跑出的原文逐字如下，`MIR_EXIT=1`：
+
+```
+IR-MIR-MIR-ONLY|case=mir_container_new_array|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_container_new_array_mixed|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_container_index_get|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_container_index_edges|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_container_new_array_empty|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_container_string_index|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_container_index_type_mismatch|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY-REFUSED|case=mir_container_const_oob|mir=refused|why=illegal-operand|expect=index-out-of-range-constant|ok=no|interp-rc=0|interp-out=b'nil\n'|stdout-bytes=4|stdout-hex=6e696c0a
+IR-MIR-VERDICT|FAIL|tree=1d5cfd1477a4cf90c7f823c7aabf2e8ddafe4b43|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+四例 `illegal-operand` 的 detail 是同一个原因，逐字：
+
+```
+IR-MIR-PROBLEM|mir_container_new_array: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=3)
+IR-MIR-PROBLEM|mir_container_index_get: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=5)
+IR-MIR-PROBLEM|mir_container_new_array_empty: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_NEW_ARRAY:1,OP_INDEX_GET:1)
+IR-MIR-PROBLEM|mir_container_string_index: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_INDEX_GET:4)
+IR-MIR-PROBLEM|mir_container_const_oob: refused with why=illegal-operand, the criterion demands why=index-out-of-range-constant (a refusal for the wrong reason is not the refusal this list measures)
+```
+
+`asp=3`（三个元素）/ `asp=5`（嵌套两层的五个元素）是**第一个真因被红在脸上**：参数栈只进不出。空数组与字符串下标没有 `PUSH`，撞的是 unknown-opcode 那道墙——同一个缺口，两种红法。反向例在实现前红成「拒译了，但**理由不对**」：一条理由错的拒绝不算这条判据要的拒绝，所以它单独占一个 `ok=no`。
+
+### 二、操作数布局：由 dump 证实，不凭记忆
+
+```
+$ printf 'a = [1, 2, 3]\nsay a[1]\nsay a[3]\n' > .scratch/probe1.im
+$ ./build/aot-mir dump .scratch/probe1.im
+IR-MIR-INSN|func=0|idx=6|op=OP_NEW_ARRAY|r1=1|r2=0|r3=3|argc=0
+IR-MIR-INSN|func=0|idx=10|op=OP_INDEX_GET|r1=3|r2=1|r3=2|argc=0
+IR-MIR-INSN|func=0|idx=14|op=OP_INDEX_GET|r1=3|r2=1|r3=2|argc=0
+```
+
+- `OP_NEW_ARRAY`：`r1` = 目标寄存器、`r2` = 0（编译器恒发 0、解释器也**不读**）、`r3` = 元素**个数**。元素不在操作数里，它们在参数栈上（三元素先各自 `PUSH_REG`，栈高 3）。
+- `OP_INDEX_GET`：`r1` = 目标、`r2` = 容器寄存器、`r3` = 下标寄存器。
+
+三处独立来源一致：`src/compiler/bytecode.h:14-16` 的注释（[obs: 1d5cfd1]）、`src/compiler/compiler.c:1047` 的 `emit(OP_NEW_ARRAY, r, 0, expr->list.count)`（[obs: 1d5cfd1]）、解释器 `src/vm/vm.c:3620-3647` 只读 `ins.r1`/`ins.r3`、元素自 `base = t->sp - (n - 1)`（第一个 push 就是元素 0，[obs: 1d5cfd1]）。所以 `op_regs` 只把 `r1` 记成寄存器、把 `r3` 当**计数**读——这一步写反了，`r3` 就会被当成第三个寄存器，读数会以「读了一个没写过的寄存器」的形态红。
+
+### 三、实现（全部在 `src/compilation/aot_mir.c`）
+
+1. **值表示**：`#define MV_ARR 6`（= `src/vm/vm.h` 的 `VAL_ARRAY`，[obs: 1d5cfd1]），见 `src/compilation/aot_mir.c:740`（[obs: 85a4660]）。既有约定照抄：解释器把容器放进寄存器时 `ival` 是**池下标加一**（`src/vm/vm.c:3644`，[obs: 1d5cfd1]），所以 `MV_ARR` 的 `ival` 也是池下标；`sval` 留给驻留串标记、`ptr` 留给将来的字典。`MirVal` 的 32 字节布局与 `offsetof` 断言（`src/compilation/aot_mir.c:96-102`，[obs: 85a4660]）**一个字都没动**——这里没有第三套值表示。
+2. **分配走 `mv_alloc`**：`mv_arr_new`（`src/compilation/aot_mir.c:745`，[obs: 85a4660]）每个数组字面量一次 `mv_alloc(sizeof(MirVal) * cap)`，池从 8 槽起**整块搬家一倍一倍地长**，旧块留给 `atexit(mv_free_all)` 一次清扫。记账仪器因此能说出真实开销：`bytes=256` = 8 槽 × 32 字节，不是「一个数组 0 字节」的那种假绿。
+3. **`op_regs` 两条臂**（`src/compilation/aot_mir.c:1083`、`:1092`，[obs: 85a4660]）：`OP_NEW_ARRAY` → `R1`；`OP_INDEX_GET` → `R1|R2|R3`。
+4. **`prescan` 两条臂**：`OP_NEW_ARRAY` 校验 `r3` 落在 `[0, REG_LIMIT)`、`asp >= n` 且 `asp -= n`（`src/compilation/aot_mir.c:1524`，[obs: 85a4660]）——这一行就是第一节 `asp=3` 那四条红的解药；`OP_INDEX_GET` 本趟无事可做。
+5. **生成前能查的常量下标**：新增 `prescan_constant_subscripts`（`src/compilation/aot_mir.c:1361`，[obs: 85a4660]），只在**常量可证**时生效——`OP_LOADK_INT`/`OP_LOADK_I64` 记下标整数、`OP_NEW_ARRAY` 记容器长度，遇到**基本块汇合点**清空知识（join 处不猜），两样都知道且 `k < 0 || k >= len` 时拒译。为了让「理由的名字」成为读数的一部分，为它单开 `g_prescan_why`（`src/compilation/aot_mir.c:974`，[obs: 85a4660]），否则这条拒绝会混进 `illegal-operand` 那一锅，判据也就分不出「拒对了」与「拒错了」。
+6. **运行期语义逐条照解释器**：`mv_arr_get`（`src/compilation/aot_mir.c:793`，[obs: 85a4660]）。下标先归类、再找容器（`mv_index_i32`，`src/compilation/aot_mir.c:780`，[obs: 85a4660] 与 `src/vm/vm.c:323-334`、`:3678-3680` 一致，[obs: 1d5cfd1]）；数组臂越界/负下标答 nil（`src/vm/vm.c:1000-1012`，[obs: 1d5cfd1]）；字符串臂负下标回卷 `i = len + i`、命中 `mv_alloc(2)` 出一字节新串（`src/vm/vm.c:3700-3711`，[obs: 1d5cfd1]）；其它容器答 nil（`src/vm/vm.c:3712-3714`，[obs: 1d5cfd1]）。
+7. **emit 出口**：`OP_NEW_ARRAY` 与 `OP_INDEX_GET` 在 `src/compilation/aot_mir.c:1902-1907`（[obs: 85a4660]）；`emit_container` 的暂存区按**参数栈最深点**定尺寸（`src/compilation/aot_mir.c:2040-2055`、`:2120-2121`，[obs: 85a4660]）——不放大，`mvargs + asp - n` 就会指到相邻寄存器，读出来的是「别人的值」而不是数组元素。
+
+### 四、读数（实现之后，原始）
+
+```
+IR-MIR-ALLOCS|case=mir_container_new_array|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_container_new_array|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=310a320a330a
+IR-MIR-ALLOCS|case=mir_container_new_array_mixed|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_container_new_array_mixed|mir=accepted|cc=ok|exec=same|rc=0|bytes=10|stdout-hex=68690a320a747275650a
+IR-MIR-ALLOCS|case=mir_container_index_get|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_container_index_get|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=360a370a350a
+IR-MIR-ALLOCS|case=mir_container_index_edges|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_container_index_edges|mir=accepted|cc=ok|exec=same|rc=0|bytes=16|stdout-hex=6e696c0a6e696c0a380a380a370a390a
+IR-MIR-ALLOCS|case=mir_container_new_array_empty|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_container_new_array_empty|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=6e696c0a
+IR-MIR-ALLOCS|case=mir_container_string_index|reported=yes|allocs=3|freed=3|live=0|bytes=6|expect-allocs=3|expect-bytes=6|ok=yes
+IR-MIR-MIR-ONLY|case=mir_container_string_index|mir=accepted|cc=ok|exec=same|rc=0|bytes=10|stdout-hex=680a690a6e696c0a690a
+IR-MIR-ALLOCS|case=mir_container_index_type_mismatch|reported=no|why=rc=1
+IR-MIR-MIR-ONLY|case=mir_container_index_type_mismatch|mir=accepted|cc=ok|exec=same|rc=1|bytes=0|stdout-hex=
+IR-MIR-MIR-ONLY-REFUSED|case=mir_container_const_oob|mir=refused|why=index-out-of-range-constant|expect=index-out-of-range-constant|ok=yes|interp-rc=0|interp-out=b'nil\n'|stdout-bytes=4|stdout-hex=6e696c0a
+IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=1|ok=1|expect=1
+IR-MIR-VERDICT|PASS|tree=1d5cfd1477a4cf90c7f823c7aabf2e8ddafe4b43|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+MIR_EXIT=0
+```
+
+逐条读：`exec=same` 七例、`ok=yes` 十一行、`REFUSED-TOTAL|cases=1|ok=1|expect=1`。ALLOCS 是「先量后写死」：`1|256` 五例、`3|6`（三次一字节新串）、`0|0`（类型错那例在 `exit(1)` 之前确实一次分配都没有）逐例写进 `ALLOCS_EXPECT`，没有留成默认的 `0|0`（默认值就是那条「绕开 `mv_alloc` 直接 `malloc` 也会假绿」的陷阱）。这里有一处**没有被认证**的地方，写出来：类型错那例 `rc=1`，而工具只在 `rc_r == 0` 时才比对分配计数（所以它印的是 `reported=no|why=rc=1`），**那一格的 `0|0` 今天没有裁判**——它是一句期望，不是一条读数。
+
+覆盖读数（同一棵树，`python3 tools/aot_mir_cover.test.py --build build`）：
+
+```
+IR-AOT-MIR-LOWERING|handles=36|of=67|unknown=31|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=36|emitter=36|reported=36|agree=yes
+IR-AOT-MIR|accepted=109|refused=0|same-as-interpreter=109|of=29|emittable=36|of-ops=67|not-emittable=31|corpus=inline-cases:86|mir-only-cases:23|beyond-ast-denominator=6
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-that-no-interpreter-run-of-the-corpus-executed|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR-VERDICT|PASS|tree=1d5cfd1477a4cf90c7f823c7aabf2e8ddafe4b43|accepted=109|of=29|covered=29|missing=0|refused=0|same-as-interpreter=109|prelude-excluded=yes|beyond-ast-denominator=6
+```
+
+`handles=34 → 36`（两条新臂），`agree=yes` 表示 `table`/`emitter`/`reported` 三处报的是同一个数；`covered=29|of=29` 没变（本节没新增可覆盖 opcode，只是把两条已有的发射补齐）。`IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)` **是基线 `1d5cfd1` 上就有的读数**（来源：共享语料里左真短路的 `bool_or`/`or_result_mod`），本节七例既不发射也不执行 `OP_OR`，**本笔不声称关闭这一格**——主线后来的语料补了它，那是别人的账。
+
+### 五、反向判据（非对称：注入破坏一件，判据必须红）
+
+两次注入都先 `grep -n` 印原件，再读判据输出；两次都从同一棵树（`85a4660` 的 `src/compilation/aot_mir.c`）出发、`git checkout --` 复原。
+
+**注入 A：删掉一句越界检查**（`src/compilation/aot_mir.c:801`，[obs: 85a4660]）：
+
+```
+$ grep -n 'if (i < 0 || i >= n) return mv_nil();' src/compilation/aot_mir.c
+801:"        if (i < 0 || i >= n) return mv_nil();  /* … */\n"
+$ python3 - <<'EOF'   # 整行删掉
+EOF
+INJECTION-A applied: bounds check line removed
+BUILD_EXIT=0 → MIR_EXIT=1
+IR-MIR-EXEC-DIFF|case=mir_container_index_edges|interp-rc=0|mir-rc=0|interp-out=b'nil\nnil\n8\n8\n7\n9\n'|mir-out=b'3\n0\n8\n8\n7\n9\n'
+IR-MIR-EXEC-DIFF|case=mir_container_new_array_empty|interp-rc=0|mir-rc=0|interp-out=b'nil\n'|mir-out=b'0\n'
+IR-MIR-VERDICT|FAIL|tree=85a466084a6e917d4e8edf62d5ff54df5bc7ebe2|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+注意这两行的形状：**rc 相同（都是 0）、字节不同**。删掉那句检查之后，负下标读到的是池里**计数槽**（`3`），空数组的 `a[0]` 读到槽外的 `0`——这正是那句检查的力气所在。如果判据只看 rc，这一格会**假绿**。
+
+**注入 B：把读值改成常数**（`src/compilation/aot_mir.c:802`，[obs: 85a4660]）：
+
+```
+$ grep -n 'return mv_arrmem[iv + i];' src/compilation/aot_mir.c
+802:"        return mv_arrmem[iv + i];\n"
+$ python3 - <<'EOF'   # 换成 return mv_int(0);
+EOF
+INJECTION-B applied: read value replaced with a constant 0
+MIR_EXIT=1
+IR-MIR-PROBLEM|mir_container_new_array: the MIR route printed b'0\n0\n0\n' rc=0, the interpreter b'1\n2\n3\n' rc=0
+IR-MIR-PROBLEM|mir_container_new_array_mixed: the MIR route printed b'0\n0\n0\n' rc=0, the interpreter b'hi\n2\ntrue\n' rc=0
+IR-MIR-PROBLEM|mir_container_index_get: the MIR route printed b'nil\nnil\nnil\n' rc=0, the interpreter b'6\n7\n5\n' rc=0
+IR-MIR-PROBLEM|mir_container_index_edges: the MIR route printed b'nil\nnil\n0\n0\n0\n0\n' rc=0, the interpreter b'nil\nnil\n8\n8\n7\n9\n'
+IR-MIR-VERDICT|FAIL|tree=85a466084a6e917d4e8edf62d5ff54df5bc7ebe2|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+**复原**：两次都是 `git checkout -- src/compilation/aot_mir.c` → `BUILD_EXIT=0` → `MIR_EXIT=0`、`109` 例 `exec=same`。工具里没有叫 `INJECTED` 的计数读数（`grep -rn INJECT tools/*.py` 无命中），所以「计数归一」在这里的证据只能是这三行复原读数，不是某个数字。
+
+### 六、诚实边界
+
+1. **只读索引只做 `INDEX_GET`**。`INDEX_SET`、`NEW_DICT`、`NEW_SET` 明确不做，仍然拒译——它们是下一节的内容，本节一个字节都没碰。
+2. **数组不是标量，今天也没有「容器打印」这条路**。量出来的对照：解释器 `a = [1, 2, 3]` + `say a` 打 `[1, 2, 3]`、`a == a` 答 `true`、`a == b` 答 `false`（rc=0）；本路线这几例都是 **rc=134（abort）**、无 stdout。原因是 `mv_as_nv` 没有 `MV_ARR` 的臂（`case MV_BOO: return NV_BOO; default: abort();`），而打印/比较/算术都从 `mv_as_nv` 出去。这是一条**停止**，不是错误答案，也不假装能打印。
+3. **常量越界只在基本块内可证**。`prescan_constant_subscripts` 在任何块汇合点清空长度/下标知识，所以「先建数组、再经一个 `if` 之后读常量下标」**不拒译**，落回运行期答 nil（与解释器一致）。保守，不完备；完备性本节不承诺。
+4. **字符串下标出一字节新串**是照解释器 `strdup` 逐字节抄的（`alloc` 记账里 `3|6` 就是这三次的 2 字节 × 3）。**数组臂不同**：解释器的 `vm_array_get` 会把**非驻留**串重新 intern（`src/vm/vm.c:1006-1009`，[obs: 1d5cfd1]），本路线**没有**那条 intern 路径——今天数组里的串只可能是驻留串（元素来自 `LOADK_STRING` 或嵌套 `NEW_ARRAY`），所以读数一致；但「先 `+` 拼出一个串、放进数组、再读出来」这种形状本节**没有量过**，不声称。
+5. **容器嵌套深度不受限**（数组套数组照常，`mir_container_index_get` 咬了 `b[0][1]`），但**没有环形引用检测**：自引用容器会把 `mv_as_nv` 之外的路径留给 abort，本节没有量过。
+6. **`mv_free_all` 只在程序退出时清扫**，所以 `live` 永远是 0、`freed` 永远等于 `allocs`——这是**退出清扫**的读数形状，不是「每个数组字面量都被及时释放」。一次循环里建数组会一直长到退出，与解释器的池增长同形，本节没有做回收。
+7. **`OP_NEW_ARRAY` 的 `r2` 不读**：dump 证明编译器恒发 0；如果将来编译器把「首个元素寄存器」放进 `r2`，本节的 `op_regs` 会**漏掉一个操作数**，读数会以「读了一个没写过的寄存器」的形态红。这一条写在注释里（`src/compilation/aot_mir.c:1083` 附近，[obs: 85a4660]）。
+8. **全局寄存器池上限 `REG_LIMIT` 之外的容器**（超过 4096 个态）本路线不追踪；本节没有量过那个规模的语料。
+
+### 七、与主线和在途分支的关系（写给合并的人）
+
+本节按派工建在 `1d5cfd1` 上，工作期间 `origin/main` 已前进到 `cdd5a11`（合入 `mirval-concat2` 与 `OP_OR` 语料）。我**故意不跟进、不 rebase**，所以：
+
+- 主线 `cdd5a11` 已经有一节 `§10.112`（concat 链）与 `§10.111`（`OP_OR` 短路），本节按「接着本分支最大节号往下排」写成 `§10.112`，**合并时会撞号**，需要在合并提交里顺延为 `§10.112`（正文一字不改，只改标题行与节号引用）。
+- `IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)` 在本分支的基线上就是这一格，合并后它会自己变成 `(none)`；**本笔不声称关闭它**。
+- `IR-AOT-MIR-PIN|match=no|tree-moved=yes` 在本分支上是正当的（pin 树 `2477ece` 早于本节代码），收尾时按仓库惯例 `--pin` 重钉。
+
+本节**没做**的事，逐条：`INDEX_SET`/`NEW_DICT`/`NEW_SET`、容器打印与容器相等、驻留复用、及时回收（非退出清扫）、环形引用检测、`REG_LIMIT` 之外的容器、以及 `IR-AOT-MIR-UNEXECUTED` 那一格。写了「做了」而没写「没做」的地方，上面逐条补上了。
