@@ -5788,3 +5788,137 @@ IR-MIR-VERDICT|PASS|tree=f7a7dc0e42b621daea609f0d03b42c2291a1cb75|accepted=86|re
 读法：数组作**元素**、数组作**容器**这两格都够得到且答对（子集臂用的是 `val_eq`，而数组那一行是身份比较，见 `src/vm/vm.c:420` 与 `src/compilation/aot_mir.c:753`）。[obs: 9d6741e]真正结构上不可达的只有**集合**的格子（：`src/vm/vm.c:2382-2395` 的 `set_contains`/`set_subset`），因为这条线上 `OP_NEW_SET` 不在降低表里、集合值造不出来，`k in {…}` 在 `OP_IN` 之前就被拒。所以本节写边界时用的词是**集合**，不是「左操作数是容器」。
 
 本节按派工建在 `f7a7dc0` 上，**不 push、不 rebase、不动 main**。本分支出身的那棵树（`f7a7dc0`）带着上一笔合并留下的残留：一行 `@@PIN-GATE@@` 和半截冲突标记；本节照派工没有改动它，合并在 `03bacff` 里把它清掉了（清理笔同时补了 `tools/check_text_integrity.py` 的一格检查，见 `2dba43b`），所以本节在这次合并之后的行里不再有那几行。
+## §10.116 容器写入的第一格（分支上的号是 §10.114，合并前主线已发布 §10.115，故顺延）：`OP_INDEX_SET` 写的是容器的槽，不是寄存器（aot-mir，A 类第十二项）
+
+### 一、这笔债的来源与日期
+
+来源是上一节自己钉下的边界句：§10.112 让数组只读，`src/compilation/aot_mir.c:864-866` 的 DOES-NOT-COVER 第一条原话是「OP_INDEX_SET is not emitted, so no program on this route can store INTO an array」；`a = [1, 2, 3]` 之后 `a[1] = 99` 今天停在 `unsupported-opcode`。日期 **2026-11-08**。 [obs: 816f6cb]
+
+### 二、语义照着 `L_INDEX_SET` 抄，不发明
+
+- **操作数角色与读侧不同序**：`src/vm/vm.c:3718-3720` 是 `Value *obj = &R[ins.r1]; Value *idxv = &R[ins.r2]; Value *valv = &R[ins.r3];` —— `r1` 是**容器**、`r2` 是**下标**、`r3` 是**值**，`r1` 不是目的寄存器。`src/compiler/bytecode.h:16` 的注释写 `reg[r1][r2] = reg[r3]`，读起来像赋值目标，但它只是下标记法；编译器实际发的是 `emit(comp->curBC, OP_INDEX_SET, arr, idx, val)`（`src/compiler/compiler.c:2378`），第一个操作数就是容器寄存器。 [obs: 816f6cb]
+- **下标转换在数组分支内部**：`src/vm/vm.c:3722` 的 `int i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(vm, idxv);` 写在 `if (obj->type == VAL_ARRAY)`（`:3721`）里面，所以非数组容器**根本不转换下标**——与读侧 `src/vm/vm.c:3679` 先转换再看容器**不对称**。实测：`x = 5; x[nosuchglobal] = 7` 解释器 rc0 静默丢弃；同一个非法下标在**读**侧是 rc1 `type_mismatch`。 [obs: 816f6cb]
+- **负下标抛**：`src/vm/vm.c:3723-3726` 抛 `index_out_of_range`（stderr 一行 + rc1；stdout 只留异常之前打印过的字节）。 [obs: 816f6cb]
+- **非数值下标拒**：nil / 字符串 / 数组经 `val_as_double`（`src/vm/vm.c:323-332`，default 臂是 `vm_throw_kind(vm, "type_mismatch")`）拒掉；整数、浮点（截断）、布尔（真=1）放行。 [obs: 816f6cb]
+- **越界不是错**：`vm_array_set`（`src/vm/vm.c:976-999`）在 `i >= a->count` 时先 `array_ensure`（`:987`）长大、再用 `while (a->count <= i) value_copy(&a->items[a->count++], &nil);`（`:992`）填 nil，所以「写下标 5」之后读回是 nil，不是异常。 [obs: 816f6cb]
+- **先克隆再落槽**：`:978-979` 的注释与 `value_copy(&tmp, v)` 是为了自赋值 `a[0] = a[2]` 与增长时重分配都安全；落槽是 `value_free(&a->items[i]); a->items[i] = tmp;`（`:995-996`）——**32 字节槽拷贝，不按 tag 分派**。
+- **存活槽守卫**：`:977` 的 `if (idx < 0 || idx >= vm->arrayCount || i < 0) return;` 是静默返回。
+
+### 三、判据先立：五条用例，先红
+
+`tools/aot_mir.test.py` 的 `MIR_ONLY` 加五条（`:770-792`），`ALLOCS_EXPECT` 加五条（`:249-271`）： [obs: 816f6cb]
+
+| 用例 | 覆盖 | 解释器答案 |
+|---|---|---|
+| `mir_index_set_int`（`:770`） | 常量下标写入并回读；**计算下标** `i = z+1`、`j = z+2` | `99 / 2 / 42 / 3 / 7` |
+| `mir_index_set_overwrite`（`:774`） | 同槽覆盖两次、经第二个全局别名 `b` 读回、自赋值 `a[0] = a[2]` | `88 / 88 / 3 / 88 / 3` |
+| `mir_index_set_grow`（`:778`） | 写越界下标 5（长到 6 并填 nil）、越界读回；第二个数组后建后再写第一个（**区域必须搬家**） | `9 / nil / nil / 3 / 1 / 8 / nil / 7 / 9` |
+| `mir_index_set_edges`（`:784`） | 非数组容器写（静默丢弃）、字符串值、末尾一条 `type_mismatch` | `5` `hi`，rc1 |
+| `mir_index_set_negative`（`:788`） | `z - 1` 负下标 → `index_out_of_range` | `2`，rc1 |
+
+**为什么下标必须是算出来的**：常量下标会被既有的 `prescan_constant_subscripts` 先判掉——同一段流写成常量时是 `why=index-out-of-range-constant|detail=container=0 insn=20 constant subscript 5 is outside the 3 element(s) of the array built into register 4`，运行期那一臂就测不到。这条也正是第六节第 4 条要说的边界。
+
+实现之前的红原文（`.scratch/red3.log`，`MIR_EXIT=1`）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_index_set_int|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_index_set_overwrite|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_index_set_grow|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_index_set_edges|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_index_set_negative|mir=refused|why=unsupported-opcode
+IR-MIR-PROBLEM|mir_index_set_int: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_INDEX_SET:3)
+IR-MIR-PROBLEM|mir_index_set_overwrite: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_INDEX_SET:3)
+IR-MIR-PROBLEM|mir_index_set_grow: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_INDEX_SET:2)
+IR-MIR-PROBLEM|mir_index_set_edges: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_INDEX_SET:3)
+IR-MIR-PROBLEM|mir_index_set_negative: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_INDEX_SET:1)
+IR-MIR-VERDICT|FAIL|tree=f7a7dc0e42b621daea609f0d03b42c2291a1cb75|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+### 四、改动：三个钩子 + 一段运行期
+
+1. `op_regs`：`src/compilation/aot_mir.c:1398` 加 `case OP_INDEX_SET: return R1 | R2 | R3;`，长注 `:1384-1397` 写明「r1 容器 / r2 下标 / r3 值，掩码里**没有目的寄存器**（处理臂从不写 `R[ins.r1]`），三个仍全进掩码，因为 generic bound loop 是唯一的界」。 [obs: 816f6cb]
+2. `prescan`：`src/compilation/aot_mir.c:1892` 加 `if (op == OP_INDEX_SET) continue;`，紧贴 `if (op == OP_INDEX_GET) continue;` 写在 `switch` **之外**。写成 `case` 会被 `tools/aot_mir_cover.test.py` 的 operand 检测器读成「该 opcode 核一个索引」，并排进 `dead`（本轮读数 `IR-AOT-MIR-OPERANDS|indexed=10|prescanned=11|checked=10|missing=(none)|dead=(none)|detector-saw=yes|agree=yes`）。 [obs: 816f6cb]
+3. `emit_one`：`src/compilation/aot_mir.c:2294` 加 `case OP_INDEX_SET: buf_fmt(b, "    mv_arr_set(v[%d], v[%d], v[%d]);", r1, r2, r3); return 0;`——**调用、无赋值**：写完容器仍要持有容器本身。 [obs: 816f6cb]
+4. 运行期（`kMirValBlock` 内）： [obs: 816f6cb]
+   - `mv_arr_need(want)`（`src/compilation/aot_mir.c:921`）从 `mv_arr_new` 里**提取**（不是新语义）：新字面量与越界写一条增长规则； [obs: 816f6cb]
+   - `mv_arr_live(iv)`（`:983`）是**转发头**解析器：活数组的计数头是 `MV_INT`，被搬走的区域把头改成 `{MV_ARR, 新下标}`（`:1114`），所有读者经它落地，跳数上限 64（坏池变成停，不是挂）；
+   - `mv_arr_get` 走转发头（`:998`）；
+   - `mv_arr_set`（`:1075`）：非 `MV_ARR` 容器**静默 return 且不转换下标**；`mv_index_i32` 抛 `type_mismatch`；`i < 0` 走 stderr + `exit(1)`；存活槽原地整体赋值（**零分配**）；越界高时，区域正好在池高水位就**原地长**，否则**搬到池边界**并留转发头。
+
+**分配账（先量后写死）**：`tools/aot_mir.test.py:249-271` 五条 `(allocs, bytes)` 与逐条理由—— [obs: 816f6cb]
+
+- `mir_index_set_int` `(1, 256)`：池首块。`a = [1, 2, 3]` 第一次 `mv_arr_new` 要 4 槽 → 容量 8 → `8 × 32 = 256`；其后两次写入一次 `mv_alloc` 都没有（原地覆盖，或新槽仍在 8 槽容量内）。
+- `mir_index_set_overwrite` `(1, 256)`：同一条账。`b = a` 不建新数组（别名共用同一区域），三次写全部零分配。
+- `mir_index_set_grow` `(3, 1792)`：`256`（首块 8 槽）＋`512`（`b = [7]` 落在 `mv_arrused = 7`，要 9 槽 > 8 → 翻到 16 槽）＋`1024`（`b[s]` 的 `s = 3` 越界，而 `c = [9, 9]` 正压在 `b` 的区域上，只能搬到池边界：新区域要 `mv_arrused + want + 1` 槽 → 翻到 32 槽）。三次合计 `3 | 1792`。
+- `mir_index_set_edges` / `mir_index_set_negative` `(0, 0)`：两条都以 rc≠0 收尾（`type_mismatch` / `index_out_of_range`），harness 对 rc≠0 只印 `reported=no|why=rc=1`、不比分配账；表里这两个数是「故意声明不查」。
+
+### 五、绿读数与反向判据（非对称两次）
+
+`MIR_EXIT=0`、`COVER_EXIT=0`，`tree=816f6cb7a15a72737d8e76c97479057c1edb37ab`：
+
+```
+IR-MIR-ALLOCS|case=mir_index_set_int|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_index_set_int|mir=accepted|cc=ok|exec=same|rc=0|bytes=12|stdout-hex=39390a320a34320a330a370a
+IR-MIR-ALLOCS|case=mir_index_set_overwrite|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_index_set_overwrite|mir=accepted|cc=ok|exec=same|rc=0|bytes=13|stdout-hex=38380a38380a330a38380a330a
+IR-MIR-ALLOCS|case=mir_index_set_grow|reported=yes|allocs=3|freed=3|live=0|bytes=1792|expect-allocs=3|expect-bytes=1792|ok=yes
+IR-MIR-MIR-ONLY|case=mir_index_set_grow|mir=accepted|cc=ok|exec=same|rc=0|bytes=24|stdout-hex=390a6e696c0a6e696c0a330a310a380a6e696c0a370a390a
+IR-MIR-ALLOCS|case=mir_index_set_edges|reported=no|why=rc=1
+IR-MIR-MIR-ONLY|case=mir_index_set_edges|mir=accepted|cc=ok|exec=same|rc=1|bytes=5|stdout-hex=350a68690a
+IR-MIR-ALLOCS|case=mir_index_set_negative|reported=no|why=rc=1
+IR-MIR-MIR-ONLY|case=mir_index_set_negative|mir=accepted|cc=ok|exec=same|rc=1|bytes=2|stdout-hex=320a
+IR-MIR-VERDICT|PASS|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=40|of=67|unknown=27|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=40|emitter=40|reported=40|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=122|of=29|covered=29|missing=0|refused=0|same-as-interpreter=122|prelude-excluded=yes|beyond-ast-denominator=11
+```
+
+两个 `accepted` 不是同一本账：第一行 `IR-MIR-VERDICT` 的 `accepted=86` 是**共享语料**（86 条一个字节没动），`IR-AOT-MIR-COVER` 那一行的 `accepted=122` 是语料 + MIR-only（`117 → 122`）。`handles 39 → 40` 就是 `src/compilation/aot_mir.c:1398` 那一行表格；`mir_only 31 → 36`。 [obs: 816f6cb]
+
+**反向判据①：下标错取一个操作数。** 把 `:2294` 的格式参数从 `r1, r2, r3` 改成 `r1, r1, r3`（下标取容器那个寄存器）。`BUILD_EXIT=0`、`MIR_EXIT=1`，红的原文：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_index_set_int|interp-rc=0|mir-rc=1|interp-out=b'99\n2\n42\n3\n7\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_index_set_overwrite|interp-rc=0|mir-rc=1|interp-out=b'88\n88\n3\n88\n3\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_index_set_grow|interp-rc=0|mir-rc=1|interp-out=b'9\nnil\nnil\n3\n1\n8\nnil\n7\n9\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_index_set_edges|interp-rc=1|mir-rc=1|interp-out=b'5\nhi\n'|mir-out=b'5\n'
+IR-MIR-PROBLEM|mir_index_set_int: the MIR route printed b'' rc=1, the interpreter b'99\n2\n42\n3\n7\n' rc=0
+IR-MIR-PROBLEM|mir_index_set_overwrite: the MIR route printed b'' rc=1, the interpreter b'88\n88\n3\n88\n3\n' rc=0
+IR-MIR-PROBLEM|mir_index_set_grow: the MIR route printed b'' rc=1, the interpreter b'9\nnil\nnil\n3\n1\n8\nnil\n7\n9\n' rc=0
+IR-MIR-PROBLEM|mir_index_set_edges: the MIR route printed b'5\n' rc=1, the interpreter b'5\nhi\n' rc=1
+IR-MIR-VERDICT|FAIL|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+红在 **stdout 字节**上（`mir-out` 与 `interp-out` 不同），不是"rc 不同就算"这种弱判据；`mir_index_set_negative` 仍是 `exec=same`（它的异常早于任何下标使用），这是预期的不对称。
+
+**反向判据②：值取成常数。** 同一行改成 `buf_fmt(b, "    mv_arr_set(v[%d], v[%d], mv_int(1LL));", r1, r2)`——写入的值恒为 1。期望行必须红，且分配账一行不动：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_index_set_int|interp-rc=0|mir-rc=0|interp-out=b'99\n2\n42\n3\n7\n'|mir-out=b'1\n2\n1\n3\n1\n'
+IR-MIR-EXEC-DIFF|case=mir_index_set_overwrite|interp-rc=0|mir-rc=0|interp-out=b'88\n88\n3\n88\n3\n'|mir-out=b'1\n1\n1\n1\n3\n'
+IR-MIR-EXEC-DIFF|case=mir_index_set_grow|interp-rc=0|mir-rc=0|interp-out=b'9\nnil\nnil\n3\n1\n8\nnil\n7\n9\n'|mir-out=b'1\nnil\nnil\n3\n1\n1\nnil\n7\n9\n'
+IR-MIR-EXEC-DIFF|case=mir_index_set_edges|interp-rc=1|mir-rc=1|interp-out=b'5\nhi\n'|mir-out=b'5\n1\n'
+IR-MIR-ALLOCS|case=mir_index_set_int|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-PROBLEM|mir_index_set_int: the MIR route printed b'1\n2\n1\n3\n1\n' rc=0, the interpreter b'99\n2\n42\n3\n7\n' rc=0
+IR-MIR-PROBLEM|mir_index_set_overwrite: the MIR route printed b'1\n1\n1\n1\n3\n' rc=0, the interpreter b'88\n88\n3\n88\n3\n' rc=0
+IR-MIR-PROBLEM|mir_index_set_grow: the MIR route printed b'1\nnil\nnil\n3\n1\n1\nnil\n7\n9\n' rc=0, the interpreter b'9\nnil\nnil\n3\n1\n8\nnil\n7\n9\n' rc=0
+IR-MIR-PROBLEM|mir_index_set_edges: the MIR route printed b'5\n1\n' rc=1, the interpreter b'5\nhi\n' rc=1
+IR-MIR-VERDICT|FAIL|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+两次注入之后都 `git checkout -- src/` 复原（`grep` 印回原件那一行、`git status --porcelain` 空），`BUILD_EXIT=0`、`MIR_EXIT=0`、`same=122 diff=0`、`VERDICT|PASS`。仓库里没有 `INJECTED` 这种读数，所以证据只能是复原后的重跑。
+
+### 六、没做什么（逐条）
+
+1. **DICT 那一半没做。** `OP_NEW_DICT`/`OP_NEW_SET` 仍未降低（实测 `d = {}; d[0] = 5` → `why=unsupported-opcode`），所以 `src/vm/vm.c:3729-3731` 的 `vm_dict_set` 臂**不可达**；`mv_arr_set` 的非数组臂只是静默 return，不是字典写入。 [obs: 816f6cb]
+2. **写侧不做 interning。** 读侧 `vm_array_get` 把结果暂存进全局 intern 表让临时串活过一步，这一段没有复刻到写侧（写侧本来不 intern）。
+3. **不做运行期回收。** `value_free(&a->items[i])`（`src/vm/vm.c:995`）与 `vm->used_mem` / `array_ensure` 的记账（`:987-993`）没有复刻：本路线所有块都登记在 `mv_alloc` 的链表里（`src/compilation/aot_mir.c:171-183`），退出时一次扫（`IR-MIR-ALLOCS|…|live=0`），运行期不回收。覆盖掉一个堆串元素不会立刻释放旧串。 [obs: 816f6cb]
+4. **`array_ensure` 的失败路径没有对应物。** 解释器 `:987-990` 在 ensure 失败时 `value_free(&tmp)` 然后静默 return（丢一次写）；这边 `mv_alloc` 的 OOM 是 `if (!p) abort();`（`src/compilation/aot_mir.c:173`），即「停止」而不是「丢一次写」。 [obs: 816f6cb]
+5. **常量下标越界仍按既有 policy 拒译**，即使那条写其实会增长：`a[p] = 9` 之后 `say a[5]` → `why=index-out-of-range-constant`。不放行，因为放行等于让「可证明写错的下标」与「对的下标」同答（`MIR_ONLY_REFUSE` 里 `mir_container_const_oob` 的注释就是这个理由）。
+6. **`say a`（打印容器）仍崩**：`a = [1, 2, 3]; a[1] = 9; say a` 在 MIR 路线 rc=134（`mv_say` 的 `MV_ARR` 臂 abort），解释器打印 `[1, 9, 3]`。这是 §10.112 已钉的**既有**边界（本节没碰 `mv_say`），也不作为本节判据——一条没人会修的红判据只会变成噪音。
+7. **链式下标写入只在里层已存在时可用**：`a = [[1, 2], [3]]; a[0][1] = 88` 两路都答 `88`；「里层是 nil 就新建」那一臂不可达——`a = [[1, 2]]; a[3][0] = 5` 先被常量下标 policy 拒掉（`why=index-out-of-range-constant`，解释器答 `5` 再 `2`）。
+8. **共享语料与 refuse 表一笔没动**：`tools/aot_cover.pin.json` 仍 `86` 条、`of=29`，`MIR_ONLY_REFUSE` 里 `mir_container_const_oob` 仍在册。
+9. **文档缺陷（不是本节造成的，本节只顺手删掉四行标记）。** 基线 `f7a7dc0` 的 `docs/STATUS.md` 尾部带着一段未解决的冲突痕迹：`docs/STATUS.md:5270` / `:5438` / `:5611` 三处（`0ff78e2` 引入；两边 §10.112 与 §10.113 的正文都对，只是标记没删） [obs: 816f6cb]。主线随后用 `03bacff` 只删掉这四行，本分支做同样的删除——好让本节的追加处不再落在被删掉的行上；两边的正文一字未动，冲突解本身不是本节做的。合并时两边都删了同样四行，所以这次合并里它没有留下任何文本。
+
+### 七、诚实边界：容器写入仍不是完整容器语义
+
+这一格补的是「**已有数组上的 32 字节标量槽**」：原地覆盖、越界高增长（尾上填 nil）、负下标抛、非数值下标抛、非数组容器静默丢弃、区域搬家用转发头保别名。它不是：字典写入、链式新建、写侧内存审计、与解释器同机制的 `ArrayObj`（解释器的句柄不动、只搬 `a->items`，这边搬的是槽本身并靠头解决别名——**行为等价、机制不同**，所以「`ival` 就是池下标」这条旧断言仍然成立）。还有一条更根本的：解释器的 `value_free` + `used_mem` 让「覆盖」有可观测的代价，本路线的覆盖在任何读数上都**零分配**（这正是 `ALLOCS_EXPECT` 里三条 `(1|256)` 与 `(3|1792)` 只在建数组/搬家时上涨的原因）。

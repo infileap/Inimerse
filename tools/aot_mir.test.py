@@ -257,6 +257,38 @@ ALLOCS_EXPECT = {
     # The type-mismatch case exits 1, so its reading is `reported=no|why=rc=1`
     # and no count is consulted; listed so the table says so on purpose.
     "mir_container_index_type_mismatch": (0, 0),
+    # WRITE (OP_INDEX_SET).  The three numbers below are MEASURED, and each one
+    # is a claim about what the write itself does: `mir_index_set_int` and
+    # `mir_index_set_overwrite` both measure (1, 256) -- ONE pool block of 8
+    # slots -- for programs that contain exactly one array literal and no
+    # growth.  That is the pool, allocated on first use by mv_arr_new; the
+    # writes add NOTHING to it, because every one of their subscripts is inside
+    # the literal's count and mv_arr_set's in-place arm is a plain 32-byte slot
+    # assignment with no mv_alloc call.  A route that copied an element, boxed
+    # the value, or grew by one slot per write lands on a different number here.
+    "mir_index_set_int": (1, 256),
+    "mir_index_set_overwrite": (1, 256),
+    # mir_index_set_grow measures THREE blocks, 1792 bytes, and the number is
+    # the sum of the pool block's two doublings:
+    #   a = [1,2,3] needs 1 count + 3 items = 4 slots  -> the first use
+    #                allocates the 8-slot block                       256
+    #   b = [7]     lands at used=7 and needs 7+1+1 = 9 slots, which no longer
+    #                fits in 8, so the block doubles to 16               512
+    #   b[s] = 8    with s=3 falls PAST the end of b (count 1) while c=[9,9]
+    #                sits above b's region, so b must MOVE to the frontier:
+    #                used=12, the moved region needs 4 slots and one more count
+    #                slot, i.e. 17 total, past 16, so the block doubles to 32
+    #                                                                   1024
+    # The nil fill and the item moved do NOT allocate: the moved 4-slot region
+    # is inside the block the doubling already bought.  A route that allocated
+    # a fresh item block per array would report (5, 512) here (three literals
+    # plus the move plus ... ) -- a different pair, on purpose.
+    "mir_index_set_grow": (3, 1792),
+    # The last two end on an exception, so like the type-mismatch case above
+    # their reading is `reported=no|why=rc=1` and no count is consulted;
+    # listed so the table says so on purpose.
+    "mir_index_set_edges": (0, 0),
+    "mir_index_set_negative": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -706,6 +738,75 @@ MIR_ONLY = [
      'm = 0 - 1\nsay s[m]\n'),
     ("mir_container_index_type_mismatch",
      'a = [7, 8, 9]\nsay a[nosuchglobal]\n'),
+    # OP_INDEX_SET -- the WRITE half of the container step, and the first cell
+    # in which a literal stops being read-only.  Read the handler before any of
+    # these: `L_INDEX_SET` (src/vm/vm.c:3717) takes r1 = the CONTAINER, r2 = the
+    # SUBSCRIPT, r3 = the VALUE (src/compiler/bytecode.h:16 spells it
+    # `reg[r1][r2] = reg[r3]`), and r1 is not a destination -- the register's
+    # own value survives the write.  Three things there are copied exactly and
+    # none of them is invented here: the subscript is converted INSIDE the
+    # array branch (so a bad subscript on a non-array is a SILENT no-op, not a
+    # throw); a write past the end EXTENDS the array with nil fill
+    # (src/vm/vm.c:983-989) while a negative subscript throws
+    # index_out_of_range (src/vm/vm.c:3722); and the stored value is the value
+    # (a string stays a string), with the clone-before-store order at
+    # src/vm/vm.c:990-997 being what makes `a[0] = a[2]` safe.
+    #
+    #   mir_index_set_int   an int written at a constant subscript and at a
+    #                       COMPUTED one (`i = z + 1`, never a constant: a
+    #                       constant in range is fine for the pre-scan, but a
+    #                       constant is the one subscript shape that could
+    #                       answer without the runtime arm, so the arm is
+    #                       driven by arithmetic).
+    #   mir_index_set_overwrite
+    #                       the same slot written twice, then read through the
+    #                       ALIAS `b = a` -- an array is a handle, so the
+    #                       interpreter's `b` sees what `a` stored, and a route
+    #                       that copied the array on assignment would print the
+    #                       OLD value here while passing the rc check.
+    #   mir_index_set_grow   a write PAST the end (index 5 on a 3-element
+    #                       array): the interpreter grows it and fills the hole
+    #                       with nil, so `say a[4]` prints nil and `say a[3]`
+    #                       prints nil while a[5] prints the stored value.  The
+    #                       second half grows an array that is NOT the newest
+    #                       one, which is the case a flat pool with no
+    #                       forwarding would answer with the old length.
+    #   mir_index_set_edges a non-array container (`x = 5`, then `x[...] = 7`)
+    #                       is a silent no-op -- the interpreter's `say x` still
+    #                       prints 5 -- and a string stored into an int slot
+    #                       stays a string.  It ends on a nil subscript, which
+    #                       throws type_mismatch: stdout keeps the lines
+    #                       printed BEFORE the throw and rc is 1, so both
+    #                       halves are asserted in one reading.
+    #   mir_index_set_negative
+    #                       a COMPUTED negative subscript (`n = z - 1`) throws
+    #                       index_out_of_range, with the line printed before it
+    #                       still on stdout and rc 1.  Asymmetric with the read
+    #                       side on purpose: `say a[n]` answers nil for the same
+    #                       n (src/vm/vm.c:1002), the write refuses it
+    #                       (src/vm/vm.c:3722), and both readings are here so
+    #                       that a route which quietly reused the read side's
+    #                       answer goes red.
+    ("mir_index_set_int",
+     'a = [1, 2, 3]\na[0] = 99\nsay a[0]\nsay a[1]\n'
+     'z = 0\ni = z + 1\na[i] = 42\nsay a[1]\nsay a[2]\n'
+     'j = z + 2\na[j] = 7\nsay a[j]\n'),
+    ("mir_index_set_overwrite",
+     'a = [1, 2, 3]\nb = a\nz = 0\nq = z + 1\n'
+     'a[q] = 77\na[q] = 88\nsay a[q]\nsay b[q]\n'
+     'a[0] = a[2]\nsay a[0]\nsay a[1]\nsay a[2]\n'),
+    ("mir_index_set_grow",
+     'a = [1, 2, 3]\nz = 0\np = z + 5\na[p] = 9\n'
+     'q = z + 4\nsay a[p]\nsay a[q]\n'
+     'r = z + 3\nsay a[r]\nsay a[2]\nsay a[0]\n'
+     'b = [7]\nc = [9, 9]\ns = z + 3\nb[s] = 8\nt = z + 1\n'
+     'say b[s]\nsay b[t]\nsay b[0]\nsay c[0]\n'),
+    ("mir_index_set_edges",
+     'x = 5\nx[nosuchglobal] = 7\nsay x\n'
+     's = "hi"\na = [1, 2, 3]\na[1] = s\nsay a[1]\n'
+     'a[nosuchglobal] = 1\n'),
+    ("mir_index_set_negative",
+     'a = [1, 2, 3]\nz = 0\nsay a[1]\nn = z - 1\na[n] = 77\nsay a[0]\n'),
     # OP_MIN / OP_MAX, the SET REDUCTIONS -- not an arithmetic pair.  Read the
     # handlers before the names: `L_MIN`/`L_MAX` (src/vm/vm.c:4357) call
     # `set_minmax(vm, &R[ins.r2], &R[ins.r1], 0/1)` and `set_minmax`

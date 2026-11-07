@@ -897,16 +897,23 @@ static const char *const kMirValBlock =
 " * that in its ArrayObj), so the count lives in the POOL SLOT IMMEDIATELY\n"
 " * BEFORE the array's first item and pool[ival] is item 0: the same pointer\n"
 " * relation ArrayObj's aidx has, with the header in the pool instead of in the\n"
-" * value.  mv_arr_new and mv_arr_get are the only two readers of that slot.\n"
+" * value.  mv_arr_new, mv_arr_get, mv_arr_set and mv_arr_live are the four\n"
+" * readers of that slot -- the write path (mv_arr_set) is the one that WRITES\n"
+" * it, extending the count and, when a region moves, replacing it with a\n"
+" * forwarding head (mv_arr_live's note).\n"
 " * Growth doubles into a new mv_alloc block and leaves the old block to the\n"
 " * exit sweep; there is no free list yet and this route reclaims nothing\n"
 " * mid-run, which is mv_str_concat's debt word for word (a loop that builds N\n"
 " * arrays allocates as the pool grows and frees once, at exit).\n"
 " *\n"
 " * WHAT IT DOES NOT COVER, each named by the thing that would need it:\n"
-" *   - OP_INDEX_SET is not emitted, so no program on this route can store INTO\n"
-" *     an array; a literal is read-only for its whole life, which is also why\n"
-" *     the pool is never re-indexed.\n"
+" *   - OP_INDEX_SET IS emitted (mv_arr_set), so a literal is no longer\n"
+" *     read-only.  What the write does NOT reproduce is written in mv_arr_set's\n"
+" *     own note: a DICT container, the interning on the way out, the memory\n"
+" *     accounting of the slot it overwrote, and the whole dict/set half of\n"
+" *     L_INDEX_SET.  The pool still moves a region only at the high-water mark\n"
+" *     or behind a forwarding head -- it is never re-indexed under a handle a\n"
+" *     program still holds, which is the property that makes an array aliasable.\n"
 " *   - OP_NEW_DICT and OP_NEW_SET are not emitted, and prescan refuses the\n"
 " *     preset `set` global by name, so no DICT can reach this pool.  mv_arr_get\n"
 " *     answers a container that is neither array nor string with nil, which is\n"
@@ -953,16 +960,24 @@ static const char *const kMirValBlock =
 "static MirVal *mv_arrmem = 0;   /* the item pool: one flat block, doubled */\n"
 "static int mv_arrcap = 0, mv_arrused = 0;\n"
 "\n"
+"/* Make the pool hold slots [0 .. want-1].  ONE mv_alloc per doubling, plus one\n"
+"   pass over what is already live -- that is what keeps the (allocs, bytes) pair\n"
+"   a number a reader can predict instead of one this file reports after the\n"
+"   fact.  Two callers, one rule: a fresh literal (mv_arr_new) and a write that\n"
+"   outgrows its region (mv_arr_set). */\n"
+"static inline void mv_arr_need(int want) {\n"
+"    if (want <= mv_arrcap) return;\n"
+"    int cap = mv_arrcap ? mv_arrcap : 8;\n"
+"    while (cap < want) cap *= 2;\n"
+"    MirVal *fresh = (MirVal *)mv_alloc(sizeof(MirVal) * (size_t)cap);\n"
+"    for (int i = 0; i < mv_arrused; i++) fresh[i] = mv_arrmem[i];\n"
+"    mv_arrmem = fresh;                     /* old block: swept at exit */\n"
+"    mv_arrcap = cap;\n"
+"}\n"
+"\n"
 "static inline MirVal mv_arr_new(int n, const MirVal *items) {\n"
 "    int want = mv_arrused + n + 1;             /* 1 count slot, then n items */\n"
-"    if (want > mv_arrcap) {\n"
-"        int cap = mv_arrcap ? mv_arrcap : 8;\n"
-"        while (cap < want) cap *= 2;\n"
-"        MirVal *fresh = (MirVal *)mv_alloc(sizeof(MirVal) * (size_t)cap);\n"
-"        for (int i = 0; i < mv_arrused; i++) fresh[i] = mv_arrmem[i];\n"
-"        mv_arrmem = fresh;                     /* old block: swept at exit */\n"
-"        mv_arrcap = cap;\n"
-"    }\n"
+"    mv_arr_need(want);\n"
 "    MirVal r;\n"
 "    r.type = MV_ARR;\n"
 "    r.ival = mv_arrused + 1;                   /* item 0 sits at pool[ival] */\n"
@@ -1001,12 +1016,33 @@ static const char *const kMirValBlock =
 "                   does not say so still cannot hand back a silent 0. */\n"
 "}\n"
 "\n"
+"/* THE FORWARDING HEAD.  A live array's count header is an MV_INT (the count).\n"
+"   A region that had to MOVE leaves `{MV_ARR, new_index}` in that slot instead,\n"
+"   and every reader resolves through it here: the array keeps ONE handle for\n"
+"   its whole life even after the allocator copies its items, which is the\n"
+"   property the interpreter gets from its ArrayObj (src/vm/vm.c:976-998 keeps\n"
+"   `aidx` fixed while only `a->items` moves).  Without this head, `b = a;`\n"
+"   followed by a growing write through `a` would leave `b` pointing at the OLD\n"
+"   length -- the pool would be re-indexed under a handle the program still\n"
+"   holds.  A chain is bounded by the number of moves of one array; no cycle is\n"
+"   constructible (a head always names a region created LATER), and the hop\n"
+"   budget below turns a corrupt pool into a stop instead of a hang. */\n"
+"static inline int mv_arr_live(int iv) {\n"
+"    int hops = 0;\n"
+"    while (iv >= 1 && iv <= mv_arrused && mv_arrmem[iv - 1].type == MV_ARR) {\n"
+"        int nv = (int)mv_arrmem[iv - 1].ival;\n"
+"        if (nv == iv || ++hops > 64) break;\n"
+"        iv = nv;\n"
+"    }\n"
+"    return iv;\n"
+"}\n"
+"\n"
 "static inline MirVal mv_arr_get(MirVal obj, MirVal idxv) {\n"
 "    int i = mv_index_i32(idxv);   /* converted BEFORE the container is looked at:\n"
 "                                     a bad subscript is type_mismatch even when\n"
 "                                     the array is empty (src/vm/vm.c:3678-3680) */\n"
 "    if (obj.type == MV_ARR) {\n"
-"        int iv = (int)obj.ival;\n"
+"        int iv = mv_arr_live((int)obj.ival);              /* through the head */\n"
 "        if (iv < 1 || iv > mv_arrused) return mv_nil();   /* not a live slot */\n"
 "        int n = (int)mv_arrmem[iv - 1].ival;              /* the count header */\n"
 "        if (i < 0 || i >= n) return mv_nil();             /* src/vm/vm.c:1002 */\n"
@@ -1117,6 +1153,97 @@ static const char *const kMirValBlock =
 "    return mv_boo(0);   /* :2432 -- dict, string, number, nil: false */\n"
 "}\n"
 "\n"
+"/* THE WRITE HALF of the container step.  Read src/vm/vm.c:3717-3734 (L_INDEX_SET)\n"
+" * beside this: r1 is the CONTAINER, r2 the SUBSCRIPT, r3 the VALUE, and r1 is\n"
+" * NOT a destination -- the container register keeps its own value across the\n"
+" * write (src/compiler/bytecode.h:16 spells the instruction\n"
+" * `reg[r1][r2] = reg[r3]`).  The emitter therefore calls this for SIDE EFFECTS\n"
+" * only, and the four facts below are copied from that handler and from\n"
+" * vm_array_set (src/vm/vm.c:976-998) rather than invented:\n"
+" *\n"
+" * 1. THE SUBSCRIPT IS CONVERTED INSIDE THE ARRAY BRANCH.  `if (obj->type ==\n"
+" *    VAL_ARRAY) { int i = ... }` -- so `x = 5; x[nosuchglobal] = 7` is a SILENT\n"
+" *    no-op and never reaches val_as_double, while the same bad subscript on the\n"
+" *    READ side throws (mv_arr_get converts first, src/vm/vm.c:3678-3680).  That\n"
+" *    asymmetry is the interpreter's, measured (tools/aot_mir.test.py's\n"
+" *    mir_index_set_edges: `say x` still prints 5), and it is the one place\n"
+" *    where OP_INDEX_SET and OP_INDEX_GET must NOT share an arm.\n"
+" * 2. A NEGATIVE SUBSCRIPT THROWS, a too-large one DOES NOT: `if (i < 0)` calls\n"
+" *    vm_throw_kind with index_out_of_range (src/vm/vm.c:3721-3724), and then the\n"
+" *    write EXTENDS the array with nil fill (`while (a->count <= i)\n"
+" *    value_copy(...)`, src/vm/vm.c:987-990).  So `say a[4]` after `a[5] = 9`\n"
+" *    prints nil, not an error -- the read side's answer for the same index, for\n"
+" *    a different reason.\n"
+" * 3. THE VALUE IS THE VALUE.  Nothing coerces it (`tmp` is a value_copy, not an\n"
+" *    int): storing the string hi into the second slot of [1, 2, 3] makes that\n"
+" *    slot a string.  The clone-before-store ORDER in vm_array_set is what makes\n"
+" *    `a[0] = a[2]` safe across a reallocating growth; this route has no clone to\n"
+" *    order -- it copies four fields of a register that nothing else moves.\n"
+" * 4. A DEAD SLOT IS A no-op (src/vm/vm.c:977), reproduced for the same reason\n"
+" *    the read side reproduces it: an out-of-range handle is not an error there.\n"
+" *\n"
+" * ALLOCATION.  An in-range write is 32 bytes of assignment and ZERO mv_alloc --\n"
+" * ALLOCS_EXPECT measures that.  A growing write allocates only when the POOL\n"
+" * block has to double, or when the region is not at the pool high-water mark\n"
+" * and has to move (the lower half of this function); both numbers are measured\n"
+" * and written down in tools/aot_mir.test.py, not estimated here.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER.  A DICT container (src/vm/vm.c:3727-3728) is not\n"
+" * reachable on this route, and the silent no-op it would get here is the right\n"
+" * answer only by accident of being unreachable; the intern step vm_array_get\n"
+" * performs on the way OUT (src/vm/vm.c:1006-1009) is not reproduced, and neither\n"
+" * is the memory ACCOUNTING the interpreter does on the slot it overwrote (the\n"
+" * value_free of the old element and vm->used_mem): this route never frees\n"
+" * mid-run, so an overwritten string's bytes stay in the exit sweep.  A CONSTANT\n"
+" * subscript on an array a write has GROWN is still refused by the pre-scan\n"
+" * (index-out-of-range-constant) -- its length knowledge predates the write and\n"
+" * is not revived, and docs/STATUS.md section 10.114 carries the measured\n"
+" * reading.  The whole dict/set half of L_INDEX_SET is un-emitted. */\n"
+"static inline void mv_arr_set(MirVal obj, MirVal idxv, MirVal valv) {\n"
+"    if (obj.type != MV_ARR) return;   /* src/vm/vm.c:3726-3733, fact 1 */\n"
+"    int i = mv_index_i32(idxv);       /* fact 1: after the container check */\n"
+"    if (i < 0) {                      /* fact 2: src/vm/vm.c:3721-3724 */\n"
+"        fprintf(stderr, \"[exception] uncaught: index_out_of_range\\n\");\n"
+"        exit(1);\n"
+"    }\n"
+"    int iv = mv_arr_live((int)obj.ival);\n"
+"    if (iv < 1 || iv > mv_arrused) return;       /* fact 4: src/vm/vm.c:977 */\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;         /* the count header */\n"
+"    if (i < n) {                                 /* overwrite: no allocation */\n"
+"        mv_arrmem[iv + i] = valv;                /* fact 3 */\n"
+"        return;\n"
+"    }\n"
+"    int want = i + 1;\n"
+"    if (iv + n == mv_arrused) {\n"
+"        /* The region ends at the pool high-water mark, so nothing lives in the\n"
+"           slots above it: it extends where it is, and the handle -- with every\n"
+"           alias -- keeps naming the same items.  ZERO mv_alloc unless the pool\n"
+"           block itself doubles; the measured pair is in ALLOCS_EXPECT. */\n"
+"        mv_arr_need(iv + want);\n"
+"        for (int k = n; k < i; k++) mv_arrmem[iv + k] = mv_nil();   /* fact 2 */\n"
+"        mv_arrmem[iv + i] = valv;                                  /* fact 3 */\n"
+"        mv_arrmem[iv - 1] = mv_int(want);\n"
+"        if (iv + want > mv_arrused) mv_arrused = iv + want;\n"
+"        return;\n"
+"    }\n"
+"    /* NOT at the high-water mark: the slots after this region belong to a LATER\n"
+"       array, so it cannot extend in place.  Copy it to the frontier and leave a\n"
+"       forwarding head behind (mv_arr_live's note): one mv_alloc if the pool\n"
+"       block doubles, and nothing per element -- a move is a copy, not a\n"
+"       reallocation of the items. */\n"
+"    mv_arr_need(mv_arrused + want + 1);\n"
+"    int nv = mv_arrused + 1;\n"
+"    for (int k = 0; k < n; k++) mv_arrmem[nv + k] = mv_arrmem[iv + k];\n"
+"    for (int k = n; k < i; k++) mv_arrmem[nv + k] = mv_nil();\n"
+"    mv_arrmem[nv + i] = valv;\n"
+"    mv_arrmem[nv - 1] = mv_int(want);\n"
+"    mv_arrused += want + 1;\n"
+"    mv_arrmem[iv - 1].type = MV_ARR;   /* the forwarding head */\n"
+"    mv_arrmem[iv - 1].ival = nv;      /* fval SHARES this union slot: writing it\n"
+"                                         here would zero the head. */\n"
+"    mv_arrmem[iv - 1].sval = 0;\n"
+"    mv_arrmem[iv - 1].ptr  = 0;\n"
+"}\n"
 "/* THE ONE MIR-SIDE PRINT EXIT -- the second honest debt in this block.\n"
 " *\n"
 " * WHY IT EXISTS.  The shared preamble's nv_say(NV a) has exactly three\n"
@@ -1393,6 +1520,21 @@ static int op_regs(int op) {
        detector reads a prescan case as "this opcode reads an index", and
        OP_IN's third operand is a container register, not an index). */
     case OP_IN: return R1 | R2 | R3;
+    /* OP_INDEX_SET is the WRITE half of the index pair, and it does NOT share
+       OP_INDEX_GET's operand ORDER: the handler's first three lines are
+       `Value *obj = &R[ins.r1]; Value *idxv = &R[ins.r2]; Value *valv = &R[ins.r3];`
+       (src/vm/vm.c:3718-3720), i.e. r1 is the CONTAINER, r2 the SUBSCRIPT and r3
+       the VALUE, and bytecode.h:16 spells the same order (`index set:
+       reg[r1][r2] = reg[r3]`).  One trap sits inside that comment: it writes
+       `reg[r1] = ...`, which reads like a destination, but r1 is read, never
+       written -- there is no `R[ins.r1] =` anywhere in L_INDEX_SET, the write
+       lands in the container's items, and the compiler emits
+       `emit(OP_INDEX_SET, arr, idx, val)` (src/compiler/compiler.c:2371-2379)
+       with `arr` the register the container was compiled into.  So NOTHING
+       here is a destination and all three are still registers: the mask bounds
+       the container, the subscript and the value, and the generic bound loop
+       below is the only thing that does. */
+    case OP_INDEX_SET: return R1 | R2 | R3;
     case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD:
     case OP_EQ: case OP_NEQ: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
     case OP_AND: case OP_OR: return R1 | R2 | R3;
@@ -1870,6 +2012,23 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                (type_mismatch, rc 1), so refusing those here would hide answers
                that exist. */
             if (op == OP_INDEX_GET) continue;
+            /* OP_INDEX_SET is the same shape from the pool's point of view: r1
+               is a CONTAINER (bounded by the generic mask loop already run
+               above), r2 is a SUBSCRIPT VALUE and r3 is a VALUE -- no pool index,
+               no global, no function, no child id.  It is a plain `if` and not
+               a `case` on purpose: tools/aot_mir_cover.test.py's operand
+               detector reads every opcode `case` label in this function as a
+               claim that the opcode checks a pool/global/function/label index and
+               compares it two-way against the emitter, where this arm emits
+               OP_INDEX_SET with no index read at all -- a `case` here would be
+               reported `dead` and `agree=no`.  The runtime half is mv_arr_set's
+               by design: the interpreter answers a negative subscript by
+               throwing index_out_of_range, a non-numeric one with type_mismatch,
+               and a subscript past the end by GROWING the array, so none of the
+               three is statically refusable, and a constant subscript that
+               prescan_constant_subscripts has not invalidated is still
+               refused there (see its note). */
+            if (op == OP_INDEX_SET) continue;
             switch (op) {
             case OP_LOADK_FLOAT: {
                 int32_t ix = ir_insn_r2(in);
@@ -2272,6 +2431,13 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         return 0;
     }
     case OP_INDEX_GET: buf_fmt(b, "    v[%d] = mv_arr_get(v[%d], v[%d]);", r1, r2, r3); return 0;
+    /* OP_INDEX_SET is a CALL WITH NO ASSIGNMENT: the handler reads r1/r2/r3 and
+       writes into the container, so unlike every arm above this one leaves the
+       destination register alone (v[r1] already holds the container and must
+       still hold it afterwards -- an assignment here would overwrite the handle
+       with a void).  The order handed to mv_arr_set is the handler's, not
+       OP_INDEX_GET's: container, subscript, value. */
+    case OP_INDEX_SET: buf_fmt(b, "    mv_arr_set(v[%d], v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); return 0;
