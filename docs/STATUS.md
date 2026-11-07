@@ -5267,7 +5267,6 @@ gate: OK — every stage passed (20/20 stages ran).
 
 `match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 4 项 beyond 名单一致）；`tree-moved=yes` 是**预期**的：pin 的 `tree` 记的是「这一读数在哪个提交上取」，重记 pin 的那一笔在它后面，读数本身不动。这条用例的 `UNEXECUTED|ops=(none)` 在门禁里被**重算**了一次（cover 回归跑同一套用例），不是本节手工贴的。
 
-<<<<<<< HEAD
 ## §10.112 容器最小闭环第一步：`OP_NEW_ARRAY` 与只读的 `OP_INDEX_GET`（aot-mir-container，A 类第九项）
 
 前九节（§10.101–§10.109）走的都是**标量与字符串**。容器这条路今天不是「答错了」，是**整条路不存在**：MIR 路线里凡是建数组的程序都停在 `unsupported-opcode`，而它的邻居——参数栈——会先把翻译器绊倒。本节要的是**最小闭环的第一步**：`[1, 2, 3]` 建得出来、`a[1]` 按字节读得对、越界与非整数下标与解释器同分类。`INDEX_SET`、`NEW_DICT`、`NEW_SET` 一笔没碰，它们是下一节的事。
@@ -5435,7 +5434,6 @@ IR-MIR-VERDICT|FAIL|tree=85a466084a6e917d4e8edf62d5ff54df5bc7ebe2|accepted=86|re
 - `IR-AOT-MIR-PIN|match=no|tree-moved=yes` 在本分支上是正当的（pin 树 `2477ece` 早于本节代码），收尾时按仓库惯例 `--pin` 重钉。
 
 本节**没做**的事，逐条：`INDEX_SET`/`NEW_DICT`/`NEW_SET`、容器打印与容器相等、驻留复用、及时回收（非退出清扫）、环形引用检测、`REG_LIMIT` 之外的容器、以及 `IR-AOT-MIR-UNEXECUTED` 那一格。写了「做了」而没写「没做」的地方，上面逐条补上了。
-=======
 ## §10.113 零分配组的下一格：`OP_MIN`/`OP_MAX` 是**集合归约**，所以这一格补的是「值域上的 nil」（aot-mir，A 类第十项）
 
 ### 一、这笔债的来源与日期
@@ -5607,8 +5605,6 @@ IR-MIR-PROBLEM|mir_minmax_boundary: allocation count off -- got allocs=0|bytes=0
 11. **`unknown=30` 没动。** `of=67` 的分母没变，剩下 30 个未知 opcode 是别的债，本节不声称碰过。
 12. **引用形式**：本节的引用一律是 `路径:行号` 形（不是「第 N 行」的散文形），所以不需要树戳；若将来有人改成散文形，必须带 `[obs: cdd5a11]` 这样的树戳。
 
-@@PIN-GATE@@
->>>>>>> stream/mirval-minmax
 
 ## §10.114 容器写入的第一格：`OP_INDEX_SET` 写的是容器的槽，不是寄存器（aot-mir，A 类第十一项）
 
@@ -5739,7 +5735,7 @@ IR-MIR-VERDICT|FAIL|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|re
 6. **`say a`（打印容器）仍崩**：`a = [1, 2, 3]; a[1] = 9; say a` 在 MIR 路线 rc=134（`mv_say` 的 `MV_ARR` 臂 abort），解释器打印 `[1, 9, 3]`。这是 §10.112 已钉的**既有**边界（本节没碰 `mv_say`），也不作为本节判据——一条没人会修的红判据只会变成噪音。
 7. **链式下标写入只在里层已存在时可用**：`a = [[1, 2], [3]]; a[0][1] = 88` 两路都答 `88`；「里层是 nil 就新建」那一臂不可达——`a = [[1, 2]]; a[3][0] = 5` 先被常量下标 policy 拒掉（`why=index-out-of-range-constant`，解释器答 `5` 再 `2`）。
 8. **共享语料与 refuse 表一笔没动**：`tools/aot_cover.pin.json` 仍 `86` 条、`of=29`，`MIR_ONLY_REFUSE` 里 `mir_container_const_oob` 仍在册。
-9. **文档缺陷（不是本节造成的）**：`docs/STATUS.md:5270` / `:5438` / `:5611` 在基线 `f7a7dc0` 上就带着一段**未解决的冲突标记**（`0ff78e2` 引入，两边的 §10.112 与 §10.113 都留在文件里）。本节只把 §10.114 **追加在文件末尾**，不去替别人做冲突解。 [obs: 816f6cb]
+9. **文档缺陷（不是本节造成的，本节只顺手删掉四行标记）。** 基线 `f7a7dc0` 的 `docs/STATUS.md` 尾部带着一段未解决的冲突痕迹：`docs/STATUS.md:5270` / `:5438` / `:5611` 三处（`0ff78e2` 引入；两边 §10.112 与 §10.113 的正文都对，只是标记没删） [obs: 816f6cb]。主线随后用 `03bacff` 只删掉这四行，本分支做同样的删除——好让 §10.114 的追加处不再落在被删掉的行上；两边的正文一字未动，冲突解本身不是本节做的。
 
 ### 七、诚实边界：容器写入仍不是完整容器语义
 
