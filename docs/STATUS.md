@@ -5267,7 +5267,6 @@ gate: OK — every stage passed (20/20 stages ran).
 
 `match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 4 项 beyond 名单一致）；`tree-moved=yes` 是**预期**的：pin 的 `tree` 记的是「这一读数在哪个提交上取」，重记 pin 的那一笔在它后面，读数本身不动。这条用例的 `UNEXECUTED|ops=(none)` 在门禁里被**重算**了一次（cover 回归跑同一套用例），不是本节手工贴的。
 
-<<<<<<< HEAD
 ## §10.112 容器最小闭环第一步：`OP_NEW_ARRAY` 与只读的 `OP_INDEX_GET`（aot-mir-container，A 类第九项）
 
 前九节（§10.101–§10.109）走的都是**标量与字符串**。容器这条路今天不是「答错了」，是**整条路不存在**：MIR 路线里凡是建数组的程序都停在 `unsupported-opcode`，而它的邻居——参数栈——会先把翻译器绊倒。本节要的是**最小闭环的第一步**：`[1, 2, 3]` 建得出来、`a[1]` 按字节读得对、越界与非整数下标与解释器同分类。`INDEX_SET`、`NEW_DICT`、`NEW_SET` 一笔没碰，它们是下一节的事。
@@ -5435,7 +5434,6 @@ IR-MIR-VERDICT|FAIL|tree=85a466084a6e917d4e8edf62d5ff54df5bc7ebe2|accepted=86|re
 - `IR-AOT-MIR-PIN|match=no|tree-moved=yes` 在本分支上是正当的（pin 树 `2477ece` 早于本节代码），收尾时按仓库惯例 `--pin` 重钉。
 
 本节**没做**的事，逐条：`INDEX_SET`/`NEW_DICT`/`NEW_SET`、容器打印与容器相等、驻留复用、及时回收（非退出清扫）、环形引用检测、`REG_LIMIT` 之外的容器、以及 `IR-AOT-MIR-UNEXECUTED` 那一格。写了「做了」而没写「没做」的地方，上面逐条补上了。
-=======
 ## §10.113 零分配组的下一格：`OP_MIN`/`OP_MAX` 是**集合归约**，所以这一格补的是「值域上的 nil」（aot-mir，A 类第十项）
 
 ### 一、这笔债的来源与日期
@@ -5607,5 +5605,3 @@ IR-MIR-PROBLEM|mir_minmax_boundary: allocation count off -- got allocs=0|bytes=0
 11. **`unknown=30` 没动。** `of=67` 的分母没变，剩下 30 个未知 opcode 是别的债，本节不声称碰过。
 12. **引用形式**：本节的引用一律是 `路径:行号` 形（不是「第 N 行」的散文形），所以不需要树戳；若将来有人改成散文形，必须带 `[obs: cdd5a11]` 这样的树戳。
 
-@@PIN-GATE@@
->>>>>>> stream/mirval-minmax
