@@ -498,6 +498,32 @@ MIR_ONLY = [
      'say u\nsay u == v\nsay u != v\n'
      'say "z" + u + ""\nsay u + u + u\n'
      'say a\nsay b\n'),
+    # OP_OR, EXECUTED rather than merely emitted.  The corpus has this opcode in
+    # three programmes' lowered streams and not one interpreter run of the
+    # corpus ever executes it: `X or Y` short-circuits when X is true, so the
+    # OP_OR itself is jumped over.  That is a CORPUS gap, not a correctness
+    # gap -- `a or b` compiles differently depending on which side is false --
+    # and the reading that names the gap is IR-AOT-MIR-UNEXECUTED.
+    #
+    # So every line here that is meant to run OP_OR has a FALSE left operand:
+    #   `a or b`    false or true  -> the OP_OR runs and yields the right side.
+    #   `a or c`    false or false -> the OP_OR runs and yields false: a print
+    #               arm that answered a constant `true` would be caught here and
+    #               not by the line above.
+    #   `a or a`    the same register twice through the OP_OR.
+    #   `b or a`    the CONTROL: a TRUE left operand, so the OP_OR is JUMPED
+    #               OVER.  Its answer is still compared, which is what makes the
+    #               case able to tell "short-circuits" apart from "always runs
+    #               the OR" -- changing either shape changes the bytes.
+    #   `a and b` / `b and a`  the mirror shape for OP_AND (and short-circuits on
+    #               a false left, so only `b and a` reaches the AND).  These two
+    #               lines are not what this case is for; they are here so the
+    #               short-circuit rule is measured in both directions in one
+    #               program instead of asserted in a comment.
+    ("mir_short_circuit_or",
+     'a = false\nb = true\nc = false\n'
+     'say a or b\nsay a or c\nsay a or a\nsay b or a\n'
+     'say a and b\nsay b and a\n'),
 ]
 
 

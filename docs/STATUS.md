@@ -4998,3 +4998,84 @@ gate: OK — every stage passed (20/20 stages ran).
 9. **`container_nregs` 的放宽是保守的。** 它按「最后一个操作数」放大寄存器数组，只放大不缩小，所以别的容器不会因此缩水；但它是一个共享函数，理论上会改变其他容器（`OP_CONCAT` 与普通 opcode 共存时）的数组尺寸 —— 只变大，不影响输出。
 10. **分配读数只对这一条用例写死。** `ALLOCS_EXPECT` 里只有 `mir_add_string_concat` 与 `mir_concat_chain` 两个条目，其余 MIR-only 用例仍按 `(0, 0)` 要求「不分配也不漏」，本节没有放宽那条默认。
 11. **本用例不覆盖 OOM、不覆盖超过 `SIZE_MAX / 2` 的链长、不覆盖 count <= 0 与 count == 1 的 `OP_CONCAT`。** 这三类要么不可测（OOM 与超长），要么编译器今天不产（短链）。
+
+## §10.110 短路：左真时 `OP_OR` 根本不执行，所以补的是语料而不是阈值（aot-mir，B 类）
+
+### 一、这笔债的来源与日期
+
+**来源**：`IR-AOT-MIR-UNEXECUTED` 这一行在 d820953 上报的是 `ops=(OP_OR)`。它的含义**不是** MIR 路线不会发射 `OP_OR`（`OP_OR` 早就在 lowering 表里，`handles` 里有它、`emittable=yes`），而是：共享语料里有 3 个程序的降低流里出现 `OP_OR`，可**解释器跑共享语料时一次也没执行过它** —— 因为 `X or Y` 在 X 为真时短路跳过 OR 本身，而那 3 个程序里恰好都是左真。
+
+**这不是正确性缺口，是语料缺口。** 自造 `a or b` / `b or a` / `a and b` 三例，两侧输出 `true/true/false` 逐字节一致；也就是说 `OP_OR` 的 MIR 语义**今天就是对的**，缺的是一次「让它真的被执行」的读数。所以这一格不许改语料程序绕过、不许调阈值，只许补一条**真执行**它的 MIR_ONLY 用例。日期 **2026-11-06**。
+
+### 二、缺口原文（补语料之前，85bebc4 上）
+
+```
+IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-that-no-interpreter-run-of-the-corpus-executed|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+```
+
+`emittable=yes` 在同一行上，所以这一行自己就说清了缺口在哪一侧：不是发射器，是「没有一次执行」。
+
+### 三、判据先立：让 `OP_OR` 真的跑一次
+
+新用例 `mir_short_circuit_or`（`tools/aot_mir.test.py` 的 MIR_ONLY 列表，照现有写法只比 stdout 字节）：
+
+```
+a = false
+b = true
+c = false
+say a or b     # false or true  -> OP_OR 执行，答右侧
+say a or c     # false or false -> OP_OR 执行，答 false（答恒 true 的臂在这里红）
+say a or a     # 同一寄存器两次过 OP_OR
+say b or a     # 对照：左真，OP_OR 被跳过（原子仍答 true）
+say a and b    # and 的镜像：左假，AND 被跳过
+say b and a    # and 的镜像：左真，AND 执行
+```
+
+**左操作数为假的三行才是本节的目的**：`or` 只在左假时才走 `OP_OR`。`b or a` 是刻意留的**对照行**：它证明短路仍然短路，把 `or` 实现成「恒执行 OR」会在别处露馅（见第七节第 3 条：在本仓库今天能测的范围内，这一行的保护力有限，那是本节要写下来的边界之一）。
+
+这一条用例落在 `ALLOCS_EXPECT` 的默认 `(0, 0)` 上：它一个字符串都不碰，所以既不分配也不许漏。
+
+### 四、这不是代码改动
+
+`src/` 下**一个字没改**：`OP_OR` 早就在 `op_regs` 与 `emit_one` 里，`OP_JUMP_IF_FALSE`／`OP_JUMP_IF_TRUE` 也早就在。补的是**语料**，也就是「谁去执行它」这件事。共享语料那 3 个 emit `OP_OR` 的程序**一个字节没动**，`tools/aot_cover.pin.json` 与任何阈值也没动。
+
+### 五、机制证据（非对称，先印被计数的对象）
+
+`INIMERSE_HOT_OPS=1` 的解释器热普查，两个程序只差左操作数：
+
+```
+a = false / b = true / say a or b     ->  OP-HOT|op=OP_OR|interp=1
+a = false / b = true / say b or a     ->  grep -c OP_OR 该日志 = 0（短路跳开）
+```
+
+同一条 `OP_OR`、同一个 `say`，只有左边真假不同：左假执行 **1 次**，左真执行 **0 次**。这就是「左操作数为 false 时才走 `OP_OR`」的实测量，不是注释里的断言。
+
+### 六、反向判据（非对称注入一次）
+
+**注入处先印原件**：用例第一行 `'a = false\nb = true\nc = false\n'`。
+
+**注入 I2（`INJECTED-TRUE-LEFT`）**：把它改成 `a = true`，于是每一条 `or` 都变成左真、`OP_OR` 又被短路跳开，而**答案仍然由解释器自己定**（判据不与解释器对账，只比字节，所以 stdout 不会红）。
+
+**注入后先印被计数的对象**：`grep -c INJECTED-TRUE-LEFT` = `2`。`COVER_EXIT=0`（注意：这一行不是退出码判据），读数红原文：
+
+```
+IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-that-no-interpreter-run-of-the-corpus-executed|...
+IR-AOT-MIR|accepted=100|refused=0|same-as-interpreter=100|of=29|emittable=33|of-ops=67|not-emittable=34|corpus=inline-cases:86|mir-only-cases:14|beyond-ast-denominator=3
+IR-AOT-MIR-VERDICT|PASS|...|accepted=100|same-as-interpreter=100|...
+```
+
+这次注入是本节最有信息量的一次读数：`accepted=100|same-as-interpreter=100` **一点没变**，`beyond-ast-denominator` 从 4 掉回 3，`UNEXECUTED` 从 `(none)` 回到 `(OP_OR)`。**正确性没动，只有「执行性」这本账动了** —— 这正是「语料缺口，不是正确性缺口」的可测证明。
+
+**还原证据**：拷回注入前的测试文件，`grep -c INJECTED` = `0`（无匹配，rc=1），用例首行回到 `a = false`，重跑读数 `IR-AOT-MIR-UNEXECUTED|ops=(none)`、`beyond-ast-denominator=4`。
+
+### 七、诚实边界
+
+1. **`UNEXECUTED` 读的是「共享语料的降低流里出现过、而解释器跑共享语料时从未执行」的 opcode。** 它不声称 MIR 生成的代码也执行了它 —— 那是另一本账（`beyond-ast-denominator`），本节只是让这本账多一条。
+2. **短路的方向是固定的**：`or` 只在左假执行 `OP_OR`，`and` 只在左真执行 `OP_AND`。所以补执行覆盖必须补**左假**的 `or`（以及左真的 `and`），写一个 `a or b` 但 `a` 为真是没用的。
+3. **字节判据对「MIR 是否短路」是盲的。** 这一条要说明白：`say b or a` 这行的输出在「MIR 短路」与「MIR 恒执行 OR 但值算对」两种实现下**完全相同**，而解释器热普查只数解释器（`OP-HOT` 的 `why` 字段明说 `aot=na`：生成 C 把每个 op 展平成内联代码，在那里计数是在数一个被改过的对象）。所以本节的判据补的是**解释器侧的语料覆盖**；「MIR 生成的代码是否真的跳过了 OR」今天没有仪器能测，也不声称测了。
+4. **不碰阈值、不碰语料、不碰 pin 的语义**。`tools/aot_cover.pin.json` 未改，`ALLOCS_DEFAULT` 未改，共享语料未改；只新增了 MIR_ONLY 一条用例。
+5. **`beyond-ast-denominator` 从 3 到 4 是这条用例带来的，不是 MIR 路线新发射了什么。** `OP_OR` 一直在 `handles` 里；变的只是「有人跑过它」。
+6. **`accepted` 从 99 到 100 只是多了一条 MIR-only 用例**；共享语料仍是 86 条，`of`/`covered` 仍是 29/29。
+7. **不覆盖**：`??`、嵌套 `a or b or c`、`or` 的结果再喂给 `or`、常量折叠形态（`true or b`）、以及 `and`/`or` 与字符串真值的组合。这些形态今天没有判据。
+8. **热普查是 opt-in 环境变量**（`INIMERSE_HOT_OPS=1`），gate 里的 cover 回归用同一套，所以 `ops=(none)` 这个读数在门禁里也被重算，不是本节手工贴上去的。
+9. **`say a or b` 打印的是布尔原样**（`true`/`false`），不经过字符串化路径；所以这条用例不覆盖字符串化。
