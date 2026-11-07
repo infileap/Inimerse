@@ -441,6 +441,95 @@ static const char *const kMirValBlock =
 "    }\n"
 "    return mv_from_nv(nv_add(mv_as_nv(a), mv_as_nv(b)));\n"
 "}\n"
+"/* THE CHAIN FOLD -- one buffer for a whole `a + b + c + ...`, OP_CONCAT.\n"
+" *\n"
+" * WHY IT EXISTS.  `a + b + c` is compiled to ONE OP_CONCAT (the compiler\n"
+" * flattens a 3+-operand string chain; see its emit site), not to\n"
+" * (a + b) + c, and the interpreter answers it with ONE malloc: its L_CONCAT\n"
+" * branch sums every segment's length, allocates total + 1 once and memcpys the\n"
+" * segments in order.  Folding here by calling mv_str_concat N-1 times would\n"
+" * print the same BYTES while asking the heap for N-1 blocks -- the shape this\n"
+" * cell exists to remove -- so the all-string path below is the ONLY place a\n"
+" * chain allocates, and the exact (allocs, bytes) reading is what makes the\n"
+" * difference visible.\n"
+" *\n"
+" * WHAT IT ADDS.  The two shapes the interpreter's own branch has, in its own\n"
+" * order, so a 2-term `+` and a 3-term `+` cannot answer differently:\n"
+" *   - count <= 0 -> nil, count == 1 -> the operand itself (value_assign);\n"
+" *   - all operands strings -> sum, ONE mv_alloc, per-segment memcpy, result\n"
+" *     marked heap-owned exactly as every concat result is.\n"
+" * The overflow check is the CHAIN's, not the pair's: the predicate is copied\n"
+" * from src/vm/vm.c:3351 and evaluated against the RUNNING total per segment,\n"
+" * so a chain is checked against the whole sum and not only one neighbour.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER -- each a decision:\n"
+" *   - a chain that is not all strings.  The interpreter's general path folds\n"
+" *     pairwise through the L_ADD rule, which STRINGIFIES a non-string operand\n"
+" *     (and unions two sets).  This route has no stringify exit, so the fold is\n"
+" *     delegated to mv_add and stops where mv_add stops: a mixed pair aborts\n"
+" *     (the boundary the pair arm already owns), never a made-up answer.  This\n"
+" *     helper is therefore a FAST PATH over the same fold semantics, not a\n"
+" *     second semantic.\n"
+" *   - an overflow, an allocation failure, or a NULL string payload.  The\n"
+" *     interpreter answers each with an empty string (:3351 falls back to the\n"
+" *     pairwise path, :3356 is strdup(\"\"), the lengths read `sval ? sval : \"\"`);\n"
+" *     this route ABORTS.  For OOM and for a NULL payload that is the divergence\n"
+" *     already stated above mv_str_concat (an OOM fallback answers `s + t` with\n"
+" *     \"\" while the answer is not \"\", and strdup is itself a malloc).  For the\n"
+" *     overflow the fallback cannot help either: the sum does not fit, so the\n"
+" *     pairwise path it falls back to cannot build the buffer; abort is the\n"
+" *     honest stop.\n"
+" *   - an intermediate buffer returned to the registry: nothing is, so a mixed\n"
+" *     chain retains one block per step until exit (the registry's accounting\n"
+" *     debt, not a new one).\n"
+" *   - the interpreter's VAL_ARRAY/VAL_DICT trap in the same branch: it has no\n"
+" *     operand here, because no opcode this route emits builds an array or a\n"
+" *     dict and MirVal has no tag for one.\n"
+" *   - the interpreter's VAL_SET union arm in the general path: same reason\n"
+" *     (MirVal has no set tag, and the preset set global is already refused).\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case mir_concat_chain\n"
+" * compares BYTES against the interpreter over SIX chains (three, eleven, four,\n"
+" * three, resident and heap-owned segments mixed, the empty string in the\n"
+" * middle, one owned buffer three times), and its ALLOCS_EXPECT entry demands an\n"
+" * exact (allocs, bytes) pair -- one block per all-string chain, so a pairwise\n"
+" * fold is red on the NUMBER alone even when every printed byte is right. */\n"
+"static inline MirVal mv_concat_n(MirVal *ops, size_t n) {\n"
+"    if (n == 0) return mv_nil();             /* count <= 0 -> VAL_NIL */\n"
+"    if (n == 1) return ops[0];               /* value_assign, L_CONCAT */\n"
+"    int all_str = 1;\n"
+"    size_t total = 0;\n"
+"    size_t i;\n"
+"    for (i = 0; i < n; i++) {\n"
+"        if (ops[i].type != MV_STR) { all_str = 0; break; }   /* -> mv_add fold */\n"
+"        if (!ops[i].sval) abort();          /* impossible state; see the note */\n"
+"        size_t l = strlen(ops[i].sval);\n"
+"        if (total > (size_t)-1 - l - 1) abort();  /* vm.c:3351, summed over the\n"
+"                                                     CHAIN, not over one pair */\n"
+"        total += l;\n"
+"    }\n"
+"    if (all_str) {\n"
+"        char *nb = mv_alloc(total + 1);     /* ONE block for the whole chain */\n"
+"        size_t off = 0;\n"
+"        for (i = 0; i < n; i++) {\n"
+"            size_t l = strlen(ops[i].sval);\n"
+"            memcpy(nb + off, ops[i].sval, l);\n"
+"            off += l;\n"
+"        }\n"
+"        nb[total] = 0;\n"
+"        MirVal r;\n"
+"        r.type = MV_STR;\n"
+"        r.ival = 0;      /* heap-owned: the marker mv_str_concat also sets */\n"
+"        r.sval = nb;\n"
+"        r.ptr  = 0;\n"
+"        return r;\n"
+"    }\n"
+"    {   /* not all strings: the interpreter's left-assoc fold, delegated */\n"
+"        MirVal acc = ops[0];\n"
+"        for (i = 1; i < n; i++) acc = mv_add(acc, ops[i]);\n"
+"        return acc;\n"
+"    }\n"
+"}\n"
 "static inline MirVal mv_sub(MirVal a, MirVal b) { return mv_from_nv(nv_sub(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_mul(MirVal a, MirVal b) { return mv_from_nv(nv_mul(mv_as_nv(a), mv_as_nv(b))); }\n"
 "static inline MirVal mv_div(MirVal a, MirVal b) { return mv_from_nv(nv_div(mv_as_nv(a), mv_as_nv(b))); }\n"
@@ -902,6 +991,17 @@ static int op_regs(int op) {
     case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD:
     case OP_EQ: case OP_NEQ: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
     case OP_AND: case OP_OR: return R1 | R2 | R3;
+    case OP_CONCAT: return R1 | R2;   /* r3 is an OPERAND COUNT, not a register:
+                                         vm.c L_CONCAT reads `int first = ins.r2,
+                                         count = ins.r3`, so the operands are the
+                                         contiguous registers r2..r2+r3-1.  The
+                                         count is deliberately OUT of this mask,
+                                         or the generic bound loop below would
+                                         check the COUNT against REG_LIMIT while
+                                         the LAST operand went unchecked; that
+                                         bound is prescan's case and
+                                         container_nregs' widening, one place
+                                         each. */
     case OP_NEG: case OP_NOT: return R1 | R2;
     case OP_IS_NIL: return R1 | R2;   /* reads r2, writes the BOOL in r1 */
     case OP_LOAD_GLOBAL: return R1;
@@ -1133,6 +1233,22 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 return bad("container=%d insn=%d op=%s register r2=%d out of range", f, i, op_name(op), in->a);
             if ((mask & R3) && (in->b < 0 || in->b >= REG_LIMIT))
                 return bad("container=%d insn=%d op=%s register r3=%d out of range", f, i, op_name(op), in->b);
+            /* OP_CONCAT is checked here, OUTSIDE the switch, on purpose: its
+               third operand is an OPERAND COUNT and not a register, so it is not
+               one of the opcodes this switch exists to bound (a pool / global /
+               function / label index).  The operands instrument reads this
+               switch as "the opcodes that read an index", and spelling a count
+               check as a case label there would make it report a dead case for
+               an opcode that never reads an index. */
+            if (op == OP_CONCAT) {
+                int nops = in->b;
+                if (nops < 0)
+                    return bad("container=%d insn=%d op=%s operand count %d is negative",
+                               f, i, op_name(op), nops);
+                if (nops > 0 && in->a + nops - 1 >= REG_LIMIT)
+                    return bad("container=%d insn=%d op=%s last operand register %d out of range "
+                               "(first=%d count=%d)", f, i, op_name(op), in->a + nops - 1, in->a, nops);
+            }
             switch (op) {
             case OP_LOADK_FLOAT: {
                 int32_t ix = ir_insn_r2(in);
@@ -1260,6 +1376,14 @@ static int container_nregs(const IrFunc *fn, int argc) {
         if (mask < 0) continue;
         if ((mask & R1) && in->dst > maxr) maxr = in->dst;
         if ((mask & R2) && in->a > maxr) maxr = in->a;
+        /* OP_CONCAT's r3 is a count, so its operand span reaches past r2: the
+           generated line reads values from `&v[r2]` upward.  Without this, a
+           container whose highest register is a chain's LAST operand would size
+           its array from the first one, and the copy would walk off the end. */
+        if (in->op == OP_CONCAT && (mask & R2)) {
+            int last = in->a + (in->b > 0 ? in->b - 1 : 0);
+            if (last > maxr) maxr = last;
+        }
         if ((mask & R3) && in->b > maxr) maxr = in->b;
     }
     int n = maxr + 1;
@@ -1297,6 +1421,22 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         return 0;
     }
     case OP_ADD:          buf_fmt(b, "    v[%d] = mv_add(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_CONCAT: {
+        /* A chain: r2 is the first operand and r3 the count, NOT a third
+           register (see op_regs).  `&v[r2]` plus the count go to mv_concat_n,
+           which owns the interpreter's L_CONCAT semantics -- one allocation for
+           an all-string chain.  Emitting `v[r1] = mv_add(v[r2], v[r2+1])` in a
+           loop here would be exactly the N-1 concatenations this cell exists to
+           delete, and the ALLOCS reading would be the only thing that noticed.
+           r1 is written ONCE, after the fold, as value_set(&R[rres], ...) writes
+           it there, so a chain whose destination aliases one of its own operands
+           (`s + s + s` into v[first]) is safe: every operand is read before the
+           assignment. */
+        if (r3 < 0) return bad("container=%d insn=%d OP_CONCAT with negative operand count %d",
+                               c->id, i, r3);
+        buf_fmt(b, "    v[%d] = mv_concat_n(&v[%d], %d);", r1, r2, r3);
+        return 0;
+    }
     case OP_SUB:          buf_fmt(b, "    v[%d] = mv_sub(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_MUL:          buf_fmt(b, "    v[%d] = mv_mul(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_DIV:          buf_fmt(b, "    v[%d] = mv_div(v[%d], v[%d]);", r1, r2, r3); return 0;

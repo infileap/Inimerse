@@ -5012,3 +5012,257 @@ IR-AOT-MIR-VERDICT|PASS|tree=d53759393bc1304d2f9bdb640c60629851f7a574|accepted=1
 - 常量在 **`OP_EQK` 的宽池形状**（池下标 ≥ 32767，走 `IR_F_WIDE_B`）：代码路径上 `.scratch` 里量了 5001 这一档（不用宽字段），32767 以上没有实际量过，注释里也没声称过——**没有测量就不写结论**。
 
 容器、异常、并发、`OP_CONCAT`：**一笔没碰**。
+## §10.110 链式拼接：一条链只分配一次，而不是 N-1 次（aot-mir-value，A 类第八项）
+
+### 一、这笔债的来源与日期
+
+**来源**：解释器对 `a + b + c` 不是做两次 `+`，而是**一条** `OP_CONCAT` —— `src/vm/vm.c` 的 `L_CONCAT` 分支读 `int first = ins.r2, count = ins.r3`，把所有操作数当**连续寄存器** `R[first .. first+count-1]`，全串时先累加总长、**一次** `malloc(total + 1)`、再逐段 `memcpy`。编译器在 3 个及以上操作数、且操作数全是字面量／变量时把链折成这一条（叠成 `OP_CONCAT` 而不是 N-1 条 `OP_ADD`）。可这条 MIR 路线的 lowering 表（`src/compilation/aot_mir.c` 的 `op_regs`）**没有登记它**，`emit_one` 也没有分支，于是语料里 6 条链整条拒绝。
+
+§10.108 末尾第 8 条把这一格**点名留在门外**（原文：「`OP_CONCAT` 没碰。链式拼接（一次为整条链分配）是另一格，本节判据与本节任何一句话都不声称覆盖它」）。本节就是那一格，日期 **2026-11-06**。
+
+### 二、复现（修之前的原始读数，2026-11-06）
+
+`a = "aa"` / `b = "bb"` / `c = "cc"` / `say a + b + c`，`translate` 在 d820953 的树上：
+
+```
+IR-MIR-NOT-YET|op=OP_CONCAT|n=1
+IR-MIR-REFUSED|why=unsupported-opcode
+```
+
+放进判据（`mir_concat_chain`，见下）之后，整条用例的红原文：
+
+```
+IR-MIR-MIR-ONLY|case=mir_concat_chain|mir=refused|why=unsupported-opcode
+IR-MIR-PROBLEM|mir_concat_chain: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_CONCAT:6)
+IR-MIR-VERDICT|FAIL|tree=d820953a38279670600d23213c4cfa55a15ff435|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`OP_CONCAT:6` 就是用例里那六条链：三串、十一操作数、`a + b + "" + c`、`u = a + b + c`、`"z" + u + ""`、`u + u + u`。
+
+### 三、判据先立：链的「一次分配」正是唯一看得见的差别
+
+新用例 `mir_concat_chain` 只比 stdout 字节（照现有 MIR_ONLY 写法），六条链各管一件事：三串链是平面情形；**十一操作数**的长链（中间夹五个驻留字面量）是长度足够让「逐对折叠」的原形露出来的情形；`a + b + "" + c` 把空串放在链**中间**（0 长度段照样是操作数，短路的实现在这里会拿错缓冲区）；`u = a + b + c` 后 `say u` 与 `u == v` / `u != v` 让链结果活成**变量**并参与比较（不是只有 `say` 能读的临时值）；`"z" + u + ""` 让**堆拥有的链结果**继续当中段操作数；`u + u + u` 同一块缓冲区三次（原地追加的实现会在这里把 `u` 弄坏）；最后 `say a` / `say b` 证明原串没被改。
+
+**判据的牙齿是分配读数，不是字节。** 字节判据对「折叠」与「不折叠」**完全瞎**：逐对折叠打印的字节逐字相同。所以 `ALLOCS_EXPECT` 里 `mir_concat_chain` 被逐字写死成 **(6, 66)** —— 六条链各一块，而不是 `(3-1)+(11-1)+(4-1)+(3-1)+(3-1)+(3-1) = 21` 块；66 字节是六条链各自的 `总长 + 1` 之和：`(2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1) + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19`。这两个数**先量后写**：一次折叠的实测是 `allocs=6|freed=6|live=0|bytes=66`（第六节），逐对折叠的实测是 `allocs=21|bytes=199`（第五节注入 I1），两者 stdout 相同 —— 21 与 199 就是「折叠」与「不折叠」的可测差别。
+
+### 四、实现
+
+**lowering 表**：`OP_CONCAT` 登记为 `R1 | R2`。`r3` 在这张表里是**负载而不是寄存器**（`L_CONCAT` 读它是 `count`），所以它**故意不进 mask**：通用边界循环核对的是「每个被 mask 的字段是一个寄存器」，把 count 当寄存器核对会把 `REG_LIMIT` 比错，而真正必须落在界内的**最后一个操作数** `r2 + count - 1` 反而没人查。那个界在**两个地方**各写一次：`prescan` 里一段**写在 switch 之外**的 `if (op == OP_CONCAT)`（`count` 非负且 `r2 + count - 1 < REG_LIMIT`，负 count 直接拒绝而不是转交给发射器），以及 `container_nregs` 按 `r2 + count - 1` 放宽寄存器数组的尺寸 —— 只按 `r2` 算，寄存器最高的那条链会让 `&v[r2]` 之后的拷贝走出数组。
+
+**发射**：一条链发一行，`v[r1] = mv_concat_n(&v[r2], count);`。`r1` 只在折叠**之后**写一次，位置与解释器的 `value_set(&R[rres], …)` 相同，所以目的寄存器与自己的操作数别名（`s + s + s` 落到 `v[first]`）是安全的：所有操作数先被读，再写。
+
+**运行时的链式折叠**（生成 TU 的 `kMirValBlock` 内，追加、不拼接）：
+
+```c
+static inline MirVal mv_concat_n(MirVal *ops, size_t n) {
+    if (n == 0) return mv_nil();             /* count <= 0 -> VAL_NIL */
+    if (n == 1) return ops[0];               /* value_assign, L_CONCAT */
+    int all_str = 1;
+    size_t total = 0;
+    size_t i;
+    for (i = 0; i < n; i++) {
+        if (ops[i].type != MV_STR) { all_str = 0; break; }   /* -> mv_add fold */
+        if (!ops[i].sval) abort();          /* impossible state */
+        size_t l = strlen(ops[i].sval);
+        if (total > (size_t)-1 - l - 1) abort();  /* :3351, summed over the CHAIN */
+        total += l;
+    }
+    if (all_str) {
+        char *nb = mv_alloc(total + 1);     /* ONE block for the whole chain */
+        size_t off = 0;
+        for (i = 0; i < n; i++) {
+            size_t l = strlen(ops[i].sval);
+            memcpy(nb + off, ops[i].sval, l);
+            off += l;
+        }
+        nb[total] = 0;
+        MirVal r;
+        r.type = MV_STR;
+        r.ival = 0;      /* heap-owned, the same marker mv_str_concat sets */
+        r.sval = nb;
+        r.ptr  = 0;
+        return r;
+    }
+    {   /* not all strings: the interpreter's left-assoc fold, delegated */
+        MirVal acc = ops[0];
+        for (i = 1; i < n; i++) acc = mv_add(acc, ops[i]);
+        return acc;
+    }
+}
+```
+
+**照抄的三点，与一处故意的分歧**：
+
+- 溢出检查**抄链式的、不抄两操作数的**。`L_CONCAT` 的 `:3351` 是 `if (total > (size_t)-1 - l - 1)`，其中 `total` 是**运行中的总长**、`l` 是当前段。本节把它逐字搬进链循环，所以一条 11 段链是拿整条和核对的，不是只核对相邻两段（两操作数版本只能看见一对，链长到三段以上时它看不见总和）。
+- **OOM 保持 abort**，与 §10.108 的 `mv_str_concat` 臂一致。解释器在 `:3356` 是 `nb = strdup("")`，那是**静默错答**（`s + t` 答成 `""`）且 strdup 自己也是 malloc，本路线不抄；分歧是故意的，写在注释里。
+- **空串不短路**：0 长度段照样是操作数、照样计入 `total + 1` 的那一个字节。`a + b + "" + c` 的 66 字节里就含它。
+
+**不碰 §10.108 的 `OP_ADD` 串臂**：`mv_str_concat` / `mv_add` 一个字没改，本节只**调用** `mv_add`（在非全串链回退时），并新增 `mv_concat_n`。混合类型的链因此落在**已经写下的边界**上：解释器的通用路径对非串操作数按 `L_ADD` 规则**串化**、对两个 set 做并集，本路线两者都没有，所以回退到 `mv_add` 就停在 `mv_add` 停的地方（混合对 abort），不会新造第二种语义。
+
+**为什么那段不写成 switch 的 case**（这是本节唯一一处由仪器逼出来的形状）：`tools/aot_mir_cover.test.py` 的 operands 读数把 `prescan` 里的 `case OP_X:` 标签读成「这个 opcode 核对了一个**索引**」，再和 `emit_one` 里真正读池／全局／函数／标签的那几个 case 对账。把 `OP_CONCAT` 写成 case 标签，它就会被记成「核对了一个索引却从不发射一个索引」，读数红成 `dead=(OP_CONCAT)`、`agree=no`、`IR-AOT-MIR-PROBLEM|prescan checks OP_CONCAT, which the emitter does not index`。那段核对的确实不是索引而是**计数**，所以它按它本来的样子写成 switch 外的 `if`；读数随之回到 `prescanned=9|checked=8|dead=(none)|agree=yes`。改的是**代码的形状**，不是仪器的判据。
+
+### 五、反向判据（非对称，注入一次）
+
+**注入处先印原件**（`src/compilation/aot_mir.c`，单次分配那一行）：
+
+```
+"        char *nb = mv_alloc(total + 1);     /* ONE block for the whole chain */\n"
+```
+
+**注入 I1**：在 `if (all_str) {` 之前插入逐对折叠并直接 return，绕开那条单次分配（这就是本节要删掉的形状本身）：
+
+```
+"    /* INJECTED-NMINUS1 fold: the N-1 shape the criterion exists to catch */\n"
+"        return acc; }                 /* INJECTED-NMINUS1 end */\n"
+```
+
+**注入后先印被计数的对象**：`grep -c INJECTED src/compilation/aot_mir.c` = `2`。`BUILD_EXIT=0`、`MIR_EXIT=1`，判据红原文：
+
+```
+IR-MIR-ALLOCS|case=mir_concat_chain|reported=yes|allocs=21|freed=21|live=0|bytes=199|expect-allocs=6|expect-bytes=66|ok=no
+IR-MIR-MIR-ONLY|case=mir_concat_chain|mir=accepted|cc=ok|exec=same|rc=0|bytes=83|stdout-hex=6161626263630a61617c62627c63637c64647c65657c66660a6161626263630a6161626263630a747275650a66616c73650a7a6161626263630a6161626263636161626263636161626263630a61610a62620a
+IR-MIR-PROBLEM|mir_concat_chain: allocation count off -- got allocs=21|bytes=199, the criterion demands allocs=6|bytes=66 (a site that mallocs without registering reports 0|0)
+IR-MIR-VERDICT|FAIL|tree=d820953a38279670600d23213c4cfa55a15ff435|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+这是本节最重要的一次读数：`exec=same`、`stdout-hex` 与实现后**逐字相同**（83 字节一条不差），而分配数从 6 变成 21、字节从 66 变成 199。**判据按字节比是绿的，只有分配读数红** —— 这正是「折叠」与「不折叠」的可测差别，也是为什么这一格的判据必须有牙齿而不能只比 stdout。
+
+**还原证据**：把注入前的源文件拷回，`grep -c INJECTED src/compilation/aot_mir.c` = `0`（无匹配），`grep -n "ONE block for the whole chain"` 回到原件那一行，`BUILD_EXIT=0`，重跑判据 `allocs=6|freed=6|live=0|bytes=66|ok=yes`、`IR-MIR-VERDICT|PASS`、`IR-MIR-PROBLEM` 计数 0。
+
+### 六、读数（本树上测得）
+
+`python3 tools/aot_mir.test.py --build build`，`MIR_EXIT=0`：
+
+```
+IR-MIR-ALLOCS|case=mir_concat_chain|reported=yes|allocs=6|freed=6|live=0|bytes=66|expect-allocs=6|expect-bytes=66|ok=yes
+IR-MIR-MIR-ONLY|case=mir_concat_chain|mir=accepted|cc=ok|exec=same|rc=0|bytes=83|stdout-hex=6161626263630a61617c62627c63637c64647c65657c66660a6161626263630a6161626263630a747275650a66616c73650a7a6161626263630a6161626263636161626263636161626263630a61610a62620a
+IR-MIR-VERDICT|PASS|tree=d820953a38279670600d23213c4cfa55a15ff435|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`python3 tools/aot_mir_cover.test.py --build build`，`COVER_EXIT=0`，`IR-AOT-MIR-VERDICT|PASS`：
+
+```
+IR-AOT-MIR|accepted=99|refused=0|same-as-interpreter=99|of=29|emittable=33|of-ops=67|not-emittable=34|corpus=inline-cases:86|mir-only-cases:13|beyond-ast-denominator=3
+IR-AOT-MIR-OPERANDS|indexed=8|prescanned=9|checked=8|missing=(none)|dead=(none)|detector-saw=yes|agree=yes
+IR-AOT-MIR-LOWERING|handles=33|of=67|unknown=34|table=33|emitter=33|reported=33|agree=yes
+IR-AOT-MIR-BEYOND|ops=(OP_CONCAT,OP_IS_NIL,OP_LOADK_STRING)|...
+```
+
+`handles` 从 32 到 33，`accepted` 从 98 到 99、`same-as-interpreter` 从 98 到 99，`mir-only-cases` 从 12 到 13：三个数各自 +1，正好是新用例一条、OP_CONCAT 一格。`beyond-ast-denominator` 从 2 到 3，多出来的正是 `OP_CONCAT`（MIR-only 用例执行了它、AST 语料从没执行过它）——pin 必须为此重记，那是下一笔的事。
+
+`python3 tools/check_line_refs.py` 与 `python3 tools/check_word_refs.py` 都是 `RC=0`：`CITATIONS|base=1199|now=1199|removed=0|added=0|tree=d820953`；`pins -- explicit delta +12 (expect +12), unanchored delta -3 (ceiling +1)`；`readings -- explicit 185 (base 173), unanchored 559 (base 562), mis-labelled 0`。本节没有新增任何 `路径:行号` 形式的显式引用（源码行只写裸 `:NNNN` 加代码原文），所以 explicit 与 unanchored 两个棘轮一格没动。
+
+**重记 pin 与门禁**（下一笔提交 85bebc4 上测得，`GATE_EXIT=0`）：
+
+```
+IR-AOT-MIR-PIN|tree=59c6045b5b3060bf8ed1442754c8bc14b519fa43|head=85bebc45eecd8624c87cdafc991448ae567cf5c5|of=29|covered=29|pinned-covered=29|match=yes|tree-moved=yes
+gate: OK — every stage passed (20/20 stages ran).
+```
+
+`match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 beyond 名单一致）；`tree-moved=yes` 是**预期**的，不是失败：pin 的 `tree` 指的是「这一读数是在哪个提交上取的」，而这个提交（只动 pin 文件的那一笔）当然在它后面，读数本身没有移动。`gate.sh` 的 20 个阶段全过，`check_docs_headings` 的 `HEADINGS|pin|tree=59c6045|docs=111|headings=1408|dirty=no` 也在其中。
+
+### 七、诚实边界（「一次分配」在哪些形态下成立、哪些不成立）
+
+1. **「一次分配」只对全串链成立。** `mv_concat_n` 先扫一遍看是否全串：是，一次 `mv_alloc`；不是，回退到逐对的 `mv_add`（每一对各自分配，混合对 abort）。所以本节能说的准确句子是「**全串**的 `OP_CONCAT` 链一次分配」，不是「`OP_CONCAT` 永远一次分配」。
+2. **count 为 0 / 1 的链不分配。** count <= 0 回 `nil`、count == 1 直接传值，与解释器 `L_CONCAT` 同；这两种形态零分配，而用例里也没有它们（编译器只在 3 个以上操作数时才折成 `OP_CONCAT`），所以它们的字节与分配数**本用例不覆盖**。
+3. **空串段照样占一个终止符字节。** `a + b + "" + c` 分配 `2+2+0+2+1 = 7` 字节，不是 6 —— 与解释器 `malloc(total + 1)` 逐字一致（解释器也给 0 长度段算 length 0、给整条链一个终止符）。
+4. **溢出检查是整条链的，但只在字符串段上累加。** 非字符串段在扫描时直接跳出，所以「全串假设不成立时不做溢出检查」不是漏洞：那种形态回退到 `mv_add`，而 `mv_add` 的 `mv_str_concat` 臂有自己的两操作数检查（§10.108）。
+5. **OOM 与解释器分歧。** 解释器 `:3356` 的 `strdup("")` 静默答成空串，本路线 abort —— 与 `mv_str_concat` 臂一致，故意不抄静默错答。
+6. **混合类型链不成立于「折叠」。** 串 + 数／浮点／布尔、以及 set／array／dict 操作数，解释器走通用路径做串化／并集；本路线回退到 `mv_add` 停的地方（混合对 abort，容器类操作数在解释器里是 `exit(1)`，这里也是 abort）。这些形态**没有**一次分配，也**不声称**有。
+7. **`all_str` 的判定用 `type == MV_STR`，与解释器的全串快路径同一个判据。** 解释器也是先扫一遍、遇到第一个非串就转逐对；本路线同样先扫后决定，所以「先扫」本身不增加一次读遍之外的成本，也不改变任何输出。
+8. **别名安全，但依赖「先读后写」。** `v[r1]` 只在 `mv_concat_n` **返回之后**被写，所有操作数在分配与拷贝期间只被读，所以 `u + u + u`（同一块缓冲区出现三次）与 `s + s + s` 落到 `v[first]` 都安全。将来若有人把这段改成「边拼边写回 `v[r1]`」，这条就断了。
+9. **`container_nregs` 的放宽是保守的。** 它按「最后一个操作数」放大寄存器数组，只放大不缩小，所以别的容器不会因此缩水；但它是一个共享函数，理论上会改变其他容器（`OP_CONCAT` 与普通 opcode 共存时）的数组尺寸 —— 只变大，不影响输出。
+10. **分配读数只对这一条用例写死。** `ALLOCS_EXPECT` 里只有 `mir_add_string_concat` 与 `mir_concat_chain` 两个条目，其余 MIR-only 用例仍按 `(0, 0)` 要求「不分配也不漏」，本节没有放宽那条默认。
+11. **本用例不覆盖 OOM、不覆盖超过 `SIZE_MAX / 2` 的链长、不覆盖 count <= 0 与 count == 1 的 `OP_CONCAT`。** 这三类要么不可测（OOM 与超长），要么编译器今天不产（短链）。
+
+## §10.111 短路：左真时 `OP_OR` 根本不执行，所以补的是语料而不是阈值（aot-mir，B 类）
+
+### 一、这笔债的来源与日期
+
+**来源**：`IR-AOT-MIR-UNEXECUTED` 这一行在 d820953 上报的是 `ops=(OP_OR)`。它的含义**不是** MIR 路线不会发射 `OP_OR`（`OP_OR` 早就在 lowering 表里，`handles` 里有它、`emittable=yes`），而是：共享语料里有 3 个程序的降低流里出现 `OP_OR`，可**解释器跑共享语料时一次也没执行过它** —— 因为 `X or Y` 在 X 为真时短路跳过 OR 本身，而那 3 个程序里恰好都是左真。
+
+**这不是正确性缺口，是语料缺口。** 自造 `a or b` / `b or a` / `a and b` 三例，两侧输出 `true/true/false` 逐字节一致；也就是说 `OP_OR` 的 MIR 语义**今天就是对的**，缺的是一次「让它真的被执行」的读数。所以这一格不许改语料程序绕过、不许调阈值，只许补一条**真执行**它的 MIR_ONLY 用例。日期 **2026-11-06**。
+
+### 二、缺口原文（补语料之前，85bebc4 上）
+
+```
+IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-that-no-interpreter-run-of-the-corpus-executed|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+```
+
+`emittable=yes` 在同一行上，所以这一行自己就说清了缺口在哪一侧：不是发射器，是「没有一次执行」。
+
+### 三、判据先立：让 `OP_OR` 真的跑一次
+
+新用例 `mir_short_circuit_or`（`tools/aot_mir.test.py` 的 MIR_ONLY 列表，照现有写法只比 stdout 字节）：
+
+```
+a = false
+b = true
+c = false
+say a or b     # false or true  -> OP_OR 执行，答右侧
+say a or c     # false or false -> OP_OR 执行，答 false（答恒 true 的臂在这里红）
+say a or a     # 同一寄存器两次过 OP_OR
+say b or a     # 对照：左真，OP_OR 被跳过（原子仍答 true）
+say a and b    # and 的镜像：左假，AND 被跳过
+say b and a    # and 的镜像：左真，AND 执行
+```
+
+**左操作数为假的三行才是本节的目的**：`or` 只在左假时才走 `OP_OR`。`b or a` 是刻意留的**对照行**：它证明短路仍然短路，把 `or` 实现成「恒执行 OR」会在别处露馅（见第七节第 3 条：在本仓库今天能测的范围内，这一行的保护力有限，那是本节要写下来的边界之一）。
+
+这一条用例落在 `ALLOCS_EXPECT` 的默认 `(0, 0)` 上：它一个字符串都不碰，所以既不分配也不许漏。
+
+### 四、这不是代码改动
+
+`src/` 下**一个字没改**：`OP_OR` 早就在 `op_regs` 与 `emit_one` 里，`OP_JUMP_IF_FALSE`／`OP_JUMP_IF_TRUE` 也早就在。补的是**语料**，也就是「谁去执行它」这件事。共享语料那 3 个 emit `OP_OR` 的程序**一个字节没动**，`tools/aot_cover.pin.json` 与任何阈值也没动。
+
+### 五、机制证据（非对称，先印被计数的对象）
+
+`INIMERSE_HOT_OPS=1` 的解释器热普查，两个程序只差左操作数：
+
+```
+a = false / b = true / say a or b     ->  OP-HOT|op=OP_OR|interp=1
+a = false / b = true / say b or a     ->  grep -c OP_OR 该日志 = 0（短路跳开）
+```
+
+同一条 `OP_OR`、同一个 `say`，只有左边真假不同：左假执行 **1 次**，左真执行 **0 次**。这就是「左操作数为 false 时才走 `OP_OR`」的实测量，不是注释里的断言。
+
+### 六、反向判据（非对称注入一次）
+
+**注入处先印原件**：用例第一行 `'a = false\nb = true\nc = false\n'`。
+
+**注入 I2（`INJECTED-TRUE-LEFT`）**：把它改成 `a = true`，于是每一条 `or` 都变成左真、`OP_OR` 又被短路跳开，而**答案仍然由解释器自己定**（判据不与解释器对账，只比字节，所以 stdout 不会红）。
+
+**注入后先印被计数的对象**：`grep -c INJECTED-TRUE-LEFT` = `2`。`COVER_EXIT=0`（注意：这一行不是退出码判据），读数红原文：
+
+```
+IR-AOT-MIR-UNEXECUTED|ops=(OP_OR)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-that-no-interpreter-run-of-the-corpus-executed|...
+IR-AOT-MIR|accepted=100|refused=0|same-as-interpreter=100|of=29|emittable=33|of-ops=67|not-emittable=34|corpus=inline-cases:86|mir-only-cases:14|beyond-ast-denominator=3
+IR-AOT-MIR-VERDICT|PASS|...|accepted=100|same-as-interpreter=100|...
+```
+
+这次注入是本节最有信息量的一次读数：`accepted=100|same-as-interpreter=100` **一点没变**，`beyond-ast-denominator` 从 4 掉回 3，`UNEXECUTED` 从 `(none)` 回到 `(OP_OR)`。**正确性没动，只有「执行性」这本账动了** —— 这正是「语料缺口，不是正确性缺口」的可测证明。
+
+**还原证据**：拷回注入前的测试文件，`grep -c INJECTED` = `0`（无匹配，rc=1），用例首行回到 `a = false`，重跑读数 `IR-AOT-MIR-UNEXECUTED|ops=(none)`、`beyond-ast-denominator=4`。
+
+### 七、诚实边界
+
+1. **`UNEXECUTED` 的 basis 是「所有用例（`shared` + `mir_only`）的解释器执行集合」，不是只跑共享语料。** 读数那一行自带的注释写的是 `a-shared-case-that-no-interpreter-run-of-the-corpus-executed`，可脚本是先 `cases = shared + mir_only`、再对**每一个** case 跑 `executed_ops.update(dyn)`，所以集合里既有共享语料的执行、也有 MIR-only 用例的执行 —— 本节能把它归零，恰恰是因为补的那条 MIR-only 用例**真的跑了**解释器。这句话必须写在这里：下一个人若照那行注释理解成「只算共享语料」，就会得出「补 MIR-only 用例不可能影响 UNEXECUTED」的错结论（这个错结论今天已经被证伪）。
+   它也不声称 MIR **生成的**代码执行了它 —— 那是另一本账（`beyond-ast-denominator`），本节只是让这本账多一条。
+2. **短路的方向是固定的**：`or` 只在左假执行 `OP_OR`，`and` 只在左真执行 `OP_AND`。所以补执行覆盖必须补**左假**的 `or`（以及左真的 `and`），写一个 `a or b` 但 `a` 为真是没用的。
+3. **字节判据对「MIR 是否短路」是盲的。** 这一条要说明白：`say b or a` 这行的输出在「MIR 短路」与「MIR 恒执行 OR 但值算对」两种实现下**完全相同**，而解释器热普查只数解释器（`OP-HOT` 的 `why` 字段明说 `aot=na`：生成 C 把每个 op 展平成内联代码，在那里计数是在数一个被改过的对象）。所以本节的判据补的是**解释器侧的语料覆盖**；「MIR 生成的代码是否真的跳过了 OR」今天没有仪器能测，也不声称测了。
+4. **不碰阈值、不碰语料、不碰 pin 的语义**。`tools/aot_cover.pin.json` 未改，`ALLOCS_DEFAULT` 未改，共享语料未改；只新增了 MIR_ONLY 一条用例。
+5. **`beyond-ast-denominator` 从 3 到 4 是这条用例带来的，不是 MIR 路线新发射了什么。** `OP_OR` 一直在 `handles` 里；变的只是「有人跑过它」。
+6. **`accepted` 从 99 到 100 只是多了一条 MIR-only 用例**；共享语料仍是 86 条，`of`/`covered` 仍是 29/29。
+7. **不覆盖**：`??`、嵌套 `a or b or c`、`or` 的结果再喂给 `or`、常量折叠形态（`true or b`）、以及 `and`/`or` 与字符串真值的组合。这些形态今天没有判据。
+8. **热普查是 opt-in 环境变量**（`INIMERSE_HOT_OPS=1`），gate 里的 cover 回归用同一套，所以 `ops=(none)` 这个读数在门禁里也被重算，不是本节手工贴上去的。
+9. **`say a or b` 打印的是布尔原样**（`true`/`false`），不经过字符串化路径；所以这条用例不覆盖字符串化。
+
+**重记 pin 与门禁**（重记 pin 之后、HEAD=8a2762f 上测得，`GATE_EXIT=0`）：
+
+```
+IR-AOT-MIR-PIN|tree=e1fa8f0c19c6d9db7ae58ec377915548312a5e46|head=8a2762fc8fadf5fc3794a6d640194791009824a9|of=29|covered=29|pinned-covered=29|match=yes|tree-moved=yes
+GATE|start|head=8a2762fc8fadf5fc3794a6d640194791009824a9|worktree=.worktrees/mirval-concat2
+gate: OK — every stage passed (20/20 stages ran).
+```
+
+`match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 4 项 beyond 名单一致）；`tree-moved=yes` 是**预期**的：pin 的 `tree` 记的是「这一读数在哪个提交上取」，重记 pin 的那一笔在它后面，读数本身不动。这条用例的 `UNEXECUTED|ops=(none)` 在门禁里被**重算**了一次（cover 回归跑同一套用例），不是本节手工贴的。
