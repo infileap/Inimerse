@@ -5266,3 +5266,176 @@ gate: OK — every stage passed (20/20 stages ran).
 ```
 
 `match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 4 项 beyond 名单一致）；`tree-moved=yes` 是**预期**的：pin 的 `tree` 记的是「这一读数在哪个提交上取」，重记 pin 的那一笔在它后面，读数本身不动。这条用例的 `UNEXECUTED|ops=(none)` 在门禁里被**重算**了一次（cover 回归跑同一套用例），不是本节手工贴的。
+
+## §10.112 零分配组的下一格：`OP_MIN`/`OP_MAX` 是**集合归约**，所以这一格补的是「值域上的 nil」（aot-mir，A 类）
+
+### 一、这笔债的来源与日期
+
+**来源**：cdd5a11 上 `IR-AOT-MIR-NOT-YET|op=OP_MIN|n=1` 与 `op=OP_MAX|n=1`。看起来是「零分配组」的机械下一格：补一个「两输入选一、不分配」的折叠。**读真身之后不是。**
+
+- 操作数布局在 `src/compiler/bytecode.h:49-50`：`OP_MIN,           /* min: r1 = min(r2) */` 与 `OP_MAX,           /* max: r1 = max(r2) */` —— 只有**一个**源操作数 `r2`，第三操作数不存在；编译器两处 emit 都在 `src/compiler/compiler.c`：`:1025` 临时值原地（`operand, operand`）、`:1031` 写进变量 `r`。
+- 语义在 `src/vm/vm.c:4357` 的 `L_MIN` 与 `:4362` 的 `L_MAX`：两处都是 `Value src = R[ins.r2]; set_minmax(vm, &src, &R[ins.r1], 0/1);`，最后一位是 `isMax`。
+- `set_minmax` 本体的开头（`src/vm/vm.c:2476`）：
+
+```
+static void set_minmax(VM *vm, Value *src, Value *dst, int isMax) {
+    dst->type = VAL_NIL; dst->ival = 0;  dst->sval = NULL;
+    if (src->type != VAL_SET) return;
+```
+
+`dst->type = VAL_NIL` 是**函数体第一条语句**（本树 `src/vm/vm.c:2477`），`if (src->type != VAL_SET) return;` 是第二条（`:2478`）。也就是说 `min`/`max` 不是算术二元运算，是**集合归约**，而且**只有集合才可能非 nil**。
+
+- 语法层也没有二元 `min(a, b)`：`min`/`max` 是词法关键字（`src/lexer/lexer.c:47`），按一元表达式解析（`src/parser/parser.c:640`）；`min(1, 2)` 是集合区间拼写（先 `OP_SET_INTERVAL` 再 `OP_MIN`，实测见第五节）。
+
+日期 **2026-11-07**。
+
+### 二、缺口原文（实现之前，本树）
+
+六条 MIR-only 用例先立、先跑，红的原文（`why` 全是 `unsupported-opcode`，`op_regs` 返回 `-1` 的直接结果）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_minmax_int|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_minmax_boundary|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_minmax_float|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_minmax_string|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_minmax_nil|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_minmax_var|mir=refused|why=unsupported-opcode
+IR-MIR-PROBLEM|mir_minmax_int: the MIR route refused OP_MIN -- see IR-MIR-NOT-YET (the interpreter ran it)
+...
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|...|mir-only-cases=24|mir-only-same-as-interpreter=18
+IR-MIR-VERDICT|FAIL|tree=cdd5a11a940239f108683aca8775ed1c034fcf44|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+MIR_EXIT=1
+```
+
+同一批读数的 `NOT-YET` 计数逐条变化（每跑一条用例就重算一次）：`(OP_MIN:2,OP_MAX:2)` / `(OP_MIN:3,OP_MAX:2)` / `(OP_MIN:2,OP_MAX:1)` / `(OP_MIN:1,OP_MAX:1)` —— `min` 用例把 `OP_MIN` 计满、`max` 用例把 `OP_MAX` 计满，两条 arm 各有独立红证据。
+
+### 三、判据先立：六个用例，十二条读数
+
+`tools/aot_mir.test.py:619-627` 新增六条 MIR_ONLY（只比 stdout 字节 + 分配读数）：
+
+| 用例 | 覆盖 | 解释器答案 |
+|---|---|---|
+| `mir_minmax_int`（`:619`） | `min(5)`/`max(5)`/`min(-7)`/`max(-7)`，整数正负混合 | 四行 `nil` |
+| `mir_minmax_boundary`（`:620`） | `min(2147483647)`/`max(-2147483648)`/`min(-9223372036854775807)`/`max(9223372036854775807)`，i32 与 i64 两头 | 四行 `nil` |
+| `mir_minmax_float`（`:623`） | `min(-0.0)`/`max(-0.25)`/`min(1e-300)`/`max(0.0)`/`min(3.5)` | 五行 `nil` |
+| `mir_minmax_string`（`:625`） | `min("b")`/`max("b")`/`min("")` 标量字符串操作数 | 三行 `nil`（**不是**字典序比较） |
+| `mir_minmax_nil`（`:626`） | `min(nil)`/`max(nil)` | 两行 `nil` |
+| `mir_minmax_var`（`:627`） | `x = 3; min(x)` 与 `q = -2; max(q)`，变量拼写 | 两行 `nil` |
+
+共享语料（86 条）一个字节没动，`tools/aot_cover.pin.json` 没动，`ALLOCS_EXPECT` 没动（六条都落在默认 `(0, 0)`：不分配也不许漏）。
+
+### 四、为什么这一格能只有一行：值域上的三道闸
+
+MirVal 没有 set 标签（`src/compilation/aot_mir.c` 的 `kMirValBlock` 只有 `MV_INT`/`MV_FLT`/`MV_BOO`/`MV_NIL`/`MV_STR` 五个标量标签）；操作数的三个生产者全部在子集之外：
+
+```
+say min(Z)                        -> why=illegal-operand|detail=...global 1 is the preset set global 'Z'...   (src/compilation/aot_mir.c:1399)
+p = 1, 2, 3 / say min(p)          -> why=illegal-operand|detail=...leaves the argument stack unbalanced: asp=3  (src/compilation/aot_mir.c:1433-1434)
+say min(1, 2)                     -> why=illegal-operand|detail=...asp=2
+```
+
+预设集合全局按名拒（表在 `src/compilation/aot_mir.c:976` 的 `kPresetGlobals[23]`），`OP_NEW_SET`/`OP_SET_INTERVAL` 未降低（它们的 pop 不计 `asp`，所以容器检查先红）。
+
+所以：**任何被接受的流，`R[r2]` 都是非集合**，解释器第一条语句答 `VAL_NIL`，且无论 `isMax` 是几都一样。这就是为什么这一格不是折叠，而是「值域上的 nil」——一行就是全语义，方向参数在这个值域上没有方向。
+
+### 五、改动（三处 + 一个守卫，零分配）
+
+1. `src/compilation/aot_mir.c:1087`：`op_regs` 加 `case OP_MIN: case OP_MAX: return R1 | R2;`（第三操作数不读，不占寄存器）。
+2. `src/compilation/aot_mir.c:1693-1694`：`emit_one` 加两臂，写法与 `OP_IS_NIL` 同一行内风格：
+
+```
+    case OP_MIN:          buf_fmt(b, "    v[%d] = mv_minmax(v[%d], 0);", r1, r2); return 0;
+    case OP_MAX:          buf_fmt(b, "    v[%d] = mv_minmax(v[%d], 1);", r1, r2); return 0;
+```
+
+3. `src/compilation/aot_mir.c:402` 起（`kMirValBlock` 内）：`mv_minmax` 与一段长注释（WHY / WHAT / DOES-NOT-COVER / DELETE CONDITION / MEASURED BY），函数体：
+
+```
+static inline MirVal mv_minmax(MirVal a, int isMax) {
+    (void)isMax;
+    if (a.type != MV_INT && a.type != MV_FLT && a.type != MV_BOO &&
+        a.type != MV_NIL && a.type != MV_STR)
+        abort();   /* a tag this block has never seen: not a scalar, so a set */
+    return mv_nil();   /* set_minmax's first statement, for a non-set operand */
+}
+```
+
+`abort()` 是**死代码**（五个标签今天穷尽），但它是一个 **DELETE 检测器**，不是防御分支：将来给 MirVal 加第六个标签（集合）而不重读这里，程序会**崩**而不是静默答 nil。
+
+零分配：没有 `mv_alloc`。`mv_nil()` 只是把五个标量字段写成 0，不碰 heap；`abort` 路径不分配。
+
+### 六、读数（原始）
+
+`MIR_EXIT=0`、`IR-MIR-VERDICT|PASS`：
+
+```
+IR-MIR-MIR-ONLY|case=mir_minmax_int|mir=accepted|cc=ok|exec=same|rc=0|bytes=16|stdout-hex=6e696c0a6e696c0a6e696c0a6e696c0a
+IR-MIR-MIR-ONLY|case=mir_minmax_boundary|mir=accepted|cc=ok|exec=same|rc=0|bytes=16|stdout-hex=6e696c0a6e696c0a6e696c0a6e696c0a
+IR-MIR-MIR-ONLY|case=mir_minmax_float|mir=accepted|cc=ok|exec=same|rc=0|bytes=20|stdout-hex=6e696c0a6e696c0a6e696c0a6e696c0a6e696c0a
+IR-MIR-MIR-ONLY|case=mir_minmax_string|mir=accepted|cc=ok|exec=same|rc=0|bytes=12|stdout-hex=6e696c0a6e696c0a6e696c0a
+IR-MIR-MIR-ONLY|case=mir_minmax_nil|mir=accepted|cc=ok|exec=same|rc=0|bytes=8|stdout-hex=6e696c0a6e696c0a
+IR-MIR-MIR-ONLY|case=mir_minmax_var|mir=accepted|cc=ok|exec=same|rc=0|bytes=8|stdout-hex=6e696c0a6e696c0a
+IR-MIR-ALLOCS|case=mir_minmax_int|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_minmax_boundary|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_minmax_float|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_minmax_string|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_minmax_nil|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_minmax_var|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=24|mir-only-same-as-interpreter=24
+IR-MIR-VERDICT|PASS|tree=cdd5a11a940239f108683aca8775ed1c034fcf44|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`stdout-hex=6e696c0a...` 是若干行 `nil\n`；`bytes` 与行数吻合（4/4/5/3/2/2 行 → 16/16/20/12/8/8 字节）。`IR-MIR-LAYOUT-ASSERT|files=86|need=6|files-complete=86|missing=(none)` 原样（`MirVal` 与 `Value` 逐字节兼容的六条 `_Static_assert` 没动）。
+
+覆盖读数（`COVER_EXIT=0`）：
+
+```
+IR-AOT-MIR-LOWERING|handles=37|of=67|unknown=30|table=37|emitter=37|reported=37|agree=yes|basis=...
+IR-AOT-MIR|accepted=110|refused=0|same-as-interpreter=110|of=29|emittable=37|of-ops=67|not-emittable=30|corpus=inline-cases:86|mir-only-cases:24|beyond-ast-denominator=8|basis=...
+IR-AOT-MIR-UNEXECUTED|ops=(none)|basis=...|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+IR-AOT-MIR-COVER|covered=29|of=29|denominator=tools/aot_cover.pin.json:covered_ops|coverage-claim=none
+```
+
+`handles 35→37` 与预期一致；`accepted 104→110` 是六条新用例，不是共享语料变了（共享语料仍 86 条、`of=29` 仍 29）；`UNEXECUTED|ops=(none)` 没有冒出新的 opcode 名字（`OP_MIN`/`OP_MAX` 落在 `IR-AOT-MIR-BEYOND` 那一行的名单里，那是「执行过但不在 AST 分母里」的另一本账）。
+
+### 七、反向判据（非对称两次）
+
+**① 方向注入**：先 `grep -n` 印原件 `src/compilation/aot_mir.c:407` 的 `return mv_nil();   /* set_minmax's first statement, for a non-set operand */`，改成 `return isMax ? a : mv_nil();`（只剩 `max` 保留候选）。红在**字节**上，不是崩溃：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_minmax_int|interp-rc=0|mir-rc=0|interp-out=b'nil\nnil\nnil\nnil\n'|mir-out=b'nil\n5\nnil\n-7\n'
+IR-MIR-ALLOCS|case=mir_minmax_int|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-PROBLEM|mir_minmax_int: the MIR route printed b'nil\n5\nnil\n-7\n' rc=0, the interpreter b'nil\nnil\nnil\nnil\n' rc=0
+IR-MIR-VERDICT|FAIL|tree=cdd5a11a940239f108683aca8775ed1c034fcf44|accepted=5|refused=0|differ=0|c-identical=0|c-diff=5|perturb-stdout-changes=5
+```
+
+五条 `IR-MIR-PROBLEM`、`INJ1_EXIT=1`。**非对称**：分配那本账一行没动（仍 `allocs=0|...|ok=yes`），只有字节账红了 —— 「零分配」与「值语义」两个判据互相独立。
+
+**② 期望值注入**：印 `tools/aot_mir.test.py:214-218` 的 `ALLOCS_EXPECT` 原件，给 `mir_minmax_boundary` 加一条正期望 `(1, 8)`。红在期望值那条线上，字节与执行不变：
+
+```
+IR-MIR-ALLOCS|case=mir_minmax_boundary|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=1|expect-bytes=8|ok=no
+IR-MIR-MIR-ONLY|case=mir_minmax_boundary|mir=accepted|cc=ok|exec=same|rc=0|bytes=16|stdout-hex=6e696c0a6e696c0a6e696c0a6e696c0a
+IR-MIR-PROBLEM|mir_minmax_boundary: allocation count off -- got allocs=0|bytes=0, the criterion demands allocs=1|bytes=8 (a site that mallocs without registering reports 0|0)
+```
+
+`INJ2_EXIT=1`。还原后 `grep -c INJECTED` 两个文件都为 `0`，`BUILD_EXIT=0`。
+
+**另一次诚实的反向读数（不是红的）**：把 emit 里字面 `0/1` 对调，**按设计无变化** —— 这条路上 `isMax` 没有方向（第四节）。所以「方向」只能从语义表注入（上面①就是这么做的）；字面参数对调是等价变换，不是漏掉的注入。
+
+### 八、诚实边界
+
+1. **折叠本身不可测，也不声称测了。** `min`/`max` 真正的语义（`set_minmax` 的折叠段 `src/vm/vm.c:2481-2502`：整数按 `long long`、浮点按 `double`、字符串按 `strcmp`、串/数混合拒）**今天不可达**：MIR 里造不出集合。本节的 nil 不是「实现了 min」，是「在 MIR 可达值域上恰好与解释器**同一条语句**同答」。DELETE CONDITION 钉在「给 `MirVal` 加集合标签 / 降低 `OP_NEW_SET`」的那一笔提交上。
+2. **NaN 不可测。** NaN 只能经 builtin 到达（`say sqrt(-1)` → `nan`，`say 1.0/0.0` → `inf`），而 `OP_CALL_BUILTIN` 不在子集（`asp=1` 拒）；把 NaN 塞进集合也不行（集合拼写本身被拒）。解释器确有确定答案（集合含 NaN 时 `val_cmp` 的 `d > d` 全 false ⇒ 当相等处理），但本节不「照抄」它，因为一条也到不了。
+3. **-0.0 的符号不可观测。** 两路 stdout 都印 `0`（实测 `say -0.0` → `0`）；并且 `p = -0.0, 0.0` 是**解析错**（`expected 'expression', but got '-'`），集合里也测不了。`mir_minmax_float` 的 `min(-0.0)` 只覆盖到「字面量作标量操作数」这一层。
+4. **带负号的集合字面量写不出来。** `p = -5, 3, -1` → `expected 'expression', but got ',' (type 101)`；能写的那种也不行（`asp` 先红，见第 5 条）。元素级整数正负混合与边界因此**不可测**，只测了标量操作数。
+5. **`min(1, 2)` 的拒译理由是 `asp` 不平衡，不是 unsupported-opcode。** 这是 prescan 的容器检查先于 opcode 检查，属既有形状（`OP_NEW_SET`/`OP_SET_INTERVAL` 未降低 ⇒ 它们的 pop 不计 `asp`）。不是本节引入的，但它意味着「集合形态的 min」的拒绝理由对读者不直白；单独记这里，**不顺手改**。
+6. **预设集合全局的答案非 nil，但同样不可达。** `min(Z+)` / `max(Z+)` / `min(Z)` 解释器答 `1` / `nil` / `nil`（`set_minmax` 的 kind==1 分支 `src/vm/vm.c:2515-2522`），MIR 全部 `illegal-operand`（按名拒）。本节不假装覆盖它们。
+7. **`abort()` 守卫是死代码**（五个标签今天穷尽），它是 DELETE 检测器：新增第六个标签会崩而不是静默答 nil。故意不加「容器值」防御分支，因为 MirVal 今天就装不下集合。
+8. **不特判常量。** 没有加任何常量折叠；`min(5)` 走的就是 `LOADK_INT` → `OP_MIN` 的同一条路径（dump 原文四条指令：`LOADK_INT r1=1 r2=5` / `OP_MIN r1=1 r2=1 r3=0` / `OP_SAY` / `OP_HALT`）。
+9. **字节判据的 oracle 是解释器本身**（harness 里没有独立的值期望表），所以「把期望值改掉」那次注入改的是 `ALLOCS_EXPECT` 那一行 —— 本节唯一按用例声明的期望；值那一侧只能靠注入实现反向（第七节①）。
+10. **`beyond-ast-denominator 4→8` 是六条新用例带来的，不是 MIR 发了新东西。** 变的只是「有人跑过 `OP_MIN`/`OP_MAX`」；`emittable 35→37` 是这一对 opcode。
+11. **`unknown=30` 没动。** `of=67` 的分母没变，剩下 30 个未知 opcode 是别的债，本节不声称碰过。
+12. **引用形式**：本节的引用一律是 `路径:行号` 形（不是「第 N 行」的散文形），所以不需要树戳；若将来有人改成散文形，必须带 `[obs: cdd5a11]` 这样的树戳。
+
+@@PIN-GATE@@

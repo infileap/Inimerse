@@ -331,6 +331,81 @@ static const char *const kMirValBlock =
 "}\n"
 "static inline MirVal mv_neg(MirVal a) { return mv_from_nv(nv_neg(mv_as_nv(a))); }\n"
 "static inline MirVal mv_not(MirVal a) { return mv_boo(!mv_tru(a)); }\n"
+"/* THE SET-REDUCTION ARM -- what OP_MIN/OP_MAX answer on this route, and why\n"
+" * the whole answer is nil.  Same structure as the notes here: WHY / WHAT IT\n"
+" * ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED BY.\n"
+" *\n"
+" * WHY IT EXISTS.  `say min(5)` refused to translate ('unsupported-opcode',\n"
+" * IR-MIR-NOT-YET|op=OP_MIN|n=1) -- not because a lowering was missing in the\n"
+" * usual sense, but because what the opcode MEANS here had not been read.\n"
+" * Read it in the interpreter: L_MIN/L_MAX (src/vm/vm.c:4357) hand\n"
+" * R[ins.r2] and R[ins.r1] to set_minmax() (src/vm/vm.c:2476), whose FIRST\n"
+" * statement is `dst->type = VAL_NIL`; the fold over integers (exact long\n"
+" * long), floats and strings (strcmp) happens ONLY under\n"
+" * `if (src->type != VAL_SET) return;`.  So OP_MIN is a SET REDUCTION, not an\n"
+" * arithmetic pair: `min(1, 2)` is the interval-set spelling (OP_SET_INTERVAL)\n"
+" * and there is no two-operand min anywhere in the compiler.\n"
+" *\n"
+" * WHY THE ANSWER IS nil ON EVERY STREAM THIS ROUTE ACCEPTS.  MirVal has no\n"
+" * set tag (MV_INT/MV_FLT/MV_BOO/MV_NIL/MV_STR), and EVERY producer of a set\n"
+" * is refused by prescan before OP_MIN is reached: OP_NEW_SET and\n"
+" * OP_SET_INTERVAL are not lowered, the preset set globals are refused by\n"
+" * name (see kPresetGlobals above), and a literal `min(1, 2)` leaves the\n"
+" * argument stack unbalanced.  Measured, not recalled: `say min(Z)` refuses\n"
+" * with 'global 1 is the preset set global', and `p = 1, 2, 3` + `say\n"
+" * min(p)` with 'leaves the argument stack unbalanced: asp=3'.  That is the\n"
+" * value-domain argument: for every stream that REACHES this arm the operand\n"
+" * is a non-set, and the interpreter's own answer for a non-set is VAL_NIL by\n"
+" * its first statement.  Answering 0 instead would be the same FALSE\n"
+" * EQUIVALENCE this block already fixed once for locals (mv_nil's note): nil\n"
+" * and 0 are two answers -- `say min(5)` prints 'nil', and a route that\n"
+" * printed '0' would be silently wrong with a success exit code.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER -- and the reason isMax is not a TODO but a NOPE:\n"
+" *  - The FOLD ITSELF (min versus max of a set's elements, including the\n"
+" *    string/number refusal rule).  A set cannot arrive; there is no value to\n"
+" *    fold.  Note that -0.0 as an ELEMENT is unreachable twice over: the\n"
+" *    lexer rejects `p = -0.0, 0.0` outright (parse error, measured), and a\n"
+" *    set holding a variable is refused with asp imbalance.\n"
+" *  - NaN.  It exists in the interpreter (`sqrt(-1)` prints nan) but only as a\n"
+" *    builtin call result, and OP_CALL_BUILTIN is outside the subset, so a\n"
+" *    NaN can never be the operand of this opcode here.\n"
+" *  - `min(x)` where x is a CONTAINER global (Z, Z+, 1..Z, ...).  prescan\n"
+" *    refuses the preset set globals by name; a user container cannot be made\n"
+" *    without OP_NEW_SET/OP_SET_INTERVAL, also refused.\n"
+" *\n"
+" * WHY THE TYPE TEST IS THERE AT ALL.  It is the DELETE-DETECTOR.  The five\n"
+" * tags compared are exactly the tags MirVal has; a SIXTH tag would be a set,\n"
+" * which is the ONE value this opcode is defined on here, and falling through\n"
+" * to nil for it would be the first silent wrong answer instead of a loud\n"
+" * stop.  So the guard is not a defensive branch -- it is the value-domain\n"
+" * claim, executable, and it is what makes adding a set tag impossible\n"
+" * without coming back to this function.\n"
+" *\n"
+" * DELETE CONDITION (decidable): the commit that gives MirVal a set tag (or\n"
+" * that lowers OP_NEW_SET/OP_SET_INTERVAL and the preset globals, whichever\n"
+" * comes first) must replace this body with the interpreter's fold, reusing\n"
+" * val_is_num/val_orderable's rule rather than writing a second one.  Test:\n"
+" * the six MIR_ONLY cases below are named minmax; the first one with a real\n"
+" * set operand has to change this body, and grep -c mv_minmax == 0 in the\n"
+" * emitter means the opcode was removed rather than this value redefined.\n"
+" *\n"
+" * ZERO ALLOCATION, and not by accident: the arm returns an existing tag with\n"
+" * a constant payload (mv_nil), so IR-MIR-ALLOCS must read allocs=0|freed=0|\n"
+" * live=0|bytes=0 on every minmax case, exactly like the arithmetic arms.\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases mir_minmax_int,\n"
+" * mir_minmax_boundary, mir_minmax_float, mir_minmax_string, mir_minmax_nil\n"
+" * and mir_minmax_var compare stdout bytes against the interpreter.\n"
+" *\n"
+" * MEASURED ON.  cdd5a11 (the tree this arm was written against). */\n"
+"static inline MirVal mv_minmax(MirVal a, int isMax) {\n"
+"    (void)isMax;\n"
+"    if (a.type != MV_INT && a.type != MV_FLT && a.type != MV_BOO &&\n"
+"        a.type != MV_NIL && a.type != MV_STR)\n"
+"        abort();   /* a tag this block has never seen: not a scalar, so a set */\n"
+"    return mv_nil();   /* set_minmax's first statement, for a non-set operand */\n"
+"}\n"
 "/* THE STRING ARM OF + -- the first value in this route whose answer is\n"
 " * HEAP-OWNED, and therefore the first place heap ownership enters the MIR\n"
 " * route at all.  Same structure as the notes below: WHY IT EXISTS / WHAT IT\n"
@@ -1004,6 +1079,12 @@ static int op_regs(int op) {
                                          each. */
     case OP_NEG: case OP_NOT: return R1 | R2;
     case OP_IS_NIL: return R1 | R2;   /* reads r2, writes the BOOL in r1 */
+    /* The SET REDUCTIONS.  `r1 = min(r2)` (src/compiler/bytecode.h:49-50):
+       ONE operand, in r2; r3 is not an operand and must not be read as a
+       register (reading it would index v[0]).  The emitter answers nil for
+       every non-set operand, which is the interpreter's own first statement --
+       see mv_minmax's note in kMirValBlock for the value-domain argument. */
+    case OP_MIN: case OP_MAX: return R1 | R2;
     case OP_LOAD_GLOBAL: return R1;
     case OP_STORE_GLOBAL: return R2;
     case OP_JUMP: return 0;
@@ -1603,6 +1684,14 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_NEG:          buf_fmt(b, "    v[%d] = mv_neg(v[%d]);", r1, r2); return 0;
     case OP_NOT:          buf_fmt(b, "    v[%d] = mv_not(v[%d]);", r1, r2); return 0;
     case OP_IS_NIL:       buf_fmt(b, "    v[%d] = mv_is_nil(v[%d]);", r1, r2); return 0;
+    /* The set reductions, lowered as what they answer for a non-set operand --
+       nil, in ZERO allocations.  `isMax` is not a direction the fold can take
+       here: there is no set to fold.  The reasoning, the measured refusals
+       that make the operand provably a non-set, and the delete condition are
+       in mv_minmax's note in kMirValBlock; the op_regs entry above says why r2
+       is the only operand. */
+    case OP_MIN:          buf_fmt(b, "    v[%d] = mv_minmax(v[%d], 0);", r1, r2); return 0;
+    case OP_MAX:          buf_fmt(b, "    v[%d] = mv_minmax(v[%d], 1);", r1, r2); return 0;
     case OP_LOAD_GLOBAL:
         /* Index -1 has no name to look up: gnames[] is built from the globals
            prescan saw REFERENCED, and an unresolved global is referenced by
