@@ -185,6 +185,49 @@ def nul_offsets(path: Path) -> list[int]:
     return [i for i, byte in enumerate(data) if byte == 0]
 
 
+OPEN_MARKER = "<" * 7 + " "
+MID_MARKER = "=" * 7
+CLOSE_MARKER = ">" * 7 + " "
+
+
+def conflict_marker_lines(path: Path) -> list[tuple[int, str, str]]:
+    """Lines that carry an unresolved merge conflict's markers.
+
+    Why this lives here (measured, not assumed): `docs/STATUS.md` reached main
+    with `<<<<<<< HEAD` at line 5270, `=======` at line 5438 and
+    `>>>>>>> stream/mirval-minmax` at line 5611 -- the tail of a conflict
+    between two sections that had both been kept on purpose.  The content was
+    right, and the file still said, in the one syntax every tool reads as
+    "unresolved", that nobody had decided.  Every reader downstream inherited
+    that, and the 20-stage gate was green because no stage asked the question.
+
+    The three literal shapes are assembled from pieces, so this file does not
+    flag itself; a check whose own source is its first offender either exempts
+    itself -- and then exempts the next file that quotes it, and so on -- or
+    never runs.
+
+    A file is reported only when it carries an opening AND a closing line.  A
+    bare seven-equals line is a setext heading underline in every Markdown
+    file that uses one, and treating it as a conflict would make this check
+    cry on the documents it mostly guards -- the same shape of false red this
+    repository keeps recording as its own defect.  Both ends present is
+    unambiguous.
+    """
+    try:
+        text = path.read_bytes().decode("utf-8", "surrogateescape")
+    except OSError as exc:
+        sys.exit(f"check_text_integrity: cannot read tracked file {path.name}: {exc}")
+    found: list[tuple[int, str, str]] = []
+    for number, line in enumerate(text.split("\n"), start=1):
+        if line.startswith(OPEN_MARKER):
+            found.append((number, "open", line))
+        elif line.startswith(CLOSE_MARKER):
+            found.append((number, "close", line))
+        elif line == MID_MARKER:
+            found.append((number, "middle", line))
+    return found
+
+
 def describe(path: Path, offsets: list[int], limit: int = 3) -> list[str]:
     data = path.read_bytes()
     lines: list[str] = []
@@ -265,6 +308,7 @@ def main() -> int:
     # counted -- which is why the denominator is on the reachable exit instead.
 
     offenders: list[tuple[str, list[int]]] = []
+    conflicts: list[tuple[str, list[tuple[int, str, str]]]] = []
     for name in text:
         path = REPO_ROOT / name
         try:
@@ -273,6 +317,12 @@ def main() -> int:
             sys.exit(f"check_text_integrity: cannot read tracked file {name}: {exc}")
         if offsets:
             offenders.append((name, offsets))
+        marks = conflict_marker_lines(path)
+        kinds = {kind for _, kind, _ in marks}
+        # Both ends present is an unresolved conflict; one end alone is a
+        # quotation or a Markdown underline, and this check does not guess.
+        if "open" in kinds and "close" in kinds:
+            conflicts.append((name, marks))
 
     if offenders:
         total = sum(len(offsets) for _, offsets in offenders)
@@ -295,8 +345,36 @@ def main() -> int:
         )
         return 1
 
+    if conflicts:
+        marks_total = sum(len(marks) for _, marks in conflicts)
+        print(
+            f"check_text_integrity: {marks_total} merge-conflict marker line(s) "
+            f"in {len(conflicts)} of {len(text)} tracked text file(s).",
+            file=sys.stderr,
+        )
+        for name, marks in conflicts:
+            print(f"  {name}", file=sys.stderr)
+            for number, kind, line in marks[:3]:
+                print(f"    line {number} ({kind}) {line[:40]}", file=sys.stderr)
+            if len(marks) > 3:
+                print(f"    ... and {len(marks) - 3} more", file=sys.stderr)
+        print(
+            "check_text_integrity: a conflict marker is the one syntax every "
+            "tool reads as 'nobody decided'; a file that carries both ends has "
+            "two answers in it and reports the first one. Resolve the conflict "
+            "and commit the decision, or delete the second copy -- do not leave "
+            "the markers where the reader finds them first.\n"
+            "check_text_integrity: measured on docs/STATUS.md (four marker "
+            "lines, one `@@PIN-GATE@@` artefact, pushed to main by a merge "
+            "whose substance was right); no gate stage asked this question "
+            "before, so nothing was red.",
+            file=sys.stderr,
+        )
+        return 1
+
     print(
-        f"check_text_integrity: {len(text)} text file(s), 0 with NUL bytes; "
+        f"check_text_integrity: {len(text)} text file(s), 0 with NUL bytes, "
+        f"0 with merge-conflict markers; "
         f"{len(TEXT_SUFFIXES)} suffix(es) + {len(TEXT_NAMES)} name(s) in the "
         f"allow-list, {len(dead)} of them match nothing today (stated)."
     )
