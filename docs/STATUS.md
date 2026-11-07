@@ -5021,7 +5021,7 @@ WHY IT EXISTS，用一句话说清楚：**数组的构造在 MIR 路线里是一
 
 ### 一、判据先行（实现之前，逐字）
 
-`tools/aot_mir.test.py` 的 `MIR_ONLY` 加七例（逐个打印元素、边界下标、嵌套容器、空数组、字符串下标、非整数下标、类型错），另加一张反向表 `MIR_ONLY_REFUSE`（一例：常量越界下标**必须被拒译**，并且拒译理由必须叫 `index-out-of-range-constant`）。七例都在 `exec=same` 上判：`tools/aot_mir.test.py:1110` 把 **rc 与 stdout 一起比**（[obs: 1d5cfd1]），不是「看起来差不多」。
+`tools/aot_mir.test.py` 的 `MIR_ONLY` 加七例（逐个打印元素、边界下标、嵌套容器、空数组、字符串下标、非整数下标、类型错），另加一张反向表 `MIR_ONLY_REFUSE`（一例：常量越界下标**必须被拒译**，并且拒译理由必须叫 `index-out-of-range-constant`）。七例都在 `exec=same` 上判：`tools/aot_mir.test.py:1038` 把 **rc 与 stdout 一起比**（[obs: 1d5cfd1]），不是「看起来差不多」。
 
 | 用例 | 源码 | 它咬的是什么 |
 | --- | --- | --- |
@@ -5130,7 +5130,7 @@ IR-AOT-MIR-VERDICT|PASS|tree=1d5cfd1477a4cf90c7f823c7aabf2e8ddafe4b43|accepted=1
 
 ```
 $ grep -n 'if (i < 0 || i >= n) return mv_nil();' src/compilation/aot_mir.c
-801:"        if (i < 0 || i >= n) return mv_nil();             /* src/vm/vm.c:1002 */\n"
+801:"        if (i < 0 || i >= n) return mv_nil();  /* … */\n"
 $ python3 - <<'EOF'   # 整行删掉
 EOF
 INJECTION-A applied: bounds check line removed
