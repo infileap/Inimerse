@@ -5080,3 +5080,13 @@ IR-AOT-MIR-VERDICT|PASS|...|accepted=100|same-as-interpreter=100|...
 7. **不覆盖**：`??`、嵌套 `a or b or c`、`or` 的结果再喂给 `or`、常量折叠形态（`true or b`）、以及 `and`/`or` 与字符串真值的组合。这些形态今天没有判据。
 8. **热普查是 opt-in 环境变量**（`INIMERSE_HOT_OPS=1`），gate 里的 cover 回归用同一套，所以 `ops=(none)` 这个读数在门禁里也被重算，不是本节手工贴上去的。
 9. **`say a or b` 打印的是布尔原样**（`true`/`false`），不经过字符串化路径；所以这条用例不覆盖字符串化。
+
+**重记 pin 与门禁**（重记 pin 之后、HEAD=8a2762f 上测得，`GATE_EXIT=0`）：
+
+```
+IR-AOT-MIR-PIN|tree=e1fa8f0c19c6d9db7ae58ec377915548312a5e46|head=8a2762fc8fadf5fc3794a6d640194791009824a9|of=29|covered=29|pinned-covered=29|match=yes|tree-moved=yes
+GATE|start|head=8a2762fc8fadf5fc3794a6d640194791009824a9|worktree=.worktrees/mirval-concat2
+gate: OK — every stage passed (20/20 stages ran).
+```
+
+`match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 4 项 beyond 名单一致）；`tree-moved=yes` 是**预期**的：pin 的 `tree` 记的是「这一读数在哪个提交上取」，重记 pin 的那一笔在它后面，读数本身不动。这条用例的 `UNEXECUTED|ops=(none)` 在门禁里被**重算**了一次（cover 回归跑同一套用例），不是本节手工贴的。
