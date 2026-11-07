@@ -5922,3 +5922,72 @@ IR-MIR-VERDICT|FAIL|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|re
 ### 七、诚实边界：容器写入仍不是完整容器语义
 
 这一格补的是「**已有数组上的 32 字节标量槽**」：原地覆盖、越界高增长（尾上填 nil）、负下标抛、非数值下标抛、非数组容器静默丢弃、区域搬家用转发头保别名。它不是：字典写入、链式新建、写侧内存审计、与解释器同机制的 `ArrayObj`（解释器的句柄不动、只搬 `a->items`，这边搬的是槽本身并靠头解决别名——**行为等价、机制不同**，所以「`ival` 就是池下标」这条旧断言仍然成立）。还有一条更根本的：解释器的 `value_free` + `used_mem` 让「覆盖」有可观测的代价，本路线的覆盖在任何读数上都**零分配**（这正是 `ALLOCS_EXPECT` 里三条 `(1|256)` 与 `(3|1792)` 只在建数组/搬家时上涨的原因）。
+
+## §10.118 `OP_THROW` 的第一格：未捕获时**退出码与非空 stderr**才是语义（aot-mir，A 类第十四项）
+
+### 一、来源与日期
+
+来源是异常支线的路线裁定：`try`/`catch` 的真实合同是 handler 栈 + 弹栈 + 剪帧（`src/vm/vm.c:2570-2577`、`:4142`），跨帧 catch 必须动 `OP_CALL_FUNC` 的每一条生成码或改 longjmp，那是 B 类的一整格。`OP_THROW` 自己只要答「未捕获」这一半就是**可观测**的语义：真跑 stdout、stderr 一行、退出码 1。日期 **2026-11-08**，基线 `3efa354`。 [obs: 92955ec]
+
+今天的红（本分支第一次跑，二进制还是基线的 `build/aot-mir`，判据已先写进 `tools/aot_mir.test.py`；红点在 MIR 侧，不是解释器侧）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_throw_uncaught_top|mir=refused|why=unsupported-opcode
+IR-MIR-MIR-ONLY|case=mir_throw_uncaught_cross|mir=refused|why=unsupported-opcode
+IR-MIR-PROBLEM|mir_throw_uncaught_top: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_THROW:1)
+IR-MIR-PROBLEM|mir_throw_uncaught_cross: the MIR route refused a case this list exists to measure: unsupported-opcode (OP_THROW:1)
+IR-MIR-VERDICT|FAIL|tree=3efa354626aa68d6c3b4595f3305a7f7f349a487|accepted=86|refused=0|...
+```
+
+### 二、语义：`vm_throw` 的未捕获路径写了什么
+
+- handler 的唯一调用点是 `vm_throw(vm, t, &R[ins.r1])`（`src/vm/vm.c:4449`）：**r1 是被抛的值**，是一个寄存器，不是池下标。编译器的三个 emit 点都传表达式寄存器（`src/compiler/compiler.c:616`、`:2316`、`:2328`）。 [obs: 92955ec]
+- 没有 handler 时，`fprintf(stderr, "\n[exception] uncaught: %s\n", (err->type == VAL_STRING && err->sval) ? err->sval : "(non-string value)")`（`src/vm/vm.c:2640-2641`），随后 `  at ip=%d frames=%d` 与帧链（`:2642-2644`），再 `last_error = 1`（`:2648`）——所以**退出码是 1**，且 stdout 只保留异常之前写过的字节。 [obs: 92955ec]
+- 解释器实测（本树）：`p1`（`say "a"` / `throw "boom"` / `say "b"`）rc=1、stdout `a\n`、stderr `\n[exception] uncaught: boom\n  at ip=4 frames=0\n`；`p2`（`func f() { throw "from-func" }`，从 main 调 `f()`）rc=1、stdout `before\n`、stderr `\n[exception] uncaught: from-func\n  at ip=2 frames=1 -> ip=3\n`。 [obs: 92955ec]
+
+### 三、判据三条，先立、先红
+
+| 判据 | 位置 | 要求 | 今天的红 |
+|---|---|---|---|
+| A-1 | `tools/aot_mir.test.py:628`（`MIR_ONLY`）+ `:355`（`STDERR_EXPECT`） | `p1` 被接受、真跑、rc=1、stdout 逐字节同解释器、stderr 含 `[exception] uncaught: boom` | translate rc=1 / refused（`OP_THROW:1`） [obs: 92955ec] |
+| A-2 | `tools/aot_mir.test.py:629` + `:359`（`STDERR_EXCLUDE`） | `p2` 的 stderr 含 `[exception] uncaught: from-func`，**且**不含 `[exception] uncaught: boom` | 同上，refused [obs: 92955ec] |
+| A-3 | `tools/aot_mir.test.py:1109`（`MIR_ONLY_REFUSE` 的 `mir_try_no_throw`） | `p14`（`try`/`catch`、无 `throw`）**仍然**拒译，`why=unsupported-opcode`，且 not-yet 含 `OP_TRY_START`/`OP_TRY_END`、不含 `OP_THROW` | 拒译这一半今天是绿的（旁表见 `:1126-1127`）；A 落地后必须保持 [obs: 92955ec] |
+
+A-3 是**负判据**：它堵的是「顺手把 try 也做了」。`p14` 解释器答案是 rc=0、stdout `a\nd\n`、stderr 空（catch 体不跑）；把 try 半做掉，这个程序就从「具名拒译」变成「rc=1 + 一条假异常」，那是**带退出码的错答案**，比拒译更坏。旁表把「拒译是关于什么」写成断言：两个 TRY opcode 在、`OP_THROW` 不在（`tools/aot_mir.test.py:1126-1127`）。 [obs: 92955ec]
+
+### 四、改动：三处 + 一段 helper
+
+1. `op_regs`：`src/compilation/aot_mir.c:1625` 加 `case OP_THROW: return R1;`，长注 `:1607-1624` 写明「r1 是被抛的值、它是寄存器；r2/r3 不是操作数；这条是单向读，掩码没有方向位」；并写明 **`prescan` 不需要 case**（没有池/全局/函数/标签索引可查，r1 由 generic bound loop 兜）。 [obs: 92955ec]
+2. `emit_one`：`src/compilation/aot_mir.c:2627` 加 `case OP_THROW: buf_fmt(b, "    mv_die_uncaught(v[%d]);", r1); return 0;`，注 `:2609-2626` 写明「只答未捕获的一半；带 handler 的整条仍拒译，这就是 A-3 存在的理由」。 [obs: 92955ec]
+3. 运行期 helper：`src/compilation/aot_mir.c:1055-1060` 的 `mv_die_uncaught(MirVal a)`：打印寄存器里的字符串（非字符串打 `(non-string value)`），然后 `exit(1)`——`exit` 会跑 `atexit(mv_free_all)`，所以 ALLOCS 尾巴是诚实的（注册点 `src/compilation/aot_mir.c:2732`）。 [obs: 92955ec]
+4. **helper 为什么必须落在 `kMirValBlock` 之内**（`src/compilation/aot_mir.c:38-48` 的块注释自己写了这条）：共享 preamble 在两路逐字节相同，`classify()` 取第一个差异行并要求共同前缀仍带三个 marker（`tools/aot_mir.test.py:105`、`:1207`）；把 helper 插进 preamble 会让每个 c-diff 变成 `Unclassifiable`。 [obs: 92955ec]
+
+### 五、仪表：包含（含具名子串），不是相等
+
+- `STDERR_EXPECT`（`tools/aot_mir.test.py:355`）要求具名子串；`STDERR_EXCLUDE`（`:359`）要求「别的 throw 的字**不**出现」；两者合起来才看得见「答案是常量」这种假实现——一个只写 `mv_str("boom")` 的臂能通过所有正向子串，却答不出 `from-func`。 [obs: 92955ec]
+- `ALLOCS_EXPECT` 的两条 `(0, 0)`（`tools/aot_mir.test.py:301-302`）是**先量后写**：两个生成程序自己的 stderr 都是 `IR-MIR-ALLOCS|allocs=0|freed=0|live=0|bytes=0`（字面量是 resident，throw 不分配；退出仍走 atexit 扫）。 [obs: 92955ec]
+- 为什么**不**逐字节比：已 pin 的绿用例 `mir_container_index_type_mismatch`（`tools/aot_mir.test.py:739-740`）两边 stderr 今天就不一致——解释器打前导空行 + `  at ip=11 frames=0`，MIR 打无前导空行、无 ip 行，并在尾部多一行 ALLOCS。相等仪表会在落地的当天先欠一笔**假红**。 [obs: 92955ec]
+- 两条仪表都做了双向自检（`tools/aot_mir.test.py:1338-1383`）：子串在/不在、别的 throw 的字泄漏、not-yet 丢了 TRY_END、not-yet 多了 OP_THROW；`--self-check` 读数 `checks=18|verdict=PASS`。 [obs: 92955ec]
+
+### 六、两次非对称反向判据
+
+1. **把消息写成常量**：`emit_one` 的臂改成 `mv_die_uncaught(mv_str("boom"))`。读数：`mir_throw_uncaught_top` 仍绿、`mir_throw_uncaught_cross` **两条都红**（`missing=([exception] uncaught: from-func)|leaked=([exception] uncaught: boom)`），`IR-MIR-VERDICT|FAIL`。复原（`grep -c` 该注入拼写 = 0、重编、重跑）→ `VERDICT|PASS`。 [obs: 92955ec]
+2. **只 exit 不打印**：臂改成裸 `exit(1);`。读数：`mir_throw_uncaught_top` 红在**缺消息**（`missing=([exception] uncaught: boom)`；退出码 1 与 stdout 仍对，说明只看退出码看不见静默停机），`VERDICT|FAIL`。复原 → `PASS`。 [obs: 92955ec]
+
+### 七、读数（本树，实跑）
+
+- `p1`/`p2`：translate rc=0、cc rc=0、运行 rc=1、stdout 与解释器**逐字节相同**（`a\n`、`before\n`）；stderr 为 `[exception] uncaught: boom` / `[exception] uncaught: from-func`，各跟一行 `IR-MIR-ALLOCS|allocs=0|freed=0|live=0|bytes=0`。 [obs: 92955ec]
+- `p14`：translate rc=1、`why=unsupported-opcode`，`IR-MIR-NOT-YET|op=OP_TRY_START|n=1`、`|op=OP_TRY_END|n=1`，**没有 OP_THROW**；解释器 rc=0、`a\nd\n`。 [obs: 92955ec]
+- `IR-MIR-COVER|…mir-only-cases=43|mir-only-same-as-interpreter=43`（基线 41，两个新用例各 +1）；`IR-AOT-MIR|accepted=129|refused=0|same-as-interpreter=129|of=29|emittable=42|of-ops=67|not-emittable=25|beyond-ast-denominator=13`（`OP_THROW` 进 BEYOND）；`IR-AOT-MIR-LOWERING|handles=42|of=67|unknown=25|table=42|emitter=42|reported=42|agree=yes`。 [obs: 92955ec]
+- `IR-AOT-MIR-UNEXECUTED` 仍是 `ops=(none)`：两个新用例由解释器执行过，不是「共享用例里没跑到的 opcode」。 [obs: 92955ec]
+
+`handles` 41 → **42**，不是更多：这一格只加 `OP_THROW` 一个 opcode。`try` 相关的 `OP_TRY_START`/`OP_TRY_END` 按设计继续拒译（A-3），其余 24 个 opcode 仍 unknown。
+
+### 八、诚实边界（单列）
+
+1. **`try`/`catch`/`finally` 仍整条拒译**，`p14` 是判据（`tools/aot_mir.test.py:1109`）；`finally` 的正常落穿行为也没复刻（`p12` 解释器只打 `body\ndone\n`，别拿它当参照）。 [obs: 92955ec]
+2. **非字符串抛出值**的 message 是字面 `(non-string value)`（`src/vm/vm.c:2641`），本树没有专门用例逐字比对，只按来源抄。 [obs: 92955ec]
+3. **`--err-json` 不复刻**：解释器的 `g_err_json` 分支（`src/vm/vm.c:2616-2636`）打的是 JSON 形状，本路线没有这个开关。 [obs: 92955ec]
+4. **线程内异常**没有专门判据：`OP_THROW` 在 thread 容器里落到的仍是本进程 `exit(1)`，与解释器线程语义（`vm->last_error` 只对 main）未逐一对照。 [obs: 92955ec]
+5. **`at ip=…` / `frames=…` 两行不保证逐字节相同**：MIR 路线没有字节码 ip、也没有帧台账，这两行不打印；前导空行同样不打印（与既有两个 stop 同形）。**这正是仪表是「包含」而不是「相等」的原因**（§五）。 [obs: 92955ec]
+6. 多出来的一行 `IR-MIR-ALLOCS|…` 是 atexit 尾巴，**两边 stderr 的尾部本来就不同**；任何把 stderr 当逐字节合同的断言都会先红在这个绿用例上（`tools/aot_mir.test.py:739-740`）。 [obs: 92955ec]
