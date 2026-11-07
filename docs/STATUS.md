@@ -4953,7 +4953,7 @@ IR-MIR-VERDICT|FAIL|tree=d820953a38279670600d23213c4cfa55a15ff435|accepted=86|re
 
 **还原证据**：把注入前的源文件拷回，`grep -c INJECTED src/compilation/aot_mir.c` = `0`（无匹配），`grep -n "ONE block for the whole chain"` 回到原件那一行，`BUILD_EXIT=0`，重跑判据 `allocs=6|freed=6|live=0|bytes=66|ok=yes`、`IR-MIR-VERDICT|PASS`、`IR-MIR-PROBLEM` 计数 0。
 
-### 六、读数（本树上测得；pin 重记之后的 gate 读数见本节末段）
+### 六、读数（本树上测得）
 
 `python3 tools/aot_mir.test.py --build build`，`MIR_EXIT=0`：
 
@@ -4975,6 +4975,15 @@ IR-AOT-MIR-BEYOND|ops=(OP_CONCAT,OP_IS_NIL,OP_LOADK_STRING)|...
 `handles` 从 32 到 33，`accepted` 从 98 到 99、`same-as-interpreter` 从 98 到 99，`mir-only-cases` 从 12 到 13：三个数各自 +1，正好是新用例一条、OP_CONCAT 一格。`beyond-ast-denominator` 从 2 到 3，多出来的正是 `OP_CONCAT`（MIR-only 用例执行了它、AST 语料从没执行过它）——pin 必须为此重记，那是下一笔的事。
 
 `python3 tools/check_line_refs.py` 与 `python3 tools/check_word_refs.py` 都是 `RC=0`：`CITATIONS|base=1199|now=1199|removed=0|added=0|tree=d820953`；`pins -- explicit delta +12 (expect +12), unanchored delta -3 (ceiling +1)`；`readings -- explicit 185 (base 173), unanchored 559 (base 562), mis-labelled 0`。本节没有新增任何 `路径:行号` 形式的显式引用（源码行只写裸 `:NNNN` 加代码原文），所以 explicit 与 unanchored 两个棘轮一格没动。
+
+**重记 pin 与门禁**（下一笔提交 85bebc4 上测得，`GATE_EXIT=0`）：
+
+```
+IR-AOT-MIR-PIN|tree=59c6045b5b3060bf8ed1442754c8bc14b519fa43|head=85bebc45eecd8624c87cdafc991448ae567cf5c5|of=29|covered=29|pinned-covered=29|match=yes|tree-moved=yes
+gate: OK — every stage passed (20/20 stages ran).
+```
+
+`match=yes` 是数字对上了（of/covered/pinned-covered 三个 29 与 beyond 名单一致）；`tree-moved=yes` 是**预期**的，不是失败：pin 的 `tree` 指的是「这一读数是在哪个提交上取的」，而这个提交（只动 pin 文件的那一笔）当然在它后面，读数本身没有移动。`gate.sh` 的 20 个阶段全过，`check_docs_headings` 的 `HEADINGS|pin|tree=59c6045|docs=111|headings=1408|dirty=no` 也在其中。
 
 ### 七、诚实边界（「一次分配」在哪些形态下成立、哪些不成立）
 
