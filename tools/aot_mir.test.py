@@ -206,6 +206,29 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # (1+2+1) + (2+2+1) + (2+0+1) + (2+2+1) + (4+2+1) = 5+4+4+5+3+5+7.
 ALLOCS_EXPECT = {
     "mir_add_string_concat": (7, 33),
+    # The array literal's ONE block is the value pool, not the array: the pool
+    # is MV_SLOTS == 8 slots of 32 bytes = 256 bytes, allocated on FIRST use and
+    # grown by doubling after that.  Every literal case below fits in those 8
+    # slots -- a 3-element array needs 1 count + 3 items = 4; the nested case
+    # needs 3 + 2 + 3 = 8 exactly -- so each of them measures allocs=1|bytes=256
+    # and the empty literal measures the same, because the first use allocates
+    # the pool whether or not any element follows.  A route that malloc'd the
+    # array itself, or one that grew by one slot per element, lands on a
+    # different bytes number here and the difference names which.
+    "mir_container_new_array": (1, 256),
+    "mir_container_new_array_mixed": (1, 256),
+    "mir_container_index_get": (1, 256),
+    "mir_container_index_edges": (1, 256),
+    "mir_container_new_array_empty": (1, 256),
+    # The string arm of OP_INDEX_GET builds ONE 2-byte block per character it
+    # actually returns (src/vm/vm.c:3706-3709 strdup's a one-character buffer;
+    # this route's mv_alloc does the same): reads 0 and 1 answer 'h' and 'i',
+    # read 2 is past the end and answers nil with no block, and the negative
+    # read answers 'i' again -- three blocks, 6 bytes.
+    "mir_container_string_index": (3, 6),
+    # The type-mismatch case exits 1, so its reading is `reported=no|why=rc=1`
+    # and no count is consulted; listed so the table says so on purpose.
+    "mir_container_index_type_mismatch": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -495,7 +518,114 @@ MIR_ONLY = [
     ("mir_eqk_string_ne", 's = "hi"\nsay s != "hi"\nsay s != "ho"\n'),
     ("mir_eqk_number", 'say 1 == 1\nsay 1 != 1\nsay true == true\n'),
     ("mir_eqk_string_cross", 's = "hi"\nsay "hi" == s\nsay "ho" == s\n'),
+    # ---- the container step: OP_NEW_ARRAY and the read-only OP_INDEX_GET ----
+    #
+    # The first ask whose ANSWER is a heap OBJECT and not a scalar: `a =
+    # [1, 2, 3]` is one array literal, and `a[1]` is a read off it.  Printed
+    # ELEMENT BY ELEMENT so the criterion is byte-exact on stdout -- `say a`
+    # (the object itself) is a FORMATTING answer, not this step's, and stays an
+    # abort boundary named in docs/STATUS.md; every line below reads one element
+    # through OP_INDEX_GET and prints that value, which is the closed loop.
+    # What each one is the criterion OF:
+    #   mir_container_new_array        three integers, every element read by a
+    #                        CONSTANT subscript.  An emitter that built the
+    #                        array but read the wrong register answers 1,3,2 or
+    #                        misses; the operand layout (r1 = destination, r2 =
+    #                        UNREAD, r3 = element count, elements from the last
+    #                        r3 pushed values) is copied from
+    #                        src/vm/vm.c:3620-3647 and
+    #                        src/compiler/bytecode.h:14.
+    #   mir_container_new_array_mixed  a string, an integer and a boolean in one
+    #                        literal.  The array is a heap OBJECT holding
+    #                        32-byte slots, so a route that copied only the
+    #                        numeric tag, or that stored pointers into its own
+    #                        stack, prints the wrong bytes here.
+    #   mir_container_index_get an array whose two elements ARE arrays, read
+    #                        through two subscript levels.  The element copy has
+    #                        to keep a nested handle alive after the outer
+    #                        literal is gone; a route that flattened the copy
+    #                        prints nil.
+    #   mir_container_index_edges NEGATIVE, past-the-end, float, and boolean
+    #                        subscripts -- all of them COMPUTED (`z - 1`, not
+    #                        `-1`), because a CONSTANT subscript this route can
+    #                        prove out of range is refused before generation
+    #                        (the reverse criterion below) and could not be
+    #                        measured here.  The arithmetic is what makes them
+    #                        unprovable to the pre-scan and run-time-only to this
+    #                        route, which is exactly the arm this case owns.
+    #                        These are the runtime arms of src/vm/vm.c:3675-3716:
+    #                        an out-of-range read answers nil "compat", `1.9`
+    #                        truncates to 1, and `true` converts to 1 through
+    #                        the tag-checked val_as_double, not through the
+    #                        union's double slot.  A route that silently
+    #                        answered 0 on a miss differs in bytes here, and the
+    #                        exit code would not notice.
+    #   mir_container_new_array_empty  an EMPTY literal, read at run time.  n
+    #                        == 0 means no PUSH_REG at all, so the generated code
+    #                        must not reference an argument stack it never
+    #                        declared, and the read must answer nil rather than
+    #                        read item 0 of a zero-element block.
+    #   mir_container_string_index     the OTHER container arm OP_INDEX_GET has
+    #                        (src/vm/vm.c:3700-3711): a string subscripted with a
+    #                        positive, a past-the-end and a NEGATIVE index.
+    #                        OP_INDEX_GET is one opcode with two container arms,
+    #                        and a route that answered a string container with
+    #                        nil would print nil where the interpreter prints a
+    #                        character -- the silent-wrong-answer shape this
+    #                        list exists to redden, on a program the subset CAN
+    #                        spell.
+    #   mir_container_index_type_mismatch
+    #                        nil as the subscript.  The interpreter throws
+    #                        type_mismatch, prints NOTHING on stdout and exits 1
+    #                        (src/vm/vm.c:323-334 reached through L_INDEX_GET),
+    #                        so this case asserts rc AND bytes: a route that
+    #                        coerced the nil to 0 would print `7` and exit 0, and
+    #                        both halves of that mismatch are visible in the one
+    #                        reading.
+    ("mir_container_new_array",
+     'a = [1, 2, 3]\nsay a[0]\nsay a[1]\nsay a[2]\n'),
+    ("mir_container_new_array_mixed",
+     'a = ["hi", 2, true]\nsay a[0]\nsay a[1]\nsay a[2]\n'),
+    ("mir_container_index_get",
+     'b = [[5, 6], [7]]\nsay b[0][1]\nsay b[1][0]\nsay b[0][0]\n'),
+    ("mir_container_index_edges",
+     'a = [7, 8, 9]\nz = 0\n'
+     'neg = z - 1\nsay a[neg]\n'
+     'past = z + 3\nsay a[past]\n'
+     'fl = z + 1.9\nsay a[fl]\n'
+     'bo = z == 0\nsay a[bo]\n'
+     'say a[z]\n'
+     'two = z + 2\nsay a[two]\n'),
+    ("mir_container_new_array_empty",
+     'a = []\ni = 0\nsay a[i]\n'),
+    ("mir_container_string_index",
+     's = "hi"\ni = 0\nsay s[i]\nj = 1\nsay s[j]\nk = 2\nsay s[k]\n'
+     'm = 0 - 1\nsay s[m]\n'),
+    ("mir_container_index_type_mismatch",
+     'a = [7, 8, 9]\nsay a[nosuchglobal]\n')
 ]
+
+
+# The REVERSE half of MIR_ONLY: programs this route must REFUSE, by name, with
+# the why it must refuse them with.  Asymmetric on purpose -- the observed fact
+# that the interpreter answers such a program is the reason a refusal here has
+# to be a NAMED decision and not an accident of what got implemented.
+#
+# mir_container_const_oob is `a = [1, 2, 3]` read at `a[3]`.  The array literal
+# has THREE elements at a place the pre-scan can SEE, and the subscript is a
+# constant register the pre-scan can SEE, so the index is out of range before
+# any code runs.  The interpreter answers nil (src/vm/vm.c:1002 returns a nil
+# Value when `i >= count`) and this route could answer nil at run time too --
+# but a route that answers a provably-wrong subscript the same way it answers a
+# good one has no way to say WHICH it did, and "silently the same answer" is the
+# class of hole every MIR_ONLY comment above exists to close.  So the pre-scan
+# refuses the program whole, with a why a reader can grep for; the interpreter
+# keeps answering nil, and the reading prints BOTH facts.
+MIR_ONLY_REFUSE = {
+    "mir_container_const_oob": (
+        'a = [1, 2, 3]\nsay a[3]\n',
+        "index-out-of-range-constant"),
+}
 
 
 def run_bytes(cmd, cwd):
@@ -1066,6 +1196,42 @@ def main():
         print("IR-MIR-MIR-ONLY|case=%s|mir=accepted|cc=ok|exec=%s|rc=%s|bytes=%d|stdout-hex=%s"
               % (name, "same" if same else "diff", rc_r, len(out_r), out_r.hex()))
 
+    # ------------------------------------------------------- the reverse criterion
+    #
+    # MIR_ONLY_REFUSE is judged ASYMMETRICALLY and in two directions, because a
+    # refusal is a claim and a claim has two ways to be wrong: accepting the
+    # program (which hides the question the entry exists to ask) and refusing it
+    # for the WRONG reason (which would pass a "it errored out" check while the
+    # named check it is supposed to be measured by never ran).  The reading
+    # carries the interpreter's answer for the same file, captured here and not
+    # assumed: the refusal is THIS ROUTE's decision standing next to an answer
+    # the interpreter really gives, not a program nobody can run.
+    ref_ran = ref_ok = 0
+    for name, (src, want_why) in MIR_ONLY_REFUSE.items():
+        s = Path(workdir) / (name + ".im")
+        s.write_text(src)
+        mir_c = Path(workdir) / (name + ".mir.c")
+        rc_m, om, em = run([mir_tool, "translate", s, mir_c], workdir)
+        got = parse_mir_out(om)
+        ref_ran += 1
+        why = got["refused"][0] if got.get("refused") else "no IR-MIR-REFUSED line"
+        rc_i, out_i, _ei = run_bytes([interp, "--no-mods", "run", s], workdir)
+        if rc_m == 0:
+            problems.append("%s: the MIR route ACCEPTED a program this list exists to see refused"
+                            " (the criterion demands why=%s); it translated %d bytes of C"
+                            % (name, want_why, (mir_c.stat().st_size if mir_c.exists() else 0)))
+        elif got.get("refused") is None or why != want_why:
+            problems.append("%s: refused with why=%s, the criterion demands why=%s (a refusal for"
+                            " the wrong reason is not the refusal this list measures)"
+                            % (name, why, want_why))
+        else:
+            ref_ok += 1
+        print("IR-MIR-MIR-ONLY-REFUSED|case=%s|mir=%s|why=%s|expect=%s|ok=%s"
+              "|interp-rc=%s|interp-out=%r|stdout-bytes=%d|stdout-hex=%s"
+              % (name, "refused" if rc_m != 0 else "accepted", why, want_why,
+                 "yes" if (rc_m != 0 and why == want_why) else "no",
+                 rc_i, out_i, len(out_i), out_i.hex()))
+
     print("IR-MIR-LAYOUT-ASSERT|files=%d|need=%d|files-complete=%d|missing=(%s)"
           "|basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every-generated"
           "-file-read-off-the-emitted-text"
@@ -1078,6 +1244,8 @@ def main():
              ",".join("%s:%d" % (r, reasons[r]) for r in DIFF_REASONS),
              perturbed, perturb_fail, stdout_changes,
              mir_only_ran, mir_only_same))
+    print("IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=%d|ok=%d|expect=%d"
+          % (ref_ran, ref_ok, len(MIR_ONLY_REFUSE)))
     for line in unclassifiable:
         print("IR-MIR-C-UNCLASSIFIED|" + line)
     for line in problems:
@@ -1085,7 +1253,8 @@ def main():
 
     ok = (differ == 0 and not problems and not unclassifiable and conserved == accepted
           and perturb_fail == 0 and stdout_changes > 0 and perturbed > 0
-          and mir_only_same == len(MIR_ONLY))
+          and mir_only_same == len(MIR_ONLY)
+          and ref_ok == len(MIR_ONLY_REFUSE))
     if c_identical == 0 and c_diff > 0:
         ok = ok  # a corpus where every file differs is not itself a failure
     print("IR-MIR-VERDICT|%s|tree=%s|accepted=%d|refused=%d|differ=%d|c-identical=%d|c-diff=%d"
