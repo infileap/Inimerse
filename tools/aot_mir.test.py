@@ -289,6 +289,20 @@ ALLOCS_EXPECT = {
     # listed so the table says so on purpose.
     "mir_index_set_edges": (0, 0),
     "mir_index_set_negative": (0, 0),
+    # DICT (OP_NEW_DICT + the read-only dict branch of OP_INDEX_GET).  All four
+    # MEASURED before they were written down, and all four land on ONE pool
+    # block: a dict shares mv_arrmem with an array (it IS an ArrayObj's items in
+    # the interpreter), its region is 1 count slot + 2*pairs item slots, and the
+    # first pool block is 8 slots = 256 bytes, so a 1-pair dict (3 slots) and a
+    # 2-pair dict (5 slots) both fit the first block and only the block is ever
+    # allocated.  The READS add nothing: mv_dict_get compares keys through
+    # mv_eq and mv_dict_get_at copies a 32-byte KEY slot, neither calls mv_alloc.
+    # A route that malloc'd a per-dict table (or that hash-boxed a key) lands on
+    # a different pair here and the difference names which.
+    "mir_dict_new_get": (1, 256),
+    "mir_dict_missing_key": (1, 256),
+    "mir_dict_key_register": (1, 256),
+    "mir_dict_position_key": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -954,6 +968,58 @@ MIR_ONLY = [
      'say [x - 1] in c\n'
      'say x in c\n'
      'say [1] != c[0]\n'),
+    # THE DICT PAIR -- OP_NEW_DICT and the dict branch of the read-only
+    # OP_INDEX_GET.  Same criterion shape as the container cases above: stdout
+    # BYTES against the interpreter, no expected string anywhere.  What each
+    # one is the criterion OF:
+    #   mir_dict_new_get    two pairs, each value read by a STRING subscript
+    #                       the compiler lowers to a constant register.  An
+    #                       lowering that pushed key/value in the wrong order
+    #                       (value,key) answers 1 where the interpreter answers
+    #                       "a"'s value, or nil.
+    #   mir_dict_missing_key
+    #                       a key the literal does not contain.  The
+    #                       interpreter's vm_dict_get answers nil (src/vm/vm.c:1149-1170);
+    #                       a route that answered the INTEGER 0 there differs
+    #                       in bytes and not merely in rc -- this case is the
+    #                       one docs/STATUS.md's reverse criterion reads.
+    #   mir_dict_key_register
+    #                       a key carried in a REGISTER, not a literal,
+    #                       and read twice: the pair scan has to compare
+    #                       KEY CONTENT (val_eq -> mv_eq's string row,
+    #                       src/vm/vm.c:417), not the two values' ival.  Both
+    #                       resident keys have ival == 1, so an integer
+    #                       comparison answers the FIRST pair's value for
+    #                       every lookup and prints 1, 1 here.
+    #   mir_dict_position_key
+    #                       an INT subscript, which the interpreter's dict arm
+    #                       does NOT treat as a key: it reads the pair at
+    #                       position i and returns its KEY (src/vm/vm.c:3683-3696),
+    #                       and a position past the last pair answers nil.
+    #                       `z` and the arithmetic make the subscripts
+    #                       non-constant so the pre-scan cannot fold them.
+    ("mir_dict_new_get",
+     'd = {"a": 1, "b": 2}\n'
+     'say d["a"]\n'
+     'say d["b"]\n'),
+    ("mir_dict_missing_key",
+     'd = {"a": 1}\n'
+     'say d["nosuch"]\n'
+     'say d["a"]\n'),
+    ("mir_dict_key_register",
+     'd = {"a": 1, "b": 2}\n'
+     'k = "b"\n'
+     'say d[k]\n'
+     'say d[k]\n'
+     'say d["a"]\n'),
+    ("mir_dict_position_key",
+     'd = {"a": 1, "b": 2}\n'
+     'z = 0\n'
+     'say d[z]\n'
+     'i = z + 1\n'
+     'say d[i]\n'
+     'j = z + 2\n'
+     'say d[j]\n'),
 
 ]
 

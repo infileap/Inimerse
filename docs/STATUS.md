@@ -5922,3 +5922,141 @@ IR-MIR-VERDICT|FAIL|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|re
 ### 七、诚实边界：容器写入仍不是完整容器语义
 
 这一格补的是「**已有数组上的 32 字节标量槽**」：原地覆盖、越界高增长（尾上填 nil）、负下标抛、非数值下标抛、非数组容器静默丢弃、区域搬家用转发头保别名。它不是：字典写入、链式新建、写侧内存审计、与解释器同机制的 `ArrayObj`（解释器的句柄不动、只搬 `a->items`，这边搬的是槽本身并靠头解决别名——**行为等价、机制不同**，所以「`ival` 就是池下标」这条旧断言仍然成立）。还有一条更根本的：解释器的 `value_free` + `used_mem` 让「覆盖」有可观测的代价，本路线的覆盖在任何读数上都**零分配**（这正是 `ALLOCS_EXPECT` 里三条 `(1|256)` 与 `(3|1792)` 只在建数组/搬家时上涨的原因）。
+
+## §10.117 字典最小闭环第一步：`OP_NEW_DICT` 与只读 `OP_INDEX_GET`（aot-mir，A 类第十三项）
+
+§10.116 之后，容器这一族只剩字典没有闭环：数组能建、能读、能写，字典连字面量都过不了 prescan。这一节交的是**字典的第一口气**——能建一个字面量，能用 `d[...]` 读一个值；写、比较、打印、迭代都留在第七节的边界里，逐条带读数。解释器语义照抄 `src/vm/vm.c:3648-3673`（`L_NEW_DICT`：`vm_array_new` 拿池下标，`push_n` 推进 2*n 个 key/value，句柄写 `aidx + 1`）与 `src/vm/vm.c:3675-3714`（`L_INDEX_GET` 的三路分派：数组、字典、字符串），字典那一臂再分两条：`src/vm/vm.c:3683` 先看 `idxv->type == VAL_INT`，是整数就是**位置**（读 `items[i * 2]`，即第 i 对的 KEY，界是 `src/vm/vm.c:3688`），否则走 `vm_dict_get`（`src/vm/vm.c:3697-3698` → `:1149-1172`，缺失键答 nil，命中把值拷一份）。[obs: 1fc5d3a]
+
+### 一、判据先红（实现之前）
+
+四条 `MIR_ONLY` 用例在 `tools/aot_mir.test.py:1001-1020`：`mir_dict_new_get`（字面量 + 两个字符串键）、`mir_dict_missing_key`（缺键答 nil）、`mir_dict_key_register`（键在寄存器里）、`mir_dict_position_key`（整数下标是**位置**而不是键——`a, b` 与 `0, 1` 两个答案必须分得开，一个 ival 比较会把它们合在一起）。实现之前先跑一次（`tree=3efa354626aa68d6c3b4595f3305a7f7f349a487`）： [obs: 1fc5d3a]
+
+```
+IR-MIR-MIR-ONLY|case=mir_dict_new_get|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_dict_missing_key|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_dict_key_register|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_dict_position_key|mir=refused|why=illegal-operand
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=45|mir-only-same-as-interpreter=41
+IR-MIR-PROBLEM|mir_dict_new_get: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=4)
+IR-MIR-PROBLEM|mir_dict_missing_key: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=2)
+IR-MIR-PROBLEM|mir_dict_key_register: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=4)
+IR-MIR-PROBLEM|mir_dict_position_key: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=4)
+IR-MIR-VERDICT|FAIL|tree=3efa354626aa68d6c3b4595f3305a7f7f349a487|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+红是 `why=illegal-operand`，不是 `why=unsupported-opcode`：**不平衡的参数栈先于缺 arm 发火**。`OP_NEW_DICT` 的 2*n 个 push 槽没人消费，pre-scan 在发射前就拒了整条程序（`src/compilation/aot_mir.c:2203-2213`）——`OP_NEW_ARRAY` 那一格记的是同一个形状（`src/compilation/aot_mir.c:1685-1692`）。`mir-only-cases=45`、`mir-only-same-as-interpreter=41`：新增的四条就是 45 与 41 之间那 4 个，红在它们身上，不是红在共享语料的 86 条上。[obs: 1fc5d3a]
+
+### 二、实现（三处入口 + 两个成员 + 一条搬家的行）
+
+- **`MV_DIC` 是一个新 tag，不是新池**：`src/compilation/aot_mir.c:97-106`。因为解释器把字典存在**数组池**里（`src/vm/vm.c:3648-3673`），句柄同样是 `aidx + 1`，所以 `mv_arrmem` 就是字典的存储，头一格放的是 ITEM 数 `2*pairs`（`ArrayObj` 的 `count`），后面按 push 顺序 key0,value0,key1,value1 排（`src/vm/vm.c:3666` 的 `vm_array_push_n` 就是这个顺序）。[obs: 1fc5d3a]
+- **构造器** `mv_dic_new`（`src/compilation/aot_mir.c:1077-1089`）：一次 `mv_arr_need(used + 2*n + 1)`，头写 `mv_int(2*n)`，拷 2n 个槽。字典**建完不动**，所以 `mv_arr_live` 的转发头对它永远是 no-op（头是 `MV_INT`，不是 `MV_ARR`）。[obs: 1fc5d3a]
+- **读者** `mv_dict_get_at` / `mv_dict_get`（`src/compilation/aot_mir.c:1194-1217`）：前者是位置（`k < 0 || k*2 >= n` 答 nil），后者是键（线性扫，`mv_eq` 当 `val_eq` 用，缺键答 nil）。**不建哈希表**：解释器的开放寻址只是一个**索引**，每个候选最后仍然用 `val_eq` 判（`src/vm/vm.c:1138-1146`），所以线性扫访问的正是那个 probe 会答的那一对、同一顺序；哈希在这条路线上是第二个答案的主人，还要复刻 `dict_hash_key` 的跨类型规则（`src/vm/vm.c:1038-1072`）。[obs: 1fc5d3a]
+- **分派进 `mv_arr_get`**：`src/compilation/aot_mir.c:1228-1240`，字典是第二个 dispatch（数组之后、字符串之前，`src/compilation/aot_mir.c:1239`）。**这一格真正的坑是下标的转换**：`mv_index_i32` 原来在函数头、对所有容器都转——对数组和字符串对，对字典**错**，因为字典的非整数下标是**键查找**，一个字符串下标走 `mv_index_i32` 会打 `type_mismatch` 然后退出，而解释器答的是 `d["a"]` 的值。所以转换被搬进了数组臂与字符串臂各自的里面（`src/compilation/aot_mir.c:1230-1234`、`:1244-1245`），默认分支的注释也补上了 `MV_DIC`（`src/compilation/aot_mir.c:1110-1111`）。[obs: 1fc5d3a]
+- **三个 lowering 入口**：`op_regs` 把 `r1` 认成唯一的寄存器、`r3` 是 PAIR 数、`r2` 不读（`src/compilation/aot_mir.c:1694-1704`）；pre-scan 把容器当成**一族**，槽数是 `2*n` 或 `n`，先查 `n` 的界再查 asp（`src/compilation/aot_mir.c:2203-2213`）；发射是 `mv_dic_new(n, mvargs + asp - 2*n)` 并把 asp 减 2*n，空字面量走 `mv_dic_new(0, 0)`（`src/compilation/aot_mir.c:2655-2661`）；`emit_container` 的栈扫描把字典当成带参数消费者（`src/compilation/aot_mir.c:2820-2824`）。[obs: 1fc5d3a]
+- 顺手把三处被这次改动**证伪**的旧注释改掉（不是新功能）：数组块里「`OP_NEW_DICT` 不发射、没有 DICT 能到池里」那段（`src/compilation/aot_mir.c:927-936`）、`mv_in` 里「DICT 容器在 `OP_IN` 之前就被拒」（`src/compilation/aot_mir.c:1300-1305`）、发射器容器对注释里把 `OP_NEW_DICT` 列为未发射的那句。[obs: 1fc5d3a]
+
+### 三、读数（绿，原样）
+
+实现后第一次跑**每个字典读都印 nil**：我自己的区域判据写成了 `mv_arrmem[iv - 1].type != MV_DIC`，而构造器把头写成 `mv_int(2*n)`——头永远是 `MV_INT`，所以判据把每一个活字典都判成「不活」。改成和数组臂**同一条范围规则**（`mv_arr_live` 过一遍 + `iv < 1 || iv > mv_arrused`）之后：
+
+```
+IR-MIR-ALLOCS|case=mir_dict_new_get|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_dict_new_get|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=310a320a
+IR-MIR-ALLOCS|case=mir_dict_missing_key|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_dict_missing_key|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=6e696c0a310a
+IR-MIR-ALLOCS|case=mir_dict_key_register|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_dict_key_register|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=320a320a310a
+IR-MIR-ALLOCS|case=mir_dict_position_key|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-MIR-ONLY|case=mir_dict_position_key|mir=accepted|cc=ok|exec=same|rc=0|bytes=8|stdout-hex=610a620a6e696c0a
+IR-MIR-VERDICT|PASS|tree=a19eaebc6ee5a8139951a175c16c4dd439b8cad6|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`stdout-hex` 逐字节就是解释器的：`310a320a` = `1\n2\n`，`6e696c0a310a` = `nil\n1\n`，`320a320a310a` = `2\n2\n1\n`，`610a620a6e696c0a` = `a\nb\nnil\n`——最后一条是位置读（第 0、1 对是键 `a`、`b`，位置 2 越界答 nil），一条 ival 比较读不出它。覆盖账（同一棵树，`python3 tools/aot_mir_cover.test.py --build build`）：
+
+```
+IR-AOT-MIR|accepted=131|refused=0|same-as-interpreter=131|of=29|emittable=42|of-ops=67|not-emittable=25|corpus=inline-cases:86|mir-only-cases:45|beyond-ast-denominator=13|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-OPERANDS|indexed=10|prescanned=11|checked=10|basis=case-labels-in-aot_mir.c's-emit_one-that-read-a-pool-global-function-or-label-index-versus-the-cases-in-prescan|missing=(none)|dead=(none)|detector-saw=yes|agree=yes
+IR-AOT-MIR-LOWERING|handles=42|of=67|unknown=25|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=42|emitter=42|reported=42|agree=yes
+IR-AOT-MIR-UNEXECUTED|ops=(none)|basis=opcodes-in-a-lowered-stream-of-a-shared-case-that-no-interpreter-run-of-the-corpus-executed|in-ast-denominator=no|counted-in-covered=no|emittable=yes
+```
+
+`handles 41 → 42` 就是 `src/compilation/aot_mir.c:1704` 那一行（`OP_NEW_DICT` 同时出现在 `op_regs` 和 `emit_one`，所以 table / emitter / reported 三个数都 +1）；`accepted=131` 是语料 + MIR-only（`122 → 131`，九条：四条字典 + 本次顺带不再被 asp 拒掉的既有 MIR-only），`beyond-ast-denominator` 从 11 到 13（`OP_NEW_DICT` 与 `OP_INDEX_GET` 进入「解释器在 MIR-only 用例上执行、但不进 AST 分母」那一栏）。`OPERANDS` 仍是 `dead=(none)`、`agree=yes`：pre-scan 的容器分支从 `OP_NEW_ARRAY` 一处变成一族，但**计数的判据没动**（`prescanned=11` 与 `indexed=10` 的差仍是那几处只读池/全局/函数/标签下标以外的 case）。[obs: 1fc5d3a]
+
+### 四、`ALLOCS_EXPECT` 先量后写
+
+四条字典用例的分配账**先跑、后写**（`tools/aot_mir.test.py:292-305`）：四条全部 `(1, 256)`。原因在账上不是猜的：字典与数组共享 `mv_arrmem`，区域是 `1 + 2*pairs` 槽，第一块池是 8 槽 = 256 字节，所以 1 对（3 槽）与 2 对（5 槽）都塞进第一块，只有那块被分配；**读不分配**（`mv_dict_get` 只用 `mv_eq` 比键、`mv_dict_get_at` 拷一个 32 字节的槽）。谁若给每个字典 malloc 一张表、或把键装箱，这一对就会换个数，读数会说出是哪一种。[obs: 1fc5d3a]
+
+### 五、反向判据（两条，非对称）
+
+仓库里没有 `INJECTED_COUNT` 这种读数，所以每次注入的证据是「注入后 `grep -n` 印出被改的那一行 + 判据原文」和「复原后同一行印回原件 + 判据原文」，计数用我自己的 `grep -c` 打出来。
+
+**① 键比较换成整数比较。** `src/compilation/aot_mir.c:1214` 的 `if (mv_tru(mv_eq(mv_arrmem[iv + p], idxv)))` 改成 `if ((int)mv_arrmem[iv + p].ival == (int)idxv.ival)`——驻留字符串的 `ival` 都是 1，于是每个字符串键都命中第 0 对。注入后 `INJECT1_COUNT=1`，`grep -n` 印出 `1214:"        if ((int)mv_arrmem[iv + p].ival == (int)idxv.ival)  /* INJECT1 */`，`BUILD_RC=0`、`TEST_RC=1`： [obs: 1fc5d3a]
+
+```
+IR-MIR-EXEC-DIFF|case=mir_dict_new_get|interp-rc=0|mir-rc=0|interp-out=b'1\n2\n'|mir-out=b'1\n1\n'
+IR-MIR-EXEC-DIFF|case=mir_dict_missing_key|interp-rc=0|mir-rc=0|interp-out=b'nil\n1\n'|mir-out=b'1\n1\n'
+IR-MIR-EXEC-DIFF|case=mir_dict_key_register|interp-rc=0|mir-rc=0|interp-out=b'2\n2\n1\n'|mir-out=b'1\n1\n1\n'
+IR-MIR-MIR-ONLY|case=mir_dict_position_key|mir=accepted|cc=ok|exec=same|rc=0|bytes=8|stdout-hex=610a620a6e696c0a
+IR-MIR-VERDICT|FAIL|tree=a19eaebc6ee5a8139951a175c16c4dd439b8cad6|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+红在三条键扫描用例的 **stdout 字节**上，`mir_dict_position_key` 仍 `exec=same`——位置分支根本不经过这一行，这正是这条判据的**不对称**：它钉的是键那一臂，位置那一臂在自己的用例上不动。复原后 `INJECT1_COUNT=0`、那一行印回 `if (mv_tru(mv_eq(mv_arrmem[iv + p], idxv)))`、`git status --porcelain` 空、`TEST_RC=0`、`VERDICT|PASS`。
+
+**② 缺键答 0，不答 nil。** 同一函数的原 `return mv_nil();`（`src/compilation/aot_mir.c:1216`）改成 `return mv_int(0LL);`。注入后 `INJECT2_COUNT=1`，印出 `1216:"    return mv_int(0LL);  /* INJECT2 */           /* src/vm/vm.c:1158-1161 */`，`BUILD_RC=0`、`TEST_RC=1`： [obs: 1fc5d3a]
+
+```
+IR-MIR-MIR-ONLY|case=mir_dict_new_get|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=310a320a
+IR-MIR-EXEC-DIFF|case=mir_dict_missing_key|interp-rc=0|mir-rc=0|interp-out=b'nil\n1\n'|mir-out=b'0\n1\n'
+IR-MIR-MIR-ONLY|case=mir_dict_missing_key|mir=accepted|cc=ok|exec=diff|rc=0|bytes=4|stdout-hex=300a310a
+IR-MIR-MIR-ONLY|case=mir_dict_key_register|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=320a320a310a
+IR-MIR-MIR-ONLY|case=mir_dict_position_key|mir=accepted|cc=ok|exec=same|rc=0|bytes=8|stdout-hex=610a620a6e696c0a
+IR-MIR-VERDICT|FAIL|tree=a19eaebc6ee5a8139951a175c16c4dd439b8cad6|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+只红 `mir_dict_missing_key` 一条（`0` vs `nil`），其余三条 `exec=same`——它们没有缺键。两条判据各自只打自己那一臂，所以它们不是同一个断言的两次复读。复原后 `INJECT2_COUNT=0`、`src/compilation/aot_mir.c:1216` 印回 `return mv_nil();`、`git status --porcelain` 空、`BUILD_RC=0`、`TEST_RC=0`、`VERDICT|PASS`。[obs: 1fc5d3a]
+
+### 六、没做什么（逐条）
+
+1. **字典写入没做。** `OP_INDEX_SET` 走的是 `mv_arr_set`，它对非数组容器静默 `return`（`src/compilation/aot_mir.c:1394-1395`），所以 `d["a"] = 9` 在这条路线上是**静默 no-op**，解释器答 9、这边答 1（实测，见第七节第 1 条）。`vm_dict_set`（`src/vm/vm.c:1184-1222`）在 `OP_INDEX_SET` 的字典臂（`src/vm/vm.c:3730`）上是**存在但不可达**的。[obs: 1fc5d3a]
+2. **哈希索引没建。** `dict_hash_key`（`src/vm/vm.c:1038-1072`）、`dict_hash_find`（`src/vm/vm.c:1138-1146`）、`dict_hash_build`/`dict_hash_ensure` 一个都没复刻：线性扫用一条 `val_eq` 规则（`mv_eq`），这是「一个答案只有一个主人」的选择，代价是每次读 O(n)；`dict_hash_key` 的跨类型规则（1 与 1.0 hash 相同）也就没有被复刻的必要。[obs: 1fc5d3a]
+3. **interning 没做。** `vm_dict_get` 命中时把非驻留串换进驻留表（`src/vm/vm.c:1163-1166`，位置臂在 `src/vm/vm.c:3689-3693`）；这边没有驻留表，字节相同、身份不可观测——这是数组臂已经记下的同一笔债，不是新债。[obs: 1fc5d3a]
+4. **运行期回收没做。** 字典块登记在 `mv_alloc` 链表里，退出时一次扫；没有 `value_free` 的对应物。[obs: 1fc5d3a]
+5. **`mv_eq` 没加 `MV_DIC` 行。** 加了就等于顺手把「字典当键 / 两个字典比较」也答了，那是另一格（题目不许扩）。现在它们走 `nv_eq → mv_as_nv` 并 abort，见第七节。[obs: 1fc5d3a]
+6. **`mv_say` 没碰**：打印字典仍是 abort（第七节第 3 条）。这是 §10.112/§10.116 已钉的既有边界。[obs: 1fc5d3a]
+7. **共享语料与 refuse 表一笔没动**：`tools/aot_cover.pin.json` 仍 86 条、`of=29`。[obs: 1fc5d3a]
+
+### 七、诚实边界：字典这条路上仍答不对的形状
+
+每条要么有探针读数（探针在 `.scratch/probe_mir.sh`，跑的是「translate → cc → 运行」与 `inimerse --no-mods run` 两路对照），要么明写「未测」。**答对的不列进来装点门面，但列出来是为了说明「哪一格的读数来自哪一臂」。** 
+
+**答错、而且是静默的（最危险的一类）：**
+
+1. **往已有键写入**：`d = {"a": 1}; d["a"] = 9; say d["a"]` —— 解释器 `9`，这边 `1`（rc=0，不报错）。因为 `mv_arr_set` 对非数组容器静默 return（`src/compilation/aot_mir.c:1394-1395`）。[obs: 1fc5d3a]
+2. **写一个新键**：`d = {"a": 1}; d["b"] = 7; say d["b"]; say d["a"]` —— 解释器 `7`、`1`，这边 `nil`、`1`（rc=0）。同上一条，同一个根因，但读数不同（新键连旧键都没被碰）。[obs: 1fc5d3a]
+
+**停住程序的（rc=134，stdout 空）：**
+
+3. **`say d`（打印字典）** —— 解释器 `{a: 1, b: 2}`，这边 rc=134、stdout 空：`mv_say` 的非 nil/非字符串走 `mv_as_nv`（`src/compilation/aot_mir.c:1481`），`MV_DIC` 到不了 NV。[obs: 1fc5d3a]
+4. **字典当键**：`d = {inner: 2}; say d[inner]`（`inner` 是另一个字典）—— 解释器 `2`（`val_eq` 按句柄相等，`src/vm/vm.c:421`），这边 rc=134：`mv_eq` 没有 `MV_DIC` 行（`src/compilation/aot_mir.c:752-766`，数组同一性的行在 `:763-764`），落到 `nv_eq`。[obs: 1fc5d3a]
+5. **两个字典比较**：`d = {"a": 1}; e = d; say d == e` —— 解释器 `true`，这边 rc=134。[obs: 1fc5d3a]
+
+**答对、但机制不同（不是缺口，写下来是别让人以为是缺口）：**
+
+6. **嵌套字典**：`d = {"a": {"b": {"c": 3}}}; say d["a"]["b"]["c"]` —— 两路都 `3`（读的每一层都是同一臂）。[obs: 1fc5d3a]
+7. **非字符串键**：`d = {1.0: "x", 2.0: "y"}; say d[1.0]` → 两路 `x`；`say d[1.0]` 的浮点下标走键臂（`val_eq` 的 int/float 互等，`mv_eq` 的 `nv_eq` 也一样）；`d = {true: 7}; say d[true]` → 两路 `7`。整数**字面量**下标则不是键而是位置：`d = {1: "x", 2: "y"}; say d[0]; say d[1]` → 两路 `1`、`2`（答的是键 1、键 2）。[obs: 1fc5d3a]
+8. **重复键**：`d = {"a": 1, "a": 2}; say d["a"]` —— 两路 `1`（解释器的哈希索引与这边的线性扫都答第 0 对）。这一条是**实测相同**，不是原则相同：解释器的答案取决于 `dict_hash_build` 的插入顺序与探针扫描顺序，这边永远答第一对；两种实现此刻给出同一个数，但这不是本节可证明的等价。[obs: 1fc5d3a]
+9. **负下标 / 空字典**：`d = {"a": 1, "b": 2}; n = 0 - 1; say d[n]` → 两路 `nil`；`d = {}; say d["x"]; say d[0]` → 两路 `nil`、`nil`。[obs: 1fc5d3a]
+10. **`in` 于字典**：`d = {"a": 1}; say "a" in d; say "zz" in d` → 两路 `false`、`false`（§10.115 钉的是「非数组容器一律假」，这里没有新答案）。[obs: 1fc5d3a]
+11. **字典在数组里**：`a = [{"a": 1}, {"a": 5}]; say a[0]["a"]; say a[1]["a"]` → 两路 `1`、`5`（分配账是两块 256 字节块：两个字典字面量各一块，`allocs=2|bytes=512`）。[obs: 1fc5d3a]
+
+**未测（不是「未支持」，是这一节没有跑过的形状）：**
+
+12. **迭代** `for x in d` / 任何按键序遍历 —— 未测。[obs: 1fc5d3a]
+13. **把字典当参数传 / 当返回值传 / 越过函数调用的边界** —— 未测。[obs: 1fc5d3a]
+14. **字典参与算术、拼接、`OP_CMP`** 等其他算符 —— 未测。[obs: 1fc5d3a]
+15. **`removal`（`vm_dict_remove`，`src/vm/vm.c:1223` 起）** —— 没有对应 opcode，未测，也不可达。[obs: 1fc5d3a]
+16. **驻留身份的观测**（同一字符串两次读是否是同一个指针） —— 本路线没有驻留表，解释器侧可观测与否**未测**；字节层面 nx 不可观测。[obs: 1fc5d3a]
+
+### 八、这一格之后
+
+`handles` 从 41 到 **42**，不是更多：这一节只让 `OP_NEW_DICT` 出现在 `op_regs` 与 `emit_one` 两个表里（`src/compilation/aot_mir.c:1704`、`:2655`），`OP_INDEX_GET` 本来就在（这次只是它的第二个分派臂长出来）。字典这条路线下一步真正的增量是 **`OP_INDEX_SET` 的字典臂**（`src/vm/vm.c:3730` 的 `vm_dict_set`）与 **`mv_eq` 的 `MV_DIC` 行**（`src/vm/vm.c:421`）：前者让第 1、2 条边界变绿，后者让第 4、5 条变绿，两个都是新 opcode 级别的洞，不是这一节能顺手带上的。[obs: 1fc5d3a]

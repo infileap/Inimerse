@@ -94,6 +94,16 @@ static const char *const kMirValBlock =
 "                      the equality pair (mv_eq/mv_ne) names this tag and the\n"
 "                      pool and its readers sit further down.  The container\n"
 "                      block's own note explains what the tag means. */\n"
+"#define MV_DIC 7   /* = VAL_DICT -- ival is a POOL INDEX, the same pool MV_ARR\n"
+"                      names, because the interpreter keeps a dict in its ARRAY\n"
+"                      pool (L_NEW_DICT calls vm_array_new then push_n of the\n"
+"                      key/value pairs, src/vm/vm.c:3648-3673: the dict's items\n"
+"                      ARE an ArrayObj's items and the dict handle is\n"
+"                      `aidx + 1` exactly as an array's is).  DEFINED HERE, above\n"
+"                      every reader, for the reason MV_ARR's note gives: generated\n"
+"                      C is compiled in block order and the equality pair comes\n"
+"                      first.  Read-only this step: no write path builds or\n"
+"                      mutates one. */\n"
 "\n"
 "/* The placeholder's own test: these are compiled into every generated file,\n"
 "   and tools/aot_mir.test.py compiles every generated file with the system\n"
@@ -914,13 +924,16 @@ static const char *const kMirValBlock =
 " *     L_INDEX_SET.  The pool still moves a region only at the high-water mark\n"
 " *     or behind a forwarding head -- it is never re-indexed under a handle a\n"
 " *     program still holds, which is the property that makes an array aliasable.\n"
-" *   - OP_NEW_DICT and OP_NEW_SET are not emitted, and prescan refuses the\n"
-" *     preset `set` global by name, so no DICT can reach this pool.  mv_arr_get\n"
-" *     answers a container that is neither array nor string with nil, which is\n"
-" *     the interpreter's own else branch (src/vm/vm.c:3712-3714) and the right\n"
-" *     answer for nil, an int, a float and a bool; for a dict it would be the\n"
-" *     WRONG answer, so a dict container is unreachable here rather than\n"
-" *     handled here, and docs/STATUS.md says so.\n"
+" *   - OP_NEW_SET is not emitted, and prescan refuses the preset `set` global\n"
+" *     by name, so no SET can reach this pool.  OP_NEW_DICT now IS emitted\n"
+" *     (this file's constructor note, above mv_dic_new), and a dict reaching\n"
+" *     mv_arr_get is answered by that function's own MV_DIC arm rather than\n"
+" *     by the nil tail -- the first version of this route had no such arm and\n"
+" *     answered every dict read `nil` silently, see that member's note.\n"
+" *     The nil tail now stands for the tags the route cannot build at all\n"
+" *     (set, function, closure): the interpreter's else branch\n"
+" *     (src/vm/vm.c:3712-3714) and the right answer for nil, an int, a float\n"
+" *     and a bool.\n"
 " *   - `say a` -- printing a container -- is a STOP, not an answer: mv_say\n"
 " *     hands every tag but nil and string to nv_say through mv_as_nv, and\n"
 " *     mv_tag_to_nv aborts on MV_ARR where the interpreter prints a bracketed\n"
@@ -989,6 +1002,92 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* THE SECOND CONTAINER THIS ROUTE BUILDS -- a heap DICT, built once and read\n"
+" * only (OP_NEW_DICT + the dict branch of OP_INDEX_GET).  Same note structure\n"
+" * as the array block above: WHY / WHAT IT ADDS / WHAT IT DOES NOT COVER /\n"
+" * DELETE CONDITION / MEASURED BY.\n"
+" *\n"
+" * WHY IT EXISTS.  The array block's note ends with the reason this one does:\n"
+" * `x = {\"a\": 1}` followed by `say x[\"a\"]` was refused WHOLE -- OP_NEW_DICT\n"
+" * had no entry in op_regs and its 2*n argument-stack slots were never\n"
+" * consumed, so prescan refused the program before the interpreter's answer\n"
+" * (1) could be reached (measured: `IR-MIR-MIR-ONLY|case=mir_dict_new_get|\n"
+" * mir=refused|why=illegal-operand`, detail `leaves the argument stack\n"
+" * unbalanced: asp=4`).  A dict is the second container a program can spell,\n"
+" * and it is the first one whose VALUE is a pair list, so the lowering has to\n"
+" * say out loud how a key is found.\n"
+" *\n"
+" * WHAT IT ADDS.  One tag, MV_DIC = VAL_DICT, and ONE POOL: mv_arrmem is the\n"
+" * dict's storage too, because the interpreter keeps a dict in its array pool\n"
+" * (L_NEW_DICT calls vm_array_new then pushes 2*n values, src/vm/vm.c:3648-3673,\n"
+" * and the handle it writes is `aidx + 1`) -- the same handle an MV_ARR value\n"
+" * carries.  The count header is the ITEM count, 2*pairs, which is ArrayObj's\n"
+" * `count` for a dict and is why `i * 2 < count` below is the position bound.\n"
+" * mv_dic_new lays the pairs out in PUSH ORDER: key0, value0, key1, value1 ...\n"
+" * the order L_NEW_DICT's push_n writes (src/vm/vm.c:3666) and the order the\n"
+" * interpreter's items[] keeps, because its hash table is an INDEX over items,\n"
+" * never a reordering of them.  That is what lets an int subscript mean `pair i`\n"
+" * here exactly as it does there.\n"
+" * Lookup is a LINEAR SCAN over the pairs with mv_eq, not a hash table.  The\n"
+" * interpreter builds an open-addressing index and still resolves every\n"
+" * candidate with val_eq (src/vm/vm.c:1138-1146 dict_hash_find), so a probe\n"
+" * that compares keys with val_eq -- mv_eq here -- visits exactly the pair\n"
+" * that probe would answer, in the same order.  The hash is a SPEED structure\n"
+" * on this route it would be a second owner of one answer, and it would also\n"
+" * have to reproduce dict_hash_key's cross-type rule (src/vm/vm.c:1038-1072:\n"
+" * 1 and 1.0 hash alike) or the index and mv_eq would disagree about what\n"
+" * equal means.  O(n) per read is the price of one equality rule; the pool is\n"
+" * tiny and this step is the closed loop, not the fast one.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER, each named by the thing that would need it:\n"
+" *   - OP_INDEX_SET on a dict.  There is no writer here.  mv_arr_set returns\n"
+" *     immediately for a non-array container (its own fact 1), so `d[\"a\"] = 9`\n"
+" *     is a SILENT no-op on this route while vm_dict_set overwrites the pair\n"
+" *     (src/vm/vm.c:1184-1222).  Measured, and named in docs/STATUS.md's\n"
+" *     boundary section for this step -- a silent no-op is exactly the shape\n"
+" *     that must not be mistaken for an answer.\n"
+" *   - Removing a pair (vm_dict_remove), and anything that grows a dict.\n"
+" *     A dict region is built complete and never moved, so mv_arr_live's\n"
+" *     forwarding head is unnecessary here (and harmless: a dict's header is\n"
+" *     MV_INT, never MV_ARR).\n"
+" *   - The interpreter's interning on the way out of vm_dict_get\n"
+" *     (src/vm/vm.c:1163-1166: a non-resident string read back becomes the\n"
+" *     interned one).  This route has no intern table; the bytes printed are\n"
+" *     identical and identity is unobservable through the lowered opcodes, the\n"
+" *     same debt mv_arr_get's note records for the array arm.\n"
+" *   - A dict as a KEY, or two dicts compared: mv_eq has an array-identity row\n"
+" *     and no dict row, so a dict operand reaches mv_as_nv and STOPS the\n"
+" *     program (abort) where val_eq compares `a->ival == b->ival`\n"
+" *     (src/vm/vm.c:421).  Out of this step's scope on purpose: no lowered\n"
+" *     opcode asks for it, and naming it is cheaper than half-answering it.\n"
+" *\n"
+" * DELETE CONDITION (decidable).  Delete this pair in the commit that gives\n"
+" * this route a dict/value runtime shared with the interpreter's vm_dict_*\n"
+" * (docs/streams/aot-mir-value.md section 4): the check is\n"
+" * `grep -c mv_dic_new src/compilation/aot_mir.c` falling to 0 and the dict\n"
+" * branch of mv_arr_get collapsing into a call to vm_dict_get.\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases mir_dict_new_get,\n"
+" * mir_dict_missing_key, mir_dict_key_register and mir_dict_position_key\n"
+" * compare stdout BYTES against the interpreter; all four were red before\n"
+" * this pair as IR-MIR-MIR-ONLY|case=...|mir=refused|why=illegal-operand.\n"
+" * The two reverse criteria in docs/STATUS.md 10.117 flip the missing-key\n"
+" * answer and the key comparison separately.  ALLOCS_EXPECT's dict entries\n"
+" * are the pool blocks, measured first. */\n"
+"static inline MirVal mv_dic_new(int n, const MirVal *items) {\n"
+"    int want = mv_arrused + 2 * n + 1;   /* 1 count slot, then 2n items */\n"
+"    mv_arr_need(want);\n"
+"    MirVal r;\n"
+"    r.type = MV_DIC;\n"
+"    r.ival = mv_arrused + 1;             /* pair 0 sits at pool[ival] */\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    mv_arrmem[r.ival - 1] = mv_int(2 * n);  /* the ITEM count, as ArrayObj holds */\n"
+"    for (int i = 0; i < 2 * n; i++) mv_arrmem[r.ival + i] = items[i];\n"
+"    mv_arrused = want;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* val_as_double's classification (src/vm/vm.c:323-334), without a VM to throw\n"
 "   into.  int, float and bool are numbers there; nil, string and array call\n"
 "   vm_throw_kind(\"type_mismatch\") and read nothing, and an uncaught throw\n"
@@ -1008,7 +1107,8 @@ static const char *const kMirValBlock =
 "    case MV_INT:   return (int)a.ival;\n"
 "    case MV_FLT:   return (int)a.fval;\n"
 "    case MV_BOO:   return a.ival ? 1 : 0;\n"
-"    default:       break;            /* MV_NIL / MV_STR / MV_ARR: vm.c:328 */\n"
+"    default:       break;            /* MV_NIL / MV_STR / MV_ARR / MV_DIC:\n"
+"                                        vm.c:328 */\n"
 "    }\n"
 "    fprintf(stderr, \"[exception] uncaught: type_mismatch\\n\");\n"
 "    exit(1);\n"
@@ -1037,17 +1137,106 @@ static const char *const kMirValBlock =
 "    return iv;\n"
 "}\n"
 "\n"
+"/* THE DICT READ MEMBERS -- the dict branch of OP_INDEX_GET, transcribed from\n"
+" * the two functions the interpreter's L_INDEX_GET calls, IN THE ORDER\n"
+" * L_INDEX_GET asks them (src/vm/vm.c:3675-3705): the INT-subscript test first\n"
+" * (src/vm/vm.c:3683), the key lookup everywhere else (src/vm/vm.c:3698).\n"
+" *\n"
+" * WHY IT EXISTS.  `d = {\"a\": 1}; say d[\"a\"]` compiles OP_NEW_DICT then\n"
+" * OP_INDEX_GET, and before this pair the read fell into mv_arr_get's first test\n"
+" * (obj.type == MV_ARR), which a dict handle fails, so every dict read answered\n"
+" * `nil` -- silently, for every key, on a program the route accepted.  That\n"
+" * silent nil is the wrong-answer shape this member removes; it is not the\n"
+" * interning debt, which the block's constructor note already names.\n"
+" *\n"
+" * WHAT IT ADDS.  The interpreter's two-level dispatch, branch by branch:\n"
+" *   - a subscript whose type is INT is a POSITION, not a key\n"
+" *     (src/vm/vm.c:3683 tests `idxv->type == VAL_INT` BEFORE any lookup).\n"
+" *     The pair at position i is read out as `items[i * 2]`, i.e. the KEY, and\n"
+" *     the bound is `i >= 0 && i * 2 < item_count` (src/vm/vm.c:3688) -- note\n"
+" *     that is NOT a `len / 2` count with a negative-from-end rule -- this\n"
+" *     route's own helper has one, vm.c has none: 3688 IS the whole bound;\n"
+" *     non-negative position read and a negative subscript answers nil, exactly\n"
+" *     as the string container arm's `i < 0` rule does further down.  A position\n"
+" *     past the last pair is nil (src/vm/vm.c:3688-3696).\n"
+" *   - every other tag is a KEY LOOKUP through vm_dict_get\n"
+" *     (src/vm/vm.c:3697-3698): a linear probe whose acceptance test is\n"
+" *     val_eq (src/vm/vm.c:1138-1146 dict_hash_find), whose absent answer is\n"
+" *     nil (src/vm/vm.c:1158 + :1171), and whose hit is a COPY of the value (\n"
+" *     src/vm/vm.c:1162-1168, the same value_copy/strdup shape the array arm's\n"
+" *     note records).  mv_eq is this route's val_eq, so the scan below visits\n"
+" *     exactly the pairs that probe would, in the same order, with one equality\n"
+" *     rule; the hash table is a speed structure and a second owner of one\n"
+" *     answer (the constructor note's argument).\n"
+" *\n"
+" * WHAT IT DOES NOT COVER (the read's own share; the writer's share is the\n"
+" * constructor note's):\n"
+" *   - `mv_eq` has no MV_DIC row, so a DICT-KEYED lookup reaches mv_as_nv and\n"
+" *     STOPS the program where val_eq compares `a->ival == b->ival`\n"
+" *     (src/vm/vm.c:421).  Measured and listed in docs/STATUS.md 10.117's\n"
+" *     honesty section; a dict key is not reachable from any lowered case, and\n"
+" *     answering it through mv_as_nv would be the half-answer the constructor\n"
+" *     note refuses.\n"
+" *   - The interning on the way out (src/vm/vm.c:3689-3693 for the position\n"
+" *     arm, src/vm/vm.c:1163-1166 for the key arm): bytes identical, identity\n"
+" *     unobservable through the lowered opcodes -- the array arm's same debt.\n"
+" *\n"
+" * DELETE CONDITION (decidable).  Same as the constructor pair's: the commit\n"
+" * that gives this route a shared value runtime drops these two functions and\n"
+" * calls vm_dict_get; the check is `grep -c mv_dict_get src/compilation/aot_mir.c`\n"
+" * falling to 0 while the dict MIR_ONLY cases stay green.\n"
+" *\n"
+" * MEASURED BY.  mir_dict_position_key is the case the POSITION branch cannot\n"
+" * pass without (it reads keys `a`, `b` and then nil from position 2), and\n"
+" * mir_dict_key_register is the case the KEY branch cannot (two resident keys,\n"
+" * both ival == 1, so an ival comparison answers `1` for every read).  The\n"
+" * two reverse criteria in docs/STATUS.md 10.117 flip each branch separately. */\n"
+"static inline MirVal mv_dict_get_at(MirVal obj, MirVal idxv) {\n"
+"    int iv = mv_arr_live((int)obj.ival);        /* a dict never moves, so the\n"
+"                                                   forwarding head is a no-op\n"
+"                                                   here; through it anyway so\n"
+"                                                   both arms share one range\n"
+"                                                   rule (the array arm's) */\n"
+"    if (iv < 1 || iv > mv_arrused) return mv_nil();   /* not a live region */\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;        /* the ITEM count, 2*pairs */\n"
+"    int k = (int)idxv.ival;\n"
+"    if (k < 0 || k * 2 >= n) return mv_nil();   /* src/vm/vm.c:3685/3689-3691 */\n"
+"    return mv_arrmem[iv + k * 2];               /* the KEY at pair k */\n"
+"}\n"
+"static inline MirVal mv_dict_get(MirVal obj, MirVal idxv) {\n"
+"    /* src/vm/vm.c:3683: the INT test comes first, BEFORE the region check,\n"
+"       because a bad position answer is nil and not a stop. */\n"
+"    if (idxv.type == MV_INT) return mv_dict_get_at(obj, idxv);\n"
+"    int iv = mv_arr_live((int)obj.ival);        /* same rule as the position arm */\n"
+"    if (iv < 1 || iv > mv_arrused) return mv_nil();\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    for (int p = 0; p + 1 < n; p += 2)          /* key, value, key, value ... */\n"
+"        if (mv_tru(mv_eq(mv_arrmem[iv + p], idxv)))\n"
+"            return mv_arrmem[iv + p + 1];       /* src/vm/vm.c:1162 value_copy */\n"
+"    return mv_nil();                            /* src/vm/vm.c:1158-1161 */\n"
+"}\n"
+"\n"
+"/* THE CONTAINER READER.  Named after its first member; it now answers the\n"
+"   three containers one OP_INDEX_GET can be handed (array, dict, string),\n"
+"   dispersed the way the interpreter's L_INDEX_GET disperses them.  The\n"
+"   subscript conversion MOVED INSIDE the array and string arms when the dict\n"
+"   arm arrived: it used to sit above the first test, which was right while\n"
+"   every container in the function converted, and is wrong for the dict arm,\n"
+"   whose non-INT subscripts are KEY LOOKUPS and are never converted -- a\n"
+"   STRING subscript through mv_index_i32 would print type_mismatch and exit\n"
+"   where the interpreter answers d[\"a\"]'s value. */\n"
 "static inline MirVal mv_arr_get(MirVal obj, MirVal idxv) {\n"
-"    int i = mv_index_i32(idxv);   /* converted BEFORE the container is looked at:\n"
-"                                     a bad subscript is type_mismatch even when\n"
-"                                     the array is empty (src/vm/vm.c:3678-3680) */\n"
 "    if (obj.type == MV_ARR) {\n"
+"        int i = mv_index_i32(idxv);   /* a bad subscript is type_mismatch even\n"
+"                                         when the array is empty\n"
+"                                         (src/vm/vm.c:3678-3680) */\n"
 "        int iv = mv_arr_live((int)obj.ival);              /* through the head */\n"
 "        if (iv < 1 || iv > mv_arrused) return mv_nil();   /* not a live slot */\n"
 "        int n = (int)mv_arrmem[iv - 1].ival;              /* the count header */\n"
 "        if (i < 0 || i >= n) return mv_nil();             /* src/vm/vm.c:1002 */\n"
 "        return mv_arrmem[iv + i];\n"
 "    }\n"
+"    if (obj.type == MV_DIC) return mv_dict_get(obj, idxv);  /* src/vm/vm.c:3681 */\n"
 "    if (obj.type == MV_STR) {\n"
 "        /* The other container this subset can hold, answered the way\n"
 "           src/vm/vm.c:3700-3711 answers it: a negative subscript counts from\n"
@@ -1055,6 +1244,7 @@ static const char *const kMirValBlock =
 "           one-character string (strdup(buf) there, mv_alloc(2) here -- ival 0,\n"
 "           heap-owned, swept at exit).  A loop of these allocates per read\n"
 "           exactly as the interpreter does. */\n"
+"        int i = mv_index_i32(idxv);  /* the conversion the array arm does */\n"
 "        int la = (int)strlen(obj.sval ? obj.sval : \"\");\n"
 "        if (i < 0) i += la;\n"
 "        if (obj.sval && i >= 0 && i < la) {\n"
@@ -1107,10 +1297,12 @@ static const char *const kMirValBlock =
 " *     So `2 in p` -- where the interpreter answers TRUE through a binary\n"
 " *     search over a set of ints -- cannot reach this function, and the honest\n"
 " *     line here is b-non-array-answers-false, not a set arm.\n"
-" *   - A DICT container.  A dict literal followed by a membership test refuses\n"
-" *     BEFORE OP_IN (OP_NEW_DICT's pops are not counted: leaves the argument\n"
-" *     stack unbalanced, asp=2), and the interpreter answers FALSE for that\n"
-" *     program anyway (:2432) -- a dict is not a key set there.\n"
+" *   - A DICT container used to refuse BEFORE OP_IN, because OP_NEW_DICT's\n"
+" *     pops were not counted and prescan stopped at the unbalanced argument\n"
+" *     stack (asp=2).  With OP_NEW_DICT emitted that program now lowers, and\n"
+" *     what it must answer is the interpreter's FALSE (:2432 -- a dict is not\n"
+" *     a key set there), which is the b-non-array-answers-false line below\n"
+" *     extended to a tag that was unreachable when this note was written.\n"
 " *   - The malformed-handle answers (:2399 for b, :2406 for a).  mv_arr_new\n"
 " *     never builds one, so both branches here are unreachable GUARDS mirroring\n"
 " *     the interpreter's own live-slot test (the same check mv_arr_get's line\n"
@@ -1499,6 +1691,17 @@ static int op_regs(int op) {
        (src/compiler/compiler.c:1042-1045) and only the count survives here,
        which is why the interpreter reads them off its own argument stack. */
     case OP_NEW_ARRAY: return R1;
+    /* OP_NEW_DICT's operand layout is OP_NEW_ARRAY's, read out of its own
+       handler: r1 is the register the dict value lands in, r3 is the PAIR
+       COUNT (a NUMBER, not a register: src/compiler/compiler.c:1060 emits
+       `OP_NEW_DICT, r, 0, expr->dict.count`, and src/vm/vm.c:3648-3673 reads
+       ins.r1 and ins.r3 only), r2 is not read at all.  The 2*n pushed slots
+       are not registers of this instruction either, for the same reason the
+       array's elements are not -- the compiler pushes them
+       (src/compiler/compiler.c:1054-1056) and the emitter collects them off
+       mvargs -- so the mask is r1 alone and the count's own bound lives in the
+       pre-scan, next to OP_NEW_ARRAY's. */
+    case OP_NEW_DICT: return R1;
     /* OP_INDEX_GET reads r2 (the container) and r3 (the subscript) and writes
        r1: `R[ins.r1] = ...`, src/vm/vm.c:3675-3716, where the handler's own
        first two lines are `Value *obj = &R[ins.r2]; Value *idxv = &R[ins.r3];`.
@@ -1970,36 +2173,43 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d op=%s last operand register %d out of range "
                                "(first=%d count=%d)", f, i, op_name(op), in->a + nops - 1, in->a, nops);
             }
-            /* The container pair is checked HERE and not in the switch below, and
-               that placement is itself a claim worth stating: every case label
-               in this switch exists because its emitter reads a POOL, GLOBAL,
-               FUNCTION or LABEL index, and the coverage test's operand detector
-               (tools/aot_mir_cover.test.py:288-327) reads the switch's labels
-               against the emitter's indexed arms in both directions.  Neither
-               of these two opcodes reads such an index -- OP_NEW_ARRAY's r3 is
-               an ELEMENT COUNT (op_regs' note; the emitter turns it into a
-               stack offset) and OP_INDEX_GET's three operands are plain
-               registers -- so a case label here would be a label the detector
-               calls dead, which is a true reading of the wrong question.  The
-               bounds they do need are the arm's own: the count versus the
-               pool's register bound, and the count versus the argument stack.
-               OP_NEW_ARRAY is the argument stack's consumer, and the one that
-               makes OP_PUSH_REG a CONSUMED operand rather than a leak: the
-               elements were pushed one at a time by the compiler
+            /* The container family is checked HERE and not in the switch below,
+               and that placement is itself a claim worth stating: every case
+               label in this switch exists because its emitter reads a POOL,
+               GLOBAL, FUNCTION or LABEL index, and the coverage test's operand
+               detector (tools/aot_mir_cover.test.py:288-327) reads the switch's
+               labels against the emitter's indexed arms in both directions.
+               None of these opcodes reads such an index -- OP_NEW_ARRAY's and
+               OP_NEW_DICT's r3 are COUNTS (op_regs' notes; the emitter turns
+               them into stack offsets) and OP_INDEX_GET's three operands are
+               plain registers -- so a case label here would be a label the
+               detector calls dead, which is a true reading of the wrong
+               question.  The bounds they do need are the arm's own: the count
+               versus the pool's register bound, and the count versus the
+               argument stack.
+               OP_NEW_ARRAY and OP_NEW_DICT are the argument stack's consumers,
+               and the two that make OP_PUSH_REG a CONSUMED operand rather than
+               a leak: the elements were pushed one at a time by the compiler
                (src/compiler/compiler.c:1042-1045, `emit(OP_PUSH_REG, ...)` per
-               element) and the count in r3 says how many of them this
-               instruction takes (src/vm/vm.c:3637-3642 reads them back as
-               `base = t->sp - (n - 1)`, so the FIRST push is element 0).
-               Bound first, then consume -- an n larger than asp is a refusal,
-               not a negative stack. */
-            if (op == OP_NEW_ARRAY) {
+               element; for a dict 2*count times, key0,value0,key1,value1 ...
+               src/compiler/compiler.c:1054-1056) and the count in r3 says how
+               many PAIRS this instruction takes (src/vm/vm.c:3637-3642 reads
+               them back as `base = t->sp - (n - 1)`, so the FIRST push is
+               element 0; src/vm/vm.c:3658-3666 does the same with 2*n slots).
+               The dict consumes `2 * n` slots, the array `n`; both are bounded
+               against the SAME r3 bound so the emitted offset cannot go absurd.
+               Bound first, then consume -- a count larger than asp is a
+               refusal, not a negative stack. */
+            if (op == OP_NEW_ARRAY || op == OP_NEW_DICT) {
                 int n = ir_insn_r3(in);
+                int slots = (op == OP_NEW_DICT) ? 2 * n : n;
                 if (n < 0 || n >= REG_LIMIT)
-                    return bad("container=%d insn=%d element count %d out of range", f, i, n);
-                if (asp < n)
-                    return bad("container=%d insn=%d argument stack underflows: asp=%d elements=%d",
-                               f, i, asp, n);
-                asp -= n;
+                    return bad("container=%d insn=%d op=%s count %d out of range",
+                               f, i, op_name(op), n);
+                if (asp < slots)
+                    return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=%d",
+                               f, i, op_name(op), asp, slots);
+                asp -= slots;
                 continue;
             }
             /* OP_INDEX_GET has nothing to check in this pass: its operands are
@@ -2410,9 +2620,10 @@ static int emit_one(Ctx *c, Buf *b, int i) {
      * note records that r3 is, and that is why this arm reads w3 where a
      * register number would be expected.
      *
-     * WHAT IT DOES NOT COVER.  OP_INDEX_SET, OP_NEW_DICT and OP_NEW_SET stay
-     * un-emitted and are named in docs/STATUS.md's boundary section for this
-     * step; the container block above says what the array runtime does not
+     * WHAT IT DOES NOT COVER.  OP_INDEX_SET on a DICT (the array write is
+     * lowered; the dict write has no runtime -- see mv_dic_new's note) and
+     * OP_NEW_SET stay un-emitted and are named in docs/STATUS.md's boundary
+     * section for this step; the container block above says what the array runtime does not
      * reproduce (interning, dict containers, printing a container).
      *
      * MEASURED BY.  tools/aot_mir.test.py's container cases compare stdout
@@ -2428,6 +2639,24 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (n == 0) { buf_fmt(b, "    v[%d] = mv_arr_new(0, 0);", r1); return 0; }
         buf_fmt(b, "    v[%d] = mv_arr_new(%d, mvargs + asp - %d); asp -= %d;",
                 r1, n, n, n);
+        return 0;
+    }
+    /* THE DICT CONSTRUCTOR -- OP_NEW_DICT, the same argument-stack mouth as
+       OP_NEW_ARRAY with 2*n slots instead of n.  WHY / WHAT IT ADDS / WHAT IT
+       DOES NOT COVER / DELETE CONDITION / MEASURED BY all live in
+       kMirValBlock's constructor note above mv_dic_new; what belongs HERE is
+       the operand reading.  r3 is the PAIR count (op_regs' note), so the slots
+       this instruction consumes are 2*r3, and the first push is items[0]:
+       `mv_dic_new(n, mvargs + asp - 2*n)` hands key0,value0,key1,value1 in the
+       compiler's push order (src/compiler/compiler.c:1054-1056), which is the
+       items[] order L_NEW_DICT writes (src/vm/vm.c:3663-3666).  The empty
+       literal consumes nothing and must not read mvargs at 0 (the same
+       spelling OP_NEW_ARRAY's arm uses for the same reason). */
+    case OP_NEW_DICT: {
+        int n = w3;                    /* the PAIR count: see op_regs' note */
+        if (n == 0) { buf_fmt(b, "    v[%d] = mv_dic_new(0, 0);", r1); return 0; }
+        buf_fmt(b, "    v[%d] = mv_dic_new(%d, mvargs + asp - %d); asp -= %d;",
+                r1, n, 2 * n, 2 * n);
         return 0;
     }
     case OP_INDEX_GET: buf_fmt(b, "    v[%d] = mv_arr_get(v[%d], v[%d]);", r1, r2, r3); return 0;
@@ -2588,11 +2817,12 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
             if (asp_now > asp_deepest) asp_deepest = asp_now;
             continue;
         }
-        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY) {
+        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY || op == OP_NEW_DICT) {
             int n = ir_insn_r3(in);
-            if (n > 0) {
-                if (op == OP_NEW_ARRAY) has_args = 1;
-                asp_now -= n;
+            int slots = (op == OP_NEW_DICT) ? 2 * n : n;
+            if (slots > 0) {
+                if (op == OP_NEW_ARRAY || op == OP_NEW_DICT) has_args = 1;
+                asp_now -= slots;
                 if (asp_now < 0) asp_now = 0;   /* prescan already refused this */
             }
         }
