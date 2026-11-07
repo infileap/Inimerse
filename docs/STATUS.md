@@ -5070,7 +5070,8 @@ IR-AOT-MIR-VERDICT|PASS|...|accepted=100|same-as-interpreter=100|...
 
 ### 七、诚实边界
 
-1. **`UNEXECUTED` 读的是「共享语料的降低流里出现过、而解释器跑共享语料时从未执行」的 opcode。** 它不声称 MIR 生成的代码也执行了它 —— 那是另一本账（`beyond-ast-denominator`），本节只是让这本账多一条。
+1. **`UNEXECUTED` 的 basis 是「所有用例（`shared` + `mir_only`）的解释器执行集合」，不是只跑共享语料。** 读数那一行自带的注释写的是 `a-shared-case-that-no-interpreter-run-of-the-corpus-executed`，可脚本是先 `cases = shared + mir_only`、再对**每一个** case 跑 `executed_ops.update(dyn)`，所以集合里既有共享语料的执行、也有 MIR-only 用例的执行 —— 本节能把它归零，恰恰是因为补的那条 MIR-only 用例**真的跑了**解释器。这句话必须写在这里：下一个人若照那行注释理解成「只算共享语料」，就会得出「补 MIR-only 用例不可能影响 UNEXECUTED」的错结论（这个错结论今天已经被证伪）。
+   它也不声称 MIR **生成的**代码执行了它 —— 那是另一本账（`beyond-ast-denominator`），本节只是让这本账多一条。
 2. **短路的方向是固定的**：`or` 只在左假执行 `OP_OR`，`and` 只在左真执行 `OP_AND`。所以补执行覆盖必须补**左假**的 `or`（以及左真的 `and`），写一个 `a or b` 但 `a` 为真是没用的。
 3. **字节判据对「MIR 是否短路」是盲的。** 这一条要说明白：`say b or a` 这行的输出在「MIR 短路」与「MIR 恒执行 OR 但值算对」两种实现下**完全相同**，而解释器热普查只数解释器（`OP-HOT` 的 `why` 字段明说 `aot=na`：生成 C 把每个 op 展平成内联代码，在那里计数是在数一个被改过的对象）。所以本节的判据补的是**解释器侧的语料覆盖**；「MIR 生成的代码是否真的跳过了 OR」今天没有仪器能测，也不声称测了。
 4. **不碰阈值、不碰语料、不碰 pin 的语义**。`tools/aot_cover.pin.json` 未改，`ALLOCS_DEFAULT` 未改，共享语料未改；只新增了 MIR_ONLY 一条用例。
