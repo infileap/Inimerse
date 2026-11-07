@@ -5774,4 +5774,17 @@ IR-MIR-VERDICT|PASS|tree=f7a7dc0e42b621daea609f0d03b42c2291a1cb75|accepted=86|re
 - `IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=1|ok=1|expect=1`（未变：本次没有新增「应该被拒」的用例）。
 - `IR-AOT-MIR-PIN|match=no|tree-moved=yes` 在本分支上是**正当的**（pin 树早于本节代码），收尾按仓库惯例 `--pin` 重钉。
 
+### 十、左操作数是容器时，这条路线上够得到，两侧答案相同
+
+第一节的语义表里有一支是「`a` 是数组」，而它的元素本身可以是数组（`[[1], [2]]` 就是本路线自己造得出来的）。四支探针（解释器 `--no-mods run` 与 MIR `translate` → `gcc -O1` → 跑，两侧逐字相同）：[obs: 9d6741e]
+
+| 程序 | 解释器 | MIR |
+|---|---|---|
+| `a = [[1], [2]]; say a == a` | `true` | `true` |
+| `a = [[1], [2]]; b = [[1], [2]]; say a == b` | `false` | `false` |
+| `x = [1]; say x == [1]` | `false` | `false` |
+| `a = [1]; b = [[1], [2]]; say a in b; say b[0] in b` | `false` / `false` | `false` / `false` |
+
+读法：数组作**元素**、数组作**容器**这两格都够得到且答对（子集臂用的是 `val_eq`，而数组那一行是身份比较，见 `src/vm/vm.c:420` 与 `src/compilation/aot_mir.c:753`）。[obs: 9d6741e]真正结构上不可达的只有**集合**的格子（：`src/vm/vm.c:2382-2395` 的 `set_contains`/`set_subset`），因为这条线上 `OP_NEW_SET` 不在降低表里、集合值造不出来，`k in {…}` 在 `OP_IN` 之前就被拒。所以本节写边界时用的词是**集合**，不是「左操作数是容器」。
+
 本节按派工建在 `f7a7dc0` 上，**不 push、不 rebase、不动 main**。本分支出身的那棵树（`f7a7dc0`）带着上一笔合并留下的残留：一行 `@@PIN-GATE@@` 和半截冲突标记；本节照派工没有改动它，合并在 `03bacff` 里把它清掉了（清理笔同时补了 `tools/check_text_integrity.py` 的一格检查，见 `2dba43b`），所以本节在这次合并之后的行里不再有那几行。
