@@ -321,6 +321,13 @@ ALLOCS_EXPECT = {
     "mir_dict_set_overwrite": (1, 256),
     "mir_dict_set_append": (1, 256),
     "mir_dict_set_grow_after_neighbour": (2, 768),
+    # Equality allocates nothing of its own: the dicts are the allocation.
+    # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
+    # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
+    # A row that compared CONTENT would have to walk pairs and, for a string
+    # key or value, could box one; it would move these numbers.
+    "mir_dict_identity_eq": (1, 256),
+    "mir_dict_neq_and_cross_type": (2, 768),
 }
 ALLOCS_DEFAULT = (0, 0)
 
