@@ -6331,3 +6331,72 @@ A-3 是**负判据**：它堵的是「顺手把 try 也做了」。`p14` 解释�
 4. **线程内异常**没有专门判据：`OP_THROW` 在 thread 容器里落到的仍是本进程 `exit(1)`，与解释器线程语义（`vm->last_error` 只对 main）未逐一对照。 [obs: 92955ec]
 5. **`at ip=…` / `frames=…` 两行不保证逐字节相同**：MIR 路线没有字节码 ip、也没有帧台账，这两行不打印；前导空行同样不打印（与既有两个 stop 同形）。**这正是仪表是「包含」而不是「相等」的原因**（§五）。 [obs: 92955ec]
 6. 多出来的一行 `IR-MIR-ALLOCS|…` 是 atexit 尾巴，**两边 stderr 的尾部本来就不同**；任何把 stderr 当逐字节合同的断言都会先红在这个绿用例上（`tools/aot_mir.test.py:739-740`）。 [obs: 92955ec]
+
+## §10.125 集合字面量 `OP_NEW_SET`：这条路线的第三个容器（handles 44 → 45，aot-mir，A 类第十五项）
+
+### 一、来源与日期
+
+来源是值表示路线的继续：`s = 1, 2` 在 MIR 路线里**整片被拒**，红在容器关口（`illegal-operand: container=0 leaves the argument stack unbalanced: asp=2`），因为 `OP_NEW_SET` 没有登记臂、预扫描把集合元素当成了压栈实参。日期 **2026-11-08**，基线 `62ff19e`。 [obs: 480bb0b]
+
+先红的读数（判据先提交、实现后来；这一笔**由本次执行体重跑**，不是凭记忆写）：
+
+```
+IR-MIR-MIR-ONLY|case=mir_set_new_len_in|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_set_new_single|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_set_new_dedup|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_set_new_membership|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_set_new_register_elements|mir=refused|why=illegal-operand
+IR-MIR-PROBLEM|mir_set_new_len_in: the MIR route refused a case this list exists to measure: illegal-operand (aot_mir: illegal-operand: container=0 leaves the argument stack unbalanced: asp=2)
+```
+
+`_dedup` 的 `asp=3`、`_membership` 的 `asp=8` 是元素个数不同所致：**同一个病因、不同的计数**，所以「红」在这里是**有名字的红**（不是程序崩）。
+
+### 二、语义：`L_NEW_SET` 到底做了什么
+
+- `r3` 是元素**个数**（不是寄存器）；`r1` 拿到集合的池下标，池条目种类 `VAL_SET`。分配失败时把栈上那 n 个元素逐个 `value_free` 再把 `r1` 置 nil —— **失败路径本身有分配语义**，不实现它就是在别的错误上撒谎。`src/vm/vm.c:4286-4310` [obs: 480bb0b]
+- 元素按**压栈顺序**读（`base = sp - (n-1)` 起、往上走），顺序不是细节：集合的合并与去重都按这个顺序。`src/vm/vm.c:4297-4305` [obs: 480bb0b]
+- 元素若**已经是集合**，走 `vm_set_add_comp`：把它两个半边（排序 i64 半边与 items 列表）一起并进来，不是按引用加一项。`src/vm/vm.c:1921-1930` [obs: 480bb0b]
+- `SetObj` 根本**没有哈希表**：排序的 `long long *i64` + 非整数 `Value *items` + 区间分量 `SetComp *comps`。`src/vm/vm.h:60-69` [obs: 480bb0b]
+- `vm_set_add` 是**不对称**的：INT 元素在 i64 半边二分、**从不看 items**；其余 tag 扫 items 用 `val_eq`、**从不看 i64**。`src/vm/vm.c:1872-1920` [obs: 480bb0b]
+
+不对称是可观测的：解释器实测 `s = 1.0, 1` 是**两个元素**（`len` 2、`1 in s` 真、`1.0 in s` 真）；反写 `s = 1, 1.0` 也是两个；`s = 1, 1` 是一个。**一个统一的数值相等会把第一种给成 `len` 1** —— 这是本格存在的「静默错形状」，`mir_set_new_membership` 把两种拼写顺序都钉住。 [obs: 480bb0b]
+
+### 三、判据五条（都先红后绿，都比对 stdout 字节）
+
+| 用例 | 语句 | 它钉住什么 |
+|---|---|---|
+| `mir_set_new_len_in` | `s = 1, 2; say len(s); say 2 in s; say 3 in s` | 命中与落空**两条**都要对，只有一条对的实现会在两条里红一条 |
+| `mir_set_new_single` | `s = 7, 7` | 单元素字面量：重复既是去重又是唯一元素 |
+| `mir_set_new_dedup` | `s = 1, 1, 2` | 压三个存两个 |
+| `mir_set_new_membership` | `s = "a", "b"`、`t = 1.0, 1.0`、`u = 1, 1.0`、`w = 1.0, 1`，各带 `len` 与 `in` | **两种拼写顺序**（不对称合并的指纹） |
+| `mir_set_new_register_elements` | `a = 1; b = 2; s = a, b` | 元素来自**寄存器**而不是常量池 |
+ [obs: 480bb0b]
+
+### 四、读数（合并前，本树 `480bb0b`）
+
+```
+IR-MIR-ALLOCS|case=mir_set_new_len_in|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_new_single|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_new_dedup|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_new_membership|reported=yes|allocs=2|freed=2|live=0|bytes=768|ok=yes
+IR-MIR-ALLOCS|case=mir_set_new_register_elements|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-COVER|mir-only-cases=58|mir-only-same-as-interpreter=58
+IR-AOT-MIR-LOWERING|handles=45|of=67|unknown=22|table=45|emitter=45|reported=45|agree=yes
+IR-AOT-MIR|accepted=144|refused=0|same-as-interpreter=144|beyond-ast-denominator=16
+IR-AOT-MIR-UNEXECUTED|ops=(none)
+```
+
+三行 `allocs=1|bytes=256` 是**同一个读数的三种形状**（第一块 8 槽 = 256 字节；`[count][1][2]` 占 3 槽，不翻倍）；`_membership` 的 `2|768` 是**真翻倍**（`s`/`t` 各 3 槽共 6，`u` 要第 9 槽 ⇒ 池从 8 槽到 16 槽）。**去重的地板要说出来**：若重复真的占了槽（`s = 1, 1, 2` 压 3 存 3），仍装得进 8 槽块 ⇒ **块数看不见这个缺陷**，能看见它的是 stdout（`len` 会印 3）。这一行是把它说出来，不是假装它就是那道闸。 [obs: 480bb0b]
+
+### 五、不覆盖的边界（每条都由「谁需要它」点名）
+
+1. **`OP_SET_ADD` / `OP_SET_INTERVAL`**：无发射臂、无运行时 —— 集合由字面量**一次建完**、永不扩展。集合**作元素**（`q = p, 4`）会落到 `mv_eq` 就停，而解释器走 `vm_set_add_comp` 把 p 的两个半边并进来（`src/vm/vm.c:1921-1930`）。 [obs: 480bb0b]
+2. **集合相等**：`mv_eq` 没有 `MV_SET` 行，`s == t` 把集合交给 `mv_as_nv`、**直接 abort（rc 134）**；解释器 `L_EQ` 对 SET/SET 调 `set_equal` 按**内容**比（`src/vm/vm.c:3539-3544`、`:2310` 比两半边）。**不能学 `MV_DIC` 用身份短接**：`val_eq` 对 dict 是身份（`src/vm/vm.c:421`）、对 set 是 FALSE —— 身份行会让**两个相等集合答 false**，那是错答而不是停。内容相等是下一格。 [obs: 480bb0b]
+3. **集合作 dict 键、作 `+`/`<`/`min`/`not` 的操作数、被 `say` 打印**：一律落到 `mv_as_nv` 或 `mv_tru` 的兜底 abort，与本路线 dict 的停法同形。 [obs: 480bb0b]
+4. **`s in arr`（集合被数组探测）**：本路线停。**解释器读数是我实测的**：`s = 1, 2` 时 `s in [1, 2]` 是 **false**、`s in [1, 3]` 是 false、`[1, 2] in s` 是 **true**、`1 in s` 是 true、`1.0 in s` 是 false。**这里更正一处实现注释的说法**：注释原先写「解释器的 array 臂只遍历 items 半边、所以 `{1, 2} in [1, 2]` 答 TRUE 是空转」，实测是 false —— 停的理由仍然成立（本条路线没有这条臂），但「解释器答错」这半句不成立，已按实测改写。 [obs: 480bb0b]
+5. **哈希结构**：`SetObj` 没有哈希表（`src/vm/vm.h:60-69`），这里的 O(n) 扫描就是 `set_contains` 自己做的事：**答案相同，复杂度也相同**，不是我们省了。 [obs: 480bb0b]
+6. **集合的 `len` 与 `in` 是臂而不是新 opcode**：`len()` 那格（§10.123）只答数组；本格把 set 半边补进同一对辅助函数，`mir_set_new_len_in` 是这条的判据。 [obs: 480bb0b]
+
+### 六、为什么不一并做「集合写入」
+
+`OP_SET_ADD`/`OP_SET_INTERVAL` 在发射侧就有形状问题（`r3` 是区间计数不是值），而集合**作元素**要复刻的 `vm_set_add_comp` 是「两次合并」不是一个赋值；那两格属于「容器写入」家族（数组写入 `OP_INDEX_SET` 已做、字典写入未做），合并顺序已在 `docs/BOARD.md` 的待办里。把它们塞进本格会让五条判据同时验两件事，红时分不清是谁错。
