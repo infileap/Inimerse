@@ -303,6 +303,24 @@ ALLOCS_EXPECT = {
     "mir_dict_missing_key": (1, 256),
     "mir_dict_key_register": (1, 256),
     "mir_dict_position_key": (1, 256),
+    # The WRITE cases.  Measured first, then written, in that order:
+    #   overwrite  the dict literal is the only allocation (5 slots -> block 1);
+    #              overwriting an existing pair allocates nothing at all, which is
+    #              the point of the case -- a route that re-appended the pair
+    #              instead of overwriting it in place would print the right bytes
+    #              and still move this number.
+    #   append     two appends ({"a":1} -> +b -> +c) still fit the first 256-byte
+    #              block: 3 + 2 + 2 = 7 slots <= 8.  So an append is not an
+    #              allocation here, and "it printed the right thing" cannot be an
+    #              accident of a fresh block either.
+    #   grow       the dict cannot extend in place (an array was created after
+    #              it), so the move allocates a second block: 2 blocks, 768 bytes
+    #              -- dict block (256) + the frontier block for the moved copy and
+    #              the array.  A route that reused the old region instead of
+    #              copying would print the same bytes and report 1 block.
+    "mir_dict_set_overwrite": (1, 256),
+    "mir_dict_set_append": (1, 256),
+    "mir_dict_set_grow_after_neighbour": (2, 768),
 }
 ALLOCS_DEFAULT = (0, 0)
 
