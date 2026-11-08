@@ -1073,6 +1073,33 @@ MIR_ONLY = [
      'say d["a"]\n'
      'say arr[2]\n'
      'say arr[0]\n'),
+    # DICT EQUALITY.  The interpreter answers by IDENTITY, not by content
+    # (src/vm/vm.c:421 `if (a->type == VAL_DICT) return a->ival == b->ival;`), so
+    # two dicts built from the same literal are NOT equal while a copy is.  Before
+    # this step mv_eq had no MV_DIC row and the operand reached mv_as_nv, which
+    # ABORTS: the route had no answer at all (rc 134) where the interpreter had
+    # three (false, true, true).  A criterion is needed rather than "it will
+    # never come up": `f = d` gives two handles to one dict, which is how a
+    # program says "this one".
+    ("mir_dict_identity_eq",
+     'd = {"a": 1}\n'
+     'e = {"a": 1}\n'
+     'say d == e\n'
+     'say d == d\n'
+     'f = d\n'
+     'say f == d\n'),
+    # The other side of the same row: `!=` must negate it, and a dict compared
+    # with an ARRAY must be false rather than a stop -- val_eq falls through its
+    # same-type chain to `return false` (src/vm/vm.c:428), so "different
+    # containers" is an ANSWER, not a type error.
+    ("mir_dict_neq_and_cross_type",
+     'd = {"a": 1}\n'
+     'e = {"a": 2}\n'
+     'say d != e\n'
+     'say d == e\n'
+     'arr = [1, 2]\n'
+     'say d == arr\n'
+     'say d != arr\n'),
 
 ]
 
