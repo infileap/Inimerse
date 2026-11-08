@@ -1943,6 +1943,18 @@ add_test(NAME wasm_mir_cover_selfcheck_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "wasm_mir self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/wasm_mir_cover.test.py --self-check)
 set_tests_properties(wasm_mir_cover_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;regression")
 
+# The ratchet's floor had a self-check only a human could run.  The gate's
+# line-refs stage calls the checker WITHOUT --self-check (tools/gate.sh:599), so
+# as long as the tree's delta stayed under the ceiling, raising the ceiling was
+# invisible to "20/20 stages ran" -- measured: with
+# EXP_LINE_REFS_UNANCHORED_DELTA_MAX forced back to 1, the plain run is rc=0 and
+# this test is rc=1, failing on the cell "the unanchored ceiling is the ratchet's
+# floor, 0: want 0 got 1".  The checker's own sentence ("raising the number
+# silently now fails here first") was true of the file and false of the gate
+# until this registration existed.
+add_test(NAME line_refs_selfcheck_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "check_line_refs self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_line_refs.py --self-check)
+set_tests_properties(line_refs_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
 # The ledger arithmetic and the two parsers, on inputs whose answer is known --
 # including the ones the ledger has to reject.  No build output, no corpus.
 add_test(NAME aot_mir_cover_selfcheck_regression

@@ -490,7 +490,8 @@ EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # A RATCHET, on top of that: the ceiling only ever moves DOWN, and only in the
 # commit that pays a reference.  A ceiling that stays where it was after a
 # repayment is not a ceiling, it is headroom -- measured on this very branch:
-# five references paid took the delta from +9 to +4, and the old ceiling of
+# five references paid took the delta from +9 to +4 (the +9 reading is
+# a8f257f's: `unanchored delta +9 (ceiling +12)`), and the old ceiling of
 # +12 said nothing about it, so putting all five back would also have said
 # nothing (`rc=0` with `unanchored delta +9 (ceiling +12)`).  Raising this
 # number again needs its own commit and the same kind of argument that raised
@@ -1314,7 +1315,11 @@ def self_check() -> int:
     expect("a sha this repository never had is a problem",
            pin_tree_problem("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")[1],
            lambda s: s.startswith("tree-unresolved=deadbee") and "no such object" in s)
-    _rc, blob = git_out("hash-object", "CMakeLists.txt")
+    # HEAD's own blob, not `git hash-object` of the working file: the latter
+    # answers with an object the repository may not hold yet (dirty tree), so the
+    # cell would have asserted "no such object" instead of "is a blob" -- a
+    # reading that depends on whether someone had edited CMakeLists.txt.
+    _rc, blob = git_out("rev-parse", "HEAD:CMakeLists.txt")
     expect("an object that exists but is not a tree is its own problem",
            pin_tree_problem(blob)[1],
            lambda s: s.startswith("tree-unresolved=") and "is a blob" in s)
