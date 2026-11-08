@@ -1,14 +1,14 @@
 {
-  "tree": "024f1452462bed14b1f886f6e1aef1e25525c603",
+  "tree": "2c7c5ce2518d62f098311dc76e1c6a8410461399",
   "covered": 29,
   "of": 29,
   "of-source": "tools/aot_cover.pin.json:covered_ops (read, not copied: the two routes must not drift apart, and the two pins are never added)",
   "corpus": {
     "inline_cases": 86,
-    "mir_only_cases": 53,
-    "accepted": 139,
+    "mir_only_cases": 58,
+    "accepted": 144,
     "refused": 0,
-    "same-stdout-and-rc-as-interpreter": 139
+    "same-stdout-and-rc-as-interpreter": 144
   },
   "covered_ops": [
     "OP_ADD",
@@ -56,6 +56,7 @@
     "OP_NEQK",
     "OP_NEW_ARRAY",
     "OP_NEW_DICT",
+    "OP_NEW_SET",
     "OP_OR",
     "OP_THROW"
   ],
