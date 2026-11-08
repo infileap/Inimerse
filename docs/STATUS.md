@@ -6225,3 +6225,41 @@ IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=5|ok=3|expect=5
 - **内建调用整族仍然不可达**：`str()`/`int()`/`len()`/`dbg_ip()` 在解释器里都有答案（各印 `1`/`42`/`2`/`0`），这条路线上被具名拒绝。这不是「还差一点」，是**当前不在这条路线上**。[obs: 0c4749f]
 - **`OP_CALL_VALUE`（把函数当值调用）仍是通用 `unsupported-opcode`**：它今天连一个具名理由都没有，属于同一族但没被本节覆盖。写下它，免得下一个读者以为「内建调用说清楚了 = 调用族都说清楚了」。[obs: 0c4749f]
 - **`g_notyet` 不再为内建调用计数**：拒绝发生在计数之前，因此 `IR-MIR-NOT-YET|op=OP_CALL_BUILTIN` 不再出现在输出里；`not-emittable` 的 25 来自 `op_regs` 的口径，**没有变**（读数是 `emittable=42|not-emittable=25`）。[obs: 0c4749f]
+
+## §10.123 `len()` 是这条路线的第一个内建（handles 42 → 43）
+
+§10.122 把内建调用从「像缺 opcode」改成「像一条边界」，并写明**不实现**的理由：注册表、能力位与 safe-mode 规则都在 VM 和各 mod 里，抄一份就会有两套语义。这一节把那条理由收窄到**它真正适用的范围**，而不是撤掉它。
+
+### 一、为什么是 `len`，以及为什么理由在这里不成立
+
+三件事同时成立，`len` 才成为第一个：
+
+- **语义是有限的、可抄的**：解释器的实现在一个函数里（`src/runtime/runtime_posix.c:11-27`），按 ARRAY、SET、DICT、STRING、INT、FLOAT **顺序**判定，其余（nil、bool）落到 `n = 0`。没有任何一处需要能力位、safe-mode 或 mod 参与。[obs: fdeba0a]
+- **值域已在模型里**：六个臂分别读「区域头里的元素数」「区域头里的槽数除以二」「`strlen`」「整数本身」「浮点截断」和常量 0，**没有一个需要模型今天不持有的值**，`len` 自己也**一次都不分配**。[obs: fdeba0a]
+- **AST 路线答不了**：`say len("abc")` 在 `aot-native` 上被拒（`expression kind 10 is outside the numeric subset`）⇒ 这是**超出 AST 路线**的能力，不是把已有的东西再实现一遍。[obs: fdeba0a]
+
+剩下 24 个不发射的 opcode 里，其余内建名（`str`/`list`/`push`/`gui_stage`/`read_file`…）仍然按名拒绝：它们要么返回值模型今天给不出的东西（运行时构造的字符串），要么要 mod 的本事。**边界没有移动，只是第一格被证明是可搬的**。[obs: fdeba0a]
+
+### 二、四处改动，每处都有量出来的理由
+
+- **`op_regs`（`src/compilation/aot_mir.c:1879`）**：`OP_CALL_BUILTIN → R1`。r1 是**结果寄存器**；r2 是内建名在容器字符串池里的下标、r3 是参数个数，都不是寄存器。加之前这一行没有条目，所以每个内建调用都被算进 `not-emittable`。[obs: fdeba0a]
+- **`prescan`（`:2425`）**：核池下标、**先判名字再判参数个数**，然后 `asp -= argc`。顺序是量出来的：把参数个数判在前面，`say dbg_ip()`（零参数）会得到 `illegal-operand` 而不是 `builtin-call`——那条读数与 §10.122 的判据直接冲突。参数是 `OP_PUSH_REG` 推上来的，这正是过去被报成「参数栈不平衡」的那次推入，现在由这一臂消费掉。[obs: fdeba0a]
+- **`emit_one`（`:2849`）**：名字**在这里也解析一次**（读同一个字符串池），所以发射器的下标读取与 prescan 的界检查是**同一个主张**——operands 仪表正是比对这两者；`len` 之外的任何名字返回 -1，作为第二道锁。[obs: fdeba0a]
+- **`kMirValBlock` 的 `mv_len`（`:1363`）**：解释器的值域**逐个臂**照抄，**除了 SET**——那条臂在这条路线上**不可达**（没有集合可表示），这与 `mv_in` 对容器臂的结构性说明是同一类话。DICT 臂除以二（字典区域存的是**键值对**，与 `src/vm/vm.c:3693` 同一个 `/2`），FLOAT 向零截断。[obs: fdeba0a]
+
+### 三、读数与两次有牙的注入
+
+`handles 42→43`、`emittable 42→43`、`not-emittable 25→24`、`accepted 136→137`、`mir-only-cases 50→51`、`IR-AOT-MIR-OPERANDS|indexed=11|prescanned=12|checked=11|missing=(none)|dead=(none)|agree=yes`。[obs: fdeba0a]
+
+判据是一条程序里的八个形状（数组、字典、字符串、整数、浮点、nil、bool、空串），解释器答案是 `3, 1, 4, 7, 2, 0, 0, 0`：
+
+- **DICT 臂去掉 `/2`** ⇒ `3,2,4,7,2,0,0,0`，`IR-MIR-EXEC-DIFF` 点名，其余形状不动。[obs: fdeba0a]
+- **STRING 臂强制 0** ⇒ `3,1,0,7,2,0,0,0`，只有字符串那一格动。[obs: fdeba0a]
+
+两次注入都只咬这一格 ⇒ 这条判据在量这个函数，而不是在量「程序跑起来了」。[obs: fdeba0a]
+
+### 四、诚实边界
+
+- **SET 臂没有实现，是判不了**：`len({1,2})` 在这条路线上根本走不到 `mv_len`——没有集合能构造出来（§10.117/§10.120 的 `NEW_SET` 缺口）。这一条要等集合进模型。[obs: fdeba0a]
+- **只有 `len`**：`str`（43 个文件先撞它）、`list`、`push`、`size`、`count` 以及所有 mod 内建仍然按名拒绝。下一个可搬的格子要先满足「语义写在本地、值域已在模型里、不分配」三条，而 `str` **今天不满足第三条**（它要构造一个运行时字符串）。[obs: fdeba0a]
+- **参数个数判据是编译器的性质**：`argc != 1` 的分支写成拒绝而不是等价物，因为编译器为内建只会发它自己的参数个数；这条分支**没有任何判据覆盖**，写在这里。[obs: fdeba0a]
