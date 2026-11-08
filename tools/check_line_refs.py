@@ -1321,8 +1321,11 @@ def self_check() -> int:
     expect("a pin with no tree field is a problem of its own",
            pin_tree_problem("")[0], "citations-pin-tree-absent")
     # The ratchet's own floor, asserted: 12 -> 4 -> 2 -> 1 -> 0 is a sequence of
-    # repayments, and the last one closed the headroom.  Raising it silently now
-    # fails here first, which is the point of writing the number down twice.
+    # repayments, and the last one took the ceiling to zero -- which is not the
+    # same as spending the budget: four of the inherited slack still sit under it
+    # (`delta - ceiling`), so those four, not the ceiling, are what the next
+    # repayment gives up.  Raising the number silently now fails here first, which
+    # is the point of writing it down twice.
     expect("the unanchored ceiling is the ratchet's floor, 0",
            EXP_LINE_REFS_UNANCHORED_DELTA_MAX, 0)
     expect("the explicit delta is still the equation it was, +12",
