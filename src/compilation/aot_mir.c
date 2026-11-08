@@ -104,6 +104,20 @@ static const char *const kMirValBlock =
 "                      C is compiled in block order and the equality pair comes\n"
 "                      first.  Read-only this step: no write path builds or\n"
 "                      mutates one. */\n"
+"#define MV_SET 8   /* = VAL_SET -- ival is a POOL INDEX, the same pool MV_ARR and\n"
+"                      MV_DIC name.  That is NOT the interpreter's storage: it\n"
+"                      keeps a set in vm->sets[] (a SetObj with a sorted i64\n"
+"                      half and a Value items half, src/vm/vm.h:60-69) while a\n"
+"                      dict rides in its array pool.  What the two DO share is\n"
+"                      the property a handle needs -- the storage is reachable\n"
+"                      only through the handle, and a handle is stable for as\n"
+"                      long as the value that carries it -- so the region is\n"
+"                      built ONCE, complete, and never moved.  The tag value is\n"
+"                      VAL_SET itself (8), so a MirVal and a Value agree about\n"
+"                      what a set is even though only one of them can hold it.\n"
+"                      DEFINED HERE, above every reader, for the reason MV_ARR's\n"
+"                      note gives.  Read-only once built: no lowered opcode adds\n"
+"                      to or removes from one (see mv_set_new's note). */\n"
 "\n"
 "/* The placeholder's own test: these are compiled into every generated file,\n"
 "   and tools/aot_mir.test.py compiles every generated file with the system\n"
@@ -1095,6 +1109,139 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* THE THIRD CONTAINER THIS ROUTE BUILDS -- a heap SET, built once and never\n"
+" * written (OP_NEW_SET, plus the set arms of mv_in and mv_len).  Same note\n"
+" * structure as the array and dict blocks above: WHY / WHAT IT ADDS / WHAT IT\n"
+" * DOES NOT COVER / DELETE CONDITION / MEASURED BY.\n"
+" *\n"
+" * WHY IT EXISTS.  `s = 1, 2` was refused WHOLE: OP_NEW_SET had no entry in\n"
+" * op_regs, so its r3 count of pushes was never consumed and prescan refused\n"
+" * the program before the interpreter's answer could be reached (measured:\n"
+" * IR-MIR-MIR-ONLY|case=mir_set_new_len_in|mir=refused|why=illegal-operand,\n"
+" * detail `leaves the argument stack unbalanced: asp=2`) -- the OP_NEW_DICT\n"
+" * shape, one container later.\n"
+" *\n"
+" * WHAT IT ADDS.  One tag, MV_SET = VAL_SET, and the SAME POOL: mv_arrmem\n"
+" * holds a set's elements because a set here IS [count][element...], laid out\n"
+" * in PUSH ORDER, which is the order L_NEW_SET reads its stack in\n"
+" * (src/vm/vm.c:4286-4313).  The count header is the DEDUPED element count,\n"
+" * which is also what len() reads (src/runtime/runtime_posix.c:13-19 sums\n"
+" * SetObj's iCount and count for a finite set with no components -- the two\n"
+" * halves this region keeps interleaved).\n"
+" *\n"
+" * THE MERGE IS THE INTERPRETER'S, HALF FOR HALF.  vm_set_add\n"
+" * (src/vm/vm.c:1872-1920) is asymmetric, and this loop copies the asymmetry\n"
+" * instead of running one equality over every pushed pair:\n"
+" *   - an INT element binary-searches the sorted i64 half and never looks at\n"
+" *     items, so `s = 1.0, 1` is TWO elements (measured on the interpreter:\n"
+" *     len 2, `1 in s` true, `1.0 in s` true);\n"
+" *   - every other tag scans items with val_eq -- mv_eq here -- and never\n"
+" *     looks at i64, which is why the reverse spelling `s = 1, 1.0` is two\n"
+" *     elements as well, and why `s = 1, 1` is one.\n"
+" * One numeric equality over all pushed pairs answers len 1 for `1.0, 1`;\n"
+" * that is the silent-wrong shape this note exists to name, and\n"
+" * mir_set_new_membership pins BOTH orders.\n"
+" *\n"
+" * DEDUP IS ALSO A COMPACTION.  A repeat takes no slot: the live extent is\n"
+" * 1 + (distinct count) and the pool's used pointer ends there, so the dropped\n"
+" * slots stay free for the next literal.  The interpreter does not store the\n"
+" * duplicate either (its i64/items hold distinct values only), so the two\n"
+" * agree about what the set CONTAINS; the footprint is this route's own\n"
+" * business and is what ALLOCS_EXPECT reads.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER, each named by the thing that would need it:\n"
+" *   - OP_SET_ADD and OP_SET_INTERVAL.  No emitter arm and no runtime: a set\n"
+" *     is built complete by its literal and never extended.  A set as an\n"
+" *     ELEMENT (`q = p, 4`) reaches this loop as an MV_SET item and mv_eq\n"
+" *     stops it, where the interpreter merges p's two halves\n"
+" *     (src/vm/vm.c:1921-1930 vm_set_add_comp).\n"
+" *   - Set EQUALITY.  mv_eq has no MV_SET row, so `s == t` hands a set to\n"
+" *     mv_as_nv and STOPS the program (abort, rc 134) where the interpreter's\n"
+" *     L_EQ calls set_equal for a SET/SET pair (src/vm/vm.c:3539-3544) and\n"
+" *     answers by CONTENT (src/vm/vm.c:2310 compares the two halves).  An\n"
+" *     identity row is NOT available as a shortcut the way MV_DIC's was --\n"
+" *     val_eq IS identity for a dict (src/vm/vm.c:421) and is FALSE for a set,\n"
+" *     so a row here would answer false for two equal sets: a wrong answer\n"
+" *     rather than a stop.  Content equality is the next cell.\n"
+" *   - A set as a dict KEY, as an operand of + / < / min / not, or printed\n"
+" *     (`say s`): every one of those reaches mv_as_nv or mv_tru's fall-through\n"
+" *     and aborts, which is the same STOP a dict already takes on this route.\n"
+" *   - `s in arr` (a SET probed against an ARRAY).  The interpreter answers\n"
+" *     FALSE for every finite set here, and that is a defect rather than a\n"
+" *     rule: the set-vs-array subset branch (src/vm/vm.c:2414-2423) starts\n"
+" *     from res = 0, walks a set's ITEMS half only, and never sets res back\n"
+" *     to 1 -- so a set made of integers (their values live in the sorted\n"
+" *     i64 half) and a set made of floats answer alike.  Measured on the\n"
+" *     interpreter: `s = 1, 2` then `s in [1, 2]` is false; `t = 1.0, 2.0`\n"
+" *     then `t in [1, 2]` is false too.  A constant false is not a semantic\n"
+" *     this route will reproduce silently, so the scalar path below sees an\n"
+" *     MV_SET and mv_eq STOPS the program (abort, rc 134).\n"
+" *   - The interpreter's hash structure.  A SetObj has NO hash table at all\n"
+" *     (a sorted i64 half plus an items list, src/vm/vm.h:60-69), so the O(n)\n"
+" *     scans here are what set_contains itself does: the same answer by the\n"
+" *     same route, not a speed trade.\n"
+" *\n"
+" * DELETE CONDITION (decidable).  Delete this function and the tag in the\n"
+" * commit that gives this route a shared set runtime with the interpreter's\n"
+" * vm_set_*: the check is `grep -c mv_set_new src/compilation/aot_mir.c`\n"
+" * falling to 0 and mv_in's set arm collapsing into a call to set_contains.\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases mir_set_new_len_in,\n"
+" * mir_set_new_single, mir_set_new_dedup, mir_set_new_membership and\n"
+" * mir_set_new_register_elements compare stdout BYTES against the interpreter;\n"
+" * all five were red before this function as\n"
+" * IR-MIR-MIR-ONLY|case=...|mir=refused|why=illegal-operand.  The two reverse\n"
+" * criteria in docs/STATUS.md 10.125 flip the dedup and the membership\n"
+" * separately.  ALLOCS_EXPECT's set entries are the pool blocks, measured\n"
+" * first: the pool is MV_SLOTS slots of 32 bytes, allocated on first use and\n"
+" * doubled after that. */\n"
+"static inline MirVal mv_set_new(int n, const MirVal *items) {\n"
+"    int want = mv_arrused + n + 1;             /* 1 count slot, then n pushes */\n"
+"    mv_arr_need(want);\n"
+"    MirVal r;\n"
+"    r.type = MV_SET;\n"
+"    r.ival = mv_arrused + 1;                   /* element 0 sits at pool[ival] */\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    int k = 0;\n"
+"    for (int i = 0; i < n; i++) {\n"
+"        MirVal x = items[i];\n"
+"        int dup = 0;\n"
+"        for (int j = 0; j < k; j++) {\n"
+"            MirVal y = mv_arrmem[r.ival + j];\n"
+"            if (x.type == MV_INT) {\n"
+"                if (y.type == MV_INT && y.ival == x.ival) { dup = 1; break; }\n"
+"            } else if (y.type != MV_INT && mv_tru(mv_eq(y, x))) { dup = 1; break; }\n"
+"        }\n"
+"        if (!dup) mv_arrmem[r.ival + k++] = x;\n"
+"    }\n"
+"    mv_arrmem[r.ival - 1] = mv_int(k);         /* the ELEMENT count, deduped */\n"
+"    mv_arrused = r.ival + k;                   /* a dropped slot stays free */\n"
+"    return r;\n"
+"}\n"
+"\n"
+"/* ONE SET'S MEMBERSHIP TEST, half for half, copied from set_contains\n"
+"   (src/vm/vm.c:2020-2054) for the only kind this route can build: a finite\n"
+"   set with no interval components.  The asymmetry IS the point -- an INT probe\n"
+"   binary-searches the int half AND THEN still scans the non-int items (so\n"
+"   `1 in {1.0}` is TRUE), while every other tag looks at items only (so\n"
+"   `1.0 in {1}` is FALSE).  Scanning by the region's count is why a set's\n"
+"   header is the deduped element count and not the push count.  It allocates\n"
+"   nothing. */\n"
+"static inline int mv_set_has(int iv, MirVal x) {\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    for (int j = 0; j < n; j++) {\n"
+"        MirVal y = mv_arrmem[iv + j];\n"
+"        if (x.type == MV_INT) {\n"
+"            if (y.type == MV_INT) { if (y.ival == x.ival) return 1; }\n"
+"            else if (mv_tru(mv_eq(y, x))) return 1;\n"
+"        } else if (y.type != MV_INT) {\n"
+"            if (mv_tru(mv_eq(y, x))) return 1;\n"
+"        }\n"
+"    }\n"
+"    return 0;\n"
+"}\n"
+"\n"
 "/* val_as_double's classification (src/vm/vm.c:323-334), without a VM to throw\n"
 "   into.  int, float and bool are numbers there; nil, string and array call\n"
 "   vm_throw_kind(\"type_mismatch\") and read nothing, and an uncaught throw\n"
@@ -1330,6 +1477,21 @@ static const char *const kMirValBlock =
 " *     among b's (:2408-2413); true for an EMPTY a.  This is the arm that\n"
 " *     needs mv_eq's array row above; there is no other way to write it.\n"
 " *   - b ARRAY, a anything else: MEMBERSHIP by val_eq (:2425-2428).\n"
+" *   - b SET, a ARRAY: SUBSET -- every element of a must be in b\n"
+" *     (:2383-2393); an EMPTY or invalid a is TRUE (the interpreter's own\n"
+" *     `return 1`, commented `empty array: subset is true`).\n"
+" *   - b SET, a SET: the same loop, because the interpreter calls set_subset\n"
+" *     (:2394), which walks a's elements and asks set_contains(b) for each\n"
+" *     (src/vm/vm.c:2340-2374); mv_set_has is that question.  An invalid a is\n"
+" *     FALSE here (set_subset's `if (!a || !b) return 0`) where an invalid\n"
+" *     ARRAY a is TRUE -- the handler really does answer those two malformed\n"
+" *     handles differently, and the guards below keep them apart.\n"
+" *   - b SET, a anything else: MEMBERSHIP (:2395, set_contains -- mv_set_has).\n"
+" *     This is the arm `2 in p` takes, and the one the reverse criterion\n"
+" *     mir_set_new_membership flips.  The interpreter's half-for-half rule --\n"
+" *     an INT probe searches the int half and THEN still scans the items, a\n"
+" *     non-INT probe scans the items only -- is mv_set_has's, so this arm does\n"
+" *     not re-state it.\n"
 " *   - b anything else: FALSE (:2432) -- a dict, a string, a number,\n"
 " *     nil.  This is the branch a reader is most likely to want to fix:\n"
 " *     there is no substring test (a string inside a string answers FALSE,\n"
@@ -1339,14 +1501,23 @@ static const char *const kMirValBlock =
 " * Zero allocation: it reads the pool and calls mv_eq; it never builds a value.\n"
 " *\n"
 " * WHAT IT DOES NOT COVER, each a decision:\n"
-" *   - The SET container arm (:2382-2395).  STRUCTURAL, not forgotten: no set\n"
-" *     can be an operand here.  OP_NEW_SET / OP_SET_INTERVAL are not lowered,\n"
-" *     the 23 preset set globals are refused by name, and a set literal\n"
-" *     leaves the argument stack unbalanced (measured: `p = 1, 2, 3` + a\n"
-" *     membership test refuses at asp=3; `say 2 in Z` refuses on the Z name).\n"
-" *     So `2 in p` -- where the interpreter answers TRUE through a binary\n"
-" *     search over a set of ints -- cannot reach this function, and the honest\n"
-" *     line here is b-non-array-answers-false, not a set arm.\n"
+" *   - The SET container arm's OWN uncovered half.  The b SET arms above cover\n"
+" *     a finite set with no interval components -- every set this route can\n"
+" *     build -- for a SET, an ARRAY or a scalar.  What is NOT covered: the\n"
+" *     interval components (:2396-2404, builtin_contains over comps), the\n"
+" *     `set`/`Z` preset globals (still refused by name in prescan: `say 2 in Z`\n"
+" *     refuses on the Z name, measured), and a SET probed against an ARRAY\n"
+" *     (`s in arr`), which the interpreter answers FALSE for every set -- a\n"
+" *     defect, not a rule: the branch at src/vm/vm.c:2414-2423 initialises\n"
+" *     res to 0 and never sets it to 1, so even a set whose elements are all\n"
+" *     present reads false (measured: `s = 1, 2` / `t = 1.0, 2.0`, both\n"
+" *     false against [1, 2]).  This route reaches the\n"
+" *     scalar loop below with an MV_SET and mv_eq STOPS the program (abort,\n"
+" *     rc 134) instead of answering.\n"
+" *   - OP_SET_ADD / OP_SET_INTERVAL.  Neither is lowered, so a set is built\n"
+" *     whole by its literal and never extended; the interpreter's extending\n"
+" *     forms (a comprehension's OP_SET_ADD, `q = p, 4`'s vm_set_add_comp) stop\n"
+" *     at OP_CALL_BUILTIN `list` or at mv_eq's missing set row.\n"
 " *   - A DICT container used to refuse BEFORE OP_IN, because OP_NEW_DICT's\n"
 " *     pops were not counted and prescan stopped at the unbalanced argument\n"
 " *     stack (asp=2).  With OP_NEW_DICT emitted that program now lowers, and\n"
@@ -1392,19 +1563,43 @@ static const char *const kMirValBlock =
 "            if (mv_tru(mv_eq(a, mv_arrmem[bi + j]))) return mv_boo(1);\n"
 "        return mv_boo(0);\n"
 "    }\n"
+"    if (b.type == MV_SET) {\n"
+"        int bi = (int)b.ival;\n"
+"        if (bi < 1 || bi > mv_arrused || !mv_arrmem) return mv_boo(0);\n"
+"        if (a.type == MV_ARR) {\n"
+"            int ai = (int)a.ival;\n"
+"            if (ai < 1 || ai > mv_arrused) return mv_boo(1);  /* :2386 */\n"
+"            int an = (int)mv_arrmem[ai - 1].ival;\n"
+"            for (int i = 0; i < an; i++)\n"
+"                if (!mv_set_has(bi, mv_arrmem[ai + i])) return mv_boo(0);\n"
+"            return mv_boo(1);\n"
+"        }\n"
+"        if (a.type == MV_SET) {\n"
+"            int ai = (int)a.ival;\n"
+"            if (ai < 1 || ai > mv_arrused) return mv_boo(0);  /* set_subset */\n"
+"            int an = (int)mv_arrmem[ai - 1].ival;\n"
+"            for (int i = 0; i < an; i++)\n"
+"                if (!mv_set_has(bi, mv_arrmem[ai + i])) return mv_boo(0);\n"
+"            return mv_boo(1);\n"
+"        }\n"
+"        return mv_boo(mv_set_has(bi, a));   /* :2395 set_contains */\n"
+"    }\n"
 "    return mv_boo(0);   /* :2432 -- dict, string, number, nil: false */\n"
 "}\n"
 
 "/* len(): the interpreter's own domain, read off src/runtime/runtime_posix.c:11-27,\n"
 "   which tests ARRAY, SET, DICT, STRING, INT, FLOAT in that order and falls\n"
-"   through to 0 for everything else (nil and bools).  Reproduced arm for arm\n"
-"   except SET: no set is representable on this route, so that arm is\n"
-"   UNREACHABLE here rather than missing -- the same structural note mv_in\n"
-"   carries for its container arm.  The DICT arm divides by two because a dict\n"
-"   region stores PAIRS, the same /2 src/vm/vm.c:3693 does; FLOAT truncates\n"
-"   toward zero, as `(long long)v->fval` does.  It allocates nothing. */\n"
+"   through to 0 for everything else (nil and bools).  Reproduced arm for arm,\n"
+"   SET INCLUDED: for a finite set with no interval components the interpreter\n"
+"   sums SetObj's iCount and count, and this route's region stores exactly those\n"
+"   distinct elements behind one count slot -- so the slot IS that sum, read\n"
+"   without building the array vm_set_to_array would need.  A component-bearing\n"
+"   set (an interval) cannot be built here, which is mv_set_new's OP_SET_INTERVAL\n"
+"   boundary rather than a hole in this arm.  The DICT arm divides by two\n"
+"   because a dict region stores PAIRS, the same /2 src/vm/vm.c:3693 does; FLOAT\n"
+"   truncates toward zero, as `(long long)v->fval` does.  It allocates nothing. */\n"
 "static inline MirVal mv_len(MirVal a) {\n"
-"    if (a.type == MV_ARR || a.type == MV_DIC) {\n"
+"    if (a.type == MV_ARR || a.type == MV_DIC || a.type == MV_SET) {\n"
 "        int i = (int)a.ival;\n"
 "        if (i < 1 || i > mv_arrused || !mv_arrmem) return mv_int(0);\n"
 "        long long n = (long long)mv_arrmem[i - 1].ival;\n"
@@ -1850,6 +2045,20 @@ static int op_regs(int op) {
        mvargs -- so the mask is r1 alone and the count's own bound lives in the
        pre-scan, next to OP_NEW_ARRAY's. */
     case OP_NEW_DICT: return R1;
+    /* OP_NEW_SET's operand layout is OP_NEW_ARRAY's a third time, read out of
+       its own handler: r1 is the register the set value lands in, r3 is the
+       element COUNT (a NUMBER, not a register: src/compiler/compiler.c:566
+       emits `OP_NEW_SET, r, 0, expr->list.count`, and src/vm/vm.c:4286-4313
+       reads ins.r1 and ins.r3 only -- its `int n = ins.r3` is the width of the
+       stack mouth), r2 is not read at all.  The n pushed slots are not
+       registers of this instruction either (src/compiler/compiler.c:562-565
+       pushes one OP_PUSH_REG per element), so the mask is r1 alone and the
+       count's own bound lives in the pre-scan, next to OP_NEW_ARRAY's and
+       OP_NEW_DICT's.  ONE READING DIFFERS FROM THE ARRAY'S: the pushes are not
+       n slots of output, they are n CANDIDATES for one set, so the mouth
+       consumes n while the value keeps only the DISTINCT ones -- the dedup is
+       vm_set_add's (src/vm/vm.c:1872-1920) and mv_set_new's note has it. */
+    case OP_NEW_SET: return R1;
     /* OP_INDEX_GET reads r2 (the container) and r3 (the subscript) and writes
        r1: `R[ins.r1] = ...`, src/vm/vm.c:3675-3716, where the handler's own
        first two lines are `Value *obj = &R[ins.r2]; Value *idxv = &R[ins.r3];`.
@@ -2348,28 +2557,36 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                GLOBAL, FUNCTION or LABEL index, and the coverage test's operand
                detector (tools/aot_mir_cover.test.py:288-327) reads the switch's
                labels against the emitter's indexed arms in both directions.
-               None of these opcodes reads such an index -- OP_NEW_ARRAY's and
-               OP_NEW_DICT's r3 are COUNTS (op_regs' notes; the emitter turns
-               them into stack offsets) and OP_INDEX_GET's three operands are
-               plain registers -- so a case label here would be a label the
-               detector calls dead, which is a true reading of the wrong
-               question.  The bounds they do need are the arm's own: the count
-               versus the pool's register bound, and the count versus the
+               None of these opcodes reads such an index -- OP_NEW_ARRAY's,
+               OP_NEW_DICT's and OP_NEW_SET's r3 are COUNTS (op_regs' notes; the
+               emitter turns them into stack offsets) and OP_INDEX_GET's three
+               operands are plain registers -- so a case label here would be a
+               label the detector calls dead, which is a true reading of the
+               wrong question.  The bounds they do need are the arm's own: the
+               count versus the pool's register bound, and the count versus the
                argument stack.
-               OP_NEW_ARRAY and OP_NEW_DICT are the argument stack's consumers,
-               and the two that make OP_PUSH_REG a CONSUMED operand rather than
-               a leak: the elements were pushed one at a time by the compiler
+               OP_NEW_ARRAY, OP_NEW_DICT and OP_NEW_SET are the argument
+               stack's consumers, and the three that make OP_PUSH_REG a
+               CONSUMED operand rather than a leak: the elements were pushed one
+               at a time by the compiler
                (src/compiler/compiler.c:1042-1045, `emit(OP_PUSH_REG, ...)` per
                element; for a dict 2*count times, key0,value0,key1,value1 ...
-               src/compiler/compiler.c:1054-1056) and the count in r3 says how
-               many PAIRS this instruction takes (src/vm/vm.c:3637-3642 reads
+               src/compiler/compiler.c:1054-1056; for a set once per element,
+               src/compiler/compiler.c:562-565) and the count in r3 says how
+               many slots this instruction takes (src/vm/vm.c:3637-3642 reads
                them back as `base = t->sp - (n - 1)`, so the FIRST push is
-               element 0; src/vm/vm.c:3658-3666 does the same with 2*n slots).
-               The dict consumes `2 * n` slots, the array `n`; both are bounded
-               against the SAME r3 bound so the emitted offset cannot go absurd.
+               element 0; src/vm/vm.c:3658-3666 does the same with 2*n slots,
+               and src/vm/vm.c:4286-4313 does it with n for a set).
+               The dict consumes `2 * n` slots, the array and the set `n`; all
+               are bounded against the SAME r3 bound so the emitted offset
+               cannot go absurd.  For the set the consumption is n even though
+               the VALUE keeps only the distinct elements (duplicates are
+               merged, not stored), so this count is the stack's width and NOT
+               the value's element count -- the two are different numbers for
+               `s = 1, 1`.
                Bound first, then consume -- a count larger than asp is a
                refusal, not a negative stack. */
-            if (op == OP_NEW_ARRAY || op == OP_NEW_DICT) {
+            if (op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) {
                 int n = ir_insn_r3(in);
                 int slots = (op == OP_NEW_DICT) ? 2 * n : n;
                 if (n < 0 || n >= REG_LIMIT)
@@ -2867,6 +3084,28 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                 r1, n, 2 * n, 2 * n);
         return 0;
     }
+    /* THE SET CONSTRUCTOR -- OP_NEW_SET, the third argument-stack mouth and the
+       only one that DEDUPS what it pops.  Same shape as OP_NEW_ARRAY: r3 is the
+       element COUNT (op_regs' note; the operand reading is the same one), so
+       the mouth is n slots of mvargs in push order -- `mv_set_new(n, mvargs +
+       asp - n)` -- and the value keeps only the distinct elements, which is the
+       merge rule in kMirValBlock's mv_set_new note.  WHAT BELONGS HERE is that
+       the consumption is n even when the value is shorter: the slots are the
+       compiler's pushes (src/compiler/compiler.c:562-565), not the set's
+       contents, so `s = 1, 1` pops two and stores one.  The empty literal
+       consumes nothing and must not read mvargs at 0 (the same spelling the two
+       arms above use for the same reason); it is not reachable from source
+       today -- the only OP_NEW_SET with count 0 is a comprehension's
+       (src/compiler/compiler.c:582), and that program is refused earlier, at
+       OP_CALL_BUILTIN `list` -- but r3 == 0 is a legal instruction and this arm
+       answers it instead of reading a null. */
+    case OP_NEW_SET: {
+        int n = w3;                     /* the element COUNT: see op_regs' note */
+        if (n == 0) { buf_fmt(b, "    v[%d] = mv_set_new(0, 0);", r1); return 0; }
+        buf_fmt(b, "    v[%d] = mv_set_new(%d, mvargs + asp - %d); asp -= %d;",
+                r1, n, n, n);
+        return 0;
+    }
     case OP_INDEX_GET: buf_fmt(b, "    v[%d] = mv_arr_get(v[%d], v[%d]);", r1, r2, r3); return 0;
     /* OP_INDEX_SET is a CALL WITH NO ASSIGNMENT: the handler reads r1/r2/r3 and
        writes into the container, so unlike every arm above this one leaves the
@@ -3054,11 +3293,11 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
             if (asp_now > asp_deepest) asp_deepest = asp_now;
             continue;
         }
-        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY || op == OP_NEW_DICT) {
+        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) {
             int n = ir_insn_r3(in);
             int slots = (op == OP_NEW_DICT) ? 2 * n : n;
             if (slots > 0) {
-                if (op == OP_NEW_ARRAY || op == OP_NEW_DICT) has_args = 1;
+                if (op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) has_args = 1;
                 asp_now -= slots;
                 if (asp_now < 0) asp_now = 0;   /* prescan already refused this */
             }
