@@ -1123,6 +1123,49 @@ static const char *const kMirValBlock =
 "                   does not say so still cannot hand back a silent 0. */\n"
 "}\n"
 "\n"
+"/* THE UNCAUGHT-THROW EXIT.  src/vm/vm.c:2639-2643 is the rule, read there:\n"
+" * when no handler is open, vm_throw prints the thrown VALUE on stderr and\n"
+" * stops the thread with rc 1 --\n"
+" *   `fprintf(stderr, \"\\n[exception] uncaught: %s\\n\", (err->type ==\n"
+" *    VAL_STRING && err->sval) ? err->sval : \"(non-string value)\")`,\n"
+" * then the `  at ip=... frames=...` ledger, then `vm->last_error = 1`.\n"
+" * This route has no handler stack yet -- the try/catch half is refused\n"
+" * WHOLE by the pre-scan (OP_TRY_START/OP_TRY_END have no case in op_regs) --\n"
+" * so every throw it can emit is uncaught, and the answer that is observable\n"
+" * is exactly this one: the message on stderr, stdout left where the program\n"
+" * got to, exit code 1.\n"
+" *\n"
+" * WHY IT TAKES A MirVal AND NOT A STRING.  The message is the VALUE IN THE\n"
+" * REGISTER, not a category word.  The two stops this block already prints\n"
+" * (type_mismatch in mv_index_i32 above, index_out_of_range in mv_arr_set\n"
+" * below) are CONSTANTS, and copying that template is the cheap, wrong\n"
+" * answer: `throw \"boom\"` and `throw \"from-func\"` would print the same\n"
+" * word.  The emitted arm hands v[r1] here for that reason, and a case whose\n"
+" * only throw said \"boom\" could not see the difference.\n"
+" *\n"
+" * WHY THIS LIVES INSIDE kMirValBlock AND NOT IN THE SHARED PREAMBLE.\n"
+" * aot_native_preamble() is byte-identical in both routes and\n"
+" * tools/aot_mir.test.py's classify() takes the first differing line and\n"
+" * requires the common prefix to still carry nv_say, nv_fmt_double and\n"
+" * nv_die_division_by_zero; a helper spliced between them would make every\n"
+" * c-diff unclassifiable.  Appending inside this block is the one safe place\n"
+" * (see kMirValBlock's own header note above).\n"
+" *\n"
+" * WHAT IT DOES NOT REPRODUCE.  The leading blank line, the two ledger lines\n"
+" * `  at ip=...` / ` frames=...` and `--err-json`'s `{\"error\":\"exception\",...}`\n"
+" * shape (src/vm/vm.c:2617-2636): this route has no bytecode ip, no frame\n"
+" * ledger and no such flag.  So the criterion on stderr is a CONTAINMENT\n"
+" * predicate (tools/aot_mir.test.py's STDERR_EXPECT) -- these named\n"
+" * substrings, not byte equality -- and the ALLOCS line atexit prints after\n"
+" * this exit is a third, deliberate difference from the interpreter's tail.\n"
+" */\n"
+"static void mv_die_uncaught(MirVal a) {\n"
+"    fflush(stdout);   /* the lines say() already wrote stay written */\n"
+"    fprintf(stderr, \"[exception] uncaught: %s\\n\",\n"
+"            (a.type == MV_STR && a.sval) ? a.sval : \"(non-string value)\");\n"
+"    exit(1);          /* atexit(mv_free_all) still reports the pool */\n"
+"}\n"
+"\n"
 "/* THE FORWARDING HEAD.  A live array's count header is an MV_INT (the count).\n"
 "   A region that had to MOVE leaves `{MV_ARR, new_index}` in that slot instead,\n"
 "   and every reader resolves through it here: the array keeps ONE handle for\n"
@@ -1879,6 +1922,21 @@ static int op_regs(int op) {
     case OP_CALL_BUILTIN: return R1;
     case OP_RETURN: return R1;
     case OP_SAY: return R1;
+    /* OP_THROW reads exactly ONE register, r1, and THAT REGISTER IS THE THROWN
+       VALUE.  Two facts, both read off the handler and the compiler rather than
+       guessed: the handler's whole body is `vm_throw(vm, t, &R[ins.r1])`
+       (src/vm/vm.c:4448-4449), and the three emit sites all pass the expression
+       register -- `emit(comp->curBC, OP_THROW, errReg, 0, 0)`
+       (src/compiler/compiler.c:616), `..., rethrow, 0, 0` (:2316) and
+       `..., e, 0, 0` (:2328).  So r2 and r3 are not operands (the emitter
+       reads nothing else), and this mask says precisely which register the
+       generated line will index.  It is a one-way READ -- the throw does not
+       return, so nothing is written back -- and the mask has no direction bit;
+       R1 here means "r1 is a live register", which is all prescan bounds.
+       This opcode needs NO case in prescan: r1 is checked by the generic
+       bound loop for every mask bit, and there is no pool, global, function
+       or label index here for the operand instrument to see. */
+    case OP_THROW: return R1;
     case OP_HALT: return 0;
     default: return -1;
     }
@@ -2945,6 +3003,21 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         else buf_str(b, "    return mv_nil();");
         return 0;
     case OP_SAY:          buf_fmt(b, "    mv_say(v[%d]);", r1); return 0;
+    /* THE FIRST EXCEPTION OPCODE this route answers, and the answer stops at
+       the UNCAUGHT half: no handler is open, so the value goes to stderr and
+       the process exits 1 (mv_die_uncaught, in kMirValBlock).  EVERYTHING
+       CARRYING A HANDLER IS STILL REFUSED WHOLE -- OP_TRY_START and
+       OP_TRY_END have no case here and none in op_regs, so a `try` program
+       never reaches this arm.  That refusal is measured, not promised:
+       tools/aot_mir.test.py's MIR_ONLY_REFUSE entry mir_try_no_throw demands
+       why=unsupported-opcode with OP_TRY_START/OP_TRY_END on the not-yet
+       line and OP_THROW absent from it.  An arm that also answered try would
+       turn a named refusal into a plausible wrong answer, which is the
+       worse direction.  This arm is one call and allocates nothing; the
+       IR-MIR-ALLOCS line that follows on stderr is atexit(mv_free_all)'s,
+       which exit(1) runs by design (see the atexit registration in
+       emit_container). */
+    case OP_THROW:        buf_fmt(b, "    mv_die_uncaught(v[%d]);", r1); return 0;
     case OP_HALT:
         if (c->nodes[c->id].is_main) buf_str(b, "    return 0;");
         else buf_str(b, "    fflush(stdout); exit(0);");
