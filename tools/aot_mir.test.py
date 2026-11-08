@@ -331,6 +331,38 @@ ALLOCS_EXPECT = {
     # key or value, could box one; it would move these numbers.
     "mir_dict_identity_eq": (1, 256),
     "mir_dict_neq_and_cross_type": (2, 768),
+    # The SET cases.  MEASURED FIRST, then written, in that order (the numbers
+    # below are the generated programs' own IR-MIR-ALLOCS lines).  The unit is
+    # the same MV_SLOTS*32-byte pool block every container on this route shares,
+    # allocated on first use and DOUBLED when the frontier needs more than the
+    # block holds -- so these three readings are really one reading in three
+    # shapes:
+    #   one literal   256 bytes = the first block (8 slots).  `s = 1, 2` stores
+    #                 [count][1][2] = 3 slots, `s = 7, 7` and `s = a, b` store 2,
+    #                 so all three fit and none doubles.  This is also the row
+    #                 that says a set is NOT a per-element malloc: a route that
+    #                 boxed each element would report one block per element.
+    #   dedup         `s = 1, 1, 2` PUSHES three elements and stores TWO: the
+    #                 region is [2][1][2], 3 slots, still the first block.  The
+    #                 floor matters: a repeat that took a slot would land on 4
+    #                 slots, which ALSO fits an 8-slot block, so the block count
+    #                 cannot see that defect -- the stdout criterion can (len
+    #                 would print 3), and this row is written to say so rather
+    #                 than to pretend it is the guard.
+    #   membership    FOUR literals, and the doubling is the reading: s = "a","b"
+    #                 and t = 1.0,1.0 store 3 slots each (6 of 8), u = 1,1.0
+    #                 needs a 9th, so the pool DOUBLES to 16 slots -- 256 + 512
+    #                 = 768 bytes, 2 blocks -- and w = 1.0,1 then fits the
+    #                 doubled block without allocating.  A route that re-used the
+    #                 first region for u would report 1 block and could still
+    #                 print the right bytes only by overwriting s, whose "b" in s
+    #                 line would then read the wrong set; the two probes are of
+    #                 the same copy-vs-overwrite decision.
+    "mir_set_new_len_in": (1, 256),
+    "mir_set_new_single": (1, 256),
+    "mir_set_new_dedup": (1, 256),
+    "mir_set_new_membership": (2, 768),
+    "mir_set_new_register_elements": (1, 256),
     # The throw pair ends on an exception too, so like the cases just above
     # their reading is `reported=no|why=rc=1` and no count is consulted; listed
     # so the table says so on purpose.  The numbers are MEASURED from the
