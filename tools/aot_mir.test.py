@@ -1020,6 +1020,41 @@ MIR_ONLY = [
      'say d[i]\n'
      'j = z + 2\n'
      'say d[j]\n'),
+    # The WRITE half.  Before this step `d["a"] = 9` was emitted but a SILENT
+    # no-op (mv_arr_set returns immediately for a non-array container), which is
+    # the worst of the three possible answers: it prints the OLD value and looks
+    # like an answer.  The overwrite case is what catches that -- the key exists,
+    # so a no-op and a correct write differ in the second line and only there.
+    ("mir_dict_set_overwrite",
+     'd = {"a": 1, "b": 2}\n'
+     'say d["a"]\n'
+     'd["a"] = 9\n'
+     'say d["a"]\n'
+     'say d["b"]\n'),
+    # A key that is NOT there: the pair is appended and reachable afterwards.
+    # vm_dict_set clones key and value before touching the pool
+    # (src/vm/vm.c:1186-1191), which is what makes `d[k] = d[k]` defined; this
+    # case is the plain append, and the third write grows the same dict twice.
+    ("mir_dict_set_append",
+     'd = {"a": 1}\n'
+     'd["b"] = 7\n'
+     'say d["b"]\n'
+     'say d["a"]\n'
+     'd["c"] = 3\n'
+     'say d["c"]\n'),
+    # The append that CANNOT extend in place: an array is created after the
+    # dict, so the dict's region no longer ends at the pool frontier and the
+    # write must move it and leave a forwarding head.  The array is read back in
+    # the same program, because a move that trampled a neighbour shows there
+    # first.
+    ("mir_dict_set_grow_after_neighbour",
+     'd = {"a": 1}\n'
+     'arr = [1, 2, 3]\n'
+     'd["b"] = 7\n'
+     'say d["b"]\n'
+     'say d["a"]\n'
+     'say arr[2]\n'
+     'say arr[0]\n'),
 
 ]
 
