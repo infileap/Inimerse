@@ -1163,6 +1163,17 @@ MIR_ONLY_REFUSE = {
     "mir_thread_result_unwrap": (
         'thread plain_worker {\n    return 11\n}\nr = thread_result("plain_worker")\nsay r\n',
         "threads"),
+    # A builtin call.  Today neither of these reaches a named reason: the one
+    # with an argument is refused for a DIFFERENT fault (the argument stack is
+    # left unbalanced because nothing consumes OP_PUSH_REG), and the one without
+    # an argument is refused as a generic unknown opcode.  Both readings are
+    # measured below before the reason gets a name.
+    "mir_builtin_call_with_arg": (
+        'x = str(1)\nsay x\n',
+        "builtin-call"),
+    "mir_builtin_call_no_arg": (
+        'say dbg_ip()\n',
+        "builtin-call"),
 }
 
 
