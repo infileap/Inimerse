@@ -497,15 +497,27 @@ EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # it the first time; lowering it needs none, because the tree just proved it.
 #
 # 12 -> 4 -> 2 -> 1 -> 0.  The last step is this commit, and it is the step the
-# whole ratchet was for: at +1 there was still one number of headroom to spend,
-# and headroom that nobody has to argue for is the thing this constant exists to
-# refuse.  The tree proves the move rather than promising it: the reading on the
-# commit that lowered it is `unanchored delta -4 (ceiling +0)`, i.e. four
-# references were repaid BELOW the old ceiling of 1, so the ceiling was the only
-# thing still above zero.  Raising this number again -- even by one -- needs its
-# own commit and the same kind of argument that raised it from +9 the first
-# time; there is no longer any reading that can be used to raise it by simply
-# resuming an old value.
+# whole ratchet was for: at +1 there was still headroom to spend, and headroom
+# that nobody has to argue for is the thing this constant exists to refuse.
+#
+# THE ARITHMETIC, because the first version of this comment got it wrong and the
+# error is instructive.  The reading on the commit that lowered it is
+# `unanchored delta -4 (ceiling +0)`.  That -4 is FOUR BELOW ZERO, not "four
+# below the old ceiling": against the old ceiling of +1 the same tree sat FIVE
+# under.  The "four" in the first draft was the reading of a DIFFERENT tree
+# (`d820953`, `unanchored delta -3 (ceiling +1)`, where 1 - (-3) = 4), carried
+# over onto a tree that never produced it -- a number moved from the tree that
+# measured it, which is the failure this whole file exists to catch.  The review
+# that found it is why the correction is written down here instead of being
+# quietly overwritten.
+#
+# And 0 does NOT mean the budget is empty: `delta - ceiling` is 4 here, so four
+# more unanchored references could still be added and stay green.  A ratchet at
+# 0 means "no new headroom", not "no room left"; the four that remain are to be
+# given up in the next repayment, not spent.
+#
+# Raising this number again -- even by one -- needs its own commit and the same
+# kind of argument that raised it from +9 the first time.
 EXP_LINE_REFS_UNANCHORED_DELTA_MAX = int(
     os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "0")
 )
