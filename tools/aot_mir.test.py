@@ -1228,6 +1228,72 @@ MIR_ONLY = [
      'arr = [1, 2]\n'
      'say d == arr\n'
      'say d != arr\n'),
+    # SET LITERALS -- OP_NEW_SET.  The fifth container a program can spell and
+    # the first one whose ELEMENTS ARE A SET and not a sequence: the same push
+    # that an array keeps, a set MERGES (src/vm/vm.c:4286-4313 L_NEW_SET calls
+    # vm_set_add per pushed value, whose int half is a sorted insert and whose
+    # other half is a val_eq scan -- both no-ops on a repeat).  So the reading
+    # that separates a set from an array with the same source text is len().
+    #
+    # The literal is the ONLY set source this route can reach: `s = 1, 2` is a
+    # bare comma list (src/parser/parser.c:522 looks_like_set_start, :533
+    # parse_set_literal -> EXPR_SETLIT, src/compiler/compiler.c:558-566), and
+    # the other two set shapes sit behind refusals that fire FIRST -- the
+    # comprehension `{v in S | c}` compiles OP_CALL_BUILTIN "list"
+    # (src/compiler/compiler.c:575), which this route refuses by name (only
+    # `len` resolves), and `min(1, 2)` is OP_SET_INTERVAL, which is not in the
+    # table.  That is also why the EMPTY set has no case here: the only
+    # OP_NEW_SET with count 0 is src/compiler/compiler.c:582, inside the
+    # comprehension arm.
+    #
+    # Why each case is here, one by one:
+    #   mir_set_new_len_in     the flat two-int set: len, one hit, one miss.
+    #                          Nothing in it depends on dedup or on content
+    #                          equality, so it stays green under both reverse
+    #                          criteria in docs/STATUS.md 10.125.
+    #   mir_set_new_single     `s = 7, 7`.  A ONE-element set literal is
+    #                          unspellable without a repeated element (`s = 7,`
+    #                          is a parse error: "expected 'expression', but got
+    #                          'say'"; `s = ()` is one too), so this is the only
+    #                          shape a single-element set ever takes -- which is
+    #                          also why the dedup injection reddens this case
+    #                          as well as mir_set_new_dedup.
+    #   mir_set_new_dedup      `s = 1, 1, 2`: three pushes, two elements.  An
+    #                          implementation that appended every push answers 3
+    #                          here and passes every other case in this group.
+    #   mir_set_new_membership the two membership rules a route gets wrong while
+    #                          ints still work: a STRING element compared by
+    #                          CONTENT rather than by handle, and a FLOAT element
+    #                          found from an INT probe.  set_contains runs the
+    #                          val_eq scan for an INT probe too (src/vm/vm.c:2020
+    #                          finds 1 in {1.0}), while the reverse is a
+    #                          different answer -- `1.0 in {1}` is FALSE, because
+    #                          a non-int probe never looks at the int half --
+    #                          and `u = 1, 1.0` is a TWO-element set.  The same
+    #                          asymmetry is in vm_set_add's DEDUP (src/vm/vm.c:1872:
+    #                          an INT looks only at the sorted i64 half, every
+    #                          other tag only at items), so the spellings that
+    #                          separate the halves are pinned in both orders:
+    #                          `1, 1.0` and `1.0, 1` are BOTH two elements --
+    #                          measured, and the second one is where a dedup that
+    #                          ran one numeric equality over all pairs answers 1.
+    #   mir_set_new_register_elements
+    #                          the elements are VALUES in registers, not
+    #                          constants: this pins that the lowering collects
+    #                          the pushed values instead of the register numbers.
+    ("mir_set_new_len_in",
+     's = 1, 2\nsay len(s)\nsay 2 in s\nsay 3 in s\n'),
+    ("mir_set_new_single",
+     's = 7, 7\nsay len(s)\nsay 7 in s\nsay 8 in s\n'),
+    ("mir_set_new_dedup",
+     's = 1, 1, 2\nsay len(s)\nsay 1 in s\nsay 2 in s\nsay 3 in s\n'),
+    ("mir_set_new_membership",
+     's = "a", "b"\nsay len(s)\nsay "b" in s\nsay "z" in s\n'
+     't = 1.0, 1.0\nsay 1 in t\nsay 1.0 in t\n'
+     'u = 1, 1.0\nsay len(u)\nsay 1 in u\nsay 1.0 in u\n'
+     'w = 1.0, 1\nsay len(w)\nsay 1 in w\nsay 1.0 in w\n'),
+    ("mir_set_new_register_elements",
+     'a = 1\nb = 2\ns = a, b\nsay len(s)\nsay 2 in s\nsay 4 in s\n'),
 
 ]
 
