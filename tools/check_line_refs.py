@@ -495,8 +495,19 @@ EXP_LINE_REFS_DELTA = int(os.environ.get("EXP_LINE_REFS_DELTA", "12"))
 # nothing (`rc=0` with `unanchored delta +9 (ceiling +12)`).  Raising this
 # number again needs its own commit and the same kind of argument that raised
 # it the first time; lowering it needs none, because the tree just proved it.
+#
+# 12 -> 4 -> 2 -> 1 -> 0.  The last step is this commit, and it is the step the
+# whole ratchet was for: at +1 there was still one number of headroom to spend,
+# and headroom that nobody has to argue for is the thing this constant exists to
+# refuse.  The tree proves the move rather than promising it: the reading on the
+# commit that lowered it is `unanchored delta -4 (ceiling +0)`, i.e. four
+# references were repaid BELOW the old ceiling of 1, so the ceiling was the only
+# thing still above zero.  Raising this number again -- even by one -- needs its
+# own commit and the same kind of argument that raised it from +9 the first
+# time; there is no longer any reading that can be used to raise it by simply
+# resuming an old value.
 EXP_LINE_REFS_UNANCHORED_DELTA_MAX = int(
-    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "1")
+    os.environ.get("EXP_LINE_REFS_UNANCHORED_DELTA_MAX", "0")
 )
 
 # The one pin here that is not about how many references there are, but about
@@ -1297,6 +1308,13 @@ def self_check() -> int:
            lambda s: s.startswith("tree-unresolved=") and "is a blob" in s)
     expect("a pin with no tree field is a problem of its own",
            pin_tree_problem("")[0], "citations-pin-tree-absent")
+    # The ratchet's own floor, asserted: 12 -> 4 -> 2 -> 1 -> 0 is a sequence of
+    # repayments, and the last one closed the headroom.  Raising it silently now
+    # fails here first, which is the point of writing the number down twice.
+    expect("the unanchored ceiling is the ratchet's floor, 0",
+           EXP_LINE_REFS_UNANCHORED_DELTA_MAX, 0)
+    expect("the explicit delta is still the equation it was, +12",
+           EXP_LINE_REFS_DELTA, 12)
     for name in fails:
         print(f"FAIL -- {name}")
     if fails:
