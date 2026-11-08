@@ -2228,6 +2228,30 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
         for (int i = 0; i < fn->ninsns; i++) {
             const IrInsn *in = &fn->insns[i];
             int op = in->op;
+            if (op == OP_CALL_BUILTIN) {
+                /* r2 is a STRING-POOL INDEX, not a register: the compiler emits
+                   `emit(curBC, OP_CALL_BUILTIN, result, ni, argc)`
+                   (src/compiler/compiler.c:464) with `ni` naming the builtin and
+                   r3 the argument count, and the operands were pushed by
+                   OP_PUSH_REG.  So this refusal can NAME what the program asked
+                   for instead of reporting the push it left behind.
+                   Why a name and not an implementation: the builtin registry,
+                   its capability flags and the safe-mode rule live in the VM and
+                   in the mods (vm_register_builtin callers), so emitting a call
+                   here would be a second copy of that dispatch -- the same
+                   reason the thread section is refused by name.  Before this
+                   case the two programs in MIR_ONLY_REFUSE were refused as
+                   'leaves the argument stack unbalanced' and 'unsupported
+                   opcode', neither of which says 'builtin call'. */
+                int32_t ix = ir_insn_r2(in);
+                const char *bn = (ix >= 0 && ix < node->string_count && node->string_pool)
+                                 ? node->string_pool[ix] : NULL;
+                g_prescan_why = "builtin-call";
+                return bad("container=%d insn=%d builtin call '%s' -- this route does not emit"
+                           " OP_CALL_BUILTIN; the builtin registry, its capability flags and the"
+                           " safe-mode rule live in the VM and the mods",
+                           f, i, bn ? bn : "(name index out of range)");
+            }
             int mask = op_regs(op);
             if (mask < 0) {
                 g_notyet++;
