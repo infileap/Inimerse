@@ -6185,3 +6185,43 @@ say "defined-never-started"
 ### 五、这一格之后
 
 `handles` 42 不动，`MIR_ONLY` 50 格全绿。字典这条路线剩下的具名洞：**哈希表**（速度结构，不是语义）、**删除键值对**（无 opcode）、**覆盖时不 free 旧值**（§10.120 已记）。真正的下一格在值表示之外：`OP_CALL_BUILTIN`（27 号 opcode 与 `asp` 判据一起挡着）——它同时是 A 组「内置调用打底」那条被否掉的路线留下的唯一真实缺口。
+
+## §10.122 内建调用的拒绝有了名字（以及为什么不是实现）
+
+`handles` 不动（**42/67**）、`emittable` 不动（42）、判据格数不动（`MIR_ONLY_REFUSE` 5 格）。这一节不加能力，只把一条**早就存在的决定**从「像缺 opcode」改成「像一条边界」。
+
+### 一、病：拒绝是对的，理由不是
+
+两个程序在解释器里都有答案，在这条路线上都被拒——但被拒的理由都不是「内建调用」：
+
+- `x = str(1)`（`say x` 解释器印 `1`）：why=`illegal-operand`，detail 是 `container=0 leaves the argument stack unbalanced: asp=1`。参数以 `OP_PUSH_REG` 到达，**没有任何东西消费它**，于是容器被判成「参数栈不平衡」。读者会去查栈平衡，而问题在调用本身。[obs: 0c4749f]
+- `say dbg_ip()`（解释器印 `0`）：why=`unsupported-opcode`，`IR-MIR-NOT-YET|op=OP_CALL_BUILTIN`。这一条读起来像「忘记实现一个 opcode」，而它是一条**刻意的**边界。[obs: 0c4749f]
+
+崩溃与答错分得开，但「答错的原因」也分得开：这两条今天都指错了方向。
+
+### 二、两处机制（都是量出来的，不是想当然）
+
+- **拒绝必须写在 `op_regs` 跳过之前**。`prescan` 的主循环是 `int mask = op_regs(op); if (mask < 0) { g_notyet++; … continue; }`，而 `op_regs(OP_CALL_BUILTIN)` 是 -1 ⇒ 写成 switch 里的 `case` **根本到不了**（实测：读数停在 `illegal-operand`/`unsupported-opcode` 不动）。所以它是一条 `if (op == OP_CALL_BUILTIN)`，放在那条 skip 之前。[obs: 0c4749f]
+- **不能写成 `case` 标签**：`tools/aot_mir_cover.test.py` 的 operand 检测器把本函数里每个 `case` 标签读成「该 opcode 核了一个池/全局/函数/标号下标」，而这一臂只把 r2 当**字符串池下标**用来**点名**（`src/compiler/compiler.c:464`：`emit(curBC, OP_CALL_BUILTIN, result, ni, argc)`，`ni` 是名字、r3 是参数个数）。这与 `OP_CONCAT` 的操作数个数检查同因，后者同样写在 switch 之外。写成 case 会被报 `dead`、`agree=no`。[obs: 0c4749f]
+
+### 三、为什么是**点名拒绝**而不是实现
+
+内建的**注册表**、它的**能力位**（`CAP_MASK`）与 **safe-mode 规则**都在 VM 与各 mod 里（`vm_register_builtin` 的调用者）。在这条路线上「发一次内建调用」等于把那份派发**再抄一遍**，而抄一份就会有两套能力判定、两套 safe-mode 语义。这与 §10.119 对线程段的处理同因、同形：**边界是要写下来的决定，不是要偷偷打开的缺口**。所以 `handles` 42/67 不动，`not-emittable` 25 不动——这一节的价值在**可读性**与**可证伪性**，不在覆盖率。[obs: 0c4749f]
+
+### 四、有牙的反向判据
+
+把那条 `if` 停用（`if (0 && op == OP_CALL_BUILTIN)`）：
+
+```
+IR-MIR-MIR-ONLY-REFUSED|case=mir_builtin_call_with_arg|why=illegal-operand   ok=no
+IR-MIR-MIR-ONLY-REFUSED|case=mir_builtin_call_no_arg |why=unsupported-opcode  ok=no
+IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=5|ok=3|expect=5
+```
+
+两个格子同时翻红、其余三格不动 ⇒ 这两格**确实在量这条 if**，而不是在量别的东西。复原后 `cases=5|ok=5`、`IR-MIR-VERDICT|PASS`、`handles=42|of=67|unknown=25`、`IR-AOT-MIR-OPERANDS|…|dead=(none)|agree=yes`（证明这次改写没有变成下标检查）。[obs: 0c4749f]
+
+### 五、剩下的诚实边界
+
+- **内建调用整族仍然不可达**：`str()`/`int()`/`len()`/`dbg_ip()` 在解释器里都有答案（各印 `1`/`42`/`2`/`0`），这条路线上被具名拒绝。这不是「还差一点」，是**当前不在这条路线上**。[obs: 0c4749f]
+- **`OP_CALL_VALUE`（把函数当值调用）仍是通用 `unsupported-opcode`**：它今天连一个具名理由都没有，属于同一族但没被本节覆盖。写下它，免得下一个读者以为「内建调用说清楚了 = 调用族都说清楚了」。[obs: 0c4749f]
+- **`g_notyet` 不再为内建调用计数**：拒绝发生在计数之前，因此 `IR-MIR-NOT-YET|op=OP_CALL_BUILTIN` 不再出现在输出里；`not-emittable` 的 25 来自 `op_regs` 的口径，**没有变**（读数是 `emittable=42|not-emittable=25`）。[obs: 0c4749f]
