@@ -439,7 +439,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 | 3 | `python3 tools/check_line_refs.py` | `rc=0`、`pins -- explicit delta +12 (expect +12)`、`unanchored delta` **≤ 当时的 `ceiling`**（读数行自己印出这个值），且 `unanchored` 的定义是「有一个数字，没有任何东西撑着它」——**引文就是那个东西**，所以补引文不是给文档润色，它就是还债；今天的 `ceiling` 停在**一**而不是零，因为最后一条引用指向**另一棵提交上的某一行**——**引文撑得住，账本表达不了**，那不是债，是账本的表达力缺口；`VERDICT\|assertions=0`、`CITATIONS\|removed=0`（除非同笔带收据） | 往 `docs/` 里任何被引文件的上方插一行 ⇒ `unanchored` 上涨；**实测**在 `docs/BOARD.md` §3 插一行会从 `+9` 推到 `+12` 之上（丢 5 条锚，全在 `docs/AUDIT.md` 引 BOARD 的那两行上）⇒ 所以「插行要算账」是这一格在量的东西 |
 | 4 | `python3 tools/citations.test.py` | `rc=0`、`cases=8 red=0 green=8` | 这是**检查器自己的自检**：删掉一条裸引用、伪造收据、把收据名指向仍活着的引用 —— 8 个用例各红一次即证伪 |
 | 5 | `python3 tools/check_word_refs.py` | `rc=0`、`WORD-REF\|…\|baseline=N\|verdict=PASS`，且 `offenders` 等于 `baseline` | 新增一条「点名了文件却不说树」的引用 ⇒ `offenders` 超过 `baseline` ⇒ 阶段红 |
-| 6 | `grep -c "add_test(" CMakeLists.txt` 与 `ctest --test-dir build -N \| tail -1` 与 `grep -n 'EXP_CTEST=' tools/gate.sh` | **三个数必须相等**（今天都是 193） | 其中任一处单独变化 ⇒ 有一个 `add_test(` 掉了或 `EXP_CTEST` 没跟上。`ctest` 在全跳过时也退 0，所以**条数必须是断言而不是标签** |
+| 6 | `grep -c "add_test(" CMakeLists.txt` 与 `ctest --test-dir build -N \| tail -1` 与 `grep -n 'EXP_CTEST=' tools/gate.sh` | **三个数必须相等**（今天都是 194） | 其中任一处单独变化 ⇒ 有一个 `add_test(` 掉了或 `EXP_CTEST` 没跟上。`ctest` 在全跳过时也退 0，所以**条数必须是断言而不是标签** |
 
 **反向自检（每次改这份清单都要跑一遍，它才是清单可信的原因）**：把上面第 2 条 pin 的 `tree` 换成 `deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`，**第 2 条必须红**（实测 `rc=4`）。
 
@@ -467,7 +467,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
     recon.explicit-delta=12
     recon.citations-cases=8
     recon.word-refs-baseline=87
-    recon.ctest-count=193
+    recon.ctest-count=194
 
 | 7 | 读回收据 | `rc=0`、`RECON\|tokens=5\|tokens-read-back=5\|tokens-unknown=0\|tokens-resolver-failed=0\|tokens-tree-disagrees=0\|closed=yes`（`tokens` 等于四项之和；不闭环就自己报 PROBLEM；「没这个 key」「有 key 但解算器不在/抛了」「树自己三个数打架」是三件不同的事，第四条是后加的）、每个 token 的值都是从树上读回来的 | **把任意一个 token 的值改错 ⇒ 第 7 行必红**；把 key 拼错 ⇒ 红且说「这个 key 没有解算器」（key 集封闭）；同一个 key 两个值 ⇒ 红。**这是本节的元判据**：它决定前六行是「有牙的清单」还是「只读文档」—— 2026-11-04 实测过没有它时的状态：把 `ctest-count` 那格改成「今天都是 192」，七个 docs 检查器全部 `rc=0`，没有一个吭声 |
 
