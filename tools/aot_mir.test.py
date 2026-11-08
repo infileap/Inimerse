@@ -321,6 +321,9 @@ ALLOCS_EXPECT = {
     "mir_dict_set_overwrite": (1, 256),
     "mir_dict_set_append": (1, 256),
     "mir_dict_set_grow_after_neighbour": (2, 768),
+    # len() itself allocates nothing; the one block is the ARRAY literal's pool
+    # (8 slots * 32 bytes) and the one-pair dict fits in the same block.
+    "mir_len_of_every_shape_this_route_holds": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -556,6 +559,13 @@ def allocs_problems(text, case):
 #                             exists so that "which operand is the constant" is
 #                             measured rather than assumed.
 MIR_ONLY = [
+    # len() over the value domain this route can actually hold.  The builtin is
+    # refused today by name (why=builtin-call, 10.122), so this case is red on
+    # arrival; the interpreter answers 3, 1, 4, 7, 2, 0, 0, 0 for the eight
+    # shapes below (arrays, dicts, strings, ints, floats, nil, bools, empty).
+    ("mir_len_of_every_shape_this_route_holds",
+     'a = [1, 2, 3]\nsay len(a)\nd = {"x": 1}\nsay len(d)\nsay len("abcd")\n'
+     'say len(7)\nsay len(2.9)\nsay len(nil)\nsay len(true)\nsay len("")\n'),
     ("mir_loadk_string", 's = "hi"\nsay s\n'),
     ("mir_loadk_string_escapes", 'say "a\\tb\\nc"\n'),
     ("mir_loadk_string_quotes", 'say "q\\"z \\\\ back ??= mid \u4e2d"\n'),
