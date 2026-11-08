@@ -6060,3 +6060,53 @@ IR-MIR-VERDICT|FAIL|tree=a19eaebc6ee5a8139951a175c16c4dd439b8cad6|accepted=86|re
 ### 八、这一格之后
 
 `handles` 从 41 到 **42**，不是更多：这一节只让 `OP_NEW_DICT` 出现在 `op_regs` 与 `emit_one` 两个表里（`src/compilation/aot_mir.c:1704`、`:2655`），`OP_INDEX_GET` 本来就在（这次只是它的第二个分派臂长出来）。字典这条路线下一步真正的增量是 **`OP_INDEX_SET` 的字典臂**（`src/vm/vm.c:3730` 的 `vm_dict_set`）与 **`mv_eq` 的 `MV_DIC` 行**（`src/vm/vm.c:421`）：前者让第 1、2 条边界变绿，后者让第 4、5 条变绿，两个都是新 opcode 级别的洞，不是这一节能顺手带上的。[obs: 1fc5d3a]
+
+## §10.119 并发（E 组）：把「边界」写成判据，而不是留给下一个人去猜
+
+这一节不改任何 lowering 代码，`handles` 仍是 **42/67**。它做的是另一件事：把一个**已经被量出来的决定**（并发不进 MIR 路线）变成**会被门禁看着的判据**，并且把「为什么不是工作量估计」这句话换成读数。
+
+### 一、边界在哪，用一句话说清
+
+`src/compilation/aot_mir.c:1835` 的 `if (bc->thread_count > 0) return -2;` 是这条路线唯一的并发边界，它拒的是**容器**，不是「某个线程已经被启动」。所以下面这个程序——声明了一个线程函数、**从不启动它**——同样被拒：[obs: 9453186]
+
+```inimerse
+thread plain_worker {
+    return 1
+}
+say "defined-never-started"
+```
+
+解释器对它回答 `defined-never-started`（rc 0），MIR 路线整份拒掉，`why=threads`。这条不对称正是判据要用的形状：**解释器答得出，这条路线拒得掉，两个事实并排**，而不是「一个没人跑得起来的程序」。`thread_count` 是容器级的，编译器把计数挂在 `mainBC` 上（`src/compiler/compiler.c:250`）。[obs: 9453186]
+
+### 二、判据（新增两格，`MIR_ONLY_REFUSE` 1 → 3）
+
+`tools/aot_mir.test.py` 的 `MIR_ONLY_REFUSE` 现在有三格，新增两格都要求 `why=threads`：
+
+1. **`mir_thread_decl_never_started`** —— 上面那个「声明但不启动」的程序。读数：`mir=refused|why=threads|expect=threads|ok=yes|interp-rc=0|interp-out=b'defined-never-started\n'|stdout-hex=646566696e65642d6e657665722d737461727465640a`。[obs: 9453186]
+2. **`mir_thread_result_unwrap`** —— `thread plain_worker { return 11 }` 之后 `r = thread_result("plain_worker")`、`say r`。这个程序本来是一个**值表示问题**（把 Result 拆开）。它被拒的理由必须是 `threads`，不许变成「参数栈不平衡」：实测把线程段去掉以后，同样形状拿到的是 `IR-MIR-REFUSED|why=illegal-operand|... asp=3`，也就是说这两个 why 是**可以互换的**，不钉住就会漂。读数：`mir=refused|why=threads|interp-rc=0|interp-out=b'{ok: false, error: thread is missing or not finished}\n'|stdout-hex=7b6f6b3a2066616c73652c206572726f723a20746872656164206973206d697373696e67206f72206e6f742066696e69736865647d0a`。[obs: 9453186]
+
+总计：`IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=3|ok=3|expect=3`。
+
+### 三、反向判据：把边界改掉，两格必须红，而且要**点名**
+
+把 `src/compilation/aot_mir.c:1835` 的守卫改成永不触发（`if (0 && bc->thread_count > 0) return -2;`，只改这一处、随后还原、`INJECTED_COUNT=0`、`BUILD_EXIT=0`），两格立刻红，而且红的原因是**具名的**，不是「程序崩了」：[obs: 9453186]
+
+`IR-MIR-PROBLEM|mir_thread_decl_never_started: refused with why=container-shape, the criterion demands why=threads (a refusal for the wrong reason is not the refusal this list measures)`
+
+同一个注入让 `why` 从 `threads` 漂成 `container-shape`——**「拒对了没拒对理由」这件事是可测的**，这就是这两格存在的理由。还原后 `cases=3|ok=3` 回绿。[obs: 9453186]
+
+### 四、为什么不选 A，为什么不选 B（两条都是读数，不是估计）
+
+- **A（先做内置调用打底，再放开线程线）**：它给的 +2 个 `handles` 不是 E 组的，是 `OP_CALL_BUILTIN` 与 `OP_NEW_DICT`；而 `x = str(1); say x`（纯内置、无线程）今天在 MIR 上就死在 `why=illegal-operand ... asp=1`——挡它的是**参数栈平衡判据**，不是这条线程线。所以 A 连「拒到线程边界」都还没走到。[obs: 9453186]
+- **B（真的发射线程）**：会让 `same-as-interpreter` 掉。解释器 `thread` 走真 OS 线程（`src/vm/vm.c:4459` 的 `L_THREAD_START:`，`src/vm/vm.c:4852` 注释写明 `is_task stays 0: wait/yield/recv use OS-thread (Sleep) paths, no Fiber dependency`），`task` 走协作式 Fiber，两套模型并存；一个真并行探针 20 次里出现 **2 种输出**，而这条路线所有 `MIR_ONLY` 判据都是**逐字节**比较。把「具名拒绝」换成「不可测的绿」，是拿判据的牙齿去换一个数字。[obs: 9453186]
+- **C（本节做的事）**：`handles` +0，代价是两格判据与一段文字，收益是「边界」这件事以后**漂了会红**。
+
+### 五、诚实边界（这一节没做的事）
+
+- E 组本体是 **9 个** opcode（`OP_THREAD_START`/`CTRL`/`JOIN`/`WAIT`/`STATE`/`LOCK`/`SEND`/`RECV`/`THREAD_GOTO`，`src/compiler/bytecode.h:32-37` 起的线程段），另有 2 个非 E 组的前置（内置调用、字典）在 26 个 unknown 里押着；剩下的属其他组。**「并发 +0 格」不等于「unknown 只剩并发」。** [obs: 9453186]
+- `start` 带参数时 `OP_PUSH_REG` 能发射而 `OP_THREAD_START` 不消费，**预测**会退化成 `illegal-operand: asp=N` —— 这条**未测**（要测它必须先放开边界，本节没放开）。[obs: 9453186]
+- 关于「要不要有一天真做并发」：本节不裁定。它只钉住「现在不做，而且是因为测不了」，不是「因为难」。
+
+### 六、这一格之后
+
+`handles` 42 不动；`MIR_ONLY_REFUSE` 从 1 到 3，`IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=3|ok=3` 是新的读数。下一步仍然是容器写入（`OP_INDEX_SET` 在字典臂上还差一格）与内置调用（`OP_CALL_BUILTIN` 有 27 号 opcode 与 `asp` 判据一起挡着），两个都在值表示之外。
