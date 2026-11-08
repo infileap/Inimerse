@@ -1039,10 +1039,43 @@ MIR_ONLY = [
 # class of hole every MIR_ONLY comment above exists to close.  So the pre-scan
 # refuses the program whole, with a why a reader can grep for; the interpreter
 # keeps answering nil, and the reading prints BOTH facts.
+#
+# The two `threads` entries are about the OTHER thing a named refusal can be
+# worth: keeping a boundary from drifting.  The decision they encode was taken
+# after measuring, not because emitting threads is hard:
+#
+# 1. The boundary is CONTAINER level, not "a thread was actually started".
+#    src/compilation/aot_mir.c:1632 returns -2 whenever bc->thread_count > 0, and
+#    the compiler hangs that count on the container (src/compiler/compiler.c:250,
+#    :423), so a file that DECLARES a thread and never starts it is refused too.
+#    The interpreter answers that file (`defined-never-started`, rc 0), so the
+#    reading prints an answer next to a refusal -- if a later change made the
+#    refusal fire only at a start site, why=threads would move and this entry
+#    would go red.  That drift is the measurement.
+#
+# 2. `thread_result("plain_worker")` would be a value-representation question
+#    (unwrap a Result) if the container carried no thread section.  It is refused
+#    by the SAME named why, so "outside because it is concurrent" cannot silently
+#    become "outside because the argument stack was unbalanced" -- which, measured,
+#    is exactly the why such a program gets the moment the thread section is gone
+#    (IR-MIR-REFUSED|why=illegal-operand ... asp=3 for the no-thread variant).
+#
+# Emitting threads was rejected on purpose, and the reason is a measurement:
+# /home/sakiko/inimerse/.scratch/ruling-concurrency.md records a real OS-thread
+# probe (src/vm/vm.c:4459 starts a real thread, :4852 states it has no Fiber
+# dependency) whose output differs run to run (2 distinct outputs over 20 runs),
+# while every MIR-only criterion here compares bytes.  Emitting it would trade a
+# named refusal for an unmeasurable one.
 MIR_ONLY_REFUSE = {
     "mir_container_const_oob": (
         'a = [1, 2, 3]\nsay a[3]\n',
         "index-out-of-range-constant"),
+    "mir_thread_decl_never_started": (
+        'thread plain_worker {\n    return 1\n}\nsay "defined-never-started"\n',
+        "threads"),
+    "mir_thread_result_unwrap": (
+        'thread plain_worker {\n    return 11\n}\nr = thread_result("plain_worker")\nsay r\n',
+        "threads"),
 }
 
 
