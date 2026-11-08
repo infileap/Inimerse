@@ -1351,6 +1351,27 @@ static const char *const kMirValBlock =
 "    }\n"
 "    return mv_boo(0);   /* :2432 -- dict, string, number, nil: false */\n"
 "}\n"
+
+"/* len(): the interpreter's own domain, read off src/runtime/runtime_posix.c:11-27,\n"
+"   which tests ARRAY, SET, DICT, STRING, INT, FLOAT in that order and falls\n"
+"   through to 0 for everything else (nil and bools).  Reproduced arm for arm\n"
+"   except SET: no set is representable on this route, so that arm is\n"
+"   UNREACHABLE here rather than missing -- the same structural note mv_in\n"
+"   carries for its container arm.  The DICT arm divides by two because a dict\n"
+"   region stores PAIRS, the same /2 src/vm/vm.c:3693 does; FLOAT truncates\n"
+"   toward zero, as `(long long)v->fval` does.  It allocates nothing. */\n"
+"static inline MirVal mv_len(MirVal a) {\n"
+"    if (a.type == MV_ARR || a.type == MV_DIC) {\n"
+"        int i = (int)a.ival;\n"
+"        if (i < 1 || i > mv_arrused || !mv_arrmem) return mv_int(0);\n"
+"        long long n = (long long)mv_arrmem[i - 1].ival;\n"
+"        return mv_int(a.type == MV_DIC ? n / 2 : n);\n"
+"    }\n"
+"    if (a.type == MV_STR) return mv_int(a.sval ? (long long)strlen(a.sval) : 0);\n"
+"    if (a.type == MV_INT) return mv_int(a.ival);\n"
+"    if (a.type == MV_FLT) return mv_int((long long)a.fval);\n"
+"    return mv_int(0);   /* MV_NIL, MV_BOO -- the interpreter's fall-through */\n"
+"}\n"
 "\n"
 "/* THE WRITE HALF of the container step.  Read src/vm/vm.c:3717-3734 (L_INDEX_SET)\n"
 " * beside this: r1 is the CONTAINER, r2 the SUBSCRIPT, r3 the VALUE, and r1 is\n"
@@ -1850,6 +1871,12 @@ static int op_regs(int op) {
     case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: return R1;
     case OP_PUSH_REG: return R1;
     case OP_CALL_FUNC: return R2;
+    /* r1 is the RESULT register; r2 is a STRING-POOL INDEX naming the builtin
+       (compiler.c:464) and r3 is the argument count, so neither is a register.
+       Before 10.123 this opcode had no entry and every builtin call was counted
+       not-emittable; `len` is emitted now and the rest are refused BY NAME in
+       prescan. */
+    case OP_CALL_BUILTIN: return R1;
     case OP_RETURN: return R1;
     case OP_SAY: return R1;
     case OP_HALT: return 0;
@@ -2228,30 +2255,6 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
         for (int i = 0; i < fn->ninsns; i++) {
             const IrInsn *in = &fn->insns[i];
             int op = in->op;
-            if (op == OP_CALL_BUILTIN) {
-                /* r2 is a STRING-POOL INDEX, not a register: the compiler emits
-                   `emit(curBC, OP_CALL_BUILTIN, result, ni, argc)`
-                   (src/compiler/compiler.c:464) with `ni` naming the builtin and
-                   r3 the argument count, and the operands were pushed by
-                   OP_PUSH_REG.  So this refusal can NAME what the program asked
-                   for instead of reporting the push it left behind.
-                   Why a name and not an implementation: the builtin registry,
-                   its capability flags and the safe-mode rule live in the VM and
-                   in the mods (vm_register_builtin callers), so emitting a call
-                   here would be a second copy of that dispatch -- the same
-                   reason the thread section is refused by name.  Before this
-                   case the two programs in MIR_ONLY_REFUSE were refused as
-                   'leaves the argument stack unbalanced' and 'unsupported
-                   opcode', neither of which says 'builtin call'. */
-                int32_t ix = ir_insn_r2(in);
-                const char *bn = (ix >= 0 && ix < node->string_count && node->string_pool)
-                                 ? node->string_pool[ix] : NULL;
-                g_prescan_why = "builtin-call";
-                return bad("container=%d insn=%d builtin call '%s' -- this route does not emit"
-                           " OP_CALL_BUILTIN; the builtin registry, its capability flags and the"
-                           " safe-mode rule live in the VM and the mods",
-                           f, i, bn ? bn : "(name index out of range)");
-            }
             int mask = op_regs(op);
             if (mask < 0) {
                 g_notyet++;
@@ -2417,6 +2420,45 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                "not an NV int/float/bool -- outside this subset",
                                f, i, ix, gname);
                 g_gref[ix] = 1;
+                break;
+            }
+            case OP_CALL_BUILTIN: {
+                /* r2 indexes the CONTAINER's string pool, exactly as
+                   OP_LOADK_STRING's r2 does, and r3 is the argument count; the
+                   arguments themselves were pushed by OP_PUSH_REG, so this arm
+                   CONSUMES them from the argument stack.
+                   `len` is the one builtin this route emits (10.123): its whole
+                   domain is a length or a number, none of which needs a value
+                   the model cannot hold, and it allocates nothing.  Every other
+                   name is refused BY NAME -- the registry, its capability flags
+                   and the safe-mode rule live in the VM and the mods, so calling
+                   one here would be a second copy of that dispatch (10.122). */
+                int32_t ix = ir_insn_r2(in);
+                if (ix < 0 || ix >= node->string_count)
+                    return bad("container=%d insn=%d builtin name index %d out of range (count=%d)",
+                               f, i, ix, node->string_count);
+                const char *bn = node->string_pool ? node->string_pool[ix] : NULL;
+                if (!bn)
+                    return bad("container=%d insn=%d builtin name entry %d is NULL", f, i, ix);
+                /* The NAME is decided first: a builtin this route does not
+                   emit is refused as a builtin call, whatever its arity, so a
+                   zero-argument one is not reported as if len had been called
+                   wrongly (measured: with the arity test first, 'say dbg_ip()'
+                   came back as illegal-operand). */
+                if (strcmp(bn, "len") != 0) {
+                    g_prescan_why = "builtin-call";
+                    return bad("container=%d insn=%d builtin call '%s' -- this route emits len and"
+                               " no other builtin; the registry, its capability flags and the"
+                               " safe-mode rule live in the VM and the mods", f, i, bn);
+                }
+                int argc = ir_insn_r3(in);
+                if (argc != 1)
+                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s);"
+                               " this route emits len, which takes one", f, i, bn, argc);
+                if (asp < argc)
+                    return bad("container=%d insn=%d builtin '%s' argument stack underflows:"
+                               " asp=%d argc=%d", f, i, bn, asp, argc);
+                asp -= argc;
                 break;
             }
             case OP_CALL_FUNC: {
@@ -2804,6 +2846,20 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_JUMP_IF_FALSE: buf_fmt(b, "    if (!mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
     case OP_JUMP_IF_TRUE:  buf_fmt(b, "    if (mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
     case OP_PUSH_REG:     buf_fmt(b, "    mvargs[asp++] = v[%d];", r1); return 0;
+    case OP_CALL_BUILTIN: {
+        /* The name is resolved HERE, off the container's string pool, so the
+           emitter's index read and prescan's bound are the same claim (the
+           operands instrument compares the two).  Anything but `len` returns -1:
+           prescan refuses those by name, and this is the second lock. */
+        const Bytecode *bc = c->node;
+        int32_t ix = r2;
+        const char *bn = (ix >= 0 && ix < bc->string_count && bc->string_pool)
+                         ? bc->string_pool[ix] : NULL;
+        if (!bn || strcmp(bn, "len") != 0) return -1;
+        buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
+        buf_str(b, " asp -= 1;");
+        return 0;
+    }
     case OP_CALL_FUNC: {
         int fidx = r1, res = r2, argc = w3;
         int callee = c->nodes[0].child_ids ? c->nodes[0].child_ids[fidx] : -1;
