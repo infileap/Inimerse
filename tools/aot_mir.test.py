@@ -1372,13 +1372,13 @@ MIR_ONLY = [
     # requires register `r1` to hold VAL_FUNCTION and then REUSES the ordinary
     # call path with the function index taken from the value (:4058-4069).
     #
-    # Only the CAPTURE-FREE form is lowered here.  The four programs that
-    # capture (capture read, higher order, returned/transitive closure,
-    # zero-argument call over a heap string) are written and red on
-    # `stream/mirval-closure`, and land one at a time: the list below is the
-    # set of shapes this route answers TODAY, and a criterion that is red on
-    # the tree it lands on would make the verdict FAIL rather than buy
-    # anything.
+    # The capture-free form and the ONE-CAPTURE READ form are lowered here.
+    # The three programs that still need more (higher order, returned
+    # function with a transitive capture, zero-argument call over a heap
+    # string) are written and red on `stream/mirval-closure`, and land one at
+    # a time: the list below is the set of shapes this route answers TODAY,
+    # and a criterion that is red on the tree it lands on would make the
+    # verdict FAIL rather than buy anything.
     #
     # The program was run through the interpreter first (`build/inimerse
     # --no-mods run`); that reading is the oracle, and the route's answer
@@ -1398,6 +1398,42 @@ MIR_ONLY = [
      'if f { say "truthy" }\n'
      'g = f\n'
      'say g()\n'),
+    # CAPTURE READ.  `make` returns a lambda over its own local `n`, and the
+    # frame that held `n` is GONE by the time the lambda runs (the interpreter
+    # pops it at L_RETURN, src/vm/vm.c:4126-4142), so the value has to carry
+    # its environment: OP_MAKE_FUNC (:4040-4054) pops `r3` values off the
+    # argument stack into a FRESH ImClosureEnv for every instantiation, and
+    # OP_LOAD_CAPTURE (:4033-4039) reads slot `r2` of the environment the
+    # running frame was entered with (nil when it has none).
+    #
+    # TWO INSTANTIATIONS IN ONE PROGRAM are what make this a per-CLOSURE
+    # criterion and not a per-function one: `make(10)` and `make(3)` answer
+    # 15 then 10, and a route that put both environments on one slot -- or
+    # that kept one env per function index -- would answer 15 then 15.  Same
+    # three lines of output, same byte count, one number different: that is
+    # the reading, and no shape comparison can see it.  `say f` pins the
+    # other half: the value now carries a live environment and must still
+    # print `<function>` (:1379), which reddens an arm that walks into the
+    # environment instead of ignoring it.
+    #
+    # Oracle first: the program was run through the interpreter
+    # (`build/inimerse --no-mods run`), which printed
+    #     <function>
+    #     15
+    #     10
+    # and exited 0.  The route's answer before this step was
+    # why=illegal-operand (OP_LOAD_CAPTURE had no op_regs entry), with
+    # prescan's OP_MAKE_FUNC arm refusing a nonzero capture count by name
+    # behind it.
+    ("mir_closure_capture_read",
+     'func make(n) {\n'
+     '  return x -> x + n\n'
+     '}\n'
+     'f = make(10)\n'
+     'say f\n'
+     'say f(5)\n'
+     'g = make(3)\n'
+     'say g(7)\n'),
     # SET LITERALS -- OP_NEW_SET.  The fifth container a program can spell and
     # the first one whose ELEMENTS ARE A SET and not a sequence: the same push
     # that an array keeps, a set MERGES (src/vm/vm.c:4286-4313 L_NEW_SET calls
