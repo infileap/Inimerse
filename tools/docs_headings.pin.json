@@ -1,6 +1,6 @@
 {
  "docs": 111,
- "headings": 1427,
+ "headings": 1428,
  "per_file": {
   "docs/API.md": 15,
   "docs/AUDIT.md": 543,
@@ -18,7 +18,7 @@
   "docs/RELEASE_0.5.1.md": 6,
   "docs/RELEASE_0.5.2.md": 7,
   "docs/REQUIREMENTS_ANALYSIS.md": 10,
-  "docs/STATUS.md": 103,
+  "docs/STATUS.md": 104,
   "docs/SYNTAX.md": 9,
   "docs/THREADS_V06.md": 7,
   "docs/TYPESET_V06.md": 10,
@@ -114,5 +114,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "e6e59d7"
+ "tree": "c9c12a6"
 }
