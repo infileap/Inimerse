@@ -6617,3 +6617,62 @@ IR-MIR-VERDICT|PASS|tree=c447c097738b34c77033566eb5b6d37f024cc74f|accepted=86|re
 1. **无捕获只此一形**：`r3 != 0` 的 `OP_MAKE_FUNC` 按名拒译（`function index N captures ...`），不是静默丢环境。拒译带名字，所以下一个人一眼能看出缺的是哪一格。
 2. **函数表只在需要的模块里长出来**：无函数值的模块 C 文本与上一格逐字节相同（`c-identical=0|c-diff=86` 未动），扰动读数也未动。
 3. **不认捕获不等于不认函数**：打印、真值、拷贝、调用四条都答；`OP_LOAD_CAPTURE` 仍不降，它的零环境语义（给 `nil`）属于下一格。
+
+## §10.131 捕获：值自己持环境，自指针只在真需要它的容器里（aot-mir，A 类第二十项）
+
+### 一、来源与日期
+
+判据 `576be6b`（捕获读，在 `8dd61d8` 上先红）与 `939c1dd`（另外三条：高阶、返回并转递捕获、零参调用堆字符串；先红读数取自 `8dd61d8` 的二进制），实现 `1c9d664` 与注记纠正 `3f7f0f1`，2026-11-09。这一格把闭包组**五条判据全部落齐**：上一格（§10.130）只买了无捕获一条，另外三条当时以为需要各自一格，实测发现同一套机制就答了 —— 见五节。
+
+### 二、形状（读码，不是猜）
+
+`OP_MAKE_FUNC` 带 `r3`：把参数栈上 `r3` 个值弹进一块**新环境**（每次实例化一份，解释器在 `src/vm/vm.c` 的 MAKE_FUNC 臂就是这样弹的）；`OP_LOAD_CAPTURE` 读当前帧环境的槽 `r2`，**没有环境时给 `nil`**。本路线把这块环境挂在值自己的 `MV_FUN.ptr` 上 —— 上一格特意留空的字段就是为它留的，`MirVal` 的 32 字节布局与六条 `_Static_asserts` 仍未动（A′ 冻结 `Value` 宽度、禁止第三套表示）。
+
+调用侧：派发表 `mv_callv` 已经拿着函数值，把它作为**隐藏的自指针参数**传给被调容器；按名调用的容器（`make(10)` 这种）拿到的是 `nil` —— 这正是解释器的语义（`CALL_FUNC` 进入的帧本来就没有环境）。隐藏参数**只加给真正读环境内槽的容器**：不然每个已接受程序的 C 文本都会移动，`c-identical=0|c-diff=86` 那对读数就不再是它们本来的意思（这条纪律与 §10.130 的派发表同源）。
+
+发射端另有两处「条件发射」：`mv_capture`/环境构造这两个运行时函数只在模块确实有 `OP_LOAD_CAPTURE` 或有捕获的 `OP_MAKE_FUNC` 时才进生成物。`OP_LOAD_CAPTURE` **故意不给 prescan case**：那张表的标签定义是「发射端真的读池/全局/函数/标签下标的 case」，给它加一条会被覆盖测试判成 `dead=(OP_CALL_VALUE)` —— 检测器是对的，这条 opcode 的发射端确实不读编译期下标。
+
+### 三、判据
+
+| 用例 | 断言 | 红读数（`8dd61d8`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_closure_capture_read` | `make(10)` 与 `make(3)` 印 15 再 10（共享环境会印 15 再 15） | `why=illegal-operand`（`captures 1 value(s)`） | `exec=same`，`<function>`/`15`/`10` |
+| `mir_closure_higher_order` | 42/42/15，第三个把带环境的闭包当参数穿过 `apply` | 同上（`captures 1 value(s)`） | `exec=same`，`42/42/15` |
+| `mir_closure_return_value` | 5 再 6；`outer(1)(2)(3)` 的转递捕获 | 同上（`captures 1 value(s)`） | `exec=same`，`5/6` |
+| `mir_closure_zeroarg_string` | `f()` 零参调用仍印 `hithere`（调用路径不读参数栈） | 同上 | `exec=same`，`hithere` |
+
+四条都**编译通过、红在答案上或具名拒译上**，没有一条靠崩溃当红。红读数的家族名是 `captures 1 value(s); only the capture-free function form ...`（具名拒译），改前 `mir-only-cases=70|same=69`（判据笔那次），改后 `73|73`。
+
+### 四、读数（本树 `939c1dd`）
+
+```
+IR-MIR-ALLOCS|case=mir_closure_capture_read|reported=yes|allocs=2|freed=2|live=0|bytes=64|expect-allocs=2|expect-bytes=64|ok=yes
+IR-MIR-MIR-ONLY|case=mir_closure_capture_read|mir=accepted|cc=ok|exec=same|rc=0|bytes=17|stdout-hex=3c66756e6374696f6e3e0a31350a31300a
+IR-MIR-ALLOCS|case=mir_closure_higher_order|reported=yes|allocs=1|freed=1|live=0|bytes=32|expect-allocs=1|expect-bytes=32|ok=yes
+IR-MIR-MIR-ONLY|case=mir_closure_higher_order|mir=accepted|cc=ok|exec=same|rc=0|bytes=9|stdout-hex=34320a34320a31350a
+IR-MIR-ALLOCS|case=mir_closure_return_value|reported=yes|allocs=2|freed=2|live=0|bytes=96|expect-allocs=2|expect-bytes=96|ok=yes
+IR-MIR-MIR-ONLY|case=mir_closure_return_value|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=350a360a
+IR-MIR-ALLOCS|case=mir_closure_zeroarg_string|reported=yes|allocs=2|freed=2|live=0|bytes=40|expect-allocs=2|expect-bytes=40|ok=yes
+IR-MIR-MIR-ONLY|case=mir_closure_zeroarg_string|mir=accepted|cc=ok|exec=same|rc=0|bytes=8|stdout-hex=686974686572650a
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|mir-only-cases=73|mir-only-same-as-interpreter=73
+IR-MIR-VERDICT|PASS|tree=939c1dd4e884fdbb5c24957232c143b93ad43880|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+四个 `allocs` 数都是**先量后写**（生成程序自己的 `IR-MIR-ALLOCS` 行），写进判据表时没有做任何分解推导：`1|32`、`2|96`、`2|40`、`2|64` 各有自己的判别力（共享环境会把 `higher_order` 变成 0|0，转递捕获只拷中间帧会把 `return_value` 印成 3）。`stdout-hex` 解出来分别是 `<function>\n15\n10\n`、`42\n42\n15\n`、`5\n6\n`、`hithere\n`，与解释器逐字节同 rc。发射器侧：`handles=47→48|of=67|unknown=20→19|agree=yes`（`OP_LOAD_CAPTURE` 进表），`accepted=156→159`、`beyond-ast=18→19`，`refused` 仍 0；`covered=29|of=29|missing=0` 不变 [obs: 939c1dd]。
+
+### 五、一个计划外的发现：转递捕获不需要第二套机制
+
+剩下三条判据原本按「四条捕获形状各自一格」排的，实测是**同一套机制答的**：
+
+1. **转递捕获**：编译器在内层 `OP_MAKE_FUNC` 之前把父捕获**当作普通值重新载入**（`src/compiler/compiler.c` 的 `:1297-1302` 区段），那次读走的就是本格加的 `OP_LOAD_CAPTURE`、`self` 也已经是中层闭包自己的函数值。所以 `outer(1)(2)(3)` 的 6 不是新代码买来的，是同一机制的自然结果。
+2. **高阶**：`apply(g, x)` 里的 `g` 是参数而不是名字，调用是 `OP_CALL_VALUE`，自指针参数顺着派发表传下去 —— 与 `capture_read` 是同一条路径，只是函数值从参数栈来。
+3. **零参调用**：`f()` 的 `argc=0`，派发表按 0 参数调用，不读参数栈；捕获的堆字符串在环境里活着，所以印 `hithere`。
+
+三格另跑了探针（都与解释器同 stdout 同 rc）：创建者帧内按值调用、创建后改 `n`（环境是拷贝，旧值仍在）、`g = f` 复制后仍可调用、main 里无环境读得 `nil`。纠正笔 `3f7f0f1` 就是把注记里那句当时写错的「转递捕获仍不可达」改成实测结论 —— 错的注记留在树上比没有注记更坏。
+
+### 六、边界
+
+1. **`OP_LOAD_CAPTURE` 没有 prescan case**，这是有意的：它的发射端不读编译期下标，多一条会让操作数检测器判 `dead`。`OP_MAKE_FUNC` 的 prescan arm 改成按 `r3` 消耗参数栈（下溢检查 + `asp -= ncap`），不再是按名拒绝。
+2. **两个创建点不一致会被大声拒**：同一容器下标若有两个创建点、捕获数不同，`func_cap` 返回 `-2`，发射端拒绝而不是猜一个。
+3. **函数值相等仍不答**：`f == g` 走 `mv_as_nv` 会中止；没有 accepted 流碰到，所以判据不测，记成债而不是「已答对」。
+4. **既有 86 例语料未动**：`c-identical=0|c-diff=86`、`reasons` 两条分量、`perturb-stdout-changes=5` 与上一格逐字相同；`refused=0` 说明没有把任何既有形状改成拒译。
