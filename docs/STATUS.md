@@ -6676,3 +6676,50 @@ IR-MIR-VERDICT|PASS|tree=939c1dd4e884fdbb5c24957232c143b93ad43880|accepted=86|re
 2. **两个创建点不一致会被大声拒**：同一容器下标若有两个创建点、捕获数不同，`func_cap` 返回 `-2`，发射端拒绝而不是猜一个。
 3. **函数值相等仍不答**：`f == g` 走 `mv_as_nv` 会中止；没有 accepted 流碰到，所以判据不测，记成债而不是「已答对」。
 4. **既有 86 例语料未动**：`c-identical=0|c-diff=86`、`reasons` 两条分量、`perturb-stdout-changes=5` 与上一格逐字相同；`refused=0` 说明没有把任何既有形状改成拒译。
+
+## §10.132 比较两个函数：答案是那个解释器本来就会给的「否」（aot-mir，A 类第二十一项）
+
+### 一、来源与日期
+
+判据 `7673622`（两例，在 `fb043c0` 上先红）、实现 `d39a926`、注记更正 `e880dab`，2026-11-09。这是 §10.131 末尾记下的那笔债 —— 那里明说「`f == g` 走 `mv_as_nv` 会中止、仍不答」，这一格把它答了。
+
+### 二、形状
+
+`mv_eq` 与 `mv_ne` 各加一行：任一侧是函数值时，相等答 false、不等答 true。**这不是简化，是解释器的答案**：`val_eq` 的 FUNCTION 行比的是 `ImClosureFunction` 的指针，而解释器**每次读函数值都克隆**（`value_copy` 走 `im_closure_function_clone`）—— `f == f` 是把全局读两次、两个克隆，`h = f` 在赋值时又克隆一次，下标读也是克隆。所以没有任何形状能让两个操作数指向同一个闭包对象，那一行在解释器里**事实上是死代码**。本路线复制 `MirVal` 结构体、不克隆（而且 `MV_FUN.ptr` 存的是环境，无捕获时是 NULL），照那一行的**意图**实现会印 true 而解释器印 false —— 那是静默分歧，比中止更坏。跨类型也在这条里：函数不是数字，`val_eq` 的数值强制尾部够不到它，所以 `f == 42`、`f == nil` 与 `f == g` 用同一行。
+
+**顺序**（`f < g`）与**算术**（`f + 1`）不在这一格：`val_cmp` 只要两个字符串或两个数字，解释器在那些形状上也抛错，本路线继续中止而不是编一个数。**没有为身份造对象**：不新增分配，`MirVal` 布局与六条断言未动 —— 见六节的删除条件。
+
+### 三、判据
+
+| 用例 | 断言 | 红读数（`fb043c0`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_function_equality_nocapture` | 六行 `false/false/false/true/false/false`：两个创建、一次拷贝、同值自比、`!=`、与整数、与 nil | `exec=diff`、`rc=-6`、stdout 空 | `exec=same`，35 字节 |
+| `mir_function_equality_captured` | 四行 `false/false/false/true`：两个捕获实例、一次拷贝、自比、`!=` | 同上（`rc=-6`、空） | `exec=same`，23 字节 |
+
+两条红都是**编译通过、然后被 abort 杀掉**（`why=rc=-6`、stdout 空），不是拒译：这是本仓库最不想要的那类红 —— 被接受、被编译、答案存在却被杀。第二条的 `p = m` 是关键行：解释器在赋值时克隆，所以「同一个闭包的两份」也答 false；本路线若按指针比会答 true。
+
+### 四、读数（本树 `d39a926`）
+
+```
+IR-MIR-ALLOCS|case=mir_function_equality_nocapture|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-MIR-ONLY|case=mir_function_equality_nocapture|mir=accepted|cc=ok|exec=same|rc=0|bytes=35|stdout-hex=66616c73650a66616c73650a66616c73650a747275650a66616c73650a66616c73650a
+IR-MIR-ALLOCS|case=mir_function_equality_captured|reported=yes|allocs=2|freed=2|live=0|bytes=64|expect-allocs=2|expect-bytes=64|ok=yes
+IR-MIR-MIR-ONLY|case=mir_function_equality_captured|mir=accepted|cc=ok|exec=same|rc=0|bytes=23|stdout-hex=66616c73650a66616c73650a66616c73650a747275650a
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|mir-only-cases=75|mir-only-same-as-interpreter=75
+IR-MIR-VERDICT|PASS|tree=d39a926fda320b020a9421ff7665fd4e7f123093|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`stdout-hex` 解出来就是 `false` 四/六行那两组；两条与解释器逐字节同 rc。分配是**先量后写**：无捕获 0|0（没有环境可造），有捕获 2|64（`make` 两次各一份 32 字节环境）。发射器侧：`accepted=159→161`、`mir-only-cases=73→75`、`handles=48|of=67|unknown=19|agree=yes` **不动**（这一格没有新 opcode），`covered=29|missing=0|refused=0` 不变，既有 86 例 C 文本未动 [obs: d39a926]。
+
+### 五、一致于缺陷，以及为什么「比指针」在这里是错的
+
+这一格和 §10.128 同型：目标是**印出解释器印的东西**，而解释器的答案来自一个克隆行为。四个探针把这件事钉死（每个都先跑解释器）：`f = () -> 7` 下 `say f != f` 印 true；`func eq(a, b) { return a == b }` 配合 `say eq(f, f)` 印 false（参数入栈就克隆）；`d = [f]` 后 `say d[0] == d[0]` 印 false（每次下标读都克隆）；`say f == f` 本体印 false。所以「两条都是同一个函数值所以该相等」这个直觉，在解释器里根本不成立。
+
+反过来说，本路线**没有**为了对齐而克隆：它的值是复制语义，若照 `val_eq` 的指针行直接比 `ptr`，`h = f` 之后会印 true —— 一条只在我们的实现里成立的「正确」，正是判据要防的静默分歧。所以答案是常量 false，并在 `mv_eq` 的注记里写清楚这是**与缺陷达成一致**。
+
+### 六、边界
+
+1. **顺序与算术仍中止**：`f < g`、`f + 1` 走 `mv_as_nv`，与解释器抛错同类的形为是中止；这一格只答相等/不等。
+2. **不造身份对象**：没有分配、没有新 tag、没有动 `MirVal`；因此函数值之间的「同一实例」在本路线不可观测 —— 这正好是解释器给出的可观测性。
+3. **删除条件（可判定）**：解释器停止「读时克隆」的那笔提交，会让身份变得可观测；那时这一行必须长出真正的身份对象才能继续对齐 —— 注记里写了这句，而不是「以后再说」。
+4. **与 §10.131 的接缝**：捕获环境仍只在真读它的容器上作为隐藏参数传递；这一格没有碰调用机制，`mir_closure_*` 五条判据读数不变。

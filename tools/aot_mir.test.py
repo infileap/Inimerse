@@ -431,6 +431,12 @@ ALLOCS_EXPECT = {
     "mir_closure_higher_order": (1, 32),
     "mir_closure_return_value": (2, 96),
     "mir_closure_zeroarg_string": (2, 40),
+    # Function equality allocates NOTHING on the capture-free side (there is no
+    # environment to build) and exactly the two environments `make` builds in
+    # the captured case -- one per instantiation, 32 bytes each.  Both MEASURED
+    # off the generated program's own IR-MIR-ALLOCS line, and the second one
+    # is what separates `m = make(1); n = make(2)` from a shared environment.
+    "mir_function_equality_captured": (2, 64),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -1504,6 +1510,51 @@ MIR_ONLY = [
      'func make(s) { return () -> s }\n'
      'f = make("hi" + "there")\n'
      'say f()\n'),
+    # FUNCTION EQUALITY, capture-free.  `==` on two function values used to
+    # STOP the program: mv_eq has no MV_FUN row, so the comparison fell to
+    # nv_eq(mv_as_nv(..)) and mv_tag_to_nv's default abort() killed it after
+    # cc had accepted it (rc 134, empty stdout).  The interpreter ANSWERS, and
+    # the answers below are all false except the `!=`:
+    #
+    #     false false false true false false
+    #
+    # and that is the reading worth writing down.  Not because functions
+    # "cannot be compared", but because val_eq's FUNCTION row (src/vm/vm.c:419,
+    # `return a->ptr == b->ptr`) compares the ImClosureFunction POINTER, and
+    # every read of a function value CLONES it (value_copy, src/vm/vm.c:530-537:
+    # `im_closure_function_clone`).  So `f == f` loads the global twice into
+    # two cloned closures and answers false, `h = f` clones on assignment, and
+    # even `d[0] == d[0]` clones on each index read -- measured.  The row is
+    # in effect dead: no shape that reads a value twice can see one pointer
+    # twice.  This route copies MirVal structs without cloning, so comparing
+    # ptr here would answer TRUE where the interpreter answers FALSE -- the
+    # criterion pins the interpreter's answer, not the row's intent.
+    ("mir_function_equality_nocapture",
+     'f = () -> 42\n'
+     'g = () -> 42\n'
+     'say f == g\n'
+     'h = f\n'
+     'say f == h\n'
+     'say f == f\n'
+     'say g != f\n'
+     'say f == 42\n'
+     'say f == nil\n'),
+    # FUNCTION EQUALITY where the values carry an environment.  Same stop before
+    # this cell, same answer after: two instantiations answer false (the
+    # interpreter cloned them), and a copy answers false too -- `p = m` is
+    # value_copy, i.e. another clone with a shared env, so the closure objects
+    # are distinct.  `m != n` is the one true line.  The allocations are the
+    # two environments `make` built (32 bytes each, one captured value), measured
+    # off the generated program's IR-MIR-ALLOCS line.
+    ("mir_function_equality_captured",
+     'func make(n) { return x -> x + n }\n'
+     'm = make(1)\n'
+     'n = make(2)\n'
+     'p = m\n'
+     'say m == n\n'
+     'say m == p\n'
+     'say m == m\n'
+     'say m != n\n'),
     # SET LITERALS -- OP_NEW_SET.  The fifth container a program can spell and
     # the first one whose ELEMENTS ARE A SET and not a sequence: the same push
     # that an array keeps, a set MERGES (src/vm/vm.c:4286-4313 L_NEW_SET calls
