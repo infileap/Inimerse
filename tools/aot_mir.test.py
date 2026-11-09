@@ -419,6 +419,18 @@ ALLOCS_EXPECT = {
     # down.  MEASURED from the generated program's own IR-MIR-ALLOCS line
     # (allocs=2|freed=2|live=0|bytes=64) and not derived.
     "mir_closure_capture_read": (2, 64),
+    # The other three closure programs measure their own numbers, and all
+    # three are MEASURED off the generated program's own IR-MIR-ALLOCS line
+    # rather than derived: higher_order = 1|32, return_value = 2|96,
+    # zeroarg_string = 2|40.  What they buy is the per-program count; how the
+    # blocks decompose is NOT claimed here, because a decomposition written
+    # down without a reading to match it is exactly the kind of arithmetic
+    # this repository has had to correct before.  A shared-environment route
+    # would move higher_order to 0|0 and turn its output into 42/42/15-with-
+    # the-wrong-env, so the number and the bytes move together.
+    "mir_closure_higher_order": (1, 32),
+    "mir_closure_return_value": (2, 96),
+    "mir_closure_zeroarg_string": (2, 40),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -1386,13 +1398,17 @@ MIR_ONLY = [
     # requires register `r1` to hold VAL_FUNCTION and then REUSES the ordinary
     # call path with the function index taken from the value (:4058-4069).
     #
-    # The capture-free form and the ONE-CAPTURE READ form are lowered here.
-    # The three programs that still need more (higher order, returned
-    # function with a transitive capture, zero-argument call over a heap
-    # string) are written and red on `stream/mirval-closure`, and land one at
-    # a time: the list below is the set of shapes this route answers TODAY,
-    # and a criterion that is red on the tree it lands on would make the
-    # verdict FAIL rather than buy anything.
+    # All five programs below are lowered: the capture-free form, one capture
+    # read, higher order, a returned function with a transitive capture, and a
+    # zero-argument call over a heap string.  The last three were written and
+    # red on `stream/mirval-closure` before any capture existed; they came in
+    # with the SAME mechanism as the capture read, because the compiler emits
+    # the transitive capture as an ordinary re-load of the parent capture
+    # before the inner OP_MAKE_FUNC.  That is the finding, not an accident --
+    # so they are criteria here and not a promise, and each of them still
+    # distinguishes a wrong route from a right one by its own reading (15,15
+    # vs 15,10 for a shared environment; 3 vs 6 for a middle-frame-only copy;
+    # a stack read before the first push for the zero-argument call).
     #
     # The program was run through the interpreter first (`build/inimerse
     # --no-mods run`); that reading is the oracle, and the route's answer
@@ -1448,6 +1464,46 @@ MIR_ONLY = [
      'say f(5)\n'
      'g = make(3)\n'
      'say g(7)\n'),
+    # HIGHER ORDER.  A lambda is passed as an ARGUMENT to a user function and
+    # called there; the callee register inside `apply` is a PARAMETER, not a
+    # name the compiler resolved, so the call is OP_CALL_VALUE on a value that
+    # arrived through the argument stack.  The third line passes a closure
+    # that already carries an environment through the same function, so the
+    # dispatch has to pass `self` down; a route that only made direct-call
+    # function names callable cannot print 42/42/15.
+    ("mir_closure_higher_order",
+     'func apply(g, x) { return g(x) }\n'
+     'say apply(x -> x * 2, 21)\n'
+     'say apply(x -> x + 1, 41)\n'
+     'func make(n) { return x -> x + n }\n'
+     'say apply(make(10), 5)\n'),
+    # RETURNED FUNCTION and a TRANSITIVE capture.  `make` returns a function;
+    # the caller calls it.  `outer(1)` returns a function whose body builds
+    # ANOTHER function over both `a` and `b`: the innermost reads `a` through
+    # the middle closure's environment, which is the compiler's
+    # transitive-capture arm -- it RE-LOADS the parent capture as an ordinary
+    # value before the inner OP_MAKE_FUNC (src/compiler/compiler.c:1297-1302),
+    # so that read is the same OP_LOAD_CAPTURE this cell added.  A route that
+    # copied only the middle frame's own captures prints 3 instead of 6 (or
+    # nil), so the two lines are not redundant.
+    ("mir_closure_return_value",
+     'func make(n) { return x -> x + 1 }\n'
+     'f = make(9)\n'
+     'say f(4)\n'
+     'func outer(a) { return b -> (c -> a + b + c) }\n'
+     'g = outer(1)\n'
+     'h = g(2)\n'
+     'say h(3)\n'),
+    # ZERO-ARGUMENT call of a closure over a HEAP-OWNED string.
+    # `"hi" + "there"` allocates before it is captured; the closure is called
+    # with no arguments, so OP_CALL_VALUE must not read the argument stack at
+    # all (an implementation that always formatted `mvargs[asp-1]` would read
+    # one slot before the first push).  The captured string has to survive
+    # after `make` returns: "hithere" is the whole assertion.
+    ("mir_closure_zeroarg_string",
+     'func make(s) { return () -> s }\n'
+     'f = make("hi" + "there")\n'
+     'say f()\n'),
     # SET LITERALS -- OP_NEW_SET.  The fifth container a program can spell and
     # the first one whose ELEMENTS ARE A SET and not a sequence: the same push
     # that an array keeps, a set MERGES (src/vm/vm.c:4286-4313 L_NEW_SET calls
