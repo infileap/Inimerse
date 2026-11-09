@@ -405,6 +405,20 @@ ALLOCS_EXPECT = {
     # this row is where that would have been said.
     "mir_throw_uncaught_top": (0, 0),
     "mir_throw_uncaught_cross": (0, 0),
+    # The closure pair is the only place the MIR route allocates something the
+    # interpreter allocates too, and the counts are per INSTANTIATION, not per
+    # function: mir_closure_value_nocapture makes a function value with no
+    # capture and measures allocs=0|bytes=0 (it is the default row), while
+    # mir_closure_capture_read calls `make` TWICE and measures allocs=2|
+    # bytes=64.  The two blocks are the two environments, one per call
+    # (src/vm/vm.c:4040-4054 builds a FRESH ImClosureEnv per OP_MAKE_FUNC), and
+    # 32 bytes each is sizeof(MirVal) = one slot of one captured value.  A
+    # route that shared one environment across both instantiations would
+    # measure 1|32, and it would also print 15,15 -- so the number and the
+    # output disagree together, which is what makes this row worth writing
+    # down.  MEASURED from the generated program's own IR-MIR-ALLOCS line
+    # (allocs=2|freed=2|live=0|bytes=64) and not derived.
+    "mir_closure_capture_read": (2, 64),
 }
 ALLOCS_DEFAULT = (0, 0)
 
