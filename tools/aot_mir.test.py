@@ -431,6 +431,12 @@ ALLOCS_EXPECT = {
     "mir_closure_higher_order": (1, 32),
     "mir_closure_return_value": (2, 96),
     "mir_closure_zeroarg_string": (2, 40),
+    # Function equality allocates NOTHING on the capture-free side (there is no
+    # environment to build) and exactly the two environments `make` builds in
+    # the captured case -- one per instantiation, 32 bytes each.  Both MEASURED
+    # off the generated program's own IR-MIR-ALLOCS line, and the second one
+    # is what separates `m = make(1); n = make(2)` from a shared environment.
+    "mir_function_equality_captured": (2, 64),
 }
 ALLOCS_DEFAULT = (0, 0)
 
