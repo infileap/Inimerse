@@ -6571,3 +6571,49 @@ IR-MIR-VERDICT|PASS|tree=ad91878...|accepted=86|refused=0|differ=0|c-identical=0
 1. **只有 ARR 与 DIC 会留转发头** —— 它们是唯二能增长的区域；SET 的头部是 `MV_INT`，`mv_arr_live` 在集合句柄上是 no-op，所以集合臂的读数字节未动。
 2. **数组那条用变量下标**（`i = 2; a[i] = 9`）：常量越界下标在翻译期就被拒（`why=index-out-of-range-constant`，它本身是另一格的判据），所以这条判据存在的理由之一就是绕开那道拒译、让写臂真的走搬移分支。
 3. **不修解释器**：解释器的 `len` 读的是 `ArrayObj`/`SetObj` 自己的计数，句柄搬移只是它内部数组在动，本来就不会读到下标。
+
+## §10.130 函数值：无捕获闭包的最小形态（aot-mir，A 类第十九项）
+
+### 一、来源与日期
+
+判据 `774822e`（先红，读数见三、四节），实现 `c447c09`，2026-11-09。这一格是闭包组的第一条，也是这条路线上**第一次出现函数值**：此前 `f = () -> 42` 在预扫描就被拒（`why=unsupported-opcode`，`OP_MAKE_FUNC` 与 `OP_CALL_VALUE` 一起挂在 `IR-MIR-NOT-YET` 上）。闭包组的另外四条判据（捕获读、高阶传参、返回并转递捕获、零参调用堆字符串）**已经写好并保持红**，留在 `stream/mirval-closure` 上逐条落地 —— 本格只买了一条。
+
+### 二、形状（读码，不是猜）
+
+解释器的三个 opcode 各读了一遍：`OP_MAKE_FUNC` 把 `r3` 个值从参数栈弹进一个新环境、把 `VAL_FUNCTION` 与函数下标写进目标寄存器；`OP_LOAD_CAPTURE` 读当前帧环境的槽 `r2`（没有环境时给 `nil`）；`OP_CALL_VALUE` 要求寄存器 `r1` 持有 `VAL_FUNCTION`，取出下标后**复用**普通调用路径。编译器侧：每个捕获值先发一条 `OP_PUSH_REG`，再发 `OP_MAKE_FUNC`；被调者是变量而不是名字时发 `OP_CALL_VALUE`。
+
+本路线的对应形状是**一个值、一张够用的表**：`MV_FUN` 取 `VAL_FUNCTION` 的 tag 号，载荷是**这条路线自己的模块下标**（经 `nodes[0].child_ids[]` 从字节码函数下标翻译而来 —— 所有 lambda 都注册进主字节码，那一个数组是唯一的翻译点）；`ptr` 置 0，**留给下一格的捕获数组**。`MirVal` 的 32 字节布局与它的六条 `_Static_asserts` 一个没动：A′ 冻结 `Value` 的宽度、禁止第三套值表示，而 `ptr` 本来就在结构里 —— 所以「闭包需要加宽值」这个担心在这个仓库是**不成立**的，挡路的是调用机制而不是布局。
+
+调用值走一张派发表，**只在确实搬动函数值的模块里发射**。不这么做，既有 86 个语料程序的 C 文本会被移动一格，`c-identical=0|c-diff=86` 这对读数就不再是它们本来的意思 —— 本格是买一条判据，不是重写这条路线的输出。
+
+### 三、判据
+
+| 用例 | 语句 | 红读数（`2de6727`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_closure_value_nocapture` | `f = () -> 42`；`say f`；`if f { say "truthy" }`；`g = f`；`say g()` | `mir=refused|why=unsupported-opcode`（`OP_MAKE_FUNC:1,OP_CALL_VALUE:1`） | `mir=accepted|cc=ok|exec=same`，输出 `<function>`/`truthy`/`42` |
+
+这一条钉四件事：函数值打印成 `<function>`（与解释器同一行）、真值位置为真、能拷进另一个变量、**能经那个拷贝被调用**（拷贝是 `OP_MOV`，调用是 `OP_CALL_VALUE`）。任何把整数下标当值打印、或让拷贝不可调用的实现，在第一行或第三行就红。
+
+### 四、读数（本树 `c447c09`）
+
+```
+IR-MIR-ALLOCS|case=mir_closure_value_nocapture|reported=yes|allocs=0|freed=0|live=0|bytes=0|expect-allocs=0|expect-bytes=0|ok=yes
+IR-MIR-MIR-ONLY|case=mir_closure_value_nocapture|mir=accepted|cc=ok|exec=same|rc=0|bytes=21|stdout-hex=3c66756e6374696f6e3e0a7472757468790a34320a
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|mir-only-cases=69|mir-only-same-as-interpreter=69
+IR-MIR-VERDICT|PASS|tree=c447c097738b34c77033566eb5b6d37f024cc74f|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+`stdout-hex` 解出来是 `<function>\ntruthy\n42\n`，与解释器逐字节相同。**`allocs=0` 是有意义的零**：无捕获的函数值不持环境，所以这一格一条分配都不该有；有分配的实现在这一行红（`ok=no`）。覆盖侧 `IR-AOT-MIR-LOWERING` 从 `handles=45|of=67|unknown=22` 走到 `handles=47|of=67|unknown=20|agree=yes`（`OP_MAKE_FUNC` 与 `OP_CALL_VALUE` 两个 case 标签进表），`accepted=154→155`、`beyond-ast-denominator=16→18`，`refused` 仍为 0（四条捕获判据不在本树的列表里，见五节）[obs: c447c09]。
+
+### 五、只买了一条：四条捕获判据留在分支上，不跟着上 main
+
+1. **为什么不放到这个列表里**：`tools/aot_mir.test.py` 的判据列表就是「这条路线今天答得出来的形状」的清单，判定要求 `mir-only-same-as-interpreter == 列表长度`。把这四条红着放进来，main 上每一枚 pin 的 `IR-MIR-VERDICT` 都会是 FAIL，直到整个闭包组做完 —— 那不是买一条判据，是把未完成的工作变成常红的门。它们的正文、红读数与「为什么每条都必要」写在 `stream/mirval-closure` 的判据笔 `bc9862c` 里，逐条落地时一次只搬一条。
+2. **它们今天红在哪（同一家族、不同原因）**：四条都是 `why=illegal-operand`，细节是容器门上的具名拒译 —— `function index N captures 1 value(s); only the capture-free function form i...`。这个细节从早先的 `argument stack unbalanced: asp=N` 换成了捕获计数，是**同一个红家族**换了更准确的原因，不是把判据改松。
+3. **为什么捕获不能顺带做**：捕获值要活过建它的那一帧（`make` 返回后 `n` 已经不在栈上），所以值必须**自己持**一份捕获数组；本路线没有「每帧环境」这种结构，最省的形状是把 `MirVal*` 挂在 `MV_FUN.ptr` 上（`ptr` 就是为此留的），被调容器则需要一个隐藏的自指针参数，且**只在真有捕获的模块里加**（否则又是移动既有 C 文本）。这是下一格的活，不是这一格的。
+4. **一个还不答的角落**：`f == g` 今天会走 `mv_as_nv` 中止（没有任何 accepted 流碰到它，所以判据不测）；要答它得先读解释器 `val_eq` 对函数的那一行。记在这里，免得下一个人把它当成「已答对」。
+
+### 六、边界
+
+1. **无捕获只此一形**：`r3 != 0` 的 `OP_MAKE_FUNC` 按名拒译（`function index N captures ...`），不是静默丢环境。拒译带名字，所以下一个人一眼能看出缺的是哪一格。
+2. **函数表只在需要的模块里长出来**：无函数值的模块 C 文本与上一格逐字节相同（`c-identical=0|c-diff=86` 未动），扰动读数也未动。
+3. **不认捕获不等于不认函数**：打印、真值、拷贝、调用四条都答；`OP_LOAD_CAPTURE` 仍不降，它的零环境语义（给 `nil`）属于下一格。

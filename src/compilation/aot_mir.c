@@ -118,6 +118,27 @@ static const char *const kMirValBlock =
 "                      DEFINED HERE, above every reader, for the reason MV_ARR's\n"
 "                      note gives.  Read-only once built: no lowered opcode adds\n"
 "                      to or removes from one (see mv_set_new's note). */\n"
+"#define MV_FUN 9   /* = VAL_FUNCTION -- ival is a MODULE INDEX into this\n"
+"                      route's own function table (the switch mv_callv is),\n"
+"                      NOT the interpreter's root-bytecode function index that\n"
+"                      Value's VAL_FUNCTION carries: every lambda is registered\n"
+"                      into mainBC (src/compiler/compiler.c:1246), so the\n"
+"                      bytecode operand is main's child slot while this route\n"
+"                      numbers containers depth-first, and build_nodes'\n"
+"                      child_ids[] is the one translation between the two\n"
+"                      (emit_one's OP_MAKE_FUNC arm performs it, once, at\n"
+"                      translation time).  ptr is the CAPTURE ENVIRONMENT\n"
+"                      HANDLE, which is the job Value.ptr gives it -- it carries\n"
+"                      the ImClosureFunction there (value_set(..., VAL_FUNCTION,\n"
+"                      ins.r2, 0, NULL, fn), src/vm/vm.c:4040-4054) -- and this\n"
+"                      cell emits NULL in it because only the NOCAPTURE form is\n"
+"                      lowered: a capture count above zero is still REFUSED, by\n"
+"                      name, in prescan (see that arm's note).  Printing is\n"
+"                      `<function>` (src/vm/vm.c:1379) and truthiness is true\n"
+"                      (vm_truthy's `default: return 1`, src/vm/vm.c:400), which\n"
+"                      is the whole of what mir_closure_value_nocapture asks.\n"
+"                      DEFINED HERE, above every reader, for the reason MV_ARR's\n"
+"                      note gives. */\n"
 "\n"
 "/* The placeholder's own test: these are compiled into every generated file,\n"
 "   and tools/aot_mir.test.py compiles every generated file with the system\n"
@@ -324,6 +345,75 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* MV_FUN -- the first value in this route that is not DATA, and the whole of\n"
+" * the NOCAPTURE function form.  Same structure as the notes around it: WHY IT\n"
+" * EXISTS / WHAT IT ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION.\n"
+" *\n"
+" * WHY IT EXISTS.  `f = () -> 42` / `say f` / `if f {}` / `g = f` / `say g()`\n"
+" * refused to translate at all: OP_MAKE_FUNC and OP_CALL_VALUE had no entry in\n"
+" * op_regs, so both counted as not-yet and the whole program was\n"
+" * `why=unsupported-opcode (OP_MAKE_FUNC:1,OP_CALL_VALUE:1)`.  The value those\n"
+" * two opcodes move exists in the interpreter -- a VAL_FUNCTION with the\n"
+" * function's index in ival and an ImClosureFunction in ptr -- and MirVal has a\n"
+" * 32-byte shape with a ptr field, so this is a missing TAG and a missing\n"
+" * dispatch, not a missing representation.  No layout change, no third value\n"
+" * representation: docs/DECFY_DESIGN.md:118 freezes Value at 32 bytes and\n"
+" * docs/DECFY_DESIGN.md:583 is the A' ruling, and both hold here by\n"
+" * construction (the six _Static_assert lines above are the executable claim).\n"
+" *\n"
+" * WHAT IT ADDS, exactly four pieces and nothing else:\n"
+" *   - `#define MV_FUN 9` (= VAL_FUNCTION, the number the interpreter gives it)\n"
+" *     and this constructor.  ival is the MODULE INDEX of the container, which\n"
+" *     is NOT the bytecode operand: a lambda is registered into mainBC\n"
+" *     (src/compiler/compiler.c:1246), so OP_MAKE_FUNC's operand counts main's\n"
+" *     children while this route numbers every container depth-first, and\n"
+" *     nodes[0].child_ids[] is the one translation (performed at translation\n"
+" *     time in emit_one's OP_MAKE_FUNC arm).\n"
+" *   - arms in mv_tru (true, vm_truthy's `default: return 1`) and in mv_say\n"
+" *     (`<function>`, src/vm/vm.c:1379).\n"
+" *   - mv_callv, the dispatch table emitted only for a module that actually\n"
+" *     moves a function value, and the two emitter arms that fill and read it.\n"
+" * ptr stays 0 for the same reason mv_from_nv's ptr stays 0: nothing this route\n"
+" * emits has a capture environment to put there YET.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER -- a boundary, deliberately, and the next grid's\n"
+" * payload:\n"
+" *   - A CLOSURE (any capture count above zero).  prescan REFUSES it by name\n"
+" *     instead of emitting a function whose ptr would be a lie; OP_LOAD_CAPTURE\n"
+" *     is still not in op_regs.  The four criteria that need a per-frame\n"
+" *     environment and capture passing stay red BY DESIGN (see the criteria\n"
+" *     commit's own message), and this tag is the slot they will hang the\n"
+" *     environment handle on: ptr is where an MvClosureEnv* will go, exactly as\n"
+" *     Value.ptr holds the ImClosureFunction.\n"
+" *   - Comparing two functions (`f == g`, `f != g`).  mv_eq has no MV_FUN row,\n"
+" *     so it falls to nv_eq and mv_as_nv stops the program; no accepted stream\n"
+" *     reaches it (the criterion only prints, tests truthiness, copies and\n"
+" *     calls), and answering it needs val_eq's row to be read first.  A LOUD\n"
+" *     stop, never a made-up false.\n"
+" *   - Ordering, arithmetic, container membership on a function.  Same class:\n"
+" *     mv_as_nv stops the program rather than inventing a number.\n"
+" *\n"
+" * DELETE CONDITION (decidable, not a wish).  Delete the tag and the\n"
+" * constructor in the commit that gives the shared NV a function/payload tag,\n"
+" * at which point this becomes mv_from_nv(nv_fun(idx)) like every other\n"
+" * constructor, and the test is mechanical: MV_FUN no longer appears in this\n"
+" * block outside mv_tru/mv_say/mv_callv's arms.  Deleting it earlier puts\n"
+" * OP_MAKE_FUNC back to zero answer for a program the interpreter answers.\n"
+" *\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case\n"
+" * mir_closure_value_nocapture compares stdout BYTES and the exit code against\n"
+" * the interpreter over `say f` / `if f` / `say g()`; its ALLOCS reading is\n"
+" * 0|0|0|0 because a function value is a tag plus an index and nothing is\n"
+" * allocated for one. */\n"
+"static inline MirVal mv_fun(int idx) {\n"
+"    MirVal r;\n"
+"    r.type = MV_FUN;\n"
+"    r.ival = (long long)idx;   /* module index; mv_callv is the only reader */\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;                /* the capture environment handle: NULL here */\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* Every operation below is the nv_* one, reached through the field moves\n"
 "   above: the delegating body IS the claim that the runtime is single.  The\n"
 "   exceptions are the arms that name MV_NIL, each one spelled the way the\n"
@@ -347,6 +437,14 @@ static const char *const kMirValBlock =
 "static inline MirVal mv_is_nil(MirVal a) { return mv_boo(a.type == MV_NIL); }\n"
 "static inline int mv_tru(MirVal a) {\n"
 "    if (a.type == MV_NIL) return 0;   /* vm_truthy: VAL_NIL is false, and only it */\n"
+"    if (a.type == MV_FUN) return 1;   /* vm_truthy's `default: return 1`\n"
+"                                         (src/vm/vm.c:400): a VAL_FUNCTION is\n"
+"                                         TRUE, `if f {}` taken.  Truthiness\n"
+"                                         reads no payload, so no guard.\n"
+"                                         MV_FUN's row -- together with mv_say's\n"
+"                                         and mv_callv's -- is the two-line\n"
+"                                         answer mir_closure_value_nocapture\n"
+"                                         asks for; see mv_fun's note. */\n"
 "    if (a.type == MV_STR) return 1;   /* vm_truthy's `default: return 1`\n"
 "                                         (src/vm/vm.c:400): every string is\n"
 "                                         true, the empty one included.\n"
@@ -405,12 +503,15 @@ static const char *const kMirValBlock =
 " *    without OP_NEW_SET/OP_SET_INTERVAL, also refused.\n"
 " *\n"
 " * WHY THE TYPE TEST IS THERE AT ALL.  It is the DELETE-DETECTOR.  The five\n"
-" * tags compared are exactly the tags MirVal has; a SIXTH tag would be a set,\n"
-" * which is the ONE value this opcode is defined on here, and falling through\n"
-" * to nil for it would be the first silent wrong answer instead of a loud\n"
-" * stop.  So the guard is not a defensive branch -- it is the value-domain\n"
-" * claim, executable, and it is what makes adding a set tag impossible\n"
-" * without coming back to this function.\n"
+" * scalar tags compared are the tags this opcode has an answer for; a set is\n"
+" * the ONE value it is defined on here, and falling through to nil for it\n"
+" * would be the first silent wrong answer instead of a loud stop.  (MV_FUN, added\n"
+" * later, is not a set either: a min/max operand that is a FUNCTION has no\n"
+" * answer on this route, so the guard's abort is the right answer for it --\n"
+" * the list stops at the scalar tags on purpose, and a set tag would still be\n"
+" * the one tag this body must learn.)  So the guard is not a defensive branch\n"
+" * -- it is the value-domain claim, executable, and it is what makes adding a\n"
+" * set tag impossible without coming back to this function.\n"
 " *\n"
 " * DELETE CONDITION (decidable): the commit that gives MirVal a set tag (or\n"
 " * that lowers OP_NEW_SET/OP_SET_INTERVAL and the preset globals, whichever\n"
@@ -1907,6 +2008,11 @@ static const char *const kMirValBlock =
 " * reason is the debt this comment exists to date. */\n"
 "static inline void mv_say(MirVal a) {\n"
 "    if (a.type == MV_NIL) { printf(\"nil\\n\"); return; }\n"
+"    /* A function prints the ONE word the interpreter prints for one\n"
+"     * (src/vm/vm.c:1379, value_to_string's VAL_FUNCTION arm).  It ignores the\n"
+"     * payload on purpose: `<function>` is the whole spelling in both routes,\n"
+"     * the closure's captures included, so nothing here has to read ptr. */\n"
+"    if (a.type == MV_FUN) { printf(\"<function>\\n\"); return; }\n"
 "    if (a.type == MV_STR) {\n"
 "        if (a.sval) { printf(\"%s\\n\", a.sval); return; }   /* resident or\n"
 "                                                       heap-owned: same bytes */\n"
@@ -2214,6 +2320,26 @@ static int op_regs(int op) {
     case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: return R1;
     case OP_PUSH_REG: return R1;
     case OP_CALL_FUNC: return R2;
+    /* THE FUNCTION VALUE -- the two opcodes that make a function a VALUE rather
+       than a callee the emitter names.  Operands read off the compiler, not
+       guessed: OP_MAKE_FUNC is emitted as emit(curBC, OP_MAKE_FUNC, out, fidx,
+       fbc->capture_count) (src/compiler/compiler.c:1303) -- r1 is the DESTINATION
+       register, r2 the function index (a pool/function index, checked in
+       prescan's arm) and r3 the capture COUNT, so only r1 is a register.
+       OP_CALL_VALUE is emitted with the callee in r1, the result in r2 and the
+       argument count in r3 (src/compiler/compiler.c:883/892/907), the mirror
+       image of OP_CALL_FUNC's R2-only row, so BOTH r1 and r2 are registers here
+       and r3 is a count that prescan's argument-stack balance consumes.
+       Neither opcode reads a compile-time index in its EMITTER (the callee's
+       index travels in a register and mv_callv dispatches on it at run time), but
+       OP_MAKE_FUNC's emitter DOES read nodes[0].child_ids[fidx] -- the
+       translation from the bytecode's main-relative slot to this route's
+       depth-first module index -- so it is "indexed" in the coverage test's
+       sense and its prescan arm is a real case label; OP_CALL_VALUE is not,
+       which is why its bound lives outside the switch beside OP_NEW_ARRAY's
+       (see that block's note). */
+    case OP_MAKE_FUNC: return R1;
+    case OP_CALL_VALUE: return R1 | R2;
     /* r1 is the RESULT register; r2 is a STRING-POOL INDEX naming the builtin
        (compiler.c:464) and r3 is the argument count, so neither is a register.
        Before 10.123 this opcode had no entry and every builtin call was counted
@@ -2689,6 +2815,35 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 asp -= slots;
                 continue;
             }
+            /* OP_CALL_VALUE CONSUMES THE ARGUMENT STACK WITHOUT READING ANY INDEX,
+               so it lives HERE and not as a case label -- the same placement, and
+               the same reason, as the container family above (its emitter's
+               callee index travels in a register and mv_callv dispatches on it at
+               run time, so a case label for it would be one the detector at
+               tools/aot_mir_cover.test.py:288-327 reports as dead -- the label
+               is left out for that reading, not because the check was skipped;
+               this note does not spell the label out, so it cannot match itself).
+               The count is r3, the operand the compiler writes as the last
+               argument of emit(..., OP_CALL_VALUE, out, callee, res, argCount)
+               (src/compiler/compiler.c:883/892/907), and the arguments were
+               pushed one at a time by OP_PUSH_REG -- exactly OP_CALL_FUNC's
+               convention (the emitter's arm reads them back as
+               mvargs[asp-argc..asp-1]).  The balance is kept HONEST rather than
+               skipped: a call with arguments that the emitted C could not index
+               is a REFUSAL here, not an unbalanced stack downstream, and the
+               0-argument form (this cell's criterion) is the case where the
+               emitted arm passes the literal 0 instead of mvargs. */
+            if (op == OP_CALL_VALUE) {
+                int n = ir_insn_r3(in);
+                if (n < 0 || n >= REG_LIMIT)
+                    return bad("container=%d insn=%d op=%s argument count %d out of range",
+                               f, i, op_name(op), n);
+                if (asp < n)
+                    return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d argc=%d",
+                               f, i, op_name(op), asp, n);
+                asp -= n;
+                continue;
+            }
             /* OP_INDEX_GET has nothing to check in this pass: its operands are
                registers (bounded above), and the one thing a reader can prove
                about them -- a CONSTANT subscript outside a length the same
@@ -2839,6 +2994,39 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d argument stack underflows: asp=%d argc=%d",
                                f, i, asp, argc);
                 asp -= argc;
+                break;
+            }
+            /* THE FUNCTION LITERAL.  Two operands and both are checked here
+               because the emitter reads them: r2 is the FUNCTION INDEX the
+               compiler wrote (emit(curBC, OP_MAKE_FUNC, out, fidx,
+               fbc->capture_count), src/compiler/compiler.c:1303), and the
+               emitter turns it into this route's module index through
+               nodes[0].child_ids[fidx] -- the same main-relative slot OP_CALL_FUNC
+               above reads from the same table, which is why the bound is
+               root->func_count and not node->something.
+               r3 is the CAPTURE COUNT, and this cell lowers ONLY the NOCAPTURE
+               form: a nonzero count is REFUSED BY NAME here rather than emitted
+               with a ptr that would have no environment behind it.  That refusal
+               is what keeps the four capture criteria red, and it is the seam the
+               next grid opens: when a per-frame environment exists, this arm
+               loses the `!= 0` test and r3 becomes a slot count consumed off the
+               argument stack exactly as OP_NEW_ARRAY's r3 is above (the compiler
+               pushes one OP_PUSH_REG per capture just before this instruction).
+               Until then the count must not be silently dropped: emitting
+               mv_fun() with no env would answer `f(5)` against a function whose
+               body reads OP_LOAD_CAPTURE -- an accepted, compiled, killed
+               program, the class this block refuses to print. */
+            case OP_MAKE_FUNC: {
+                int fidx = in->a;
+                int ncap = ir_insn_r3(in);
+                if (fidx < 0 || fidx >= root->func_count)
+                    return bad("container=%d insn=%d function index %d out of range (count=%d)",
+                               f, i, fidx, root->func_count);
+                if (ncap != 0)
+                    return bad("container=%d insn=%d function index %d captures %d value(s);"
+                               " only the capture-free function form is lowered (a capture"
+                               " needs a per-frame environment, which this route does not"
+                               " build yet)", f, i, fidx, ncap);
                 break;
             }
             case OP_PUSH_REG:
@@ -3258,6 +3446,80 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (argc > 0) buf_fmt(b, " asp -= %d;", argc);
         return 0;
     }
+    /* THE FUNCTION VALUE -- the first two arms that move a function as a VALUE
+       rather than naming a callee here.  Same structure as the notes around them:
+       WHY / WHAT IT ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED
+       BY.
+       *
+       * WHY.  Both opcodes were unknown to this route: `f = () -> 42` came back
+       * unsupported-opcode with OP_MAKE_FUNC:1,OP_CALL_VALUE:1, so a function
+       * could not even be PRINTED, let alone called through a variable.
+       *
+       * WHAT IT ADDS.  Two arms and one dispatch table in aot_mir_translate:
+       *   - OP_MAKE_FUNC stores `mv_fun(<module index>)` in r1.  The index is
+       *     nodes[0].child_ids[fidx] -- the SAME table OP_CALL_FUNC's arm reads,
+       *     and the same reason: every lambda is registered into mainBC
+       *     (src/compiler/compiler.c:1246), so the bytecode's function index counts
+       *     main's children while this route numbers containers depth-first.
+       *   - OP_CALL_VALUE reads the callee OUT OF A REGISTER and lets mv_callv
+       *     pick the C function, the runtime mirror of the interpreter's
+       *     `call_fidx_override = R[ins.r1].ival` (src/vm/vm.c:4056-4057).  argc ==
+       *     0 passes the literal 0 because a container with no OP_PUSH_REG never
+       *     declares mvargs -- this cell's criterion is exactly that shape.
+       *
+       * WHAT IT DOES NOT COVER -- each a named refusal upstream, not a silent
+       * answer here:
+       *   - a capture count above zero.  prescan refuses it; the guard below is
+       *     the second lock (the emitter is never asked to emit an environment
+       *     pointer it cannot build).  The four capture criteria stay red BY
+       *     DESIGN.
+       *   - a callee whose function index does not resolve in child_ids.  bad(), as
+       *     OP_CONCAT's arm does, rather than the `mv_missing_callee` identifier
+       *     OP_CALL_FUNC falls back to -- a function VALUE that cannot name itself
+       *     is a translation defect, not a run-time answer.
+       *   - an arity mismatch.  mv_callv's generated switch checks it and stops
+       *     the program (see that emitter); the interpreter's own tolerance for
+       *     filling missing arguments with nil is not reproduced here, and no
+       *     accepted stream reaches it.
+       *
+       * DELETE CONDITION (decidable).  These two arms are REPLACED, not deleted,
+       * by the grid that lowers captures: OP_MAKE_FUNC then also consumes r3
+       * slots off the argument stack and passes them to a real environment handle
+       * (ptr), and OP_CALL_VALUE is unchanged by that.  The test that the
+       * nocapture-only restriction is gone is mechanical: the `ncap != 0` test
+       * disappears from prescan's arm and ir_closure_capture_read stops being
+       * `mir=refused`.
+       *
+       * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case
+       * mir_closure_value_nocapture: before these arms it was refused
+       * (unsupported-opcode); mir_closure_capture_read and the three others stay
+       * refused with why=illegal-operand. */
+    case OP_MAKE_FUNC: {
+        int fidx = r2;                       /* r2 = FUNCTION INDEX, not a register */
+        int ncap = w3;                       /* r3 = CAPTURE COUNT */
+        int callee = c->nodes[0].child_ids ? c->nodes[0].child_ids[fidx] : -1;
+        if (ncap != 0)
+            return bad("container=%d insn=%d function index %d captures %d value(s):"
+                       " only the capture-free form is lowered", c->id, i, fidx, ncap);
+        if (callee < 0 || callee >= c->m->nfuncs)
+            return bad("container=%d insn=%d function index %d does not resolve to a"
+                       " container", c->id, i, fidx);
+        buf_fmt(b, "    v[%d] = mv_fun(%d);", r1, callee);
+        return 0;
+    }
+    case OP_CALL_VALUE: {
+        int callee_reg = r1, res = r2, argc = w3;
+        if (argc < 0 || argc >= REG_LIMIT)
+            return bad("container=%d insn=%d OP_CALL_VALUE argument count %d out of range",
+                       c->id, i, argc);
+        if (argc == 0) {
+            buf_fmt(b, "    v[%d] = mv_callv(v[%d], 0, 0);", res, callee_reg);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_callv(v[%d], mvargs + asp - %d, %d); asp -= %d;",
+                res, callee_reg, argc, argc, argc);
+        return 0;
+    }
     /* THE IMPLICIT RETURN IS nil, NOT INTEGER 0 -- the debt this arm used to
      * pay for by answering a question nobody asked.  Five parts, same shape as
      * the mv_eq note in the block above: WHY / WHAT IT ADDS / WHAT IT DOES NOT
@@ -3572,6 +3834,65 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
         buf_str(&out, ");" NL);
     }
     buf_str(&out, NL);
+
+    /* THE FUNCTION TABLE'S CALLABLE HALF, emitted only for a module that
+       actually moves a function VALUE, which is why this is a scan and not part
+       of kMirValBlock:
+         - it emits the dispatch whose `case` labels are THIS route's module
+           indices and whose arms call the containers by their translation-
+           unit names (the forward declarations above are exactly the prototypes
+           it needs, and it is emitted between them and the bodies so main can
+           call it);
+         - it is emitted ONLY when OP_MAKE_FUNC or OP_CALL_VALUE occurs, because
+           a table no container references would change the generated text of
+           every accepted case that has nothing to do with functions -- the
+           C-mirror comparison in tools/aot_mir.test.py (classify(), the
+           `IR-MIR-C-SAME`/`c-identical` readings) would then move for programs
+           this cell does not touch.  A closure program is the only program
+           whose emitted text changes here, and its readings are what this cell
+           is measured by.
+       What the dispatch is NOT: a second interpreter.  It carries the interpreter's
+       L_CALL_VALUE guard verbatim -- a non-function callee is `error: value is not
+       callable` on stderr with rc 1 -- because that is the answer the criterion
+       compares, and it stops the program on an arity mismatch instead of
+       fabricating an answer the interpreter would fill differently. */
+    int needs_callv = 0;
+    for (int f = 0; f < m->nfuncs && !needs_callv; f++) {
+        const IrFunc *fn = &m->funcs[f];
+        for (int i = 0; i < fn->ninsns; i++) {
+            int op = fn->insns[i].op;
+            if (op == OP_MAKE_FUNC || op == OP_CALL_VALUE) { needs_callv = 1; break; }
+        }
+    }
+    if (needs_callv) {
+        buf_str(&out, "static MirVal mv_callv(MirVal f, MirVal *args, int nargs) {" NL);
+        buf_str(&out, "    if (f.type != MV_FUN) {" NL);
+        buf_str(&out, "        fprintf(stderr, \"error: value is not callable\\n\");" NL);
+        buf_str(&out, "        abort();" NL);
+        buf_str(&out, "    }" NL);
+        buf_str(&out, "    switch ((int)f.ival) {" NL);
+        for (int i = 1; i < m->nfuncs; i++) {
+            int argc = nodes[i].argc;
+            buf_fmt(&out, "    case %d:" NL, i);
+            buf_str(&out, "        if (nargs != ");
+            buf_fmt(&out, "%d", argc);
+            buf_str(&out, ") {" NL);
+            buf_fmt(&out, "            fprintf(stderr, \"error: function takes %d argument(s),"
+                          " got %%d\\n\", nargs);" NL, argc);
+            buf_str(&out, "            abort();" NL);
+            buf_str(&out, "        }" NL);
+            buf_fmt(&out, "        return %s(", fnnames[i]);
+            for (int k = 0; k < argc; k++) buf_fmt(&out, "%sargs[%d]", k ? ", " : "", k);
+            buf_str(&out, ");" NL);
+        }
+        buf_str(&out, "    default:" NL);
+        buf_str(&out, "        fprintf(stderr, \"error: function index %d has no container\\n\"," NL);
+        buf_str(&out, "                (int)f.ival);" NL);
+        buf_str(&out, "        abort();" NL);
+        buf_str(&out, "    }" NL);
+        buf_str(&out, "}" NL);
+        buf_str(&out, NL);
+    }
 
     for (int i = 1; i < m->nfuncs; i++) {
         if (emit_container(&out, m, nodes, gnames, fnnames, i) != 0) {
