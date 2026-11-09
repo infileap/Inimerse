@@ -6517,7 +6517,7 @@ IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|
 IR-MIR-VERDICT|PASS|tree=0112b13f30c44654030cb1903925ab9d81fe1c70|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
 ```
 
-两行 `allocs=2|bytes=768` 是**同一个读数的两种形状**（和 §10.127 六条同形）：键比较自己不分配，这两块是字典块与集合块（池按 256 字节一块、需要时翻倍）。`stdout-hex` 的尾巴 `6c0a` 是 `nil\n`、`320a` 是 `2\n` —— 与解释器的字节相同。`mir-only-cases` 从 64 到 66 是本格新增两条用例的直接后果；`accepted=150`、`handles=45|of=67` 这类覆盖读数本格不动（它只动键比较，不增删发射器），见 §10.127 四节。
+两行 `allocs=2|bytes=768` 是**同一个读数的两种形状**（和 §10.127 六条同形）：键比较自己不分配，这两块是字典块与集合块（池按 256 字节一块、需要时翻倍）。`stdout-hex` 的尾巴 `6c0a` 是 `nil\n`、`320a` 是 `2\n` —— 与解释器的字节相同。`mir-only-cases` 从 64 到 66、覆盖语料的 `accepted` 从 150 到 152（`same-as-interpreter=152`），都是本格**新增这两条用例**的直接后果；发射器一个也没增删，所以 `handles=45|of=67|unknown=22|agree=yes` 与 §10.127 四节同值（`IR-AOT-MIR-LOWERING` 那一行是这次在合并树 `a0cc094` 上重取的）。
 
 ### 五、这是一致于**缺陷**，不是「已答对」
 
