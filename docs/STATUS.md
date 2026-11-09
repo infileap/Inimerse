@@ -6524,8 +6524,50 @@ IR-MIR-VERDICT|PASS|tree=0112b13f30c44654030cb1903925ab9d81fe1c70|accepted=86|re
 1. **解释器那一半是它自己的缺陷**：它收键用 `val_eq`，而 `val_eq` 对 set 没有行。正确的语义有争论（集合键按内容？按身份？干脆拒译？），但**今天解释器的事实是印 `nil`**，而这条路线的灵魂指标是与解释器逐字节一致 —— 所以本格照抄缺陷，没有去修解释器。
 2. **修法只有一处、方向已写清**：`mv_key_eq` 只对 `MV_SET` 说「不命中」，其余委托 `mv_eq`；如果哪天解释器把 `val_eq` 补上按内容的 `VAL_SET` 行，本格要跟着删掉那两行里的一个 `if`，改完两条判据的期望值也跟着变成 `7/nil` 那一侧 —— 这正说明它是抄来的规则，不是推导出来的。
 3. **拒译不可行**：字典键是动态类型，`prescan` 无法静态判定某个键是集合，所以「在翻译期拒掉集合键」这条路没有地方落。
-4. **顺记一笔独立的缺陷，不在本格修**：`mv_len` 的容器臂直接读 `(int)a.ival`，**不经 `mv_arr_live`**，所以一棵**搬移过**的字典会把转发头里的新下标当成 item count。实测（`0112b13` 的二进制）：`s = 1, 2 / d = {} / d[s] = 7 / say d[s] / say len(d)` 这颗字典建在集合**之后**，写时走拷贝分支留下转发头 ⇒ MIR 印 `7` 与 `2`，解释器印 `nil` 与 `1`。这与集合键无关（把键比较换回 `mv_eq` 仍是 `2`），改法是容器臂先 `mv_arr_live`，应各自一格、各自一笔读数。本格的第二条判据故意让字典建在两个集合之后，就是为了不让这个缺陷污染它的对数读数。
+4. **顺记一笔独立的缺陷，不在本格修**：`mv_len` 的容器臂直接读 `(int)a.ival`，**不经 `mv_arr_live`**，所以一棵**搬移过**的字典会把转发头里的新下标当成 item count。实测（`0112b13` 的二进制）：`s = 1, 2 / d = {} / d[s] = 7 / say d[s] / say len(d)` 这颗字典建在集合**之后**，写时走拷贝分支留下转发头 ⇒ MIR 印 `7` 与 `2`，解释器印 `nil` 与 `1`。这与集合键无关（把键比较换回 `mv_eq` 仍是 `2`），改法是容器臂先 `mv_arr_live`，应各自一格、各自一笔读数。本格的第二条判据故意让字典建在两个集合之后，就是为了不让这个缺陷污染它的对数读数。 **这笔债由 §10.129 修掉，同时更正本段两处记录：搬移只在「字典先建、集合后建」的顺序下发生（本段写的顺序不会搬移），且本段的 `7` 与 `2` 来自两棵不同的树 —— 证据以 §10.129 五节为准。**
 
 ### 六、为什么不动 `mv_eq`
 
 §10.127 的六条判据要求 `s == t` 按内容答 `true`；把 `mv_eq` 的 set 臂改成恒 false 会让那六条全红，而 `OP_EQ` 确实该按内容答。这个解释器里，**相等运算与字典键是两条不同的规则**（`OP_EQ` 走 `L_EQ` 的 set/`set_equal` 二分，字典收键走 `val_eq`），本格只是把这个分叉照抄成两个函数（`mv_key_eq` 与 `mv_eq`）。`mv_ne` 同样不动：它服务 `OP_NEQ`，不服务字典键。
+
+## §10.129 `len()` 在搬移过的容器上先解引用句柄（aot-mir，A 类第十八项）
+
+### 一、来源与日期
+
+判据 `ce78553`（`stream/mirval-lenhead`，在 `c53cdc5` 上先红），实现 `ad91878`，2026-11-09。缺陷是 §10.128 量它自己的红读数时顺带照出来的，那一段（五.4）把它记成了一笔债而不是当格修：`mv_len` 的容器臂读 `(int)a.ival`，**不经 `mv_arr_live`**。
+
+### 二、缺陷的形状（读码，不是猜）
+
+池里只有两种 `iv`：**活区域的起始槽**，与**转发头**。活区域的头部槽（`iv - 1`）是 `MV_INT`，`ival` 是 item 数；区域被搬到池前沿时，旧头部槽被改写成 `MV_ARR`，`ival` 是**新句柄**（`mv_dict_set` 拷贝分支的最后一件事）。`mv_arr_get`、`mv_dict_get`、`mv_dict_set` 都先调 `mv_arr_live`，`mv_len` 没有 —— 于是把新句柄当成了 item 数，字典臂还按 `/2` 除了一次。
+
+### 三、两条判据
+
+| 用例 | 语句 | 红读数（`c53cdc5`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_len_after_a_dict_moves` | `d = {"a": 1}`；`s = 1, 2`；`d["b"] = 2`；`say len(d)`；`say d["a"]`；`say d["b"]` | interp `2/1/2`，route `3/1/2`（头 7，`7/2`） | interp 与 route 都是 `2/1/2` |
+| `mir_len_after_an_array_moves` | `a = [1, 2]`；`b = [3, 4]`；`i = 2`；`a[i] = 9`；`say a[i]`；`say len(a)`；`say b[0]` | interp `9/3/3`，route `9/7/3`（同一个头，数组臂不除） | interp 与 route 都是 `9/3/3` |
+
+两条**编译通过、红在答案上**（`mir=accepted`），红读数是 `IR-MIR-PROBLEM` 整行，两边输出印在同一行。一个只修字典臂的实现会在数组那条红（`7` 对 `3`），只修数组的会在字典那条红（`3` 对 `2`）。
+
+### 四、读数（本树 `ad91878`）
+
+```
+IR-MIR-ALLOCS|case=mir_len_after_a_dict_moves|reported=yes|allocs=2|freed=2|live=0|bytes=768|expect-allocs=2|expect-bytes=768|ok=yes
+IR-MIR-MIR-ONLY|case=mir_len_after_a_dict_moves|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=320a310a320a
+IR-MIR-ALLOCS|case=mir_len_after_an_array_moves|reported=yes|allocs=2|freed=2|live=0|bytes=768|expect-allocs=2|expect-bytes=768|ok=yes
+IR-MIR-MIR-ONLY|case=mir_len_after_an_array_moves|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=390a330a330a
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|mir-only-cases=68|mir-only-same-as-interpreter=68
+IR-MIR-VERDICT|PASS|tree=ad91878...|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+两块 `2/768` = 容器块（池按 256 字节、翻倍到 16 槽）与搬移后的前沿块；**解引用句柄一行不分配**，所以修复前后这两个数不变，把 `mv_arr_live` 写成会分配的版本会在这里红。`stdout-hex` 尾巴 `320a310a320a` 是 `2\n1\n2\n`、`390a330a330a` 是 `9\n3\n3\n` —— 与解释器逐字节相同。`mir-only-cases` 66→68、覆盖语料 `accepted` 152→154 是新增两条用例的直接后果（合并树上重取），发射器不增删，`handles` 不动。
+
+### 五、一处更正：§10.128 五.4 的读数对来自两棵树
+
+五.4 记的是「`d[s]` 印 `7`、`len` 印 `2`，解释器 `nil` / `1`」。那对数字**从来没有在同一棵树上同时成立**：`7` 是 §10.128 **之前**的树（集合键按内容命中，于是写是覆盖而不是追加、字典根本没搬），`2` 是 §10.128 **之后**的树（键不再命中，追加把字典搬到前沿，`len` 读到头）。同一段把语句顺序也写反了：搬移只在**字典先建、集合后建**（写时字典不在前沿）这个顺序下发生，而五.4 写的 `s = 1, 2` 在前、`d = {}` 在后**不会搬移**。今天实测（`c53cdc5`）：先建字典、后建集合的那颗印 `nil` / `2`，修后 `nil` / `1`；五.4 写的顺序在 `c53cdc5` 上本来就印 `nil` / `1`。所以缺陷是真的、债也真欠着，**要更正的只是那一段的证据**；判据与读数以本节为准。
+
+### 六、边界
+
+1. **只有 ARR 与 DIC 会留转发头** —— 它们是唯二能增长的区域；SET 的头部是 `MV_INT`，`mv_arr_live` 在集合句柄上是 no-op，所以集合臂的读数字节未动。
+2. **数组那条用变量下标**（`i = 2; a[i] = 9`）：常量越界下标在翻译期就被拒（`why=index-out-of-range-constant`，它本身是另一格的判据），所以这条判据存在的理由之一就是绕开那道拒译、让写臂真的走搬移分支。
+3. **不修解释器**：解释器的 `len` 读的是 `ArrayObj`/`SetObj` 自己的计数，句柄搬移只是它内部数组在动，本来就不会读到下标。
