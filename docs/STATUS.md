@@ -6400,3 +6400,78 @@ IR-AOT-MIR-UNEXECUTED|ops=(none)
 ### 六、为什么不一并做「集合写入」
 
 `OP_SET_ADD`/`OP_SET_INTERVAL` 在发射侧就有形状问题（`r3` 是区间计数不是值），而集合**作元素**要复刻的 `vm_set_add_comp` 是「两次合并」不是一个赋值；那两格属于「容器写入」家族（数组写入 `OP_INDEX_SET` 已做、字典写入未做），合并顺序已在 `docs/BOARD.md` 的待办里。把它们塞进本格会让五条判据同时验两件事，红时分不清是谁错。
+
+## §10.127 集合相等按内容（aot-mir，A 类第十六项）
+
+### 一、来源与日期
+
+来源是 §10.125 留下的那一格：那条路线的 `mv_eq` 没有 `MV_SET` 行，`s == t` 把集合交给 `mv_as_nv`、在**运行期** abort，而解释器的 `L_EQ` 对 SET/SET 对按**内容**答。判据笔 **49f6fc5**（`aot-mir: set equality -- six criteria, red, before the implementation`），实现笔 **217cc2a**（`aot-mir: set equality by CONTENT (sets answer, and the agreement with a defect is stated)`），日期 **2026-11-09**。
+
+先红的读数**由本次执行体重跑**，不抄 commit message：把 `src/compilation/aot_mir.c` 还原成 49f6fc5 的内容、`cmake --build build --target aot-mir`，再跑 `python3 tools/aot_mir.test.py --build build`。两笔只差这一个文件（`git diff --stat 49f6fc5..217cc2a` 的唯一一行就是 `src/compilation/aot_mir.c`），所以这就是判据笔的实现。六条全部 `IR-MIR-EXEC-DIFF`：**translate 接受（`mir=accepted`）、运行时 SIGABRT、stdout 空**；读数里的 `rc=-6` 是 Python 对 SIGABRT 的记法，shell 看到的是 134。
+
+```
+IR-MIR-MIR-ONLY|case=mir_set_eq_same|mir=accepted|cc=ok|exec=diff|rc=-6|bytes=0|stdout-hex=
+IR-MIR-EXEC-DIFF|case=mir_set_eq_same|interp-rc=0|mir-rc=-6|interp-out=b'true\nfalse\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_set_eq_diff|interp-rc=0|mir-rc=-6|interp-out=b'false\ntrue\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_set_eq_mixed_order|interp-rc=0|mir-rc=-6|interp-out=b'true\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_set_eq_int_vs_float|interp-rc=0|mir-rc=-6|interp-out=b'false\ntrue\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_set_eq_vs_scalar|interp-rc=0|mir-rc=-6|interp-out=b'false\ntrue\nfalse\nfalse\n'|mir-out=b''
+IR-MIR-EXEC-DIFF|case=mir_set_eq_dedup|interp-rc=0|mir-rc=-6|interp-out=b'true\n2\n'|mir-out=b''
+IR-MIR-PROBLEM|mir_set_eq_same: the MIR route printed b'' rc=-6, the interpreter b'true\nfalse\n' rc=0
+```
+
+红是**有名字的红**：失败模式是 `exec=diff` 加一条 `IR-MIR-PROBLEM`，而且解释器的答案（`interp-out=`）与崩溃读数印在同一行 —— 「这一格该答什么」在红的时候就已经固定，不是实现完再补的期望值。`mir=accepted` 这一半同样重要：这条路线**编译通过**，红在运行期，所以它不是「发射器还不认识这个 opcode」那种红。
+
+### 二、`L_EQ` / `set_equal` 的语义
+
+- **`L_EQ` 是一次二分**：只有 SET/SET 才进 `set_equal`，其余全部落 `val_eq`。`src/vm/vm.c:3539-3544` [obs: 217cc2a]
+- **`set_equal` 先按 kind 分流**：kind1 比名字、kind2 比区间、kind0 的单 comp 等于 kind2（`src/vm/vm.c:2221-2235` [obs: 217cc2a]）；kind0 对 kind0 才比内容，且先要求两半边**各自的计数**相等。`src/vm/vm.c:2236` [obs: 217cc2a]
+- **半边比半边**：i64 半边只在 `a->i64` 里找 `b->i64`（按值，`src/vm/vm.c:2237-2241` [obs: 217cc2a]）；items 半边只在 `a->items` 里找 `b->items`（按 `val_eq`，`src/vm/vm.c:2242-2246` [obs: 217cc2a]）；comps 半边对 comps（`src/vm/vm.c:2247-2251` [obs: 217cc2a]）。**没有一条跨半边的比较**，所以 `{1}` 与 `{1.0}` 不相等。
+- **`val_eq` 的行里没有 `VAL_SET`**：INT/FLOAT/STRING/BOOL/NIL/ARRAY/DICT/FUNCTION 八行（`src/vm/vm.c:413-428` [obs: 217cc2a]），末尾的数值强转只覆盖 INT/FLOAT/BOOL，其余一律 `false`（`src/vm/vm.c:429` [obs: 217cc2a]）。ARRAY 与 DICT 是**身份**（`ival`，`src/vm/vm.c:421` [obs: 217cc2a]），SET 连身份行都没有 —— §10.125 那句「身份短接会答错」的出处。
+- **本路线**：`mv_eq` 的 set 分支放在数组/字典身份行**之前**（`src/compilation/aot_mir.c:790-793` [obs: 217cc2a]，身份行在 `src/compilation/aot_mir.c:794-801` [obs: 217cc2a]）；`mv_ne` 的对应臂在 `src/compilation/aot_mir.c:809` [obs: 217cc2a]；`mv_set_eq` 在 `src/compilation/aot_mir.c:1282-1300` [obs: 217cc2a]：两侧总槽数先相等（`src/compilation/aot_mir.c:1285` [obs: 217cc2a]），然后 INT 只配 INT 按值（`src/compilation/aot_mir.c:1291-1292` [obs: 217cc2a]）、非 INT 只配非 INT 用 `mv_eq`（`src/compilation/aot_mir.c:1293-1294` [obs: 217cc2a]）。`mv_set_new` 把元素拍平成 `[count][items...]`，所以「半边」由**元素自己的 tag** 决定，不是索引；「不做跨半边强转」在实现里就是那两个 type 判断。
+
+### 三、六条判据（都先红后绿，都比对 stdout 字节）
+
+| 用例 | 语句 | 它钉住什么 |
+|---|---|---|
+| `mir_set_eq_same` | `s = 1, 2`；`t = 2, 1`；`say s == t`；`say s != t` | **顺序无关**：按池元素顺序比的实现会答 false |
+| `mir_set_eq_diff` | `s = 1, 2`；`t = 1, 3` | 不等方向，且 `!=` 与 `==` 并列：硬编码一个答案的实现露馅 |
+| `mir_set_eq_mixed_order` | `s = 1.0, 1`；`t = 1, 1.0` | 两种拼写里 int 都在一半、float 在另一半 ⇒ **true**；它是「一个统一数值相等」的反证 |
+| `mir_set_eq_int_vs_float` | `s = 1, 2`；`t = 1.0, 2.0` | 整半边两个元素 vs items 半边两个元素 ⇒ `set_equal` 答 0；跨半边强转会答 true，这一条把它分开 |
+| `mir_set_eq_vs_scalar` | `s == 1`、`s != 1`、`s == [1, 2]`、`[1, 2] == s` | 集合对非集合是 **false 而不是 void**（读数 false/true/false/false），走 `mv_as_nv` 的实现会崩 |
+| `mir_set_eq_dedup` | `s = 1, 1, 2`；`t = 1, 2`；`say s == t`；`say len(s)` | 相等比的是**去重后**的内容；`len` 同时钉住去重（会印 3 的实现在这里红） |
+
+### 四、读数（本树 `217cc2a`）
+
+```
+IR-MIR-ALLOCS|case=mir_set_eq_same|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_eq_diff|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_eq_mixed_order|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_eq_int_vs_float|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_eq_vs_scalar|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_set_eq_dedup|reported=yes|allocs=1|freed=1|live=0|bytes=256|expect-allocs=1|expect-bytes=256|ok=yes
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|perturbed=5|perturb-stdout-changes=5|mir-only-cases=64|mir-only-same-as-interpreter=64
+IR-MIR-VERDICT|PASS|tree=217cc2a1f1d16e94a91018f9551c77558a139d15|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR-LOWERING|handles=45|of=67|unknown=22|table=45|emitter=45|reported=45|agree=yes
+IR-AOT-MIR|accepted=150|of=29|covered=29|missing=0|refused=0|same-as-interpreter=150|prelude-excluded=yes|beyond-ast-denominator=16
+IR-AOT-MIR-UNEXECUTED|ops=(none)
+```
+
+六行 `allocs=1|freed=1|live=0|bytes=256` 是**同一个读数的六种形状**：相等臂自己不分配（它只遍历两个池），这 1 块 256 字节是字面量本身的池。**这个读数的来历要写出来**：`mir_set_eq_int_vs_float` 最初的拼法是单元素字面量 `s = 1` / `t = 1.0`，实测 `allocs=0|bytes=0` —— 因为单元素集合字面量**被常量折叠成了标量**，那对程序比的是两个普通值、不是两个集合。所以这一条改成两个元素，行表里的 1 是实测重取的值，不是推导。`tools/aot_mir.test.py:371-381` [obs: 217cc2a]
+
+### 五、不覆盖的边界（每条都有实测读数）
+
+1. **集合对数组的 `in`：这里的一致是一致于缺陷。** 解释器 `s in arr` 的分支从 `res = 0` 起步、只遍历 `sa->items`、**从不置 1**（`src/vm/vm.c:2402-2423` [obs: 217cc2a]），所以答案恒 false —— 我的实测：`s = 1, 2` 对 `[1, 2]` 与 `[1, 9]` 全 false，`t = 1.0, 2.0` 对两者也全 false；反向 `a in s` 是 true。加上 set 相等臂之后，这条路线在这些例子上**也**答 false（`build/aot-mir translate` + `cc` 后逐行比对，六行与解释器逐字节相同）。所以正确的句子是「与解释器一致」，**不是「已答对」**：`s in [1, 2]` 的正确答案是 true，两边都没给。
+2. **集合相等只看两半边**：`1, 2` 与 `1.0, 2.0` 不相等（i64 半边两个元素 vs items 半边两个元素），与解释器 `set_equal` 一致，`mir_set_eq_int_vs_float` 钉的就是这条。**单元素拼法不存在**：`s = 1` 落成标量（见上面 `allocs=0`），所以「`{1}` 与 `{1.0}`」在这个路线里根本构不成两个集合 —— 能说这句话的只有 `len` ≥ 2 的拼法。
+3. **集合作 dict key：本格让它从「停」变成了「答得不一样」**，这一条与 §10.125 写的不同，按实测改。`say s`、`s + 1`、`s < 1`、`not s` 仍是 abort（实测 rc 134；`not s` 的同时解释器印 false），这条没变。但 `d[s] = 7; say d[s]` **不再 abort**：这条路线的 dict 键比较就调 `mv_eq`（`src/compilation/aot_mir.c:1460-1470` [obs: 217cc2a] 的 `mv_dict_get`、`src/compilation/aot_mir.c:1762-1770` [obs: 217cc2a] 的 `mv_dict_set`），所以 set 键现在按**内容**命中 —— 实测 `d[s] = 7; say d[s]` 在实现笔上印 **7**，解释器印 **nil**（`len(d)` 两边都是 1）。解释器那一半是它自己的缺陷：`vm_dict_set` 收下键，而 `dict_hash_find` 用 `val_eq` 比键（`src/vm/vm.c:1144` [obs: 217cc2a]），`val_eq` 对 set 是 false（见二节），所以它插入的键永远查不回来。**这一条是 §10.127 引入的不一致，不写成「已答对」**；消掉它要比 `val_eq` 或 dict 键的语义先定下来，那是 dict 那格的事。
+4. **kind1 / kind2 集合与 `comps`**：`set_equal` 对名字集、区间集、单一 comp 与 kind2 的相等都有行（`src/vm/vm.c:2224-2235` [obs: 217cc2a]），这条路线**造不出**这些集合（`mv_set_new` 只产 kind0 的扁平槽），所以那些行在本格不可达，也没有判据；`comps` 半边同样不可达。
+   `[obs: 217cc2a]`
+
+### 六、为什么不在 `mv_eq` 里抄 dict 的身份短接
+
+字典那格（§10.121）用的行是 `a.type == b.type && a.ival == b.ival`，出处是 `val_eq` 对 dict 就是身份（`src/vm/vm.c:421` [obs: 217cc2a]）。**这一格不能借这一行**，理由不是「风格不同」，是同一行在两种类型上给出相反的对错：
+
+- `val_eq` 对 dict 有身份行，对 set **没有**行 ⇒ 对 set 一律 `false`（`src/vm/vm.c:429` [obs: 217cc2a]）。照抄身份行，等于把一个「两集合内容相同」的问题换成「两个池下标相同」的问题：`s = 1, 2` 与 `t = 2, 1` 落在不同下标，答案 false —— **错答**，不是停。停至少能让 `exec=diff` 喊出来；错答在 `exec=same` 的外衣下也能活着（它只是没被这条判据看见），而在这里它连外衣都穿不上。
+- 更直接的一条：`mir_set_eq_same` 钉的就是「两份拼写、同一内容」—— 身份实现在这一条上直接红（两个集合字面量必然在不同池下标），`mir_set_eq_mixed_order` 也红。**这不是「防守得对但测不出来」的情形**，是有一条判据正对着它。§10.121 说 dict 的身份行「防守得对但测不出来」，是因为 dict 的两个句柄相等只在同一变量被赋两次时出现；集合不一样：内容相等是集合字面量的常态。
+
+所以这一格借的是**内容**：`set_equal` 比什么（两半边各自的计数 + 半边对半边），`mv_set_eq` 就比什么；它比 `set_equal` 少的是 kind1/kind2/comps（见五节第 4 条），多的是没有 —— 这不是省掉的语义，是造不出来的输入。

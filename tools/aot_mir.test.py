@@ -363,6 +363,22 @@ ALLOCS_EXPECT = {
     "mir_set_new_dedup": (1, 256),
     "mir_set_new_membership": (2, 768),
     "mir_set_new_register_elements": (1, 256),
+    # The equality group builds its sets exactly the way the literals above do
+    # -- one pool block on first use, both operands fitting in MV_SLOTS -- so
+    # every one of the six measures allocs=1|freed=1|live=0|bytes=256.  These
+    # numbers are MEASURED from each program's own IR-MIR-ALLOCS line and not
+    # derived from the set cases above: the first spelling of
+    # mir_set_eq_int_vs_float used single-element literals, which constant-fold
+    # to plain values, and it measured allocs=0|bytes=0 -- which is why the case
+    # is spelled with two elements and why its row here says 1 rather than 0.
+    # The equality arm itself allocates nothing: it walks the two pools, so a
+    # case that allocates here is allocating its literals, not its comparison.
+    "mir_set_eq_same": (1, 256),
+    "mir_set_eq_diff": (1, 256),
+    "mir_set_eq_mixed_order": (1, 256),
+    "mir_set_eq_int_vs_float": (1, 256),
+    "mir_set_eq_vs_scalar": (1, 256),
+    "mir_set_eq_dedup": (1, 256),
     # The throw pair ends on an exception too, so like the cases just above
     # their reading is `reported=no|why=rc=1` and no count is consulted; listed
     # so the table says so on purpose.  The numbers are MEASURED from the
@@ -1326,6 +1342,57 @@ MIR_ONLY = [
      'w = 1.0, 1\nsay len(w)\nsay 1 in w\nsay 1.0 in w\n'),
     ("mir_set_new_register_elements",
      'a = 1\nb = 2\ns = a, b\nsay len(s)\nsay 2 in s\nsay 4 in s\n'),
+    # SET EQUALITY.  `L_EQ` (src/vm/vm.c:3539-3543) sends SET/SET to
+    # set_equal() (src/vm/vm.c:2221-2260), which compares the two halves
+    # SEPARATELY -- the sorted i64 half against itself, the item half against
+    # itself -- and answers 0 when the COUNT of either half differs.  Everything
+    # else (a set against a number, a set against an array) falls to val_eq()
+    # (src/vm/vm.c:413-430), which has no VAL_SET row and answers FALSE.
+    #
+    # Why each line is here, one by one:
+    #   mir_set_eq_same          two spellings of one content, `2, 1` against
+    #                            `1, 2`.  A route comparing pool elements IN
+    #                            ORDER answers FALSE here; the interpreter says
+    #                            TRUE.
+    #   mir_set_eq_diff          the not-equal direction, with `!=` beside `==`
+    #                            so a route that hardcodes one answer shows.
+    #   mir_set_eq_mixed_order   `1.0, 1` against `1, 1.0`: the int lands in one
+    #                            half and the float in the other in BOTH, so this
+    #                            is TRUE -- it is the case that kills "one numeric
+    #                            equality for everything", which the next case
+    #                            says must not happen.
+    #   mir_set_eq_int_vs_float  `1, 2` against `1.0, 2.0` -- two elements on the
+    #                            i64 half versus two on the item half, so
+    #                            set_equal answers 0.  This is the half-for-half
+    #                            rule and NOT a numeric coercion: comparing
+    #                            values across the halves would answer TRUE here
+    #                            (1 pairs 1.0 and 2 pairs 2.0 by val_eq), which
+    #                            is the wrong shape the class check exists to
+    #                            refuse.  Two spellings of one element are not the
+    #                            discriminator: a single-element set literal is
+    #                            constant-folded to a plain value, so `s = 1` and
+    #                            `t = 1.0` compare as numbers on both sides.
+    #   mir_set_eq_vs_scalar     a set against a number and against an array: three
+    #                            FALSE answers that must not be an abort.  val_eq
+    #                            has no set row, so a route that runs a set through
+    #                            mv_eq as a dict (identity) or through mv_as_nv
+    #                            prints something else or exits 134.
+    #   mir_set_eq_dedup         `1, 1, 2` against `1, 2`: equality is over the
+    #                            DEDUPED content, so the count each half holds is
+    #                            what makes them equal.
+    ("mir_set_eq_same",
+     's = 1, 2\nt = 2, 1\nsay s == t\nsay s != t\n'),
+    ("mir_set_eq_diff",
+     's = 1, 2\nt = 1, 3\nsay s == t\nsay s != t\n'),
+    ("mir_set_eq_mixed_order",
+     's = 1.0, 1\nt = 1, 1.0\nsay s == t\n'),
+    ("mir_set_eq_int_vs_float",
+     's = 1, 2\nt = 1.0, 2.0\nsay s == t\nsay s != t\n'),
+    ("mir_set_eq_vs_scalar",
+     's = 1, 2\nsay s == 1\nsay s != 1\n'
+     'a = [1, 2]\nsay s == a\nsay a == s\n'),
+    ("mir_set_eq_dedup",
+     's = 1, 1, 2\nt = 1, 2\nsay s == t\nsay len(s)\n'),
 
 ]
 
