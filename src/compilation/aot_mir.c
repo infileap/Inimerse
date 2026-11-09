@@ -131,12 +131,16 @@ static const char *const kMirValBlock =
 "                      HANDLE, which is the job Value.ptr gives it -- it carries\n"
 "                      the ImClosureFunction there (value_set(..., VAL_FUNCTION,\n"
 "                      ins.r2, 0, NULL, fn), src/vm/vm.c:4040-4054) -- and this\n"
-"                      cell emits NULL in it because only the NOCAPTURE form is\n"
-"                      lowered: a capture count above zero is still REFUSED, by\n"
-"                      name, in prescan (see that arm's note).  Printing is\n"
+"                      route fills it with the environment mv_fun_cap allocates\n"
+"                      when the capture count is above zero (NULL for the\n"
+"                      capture-free form, and NULL is also what a container gets\n"
+"                      when it is called as a plain function: its capture reads\n"
+"                      then answer nil, which is exactly what the interpreter's\n"
+"                      no-environment read answers).  Printing is\n"
 "                      `<function>` (src/vm/vm.c:1379) and truthiness is true\n"
 "                      (vm_truthy's `default: return 1`, src/vm/vm.c:400), which\n"
-"                      is the whole of what mir_closure_value_nocapture asks.\n"
+"                      is the whole of what mir_closure_value_nocapture and\n"
+"                      mir_closure_capture_read ask.\n"
 "                      DEFINED HERE, above every reader, for the reason MV_ARR's\n"
 "                      note gives. */\n"
 "\n"
@@ -346,7 +350,8 @@ static const char *const kMirValBlock =
 "}\n"
 "\n"
 "/* MV_FUN -- the first value in this route that is not DATA, and the whole of\n"
-" * the NOCAPTURE function form.  Same structure as the notes around it: WHY IT\n"
+" * the function form this route lowers: capture-free values and the ONE-CAPTURE\n"
+" * read form.  Same structure as the notes around it: WHY IT\n"
 " * EXISTS / WHAT IT ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION.\n"
 " *\n"
 " * WHY IT EXISTS.  `f = () -> 42` / `say f` / `if f {}` / `g = f` / `say g()`\n"
@@ -361,7 +366,7 @@ static const char *const kMirValBlock =
 " * docs/DECFY_DESIGN.md:583 is the A' ruling, and both hold here by\n"
 " * construction (the six _Static_assert lines above are the executable claim).\n"
 " *\n"
-" * WHAT IT ADDS, exactly four pieces and nothing else:\n"
+" * WHAT IT ADDS, exactly five pieces and nothing else:\n"
 " *   - `#define MV_FUN 9` (= VAL_FUNCTION, the number the interpreter gives it)\n"
 " *     and this constructor.  ival is the MODULE INDEX of the container, which\n"
 " *     is NOT the bytecode operand: a lambda is registered into mainBC\n"
@@ -372,24 +377,45 @@ static const char *const kMirValBlock =
 " *   - arms in mv_tru (true, vm_truthy's `default: return 1`) and in mv_say\n"
 " *     (`<function>`, src/vm/vm.c:1379).\n"
 " *   - mv_callv, the dispatch table emitted only for a module that actually\n"
-" *     moves a function value, and the two emitter arms that fill and read it.\n"
-" * ptr stays 0 for the same reason mv_from_nv's ptr stays 0: nothing this route\n"
-" * emits has a capture environment to put there YET.\n"
+" *     moves a function value, and the function-value emitter arms that fill and\n"
+" *     read it (OP_MAKE_FUNC, whose r3 is a CAPTURE COUNT consumed off the\n"
+" *     argument stack, and OP_LOAD_CAPTURE, whose r2 is an ENVIRONMENT SLOT and\n"
+" *     not a register -- both are R1-only rows in op_regs).\n"
+" *   - the CAPTURE ENVIRONMENT, the piece this cell adds: mv_fun_cap allocates\n"
+" *     one slot array per creation when the capture count is above zero,\n"
+" *     mv_capture reads a slot of it, and a container's signature carries a\n"
+" *     hidden leading `self` parameter when -- and ONLY when -- its body reads a\n"
+" *     slot inside the environment its creator built (see func_cap's note: a\n"
+" *     parameter on every container would move the generated text of programs\n"
+" *     that never touch a closure).\n"
+" * ptr is NULL for the capture-free form (there is nothing to point at) and,\n"
+" * above a capture count of zero, it is mv_fun_cap's environment -- the one\n"
+" * field that makes two values built by the same OP_MAKE_FUNC independent.\n"
 " *\n"
 " * WHAT IT DOES NOT COVER -- a boundary, deliberately, and the next grid's\n"
 " * payload:\n"
-" *   - A CLOSURE (any capture count above zero).  prescan REFUSES it by name\n"
-" *     instead of emitting a function whose ptr would be a lie; OP_LOAD_CAPTURE\n"
-" *     is still not in op_regs.  The four criteria that need a per-frame\n"
-" *     environment and capture passing stay red BY DESIGN (see the criteria\n"
-" *     commit's own message), and this tag is the slot they will hang the\n"
-" *     environment handle on: ptr is where an MvClosureEnv* will go, exactly as\n"
-" *     Value.ptr holds the ImClosureFunction.\n"
+" *   - A CLOSURE THAT READS A CAPTURE ITSELF PRODUCED BY A CLOSURE.  This\n"
+" *     bullet used to say such a program was out of reach; it is MEASURED to\n"
+" *     be answered by this block instead: `outer(1)` returning `b -> (c ->\n"
+" *     a + b + c)` prints 6 for `g(2)(3)`, the interpreter's own number, because\n"
+" *     the compiler RE-LOADS the parent capture as an ordinary value before\n"
+" *     the inner OP_MAKE_FUNC (src/compiler/compiler.c:1297-1302), and that\n"
+" *     load is the same read this block already answers -- one environment\n"
+" *     per creation, no second mechanism.  What is still out of reach is\n"
+" *     stated below and is about FUNCTIONS, not about capture depth.\n"
+" *     What IS answered, and was the point of the environment: every creation\n"
+" *     site gets its OWN environment (copied from the argument stack at\n"
+" *     OP_MAKE_FUNC, as the interpreter's L_MAKE_FUNC copies it), and a capture\n"
+" *     read inside a slot the environment has answers that value even after\n"
+" *     the creating frame has returned.\n"
 " *   - Comparing two functions (`f == g`, `f != g`).  mv_eq has no MV_FUN row,\n"
 " *     so it falls to nv_eq and mv_as_nv stops the program; no accepted stream\n"
-" *     reaches it (the criterion only prints, tests truthiness, copies and\n"
-" *     calls), and answering it needs val_eq's row to be read first.  A LOUD\n"
-" *     stop, never a made-up false.\n"
+" *     reaches it (the criteria only print, test truthiness, copy and\n"
+" *     call), and answering it needs val_eq's row to be read first.  A LOUD\n"
+" *     stop, never a made-up false.  A capture READ whose slot is outside the\n"
+" *     environment is not in this list either, and is not a gap: the interpreter\n"
+" *     answers nil there (src/vm/vm.c:4033-4039) and the emitting arm answers\n"
+" *     mv_nil() for exactly that shape.\n"
 " *   - Ordering, arithmetic, container membership on a function.  Same class:\n"
 " *     mv_as_nv stops the program rather than inventing a number.\n"
 " *\n"
@@ -400,11 +426,13 @@ static const char *const kMirValBlock =
 " * block outside mv_tru/mv_say/mv_callv's arms.  Deleting it earlier puts\n"
 " * OP_MAKE_FUNC back to zero answer for a program the interpreter answers.\n"
 " *\n"
-" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case\n"
-" * mir_closure_value_nocapture compares stdout BYTES and the exit code against\n"
-" * the interpreter over `say f` / `if f` / `say g()`; its ALLOCS reading is\n"
-" * 0|0|0|0 because a function value is a tag plus an index and nothing is\n"
-" * allocated for one. */\n"
+" * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases\n"
+" * mir_closure_value_nocapture and mir_closure_capture_read compare stdout\n"
+" * BYTES and the exit code against the interpreter: the first over `say f` /\n"
+" * `if f` / `say g()` (its ALLOCS reading is 0|0|0|0 because a capture-free\n"
+" * function value is a tag plus an index and nothing is allocated for one), the\n"
+" * second over `make(10)(5)` = 15 and `make(3)(7)` = 10, which differ only if\n"
+" * each value carries its own environment (2 allocations, 2*32 bytes). */\n"
 "static inline MirVal mv_fun(int idx) {\n"
 "    MirVal r;\n"
 "    r.type = MV_FUN;\n"
@@ -2340,6 +2368,22 @@ static int op_regs(int op) {
        (see that block's note). */
     case OP_MAKE_FUNC: return R1;
     case OP_CALL_VALUE: return R1 | R2;
+    /* THE CAPTURE READ -- one register and one slot, and only the first is a
+       register.  Read off the handler, not guessed: OP_LOAD_CAPTURE's whole
+       body is `if (!t->closure_env || ins.r2 < 0 ||
+       (size_t)ins.r2 >= im_closure_env_size(t->closure_env)) R[r1] = nil;
+       else value_assign(&R[r1], env_get(env, r2))` (src/vm/vm.c:4033-4039), so
+       r1 is the DESTINATION and r2 is an ENVIRONMENT SLOT INDEX -- never
+       v[r2].  The compiler emits it as emit(comp->curBC, OP_LOAD_CAPTURE, r, ci,
+       0) (src/compiler/compiler.c:547), ci being the lambda's own capture
+       number.  It has NO case label in prescan's switch on purpose: that
+       switch's labels are the opcodes whose EMITTER reads a pool / global /
+       function / label index, and this arm reads a slot of the environment
+       instead (the bound it needs is against a count the bytecode does not
+       carry -- see func_cap's note -- and a slot outside it is the interpreter's
+       own nil, answered by the arm rather than refused).  A label here would be
+       read as a dead check by tools/aot_mir_cover.test.py. */
+    case OP_LOAD_CAPTURE: return R1;
     /* r1 is the RESULT register; r2 is a STRING-POOL INDEX naming the builtin
        (compiler.c:464) and r3 is the argument count, so neither is a register.
        Before 10.123 this opcode had no entry and every builtin call was counted
@@ -3004,29 +3048,38 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                nodes[0].child_ids[fidx] -- the same main-relative slot OP_CALL_FUNC
                above reads from the same table, which is why the bound is
                root->func_count and not node->something.
-               r3 is the CAPTURE COUNT, and this cell lowers ONLY the NOCAPTURE
-               form: a nonzero count is REFUSED BY NAME here rather than emitted
-               with a ptr that would have no environment behind it.  That refusal
-               is what keeps the four capture criteria red, and it is the seam the
-               next grid opens: when a per-frame environment exists, this arm
-               loses the `!= 0` test and r3 becomes a slot count consumed off the
-               argument stack exactly as OP_NEW_ARRAY's r3 is above (the compiler
-               pushes one OP_PUSH_REG per capture just before this instruction).
-               Until then the count must not be silently dropped: emitting
-               mv_fun() with no env would answer `f(5)` against a function whose
-               body reads OP_LOAD_CAPTURE -- an accepted, compiled, killed
-               program, the class this block refuses to print. */
+               r3 is the CAPTURE COUNT and, since the capture-read grid, it is
+               an ARGUMENT-STACK COUNT: the compiler pushes one OP_PUSH_REG per
+               capture immediately before this instruction
+               (src/compiler/compiler.c:1297-1303), and the emitter reads those
+               slots back as mvargs[asp-ncap..asp-1] exactly the way OP_NEW_ARRAY
+               reads its elements.  So it is consumed here, bounded against the
+               stack rather than dropped -- a count the emitted C could not index
+               is a REFUSAL, not an unbounded read.  The old blanket refusal
+               for any nonzero count is gone for the same reason the environment
+               exists: mv_fun_cap builds it and the container's hidden self
+               parameter reads it.
+               One thing is still checked and deliberately NOT here: whether a
+               container reads a slot INSIDE the environment it was created with.
+               That is func_cap's job (it is a cross-container fact, not a per
+               instruction one), and a slot outside the environment is the
+               interpreter's own nil, so the emitting arm answers it instead of
+               refusing it. */
             case OP_MAKE_FUNC: {
                 int fidx = in->a;
                 int ncap = ir_insn_r3(in);
                 if (fidx < 0 || fidx >= root->func_count)
                     return bad("container=%d insn=%d function index %d out of range (count=%d)",
                                f, i, fidx, root->func_count);
-                if (ncap != 0)
-                    return bad("container=%d insn=%d function index %d captures %d value(s);"
-                               " only the capture-free function form is lowered (a capture"
-                               " needs a per-frame environment, which this route does not"
-                               " build yet)", f, i, fidx, ncap);
+                if (ncap < 0 || ncap >= REG_LIMIT)
+                    return bad("container=%d insn=%d function index %d capture count %d out of range",
+                               f, i, fidx, ncap);
+                if (asp < ncap)
+                    return bad("container=%d insn=%d function index %d captures %d value(s)"
+                               " but the argument stack holds %d: the compiler pushes one"
+                               " register per capture before this instruction",
+                               f, i, fidx, ncap, asp);
+                asp -= ncap;
                 break;
             }
             case OP_PUSH_REG:
@@ -3089,6 +3142,85 @@ static int container_nregs(const IrFunc *fn, int argc) {
     if (n < argc + 1) n = argc + 1;   /* parameters live in registers 1..argc */
     if (n < 1) n = 1;
     return n;
+}
+
+/* THE CAPTURE TABLE: how many values a container was created with, and whether
+   it reads any of them.  Same structure as the notes around it: WHY / WHAT IT
+   ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED BY.
+
+   WHY IT EXISTS.  The environment is built by the CREATOR (OP_MAKE_FUNC, whose
+   r3 is the count) and read by the CONTAINER (OP_LOAD_CAPTURE, whose r2 is a
+   slot), so the two facts live in two different instruction streams and one of
+   them has to be looked up ACROSS the module: a container's signature carries
+   the hidden `self` parameter only when a creation site gives it an
+   environment AND its body reads a slot inside that environment.  Without the
+   lookup the route would have to put `self` on EVERY container -- which moves
+   the generated text of every accepted program, the 86-case corpus included,
+   for a parameter those programs never use -- or on none, leaving a captured
+   read no answer.
+
+   WHAT IT ADDS.  func_cap returns the capture count of the ONE
+   OP_MAKE_FUNC that builds this container: -1 when no instruction in the
+   module creates it (a plain `func` container, or a value only reachable
+   through an opcode this route counts not-yet), and -2 when two creation
+   sites disagree -- which the compiler cannot produce (one lambda literal has
+   one capture count) and which is therefore a refusal at the emitting site
+   rather than a guess here.  func_reads_capture is the predicate the
+   signature follows: an environment exists (cap > 0) and the body reads a
+   slot BELOW its size, so the emitted read can never index past the slots
+   mv_fun_cap allocated.
+
+   WHAT IT DOES NOT COVER.  A container created WITH captures whose body reads
+   none keeps the plain signature: the environment is still built, because
+   the creator cannot see the callee's body and dropping it would need the
+   same scan answered in the opposite direction (one table, one direction,
+   the cheap one).  A read whose slot is OUTSIDE the environment is not
+   covered here either, and it is not a gap: the interpreter answers nil for
+   it (src/vm/vm.c:4033-4039 bounds the slot against im_closure_env_size), so
+   the emitting arm answers mv_nil() for exactly that shape and the two agree
+   byte for byte.
+
+   DELETE CONDITION (decidable).  When the module carries each container's
+   capture count directly (a field beside `argc`, filled by the compiler that
+   already knows it), these two become field reads and the scan goes away in
+   the same commit; the test is mechanical: no OP_MAKE_FUNC walk in this file
+   outside the emitter's own arm.
+
+   MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case
+   mir_closure_capture_read: `make(10)` then f(5) prints 15 and `make(3)` then
+   g(7) prints 10, which can only be right if the slot read came from the
+   value's OWN environment; mir_closure_value_nocapture keeps cap == 0, so its
+   signature and its generated text do not move. */
+static int func_cap(const IrModule *m, const Node *nodes, int id) {
+    if (!m || !nodes || !nodes[0].child_ids || id <= 0 || id >= m->nfuncs) return -1;
+    int cap = -1;
+    for (int f = 0; f < m->nfuncs; f++) {
+        const IrFunc *fn = &m->funcs[f];
+        for (int i = 0; i < fn->ninsns; i++) {
+            const IrInsn *in = &fn->insns[i];
+            if (in->op != OP_MAKE_FUNC) continue;
+            int fidx = in->a;
+            if (fidx < 0 || fidx >= nodes[0].nchild) continue;
+            if (nodes[0].child_ids[fidx] != id) continue;
+            int ncap = (int)ir_insn_r3(in);
+            if (cap == -1) cap = ncap;
+            else if (cap != ncap) return -2;
+        }
+    }
+    return cap;
+}
+
+static int func_reads_capture(const IrModule *m, const Node *nodes, int id) {
+    int cap = func_cap(m, nodes, id);
+    if (cap <= 0) return 0;
+    const IrFunc *fn = &m->funcs[id];
+    for (int i = 0; i < fn->ninsns; i++) {
+        const IrInsn *in = &fn->insns[i];
+        if (in->op != OP_LOAD_CAPTURE) continue;
+        int32_t slot = ir_insn_r2(in);
+        if (slot >= 0 && slot < cap) return 1;
+    }
+    return 0;
 }
 
 static int emit_one(Ctx *c, Buf *b, int i) {
@@ -3439,72 +3571,124 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_CALL_FUNC: {
         int fidx = r1, res = r2, argc = w3;
         int callee = c->nodes[0].child_ids ? c->nodes[0].child_ids[fidx] : -1;
+        /* A callee that reads a capture slot has a hidden leading `self`
+           parameter (see func_cap's note).  Called BY NAME there is no function
+           VALUE to take the environment from, and the interpreter's answer for
+           that frame is a NULL environment -- every slot then reads nil
+           (src/vm/vm.c:4033-4039).  mv_nil() IS that environment: its ptr is
+           NULL, so no slot is ever read. */
+        int self = (callee > 0 && callee < c->m->nfuncs)
+                   ? func_reads_capture(c->m, c->nodes, callee) : 0;
         buf_fmt(b, "    v[%d] = %s(", res, callee >= 0 ? c->fnnames[callee] : "mv_missing_callee");
+        if (self) buf_str(b, "mv_nil()");
         for (int k = 0; k < argc; k++)
-            buf_fmt(b, "%smvargs[asp-%d]", k ? ", " : "", argc - k);
+            buf_fmt(b, "%smvargs[asp-%d]", (k || self) ? ", " : "", argc - k);
         buf_str(b, ");");
         if (argc > 0) buf_fmt(b, " asp -= %d;", argc);
         return 0;
     }
-    /* THE FUNCTION VALUE -- the first two arms that move a function as a VALUE
-       rather than naming a callee here.  Same structure as the notes around them:
-       WHY / WHAT IT ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED
-       BY.
+    /* THE FUNCTION VALUE -- the arms that move a function as a VALUE rather
+       than naming a callee here, and the capture read that makes such a value
+       more than an index.  Same structure as the notes around them: WHY /
+       WHAT IT ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED BY.
        *
-       * WHY.  Both opcodes were unknown to this route: `f = () -> 42` came back
-       * unsupported-opcode with OP_MAKE_FUNC:1,OP_CALL_VALUE:1, so a function
-       * could not even be PRINTED, let alone called through a variable.
+       * WHY.  Both function-value opcodes were unknown to this route at first:
+       * `f = () -> 42` came back unsupported-opcode with
+       * OP_MAKE_FUNC:1,OP_CALL_VALUE:1, so a function could not even be PRINTED,
+       * let alone called through a variable.  The next grid then hit the wall
+       * this cell crosses: a lambda whose body READS its capture was refused by
+       * name, because a function value with a ptr field but no environment behind
+       * it cannot answer `f(5)` -- and answering it with a made-up value is the
+       * class of error the route refuses to print.
        *
-       * WHAT IT ADDS.  Two arms and one dispatch table in aot_mir_translate:
-       *   - OP_MAKE_FUNC stores `mv_fun(<module index>)` in r1.  The index is
+       * WHAT IT ADDS.  Three arms and one dispatch table in aot_mir_translate:
+       *   - OP_MAKE_FUNC stores `<module index>` in r1.  The index is
        *     nodes[0].child_ids[fidx] -- the SAME table OP_CALL_FUNC's arm reads,
        *     and the same reason: every lambda is registered into mainBC
        *     (src/compiler/compiler.c:1246), so the bytecode's function index counts
-       *     main's children while this route numbers containers depth-first.
+       *     main's children while this route numbers containers depth-first.  A
+       *     capture count above zero goes through mv_fun_cap, which COPIES the
+       *     r3 slots that were pushed onto the argument stack into a fresh
+       *     environment and puts it in ptr; the count then comes off the stack
+       *     (`asp -= ncap`), exactly as OP_NEW_ARRAY's element count does.
+       *   - OP_LOAD_CAPTURE reads slot r2 of the calling value's environment
+       *     through the hidden `self` parameter.  r2 is NOT a register: it is
+       *     an index into the environment the value was built with.
        *   - OP_CALL_VALUE reads the callee OUT OF A REGISTER and lets mv_callv
        *     pick the C function, the runtime mirror of the interpreter's
        *     `call_fidx_override = R[ins.r1].ival` (src/vm/vm.c:4056-4057).  argc ==
        *     0 passes the literal 0 because a container with no OP_PUSH_REG never
-       *     declares mvargs -- this cell's criterion is exactly that shape.
+       *     declares mvargs -- the first criterion's shape.
+       *   - each call site is matched to the signature by func_reads_capture:
+       *     mv_callv passes the VALUE as `self` (it carries the environment),
+       *     and a by-name call passes mv_nil() (no environment, so every read
+       *     answers nil -- the interpreter's own answer for a NULL env).
        *
-       * WHAT IT DOES NOT COVER -- each a named refusal upstream, not a silent
-       * answer here:
-       *   - a capture count above zero.  prescan refuses it; the guard below is
-       *     the second lock (the emitter is never asked to emit an environment
-       *     pointer it cannot build).  The four capture criteria stay red BY
-       *     DESIGN.
+       * WHAT IT DOES NOT COVER -- each a named refusal upstream or a boundary
+       * stated in the MV_FUN note, not a silent answer here:
+       *   - a capture count the argument stack cannot supply, or one outside
+       *     REG_LIMIT.  prescan refuses it; the emitter's own bounds check is
+       *     the second lock.
        *   - a callee whose function index does not resolve in child_ids.  bad(), as
        *     OP_CONCAT's arm does, rather than the `mv_missing_callee` identifier
        *     OP_CALL_FUNC falls back to -- a function VALUE that cannot name itself
        *     is a translation defect, not a run-time answer.
+       *   - two creation sites that disagree about a container's capture count.
+       *     The compiler cannot produce it (one literal, one count); func_cap
+       *     answers -2 for it and OP_LOAD_CAPTURE's arm stops the translation
+       *     rather than reading a slot of an environment whose size is a guess.
        *   - an arity mismatch.  mv_callv's generated switch checks it and stops
        *     the program (see that emitter); the interpreter's own tolerance for
        *     filling missing arguments with nil is not reproduced here, and no
        *     accepted stream reaches it.
        *
-       * DELETE CONDITION (decidable).  These two arms are REPLACED, not deleted,
-       * by the grid that lowers captures: OP_MAKE_FUNC then also consumes r3
-       * slots off the argument stack and passes them to a real environment handle
-       * (ptr), and OP_CALL_VALUE is unchanged by that.  The test that the
-       * nocapture-only restriction is gone is mechanical: the `ncap != 0` test
-       * disappears from prescan's arm and ir_closure_capture_read stops being
-       * `mir=refused`.
+       * DELETE CONDITION (decidable).  The nocapture-only restriction this
+       * block used to carry is GONE, and its own test was mechanical: the
+       * `ncap != 0` refusal is no longer in prescan's arm, and
+       * mir_closure_capture_read went from mir=refused to accepted/same.  What
+       * would delete the REST is a per-container capture count in the module
+       * (then func_cap's scan goes, see its note) and a value-domain environment
+       * the shared NV can carry (then mv_fun_cap folds into mv_from_nv).
        *
-       * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY case
-       * mir_closure_value_nocapture: before these arms it was refused
-       * (unsupported-opcode); mir_closure_capture_read and the three others stay
-       * refused with why=illegal-operand. */
+       * MEASURED BY.  tools/aot_mir.test.py's MIR_ONLY cases:
+       * mir_closure_value_nocapture (refused before these arms;
+       * unsupported-opcode) and mir_closure_capture_read (`make(10)`, `f(5)`
+       * printing 15, `make(3)`, `g(7)` printing 10 -- the two environments are
+       * 2 allocs/64 bytes and the answers differ, which is the whole point). */
     case OP_MAKE_FUNC: {
         int fidx = r2;                       /* r2 = FUNCTION INDEX, not a register */
         int ncap = w3;                       /* r3 = CAPTURE COUNT */
         int callee = c->nodes[0].child_ids ? c->nodes[0].child_ids[fidx] : -1;
-        if (ncap != 0)
-            return bad("container=%d insn=%d function index %d captures %d value(s):"
-                       " only the capture-free form is lowered", c->id, i, fidx, ncap);
+        if (ncap < 0 || ncap >= REG_LIMIT)
+            return bad("container=%d insn=%d function index %d capture count %d out of range",
+                       c->id, i, fidx, ncap);
         if (callee < 0 || callee >= c->m->nfuncs)
             return bad("container=%d insn=%d function index %d does not resolve to a"
                        " container", c->id, i, fidx);
-        buf_fmt(b, "    v[%d] = mv_fun(%d);", r1, callee);
+        if (ncap == 0) {
+            buf_fmt(b, "    v[%d] = mv_fun(%d);", r1, callee);
+            return 0;
+        }
+        /* The environment is built from the r3 slots the compiler pushed
+           immediately before this instruction; the first push is slot 0
+           (src/vm/vm.c:4040-4054 pops them in order). */
+        buf_fmt(b, "    v[%d] = mv_fun_cap(%d, mvargs + asp - %d, %d); asp -= %d;",
+                r1, callee, ncap, ncap, ncap);
+        return 0;
+    }
+    case OP_LOAD_CAPTURE: {
+        int slot = w2;                       /* r2 = ENVIRONMENT SLOT, not a register */
+        int cap = func_cap(c->m, c->nodes, c->id);
+        if (cap == -2)
+            return bad("container=%d insn=%d reads capture slot %d but two creation sites"
+                       " give this container different capture counts", c->id, i, slot);
+        /* The interpreter's own three-way answer (src/vm/vm.c:4033-4039):
+           no environment, or a slot outside it, is nil; inside it is the
+           captured value.  The emitting side picks the arm it can prove. */
+        if (cap > 0 && slot >= 0 && slot < cap)
+            buf_fmt(b, "    v[%d] = mv_capture(self, %d);", r1, slot);
+        else
+            buf_fmt(b, "    v[%d] = mv_nil();", r1);
         return 0;
     }
     case OP_CALL_VALUE: {
@@ -3634,7 +3818,11 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
        every push not yet consumed.  OP_NEW_ARRAY consumes w3 of them
        (prescan proved it cannot underflow) and it also makes has_args true
        even when no OP_PUSH_REG appears in a different container's arm -- an
-       array literal's elements ARE argument-stack entries. */
+       array literal's elements ARE argument-stack entries.  OP_MAKE_FUNC is
+       the fourth consumer for the same shape: its r3 is the CAPTURE COUNT and
+       the compiler pushed one register per capture just before it, so the
+       deepest point of a container that only builds a closure is above zero
+       even though nothing in it looks like a call. */
     int has_args = 0;
     int asp_deepest = 0, asp_now = 0;
     for (int i = 0; i < fn->ninsns; i++) {
@@ -3646,7 +3834,8 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
             if (asp_now > asp_deepest) asp_deepest = asp_now;
             continue;
         }
-        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) {
+        if (op == OP_CALL_FUNC || op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET
+            || op == OP_MAKE_FUNC) {
             int n = ir_insn_r3(in);
             int slots = (op == OP_NEW_DICT) ? 2 * n : n;
             if (slots > 0) {
@@ -3703,9 +3892,17 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
     if (nodes[id].is_main) {
         buf_str(out, "int main(void) {" NL);
     } else {
+        /* The hidden `self` parameter: FIRST, so the user arguments keep their
+           numbers (a0 is still the first argument, and v[k+1] = a_k below is
+           unchanged), and only on a container that reads a capture slot inside
+           the environment its creator built -- see func_cap's note for why
+           unconditional would move every other program's text. */
+        int self = func_reads_capture(m, nodes, id);
         buf_fmt(out, "static MirVal %s(", fnnames[id]);
-        if (argc == 0) buf_str(out, "void");
-        for (int k = 0; k < argc; k++) buf_fmt(out, "%sMirVal a%d", k ? ", " : "", k);
+        if (argc == 0 && !self) buf_str(out, "void");
+        if (self) buf_str(out, "MirVal self");
+        for (int k = 0; k < argc; k++)
+            buf_fmt(out, "%sMirVal a%d", (k || self) ? ", " : "", k);
         buf_str(out, ") {" NL);
     }
     buf_fmt(out, "    MirVal v[%d];" NL, nregs);
@@ -3828,12 +4025,59 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
 
     for (int i = 1; i < m->nfuncs; i++) {
         int argc = nodes[i].argc;
+        int self = func_reads_capture(m, nodes, i);
         buf_fmt(&out, "static MirVal %s(", fnnames[i]);
-        if (argc == 0) buf_str(&out, "void");
-        for (int k = 0; k < argc; k++) buf_fmt(&out, "%sMirVal", k ? ", " : "");
+        if (argc == 0 && !self) buf_str(&out, "void");
+        if (self) buf_str(&out, "MirVal self");
+        for (int k = 0; k < argc; k++)
+            buf_fmt(&out, "%sMirVal", (k || self) ? ", " : "");
         buf_str(&out, ");" NL);
     }
     buf_str(&out, NL);
+
+    /* THE CAPTURE ENVIRONMENT, the same shape and the same reason as the table
+       below: emitted ONLY for a module that actually builds or reads one.
+       Why it is not part of kMirValBlock: that block is appended to every
+       generated file, so a runtime function no program references would move
+       the generated text -- and therefore the classify()/IR-MIR-C-SAME
+       readings -- of the 86-case corpus, which has no closure in it.  A
+       closure program is the only program whose text changes here, and its
+       readings are what the capture cell is measured by.
+       What the two functions are NOT: a reference-counted environment.  The
+       slot array is COPIED at creation (the interpreter's L_MAKE_FUNC copies
+       the pushed values into im_closure_env_new the same way, src/vm/vm.c:4040-4054),
+       registered so the process's exit sweep can free it, and never shared
+       with the creator's stack -- so a value that outlives the frame that
+       built it still reads its own slots.  No bound is checked in mv_capture:
+       the emitting arm only calls it with a slot the container's environment
+       provably has, and answers mv_nil() for every other shape (which is the
+       interpreter's own answer for a missing environment or an out-of-range
+       slot, src/vm/vm.c:4033-4039). */
+    int needs_cap = 0;
+    for (int f = 0; f < m->nfuncs && !needs_cap; f++) {
+        const IrFunc *fn = &m->funcs[f];
+        for (int i = 0; i < fn->ninsns; i++) {
+            const IrInsn *in = &fn->insns[i];
+            if (in->op == OP_LOAD_CAPTURE) { needs_cap = 1; break; }
+            if (in->op == OP_MAKE_FUNC && ir_insn_r3(in) > 0) { needs_cap = 1; break; }
+        }
+    }
+    if (needs_cap) {
+        buf_str(&out, "static inline MirVal mv_fun_cap(int idx, const MirVal *slots, int ncap) {" NL);
+        buf_str(&out, "    MirVal r = mv_fun(idx);" NL);
+        buf_str(&out, "    if (ncap > 0) {" NL);
+        buf_str(&out, "        MirVal *env = (MirVal *)mv_alloc(sizeof(MirVal) * (size_t)ncap);" NL);
+        buf_str(&out, "        for (int i = 0; i < ncap; i++) env[i] = slots[i];" NL);
+        buf_str(&out, "        r.ptr = env;" NL);
+        buf_str(&out, "    }" NL);
+        buf_str(&out, "    return r;" NL);
+        buf_str(&out, "}" NL);
+        buf_str(&out, "static inline MirVal mv_capture(MirVal self, int slot) {" NL);
+        buf_str(&out, "    if (!self.ptr) return mv_nil();" NL);
+        buf_str(&out, "    return ((MirVal *)self.ptr)[slot];" NL);
+        buf_str(&out, "}" NL);
+        buf_str(&out, NL);
+    }
 
     /* THE FUNCTION TABLE'S CALLABLE HALF, emitted only for a module that
        actually moves a function VALUE, which is why this is a scan and not part
@@ -3882,7 +4126,15 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
             buf_str(&out, "            abort();" NL);
             buf_str(&out, "        }" NL);
             buf_fmt(&out, "        return %s(", fnnames[i]);
-            for (int k = 0; k < argc; k++) buf_fmt(&out, "%sargs[%d]", k ? ", " : "", k);
+            /* A container that reads its environment needs the VALUE back, not
+               a bare call: mv_callv was handed the function value itself, and
+               that value carries the environment ptr the read goes through.
+               `f` is mv_callv's own parameter, so the emitted call is
+               fn(f, args[0], ..., args[argc-1]) -- one extra leading argument. */
+            if (func_reads_capture(m, nodes, i)) buf_str(&out, "f");
+            for (int k = 0; k < argc; k++)
+                buf_fmt(&out, "%sargs[%d]",
+                        (k || func_reads_capture(m, nodes, i)) ? ", " : "", k);
             buf_str(&out, ");" NL);
         }
         buf_str(&out, "    default:" NL);
