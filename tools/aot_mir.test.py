@@ -437,6 +437,19 @@ ALLOCS_EXPECT = {
     # off the generated program's own IR-MIR-ALLOCS line, and the second one
     # is what separates `m = make(1); n = make(2)` from a shared environment.
     "mir_function_equality_captured": (2, 64),
+    # Printing a container allocates NOTHING of its own -- mv_vts formats into
+    # stack scratch.  What these count is the POOL BLOCK the literal itself
+    # needed, measured off each generated program's IR-MIR-ALLOCS line: one
+    # 256-byte block for a flat array, a dict or a set; two for the two nested
+    # shapes, because `[[1, 2], [3]]` and `[1.5, 2]`-inside-a-dict each build a
+    # second region.  The empty case reads one block: `a = []` needs none and
+    # `d = {}` still takes the one count slot.
+    "mir_print_array_whole": (1, 256),
+    "mir_print_dict_whole": (1, 256),
+    "mir_print_nested_depth": (2, 768),
+    "mir_print_set_whole": (1, 256),
+    "mir_print_mixed_tags": (2, 768),
+    "mir_print_empty": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
