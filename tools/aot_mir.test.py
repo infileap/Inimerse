@@ -1362,6 +1362,42 @@ MIR_ONLY = [
      'arr = [1, 2]\n'
      'say d == arr\n'
      'say d != arr\n'),
+    # ---------------------------------------------------------- closures
+    #
+    # The closure group is three opcodes read out of src/vm/vm.c rather than
+    # guessed: OP_MAKE_FUNC (:4040-4054) pops `r3` values off the argument
+    # stack into a fresh environment and stores VAL_FUNCTION with `r2` as the
+    # function index; OP_LOAD_CAPTURE (:4033-4039) reads slot `r2` of the
+    # frame's environment (nil when there is none); OP_CALL_VALUE (:4056-4057)
+    # requires register `r1` to hold VAL_FUNCTION and then REUSES the ordinary
+    # call path with the function index taken from the value (:4058-4069).
+    #
+    # Only the CAPTURE-FREE form is lowered here.  The four programs that
+    # capture (capture read, higher order, returned/transitive closure,
+    # zero-argument call over a heap string) are written and red on
+    # `stream/mirval-closure`, and land one at a time: the list below is the
+    # set of shapes this route answers TODAY, and a criterion that is red on
+    # the tree it lands on would make the verdict FAIL rather than buy
+    # anything.
+    #
+    # The program was run through the interpreter first (`build/inimerse
+    # --no-mods run`); that reading is the oracle, and the route's answer
+    # before this step was a pre-scan refusal with why=unsupported-opcode and
+    # the opcodes on IR-MIR-NOT-YET.
+    #
+    # NO CAPTURE.  `() -> 42` is a function VALUE: it must print as
+    # `<function>` (src/vm/vm.c:1379), be TRUE in the truth position
+    # (vm_truthy's `default: return 1`, :400), survive a copy into another
+    # variable, and be callable THROUGH that copy -- the copy is OP_MOV and
+    # the call is OP_CALL_VALUE, so this is the smallest program that touches
+    # all four.  A lowering that printed the integer index, or that made the
+    # copy un-callable, reddens on line 1 or 3.
+    ("mir_closure_value_nocapture",
+     'f = () -> 42\n'
+     'say f\n'
+     'if f { say "truthy" }\n'
+     'g = f\n'
+     'say g()\n'),
     # SET LITERALS -- OP_NEW_SET.  The fifth container a program can spell and
     # the first one whose ELEMENTS ARE A SET and not a sequence: the same push
     # that an array keeps, a set MERGES (src/vm/vm.c:4286-4313 L_NEW_SET calls
