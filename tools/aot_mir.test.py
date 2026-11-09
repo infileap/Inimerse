@@ -330,6 +330,12 @@ ALLOCS_EXPECT = {
     # BOXED a set key into a scalar to compare it would move these numbers.
     "mir_set_dict_key_lookup": (2, 768),
     "mir_set_dict_key_append": (2, 768),
+    # len() of a moved container: the fix follows the head, so nothing is
+    # allocated beyond the two containers themselves.  Both programs build
+    # one dict/array plus a second container and double the pool block to
+    # 16 slots at the copy; measured (allocs=2, bytes=768) before writing.
+    "mir_len_after_a_dict_moves": (2, 768),
+    "mir_len_after_an_array_moves": (2, 768),
     # len() itself allocates nothing; the one block is the ARRAY literal's pool
     # (8 slots * 32 bytes) and the one-pair dict fits in the same block.
     "mir_len_of_every_shape_this_route_holds": (1, 256),
@@ -1299,6 +1305,36 @@ MIR_ONLY = [
      'd[t] = 9\n'
      'say len(d)\n'
      'say d[s]\n'),
+    # len() THROUGH A MOVED CONTAINER.  Both containers here are copied to the
+    # pool frontier when a later region owns the slots above them, leaving a
+    # forwarding head at the old handle (mv_arr_live's note in aot_mir.c).  The
+    # header of a LIVE region is MV_INT (its item count); the forwarding head is
+    # MV_ARR whose ival is the NEW handle.  mv_arr_get and mv_dict_get/dict_set
+    # all call mv_arr_live first; mv_len read `(int)a.ival` straight and therefore
+    # read the HEAD as a count.  Measured on the merge base, written here:
+    #   dict moved   interp b'2\n1\n2\n'   / mir b'3\n1\n2\n'   (head 7 -> n/2 = 3)
+    #   array moved  interp b'9\n3\n3\n'   / mir b'9\n7\n3\n'   (head 7 -> 7)
+    # The dict case is a DICT (n/2) so the wrong answer is 3, not 7; the array
+    # case is an ARRAY (n as-is) so the same head prints 7.  Neither case can pass
+    # by fixing one arm only.  The array's write uses a VARIABLE subscript because
+    # a constant one outside the literal is refused at translate time
+    # (why=index-out-of-range-constant) -- that refusal is why this program exists
+    # rather than `a[2] = 9` on a two-element literal.
+    ("mir_len_after_a_dict_moves",
+     'd = {"a": 1}\n'
+     's = 1, 2\n'
+     'd["b"] = 2\n'
+     'say len(d)\n'
+     'say d["a"]\n'
+     'say d["b"]\n'),
+    ("mir_len_after_an_array_moves",
+     'a = [1, 2]\n'
+     'b = [3, 4]\n'
+     'i = 2\n'
+     'a[i] = 9\n'
+     'say a[i]\n'
+     'say len(a)\n'
+     'say b[0]\n'),
     # DICT EQUALITY.  The interpreter answers by IDENTITY, not by content
     # (src/vm/vm.c:421 `if (a->type == VAL_DICT) return a->ival == b->ival;`), so
     # two dicts built from the same literal are NOT equal while a copy is.  Before
