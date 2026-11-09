@@ -321,6 +321,15 @@ ALLOCS_EXPECT = {
     "mir_dict_set_overwrite": (1, 256),
     "mir_dict_set_append": (1, 256),
     "mir_dict_set_grow_after_neighbour": (2, 768),
+    # The set-key pair.  Two blocks each = the dict's block and one set's
+    # block; `t` is a second SET region but the pool still fits in the second
+    # block (the lookup case builds a 3-slot dict + two 3-slot sets = 9 slots
+    # over 8, so the second 256-byte block is the frontier's; the append case
+    # builds two sets first and the empty dict then extends the frontier in
+    # place).  Key comparison allocates nothing on either arm -- a route that
+    # BOXED a set key into a scalar to compare it would move these numbers.
+    "mir_set_dict_key_lookup": (2, 768),
+    "mir_set_dict_key_append": (2, 768),
     # len() itself allocates nothing; the one block is the ARRAY literal's pool
     # (8 slots * 32 bytes) and the one-pair dict fits in the same block.
     "mir_len_of_every_shape_this_route_holds": (1, 256),
@@ -1249,6 +1258,47 @@ MIR_ONLY = [
      'say d["a"]\n'
      'say arr[2]\n'
      'say arr[0]\n'),
+    # THE SET KEY PAIR -- a dict key is accepted by `val_eq` in the interpreter
+    # (src/vm/vm.c:1144 dict_hash_find, and the same test in vm_dict_set's
+    # lookup), and `val_eq` has no VAL_SET row: its same-type chain falls out at
+    # VAL_SET (src/vm/vm.c:413-428 lists INT, FLOAT, STRING, BOOL, NIL, ARRAY,
+    # DICT, FUNCTION) and the cross-type tail wants two numbers, so a set answers
+    # FALSE against a set, against itself and against anything else.  The
+    # interpreter therefore ACCEPTED a pair it can never find again: `d[s] = 7;
+    # say d[s]` prints `nil` there.  The MIR route compared keys with mv_eq, which
+    # gained a set arm (by CONTENT, correctly, for OP_EQ/OP_NEQ in 10.127), so
+    # the same program printed `7` -- the route's answer there agreed with nothing.
+    # These two cases were RED on the merge base as IR-MIR-EXEC-DIFF (measured
+    # there first, written here second):
+    #   lookup  interp b'nil\nnil\n1\n' / mir b'7\n7\n1\n'
+    #   append  interp b'2\nnil\n'      / mir b'1\n9\n'
+    # The `t` operand is why: `s = 1, 2` and `t = 1, 2` are two regions with
+    # content-identical sets, so a content rule hits where an identity rule
+    # (or val_eq's no-row rule) does not -- and neither case can pass by
+    # answering only one of them.
+    ("mir_set_dict_key_lookup",
+     'd = {"a": 1}\n'
+     's = 1, 2\n'
+     't = 1, 2\n'
+     'd[s] = 7\n'
+     'say d[s]\n'
+     'say d[t]\n'
+     'say d["a"]\n'),
+    # The WRITE half's criterion, and it reads the PAIR COUNT rather than a
+    # lookup: the interpreter appends `d[t] = 9` as a SECOND pair (its lookup
+    # answered false), so len is 2 and the first pair's value stays 7 behind a
+    # key that cannot be found; a route whose write-side comparison matched by
+    # content overwrote instead and reported len 1 / d[s] 9.  Both lines
+    # discriminate, and the dict never moves here (it is created after the two
+    # sets), so len's own reading is pair count and nothing else.
+    ("mir_set_dict_key_append",
+     's = 1, 2\n'
+     't = 1, 2\n'
+     'd = {}\n'
+     'd[s] = 7\n'
+     'd[t] = 9\n'
+     'say len(d)\n'
+     'say d[s]\n'),
     # DICT EQUALITY.  The interpreter answers by IDENTITY, not by content
     # (src/vm/vm.c:421 `if (a->type == VAL_DICT) return a->ival == b->ival;`), so
     # two dicts built from the same literal are NOT equal while a copy is.  Before
