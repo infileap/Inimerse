@@ -6723,3 +6723,61 @@ IR-MIR-VERDICT|PASS|tree=d39a926fda320b020a9421ff7665fd4e7f123093|accepted=86|re
 2. **不造身份对象**：没有分配、没有新 tag、没有动 `MirVal`；因此函数值之间的「同一实例」在本路线不可观测 —— 这正好是解释器给出的可观测性。
 3. **删除条件（可判定）**：解释器停止「读时克隆」的那笔提交，会让身份变得可观测；那时这一行必须长出真正的身份对象才能继续对齐 —— 注记里写了这句，而不是「以后再说」。
 4. **与 §10.131 的接缝**：捕获环境仍只在真读它的容器上作为隐藏参数传递；这一格没有碰调用机制，`mir_closure_*` 五条判据读数不变。
+
+## §10.133 打印一个容器：在 MirVal 层拼出解释器的那串字节（aot-mir，A 类第二十二项）
+
+### 一、来源与日期
+
+判据 `e9116da`（六例，在 `f5706cb` 上先红）、实现 `87d2c12`、注记更正 `8d6932e`，2026-11-09。这补的是 §10.130 之前就记下的那一类 —— 「`say a` 是 STOP，不是答案」，只是那时它被写成「打印出口自成一类」。
+
+### 二、形状
+
+`say` 的结构值是三条 tag 的事：数组、字典、集合（以及它们嵌套里的任何一个）。它以前落在 `mv_as_nv` 上、被 `mv_tag_to_nv` 中止（空 stdout、rc 134），因为共享前导的 `nv_say(NV)` 只有三个分支，而 `NV` 没有指针 —— 容器教不进去。所以字节必须在 MirVal 层拼：新函数 `mv_vts` 逐句搬 `value_to_string`：
+
+- **深度只展开 `depth < 2`**，所以 `[[1, 2], [3]]` 印全、而 `[[[1]]]` 印 `[[[]]]`（深度 2 只印空括号）；
+- **集合印 `set(N)`**，N 是去重后的元素数，从区域头槽读；`1, 2, 2.0` 是**三**个（整数半边从不去重一个浮点）；
+- **数组元素走 256 字节暂存、字典键 128、值 256**，放不下的元素被丢弃但括号照常闭合（`used + need < bufsz`）—— 这是解释器自己的截断规则，不是我们的简化；
+- **标量沿用已经打印过的拼法**：`nil`、`true`/`false`、`<function>`、整数 `%lld`、浮点**仍走 `nv_fmt_double`**（数字拼法只有一个实现）。
+
+它**不分配**：函数只在栈上拼，六个用例的 ALLOCS 读数是字面量自己那份池块（下文）。
+
+### 三、判据
+
+| 用例 | 钉住什么 | 红读数（`f5706cb`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_print_array_whole` | 平数组 + 其后的 `len` | 空 stdout、rc −6 | `[1, 2]`，9 字节 |
+| `mir_print_dict_whole` | 插入序键值对，字符串键不加引号 | 空、rc −6 | `{a: 1, b: 2}`，15 字节 |
+| `mir_print_nested_depth` | 深度 1 展开、深度 2 收缩 | 空、rc −6 | `[[1, 2], [3]]` / `[[[]]]`，21 字节 |
+| `mir_print_set_whole` | `set(N)` 取去重数，`1, 2, 2.0` 是 3 | 空、rc −6 | `set(3)` / `3`，9 字节 |
+| `mir_print_mixed_tags` | 容器里的 bool/nil/string/float 全在 | 空、rc −6 | `{k: [true, nil, s]}` / `[1.5, 2]`，29 字节 |
+| `mir_print_empty` | `[]` 与 `{}` 的空体 | 空、rc −6 | `[]` / `{}`，6 字节 |
+
+六条红都是**被接受、被编译、然后运行时死掉**（不是拒译）：这是「拒译比答错好」那条规矩下最容易被忽略的一类，因为翻译侧一切正常。
+
+### 四、读数（本树 `87d2c12`）
+
+```
+IR-MIR-MIR-ONLY|case=mir_print_array_whole|mir=accepted|cc=ok|exec=same|rc=0|bytes=9|stdout-hex=5b312c20325d0a320a
+IR-MIR-MIR-ONLY|case=mir_print_dict_whole|mir=accepted|cc=ok|exec=same|rc=0|bytes=15|stdout-hex=7b613a20312c20623a20327d0a320a
+IR-MIR-MIR-ONLY|case=mir_print_nested_depth|mir=accepted|cc=ok|exec=same|rc=0|bytes=21|stdout-hex=5b5b312c20325d2c205b335d5d0a5b5b5b5d5d5d0a
+IR-MIR-MIR-ONLY|case=mir_print_set_whole|mir=accepted|cc=ok|exec=same|rc=0|bytes=9|stdout-hex=7365742833290a330a
+IR-MIR-MIR-ONLY|case=mir_print_mixed_tags|mir=accepted|cc=ok|exec=same|rc=0|bytes=29|stdout-hex=7b6b3a205b747275652c206e696c2c20735d7d0a5b312e352c20325d0a
+IR-MIR-MIR-ONLY|case=mir_print_empty|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=5b5d0a7b7d0a
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|mir-only-cases=81|mir-only-same-as-interpreter=81
+IR-MIR-VERDICT|PASS|tree=87d2c12...|accepted=86|refused=0|differ=0|perturb-stdout-changes=5
+```
+
+ALLOCS 是**先量后写**：平数组/字典/集合各一块 256 字节池（`allocs=1|bytes=256`），两个嵌套形状各两块（`2|768`），空的读一块 —— `a = []` 不占区域而 `d = {}` 仍要一个计数槽。发射器侧：`accepted=161→167`、`mir-only-cases=75→81`，`handles=48|of=67|unknown=19|agree=yes` **不动**（没有新 opcode），`covered=29|missing=0|refused=0` 不变，既有 86 例 C 文本未动 [obs: 8d6932e]。
+
+### 五、写这条之前先量过的三件事
+
+1. **深度规则不是猜的**：`[[[1]]]` 在解释器里印 `[[[]]]`（`od -c` 逐字节读过），它是 `depth < 2` 的直接后果，不是截断事故。
+2. **`set(N)` 的 N 是去重数、不是压栈数**：`1, 2, 2.0` 印 `set(3)`、`len` 也是 3；一个按压栈数印的实现在别的集合用例上都绿，只在这里红。
+3. **截断规则的边界**：`used + need < bufsz` 而不是 `<=`，所以恰好放满的最后一个元素也会被丢 —— 照抄解释器的算式而不是「差不多就行」，是因为字节判据不看意图。
+
+### 六、边界
+
+1. **区间分量仍不可达**：`set(Z interval)` 需要区间运行时，本路线没有（见 `mv_set_new` 注记）；本函数的 `set(?)` 分支是「句柄已不解析」的兜底，不是区间支持。
+2. **没有新分配、没有互操作**：`mv_vts` 不分配，池块仍只由字面量产生；字符串仍走它自己的打印分支（字节相同，故没合并）。
+3. **截断是可复现的**：超长容器按同一算式截断；这不是「大容器不支持」，而是解释器本来也只印一屏。
+4. **与 §10.130/§10.131 的接缝**：容器里的函数值印 `<function>`（同一拼法），捕获环境不参与打印。

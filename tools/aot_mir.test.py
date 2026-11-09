@@ -437,6 +437,19 @@ ALLOCS_EXPECT = {
     # off the generated program's own IR-MIR-ALLOCS line, and the second one
     # is what separates `m = make(1); n = make(2)` from a shared environment.
     "mir_function_equality_captured": (2, 64),
+    # Printing a container allocates NOTHING of its own -- mv_vts formats into
+    # stack scratch.  What these count is the POOL BLOCK the literal itself
+    # needed, measured off each generated program's IR-MIR-ALLOCS line: one
+    # 256-byte block for a flat array, a dict or a set; two for the two nested
+    # shapes, because `[[1, 2], [3]]` and `[1.5, 2]`-inside-a-dict each build a
+    # second region.  The empty case reads one block: `a = []` needs none and
+    # `d = {}` still takes the one count slot.
+    "mir_print_array_whole": (1, 256),
+    "mir_print_dict_whole": (1, 256),
+    "mir_print_nested_depth": (2, 768),
+    "mir_print_set_whole": (1, 256),
+    "mir_print_mixed_tags": (2, 768),
+    "mir_print_empty": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -1672,6 +1685,65 @@ MIR_ONLY = [
      'a = [1, 2]\nsay s == a\nsay a == s\n'),
     ("mir_set_eq_dedup",
      's = 1, 1, 2\nt = 1, 2\nsay s == t\nsay len(s)\n'),
+    # PRINTING A CONTAINER WHOLE -- `say a` where a is an array, a dict, a
+    # set, or one of those nested inside another.  This is a separate exit
+    # from `say` of a scalar and every case below was RED before this cell
+    # as a runtime abort with empty stdout (rc 134), not a refusal:
+    # mv_say hands every tag but nil, string and function to nv_say
+    # through mv_as_nv, and mv_tag_to_nv aborts on MV_ARR/MV_DIC/MV_SET.
+    # The interpreter prints a bracketed list, a braced pair list and
+    # `set(N)`, and that text is what these compare BYTES against --
+    # no expected string is written down here.
+    #
+    # Why each case is here, one by one:
+    #   mir_print_array_whole  the flat list, plus len() behind it so a
+    #                          formatter that prints `[...]` but loses
+    #                          the count is caught.
+    #   mir_print_dict_whole   pairs in INSERTION order, keys and values
+    #                          formatted with the same scalar rules
+    #                          (a string key prints unquoted).
+    #   mir_print_nested_depth the recursion cap, twice: depth 1 expands
+    #                          (`[[1, 2], [3]]`) and depth 2 does not
+    #                          (`[[[1]]]` prints `[[[]]]`, measured on the
+    #                          interpreter), because value_to_string
+    #                          expands only `depth < 2`.
+    #   mir_print_set_whole    a set prints `set(N)`, the DEDUPED element
+    #                          count, and `1, 2, 2.0` is three elements
+    #                          (the float lives in the items half and the
+    #                          int 2 never dedups it), which a formatter
+    #                          that counts pushes answers 2 for.
+    #   mir_print_mixed_tags   every scalar tag inside one container --
+    #                          bool, nil, string, float -- so no tag's
+    #                          spelling can be borrowed from the say exit.
+    #   mir_print_empty        `[]` and `{}`: the two shapes whose body
+    #                          loop runs zero times.
+    ("mir_print_array_whole",
+     'a = [1, 2]\n'
+     'say a\n'
+     'say len(a)\n'),
+    ("mir_print_dict_whole",
+     'd = {"a": 1, "b": 2}\n'
+     'say d\n'
+     'say len(d)\n'),
+    ("mir_print_nested_depth",
+     'a = [[1, 2], [3]]\n'
+     'b = [[[1]]]\n'
+     'say a\n'
+     'say b\n'),
+    ("mir_print_set_whole",
+     's = 1, 2, 2.0\n'
+     'say s\n'
+     'say len(s)\n'),
+    ("mir_print_mixed_tags",
+     'd = {"k": [true, nil, "s"]}\n'
+     'say d\n'
+     'c = [1.5, 2]\n'
+     'say c\n'),
+    ("mir_print_empty",
+     'a = []\n'
+     'd = {}\n'
+     'say a\n'
+     'say d\n'),
 
 ]
 
