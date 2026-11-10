@@ -2578,6 +2578,13 @@ static int op_regs(int op) {
        The zero mask is also the claim this route makes to IR-MIR-CONSERVE --
        the instruction is emitted rather than counted not-yet. */
     case OP_STOP: return 0;
+    /* OP_YIELD reads no operand and writes none: the compiler emits it with
+       all three fields zero (`emit(comp->curBC, OP_YIELD, 0, 0, 0)`), and the
+       interpreter's arm touches no register -- its whole work is a guarded
+       fiber hand-off (`if (t->is_task && t->fiber_sched) SwitchToFiber(...);`).
+       The zero mask is also the claim this route makes to IR-MIR-CONSERVE: the
+       instruction is emitted, not counted not-yet. */
+    case OP_YIELD: return 0;
     default: return -1;
     }
 }
@@ -4050,6 +4057,26 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_STOP: case OP_HALT:
         if (c->nodes[c->id].is_main) buf_str(b, "    return 0;");
         else buf_str(b, "    fflush(stdout); exit(0);");
+        return 0;
+    case OP_YIELD:
+        /* THE EMPTY ARM, ON PURPOSE.  The interpreter's arm is one guarded call
+           -- `if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched)`
+           -- a cooperative hand-off to a fiber scheduler.  This route refuses a
+           container with a thread section by name (why=threads), so every
+           program it accepts runs on one plain thread with no scheduler: both
+           conditions are false, and the opcode does nothing a program can see.
+           There is no statement to emit, and the note is not decoration: an arm
+           that emitted NOTHING would trip the conservation check ("emitted
+           nothing, so the conservation equation could not see it") and turn a
+           legitimate no-op into a refusal, so the note is what makes the
+           instruction visible to IR-MIR-CONSERVE while writing no code.
+           What the arm must not be is the whole content of the four criteria:
+           not a stop (mir_yield_at_toplevel), not a loop restart
+           (mir_yield_mid_loop), not a frame change
+           (mir_yield_inside_a_function), and not an allocation
+           (mir_yield_around_allocating). */
+        buf_str(b, "    /* OP_YIELD: this thread is not a task, so the arm is the no-op "
+                   "the interpreter's guard already is (see IR-MIR-OP-YIELD's criteria) */");
         return 0;
     default:
         return 1;

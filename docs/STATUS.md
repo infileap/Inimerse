@@ -6921,3 +6921,72 @@ IR-MIR-VERDICT|PASS|tree=aa53930...|accepted=86|refused=0|differ=0
 2. **约束只是「成员检查」，不是类型的全部**：解释器还允许 `x: 1, 2, 3` 的全局存 `nil` 吗？本格没有量过这条，也不声称；判据只覆盖了上面七种形状。
 3. **集合键与集合约束是两条规则**（§10.128 的字典键比较走 `mv_key_eq`，本格的成员检查走 `mv_set_has`）：两者都不许互相「借」对方的答案，判据各自钉住。
 4. **`g_bound_used` 是程序级的**：这意味着一个只声明过一次约束的大程序，每个全局存储都多一次比较与一次分支。读数上没有可见成本（`mir_bind_plain_constraint` 是 0|0，其它三条的 256 字节是集合字面量本身），但没有为了省这几条指令去做逐全局的细粒度开关 —— 那会让「表是全局的」这条解释器的规则在发射器里变成第二个版本。
+
+## §10.136 `yield`：这条路线里它是一个 no-op，而「什么都不发」会变成一次拒译（aot-mir，A 类第二十五项）
+
+### 一、来源与日期
+
+判据 `ca80f2f`（四例，在 `a7cfdac` 上先红）、实现 `a29fd74`，2026-11-09。这是 `unknown` 从 17 降到 16 的那一格。
+
+### 二、形状
+
+`yield` 在解释器里的全部工作是**一句带守卫的调用**：
+
+```
+if (t->is_task && t->fiber_sched) SwitchToFiber(t->fiber_sched);
+```
+
+也就是「把控制权交还给 fiber 调度器」——协作式的让出。而**两个条件**在本路线接受的程序里恒为假：本路线按名拒掉带线程段的容器（`why=threads`），所以它接受的每个程序都跑在一条普通线程上，`is_task` 是假，也没有调度器。于是这条 opcode 在本路线里做不出任何程序能看见的事。
+
+**所以这一格真正要钉的不是它印什么，而是它不能等于什么**（四条判据各钉一条）：
+
+- **不能是停**：`yield` 之后的 `say 2` 还得印（`mir_yield_at_toplevel`）；
+- **不能是重跑**：`while` 里 `yield`，循环体只跑三次、`i` 最后是 3，而不是从某个地方重来（`mir_yield_mid_loop`）；
+- **不能是换帧**：被调容器在 `yield` 之后仍要跑完，调用点也仍要继续（`mir_yield_inside_a_function` 印 `in`、`out`、`end`）；
+- **不能白花**：`yield` 本身零分配（`mir_yield_around_allocating` 唯一的 256 字节是它自己建的那个数组字面量）。
+
+### 三、几处「不写代码也得写点什么」
+
+发射器的这一臂**不产生任何可执行语句**，但也不能什么都不写：`emit_container` 的每条指令都要求正文变长，否则报 `emitted nothing, so the conservation equation could not see it` 并**拒译**——也就是说，一个合法的 no-op 会因为这个守恒检查变成一次失败。所以这一臂写一行**注释**：
+
+```
+/* OP_YIELD: this thread is not a task, so the arm is the no-op the interpreter's guard already is */
+```
+
+这行注释不是装饰：它让指令对 `IR-MIR-CONSERVE` 可见（`emitted+not-yet=insns` 成立），同时不写任何可执行文本。注释里说明了「为什么这里是空的」，因为下一个人读到它第一反应会是「这是漏了吧」。
+
+`op_regs` 给的是零掩码：编译器发它时三个字段都是 0，解释器的臂也从不碰 `R[]`。
+
+### 四、判据
+
+| 用例 | 钉住什么 | 红读数（`a7cfdac`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_yield_at_toplevel` | 不是停：`say 2` 仍执行 | 拒译 `OP_YIELD:1` | `1 2`，4 字节 |
+| `mir_yield_mid_loop` | 不是重跑：三次迭代 | 拒译 `OP_YIELD:1` | `3`，2 字节 |
+| `mir_yield_inside_a_function` | 不是换帧：容器跑完、调用点继续 | 拒译 `OP_YIELD:1` | `in out end`，11 字节 |
+| `mir_yield_around_allocating` | 零分配：唯一一块是数组字面量 | 拒译 `OP_YIELD:2` | `2`，2 字节，`allocs=1` |
+
+四条红都是**拒译**（`why=unsupported-opcode`），与最近几格同形；差别在于这一格的绿读数**四例 stdout 全都与「把 yield 那行删掉」的程序相同** —— 这正是它作为 no-op 的定义，也正是为什么这四条只能靠「不许等于什么」来钉。
+
+### 五、读数（本树 `a29fd74`）
+
+```
+IR-MIR-MIR-ONLY|case=mir_yield_at_toplevel|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=310a320a
+IR-MIR-MIR-ONLY|case=mir_yield_mid_loop|mir=accepted|cc=ok|exec=same|rc=0|bytes=2|stdout-hex=330a
+IR-MIR-MIR-ONLY|case=mir_yield_inside_a_function|mir=accepted|cc=ok|exec=same|rc=0|bytes=11|stdout-hex=696e0a6f75740a656e640a
+IR-MIR-MIR-ONLY|case=mir_yield_around_allocating|mir=accepted|cc=ok|exec=same|rc=0|bytes=2|stdout-hex=320a
+IR-MIR-ALLOCS|case=mir_yield_at_toplevel|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_yield_mid_loop|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_yield_inside_a_function|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_yield_around_allocating|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-COVER|...|mir-only-cases=96|mir-only-same-as-interpreter=96
+IR-MIR-VERDICT|PASS|tree=a29fd74...|accepted=86|refused=0|differ=0
+```
+
+发射器侧（合并前在本树上量的）：`handles=51|of=67|unknown=16|agree=yes`、`accepted=182|same-as-interpreter=182`、`beyond-ast-denominator=22`（`OP_YIELD` 进了「MIR 独有例子上解释器执行过的 opcode」那一栏）、`covered=29|missing=0` [obs: a29fd74]。
+
+### 六、边界
+
+1. **带线程体的程序仍取不到这条**：容器里有线程段就在 `why=threads` 处被拒，所以「`yield` 真的让出一个 task」那种形状永远不会到发射器——本格的 no-op 与解释器的 no-op 之所以相同，**靠的正是那道更早的拒绝**。
+2. **`OP_WAIT` 与线程八件套仍在 not-yet**：它们与 `yield` 不同，`WAIT` 会真的等一个时长，本路线没有调度器可等。
+3. **`OP_SET_INTERVAL` / `OP_RECORD` / `OP_DECLARE` 各有各的成本**：区间要一整套区间运行时，`RECORD` 是记录元数据子系统，`DECLARE` 只能靠触发资源限才观测到——这三个都不是「再一格 no-op」。

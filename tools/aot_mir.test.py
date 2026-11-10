@@ -474,6 +474,18 @@ ALLOCS_EXPECT = {
     "mir_bind_initial_value": (1, 256),
     "mir_bind_int_probe_finds_float": (1, 256),
     "mir_bind_plain_constraint": (0, 0),
+    # OP_YIELD allocates nothing (it is an arm that emits a note and no
+    # statement, see the emitter's case), so the three plain yields are (0, 0)
+    # and split out of ALLOCS_DEFAULT only to say so.  The fourth builds one
+    # array literal before yielding and reads 1|256 -- the yield itself adds
+    # nothing to the count, which is the claim: a route that boxed a yielded
+    # value, or that allocated a "scheduler ticket", would move this row.
+    # Both numbers MEASURED off the generated programs' own IR-MIR-ALLOCS lines
+    # rather than derived.
+    "mir_yield_at_toplevel": (0, 0),
+    "mir_yield_mid_loop": (0, 0),
+    "mir_yield_inside_a_function": (0, 0),
+    "mir_yield_around_allocating": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -1900,6 +1912,52 @@ MIR_ONLY = [
      'x: 5\n'
      'x = 9\n'
      'say x\n'),
+
+    # OP_YIELD -- `yield` (src/parser/parser.c, the STMT_YIELD branch; the
+    # compiler emits it with all three fields zero).  The interpreter's whole
+    # arm is one guarded call: `if (t->is_task && t->fiber_sched)
+    # SwitchToFiber(t->fiber_sched); continue;` -- a cooperative hand-off to a
+    # fiber scheduler, and a NO-OP when the running thread is not a task.
+    #
+    # THAT IS THE POINT OF THESE CASES.  This route refuses a container with a
+    # thread section by name (why=threads), so every program it accepts runs on
+    # one plain thread with no fiber scheduler: both conditions of the
+    # interpreter's guard are false, and the opcode cannot do anything a
+    # program can see.  What has to be nailed down is therefore what the arm
+    # must NOT be -- a route that answered `yield` with any of these would pass
+    # a "is it still accepted" test and fail here:
+    #
+    #   not a stop     `say 2` after the yield still prints (mir_yield_at_toplevel)
+    #   not a re-run   the loop body runs exactly three times, so `i` ends at 3
+    #                  rather than restarting (mir_yield_mid_loop)
+    #   not a frame    the caller continues after the callee yields, and the
+    #                  callee finishes (mir_yield_inside_a_function)
+    #   not free-of-charge a yield allocates nothing: the only block the fourth
+    #                  case reports is the array literal it builds itself
+    ("mir_yield_at_toplevel",
+     'say 1\n'
+     'yield\n'
+     'say 2\n'),
+    ("mir_yield_mid_loop",
+     'i = 0\n'
+     'while i < 3 {\n'
+     '  yield\n'
+     '  i = i + 1\n'
+     '}\n'
+     'say i\n'),
+    ("mir_yield_inside_a_function",
+     'func f() {\n'
+     '  say "in"\n'
+     '  yield\n'
+     '  say "out"\n'
+     '}\n'
+     'f()\n'
+     'say "end"\n'),
+    ("mir_yield_around_allocating",
+     'a = [1, 2]\n'
+     'yield\n'
+     'say len(a)\n'
+     'yield\n'),
 
 ]
 
