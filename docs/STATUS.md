@@ -6842,3 +6842,82 @@ IR-MIR-VERDICT|PASS|tree=471143c...|accepted=86|refused=0|differ=0
 2. **`stop t1` / `restart t1` / `yield` 仍在 not-yet**：`OP_THREAD_CTRL` 与 `OP_YIELD` 没有臂，`unknown` 里剩下的 18 个包含它们。
 3. **没有新分配、没有新寄存器**：零掩码意味着这一格既不加寄存器也不动池。
 4. **rc 语义**：`return 0;` 与 `exit(0)` 都给 0，与解释器停线程后的 0 相同；`exit` 前显式 `fflush(stdout)`，因为容器可能停在未刷新的输出之后。
+
+## §10.135 约束声明：记录一张表，并且用它检查存储（aot-mir，A 类第二十四项）
+
+### 一、来源与日期
+
+判据 `099a1d8`（七例，在 `34600dc` 上先红）、实现 `aa53930`，2026-11-09。这是 `unknown` 从 18 降到 17 的那一格。
+
+### 二、形状
+
+`OP_BIND` 是 `name: set [= init]` 这条声明（唯一形状，解析器里 `looks_like_set_start` 的那个分支）。它在解释器里跨**两个**臂：
+
+- 声明处 `L_BIND` 做两件事：把约束记成 `vm->global_bound[g] = set 的区域下标 + 1`（`0` 表示无约束），并检查初值 —— 不命中就抛 `initial value out of range`；
+- **每一个存储**处 `L_STORE_GLOBAL` 查同一张表，不命中就抛 `type_mismatch`。
+
+所以「发射了 `OP_BIND`」不等于这一格答对了：只记录不检查的路线会把 `x = 5` 印成 `5`，而解释器一个字都不印、退出码 1、在 stderr 上说 `type_mismatch`。这条差异正是 `mir_bind_out_of_range_store` 存在的理由，也是这一格真正的成本所在。
+
+四个决定，每个都写成了可被读数推翻的形状：
+
+1. **表里存解释器存的那个数**：区域下标 `+ 1`，`0` = 无约束。存下标本身会让 0 号集合与「无约束」撞在同一个值上；池的句柄从 1 起，`+1` 什么都不损失。检查因此是一次比较加一次成员测试，不需要 tag 判别。
+2. **检查是程序级开关**（`g_bound_used`）：一个程序里任何一处声明，都会让这个程序里**所有**全局存储带上守卫 —— 这正是解释器的规则（表是全局的，不是逐条语句的），同时保证**没有声明的程序 C 字节一字不动**，覆盖测试的 `c-identical`/`c-diff` 分类不会因为这一格而移动。
+3. **两条消息由来源决定，不由值决定**：同一个「不命中」，声明处说 `initial value out of range`，存储处说 `type_mismatch`。判据给每条消息一个正向子串**加**一条互斥禁止，所以一个常量消息满足不了两条。
+4. **不自己发明成员规则**：检查直接调 `mv_set_has`，它是解释器 `set_contains` 的抄本，连非对称一起抄 —— INT 探针先比 int 半边、**再**扫非 int 元素（所以 `1` 是 `{1.0, 2.0}` 的成员），其它 tag 只看 items（所以 `1.0` 不是 `{1, 2, 3}` 的成员）。两个用例各钉一个方向：造一个「数值成员」统一规则的路线会过第一条、红在第二条。
+
+初值寄存器 `r3` 是**编译期操作数**（`-1` 表示没有 `= value`），所以「有没有初值」在发射时就是 C 文本的分支，不是运行时的判断：无初值时按 `L_BIND` 的无初值路径把全局置成 `nil`。
+
+表里存的句柄**不**经 `mv_arr_live` 解析，这是声明不是疏忽：本路线里集合没有写路径（`OP_SET_ADD` 未发射），而唯一会搬区域的路径 —— `mv_dict_set` 的非前沿分支 —— 把它被要求写的那本字典拷到**前沿**，其它区域原地不动，所以从集合上取到的句柄只要池还在就有效。哪天集合长出写路径，这张表就得开始解析（§10.129 修的 `mv_len` 正是同一个错误在另一个臂上）。
+
+### 三、判据
+
+| 用例 | 钉住什么 | 红读数（`34600dc`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_bind_constrained_store` | 存储前全局是 `nil`，成员赋值落地 | 拒译 `OP_BIND:1` | `nil 2`，6 字节 |
+| `mir_bind_initial_value` | 初值臂存下给的值，之后的成员赋值仍落地 | 拒译 `OP_BIND:1` | `2 3`，4 字节 |
+| `mir_bind_out_of_range_store` | `x = 5`：stdout 空、rc 1、stderr 有 `type_mismatch`、**不得**有另一条消息 | 拒译 `OP_BIND:1` | rc 1，0 字节 |
+| `mir_bind_out_of_range_init` | `= 5`：另一条消息，且不得有 `type_mismatch` | 拒译 `OP_BIND:1` | rc 1，0 字节 |
+| `mir_bind_int_probe_finds_float` | 非对称方向一：INT 探针仍是浮点集合的成员（`x = 1` 进 `{1.0, 2.0}`） | 拒译 `OP_BIND:1` | `2 1`，4 字节 |
+| `mir_bind_float_probe_misses_int` | 方向二：FLOAT 探针不是整数集合的成员（`x = 1.0` 抛） | 拒译 `OP_BIND:1` | rc 1，0 字节 |
+| `mir_bind_plain_constraint` | 约束不是集合时**不**记约束，存储全放行 | 拒译 `OP_BIND:1` | `9`，2 字节 |
+
+七条红全是**拒译**（`why=unsupported-opcode`），与上一格同形：这一格也没有「被接受然后印错」的阶段 —— 但**这一格的三、四两条是成对的**，因为「被接受然后不检查」恰恰是一种能印错而不停的可能，判据按 stderr 的正向子串与互斥禁止把它钉住了。
+
+### 四、读数（本树 `aa53930`）
+
+```
+IR-MIR-MIR-ONLY|case=mir_bind_constrained_store|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=6e696c0a320a
+IR-MIR-MIR-ONLY|case=mir_bind_initial_value|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=320a330a
+IR-MIR-MIR-ONLY|case=mir_bind_out_of_range_store|mir=accepted|cc=ok|exec=same|rc=1|bytes=0|stdout-hex=
+IR-MIR-MIR-ONLY|case=mir_bind_out_of_range_init|mir=accepted|cc=ok|exec=same|rc=1|bytes=0|stdout-hex=
+IR-MIR-MIR-ONLY|case=mir_bind_int_probe_finds_float|mir=accepted|cc=ok|exec=same|rc=0|bytes=4|stdout-hex=320a310a
+IR-MIR-MIR-ONLY|case=mir_bind_float_probe_misses_int|mir=accepted|cc=ok|exec=same|rc=1|bytes=0|stdout-hex=
+IR-MIR-MIR-ONLY|case=mir_bind_plain_constraint|mir=accepted|cc=ok|exec=same|rc=0|bytes=2|stdout-hex=390a
+IR-MIR-STDERR|case=mir_bind_out_of_range_store|need=([exception] uncaught: type_mismatch)|forbidden=([exception] uncaught: initial value out of range)|missing=(none)|leaked=(none)|ok=yes
+IR-MIR-STDERR|case=mir_bind_out_of_range_init|need=([exception] uncaught: initial value out of range)|forbidden=([exception] uncaught: type_mismatch)|missing=(none)|leaked=(none)|ok=yes
+IR-MIR-ALLOCS|case=mir_bind_constrained_store|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_bind_initial_value|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_bind_int_probe_finds_float|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-ALLOCS|case=mir_bind_plain_constraint|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-COVER|...|mir-only-cases=92|mir-only-same-as-interpreter=92
+IR-MIR-VERDICT|PASS|tree=aa53930...|accepted=86|refused=0|differ=0
+```
+
+三条抛异常的用例读数是 `IR-MIR-ALLOCS|reported=no|why=rc=1` —— 与 §10.124 的抛异常那一对同形：消息在 stderr 上，退出发生在运行中，没有计数可咨询。
+
+发射器侧：`handles=50|of=67|unknown=17|agree=yes`、`accepted=178|same-as-interpreter=178`、`beyond-ast-denominator=21`（`OP_BIND` 进了「MIR 独有例子上解释器执行过的 opcode」那一栏）、`covered=29|missing=0` [obs: aa53930]。
+
+### 五、写这条之前先量过的事
+
+1. **约束不一定是字面量集合**。`s = 1, 2, 3` 之后 `x: s = 2` 也合法：解释器与 MIR 都印 `2`、随后 `x = 4` 都抛 `type_mismatch`（rc 1）[obs: aa53930]。这就是为什么「是不是集合」的判断在**运行时**（看 `v[setReg]` 的 tag）而不在发射时 —— 发射器看不到那个寄存器的值。
+2. **`x: 5` 是「约束不是集合」，不是「约束写错」**。解释器把 `sidx` 记成 `-1`，于是没有任何存储被检查：`x = 9` 印 `9`。`mir_bind_plain_constraint` 钉住这条路不能因为「只认集合」就拒译这个程序。
+3. **函数里对同名全局的赋值走的是局部变量**。实测 `x: 1, 2, 3` 之后 `func f(v) { x = v; say x }`，`f(2)` 印 2、`f(5)` 印 5，**都不抛**。所以本格覆盖的是「顶层存储」，函数内的那条路根本不经过这张表；这一格不声称覆盖它。
+4. **浮点打印口径会让人把读数看错**。`x: 1.0, 2.0 = 2.0` 印出来是 `2`（`nv_fmt_double` 对整数值浮点就印整数形），`x = 1` 印 `1`；两个读数都是单字节 `32`/`31`，与 §10.133 钉的容器打印口径一致。
+5. **非对称两个方向都实测过**：`x: 1, 2, 3` 后 `x = 1.5` 抛；`x: 1.0, 2.0` 后 `x = 1` 通过。这不是从 `set_contains` 的注释推出来的，是量出来的。
+
+### 六、边界
+
+1. **`OP_DECLARE`（资源上限声明）仍不在本格**：它不是 `OP_BIND`，记的是 `limit_mem`/`limit_threads` 这类东西，只能靠**触发**那个限才观测到，仍未发射。
+2. **约束只是「成员检查」，不是类型的全部**：解释器还允许 `x: 1, 2, 3` 的全局存 `nil` 吗？本格没有量过这条，也不声称；判据只覆盖了上面七种形状。
+3. **集合键与集合约束是两条规则**（§10.128 的字典键比较走 `mv_key_eq`，本格的成员检查走 `mv_set_has`）：两者都不许互相「借」对方的答案，判据各自钉住。
+4. **`g_bound_used` 是程序级的**：这意味着一个只声明过一次约束的大程序，每个全局存储都多一次比较与一次分支。读数上没有可见成本（`mir_bind_plain_constraint` 是 0|0，其它三条的 256 字节是集合字面量本身），但没有为了省这几条指令去做逐全局的细粒度开关 —— 那会让「表是全局的」这条解释器的规则在发射器里变成第二个版本。
