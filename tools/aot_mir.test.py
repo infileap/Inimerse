@@ -2489,6 +2489,18 @@ MIR_ONLY_REFUSE = {
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
         "builtin-call"),
+    # A mutex taken and never released.  The INTERPRETER HANGS on this shape
+    # (measured: the block form printed `a\nin\nb`, the bare probe never returned
+    # and was killed after two minutes), so the refusal is the only honest
+    # answer -- an "it is a no-op on one thread" reading would be true of the
+    # BLOCK form and false here.  The mirror case refuses `unlock m` alone for
+    # the same reason (it would release a mutex this route never took).
+    "mir_lock_bare_never_released": (
+        'lock m\nsay 1\n',
+        "lock-unpaired"),
+    "mir_lock_unlock_alone": (
+        'unlock m\nsay 1\n',
+        "lock-unpaired"),
     # The jump leaves the guarded body without passing TRY_END, so the frame
     # that a later throw would use is the wrong one -- see the note above.
     "mir_try_escapes": (

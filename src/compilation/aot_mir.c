@@ -2706,6 +2706,17 @@ static int op_regs(int op) {
        The mask is R1 alone: a bit for r2 would have the generic bound loop read
        a string-pool index as a register number. */
     case OP_SET_INTERVAL: return R1;
+    /* OP_LOCK reads NO register and writes none.  Its two fields are a MUTEX
+       index (r1, into the container's `mutexes` table -- a run-time object, not
+       a pool slot) and a DIRECTION bit (r2: 0 = acquire, 1 = release); the
+       compiler emits `emit(comp->curBC, OP_LOCK, midx, 1, 0)` for the release
+       and `..., midx, 0, 0` for the acquire.  So the mask is zero, and the
+       mutex index is not an operand the pre-scan can bound -- this route does
+       not carry a mutex table, and an out-of-range index would be the
+       interpreter's own container-shape problem, not an emitted-C hazard.
+       The zero mask is also the claim to IR-MIR-CONSERVE: the instruction is
+       emitted (as a note), not counted not-yet. */
+    case OP_LOCK: return 0;
     case OP_CALL_FUNC: return R2;
     /* THE FUNCTION VALUE -- the two opcodes that make a function a VALUE rather
        than a callee the emitter names.  Operands read off the compiler, not
@@ -3346,6 +3357,66 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                prescan_constant_subscripts has not invalidated is still
                refused there (see its note). */
             if (op == OP_INDEX_SET) continue;
+            if (op == OP_LOCK) {
+                /* THE PAIRED FORM ONLY.  `lock m { ... }` is emitted as
+                   acquire(m) ... release(m) -- the same opcode twice with
+                   r2 = 0 then 1 -- so the two can be checked against each other
+                   statically, and that check is the whole reason this arm exists:
+                   the BARE form (`lock m`, r2 = 0 with no release) takes the
+                   mutex and never gives it back, and the INTERPRETER HANGS on it
+                   (measured: the block form printed `a\nin\nb`, the bare probe
+                   never returned and was killed after two minutes).  Reproducing
+                   a hang is not agreement, and answering it as "another no-op"
+                   would hide exactly the shape a reader most needs told.
+                   `unlock m` (r2 = 1 with no acquire) is refused for the mirror
+                   reason: it would release a mutex this route never took.
+                   The pairing is per MUTEX INDEX within one container, which is
+                   enough for the shape the parser writes: a block is contiguous.
+                   A mutex index is not a pool slot, so there is nothing to
+                   range-check -- op_regs' zero mask says the same thing. */
+                int midx = in->dst, dir = in->a & 1;
+                int want = -1;
+                for (int j = 0; j < fn->ninsns; j++) {   /* find the last acquire of this mutex */
+                    const IrInsn *o = &fn->insns[j];
+                    if (j == 0) continue;
+                    if (o->op != OP_LOCK || o->dst != midx) continue;
+                    if ((o->a & 1) == 0) want = j;
+                }
+                if (dir == 0) {
+                    /* an acquire needs a later release in this container */
+                    int found = 0;
+                    for (int j = i + 1; j < fn->ninsns && !found; j++)
+                        if (fn->insns[j].op == OP_LOCK && fn->insns[j].dst == midx
+                            && (fn->insns[j].a & 1)) found = 1;
+                    if (!found) {
+                        g_prescan_why = "lock-unpaired";
+                        return bad("container=%d insn=%d acquires mutex %d and never releases it in this "
+                                   "container -- the interpreter deadlocks on that shape (measured), so it "
+                                   "is refused rather than copied", f, i, midx);
+                    }
+                }
+                if (dir == 1) {
+                    /* a release needs an EARLIER acquire of the same mutex */
+                    int found = 0;
+                    for (int j = 0; j < i && !found; j++)
+                        if (fn->insns[j].op == OP_LOCK && fn->insns[j].dst == midx
+                            && !(fn->insns[j].a & 1)) found = 1;
+                    if (!found) {
+                        g_prescan_why = "lock-unpaired";
+                        return bad("container=%d insn=%d releases mutex %d without acquiring it in this "
+                                   "container -- `unlock m` on its own (the compiler emits the release as the "
+                                   "same opcode with r2 = 1)", f, i, midx);
+                    }
+                }
+                (void)want;
+                /* `continue`, NOT `break`: this block sits OUTSIDE the operand
+                   switch (so the cover instrument's detector does not count it
+                   as a dead index case), and a bare `break` would leave the
+                   instruction loop before the rest of the per-instruction pass
+                   -- measured: the generated C contained `(null) = v[1];` for a
+                   global the pass had never marked referenced. */
+                continue;
+            }
             switch (op) {
             case OP_LOADK_FLOAT: {
                 int32_t ix = ir_insn_r2(in);
@@ -4604,6 +4675,29 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_WAIT:
         if (g_wait_used) buf_fmt(b, "    mv_wait(v[%d]);", r1);
         else buf_str(b, "    /* OP_WAIT with no wait in this program: unreachable, kept for conservation */");
+        return 0;
+    /* OP_LOCK.  `lock m { ... }` is acquire, body, release -- the same opcode
+       twice, distinguished by r2 (0 = acquire, 1 = release; src/compiler/
+       compiler.c, STMT_LOCK).  The interpreter's arm looks the name up in
+       vm->mutexes, creates an ImMutex on first use and calls im_mutex_lock or
+       im_mutex_unlock.
+       THIS ROUTE HAS ONE THREAD.  A container carrying a thread section is
+       refused earlier (why=threads), so a mutex has nothing to contend with:
+       both calls are unobservable, and the arm is a note -- the same honest
+       no-op as OP_YIELD (10.136), and a note rather than silence because
+       emit_container refuses an instruction whose body did not grow
+       ("emitted nothing, so the conservation equation could not see it").
+       The BARE form (`lock m` with no block, OP_LOCK with isBlock 0 and no
+       matching release) is REFUSED by the pre-scan instead: it takes the mutex
+       and never gives it back, and the interpreter measures as a HANG --
+       measured, the block form printed `a\nin\nb` while the bare probe never
+       returned and was killed after two minutes.  A hang is not an answer to
+       copy. */
+    case OP_LOCK:
+        buf_fmt(b, "    /* OP_LOCK %s: one thread, so there is nothing to contend"
+                   " (see IR-MIR-LOCK's criteria) */" NL,
+                (r2 & 1) ? "release" : "acquire");
+        (void)r1;
         return 0;
     case OP_THROW:
         buf_fmt(b, "    mv_throw(v[%d]);", r1);
