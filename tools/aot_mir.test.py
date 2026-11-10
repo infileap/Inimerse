@@ -507,7 +507,15 @@ ALLOCS_EXPECT = {
     "mir_wait_inside_a_function": (0, 0),
     "mir_wait_with_a_variable_delay": (0, 0),
     "mir_wait_in_a_loop": (0, 0),
-    "mir_wait_a_non_number_is_zero": (0, 0),
+    # MEASURED like every other row, on the tree that answers these cases.
+    # OP_RECORD is metadata-only here: no store is consulted, no name is
+    # interned at run time and the following STORE_GLOBAL is a plain copy.
+    "mir_record_assigns_the_value": (0, 0),
+    "mir_record_two_names": (0, 0),
+    "mir_record_a_store_tag": (0, 0),
+    "mir_record_default_store": (0, 0),
+    "mir_record_then_overwrite": (0, 0),
+
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -2172,6 +2180,59 @@ MIR_ONLY = [
      'say 1\n'
      'wait "x"\n'
      'say 2\n'),
+
+    # ---- record: a statement whose meaning lives on the host's disk ---------
+    #
+    # `record name = value` compiles to MOV + OP_RECORD + OP_STORE_GLOBAL: the
+    # GLOBAL is written by the STORE_GLOBAL that follows, not by OP_RECORD.  What
+    # OP_RECORD itself does is store metadata (name, store, scope, merge) and --
+    # only when a save file was loaded at startup -- replace R[r3] with the value
+    # found under that name in the loaded dict.
+    #
+    # That is the shape this route cannot carry: it keeps no record store, so it
+    # writes no metadata AND CREATES NO save.dat.  With no store to consult, the
+    # operand survives and the following STORE_GLOBAL writes it, which is exactly
+    # what the interpreter prints in a FIRST run in a fresh directory.
+    #
+    # The divergences are real and are recorded in STATUS.md, not hidden here:
+    # the interpreter WRITES save.dat at exit, and a later program in that same
+    # directory reads the stored value instead of its own operand (measured: 5
+    # stored by one run, `record a = 9 / say a` in the same directory prints 5
+    # while this route prints 9).  So record is the first statement whose
+    # interpreter output is a function of the host's disk, not of the program --
+    # and the criteria below stay inside the only region where both routes are
+    # deterministic: a fresh directory.
+    #
+    # Two rules make them stay deterministic even when the harness shares one
+    # workdir across cases: every name below appears in THIS FILE exactly once,
+    # so a store entry can never answer for a name it did not come from, and each
+    # case writes back the value it would find stored (so a second run of the
+    # same case reads the same bytes).
+    ("mir_record_assigns_the_value",
+     'record rnote = 5\n'
+     'say rnote\n'
+     'say "done"\n'),
+
+    ("mir_record_two_names",
+     'record rscore = 1\n'
+     'record rflag = 2\n'
+     'say rscore\n'
+     'say rflag\n'),
+
+    ("mir_record_a_store_tag",
+     'record rtagged = 5, store: "both"\n'
+     'rtotal = rtagged + 1\n'
+     'say rtotal\n'),
+
+    ("mir_record_default_store",
+     'record default store = "both"\n'
+     'say 1\n'),
+
+    ("mir_record_then_overwrite",
+     'record rover = 5\n'
+     'say rover\n'
+     'rover = 9\n'
+     'say rover\n'),
 
 ]
 
