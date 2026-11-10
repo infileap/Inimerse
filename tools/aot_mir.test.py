@@ -486,6 +486,18 @@ ALLOCS_EXPECT = {
     "mir_yield_mid_loop": (0, 0),
     "mir_yield_inside_a_function": (0, 0),
     "mir_yield_around_allocating": (1, 256),
+    # THE ONE ROW THIS CELL HAD TO CORRECT.  It was first written as (0, 0),
+    # before the implementation existed, on the reasoning that an arm that so
+    # far only printed and exited carries no block -- a guess, and the rule this
+    # file states ("measured first, then written") is there because guesses get
+    # this wrong.  The measured reading is 1|256, and the block is not the
+    # throw: it is the `x: 1, 2, 3` DECLARATION, the same 1|256 that
+    # mir_bind_constrained_store has read since section 10.135.  The thrown
+    # value itself allocates nothing -- mv_str hands back a RESIDENT string
+    # (ival = 1 says "static storage", see its note), so a catch that prints
+    # `type_mismatch` costs zero blocks.  Kept as a row, with the correction
+    # written down, because a silently fixed expectation teaches nobody.
+    "mir_try_catches_an_arm_stop": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
