@@ -7516,3 +7516,78 @@ IR-AOT-MIR|accepted=231|same-as-interpreter=231|emittable=59|of-ops=67
 1. **`send` 仍然拒译**：`send t1 5` 连解释器都过不了——它答「未定义的线程 t1」，因为线程名必须在 `thread` 段里定义，而线程段本身被拒。所以 `send` 与线程六件一起留在 `unknown` 里。
 2. **这一格不声称「消息传递可用」**：它只声称「在这些程序上，`recv` 的答案与解释器一致」。真正的消息传递需要线程段与调度器，那条路在本路线是**具名边界**（`why=threads`），不是缺口。
 3. **`recv` 不阻塞，所以判据里没有时间断言**：与 §10.138 的 `wait` 相反——`wait` 真的睡（因此要手工记录延迟），`recv` 真的不睡（因此「立刻返回」由程序在合理时间内完成来体现，不需要计时）。
+
+## §10.145 这条路线的边界：把 `unknown=8` 变成一个必须被论证的集合（A 类第三十四项）
+
+### 一、来源与日期
+
+实现 `fe59dc1`（检查器 + 两条 CTest）、`1be19eb`（`recon.ctest-count` 同步），2026-11-09。这一节没有新 opcode，`handles` 仍是 `59|of=67`——它做的是**把余数从数字变成论证**。
+
+### 二、问题
+
+`IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8` 是一个**计数**。计数回答不了「这 8 个为什么在」。而两种缺席会印出同一个数，却要求完全相反的回应：
+
+- 还没有写臂的 opcode，那是**活**；
+- 这条路线**决定不安**的 opcode，那是**边界**。
+
+更糟的是：明天往 `src/compiler/bytecode.h` 末尾追加一个 opcode 而没有人写臂，它会**静默地**加入余数——`unknown` 加一，而没有任何东西说出这是哪一种缺席。读到 `unknown=8` 的人分不出「还剩 8 件事」和「有 8 件已声明不做」，而这个区别正是他要问的全部。
+
+### 三、办法：把边界做成一个有两条性质的人工物
+
+`tools/aot_mir_surface.py` 要求余数是一个**闭合且可复读**的集合：
+
+- **闭合**：每个未发射的 opcode 都必须在 `BOUNDARY` 表里被归类；反过来，如果某行归类的 opcode **后来有了臂**，那行就报**陈旧**——一份描述已经不存在的树的边界，比没有边界更坏，因为它会**错误地回答**读者的问题。
+- **有据**：每行都必须点名一个树里还在的东西（文件 + 里面的一个片段），所以一个分类活不过它所指的那段代码。
+
+它**不判断**一条边界高不高明，只判断它完不完整、能不能被重读。**这是让人可以反驳它的前提**。
+
+三个类，每个都用一句话说清「这条路为什么不答它」：
+
+| 类 | 含义 | 本树 |
+|---|---|---|
+| `another-thread` | 答案要求存在第二条线程；本路线按 `why=threads` 拒掉带线程段的容器，所以**构造上不可达** | 7 |
+| `measurement` | 可观测量是「资源上限在第几条指令被触发」；生成的 C 的指令流不是解释器的，那个计数在这里没有对应物 | 1 |
+| `retired` | 解释器不再派发它，没有东西可以一致 | 1 |
+
+### 四、读数（本树 `1be19eb`）
+
+```
+IR-AOT-MIR-SURFACE|declared=67|emitted=59|unemitted=8|classified=9|classes=3
+IR-AOT-MIR-BOUNDARY-CLASS|class=another-thread|n=7|meaning=unreachable by construction: this route accepts no thread section
+IR-AOT-MIR-BOUNDARY-CLASS|class=measurement|n=1|meaning=the observable is a stop position, not a value
+IR-AOT-MIR-BOUNDARY-CLASS|class=retired|n=1|meaning=the interpreter no longer dispatches it
+IR-AOT-MIR-SURFACE-VERDICT|PASS
+```
+
+`classified=9` 而 `unemitted=8`，因为 `OP_POP_REG` 也有一行：它**不是成员**（enum 的注释在编号空洞里提到它），但读者会问它，所以那一行说的是「为什么这里没有可答的东西」。
+
+`declared=67` 与 `IR-MIR-SUBSET` 的分母一致，这一点是**先错后对的**，见六.1。
+
+### 五、反向验证：两个方向都注入过并还原
+
+```
+把一行改名（= 一个 opcode 无人归类）
+  → PROBLEM|the emitter has no case for OP_DECLARE, and the boundary does not
+              classify it                                   VERDICT|FAIL
+把某行的证据片段改掉
+  → PROBLEM|OP_DECLARE: evidence 'no-such-line-anywhere' is no longer in
+              src/vm/vm.c                                   VERDICT|FAIL
+还原
+  → VERDICT|PASS
+```
+
+五个自检格（闭合 / 未分类 / 陈旧 / 证据失效 / 未声明类）**注册成自己的 CTest**：一个从没被证明会红的检查器，是没有人能引用的检查器。
+
+`EXP_CTEST` 194 → 196 与注册**同一笔提交**里改：注册与它蕴含的那个数必须同进同出，否则别人的门禁会为一个两者都不点名的理由变红。
+
+### 六、这一格自己踩的两个坑
+
+1. **注释里的名字不是成员。** 第一版用正则扫名字，把 enum 注释里那句「29 是空洞：`OP_POP_REG` 曾在这里」的**单词**当成了成员，于是报 `declared=68|emitted=60`——而 `aot-mir subset` 与 case 标签 grep 都说 **59/67**。多出来的那个「成员」是注释里的一个词，多出来的那个「发射」是对它做的算术。现在先剥注释再数，并且注释里写明了这件事：只存在于文字里的 opcode 不可能有派发器，把它算进余数会放一条**永远赢不了的条目**进去，而余数正是这个检查器存在的意义。
+2. **一个 0 的类不是类。** 初版还有个 `scheduler` 类，实际使用数为 0。一个没人用的类是一个读者读不出含义的类——删掉了，而不是留着当「以后可能用上」。
+
+### 七、边界
+
+1. **这一节不增加 `handles`**，也不该：`handles` 数的是 opcode 实现，而这一格是把**已经存在的余数**固定成可论证的形状。
+2. **它不判断边界明智不明智**。「线程六件应该实现吗」这个问题的答案是「如果这条路线开始接受线程段」，而那是一个与 `handles` 无关的决定；检查器只保证「如果你不答它，你得说清是哪一种不答」。
+3. **`docs/` 里的 34 节论证没有被搬过来**。表里每行的 `why` 是一句话摘要，而 `BOUNDARY` 的存在理由是 `docs/` **装不了**的东西——散文允许「等等」，检查器不允许。两者是互补的：`docs/` 讲为什么，这个表保证**集合是闭的**。
+4. **`OP_DECLARE` 的 `measurement` 类是唯一还在「理论上也许能做」的**：它可达、无线程依赖。它留在这个类里，是因为可观测量（触限发生在第几条指令）与生成的 C 没有共同刻度——真要支持它，得先定义「生成的 C 里的指令计数」是什么，而那是一个新决定，不是一条臂。
