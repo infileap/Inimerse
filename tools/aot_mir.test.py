@@ -515,7 +515,24 @@ ALLOCS_EXPECT = {
     "mir_record_a_store_tag": (0, 0),
     "mir_record_default_store": (0, 0),
     "mir_record_then_overwrite": (0, 0),
-
+    # The INTERVAL cases.  MEASURED on the tree that answers them, and TWO of the
+    # eight are not what the general shape suggested -- which is exactly why the
+    # rule is "measured first, then written":
+    #   a_non_number_bound   0|0, not 1|256: the whole VALUE becomes nil, so no
+    #                        interval region is built at all (the arm checks the
+    #                        bounds before it calls mv_set_interval).
+    #   equality_by_bounds   2|768, not 1|256: the program builds TWO intervals
+    #                        (p and q) and then a third (r), so the pool grows
+    #                        past the first eight-slot block.
+    #   the other six       1|256: one region of four slots inside the first block.
+    "mir_interval_membership": (1, 256),
+    "mir_interval_inclusive_upper": (1, 256),
+    "mir_interval_open_upper_bound": (1, 256),
+    "mir_interval_bounds_from_registers": (1, 256),
+    "mir_interval_len_and_print": (1, 256),
+    "mir_interval_a_non_number_bound_makes_nil": (0, 0),
+    "mir_interval_equality_by_bounds": (2, 768),
+    "mir_interval_inside_a_function": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -2233,6 +2250,88 @@ MIR_ONLY = [
      'say rover\n'
      'rover = 9\n'
      'say rover\n'),
+
+    # ---- interval sets: a set whose answer is a predicate, not a list -------
+    #
+    # `[0, 3)` is not an array (that is `[0, 3]`) and not a finite set: it is
+    # OP_SET_INTERVAL, and the interpreter answers it with SetObj.kind 2 -- a
+    # DOMAIN NAME plus two bounds plus two inclusivity bits.  The two bounds are
+    # not operands: they arrive on the ARGUMENT stack (`OP_PUSH_REG lo` then
+    # `OP_PUSH_REG hi`), which is the first opcode in this route whose registers
+    # are not all in the operand word.
+    #
+    # Everything below was read off the interpreter before it was written here:
+    # `len()` of an interval is 0 (nothing to enumerate), it prints as
+    # `set(R interval)` (the domain, not a count), membership is a predicate on
+    # the DOMAIN first and the bounds second, and a non-numeric bound does not
+    # refuse the program -- it makes the VALUE nil (`p` becomes nil, and
+    # `1 in p` is then false).
+    #
+    # The domain is always R on this route: the compiler defaults the base name
+    # to "R", and `[0, 3) Z` / operator algebra are not reachable from this
+    # grammar (measured: `p | [5, 7)` does not parse at all), so a name other
+    # than R is refused by name rather than guessed at.
+
+    ("mir_interval_membership",
+     'p = [0, 3)\n'
+     'say 1 in p\n'
+     'say 1.5 in p\n'
+     'say 5 in p\n'
+     'say "x" in p\n'
+     'say true in p\n'),
+
+    ("mir_interval_inclusive_upper",
+     'p = (0, 3]\n'
+     'say 0 in p\n'
+     'say 2 in p\n'
+     'say 3 in p\n'),
+
+    ("mir_interval_open_upper_bound",
+     'p = [0, )\n'
+     'say -1 in p\n'
+     'say 5 in p\n'
+     'say len(p)\n'
+     'say p\n'),
+
+    ("mir_interval_bounds_from_registers",
+     'lo = 1\n'
+     't = 5\n'
+     'p = [lo, t)\n'
+     'say 1 in p\n'
+     'say 2 in p\n'
+     'say 6 in p\n'),
+
+    ("mir_interval_len_and_print",
+     'p = [0, 3)\n'
+     'say p\n'
+     'say len(p)\n'),
+
+    ("mir_interval_a_non_number_bound_makes_nil",
+     'p = [nil, 3)\n'
+     'say p\n'
+     'say 1 in p\n'),
+
+    # MEASURED on the tree that answers them: every program builds exactly ONE
+    # pool region (the interval is 4 slots, which fits the first 256-byte block),
+    # so the reading is 1|256 -- the same shape as every other container row.
+    # It was first written as 0|0 before the implementation existed; that guess is
+    # corrected here rather than silently replaced.
+    ("mir_interval_equality_by_bounds",
+     'p = [0, 3)\n'
+     'q = [0, 3)\n'
+     'say p == q\n'
+     'r = [0, 4)\n'
+     'say p == r\n'
+     'say p != r\n'),
+
+    ("mir_interval_inside_a_function",
+     'func band(lo, hi) {\n'
+     '    return [lo, hi)\n'
+     '}\n'
+     'p = band(1, 4)\n'
+     'say 2 in p\n'
+     'say 4 in p\n'
+     'say len(p)\n'),
 
 ]
 
