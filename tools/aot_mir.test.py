@@ -665,6 +665,14 @@ STDERR_EXPECT = {
     # exit code (mir_try_finally_cleanup's execution row carries rc=1), so a
     # route that swallowed the error would fail both halves.
     "mir_try_finally_cleanup": ("[exception] uncaught: boom",),
+    # A pair with no order is refused with the SAME message the interpreter
+    # prints, so the criterion can demand it instead of accepting any stop.
+    "mir_order_a_string_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_a_number_against_a_string": ("[exception] uncaught: type_mismatch",),
+    "mir_order_a_set_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_an_array_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_a_dict_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_nil_against_a_number": ("[exception] uncaught: type_mismatch",),
 }
 STDERR_EXCLUDE = {
     "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
