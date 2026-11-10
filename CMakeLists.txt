@@ -2032,3 +2032,17 @@ add_test(NAME verse_upp_transport_selfcheck
   COMMAND ${INIMERSE_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/verse_upp_transport.test.py
           --self-check)
 set_tests_properties(verse_upp_transport_selfcheck PROPERTIES TIMEOUT 30 LABELS "protocol;upp;verse")
+# The MIR route's BOUNDARY.  tools/aot_mir_cover.test.py reports how many of the
+# encoded opcodes this route answers; it cannot say why the rest are absent, and
+# one new opcode appended to bytecode.h joins that remainder silently.  This
+# registration makes the remainder a closed set that has to be argued for: every
+# unemitted opcode must be classified in tools/aot_mir_surface.py, and every
+# classification must name an artifact the tree still contains.  The checker's
+# own five controls are registered beside it, because a checker that has never
+# been shown to go red is a checker nobody can quote.
+add_test(NAME aot_mir_surface_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_surface.py)
+set_tests_properties(aot_mir_surface_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;aot-mir;regression")
+add_test(NAME aot_mir_surface_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_surface.py --self-check)
+set_tests_properties(aot_mir_surface_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;aot-mir;regression")
