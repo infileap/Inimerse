@@ -7127,3 +7127,73 @@ IR-AOT-MIR-LOWERING|handles=54|of=67|unknown=13|agree=yes
 2. **判据不测时间**。墙钟断言是抖动测试穿上了测量的衣服：同一台机器上 300 毫秒能读成 297 到 310。所以延迟只在本文档手工记录，判据只钉「不许改变输出 / 不许吞语句 / 不许分配」。
 3. **Windows 那半个 helper 在本机没编过**。这里只编译并跑了 POSIX 分支（`nanosleep`）；`_WIN32` 分支（`Sleep`）在这台机器上没有编译器验证过，写在这里而不是假装它被测过。
 4. **线程等待仍未降级**：`worker.wait` 的三处发射点都在线程语境里，随 `why=threads` 整段拒掉，与本格无关。
+
+## §10.139 `record`：这条路线不存/不写/不生成存档，于是操作数就是答案（aot-mir，A 类第二十八项）
+
+### 一、来源与日期
+
+判据 `28a1a55`（五例先红）、实现 `4247cc4`，2026-11-09。这是 `unknown` 从 13 降到 12 的那一格，也是这条路线**最后一条便宜的格子**：剩下的十二个 opcode 每个都要一个子系统（见六.4）。
+
+### 二、形状
+
+**编译器侧**：`record name = value [, tags]` 不是一条赋值指令，是三条。名字第一次出现时它发 `OP_MOV rs, r0` → `OP_RECORD g, (meta << 16) | sidx, rs` → `OP_STORE_GLOBAL g, rs` → 记下这个全局已经是 record 全局；之后再写同名时**只发** `OP_STORE_GLOBAL`。`record default store = value` 是另一形，发 `OP_RECORD -1, store, 0`（`r1 = -1` 表示这条指令没有名字）。
+
+⇒ **赋值永远是紧跟的那条 `OP_STORE_GLOBAL` 干的**；`OP_RECORD` 自己只写元数据（名字、store、scope、merge 四个字段）。
+
+**解释器侧**：`src/vm/vm.c` 的 `L_RECORD` 先写元数据（按需 `realloc` 扩表、`strdup` 名字），然后有一个**分支**：只有在启动时载入过存档（`vm->record_loaded_dict > 0`）并且这个名字在存档里有，它才把**存档里的值**搬进 `r3` ——也就是把编译器刚放进寄存器的操作数**覆盖掉**。没有存档时这个分支整段跳过，寄存器保持 `MOV` 写进去的值。
+
+**本路线侧**：把这条指令降级成**元数据 no-op**。它不写元数据、不载存档、不写存档、也不创建存档文件；`r3` 保留 `MOV` 放进去的值，随后的 `STORE_GLOBAL` 写入程序自己的值 ——**这正是解释器在干净目录里第一次跑时的行为**。
+
+掩码是 `R3`、不是 `0`：`r1` 在本路线是全局号、`r2` 是打包的名字下标，两者都不是寄存器，所以都不进掩码；`r3` 在 IR 自己的语义里确实是寄存器（有存档时解释器写的就是它），所以它留在掩码里，而**将来真带存档的路线正好写在那里**。
+
+### 三、判据
+
+五例，都先在解释器上量出 oracle，再在 `23465c0` 的主树二进制上先红。
+
+| 用例 | 钉住什么 | 红读数（`23465c0`） | 绿读数（本树 `4247cc4`） |
+|---|---|---|---|
+| `mir_record_assigns_the_value` | 值经 `STORE_GLOBAL` 落地 | 拒译 `OP_RECORD:1` | `5 / done`，7 字节 |
+| `mir_record_two_names` | 两个名字各自独立 | 拒译 `OP_RECORD:2` | `1 / 2`，4 字节 |
+| `mir_record_a_store_tag` | 带 `store:` 标签的形不影响值 | 拒译 `OP_RECORD:1` | `6`（`rtagged + 1`），2 字节 |
+| `mir_record_default_store` | `default store` 形没有名字也没有副作用 | 拒译 `OP_RECORD:1` | `1`，2 字节 |
+| `mir_record_then_overwrite` | record 之后普通赋值仍覆盖它 | 拒译 `OP_RECORD:1` | `5 / 9`，4 字节 |
+
+五行的 `ALLOCS` 全是 `allocs=0|bytes=0`（先量后写）：本格没有构造任何容器，也没有 helper——元数据 no-op 的生成文本里只有一行注释。
+
+### 四、读数
+
+```
+IR-MIR-MIR-ONLY|case=mir_record_assigns_the_value|mir=accepted|cc=ok|exec=same|rc=0|bytes=7|stdout-hex=350a646f6e650a
+IR-MIR-MIR-ONLY|case=mir_record_two_names|...|bytes=4|stdout-hex=310a320a
+IR-MIR-MIR-ONLY|case=mir_record_a_store_tag|...|bytes=2|stdout-hex=360a
+IR-MIR-MIR-ONLY|case=mir_record_default_store|...|bytes=2|stdout-hex=310a
+IR-MIR-MIR-ONLY|case=mir_record_then_overwrite|...|bytes=4|stdout-hex=350a390a
+IR-MIR-COVER|...|mir-only-cases=118|mir-only-same-as-interpreter=118
+IR-MIR-VERDICT|PASS
+IR-AOT-MIR|accepted=204|of=29|covered=29|missing=0|refused=0|same-as-interpreter=204|beyond-ast-denominator=26
+IR-AOT-MIR-LOWERING|handles=55|of=67|unknown=12|agree=yes
+```
+
+**`save.dat` 的实测转写**（同一目录、逐字节；这是本格的核心发现，不是脚注）：
+
+| 步骤 | 程序 | 解释器印 | 存档文件 |
+|---|---|---|---|
+| ① 干净目录 | `record a = 5 / say a` | `5` | 生成 `{"a":5}` |
+| ② 同一目录 | `record a = 9 / say a` | **`5`** | 仍是 `{"a":5}` |
+| ③ 同一目录 | 没有 `record` 的程序 | 正常 | **不生成** |
+
+② 那行是关键：解释器把**存档里的 5** 覆盖了程序写的 9。同一个程序在同一目录跑两次会给出不同答案；两次之间换个程序写存档也会改变答案。⇒ **`record` 是这条路线遇到的第一个「输出是宿主磁盘的函数、而不是程序的函数」的形状**。
+
+### 五、实现期才发现的四件事
+
+1. **harness 的目录是共享的**。`tools/aot_mir.test.py` 每次调用只 `mkdtemp` 一次，全部用例共用一个工作目录 ⇒ 解释器侧会在里面累积 `save.dat`。判据因此遵守两条稳定性规则，都写在判据组的注释里：**每个 record 名字在本文件里只出现一次**（存档不可能替一个它没来源的名字作答）、**每例写回的值正是它自己会读到的值**（同一个用例重跑读到的字节相同）。五条判据都满足这两条，所以它们在共享目录里仍然逐字节确定。
+2. **`r1`/`r2` 在本路线不是寄存器**，而覆盖仪器的操作数检测器会把「有 pre-scan 分支却没有索引读者」的标签判成 dead label ⇒ 本格**故意不加 pre-scan case**（同一处理见 `OP_WAIT`、`OP_TRY_END`）。没有全局号范围校验也安全：本路线不使用那个全局，越界的全局号在解释器那边同样是「什么都不做」。
+3. **生成文本里故意点名那个寄存器**。注释写成 `/* OP_RECORD: no record store on this route -- v[3] keeps what the preceding MOV put there */`，把 `r3` 写进文本：读者应该能看见这是**故意不动**，而不是忘了动。
+4. **worktree 里没有 `build/` 时要先 configure**。`cmake --build build -j4 --target aot-mir` 在全新 worktree 上直接报 `Error: .../build is not a directory`，得先 `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`。
+
+### 六、边界
+
+1. **存档是明知的分歧，不藏**。解释器在退出时写 `save.dat`（只要有 record 元数据），之后同一目录里的程序读回存档值；本路线不载、不写、不生成，于是同一目录里的第二个程序会印程序自己的值（`9` 而解释器印 `5`）。这条分歧记在这里，而不是靠删掉判据来回避。
+2. **判据只覆盖「干净目录」那一块**。那是两条路线都确定的唯一区域；跨运行的存档语义没有判据，理由与一中的稳定性规则相同——它需要一个**顺序依赖**的测试，而顺序依赖的用例会把「哪条用例先跑」变成读数的一部分，那种读数不是关于程序的事实。
+3. **函数体内的 `record` 形状不被判据覆盖**。实测解释器里函数内 `record a = 7` 之后顶层 `say a` 印 `nil`（名字在函数内成了另一个槽），这条形状的对应关系还没查清，所以没有为它写判据——不是实现拒绝它，是**没有 oracle**。
+4. **这一格之后再没有便宜的格子**。剩余十二个 opcode：线程六件（`START`/`CTRL`/`JOIN`/`WAIT`/`STATE`/`GOTO`）+ `LOCK`/`SEND`/`RECV` 三件都随 `why=threads` 整段拒；`OP_DECLARE` 是资源限制子系统（观测点是「触限」而不是值）；`OP_SET_INTERVAL` 要命名内建集代数 + 区间谓词 + 打印；`OP_SET_ADD` 只有推导式能发，而推导式先发 `list` 内建、本路线按名拒；`OP_POP_REG` 已从解释器移除、不可达。**每一个都是子系统，没有一个是「再写一条臂」**。
