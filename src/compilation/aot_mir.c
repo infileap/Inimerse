@@ -2282,6 +2282,15 @@ static char  g_namedetail[256];
 static unsigned char *g_gref;        /* per-global: some instruction touches it */
 static int   g_gref_n;
 static int   g_globals_renamed;
+/* 1 when the program declares a constraint (`name: set [= init]`).  The
+   declaration is what makes a plain global store a CHECKED store
+   (src/vm/vm.c's L_STORE_GLOBAL consults vm->global_bound), so the emitter
+   guards its store arm on this program-level fact: a program with no
+   declaration keeps the C bytes it had before this grid, and the cover test's
+   c-identical/c-diff classification does not move for it.  One declaration
+   anywhere in the program turns the guard on everywhere, which is exactly the
+   interpreter's rule -- the table is global, not per-store. */
+static int   g_bound_used;
 
 /* The `why` a prescan refusal carries.  One family ("illegal-operand") covers
    every operand this route cannot emit, but a refusal whose reason a reader
@@ -2486,6 +2495,18 @@ static int op_regs(int op) {
     case OP_MIN: case OP_MAX: return R1 | R2;
     case OP_LOAD_GLOBAL: return R1;
     case OP_STORE_GLOBAL: return R2;
+    /* OP_BIND -- `name: set [= init]`, the only declaration shape the parser
+       has (src/parser/parser.c, the `looks_like_set_start` branch).  The
+       compiler emits it as emit(comp->curBC, OP_BIND, g, setReg, initReg)
+       (src/compiler/compiler.c, STMT_BIND), so r1 is a GLOBAL id and not a
+       register, r2 is the register holding the declared constraint, and r3 is
+       the initialiser register -- or -1 when the declaration had no `= value`.
+       That -1 is why the mask says R2 and not R2|R3: a mask is a property of
+       the OPCODE, while "is r3 an operand" is a property of THIS instruction.
+       The pre-scan's own arm checks r3 instead (a negative or over-limit r3 is
+       refused there), which is the same arrangement OP_STORE_GLOBAL uses for
+       its global id. */
+    case OP_BIND: return R2;
     case OP_JUMP: return 0;
     case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: return R1;
     case OP_PUSH_REG: return R1;
@@ -3136,6 +3157,29 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 g_gref[ix] = 1;
                 break;
             }
+            case OP_BIND: {
+                /* r1 is the GLOBAL being declared (op_regs' note), r2 the
+                   register holding the constraint (checked by the generic mask
+                   loop), r3 the initialiser register or -1.  No mask bit
+                   covers r3 -- that -1 is legal here -- so the operand check
+                   is this arm's job, and it must reject a negative other than
+                   -1 as well: the emitter would otherwise write v[-2]. */
+                int ix = in->dst, init = ir_insn_r3(in);
+                if (ix < 0 || ix >= root->global_name_count || ix >= g_gref_n)
+                    return bad("container=%d insn=%d global index %d out of range (count=%d)",
+                               f, i, ix, root->global_name_count);
+                const char *gname = root->global_names ? root->global_names[ix] : NULL;
+                if (is_preset_global(gname))
+                    return bad("container=%d insn=%d global %d is the preset set global '%s', whose value is a set, "
+                               "not an NV int/float/bool -- outside this subset",
+                               f, i, ix, gname);
+                if (init < -1 || init >= REG_LIMIT)
+                    return bad("container=%d insn=%d initialiser register %d out of range (-1 for none, limit=%d)",
+                               f, i, init, REG_LIMIT);
+                g_gref[ix] = 1;
+                g_bound_used = 1;
+                break;
+            }
             case OP_CALL_BUILTIN: {
                 /* r2 indexes the CONTAINER's string pool, exactly as
                    OP_LOADK_STRING's r2 does, and r3 is the argument count; the
@@ -3698,7 +3742,52 @@ static int emit_one(Ctx *c, Buf *b, int i) {
            spelled out instead -- nil, which is what the interpreter answers. */
         if (w2 == -1) { buf_fmt(b, "    v[%d] = mv_nil();", r1); return 0; }
         buf_fmt(b, "    v[%d] = %s;", r1, c->gnames[w2]); return 0;
-    case OP_STORE_GLOBAL: buf_fmt(b, "    %s = v[%d];", c->gnames[r1], r2); return 0;
+    case OP_STORE_GLOBAL: {
+        /* THE CHECKED STORE, and the half of OP_BIND that is not a declaration.
+           `vm->global_bound[g] > 0` is checked on EVERY store to that global
+           (src/vm/vm.c, L_STORE_GLOBAL: it value_copy's the source, and when
+           the bound is set and `set_contains` says no it throws
+           `type_mismatch`), so an emitter that records the declaration and
+           then stores unchecked answers `x = 5` with 5 while the interpreter
+           prints nothing, exits 1 and says type_mismatch -- the disagreement
+           mir_bind_out_of_range_store exists to catch.
+           The guard is emitted only when the program declares a constraint
+           (g_bound_used, see its note): a program with no declaration has an
+           all-zero table, and its store keeps the exact bytes it had. */
+        if (g_bound_used)
+            buf_fmt(b, "    if (mv_bound[%d] && !mv_set_has(mv_bound[%d] - 1, v[%d]))\n"
+                       "        mv_bind_stop(\"type_mismatch\");" NL,
+                    r1, r1, r2);
+        buf_fmt(b, "    %s = v[%d];", c->gnames[r1], r2);
+        return 0;
+    }
+    case OP_BIND: {
+        /* THE DECLARATION.  L_BIND does two things and this arm does both, in
+           the interpreter's order: record the bound, then check the
+           initialiser -- with the SAME membership test a later store uses,
+           and with a DIFFERENT message (`initial value out of range`, not
+           type_mismatch), which is why the two cases come in pairs.
+           The table stores what the interpreter stores: the set's region
+           index plus one, zero meaning "no bound" (vm->global_bound[g] in
+           src/vm/vm.c).  A constraint that is not a set records no bound
+           (L_BIND's `sidx = (R[setReg].type == VAL_SET) ? ... : -1`), so
+           `x: 5` leaves every store unchecked -- mir_bind_plain_constraint.
+           w3 is -1 for a declaration without an initial value, and that is a
+           compile-time operand, so the branch is C text chosen here rather
+           than a run-time test: L_BIND's no-init path leaves the global nil. */
+        int gid = r1, sreg = r2, init = w3;
+        buf_fmt(b, "    mv_bound[%d] = (v[%d].type == MV_SET) ? (int)v[%d].ival + 1 : 0;" NL,
+                gid, sreg, sreg);
+        if (init >= 0) {
+            buf_fmt(b, "    if (mv_bound[%d] && !mv_set_has(mv_bound[%d] - 1, v[%d]))\n"
+                       "        mv_bind_stop(\"initial value out of range\");" NL,
+                    gid, gid, init);
+            buf_fmt(b, "    %s = v[%d];", c->gnames[gid], init);
+        } else {
+            buf_fmt(b, "    %s = mv_nil();", c->gnames[gid]);
+        }
+        return 0;
+    }
     case OP_JUMP:         buf_fmt(b, "    goto L%d;", w2); return 0;
     case OP_JUMP_IF_FALSE: buf_fmt(b, "    if (!mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
     case OP_JUMP_IF_TRUE:  buf_fmt(b, "    if (mv_tru(v[%d])) goto L%d;", r1, w2); return 0;
@@ -4134,6 +4223,7 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
     /* The pre-scan runs first because it is what decides which globals are
        referenced at all; names are built from that answer, not beside it. */
     g_gref_n = root->global_name_count;
+    g_bound_used = 0;   /* a fresh pre-scan decides this, not the last call */
     if (g_gref_n > 0) {
         g_gref = calloc((size_t)g_gref_n, 1);
         if (!g_gref) { refuse("out-of-memory", "the global reference table"); goto done; }
@@ -4186,6 +4276,34 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
         buf_fmt(&out, "static MirVal %s = { MV_NIL, 0, 0 };" NL, gnames[i]);
     }
     buf_str(&out, NL);
+
+    /* THE BOUND TABLE, emitted only for a program that declares a constraint
+       (`name: set [= init]`) -- g_bound_used's note says why the guard is a
+       program-level switch rather than an always-on one.  The entry stores
+       what the interpreter stores in vm->global_bound: the set's region index
+       plus one, with zero meaning "no bound" (src/vm/vm.c, L_BIND:
+       `vm->global_bound[g] = sidx >= 0 ? sidx + 1 : 0`).  Storing the index
+       itself would make set 0 indistinguishable from no bound, and the pool's
+       handles start at 1, so +1 loses nothing.
+       The stored index is NOT resolved through mv_arr_live, and that is a
+       claim, not an oversight: a set has no write path in this route (OP_SET_ADD
+       is not emitted), and the only copy path that moves a region --
+       mv_dict_set's non-frontier branch -- copies the dict it was told to write
+       to the FRONTIER and leaves every other region where it is, so a handle
+       taken from a set stays valid for the life of the pool.  If a set ever
+       grows a write path, this entry has to start resolving (the array case in
+       mv_len, §10.129, is the same mistake in a different arm). */
+    if (g_bound_used) {
+        int nb = root->global_name_count > 0 ? root->global_name_count : 1;
+        buf_fmt(&out, "static int mv_bound[%d];   /* +1 per global, 0 = no bound */" NL, nb);
+        buf_str(&out,
+            "static void mv_bind_stop(const char *msg) {\n"
+            "    fflush(stdout);   /* the lines say() already wrote stay written */\n"
+            "    fprintf(stderr, \"[exception] uncaught: %s\\n\", msg);\n"
+            "    exit(1);          /* atexit(mv_free_all) still reports the pool */\n"
+            "}\n"
+            NL);
+    }
 
     for (int i = 1; i < m->nfuncs; i++) {
         int argc = nodes[i].argc;

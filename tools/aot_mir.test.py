@@ -459,6 +459,21 @@ ALLOCS_EXPECT = {
     "mir_stop_mid_loop": (0, 0),
     "mir_stop_inside_a_function": (0, 0),
     "mir_stop_after_allocating": (1, 256),
+    # OP_BIND allocates nothing itself: the table is a file-scope int array and
+    # the stop is a printf to stderr.  What these count is the SET LITERAL the
+    # declaration builds, measured off each generated program's own
+    # IR-MIR-ALLOCS line: one 256-byte pool block for a three-element set.
+    # `mir_bind_plain_constraint` reads 0|0 because `x: 5` declares a
+    # constraint that is not a set -- no set literal, and the emitter records
+    # no bound (L_BIND's sidx == -1) -- so a nonzero count here would mean the
+    # route built a set the program never wrote.  The three throwing cases
+    # report `reported=no|why=rc=1` and no count is consulted, exactly like the
+    # throw pair above: their message is on stderr and their exit happens
+    # inside the run.
+    "mir_bind_constrained_store": (1, 256),
+    "mir_bind_initial_value": (1, 256),
+    "mir_bind_int_probe_finds_float": (1, 256),
+    "mir_bind_plain_constraint": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
