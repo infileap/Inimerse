@@ -7471,3 +7471,48 @@ IR-AOT-MIR|accepted=227|same-as-interpreter=227|emittable=58|of-ops=67
 2. **跨容器共用的集合也能长大**：`mv_set_add` 收到的是值的**拷贝**，搬移只改池、不改调用者的寄存器；调用者的句柄仍然指向转发头，`mv_arr_live` 会解析它。这正是「别名不受搬移影响」的实现方式，也是那段注释写明的理由。
 3. **推导式到此为止**：`OP_SET_ADD` 之后这条路上没有剩下的 opcode 了。`IR-MIR-NOT-YET` 在推导式程序上现在是空的——这条路的下一步不再是「再实现一个 opcode」，而是「让更多程序形态通过预扫描」。
 4. **`OP_SET_ADD` 不推动 `list` 那一格记下的判据**：两者是独立的判据组，`list` 是读、`add` 是写。
+
+## §10.144 `recv`：没有线程能填的队列，答案只能是 nil（aot-mir，A 类第三十三项）
+
+### 一、来源与日期
+
+判据 `1b4a1c4`（四条先红）、实现 `38a8c58`，2026-11-09。这是 `unknown` 从 9 降到 8 的那一格。
+
+### 二、形状
+
+`recv name [, timeout]` 编译成 `OP_RECV r1, r2, 0`：`r1` 是**结果**寄存器，`r2` 是超时寄存器（源码没有超时就是 **−1**），`r3` 不用（`src/compiler/compiler.c`，`STMT_RECV`）。
+
+解释器的臂（`src/vm/vm.c`，`L_RECV`）在 `t->msg_lock` 下轮询 `t->msg_q`。**这两个对象只在启动线程的路径上创建**（同文件 `4532-4533`：`ImMutex *ml = im_mutex_new(); nt->msg_lock = ml;`）。本路线接受的程序只有一条线程，而带线程段的容器在更早处就被按 `why=threads` 拒掉——所以 `t->msg_lock` 是 NULL，整段轮询被跳过，`out`（初始化为 `VAL_NIL`）原样返回。
+
+**超时寄存器甚至不被读取**：解释器在没有队列可等时也不等。实测 `recv m, 0.5` 立刻返回 nil，而不是睡半秒。
+
+### 三、判据
+
+| 用例 | 钉住什么 | 绿读数 |
+|---|---|---|
+| `mir_recv_is_nil` | 立刻返回 nil，后续语句照常 | `nil / after`，10 字节 |
+| `mir_recv_with_a_timeout` | 带超时也不等待、也是 nil | `nil`，4 字节 |
+| `mir_recv_inside_a_function` | 容器里接收到的值可被 `return` 出来 | `nil / done`，9 字节 |
+| `mir_recv_result_is_a_value` | 结果是一个**真 nil 值**，不是“没写过的寄存器” | `true / false / nil`，15 字节 |
+
+最后一条是这一格的关键：一个**什么都不写**的臂也能让前三条通过（寄存器里恰好是 nil 的情况很多），但 `say m == nil` 会答 true 而 `say m == 0` 会答 false——只有真的写入了 nil 才两条都对，`x = m` 之后再 `say x` 也一样。**「恰好空着」和「答案是 nil」在前三条上不可区分，在第四条上可区分**。
+
+### 四、读数（本树 `38a8c58`）
+
+```
+IR-MIR-COVER|...|mir-only-cases=145|mir-only-same-as-interpreter=145
+IR-MIR-VERDICT|PASS
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|agree=yes
+IR-AOT-MIR|accepted=231|same-as-interpreter=231|emittable=59|of-ops=67
+  |not-emittable=8|beyond-ast-denominator=30
+```
+
+四条 `ALLOCS` 全是 `0|0`——队列读不到东西，也就没有可分配的块。这一行存在是为了让「把收到的值装箱」或「为接收缓冲向池要一块」的实现被读数抓住。
+
+`op_regs` 只给 `R1`：`r2` 是超时寄存器、在源码没有超时时是 −1，给它一位会让通用的寄存器边界循环拒掉一个合法的 −1（`OP_BIND` 的初始化寄存器是同样的处理）。
+
+### 五、边界
+
+1. **`send` 仍然拒译**：`send t1 5` 连解释器都过不了——它答「未定义的线程 t1」，因为线程名必须在 `thread` 段里定义，而线程段本身被拒。所以 `send` 与线程六件一起留在 `unknown` 里。
+2. **这一格不声称「消息传递可用」**：它只声称「在这些程序上，`recv` 的答案与解释器一致」。真正的消息传递需要线程段与调度器，那条路在本路线是**具名边界**（`why=threads`），不是缺口。
+3. **`recv` 不阻塞，所以判据里没有时间断言**：与 §10.138 的 `wait` 相反——`wait` 真的睡（因此要手工记录延迟），`recv` 真的不睡（因此「立刻返回」由程序在合理时间内完成来体现，不需要计时）。
