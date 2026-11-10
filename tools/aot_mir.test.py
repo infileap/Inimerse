@@ -498,6 +498,16 @@ ALLOCS_EXPECT = {
     # `type_mismatch` costs zero blocks.  Kept as a row, with the correction
     # written down, because a silently fixed expectation teaches nobody.
     "mir_try_catches_an_arm_stop": (1, 256),
+    # OP_WAIT allocates nothing: the sleep is a libc call, not a pool block, and
+    # nothing below builds a container.  These rows exist so that a future arm
+    # that boxed the duration or asked the pool for a "timer" would move them.
+    # MEASURED like every other row, not derived from "it should be zero".
+    "mir_wait_at_toplevel": (0, 0),
+    "mir_wait_zero": (0, 0),
+    "mir_wait_inside_a_function": (0, 0),
+    "mir_wait_with_a_variable_delay": (0, 0),
+    "mir_wait_in_a_loop": (0, 0),
+    "mir_wait_a_non_number_is_zero": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -2114,6 +2124,54 @@ MIR_ONLY = [
      '  }\n'
      '}\n'
      'g()\n'),
+    # OP_WAIT -- the second opcode in this route whose answer is not a value.
+    # The interpreter's arm turns the operand into milliseconds with its own type
+    # ladder (INT through ival, FLOAT through fval, ANYTHING ELSE as 0.0) and then,
+    # in the CLI shape this route accepts (not a task, no gui pump, no per-frame
+    # callbacks), hands it to a blocking sleep.  So the observable part of `wait`
+    # is TIME, and every program below prints the same bytes whether the delay
+    # happens or not.  That is why these are criteria about what `wait` must NOT
+    # do -- change output, drop a statement, allocate -- and why the delay itself
+    # is measured by hand and written into section 10.138 instead of asserted
+    # here: a wall-clock assertion in this file would be a flaky test wearing a
+    # measurement's clothes.
+    ("mir_wait_at_toplevel",
+     'say 1\n'
+     'wait 0.05\n'
+     'say 2\n'),
+    ("mir_wait_zero",
+     'say 1\n'
+     'wait 0\n'
+     'say 2\n'),
+    # `pause` is a keyword (the first spelling of this case did not parse: "expected
+    # 'function name', but got 'pause' (type 45)"), so the container is `hold`.
+    ("mir_wait_inside_a_function",
+     'func hold(a) {\n'
+     '  say a\n'
+     '  wait 0.02\n'
+     '  say "done"\n'
+     '}\n'
+     'hold(7)\n'
+     'say "after"\n'),
+    ("mir_wait_with_a_variable_delay",
+     'd = 0.01\n'
+     'say 1\n'
+     'wait d\n'
+     'say 2\n'),
+    ("mir_wait_in_a_loop",
+     'i = 0\n'
+     'while i < 3 {\n'
+     '  wait 0.01\n'
+     '  i = i + 1\n'
+     '}\n'
+     'say i\n'),
+    # The type ladder, not the register's tag: the interpreter reads a STRING
+    # operand as 0.0 and carries on, so this route must too -- and mv_as_nv, which
+    # aborts on a string, is exactly what it must not use here.
+    ("mir_wait_a_non_number_is_zero",
+     'say 1\n'
+     'wait "x"\n'
+     'say 2\n'),
 
 ]
 
