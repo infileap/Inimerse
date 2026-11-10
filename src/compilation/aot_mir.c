@@ -351,6 +351,23 @@ static const char *const kMirValBlock =
 "   with the string block. */\n"
 "static void   mv_throw(MirVal a);\n"
 "static inline MirVal mv_str(const char *s);\n"
+"static inline int mv_numeric(MirVal a) {\n"
+"    return a.type == MV_INT || a.type == MV_FLT || a.type == MV_BOO;   /* :323-334 */\n"
+"}\n"
+"static inline int mv_str_cmp(MirVal a, MirVal b) {\n"
+"    /* BOTH STRINGS IS A PRECONDITION, not a hope: the four ordering arms call\n"
+"       mv_orderable first and this function second, and the string arm only\n"
+"       when both sides are MV_STR.  A mixed pair can no longer reach here, so\n"
+"       the guard is kept as a stop (a future caller that skips the guard is a\n"
+"       defect, and a defect should stop loudly) but it is no longer the ROUTE's\n"
+"       answer to the shape -- mv_orderable is. */\n"
+"    if (a.type != MV_STR || b.type != MV_STR) abort();\n"
+"    if (!a.sval || !b.sval) abort();  /* payload guard only: ival is the free\n"
+"                                         marker, not a residency claim (see\n"
+"                                         mv_str_concat, which relaxed it) */\n"
+"    if (a.sval == b.sval) return 0;   /* val_cmp:450 pointer fast path */\n"
+"    return strcmp(a.sval, b.sval);    /* val_cmp:451 */\n"
+"}\n"
 "static inline MirVal mv_nil(void) {\n"
 "    MirVal r;\n"
 "    r.type = MV_NIL;\n"
@@ -500,7 +517,10 @@ static const char *const kMirValBlock =
 "                                         mv_str_concat). */\n"
 "    return nv_tru(mv_as_nv(a));\n"
 "}\n"
-"static inline MirVal mv_neg(MirVal a) { return mv_from_nv(nv_neg(mv_as_nv(a))); }\n"
+"static inline MirVal mv_neg(MirVal a) {\n"
+"    if (!mv_numeric(a)) { mv_throw(mv_str(\"type_mismatch\")); return mv_boo(0); }   /* :323-334 */\n"
+"    return mv_from_nv(nv_neg(mv_as_nv(a)));\n"
+"}\n"
 "static inline MirVal mv_not(MirVal a) { return mv_boo(!mv_tru(a)); }\n"
 "/* THE SET-REDUCTION ARM -- what OP_MIN/OP_MAX answer on this route, and why\n"
 " * the whole answer is nil.  Same structure as the notes here: WHY / WHAT IT\n"
@@ -688,6 +708,7 @@ static const char *const kMirValBlock =
 "                                                                answer on this route */\n"
 "        return mv_str_concat(a, b);\n"
 "    }\n"
+"    if (!mv_numeric(a) || !mv_numeric(b)) { mv_throw(mv_str(\"type_mismatch\")); return mv_boo(0); }\n"
 "    return mv_from_nv(nv_add(mv_as_nv(a), mv_as_nv(b)));\n"
 "}\n"
 "/* THE CHAIN FOLD -- one buffer for a whole `a + b + c + ...`, OP_CONCAT.\n"
@@ -779,10 +800,22 @@ static const char *const kMirValBlock =
 "        return acc;\n"
 "    }\n"
 "}\n"
-"static inline MirVal mv_sub(MirVal a, MirVal b) { return mv_from_nv(nv_sub(mv_as_nv(a), mv_as_nv(b))); }\n"
-"static inline MirVal mv_mul(MirVal a, MirVal b) { return mv_from_nv(nv_mul(mv_as_nv(a), mv_as_nv(b))); }\n"
-"static inline MirVal mv_div(MirVal a, MirVal b) { return mv_from_nv(nv_div(mv_as_nv(a), mv_as_nv(b))); }\n"
-"static inline MirVal mv_mod(MirVal a, MirVal b) { return mv_from_nv(nv_mod(mv_as_nv(a), mv_as_nv(b))); }\n"
+"static inline MirVal mv_sub(MirVal a, MirVal b) {\n"
+"    if (!mv_numeric(a) || !mv_numeric(b)) { mv_throw(mv_str(\"type_mismatch\")); return mv_boo(0); }\n"
+"    return mv_from_nv(nv_sub(mv_as_nv(a), mv_as_nv(b)));\n"
+"}\n"
+"static inline MirVal mv_mul(MirVal a, MirVal b) {\n"
+"    if (!mv_numeric(a) || !mv_numeric(b)) { mv_throw(mv_str(\"type_mismatch\")); return mv_boo(0); }\n"
+"    return mv_from_nv(nv_mul(mv_as_nv(a), mv_as_nv(b)));\n"
+"}\n"
+"static inline MirVal mv_div(MirVal a, MirVal b) {\n"
+"    if (!mv_numeric(a) || !mv_numeric(b)) { mv_throw(mv_str(\"type_mismatch\")); return mv_boo(0); }\n"
+"    return mv_from_nv(nv_div(mv_as_nv(a), mv_as_nv(b)));\n"
+"}\n"
+"static inline MirVal mv_mod(MirVal a, MirVal b) {\n"
+"    if (!mv_numeric(a) || !mv_numeric(b)) { mv_throw(mv_str(\"type_mismatch\")); return mv_boo(0); }\n"
+"    return mv_from_nv(nv_mod(mv_as_nv(a), mv_as_nv(b)));\n"
+"}\n"
 "/* THE STRING ARM IN THE EQUALITY PAIR -- the debt this block used to pay for\n"
 " * by dying.  Same structure as the nil note above: WHY IT EXISTS / WHAT IT\n"
 " * ADDS / WHAT IT DOES NOT COVER / DELETE CONDITION / MEASURED BY.\n"
@@ -1081,20 +1114,25 @@ static const char *const kMirValBlock =
 "    return (a.type == MV_INT || a.type == MV_FLT || a.type == MV_BOO)\n"
 "        && (b.type == MV_INT || b.type == MV_FLT || b.type == MV_BOO);   /* :444 */\n"
 "}\n"
-"static inline int mv_str_cmp(MirVal a, MirVal b) {\n"
-"    /* BOTH STRINGS IS A PRECONDITION, not a hope: the four ordering arms call\n"
-"       mv_orderable first and this function second, and the string arm only\n"
-"       when both sides are MV_STR.  A mixed pair can no longer reach here, so\n"
-"       the guard is kept as a stop (a future caller that skips the guard is a\n"
-"       defect, and a defect should stop loudly) but it is no longer the ROUTE's\n"
-"       answer to the shape -- mv_orderable is. */\n"
-"    if (a.type != MV_STR || b.type != MV_STR) abort();\n"
-"    if (!a.sval || !b.sval) abort();  /* payload guard only: ival is the free\n"
-"                                         marker, not a residency claim (see\n"
-"                                         mv_str_concat, which relaxed it) */\n"
-"    if (a.sval == b.sval) return 0;   /* val_cmp:450 pointer fast path */\n"
-"    return strcmp(a.sval, b.sval);    /* val_cmp:451 */\n"
-"}\n"
+"/* THE ARITHMETIC GUARD.  val_as_double (src/vm/vm.c:323-334) admits int, float"
+" * and bool, and REFUSES everything else with vm_throw_kind(type_mismatch) --"
+" * so every arithmetic opcode has the same precondition the ordering arms have,"
+" * and this route answered the failure with mv_as_nv -> abort() (rc 134, no"
+" * message)."
+" *"
+" * MEASURED, interpreter side, all of these print [exception] uncaught:"
+" * type_mismatch, nothing on stdout, exit 1:"
+" *     1 + nil     nil - 1     1 / nil     nil % 2     -nil"
+" * and true * 2 answers 2 -- a BOOL is numeric, and that is the control that"
+" * stops this from becoming the rule refuse-anything-not-int-or-float."
+" * An ARRAY operand is a different shape (L_ADD has its own stderr line and"
+" * exit 1); this guard refuses it with type_mismatch, which is what the OTHER"
+" * arithmetic opcodes give it (measured: a list plus one refuses for addition"
+" * only)."
+" *"
+" * WHAT IT DOES NOT COVER: it does not make the failure catchable on its own --"
+" * mv_throw sets a flag and the ARMS carry the check (OP_LT note records the"
+" * measurement that made that distinction expensive to learn). */"
 "/* The four ordering arms, each: the interpreter's guard FIRST, then the\n"
 "   comparison.  mv_throw is a stop with the interpreter's own message when no\n"
 "   handler is open, and the catchable seam when one is (10.137) -- so these\n"
@@ -4538,10 +4576,18 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         buf_fmt(b, "    mv_arr_set(v[%d], v[%d], v[%d]);", r1, r2, r3);
         emit_try_check(b, c, i);
         return 0;
-    case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_GE:           buf_fmt(b, "    v[%d] = mv_ge(v[%d], v[%d]);", r1, r2, r3); return 0;
+    /* THE ORDERING PAIR, and the ONE THING they must do that the other arms do
+       not: carry the check.  Since this cell an unorderable pair is a THROW
+       (mv_orderable's note), and mv_throw only SETS THE FLAG -- the jump to the
+       catch happens in the check emitted after the instruction.  Measured
+       without it: `try { say ("hi" < c) }` printed `false` and carried on,
+       because the throw had been recorded and nothing acted on the record; the
+       interpreter prints `caught`.  Found by the fuzzer, on the same day the
+       guard was added. */
+    case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); emit_try_check(b, c, i); return 0;
+    case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); emit_try_check(b, c, i); return 0;
+    case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); emit_try_check(b, c, i); return 0;
+    case OP_GE:           buf_fmt(b, "    v[%d] = mv_ge(v[%d], v[%d]);", r1, r2, r3); emit_try_check(b, c, i); return 0;
     case OP_AND:          buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) && mv_tru(v[%d]));", r1, r2, r3); return 0;
     case OP_OR:           buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) || mv_tru(v[%d]));", r1, r2, r3); return 0;
     case OP_NEG:

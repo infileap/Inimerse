@@ -2046,3 +2046,18 @@ set_tests_properties(aot_mir_surface_regression PROPERTIES WORKING_DIRECTORY ${C
 add_test(NAME aot_mir_surface_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_surface.py --self-check)
 set_tests_properties(aot_mir_surface_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;aot-mir;regression")
+
+# The MIR route's DIFFERENTIAL FUZZER.  Its corpus is hand-written -- 86 shared
+# cases plus a MIR-only list -- and a hand-written corpus finds what its author
+# already suspected.  Measured twice in one week: the set's 32-bit narrowing
+# (10.142) and the unorderable-pair abort (10.146) were both found by generating
+# programs and comparing two runtimes, after every written case was green.
+# Registered with a small fixed count and a fixed seed so it is a REPRODUCIBLE
+# reading rather than a lottery: the number in the gate is the number anybody
+# else gets from the same seed.
+add_test(NAME aot_mir_fuzz_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --count 20 --seed 7 --engine $<TARGET_FILE:inimerse> --mir-tool $<TARGET_FILE:aot-mir>)
+set_tests_properties(aot_mir_fuzz_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;aot-mir;regression")
+add_test(NAME aot_mir_fuzz_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --self-check)
+set_tests_properties(aot_mir_fuzz_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;aot-mir;regression")

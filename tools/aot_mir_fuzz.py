@@ -122,7 +122,12 @@ def value_expr(rng, names, depth=0):
         return "(%s or %s)" % (cond(rng, names, depth + 1), cond(rng, names, depth + 1))
     if r < 0.94:
         return "(not %s)" % cond(rng, names, depth + 1)
-    return "min(%s)" % set_expr(rng, names)
+    # `min(<set>)` is deliberately NOT generated: min takes one argument and its
+    # answer for a non-set operand is nil, so composing it invites the
+    # `min(a, b)` syntax error that flooded an earlier run with UNSOUND cases
+    # that were the GENERATOR's fault, not this route's.  A set literal read
+    # through len() is the shape that is actually answerable here.
+    return "len([%s])" % set_literal(rng)   # brackets: len takes ONE argument
 
 
 def cond(rng, names, depth=0):
@@ -147,15 +152,47 @@ def string_or_container(rng, names):
     return set_expr(rng, names)
 
 
-def set_expr(rng, names):
+# NON-NEGATIVE ONLY, and that is a measured limit of the LANGUAGE, not of this
+# route: `c = -1, 2` and `c = 1, -1, 2` both answer "Error: expected
+# 'expression'", because the set-literal lookahead (src/parser/parser.c's
+# looks_like_set_start) does not accept a leading '-' and the retry then sees a
+# comma.  The interpreter and the MIR route refuse identically, so it is not a
+# divergence -- but a generator that emits it reports a syntax error as a
+# finding, which is the generator's bug wearing a finding's clothes.
+SET_INTS = ["0", "1", "2", "3", "7", "42", "100"]
+
+
+def set_literal(rng):
+    """A set literal: a bare comma list, which is the ONLY set source the
+    language has (src/parser/parser.c's looks_like_set_start)."""
     n = rng.randint(1, 4)
-    return ", ".join(rng.choice(INTS) for _ in range(n))
+    return ", ".join(rng.choice(SET_INTS) for _ in range(n))
+
+
+def set_expr(rng, names):
+    """A set bound to a NAME, never a bare comma list in an expression.
+
+    `c = 1, 2` parses; `0.5 * (1, 2)` does not -- not in this route and not in
+    the interpreter, which answers "Error: expected 'expression', but got ','".
+    The bare list is a STATEMENT shape (src/parser/parser.c's bind path), so a
+    generator that pastes one into an expression produces a syntax error and
+    calls it a finding.  Bindings are what these helpers are for.
+    """
+    return set_literal(rng)
 
 
 def set_or_array(rng, names):
-    if rng.random() < 0.5:
+    """A CONTAINER operand for `in`: an array literal, or a bound name.
+
+    Never a bare set list -- see set_expr's note.  `c` is in `names` because the
+    generator binds it before composing; an unbound name reads nil, which is a
+    legal operand and not a syntax error.
+    """
+    if rng.random() < 0.6:
         return "[" + ", ".join(rng.choice(INTS) for _ in range(rng.randint(0, 4))) + "]"
-    return set_expr(rng, names)
+    if names and rng.random() < 0.5:
+        return rng.choice(names)
+    return "[" + ", ".join(rng.choice(INTS) for _ in range(rng.randint(0, 3))) + "]"
 
 
 def gen_program(rng):
@@ -171,7 +208,10 @@ def gen_program(rng):
             lines.append("c = " + set_expr(rng, names))
         else:
             lines.append("c = " + rng.choice(STRINGS))
-        names.append("c")
+        # NOT appended to `names`: `c` may be a SET or a DICT, and pasting a
+        # bare set list into an expression does not parse in EITHER runtime
+        # (measured: "Error: expected 'expression', but got ','").  It is read
+        # through len() above, which is the shape the language allows.
         lines.append("say len(c)")
     # a closure over one capture
     if rng.random() < 0.35:
@@ -248,6 +288,7 @@ def main():
     rng = random.Random(args.seed)
 
     ran = diverge = threw = unsound = 0
+    skipped_refusals = 0
     findings = []
     for n in range(args.count):
         src = gen_program(rng)
@@ -260,12 +301,24 @@ def main():
         mir_c = work / ("f%03d.mir.c" % n)
         rc_t, out_t, err_t = run([args.mir_tool, "translate", prog, mir_c], work)
         if rc_t != 0:
-            unsound += 1
             why = ""
             for line in out_t.decode("utf-8", "replace").splitlines():
                 if line.startswith("IR-MIR-REFUSED|"):
                     why = line.strip()
-            findings.append("FUNSOUND|case=%d|why=%s" % (n, why or (err_t or b"").decode("utf-8", "replace").strip()[:120]))
+            # A NAMED refusal is this route working as designed, not a finding:
+            # the boundary table (tools/aot_mir_surface.py) argues for every one
+            # of them, and counting them as UNSOUND would make a run that
+            # suddenly covered LESS look the same as a run that found a bug.
+            # A PARSE error is the generator's own fault and is counted apart.
+            named = ("|why=threads|", "|why=try-enters|", "|why=try-escapes|",
+                     "|why=set-interval-domain|", "|why=lock-unpaired|",
+                     "|why=index-out-of-range-constant|")
+            text = why or (err_t or b"").decode("utf-8", "replace").strip()[:120]
+            if any(k in text for k in named):
+                skipped_refusals += 1
+                continue
+            unsound += 1
+            findings.append("FUNSOUND|case=%d|why=%s" % (n, text))
             continue
         exe = work / ("f%03d.exe" % n)
         rc_c, _o_c, e_c = run([args.cc, "-O2", "-o", exe, mir_c], work)
@@ -284,8 +337,10 @@ def main():
 
     for f in findings:
         print(f)
-    print("IR-AOT-MIR-FUZZ|seed=%d|count=%d|ran=%d|diverge=%d|threw=%d|unsound=%d|dir=%s"
-          % (args.seed, args.count, ran, diverge, threw, unsound, work))
+    print("IR-AOT-MIR-FUZZ|seed=%d|count=%d|ran=%d|diverge=%d|threw=%d|unsound=%d"
+          "|refused-by-name=%d|dir=%s"
+          % (args.seed, args.count, ran, diverge, threw, unsound,
+             skipped_refusals, work))
     print("IR-AOT-MIR-FUZZ-VERDICT|%s" % ("PASS" if diverge == 0 and threw == 0 else "FAIL"))
     return 0 if diverge == 0 and threw == 0 else 1
 
