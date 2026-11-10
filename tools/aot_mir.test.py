@@ -2550,6 +2550,50 @@ MIR_ONLY = [
      'say list(s)\n'
      'say t[0]\n'),
 
+    # ---- recv: the message queue that only a thread can fill ----------------
+    #
+    # `recv x` is OP_RECV r1, r2, 0 -- result register, timeout register (-1
+    # when there is none), nothing else (src/compiler/compiler.c, STMT_RECV).
+    # The interpreter's arm polls `t->msg_q` under `t->msg_lock`, and BOTH of
+    # those exist only on a thread started by OP_THREAD_START
+    # (src/vm/vm.c:4532-4533: `ImMutex *ml = im_mutex_new(); nt->msg_lock = ml;`
+    # inside the thread-spawn path).  So on the single thread this route
+    # accepts, the whole poll is skipped and the answer is nil -- measured:
+    # `recv x` / `say x` prints nil and returns immediately, with and without a
+    # timeout (`recv x, 0.5` also prints nil and does not wait).
+    #
+    # A message can only ever arrive from another thread, and a container
+    # carrying a thread section is refused before this arm (why=threads).  So
+    # nil is not a simplification here: it is the only answer this route's
+    # programs can reach, and the same one the interpreter gives them.
+    ("mir_recv_is_nil",
+     'recv msg\n'
+     'say msg\n'
+     'say "after"\n'),
+
+    ("mir_recv_with_a_timeout",
+     'recv msg, 0.5\n'
+     'say msg\n'),
+
+    ("mir_recv_inside_a_function",
+     'func take() {\n'
+     '  recv m\n'
+     '  return m\n'
+     '}\n'
+     'say take()\n'
+     'say "done"\n'),
+
+    # The result is a VALUE like any other: storing it and comparing it must
+    # behave as nil, not as "unset".  A route that left the register untouched
+    # would print whatever happened to be in it, which reads as a coincidence
+    # rather than an answer.
+    ("mir_recv_result_is_a_value",
+     'recv m\n'
+     'say m == nil\n'
+     'say m == 0\n'
+     'x = m\n'
+     'say x\n'),
+
 ]
 
 
