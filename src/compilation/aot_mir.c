@@ -2550,6 +2550,13 @@ static int op_regs(int op) {
        or label index here for the operand instrument to see. */
     case OP_THROW: return R1;
     case OP_HALT: return 0;
+    /* OP_STOP reads no operand and writes none: the interpreter's arm never
+       touches R[] (src/vm/vm.c, L_STOP: `t->running = false; continue;`), and
+       the compiler emits it with all three fields zero
+       (src/compiler/compiler.c, STMT_STOP: `emit(comp->curBC, OP_STOP, 0, 0, 0)`).
+       The zero mask is also the claim this route makes to IR-MIR-CONSERVE --
+       the instruction is emitted rather than counted not-yet. */
+    case OP_STOP: return 0;
     default: return -1;
     }
 }
@@ -3936,7 +3943,22 @@ static int emit_one(Ctx *c, Buf *b, int i) {
        which exit(1) runs by design (see the atexit registration in
        emit_container). */
     case OP_THROW:        buf_fmt(b, "    mv_die_uncaught(v[%d]);", r1); return 0;
-    case OP_HALT:
+    /* OP_STOP shares OP_HALT's two exits, for a different reason.  The
+       interpreter's arm is `t->running = false; continue;` (src/vm/vm.c, L_STOP)
+       -- the RUNNING thread stops -- while HALT ends the program outright.
+       This route emits one thread per program (a container carrying a thread
+       section is refused earlier, why=threads), so "this thread stops" and "the
+       program ends" are the same event and the same bytes: return from main, or
+       exit(0) out of a container.  What they are NOT is a `break` or a flag:
+       `stop all` reached from inside a while must leave the whole program
+       (mir_stop_mid_loop), and a container's `stop all` must not let the call
+       site continue with mv_nil() (mir_stop_inside_a_function).
+       The exit is unconditional, so the atexit(mv_free_all) registration still
+       runs and the allocation reading is unchanged -- mir_stop_after_allocating
+       pins that with one block allocated before the stop.
+       IR-MIR-CONSERVE counts this as emitted, which is why op_regs carries the
+       case; the absence showed up as four refusals naming OP_STOP:1. */
+    case OP_STOP: case OP_HALT:
         if (c->nodes[c->id].is_main) buf_str(b, "    return 0;");
         else buf_str(b, "    fflush(stdout); exit(0);");
         return 0;

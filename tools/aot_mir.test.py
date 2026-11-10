@@ -450,6 +450,15 @@ ALLOCS_EXPECT = {
     "mir_print_set_whole": (1, 256),
     "mir_print_mixed_tags": (2, 768),
     "mir_print_empty": (1, 256),
+    # OP_STOP allocates nothing itself; the three plain stops are therefore
+    # (0, 0) and split out of ALLOCS_DEFAULT only to say so.  The fourth
+    # allocates one array literal before it stops, which is what makes the
+    # reading tell the exit apart from `exit(0)` skipping the sweep: freed
+    # and live=0 still have to come back from atexit(mv_free_all).
+    "mir_stop_at_toplevel": (0, 0),
+    "mir_stop_mid_loop": (0, 0),
+    "mir_stop_inside_a_function": (0, 0),
+    "mir_stop_after_allocating": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -1744,6 +1753,58 @@ MIR_ONLY = [
      'd = {}\n'
      'say a\n'
      'say d\n'),
+
+    # `stop all` is OP_STOP.  The interpreter's arm is two statements --
+    # `t->running = false; continue;` (src/vm/vm.c, L_STOP) -- i.e. "the
+    # RUNNING thread stops here", which for the one thread a program has is
+    # "the program ends here, with rc 0 and no more output".  This route
+    # emits one thread per program (a container with a thread section is
+    # refused earlier, why=threads), so the same two statements are the same
+    # exit: `return 0;` from main, `fflush(stdout); exit(0);` from a
+    # container -- the exit OP_HALT already leaves through.
+    #
+    #   mir_stop_at_toplevel   the plain shape: `say 2` after `stop all` is
+    #                          never printed, and the rc is still 0.
+    #   mir_stop_mid_loop      reached from inside a `while` on its third
+    #                          pass: a lowering that emits a `break` or a
+    #                          flag instead of an exit prints `done` and/or
+    #                          keeps counting, and one that emits it only at
+    #                          top level does not stop at all.
+    #   mir_stop_inside_a_function
+    #                          the container path -- `return mv_nil()` would
+    #                          be wrong here because the call site keeps
+    #                          going and prints `3`; only the exit does.
+    #   mir_stop_after_allocating
+    #                          the exit sweep is atexit, not the end of main,
+    #                          so a block allocated before the stop is still
+    #                          freed and reported as freed.
+    ("mir_stop_at_toplevel",
+     'say 1\n'
+     'stop all\n'
+     'say 2\n'),
+    ("mir_stop_mid_loop",
+     'i = 0\n'
+     'while i < 10 {\n'
+     '  say i\n'
+     '  i = i + 1\n'
+     '  if i == 3 {\n'
+     '    stop all\n'
+     '  }\n'
+     '}\n'
+     'say "done"\n'),
+    ("mir_stop_inside_a_function",
+     'func f() {\n'
+     '  say 1\n'
+     '  stop all\n'
+     '  say 2\n'
+     '}\n'
+     'f()\n'
+     'say 3\n'),
+    ("mir_stop_after_allocating",
+     'a = [1, 2]\n'
+     'say len(a)\n'
+     'stop all\n'
+     'say "unreached"\n'),
 
 ]
 
