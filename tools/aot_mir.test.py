@@ -533,6 +533,14 @@ ALLOCS_EXPECT = {
     "mir_interval_a_non_number_bound_makes_nil": (0, 0),
     "mir_interval_equality_by_bounds": (2, 768),
     "mir_interval_inside_a_function": (1, 256),
+    # The LOCK cases allocate nothing: a mutex is not a pool region, and the
+    # three programs below build no container.  `mir_lock_around_a_container`
+    # builds one array literal, so it reads 1|256 -- MEASURED, not inferred
+    # from "the lock adds nothing".
+    "mir_lock_block": (0, 0),
+    "mir_lock_inside_a_loop": (0, 0),
+    "mir_lock_return_from_body": (0, 0),
+    "mir_lock_around_a_container": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -2333,6 +2341,58 @@ MIR_ONLY = [
      'say 4 in p\n'
      'say len(p)\n'),
 
+    # ---- lock: a mutex this route never contends ----------------------------
+    #
+    # `lock m { ... }` compiles to OP_LOCK (acquire), the body, OP_LOCK (release)
+    # -- the same opcode twice with r2 = 0 and r2 = 1 (src/compiler/compiler.c,
+    # STMT_LOCK's isBlock == 1 path; isBlock 0 is the bare `lock m` form and
+    # isBlock 2 is `unlock m`).  The interpreter's arm is a named ImMutex
+    # (src/vm/vm.c, L_LOCK): look the index up, create the mutex on first use,
+    # `im_mutex_lock` or `im_mutex_unlock` by r2, continue.
+    #
+    # On this route there is exactly ONE thread -- a container carrying a thread
+    # section is refused earlier, why=threads -- so a mutex has nothing to
+    # contend with and both calls are unobservable.  That makes this the honest
+    # no-op of the group, like yield (10.136): what the criteria pin is what the
+    # arm must NOT do (change output, drop the body, break a return out of the
+    # body, allocate).
+    #
+    # The BARE form (`lock m` with no block) is REFUSED, not answered: it takes
+    # the mutex and never releases it, and the interpreter measures as a HANG
+    # (the probe printed `a\nin\nb` for the block form and never returned for
+    # the bare one; killed after two minutes).  Reproducing a hang is not
+    # agreement.
+    ("mir_lock_block",
+     'say "a"\n'
+     'lock m {\n'
+     '  say "in"\n'
+     '}\n'
+     'say "b"\n'),
+
+    ("mir_lock_inside_a_loop",
+     'i = 0\n'
+     'while i < 3 {\n'
+     '  lock m {\n'
+     '    i = i + 1\n'
+     '  }\n'
+     '}\n'
+     'say i\n'),
+
+    ("mir_lock_return_from_body",
+     'func f() {\n'
+     '  lock m {\n'
+     '    return 7\n'
+     '  }\n'
+     '}\n'
+     'say f()\n'),
+
+    ("mir_lock_around_a_container",
+     'lock m {\n'
+     '  a = [1, 2]\n'
+     '  say len(a)\n'
+     '}\n'
+     'say "done"\n'),
+
 ]
 
 
@@ -2429,6 +2489,18 @@ MIR_ONLY_REFUSE = {
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
         "builtin-call"),
+    # A mutex taken and never released.  The INTERPRETER HANGS on this shape
+    # (measured: the block form printed `a\nin\nb`, the bare probe never returned
+    # and was killed after two minutes), so the refusal is the only honest
+    # answer -- an "it is a no-op on one thread" reading would be true of the
+    # BLOCK form and false here.  The mirror case refuses `unlock m` alone for
+    # the same reason (it would release a mutex this route never took).
+    "mir_lock_bare_never_released": (
+        'lock m\nsay 1\n',
+        "lock-unpaired"),
+    "mir_lock_unlock_alone": (
+        'unlock m\nsay 1\n',
+        "lock-unpaired"),
     # The jump leaves the guarded body without passing TRY_END, so the frame
     # that a later throw would use is the wrong one -- see the note above.
     "mir_try_escapes": (

@@ -7274,3 +7274,65 @@ IR-AOT-MIR-VERDICT|PASS|covered=29|missing=0
 2. **没有集合运算符**。`p | [5, 7)` 直接解析失败（`Error: expected 'expression', but got '|'`），所以并/交/差不可达，本格不需要回答它们。
 3. **`OP_SET_ADD` 仍是 not-yet**：它只由推导式发射，而推导式先发 `list` 内建、本路线按名拒。
 4. **区间与有限集的相等答 false**，这是解释器 `set_equal` 的规矩（交叉相等要求空字面量 + 恰好一个组件），不是本路线的简化——判据里没有这条，因为本路线构造不出那种字面量。
+
+## §10.141 `lock`：成对的那种是一个 no-op，不成对的按名拒绝（aot-mir，A 类第三十项）
+
+### 一、来源与日期
+
+判据 `7507ffc`（四条执行 + 两条拒绝）、实现 `c6026be`，2026-11-09。这是 `unknown` 从 11 降到 10 的那一格。
+
+### 二、形状
+
+`lock m { ... }` 在字节码里是**同一条 opcode 出现两次**：`OP_LOCK midx, 0` 取锁、body、`OP_LOCK midx, 1` 放锁（`src/compiler/compiler.c`，`STMT_LOCK` 的 `isBlock == 1` 路径；`isBlock == 0` 是裸 `lock m`，`isBlock == 2` 是 `unlock m`）。解释器的臂（`src/vm/vm.c`，`L_LOCK`）按名字查 `vm->mutexes`，第一次用到就 `im_mutex_new()` 建出来，然后按 `r2` 调 `im_mutex_lock` 或 `im_mutex_unlock`。
+
+**本路线只有一条线程**（带线程段的容器在更早的地方按 `why=threads` 拒掉），所以互斥量没有任何竞争者，两次调用都不可观测。于是这一臂是一个**注释**——与 §10.136 的 `yield` 同一类「诚实的 no-op」，而且必须是注释而不是沉默：`emit_container` 对「正文没变长」的指令会拒译。
+
+`op_regs` 给的是零掩码：`r1` 是**互斥量下标**（容器 `mutexes` 表里的运行期对象，不是池槽），`r2` 是方向位，两个都不是寄存器。
+
+### 三、不成对的那种：按名拒绝，而且理由是实测
+
+**`lock m` 不带块会让解释器死锁。** 它取锁、然后永远不放。实测：块形式印 `a\nin\nb`，裸形式的探针**两分钟没有返回**，被 kill。
+
+所以 prescan 对同一互斥量下标做**成对检查**，两个方向都拒，`why=lock-unpaired`：
+
+- 取了不放（`lock m` 裸写）⇒ 拒绝；
+- 放了没取（`unlock m` 单独出现）⇒ 拒绝，理由是它会放一把本路线从没取过的锁。
+
+把挂死照抄过来不是「与解释器一致」，而是一段无法被测的行为；把裸形式答成「又一个 no-op」则会掩盖读者最需要被告知的那个形状。两条拒绝都进了 `MIR_ONLY_REFUSE`，所以拒绝是被测量的，不是被许诺的。
+
+### 四、判据
+
+| 用例 | 钉住什么 | 红读数（`793d0e4`） | 绿读数（本树 `c6026be`） |
+|---|---|---|---|
+| `mir_lock_block` | 块形式：body 跑了、前后语句都在 | `unsupported-opcode (OP_LOCK:2)` | `a / in / b`，7 字节 |
+| `mir_lock_inside_a_loop` | 循环里反复取放不改变计数 | 同上 | `3`，2 字节 |
+| `mir_lock_return_from_body` | body 里的 `return` 不被锁吞掉 | 同上 | `7`，2 字节 |
+| `mir_lock_around_a_container` | 锁块里建容器、`len` 仍对 | 同上 | `2 / done`，7 字节，`allocs=1` |
+| `mir_lock_bare_never_released`（拒绝） | 裸 `lock m` 按名拒 | `unsupported-opcode` | `why=lock-unpaired`，`ok=yes` |
+| `mir_lock_unlock_alone`（拒绝） | 单独 `unlock m` 按名拒 | `unsupported-opcode` | `why=lock-unpaired`，`ok=yes` |
+
+四条执行判据的 `ALLOCS`：三个 `0|0`（互斥量不是池区域，这三个程序也不建容器），`mir_lock_around_a_container` 是 `1|256`（它建了一个数组字面量）——**量出来的**，不是从「锁不分配」推出来的。
+
+### 五、读数（本树 `c6026be`）
+
+```
+IR-MIR-COVER|...|mir-only-cases=130|mir-only-same-as-interpreter=130
+IR-MIR-VERDICT|PASS
+IR-AOT-MIR-LOWERING|handles=57|of=67|unknown=10|agree=yes
+IR-AOT-MIR|accepted=216|same-as-interpreter=216|emittable=57|of-ops=67
+  |not-emittable=10|beyond-ast-denominator=28
+IR-AOT-MIR-VERDICT|PASS|covered=29|missing=0
+```
+
+### 六、实现期被两套仪器抓到的两件事
+
+1. **把检查写成 `case OP_LOCK` 会被覆盖仪器判死标签。** 第一版把成对检查放进操作数 switch，`tools/aot_mir_cover.test.py` 直接报 `prescan checks OP_LOCK, which the emitter does not index`——因为它不读池、不读全局、不读表。移到 switch 外面写成 `if (op == OP_LOCK)` 才对，这也是 `OP_WAIT`、`OP_TRY_END` 已经在用的位置。
+2. **移出去之后，`break` 跳出的是指令循环而不是 switch。** 于是每条指令剩下的那半段 pass 被跳过，生成的 C 里出现 `(null) = v[1];`——一个 pass 从没标记过「被引用」的全局。这次是**覆盖仪器**报出来的（`mir_lock_around_a_container: the generated C did not compile: 'null' undeclared`），修法是 `continue`，注释里写明了这两个词为什么不能互换。
+
+第 2 条值得单独记：它不是因为逻辑写错，而是因为**移动一段代码改变了它所在的作用域**，而「break 跳出哪一层」正是那种一旦错了也不会有编译错误的决定。
+
+### 七、边界
+
+1. **线程仍在更早处被拒**：带线程段的容器根本到不了这一臂，所以「互斥量真的挡住了别人」这个形状在本路线不可测，也不声称。
+2. **`send` / `recv` 仍需线程**：`send t1 5` 连解释器都答 `未定义的线程 't1'`（线程名要在 `thread` 段里定义），而线程段本身被拒；这两个 opcode 与前六个线程 opcode 一起留在 `unknown` 里。
+3. **跨容器的取放不检查**：成对检查是**每个容器内**的，因为块在字节码里是连续的；跨容器的裸取（在一个函数里 `lock m`、在另一个里 `unlock m`）本路线不检查——解释器那种情形同样是死锁风险，但本路线的判据里没有它，所以不声称覆盖。
