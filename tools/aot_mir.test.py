@@ -2234,6 +2234,83 @@ MIR_ONLY = [
      'rover = 9\n'
      'say rover\n'),
 
+    # ---- interval sets: a set whose answer is a predicate, not a list -------
+    #
+    # `[0, 3)` is not an array (that is `[0, 3]`) and not a finite set: it is
+    # OP_SET_INTERVAL, and the interpreter answers it with SetObj.kind 2 -- a
+    # DOMAIN NAME plus two bounds plus two inclusivity bits.  The two bounds are
+    # not operands: they arrive on the ARGUMENT stack (`OP_PUSH_REG lo` then
+    # `OP_PUSH_REG hi`), which is the first opcode in this route whose registers
+    # are not all in the operand word.
+    #
+    # Everything below was read off the interpreter before it was written here:
+    # `len()` of an interval is 0 (nothing to enumerate), it prints as
+    # `set(R interval)` (the domain, not a count), membership is a predicate on
+    # the DOMAIN first and the bounds second, and a non-numeric bound does not
+    # refuse the program -- it makes the VALUE nil (`p` becomes nil, and
+    # `1 in p` is then false).
+    #
+    # The domain is always R on this route: the compiler defaults the base name
+    # to "R", and `[0, 3) Z` / operator algebra are not reachable from this
+    # grammar (measured: `p | [5, 7)` does not parse at all), so a name other
+    # than R is refused by name rather than guessed at.
+
+    ("mir_interval_membership",
+     'p = [0, 3)\n'
+     'say 1 in p\n'
+     'say 1.5 in p\n'
+     'say 5 in p\n'
+     'say "x" in p\n'
+     'say true in p\n'),
+
+    ("mir_interval_inclusive_upper",
+     'p = (0, 3]\n'
+     'say 0 in p\n'
+     'say 2 in p\n'
+     'say 3 in p\n'),
+
+    ("mir_interval_open_upper_bound",
+     'p = [0, )\n'
+     'say -1 in p\n'
+     'say 5 in p\n'
+     'say len(p)\n'
+     'say p\n'),
+
+    ("mir_interval_bounds_from_registers",
+     'lo = 1\n'
+     't = 5\n'
+     'p = [lo, t)\n'
+     'say 1 in p\n'
+     'say 2 in p\n'
+     'say 6 in p\n'),
+
+    ("mir_interval_len_and_print",
+     'p = [0, 3)\n'
+     'say p\n'
+     'say len(p)\n'),
+
+    ("mir_interval_a_non_number_bound_makes_nil",
+     'p = [nil, 3)\n'
+     'say p\n'
+     'say 1 in p\n'),
+
+    ("mir_interval_equality_by_bounds",
+     'p = [0, 3)\n'
+     'q = [0, 3)\n'
+     'say p == q\n'
+     'r = [0, 4)\n'
+     'say p == r\n'
+     'say p != r\n'),
+
+    ("mir_interval_inside_a_function",
+     'func band(lo, hi) {\n'
+     '    return [lo, hi)\n'
+     '}\n'
+     'p = band(1, 4)\n'
+     'say 2 in p\n'
+     'say 4 in p\n'
+     'say len(p)\n'),
+
 ]
 
 
