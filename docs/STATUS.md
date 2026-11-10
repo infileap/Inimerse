@@ -6781,3 +6781,64 @@ ALLOCS 是**先量后写**：平数组/字典/集合各一块 256 字节池（`a
 2. **没有新分配、没有互操作**：`mv_vts` 不分配，池块仍只由字面量产生；字符串仍走它自己的打印分支（字节相同，故没合并）。
 3. **截断是可复现的**：超长容器按同一算式截断；这不是「大容器不支持」，而是解释器本来也只印一屏。
 4. **与 §10.130/§10.131 的接缝**：容器里的函数值印 `<function>`（同一拼法），捕获环境不参与打印。
+
+## §10.134 `stop all`：一个线程的程序里，线程停下就是程序结束（aot-mir，A 类第二十三项）
+
+### 一、来源与日期
+
+判据 `5a5a4ee`（四例，在 `ed758ba` 上先红）、实现 `471143c`，2026-11-09。这是 `unknown` 从 19 降到 18 的那一格。
+
+### 二、形状
+
+解释器里 `OP_STOP` 的臂只有两句 —— `t->running = false; continue;` —— 也就是**「正在跑的那个线程停在这里」**，而不是「程序结束」。`OP_HALT` 才是后者。这两句话在别处是一对不同的语义，在本路线里却重合：本路线**一个程序只发射一个线程**，带 `OP_THREAD_*` 的容器在更早的地方就被按名拒掉（`why=threads`）。所以对任何本路线会接受的程序，「这个线程停下」与「程序结束」是同一件事，退出字节也就相同：在 main 里 `return 0;`，在容器里 `fflush(stdout); exit(0);`（`OP_HALT` 早就在用的那两个出口）。
+
+**承重的不是它等于什么，而是它不能等于什么**：
+
+- 不能是 `break`：`stop all` 从 `while` 第三圈里来，循环后面的 `say "done"` 就不该印（`mir_stop_mid_loop` 钉这条，印出 `done` 的实现会漏）；
+- 不能是「设个标志继续」：那会连后面的语句一起跑完；
+- 容器里不能是 `return mv_nil()`：那会让调用点接着印 `3`（`mir_stop_inside_a_function` 钉这条）。
+
+退出是**无条件**的，所以 `atexit(mv_free_all)` 照绑架 —— 分配读数不受影响；`mir_stop_after_allocating` 用一个在停下之前建好的数组字面量钉住这一点（`freed=1|live=0` 必须还报得出来）。
+
+`op_regs` 给的是零掩码：解释器的臂从不碰 `R[]`，编译器发它时三个字段都是 0（`STMT_STOP: emit(comp->curBC, OP_STOP, 0, 0, 0)`）。零掩码同时也是这条路对 `IR-MIR-CONSERVE` 的声明 —— 它是**发射了**，不是记进 not-yet。
+
+### 三、判据
+
+| 用例 | 钉住什么 | 红读数（`ed758ba`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_stop_at_toplevel` | 停下之后的 `say 2` 永不执行，rc 仍是 0 | 拒译 `OP_STOP:1` | `1`，2 字节 |
+| `mir_stop_mid_loop` | 从 `while` 第三圈里来，`done` 不印 | 拒译 `OP_STOP:1` | `0 1 2`，6 字节 |
+| `mir_stop_inside_a_function` | 容器路径：调用点不继续（不印 `3`） | 拒译 `OP_STOP:1` | `1`，2 字节 |
+| `mir_stop_after_allocating` | 停下之前建的一块仍被 atexit 扫掉 | 拒译 `OP_STOP:1` | `2`，2 字节，`freed=1` |
+
+四条红都是**拒译**（`why=unsupported-opcode`），不是错答 —— 这一格没有「被接受然后印错」的阶段。
+
+### 四、读数（本树 `471143c`）
+
+```
+IR-MIR-MIR-ONLY|case=mir_stop_at_toplevel|mir=accepted|cc=ok|exec=same|rc=0|bytes=2|stdout-hex=310a
+IR-MIR-MIR-ONLY|case=mir_stop_mid_loop|mir=accepted|cc=ok|exec=same|rc=0|bytes=6|stdout-hex=300a310a320a
+IR-MIR-MIR-ONLY|case=mir_stop_inside_a_function|mir=accepted|cc=ok|exec=same|rc=0|bytes=2|stdout-hex=310a
+IR-MIR-MIR-ONLY|case=mir_stop_after_allocating|mir=accepted|cc=ok|exec=same|rc=0|bytes=2|stdout-hex=320a
+IR-MIR-ALLOCS|case=mir_stop_at_toplevel|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_stop_mid_loop|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_stop_inside_a_function|reported=yes|allocs=0|freed=0|live=0|bytes=0|ok=yes
+IR-MIR-ALLOCS|case=mir_stop_after_allocating|reported=yes|allocs=1|freed=1|live=0|bytes=256|ok=yes
+IR-MIR-COVER|...|mir-only-cases=85|mir-only-same-as-interpreter=85
+IR-MIR-VERDICT|PASS|tree=471143c...|accepted=86|refused=0|differ=0
+```
+
+发射器侧：`handles=49|of=67|unknown=18|agree=yes`、`accepted=171|same-as-interpreter=171`、`beyond-ast-denominator=20`（`OP_STOP` 进了「MIR 独有例子上解释器执行过的 opcode」那一栏）、`covered=29|missing=0` [obs: 471143c]。
+
+### 五、写这条之前先量过、以及一处量不出来的事
+
+1. **裸 `stop` 不产生这个 opcode**。`stop` 后面必须跟线程名或 `all`；裸写会被解析器拒（`Error at line 3: expected 'thread name', but got 'say'`），`stop t1` 走的是 `OP_THREAD_CTRL`（`STMT_THREAD_CTRL`）。所以本格能覆盖的形状只有 `stop all` 加「无线程体」，这与读数一致。
+2. **`stop all` 的名字与它的实现不完全一致**。实现只停**正在跑的那个线程**，名字说「都停」。我试着量这件事：起一个 `thread t1 { ... }` 再 `stop all`。量不出来 —— 线程体里的 `say` 走 `gui_say` 这个内建（`STMT_SAY` 在 `in_thread` 时的分支），不写 stdout，两种实现下 stdout 都只剩 `after` 一行或干脆空。**所以这条只记「名字与实现不一致」，不记「错」**：没有量到差异，就不该在文档里判它对错。而且本路线根本不接受带线程体的容器，这一条对它是不可达的形状。
+3. **`OP_HALT` 的两个出口本来就分 main/容器**。共用那两个出口不等于「这两个 opcode 一样」：`OP_HALT` 是程序结束，`OP_STOP` 是线程结束，只是本路线只有一条线程，所以同一个出口同时是两者的答案。
+
+### 六、边界
+
+1. **带线程体的程序仍取不到这条**：容器里有线程段就在 `why=threads` 处被拒，`OP_STOP` 与「还有别的线程在跑」并存的那种形状永远不会到发射器。
+2. **`stop t1` / `restart t1` / `yield` 仍在 not-yet**：`OP_THREAD_CTRL` 与 `OP_YIELD` 没有臂，`unknown` 里剩下的 18 个包含它们。
+3. **没有新分配、没有新寄存器**：零掩码意味着这一格既不加寄存器也不动池。
+4. **rc 语义**：`return 0;` 与 `exit(0)` 都给 0，与解释器停线程后的 0 相同；`exit` 前显式 `fflush(stdout)`，因为容器可能停在未刷新的输出之后。
