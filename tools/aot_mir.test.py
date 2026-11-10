@@ -514,9 +514,19 @@ def allocs_problems(text, case):
 STDERR_EXPECT = {
     "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
     "mir_throw_uncaught_cross": ("[exception] uncaught: from-func",),
+    # OP_BIND can stop with two DIFFERENT messages, and the interpreter decides
+    # which by WHERE the value came from, not by its value: an assignment that
+    # misses the bound throws `type_mismatch` (L_STORE_GLOBAL), an initialiser
+    # that misses it throws `initial value out of range` (L_BIND).  Each case
+    # demands its own and forbids the other, so one constant message cannot
+    # satisfy both.
+    "mir_bind_out_of_range_store": ("[exception] uncaught: type_mismatch",),
+    "mir_bind_out_of_range_init": ("[exception] uncaught: initial value out of range",),
 }
 STDERR_EXCLUDE = {
     "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
+    "mir_bind_out_of_range_store": ("[exception] uncaught: initial value out of range",),
+    "mir_bind_out_of_range_init": ("[exception] uncaught: type_mismatch",),
 }
 
 
@@ -1805,6 +1815,76 @@ MIR_ONLY = [
      'say len(a)\n'
      'stop all\n'
      'say "unreached"\n'),
+
+    # OP_BIND -- the constraint declaration `name: set [= init]` (parser.c:1409-
+    # 1419, the only declaration shape).  The interpreter's arm (src/vm/vm.c,
+    # L_BIND) does two things: it records `vm->global_bound[g] = set + 1`, and it
+    # checks an initial value with the SAME test a later assignment uses
+    # (set_contains).  The second half lives in L_STORE_GLOBAL, which is where
+    # an out-of-range assignment throws `type_mismatch` -- so a lowering that
+    # only records the binding answers every assignment wrongly and silently,
+    # and one that checks only the initialiser leaves `x = 5` printing 5.
+    #
+    #   mir_bind_constrained_store   the record itself: before any store the
+    #                          global is nil (L_BIND's no-init branch sets
+    #                          VAL_NIL), and a member assignment lands.
+    #   mir_bind_initial_value  the initialiser arm stores the value it was
+    #                          given, and a later member assignment still lands.
+    #   mir_bind_out_of_range_store
+    #                          `x = 5` against `1, 2, 3`: the interpreter prints
+    #                          NOTHING on stdout and exits 1 with `type_mismatch`
+    #                          on stderr; a route that stores and prints `5` is
+    #                          the wrong answer this case exists to catch.
+    #   mir_bind_out_of_range_init
+    #                          `= 5` in the declaration: the OTHER message
+    #                          (`initial value out of range`), which is the half
+    #                          a shared stop-with-type_mismatch arm would get
+    #                          wrong while still passing the case above.
+    #   mir_bind_int_probe_finds_float
+    #                          set_contains' asymmetry, direction one: an INT
+    #                          probe still scans the non-int items through
+    #                          val_eq, so `1` IS a member of `{1.0, 2.0}`.
+    #   mir_bind_float_probe_misses_int
+    #                          the direction that makes it asymmetric: a FLOAT
+    #                          probe only looks at the items half, so `1.0` is
+    #                          NOT a member of `{1, 2, 3}` and the store throws.
+    #                          One numeric membership rule for both answers
+    #                          passes the first and fails this one.
+    #   mir_bind_plain_constraint
+    #                          `x: 5` -- the declared expression is not a set,
+    #                          so the interpreter records NO bound (sidx == -1)
+    #                          and every store lands.  A route that only knows
+    #                          how to bind sets must not refuse this program.
+    ("mir_bind_constrained_store",
+     'x: 1, 2, 3\n'
+     'say x\n'
+     'x = 2\n'
+     'say x\n'),
+    ("mir_bind_initial_value",
+     'x: 1, 2, 3 = 2\n'
+     'say x\n'
+     'x = 3\n'
+     'say x\n'),
+    ("mir_bind_out_of_range_store",
+     'x: 1, 2, 3\n'
+     'x = 5\n'
+     'say x\n'),
+    ("mir_bind_out_of_range_init",
+     'x: 1, 2, 3 = 5\n'
+     'say x\n'),
+    ("mir_bind_int_probe_finds_float",
+     'x: 1.0, 2.0 = 2.0\n'
+     'say x\n'
+     'x = 1\n'
+     'say x\n'),
+    ("mir_bind_float_probe_misses_int",
+     'x: 1, 2, 3\n'
+     'x = 1.0\n'
+     'say x\n'),
+    ("mir_bind_plain_constraint",
+     'x: 5\n'
+     'x = 9\n'
+     'say x\n'),
 
 ]
 
