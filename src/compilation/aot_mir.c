@@ -2582,6 +2582,19 @@ static int op_regs(int op) {
        refused there), which is the same arrangement OP_STORE_GLOBAL uses for
        its global id. */
     case OP_BIND: return R2;
+    /* OP_RECORD -- `record name = value [, tags]`, and `record default store =
+       value`.  Emitted as emit(curBC, OP_RECORD, g, (meta << 16) | sidx, rs)
+       (src/compiler/compiler.c, STMT_RECORD), so r1 is a GLOBAL id (or -1 for
+       the default-store form, which has no name at all), r2 packs the name's
+       string-pool index under the meta byte, and r3 is the register holding the
+       value -- the register the interpreter's arm MAY overwrite with a value
+       found in a loaded save file.
+       The mask is R3 and not 0: r3 is a register in the IR's own terms, and a
+       route that one day carries the store would write exactly there.  This
+       route does not carry one, so its arm reads r3 and writes nothing (see the
+       emitter's arm and IR-MIR-RECORD's criteria); r1/r2 are immediates here,
+       not registers, which is why neither appears in the mask. */
+    case OP_RECORD: return R3;
     case OP_JUMP: return 0;
     case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: return R1;
     case OP_PUSH_REG: return R1;
@@ -4077,6 +4090,34 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         } else {
             buf_fmt(b, "    %s = mv_nil();", c->gnames[gid]);
         }
+        return 0;
+    }
+    case OP_RECORD: {
+        /* THE METADATA STATEMENT.  What the interpreter does here is write a
+           record table entry (name, store, scope, merge) and then, ONLY if a
+           save file was loaded at startup, REPLACE this register with the value
+           stored under that name (src/vm/vm.c, L_RECORD's
+           `vm->record_loaded_dict > 0` branch).
+           This route keeps no record store: it loads no save file, writes no
+           metadata and creates none.  So the register keeps what the compiler's
+           preceding MOV put in it, and the STORE_GLOBAL that follows writes the
+           program's own value -- which is what the interpreter prints in a first
+           run in a fresh directory.
+           The divergence is real and is recorded rather than papered over: the
+           interpreter WRITES save.dat at exit, and a later program in that same
+           directory reads the stored value instead of its own operand (measured:
+           one run stores 5, then `record a = 9 / say a` in that directory prints
+           5 where this route prints 9).  Record is the first statement whose
+           interpreter output is a function of the host's disk rather than of the
+           program; the criteria stay in the only deterministic region and
+           STATUS.md carries the transcript.
+           The operand is NAMED in the emitted text on purpose: the register is
+           the one the store path would have written, and a reader of the C
+           should be able to see that this route deliberately left it alone
+           rather than that it forgot. */
+        buf_fmt(b, "    /* OP_RECORD: no record store on this route -- v[%d] keeps"
+                   " what the preceding MOV put there */" NL, r3);
+        (void)r1;
         return 0;
     }
     case OP_JUMP:         buf_fmt(b, "    goto L%d;", w2); return 0;
