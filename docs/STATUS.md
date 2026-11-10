@@ -7197,3 +7197,80 @@ IR-AOT-MIR-LOWERING|handles=55|of=67|unknown=12|agree=yes
 2. **判据只覆盖「干净目录」那一块**。那是两条路线都确定的唯一区域；跨运行的存档语义没有判据，理由与一中的稳定性规则相同——它需要一个**顺序依赖**的测试，而顺序依赖的用例会把「哪条用例先跑」变成读数的一部分，那种读数不是关于程序的事实。
 3. **函数体内的 `record` 形状不被判据覆盖**。实测解释器里函数内 `record a = 7` 之后顶层 `say a` 印 `nil`（名字在函数内成了另一个槽），这条形状的对应关系还没查清，所以没有为它写判据——不是实现拒绝它，是**没有 oracle**。
 4. **这一格之后再没有便宜的格子**。剩余十二个 opcode：线程六件（`START`/`CTRL`/`JOIN`/`WAIT`/`STATE`/`GOTO`）+ `LOCK`/`SEND`/`RECV` 三件都随 `why=threads` 整段拒；`OP_DECLARE` 是资源限制子系统（观测点是「触限」而不是值）；`OP_SET_INTERVAL` 要命名内建集代数 + 区间谓词 + 打印；`OP_SET_ADD` 只有推导式能发，而推导式先发 `list` 内建、本路线按名拒；`OP_POP_REG` 已从解释器移除、不可达。**每一个都是子系统，没有一个是「再写一条臂」**。
+
+## §10.140 区间集：池里装的是谓词，不是清单（aot-mir，A 类第二十九项）
+
+### 一、来源与日期
+
+判据 `cf29586`（八例先红）、实现 `07f744a`，2026-11-09。这是 `unknown` 从 12 降到 11 的那一格。
+
+### 二、形状
+
+**解释器侧**：`[0, 3)` 不是数组（那是 `[0, 3]`），也不是有限集。它是 `OP_SET_INTERVAL`，答案是 `SetObj.kind = 2`（`src/vm/vm.h:57-69` [obs: 07f744a]）：一个**定义域名**、两个 `double` 边界、两位包含性，以及**没有任何可枚举的东西**。全部行径向三个函数读来：
+
+- **成员**：`set_contains` 的 kind-2 臂（`src/vm/vm.c:2046-2053` [obs: 07f744a]）先问域名（`builtin_contains`），再问边界。`R` 的域名判定是 `return 1`（`:1998` [obs: 07f744a]），所以对 R 区间而言剩下的只有：**非数字不是成员**（`builtin_contains` 的第一行，`VAL_BOOL` 也在这一行被拒——这就是为什么这里不能改用 `val_is_num`）、NaN 不是成员，以及两个边界与它们的包含位。
+- **相等**：`set_equal` 的 kind-2 行（`:2225-2227` [obs: 07f744a]）比域名、边界、两个包含位；kind 0 与 kind 2 的交叉相等要求「空字面量恰好一个组件」，本路线不构造那种形状，所以区间对有限集答 **false** 而不是停。
+- **长度**：`0`。`vm_set_to_array`（`:2313-2316` [obs: 07f744a]）对 kind 1 返回 −1（整域内建集是无限的），对 kind 2 走 `set_comp_enum`——R 区间枚举出来是空的。
+- **打印**：`set(R interval)`（`:1330` [obs: 07f744a]），域名加一个词，**不是计数**。
+
+**本路线侧**：同一个池，**四个槽**，头槽说清这是什么：
+
+```
+头槽 (ival-1) : MV_INT, ival == -1        ← −1 表示「区间」；>=0 表示有限集的元素数
+ival + 0      : MV_FLT  lo
+ival + 1      : MV_FLT  hi
+ival + 2      : MV_INT  flags（1=下界含，2=上界含）
+```
+
+那个 −1 是**每个已有的集合读者本来就在看的槽**：它们全都以 `int n = (int)mv_arrmem[iv-1].ival;` 开头，而负的计数不是计数，所以没有任何读者会把区间当成有限集。它也不会和转发头混淆——转发头是 `MV_ARR`，同一个槽，同一个理由。
+
+**不造第三个 tag 的理由**：tag 会是同一个池槽的第二种分类，而这份文件已经两次论证过「同一个答案不能有两个主人」（字典的哈希表、集合的两半边）。头槽本身就是「这个区域装的是什么」的答案，而它本来就在装计数。
+
+### 三、第一个「寄存器不全在操作数里」的 opcode
+
+`EXPR_SETINTERVAL` 的发射序列（`src/compiler/compiler.c`）是：先算 lo、hi 并各自 `OP_PUSH_REG`，再发 `OP_SET_INTERVAL r, (nameIdx & 0xFFFFFF) | (flags << 24), 0`。所以 **r1 是目标寄存器，r2 是打包立即数，r3 不用；两个边界只存在于参数栈上**。这是本路线第一次遇到这种形状：
+
+- `op_regs` 只能给 `R1`——给 r2 一位会让通用的寄存器边界循环把一个字符串池下标当寄存器号查；
+- `prescan` 必须**消耗两个栈槽**（两个边界都会被推，即使源码里省略，编译器也会用 ±1.0e308 补上）；
+- 发射臂读 `mvargs[asp-2]` 与 `mvargs[asp-1]`。
+
+**第一版把这两个写成 `v[asp-2]`／`v[asp-1]`**，于是每一次成员判定都答 false：`mir_interval_membership` 印 `false false false false false`，解释器印 `true true false false false`。判据抓到了它，改一个字母就对了——这就是「判据先红」在真实缺陷上的价值，不是流程装饰。
+
+**域名不是 R 时按名拒绝**（`why=set-interval-domain`）：同一套语法既能到 `R[0~3)`（kind 2，本 opcode），也能到 `Z[0~3]`（**有限集**，kind 0 带一个组件，实测 `set(4)` 且成员可枚举）。把 Z 当 R 答，是错答而不是缺答。
+
+**非数字边界不是拒译**：解释器对 `[nil, 3)` 的回答是**整个值变成 nil**（`L_SET_INTERVAL` 的 `!val_is_num` 臂），所以发射的是 `v[r1] = mv_nil()` 而不是停；随后 `1 in p` 自然为 false。
+
+### 四、判据
+
+八例，全部先在解释器上量出 oracle，再在 `49b0e0e` 上先红——红的形状与最近几格不同：**不是"没有这个 opcode 的臂"，而是 `OP_SET_INTERVAL` 的两个操作数没人读**，所以八条红全是 `illegal-operand ... leaves the argument stack unbalanced: asp=2`（相等那条 `asp=6`，函数里那条 `container=1`）。这个区别值得写下来：判据测的是参数栈那一半。
+
+| 用例 | 钉住什么 | 绿读数（本树 `07f744a`） |
+|---|---|---|
+| `mir_interval_membership` | 定义域先于边界；bool/字符串不是成员；INT 与 FLOAT 都在界内 | `true true false false false`，28 字节 |
+| `mir_interval_inclusive_upper` | `(0, 3]`：下界不含、上界含 | `false true true`，16 字节 |
+| `mir_interval_open_upper_bound` | `[0, )`：上界开、`len` 为 0、打印域名 | `false true 0 set(R interval)`，29 字节 |
+| `mir_interval_bounds_from_registers` | 边界来自变量（不是常量） | `true true false`，16 字节 |
+| `mir_interval_len_and_print` | `len` 是 0、打印不是计数 | `set(R interval) 0`，18 字节 |
+| `mir_interval_a_non_number_bound_makes_nil` | 非数字边界 → 整个值是 nil | `nil false`，10 字节 |
+| `mir_interval_equality_by_bounds` | 相等按边界与包含位，区间对区间 | `true false true`，16 字节 |
+| `mir_interval_inside_a_function` | 区间在容器里构造、返回后仍有效 | `true false 0`，13 字节 |
+
+### 五、读数（本树 `07f744a`）
+
+```
+IR-MIR-COVER|...|mir-only-cases=126|mir-only-same-as-interpreter=126
+IR-MIR-VERDICT|PASS
+IR-AOT-MIR-LOWERING|handles=56|of=67|unknown=11|agree=yes
+IR-AOT-MIR|accepted=212|same-as-interpreter=212|emittable=56|of-ops=67
+  |not-emittable=11|beyond-ast-denominator=27
+IR-AOT-MIR-VERDICT|PASS|covered=29|missing=0
+```
+
+`ALLOCS_EXPECT` 里**两行是量出来才改对的**，注释写明了哪两行、为什么：`a_non_number_bound` 是 `0|0`（值在调用 `mv_set_interval` 之前就变成了 nil，一个区域都不建），`equality_by_bounds` 是 `2|768`（程序建了三个区间，池长过第一个八槽块）。其余六例 `1|256`。三行都先按「一般形状」写成 1|256，然后被读数纠正——写在注释里而不是悄悄替换。
+
+### 六、边界
+
+1. **只有 R 域**。其余域名（N/Z/Z±/FloatN/floatN）在解释器里是**有限集或整域内建集**，形状不同（kind 0 + 组件，或 kind 1），本格按名拒译。要支持它们需要「内建集代数」这个子系统，不是再加一条臂。
+2. **没有集合运算符**。`p | [5, 7)` 直接解析失败（`Error: expected 'expression', but got '|'`），所以并/交/差不可达，本格不需要回答它们。
+3. **`OP_SET_ADD` 仍是 not-yet**：它只由推导式发射，而推导式先发 `list` 内建、本路线按名拒。
+4. **区间与有限集的相等答 false**，这是解释器 `set_equal` 的规矩（交叉相等要求空字面量 + 恰好一个组件），不是本路线的简化——判据里没有这条，因为本路线构造不出那种字面量。
