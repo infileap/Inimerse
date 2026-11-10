@@ -2357,6 +2357,15 @@ static int   g_bound_used;
    belong to it (src/vm/vm.c:4142 is the interpreter's version of that pop).
    Nothing else in the emitted text moves when no try pair is present. */
 static int   g_try_used;
+/* Set by a whole-program scan when any container carries OP_WAIT.  `wait`'s
+   answer is TIME, not a value, so what the flag buys is the runtime helper that
+   performs the delay (mv_wait) -- emitted only when a program can reach it,
+   which keeps every program without a `wait` byte-identical in generated C.
+   The scan is done here rather than in the pre-scan because this opcode reads
+   NO pool, NO global and NO table: a pre-scan case would be an arm with nothing
+   to validate, and the cover instrument counts exactly that as a dead label
+   (see its operand detector). */
+static int   g_wait_used;
 
 /* The `why` a prescan refusal carries.  One family ("illegal-operand") covers
    every operand this route cannot emit, but a refusal whose reason a reader
@@ -2659,6 +2668,11 @@ static int op_regs(int op) {
        The zero mask is also the claim to IR-MIR-CONSERVE (both are emitted). */
     case OP_TRY_START: return 0;
     case OP_TRY_END: return 0;
+    /* OP_WAIT's r1 is the delay REGISTER and r2/r3 are zero (src/compiler/
+       compiler.c, STMT_WAIT: `emit(comp->curBC, OP_WAIT, r, 0, 0)`).  It reads
+       no pool and no global, so unlike OP_BIND there is nothing for the pre-scan
+       to range-check; whether the helper is emitted is decided by g_wait_used. */
+    case OP_WAIT: return R1;
     default: return -1;
     }
 }
@@ -4374,6 +4388,20 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (g_try_used) buf_str(b, "    if (mv_try_depth > 0) mv_try_depth--;");
         else buf_str(b, "    /* OP_TRY_END with no try pair in this program: the arm is a no-op */");
         return 0;
+    /* OP_WAIT -- the second opcode here whose answer is not a value (YIELD was
+       the first).  The interpreter's arm turns the operand into milliseconds
+       with its own ladder (INT through ival, FLOAT through fval, anything else
+       as 0.0) and, in the CLI shape this route accepts, hands it to a blocking
+       sleep; the value it leaves behind is nothing, so the emitted C REPRODUCES
+       the delay instead of pretending there is none.  What it must not do is
+       what the criteria say: change the output, drop a statement, or allocate.
+       A negative delay is the one shape this arm deliberately does not copy:
+       the interpreter converts it to an unsigned sleep and blocks for days
+       (measured, section 10.138), and reproducing a hang is not agreement. */
+    case OP_WAIT:
+        if (g_wait_used) buf_fmt(b, "    mv_wait(v[%d]);", r1);
+        else buf_str(b, "    /* OP_WAIT with no wait in this program: unreachable, kept for conservation */");
+        return 0;
     case OP_THROW:
         buf_fmt(b, "    mv_throw(v[%d]);", r1);
         emit_try_check(b, c, i);
@@ -4636,9 +4664,16 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
        referenced at all; names are built from that answer, not beside it. */
     g_gref_n = root->global_name_count;
     g_bound_used = 0;   /* a fresh pre-scan decides this, not the last call */
+    g_wait_used = 0;    /* a whole-program scan decides this one; see its note */
     if (g_gref_n > 0) {
         g_gref = calloc((size_t)g_gref_n, 1);
         if (!g_gref) { refuse("out-of-memory", "the global reference table"); goto done; }
+    }
+
+    for (int f = 0; f < m->nfuncs && !g_wait_used; f++) {
+        const IrFunc *wf = &m->funcs[f];
+        for (int i = 0; i < wf->ninsns; i++)
+            if (wf->insns[i].op == OP_WAIT) { g_wait_used = 1; break; }
     }
 
     int kinds = prescan(m, nodes, root, NULL, NULL);
@@ -4764,6 +4799,45 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
             "    NV x = mv_as_nv(a); long long r;\n"
             "    if (x.t != NV_FLT && __builtin_sub_overflow(0LL, x.i, &r)) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
             "    return mv_neg(a);\n"
+            "}\n"
+            NL);
+    }
+    /* THE DELAY ITSELF, emitted only for a program that carries a `wait`.
+       Why a helper at all: the interpreter's arm is a blocking sleep in the CLI
+       shape (src/vm/vm.c, L_WAIT's final else), and a route that dropped the
+       delay would be answering with no delay while claiming the same bytes.
+       The type ladder below is a COPY of the interpreter's, down to the
+       non-number case: INT reads ival, FLOAT reads fval, EVERYTHING ELSE is 0.0.
+       mv_as_nv is deliberately NOT used here -- it aborts on a string
+       (mv_tag_to_nv's default), while the interpreter reads a string operand as
+       zero seconds and carries on (measured, .scratch/probe3).
+       The include is emitted here and not in the preamble: aot_native_preamble()
+       is byte-identical in both routes by construction, so a MIR-only include
+       may only live after it.
+       `ms <= 0` returns at once.  That is a KNOWN DIVERGENCE on the negative
+       side and the boundary section says so: the interpreter hands -1 second
+       to an unsigned sleep and never returns (measured by watching a probe for
+       two minutes, then killing it), and a hang is not an answer to copy. */
+    if (g_wait_used) {
+        buf_str(&out,
+            "#if defined(_WIN32)\n"
+            "#include <windows.h>\n"
+            "#else\n"
+            "#include <time.h>\n"
+            "#endif\n"
+            "static void mv_wait(MirVal v) {\n"
+            "    double seconds = (v.type == MV_INT) ? (double)v.ival\n"
+            "                   : (v.type == MV_FLT) ? v.fval : 0.0;\n"
+            "    int ms = (int)(seconds * 1000.0);\n"
+            "    if (ms <= 0) return;\n"
+            "#if defined(_WIN32)\n"
+            "    Sleep((unsigned)ms);\n"
+            "#else\n"
+            "    struct timespec ts;\n"
+            "    ts.tv_sec = ms / 1000;\n"
+            "    ts.tv_nsec = (long)(ms % 1000) * 1000000L;\n"
+            "    nanosleep(&ts, (struct timespec *)0);\n"
+            "#endif\n"
             "}\n"
             NL);
     }
