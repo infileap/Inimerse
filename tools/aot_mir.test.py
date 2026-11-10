@@ -2333,6 +2333,45 @@ MIR_ONLY = [
      'say 4 in p\n'
      'say len(p)\n'),
 
+    # OP_CALL_BUILTIN `list` -- the second builtin this route emits, and the
+    # first whose ANSWER is a container.  The oracle is the interpreter
+    # (src/runtime/runtime_posix.c:326-336 posix_core_list), measured before
+    # each row below was written:
+    #   an ARRAY is returned AS THE SAME VALUE (pop, then push it back -- not a
+    #   copy, which mir_list_of_an_array pins with `list(a) == a`);
+    #   a finite SET is enumerated by vm_set_to_array (src/vm/vm.c:2312-2340),
+    #   which walks the sorted i64 half FIRST and the insertion-ordered items
+    #   SECOND -- so the order is SEGMENTED, not sorted;
+    #   any other value is nil, INCLUDING an interval set (measured: the
+    #   interpreter prints nil for list([0, 3)) even though vm_set_to_array
+    #   would enumerate kind 2, because this route's mv_set_interval has no
+    #   members to give).
+    # mir_list_mixed_set is the row that a whole-region sort would fail: both
+    # of its programs print [1, 3, 2.5], never [1, 2.5, 3].
+    ("mir_list_of_a_set",
+     's = 3, 1, 2\n'
+     'say list(s)\n'),
+
+    ("mir_list_mixed_set",
+     't = 1, 2.5, 3\n'
+     'u = 2.5, 1, 3\n'
+     'say list(t)\n'
+     'say list(u)\n'),
+
+    ("mir_list_of_an_array",
+     'a = [1, 2]\n'
+     'say list(a) == a\n'
+     'say list(a)\n'),
+
+    ("mir_list_of_scalars",
+     'say list(5)\n'
+     'say list(nil)\n'
+     'say list("ab")\n'),
+
+    ("mir_list_of_an_interval",
+     'p = [0, 3)\n'
+     'say list(p)\n'),
+
 ]
 
 
