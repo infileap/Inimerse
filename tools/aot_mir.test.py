@@ -2477,6 +2477,63 @@ MIR_ONLY = [
      'say len(s)\n'
      'say list(s)\n'),
 
+    # ---- OP_SET_ADD: the comprehension's write half -------------------------
+    #
+    # `{ x in S | cond }` compiles to: build an EMPTY set (OP_NEW_SET r, 0, 0),
+    # loop over `list(S)`, and for each member whose condition holds emit
+    # OP_SET_ADD result, x.  So this opcode is the first WRITE this route gives
+    # a container other than an array -- and the first that makes a set's region
+    # MOVE, because a set region is [count][elem...] with no capacity slot.
+    #
+    # The move is the array's move (mv_arr_live's note): at the pool frontier
+    # the region extends in place; elsewhere it is COPIED to the frontier and a
+    # forwarding head is left at the old handle.  That is why every set reader
+    # gained `mv_arr_live` in the same commit -- before it, a set could not move,
+    # so they read the handle directly.
+    #
+    # Every reading below was taken on the interpreter first:
+    #   { x in [3, 1, 2, 2] | x > 0 }     set(3) / len 3 / [1, 2, 3]
+    #   { x in [1, 2, 3] | x > 1 }        [2, 3]
+    #   { x in [1.5, 2.5, 1.5] | x > 1 }  [1.5, 2.5] / len 2
+    #   { x in [] | x > 0 }               set(0) / len 0 / []
+    #   { x in [5, 1, 9, 3] | x > 2 }     [3, 5, 9], and a container built
+    #                                     AFTER the set is untouched by the adds
+    ("mir_set_add_dedups_and_orders",
+     's = { x in [3, 1, 2, 2] | x > 0 }\n'
+     'say list(s)\n'
+     'say len(s)\n'),
+
+    ("mir_set_add_filters",
+     's = { x in [1, 2, 3] | x > 1 }\n'
+     'say list(s)\n'),
+
+    ("mir_set_add_floats",
+     's = { x in [1.5, 2.5, 1.5] | x > 1 }\n'
+     'say list(s)\n'
+     'say len(s)\n'),
+
+    # The EMPTY source: the comprehension still builds a set (OP_NEW_SET with
+    # count 0) and adds nothing, so `say s` prints set(0), len is 0 and list is
+    # the empty array.  A route that answered nil for the empty set would pass
+    # the first two lines and fail the third.
+    ("mir_set_add_empty_source",
+     's = { x in [] | x > 0 }\n'
+     'say s\n'
+     'say len(s)\n'
+     'say list(s)\n'),
+
+    # THE MOVE: an array is built AFTER the set, so the set's region no longer
+    # ends at the pool frontier and its first add must copy it forward and leave
+    # a head.  The array is read back in the same program, because a move that
+    # trampled a neighbour shows there first -- and `say list(s)` twice pins that
+    # the old handle still names the set after the move.
+    ("mir_set_add_moves_the_region",
+     's = { x in [5, 1, 9, 3] | x > 2 }\n'
+     't = [7, 8, 9]\n'
+     'say list(s)\n'
+     'say list(s)\n'
+     'say t[0]\n'),
+
 ]
 
 
