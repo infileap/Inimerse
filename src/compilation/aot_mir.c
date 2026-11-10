@@ -2921,6 +2921,14 @@ static int op_regs(int op) {
        established), so the mask names r1 because the emitted C READS it, and r2
        because it reads that too. */
     case OP_SET_ADD: return R1 | R2;
+    /* OP_RECV -- `recv name [, timeout]`, emitted as
+       `emit(comp->curBC, OP_RECV, result, timeout_reg, 0)` (src/compiler/
+       compiler.c, STMT_RECV), where timeout_reg is -1 when the source has no
+       timeout.  r1 is the DESTINATION register, r2 is the timeout register or
+       -1, and r3 is unused.  The -1 is why the mask says R1 only: a mask bit
+       for r2 would have the generic bound loop reject a legitimate -1, which is
+       the same arrangement OP_BIND uses for its initialiser. */
+    case OP_RECV: return R1;
     case OP_CALL_FUNC: return R2;
     /* THE FUNCTION VALUE -- the two opcodes that make a function a VALUE rather
        than a callee the emitter names.  Operands read off the compiler, not
@@ -4183,6 +4191,25 @@ static int emit_one(Ctx *c, Buf *b, int i) {
        is the criterion, and its second line (`1 in p`) then reads false because
        membership of nil is false.
        The domain is always R here: prescan refused anything else by name. */
+    case OP_RECV:
+        /* THE MESSAGE QUEUE THIS ROUTE CANNOT FILL.  The interpreter's arm polls
+           `t->msg_q` under `t->msg_lock` and waits for a message; both of those
+           objects are created ONLY in the thread-spawn path (src/vm/vm.c:4532:
+           `ImMutex *ml = im_mutex_new(); nt->msg_lock = ml;`), and a container
+           carrying a thread section is refused earlier (why=threads).  So on the
+           single thread this route accepts, `t->msg_lock` is NULL, the whole
+           poll is skipped, and the answer is `out` initialised to VAL_NIL
+           (src/vm/vm.c, L_RECV's `Value out = { VAL_NIL, ... }`).
+           That is what this arm writes: nil, and the timeout register is not
+           even read -- the interpreter does not wait either when there is no
+           queue to wait on (measured: `recv m, 0.5` returns nil immediately, it
+           does not sleep for half a second).
+           A message can only come from another thread, so this is not a
+           simplification of the opcode; it is the only answer these programs can
+           reach, and it agrees with the interpreter byte for byte. */
+        buf_fmt(b, "    v[%d] = mv_nil();   /* OP_RECV: no thread can fill this queue"
+                   " (see IR-MIR-RECV's criteria) */", r1);
+        return 0;
     case OP_SET_ADD: {
         /* One call, for side effects only: mv_set_add takes the set by VALUE and
            grows the region (in place at the frontier, or by moving it and

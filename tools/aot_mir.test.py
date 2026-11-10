@@ -588,6 +588,14 @@ ALLOCS_EXPECT = {
     "mir_set_add_floats": (2, 768),
     "mir_set_add_empty_source": (1, 256),
     "mir_set_add_moves_the_region": (3, 1792),
+    # OP_RECV allocates nothing: it reads a queue that cannot be non-empty on
+    # this route.  MEASURED (all four read 0|0), and the row exists so that an
+    # arm which boxed the "received" value, or asked the pool for a buffer,
+    # would move the number.
+    "mir_recv_is_nil": (0, 0),
+    "mir_recv_with_a_timeout": (0, 0),
+    "mir_recv_inside_a_function": (0, 0),
+    "mir_recv_result_is_a_value": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
