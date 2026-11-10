@@ -2602,6 +2602,60 @@ MIR_ONLY = [
      'x = m\n'
      'say x\n'),
 
+    # ---- ORDERING WITH NO ANSWER: the stop this route answers by aborting ----
+    #
+    # Found by tools/aot_mir_fuzz.py after every hand-written case was green, in
+    # the first twenty-five generated programs -- which is the argument for a
+    # generator over a hand-written corpus, made twice in one week (the set's
+    # 32-bit narrowing in 10.142 was the other).
+    #
+    # The interpreter REFUSES a pair with no order: val_orderable (src/vm/vm.c)
+    # admits two strings or two numbers, and everything else reaches
+    # vm_throw_kind("type_mismatch") -- measured, all six shapes below print the
+    # exception on stderr, nothing on stdout, and exit 1.  This route answered
+    # them with abort() (rc 134, no message), because mv_str_cmp's mixed-pair
+    # guard is an abort and mv_lt/mv_le/mv_gt/mv_ge route every string operand
+    # through it.
+    #
+    # `true > 1` is the necessary condition and it is in the third case: a BOOL
+    # is NUMERIC here (val_is_num accepts it), so the interpreter answers false
+    # and this route must keep answering false.  An implementation that refuses
+    # "anything that is not int or float" reddens there.
+    ("mir_order_a_string_against_a_number",
+     'say ("a" < 1)\n'),
+
+    ("mir_order_a_number_against_a_string",
+     'x = "s"\n'
+     'say (x > 2)\n'),
+
+    ("mir_order_a_bool_against_a_number",
+     'say (true > 1)\n'
+     'say (false <= 0)\n'),
+
+    ("mir_order_a_set_against_a_number",
+     'c = 1, 2\n'
+     'say (c > 1)\n'),
+
+    ("mir_order_an_array_against_a_number",
+     'a = [1]\n'
+     'say (a >= 1)\n'),
+
+    ("mir_order_a_dict_against_a_number",
+     'd = {"a": 1}\n'
+     'say (d < 1)\n'),
+
+    ("mir_order_nil_against_a_number",
+     'say (nil > 1)\n'),
+
+    # The MIXED direction the other way: a string against a string still answers,
+    # so a route that refused every ordering would pass the seven cases above and
+    # fail this one.
+    ("mir_order_two_strings_still_answer",
+     'say ("a" < "b")\n'
+     'say ("a" > "b")\n'
+     'say ("a" <= "a")\n'
+     'say ("b" >= "a")\n'),
+
 ]
 
 
