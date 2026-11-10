@@ -596,6 +596,21 @@ ALLOCS_EXPECT = {
     "mir_recv_with_a_timeout": (0, 0),
     "mir_recv_inside_a_function": (0, 0),
     "mir_recv_result_is_a_value": (0, 0),
+    # The ORDERING-STOP family: every one of them ends on an exception, so the
+    # reading is `reported=no|why=rc=1` and no count is consulted -- the same
+    # shape as the throw pair.  The two that ANSWER get real numbers, and
+    # `mir_order_is_catchable` builds the DICT it compares against, so it reads
+    # 1|256: the block is the literal, not the throw.  MEASURED, and one of them
+    # was written as 0|0 first and corrected here.
+    "mir_order_a_string_against_a_number": (0, 0),
+    "mir_order_a_number_against_a_string": (0, 0),
+    "mir_order_a_set_against_a_number": (0, 0),
+    "mir_order_an_array_against_a_number": (0, 0),
+    "mir_order_a_dict_against_a_number": (0, 0),
+    "mir_order_nil_against_a_number": (0, 0),
+    "mir_order_a_bool_against_a_number": (0, 0),
+    "mir_order_two_strings_still_answer": (0, 0),
+    "mir_order_is_catchable": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -665,6 +680,14 @@ STDERR_EXPECT = {
     # exit code (mir_try_finally_cleanup's execution row carries rc=1), so a
     # route that swallowed the error would fail both halves.
     "mir_try_finally_cleanup": ("[exception] uncaught: boom",),
+    # A pair with no order is refused with the SAME message the interpreter
+    # prints, so the criterion can demand it instead of accepting any stop.
+    "mir_order_a_string_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_a_number_against_a_string": ("[exception] uncaught: type_mismatch",),
+    "mir_order_a_set_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_an_array_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_a_dict_against_a_number": ("[exception] uncaught: type_mismatch",),
+    "mir_order_nil_against_a_number": ("[exception] uncaught: type_mismatch",),
 }
 STDERR_EXCLUDE = {
     "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
@@ -2601,6 +2624,75 @@ MIR_ONLY = [
      'say m == 0\n'
      'x = m\n'
      'say x\n'),
+
+    # ---- ORDERING WITH NO ANSWER: the stop this route answers by aborting ----
+    #
+    # Found by tools/aot_mir_fuzz.py after every hand-written case was green, in
+    # the first twenty-five generated programs -- which is the argument for a
+    # generator over a hand-written corpus, made twice in one week (the set's
+    # 32-bit narrowing in 10.142 was the other).
+    #
+    # The interpreter REFUSES a pair with no order: val_orderable (src/vm/vm.c)
+    # admits two strings or two numbers, and everything else reaches
+    # vm_throw_kind("type_mismatch") -- measured, all six shapes below print the
+    # exception on stderr, nothing on stdout, and exit 1.  This route answered
+    # them with abort() (rc 134, no message), because mv_str_cmp's mixed-pair
+    # guard is an abort and mv_lt/mv_le/mv_gt/mv_ge route every string operand
+    # through it.
+    #
+    # `true > 1` is the necessary condition and it is in the third case: a BOOL
+    # is NUMERIC here (val_is_num accepts it), so the interpreter answers false
+    # and this route must keep answering false.  An implementation that refuses
+    # "anything that is not int or float" reddens there.
+    ("mir_order_a_string_against_a_number",
+     'say ("a" < 1)\n'),
+
+    ("mir_order_a_number_against_a_string",
+     'x = "s"\n'
+     'say (x > 2)\n'),
+
+    ("mir_order_a_bool_against_a_number",
+     'say (true > 1)\n'
+     'say (false <= 0)\n'),
+
+    ("mir_order_a_set_against_a_number",
+     'c = 1, 2\n'
+     'say (c > 1)\n'),
+
+    ("mir_order_an_array_against_a_number",
+     'a = [1]\n'
+     'say (a >= 1)\n'),
+
+    ("mir_order_a_dict_against_a_number",
+     'd = {"a": 1}\n'
+     'say (d < 1)\n'),
+
+    ("mir_order_nil_against_a_number",
+     'say (nil > 1)\n'),
+
+    # THE STOP HAS TO BE CATCHABLE, and that is a separate claim from "it stops".
+    # mv_throw only SETS a flag; the jump to the handler is the check emitted
+    # after the instruction.  The four ordering arms had the guard without the
+    # check, so inside a try the pair answered `false` and carried on -- measured
+    # before the fix, from the fuzzer's seed 7: the interpreter printed `caught`
+    # and this route printed `false`, with the same program and the same rc.
+    ("mir_order_is_catchable",
+     'c = {"a": 1}\n'
+     'try {\n'
+     '    say ("hi" < c)\n'
+     '} catch (e) {\n'
+     '    say "caught"\n'
+     '}\n'
+     'say "after"\n'),
+
+    # The MIXED direction the other way: a string against a string still answers,
+    # so a route that refused every ordering would pass the seven cases above and
+    # fail this one.
+    ("mir_order_two_strings_still_answer",
+     'say ("a" < "b")\n'
+     'say ("a" > "b")\n'
+     'say ("a" <= "a")\n'
+     'say ("b" >= "a")\n'),
 
 ]
 
