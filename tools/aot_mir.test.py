@@ -533,6 +533,37 @@ ALLOCS_EXPECT = {
     "mir_interval_a_non_number_bound_makes_nil": (0, 0),
     "mir_interval_equality_by_bounds": (2, 768),
     "mir_interval_inside_a_function": (1, 256),
+
+    # ---------------------------------------------------------- `list` builtin
+    # Measured FIRST on the tree that implements it, then written down; the
+    # `list(5) / list(nil) / list("ab")` row was first written as 0|0 and the
+    # other four were left to fail as 0|0 defaults, which is what the first run
+    # reported -- the numbers below are that run's numbers, not a prediction:
+    #   IR-MIR-ALLOCS|case=mir_list_of_a_set|allocs=1|bytes=256
+    #   IR-MIR-ALLOCS|case=mir_list_mixed_set|allocs=2|bytes=768
+    #   IR-MIR-ALLOCS|case=mir_list_of_an_array|allocs=1|bytes=256
+    #   IR-MIR-ALLOCS|case=mir_list_of_scalars|allocs=0|bytes=0
+    #   IR-MIR-ALLOCS|case=mir_list_of_an_interval|allocs=1|bytes=256
+    # The four non-zero rows are the pool's first block (8 MirVal slots = 256
+    # bytes); mixed_set asks for TWO because its two sets plus their two
+    # destination arrays no longer fit in one, so the pool doubles.
+    #
+    # mir_list_of_an_array reads 1|256 rather than 0|0 even though list() COPIES
+    # nothing: the program's own `a = [1, 2]` builds the array it returns.
+    # mir_list_of_an_interval reads 1|256 for the same reason -- `p = [0, 3)` is
+    # a four-slot interval region -- and list() adds NOTHING to it, which is the
+    # point of the row: nil costs no block.
+    "mir_list_of_a_set": (1, 256),
+    "mir_list_mixed_set": (2, 768),
+    "mir_list_of_an_array": (1, 256),
+    "mir_list_of_scalars": (0, 0),
+    "mir_list_of_an_interval": (1, 256),
+    # The narrowing row's pool: `s` is one region of three slots, and the array
+    # list() builds is four more (one count header + three counted items, of
+    # which only two are written when the truncation collides -- the region is
+    # sized by the set's len, not by the emitted count).  Eight slots fit the
+    # first block, so one 256-byte allocation.  Measured, not predicted.
+    "mir_list_narrows_wide_ints": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -2371,6 +2402,20 @@ MIR_ONLY = [
     ("mir_list_of_an_interval",
      'p = [0, 3)\n'
      'say list(p)\n'),
+
+    # The narrowing row.  vm_set_to_array:2325 stores `(int)s->i64[i]`, so a
+    # set element above 32 bits is TRUNCATED on the way out, and the truncated
+    # value can collide with a literal that is already a member: 5000000000
+    # becomes 705032704, which the set also contains, so a THREE-member set
+    # enumerates TWO elements while len() still says three.  Found by
+    # differential probing after the first four rows were green -- the four
+    # above never leave the int32 range and could not have caught it.
+    # MEASURED: interp `len 2` / `[705032704]`, and the route printed
+    # `[1, 5000000000]` before the narrowing was copied.
+    ("mir_list_narrows_wide_ints",
+     's = 5000000000, 705032704\n'
+     'say len(s)\n'
+     'say list(s)\n'),
 
 ]
 

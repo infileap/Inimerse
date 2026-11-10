@@ -1384,7 +1384,14 @@ static const char *const kMirValBlock =
 " * criteria in docs/STATUS.md 10.125 flip the dedup and the membership\n"
 " * separately.  ALLOCS_EXPECT's set entries are the pool blocks, measured\n"
 " * first: the pool is MV_SLOTS slots of 32 bytes, allocated on first use and\n"
-" * doubled after that. */\n"
+" * doubled after that.\n"
+" *\n"
+" * THE ENUMERATION THIS REGION IS READ BY is mv_list (its note is beside\n"
+" * mv_len): `list(s)` walks the region as the interpreter's two halves, ints\n"
+" * ascending first and items in push order after, which is the ONLY reader\n"
+" * that observes this region's order at all.  tools/aot_mir.test.py pins it in\n"
+" * mir_list_of_a_set, mir_list_mixed_set, mir_list_of_scalars,\n"
+" * mir_list_of_an_interval and mir_list_narrows_wide_ints. */\n"
 "/* ONE SET IS AN INTERVAL -- the fourth kind of value in the pool, and the only\n"
 "   one whose answer is a PREDICATE rather than a list.  The interpreter keeps\n"
 "   it as SetObj.kind 2 (src/vm/vm.h:57-69): a domain name, two double bounds and\n"
@@ -1905,10 +1912,13 @@ static const char *const kMirValBlock =
 " *     answers false for a set against a non-set.  It used to STOP the program\n"
 " *     (abort, rc 134) instead; that stop is gone with the set arm, and\n"
 " *     docs/STATUS.md 10.127 says plainly that the agreement is with a defect.\n"
-" *   - OP_SET_ADD / OP_SET_INTERVAL.  Neither is lowered, so a set is built\n"
-" *     whole by its literal and never extended; the interpreter's extending\n"
-" *     forms (a comprehension's OP_SET_ADD, `q = p, 4`'s vm_set_add_comp) stop\n"
-" *     at OP_CALL_BUILTIN `list` or at mv_eq's missing set row.\n"
+" *   - OP_SET_ADD / OP_SET_INTERVAL.  OP_SET_ADD is not lowered, so a set is\n"
+" *     built whole by its literal and never extended; the interpreter's\n"
+" *     extending forms (a comprehension's OP_SET_ADD, `q = p, 4`'s\n"
+" *     vm_set_add_comp) now stop AT OP_SET_ADD -- the comprehension used to\n"
+" *     stop one opcode earlier, at the OP_CALL_BUILTIN `list` that is its\n"
+" *     first bytecode, and that opcode is emitted now (mv_list's note).\n"
+" *     MEASURED: `{ x in s | x > 1 }` reports IR-MIR-NOT-YET|op=OP_SET_ADD|n=1.\n"
 " *   - A DICT container used to refuse BEFORE OP_IN, because OP_NEW_DICT's\n"
 " *     pops were not counted and prescan stopped at the unbalanced argument\n"
 " *     stack (asp=2).  With OP_NEW_DICT emitted that program now lowers, and\n"
@@ -2015,6 +2025,108 @@ static const char *const kMirValBlock =
 "    if (a.type == MV_INT) return mv_int(a.ival);\n"
 "    if (a.type == MV_FLT) return mv_int((long long)a.fval);\n"
 "    return mv_int(0);   /* MV_NIL, MV_BOO -- the interpreter's fall-through */\n"
+"}\n"
+"\n"
+"/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
+"   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
+"   function is three answers, and all three are reproduced here rather than\n"
+"   inferred:\n"
+"     an ARRAY is pushed back AS THE SAME VALUE (pop, then push the same Value),\n"
+"       so this returns `a` itself: not a copy, which is observable --\n"
+"       `list(a) == a` is true in the interpreter because val_eq's array row\n"
+"       compares `ival` (mv_eq's row here does the same) and would be FALSE for\n"
+"       a correct-looking copy.  MEASURED: mir_list_of_an_array prints\n"
+"       `true` then `[1, 2]`.\n"
+"     a SET becomes a NEW array via vm_set_to_array (src/vm/vm.c:2312-2340).\n"
+"       Its order is SEGMENTED and that is the fact this function exists to get\n"
+"       right: the sorted i64 half is walked FIRST, then SetObj's items in\n"
+"       insertion order.  So `3, 1, 2` enumerates [1, 2, 3] while `1, 2.5, 3`\n"
+"       enumerates [1, 3, 2.5] and `2.5, 1, 3` enumerates the SAME [1, 3, 2.5],\n"
+"       whatever the push order.  A whole-region sort would answer\n"
+"       [1, 2.5, 3] -- sorted, plausible, and a silent disagreement with the\n"
+"       oracle; that is why this is two passes and not one qsort.\n"
+"       The CROSS-HALF dedup is array_has's (src/vm/vm.c:2254-2261, val_eq on\n"
+"       each element already emitted), and it is reachable: an int 1 and a bool\n"
+"       true are ONE entry of `list` -- MEASURED, `s = 1, true` answers\n"
+"       len 2 / list [1] on the interpreter, because val_eq promotes a mixed\n"
+"       numeric pair to double.  mv_eq is that row here, so the second pass\n"
+"       tests every non-int item against the ints already emitted.\n"
+"     EVERYTHING ELSE is nil, and that includes an INTERVAL set: the\n"
+"       interpreter's answer for list([0, 3)) is nil (MEASURED) even though\n"
+"       vm_set_to_array would enumerate kind 2, because this route's\n"
+"       mv_set_interval carries BOUNDS and no members; mv_set_is_interval is\n"
+"       the discriminator, the same one mv_len uses for the same header slot.\n"
+"   ALLOCATION.  Only the set arm allocates, and it allocates exactly what\n"
+"   mv_arr_new allocates for n items (one pool block when the pool has to grow,\n"
+"   none when it does not).  The layout is written here rather than handed to\n"
+"   mv_arr_new because the order is not the source order: the count header is\n"
+"   rewritten at the end to the EMITTED count, which is the compaction mv_set_new\n"
+"   already performs when it drops a duplicate.  The int half is emitted by\n"
+"   repeated minimum-above-last selection -- O(k^2) over a literal's handful of\n"
+"   elements, and it needs no scratch buffer, which keeps this arm's allocation\n"
+"   reading a single number a reader can predict. */\n"
+"static inline MirVal mv_list(MirVal a) {\n"
+"    if (a.type == MV_ARR) return a;            /* :328 -- the same Value back */\n"
+"    if (a.type != MV_SET) return mv_nil();     /* :330 idx < 0 -> push_nil */\n"
+"    int iv = mv_arr_live((int)a.ival);\n"
+"    if (iv < 1 || iv > mv_arrused || !mv_arrmem) return mv_nil();\n"
+"    if (mv_set_is_interval(iv)) return mv_nil();   /* kind 2: nothing to enumerate */\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    if (n < 0) return mv_nil();\n"
+"    mv_arr_need(mv_arrused + n + 1);           /* the destination region */\n"
+"    MirVal r;\n"
+"    r.type = MV_ARR;\n"
+"    r.ival = mv_arrused + 1;\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    int w = 0;\n"
+"    /* PASS 1 -- the int half, ascending.  TWO details are the interpreter's and\n"
+"       neither is obvious, so both were measured rather than reasoned:\n"
+"       (a) the SELECTION order is the raw i64 half's (SetObj keeps it sorted),\n"
+"       (b) the EMITTED value is `(int)s->i64[i]` -- vm_set_to_array:2325\n"
+"           narrows to int and stores that in the 64-bit slot.  So\n"
+"           `s = 5000000000, 1` enumerates [1, 705032704], not [1, 5000000000]\n"
+"           (MEASURED on the interpreter), and the narrowing can COLLIDE: \n"
+"           `s = 5000000000, 705032704` is len 2 but list [705032704], because\n"
+"           array_has sees the second truncated value already present.  That is\n"
+"           why the dup test below runs against what was EMITTED and not\n"
+"           against raw ivalues -- the same array_has the items pass leans on. */\n"
+"    long long last = 0;\n"
+"    int first = 1;\n"
+"    for (int i = 0; i < n; i++) {\n"
+"        long long pick = 0;\n"
+"        int have = 0;\n"
+"        for (int j = 0; j < n; j++) {\n"
+"            MirVal y = mv_arrmem[iv + j];\n"
+"            if (y.type != MV_INT) continue;\n"
+"            if (!first && y.ival <= last) continue;\n"
+"            if (!have || y.ival < pick) { pick = y.ival; have = 1; }\n"
+"        }\n"
+"        if (!have) break;\n"
+"        last = pick;\n"
+"        first = 0;\n"
+"        MirVal e = mv_int((long long)(int)pick);   /* :2325 -- the (int) narrow */\n"
+"        int dup = 0;\n"
+"        for (int t = 0; t < w; t++) {\n"
+"            if (mv_tru(mv_eq(mv_arrmem[r.ival + t], e))) { dup = 1; break; }\n"
+"        }\n"
+"        if (!dup) mv_arrmem[r.ival + w++] = e;\n"
+"    }\n"
+"    /* PASS 2 -- everything else, in the region's (push) order, skipping what\n"
+"       array_has would: an item equal to an int already emitted. */\n"
+"    for (int j = 0; j < n; j++) {\n"
+"        MirVal x = mv_arrmem[iv + j];\n"
+"        if (x.type == MV_INT) continue;\n"
+"        int dup = 0;\n"
+"        for (int t = 0; t < w; t++) {\n"
+"            if (mv_arrmem[r.ival + t].type != MV_INT) continue;\n"
+"            if (mv_tru(mv_eq(mv_arrmem[r.ival + t], x))) { dup = 1; break; }\n"
+"        }\n"
+"        if (!dup) mv_arrmem[r.ival + w++] = x;\n"
+"    }\n"
+"    mv_arrmem[r.ival - 1] = mv_int(w);         /* the EMITTED count */\n"
+"    mv_arrused = r.ival + w;\n"
+"    return r;\n"
 "}\n"
 "\n"
 "/* THE WRITE HALF of the container step.  Read src/vm/vm.c:3717-3734 (L_INDEX_SET)\n"
@@ -3518,12 +3630,15 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    OP_LOADK_STRING's r2 does, and r3 is the argument count; the
                    arguments themselves were pushed by OP_PUSH_REG, so this arm
                    CONSUMES them from the argument stack.
-                   `len` is the one builtin this route emits (10.123): its whole
-                   domain is a length or a number, none of which needs a value
-                   the model cannot hold, and it allocates nothing.  Every other
-                   name is refused BY NAME -- the registry, its capability flags
-                   and the safe-mode rule live in the VM and the mods, so calling
-                   one here would be a second copy of that dispatch (10.122). */
+                   TWO names are emitted (10.123, and `list` beside it): `len`,
+                   whose whole domain is a length or a number and which
+                   allocates nothing, and `list`, whose whole domain is an
+                   array (returned as-is), a finite set (enumerated) or nil --
+                   see mv_list's note for why those three are the answers the
+                   interpreter gives.  Every other name is refused BY NAME --
+                   the registry, its capability flags and the safe-mode rule
+                   live in the VM and the mods, so calling one here would be a
+                   second copy of that dispatch (10.122). */
                 int32_t ix = ir_insn_r2(in);
                 if (ix < 0 || ix >= node->string_count)
                     return bad("container=%d insn=%d builtin name index %d out of range (count=%d)",
@@ -3536,16 +3651,17 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    zero-argument one is not reported as if len had been called
                    wrongly (measured: with the arity test first, 'say dbg_ip()'
                    came back as illegal-operand). */
-                if (strcmp(bn, "len") != 0) {
+                if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0) {
                     g_prescan_why = "builtin-call";
-                    return bad("container=%d insn=%d builtin call '%s' -- this route emits len and"
-                               " no other builtin; the registry, its capability flags and the"
-                               " safe-mode rule live in the VM and the mods", f, i, bn);
+                    return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
+                               " list and no other builtin; the registry, its capability flags and"
+                               " the safe-mode rule live in the VM and the mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
                 if (argc != 1)
                     return bad("container=%d insn=%d builtin '%s' is called with %d argument(s);"
-                               " this route emits len, which takes one", f, i, bn, argc);
+                               " this route emits len and list, both of which take one",
+                               f, i, bn, argc);
                 if (asp < argc)
                     return bad("container=%d insn=%d builtin '%s' argument stack underflows:"
                                " asp=%d argc=%d", f, i, bn, asp, argc);
@@ -4141,9 +4257,10 @@ static int emit_one(Ctx *c, Buf *b, int i) {
        consumes nothing and must not read mvargs at 0 (the same spelling the two
        arms above use for the same reason); it is not reachable from source
        today -- the only OP_NEW_SET with count 0 is a comprehension's
-       (src/compiler/compiler.c:582), and that program is refused earlier, at
-       OP_CALL_BUILTIN `list` -- but r3 == 0 is a legal instruction and this arm
-       answers it instead of reading a null. */
+       (src/compiler/compiler.c:582), and that program is still refused, one
+       opcode later: it now stops at OP_SET_ADD, the arm below, rather than at
+       the OP_CALL_BUILTIN `list` that used to precede it -- but r3 == 0 is a
+       legal instruction and this arm answers it instead of reading a null. */
     case OP_NEW_SET: {
         int n = w3;                     /* the element COUNT: see op_regs' note */
         if (n == 0) { buf_fmt(b, "    v[%d] = mv_set_new(0, 0);", r1); return 0; }
@@ -4289,19 +4406,28 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_CALL_BUILTIN: {
         /* The name is resolved HERE, off the container's string pool, so the
            emitter's index read and prescan's bound are the same claim (the
-           operands instrument compares the two).  Anything but `len` returns -1:
-           prescan refuses those by name, and this is the second lock. */
+           operands instrument compares the two).  Anything but `len` and `list`
+           returns -1: prescan refuses those by name, and this is the second
+           lock.  The ARITY is one for both, so the pop below is shared and only
+           the call differs -- and the piece of knowledge worth stating twice is
+           which RUNTIME function the name maps to, because `list` answers a new
+           container where `len` answers a number. */
         const Bytecode *bc = c->node;
         int32_t ix = r2;
         const char *bn = (ix >= 0 && ix < bc->string_count && bc->string_pool)
                          ? bc->string_pool[ix] : NULL;
-        if (!bn || strcmp(bn, "len") != 0) return -1;
-        buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
+        if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0)) return -1;
+        if (strcmp(bn, "list") == 0)
+            buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
+        else
+            buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
         buf_str(b, " asp -= 1;");
         /* len answers nil/garbage for a non-container and never throws, so this
            check exists for the CALLER's flag rather than len's own: a callee
            reached through a builtin cannot set it, but keeping every call site
-           identical is cheaper than arguing which ones can. */
+           identical is cheaper than arguing which ones can.  `list` allocates
+           for the set arm, and that allocation is mv_alloc's, which does not
+           throw either. */
         emit_try_check(b, c, i);
         return 0;
     }
