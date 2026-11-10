@@ -7062,3 +7062,68 @@ IR-AOT-MIR-VERDICT|PASS|...|covered=29|missing=0|same-as-interpreter=193
 2. **`mv_try_var` 只有 64 格**：更深的嵌套会**大声停在那里**（`mv_die_uncaught`），不是静默截断。
 3. **两笔既有的债，本格不修**（都不属于「照抄解释器与缺陷一致」那一类，而是本路线自己的洞）：①非数值操作数撞到 `mv_tag_to_nv` 的 `default: abort()`（`say "a" + 1` 在两路线里的 MIR 侧 rc 134，与 try 无关）；②`mv_arr_set` 的 `index_out_of_range` **不是**解释器的异常——`a[5] = 1` 在解释器里被静默忽略（实测只印 `after`、stderr 空、rc 0），所以它也不该被本格当成可捕获的东西。
 4. **`finally` 的重抛路径没被判据覆盖到**：只有 `finally` 没有 `catch` 时，编译器在 finally 末尾重抛一个内部全局；本格的四条 finally 判据都带 catch。这是形状边界，不是未实现——重抛走的是同一条 `OP_THROW`。
+
+## §10.138 `wait`：这条路线真的睡，而「负时长」是它唯一不复现的形状（aot-mir，A 类第二十七项）
+
+### 一、来源与日期
+
+判据 `9eb08a7`（六例先红）、实现 `39c7a00`，2026-11-09。这是 `unknown` 从 14 降到 13 的那一格。
+
+### 二、形状
+
+**解释器侧**：`wait` 的答案不是一个值，是一段时间。`src/vm/vm.c` 的 `L_WAIT` 先把操作数变成毫秒，用的是**它自己的类型阶梯**：`INT` 读 `ival`、`FLOAT` 读 `fval`、**其他任何类型一律 0.0**；然后 `ms = (int)(seconds * 1000)`。接着分四个去向：这个线程是 task 就交给调度器；`step_mode` 就交 `sleep_ms`；有 gui 泵或有逐帧回调就进循环泵帧；**剩下的（也就是这条路线接受的 CLI 形状）落到 `sleep_ms(ms)`**，即一次阻塞睡眠。睡完之后它还会做一次自动存档检查，而这条路线没有 `record`，那个检查是 no-op。
+
+发射侧：`STMT_WAIT` 在 `src/compiler/compiler.c` 发 `OP_WAIT r, 0, 0`——只有 `r1` 是寄存器，`r2`/`r3` 为零，所以掩码是 `R1`、没有可校验的池索引或全局号。另外三处 `OP_WAIT` 属于 `worker.wait`（线程等待），本路线整段按 `why=threads` 拒。
+
+**本路线侧**：**真的睡**。这不是「照抄一个 no-op」：判据能看到的只有字节，而字节在这里不携带延迟——如果只把这条指令当 no-op 放过去，生成的可执行文件就会印出同样的字节并且**立刻返回**，那是一个用「同样的输出」掩盖「不同的行为」的答案。所以发射一个条件 helper `mv_wait`（只在程序里出现 `wait` 时发出，`g_wait_used` 与 `g_bound_used`/`g_try_used` 同一层：没有 `wait` 的程序，生成文本一字不动）：
+
+- 类型阶梯**逐字照抄**解释器：`MV_INT` 读 `ival`、`MV_FLT` 读 `fval`、其他 0.0。**故意不用 `mv_as_nv`**——它在字符串上会 `abort()`（`mv_tag_to_nv` 的 default），而解释器把字符串读成 0 秒然后照常往下走；`mir_wait_a_non_number_is_zero` 钉的就是这一条。
+- 阻塞用平台的睡眠：`_WIN32` 走 `Sleep`，否则 `nanosleep`。`#include` 发在**共享前导之后**，因为 `aot_native_preamble()` 在两条路线必须逐字相同，MIR 独有的 include 不能进它。
+
+### 三、判据
+
+六例，全部先在解释器上量出 oracle，再在 `84f89d8` 上先红。
+
+| 用例 | 钉住什么 | 红读数（`84f89d8`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_wait_at_toplevel` | 延迟不改变输出、不吞语句 | 拒译 `OP_WAIT:1` | `1 / 2`，4 字节 |
+| `mir_wait_zero` | `wait 0` 是一次立即返回 | 同上 | `1 / 2`，4 字节 |
+| `mir_wait_inside_a_function` | 容器里的等待不打断调用点 | 同上 | `7 / done / after`，13 字节 |
+| `mir_wait_with_a_variable_delay` | 延迟可以来自寄存器 | 同上 | `1 / 2`，4 字节 |
+| `mir_wait_in_a_loop` | 循环里反复等待后计数仍对 | 同上 | `3`，2 字节 |
+| `mir_wait_a_non_number_is_zero` | 类型阶梯，不是 tag：字符串读成 0.0 且**不许 abort** | 同上 | `1 / 2`，4 字节 |
+
+六行的 `ALLOCS` 全是 `allocs=0|bytes=0`（先量后写）：睡眠是 libc 调用，不是池里的块，而这一格没有任何容器构造。
+
+### 四、实现期才发现的四件事
+
+1. **`pause` 是关键字**。`mir_wait_inside_a_function` 的第一版把容器命名为 `pause`，解析器直接拒：`expected 'function name', but got 'pause' (type 45)`。改成 `hold`，并把这次改名写进注释——否则下一个人会以为是笔误。
+2. **这条 opcode 没有 pre-scan 分支，而且不该有**。它不读池、不读全局、不读表，没有可校验的操作数；而覆盖仪器的操作数检测器把「有 pre-scan 分支却没有索引读者」的标签判成 dead label。所以 `g_wait_used` 来自一次**全程序扫描**（helper 在任何容器被降级之前就要发出去），不是 pre-scan。
+3. **类型阶梯不能用 `mv_as_nv`**：见二。这是「同一件事在两条路线上的两种写法」里最容易写错的一处——`mv_as_nv` 是本路线别的臂的默认选择，在这里恰好是错的。
+4. **负数是一处明知的分歧**（见六）。
+
+### 五、读数（本树 `39c7a00`）
+
+```
+IR-MIR-COVER|...|mir-only-cases=113|mir-only-same-as-interpreter=113
+IR-MIR-VERDICT|PASS|tree=9eb08a7...   ← 判据笔上的绿（实现前的那棵树）
+IR-MIR-ALLOCS|case=mir_wait_at_toplevel|...|allocs=0|freed=0|live=0|bytes=0|ok=yes   （六例同形）
+IR-AOT-MIR|accepted=199|of=29|covered=29|missing=0|refused=0|same-as-interpreter=199|beyond-ast-denominator=25
+IR-AOT-MIR-LOWERING|handles=54|of=67|unknown=13|agree=yes
+```
+
+**手工计时**（同一台机器、各三次、逐次取整到毫秒；判据不做时间断言，见六.2）：
+
+| 程序 | 本路线 | 解释器 |
+|---|---|---|
+| `say 1 / wait 0.3 / say 2` | 0.3096 / 0.3097 / 0.3075 | 0.3558 / 0.3526 / 0.3551 |
+| `say 1 / wait 0 / say 2` | 0.0066 / 0.0073 / 0.0064 | 0.0468 / 0.0408 / 0.0452 |
+
+那个 45 毫秒的差不是睡眠：它是解释器加载模块的启动开销。把两行相减，两条路线在同一台机器上花在睡眠上的都是 300 毫秒。
+
+### 六、边界
+
+1. **负时长是本格唯一不复现的形状**。解释器把 `wait -1` 变成 `ms = -1000` 再交给一个**无符号**的睡眠，于是一去不回——探针程序跑满两分钟仍未返回，被移到后台后杀掉。本路线在 `ms <= 0` 时立即返回，所以这一条是**明知的分歧**：复现一次挂死不是「与解释器一致」，而是一段无法被测的代码。判据里没有负时长，因为没有一条能把两条路线都跑完的 oracle。
+2. **判据不测时间**。墙钟断言是抖动测试穿上了测量的衣服：同一台机器上 300 毫秒能读成 297 到 310。所以延迟只在本文档手工记录，判据只钉「不许改变输出 / 不许吞语句 / 不许分配」。
+3. **Windows 那半个 helper 在本机没编过**。这里只编译并跑了 POSIX 分支（`nanosleep`）；`_WIN32` 分支（`Sleep`）在这台机器上没有编译器验证过，写在这里而不是假装它被测过。
+4. **线程等待仍未降级**：`worker.wait` 的三处发射点都在线程语境里，随 `why=threads` 整段拒掉，与本格无关。
