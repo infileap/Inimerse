@@ -897,6 +897,8 @@ static const char *const kMirValBlock =
 " * reddens that case while mir_in_array_hit stays green -- measured twice;\n"
 " * docs/STATUS.md 10.115 records the transcript. */\n"
 "static int mv_set_eq(int ia, int ib);  /* defined with the set helpers below */\n"
+"static inline int mv_arr_live(int iv);  /* the forwarding-head resolver, defined below: mv_set_add\n"
+"                                             and the set readers need it before its body */\n"
 "static inline MirVal mv_eq(MirVal a, MirVal b) {\n"
 "    if (a.type == MV_NIL || b.type == MV_NIL) return mv_boo(a.type == b.type);\n"
 "    if (a.type == MV_STR || b.type == MV_STR) {\n"
@@ -1489,6 +1491,86 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* ADDING ONE ELEMENT TO A SET -- OP_SET_ADD, the first WRITE this route gives a\n"
+" * container other than an array (and the opcode the comprehension lowering\n"
+" * needs: `{ x in S | cond }` builds an empty set and adds every member whose\n"
+" * condition holds).\n"
+" *\n"
+" * WHAT IT COPIES.  vm_set_add (src/vm/vm.c:1877-1920) is ASYMMETRIC, and the\n"
+" * asymmetry is the whole reason a set has two halves:\n"
+" *   - an INT element binary-searches the sorted i64 half, INSERTS in place if\n"
+" *     absent (`memmove` + store) and never looks at items;\n"
+" *   - every other tag scans `items` with val_eq and APPENDS if absent, never\n"
+" *     looking at i64.\n"
+" * This route's set region is one flat [count][elem...] run, so \"the int half\"\n"
+" * is not a separate array -- the observable consequence is the ORDER, which\n"
+" * mv_list already reproduces by sorting the int elements at read time.  What\n"
+" * matters here is the MEMBERSHIP RULE, which is the same one mv_set_has uses\n"
+" * (cf. `1 in {1.0}` is true, `1.0 in {1}` is false) -- an append that tested\n"
+" * one uniform equality would collapse pairs the interpreter keeps apart.\n"
+" *\n"
+" * GROWTH.  A set region is [count][elem...] and its handle is `ival`; there is\n"
+" * no capacity slot, so growing means the region must MOVE.  The move is the\n"
+" * array's move, for the array's reason (mv_arr_live's note): a region that is\n"
+" * not at the pool's high-water mark cannot extend in place, because the slots\n"
+" * above it belong to a later region.  So:\n"
+" *   - at the frontier  -> extend in place, the handle stands;\n"
+" *   - elsewhere        -> copy to the frontier and leave a FORWARDING HEAD\n"
+" *                         behind, exactly as mv_arr_set does.\n"
+" * THE FORWARDING HEAD IS WHY EVERY SET READER NOW RESOLVES `ival` FIRST: until\n"
+" * this commit a set could not move, so mv_set_has/mv_set_eq read the handle\n"
+" * directly, and a moved set would have made an old alias read stale garbage.\n"
+" * Those two gained `mv_arr_live` in this commit; mv_len and mv_list already had\n"
+" * it because an ARRAY could already move through them.\n"
+" *\n"
+" * WHAT IT DOES NOT COVER.  A set that is not kind 0 (a finite literal): the\n"
+" * interpreter's `if (!s || s->kind != 0) return;` means an INTERVAL silently\n"
+" * ignores an add, and this arm does the same -- an interval region has the -1\n"
+" * discriminator, so the test is `mv_set_is_interval`.\n"
+" *\n"
+" * MEASURED BY mir_set_add_* in tools/aot_mir.test.py (a comprehension's\n"
+" * membership, dedup, two-element order, and an add that must MOVE the region\n"
+" * because a container was built after it). */\n"
+"static inline void mv_set_add(MirVal sv, MirVal x) {\n"
+"    if (sv.type != MV_SET) return;               /* src/vm/vm.c:4455 */\n"
+"    int iv = mv_arr_live((int)sv.ival);\n"
+"    if (iv < 1 || iv > mv_arrused) return;\n"
+"    if (mv_set_is_interval(iv)) return;          /* :1879 `kind != 0` -> silent */\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    for (int j = 0; j < n; j++) {                /* the membership rule, once */\n"
+"        MirVal y = mv_arrmem[iv + j];\n"
+"        if (x.type == MV_INT) {\n"
+"            if (y.type == MV_INT) { if (y.ival == x.ival) return; }\n"
+"            else if (mv_tru(mv_eq(y, x))) return;\n"
+"        } else if (y.type != MV_INT) {\n"
+"            if (mv_tru(mv_eq(y, x))) return;\n"
+"        }\n"
+"    }\n"
+"    int want = n + 1;\n"
+"    if (iv + n == mv_arrused) {\n"
+"        mv_arr_need(iv + want);\n"
+"        mv_arrmem[iv + n] = x;\n"
+"        mv_arrmem[iv - 1] = mv_int(want);\n"
+"        if (iv + want > mv_arrused) mv_arrused = iv + want;\n"
+"        return;\n"
+"    }\n"
+"    mv_arr_need(mv_arrused + want + 1);\n"
+"    int nv = mv_arrused + 1;\n"
+"    for (int k = 0; k < n; k++) mv_arrmem[nv + k] = mv_arrmem[iv + k];\n"
+"    mv_arrmem[nv + n] = x;\n"
+"    mv_arrmem[nv - 1] = mv_int(want);\n"
+"    mv_arrused += want + 1;\n"
+"    mv_arrmem[iv - 1].type = MV_ARR;   /* the forwarding head (see mv_arr_live) */\n"
+"    mv_arrmem[iv - 1].ival = nv;       /* fval SHARES this union slot: writing it\n"
+"                                          here would zero the head. */\n"
+"    mv_arrmem[iv - 1].sval = 0;\n"
+"    mv_arrmem[iv - 1].ptr  = 0;\n"
+"    /* The CALLER's register is deliberately left alone: it still holds the old\n"
+"       handle, which now names the head, and mv_arr_live resolves it -- the same\n"
+"       arrangement mv_dict_set's move relies on.  Rewriting the register instead\n"
+"       would be a second answer to the question where-is-my-set, and the second\n"
+"       one is the one a stale ALIAS would not see. */\n"
+"}\n"
 "/* ONE SET'S MEMBERSHIP TEST, half for half, copied from set_contains\n"
 "   (src/vm/vm.c:2020-2054) for the only kind this route can build: a finite\n"
 "   set with no interval components.  The asymmetry IS the point -- an INT probe\n"
@@ -1498,6 +1580,7 @@ static const char *const kMirValBlock =
 "   header is the deduped element count and not the push count.  It allocates\n"
 "   nothing. */\n"
 "static inline int mv_set_has(int iv, MirVal x) {\n"
+"    iv = mv_arr_live(iv);   /* sets can GROW now (mv_set_add), so a handle may name a head */\n"
 "    if (mv_set_is_interval(iv)) return mv_interval_has(iv, x);   /* kind 2: a predicate */\n"
 "    int n = (int)mv_arrmem[iv - 1].ival;\n"
 "    for (int j = 0; j < n; j++) {\n"
@@ -1531,6 +1614,7 @@ static const char *const kMirValBlock =
 "       against a finite set is FALSE, not a stop: set_equal's kind-0/kind-2\n"
 "       crossings require an empty literal with exactly one component, which\n"
 "       mv_set_new never builds (it stores components as flattened elements). */\n"
+"    ia = mv_arr_live(ia); ib = mv_arr_live(ib);   /* see mv_set_has' note */\n"
 "    int iai = mv_set_is_interval(ia), ibi = mv_set_is_interval(ib);\n"
 "    if (iai || ibi) {\n"
 "        if (!iai || !ibi) return 0;\n"
@@ -2017,7 +2101,7 @@ static const char *const kMirValBlock =
 "           SetObj's iCount + count for a finite set and answers 0 for kind 2 --\n"
 "           measured: `len([0, 3))` is 0 while `1 in [0, 3)` is true.  Its header\n"
 "           slot holds -1, which is also why the negative test is the arm. */\n"
-"        if (a.type == MV_SET && mv_set_is_interval(i)) return mv_int(0);\n"
+"        if (a.type == MV_SET && mv_set_is_interval(i)) return mv_int(0);   /* i is already resolved */\n"
 "        long long n = (long long)mv_arrmem[i - 1].ival;\n"
 "        return mv_int(a.type == MV_DIC ? n / 2 : n);\n"
 "    }\n"
@@ -2829,6 +2913,14 @@ static int op_regs(int op) {
        The zero mask is also the claim to IR-MIR-CONSERVE: the instruction is
        emitted (as a note), not counted not-yet. */
     case OP_LOCK: return 0;
+    /* OP_SET_ADD -- `set_add`, emitted by the COMPREHENSION lowering as
+       `emit(comp->curBC, OP_SET_ADD, result, xReg, 0)` (src/compiler/compiler.c,
+       EXPR_SETCOMP): r1 is the SET being grown, r2 the element, r3 unused.
+       r1 is NOT a destination -- the instruction mutates the container in place,
+       and the register keeps its own value (the same convention OP_INDEX_SET
+       established), so the mask names r1 because the emitted C READS it, and r2
+       because it reads that too. */
+    case OP_SET_ADD: return R1 | R2;
     case OP_CALL_FUNC: return R2;
     /* THE FUNCTION VALUE -- the two opcodes that make a function a VALUE rather
        than a callee the emitter names.  Operands read off the compiler, not
@@ -4091,6 +4183,16 @@ static int emit_one(Ctx *c, Buf *b, int i) {
        is the criterion, and its second line (`1 in p`) then reads false because
        membership of nil is false.
        The domain is always R here: prescan refused anything else by name. */
+    case OP_SET_ADD: {
+        /* One call, for side effects only: mv_set_add takes the set by VALUE and
+           grows the region (in place at the frontier, or by moving it and
+           leaving a forwarding head -- see its note).  No assignment to r1: the
+           register keeps the handle it had, which is what makes an alias that
+           was taken before the add still resolve. */
+        buf_fmt(b, "    mv_set_add(v[%d], v[%d]);", r1, r2);
+        emit_try_check(b, c, i);
+        return 0;
+    }
     case OP_SET_INTERVAL: {
         int32_t packed = ir_insn_r2(in);
         int flags = (int)((packed >> 24) & 0xFF);

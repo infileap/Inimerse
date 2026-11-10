@@ -572,6 +572,22 @@ ALLOCS_EXPECT = {
     # sized by the set's len, not by the emitted count).  Eight slots fit the
     # first block, so one 256-byte allocation.  Measured, not predicted.
     "mir_list_narrows_wide_ints": (1, 256),
+    # The COMPREHENSION cases.  MEASURED on the tree that answers them (a
+    # comprehension builds the source array, the empty set, `list` of the source,
+    # and a destination array for each `say list(s)`), then written down.  TWO
+    # of the five were first written as 2|768 and the readings corrected them --
+    # which is the rule this table states, applied to itself:
+    #   empty_source   1|256, not 2|768: the source `[]` is an EMPTY array (no
+    #                  region of its own beyond its header) and no add ever runs,
+    #                  so the second block is never asked for.
+    #   moves_region   3|1792, not 2|768: the set is copied to the frontier AND
+    #                  the destination array for `list` lands beside it, so the
+    #                  pool doubles twice.
+    "mir_set_add_dedups_and_orders": (2, 768),
+    "mir_set_add_filters": (2, 768),
+    "mir_set_add_floats": (2, 768),
+    "mir_set_add_empty_source": (1, 256),
+    "mir_set_add_moves_the_region": (3, 1792),
 }
 ALLOCS_DEFAULT = (0, 0)
 
