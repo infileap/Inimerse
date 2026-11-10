@@ -1385,6 +1385,78 @@ static const char *const kMirValBlock =
 " * separately.  ALLOCS_EXPECT's set entries are the pool blocks, measured\n"
 " * first: the pool is MV_SLOTS slots of 32 bytes, allocated on first use and\n"
 " * doubled after that. */\n"
+"/* ONE SET IS AN INTERVAL -- the fourth kind of value in the pool, and the only\n"
+"   one whose answer is a PREDICATE rather than a list.  The interpreter keeps\n"
+"   it as SetObj.kind 2 (src/vm/vm.h:57-69): a domain name, two double bounds and\n"
+"   two inclusivity bits, and NOTHING to enumerate -- which is why len() of an\n"
+"   interval is 0 and its print is `set(R interval)` rather than a count.\n"
+" *\n"
+" * STORAGE.  The same pool, four slots, with a header that says what it is:\n"
+" *   header slot (ival - 1) : MV_INT, ival == -1      <- -1 means INTERVAL;\n"
+" *                                                      a count >= 0 means a\n"
+" *                                                      finite set (mv_set_new)\n"
+" *   ival + 0 : MV_FLT  lo\n"
+" *   ival + 1 : MV_FLT  hi\n"
+" *   ival + 2 : MV_INT  flags (1 = lower bound inclusive, 2 = upper inclusive)\n"
+" * That -1 is the discriminator every existing set reader already looks at: they\n"
+" * all start with `int n = (int)mv_arrmem[iv - 1].ival;` and a negative count is\n"
+" * not a count, so no reader can mistake an interval for a finite set by\n"
+" * accident.  It also cannot collide with a forwarding head, which is MV_ARR and\n"
+" * lives in the same slot for the same reason (mv_arr_live's note).\n"
+" *\n"
+" * WHY NOT A THIRD TAG.  A tag would be a second classification of the same\n"
+" * pool slot, and this file already argues twice against two owners of one\n"
+" * answer (the dict's hash table, the set's halves).  The header slot IS the\n"
+" * answer to \"what is in this region\", and it is the slot that already carries\n"
+" * the count.\n"
+" *\n"
+" * THE DOMAIN IS ALWAYS R.  The compiler defaults the base name to \"R\"\n"
+" * (src/parser/parser.c:514) and the only other spellings the parser reaches are\n"
+" * the builtin set names, whose intervals are a DIFFERENT shape -- measured:\n"
+" * `Z[0~3]` is a FINITE set (kind 0 with one component, `set(4)`, members\n"
+" * enumerated) while `R[0~3)` is kind 2 (`set(0)`, no members).  Only the second\n"
+" * is OP_SET_INTERVAL's answer, so a name other than R is refused by name rather\n"
+" * than answered as if it were R.\n"
+" */\n"
+"static inline int mv_set_is_interval(int iv) {\n"
+"    return mv_arrmem[iv - 1].type == MV_INT && (int)mv_arrmem[iv - 1].ival < 0;\n"
+"}\n"
+"static inline MirVal mv_set_interval(double lo, double hi, int flags) {\n"
+"    mv_arr_need(mv_arrused + 4);            /* 1 header slot, then 3 payload */\n"
+"    MirVal r;\n"
+"    r.type = MV_SET;\n"
+"    r.ival = mv_arrused + 1;\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    mv_arrmem[r.ival - 1] = mv_int(-1);     /* the INTERVAL discriminator */\n"
+"    mv_arrmem[r.ival + 0] = mv_flt(lo);\n"
+"    mv_arrmem[r.ival + 1] = mv_flt(hi);\n"
+"    mv_arrmem[r.ival + 2] = mv_int(flags);\n"
+"    mv_arrused = r.ival + 3;\n"
+"    return r;\n"
+"}\n"
+"/* THE MEMBERSHIP PREDICATE, copied from set_contains's kind-2 arm\n"
+"   (src/vm/vm.c:2046-2053): the DOMAIN decides first, then the bounds.  On this\n"
+"   route the domain is R and R answers `return 1` for any number\n"
+"   (src/vm/vm.c:1998), so what is left is: a non-number is not a member (that\n"
+"   test is builtin_contains' first line), NaN is not a member either, and then\n"
+"   the two bounds with their inclusivity bits.  A BOOL probe is REFUSED by that\n"
+"   first line -- `true in p` is false even though val_is_num accepts a bool\n"
+"   elsewhere -- which is why this is written as an explicit tag test and not by\n"
+"   calling val_is_num.\n"
+" * MEASURED BY mir_interval_membership (five probes in one program). */\n"
+"static inline int mv_interval_has(int iv, MirVal x) {\n"
+"    if (x.type != MV_INT && x.type != MV_FLT) return 0;\n"
+"    double d = (x.type == MV_INT) ? (double)x.ival : x.fval;\n"
+"    if (d != d) return 0;                   /* NaN */\n"
+"    double lo = mv_arrmem[iv + 0].fval;\n"
+"    double hi = mv_arrmem[iv + 1].fval;\n"
+"    int flags = (int)mv_arrmem[iv + 2].ival;\n"
+"    int loInc = flags & 1, hiInc = (flags >> 1) & 1;\n"
+"    if (d < lo || (d == lo && !loInc)) return 0;\n"
+"    if (d > hi || (d == hi && !hiInc)) return 0;\n"
+"    return 1;\n"
+"}\n"
 "static inline MirVal mv_set_new(int n, const MirVal *items) {\n"
 "    int want = mv_arrused + n + 1;             /* 1 count slot, then n pushes */\n"
 "    mv_arr_need(want);\n"
@@ -1419,6 +1491,7 @@ static const char *const kMirValBlock =
 "   header is the deduped element count and not the push count.  It allocates\n"
 "   nothing. */\n"
 "static inline int mv_set_has(int iv, MirVal x) {\n"
+"    if (mv_set_is_interval(iv)) return mv_interval_has(iv, x);   /* kind 2: a predicate */\n"
 "    int n = (int)mv_arrmem[iv - 1].ival;\n"
 "    for (int j = 0; j < n; j++) {\n"
 "        MirVal y = mv_arrmem[iv + j];\n"
@@ -1445,6 +1518,19 @@ static const char *const kMirValBlock =
 "   FALSE through exactly this class check while mir_set_eq_mixed_order answers\n"
 "   TRUE through it; one numeric equality for everything gets both wrong. */\n"
 "static int mv_set_eq(int ia, int ib) {\n"
+"    /* set_equal's kind-2 row (src/vm/vm.c:2225-2227): two intervals are equal\n"
+"       when their DOMAIN, bounds and inclusivity all match -- and the domain is\n"
+"       always R here, so the comparison is the three payload slots.  An interval\n"
+"       against a finite set is FALSE, not a stop: set_equal's kind-0/kind-2\n"
+"       crossings require an empty literal with exactly one component, which\n"
+"       mv_set_new never builds (it stores components as flattened elements). */\n"
+"    int iai = mv_set_is_interval(ia), ibi = mv_set_is_interval(ib);\n"
+"    if (iai || ibi) {\n"
+"        if (!iai || !ibi) return 0;\n"
+"        return mv_arrmem[ia + 0].fval == mv_arrmem[ib + 0].fval\n"
+"            && mv_arrmem[ia + 1].fval == mv_arrmem[ib + 1].fval\n"
+"            && mv_arrmem[ia + 2].ival == mv_arrmem[ib + 2].ival;\n"
+"    }\n"
 "    int na = (int)mv_arrmem[ia - 1].ival;\n"
 "    int nb = (int)mv_arrmem[ib - 1].ival;\n"
 "    if (na != nb) return 0;              /* :2226-2229 iCount and count */\n"
@@ -1917,6 +2003,11 @@ static const char *const kMirValBlock =
 "    if (a.type == MV_ARR || a.type == MV_DIC || a.type == MV_SET) {\n"
 "        int i = mv_arr_live((int)a.ival);   /* through the head, like mv_arr_get */\n"
 "        if (i < 1 || i > mv_arrused || !mv_arrmem) return mv_int(0);\n"
+"        /* An INTERVAL has nothing to enumerate: the interpreter's len() sums\n"
+"           SetObj's iCount + count for a finite set and answers 0 for kind 2 --\n"
+"           measured: `len([0, 3))` is 0 while `1 in [0, 3)` is true.  Its header\n"
+"           slot holds -1, which is also why the negative test is the arm. */\n"
+"        if (a.type == MV_SET && mv_set_is_interval(i)) return mv_int(0);\n"
 "        long long n = (long long)mv_arrmem[i - 1].ival;\n"
 "        return mv_int(a.type == MV_DIC ? n / 2 : n);\n"
 "    }\n"
@@ -2191,8 +2282,13 @@ static const char *const kMirValBlock =
 "    if (v.type == MV_FLT) { nv_fmt_double(buf, (size_t)bufsz, v.fval); return; }\n"
 "    if (v.type == MV_SET) {\n"
 "        int iv = mv_arr_live((int)v.ival);\n"
-"        if (iv >= 1 && iv <= mv_arrused) snprintf(buf, (size_t)bufsz, \"set(%d)\", (int)mv_arrmem[iv - 1].ival);\n"
-"        else snprintf(buf, (size_t)bufsz, \"set(?)\");\n"
+"        if (iv < 1 || iv > mv_arrused) { snprintf(buf, (size_t)bufsz, \"set(?)\"); return; }\n"
+"        /* value_to_string's kind-2 row (src/vm/vm.c:1330) prints the DOMAIN and\n"
+"           the word interval, never a count: `set(R interval)`.  The domain is\n"
+"           always R on this route (mv_set_interval's note), so the name is a\n"
+"           literal here instead of a table lookup. */\n"
+"        if (mv_set_is_interval(iv)) { snprintf(buf, (size_t)bufsz, \"set(R interval)\"); return; }\n"
+"        snprintf(buf, (size_t)bufsz, \"set(%d)\", (int)mv_arrmem[iv - 1].ival);\n"
 "        return;\n"
 "    }\n"
 "    if (v.type == MV_ARR || v.type == MV_DIC) {\n"
@@ -2598,6 +2694,18 @@ static int op_regs(int op) {
     case OP_JUMP: return 0;
     case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: return R1;
     case OP_PUSH_REG: return R1;
+    /* OP_SET_INTERVAL -- `[lo, hi)` / `(lo, hi]`, the interval-set literal.
+       Operands read off the compiler (src/compiler/compiler.c, EXPR_SETINTERVAL):
+       the two BOUNDS are compiled first and pushed as OP_PUSH_REG, then this is
+       emitted as `emit(curBC, OP_SET_INTERVAL, r, (nameIdx & 0xFFFFFF) | (flags
+       << 24), 0)`.  So r1 is the destination register, r2 is a PACKED IMMEDIATE
+       (string-pool index of the domain name in the low 24 bits, the two
+       inclusivity bits on top) and r3 is unused -- the first opcode in this
+       route whose registers are NOT all in the operand word, which is why its
+       arm reads mvargs.
+       The mask is R1 alone: a bit for r2 would have the generic bound loop read
+       a string-pool index as a register number. */
+    case OP_SET_INTERVAL: return R1;
     case OP_CALL_FUNC: return R2;
     /* THE FUNCTION VALUE -- the two opcodes that make a function a VALUE rather
        than a callee the emitter names.  Operands read off the compiler, not
@@ -3137,6 +3245,39 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                `s = 1, 1`.
                Bound first, then consume -- a count larger than asp is a
                refusal, not a negative stack. */
+            /* OP_SET_INTERVAL is the fourth producer that CONSUMES the argument
+               stack, and the first whose operands live ONLY there: the two
+               bounds were pushed by the compiler (EXPR_SETINTERVAL) and nothing
+               in the operand word names them.  Two slots, always -- both bounds
+               are pushed even when the source omits them, because the compiler
+               substitutes +/-1.0e308 rather than skipping the push.
+               The domain name is checked here and refused BY NAME when it is not
+               R: the parser reaches `R[0~3)` (kind 2, the shape this arm
+               answers) and `Z[0~3]` (a FINITE set, a different shape this route
+               does not build through this opcode) by the same syntax, so
+               answering a Z interval as though it were R would be a wrong answer
+               rather than a missing one.
+               r2 packs the name index and the flags, so the emitter must not
+               read it as a register; op_regs' note says the mask is R1 alone. */
+            if (op == OP_SET_INTERVAL) {
+                int32_t packed = ir_insn_r2(in);
+                int32_t nix = packed & 0xFFFFFF;
+                if (nix < 0 || nix >= node->string_count)
+                    return bad("container=%d insn=%d interval domain name index %d out of range (count=%d)",
+                               f, i, nix, node->string_count);
+                const char *base = node->string_pool ? node->string_pool[nix] : NULL;
+                if (!base || strcmp(base, "R") != 0) {
+                    g_prescan_why = "set-interval-domain";
+                    return bad("container=%d insn=%d interval over domain \'%s\' -- this route emits R "
+                               "intervals only (the builtin domains spell a FINITE set through the same "
+                               "syntax and a different opcode shape)", f, i, base ? base : "(null)");
+                }
+                if (asp < 2)
+                    return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=2",
+                               f, i, op_name(op), asp);
+                asp -= 2;
+                continue;
+            }
             if (op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) {
                 int n = ir_insn_r3(in);
                 int slots = (op == OP_NEW_DICT) ? 2 * n : n;
@@ -3753,6 +3894,27 @@ static int emit_one(Ctx *c, Buf *b, int i) {
        The reasoning, the arms this route cannot be asked for, and the delete
        condition are in mv_in's note in kMirValBlock. */
     case OP_IN:           buf_fmt(b, "    v[%d] = mv_in(v[%d], v[%d]);", r1, r2, r3); return 0;
+    /* THE INTERVAL LITERAL.  Two bounds off the argument stack (lo was pushed
+       first, so it is at asp-2), the domain name and the two inclusivity bits
+       out of r2, and the answer is one pool region -- see mv_set_interval's note
+       for the layout and mv_interval_has's for the predicate.  A non-number bound
+       is NOT a refusal: the interpreter answers NIL for the whole value
+       (src/vm/vm.c, L_SET_INTERVAL's `!val_is_num` arm), so this arm answers
+       mv_nil() and the program keeps going -- mir_interval_a_non_number_bound_makes_nil
+       is the criterion, and its second line (`1 in p`) then reads false because
+       membership of nil is false.
+       The domain is always R here: prescan refused anything else by name. */
+    case OP_SET_INTERVAL: {
+        int32_t packed = ir_insn_r2(in);
+        int flags = (int)((packed >> 24) & 0xFF);
+        buf_fmt(b, "    if (!((mvargs[asp-2].type == MV_INT || mvargs[asp-2].type == MV_FLT)"
+                   " && (mvargs[asp-1].type == MV_INT || mvargs[asp-1].type == MV_FLT))) {"
+                   " v[%d] = mv_nil(); }" NL, r1);
+        buf_fmt(b, "    else { double lo_ = (mvargs[asp-2].type == MV_INT) ? (double)mvargs[asp-2].ival : mvargs[asp-2].fval;"
+                   " double hi_ = (mvargs[asp-1].type == MV_INT) ? (double)mvargs[asp-1].ival : mvargs[asp-1].fval;"
+                   " v[%d] = mv_set_interval(lo_, hi_, %d); } asp -= 2;" NL, r1, flags);
+        return 0;
+    }
     /* THE CONSTANT SPELLING OF STRING EQUALITY -- the asymmetry docs/STATUS.md
      * 10.105 RECORDED ("先记不顺手修") and this arm closes.  Same five-part
      * structure as the mv_eq note in kMirValBlock: WHY IT EXISTS / WHAT IT ADDS

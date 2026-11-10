@@ -515,7 +515,24 @@ ALLOCS_EXPECT = {
     "mir_record_a_store_tag": (0, 0),
     "mir_record_default_store": (0, 0),
     "mir_record_then_overwrite": (0, 0),
-
+    # The INTERVAL cases.  MEASURED on the tree that answers them, and TWO of the
+    # eight are not what the general shape suggested -- which is exactly why the
+    # rule is "measured first, then written":
+    #   a_non_number_bound   0|0, not 1|256: the whole VALUE becomes nil, so no
+    #                        interval region is built at all (the arm checks the
+    #                        bounds before it calls mv_set_interval).
+    #   equality_by_bounds   2|768, not 1|256: the program builds TWO intervals
+    #                        (p and q) and then a third (r), so the pool grows
+    #                        past the first eight-slot block.
+    #   the other six       1|256: one region of four slots inside the first block.
+    "mir_interval_membership": (1, 256),
+    "mir_interval_inclusive_upper": (1, 256),
+    "mir_interval_open_upper_bound": (1, 256),
+    "mir_interval_bounds_from_registers": (1, 256),
+    "mir_interval_len_and_print": (1, 256),
+    "mir_interval_a_non_number_bound_makes_nil": (0, 0),
+    "mir_interval_equality_by_bounds": (2, 768),
+    "mir_interval_inside_a_function": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -2294,6 +2311,11 @@ MIR_ONLY = [
      'say p\n'
      'say 1 in p\n'),
 
+    # MEASURED on the tree that answers them: every program builds exactly ONE
+    # pool region (the interval is 4 slots, which fits the first 256-byte block),
+    # so the reading is 1|256 -- the same shape as every other container row.
+    # It was first written as 0|0 before the implementation existed; that guess is
+    # corrected here rather than silently replaced.
     ("mir_interval_equality_by_bounds",
      'p = [0, 3)\n'
      'q = [0, 3)\n'
