@@ -2684,14 +2684,26 @@ int aot_mir_emitted_opcode(int i) {
 }
 
 const char *aot_mir_subset_description(void) {
-    static char desc[512];
+    /* 2 KB, and the bound below is not decoration.  This buffer was 512 bytes
+       until section 10.137 added two opcodes, and adding them made the list
+       longer than the buffer: o += n on a TRUNCATED snprintf returned the
+       length the list WANTED, so the next call was handed sizeof desc - o as a
+       size_t -- negative once o passed the buffer, i.e. huge -- and wrote past
+       the end.  The symptom was not in this function: `aot-mir subset` died with
+       "*** buffer overflow detected ***" and the coverage instrument reported
+       `REFUSED|the tool does not report its emittable set (IR-MIR-SUBSET)`.
+       The description is ~1.2 KB for the current 67 opcodes, so 2048 is
+       headroom, and the early break keeps a future addition from repeating the
+       same mistake. */
+    static char desc[2048];
     if (!desc[0]) {
-        int o = 0;
+        size_t o = 0;
         for (int op = 0; op < 256; op++) {
             if (op_regs(op) < 0) continue;
-            int n = snprintf(desc + o, sizeof desc - (size_t)o, "%s%s", o ? "," : "", op_name(op));
-            if (n < 0) break;
-            o += n;
+            size_t room = sizeof desc - o;
+            int n = snprintf(desc + o, room, "%s%s", o ? "," : "", op_name(op));
+            if (n < 0 || (size_t)n >= room) break;   /* would have truncated: stop */
+            o += (size_t)n;
         }
     }
     return desc;
