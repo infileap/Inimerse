@@ -1478,6 +1478,45 @@ static const char *const kMirValBlock =
 "   The interpreter checks `idxv->type == VAL_INT` first and calls\n"
 "   val_as_double for everything else (src/vm/vm.c:3679, :3702); the two agree\n"
 "   on every tag, so one tag table serves both opcodes. */\n"
+"\n"
+"/* THE TRY STATE AND ITS ONE SEAM.  A `try` opens a frame, a throw closes the\n"
+" * innermost one, and control reaches the catch by the CALLER's check rather\n"
+" * than by unwinding the C stack.  That is the whole reason this is not a\n"
+" * setjmp/longjmp lowering, and the reason is measurable:\n"
+" *\n"
+" *   gcc -O2, `int f(void) { MirVal v[4]; ... if (setjmp(jb)) { say(v[1]); }\n"
+" *   v[1] = mv_int(2); longjmp(jb, 1); }` prints the SETJMP-TIME value of\n"
+" *   v[1], not the one written before the longjmp -- the C standard lets the\n"
+" *   compiler keep a non-volatile local in a register, and longjmp restores\n"
+" *   registers.  The interpreter's throw does NOT roll registers back: a\n"
+" *   throw in a try body leaves every register as the body left it (vm_throw\n"
+" *   restores code/ip/sp/base and keeps the frame's own registers).\n"
+" *   tools/aot_mir.test.py's mir_try_keeps_a_register_written_in_the_body\n"
+" *   pins that with a value only the written register can produce.\n"
+" *\n"
+" * `volatile MirVal v[]` would fix the rollback and break the emitter: OP_CONCAT\n"
+" * hands `&v[r2]` to mv_concat_n as a `MirVal *`, and volatile does not convert.\n"
+" * So the frame records the ADDRESS of the catch variable (a static global, not\n"
+" * a local) and the throwing site sets a flag; the instruction that could throw\n"
+" * carries a check that jumps to its own catch label.\n"
+" *\n"
+" * mv_try_var[] is 64 slots because the STATIC nesting is known at emit time but\n"
+" * recursion re-enters the same frame, so the dynamic depth is not.  A program\n"
+" * that nests deeper than 64 at run time stops loudly there (mv_try_new); the\n"
+" * interpreter grows its exc_stack instead, so this is a boundary, not an answer.\n"
+" */\n"
+"static int    mv_try_depth;\n"
+"static MirVal *mv_try_var[64];\n"
+"static MirVal mv_err;\n"
+"static int    mv_throwing;\n"
+"static void   mv_throw(MirVal a);\n"
+"static void   mv_die_uncaught(MirVal a);   /* defined below; mv_try_new stops there */\n"
+"static void   mv_try_new(MirVal *var) {\n"
+"    if (mv_try_depth >= 64) mv_die_uncaught(mv_str(\"try nesting deeper than 64\"));\n"
+"    mv_try_var[mv_try_depth] = var;\n"
+"    mv_try_depth++;\n"
+"}\n"
+"\n"
 "static inline int mv_index_i32(MirVal a) {\n"
 "    switch (a.type) {\n"
 "    case MV_INT:   return (int)a.ival;\n"
@@ -1486,10 +1525,11 @@ static const char *const kMirValBlock =
 "    default:       break;            /* MV_NIL / MV_STR / MV_ARR / MV_DIC:\n"
 "                                        vm.c:328 */\n"
 "    }\n"
-"    fprintf(stderr, \"[exception] uncaught: type_mismatch\\n\");\n"
-"    exit(1);\n"
-"    return 0;   /* not reached: exit is noreturn.  Spelled so a compiler that\n"
-"                   does not say so still cannot hand back a silent 0. */\n"
+"    mv_throw(mv_str(\"type_mismatch\"));\n"
+"    return 0;   /* not reached: the instruction that called this is followed by\n"
+"                   its own `if (mv_throwing)` check, which jumps to the catch (or\n"
+"                   returns to the caller's check).  Spelled as a 0 so a compiler\n"
+"                   that cannot see that still cannot hand back a silent index. */\n"
 "}\n"
 "\n"
 "/* THE UNCAUGHT-THROW EXIT.  src/vm/vm.c:2639-2643 is the rule, read there:\n"
@@ -1533,6 +1573,25 @@ static const char *const kMirValBlock =
 "    fprintf(stderr, \"[exception] uncaught: %s\\n\",\n"
 "            (a.type == MV_STR && a.sval) ? a.sval : \"(non-string value)\");\n"
 "    exit(1);          /* atexit(mv_free_all) still reports the pool */\n"
+"}\n"
+"\n"
+"/* THE SEAM ITSELF.  Called by a throw, by an out-of-range subscript, and by the\n"
+" * two OP_BIND stops -- every site the interpreter routes through vm_throw.\n"
+" * With a frame open it writes the thrown value into the catch variable (the\n"
+" * frame's ADDRESS, so a `catch { }` with no variable records (MirVal*)0),\n"
+" * remembers the value, and sets the flag; with none open it is exactly\n"
+" * mv_die_uncaught.  mv_throw does not allocate and does not leave the frame,\n"
+" * so every register keeps the value the body wrote.\n"
+" */\n"
+"static void mv_throw(MirVal a) {\n"
+"    if (mv_try_depth > 0) {\n"
+"        MirVal *var = mv_try_var[--mv_try_depth];\n"
+"        if (var) *var = a;\n"
+"        mv_err = a;\n"
+"        mv_throwing = 1;\n"
+"        return;\n"
+"    }\n"
+"    mv_die_uncaught(a);\n"
 "}\n"
 "\n"
 "/* THE FORWARDING HEAD.  A live array's count header is an MV_INT (the count).\n"
@@ -2291,6 +2350,13 @@ static int   g_globals_renamed;
    anywhere in the program turns the guard on everywhere, which is exactly the
    interpreter's rule -- the table is global, not per-store. */
 static int   g_bound_used;
+/* Set by the pre-scan when the program carries a try pair.  Two things follow
+   from it and both are measured rather than assumed: the emitter adds the
+   `if (mv_throwing)` check after every instruction that can throw, and non-main
+   containers get an `mv_try_mark` so a returning function pops the frames that
+   belong to it (src/vm/vm.c:4142 is the interpreter's version of that pop).
+   Nothing else in the emitted text moves when no try pair is present. */
+static int   g_try_used;
 
 /* The `why` a prescan refusal carries.  One family ("illegal-operand") covers
    every operand this route cannot emit, but a refusal whose reason a reader
@@ -2585,6 +2651,14 @@ static int op_regs(int op) {
        The zero mask is also the claim this route makes to IR-MIR-CONSERVE: the
        instruction is emitted, not counted not-yet. */
     case OP_YIELD: return 0;
+    /* OP_TRY_START's r2 is a GLOBAL INDEX -- the catch variable -- not a
+       register, and OP_TRY_END's three fields are zero (src/compiler/compiler.c,
+       STMT_TRY: `emit(..., OP_TRY_START, 0, varIdx, 0)`).  So both masks are
+       zero and the operand checks are their prescan arms' job: a mask bit here
+       would have the generic loop read a global index as a register number.
+       The zero mask is also the claim to IR-MIR-CONSERVE (both are emitted). */
+    case OP_TRY_START: return 0;
+    case OP_TRY_END: return 0;
     default: return -1;
     }
 }
@@ -2610,14 +2684,26 @@ int aot_mir_emitted_opcode(int i) {
 }
 
 const char *aot_mir_subset_description(void) {
-    static char desc[512];
+    /* 2 KB, and the bound below is not decoration.  This buffer was 512 bytes
+       until section 10.137 added two opcodes, and adding them made the list
+       longer than the buffer: o += n on a TRUNCATED snprintf returned the
+       length the list WANTED, so the next call was handed sizeof desc - o as a
+       size_t -- negative once o passed the buffer, i.e. huge -- and wrote past
+       the end.  The symptom was not in this function: `aot-mir subset` died with
+       "*** buffer overflow detected ***" and the coverage instrument reported
+       `REFUSED|the tool does not report its emittable set (IR-MIR-SUBSET)`.
+       The description is ~1.2 KB for the current 67 opcodes, so 2048 is
+       headroom, and the early break keeps a future addition from repeating the
+       same mistake. */
+    static char desc[2048];
     if (!desc[0]) {
-        int o = 0;
+        size_t o = 0;
         for (int op = 0; op < 256; op++) {
             if (op_regs(op) < 0) continue;
-            int n = snprintf(desc + o, sizeof desc - (size_t)o, "%s%s", o ? "," : "", op_name(op));
-            if (n < 0) break;
-            o += n;
+            size_t room = sizeof desc - o;
+            int n = snprintf(desc + o, room, "%s%s", o ? "," : "", op_name(op));
+            if (n < 0 || (size_t)n >= room) break;   /* would have truncated: stop */
+            o += (size_t)n;
         }
     }
     return desc;
@@ -3187,6 +3273,78 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 g_bound_used = 1;
                 break;
             }
+            case OP_TRY_START: {
+                /* THE TRY FRAME, opened where the interpreter opens it.  Two
+                   claims are worth spelling out because both are measured:
+                   (1) the frame is matched to its metadata entry by
+                   `start_off == t->ip - 1` (src/vm/vm.c:4420-4433) and an
+                   instruction with NO matching entry is a pure no-op there --
+                   IR instructions are indexed exactly like the bytecode offsets
+                   (build_insns copies one for one), so the test here is
+                   `start_off == i`, and the emitter writes only a comment for
+                   the no-entry case (see its arm);
+                   (2) r2 is the catch VARIABLE, a GLOBAL index -- not a
+                   register -- so it is checked here against the same two rules
+                   every global arm uses (inside the table, and not the preset
+                   set global).
+                   r2 may be -1: `catch { }` has no variable and the
+                   interpreter's frame then answers `f->var_idx >= 0` with no
+                   store (src/vm/vm.c:2580-2585).  A finally-only handler
+                   registers the phantom global __inimerse_finally_error so the
+                   emitted handler can re-throw it (src/compiler/compiler.c,
+                   STMT_TRY), and that global is refused here for the same
+                   reason the preset one is: its value is not something this
+                   subset can hold.
+                   THE ESCAPE SCAN.  A region is the half-open byte range
+                   [start_off, end_off].  A jump with BOTH ends inside it is
+                   fine.  A jump out of it is refused (`why=try-escapes`)
+                   because the interpreter LEAKS the frame there -- measured:
+                   `.scratch/probe3/e5.im` (a bare `break` out of a try inside a
+                   while loop) leaves exc_depth set, and the throw after the
+                   loop is then caught by that stale entry, printing
+                   `2\nlate\n` and exiting 0.  There is no answer to copy there,
+                   so the shape is refused by name rather than guessed at.
+                   A jump from outside INTO the region is refused (`why=try-enters`)
+                   for the mirror reason: the frame such a jump would need was
+                   never opened. */
+                int ix = in->a;
+                if (ix >= root->global_name_count || ix >= g_gref_n)
+                    return bad("container=%d insn=%d catch variable global index %d out of range (count=%d)",
+                               f, i, ix, root->global_name_count);
+                if (ix >= 0) {
+                    const char *gname = root->global_names ? root->global_names[ix] : NULL;
+                    if (is_preset_global(gname))
+                        return bad("container=%d insn=%d catch variable %d is the preset set global '%s', "
+                                   "whose value is a set, not an NV int/float/bool -- outside this subset",
+                                   f, i, ix, gname);
+                    g_gref[ix] = 1;
+                }
+                const TryEntry *te = NULL;
+                for (int k = node->try_count - 1; k >= 0; k--)
+                    if (node->try_entries[k].start_off == i) { te = &node->try_entries[k]; break; }
+                if (!te) break;      /* no entry: the interpreter's arm is a no-op */
+                g_try_used = 1;
+                int rs = te->start_off, re = te->end_off;
+                for (int j = 0; j < fn->ninsns; j++) {
+                    const IrInsn *jmp = &fn->insns[j];
+                    if (jmp->op != OP_JUMP && jmp->op != OP_JUMP_IF_FALSE
+                        && jmp->op != OP_JUMP_IF_TRUE) continue;
+                    int32_t t = ir_insn_r2(jmp);
+                    int in_src = (j >= rs && j <= re), in_dst = (t >= rs && t <= re);
+                    if (in_src && !in_dst) {
+                        g_prescan_why = "try-escapes";
+                        return bad("container=%d insn=%d leaves the try region [%d,%d] by jumping to %d; "
+                                   "the interpreter leaks the frame on that shape (measured, so there is "
+                                   "no answer to copy)", f, j, rs, re, (int)t);
+                    }
+                    if (!in_src && in_dst) {
+                        g_prescan_why = "try-enters";
+                        return bad("container=%d insn=%d jumps INTO the try region [%d,%d] at %d, whose "
+                                   "frame was never opened", f, j, rs, re, (int)t);
+                    }
+                }
+                break;
+            }
             case OP_CALL_BUILTIN: {
                 /* r2 indexes the CONTAINER's string pool, exactly as
                    OP_LOADK_STRING's r2 does, and r3 is the argument count; the
@@ -3318,6 +3476,10 @@ typedef struct {
     char          **gnames;
     char          **fnnames;
     int             id;
+    /* Per-instruction catch label, or NULL when the program has no try pair.
+       Built once per container by emit_container; emit_one reads it through
+       emit_try_check.  See that function for what the text does with it. */
+    const int      *try_catch_at;
 } Ctx;
 
 static int container_nregs(const IrFunc *fn, int argc) {
@@ -3423,6 +3585,44 @@ static int func_reads_capture(const IrModule *m, const Node *nodes, int id) {
     return 0;
 }
 
+/* THE RUN-TIME CHECK, AND WHY IT IS A CHECK RATHER THAN AN UNWIND.
+ *
+ * A throw does not leave the throwing instruction by itself: mv_throw records
+ * the value and sets mv_throwing, and the instruction is FOLLOWED by this text,
+ * which is what actually moves control.  Two shapes, chosen statically:
+ *
+ *   - inside a try region: `goto L<catch_off>` -- the catch is a block start in
+ *     this container (src/compiler/mir.c:82-88 marks the three try offsets as
+ *     block starts, so the label exists; the emitter also marks catch_off in
+ *     need[] so the pair cannot depend on that).
+ *     The flag is cleared here because it has been consumed: the interpreter's
+ *     vm_throw pops the frame and leaves `t->ip` at the catch, and the handler
+ *     runs with that slot already off the exception stack.
+ *
+ *   - outside every region and not in main: return to the caller with nil.  The
+ *     thrown frame may belong to a CALLER (a callee with no try of its own
+ *     throws into the first frame the thread has, src/vm/vm.c:2554-2560), so the
+ *     return is not "swallow it" -- the flag stays set and the caller's own
+ *     check jumps.  mv_try_mark is the depth the container entered with, and
+ *     restoring it here is the interpreter's return rule read as a compile-time
+ *     fact (src/vm/vm.c:4142 pops every frame with frame_count >= this frame's),
+ *     spelled as a MIN so a frame mv_throw already popped is not resurrected.
+ *
+ * In main, outside a region, no text is emitted: mv_throw with no frame open
+ * calls mv_die_uncaught, which is exactly the interpreter's uncaught path and
+ * does not return. */
+static void emit_try_check(Buf *b, const Ctx *c, int i) {
+    const IrFunc *fn = &c->m->funcs[c->id];
+    if (!c->try_catch_at || i < 0 || i >= fn->ninsns) return;
+    int catch_off = c->try_catch_at[i];
+    if (catch_off >= 0) {
+        buf_fmt(b, " if (mv_throwing) { mv_throwing = 0; goto L%d; }", catch_off);
+        return;
+    }
+    if (!c->nodes[c->id].is_main)
+        buf_str(b, " if (mv_throwing) { if (mv_try_depth > mv_try_mark) mv_try_depth = mv_try_mark; return mv_nil(); }");
+}
+
 static int emit_one(Ctx *c, Buf *b, int i) {
     const IrInsn *in = &c->m->funcs[c->id].insns[i];
     int op = in->op;
@@ -3451,7 +3651,28 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         buf_str(b, "\");");
         return 0;
     }
-    case OP_ADD:          buf_fmt(b, "    v[%d] = mv_add(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_ADD:
+        /* THE ARITHMETIC STOPS, FUNNELLED -- only for a program that carries a
+           try pair, because the stop itself lives in the shared preamble
+           (nv_add's __builtin_add_overflow, nv_div's `y.i == 0`) and that
+           preamble is byte-identical in both routes by construction (see
+           classify()).  So the check cannot live THERE; it lives here, in front
+           of the call, and only in text that a try program gets.  Every reader
+           of the decision should keep the two halves in view: the helper's
+           predicate is nv_add's predicate copied (not "any overflow is an
+           exception": a float add never overflows, and nv_div answers inf for
+           a float zero divisor rather than stopping), and the message is the
+           one the preamble would have printed -- the same string the catch
+           variable then holds.  Measured by the three criteria named in
+           mir_try_catches_an_arm_stop's note; the cases they replace are the
+           ones the interpreter answers `type_mismatch`, `division_by_zero` and
+           `numeric_overflow` CATCHABLY (`.scratch/probe3` e1/div1/ovf1). */
+        if (g_try_used) {
+            buf_fmt(b, "    v[%d] = mv_try_add(v[%d], v[%d]);", r1, r2, r3);
+            emit_try_check(b, c, i);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_add(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_CONCAT: {
         /* A chain: r2 is the first operand and r3 the count, NOT a third
            register (see op_regs).  `&v[r2]` plus the count go to mv_concat_n,
@@ -3468,10 +3689,34 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         buf_fmt(b, "    v[%d] = mv_concat_n(&v[%d], %d);", r1, r2, r3);
         return 0;
     }
-    case OP_SUB:          buf_fmt(b, "    v[%d] = mv_sub(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_MUL:          buf_fmt(b, "    v[%d] = mv_mul(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_DIV:          buf_fmt(b, "    v[%d] = mv_div(v[%d], v[%d]);", r1, r2, r3); return 0;
-    case OP_MOD:          buf_fmt(b, "    v[%d] = mv_mod(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_SUB:
+        if (g_try_used) {
+            buf_fmt(b, "    v[%d] = mv_try_sub(v[%d], v[%d]);", r1, r2, r3);
+            emit_try_check(b, c, i);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_sub(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_MUL:
+        if (g_try_used) {
+            buf_fmt(b, "    v[%d] = mv_try_mul(v[%d], v[%d]);", r1, r2, r3);
+            emit_try_check(b, c, i);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_mul(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_DIV:
+        if (g_try_used) {
+            buf_fmt(b, "    v[%d] = mv_try_div(v[%d], v[%d]);", r1, r2, r3);
+            emit_try_check(b, c, i);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_div(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_MOD:
+        if (g_try_used) {
+            buf_fmt(b, "    v[%d] = mv_try_mod(v[%d], v[%d]);", r1, r2, r3);
+            emit_try_check(b, c, i);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_mod(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_EQ:           buf_fmt(b, "    v[%d] = mv_eq(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_NEQ:          buf_fmt(b, "    v[%d] = mv_ne(v[%d], v[%d]);", r1, r2, r3); return 0;
     /* THE MEMBERSHIP ARM.  One call to mv_in, which carries the interpreter's
@@ -3717,21 +3962,37 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                 r1, n, n, n);
         return 0;
     }
-    case OP_INDEX_GET: buf_fmt(b, "    v[%d] = mv_arr_get(v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_INDEX_GET:
+        buf_fmt(b, "    v[%d] = mv_arr_get(v[%d], v[%d]);", r1, r2, r3);
+        /* mv_arr_get answers a non-numeric SUBSCRIPT through mv_index_i32, whose
+           default arm is mv_throw ("type_mismatch"); the interpreter answers the
+           same case the same way and CATCHES it (`.scratch/probe3/idx1`), so
+           this site carries the check. */
+        emit_try_check(b, c, i);
+        return 0;
     /* OP_INDEX_SET is a CALL WITH NO ASSIGNMENT: the handler reads r1/r2/r3 and
        writes into the container, so unlike every arm above this one leaves the
        destination register alone (v[r1] already holds the container and must
        still hold it afterwards -- an assignment here would overwrite the handle
        with a void).  The order handed to mv_arr_set is the handler's, not
        OP_INDEX_GET's: container, subscript, value. */
-    case OP_INDEX_SET: buf_fmt(b, "    mv_arr_set(v[%d], v[%d], v[%d]);", r1, r2, r3); return 0;
+    case OP_INDEX_SET:
+        buf_fmt(b, "    mv_arr_set(v[%d], v[%d], v[%d]);", r1, r2, r3);
+        emit_try_check(b, c, i);
+        return 0;
     case OP_LT:           buf_fmt(b, "    v[%d] = mv_lt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_GT:           buf_fmt(b, "    v[%d] = mv_gt(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_LE:           buf_fmt(b, "    v[%d] = mv_le(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_GE:           buf_fmt(b, "    v[%d] = mv_ge(v[%d], v[%d]);", r1, r2, r3); return 0;
     case OP_AND:          buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) && mv_tru(v[%d]));", r1, r2, r3); return 0;
     case OP_OR:           buf_fmt(b, "    v[%d] = mv_boo(mv_tru(v[%d]) || mv_tru(v[%d]));", r1, r2, r3); return 0;
-    case OP_NEG:          buf_fmt(b, "    v[%d] = mv_neg(v[%d]);", r1, r2); return 0;
+    case OP_NEG:
+        if (g_try_used) {
+            buf_fmt(b, "    v[%d] = mv_try_neg(v[%d]);", r1, r2);
+            emit_try_check(b, c, i);
+            return 0;
+        }
+        buf_fmt(b, "    v[%d] = mv_neg(v[%d]);", r1, r2); return 0;
     case OP_NOT:          buf_fmt(b, "    v[%d] = mv_not(v[%d]);", r1, r2); return 0;
     case OP_IS_NIL:       buf_fmt(b, "    v[%d] = mv_is_nil(v[%d]);", r1, r2); return 0;
     /* The set reductions, lowered as what they answer for a non-set operand --
@@ -3763,9 +4024,17 @@ static int emit_one(Ctx *c, Buf *b, int i) {
            all-zero table, and its store keeps the exact bytes it had. */
         if (g_bound_used)
             buf_fmt(b, "    if (mv_bound[%d] && !mv_set_has(mv_bound[%d] - 1, v[%d]))\n"
-                       "        mv_bind_stop(\"type_mismatch\");" NL,
+                       "        mv_throw(mv_str(\"type_mismatch\"));" NL,
                     r1, r1, r2);
         buf_fmt(b, "    %s = v[%d];", c->gnames[r1], r2);
+        /* The store is the OTHER half of the bound rule and its stop is the same
+           exception the interpreter raises (src/vm/vm.c, L_STORE_GLOBAL's
+           vm_throw_kind), so a `try { x = 5 } catch (e)` catches it here too --
+           `.scratch/probe3/e1` is the measured receipt, and
+           mir_try_catches_an_arm_stop is the criterion.  Note the ORDER the text
+           keeps: the throw happens BEFORE the store writes, exactly as
+           value_assign is only reached after the membership test passed. */
+        emit_try_check(b, c, i);
         return 0;
     }
     case OP_BIND: {
@@ -3787,9 +4056,10 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                 gid, sreg, sreg);
         if (init >= 0) {
             buf_fmt(b, "    if (mv_bound[%d] && !mv_set_has(mv_bound[%d] - 1, v[%d]))\n"
-                       "        mv_bind_stop(\"initial value out of range\");" NL,
+                       "        mv_throw(mv_str(\"initial value out of range\"));" NL,
                     gid, gid, init);
             buf_fmt(b, "    %s = v[%d];", c->gnames[gid], init);
+            emit_try_check(b, c, i);
         } else {
             buf_fmt(b, "    %s = mv_nil();", c->gnames[gid]);
         }
@@ -3811,6 +4081,11 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (!bn || strcmp(bn, "len") != 0) return -1;
         buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
         buf_str(b, " asp -= 1;");
+        /* len answers nil/garbage for a non-container and never throws, so this
+           check exists for the CALLER's flag rather than len's own: a callee
+           reached through a builtin cannot set it, but keeping every call site
+           identical is cheaper than arguing which ones can. */
+        emit_try_check(b, c, i);
         return 0;
     }
     case OP_CALL_FUNC: {
@@ -3830,6 +4105,11 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "%smvargs[asp-%d]", (k || self) ? ", " : "", argc - k);
         buf_str(b, ");");
         if (argc > 0) buf_fmt(b, " asp -= %d;", argc);
+        /* THE CALLEE'S THROW LANDS HERE.  A callee with no try of its own throws
+           into the frame this call site owns, and returns nil with the flag
+           still set; this check is what turns that into the catch (inside a
+           region) or into this container's own return (outside one). */
+        emit_try_check(b, c, i);
         return 0;
     }
     /* THE FUNCTION VALUE -- the arms that move a function as a VALUE rather
@@ -3943,10 +4223,12 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                        c->id, i, argc);
         if (argc == 0) {
             buf_fmt(b, "    v[%d] = mv_callv(v[%d], 0, 0);", res, callee_reg);
+            emit_try_check(b, c, i);
             return 0;
         }
         buf_fmt(b, "    v[%d] = mv_callv(v[%d], mvargs + asp - %d, %d); asp -= %d;",
                 res, callee_reg, argc, argc, argc);
+        emit_try_check(b, c, i);
         return 0;
     }
     /* THE IMPLICIT RETURN IS nil, NOT INTEGER 0 -- the debt this arm used to
@@ -4020,25 +4302,82 @@ static int emit_one(Ctx *c, Buf *b, int i) {
      * the receipt for "an exit code cannot see this hole". */
     case OP_RETURN:
         if (c->nodes[c->id].is_main) { buf_str(b, "    return 0;"); return 0; }
+        /* A RETURN OUT OF A try POPS THAT FUNCTION'S FRAMES, and the interpreter
+           spells the rule as `while (exc_depth > 0 && top.frame_count >=
+           t->frame_count) exc_depth--` (src/vm/vm.c:4142).  Statically the
+           container knows only the depth it ENTERED with, so the reset is a MIN
+           against mv_try_mark: a frame opened by this function goes away, and a
+           frame mv_throw already popped (the caller's) is not resurrected.
+           mir_try_finally_keeps_return and mir_try_return_from_inside are the two
+           criteria; the second one only passes if the frames of the returned-out
+           try are gone, because it throws AFTER the return. */
+        if (g_try_used) buf_str(b, "    if (mv_try_depth > mv_try_mark) mv_try_depth = mv_try_mark;" NL);
         if (r1 > 0) buf_fmt(b, "    return v[%d];", r1);
         else buf_str(b, "    return mv_nil();");
         return 0;
     case OP_SAY:          buf_fmt(b, "    mv_say(v[%d]);", r1); return 0;
     /* THE FIRST EXCEPTION OPCODE this route answers, and the answer stops at
        the UNCAUGHT half: no handler is open, so the value goes to stderr and
-       the process exits 1 (mv_die_uncaught, in kMirValBlock).  EVERYTHING
-       CARRYING A HANDLER IS STILL REFUSED WHOLE -- OP_TRY_START and
-       OP_TRY_END have no case here and none in op_regs, so a `try` program
-       never reaches this arm.  That refusal is measured, not promised:
-       tools/aot_mir.test.py's MIR_ONLY_REFUSE entry mir_try_no_throw demands
-       why=unsupported-opcode with OP_TRY_START/OP_TRY_END on the not-yet
-       line and OP_THROW absent from it.  An arm that also answered try would
-       turn a named refusal into a plausible wrong answer, which is the
-       worse direction.  This arm is one call and allocates nothing; the
-       IR-MIR-ALLOCS line that follows on stderr is atexit(mv_free_all)'s,
-       which exit(1) runs by design (see the atexit registration in
-       emit_container). */
-    case OP_THROW:        buf_fmt(b, "    mv_die_uncaught(v[%d]);", r1); return 0;
+       the process exits 1 (mv_die_uncaught, in kMirValBlock).
+       THAT WAS THE WHOLE ARM, and the paragraph that used to stand here said
+       the handler half was refused whole: `OP_TRY_START`/`OP_TRY_END` had no
+       case anywhere, so a `try` program never reached this one, and the
+       MIR_ONLY_REFUSE entry mir_try_no_throw pinned the refusal by demanding
+       why=unsupported-opcode with the pair on the not-yet line and OP_THROW
+       absent from it.  That prediction was honest about the direction and is
+       now ANSWERED rather than quietly dropped: the pair has masks and arms
+       (op_regs and this switch), the refusal entry retired into MIR_ONLY as
+       an EXECUTING case (mir_try_body_finishes -- running the same program
+       and comparing bytes is the stronger assertion), and this arm calls
+       mv_throw, which is mv_die_uncaught when no frame is open and the seam
+       when one is.  The uncaught path is therefore unchanged byte for byte
+       (the same message, the same exit 1, the same atexit line).
+       What did NOT change: an uncaught throw still does not look like a
+       handler.  Ir-MIR-ALLOCS on stderr is atexit(mv_free_all)'s and runs for
+       both paths. */
+    case OP_TRY_START: {
+        /* OPENS THE FRAME THE CATCH BELONGS TO.  The entry is matched exactly as
+           the interpreter matches it (`start_off == this instruction`), and when
+           none matches, both routes do nothing: the arm still writes text, because
+           emit_container refuses an instruction whose body did not grow ("emitted
+           nothing, so the conservation equation could not see it") -- the same
+           reason OP_YIELD's arm is a comment (10.136).  That is a fact about this
+           emitter, not about try, and it is why a no-op here cannot be silence.
+           The frame records the ADDRESS of the catch variable, which is a global
+           (the compiler emits `emit(..., OP_TRY_START, 0, varIdx, 0)` with a
+           global index, src/compiler/compiler.c, STMT_TRY), so the address
+           outlives this frame -- the closure programs of 10.130/10.131 taught the
+           same lesson about what kind of value may cross a frame boundary.
+           r2 == -1 is `catch { }` with no variable: mv_try_new(NULL) and the
+           thrown value is dropped, which is the interpreter's `f->var_idx >= 0`
+           test answered by absence. */
+        const Bytecode *node = c->node;
+        const TryEntry *te = NULL;
+        for (int k = node->try_count - 1; k >= 0; k--)
+            if (node->try_entries[k].start_off == i) { te = &node->try_entries[k]; break; }
+        if (!te || !g_try_used) {
+            buf_str(b, "    /* OP_TRY_START: no try entry starts here, so both routes do nothing"
+                       " (src/vm/vm.c:4426-4433); the comment is text IR-MIR-CONSERVE can see */");
+            return 0;
+        }
+        if (r2 >= 0 && r2 < c->root->global_name_count && c->gnames[r2])
+            buf_fmt(b, "    mv_try_new(&%s);", c->gnames[r2]);
+        else
+            buf_str(b, "    mv_try_new((MirVal *)0);");
+        return 0;
+    }
+    case OP_TRY_END:
+        /* One frame, one pop -- `if (t->exc_depth > 0) t->exc_depth--;` in
+           src/vm/vm.c, including the guard: a program whose TRY_END has no
+           matching TRY_START must not drive the depth below zero, because
+           negative depth would make the next mv_throw call mv_try_var[-1]. */
+        if (g_try_used) buf_str(b, "    if (mv_try_depth > 0) mv_try_depth--;");
+        else buf_str(b, "    /* OP_TRY_END with no try pair in this program: the arm is a no-op */");
+        return 0;
+    case OP_THROW:
+        buf_fmt(b, "    mv_throw(v[%d]);", r1);
+        emit_try_check(b, c, i);
+        return 0;
     /* OP_STOP shares OP_HALT's two exits, for a different reason.  The
        interpreter's arm is `t->running = false; continue;` (src/vm/vm.c, L_STOP)
        -- the RUNNING thread stops -- while HALT ends the program outright.
@@ -4140,10 +4479,49 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
             if (t >= 0 && t <= fn->ninsns) need[t] = 1;
         }
     }
+    /* THE STATIC HALF OF try/catch.  For every instruction, the catch label of
+       the INNERMOST region enclosing it (-1 outside every region; regions here
+       never cross containers, because bytecode try entries are per-container).
+       The innermost one is the entry with the LARGEST start_off, and the
+       entries are written in ascending start order by the compiler, so
+       overwriting in that order lands on the innermost.  The catch labels are
+       ALSO marked in need[] even though src/compiler/mir.c:82-88 already turns
+       every try offset into a block start: the emitter's jump must not depend
+       on a property of another pass to find its label. */
+    int *try_catch_at = NULL;
+    if (g_try_used) {
+        size_t n = (size_t)(fn->ninsns > 0 ? fn->ninsns : 1);
+        try_catch_at = malloc(sizeof(int) * n);
+        if (!try_catch_at) { free(need); return bad("container=%d: out of memory", id); }
+        for (int k = 0; k < node->try_count; k++) {
+            const TryEntry *te = &node->try_entries[k];
+            if (te->catch_off >= 0 && te->catch_off <= fn->ninsns) need[te->catch_off] = 1;
+        }
+        /* INNERMOST, and NOT "last one written": the compiler's entry order is
+           not a nesting order (measured: with the loop that let a later entry
+           overwrite an earlier one, `try { try { throw } catch (e) { ... } }`
+           emitted its inner throw as a jump to the OUTER catch, and
+           mir_try_nested printed `inner\nafter` where the interpreter prints
+           `inner\nmid\nafter`).  The region with the LARGEST start_off that
+           encloses the instruction is the innermost, which is a property of the
+           numbers and not of the array's order. */
+        for (int j = 0; j < fn->ninsns; j++) {
+            int best = -1, best_start = -1;
+            for (int k = 0; k < node->try_count; k++) {
+                const TryEntry *te = &node->try_entries[k];
+                if (j >= te->start_off && j <= te->end_off && te->start_off > best_start) {
+                    best_start = te->start_off;
+                    best = te->catch_off;
+                }
+            }
+            try_catch_at[j] = best;
+        }
+    }
 
     Ctx c;
     c.m = m; c.root = m->bc; c.node = node; c.nodes = nodes;
     c.gnames = gnames; c.fnnames = fnnames; c.id = id;
+    c.try_catch_at = try_catch_at;
 
     Buf body;
     buf_init(&body);
@@ -4153,12 +4531,12 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
         size_t before = body.len;
         int rc = emit_one(&c, &body, i);
         if (rc != 0) {
-            free(need); buf_free(&body);
+            free(need); free(try_catch_at); buf_free(&body);
             return bad("container=%d insn=%d op=%s was accepted by the pre-scan but not emitted",
                        id, i, op_name(fn->insns[i].op));
         }
         if (body.len == before) {
-            free(need); buf_free(&body);
+            free(need); free(try_catch_at); buf_free(&body);
             return bad("container=%d insn=%d op=%s emitted nothing, so the conservation equation could not see it",
                        id, i, op_name(fn->insns[i].op));
         }
@@ -4167,7 +4545,7 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
         g_used_by_op[fn->insns[i].op < 256 ? fn->insns[i].op : 0] = 1;
     }
     if (need[fn->ninsns]) buf_fmt(&body, "L%d: ;" NL, fn->ninsns);
-    free(need);
+    free(need); free(try_catch_at);
 
     if (nodes[id].is_main) {
         buf_str(out, "int main(void) {" NL);
@@ -4193,6 +4571,13 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
        OP_HALT's exit(0) -- runs it.  A non-main container is not a program and
        must not arm it, or a call would register a second sweep. */
     if (nodes[id].is_main) buf_str(out, "    atexit(mv_free_all);" NL);
+    /* THE DEPTH THIS CONTAINER ENTERED WITH.  A returning function pops the
+       frames that belong to it (src/vm/vm.c:4142); mv_try_mark is that rule
+       turned into a number the function can restore, and every `return` and
+       every "return to the caller's check" path resets to it as a MIN (see
+       emit_try_check). */
+    if (g_try_used && !nodes[id].is_main)
+        buf_str(out, "    int mv_try_mark = mv_try_depth;   /* frames open at entry */" NL);
     if (has_args) {
         int nargs = asp_deepest > nregs ? asp_deepest : nregs;
         buf_fmt(out, "    MirVal mvargs[%d];" NL, nargs);
@@ -4328,6 +4713,57 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
             "    fflush(stdout);   /* the lines say() already wrote stay written */\n"
             "    fprintf(stderr, \"[exception] uncaught: %s\\n\", msg);\n"
             "    exit(1);          /* atexit(mv_free_all) still reports the pool */\n"
+            "}\n"
+            NL);
+    }
+    /* THE ARITHMETIC STOPS, RE-EXPRESSED AS THROWS -- and emitted only for a
+       program that carries a try pair.  The stops themselves live in
+       aot_native_preamble (nv_die_division_by_zero, nv_die_numeric_overflow) and
+       that preamble is byte-identical in both routes by construction
+       (classify() reads it), so nothing in it may change.  What CAN change is
+       which function the emitted instruction calls: with a try in the program,
+       OP_ADD/OP_SUB/OP_MUL/OP_DIV/OP_MOD/OP_NEG call these wrappers, which
+       pre-test the preamble's own condition and route the failure through
+       mv_throw instead of exit(1).  Every predicate here is a COPY of the
+       preamble's, which is why each one names the line it copies; a wrapper that
+       invented a wider predicate would raise a catchable exception where the
+       interpreter answers a value (`1.0/0.0` prints inf, `.scratch/probe3/fdiv`).
+       The wrappers call the same mv_* they wrap on every path that does NOT
+       stop, so the answer and the allocation reading of an arithmetic result are
+       unchanged. */
+    if (g_try_used) {
+        buf_str(&out,
+            "static inline MirVal mv_try_add(MirVal a, MirVal b) {\n"
+            "    NV x, y; long long r;\n"
+            "    if (a.type == MV_STR || b.type == MV_STR) return mv_add(a, b);\n"
+            "    x = mv_as_nv(a); y = mv_as_nv(b);\n"
+            "    if (x.t == NV_FLT || y.t == NV_FLT) return mv_add(a, b);\n"
+            "    if (__builtin_add_overflow(x.i, y.i, &r)) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+            "    return mv_add(a, b);\n"
+            "}\n"
+            "static inline MirVal mv_try_sub(MirVal a, MirVal b) {\n"
+            "    NV x = mv_as_nv(a), y = mv_as_nv(b); long long r;\n"
+            "    if (x.t != NV_FLT && y.t != NV_FLT && __builtin_sub_overflow(x.i, y.i, &r)) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+            "    return mv_sub(a, b);\n"
+            "}\n"
+            "static inline MirVal mv_try_mul(MirVal a, MirVal b) {\n"
+            "    NV x = mv_as_nv(a), y = mv_as_nv(b); long long r;\n"
+            "    if (x.t != NV_FLT && y.t != NV_FLT && __builtin_mul_overflow(x.i, y.i, &r)) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+            "    return mv_mul(a, b);\n"
+            "}\n"
+            "static inline MirVal mv_try_div(MirVal a, MirVal b) {\n"
+            "    NV x = mv_as_nv(a), y = mv_as_nv(b);\n"
+            "    if (x.t != NV_FLT && y.t != NV_FLT && y.i == 0) { mv_throw(mv_str(\"division_by_zero\")); return mv_nil(); }\n"
+            "    return mv_div(a, b);\n"
+            "}\n"
+            "static inline MirVal mv_try_mod(MirVal a, MirVal b) {\n"
+            "    if (nv_asi(mv_as_nv(b)) == 0) { mv_throw(mv_str(\"division_by_zero\")); return mv_nil(); }\n"
+            "    return mv_mod(a, b);\n"
+            "}\n"
+            "static inline MirVal mv_try_neg(MirVal a) {\n"
+            "    NV x = mv_as_nv(a); long long r;\n"
+            "    if (x.t != NV_FLT && __builtin_sub_overflow(0LL, x.i, &r)) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+            "    return mv_neg(a);\n"
             "}\n"
             NL);
     }

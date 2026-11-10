@@ -6990,3 +6990,75 @@ IR-MIR-VERDICT|PASS|tree=a29fd74...|accepted=86|refused=0|differ=0
 1. **带线程体的程序仍取不到这条**：容器里有线程段就在 `why=threads` 处被拒，所以「`yield` 真的让出一个 task」那种形状永远不会到发射器——本格的 no-op 与解释器的 no-op 之所以相同，**靠的正是那道更早的拒绝**。
 2. **`OP_WAIT` 与线程八件套仍在 not-yet**：它们与 `yield` 不同，`WAIT` 会真的等一个时长，本路线没有调度器可等。
 3. **`OP_SET_INTERVAL` / `OP_RECORD` / `OP_DECLARE` 各有各的成本**：区间要一整套区间运行时，`RECORD` 是记录元数据子系统，`DECLARE` 只能靠触发资源限才观测到——这三个都不是「再一格 no-op」。
+
+## §10.137 `try` / `catch` / `finally`：抛是一次置标志，帧是一个槽（aot-mir，A 类第二十六项）
+
+### 一、来源与日期
+
+判据 `4835034`（十一例先红、外加一条拒绝判据与一条退役）、实现 `575a9d5`、缓冲区修正 `7054191`，2026-11-09。这是 `unknown` 从 16 降到 14 的那一格——两个 opcode，一次。
+
+### 二、形状
+
+**解释器侧**：`try` 是一个栈。`OP_TRY_START` 先在字节码的 `try_entries` 里按起点查一条条目，查不到就什么都不做（纯 no-op），查到就把一帧 `{code, ip, sp, base, frame_count, catch_ip, var_idx, ignore}` 压进 `exc_stack`；`OP_TRY_END` 弹一层；抛的时候 `vm_throw` 取**栈顶**那帧、按它的 `frame_count` 回退帧、把错误值写进 `var_idx` 指的那个**全局**（`var_idx < 0` 的裸 `catch { }` 只吞掉并记一笔），然后跳到 `catch_ip`。容器返回时，属于它的那些帧按 `frame_count` 被弹掉。注意 `TRY_START` 的 `r2` 是**全局号**，不是寄存器——所以这一臂的掩码是零。
+
+**本路线侧**：**不用 `setjmp`/`longjmp`**，用一条传播标志。这样选是实测逼出来的：在 `try` 里写一个数组元素、再从 `catch` 里读回，`longjmp` 之后读到的是 `setjmp` 那一刻的旧值（`111`，不是 `222`）——`longjmp` 回滚的正是寄存器，而这条路线把每一个值都放在寄存器 `v[]` 里。判据 `mir_try_keeps_a_register_written_in_the_body` 就是那条会抓住这件事的判据（解释器印 `2`）。改成 `volatile` 也不行：拼接路径要一个 `MirVal *`，`volatile MirVal *` 传不进去。
+
+于是三个机制：
+
+1. **抛 = 置标志 + 写变量**。`mv_throw(v)`：还有帧就把它写的那个变量（`mv_try_var[--mv_try_depth]`，裸 `catch { }` 是空指针）接住这个值、置 `mv_throwing`；没有帧就照旧未捕获。
+2. **最内层 catch 在翻译期解析**。每个容器在发正文前算一张表：每条指令 → 覆盖它的条目里**起点最大**的那条（属性是数字，不是数组顺序；见四.2）。每个「可能抛」的指令之后就发一句 `if (mv_throwing) { mv_throwing = 0; goto L<catch_off>; }`。
+3. **非 main 容器在返回时恢复深度**（`mv_try_mark`）：对应解释器返回时弹掉自己那些帧的那段循环。没有它，`try { return 5 }` 会把帧留给调用者。
+
+**可捕获的家族**：`throw` 本身、下标类型错、两处 `OP_BIND` 的 stop、算术的 `division_by_zero` 与 `numeric_overflow`。后两者来自**共享前导**（两条路线必须逐字相同，`classify()` 读它），所以只能在发射点**前置检查**：`mv_try_*` 六个 wrapper 只在程序用到 `try` 时发射，没用到 `try` 的程序生成文本一字不动。它们的判据必须与共享前导一致：浮点除零是 `inf`、不抛；`%` 用整数化之后的零判；溢出用 `__builtin_*_overflow`；`+` 撞到字符串直接走拼接路径。
+
+**按名拒绝的形状**：跳出或跳进 `try` 区，`why=try-escapes` / `why=try-enters`。这不是省事：`break` 跳出 `try` 时解释器**自己**漏帧（实测同一个程序里，那个过期的帧接住了循环之后才发生的 `throw`，先印 `2` 再印 `late`，rc 0）——本路线不照抄这个漏。
+
+### 三、判据
+
+十一例执行 + 一例拒绝，全部先在解释器上量出 oracle，再在 `489a674` 上先红。
+
+| 用例 | 钉住什么 | 红读数（`489a674`） | 绿读数（本树） |
+|---|---|---|---|
+| `mir_try_catches_a_throw` | 抛出来、进 catch、之后继续 | 拒译 `OP_TRY_START:1,OP_TRY_END:1` | `a / boom / after`，13 字节 |
+| `mir_try_body_finishes` | 不抛时 catch 不跑（**退役来的**，见五） | 同上 | `x / done`，7 字节 |
+| `mir_try_catches_from_a_callee` | 被调容器里抛、调用者的 try 接住 | 同上 | `inner / after`，12 字节 |
+| `mir_try_catches_an_arm_stop` | 绑定的 `type_mismatch` 也是可捕获的 | 同上 | `type_mismatch / after`，20 字节，`allocs=1`（是声明那块集合） |
+| `mir_try_nested` | 内层抛进内层 catch、catch 里再抛进**外层** catch | `:2,:2` | `inner / mid / after`，16 字节 |
+| `mir_try_bare_catch` | 裸 `catch { }` 没有变量也不许崩 | 同上 | `bare catch / after`，17 字节 |
+| `mir_try_catches_a_non_string` | 抛一个数字也能接住、`say e` 印 `5` | 同上 | `5 / after`，8 字节 |
+| `mir_try_finally_cleanup` | finally 在错误仍未捕获时照跑，进程仍 rc 1 | 同上 | `t / cleanup`，10 字节，rc 1，stderr 含 `[exception] uncaught: boom` |
+| `mir_try_finally_keeps_return` | finally 跑完、`return` 的返回值还在 | 同上 | `t / cleanup / 1`，12 字节 |
+| `mir_try_return_from_inside` | 从 try 里返回要把帧还回去 | 同上 | `5`，2 字节 |
+| `mir_try_keeps_a_register_written_in_the_body` | catch 里读到 body 写进寄存器的值（`setjmp` 方案会印 1） | 同上 | `2`，2 字节 |
+| `mir_try_escapes`（拒绝） | 跳出 try 区按名字拒，不按 `unsupported-opcode` | `why=unsupported-opcode` | `why=try-escapes`，`ok=yes` |
+
+### 四、实现期才发现的四件事
+
+1. **`mv_die_uncaught` 要先声明**。`mv_try_new`（深度超 64 就停在那里）写在 `mv_die_uncaught` 定义之前，生成的 `o.c` 先是隐式声明、随后撞上「静态声明跟在非静态声明之后」。两行前置声明解决。
+2. **`try_entries` 不是嵌套顺序**。第一版按「后写的条目覆盖前面的」填那张表，于是 `try { try { ... } catch ... }` 的内层 `throw` 跳到了**外层** catch：`mir_try_nested` 印 `inner / after`，解释器印 `inner / mid / after`。改成逐格取「起点最大的 enclosing 条目」之后，内层 `goto L6`、内层 catch 里的再抛 `goto L12`。
+3. **「什么都不发」等于拒译**（与 §10.136 同一条约束）：查不到条目的 `TRY_START`、以及没有 try 的程序里的两个臂，都只发一行注释，否则 `emit_container` 的守恒检查报 `emitted nothing, so the conservation equation could not see it`。
+4. **那个 512 字节的缓冲区**。`aot_mir_subset_description` 把可发射 opcode 拼成一个字符串，长度上限写死 512；这一格多两个 opcode 之后它就超了，而循环在截断之后还按「想要的长度」前进，下一次调用拿到的是 `sizeof desc - o`（越过末尾后是个巨大的 `size_t`），于是写出界。**症状不在这个函数里**：`aot-mir subset` 死在 `*** buffer overflow detected ***`，覆盖仪器如实报 `REFUSED|the tool does not report its emittable set (IR-MIR-SUBSET)`，而不是猜一个分母。修成 2 KB + 遇截断即停，当前 53 个 opcode 的描述是 561 字符（`7054191`）。
+
+### 五、读数（本树 `7054191`）
+
+```
+IR-MIR-COVER|...|mir-only-cases=107|mir-only-same-as-interpreter=107
+IR-MIR-VERDICT|PASS|tree=7054191...|accepted=86|refused=0|differ=0|c-diff=86|perturb-stdout-changes=5
+IR-MIR-SUBSET|emits=53|ops=(...)
+IR-AOT-MIR|accepted=193|refused=0|same-as-interpreter=193|emittable=53|of-ops=67|not-emittable=14|beyond-ast-denominator=24
+IR-AOT-MIR-LOWERING|handles=53|of=67|unknown=14|agree=yes
+IR-AOT-MIR-VERDICT|PASS|...|covered=29|missing=0|same-as-interpreter=193
+```
+
+`OP_TRY_START`/`OP_TRY_END` 进了 `IR-AOT-MIR-BEYOND` 那一栏（解释器在 MIR 独有例子上真的执行过它们），`covered=29|missing=0` 不动。
+
+**一条退役**：`mir_try_no_throw` 原本在拒绝清单里，注释写着「`throw` 那步之后它必须继续红」。这一步之后它不再是拒绝：它的程序搬进执行清单成为 `mir_try_body_finishes`，那条注释改写成了这次退役的记录——一个「先记下预测、后来被实测推翻」的判据，退回它该有的位置是执行比拒绝更强的断言，而把预测留在原地才是假装。
+
+`ALLOCS_EXPECT` 里 `mir_try_catches_an_arm_stop` 那一行是**这一格唯一改过的期望值**：实现之前按「一条只印字再退出的臂不带块」猜成 `0|0`，实测 `1|256`，而那 256 字节不是 throw——是声明 `x: 1, 2, 3` 那块集合（与 §10.135 的那一行同形）。抛出去的值本身零分配：`mv_str` 交回的是**resident** 字符串（`ival = 1` 说「静态存储」）。改正写在那一行的注释里，不悄悄改。
+
+### 六、边界与两笔债
+
+1. **带线程体的容器仍拒**：`why=threads` 比 try 更早，本格的判据里没有一条起线程。
+2. **`mv_try_var` 只有 64 格**：更深的嵌套会**大声停在那里**（`mv_die_uncaught`），不是静默截断。
+3. **两笔既有的债，本格不修**（都不属于「照抄解释器与缺陷一致」那一类，而是本路线自己的洞）：①非数值操作数撞到 `mv_tag_to_nv` 的 `default: abort()`（`say "a" + 1` 在两路线里的 MIR 侧 rc 134，与 try 无关）；②`mv_arr_set` 的 `index_out_of_range` **不是**解释器的异常——`a[5] = 1` 在解释器里被静默忽略（实测只印 `after`、stderr 空、rc 0），所以它也不该被本格当成可捕获的东西。
+4. **`finally` 的重抛路径没被判据覆盖到**：只有 `finally` 没有 `catch` 时，编译器在 finally 末尾重抛一个内部全局；本格的四条 finally 判据都带 catch。这是形状边界，不是未实现——重抛走的是同一条 `OP_THROW`。

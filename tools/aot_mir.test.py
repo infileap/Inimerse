@@ -486,6 +486,18 @@ ALLOCS_EXPECT = {
     "mir_yield_mid_loop": (0, 0),
     "mir_yield_inside_a_function": (0, 0),
     "mir_yield_around_allocating": (1, 256),
+    # THE ONE ROW THIS CELL HAD TO CORRECT.  It was first written as (0, 0),
+    # before the implementation existed, on the reasoning that an arm that so
+    # far only printed and exited carries no block -- a guess, and the rule this
+    # file states ("measured first, then written") is there because guesses get
+    # this wrong.  The measured reading is 1|256, and the block is not the
+    # throw: it is the `x: 1, 2, 3` DECLARATION, the same 1|256 that
+    # mir_bind_constrained_store has read since section 10.135.  The thrown
+    # value itself allocates nothing -- mv_str hands back a RESIDENT string
+    # (ival = 1 says "static storage", see its note), so a catch that prints
+    # `type_mismatch` costs zero blocks.  Kept as a row, with the correction
+    # written down, because a silently fixed expectation teaches nobody.
+    "mir_try_catches_an_arm_stop": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -549,6 +561,12 @@ STDERR_EXPECT = {
     # satisfy both.
     "mir_bind_out_of_range_store": ("[exception] uncaught: type_mismatch",),
     "mir_bind_out_of_range_init": ("[exception] uncaught: initial value out of range",),
+    # A finally body runs WHILE the error is still uncaught: the try pair pops
+    # nothing on the way out, so `cleanup` prints and the process still exits 1
+    # with the original message.  The criterion demands the message AND the
+    # exit code (mir_try_finally_cleanup's execution row carries rc=1), so a
+    # route that swallowed the error would fail both halves.
+    "mir_try_finally_cleanup": ("[exception] uncaught: boom",),
 }
 STDERR_EXCLUDE = {
     "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
@@ -1959,6 +1977,144 @@ MIR_ONLY = [
      'say len(a)\n'
      'yield\n'),
 
+    # ---- renditions of try/catch/finally, the eleven shapes that matter -----
+    #
+    # The interpreter keeps one ExcFrame per try: `L_TRY_START` looks the range
+    # up in the bytecode's try table by `start_off == t->ip - 1`, saves
+    # {code, ip, sp, base, frame_count, catch_ip, var_idx} and `L_THROW` calls
+    # vm_throw, which restores that frame and jumps to catch_ip (src/vm/vm.c
+    # L_TRY_START / L_TRY_END / L_THROW near :4420, vm_throw near :2569).  The
+    # eleven programs below are one per thing that restore can be wrong about;
+    # each was RUN on the interpreter first and its bytes are what the case
+    # demands.
+    #
+    #   mir_try_catches_a_throw        the catch runs and the `say "b"` behind the
+    #                                  throw does NOT (a route that resumed after
+    #                                  the throw would print a, boom, b, after)
+    #   mir_try_body_finishes          a try with no throw leaves the catch
+    #                                  untouched (this case spent its life as a
+    #                                  REFUSAL -- see the retirement note below)
+    #   mir_try_catches_from_a_callee  the frame that is unwound is the CALLEE's,
+    #                                  and the caller's try catches
+    #   mir_try_catches_an_arm_stop    an `x: 1, 2, 3` bound is not an opcode -- it
+    #                                  is a stop inside OP_STORE_GLOBAL, and it is
+    #                                  catchable (`say e` prints type_mismatch)
+    #   mir_try_nested                 the inner handler re-throws; the outer one
+    #                                  catches the second throw, not the first
+    #   mir_try_bare_catch             `catch { }` has no variable, so there is no
+    #                                  global to write the error into
+    #   mir_try_catches_a_non_string   `throw 5` carries 5 through the catch
+    #   mir_try_finally_cleanup        finally runs while the error is still
+    #                                  uncaught and the process still exits 1
+    #   mir_try_finally_keeps_return   a return inside try runs finally and keeps
+    #                                  its value (the frames that function opened
+    #                                  are popped on return, src/vm/vm.c:4142)
+    #   mir_try_return_from_inside     return from inside try, catch never runs
+    #   mir_try_keeps_a_register_...   a register written in the body is still the
+    #                                  written value in the catch -- measured, and
+    #                                  it is the one reading a setjmp/longjmp
+    #                                  lowering gets wrong (both register allocators
+    #                                  roll the local back to its setjmp value).
+    ("mir_try_catches_a_throw",
+     'try {\n'
+     '  say "a"\n'
+     '  throw "boom"\n'
+     '  say "b"\n'
+     '} catch (e) {\n'
+     '  say e\n'
+     '}\n'
+     'say "after"\n'),
+    ("mir_try_body_finishes",
+     'try {\n'
+     '  say "x"\n'
+     '} catch (e) {\n'
+     '  say "c"\n'
+     '}\n'
+     'say "done"\n'),
+    ("mir_try_catches_from_a_callee",
+     'func f() {\n'
+     '  throw "inner"\n'
+     '}\n'
+     'try {\n'
+     '  f()\n'
+     '  say "not reached"\n'
+     '} catch (e) {\n'
+     '  say e\n'
+     '}\n'
+     'say "after"\n'),
+    ("mir_try_catches_an_arm_stop",
+     'x: 1, 2, 3\n'
+     'try {\n'
+     '  x = 5\n'
+     '  say "not reached"\n'
+     '} catch (e) {\n'
+     '  say e\n'
+     '}\n'
+     'say "after"\n'),
+    ("mir_try_nested",
+     'try {\n'
+     '  try {\n'
+     '    throw "inner"\n'
+     '  } catch (e) {\n'
+     '    say e\n'
+     '    throw "mid"\n'
+     '  }\n'
+     '} catch (e) {\n'
+     '  say e\n'
+     '}\n'
+     'say "after"\n'),
+    ("mir_try_bare_catch",
+     'try {\n'
+     '  throw "bare"\n'
+     '} catch {\n'
+     '  say "bare catch"\n'
+     '}\n'
+     'say "after"\n'),
+    ("mir_try_catches_a_non_string",
+     'try {\n'
+     '  throw 5\n'
+     '} catch (e) {\n'
+     '  say e\n'
+     '}\n'
+     'say "after"\n'),
+    ("mir_try_finally_cleanup",
+     'try {\n'
+     '  say "t"\n'
+     '  throw "boom"\n'
+     '} finally {\n'
+     '  say "cleanup"\n'
+     '}\n'),
+    ("mir_try_finally_keeps_return",
+     'func f() {\n'
+     '  try {\n'
+     '    say "t"\n'
+     '    return 1\n'
+     '  } finally {\n'
+     '    say "cleanup"\n'
+     '  }\n'
+     '}\n'
+     'say f()\n'),
+    ("mir_try_return_from_inside",
+     'func f() {\n'
+     '  try {\n'
+     '    return 5\n'
+     '  } catch (e) {\n'
+     '    say "c"\n'
+     '  }\n'
+     '}\n'
+     'say f()\n'),
+    ("mir_try_keeps_a_register_written_in_the_body",
+     'func g() {\n'
+     '  x = 1\n'
+     '  try {\n'
+     '    x = 2\n'
+     '    throw "e"\n'
+     '  } catch (e) {\n'
+     '    say x\n'
+     '  }\n'
+     '}\n'
+     'g()\n'),
+
 ]
 
 
@@ -2004,23 +2160,36 @@ MIR_ONLY = [
 # dependency) whose output differs run to run (2 distinct outputs over 20 runs),
 # while every MIR-only criterion here compares bytes.  Emitting it would trade a
 # named refusal for an unmeasurable one.
-# mir_try_no_throw is the NEGATIVE CRITERION for the throw step, and it is the
-# reason OP_THROW could land as one arm instead of three.  The program contains
-# a `try`/`catch` and NO throw at all: `say "a"` behind a try, a catch that
-# would say "c", then `say "d"`.  The interpreter answers rc=0, stdout `a\nd\n`,
-# empty stderr (measured, ruling-exceptions.md §4.1 p14) -- the catch body never
-# runs because nothing is thrown.  This route refuses it whole today, with
-# why=unsupported-opcode and OP_TRY_START/OP_TRY_END on the not-yet line.
+# mir_try_no_throw USED TO LIVE HERE, AND THIS IS THE RECORD OF ITS RETIREMENT.
+# It was the NEGATIVE CRITERION for the throw step, and the reason OP_THROW could
+# land as one arm instead of three: a `try`/`catch` with NO throw, where the
+# interpreter answers rc=0, stdout `a\nd\n` and empty stderr (measured,
+# ruling-exceptions.md §4.1 p14).  The cheap way to make `throw` "work" is to
+# teach the arm to exit when a try frame is open; that would have turned the
+# program from a NAMED refusal into `a\n[exception] uncaught: ...`, rc=1 --
+# a wrong answer carrying an exit code, strictly worse than an honest refusal
+# (ruling-exceptions.md §5 item 6).  So it sat on the refusal side with a side
+# table saying what the refusal had to still be ABOUT: both TRY opcodes present,
+# OP_THROW ABSENT.
 #
-# THE POINT IS THAT THIS MUST STAY RED AFTER THE THROW STEP.  The cheap way to
-# make `throw` "work" is to teach the arm to exit when a try frame is open; that
-# turns this program from a NAMED refusal into `a\n[exception] uncaught: ...`,
-# rc=1 -- a wrong answer carrying an exit code, which is strictly worse than an
-# honest refusal (ruling-exceptions.md §5 item 6).  So the criterion is not in
-# MIR_ONLY (which would demand it run) but here, and the side table below says
-# exactly which opcodes the refusal must still be ABOUT: both TRY opcodes
-# present, OP_THROW ABSENT.  That absence is what proves the refusal happens
-# at the try pair and not because some throw somewhere was un-lowered.
+# The try pair is lowered now, so the not-yet list can no longer carry the try
+# pair and the entry cannot be a refusal any more.  Retiring it is not
+# discarding the criterion: its program is now mir_try_body_finishes in MIR_ONLY,
+# the same bytes demanded of an execution instead of of a refusal.  That is the
+# stronger of the two claims -- a refusal only had to NAME the opcodes, an
+# execution has to print a, d and nothing else.  The side table mechanism is
+# kept (it is exercised by the self-check's own fixture) with no live rows.
+#
+# mir_try_escapes is what the try pair added to the refusal side, and the reason
+# is a MEASUREMENT of the interpreter, not of this route: a `break` out of a try
+# body leaks that try's ExcFrame (nothing pops it -- L_TRY_END is never reached,
+# and only a RETURN pops frames, src/vm/vm.c:4142).  The measured program
+# `while i < 3 { try { ... break } catch (e) { say "c" } }` followed by an
+# `throw "late"` in ITS OWN try prints `2` then `late` with rc=0: the throw is
+# caught by the STALE frame and its catch body runs after the loop has already
+# finished.  This route refuses the leaking program by name instead of copying
+# that, because a route cannot answer "which frame does this throw belong to"
+# with a jump target and still be read.
 MIR_ONLY_REFUSE = {
     "mir_container_const_oob": (
         'a = [1, 2, 3]\nsay a[3]\n',
@@ -2042,9 +2211,27 @@ MIR_ONLY_REFUSE = {
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
         "builtin-call"),
-    "mir_try_no_throw": (
-        'try {\n    say "a"\n} catch (e) {\n    say "c"\n}\nsay "d"\n',
-        "unsupported-opcode"),
+    # The jump leaves the guarded body without passing TRY_END, so the frame
+    # that a later throw would use is the wrong one -- see the note above.
+    "mir_try_escapes": (
+        'i = 0\n'
+        'while i < 3 {\n'
+        '  try {\n'
+        '    i = i + 1\n'
+        '    if i == 2 {\n'
+        '      break\n'
+        '    }\n'
+        '  } catch (e) {\n'
+        '    say "c"\n'
+        '  }\n'
+        '}\n'
+        'say i\n'
+        'try {\n'
+        '  throw "late"\n'
+        '} catch (e) {\n'
+        '  say e\n'
+        '}\n',
+        "try-escapes"),
 }
 
 # THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
@@ -2053,23 +2240,24 @@ MIR_ONLY_REFUSE = {
 # the not-yet line that accompanies it names the opcodes.  Both are needed, and
 # they answer different questions: the why says the refusal is this route's
 # decision (not the interpreter's answer), the not-yet list says WHAT it is still
-# about.  For mir_try_no_throw the second half is the whole criterion --
-# OP_TRY_START and OP_TRY_END must be in it (the try pair is still un-emitted)
-# and OP_THROW must NOT be (the throw step lowered it, so a refusal that still
-# named it would be a leftover, and a program refused "because of throw" would
-# be the exact shape the try arm must not create).  Entries are (must-contain,
-# must-not-contain) over the opcode names parse_mir_out() found.
+# about.  Entries are (must-contain, must-not-contain) over the opcode names
+# parse_mir_out() found.
+#
+# It has NO live rows today: its only row was mir_try_no_throw, whose criterion
+# was "the try pair is still un-emitted and OP_THROW is not" -- the try pair is
+# lowered now, so the row would have to demand that a lowered opcode be
+# un-lowered.  The mechanism is not dead code: notyet_problems() takes an
+# optional spec, and the self-check below runs it on its own fixture in all three
+# directions (naming what it must, leaking what it must not, losing a name).  A
+# future refusal-by-opcode adds a row here and gets both halves back.
 MIR_ONLY_REFUSE_NOTYET = {
-    "mir_try_no_throw": (
-        ("OP_TRY_START", "OP_TRY_END"),
-        ("OP_THROW",),
-    ),
 }
 
 
-def notyet_problems(notyet, case):
+def notyet_problems(notyet, case, spec=None):
     """Which ways this refusal's not-yet list disagrees with the side table."""
-    spec = MIR_ONLY_REFUSE_NOTYET.get(case)
+    if spec is None:
+        spec = MIR_ONLY_REFUSE_NOTYET.get(case)
     if spec is None:
         return []
     need, forbid = spec
@@ -2307,17 +2495,22 @@ def self_check(verbose):
                  "clean" if want_clean is True else ("missing" if want_clean is False
                  else "leaked-word"), "ok" if hit else "WRONG"))
         ok &= hit
-    # The NOT-YET side table, same shape: the try pair present and OP_THROW
-    # absent is clean; naming OP_THROW is a failure; losing one try opcode is
-    # a failure in the OTHER direction (the refusal stopped being about the
-    # pair) -- two directions, because a refusal can leak either way.
+    # The NOT-YET side table, same shape: a list that carries exactly the two
+    # names the spec demands is clean; naming a forbidden one is a failure;
+    # losing one required name is a failure in the OTHER direction (the refusal
+    # stopped being about what the spec says).  The table has no live rows any
+    # more (its one row retired with mir_try_no_throw), so the spec below is a
+    # fixture: the mechanism is what is under test here, not a refusal.
+    SIDETABLE_FIXTURE = (("OP_TRY_START", "OP_TRY_END"), ("OP_THROW",))
     for what, notyet, want_ok in (
             ("notyet-try-only", [("OP_TRY_START", 1), ("OP_TRY_END", 1)], True),
             ("notyet-names-throw", [("OP_TRY_START", 1), ("OP_TRY_END", 1),
                                     ("OP_THROW", 1)], False),
-            ("notyet-lost-try-end", [("OP_TRY_START", 1)], False)):
+            ("notyet-lost-try-end", [("OP_TRY_START", 1)], False),
+            ("notyet-no-rows", [("OP_TRY_START", 1)], True)):
         checks += 1
-        got = notyet_problems(notyet, "mir_try_no_throw")
+        got = notyet_problems(notyet, "side-table-fixture",
+                              None if what == "notyet-no-rows" else SIDETABLE_FIXTURE)
         hit = (not got) if want_ok else (len(got) == 1)
         print("IR-MIR-SELFCHECK|what=%s|got=%s|want=%s|%s"
               % (what, "none" if not got else got[0].split(":")[0],
@@ -2755,9 +2948,10 @@ def main():
             ref_ok += 1
         # The not-yet side table: a refusal is a claim about WHICH opcodes are
         # missing, and `why=unsupported-opcode` with no opcode names would
-        # accept a program being refused for a reason nobody wrote down.  For
-        # mir_try_no_throw this is the negative criterion that keeps the try
-        # pair out (see MIR_ONLY_REFUSE_NOTYET's note).
+        # accept a program being refused for a reason nobody wrote down.  No
+        # live row today (see MIR_ONLY_REFUSE_NOTYET's note); the mechanism is
+        # exercised by the self-check's fixture and this loop keeps working the
+        # moment a row comes back.
         np = notyet_problems(got.get("notyet") or [], name)
         if name in MIR_ONLY_REFUSE_NOTYET:
             problems.extend(np)
