@@ -674,6 +674,12 @@ STDERR_EXPECT = {
     # satisfy both.
     "mir_bind_out_of_range_store": ("[exception] uncaught: type_mismatch",),
     "mir_bind_out_of_range_init": ("[exception] uncaught: initial value out of range",),
+    # `+` on an array or a dict KILLS the process with this sentence and rc 1
+    # (src/vm/vm.c:3280-3283) -- it is not a throw, so a try/catch cannot catch
+    # it, and this route must print the same words rather than call it a
+    # type_mismatch.
+    "mir_add_arrays_is_a_fatal_error": ("Error: '+' is not defined for arrays/dicts",),
+    "mir_add_dicts_is_a_fatal_error": ("Error: '+' is not defined for arrays/dicts",),
     # A finally body runs WHILE the error is still uncaught: the try pair pops
     # nothing on the way out, so `cleanup` prints and the process still exits 1
     # with the original message.  The criterion demands the message AND the
@@ -2693,6 +2699,81 @@ MIR_ONLY = [
      'say ("a" > "b")\n'
      'say ("a" <= "a")\n'
      'say ("b" >= "a")\n'),
+
+    # -------------------------------------------------- OP_ADD and its five rules
+    # `+` is not arithmetic on this language: the interpreter's L_ADD
+    # (src/vm/vm.c:3276-3326) branches FOUR ways before it ever adds, and each
+    # branch was measured on build/inimerse before the row below was written:
+    #   array or dict on either side -> the program DIES with
+    #     "Error: '+' is not defined for arrays/dicts (arr + [x] silently loses
+    #     data; use push(arr, x) instead)" on stderr, rc 1.  Not a throw: a try
+    #     cannot catch it.
+    #   set on either side -> union when BOTH are sets (vm_set_union builds a new
+    #     set from a's sorted i64 half, then a's items, then b's two halves, so
+    #     `list(a + c)` is SEGMENTED like list() of any finite set) and nil
+    #     otherwise -- `a + 5` and `a + nil` both print nil.
+    #   string on either side -> BOTH sides go through value_to_string and are
+    #     concatenated: `"a" + 1` is "a1", `1 + "a"` is "1a", `"a" + 1.5` is
+    #     "a1.5", `"a" + true` is "atrue", `"a" + nil` is "anil".  This route
+    #     answered the mixed pair by abort() until this step, which is why the
+    #     six rows below carry rc=0 oracles rather than refusal oracles.
+    #   otherwise -> int64 add (overflow throws numeric_overflow) or double add.
+    ("mir_add_string_and_int",
+     'say "a" + 1\n'),
+    ("mir_add_int_and_string",
+     'say 1 + "a"\n'),
+    ("mir_add_string_and_float",
+     'say "a" + 1.5\n'),
+    ("mir_add_string_and_bool",
+     'say "a" + true\n'),
+    ("mir_add_string_and_nil",
+     'say "a" + nil\n'),
+    ("mir_add_string_and_a_variable",
+     'x = 5\n'
+     'say "v=" + x\n'),
+    # The CHAIN shape: three operands are one OP_CONCAT (the compiler folds
+    # `a + b + c`), and its per-step fold is the same L_ADD rule -- so a chain
+    # that reaches a number is the one place the concat fast path and the add
+    # rule can disagree.  Measured: "v=5!".
+    ("mir_add_string_chain_with_a_number",
+     'x = 5\n'
+     'say "v=" + x + "!"\n'),
+    ("mir_add_sets_is_a_union",
+     'a = 1, 2\n'
+     'b = 3, 4\n'
+     'say a + b\n'
+     'say len(a + b)\n'),
+    ("mir_add_sets_overlap",
+     'a = 1, 2\n'
+     'c = 2, 3\n'
+     'say list(a + c)\n'
+     'say len(a + c)\n'),
+    # A set against a non-set is nil, not a throw and not a union with one
+    # element: the interpreter assigns n = -1 whenever the pair is not two sets.
+    ("mir_add_set_and_a_scalar_is_nil",
+     'a = 1, 2\n'
+     'say a + 5\n'
+     'say a + nil\n'),
+    # An INTERVAL set has no members in the interpreter (iCount/count/comps are
+    # all zero for kind 2), so a union of two intervals is the EMPTY set -- a
+    # measured property of set_union, not an error path.  A route that refused
+    # the pair, or that unioned the intervals as intervals, would answer
+    # something else here.
+    ("mir_add_intervals_is_an_empty_set",
+     'p = (0, 3)\n'
+     'q = (2, 5)\n'
+     'say p + q\n'
+     'say len(p + q)\n'),
+    # The two FATAL rows.  Their stdout is empty and their rc is 1 on both
+    # routes already; what separates "the same answer" from "the same exit code
+    # for a different reason" is the sentence, so each demands it on stderr
+    # (see STDERR_EXPECT).  This route answered `undefined: type_mismatch`
+    # before this step.
+    ("mir_add_arrays_is_a_fatal_error",
+     'say [1] + [2]\n'),
+    ("mir_add_dicts_is_a_fatal_error",
+     'd = {"a": 1}\n'
+     'say d + d\n'),
 
 ]
 
