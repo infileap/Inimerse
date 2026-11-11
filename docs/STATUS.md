@@ -7667,3 +7667,58 @@ fuzzer 的比较器有自己的四个自检格（相同 / 差一个字节 / 引�
 1. **fuzzer 不生成**：线程段（按名拒）、`wait`（答案是时间）、`record`（答案是宿主磁盘）、故意的未捕获 throw、集合作字典键（§10.128 已知两边一致于缺陷）。每一条都是决定，不是遗漏。
 2. **它比的是 stdout 与退出码**，不比 stderr。stderr 的差异已经由 `STDERR_EXPECT` 那一族判据逐条钉过，而且两条路线从没承诺过 stderr 逐字节相同（§10.124 的注释）。
 3. **`handles` 不动是对的**：这一格没有新 opcode。`handles` 数的是「67 个 opcode 答了几个」，不数「答对了几个」——而后者的证据在 `same-as-interpreter` 与 `mir-only-cases` 上。
+
+## §10.147 `+` 的四条分支：字符串不再是「这一边没有答案」（aot-mir，A 类第二十七项）
+
+### 一、来源与日期
+
+判据 `9f0eec2`（十三条先红），实现 `745ad88`（2 文件 +125/−4），2026-11-09。起点是 fuzzer 扩面之后的手工差分：十个形状里九个两边一致，第十个（`say "a" + 1`）本路线 **rc=134**——它没答错，它**用 abort 代替回答**。
+
+### 二、形状：解释器在 `+` 上分支四次，本路线原来只答了两次
+
+解释器臂先看 fatal，再看集合，再看字符串，再看数值（`src/vm/vm.c` 里 `L_ADD` 那一段，3276–3326）：
+
+| 序 | 条件 | 解释器的答案 | 本格之前本路线的答案 |
+|---|---|---|---|
+| 1 | 任一侧是数组或字典 | `Error: '+' is not defined for arrays/dicts …`（**fatal**，`exit(1)`，try 捕不到） | `type_mismatch` 抛出（可捕，rc=1） |
+| 2 | 两侧都是集合 | 并集；只有一侧是集合 | `nil` | 抛 `type_mismatch` |
+| 3 | 任一侧是字符串 | **两侧都过 `value_to_string`**，再拼接（缓冲 128） | 混合对 **abort**（rc=134） |
+| 4 | 两侧 intlike | int64 + 溢出检查 ⇒ 溢出抛 `numeric_overflow` | 同 |
+
+第 3 行那句 abort 的注释写着「MIXED PAIR: no answer on this route」——而解释器有答案，而且有四种：`"a"+1`=`a1`、`"a"+1.5`=`a1.5`、`"a"+true`=`atrue`、`"a"+nil`=`anil`（反向 `1+"a"`=`1a`，变量 `x = 5` 后 `"v="+x`=`v=5`）。
+
+### 三、判据（十三条，`9f0eec2`，在 `1b2114d` 上全红）
+
+字符串五条 + 链式一条（`x = 5; say "v=" + x + "!"`，走 `OP_CONCAT` 链）；集合三条（不交、相交、与标量）；区间一条；fatal 两条（数组、字典，用 `STDERR_EXPECT` 钉那句致命话）。红读数形如：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_add_string_and_int|interp b'a1\n' rc=0|mir b'' rc=-6
+IR-MIR-EXEC-DIFF|case=mir_add_sets_is_a_union|interp b'set(4)\n4\n' rc=0|mir b'' rc=1
+IR-MIR-STDERR|case=mir_add_arrays_is_a_fatal_error|does not contain "Error: '+' is not defined for arrays/dicts"
+```
+
+### 四、实现：按解释器的顺序重写，而不是按本路线的旧形状打补丁
+
+`mv_add` 整段重写，四条分支与解释器同序；第 3 条把非字符串那侧先 `mv_vts` 成 128 字节的字符串再 `mv_str_concat`（**与解释器同一个缓冲区大小**，因为超长结果在两边都必须截在同一个位置）。集合那一支新建 `mv_set_union_of`：池上两趟 pass（先 a 后 b），分段序照 `set_union`（i64 半边在前、items 次之、comps 最后），**区间集不贡献成员**——解释器的 kind-2 集合两个计数都是 0，所以两个区间集求并是空集（实测 `p = (0, 3); q = (2, 5); say p + q` 印 `set(0)`、`len` 0）。`mv_try_add` 退化成「只保留第 4 条」，非数值对一律交回 `mv_add`，于是 try 里的数组加法仍然致命（与解释器一致）。读数（本树 `745ad88`）：
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86
+  |c-identical=0|c-diff=86|perturb-stdout-changes=5
+  |mir-only-cases=167|mir-only-same-as-interpreter=167
+IR-MIR-VERDICT|PASS|tree=745ad88|accepted=86|refused=0|differ=0
+IR-AOT-MIR|accepted=253|refused=0|same-as-interpreter=253|of=29|emittable=59|of-ops=67
+  |not-emittable=8|corpus=inline-cases:86|mir-only-cases:167|beyond-ast-denominator=30
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-OPERANDS|indexed=14|prescanned=15|checked=14|missing=(none)|dead=(none)|agree=yes
+```
+
+### 五、十一行分配，第一遍全猜错
+
+`ALLOCS_EXPECT` 的十一行第一遍写的是 `0|0`——「加法是算术，算术不分配」。第一次跑，十一行全红：第 3 条要先造字符串再拼，`mv_str_concat` 会注册缓冲，所以每条字符串例是 `1|n`（bytes = 结果长度 + 1），链式是 `2|9`；两个集合例是 `2|768` 与 `3|1792`（两个集合 + 并集 + `list` 的目标数组 ⇒ 池翻两次）；区间并集 `2|768`；与标量求并 `1|256`（只建结果集合）。**十一行都是先量后写的第二遍**，注释里留着第一遍的错法，因为它正是这一节的存在理由。
+
+### 六、边界
+
+1. **`+` 只答这四种解释器形状**：数组/字典致命、集合并集（区间集并集空集）、字符串混合拼接、数值加法。这些形状之外的组合（例如 `true + [1]`）先撞第 1 条，与解释器的 fatal 同形。
+2. **字符串缓冲仍是 128 字节**，超长结果两边截在同一个位置——这是**照抄**，不是本路线另设的限制。
+3. **`mv_try_sub/mul/div/mod` 仍可能 abort**：本格只修了 `mv_try_add` 的入口；其余三个 wrapper 对非数值 tag 直接 `mv_as_nv` ⇒ 撞 `abort()`。这一条记成债，不在本格。
+4. **`mv_arr_set` 的 `index_out_of_range`** 仍在（解释器对越界写静默忽略），与本格无关。
