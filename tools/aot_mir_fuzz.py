@@ -313,6 +313,37 @@ def gen_program(rng):
         lines.append("} catch (e) {")
         lines.append('    say "caught"')
         lines.append("}")
+    # THE SET OPERATOR FAMILY, AND A STRING THAT REACHES `+`.  Both were
+    # BLIND SPOTS of this generator rather than of the route: SETOPS was
+    # declared here and never used, so not one program in 2500 ever put an
+    # operator on a set; and value_expr has no leaf that returns a bare string,
+    # so `say "a" + 1` -- the exact shape section 10.147 was written for --
+    # could not be generated either.  Measured examples of the set family:
+    # `s = 1, 2, 3` / `t = 2, 3` / `say s - t` prints set(1) (set_diff),
+    # `say s * t` prints set(2) (set_intersect), and the interpreter answers
+    # nil for a set beside a scalar.
+    # SETOPS was declared and never used: no program this generator produced
+    # ever put an operator on a set.  The route has arms for + - * and the
+    # comparisons, so the family is legal; measured examples: `s = 1, 2, 3`
+    # / `t = 2, 3` / `say s - t` prints set(1) (the interpreter's set_diff),
+    # and `say s * t` prints set(2).
+    if rng.random() < 0.5:
+        lines.append("sw = " + set_expr(rng, names))
+        lines.append("sv = " + set_expr(rng, names))
+        op = rng.choice(SETOPS)
+        if op == "in":
+            lines.append("say " + rng.choice(INTS) + " in sw")
+        else:
+            lines.append("say sw %s sv" % op)
+        lines.append("say len(sw %s sv)" % op if op in ("+", "-", "*") else "say " + rng.choice(INTS))
+    # A STRING REACHING +.  value_expr has no leaf that returns a bare string,
+    # so `say "a" + 1` -- the shape section 10.147 was written for -- could
+    # never appear in 2500 generated programs.
+    if rng.random() < 0.5:
+        lines.append("sp = " + rng.choice(STRINGS))
+        lines.append("say sp + " + rng.choice(INTS))
+        lines.append("say " + rng.choice(INTS) + " + sp")
+        lines.append("say sp + " + rng.choice(STRINGS))
     lines.append("say " + value_expr(rng, names))
     return "\n".join(lines) + "\n"
 

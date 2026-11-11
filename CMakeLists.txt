@@ -2074,6 +2074,9 @@ set_tests_properties(aot_mir_fuzz_regression PROPERTIES WORKING_DIRECTORY ${CMAK
 add_test(NAME aot_mir_fuzz_regression_seed13
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --count 20 --seed 13 --engine $<TARGET_FILE:inimerse> --mir-tool $<TARGET_FILE:aot-mir>)
 set_tests_properties(aot_mir_fuzz_regression_seed13 PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;aot-mir;regression")
+add_test(NAME aot_mir_fuzz_regression_seed17
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --count 20 --seed 17 --engine $<TARGET_FILE:inimerse> --mir-tool $<TARGET_FILE:aot-mir>)
+set_tests_properties(aot_mir_fuzz_regression_seed17 PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;aot-mir;regression")
 add_test(NAME aot_mir_fuzz_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --self-check)
 set_tests_properties(aot_mir_fuzz_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;aot-mir;regression")
