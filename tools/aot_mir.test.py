@@ -716,6 +716,9 @@ STDERR_EXPECT = {
     "mir_bind_out_of_range_store": ("[exception] uncaught: type_mismatch",),
     "mir_bind_out_of_range_init": ("[exception] uncaught: initial value out of range",),
     "mir_mod_a_set_still_stops": ("[exception] uncaught: type_mismatch",),
+    # the error falls OUTSIDE the try block, so it is uncaught: the reading must
+    # carry the interpreter's own wording, not merely a non-zero exit.
+    "mir_arith_type_error_outside_a_try": ("[exception] uncaught: type_mismatch",),
     # `+` on an array or a dict KILLS the process with this sentence and rc 1
     # (src/vm/vm.c:3280-3283) -- it is not a throw, so a try/catch cannot catch
     # it, and this route must print the same words rather than call it a
@@ -2885,6 +2888,58 @@ MIR_ONLY = [
      'a = 1, 2, 3\n'
      'b = 2, 3\n'
      'say a % b\n'),
+
+    # ---- ARITHMETIC ON A NON-NUMBER, IN A PROGRAM THAT CARRIES A TRY
+    #
+    # These eight are about a bug that only exists INSIDE a program with a try
+    # pair: with a try in the file the emitter routes OP_ADD/SUB/MUL/DIV/MOD/NEG
+    # through mv_try_*, and mv_try_sub/mul/div/mod/neg called mv_as_nv on both
+    # operands BEFORE asking whether they were numbers.  mv_as_nv on a string,
+    # array, dict, nil or set is an abort(), so every one of these programs
+    # died with rc=134 and an empty stdout -- measured on aef11cc -- while the
+    # interpreter answered a catchable `type_mismatch`, or (for a set pair) a
+    # value.  Outside a try the same program was fine, because mv_sub's own
+    # guard runs first; that asymmetry is why a program that merely CONTAINS a
+    # try is enough to expose it, and why case 7 below puts the error outside
+    # the try block.
+    #
+    # Case 8 is the control: a genuine stop (integer division by zero) must
+    # STILL be a throw with its own name.  A patch that made every wrapper
+    # delegate to mv_div would pass cases 1-7 and break this one.
+    ("mir_try_arith_sub_on_a_string",
+     'try { say "a" - 1 } catch (e) { say e }\n'
+     'say "after"\n'),
+
+    ("mir_try_arith_mul_on_a_string",
+     'try { say "a" * 2 } catch (e) { say e }\n'
+     'say "after"\n'),
+
+    ("mir_try_arith_div_on_a_string",
+     'try { say "a" / 2 } catch (e) { say e }\n'
+     'say "after"\n'),
+
+    ("mir_try_arith_neg_on_a_string",
+     'try { say -"a" } catch (e) { say e }\n'
+     'say "after"\n'),
+
+    ("mir_try_arith_on_a_set_and_a_scalar",
+     'a = 1, 2\n'
+     'try { say a - 5 } catch (e) { say e }\n'
+     'say "after"\n'),
+
+    ("mir_try_arith_on_two_sets",
+     'a = 1, 2, 3\n'
+     'b = 2, 3\n'
+     'try { say a - b } catch (e) { say e }\n'
+     'say "after"\n'),
+
+    ("mir_arith_type_error_outside_a_try",
+     'try { say "t" } catch (e) { say e }\n'
+     'say "a" - 1\n'),
+
+    ("mir_try_div_zero_is_still_caught",
+     'try { say 1 / 0 } catch (e) { say e }\n'
+     'say "after"\n'),
 
 ]
 
