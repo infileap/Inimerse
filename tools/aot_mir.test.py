@@ -640,6 +640,18 @@ ALLOCS_EXPECT = {
     "mir_add_sets_overlap": (3, 1792),
     "mir_add_set_and_a_scalar_is_nil": (1, 256),
     "mir_add_intervals_is_an_empty_set": (2, 768),
+    # MEASURED like every other row -- these nine lines were added only after the
+    # first green run printed what they are; the figures and their reasons are in
+    # the doc's readings section.
+    "mir_sub_sets_is_a_difference": (2, 768),
+    "mir_sub_lists_the_leftovers": (3, 1024),
+    "mir_sub_keeps_a_float_out": (2, 768),
+    "mir_mul_sets_is_an_intersection": (2, 1024),
+    "mir_mul_floats": (2, 768),
+    "mir_sub_a_set_and_a_scalar_is_nil": (1, 512),
+    "mir_sub_an_interval_is_nil": (2, 768),
+    "mir_mul_with_an_interval_keeps_the_members": (2, 768),
+    "mir_mod_a_set_still_stops": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -703,6 +715,7 @@ STDERR_EXPECT = {
     # satisfy both.
     "mir_bind_out_of_range_store": ("[exception] uncaught: type_mismatch",),
     "mir_bind_out_of_range_init": ("[exception] uncaught: initial value out of range",),
+    "mir_mod_a_set_still_stops": ("[exception] uncaught: type_mismatch",),
     # `+` on an array or a dict KILLS the process with this sentence and rc 1
     # (src/vm/vm.c:3280-3283) -- it is not a throw, so a try/catch cannot catch
     # it, and this route must print the same words rather than call it a
@@ -2803,6 +2816,75 @@ MIR_ONLY = [
     ("mir_add_dicts_is_a_fatal_error",
      'd = {"a": 1}\n'
      'say d + d\n'),
+
+    # ---- SETS ON `-` AND `*`: the interpreter answers, this route threw ----
+    #
+    # Found by tools/aot_mir_fuzz.py in its 2500-program sweep, after the cell
+    # that gave `+` its four branches.  `L_SUB` and `L_MUL` (src/vm/vm.c:3445-3500)
+    # both test for SETS FIRST -- two sets go through set_diff / set_intersect,
+    # one set beside anything else gives n = -1 and L_SUB/L_MUL turn that into
+    # NIL -- and only then fall through to the int64/double arms.  This route
+    # answered every one of them with vm_throw(count "type_mismatch"), because
+    # mv_sub and mv_mul began with the numeric guard.  A wrong answer, not a
+    # missing one: the interpreter has an answer for every shape below.
+    #
+    # DIV AND MOD ARE THE CONTROL, and they are NOT part of this cell: L_DIV
+    # has no set arm at all (src/vm/vm.c:3501 falls straight into the numeric
+    # path), so `a / b` and `a % b` over sets throw type_mismatch in the
+    # interpreter too.  The criterion below keeps them there, so an
+    # implementation that answered all four arithmetic operators with set
+    # algebra would redden on the control.
+    ("mir_sub_sets_is_a_difference",
+     'a = 1, 2, 3\n'
+     'b = 2, 3\n'
+     'say a - b\n'
+     'say len(a - b)\n'),
+
+    ("mir_sub_lists_the_leftovers",
+     'a = 1, 2, 3\n'
+     'b = 1, 3\n'
+     'say list(a - b)\n'),
+
+    ("mir_sub_keeps_a_float_out",
+     'a = 1, 2\n'
+     'b = 1, 1.5\n'
+     'say list(a - b)\n'),
+
+    ("mir_mul_sets_is_an_intersection",
+     'a = 1, 2, 3\n'
+     'b = 2, 3, 4\n'
+     'say a * b\n'
+     'say len(a * b)\n'
+     'say list(a * b)\n'),
+
+    ("mir_mul_floats",
+     'a = 1.5, 2.5\n'
+     'b = 2.5, 9\n'
+     'say a - b\n'
+     'say a * b\n'),
+
+    ("mir_sub_a_set_and_a_scalar_is_nil",
+     'a = 1, 2\n'
+     'say a - 5\n'
+     'say a * 5\n'),
+
+    ("mir_sub_an_interval_is_nil",
+     'p = (0, 3)\n'
+     'q = (2, 5)\n'
+     'say p - q\n'
+     'say p * q\n'
+     'say len(p * q)\n'),
+
+    ("mir_mul_with_an_interval_keeps_the_members",
+     'a = 1, 2\n'
+     'p = (0, 5)\n'
+     'say a * p\n'
+     'say len(a * p)\n'),
+
+    ("mir_mod_a_set_still_stops",
+     'a = 1, 2, 3\n'
+     'b = 2, 3\n'
+     'say a % b\n'),
 
 ]
 
