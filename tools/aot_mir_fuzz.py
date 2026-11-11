@@ -40,6 +40,32 @@ the inside.  The lesson is in the tool's own history rather than in a bug: a
 generator's silence about a shape is indistinguishable from that shape being
 correct.
 
+WHY THE GENERATOR NOW DECLARES ITS OWN FAMILIES (§10.156)
+
+§10.154 found TWO DEAD FAMILIES by a person reading this file against the
+route's arm list: a SETOPS table no branch ever read, and no leaf returning a
+bare string, so `say "a" + 1` could not be generated at all.  Both were found by
+READING, not by a run going red -- 2500 generated programs stood behind them
+reporting PASS, because a generator's silence about a shape is
+indistinguishable from that shape being correct when you are standing inside
+the generator.
+
+So the generator now says which families it HAS, registers each family it
+actually EMITS while generating, prints a census, and goes RED when a declared
+family emitted zero programs:
+
+    FAMILIES                 the declaration, in this file, above gen_program
+    emitted.add(name)        the registration, at each family's own block
+    IR-AOT-MIR-FUZZ-FAMILY|name=<n>|programs=<k>|of=<count>     the census
+    FFAMILY-SILENT|family=<n>|programs=0|of=<count>            the red
+    IR-AOT-MIR-FUZZ-FAMILIES|declared=|emitted=|silent=        the roll-up
+
+`--suppress-family <name>` forces one declared family's dice to zero, which is
+how the red is REPRODUCED by a reader instead of being taken on the word of a
+commit message.  It suppresses by skipping the family's block, so the run is a
+genuinely different run -- the point is not that the rest of the run is
+untouched, it is that the census of a family that produced nothing is a red.
+
 FINDINGS ARE THREE KINDS, because they need three different responses:
 
   DIVERGE   both ran to completion and the bytes differ.  A wrong answer.
@@ -53,8 +79,9 @@ FINDINGS ARE THREE KINDS, because they need three different responses:
 Usage:
     python3 tools/aot_mir_fuzz.py [--count N] [--seed S] [--engine ...]
                                   [--mir-tool ...] [--cc ...] [--keep-dir D]
-                                  [--self-check]
-Exit: 0 = no DIVERGE and no THREW; 1 = at least one.
+                                  [--suppress-family NAME] [--self-check]
+Exit: 0 = no DIVERGE, no THREW, and no declared family at zero programs;
+      1 = at least one of those.
 """
 import argparse
 import os
@@ -82,6 +109,69 @@ STRINGS = ['"a"', '"hi"', '"zz"', '""', '"q\\"z"']
 BINOPS = ["+", "-", "*", "%"]
 CMPOPS = ["<", "<=", ">", ">=", "==", "!="]
 SETOPS = ["+", "-", "<", ">", "==", "!=", "in"]
+
+
+# --- the declaration: the families this generator BELIEVES it has ------------
+#
+# This tuple is the tool's claim about itself, written where a reviewer can
+# read it beside the arms it claims to reach.  Before it existed the family
+# list lived only in the code paths, so a block that was never reached was
+# INVISIBLE: §10.154 found two of them (SETOPS declared and never read; no
+# string leaf in value_expr) by reading this file against the route's arm list,
+# with 2500 generated programs reporting PASS behind them.
+#
+# `gen_program` registers a family here-in-declared only where it actually
+# emits that family, main() counts the registrations, and `audit_families`
+# turns a declared family with zero programs into a red line.  A family added
+# to the code but not declared here is a red too (FFAMILY-UNDECLARED), because
+# a declaration that can go stale is the same silence one level up.
+FAMILIES = (
+    "container-len",   # c = <arr|dict|set|str>; say len(c)
+    "index-side",      # say c[0] / say c[k] on an arr, a str or a dict
+    "growth",          # gw[k] = v past the end; the gap fills with nil
+    "nest-alias",      # n[0][0], p/q aliasing, e["k"][1]
+    "closure",         # func mk(n) { return x -> x + n }
+    "loop",            # while i < k { acc = ... }
+    "try-catch",       # try { say ... } catch (e) { ... }
+    "set-ops",         # s = 1, 2, 3; say s - t   (SETOPS, all seven)
+    "str-concat",      # say sp + 1               (§10.147's shape)
+    "scalar-tail",     # the trailing `say <value_expr>` (unconditional)
+)
+
+
+def _hit(rng, p, name, suppressed):
+    """One family's dice roll, with the suppression lever.
+
+    rng.random() is drawn FIRST and unconditionally, so `--suppress-family`
+    changes which block runs without turning the lever into a second, unnamed
+    change to the roll order.  Suppressing a family still reshuffles the
+    programs after it (its body draws its own randoms), and that is stated in
+    the docstring rather than papered over: the reading this lever exists for
+    is "a declared family produced zero programs is RED", not "the rest of the
+    run is byte-identical".
+    """
+    return rng.random() < p and name not in suppressed
+
+
+def audit_families(counts):
+    """The declaration checked against the census: (silent, undeclared).
+
+    `silent` is a declared family that produced no program at all -- the shape
+    §10.154 had two of and nothing could see.  `undeclared` is a family the
+    generator registered that FAMILIES does not name: a block added to the
+    generator without being added to the declaration, which makes the claim
+    above incomplete rather than wrong.
+    """
+    silent = [f for f in FAMILIES if counts.get(f, 0) == 0]
+    undeclared = sorted(n for n in counts if n not in FAMILIES)
+    return silent, undeclared
+
+
+def verdict_of(diverge, threw, silent, undeclared):
+    """One place decides PASS/FAIL, so the self-check measures the real rule."""
+    if diverge or threw or silent or undeclared:
+        return "FAIL"
+    return "PASS"
 
 
 def number(rng):
@@ -212,10 +302,19 @@ def set_or_array(rng, names):
     return "[" + ", ".join(rng.choice(INTS) for _ in range(rng.randint(0, 3))) + "]"
 
 
-def gen_program(rng):
+def gen_program(rng, suppressed=()):
+    """One program, plus the set of families this call actually EMITTED.
+
+    The second return value is the registration the run counts.  A family is
+    registered at its own block, not inferred from the text afterwards: if the
+    block stops emitting, the registration stops with it, which is the whole
+    point (see FAMILIES above).
+    """
     lines, names = [], []
+    emitted = set()
     # sometimes a container whose length is read back
-    if rng.random() < 0.5:
+    if _hit(rng, 0.5, "container-len", suppressed):
+        emitted.add("container-len")
         kind = rng.choice(["arr", "dict", "set", "str"])
         if kind == "arr":
             lines.append("c = [" + ", ".join(rng.choice(INTS) for _ in range(rng.randint(0, 5))) + "]")
@@ -236,6 +335,8 @@ def gen_program(rng):
         # of OP_INDEX_SET has to carry.  This route has a separate helper for
         # each of those and each has its own note; a generator that only builds
         # containers and asks for their length never exercises any of them.
+        if kind != "set":
+            emitted.add("index-side")   # arr, str and dict each read a subscript
         if kind == "arr":
             lines.append("say c[0]")
             lines.append("say c[%d]" % rng.randint(0, 3))
@@ -254,7 +355,8 @@ def gen_program(rng):
     # at translate time the generator could not say them, which is exactly the
     # silence this fuzzer exists to break -- so the family is written down and
     # given its own seed rather than left to the dice.
-    if rng.random() < 0.4:
+    if _hit(rng, 0.4, "growth", suppressed):
+        emitted.add("growth")
         k = rng.randint(1, 5)
         lines.append("gw = [" + ", ".join(rng.choice(INTS) for _ in range(rng.randint(1, 3))) + "]")
         lines.append("gw[%d] = %s" % (k, rng.choice(INTS)))
@@ -270,7 +372,8 @@ def gen_program(rng):
     # region, and a write through an alias has to be visible through the original
     # name.  Measured reachable in both runtimes: `n = [[1, 2], [3]]` /
     # `say n[1][0]`, `b = a` / `b[0] = 9` / `say a[0]` (both answer 9).
-    if rng.random() < 0.35:
+    if _hit(rng, 0.35, "nest-alias", suppressed):
+        emitted.add("nest-alias")
         role = rng.choice(["alias", "nested", "dictvalue"])
         if role == "alias":
             lines.append("p = [%s]" % ", ".join(rng.choice(INTS) for _ in range(rng.randint(1, 3))))
@@ -292,12 +395,14 @@ def gen_program(rng):
             lines.append('e["k"][1] = %s' % rng.choice(INTS))
             lines.append('say e["k"][1]')
     # a closure over one capture
-    if rng.random() < 0.35:
+    if _hit(rng, 0.35, "closure", suppressed):
+        emitted.add("closure")
         lines.append("func mk(n) { return x -> x + n }")
         lines.append("f = mk(%s)" % rng.choice(INTS))
         lines.append("say f(%s)" % rng.choice(INTS))
     # a loop, so the answer depends on iteration
-    if rng.random() < 0.5:
+    if _hit(rng, 0.5, "loop", suppressed):
+        emitted.add("loop")
         lines.append("acc = " + rng.choice(INTS))
         names.append("acc")
         lines.append("i = 0")
@@ -307,7 +412,8 @@ def gen_program(rng):
         lines.append("    i = i + 1")
         lines.append("}")
     # a try/catch around an expression that may or may not throw
-    if rng.random() < 0.3:
+    if _hit(rng, 0.3, "try-catch", suppressed):
+        emitted.add("try-catch")
         lines.append("try {")
         lines.append("    say " + value_expr(rng, names))
         lines.append("} catch (e) {")
@@ -327,7 +433,8 @@ def gen_program(rng):
     # comparisons, so the family is legal; measured examples: `s = 1, 2, 3`
     # / `t = 2, 3` / `say s - t` prints set(1) (the interpreter's set_diff),
     # and `say s * t` prints set(2).
-    if rng.random() < 0.5:
+    if _hit(rng, 0.5, "set-ops", suppressed):
+        emitted.add("set-ops")
         lines.append("sw = " + set_expr(rng, names))
         lines.append("sv = " + set_expr(rng, names))
         op = rng.choice(SETOPS)
@@ -339,13 +446,20 @@ def gen_program(rng):
     # A STRING REACHING +.  value_expr has no leaf that returns a bare string,
     # so `say "a" + 1` -- the shape section 10.147 was written for -- could
     # never appear in 2500 generated programs.
-    if rng.random() < 0.5:
+    if _hit(rng, 0.5, "str-concat", suppressed):
+        emitted.add("str-concat")
         lines.append("sp = " + rng.choice(STRINGS))
         lines.append("say sp + " + rng.choice(INTS))
         lines.append("say " + rng.choice(INTS) + " + sp")
         lines.append("say sp + " + rng.choice(STRINGS))
+    # UNCONDITIONAL, and that is what makes it the census's own canary: every
+    # program carries a trailing scalar say, so `scalar-tail` reading 0 in the
+    # census means the REGISTRATION stopped happening, not that the dice were
+    # unlucky.  A family that can never be silent is worth one line precisely
+    # because it tells the red for the other nine apart from a broken counter.
+    emitted.add("scalar-tail")
     lines.append("say " + value_expr(rng, names))
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n", emitted
 
 
 # --- running ---------------------------------------------------------------
@@ -383,10 +497,25 @@ def main():
     ap.add_argument("--mir-tool", default=str(ROOT / "build" / "aot-mir"))
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"))
     ap.add_argument("--keep-dir", default="")
+    ap.add_argument("--suppress-family", action="append", default=[], metavar="NAME")
     ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args()
     if args.self_check:
         return self_check()
+
+    # A SUPPRESSION THAT NAMES NOTHING IS REFUSED, because the whole point of
+    # the lever is that a reader can trust its red: `--suppress-family gwoth`
+    # (typo) would otherwise suppress nothing and print a green run, which reads
+    # exactly like "the control does not work".  The key set is closed here for
+    # the same reason check_reconciliation.py closes its token keys.
+    suppressed = set(args.suppress_family)
+    unknown = sorted(suppressed - set(FAMILIES))
+    if unknown:
+        for name in unknown:
+            print("FFAMILY-SUPPRESS-UNKNOWN|name=%s|why=not-in-FAMILIES|declared=%d"
+                  % (name, len(FAMILIES)))
+        print("IR-AOT-MIR-FUZZ-FAMILY-DECLARED|names=%s" % ",".join(FAMILIES))
+        return 1
 
     # RESOLVED TO ABSOLUTE, because the translator is run with `work` as its cwd
     # and a relative --keep-dir then names a FILE the translator cannot find
@@ -399,8 +528,11 @@ def main():
     ran = diverge = threw = unsound = 0
     skipped_refusals = 0
     findings = []
+    family_counts = {name: 0 for name in FAMILIES}
     for n in range(args.count):
-        src = gen_program(rng)
+        src, emitted = gen_program(rng, suppressed)
+        for name in emitted:
+            family_counts[name] = family_counts.get(name, 0) + 1
         prog = work / ("f%03d.im" % n)
         prog.write_text(src)
         rc_i, out_i, _e_i = run([args.engine, "--no-mods", "run", prog], work)
@@ -444,14 +576,33 @@ def main():
             diverge += 1
             findings.append("FDIVERGE|case=%d|interp=%r|mir=%r" % (n, a, b))
 
+    # THE FAMILY CENSUS, and the red it exists for.  A declared family at zero
+    # programs is the silence §10.154 could only find by reading the generator
+    # against the route's arm list: the run itself said PASS for 2500 programs
+    # while two families were dead.  It says RED now, and it says it in a line
+    # a machine can grep.
+    silent, undeclared = audit_families(family_counts)
+    for name in silent:
+        findings.append("FFAMILY-SILENT|family=%s|programs=0|of=%d" % (name, args.count))
+    for name in undeclared:
+        findings.append("FFAMILY-UNDECLARED|family=%s|programs=%d|why=not-in-FAMILIES"
+                        % (name, family_counts[name]))
     for f in findings:
         print(f)
+    for name in FAMILIES:
+        print("IR-AOT-MIR-FUZZ-FAMILY|name=%s|programs=%d|of=%d|%s"
+              % (name, family_counts[name], args.count,
+                 "emitted" if family_counts[name] else "SILENT"))
+    print("IR-AOT-MIR-FUZZ-FAMILIES|declared=%d|emitted=%d|silent=%d|undeclared=%d|suppressed=%s"
+          % (len(FAMILIES), len(FAMILIES) - len(silent), len(silent), len(undeclared),
+             ",".join(sorted(suppressed)) if suppressed else "-"))
     print("IR-AOT-MIR-FUZZ|seed=%d|count=%d|ran=%d|diverge=%d|threw=%d|unsound=%d"
           "|refused-by-name=%d|dir=%s"
           % (args.seed, args.count, ran, diverge, threw, unsound,
              skipped_refusals, work))
-    print("IR-AOT-MIR-FUZZ-VERDICT|%s" % ("PASS" if diverge == 0 and threw == 0 else "FAIL"))
-    return 0 if diverge == 0 and threw == 0 else 1
+    verdict = verdict_of(diverge, threw, silent, undeclared)
+    print("IR-AOT-MIR-FUZZ-VERDICT|%s" % verdict)
+    return 0 if verdict == "PASS" else 1
 
 
 def self_check():
@@ -461,6 +612,13 @@ def self_check():
     Three cells: identical payloads are clean; one byte apart is a difference;
     and the engine's own notices are filtered (a line starting with '[' is not
     the program's output).
+
+    THEN THE FAMILY AUDIT'S OWN CONTROL, in BOTH directions, driven through the
+    real generator rather than a hand-made counts dict -- a census that only
+    ever gets to say "all ten emitted" is the silence §10.156 exists to remove,
+    so the second half of the control suppresses one family and requires the
+    audit to name exactly that one.  `checks` therefore counts comparator cells
+    and family cells together.
     """
     ok = True
     cells = [
@@ -475,7 +633,40 @@ def self_check():
         print("IR-AOT-MIR-FUZZ-SELFCHECK|what=%s|differ=%s|want=%s|%s"
               % (what, got, want_diff, "ok" if hit else "WRONG"))
         ok &= hit
-    print("IR-AOT-MIR-FUZZ-SELFCHECK|checks=%d|verdict=%s" % (len(cells), "PASS" if ok else "FAIL"))
+
+    def census(count, suppressed):
+        r = random.Random(7)
+        c = {f: 0 for f in FAMILIES}
+        for _ in range(count):
+            _src, emitted = gen_program(r, suppressed)
+            for name in emitted:
+                c[name] = c.get(name, 0) + 1
+        return c
+
+    clean = census(20, set())
+    silent_clean, undeclared_clean = audit_families(clean)
+    silenced = census(20, {"growth"})
+    silent_silenced, _u = audit_families(silenced)
+    fam_cells = [
+        ("families-all-emitted", silent_clean == [] and undeclared_clean == []
+         and verdict_of(0, 0, silent_clean, undeclared_clean) == "PASS",
+         "silent=%s|undeclared=%s" % (silent_clean, undeclared_clean)),
+        ("family-silenced-is-named", silent_silenced == ["growth"],
+         "silent=%s" % (silent_silenced,)),
+        ("silent-family-is-red", verdict_of(0, 0, ["growth"], []) == "FAIL",
+         "verdict=%s" % verdict_of(0, 0, ["growth"], [])),
+        ("undeclared-family-is-red", verdict_of(0, 0, [], ["ghost"]) == "FAIL",
+         "verdict=%s" % verdict_of(0, 0, [], ["ghost"])),
+        ("scalar-tail-is-the-canary", clean["scalar-tail"] == 20,
+         "scalar-tail=%d|of=20" % clean["scalar-tail"]),
+    ]
+    for what, hit, detail in fam_cells:
+        print("IR-AOT-MIR-FUZZ-SELFCHECK|what=%s|%s|%s"
+              % (what, detail, "ok" if hit else "WRONG"))
+        ok &= hit
+    print("IR-AOT-MIR-FUZZ-SELFCHECK|declared=%s" % ",".join(FAMILIES))
+    print("IR-AOT-MIR-FUZZ-SELFCHECK|checks=%d|verdict=%s"
+          % (len(cells) + len(fam_cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
 
