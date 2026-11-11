@@ -8106,3 +8106,125 @@ IR-AOT-MIR-FUZZ-VERDICT|PASS
 - **仍然不生成**：线程段（按名拒）、时间或磁盘答案（`wait`/`record`）、故意的未捕获 `throw`、以及「集合作字典键」（§10.128 已记成「与缺陷达成一致」，每次重find 一遍没有新信息）。
 - **生成的是语句而不是表达式**：裸集合字面量在两条路线里都不是合法表达式（实测 `Error: expected 'expression', but got ','`），所以集合族写成 `sw = <集合字面量>` 再 `say sw OP sv`，而不是把集合塞进表达式里。
 - **本格不产生新判据**：生成器改动的「判据」是它注册的种子族与自检，覆盖面由每次运行的 `diverge`/`refused-by-name` 计数表达；若要它变成有牙的断言，得先有人写下「哪一族必须出现在报告里」——那是另一格。
+
+## §10.156 生成器自报族谱：一族沉默就是一次红（tools，A 类外一项）
+
+### 一、来源与日期
+
+- 提交：`0ba1164`（生成器自报 + 沉默即红；红、绿两条读数都逐字贴在那笔的提交信息里）。本节文档随后单独一笔。
+- 日期：2026-11-11。基线 `8c20c9a`（与 `git ls-remote origin refs/heads/main` 同 sha）。
+- 本格不动 `src/`：改的是生成器**关于自己的说法**。
+
+### 二、形状：沉默与正确，从生成器内部无法区分
+
+§10.154 靠人把生成器的代码对着路线的臂列表读，找出两族死代码，然后在自己的「六」里写下了下一格的条件——「若要它变成有牙的断言，得先有人写下『哪一族必须出现在报告里』」。本格就是那一格。
+
+在那之前，生成器相信的族只活在 rng 的分支里：哪一族被摇到、摇到几次，跑完只知道总分（`ran`、`diverge`、`refused-by-name`），**报告里没有族名**。所以把某一族的概率改塌到零（写错分支条件、把骰子写死、常量折叠掉一种运算符）之后，输出与「这族全对」逐字节相同——2500 例 PASS 站在两族死代码前面，就是这么来的。这是同一课的第三次，前两次都只能靠人读出来。
+
+三件东西现在都在生成器里，且都写在同一份源码上：
+
+1. **声明**：`FAMILIES` 是工具对自己所相信的全部族名的声明，写在 `gen_program` 上方，reviewer 可以就着一处把声明与臂列表对着读。
+2. **登记**：每族在自己的代码块里 `emitted.add(name)`，不在事后从生成文本里猜。块停止发程序，登记随之消失——这才是重点。
+3. **红**：`audit_families` 把「声明了却零程序」变成 `FFAMILY-SILENT`；`verdict_of` 是**唯一**决定 PASS/FAIL 的地方，自检因此量的是真规则，不是它的拷贝。
+
+### 三、判据与红读数
+
+判据三条，方向都是「说出来的必须兑现」：
+
+- 声明了、却零程序 → `FFAMILY-SILENT|family=<n>|programs=0|of=<count>` → `VERDICT|FAIL`，退出码 1。
+- 登记了、却不在声明里 → `FFAMILY-UNDECLARED|...`，同样红：一份会过期的声明，是同一课高一层。
+- `--suppress-family gwoth`（拼错的名字）→ `FFAMILY-SUPPRESS-UNKNOWN`，退出码 1。压不住的杆子只会打出绿色，而绿色读起来正像「这个控制不工作」，所以键集在这里是关死的。
+
+红读数两条，都取 seed 7、`--count 20`。**(a) 旗子压族**（`--suppress-family growth`，退出码 1）；**(b) 源码级压族**（把 growth 的骰子 `0.4` 临时改成 `0.0`，不加旗子，退出码 1）——(b) 打印的 `suppressed=-` 说明这次红来自生成器自己的骰子，不是来自那根专门用来演示它的杆子。两条都在下节逐字；恢复骰子后同一命令回到 `VERDICT|PASS`、退出码 0。
+
+### 四、读数
+
+红 (a)，旗子压族：
+
+```
+FFAMILY-SILENT|family=growth|programs=0|of=20
+IR-AOT-MIR-FUZZ-FAMILY|name=growth|programs=0|of=20|SILENT
+IR-AOT-MIR-FUZZ-FAMILIES|declared=10|emitted=9|silent=1|undeclared=0|suppressed=growth
+IR-AOT-MIR-FUZZ|seed=7|count=20|ran=17|diverge=0|threw=0|unsound=0|refused-by-name=3
+IR-AOT-MIR-FUZZ-VERDICT|FAIL
+exit=1
+```
+
+红 (b)，源码级压族（`0.4` → `0.0`，无旗子）：
+
+```
+FFAMILY-SILENT|family=growth|programs=0|of=20
+IR-AOT-MIR-FUZZ-FAMILY|name=growth|programs=0|of=20|SILENT
+IR-AOT-MIR-FUZZ-FAMILIES|declared=10|emitted=9|silent=1|undeclared=0|suppressed=-
+IR-AOT-MIR-FUZZ-VERDICT|FAIL
+exit=1
+```
+
+恢复后的绿，四个种子族（每族打印自己的普查行、总分与判决）：
+
+```
+IR-AOT-MIR-FUZZ-FAMILIES|declared=10|emitted=10|silent=0|undeclared=0|suppressed=-
+IR-AOT-MIR-FUZZ|seed=7|count=20|ran=19|diverge=0|threw=0|unsound=0|refused-by-name=1|dir=/tmp/aot_mir_fuzz_es0mm021
+IR-AOT-MIR-FUZZ-VERDICT|PASS
+IR-AOT-MIR-FUZZ-FAMILIES|declared=10|emitted=10|silent=0|undeclared=0|suppressed=-
+IR-AOT-MIR-FUZZ|seed=11|count=20|ran=14|diverge=0|threw=0|unsound=0|refused-by-name=6|dir=/tmp/aot_mir_fuzz_tbmayaef
+IR-AOT-MIR-FUZZ-VERDICT|PASS
+IR-AOT-MIR-FUZZ-FAMILIES|declared=10|emitted=10|silent=0|undeclared=0|suppressed=-
+IR-AOT-MIR-FUZZ|seed=13|count=20|ran=13|diverge=0|threw=0|unsound=0|refused-by-name=7|dir=/tmp/aot_mir_fuzz_fdhsptc6
+IR-AOT-MIR-FUZZ-VERDICT|PASS
+IR-AOT-MIR-FUZZ-FAMILIES|declared=10|emitted=10|silent=0|undeclared=0|suppressed=-
+IR-AOT-MIR-FUZZ|seed=17|count=20|ran=17|diverge=0|threw=0|unsound=0|refused-by-name=3|dir=/tmp/aot_mir_fuzz_5qxvho0k
+IR-AOT-MIR-FUZZ-VERDICT|PASS
+```
+
+seed 7 的逐族普查：十族全部非零，且 `scalar-tail` 恰好等于 `count`（下一节说它为什么该等于）：
+
+```
+IR-AOT-MIR-FUZZ-FAMILY|name=container-len|programs=12|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=index-side|programs=8|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=growth|programs=5|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=nest-alias|programs=9|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=closure|programs=7|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=loop|programs=13|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=try-catch|programs=3|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=set-ops|programs=10|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=str-concat|programs=14|of=20|emitted
+IR-AOT-MIR-FUZZ-FAMILY|name=scalar-tail|programs=20|of=20|emitted
+```
+
+自检（`--self-check`，退出码 0，取证那一格从 4 格加到 9 格）：
+
+```
+IR-AOT-MIR-FUZZ-SELFCHECK|what=families-all-emitted|silent=[]|undeclared=[]|ok
+IR-AOT-MIR-FUZZ-SELFCHECK|what=family-silenced-is-named|silent=['growth']|ok
+IR-AOT-MIR-FUZZ-SELFCHECK|what=silent-family-is-red|verdict=FAIL|ok
+IR-AOT-MIR-FUZZ-SELFCHECK|what=undeclared-family-is-red|verdict=FAIL|ok
+IR-AOT-MIR-FUZZ-SELFCHECK|what=scalar-tail-is-the-canary|scalar-tail=20|of=20|ok
+IR-AOT-MIR-FUZZ-SELFCHECK|declared=container-len,index-side,growth,nest-alias,closure,loop,try-catch,set-ops,str-concat,scalar-tail
+IR-AOT-MIR-FUZZ-SELFCHECK|checks=9|verdict=PASS
+```
+
+拼错族名的拒绝：
+
+```
+FFAMILY-SUPPRESS-UNKNOWN|name=gwoth|why=not-in-FAMILIES|declared=10
+IR-AOT-MIR-FUZZ-FAMILY-DECLARED|names=container-len,index-side,growth,nest-alias,closure,loop,try-catch,set-ops,str-concat,scalar-tail
+exit=1
+```
+
+### 五、写这条之前先量过的事
+
+1. **两个方向的红都真的跑出来了，不是设计**：先按旗子压（退出码 1），再把 growth 的骰子改 0（退出码 1，且 `suppressed=-`），恢复后同一条命令回到 0。只写判据而不看它红，「这个控制工作」就只是一句话。
+2. **本格没有改变路线上的任何读数**：四个种子族的 `ran`/`refused-by-name` 与 §10.154 记录的值逐个相同（19/1、14/6、13/7、17/3），分歧、抛出、不可靠都仍是 0。红只来自「族名零程序」这一条新判据，不是把旧判据调紧了。
+3. **`scalar-tail` 每个程序都登记，所以它该等于 `count`**：它是普查自己的金丝雀——某族读 0 究竟是「骰子没摇到」还是「计数器坏了」，靠一个不可能沉默的族分开；实测 20/20。
+4. **计数没有动**：本格不加 CTest，`ctest -N` 仍是 203（与 `EXP_CTEST`、`recon.ctest-count` 一致），`check_reconciliation.py` 仍 `VERDICT|PASS|measured=5`。要求「若加 CTest 必须同笔同步计数」因此未被触发。
+5. **文档预算改前量过**：`explicit delta +12 (expect +12)`、`unanchored delta -4 (ceiling 0)`、`pointer delta +196 (ceiling 223)`。本节刻意不写任何新的带行号的路径引用（`EXP_LINE_REFS_DELTA` 是**等号**判据，多一条显式引用就变 +13），所以三项读数改后不变。
+
+### 六、边界（每条都是决定，不是遗漏）
+
+- **不加新 CTest**：四个已注册的种子族今天就端到端跑这条沉默检查（零程序族 → `FFAMILY-SILENT` → 退出码 1 → CTest 红），再加一个「专跑自检」的注册只会多一处计数要同步、少一分信号。代价写在这里：门禁里**没有**任何一步会去压族，压族这一步是人手动复现的。
+- **`scalar-tail` 是无条件族，故意保留**：它不进任何 `if`，所以它衡量的是「登记是否还在发生」，不是「骰子是否友好」。它是金丝雀，不是覆盖面。
+- **`index-side` 登记在 `container-len` 的块里**：它今天只在这块里可达（容器先被造出来，才谈得上取下标），所以压 `container-len` 会同时点名两族——那是代码形状的真话，不是重复计数；普查里 12 与 8 的差就是这个包含关系。
+- **压族不保证其余部分的字节相同**：被跳过的块本来会抽自己的随机数，所以压族之后程序流整体位移（红 (a) 的 `ran=17` 与绿的 `ran=19` 就是这个位移）。杆子只承诺「零程序即红」，不假装被压的那次运行与原来同构；这一点写在 `_hit` 的 docstring 里，而不是靠读者去猜。
+- **生成器的运行目录仍是每次运行新建的临时目录，不改**：那是工具的既有行为，单次进程内自足；本格的 scratch（配置日志、构建日志、四个种子的输出、提交信息草稿）全部落在 worktree 的 `.scratch/` 下。
+- **本格不声称覆盖面**：普查说的是「这一族发了几个程序」，不是「这一族打到了路线的哪几条臂」；把族名对到臂列表仍是人读的活（§10.154 就是这么做的），本条只是让「族名一个都没有」这件事自己红。
