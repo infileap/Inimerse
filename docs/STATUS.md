@@ -5913,7 +5913,7 @@ IR-MIR-VERDICT|FAIL|tree=816f6cb7a15a72737d8e76c97479057c1edb37ab|accepted=86|re
 2. **写侧不做 interning。** 读侧 `vm_array_get` 把结果暂存进全局 intern 表让临时串活过一步，这一段没有复刻到写侧（写侧本来不 intern）。
 3. **不做运行期回收。** `value_free(&a->items[i])`（`src/vm/vm.c:995`）与 `vm->used_mem` / `array_ensure` 的记账（`:987-993`）没有复刻：本路线所有块都登记在 `mv_alloc` 的链表里（`src/compilation/aot_mir.c:171-183`），退出时一次扫（`IR-MIR-ALLOCS|…|live=0`），运行期不回收。覆盖掉一个堆串元素不会立刻释放旧串。 [obs: 816f6cb]
 4. **`array_ensure` 的失败路径没有对应物。** 解释器 `:987-990` 在 ensure 失败时 `value_free(&tmp)` 然后静默 return（丢一次写）；这边 `mv_alloc` 的 OOM 是 `if (!p) abort();`（`src/compilation/aot_mir.c:173`），即「停止」而不是「丢一次写」。 [obs: 816f6cb]
-5. **常量下标越界仍按既有 policy 拒译**，即使那条写其实会增长：`a[p] = 9` 之后 `say a[5]` → `why=index-out-of-range-constant`。不放行，因为放行等于让「可证明写错的下标」与「对的下标」同答（`MIR_ONLY_REFUSE` 里 `mir_container_const_oob` 的注释就是这个理由）。
+5. **常量下标越界仍按既有 policy 拒译**，即使那条写其实会增长：`a[p] = 9` 之后 `say a[5]` → `why=index-out-of-range-constant`。不放行，因为放行等于让「可证明写错的下标」与「对的下标」同答（`MIR_ONLY_REFUSE` 里 `mir_container_const_oob` 的注释就是这个理由）。**这一条已于 §10.151 退役**：解释器对越界读答 `nil`、对增长后的读答写进去的值，所以「写错的下标」不存在，拒绝反而拒绝了一个有答案的程序。
 6. **`say a`（打印容器）仍崩**：`a = [1, 2, 3]; a[1] = 9; say a` 在 MIR 路线 rc=134（`mv_say` 的 `MV_ARR` 臂 abort），解释器打印 `[1, 9, 3]`。这是 §10.112 已钉的**既有**边界（本节没碰 `mv_say`），也不作为本节判据——一条没人会修的红判据只会变成噪音。
 7. **链式下标写入只在里层已存在时可用**：`a = [[1, 2], [3]]; a[0][1] = 88` 两路都答 `88`；「里层是 nil 就新建」那一臂不可达——`a = [[1, 2]]; a[3][0] = 5` 先被常量下标 policy 拒掉（`why=index-out-of-range-constant`，解释器答 `5` 再 `2`）。
 8. **共享语料与 refuse 表一笔没动**：`tools/aot_cover.pin.json` 仍 `86` 条、`of=29`，`MIR_ONLY_REFUSE` 里 `mir_container_const_oob` 仍在册。
@@ -7916,3 +7916,54 @@ IR-MIR-VERDICT|PASS|tree=32ed5848f21a7980072001fe547f2ae39bbfe1be|accepted=86|re
 1. 本格只把**机制**从 exit 改成 throw；`i >= count` 的扩展没有新判据（运行期早已一致），但**常量子标的翻译期拒绝仍在**：程序 `a = [1, 2]` 后写 `a[5] = 9` 会被 `why=index-out-of-range-constant` 拒掉，而解释器会扩展它。这是本路线的一处**过度拒绝**，需要单独一格处理（它不是「没有答案」，而是「答案需要运行期的长度」，而 present 的常数检查用的是字面量的长度）。
 2. `mv_arr_set` 对非数组容器（字符串/字典/nil）的写仍是「静默忽略」，这条与解释器一致，没有判据（旧用例 `mir_index_set_edges` 覆盖了边界下标的一半）。
 3. 本格不动 `mv_arr_get` 的负下标语义（nil），也不动字典键比较的任何规则。
+
+## §10.151 常量子标的「生成前拒绝」退役：一个有答案的程序不该被拒译（aot-mir，A 类第二十八项）
+
+### 一、来源与日期
+
+判据 `5b9dcb0`，实现 `4f6c8e8`，2026-11-11。这一格**不推进 handles**（`handles=59|of=67|unknown=8` 不动），推进的是 `accepted 275→278`：三个语料程序此前被按名拒译，现在被执行并与解释器逐字节相同。
+
+### 二、退役的是什么
+
+`src/compilation/aot_mir.c` 曾有一个 `prescan_constant_subscripts` 趟：它按容器把「某寄存器里是长度为 N 的字面量数组」「某寄存器里是常量 k」这两件事沿直线指令传播（join 点清零、全局经写/读传播、调用清全局表），然后在 `OP_INDEX_GET` 上发现 `k >= N` 就**在发射之前**拒译，理由名 `index-out-of-range-constant`。全文件只此一处「生成前拒绝」，它自己的长注释也承认：**解释器会回答它（nil）**。
+
+它退役的原因是两个实测，不是一个偏好：
+
+1. **它有答案，而且答案不是 nil**。`a = [1, 2]` / `a[5] = 9` / `say a[5]` —— 解释器印 `9`（写会让数组**增长**，中间槽填 nil），而这条拒绝把它判成「不可能的下标」。一个答案非 nil 的程序被拒译，是比「答错」更贵的一类：它连比较的机会都没有。
+2. **它记住的长度会过期**。增长是写路径干的，而那段知识不在写之后失效，所以 `a[5] = 9` 之后同一常量下标的**读**仍然落在过期长度上。这是策略层的硬伤：一份不可靠的知识用来拒绝，拒绝就会错。
+
+### 三、判据
+
+`mir_container_const_oob` 从 `MIR_ONLY_REFUSE` 退役（它要求「必须拒译」，而拒译正是被退役的东西），换成 `MIR_ONLY` 里的三条：
+
+| 判据 | 程序 | 解释器 | 退役前本路线 |
+|---|---|---|---|
+| `mir_read_past_a_literal_is_nil` | `a = [1, 2, 3]` / `say a[3]` / `say "after"` | `nil`,`after` | 拒译（`insn=10 constant subscript 3 is outside the 3 element(s)`） |
+| `mir_read_a_value_written_past_the_literal` | `a = [1, 2]` / `a[5] = 9` / `say a[5]` / `say len(a)` | `9`,`6` | 拒译（`insn=12 … 5 is outside the 2 element(s)`） |
+| `mir_read_far_past_a_single_element_literal` | `a = [1]` / `say a[40]` | `nil`,`after` | 拒译（`insn=6 … 40 is outside the 1 element(s)`） |
+
+三条都是 `exec=same`（`stdout-hex` 分别是 `6e696c0a61667465720a`、`390a360a`、`6e696c0a61667465720a`），`ALLOCS` 各 `1|256`（字面量自己的块，读不分配）——这两行是**绿跑之后量的**，第一遍按 `0|0` 写，被 `IR-MIR-ALLOCS` 判错。
+
+### 四、读数
+
+```
+IR-MIR-COVER|...|mir-only-cases=192|mir-only-same-as-interpreter=192
+IR-MIR-VERDICT|PASS|tree=ba568e9...|accepted=86|refused=0|differ=0
+IR-AOT-MIR|accepted=278|refused=0|same-as-interpreter=278|of=29|emittable=59|of-ops=67|not-emittable=8|beyond-ast-denominator=30
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|table=59|emitter=59|reported=59|agree=yes
+```
+
+`accepted 275→278` 是这一格唯一动过的数：三个语料程序从「按名拒译」变成「执行且逐字节相同」。
+
+### 五、写这条之前量过的事
+
+1. 解释器对越界**读**答 `nil`（`src/vm/vm.c` 的数组读臂），本路线的 `mv_arr_get` 早就是同一个答案 —— 也就是说这条拒绝所拒绝的程序，运行期本来就能答对。
+2. 越界**写**会让数组增长（`src/vm/vm.c` 的写路径按 `ni` 扩容并填 nil），所以「常量下标越界」在写侧根本没有拒绝的理由；在写之后再读同一个下标，答案就是写进去的值。
+3. 负下标：读答 nil、写抛 `index_out_of_range`（§10.150 已把它改成可捕获的 throw）——两者都不在这条静态知识的范围里，退役没有碰到它们。
+4. `KS_GLOBALS`（4096）这个界与 `0 < id < 4096` 的检查是这段知识的实现细节；删掉之后 `grep` 不再有 `ks_*` 残留，只剩两处注释点名「它已退役」。
+
+### 六、边界
+
+1. **删掉的是「生成前拒绝」，不是「运行期行为」**。越界读仍是 nil、越界写仍是增长、负下标写仍是可捕获的 throw；本格只删了「发射前把程序判死」的那一步 (168 行)。
+2. **`MIR_ONLY_REFUSE` 仍然存在**，它现在装的是能力边界（线程、测不出的限制等），不再是这条。区别写在那里：能力边界可以拒，可回答的形状不能拒。
+3. **本路线的「拒绝前已知」少了唯一的实例**。往后若有新检查想按同样理由拒译，得先回答本格这个问题：「解释器会答什么？如果它会答，我们就得答」。

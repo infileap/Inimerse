@@ -1614,9 +1614,10 @@ MIR_ONLY = [
     # The dict case is a DICT (n/2) so the wrong answer is 3, not 7; the array
     # case is an ARRAY (n as-is) so the same head prints 7.  Neither case can pass
     # by fixing one arm only.  The array's write uses a VARIABLE subscript because
-    # a constant one outside the literal is refused at translate time
-    # (why=index-out-of-range-constant) -- that refusal is why this program exists
-    # rather than `a[2] = 9` on a two-element literal.
+    # when this criterion was written a constant one outside the literal was
+    # refused at translate time (why=index-out-of-range-constant).  That refusal
+    # was retired by §10.151, so `a[2] = 9` would work today -- the program is
+    # left as it was measured rather than rewritten for no reason.
     ("mir_len_after_a_dict_moves",
      'd = {"a": 1}\n'
      's = 1, 2\n'
