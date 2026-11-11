@@ -431,6 +431,18 @@ ALLOCS_EXPECT = {
     "mir_closure_higher_order": (1, 32),
     "mir_closure_return_value": (2, 96),
     "mir_closure_zeroarg_string": (2, 40),
+    # The wrong-arity closure measures the same one-environment-per-
+    # instantiation shape as the rows above, and its number was MEASURED the
+    # same way -- `mk = (n) -> (a, b) -> n + a + b` then `f = mk(10)` is ONE
+    # capture of ONE slot, so the generated program's own IR-MIR-ALLOCS line
+    # reads allocs=1|freed=1|live=0|bytes=32.  It is here rather than left on
+    # the (0, 0) default because the default made the harness report
+    # `ok=no|expect-allocs=0|expect-bytes=0` on the green run, i.e. the row is
+    # what the wrong-arity fix has to keep true, not a restatement of it: a fix
+    # that padded by re-reading the callee's environment, or that built a fresh
+    # argument vector per call, would move this number.  The other eight
+    # wrong-arity criteria measure 0|0 and stay on the default.
+    "mir_arity_value_capture_extra": (1, 32),
     # Function equality allocates NOTHING on the capture-free side (there is no
     # environment to build) and exactly the two environments `make` builds in
     # the captured case -- one per instantiation, 32 bytes each.  Both MEASURED
