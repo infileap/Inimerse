@@ -7788,3 +7788,69 @@ IR-AOT-MIR-VERDICT|PASS|tree=dd886baa06aab12d21f83c6145c5ce1451113cdf|accepted=2
 3. **`/` 与 `%` 不动**：控制组那一条钉住它们仍然抛 `type_mismatch`，与解释器一致（解释器的 `/`、`%` 臂没有集合分支）。
 4. **宽整数窄化是照抄，不是修复**：本格不修解释器的 32 位截断，只让它在本路线里同样发生。
 5. **`mv_try_sub` / `mv_try_mul` 仍然可能 abort**：本格只改 `mv_sub` / `mv_mul` 的入口；带 `try` 的程序走 wrapper，集合在那里仍会落到 `mv_as_nv` ⇒ `abort()`。记成债，与 §10.147 的边界第 3 条同一笔。
+
+## §10.149 算术包装器：先问是不是数字，再转换（aot-mir，A 类第二十八项）
+
+### 一、来源与日期
+
+- 判据：`2133490`（`test: eight criteria for arithmetic on a non-number, inside a program with a try`），2026-11-11。
+- 实现：`810f849`（`aot-mir: the arithmetic wrappers ask whether it is a number before converting it`）。
+- **本格不推进 handles**（`OP_SUB`/`OP_MUL`/`OP_DIV`/`OP_MOD`/`OP_NEG` 早就有臂，`handles` 仍是 `59|of=67|unknown=8`）：它推进的是 `accepted 262 → 270` 与 `mir-only-cases 176 → 184`，也就是**同一批 opcode 不再答崩**。
+
+### 二、形状
+
+带 `try` 的程序里，发射器把 `OP_ADD/SUB/MUL/DIV/MOD/NEG` 换成 `mv_try_*` 包装器（原因见 §10.137 的第二节：停止要能被 catch 住）。五个包装器的开头原本是：
+
+`NV x = mv_as_nv(a), y = mv_as_nv(b);`
+
+对**数字以外**的东西 `mv_as_nv` 是 `abort()`。于是：
+
+| 表达式 | 解释器 | 本格之前（带 `try` 的程序） | 本格之后 |
+|---|---|---|---|
+| `"a" - 1` | 可捕获的 `type_mismatch` | `rc=134`、stdout 空 | `type_mismatch` |
+| `"a" * 2` / `"a" / 2` / `-"a"` | 同上 | `rc=134` | 同上 |
+| `[1] - 1` | 可捕获的 `type_mismatch` | `rc=134` | `type_mismatch` |
+| `1, 2 - 5` | `nil` | `rc=134` | `nil` |
+| `1, 2, 3 - 2, 3` | `set(1)` | `rc=134` | `set(1)` |
+
+修法是让每个包装器**先问、后转**：`if (!mv_numeric(a) || !mv_numeric(b)) return mv_sub(a, b);` —— 把非数字对交还给被包装的函数（它的守卫会抛 `type_mismatch`，或像 §10.148 那样真的给出答案），包装器自己只留下「真正会停」的谓词（整数 `/ 0`、`% 0`、int64 溢出）。这与 §10.147 给 `mv_try_add` 定下的规则是同一条：**第 1 到 3 条属于 `mv_add`，包装器只为第 4 条存在**。
+
+### 三、判据
+
+| 判据 | 解释器（绿） | 本格之前（红） |
+|---|---|---|
+| `mir_try_arith_sub_on_a_string` | `type_mismatch\nafter` rc0 | `b''` rc=-6 |
+| `mir_try_arith_mul_on_a_string` | `type_mismatch\nafter` rc0 | `b''` rc=-6 |
+| `mir_try_arith_div_on_a_string` | `type_mismatch\nafter` rc0 | `b''` rc=-6 |
+| `mir_try_arith_neg_on_a_string` | `type_mismatch\nafter` rc0 | `b''` rc=-6 |
+| `mir_try_arith_on_a_set_and_a_scalar` | `nil\nafter` rc0 | `b''` rc=-6 |
+| `mir_try_arith_on_two_sets` | `set(1)\nafter` rc0 | `b''` rc=-6 |
+| `mir_arith_type_error_outside_a_try` | `t` rc1 + 未捕获 `type_mismatch` | `b''` rc=-6 |
+| `mir_try_div_zero_is_still_caught`（**控制组**） | `division_by_zero\nafter` rc0 | 已经是绿的 |
+
+控制组的作用写进注释：一个「把所有东西都交给 `mv_div`」的补丁会让前七条全绿、把它弄红。
+
+### 四、读数
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-diff=86|mir-only-cases=184|mir-only-same-as-interpreter=184
+IR-MIR-VERDICT|PASS|tree=21334907323bb8fe5a3014221d55dc854c0733b0|accepted=86|refused=0|differ=0
+IR-AOT-MIR|accepted=270|refused=0|same-as-interpreter=270|emittable=59|of-ops=67|not-emittable=8
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=810f849|accepted=270|of=29|covered=29|missing=0|refused=0|same-as-interpreter=270
+```
+
+`ALLOCS` 两行是量出来的：字符串四例 `0|0`（不分配），`a = 1, 2` 那例 `1|256`，两个集合 `2|768`。第一遍表里没有这两行、按默认 `0|0` 判红，读数就是这样把「猜」纠成「量」的。
+
+### 五、写这条之前量过的事
+
+1. **只有带 `try` 的程序会炸**：同一句 `say "a" - 1` 在没有 `try` 的文件里，两边都是 `[exception] uncaught: type_mismatch` + rc1（`mv_sub` 自己的守卫先跑）。所以判据程序必须都带一个 `try`，否则量不到这个洞。
+2. **集合对也被读在守卫之前**：`a = 1, 2 - 5` 在带 `try` 的程序里 `rc=134`，尽管 §10.148 刚让 `mv_sub` 能回答这个形状 —— 包装器是在 `mv_sub` 之前读的，顺序就是问题本身。
+3. **控制组是真的**：`try { say 1 / 0 }` 两边都印 `division_by_zero`，所以包装器里必须留下自己的谓词，不能整体换成委托。
+
+### 六、边界
+
+1. 这只改了 `mv_try_*` 五个包装器；**不带 `try` 的程序生成的 C 文本一字未动**（同一棵树里 86 条语料仍 `c-diff=86`、`c-identical=0`）。
+2. `mv_as_nv` 本身仍然是「非数字即 abort」——本格没有把它变宽，只是**不再在守卫之前调用它**。带 `try` 的程序里若还有别的路径提前转数值，仍会 abort（`mv_arr_set` 的越界写、`mv_vts` 之外的打印路径都不属于本格）。
+3. 判据只覆盖 `-`、`*`、`/`、`%`、一元 `-` 与 `+`；比较类（`<`、`==`）对混合类型的处理是 §10.13x 系列的既有读数，本格没碰。
+4. `mv_try_mod` 的谓词用的是 `nv_asi`（`%` 的解释器语义），与 `/` 的「非浮点且为 0」不同 —— 这是照抄，不是统一。
