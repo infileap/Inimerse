@@ -660,6 +660,11 @@ ALLOCS_EXPECT = {
     # measured on the first green run, like every other row
     "mir_index_set_negative_is_caught": (1, 256),
     "mir_index_set_negative_in_a_nested_array": (1, 256),   # measured: one block for both literals
+    # measured on the first green run of the retired refusal: one block each, the
+    # array literal itself; the read allocates nothing.
+    "mir_read_past_a_literal_is_nil": (1, 256),
+    "mir_read_a_value_written_past_the_literal": (1, 256),
+    "mir_read_far_past_a_single_element_literal": (1, 256),
     "mir_index_read_negative_is_nil": (1, 256),
     "mir_dict_negative_key_is_nil": (1, 256),
 }
@@ -2923,6 +2928,30 @@ MIR_ONLY = [
     # Nested: the arms are per container, so a[0] has to be the same shape one level
     # down.  Before this cell the MIR route fsync'd the outer program out of existence
     # here (rc=1) while the interpreter printed the caught name and continued.
+    # --- a constant subscript past a literal ---------------------------------
+    # THE REFUSAL THESE THREE REPLACE (2026-11-11, §10.151): the route used to
+    # refuse `say a[5]` on a two element literal at translate time
+    # (why=index-out-of-range-constant).  The interpreter answers `nil`
+    # (src/vm/vm.c:1002), and mv_arr_get answers nil the same way; the refusal
+    # was a route policy, not a route limit.  Worse, the policy was unsound
+    # where it mattered: the remembered length did not follow the growth that
+    # `a[5] = 9` performs (src/vm/vm.c:3721-3724), so the route refused the
+    # program below whose answer is 9 -- a non-nil answer, refused.  These are
+    # the three shapes that refusal hid: a plain read past the literal, a read
+    # of a value a write put past it, and a read far past it.
+    ("mir_read_past_a_literal_is_nil",
+     'a = [1, 2, 3]\n'
+     'say a[3]\n'
+     'say "after"\n'),
+    ("mir_read_a_value_written_past_the_literal",
+     'a = [1, 2]\n'
+     'a[5] = 9\n'
+     'say a[5]\n'
+     'say len(a)\n'),
+    ("mir_read_far_past_a_single_element_literal",
+     'a = [1]\n'
+     'say a[40]\n'
+     'say "after"\n'),
     ("mir_index_set_negative_in_a_nested_array",
      'n = [[1, 2], [3]]\n'
      'try { n[0][-1] = 9 } catch (e) { say e }\n'
@@ -3077,9 +3106,13 @@ MIR_ONLY = [
 # that, because a route cannot answer "which frame does this throw belong to"
 # with a jump target and still be read.
 MIR_ONLY_REFUSE = {
-    "mir_container_const_oob": (
-        'a = [1, 2, 3]\nsay a[3]\n',
-        "index-out-of-range-constant"),
+    # `mir_container_const_oob` RETIRED (2026-11-11, §10.151): it demanded the
+    # refuse-at-translate-time for `say a[3]` on a three element literal, and the
+    # interpreter answers `nil` for exactly that program.  The refusal could not
+    # survive the one measurement that mattered: `a = [1, 2]` / `a[5] = 9` /
+    # `say a[5]` grows the array (src/vm/vm.c:3721-3724) and the stored value IS
+    # 9 -- so the length this pass remembered was stale, and the route refused a
+    # program with a non-nil answer.  It is now a positive criterion below.
     "mir_thread_decl_never_started": (
         'thread plain_worker {\n    return 1\n}\nsay "defined-never-started"\n',
         "threads"),
