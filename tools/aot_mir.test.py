@@ -652,6 +652,11 @@ ALLOCS_EXPECT = {
     "mir_sub_an_interval_is_nil": (2, 768),
     "mir_mul_with_an_interval_keeps_the_members": (2, 768),
     "mir_mod_a_set_still_stops": (1, 256),
+    # measured, not assumed: the two set cases carry their own set literals
+    # (one block for `a = 1, 2`, two for the pair), and no arithmetic on a
+    # non-number allocates anything at all -- the string cases above report 0|0.
+    "mir_try_arith_on_a_set_and_a_scalar": (1, 256),
+    "mir_try_arith_on_two_sets": (2, 768),
 }
 ALLOCS_DEFAULT = (0, 0)
 
