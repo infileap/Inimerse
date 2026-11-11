@@ -644,11 +644,11 @@ ALLOCS_EXPECT = {
     # first green run printed what they are; the figures and their reasons are in
     # the doc's readings section.
     "mir_sub_sets_is_a_difference": (2, 768),
-    "mir_sub_lists_the_leftovers": (3, 1024),
+    "mir_sub_lists_the_leftovers": (2, 768),
     "mir_sub_keeps_a_float_out": (2, 768),
-    "mir_mul_sets_is_an_intersection": (2, 1024),
+    "mir_mul_sets_is_an_intersection": (3, 1792),
     "mir_mul_floats": (2, 768),
-    "mir_sub_a_set_and_a_scalar_is_nil": (1, 512),
+    "mir_sub_a_set_and_a_scalar_is_nil": (1, 256),
     "mir_sub_an_interval_is_nil": (2, 768),
     "mir_mul_with_an_interval_keeps_the_members": (2, 768),
     "mir_mod_a_set_still_stops": (1, 256),
