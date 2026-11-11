@@ -687,6 +687,29 @@ ALLOCS_EXPECT = {
     "mir_set_min_max_mixed_numbers": (1, 256),
     "mir_index_read_negative_is_nil": (1, 256),
     "mir_dict_negative_key_is_nil": (1, 256),
+    # The fourteen key-identity criteria, measured on the first run that had
+    # the fix: every one of them builds ONE dict literal (the empty dict each
+    # program starts from) and the fix itself allocates nothing, so the row is
+    # (1, 256) and not the (0, 0) the table's default said.  The run is what
+    # corrected it: the first green pass listed all fourteen as
+    # `allocs=1|bytes=256, the criterion demands allocs=0|bytes=0`.  The
+    # fifteenth case compares with `==` and never builds a dict, so (0, 0)
+    # there is measured too, not inherited -- it reports allocs=0|bytes=0.
+    "mir_boolkey_set_true_probe_skips_int_half": (1, 256),
+    "mir_boolkey_set_int_probe_crosses_halves": (1, 256),
+    "mir_boolkey_int_vs_bool": (1, 256),
+    "mir_boolkey_bool_vs_int": (1, 256),
+    "mir_boolkey_false_vs_zero": (1, 256),
+    "mir_boolkey_bool_vs_float": (1, 256),
+    "mir_boolkey_int_float_collapses": (1, 256),
+    "mir_boolkey_int_float_collapses_reverse": (1, 256),
+    "mir_boolkey_int_float_hash_truncates": (1, 256),
+    "mir_boolkey_two_equal_floats": (1, 256),
+    "mir_boolkey_zero_vs_negative_zero": (1, 256),
+    "mir_boolkey_nil_vs_zero": (1, 256),
+    "mir_boolkey_str_vs_int": (1, 256),
+    "mir_boolkey_register_read": (1, 256),
+    "mir_boolkey_eq_is_not_key_identity": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
