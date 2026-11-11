@@ -8004,3 +8004,55 @@ IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|table=59|emitter=59|reported=59|a
 1. 这一格**没有新行为**：没有一行运行时或发射器的改动，交付物是判据、生成器分支与登记。它是 §10.151 的验收面，不是新能力。
 2. 增长后的**搬移**语义仍靠 §10.148 的 `mv_arr_live` 转发头；这一格只是把「搬移之后读回」也纳入了可复跑的形状（`mir_grow_through_an_alias` 的 `b` 读的就是搬移后的区域）。
 3. `refused-by-name=2` 在那 18 例里仍是 `why=threads` 一类的能力边界，与本族无关。
+
+## §10.153 `min()`/`max()`：集合归约，而不是在集合上停住（aot-mir，A 类第三十项）
+
+### 一、来源与日期
+
+- 判据：`10b1a46`（七条先红）与 `11c6750`（第八条：函数操作数）。
+- 实现：`521be6e`。
+- 日期：2026-11-12。基线 `fe72f9f`。
+- 本格不推进 `handles`（`OP_MIN`/`OP_MAX` 早有臂，59|of=67|unknown=8 不动）；推进的是**同一棵树上的答案**：`accepted 275→292`、`mir-only-cases 189→206`。
+
+### 二、形状：`min` 是集合归约，不是二元函数
+
+- 解释器把 `R[ins.r2]` 与 `R[ins.r1]` 交给 `set_minmax`，而它的**第一句**就是 `dst->type = VAL_NIL`：只有 `src->type == VAL_SET` 才继续往下折叠。所以 `min(1, 2)` 答 `nil`（没有二元 `min`），`x = 1, 2` 后 `min(x)` 答 `1`。
+- 翻译期：`min(1, 2)` 编译成区间集（`OP_SET_INTERVAL`），`min(x)` 是 `OP_MIN` 带一个寄存器操作数。
+- 本路线的旧臂只认标量 tag：标量答 `nil`（对），**集合 `abort()`**（错——解释器有答案）。旧臂的注释用「集合到不了这里」论证这件事，而那个前提被 `OP_NEW_SET`（§10.125）与 `OP_SET_INTERVAL`（§10.140）退役了。
+
+### 三、判据：七条红读数 + 一条函数操作数
+
+```
+IR-MIR-PROBLEM|mir_set_min_max_ints: the MIR route printed b'' rc=-6, the interpreter b'1\n3\n' rc=0
+IR-MIR-PROBLEM|mir_set_min_max_floats: … b'1.5\n2.5\n' rc=0
+IR-MIR-PROBLEM|mir_set_min_max_strings: … b'a\nb\n' rc=0
+IR-MIR-PROBLEM|mir_set_min_max_mixed_is_nil: … b'nil\nnil\n' rc=0
+IR-MIR-PROBLEM|mir_set_min_max_of_an_interval: … b'nil\n' rc=0
+IR-MIR-PROBLEM|mir_set_min_max_narrows_i64: … b'1\n705032704\n' rc=0
+IR-MIR-PROBLEM|mir_set_min_max_mixed_numbers: … b'1\n2.5\n' rc=0
+```
+
+第八条（`mir_set_min_max_of_a_function`）钉的是旧臂的另一半：`f = () -> 42` 后 `min(f)` 在解释器是 `nil`，而旧臂对 `MV_FUN` 也是 `abort()`（它的注释把函数列成「本路线没有答案」）。现在两者都答 `nil`。
+
+### 四、读数
+
+```
+IR-MIR-COVER|…|mir-only-cases=206|mir-only-same-as-interpreter=206
+IR-MIR-VERDICT|PASS|tree=521be6e…
+IR-AOT-MIR|accepted=292|same-as-interpreter=292|emittable=59|of-ops=67|not-emittable=8|beyond-ast-denominator=30
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|agree=yes
+```
+
+### 五、写这条之前先量过的事
+
+1. **窄化规则**：`set_minmax` 把 i64 半边按 `(int)` 读，所以 `x = 5000000000, 1` 的 `max` 是 `705032704`。照抄这个缺陷是本格唯一诚实的做法——用完整 int64 比较会答 `5000000000`，正是我们要复现的那个缺陷的反面。
+2. **字符串与数字混在一起是 `nil`**（解释器 `have = -1`），不是「按类型排序」：`x = 1, "a"` 的 `min`/`max` 都是 `nil`。
+3. **空集合**在解释器里 `have` 停在 0 ⇒ `nil`；本路线的折叠同样以 `nil` 起手、以 `have` 收尾。
+4. **区间没有离散极值**：`p = (0, 3)` 的 `min` 是 `nil`（解释器对 `nameIdx == 24` 直接返回），本路线对 kind 2 也答 `nil`。
+
+### 六、边界（每条都是决定，不是遗漏）
+
+- **命名内建集**（`Z`、`Z+`、…）仍按名拒（preset 全局），所以 kind 1 在本路线不可达；若将来可达，规则是 `set_minmax` 的 kind-1 答案（N 的最小 0、Z+ 的最小 1、Z- 的最大 −1，其余 `nil`）。
+- **除 `R` 以外的整数区间**不可达（本路线只构建 `R` 区间），而 `R` 没有离散极值。
+- **NaN 元素**只能从 `OP_CALL_BUILTIN` 进来，仍在子集之外。
+- **零分配说的是这条臂**：折叠只回传它找到的元素或 `nil`，从不构造集合；判据里的 `(1, 256)` 是程序自己建的那个集合字面量。第一遍表把七行全填成 `(0, 0)`，第一次运行把它们全部推翻——照例「先量后写」。

@@ -673,6 +673,18 @@ ALLOCS_EXPECT = {
     "mir_grow_a_nested_element": (1, 256),
     "mir_grow_then_compare": (2, 768),
     "mir_grow_with_an_explicit_nil": (1, 256),
+    # The reduction itself allocates nothing; the ONE block each of these
+    # programs claims is the set literal itself (a set is [count][elem...]
+    # in the pool).  Measured on the first run, not guessed: the first
+    # pass of this table said (0, 0) for all seven and the run refuted it.
+    "mir_set_min_max_of_a_function": (0, 0),   # no set is built at all
+    "mir_set_min_max_ints": (1, 256),
+    "mir_set_min_max_floats": (1, 256),
+    "mir_set_min_max_strings": (1, 256),
+    "mir_set_min_max_mixed_is_nil": (1, 256),
+    "mir_set_min_max_of_an_interval": (1, 256),
+    "mir_set_min_max_narrows_i64": (1, 256),
+    "mir_set_min_max_mixed_numbers": (1, 256),
     "mir_index_read_negative_is_nil": (1, 256),
     "mir_dict_negative_key_is_nil": (1, 256),
 }
@@ -2999,6 +3011,49 @@ MIR_ONLY = [
      'a[3] = 1\n'
      'say a == b\n'
      'say len(a) == len(b)\n'),
+    # --- min()/max() OVER A SET ------------------------------------------------
+    # `min` is a SET REDUCTION, not a two-operand function: the interpreter's
+    # set_minmax fills the destination with nil first and returns unless the
+    # operand is a set, so `min(1, 2)` answers nil while `x = 1, 2` then
+    # `min(x)` answers 1.  Until this cell the route ABORTED on every one of
+    # these (rc=-6, empty stdout) because its arm only knew the scalar tags and
+    # its note argued that no set could reach it -- true when it was written,
+    # false since OP_NEW_SET (§10.125) and OP_SET_INTERVAL (§10.140) were
+    # lowered.  Each expected line below was measured on the interpreter first.
+    ("mir_set_min_max_ints",
+     'x = 1, 2, 3\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_floats",
+     'x = 2.5, 1.5\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_strings",
+     'x = "b", "a"\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_mixed_is_nil",
+     'x = 1, "a"\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_of_an_interval",
+     'p = (0, 3)\n'
+     'say min(p)\n'),
+    ("mir_set_min_max_narrows_i64",
+     'x = 5000000000, 1\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    # A function operand is not a set either: set_minmax's first statement
+    # answers nil, while this arm used to abort on the MV_FUN tag (the old note
+    # listed it as "no answer on this route").  Measured: nil / nil.
+    ("mir_set_min_max_of_a_function",
+     'f = () -> 42\n'
+     'say min(f)\n'
+     'say max(f)\n'),
+    ("mir_set_min_max_mixed_numbers",
+     'x = 1, 2, 2.5\n'
+     'say min(x)\n'
+     'say max(x)\n'),
     ("mir_grow_with_an_explicit_nil",
      'a = [1, 2]\n'
      'a[4] = nil\n'
