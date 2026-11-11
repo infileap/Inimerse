@@ -2999,6 +2999,42 @@ MIR_ONLY = [
      'a[3] = 1\n'
      'say a == b\n'
      'say len(a) == len(b)\n'),
+    # --- min()/max() OVER A SET ------------------------------------------------
+    # `min` is a SET REDUCTION, not a two-operand function: the interpreter's
+    # set_minmax fills the destination with nil first and returns unless the
+    # operand is a set, so `min(1, 2)` answers nil while `x = 1, 2` then
+    # `min(x)` answers 1.  Until this cell the route ABORTED on every one of
+    # these (rc=-6, empty stdout) because its arm only knew the scalar tags and
+    # its note argued that no set could reach it -- true when it was written,
+    # false since OP_NEW_SET (§10.125) and OP_SET_INTERVAL (§10.140) were
+    # lowered.  Each expected line below was measured on the interpreter first.
+    ("mir_set_min_max_ints",
+     'x = 1, 2, 3\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_floats",
+     'x = 2.5, 1.5\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_strings",
+     'x = "b", "a"\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_mixed_is_nil",
+     'x = 1, "a"\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_of_an_interval",
+     'p = (0, 3)\n'
+     'say min(p)\n'),
+    ("mir_set_min_max_narrows_i64",
+     'x = 5000000000, 1\n'
+     'say min(x)\n'
+     'say max(x)\n'),
+    ("mir_set_min_max_mixed_numbers",
+     'x = 1, 2, 2.5\n'
+     'say min(x)\n'
+     'say max(x)\n'),
     ("mir_grow_with_an_explicit_nil",
      'a = [1, 2]\n'
      'a[4] = nil\n'
