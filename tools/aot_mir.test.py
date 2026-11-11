@@ -431,6 +431,18 @@ ALLOCS_EXPECT = {
     "mir_closure_higher_order": (1, 32),
     "mir_closure_return_value": (2, 96),
     "mir_closure_zeroarg_string": (2, 40),
+    # The wrong-arity closure measures the same one-environment-per-
+    # instantiation shape as the rows above, and its number was MEASURED the
+    # same way -- `mk = (n) -> (a, b) -> n + a + b` then `f = mk(10)` is ONE
+    # capture of ONE slot, so the generated program's own IR-MIR-ALLOCS line
+    # reads allocs=1|freed=1|live=0|bytes=32.  It is here rather than left on
+    # the (0, 0) default because the default made the harness report
+    # `ok=no|expect-allocs=0|expect-bytes=0` on the green run, i.e. the row is
+    # what the wrong-arity fix has to keep true, not a restatement of it: a fix
+    # that padded by re-reading the callee's environment, or that built a fresh
+    # argument vector per call, would move this number.  The other eight
+    # wrong-arity criteria measure 0|0 and stay on the default.
+    "mir_arity_value_capture_extra": (1, 32),
     # Function equality allocates NOTHING on the capture-free side (there is no
     # environment to build) and exactly the two environments `make` builds in
     # the captured case -- one per instantiation, 32 bytes each.  Both MEASURED
@@ -3140,6 +3152,180 @@ MIR_ONLY = [
     ("mir_try_div_zero_is_still_caught",
      'try { say 1 / 0 } catch (e) { say e }\n'
      'say "after"\n'),
+
+    # ---- WRONG ARITY AT A USER-FUNCTION CALL
+    #
+    # The emitted callee signature is FIXED by the callee's own declaration
+    # (`static MirVal fn_h(MirVal a0)`), so a call site that pushes a different
+    # number of arguments than that callee declares used to hand C a call the
+    # callee's own prototype rejects:
+    #
+    #     func h(n) { return n }
+    #     say h(1, 2)
+    #
+    # `cc` answered `error: too many arguments to function 'fn_h'; expected 1,
+    # have 2` -- after translate had already exited 0.  That is a failure at the
+    # C COMPILER, which is exactly the class this route exists to eliminate: the
+    # interpreter answers the program and the route cannot even build it.  The
+    # other direction is the same wall: `say h()` gave `too few arguments ...
+    # expected 1, have 0`.
+    #
+    # THE INTERPRETER'S RULE, MEASURED FIRST (`build/inimerse --no-mods run`),
+    # because the interpreter is the only oracle this route has.  The whole rule
+    # is three lines of src/vm/vm.c's L_CALL_FUNC arm, and BOTH call paths --
+    # OP_CALL_FUNC by name and OP_CALL_VALUE through a value -- run that ONE arm
+    # (`int fidx = (ins.op == OP_CALL_VALUE) ? call_fidx_override : ins.r1`):
+    #
+    #     int param_slots = root->func_argc[fidx] > argc ? root->func_argc[fidx] : argc;
+    #     for (int i = 0; i < param_slots; i++) value_set(&FR[i + 1], VAL_NIL, ...);
+    #     for (int i = argc - 1; i >= 0; i--) { value_move(&FR[i + 1], &t->stack[t->sp]); t->sp--; }
+    #
+    # The readings that follow from it, each observed rather than inferred:
+    #
+    #   1. EXTRA arguments are EVALUATED -- every argument expression's side
+    #      effect happens, in argument order, before the callee's body runs --
+    #      and then DISCARDED as arguments.  Measured with an extra argument
+    #      that is itself a printing call: the printer runs first, then the
+    #      body, and the callee's parameter is the FIRST argument.
+    #   2. MISSING parameters read NIL.  The nil-fill above is why: every slot
+    #      up to max(declared, argc) is set to nil BEFORE the pushed arguments
+    #      are moved in, so a slot no argument reached keeps its nil.
+    #   3. The CALLEE therefore sees argument k in register k+1 for k < argc,
+    #      and nil for declared > k >= argc.  Nothing else.
+    #   4. A FUNCTION VALUE obeys the SAME rule, because it is the same arm:
+    #      `f = () -> 42` called as `f(1, 2)` prints 42, and `f = (a, b) -> a`
+    #      called as `f(7)` / `f()` prints 7 then nil.  Measured, not assumed
+    #      from the by-name path -- the two opcodes are pre-scanned differently,
+    #      so the interpreter had to be asked separately.
+    #
+    # NOT REPRODUCED, and this is the one place the two differ: an extra
+    # argument also lands in the callee's OWN frame slot for its position (the
+    # move loop writes FR[k+1] for every k < argc, before anything is discarded
+    # as an argument), so a callee that READS a local register before writing it
+    # can see that extra argument -- and a later call at the same frame depth
+    # keeps seeing it, because the interpreter nil-fills only up to
+    # max(declared, argc).  Measured:
+    #
+    #     func g(a) { if false { y = 1 }  say y }
+    #     g(1, 99, 88)     -> 88      (the third ARGUMENT, in local slot y)
+    #     g(1)             -> 88      (still there: that depth was never re-filled)
+    #
+    # Both numbers are the interpreter's, and this route answers 0 for both --
+    # its frame is initialised to 0 on every entry.  Reproducing it needs the
+    # callee's registers writable from the call site, i.e. a signature that
+    # carries the argument vector, and it is a property of the interpreter's
+    # stale register file rather than of its calling convention.  It is named in
+    # docs/STATUS.md as a decision, with this transcript, instead of being
+    # half-reproduced here.
+    #
+    # READINGS.  Every program below was run through the interpreter first and
+    # its stdout is quoted in that case's comment.  The route's reading before
+    # this step was `cc failed` for the by-name cases (the C never compiled) and
+    # a runtime abort, rc 134, for the value cases (mv_callv's emitted
+    # `if (nargs != <argc>)` guard stopped the program after cc had accepted it).
+
+    # EXTRA ARGUMENT, BY NAME.  The callee has one parameter and returns it; the
+    # call pushes two.  Interpreter: `1`.  The first line of output is the
+    # callee's own `say "n="`, so this also pins that the callee really RAN and
+    # that the parameter it ran with is the FIRST argument, not the last.
+    ("mir_arity_extra_args_by_name",
+     'func h(n) {\n'
+     '    say "n="\n'
+     '    say n\n'
+     '    return n\n'
+     '}\n'
+     'say h(1, 2)\n'),
+
+    # MISSING ARGUMENT, BY NAME.  Two parameters, one argument.  Interpreter:
+    # `7` then `nil`.  A route that padded with 0 would print `0` on the second
+    # line and nothing else would change, which is why the nil is the reading.
+    ("mir_arity_missing_args_by_name",
+     'func g(a, b) {\n'
+     '    say a\n'
+     '    say b\n'
+     '}\n'
+     'g(7)\n'),
+
+    # ZERO ARGUMENTS, BY NAME, to a two-parameter function.  Interpreter: `nil`
+    # then `nil`.  This is the case with no argument-stack traffic at all, so it
+    # also stops a fix that only pads when argc > 0.
+    ("mir_arity_zero_args_by_name",
+     'func g(a, b) {\n'
+     '    say a\n'
+     '    say b\n'
+     '}\n'
+     'g()\n'),
+
+    # THE EXTRA ARGUMENT IS EVALUATED.  `mark()` is the extra argument and it
+    # prints; the callee's body prints too.  Interpreter: `mark`, `body`, `1` --
+    # so the argument expression ran BEFORE the body, and its value was thrown
+    # away rather than becoming the parameter.  A fix that dropped the extra
+    # argument at TRANSLATE time (or that only emitted the first `declared`
+    # argument pushes) would lose the `mark` line, and this is the only criterion
+    # whose red would be a missing side effect rather than a missing value.
+    ("mir_arity_extra_arg_is_evaluated",
+     'func mark() {\n'
+     '    say "mark"\n'
+     '    return 9\n'
+     '}\n'
+     'func h(n) {\n'
+     '    say "body"\n'
+     '    say n\n'
+     '}\n'
+     'h(1, mark())\n'),
+
+    # NESTED AND MIXED.  Three inner calls -- one with an extra argument, one
+    # exact, one with two extra -- feed one exact call.  Interpreter: `8`
+    # (1 + 3 + 4).  The three inner shapes are the three arities in one program,
+    # so a fix that only handled the outermost call site, or that padded in one
+    # arm of the emitter, reddens here and passes the four cases above.
+    ("mir_arity_nested_mixed",
+     'func one(a) {\n'
+     '    return a\n'
+     '}\n'
+     'func three(a, b, c) {\n'
+     '    return a + b + c\n'
+     '}\n'
+     'say three(one(1, 2), one(3), one(4, 5, 6))\n'),
+
+    # FUNCTION VALUE, EXTRA ARGUMENTS.  `f` is a closure of declared arity 0
+    # called with two.  Interpreter: `42`.  This is OP_CALL_VALUE, a different
+    # opcode and a different emitted dispatch (mv_callv) from the cases above,
+    # and at the start of this step it aborted at RUN time with rc 134 instead
+    # of failing to compile -- the same bug one layer later.
+    ("mir_arity_value_extra",
+     'f = () -> 42\n'
+     'say f(1, 2)\n'),
+
+    # FUNCTION VALUE, MISSING ARGUMENTS.  Declared arity 2, called once with one
+    # and once with none.  Interpreter: `7` then `nil`.  The `f()` line is the
+    # one that must not read the argument stack: OP_CALL_VALUE is emitted with a
+    # literal `0, 0` when argc == 0, so a padding arm that formatted `args[0]`
+    # unconditionally would dereference NULL here.
+    ("mir_arity_value_missing",
+     'f = (a, b) -> a\n'
+     'say f(7)\n'
+     'say f()\n'),
+
+    # FUNCTION VALUE WITH A CAPTURE, EXTRA ARGUMENTS.  The dispatch has to pass
+    # the value itself as the hidden leading `self` AND pad the user arguments,
+    # so the two adaptations meet in one call.  Interpreter: `13` then `13`
+    # (10 + 1 + 2, and the four-argument call discards 3 and 4).
+    ("mir_arity_value_capture_extra",
+     'mk = (n) -> (a, b) -> n + a + b\n'
+     'f = mk(10)\n'
+     'say f(1, 2)\n'
+     'say f(1, 2, 3, 4)\n'),
+
+    # THROUGH A PARAMETER.  The callee is a function value that arrived as an
+    # argument, and the CALLER `apply` is itself over-applied (declared 2, called
+    # with 3), so an extra argument is discarded twice on one line.  Interpreter:
+    # `6`.  Measured value 6, not 9: the third argument dies at `apply`'s own
+    # call site and never reaches `f`.
+    ("mir_arity_value_through_param",
+     'apply = (f, x) -> f(x)\n'
+     'dbl = (n) -> n * 2\n'
+     'say apply(dbl, 3, 9)\n'),
 
 ]
 

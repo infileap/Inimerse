@@ -4828,12 +4828,35 @@ static int emit_one(Ctx *c, Buf *b, int i) {
            that frame is a NULL environment -- every slot then reads nil
            (src/vm/vm.c:4033-4039).  mv_nil() IS that environment: its ptr is
            NULL, so no slot is ever read. */
-        int self = (callee > 0 && callee < c->m->nfuncs)
-                   ? func_reads_capture(c->m, c->nodes, callee) : 0;
+        int named = (callee > 0 && callee < c->m->nfuncs);
+        int self = named ? func_reads_capture(c->m, c->nodes, callee) : 0;
+        /* THE CALL SITE ADAPTS TO THE CALLEE, because the CALLEE's signature is
+           its own declaration and cannot move: `func h(n)` emits
+           `static MirVal fn_h(MirVal a0)` no matter how the program calls it.
+           `want` is how many arguments that declaration takes; `argc` is how
+           many the program pushed.  A call that pushed a different number used
+           to emit a call the callee's own prototype rejects, and cc answered
+           `too many arguments to function 'fn_h'; expected 1, have 2` -- after
+           translate had exited 0, i.e. this route failed AT THE C COMPILER for
+           a program the interpreter answers.  The interpreter's answer is the
+           rule implemented here, not a new one: at src/vm/vm.c's L_CALL_FUNC
+           arm every frame slot up to max(declared, argc) is nil-filled before
+           the pushed arguments are moved in, so
+             MISSING parameters read nil -> the mv_nil() padding below, and
+             EXTRA arguments are still evaluated and merely dropped as
+             parameters -> their pushes and the `argc`-wide pop below are
+             untouched.  When argc == want this emits byte-identical text to
+             what it emitted before this cell, which is what keeps the
+             no-wrong-arity corpus's C from moving. */
+        int want = named ? c->nodes[callee].argc : argc;
         buf_fmt(b, "    v[%d] = %s(", res, callee >= 0 ? c->fnnames[callee] : "mv_missing_callee");
-        if (self) buf_str(b, "mv_nil()");
-        for (int k = 0; k < argc; k++)
-            buf_fmt(b, "%smvargs[asp-%d]", (k || self) ? ", " : "", argc - k);
+        int first = 1;
+        if (self) { buf_str(b, "mv_nil()"); first = 0; }
+        for (int k = 0; k < want; k++) {
+            if (k < argc) buf_fmt(b, "%smvargs[asp-%d]", first ? "" : ", ", argc - k);
+            else buf_fmt(b, "%smv_nil()", first ? "" : ", ");
+            first = 0;
+        }
         buf_str(b, ");");
         if (argc > 0) buf_fmt(b, " asp -= %d;", argc);
         /* THE CALLEE'S THROW LANDS HERE.  A callee with no try of its own throws
@@ -4893,10 +4916,19 @@ static int emit_one(Ctx *c, Buf *b, int i) {
        *     The compiler cannot produce it (one literal, one count); func_cap
        *     answers -2 for it and OP_LOAD_CAPTURE's arm stops the translation
        *     rather than reading a slot of an environment whose size is a guess.
-       *   - an arity mismatch.  mv_callv's generated switch checks it and stops
-       *     the program (see that emitter); the interpreter's own tolerance for
-       *     filling missing arguments with nil is not reproduced here, and no
-       *     accepted stream reaches it.
+       *   - an arity mismatch.  It IS reproduced now, and it is not a boundary
+       *     any more: mv_callv's generated switch pads a missing argument with
+       *     mv_nil() and drops an extra one at the call, which is the
+       *     interpreter's own answer at src/vm/vm.c's L_CALL_FUNC arm (the arm
+       *     OP_CALL_VALUE and OP_CALL_FUNC share).  The guard that used to stop
+       *     the program here answered a program the interpreter answers with
+       *     rc 134; the criteria mir_arity_value_extra / _missing /
+       *     _capture_extra / _through_param are what hold the padding down.
+       *     What is still NOT reproduced is narrower and is named in
+       *     docs/STATUS.md: the interpreter also lets an extra argument land in
+       *     the callee's own local register slot, and lets it persist across
+       *     calls at the same frame depth.  That needs the callee's registers
+       *     writable from the call site, which this signature cannot do.
        *
        * DELETE CONDITION (decidable).  The nocapture-only restriction this
        * block used to carry is GONE, and its own test was mechanical: the
@@ -5676,8 +5708,11 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
        What the dispatch is NOT: a second interpreter.  It carries the interpreter's
        L_CALL_VALUE guard verbatim -- a non-function callee is `error: value is not
        callable` on stderr with rc 1 -- because that is the answer the criterion
-       compares, and it stops the program on an arity mismatch instead of
-       fabricating an answer the interpreter would fill differently. */
+       compares.  It used to stop the program on an arity mismatch as well; it
+       does not any more, because the interpreter answers those calls rather
+       than stopping (see the padding note on the emitted `case` arms), and
+       `f = () -> 42` called as `f(1, 2)` is a program this route must be able
+       to run. */
     int needs_callv = 0;
     for (int f = 0; f < m->nfuncs && !needs_callv; f++) {
         const IrFunc *fn = &m->funcs[f];
@@ -5695,24 +5730,33 @@ int aot_mir_translate(const IrModule *m, const char *out_path) {
         buf_str(&out, "    switch ((int)f.ival) {" NL);
         for (int i = 1; i < m->nfuncs; i++) {
             int argc = nodes[i].argc;
+            int self = func_reads_capture(m, nodes, i);
             buf_fmt(&out, "    case %d:" NL, i);
-            buf_str(&out, "        if (nargs != ");
-            buf_fmt(&out, "%d", argc);
-            buf_str(&out, ") {" NL);
-            buf_fmt(&out, "            fprintf(stderr, \"error: function takes %d argument(s),"
-                          " got %%d\\n\", nargs);" NL, argc);
-            buf_str(&out, "            abort();" NL);
-            buf_str(&out, "        }" NL);
+            /* PAD, DO NOT STOP.  This used to be an
+               `if (nargs != <argc>) { fprintf(...); abort(); }` guard, i.e. the
+               route compiled the program and then refused at RUN TIME, rc 134,
+               a call the interpreter answers: `f = () -> 42` called as
+               `f(1, 2)` prints 42 there.  The guard is not a decision this
+               route gets to make, because the same L_CALL_FUNC arm answers it
+               for OP_CALL_VALUE as for OP_CALL_FUNC -- missing arguments are
+               nil and extra arguments are dropped -- so the dispatch pads at
+               the call instead.  `args` is NULL whenever nargs == 0 (the
+               zero-argument call site above passes a literal `0, 0`), so the
+               `nargs > k` test must come FIRST: it is what keeps a
+               zero-argument call from dereferencing a null pointer. */
             buf_fmt(&out, "        return %s(", fnnames[i]);
             /* A container that reads its environment needs the VALUE back, not
                a bare call: mv_callv was handed the function value itself, and
                that value carries the environment ptr the read goes through.
                `f` is mv_callv's own parameter, so the emitted call is
                fn(f, args[0], ..., args[argc-1]) -- one extra leading argument. */
-            if (func_reads_capture(m, nodes, i)) buf_str(&out, "f");
-            for (int k = 0; k < argc; k++)
-                buf_fmt(&out, "%sargs[%d]",
-                        (k || func_reads_capture(m, nodes, i)) ? ", " : "", k);
+            int first = 1;
+            if (self) { buf_str(&out, "f"); first = 0; }
+            for (int k = 0; k < argc; k++) {
+                buf_fmt(&out, "%s(nargs > %d ? args[%d] : mv_nil())",
+                        first ? "" : ", ", k, k);
+                first = 0;
+            }
             buf_str(&out, ");" NL);
         }
         buf_str(&out, "    default:" NL);

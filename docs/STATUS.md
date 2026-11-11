@@ -8275,3 +8275,120 @@ exit=1
 - **压族不保证其余部分的字节相同**：被跳过的块本来会抽自己的随机数，所以压族之后程序流整体位移（红 (a) 的 `ran=17` 与绿的 `ran=19` 就是这个位移）。杆子只承诺「零程序即红」，不假装被压的那次运行与原来同构；这一点写在 `_hit` 的 docstring 里，而不是靠读者去猜。
 - **生成器的运行目录仍是每次运行新建的临时目录，不改**：那是工具的既有行为，单次进程内自足；本格的 scratch（配置日志、构建日志、四个种子的输出、提交信息草稿）全部落在 worktree 的 `.scratch/` 下。
 - **本格不声称覆盖面**：普查说的是「这一族发了几个程序」，不是「这一族打到了路线的哪几条臂」；把族名对到臂列表仍是人读的活（§10.154 就是这么做的），本条只是让「族名一个都没有」这件事自己红。
+
+## §10.157 实参个数对不上：cc 的报错不是本路线的答案（aot-mir，A 类第三十二项）
+
+### 一、来源与日期
+
+- 判据：`5001220`（九条先红：`mir-only-cases=215` 而 `mir-only-same-as-interpreter=206`，`IR-MIR-VERDICT|FAIL`）。
+- 实现：`7cc9067`。
+- 日期：2026-11-11。基线 `ec21ffe`。
+- 本格**不推进 `handles`**（`59|of=67|unknown=8` 不动：没有新操作码），推进的是**同一棵树上的答案**：`accepted 292→301`、`mir-only-cases 206→215`。九条此前要么编译不过、要么运行期 `rc=-6` 的程序，现在执行且与解释器逐字节相同。
+
+### 二、形状
+
+一个用户函数的**签名由它自己的声明决定**：`func h(n)` 发射 `static MirVal fn_h(MirVal a0)`，与调用点无关。实参的个数却由程序决定。两者不一致时，报错的地方变成了 **C 编译器**：
+
+```
+func h(n) { return n }
+say h(1, 2)
+```
+
+翻译本身是成功的——`aot-mir translate` 退出码 0，发射出
+
+```
+v[1] = fn_h(mvargs[asp-2], mvargs[asp-1]); asp -= 2;
+```
+
+紧接着 cc 拒绝这条程序：
+
+```
+error: too many arguments to function 'fn_h'; expected 1, have 2
+  ... | v[1] = fn_h(mvargs[asp-2], mvargs[asp-1]); asp -= 2;
+  ... | static MirVal fn_h(MirVal a0) {
+```
+
+反方向同形：`say h()` 得到 `too few arguments to function 'fn_h'; expected 1, have 0`。而解释器两题都答（`1` 与 `nil`，rc 0）。
+
+这是本路线最贵的一类失败：不是答错，而是**没有答案**——程序连被比较的机会都没有，失败发生在 C 编译器里，而这条路线存在的全部理由就是把 `.im` 变成能跑的 C。同一个 bug 在函数值那条路上晚一层发作：`f = () -> 42` 配 `f(1, 2)` 能编过，然后在运行期 abort，`rc=-6`。
+
+### 三、判据与红读数
+
+九条判据**先写、先红**，红读数分两层：
+
+| 判据 | 程序 | 解释器 | 红读数 |
+|---|---|---|---|
+| `mir_arity_extra_args_by_name` | `func h(n) { … }` / `say h(1, 2)` | `1` | cc failed：`too many arguments to function 'fn_h'; expected 1` |
+| `mir_arity_missing_args_by_name` | `func g(a, b) { … }` / `g(7)` | `7`, `nil` | cc failed：`too few arguments to function 'fn_g'; expected 2` |
+| `mir_arity_zero_args_by_name` | 同上 / `g()` | `nil`, `nil` | cc failed：`too few arguments … expected 2, have 0` |
+| `mir_arity_extra_arg_is_evaluated` | `h(1, mark())`，`mark` 印字 | `mark`, `body`, `1` | cc failed：`too many arguments to function 'fn_h'` |
+| `mir_arity_nested_mixed` | `three(one(1, 2), one(3), one(4, 5, 6))` | `8` | cc failed：`too many arguments to function 'fn_one'; expected 1, have 2` |
+| `mir_arity_value_extra` | `f = () -> 42` / `f(1, 2)` | `42` | `rc=-6`（运行期 abort） |
+| `mir_arity_value_missing` | `f = (a, b) -> a` / `f(7)`、`f()` | `7`, `nil` | `rc=-6` |
+| `mir_arity_value_capture_extra` | 捕获闭包 / `f(1, 2)`、`f(1, 2, 3, 4)` | `13`, `13` | `rc=-6` |
+| `mir_arity_value_through_param` | `apply(dbl, 3, 9)` | `6` | `rc=-6` |
+
+前五条红在 **cc**：翻译接受（`mir=accepted`、`cc=ok` 都还没到），编不过。后四条红在**运行期**：C 编过了，`OP_CALL_VALUE` 用的那张分发表里逐函数发射的
+
+```
+if (nargs != 2) {
+    fprintf(stderr, "error: function takes 2 argument(s), got %d\n", nargs);
+    abort();
+}
+```
+
+把程序停下。两条 red 是两个层次，不是同一条：一条是「这条路线产不出 C」，一条是「产出了 C 却在跑的时候停住」。`rc=-6` 是 abort 的退出码，`exec=diff`、`bytes=0`。
+
+### 四、读数
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=215|mir-only-same-as-interpreter=215
+IR-MIR-VERDICT|PASS|tree=7cc9067602f66fc715dd441f4e18719d039c62e1|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR|accepted=301|refused=0|same-as-interpreter=301|of=29|emittable=59|of-ops=67|not-emittable=8|corpus=inline-cases:86|mir-only-cases:215|beyond-ast-denominator=30|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=7cc9067602f66fc715dd441f4e18719d039c62e1|accepted=301|of=29|covered=29|missing=0|refused=0|same-as-interpreter=301|prelude-excluded=yes|beyond-ast-denominator=30
+```
+
+九条各自变绿之后逐条读到（`mir-only-same-as-interpreter` 与 `mir-only-cases` 同值就是它们）：
+
+| 判据 | 绿读数（`mir=accepted|cc=ok|exec=same|rc=0` 之后的 `bytes=` 与 `stdout-hex=`） |
+|---|---|
+| `mir_arity_extra_args_by_name` | `bytes=7` / `6e3d0a310a310a` |
+| `mir_arity_missing_args_by_name` | `bytes=6` / `370a6e696c0a` |
+| `mir_arity_zero_args_by_name` | `bytes=8` / `6e696c0a6e696c0a` |
+| `mir_arity_extra_arg_is_evaluated` | `bytes=12` / `6d61726b0a626f64790a310a` |
+| `mir_arity_nested_mixed` | `bytes=2` / `380a` |
+| `mir_arity_value_extra` | `bytes=3` / `34320a` |
+| `mir_arity_value_missing` | `bytes=6` / `370a6e696c0a` |
+| `mir_arity_value_capture_extra` | `bytes=6` / `31330a31330a` |
+| `mir_arity_value_through_param` | `bytes=2` / `360a` |
+
+`c-identical=0|c-diff=86` 与 `perturb-stdout-changes=5` 都**没有动**：这一格改的是调用点的实参，不是那 86 条 AST 对照的 C 文本形状，也不是扰动面。
+
+### 五、写这条之前先量过的事
+
+1. **解释器的规则是量出来的，不是推出来的**（判据写之前，`build/inimerse --no-mods`）：多出来的实参**会被求值**——`h(1, mark())` 先印 `mark`，再进被调者的身体，所以副作用按实参顺序发生，然后被当作实参丢掉；实参不够时参数**读到 nil**（不是 0，也不是上一个调用的残留）：`func g(a, b)` 的 `g(7)` 印 `7`、`nil`，`g()` 印 `nil`、`nil`，`g(7, 8, 9)` 印 `7`、`8`。
+2. **机制只有一处**：`L_CALL_FUNC` 一个臂同时服务两个操作码（`fidx` 在 `call_fidx_override` 与 `ins.r1` 之间由 `ins.op == OP_CALL_VALUE` 选），它的三行是「先按 `max(declared, argc)` 把 FR 填 nil，再把压入的实参按倒序搬进 FR」。所以「少读 nil」是那三行里的第一行，「多者丢弃」是第二行——本条实现的是这两个已测事实，不是新政策。
+3. **函数值那条路单独量过**：`f = () -> 42` 配 `say f(1, 2)` 印 `42`；`f = (a, b) -> a` 配 `f()` / `f(7)` 印 `nil` / `7`；捕获闭包 `mk = (n) -> (a, b) -> n + a + b` 配 `mk(10)` 后 `f(1, 2, 3, 4)` 印 `13`。两条路**同一条臂**，但预扫描与发射是两处，所以分别量，而不是从按名调用那条外推。
+4. **正常形状的 C 文本没有动**（逐字节 diff：同一批程序分别用改前/改后的 `aot-mir` 翻译）。按名调用且实参个数**对得上**的那个程序，发射结果**逐字节相同**（`IDENTICAL`）。同一次对比也给出了「动了哪些形状」，写进 §六。
+5. **分配数是量出来的**：九条里只有捕获闭包那条分配，它自己的绿 `IR-MIR-ALLOCS` 行读 `allocs=1|freed=1|live=0|bytes=32`（一次实例化、一个单槽环境），于是 `ALLOCS_EXPECT` 添 `(1, 32)`，其余八条留在默认 `(0, 0)`。这一行是**绿跑之后**才写的：第一遍绿跑对这条报的是 `ok=no|expect-allocs=0|expect-bytes=0`，补上之后重跑才是 `expect-allocs=1|expect-bytes=32|ok=yes`。
+6. **文档预算改前量过**：`explicit delta +12 (expect +12)`、`unanchored delta -4 (ceiling 0)`、`pointer delta +196 (ceiling 223)`。本节刻意不写任何新的带行号引用（显式引用是**等号**判据，多一条就变 +13），所以三项读数改后不变，见 §六。
+7. **计数没有动**：本格不加 CTest，`ctest -N` 仍是 203（与 `EXP_CTEST`、`recon.ctest-count` 一致），`check_reconciliation.py` 仍 `VERDICT|PASS|measured=5`。
+
+### 六、边界（每条都是决定，不是遗漏）
+
+- **不复制解释器的「陈旧寄存器」现象，而是点名**。解释器把多出来的实参搬进 `FR[k+1]`（`k < argc`）之后才把「超出声明个数」的部分丢掉，所以被调者**自己**那个位置的局部寄存器里会留着实参，而且同一帧深度的下一次调用仍然看得到它——因为 nil 填充只到 `max(declared, argc)` 宽：
+
+  ```
+  func g(a) { if false { y = 1 }  say y }
+  g(1, 99, 88)     -> 88      （第三个实参，落在局部槽 y）
+  g(1)             -> 88      （还在：这个深度没有被重新填过）
+  ```
+
+  本路线两个都答 `0`（它进帧时逐槽置 0）。要复现就得让调用点能写被调者的寄存器，也就是把实参向量塞进签名，而这是解释器寄存器文件的陈旧性，不是它调用约定的内容。**这是本格唯一没有对齐的读数**，写明而不是假装它不存在；判据注释里也带着这段转录。
+- **不动 builtin 的实参个数**。`say len(1, 2)` 在解释器里真的印 `2`（它返回实参个数），本路线按名拒译这条程序——那是另一条已经写下来的能力边界，与本格无关，本格一格都没碰。
+- **`mv_callv` 的运行期检查是少了一条，不是全没了**。留下的是「非函数不可调用」（`error: value is not callable`，rc 1）与「函数索引没有容器」两条；被删掉的只有「实参个数对不上」，因为解释器对它有答案而前两条它有/没有答案的结论不同。
+- **哪些形状的 C 文本动了**（实测，见 §五 第 4 条）：按名调用且个数对得上 → **逐字节不变**；按名调用且个数对不上 → 只动那一行调用（`fn_h(mvargs[asp-2])` 取代 `fn_h(mvargs[asp-2], mvargs[asp-1])`，弹出的宽度仍是 `argc`，所以多出来的实参照样被求值）；**任何用到函数值的模块** → 那张分发表 switch 的文本会动，因为守卫删了、实参改成带 `nargs > k` 短路的三元式。最后一条是刻意的，而且 `nargs > k` 必须在前：`argc == 0` 的调用点按字面量传的是空指针，先取 `args[0]` 就是空指针解引用——这一条有判据 `mir_arity_value_missing` 的 `f()` 一行钉着。
+- **本格不改 `prescan` 的收窄**：`want` 从 `nodes[callee].argc` 取，只在被调者的函数下标能解析时才用；解析不到时退回 `argc`，`mv_missing_callee` 那条回退路径的文本因此一个字都没动。
+- **文档预算三项读数改后**：`explicit delta +12 (expect +12)`、`unanchored delta -4 (ceiling 0)`、`pointer delta +196 (ceiling 223)`——与改前逐字相同，本节没有新增任何带行号的路径引用。
+
