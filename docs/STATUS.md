@@ -7722,3 +7722,69 @@ IR-AOT-MIR-OPERANDS|indexed=14|prescanned=15|checked=14|missing=(none)|dead=(non
 2. **字符串缓冲仍是 128 字节**，超长结果两边截在同一个位置——这是**照抄**，不是本路线另设的限制。
 3. **`mv_try_sub/mul/div/mod` 仍可能 abort**：本格只修了 `mv_try_add` 的入口；其余三个 wrapper 对非数值 tag 直接 `mv_as_nv` ⇒ 撞 `abort()`。这一条记成债，不在本格。
 4. **`mv_arr_set` 的 `index_out_of_range`** 仍在（解释器对越界写静默忽略），与本格无关。
+
+## §10.148 集合的 `-` 与 `*`：先看类型，再看数（aot-mir，A 类第二十八项）
+
+### 一、来源与日期
+
+2026-11-11。判据 `b5b7438`（九条，先红），实现 `dd886ba`。
+
+这一格**不推进 handles**：`OP_SUB` 与 `OP_MUL` 早就有臂，缺的是臂里的第一条分支。所以 `handles` 仍是 59（`unknown=8`），推进的是 `accepted` 与 `same-as-interpreter`（253 → 262，见第四节）。
+
+### 二、形状
+
+解释器的 `L_SUB`（`src/vm/vm.c` 的 3445 行起）与 `L_MUL`（3472 行起）读的是**同一条顺序**：
+
+1. **两边都是 set** ⇒ `set_diff` / `set_intersect`，结果 `VAL_SET`；
+2. **只有一边是 set** ⇒ 那个辅助函数返回 −1，臂把 −1 写成 `VAL_NIL`；
+3. 这之后才轮到数值：两侧 intlike ⇒ int64 + `__builtin_*_overflow`（溢出抛 `numeric_overflow`），否则 double。
+
+本路线原来的 `mv_sub` / `mv_mul` **没有第 1、2 步**，直接进数值守卫 ⇒ 每一个集合形状都印 `type_mismatch`、rc 1——不是「没有答案」，是**答错**。
+
+`set_diff` 只接受**两侧都是有限集**：任一 `kind != 0`、或任一 `compCount > 0`，直接返回 −1。本路线能造出的非有限集只有区间（kind 2），所以这条整句拒绝压缩成一个 `mv_set_is_interval` 测试。
+
+`set_intersect` 是四趟：a 的 i64 半边查 b、a 的 items 查 b、b 的 i64 半边查 a、b 的 items 查 a，全部经 `vm_set_add` 去重 ⇒ 结果与 `b * a` 相同。它还有一段**组件半趟**（把区间转成组件、`comp_intersect` 双层循环），本路线没有组件槽，这一段没有抄。
+
+### 三、九条判据
+
+| 判据 | 解释器 | 本格之前 | 现在 |
+|---|---|---|---|
+| `mir_sub_sets_is_a_difference` | `set(1)` / `1` | `type_mismatch` rc 1 | same |
+| `mir_sub_lists_the_leftovers` | `[2]` | rc 1 | same |
+| `mir_sub_keeps_a_float_out` | `[2]` | rc 1 | same |
+| `mir_mul_sets_is_an_intersection` | `set(2)` / `2` / `[2, 3]` | rc 1 | same |
+| `mir_mul_floats` | `set(1)` / `set(1)` | rc 1 | same |
+| `mir_sub_a_set_and_a_scalar_is_nil` | `nil` / `nil` | rc 1 | same |
+| `mir_sub_an_interval_is_nil` | `nil` / `set(0)` / `0` | rc 1 | same |
+| `mir_mul_with_an_interval_keeps_the_members` | `set(2)` / `2` | rc 1 | same |
+| `mir_mod_a_set_still_stops`（**控制组**） | `type_mismatch` rc 1 | rc 1（同） | same |
+
+最后一条是控制组：`/` 与 `%` 的解释器臂**没有集合分支**（`L_DIV` 3501 行起直接走数值路径），所以集合落在那两条上必须仍然抛 `type_mismatch`。它钉的是「本格没有顺手把 `/` 与 `%` 也接上集合」。
+
+### 四、读数
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=176|mir-only-same-as-interpreter=176
+IR-MIR-VERDICT|PASS|tree=b5b743875d459472a76a95ce0d3073b328212590|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR|accepted=262|refused=0|same-as-interpreter=262|of=29|emittable=59|of-ops=67|not-emittable=8|corpus=inline-cases:86|mir-only-cases:176|beyond-ast-denominator=30
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=dd886baa06aab12d21f83c6145c5ce1451113cdf|accepted=262|of=29|covered=29|missing=0|refused=0|same-as-interpreter=262|beyond-ast-denominator=30
+```
+
+`IR-MIR-ALLOCS` 的九行（`mir_mod_a_set_still_stops` 是 `reported=no|why=rc=1`，与其余 rc=1 的用例同形）：`(2,768)`、`(2,768)`、`(2,768)`、`(3,1792)`、`(2,768)`、`(1,256)`、`(2,768)`、`(2,768)`。
+
+**三行是猜的，三行全错，第一次绿跑把它们改掉了**：`mir_sub_lists_the_leftovers` 猜 `3|1024` 实测 `2|768`、`mir_mul_sets_is_an_intersection` 猜 `2|1024` 实测 `3|1792`、`mir_sub_a_set_and_a_scalar_is_nil` 猜 `1|512` 实测 `1|256`。表上方的注释写着「这些数在第一次绿跑后才定」——它就是在第一次绿跑后定的。
+
+### 五、写这条之前量过的三件事
+
+1. **空集合打印 `set(0)`、`list` 给 `[]`**（不是 nil）：`a = 1, 2; b = 2, 1; say a - b` 印 `set(0)`，`say list(a - b)` 印 `[]`。这一步决定了「差集为空」怎么写，也决定了它和**组件集合**的答案在 `list` 上分得开。
+2. **两个区间相交仍印 `set(0)`、len 0，即使它们真的重叠**：`p = (0, 5); q = (2, 3)` 与 `p = (0, 3); q = (2, 5)` 印的是同一行 —— 打印只看 `iCount + count`，组件不计入。本路线因此把「区间 ∩ 区间」写成空有限集，打印与长度都对。
+3. **i64 半边是窄着读的**：`a = 5000000000, 1; b = 1, 2; say list(a - b)` 解释器印 `[705032704]`（5000000000 截成 32 位）；`a = 5000000000, 1; b = 5000000000, 2; say a * b` 印 `set(0)`（两侧探针都先窄化，与对侧存的宽值不相等）。本路线的两个新函数照抄这个 `(long long)(int)` 转换。
+
+### 六、边界
+
+1. **区间 ∩ 区间的 `list` 与解释器不同**：解释器造的是组件集合，`list(p * q)` 给 `nil`（`vm_set_to_array` 拒绝组件集）；本路线给空有限集，`list` 是 `[]`。打印与 `len` 一致，`list` 不一致——这是本格唯一的一处已知分歧，选择它是因为没差的那两项更常被看见，且组件槽不在本路线的表示里。
+2. **组件集合不算模型的一部分**：本路线没有 `compCount` 槽，因此任何依赖组件的形状（组件并、组件交、组件枚举）都不在本格；`p + q` 的「空集」答案来自 §10.147 的同一事实（区间集的 `iCount`/`count` 都是 0）。
+3. **`/` 与 `%` 不动**：控制组那一条钉住它们仍然抛 `type_mismatch`，与解释器一致（解释器的 `/`、`%` 臂没有集合分支）。
+4. **宽整数窄化是照抄，不是修复**：本格不修解释器的 32 位截断，只让它在本路线里同样发生。
+5. **`mv_try_sub` / `mv_try_mul` 仍然可能 abort**：本格只改 `mv_sub` / `mv_mul` 的入口；带 `try` 的程序走 wrapper，集合在那里仍会落到 `mv_as_nv` ⇒ `abort()`。记成债，与 §10.147 的边界第 3 条同一笔。
