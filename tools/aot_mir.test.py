@@ -657,6 +657,11 @@ ALLOCS_EXPECT = {
     # non-number allocates anything at all -- the string cases above report 0|0.
     "mir_try_arith_on_a_set_and_a_scalar": (1, 256),
     "mir_try_arith_on_two_sets": (2, 768),
+    # measured on the first green run, like every other row
+    "mir_index_set_negative_is_caught": (1, 256),
+    "mir_index_set_negative_in_a_nested_array": (1, 256),   # measured: one block for both literals
+    "mir_index_read_negative_is_nil": (1, 256),
+    "mir_dict_negative_key_is_nil": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -723,6 +728,7 @@ STDERR_EXPECT = {
     "mir_mod_a_set_still_stops": ("[exception] uncaught: type_mismatch",),
     # the error falls OUTSIDE the try block, so it is uncaught: the reading must
     # carry the interpreter's own wording, not merely a non-zero exit.
+    "mir_index_set_negative_uncaught": ("[exception] uncaught: index_out_of_range",),
     "mir_arith_type_error_outside_a_try": ("[exception] uncaught: type_mismatch",),
     # `+` on an array or a dict KILLS the process with this sentence and rc 1
     # (src/vm/vm.c:3280-3283) -- it is not a throw, so a try/catch cannot catch
@@ -2888,6 +2894,55 @@ MIR_ONLY = [
      'p = (0, 5)\n'
      'say a * p\n'
      'say len(a * p)\n'),
+
+    # --- a negative subscript on a WRITE -----------------------------------------
+    # The interpreter shelves a write to an array at a negative subscript into an
+    # exception: `vm_throw_kind(vm, "index_out_of_range")` in L_INDEX_SET
+    # (src/vm/vm.c:3721-3724, read before this cell was written).  A READ at a
+    # negative subscript is a different shape: vm_array_get's guard returns nil and
+    # no exception exists, so the two are pinned separately here.
+    #
+    # The answer is a caught exception, not a harbour: the value a[-1] names is not
+    # an element of a, and `say a` afterwards must still be the two original elements.
+    ("mir_index_set_negative_is_caught",
+     'a = [1, 2]\n'
+     'try { a[-1] = 9 } catch (e) { say e }\n'
+     'say "after"\n'
+     'say a\n',
+     ),
+
+    # Outside a try the same write is the fatal kind: nobody carries it, the route
+    # stops with the interpreter's own message and its rc=1.  This criterion exists
+    # so the fix above cannot be a swallow.
+    ("mir_index_set_negative_uncaught",
+     'a = [1, 2]\n'
+     'a[-1] = 9\n'
+     'say "after"\n',
+     ),
+
+    # Nested: the arms are per container, so a[0] has to be the same shape one level
+    # down.  Before this cell the MIR route fsync'd the outer program out of existence
+    # here (rc=1) while the interpreter printed the caught name and continued.
+    ("mir_index_set_negative_in_a_nested_array",
+     'n = [[1, 2], [3]]\n'
+     'try { n[0][-1] = 9 } catch (e) { say e }\n'
+     'say n[0]\n',
+     ),
+
+    # Controls: a negative READ is nil on both routes (nothing to catch), and a dict
+    # takes -1 as an ordinary key (the interpreter answers nil for it, which is a
+    # separate defect, not this cell's).
+    ("mir_index_read_negative_is_nil",
+     'a = [1, 2]\n'
+     'say a[-1]\n'
+     'try { say a[-1] } catch (e) { say e }\n'
+     'say "after"\n',
+     ),
+    ("mir_dict_negative_key_is_nil",
+     'd = {}\n'
+     'd[-1] = 9\n'
+     'say d[-1]\n',
+     ),
 
     ("mir_mod_a_set_still_stops",
      'a = 1, 2, 3\n'

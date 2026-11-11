@@ -7854,3 +7854,65 @@ IR-AOT-MIR-VERDICT|PASS|tree=810f849|accepted=270|of=29|covered=29|missing=0|ref
 2. `mv_as_nv` 本身仍然是「非数字即 abort」——本格没有把它变宽，只是**不再在守卫之前调用它**。带 `try` 的程序里若还有别的路径提前转数值，仍会 abort（`mv_arr_set` 的越界写、`mv_vts` 之外的打印路径都不属于本格）。
 3. 判据只覆盖 `-`、`*`、`/`、`%`、一元 `-` 与 `+`；比较类（`<`、`==`）对混合类型的处理是 §10.13x 系列的既有读数，本格没碰。
 4. `mv_try_mod` 的谓词用的是 `nv_asi`（`%` 的解释器语义），与 `/` 的「非浮点且为 0」不同 —— 这是照抄，不是统一。
+
+## §10.150 负下标的数组写：一条 throw，不是一次 exit（aot-mir，A 类第三十项）
+
+### 一、来源与日期
+
+判据 `2f27c0a`（2026-11-11，五条，其中两条在基线 `cc73482` 上红）；实现 `32ed584`。这一格**不推进 handles**（`OP_INDEX_SET` 早就有臂，`handles=59|of=67|unknown=8` 不动），推进的是 `mir-only-cases` 与「同一棵树上答案相同」这条指标。
+
+### 二、形状
+
+解释器的数组写（`src/vm/vm.c:3717-3733`）[obs: 32ed584]：
+
+1. 容器不是 `VAL_ARRAY` 就直接返回 —— 字符串、字典、nil 上的写是**静默忽略**；
+2. 下标 `i = (idxv->type == VAL_INT) ? idxv->ival : (int)val_as_double(vm, idxv)`；
+3. `i < 0` ⇒ `vm_throw_kind(vm, "index_out_of_range")`（`src/vm/vm.c:3721-3724`）[obs: 32ed584] —— **一次 throw**，可被 `try/catch` 接住；
+4. `i >= count` ⇒ 不是错误，是**扩展**：中间槽填 nil（`vm.c:3721-3724` 的 fill 段）。
+
+本路线这三件事里第 1、2 早已一致；第 3 件之前是「同一句话、不同机制」：`mv_arr_set` 走 `fprintf(stderr, "[exception] uncaught: index_out_of_range")` + `exit(1)`，于是
+
+- 没有 handler 的程序：两边一样（同一句话、都 rc 1）——旧判据 `mir_index_set_negative` 钉的正是这一半；
+- 有 handler 的程序：解释器继续跑，本路线的进程直接消失。
+
+### 三、判据
+
+| 用例 | 形状 | 基线 `cc73482` |
+|---|---|---|
+| `mir_index_set_negative_is_caught` | `try { a[-1] = 9 } catch(e) { say e }` 后继续 | 红：`b'' rc=1` vs `index_out_of_range\nafter\n[1, 2]\n` rc=0 |
+| `mir_index_set_negative_in_a_nested_array` | 嵌套数组里负下标写在 handler 里 | 红：`b'' rc=1` vs `index_out_of_range\n[1, 2]\n` rc=0 |
+| `mir_index_set_negative_uncaught` | 同样的写，**没有** handler | 绿（控制组：故意钉住「未捕获仍 rc 1、仍印那句话」） |
+| `mir_index_read_negative_is_nil` | `say a[-1]` | 绿（控制组：读路径的负下标是 nil，不是 throw） |
+| `mir_dict_negative_key_is_nil` | `d[-1] = 9` 后 `say d[-1]` | 绿（控制组：字典的负键是键，不是下标） |
+
+红读数原文（`IR-MIR-PROBLEM|mir_index_set_negative_is_caught: the MIR route printed b'' rc=1, the interpreter b'index_out_of_range\nafter\n[1, 2]\n' rc=0`、`IR-MIR-PROBLEM|mir_index_set_negative_in_a_nested_array: … b'index_out_of_range\n[1, 2]\n' rc=0`）。
+
+### 四、实现与读数
+
+`mv_arr_set` 的 `i < 0` 分支改成
+
+```
+        mv_throw(mv_str("index_out_of_range"));
+        return;
+```
+
+机制换了一条，话语、未捕获形状的 rc、以及读路径全都没动。`OP_INDEX_SET` 的发射点早就有 `emit_try_check`（§10.137 加的），所以 throw 之后的那一跳自动成立。
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-diff=86|perturb-stdout-changes=5|mir-only-cases=189|mir-only-same-as-interpreter=189
+IR-MIR-VERDICT|PASS|tree=32ed5848f21a7980072001fe547f2ae39bbfe1be|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+```
+
+两条控制组与三条新判据全绿；`mir-only-cases` 184 → 189。
+
+### 五、写这条之前量过的事
+
+- **负下标的写 vs 读不是一回事**：读走 `vm_array_get` 的 `i < 0` 守卫（返回 nil），没有 throw；写才 throw。所以判据里专门留了一条读的控制组。
+- **字典的负键是键**：`d[-1] = 9` 在两边都答 `nil`（`d[-1]` 查回来是 nil）—— 这一半是两边一致的「奇怪」，不在本格修。
+- **扩展语义运行期已经一致**：`mv_arr_set` 的 `i >= count` 分支本来就会填 nil 长到 `i`，与解释器的 fill 段同形；真正挡路的是 **prescan 的常量子标检查**（字面量 2 元素 + `a[5]` 被判成越界并拒译）—— 见下节。
+
+### 六、边界
+
+1. 本格只把**机制**从 exit 改成 throw；`i >= count` 的扩展没有新判据（运行期早已一致），但**常量子标的翻译期拒绝仍在**：程序 `a = [1, 2]` 后写 `a[5] = 9` 会被 `why=index-out-of-range-constant` 拒掉，而解释器会扩展它。这是本路线的一处**过度拒绝**，需要单独一格处理（它不是「没有答案」，而是「答案需要运行期的长度」，而 present 的常数检查用的是字面量的长度）。
+2. `mv_arr_set` 对非数组容器（字符串/字典/nil）的写仍是「静默忽略」，这条与解释器一致，没有判据（旧用例 `mir_index_set_edges` 覆盖了边界下标的一半）。
+3. 本格不动 `mv_arr_get` 的负下标语义（nil），也不动字典键比较的任何规则。
