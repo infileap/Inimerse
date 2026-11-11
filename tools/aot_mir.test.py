@@ -611,6 +611,35 @@ ALLOCS_EXPECT = {
     "mir_order_a_bool_against_a_number": (0, 0),
     "mir_order_two_strings_still_answer": (0, 0),
     "mir_order_is_catchable": (1, 256),
+    # The five rules of `+` (OP_ADD).  MEASURED FIRST on the tree that
+    # implements them, then written down -- and the first pass DID guess 0|0 for
+    # all eleven rows, because "an add is arithmetic, arithmetic does not
+    # allocate" is the intuition.  The first run refuted it in eleven lines, and
+    # the reason is the same in every one of them: rule 3 stringifies and then
+    # concatenates, and mv_str_concat registers its buffer (1 alloc, bytes =
+    # result length + 1).  The seven string rows therefore read 1|n and 2|n,
+    # the two set rows read 2|768 and 3|1792 (each set is a pool block, and
+    # mir_add_sets_overlap asks for a THIRD: two sets plus the union plus the
+    # destination array of list() no longer fit in one block), and the interval
+    # row reads 2|768 for the same 768-byte reason: two interval regions, then
+    # the (empty) union region.
+    #   IR-MIR-ALLOCS|case=mir_add_string_and_int|allocs=1|bytes=3
+    #   IR-MIR-ALLOCS|case=mir_add_string_chain_with_a_number|allocs=2|bytes=9
+    #   IR-MIR-ALLOCS|case=mir_add_sets_overlap|allocs=3|bytes=1792
+    # The two fatal rows are not listed: the interpreter answers them by
+    # exiting 1 from inside the arm, so the instrument reports `reported=no`,
+    # the same shape as every other rc=1 case.
+    "mir_add_string_and_int": (1, 3),
+    "mir_add_int_and_string": (1, 3),
+    "mir_add_string_and_float": (1, 5),
+    "mir_add_string_and_bool": (1, 6),
+    "mir_add_string_and_nil": (1, 5),
+    "mir_add_string_and_a_variable": (1, 4),
+    "mir_add_string_chain_with_a_number": (2, 9),
+    "mir_add_sets_is_a_union": (2, 768),
+    "mir_add_sets_overlap": (3, 1792),
+    "mir_add_set_and_a_scalar_is_nil": (1, 256),
+    "mir_add_intervals_is_an_empty_set": (2, 768),
 }
 ALLOCS_DEFAULT = (0, 0)
 
