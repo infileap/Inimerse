@@ -2055,8 +2055,17 @@ set_tests_properties(aot_mir_surface_selfcheck PROPERTIES WORKING_DIRECTORY ${CM
 # Registered with a small fixed count and a fixed seed so it is a REPRODUCIBLE
 # reading rather than a lottery: the number in the gate is the number anybody
 # else gets from the same seed.
+# TWO SEEDS, because one seed is one program family: the generator picks a
+# container kind, an index shape and a loop body from its own dice, so a single
+# seed leaves whole branches of its own generator untouched.  The pair costs a
+# few seconds and covers the arithmetic/ordering families (seed 7) and the
+# indexing ones (seed 11); the count stays small so the stage is a reading, not
+# a soak.
 add_test(NAME aot_mir_fuzz_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --count 20 --seed 7 --engine $<TARGET_FILE:inimerse> --mir-tool $<TARGET_FILE:aot-mir>)
+add_test(NAME aot_mir_fuzz_regression_seed11
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --count 20 --seed 11 --engine $<TARGET_FILE:inimerse> --mir-tool $<TARGET_FILE:aot-mir>)
+set_tests_properties(aot_mir_fuzz_regression_seed11 PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;aot-mir;regression")
 set_tests_properties(aot_mir_fuzz_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;aot-mir;regression")
 add_test(NAME aot_mir_fuzz_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --self-check)

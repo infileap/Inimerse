@@ -29,6 +29,17 @@ WHAT IT DOES NOT GENERATE, AND WHY EACH IS A DECISION
     AGREEMENT WITH A DEFECT, and a fuzzer that re-finds it every run teaches
     nothing).
 
+WHAT IT DID NOT REACH UNTIL THE SECOND CELL, and how that was found: the first
+version built containers and asked for their LENGTH -- it never indexed one.
+`say c[0]`, `c[i] = v`, a dict read at a key that is not there, a string indexed
+by a character: each of those has its own helper with its own note, and none was
+generated.  The agent that noticed was a person reading the generator against
+the route's arm list, not a run going red -- 190 programs across five seeds came
+back clean before and after, which is exactly what a blind spot looks like from
+the inside.  The lesson is in the tool's own history rather than in a bug: a
+generator's silence about a shape is indistinguishable from that shape being
+correct.
+
 FINDINGS ARE THREE KINDS, because they need three different responses:
 
   DIVERGE   both ran to completion and the bytes differ.  A wrong answer.
@@ -149,7 +160,13 @@ def string_or_container(rng, names):
     if r < 0.9:
         return "{%s}" % ", ".join('%s: %s' % (rng.choice(STRINGS), rng.choice(INTS))
                                   for _ in range(rng.randint(0, 2)))
-    return set_expr(rng, names)
+    # A SET LITERAL IS A STATEMENT SHAPE, NOT AN EXPRESSION: `1, 2` is how a set
+    # is BOUND (`s = 1, 2`), so pasting it into `len(...)` produced
+    # `len(42, 100, 1, 2)` -- four arguments -- and the run reported that as an
+    # UNSOUND case, i.e. the generator's own bug wearing a finding's clothes
+    # (measured on seed 101, case 0).  Wrap it in brackets, which IS an
+    # expression and takes one argument.
+    return "[" + set_literal(rng) + "]"
 
 
 # NON-NEGATIVE ONLY, and that is a measured limit of the LANGUAGE, not of this
@@ -213,6 +230,51 @@ def gen_program(rng):
         # (measured: "Error: expected 'expression', but got ','").  It is read
         # through len() above, which is the shape the language allows.
         lines.append("say len(c)")
+        # THE INDEX SIDE, which the generator did not reach until now: a read at
+        # an in-range subscript, a read past the end (the interpreter answers nil
+        # rather than throwing, src/vm/vm.c:1002), and a WRITE that the array arm
+        # of OP_INDEX_SET has to carry.  This route has a separate helper for
+        # each of those and each has its own note; a generator that only builds
+        # containers and asks for their length never exercises any of them.
+        if kind == "arr":
+            lines.append("say c[0]")
+            lines.append("say c[%d]" % rng.randint(0, 3))
+            lines.append("c[%d] = %s" % (rng.randint(0, 2), rng.choice(INTS)))
+            lines.append("say c[0]")
+        elif kind == "str":
+            lines.append("say c[0]")            # a one-character string, or nil
+        elif kind == "dict":
+            lines.append('say c["a"]')
+            lines.append('say c["zz"]')         # a key that is not there
+            lines.append('c["b"] = %s' % rng.choice(INTS))
+            lines.append('say c["b"]')
+    # NESTED CONTAINERS AND ALIASES.  Both are places where a route that models
+    # a container as a REGION IN A POOL can part company with a runtime that
+    # models it as an OBJECT: a nested write has to reach THROUGH the outer
+    # region, and a write through an alias has to be visible through the original
+    # name.  Measured reachable in both runtimes: `n = [[1, 2], [3]]` /
+    # `say n[1][0]`, `b = a` / `b[0] = 9` / `say a[0]` (both answer 9).
+    if rng.random() < 0.35:
+        role = rng.choice(["alias", "nested", "dictvalue"])
+        if role == "alias":
+            lines.append("p = [%s]" % ", ".join(rng.choice(INTS) for _ in range(rng.randint(1, 3))))
+            lines.append("q = p")
+            lines.append("q[0] = %s" % rng.choice(INTS))
+            lines.append("say p[0]")
+            lines.append("say q[0]")
+            lines.append("say len(p)")
+        elif role == "nested":
+            lines.append("n = [[%s], [%s]]" % (rng.choice(INTS), rng.choice(INTS)))
+            lines.append("say n[0][0]")
+            lines.append("x = n[1]")
+            lines.append("say x[0]")
+            lines.append("say len(n)")
+        else:
+            lines.append('e = {"k": [%s, %s]}' % (rng.choice(INTS), rng.choice(INTS)))
+            lines.append('say e["k"][0]')
+            lines.append('say len(e["k"])')
+            lines.append('e["k"][1] = %s' % rng.choice(INTS))
+            lines.append('say e["k"][1]')
     # a closure over one capture
     if rng.random() < 0.35:
         lines.append("func mk(n) { return x -> x + n }")
