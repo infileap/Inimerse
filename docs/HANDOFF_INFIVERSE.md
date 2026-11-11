@@ -5,6 +5,10 @@
 
 **阅读顺序建议**：§1 先看边界 → §2 看已拍板的语言决策 → §3 看分支上与 main 的差距 → §4 看真正悬着的六件事。
 
+**出处怎么读**：本文件的每处代码出处都是「反引号路径 + 紧跟的一句反引号引文」，引文必须在该文件里**逐字存在** ——
+不给行号（行号会漂，本文件为此专门写过一节 §4.6）。`tools/check_handoff_anchors.py` 逐条验证这些锚点，
+缺一条就红。凡带 `[obs: fe72f9f]` 的数字，都是在 `fe72f9f` 这棵树上按句中那条命令重测过的。
+
 ---
 
 ## §1. 边界与坐标系（先读，避免我这几轮踩过的坑）
@@ -42,7 +46,7 @@
 
 ### 2.2 集合化类型系统成为 **v0.6 目标**（人裁定）
 
-- 原本挂在 v3.1（`docs/archive/ROADMAP_3.1.md:3` 逐字："集合化是长期语言演进项目，**不纳入 v0.3–v0.6 的交付承诺**"），
+- 原本挂在 v3.1（`docs/archive/ROADMAP_3.1.md` 里 `集合化是长期语言演进项目，不纳入 v0.3–v0.6 的交付承诺。` 那句逐字原文），
   **已被裁定提前为 v0.6**；`docs/STATUS.md` §4 有专门小节，`docs/STATUS.md` §5 P3 那行被划掉并注明。
 - **v3.1 的三根柱子仍然是缺的**：谓词集合 `{x in Z | x > 0}`、静态子集证明、BigInt。见 §4.1。
 
@@ -56,18 +60,19 @@ x: Z+ = 1
 
 - **`be` 退役 = 保留为「纯脱糖」的等价别名**：`STMT_BE` 从 AST 消失，两种拼写产生**同一个节点**，
   `.im` 改动 0；实现点从 13+ 处降到 2 处。**顺序约束**：必须在「`be_bound` 每次赋值重校验迁移到 `:` 声明的全局」
-  之后，否则静默丢掉 `src/vm/vm.c:3589-3598` 的 `type_mismatch`。
-- `:` 后必须能接**完整集合表达式**（依据 `src/parser/parser.c:1387`），否则内联集合 `age: [0, 120] = 18` 会随之丢失。
+  之后，否则静默丢掉 `src/vm/vm.c` 里 `if (!set_contains(vm, bidx, &newv)) {` 紧跟那句 `vm_throw_kind(vm, "type_mismatch");` 的守卫
+  （**`be_bound` 这个对象今天已不存在**：`grep -rn be_bound src/` 零命中 [obs: fe72f9f]；等价职责今天落在 `L_STORE_GLOBAL` 的 `vm->global_bound[idx] > 0` 判定上）。
+- `:` 后必须能接**完整集合表达式**（依据 `src/parser/parser.c` 里 `static int starts_collection_expr(Token t) {` 那个判定），否则内联集合 `age: [0, 120] = 18` 会随之丢失。
 - 这与 `docs/archive/ROADMAP_3.1.md` §声明语法与兼容性原写的「`:` 与 `be` **并存**」**相反**；该文件原文不改写。
 
 ### 2.4 基数记法 = `count(A)`（人裁定）
 
-- **`#A` 已证明做不到**：`src/lexer/lexer.c:82` **无条件**把 `#` 当注释引导符（不要求后接空白），
-  `:83-92` 还有 `#[...]` **嵌套块注释**。后果：`x = #A` 会**吞掉整行**、让 `x =` 去接下一行的 token（跨行静默错位）；
+- **`#A` 已证明做不到**：`src/lexer/lexer.c` 里 `} else if (lex->src[lex->pos] == '#') {` 那一支**无条件**把 `#` 当注释引导符（不要求后接空白），
+  同一个函数里 `if (lex->src[lex->pos+1] == '[') {` 那一支还有 `#[...]` **嵌套块注释**。后果：`x = #A` 会**吞掉整行**、让 `x =` 去接下一行的 token（跨行静默错位）；
   `#[1~5]` 被整段吃掉。⇒ 词法**未改**，因为选了 `count(A)`。
-- ★ **【记录】写下这一节时 `count` 不存在；今天它存在，注册在三处** —— 编译器侧一处、两个运行期的注册函数各一处。★ 复跑：`grep -rn '"count"' src/ --include=*.c | wc -l` 今天给 **9**，而同一个式子对 `size` 给 **6** ⇒ **两者的大小关系与本节写下时相反。** 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 L。
-- 做同一件事的是 `size`（`src/runtime/runtime.c:1751`、`src/runtime/runtime_posix.c:1089`，
-  `.im` 里 **29 处**），而 `size` 同时已是 GUI 关键字（`docs/SYNTAX.md` §5 那句「`size` 在集合语境下是 `count` 的已弃用别名……作为 **GUI 关键字**……它也**不动**」（**写下时写的是 `:539`、`:468`** —— 实测两处都不是它：`:468` 在 `50216cb`/`2de15ca` 上对、今天漂到 `:478`；而 `:539` 在 `2de15ca` 上是 §6.1 的别名表行、今天落在 §6 的标题上 ⇒ **它从来没有指过这句话**，不是漂移而是「从未正确」。**判不了的是「它当时指的是什么」，判得了的是「它该指什么」。**）。**处置未定**（§4.3）。
+- ★ **【记录】写下这一节时 `count` 不存在；今天它存在，注册在三处** —— 编译器侧一处、两个运行期的注册函数各一处。★ 复跑：`grep -rn '"count"' src/ --include=*.c | wc -l` 今天给 **9**，而同一个式子对 `size` 给 **6** [obs: fe72f9f] ⇒ **两者的大小关系与本节写下时相反。** 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 L。
+- 做同一件事的是 `size`（`src/runtime/runtime.c` 里 `vm_register_builtin(vm, "size", builtin_size);`、`src/runtime/runtime_posix.c` 里 `vm_register_builtin(vm, "size", posix_core_size);`，
+  `.im` 里 **74 处** [obs: fe72f9f]，复跑 `grep -rn 'size' --include=*.im . | wc -l`），而 `size` 同时已是 GUI 关键字（`docs/SYNTAX.md` 里 `已弃用别名` 起头的那句 §5 原文「`size` 在集合语境下是 `count` 的已弃用别名……作为 **GUI 关键字**……它也**不动**」（**写下时写的是两个行号：539 与 468** —— 实测两处都不是它：第 468 行在 `50216cb`/`2de15ca` 上对、今天漂到 478；而第 539 行在 `2de15ca` 上是 §6.1 的别名表行、今天落在 §6 的标题上 ⇒ **它从来没有指过这句话**，不是漂移而是「从未正确」。**判不了的是「它当时指的是什么」，判得了的是「它该指什么」。**）。**处置未定**（§4.3）。
 
 ### 2.5 集合代数用四则运算符（人裁定）
 
@@ -75,13 +80,13 @@ x: Z+ = 1
 
 ### 2.6 谓词：可判定边界 = 简单计算 + 正则表达式；求解器/SMT 作为**拓展库**（人裁定）
 
-- **谓词集合语法复用 `|`**：`{x in Z | x > 0}`。挂载点已存在：`src/parser/ast.h:25`
-  `Expr *guard;              /* optional \`|\` predicate */` —— **但今天它接的是 `case` 分支的模式守卫**
-  （`src/parser/parser.c:1056` `br->mode = 3; /* membership / subset */`、`:1071-1082`），
+- **谓词集合语法复用 `|`**：`{x in Z | x > 0}`。挂载点已存在：`src/parser/ast.h` 里 `Expr *guard;` 那一行
+  （注释说明它是「可选谓词」）—— **但今天它接的是 `case` 分支的模式守卫**
+  （`src/parser/parser.c` 里 `br->mode = 3; /* membership / subset */`、同段的 `br->mode = 4; /* regex match */`），
   **不是集合推导式的谓词**。⚠ 两者的区别已有一个登记：`docs/TYPESET_V06.md` §3.5。
 - 设计史给出的机制（`i.json m00767`）：主选 **Z3**、备 **CVC5**，超时 100ms → 500ms → **降级为运行时检查**；
   并附一张**内置已证结论表**（`Z+ in N`、`N in Z`、`Dec(n) in Q`、`[a~b] in [c~d] ↔ a >= c and b <= d` 等）。
-- `subset` **作为关键字/别名不存在**（`in` 一符两义由 `src/compiler/compiler.c:1713`、`src/compiler/bytecode.h:43` 承担）。
+- `subset` **作为关键字/别名不存在**（`in` 一符两义由 `src/compiler/compiler.c` 里 `emit(comp->curBC, OP_IN, tmp, subj, pat);`、`src/compiler/bytecode.h` 里 `OP_IN,` 那个操作码承担）。
 
 ### 2.7 `@bits(n)` / `@bytes(n)` **后置**（人裁定）
 
@@ -92,18 +97,18 @@ state: {"alive","dead","respawning"} @bits(2)
 
 出处 `i.json m00779`（"编译器自动验证位宽是否足够存储集合的所有值"）。
 ⚠ 与 `i.json m00721`（"**所有标签只出现在声明最前面**，不允许出现在类型表达式的中间或后面"）**矛盾**。
-⚠ **两个数要分开写：这一对标注在 `src/` 里是零命中，在 `docs/*.md` 里今天不是零。**★ 复跑：`grep -rn '@bits\|@bytes' src/ --include=*.c --include=*.h | wc -l` 给 **0**，而同一个式子把 `docs/` 也算进去给 **23**。★ 写作时唯一命中是本会话新写的 `docs/STATUS.md` §4（@ 809dc73 → :498）；`main @ 809dc73` 上已有第二处 `:508`。★ **一句话里的「零命中」如果它的射程跨了两个目录，那么它至少要写两个数** —— 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 M。
+⚠ **两个数要分开写：这一对标注在 `src/` 里是零命中，在 `docs/*.md` 里今天不是零。**★ 复跑：`grep -rn '@bits\|@bytes' src/ --include=*.c --include=*.h | wc -l` 给 **0**，而同一个式子把 `docs/` 也算进去给 **28** [obs: fe72f9f]。★ 写作时唯一命中是本会话新写的 `docs/STATUS.md` §4（`809dc73` 上第 498 行）；`main @ 809dc73` 上已有第二处（第 508 行）。★ **一句话里的「零命中」如果它的射程跨了两个目录，那么它至少要写两个数** —— 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 M。
 
 ### 2.8 `Z` 的 BigInt 表示 = 立即数 + 溢出切堆对象（人裁定）
 
 配合 **R2 的输入语法 = 大整数字面量溢出即切堆**，**不新增任何运算符**
-（**没有** `^` 运算符、**没有** `pow()` 内建：★ **要断言的宾语是「那个记号」，不是「那串字符」—— 两者在这个仓库里差两个量级。** 复跑：`grep -rn 'TOK_CARET\|OP_POW' src/ --include=*.c --include=*.h | wc -l` 给 **0**（这才是「没有那个运算符」）；而 `grep -rn '\*\*' src/ --include=*.c --include=*.h | wc -l` 给 **169**，逐处看过全是形如「某类型的双重指针加变量名」的声明；`grep -rn 'pow(' src/ --include=*.c --include=*.h | wc -l` 给 **2**，两处都是 C 库的 `pow(10.0, …)` 调用，不是语言内建。`i.json` 里 `**` 紧跟数字的 198 处抽样全是 markdown 粗体。★ 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 N）。
+（**没有** `^` 运算符、**没有** `pow()` 内建：★ **要断言的宾语是「那个记号」，不是「那串字符」—— 两者在这个仓库里差两个量级。** 复跑：`grep -rn 'TOK_CARET\|OP_POW' src/ --include=*.c --include=*.h | wc -l` 给 **0**（这才是「没有那个运算符」）；而 `grep -rn '\*\*' src/ --include=*.c --include=*.h | wc -l` 给 **189**，逐处看过全是形如「某类型的双重指针加变量名」的声明；`grep -rn 'pow(' src/ --include=*.c --include=*.h | wc -l` 给 **2**，两处都是 C 库的 `pow(10.0, …)` 调用，不是语言内建。`i.json` 里 `**` 紧跟数字的 198 处抽样全是 markdown 粗体 [obs: fe72f9f]。★ 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 N）。
 
 ### 2.9 `FloatN` / `floatN` 移出核心内置集合，改由**拓展库**提供（人裁定）
 
-- 影响清单见 `docs/TYPESET_V06.md` §8。实现面：`src/parser/parser.c:383` `name_is_builtin_set`、
-  `src/compiler/compiler.c:2861-2866` `pset[23]`、`src/vm/vm.c:1780-1781`/`:1824`/`:1884`、`:1877-1880` 的 24 格硬编码子集表。
-- `src/compilation/`（AOT 与 wasm 后端）**FloatN 零命中** ⇒ 移出不影响两个后端。
+- 影响清单见 `docs/TYPESET_V06.md` §8。实现面：`src/parser/parser.c` 里 `static bool name_is_builtin_set(StringView name) {`、
+  `src/compiler/compiler.c` 里 `static const char *pset[23] = {` 那张表、`src/vm/vm.c` 里 `static const char *bn[24] = {` 那张 24 格硬编码子集表（三处今天都还在）[obs: fe72f9f]。
+- `src/compilation/`（AOT 与 wasm 后端）**FloatN 零命中**（`grep -rn 'FloatN\|floatN' src/compilation/ | wc -l` 给 0 [obs: fe72f9f]）⇒ 移出不影响两个后端。
 - 仓库内既有**同向先例**：`future/archive/集合化.md` §3.1 把 `FloatN`/`floatN` 标为 ⚠️ 建议删除，§3.2 给了四条理由。
 
 ### 2.10 内建函数收到无法解释的实参类型时（**D14**，人裁定）
@@ -112,8 +117,8 @@ state: {"alive","dead","respawning"} @bits(2)
 - **只产出值**的调用（`chr`/`int`/`round`）⇒ 按各自**已裁定**的定义值作答，不抛（`chr(non-int)` 答 `""`；`int("0x10")` 答 `16`）。
 - **不在本条范围内**：**运行期状态**的类型不符（槽里存的不是 `VAL_INT` 等）—— 那按该家族既有答案返回定义值（原子槽族为 `0`），
   且**不得改动那份状态**。
-- 条款正文在 `docs/SYNTAX.md` §7.1 **D14**；六处实现点已落地（Windows `src/runtime/runtime.c:1594`/`:1663`/`:1688`；
-  POSIX `src/runtime/runtime_posix.c:767`/`:811`/`:839`，守卫必须**在 `posix_atomic_find` 之前**，因为后者把一个返回值折成两种决定）。
+- 条款正文在 `docs/SYNTAX.md` §7.1 **D14**；六处实现点已落地（Windows `src/runtime/runtime.c` 里 `if (!nm) { vm_throw_kind(vm, "type_mismatch"); return 1; }` 出现了三处；
+  POSIX `src/runtime/runtime_posix.c` 里 `if (name.type != VAL_STRING) { vm_throw_kind(vm, "type_mismatch"); return 1; }` 也是三处，守卫必须**在 `posix_atomic_find` 之前**，因为后者把一个返回值折成两种决定——原因写在 `src/runtime/runtime_posix.c` 里 `check must come BEFORE the lookup` 那句注释里）。
 - ⚠ **"操作共享状态就抛 / 只产出值就答定义值"这个切法本身没有被正式确认** —— 落地时按此窄条款处理，**不能外推成"引擎开始校验参数类型了"**。
 
 ---
@@ -123,22 +128,22 @@ state: {"alive","dead","respawning"} @bits(2)
 ### 3.1 `stream/typeset-v06`（6 个提交，未合并、未推送）
 
 落在 `docs/TYPESET_V06.md`（六节 + §7 逐条状态 + §7.8 仍未决 + §8 `FloatN` 影响 + §9 审计 + §10）与四处口径同步
-（`docs/STATUS.md` §4/§5、`docs/BOARD.md`、`docs/archive/ROADMAP.md:9`、`docs/archive/ROADMAP_3.1.md:3`）。
+（`docs/STATUS.md` §4/§5、`docs/BOARD.md`、`docs/archive/ROADMAP.md` 里 `已于 2026-10 提前为 v0.6 目标`、`docs/archive/ROADMAP_3.1.md` 里 `集合化是长期语言演进项目`）。
 提交：`f1d2286` → `b3c2914` → `f28157a` → `a02bdae` → `5fe6598` → `96f1b5e`。
 
 ### 3.2 `stream/ci-gate-static`（3 个提交，未合并、未推送）
 
-- 把门禁的**三个纯文件检查阶段**（`links`/`doc-paths`/`ignored-credentials`）接进 `.github/workflows/linux-build.yml`。
+- 把门禁的**三个纯文件检查阶段**（`links`/`doc-paths`/`ignored-credentials`）接进 `.github/workflows/linux-build.yml` 里 `for stage in ignored-credentials links doc-paths text-integrity \` 那一行（今天比本节写的多接了 `text-integrity` [obs: fe72f9f]）。
 - **修掉 Linux CI 一个一直在错的测试枚举**：`ctest -N` **右对齐编号**，旧 sed 要求**恰好一个空格** ⇒
   只收集到三位数的那些（实测 35/134），而**没有任何东西比对过数量**。旧模式**只在 `Total Tests <= 99` 时成立**，
-  在第 100 个测试加入时静默降级，**阈值没有任何人记录**。
-- 加了两条**不是常量**的断言：`collected == Total Tests`（**同一条 `ctest -N`、同一平台** ⇒ Windows 上自动是 124）、
-  以及同一段输出上的 `grep -cF '***Skipped'`（**零额外测试**）。
+  在第 100 个测试加入时静默降级，**阈值没有任何人记录**（这段原始记录今天仍留在文件注释里：`demanded exactly one space between "Test" and "#"` [obs: fe72f9f]）。
+- 加了两条**不是常量**的断言：`collected == Total Tests`（**同一条 `ctest -N`、同一平台** ⇒ Windows 上自动是 124）——今天落在 `tools/ctest_enumerate.sh` 里 `collected %s of %s registered tests from %s` 那句；
+  以及「零额外测试」——今天由 `tools/ctest_skip_guard.sh` 承担（旧写法是同一段输出上的 `grep -cF '***Skipped'`，这份内联拷贝在 fe72f9f 上已经找不到了 [obs: fe72f9f]）。
 
 ### 3.3 计划文件（**未跟踪**）
 
 `@/home/sakiko/inimerse/.verify/v31/ts/TYPESET_V06_PLAN.md`（21984 B，八个阶段 + 顺序约束）——
-**被 `.gitignore:88` 的 `.verify/` 排除，不在仓库里**。谁接手都要知道它不在版控中。
+**被 `.gitignore` 里 `.verify/` 那条排除，不在仓库里**。谁接手都要知道它不在版控中。
 
 ---
 
@@ -146,37 +151,37 @@ state: {"alive","dead","respawning"} @bits(2)
 
 ### 4.1 **没有归属**：v3.1 的三根柱子都还没落地
 
-谓词集合（完全不存在）、静态子集证明（每次 `OP_BE`/`L_STORE_GLOBAL` 都做运行时 `set_contains`）、BigInt（整数是 int64）。
+谓词集合（完全不存在）、静态子集证明（每次 `L_STORE_GLOBAL` 都做运行时 `set_contains` —— 原写的 `OP_BE` 已随 `be` 一起退役，今天 `src/` 里零命中 [obs: fe72f9f]）、BigInt（整数是 int64）。
 另缺：表示窄化 u8/i16、Decimal/定点、大集合数据结构（哈希/位图/区间压缩/结构共享）、迁移工具。
 
 ### 4.2 **没有归属**：「同一语义、多个生产点」是本仓库反复出现的缺陷类
 
 已登记的实例（**每一条都能在仓库里指到具体位置**）：
 
-- 全局名恢复有**三份**、**两种策略**：`src/vm/vm.c:1504-1511`（无条件 `free`+`strdup` 替换）
-  vs `src/vm/vm.c:4987-4992` 与 `:5039-5044`（`if (!name)` 只填空槽）。同一文件、同一天。
-- 预设全局的**编码不一致**：`src/compiler/compiler.c:2867` 用 **GBK** `"\xBF\xD5"`，
-  `src/vm/vm.c:1479` 用 **UTF-8** `"\xE7\xA9\xBA"` 并**逐字注释解释为什么必须是 UTF-8**
-  （"GBK sources are transcoded to UTF-8 at load"）⇒ **注释写对了、实现没跟随**。
+- 全局名恢复有**四份**、**两种策略**：`src/vm/vm.c` 里 `if (vm->globals[i].name) free(vm->globals[i].name);` 那一处（无条件 `free`+`strdup` 替换）
+  vs `src/vm/vm.c` 里 `if (!vm->globals[i].name) vm->globals[i].name = strdup(bc->global_names[i]);` 那三处（`if (!name)` 只填空槽）。同一文件、同一天；[obs: fe72f9f] 实数是 1+3 = 4 份，本节原写「三份」。
+- 预设全局的**编码不一致**：`src/compiler/compiler.c` 里 `"\xBF\xD5"` 用 **GBK**，
+  `src/vm/vm.c` 里 `strdup("\xE7\xA9\xBA")` 用 **UTF-8** 并**逐字注释解释为什么必须是 UTF-8**
+  （原因写在 `src/vm/vm.c` 里 `GBK sources are transcoded to UTF-8 at load` 这句注释里）⇒ **注释写对了、实现没跟随**。
 - `load_params`/`save_params` 有**两个东西**：CLI 路径（已修）与脚本内建（POSIX 仍注册 `posix_unsupported`，
-  按平台钉在 `vtest/posix_runtime_parity_v04.im:27-33`，注释自称 `REGISTERED, NOT RESOLVED`）。
+  按平台钉在 `vtest/posix_runtime_parity_v04.im` 的 `REGISTERED, NOT RESOLVED` 那段注释里）。
 - CI 的测试枚举：`release.yml` 与 `linux-build.yml` 两份拷贝，`release.yml` 修了、另一份没修（见 §3.2）。
-- `src/vm/vm.c:1512` 有一句 **GBK↔UTF-8 往返的乱码注释**（`锟斤拷…`），**它是合法 UTF-8**，
+- `src/vm/vm.c` 里 `/* ---------- 锟竭硷拷 ---------- */` 是一句 **GBK↔UTF-8 往返的乱码注释**，**它是合法 UTF-8**，
   所以查 NUL 字节的新阶段**抓不到它**；全仓受版本控制的文本文件里**只有 2 个**非法 UTF-8
-  （`ai_browser_diag.js`、`examples/legacy-ui/desktop.html`）。
+  （`ai_browser_diag.js`、`examples/legacy-ui/desktop.html`）[obs: fe72f9f]。
 
 ### 4.3 **需要人裁定**：`count` 与 `size` 的处置
 
-见 §2.4。推荐（**未定**）：`count` 当规范名，`size` 对集合降为已弃用别名并迁移 29 处。
+见 §2.4。推荐（**未定**）：`count` 当规范名，`size` 对集合降为已弃用别名并迁移 74 处 [obs: fe72f9f]。
 
-### 4.4 **未登记也只差一步**：`docs/SYNTAX.md:39` 与实现矛盾
+### 4.4 **未登记也只差一步**：`docs/SYNTAX.md` 的注释一节与实现矛盾
 
-`docs/SYNTAX.md:39` 逐字："两种行注释，**没有块注释**"，而 `src/lexer/lexer.c:83-92` **就是**块注释
-（`#[...]` 嵌套计数），`selfhost/lexer.im:6` 也自述支持它。⇒ 改文档还是删实现，**未定**。
+`docs/SYNTAX.md` 里 `加一种嵌套块注释` 这一句（原句是「两种行注释，**没有块注释**」——**这一句在本节写下之后已经被改掉** [obs: fe72f9f]），而 `src/lexer/lexer.c` 里 `if (lex->src[lex->pos+1] == '[') {` **就是**块注释
+（`#[...]` 嵌套计数），`selfhost/lexer.im` 里 `支持 # 行注释和 #[...] 块注释` 也自述支持它。⇒ 改文档还是删实现，**未定**（文档已经先走了半步：实现没动、文档改成与实现一致；要不要把这条登记下来，仍未定）。
 
 ### 4.5 **người 的**：`be` 退役节奏
 
-已裁定为"纯脱糖别名"（§2.3），但**迁移 19 个 `vtest/*.im`（全仓 42 行）的时机**没定。
+已裁定为"纯脱糖别名"（§2.3），但**迁移 29 个 `vtest/*.im`（`vtest` 里 50 行、全仓 89 行）的时机**没定 [obs: fe72f9f]。
 
 ### 4.6 **规则本身还没有家**：一次观测 ≠ 一个性质
 
@@ -184,7 +189,7 @@ state: {"alive","dead","respawning"} @bits(2)
 例：读一次 `ctest -N` 就当成"CI 上注册了什么"；读一次 `java: ABSENT` 就当成"两个 bridge 都跳过"；
 读一次 `Total Tests: 136` 就当成"那个分支的属性"；把两个不同时刻的观测拼成「36/136」这个比值。
 
-⇒ **与 `EXP_CTEST` 的 130、`docs/archive/API_BUILTIN_TABLE.md` 的「59」、`linux-build.yml:45` 的「恰好一个空格」
+⇒ **与 `EXP_CTEST` 当年那个 130、`docs/archive/API_BUILTIN_TABLE.md` 的「59」、`.github/workflows/linux-build.yml` 里 `demanded exactly one space between "Test" and "#"` 那句
 是同一形状的第五份拷贝**：**一个数/一个格式被写下来时是对的，之后没有人核对它** —— 而且这次，写下来的人是我。
 
 **建议的落点**（未定）：`docs/AUDIT.md` 一条登记，或用 `docs/SYNTAX.md` §7.4 的 H 系列写一条可引用的规则。
