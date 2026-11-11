@@ -248,6 +248,22 @@ def gen_program(rng):
             lines.append('say c["zz"]')         # a key that is not there
             lines.append('c["b"] = %s' % rng.choice(INTS))
             lines.append('say c["b"]')
+    # GROWTH, the shape a RETIRED refusal used to make unreachable (§10.151):
+    # a write past the end grows the array (src/vm/vm.c:3721-3724) and the gap
+    # fills with nil.  While `prescan_constant_subscripts` refused these shapes
+    # at translate time the generator could not say them, which is exactly the
+    # silence this fuzzer exists to break -- so the family is written down and
+    # given its own seed rather than left to the dice.
+    if rng.random() < 0.4:
+        k = rng.randint(1, 5)
+        lines.append("gw = [" + ", ".join(rng.choice(INTS) for _ in range(rng.randint(1, 3))) + "]")
+        lines.append("gw[%d] = %s" % (k, rng.choice(INTS)))
+        lines.append("say gw")
+        lines.append("say len(gw)")
+        lines.append("say gw[%d]" % k)
+        lines.append("gx = gw")
+        lines.append("say gx[%d]" % k)
+        lines.append("say gw[%d]" % (k + rng.randint(0, 2)))
     # NESTED CONTAINERS AND ALIASES.  Both are places where a route that models
     # a container as a REGION IN A POOL can part company with a runtime that
     # models it as an OBJECT: a nested write has to reach THROUGH the outer

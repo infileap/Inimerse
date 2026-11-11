@@ -665,6 +665,14 @@ ALLOCS_EXPECT = {
     "mir_read_past_a_literal_is_nil": (1, 256),
     "mir_read_a_value_written_past_the_literal": (1, 256),
     "mir_read_far_past_a_single_element_literal": (1, 256),
+    # measured on the first run of these criteria: the literal's own block; the
+    # comparison case builds two of them.
+    "mir_grow_an_array_past_its_literal": (1, 256),
+    "mir_grow_through_an_alias": (1, 256),
+    "mir_grow_inside_a_function": (1, 256),
+    "mir_grow_a_nested_element": (1, 256),
+    "mir_grow_then_compare": (2, 768),
+    "mir_grow_with_an_explicit_nil": (1, 256),
     "mir_index_read_negative_is_nil": (1, 256),
     "mir_dict_negative_key_is_nil": (1, 256),
 }
@@ -2948,6 +2956,53 @@ MIR_ONLY = [
      'a = [1, 2]\n'
      'a[5] = 9\n'
      'say a[5]\n'
+     'say len(a)\n'),
+    # --- GROWTH: the answer a retired refusal used to hide ---------------------
+    # A write past the end GROWS the array and fills the gap with nil
+    # (src/vm/vm.c:3721-3724).  §10.151 retired the translate-time refusal that
+    # called these shapes impossible; these six pin what the runtime answers,
+    # because "we no longer refuse it" is not the same claim as "we answer what
+    # the interpreter answers".  Each was measured by hand first
+    # (`inimerse --no-mods` against the generated C) and written afterwards.
+    ("mir_grow_an_array_past_its_literal",
+     'a = [1, 2]\n'
+     'a[5] = 9\n'
+     'say a\n'
+     'say len(a)\n'
+     'say a[5]\n'
+     'say a[3]\n'),
+    ("mir_grow_through_an_alias",
+     'a = [1]\n'
+     'b = a\n'
+     'a[3] = 7\n'
+     'say b\n'
+     'say b[3]\n'
+     'say len(b)\n'),
+    ("mir_grow_inside_a_function",
+     'func grow(a) {\n'
+     '    a[4] = 7\n'
+     '    return a\n'
+     '}\n'
+     'x = [1]\n'
+     'y = grow(x)\n'
+     'say x\n'
+     'say y\n'
+     'say len(x)\n'),
+    ("mir_grow_a_nested_element",
+     'n = [[1]]\n'
+     'n[3] = 5\n'
+     'say n\n'
+     'say n[3]\n'),
+    ("mir_grow_then_compare",
+     'a = [1]\n'
+     'b = [2]\n'
+     'a[3] = 1\n'
+     'say a == b\n'
+     'say len(a) == len(b)\n'),
+    ("mir_grow_with_an_explicit_nil",
+     'a = [1, 2]\n'
+     'a[4] = nil\n'
+     'say a\n'
      'say len(a)\n'),
     ("mir_read_far_past_a_single_element_literal",
      'a = [1]\n'
