@@ -7967,3 +7967,40 @@ IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|table=59|emitter=59|reported=59|a
 1. **删掉的是「生成前拒绝」，不是「运行期行为」**。越界读仍是 nil、越界写仍是增长、负下标写仍是可捕获的 throw；本格只删了「发射前把程序判死」的那一步 (168 行)。
 2. **`MIR_ONLY_REFUSE` 仍然存在**，它现在装的是能力边界（线程、测不出的限制等），不再是这条。区别写在那里：能力边界可以拒，可回答的形状不能拒。
 3. **本路线的「拒绝前已知」少了唯一的实例**。往后若有新检查想按同样理由拒译，得先回答本格这个问题：「解释器会答什么？如果它会答，我们就得答」。
+
+## §10.152 增长的那些形状，从此有名字（aot-mir，A 类第二十九项）
+
+### 一、来源与日期
+
+判据与工具改动同一笔 `tools/aot_mir.test.py` + `tools/aot_mir_fuzz.py` + `CMakeLists.txt` + `tools/gate.sh` + `docs/BOARD.md`，2026-11-11。这一格**不推进 handles，也不推进 accepted 的语料**（都在 §10.151 之后没变：`handles=59|of=67|unknown=8`、`accepted=278`）；它推进的是**可复跑的宽度**：`mir-only-cases 192→198`，以及一族的生成器形状从「手测过」变成「有种子、有 CTest」。
+
+§10.151 退役了那条「常量下标越界就拒译」的生成前拒绝。退役之后有一句话不能只停在结论上：**「我们不再拒绝它」不等于「我们答得和解释器一样」**。这一格就是补那句话的两半——先是六条手写判据，再是一个生成器族和它的种子。
+
+### 二、六条判据钉住的是什么
+
+| 判据 | 形状 | 解释器 |
+|---|---|---|
+| `mir_grow_an_array_past_its_literal` | `a = [1, 2]` / `a[5] = 9` / `say a` / `len` / `a[5]` / `a[3]` | `[1, 2, nil, nil, nil, 9]`,`6`,`9`,`nil` |
+| `mir_grow_through_an_alias` | `a = [1]` / `b = a` / `a[3] = 7` / `say b` / `b[3]` / `len(b)` | `[1, nil, nil, 7]`,`7`,`4` |
+| `mir_grow_inside_a_function` | 函数里 `a[4] = 7` 再返回 | 两边都是五槽，返回值与原值相同 |
+| `mir_grow_a_nested_element` | `n = [[1]]` / `n[3] = 5` / `say n` | `[[1], nil, nil, 5]`,`5` |
+| `mir_grow_then_compare` | 增长后比长度/相等 | `false`,`false` |
+| `mir_grow_with_an_explicit_nil` | `a[4] = nil`（显式 nil 也要增长） | `[1, 2, nil, nil, nil]`,`5` |
+
+顺手在同一台机器上另跑了八条**没进判据**的形状，全部 `SAME`：增长后比较（`a == b` / `len` 相等）、显式 nil 增长、嵌套别名增长（`m = n[0]; m[2] = 5`）、单步追加（`a[1] = 2`）、字符串越界写（静默忽略）、字典里的数组增长、函数内增长后别名可见、变量下标增长。它们不进口径，是因为每条都要一段固定程序，而六条已经把这族的三个承重点（增长、别名、显式 nil）钉住了。
+
+### 三、生成器与种子
+
+`tools/aot_mir_fuzz.py` 加了一个 `gw`/`gx` 族：`gw = [...]` → `gw[k] = v`（k 可能远超字面量长度）→ `say gw` / `len` / `say gw[k]` → 别名 `gx = gw` 读回 → 再读一个 k+0..2 的下标。登记成 `aot_mir_fuzz_regression_seed13`（`--count 20 --seed 13`），`EXP_CTEST 199→200`，`docs/BOARD.md` 的 `recon.ctest-count` 同步。
+
+读数：`IR-AOT-MIR-FUZZ|seed=13|count=20|ran=18|diverge=0|threw=0|unsound=0|refused-by-name=2`、`IR-AOT-MIR-FUZZ-VERDICT|PASS`；`ctest -N` ⇒ `Total Tests: 200`；`check_reconciliation.py` ⇒ `VERDICT|PASS|measured=5`。
+
+### 四、为什么这一族以前生成不出来
+
+不是忘了写，是**写不出来**：`gw[5] = v` 在 `[a, b]` 这种两元素字面量上会被 `prescan_constant_subscripts` 在发射前判死（§10.151 之前），生成器即使产出这样的程序也只会拿到 `why=index-out-of-range-constant`，于是「这个形状我们答得对不对」这件事永远不进入读数。这条与 §10.146 的教训是同一个：**生成器对某个形状的沉默，与该形状正确，从内部看无法区分**。区别是这次沉默的原因是一条策略，而不是作者的疏忽。
+
+### 五、边界
+
+1. 这一格**没有新行为**：没有一行运行时或发射器的改动，交付物是判据、生成器分支与登记。它是 §10.151 的验收面，不是新能力。
+2. 增长后的**搬移**语义仍靠 §10.148 的 `mv_arr_live` 转发头；这一格只是把「搬移之后读回」也纳入了可复跑的形状（`mir_grow_through_an_alias` 的 `b` 读的就是搬移后的区域）。
+3. `refused-by-name=2` 在那 18 例里仍是 `why=threads` 一类的能力边界，与本族无关。
