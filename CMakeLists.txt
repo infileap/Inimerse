@@ -2080,3 +2080,18 @@ set_tests_properties(aot_mir_fuzz_regression_seed17 PROPERTIES WORKING_DIRECTORY
 add_test(NAME aot_mir_fuzz_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/aot_mir_fuzz.py --self-check)
 set_tests_properties(aot_mir_fuzz_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;aot-mir;regression")
+
+# The handoff's citations are CONTENT ANCHORS, not line numbers: a backticked path
+# followed by a quote that must appear verbatim in that file today.  A line number
+# is a claim about a tree and it dies on the next edit above it -- docs/HANDOFF_INFIVERSE.md
+# carried citations whose target had moved hundreds of lines, and two that had never
+# pointed at the sentence they were attached to.  A quote does not drift: either it is
+# in the file, or the sentence it backs has changed, and both are worth red.  Registered
+# with its own controls for the same reason as every other checker here -- one that has
+# never been shown to go red is a checker nobody can quote.
+add_test(NAME handoff_anchor_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_handoff_anchors.py)
+set_tests_properties(handoff_anchor_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;docs;regression")
+add_test(NAME handoff_anchor_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_handoff_anchors.py --self-check)
+set_tests_properties(handoff_anchor_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;docs;regression")
