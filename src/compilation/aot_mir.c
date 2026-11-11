@@ -3505,173 +3505,18 @@ static char **build_func_names(const Node *nodes, int n) {
     return out;
 }
 
-/* --------------------------------------------------- provable subscripts */
-
-/* What this route can PROVE about one register in a straight line of
-   instructions, and the only two users of it: the length of an array a
-   register holds, and the integer value a register holds.  Kept per container,
-   cleared at every JOIN POINT -- a block label and every jump target -- because
-   a label can be reached with two different values in the same register, and
-   knowledge that survived a join would be a lie the refusal below acts on.
-   File scope and static: REG_LIMIT is a compile-time bound here, so a table
-   that is never allocated is a table that cannot leak on the refusal paths
-   this file takes; the global half is bounded by KS_GLOBALS just below, and
-   its soundness rule (a call clears it) lives there too. */
-static unsigned char ks_klen_ok[REG_LIMIT];
-static int           ks_klen_val[REG_LIMIT];
-static unsigned char ks_kint_ok[REG_LIMIT];
-static long long     ks_kint_val[REG_LIMIT];
-/* The same two facts, keyed by GLOBAL id instead of by register, because a
-   constant that travels through `a = [1, 2, 3]` and is read back as `a[3]` is
-   just as provable as the literal-in-place spelling and is the shape a reader
-   actually writes.  Soundness is the whole difficulty: a global's contents can
-   be rewritten by any call, so every OP_CALL_FUNC CLEARS this table (a call
-   this pass cannot see into must invalidate exactly what it could touch), and
-   an OP_STORE_GLOBAL overwrites the entry with the knowledge of its source
-   register -- unknown source, unknown entry.  What survives is only what one
-   straight line between two such events proves, which is the same claim the
-   register tables make.  Bounded by KS_GLOBALS: an id beyond it is simply not
-   tracked, which can only make this pass refuse LESS, never wrongly refuse. */
-#define KS_GLOBALS 4096
-static unsigned char ks_gklen_ok[KS_GLOBALS];
-static int           ks_gklen_val[KS_GLOBALS];
-
-static void ks_reset(void) {
-    memset(ks_klen_ok, 0, sizeof ks_klen_ok);
-    memset(ks_klen_val, 0, sizeof ks_klen_val);
-    memset(ks_kint_ok, 0, sizeof ks_kint_ok);
-    memset(ks_kint_val, 0, sizeof ks_kint_val);
-    memset(ks_gklen_ok, 0, sizeof ks_gklen_ok);
-    memset(ks_gklen_val, 0, sizeof ks_gklen_val);
-}
-
-/* A call may store any global, so it forgets every array length known through
-   one.  Register knowledge is untouched: a callee cannot write the caller's
-   registers, only globals. */
-static void ks_globals_clobbered(void) {
-    memset(ks_gklen_ok, 0, sizeof ks_gklen_ok);
-    memset(ks_gklen_val, 0, sizeof ks_gklen_val);
-}
-
-/* The ONE refusal this route makes before it generates anything, about a
-   subscript: a CONSTANT index outside a length the same straight line proves.
-   `say [7, 8, 9][3]` -- or the same program spelled `a = [1, 2, 3]` then
-   `say a[3]`, which the global table above makes just as provable -- cannot
-   read anything the interpreter's answer (nil) would
-   not also be, and the interpreter DOES answer it -- so why refuse instead of
-   generating a read that mv_arr_get answers nil?  Because the criterion for
-   this step is "a bound a reader can see is impossible is refused before
-   generation" (the same shape OP_LOADK_STRING's pool bound has), and because
-   a constant subscript is exactly the case a reader can see it in.  What is
-   NOT refused is anything this pass cannot prove: a variable subscript is
-   answered at run time with the interpreter's rc (mv_arr_get), because a
-   refusal there would hide an answer that exists.
-   The negative half is the same rule: an ARRAY does not wrap a negative
-   subscript (src/vm/vm.c:1002 answers nil for i < 0), so a constant -1 is
-   just as provably outside as a constant 3 is.  A STRING container does wrap
-   (src/vm/vm.c:3705 `if (i < 0) i = len + i;`), and this check cannot see a
-   string length at all -- only array lengths are tracked -- so a constant
-   negative subscript on a string is left to the runtime, which answers it
-   correctly.
-   Returns 0 or -1 (g_detail and g_prescan_why say which). */
-static int prescan_constant_subscripts(const IrFunc *fn, int f) {
-    int n = fn->ninsns;
-    if (n <= 0) return 0;
-    unsigned char *join = calloc((size_t)n + 1, 1);
-    if (!join) return bad("container=%d: out of memory for the join table", f);
-    join[0] = 1;
-    for (int b = 0; b < fn->nblocks; b++) {
-        int s = fn->blocks[b].start;
-        if (s >= 0 && s <= n) join[s] = 1;
-    }
-    for (int i = 0; i < n; i++) {
-        int op = fn->insns[i].op;
-        if (op != OP_JUMP && op != OP_JUMP_IF_FALSE && op != OP_JUMP_IF_TRUE) continue;
-        int32_t t = ir_insn_r2(&fn->insns[i]);
-        if (t >= 0 && t <= n) join[t] = 1;
-    }
-    ks_reset();
-    for (int i = 0; i < n; i++) {
-        const IrInsn *in = &fn->insns[i];
-        int op = in->op;
-        int mask = op_regs(op);
-        if (join[i]) ks_reset();
-        if (mask < 0) continue;
-        if ((mask & R1) && in->dst >= 0 && in->dst < REG_LIMIT) {
-            /* Any store to a register ends what we knew about its contents.
-               Invalidation comes BEFORE the arms below, so the arms' own
-               `set` calls are the last word about the register they write. */
-            ks_klen_ok[in->dst] = 0;
-            ks_kint_ok[in->dst] = 0;
-        }
-        switch (op) {
-        case OP_LOADK_INT:
-            ks_kint_ok[in->dst] = 1;
-            ks_kint_val[in->dst] = ir_insn_r2(in);
-            break;
-        case OP_LOADK_I64: {
-            long long v = (long long)((unsigned long long)(unsigned int)ir_insn_r2(in) |
-                                      ((unsigned long long)(unsigned int)ir_insn_r3(in) << 32));
-            ks_kint_ok[in->dst] = 1;
-            ks_kint_val[in->dst] = v;
-            break;
-        }
-        case OP_NEW_ARRAY: {
-            /* The count is r3 (op_regs' note).  A non-negative count is already
-               guaranteed by the operand pass; the length is what this pass
-               needs next to the subscript. */
-            ks_klen_ok[in->dst] = 1;
-            ks_klen_val[in->dst] = (int)ir_insn_r3(in);
-            break;
-        }
-        case OP_STORE_GLOBAL: {
-            /* r1 is the GLOBAL id, r2 the source register (op_regs returns R2
-               for this op for exactly that reason, and the emitter writes
-               `gnames[r1] = v[r2]`).  The entry takes the source's knowledge
-               verbatim; unknown source, unknown entry. */
-            int gid = in->dst, src = in->a;
-            if (gid >= 0 && gid < KS_GLOBALS) {
-                int known = (src >= 0 && src < REG_LIMIT) ? ks_klen_ok[src] : 0;
-                ks_gklen_ok[gid] = (unsigned char)known;
-                ks_gklen_val[gid] = known ? ks_klen_val[src] : 0;
-            }
-            break;
-        }
-        case OP_LOAD_GLOBAL: {
-            /* The register half of the same fact: -1 is the unresolved global
-               the emitter spells out as nil, and it knows nothing. */
-            int gid = in->a, dst = in->dst;
-            if (dst >= 0 && dst < REG_LIMIT && gid >= 0 && gid < KS_GLOBALS && ks_gklen_ok[gid]) {
-                ks_klen_ok[dst] = 1;
-                ks_klen_val[dst] = ks_gklen_val[gid];
-            }
-            break;
-        }
-        case OP_CALL_FUNC:
-            ks_globals_clobbered();
-            break;
-        case OP_INDEX_GET: {
-            int rcont = in->a, ridx = in->b;   /* r2 = container, r3 = subscript */
-            if (rcont < 0 || rcont >= REG_LIMIT || ridx < 0 || ridx >= REG_LIMIT) break;
-            if (!ks_klen_ok[rcont] || !ks_kint_ok[ridx]) break;
-            long long k = ks_kint_val[ridx];
-            int len = ks_klen_val[rcont];
-            if (k < 0 || k >= len) {
-                free(join);
-                g_prescan_why = "index-out-of-range-constant";
-                return bad("container=%d insn=%d constant subscript %lld is outside the %d element(s) "
-                           "of the array built into register %d",
-                           f, i, k, len, rcont);
-            }
-            break;
-        }
-        default:
-            break;
-        }
-    }
-    free(join);
-    return 0;
-}
+/* --------------------------------------------------- provable subscripts: retired */
+/* A pass named `prescan_constant_subscripts` used to live here.  It refused a
+   constant subscript that a literal made look impossible, and it was the one
+   pre-generation refusal in this file.  It was retired on 2026-11-11 (§10.151)
+   for the reason its own comment conceded: the interpreter ANSWERS that read
+   (nil, src/vm/vm.c:1002), and mv_arr_get answers it the same way -- so the
+   refusal was a route policy, not a route limit, and it turned programs the
+   interpreter runs into programs this route would not translate.  It was also
+   unsound where it mattered: the length it remembered was not updated when a
+   write grew the array (src/vm/vm.c:3721-3724), so `a = [1, 2]` /
+   `a[5] = 9` / `say a[5]` -- a program whose answer is 9 -- was refused with
+   "5 is outside the 2 elements".   */
 
 /* --------------------------------------------------------------- pre-scan */
 
@@ -3834,10 +3679,11 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 continue;
             }
             /* OP_INDEX_GET has nothing to check in this pass: its operands are
-               registers (bounded above), and the one thing a reader can prove
-               about them -- a CONSTANT subscript outside a length the same
-               straight line proves -- is checked by prescan_constant_subscripts
-               below, which needs this container's whole instruction list.  The
+               registers (bounded above).  A constant subscript past the end of a
+               literal used to be refused before generation by
+               prescan_constant_subscripts; that pass is retired (§10.151) because
+               the interpreter answers the read (nil, src/vm/vm.c:1002) and
+               mv_arr_get answers it the same way.  The
                RUNTIME half is mv_arr_get's, deliberately: the interpreter
                answers an out-of-range read (nil) and a non-numeric subscript
                (type_mismatch, rc 1), so refusing those here would hide answers
@@ -3855,10 +3701,11 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                reported `dead` and `agree=no`.  The runtime half is mv_arr_set's
                by design: the interpreter answers a negative subscript by
                throwing index_out_of_range, a non-numeric one with type_mismatch,
-               and a subscript past the end by GROWING the array, so none of the
-               three is statically refusable, and a constant subscript that
-               prescan_constant_subscripts has not invalidated is still
-               refused there (see its note). */
+               and a subscript past the end by GROWING the array
+               (src/vm/vm.c:3721-3724), so none of the three is statically
+               refusable -- and a length a straight line remembers goes stale the
+               moment one write grows the array, which is the measurement that
+               retired prescan_constant_subscripts (§10.151). */
             if (op == OP_INDEX_SET) continue;
             if (op == OP_LOCK) {
                 /* THE PAIRED FORM ONLY.  `lock m { ... }` is emitted as
@@ -4202,11 +4049,9 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
         }
         if (asp != 0)
             return bad("container=%d leaves the argument stack unbalanced: asp=%d", f, asp);
-        /* Runs after the operand pass so that a pool bound or a register bound
-           is still reported first: the readings the existing corpus pinned
-           must not move because a new check took the earlier turn. */
-        if (prescan_constant_subscripts(fn, f) != 0)
-            return -1;
+        /* The constant-subscript analysis that used to run here was retired
+           (§10.151): it refused reads the interpreter answers, and its length
+           knowledge went stale as soon as a write grew the array. */
     }
     for (int op = 0; op < 256; op++) if (g_notyet_by_op[op]) kinds++;
     return kinds;
