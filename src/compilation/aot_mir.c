@@ -2931,6 +2931,71 @@ static const char *const kMirValBlock =
 "    return out;\n"
 "}\n"
 "\n"
+"/* substr(): THE FIRST BUILTIN THAT GROWS BYTES IN THE POOL.  Every builtin\n"
+"   before it answered from slots that already existed -- a header, a string the\n"
+"   program wrote, a container it built.  This one CUTS A NEW STRING out of\n"
+"   another, so it is the first whose answer is bytes nobody wrote down.  Read\n"
+"   src/runtime/runtime_posix.c:548-572 beside this.\n"
+"\n"
+"   WHY IT EXISTS.  substr() was refused by name (why=builtin-call) while every\n"
+"   value it consumes was already representable here.\n"
+"\n"
+"   THE FOUR CLAMPING RULES, in the interpreter's own order, because the order\n"
+"   is what makes the answers what they are:\n"
+"     1. A NEGATIVE start counts FROM THE END: sl + start.\n"
+"     2. That result is clamped into [0, sl] -- so a start before the beginning\n"
+"        becomes 0 (`substr(\"abcdef\", -99, 2)` is `ab`, not empty) and a start\n"
+"        past the end becomes sl (so the answer is empty, NOT nil and NOT the\n"
+"        whole string).\n"
+"     3. A NEGATIVE length becomes 0.  IT DOES NOT count from the end -- the\n"
+"        symmetric-looking rule is wrong, and it is measured: `(\"abcdef\", 3,\n"
+"        -1)` is empty.\n"
+"     4. The length is clamped to `sl - start`.\n"
+"   BYTE-WISE, NO UTF-8: `substr(\"h\u00e9llo\", 1, 2)` returns the two bytes C3\n"
+"   A9, which happen to be one character.  A rune-aware implementation answers\n"
+"   something else for the same call, and that line is the only one that sees\n"
+"   it.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- boundaries, named:\n"
+"     - A non-string SOURCE is read as the EMPTY string (`sv.type == VAL_STRING\n"
+"       && sv.sval ? ... : \"\"`), so `substr(123, 0, 1)` is empty rather than a\n"
+"       throw.  Copied, and in the criterion.\n"
+"     - THE START AND LENGTH ARE `ival` READS, not conversions: a STRING or a\n"
+"       BOOL in either position reads as 0 (the interpreter does the same thing\n"
+"       for the same reason).  Not pinned -- no accepted program here reaches a\n"
+"       shape where it is observable and a rule without a criterion is a claim.\n"
+"     - THE TWO-ARGUMENT CALL answers the INTERPRETER'S `1`: with sp == 1 the\n"
+"       arm returns 0 (a failed builtin) and the destination register keeps its\n"
+"       previous value, which measured 1 on a fresh program.  That is a stale\n"
+"       register, not a substring, so it is refused BY NAME\n"
+"       (builtin-stale-stack) like the other shapes of the same class.\n"
+"\n"
+"   DELETE CONDITION.  The arm, its pre-scan name and the two criteria go\n"
+"   together.  Removing only the heap answer (returning a pointer into the\n"
+"   source) would still print the same bytes for every line but one --\n"
+"   `len(substr(...))` and the ALLOCS row are what notice.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_substr_clamps_every_boundary (the\n"
+"   eleven clamped lines, byte-for-byte) and mir_substr_allocates_its_answer\n"
+"   (one block per call, sized by the CLAMPED length -- so a route that sized\n"
+"   the answer by the source or by the requested length moves the total). */\n"
+"static inline MirVal mv_substr(MirVal src, MirVal startv, MirVal lenv) {\n"
+"    const char *s = (src.type == MV_STR && src.sval) ? src.sval : \"\";\n"
+"    int sl = (int)strlen(s);\n"
+"    int start = (int)startv.ival;          /* ival read, not a conversion */\n"
+"    int len = (int)lenv.ival;\n"
+"    if (start < 0) start = sl + start;                    /* rule 1 */\n"
+"    if (start < 0) start = 0; if (start > sl) start = sl; /* rule 2 */\n"
+"    if (len < 0) len = 0;                                 /* rule 3 */\n"
+"    if (len > sl - start) len = sl - start;               /* rule 4 */\n"
+"    char *nb = (char *)mv_alloc((size_t)len + 1);\n"
+"    if (len > 0) memcpy(nb, s + start, (size_t)len);\n"
+"    nb[len] = 0;\n"
+"    MirVal r;\n"
+"    r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;   /* heap-owned */\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4586,11 +4651,11 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
-                    && strcmp(bn, "pop") != 0) {
+                    && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
-                               " list, size, count, has, keys, str, sum, remove, push and pop"
-                               " and no other builtin;"
+                               " list, size, count, has, keys, str, sum, remove, push, pop"
+                               " and substr and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -4630,6 +4695,16 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                " the interpreter answers that shape with the argument stack top"
                                " or the destination register's previous value, not with a value"
                                " the program asks for", f, i, bn, argc);
+                }
+                /* substr needs THREE: with two the interpreter returns 0 and the
+                   destination register keeps its value (measured: `substr("abc",
+                   1)` answers 1 on a fresh program).  Same class, same name. */
+                if (strcmp(bn, "substr") == 0 && argc < 3) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin 'substr' is called with %d argument(s):"
+                               " the interpreter answers that shape with the argument stack top"
+                               " or the destination register's previous value, not with a value"
+                               " the program asks for", f, i, argc);
                 }
                 if (strcmp(bn, "has") == 0 && argc < 2) {
                     g_prescan_why = "builtin-stale-stack";
@@ -5448,7 +5523,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
-                    && strcmp(bn, "pop") != 0)) return -1;
+                    && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5457,6 +5532,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "substr") == 0)
+            buf_fmt(b, "    v[%d] = mv_substr(mvargs[asp-3], mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "remove") == 0)
             buf_fmt(b, "    v[%d] = mv_remove(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "push") == 0)

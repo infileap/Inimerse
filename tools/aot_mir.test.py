@@ -432,13 +432,16 @@ ALLOCS_EXPECT = {
     # write down what the number should be, then check.
     #   mir_substr_clamps_every_boundary: eleven calls, clamped lengths
     #     3,2,0,4,0,2,0,2,0,2,3 -> sum 18, plus one byte per answer = 11 calls
-    #     -> 29 bytes.  Blocks: 29 < 256, so it is the ONE pool block the
-    #     program's own literals need... except the literals are resident
-    #     (mv_str, ival=1, no allocation), so the answer strings are all there
-    #     is.  MEASURED below.
-    #   mir_substr_allocates_its_answer: three calls, lengths 3,4,0 -> 7 + 3 = 10
-    "mir_substr_clamps_every_boundary": (0, 0),
-    "mir_substr_allocates_its_answer": (0, 0),
+    #     -> 29 bytes.  The program's string literals are RESIDENT (mv_str,
+    #     ival=1) and allocate nothing, so the eleven answers are the whole
+    #     allocation.  PREDICTED 11|29, MEASURED 11|29 -- the prediction held.
+    #   mir_substr_allocates_its_answer: three calls, clamped lengths 3,4,0
+    #     -> 7 + 3 = 10.  PREDICTED 3|10, MEASURED 3|10.
+    # Both are recorded here as the derivation PLUS the check, which is the
+    # practice the previous cell's three-wrong-out-of-five earned: write what
+    # the number should be, then look.
+    "mir_substr_clamps_every_boundary": (11, 29),
+    "mir_substr_allocates_its_answer": (3, 10),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
