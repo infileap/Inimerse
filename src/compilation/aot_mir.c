@@ -4116,10 +4116,30 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                " the safe-mode rule live in the VM and the mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
-                if (argc != 1)
-                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s);"
-                               " this route emits len and list, both of which take one",
+                if (argc < 0 || argc >= REG_LIMIT)
+                    return bad("container=%d insn=%d builtin '%s' argument count %d out of range",
                                f, i, bn, argc);
+                /* THE ZERO-ARGUMENT CALL is answered by the interpreter, but with
+                   a LEFTOVER: the runtime reads the argument stack top when one is
+                   pushed and, when the stack is empty, the VM moves the -- unchanged
+                   -- destination register into the result (L_CALL_BUILTIN only
+                   moves t->stack[t->sp] into R[ins.r1] when t->sp >= 0).  Measured:
+                   a fresh `say len()` prints 0 (the register's initial value),
+                   `x = 6` followed by `say len()` prints 6, `x = "abcdef"` followed
+                   by `say list()` prints abcdef, and `say len("abc", len())` prints 3
+                   (there the inner call reads the OUTER call's pushed argument off
+                   the stack).  The answer is not a function of the expression, so
+                   there is nothing to copy, and this shape is refused BY NAME.  It
+                   is also the ONLY reader of the stack residue a multi-argument call
+                   leaves behind, which is why accepting that residue is sound. */
+                if (argc == 0) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with no argument:"
+                               " the interpreter answers it with a leftover (the argument stack"
+                               " top if one was pushed, otherwise the destination register's"
+                               " previous value), not with a value the program asks for",
+                               f, i, bn);
+                }
                 if (asp < argc)
                     return bad("container=%d insn=%d builtin '%s' argument stack underflows:"
                                " asp=%d argc=%d", f, i, bn, asp, argc);
@@ -4901,10 +4921,18 @@ static int emit_one(Ctx *c, Buf *b, int i) {
            emitter's index read and prescan's bound are the same claim (the
            operands instrument compares the two).  Anything but `len` and `list`
            returns -1: prescan refuses those by name, and this is the second
-           lock.  The ARITY is one for both, so the pop below is shared and only
-           the call differs -- and the piece of knowledge worth stating twice is
-           which RUNTIME function the name maps to, because `list` answers a new
-           container where `len` answers a number. */
+           lock.  ARITY: every argument was pushed -- and therefore evaluated,
+           in source order -- by OP_PUSH_REG before this instruction, and the
+           call reads mvargs[asp-1], the TOP, which is the LAST argument.  That
+           is the interpreter's answer for any count above one: its runtime
+           reads the stack top and pops exactly one value, so the last argument
+           answers and the earlier ones stay on the stack as residue.  This
+           route pops ALL of them (`asp -= argc`), so asp stays balanced and
+           there is no residue to read; that is sound because the only reader
+           of the residue in the interpreter is a ZERO-argument builtin, which
+           the pre-scan refuses by name (builtin-stale-stack).  The one-argument
+           call is byte-identical to before: the pop width is the argument
+           count, and for one that is the same single pop. */
         const Bytecode *bc = c->node;
         int32_t ix = r2;
         const char *bn = (ix >= 0 && ix < bc->string_count && bc->string_pool)
@@ -4914,7 +4942,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else
             buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
-        buf_str(b, " asp -= 1;");
+        buf_fmt(b, " asp -= %d;", w3);
         /* len answers nil/garbage for a non-container and never throws, so this
            check exists for the CALLER's flag rather than len's own: a callee
            reached through a builtin cannot set it, but keeping every call site
