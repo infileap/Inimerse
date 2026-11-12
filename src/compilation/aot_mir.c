@@ -3091,6 +3091,103 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* join(): the mirror of split -- it consumes a CONTAINER and answers ONE new\n"
+"   string, where split produced a container of new strings.  Read\n"
+"   src/runtime/runtime_posix.c:417-429 beside this.\n"
+"\n"
+"   WHY IT EXISTS.  join() was refused by name (why=builtin-call) while both\n"
+"   the container it walks and the formatter it needs were already here.\n"
+"\n"
+"   THE SEPARATOR RULE, read off the interpreter rather than assumed: the LAST\n"
+"   argument is the separator ONLY IF IT IS A STRING.  `join([1,2,3])` has one\n"
+"   argument, so the array is the whole input and the separator is the empty\n"
+"   string -- which is why `join([1,2,3])` prints `123` and not an error.  A\n"
+"   NON-string second argument is therefore not a separator at all; the arm\n"
+"   below mirrors that by taking the array from the last pushed slot and the\n"
+"   separator from the slot before it only when that slot holds a string.\n"
+"\n"
+"   EACH ELEMENT IS FORMATTED WITH mv_vts -- the SHORT value_to_string rule,\n"
+"   NOT str()'s %.17g.  This is the cell's load-bearing detail and it is\n"
+"   MEASURED: `join([0.1 + 0.2], \"-\")` is `0.3` while `str(0.1 + 0.2)` is\n"
+"   `0.30000000000000004`, and `join([1/3], \"-\")` is `0.333333` while str is\n"
+"   `0.33333333333333331`.  A criterion written over integer elements alone\n"
+"   cannot see the difference, so the program prints both of the SAME\n"
+"   expression beside each other.\n"
+"\n"
+"   NO printf IS APPLIED TO ELEMENT BYTES: an element containing `%s` is copied\n"
+"   verbatim, which `join([\"%s\", \"%d\"], \"-\")` pins.  mv_vts formats into\n"
+"   a buffer and the buffer is copied; nothing re-interprets the data as a\n"
+"   format string.  An implementation that reached for snprintf with the\n"
+"   element as the FORMAT would print garbage or crash on that line.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- boundaries, named:\n"
+"     - A NESTED CONTAINER IS SERIALISED, not refused: `join([[1, 2], 3],\n"
+"       \"-\")` is `[1, 2]-3` because mv_vts already formats containers (its\n"
+"       depth rule applies unchanged).  The alternative -- refusing this shape\n"
+"       by name -- was considered and REJECTED: the interpreter answers it, the\n"
+"       route already has the formatter that does, and a refusal here would be\n"
+"       a capability regression dressed as a boundary.  Recorded because it was\n"
+"       a real choice, not because it was close.\n"
+"     - A NON-ARRAY source answers the EMPTY STRING, never nil and never a\n"
+"       throw (`join(nil, \"-\")`, `join(\"abc\", \"-\")`, `join({\"a\": 1},\n"
+"       \"-\")` are all empty).  Copied, and in the criterion.\n"
+"     - THE INTERPRETER'S per-element 256-byte part buffer is NOT reproduced:\n"
+"       mv_vts is given a buffer sized for the whole answer here, so a single\n"
+"       element longer than 255 bytes is formatted in full where the\n"
+"       interpreter would truncate it.  Not pinned: no accepted program here\n"
+"       reaches that length, and pinning a truncation this route does not have\n"
+"       would be writing a criterion for someone else's limit.\n"
+"     - A ONE-ARGUMENT call is the DEFAULT-SEPARATOR form above, not a stale\n"
+"       register: `join([1,2,3])` answers `123` on the interpreter, so it is\n"
+"       EMITTED rather than refused.  A ZERO-argument call is refused BY NAME\n"
+"       (builtin-stale-stack) like the other shapes of that class.\n"
+"\n"
+"   DELETE CONDITION.  The arm, its pre-scan name and the two criteria go\n"
+"   together.  Switching the element formatter from mv_vts to %.17g reddens\n"
+"   exactly the two float lines; printing with a format string reddens only the\n"
+"   `%s`/`%d` line.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's\n"
+"   mir_join_every_shape_and_the_default_separator (eleven lines, byte-exact)\n"
+"   and mir_join_float_format_and_percent (the float pair and the literal %).\n"
+"   join allocates ONE block for its answer -- the mirror of split's one block\n"
+"   per element -- and the ALLOCS rows pin that. */\n"
+"static inline MirVal mv_join(MirVal arrv, int has_sep, MirVal sepv) {\n"
+"    if (arrv.type != MV_ARR) return mv_str_of(mv_str(\"\"));   /* :423 */\n"
+"    int iv = mv_arr_live((int)arrv.ival);\n"
+"    if (iv < 1 || iv > mv_arrused) return mv_str_of(mv_str(\"\"));\n"
+"    const char *sep = (has_sep && sepv.type == MV_STR && sepv.sval) ? sepv.sval : \"\";\n"
+"    size_t seplen = strlen(sep);\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    /* TWO PASSES, ONE ALLOCATION -- the same shape mv_split uses, and the\n"
+"       reason this is exact rather than generous: the first pass FORMATS every\n"
+"       element into a scratch buffer and adds up the lengths, the second copies.\n"
+"       A single 'reserve 1024 per element' allocation would be simpler, and is\n"
+"       what the first draft did; it also made a five-byte answer cost 22 294\n"
+"       bytes, which is visible in IR-MIR-ALLOCS and is a real cost on a route\n"
+"       whose whole point is that the readings are checkable.  The scratch is\n"
+"       per element and freed by the stack. */\n"
+"    size_t cap = 1 + seplen * (size_t)(n > 0 ? n - 1 : 0);\n"
+"    for (int i = 0; i < n; i++) {\n"
+"        char part[1024];\n"
+"        mv_vts(mv_arrmem[iv + i], part, (int)sizeof part, 0);\n"
+"        cap += strlen(part);\n"
+"    }\n"
+"    char *buf = (char *)mv_alloc(cap);\n"
+"    size_t used = 0;\n"
+"    for (int i = 0; i < n; i++) {\n"
+"        if (i > 0 && seplen) { memcpy(buf + used, sep, seplen); used += seplen; }\n"
+"        char part[1024];\n"
+"        mv_vts(mv_arrmem[iv + i], part, (int)sizeof part, 0);\n"
+"        size_t pl = strlen(part);\n"
+"        memcpy(buf + used, part, pl); used += pl;\n"
+"    }\n"
+"    buf[used] = 0;\n"
+"    MirVal r;\n"
+"    r.type = MV_STR; r.ival = 0; r.sval = buf; r.ptr = 0;   /* heap-owned */\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4747,11 +4844,11 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
                     && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
-                    && strcmp(bn, "split") != 0) {
+                    && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
-                               " and substr and split and no other builtin;"
+                               " and substr, split and join and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -4795,6 +4892,12 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 /* substr needs THREE: with two the interpreter returns 0 and the
                    destination register keeps its value (measured: `substr("abc",
                    1)` answers 1 on a fresh program).  Same class, same name. */
+                if (strcmp(bn, "join") == 0 && argc < 1) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin 'join' is called with no argument:"
+                               " the interpreter answers it with a leftover, not with a value"
+                               " the program asks for", f, i);
+                }
                 if (strcmp(bn, "split") == 0 && argc < 2) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin 'split' is called with %d argument(s):"
@@ -5627,7 +5730,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
                     && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
-                    && strcmp(bn, "split") != 0)) return -1;
+                    && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5636,6 +5739,13 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "join") == 0)
+            /* ONE argument is the default-separator form (`join([1,2,3])` is
+               `123`), so the separator is passed only when the count is two or
+               more.  The pre-scan refuses zero arguments by name. */
+            buf_fmt(b, "    v[%d] = mv_join(mvargs[asp-%d], %d, %s);", r1,
+                    w3 > 1 ? 2 : 1, w3 > 1 ? 1 : 0,
+                    w3 > 1 ? "mvargs[asp-1]" : "mv_nil()");
         else if (strcmp(bn, "split") == 0)
             buf_fmt(b, "    v[%d] = mv_split(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "substr") == 0)
