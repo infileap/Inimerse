@@ -358,6 +358,14 @@ ALLOCS_EXPECT = {
     # would read 4 blocks fewer here AND move the first printed line.
     "mir_has_uses_the_coercing_rule": (2, 768),
     "mir_keys_returns_a_new_region": (4, 3840),
+    # str() answers a HEAP string on every arm, so the allocation reading is
+    # part of this cell rather than a side note: each call is one mv_alloc of
+    # the answer's length plus one.  The two rows below are filled in from the
+    # generated programs' own IR-MIR-ALLOCS lines once the arm exists -- they
+    # are deliberately left at the default until then, because a number written
+    # here before the run would be a guess dressed as a measurement.
+    "mir_str_of_every_shape": (0, 0),
+    "mir_str_float_split_side_by_side": (0, 0),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1217,6 +1225,39 @@ MIR_ONLY = [
      'd = {"a": 1, "b": 2}\nsay keys(d)\nsay keys({})\nsay keys(nil)\n'
      'say keys([1, 2])\nsay keys("ab")\n'
      'k = keys(d)\nk[0] = "zzz"\nsay keys(d)\n'),
+    # str(): the SECOND print exit, and the only builtin whose answer is a
+    # freshly allocated string.  Written BEFORE the implementation; on arrival
+    # `why=builtin-call`.  The interpreter's answers, measured per value shape:
+    #   1 -7 2.5 0.10000000000000001 true nil ab "" [1, 2] [] {a: 1} {}
+    #   <function> set(2) set(R interval)
+    # Three facts in this one program are each a failure mode:
+    #   - `str(0.1)` is `0.10000000000000001`, NOT `0.1`: str formats a float
+    #     with %.17g while `say` uses the shorter value_to_string format.  A
+    #     route that reused mv_say's formatter prints 0.1 and fails here.
+    #   - `str([1, 2])` is `[1, 2]` and `str({"a": 1})` is `{a: 1}`: the
+    #     container arm is value_to_string's, the same one `say` uses, so this
+    #     is the case where the two formats COEXIST inside one call.
+    #   - `str(f)` is `<function>` and `str(nil)` is `nil` -- the words, not
+    #     empty strings and not a pointer.
+    ("mir_str_of_every_shape",
+     'say str(1)\nsay str(-7)\nsay str(2.5)\nsay str(0.1)\nsay str(true)\n'
+     'say str(nil)\nsay str("ab")\nsay str("")\nsay str([1, 2])\nsay str([])\n'
+     'say str({"a": 1})\nsay str({})\n'
+     'f = () -> 42\nsay str(f)\n'
+     's = 1, 2\nsay str(s)\n'
+     'iv = [1~3]\nsay str(iv)\n'),
+    # THE FLOAT SPLIT, side by side, because that is the only reading that
+    # separates the two formatters: `say 0.1` is 0.1 and `say str(0.1)` is
+    # 0.10000000000000001; `say 1/3` is 0.333333 and `say str(1/3)` is
+    # 0.33333333333333331; `say 123456789.123456789` is 123456789.123457 and
+    # its str is 123456789.12345679.  `str([0.1, 2])` is `[0.1, 2]` -- the
+    # container arm uses the SHORT format even inside str, so the two formats
+    # are chosen per value type and not per call.  `len(str(0.1))` is 19: the
+    # answer is a real heap string, and 19 is its length in bytes.
+    ("mir_str_float_split_side_by_side",
+     'say 0.1\nsay str(0.1)\nsay 1 / 3\nsay str(1 / 3)\n'
+     'say 123456789.123456789\nsay str(123456789.123456789)\n'
+     'say str([0.1, 2])\nsay str(1.0)\nsay str(str(1))\nsay len(str(0.1))\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
