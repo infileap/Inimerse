@@ -8773,3 +8773,27 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 6. **不动 `src/`**：本格没有实现，也没有新 `why=`；`handles=59|of=67|unknown=8` 与 §10.158 相同，`of=29`、`covered=29`、`missing=0` 全不动。这是**同意**的形状，不是修复的形状。
 7. **文档预算没有位移**：这一节不新增任何 `path:line` 引用（只引代码、只写文件名），所以 `check_line_refs` 的 `explicit delta` 仍是 `+12`；`citations` 的 1199 行与 `recon.*` 令牌一概没碰。
 8. **与 §10.159 的关系**：兄弟格在另一个 worktree 里写同一段尾注，合并时两条尾部追加都保留；本格没有改 §10.159，也不依赖它。
+
+## §10.161 继承裁定：闭包组已落地，`stream/mirval-closure` 是更早基线重做的重复（A 类第十九、二十项的后续）
+
+### 一、来源与日期
+
+接手会话（`session-f96c94eb` 因 bili preflight 502 死后由新会话接手），2026-11-12。交接包 §四.2 写「闭包第一格绿，但整格判据 `bc9862c` 还要 `OP_MAKE_FUNC` + `OP_CALL_VALUE` + `OP_LOAD_CAPTURE` + 转递捕获」，并要求在「真做」或「明写边界划掉」之间裁定。**按树重核后，这个前提与 `origin/main` 不符**，本节记录的是裁定与证据，不是一次实现。
+
+### 二、裁定
+
+**闭包组五条判据早已在 `origin/main` 上落齐**：§10.130（`c447c09`/`939c1dd`，无捕获函数值）与 §10.131（`1c9d664`，捕获读 + 高阶 + 返回并转递 + 零参调用堆字符串），日期 2026-11-09，两节都写明「五条判据全部落齐」。`stream/mirval-closure`（判据 `bc9862c`、实现 `71fd728`）是在旧基线 `2de6727` 上把同一组判据重做一遍 —— 它诞生时 `939c1dd` 还没进那棵树，所以「另外四条还红」在**那条旧分支上是真的**，在**今天的 main 上不成立**。处置：**不合并**（合并即回退，见三.3），分支保留在工作树 `.worktrees/mirval-closure` 作历史，不删。
+
+### 三、证据（亲跑，`363a3a1`）
+
+1. `git show origin/main:tools/aot_mir.test.py | grep -c mir_closure_` = **11**：五条 `MIR_ONLY` 判据与它们的 `ALLOCS_EXPECT`/`STDERR_EXCLUDE` 行都在树上。
+2. `git show origin/main:src/compilation/aot_mir.c | grep -c 'mv_fun_cap\|mv_capture'` = **13**：捕获环境已经在实现里（`MV_FUN.ptr` 指向每次创建自己的槽数组）。
+3. `git merge-base --is-ancestor 939c1dd 9dafc43` = 真；`939c1dd` 不是 `2de6727` 的祖先。`71fd728:src/compilation/aot_mir.c` 里 `mv_fun_cap` 出现 **0** 次 ⇒ 合它会删掉 main 已有的捕获支持。
+4. 五条判据在 `363a3a1` 上亲测全绿：`IR-MIR-MIR-ONLY` 逐条 `mir=accepted|exec=same`，`ALLOCS` 读数 `2|64`（捕获读）、`1|32`（高阶）、`2|96`（返回并转递）、`2|40`（零参堆字符串）、`0|0`（无捕获），`ok=yes` 全命中。
+
+### 四、边界
+
+1. **本裁定不新增实现、不动 `src/`**：`handles=59|of=67|unknown=8` 与 §10.160 相同；`of=29|covered=29|missing=0` 不动。
+2. **编号让位**：`.scratch/builtin-plan/PLAN.md` 的建议序列把 `size`/`count` 写作 §10.161，本节占用了这个号 ⇒ 该序列从本节的下一号起顺延一位；PLAN 是 scratch 里的建议，不是规范。
+3. **没有剩余格**：闭包组的两格（A 类第十九、二十项）都已落在 §10.130/§10.131，不再从 A 类推进计划里保留条目。
+4. **可复现**：裁定靠三段 `git show`/`merge-base`/`grep -c` 与 `tools/aot_mir.test.py --build build --tool build/aot-mir` 的 `IR-MIR-MIR-ONLY|case=mir_closure_*` 行；任何一条读数变化即本节需重写。
