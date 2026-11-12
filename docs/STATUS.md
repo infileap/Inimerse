@@ -8941,3 +8941,46 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 4. **旧判据 `mir_builtin_call_with_arg` 换名不删**：它原来的程序是 `x = str(1)`，`str` 落地后它**正确地**变红（那条臂从拒绝侧走到了回答侧）。处置是把它指向仍不发射的 `trim`，就地写明原因 —— 判据测的类（带实参的内建调用按名拒）没变，只有它点的名字移动了。下一次 `trim` 落地时这张行要再往前挪一个名字。
 5. **文档预算没有位移**：本节不新增 `path:line` 引用，`explicit delta` 仍是 `+12`；`citations` 1199 行不动。
 6. **删除条件**：臂、预扫名字与两条判据同删；只删浮点臂会让 `str(0.1)` 等于 `say 0.1`，只删 `mv_vts` 臂会让容器行全红。
+
+## §10.165 内建 `sum`：折、两个 nil 边界，以及它raise的两种方式（A 类第三十八项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12，§10.164 之后的第四格实现。父 sha `37fb09e`。编号承接 §10.161 的让位规则。
+
+### 二、判据（先红）
+
+三条 `MIR_ONLY` 判据，在 `37fb09e` 上前两条都是 `mir=refused|why=builtin-call`（mir-only 256/254）：
+
+- `mir_sum_fold_and_nil_boundaries`（10 行）：`6 0 3.5 3.5 nil nil nil nil 3.5 nil`。
+- `mir_sum_non_numeric_throws`：`say "before"` 之后 `sum([1, "a", 2])`，stdout 恰好 `before\n`、rc 1、stderr 含 `[exception] uncaught: sum: non-numeric element`，且 `STDERR_EXCLUDE` 禁止 `numeric_overflow`。
+- `mir_sum_bool_element_throws`（**第三条是注入实验之后补的**，见五.2）：`say "bool"` 之后 `sum([1, true])`，stdout `bool\n`、rc 1、同一条消息。
+
+三件事各有一个失败面：折（int 与 float 的转换时机、集合走 `mv_list` 的枚举）、nil 边界（非容器 `3`/`"ab"`/`nil`、以及枚举不出来的 R 区间）、**抛**（第一个会 raise 的内建）。
+
+### 三、实现
+
+`mv_sum(MirVal a)`：ARRAY 自己就是源；SET 先走 `mv_list`（**复用**同一套枚举，所以区间的 nil 是顺着来的，不是第二条规则）；其余 nil。累加器是一个 int64（`__builtin_add_overflow`）加一个并行 double —— 这正是 `[1, 2.5]` 与 `[2.5, 1]` 都答 3.5 而都不答整数的原因。元素规则只有 `MV_INT`/`MV_FLT`，其他一律 `mv_throw(mv_str("sum: non-numeric element"))`；int 累加器回绕则 `mv_throw(mv_str("numeric_overflow"))`。
+
+预扫与发射器的名字门扩到八个名字；`sum()` 零参仍按名拒 `builtin-stale-stack`。
+
+### 四、读数（亲跑）
+
+- `IR-MIR-COVER`：`mir-only-cases=257|mir-only-same-as-interpreter=257`，`inline-cases:86|accepted=86|refused=0|differ=0`，`c-diff=86`，`perturb-stdout-changes=5`。
+- `ALLOCS`：`mir_sum_fold_and_nil_boundaries` = `4|1794`（程序自己的字面量；`sum` 零分配），两条抛错案例报 `reported=no|why=rc=1`（在运行中停下，没有 sweep 行 —— 与其他抛错判据同一处理）。
+- `IR-MIR-STDERR|case=mir_sum_non_numeric_throws|…|ok=yes`：需要的那句在、禁止的那句不在。
+- `handles=59|of=67|unknown=8` 不动；`of=29|covered=29|missing=0` 不动。
+
+### 五、非对称注入（绿树上各一次）
+
+1. **把 throw 臂换成 `return mv_nil()`**：三件同时红 —— rc 从 1 变 0、stdout 多印一行 `nil`、stderr 那句话消失（`missing=(...)`）。`sum` 的形状正是「三个通道一起看」才有判别力。
+2. **把 `MV_BOO` 混进数字臂**：前两条判据**完全绿**，只有第三条（`mir_sum_bool_element_throws`）红 —— 印 2、rc 0、消息缺失。**这条判据是这次注入之后补的**：先有实现、先跑注入，才发现「让布尔落进整数臂」这个最合理的错法在前两条判据里看不见。这是「注入不是验收仪式的装饰」的一次实例。
+
+### 六、边界
+
+1. **组件集合（`1, 2, Z[7~9]`）建不出来**：与 §10.162 同一条边界，`sum` 的集合臂照 `mv_list` 的答案走，因此那条边界自动继承。
+2. **集合整数半边的窄化照抄**：`mv_list` 把每个 int 窄成 `(int)` 再发射（那条 note 记了实测），所以 `s = 5000000000, 1` 的 `sum` 加的是窄化后的值 —— 与解释器一致，是照抄不是修正。
+3. **`numeric_overflow` 是第二种 raise**：`sum([9223372036854775807, 1])` 在解释器上抛它（实测）。本格没有单列判据（`STDERR_EXCLUDE` 反向钉住它不出现在第一条抛错案例里），留作下一格的候选。
+4. **零参与多参调用**：同既有各格，零参按名拒、多参读最后一个实参。
+5. **文档预算没有位移**：本节不新增 `path:line` 引用，`explicit delta` 仍是 `+12`；`citations` 1199 行不动。
+6. **删除条件**：臂、预扫名字与三条判据同删；只删 throw 臂会让静默 nil 复活，只放宽元素规则会让布尔通过。
