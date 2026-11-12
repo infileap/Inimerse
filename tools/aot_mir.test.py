@@ -452,6 +452,24 @@ ALLOCS_EXPECT = {
     #   the run knows.
     "mir_split_edges_and_the_trailing_empty": (20, 1822),
     "mir_split_allocates_new_bytes_per_element": (4, 262),
+    # join(): PREDICTION, stated before the arm exists, in the form two cells
+    # have now earned twice over.
+    #
+    #   join answers ONE string, so the mirror of split is: split allocates one
+    #   block per element, join allocates ONE block for the whole answer.
+    #   The interpreter does exactly that -- a single malloc grown by
+    #   concatenation is NOT what it does; it builds one buffer and copies the
+    #   pieces in.  So the prediction is:
+    #       join([1, 2, 3], "-")  eleven bytes: "1-2-3" is 5 + NUL = 6
+    #                             + the array literal's pool block
+    #   Blocks: 1 for the answer.  Bytes: 6 + the pool block the ARRAY literal
+    #   needs (8 slots = 256) = 262.  So PREDICTED 2|262.
+    #   NOTE THE POOL-BLOCK ARITHMETIC IS NOW WRITTEN AS A FUNCTION rather than
+    #   re-derived: blocks(n_slots) = 256 bytes for n <= 8, then 256*2^d for the
+    #   doubling d that fits n.  Two cells in a row got this wrong by pricing a
+    #   region at exactly the slots it needed.
+    "mir_join_every_shape_and_the_default_separator": (0, 0),
+    "mir_join_float_format_and_percent": (0, 0),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1604,6 +1622,50 @@ MIR_ONLY = [
     #   character rather than per piece.
     ("mir_split_allocates_new_bytes_per_element",
      'a = split("a,b,c", ",")\nsay len(a)\nsay a[0]\nsay a[2]\n'),
+    # join(): container -> ONE new string, the mirror of split (which answers a
+    # container of new strings).  Written BEFORE the implementation.
+    #
+    # SIX SHAPES MEASURED BEFORE ANY CRITERION WAS WRITTEN, and ONE OF THEM
+    # DECIDES THE ARM:
+    #   join([1, 2, 3])            -> 123       the default separator is the
+    #                                           EMPTY STRING
+    #   join([1, 2.5, true, nil])  -> 1-2.5-true-nil
+    #                                           bool and nil get their printed
+    #                                           words, not "" and not a skip
+    #   join([[1, 2], 3], "-")     -> [1, 2]-3  a nested container is
+    #                                           SERIALISED, not refused
+    #   join(nil, "-") / join("abc", "-") / join({"a": 1}, "-")
+    #                              -> ""        non-arrays answer the EMPTY
+    #                                           STRING (not nil, not a throw)
+    #   join(["%s", "%d"], "-")    -> %s-%d     literal: no printf on the data
+    #   join([1.0, 0.1+0.2, 1/3], "-") -> 1-0.3-0.333333
+    #
+    # THE LAST ONE IS THE REASON THIS CELL EXISTS.  0.1+0.2 prints 0.3 through
+    # join and 0.30000000000000004 through str(): join formats each element with
+    # value_to_string (mv_vts, the SHORT format) while str() reached for %.17g.
+    # A criterion written only over integer elements cannot see the difference
+    # (2.5 looks the same either way), which is why the float line below prints
+    # join(...) and str(...) of the SAME expression side by side.
+    #
+    # MEASURED, byte-exact, in order:
+    #   123 / 1-2-3 / ab / (empty) / 12 / 1-2.5-true-nil / [1, 2]-3
+    #   / (empty) / (empty) / (empty) / 1|[2, [3]] / 1-0.3-0.333333
+    #   / 0.30000000000000004 / 0.33333333333333331 / a::b::c / 0
+    ("mir_join_every_shape_and_the_default_separator",
+     'say join([1, 2, 3])\nsay join([1, 2, 3], "-")\nsay join(["a", "b"], "")\n'
+     'say join([], "-")\nsay join([1, 2])\n'
+     'say join([1, 2.5, true, nil], "-")\nsay join([[1, 2], 3], "-")\n'
+     'say join(nil, "-")\nsay join("abc", "-")\nsay join({"a": 1}, "-")\n'
+     'say join([1, [2, [3]]], "|")\n'),
+    # THE FLOAT SPLIT, join beside str on the same expression, plus the literal
+    # `%` case.  Both lines are needed: the first is the only pair that can tell
+    # mv_vts from %.17g, and the second is what proves no printf is applied to
+    # element bytes (`join(["%s","%d"])` must print them verbatim; a printf-based
+    # implementation prints garbage or crashes).
+    ("mir_join_float_format_and_percent",
+     'say join([1.0, 0.1 + 0.2, 1 / 3], "-")\nsay str(0.1 + 0.2)\n'
+     'say str(1 / 3)\nsay join(["%s", "%d"], "-")\nsay join(["a", "b", "c"], "::")\n'
+     'say len(join([], "-"))\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
