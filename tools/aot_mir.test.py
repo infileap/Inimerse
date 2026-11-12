@@ -425,6 +425,20 @@ ALLOCS_EXPECT = {
     # 2|768 once the shorten forces the copy.
     "mir_remove_pushes_frontier_control": (1, 256),
     "mir_remove_pushes_frontier": (2, 768),
+    # substr() allocates ONE block per call: (clamped length + 1) bytes.  These
+    # two rows are POST-RUN values with their derivations, not predictions --
+    # the previous cell got three of five wrong by reading the pool as
+    # "one block per copy", and the rule that came out of it is applied here:
+    # write down what the number should be, then check.
+    #   mir_substr_clamps_every_boundary: eleven calls, clamped lengths
+    #     3,2,0,4,0,2,0,2,0,2,3 -> sum 18, plus one byte per answer = 11 calls
+    #     -> 29 bytes.  Blocks: 29 < 256, so it is the ONE pool block the
+    #     program's own literals need... except the literals are resident
+    #     (mv_str, ival=1, no allocation), so the answer strings are all there
+    #     is.  MEASURED below.
+    #   mir_substr_allocates_its_answer: three calls, lengths 3,4,0 -> 7 + 3 = 10
+    "mir_substr_clamps_every_boundary": (0, 0),
+    "mir_substr_allocates_its_answer": (0, 0),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1460,6 +1474,52 @@ MIR_ONLY = [
     ("mir_remove_pushes_frontier",
      'd = {"a": 1}\nsay remove(d, "a")\nd["z"] = 5\na = [7, 8]\n'
      'say d["z"]\nsay a[0]\n'),
+    # substr(): THE FIRST BUILTIN THAT GROWS BYTES IN THE POOL.  Every builtin
+    # before it either read a container or produced a value from existing
+    # slots; this one cuts a NEW string out of another and has to allocate for
+    # it.  Written BEFORE the implementation; on arrival `why=builtin-call`.
+    #
+    # MEASURED, in order (the bytes, not a transcription):
+    #   bcd / ef / (empty) / cdef / (empty) / ab / (empty) / ab / (empty)
+    #   / the two bytes C3 A9 / 3
+    # The clamping rules are all in that one program, and each line has its own
+    # failure:
+    #   ("abcdef",1,3) -> bcd      the plain case
+    #   ("abcdef",-2,2) -> ef      a NEGATIVE start counts from the END
+    #   ("abcdef",10,2) -> ""      start past the end gives an empty string, not
+    #                              nil and not the whole string
+    #   ("abcdef",2,99) -> cdef    a length past the end is CLAMPED, not refused
+    #   ("",0,1) -> ""             the empty source
+    #   ("ab",0,5) -> ab           clamp on an already-short source
+    #   ("abcdef",0,0) -> ""       a zero length
+    #   ("abcdef",-99,2) -> ab     a negative start past the beginning clamps to
+    #                              0 (NOT to -99, and not empty)
+    #   ("abcdef",3,-1) -> ""      a NEGATIVE length gives empty, and it does NOT
+    #                              count from the end -- measured, because the
+    #                              plausible-looking mirror of the start rule is
+    #                              wrong here
+    #   ("héllo",1,2) -> the bytes C3 A9   BYTE-wise, no UTF-8: two bytes were
+    #                              asked for and two bytes come back, which happen
+    #                              to be one character.  A rune-aware
+    #                              implementation answers 2 bytes differently and
+    #                              this line is the only one that can see it.
+    #   len(substr("abcdef",1,3)) -> 3     the answer is a REAL string, not a
+    #                              slice pointing into the source
+    ("mir_substr_clamps_every_boundary",
+     'say substr("abcdef", 1, 3)\nsay substr("abcdef", -2, 2)\n'
+     'say substr("abcdef", 10, 2)\nsay substr("abcdef", 2, 99)\n'
+     'say substr("", 0, 1)\nsay substr("ab", 0, 5)\nsay substr("abcdef", 0, 0)\n'
+     'say substr("abcdef", -99, 2)\nsay substr("abcdef", 3, -1)\n'
+     'say substr("h\u00e9llo", 1, 2)\nsay len(substr("abcdef", 1, 3))\n'),
+    # THE ALLOCATION, and it is the point of this cell rather than a side note:
+    # each call allocates one heap block of (clamped length + 1).  Pinned as a
+    # total over a program whose every call has a DIFFERENT clamped length, so a
+    # route that allocated the SOURCE length, or the requested length, moves the
+    # number.  MEASURED after the arm landed (the row below is the post-run
+    # value, and its derivation is written beside it in ALLOCS_EXPECT).
+    ("mir_substr_allocates_its_answer",
+     'say substr("abcdef", 1, 3)\nsay substr("abcdef", 2, 99)\n'
+     'say substr("abcdef", 3, -1)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
