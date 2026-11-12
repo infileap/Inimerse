@@ -722,6 +722,22 @@ ALLOCS_EXPECT = {
     "mir_boolkey_str_vs_int": (1, 256),
     "mir_boolkey_register_read": (1, 256),
     "mir_boolkey_eq_is_not_key_identity": (0, 0),
+    # §10.160's container rows.  Every one of the five builds exactly one
+    # container literal whose elements fit the first 8-slot pool block, so the
+    # reading is the pool and nothing else: a three-element set (`1, 2, 3`
+    # needs 1 count + 3 items = 4 slots), a two-element set (3 slots), an
+    # array + set pair that fits EXACTLY 8 slots (4 + 4, which is why it still
+    # measures one block and not two), a two-pair dict (5 slots) and one
+    # `[0, 3)` interval (2 bound slots).  MEASURED from each generated
+    # program's own IR-MIR-ALLOCS line, not derived from the rows above: all
+    # five reported allocs=1|freed=1|live=0|bytes=256.  The `for` lowering and
+    # the nil it reads allocate nothing; a route that boxed each iterated
+    # value, or that copied the set, would move one of these numbers.
+    "mir_set_three_elements_three_nils": (1, 256),
+    "mir_set_two_elements_two_nils": (1, 256),
+    "mir_array_then_set_iteration": (1, 256),
+    "mir_dict_iteration_keys": (1, 256),
+    "mir_interval_iteration_yields_nothing": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -810,11 +826,20 @@ STDERR_EXPECT = {
     "mir_order_an_array_against_a_number": ("[exception] uncaught: type_mismatch",),
     "mir_order_a_dict_against_a_number": ("[exception] uncaught: type_mismatch",),
     "mir_order_nil_against_a_number": ("[exception] uncaught: type_mismatch",),
+    # §10.160's two throw readings.  Each demands the sentence that names the
+    # error that SURFACED.  In the after-catch case the finally's throw is the
+    # one that propagates, so `boom` is forbidden as well as unneeded: if the
+    # original error resurfaced behind the cleanup, the output bytes could stay
+    # the same (stdout `caught` is printed before either throw) and only
+    # stderr would say which error won -- this row is what makes that visible.
+    "mir_finally_throw_after_catch_propagates": ("[exception] uncaught: fin-throw",),
+    "mir_finally_runs_before_try_error": ("[exception] uncaught: boom",),
 }
 STDERR_EXCLUDE = {
     "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
     "mir_bind_out_of_range_store": ("[exception] uncaught: initial value out of range",),
     "mir_bind_out_of_range_init": ("[exception] uncaught: type_mismatch",),
+    "mir_finally_throw_after_catch_propagates": ("[exception] uncaught: boom",),
 }
 
 
@@ -3528,6 +3553,213 @@ MIR_ONLY = [
      'apply = (f, x) -> f(x)\n'
      'dbl = (n) -> n * 2\n'
      'say apply(dbl, 3, 9)\n'),
+
+    # ==================================================================
+    # §10.160 (2026-11-11, base 9dafc43).  THREE PLACES WHERE BOTH SIDES
+    # ARE WRONG THE SAME WAY.
+    #
+    # THESE WERE GREEN ON FIRST WRITE, and that is the honest state: the
+    # sweep that produced this cell found the interpreter and the route
+    # already agreeing in these places, so there was no fix to drive a red
+    # first.  They are not criteria of a repair; they are the record that the
+    # agreement exists and the alarm for the day a later change breaks it.
+    # The three are DEFECTS in the interpreter that the route faithfully
+    # copies (try/catch/finally was lowered in §10.137); docs/STATUS.md §10.160
+    # carries the evidence, and for each one the observation that would RETIRE
+    # it.
+    #
+    # Why a red here is a real question and not noise: the agreement is in the
+    # OUTPUT, not in the opcode set, so no cover instrument can see it.  The
+    # only shape that catches a silent divergence is a program whose stdout
+    # BYTES and exit code are pinned on BOTH sides.  A red therefore means the
+    # two executables now disagree, and the first thing to establish is WHICH
+    # side changed.  If the interpreter gained a fix, the route must learn the
+    # same fix, and this criterion is retired with both readings quoted in the
+    # message -- not quietly adjusted to whichever side was read last.
+    #
+    # 1. FINALLY RUNS ONLY UNDER A NON-EMPTY CATCH BODY.  `try { say "body" }
+    #    finally { say "fin" }` prints `body` then `after`, NOT `fin`.  The
+    #    compiler counts the catch body's STATEMENTS to decide whether a
+    #    handler exists (`catch { }` and `catch (e) { }` both count zero), and
+    #    with no handler the normal-path jump is patched PAST the finally body
+    #    and its rethrow.  A non-empty catch body makes the jump land on the
+    #    finally instead.
+    #
+    # 2. A THROW INSIDE A FINALLY.  When the finally RUNS, its throw PROPAGATES
+    #    (measured: rc 1, `[exception] uncaught: fin-throw`); when the finally
+    #    does NOT run -- shape 1 -- its throw is never reached and the process
+    #    exits 0 with clean stderr.  The two halves are separate criteria on
+    #    purpose: they can look like one swallowed error and are two different
+    #    events, and a reader who pins the skipped shape as `the throw is
+    #    swallowed` will be wrong about every finally that runs.
+    #
+    # 3. `for x in s` OVER A SET READS nil FOR EVERY ELEMENT.  The
+    #    for-over-container lowering is a counted `while` reading `s[i]`, and
+    #    the reader has no set arm: a set falls into the final catch-all that
+    #    answers nil, while `len(s)` answers the count, so a three-element set
+    #    prints three nils.  An array prints its elements; a dict prints its
+    #    KEYS, because its integer subscript is the position-to-key read; an
+    #    interval set is iterated ZERO times, because its len is 0.  The last
+    #    one is only an agreement for the `[0, 3)` spelling: the `R[0~3)`
+    #    spelling DISAGREES between the sides (interpreter `set(0)`/len 0/
+    #    min 0/max 3, route `set(1)`/len 1/min and max answering the set
+    #    itself), so it is reported as a different cell and is NOT folded in
+    #    here -- an agreement that does not exist cannot be locked.
+
+    # NORMAL PATH, NO HANDLER: the finally is SKIPPED.  Interpreter and route
+    # both print `body` then `after`, rc 0.  A fix that ran finally blocks
+    # unconditionally would print `body`, `fin`, `after` here and redden.
+    ("mir_finally_only_skipped",
+     'try {\n'
+     '    say "body"\n'
+     '} finally {\n'
+     '    say "fin"\n'
+     '}\n'
+     'say "after"\n'),
+
+    # AN EMPTY CATCH BODY IS NOT A HANDLER.  The same program with `catch { }`
+    # added; its body contributes zero statements, so the finally is skipped
+    # exactly as above.  Interpreter: `body\nafter`, rc 0.  Route: identical.
+    ("mir_finally_empty_catch_skipped",
+     'try {\n'
+     '    say "body"\n'
+     '} catch {\n'
+     '} finally {\n'
+     '    say "fin"\n'
+     '}\n'
+     'say "after"\n'),
+
+    # A CATCH VARIABLE DOES NOT MAKE IT A HANDLER.  `catch (e) { }` binds a
+    # name to an empty body; the statement count is still zero, so the finally
+    # is still skipped.  Interpreter: `body\nafter`, rc 0.  Route: identical.
+    # This is the question a reader asks after the previous case, and the
+    # answer is that the variable is not the trigger -- the BODY is.
+    ("mir_finally_empty_catch_var_skipped",
+     'try {\n'
+     '    say "body"\n'
+     '} catch (e) {\n'
+     '} finally {\n'
+     '    say "fin"\n'
+     '}\n'
+     'say "after"\n'),
+
+    # NON-EMPTY CATCH, NOTHING THROWN: the finally RUNS.  `catch { say
+    # "caught" }` contributes a statement, the handler exists, and the normal
+    # path falls onto the finally.  Interpreter: `body`, `fin`, `after`, rc 0.
+    # The `caught` line is absent because nothing threw; pairing this with the
+    # empty-catch cases is the point -- one statement flips the lowering.
+    ("mir_finally_after_catch_runs",
+     'try {\n'
+     '    say "body"\n'
+     '} catch {\n'
+     '    say "caught"\n'
+     '} finally {\n'
+     '    say "fin"\n'
+     '}\n'
+     'say "after"\n'),
+
+    # THE SKIPPED FINALLY'S THROW IS NEVER REACHED.  Quirk 1 and quirk 2 in
+    # one program: no handler, so the finally -- and the throw inside it --
+    # are off the path.  Interpreter and route both print `body` then
+    # `after`, exit 0, and print NOTHING on stderr.  This is the one shape in
+    # which the error `disappears`, and it disappears because the block never
+    # ran; the two cases after it are the same throw in blocks that DO run.
+    ("mir_finally_throw_in_skipped_block",
+     'try {\n'
+     '    say "body"\n'
+     '} finally {\n'
+     '    throw "fin-throw"\n'
+     '}\n'
+     'say "after"\n'),
+
+    # THE FINALLY RUNS AFTER A CAUGHT ERROR, AND ITS THROW PROPAGATES.
+    # Interpreter: stdout `caught`, rc 1, stderr `[exception] uncaught:
+    # fin-throw`.  The route prints the same stdout, the same sentence (it has
+    # no `at ip=` ledger line) and exits 1.  `boom` must NOT appear: the
+    # original error did not resurface behind the new one.  This is the case
+    # that retires `a throw in a finally is swallowed`.
+    ("mir_finally_throw_after_catch_propagates",
+     'try {\n'
+     '    throw "boom"\n'
+     '} catch {\n'
+     '    say "caught"\n'
+     '} finally {\n'
+     '    throw "fin-throw"\n'
+     '}\n'),
+
+    # HANDLER-LESS ERROR PATH: THE FINALLY RUNS, THEN THE ORIGINAL RETHROWS.
+    # `try { throw "boom" } finally { say "fin" }` prints `fin`, exits 1 and
+    # reports `boom`, on both sides.  The finally is on the error path here --
+    # the opposite of the first case -- because a throw jumps to its own frame
+    # first.  Three claims in one reading: `fin` DID print, the exit code is 1,
+    # and the sentence names `boom` rather than the cleanup.
+    ("mir_finally_runs_before_try_error",
+     'try {\n'
+     '    throw "boom"\n'
+     '} finally {\n'
+     '    say "fin"\n'
+     '}\n'),
+
+    # A THREE-ELEMENT SET ITERATES AS THREE NILS.  `s = 1, 2, 3` is a set
+    # literal, not an array.  Interpreter: `nil`, `nil`, `nil`, `end`, rc 0;
+    # route: identical bytes and rc.
+    ("mir_set_three_elements_three_nils",
+     's = 1, 2, 3\n'
+     'for x in s {\n'
+     '    say x\n'
+     '}\n'
+     'say "end"\n'),
+
+    # ... AND A TWO-ELEMENT SET IS TWO NILS.  Measured `nil`, `nil`, `end`.  The
+    # reading pins that the nil count tracks len(s) -- the counted `while`'s
+    # bound -- rather than a number baked into the literal's slot count.
+    ("mir_set_two_elements_two_nils",
+     's = 1, 2\n'
+     'for x in s {\n'
+     '    say x\n'
+     '}\n'
+     'say "end"\n'),
+
+    # THE SAME LOOP OVER AN ARRAY ANSWERS THE ELEMENTS.  One program, both
+    # containers: `1`, `2`, `3` then `nil`, `nil`, `nil`, then `end`, rc 0.
+    # The contrast is the reading: it is not that `for` over any container
+    # yields nil, it is that the reader has no set arm while it does have an
+    # array arm.
+    ("mir_array_then_set_iteration",
+     'a = [1, 2, 3]\n'
+     'for x in a {\n'
+     '    say x\n'
+     '}\n'
+     's = 1, 2, 3\n'
+     'for x in s {\n'
+     '    say x\n'
+     '}\n'
+     'say "end"\n'),
+
+    # A DICT ITERATES ITS KEYS.  `for k in d` reads `d[i]`, and an integer
+    # subscript on a dict is the position-to-KEY read, so the loop answers the
+    # keys `a`, `b` -- not the values 1, 2.  Interpreter and route: `a`, `b`,
+    # `end`, rc 0.
+    ("mir_dict_iteration_keys",
+     'd = {"a": 1, "b": 2}\n'
+     'for k in d {\n'
+     '    say k\n'
+     '}\n'
+     'say "end"\n'),
+
+    # AN INTERVAL SET IS ITERATED ZERO TIMES, because its len is 0.  `[0, 3)`
+    # prints `set(R interval)`, len 0, and the loop body never runs: reading
+    # `set(R interval)`, `0`, `end`, rc 0, on both sides.  The bound is the
+    # `[0, 3)` spelling; the `R[0~3)` spelling DISAGREES (see the block above)
+    # and is deliberately absent here.
+    ("mir_interval_iteration_yields_nothing",
+     'p = [0, 3)\n'
+     'say p\n'
+     'say len(p)\n'
+     'for x in p {\n'
+     '    say x\n'
+     '}\n'
+     'say "end"\n'),
 
 ]
 
