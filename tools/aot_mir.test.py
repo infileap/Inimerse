@@ -339,6 +339,14 @@ ALLOCS_EXPECT = {
     # len() itself allocates nothing; the one block is the ARRAY literal's pool
     # (8 slots * 32 bytes) and the one-pair dict fits in the same block.
     "mir_len_of_every_shape_this_route_holds": (1, 256),
+    # size()/count() add NO allocation: both read a header or the string length
+    # on the stack.  These blocks are the literals the two programs write --
+    # the array, the one-pair dict and the set -- MEASURED off each generated
+    # program's own IR-MIR-ALLOCS line before writing the row.  A route that
+    # boxed the answer, or enumerated the interval with a temporaries array,
+    # would move these numbers.
+    "mir_size_and_count_of_every_shape": (2, 768),
+    "mir_len_size_count_side_by_side": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1130,6 +1138,40 @@ MIR_ONLY = [
     ("mir_len_of_every_shape_this_route_holds",
      'a = [1, 2, 3]\nsay len(a)\nd = {"x": 1}\nsay len(d)\nsay len("abcd")\n'
      'say len(7)\nsay len(2.9)\nsay len(nil)\nsay len(true)\nsay len("")\n'),
+    # size()/count(): ONE collection body, TWO different tails.  Written
+    # BEFORE the implementation, and measured red on arrival as
+    # `why=builtin-call` (the pre-scan names only `len` and `list`).  The
+    # interpreter's answer is 17 lines, in this order:
+    #     2 0 2 1 0 2 nil 3 nil 2 nil nil 2 nil nil 2 2
+    # Read them as the three questions the single case holds apart:
+    #   - the shared collection body, where size and count AGREE:
+    #     [1, 2]->2, []->0, "ab"->2, {a:1}->1, {}->0, 1,2->2;
+    #   - the interval shape BOTH must answer nil for: [1~3] (an R interval
+    #     has no lattice to enumerate), while len([1~3]) answers 0 -- that
+    #     zero is §10.129's arm and must not leak into size/count;
+    #   - size()'s COERCION tail, which count() drops: 3->3, -7->nil (the
+    #     interpreter's `if (n < 0)` treats a negative result as no answer),
+    #     2.5->2 (truncation toward zero), true->nil, nil->nil.
+    # The cheap implementation `count = size` passes every collection line
+    # above and prints 3 where count(3) is nil; the coercion tail is the
+    # reason this case cannot be split into two independent ones.
+    ("mir_size_and_count_of_every_shape",
+     'a = [1, 2]\nsay size(a)\ne = []\nsay size(e)\nsay size("ab")\n'
+     'd = {"a": 1}\nsay size(d)\ned = {}\nsay size(ed)\ns = 1, 2\nsay size(s)\n'
+     'iv = [1~3]\nsay size(iv)\nsay size(3)\nsay size(-7)\nsay size(2.5)\n'
+     'say size(true)\nsay size(nil)\nsay count(a)\nsay count(3)\nsay count(iv)\n'
+     'say count("ab")\nsay count(s)\n'),
+    # The three names side by side on ONE operand, because the first case
+    # states the difference and this one makes it a single textual line:
+    #   x = [1, 2]  -> len 2, size 2, count 2   (the shared body)
+    #   iv = [1~3]  -> len 0, size nil, count nil (the interval split)
+    #   size(3)=3, count(3)=nil                (the coercion split)
+    # An implementation that aliased any two of the three names fails at
+    # least one line of this program, and no single arm can satisfy it.
+    ("mir_len_size_count_side_by_side",
+     'x = [1, 2]\nsay len(x)\nsay size(x)\nsay count(x)\n'
+     'iv = [1~3]\nsay len(iv)\nsay size(iv)\nsay count(iv)\n'
+     'say size(3)\nsay count(3)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.

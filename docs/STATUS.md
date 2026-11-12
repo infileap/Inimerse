@@ -8797,3 +8797,56 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 2. **编号让位**：`.scratch/builtin-plan/PLAN.md` 的建议序列把 `size`/`count` 写作 §10.161，本节占用了这个号 ⇒ 该序列从本节的下一号起顺延一位；PLAN 是 scratch 里的建议，不是规范。
 3. **没有剩余格**：闭包组的两格（A 类第十九、二十项）都已落在 §10.130/§10.131，不再从 A 类推进计划里保留条目。
 4. **可复现**：裁定靠三段 `git show`/`merge-base`/`grep -c` 与 `tools/aot_mir.test.py --build build --tool build/aot-mir` 的 `IR-MIR-MIR-ONLY|case=mir_closure_*` 行；任何一条读数变化即本节需重写。
+
+## §10.162 内建 `size`/`count`：一条集合体、两条尾巴，区间两侧都 nil（A 类第三十五项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12；§10.161 的裁定（不合并闭包旧支）之后的第一格实现。父 sha `a177c37`。`.scratch/builtin-plan/PLAN.md` 的建议序列把这一格写作 §10.161，§10.161 占用了那个号，本节按 §10.161 四.2 的让位规则改用 §10.162。
+
+### 二、判据（先红）
+
+两条 `MIR_ONLY` 判据：`mir_size_and_count_of_every_shape`（17 行输出）与 `mir_len_size_count_side_by_side`（8 行输出）。在 `a177c37` 上先红：两条都是 `mir=refused|why=builtin-call`（预扫的名字门只认 `len` 与 `list`），harness exit 1。解释器的逐行读数写在判据注释里，也就是这条臂要履约的合同：
+
+1. **集合体上三者一致**：`[1, 2]`→2、`[]`→0、`"ab"`→2、`{a:1}`→1、`{}`→0、`1, 2`→2。
+2. **区间是两侧同错的那一格**：`size([1~3])` 与 `count([1~3])` 都是 `nil`，而 `len([1~3])` 是 0 —— §10.129 给 len 的 0 不许漏进这两个名字。
+3. **只有 size 保留强制转换尾**：`size(3)`=3、`size(-7)`=`nil`（解释器的 `if (n < 0)` 把负数结果读成「无答案」）、`size(2.5)`=2（向零截断）、`size(true)`/`size(nil)`=`nil`；`count(3)`=`nil`、`count(2.5)`=`nil`，但字符串仍在 `count` 的体内（`count("ab")`=2，不是 nil）。
+
+第二条判据把三个名字并排放在一个操作数上：`len(x)`/`size(x)`/`count(x)` 对 `[1, 2]` 是 `2 2 2`，对 `[1~3]` 是 `0 nil nil`，`size(3)`=3 而 `count(3)`=`nil`。任何两个名字被别名化，至少一行会红。
+
+### 三、实现
+
+预扫与发射器两处名字门收下 `size`/`count`；运行时新增三个函数，`mv_len` 一字未动：
+
+- `mv_region_len`：共享体，覆盖容器与字符串，对区间和非集合回答 0（不是数字，也不是 nil —— 两个调用者各自把这个 0 映射成 nil）。
+- `mv_size`：共享体 + INT 自身 / FLOAT 向零截断 + `n < 0` 即 nil。
+- `mv_count`：共享体，无强制转换尾（数字一律 nil）。
+
+预扫的拒绝消息随之改成「this route emits len, list, size and count and no other builtin」，四个名字之外的调用仍按名字拒（`why=builtin-call`），零参调用仍先按名字拒（`builtin-stale-stack`）。
+
+### 四、读数（亲跑）
+
+- `IR-MIR-COVER`：`mir-only-cases=250|mir-only-same-as-interpreter=250`（判据落笔前是 250/248 —— 那两条正是被拒的两条），`inline-cases:86|accepted=86|refused=0|differ=0`，`c-diff=86|c-identical=0`，`perturb-stdout-changes=5`。
+- `IR-AOT-MIR-VERDICT|PASS|accepted=336|of=29|covered=29|missing=0|refused=0|same-as-interpreter=336`（accepted 由 334 升到 336，就是这两条判据）。
+- `ALLOCS` 两行按本格的形状钉住：`mir_size_and_count_of_every_shape` 是 `2|768`（数组、一对字典、集合三个字面量），`mir_len_size_count_side_by_side` 是 `1|256`（只有数组字面量）；两个答案本身在栈上算，不分配。
+- `handles=59|of=67|unknown=8` **不动**：内建臂不是新 opcode 臂，`of=29|covered=29|missing=0` 也不动。
+
+### 五、非对称注入（都在绿树上做，各只红一行）
+
+1. **别名化**：把 `count` 发射成 `mv_size` ⇒ 两条判据都只红在 `count(3)` 那一行（印 3，解释器是 nil）。
+2. **删掉尾上的 `n < 0`**：`size` 直接把 n 印出去 ⇒ 只红在 `size(-7)` 那一行（印 -7，解释器是 nil）。
+
+两处都恢复后重跑，`250/250` 与 exit 0。
+
+### 六、边界
+
+1. **组件集合（`1, 2, Z[7~9]`）建不出来**：`OP_SET_INTERVAL` 的名字边界只认 `R`，所以解释器对组件集合枚举出的 5 在本路线**不可达**。这不是同意的形状，是能力边界——和 §10.159 的 `Z[7~9]` 同一条。
+2. **区间的 nil 是本格量过的部分**：`*` 不等于区间的迭代语义正确；`R[0~3)` 的迭代仍归 §10.159 记录的真分歧，本格没有改它。
+3. **判据钉 stdout 字节与退出码，外加 ALLOCS 行**；两个程序都不写 stderr，所以没有 `STDERR_EXCLUDE`。
+4. **移动/陈旧容器句柄**：解释器对越界句柄给 `nil`，本路线也给 `nil`；这不是新 `why=`，也不改变预扫的接受面。
+5. **文档预算没有位移**：本节不新增任何 `path:line` 引用（只引代码、只写文件名与 `§`），`check_line_refs` 的 `explicit delta` 仍是 `+12`；`citations` 的 1199 行不动。
+6. **删除条件**：删掉 `size`/`count` 两个名字（预扫 + 发射器）与 `mv_region_len`/`mv_size`/`mv_count`，同时删掉两条判据；删一个名字而留另一条的尾会让判据红，所以两个名字不可单独删。
+
+### 七、与兄弟格的关系
+
+§10.159 的 argc 臂与 §10.160 的三处两侧同错都不动；三条尾部追加在同一文件末尾相邻，合并时都保留。
