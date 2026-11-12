@@ -2666,6 +2666,72 @@ static const char *const kMirValBlock =
 "   mir_keys_returns_a_new_region -- stdout BYTES and rc against the\n"
 "   interpreter, plus the ALLOCS line.  mv_keys is the only arm here that\n"
 "   allocates (one region for the result); mv_has allocates nothing. */\n"
+"/* str(): the SECOND PRINT EXIT, and the first builtin whose answer is a fresh\n"
+"   HEAP string.  Read src/runtime/runtime_posix.c:85-94 beside this.\n"
+"\n"
+"   WHY IT EXISTS.  str() was refused by name (why=builtin-call) while every\n"
+"   value shape it formats was already representable here.  What makes it a\n"
+"   cell rather than a formatting errand is the measurement below.\n"
+"\n"
+"   WHAT IT ADDS -- ONE function with TWO float formats inside it, which is the\n"
+"   interpreter's own shape and not a slip:\n"
+"     - INT `%lld`, BOOL true/false, STRING its own bytes, and everything else\n"
+"       (nil, function, containers) through value_to_string -- mv_vts here.  So\n"
+"       str(0.1) and str([0.1, 2]) print DIFFERENT formats of the same double:\n"
+"       0.10000000000000001 as a bare float, 0.1 inside an array.  MEASURED:\n"
+"       `say str(0.1)` is 0.10000000000000001, `say 0.1` is 0.1, and\n"
+"       `say str([0.1, 2])` is [0.1, 2].\n"
+"     - FLOAT uses `%.17g`, i.e. nv_fmt_double is NOT used for the bare float\n"
+"       arm (it is used INSIDE mv_vts for floats in containers).  A single\n"
+"       formatter for both arms fails one of the two lines above.\n"
+"     - The answer is HEAP-OWNED (ival = 0, one mv_alloc per call, swept at\n"
+"       exit) even for a string argument, because the interpreter strdups it.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- a boundary, named:\n"
+"     - THE ZERO-ARGUMENT CALL.  The interpreter's arm returns 0 when the stack\n"
+"       is empty and the destination register keeps its old value; MEASURED:\n"
+"       `x = 6` then `say str()` prints 6, `y = \"abcdef\"` then `say str()`\n"
+"       prints abcdef, and after `f = () -> 1` it prints <function>.  Not a\n"
+"       function of the expression, so it is refused BY NAME in the pre-scan\n"
+"       (builtin-stale-stack), like len/list/size/count/has.\n"
+"     - A MULTI-ARGUMENT CALL reads the LAST argument, the same arm every other\n"
+"       builtin here takes.\n"
+"     - A container whose printed form is longer than the interpreter's 1024-\n"
+"       byte buffer truncates the same way there and here (one shared buffer\n"
+"       size), so neither is honoured to arbitrary depth.\n"
+"\n"
+"   DELETE CONDITION.  Delete the arm, its pre-scan name and the two criterion\n"
+"   cases together.  Removing only the %.17g arm leaves str(0.1) equal to\n"
+"   say 0.1, which the float-split criterion catches; removing only the\n"
+"   mv_vts arm breaks every container line.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_str_of_every_shape and\n"
+"   mir_str_float_split_side_by_side -- stdout BYTES and rc, plus the ALLOCS\n"
+"   line, because the answer is an allocation and a formatter that returned a\n"
+"   resident pointer would move that number. */\n"
+"static inline MirVal mv_str_of(MirVal a) {\n"
+"    char buf[1024];\n"
+"    if (a.type == MV_INT) snprintf(buf, sizeof buf, \"%lld\", (long long)a.ival);\n"
+"    else if (a.type == MV_FLT) snprintf(buf, sizeof buf, \"%.17g\", a.fval);\n"
+"    else if (a.type == MV_BOO) snprintf(buf, sizeof buf, \"%s\", a.ival ? \"true\" : \"false\");\n"
+"    else if (a.type == MV_STR) {\n"
+"        size_t sl = a.sval ? strlen(a.sval) : 0;\n"
+"        char *nb = (char *)mv_alloc(sl + 1);      /* strdup, registered */\n"
+"        if (sl) memcpy(nb, a.sval, sl);\n"
+"        nb[sl] = 0;\n"
+"        MirVal r;\n"
+"        r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"        return r;\n"
+"    }\n"
+"    else mv_vts(a, buf, (int)sizeof buf, 0);\n"
+"    size_t bl = strlen(buf);\n"
+"    char *nb = (char *)mv_alloc(bl + 1);\n"
+"    memcpy(nb, buf, bl + 1);\n"
+"    MirVal r;\n"
+"    r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "static inline MirVal mv_has(MirVal dict, MirVal key) {\n"
 "    if (dict.type != MV_DIC) return mv_boo(0);   /* :514 -- VAL_DICT only */\n"
 "    int iv = mv_arr_live((int)dict.ival);\n"
@@ -4268,12 +4334,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    came back as illegal-operand). */
                 if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
                     && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
-                    && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0) {
+                    && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
+                    && strcmp(bn, "str") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
-                               " list, size, count, has and keys and no other builtin; the"
-                               " registry, its capability flags and the safe-mode rule live in"
-                               " the VM and the mods", f, i, bn);
+                               " list, size, count, has, keys and str and no other builtin;"
+                               " the registry, its capability flags and the safe-mode rule"
+                               " live in the VM and the mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
                 if (argc < 0 || argc >= REG_LIMIT)
@@ -5115,7 +5182,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                          ? bc->string_pool[ix] : NULL;
         if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
                     && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
-                    && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0)) return -1;
+                    && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
+                    && strcmp(bn, "str") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5124,6 +5192,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "str") == 0)
+            buf_fmt(b, "    v[%d] = mv_str_of(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "has") == 0)
             /* TWO operands, and the ORDER is the push order: the compiler pushes
                the container first and the key second (src/compiler/compiler.c's
