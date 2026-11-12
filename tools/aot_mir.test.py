@@ -727,6 +727,20 @@ ALLOCS_EXPECT = {
     # first pool block is 8 slots = 256 bytes, so both fit ONE block; it is
     # the number that must not move when the multi-argument arm is emitted.
     "mir_builtin_argc_single_arg_control": (1, 256),
+    # MEASURED on the first green run of the multi-argument arm; every one of
+    # these numbers is the array literals the program happens to contain, not
+    # the builtin call itself (a builtin call allocates nothing: it reads one
+    # pool slot and pops the stack).  `len_last` carries [1, 2, 3] (4 slots),
+    # [9] (2) and [1, 2] (3) = 9 slots, so the pool doubles: 8+16 slots =
+    # 256 + 512 = 768 bytes in two blocks.  `len_many` is one 5-slot literal
+    # [1, 2, 3, 4], inside the first block.  `list_last` is one 3-slot [5, 6],
+    # `nested` one 4-slot [1, 2, 3], and `args_evaluated` has no container
+    # literal at all -- and the default (0, 0) is its measured row: the call
+    # and the side effect both allocate nothing.
+    "mir_builtin_argc_len_last": (2, 768),
+    "mir_builtin_argc_len_many": (1, 256),
+    "mir_builtin_argc_list_last": (1, 256),
+    "mir_builtin_argc_nested_expression_loop": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
