@@ -8474,3 +8474,186 @@ IR-AOT-MIR-VERDICT|PASS|tree=106886a92abeea70bab4fd26d044ffd0be54b0bd|accepted=3
 2. **加一条必要条件只会把「命中」变「不命中」**：因此以前各格（尤其 §10.128 的「集合键恒不命中」）的答案方向全部保留，唯一的位移是「本来错误地并成一对的地方分开」。
 3. **`==` 未动**，`mv_eq`/`mv_ne`/`mv_set_eq` 一字未改；集合成员那一侧也未动。
 4. **没有新拒绝**：这一格没有引入任何 `why=`，十五条程序现在全部被接受并执行。
+
+## §10.160 三处两侧同错的同意：finally 的触发面、finally 里的 throw、集合迭代的 nil（aot-mir，A 类第三十五项）
+
+### 一、来源与日期
+
+- 判据：`40013db`（十二条：七条 finally、五条迭代；**首写即绿**）。
+- 实现：无。本格一个字节都不动 `src/`：三处都不是本路线的缺陷——`try`/`catch`/`finally` 的降级是 §10.137 从解释器逐字搬下来的，集合遍历是 §10.125 之前就有的「下标读」形状。判据锁定的是**已经成立的同意**，不是一处修法。
+- 日期：2026-11-11。基线 `9dafc43`（`9dafc433a02be7501205a7b2d19a256099d8c8b2`）。
+- 本格**不推进 `handles`**：`handles=59|of=67|unknown=8` 一条不动——没有新操作码，`OP_INDEX_GET` 与 `OP_THROW` 都是既有的。推进的是 `mir-only-cases 230→242` 与 `accepted 316→328`（同一基线上量的）。
+- 一句话：**这是等号，不是箭头**。§10.157/§10.158 是「先红后绿」；这一格相反——只读扫把三处同意扫出来，判据当场绿。绿不是「没测」，绿是结论本身：任何一侧在未来改掉这三处，判据会当场红，那才是真正的 drift。
+
+### 二、形状
+
+三处都只用最小程序量，两侧分别是 `build/inimerse --no-mods run` 与「`build/aot-mir translate` → `cc -O2 -std=c99` → 运行」；比较的是 stdout **字节**与退出码。
+
+**其一，finally 只在「catch 体非空」时进入正常收尾路径。**
+
+```wren
+try {
+    say "body"
+} finally {
+    say "fin"
+}
+say "after"
+```
+
+两侧都是 `body\nafter\n`（11 字节），rc 0，`fin` 一次也不印。中间加 `catch { }`、或加 `catch (e) { }`，读数一字不变；把 catch 体写上一句 `say "caught"`（哪怕一次都不执行），同一程序就变成 `body\nfin\nafter\n`（15 字节）——决定 finally 去不去的是 catch 体的**语句条数**，不是有没有 `catch` 关键字。
+
+**异常路径不是这样**：`try { throw "boom" } finally { say "fin" }` 两侧印 `fin\n`（4 字节）、rc 1、stderr 是 `boom`。finally 在异常路径上会跑，跑完把原错误重新抛出。所以「没有 handler 就不跑 finally」的准确形状是：**正常收尾路径**跳过了它，异常路径没有。
+
+机制在解析器与编译器里：`handlerCount` 只数 catch 体的语句，finally-only 的 try 会被注册一个幻影全局 `__inimerse_finally_error`，于是正常路径的 JUMP 被**补丁打了两次**——
+
+```c
+if (stmt->tryStmt.handlerCount == 0 && stmt->tryStmt.finallyCount > 0) {
+    finally_error_idx = register_global(comp, "__inimerse_finally_error");
+    varIdx = finally_error_idx;
+}
+...
+patch_r2(comp->curBC, tjo, comp->curBC->count);   /* 先落在 catch 体尾，也就是 finally 开头 */
+for (int i = 0; i < stmt->tryStmt.finallyCount; i++)
+    compile_stmt(comp, stmt->tryStmt.finallyBody[i], break_list, break_count_ptr);
+if (finally_error_idx >= 0) {
+    int rethrow = alloc_reg();
+    emit(comp->curBC, OP_LOAD_GLOBAL, rethrow, finally_error_idx, 0);
+    emit(comp->curBC, OP_THROW, rethrow, 0, 0);
+    /* Normal completion must skip both the cleanup exception rethrow
+       and the exception-only finally entry. */
+    patch_r2(comp->curBC, tjo, comp->curBC->count);  /* 第二次补丁把跳点挪到 finally 之后 */
+}
+```
+
+字节码把这件事钉死了（`try { say "body" } finally { throw "fin-throw" } say "after"` 的 main 流）：
+
+```text
+57,0,23,0    OP_TRY_START   varIdx=23：幻影全局 __inimerse_finally_error
+3,1,0,0      LOADK "body"    30,1,0,0  SAY    58,0,0,0  OP_TRY_END
+24,0,9,0     OP_JUMP   正常路径 0→9：跳过的正是 finally 体与其重抛
+3,1,1,0      LOADK "fin-throw"   59,1,0,0  THROW
+22,1,23,0    LOAD_GLOBAL 23   59,1,0,0  THROW
+9: LOADK "after"   SAY   HALT
+```
+
+本路线按字节码原样发 `goto`（跳点就是表里那个 9），于是两侧在同一个空档上对齐。`OP_TRY_START` 压的那一帧在解释器里是 `ExcFrame{catch_ip, var_idx, ignore}`；`vm_throw` 取栈顶帧、`var_idx >= 0` 时把错误值写进那个全局、`ignore` 时只记进调试槽，然后 `ip = f->catch_ip`——这正是异常路径「先跑 finally 再重抛」的实现，也是正常路径那条跳点被覆盖之后不再传上去的原因。
+
+**其二，finally 里的 throw：运行则上浮，跳过则不可达。**
+
+```wren
+try {
+    say "body"
+} finally {
+    throw "fin-throw"
+}
+say "after"
+```
+
+两侧印 `body\nafter\n`（11 字节）、rc 0、stderr 空。「throw 被吞掉」在这里的可观测形式只是：**它根本没执行**。
+
+真让它执行，它就传上去：`try { throw "boom" } catch { say "caught" } finally { throw "fin-throw" }` 两侧 stdout `caught\n`（7 字节）、rc 1、stderr 是 `fin-throw`（原错误 `boom` 让位）；`try { throw "boom" } finally { say "fin" }` 两侧 `fin\n`、rc 1、stderr `boom`。
+
+所以简报那句「finally 里的 throw 被吞掉」只在一个形状上为真：`break`/`continue` 把 finally 内联进循环控制流（此时异常帧还开着，throw 落回自己的帧里被静默）。而本路线对这种「跳出 try 区」的程序在 translate 阶段就按 `why=try-escapes` 整条拒译（§10.137 量的正是解释器在这里泄漏帧），那条形状因此不构成可锁的同意——它是边界，不是判据。
+
+**其三，集合逐元素迭代恒给 `nil`。**
+
+```wren
+s = 1, 2, 3
+for x in s {
+    say x
+}
+say "end"
+```
+
+两侧：`nil\nnil\nnil\nend\n`（16 字节），rc 0——`len(s)` 是 3，所以循环跑三次、每次读出一个 nil。两元素 `s = 1, 2` 印两行；数组 `a = [1, 2, 3]` 印 `1\n2\n3`；字典 `d = {"a": 1, "b": 2}` 印键 `a\nb`；区间 `p = [0, 3)` 一行也不印（`len(p)` 是 0）。
+
+机制是 `for x in <容器>` 的降级形状：索引从 0 起、`while i < len(container)`、每轮 `x = container[i]`——
+
+```c
+/* for x in <容器>：i=0; while i<len(arr): x=arr[i]; body; i++ */
+emit(comp->curBC, OP_INDEX_GET, r_x, arr_reg, r_i);
+```
+
+而 `OP_INDEX_GET` 只认识数组、字典、字符串三族容器，其余全部落到最后那个分支：
+
+```c
+} else {
+    value_set(&R[ins.r1], VAL_NIL, 0, 0, NULL, NULL);
+}
+```
+
+集合没有臂，于是 `s[i]` 恒为 `nil`，而 `len(s)` 是元素**个数**：正好印 `len(s)` 行 nil。路线侧是同一个形状——读容器的辅助函数在数组/字典/字符串三臂之后原样抄了同一个收尾 `return mv_nil();`，两侧一起掉进同一个兜底。
+
+### 三、判据（首写即绿）
+
+十二行在 `MIR_ONLY` 末尾，读数逐字节相同：
+
+| 判据 | 程序 | 读数（两侧相同） |
+| --- | --- | --- |
+| `mir_finally_only_skipped` | `try{say body}finally{say fin}say after` | `body\nafter`，rc 0 |
+| `mir_finally_empty_catch_skipped` | 同上，中间 `catch { }` | `body\nafter`，rc 0 |
+| `mir_finally_empty_catch_var_skipped` | 同上，中间 `catch (e) { }` | `body\nafter`，rc 0 |
+| `mir_finally_after_catch_runs` | 同上，`catch { say "caught" }` | `body\nfin\nafter`，rc 0 |
+| `mir_finally_throw_in_skipped_block` | `finally{throw "fin-throw"}` | `body\nafter`，rc 0，stderr 空 |
+| `mir_finally_throw_after_catch_propagates` | `try{throw boom}catch{say caught}finally{throw fin-throw}` | `caught`，rc 1，stderr `fin-throw` |
+| `mir_finally_runs_before_try_error` | `try{throw boom}finally{say fin}` | `fin`，rc 1，stderr `boom` |
+| `mir_set_three_elements_three_nils` | `s=1,2,3` 循环 | `nil\nnil\nnil\nend`，rc 0 |
+| `mir_set_two_elements_two_nils` | `s=1,2` 循环 | `nil\nnil\nend`，rc 0 |
+| `mir_array_then_set_iteration` | 数组循环后接集合循环 | `1\n2\n3\nnil\nnil\nnil\nend`，rc 0 |
+| `mir_dict_iteration_keys` | `d={"a":1,"b":2}` 循环 | `a\nb\nend`，rc 0 |
+| `mir_interval_iteration_yields_nothing` | `p=[0,3)` 循环 | `set(R interval)\n0\nend`，rc 0 |
+
+**它们第一次运行就是绿的，这一点要写清楚**：`mir-only-cases 230→242`、`mir-only-same-as-interpreter=242`，十二条全部 `mir=accepted|cc=ok|exec=same`。这不是「判据写松了」——写松的样子是「把红读成绿」；这十二个程序是先由只读扫量出来的，两侧读数逐字节相同，判据只是把**已经成立的等号**钉进可重复的报告里。等号的判据天然首绿；它的价值在第二次运行：只要解释器或路线动到这三处，十二条里必有一条红，而且读数里带 `bytes=` 与 `stdout-hex=`，红的时候能看出是哪一侧动了。
+
+`ALLOCS_EXPECT` 里五行读数全是**先跑后抄**的：五个容器类判据一律 `allocs=1|bytes=256`（一块 8 槽池），finally 类一律 0|0。`STDERR_EXPECT`/`STDERR_EXCLUDE` 为两条抛错判据各加一行：需要 `fin-throw`/`boom` 出现，且 `boom` 前者不许漏出来——钉的是「哪一句错误留下来」，不是「有没有报错」。
+
+### 四、读数
+
+```text
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=242|mir-only-same-as-interpreter=242
+IR-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR|accepted=328|refused=0|same-as-interpreter=328|of=29|emittable=59|of-ops=67|not-emittable=8|corpus=inline-cases:86|mir-only-cases:242|beyond-ast-denominator=30|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=328|of=29|covered=29|missing=0|refused=0|same-as-interpreter=328|prelude-excluded=yes|beyond-ast-denominator=30
+```
+
+十二条判据的逐例读数（`IR-MIR-MIR-ONLY` 的 `rc=/bytes=/stdout-hex=` 字段）：
+
+| 判据 | rc | bytes | stdout-hex |
+| --- | --- | --- | --- |
+| `mir_finally_only_skipped` | 0 | 11 | `626f64790a61667465720a` |
+| `mir_finally_empty_catch_skipped` | 0 | 11 | `626f64790a61667465720a` |
+| `mir_finally_empty_catch_var_skipped` | 0 | 11 | `626f64790a61667465720a` |
+| `mir_finally_after_catch_runs` | 0 | 15 | `626f64790a66696e0a61667465720a` |
+| `mir_finally_throw_in_skipped_block` | 0 | 11 | `626f64790a61667465720a` |
+| `mir_finally_throw_after_catch_propagates` | 1 | 7 | `6361756768740a` |
+| `mir_finally_runs_before_try_error` | 1 | 4 | `66696e0a` |
+| `mir_set_three_elements_three_nils` | 0 | 16 | `6e696c0a6e696c0a6e696c0a656e640a` |
+| `mir_set_two_elements_two_nils` | 0 | 12 | `6e696c0a6e696c0a656e640a` |
+| `mir_array_then_set_iteration` | 0 | 22 | `310a320a330a6e696c0a6e696c0a6e696c0a656e640a` |
+| `mir_dict_iteration_keys` | 0 | 8 | `610a620a656e640a` |
+| `mir_interval_iteration_yields_nothing` | 0 | 22 | `736574285220696e74657276616c290a300a656e640a` |
+
+`same-as-interpreter` 316→328，`differ` 仍是 0：没有任何一条原本一致的程序在这一格之后变得不一致。`of=29`、`covered=29`、`missing=0`、`beyond-ast-denominator=30` 全不动——这一格不换覆盖，只换**等号的证据形态**。
+
+### 五、写这条之前量过的事
+
+1. **空 catch 的三种写法都量了**：`catch { }`、`catch (e) { }`、以及只写注释的 catch 体——三者的 `handlerCount` 都是 0，finally 都不跑；catch 体里一句 `say` 是分水岭。`catch (e)` 只多绑一个名字，不改变条数。
+2. **正常路径与异常路径分开量**：try 体 throw + 无 catch → finally 跑、原错误重抛（rc 1）；try 体不 throw + 无 catch → finally 不跑（rc 0）。同一个程序在不同路径上两种答案，判据必须挑一条路径钉——这一格钉的是正常路径，异常路径由另外两条钉住。
+3. **throw 的位置矩阵量了**：finally 里（运行态）→ 上浮；finally 里（跳过态）→ 不可达；catch 体里 → 上浮；try 体里且 finally 会跑 → 清理先跑、原错误上浮；`break` 出 try 且 finally 内联了 throw → 被吞，但本路线按 `why=try-escapes` 拒译。最后一条量的是「为什么不能拿它当判据」。
+4. **迭代四种容器都量了**：set（3 元素 3 nil、2 元素 2 nil）、array（元素）、dict（键）、`[0, 3)` 区间（零次，`len` 0）。`str()` 会被本路线按 `why=builtin-call` 拒译，所以判据里只出现 `say x` 与 `len`。
+5. **`Z[0~3]` 有限域区间**：解释器印四行 nil，本路线按 `why=set-interval-domain` 拒译（它只发 R 区间）——能力边界，既不是同意也不是红。
+6. **`R[0~3)` 显式域区间两侧不一致**：解释器 `set(0)`、`len` 0、`min` 0、`max` 3；本路线 `set(1)`、`len` 1、`min`/`max` 都答集合自己。这是**另一格**的真分歧，不写进本条判据，也不靠「取最后看的那一侧」圆掉——它和 `[0, 3)` 只差一个拼法，差的却是 `OP_SET_INTERVAL` 之后多出来的那条 `NEW_SET`。
+7. **机制是读出来的，不是猜的**：解析器的 `handlerCount` 数语句、编译器的两次 `patch_r2`、`OP_TRY_START` 压 `ExcFrame`、`vm_throw` 存 `var_idx` 或按 `ignore` 静默、`OP_INDEX_GET` 的兜底分支、路线侧那行 `return mv_nil();`。每一条都先量两侧读数、再回到源码里找到发出它的那一行。
+8. **ALLOCS 是量出来的**：五个容器类判据全 `allocs=1|bytes=256`（一块 8 槽池），finally 类全 0|0；两条 rc 1 的判据 `reported=no`，因为解释器只在 rc 0 时读那一行。
+
+### 六、边界
+
+1. **其一 的退场观察**：若解释器去掉 `tjo` 的第二次补丁（或让 finally-only 的 try 在正常路径上也落到 finally 开头），`mir_finally_only_skipped` 等四条会开始印 `fin` 而红，`mir_finally_throw_in_skipped_block` 会从 rc 0 变 rc 1——届时本路线必须同步，否则红就是 drift。这是这一格唯一「一句话就能推翻」的观察。
+2. **其二 的退场观察**：若让「finally 里的 throw」在**运行态**消失（例如 `vm_throw` 在 finally 路径上只存不跳，或本路线在 finally 入口处再清一次 `mv_throwing`），`mir_finally_throw_after_catch_propagates` 会从 rc 1 变 rc 0、stderr 变空而红。反过来，若 `break` 出 try 被合法化并照抄泄漏帧，本路线会多接受一批程序，那时 §10.137 的 `try-escapes` 拒译与这条边界要一起重写。
+3. **其三 的退场观察**：解释器若给 `OP_INDEX_GET` 补一个 `VAL_SET` 臂（第 i 个元素按枚举答），三条集合判据会印 `1 2 3` 而红；本路线必须补同一臂。若只改 `len` 的语义，nil 的**行数**会变，判据仍红。
+4. **区间只担保它量过的部分**：`[0, 3)` 的同意是「len 0 ⇒ 零次」这一条，不是「区间的迭代语义正确」。`Z` 的拒绝是能力边界，`R[0~3)` 是另一格的真分歧。
+5. **判据只钉 stdout 字节与退出码**：stderr 用包含式，因为本路线没有解释器的 `at ip=… frames=…` 账本；两条抛错判据钉的是「哪一句」而不是整行，`STDERR_EXCLUDE` 额外钉住「原错误不许冒出来」。
+6. **不动 `src/`**：本格没有实现，也没有新 `why=`；`handles=59|of=67|unknown=8` 与 §10.158 相同，`of=29`、`covered=29`、`missing=0` 全不动。这是**同意**的形状，不是修复的形状。
+7. **文档预算没有位移**：这一节不新增任何 `path:line` 引用（只引代码、只写文件名），所以 `check_line_refs` 的 `explicit delta` 仍是 `+12`；`citations` 的 1199 行与 `recon.*` 令牌一概没碰。
+8. **与 §10.159 的关系**：兄弟格在另一个 worktree 里写同一段尾注，合并时两条尾部追加都保留；本格没有改 §10.159，也不依赖它。
