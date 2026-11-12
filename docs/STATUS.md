@@ -8850,3 +8850,47 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 ### 七、与兄弟格的关系
 
 §10.159 的 argc 臂与 §10.160 的三处两侧同错都不动；三条尾部追加在同一文件末尾相邻，合并时都保留。
+
+## §10.163 内建 `has`/`keys`：两套键规则必须并存，`keys` 交出新区域（A 类第三十六项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12，§10.162 之后的第二格实现。父 sha `ea7b6b0`。编号承接 §10.161 的让位规则（PLAN 建议序列把这一格写作 §10.162）。
+
+### 二、判据（先红）
+
+两条 `MIR_ONLY` 判据，在 `ea7b6b0` 上都是 `mir=refused|why=builtin-call`，harness exit 1：
+
+- `mir_has_uses_the_coercing_rule`（13 行输出）：`true false false false false false false false false` 之后跟两对。
+- `mir_keys_returns_a_new_region`（10 行输出）：`[z, a, m]` 打印两次（中间夹一次 `m["z"] = 9`，证明顺序在覆盖后不变）、`keys(m)[0]`=z、`len(keys(m))`=3，然后 `[a, b]` / `[]` / `[]` / `[]` / `[]`，最后向返回数组写 `k[0] = "zzz"` 后再 `keys(d)` 仍是 `[a, b]`。
+
+**两对是这一格的全部理由**：`n = {1: "x"}` 上 `has(n, true)` 是 **true** 而 `n[true]` 是 **nil**；`e = {true: "b"}` 上 `has(e, 1)` 是 **true** 而 `e[1]` 是 **nil**。`has` 用 `val_eq`（混合数值对提升为 double），字典读写用哈希门 `mv_key_eq`（§10.158），两条规则在这两对上结论相反。
+
+### 三、实现
+
+- 运行时新增 `mv_has(MirVal dict, MirVal key)`（非 `MV_DIC` 直接 `false`，线性扫对，比较器是 **`mv_eq`**）与 `mv_keys(MirVal a)`（非字典与空字典都答 `[]`，不是 nil；正常路径按插入序把键拷进一个**新**分配的区域）。
+- 发射器：`keys` → `mv_keys(mvargs[asp-1])`；`has` → `mv_has(mvargs[asp-2], mvargs[asp-1])`（编译器先压容器后压键，容器在 `asp-2`）。
+- 预扫：名字门扩到六个名字；**`has` 少于两个实参按名拒 `builtin-stale-stack`** —— 解释器的臂在栈不够深时返回 0（失败的 builtin），目标寄存器保持原值。实测三种形状：`say has(d)` 印字典、`w = "hello"` 之后印 `hello`、在 `len("abc", has(d))` 里印 0，所以这个形状没有「由表达式决定」的答案可抄，与 §10.159 的零参 `len`/`list` 同类。
+
+### 四、读数（亲跑）
+
+- `IR-MIR-COVER`：`mir-only-cases=252|mir-only-same-as-interpreter=252`（落笔前 252/250），`inline-cases:86|accepted=86|refused=0|differ=0`，`c-diff=86|c-identical=0`，`perturb-stdout-changes=5`。
+- `IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=9|ok=9|expect=9` 不动：本格没有新增拒译判据，`has` 的单参拒绝是用 `aot-mir translate` 手验的（`IR-MIR-REFUSED|why=builtin-stale-stack`）。
+- `ALLOCS`：`mir_has_uses_the_coercing_rule` = `2|768`（两个字典字面量，池翻一次；`has` 自身零分配），`mir_keys_returns_a_new_region` = `4|3840`（五次 `keys` 各建一个区域）。两行都是先量后写。
+- `handles=59|of=67|unknown=8` 不动；`of=29|covered=29|missing=0` 不动。
+
+### 五、非对称注入（绿树上各做一次，逐次恢复重建）
+
+1. **`has` 借用 `mv_key_eq`**：只红那两对——`has(n, true)` 与 `has(e, 1)` 从 true 变 false，前九行一个字节都没动。这正是判据存在的理由。
+2. **`mv_keys` 返回字典自己的区域**：红四行——两次 `keys(m)` 印成 `[z, 1, a, 2, m, 3]` / `[z, 9, a, 2, m, 3]`（对值也进了数组）、`len(keys(m))` 从 3 变 6、最后一行印成 `[zzz, 1, b, 2]`（往返回数组的写泄漏回了字典）；`ALLOCS` 同时从 `4|3840` 掉到 `3|1792`，是第二把锁。
+
+（第一次注入写错了：`r` 先用后声明，症状是 `cc failed` 而不是答案不同——那是实现错误不是判据的读数，已重写并记录。）
+
+### 六、边界
+
+1. **`has` 的比较器与字典的键规则不同，是故意的**：这一节不统一它们。要统一得先改解释器（`val_eq` 或 `dict_hash_find`），而本路线的目标是逐字复现它。
+2. **集合作键仍是既有债**（§10.158 只解决了 bool/int 那条）：`d[s] = 7` 之后 `d[s]` 是 `nil`、`has(d, s)` 是 `false`、`len(d)` 是 1 —— 本格没有动它，`mv_has` 走 `mv_eq` 而非 `mv_key_eq` 这一点与该债**无关**（`mv_eq` 有集合行、`mv_key_eq` 没有，所以 `has` 与 `d[s]` 在集合上也不一致，实测确认）。
+3. **多参调用只读最后一个实参**：与 §10.159 的 `len`/`list` 同一条，本格没有新增机制（`has("a", d)` 等价于 `has(d)` 的顶层，实测 false）。
+4. **`keys` 的顺序是插入序**，不是排序序；覆盖已有键不改位置——这正是判据里「打印两次、中间覆盖」那两行钉的。
+5. **文档预算没有位移**：本节不新增 `path:line` 引用，`check_line_refs` 的 `explicit delta` 仍是 `+12`；`citations` 1199 行不动。
+6. **删除条件**：两个名字与两个运行时函数必须同删；只删一个会让另一条的判据红。

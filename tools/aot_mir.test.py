@@ -347,6 +347,17 @@ ALLOCS_EXPECT = {
     # would move these numbers.
     "mir_size_and_count_of_every_shape": (2, 768),
     "mir_len_size_count_side_by_side": (1, 256),
+    # has()/keys() readings, MEASURED off each generated program's own
+    # IR-MIR-ALLOCS line on the green run before they were written here.
+    # mv_has allocates NOTHING; the two blocks are the literals the program
+    # writes -- one two-pair dict and one one-pair dict, which do not fit the
+    # first pool block together, so the pool doubles.  mv_keys allocates ONE
+    # region per call and the program calls it five times (three over the
+    # three-pair dict, one over {} , one over the two-pair dict), which is where
+    # the four blocks come from.  A keys() that returned the dict's own region
+    # would read 4 blocks fewer here AND move the first printed line.
+    "mir_has_uses_the_coercing_rule": (2, 768),
+    "mir_keys_returns_a_new_region": (4, 3840),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1172,6 +1183,40 @@ MIR_ONLY = [
      'x = [1, 2]\nsay len(x)\nsay size(x)\nsay count(x)\n'
      'iv = [1~3]\nsay len(iv)\nsay size(iv)\nsay count(iv)\n'
      'say size(3)\nsay count(3)\n'),
+    # has()/keys(): the two KEY RULES in one cell, and they must not be the
+    # same rule.  Written BEFORE the implementation; on arrival both are
+    # `why=builtin-call`.  The interpreter's answers, measured on the same tree
+    # that measured every line of this file, are:
+    #   true false false false false false false false false   (has, first nine)
+    #   true / nil                                             (n={1:"x"} pair)
+    #   true / nil                                             (e={true:"b"} pair)
+    # The last two PAIRS are the whole point: `has(n, true)` is TRUE while
+    # `n[true]` is nil, and `has(e, 1)` is TRUE while `e[1]` is nil.  has()
+    # scans the pairs with val_eq (which promotes a mixed numeric pair to
+    # double), the dict read/write arms use the hash-gated mv_key_eq (8.10),
+    # and the two rules disagree on exactly these pairs.  An implementation
+    # that reused mv_key_eq for has() passes every string-key line above and
+    # prints false twice here.
+    ("mir_has_uses_the_coercing_rule",
+     'd = {"a": 1, "b": 2}\n'
+     'say has(d, "a")\nsay has(d, "z")\nsay has(d, 1)\nsay has({}, "a")\n'
+     'say has([1, 2], 1)\nsay has("abc", "a")\nsay has(nil, "a")\n'
+     'say has(d, nil)\nsay has(d, true)\n'
+     'n = {1: "x"}\nsay has(n, true)\nsay n[true]\n'
+     'e = {true: "b"}\nsay has(e, 1)\nsay e[1]\n'),
+    # keys() hands back a NEW array, and the program MUTATES the dict between
+    # two printings for that reason: a keys() that returned the dict's own
+    # region (or an alias the pair-order overwrite rule then perturbs) prints a
+    # different first line.  The third and fourth lines pin the two things a
+    # fresh region has to get right -- element order (insertion, not sorted)
+    # and length -- and the last two lines prove the returned array is not
+    # reachable from the dict: writing into it must NOT change keys(d).
+    ("mir_keys_returns_a_new_region",
+     'm = {}\nm["z"] = 1\nm["a"] = 2\nm["m"] = 3\nsay keys(m)\n'
+     'm["z"] = 9\nsay keys(m)\nsay keys(m)[0]\nsay len(keys(m))\n'
+     'd = {"a": 1, "b": 2}\nsay keys(d)\nsay keys({})\nsay keys(nil)\n'
+     'say keys([1, 2])\nsay keys("ab")\n'
+     'k = keys(d)\nk[0] = "zzz"\nsay keys(d)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
