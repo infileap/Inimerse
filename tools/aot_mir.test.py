@@ -366,11 +366,16 @@ ALLOCS_EXPECT = {
     # here before the run would be a guess dressed as a measurement.
     "mir_str_of_every_shape": (17, 864),
     "mir_str_float_split_side_by_side": (9, 350),
-    # sum() allocates NOTHING: it reads the container's items in place.  What
-    # these rows count is the literals the programs build -- one 4-item array,
-    # one set, one array for the throw case.  MEASURED after the arm landed.
-    "mir_sum_fold_and_nil_boundaries": (0, 0),
-    "mir_sum_non_numeric_throws": (0, 0),
+    # sum() itself allocates NOTHING -- it reads the container's items in place
+    # and throws on a bad element.  What the first row counts is the literals the
+    # program builds (four pool blocks / 1794 bytes: an array of four, the set,
+    # and the ones behind `"1, 2"[0]`), MEASURED off the generated program's own
+    # IR-MIR-ALLOCS line.  The throw case reports `reported=no|why=rc=1`: it
+    # stops inside the run, so no sweep line is printed and no count is
+    # consulted -- the same treatment the other throwing criteria get.
+    "mir_sum_fold_and_nil_boundaries": (4, 1794),
+    "mir_sum_non_numeric_throws": (1, 256),
+    "mir_sum_bool_element_throws": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -843,6 +848,7 @@ def allocs_problems(text, case):
 # table of positives cannot see "printed the wrong throw's word".
 STDERR_EXPECT = {
     "mir_sum_non_numeric_throws": ("[exception] uncaught: sum: non-numeric element",),
+    "mir_sum_bool_element_throws": ("[exception] uncaught: sum: non-numeric element",),
     "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
     "mir_throw_uncaught_cross": ("[exception] uncaught: from-func",),
     # OP_BIND can stop with two DIFFERENT messages, and the interpreter decides
@@ -1291,6 +1297,15 @@ MIR_ONLY = [
     # OTHER way this builtin can stop.
     ("mir_sum_non_numeric_throws",
      'say "before"\nsay sum([1, "a", 2])\n'),
+    # THE OTHER MALFORMED ELEMENT, and it needs its own program because the
+    # first throw ends the run: a BOOL element.  `sum([1, true])` raises
+    # `sum: non-numeric element` (the element rule is VAL_INT/VAL_FLOAT only),
+    # so stdout is empty but for the marker and rc is 1.  This is the line that
+    # separates "malformed element throws" from "anything that looks numeric is
+    # summed": a route that let a BOOL fall into the int arm prints 2 and exits
+    # 0, and every line of the case above would still pass.
+    ("mir_sum_bool_element_throws",
+     'say "bool"\nsay sum([1, true])\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.

@@ -2870,6 +2870,92 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* sum(): the first builtin this route emits that can THROW, and the first one\n"
+"   that consumes mv_list's set enumeration.  Read\n"
+"   src/runtime/runtime_posix.c:338-395 beside this; the three things that\n"
+"   function's own comment says it used to get wrong are exactly the three arms\n"
+"   here.\n"
+"\n"
+"   WHY IT EXISTS.  sum() was refused by name (why=builtin-call) while every\n"
+"   shape it reads was already lowerable -- an array, a set, and the enumeration\n"
+"   mv_list already performs.  What makes it a cell of its own is the THIRD exit\n"
+"   kind: the two builtins before it either answer or answer nil, and this one\n"
+"   can also raise.\n"
+"\n"
+"   WHAT IT ADDS, three answers and three signals:\n"
+"     - THE FOLD: int64 accumulator with __builtin_add_overflow, and a double\n"
+"       kept in PARALLEL so that the moment any element is a float the answer is\n"
+"       the float total of everything seen so far.  That is why [1, 2.5] and\n"
+"       [2.5, 1] both answer 3.5 and neither answers an int.\n"
+"     - nil FOR A NON-CONTAINER (3, \"ab\", nil) and for a set that cannot be\n"
+"       enumerated (the R interval [1~3], whose list() is nil too).\n"
+"     - THE THROW for a non-numeric element: `sum: non-numeric element`, an\n"
+"       unrecoverable-by-nil failure the interpreter made catchable in 2026-10\n"
+"       (the message text is the interpreter's, not this file's -- that is the\n"
+"       point).  An element is numeric iff it is MV_INT or MV_FLT, so a BOOL\n"
+"       element throws as well.  The OVERFLOW signal is the other one:\n"
+"       numeric_overflow, the same kind the arithmetic operators raise.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- boundaries, named:\n"
+"     - A COMPONENT-BEARING SET (`1, 2, Z[7~9]`).  The interpreter enumerates\n"
+"       it; this route cannot build one at all, the same boundary §10.162\n"
+"       records for size()/count().\n"
+"     - THE INTEGER NARROWING of a set's int half.  mv_list narrows each int to\n"
+"       `(int)` before emitting it (that note records the measurement), so a sum\n"
+"       over `s = 5000000000, 1` adds the narrowed values exactly as the\n"
+"       interpreter's own enumerator does.  Copied, not repaired.\n"
+"     - A ZERO-ARGUMENT CALL and a MULTI-ARGUMENT one: the same stack-top rule\n"
+"       every builtin here follows.  sum() with no argument is refused BY NAME\n"
+"       (builtin-stale-stack) because the destination register keeps its old\n"
+"       value; several arguments answer off the LAST one.\n"
+"\n"
+"   DELETE CONDITION.  Delete the arm with its pre-scan name and the two\n"
+"   criterion cases.  Removing only the throw arm turns the failure into a\n"
+"   silent nil, which mir_sum_non_numeric_throws catches on both the stdout\n"
+"   length and the exit code.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_sum_fold_and_nil_boundaries and\n"
+"   mir_sum_non_numeric_throws -- stdout BYTES, the exit code and (for the\n"
+"   second) a stderr CONTAINS predicate plus an exclusion of the other message.\n"
+"   sum allocates nothing; the ALLOCS rows count only the literals. */\n"
+"static inline MirVal mv_sum(MirVal a) {\n"
+"    /* The region to walk: an ARRAY walks itself, a SET walks mv_list's answer\n"
+"       (the SAME enumeration size()/count()/list() use), everything else is\n"
+"       nil.  mv_list returns the array back unchanged for an ARRAY, so the two\n"
+"       arms converge -- but the set arm is where the interval answer comes\n"
+"       from, and it must stay mv_list's (nil), not a second implementation. */\n"
+"    MirVal src = a;\n"
+"    if (a.type == MV_SET) src = mv_list(a);\n"
+"    if (src.type != MV_ARR) return mv_nil();\n"
+"    int iv = mv_arr_live((int)src.ival);\n"
+"    if (iv < 1 || iv > mv_arrused) return mv_nil();\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    long long isum = 0;\n"
+"    double fsum = 0;\n"
+"    int all_int = 1, oflow = 0;\n"
+"    for (int i = 0; i < n; i++) {\n"
+"        MirVal e = mv_arrmem[iv + i];\n"
+"        /* VAL_INT and VAL_FLOAT only -- a BOOL or a NIL element is a MALFORMED\n"
+"           element, not a zero.  This is the arm the interpreter's comment\n"
+"           (:381-386) added when the WIN32 copy and the POSIX copy disagreed. */\n"
+"        if (e.type == MV_FLT) {\n"
+"            all_int = 0;\n"
+"            fsum += e.fval;\n"
+"        } else if (e.type == MV_INT) {\n"
+"            fsum += (double)e.ival;\n"
+"            long long tmp;\n"
+"            if (__builtin_add_overflow(isum, (long long)e.ival, &tmp)) oflow = 1;\n"
+"            else isum = tmp;\n"
+"        } else {\n"
+"            mv_throw(mv_str(\"sum: non-numeric element\"));\n"
+"            return mv_nil();      /* the value is irrelevant once the flag is set */\n"
+"        }\n"
+"    }\n"
+"    if (!all_int) return mv_flt(fsum);\n"
+"    if (oflow) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+"    return mv_int(isum);\n"
+"}\n"
+"\n"
 "/* THE WRITE HALF of the container step.  Read src/vm/vm.c:3717-3734 (L_INDEX_SET)\n"
 " * beside this: r1 is the CONTAINER, r2 the SUBSCRIPT, r3 the VALUE, and r1 is\n"
 " * NOT a destination -- the container register keeps its own value across the\n"
@@ -4335,10 +4421,10 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
                     && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
-                    && strcmp(bn, "str") != 0) {
+                    && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
-                               " list, size, count, has, keys and str and no other builtin;"
+                               " list, size, count, has, keys, str and sum and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5183,7 +5269,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
                     && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
-                    && strcmp(bn, "str") != 0)) return -1;
+                    && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5192,6 +5278,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "sum") == 0)
+            buf_fmt(b, "    v[%d] = mv_sum(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "str") == 0)
             buf_fmt(b, "    v[%d] = mv_str_of(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "has") == 0)
