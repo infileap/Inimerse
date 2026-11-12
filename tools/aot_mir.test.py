@@ -452,24 +452,30 @@ ALLOCS_EXPECT = {
     #   the run knows.
     "mir_split_edges_and_the_trailing_empty": (20, 1822),
     "mir_split_allocates_new_bytes_per_element": (4, 262),
-    # join(): PREDICTION, stated before the arm exists, in the form two cells
-    # have now earned twice over.
+    # join(): MEASURED, and the prediction was wrong in a way worth keeping.
     #
-    #   join answers ONE string, so the mirror of split is: split allocates one
-    #   block per element, join allocates ONE block for the whole answer.
-    #   The interpreter does exactly that -- a single malloc grown by
-    #   concatenation is NOT what it does; it builds one buffer and copies the
-    #   pieces in.  So the prediction is:
-    #       join([1, 2, 3], "-")  eleven bytes: "1-2-3" is 5 + NUL = 6
-    #                             + the array literal's pool block
-    #   Blocks: 1 for the answer.  Bytes: 6 + the pool block the ARRAY literal
-    #   needs (8 slots = 256) = 262.  So PREDICTED 2|262.
-    #   NOTE THE POOL-BLOCK ARITHMETIC IS NOW WRITTEN AS A FUNCTION rather than
-    #   re-derived: blocks(n_slots) = 256 bytes for n <= 8, then 256*2^d for the
-    #   doubling d that fits n.  Two cells in a row got this wrong by pricing a
-    #   region at exactly the slots it needed.
-    "mir_join_every_shape_and_the_default_separator": (0, 0),
-    "mir_join_float_format_and_percent": (0, 0),
+    #   PREDICTED 2|262 for join([1,2,3],"-") on this reasoning: the answer is
+    #   one block ("1-2-3" = 5 + NUL = 6 bytes) plus the array literal's pool
+    #   block, and blocks(n_slots) = 256 for n <= 8, doubling thereafter.  The
+    #   pool-block half of that arithmetic is right and is kept as a closed form.
+    #
+    #   MEASURED 15|3895 over the whole eleven-line program -- which is not a
+    #   refutation so much as a scope error on my part: the prediction was for
+    #   ONE join call and the row covers ELEVEN, each with its own array literal
+    #   and its own answer block, and the pool doubles as those regions stack up.
+    #   The per-call claim does hold; the row was never about one call.
+    #
+    #   THE REAL FINDING IN THIS CELL IS THE IMPLEMENTATION'S FIRST DRAFT.  It
+    #   reserved 1024 bytes per element to size the answer, and the run read
+    #   15|22294 for the same program -- a five-byte answer costing fifteen
+    #   kilobytes.  The fix is two passes over the elements (format into a
+    #   scratch buffer, sum the lengths, then allocate exactly) and the same
+    #   program then reads 15|3895.  Both numbers are recorded because the first
+    #   one is what "obviously fine" costs, and IR-MIR-ALLOCS is the only reading
+    #   in this file that could see it -- the stdout was byte-identical either
+    #   way.
+    "mir_join_every_shape_and_the_default_separator": (15, 3895),
+    "mir_join_float_format_and_percent": (8, 838),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
