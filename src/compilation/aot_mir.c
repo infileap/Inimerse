@@ -2545,6 +2545,79 @@ static const char *const kMirValBlock =
 "    return mv_int(0);   /* MV_NIL, MV_BOO -- the interpreter's fall-through */\n"
 "}\n"
 "\n"
+"/* size() and count(): the third and fourth builtins this route emits, and the\n"
+"   pair that shows the collection body is ONE body with TWO tails.  Read\n"
+"   src/runtime/runtime_posix.c:30-51 (size) and :63-82 (count) beside this: the\n"
+"   interpreter's two functions share their body -- containers AND strings --\n"
+"   and differ in exactly two places, which is what is reproduced here.\n"
+"\n"
+"   WHY IT EXISTS.  size() and count() were refused BY NAME (why=builtin-call)\n"
+"   although every shape they read was already lowerable, because no arm of\n"
+"   len() could imitate their answers: `say size(3)` is 3, `say len([1~3])` is 0\n"
+"   where `say size([1~3])` is nil, and `say count(3)` is nil.  A name-only\n"
+"   alias would have printed 0 for the first and the third.\n"
+"\n"
+"   WHAT IT ADDS, exactly three pieces:\n"
+"     - mv_region_len: the shared body -- containers and strings.  It answers 1\n"
+"       and the count for an enumerable collection or a string, and 0 for every\n"
+"       other shape INCLUDING an interval set.  It is not mv_len's body with a\n"
+"       flag: mv_len answers 0 for a non-collection and 0 for an interval, while\n"
+"       both of these names answer NIL for those same inputs -- the split is\n"
+"       measured, not assumed, and count(\"ab\")=2 is why STRING belongs here.\n"
+"     - mv_size: the body plus the coercion tail -- INT answers itself, FLOAT\n"
+"       truncates toward zero, and everything else (nil, BOO, function,\n"
+"       interval set) answers nil.  The tail also answers\n"
+"       nil for a NEGATIVE result: the interpreter's `if (n < 0)` at\n"
+"       runtime_posix.c:51 reads a negative number as no answer, so size(-7)\n"
+"       and size(-2.75) are nil while size(7) and size(2.75) are 7 and 2.\n"
+"     - mv_count: the same body with NO coercion tail.  A string is still the\n"
+"       body, so count(\"ab\") is 2; a number is nil, so 3 and 2.5 answer nil\n"
+"       -- the entire measured difference from size.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- a boundary:\n"
+"     - A COMPONENT-BEARING SET (`1, 2, Z[7~9]`).  The interpreter enumerates\n"
+"       it and answers 5; this route cannot build that set at all (OP_SET_\n"
+"       INTERVAL's note refuses every lattice name but R), so no accepted\n"
+"       program can put one in front of these arms.\n"
+"     - A MOVED or stale container handle: the interpreter's own size() checks\n"
+"       `ival > 0 && ival - 1 < arrayCount` and answers nil for a handle that\n"
+"       fails; mv_region_len answers 0, which both callers map to nil.  A\n"
+"       program holding such a handle is not accepted here either way.\n"
+"\n"
+"   DELETE CONDITION.  Delete size and count from the pre-scan and emitter\n"
+"   together with mv_region_len when the two criterion cases are removed: one\n"
+"   name and the other's tail fails a criterion line, so neither is deletable\n"
+"   alone.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_size_and_count_of_every_shape\n"
+"   and mir_len_size_count_side_by_side -- stdout BYTES and rc against the\n"
+"   interpreter, plus the ALLOCS line; the answers themselves need no heap\n"
+"   beyond the containers the program builds. */\n"
+"static inline int mv_region_len(MirVal a, long long *n) {\n"
+"    if (a.type == MV_STR) { *n = a.sval ? (long long)strlen(a.sval) : 0; return 1; }\n"
+"    if (a.type != MV_ARR && a.type != MV_DIC && a.type != MV_SET) return 0;\n"
+"    int i = mv_arr_live((int)a.ival);   /* through the head, like mv_len */\n"
+"    if (i < 1 || i > mv_arrused || !mv_arrmem) return 0;\n"
+"    if (a.type == MV_SET && mv_set_is_interval(i)) return 0;   /* interval: no answer */\n"
+"    long long c = (long long)mv_arrmem[i - 1].ival;\n"
+"    *n = (a.type == MV_DIC) ? c / 2 : c;\n"
+"    return 1;\n"
+"}\n"
+"\n"
+"static inline MirVal mv_size(MirVal a) {\n"
+"    long long n = -1;\n"
+"    if (a.type == MV_INT) n = a.ival;\n"
+"    else if (a.type == MV_FLT) n = (long long)a.fval;\n"
+"    else if (!mv_region_len(a, &n)) return mv_nil();\n"
+"    return n < 0 ? mv_nil() : mv_int(n);   /* runtime_posix.c:51 */\n"
+"}\n"
+"\n"
+"static inline MirVal mv_count(MirVal a) {\n"
+"    long long n = 0;\n"
+"    if (!mv_region_len(a, &n)) return mv_nil();   /* no coercion tail */\n"
+"    return mv_int(n);\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4109,11 +4182,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    zero-argument one is not reported as if len had been called
                    wrongly (measured: with the arity test first, 'say dbg_ip()'
                    came back as illegal-operand). */
-                if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0) {
+                if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
+                    && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
-                               " list and no other builtin; the registry, its capability flags and"
-                               " the safe-mode rule live in the VM and the mods", f, i, bn);
+                               " list, size and count and no other builtin; the registry, its"
+                               " capability flags and the safe-mode rule live in the VM and the"
+                               " mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
                 if (argc < 0 || argc >= REG_LIMIT)
@@ -4937,9 +5012,14 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         int32_t ix = r2;
         const char *bn = (ix >= 0 && ix < bc->string_count && bc->string_pool)
                          ? bc->string_pool[ix] : NULL;
-        if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0)) return -1;
+        if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
+                    && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "size") == 0)
+            buf_fmt(b, "    v[%d] = mv_size(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "count") == 0)
+            buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else
             buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
         buf_fmt(b, " asp -= %d;", w3);

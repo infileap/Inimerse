@@ -339,6 +339,14 @@ ALLOCS_EXPECT = {
     # len() itself allocates nothing; the one block is the ARRAY literal's pool
     # (8 slots * 32 bytes) and the one-pair dict fits in the same block.
     "mir_len_of_every_shape_this_route_holds": (1, 256),
+    # size()/count() add NO allocation: both read a header or the string length
+    # on the stack.  These blocks are the literals the two programs write --
+    # the array, the one-pair dict and the set -- MEASURED off each generated
+    # program's own IR-MIR-ALLOCS line before writing the row.  A route that
+    # boxed the answer, or enumerated the interval with a temporaries array,
+    # would move these numbers.
+    "mir_size_and_count_of_every_shape": (2, 768),
+    "mir_len_size_count_side_by_side": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
