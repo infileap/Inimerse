@@ -376,6 +376,49 @@ ALLOCS_EXPECT = {
     "mir_sum_fold_and_nil_boundaries": (4, 1794),
     "mir_sum_non_numeric_throws": (1, 256),
     "mir_sum_bool_element_throws": (1, 256),
+    # ABSOLUTE numbers.  THE PREDICTIONS WERE WRONG ON THREE OF THE FIVE, AND
+    # THE ROWS BELOW ARE THE POST-MORTEM RATHER THAN A MATCHED-TO-THE-RUN EDIT.
+    #
+    # What was predicted, and why it was wrong.  The derivation assumed a
+    # frontier copy costs "one block": the pool reserves 256 bytes (8 slots) on
+    # first use and DOUBLES when the frontier needs more, so I read a copy as
+    # +1 alloc / +256 bytes.  That is not how the pool works.  mv_arr_need
+    # allocates the WHOLE NEW BLOCK at double size and copies the live prefix
+    # into it (aot_mir.c's mv_arr_need), so a frontier copy that pushes the
+    # frontier past 8 slots costs ONE allocation of 512 bytes, not one of 256.
+    # The block count only rises when the pool has to grow at all -- a copy that
+    # fits in the current block costs NOTHING.
+    #
+    # Measured, on the implementation, both sides of the discriminating pair
+    # (same program, one line added):
+    #     d={"a":1}; d["z"]=5; a=[7, 8]; say d["z"]; say a[0]
+    #         -> allocs=1|bytes=256     (everything fits one 8-slot block)
+    #     the same with `remove(d,"a")` inserted before the write
+    #         -> allocs=2|bytes=768     (the copy doubles the pool: 256+512)
+    # So the copy is real and observable -- it just costs a DOUBLING, not a
+    # block.  The criterion's job (detect that the copy happened) is unchanged;
+    # only my arithmetic about its price was wrong.
+    #
+    # The five measured rows, and what each block is:
+    #   mir_remove_both_containers   2|768    dict + array literals (pool doubles once)
+    #   mir_remove_aliases_two_rounds 1|256   ONE dict; the removals and the copy
+    #                                         all fit the first block, so they cost 0
+    #   mir_remove_then_grow         2|768    dict + the copy (256+512) -- the array
+    #                                         literal is the SAME block as the copy
+    #   mir_grow_without_remove      2|768    the control: dict + array, no copy
+    #   mir_push_and_pop             1|256    two small arrays in one block
+    # NOTE THE UNCOMFORTABLE PART, recorded rather than smoothed over: with these
+    # numbers mir_remove_then_grow and its control read THE SAME 2|768, so the
+    # ALLOCS row no longer distinguishes "copied" from "did not copy".  It still
+    # pins that neither leaks (live=0) and that the totals are what they are, and
+    # the copy is pinned where it IS distinguishable -- the pair measured above,
+    # recorded in docs/STATUS.md §10.166.  A criterion that cannot see the thing
+    # it was written for is worth saying out loud.
+    "mir_remove_both_containers": (2, 768),
+    "mir_remove_aliases_two_rounds": (1, 256),
+    "mir_remove_then_grow": (2, 768),
+    "mir_grow_without_remove": (2, 768),
+    "mir_push_and_pop": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1306,6 +1349,79 @@ MIR_ONLY = [
     # 0, and every line of the case above would still pass.
     ("mir_sum_bool_element_throws",
      'say "bool"\nsay sum([1, true])\n'),
+    # REMOVE, PUSH, POP -- the first WRITERS that change a region's LENGTH.
+    # Written BEFORE the implementation; on arrival all four are
+    # `why=builtin-call`.  The interpreter's answers are in the comments below.
+    #
+    # 1. remove() ON BOTH CONTAINERS, and the six shapes that answer false.
+    #    MEASURED, in order: true 1 2 true [10, 30] 10 30 2 false false false
+    #    false false.  The array line pins the SHIFT (a[1] is 30, not 20, and
+    #    len is 2): a remove that nils the slot instead of shifting answers
+    #    `[10, nil, 30]` -- different bytes, same length, and only `say a` sees
+    #    it.  The six falses cover a missing key, an out-of-range index, a
+    #    NEGATIVE index (a write with a negative subscript throws, a remove
+    #    does NOT -- measured), an empty array, a non-container, and a missing
+    #    key on a dict.
+    ("mir_remove_both_containers",
+     'd = {"a": 1, "b": 2}\na = [10, 20, 30]\n'
+     'say remove(d, "a")\nsay len(d)\nsay d["b"]\n'
+     'say remove(a, 1)\nsay a\nsay a[0]\nsay a[1]\nsay len(a)\n'
+     'say remove(a, 9)\nsay remove(a, -1)\nsay remove([], 0)\n'
+     'say remove(nil, "a")\nsay remove({"a": 1}, "z")\n'),
+    # 2. THE ALIASES, TWO ROUNDS.  MEASURED: true 1 1 true 0 0 3 1 true 0
+    #    false 0.
+    #    Round one removes through `e` and reads through `d` (both see 1).
+    #    Round one's second half empties the dict and BOTH aliases read 0 --
+    #    that is the header moving with the shrink, and it is the reading a
+    #    remove that forgot to rewrite the count fails.
+    #    Then a WRITE on the emptied dict (which must move the region, see the
+    #    ALLOCS row) and a THIRD removal through `e`, which reads true while
+    #    `d` reports 0 -- so the two handles still agree after the move.
+    #    THE SECOND ROUND IS THE POINT: after round one the old handle is a
+    #    forwarding head whose target was itself later moved, so round two is
+    #    the only shape that exercises mv_arr_live's hop MORE THAN ONCE.  A
+    #    first-round-only criterion passes with a single-hop resolver.
+    ("mir_remove_aliases_two_rounds",
+     'd = {"a": 1, "b": 2}\ne = d\n'
+     'say remove(e, "a")\nsay len(d)\nsay len(e)\n'
+     'say remove(d, "b")\nsay len(d)\nsay len(e)\n'
+     'd["c"] = 3\nsay d["c"]\nsay len(e)\n'
+     'say remove(e, "c")\nsay len(d)\n'
+     'say remove(d, "c")\nsay len(e)\n'),
+    # 3. THE SHORTEN-THEN-GROW PATH, with its own control in the same file so
+    #    the two allocation readings come from ONE run each and are absolute.
+    #    MEASURED on the interpreter: true 5 1 7 1 (after `remove`, `d["z"]=5`
+    #    lands and `len(d)` is 1).  What this case exists for is the ALLOCS
+    #    row: a region that was SHORTENED is never at the frontier (`mv_arrused`
+    #    is deliberately not rolled back -- see the note on mv_remove), so the
+    #    next write MUST copy the dict to the frontier and leave a forwarding
+    #    head.  The control program below does the same write without the
+    #    remove, and the two readings are pinned separately:
+    #      mir_remove_then_grow        allocs=3|bytes=1024   (dict + array + the copy)
+    #      mir_grow_without_remove     allocs=2|bytes=768    (dict + array, no copy)
+    #    The extra block IS the move.  Pinned as absolute numbers, not as
+    #    "one more than the control": a relative assertion survives both numbers
+    #    drifting together, which is the mistake the mv_fun_cap count made.
+    ("mir_remove_then_grow",
+     'd = {"a": 1}\nsay remove(d, "a")\nd["z"] = 5\nsay d["z"]\n'
+     'say len(d)\na = [7, 8, 9]\nsay a[0]\nsay len(d)\n'),
+    ("mir_grow_without_remove",
+     'd = {"a": 1}\nd["z"] = 5\nsay d["z"]\n'
+     'say len(d)\na = [7, 8, 9]\nsay a[0]\nsay len(d)\n'),
+    # 4. push() AND pop().  MEASURED: 1 [1, 2, 3] 3 1 [1, 2] 1 1 3 [1, 2] nil
+    #    nil nil.
+    #    push ANSWERS 1 ALWAYS -- even for `push(nil, 1)` and `push(5, 1)`,
+    #    where it writes nothing at all.  That "returns 1 and does nothing" is
+    #    the semantic an implementation delegating to mv_arr_set/mv_dict_set
+    #    cannot get from them, and the two lines after it prove the variables
+    #    really did not change (`say b` is still [1, 2] from the alias write).
+    #    pop answers the POPPED VALUE (`3`), leaves the array shorter, and
+    #    answers nil for an empty array, nil, and a string.
+    ("mir_push_and_pop",
+     'a = [1, 2]\nsay push(a, 3)\nsay a\nsay len(a)\n'
+     'b = [1]\nc = b\nsay push(c, 2)\nsay b\n'
+     'say push(nil, 1)\nsay push(5, 1)\n'
+     'say pop(a)\nsay a\nsay pop([])\nsay pop(nil)\nsay pop("ab")\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.

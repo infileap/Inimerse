@@ -8997,3 +8997,67 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 4. **零参与多参调用**：同既有各格，零参按名拒、多参读最后一个实参。
 5. **文档预算没有位移**：本节不新增 `path:line` 引用，`explicit delta` 仍是 `+12`；`citations` 1199 行不动。
 6. **删除条件**：臂、预扫名字与三条判据同删；只删 throw 臂会让静默 nil 复活，只放宽元素规则会让布尔通过。
+
+## §10.166 内建 `remove`/`push`/`pop`：这条路线第一次改动区域长度（A 类第三十九项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12，§10.165 之后的第五格实现。父 sha `be023b4`。
+
+### 二、判据（先红）
+
+五条 `MIR_ONLY`，在 `be023b4` 上四条 `mir=refused|why=builtin-call`、一条对照先绿（mir-only 262/258）：
+
+| 判据 | oracle |
+|---|---|
+| `mir_remove_both_containers` | `true 1 2 true [10, 30] 10 30 2 false×5` |
+| `mir_remove_aliases_two_rounds` | `true 1 1 true 0 0 3 1 true 0 false 0` |
+| `mir_remove_then_grow` | `true 5 1 7 1` |
+| `mir_grow_without_remove`（对照） | `5 2 7 2` |
+| `mir_push_and_pop` | `1 [1,2,3] 3 1 [1,2] 1 1 3 [1,2] nil nil nil` |
+
+判据里钉住三个只有字节比较看得见的细节：数组 remove 是**移位**而非清 nil（`[10, 30]`、`a[1]`=30，长度都是 2，只有 `say a` 分得开）；`push` **恒返回 1**，连 `push(nil,1)`/`push(5,1)` 也返回 1 且什么都不写（后面紧跟 `say b` 仍 `[1,2]` 证明变量真的没变）；第二轮 remove 才真正踩到 `mv_arr_live` 的多跳（第一轮后旧句柄是 head-to-head）。
+
+### 三、实现
+
+`mv_remove(obj, key)`：DICT 用 `mv_key_eq` 扫对、成对左移、头槽 `n-2`、尾两槽清 nil；ARRAY 下标走 `mv_index_i32`（非整数抛 `type_mismatch`）但**负数答 false 不抛**（写抛、remove 不抛，解释器 `:527-546` 的判据是 `idx >= 0 && idx < a->count`）；其余（含缺键、空容器、nil、字符串、集合）答 false。
+`mv_push(obj, x)`：**恒返回 1**；数组经 `mv_arr_set(obj, mv_int(n), x)` 追加（`i == n` 正是扩展分支，复用增长臂而非另写一份）；非数组什么都不写、仍返回 1。
+`mv_pop(obj)`：数组最后一个元素，头槽 `n-1`，尾槽清 nil；空数组/非数组答 nil。
+
+`remove`/`push` 少于两参按名拒 `builtin-stale-stack`（`say remove({"a": 1})` 实测印字典自身）。
+
+### 四、设计决策：缩短**不回收**池槽
+
+`mv_remove`/`mv_pop` 只改头槽，`mv_arrused` 不回退。放弃的那条替代方案（区域恰好坐在前沿时把槽还回去）**不是更冒险，而是不可达**：增长臂的前沿判据是 `iv + n == mv_arrused`，而删完之后 `iv + n' < mv_arrused` 是构造性的（`n' = n - 2`）⇒ **回收能生效的时机与它需要生效的时机互补**。一个任何被接受程序都走不到的分支不是节省，是未测的代码。
+
+代价是可测量的并已被钉住：缩短过的区域下一次写**必然**拷到前沿。解释器那边释放 `2 * sizeof(Value)` 的 `used_mem`（`src/vm/vm.c:1244`），本路线没有这本账、退出时整池 sweep —— 差异是记账，不是泄漏（五条判据全部 `live=0`）。
+
+### 五、读数，以及**我的 ALLOCS 预测五条错三条**
+
+真实读数（亲跑）：`mir_remove_both_containers` = `2|768`、`mir_remove_aliases_two_rounds` = `1|256`、`mir_remove_then_grow` = `2|768`、`mir_grow_without_remove` = `2|768`、`mir_push_and_pop` = `1|256`。
+
+**预测错在哪（本轮唯一的实质发现）**：我把"前沿拷贝"算成「+1 块、+256 字节」，因为池首次用到 8 槽时正是 256 字节。**但池不是按块增量分配的**：`mv_arr_need` 一次性分配**双倍大小的整块**并把活的前缀拷进去，所以一次把前沿推过 8 槽的拷贝是**一块 512 字节**，而不是 256；而**放得下的拷贝成本为零**。判别对（同一程序加一行）实测：
+
+```
+d={"a":1}; d["z"]=5; a=[7, 8]; say d["z"]; say a[0]          -> allocs=1|bytes=256
+同一程序，在写之前插一句 remove(d,"a")                          -> allocs=2|bytes=768   (256+512)
+```
+
+所以拷贝真实存在且可观测，错的是我算它的价钱的算术。
+
+**一条不舒服的结论，照写不删**：按实测数字，`mir_remove_then_grow` 与它的对照组**读数相同**（`2|768`），因此**那一行不再能区分"拷了"与"没拷"**。它仍然钉住 `live=0` 与总量；区分拷贝的那对程序记在本节上表与 `tools/aot_mir_test.py` 的注释里。一个看不见自己写作理由的判据，值得说出来。
+
+### 六、非对称注入（各只红自己那一行）
+
+1. **数组 remove 清 nil 而不移位**：只红 `mir_remove_both_containers`，且只红 `[10, nil]` 与 `a[1]`=nil 两处（`len` 两边都是 2 —— 这就是程序里放 `say a` 的理由）。
+2. **头槽单位错（`n-2` → `n-1`）**：只红两条字典判据 —— `len(d)` 0→1、1→2，且 `mir_remove_then_grow` 的 `d["z"]` 读成 nil。
+
+两次都恢复并重跑到 `mir-only 262/262`、exit 0。
+
+### 七、边界
+
+1. **字典没有 push**：解释器里没有 `push(dict, x)` 这种东西，本路线不发明一个 —— 字典实参什么都不写、仍答 1。
+2. **哈希索引不存在**：解释器删完重哈希（`src/vm/vm.c:1246`），本路线用线性扫描，没有可重建的东西；可观测的那半（存活对的顺序）两边相同。
+3. **零参/单参**：按名拒，理由与前面各格同一条。
+4. **文档预算**：本节不新增 `path:line` 引用，`explicit delta` 仍 `+12`；`citations` 1199 行不动。
+5. **删除条件**：三个臂、预扫名字与五条判据同删；只删收缩臂会留下"能长不能缩"的路线，正是这批判据写作时所针对的状态。
