@@ -699,6 +699,29 @@ ALLOCS_EXPECT = {
     "mir_set_min_max_mixed_numbers": (1, 256),
     "mir_index_read_negative_is_nil": (1, 256),
     "mir_dict_negative_key_is_nil": (1, 256),
+    # The fourteen key-identity criteria, measured on the first run that had
+    # the fix: every one of them builds ONE dict literal (the empty dict each
+    # program starts from) and the fix itself allocates nothing, so the row is
+    # (1, 256) and not the (0, 0) the table's default said.  The run is what
+    # corrected it: the first green pass listed all fourteen as
+    # `allocs=1|bytes=256, the criterion demands allocs=0|bytes=0`.  The
+    # fifteenth case compares with `==` and never builds a dict, so (0, 0)
+    # there is measured too, not inherited -- it reports allocs=0|bytes=0.
+    "mir_boolkey_set_true_probe_skips_int_half": (1, 256),
+    "mir_boolkey_set_int_probe_crosses_halves": (1, 256),
+    "mir_boolkey_int_vs_bool": (1, 256),
+    "mir_boolkey_bool_vs_int": (1, 256),
+    "mir_boolkey_false_vs_zero": (1, 256),
+    "mir_boolkey_bool_vs_float": (1, 256),
+    "mir_boolkey_int_float_collapses": (1, 256),
+    "mir_boolkey_int_float_collapses_reverse": (1, 256),
+    "mir_boolkey_int_float_hash_truncates": (1, 256),
+    "mir_boolkey_two_equal_floats": (1, 256),
+    "mir_boolkey_zero_vs_negative_zero": (1, 256),
+    "mir_boolkey_nil_vs_zero": (1, 256),
+    "mir_boolkey_str_vs_int": (1, 256),
+    "mir_boolkey_register_read": (1, 256),
+    "mir_boolkey_eq_is_not_key_identity": (0, 0),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -3153,6 +3176,185 @@ MIR_ONLY = [
      'try { say 1 / 0 } catch (e) { say e }\n'
      'say "after"\n'),
 
+
+    # -------------------------------------------------- dict key IDENTITY
+    #
+    # A boolean and the integer it equals are ONE value for `==` and TWO keys
+    # for a dict.  Both halves of that sentence are measured, and the second
+    # one is not a simplification of the first: the interpreter's dict answers
+    # by bucket hash THEN val_eq -- dict_hash_find accepts a pair only when the
+    # stored hash equals the probe's hash AND val_eq says equal -- and
+    # dict_hash_key gives BOOL a row of its own (0x85ebca6b for true,
+    # 0xc2b2ae35 for false) that is NOT the INT row, while val_eq's numeric
+    # tail (src/vm/vm.c:425-427) does put a bool in the same class as an int.
+    # The hash SEPARATES a pair val_eq would join, so no reading of val_eq
+    # alone can produce the interpreter's answer here.  That is why the repair
+    # is a hash gate and not a tag gate.
+    #
+    # MEASURED IN THE INTERPRETER FIRST (build/inimerse --no-mods), the route's
+    # answer measured second.  `d[0]` / `d[1]` are POSITIONAL reads
+    # (src/vm/vm.c:3683-3696 returns the KEY at pair i for an INT subscript),
+    # so they read out the pair ORDER as well as the pair COUNT:
+    #
+    #   d[1] = "a"; d[true] = "b"                   len 2   d[0]=1     d[1]=true
+    #   d[true] = "b"; d[1] = "a"                   len 2   d[0]=true  d[1]=1
+    #   d[false] = "b"; d[0] = "a"                  len 2   d[0]=false d[1]=0
+    #   d[true] = "b"; d[1.0] = "f"                 len 2   d[0]=true  d[1]=1
+    #   d[1] = "a"; d[1.0] = "f"                    len 1   (the VALUE is "f";
+    #                                                        the key slot keeps 1)
+    #   d[4294967297] = "a"; d[4294967297.0] = "f"  len 2
+    #   d[2] = "a"; d[2.0] = "f"                    len 1
+    #   d[-1] = "a"; d[-1.0] = "f"                  len 1
+    #   d[1.5] = "a"; d[1.5] = "b"                  len 1
+    #   d[0.0] = "a"; d[-0.0] = "b"                 len 1
+    #   d[nil] = "n"; d[0] = "z"                    len 2
+    #   d["1"] = "s"; d[1] = "i"                    len 2
+    #   k = true; d[true]="b"; d[1]="a"; say d[k]   "b"     len 2
+    #
+    # THE 4294967297 ROW IS THE ONE THAT RULES OUT THE CHEAP REPAIR.  A model
+    # that answered "same key iff val_eq and the tags share a class, with
+    # {INT,FLOAT} one class and {BOOL} another" gets every other row right and
+    # this one WRONG.  dict_hash_key truncates an int key to 32 bits, so
+    # 4294967297 hashes exactly like 1 and shares the int bucket; the float
+    # 4294967297.0 lies OUTSIDE the [-2^31, 2^31) window whose integral values
+    # are re-hashed through the INT row, so it hashes by its IEEE bits -- a
+    # different bucket, hence two pairs, though val_eq calls the two values
+    # equal.  Only the interpreter's own hash reproduces that, so the route
+    # copies it.
+    #
+    # `==` IS NOT THIS RULE, and a repair that made it so would be a second
+    # defect.  The same interpreter prints true for `1 == true`, `0 == false`,
+    # `1.0 == true` and `1 == 1.0`, and false for `nil == 0`.
+    # mir_boolkey_eq_is_not_key_identity pins all five inside this group, so
+    # widening the dict rule into mv_eq reddens it.
+    #
+    # THE SET SIDE SHARES THE MACHINERY BUT NOT THIS RULE.  set_contains
+    # (src/vm/vm.c:2019-2040) lets an INT probe binary-search the sorted int
+    # half AND THEN still scan the non-int items, while every other tag looks
+    # at the items half only.  A bool is an item-half member, so the rule is
+    # asymmetric and the interpreter says so:
+    #
+    #   s = { x in [1] | x > 0 }     true in s FALSE   1 in s TRUE   1.0 in s FALSE
+    #   s = { x in [true] | x > 0 }  1 in s TRUE       true in s TRUE  1.0 in s TRUE
+    #
+    # mv_set_has already copies exactly that and is green on both, so these two
+    # cases are the control that the key repair does NOT reach it: they are
+    # written before the dict cases because a repair that widened mv_eq (or
+    # pushed mv_key_eq into the set path) would have to redden them.
+    ("mir_boolkey_set_true_probe_skips_int_half",
+     's = { x in [1] | x > 0 }\n'
+     'say true in s\n'
+     'say 1 in s\n'
+     'say 1.0 in s\n'),
+    ("mir_boolkey_set_int_probe_crosses_halves",
+     's = { x in [true] | x > 0 }\n'
+     'say 1 in s\n'
+     'say true in s\n'
+     'say 1.0 in s\n'
+     'say false in s\n'),
+    # The brief's own program, both write orders.  The order matters: `d[0]`
+    # and `d[1]` read the pair array by position, so a route that collapsed the
+    # two pairs prints one line where the interpreter prints two, and gets the
+    # surviving pair's position wrong in the other order.
+    ("mir_boolkey_int_vs_bool",
+     'd = {}\n'
+     'd[1] = "a"\n'
+     'd[true] = "b"\n'
+     'say len(d)\n'
+     'say d[0]\n'
+     'say d[1]\n'),
+    ("mir_boolkey_bool_vs_int",
+     'd = {}\n'
+     'd[true] = "b"\n'
+     'd[1] = "a"\n'
+     'say len(d)\n'
+     'say d[0]\n'
+     'say d[1]\n'),
+    ("mir_boolkey_false_vs_zero",
+     'd = {}\n'
+     'd[false] = "b"\n'
+     'd[0] = "a"\n'
+     'say len(d)\n'
+     'say d[0]\n'
+     'say d[1]\n'),
+    ("mir_boolkey_bool_vs_float",
+     'd = {}\n'
+     'd[true] = "b"\n'
+     'd[1.0] = "f"\n'
+     'say len(d)\n'
+     'say d[0]\n'
+     'say d[1]\n'),
+    # THE POSITIVE CONTROL OF THE HASH GATE: an int and an integral float are
+    # one key in the interpreter, because dict_hash_key re-hashes an integral
+    # float inside the int window through the INT row.  A repair that separated
+    # every cross-tag pair passes the four cases above and reddens these two.
+    ("mir_boolkey_int_float_collapses",
+     'd = {}\n'
+     'd[1] = "a"\n'
+     'd[1.0] = "f"\n'
+     'say len(d)\n'
+     'say d[0]\n'),
+    ("mir_boolkey_int_float_collapses_reverse",
+     'd = {}\n'
+     'd[1.0] = "f"\n'
+     'd[1] = "a"\n'
+     'say len(d)\n'
+     'say d[0]\n'),
+    # The row that a tag-class model cannot answer, explained above: the int's
+    # hash is truncated to 32 bits and collides with 1's, the float's is its
+    # IEEE bits, so val_eq's TRUE does not make them one key.
+    ("mir_boolkey_int_float_hash_truncates",
+     'd = {}\n'
+     'd[4294967297] = "a"\n'
+     'd[4294967297.0] = "f"\n'
+     'say len(d)\n'),
+    # Two equal floats, and 0.0 against -0.0: both one key in the interpreter
+    # (val_eq's float row is `a->fval == b->fval`, and 0.0 == -0.0; the hash
+    # re-hashes -0.0 through the same int window as 0.0, giving both the int 0
+    # bucket).  A hash gate that compared raw double bits answers two keys on
+    # the second one.
+    ("mir_boolkey_two_equal_floats",
+     'd = {}\n'
+     'd[1.5] = "a"\n'
+     'd[1.5] = "b"\n'
+     'say len(d)\n'),
+    ("mir_boolkey_zero_vs_negative_zero",
+     'd = {}\n'
+     'd[0.0] = "a"\n'
+     'd[-0.0] = "b"\n'
+     'say len(d)\n'),
+    # The two non-numeric rows the hash gate must not disturb: nil hashes to
+    # 0x27d4eb2f and the string "1" to djb2's 177622, neither of which is the
+    # int 1's bucket (0x9e3779b1), so both pairs are already two keys and stay
+    # two.  They guard the new gate against JOINING pairs the old comparison
+    # separated.
+    ("mir_boolkey_nil_vs_zero",
+     'd = {}\n'
+     'd[nil] = "n"\n'
+     'd[0] = "z"\n'
+     'say len(d)\n'),
+    ("mir_boolkey_str_vs_int",
+     'd = {}\n'
+     'd["1"] = "s"\n'
+     'd[1] = "i"\n'
+     'say len(d)\n'),
+    # The KEY branch, not the position branch: the read that has to walk the
+    # pair array and compare keys is the non-INT subscript, and the interpreter
+    # finds the bool pair there and answers "b".  A route that collapsed the
+    # two writes answers "a" -- which is what the merge base does.
+    ("mir_boolkey_register_read",
+     'd = {}\n'
+     'd[true] = "b"\n'
+     'd[1] = "a"\n'
+     'k = true\n'
+     'say d[k]\n'
+     'say len(d)\n'),
+    ("mir_boolkey_eq_is_not_key_identity",
+     'say 1 == true\n'
+     'say 0 == false\n'
+     'say 1.0 == true\n'
+     'say 1 == 1.0\n'
+     'say nil == 0\n'),
     # ---- WRONG ARITY AT A USER-FUNCTION CALL
     #
     # The emitted callee signature is FIXED by the callee's own declaration

@@ -8392,3 +8392,85 @@ IR-AOT-MIR-VERDICT|PASS|tree=7cc9067602f66fc715dd441f4e18719d039c62e1|accepted=3
 - **本格不改 `prescan` 的收窄**：`want` 从 `nodes[callee].argc` 取，只在被调者的函数下标能解析时才用；解析不到时退回 `argc`，`mv_missing_callee` 那条回退路径的文本因此一个字都没动。
 - **文档预算三项读数改后**：`explicit delta +12 (expect +12)`、`unanchored delta -4 (ceiling 0)`、`pointer delta +196 (ceiling 223)`——与改前逐字相同，本节没有新增任何带行号的路径引用。
 
+
+## §10.158 字典键是「哈希闸门 ∧ `val_eq`」，不是 `val_eq` 本身（aot-mir，A 类第三十三项）
+
+### 一、来源与日期
+
+- 判据：`e583c2c`（十五条：六条红、九条是对照组；红读数 `mir-only-cases=221` 而 `mir-only-same-as-interpreter=215`，`IR-MIR-VERDICT|FAIL`）。
+- 实现：`df0e75a`。
+- 合并：`106886a`（把 `89675b5` 合进来之后重跑：`mir-only-cases=230|mir-only-same-as-interpreter=230`、`IR-MIR-VERDICT|PASS`）。
+- 日期：2026-11-11。基线 `ec21ffe`。
+- 本格**不推进 `handles`**（`59|of=67|unknown=8` 不动：没有新操作码），推进的是**同一棵树上的答案**：`accepted 301→316`、`mir-only-cases 215→230`。
+- 这一格是从一次**只读差分扫**（1820 个程序）里捞出来的静默分歧：两侧 `rc=0`、无拒译、`stdout` 不同——本路线最贵的一类。
+
+### 二、形状
+
+解释器的字典键不是「两个值相等」，而是**两件事同时成立**：桶里的 32 位哈希等于探针的哈希，**并且** `val_eq` 说相等。第二半落在 `dict_hash_find` 的收键条件里，第一半落在它的槽位选择里。
+
+而 `dict_hash_key` 给布尔**单独一行**（`true` 是 `0x85ebca6b`、`false` 是 `0xc2b2ae35`），这两行都**不是**整数那一行；同一时刻，`val_eq` 的数值尾巴把布尔与整数放进同一个类。于是哈希这一半**拆开**了 `val_eq` 会合并的一对：
+
+```
+d = {}
+d[1] = "a"
+d[true] = "b"
+say len(d)
+```
+
+解释器印 `2`，本路线印 `1`——因为它只做了「比较」那一半，没做「闸门」那一半。
+
+真正把代价便宜的模型排除掉的是这一条：`d[4294967297]` 与 `d[4294967297.0]` 在解释器里是**两个键**。整数那一行把键截断到 32 位（`2^32+1` 恰好与 `1` 同哈希），而整值浮点只在 `[-2^31, 2^31)` 之内被改道走整数行、出了窗口就按 IEEE 位走自己那一行。所以「`val_eq` 再加一张 tag 类表（`{INT,FLOAT}` 一类、`{BOOL}` 一类）」这种模型会把这一条答成一——它对了其余各行，独错这一行；闸门不需要类表也复现得出来。
+
+`==` **不是**这条规则：`1 == true` 仍然为真，而 `1` 与 `true` 是两个键。这正是修法不能落在 `mv_eq` 里的原因。
+
+### 三、判据与红读数
+
+十五条判据**先写、先红**。六条红在**同一层**：两侧 `rc=0`、无拒译，只是答案不同。
+
+| 判据 | 一侧两键的写法 | 解释器 | 红读数（本路线） |
+|---|---|---|---|
+| `mir_boolkey_int_vs_bool` | `d[1]` 后 `d[true]` | `2`, `1`, `true` | `1`, `1`, `nil` |
+| `mir_boolkey_bool_vs_int` | 顺序反过来 | `2`, `true`, `1` | `1`, `true`, `nil` |
+| `mir_boolkey_false_vs_zero` | `d[0]` 后 `d[false]` | `2`, `false`, `0` | `1`, `false`, `nil` |
+| `mir_boolkey_bool_vs_float` | `d[1.0]` 后 `d[true]` | `2`, `true`, `1` | `1`, `true`, `nil` |
+| `mir_boolkey_int_float_hash_truncates` | `d[4294967297]` 后 `d[4294967297.0]` | `2` | `1` |
+| `mir_boolkey_register_read` | 经变量写两键再读 | `b`, `2` | `a`, `1` |
+
+读数里 `d[0]` 这种**位置**下标会答「第 0 对是哪一对」，所以每条同时钉住**对的数量**与**对的次序**：本路线那条唯一的对在第 0 位、键是整数；解释器整数对在前、布尔对在后。
+
+红读数的原文（六条同形，这里贴两条）：
+
+```
+IR-MIR-EXEC-DIFF|case=mir_boolkey_int_vs_bool|interp-rc=0|mir-rc=0|interp-out=b'2\n1\ntrue\n'|mir-out=b'1\n1\nnil\n'
+IR-MIR-EXEC-DIFF|case=mir_boolkey_int_float_hash_truncates|interp-rc=0|mir-rc=0|interp-out=b'2\n'|mir-out=b'1\n'
+```
+
+九条对照组在基线实现上**本来就绿**，所以一个「顺手多收几条」的修法会把它们弄红：整数与浮点在两个写序上都**合并成一键**（`d[1]` 与 `d[1.0]` 是同一个键，后写的值赢、键槽仍记 `1`）、两个数值相等的浮点、`0.0` 与 `-0.0`、`nil` 与 `0`、字符串 `"1"` 与整数 `1`，五条 `==` 的答案（`true`/`true`/`true`/`true`/`false`），以及两条**集合成员**判据——它们带着解释器那条非对称的整数半边规则（整数探针先二分整数半边再扫 items，布尔探针只看 items：`true in {1}` 为假、`1 in {true}` 为真）。集合那一套**故意不动**。
+
+### 四、读数
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=230|mir-only-same-as-interpreter=230
+IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=7|ok=7|expect=7
+IR-MIR-VERDICT|PASS|tree=106886a92abeea70bab4fd26d044ffd0be54b0bd|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR|accepted=316|refused=0|same-as-interpreter=316|of=29|emittable=59|of-ops=67|not-emittable=8|corpus=inline-cases:86|mir-only-cases=230|beyond-ast-denominator=30|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=106886a92abeea70bab4fd26d044ffd0be54b0bd|accepted=316|of=29|covered=29|missing=0|refused=0|same-as-interpreter=316|prelude-excluded=yes|beyond-ast-denominator=30
+```
+
+`same-as-interpreter` 215→230，`differ` 仍是 0：没有任何一条原本一致的程序在这一格之后变得不一致。`of=29`、`covered=29`、`missing=0`、`beyond-ast-denominator=30` 全不动——修法移动的是**键的身份**，不是覆盖。
+
+### 五、写这条之前量过的事
+
+1. **键身份是合取，不是比较**：读 `dict_hash_find` 的收键条件（哈希相等 ∧ `val_eq`），再读 `dict_hash_key` 的三条行——布尔两行、整数一行（32 位截断）、浮点在内窗口改道整数行、出窗口按 IEEE 位。
+2. **量了十三条形状**：布尔/整数两序、布尔/浮点、布尔/`false` 与 `0`、整数与整值浮点两序、两个数值相等的浮点、`0.0` 与 `-0.0`、`nil` 与 `0`、`"1"` 与 `1`、`4294967297` 与 `4294967297.0`、经变量写入再读、以及五条 `==`。**全部先量解释器、再量本路线**；六条不同、其余一致。
+3. **`==` 与字典键是两条规则**：`1 == true` 为真而两键不同——所以修法只能落在键比较器里，不能改相等运算（改了会把 §10.127 的集合内容相等、§10.148 的集合 `-`/`*` 一起挪）。
+4. **集合成员不参与**：那两条判据是**对照组**，照抄解释器的非对称半边规则，本格不允许顺手「统一」。
+5. **行数是量出来的**：第一次绿跑把十四条新判据报成 `allocs=1|bytes=256, the criterion demands allocs=0|bytes=0`（每个程序起手一个空字典字面量占一块，修法本身零分配）；第十五条从不建字典，报 `allocs=0|bytes=0`。
+
+### 六、边界
+
+1. **字典键的闸门在本路线是「先查哈希再比」的线性对表**，不是桶表：解释器的两键/一键结论被逐条照抄，但**哈希碰撞**的处理路径不同（解释器在下标里碰撞、本路线在扫描里碰撞），两侧 `val_eq` 相同的碰撞对结论一致，两侧 `val_eq` 不同的碰撞对结论也一致——这一点是量过十条混写程序才写下的，不是推理。
+2. **加一条必要条件只会把「命中」变「不命中」**：因此以前各格（尤其 §10.128 的「集合键恒不命中」）的答案方向全部保留，唯一的位移是「本来错误地并成一对的地方分开」。
+3. **`==` 未动**，`mv_eq`/`mv_ne`/`mv_set_eq` 一字未改；集合成员那一侧也未动。
+4. **没有新拒绝**：这一格没有引入任何 `why=`，十五条程序现在全部被接受并执行。
