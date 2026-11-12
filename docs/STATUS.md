@@ -8386,7 +8386,7 @@ IR-AOT-MIR-VERDICT|PASS|tree=7cc9067602f66fc715dd441f4e18719d039c62e1|accepted=3
   ```
 
   本路线两个都答 `0`（它进帧时逐槽置 0）。要复现就得让调用点能写被调者的寄存器，也就是把实参向量塞进签名，而这是解释器寄存器文件的陈旧性，不是它调用约定的内容。**这是本格唯一没有对齐的读数**，写明而不是假装它不存在；判据注释里也带着这段转录。
-- **不动 builtin 的实参个数**。`say len(1, 2)` 在解释器里真的印 `2`（它返回实参个数），本路线按名拒译这条程序——那是另一条已经写下来的能力边界，与本格无关，本格一格都没碰。
+- **不动 builtin 的实参个数**。`say len(1, 2)` 在解释器里真的印 `2`，但**不是它返回了实参个数**——它读的是最后一个实参（§10.159 量并钉住这条规则）；本路线当时按名拒译这条程序，那是另一条已经写下来的能力边界，本格一格都没碰。
 - **`mv_callv` 的运行期检查是少了一条，不是全没了**。留下的是「非函数不可调用」（`error: value is not callable`，rc 1）与「函数索引没有容器」两条；被删掉的只有「实参个数对不上」，因为解释器对它有答案而前两条它有/没有答案的结论不同。
 - **哪些形状的 C 文本动了**（实测，见 §五 第 4 条）：按名调用且个数对得上 → **逐字节不变**；按名调用且个数对不上 → 只动那一行调用（`fn_h(mvargs[asp-2])` 取代 `fn_h(mvargs[asp-2], mvargs[asp-1])`，弹出的宽度仍是 `argc`，所以多出来的实参照样被求值）；**任何用到函数值的模块** → 那张分发表 switch 的文本会动，因为守卫删了、实参改成带 `nargs > k` 短路的三元式。最后一条是刻意的，而且 `nargs > k` 必须在前：`argc == 0` 的调用点按字面量传的是空指针，先取 `args[0]` 就是空指针解引用——这一条有判据 `mir_arity_value_missing` 的 `f()` 一行钉着。
 - **本格不改 `prescan` 的收窄**：`want` 从 `nodes[callee].argc` 取，只在被调者的函数下标能解析时才用；解析不到时退回 `argc`，`mv_missing_callee` 那条回退路径的文本因此一个字都没动。
@@ -8474,3 +8474,120 @@ IR-AOT-MIR-VERDICT|PASS|tree=106886a92abeea70bab4fd26d044ffd0be54b0bd|accepted=3
 2. **加一条必要条件只会把「命中」变「不命中」**：因此以前各格（尤其 §10.128 的「集合键恒不命中」）的答案方向全部保留，唯一的位移是「本来错误地并成一对的地方分开」。
 3. **`==` 未动**，`mv_eq`/`mv_ne`/`mv_set_eq` 一字未改；集合成员那一侧也未动。
 4. **没有新拒绝**：这一格没有引入任何 `why=`，十五条程序现在全部被接受并执行。
+
+## §10.159 `len(x, y)` 读的是最后一个实参，不是实参个数；零参读的是残渣（aot-mir，A 类第三十四项）
+
+### 一、来源与日期
+
+- 判据：`6e49fa3`（八条：六条正、两条反；红读数 `mir-only-cases=236` 而 `mir-only-same-as-interpreter=231`，`IR-MIR-VERDICT|FAIL`，红跑在基线 `9dafc43` 的树上）。
+- 实现：`58fcf79`。
+- 日期：2026-11-11。基线 `9dafc43`。
+- 本格**不推进 `handles`**（`59|of=67|unknown=8` 不动：没有新操作码），推进的是**同一棵树上的答案**：`accepted 316→322`、`mir-only-cases 230→236`、反向判据总数 `7→9`。
+- 这一格是从一次**只读扫**（1820 个程序）里捞出来的：路线对 builtin 调用只收实参个数 1，其余一律拒译（`why=illegal-operand`），而解释器对多数的多参形状有答案。拒掉一个解释器会答的程序，等于把这条路线声称的面自己缩小。
+
+### 二、形状
+
+预扫描在 builtin 那个臂上收紧口是**一条按个数的检查**：解析到名字是 `len` 或 `list` 之后，若 `argc != 1` 就 `bad(...)`，`why` 落回默认的 `illegal-operand`；发射器也只有一个臂，弹一格（`asp -= 1;`）并从 `mvargs[asp-1]` 取值。于是每个多参形状都死在翻译期，程序从未变成 C。
+
+解释器那边只有**栈顶**一条规则：`posix_core_len` 取 `vm_cur_stack(vm)[vm_cur_sp(vm)]`，算出长度，弹**一个**、压回一个，与指令里写的个数无关。所以多参调用里前面的实参被求值、留在实参栈上，答案是**最后一个实参**：
+
+```
+say len(1, 2)       -> 2        （最后一个实参）
+say len(2, 1)       -> 1        （最后一个实参；若按个数答会是 2）
+say len("ab", 5)    -> 5
+say len(5, "ab")    -> 2        （最后一个实参；恰与个数同值，故必须与上一行配对才钉得住）
+say len(9, 8, [1, 2, 3, 4]) -> 4（个数是 3，最后一个是长度 4 的数组）
+```
+
+「个数」模型、「首参」模型都在这些判别式上立刻输掉；`len(1, 2)` 印 2 只是**恰好**与个数同值，不是个数的证据——这也是 §10.157 §六 第二句把值读成个数的原因，那一句本格已经就地改正。
+
+零参是另一件事：`len()` 没有实参可读，解释器读的是**目的寄存器**（空栈时 VM 直接把寄存器原样移过去）或**栈顶的残渣**（若外层刚压过实参）。于是：
+
+```
+say len()                 -> 0         （新程序：目的寄存器的初值）
+x = 6 / say len()         -> 6         （同一个寄存器，还是 6）
+x = "abcdef" / say list() -> abcdef    （残渣，原样是那个字符串）
+say len("abc", len())     -> 3         （内层读到外层压上的 "abc"）
+```
+
+### 三、判据与红读数
+
+八条判据**先写、先红**：六条被接受（含一条本来就在的对照），两条反向判据红在**另一个层次**（拒了，但理由不对）。
+
+| 判据 | 写法 | 解释器 | 红读数（本路线） |
+|---|---|---|---|
+| `mir_builtin_argc_len_last` | `len(2, 1)`、`len(12345, 0)`、`len("abc", 1)`、`len(1, "abc")`、`len([1, 2, 3], [9])`、`len(1, [1, 2])`，再配 `len("ab", 5)` 与 `len(5, "ab")` 两条判别式 | `1`, `0`, `1`, `3`, `1`, `2`, `5`, `2` | 拒译（`why=illegal-operand`），程序未变成 C |
+| `mir_builtin_argc_len_many` | `len(1, 2, 3)`、`len(9, 8, [1, 2, 3, 4])`、`len(1, 2, 3, 4, 5)` | `3`, `4`, `5` | 同上 |
+| `mir_builtin_argc_len_args_evaluated` | `mark()` 在首位/次位：`len(mark(), 7)`、`len(1, mark())` | `m`, `7`, `m`, `5` | 同上 |
+| `mir_builtin_argc_list_last` | `list(1, 2)`、`list(1, [5, 6])`、`list([5, 6], 1)`、`list(1, 2, 3)` | `nil`, `[5, 6]`, `nil`, `nil` | 同上 |
+| `mir_builtin_argc_nested_expression_loop` | `len(len(1, 2), len([1, 2, 3], 9))`、`x = len(1, 2) + len(3, 4, 5)`、循环里 `len(n, 2)` | `9`, `7`, `2` | 同上 |
+| `mir_builtin_argc_single_arg_control` | 单参四条（这条在基线上本来就绿，是做对照的） | `3`, `4`, `[1, 2]`, `1` | 绿（`bytes=13|stdout-hex=330a340a5b312c20325d0a310a`） |
+| `mir_builtin_argc_zero_len`（反向） | `x = 6` 后 `say len()` | `6` | `why=illegal-operand`，期望 `builtin-stale-stack`，`ok=no` |
+| `mir_builtin_argc_zero_list`（反向） | `x = "abcdef"` 后 `say list()` | `abcdef` | 同上 |
+
+红读数的原文：
+
+```
+IR-MIR-MIR-ONLY|case=mir_builtin_argc_len_last|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_builtin_argc_len_many|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_builtin_argc_len_args_evaluated|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_builtin_argc_list_last|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY|case=mir_builtin_argc_nested_expression_loop|mir=refused|why=illegal-operand
+IR-MIR-MIR-ONLY-REFUSED|case=mir_builtin_argc_zero_len|mir=refused|why=illegal-operand|expect=builtin-stale-stack|ok=no|interp-rc=0|interp-out=b'6\n'|stdout-bytes=2|stdout-hex=360a
+IR-MIR-MIR-ONLY-REFUSED|case=mir_builtin_argc_zero_list|mir=refused|why=illegal-operand|expect=builtin-stale-stack|ok=no|interp-rc=0|interp-out=b'abcdef\n'|stdout-bytes=7|stdout-hex=6162636465660a
+```
+
+两条反向判据的红是「理由不对」而不是「答得不一样」：本路线拒了它们，但它当时给的理由是 `illegal-operand`——一个说「这个形状没有意义」的理由，而本格要的是「这个形状的答案不是程序的函数」，于是理由被具名成 `builtin-stale-stack`。
+
+### 四、读数
+
+```
+IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|conserved=86|c-identical=0|c-diff=86|reasons=identical:0,mir-register-shape:82,mir-register-shape+mir-internal-globals:4|perturbed=5|perturb-c-changed-failures=0|perturb-stdout-changes=5|mir-only-cases=236|mir-only-same-as-interpreter=236
+IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=9|ok=9|expect=9
+IR-MIR-VERDICT|PASS|tree=58fcf79066eb48cd92470260b52ced7e2f11ed6c|accepted=86|refused=0|differ=0|c-identical=0|c-diff=86|perturb-stdout-changes=5
+IR-AOT-MIR|accepted=322|refused=0|same-as-interpreter=322|of=29|emittable=59|of-ops=67|not-emittable=8|corpus=inline-cases:86|mir-only-cases=236|beyond-ast-denominator=30|basis=mir-emitted-ops-union-over-the-corpus|coverage-claim=none
+IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|basis=distinct-case-labels-in-src/compilation/aot_mir.c's-op_regs-and-emit_one|table=59|emitter=59|reported=59|agree=yes
+IR-AOT-MIR-VERDICT|PASS|tree=58fcf79066eb48cd92470260b52ced7e2f11ed6c|accepted=322|of=29|covered=29|missing=0|refused=0|same-as-interpreter=322|prelude-excluded=yes|beyond-ast-denominator=30
+```
+
+`same-as-interpreter` 316→322，`differ` 仍是 0；`of=29`、`covered=29`、`missing=0`、`beyond-ast-denominator=30` 全不动——本格移动的是**同一棵树上被接受的程序**，不是覆盖；`handles` 也没有动。
+
+六条被接受的判据逐条读到（`mir=accepted|cc=ok|exec=same|rc=0` 之后）：
+
+| 判据 | `bytes` / `stdout-hex` | 分配（绿跑之后抄的） |
+|---|---|---|
+| `mir_builtin_argc_len_last` | `16` / `310a300a310a330a310a320a350a320a` | `allocs=2|bytes=768` |
+| `mir_builtin_argc_len_many` | `6` / `330a340a350a` | `allocs=1|bytes=256` |
+| `mir_builtin_argc_len_args_evaluated` | `8` / `6d0a370a6d0a350a` | `allocs=0|bytes=0` |
+| `mir_builtin_argc_list_last` | `19` / `6e696c0a5b352c20365d0a6e696c0a6e696c0a` | `allocs=1|bytes=256` |
+| `mir_builtin_argc_nested_expression_loop` | `6` / `390a370a320a` | `allocs=1|bytes=256` |
+| `mir_builtin_argc_single_arg_control` | `13` / `330a340a5b312c20325d0a310a` | `allocs=1|bytes=256` |
+
+两条反向判据现在是 `builtin-stale-stack|expect=builtin-stale-stack|ok=yes`。发射出来的 C 是这两行（照抄生成文本）：
+
+```
+    v[1] = mv_len(mvargs[asp-1]); asp -= 2;
+    v[3] = mv_len(mvargs[asp-1]); asp -= 3;
+    v[4] = mv_list(mvargs[asp-1]); asp -= 2;
+```
+
+### 五、写这条之前量过的事
+
+1. **规则是量出来的，不是推出来的**（判据落笔之前，`build/inimerse --no-mods`）：`len(2, 1)` 印 1、`len(1, 2)` 印 2、`len("ab", 5)` 印 5、`len(5, "ab")` 印 2、`len(9, 8, [1, 2, 3, 4])` 印 4、`len([1, 2, 3], [9])` 印 1、`len(1, [1, 2])` 印 2、`len(1, 2, 3)` 印 3、`len(1, 2, 3, 4, 5)` 印 5——**最后一个实参**，不是个数、也不是首参。`list` 一并量过：`list(1, [5, 6])` 印 `[5, 6]`、`list([5, 6], 1)` 印 `nil`、`list(1, 2)` 印 `nil`。
+2. **每个实参都被求值**：`mark()` 放在首位（`len(mark(), 7)`）先印 `m` 再印 `7`，放在次位（`len(1, mark())`）也是先 `m` 再 `5`；两侧 stdout 的次序就是求值次序。所以「接受」不是「只读最后一个就扔掉前面」，前面照样求值——本路线在发射里也只是不建残渣，不跳过求值。
+3. **零参是残渣，量了四条程序**：新程序 `say len()` 印 0；`x = 6` 之后印 6；`x = "abcdef"` 之后 `say list()` 印 `abcdef`；`say len("abc", len())` 印 3（内层的零参调用读到的正是外层压上的 `"abc"`）。机制读自 `posix_core_len`/`posix_core_list` 与 VM 的 builtin 臂：它们只读栈顶、只弹一个，空栈时 VM 把目的寄存器原样移过去——所以零参答的是**寄存器/栈的上一状态**，不是程序请求的值。
+4. **单参的 C 文本逐字节没有动**：同一批单参程序（`len(x)`、`len("abcd")`、`list(x)`、`len(1)`）分别用主树上未改的 `aot-mir` 和本格改后的 `aot-mir` 翻译，`diff` 结论 `IDENTICAL`。发射里 `asp -= %d` 在 `argc == 1` 时就是原来那行 `asp -= 1;`，这是逐字节对比量出来的，不是推理。
+5. **分配数是绿跑之后抄的**：`len_last` 是 9 个字面量槽（4+2+3），池从 8 槽翻到 8+16 槽，`2|768`；`len_many` 一个 5 槽 `[1, 2, 3, 4]`、`list_last` 一个 3 槽 `[5, 6]`、`nested` 一个 4 槽 `[1, 2, 3]`、对照一个 4+3 槽，都是 `1|256`；`args_evaluated` 没有容器字面量，`0|0`。第一遍绿跑这五条的 `ALLOCS_EXPECT` 是默认 `(0, 0)`，报 `ok=no`，补上之后重跑才 `ok=yes`。
+6. **文档预算改前量过**：`explicit delta +12 (expect +12)`、`unanchored delta -4 (ceiling 0)`、`pointer delta +196 (ceiling 223)`，`CITATIONS|base=1199|now=1199`。本节刻意不写任何新的带行号引用（显式引用是**等号**判据，多一条就变 +13），所以三项读数改后不变，见 §六。
+7. **计数没有动**：本格不加 CTest，`ctest -N` 仍是 203（`EXP_CTEST` 与 `check_reconciliation.py` 的 `ctest-count` 都读 203），`check_reconciliation.py` 仍 `VERDICT|PASS|measured=5`。
+
+### 六、边界（每条都是决定，不是遗漏）
+
+1. **多参照答是一个决定，不是复制缺陷**。解释器的缺陷是「builtin 忽略个数、把压上的实参留在栈上」；它答的**值**是最后一个实参，而这个值是程序的函数：`len(1, 2)` 与 `len(2, 1)` 印不同、且两侧都由程序本身决定。零参答的值**不是**程序的函数：两个只差前置赋值的程序印不同，也没有任何程序能把那个残渣与「程序要的值」分开。所以「答多参、拒零参」是同一条规则的切分，不是双重标准；若无条件照抄零参，本格就开始复制缺陷。
+2. **拒的是零参，具名 `builtin-stale-stack`**。明细句写明「答案是一个遗留物（若外圈压过实参则是栈顶，否则是目的寄存器的上一个值），不是程序请求的值」。`why` 词典从 `illegal-operand` 的默认值里分出这一条，因为「这个形状没有意义」不是本格的意思——这个形状有意义，只是答案不可复现。
+3. **为什么拒而不照抄零参**。要复现它，C 侧就得维护一个「残余实参栈」并在零参调用时读它——那是解释器寄存器/栈的陈旧性，不是调用约定的内容（同 §10.157 §六 第一条的思路）。而且本路线**不留残渣**：它接受多参时每个实参都求值、都不留在栈上，唯一能读残渣的调用点（零参 builtin）被点名拒掉之后，残渣在任何被接受的程序里**不可观测**——这一点由预扫描的静态性保证（预扫描走遍所有容器，被接受的程序里没有零参 builtin 调用），不是靠运行时赌。
+4. **不接受「个数」模型，也不接受「首参」模型**。三对判别式钉着：`len(2, 1)`/`len(1, 2)`（个数与首参都答 2，量到 1），`len("ab", 5)`/`len(5, "ab")`（首参答 5/5，个数答 2/2，量到 5/2），`len(9, 8, [1, 2, 3, 4])`（个数答 3，量到 4）。将来若有人改回 count，这三条直接红。
+5. **单参一个字节都没动**。`asp -= %d` 在 `argc == 1` 时就是旧的 `asp -= 1;`；改前/改后的 `aot-mir` 对单参程序翻译出的 C `IDENTICAL`（逐字节 diff，见 §五 第 4 条）。86 条 AST 对照的 `c-identical=0|c-diff=86` 与 `perturb-stdout-changes=5` 也都没动。
+6. **builtin 的名字面不变**：仍只发 `len`/`list`，其余名字仍 `builtin-call`；名字先判，所以 `str(1)` 这种零参/多参的形状仍报 `builtin-call`，不会落到 `builtin-stale-stack`。本格没有扩大 builtin 面。
+7. **§10.157 §六 第二句就地改正**。那句说 `say len(1, 2)` 在解释器里「返回实参个数」，量过之后是错的：它读的是最后一个实参（`len(2, 1)` 印 1 就否掉了个数）。原文保留会把两处读数写成相反的，所以那一句改成「读的是最后一个实参」，并让本节的判据钉住它；§10.157 说的「本格没碰 builtin 实参个数」仍然是事实，只是那一格的描述口径不再被沿用。
+8. **文档预算**：本节不新增任何带行号的路径引用，三项读数改后与改前逐字相同（见 §五 第 6 条与 §六 末尾的读数）。
