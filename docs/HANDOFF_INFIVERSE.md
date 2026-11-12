@@ -3,11 +3,11 @@
 **目的**：把当前 `inimerse` 仓库里已经落盘的决策、只在分支上的改动、以及**仍然没有归属的问题**，
 一次性交给接手 Infiverse 大方向的新会话。**本文件只记录事实与出处；不在这里重新论证。**
 
-**阅读顺序建议**：§1 先看边界 → §2 看已拍板的语言决策 → §3 看分支上与 main 的差距 → §4 看真正悬着的六件事。
+**阅读顺序建议**：§1 先看边界 → §2 看已拍板的语言决策 → §3 看分支上与 main 的差距 → §4 看真正悬着的事（§4.4 已关闭，剩五件）。
 
 **出处怎么读**：本文件的每处代码出处都是「反引号路径 + 紧跟的一句反引号引文」，引文必须在该文件里**逐字存在** ——
 不给行号（行号会漂，本文件为此专门写过一节 §4.6）。`tools/check_handoff_anchors.py` 逐条验证这些锚点，
-缺一条就红。凡带 `[obs: fe72f9f]` 的数字，都是在 `fe72f9f` 这棵树上按句中那条命令重测过的。
+缺一条就红。凡带 `[obs: <ref>]` 的数字，都是在那个 ref 这棵树上按句中那条命令重测过的。
 
 ---
 
@@ -15,10 +15,10 @@
 
 **这个目录当前检出的是哪个分支，与你的直觉经常不同。**
 
-- `/home/sakiko/inimerse`（主工作树）**当前检出 `stream/builtin-contract-rulings`**，**不是 `main`**，
-  而且带着**未提交改动**（`CMakeLists.txt`、`docs/API.md` 等）。
-- `main` 停在 **`0e5df55`**；`origin/main` 停在 **`29402f8`**（0.5.0 冻结在那里）。
-  ⇒ **本地 `main` 落后 `origin/main` 6 个提交，两者是祖先关系。**
+- `/home/sakiko/inimerse`（主工作树）**今天检出的是 `local/main-tree`**（一个本地分支，分支名不是 `main`），树是**干净的**（`git -C /home/sakiko/inimerse status --porcelain | wc -l` 给 0）。
+  **这一条会变**：写下本段时主工作树检出的是 `stream/builtin-contract-rulings`、而且带着未提交改动（`CMakeLists.txt`、`docs/API.md` 等）—— 所以**先跑命令，再相信本段**。
+- `main`、`origin/main` 与主工作树 HEAD 今天**都停在 `9dafc43`**（`git rev-parse --short main origin/main` 与 `git -C /home/sakiko/inimerse log --oneline -1` 各读一次）。
+  ⇒ `git rev-list --count main..origin/main` 与 `origin/main..local/main-tree` 都给 **0**：**没有落后、没有领先、没有未推送。** [obs: 9dafc43]  **历史读数**（写下时）：`main` 停 `0e5df55`、`origin/main` 停 `29402f8`（0.5.0 的冻结线），本地 `main` 落后 6 个提交 —— 那时的坑是「主工作树不代表 main」；今天的形状变了，坑还在（见下条）。
 - 因此：**任何"实测数字"都必须同时说清「哪台机器、哪个目录、哪个 ref」。**
   我这几轮犯的每一个复核错误，都出在这一句上（详见 §4.6）。
 
@@ -72,7 +72,7 @@ x: Z+ = 1
   `#[1~5]` 被整段吃掉。⇒ 词法**未改**，因为选了 `count(A)`。
 - ★ **【记录】写下这一节时 `count` 不存在；今天它存在，注册在三处** —— 编译器侧一处、两个运行期的注册函数各一处。★ 复跑：`grep -rn '"count"' src/ --include=*.c | wc -l` 今天给 **9**，而同一个式子对 `size` 给 **6** [obs: fe72f9f] ⇒ **两者的大小关系与本节写下时相反。** 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 L。
 - 做同一件事的是 `size`（`src/runtime/runtime.c` 里 `vm_register_builtin(vm, "size", builtin_size);`、`src/runtime/runtime_posix.c` 里 `vm_register_builtin(vm, "size", posix_core_size);`，
-  `.im` 里 **74 处** [obs: fe72f9f]，复跑 `grep -rn 'size' --include=*.im . | wc -l`），而 `size` 同时已是 GUI 关键字（`docs/SYNTAX.md` 里 `已弃用别名` 起头的那句 §5 原文「`size` 在集合语境下是 `count` 的已弃用别名……作为 **GUI 关键字**……它也**不动**」（**写下时写的是两个行号：539 与 468** —— 实测两处都不是它：第 468 行在 `50216cb`/`2de15ca` 上对、今天漂到 478；而第 539 行在 `2de15ca` 上是 §6.1 的别名表行、今天落在 §6 的标题上 ⇒ **它从来没有指过这句话**，不是漂移而是「从未正确」。**判不了的是「它当时指的是什么」，判得了的是「它该指什么」。**）。**处置未定**（§4.3）。
+  `.im` 里 **74 处** [obs: fe72f9f]，复跑 `grep -rn 'size' --include=*.im . | wc -l`），而 `size` 同时已是 GUI 关键字（`docs/SYNTAX.md` 里 `已弃用别名` 起头的那句 §5 原文「`size` 在集合语境下是 `count` 的已弃用别名……作为 **GUI 关键字**……它也**不动**」（**写下时写的是两个行号：539 与 468** —— 实测两处都不是它：第 539 行在 `2de15ca` 上是 §6.1 的别名表行、在 `9dafc43` 上落在 §6 的标题 `## 6. 完整关键字表` 上；第 468 行我**复核不出来**：同一句话在 `2de15ca` 上是第 512 行、在 `9dafc43` 上是第 522 行，而在 `50216cb` 上这份文件里根本没有这句话（`git show 50216cb:docs/SYNTAX.md | grep -c '已弃用别名'` 给 0） ⇒ **它从来没有指过这句话**，不是漂移而是「从未正确」。**判不了的是「它当时指的是什么」，判得了的是「它该指什么」。**）。**处置未定**（§4.3）。
 
 ### 2.5 集合代数用四则运算符（人裁定）
 
@@ -97,18 +97,18 @@ state: {"alive","dead","respawning"} @bits(2)
 
 出处 `i.json m00779`（"编译器自动验证位宽是否足够存储集合的所有值"）。
 ⚠ 与 `i.json m00721`（"**所有标签只出现在声明最前面**，不允许出现在类型表达式的中间或后面"）**矛盾**。
-⚠ **两个数要分开写：这一对标注在 `src/` 里是零命中，在 `docs/*.md` 里今天不是零。**★ 复跑：`grep -rn '@bits\|@bytes' src/ --include=*.c --include=*.h | wc -l` 给 **0**，而同一个式子把 `docs/` 也算进去给 **28** [obs: fe72f9f]。★ 写作时唯一命中是本会话新写的 `docs/STATUS.md` §4（`809dc73` 上第 498 行）；`main @ 809dc73` 上已有第二处（第 508 行）。★ **一句话里的「零命中」如果它的射程跨了两个目录，那么它至少要写两个数** —— 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 M。
+⚠ **两个数要分开写：这一对标注在 `src/` 里是零命中，在 `docs/*.md` 里今天不是零。**★ 复跑（`9dafc43`）：`grep -rn '@bits\|@bytes' src/ --include=*.c --include=*.h | wc -l` 给 **0**；把 `docs/` 加进同一个式子**仍然给 0** —— 因为 `--include=*.c --include=*.h` 把 `docs/*.md` 整个排除了，**这是命令的射程写错了，不是那个数漂了**：要拿 docs 侧的数，必须去掉 include，`grep -rn '@bits\|@bytes' src/ docs/ | wc -l` 给 **28** [obs: 9dafc43]。★ 写作时唯一命中是本会话新写的 `docs/STATUS.md` §4（`809dc73` 上第 498 行）；`main @ 809dc73` 上已有第二处（第 508 行）。★ **一句话里的「零命中」如果它的射程跨了两个目录，那么它至少要写两个数 —— 而且两个数各自都得用真正落在那个目录的命令数出来** —— 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 M。
 
 ### 2.8 `Z` 的 BigInt 表示 = 立即数 + 溢出切堆对象（人裁定）
 
 配合 **R2 的输入语法 = 大整数字面量溢出即切堆**，**不新增任何运算符**
-（**没有** `^` 运算符、**没有** `pow()` 内建：★ **要断言的宾语是「那个记号」，不是「那串字符」—— 两者在这个仓库里差两个量级。** 复跑：`grep -rn 'TOK_CARET\|OP_POW' src/ --include=*.c --include=*.h | wc -l` 给 **0**（这才是「没有那个运算符」）；而 `grep -rn '\*\*' src/ --include=*.c --include=*.h | wc -l` 给 **189**，逐处看过全是形如「某类型的双重指针加变量名」的声明；`grep -rn 'pow(' src/ --include=*.c --include=*.h | wc -l` 给 **2**，两处都是 C 库的 `pow(10.0, …)` 调用，不是语言内建。`i.json` 里 `**` 紧跟数字的 198 处抽样全是 markdown 粗体 [obs: fe72f9f]。★ 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 N）。
+（**没有** `^` 运算符、**没有** `pow()` 内建：★ **要断言的宾语是「那个记号」，不是「那串字符」—— 两者在这个仓库里差两个量级。** 复跑：`grep -rn 'TOK_CARET\|OP_POW' src/ --include=*.c --include=*.h | wc -l` 给 **0**（这才是「没有那个运算符」）；而 `grep -rn '\*\*' src/ --include=*.c --include=*.h | wc -l` 给 **189**，逐处看过全是形如「某类型的双重指针加变量名」的声明；`grep -rn 'pow(' src/ --include=*.c --include=*.h | wc -l` 给 **2**，两处都是 C 库的 `pow(10.0, …)` 调用，不是语言内建。`i.json` 里 `**` 紧跟数字的 **191** 处（`grep -o '\*\*[0-9]' /home/sakiko/i.json | wc -l`；本文件写作时写的是 198，差 7 处，**那个旧数是怎么数出来的我没有复现出来**）抽样全是 markdown 粗体 —— 导出对话里它们是标题的加粗（如 `**1. 玩法定位` 那样），不是语言运算符 [obs: 9dafc43]。★ 判据与出处见 `docs/AUDIT.md` §1.97 增补四十八乙组 N）。
 
 ### 2.9 `FloatN` / `floatN` 移出核心内置集合，改由**拓展库**提供（人裁定）
 
 - 影响清单见 `docs/TYPESET_V06.md` §8。实现面：`src/parser/parser.c` 里 `static bool name_is_builtin_set(StringView name) {`、
-  `src/compiler/compiler.c` 里 `static const char *pset[23] = {` 那张表、`src/vm/vm.c` 里 `static const char *bn[24] = {` 那张 24 格硬编码子集表（三处今天都还在）[obs: fe72f9f]。
-- `src/compilation/`（AOT 与 wasm 后端）**FloatN 零命中**（`grep -rn 'FloatN\|floatN' src/compilation/ | wc -l` 给 0 [obs: fe72f9f]）⇒ 移出不影响两个后端。
+  `src/compiler/compiler.c` 里 `static const char *pset[23] = {` 那张表、`src/vm/vm.c` 里 `static const char *bn[24] = {` 那张 24 格硬编码子集表（三处今天都还在，逐处核到）[obs: 9dafc43]。**但这张预置表不止三份 —— 第四份在 MIR/AOT 路线上，见下一条。**
+- `src/compilation/`（AOT 与 wasm 后端）**`FloatN` 这个「串」零命中**（`grep -rn 'FloatN\|floatN' src/compilation/ | wc -l` 给 0 [obs: 9dafc43]）—— **但这推不出「那里没有预置表」**：同一个目录里 `src/compilation/aot_mir.c` 的 `static const char *const kPresetGlobals[23] = {` 就是**预置全局表的第四份拷贝**（表里逐字有 `"Float1"`…`"Float9"`、`"float1"`…`"float9"`，还有一个 GBK 的 `"\xBF\xD5"`）。旁边 `src/compilation/aot_mir.c` 的 `static int is_preset_global(const char *name) {` **按名字拒绝**这类全局落进 MIR 全局表，代码注释里写明理由：这样种下的全局「会读成一个零值载荷」，所以必定「按名字拒绝，而不是把它降级成整数、让它安静地错」。⇒ **「移出不影响两个后端」不成立**：MIR/AOT 路线自己持有一份表，而且是**按名字**挡的 —— `kPresetGlobals` 在 `1dec5e6` 上进入（`fe72f9f` 已是它的后代），写下这一节时它就不该被那句「零命中」放过。这是 §2.7/§2.8 那条判据（断言要落在**记号**上、不是落在**子串**上）的又一次反例：`FloatN` 是宏的拼法，表里写的是 `"Float1"`。
 - 仓库内既有**同向先例**：`future/archive/集合化.md` §3.1 把 `FloatN`/`floatN` 标为 ⚠️ 建议删除，§3.2 给了四条理由。
 
 ### 2.10 内建函数收到无法解释的实参类型时（**D14**，人裁定）
@@ -147,7 +147,10 @@ state: {"alive","dead","respawning"} @bits(2)
 
 ---
 
-## §4. 真正悬着的六件事（按「有没有归属」排序）
+## §4. 真正悬着的事（按「有没有归属」排序）
+
+**写下时是六件；§4.4 已在 `4450320` 上关闭，今天只剩五件悬着 —— 那一条仍留在本节，因为它值得留下的部分是「它曾经被判成未登记，而且判错了」。** [obs: 9dafc43]
+
 
 ### 4.1 **没有归属**：v3.1 的三根柱子都还没落地
 
@@ -174,10 +177,15 @@ state: {"alive","dead","respawning"} @bits(2)
 
 见 §2.4。推荐（**未定**）：`count` 当规范名，`size` 对集合降为已弃用别名并迁移 74 处 [obs: fe72f9f]。
 
-### 4.4 **未登记也只差一步**：`docs/SYNTAX.md` 的注释一节与实现矛盾
+### 4.4 **已关闭**：`docs/SYNTAX.md` 的注释一节曾经与实现矛盾
 
-`docs/SYNTAX.md` 里 `加一种嵌套块注释` 这一句（原句是「两种行注释，**没有块注释**」——**这一句在本节写下之后已经被改掉** [obs: fe72f9f]），而 `src/lexer/lexer.c` 里 `if (lex->src[lex->pos+1] == '[') {` **就是**块注释
-（`#[...]` 嵌套计数），`selfhost/lexer.im` 里 `支持 # 行注释和 #[...] 块注释` 也自述支持它。⇒ 改文档还是删实现，**未定**（文档已经先走了半步：实现没动、文档改成与实现一致；要不要把这条登记下来，仍未定）。
+这一条在 §4 写下时是「未登记，改文档还是删实现未定」。**它在 `4450320` 上关闭了**，而且关得比当时设想的彻底：实现没动，文档改成与实现一致，这条教训还升格成了一条可引用的规则。证据三处，全部在同一个提交里：
+
+- **文档**：`docs/SYNTAX.md` 里 `两种行注释，**加一种嵌套块注释**` 是今天的第一句；它后面记的是**两条本机实测的性质**、不是设计意图 —— 块注释可嵌套（`depth` 计数、配平即止）；配平之后跳过逻辑**落进行注释的跳读**，所以同行的余下代码也被丢弃（`x = 3 #[ inline ] say 88` 不执行 `say 88`）。写下本节时那句还是「两种行注释，**没有块注释**」—— **错的是文档，不是实现**。
+- **实现**：`src/lexer/lexer.c` 里 `if (lex->src[lex->pos+1] == '[') {` 是块注释入口（`#[...]` 嵌套计数）；`selfhost/lexer.im` 里 `支持 # 行注释和 #[...] 块注释` 在自举侧也自述支持它。实现侧这三条注释写下这一节时就有，矛盾只在文档。
+- **登记**：`docs/BOARD.md` 里 `docs-comment-and-h4` 那一行（状态「已完成」，只改 `docs/SYNTAX.md`）；同一个提交还新增了 `docs/SYNTAX.md` 里 `H4. 一次观测 ≠ 一个性质` 这条元规则（§7.4），把「写下来的数/格式没人复核」这类缺陷立成了可引用的判据。
+
+⇒ **「改文档还是删实现」不再是问题**：结论是改文档（实现是对的）。**它从「悬着」里退出。** 留在这里是因为它示范了这类事该怎么关：改文档、补登记、立一条规则，三件都做，而且落在同一个提交里 [obs: 9dafc43]。
 
 ### 4.5 **người 的**：`be` 退役节奏
 
