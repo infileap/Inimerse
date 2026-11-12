@@ -366,6 +366,16 @@ ALLOCS_EXPECT = {
     # here before the run would be a guess dressed as a measurement.
     "mir_str_of_every_shape": (17, 864),
     "mir_str_float_split_side_by_side": (9, 350),
+    # sum() itself allocates NOTHING -- it reads the container's items in place
+    # and throws on a bad element.  What the first row counts is the literals the
+    # program builds (four pool blocks / 1794 bytes: an array of four, the set,
+    # and the ones behind `"1, 2"[0]`), MEASURED off the generated program's own
+    # IR-MIR-ALLOCS line.  The throw case reports `reported=no|why=rc=1`: it
+    # stops inside the run, so no sweep line is printed and no count is
+    # consulted -- the same treatment the other throwing criteria get.
+    "mir_sum_fold_and_nil_boundaries": (4, 1794),
+    "mir_sum_non_numeric_throws": (1, 256),
+    "mir_sum_bool_element_throws": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -837,6 +847,8 @@ def allocs_problems(text, case):
 # fail the second, and a route that printed nothing fails the first.  One
 # table of positives cannot see "printed the wrong throw's word".
 STDERR_EXPECT = {
+    "mir_sum_non_numeric_throws": ("[exception] uncaught: sum: non-numeric element",),
+    "mir_sum_bool_element_throws": ("[exception] uncaught: sum: non-numeric element",),
     "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
     "mir_throw_uncaught_cross": ("[exception] uncaught: from-func",),
     # OP_BIND can stop with two DIFFERENT messages, and the interpreter decides
@@ -882,6 +894,7 @@ STDERR_EXPECT = {
     "mir_finally_runs_before_try_error": ("[exception] uncaught: boom",),
 }
 STDERR_EXCLUDE = {
+    "mir_sum_non_numeric_throws": ("[exception] uncaught: numeric_overflow",),
     "mir_throw_uncaught_cross": ("[exception] uncaught: boom",),
     "mir_bind_out_of_range_store": ("[exception] uncaught: initial value out of range",),
     "mir_bind_out_of_range_init": ("[exception] uncaught: type_mismatch",),
@@ -1258,6 +1271,41 @@ MIR_ONLY = [
      'say 0.1\nsay str(0.1)\nsay 1 / 3\nsay str(1 / 3)\n'
      'say 123456789.123456789\nsay str(123456789.123456789)\n'
      'say str([0.1, 2])\nsay str(1.0)\nsay str(str(1))\nsay len(str(0.1))\n'),
+    # sum(): the first builtin this route emits that can THROW, and the first
+    # that consumes mv_list's set enumeration.  Written BEFORE the
+    # implementation; on arrival `why=builtin-call`.  The interpreter's answers:
+    #   6 0 3.5 3.5 nil nil nil nil 3.5 nil
+    # Three separate answers live in this program and each has its own failure:
+    #   - the fold: [1, 2, 3]->6 (int), []->0, [1, 2.5]->3.5 and [2.5, 1]->3.5
+    #     (float as soon as ANY element is float, in either order), and a SET
+    #     `1, 2.5`->3.5 through the same enumeration mv_list uses;
+    #   - the nil answer for a NON-CONTAINER (3, "ab", nil) and for a set that
+    #     cannot be enumerated (the R interval [1~3]);
+    #   - nothing here throws, so this case is the fold and the nil boundaries.
+    ("mir_sum_fold_and_nil_boundaries",
+     'say sum([1, 2, 3])\nsay sum([])\nsay sum([1, 2.5])\n'
+     's = 1, 2.5\nsay sum(s)\n'
+     'iv = [1~3]\nsay sum(iv)\nsay sum(3)\nsay sum("ab")\nsay sum(nil)\n'
+     'say sum([2.5, 1])\nsay sum("1, 2"[0])\n'),
+    # THE THROW, and it is a separate case because it is the only one that reads
+    # stderr and the exit code: `say "before"` prints, then sum([1, "a", 2])
+    # raises `sum: non-numeric element`, so stdout is exactly `before\n` and rc
+    # is 1.  A route that answered nil (the old POSIX behaviour) or 3 (summing a
+    # as 0) would print a second line and exit 0 -- both are caught here and
+    # neither is caught by the fold case above.  The message is pinned by
+    # STDERR_EXPECT, and STDERR_EXCLUDE forbids `numeric_overflow`, which is the
+    # OTHER way this builtin can stop.
+    ("mir_sum_non_numeric_throws",
+     'say "before"\nsay sum([1, "a", 2])\n'),
+    # THE OTHER MALFORMED ELEMENT, and it needs its own program because the
+    # first throw ends the run: a BOOL element.  `sum([1, true])` raises
+    # `sum: non-numeric element` (the element rule is VAL_INT/VAL_FLOAT only),
+    # so stdout is empty but for the marker and rc is 1.  This is the line that
+    # separates "malformed element throws" from "anything that looks numeric is
+    # summed": a route that let a BOOL fall into the int arm prints 2 and exits
+    # 0, and every line of the case above would still pass.
+    ("mir_sum_bool_element_throws",
+     'say "bool"\nsay sum([1, true])\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
