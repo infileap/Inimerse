@@ -376,14 +376,49 @@ ALLOCS_EXPECT = {
     "mir_sum_fold_and_nil_boundaries": (4, 1794),
     "mir_sum_non_numeric_throws": (1, 256),
     "mir_sum_bool_element_throws": (1, 256),
-    # MEASURED, absolute, one run each (see the case comments for what each
-    # number is).  The remove-then-grow row is three blocks and the control is
-    # two: the third IS the frontier copy a shortened region forces.
+    # ABSOLUTE numbers.  THE PREDICTIONS WERE WRONG ON THREE OF THE FIVE, AND
+    # THE ROWS BELOW ARE THE POST-MORTEM RATHER THAN A MATCHED-TO-THE-RUN EDIT.
+    #
+    # What was predicted, and why it was wrong.  The derivation assumed a
+    # frontier copy costs "one block": the pool reserves 256 bytes (8 slots) on
+    # first use and DOUBLES when the frontier needs more, so I read a copy as
+    # +1 alloc / +256 bytes.  That is not how the pool works.  mv_arr_need
+    # allocates the WHOLE NEW BLOCK at double size and copies the live prefix
+    # into it (aot_mir.c's mv_arr_need), so a frontier copy that pushes the
+    # frontier past 8 slots costs ONE allocation of 512 bytes, not one of 256.
+    # The block count only rises when the pool has to grow at all -- a copy that
+    # fits in the current block costs NOTHING.
+    #
+    # Measured, on the implementation, both sides of the discriminating pair
+    # (same program, one line added):
+    #     d={"a":1}; d["z"]=5; a=[7, 8]; say d["z"]; say a[0]
+    #         -> allocs=1|bytes=256     (everything fits one 8-slot block)
+    #     the same with `remove(d,"a")` inserted before the write
+    #         -> allocs=2|bytes=768     (the copy doubles the pool: 256+512)
+    # So the copy is real and observable -- it just costs a DOUBLING, not a
+    # block.  The criterion's job (detect that the copy happened) is unchanged;
+    # only my arithmetic about its price was wrong.
+    #
+    # The five measured rows, and what each block is:
+    #   mir_remove_both_containers   2|768    dict + array literals (pool doubles once)
+    #   mir_remove_aliases_two_rounds 1|256   ONE dict; the removals and the copy
+    #                                         all fit the first block, so they cost 0
+    #   mir_remove_then_grow         2|768    dict + the copy (256+512) -- the array
+    #                                         literal is the SAME block as the copy
+    #   mir_grow_without_remove      2|768    the control: dict + array, no copy
+    #   mir_push_and_pop             1|256    two small arrays in one block
+    # NOTE THE UNCOMFORTABLE PART, recorded rather than smoothed over: with these
+    # numbers mir_remove_then_grow and its control read THE SAME 2|768, so the
+    # ALLOCS row no longer distinguishes "copied" from "did not copy".  It still
+    # pins that neither leaks (live=0) and that the totals are what they are, and
+    # the copy is pinned where it IS distinguishable -- the pair measured above,
+    # recorded in docs/STATUS.md §10.166.  A criterion that cannot see the thing
+    # it was written for is worth saying out loud.
     "mir_remove_both_containers": (2, 768),
-    "mir_remove_aliases_two_rounds": (3, 1024),
-    "mir_remove_then_grow": (3, 1024),
+    "mir_remove_aliases_two_rounds": (1, 256),
+    "mir_remove_then_grow": (2, 768),
     "mir_grow_without_remove": (2, 768),
-    "mir_push_and_pop": (2, 768),
+    "mir_push_and_pop": (1, 256),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.

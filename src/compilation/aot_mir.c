@@ -2779,6 +2779,145 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* remove(), push(), pop(): the first WRITERS this route emits that change a\n"
+"   region's LENGTH.  Read src/runtime/runtime_posix.c:399-431 (push, pop) and\n"
+"   :527-546 (remove) beside this.\n"
+"\n"
+"   WHY THEY ARE ONE CELL.  Every writer before them either overwrote a slot in\n"
+"   place (OP_INDEX_SET on a container that already had the slot) or grew a\n"
+"   region at its frontier.  These three DO change the length, and the one that\n"
+"   SHRINKS is what makes the difference observable: a shortened region stops\n"
+"   sitting at the frontier forever.\n"
+"\n"
+"   THE DESIGN DECISION, and the reason it is written here rather than\n"
+"   discovered later: mv_remove DOES NOT ROLL BACK mv_arrused.  A shrink edits\n"
+"   the header and leaves the pool high-water mark alone.  The tempting\n"
+"   alternative -- give the slots back when the region happens to end at the\n"
+"   frontier -- is not merely riskier, it is UNREACHABLE: the frontier test a\n"
+"   growth arm uses is `iv + n == mv_arrused`, and after a removal\n"
+"   `iv + n' < mv_arrused` by construction (n' = n - 2).  So the condition that\n"
+"   would make the rollback safe is exactly the condition a shortened region\n"
+"   never satisfies -- the rollback could only run on regions it was not needed\n"
+"   for.  A branch nobody can exercise is not a saving, it is untested code, so\n"
+"   the slots stay.  The COST is measurable and is pinned as one: the next write\n"
+"   to a shortened region MUST copy it to the frontier and leave a forwarding\n"
+"   head (mir_remove_then_grow reads one block more than its control\n"
+"   mir_grow_without_remove, and both numbers are absolute in ALLOCS_EXPECT).\n"
+"   The interpreter does the same work for a different reason -- it releases\n"
+"   `2 * sizeof(Value)` of used_mem (src/vm/vm.c:1244) -- and this route has no\n"
+"   such ledger; the pool is swept at exit.  That difference is deliberate and\n"
+"   is not a leak: IR-MIR-ALLOCS reports live=0 on every case below.\n"
+"\n"
+"   HOW EACH ONE ANSWERS:\n"
+"     - remove(obj, key) -> BOOL.  DICT: find the pair with mv_key_eq (the\n"
+"       dict's own rule, NOT has()'s coercing mv_eq), shift the pairs above it\n"
+"       down by one pair, rewrite the header to n - 2, nil the two tail slots.\n"
+"       THE HEADER UNIT IS SLOTS, NOT PAIRS: mv_dict_set's own note calls it\n"
+"       'the ITEM count, 2*pairs' and mv_len halves it, so dropping ONE pair\n"
+"       subtracts TWO.  ARRAY: the subscript goes through mv_index_i32 (so a\n"
+"       non-integer subscript throws type_mismatch) but a NEGATIVE one answers\n"
+"       false rather than throwing -- the write side throws there, the remove\n"
+"       side does not, and the interpreter's :527-546 is the reason (it tests\n"
+"       `idx >= 0 && idx < a->count` before doing anything).  Everything else,\n"
+"       including a missing key and an empty container, answers false.\n"
+"     - push(obj, x) -> 1, ALWAYS.  The interpreter's arm ends in\n"
+"       `push_int(vm, 1)` whatever happened (runtime_posix.c:399-407), so\n"
+"       `push(nil, 1)` and `push(5, 1)` answer 1 while writing NOTHING.  That\n"
+"       silent success is this function's own semantics and cannot come from\n"
+"       mv_dict_set/mv_arr_set, which is why the container test is first.\n"
+"       ARRAY: append at the index the header names, through the SAME growth\n"
+"       path mv_arr_set uses (in place at the frontier, copy + head otherwise).\n"
+"       DICT: there is no dict push in the interpreter, and this route does not\n"
+"       invent one -- a dict argument writes nothing and still answers 1.\n"
+"     - pop(obj) -> the popped VALUE.  ARRAY: the last element, then the header\n"
+"       goes down by one and the tail slot is nilled.  An empty array, a\n"
+"       non-array (including a string and nil) answer nil.  This is the second\n"
+"       shrinking writer, and it inherits mv_remove's no-rollback rule for the\n"
+"       same reason.\n"
+"\n"
+"   WHAT THEY DO NOT COVER -- boundaries, named:\n"
+"     - A ZERO- or ONE-ARGUMENT remove, and a ZERO-ARGUMENT push/pop: the same\n"
+"       stack-top rule every builtin here follows, refused BY NAME\n"
+"       (builtin-stale-stack) because the answer is a stale register.  Measured:\n"
+"       `remove({\"a\": 1})` prints the dict ITSELF, not a boolean.\n"
+"     - THE dict's hash index.  The interpreter rebuilds it after a removal\n"
+"       (src/vm/vm.c:1246); this route has no hash table -- mv_key_eq is a\n"
+"       linear scan -- so there is nothing to rebuild.  The OBSERVABLE part, the\n"
+"       surviving pair ORDER, is the same either way and is what the criteria\n"
+"       pin.\n"
+"\n"
+"   DELETE CONDITION.  The three arms and their pre-scan names go together with\n"
+"   the five criteria; removing only the shrink arms leaves a route that can\n"
+"   grow a region and never shrink it, which is the state these criteria were\n"
+"   written against.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_remove_both_containers,\n"
+"   mir_remove_aliases_two_rounds, mir_remove_then_grow (with its control\n"
+"   mir_grow_without_remove) and mir_push_and_pop -- stdout BYTES and rc, plus\n"
+"   the ALLOCS row each one pins. */\n"
+"static inline void mv_arr_set(MirVal obj, MirVal idxv, MirVal valv);   /* push\n"
+"    appends through it: the definition sits far below, and kMirValBlock is one\n"
+"    string compiled in source order, so the call needs this line -- the same\n"
+"    rule the file's other forward declarations follow (and the third time it\n"
+"    has bitten; see mv_set_new's note). */\n"
+"static inline MirVal mv_remove(MirVal obj, MirVal key) {\n"
+"    if (obj.type == MV_DIC) {\n"
+"        int iv = mv_arr_live((int)obj.ival);\n"
+"        if (iv < 1 || iv > mv_arrused) return mv_boo(0);\n"
+"        int n = (int)mv_arrmem[iv - 1].ival;      /* SLOTS, 2*pairs */\n"
+"        for (int p = 0; p + 1 < n; p += 2) {\n"
+"            if (!mv_tru(mv_key_eq(mv_arrmem[iv + p], key))) continue;\n"
+"            for (int k = p; k + 2 < n; k++) mv_arrmem[iv + k] = mv_arrmem[iv + k + 2];\n"
+"            mv_arrmem[iv + n - 2] = mv_nil();     /* the two stale tail slots */\n"
+"            mv_arrmem[iv + n - 1] = mv_nil();\n"
+"            mv_arrmem[iv - 1] = mv_int(n - 2);    /* ONE PAIR IS TWO SLOTS */\n"
+"            return mv_boo(1);                     /* mv_arrused untouched */\n"
+"        }\n"
+"        return mv_boo(0);\n"
+"    }\n"
+"    if (obj.type == MV_ARR) {\n"
+"        int i = mv_index_i32(key);                /* non-integer THROWS */\n"
+"        if (i < 0) return mv_boo(0);              /* negative does NOT */\n"
+"        int iv = mv_arr_live((int)obj.ival);\n"
+"        if (iv < 1 || iv > mv_arrused) return mv_boo(0);\n"
+"        int n = (int)mv_arrmem[iv - 1].ival;\n"
+"        if (i >= n) return mv_boo(0);\n"
+"        for (int k = iv + i; k + 1 < iv + n; k++) mv_arrmem[k] = mv_arrmem[k + 1];\n"
+"        mv_arrmem[iv + n - 1] = mv_nil();\n"
+"        mv_arrmem[iv - 1] = mv_int(n - 1);        /* ONE ELEMENT IS ONE SLOT */\n"
+"        return mv_boo(1);\n"
+"    }\n"
+"    return mv_boo(0);                             /* nil, string, set, function */\n"
+"}\n"
+"\n"
+"static inline MirVal mv_push(MirVal obj, MirVal x) {\n"
+"    if (obj.type == MV_ARR) {\n"
+"        int iv = mv_arr_live((int)obj.ival);\n"
+"        if (iv >= 1 && iv <= mv_arrused) {\n"
+"            int n = (int)mv_arrmem[iv - 1].ival;\n"
+"            /* Append BY WRITING THE SLOT THE HEADER NAMES, through the same\n"
+"               arm mv_arr_set uses: `i == n` is exactly the extension case\n"
+"               (i < n overwrites, i >= n extends or copies), so this is one\n"
+"               call and not a second growth implementation. */\n"
+"            mv_arr_set(obj, mv_int(n), x);\n"
+"        }\n"
+"        return mv_int(1);\n"
+"    }\n"
+"    return mv_int(1);   /* a dict, a set, a string, nil: answer 1, write nothing */\n"
+"}\n"
+"\n"
+"static inline MirVal mv_pop(MirVal obj) {\n"
+"    if (obj.type != MV_ARR) return mv_nil();   /* nil, string, dict, set */\n"
+"    int iv = mv_arr_live((int)obj.ival);\n"
+"    if (iv < 1 || iv > mv_arrused) return mv_nil();\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    if (n < 1) return mv_nil();                /* the empty array */\n"
+"    MirVal out = mv_arrmem[iv + n - 1];\n"
+"    mv_arrmem[iv + n - 1] = mv_nil();\n"
+"    mv_arrmem[iv - 1] = mv_int(n - 1);         /* shrink; mv_arrused unchanged */\n"
+"    return out;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4432,10 +4571,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
                     && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
-                    && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0) {
+                    && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
+                    && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
+                    && strcmp(bn, "pop") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
-                               " list, size, count, has, keys, str and sum and no other builtin;"
+                               " list, size, count, has, keys, str, sum, remove, push and pop"
+                               " and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -4465,6 +4607,17 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    `len("abc", has(d))` because there the top is the pushed
                    argument.  Same class as the zero-argument call below, so the
                    same name: the answer is not a function of the expression. */
+                /* remove() and push() need TWO: with one the interpreter returns 0
+                   (a failed builtin) and the destination register keeps its previous
+                   value -- MEASURED, `say remove({"a": 1})` prints the dict itself,
+                   `say push(a)` prints the array.  Same class, same name. */
+                if ((strcmp(bn, "remove") == 0 || strcmp(bn, "push") == 0) && argc < 2) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
+                               " the interpreter answers that shape with the argument stack top"
+                               " or the destination register's previous value, not with a value"
+                               " the program asks for", f, i, bn, argc);
+                }
                 if (strcmp(bn, "has") == 0 && argc < 2) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin 'has' is called with %d argument(s):"
@@ -5280,7 +5433,9 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
                     && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
-                    && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0)) return -1;
+                    && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
+                    && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
+                    && strcmp(bn, "pop") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5289,6 +5444,12 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "remove") == 0)
+            buf_fmt(b, "    v[%d] = mv_remove(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "push") == 0)
+            buf_fmt(b, "    v[%d] = mv_push(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "pop") == 0)
+            buf_fmt(b, "    v[%d] = mv_pop(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "sum") == 0)
             buf_fmt(b, "    v[%d] = mv_sum(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "str") == 0)
