@@ -419,6 +419,12 @@ ALLOCS_EXPECT = {
     "mir_remove_then_grow": (2, 768),
     "mir_grow_without_remove": (2, 768),
     "mir_push_and_pop": (1, 256),
+    # MEASURED, and this pair is the one that pins the frontier copy (see the
+    # cases' comment for the block arithmetic).  The control is green on
+    # arrival; the subject is 1|256 before the write lands in a fresh pool and
+    # 2|768 once the shorten forces the copy.
+    "mir_remove_pushes_frontier_control": (1, 256),
+    "mir_remove_pushes_frontier": (2, 768),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1422,6 +1428,38 @@ MIR_ONLY = [
      'b = [1]\nc = b\nsay push(c, 2)\nsay b\n'
      'say push(nil, 1)\nsay push(5, 1)\n'
      'say pop(a)\nsay a\nsay pop([])\nsay pop(nil)\nsay pop("ab")\n'),
+    # THE FRONTIER COPY, made a NAMED PAIR instead of a paragraph.
+    #
+    # It existed only in a commit message and in docs/STATUS.md §10.166 before
+    # this: two programs differing by one `remove(d, "a")`, whose readings
+    # differ by exactly the doubling a frontier copy costs.  A comparison that
+    # lives in prose is dropped the next time someone re-pins; a comparison that
+    # is two named cases with two pinned ALLOCS rows survives.
+    #
+    # THE PRICE WAS THE THING I GOT WRONG, so the arithmetic is written down
+    # here for the next person: the pool reserves 8 slots (256 bytes) on first
+    # use and DOUBLES when the frontier needs more, allocating the whole new
+    # block and copying the live prefix (mv_arr_need).  So
+    #     a copy that FITS in the current block        costs 0 allocations
+    #     a copy that pushes the frontier past 8 slots  costs ONE 512-byte block
+    # -- not "one 256-byte block per copy", which is what I assumed and why
+    # three of my five predictions were wrong in that cell.
+    #
+    # Both programs fit one block until the dict is written:
+    #   control  d={"a":1}; d["z"]=5; a=[7, 8]; say d["z"]; say a[0]   -> 5 7
+    #   subject  the same, with `say remove(d,"a")` first               -> true 5 7
+    # The control's write lands in the frontier block; the subject's cannot,
+    # because the shorten left `iv + n' < mv_arrused`, so it copies and doubles.
+    #   IR-MIR-ALLOCS|case=mir_remove_pushes_frontier_control|allocs=1|bytes=256
+    #   IR-MIR-ALLOCS|case=mir_remove_pushes_frontier|allocs=2|bytes=768
+    # THIS is the row that can tell "copied" from "did not copy" -- the one
+    # named mir_remove_then_grow cannot (both sides read 2|768 there, which is
+    # recorded in ALLOCS_EXPECT and in the pin's allocs-scope).
+    ("mir_remove_pushes_frontier_control",
+     'd = {"a": 1}\nd["z"] = 5\na = [7, 8]\nsay d["z"]\nsay a[0]\n'),
+    ("mir_remove_pushes_frontier",
+     'd = {"a": 1}\nsay remove(d, "a")\nd["z"] = 5\na = [7, 8]\n'
+     'say d["z"]\nsay a[0]\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
