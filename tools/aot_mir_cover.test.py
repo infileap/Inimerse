@@ -794,6 +794,28 @@ def main():
         "beyond-ast-denominator": beyond,
         "coverage-claim": "none",
         "basis": "mir-emitted-ops-union-over-the-corpus",
+        # WHAT EACH ALLOCS ROW ACTUALLY PINS.  Added because a criterion's NAME
+        # can outlive its discriminating power: mir_remove_then_grow is called
+        # "then_grow" and was written to detect the frontier copy, but the
+        # measured numbers came out equal to its control's (2|768 both), so the
+        # row no longer distinguishes copied from not-copied.  Recording the
+        # scope next to the count is the difference between a reader who knows
+        # that and one who cites the name.  The copy IS pinned -- by the pair
+        # mir_remove_pushes_frontier / its control, which read 1|256 and 2|768.
+        "allocs-scope": {
+            "mir_remove_then_grow": "totals+live",
+            "mir_grow_without_remove": "totals+live",
+            "mir_remove_pushes_frontier": "totals+live+the-copy",
+            "mir_remove_pushes_frontier_control": "totals+live",
+            "_why": [
+                "totals+live means the row pins how many blocks and bytes the whole",
+                "program took and that nothing survived the sweep -- NOT that any",
+                "particular write copied a region.  the-copy means the two programs",
+                "differ by exactly one remove() and their readings differ by exactly",
+                "the doubling a frontier copy costs, so the row can tell the copy",
+                "from its absence.",
+            ],
+        },
         "note": [
             "regenerate with tools/aot_mir_cover.test.py --pin.  The fraction a",
             "reader sees in IR-AOT-MIR is this file.  coverage-claim=none says",
