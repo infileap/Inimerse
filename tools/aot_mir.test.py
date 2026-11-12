@@ -442,6 +442,12 @@ ALLOCS_EXPECT = {
     # the number should be, then look.
     "mir_substr_clamps_every_boundary": (11, 29),
     "mir_substr_allocates_its_answer": (3, 10),
+    # split(): the arm does not exist yet, so these two are the PREDICTION from
+    # the case comments above, not post-run values.  The rows are filled with
+    # the derivation beside them; if the run disagrees the difference is a
+    # finding (see the cell's STATUS section), not an edit.
+    "mir_split_edges_and_the_trailing_empty": (0, 0),
+    "mir_split_allocates_new_bytes_per_element": (0, 0),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1523,6 +1529,66 @@ MIR_ONLY = [
     ("mir_substr_allocates_its_answer",
      'say substr("abcdef", 1, 3)\nsay substr("abcdef", 2, 99)\n'
      'say substr("abcdef", 3, -1)\n'),
+    # split(): the first builtin whose answer is a CONTAINER OF NEW STRINGS.
+    # substr() produced one string; this produces an array whose elements are
+    # each freshly allocated bytes.  Written BEFORE the implementation; on
+    # arrival `why=builtin-call`.
+    #
+    # THE FOUR SHAPES THE PLAN'S TABLE DID NOT LIST, measured before a criterion
+    # was written for any of them -- and ONE OF THEM DECIDES THE WHOLE ARM:
+    #   ("a,b,", ",")   -> [a, b]   TWO elements: the TRAILING empty is DROPPED
+    #   (",a", ",")     -> [, a]    TWO elements: the LEADING empty is KEPT
+    #   ("a::b", "::")  -> [a, b]   the separator matches as a WHOLE STRING, not
+    #                               character by character (that would be [a,,b])
+    #   (123, ",")      -> []       a non-string source is read as the EMPTY
+    #                               string, so it yields nothing -- not ["123"]
+    # The leading/trailing asymmetry is not a bug in the interpreter: its loop
+    # is `while (*p)` with `strstr`, so a match at position 0 still pushes an
+    # empty piece while a trailing separator just advances p to the NUL and the
+    # loop ends.  Copied, and pinned by the two lines that differ.
+    #
+    # THE PAIR THAT LOOKS IDENTICAL AND IS NOT:
+    #   split(",", ",") -> prints [] but len is 1   (one empty-string element)
+    #   split("", ",")  -> prints [] and len is 0   (a genuinely empty array)
+    # Both print the same three bytes.  Only len() separates them, which is why
+    # the program below prints len() beside both -- a route that answered "one
+    # empty element" for the empty source would pass every `say` in this file.
+    #
+    # THE TWO OPPOSITE BOUNDARIES, in one program on purpose: an empty SOURCE
+    # yields [] (nothing to split), while an empty SEPARATOR yields [the whole
+    # string] (the interpreter substitutes " " and "abc" has no space in it).
+    # Keeping them adjacent makes it visible which one is the special case.
+    #
+    # MEASURED, byte-exact, in order:
+    #   [a, b, c] / [] / [abc] / [] / 2 / [, a] / [a, b] / [] / [] / 1
+    #   / [, ] / [a, , b] / 0
+    ("mir_split_edges_and_the_trailing_empty",
+     'say split("a,b,c", ",")\nsay split("", ",")\nsay split("abc", "")\n'
+     'say split(nil, ",")\nsay len(split("a,b,", ","))\nsay split(",a", ",")\n'
+     'say split("a::b", "::")\nsay split(123, ",")\n'
+     'say split(",", ",")\nsay len(split(",", ","))\nsay split(",,", ",")\n'
+     'say split("a,,b", ",")\nsay len(split("", ""))\n'),
+    # THE ALLOCATION, and it is what separates "a container of new bytes" from
+    # "a container of views into the source".  PREDICTION, written before the
+    # arm exists, in the form the previous two cells earned: state the number,
+    # then check it, and if the run disagrees, find the mechanism -- do not
+    # edit the number.
+    #
+    #   Every element is its OWN allocation of (piece length + 1), because
+    #   posix_core_split mallocs a piece per element, pushes it, and frees it
+    #   (the array copies).  The source and separator are also strdup'd -- TWO
+    #   more allocations -- and the result is ONE array region.
+    #
+    #   split("a,b,c", ",")  pieces a,b,c     3 blocks of 1+1,1+1,1+1 = 6 bytes
+    #                        + source strdup 6  + sep strdup 2
+    #                        + the array region (4 slots = 128 bytes)
+    #   That is 6 blocks; bytes = 3*2 + 6 + 2 + 128 = 144.
+    #   The real question the run answers is whether this route's port keeps
+    #   the two strdups (it may not need them -- it can point at the existing
+    #   strings) and what it does about the array region.  WHICHEVER WAY IT
+    #   LANDS, the difference from 6|144 is a finding to write down.
+    ("mir_split_allocates_new_bytes_per_element",
+     'a = split("a,b,c", ",")\nsay len(a)\nsay a[0]\nsay a[2]\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
