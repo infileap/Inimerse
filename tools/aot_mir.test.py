@@ -722,6 +722,11 @@ ALLOCS_EXPECT = {
     "mir_boolkey_str_vs_int": (1, 256),
     "mir_boolkey_register_read": (1, 256),
     "mir_boolkey_eq_is_not_key_identity": (0, 0),
+    # MEASURED on this control's first run (it is green on the unmodified
+    # route).  The control's two array literals need 4 + 3 = 7 slots and the
+    # first pool block is 8 slots = 256 bytes, so both fit ONE block; it is
+    # the number that must not move when the multi-argument arm is emitted.
+    "mir_builtin_argc_single_arg_control": (1, 256),
 }
 ALLOCS_DEFAULT = (0, 0)
 
@@ -3529,6 +3534,130 @@ MIR_ONLY = [
      'dbl = (n) -> n * 2\n'
      'say apply(dbl, 3, 9)\n'),
 
+    # THE BUILTIN'S ARGUMENT COUNT.  `len` and `list` are the only two builtins
+    # this route emits, and until this cell both were accepted ONLY with one
+    # argument: the pre-scan refused every other count as `illegal-operand`, so
+    # a program the interpreter answers never became C at all -- the failure
+    # §10.157 records one layer down at cc, here one layer up at translate.
+    #
+    # WHAT THE INTERPRETER DOES with a count above one is NOT "count the
+    # arguments".  It is `len` / `list` applied to the LAST argument, with the
+    # others evaluated and left on the argument stack.  MEASURED before a
+    # criterion was written (build/inimerse --no-mods):
+    #
+    #     say len(2, 1)               -> 1   (a count would answer 2)
+    #     say len(12345, 0)           -> 0   (a count would answer 2)
+    #     say len("abc", 1)           -> 1   (last is the int 1: len(1) is 1)
+    #     say len(1, "abc")           -> 3   (last is the string: its length)
+    #     say len([1, 2, 3], [9])     -> 1   (last is the array [9])
+    #     say len(1, [1, 2])          -> 2
+    #     say len(1, 2, 3)            -> 3
+    #     say len(9, 8, [1, 2, 3, 4]) -> 4
+    #     say len(mark(), 7)          -> mark, then 7   (every argument runs)
+    #     say list(1, [5, 6])         -> [5, 6]
+    #     say list([5, 6], 1)         -> nil
+    #
+    # The mechanism is one line of the runtime: the builtin reads
+    # vm_cur_stack(vm)[vm_cur_sp(vm)] -- the stack TOP -- and pops exactly ONE
+    # value and pushes exactly one, whatever the instruction's argument count
+    # said.  The answer is a function of the last argument because the last
+    # argument IS the top; the earlier ones are never read, they STAY on that
+    # stack instead of being discarded.
+    #
+    # DECIDED: this route AGREES with that answer for a count of two or more,
+    # and it does so without modelling the leftover pushes, because the leftover
+    # has exactly ONE reader in the interpreter: a builtin called with ZERO
+    # arguments, which reads the top (the leftover) or -- on an empty stack --
+    # the destination register's stale value.  That shape is refused BY NAME on
+    # the reverse side (why=builtin-stale-stack, in MIR_ONLY_REFUSE below), and
+    # the pre-scan is STATIC over every container, so no program this route
+    # accepts can contain such a call and no accepted program can observe what
+    # the extra arguments left behind.  So answering 2 for `len(1, 2)` is NOT
+    # copying a defect: it is the interpreter's own value, and the defect (a
+    # builtin that ignores its argument count and leaks its pushes) is confined
+    # to a shape this route refuses.
+    #
+    # RED READING of every case below on the unmodified route: refused at
+    # translate, `why=illegal-operand` (the detail named the count and said this
+    # route emits len and list only with one argument), so the program never
+    # becomes C.  The LAST case is the CONTROL: it is green on arrival, and it
+    # is here so that a fix which moved the one-argument arm reddens next to the
+    # multi-argument ones it was meant to leave alone.
+
+    # LAST, NOT COUNT, NOT FIRST.  Every line distinguishes the three candidate
+    # rules: `len` of the last argument (1, 0, 1, 3, 1, 2), the number of
+    # arguments (all 2), and the first argument (2, 12345, 3, 1, 3, 1).  No
+    # two of the three agree on any line.  The last two lines are the
+    # discriminator pair independently read on the main tree: with `len` of the
+    # last argument they are 5 and 2, while a count would answer 2 for both.
+    ("mir_builtin_argc_len_last",
+     'say len(2, 1)\n'
+     'say len(12345, 0)\n'
+     'say len("abc", 1)\n'
+     'say len(1, "abc")\n'
+     'say len([1, 2, 3], [9])\n'
+     'say len(1, [1, 2])\n'
+     'say len("ab", 5)\n'
+     'say len(5, "ab")\n'),
+
+    # THREE AND MORE.  The count is not a special case of two: three and four
+    # arguments answer the same way, and the third line pushes five.  Interpreter:
+    # `3`, `4`, `5`.
+    ("mir_builtin_argc_len_many",
+     'say len(1, 2, 3)\n'
+     'say len(9, 8, [1, 2, 3, 4])\n'
+     'say len(1, 2, 3, 4, 5)\n'),
+
+    # EVERY ARGUMENT IS EVALUATED, not just the one that answers.  `mark` prints
+    # and returns 5.  Interpreter: `m`, `7`, `m`, `5` -- so the earlier argument
+    # ran in both directions (it is the first argument on line 1 and the last on
+    # line 2), and a fix that emitted only the last argument's push would lose
+    # the first `m` while a fix that answered the first argument would print 5
+    # for the second line.
+    ("mir_builtin_argc_len_args_evaluated",
+     'func mark() {\n'
+     '    say "m"\n'
+     '    return 5\n'
+     '}\n'
+     'say len(mark(), 7)\n'
+     'say len(1, mark())\n'),
+
+    # `list` OBEYS THE SAME RULE, and its answers are a container and nil rather
+    # than a number, so the second and fourth lines pin that nil is a real
+    # answer.  The third line is the one an "answer the first argument" fix gets
+    # wrong: `list([5, 6], 1)` is nil, not the array.  Interpreter:
+    # `nil`, `[5, 6]`, `nil`, `nil`.
+    ("mir_builtin_argc_list_last",
+     'say list(1, 2)\n'
+     'say list(1, [5, 6])\n'
+     'say list([5, 6], 1)\n'
+     'say list(1, 2, 3)\n'),
+
+    # NESTED, IN AN EXPRESSION, AND IN A LOOP.  The last argument of the outer
+    # call is ITSELF a multi-argument call, `x` adds two of them, and the loop
+    # calls one four times -- which is what the emitted pop has to keep balanced
+    # (a route that read the last argument but popped only one value per call
+    # would drift `asp` upward here).  Interpreter: `9`, `7`, `2`.
+    ("mir_builtin_argc_nested_expression_loop",
+     'say len(len(1, 2), len([1, 2, 3], 9))\n'
+     'x = len(1, 2) + len(3, 4, 5)\n'
+     'say x\n'
+     'n = 0\n'
+     'while n < 3 {\n'
+     '  n = n + 1\n'
+     '}\n'
+     'say len(n, 2)\n'),
+
+    # THE CONTROL.  One argument for both builtins, over four containers.  Green
+    # on arrival, and it is the reading that must not move: `3`, `4`, `[1, 2]`,
+    # `1`.  `list` of an array is the SAME value (`mv_list` returns it as-is),
+    # and `len(1)` is 1 -- both are the one-argument arm, not this cell's shape.
+    ("mir_builtin_argc_single_arg_control",
+     'say len([1, 2, 3])\n'
+     'say len("abcd")\n'
+     'say list([1, 2])\n'
+     'say len(1)\n'),
+
 ]
 
 
@@ -3662,6 +3791,39 @@ MIR_ONLY_REFUSE = {
         '  say e\n'
         '}\n',
         "try-escapes"),
+    # THE ARGUMENT COUNT THE ROUTE STILL WITHHOLDS, BY NAME.  `len()` and
+    # `list()` with NO argument are accepted by the parser and answered by the
+    # interpreter, but the answer is NOT a function of the program.  MEASURED
+    # (build/inimerse --no-mods):
+    #
+    #     say len()                 -> 0        (a fresh program: the destination
+    #                                            register's initial 0)
+    #     x = 6                     then
+    #     say len()                 -> 6        (the same register, still 6)
+    #     x = "abcdef"              then
+    #     say list()                -> abcdef   (the leftover, as the string it was)
+    #     say 7                     then
+    #     say len()                 -> 7        (the register's most recent int)
+    #     say len("abc", len())     -> 3        (sp is NOT empty here: the inner
+    #                                            call reads the OUTER call's pushed
+    #                                            "abc" off the stack top)
+    #
+    # The runtime reads the argument stack top and, when the stack is empty, the
+    # VM moves the -- unchanged -- destination register into the result.  Both
+    # of those are leftovers: two programs that differ only in what was assigned
+    # before the call print different values for the same expression.  There is
+    # no answer to copy, so this is the one shape where withholding an answer is
+    # the honest reading, and it gets a NAME (builtin-stale-stack) instead of
+    # staying `illegal-operand`.  It is also what makes the DECISION above sound:
+    # the unknown residue of a multi-argument call can only be READ by exactly
+    # this zero-argument shape, and the pre-scan is static over every container,
+    # so no program this route ACCEPTS contains one.
+    "mir_builtin_argc_zero_len": (
+        'x = 6\nsay len()\n',
+        "builtin-stale-stack"),
+    "mir_builtin_argc_zero_list": (
+        'x = "abcdef"\nsay list()\n',
+        "builtin-stale-stack"),
 }
 
 # THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
