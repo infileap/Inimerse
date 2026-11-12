@@ -442,6 +442,16 @@ ALLOCS_EXPECT = {
     # the number should be, then look.
     "mir_substr_clamps_every_boundary": (11, 29),
     "mir_substr_allocates_its_answer": (3, 10),
+    # split(), MEASURED, with the prediction that missed written above:
+    #   the byte-arithmetic case reads 4|262 -- three element blocks of two
+    #   bytes plus the pool's whole 256-byte first block.
+    #   the thirteen-line case reads 20|1822: thirteen calls, each with its own
+    #   elements, and the pool doubling twice as the regions stack up.  That
+    #   total is reported as read, not decomposed, because every attempt to
+    #   decompose it (including mine) has needed the block arithmetic that only
+    #   the run knows.
+    "mir_split_edges_and_the_trailing_empty": (20, 1822),
+    "mir_split_allocates_new_bytes_per_element": (4, 262),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1523,6 +1533,77 @@ MIR_ONLY = [
     ("mir_substr_allocates_its_answer",
      'say substr("abcdef", 1, 3)\nsay substr("abcdef", 2, 99)\n'
      'say substr("abcdef", 3, -1)\n'),
+    # split(): the first builtin whose answer is a CONTAINER OF NEW STRINGS.
+    # substr() produced one string; this produces an array whose elements are
+    # each freshly allocated bytes.  Written BEFORE the implementation; on
+    # arrival `why=builtin-call`.
+    #
+    # THE FOUR SHAPES THE PLAN'S TABLE DID NOT LIST, measured before a criterion
+    # was written for any of them -- and ONE OF THEM DECIDES THE WHOLE ARM:
+    #   ("a,b,", ",")   -> [a, b]   TWO elements: the TRAILING empty is DROPPED
+    #   (",a", ",")     -> [, a]    TWO elements: the LEADING empty is KEPT
+    #   ("a::b", "::")  -> [a, b]   the separator matches as a WHOLE STRING, not
+    #                               character by character (that would be [a,,b])
+    #   (123, ",")      -> []       a non-string source is read as the EMPTY
+    #                               string, so it yields nothing -- not ["123"]
+    # The leading/trailing asymmetry is not a bug in the interpreter: its loop
+    # is `while (*p)` with `strstr`, so a match at position 0 still pushes an
+    # empty piece while a trailing separator just advances p to the NUL and the
+    # loop ends.  Copied, and pinned by the two lines that differ.
+    #
+    # THE PAIR THAT LOOKS IDENTICAL AND IS NOT:
+    #   split(",", ",") -> prints [] but len is 1   (one empty-string element)
+    #   split("", ",")  -> prints [] and len is 0   (a genuinely empty array)
+    # Both print the same three bytes.  Only len() separates them, which is why
+    # the program below prints len() beside both -- a route that answered "one
+    # empty element" for the empty source would pass every `say` in this file.
+    #
+    # THE TWO OPPOSITE BOUNDARIES, in one program on purpose: an empty SOURCE
+    # yields [] (nothing to split), while an empty SEPARATOR yields [the whole
+    # string] (the interpreter substitutes " " and "abc" has no space in it).
+    # Keeping them adjacent makes it visible which one is the special case.
+    #
+    # MEASURED, byte-exact, in order:
+    #   [a, b, c] / [] / [abc] / [] / 2 / [, a] / [a, b] / [] / [] / 1
+    #   / [, ] / [a, , b] / 0
+    ("mir_split_edges_and_the_trailing_empty",
+     'say split("a,b,c", ",")\nsay split("", ",")\nsay split("abc", "")\n'
+     'say split(nil, ",")\nsay len(split("a,b,", ","))\nsay split(",a", ",")\n'
+     'say split("a::b", "::")\nsay split(123, ",")\n'
+     'say split(",", ",")\nsay len(split(",", ","))\nsay split(",,", ",")\n'
+     'say split("a,,b", ",")\nsay len(split("", ""))\n'),
+    # THE ALLOCATION, and it is what separates "a container of new bytes" from
+    # "a container of views into the source".  PREDICTION, written before the
+    # arm exists, in the form the previous two cells earned: state the number,
+    # then check it, and if the run disagrees, find the mechanism -- do not
+    # edit the number.
+    #
+    #   Every element is its OWN allocation of (piece length + 1).  The
+    #   interpreter ALSO strdups the source and the separator; this route does
+    #   not need to (it reads the values it was handed and owns neither), and
+    #   the first thing the run settled is that it does not.
+    #
+    #   split("a,b,c", ",") = THREE pieces of one byte each, four slots needed
+    #   (one count header + three elements) which the pool's first block of
+    #   EIGHT slots (256 bytes) covers in one allocation, so:
+    #        3 element blocks  1+1, 1+1, 1+1        = 6 bytes
+    #        1 pool block      ................       = 256 bytes
+    #        ------------------------------------------------
+    #        4 blocks                                262 bytes
+    #   PREDICTED 6|144 (which added the two strdups and priced the region at
+    #   128), MEASURED 4|262.  BOTH differences are the prediction's fault, not
+    #   the arm's, and they are recorded rather than smoothed:
+    #     - the two strdups do not exist here (they are the interpreter owning
+    #       its own inputs; this route does not), so 6 blocks -> 4;
+    #     - the pool block is 256 bytes (8 slots), not 128 (4 slots), so 144 ->
+    #       262.  I priced the region at exactly the slots it needed, which is
+    #       the same "increments" mistake as the frontier-copy cell -- the pool
+    #       allocates its whole block, never a fitted one.
+    #   The criterion's job is unharmed: it still catches a route that shares
+    #   bytes instead of copying (0 element blocks) or that allocates per
+    #   character rather than per piece.
+    ("mir_split_allocates_new_bytes_per_element",
+     'a = split("a,b,c", ",")\nsay len(a)\nsay a[0]\nsay a[2]\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
