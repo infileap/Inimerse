@@ -2996,6 +2996,101 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* split(): the first builtin whose answer is a CONTAINER OF NEW STRINGS.\n"
+"   substr() grew one string; this grows an array and one string per element.\n"
+"   Read src/runtime/runtime_posix.c:431-462 beside this.\n"
+"\n"
+"   WHY IT EXISTS.  split() was refused by name (why=builtin-call) while the\n"
+"   array it answers with was already representable here.\n"
+"\n"
+"   THE THREE BEHAVIOURS THE INTERPRETER'S LOOP PRODUCES, and all three are\n"
+"   copied rather than tidied:\n"
+"     1. A TRAILING separator does NOT produce a final empty element\n"
+"        (`split(\"a,b,\", \",\")` is [a, b]) because the loop is `while (*p)`\n"
+"        and a trailing match just advances p to the NUL.  A LEADING one DOES\n"
+"        (`split(\",a\", \",\")` is [, a]) because a match at position 0 pushes\n"
+"        an empty piece before p moves.  THE ASYMMETRY IS THE BEHAVIOUR.\n"
+"     2. THE SEPARATOR MATCHES AS A WHOLE STRING (strstr), not character by\n"
+"        character: `split(\"a::b\", \"::\")` is [a, b], where a per-character\n"
+"        split would answer [a,,b].\n"
+"     3. AN EMPTY SEPARATOR IS REPLACED WITH A SINGLE SPACE before the loop,\n"
+"        so `split(\"abc\", \"\")` is [abc] -- the whole string, because it has no\n"
+"        space in it.  This is the opposite edge from an empty SOURCE, which\n"
+"        yields an empty array: two boundaries that point in opposite\n"
+"        directions, both in one criterion so a reader sees which is the\n"
+"        special case.\n"
+"   A NON-STRING SOURCE or separator reads as the EMPTY STRING, so\n"
+"   `split(123, \",\")` is [] and `split(nil, \",\")` is [].  Copied.\n"
+"\n"
+"   THE PAIR THAT PRINTS IDENTICALLY AND IS NOT: `split(\",\", \",\")` prints []\n"
+"   with len 1 (one empty-string element -- the leading-empty rule applied to a\n"
+"   string that is all separator) while `split(\"\", \",\")` prints [] with len 0\n"
+"   (the loop never runs).  A route that answered one empty element for the\n"
+"   empty source would pass every `say` in the criteria; only len() separates\n"
+"   them, which is why the program prints len() beside both.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- boundaries, named:\n"
+"     - MULTI-BYTE separators are supported (strstr), but a separator that\n"
+"       OVERLAPS itself (`split(\"aaa\", \"aa\")`) follows strstr's left-to-right\n"
+"       non-overlapping advance.  Not pinned: no accepted program here reaches\n"
+"       a shape where a different rule would be observable without also\n"
+"       changing one of the pinned lines.\n"
+"     - THE TWO STRDUPS in the interpreter (source and separator) have no\n"
+"       counterpart here: this route reads the values it was handed and never\n"
+"       owns them, so it allocates ONE region plus one block per ELEMENT.  That\n"
+"       is a real difference in the allocation reading, and it is why the\n"
+"       criterion's predicted total was written down before the arm existed.\n"
+"     - A ONE-ARGUMENT call answers the interpreter's stale register (measured:\n"
+"       `split(\"a,b\")` prints the pushed argument back), so it is refused BY\n"
+"       NAME like the other shapes of that class.\n"
+"\n"
+"   DELETE CONDITION.  The arm, its pre-scan name and the two criteria go\n"
+"   together.  Removing only the trailing-empty rule would print [a, b, ] and\n"
+"   redden exactly one line of one criterion; removing only the leading-empty\n"
+"   rule reddens another.  They are separable, which is why both are pinned.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's\n"
+"   mir_split_edges_and_the_trailing_empty (thirteen lines, byte-exact) and\n"
+"   mir_split_allocates_new_bytes_per_element (one block per element). */\n"
+"static inline MirVal mv_split(MirVal src, MirVal sepv) {\n"
+"    const char *s = (src.type == MV_STR && src.sval) ? src.sval : \"\";\n"
+"    const char *sep = (sepv.type == MV_STR && sepv.sval) ? sepv.sval : \"\";\n"
+"    if (!sep[0]) sep = \" \";                  /* :443 -- the empty-separator rule */\n"
+"    size_t sl = strlen(sep);\n"
+"    /* Count the pieces first so the region can be laid out once: the count is\n"
+"       the number of NON-trailing empty-prefixed pieces, which is what the\n"
+"       `while (*p)` loop emits.  Two passes here, one allocation for the region\n"
+"       -- the same shape mv_keys uses. */\n"
+"    int n = 0;\n"
+"    for (const char *p = s; *p; ) {\n"
+"        const char *q = strstr(p, sep);\n"
+"        n++;\n"
+"        if (!q) break;\n"
+"        p = q + sl;\n"
+"    }\n"
+"    int hdr = mv_arrused + 1;\n"
+"    mv_arr_need(mv_arrused + n + 1);\n"
+"    MirVal r;\n"
+"    r.type = MV_ARR; r.ival = hdr; r.sval = 0; r.ptr = 0;\n"
+"    mv_arrmem[hdr - 1] = mv_int(n);\n"
+"    int w = 0;\n"
+"    for (const char *p = s; *p; ) {\n"
+"        const char *q = strstr(p, sep);\n"
+"        size_t blen = q ? (size_t)(q - p) : strlen(p);\n"
+"        char *nb = (char *)mv_alloc(blen + 1);   /* one block PER ELEMENT */\n"
+"        if (blen) memcpy(nb, p, blen);\n"
+"        nb[blen] = 0;\n"
+"        MirVal e;\n"
+"        e.type = MV_STR; e.ival = 0; e.sval = nb; e.ptr = 0;\n"
+"        mv_arrmem[hdr + w] = e;\n"
+"        w++;\n"
+"        if (!q) break;\n"
+"        p = q + sl;\n"
+"    }\n"
+"    mv_arrused = hdr + w;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4651,11 +4746,12 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
-                    && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0) {
+                    && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
+                    && strcmp(bn, "split") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
-                               " and substr and no other builtin;"
+                               " and substr and split and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -4699,6 +4795,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 /* substr needs THREE: with two the interpreter returns 0 and the
                    destination register keeps its value (measured: `substr("abc",
                    1)` answers 1 on a fresh program).  Same class, same name. */
+                if (strcmp(bn, "split") == 0 && argc < 2) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin 'split' is called with %d argument(s):"
+                               " the interpreter answers that shape with the argument stack top"
+                               " or the destination register's previous value, not with a value"
+                               " the program asks for", f, i, argc);
+                }
                 if (strcmp(bn, "substr") == 0 && argc < 3) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin 'substr' is called with %d argument(s):"
@@ -5523,7 +5626,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
-                    && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0)) return -1;
+                    && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
+                    && strcmp(bn, "split") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5532,6 +5636,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "split") == 0)
+            buf_fmt(b, "    v[%d] = mv_split(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "substr") == 0)
             buf_fmt(b, "    v[%d] = mv_substr(mvargs[asp-3], mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "remove") == 0)

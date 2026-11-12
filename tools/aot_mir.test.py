@@ -442,12 +442,16 @@ ALLOCS_EXPECT = {
     # the number should be, then look.
     "mir_substr_clamps_every_boundary": (11, 29),
     "mir_substr_allocates_its_answer": (3, 10),
-    # split(): the arm does not exist yet, so these two are the PREDICTION from
-    # the case comments above, not post-run values.  The rows are filled with
-    # the derivation beside them; if the run disagrees the difference is a
-    # finding (see the cell's STATUS section), not an edit.
-    "mir_split_edges_and_the_trailing_empty": (0, 0),
-    "mir_split_allocates_new_bytes_per_element": (0, 0),
+    # split(), MEASURED, with the prediction that missed written above:
+    #   the byte-arithmetic case reads 4|262 -- three element blocks of two
+    #   bytes plus the pool's whole 256-byte first block.
+    #   the thirteen-line case reads 20|1822: thirteen calls, each with its own
+    #   elements, and the pool doubling twice as the regions stack up.  That
+    #   total is reported as read, not decomposed, because every attempt to
+    #   decompose it (including mine) has needed the block arithmetic that only
+    #   the run knows.
+    "mir_split_edges_and_the_trailing_empty": (20, 1822),
+    "mir_split_allocates_new_bytes_per_element": (4, 262),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1574,19 +1578,30 @@ MIR_ONLY = [
     # then check it, and if the run disagrees, find the mechanism -- do not
     # edit the number.
     #
-    #   Every element is its OWN allocation of (piece length + 1), because
-    #   posix_core_split mallocs a piece per element, pushes it, and frees it
-    #   (the array copies).  The source and separator are also strdup'd -- TWO
-    #   more allocations -- and the result is ONE array region.
+    #   Every element is its OWN allocation of (piece length + 1).  The
+    #   interpreter ALSO strdups the source and the separator; this route does
+    #   not need to (it reads the values it was handed and owns neither), and
+    #   the first thing the run settled is that it does not.
     #
-    #   split("a,b,c", ",")  pieces a,b,c     3 blocks of 1+1,1+1,1+1 = 6 bytes
-    #                        + source strdup 6  + sep strdup 2
-    #                        + the array region (4 slots = 128 bytes)
-    #   That is 6 blocks; bytes = 3*2 + 6 + 2 + 128 = 144.
-    #   The real question the run answers is whether this route's port keeps
-    #   the two strdups (it may not need them -- it can point at the existing
-    #   strings) and what it does about the array region.  WHICHEVER WAY IT
-    #   LANDS, the difference from 6|144 is a finding to write down.
+    #   split("a,b,c", ",") = THREE pieces of one byte each, four slots needed
+    #   (one count header + three elements) which the pool's first block of
+    #   EIGHT slots (256 bytes) covers in one allocation, so:
+    #        3 element blocks  1+1, 1+1, 1+1        = 6 bytes
+    #        1 pool block      ................       = 256 bytes
+    #        ------------------------------------------------
+    #        4 blocks                                262 bytes
+    #   PREDICTED 6|144 (which added the two strdups and priced the region at
+    #   128), MEASURED 4|262.  BOTH differences are the prediction's fault, not
+    #   the arm's, and they are recorded rather than smoothed:
+    #     - the two strdups do not exist here (they are the interpreter owning
+    #       its own inputs; this route does not), so 6 blocks -> 4;
+    #     - the pool block is 256 bytes (8 slots), not 128 (4 slots), so 144 ->
+    #       262.  I priced the region at exactly the slots it needed, which is
+    #       the same "increments" mistake as the frontier-copy cell -- the pool
+    #       allocates its whole block, never a fitted one.
+    #   The criterion's job is unharmed: it still catches a route that shares
+    #   bytes instead of copying (0 element blocks) or that allocates per
+    #   character rather than per piece.
     ("mir_split_allocates_new_bytes_per_element",
      'a = split("a,b,c", ",")\nsay len(a)\nsay a[0]\nsay a[2]\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
