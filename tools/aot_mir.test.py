@@ -347,6 +347,17 @@ ALLOCS_EXPECT = {
     # would move these numbers.
     "mir_size_and_count_of_every_shape": (2, 768),
     "mir_len_size_count_side_by_side": (1, 256),
+    # has()/keys() readings, MEASURED off each generated program's own
+    # IR-MIR-ALLOCS line on the green run before they were written here.
+    # mv_has allocates NOTHING; the two blocks are the literals the program
+    # writes -- one two-pair dict and one one-pair dict, which do not fit the
+    # first pool block together, so the pool doubles.  mv_keys allocates ONE
+    # region per call and the program calls it five times (three over the
+    # three-pair dict, one over {} , one over the two-pair dict), which is where
+    # the four blocks come from.  A keys() that returned the dict's own region
+    # would read 4 blocks fewer here AND move the first printed line.
+    "mir_has_uses_the_coercing_rule": (2, 768),
+    "mir_keys_returns_a_new_region": (4, 3840),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.

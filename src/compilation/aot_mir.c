@@ -2618,6 +2618,90 @@ static const char *const kMirValBlock =
 "    return mv_int(n);\n"
 "}\n"
 "\n"
+"/* has() and keys(): the two KEY RULES, side by side on purpose, because they\n"
+"   are NOT the same rule and the difference is observable.  Read\n"
+"   src/runtime/runtime_posix.c:498-520 (keys, has) beside this.\n"
+"\n"
+"   WHY IT EXISTS.  Both names were refused by name (why=builtin-call) while\n"
+"   every shape they read was already lowerable.  What made them a CELL rather\n"
+"   than two rows is the pair of measured facts below, which no single rule can\n"
+"   satisfy.\n"
+"\n"
+"   WHAT IT ADDS, two arms with two DIFFERENT comparators:\n"
+"     - mv_has scans the pairs with mv_eq -- the COERCING comparison, the one\n"
+"       OP_EQ/OP_NEQ use.  That is the interpreter's own call (val_eq, its\n"
+"       :516), and it is NOT the dict's key rule: MV_KEY_EQ is the hash gate\n"
+"       plus mv_eq, so a bool and the int it equals are two keys there and ONE\n"
+"       value here.  The measured pair is the whole argument: with\n"
+"       n = {1: \"x\"}, has(n, true) is TRUE while n[true] is nil; with\n"
+"       e = {true: \"b\"}, has(e, 1) is TRUE while e[1] is nil.  An\n"
+"       implementation that reused mv_key_eq passes every string-key line and\n"
+"       answers false on both of those.\n"
+"     - mv_keys builds a NEW array of the dict's keys in INSERTION order (the\n"
+"       region is walked as key,value,key,value).  It must not hand back the\n"
+"       dict's own region: the program prints keys(m), mutates m, prints again,\n"
+"       and writes into the RETURNED array at the end -- an alias moves the\n"
+"       first line or leaks the write back into the dict.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- the boundary, named:\n"
+"     - EITHER NAME CALLED WITHOUT AN ARGUMENT, OR has() WITH ONE.  The\n"
+"       interpreter's arms read the stack TOP and return 0 (a failed builtin)\n"
+"       when the stack is too shallow, which leaves the DESTINATION REGISTER\n"
+"       holding whatever it held before -- measured: `say has(d)` prints the\n"
+"       dict, `w = \"hello\"` then `say has(d)` prints hello, `say keys()`\n"
+"       prints the previous register, and nesting changes it again.  The answer\n"
+"       is a stale register, not a function of the program, so both shapes are\n"
+"       refused BY NAME in the pre-scan (builtin-stale-stack), exactly like the\n"
+"       zero-argument len()/list() case 10.159 recorded.\n"
+"     - A MULTI-ARGUMENT CALL answers off the LAST argument (the stack top),\n"
+"       which is the SAME arm len()/list() already take; nothing new here.\n"
+"     - A SET or ARRAY as the dict argument: has() answers false (its arm tests\n"
+"       VAL_DICT), and keys() answers an EMPTY array, not nil -- measured.\n"
+"\n"
+"   DELETE CONDITION.  Delete both arms and their pre-scan names together; the\n"
+"   pair criterion (mir_has_uses_the_coercing_rule) fails if either name goes\n"
+"   back to builtin-call, and fails differently if has() borrows the key rule.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_has_uses_the_coercing_rule and\n"
+"   mir_keys_returns_a_new_region -- stdout BYTES and rc against the\n"
+"   interpreter, plus the ALLOCS line.  mv_keys is the only arm here that\n"
+"   allocates (one region for the result); mv_has allocates nothing. */\n"
+"static inline MirVal mv_has(MirVal dict, MirVal key) {\n"
+"    if (dict.type != MV_DIC) return mv_boo(0);   /* :514 -- VAL_DICT only */\n"
+"    int iv = mv_arr_live((int)dict.ival);\n"
+"    if (iv < 1 || iv > mv_arrused) return mv_boo(0);\n"
+"    int n = (int)mv_arrmem[iv - 1].ival;\n"
+"    for (int p = 0; p + 1 < n; p += 2)\n"
+"        if (mv_tru(mv_eq(mv_arrmem[iv + p], key))) return mv_boo(1);\n"
+"    return mv_boo(0);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_keys(MirVal a) {\n"
+"    /* :498-511 -- the answer is an array even when there is nothing to put in\n"
+"       it: a non-dict and an empty dict both answer [] (not nil). */\n"
+"    int iv = -1;\n"
+"    if (a.type == MV_DIC) {\n"
+"        int h = mv_arr_live((int)a.ival);\n"
+"        if (h >= 1 && h <= mv_arrused) iv = h;\n"
+"    }\n"
+"    int n = 0;\n"
+"    if (iv > 0) {\n"
+"        int items = (int)mv_arrmem[iv - 1].ival;\n"
+"        n = items / 2;\n"
+"    }\n"
+"    mv_arr_need(mv_arrused + n + 1);   /* the destination region */\n"
+"    MirVal r;\n"
+"    r.type = MV_ARR;\n"
+"    r.ival = mv_arrused + 1;\n"
+"    r.sval = 0;\n"
+"    r.ptr  = 0;\n"
+"    mv_arrmem[r.ival - 1] = mv_int(n);\n"
+"    for (int k = 0; k < n; k++)\n"
+"        mv_arrmem[r.ival + k] = mv_arrmem[iv + 2 * k];   /* INSERTION order */\n"
+"    mv_arrused += n + 1;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4183,12 +4267,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    wrongly (measured: with the arity test first, 'say dbg_ip()'
                    came back as illegal-operand). */
                 if (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
-                    && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0) {
+                    && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
+                    && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
-                               " list, size and count and no other builtin; the registry, its"
-                               " capability flags and the safe-mode rule live in the VM and the"
-                               " mods", f, i, bn);
+                               " list, size, count, has and keys and no other builtin; the"
+                               " registry, its capability flags and the safe-mode rule live in"
+                               " the VM and the mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
                 if (argc < 0 || argc >= REG_LIMIT)
@@ -4207,6 +4292,22 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    there is nothing to copy, and this shape is refused BY NAME.  It
                    is also the ONLY reader of the stack residue a multi-argument call
                    leaves behind, which is why accepting that residue is sound. */
+                /* has() IS THE SECOND SHAPE WITH THAT ANSWER, and it is a different
+                   count: the interpreter's arm returns 0 (a failed builtin) when
+                   the stack holds fewer than TWO values, so `has(d)` leaves the
+                   destination register as it was.  Measured, in one program:
+                   `say has(d)` prints the dict when the register still held it,
+                   prints `hello` after `w = "hello"`, and prints 0 inside
+                   `len("abc", has(d))` because there the top is the pushed
+                   argument.  Same class as the zero-argument call below, so the
+                   same name: the answer is not a function of the expression. */
+                if (strcmp(bn, "has") == 0 && argc < 2) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin 'has' is called with %d argument(s):"
+                               " the interpreter answers that shape with the argument stack top"
+                               " or the destination register's previous value, not with a value"
+                               " the program asks for", f, i, argc);
+                }
                 if (argc == 0) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin '%s' is called with no argument:"
@@ -5013,13 +5114,23 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         const char *bn = (ix >= 0 && ix < bc->string_count && bc->string_pool)
                          ? bc->string_pool[ix] : NULL;
         if (!bn || (strcmp(bn, "len") != 0 && strcmp(bn, "list") != 0
-                    && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0)) return -1;
+                    && strcmp(bn, "size") != 0 && strcmp(bn, "count") != 0
+                    && strcmp(bn, "has") != 0 && strcmp(bn, "keys") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
             buf_fmt(b, "    v[%d] = mv_size(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "count") == 0)
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "keys") == 0)
+            buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "has") == 0)
+            /* TWO operands, and the ORDER is the push order: the compiler pushes
+               the container first and the key second (src/compiler/compiler.c's
+               builtin call site), so the container is asp-2 and the key is the
+               stack top -- the same top every other arm reads.  The pre-scan has
+               already refused anything below two arguments by name. */
+            buf_fmt(b, "    v[%d] = mv_has(mvargs[asp-2], mvargs[asp-1]);", r1);
         else
             buf_fmt(b, "    v[%d] = mv_len(mvargs[asp-1]);", r1);
         buf_fmt(b, " asp -= %d;", w3);
