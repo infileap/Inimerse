@@ -8784,11 +8784,23 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 
 **闭包组五条判据早已在 `origin/main` 上落齐**：§10.130（`c447c09`/`939c1dd`，无捕获函数值）与 §10.131（`1c9d664`，捕获读 + 高阶 + 返回并转递 + 零参调用堆字符串），日期 2026-11-09，两节都写明「五条判据全部落齐」。`stream/mirval-closure`（判据 `bc9862c`、实现 `71fd728`）是在旧基线 `2de6727` 上把同一组判据重做一遍 —— 它诞生时 `939c1dd` 还没进那棵树，所以「另外四条还红」在**那条旧分支上是真的**，在**今天的 main 上不成立**。处置：**不合并**（合并即回退，见三.3），分支保留在工作树 `.worktrees/mirval-closure` 作历史，不删。
 
-### 三、证据（亲跑，`363a3a1`）
+### 三、证据（亲跑；第 2 条的计数表在 `564a147` 上复核重取）
 
 1. `git show origin/main:tools/aot_mir.test.py | grep -c mir_closure_` = **11**：五条 `MIR_ONLY` 判据与它们的 `ALLOCS_EXPECT`/`STDERR_EXCLUDE` 行都在树上。
-2. `git show origin/main:src/compilation/aot_mir.c | grep -c 'mv_fun_cap\|mv_capture'` = **13**：捕获环境已经在实现里（`MV_FUN.ptr` 指向每次创建自己的槽数组）。
-3. `git merge-base --is-ancestor 939c1dd 9dafc43` = 真；`939c1dd` 不是 `2de6727` 的祖先。`71fd728:src/compilation/aot_mir.c` 里 `mv_fun_cap` 出现 **0** 次 ⇒ 合它会删掉 main 已有的捕获支持。
+2. 捕获环境已经在实现里（`MV_FUN.ptr` 指向每次创建自己的槽数组）。**这条的计数方式必须写明，因为第一版把它写错了**：逐提交跑 `git show <sha>:src/compilation/aot_mir.c | grep -c mv_fun_cap`，得到下表（另一侧 `grep -c mv_capture` 一并列出，理由见下）：
+
+   | commit | `mv_fun_cap` | `mv_capture` | 这棵树是什么 |
+   |---|---|---|---|
+   | `2de6727` | 0 | 0 | 闭包支的基点 |
+   | `71fd728` | **0** | **0** | 闭包支 tip（本节的裁定对象） |
+   | `c447c09` | 0 | 0 | §10.130 落地**之前** |
+   | `939c1dd` | **9** | 4 | §10.130 落地（2026-11-09），捕获机制进 main |
+   | `1c9d664` | 9 | 4 | §10.131 补全五条判据 |
+   | `564a147` | **9** | 4 | 当前 main |
+
+   全树交叉验证：`git grep -c mv_fun_cap 564a147 -- src` 只命中一个文件 —— `564a147:src/compilation/aot_mir.c:9`。
+   **第一版这里的数写错过**：当时跑的是 `grep -c 'mv_fun_cap\|mv_capture'`（两个词合一）得到 13，却在正文里把它当成「`mv_fun_cap` 出现 13 次」写下来。13 是 9 + 4 的和，`mv_fun_cap` 本身在每一棵有它的树上都只有 **9**。结论不受影响（`0 vs 9` 已经足够），但数字必须能一条命令复现：一个复算到 9 的人如果照原文去数 13，会以为这条裁定是编的。
+3. `git merge-base --is-ancestor 939c1dd 9dafc43` = 真；`939c1dd` 不是 `2de6727` 的祖先。上表第 2 行与第 5 行的 `0` 与 `9` ⇒ 合 `71fd728` 会删掉 main 已有的捕获支持。
 4. 五条判据在 `363a3a1` 上亲测全绿：`IR-MIR-MIR-ONLY` 逐条 `mir=accepted|exec=same`，`ALLOCS` 读数 `2|64`（捕获读）、`1|32`（高阶）、`2|96`（返回并转递）、`2|40`（零参堆字符串）、`0|0`（无捕获），`ok=yes` 全命中。
 
 ### 四、边界
@@ -8797,6 +8809,7 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 2. **编号让位**：`.scratch/builtin-plan/PLAN.md` 的建议序列把 `size`/`count` 写作 §10.161，本节占用了这个号 ⇒ 该序列从本节的下一号起顺延一位；PLAN 是 scratch 里的建议，不是规范。
 3. **没有剩余格**：闭包组的两格（A 类第十九、二十项）都已落在 §10.130/§10.131，不再从 A 类推进计划里保留条目。
 4. **可复现**：裁定靠三段 `git show`/`merge-base`/`grep -c` 与 `tools/aot_mir.test.py --build build --tool build/aot-mir` 的 `IR-MIR-MIR-ONLY|case=mir_closure_*` 行；任何一条读数变化即本节需重写。
+5. **一次更正记录（本节的数字被独立复核抓到过一次）**：三.2 初版把 `mv_fun_cap` 写成 13，实测是 9（13 是它与 `mv_capture` 的 4 之和，当时命令把两个词合成了一个正则却没在正文里说明）。已就地改成逐提交的计数表并写明命令，结论（`0 vs 9`）不变。这条留在这里而不是悄悄改掉：**裁定靠数字，数字就必须能一条命令复现**；一个复算到 9 的人若按原文去数 13，会以为整节裁定是编的。
 
 ## §10.162 内建 `size`/`count`：一条集合体、两条尾巴，区间两侧都 nil（A 类第三十五项）
 
