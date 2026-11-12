@@ -3,7 +3,7 @@
 **目的**：把当前 `inimerse` 仓库里已经落盘的决策、只在分支上的改动、以及**仍然没有归属的问题**，
 一次性交给接手 Infiverse 大方向的新会话。**本文件只记录事实与出处；不在这里重新论证。**
 
-**阅读顺序建议**：§1 先看边界 → §2 看已拍板的语言决策 → §3 看分支上与 main 的差距 → §4 看真正悬着的事（§4.4 已关闭，剩五件）。
+**阅读顺序建议**：§1 先看边界 → §2 看已拍板的语言决策 → §3 看分支上与 main 的差距 → §4 看真正悬着的事（§4.4 与 §4.6 已关闭，剩四件）。
 
 **出处怎么读**：本文件的每处代码出处都是「反引号路径 + 紧跟的一句反引号引文」，引文必须在该文件里**逐字存在** ——
 不给行号（行号会漂，本文件为此专门写过一节 §4.6）。`tools/check_handoff_anchors.py` 逐条验证这些锚点，
@@ -123,15 +123,17 @@ state: {"alive","dead","respawning"} @bits(2)
 
 ---
 
-## §3. 分支与 main 的差距（**这些还没进 main**）
+## §3. 分支与 main 的差距（**已补进 main**；以下是写下时的读数）
 
-### 3.1 `stream/typeset-v06`（6 个提交，未合并、未推送）
+### 3.1 `stream/typeset-v06`（6 个提交；写下时未合并、未推送，今天已进 main）
 
 落在 `docs/TYPESET_V06.md`（六节 + §7 逐条状态 + §7.8 仍未决 + §8 `FloatN` 影响 + §9 审计 + §10）与四处口径同步
 （`docs/STATUS.md` §4/§5、`docs/BOARD.md`、`docs/archive/ROADMAP.md` 里 `已于 2026-10 提前为 v0.6 目标`、`docs/archive/ROADMAP_3.1.md` 里 `集合化是长期语言演进项目`）。
 提交：`f1d2286` → `b3c2914` → `f28157a` → `a02bdae` → `5fe6598` → `96f1b5e`。
 
-### 3.2 `stream/ci-gate-static`（3 个提交，未合并、未推送）
+**复核（as of `9dafc43`）**：对上面六个提交逐个跑 `git merge-base --is-ancestor <c> 9dafc43`，六个全 **YES**；`git branch -a --contains 96f1b5e` 里同时有 `main` 与 `local/main-tree` ⇒ 它们既在 main 里、也在 `origin/main` 里。而 `stream/typeset-v06` 这个分支名在本地 refs（`git for-each-ref`）与远端 heads（`git ls-remote --heads origin`，81 个 head、0 命中）里**都不再存在** ⇒ 本节原写的「未合并、未推送」是**当时的读数**，今天两件事都不成立。
+
+### 3.2 `stream/ci-gate-static`（3 个提交；写下时未合并、未推送，今天已进 main）
 
 - 把门禁的**三个纯文件检查阶段**（`links`/`doc-paths`/`ignored-credentials`）接进 `.github/workflows/linux-build.yml` 里 `for stage in ignored-credentials links doc-paths text-integrity \` 那一行（今天比本节写的多接了 `text-integrity` [obs: fe72f9f]）。
 - **修掉 Linux CI 一个一直在错的测试枚举**：`ctest -N` **右对齐编号**，旧 sed 要求**恰好一个空格** ⇒
@@ -139,6 +141,8 @@ state: {"alive","dead","respawning"} @bits(2)
   在第 100 个测试加入时静默降级，**阈值没有任何人记录**（这段原始记录今天仍留在文件注释里：`demanded exactly one space between "Test" and "#"` [obs: fe72f9f]）。
 - 加了两条**不是常量**的断言：`collected == Total Tests`（**同一条 `ctest -N`、同一平台** ⇒ Windows 上自动是 124）——今天落在 `tools/ctest_enumerate.sh` 里 `collected %s of %s registered tests from %s` 那句；
   以及「零额外测试」——今天由 `tools/ctest_skip_guard.sh` 承担（旧写法是同一段输出上的 `grep -cF '***Skipped'`，这份内联拷贝在 fe72f9f 上已经找不到了 [obs: fe72f9f]）。
+
+**复核（as of `9dafc43`）**：三件都在 main 里 —— `.github/workflows/linux-build.yml` 里 `for stage in ignored-credentials links doc-paths text-integrity` 那一行今天接的是 `text-integrity`；`tools/ctest_enumerate.sh` 里 `collected %s of %s registered tests from %s` 由 `git log -S 'collected %s of %s registered tests from %s' -- tools/ctest_enumerate.sh` 指到 `12ff42a`（「ci: the same fix sat in two workflows and only one was fixed」）；`tools/ctest_skip_guard.sh` 由 `git log --diff-filter=A -- tools/ctest_skip_guard.sh` 指到 `907b093`。这两个提交都对 `9dafc43` 跑过 `git merge-base --is-ancestor`（全 **YES**），而 `stream/ci-gate-static` 在本地 refs 与 `git ls-remote --heads origin` 里**都已不存在** ⇒ 本节同样只剩「当时的读数」这一层意思。
 
 ### 3.3 计划文件（**未跟踪**）
 
@@ -149,7 +153,7 @@ state: {"alive","dead","respawning"} @bits(2)
 
 ## §4. 真正悬着的事（按「有没有归属」排序）
 
-**写下时是六件；§4.4 已在 `4450320` 上关闭，今天只剩五件悬着 —— 那一条仍留在本节，因为它值得留下的部分是「它曾经被判成未登记，而且判错了」。** [obs: 9dafc43]
+**写下时是六件；§4.4 与 §4.6 都已在 `4450320` 上关闭（一条是文档与实现矛盾、一条是规则没有归属），今天只剩四件悬着（§4.1、§4.2、§4.3、§4.5）—— 那两条仍留在本节，因为它们值得留下的部分是「当时是怎么判的、又是在哪一步被判反的」。** [obs: 9dafc43]
 
 
 ### 4.1 **没有归属**：v3.1 的三根柱子都还没落地
@@ -187,11 +191,13 @@ state: {"alive","dead","respawning"} @bits(2)
 
 ⇒ **「改文档还是删实现」不再是问题**：结论是改文档（实现是对的）。**它从「悬着」里退出。** 留在这里是因为它示范了这类事该怎么关：改文档、补登记、立一条规则，三件都做，而且落在同一个提交里 [obs: 9dafc43]。
 
-### 4.5 **người 的**：`be` 退役节奏
+### 4.5 **`be` 退役节奏**
+
+原标题含一残字 `người`，意图不明；此处按节内内容重命名，内容未动。
 
 已裁定为"纯脱糖别名"（§2.3），但**迁移 29 个 `vtest/*.im`（`vtest` 里 50 行、全仓 89 行）的时机**没定 [obs: fe72f9f]。
 
-### 4.6 **规则本身还没有家**：一次观测 ≠ 一个性质
+### 4.6 **已关闭**：一次观测 ≠ 一个性质（规则已有家、已登记）
 
 本会话里**每一个复核错误都落在同一类句子上**：「某个目录里某些命令的输出**是** X」。
 例：读一次 `ctest -N` 就当成"CI 上注册了什么"；读一次 `java: ABSENT` 就当成"两个 bridge 都跳过"；
@@ -200,8 +206,9 @@ state: {"alive","dead","respawning"} @bits(2)
 ⇒ **与 `EXP_CTEST` 当年那个 130、`docs/archive/API_BUILTIN_TABLE.md` 的「59」、`.github/workflows/linux-build.yml` 里 `demanded exactly one space between "Test" and "#"` 那句
 是同一形状的第五份拷贝**：**一个数/一个格式被写下来时是对的，之后没有人核对它** —— 而且这次，写下来的人是我。
 
-**建议的落点**（未定）：`docs/AUDIT.md` 一条登记，或用 `docs/SYNTAX.md` §7.4 的 H 系列写一条可引用的规则。
-**本文件的作者没有权限写那两处**，所以它被留在这里。
+**当时的建议落点**（未定）：`docs/AUDIT.md` 一条登记，或用 `docs/SYNTAX.md` §7.4 的 H 系列写一条可引用的规则 —— 当时以为「本文件的作者没有权限写那两处」。**它在 `4450320` 上关闭了**，和 §4.4 是同一个提交：家就在 `docs/SYNTAX.md` 里 `H4. 一次观测 ≠ 一个性质`（§7.4 的 H 系列），登记在 `docs/BOARD.md` 里 `docs-comment-and-h4` 那一行（状态「已完成」）；连第三方复核也记了这条：`docs/AUDIT.md` 里 `一条说「规则需要家」的规则，当年没有家；后来有了家，而它举的第一个例子同时过期两次`（它还顺手指出 H4 自己的第一个例子过期了两次）。⇒ **它从「悬着」里退出** [obs: 9dafc43]。
+
+**与 §4.4 是同一件事的两半**：§4.4 关掉的是内容（行注释/块注释那条被观测的规则），§4.6 关掉的是归属（「这种观测不该被当成性质」这条元规则该住在哪里）；两节各自留在这里，不合并。留下的部分是上面那个论证 —— **它把「写下来的数/格式没人复核」这一类缺陷立成了可引用的判据**，而这个论证本身也成了它的实例（它举的例子先过期，见上面 AUDIT 那句）。
 
 ---
 
