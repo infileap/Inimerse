@@ -364,8 +364,8 @@ ALLOCS_EXPECT = {
     # generated programs' own IR-MIR-ALLOCS lines once the arm exists -- they
     # are deliberately left at the default until then, because a number written
     # here before the run would be a guess dressed as a measurement.
-    "mir_str_of_every_shape": (0, 0),
-    "mir_str_float_split_side_by_side": (0, 0),
+    "mir_str_of_every_shape": (17, 864),
+    "mir_str_float_split_side_by_side": (9, 350),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -4120,13 +4120,22 @@ MIR_ONLY_REFUSE = {
     "mir_thread_result_unwrap": (
         'thread plain_worker {\n    return 11\n}\nr = thread_result("plain_worker")\nsay r\n',
         "threads"),
-    # A builtin call.  Today neither of these reaches a named reason: the one
-    # with an argument is refused for a DIFFERENT fault (the argument stack is
-    # left unbalanced because nothing consumes OP_PUSH_REG), and the one without
-    # an argument is refused as a generic unknown opcode.  Both readings are
-    # measured below before the reason gets a name.
+    # A builtin call the route does not emit.  The one with an argument is
+    # refused for a DIFFERENT fault than the one without: its argument stack is
+    # left unbalanced because nothing consumes OP_PUSH_REG, and the no-argument
+    # one is refused as a generic unknown opcode.  Both readings were measured
+    # before the reason got a name, and the reason is the same for both.
+    #
+    # THE PROGRAM CHANGED, AND THIS IS WHY.  It used to be `x = str(1)`, which
+    # was `builtin-call` when str() had no arm.  §10.164 emits str(), so that
+    # program is now ACCEPTED and this criterion correctly went red: the arm it
+    # names moved from the refusal side to the answer side.  It is repointed at
+    # `trim`, which is still not emitted, rather than deleted -- the class this
+    # criterion exists for (a builtin call with an argument is refused BY NAME)
+    # is unchanged, and only the name it names moved.  When trim() lands, this
+    # row moves to the next name still on the outside, for the same reason.
     "mir_builtin_call_with_arg": (
-        'x = str(1)\nsay x\n',
+        'x = trim(" ab ")\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
