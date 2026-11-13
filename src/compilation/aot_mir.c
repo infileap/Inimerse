@@ -3348,6 +3348,82 @@ static const char *const kMirValBlock =
 "    return mv_boo(pl <= sl && memcmp(s + sl - pl, p, pl) == 0);\n"
 "}\n"
 "\n"
+"/* upper(), lower(), trim(): the transforms that ask ONE question about a\n"
+"   SET.  Read src/runtime/runtime_posix.c:625-640 beside this.\n"
+"\n"
+"   upper/lower FOLD ASCII AND NOTHING ELSE, byte-wise -- measured in both\n"
+"   directions so neither line alone can be satisfied by accident:\n"
+"     upper(\"\u00e9\")      is \u00e9     (both bytes unchanged: not locale folding)\n"
+"     upper(\"\u00e0bc\")    is \u00e0BC   (the 0xC3 0xA0 lead stays, ASCII tail folds)\n"
+"     lower(\"\u00c0BC\")    is \u00c0bc   (same, the other way)\n"
+"   A rune-aware or locale-aware implementation folds the accented lead and\n"
+"   reddens these three lines.  A non-string source is the empty string (measured\n"
+"   here rather than carried over from the scans): upper(nil), upper(123),\n"
+"   trim(nil) and trim(123) are all empty.\n"
+"\n"
+"   TRIM'S SET IS AN ENUMERATION `\" \t\r\n\"`, NOT isspace().  Measured:\n"
+"     trim(\" x \")            x        (len 1)\n"
+"     trim(\"\\t\\n x \\r\")      x        (len 1)   the four listed characters\n"
+"     trim(0x0B + \" x\")       0x0B x   (len 3)   vertical tab NOT in the set\n"
+"     trim(0x0C + \" x\")       0x0C x   (len 3)   form feed NOT in the set\n"
+"   The last two are the ones that matter: an isspace() implementation passes\n"
+"   the first two and fails these, which is the whole point of printing them\n"
+"   instead of printing x.  trim strips only the ENDS (\"a b  \" is \"a b\").\n"
+"\n"
+"   ALLOCATION.  upper/lower allocate their answer -- the interpreter strdup()s\n"
+"   the source first, so a no-op fold still answers a fresh string.  trim does\n"
+"   NOT copy when there is nothing to cut: it hands the ORIGINAL bytes back\n"
+"   through a fresh MirVal, so trim(\"abc\") allocates nothing and trim(\" abc \")\n"
+"   allocates its 3-byte answer.  This is not an optimisation promise -- it is\n"
+"   what the code does, and the criterion mir_trim_allocates_only_when_it_cuts\n"
+"   is what says so (it reddens if a copy is added on the no-op path).\n"
+"\n"
+"   DELETE CONDITION.  The three arms and their names go together; an isspace()\n"
+"   trim reddens the 0x0B/0x0C lines, a locale fold reddens the accented lines,\n"
+"   and a copy-on-noop reddens the allocation row. */\n"
+"static inline MirVal mv_case_of(MirVal a, int up) {\n"
+"    const char *s = mv_sstr(a);\n"
+"    size_t n = strlen(s);\n"
+"    char *nb = (char *)mv_alloc(n + 1);\n"
+"    for (size_t i = 0; i < n; i++) {\n"
+"        char c = s[i];\n"
+"        if (up && c >= 'a' && c <= 'z') c -= 'a' - 'A';\n"
+"        else if (!up && c >= 'A' && c <= 'Z') c += 'a' - 'A';\n"
+"        nb[i] = c;\n"
+"    }\n"
+"    nb[n] = 0;\n"
+"    MirVal r; r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
+"static inline MirVal mv_upper(MirVal a) { return mv_case_of(a, 1); }\n"
+"static inline MirVal mv_lower(MirVal a) { return mv_case_of(a, 0); }\n"
+"\n"
+"static inline int mv_trim_ws(char c) {\n"
+"    return c == ' ' || c == '\\t' || c == '\\r' || c == '\\n';   /* the four, enumerated */\n"
+"}\n"
+"\n"
+"static inline MirVal mv_trim(MirVal a) {\n"
+"    const char *s = mv_sstr(a);\n"
+"    const char *b = s;\n"
+"    size_t n = strlen(s);\n"
+"    while (n && mv_trim_ws(b[0])) { b++; n--; }\n"
+"    while (n && mv_trim_ws(b[n - 1])) n--;\n"
+"    if (!n && s[0] == 0) {   /* nothing was cut and the source is empty */\n"
+"        char *nb = (char *)mv_alloc(1); nb[0] = 0;\n"
+"        MirVal r; r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"        return r;\n"
+"    }\n"
+"    if (b == s && n == strlen(s)) {   /* nothing to cut: hand the bytes back */\n"
+"        MirVal r; r.type = MV_STR; r.ival = 0; r.sval = (char *)s; r.ptr = 0;\n"
+"        return r;\n"
+"    }\n"
+"    char *nb = (char *)mv_alloc(n + 1);\n"
+"    memcpy(nb, b, n); nb[n] = 0;\n"
+"    MirVal r; r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "static inline MirVal mv_replace(MirVal str, MirVal oldv, MirVal newv) {\n"
 "    const char *s = mv_sstr(str);\n"
 "    const char *old = mv_sstr(oldv);\n"
@@ -5038,12 +5114,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "chars") != 0 && strcmp(bn, "ord") != 0
                     && strcmp(bn, "chr") != 0 && strcmp(bn, "index") != 0
                     && strcmp(bn, "replace") != 0 && strcmp(bn, "startswith") != 0
-                    && strcmp(bn, "endswith") != 0) {
+                    && strcmp(bn, "endswith") != 0 && strcmp(bn, "upper") != 0
+                    && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
-                               " replace, startswith and endswith and no other builtin;"
+                               " replace, startswith, endswith, upper, lower and trim and"
+                               " no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5094,6 +5172,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
                                " the two-argument scans read their needle off the stack top and"
                                " the source below it, so a short call would read residue", f, i, bn, argc);
+                }
+                if ((strcmp(bn, "upper") == 0 || strcmp(bn, "lower") == 0
+                     || strcmp(bn, "trim") == 0) && argc < 1) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with no argument:"
+                               " the interpreter answers it with a leftover, not with a value"
+                               " the program asks for", f, i, bn);
                 }
                 if ((strcmp(bn, "chars") == 0 || strcmp(bn, "ord") == 0
                      || strcmp(bn, "chr") == 0) && argc < 1) {
@@ -5944,7 +6029,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "chars") != 0 && strcmp(bn, "ord") != 0
                     && strcmp(bn, "chr") != 0 && strcmp(bn, "index") != 0
                     && strcmp(bn, "replace") != 0 && strcmp(bn, "startswith") != 0
-                    && strcmp(bn, "endswith") != 0)) return -1;
+                    && strcmp(bn, "endswith") != 0 && strcmp(bn, "upper") != 0
+                    && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5959,6 +6045,12 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_ord(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "chr") == 0)
             buf_fmt(b, "    v[%d] = mv_chr(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "upper") == 0)
+            buf_fmt(b, "    v[%d] = mv_upper(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "lower") == 0)
+            buf_fmt(b, "    v[%d] = mv_lower(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "trim") == 0)
+            buf_fmt(b, "    v[%d] = mv_trim(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)
