@@ -1035,6 +1035,11 @@ STDERR_EXPECT = {
         "[exception] uncaught: bit_and: expected two integers",),
     "mir_sum_non_numeric_throws": ("[exception] uncaught: sum: non-numeric element",),
     "mir_sum_bool_element_throws": ("[exception] uncaught: sum: non-numeric element",),
+    # sqrt does not coerce a non-number to 0: it throws the interpreter's
+    # type_mismatch, and the message is the message.
+    "mir_sqrt_nil_throws": ("[exception] uncaught: type_mismatch",),
+    "mir_sqrt_string_throws": ("[exception] uncaught: type_mismatch",),
+    "mir_sqrt_array_throws": ("[exception] uncaught: type_mismatch",),
     "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
     "mir_throw_uncaught_cross": ("[exception] uncaught: from-func",),
     # OP_BIND can stop with two DIFFERENT messages, and the interpreter decides
@@ -2025,6 +2030,24 @@ MIR_ONLY = [
      'say round("2.5")\nsay round("x")\nsay round(true)\nsay round(nil)\n'
      'say round([1, 2])\nsay round({"a": 1})\nsay round(f)\n'
      'say round(round(2.5))\n'),
+    # sqrt() reads ONE number and answers a double, and the number is not
+    # always a float: sqrt(4) is 2, sqrt(9) is 3, sqrt(true) is 1 and
+    # sqrt(9223372036854775807) is 3037000499.97605, while sqrt(-1) is `nan`
+    # (the interpreter's printf prints it that way).  The short display is part
+    # of the criterion: sqrt(2) prints 1.414214, not 1.4142135623730951.
+    ("mir_sqrt_numbers_and_nan",
+     'say sqrt(4)\nsay sqrt(2)\nsay sqrt(9)\nsay sqrt(2.25)\n'
+     'say sqrt(0)\nsay sqrt(-1)\nsay sqrt(1e30)\nsay sqrt(true)\n'
+     'say sqrt(9223372036854775807)\nsay sqrt(sqrt(9))\n'),
+    # The three non-numbers are NOT coerced -- they THROW, and the throw is the
+    # answer: the interpreter reports type_mismatch.  Three programs, not one:
+    # an uncaught throw ends the program at the first line, and the try/catch
+    # route refuses a program whose first statement is a try (try-enters,
+    # measured while this cell was being lowered -- a structural refusal, not
+    # a sqrt one).
+    ("mir_sqrt_nil_throws", 'say "before"\nsay sqrt(nil)\n'),
+    ("mir_sqrt_string_throws", 'say sqrt("4")\n'),
+    ("mir_sqrt_array_throws", 'say sqrt([1, 2])\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
@@ -4907,8 +4930,11 @@ MIR_ONLY_REFUSE = {
     # The class under test is unchanged -- a builtin call with an argument that
     # the pre-scan refuses as builtin-call -- only the name it names moves, and
     # it must keep moving forward, never be deleted or relaxed.
+    # This row moves FORWARD as arms land; it exists to keep ONE still-refused
+    # name under the refusal criterion.  sqrt landed in §10.176, so it points
+    # at match, which is still refused by name (translate: builtin call 'match').
     "mir_builtin_call_with_arg": (
-        'x = sqrt(16)\nsay x\n',
+        'x = match("abc", "b")\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
@@ -4988,6 +5014,13 @@ MIR_ONLY_REFUSE = {
     "mir_round_multi_arg_is_not_lowered": (
         'say round(1, 2)\n',
         "builtin-argc"),
+    # sqrt: a zero-argument call answers the destination register's old value
+    # (measured `x = 7\nsay sqrt()` prints 7), so it is the same stale-stack
+    # class as len().  A two-argument call reads the TOP (measured sqrt(1, 2)
+    # is 1.414214 = sqrt(2)), i.e. the ordinary asp-1 rule, and is left accepted.
+    "mir_sqrt_zero_arg_is_not_lowered": (
+        'x = 7\nsay sqrt()\n',
+        "builtin-stale-stack"),
 }
 
 # THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
@@ -5317,7 +5350,7 @@ def perturb_case(mir_tool, workdir, name, src_path, base_c, verbose):
         if not c_changed:
             c_fail += 1
         exe = Path(workdir) / ("%s.p%d.exe" % (name, idx))
-        rc3, _o3, err3 = run(["cc", "-O2", "-o", exe, out_c], workdir)
+        rc3, _o3, err3 = run(["cc", "-O2", "-o", exe, out_c, "-lm"], workdir)
         stdout_changed = "no-file"
         if rc3 == 0:
             rc4, o4, _e4 = run([exe], workdir)
@@ -5417,8 +5450,8 @@ def wide_controls(mir_tool, interp, workdir, verbose):
         rc_i, out_i, _ei = run([interp, "--no-mods", "run", s], workdir)
         exe0 = Path(workdir) / (name + ".exe")
         exe1 = Path(workdir) / (name + ".p.exe")
-        rc_c0, _c, ec0 = run(["cc", "-O2", "-o", exe0, c0], workdir)
-        rc_c1, _c1, ec1 = run(["cc", "-O2", "-o", exe1, c1], workdir)
+        rc_c0, _c, ec0 = run(["cc", "-O2", "-o", exe0, c0, "-lm"], workdir)
+        rc_c1, _c1, ec1 = run(["cc", "-O2", "-o", exe1, c1, "-lm"], workdir)
         same = moved = "no-file"
         if rc_c0 == 0 and rc_c1 == 0:
             rc_r0, out0, _r0 = run([exe0], workdir)
@@ -5536,8 +5569,8 @@ def main():
         BASE_STDOUT[0] = out_i
         exe_m = Path(workdir) / (name + ".mir.exe")
         exe_a = Path(workdir) / (name + ".ast.exe")
-        rc_cm, _o, ecm = run(["cc", "-O2", "-o", exe_m, mir_c], workdir)
-        rc_ca, _o2, eca = run(["cc", "-O2", "-o", exe_a, ast_c], workdir)
+        rc_cm, _o, ecm = run(["cc", "-O2", "-o", exe_m, mir_c, "-lm"], workdir)
+        rc_ca, _o2, eca = run(["cc", "-O2", "-o", exe_a, ast_c, "-lm"], workdir)
         if rc_cm != 0 or rc_ca != 0:
             problems.append("%s: cc failed (mir=%s ast=%s): %s %s"
                             % (name, rc_cm, rc_ca, (ecm or "")[:200], (eca or "")[:200]))
@@ -5621,7 +5654,7 @@ def main():
         miss = mirval_assert_problems(mir_c.read_text())
         if miss:
             problems.append("%s: missing layout assertions (%s)" % (name, ",".join(miss)))
-        rc_c, _o, ec = run(["cc", "-O2", "-o", exe_m, mir_c], workdir)
+        rc_c, _o, ec = run(["cc", "-O2", "-o", exe_m, mir_c, "-lm"], workdir)
         if rc_c != 0:
             problems.append("%s: cc failed: %s" % (name, (ec or "")[:200]))
             continue

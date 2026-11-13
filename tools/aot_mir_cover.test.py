@@ -656,7 +656,7 @@ def main():
             cons = parse_kv(raw, CONSERVE) or cons
         if not cons or cons.get("holds") != "yes":
             problems.append("%s: IR-MIR-CONSERVE does not hold: %s" % (name, cons))
-        rc_c, _o, ec = run([args.cc, "-O2", "-o", exe, cfile], workdir)
+        rc_c, _o, ec = run([args.cc, "-O2", "-o", exe, cfile, "-lm"], workdir)  # -lm: mv_sqrt needs libm
         if rc_c != 0:
             problems.append("%s: the generated C did not compile: %s" % (name, (ec or "")[:200]))
             continue
