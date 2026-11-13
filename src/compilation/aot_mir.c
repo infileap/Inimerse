@@ -5279,14 +5279,15 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
-                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0) {
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
+                    && strcmp(bn, "round") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
-                               " bit_or, bit_xor, bit_not, shl, shr, bool and float and no"
-                               " other builtin;"
+                               " bit_or, bit_xor, bit_not, shl, shr, bool, float and round"
+                               " and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5352,6 +5353,25 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
                                " the two-argument scans read their needle off the stack top and"
                                " the source below it, so a short call would read residue", f, i, bn, argc);
+                }
+                /* round is IDENTITY (measured: round(2.5) is 2.5, round(2.6)
+                   is 2.6 -- it does not round anything), so the one-argument
+                   shape is the only one whose answer is a function of the
+                   expression.  The other two answer leftovers: round() keeps
+                   the destination register's old value (measured 6), and a
+                   two-or-more-argument round answers a position-dependent slot
+                   (measured (1,2)->1, (1,2,3)->2, ("a",2)->nil, (nil,2)->nil). */
+                if (strcmp(bn, "round") == 0 && argc < 1) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with no argument:"
+                               " the interpreter answers it with the destination register's"
+                               " previous value, not with a value the program asks for", f, i, bn);
+                }
+                if (strcmp(bn, "round") == 0 && argc > 1) {
+                    g_prescan_why = "builtin-argc";
+                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
+                               " the interpreter's round answers a position-dependent stack"
+                               " slot for that shape, not a value the program asks for", f, i, bn, argc);
                 }
                 if ((strcmp(bn, "upper") == 0 || strcmp(bn, "lower") == 0
                      || strcmp(bn, "trim") == 0) && argc < 1) {
@@ -6214,7 +6234,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
-                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0)) return -1;
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
+                    && strcmp(bn, "round") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6251,6 +6272,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_bool(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "float") == 0)
             buf_fmt(b, "    v[%d] = mv_float(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "round") == 0)
+            buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)

@@ -550,6 +550,9 @@ ALLOCS_EXPECT = {
     # first (both reported allocs=1|bytes=256), then written.
     "mir_bool_truthiness_and_zero_float": (1, 256),
     "mir_float_converts_scalars_and_zeroes_containers": (1, 256),
+    # round allocates NOTHING itself (identity copies a value); the one block
+    # is the first container literal [1, 2].  MEASURED 1|256, written after.
+    "mir_round_is_identity": (1, 256),
     "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
@@ -2020,7 +2023,7 @@ MIR_ONLY = [
      'say round(2.5)\nsay round(-2.5)\nsay round(2.4)\nsay round(2.6)\n'
      'say round(0.5)\nsay round(-0.5)\nsay round(1)\n'
      'say round("2.5")\nsay round("x")\nsay round(true)\nsay round(nil)\n'
-     'say round([1, 2])\nsay round({a: 1})\nsay round(f)\n'
+     'say round([1, 2])\nsay round({"a": 1})\nsay round(f)\n'
      'say round(round(2.5))\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
