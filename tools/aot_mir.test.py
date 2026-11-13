@@ -526,9 +526,18 @@ ALLOCS_EXPECT = {
     #   and every upper/lower call allocates exactly its answer.  The trim
     #   program is NINE calls and its reading separates the two arms.
     #   Filled after the run.
-    "mir_case_ascii_only_and_nonstring": (0, 0),
-    "mir_trim_charset_is_an_enumeration": (0, 0),
-    "mir_trim_allocates_only_when_it_cuts": (0, 0),
+    #   MEASURED 10|31, 10|24 and 1|4 -- all three read WITH their denominator:
+    #   the case row is 9 calls and each upper/lower call allocates its answer,
+    #   plus the literal loads; the trim row is 9 calls and 10 blocks because
+    #   every trim that CUTS allocates its answer while the two no-op trims
+    #   (trim("abc") and trim("")) share or pre-exist -- the row would be 11
+    #   blocks if the no-op path copied.
+    #   THE CLEAN ROW IS THE THIRD: exactly 1 allocation for exactly 1 cutting
+    #   call (3 chars + NUL = 4 bytes); trim("abc") allocates NOTHING, which is
+    #   the reading that exists to catch a copy added on the no-op path.
+    "mir_case_ascii_only_and_nonstring": (10, 31),
+    "mir_trim_charset_is_an_enumeration": (10, 24),
+    "mir_trim_allocates_only_when_it_cuts": (1, 4),
     "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
@@ -4765,8 +4774,14 @@ MIR_ONLY_REFUSE = {
     # criterion exists for (a builtin call with an argument is refused BY NAME)
     # is unchanged, and only the name it names moved.  When trim() lands, this
     # row moves to the next name still on the outside, for the same reason.
+    # THE ANCHOR MOVES WITH THE FRONTIER (§10.164 wrote this obligation down when
+    # str landed and trim became its target): trim is EMITTED as of §10.172, so
+    # this now points at `sqrt`, the next name this route still refuses by name.
+    # The class under test is unchanged -- a builtin call with an argument that
+    # the pre-scan refuses as builtin-call -- only the name it names moves, and
+    # it must keep moving forward, never be deleted or relaxed.
     "mir_builtin_call_with_arg": (
-        'x = trim(" ab ")\nsay x\n',
+        'x = sqrt(16)\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
