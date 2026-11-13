@@ -3424,6 +3424,107 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* bit_and(), bit_or(), bit_xor(), bit_not(), shl(), shr(): ONE CELL BECAUSE\n"
+"   THEY SHARE TWO ANSWERS THAT LOOK OBVIOUS AND ARE WRONG IN OPPOSITE\n"
+"   DIRECTIONS.  Read src/runtime/runtime_posix.c's posix_core_bit_* beside this.\n"
+"\n"
+"   THE QUESTION THE CELL EXISTS FOR is what a RIGHT SHIFT does to a negative\n"
+"   number.  Measured: shr(-1,1) is -1, shr(-8,2) is -2, shr(-5,1) is -3 --\n"
+"   ARITHMETIC, the sign is kept.  A logical-shift implementation passes every\n"
+"   positive line and reddens exactly those three.\n"
+"\n"
+"   AND THE OPPOSITE ANSWER: shl() DOES NOT WRAP, IT THROWS.  shl(1,63),\n"
+"   shl(1,64) and shl(3,62) all stop with numeric_overflow, so it is checked\n"
+"   multiplication; while shr() SATURATES its count (shr(1,64) 0, shr(-8,65)\n"
+"   -1, no throw).  A wrapping shl passes every value line here and reddens\n"
+"   only the overflow program.  A NEGATIVE COUNT throws numeric_overflow from\n"
+"   both -- the same message as overflow, which is worth knowing when reading\n"
+"   a failure.\n"
+"\n"
+"   NO COERCION, and this is where the cell crosses the previous two:\n"
+"   bit_and(1.9,3), bit_and(-1.9,3), bit_and(\"5\",3), bit_and(nil,3),\n"
+"   bit_and(true,3) and bit_not(nil) ALL THROW `expected two integers` /\n"
+"   `expected an integer`.  The scans and transforms read a non-string as the\n"
+"   empty string; THAT rule does NOT carry over here, and a truncating\n"
+"   implementation would pass every value line and fail only the throw case.\n"
+"\n"
+"   WIDTH.  Answers print as exact decimal (shl(1,62) is 4611686018427387904),\n"
+"   so mv_int's 64-bit width and the interpreter's agree on every line pinned\n"
+"   here -- a narrower accumulator would corrupt the high value lines.\n"
+"\n"
+"   DELETE CONDITION.  Six arms and their names go together; logical shr reddens\n"
+"   the three negative lines, a wrapping shl reddens the overflow program, a\n"
+"   coercing bit_and reddens the non-integer program.  Shl/shr and the four\n"
+"   bitwise ops are one cell because the pre-scan name and the emitter branch\n"
+"   are the same shape -- but the two THROW messages differ, and both are\n"
+"   pinned, so one arm cannot hide behind the other. */\n"
+"static inline MirVal mv_bit_msg(const char *name, const char *tail) {\n"
+"    char buf[96];\n"
+"    snprintf(buf, sizeof buf, \"%s: %s\", name, tail);\n"
+"    size_t n = strlen(buf);\n"
+"    char *nb = (char *)mv_alloc(n + 1);\n"
+"    memcpy(nb, buf, n + 1);\n"
+"    MirVal r; r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
+"static inline int mv_bit_two(MirVal a, MirVal b, const char *name, long long *x, long long *y) {\n"
+"    if (a.type != MV_INT || b.type != MV_INT) {\n"
+"        mv_throw(mv_bit_msg(name, \"expected two integers\"));\n"
+"        return 0;\n"
+"    }\n"
+"    *x = a.ival; *y = b.ival;\n"
+"    return 1;\n"
+"}\n"
+"\n"
+"static inline MirVal mv_bitand(MirVal a, MirVal b) {\n"
+"    long long x, y;\n"
+"    if (!mv_bit_two(a, b, \"bit_and\", &x, &y)) return mv_nil();\n"
+"    return mv_int(x & y);\n"
+"}\n"
+"static inline MirVal mv_bitor(MirVal a, MirVal b) {\n"
+"    long long x, y;\n"
+"    if (!mv_bit_two(a, b, \"bit_or\", &x, &y)) return mv_nil();\n"
+"    return mv_int(x | y);\n"
+"}\n"
+"static inline MirVal mv_bitxor(MirVal a, MirVal b) {\n"
+"    long long x, y;\n"
+"    if (!mv_bit_two(a, b, \"bit_xor\", &x, &y)) return mv_nil();\n"
+"    return mv_int(x ^ y);\n"
+"}\n"
+"static inline MirVal mv_bitnot(MirVal a) {\n"
+"    if (a.type != MV_INT) {\n"
+"        mv_throw(mv_bit_msg(\"bit_not\", \"expected an integer\"));\n"
+"        return mv_nil();\n"
+"    }\n"
+"    return mv_int(~a.ival);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_shl(MirVal a, MirVal b) {\n"
+"    long long x, y;\n"
+"    if (!mv_bit_two(a, b, \"shl\", &x, &y)) return mv_nil();\n"
+"    if (y < 0) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+"    long long r = x;\n"
+"    for (long long i = 0; i < y; i++) {\n"
+"        long long t;\n"
+"        if (__builtin_mul_overflow(r, 2LL, &t)) {   /* checked: overflow throws */\n"
+"            mv_throw(mv_str(\"numeric_overflow\"));\n"
+"            return mv_nil();\n"
+"        }\n"
+"        r = t;\n"
+"    }\n"
+"    return mv_int(r);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_shr(MirVal a, MirVal b) {\n"
+"    long long x, y;\n"
+"    if (!mv_bit_two(a, b, \"shr\", &x, &y)) return mv_nil();\n"
+"    if (y < 0) { mv_throw(mv_str(\"numeric_overflow\")); return mv_nil(); }\n"
+"    if (y >= 64) return mv_int(x < 0 ? -1 : 0);   /* SATURATES, does not throw */\n"
+"    return mv_int(x >> y);   /* ARITHMETIC: the sign is kept */\n"
+"}\n"
+"\n"
+"\n"
 "static inline MirVal mv_replace(MirVal str, MirVal oldv, MirVal newv) {\n"
 "    const char *s = mv_sstr(str);\n"
 "    const char *old = mv_sstr(oldv);\n"
@@ -5115,13 +5216,16 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "chr") != 0 && strcmp(bn, "index") != 0
                     && strcmp(bn, "replace") != 0 && strcmp(bn, "startswith") != 0
                     && strcmp(bn, "endswith") != 0 && strcmp(bn, "upper") != 0
-                    && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0) {
+                    && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0
+                    && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
+                    && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
+                    && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
-                               " replace, startswith, endswith, upper, lower and trim and"
-                               " no other builtin;"
+                               " replace, startswith, endswith, upper, lower, trim, bit_and,"
+                               " bit_or, bit_xor, bit_not, shl and shr and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5165,6 +5269,21 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 /* substr needs THREE: with two the interpreter returns 0 and the
                    destination register keeps its value (measured: `substr("abc",
                    1)` answers 1 on a fresh program).  Same class, same name. */
+                if ((strcmp(bn, "bit_and") == 0 || strcmp(bn, "bit_or") == 0
+                     || strcmp(bn, "bit_xor") == 0 || strcmp(bn, "shl") == 0
+                     || strcmp(bn, "shr") == 0) && argc < 2) {
+                    g_prescan_why = "builtin-argc";
+                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
+                               " the bitwise arms read two operands off the stack top and the"
+                               " register below it", f, i, bn, argc);
+                }
+                if ((strcmp(bn, "upper") == 0 || strcmp(bn, "lower") == 0
+                     || strcmp(bn, "trim") == 0 || strcmp(bn, "bit_not") == 0) && argc < 1) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with no argument:"
+                               " the interpreter answers it with a leftover, not with a value"
+                               " the program asks for", f, i, bn);
+                }
                 if ((strcmp(bn, "index") == 0 || strcmp(bn, "replace") == 0
                      || strcmp(bn, "startswith") == 0 || strcmp(bn, "endswith") == 0)
                     && argc < 2) {
@@ -6030,7 +6149,10 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "chr") != 0 && strcmp(bn, "index") != 0
                     && strcmp(bn, "replace") != 0 && strcmp(bn, "startswith") != 0
                     && strcmp(bn, "endswith") != 0 && strcmp(bn, "upper") != 0
-                    && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0)) return -1;
+                    && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0
+                    && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
+                    && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
+                    && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6045,6 +6167,18 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_ord(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "chr") == 0)
             buf_fmt(b, "    v[%d] = mv_chr(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "bit_and") == 0)
+            buf_fmt(b, "    v[%d] = mv_bitand(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "bit_or") == 0)
+            buf_fmt(b, "    v[%d] = mv_bitor(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "bit_xor") == 0)
+            buf_fmt(b, "    v[%d] = mv_bitxor(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "shl") == 0)
+            buf_fmt(b, "    v[%d] = mv_shl(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "shr") == 0)
+            buf_fmt(b, "    v[%d] = mv_shr(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "bit_not") == 0)
+            buf_fmt(b, "    v[%d] = mv_bitnot(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "upper") == 0)
             buf_fmt(b, "    v[%d] = mv_upper(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "lower") == 0)
