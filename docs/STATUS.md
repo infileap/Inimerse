@@ -9282,3 +9282,63 @@ PLAN 行 10/11/12 三格（`substr`/`split`/`join`）共享"堆字符串的产�
 `mir_bytes_high_bytes_via_ord` 里有一行 `join(chars(join(["a","b"],"")), "-")` —— **§10.169 与本节在这里交汇**：`chars` 把串切成字节、`join` 再拼回去，所以一个能往返的字节被证明了两次。这是复核建议放进判据的，采纳。
 
 `chars` 与 §10.168 的 `split` 是同一族的镜像（都造字符串数组）：`split` 每片一块、`chars` 每字节一块，两格的块粒度闭式互相校验通过（`blocks(n) = n<=8 ? 256 : 256*2^d`）。
+
+## §10.171 `replace`/`index`/`startswith`/`endswith`：四个纯扫描，以及 PLAN 表里被命名错的强制转换（A 类第四十四项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12，§10.170 之后的第十格实现。父 sha `38eeeed`。PLAN 行 16。
+
+### 二、判据（先红）
+
+两条 `MIR_ONLY`，在 `38eeeed` 上都是 `mir=refused|why=builtin-call`（mir-only 274/272）：
+- `mir_scan_empty_needle_and_overlap`（二十次调用，逐字节比）；
+- `mir_replace_allocates_only_its_answer`（**只含 replace**，理由见四）。
+
+### 三、**PLAN 的命名是错的，实测推翻**
+
+PLAN 表把 `startswith("abc", 3) = true` 记成"非字符串参数**经 `say` 路径转成字符串**"。读 `src/runtime/runtime_posix.c:573-640` 并实测：这四个都按 `v.type == VAL_STRING && v.sval ? v.sval : ""` 读参数 —— 非字符串参数是**空串**，**从不**经过 `say` 的格式化路径。所以：
+
+```
+startswith("abc", 3) 是 true      （比较 0 个字节 → 恒真）
+startswith("abc", 4) 也是 true    （与 3 同因，不是长度检查）
+startswith("abc", 0) 是 true
+index("abc", 3)      是 0         （空针在 0 处命中）
+```
+
+把 `3` 当**下标**读的人会预测长度检查，三条全错；判据把 `3`、`4`、`0` 都印出来，其中 **`4` 是分水岭** —— 当作下标它就越界。
+
+### 四、实测钉住的六个形状
+
+1. **空针族**：`index("abc","")`=0（`strstr` 返回串本身）；`replace("abc","","-")` **原样返回** `abc`（在进循环前就返回，**没有它会无限循环**）；`startswith`/`endswith` 空针为 true。
+2. **重叠规则**：`replace("aaa","aa","b")` = **`ba`**（从左到右**非重叠**，命中后跳过整根针）；`replace("abcabc","bc","X")` = `aXaX` 再钉同一规则。
+3. **字节偏移不是字符偏移**（与 §10.170 一致）：`index("héllo","l")` = **3**（不是 2）；`replace("hé","é","e")` = `he`（针是那两个字节）。
+4. **非字符串源/补丁也读成空串**：`index(nil,"a")`=-1、`startswith(nil,"")`=true、`replace(nil,"a","b")`=空串、**`replace("abc","a",nil)` = `bc`** —— nil 补丁是空串，即**删除**，不是错误也不是字面 `nil`。这一条最容易漏量且改变 replace 的含义。
+5. **首次命中**：`index("abcabc","bc")` = 1（不是 4）。
+6. **分配轴单列**：三个扫描答 int/bool、**一条 `mv_alloc` 都没有**；`replace` 只在算好的长度上分配一次答案。
+
+### 五、实现
+
+共享读取器 `mv_sstr`（非字符串→空串）；`mv_index`=`strstr`；`mv_starts`=`strncmp(s,p,strlen(p))`；`mv_ends`=`memcmp(s+sl-pl,p,pl)`；`mv_replace` **先数命中**、按精确长度分配一次（**不做增长中的 scratch**），空针提前返回源串，命中后 `i += ol`（非重叠）。名字门扩到十九个；四者少于两参时按名拒 `builtin-argc`（探针读栈顶、源在其下，短调用会读残值）。
+
+### 六、读数与分母
+
+实测 `mir_scan_empty_needle_and_overlap` = `7|23`、`mir_replace_allocates_only_its_answer` = `2|9`。
+
+**分母必须一起读**：replace-only 那行是干净的一行 —— **恰好 2 次分配对应恰好 2 个答案**（`aXaX` 5 字节 + 原样返回的 `aaa` 4 字节 = 9），所以 replace 只分配答案、别无他物。扫描行的 7 块**不是扫描**：每个到达某个臂的**字符串常量**各是一次 `mv_str` 拷贝（本路线会拷贝字面量），而这条程序三次到达 `"abc"`、还有 `"aaa"/"aa"/"b"`、`"abcabc"/"bc"/"X"`、`"héllo"/"l"/"hé"/"é"` —— **四个扫描本身加零**，所以块数跟着字面量走、不跟着调用数走。
+
+`IR-MIR-COVER|mir-only-cases=274|mir-only-same-as-interpreter=274`；cover `accepted 358→360`。
+
+### 七、非对称注入
+
+1. **非字符串针当下标读**（`k >= 0 && k <= strlen(s)`）：**只红 `startswith("abc",4)`** 一行（interp `true` / mir `false`），其余各行一个字节不动。
+2. **replace 空针交出源指针而非拷贝**：**stdout 逐字节不变**，只有 ALLOCS 动（`7|23→5|15`、`2|9→1|5`）—— 这正是"replace 单列一行"存在的意义。
+
+两次恢复后重跑 `274/274`、exit 0。
+
+### 八、边界
+
+1. **空针的"原样返回"是本路线自己拷贝一份**（解释器在空针分支 `push_string(s)` 后 `free(s)`，语义相同：返回的是**新**串）。差异只在那一份拷贝是否可见 —— 判据用 ALLOCS 钉住它。
+2. **大源串的容量**按精确长度一次分配；解释器的 `realloc` 倍增在这里没有对应物，**不钉**（接受程序达不到那个尺寸）。
+3. **文档预算**：本节不新增 `path:line` 引用，`citations` 1199 行不动。
+4. **删除条件**：四个臂、名字门与两条判据同删。强制转换改成"转字符串再比"红 `4`/`0` 两行；replace 从头重扫红 `ba` 与 `aXaX`；偏移改成字符计数红 `3` 与 `he`。
