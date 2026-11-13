@@ -501,6 +501,26 @@ ALLOCS_EXPECT = {
     #   join() at its end is one answer: 12 blocks, 281 bytes.
     "mir_bytes_ascii_roundtrip": (22, 1830),
     "mir_bytes_high_bytes_via_ord": (12, 281),
+    # The four scans: PREDICTION with its denominator, then the run.
+    #   mir_scan_empty_needle_and_overlap covers TWENTY calls; every one of them
+    #   answers an int, a bool, or the SAME string back (replace with an empty
+    #   needle returns the source unchanged), so the four scans themselves
+    #   should allocate NOTHING and the pool blocks are only the literals.
+    #   mir_replace_allocates_only_its_answer covers TWO replace calls: the first
+    #   answers "aXaX" (4 bytes) and the second returns its 3-byte source
+    #   unchanged, so its answer blocks are 5 and 4 bytes.
+    #   Both numbers are filled after the run; see the note beside them.
+    #   MEASURED 7|23 and 2|9.  READ BOTH WITH THEIR DENOMINATOR:
+    #   the replace-only row is the clean one -- exactly 2 allocations for
+    #   exactly 2 answers (aXaX is 5 bytes, the returned-unchanged aaa is 4,
+    #   9 total), so replace allocates its ANSWER and nothing else.
+    #   The scan row's 7 blocks are NOT the scans: each string CONSTANT that
+    #   reaches an arm is one mv_str copy (the route copies literals), and this
+    #   program reaches "abc" three times, "aaa"/"aa"/"b", "abcabc"/"bc"/"X",
+    #   "héllo"/"l"/"hé"/"é" -- the four scanners themselves add zero,
+    #   which is why its block count tracks the literals and not the calls.
+    "mir_scan_empty_needle_and_overlap": (7, 23),
+    "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1752,6 +1772,69 @@ MIR_ONLY = [
      'say ord(chr(128))\nsay ord(chr(255))\nsay ord(chr(200))\nsay ord(chr(65))\n'
      'say join(chars(join(["a", "b"], "")), "-")\n'
      'say len(chr(-1))\nsay len(chr(257))\nsay len(chr(200))\n'),
+    # replace() / index() / startswith() / endswith(): FOUR PURE SCANS, and the
+    # correction that matters is about what a non-string argument MEANS.
+    #
+    # THE PLAN'S TABLE SAYS `startswith("abc", 3)` is true and calls it "the
+    # non-string pattern is stringified".  MEASURED, that is not the mechanism:
+    # every one of these four reads a non-string argument as the EMPTY STRING
+    # (`v.type == VAL_STRING && v.sval ? v.sval : ""`), never through the `say`
+    # formatting path.  Which is why
+    #     startswith("abc", 3)  is true    (compare 0 bytes -> always true)
+    #     startswith("abc", 4)  is ALSO true, and so is startswith("abc", 0)
+    #     index("abc", 3)       is 0       (empty needle matches at 0)
+    # A READER WHO TAKES `3` FOR A SUBSCRIPT would predict a length check and be
+    # wrong on all three, so the criterion prints 3, 4 AND 0 -- the "4" line is
+    # the one that kills the subscript reading, because as a subscript it would
+    # be out of range.
+    #
+    # THE EMPTY-NEEDLE FAMILY, each measured:
+    #     index("abc", "")      0        strstr returns the string itself
+    #     replace("abc", "", "-") "abc"  returned unchanged, NOT an infinite loop
+    #     startswith/endswith(...,"") true
+    # replace's empty needle is the shape that hangs a naive implementation: the
+    # interpreter returns the source unchanged before entering its loop.
+    #
+    # THE OVERLAP RULE: `replace("aaa", "aa", "b")` is `ba`, i.e. a left-to-right
+    # NON-overlapping scan (after a hit it resumes past the needle).  A
+    # restart-from-the-beginning scan answers `b` and a naive one loops forever.
+    # `replace("abcabc", "bc", "X")` is `aXaX`, which pins the same rule twice.
+    #
+    # BYTE OFFSETS, not character offsets, consistent with §10.170:
+    #     index("héllo", "l")  is 3   ("é" is two bytes, so the first `l` sits at
+    #                                byte 3, not character 2)
+    #     replace("hé", "é", "e") is `he`  -- the needle is those two bytes
+    #
+    # A NON-STRING SOURCE OR PATCH reads as the empty string too, so
+    #     index(nil, "a")            -1
+    #     startswith(nil, "")        true
+    #     replace(nil, "a", "b")     ""      (empty source, so nothing to replace)
+    #     replace("abc", "a", nil)   "bc"    the nil PATCH is the empty string,
+    #                                        i.e. a deletion.  This line is the
+    #                                        one most easily left unmeasured and
+    #                                        it changes what replace means.
+    #
+    # MEASURED, byte-exact, in order:
+    #   0 / abc / true / true / ba / aXaX / true / true / true / true / 0
+    #   / -1 / true / (empty) / bc / a / 3 / he / 1 / true
+    ("mir_scan_empty_needle_and_overlap",
+     'say index("abc", "")\nsay replace("abc", "", "-")\n'
+     'say startswith("abc", "")\nsay endswith("abc", "")\n'
+     'say replace("aaa", "aa", "b")\nsay replace("abcabc", "bc", "X")\n'
+     'say startswith("abc", 3)\nsay startswith("abc", 4)\n'
+     'say startswith("abc", 0)\nsay endswith("abc", 3)\nsay index("abc", 3)\n'
+     'say index(nil, "a")\nsay startswith(nil, "")\nsay replace(nil, "a", "b")\n'
+     'say replace("abc", "a", nil)\nsay index("héllo", "l")\n'
+     'say replace("hé", "é", "e")\nsay index("abcabc", "bc")\n'
+     'say len(replace("abc", "", "xyz"))\n'),
+    # THE ALLOCATION AXIS, kept SEPARATE on purpose: index/startswith/endswith
+    # answer an int or a bool and allocate NOTHING, while replace allocates the
+    # result bytes.  Mixing them into one total would hide the three zeros --
+    # and "did this scan secretly build an intermediate string" is exactly what
+    # the zero is for.  So this program is replace-ONLY, and the all-scan
+    # program above carries the zero through its own row.
+    ("mir_replace_allocates_only_its_answer",
+     'say replace("abcabc", "bc", "X")\nsay len(replace("aaa", "", "-"))\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
