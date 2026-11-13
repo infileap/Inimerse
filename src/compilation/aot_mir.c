@@ -76,6 +76,7 @@ static const char *const kMirValBlock =
 " */\n"
 "#include <stddef.h>   /* offsetof */\n"
 "#include <math.h>     /* sqrt in mv_sqrt; the harness compiles this file with -lm */\n"
+"#include <regex.h>    /* match in mv_match */\n"
 "\n"
 "typedef struct {\n"
 "    int type;\n"
@@ -3407,6 +3408,64 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"static inline MirVal mv_match(MirVal subject, MirVal pattern) {\n"
+"    /* match() is a POSIX EXTENDED REGEX search over two strings: \\d \\w \\s\n"
+"       are translated to classes first, `^`/`$` are anchors, `|` `+` `{n,m}`\n"
+"       are the extended operators, and a pattern that cannot compile answers\n"
+"       FALSE rather than throwing (measured).  Both sides read as the EMPTY\n"
+"       string when they are not strings, so match(123, 2) is true because\n"
+"       \"\" matches \"\", not because \"123\" contains \"2\".\n"
+"\n"
+"       WHY IT EXISTS.  match() was refused BY NAME (why=builtin-call) because\n"
+"       no arm of index() could imitate it: index() answers an offset and is\n"
+"       plain substring, while match() answers a bool from a regex search.\n"
+"\n"
+"       WHAT IT DOES NOT COVER.  This is the interpreter's translation table\n"
+"       byte for byte; it is NOT a regex engine of this route's own, and the\n"
+"       buffer is sized from the pattern (16x + 1) exactly as the interpreter\n"
+"       sizes it, so the two cannot disagree about a pattern near the limit.\n"
+"\n"
+"       MEASURED BY  mir_match_regex_and_empty_pattern,\n"
+"       mir_match_non_strings_read_empty and\n"
+"       mir_match_single_argument_is_not_lowered. */\n"
+"    const char *pat = (pattern.type == MV_STR && pattern.sval) ? pattern.sval : \"\";\n"
+"    const char *sub = (subject.type == MV_STR && subject.sval) ? subject.sval : \"\";\n"
+"    size_t tcap = 16 * strlen(pat) + 1;\n"
+"    char *tr = (char *)malloc(tcap);\n"
+"    if (!tr) return mv_boo(0);\n"
+"    size_t j = 0; int in_class = 0;\n"
+"    for (size_t i = 0; pat[i] && j + 16 < tcap; i++) {\n"
+"        if (pat[i] == '[') in_class = 1;\n"
+"        if (pat[i] == ']' && in_class) in_class = 0;\n"
+"        if (pat[i] == '\\\\' && pat[i + 1]) {\n"
+"            const char *rep = 0;\n"
+"            if (in_class) {\n"
+"                switch (pat[i + 1]) {\n"
+"                    case 'd': rep = \"[:digit:]\"; break;\n"
+"                    case 'w': rep = \"[:alnum:]_\"; break;\n"
+"                    case 's': rep = \"[:space:]\"; break;\n"
+"                    default: break;\n"
+"                }\n"
+"            } else switch (pat[i + 1]) {\n"
+"                case 'd': rep = \"[[:digit:]]\"; break;\n"
+"                case 'D': rep = \"[^[:digit:]]\"; break;\n"
+"                case 'w': rep = \"[[:alnum:]_]\"; break;\n"
+"                case 'W': rep = \"[^[:alnum:]_]\"; break;\n"
+"                case 's': rep = \"[[:space:]]\"; break;\n"
+"                case 'S': rep = \"[^[:space:]]\"; break;\n"
+"                default: break;\n"
+"            }\n"
+"            if (rep) { size_t n = strlen(rep); memcpy(tr + j, rep, n); j += n; i++; continue; }\n"
+"        }\n"
+"        tr[j++] = pat[i];\n"
+"    }\n"
+"    tr[j] = 0;\n"
+"    regex_t re; int ok = 0;\n"
+"    if (regcomp(&re, tr, REG_EXTENDED) == 0) { ok = regexec(&re, sub, 0, NULL, 0) == 0; regfree(&re); }\n"
+"    free(tr);\n"
+"    return mv_boo(ok);\n"
+"}\n"
+"\n"
 "static inline MirVal mv_index(MirVal str, MirVal sub) {\n"
 "    const char *s = mv_sstr(str), *p = mv_sstr(sub);\n"
 "    const char *hit = strstr(s, p);\n"
@@ -5297,14 +5356,15 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
-                    && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0) {
+                    && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
+                    && strcmp(bn, "match") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
-                               " bit_or, bit_xor, bit_not, shl, shr, bool, float, round and"
-                               " sqrt and no other builtin;"
+                               " bit_or, bit_xor, bit_not, shl, shr, bool, float, round,"
+                               " sqrt and match and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5355,6 +5415,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
                                " the bitwise arms read two operands off the stack top and the"
                                " register below it", f, i, bn, argc);
+                }
+                if (strcmp(bn, "match") == 0 && argc < 2) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
+                               " the interpreter answers that shape without pushing anything,"
+                               " so the value printed is the one the call was handed, not a"
+                               " value the program asks for", f, i, bn, argc);
                 }
                 if ((strcmp(bn, "upper") == 0 || strcmp(bn, "lower") == 0
                      || strcmp(bn, "trim") == 0 || strcmp(bn, "bit_not") == 0) && argc < 1) {
@@ -6252,7 +6319,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
-                    && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0)) return -1;
+                    && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
+                    && strcmp(bn, "match") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6293,6 +6361,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
         else if (strcmp(bn, "sqrt") == 0)
             buf_fmt(b, "    v[%d] = mv_sqrt(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "match") == 0)
+            buf_fmt(b, "    v[%d] = mv_match(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)

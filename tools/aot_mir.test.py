@@ -212,6 +212,10 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # program actually reaches: (2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1)
 # + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
+    # match() itself only mallocs its translated pattern and frees it, so the
+    # string-only program allocates nothing; this program's one block is the
+    # `[1, 2]` literal, not the regex.
+    "mir_match_non_strings_read_empty": (1, 256),
     "mir_add_string_concat": (7, 33),
     "mir_concat_chain": (6, 66),
     # The array literal's ONE block is the value pool, not the array: the pool
@@ -2048,6 +2052,28 @@ MIR_ONLY = [
     ("mir_sqrt_nil_throws", 'say "before"\nsay sqrt(nil)\n'),
     ("mir_sqrt_string_throws", 'say sqrt("4")\n'),
     ("mir_sqrt_array_throws", 'say sqrt([1, 2])\n'),
+    # match() is not a substring test: it is a POSIX EXTENDED REGEX search
+    # (measured: "^abc$" true, "a|z" true, "c{1,2}" true, "\d" true on "a1b"),
+    # with \d \w \s translated to classes first.  A pattern that cannot
+    # compile ("[") answers false rather than throwing, and the empty pattern
+    # matches everything.  The last line (case-sensitive) is the one that tells
+    # an implementation that forgot REG_EXTENDED's case default from one that
+    # rewrote the match as strstr.
+    ("mir_match_regex_and_empty_pattern",
+     'say match("abc", "b")\nsay match("abc", "z")\nsay match("abc", "^b")\n'
+     'say match("abc", "b$")\nsay match("abc", "^abc$")\nsay match("abc", "a|z")\n'
+     'say match("abc", "a+")\nsay match("abc", "[b-d]")\nsay match("abc", "c{1,2}")\n'
+     'say match("a1b", "\\d")\nsay match("a1b", "\\w")\nsay match("abc", "")\n'
+     'say match("abc", "[")\nsay match("abc", "ABC")\n'),
+    # A non-string on EITHER side reads as the EMPTY string, never through the
+    # say formatting: match(123, 2) is TRUE because the subject is "" and the
+    # pattern is "" (and "" matches ""), not because "123" contains "2".
+    # match([1, 2], 1) is true for the opposite reason: the subject is "" too,
+    # but the pattern 1 is also "", so it is true by the same empty rule -- which
+    # is exactly why the "\d" line above has to be in a STRING-only program.
+    ("mir_match_non_strings_read_empty",
+     'say match(123, 2)\nsay match(nil, "a")\nsay match([1, 2], 1)\n'
+     'say match("abc", 123)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
@@ -4934,7 +4960,7 @@ MIR_ONLY_REFUSE = {
     # name under the refusal criterion.  sqrt landed in §10.176, so it points
     # at match, which is still refused by name (translate: builtin call 'match').
     "mir_builtin_call_with_arg": (
-        'x = match("abc", "b")\nsay x\n',
+        'x = declared(1)\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
@@ -5020,6 +5046,14 @@ MIR_ONLY_REFUSE = {
     # is 1.414214 = sqrt(2)), i.e. the ordinary asp-1 rule, and is left accepted.
     "mir_sqrt_zero_arg_is_not_lowered": (
         'x = 7\nsay sqrt()\n',
+        "builtin-stale-stack"),
+    # match() with one argument answers nothing at all (measured: the
+    # interpreter pops and pushes NOTHING when the stack has fewer than two
+    # values, so `say match("abc")` prints the argument it was handed).  The
+    # refusal is the interpreter's behaviour, not a missing arm: a two-slot
+    # builtin cannot be answered from one slot.
+    "mir_match_single_argument_is_not_lowered": (
+        'say match("abc")\n',
         "builtin-stale-stack"),
 }
 
