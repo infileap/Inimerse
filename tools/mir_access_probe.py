@@ -84,6 +84,23 @@ RUNTIME_FILE = "src/vm/vm.c"
 COPY_IGNORE = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc",
                                      "*.o", "*.so", "*.a", "node_modules")
 
+
+def copy_ignore(root, directory, names):
+    """What the throwaway copy leaves behind: a SCOPE at the top level, a filter below it.
+
+    The sweeps compile the .c files scan_files lists, and scan_files walks
+    SCAN_DIRS -- so a top-level entry outside those three directories is never
+    compiled, never rewritten and never read: copying it buys no reading.  This
+    checkout held 9.9 GB when the registered test timed out at 300 s (2026-11-13),
+    of which .worktrees was 4.9 GB and the probe dumps under .probe-ie about
+    1.1 GB -- neither is a source tree, and the copy walked all of it before the
+    first of three compiler sweeps.  Below the top level COPY_IGNORE still applies,
+    because a build/ inside src/ is build output and not a source file.
+    """
+    if os.path.abspath(directory) == os.path.abspath(root):
+        return [n for n in names if n not in SCAN_DIRS]
+    return list(COPY_IGNORE(directory, names))
+
 # The declarator, read from the RIGHT: a greedy type would swallow all but the
 # last letter of "int count" and call the member "t" (the name is one identifier,
 # so a single character was enough to complete the match).  Taking the name first
@@ -415,7 +432,12 @@ def unseen_reason(rel, fatal_files, soft_files):
 
 
 def run_probe(cc, root=None, members=None, workers=8):
-    """Measure the tree at root.  Never leaves a copy behind."""
+    """Measure the tree at root.  Never leaves a copy behind.
+
+    The copy holds SCAN_DIRS and nothing else (see copy_ignore): the rest of the
+    tree is not compiled by any of the three sweeps, so copying it would be bytes
+    without a reading -- and on a checkout with worktrees it is gigabytes.
+    """
     root = root or ROOT
     header_path = os.path.join(root, CONTAINER_HEADER)
     original = open(header_path, errors="ignore").read()
@@ -433,7 +455,8 @@ def run_probe(cc, root=None, members=None, workers=8):
     tmp = tempfile.mkdtemp(prefix="mir_access_probe.")
     try:
         tree = os.path.join(tmp, "tree")
-        shutil.copytree(root, tree, ignore=COPY_IGNORE, symlinks=True)
+        shutil.copytree(root, tree, ignore=lambda d, n: copy_ignore(root, d, n),
+                        symlinks=True)
         tree_header = os.path.join(tree, CONTAINER_HEADER)
         files = scan_files(tree)
 
