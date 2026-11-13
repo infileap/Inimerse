@@ -538,6 +538,11 @@ ALLOCS_EXPECT = {
     "mir_case_ascii_only_and_nonstring": (10, 31),
     "mir_trim_charset_is_an_enumeration": (10, 24),
     "mir_trim_allocates_only_when_it_cuts": (1, 4),
+    # THE ALLOCATION AXIS FOR THE BIT CELL IS A ZERO, and it is worth an explicit
+    # row: all six builtins answer an INTEGER, so a program made of them should
+    # allocate NOTHING.  A row of (0,0) is what catches an implementation that
+    # builds an intermediate string or routes an answer through mv_str.
+    "mir_bits_values_and_width": (0, 0),
     "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
@@ -1010,6 +1015,14 @@ def allocs_problems(text, case):
 # fail the second, and a route that printed nothing fails the first.  One
 # table of positives cannot see "printed the wrong throw's word".
 STDERR_EXPECT = {
+    # The bit cell throws TWO different messages and they name different things:
+    # overflow of the SHIFT (numeric_overflow) and a non-INT operand
+    # ("<name>: expected two integers" / "bit_not: expected an integer").
+    # Pinning both means a coercing implementation cannot pass by producing
+    # one message in the wrong place.
+    "mir_shl_overflow_is_an_error": ("[exception] uncaught: numeric_overflow",),
+    "mir_bitwise_noninteger_throws": (
+        "[exception] uncaught: bit_and: expected two integers",),
     "mir_sum_non_numeric_throws": ("[exception] uncaught: sum: non-numeric element",),
     "mir_sum_bool_element_throws": ("[exception] uncaught: sum: non-numeric element",),
     "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
@@ -1898,6 +1911,53 @@ MIR_ONLY = [
      'say len(trim("   "))\nsay trim("  a")\nsay len(trim("abc"))\n'),
     ("mir_trim_allocates_only_when_it_cuts",
      'say trim("abc")\nsay trim(" abc ")\n'),
+    # THE BIT CELL: six builtins, and the ONE question that decides whether an
+    # implementation is right is what a RIGHT SHIFT does to a negative number.
+    #
+    # MEASURED, all six value lines byte-exact:
+    #   shr(-1,1) -1   shr(-8,2) -2   shr(-5,1) -3   -- ARITHMETIC, it keeps the
+    #   sign, and a logical-shift implementation reddens exactly these three.
+    #   shr(1,64) 0    shr(-8,65) -1  shr(1,65) 0   -- counts past 63 SATURATE
+    #   rather than wrap or throw: positive to 0, negative to -1.
+    #   shl(5,34) 85899345920  -- NOTE: the plan's example prints 8589934592,
+    #   which is 1<<33; the measured answer for 5<<34 is ten times that, and the
+    #   criterion pins the measured one.  A criterion copied from the plan would
+    #   have been red for a reason that has nothing to do with the implementation.
+    #   shl(1,62) 4611686018427387904  shl(-5,2) -20  -- big ints print in exact
+    #   decimal, which is also what says the shifted width matches mv_int.
+    #   bit_and(-5,3) 3, bit_or(4,2) 6, bit_xor(-1,5) -6, bit_xor(6,3) 5
+    #   bit_not(3) -4, bit_not(0) -1, bit_not(-1) 0  -- two's complement.
+    #
+    # AND THE SHAPE THE PLAN GETS WRONG THE OTHER WAY: bit_and/bit_or/bit_xor/
+    # bit_not DO NOT COERCE.  Measured, `bit_and(1.9,3)`, `bit_and(-1.9,3)`,
+    # `bit_and("5",3)`, `bit_and(nil,3)`, `bit_and(true,3)` and `bit_not(nil)`
+    # ALL throw `<name>: expected two integers` / `bit_not: expected an integer`.
+    # The previous two cells established that scans and transforms read a
+    # non-string as the empty string; THAT rule does NOT carry over here, which
+    # is exactly why this line was measured instead of assumed.  A truncating
+    # implementation passes every value line and reddens only these throw cases.
+    #
+    # OVERFLOW IS AN ERROR, NOT A WRAP: shl(1,63), shl(1,64), shl(3,62) all throw
+    # numeric_overflow -- so shl is checked multiplication, while shr saturates.
+    # A wrapping shl passes the value lines and reddens the overflow cases.
+    #
+    # THE COUNT ITSELF must be a non-negative INT: shr(1,-1) and shl(1,-1) throw
+    # numeric_overflow (the same message as overflow, which is worth knowing).
+    #
+    # Throws are SEPARATE programs because an uncaught exception ends the
+    # program: one program can only demonstrate one throw, and mixing them into
+    # the value program would truncate the value lines and hide the rest.
+    ("mir_bits_values_and_width",
+     'say shr(-1, 1)\nsay shr(-8, 2)\nsay shr(-5, 1)\n'
+     'say shr(1, 64)\nsay shr(-8, 65)\nsay shr(1, 65)\n'
+     'say shl(5, 34)\nsay shl(1, 62)\nsay shl(-5, 2)\n'
+     'say bit_and(5, 3)\nsay bit_and(-5, 3)\nsay bit_or(4, 2)\n'
+     'say bit_xor(-1, 5)\nsay bit_xor(6, 3)\nsay bit_not(3)\n'
+     'say bit_not(0)\nsay bit_not(-1)\n'),
+    ("mir_shl_overflow_is_an_error",
+     'say "before"\nsay shl(1, 63)\n'),
+    ("mir_bitwise_noninteger_throws",
+     'say "before"\nsay bit_and(1.9, 3)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
