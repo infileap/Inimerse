@@ -1035,6 +1035,11 @@ STDERR_EXPECT = {
         "[exception] uncaught: bit_and: expected two integers",),
     "mir_sum_non_numeric_throws": ("[exception] uncaught: sum: non-numeric element",),
     "mir_sum_bool_element_throws": ("[exception] uncaught: sum: non-numeric element",),
+    # sqrt does not coerce a non-number to 0: it throws the interpreter's
+    # type_mismatch, and the message is the message.
+    "mir_sqrt_nil_throws": ("[exception] uncaught: type_mismatch",),
+    "mir_sqrt_string_throws": ("[exception] uncaught: type_mismatch",),
+    "mir_sqrt_array_throws": ("[exception] uncaught: type_mismatch",),
     "mir_throw_uncaught_top": ("[exception] uncaught: boom",),
     "mir_throw_uncaught_cross": ("[exception] uncaught: from-func",),
     # OP_BIND can stop with two DIFFERENT messages, and the interpreter decides
@@ -2035,13 +2040,14 @@ MIR_ONLY = [
      'say sqrt(0)\nsay sqrt(-1)\nsay sqrt(1e30)\nsay sqrt(true)\n'
      'say sqrt(9223372036854775807)\nsay sqrt(sqrt(9))\n'),
     # The three non-numbers are NOT coerced -- they THROW, and the throw is the
-    # answer: the interpreter reports type_mismatch.  A catch without a binding
-    # keeps all three visible in one program (an uncaught one ends the program
-    # at the first line, which hid the other two).
-    ("mir_sqrt_non_number_throws",
-     'try {\n  say sqrt(nil)\n} catch {\n  say "nil thrown"\n}\n'
-     'try {\n  say sqrt("4")\n} catch {\n  say "string thrown"\n}\n'
-     'try {\n  say sqrt([1, 2])\n} catch {\n  say "array thrown"\n}\n'),
+    # answer: the interpreter reports type_mismatch.  Three programs, not one:
+    # an uncaught throw ends the program at the first line, and the try/catch
+    # route refuses a program whose first statement is a try (try-enters,
+    # measured while this cell was being lowered -- a structural refusal, not
+    # a sqrt one).
+    ("mir_sqrt_nil_throws", 'say "before"\nsay sqrt(nil)\n'),
+    ("mir_sqrt_string_throws", 'say sqrt("4")\n'),
+    ("mir_sqrt_array_throws", 'say sqrt([1, 2])\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
@@ -4924,8 +4930,11 @@ MIR_ONLY_REFUSE = {
     # The class under test is unchanged -- a builtin call with an argument that
     # the pre-scan refuses as builtin-call -- only the name it names moves, and
     # it must keep moving forward, never be deleted or relaxed.
+    # This row moves FORWARD as arms land; it exists to keep ONE still-refused
+    # name under the refusal criterion.  sqrt landed in §10.176, so it points
+    # at match, which is still refused by name (translate: builtin call 'match').
     "mir_builtin_call_with_arg": (
-        'x = sqrt(16)\nsay x\n',
+        'x = match("abc", "b")\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
@@ -5341,7 +5350,7 @@ def perturb_case(mir_tool, workdir, name, src_path, base_c, verbose):
         if not c_changed:
             c_fail += 1
         exe = Path(workdir) / ("%s.p%d.exe" % (name, idx))
-        rc3, _o3, err3 = run(["cc", "-O2", "-o", exe, out_c], workdir)
+        rc3, _o3, err3 = run(["cc", "-O2", "-o", exe, out_c, "-lm"], workdir)
         stdout_changed = "no-file"
         if rc3 == 0:
             rc4, o4, _e4 = run([exe], workdir)
@@ -5441,8 +5450,8 @@ def wide_controls(mir_tool, interp, workdir, verbose):
         rc_i, out_i, _ei = run([interp, "--no-mods", "run", s], workdir)
         exe0 = Path(workdir) / (name + ".exe")
         exe1 = Path(workdir) / (name + ".p.exe")
-        rc_c0, _c, ec0 = run(["cc", "-O2", "-o", exe0, c0], workdir)
-        rc_c1, _c1, ec1 = run(["cc", "-O2", "-o", exe1, c1], workdir)
+        rc_c0, _c, ec0 = run(["cc", "-O2", "-o", exe0, c0, "-lm"], workdir)
+        rc_c1, _c1, ec1 = run(["cc", "-O2", "-o", exe1, c1, "-lm"], workdir)
         same = moved = "no-file"
         if rc_c0 == 0 and rc_c1 == 0:
             rc_r0, out0, _r0 = run([exe0], workdir)
@@ -5560,8 +5569,8 @@ def main():
         BASE_STDOUT[0] = out_i
         exe_m = Path(workdir) / (name + ".mir.exe")
         exe_a = Path(workdir) / (name + ".ast.exe")
-        rc_cm, _o, ecm = run(["cc", "-O2", "-o", exe_m, mir_c], workdir)
-        rc_ca, _o2, eca = run(["cc", "-O2", "-o", exe_a, ast_c], workdir)
+        rc_cm, _o, ecm = run(["cc", "-O2", "-o", exe_m, mir_c, "-lm"], workdir)
+        rc_ca, _o2, eca = run(["cc", "-O2", "-o", exe_a, ast_c, "-lm"], workdir)
         if rc_cm != 0 or rc_ca != 0:
             problems.append("%s: cc failed (mir=%s ast=%s): %s %s"
                             % (name, rc_cm, rc_ca, (ecm or "")[:200], (eca or "")[:200]))
@@ -5645,7 +5654,7 @@ def main():
         miss = mirval_assert_problems(mir_c.read_text())
         if miss:
             problems.append("%s: missing layout assertions (%s)" % (name, ",".join(miss)))
-        rc_c, _o, ec = run(["cc", "-O2", "-o", exe_m, mir_c], workdir)
+        rc_c, _o, ec = run(["cc", "-O2", "-o", exe_m, mir_c, "-lm"], workdir)
         if rc_c != 0:
             problems.append("%s: cc failed: %s" % (name, (ec or "")[:200]))
             continue

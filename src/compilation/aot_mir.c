@@ -75,6 +75,7 @@ static const char *const kMirValBlock =
 " * the second consumer still lowers ASTs, is the fork this block avoids.\n"
 " */\n"
 "#include <stddef.h>   /* offsetof */\n"
+"#include <math.h>     /* sqrt in mv_sqrt; the harness compiles this file with -lm */\n"
 "\n"
 "typedef struct {\n"
 "    int type;\n"
@@ -3390,6 +3391,22 @@ static const char *const kMirValBlock =
 "    return (v.type == MV_STR && v.sval) ? v.sval : \"\";\n"
 "}\n"
 "\n"
+"static inline MirVal mv_sqrt(MirVal a) {\n"
+"    /* sqrt() reads one NUMBER and NO other shape: a string, a nil and a\n"
+"       container each THROW type_mismatch in the interpreter (measured), not\n"
+"       zero.  Booleans are numbers here (sqrt(true) is 1) and integers stay\n"
+"       integers on the way in (sqrt(9223372036854775807) is\n"
+"       3037000499.97605), and a negative radicand answers nan rather than\n"
+"       throwing (the interpreter prints `nan`, so NaN is the answer). */\n"
+"    double d;\n"
+"    if (a.type == MV_INT) d = (double)a.ival;\n"
+"    else if (a.type == MV_FLT) d = a.fval;\n"
+"    else if (a.type == MV_BOO) d = a.ival ? 1.0 : 0.0;\n"
+"    else { mv_throw(mv_str(\"type_mismatch\")); return mv_nil(); }\n"
+"    MirVal r; r.type = MV_FLT; r.ival = 0; r.fval = sqrt(d); r.sval = 0; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "static inline MirVal mv_index(MirVal str, MirVal sub) {\n"
 "    const char *s = mv_sstr(str), *p = mv_sstr(sub);\n"
 "    const char *hit = strstr(s, p);\n"
@@ -5280,14 +5297,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
-                    && strcmp(bn, "round") != 0) {
+                    && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
-                               " bit_or, bit_xor, bit_not, shl, shr, bool, float and round"
-                               " and no other builtin;"
+                               " bit_or, bit_xor, bit_not, shl, shr, bool, float, round and"
+                               " sqrt and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5361,7 +5378,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    the destination register's old value (measured 6), and a
                    two-or-more-argument round answers a position-dependent slot
                    (measured (1,2)->1, (1,2,3)->2, ("a",2)->nil, (nil,2)->nil). */
-                if (strcmp(bn, "round") == 0 && argc < 1) {
+                if ((strcmp(bn, "round") == 0 || strcmp(bn, "sqrt") == 0) && argc < 1) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin '%s' is called with no argument:"
                                " the interpreter answers it with the destination register's"
@@ -6235,7 +6252,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
-                    && strcmp(bn, "round") != 0)) return -1;
+                    && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6274,6 +6291,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_float(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "round") == 0)
             buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
+        else if (strcmp(bn, "sqrt") == 0)
+            buf_fmt(b, "    v[%d] = mv_sqrt(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)
