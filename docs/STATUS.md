@@ -9439,3 +9439,11 @@ index("abc", 3)      是 0         （空针在 0 处命中）
 2. **`bit_not` 没有两参形态**，`argc` 门因此与其余五个不同（`builtin-stale-stack` vs `builtin-argc`）。
 3. **文档预算**：本节不新增 `path:line` 引用，`citations` 1199 行不动。
 4. **删除条件**：六个臂、名字门与三条判据同删；逻辑右移红负三行，绕回左移红溢出两条，截断强制转换红非整数程序。
+
+### 八、同一轮里碰到的第二件事：`check_release_tags` 的红灯不是本格的，但它挡住了推送
+
+位运算这支合并树上 gate 第 19 阶段红：`docs/STATUS.md:42` 等四处记的 `v0.5.1 -> 4e444dd` 被判为漂移，而 `v0.5.1` 仍指向 `4e444dd` —— **错的是比较，不是记录**：git 自动缩写的**打印宽度**随对象数从 7 涨到 8（`--short` 给 `4e444dde`），工具却在逐字符比较。干净主树 `c753708` 上单跑同一工具同样红，确认与本格无关。
+
+裁定（主人会话）＝改工具、不改归档。落地在 `stream/release-tags-prefix`，**先写自测并跑出红**（2/4 cells，两条预期失败），再把比较从"字符串"换成"把记录解析成 commit"（`rev-parse --verify --quiet <recorded>^{commit}` 再比 tag 指向的 commit）；四条 cell 覆盖：不同 commit 红、歧义缩写必须**被 `rev-parse` 拒绝而不是悄悄加长**、README 基线落后于最新 tag 红、打印宽度变大但记录仍解析到同一 commit **绿**。注册进 ctest 后 `EXP_CTEST` 203→204、`docs/BOARD.md` 的 `recon.ctest-count` 同步（两个数与本节的注册在同一轮里改，否则下一个人的 gate 会红在一个不点名他的地方，这正是 `EXP_CTEST` 那行注释写下的规矩）。
+
+**边界**：这只治"记录比今天打印的宽/窄但指向同一 commit"这一类；tag 真被移动、记录解析不到、歧义三种仍是红。**没有改动任何归档文档** —— `AUDIT.md` 与 `RELEASE_*.md` 记的是写下时为真的事，仓库规矩是归档不回改。

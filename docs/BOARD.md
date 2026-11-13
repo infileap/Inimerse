@@ -467,7 +467,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
     recon.explicit-delta=12
     recon.citations-cases=8
     recon.word-refs-baseline=87
-    recon.ctest-count=203
+    recon.ctest-count=204
 
 | 7 | 读回收据 | `rc=0`、`RECON\|tokens=5\|tokens-read-back=5\|tokens-unknown=0\|tokens-resolver-failed=0\|tokens-tree-disagrees=0\|closed=yes`（`tokens` 等于四项之和；不闭环就自己报 PROBLEM；「没这个 key」「有 key 但解算器不在/抛了」「树自己三个数打架」是三件不同的事，第四条是后加的）、每个 token 的值都是从树上读回来的 | **把任意一个 token 的值改错 ⇒ 第 7 行必红**；把 key 拼错 ⇒ 红且说「这个 key 没有解算器」（key 集封闭）；同一个 key 两个值 ⇒ 红。**这是本节的元判据**：它决定前六行是「有牙的清单」还是「只读文档」—— 2026-11-04 实测过没有它时的状态：把 `ctest-count` 那格改成「今天都是 192」，七个 docs 检查器全部 `rc=0`，没有一个吭声 |
 
