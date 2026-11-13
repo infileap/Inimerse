@@ -520,6 +520,15 @@ ALLOCS_EXPECT = {
     #   "héllo"/"l"/"hé"/"é" -- the four scanners themselves add zero,
     #   which is why its block count tracks the literals and not the calls.
     "mir_scan_empty_needle_and_overlap": (7, 23),
+    #   upper/lower/trim: PREDICTION with its denominator first.
+    #   The case program is NINE calls over seven literals: upper(123) and its
+    #   len() see the empty string, which is allocated once by the literal load,
+    #   and every upper/lower call allocates exactly its answer.  The trim
+    #   program is NINE calls and its reading separates the two arms.
+    #   Filled after the run.
+    "mir_case_ascii_only_and_nonstring": (0, 0),
+    "mir_trim_charset_is_an_enumeration": (0, 0),
+    "mir_trim_allocates_only_when_it_cuts": (0, 0),
     "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
@@ -1835,6 +1844,51 @@ MIR_ONLY = [
     # program above carries the zero through its own row.
     ("mir_replace_allocates_only_its_answer",
      'say replace("abcabc", "bc", "X")\nsay len(replace("aaa", "", "-"))\n'),
+    # upper() / lower() / trim(): the ASCII-only transforms, and the one that
+    # asks a QUESTION about the trim set rather than about the string.
+    #
+    # ASCII ONLY, BYTE-WISE -- measured, not assumed: upper("é") is "é" (both
+    # bytes unchanged, so this is not locale case folding), while
+    # upper("àbc") is "àBC" (the 0xC3 0xA0 lead stays, the ASCII tail folds).
+    # That pair is what separates "fold ASCII, leave every other byte" from
+    # "fold per character according to the locale".
+    #
+    # NON-STRING SOURCE reads as the empty string, the same rule §10.171
+    # measured for the scans (measured again here rather than carried over):
+    #   upper(nil) / upper(123) / trim(nil) / trim(123) are all ""
+    #
+    # TRIM'S SET IS AN ENUMERATION, and the criteria are built to say so:
+    #   trim(" x ")           "x"     (len 1)
+    #   trim("\t\n x \r")     "x"     (len 1)   -- the four listed characters
+    #   trim(chr(11) + " x")  0x0B x   (len 3)   -- vertical tab NOT in the set
+    #   trim(chr(12) + " x")  0x0C x   (len 3)   -- form feed NOT in the set
+    # NOTE ON HOW THE CONTROL BYTES ARE WRITTEN: the source language does NOT
+    # recognise \v or \f escapes -- measured, `len("\v x")` is 4, i.e. a
+    # backslash, a v, a space and an x -- so a criterion written with the escape
+    # would be testing four PRINTABLE characters and would pass an isspace()
+    # implementation for the wrong reason.  chr(11) and chr(12) put the real
+    # bytes in, which is why the set question is actually asked here.
+    # An isspace() implementation passes the first two and fails the last two;
+    # leaving x inside those lines would only prove "did not eat x", which the
+    # first two already prove.  This is §10.171's lesson applied forward: the
+    # criterion is the question, not the shape.
+    # trim() strips ONLY the ends: trim("a b  ") is "a b", the inner space stays.
+    ("mir_case_ascii_only_and_nonstring",
+     'say upper(nil)\nsay len(upper(123))\nsay upper(123)\nsay upper("\u00e9")\n'
+     'say len(upper("\u00e9"))\nsay upper("\u00e0bc")\nsay lower("\u00c0BC")\n'
+     'say upper("abc")\nsay lower("ABC")\nsay len(trim(" abc "))\n'),
+    # THE TRIM ALLOCATION AXIS is its own program for the same reason the
+    # replace axis was: one line has to answer "does a trim that cuts nothing
+    # still copy" and the answer must not be averaged into a transform's total.
+    #   trim("abc")   cuts nothing -- whether it copies is the reading
+    #   trim(" abc ") DOES cut, so its answer block is 3 bytes
+    ("mir_trim_charset_is_an_enumeration",
+     'say len(trim(" x "))\nsay len(trim("\\t\\n x \\r"))\n'
+     'say len(trim(chr(11) + " x"))\nsay len(trim(chr(12) + " x"))\n'
+     'say trim("a b  ")\nsay len(trim(""))\n'
+     'say len(trim("   "))\nsay trim("  a")\nsay len(trim("abc"))\n'),
+    ("mir_trim_allocates_only_when_it_cuts",
+     'say trim("abc")\nsay trim(" abc ")\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
