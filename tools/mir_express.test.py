@@ -447,6 +447,19 @@ def self_check(cc, tmp):
     # regex reading lied are the three controls -- each one is a way the old column
     # could have printed a number that was not a reading of anything.
     probe_mod = _access_probe()
+    # The copy is a scope, not a filter.  scan_files walks SCAN_DIRS, so a
+    # top-level entry outside those three is bytes no sweep compiles -- and on a
+    # checkout carrying .worktrees it is most of the tree.  These two checks hold
+    # the scope down, so "the copy swallows the whole tree again" fails here in
+    # milliseconds instead of costing the registered test its 300 s timeout.
+    check("the copy takes the measured directories and nothing else",
+          sorted(probe_mod.copy_ignore("/tree", "/tree",
+                                       ["src", "mods", "tools", "build",
+                                        ".worktrees", "video-pipeline"])),
+          [".worktrees", "build", "video-pipeline"])
+    check("below the top level a build directory is still skipped",
+          probe_mod.copy_ignore("/tree", "/tree/src", ["compiler", "build"]),
+          ["build"])
     access = probe_mod.run_probe(cc, ROOT, CONTAINER_MEMBERS)
     labels = access["members"]["labels"]
     # 1  a NAME is not a TYPE.  compiler.c has its own `labels` -- a LabelDef list
