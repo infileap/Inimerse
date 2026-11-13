@@ -2025,6 +2025,23 @@ MIR_ONLY = [
      'say round("2.5")\nsay round("x")\nsay round(true)\nsay round(nil)\n'
      'say round([1, 2])\nsay round({"a": 1})\nsay round(f)\n'
      'say round(round(2.5))\n'),
+    # sqrt() reads ONE number and answers a double, and the number is not
+    # always a float: sqrt(4) is 2, sqrt(9) is 3, sqrt(true) is 1 and
+    # sqrt(9223372036854775807) is 3037000499.97605, while sqrt(-1) is `nan`
+    # (the interpreter's printf prints it that way).  The short display is part
+    # of the criterion: sqrt(2) prints 1.414214, not 1.4142135623730951.
+    ("mir_sqrt_numbers_and_nan",
+     'say sqrt(4)\nsay sqrt(2)\nsay sqrt(9)\nsay sqrt(2.25)\n'
+     'say sqrt(0)\nsay sqrt(-1)\nsay sqrt(1e30)\nsay sqrt(true)\n'
+     'say sqrt(9223372036854775807)\nsay sqrt(sqrt(9))\n'),
+    # The three non-numbers are NOT coerced -- they THROW, and the throw is the
+    # answer: the interpreter reports type_mismatch.  A catch without a binding
+    # keeps all three visible in one program (an uncaught one ends the program
+    # at the first line, which hid the other two).
+    ("mir_sqrt_non_number_throws",
+     'try {\n  say sqrt(nil)\n} catch {\n  say "nil thrown"\n}\n'
+     'try {\n  say sqrt("4")\n} catch {\n  say "string thrown"\n}\n'
+     'try {\n  say sqrt([1, 2])\n} catch {\n  say "array thrown"\n}\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
@@ -4988,6 +5005,13 @@ MIR_ONLY_REFUSE = {
     "mir_round_multi_arg_is_not_lowered": (
         'say round(1, 2)\n',
         "builtin-argc"),
+    # sqrt: a zero-argument call answers the destination register's old value
+    # (measured `x = 7\nsay sqrt()` prints 7), so it is the same stale-stack
+    # class as len().  A two-argument call reads the TOP (measured sqrt(1, 2)
+    # is 1.414214 = sqrt(2)), i.e. the ordinary asp-1 rule, and is left accepted.
+    "mir_sqrt_zero_arg_is_not_lowered": (
+        'x = 7\nsay sqrt()\n',
+        "builtin-stale-stack"),
 }
 
 # THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
