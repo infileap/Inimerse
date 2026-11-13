@@ -1898,6 +1898,41 @@ MIR_ONLY = [
      'say len(trim("   "))\nsay trim("  a")\nsay len(trim("abc"))\n'),
     ("mir_trim_allocates_only_when_it_cuts",
      'say trim("abc")\nsay trim(" abc ")\n'),
+    # THE CONVERSION FAMILY, first pair: bool and float.  Both are TOTAL --
+    # every shape has an answer, so neither has a throw line -- and that is
+    # exactly why they are measured together and why their matrixes are one
+    # program each: a name-only alias to `say`'s truthiness would pass half the
+    # bool lines and print a container's own bytes on the rest.
+    #
+    # bool() measured on the interpreter (each line below is one `say`):
+    #   bool(1) true      bool(0)  false   bool(2) true     bool(-1) true
+    #   bool(nil) false   bool(1.5) true   bool(0.0) false  bool(-0.0) false
+    #   bool(true) true   bool("") true    bool("x") true   bool(f) true
+    #   bool([]) true     bool({}) true    bool([1, 3)) true
+    # The two lines that are NOT what a reader would guess: the EMPTY STRING is
+    # TRUE (this language has no "empty is false" rule), and -0.0 is FALSE, so
+    # the float arm is a numeric-zero test and not a sign test.
+    #
+    # float() measured on the interpreter:
+    #   float(3) 3        float(true) 1     float(nil) 0
+    #   float("2.5") 2.5  float("x") 0       float([]) 0    float({}) 0
+    #   float([1, 3)) 0   float(f) 0        float(9223372036854775807)
+    #     9.2233720368547758e+18            float(2.5) 2.5
+    # The last-but-one line is the one that puts the display format under the
+    # criterion: a route that formatted the double the way `say` formats a
+    # literal would print 9223372036854775808 here.
+    ("mir_bool_truthiness_and_zero_float",
+     'f = () -> 42\n'
+     'say bool(1)\nsay bool(0)\nsay bool(2)\nsay bool(-1)\n'
+     'say bool(nil)\nsay bool(1.5)\nsay bool(0.0)\nsay bool(-0.0)\n'
+     'say bool(true)\nsay bool("")\nsay bool("x")\nsay bool(f)\n'
+     'say bool([])\nsay bool({})\nsay bool([1, 3))\n'),
+    ("mir_float_converts_scalars_and_zeroes_containers",
+     'f = () -> 42\n'
+     'say float(3)\nsay float(true)\nsay float(nil)\n'
+     'say float("2.5")\nsay float("x")\nsay float([])\nsay float({})\n'
+     'say float([1, 3))\nsay float(f)\n'
+     'say float(9223372036854775807)\nsay float(2.5)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
