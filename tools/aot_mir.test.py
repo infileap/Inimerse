@@ -476,6 +476,31 @@ ALLOCS_EXPECT = {
     #   way.
     "mir_join_every_shape_and_the_default_separator": (15, 3895),
     "mir_join_float_format_and_percent": (8, 838),
+    # chars()/ord()/chr(): PREDICTIONS, each with its DENOMINATOR written out --
+    # the discipline three wrong predictions in a row earned.  "Denominator"
+    # means: which calls does this total cover, and what does one call cost.
+    #
+    #   mir_bytes_ascii_roundtrip covers TWENTY-ONE calls, not one.  Per-call
+    #   blocks, using blocks(n) = 256 bytes for n <= 8 pool slots:
+    #       chars(x)  -> one array region (1 + len(x) slots) + one 2-byte block
+    #                    PER BYTE of x
+    #       chr(n)    -> one 1-or-2-byte block
+    #       ord(x)    -> nothing
+    #   The pool is shared across all of them and doubles as it fills, so the
+    #   block count is NOT the sum of per-call blocks -- it is the answer blocks
+    #   plus however many pool blocks the regions needed.
+    #
+    #   MEASURED 22|1830 and 12|281.  THE DENOMINATOR IS WHY THOSE ARE THE ROWS
+    #   AND NOT A PER-CALL NUMBER: 22 blocks over 21 calls is not "one block per
+    #   call" plus one -- it is the answers (one 2-byte string per byte of every
+    #   chars() source, one 1-or-2-byte string per chr()) PLUS four pool
+    #   doublings as the regions stack past 8, 16, 32 and 64 slots.  Reading
+    #   either total as a per-call cost would be the same mistake as the three
+    #   predictions before it, made a fourth time.
+    #   The high-byte row is smaller because ord() allocates nothing and the
+    #   join() at its end is one answer: 12 blocks, 281 bytes.
+    "mir_bytes_ascii_roundtrip": (22, 1830),
+    "mir_bytes_high_bytes_via_ord": (12, 281),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
@@ -1672,6 +1697,61 @@ MIR_ONLY = [
      'say join([1.0, 0.1 + 0.2, 1 / 3], "-")\nsay str(0.1 + 0.2)\n'
      'say str(1 / 3)\nsay join(["%s", "%d"], "-")\nsay join(["a", "b", "c"], "::")\n'
      'say len(join([], "-"))\n'),
+    # chars() / ord() / chr(): THE BYTE MODEL, and the cell whose real risk is
+    # the MEASUREMENT CHANNEL rather than the implementation.
+    #
+    # THE CHANNEL PROBLEM, stated before the program: `say chr(200)` prints a
+    # byte that is not text on every terminal, and a criterion that compares
+    # stdout as TEXT could not tell "the right byte" from "the byte was eaten".
+    # So the model is pinned in TWO programs on purpose:
+    #   - the one below uses PRINTABLE ASCII only, so its stdout is text and the
+    #     byte-for-byte comparison means what it looks like;
+    #   - mir_bytes_high_bytes_via_ord below never prints a high byte: it reads
+    #     each one back through ord(), which is an INTEGER channel.  MEASURED:
+    #     ord(chr(128)) is 128, ord(chr(200)) is 200, ord(chr(255)) is 255 --
+    #     the bytes ARE there and just cannot be printed.
+    #
+    # BYTE-WISE, NOT CODEPOINTS, and both directions have to agree for that
+    # claim to mean anything -- measured together:
+    #     len(chars("é"))  is 2      (two bytes, not one character)
+    #     ord("é")         is 195    (0xC3, the FIRST byte, not 233)
+    # One line alone could be satisfied by a rune-aware implementation; the pair
+    # cannot.
+    #
+    # THE NON-STRING SOURCES, all measured: chars(nil) and chars(123) are [],
+    # ord(nil) and ord(123) are 0, ord("") is 0, and chr("65") / chr(1.5) /
+    # chr(true) all answer the EMPTY string (the argument is read as an ival,
+    # and none of those carry a useful one).
+    #
+    # THE NUL FAMILY, every line with its len() because after a NUL every `say`
+    # looks the same -- this is the rule the sibling cells earned and it applies
+    # twice over here: chr(0) prints nothing AND len(chr(0)) is 0, while
+    # chr(-1) prints a raw 0xFF (len 1) and chr(257) prints 0x01 (len 1), so
+    # the "& 0xff then stop at NUL" rule is visible only through len.
+    #
+    # MEASURED, byte-exact, in order:
+    #   [] / [] / 0 / 0 / (empty) / (empty) / (empty) / 0 / [] / 2 / 65
+    #   / 0 / 0 / 0 / [] / 0/A / 5 / a-b-c / 6 / 97 / 0
+    ("mir_bytes_ascii_roundtrip",
+     'say chars(nil)\nsay chars(123)\nsay ord(nil)\nsay ord(123)\n'
+     'say chr("65")\nsay chr(1.5)\nsay chr(true)\nsay len(chars(""))\n'
+     'say chars("")\nsay len(chars("\u00e9"))\nsay ord("A")\n'
+     'say len(chr(0))\nsay ord(chr(0))\nsay len(chars(chr(0)))\n'
+     'say chars(chr(0))\nsay len(chr(256))\nsay chr(65)\n'
+     'say len(join(chars("abc"), "-"))\nsay join(chars("abc"), "-")\n'
+     'say ord("abc")\nsay ord("")\n'),
+    # THE HIGH BYTES, READ BACK THROUGH ord() -- an integer channel, so the
+    # comparison is text-safe even though the values are not text.  This is the
+    # only program in the file whose subject cannot be printed, and it is also
+    # the crossing point with §10.169: join(chars(s), "-") splits into bytes and
+    # joins them back, so a byte that survived the round trip is proven twice.
+    #
+    # MEASURED: 128 / 255 / 200 / 65 / ab-c (via join of two one-byte pieces)
+    #           / 1 / 1 / 1   -- the three lens are chr(-1), chr(257), chr(200).
+    ("mir_bytes_high_bytes_via_ord",
+     'say ord(chr(128))\nsay ord(chr(255))\nsay ord(chr(200))\nsay ord(chr(65))\n'
+     'say join(chars(join(["a", "b"], "")), "-")\n'
+     'say len(chr(-1))\nsay len(chr(257))\nsay len(chr(200))\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.

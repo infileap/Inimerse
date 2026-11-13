@@ -3188,6 +3188,97 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* chars(), ord(), chr(): THE BYTE MODEL.  Read\n"
+"   src/runtime/runtime_posix.c:466-499 beside this.  The three are one cell\n"
+"   because each one alone is trivially wrong in a different direction, and\n"
+"   only together do they say what a \"character\" is on this route.\n"
+"\n"
+"   WHY IT EXISTS.  All three were refused by name (why=builtin-call) while the\n"
+"   string representation they read already existed.\n"
+"\n"
+"   BYTES, NOT CODEPOINTS -- and BOTH DIRECTIONS are needed to say so:\n"
+"     len(chars(\"h\u00e9llo\"))-style sources split into BYTES, so `chars(\"\u00e9\")`\n"
+"     has TWO elements, and `ord(\"\u00e9\")` is 195 (0xC3, the FIRST byte) rather\n"
+"     than 233.  A rune-aware implementation would answer 1 and 233; either\n"
+"     line alone is satisfiable by accident, which is why the criteria measure\n"
+"     the pair.\n"
+"\n"
+"   THE NON-STRING SOURCES, read off the interpreter rather than invented:\n"
+"     chars(non-string) -> []      (:469 `VAL_STRING && sval ? ... : \"\"`)\n"
+"     ord(non-string)   -> 0       (:488 the same guard, then \"no first byte\")\n"
+"     ord(\"\")          -> 0       (sval[0] is the terminator)\n"
+"     chr(non-INT)      -> \"\"     (:495 `v.type == VAL_INT ? ... : 0`, and a 0\n"
+"                                   byte makes an empty C string)\n"
+"\n"
+"   THE NUL FAMILY, which is where a byte model stops looking like a string\n"
+"   model: chr(n) is `(char)(n & 0xff)` written into a TWO-byte buffer and\n"
+"   handed on as a C string, so\n"
+"     chr(0)    is the EMPTY string (len 0, and chars(chr(0)) is [])\n"
+"     chr(256)  is ALSO empty (256 & 0xff == 0)\n"
+"     chr(-1)   is a raw 0xFF, len 1 -- printable on no terminal, present\n"
+"     chr(257)  is 0x01, len 1\n"
+"   The last two are why the high-byte criterion reads values back through\n"
+"   ord() instead of printing them: `say chr(200)` emits a byte that a text\n"
+"   comparison cannot distinguish from a byte that was eaten.\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- boundaries, named:\n"
+"     - A SOURCE WITH AN EMBEDDED NUL cannot exist here: every string this\n"
+"       route builds is NUL-terminated C text, and chr(0) is the empty string\n"
+"       rather than a one-byte value.  chars() therefore never sees a byte\n"
+"       after a NUL, which matches the interpreter's own strlen-driven loop.\n"
+"     - chr() OF A LARGE int WRAPS SILENTLY (n & 0xff); so does a negative one.\n"
+"       Both are in the criteria as `len` readings, because a value that prints\n"
+"       as nothing cannot be pinned any other way.\n"
+"     - A ZERO-ARGUMENT call of any of the three is refused BY NAME\n"
+"       (builtin-stale-stack), the same class as every other builtin here.\n"
+"\n"
+"   DELETE CONDITION.  The three arms, their pre-scan names and the two\n"
+"   criteria go together.  A rune-aware chars() reddens len(chars(\"\u00e9\")); a\n"
+"   codepoint ord() reddens ord(\"\u00e9\"); dropping the & 0xff reddens the len\n"
+"   of chr(-1) and chr(257).\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_bytes_ascii_roundtrip (printable\n"
+"   ASCII, text channel) and mir_bytes_high_bytes_via_ord (integer channel;\n"
+"   never prints a high byte).  The second also crosses §10.169:\n"
+"   join(chars(s), \"-\") splits into bytes and joins them back, so a byte that\n"
+"   survives is proven twice. */\n"
+"static inline MirVal mv_chars(MirVal a) {\n"
+"    const char *s = (a.type == MV_STR && a.sval) ? a.sval : \"\";\n"
+"    int n = (int)strlen(s);\n"
+"    int hdr = mv_arrused + 1;\n"
+"    mv_arr_need(mv_arrused + n + 1);\n"
+"    MirVal r;\n"
+"    r.type = MV_ARR; r.ival = hdr; r.sval = 0; r.ptr = 0;\n"
+"    mv_arrmem[hdr - 1] = mv_int(n);\n"
+"    for (int i = 0; i < n; i++) {\n"
+"        char *nb = (char *)mv_alloc(2);       /* one byte + NUL, per element */\n"
+"        nb[0] = s[i]; nb[1] = 0;\n"
+"        MirVal e;\n"
+"        e.type = MV_STR; e.ival = 0; e.sval = nb; e.ptr = 0;\n"
+"        mv_arrmem[hdr + i] = e;\n"
+"    }\n"
+"    mv_arrused = hdr + n;\n"
+"    return r;\n"
+"}\n"
+"\n"
+"static inline MirVal mv_ord(MirVal a) {\n"
+"    int n = (a.type == MV_STR && a.sval && a.sval[0]) ? (int)(unsigned char)a.sval[0] : 0;\n"
+"    return mv_int((long long)n);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_chr(MirVal a) {\n"
+"    char s[2];\n"
+"    s[0] = (char)(a.type == MV_INT ? (a.ival & 0xff) : 0);\n"
+"    s[1] = 0;\n"
+"    size_t bl = strlen(s);          /* a 0 byte makes this 0 -- see the NUL family */\n"
+"    char *nb = (char *)mv_alloc(bl + 1);\n"
+"    if (bl) memcpy(nb, s, bl);\n"
+"    nb[bl] = 0;\n"
+"    MirVal r;\n"
+"    r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4844,11 +4935,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
                     && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
-                    && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0) {
+                    && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0
+                    && strcmp(bn, "chars") != 0 && strcmp(bn, "ord") != 0
+                    && strcmp(bn, "chr") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
-                               " and substr, split and join and no other builtin;"
+                               " and substr, split, join, chars, ord and chr and no other"
+                               " builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -4892,6 +4986,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 /* substr needs THREE: with two the interpreter returns 0 and the
                    destination register keeps its value (measured: `substr("abc",
                    1)` answers 1 on a fresh program).  Same class, same name. */
+                if ((strcmp(bn, "chars") == 0 || strcmp(bn, "ord") == 0
+                     || strcmp(bn, "chr") == 0) && argc < 1) {
+                    g_prescan_why = "builtin-stale-stack";
+                    return bad("container=%d insn=%d builtin '%s' is called with no argument:"
+                               " the interpreter answers it with a leftover, not with a value"
+                               " the program asks for", f, i, bn);
+                }
                 if (strcmp(bn, "join") == 0 && argc < 1) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin 'join' is called with no argument:"
@@ -5730,7 +5831,9 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "str") != 0 && strcmp(bn, "sum") != 0
                     && strcmp(bn, "remove") != 0 && strcmp(bn, "push") != 0
                     && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
-                    && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0)) return -1;
+                    && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0
+                    && strcmp(bn, "chars") != 0 && strcmp(bn, "ord") != 0
+                    && strcmp(bn, "chr") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5739,6 +5842,12 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_count(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "keys") == 0)
             buf_fmt(b, "    v[%d] = mv_keys(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "chars") == 0)
+            buf_fmt(b, "    v[%d] = mv_chars(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "ord") == 0)
+            buf_fmt(b, "    v[%d] = mv_ord(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "chr") == 0)
+            buf_fmt(b, "    v[%d] = mv_chr(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "join") == 0)
             /* ONE argument is the default-separator form (`join([1,2,3])` is
                `123`), so the separator is passed only when the count is two or
