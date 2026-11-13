@@ -488,12 +488,19 @@ ALLOCS_EXPECT = {
     #       ord(x)    -> nothing
     #   The pool is shared across all of them and doubles as it fills, so the
     #   block count is NOT the sum of per-call blocks -- it is the answer blocks
-    #   plus however many pool blocks the regions needed.  21 calls with ~6
-    #   region slots each is past 8, past 16, and past 32: three doublings.
-    #   PREDICTED (for the row as a whole): the number is written after the run
-    #   below, deliberately -- see the note there.
-    "mir_bytes_ascii_roundtrip": (0, 0),
-    "mir_bytes_high_bytes_via_ord": (0, 0),
+    #   plus however many pool blocks the regions needed.
+    #
+    #   MEASURED 22|1830 and 12|281.  THE DENOMINATOR IS WHY THOSE ARE THE ROWS
+    #   AND NOT A PER-CALL NUMBER: 22 blocks over 21 calls is not "one block per
+    #   call" plus one -- it is the answers (one 2-byte string per byte of every
+    #   chars() source, one 1-or-2-byte string per chr()) PLUS four pool
+    #   doublings as the regions stack past 8, 16, 32 and 64 slots.  Reading
+    #   either total as a per-call cost would be the same mistake as the three
+    #   predictions before it, made a fourth time.
+    #   The high-byte row is smaller because ord() allocates nothing and the
+    #   join() at its end is one answer: 12 blocks, 281 bytes.
+    "mir_bytes_ascii_roundtrip": (22, 1830),
+    "mir_bytes_high_bytes_via_ord": (12, 281),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.
