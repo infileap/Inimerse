@@ -9536,3 +9536,45 @@ IR-MIR-COVER|...|mir-only-cases=279|mir-only-same-as-interpreter=277
 ### 七、文档预算与删除条件
 
 本节不新增 `path:line` 引用，`citations` 1199 行不动。删除条件：`round` 臂与两道 arity 门、三条判据同删；身份改成任何圆整会红那两条“看起来该进位”的行，关掉 arity 门会红两条拒绝判据。
+
+## §10.176 `sqrt`：一个数字进、一个 double 出，三个非数字抛（A 类第四十九项）
+
+### 一、来源与日期
+
+接手会话，2026-11-13，§10.175 之后。父 sha `8190864`（§10.175 的合并 pin）。PLAN 行 26 列了 `sqrt`，本格把它做成单臂。
+
+### 二、判据（先红）
+
+三条 `MIR_ONLY`（`mir_sqrt_numbers_and_nan`、`mir_sqrt_nil_throws`、`mir_sqrt_string_throws`、`mir_sqrt_array_throws`——实为四条）加一条 `MIR_ONLY_REFUSE`（`mir_sqrt_zero_arg_is_not_lowered`，期望 `builtin-stale-stack`）。在 `8190864` 上：
+
+    IR-MIR-MIR-ONLY|case=mir_sqrt_numbers_and_nan|mir=refused|why=builtin-call
+    IR-MIR-MIR-ONLY|case=mir_sqrt_non_number_throws|mir=refused|why=builtin-call
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_sqrt_zero_arg_is_not_lowered|mir=refused|why=builtin-call|expect=builtin-stale-stack|ok=no
+    IR-MIR-COVER|...|mir-only-cases=285|mir-only-same-as-interpreter=283
+
+判据成型过程中改了两处，都在实现提交里就地写明：抛错形状从「一个 try/catch 程序」拆成三个程序（未捕获的 throw 在第一行就结束程序；try/catch 形状本身被 `try-enters` 结构拒绝）；文档常数（移动的拒绝名）从 `sqrt` 移到 `match`。
+
+### 三、实测
+
+`s sqrt(4)`=2、`sqrt(2)`=1.414214（**短格式**，不是 `%.17g`）、`sqrt(9)`=3、`sqrt(2.25)`=1.5、`sqrt(0)`=0、`sqrt(-1)`=`nan`（NaN 就是答案，不抛）、`sqrt(1e30)`=1000000000000000、`sqrt(true)`=1、`sqrt(9223372036854775807)`=3037000499.97605。非数字：`sqrt(nil)` / `sqrt("4")` / `sqrt([1,2])` 全抛 `type_mismatch`（不是强制转 0）。零参：`x = 7` 后 `say sqrt()` 印 7（目标寄存器旧值）。多参：`sqrt(1, 2)`=1.414214=sqrt(2)，即普通栈顶规则，接受。
+
+### 四、实现
+
+`src/compilation/aot_mir.c`：`mv_sqrt` 只读 INT/FLT/BOO 三种 type，其余 `mv_throw(mv_str("type_mismatch"))`；名字门两处加 `sqrt`；零参门并入 round 那条；emitter 臂 `mv_sqrt(mvargs[asp-1])`。**生成 C 第一次需要 libm**：前导加 `#include <math.h>`，harness 的六处 `cc` 调用加 `-lm` 且**放在源文件之后**（放在前面会被 `--as-needed` 丢掉，为此误诊过一次链接失败）。
+
+### 五、非对称注入
+
+1. emitter 改答参数本身：数值行整体移动（`2`→`4`、`1.414214`→`2`、`nan`→`-1`）。
+2. throw 臂改答 nil：三个程序都印 `nil` 且 rc 0，**一次红三件事**（rc、stdout、stderr 要求）。
+
+恢复后重跑 `287/287`、exit 0、`IR-MIR-VERDICT|PASS`。
+
+### 六、边界与遗留
+
+- `try` 作首语句仍 `try-enters` 拒绝（结构性问题，与本格无关，已在判据注释里写明）。
+- `sqrt()` 的零参残值按名拒，不是实现缺失。
+- 记账：`mir_builtin_call_with_arg` 现指向 `match`（仍按名拒）；`match` 落地时再往前挪。
+
+### 七、文档预算与删除条件
+
+本节不新增 `path:line` 引用，`citations` 1199 不动。删除条件：`mv_sqrt` 臂、零参门、四条判据同删；改短格式为 `%.17g` 会红 `sqrt(2)` 行，去掉 throw 臂会红三条抛错判据。
