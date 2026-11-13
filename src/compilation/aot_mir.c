@@ -3279,6 +3279,65 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* bool() and float(): the first two of the CONVERSION family, and the first\n"
+"   two builtins in this route that are TOTAL -- every shape has an answer, so\n"
+"   neither can throw and the whole question is the answer itself.  Read\n"
+"   src/runtime/runtime_posix.c:97-120 (bool) and :122-160 (float) beside this.\n"
+"\n"
+"   WHY THEY EXIST.  Both were refused BY NAME although neither needs a shape\n"
+"   the route cannot already build: a conversion the interpreter performs in\n"
+"   four lines is not an unmaterializable shape, it is an answer this route had\n"
+"   no arm for.  Everything else here is green on a shape question; these two\n"
+"   are green on a NAME question, which is what makes them a pair with\n"
+"   upper/lower/trim (a name whose body already exists).\n"
+"\n"
+"   WHAT IT ADDS, two helpers and nothing else:\n"
+"     - mv_bool: false for NIL, INTEGER 0, FLOAT 0.0 (and -0.0, because the\n"
+"       test is numeric zero and not a sign test) and the BOOLEAN false; TRUE\n"
+"       for everything else.  The two lines a reader guesses wrong are the\n"
+"       EMPTY STRING, which is TRUE -- this language has no empty-is-false\n"
+"       rule -- and a FUNCTION VALUE, which is TRUE.  Measured.\n"
+"     - mv_float: INT widens, FLOAT is itself, STRING is atof (so \"2.5\" is\n"
+"       2.5 and \"x\" is 0), BOOLEAN is 1 or 0, and NIL, a function and a\n"
+"       CONTAINER are 0.  The container arm is the one that would be a guess:\n"
+"       the interpreter answers 0 for it, and 0 is what is reproduced -- not\n"
+"       the container's own index, which is what int() leaks (see the int cell).\n"
+"\n"
+"   WHAT IT DOES NOT COVER -- a boundary:\n"
+"     - float() of a container answers 0, which is NOT the container's index;\n"
+"       int() over a container leaks exactly that index (measured: int([]) is 1,\n"
+"       int({}) is 1, int([1, 3)) is 22), and that leak is why int is a separate\n"
+"       cell and not an alias of this one.  A reader who assumes the two\n"
+"       conversions share their container arm would print 0 for int([]).\n"
+"     - float() of an out-of-range integer is exact-then-display: 9223372036854775807\n"
+"       becomes the double 9223372036854775808 and prints 9.2233720368547758e+18,\n"
+"       which the criterion pins through stdout rather than through a cast.\n"
+"\n"
+"   DELETE CONDITION.  Delete bool and float from the pre-scan and emitter\n"
+"   together with mv_bool and mv_float when the two criterion cases are removed\n"
+"   -- the pair answers different questions (truthiness, numeric widening) and\n"
+"   neither criterion reads the other's arm.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_bool_truthiness_and_zero_float\n"
+"   and mir_float_converts_scalars_and_zeroes_containers -- stdout BYTES and\n"
+"   rc against the interpreter, plus the ALLOCS line (both allocate nothing:\n"
+"   the conversions produce values, not buffers). */\n"
+"static inline MirVal mv_bool(MirVal a) {\n"
+"    if (a.type == MV_NIL) return mv_boo(0);\n"
+"    if (a.type == MV_INT) return mv_boo(a.ival != 0);\n"
+"    if (a.type == MV_FLT) return mv_boo(a.fval != 0.0);   /* -0.0 included */\n"
+"    if (a.type == MV_BOO) return a;                       /* false stays false */\n"
+"    return mv_boo(1);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_float(MirVal a) {\n"
+"    if (a.type == MV_INT) return mv_flt((double)a.ival);\n"
+"    if (a.type == MV_FLT) return a;\n"
+"    if (a.type == MV_STR) return mv_flt(a.sval ? atof(a.sval) : 0.0);\n"
+"    if (a.type == MV_BOO) return mv_flt(a.ival ? 1.0 : 0.0);\n"
+"    return mv_flt(0.0);   /* nil, function and every container: 0, not the index */\n"
+"}\n"
+"\n"
 "/* index(), replace(), startswith(), endswith(): FOUR PURE SCANS.  Read\n"
 "   src/runtime/runtime_posix.c:573-640 beside this.  They are one cell because\n"
 "   they share ONE mistake that is easy to make and hard to see.\n"
@@ -5219,13 +5278,15 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
-                    && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0) {
+                    && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
-                               " bit_or, bit_xor, bit_not, shl and shr and no other builtin;"
+                               " bit_or, bit_xor, bit_not, shl, shr, bool and float and no"
+                               " other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -6152,7 +6213,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "lower") != 0 && strcmp(bn, "trim") != 0
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
-                    && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0)) return -1;
+                    && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6185,6 +6247,10 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_lower(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "trim") == 0)
             buf_fmt(b, "    v[%d] = mv_trim(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "bool") == 0)
+            buf_fmt(b, "    v[%d] = mv_bool(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "float") == 0)
+            buf_fmt(b, "    v[%d] = mv_float(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)

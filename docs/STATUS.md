@@ -9447,3 +9447,54 @@ index("abc", 3)      是 0         （空针在 0 处命中）
 裁定（主人会话）＝改工具、不改归档。落地在 `stream/release-tags-prefix`，**先写自测并跑出红**（2/4 cells，两条预期失败），再把比较从"字符串"换成"把记录解析成 commit"（`rev-parse --verify --quiet <recorded>^{commit}` 再比 tag 指向的 commit）；四条 cell 覆盖：不同 commit 红、歧义缩写必须**被 `rev-parse` 拒绝而不是悄悄加长**、README 基线落后于最新 tag 红、打印宽度变大但记录仍解析到同一 commit **绿**。注册进 ctest 后 `EXP_CTEST` 203→204、`docs/BOARD.md` 的 `recon.ctest-count` 同步（两个数与本节的注册在同一轮里改，否则下一个人的 gate 会红在一个不点名他的地方，这正是 `EXP_CTEST` 那行注释写下的规矩）。
 
 **边界**：这只治"记录比今天打印的宽/窄但指向同一 commit"这一类；tag 真被移动、记录解析不到、歧义三种仍是红。**没有改动任何归档文档** —— `AUDIT.md` 与 `RELEASE_*.md` 记的是写下时为真的事，仓库规矩是归档不回改。
+## §10.174 `bool`/`float`：两个全函数，以及读者会猜错的两行（A 类第四十七项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12，§10.173 之后的下一格实现。父 sha `c753708`（与 §10.173 的 `2a143f0f` 分叉于同一父；合并时按 §10.173 在前、§10.174 在后的顺序保留两侧）。PLAN 行 25 与行 26（`bool`/`float`；`int`/`round` 按主人批注拆到下一格——`int` 的容器臂会泄漏容器自己的索引，见六）。
+
+### 二、判据（先红）
+
+两条 `MIR_ONLY`，在 `c753708` 上都是 `mir=refused|why=builtin-call`：
+
+```
+IR-MIR-MIR-ONLY|case=mir_bool_truthiness_and_zero_float|mir=refused|why=builtin-call
+IR-MIR-MIR-ONLY|case=mir_float_converts_scalars_and_zeroes_containers|mir=refused|why=builtin-call
+IR-MIR-COVER|...|mir-only-cases=279|mir-only-same-as-interpreter=277
+```
+
+**两个都是全函数**（每种形状都有答案、没有抛错行），所以整格的形状问题就是 stdout 本身；这使它们与 §10.171–§10.173 的"先红在名字上、绿在形状上"不同——红只说明名字没发射，绿要逐行对齐。
+
+**写判据时量出来的两行**（读者会猜错的）：
+- **空串为真**：这套语言没有 empty-is-false 规则，`bool("")` 是 `true`。
+- **`-0.0` 为假**：浮点臂是"数值零"测试而非符号测试，`bool(-0.0)` 是 `false`。
+
+### 三、实测的十五 + 十一行
+
+`bool`（每行一个 `say`）：`1 true / 0 false / 2 true / -1 true / nil false / 1.5 true / 0.0 false / -0.0 false / true true / "" true / "x" true / f true / [] true / {} true / [1, 3) true`。
+
+`float`：`3→3 / true→1 / nil→0 / "2.5"→2.5 / "x"→0 / []→0 / {}→0 / [1, 3)→0 / f→0 / 9223372036854775807→9.2233720368547758e+18 / 2.5→2.5`。
+
+**最后倒数第二行是显示问题**：那是 `say` 的浮点格式（`nv_fmt_double`，与 §10.164 记下的 `str` 用 `%.17g` 相区分）。用 `str` 的格式会印 `9223372036854775808`；判据用 stdout 钉住它。
+
+### 四、实现
+
+`mv_bool`：NIL 假、INT 非零、FLOAT 非零（含 `-0.0`）、BOO 原样（`false` 保持 `false`）、其余真。`mv_float`：INT 加宽、FLOAT 原样、STRING `atof`、BOO 1/0、NIL/函数/容器 0。名字门扩到二十四个；emitter 各加一条分支；两者零参仍按名拒 `builtin-stale-stack`。
+
+### 五、读数与分母
+
+`mir-only-cases=279|mir-only-same-as-interpreter=279`、`IR-MIR-VERDICT|PASS`；ALLOCS 两案各 `1|256` —— 那一块是程序里的容器字面量（`[]` 或 `{}`），**先量后写**，不用默认 `0|0`：写 0 会让"把真值结果装箱"或"把 double 过一遍缓冲区"的实现多出的那一块看不见。
+
+### 六、边界
+
+1. **容器臂的 0 不是索引**：`float([])` 是 0；而 `int([])` 是 **1**、`int({})` 是 **1**、`int([1, 3))` 是 **22** —— 那是解释器把值当自己的表下标泄漏出来的数。两个转换**不共享**容器臂，这正是 `int` 必须单独一格的理由；读者若假设共享，`int([])` 会被印成 0。
+2. **`bool` 的 BOO 臂与默认臂是两个答案**：注入 (B) 把默认臂答成假时，六行动而 `bool(true)` 不动 —— 这行就是"BOO 臂存在"的读数。
+3. **显示层不是本节的证明对象**：浮点显示走共享 `nv_fmt_double`，本节只钉一行大整数；断言的是"答案类型对了之后显示自然对"。
+4. **删除条件**：两个 helper、名字门两处、emitter 两分支与两条判据同删；注入 (A) 红 `float("2.5")` 一行，注入 (B) 红六行。
+
+### 七、非对称注入
+
+1. `float` 的字符串臂改答 0（丢掉 `atof`）：**只红一行**（`float("2.5")` 2.5→0），其余十行逐字节不变。
+2. `mv_bool` 的默认臂改答假：**红六行**（`bool("")`、`bool("x")`、`bool(f)`、`bool([])`、`bool({})`、`bool([1, 3))`），INT/FLOAT 四行不动。两次恢复后重跑 `279/279`、exit 0。
+
+---
