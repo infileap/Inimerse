@@ -212,6 +212,10 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # program actually reaches: (2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1)
 # + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
+    # match() itself only mallocs its translated pattern and frees it, so the
+    # string-only program allocates nothing; this program's one block is the
+    # `[1, 2]` literal, not the regex.
+    "mir_match_non_strings_read_empty": (1, 256),
     "mir_add_string_concat": (7, 33),
     "mir_concat_chain": (6, 66),
     # The array literal's ONE block is the value pool, not the array: the pool
@@ -4956,7 +4960,7 @@ MIR_ONLY_REFUSE = {
     # name under the refusal criterion.  sqrt landed in §10.176, so it points
     # at match, which is still refused by name (translate: builtin call 'match').
     "mir_builtin_call_with_arg": (
-        'x = match("abc", "b")\nsay x\n',
+        'x = declared(1)\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
@@ -5042,6 +5046,14 @@ MIR_ONLY_REFUSE = {
     # is 1.414214 = sqrt(2)), i.e. the ordinary asp-1 rule, and is left accepted.
     "mir_sqrt_zero_arg_is_not_lowered": (
         'x = 7\nsay sqrt()\n',
+        "builtin-stale-stack"),
+    # match() with one argument answers nothing at all (measured: the
+    # interpreter pops and pushes NOTHING when the stack has fewer than two
+    # values, so `say match("abc")` prints the argument it was handed).  The
+    # refusal is the interpreter's behaviour, not a missing arm: a two-slot
+    # builtin cannot be answered from one slot.
+    "mir_match_single_argument_is_not_lowered": (
+        'say match("abc")\n',
         "builtin-stale-stack"),
 }
 
