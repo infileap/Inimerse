@@ -538,6 +538,13 @@ ALLOCS_EXPECT = {
     "mir_case_ascii_only_and_nonstring": (10, 31),
     "mir_trim_charset_is_an_enumeration": (10, 24),
     "mir_trim_allocates_only_when_it_cuts": (1, 4),
+    # bool/float allocate nothing themselves -- the ONE block in each program is
+    # the container LITERAL (`[]` or `{}`), and the expected numbers say so
+    # rather than asserting 0|0: a route that boxed a truthiness result or
+    # formatted a double through a buffer would report one more.  MEASURED
+    # first (both reported allocs=1|bytes=256), then written.
+    "mir_bool_truthiness_and_zero_float": (1, 256),
+    "mir_float_converts_scalars_and_zeroes_containers": (1, 256),
     "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
