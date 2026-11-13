@@ -9391,3 +9391,51 @@ index("abc", 3)      是 0         （空针在 0 处命中）
 2. **`chr(11)`/`chr(12)` 经 `+` 拼串**：本路线支持字符串 `+`（该程序已被接受并逐字节对齐）。
 3. **文档预算**：本节不新增 `path:line` 引用，`citations` 1199 行不动。
 4. **删除条件**：三个臂、名字门与三条判据同删；`isspace` 化红 `\v`/`\f` 两行，locale 折叠红三行带重音字符，无操作拷贝红分配行。
+
+## §10.173 `shl`/`shr`/`bit_and`/`bit_or`/`bit_xor`/`bit_not`：一个符号性与一个"不强制转换"（A 类第四十六项）
+
+### 一、来源与日期
+
+接手会话，2026-11-12，§10.172 之后的第十二格实现。父 sha `c753708`（§10.172 的合并 pin）。PLAN 行 23/24（score ~10，当前最高分）。
+
+### 二、判据（先红），以及写判据时量出来的两处 PLAN 之误
+
+三条 `MIR_ONLY`，在 `c753708` 上都是 `mir=refused|why=builtin-call`（mir-only 280/277）：`mir_bits_values_and_width`、`mir_shl_overflow_is_an_error`、`mir_bitwise_noninteger_throws`。抛错两条分开成程序，因为未捕获异常会结束程序 —— 一个程序只能演示一次抛错。
+
+**PLAN 之误一：`shl(5,34)` 的答案。** PLAN 行 23 的例子写 `8589934592`（那是 `1<<33`）；实测 **`85899345920`**，十倍之差。照 PLAN 抄的判据会因与实现无关的原因先红。
+
+**PLAN 之误二（方向相反）：位运算不强制转换。** 上两格实测"非字符串源读成空串"，那是**扫描/变换**的规则；`bit_and(1.9,3)`、`bit_and(-1.9,3)`、`bit_and("5",3)`、`bit_and(nil,3)`、`bit_and(true,3)` 与 `bit_not(nil)`、`bit_not("x")` **全部抛** `<name>: expected two integers` / `bit_not: expected an integer`。这条规则**不沿用到位运算**，正因为如此它是量出来的而不是假设的。
+
+### 三、实测的七组
+
+1. **右移的符号性（分水岭）**：`shr(-1,1)`=-1、`shr(-8,2)`=-2、`shr(-5,1)`=-3 ⇒ **算术右移**。逻辑右移实现只会红这三行，正数行全过。
+2. **移位计数越界饱和**（`shr` 停、`shl` 不）：`shr(1,64)`=0、`shr(1,65)`=0、`shr(-8,65)`=-1（负→-1，正→0，**不绕回、不抛**）。
+3. **左移溢出是错误不是绕回**：`shl(1,63)`、`shl(1,64)`、`shl(1,65)`、`shl(3,62)` 全抛 `numeric_overflow`；`shl(1,62)`=4611686018427387904、`shl(5,34)`=85899345920、`shl(-5,2)`=-20。
+4. **计数本身必须是非负 INT**：`shl(1,-1)`、`shr(1,-1)` 也抛 `numeric_overflow`（与溢出同一条消息，值得知道）。
+5. **补码**：`bit_not(3)`=-4、`bit_not(0)`=-1、`bit_not(-1)`=0；`bit_and(5,3)`=1、`bit_and(-5,3)`=3、`bit_or(4,2)`=6、`bit_xor(-1,5)`=-6、`bit_xor(6,3)`=5。
+6. **打印形态**：大整数按精确十进制打印（`4611686018427387904`、`85899345920`），与 `mv_int` 的宽度一致 —— `say` 没有把答案折成浮点。
+7. **分配轴是一个零**：六个内建全答整数 ⇒ 整个程序 **0 块 0 字节**，显式钉 `0|0`，抓"把答案绕成中间字符串 / 走 `mv_str`"的实现。
+
+### 四、实现
+
+`mv_bit_msg(name, tail)` 拼抛错条串；`mv_bit_two` 严格检查两个实参都是 `MV_INT` 否则抛；`mv_bitnot` 单独检查一个。`mv_shl` 用 `__builtin_mul_overflow` 逐步加倍——**检查过的乘法**，溢出即抛 `numeric_overflow`，负数计数直接抛；`mv_shr` 先按 `>=64` 饱和（正 0 / 负 -1），再用 `x >> y` 的算术移位。名字门扩到二十八个；`shl/shr/bit_and/bit_or/bit_xor` 的 `argc<2` 拒 `builtin-argc`，`bit_not` 的 `argc<1` 拒 `builtin-stale-stack`（与既有内建的按名拒法一致）。
+
+### 五、读数与分母
+
+`IR-MIR-COVER|mir-only-cases=280|mir-only-same-as-interpreter=280`；`IR-MIR-MIR-ONLY|case=mir_bits_values_and_width|mir=accepted|cc=ok|exec=same|bytes=71`；`IR-MIR-ALLOCS|allocs=0|freed=0|live=0|bytes=0|ok=yes`；两条抛错程序 `rc=1|stdout="before\n"`、stderr 逐字对齐。cover `accepted 363→369`（+6 个名字）。
+
+**分母一起读**：值程序 17 行 = 3 算术右移 + 3 饱和 + 3 左移（含 1 个溢出边界内）+ 8 个按位；两条抛错程序各 1 行 ——`shl` 溢出与 `bit_and` 非整数是两条**不同的消息**，一条实现不能藏在另一条后面。
+
+### 六、非对称注入
+
+1. **`shr` 改逻辑右移**（`(unsigned long long)x >> y`）：**只红值程序**（`279/280`），负三行变 `9223372036854775807`/`4611686018427387902`/`9223372036854775805`，正数行与饱和行一个字节不动。
+2. **位运算改向零截断**（`MV_FLT` 实参先 `mv_int`）：**只红 `mir_bitwise_noninteger_throws`**（`279/280`），stdout 从 `"before\n"` 变 `"before\n1\n"`、rc 1→0，其余两条程序不动。
+
+两次恢复后重跑 `280/280`、exit 0。
+
+### 七、边界
+
+1. **`shr`/`shl` 计数语义是本路线按实测实现的**（`>=64` 饱和、`<0` 抛），不依赖 C 的移位未定义行为；`shl` 用检查过的乘法而不是 `x << y`，所以 `shl(1,63)` 是抛错而不是实现定义。
+2. **`bit_not` 没有两参形态**，`argc` 门因此与其余五个不同（`builtin-stale-stack` vs `builtin-argc`）。
+3. **文档预算**：本节不新增 `path:line` 引用，`citations` 1199 行不动。
+4. **删除条件**：六个臂、名字门与三条判据同删；逻辑右移红负三行，绕回左移红溢出两条，截断强制转换红非整数程序。
