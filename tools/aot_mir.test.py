@@ -2048,6 +2048,28 @@ MIR_ONLY = [
     ("mir_sqrt_nil_throws", 'say "before"\nsay sqrt(nil)\n'),
     ("mir_sqrt_string_throws", 'say sqrt("4")\n'),
     ("mir_sqrt_array_throws", 'say sqrt([1, 2])\n'),
+    # match() is not a substring test: it is a POSIX EXTENDED REGEX search
+    # (measured: "^abc$" true, "a|z" true, "c{1,2}" true, "\d" true on "a1b"),
+    # with \d \w \s translated to classes first.  A pattern that cannot
+    # compile ("[") answers false rather than throwing, and the empty pattern
+    # matches everything.  The last line (case-sensitive) is the one that tells
+    # an implementation that forgot REG_EXTENDED's case default from one that
+    # rewrote the match as strstr.
+    ("mir_match_regex_and_empty_pattern",
+     'say match("abc", "b")\nsay match("abc", "z")\nsay match("abc", "^b")\n'
+     'say match("abc", "b$")\nsay match("abc", "^abc$")\nsay match("abc", "a|z")\n'
+     'say match("abc", "a+")\nsay match("abc", "[b-d]")\nsay match("abc", "c{1,2}")\n'
+     'say match("a1b", "\\d")\nsay match("a1b", "\\w")\nsay match("abc", "")\n'
+     'say match("abc", "[")\nsay match("abc", "ABC")\n'),
+    # A non-string on EITHER side reads as the EMPTY string, never through the
+    # say formatting: match(123, 2) is TRUE because the subject is "" and the
+    # pattern is "" (and "" matches ""), not because "123" contains "2".
+    # match([1, 2], 1) is true for the opposite reason: the subject is "" too,
+    # but the pattern 1 is also "", so it is true by the same empty rule -- which
+    # is exactly why the "\d" line above has to be in a STRING-only program.
+    ("mir_match_non_strings_read_empty",
+     'say match(123, 2)\nsay match(nil, "a")\nsay match([1, 2], 1)\n'
+     'say match("abc", 123)\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
