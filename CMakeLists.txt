@@ -1601,6 +1601,13 @@ endif()
 if(INIMERSE_PYTHON)
 add_test(NAME frozen_identity_cli_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_frozen_identity.cli.test.py)
 set_tests_properties(frozen_identity_cli_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;regression")
+# check_release_tags' regression: the drift-that-is-not-drift cell (a record
+# whose printed FORM grew while the pointer did not) plus the three NOs the
+# checker must keep.  The cell is a THROWAWAY git repository, so it does not
+# depend on this checkout's tags or object count -- which is the whole point,
+# since the defect it pins only appears when this repository is big enough.
+add_test(NAME release_tags_regression COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_release_tags.test.py)
+set_tests_properties(release_tags_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;regression")
 endif()
 
 # --- the self-hosted interpreter, first rung -------------------------------

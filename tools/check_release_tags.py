@@ -19,8 +19,12 @@ What it checks, for the tags `git tag -l` reports:
   1. every version mention written in backticks in docs/ names a tag that
      exists;
   2. every release-point binding -- a backticked tag, then an arrow or `=`,
-     then a backticked sha, adjacent -- records the sha that
-     `git rev-parse --short '<tag>^{commit}'` gives today;
+     then a backticked sha, adjacent -- RESOLVES to the commit the tag names
+     today.  It is compared as a commit, not as a string: `--short`'s printed
+     WIDTH grows with the object count (7 characters became 8 in this
+     repository without a commit moving), and comparing characters reddened
+     records that were still exactly right.  A record that resolves to another
+     commit, or that `rev-parse` refuses as ambiguous, is still a failure;
   3. the release baseline the root README states is the newest tag.  That
      number is a copy, and it read `0.5.0` while `v0.5.2` was the newest tag:
      a copy nobody compares expires in silence.  The check is here because the
@@ -301,6 +305,32 @@ def git(*args):
     return r.stdout
 
 
+def record_names_the_same_commit(name, recorded):
+    """True when `recorded` resolves to the commit `name` points at today.
+
+    A document may record a SHORTER sha than `git rev-parse --short` prints today:
+    git's auto-abbreviation length grows with the object count (7 characters became
+    8 in this repository without a single commit moving), and that is a change of
+    the PRINTED FORM, not of the pointer.  Comparing the two STRINGS therefore
+    reddened `v0.5.1 -> 4e444dd` in four documents while `v0.5.1` still pointed at
+    4e444dd -- the claim was right and the comparison was wrong.
+
+    Resolving the record and comparing COMMITS keeps every detection the tool had:
+    a moved tag still names a different commit, a record that no longer resolves
+    (deleted object) fails, and an ambiguous abbreviation fails because
+    `rev-parse` refuses it rather than guessing.  It differs only for a record
+    whose characters resolve uniquely to the right commit -- which is exactly
+    the case the old comparison misreported as drift.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", recorded + "^{commit}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:          # unknown, deleted, or ambiguous: not a match
+        return False
+    return r.stdout.strip() == git("rev-parse", name + "^{commit}").strip()
+
+
 def tags():
     """tag name -> short sha of the commit it points at today."""
     out = {}
@@ -486,7 +516,7 @@ def main():
     for _rel, _lineno, _name, _sha, why in excluded:
         excused_by[why] = excused_by.get(why, 0) + 1
 
-    wrong = [c for c in checked if c[3] != known[c[2]]]
+    wrong = [c for c in checked if not record_names_the_same_commit(c[2], c[3])]
 
     print(
         "check_release_tags: %d tag(s) in the namespace (major(s) %s); "
@@ -517,13 +547,15 @@ def main():
         )
     for rel, lineno, name, sha in wrong:
         print(
-            "check_release_tags: %s:%d records `%s` -> `%s`, but `git rev-parse "
-            "--short '%s^{commit}'` is `%s` today.  Read as a claim: no record "
+            "check_release_tags: %s:%d records `%s` -> `%s`, but that record does "
+            "not resolve to the commit `%s` names today (`git rev-parse --short "
+            "'%s^{commit}'` = `%s`; the record is either a different commit or "
+            "an abbreviation `rev-parse` refuses as ambiguous).  Read as a claim: no record "
             "marker and no falsifier NAME this binding, so this is taken as where "
             "the tag points now -- a recollection is exempt, and this binding is "
             "not written as one.  A marker on this line that names a different "
             "binding does not excuse this one."
-            % (rel, lineno, name, sha, name, known[name])
+            % (rel, lineno, name, sha, name, name, known[name])
         )
     for rel, lineno, word in orphan_markers:
         print(
