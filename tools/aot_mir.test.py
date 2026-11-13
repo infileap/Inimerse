@@ -550,6 +550,9 @@ ALLOCS_EXPECT = {
     # first (both reported allocs=1|bytes=256), then written.
     "mir_bool_truthiness_and_zero_float": (1, 256),
     "mir_float_converts_scalars_and_zeroes_containers": (1, 256),
+    # round allocates NOTHING itself (identity copies a value); the one block
+    # is the first container literal [1, 2].  MEASURED 1|256, written after.
+    "mir_round_is_identity": (1, 256),
     "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
@@ -2000,6 +2003,28 @@ MIR_ONLY = [
      'say float("2.5")\nsay float("x")\nsay float([])\nsay float({})\n'
      'say float([1, 3))\nsay float(f)\n'
      'say float(9223372036854775807)\nsay float(2.5)\n'),
+    # round() is IDENTITY, and that is the finding, not a shortcut: measured on
+    # the interpreter, round(2.5) is 2.5, round(2.6) is 2.6, round("x") is "x",
+    # round(true) is true, round(nil) is nil, round([1,2]) is the same array
+    # literal and round(f) is the function.  There is no half-away or banker
+    # rule to copy because round does not round anything -- and the two lines
+    # that would look like rounding are the ones a reader would add: 2.5 stays
+    # 2.5 and 0.5 stays 0.5.  The display lines matter too: 2.6 prints 2.6,
+    # not 3, because the value is unchanged all the way to the printer.
+    #
+    # A two-or-more-argument round answers a POSITION-DEPENDENT leftover
+    # (measured: (1,2) -> 1, (1,2,3) -> 2, ("a",2) -> nil, (nil,2) -> nil) and
+    # a zero-argument one answers the destination register's old value -- both
+    # are the stale-stack class, so both are refused BY SHAPE and named below,
+    # while the one-argument shape (the only one whose answer is a function of
+    # the expression) is what this program measures.
+    ("mir_round_is_identity",
+     'f = () -> 42\n'
+     'say round(2.5)\nsay round(-2.5)\nsay round(2.4)\nsay round(2.6)\n'
+     'say round(0.5)\nsay round(-0.5)\nsay round(1)\n'
+     'say round("2.5")\nsay round("x")\nsay round(true)\nsay round(nil)\n'
+     'say round([1, 2])\nsay round({"a": 1})\nsay round(f)\n'
+     'say round(round(2.5))\n'),
     # The throw pair goes FIRST because it is the only entry whose criterion
     # reads the STDERR channel and the exit code, and a reader who scans this
     # list should meet the exception case before the many length questions.
@@ -4954,6 +4979,15 @@ MIR_ONLY_REFUSE = {
     "mir_builtin_argc_zero_list": (
         'x = "abcdef"\nsay list()\n',
         "builtin-stale-stack"),
+    # round: the two shapes whose answer is NOT a function of the expression
+    # get named here (they are the same stale-stack class as the three rows
+    # above), and the one-argument shape is what MIR_ONLY measures.
+    "mir_round_zero_arg_is_not_lowered": (
+        'x = 6\nsay round()\n',
+        "builtin-stale-stack"),
+    "mir_round_multi_arg_is_not_lowered": (
+        'say round(1, 2)\n',
+        "builtin-argc"),
 }
 
 # THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.

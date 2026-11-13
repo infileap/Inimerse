@@ -9498,3 +9498,41 @@ IR-MIR-COVER|...|mir-only-cases=279|mir-only-same-as-interpreter=277
 2. `mv_bool` 的默认臂改答假：**红六行**（`bool("")`、`bool("x")`、`bool(f)`、`bool([])`、`bool({})`、`bool([1, 3))`），INT/FLOAT 四行不动。两次恢复后重跑 `279/279`、exit 0。
 
 ---
+
+## §10.175 `round`：一个身份函数，以及 `int` 为何被写成边界（A 类第四十八项）
+
+### 一、来源与日期
+
+接手会话，2026-11-13，§10.174 之后的下一格。父 sha `7ddd346c`（§10.174 的合并 pin）。PLAN 行 25 与行 26 把 `bool`/`float`/`int`/`round` 放在同一格，主人批注把 `int` 的容器臂拆出来——本节的裁量是：`round` 落地，`int` 写成边界。
+
+### 二、判据（先红）
+
+一条 `MIR_ONLY`（`mir_round_is_identity`，十五行）加两条 `MIR_ONLY_REFUSE`（`mir_round_zero_arg_is_not_lowered` 期望 `builtin-stale-stack`、`mir_round_multi_arg_is_not_lowered` 期望 `builtin-argc`）。在 `7ddd346c` 上：
+
+    IR-MIR-MIR-ONLY|case=mir_round_is_identity|mir=refused|why=builtin-call
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_round_zero_arg_is_not_lowered|mir=refused|why=builtin-call|expect=builtin-stale-stack|ok=no
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_round_multi_arg_is_not_lowered|mir=refused|why=builtin-call|expect=builtin-argc|ok=no
+    IR-MIR-COVER|...|mir-only-cases=283|mir-only-same-as-interpreter=282
+
+两条拒绝判据在红态报的是**错的原因**（`builtin-call` 而不是名字），正是判据偏要测的那一面：允许“因为它没实现”作借口，等于没有测拒绝的形状。
+
+### 三、实测：`round` 不圆整，它是身份
+
+解释器逐行实测（`build/inimerse --no-mods run`）：`round(2.5)` 印 `2.5`、`round(2.6)` 印 `2.6`、`round(-2.5)` 印 `-2.5`、`round(0.5)` 印 `0.5`、`round(1)` 印 `1`、`round("2.5")` 印 `2.5`、`round("x")` 印 `x`、`round(true)` 印 `true`、`round(nil)` 印 `nil`、`round([1,2])` 印 `[1, 2]`、`round({"a":1})` 印 `{a: 1}`、`round(f)` 印 `<function>`。**没有 half-away，也没有 banker**——两条“看起来该进位”的行（2.5 与 0.5）是判据的锚。
+
+### 四、实现
+
+`src/compilation/aot_mir.c`：名字门两处加 `round`；emitter 臂 `v[r1] = mvargs[asp-1]`（不装箱、不格式化、不分配）；prescan 的两道 arity 门——`argc < 1` 答 `builtin-stale-stack`（解释器交回目标寄存器旧值，实测 `x = 6\nsay round()` 印 6），`argc > 1` 答 `builtin-argc`（位置相关的栈残值，实测 `(1,2)`→1、`(1,2,3)`→2、`("a",2)`→nil、`(nil,2)`→nil）。
+
+### 五、非对称注入
+
+1. emitter 改答 `mv_int(0)`：**十五行全红**（身份一次看全）。
+2. `argc > 1` 门关掉：多参链被**接受**（判据要求拒绝），且它对 `round(1, 2)` 会印 2 而解释器印 1——**被接受本身就是失败**，不是输出错。恢复后重跑 `283/283`、exit 0。
+
+### 六、边界（未落地）：`int`
+
+`int` 的标量臂本来可发射（`int(2.5)`=2 向零截断、`int("4.9")`=4、`int("x")`=0、`int(nil)`=0、`int(true)`=1、`int(1.0e30)` 饱和到 `9223372036854775807`、`int(-1.0e30)` 饱和到 `-9223372036854775808`）。**但容器臂答的是容器自己的创建序号**：实测 `int([1,2])`=1、`a=[1,2]` 后 `int(a)`=2、`int({})`=3 —— 那是解释器运行时的区域编号，本路线没有等价的编号空间（字面量、`list()`、`keys()` 等各自建区域，顺序一挪就全错）。名字门只能按名拒，不能半发射，所以 `int` **整名保持拒绝**，这一条写在这里而不是藏在实现里。
+
+### 七、文档预算与删除条件
+
+本节不新增 `path:line` 引用，`citations` 1199 行不动。删除条件：`round` 臂与两道 arity 门、三条判据同删；身份改成任何圆整会红那两条“看起来该进位”的行，关掉 arity 门会红两条拒绝判据。
