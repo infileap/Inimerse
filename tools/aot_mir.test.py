@@ -510,8 +510,17 @@ ALLOCS_EXPECT = {
     #   answers "aXaX" (4 bytes) and the second returns its 3-byte source
     #   unchanged, so its answer blocks are 5 and 4 bytes.
     #   Both numbers are filled after the run; see the note beside them.
-    "mir_scan_empty_needle_and_overlap": (0, 0),
-    "mir_replace_allocates_only_its_answer": (0, 0),
+    #   MEASURED 7|23 and 2|9.  READ BOTH WITH THEIR DENOMINATOR:
+    #   the replace-only row is the clean one -- exactly 2 allocations for
+    #   exactly 2 answers (aXaX is 5 bytes, the returned-unchanged aaa is 4,
+    #   9 total), so replace allocates its ANSWER and nothing else.
+    #   The scan row's 7 blocks are NOT the scans: each string CONSTANT that
+    #   reaches an arm is one mv_str copy (the route copies literals), and this
+    #   program reaches "abc" three times, "aaa"/"aa"/"b", "abcabc"/"bc"/"X",
+    #   "héllo"/"l"/"hé"/"é" -- the four scanners themselves add zero,
+    #   which is why its block count tracks the literals and not the calls.
+    "mir_scan_empty_needle_and_overlap": (7, 23),
+    "mir_replace_allocates_only_its_answer": (2, 9),
     # Equality allocates nothing of its own: the dicts are the allocation.
     # identity_eq builds two 1-pair dicts and shares the handle once (1 block);
     # neq_and_cross_type builds two dicts AND an array, which is 2 blocks.

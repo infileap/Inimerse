@@ -3279,6 +3279,105 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* index(), replace(), startswith(), endswith(): FOUR PURE SCANS.  Read\n"
+"   src/runtime/runtime_posix.c:573-640 beside this.  They are one cell because\n"
+"   they share ONE mistake that is easy to make and hard to see.\n"
+"\n"
+"   THE COERCION, WHICH THE PLAN MISNAMES.  A non-string argument is the\n"
+"   EMPTY STRING (`v.type == VAL_STRING && v.sval ? v.sval : \"\"`), NOT\n"
+"   the value run through say's formatting path.  Measured:\n"
+"     startswith(\"abc\", 3) is true, and so is (\"abc\", 4), and so is (\"abc\", 0)\n"
+"     index(\"abc\", 3) is 0\n"
+"   compare zero bytes -> always true, and an empty needle hits at 0.  A reader\n"
+"   who takes 3 for a SUBSCRIPT predicts a length check and is wrong on all\n"
+"   three; the criterion prints 4 as well because as a subscript it is out of\n"
+"   range, which is what separates the two readings.\n"
+"\n"
+"   THE EMPTY NEEDLE FAMILY: index(\"abc\", \"\") is 0 (strstr returns the string\n"
+"   itself); replace(\"abc\", \"\", \"-\") returns \"abc\" UNCHANGED before its\n"
+"   loop starts -- without that early return the loop is infinite, and that\n"
+"   shape is what a naive implementation hangs on.\n"
+"\n"
+"   THE OVERLAP RULE: replace(\"aaa\", \"aa\", \"b\") is ba -- a left-to-right\n"
+"   NON-overlapping scan that resumes past the needle after a hit.  Restarting\n"
+"   from the beginning answers b; a naive one loops forever.\n"
+"\n"
+"   BYTE OFFSETS, NOT CHARACTER OFFSETS (consistent with the byte model):\n"
+"     index(\"h\u00e9llo\", \"l\") is 3, not 2\n"
+"     replace(\"h\u00e9\", \"\u00e9\", \"e\") is he -- the needle is those two bytes.\n"
+"\n"
+"   A NON-STRING SOURCE OR PATCH also reads as the empty string, so:\n"
+"     index(nil, \"a\")            -1\n"
+"     startswith(nil, \"\")        true\n"
+"     replace(nil, \"a\", \"b\")     empty string\n"
+"     replace(\"abc\", \"a\", nil)   bc  -- the nil PATCH is the empty string, i.e.\n"
+"                                   a DELETION, not an error and not a literal\n"
+"                                   nil.  This line is the one most easily\n"
+"                                   left unmeasured and it changes the meaning.\n"
+"\n"
+"   ALLOCATION: the three scanners answer an int or a bool and ALLOCATE\n"
+"   NOTHING -- their arm has no mv_alloc call at all, which is what the zero\n"
+"   in the criterion exists to catch.  replace allocates its answer once, at\n"
+"   the length it computed, never a growing scratch buffer.\n"
+"\n"
+"   DELETE CONDITION.  The four arms, their pre-scan names and the two\n"
+"   programs go together: a coercing reader reddens the 4/0 lines, a restarting\n"
+"   replace reddens ba and aXaX, a byte->char offset change reddens 3 and he.\n"
+"\n"
+"   MEASURED BY.  tools/aot_mir.test.py's mir_scan_empty_needle_and_overlap\n"
+"   (twenty calls, byte-exact) and mir_replace_allocates_only_its_answer\n"
+"   (replace alone, so the three zeros are not averaged into its total). */\n"
+"static const char *mv_sstr(MirVal v) {\n"
+"    return (v.type == MV_STR && v.sval) ? v.sval : \"\";\n"
+"}\n"
+"\n"
+"static inline MirVal mv_index(MirVal str, MirVal sub) {\n"
+"    const char *s = mv_sstr(str), *p = mv_sstr(sub);\n"
+"    const char *hit = strstr(s, p);\n"
+"    return mv_int(hit ? (long long)(hit - s) : -1);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_starts(MirVal str, MirVal pat) {\n"
+"    const char *s = mv_sstr(str), *p = mv_sstr(pat);\n"
+"    return mv_boo(strncmp(s, p, strlen(p)) == 0);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_ends(MirVal str, MirVal pat) {\n"
+"    const char *s = mv_sstr(str), *p = mv_sstr(pat);\n"
+"    size_t sl = strlen(s), pl = strlen(p);\n"
+"    return mv_boo(pl <= sl && memcmp(s + sl - pl, p, pl) == 0);\n"
+"}\n"
+"\n"
+"static inline MirVal mv_replace(MirVal str, MirVal oldv, MirVal newv) {\n"
+"    const char *s = mv_sstr(str);\n"
+"    const char *old = mv_sstr(oldv);\n"
+"    const char *newp = mv_sstr(newv);\n"
+"    size_t sl = strlen(s), ol = strlen(old), nl = strlen(newp);\n"
+"    if (!ol) {   /* returned unchanged BEFORE the loop -- the no-hang arm */\n"
+"        char *nb = (char *)mv_alloc(sl + 1);\n"
+"        memcpy(nb, s, sl + 1);\n"
+"        MirVal r; r.type = MV_STR; r.ival = 0; r.sval = nb; r.ptr = 0;\n"
+"        return r;\n"
+"    }\n"
+"    size_t cap = sl, used = 0, hits = 0, i;   /* count hits first: exact answer size */\n"
+"    for (i = 0; i < sl;) {\n"
+"        if (i + ol <= sl && memcmp(s + i, old, ol) == 0) { hits++; i += ol; }\n"
+"        else i++;\n"
+"    }\n"
+"    if (nl < ol && hits) cap = sl - hits * (ol - nl);\n"
+"    else if (nl > ol && hits) cap = sl + hits * (nl - ol);\n"
+"    char *out = (char *)mv_alloc(cap + 1);\n"
+"    for (i = 0; i < sl;) {\n"
+"        if (i + ol <= sl && memcmp(s + i, old, ol) == 0) {\n"
+"            if (nl) memcpy(out + used, newp, nl);\n"
+"            used += nl; i += ol;\n"
+"        } else out[used++] = s[i++];\n"
+"    }\n"
+"    out[used] = 0;\n"
+"    MirVal r; r.type = MV_STR; r.ival = 0; r.sval = out; r.ptr = 0;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "/* list(): the SECOND builtin this route emits, and the first whose answer is a\n"
 "   CONTAINER.  Read src/runtime/runtime_posix.c:326-336 beside it -- the whole\n"
 "   function is three answers, and all three are reproduced here rather than\n"
@@ -4937,12 +5036,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
                     && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0
                     && strcmp(bn, "chars") != 0 && strcmp(bn, "ord") != 0
-                    && strcmp(bn, "chr") != 0) {
+                    && strcmp(bn, "chr") != 0 && strcmp(bn, "index") != 0
+                    && strcmp(bn, "replace") != 0 && strcmp(bn, "startswith") != 0
+                    && strcmp(bn, "endswith") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
-                               " and substr, split, join, chars, ord and chr and no other"
-                               " builtin;"
+                               " and substr, split, join, chars, ord, chr, index,"
+                               " replace, startswith and endswith and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -4986,6 +5087,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 /* substr needs THREE: with two the interpreter returns 0 and the
                    destination register keeps its value (measured: `substr("abc",
                    1)` answers 1 on a fresh program).  Same class, same name. */
+                if ((strcmp(bn, "index") == 0 || strcmp(bn, "replace") == 0
+                     || strcmp(bn, "startswith") == 0 || strcmp(bn, "endswith") == 0)
+                    && argc < 2) {
+                    g_prescan_why = "builtin-argc";
+                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
+                               " the two-argument scans read their needle off the stack top and"
+                               " the source below it, so a short call would read residue", f, i, bn, argc);
+                }
                 if ((strcmp(bn, "chars") == 0 || strcmp(bn, "ord") == 0
                      || strcmp(bn, "chr") == 0) && argc < 1) {
                     g_prescan_why = "builtin-stale-stack";
@@ -5833,7 +5942,9 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "pop") != 0 && strcmp(bn, "substr") != 0
                     && strcmp(bn, "split") != 0 && strcmp(bn, "join") != 0
                     && strcmp(bn, "chars") != 0 && strcmp(bn, "ord") != 0
-                    && strcmp(bn, "chr") != 0)) return -1;
+                    && strcmp(bn, "chr") != 0 && strcmp(bn, "index") != 0
+                    && strcmp(bn, "replace") != 0 && strcmp(bn, "startswith") != 0
+                    && strcmp(bn, "endswith") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -5848,6 +5959,14 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_ord(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "chr") == 0)
             buf_fmt(b, "    v[%d] = mv_chr(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "index") == 0)
+            buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "replace") == 0)
+            buf_fmt(b, "    v[%d] = mv_replace(mvargs[asp-3], mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "startswith") == 0)
+            buf_fmt(b, "    v[%d] = mv_starts(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "endswith") == 0)
+            buf_fmt(b, "    v[%d] = mv_ends(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "join") == 0)
             /* ONE argument is the default-separator form (`join([1,2,3])` is
                `123`), so the separator is passed only when the count is two or
