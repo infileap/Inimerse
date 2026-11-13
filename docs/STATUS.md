@@ -9578,3 +9578,46 @@ IR-MIR-COVER|...|mir-only-cases=279|mir-only-same-as-interpreter=277
 ### 七、文档预算与删除条件
 
 本节不新增 `path:line` 引用，`citations` 1199 不动。删除条件：`mv_sqrt` 臂、零参门、四条判据同删；改短格式为 `%.17g` 会红 `sqrt(2)` 行，去掉 throw 臂会红三条抛错判据。
+
+## §10.177 `match`：POSIX 扩展正则搜索，不是子串（A 类第五十项）
+
+### 一、来源与日期
+
+接手会话，2026-11-13，§10.176 之后。父 sha `166fb121`。PLAN 行 29 列 `match`，并在同一行警告它「拖 libc regex」——本格照办，并按解释器的翻译表逐字节镜像。
+
+### 二、判据（先红）
+
+两条 `MIR_ONLY`（`mir_match_regex_and_empty_pattern` 14 行、`mir_match_non_strings_read_empty` 4 行）加一条 `MIR_ONLY_REFUSE`（`mir_match_single_argument_is_not_lowered`，期望 `builtin-stale-stack`）。在 `166fb121` 上：
+
+    IR-MIR-MIR-ONLY|case=mir_match_regex_and_empty_pattern|mir=refused|why=builtin-call
+    IR-MIR-MIR-ONLY|case=mir_match_non_strings_read_empty|mir=refused|why=builtin-call
+    IR-MIR-COVER|...|mir-only-cases=289|mir-only-same-as-interpreter=287
+
+### 三、实测
+
+`match("abc","b")`=true、`("abc","z")`=false、`("abc","^b")`=false、`("abc","b$")`=false、`("abc","^abc$")`=true、`("abc","a|z")`=true、`("abc","a+")`=true、`("abc","[b-d]")`=true、`("abc","c{1,2}")`=true、`match("a1b","\\d")`=true、`match("a1b","\\w")`=true、`("abc","")`=true、`("abc","[")`=false、`("abc","ABC")`=false。
+
+非字符串两侧都读空串：`match(123, 2)`=**true**（`""` 匹配 `""`，不是 `"123"` 含 `"2"`）、`match(nil,"a")`=false、`match([1,2],1)`=true、`match("abc",123)`=true。单参：`say match("abc")` 印 `abc`（解释器不 pop 不 push，什么都没答）。
+
+### 四、实现
+
+`src/compilation/aot_mir.c`：`mv_match(MirVal subject, MirVal pattern)` 镜像 `posix_core_match`（`src/runtime/runtime_posix.c:162-215`）——翻译表、`in_class` 状态、`16*strlen+1` 缓冲（AUDIT 1.64 的静默截断就是定长 2048 缓冲）、`REG_EXTENDED`、失败编译答 false、`regex_t` 局部。名字门两处加 `match`；`argc<2` 按名拒 `builtin-stale-stack`（解释器单参形状不推任何值）；emitter 臂 `mv_match(mvargs[asp-2], mvargs[asp-1])`。前导新增 `#include <regex.h>`（libc，不需要额外链接）。
+
+分配：`mir_match_regex_and_empty_pattern` 0|0（翻译缓冲 malloc/free 不登记）；`mir_match_non_strings_read_empty` 1|256（那是程序自己的 `[1, 2]` 字面量，不是正则）。
+
+### 五、非对称注入
+
+1. `REG_EXTENDED` → `0`（基本正则）：`a|z`、`a+`、`c{1,2}` 三行转 false。
+2. 删掉翻译表里的 `\d`：只有 `\d` 行转 false（`\d` 被当字面量，`"a1b"` 里没有 `d`）。
+
+恢复后 `289/289`、`REFUSED-TOTAL cases=13|ok=13`、exit 0、`IR-MIR-VERDICT|PASS`。
+
+### 六、边界与遗留
+
+- 翻译表是解释器的表，不是本路线自己的正则实现；两边的缓冲尺寸公式相同，靠近上限的 pattern 不会分歧。
+- `match` 单参/零参按名拒，不是实现缺失。
+- 记账：`mir_builtin_call_with_arg` 现指向 `declared`（仍按名拒）。
+
+### 七、删除条件
+
+`mv_match`、`argc<2` 门、三条判据同删；把 `REG_EXTENDED` 换成 0 红三条扩展操作符行；去掉翻译表 `\d` 只红一行。
