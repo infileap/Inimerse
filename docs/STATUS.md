@@ -10548,7 +10548,7 @@ say len(d)      -> 1
 
 理由一：**输出顺序会漂移**。
 
-task 不是协程优先的——`task` 关键字在**解析期**就把 `THREAD_FLAG_TASK` 打进 `thread_flags`（`src/parser/parser.c:1602`），于是 `L_THREAD_START`（`src/vm/vm.c:4491`）走 `vm_task_create`（`:4862`）→ `CreateFiber` 协程 + **一个调度器 OS 线程**（`:4899` `im_thread_start(task_scheduler_entry, vm)`）。**main 与 task 真并行**，输出交错。
+task 不是协程优先的——`task` 关键字在**解析期**就把 `THREAD_FLAG_TASK` 打进 `thread_flags`（`src/parser/parser.c:1602` [obs: 8f3a2484]），于是 `L_THREAD_START`（`src/vm/vm.c:4491` [obs: 8f3a2484]）走 `vm_task_create`（`:4862` [obs: 8f3a2484]）→ `CreateFiber` 协程 + **一个调度器 OS 线程**（`:4899` [obs: 8f3a2484] `im_thread_start(task_scheduler_entry, vm)`）。**main 与 task 真并行**，输出交错。
 
 实测（每个形状 20 次，取不同输出的计数）：
 
@@ -10579,7 +10579,7 @@ start w("hello") →  T  hello
 
 **整数实参不到达，字符串实参到达。** 同一形状换成 `func` 则两边都正常（`func w(x){say x} w(7)` 印 `7`），所以这不是「task 不支持参数」，而是**参数传递路径上的一条窄缺陷**。
 
-已定位到机制的一半（另一半见 §四的边界）：编译器把 task/thread 的参数**编译成局部变量**（`src/compiler/compiler.c:407-411`，`alloc_local(comp, pn)`），而 VM 把实参写进**寄存器** `nt2->R[i + 1]`（`src/vm/vm.c:4893`）。两条路径本应汇合，但整数在途中被丢掉、字符串没有。
+已定位到机制的一半（另一半见 §四的边界）：编译器把 task/thread 的参数**编译成局部变量**（`src/compiler/compiler.c:407-411` [obs: 8f3a2484]，`alloc_local(comp, pn)`），而 VM 把实参写进**寄存器** `nt2->R[i + 1]`（`src/vm/vm.c:4893` [obs: 8f3a2484]）。两条路径本应汇合，但整数在途中被丢掉、字符串没有。
 
 **这条缺陷与本路线无关**：它是解释器侧的，本路线按名拒掉整个 task 段，所以两侧都到不了这个形状。A1 要成立，就得先让解释器把 task 实参传对——那是**解释器的活**，不是「一条臂」。
 
@@ -10594,7 +10594,7 @@ start w("hello") →  T  hello
 本格还删了 `tools/aot_mir.test.py` 里 `MIR_ONLY_REFUSE_NOTYET` 表的**唯一一行**（`mir_int_container_is_refused`）。删它**不是改判据**，是**删一条没有判据的声明**——把这件事讲清楚，免得后人一看见「判据表少一行」就以为覆盖率动了：
 
 1. 那行属于 `MIR_ONLY_REFUSE_NOTYET`（给 `why=unsupported-opcode` 的拒案配 not-yet opcode 名单的表），**不是** `MIR_ONLY_REFUSE`（真正被消费的按名拒表）。`notyet_problems()` 遍历的是 `MIR_ONLY_REFUSE`，**永远到不了**那一行 ⇒ 它**从来没有被任何判据判到过**，删它**不丢任何覆盖率**。
-2. 它写的内容是「`int` 作用于容器**按名拒**」。这条按名拒**从落地起就没生效过**：它查 `fn->insns[i - 1].op`（`src/compilation/aot_mir.c:5571`），而发射顺序是 `OP_NEW_ARRAY` → **`OP_PUSH_REG`** → `OP_CALL_BUILTIN`（`src/compiler/compiler.c:460-464`），前驱永远是 `OP_PUSH_REG`，四种容器 opcode 一个都不匹配。**这是死代码**，不是一条活的边界。
+2. 它写的内容是「`int` 作用于容器**按名拒**」。这条按名拒**从落地起就没生效过**：它查 `fn->insns[i - 1].op`（`src/compilation/aot_mir.c:5571` [obs: 8f3a2484]），而发射顺序是 `OP_NEW_ARRAY` → **`OP_PUSH_REG`** → `OP_CALL_BUILTIN`（`src/compiler/compiler.c:460-464`），前驱永远是 `OP_PUSH_REG`，四种容器 opcode 一个都不匹配。**这是死代码**，不是一条活的边界。
 3. 所以现状是「按名拒在、判据没了」——一条**没有任何判据覆盖、且没生效**的按名拒。人类裁定走 (c)：**删按名拒本体**（不是留注释）、把「route-local 记账数、随分配漂移」写进 `mv_int_of` 注释、**恢复一条正向判据**（钉「两侧都是整数、且 MIR 侧随分配顺序漂移」，不是原来那条钉「两侧同数」的）。那三步在 §10.198 落，本格只做删行与记档。
 
 ### 四、边界
