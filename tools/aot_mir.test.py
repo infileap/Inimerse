@@ -220,6 +220,10 @@ ALLOCS_EXPECT = {
     "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
+    # Four regions are what the PROGRAM builds; the readers allocate nothing.
+    # Before the fix this read 5 -- mv_list built the [0..3] array for the
+    # domain-R set, which the interpreter refuses to enumerate at all.
+    "mir_domain_r_component_is_not_enumerable": (4, 3840),
     "mir_args_are_the_program_arguments": (1, 256),
     # The four intervals this program builds, and nothing else: `range` copies
     # a set and the print reads a region, so a wrong arm that allocated a
