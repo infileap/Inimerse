@@ -7237,6 +7237,7 @@ ival + 2      : MV_INT  flags（1=下界含，2=上界含）
 **第一版把这两个写成 `v[asp-2]`／`v[asp-1]`**，于是每一次成员判定都答 false：`mir_interval_membership` 印 `false false false false false`，解释器印 `true true false false false`。判据抓到了它，改一个字母就对了——这就是「判据先红」在真实缺陷上的价值，不是流程装饰。
 
 **域名不是 R 时按名拒绝**（`why=set-interval-domain`）：同一套语法既能到 `R[0~3)`（kind 2，本 opcode），也能到 `Z[0~3]`（**有限集**，kind 0 带一个组件，实测 `set(4)` 且成员可枚举）。把 Z 当 R 答，是错答而不是缺答。
+**UPDATE (§10.188)**：`Z[0~3]` 现在**被接受**并作为 kind 2 的 Z 域区间发射（同一套 `mv_set_interval_d` 带域位），不再是按名拒的情形。本句描述的「域名不是 R 时拒」今天只对**其它域名**成立。
 
 **非数字边界不是拒译**：解释器对 `[nil, 3)` 的回答是**整个值变成 nil**（`L_SET_INTERVAL` 的 `!val_is_num` 臂），所以发射的是 `v[r1] = mv_nil()` 而不是停；随后 `1 in p` 自然为 false。
 
@@ -7412,6 +7413,7 @@ IR-AOT-MIR-VERDICT|PASS|covered=29|missing=0
 2. **`list` 是推导式的前置，但不是推导式本身。** 推导式的第一条字节码就是 `OP_CALL_BUILTIN list`，所以以前整个程序停在那里；现在它推进一站，停在 `IR-MIR-NOT-YET|op=OP_SET_ADD|n=1`。两处说「停在 list」的旧注释已按实测改正。
 3. **数组的「同一句柄」只在语言层可观测**：`list(a) == a` 为 true。本路线返回同一句柄时这条自然成立，拷贝会答 false——判据里有这一条（`mir_list_of_an_array` 的 `true` 行）。
 4. **区间集的 `list` 是 nil 而不是空数组**：解释器的 `vm_set_to_array` 对 kind 2 会去枚举组件，但本路线根本不构造那种组件；实测 `list([0, 3))` 印 `nil`，所以按 nil 答。
+**UPDATE (§10.189/§10.191)**：理由句过期——本路线**现在构造**有限集里的 component，只是对它不枚举（R 域 component 的成员无对应物，§10.191 的读端分组即是证据）。答案 `nil` 仍成立，理由换了。
 
 ## §10.143 `OP_SET_ADD`：推导式的写半边，以及集合第一次会长大（aot-mir，A 类第三十二项）
 
@@ -8049,11 +8051,13 @@ IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8|agree=yes
 2. **字符串与数字混在一起是 `nil`**（解释器 `have = -1`），不是「按类型排序」：`x = 1, "a"` 的 `min`/`max` 都是 `nil`。
 3. **空集合**在解释器里 `have` 停在 0 ⇒ `nil`；本路线的折叠同样以 `nil` 起手、以 `have` 收尾。
 4. **区间没有离散极值**：`p = (0, 3)` 的 `min` 是 `nil`（解释器对 `nameIdx == 24` 直接返回），本路线对 kind 2 也答 `nil`。
+**UPDATE (§10.185)**：对 **Z 域** 过期——`min(range(1))`/`max(range(1))` 现在答 `-2147483648`/`2147483647`（离散域的端点）；对 R 域仍成立。
 
 ### 六、边界（每条都是决定，不是遗漏）
 
 - **命名内建集**（`Z`、`Z+`、…）仍按名拒（preset 全局），所以 kind 1 在本路线不可达；若将来可达，规则是 `set_minmax` 的 kind-1 答案（N 的最小 0、Z+ 的最小 1、Z- 的最大 −1，其余 `nil`）。
 - **除 `R` 以外的整数区间**不可达（本路线只构建 `R` 区间），而 `R` 没有离散极值。
+**UPDATE (§10.184/§10.188)**：过期——整数区间可由 `range(INT)` 与 `Z[lo~hi]` 两条路构建出 Z 域，故「除 R 以外不可达」不再成立；R 仍无离散极值。
 - **NaN 元素**只能从 `OP_CALL_BUILTIN` 进来，仍在子集之外。
 - **零分配说的是这条臂**：折叠只回传它找到的元素或 `nil`，从不构造集合；判据里的 `(1, 256)` 是程序自己建的那个集合字面量。第一遍表把七行全填成 `(0, 0)`，第一次运行把它们全部推翻——照例「先量后写」。
 
@@ -8759,7 +8763,9 @@ IR-AOT-MIR-VERDICT|PASS|tree=40013dba2e951d01e877b898d613e9dfd30c2a52|accepted=3
 3. **throw 的位置矩阵量了**：finally 里（运行态）→ 上浮；finally 里（跳过态）→ 不可达；catch 体里 → 上浮；try 体里且 finally 会跑 → 清理先跑、原错误上浮；`break` 出 try 且 finally 内联了 throw → 被吞，但本路线按 `why=try-escapes` 拒译。最后一条量的是「为什么不能拿它当判据」。
 4. **迭代四种容器都量了**：set（3 元素 3 nil、2 元素 2 nil）、array（元素）、dict（键）、`[0, 3)` 区间（零次，`len` 0）。`str()` 会被本路线按 `why=builtin-call` 拒译，所以判据里只出现 `say x` 与 `len`。
 5. **`Z[0~3]` 有限域区间**：解释器印四行 nil，本路线按 `why=set-interval-domain` 拒译（它只发 R 区间）——能力边界，既不是同意也不是红。
+**UPDATE (§10.188)**：过期——`Z[0~3]` 现在接受：`say Z[0~3]` 印 `set(Z interval)`、`len` 4（两侧一致）。
 6. **`R[0~3)` 显式域区间两侧不一致**：解释器 `set(0)`、`len` 0、`min` 0、`max` 3；本路线 `set(1)`、`len` 1、`min`/`max` 都答集合自己。这是**另一格**的真分歧，不写进本条判据，也不靠「取最后看的那一侧」圆掉——它和 `[0, 3)` 只差一个拼法，差的却是 `OP_SET_INTERVAL` 之后多出来的那条 `NEW_SET`。
+**UPDATE (§10.189/§10.191)**：过期——`R[0~3)` 今天**两侧一致**（`set(0)`/`0`/`0`/`3`）：读端不再把 R 域 component 当可枚举成员。
 7. **机制是读出来的，不是猜的**：解析器的 `handlerCount` 数语句、编译器的两次 `patch_r2`、`OP_TRY_START` 压 `ExcFrame`、`vm_throw` 存 `var_idx` 或按 `ignore` 静默、`OP_INDEX_GET` 的兜底分支、路线侧那行 `return mv_nil();`。每一条都先量两侧读数、再回到源码里找到发出它的那一行。
 8. **ALLOCS 是量出来的**：五个容器类判据全 `allocs=1|bytes=256`（一块 8 槽池），finally 类全 0|0；两条 rc 1 的判据 `reported=no`，因为解释器只在 rc 0 时读那一行。
 
