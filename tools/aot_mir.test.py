@@ -2271,7 +2271,20 @@ say list(b)
      'x3 = int(a)\n'
      'if x2 > x1 { say "later-bigger" } else { say "later-not-bigger" }\n'
      'if x3 == x1 { say "stable" } else { say "moved" }\n'
-     'if int(a) == nil { say "not-int" } else { say "int" }\n'),
+     'if int(a) == nil { say "not-int" } else { say "int" }\n'
+     # The rows above are still open to a second reading: the later-created
+     # container was also the later-QUERIED one, so "later-bigger" alone does
+     # not separate "the number follows creation order" from "the number
+     # follows query order".  These four lines ask the later-created
+     # container FIRST, and the earlier-created one second.  If the number
+     # followed the query, the earlier container would now come out larger.
+     # MEASURED on both routes: the earlier-created container still answers
+     # the smaller number, so the slot is fixed at creation.
+     'p = [4]\n'
+     'q = [5]\n'
+     'n1 = int(q)\n'
+     'n2 = int(p)\n'
+     'if n2 < n1 { say "creation-order" } else { say "query-order" }\n'),
     # round(x, digits) DOES round, and it is C round(): half AWAY FROM ZERO on
     # the scaled value, so round(0.5,0) is 1 and round(-0.5,0) is -1 -- the two
     # lines that separate this from banker's rounding.  The binary
@@ -5211,6 +5224,18 @@ i = 9, 8, "s"; say "mixed-type"; say min(i); say max(i)
      'say "7c:"\nsay 1 < 2 < 3\n'
      't = []\nsay "8a:"\nsay [] or g()\nsay t\n'
      't = []\nsay "8b:"\nsay {} or g()\nsay t\n'
+     # The SET family in a truth position.  The rows above cover the array and
+     # the dict; a set is a third container kind and until these two rows it
+     # had never been asked for its truth value on either route.  MEASURED on
+     # both routes: not Z[0~3] is false and not R[0~3) is false -- a set is
+     # TRUE even when it holds nothing, exactly like the empty array above
+     # (an interval over Z holds four members, one over R none; neither
+     # changes the answer, because truth reads the type and not the
+     # payload).  The `or` row then shows the same shape as 8a/8b: the
+     # right operand is not evaluated, so the log stays empty.
+     't = []\nsay "8e:"\nsay not Z[0~3]\nsay t\n'
+     't = []\nsay "8f:"\nsay not R[0~3)\nsay t\n'
+     't = []\nsay "8g:"\nsay Z[0~3] or g()\nsay t\n'
      't = []\nsay "8c:"\nsay 0.0 or g()\nsay t\n'
      't = []\nsay "8d:"\nsay -0.0 or g()\nsay t\n'
      'say "9a:"\nsay not 1 or 2\n'
