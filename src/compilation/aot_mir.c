@@ -2860,9 +2860,13 @@ static const char *const kMirValBlock =
 " * boundary and a FLOAT truncates TOWARD ZERO (int(-2.9) is -2).\n"
 " *\n"
 " * THE CONTAINER ARM answers the container's own region number, which the\n"
-" * interpreter also does (it reads the Value's index).  Those numbers agree\n"
-" * here only because both routes number allocations in the same order: that is\n"
-" * a boundary, not a contract (mir_int_container_answers_the_region_index).\n"
+" * interpreter also does (it reads the Value's index).  Those numbers are\n"
+" * ROUTE-LOCAL BOOKKEEPING and they need not be equal: on one program the\n"
+" * interpreter answered 1 and 2 for int([1, 2]) and int({3: 4}), this route\n"
+" * answered 1 and 4.  Both are integers; both drift with their own route's\n"
+" * allocation order (the later allocation gets the later number, in every\n"
+" * route).  That is a boundary, not a contract -- it is pinned as a guard,\n"
+" * not refused: see mir_int_container_arm_is_an_integer_that_drifts.\n"
 " * It allocates nothing. */\n"
 "static inline MirVal mv_int_of(MirVal a) {\n"
 "    long long n = 0;\n"
@@ -5556,29 +5560,25 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                " live in the VM and the mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
-                /* int() ON A CONTAINER IS NOT AN ARM, IT IS A LEAK.  The
-                   interpreter answers the container's own index (measured:
-                   int([1, 2]) is 1, int({}) is 2), which is its bookkeeping
-                   number -- this route numbers regions differently (measured
-                   on the same program: 1 and 4).  No arm can imitate a number
-                   that is a property of the machine rather than of the program,
-                   so the direct shape is refused by name.  The check looks at
-                   the instruction right before the call; a container routed
-                   through a global, a function return or a field load is NOT
-                   caught here and would answer this route's number -- that is
-                   the boundary, written down in §10.181. */
-                if (strcmp(bn, "int") == 0 && i > 0) {
-                    int pop_ = fn->insns[i - 1].op;
-                    if (pop_ == OP_NEW_ARRAY || pop_ == OP_NEW_DICT
-                        || pop_ == OP_NEW_SET || pop_ == OP_SET_INTERVAL) {
-                        g_prescan_why = "builtin-call";
-                        return bad("container=%d insn=%d builtin 'int' is called on a"
-                                   " container that is still on the argument stack:"
-                                   " the interpreter answers that container's own"
-                                   " index, a route-local bookkeeping number no arm"
-                                   " can imitate", f, i);
-                    }
-                }
+                /* int() ON A CONTAINER IS NOT AN ARM, IT IS A LEAK -- and it is
+                   NOT refused here any more.  There WAS a by-name refusal for
+                   it, written when the container arm looked like an accident
+                   to be caught: it looked at the instruction right before the
+                   call and matched the four container opcodes.  That could
+                   never fire, because the emitter's order is OP_NEW_ARRAY ->
+                   OP_PUSH_REG -> OP_CALL_BUILTIN, so the instruction before
+                   the call is always OP_PUSH_REG.  The refusal was dead from
+                   the day it was written (docs/STATUS.md section 10.197) and
+                   the shape it claimed to catch kept lowering.
+                   What the route actually does: int(container) answers the
+                   container's own region number -- the interpreter's pool
+                   index on the interpreter side (int([1, 2]) is 1, int({3: 4})
+                   is 2), this route's pool index here (1 and 4 on the same
+                   program).  Both are integers, both drift with their own
+                   route's allocation order, and the two values need not be
+                   equal.  That is a boundary, not a contract, and it is
+                   pinned as a guard rather than refused: see
+                   mir_int_container_arm_is_an_integer_that_drifts. */
                 if (argc < 0 || argc >= REG_LIMIT)
                     return bad("container=%d insn=%d builtin '%s' argument count %d out of range",
                                f, i, bn, argc);
