@@ -2760,6 +2760,53 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* int() -- two rules in one: a STRING reads through strtoll, every other tag\n"
+" * answers its own integer body.\n"
+" *\n"
+" * WHY BASE 16 ONLY ON A PREFIX.  src/runtime/runtime_posix.c:104-123 looks at\n"
+" * s[0]=='0' and s[1] in {'x','X'} and otherwise calls strtoll base 10.  So\n"
+" * int(\"0x10\") is 16 but int(\"0123\") is 123 -- there is no base-0 octal read\n"
+" * and the leading zero is not a base.  int(\"0b101\") is 0 and int(\"1e3\") is 1:\n"
+" * the letter stops the base-10 read.  Overflow saturates at strtoll's\n"
+" * boundary and a FLOAT truncates TOWARD ZERO (int(-2.9) is -2).\n"
+" *\n"
+" * THE CONTAINER ARM answers the container's own region number, which the\n"
+" * interpreter also does (it reads the Value's index).  Those numbers agree\n"
+" * here only because both routes number allocations in the same order: that is\n"
+" * a boundary, not a contract (mir_int_container_answers_the_region_index).\n"
+" * It allocates nothing. */\n"
+"static inline MirVal mv_int_of(MirVal a) {\n"
+"    long long n = 0;\n"
+"    if (a.type == MV_STR) {\n"
+"        const char *s = a.sval ? a.sval : \"0\";\n"
+"        int hx = (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'));\n"
+"        n = strtoll(s, (char **)0, hx ? 16 : 10);\n"
+"    }\n"
+"    else if (a.type == MV_FLT) n = (long long)a.fval;   /* toward zero */\n"
+"    else n = (long long)a.ival;\n"
+"    return mv_int(n);\n"
+"}\n"
+"\n"
+"/* round(x, digits) -- C round() on a 10^digits scale: half AWAY FROM ZERO,\n"
+" * then divided back.  Model: src/runtime/runtime_posix.c:144-160 -- digits is\n"
+" * the second operand, CLAMPED to [-12,12], and a non-numeric FIRST operand\n"
+" * answers nil rather than throwing.  The answer is always a FLOAT, so\n"
+" * round(2.345,20) prints the short form and round(2.345,-13) collapses to 0.\n"
+" * Allocates nothing. */\n"
+"static inline MirVal mv_round_of(MirVal x, MirVal d) {\n"
+"    if (x.type != MV_INT && x.type != MV_FLT) return mv_nil();\n"
+"    int digits = d.type == MV_INT ? (int)d.ival\n"
+"               : d.type == MV_FLT ? (int)d.fval : 0;\n"
+"    if (digits > 12) digits = 12;\n"
+"    if (digits < -12) digits = -12;\n"
+"    double v = x.type == MV_INT ? (double)x.ival : x.fval;\n"
+"    double scale = 1.0;\n"
+"    int count = digits < 0 ? -digits : digits;\n"
+"    for (int k = 0; k < count; k++) scale *= 10.0;\n"
+"    double out = digits >= 0 ? round(v * scale) / scale : round(v / scale) * scale;\n"
+"    return mv_flt(out);\n"
+"}\n"
+"\n"
 "static inline MirVal mv_has(MirVal dict, MirVal key) {\n"
 "    if (dict.type != MV_DIC) return mv_boo(0);   /* :514 -- VAL_DICT only */\n"
 "    int iv = mv_arr_live((int)dict.ival);\n"
@@ -5383,13 +5430,13 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
-                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
                     && strcmp(bn, "match") != 0 && strcmp(bn, "args") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
-                               " and substr, split, join, chars, ord, chr, index,"
+                               " and int, substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
                                " bit_or, bit_xor, bit_not, shl, shr, bool, float, round,"
                                " sqrt, match and args and no other builtin;"
@@ -5397,6 +5444,29 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                " live in the VM and the mods", f, i, bn);
                 }
                 int argc = ir_insn_r3(in);
+                /* int() ON A CONTAINER IS NOT AN ARM, IT IS A LEAK.  The
+                   interpreter answers the container's own index (measured:
+                   int([1, 2]) is 1, int({}) is 2), which is its bookkeeping
+                   number -- this route numbers regions differently (measured
+                   on the same program: 1 and 4).  No arm can imitate a number
+                   that is a property of the machine rather than of the program,
+                   so the direct shape is refused by name.  The check looks at
+                   the instruction right before the call; a container routed
+                   through a global, a function return or a field load is NOT
+                   caught here and would answer this route's number -- that is
+                   the boundary, written down in §10.181. */
+                if (strcmp(bn, "int") == 0 && i > 0) {
+                    int pop_ = fn->insns[i - 1].op;
+                    if (pop_ == OP_NEW_ARRAY || pop_ == OP_NEW_DICT
+                        || pop_ == OP_NEW_SET || pop_ == OP_SET_INTERVAL) {
+                        g_prescan_why = "builtin-call";
+                        return bad("container=%d insn=%d builtin 'int' is called on a"
+                                   " container that is still on the argument stack:"
+                                   " the interpreter answers that container's own"
+                                   " index, a route-local bookkeeping number no arm"
+                                   " can imitate", f, i);
+                    }
+                }
                 if (argc < 0 || argc >= REG_LIMIT)
                     return bad("container=%d insn=%d builtin '%s' argument count %d out of range",
                                f, i, bn, argc);
@@ -5473,18 +5543,17 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                    the destination register's old value (measured 6), and a
                    two-or-more-argument round answers a position-dependent slot
                    (measured (1,2)->1, (1,2,3)->2, ("a",2)->nil, (nil,2)->nil). */
-                if ((strcmp(bn, "round") == 0 || strcmp(bn, "sqrt") == 0) && argc < 1) {
+                if ((strcmp(bn, "round") == 0 || strcmp(bn, "sqrt") == 0
+                     || strcmp(bn, "int") == 0) && argc < 1) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin '%s' is called with no argument:"
                                " the interpreter answers it with the destination register's"
                                " previous value, not with a value the program asks for", f, i, bn);
                 }
-                if (strcmp(bn, "round") == 0 && argc > 1) {
-                    g_prescan_why = "builtin-argc";
-                    return bad("container=%d insn=%d builtin '%s' is called with %d argument(s):"
-                               " the interpreter's round answers a position-dependent stack"
-                               " slot for that shape, not a value the program asks for", f, i, bn, argc);
-                }
+                /* round's two-argument shape is NOT the stale-stack class: it is
+                   the precision form, measured by mir_round_precision_half_away_
+                   from_zero.  §10.175 refused it as a leftover, and that reading
+                   was wrong -- the answers it saw were that rule's own. */
                 if ((strcmp(bn, "upper") == 0 || strcmp(bn, "lower") == 0
                      || strcmp(bn, "trim") == 0) && argc < 1) {
                     g_prescan_why = "builtin-stale-stack";
@@ -6349,7 +6418,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
-                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
                     && strcmp(bn, "match") != 0
                     && strcmp(bn, "args") != 0)) return -1;
@@ -6389,8 +6458,16 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_bool(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "float") == 0)
             buf_fmt(b, "    v[%d] = mv_float(mvargs[asp-1]);", r1);
-        else if (strcmp(bn, "round") == 0)
-            buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
+        else if (strcmp(bn, "int") == 0)
+            buf_fmt(b, "    v[%d] = mv_int_of(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "round") == 0) {
+            /* one argument is identity; two is the precision form */
+            int ac = ir_insn_r3(in);
+            if (ac >= 2)
+                buf_fmt(b, "    v[%d] = mv_round_of(mvargs[asp-2], mvargs[asp-1]);", r1);
+            else
+                buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
+        }
         else if (strcmp(bn, "sqrt") == 0)
             buf_fmt(b, "    v[%d] = mv_sqrt(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "match") == 0)

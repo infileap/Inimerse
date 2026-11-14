@@ -213,7 +213,6 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
     "mir_int_of_every_shape": (0, 0),
-    "mir_int_container_answers_the_region_index": (2, 768),
     "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
@@ -2070,8 +2069,6 @@ MIR_ONLY = [
      'say int("abc")\nsay int("")\nsay int("9223372036854775808")\n'
      'say int(3)\nsay int(2.9)\nsay int(-2.9)\nsay int(-0.5)\n'
      'say int(true)\nsay int(nil)\n'),
-    ("mir_int_container_answers_the_region_index",
-     'say int([1, 2])\nsay int({"a": 1})\nsay int(() -> 1)\n'),
     # round(x, digits) DOES round, and it is C round(): half AWAY FROM ZERO on
     # the scaled value, so round(0.5,0) is 1 and round(-0.5,0) is -1 -- the two
     # lines that separate this from banker's rounding.  The binary
@@ -5102,15 +5099,14 @@ MIR_ONLY_REFUSE = {
     "mir_builtin_argc_zero_list": (
         'x = "abcdef"\nsay list()\n',
         "builtin-stale-stack"),
-    # round: the two shapes whose answer is NOT a function of the expression
-    # get named here (they are the same stale-stack class as the three rows
-    # above), and the one-argument shape is what MIR_ONLY measures.
+    # round: the ZERO-argument shape answers the destination register's old
+    # value (the stale-stack class) and is named here.  The TWO-argument shape
+    # USED TO BE here as well, called a position-dependent leftover; §10.181
+    # measured it and it is the precision form, so it is an accepted arm now
+    # (mir_round_precision_half_away_from_zero).
     "mir_round_zero_arg_is_not_lowered": (
         'x = 6\nsay round()\n',
         "builtin-stale-stack"),
-    "mir_round_multi_arg_is_not_lowered": (
-        'say round(1, 2)\n',
-        "builtin-argc"),
     # sqrt: a zero-argument call answers the destination register's old value
     # (measured `x = 7\nsay sqrt()` prints 7), so it is the same stale-stack
     # class as len().  A two-argument call reads the TOP (measured sqrt(1, 2)
@@ -5145,6 +5141,13 @@ MIR_ONLY_REFUSE = {
 # directions (naming what it must, leaking what it must not, losing a name).  A
 # future refusal-by-opcode adds a row here and gets both halves back.
 MIR_ONLY_REFUSE_NOTYET = {
+    # int() on a container: the interpreter answers that container's OWN index
+    # (measured 1 for [1, 2], 2 for {}).  Those numbers belong to the machine,
+    # not to the program -- this route answers 1 and 4 for the same shapes --
+    # so the direct shape is refused by name instead of printed wrong.
+    "mir_int_container_is_refused": (
+        'say int([1, 2])\n',
+        "builtin-call"),
 }
 
 
