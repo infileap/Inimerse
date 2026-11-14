@@ -212,6 +212,10 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # program actually reaches: (2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1)
 # + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
+    # args() builds ONE region for the list; the element strings point into argv
+    # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
+    "mir_args_are_the_program_arguments": (1, 256),
+    "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
     # `[1, 2]` literal, not the regex.
