@@ -1,5 +1,5 @@
 {
-  "tree": "104d70096c80916706fc9579276170ee3ab40274",
+  "tree": "d24c378a92f3e11aa5ec92961bc7a49035f51b55",
   "covered": 29,
   "of": 29,
   "of-source": "tools/aot_cover.pin.json:covered_ops (read, not copied: the two routes must not drift apart, and the two pins are never added)",
