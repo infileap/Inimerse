@@ -218,6 +218,13 @@ ALLOCS_EXPECT = {
     "mir_set_key_is_never_found_by_has": (3, 1792),
     "mir_int_of_every_shape": (0, 0),
     "mir_int_container_arm_is_an_integer_that_drifts": (2, 768),
+    # The abort-surface guard builds three regions and reads them: the array
+    # literal [1, 2], the dict literal {a: 1}, and the empty array the `or`
+    # row re-uses (t = []).  The set literals Z[0~3] and R[0~3) are INTERVALS
+    # on this route -- a kind-2 set is one region, but it is not enumerated,
+    # so it costs nothing beyond what the pool already had.  Measured: 3
+    # regions, 1792 bytes (256 + 512 + 1024 as the pool doubles twice).
+    "mir_no_shape_stops_where_the_interpreter_answers": (3, 1792),
     "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
@@ -1403,6 +1410,64 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # THE ABORT SURFACE, ONE PROGRAM.  `mv_tag_to_nv` (src/compilation/aot_mir.c
+    # :275-278) has three arms -- INT/FLT/BOO -- and a `default: abort()`.  That
+    # abort is the shape a reader would call a gap: a value whose tag has no NV
+    # counterpart would stop the program.  §10.199 grepped all twenty runtime
+    # call sites and found that every one of them is preceded by a gate that
+    # narrows the tag to INT/FLT/BOO first -- `mv_numeric` for the arithmetic
+    # arms, `mv_orderable` for the ordering pair, the explicit NIL/STR/SET/ARR/
+    # DIC/FUN rows for the equality and print arms, and the container row that
+    # §10.195 added to `mv_tru`.  So the abort is a guard for tags NO opcode can
+    # produce, not a capability that fires on a shape the program can write.
+    #
+    # This program is that claim, measured.  Every line below reaches
+    # `mv_as_nv` or the gate in front of it, and every line ANSWERS on both
+    # routes: nothing stops, nothing is refused, and the two stdout streams are
+    # byte for byte the same.  The nil rows matter most -- MV_NIL has no arm in
+    # `mv_tag_to_nv` either, so `nil + 1` and `nil == nil` are the two places
+    # where a missing arm would show up first, and both are answered by the
+    # gates in front (`mv_numeric` throws type_mismatch, `mv_eq` answers
+    # equality).  `nil + 1` THROWS on both routes, and a throw is an answer:
+    # the criterion wants no SHAPE THAT STOPS WHERE THE INTERPRETER ANSWERS,
+    # and the interpreter does not stop there either.
+    #
+    # It is a GUARD, not a first-red criterion: the shapes it pins already
+    # behaved this way, so it was green on arrival.  It earns its place through
+    # the injection recorded in docs/STATUS.md §10.199: delete the container
+    # row from `mv_tru` and the `not []` / `[] or g()` rows stop the program
+    # with SIGABRT, and this case goes red.
+    #
+    # What it does NOT cover is written down there too: the nine shapes where
+    # the two routes answer DIFFERENTLY without either of them stopping
+    # (`size`/`count`/`list`/`sum` on an interval set, `int` on a container or a
+    # function).  Those are wrong answers, not stops, and they cannot live in a
+    # MIR_ONLY case because that comparison is byte for byte.
+    ("mir_no_shape_stops_where_the_interpreter_answers",
+     "say (1)\n"
+     "say (1.5)\n"
+     "say (true)\n"
+     "say (nil)\n"
+     "say (\"abc\")\n"
+     "say (\"\")\n"
+     "say ([1, 2])\n"
+     "say ([])\n"
+     "say ({a: 1})\n"
+     "say ({})\n"
+     "say (Z[0~3])\n"
+     "say (R[0~3))\n"
+     # The nil rows: nil reaches mv_as_nv's door and the door answers.
+     "say (nil) == nil\n"
+     "say (nil) == 1\n"
+     # The gate that throws instead of answering: both routes raise
+     # type_mismatch, so both stop the same way -- and that is not the shape
+     # this case is about.
+     "say not []\n"
+     "say not {}\n"
+     "say not Z[0~3]\n"
+     "t = []\n"
+     "say [] or 1\n"
+     "say t\n"),
     # A finite set may hold an INTERVAL as one of its components.  The cardinality,
     # the membership test and the enumeration all fold that component by its
     # closed/open flags -- nothing is ever "enumerated" into storage.  The bare
