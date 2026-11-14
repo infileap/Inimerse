@@ -221,6 +221,10 @@ ALLOCS_EXPECT = {
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
     "mir_args_are_the_program_arguments": (1, 256),
+    # The four intervals this program builds, and nothing else: `range` copies
+    # a set and the print reads a region, so a wrong arm that allocated a
+    # wrapper or a temporary string would land here, not in the bytes.
+    "mir_range_domains_and_pass_through": (4, 800),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
