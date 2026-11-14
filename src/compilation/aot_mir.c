@@ -2613,7 +2613,20 @@ static const char *const kMirValBlock =
 "           SetObj's iCount + count for a finite set and answers 0 for kind 2 --\n"
 "           measured: `len([0, 3))` is 0 while `1 in [0, 3)` is true.  Its header\n"
 "           slot holds -1, which is also why the negative test is the arm. */\n"
-"        if (a.type == MV_SET && mv_set_is_interval(i)) return mv_int(0);   /* i is already resolved */\n"
+"        if (a.type == MV_SET && mv_set_is_interval(i)) {\n"
+"            /* UPDATE (10.188): this arm said \"an INTERVAL has nothing to\n"
+"               enumerate\" and answered 0 for every kind 2.  Measured, the Z\n"
+"               spelling counts: len(Z[0~3]) is 4, len(Z[0~0]) 1, len(Z[2~5]) 4.\n"
+"               The count is hi - lo + 1 in 32 BITS, which is also why\n"
+"               len(range(1)) is 0 -- its bounds are int32 min..max and the\n"
+"               sum WRAPS to zero -- while the R domain answers 0 every time. */\n"
+"            int zdom = ((int)mv_arrmem[i + 2].ival) & 4;\n"
+"            if (!zdom) return mv_int(0);\n"
+"            { unsigned lo32 = (unsigned)(long long)mv_arrmem[i + 0].fval;\n"
+"              unsigned hi32 = (unsigned)(long long)mv_arrmem[i + 1].fval;\n"
+"              unsigned cnt = hi32 - lo32 + 1;   /* 32-bit wrap, like the interpreter */\n"
+"              return mv_int((long long)cnt); }\n"
+"        }\n"
 "        long long n = (long long)mv_arrmem[i - 1].ival;\n"
 "        return mv_int(a.type == MV_DIC ? n / 2 : n);\n"
 "    }\n"
@@ -5139,11 +5152,11 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d interval domain name index %d out of range (count=%d)",
                                f, i, nix, node->string_count);
                 const char *base = node->string_pool ? node->string_pool[nix] : NULL;
-                if (!base || strcmp(base, "R") != 0) {
+                if (!base || (strcmp(base, "R") != 0 && strcmp(base, "Z") != 0)) {
                     g_prescan_why = "set-interval-domain";
-                    return bad("container=%d insn=%d interval over domain \'%s\' -- this route emits R "
-                               "intervals only (the builtin domains spell a FINITE set through the same "
-                               "syntax and a different opcode shape)", f, i, base ? base : "(null)");
+                    return bad("container=%d insn=%d interval over domain \'%s\' -- this route emits the "
+                               "R and Z interval spellings and no other domain (a builtin domain "
+                               "spelling a FINITE set is a different opcode shape)", f, i, base ? base : "(null)");
                 }
                 if (asp < 2)
                     return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=2",
@@ -6054,6 +6067,11 @@ static int emit_one(Ctx *c, Buf *b, int i) {
     case OP_SET_INTERVAL: {
         int32_t packed = ir_insn_r2(in);
         int flags = (int)((packed >> 24) & 0xFF);
+        { int32_t nix = packed & 0xFFFFFF;   /* 10.188: the domain lives in r2's low bits */
+          if (c->node && nix >= 0 && nix < c->node->string_count && c->node->string_pool) {
+              const char *dom = c->node->string_pool[nix];
+              if (dom && strcmp(dom, "Z") == 0) flags |= 4;
+          } }
         buf_fmt(b, "    if (!((mvargs[asp-2].type == MV_INT || mvargs[asp-2].type == MV_FLT)"
                    " && (mvargs[asp-1].type == MV_INT || mvargs[asp-1].type == MV_FLT))) {"
                    " v[%d] = mv_nil(); }" NL, r1);

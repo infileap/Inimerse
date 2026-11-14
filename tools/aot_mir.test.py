@@ -231,7 +231,7 @@ ALLOCS_EXPECT = {
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
-    "mir_len_counts_a_z_interval_its_bounds": (9, 2304),
+    "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
