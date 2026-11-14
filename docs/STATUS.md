@@ -10833,7 +10833,7 @@ static inline int mv_tag_to_nv(int t) {
 2. **`MV_STR` 与 `MV_FUN` 早就有臂**（`mv_tru` 的 `:512`/`:504`、`mv_eq` 的 `:1027`/
    `:1082`、`mv_say` 的 `:4394`/`:4387`）——这与 §10.195 的记载一致。
 3. **`round("x",2)` 与 `round(nil,2)` 都答 nil 不是 `mv_tag_to_nv` 造成的**：
-   `mv_round_of`（`src/compilation/aot_mir.c:2893`）第一行就是
+   `mv_round_of`（`src/compilation/aot_mir.c:2891`）第一行就是 [obs: f84c726e]
    `if (x.type != MV_INT && x.type != MV_FLT) return mv_nil();`，两个形状都在
    `mv_as_nv` **之前**短路。
 
@@ -10918,7 +10918,7 @@ MIR_ONLY 要求两侧 stdout 逐字相同，而它们两侧都 rc=0 却输出不
 
 ### 六、§10.198 那张表补一行：`int(函数)`
 
-人类问的第三点已查实（`src/runtime/runtime_posix.c:104-123` `posix_core_int`）：
+人类问的第三点已查实（`src/runtime/runtime_posix.c:104` `posix_core_int`，读到 123 行）[obs: f84c726e]：
 解释器的 `int` 对**任何**非数字都答 0（它只读 Value 的整数字段），对**容器**答
 自己的区域下标（`v->ival`），对**函数**同样答 0。
 
