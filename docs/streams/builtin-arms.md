@@ -29,3 +29,5 @@
 每格固定链：判据（父 sha 上先红，读数逐字进提交说明）→ 实现 → 亲跑 harness（`python3 tools/aot_mir.test.py --build <abs>/build --tool <abs>/build/aot-mir`）→ 按读端分组打注入（逐次恢复重建）→ STATUS 节 → 三枚 pin（cover/headings/citations，各自一笔）→ 合并到 `merge-win-src` → **重建 `build/aot-mir`** 后重钉三枚 pin → 全量 `tools/gate.sh` → push → `git ls-remote` 亲验 → 主树 `merge --ff-only`。
 
 合并后不重建二进制是最常见的假红来源：cover 读到旧 `build/aot-mir` 会报 `refused=N`，读数不是树的。
+
+- **收口（2026-11-14）**：内建轴 closed、边界论证零证伪、文档过期句两轮共 10 条全部挂 `UPDATE`、§10.145 未动。终态陈述在 `docs/STATUS.md` §10.193 §6，读档者不必再扫一遍。
