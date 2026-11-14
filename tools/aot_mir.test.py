@@ -212,6 +212,9 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # program actually reaches: (2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1)
 # + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
+    "mir_int_of_every_shape": (0, 0),
+    "mir_int_container_answers_the_region_index": (2, 768),
+    "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
     "mir_args_are_the_program_arguments": (1, 256),
@@ -2033,12 +2036,13 @@ MIR_ONLY = [
     # 2.5 and 0.5 stays 0.5.  The display lines matter too: 2.6 prints 2.6,
     # not 3, because the value is unchanged all the way to the printer.
     #
-    # A two-or-more-argument round answers a POSITION-DEPENDENT leftover
-    # (measured: (1,2) -> 1, (1,2,3) -> 2, ("a",2) -> nil, (nil,2) -> nil) and
-    # a zero-argument one answers the destination register's old value -- both
-    # are the stale-stack class, so both are refused BY SHAPE and named below,
-    # while the one-argument shape (the only one whose answer is a function of
-    # the expression) is what this program measures.
+    # A zero-argument round answers the destination register's old value -- the
+    # stale-stack class, refused BY SHAPE and named below.  The TWO-argument
+    # shape is NOT that class (this comment used to say it was; §10.181
+    # measured it): the interpreter rounds to `digits` places, and the earlier
+    # readings ((1,2) -> 1, (nil,2) -> nil) were that rule's own answers, not
+    # stale registers.  The precision form is measured by
+    # mir_round_precision_half_away_from_zero below.
     ("mir_round_is_identity",
      'f = () -> 42\n'
      'say round(2.5)\nsay round(-2.5)\nsay round(2.4)\nsay round(2.6)\n'
@@ -2046,6 +2050,43 @@ MIR_ONLY = [
      'say round("2.5")\nsay round("x")\nsay round(true)\nsay round(nil)\n'
      'say round([1, 2])\nsay round({"a": 1})\nsay round(f)\n'
      'say round(round(2.5))\n'),
+    # int() IS TWO RULES IN ONE: a string reads through strtoll -- base 16 ONLY
+    # when it starts with 0x/0X, base 10 otherwise -- and a non-string answers
+    # its own integer body.  That is why int("0123") is 123 and not 83: there is
+    # no base-0 octal, so the "0" prefix is not a base.  int("0b101") is 0 (the
+    # 'b' stops the base-10 read), int("1e3") is 1 (the 'e' stops it), and
+    # int("9223372036854775808") saturates at 9223372036854775807 -- strtoll's
+    # own boundary, not a wrap.  Floats truncate TOWARD ZERO: int(2.9) is 2 and
+    # int(-2.9) is -2 (not -3).
+    #
+    # The CONTAINER arm is measured but NOT promised: it answers the container's
+    # own region number (the interpreter's index), which is a route-local
+    # bookkeeping number.  The two routes agree on the shapes below because both
+    # number allocations in the same order; a program with a different order
+    # would differ, and that is why this is a boundary and not a contract.
+    ("mir_int_of_every_shape",
+     'say int("0x10")\nsay int("0X1A")\nsay int("0123")\nsay int("0b101")\n'
+     'say int("1e3")\nsay int(" 42")\nsay int("12abc")\nsay int("-7")\n'
+     'say int("abc")\nsay int("")\nsay int("9223372036854775808")\n'
+     'say int(3)\nsay int(2.9)\nsay int(-2.9)\nsay int(-0.5)\n'
+     'say int(true)\nsay int(nil)\n'),
+    ("mir_int_container_answers_the_region_index",
+     'say int([1, 2])\nsay int({"a": 1})\nsay int(() -> 1)\n'),
+    # round(x, digits) DOES round, and it is C round(): half AWAY FROM ZERO on
+    # the scaled value, so round(0.5,0) is 1 and round(-0.5,0) is -1 -- the two
+    # lines that separate this from banker's rounding.  The binary
+    # representation still shows through: round(1.005, 2) is 1 (the double is
+    # just below 1.005), which is the honest answer and is pinned as such.
+    # digits clamp to [-12, 12] (round(2.345,20) is 2.345, round(2.345,-13) is
+    # 0), and a non-numeric FIRST operand answers nil rather than throwing:
+    # round("x",2), round(nil,2), round([1,2],2) and round(true,2) are all nil.
+    ("mir_round_precision_half_away_from_zero",
+     'say round(2.345, 2)\nsay round(2.675, 2)\nsay round(-2.675, 2)\n'
+     'say round(1.005, 2)\nsay round(-1.2345, 2)\nsay round(0.5, 0)\n'
+     'say round(-0.5, 0)\nsay round(1234.5, -2)\nsay round(12345, -2)\n'
+     'say round(2.345, 20)\nsay round(2.345, -13)\nsay round(2.5)\n'
+     'say round("x", 2)\nsay round(nil, 2)\nsay round([1, 2], 2)\n'
+     'say round(true, 2)\nsay round(0.0, 2)\n'),
     # sqrt() reads ONE number and answers a double, and the number is not
     # always a float: sqrt(4) is 2, sqrt(9) is 3, sqrt(true) is 1 and
     # sqrt(9223372036854775807) is 3037000499.97605, while sqrt(-1) is `nan`
