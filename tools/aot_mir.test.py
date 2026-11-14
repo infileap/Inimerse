@@ -5133,6 +5133,9 @@ i = 9, 8, "s"; say "mixed-type"; say min(i); say max(i)
      't = []\n'
      'f = (n) -> push(t, n) and n\n'
      'g = () -> push(t, "g")\n'
+     'g1 = () -> push(t, "g1")\n'
+     'g2 = () -> push(t, "g2")\n'
+     'g3 = () -> push(t, "g3") and 0\n'
      'h = (x, y) -> push(t, "h") + x * 100 + y\n'
      'a = () -> push(t, "a") - 1\n'
      'b = () -> push(t, "b") + 9\n'
@@ -5144,7 +5147,17 @@ i = 9, 8, "s"; say "mixed-type"; say min(i); say max(i)
      't = []\narr = [0, 0]\nsay "6b:"\narr[0] = (f(1) and g())\nsay t\nsay arr\n'
      't = []\nsay "7a:"\nsay not f(0)\n'
      'say "7b:"\nsay 2 < 1 < 2\n'
-     'say "7c:"\nsay 1 < 2 < 3\n'),
+     'say "7c:"\nsay 1 < 2 < 3\n'
+     't = []\nsay "8a:"\nsay [] or g()\nsay t\n'
+     't = []\nsay "8b:"\nsay {} or g()\nsay t\n'
+     't = []\nsay "8c:"\nsay 0.0 or g()\nsay t\n'
+     't = []\nsay "8d:"\nsay -0.0 or g()\nsay t\n'
+     'say "9a:"\nsay not 1 or 2\n'
+     'say "9b:"\nsay not 0\n'
+     'say "9c:"\nsay not nil\n'
+     'say "9d:"\nsay not []\n'
+     't = []\nsay "10a:"\nsay g1() or g2() and g3()\nsay t\n'
+     't = []\nsay "10b:"\nsay g3() and g2() or g1()\nsay t\n'),
 
     # THE SAME QUESTION FOR THROW PROPAGATION, which the value program above
     # CANNOT see: a route that evaluates the right operand anyway gets the
