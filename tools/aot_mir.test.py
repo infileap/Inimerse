@@ -5400,21 +5400,22 @@ MIR_ONLY_REFUSE = {
 # about.  Entries are (must-contain, must-not-contain) over the opcode names
 # parse_mir_out() found.
 #
-# It has NO live rows today: its only row was mir_try_no_throw, whose criterion
-# was "the try pair is still un-emitted and OP_THROW is not" -- the try pair is
-# lowered now, so the row would have to demand that a lowered opcode be
-# un-lowered.  The mechanism is not dead code: notyet_problems() takes an
-# optional spec, and the self-check below runs it on its own fixture in all three
-# directions (naming what it must, leaking what it must not, losing a name).  A
-# future refusal-by-opcode adds a row here and gets both halves back.
+# It has NO live rows today: mir_try_no_throw was its only row for a while (its
+# criterion was "the try pair is still un-emitted and OP_THROW is not" -- the try
+# pair is lowered now, so the row would have to demand that a lowered opcode be
+# un-lowered), and the int-container row that followed it was deleted (see the
+# note inside the table).  The mechanism is not dead code: notyet_problems()
+# takes an optional spec, and the self-check below runs it on its own fixture in
+# all three directions (naming what it must, leaking what it must not, losing a
+# name).  A future refusal-by-opcode adds a row here and gets both halves back.
 MIR_ONLY_REFUSE_NOTYET = {
-    # int() on a container: the interpreter answers that container's OWN index
-    # (measured 1 for [1, 2], 2 for {}).  Those numbers belong to the machine,
-    # not to the program -- this route answers 1 and 4 for the same shapes --
-    # so the direct shape is refused by name instead of printed wrong.
-    "mir_int_container_is_refused": (
-        'say int([1, 2])\n',
-        "builtin-call"),
+    # NO ROWS.  The one row this table used to carry -- mir_int_container_is_refused
+    # -- was DELETED (see docs/STATUS.md §10.197): it named a refusal BY
+    # NAME (why=builtin-call), while this table is the not-yet OPCODE list that
+    # rides along with a `why=unsupported-opcode` refusal, and the two kinds of
+    # refusal are different claims.  It was also never judged: the loop over
+    # MIR_ONLY_REFUSE (the only table that names a case) never reached it, so no
+    # criterion could have reddened when its shape stopped being refused.
 }
 
 
@@ -5663,7 +5664,8 @@ def self_check(verbose):
     # names the spec demands is clean; naming a forbidden one is a failure;
     # losing one required name is a failure in the OTHER direction (the refusal
     # stopped being about what the spec says).  The table has no live rows any
-    # more (its one row retired with mir_try_no_throw), so the spec below is a
+    # more (mir_try_no_throw retired with the try pair, and the int-container
+    # row was deleted in docs/STATUS.md §10.197), so the spec below is a
     # fixture: the mechanism is what is under test here, not a refusal.
     SIDETABLE_FIXTURE = (("OP_TRY_START", "OP_TRY_END"), ("OP_THROW",))
     for what, notyet, want_ok in (
