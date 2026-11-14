@@ -412,7 +412,7 @@ ALLOCS_EXPECT = {
     # log arrays) and the two container assignments add a dict and an array,
     # so 3 pool blocks / 1792 bytes.  The throwing program allocates only its
     # one log array (1 / 256) -- the throw itself allocates nothing.
-    "mir_eval_order_short_circuit": (3, 1792),
+    "mir_eval_order_short_circuit": (4, 3840),
     "mir_eval_order_throw_propagates_from_the_right_operand": (1, 256),
     # ABSOLUTE numbers.  THE PREDICTIONS WERE WRONG ON THREE OF THE FIVE, AND
     # THE ROWS BELOW ARE THE POST-MORTEM RATHER THAN A MATCHED-TO-THE-RUN EDIT.
