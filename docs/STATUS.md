@@ -9769,3 +9769,58 @@ Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)`
 ### 五、边界
 
 本节的修复不改变任何生成代码，只改判据正文；因此 cover 读数（`accepted=377`）不变，headings 与 citations 由 pin 重新取。删除条件：两条案例与本节同删，`[1, 3]` 不可回退成 `[1, 3)`。
+
+## §10.181 `int` 与 `round(x, digits)`：一条 base 16 的前缀规则，和一个被误读成残值的精度重载（A 类第五十四项）
+
+### 一、来源
+
+§10.174 按主人批注把转换族拆两格（`bool`/`float` 先，`int`/`round` 后）；§10.175 落了 `round`，但把**两参 round** 记成「位置相关的栈残值」并按名拒掉。本节做 `int`，并把那条误读改正。父 sha `3b6af8d5`（§10.180 之后）。
+
+### 二、`int` 的实测（亲跑 `build/inimerse --no-mods run`）
+
+    int("0x10")  16      int("0X1A") 26     int("0123") 123
+    int("0b101") 0       int("1e3")   1      int(" 42")  42
+    int("12abc") 12      int("-7")   -7     int("abc")  0   int("") 0
+    int("9223372036854775808") 9223372036854775807      （strtoll 饱和）
+    int(3) 3   int(2.9) 2   int(-2.9) -2   int(-0.5) 0   int(true) 1   int(nil) 0
+    int([1, 2]) 1   int({}) 2   int(() -> 1) 0           ← 容器/函数泄漏自身索引
+
+机制（`src/runtime/runtime_posix.c:104-123`）：字符串只在 `s[0]=='0' && s[1] ∈ {x,X}` 时走 base 16，否则 `strtoll` base 10。**所以没有 base-0 的八进制**：`int("0123")` 是 123 而不是 83——PLAN 只给了 `0x10`，而唯一能暴露 base 0 的那行恰好没被量。
+
+### 三、`round(x, digits)` 的实测与 §10.175 的更正
+
+    round(2.345, 2) 2.35    round(2.675, 2) 2.68   round(-2.675, 2) -2.68
+    round(1.005, 2) 1       round(-1.2345, 2) -1.23
+    round(0.5, 0) 1         round(-0.5, 0) -1      round(1234.5, -2) 1200
+    round(12345, -2) 12300  round(2.345, 20) 2.345 round(2.345, -13) 0
+    round("x", 2) nil  round(nil, 2) nil  round([1, 2], 2) nil  round(true, 2) nil
+
+`src/runtime/runtime_posix.c:144-160`：第一操作数必须是 INT/FLOAT（否则 nil）；位数取第二操作数并 clamp 到 [-12,12]；`round(x*10^d)/10^d`（d≥0）或 `round(x/10^-d)*10^-d`（d<0），即 C `round()`——**半值远离零**，`0.5→1`、`-0.5→-1` 两行正是与 banker's 的分界。`1.005` 印 1 不是错，是双精度表示在该处已在阈值下方。
+
+**§10.175 的更正**：那一节把 `round(1,2)=1`、`round(nil,2)=nil` 读成「位置相关的栈残值」，其实分别是精度规则的答案与 nil 臂的答案。不是新事实推翻旧事实，而是**旧读数被旧机制解释错了**；这一段就是那句话的失效记录。判据侧同步：`mir_round_multi_arg_is_not_lowered` 从 `MIR_ONLY_REFUSE_NOTYET` 删除，`mir_round_precision_half_away_from_zero` 进 `MIR_ONLY`。
+
+### 四、实现（`src/compilation/aot_mir.c`）
+
+- `mv_int_of`：STR 走同一套前缀判断 + `strtoll`；FLT 转 `(long long)`（向零截断）；其余取 `ival`。
+- `mv_round_of(x, d)`：非 INT/FLT 答 `mv_nil()`；位数 clamp；scale 循环乘 10；`round()` 两条式；答 `mv_flt`。零分配。
+- 名字门两处加 `int`；`int` 加进零参拒（`builtin-stale-stack`）；**删掉 `round && argc > 1` 的按名拒**，emitter 改成分派：`ac >= 2` 走 `mv_round_of(mvargs[asp-2], mvargs[asp-1])`，否则保持原式（一参是恒等）。
+- **容器操作数按名拒**（`builtin-call`）：检查调用指令的前一条是否为 `OP_NEW_ARRAY/OP_NEW_DICT/OP_NEW_SET/OP_SET_INTERVAL`。理由写在代码里：解释器答的是容器的自身索引（机器账本），本路线答 1 和 4，同一个程序两种数——没有臂能模仿「属于机器而不属于程序」的数。
+
+### 五、非对称注入（都在绿树上、各自只红自己那格）
+
+1. 去掉 `0x` 分支：只有 `int("0x10")`/`int("0X1A")` 变 0，其余十七行不动。
+2. `floor(v*scale+0.5)` 代替 `round()`：只有 `round(-2.675,2)`→-2.67 与 `round(-0.5,0)`→0 两行红（正则全对）。
+
+两次恢复重跑：`mir-only 293|293`、`REFUSED-TOTAL cases=12|ok=12`、exit 0。
+
+### 六、分配与边界
+
+`int` 全族 0 块（标量）；`round` 精度族钉 `1|256`——那一块是程序里的 `[1, 2]` 字面量，不是 round 的分配。容器臂**不分配、不承诺**：直接字面量形状被拒，经全局/函数返回值路由的容器不进检查、会答本路线的数（已写入边界；这类形状刻意不进判据，因为钉住一个机器数等于钉住巧合）。
+
+### 七、删除条件
+
+`mv_int_of`、`mv_round_of`、`int` 名字门的六处、`round` 的 emitter 分派、容器检查与 `mir_int_of_every_shape`、`mir_round_precision_half_away_from_zero`、`mir_int_container_is_refused` 同删。把 `hx ? 16 : 10` 改回 10 红两行；`round()` 换 `floor` 红两行。
+
+### 八、与 §10.178 的关系
+
+§10.178 的底账把 `int` 记成「可做，容器臂是分界」；本节兑现并给出分界的准确形状——**不是「静默 0 还是抛」，是「机器索引」**，因此处置不是二选一而是按名拒。
