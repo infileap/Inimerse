@@ -2248,16 +2248,29 @@ say list(b)
     # program does not change (1, 256).
     #
     # This is a GUARD: it was written after the shape already existed, so it
-    # was green on arrival.  It earns its place by the injection that turns
+    # was green on arrival.  It earns its place by the injections that turn
     # it red (see docs/STATUS.md §10.198): make the container arm answer nil
-    # and both lines change.
+    # and two lines change; make it answer a constant and one line changes.
+    #
+    # What the arm answers is the container's OWN POOL SLOT -- the slot the
+    # container was given when it was allocated.  Measured on both routes:
+    # the slot does not move afterwards (int(a) is the same number before
+    # and after another allocation), and a container allocated later has the
+    # larger slot.  The two routes allocate in their own order, so the slot
+    # numbers need not be equal: on one program the interpreter answered 1
+    # and 2 and this route answered 1 and 4.  That is a boundary, not a
+    # contract, and no absolute number may appear in a criterion that
+    # compares the two routes byte for byte -- so all three facts are
+    # stated as properties both routes satisfy.
     ("mir_int_container_arm_is_an_integer_that_drifts",
      'a = [1, 2]\n'
      'x1 = int(a)\n'
      't = [9, 9, 9]\n'
      'y = [2, 3]\n'
      'x2 = int(y)\n'
-     'if x2 > x1 { say "drifts" } else { say "fixed" }\n'
+     'x3 = int(a)\n'
+     'if x2 > x1 { say "later-bigger" } else { say "later-not-bigger" }\n'
+     'if x3 == x1 { say "stable" } else { say "moved" }\n'
      'if int(a) == nil { say "not-int" } else { say "int" }\n'),
     # round(x, digits) DOES round, and it is C round(): half AWAY FROM ZERO on
     # the scaled value, so round(0.5,0) is 1 and round(-0.5,0) is -1 -- the two
