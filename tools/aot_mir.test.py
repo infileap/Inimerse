@@ -1372,6 +1372,17 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # A SET as a dict key: the writer stores the pair (len counts it) and every
+    # READ misses it.  Measured on the interpreter: len 1, d[s] nil, has(d, s)
+    # false, has(d, [1~4]) false, has(d, "a") true, e[[2~2]] false, e[k] nil.
+    # `has` is the line that used to disagree: it answered TRUE from mv_eq's
+    # set row, where val_eq has no such row and answers false for any pair with
+    # a set on either side.  The strings in the same dict are the control: the
+    # rule being tested is "sets are never equal", not "keys stop working".
+    ("mir_set_key_is_never_found_by_has",
+     's = [1~3]\nd = {}\nd[s] = 7\nsay len(d)\nsay d[s]\nsay has(d, s)\n'
+     't = [1~4]\nsay has(d, t)\nd["a"] = 1\nsay has(d, "a")\nsay len(d)\n'
+     'e = {}\nk = [2~2]\ne[k] = 9\nsay has(e, k)\nsay e[k]\n'),
     # len() over the value domain this route can actually hold.  The builtin is
     # refused today by name (why=builtin-call, 10.122), so this case is red on
     # arrival; the interpreter answers 3, 1, 4, 7, 2, 0, 0, 0 for the eight
