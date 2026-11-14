@@ -221,6 +221,10 @@ ALLOCS_EXPECT = {
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
     "mir_args_are_the_program_arguments": (1, 256),
+    # The four intervals this program builds, and nothing else: `range` copies
+    # a set and the print reads a region, so a wrong arm that allocated a
+    # wrapper or a temporary string would land here, not in the bytes.
+    "mir_range_domains_and_pass_through": (4, 800),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
@@ -4917,6 +4921,27 @@ MIR_ONLY = [
     # region (it is built here, not aliased to anything the program holds).
     # Carrying x alone would let an arm answer [] and pass; carrying nothing
     # would let it answer a CONSTANT.
+    # `range` answers a SET whose domain decides the PRINT: an int is `set(Z
+    # interval)`, a float is `set(R interval)`, and a set is handed back
+    # unchanged (pass-through).  Measured on the interpreter: printing, str()
+    # and len() are the only readers that can tell the two domains apart here
+    # -- size/count/list/sum answer nil on BOTH domains, so a case built only
+    # from those would pass with one domain for both.
+    ("mir_range_domains_and_pass_through",
+     "a = range(1)\n"
+     "say a\n"
+     "say str(a)\n"
+     "say len(a)\n"
+     "b = range(2.5)\n"
+     "say b\n"
+     "say str(b)\n"
+     "c = [1~3]\n"
+     "say range(c)\n"
+     "say range(range(1))\n"
+     "say range(\"ab\")\n"
+     "say range(nil)\n"
+     "say range(true)\n"
+     ),
     ("mir_args_are_the_program_arguments",
      'a = args()\n'
      'say a\n'

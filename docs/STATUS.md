@@ -9888,3 +9888,49 @@ PLAN 的内建轴到此为**边界的集合**，不是待办清单。再往前�
 ### 五、删除条件与边界
 
 删掉那行的条件：`val_eq` 获得 SET 行（那要同时改解释器两侧与 §10.158 的 bool/int 论据），或解释器停止「存 pair 但读不到」的行为。边界：本路线只挡 `has`；`d[s]` 与 `remove(d, s)` 本来就经 `mv_key_eq` 落空，无需改。`d[s]=7` 的写侧仍与解释器一致（存对、`len` 计数）。
+
+## §10.184 `range`：域是一个位，因为只有打印看得见它（A 类第五十六项）
+
+### 一、来源与日期
+
+§10.182 的底账把 `range` 写成 blocked（理由："`set(Z interval)` 打不出来，min/max 两半也分叉"）。那一行**错了一半**：打印打不出来的是**这条路线的表示**，不是解释器的答案。`posix_core_range`（`src/runtime/runtime_posix.c:266-299`）读下来，`range` 只做四件事：
+
+- `SET` → **原样交回同一个句柄**（`:275-278` 复制值，不动 `setCount`）；
+- `INT` → kind 2、`nameIdx 1`（Z）、`lo/hi = -2147483648..2147483647`、**两端都含**（`:285-291`）；
+- `FLOAT` → kind 2、`nameIdx 24`（R）、`lo/hi = -1e308..1e308`、**两端都不含**（`:291-295`）；
+- 其余 → `nil`（`:297`）。
+
+### 二、判据（先红）
+
+`tools/aot_mir.test.py` 的 `mir_range_domains_and_pass_through`（13 行），插在 `mir_args_are_the_program_arguments` 之前。父 `c21a9ea6` 上跑：
+
+    IR-MIR-MIR-ONLY|case=mir_range_domains_and_pass_through|mir=refused|why=builtin-call
+    IR-MIR-COVER|...|mir-only-cases=295|mir-only-same-as-interpreter=294
+
+判据同时带两个域和 set 的 pass-through，因为它们是唯一会**搞反**的东西；`size`/`count`/`list`/`sum` 在两个域上都答 `nil`（实测），只用那四个读者的案例在单域实现下也会绿。
+
+### 三、实现
+
+- 域是**位不是第二计数器**：`mv_set_interval_d(zdomain, lo, hi, flags)` 把 `4` 或进 flags 的低半字节（`1`/`2` 仍是两端的含/不含），`mv_vts` 的 kind-2 行改成 `((int)mv_arrmem[iv+2].ival & 4) ? "set(Z interval)" : "set(R interval)"`——打印读的就是边界所在的那块区域，没有第二张表。
+- `mv_range`：SET 交回、INT 建 Z（flags `3|4`）、FLT 建 R（flags `0`）、其余 `nil`。
+- prescan 与 emitter 的名字门各加 `range`，拒语改成 `...sqrt, match, range and args...`；emitter 臂 `v[r1] = mv_range(mvargs[asp-1]);`。
+- **§10.182 的 blocked 行被本节取代**：`range` 不是 blocked，是缺一个域位。`min`/`max` 仍未发射（名字门拒），所以"两半分叉"这条臂不存在；若将来发射 min/max，Z 域的 `nameIdx 1` 在 `set_minmax`（`src/vm/vm.c:2526` 只跳过 24）上会给出整数界，届时需要单列判据。
+
+### 四、读数（亲跑）
+
+    IR-MIR-COVER|...|mir-only-cases=295|mir-only-same-as-interpreter=295
+    IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=12|ok=12|expect=12
+    IR-MIR-ALLOCS|case=mir_range_domains_and_pass_through|allocs=4|bytes=800|expect=4|800|ok=yes
+
+ALLOCS 钉 `(4, 800)`：四个区间（`a`、`b`、`range(range(1))` 的 Z、以及 `range(c)` 的复制——它交回同一句柄但值被读，区间本身仍是程序早先建的那块），没有临时字符串。
+
+### 五、非对称注入（都在绿树上，各只红这一案）
+
+1. 打印强制成 R（三元两边都写 `"set(R interval)"`）⇒ 只红这一案（`set(Z interval)` 三行变 R）。
+2. INT 分支的 `mv_set_interval_d(0, ...)` 把域位翻掉 ⇒ 同样只红这一案，读到的差异是同一批行。
+
+### 六、边界与删除条件
+
+- **只覆盖四路之一**：`range` 对 SET 只交回句柄，不校验 `ival` 是否在 `setCount` 内（解释器 `:275` 有条件，MIR 侧句柄来自本路线自己建的区间，越界句柄建不出来）；若将来有跨路线传入的 set，需补这条校验。
+- **`Z[0~3]` 仍是有限集合**（kind 0，不是区间），本路线照旧拒绝——`range` 只产生 kind 2。
+- 删除条件：`min`/`max` 被发射时，本节打印臂与 `mv_set_interval_d` 的域位需与它们的界规则一起重写；或解释器把 `nameIdx 1` 的 interval 改成别的形状时，`mv_range` 的 INT 分支随之失效。

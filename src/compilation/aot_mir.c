@@ -1615,6 +1615,30 @@ static const char *const kMirValBlock =
 "    mv_arrused = r.ival + 3;\n"
 "    return r;\n"
 "}\n"
+"/* range() -- THE FIRST BUILTIN WHOSE ANSWER IS AN INTERVAL, and the reason the\n"
+"   domain had to become a bit.  posix_core_range (src/runtime/runtime_posix.c:266)\n"
+"   read, not invented:\n"
+"     - a SET is handed back UNCHANGED (the same handle; :275-278 copies the\n"
+"       value without touching setCount),\n"
+"     - an INT answers kind 2 with nameIdx 1 (Z), lo/hi -2147483648..2147483647\n"
+"       and BOTH bounds inclusive (:285-291),\n"
+"     - a FLOAT answers kind 2 with nameIdx 24 (R), lo/hi -1e308..1e308 and\n"
+"       NEITHER bound inclusive (:291-295),\n"
+"     - everything else is nil (:297).\n"
+"   len() of either domain is 0 and size/count/list/sum answer nil on both, so\n"
+"   only the print tells them apart -- what mir_range_domains_and_pass_through\n"
+"   pins. */\n"
+"static inline MirVal mv_set_interval_d(int zdomain, double lo, double hi, int flags) {\n"
+"    return mv_set_interval(lo, hi, flags | (zdomain ? 4 : 0));\n"
+"}\n"
+"static inline MirVal mv_range(MirVal a) {\n"
+"    if (a.type == MV_SET) return a;                      /* :275 pass-through */\n"
+"    if (a.type == MV_INT)\n"
+"        return mv_set_interval_d(1, -2147483648.0, 2147483647.0, 3);\n"
+"    if (a.type == MV_FLT)\n"
+"        return mv_set_interval_d(0, -1e308, 1e308, 0);\n"
+"    return mv_nil();                                    /* :297 */\n"
+"}\n"
 "/* THE FOLD BEHIND min()/max() OVER A SET -- set_minmax (src/vm/vm.c:2476)\n"
 " * rebuilt on the pool.  Read from the interpreter, not invented:\n"
 " *\n"
@@ -4229,7 +4253,16 @@ static const char *const kMirValBlock =
 "           the word interval, never a count: `set(R interval)`.  The domain is\n"
 "           always R on this route (mv_set_interval's note), so the name is a\n"
 "           literal here instead of a table lookup. */\n"
-"        if (mv_set_is_interval(iv)) { snprintf(buf, (size_t)bufsz, \"set(R interval)\"); return; }\n"
+"        if (mv_set_is_interval(iv)) {\n"
+"            /* THE DOMAIN IS A BIT, NOT A SECOND COUNTER.  range() answers a Z\n"
+"               interval for an int and an R one for a float, and this print is\n"
+"               the only reader that can tell them apart -- the bounds cannot,\n"
+"               since Z\'s are ints widened.  The bit lives in the flags slot\'s\n"
+"               low nibble (1/2 = inclusivity, 4 = integer domain), so the print\n"
+"               reads the region its bounds came from, not a second table. */\n"
+"            snprintf(buf, (size_t)bufsz, ((int)mv_arrmem[iv + 2].ival & 4) ? \"set(Z interval)\" : \"set(R interval)\");\n"
+"            return;\n"
+"        }\n"
 "        snprintf(buf, (size_t)bufsz, \"set(%d)\", (int)mv_arrmem[iv - 1].ival);\n"
 "        return;\n"
 "    }\n"
@@ -5432,14 +5465,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
-                    && strcmp(bn, "match") != 0 && strcmp(bn, "args") != 0) {
+                    && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0 && strcmp(bn, "args") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and int, substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
                                " bit_or, bit_xor, bit_not, shl, shr, bool, float, round,"
-                               " sqrt, match and args and no other builtin;"
+                               " sqrt, match, range and args and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -6420,7 +6453,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
-                    && strcmp(bn, "match") != 0
+                    && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0
                     && strcmp(bn, "args") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
@@ -6474,6 +6507,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_match(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "args") == 0)
             buf_fmt(b, "    v[%d] = mv_args();", r1);
+        else if (strcmp(bn, "range") == 0)
+            buf_fmt(b, "    v[%d] = mv_range(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)
