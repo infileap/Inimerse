@@ -10773,3 +10773,193 @@ if int(a) == nil { say "not-int" } else { say "int" }
 
 **MEASURED BY**：`python3 tools/aot_mir.test.py --build <abs>/build --tool <abs>/build/aot-mir`
 （本节读数取自合并树 `.worktrees/merge-win-src`，二进制为本次重建后的 `build/aot-mir`）。
+
+## §10.199 缺口面扫描：`mv_tag_to_nv` 的 `default: abort()` 在这条路线上是空的，错值面却不是（aot-mir，A 类第六十四项）
+
+### 一、来源
+
+人类派的新轴是「补洞」而不是「扩面」：把 `src/compilation/aot_mir.c` 里
+`mv_tag_to_nv` 的 `default: abort()` 这类**缺口面**系统性扫一遍，分清两类
+abort——①语义上该 abort 的（保留），②语义上该回答却 abort 的（补臂或按名拒）——
+并让判据钉住这个区分。派工时点名了三处要查：`mv_as_nv` / `mv_tag_to_nv` 的
+全部调用点、`MV_STR` 与 `MV_FUN`、以及 `MV_NIL`（因为 `mv_tag_to_nv` 的 switch
+里没有 `MV_NIL` 臂，人类怀疑 `mv_as_nv(MV_NIL)` 会 SIGABRT，并问这是否是
+`round("x",2)` 与 `round(nil,2)` 都答 nil 背后的那条路径）。
+
+### 二、grep 出来的清单（读出来的，不是猜的）
+
+`mv_as_nv` / `mv_tag_to_nv` 在 `src/compilation/aot_mir.c` 里共 **30 处**引用。
+`mv_tag_to_nv`（`:275-278`）只有三臂：
+
+```c
+static inline int mv_tag_to_nv(int t) {
+    switch (t) { case MV_INT: return NV_INT; case MV_FLT: return NV_FLT;
+                 case MV_BOO: return NV_BOO; default: abort(); }
+}
+```
+
+`mv_tag_from_nv`（`:272-274`）同理。**20 个运行时调用点**，逐个查它前面那道门：
+
+| 位置 | 调用者 | 前置门 | 门外的形状去哪 |
+|---|---|---|---|
+| `:534` | `mv_tru` | `MV_NIL`→0、`MV_FUN`→1、`MV_STR`→1、`MV_ARR/MV_DIC/MV_SET`→1 | 三臂之外只剩 INT/FLT/BOO |
+| `:538` | `mv_neg` | `mv_numeric`（INT/FLT/BOO） | `mv_throw(type_mismatch)` |
+| `:776` | `mv_add` | `mv_numeric` | 同上 |
+| `:878` | `mv_sub` | `mv_numeric` | 同上 |
+| `:888` | `mv_mul` | `mv_numeric` | 同上 |
+| `:892` | `mv_div` | `mv_numeric` | 同上 |
+| `:896` | `mv_mod` | `mv_numeric` | 同上 |
+| `:1083` | `mv_eq` | NIL / STR / SET / ARR+DIC / FUN 各臂 | 早退，不 abort |
+| `:1095` | `mv_ne` | 同上（复用 `mv_eq`） | 早退，不 abort |
+| `:1222` | `mv_lt` | `mv_orderable` + STR 臂 | `mv_throw(type_mismatch)` |
+| `:1227` | `mv_le` | 同上 | 同上 |
+| `:1232` | `mv_gt` | 同上 | 同上 |
+| `:1237` | `mv_ge` | 同上 | 同上 |
+| `:4399` | `mv_say` | NIL / FUN / ARR\|DIC\|SET / STR 各臂 | 早退，不 abort |
+| `:7391` | emit_container（add 溢出） | `mv_numeric` | 委托 `mv_add` ⇒ throw |
+| `:7404` | emit_container（sub 溢出） | `mv_numeric` | 同上 |
+| `:7411` | emit_container（mul 溢出） | `mv_numeric` | 同上 |
+| `:7418` | emit_container（div 溢出） | `mv_numeric` | 同上 |
+| `:7424` | emit_container（mod 溢出） | `mv_numeric` | 同上 |
+| `:7430` | emit_container（div by zero） | `mv_numeric` | 同上 |
+
+⇒ **每一个调用点前面都有一道门**，门把 tag 收成 INT/FLT/BOO 才让值进去。
+`MV_NIL` **确实没有臂**，但 nil 永远在门那里被拦下：`mv_tru` 答 0、`mv_eq` 答
+「相等否」、`mv_say` 印 `nil`、算术与排序 throw。
+
+**人类点名要查的三处，逐一落定**：
+
+1. **`MV_NIL` 进不了 `mv_as_nv`** ⇒ 「`mv_as_nv(MV_NIL)` 会 SIGABRT」这条**不成立**。
+2. **`MV_STR` 与 `MV_FUN` 早就有臂**（`mv_tru` 的 `:512`/`:504`、`mv_eq` 的 `:1027`/
+   `:1082`、`mv_say` 的 `:4394`/`:4387`）——这与 §10.195 的记载一致。
+3. **`round("x",2)` 与 `round(nil,2)` 都答 nil 不是 `mv_tag_to_nv` 造成的**：
+   `mv_round_of`（`src/compilation/aot_mir.c:2893`）第一行就是
+   `if (x.type != MV_INT && x.type != MV_FLT) return mv_nil();`，两个形状都在
+   `mv_as_nv` **之前**短路。
+
+### 三、探针：416 行，零中止
+
+`.scratch/probe_abort.py`（13 个值 × 32 种操作）：每个值过一遍
+say/neg/not/and/or/if/add/sub/mul/div/mod/eq/ne/lt/le/gt/ge/concat/int/float/bool/
+str/len/size/count/list/sum/keys/min/max/has/in，逐格比两侧的 rc 与 stdout。
+
+- **MIR rc=134（SIGABRT）而解释器 rc=0 的行：0**
+- **两侧 rc 不一致：0**；**translate 拒：0**；**解析错：0**
+
+⇒ 结论一：**②「语义上该回答却中止」的形状，在这 32 种操作上不存在**。
+`mv_tag_to_nv` 的 `default: abort()` 在这条路线上是**防御性代码，不是缺口面**：
+它挡的是「没有任何 opcode 能产出的 tag」，而每个可能的产出点前面都有一道门。
+
+### 四、但错值面不是空的：9 行静默不一致
+
+探针同时抓出**两侧都 rc=0、输出不同**的 9 行。它们不是「中止」，是
+「**语义上该回答却答错了**」——同一族问题的另一半：
+
+| 操作 | 值 | 解释器 | 本路线 |
+|---|---|---|---|
+| `int` | `Z[0~3]` / `R[0~3)` | `22` | `1` |
+| `int` | 函数 | `0` | `1` |
+| `size` | `Z[0~3]` | `4` | `nil` |
+| `count` | `Z[0~3]` | `4` | `nil` |
+| `list` | `Z[0~3]` | `[0, 1, 2, 3]` | `nil` |
+| `sum` | `Z[0~3]` | `6` | `nil` |
+
+这 9 行落在 §10.18x 已经动过的内建上：`mv_region_len` / `mv_list` 对 kind 2 区间
+集合返回 nil（因为 `mv_set_is_interval` 为真时按「区间不可枚举」拒），而解释器
+经 `vm_set_to_array` **枚举**它；`mv_int_of` 的容器臂答的是**本路线自己的池槽号**
+（§10.198 的边界），解释器侧答的是它自己的下标。
+
+⇒ **两类，处置不同**：
+
+- **`int(容器)` / `int(函数)`**：属 §10.198 已定的**池号族边界**——两侧答各自的
+  记账数，**不必相等**，判据只钉规律（整数性、分配次序、取用不改变号）不钉数值。
+  这一格**不改它**，只把 `int(函数)` 的机制补进 §10.198 那张表（见 §六）。
+- **`size` / `count` / `list` / `sum` 对区间集合答 nil**：这是**真缺口**
+  （语义上该回答内容却答 nil）。这一格**不开它**——它是「集合族读端」的一条新轴，
+  需要人类点名（见 §七）。
+
+### 五、判据（两半）
+
+**第一半：钉住「没有中止」**（人类指定的那半）。新案例
+`mir_no_shape_stops_where_the_interpreter_answers`，把 13 个值 × 关键操作压进
+**一个**程序，断言两侧都不中止且 stdout 逐字相同：
+
+```
+say (1) / say (1.5) / say (true) / say (nil)
+say ("abc") / say ("") / say ([1, 2]) / say ([]) / say ({a: 1}) / say ({})
+say (Z[0~3]) / say (R[0~3))
+say (nil) == nil / say (nil) == 1
+say not [] / say not {} / say not Z[0~3]
+t = [] / say [] or 1 / say t
+```
+
+这些行的共同点是：**每一条都会走到 `mv_as_nv` 或它的门**。`nil == nil` 走
+`mv_eq` 的 NIL 臂（两侧都答 true）、`nil == 1` 走同一臂（两侧都答 false）、
+`not []` / `not {}` / `not Z[0~3]` 走 `mv_tru` 的容器臂（§10.195 加的那一行，
+两侧都答 false）、`[] or 1` 走同一臂（两侧都答 true）。**`nil` 那一行是这一案
+的重点**：`mv_tag_to_nv` 的 switch 里没有 `MV_NIL` 臂，所以 nil 若能走进
+`mv_as_nv` 就会 SIGABRT——而这三行证明它进不去。
+
+（`nil + 1` 那一行**没有**放进判据：它两侧都抛 `type_mismatch`，抛异常的程序
+在 MIR_ONLY 的比较口径下会变成「两侧都非零退出」，那一栏比的是 stdout 而不是
+退出码，而 stdout 都是空——它会成为一个什么都不证明的绿。所以它留在 §三 的
+探针表里，不进判据。）
+
+它的牙靠**注入**：把 `mv_tru` 的容器臂（`:522`）去掉，`not []` / `not {}` /
+`not Z[0~3]` / `[] or 1` 这四行立刻 SIGABRT ⇒ 判据红（实测 `mir-rc=-6`、
+`mir-out=b''`）；恢复后重建，绿。
+
+**第二半：钉住「中止与错值是两回事」**。§四 那 9 行**故意**不进判据，因为
+MIR_ONLY 要求两侧 stdout 逐字相同，而它们两侧都 rc=0 却输出不同——它们进 §四
+的表，作为「已知缺口、待人类点名」的清单。判据的注释里也写明了这一点。
+
+**它到货即绿**：第一半钉的是**已经存在**的行为，所以它是**守卫**，不是先红判据。
+判据头明写这一点（与 §10.195、§10.198 同一条规矩）。
+
+### 六、§10.198 那张表补一行：`int(函数)`
+
+人类问的第三点已查实（`src/runtime/runtime_posix.c:104-123` `posix_core_int`）：
+解释器的 `int` 对**任何**非数字都答 0（它只读 Value 的整数字段），对**容器**答
+自己的区域下标（`v->ival`），对**函数**同样答 0。
+
+⇒ 探针那行 `int(函数)` 解释器 `0`、本路线 `1`：**不是池号族**，是
+「解释器对函数答 0、本路线答自己的槽号 1」。它与 `int(容器)` 分属两族：
+容器是「两侧各答各的记账数」（边界，钉规律），函数是「一侧答 0、一侧答记账数」
+（**错值**）。这一格把它记成**待裁**，不动实现（见 §七）。
+
+### 七、留给人类的两件事
+
+1. **`size` / `count` / `list` / `sum` 对区间集合答 nil**（真缺口，语义上该回答
+   内容）。要不要开新轴？
+2. **`int(函数)`** 两侧 `0` vs `1`（错值；容器侧是边界，函数侧不是）。
+   要不要把它与 §10.198 的池号边界合并裁定，还是单独开一格？
+
+### 八、读数
+
+- harness EXIT=0、`mir-only-cases=305|mir-only-same-as-interpreter=305`；
+- `IR-AOT-MIR-VERDICT|PASS|accepted=86|refused=0|differ=0`（corpus 口径）；
+- 判据自己的分配读数：`IR-MIR-ALLOCS|case=mir_no_shape_stops_where_the_interpreter_answers|reported=yes|allocs=3|freed=3|live=0|bytes=1792`（三个区域是程序自己建的 `[1, 2]`、`{a: 1}`、`[]`；`Z[0~3]` 与 `R[0~3)` 是 kind-2 区间集合，在这条路线上是一个不枚举的区域，不额外分配）；
+- `IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8`（不变——本节不碰 opcode）；
+- 本节**不改任何行为**：改的只有一份 STATUS 与一条判据。
+
+**DELETE CONDITION**：若将来把 `mv_tag_to_nv` 的 `default: abort()` 改成
+「缺臂时答 nil」，本节 §三 的探针结论（零中止）不再由实现保证，而 §五 第一半
+的判据**不会红**（它钉的是「不中止」，不是「答 nil」）⇒ 那时必须补一条判据钉住
+「缺臂答 nil 而不是中止」，否则这一格的判据会变成装饰品。若某个调用点前面的门
+被删掉（例如 `mv_numeric` 的检查移除），第一半的判据会立刻红。
+
+**MEASURED BY**：`python3 tools/aot_mir.test.py --build <abs>/build --tool <abs>/build/aot-mir`
+（本节读数取自合并树 `.worktrees/merge-win-src`，二进制为本次重建后的 `build/aot-mir`）。
+
+### 九、这一格提交时改了什么
+
+- `tools/aot_mir.test.py`：+65 行——新案例 `mir_no_shape_stops_where_the_interpreter_answers`
+  （19 行程序 + 判据头注释）+ `ALLOCS_EXPECT` 条目 `(3, 1792)`。
+- `docs/STATUS.md`：本节（§10.199，A 类第六十四项）。
+- `src/compilation/aot_mir.c`：**零改动**（注入期间临时删过 `mv_tru` 的容器臂，
+  恢复后与 HEAD 逐字相同——注入的痕迹不进历史）。
+
+**教训（记在这里，因为这是本会话第二次犯）**：恢复注入时我**重排**了那一行
+（把它从 STR 臂之后挪到 NIL 臂之后），功能完全等价但 diff 变脏、且让「本节不改
+实现」这句话不成立。正确做法是 `git checkout HEAD -- <file>` 把文件整个还原，
+再重建——**恢复注入要还原到逐字相同，不是「等价即可」**。
