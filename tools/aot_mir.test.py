@@ -212,6 +212,10 @@ ALLOCS_RE = re.compile(r"^IR-MIR-ALLOCS\|allocs=(\d+)\|freed=(\d+)\|live=(\d+)\|
 # program actually reaches: (2+2+2+1) + (2+1+2+1+2+1+2+1+2+1+2+1) + (2+2+0+2+1)
 # + (2+2+2+1) + (1+6+0+1) + (6+6+6+1) = 7+18+7+7+8+19.
 ALLOCS_EXPECT = {
+    # Three regions: the two set literals ([1~3], [1~4], [2~2]) and the dict
+    # that receives a pair.  has() itself allocates nothing -- neither the scan
+    # nor the gate -- so a count above three means the arm grew a temporary.
+    "mir_set_key_is_never_found_by_has": (3, 1792),
     "mir_int_of_every_shape": (0, 0),
     "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv

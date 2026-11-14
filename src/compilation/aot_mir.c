@@ -2809,7 +2809,7 @@ static const char *const kMirValBlock =
 "\n"
 "static inline MirVal mv_has(MirVal dict, MirVal key) {\n"
 "    if (dict.type != MV_DIC) return mv_boo(0);   /* :514 -- VAL_DICT only */\n"
-"    int iv = mv_arr_live((int)dict.ival);\n"
+"    /* A SET key is never found: val_eq:421 switches on the type and has no\n""       set row, so two sets answer false even when they are one handle, and a\n""       set against any other type is false by the type test.  The writer still\n""       stores the pair (len counts it) -- the one axis where the store succeeds\n""       and every read misses, which is why d[s] is nil and the len is 1.  mv_eq,\n""       the comparer the rest of this function uses, DOES have a set row that\n""       compares ival; without this gate has(d, s) answered true for a key that\n""       no lookup can ever find. */\n""    if (key.type == MV_SET) return mv_boo(0);\n""    int iv = mv_arr_live((int)dict.ival);\n"
 "    if (iv < 1 || iv > mv_arrused) return mv_boo(0);\n"
 "    int n = (int)mv_arrmem[iv - 1].ival;\n"
 "    for (int p = 0; p + 1 < n; p += 2)\n"
