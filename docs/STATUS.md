@@ -9934,3 +9934,56 @@ ALLOCS 钉 `(4, 800)`：四个区间（`a`、`b`、`range(range(1))` 的 Z、以
 - **只覆盖四路之一**：`range` 对 SET 只交回句柄，不校验 `ival` 是否在 `setCount` 内（解释器 `:275` 有条件，MIR 侧句柄来自本路线自己建的区间，越界句柄建不出来）；若将来有跨路线传入的 set，需补这条校验。
 - **`Z[0~3]` 仍是有限集合**（kind 0，不是区间），本路线照旧拒绝——`range` 只产生 kind 2。
 - 删除条件：`min`/`max` 被发射时，本节打印臂与 `mv_set_interval_d` 的域位需与它们的界规则一起重写；或解释器把 `nameIdx 1` 的 interval 改成别的形状时，`mv_range` 的 INT 分支随之失效。
+
+## §10.185 `min`/`max` 的 Z 区间臂：一条已钉住的句子被新值形状变成谎（A 类第五十七项）
+
+### 一、来源与日期
+
+§10.184 让 Z 区间可建（`range(INT)`），于是 `mv_set_minmax` 原有的第一条判断——`if (mv_set_is_interval(iv)) return mv_nil(); /* kind 2: no discrete min/max */`——从"对这条路线的全部 kind 2 成立"变成"只对 R 成立"。解释器 `set_minmax`（`src/vm/vm.c:2476`，跳过 `nameIdx 24` 的那行在 `:2526`）**按名字只跳过 R**，`nameIdx 1` 的 `lo/hi` 就是 `range` 建成时的那两个整数。所以这不是"加宽一条臂"，是**一条臂在追上一个后加的值形状**。
+
+### 二、实测（解释器，主树 `33c89cfe` 的 build）
+
+    min([3, 1, 2])   nil        max([3, 1, 2])   nil
+    min([])          nil        min([1~3])       nil
+    min(range(1))    -2147483648     max(range(1))   2147483647
+    min(range(2.5))  nil        max(range(2.5)) nil
+    min(5)           nil        max("ab")        nil
+    min([1, "a"])    nil
+
+数组/字典/数/布尔/字符串/混合数组在两个名字上都是 `nil`；R 区间也是 `nil`。**唯一会答的形状是 Z 区间的两端。**另实测：有限集合字面量在本语法里写不出来（`Z[1, 2]` 报 `expected ']', but got ','`，`Z[1 2]` 报 `expected ']', but got '2'`），所以 kind 0 集合在这条路线上不可达。
+
+### 三、判据（先红）
+
+`tools/aot_mir.test.py` 的 `mir_min_max_answer_only_z_intervals`（11 行，`MIR_ONLY` 首项）+ `ALLOCS_EXPECT` `(4, 3840)`。父 `33c89cfe` 上跑：
+
+    IR-MIR-EXEC-DIFF|case=mir_min_max_answer_only_z_intervals|interp-out=-2147483648/2147483647|mir-out=全 nil
+
+红在 Z 的两行（R 的两行本来就对），即"域被当成 R 跳过"这一条路径。
+
+### 四、实现
+
+`mv_set_minmax` 的 kind-2 分支改成读同一条域位（就是 §10.184 引入的 flags `4` 位，也就是打印读的那块区域）：
+
+    if (!(((int)mv_arrmem[iv + 2].ival) & 4)) return mv_nil();   /* :2526 */
+    return mv_int((long long)mv_arrmem[iv + (isMax ? 1 : 0)].fval);
+
+边界是 `mv_set_interval` 存的 `mv_flt` 槽，所以回答前截成 `long long` 再 `mv_int`（解释器 `:2529-2531` 也是 `VAL_INT`）。块注释里那三条"kind 2 无 min/max"的句子**留在原地并加了一行 UPDATE（10.185）**说明它对 R 仍然成立、对 Z 已过期——不删，免得下一个读注释的人以为 R 也答。
+
+### 五、非对称注入（都在绿树上，各只红这一案）
+
+1. 域位判断换成恒 `return mv_nil()`（把旧行为还原）⇒ 只红这一案（两个 Z 行变 nil）。
+2. `min`/`max` 读对方的边界（`isMax ? 0 : 1`）⇒ 只红这一案（两行对调：`2147483647`/`-2147483648`）。
+
+### 六、读数
+
+    IR-MIR-COVER|...|mir-only-cases=296|mir-only-same-as-interpreter=296
+    IR-MIR-ALLOCS|case=mir_min_max_answer_only_z_intervals|allocs=4|bytes=3840|ok=yes
+
+`accepted` 与 `handles` 不动：`min`/`max` 是既有 opcode（`OP_MIN`/`OP_MAX`），不是新注册名。
+
+### 七、边界与删除条件
+
+- **不覆盖** `nameIdx` 1 以外任何"按名字跳过的域"：本路线只有 R 与 Z 两个域，`type` 之外的命名集合由 prescan 拒。
+- **不覆盖** kind 0 集合（解析器不产，见上）。
+- 与 §10.184 的删除条件联动：若解释器把 Z 区间的 `nameIdx` 或边界槽改形状，本节与 §10.184 的打印臂同批失效。
+- 删除条件：`OP_MIN`/`OP_MAX` 从 emitter 移除使 `grep -c mv_minmax == 0`（该 marker 在 `aot_mir.c:584` 的块注释里）。
