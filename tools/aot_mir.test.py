@@ -232,6 +232,9 @@ ALLOCS_EXPECT = {
     "mir_z_domain_readers_agree": (5, 1843),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
+    # Three regions: the two sets the program builds and the list `list(b)` answers.
+    # Both reads fold the component's span; nothing allocates a member table.
+    "mir_set_interval_component_counts_its_members": (3, 1792),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
@@ -1387,6 +1390,23 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # A finite set may hold an INTERVAL as one of its components.  The cardinality,
+    # the membership test and the enumeration all fold that component by its
+    # closed/open flags -- nothing is ever "enumerated" into storage.  The bare
+    # interval (row 5) must keep printing as an interval, which is the row that
+    # separates this read-side rule from an eager materialisation.
+    ("mir_set_interval_component_counts_its_members", """b = Z[0~5]
+say b
+say len(b)
+say 3 in b
+say 7 in b
+say Z[0~5]
+say len(Z[0~2147483647])
+c = R[0~3)
+say c
+say len(c)
+say list(b)
+"""),
     # PLAN listed `range`/domains as boundaries; measured, the domain matters in
     # exactly two places and only this cell touches the first one.
     # `len` on a kind-2 interval is the CARDINALITY hi - lo + 1 computed in 32
