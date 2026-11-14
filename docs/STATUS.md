@@ -9856,3 +9856,35 @@ PLAN 的内建轴到此为**边界的集合**，不是待办清单。再往前�
 ### 五、删除条件
 
 本节是底账，不产生代码；若 `type` 从保留字表里移出、`declared` 的槽号在 IR 里出现、或某个边界名字获得可内联的真值，本节对应的那一行失效，由当时的格子改写它并在 §10.178 表里划掉。
+
+## §10.183 集合作键：`has` 不再答一个任何查找都找不到的键（A 类第五十六项）
+
+### 一、来源与日期
+
+§10.182 收口时留下的活债（§10.158 只解决 bool/int 那条）：「集合作 dict key 时 MIR 印 7、解释器印 nil」。§10.162 的 `has`/`keys` 格按 `val_eq` 的强制转换规则实现，但 `mv_eq` 有一条 `val_eq` 没有的行——SET 行比较 `ival`——于是同一个程序在 `has(d, s)` 上分叉。本节修掉这条，不新开轴。
+
+### 二、判据与实测（先红）
+
+`mir_set_key_is_never_found_by_has`（`tools/aot_mir.test.py`，`1b6aa5e...` 上先红）：
+
+    s = [1~3]   d = {}   d[s] = 7      -> len 1, d[s] nil, has(d, s) FALSE
+    t = [1~4]   has(d, t) false
+    d["a"] = 1  has(d, "a") true  len 2      <- 对照：字符串键照常工作
+    e = {}  k = [2~2]  e[k] = 9    -> has(e, k) false, e[k] nil
+
+红态：MIR `d[s]=7` 后 `has(d, s)` 印 `true`、`has(e, k)` 也 `true`（interp 两行都是 false）；其余七行两侧同答。**分配**：三块 1792 字节（两个 set 字面量 + 一个 dict），`has` 零分配——钉 `(3, 1792)` 就是为了抓住「臂里多了一个临时区」。
+
+### 三、实现与理由
+
+`mv_has` 入口加一行：`if (key.type == MV_SET) return mv_boo(0);`（`src/compilation/aot_mir.c`，紧跟 `dict.type != MV_DIC` 那行）。理由写在行上方：`val_eq:421` 按类型分支、没有 SET 行，所以两个 set 互为 false、set 与其他任何类型也 false；**写侧仍存对**（`len` 计 1）——这是唯一一条「存得进去、读全落空」的轴。`mv_eq` 的 SET 行只用于别处（例如索引读走 `mv_key_eq`，那条自带 set 短路），这里必须显式挡。
+
+### 四、注入（两次，均在绿树上，各自只红这一条）
+
+1. 删掉那行（`if (0)`）⇒ `has(d, s)` 回到 `true`，只红这一条，1 PROBLEM。
+2. 改成 `return mv_boo(1)`（set 键一律答 true）⇒ 同一条再红，方向相反。
+
+恢复后 `mir-only-cases=294|same=294`，harness exit 0。
+
+### 五、删除条件与边界
+
+删掉那行的条件：`val_eq` 获得 SET 行（那要同时改解释器两侧与 §10.158 的 bool/int 论据），或解释器停止「存 pair 但读不到」的行为。边界：本路线只挡 `has`；`d[s]` 与 `remove(d, s)` 本来就经 `mv_key_eq` 落空，无需改。`d[s]=7` 的写侧仍与解释器一致（存对、`len` 计数）。
