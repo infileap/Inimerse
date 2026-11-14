@@ -10130,3 +10130,30 @@ materialize 语义（bind 把区间物化：Z 枚举成员、R 变空有限集�
 `mir_builtin_call_with_arg` 仍指 `time_ms(1)`（§10.187 挪的），本格不动。读数：
 `accepted=385`、`mir-only 300|300`、`REFUSED-TOTAL 12|12`、headings 1484；`handles=59|of=67|unknown=8`
 不动（区间不是 opcode 手臂）。
+
+## §10.189 有限集里的区间 component：读端折算，不物化
+
+### 1. 来源
+§10.188 只钉了「裸区间」的两种读法。复核时把区间**包成集合**再读，两侧全部分叉：MIR 把区间 component 当成一个普通成员。本格把读端三处（基数、成员判断、枚举）按 component 折算，并把 §10.188 一处错数改掉。
+
+### 2. 区间的值形状（实测，不是推测）
+`b = Z[0~5]` 的结果里**始终只有一个 component**（一个 kind 2 区间），`set(6)` 是它的**基数显示**，不是成员表；`say Z[0~5]`（不包集合）仍印 `set(Z interval)`。所以这条路禁止「建集时展开」——那是改语义，而且 `Z[0~2147483647]` 会让展开不可表示。
+
+### 3. 判据（先红）
+`mir_set_interval_component_counts_its_members`，九行：`b` 的 `set(6)`/`len 6`/`3 in b` true/`7 in b` false；裸区间仍 `set(Z interval)`；`len(Z[0~2147483647])` 为 0；`c = R[0~3)` 的 `set(0)`/`len 0`；`list(b)` 为 `[0, 1, 2, 3, 4, 5]`。父 sha 上是 `IR-MIR-EXEC-DIFF`（MIR 印 `set(1)`/`1`/`false`/`false`/`2147483648`/`set(1)`/`1`/`[set(Z interval)]`）。
+**顺带抓出 §10.188 的错**：`len(Z[0~2147483647])` 该是 0（`hi - lo + 1` 在 32 位回绕成负数再钳零），§10.188 答的是 2147483648。钳零已进 `mv_len` 的 Z 臂，并在那里写上 UPDATE (10.189)。
+
+### 4. 实现
+`mv_comp_card`（一个 component 的贡献：非区间算 1；区间按 `flags & 3`，两边都闭则 `hi - lo + 1` 按 32 位、负则 0；开或半开算 0）与 `mv_set_card`（求和）。四个读端接上：`mv_len` 的有限集臂、`mv_vts` 的 `set(N)` 打印、`mv_set_has` 的元素循环（区间 component 走 `mv_interval_has`）、`mv_list` 的 **PASS 3**（在普通两趟之后按 region 顺序追加每个闭区间跨度，`(int)` 收窄并按 `array_has` 去重；PASS 2 里跳过 component 本身）。存储层零改动。
+混合形状实测：`w = Z[0~3], 9` → `set(5)`、`list(w) = [9, 0, 1, 2, 3]`（普通项在前、跨度在后），`sum(w) = 15`——顺序因此不能随手换。
+
+### 5. 非对称注入（各自只红本判据，逐次恢复重建）
+① `mv_comp_card` 对区间 component 回 `1`（旧读法）⇒ 印 `set(1)`/`1`，成员行照旧 true，只有本判据红。
+② 闭区间判定翻成 `flags & 3 == 0` ⇒ 印 `set(0)`/`0`，成员行照旧 true，只有本判据红。
+
+### 6. 边界与读数
+`list`/`sum` 对**开区间** component 答 nil（实测 `list(R[0~3))`、`sum(R[0~3))` 均为 nil）——本格不把 nil 变成空表。半开区间（flags 1/2）无法由任何语法到达，写进边界而不实现。
+读数：`accepted=386`、`mir-only 300|300`、`REFUSED-TOTAL 12|12`、ALLOCS `(3, 1792)`。
+
+### 7. 记账
+`mir_builtin_call_with_arg` 仍指 `time_ms(1)`。`handles=59|of=67|unknown=8` 不动（区间不是 opcode 手臂）。
