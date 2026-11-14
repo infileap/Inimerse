@@ -224,6 +224,8 @@ static const char *const kMirValBlock =
 "typedef struct MvBlock { void *p; size_t n; struct MvBlock *next; } MvBlock;\n"
 "static MvBlock *mv_blocks = 0;\n"
 "static long long mv_allocs = 0, mv_freed = 0, mv_live = 0, mv_bytes = 0;\n"
+"static int mv_prog_argc = 0;          /* args(): set by main, read by every */\n"
+"static char **mv_prog_argv = 0;      /* mv_args() call, wherever it sits */\n"
 "\n"
 "static void *mv_alloc(size_t n) {\n"
 "    void *p = malloc(n ? n : 1);\n"
@@ -3408,6 +3410,32 @@ static const char *const kMirValBlock =
 "    return r;\n"
 "}\n"
 "\n"
+"/* args() -- the program's arguments: argv[1..], never argv[0].\n"
+" *\n"
+" * WHY IT EXISTS.  The interpreter answers {VAL_STRING, ival 0} over vm->argv+1\n"
+" * (measured: `run prog.im x y` answers [x, y], len 2 -- the script path is not\n"
+" * in the list).  The route has no VM argv, so main stores argc/argv in two\n"
+" * statics once, and a call from inside a user function still answers the\n"
+" * process's arguments, which is what the interpreter does.\n"
+" *\n"
+" * ALLOCATION: one region for the list.  The ELEMENT strings point INTO argv and\n"
+" * are marked resident (ival 1), so they cost nothing and are never freed. */\n"
+"static inline MirVal mv_args(void) {\n"
+"    int n = (mv_prog_argc > 1) ? mv_prog_argc - 1 : 0;\n"
+"    int hdr = mv_arrused + 1;\n"
+"    mv_arr_need(mv_arrused + n + 1);\n"
+"    MirVal r;\n"
+"    r.type = MV_ARR; r.ival = hdr; r.sval = 0; r.ptr = 0;\n"
+"    mv_arrmem[hdr - 1] = mv_int(n);\n"
+"    for (int k = 0; k < n; k++) {\n"
+"        const char *a = mv_prog_argv && mv_prog_argv[k + 1] ? mv_prog_argv[k + 1] : \"\";\n"
+"        MirVal e; e.type = MV_STR; e.ival = 1; e.sval = (char *)a; e.ptr = 0;\n"
+"        mv_arrmem[hdr + k] = e;\n"
+"    }\n"
+"    mv_arrused = hdr + n;\n"
+"    return r;\n"
+"}\n"
+"\n"
 "static inline MirVal mv_match(MirVal subject, MirVal pattern) {\n"
 "    /* match() is a POSIX EXTENDED REGEX search over two strings: \\d \\w \\s\n"
 "       are translated to classes first, `^`/`$` are anchors, `|` `+` `{n,m}`\n"
@@ -5357,14 +5385,14 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
-                    && strcmp(bn, "match") != 0) {
+                    && strcmp(bn, "match") != 0 && strcmp(bn, "args") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
                                " bit_or, bit_xor, bit_not, shl, shr, bool, float, round,"
-                               " sqrt and match and no other builtin;"
+                               " sqrt, match and args and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -5498,7 +5526,10 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                " or the destination register's previous value, not with a value"
                                " the program asks for", f, i, argc);
                 }
-                if (argc == 0) {
+                /* args() is the ONE builtin whose zero-argument call is a real
+                   answer (the interpreter returns the process arguments, measured
+                   []), so the zero-argument rule must not swallow it. */
+                if (argc == 0 && strcmp(bn, "args") != 0) {
                     g_prescan_why = "builtin-stale-stack";
                     return bad("container=%d insn=%d builtin '%s' is called with no argument:"
                                " the interpreter answers it with a leftover (the argument stack"
@@ -6320,7 +6351,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
-                    && strcmp(bn, "match") != 0)) return -1;
+                    && strcmp(bn, "match") != 0
+                    && strcmp(bn, "args") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6363,6 +6395,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_sqrt(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "match") == 0)
             buf_fmt(b, "    v[%d] = mv_match(mvargs[asp-2], mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "args") == 0)
+            buf_fmt(b, "    v[%d] = mv_args();", r1);
         else if (strcmp(bn, "index") == 0)
             buf_fmt(b, "    v[%d] = mv_index(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "replace") == 0)
@@ -6940,7 +6974,8 @@ static int emit_container(Buf *out, const IrModule *m, const Node *nodes,
     free(need); free(try_catch_at);
 
     if (nodes[id].is_main) {
-        buf_str(out, "int main(void) {" NL);
+        buf_str(out, "int main(int argc, char **argv) {" NL);
+        buf_str(out, "    mv_prog_argc = argc; mv_prog_argv = argv;" NL);
     } else {
         /* The hidden `self` parameter: FIRST, so the user arguments keep their
            numbers (a0 is still the first argument, and v[k+1] = a_k below is
