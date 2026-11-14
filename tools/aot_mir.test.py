@@ -217,6 +217,7 @@ ALLOCS_EXPECT = {
     # nor the gate -- so a count above three means the arm grew a temporary.
     "mir_set_key_is_never_found_by_has": (3, 1792),
     "mir_int_of_every_shape": (0, 0),
+    "mir_int_container_arm_is_an_integer_that_drifts": (2, 768),
     "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
@@ -2211,6 +2212,53 @@ say list(b)
      'say int("abc")\nsay int("")\nsay int("9223372036854775808")\n'
      'say int(3)\nsay int(2.9)\nsay int(-2.9)\nsay int(-0.5)\n'
      'say int(true)\nsay int(nil)\n'),
+    # The CONTAINER arm of int(), measured as a GUARD rather than as a
+    # contract -- it was never a contract and for a long time it was worse
+    # than that: the route carried a by-name refusal for it that could not
+    # fire (docs/STATUS.md §10.197).
+    #
+    # What the refusal was supposed to say: "int() does not lower on a
+    # container".  What the route actually does: int(container) answers the
+    # container's OWN region number -- the interpreter's pool index for the
+    # interpreter, this route's pool index for this route.  Both are
+    # integers; the two values need not be equal, and they drift with each
+    # route's own allocation order.  int([]) is 1 in both routes here only
+    # because both happen to number their first allocation the same way.
+    #
+    # So the criterion below pins the two properties that ARE stable across
+    # routes: the answer is an integer (never nil, not even for int(nil)),
+    # and the number DRIFTS with allocation order -- the later allocation
+    # gets the later number, in every route.  It deliberately does not pin
+    # the absolute value, which is route-local bookkeeping.
+    #
+    # Measured on both routes (interpreter /home/sakiko/inimerse/build/inimerse
+    # --no-mods run, this route's build/aot-mir):
+    #     a = [1,2]; x1 = int(a); t = [9,9,9]; y = [2,3]; x2 = int(y)
+    #     interpreter: x1=1  x2=3      this route: x1=1  x2=8
+    # The ORDER agrees (x2 > x1); the absolute values do not, and that
+    # difference is the point of the boundary, not a defect in either.
+    #
+    # The allocation reading is (2, 768): the array pool is allocated ONCE per
+    # doubling (mv_arr_need doubles the whole pool, it does not allocate per
+    # literal), so the three literals cost one 256-byte block and the growth
+    # past eight slots costs one 512-byte block.  int() itself allocates
+    # NOTHING on the container arm -- it reads the region number out of the
+    # value it was handed.  Measured: a program with the same literals and no
+    # int() call reports the same (2, 768); adding int() to a one-literal
+    # program does not change (1, 256).
+    #
+    # This is a GUARD: it was written after the shape already existed, so it
+    # was green on arrival.  It earns its place by the injection that turns
+    # it red (see docs/STATUS.md §10.198): make the container arm answer nil
+    # and both lines change.
+    ("mir_int_container_arm_is_an_integer_that_drifts",
+     'a = [1, 2]\n'
+     'x1 = int(a)\n'
+     't = [9, 9, 9]\n'
+     'y = [2, 3]\n'
+     'x2 = int(y)\n'
+     'if x2 > x1 { say "drifts" } else { say "fixed" }\n'
+     'if int(a) == nil { say "not-int" } else { say "int" }\n'),
     # round(x, digits) DOES round, and it is C round(): half AWAY FROM ZERO on
     # the scaled value, so round(0.5,0) is 1 and round(-0.5,0) is -1 -- the two
     # lines that separate this from banker's rounding.  The binary
