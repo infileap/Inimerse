@@ -408,6 +408,12 @@ ALLOCS_EXPECT = {
     "mir_sum_fold_and_nil_boundaries": (4, 1794),
     "mir_sum_non_numeric_throws": (1, 256),
     "mir_sum_bool_element_throws": (1, 256),
+    # §10.194: the value program re-creates `t` six times (six one-element
+    # log arrays) and the two container assignments add a dict and an array,
+    # so 3 pool blocks / 1792 bytes.  The throwing program allocates only its
+    # one log array (1 / 256) -- the throw itself allocates nothing.
+    "mir_eval_order_short_circuit": (3, 1792),
+    "mir_eval_order_throw_propagates_from_the_right_operand": (1, 256),
     # ABSOLUTE numbers.  THE PREDICTIONS WERE WRONG ON THREE OF THE FIVE, AND
     # THE ROWS BELOW ARE THE POST-MORTEM RATHER THAN A MATCHED-TO-THE-RUN EDIT.
     #
@@ -1057,6 +1063,8 @@ def allocs_problems(text, case):
 # fail the second, and a route that printed nothing fails the first.  One
 # table of positives cannot see "printed the wrong throw's word".
 STDERR_EXPECT = {
+    "mir_eval_order_throw_propagates_from_the_right_operand": (
+        "[exception] uncaught: sum: non-numeric element",),
     # The bit cell throws TWO different messages and they name different things:
     # overflow of the SHIFT (numeric_overflow) and a non-INT operand
     # ("<name>: expected two integers" / "bit_not: expected an integer").
@@ -5087,6 +5095,74 @@ i = 9, 8, "s"; say "mixed-type"; say min(i); say max(i)
     ("mir_args_are_empty_when_none_are_passed",
      'say args()\n'
      'say len(args())\n'),
+
+    # EVALUATION ORDER AND SHORT-CIRCUIT.  A GUARD, NOT A RED-ON-ARRIVAL
+    # CRITERION: measured on §10.193's tree (ddf28636) the route already
+    # emits OP_AND/OP_OR plus OP_JUMP_IF_FALSE/OP_JUMP_IF_TRUE, and this
+    # program was byte-identical to the interpreter, so it arrives GREEN.
+    # It earns its place by the four injections recorded in §10.194; each
+    # one turns exactly one line of this program red, which is what a
+    # "we always evaluate left to right" belief would not survive.
+    #
+    # THE SIDE-EFFECT CHANNEL IS push(t, x), NOT AN ASSIGNMENT: assignment is
+    # a statement here (an `=` inside a lambda body is a parse error, measured)
+    # and a lambda body is ONE expression, so a `say`-based logger is
+    # impossible.  push returns 1 and appends, which is why item 3 below
+    # prints 1 and why every log array is exactly the call order.
+    #
+    # WHAT EACH LINE IS FOR:
+    #   1  or, left truthy  -> true, log [1]      (g must NOT run)
+    #   2  and, left falsy  -> false, log [0]     (g must NOT run)
+    #   3  h(a(), b())      -> 1, log [a, b, h]   LEFT FIRST, and the callee
+    #                                              is evaluated AFTER its args
+    #   4  f(0) or f(1) or f(2) -> true, [0, 1]   TWO calls, not three
+    #   6a d["x"] = (f(0) or g()) -> [0, g], {x: true}   right-side value
+    #                                              reaches the slot
+    #   6b arr[0] = (f(1) and g()) -> [1, g], [true, 0]
+    #   7a not f()  -> true                       `not` reads the VALUE
+    #   7b 2 < 1 < 2 -> false                     CHAIN, not (2<1)<2: the
+    #                                              left-associative reading is
+    #                                             `false -> 0 < 2` = TRUE
+    #   7c 1 < 2 < 3 -> true
+    #
+    # NOT COVERED, and deliberately not pretended otherwise: operand order
+    # inside a SHORT-CIRCUITED branch of a nested call, and allocation
+    # (this program only prints values and logs; the numbers live in
+    # ALLOCS_EXPECT as a separate line).
+    ("mir_eval_order_short_circuit",
+     't = []\n'
+     'f = (n) -> push(t, n) and n\n'
+     'g = () -> push(t, "g")\n'
+     'h = (x, y) -> push(t, "h") + x * 100 + y\n'
+     'a = () -> push(t, "a") - 1\n'
+     'b = () -> push(t, "b") + 9\n'
+     'say "1:"\nsay f(1) or g()\nsay t\n'
+     't = []\nsay "2:"\nsay f(0) and g()\nsay t\n'
+     't = []\nsay "3:"\nsay h(a(), b())\nsay t\n'
+     't = []\nsay "4:"\nsay f(0) or f(1) or f(2)\nsay t\n'
+     't = []\nd = {}\nsay "6a:"\nd["x"] = (f(0) or g())\nsay t\nsay d\n'
+     't = []\narr = [0, 0]\nsay "6b:"\narr[0] = (f(1) and g())\nsay t\nsay arr\n'
+     't = []\nsay "7a:"\nsay not f(0)\n'
+     'say "7b:"\nsay 2 < 1 < 2\n'
+     'say "7c:"\nsay 1 < 2 < 3\n'),
+
+    # THE SAME QUESTION FOR THROW PROPAGATION, which the value program above
+    # CANNOT see: a route that evaluates the right operand anyway gets the
+    # right answer on line 1 and dies on line 2.
+    #
+    # MEASURED: stdout is exactly `S1:\ntrue\n[1]\nS2:\n`, rc 1, stderr
+    # carries `[exception] uncaught: sum: non-numeric element`.  S1 proves a
+    # truthy left side SKIPS the throwing call (no exception at all); S2 proves
+    # a falsy left side DOES run it and the exception propagates.  `sum([1,
+    # "a"])` is the thrower because `throw` is a STATEMENT here, so it cannot
+    # stand in an operand position (measured: `expected 'expression', but got
+    # 'throw'`).
+    ("mir_eval_order_throw_propagates_from_the_right_operand",
+     't = []\n'
+     'f = (n) -> push(t, n) and n\n'
+     'th = () -> sum([1, "a"])\n'
+     'say "S1:"\nsay f(1) or th()\nsay t\n'
+     'say "S2:"\nsay f(0) or th()\n'),
 
 ]
 
