@@ -229,6 +229,7 @@ ALLOCS_EXPECT = {
     # the R interval and the Z interval); min/max read and allocate nothing, so
     # an arm that copied a bound into a fresh string or wrapper would land here.
     "mir_min_max_answer_only_z_intervals": (4, 3840),
+    "mir_z_domain_readers_agree": (5, 1843),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
@@ -1384,6 +1385,33 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # A POST-VALUE-SHAPE GUARD, NOT A RED-ON-ARRIVAL CRITERION.  Nothing is
+    # wrong here today: every row below already agrees with the interpreter.  It
+    # exists because 10.185 proved that adding a value shape silently falsifies
+    # an arm that was pinned earlier -- mv_set_minmax answered nil for "kind 2"
+    # and kept answering it after Z became constructible.  So this case pins the
+    # WHOLE arm surface that reads an interval to the two domains at once, and
+    # the two rows that distinguish them are min/max of Z (bounds vs nil) and
+    # the print.  It has to be able to go RED: the injection that does it is in
+    # STATUS 10.186 (the domain flag in mv_set_minmax forced off).
+    ("mir_z_domain_readers_agree",
+     "z = range(1)\n"
+     "r = range(2.5)\n"
+     "say len(z)\n"
+     "say size(z)\n"
+     "say count(z)\n"
+     "say list(z)\n"
+     "say sum(z)\n"
+     "say str(z)\n"
+     "say min(z)\n"
+     "say max(z)\n"
+     "say z + r\n"
+     "say [z, r]\n"
+     "say str([z, r])\n"
+     "say has({}, z)\n"
+     "say z == z\n"
+     "say z == range(1)\n"
+     ),
     # min/max are SET-ONLY READERS and they answer only a Z interval's two
     # bounds (measured on the interpreter): an array, a dict, a number, a bool,
     # a string and a MIXED array are all nil, and so is an R interval -- the

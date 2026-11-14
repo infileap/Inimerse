@@ -9987,3 +9987,51 @@ ALLOCS 钉 `(4, 800)`：四个区间（`a`、`b`、`range(range(1))` 的 Z、以
 - **不覆盖** kind 0 集合（解析器不产，见上）。
 - 与 §10.184 的删除条件联动：若解释器把 Z 区间的 `nameIdx` 或边界槽改形状，本节与 §10.184 的打印臂同批失效。
 - 删除条件：`OP_MIN`/`OP_MAX` 从 emitter 移除使 `grep -c mv_minmax == 0`（该 marker 在 `aot_mir.c:584` 的块注释里）。
+
+## §10.186 Z 域引入后的陈旧断言审计，与一条会红的守卫（A 类第五十八项）
+
+### 一、来源与日期
+
+§10.185 的教训不是"一条臂写错了"，而是"**新值形状会让钉住的句子静默过期**"。§10.184 让 `range(INT)` 造出 Z 区间，所有以"kind 2 只有 R"为前提的句子都要复测。本节只按谓词 `interval` / `kind 2` / `R` 在 `src/compilation/aot_mir.c` 里 grep（不翻整份注释），逐条复测，仍成立的原地保留。
+
+### 二、复测用的矩阵（15 行，两条域一次跑完）
+
+    z = range(1)
+    r = range(2.5)
+    say len(z)      say size(z)     say count(z)    say list(z)    say sum(z)
+    say str(z)      say min(z)      say max(z)
+    say z + r       say [z, r]      say str([z, r])
+    say has({}, z)  say z == z      say z == range(1)
+
+解释器与 MIR **逐行一致**：`0 / nil / nil / nil / nil / set(Z interval) / -2147483648 / 2147483647 / set(0) / [set(Z interval), set(R interval)] / 同 / false / true / true`。另补三条集合谓词探针（`has(z, 5)` false、`has(r, 2.5)` false、`5 in range(1)` true）——也一致。
+
+结论：**没有行为红**，过期的是注释；而这块没有任何 pin 守着。
+
+### 三、确实过期、已挂 UPDATE(10.186) 的句子
+
+1. `aot_mir.c` 的 min/max 块注释（"a real interval (kind 2, the only interval this route builds) is nil because it has no discrete min/max"）——对 R 仍成立，对 Z 过期。
+2. 同块 "WHAT IT DOES NOT COVER" 里的 "An INTEGER INTERVAL other than R: this route builds only R intervals (the domain is checked at translate time)"——`OP_SET_INTERVAL` 仍是 R-only，但"整条路线只造 R"这句话自 §10.184 起为假；改写成"literal 路径"，并点名 `range(INT)`。
+
+**保留未改**（复测仍成立）：区间并集/交集 `set(0)` 与 len 0、`set_diff` 对两个区间为 nil、`mv_set_is_interval` 的 "THE DOMAIN IS ALWAYS R"（这句讲的是 `OP_SET_INTERVAL` 的域，`Z[0~3]` 仍是 kind 0 有限集，故未被 `range` 动摇）、membership 的 kind-2 臂。
+
+### 四、守卫判据 `mir_z_domain_readers_agree`
+
+**明写它不是先红判据**：申报时全部行都绿，先红的前提（"行为现在错了"）在这里不成立。它存在是因为 §10.185 已证明"一条钉住的臂会静默过期"，所以把**所有读 interval 的臂**一次钉到两条域上，作用的是区分 Z/R 的那几行。
+
+它必须能红，以下两发各自验证（都在绿树上、逐次恢复重建）：
+
+1. `mv_set_minmax` 的域位判断换成恒 `null`——只红 `min(z)`/`max(z)` 两行（MIR 全 nil，interp 两界），同一发也红 §10.185 的判据（同一片行、更近的距离）。
+2. `mv_vts` 的 kind-2 打印把域位恒取 0——只红本守卫里 `str(z)` 与两个容器的行（印 `set(R interval)`），§10.185 的判据不动（它不打印区间）。**这一发证明守卫树的不是 §10.185 判据的行**。
+
+### 五、读数
+
+    IR-MIR-COVER|...|mir-only-cases=297|mir-only-same-as-interpreter=297
+    IR-MIR-ALLOCS|case=mir_z_domain_readers_agree|allocs=5|bytes=1843|ok=yes
+
+`accepted` 与 `handles` 不动：本节没有新注册名。
+
+### 六、边界
+
+- **不覆盖** `OP_SET_INTERVAL` 的域（该 opcode 的域仍恒 R，Z 只从 `range` 来）。
+- **不覆盖** kind 0 集合（解析器不产有限集合字面量，见 §10.185）。
+- 删除条件：若将来 interval 不再是 kind 2（或域位改形状），本守卫与 §10.184/§10.185 的判据同批失效。
