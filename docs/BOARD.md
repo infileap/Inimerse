@@ -463,7 +463,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
 
 上面六行里可测的数字各带一个 token，由 `tools/check_reconciliation.py` 读回树里比对：
 
-    recon.headings-docs=111
+    recon.headings-docs=112
     recon.explicit-delta=12
     recon.citations-cases=8
     recon.word-refs-baseline=87
