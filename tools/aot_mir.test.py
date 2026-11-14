@@ -231,6 +231,7 @@ ALLOCS_EXPECT = {
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
+    "mir_len_counts_a_z_interval_its_bounds": (9, 2304),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
@@ -1386,6 +1387,26 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # PLAN listed `range`/domains as boundaries; measured, the domain matters in
+    # exactly two places and only this cell touches the first one.
+    # `len` on a kind-2 interval is the CARDINALITY hi - lo + 1 computed in 32
+    # bits: `len(Z[0~3])` is 4, `len(Z[0~0])` is 1, `len(Z[2~5])` is 4, and
+    # `len(range(1))` is 0 because the integer range's bounds wrap the sum to
+    # zero rather than because intervals have no length -- `len(range(2.5))` is
+    # 0 for the other reason (the float domain never answers a count).
+    # The binding axis is DELIBERATELY absent: `p = Z[0~3]` materialises a
+    # four-member finite set on the interpreter and is a separate shape.
+    ("mir_len_counts_a_z_interval_its_bounds",
+     "say len(Z[0~3])\n"
+     "say len(Z[0~0])\n"
+     "say len(Z[2~5])\n"
+     "say len(range(1))\n"
+     "say len(range(2.5))\n"
+     "say len(R[0~3))\n"
+     "say str(Z[0~3])\n"
+     "say 2 in Z[0~3]\n"
+     "say 5 in Z[0~3]\n"
+     ),
     # PLAN row 31 called `declared` compiler-synthesized and "0 corpus calls".
     # Measured on the interpreter, it is three ordinary rules: one argument
     # answers THAT ARGUMENT (no wrapping, no declaration lookup -- `declared([1,
