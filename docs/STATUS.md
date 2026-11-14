@@ -10622,3 +10622,117 @@ A1 若要成立，需要一个**语义决定**，而不是一条臂：
 ### 六、读数
 
 本格是 docs-only：`accepted`／`mir-only`／`handles` 全部不动（`handles=59|of=67|unknown=8`）。三枚 pin 与全量 `tools/gate.sh` 按规矩照跑。
+
+## §10.198 `int` 的容器臂：从「假装在拒」改成「说清它是边界」（aot-mir，A 类第六十三项）
+
+### 一、来源
+
+§10.181 给 `int` 落地了容器臂，注释里写「按名拒、构造上不可达」；那条按名拒进的是
+`MIR_ONLY_REFUSE_NOTYET` 表。§10.197 复核时发现：**那张表不是判据表**——
+judging 循环（`tools/aot_mir.test.py`）从来不走它，所以表里那一行
+（`mir_int_container_is_refused`）从来就没有被任何东西检查过。§10.197 删了那一行。
+
+本节把剩下的半截做完：**那段按名拒本身是死代码**，删掉；把容器臂的真实行为写清楚；
+补一条**正向判据**钉住它。
+
+### 二、死代码的成因（读出来的，不是猜的）
+
+按名拒查的是「调用指令的前一条是不是容器构造指令」：
+
+```c
+const IrInsn *in = &fn->insns[i];
+if (strcmp(bn, "int") == 0 && i > 0) {
+    int pop_ = fn->insns[i - 1].op;
+    if (pop_ == OP_NEW_ARRAY || pop_ == OP_NEW_DICT || pop_ == OP_NEW_SET
+        || pop_ == OP_SET_INTERVAL) { ... refuse ... }
+}
+```
+
+而发射顺序是（`src/compiler/compiler.c:460-464`，`emit_builtin_call`）：
+
+```
+OP_NEW_ARRAY  →  OP_PUSH_REG  →  OP_CALL_BUILTIN
+```
+
+调用指令的前一条**恒是** `OP_PUSH_REG`（实参压栈），四个容器 opcode 一个都撞不上。
+`aot-mir dump` 的 IR 原文（`idx=6 OP_NEW_ARRAY`、`idx=7 OP_PUSH_REG`、
+`idx=8 OP_CALL_BUILTIN`）与这条读数一致。
+
+⇒ 那段检查**从写下的那天起就没有生效过**。被它「拒」的形状一直在降译。
+
+### 三、这条路线的真实行为（实测，两侧各自量）
+
+`int(<容器>)` 答的是**容器自己的区域号**——解释器侧读的是 Value 的下标，本路线侧读的是
+自己的池下标。两侧都是整数，也都**随各自路线的分配顺序漂移**，但**值不必相等**。
+
+同一个程序（`a = [1, 2]` / `b = {3: 4}` / `say int(a)` / `say int(b)`）：
+
+| 形状 | 解释器 | 本路线 |
+|---|---|---|
+| `int([1, 2])` | 1 | 1 |
+| `int({3: 4})` | 2 | **4** |
+| `int("7")` | 7 | 7 |
+| `int(2.9)` | 2 | 2 |
+| `int(true)` | 1 | 1 |
+| `int(nil)` | 0 | 0 |
+
+数组侧相等是巧合（两侧第一个数组都落在 1 号槽），字典侧不等。漂移也能在**一个程序里**看到：
+先取的容器号小于后取的（解释器 1→3，本路线 1→8）。
+
+⇒ 这是**边界，不是契约**。旧注释里「the two routes agree here only because both
+routes number allocations in the same order」是谎（数组侧只是巧合），并且它引用的判据名
+`mir_int_container_answers_the_region_index` **不存在**。两处都已改。
+
+### 四、判据
+
+新案例 `mir_int_container_arm_is_an_integer_that_drifts`（`tools/aot_mir.test.py`）：
+
+```
+a = [1, 2]
+x1 = int(a)
+t = [9, 9, 9]
+y = [2, 3]
+x2 = int(y)
+if x2 > x1 { say "drifts" } else { say "fixed" }
+if int(a) == nil { say "not-int" } else { say "int" }
+```
+
+它钉两件事，且两件都**只靠性质、不靠具体数值**：
+
+1. `int(<容器>)` 是整数，从不是 nil；
+2. 池号随本路线的分配顺序漂移（后取的大）。
+
+**为什么这样写**：MIR_ONLY 判据要求两侧 stdout **逐字相同**，而两侧的容器号不相等，
+所以绝对值不能进判据。归一化必须把「值」换成「性质」——上面两条都是两侧**同时**成立的
+性质，实测两侧 stdout 逐字同（`drifts\nint\n`）。
+
+**它到货即绿**：这条判据钉的是**已经存在**的行为（§10.181 落地时容器臂就在工作），
+所以它是**守卫**，不是先红判据。判据头已明写这一点。
+
+**分配读数**：`(2, 768)`——数组池倍增两块（256 + 512）。`int` 本身零分配：
+`a = [1, 2]` 单独跑是 1 块，加上 `x1 = int(a)` 仍是 1 块。
+
+### 五、两发注入（证明守卫有牙）
+
+| 注入 | MIR 侧 | 解释器侧 | 红在哪 |
+|---|---|---|---|
+| 容器臂恒答 nil | rc=1，无输出 | `drifts\nint\n` rc=0 | 整案红（`x2 > x1` 撞 nil 比较，MIR 侧崩） |
+| 容器臂恒答 0 | `fixed\nint\n` rc=0 | `drifts\nint\n` rc=0 | **只红 `drifts` 那行**，`int` 那行仍绿 |
+
+第二发是关键：它证明两根钉子**各自独立**——整数性没坏，漂移性坏了，所以只红一行。
+两次注入都恢复后重建，绿。
+
+### 六、读数
+
+- harness EXIT=0、`mir-only-cases=304|mir-only-same-as-interpreter=304`；
+- `IR-AOT-MIR-VERDICT|PASS|accepted=86|refused=0|differ=0`（corpus 口径）；
+- `IR-AOT-MIR-LOWERING|handles=59|of=67|unknown=8`（不变——本节不碰 opcode）；
+- 本节**不改任何行为**：`int([1, 2])` 在本路线本来就答 1、`int({3: 4})` 本来就答 4。
+  删掉的只是一段假装在拒的检查，换成把这个边界写下来。
+
+**DELETE CONDITION**：若将来这条按名拒被重新写活（发射顺序改了，或改成查更靠前的
+指令），本节 §五 的两发注入必须先红；若 `int` 的容器臂改成答一个**两侧相同**的数
+（例如改成答元素个数），本节的归一化判据就不再成立，需要重写。
+
+**MEASURED BY**：`python3 tools/aot_mir.test.py --build <abs>/build --tool <abs>/build/aot-mir`
+（本节读数取自合并树 `.worktrees/merge-win-src`，二进制为本次重建后的 `build/aot-mir`）。
