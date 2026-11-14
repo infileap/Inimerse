@@ -9679,3 +9679,61 @@ Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)`
 ### 六、删除条件
 
 当 `args` 收掉、`range` 的域问题被真正解决（或区间表示加域被另一节论证过）、或某个「边界」名被证明可收时，相应表格行删除并在此节留下「旧行说过什么、何时失效」。本节不新增 `path:line` 引用以外的结构改动：新增的三处引用（`aot_mir.c:1607-1619`、`vm.c:1330`、`runtime.c:1165-1187`、`runtime.c:1919`）都指向树里仍在的代码段。
+
+## §10.179 `args`：进程实参，是程序自己的那一段（A 类第五十二项）
+
+### 一、来源与日期
+
+接手会话，2026-11-14，§10.178 之后。父 sha `7b25d5e3`。§10.178 把 `args` 记成「可做，下一格」并写明缺什么：生成的 `main` 没有 `argc/argv`，harness 也不能按案例传参，所以只能测空参。本节把这三件一起补齐——这正是 §10.178 那一行点名的条件。
+
+### 二、判据（先红，含一条工具使能）
+
+两条 `MIR_ONLY` 加一处工具改动，全部先落：
+
+- `mir_args_are_the_program_arguments`（四行：`say args()`、`say len(a)`、`say a[0]`、`say a[1]`），实参 `("x", "y")`；
+- `mir_args_are_empty_when_none_are_passed`（两行），无实参；
+- `tools/aot_mir.test.py` 新增 `ARGV_CASES`（每案例一份实参表），两侧各传一份：解释器接在脚本路径后（`run prog.im x y`），MIR 二进制直接接 `argv[1..]`。缺省案例不继承别人的实参。
+
+在 `7b25d5e3` 上（判据提交 `725b0ef7`）：
+
+    IR-MIR-MIR-ONLY|case=mir_args_are_the_program_arguments|mir=refused|why=builtin-call
+    IR-MIR-MIR-ONLY|case=mir_args_are_empty_when_none_are_passed|mir=refused|why=builtin-call
+    IR-MIR-COVER|...|mir-only-cases=291|mir-only-same-as-interpreter=289
+
+空参那条**单独存在时不足以**：恒答 `[]` 的实现能骗过它。带参那条是承重的一半——没有它，判据只说明「不是 nil」。
+
+### 三、实测
+
+解释器：`run prog.im x y` → `[x, y]`、`len` 2、`a[0]` 是 `x`、`a[1]` 是 `y`；`a[0]` = **第一个实参**，不是脚本路径（脚本路径不出现在列表里）。`args(1)` 仍答 `[]`（多给的实参被忽略，没有上界 arity 门）。空参：`[]`、`0`。
+
+### 四、实现
+
+`src/compilation/aot_mir.c`（+40/−5）：
+
+- 前导两个静态量：`static int mv_prog_argc`、`static char **mv_prog_argv`，由 `main` 写一次、`mv_args()` 读——所以**函数里调用 `args()` 也答进程实参**，与解释器一致（解释器读 `vm->argv`，不看调用位置）。
+- `main` 签名 `int main(void)` → `int main(int argc, char **argv)`，紧接着写 `mv_prog_argc = argc; mv_prog_argv = argv;`。这是本格唯一跨程序形态的改动；生成文本对不用 `args()` 的程序只多两行 void 静态量。
+- `mv_args()`：`n = argc > 1 ? argc - 1 : 0`（去掉 argv[0]）；一块区域装列表，元素是 `MV_STR` 且 **`ival = 1`（resident）**——它们指向 argv 的字节，不拷贝、不释放。
+- 名字门两处加 `args`；emitter 臂 `v[r1] = mv_args();`（不读 `mvargs`，零参是它的正常形状）。
+
+**一个规则例外**：本路线对**零参调用**有一条通用规则（按名拒 `builtin-stale-stack`，因为解释器会交回栈顶残留），`args()` 是唯一**零参就是真答案**的内建，所以那条规则现在显式点名一个例外，而不是普遍适用。
+
+### 五、非对称注入
+
+1. **计数不减一**（把 argv[0] 也算进去）：`[x, y, ]` / `3` —— 第三个元素是循环走到 `argv[argc]` 的 NULL。
+2. **恒答空表**：`[]` / `0` / `nil` / `nil` —— 红的是带参那条。
+
+两次都恢复重跑：`291/291`、`REFUSED-TOTAL cases=13|ok=13`、exit 0、`IR-MIR-VERDICT|PASS`。
+
+### 六、分配与边界
+
+分配：两条案例都钉 `1|256`——一块区域装列表；元素字符串 resident，零字节。本格首次把 ALLOCS 写成「一块区域」而不是「程序字面量」。
+
+边界：`args` 的**空参**形态只能证明列表为空、不能证明「恰好这么多」；带参案例用两个不同实参来钉顺序（`a[0]`≠`a[1]`）。argv 的字节在程序整个生命周期内有效（`atexit` 之前），所以 resident 指针不悬空；`mv_free_all` 只释放自己登记过的块，argv 不在其中。
+
+### 七、删除条件
+
+`mv_args`、两个静态量、`main` 的签名、名字门两处、emitter 臂、`ARGV_CASES` 表与两条判据同删。把 `n` 改成 `argc` 红计数行；恒答 `[]` 红带参行。
+
+### 八、与 §10.178 的关系
+
+§10.178 把 `args` 列成「可做」，本节兑现并把它从底账表里删掉——那张表剩下的每一行仍是边界，`range` 仍是 blocked（理由不变：Z 域不可从本路线的区间表示导出，min/max 也分叉）。
