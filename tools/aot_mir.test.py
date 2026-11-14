@@ -230,6 +230,7 @@ ALLOCS_EXPECT = {
     # an arm that copied a bound into a fresh string or wrapper would land here.
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
+    "mir_declared_one_arg_identity_two_args_nil": (1, 256),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
@@ -1385,6 +1386,24 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # PLAN row 31 called `declared` compiler-synthesized and "0 corpus calls".
+    # Measured on the interpreter, it is three ordinary rules: one argument
+    # answers THAT ARGUMENT (no wrapping, no declaration lookup -- `declared([1,
+    # 2])` prints the list); two arguments answer nil, which is NOT the
+    # last-argument convention the other builtins share; zero arguments answer
+    # the destination register's previous value, so that shape stays refused by
+    # name (builtin-stale-stack) rather than guessed.
+    ("mir_declared_one_arg_identity_two_args_nil",
+     "x = 5\n"
+     "say declared(1)\n"
+     "say declared(\"a\")\n"
+     "say declared(x)\n"
+     "say declared([1, 2])\n"
+     "say declared(declared(3))\n"
+     "say declared(1, 2)\n"
+     "say declared(\"a\", 7)\n"
+     "say declared(1, 2, 3)\n"
+     ),
     # A POST-VALUE-SHAPE GUARD, NOT A RED-ON-ARRIVAL CRITERION.  Nothing is
     # wrong here today: every row below already agrees with the interpreter.  It
     # exists because 10.185 proved that adding a value shape silently falsifies
@@ -5119,7 +5138,12 @@ MIR_ONLY_REFUSE = {
     # name under the refusal criterion.  sqrt landed in §10.176, so it points
     # at match, which is still refused by name (translate: builtin call 'match').
     "mir_builtin_call_with_arg": (
-        'x = declared(1)\nsay x\n',
+        # 10.187 landed `declared`, so this ledger case moved forward again to
+        # time_ms, which stays refused by name on purpose (it is a wall-clock
+        # boundary: the route cannot reproduce the interpreter's clock).  The
+        # CLASS this case measures -- a builtin call carrying an argument that
+        # this route does not emit -- is unchanged; only the name moved.
+        'x = time_ms(1)\nsay x\n',
         "builtin-call"),
     "mir_builtin_call_no_arg": (
         'say dbg_ip()\n',
