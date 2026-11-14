@@ -1357,6 +1357,14 @@ def stderr_problems(text, case):
 # (a string expression is outside the numeric subset), so there is no second
 # generated file to compare against -- the interpreter remains the only oracle,
 # which is the same reason every case in this list is MIR-only.
+# Programs whose answer depends on the ARGUMENTS the binary was started with.
+# Both runs receive them (the interpreter after the script path, the MIR binary
+# as argv[1..]); without that the only measurable shape would be the empty list,
+# which no arm can fail.
+ARGV_CASES = {
+    "mir_args_are_the_program_arguments": ("x", "y"),
+}
+
 MIR_ONLY = [
     # len() over the value domain this route can actually hold.  The builtin is
     # refused today by name (why=builtin-call, 10.122), so this case is red on
@@ -4847,6 +4855,24 @@ MIR_ONLY = [
      '}\n'
      'say "end"\n'),
 
+    # THE PROGRAM'S ARGUMENTS.  `run prog.im x y` makes args() answer [x, y]:
+    # argv[0] is the script path and is NOT included, and the list is a FRESH
+    # region (it is built here, not aliased to anything the program holds).
+    # Carrying x alone would let an arm answer [] and pass; carrying nothing
+    # would let it answer a CONSTANT.
+    ("mir_args_are_the_program_arguments",
+     'a = args()\n'
+     'say a\n'
+     'say len(a)\n'
+     'say a[0]\n'
+     'say a[1]\n'),
+
+    # AND WITH NO ARGUMENTS IT IS THE EMPTY LIST, not nil and not the program
+    # name: the two shapes together are what makes a constant answer fail.
+    ("mir_args_are_empty_when_none_are_passed",
+     'say args()\n'
+     'say len(args())\n'),
+
 ]
 
 
@@ -5692,8 +5718,9 @@ def main():
         if rc_c != 0:
             problems.append("%s: cc failed: %s" % (name, (ec or "")[:200]))
             continue
-        rc_i, out_i, _ei = run_bytes([interp, "--no-mods", "run", s], workdir)
-        rc_r, out_r, er = run_bytes([exe_m], workdir)
+        case_argv = list(ARGV_CASES.get(name, ()))
+        rc_i, out_i, _ei = run_bytes([interp, "--no-mods", "run", s] + case_argv, workdir)
+        rc_r, out_r, er = run_bytes([exe_m] + case_argv, workdir)
         same = (out_r == out_i) and (rc_r == rc_i)
         mir_only_same += 1 if same else 0
         if not same:
