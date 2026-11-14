@@ -1644,7 +1644,11 @@ static const char *const kMirValBlock =
 " *\n"
 " *   - `dst->type = VAL_NIL` FIRST, and `if (src->type != VAL_SET) return;` -- so\n"
 " *     a non-set operand answers nil and that is what mv_minmax still returns.\n"
-" *   - kind 0 only.  A kind-2 (interval) set carries no members, and nameIdx 24\n"
+" *   - kind 0 only.  A kind-2 (interval) set carries no members, and nameIdx 24\n"" *     UPDATE (10.185): this bullet is true of nameIdx 24 (R) only.  Since\n"
+" *     10.184 the route can build nameIdx 1 (Z) too, and set_minmax answers\n"
+" *     its lo/hi -- which is what the interval branch below now copies.  The\n"
+" *     sentence stays here because the rule it describes is still the R half.\n"
+
 " *     (the real domain, the only one this route can build) returns nil: a real\n"
 " *     interval has no discrete min/max.  Measured: `p = (0, 3); say min(p)`\n"
 " *     prints nil.\n"
