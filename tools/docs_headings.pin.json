@@ -1,6 +1,6 @@
 {
- "docs": 111,
- "headings": 1487,
+ "docs": 112,
+ "headings": 1490,
  "per_file": {
   "docs/API.md": 15,
   "docs/AUDIT.md": 543,
@@ -18,7 +18,7 @@
   "docs/RELEASE_0.5.1.md": 6,
   "docs/RELEASE_0.5.2.md": 7,
   "docs/REQUIREMENTS_ANALYSIS.md": 10,
-  "docs/STATUS.md": 163,
+  "docs/STATUS.md": 164,
   "docs/SYNTAX.md": 9,
   "docs/THREADS_V06.md": 7,
   "docs/TYPESET_V06.md": 10,
@@ -67,6 +67,7 @@
   "docs/streams/aot-mir-value.md": 7,
   "docs/streams/be-removal.md": 6,
   "docs/streams/board-ten-rows-verification.md": 13,
+  "docs/streams/builtin-arms.md": 2,
   "docs/streams/builtin-platform-census.md": 10,
   "docs/streams/checker-scope.md": 7,
   "docs/streams/citations-pin-tree.md": 7,
@@ -114,5 +115,5 @@
   "docs/streams/ws-client-coverage.md": 5,
   "docs/streams/xlang-bridge.md": 6
  },
- "tree": "8163eba"
+ "tree": "58ad10e"
 }
