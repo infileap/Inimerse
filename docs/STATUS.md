@@ -10035,3 +10035,43 @@ ALLOCS 钉 `(4, 800)`：四个区间（`a`、`b`、`range(range(1))` 的 Z、以
 - **不覆盖** `OP_SET_INTERVAL` 的域（该 opcode 的域仍恒 R，Z 只从 `range` 来）。
 - **不覆盖** kind 0 集合（解析器不产有限集合字面量，见 §10.185）。
 - 删除条件：若将来 interval 不再是 kind 2（或域位改形状），本守卫与 §10.184/§10.185 的判据同批失效。
+
+## §10.187 `declared`: 单参恒等，多参 nil（PLAN 行 31 的收尾）
+
+**(1) 来源。** `PLAN.md:361` 把 `declared` 记为"M 0.5×0.5，编译器合成，0 corpus
+调用"，理由是"答案取决于编译器的分发，路线得复现它"。实测把这个理由拆掉了：
+答案与分发无关，只与**实参个数**有关。
+
+**(2) 判据。** `tools/aot_mir.test.py` 的 `mir_declared_one_arg_identity_two_args_nil`
+（8 行，`MIR_ONLY`首项），先红态为 `mir=refused|why=builtin-call`，
+`mir-only-cases=298|same=297`。判据刻意放了**三参**一行（`declared(1, 2, 3)`），
+否则 emitter 写成"恰好两参"也能全绿——那是假全绿。主人复核补的这条**已写进
+判据**。
+
+**(3) 实测（解释器，父 `c679f8de`）。** 单参恒等：`declared(1)`=1、
+`declared("a")`=a、`declared([1, 2])`=`[1, 2]`、`declared(declared(3))`=3。
+多参恒 nil：`(1, 2)`=`nil`、`("a", 7)`=`nil`、`(1, 2, 3)`=`nil`。零参：
+`y = 6` 之后 `declared()` 印 6（目标寄存器上一次的值）。
+
+**(4) 实现。** emitter 臂 `declared`：`ac >= 2 ? mv_nil() : mvargs[asp-1]`；
+名字门两处（prescan 与 emitter）各加 `declared`，拒语改为
+`… sqrt, match, range, args and declared and no other builtin`。零参**没有**加
+按名拒：已有的通用零参拒（`builtin-stale-stack`，理由"leftover / 目标寄存器上一次
+的值"）正好覆盖它——实测 `say declared()` 经 `translate` 回
+`IR-MIR-REFUSED|why=builtin-stale-stack|… with no argument`。
+
+**(5) 非对称注入（两次，均在绿树上、各自恢复重建）。**
+① `ac >= 2` 改成 `ac == 2` ⇒ 只红本判据（三参行印 3 而非 nil），**同时**红
+`mir_builtin_call_with_arg`（它当时指向 `declared`，见 (6)）；
+② `ac >= 2` 改成恒假（恒等） ⇒ 只红本判据的两参/三参行（`nil` 变 `1`/`"a"`）。
+恢复后 `PROBLEM=0`、`mir-only 298|298`。
+
+**(6) 记账：拒绝行前移。** `mir_builtin_call_with_arg` 原指向 `declared`
+（那是 §10.182 记账时它还是被拒的名字）。`declared` 落地后该判据正确地变红，
+处置是**前移**到 `time_ms(1)`——挂钟边界，**永久**按名拒——并在判据上方就地
+写"类不变、只有名字移动"。不得删除、不得放宽。
+
+**(7) 边界与删除条件。** 未覆盖：`declared()` 零参（按名拒）、`declared` 作为
+表达式以外的形状（`x.declared` 裸标识符）不在 corpus。删除条件：删掉 emitter 的
+`declared` 臂时，`grep -c '"declared"' src/compilation/aot_mir.c` 必须回到只出现在
+拒绝消息里的 0 处。
