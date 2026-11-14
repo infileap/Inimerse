@@ -5491,14 +5491,15 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
-                    && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0 && strcmp(bn, "args") != 0) {
+                    && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0 && strcmp(bn, "args") != 0
+                    && strcmp(bn, "declared") != 0) {
                     g_prescan_why = "builtin-call";
                     return bad("container=%d insn=%d builtin call '%s' -- this route emits len,"
                                " list, size, count, has, keys, str, sum, remove, push, pop"
                                " and int, substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
                                " bit_or, bit_xor, bit_not, shl, shr, bool, float, round,"
-                               " sqrt, match, range and args and no other builtin;"
+                               " sqrt, match, range, args and declared and no other builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
@@ -6480,7 +6481,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
                     && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0
-                    && strcmp(bn, "args") != 0)) return -1;
+                    && strcmp(bn, "args") != 0
+                    && strcmp(bn, "declared") != 0)) return -1;
         if (strcmp(bn, "list") == 0)
             buf_fmt(b, "    v[%d] = mv_list(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "size") == 0)
@@ -6533,6 +6535,20 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_match(mvargs[asp-2], mvargs[asp-1]);", r1);
         else if (strcmp(bn, "args") == 0)
             buf_fmt(b, "    v[%d] = mv_args();", r1);
+        else if (strcmp(bn, "declared") == 0) {
+            /* ONE ARGUMENT IS IDENTITY, TWO OR MORE IS NIL.  Measured on the
+               interpreter: declared(1) is 1, declared("a") is a, declared([1, 2])
+               is the list, declared(declared(3)) is 3 -- no wrapping and no
+               declaration lookup -- while (1, 2), ("a", 7) and (1, 2, 3) are all
+               nil, which is NOT the last-argument convention these other arms
+               share.  Zero arguments keep the destination register's value, so
+               the generic zero-argument refusal above already catches that. */
+            int ac = ir_insn_r3(in);
+            if (ac >= 2)
+                buf_fmt(b, "    v[%d] = mv_nil();", r1);
+            else
+                buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
+        }
         else if (strcmp(bn, "range") == 0)
             buf_fmt(b, "    v[%d] = mv_range(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "index") == 0)
