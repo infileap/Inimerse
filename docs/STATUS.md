@@ -10075,3 +10075,58 @@ ALLOCS 钉 `(4, 800)`：四个区间（`a`、`b`、`range(range(1))` 的 Z、以
 表达式以外的形状（`x.declared` 裸标识符）不在 corpus。删除条件：删掉 emitter 的
 `declared` 臂时，`grep -c '"declared"' src/compilation/aot_mir.c` 必须回到只出现在
 拒绝消息里的 0 处。
+
+## §10.188 `len` counts a Z interval's bounds（并让 Z 字面量第一次被发射）
+
+### 1. 来源
+§10.184 给 `range()` 加了域位（`mv_set_interval_d(zdomain, lo, hi, flags)`），§10.185 用同一位让
+`min`/`max` 只对 Z 答边界。但那个位**只在内建路径上设**：`Z[lo~hi]` 这个字面量写法经
+`OP_SET_INTERVAL` 进来时域名只活在 r2 的低 24 位（名字池索引），flags 里没有 4，于是
+prescan 整条按 `set-interval-domain` 拒掉。lively-ember 复核时扩测出第二个分叉：`len` 在未绑定的
+Z 字面量上就已经知道成员数（`len(Z[0~3])` = 4），而 `len(range(1))` 是 0 —— 两条 reader 对
+“区间里有多少成员”的答案不同源。本格收这两件事：Z 字面量可发射 + `len` 对 Z 区间答基数。
+
+### 2. 判据（先红）
+`tools/aot_mir.test.py` 的 `mir_len_counts_a_z_interval_its_bounds`，九行，插在 `MIR_ONLY` 首项。
+父 sha 上红的是 `IR-MIR-MIR-ONLY|...|mir=refused|why=set-interval-domain`，`mir-only 299|298`。
+九行都在**表达式位置**，绑定故意不在里面（见第 4 节）：
+
+    len(Z[0~3]) 4   len(Z[0~0]) 1   len(Z[2~5]) 4
+    len(range(1)) 0 len(range(2.5)) 0  len(R[0~3)) 0
+    str(Z[0~3]) "set(Z interval)"   2 in Z[0~3] true   5 in Z[0~3] false
+
+### 3. 实测与实现
+- **`len` 的规则是一句 C 语义**：`hi - lo + 1` 按 **32 位**算。`len(Z[2~5])` = 4 与
+  `len(Z[0~0])` = 1 都是这条；`len(range(1))` = 0 **不是**“区间没有长度”，而是它的边界是
+  int32 min..max，和式在 32 位里回绕到 0；`len(range(2.5))` = 0 与 `len(R[0~3))` = 0 则是
+  R 域从不计数的另一条原因。三条 0 的来历不同，判据里都各占一行。
+- `mv_len` 的 kind-2 臂从“恒 0”改成读域位：有 4 位就算回绕基数，没有就 0。注释以
+  `UPDATE (10.188)` 保留旧句并点名它何时失效。
+- prescan 的域门从“只 R”改成“R 与 Z”，拒绝文案改成
+  `… emits the R and Z interval spellings and no other domain`（其它域仍拒，理由不变）。
+- emitter 的 `OP_SET_INTERVAL` 从 r2 低 24 位解出域名、Z 时置位 4；R 的发射文本一字未动。
+
+### 4. 绑定是另一个形状（没进本格）
+逐条实测（interp）：`p = Z[0~3]` 印 `set(4)`、`len` 4、`4 in p` false；`q = p` 传播同一有限集；
+`r = Z[0~3]` 同样 4 员；而 `say Z[0~3]` 仍是 `set(Z interval)`（绑定后再印字面量也仍是 interval，
+说明转换**每次绑定发生**，不是全局状态）；`s = R[0~3)` 印 `set(0)` —— **R 绑进变量变成空集**；
+动态边界 `lo=0, hi=4` 时 `len(Z[lo~hi])` = 5 但打印仍是 `set(Z interval)`。这是一条独立的
+materialize 语义（bind 把区间物化：Z 枚举成员、R 变空有限集），判据要自己先红，不在本格混入。
+
+### 5. 注入
+- A：emitter 的 `flags |= 4` 改成 `flags |= 0` ⇒ 只红本判据的 Z 行（Z 长度全 0、`str` 回
+  `set(R interval)`）。
+- B：`cnt = hi32 - lo32`（丢 `+1`）⇒ 红本判据**以及** `mir_range_domains_and_pass_through`、
+  `mir_z_domain_readers_agree` 两条旧判据：off-by-one 同时把 `len(range(1))` 移成 4294967295。
+  这一发证明本格与前两格的 reader 是同一个，不是巧合。
+
+### 6. 边界
+- 只收 Z 与 R 两种域拼写；其它域名（及其“有限集”写法）仍按 `set-interval-domain` 拒。
+- 绑定/物化的三行读数照抄进第 4 节，但**不实现**、也不写成 MIR 判据 —— 那是 §10.189 的判据头。
+- 动态边界在**表达式**位置已能发射（`Z[lo~hi]` 打印 `set(Z interval)`、`len` 按回绕基数），
+  但绑定后的物化未覆盖（同上）。
+
+### 7. 记账
+`mir_builtin_call_with_arg` 仍指 `time_ms(1)`（§10.187 挪的），本格不动。读数：
+`accepted=385`、`mir-only 300|300`、`REFUSED-TOTAL 12|12`、headings 1484；`handles=59|of=67|unknown=8`
+不动（区间不是 opcode 手臂）。
