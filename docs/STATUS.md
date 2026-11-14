@@ -9824,3 +9824,35 @@ Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)`
 ### 八、与 §10.178 的关系
 
 §10.178 的底账把 `int` 记成「可做，容器臂是分界」；本节兑现并给出分界的准确形状——**不是「静默 0 还是抛」，是「机器索引」**，因此处置不是二选一而是按名拒。
+
+## §10.182 轴收口：剩下的不是「缺臂」，是「不可达」「合成」「边界」三类（A 类第五十五项）
+
+### 一、来源与日期
+
+§10.181 之后（`04ebf768`），转换族与内建族按 PLAN 序列走到尽头。本节是**底账的收尾**：把「注册了但本路线没那么发」的名字逐个归到三类之一，证明这条轴上没有剩下「有值可答、只缺一个 emitter 臂」的格子。不新增实现，只把剩余的说清楚并留下可复查的读数。
+
+### 二、三类归属（亲测/亲读）
+
+**不可达（语法）**：`type` 注册在 `src/runtime/runtime_posix.c:1306`，但 `type` 是**保留字**——`say type(1)` 在解析期就报 `expected 'expression', but got 'type' (type 129)`。名字在 VM 里，形状在语法里拿不到，所以本路线的名字门永远不会见到它：不是缺臂，是**不可达**。
+
+**编译器合成**：`declared` 不是普通调用。`declared(1)` 实测印 `1`（值本身），`x = 5` 后 `x.declared` 印 `nil`，`y = "ab"` 后 `y.declared` 印 `nil`——它读的是 `posix_core_declared`（`runtime_posix.c:306-324`）的"名字声明的界"，而界由编译器在**裸标识符**位置额外压一个全局槽号；问一个值有没有声明，答案取决于它**怎么被写出来**，本路线拿不到那个槽号（`declared(x)` 仍按名拒 `builtin-call`）。归为合成类，边界写在 §10.178 底账表里。
+
+**边界（值不在程序里）**：`random`/`time_ms`/`sleep_ms`/`env`/`read_file`/`write_file`/`write_bytes`/`input`/`mkdir`/`list_dir`/`http_get`/`http_post`/`exec`/`serial_*`/`key_press`/`mouse_*`/`has_capability`。它们的答案来自时钟、随机源、环境、文件系统或权限，不来自程序：二审同一程序不会同答，MIR 侧没有可对照的真值。见 §10.178 的逐名表。
+
+**blocked**：`range`（`set(Z interval)` 打不出来，min/max 两半也分叉），理由不变。
+
+### 三、读数（本节时）
+
+    IR-AOT-MIR-VERDICT|PASS|accepted=379|of=29|covered=29|missing=0|refused=0
+    IR-MIR-COVER|...|mir-only-cases=293|mir-only-same-as-interpreter=293
+    IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=12|ok=12|expect=12
+
+十二个按形拒全部是**形状**（零参残值、位数 clamp 之外的 arity、`int` 的容器索引），**没有一个是「这个名字整体没实现」**——`MIR_ONLY_REFUSE_NOTYET` 现在只剩 `mir_int_container_is_refused` 一条。
+
+### 四、结论
+
+PLAN 的内建轴到此为**边界的集合**，不是待办清单。再往前走需要开新的轴（例如线程/容器语义、或补齐 `range` 的集合表示），而不是继续找「还差哪个 emitter 臂」。
+
+### 五、删除条件
+
+本节是底账，不产生代码；若 `type` 从保留字表里移出、`declared` 的槽号在 IR 里出现、或某个边界名字获得可内联的真值，本节对应的那一行失效，由当时的格子改写它并在 §10.178 表里划掉。
