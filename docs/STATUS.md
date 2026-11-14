@@ -9621,3 +9621,61 @@ IR-MIR-COVER|...|mir-only-cases=279|mir-only-same-as-interpreter=277
 ### 七、删除条件
 
 `mv_match`、`argc<2` 门、三条判据同删；把 `REG_EXTENDED` 换成 0 红三条扩展操作符行；去掉翻译表 `\d` 只红一行。
+
+## §10.178 PLAN 轴收口：§10.161–§10.177 十七格落地，余下注册名逐个测量成底账（A 类第五十一项）
+
+### 一、来源与日期
+
+接手会话，2026-11-13，§10.177 之后。父 sha `c5cffb42`。`.scratch/builtin-plan/PLAN.md` 的**建议序列 §10.161–§10.175 已全部落地**（`size/count`、`has/keys`、`str`、`sum`、`push/pop/remove`、`substr/split/join`、`chars/ord/chr`、`replace/index/startswith/endswith`、`trim/upper/lower`、六个位运算、`bool/float/int/round`、`sqrt`、`match`），只有 PLAN 自己标的两格没收：`declared`（可选）与 `range`（blocked）。本节做两件事：记下轴的完成读数，并把**余下 26 个已注册但本路线仍按名拒的名字**逐个测量成底账——每一个都有一行实测，每个「边界」都能被下一轮追问。
+
+### 二、轴完成读数（`c5cffb42`，亲跑）
+
+    IR-AOT-MIR-VERDICT|PASS|accepted=375|of=29|covered=29|missing=0|refused=0|same-as-interpreter=375
+    IR-MIR-COVER|corpus=inline-cases:86|accepted=86|refused=0|differ=0|mir-only-cases=289|mir-only-same-as-interpreter=289
+    IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=13|ok=13|expect=13
+
+本路线现在发射的注册名（按名字门里的顺序）：`len list size count has keys str sum remove push pop substr split join chars ord chr index replace startswith endswith upper lower trim bit_and bit_or bit_xor bit_not shl shr bool float int round sqrt match`。PLAN 原本只要求 §10.161–§10.171（另加 `sqrt`、`match` 两行），实际做完到这 38 个名字。
+
+### 三、`range` 收不了的确切原因（PLAN 只说 blocked，本节给出读数）
+
+    say range(5)          set(Z interval)        say [1~3]         set(R interval)
+    say len(range(5))     0                     say len([1~3])    0
+    say size(range(5))    nil                   say min(range(5)) -2147483648
+    say count(range(5))   nil                   say max(range(5))  2147483647
+    say list(range(5))    nil                   say min(range(1.5)) nil
+    say 2 in range(5)     true
+
+Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)` 的 min/max 是 `INT_MIN`/`INT_MAX`（离散域的端点），`set(R interval)` 没有离散 min/max（答 nil）。本路线的区间表示（`mv_set_interval`，`aot_mir.c:1607-1619`）只有 lo/hi/flags 三个载荷，没有域；解释器的 Z/R 来自集合的 `nameIdx`（`src/vm/vm.c:1330` 的 `builtin_set_name`）。要收得先给区间表示加域并让 min/max/size/count/list 各自按域分支，这不是一格内的工作，且会牵动 §10.145 里已论证过的 32 字节布局——所以**继续标 blocked，并且现在有实测支撑这句话**，不是转述 PLAN。
+
+### 四、余下注册名的测量底账（全部 `build/inimerse --no-mods run` 亲跑）
+
+| 名字 | 实测 | 归类与一句理由 |
+|---|---|---|
+| `args` | `say args()` → `[]`；带参 `run prog.im x y` → `[x, y]`、`len` 2 | **可做，下一格**——生成的 `main` 现在无 `argc/argv`，要收得改 main 签名并把 argv 接进运行时（harness 也得能按案例传参，否则只能测空参） |
+| `declared` | `declared(x)` → `nil`（未声明）；语义是 `vm->global_bound[gidx]`（`src/runtime/runtime.c:1165-1187`） | **边界**：编译器只在裸标识符时传 global slot（否则 `-1`），本路线的生成代码没有 `global_bound` 回写表，答 nil 会让「已声明」与「未声明」同形 |
+| `type` | `say type(1)` → 解析错误 `expected 'expression', but got 'type'` | **关键字**（PLAN §1.1 的 keyword trap），不可达为调用 |
+| `print` | 同上，`got 'print'` | **关键字**，同上 |
+| `gc_now` | `1`；`gc_auto(0)`→0、`gc_auto(1)`→1 | **待定**：源码答的是开关/计数状态还是自身实参要再读；不先量就收会把「恒等」当语义 |
+| `gc_stats` | `{runs: 0, freed: 0, enabled: 0, threshold: 0, used: 2163}` | **边界**：字典里是 VM 分配器的计数（`used` 是本进程的字节数），生成代码的分配器不同，同一程序两边的数字不可能相等 |
+| `usage` | `{mem: 2163, mem_limit: 0, threads: 0, threads_limit: 0, time: 0, time_limit: 0, inst_limit: 0}` | **边界**：资源计量（含线程/时限），同上 |
+| `mod_usage` | `{mem: 2163, time: 0}` | **边界**：mod 资源计量 |
+| `mod_limit` | `1` | **边界**：mod 安全阀，`-1`/`0` 的形状取决于 mods 是否加载 |
+| `list_params` | `[]` | **边界**：.params 参数文件系统 |
+| `load_params` `save_params` | `-1`（失败） | **边界**：文件系统 |
+| `input` | 读到 EOF（印空行） | **边界**：stdin |
+| `spi_caps` | `-1` | **边界**：mod SPI 通道 |
+| `random` | —（未测，PLAN §9 已论） | **边界**：`srand(time)`（`src/runtime/runtime.c:1919`） |
+| `time_ms` `sleep_ms` | — | **边界**：墙钟 |
+| `read_file` `write_file` `write_bytes` `mkdir` `list_dir` | — | **边界**：文件系统 |
+| `atomic_get/set/add`、`entity_*`（10 个） | `atomic_get(1)` → `type_mismatch` | **边界**：线程段（§10.145 的 another-thread 类） |
+| `spi_emit/has/meta/mods/on` | `spi_has("a")` → `0` | **边界**：mod SPI |
+
+### 五、这一节不做的事
+
+- 不实现 `args`（下一格），不改 harness 传参；
+- 不碰 `range`（理由见第三节，且**不给区间表示加域**——那会动 §10.145 已论证的布局边界）；
+- 不把 `gc_now`/`gc_auto` 标成边界（它们还没量清，标边界就成了转述）。
+
+### 六、删除条件
+
+当 `args` 收掉、`range` 的域问题被真正解决（或区间表示加域被另一节论证过）、或某个「边界」名被证明可收时，相应表格行删除并在此节留下「旧行说过什么、何时失效」。本节不新增 `path:line` 引用以外的结构改动：新增的三处引用（`aot_mir.c:1607-1619`、`vm.c:1330`、`runtime.c:1165-1187`、`runtime.c:1919`）都指向树里仍在的代码段。
