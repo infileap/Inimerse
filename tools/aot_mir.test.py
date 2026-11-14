@@ -225,6 +225,10 @@ ALLOCS_EXPECT = {
     # a set and the print reads a region, so a wrong arm that allocated a
     # wrapper or a temporary string would land here, not in the bytes.
     "mir_range_domains_and_pass_through": (4, 800),
+    # Four regions are what the PROGRAM builds (the two three-element arrays,
+    # the R interval and the Z interval); min/max read and allocate nothing, so
+    # an arm that copied a bound into a fresh string or wrapper would land here.
+    "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_args_are_empty_when_none_are_passed": (1, 256),
     # match() itself only mallocs its translated pattern and frees it, so the
     # string-only program allocates nothing; this program's one block is the
@@ -1380,6 +1384,25 @@ ARGV_CASES = {
 }
 
 MIR_ONLY = [
+    # min/max are SET-ONLY READERS and they answer only a Z interval's two
+    # bounds (measured on the interpreter): an array, a dict, a number, a bool,
+    # a string and a MIXED array are all nil, and so is an R interval -- the
+    # nameIdx-24 skip in set_minmax is exactly this half of the rule.  A finite
+    # set cannot even be written in this grammar (Z[1, 2] and Z[1 2] both fail
+    # in the parser), so the Z domain is the only set shape that reaches them.
+    ("mir_min_max_answer_only_z_intervals",
+     "say min([3, 1, 2])\n"
+     "say max([3, 1, 2])\n"
+     "say min([1~3])\n"
+     "say max([1~3])\n"
+     "say min(range(1))\n"
+     "say max(range(1))\n"
+     "say min(range(2.5))\n"
+     "say max(range(2.5))\n"
+     "say min(5)\n"
+     "say max(\"ab\")\n"
+     "say min([1, \"a\"])\n"
+     ),
     # A SET as a dict key: the writer stores the pair (len counts it) and every
     # READ misses it.  Measured on the interpreter: len 1, d[s] nil, has(d, s)
     # false, has(d, [1~4]) false, has(d, "a") true, e[[2~2]] false, e[k] nil.
