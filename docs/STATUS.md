@@ -10261,3 +10261,34 @@ materialize 语义（bind 把区间物化：Z 枚举成员、R 变空有限集�
 - `min`/`max` 对**无界**组件的 nil 形态本格不覆盖：可达的组件都来自带两个整数边界的字面量。
 - §10.189 §5/§6 里「组件按跨度合并进卡数」的句子对域 R 变成谎：**原地挂 `UPDATE (10.191)`**，不重写历史。
 
+## §10.192 `unknown=8` 的边界论证复核（收口，不开新轴）
+
+### 1. 目标与口径
+
+§10.145 把 `unknown=8` 做成**必须论证**的集合：`tools/aot_mir_surface.py` 要求每个未发射 opcode 都在 `BOUNDARY` 里归类，每行点名**树里还在**的证据片段，且「臂后来存在则报陈旧」。本格复核的是**这些论证今天是否仍然成立**，不是把 8 个 unknown 判成确定。观测点 `18d1f50c`。
+
+### 2. 机械部分（亲跑）
+
+```
+python3 tools/aot_mir_surface.py
+IR-AOT-MIR-SURFACE|declared=67|emitted=59|unemitted=8|classified=9|classes=3
+IR-AOT-MIR-SURFACE-VERDICT|PASS
+```
+
+九行逐条把 `needle` 在同名文件里查一遍（`BOUNDARY` 用 `ast.literal_eval` 取出，不用正则）：**九行全部 `NEEDLE-OK`**，没有一个证据片段脱落。`classified=9` 比 `unemitted=8` 多一行，是因为 `OP_POP_REG` **已不在 enum 里**（`src/compiler/bytecode.h` 只留 `29 is a hole: OP_POP_REG used to sit here` 的注释），那一行记的是「洞」，不是一个待发射的 opcode。
+
+### 3. 机制部分（三条有争议的逐个验，不只看引用）
+
+| 类 | 行的断言 | 这次的验法 | 结果 |
+|---|---|---|---|
+| another-thread（7 行） | 「路线拒绝线程段，每个答案都需要第二个线程」 | 带 `thread t { say 1 }` 段的程序：interp 只印主干的 `done`，不印线程体的 `1`；`build/aot-mir translate` **rc=1** 且消息为 `threads: the container carries a thread section, which this route does not emit`（不产出 `.c`） | 成立 |
+| another-thread 里的 `OP_SEND` | 「解释器在编译期拒绝未声明线程名，故没有已接受的程序会到达它」 | `src/compiler/compiler.c:2189` 一带：`lookup_thread` 返回 <0 就 `fprintf` 报错并 `break`，不 `emit(OP_SEND)`；而任何声明线程的程序又被上一条的路线拒绝 | 成立（两道门串联） |
+| measurement（`OP_DECLARE`） | 「设资源上限；上限由**解释器停在哪里**观测，而发射的 C 的指令计数不是解释器的，所以可观测的那一半在此没有对应物」 | `src/vm/vm.c:4198` 对 `kind==3` 写 `vm->limit_inst`；`:3113` 用 `exec_count > limit_inst` 触发 `[resource limit]`；`src/compilation/aot_mir.c` 里**没有**任何 `exec_count` 或心跳计数（生成的 C 连计数器都没有，不只是数值不同） | 成立 |
+| retired（`OP_POP_REG`） | 「从解释器移除，enum 留洞以免 ABI 编号滑动」 | `bytecode.h` 的 29 号洞注释在场；enum 里无该名字 | 成立 |
+
+### 4. 结论与「先红」的边界
+
+**零证伪**：九行全部保持成立，`handles=59|of=67|unknown=8` 不变（本格不改任何一行、不删任何一行）。按 lively-ember 的纪律「若某条被证伪，同样先写红判据」，本格因此**没有判据**——这是复核格，不是实现格；`BOUNDARY` 表本身仍是 §10.145 的判据，`IR-AOT-MIR-SURFACE-VERDICT|PASS` 就是它的读数。
+
+被复核的两处在过去两个月里确实动过（`range` 从 blocked 变成实做、kind 2 读端被 §10.185/§10.188/§10.191 改过），但它们动的是**内建轴**，没有给这九行里的任何 opcode 添臂——`emitted=59` 与 §10.145 的读数一致即是证据。
+
