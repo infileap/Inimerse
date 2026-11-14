@@ -9499,6 +9499,8 @@ IR-MIR-COVER|...|mir-only-cases=279|mir-only-same-as-interpreter=277
 ### 六、边界
 
 1. **容器臂的 0 不是索引**：`float([])` 是 0；而 `int([])` 是 **1**、`int({})` 是 **1**、`int([1, 3))` 是 **22** —— 那是解释器把值当自己的表下标泄漏出来的数。两个转换**不共享**容器臂，这正是 `int` 必须单独一格的理由；读者若假设共享，`int([])` 会被印成 0。
+
+**UPDATE (§10.197)**：`int([1, 3))` 是 22 这个例子**不是数组**——`[1, 3)` 是 R 区间，那个数是区间的池下标。真正的数组读数是 `int([1, 2])`=1、`int({})`=2（解释器侧亲跑）。
 2. **`bool` 的 BOO 臂与默认臂是两个答案**：注入 (B) 把默认臂答成假时，六行动而 `bool(true)` 不动 —— 这行就是"BOO 臂存在"的读数。
 3. **显示层不是本节的证明对象**：浮点显示走共享 `nv_fmt_double`，本节只钉一行大整数；断言的是"答案类型对了之后显示自然对"。
 4. **删除条件**：两个 helper、名字门两处、emitter 两分支与两条判据同删；注入 (A) 红 `float("2.5")` 一行，注入 (B) 红六行。
@@ -9766,12 +9768,14 @@ Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)`
 
 即：解析器**静默接受**不对称括号，把 `1, 3` 整段丢掉，得到一个空数组；没有任何诊断、没有 exit 非零。
 
+**UPDATE (§10.197)**：上面这句**读错了**。`[1, 3)` **不是空数组，是 R 区间**：`say p` → `set(R interval)`，`len(p)`=0 是**区间长度 0**，不是「数组被清空」；`(1, 3]`、`(1, 3)` 同样是区间，只有 `[1, 3]` 才是数组（`len`=2、`p[1]`=3）。解析器不是「丢掉整段」，是按 `src/parser/parser.c:468` 的 `looks_like_bare_interval`（方括号开 + 顶层有 `,` 或 `~` ⇒ 区间；`[a,)` `[a,b)` 走 `parse_bare_interval`）走成区间——**这是设计，不是缺陷**（引入于 `8248e08e Release Infiverse 0.2.0`，`docs/SYNTAX.md:238` 亦记此条）。本节的**处置本身仍成立**（把判据正文里的 `[1, 3)` 改成 `[1, 3]` 是对的），要保留。
+
 于是 §10.174 的两行实际是 `bool([])` / `float([])`——「非空容器为真 / 容器转 0」这条轴**一次都没有被覆盖**。这正是 §10.166 抓到的「判据行看不见它写作理由」的邻居：错不在比较、在**字面量本身**，而且旁边那行注释还写着「`bool([1, 3))` true」——注释把错误抄了一遍，反而让人以为量过。
 
 ### 三、处置
 
 1. 两处 `[1, 3)` 改成 `[1, 3]`（注释里的旧文本一并改）。**读数在新树上重跑**：两条案例仍是 `1|256`（一个数组字面量一块区域），`mir-only 291|291`，harness exit 0。旧态两个数没有搬过来。
-2. **不对称括号被吞成空数组**这件事**不钉成 MIR 判据**：它是解析器的静默接受，两侧（解释器与 MIR）都答空数组，钉在 MIR_ONLY 只会得到一条永远两侧同错的噪音，而不增加任何检测力。它作为**待裁的解析器缺陷**记在这里，留给解析器一侧的判据（若将来有「非法字面量必须报错」的轴，这一行是它的第一块料）。
+2. **不对称括号被吞成空数组**这件事**不钉成 MIR 判据**：它是解析器的静默接受，两侧（解释器与 MIR）都答空数组，钉在 MIR_ONLY 只会得到一条永远两侧同错的噪音，而不增加任何检测力。它作为**待裁的解析器缺陷**记在这里，留给解析器一侧的判据（若将来有「非法字面量必须报错」的轴，这一行是它的第一块料）。**UPDATE (§10.197)**：这一定性**同时作废**——`[1, 3)` 是合法区间（见上），「非法字面量必须报错」这条轴对它不成立。
 
 ### 四、教训
 
@@ -9830,7 +9834,7 @@ Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)`
 
 ### 七、删除条件
 
-`mv_int_of`、`mv_round_of`、`int` 名字门的六处、`round` 的 emitter 分派、容器检查与 `mir_int_of_every_shape`、`mir_round_precision_half_away_from_zero`、`mir_int_container_is_refused` 同删。把 `hx ? 16 : 10` 改回 10 红两行；`round()` 换 `floor` 红两行。
+`mv_int_of`、`mv_round_of`、`int` 名字门的六处、`round` 的 emitter 分派、容器检查与 `mir_int_of_every_shape`、`mir_round_precision_half_away_from_zero`、`mir_int_container_is_refused` 同删。**UPDATE (§10.197)**：§10.197 删了 `mir_int_container_is_refused` 这一行；§10.181 当时同删的其余名字仍在。把 `hx ? 16 : 10` 改回 10 红两行；`round()` 换 `floor` 红两行。
 
 ### 八、与 §10.178 的关系
 
@@ -9858,7 +9862,7 @@ Z 域与 R 域的差别不是打印格式，是**域本身**：`set(Z interval)`
     IR-MIR-COVER|...|mir-only-cases=293|mir-only-same-as-interpreter=293
     IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=12|ok=12|expect=12
 
-十二个按形拒全部是**形状**（零参残值、位数 clamp 之外的 arity、`int` 的容器索引），**没有一个是「这个名字整体没实现」**——`MIR_ONLY_REFUSE_NOTYET` 现在只剩 `mir_int_container_is_refused` 一条。
+十二个按形拒全部是**形状**（零参残值、位数 clamp 之外的 arity、`int` 的容器索引），**没有一个是「这个名字整体没实现」**——`MIR_ONLY_REFUSE_NOTYET` 现在只剩 `mir_int_container_is_refused` 一条。**UPDATE (§10.197)**：本节删除前 `MIR_ONLY_REFUSE_NOTYET` 还有这一行；§10.197 把它删了，删完这张表**没有行**了——它的用途（给 `why=unsupported-opcode` 的拒案配 not-yet opcode 名单）本来就没有按名拒的用例，而这一行是按名拒（`builtin-call`）；而且它从未被判据判到（`MIR_ONLY_REFUSE` 里没有它），所以删它不丢任何覆盖率。
 
 ### 四、结论
 
@@ -10584,6 +10588,14 @@ start w("hello") →  T  hello
 **没改任何实现**（`src/` 一行未动）。本格只落这份裁定。
 
 `tools/aot_mir_surface.py` 的 `BOUNDARY` 表**一行未改**：它那七行的论证是「本路线按名拒线程段 ⇒ 这些 opcode 不可达」，这个论证**今天仍然成立**，与 task 无关——`aot_mir` 对 task 程序同样拒（实测：`IR-MIR-REFUSED|why=threads|detail=the container carries a thread section, which this route does not emit`，task 与 thread 两种写法给出**同一条**拒绝）。所以 `another-thread` 类**不动**，`handles=59|of=67|unknown=8` 不动。
+
+### 三之二、同一格里的另一件事：删掉一条**没有判据覆盖**的声明
+
+本格还删了 `tools/aot_mir.test.py` 里 `MIR_ONLY_REFUSE_NOTYET` 表的**唯一一行**（`mir_int_container_is_refused`）。删它**不是改判据**，是**删一条没有判据的声明**——把这件事讲清楚，免得后人一看见「判据表少一行」就以为覆盖率动了：
+
+1. 那行属于 `MIR_ONLY_REFUSE_NOTYET`（给 `why=unsupported-opcode` 的拒案配 not-yet opcode 名单的表），**不是** `MIR_ONLY_REFUSE`（真正被消费的按名拒表）。`notyet_problems()` 遍历的是 `MIR_ONLY_REFUSE`，**永远到不了**那一行 ⇒ 它**从来没有被任何判据判到过**，删它**不丢任何覆盖率**。
+2. 它写的内容是「`int` 作用于容器**按名拒**」。这条按名拒**从落地起就没生效过**：它查 `fn->insns[i - 1].op`（`src/compilation/aot_mir.c:5571`），而发射顺序是 `OP_NEW_ARRAY` → **`OP_PUSH_REG`** → `OP_CALL_BUILTIN`（`src/compiler/compiler.c:460-464`），前驱永远是 `OP_PUSH_REG`，四种容器 opcode 一个都不匹配。**这是死代码**，不是一条活的边界。
+3. 所以现状是「按名拒在、判据没了」——一条**没有任何判据覆盖、且没生效**的按名拒。人类裁定走 (c)：**删按名拒本体**（不是留注释）、把「route-local 记账数、随分配漂移」写进 `mv_int_of` 注释、**恢复一条正向判据**（钉「两侧都是整数、且 MIR 侧随分配顺序漂移」，不是原来那条钉「两侧同数」的）。那三步在 §10.198 落，本格只做删行与记档。
 
 ### 四、边界
 
