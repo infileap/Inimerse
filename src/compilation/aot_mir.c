@@ -5131,39 +5131,6 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                `s = 1, 1`.
                Bound first, then consume -- a count larger than asp is a
                refusal, not a negative stack. */
-            /* OP_SET_INTERVAL is the fourth producer that CONSUMES the argument
-               stack, and the first whose operands live ONLY there: the two
-               bounds were pushed by the compiler (EXPR_SETINTERVAL) and nothing
-               in the operand word names them.  Two slots, always -- both bounds
-               are pushed even when the source omits them, because the compiler
-               substitutes +/-1.0e308 rather than skipping the push.
-               The domain name is checked here and refused BY NAME when it is not
-               R: the parser reaches `R[0~3)` (kind 2, the shape this arm
-               answers) and `Z[0~3]` (a FINITE set, a different shape this route
-               does not build through this opcode) by the same syntax, so
-               answering a Z interval as though it were R would be a wrong answer
-               rather than a missing one.
-               r2 packs the name index and the flags, so the emitter must not
-               read it as a register; op_regs' note says the mask is R1 alone. */
-            if (op == OP_SET_INTERVAL) {
-                int32_t packed = ir_insn_r2(in);
-                int32_t nix = packed & 0xFFFFFF;
-                if (nix < 0 || nix >= node->string_count)
-                    return bad("container=%d insn=%d interval domain name index %d out of range (count=%d)",
-                               f, i, nix, node->string_count);
-                const char *base = node->string_pool ? node->string_pool[nix] : NULL;
-                if (!base || (strcmp(base, "R") != 0 && strcmp(base, "Z") != 0)) {
-                    g_prescan_why = "set-interval-domain";
-                    return bad("container=%d insn=%d interval over domain \'%s\' -- this route emits the "
-                               "R and Z interval spellings and no other domain (a builtin domain "
-                               "spelling a FINITE set is a different opcode shape)", f, i, base ? base : "(null)");
-                }
-                if (asp < 2)
-                    return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=2",
-                               f, i, op_name(op), asp);
-                asp -= 2;
-                continue;
-            }
             if (op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) {
                 int n = ir_insn_r3(in);
                 int slots = (op == OP_NEW_DICT) ? 2 * n : n;
@@ -5337,6 +5304,45 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 if (!node->string_pool || !node->string_pool[ix])
                     return bad("container=%d insn=%d string pool entry %d is NULL",
                                f, i, ix);
+                break;
+            }
+            case OP_SET_INTERVAL: {
+                /* OP_SET_INTERVAL is the fourth producer that CONSUMES the
+                   argument stack, and the first whose operands live ONLY there:
+                   the two bounds were pushed by the compiler (EXPR_SETINTERVAL)
+                   and nothing in the operand word names them.  Two slots,
+                   always -- both bounds are pushed even when the source omits
+                   them, because the compiler substitutes +/-1.0e308 rather than
+                   skipping the push.
+                   It lives in THIS switch rather than in the if-chain above
+                   because its emitter reads a STRING POOL index now (the domain
+                   name, packed into r2's low 24 bits alongside the flags) -- and
+                   the switch is where the detector reads which opcodes have an
+                   index to bound (tools/aot_mir_cover.test.py:288-327).
+                   The domain is admitted by name: the parser reaches `R[0~3)`
+                   (kind 2, the shape this arm answers) and `Z[0~3]` (the same
+                   opcode with the domain bit, 10.188) by the same syntax and
+                   refuses every other spelling, because a builtin domain that
+                   spells a FINITE set is a different opcode shape rather than a
+                   missing arm.
+                   r2 packs the name index and the flags, so the emitter must not
+                   read it as a register; op_regs' note says the mask is R1 alone. */
+                int32_t packed = ir_insn_r2(in);
+                int32_t nix = packed & 0xFFFFFF;
+                if (nix < 0 || nix >= node->string_count)
+                    return bad("container=%d insn=%d interval domain name index %d out of range (count=%d)",
+                               f, i, nix, node->string_count);
+                const char *base = node->string_pool ? node->string_pool[nix] : NULL;
+                if (!base || (strcmp(base, "R") != 0 && strcmp(base, "Z") != 0)) {
+                    g_prescan_why = "set-interval-domain";
+                    return bad("container=%d insn=%d interval over domain \'%s\' -- this route emits the "
+                               "R and Z interval spellings and no other domain (a builtin domain "
+                               "spelling a FINITE set is a different opcode shape)", f, i, base ? base : "(null)");
+                }
+                if (asp < 2)
+                    return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=2",
+                               f, i, op_name(op), asp);
+                asp -= 2;
                 break;
             }
             case OP_LOAD_GLOBAL:
