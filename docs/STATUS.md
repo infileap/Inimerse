@@ -10217,3 +10217,47 @@ materialize 语义（bind 把区间物化：Z 枚举成员、R 变空有限集�
 `accepted=386`、`mir-only 300|300`、`REFUSED-TOTAL 12|12`、headings 1485、citations 1199。
 `mir_builtin_call_with_arg` 仍指 `time_ms(1)`；盒子 `handles` 不动。
 本格**没有先红判据**（纯 docs），按格例仍需三枚 pin——pin 只看得到树，看不到诚实。
+
+## §10.191 域 R 组件不可枚举：五个读端的一格
+
+### 1. 来源
+
+§10.189 让**有限集合里的组件**按其跨度计数（`len(Z[0~5])` 6、`list` 五元）。那一格的前提是「组件的卡数只取决于标志位」。这条前提在**域 R** 上不成立，而 §10.185/§10.188 只覆盖了 kind 2 的**直接字面量**，没有覆盖**变量持有的拷贝**。lively-ember 复核混合集合时要求把它开成一格，并给了三条硬要求（按读端分组打标、每个读端各发一次注入、docs 里变谎的句子挂 UPDATE），本格照办。
+
+父 sha `9b70d1cb`。
+
+### 2. 实测：拷贝把 kind 2 变成普通组件
+
+- `say R[0~3)` → `set(R interval)`；`c = R[0~3); say c` → `set(0)`。同一个值，**打印取决于它经过一次赋值**：拷贝把 kind 2 的组件变成 kind 0 里的一个普通组件。
+- 机制：`set_comp_enum`（`src/vm/vm.c:2269`）第一行拒绝 `nameIdx > 23`，R 的 `nameIdx` 是 24 —— 于是 `vm_set_to_array` 对整个集合**失败**，不是跳过那个组件。
+- 由此五个读端的答案（interp 亲测，父 sha）：打印只数**字面成员**（`c` 与 `d` 都是 `set(0)`，`g = R[0~3), 9` 是 `set(1)`）；`len` 对整个集合答 **0**（`g` 也是 0）；`list` 与 `sum` 答 **nil**；`size`/`count` 答 **nil**；而 `min`/`max` 仍读组件的两个边界（`min(g)=0`、`max(g)=9`；`min(R[5~7), 1)=1`、`max=7`——**开区间不减一**，`set_comp_minmax` 用 `set_scan_up/down` 落在格点上）。
+- 对照组：`e = Z[0~3]` 打印 `set(4)`、`len` 4、`list` `[0, 1, 2, 3]`、`size` 4、`min` 0、`max` 3；`f = Z[0~3], 9` 是 `set(5)`/5/`[9, 0, 1, 2, 3]`/0/9；`h = 9, 8` 是 `set(2)`/2/`[8, 9]`/8/9；`i = 9, 8, "s"` 的 `min`/`max` 是 nil（混合类型 orderable 失败）。
+
+### 3. 判据
+
+`mir_domain_r_component_is_not_enumerable`（`tools/aot_mir.test.py`，提交 `da099ff1`，size/count 组追加于 `8bf5f114`）：**一个**程序，行按读端分组打标（`r-open`/`r-closed`/`z`/`mixed-z`/`mixed-r`/`plain`/`mixed-type`/`size-readers`），红态 `IR-MIR-EXEC-DIFF`（interp 答 `len 0`/`list nil`/`min 0`/`max 3`，本路线答 `set(4)`/`4`/`[0..3]`/组件本身），并 `IR-MIR-ALLOCS|allocs=5|bytes=7936`。绿后改钉 `(4, 3840)`——少的那一块是修好后**不再**为 `list` 建的数组。
+
+### 4. 实现（`src/compilation/aot_mir.c`，+33/−5）
+
+- 三个谓词紧接 `mv_set_card`：`mv_comp_nonenum(y)`（组件是 kind 2 且 `flags & 4 == 0`，即域 R）、`mv_set_nonenum(iv)`（集合里至少一个）、`mv_set_lit_card(iv)`（不是组件的成员数）。域位与 §10.184/§10.189 读的是**同一块**：Z 置 `4`。
+- 五个读端各加一道门：`mv_vts` 打印走 `nonenum ? lit_card : card`；`mv_len` 走 `nonenum ? 0 : card`；`mv_list` 走 `nonenum ? nil`；`mv_region_len`（`size`/`count` 共用）走 `nonenum ? 无答案`；`mv_set_minmax` 的成员循环把组件换成 `mv_int(lo)`（min）/`mv_int(hi)`（max），**忽略开闭**。
+- 块注释写 WHY / 机制（`:2269`、`:2476`）/ 实测 / DELETE CONDITION（`set_comp_enum` 开始枚举 R 组件那天）/ MEASURED BY。
+
+### 5. 非对称注入（五个读端各一发，逐次恢复重建）
+
+| 注入 | 红在哪 |
+| --- | --- |
+| 打印恒用 `card` | 只红 `r-closed` 的打印行（`set(0)`→`set(4)`） |
+| `len` 恒用 `card` | 红 `r-closed` 的 0→4 与 `mixed-r` 的 0→1 |
+| `list` 去掉 `nonenum` | 红 `[]`/`[0, 1, 2, 3]` 与 `mixed-r` 的 `[9]` |
+| `size`/`count` 去掉 `nonenum` | 红 size-readers 那行的四个 R 形状（`nil`→`0`/`4`） |
+| `min`/`max` 去掉组件臂 | 红十行（`0`/`3`/`9` → `set(R interval)` 或 nil） |
+
+第一版程序**漏了 size/count 组**，导致第四发注入检查时绿（`mv_region_len` 的门没有判据可红）——补上后才红，教训记在此：注入是判据的探针，不是仪式。
+
+### 6. 边界与 UPDATE
+
+- kind 2 **直接字面量**的 `size`/`count` 仍答 nil（`mv_region_len` 的 interval 提前返回），与解释器一致（`size(range(1))` 是 nil）——本格不动那条。
+- `min`/`max` 对**无界**组件的 nil 形态本格不覆盖：可达的组件都来自带两个整数边界的字面量。
+- §10.189 §5/§6 里「组件按跨度合并进卡数」的句子对域 R 变成谎：**原地挂 `UPDATE (10.191)`**，不重写历史。
+
