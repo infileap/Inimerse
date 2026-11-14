@@ -220,6 +220,10 @@ ALLOCS_EXPECT = {
     "mir_round_precision_half_away_from_zero": (1, 256),
     # args() builds ONE region for the list; the element strings point into argv
     # and are resident, so they add nothing.  Not 0|0: a region IS the answer.
+    # Four regions are what the PROGRAM builds; the readers allocate nothing.
+    # Before the fix this read 5 -- mv_list built the [0..3] array for the
+    # domain-R set, which the interpreter refuses to enumerate at all.
+    "mir_domain_r_component_is_not_enumerable": (4, 3840),
     "mir_args_are_the_program_arguments": (1, 256),
     # The four intervals this program builds, and nothing else: `range` copies
     # a set and the print reads a region, so a wrong arm that allocated a
@@ -5053,6 +5057,24 @@ say list(b)
      "say range(nil)\n"
      "say range(true)\n"
      ),
+    # A SET THAT A VARIABLE HOLDS IS NOT THE SET A LITERAL MAKES.  Measured on
+    # 9b70d1cb: `say R[0~3)` prints set(R interval) but `c = R[0~3); say c`
+    # prints set(0) -- the copy turns the component into an ordinary one, and a
+    # domain-R component is NOT ENUMERABLE, so the readers answer: print counts
+    # only the literal members, len is 0 (whole set), list is nil, while min/max
+    # still use the component's two bounds.  Grouped by reader so a red says
+    # which one, and the plain-int-set and mixed-type control groups keep an arm
+    # from answering by accident.
+    ("mir_domain_r_component_is_not_enumerable", """say "direct"; say R[0~3); say Z[0~3]
+c = R[0~3); say "r-open"; say c; say len(c); say list(c); say min(c); say max(c)
+d = R[0~3]; say "r-closed"; say d; say len(d); say list(d); say min(d); say max(d)
+e = Z[0~3]; say "z"; say e; say len(e); say list(e); say min(e); say max(e)
+say "size-readers"; say size(c); say count(c); say size(d); say count(d); say size(e); say count(e); say size(f); say count(f); say size(g); say count(g); say size(h); say count(h)
+f = Z[0~3], 9; say "mixed-z"; say f; say len(f); say list(f); say min(f); say max(f)
+g = R[0~3), 9; say "mixed-r"; say g; say len(g); say list(g); say min(g); say max(g)
+h = 9, 8; say "plain"; say h; say len(h); say list(h); say min(h); say max(h)
+i = 9, 8, "s"; say "mixed-type"; say min(i); say max(i)
+"""),
     ("mir_args_are_the_program_arguments",
      'a = args()\n'
      'say a\n'

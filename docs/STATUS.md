@@ -10145,14 +10145,14 @@ materialize 语义（bind 把区间物化：Z 枚举成员、R 变空有限集�
 
 ### 4. 实现
 `mv_comp_card`（一个 component 的贡献：非区间算 1；区间按 `flags & 3`，两边都闭则 `hi - lo + 1` 按 32 位、负则 0；开或半开算 0）与 `mv_set_card`（求和）。四个读端接上：`mv_len` 的有限集臂、`mv_vts` 的 `set(N)` 打印、`mv_set_has` 的元素循环（区间 component 走 `mv_interval_has`）、`mv_list` 的 **PASS 3**（在普通两趟之后按 region 顺序追加每个闭区间跨度，`(int)` 收窄并按 `array_has` 去重；PASS 2 里跳过 component 本身）。存储层零改动。
-**更正（本格自己的账先还）**：初稿在上一行位置曾写「混合形状实测：`w = Z[0~3], 9`、`list` 为 `[9, 0, 1, 2, 3]`」。复验时发现该程序**根本没跑起来**——`w = Z[0~3], 9` 解析期报 `expected 'expression', but got ','`；试过的其它构造也建不出「component + 普通成员」的集合（`Z[0~3] + 9` 与 `+ [9]` 都给 `set(4)`、`[0, 1, 2, 3]`，`set(...)` 报 `unknown builtin function 'set'`）。所以混合集合在语法上不可达，那段不是测量，**已删**；PASS 3 的「普通项在前、跨度在后」因此也是代码顺序，不是测量读数。真正测到的混合邻居只有：`Z[0~5]` 是**单个** component（`set(6)` 是基数显示），`R[0~3)` 是单个开 component（`set(0)`/`len 0`）。教训与 §10.180 同一条：写「实测」前先把程序跑过一遍，读数只从跑过的输出里抄。
+**更正二（上一笔更正本身是错的，这里把它撤回来）**：`4a7ffef4` 曾写「`w = Z[0~3], 9` 解析期报错、混合集合不可达」——那是**误判**。带赋值的 `w = Z[0~3], 9` 完全可跑，实测 `set(5)`、`len` 5、`list(w)`=`[9, 0, 1, 2, 3]`、`sum` 15、`min` 0、`max` 9，与本节初稿逐字一致；解析期报错的只有**裸语句**形式 `Z[0~3], 9;`（`expected 'expression', but got ','`）。误判成因记清：报错文本**不带行号**，而我那支探针最后一行写了 `say w == Z[0~3], 9`（逗号在表达式里非法），于是把**别的行**的错记到了第 1 行。教训比读数更值钱：无行号的解析错不能归给「第一行像它的那一行」，要二分到最小可跑程序。
 
 ### 5. 非对称注入（各自只红本判据，逐次恢复重建）
 ① `mv_comp_card` 对区间 component 回 `1`（旧读法）⇒ 印 `set(1)`/`1`，成员行照旧 true，只有本判据红。
 ② 闭区间判定翻成 `flags & 3 == 0` ⇒ 印 `set(0)`/`0`，成员行照旧 true，只有本判据红。
 
 ### 6. 边界与读数
-`list`/`sum` 对**开区间** component 答 nil（实测 `list(R[0~3))`、`sum(R[0~3))` 均为 nil）——本格不把 nil 变成空表。半开区间（flags 1/2）无法由任何语法到达，写进边界而不实现。**「component + 普通成员」的混合集合同样不可达**（§4 的更正段列出试过的四种构造），所以 PASS 3 与普通项的相对顺序、混合集合的 `list`/`sum` 形状都是**未测**的——不在本格声称，也不当边界钉子。
+`list`/`sum` 对**开区间** component 答 nil（实测 `list(R[0~3))`、`sum(R[0~3))` 均为 nil）——本格不把 nil 变成空表。半开区间（flags 1/2）无法由任何语法到达，写进边界而不实现。**「component + 普通成员」的混合集合可达**（赋值形式 `w = Z[0~3], 9`），裸语句形式才报错；这两种形式并列写在本节 §4 的更正二里。本格把混合集合交给下一格：`len`/`list`/`min`/`max` 对**开 component** 的混合集合已实测分叉（interp `len`=0、`list`=nil、`min`/`max` 含 component 两界；MIR `len`=1、`list`=`[9]`、`min`/`max`=nil），按「已钉住的臂变成谎」的规矩单独开格，不在本格改。
 读数：`accepted=386`、`mir-only 300|300`、`REFUSED-TOTAL 12|12`、ALLOCS `(3, 1792)`。
 
 ### 7. 记账
@@ -10217,3 +10217,47 @@ materialize 语义（bind 把区间物化：Z 枚举成员、R 变空有限集�
 `accepted=386`、`mir-only 300|300`、`REFUSED-TOTAL 12|12`、headings 1485、citations 1199。
 `mir_builtin_call_with_arg` 仍指 `time_ms(1)`；盒子 `handles` 不动。
 本格**没有先红判据**（纯 docs），按格例仍需三枚 pin——pin 只看得到树，看不到诚实。
+
+## §10.191 域 R 组件不可枚举：五个读端的一格
+
+### 1. 来源
+
+§10.189 让**有限集合里的组件**按其跨度计数（`len(Z[0~5])` 6、`list` 五元）。那一格的前提是「组件的卡数只取决于标志位」。这条前提在**域 R** 上不成立，而 §10.185/§10.188 只覆盖了 kind 2 的**直接字面量**，没有覆盖**变量持有的拷贝**。lively-ember 复核混合集合时要求把它开成一格，并给了三条硬要求（按读端分组打标、每个读端各发一次注入、docs 里变谎的句子挂 UPDATE），本格照办。
+
+父 sha `9b70d1cb`。
+
+### 2. 实测：拷贝把 kind 2 变成普通组件
+
+- `say R[0~3)` → `set(R interval)`；`c = R[0~3); say c` → `set(0)`。同一个值，**打印取决于它经过一次赋值**：拷贝把 kind 2 的组件变成 kind 0 里的一个普通组件。
+- 机制：`set_comp_enum`（`src/vm/vm.c:2269`）第一行拒绝 `nameIdx > 23`，R 的 `nameIdx` 是 24 —— 于是 `vm_set_to_array` 对整个集合**失败**，不是跳过那个组件。
+- 由此五个读端的答案（interp 亲测，父 sha）：打印只数**字面成员**（`c` 与 `d` 都是 `set(0)`，`g = R[0~3), 9` 是 `set(1)`）；`len` 对整个集合答 **0**（`g` 也是 0）；`list` 与 `sum` 答 **nil**；`size`/`count` 答 **nil**；而 `min`/`max` 仍读组件的两个边界（`min(g)=0`、`max(g)=9`；`min(R[5~7), 1)=1`、`max=7`——**开区间不减一**，`set_comp_minmax` 用 `set_scan_up/down` 落在格点上）。
+- 对照组：`e = Z[0~3]` 打印 `set(4)`、`len` 4、`list` `[0, 1, 2, 3]`、`size` 4、`min` 0、`max` 3；`f = Z[0~3], 9` 是 `set(5)`/5/`[9, 0, 1, 2, 3]`/0/9；`h = 9, 8` 是 `set(2)`/2/`[8, 9]`/8/9；`i = 9, 8, "s"` 的 `min`/`max` 是 nil（混合类型 orderable 失败）。
+
+### 3. 判据
+
+`mir_domain_r_component_is_not_enumerable`（`tools/aot_mir.test.py`，提交 `da099ff1`，size/count 组追加于 `8bf5f114`）：**一个**程序，行按读端分组打标（`r-open`/`r-closed`/`z`/`mixed-z`/`mixed-r`/`plain`/`mixed-type`/`size-readers`），红态 `IR-MIR-EXEC-DIFF`（interp 答 `len 0`/`list nil`/`min 0`/`max 3`，本路线答 `set(4)`/`4`/`[0..3]`/组件本身），并 `IR-MIR-ALLOCS|allocs=5|bytes=7936`。绿后改钉 `(4, 3840)`——少的那一块是修好后**不再**为 `list` 建的数组。
+
+### 4. 实现（`src/compilation/aot_mir.c`，+33/−5）
+
+- 三个谓词紧接 `mv_set_card`：`mv_comp_nonenum(y)`（组件是 kind 2 且 `flags & 4 == 0`，即域 R）、`mv_set_nonenum(iv)`（集合里至少一个）、`mv_set_lit_card(iv)`（不是组件的成员数）。域位与 §10.184/§10.189 读的是**同一块**：Z 置 `4`。
+- 五个读端各加一道门：`mv_vts` 打印走 `nonenum ? lit_card : card`；`mv_len` 走 `nonenum ? 0 : card`；`mv_list` 走 `nonenum ? nil`；`mv_region_len`（`size`/`count` 共用）走 `nonenum ? 无答案`；`mv_set_minmax` 的成员循环把组件换成 `mv_int(lo)`（min）/`mv_int(hi)`（max），**忽略开闭**。
+- 块注释写 WHY / 机制（`:2269`、`:2476`）/ 实测 / DELETE CONDITION（`set_comp_enum` 开始枚举 R 组件那天）/ MEASURED BY。
+
+### 5. 非对称注入（五个读端各一发，逐次恢复重建）
+
+| 注入 | 红在哪 |
+| --- | --- |
+| 打印恒用 `card` | 只红 `r-closed` 的打印行（`set(0)`→`set(4)`） |
+| `len` 恒用 `card` | 红 `r-closed` 的 0→4 与 `mixed-r` 的 0→1 |
+| `list` 去掉 `nonenum` | 红 `[]`/`[0, 1, 2, 3]` 与 `mixed-r` 的 `[9]` |
+| `size`/`count` 去掉 `nonenum` | 红 size-readers 那行的四个 R 形状（`nil`→`0`/`4`） |
+| `min`/`max` 去掉组件臂 | 红十行（`0`/`3`/`9` → `set(R interval)` 或 nil） |
+
+第一版程序**漏了 size/count 组**，导致第四发注入检查时绿（`mv_region_len` 的门没有判据可红）——补上后才红，教训记在此：注入是判据的探针，不是仪式。
+
+### 6. 边界与 UPDATE
+
+- kind 2 **直接字面量**的 `size`/`count` 仍答 nil（`mv_region_len` 的 interval 提前返回），与解释器一致（`size(range(1))` 是 nil）——本格不动那条。
+- `min`/`max` 对**无界**组件的 nil 形态本格不覆盖：可达的组件都来自带两个整数边界的字面量。
+- §10.189 §5/§6 里「组件按跨度合并进卡数」的句子对域 R 变成谎：**原地挂 `UPDATE (10.191)`**，不重写历史。
+
