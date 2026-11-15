@@ -248,6 +248,7 @@ ALLOCS_EXPECT = {
     # three reads (size, count, sum) allocate nothing.
     "mir_z_materialised_copy_answers_the_span": (4, 1799),
     "mir_z_literal_readers_enumerate_the_span": (5, 7936),
+    "mir_z_open_ended_intervals_enumerate_their_members": (5, 7936),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
@@ -1619,6 +1620,39 @@ say list(b)
      "r = [1, Z[0~3]]\n"
      "say size(r[0])\n"
      "say size(r[1])\n"),
+    # 10.203: THE OPEN-ENDED SPELLINGS.  `Z(0~3]`, `Z[0~3)` and `Z(0~3)` are
+    # writable, and the interpreter enumerates their MEMBERS, so the answer is
+    # not the closed span: size is 3 / 3 / 2 and list is [1, 2, 3] / [0, 1, 2] /
+    # [1, 2].  10.202 required both ends closed and answered nil for all three,
+    # which was a wrong value this cell found by probing the spelling rather
+    # than the flag; len() had the same bug one cell earlier (10.188 answered
+    # hi-lo+1 unconditionally, so len(Z(0~3]) was 4, not 3).
+    # A degenerate open interval is EMPTY and answers 0 / [] -- not nil.
+    ("mir_z_open_ended_intervals_enumerate_their_members",
+     "say size(Z(0~3])\n"
+     "say list(Z(0~3])\n"
+     "say size(Z[0~3))\n"
+     "say list(Z[0~3))\n"
+     "say size(Z(0~3))\n"
+     "say list(Z(0~3))\n"
+     "say sum(Z(0~3])\n"
+     "say size(Z(3~3])\n"
+     "say list(Z(3~3])\n"
+     "say len(Z(0~3])\n"
+     "say len(Z[0~3))\n"
+     "say len(Z(0~3))\n"
+     "say len(Z[0~3])\n"
+     "say len(Z(3~3])\n"
+     # the same open end as a COMPONENT of a finite set: the component
+     # contributes 1, 2, 3 -- measured len 4 and list [9, 1, 2, 3] (the plain
+     # int first, then the component's members), and membership already
+     # honoured the flags before this cell.
+     "b = Z(0~3], 9\n"
+     "say len(b)\n"
+     "say list(b)\n"
+     "say size(b)\n"
+     "say 1 in b\n"
+     "say 0 in b\n"),
 
     # A POST-VALUE-SHAPE GUARD, NOT A RED-ON-ARRIVAL CRITERION.  Nothing is
     # wrong here today: every row below already agrees with the interpreter.  It
