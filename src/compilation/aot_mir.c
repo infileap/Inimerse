@@ -2722,7 +2722,23 @@ static const char *const kMirValBlock =
 "    if (a.type != MV_ARR && a.type != MV_DIC && a.type != MV_SET) return 0;\n"
 "    int i = mv_arr_live((int)a.ival);   /* through the head, like mv_len */\n"
 "    if (i < 1 || i > mv_arrused || !mv_arrmem) return 0;\n"
-"    if (a.type == MV_SET && mv_set_is_interval(i)) return 0;   /* interval: no answer */\n"
+"    if (a.type == MV_SET && mv_set_is_interval(i)) {\n"
+"        /* 10.202: A BARE Z INTERVAL IS ENUMERABLE, so size/count answer the\n"
+"           span set_comp_enum (src/vm/vm.c:2269) builds.  Its three refusals\n"
+"           are the nil rows: nameIdx greater than 23 (the R domain, bit 4\n"
+"           clear), bounds that do not fit VAL_INT, and a lattice of\n"
+"           10,000,000 points or more -- refused, never truncated.  Measured:\n"
+"           size(Z[0~3]) 4, size(Z[-2~2]) 5, size(Z[0~10000000]) nil,\n"
+"           size(range(1)) nil (int32 span), size(R[0~3)) nil (domain). */\n"
+"        if ((((int)mv_arrmem[i + 2].ival) & 4) == 0) return 0;\n"
+"        if ((((int)mv_arrmem[i + 2].ival) & 3) != 3) return 0;\n"
+"        { long long lo = (long long)mv_arrmem[i + 0].fval;\n"
+"          long long hi = (long long)mv_arrmem[i + 1].fval;\n"
+"          if (lo < -2147483648LL || hi > 2147483647LL) return 0;\n"
+"          if (hi - lo >= 10000000LL) return 0;\n"
+"          *n = hi - lo + 1;\n"
+"          return 1; }\n"
+"    }\n"
 "    if (a.type == MV_SET && mv_set_nonenum(i)) return 0;       /* domain R: not enumerable */\n"
 "    if (a.type == MV_SET) { *n = mv_set_card(i); return 1; }   /* size/count fold components */\n"
 "    long long c = (long long)mv_arrmem[i - 1].ival;\n"
@@ -3912,7 +3928,25 @@ static const char *const kMirValBlock =
 "    if (a.type != MV_SET) return mv_nil();     /* :330 idx < 0 -> push_nil */\n"
 "    int iv = mv_arr_live((int)a.ival);\n"
 "    if (iv < 1 || iv > mv_arrused || !mv_arrmem) return mv_nil();\n"
-"    if (mv_set_is_interval(iv)) return mv_nil();   /* kind 2: nothing to enumerate */\n"
+"    if (mv_set_is_interval(iv)) {\n"
+"        /* 10.202: the literal Z interval enumerates its span as ints, in\n"
+"           ascending order, under set_comp_enum three conditions (see\n"
+"           mv_region_len).  mv_sum walks THIS answer, so sum() follows. */\n"
+"        if ((((int)mv_arrmem[iv + 2].ival) & 4) == 0) return mv_nil();\n"
+"        if ((((int)mv_arrmem[iv + 2].ival) & 3) != 3) return mv_nil();\n"
+"        { long long lo = (long long)mv_arrmem[iv + 0].fval;\n"
+"          long long hi = (long long)mv_arrmem[iv + 1].fval;\n"
+"          if (lo < -2147483648LL || hi > 2147483647LL) return mv_nil();\n"
+"          if (hi - lo >= 10000000LL) return mv_nil();\n"
+"          { int span = (int)(hi - lo + 1);\n"
+"            mv_arr_need(mv_arrused + span + 1);\n"
+"            MirVal r; r.type = MV_ARR; r.ival = mv_arrused + 1;\n"
+"            r.sval = 0; r.ptr = 0;\n"
+"            for (int k = 0; k < span; k++) mv_arrmem[r.ival + k] = mv_int(lo + k);\n"
+"            mv_arrmem[r.ival - 1] = mv_int(span);   /* the EMITTED count */\n"
+"            mv_arrused = r.ival + span;\n"
+"            return r; } }\n"
+"    }\n"
 "    if (mv_set_nonenum(iv)) return mv_nil();       /* domain R: the interpreter refuses to enumerate it */\n"
 "    int n = (int)mv_arrmem[iv - 1].ival;\n"
 "    if (n < 0) return mv_nil();\n"
@@ -5111,24 +5145,6 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
         const IrFunc *fn = &m->funcs[f];
         const Bytecode *node = nodes[f].node;
         int asp = 0;
-        /* THE Z-INTERVAL LITERAL TRACK (10.200).  zlit[r] is 1 while register r
-         * holds an UNMATERIALISED Z interval -- the value a bare `Z[0~3]`
-         * literal produces -- and 0 otherwise.  It is what tells the read-end
-         * refusal apart from the value-held copy, and the two answers differ:
-         * measured, `size(Z[0~3])` is 4 on the interpreter and nil on this
-         * route, while `z = Z[0~3]` followed by `size(z)` is 4 on BOTH sides,
-         * because the assignment adds OP_NEW_SET, which materialises the
-         * interval into a four-member finite set and gives the reader a
-         * component it can count (10.188, 10.189).  So the refusal has to
-         * name the LITERAL and must leave the materialised copy alone; a
-         * refusal that keyed on "the value is a Z interval" would refuse
-         * both, and the copy is answered correctly today.
-         *
-         * The flag is cleared by ANY other write to the register (the
-         * instruction's own R1 mask is consulted), so a value that merely
-         * passes through the register is not mistaken for the literal. */
-        unsigned char zlit[REG_LIMIT];
-        memset(zlit, 0, sizeof zlit);
         g_insns += fn->ninsns;
         for (int i = 0; i < fn->ninsns; i++) {
             const IrInsn *in = &fn->insns[i];
@@ -5192,48 +5208,6 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                reader uses (size(Z[0~3], 1) answers 1 on both sides), and
                that shape is pinned by the positive criterion so a check
                that flagged any argument would red it. */
-            if (op == OP_CALL_BUILTIN && i >= 1) {
-                int32_t ix = ir_insn_r2(in);
-                const char *bn = (ix >= 0 && ix < node->string_count && node->string_pool)
-                                 ? node->string_pool[ix] : NULL;
-                if (bn && (strcmp(bn, "size") == 0 || strcmp(bn, "count") == 0
-                           || strcmp(bn, "list") == 0 || strcmp(bn, "sum") == 0)) {
-                    /* The argument is the TOP of the argument stack, which is
-                       the last OP_PUSH_REG before this call (the emitter reads
-                       mvargs[asp-1], and the one argument was pushed just
-                       before). */
-                    const IrInsn *push = &fn->insns[i - 1];
-                    if (push->op == OP_PUSH_REG && push->dst >= 0 && push->dst < REG_LIMIT
-                        && zlit[push->dst]) {
-                        g_prescan_why = "z-literal-reader";
-                        return bad("container=%d insn=%d builtin '%s' cannot answer a bare Z"
-                                   " interval literal: the interpreter enumerates it (4 for"
-                                   " size(Z[0~3]), [0, 1, 2, 3] for list(Z[0~3]), 6 for"
-                                   " sum(Z[0~3])) while this route's reader answers nil for an"
-                                   " unmaterialised interval -- assign it first (z = Z[0~3])"
-                                   " and the materialised copy answers on both sides", f, i, bn);
-                    }
-                }
-            }
-            /* ANY OTHER WRITE to a register clears the Z-LITERAL flag on it
-               (10.200).  The literal is the VALUE, so anything that overwrites
-               the register ends it: OP_NEW_SET (the materialising copy -- the
-               assignment `z = Z[0~3]`), OP_MOV, a call's result, another
-               literal.  OP_SET_INTERVAL is the one writer that SETS the flag
-               instead, and it does so in its own case below; every other R1
-               writer clears it here.  This is why the refusal names the
-               literal and not "a Z interval": the materialised copy reaches
-               the same reader with the flag already cleared.
-               THE WRITER SET IS SPELLED OUT rather than read off op_regs,
-               because op_regs' R1 bit is NOT "this instruction writes r1":
-               OP_MOV's r1 is the destination (v[r1] = v[r2]) but OP_PUSH_REG's
-               r1 is the SOURCE (mvargs[asp++] = v[r1]), and both carry R1 in
-               the mask.  A mask-driven rule would therefore clear the flag on
-               the push that carries the literal -- and then the refusal would
-               never fire. */
-            if ((mask & R1) && op != OP_SET_INTERVAL && op != OP_PUSH_REG
-                && in->dst >= 0 && in->dst < REG_LIMIT)
-                zlit[in->dst] = 0;
             /* OP_CONCAT is checked here, OUTSIDE the switch, on purpose: its
                third operand is an OPERAND COUNT and not a register, so it is not
                one of the opcodes this switch exists to bound (a pool / global /
@@ -5497,13 +5471,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=2",
                                f, i, op_name(op), asp);
                 asp -= 2;
-                /* The literal itself is the Z-LITERAL the read-end refusal is
-                   about (10.200): a Z interval that has NOT been materialised.
-                   The R domain is not flagged: its readers answer nil on both
-                   sides already (10.186), so there is nothing to refuse. */
-                if (base && strcmp(base, "Z") == 0 && in->dst >= 0 && in->dst < REG_LIMIT)
-                    zlit[in->dst] = 1;
-                break;
+                                break;
             }
             case OP_LOAD_GLOBAL:
             case OP_STORE_GLOBAL: {
