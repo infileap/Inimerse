@@ -242,6 +242,11 @@ ALLOCS_EXPECT = {
     # an arm that copied a bound into a fresh string or wrapper would land here.
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
+    # The materialised copy (10.200): the program builds one Z interval and
+    # reads it five ways.  Two regions are the program's own (the set the
+    # assignment materialises, and the list `list(z)` answers); the other
+    # three reads (size, count, sum) allocate nothing.
+    "mir_z_literal_readers_are_refused_and_the_copy_is_not": (3, 775),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
@@ -1523,6 +1528,45 @@ say list(b)
      "say declared(\"a\", 7)\n"
      "say declared(1, 2, 3)\n"
      ),
+    # THE FOUR READERS ON A BARE Z LITERAL ARE REFUSED BY NAME (10.200), and the
+    # materialised copy beside them is NOT.  This case is a GUARD, not a
+    # red-on-arrival criterion: the refusal is already in the tree, so this
+    # case pins WHERE it applies and, just as importantly, where it does NOT.
+    #
+    # WHY THE READERS CANNOT ANSWER.  Measured on the interpreter:
+    # `size(Z[0~3])` is 4, `count(Z[0~3])` is 4, `list(Z[0~3])` is
+    # [0, 1, 2, 3] and `sum(Z[0~3])` is 6.  On this route all four are nil.
+    # The shape is the reason, not the domain: a bare literal stays a kind-2
+    # interval (the readers' own guards -- `mv_region_len`'s `if (a.type ==
+    # MV_SET && mv_set_is_interval(i)) return 0;` and `mv_list`'s `if
+    # (mv_set_is_interval(iv)) return mv_nil();`), while the ASSIGNMENT adds
+    # OP_NEW_SET, which materialises the interval into a four-member finite
+    # set and gives the reader a component it can count (10.188, 10.189).
+    # So the two spellings differ, and the difference is the size of a set.
+    #
+    # WHY A REFUSAL AND NOT AN ARM.  Answering it would mean copying the
+    # interpreter's enumeration (src/vm/vm.c's vm_set_to_array ->
+    # set_comp_enum, an index-and-lattice computation) INCLUDING its
+    # 10000000-element ceiling (measured: `size(Z[0~10000000])` is nil on the
+    # interpreter), and it would mean changing the kind-2 branch of
+    # mv_region_len and mv_list -- the two functions 10.188 and 10.189 pinned.
+    # A refusal says "this reader cannot answer this shape", which is true,
+    # and it leaves the published arms alone.
+    #
+    # THE SHAPE OF THE CASE.  The literal rows and the materialised rows are
+    # in ONE program, because the claim is a DIFFERENCE between two spellings
+    # of the same value: if the refusal were too wide it would take the
+    # materialised rows with it, and the case would go red on the rows that
+    # are answered correctly today.
+    ("mir_z_literal_readers_are_refused_and_the_copy_is_not",
+     "z = Z[0~3]\n"
+     "say size(z)\n"
+     "say count(z)\n"
+     "say list(z)\n"
+     "say sum(z)\n"
+     "say len(z)\n"
+     "say str(z)\n"
+     "say z\n"),
     # A POST-VALUE-SHAPE GUARD, NOT A RED-ON-ARRIVAL CRITERION.  Nothing is
     # wrong here today: every row below already agrees with the interpreter.  It
     # exists because 10.185 proved that adding a value shape silently falsifies
@@ -5540,6 +5584,29 @@ MIR_ONLY_REFUSE = {
     "mir_match_single_argument_is_not_lowered": (
         'say match("abc")\n',
         "builtin-stale-stack"),
+    # THE FOUR READERS ON A BARE Z INTERVAL LITERAL (10.200).  The interpreter
+    # enumerates the literal and answers 4 / 4 / [0, 1, 2, 3] / 6; this route
+    # answers nil, because a bare literal stays a kind-2 interval and the
+    # readers' own guards refuse to enumerate one.  The assignment
+    # `z = Z[0~3]` adds OP_NEW_SET, which materialises it, and the materialised
+    # copy answers 4 on BOTH sides -- so the refusal has to name the LITERAL.
+    # Each row below is one reader, so a red says which reader moved.
+    # The positive half of the same claim is the criterion
+    # mir_z_literal_readers_are_refused_and_the_copy_is_not, which pins the
+    # materialised copy as ANSWERED -- a refusal that were too wide would take
+    # those rows with it.
+    "mir_z_literal_size_is_refused": (
+        'say size(Z[0~3])\n',
+        "z-literal-reader"),
+    "mir_z_literal_count_is_refused": (
+        'say count(Z[0~3])\n',
+        "z-literal-reader"),
+    "mir_z_literal_list_is_refused": (
+        'say list(Z[0~3])\n',
+        "z-literal-reader"),
+    "mir_z_literal_sum_is_refused": (
+        'say sum(Z[0~3])\n',
+        "z-literal-reader"),
 }
 
 # THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
@@ -6162,14 +6229,24 @@ def abort_surface(mir_tool, interp, workdir, verbose):
             route_out[n] = out
         else:
             route_rc[n] = status
-    total = stops = both_stop = route_only = 0
+    total = stops = both_stop = route_only = refused_by_name = 0
     lines = []
     for n, (vname, oname, src) in zip(names, pairs):
         irc = interp_rc[n]
         rrc = route_rc[n]
         if rrc == "refused":
-            problems.append("%s: the route REFUSED this pair, so the surface here was not"
-                            " measured: %s" % (n, route_rc[n]))
+            # A REFUSAL IS NOT A STOP.  The route refusing a shape is the
+            # honest answer when it has no answer (the by-name refusals:
+            # builtin-call, builtin-stale-stack, z-literal-reader -- 10.200
+            # refused the four readers on a bare Z interval literal because
+            # this route cannot enumerate it while the interpreter can).  It
+            # says nothing about the ABORT surface, which is about the
+            # conversion door's default arm, so it is counted on its own and
+            # is not a problem.  What would be a problem is a route that
+            # STOPPED where the interpreter answered, and that is counted
+            # below.
+            refused_by_name += 1
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=answered|route=refused" % (vname, oname))
             continue
         if rrc == "nocompile":
             problems.append("%s: the lowered program did not compile: %s" % (n, route_rc[n]))
@@ -6209,9 +6286,10 @@ def abort_surface(mir_tool, interp, workdir, verbose):
     for line in lines:
         print(line)
     print("IR-MIR-ABORT-SURFACE|pairs=%d|stop-events=%d|both-stopped=%d|route-stopped-where"
-          "-interp-answered=%d|why=the-route-has-one-number-conversion-door-and-its-default-is"
-          "-abort-so-the-matrix-asks-every-value-times-every-operation-whether-that-door-is"
-          "-ever-reached-with-no-answer-behind-it" % (len(pairs), stops, both_stop, route_only))
+          "-interp-answered=%d|refused-by-name=%d|why=the-route-has-one-number-conversion-door"
+          "-and-its-default-is-abort-so-the-matrix-asks-every-value-times-every-operation-whether"
+          "-that-door-is-ever-reached-with-no-answer-behind-it"
+          % (len(pairs), stops, both_stop, route_only, refused_by_name))
     return problems
 
 
