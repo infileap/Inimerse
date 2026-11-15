@@ -6018,6 +6018,203 @@ def wide_controls(mir_tool, interp, workdir, verbose):
     return problems
 
 
+# ---------------------------------------------------------------------------
+# THE ABORT SURFACE -- a matrix over the shapes that can reach a helper whose
+# job is to convert a value to a number.
+#
+# WHY THIS EXISTS.  The route's number conversion has one door (mv_as_nv ->
+# mv_tag_to_nv) and that door's default is abort(): a tag with no arm stops the
+# program with SIGABRT where the interpreter would answer.  One MIR_ONLY case
+# says "these thirteen values and these three nil comparisons do not stop",
+# which is true but narrow: it is a list, and a list can grow a hole without
+# anyone noticing.  This stage asks the same question over a MATRIX -- every
+# value times every operation that reaches the door -- and reports the count of
+# stops, so "the surface is empty" is a number the harness can fail on rather
+# than a sentence in a document.
+#
+# WHAT IT MEASURES.  For each (value, operation) pair: the MIR route lowers the
+# program, the C is compiled and run, and the exit status is read.  A stop is
+# exit status 134 (128 + SIGABRT) or 139 (128 + SIGSEGV) -- the two ways a
+# missing arm announces itself.  The interpreter runs the same program so that
+# a shape the INTERPRETER stops on is not counted as a route defect.
+#
+# WHAT IT DOES NOT COVER.  A pair that both routes answer DIFFERENTLY without
+# either stopping is not a stop and is not counted here; those live in the
+# wrong-answer cell and cannot live in a MIR_ONLY case because that comparison
+# is byte for byte.
+# ---------------------------------------------------------------------------
+
+ABORT_SURFACE_VALUES = [
+    ("int", "1"),
+    ("float", "1.5"),
+    ("bool", "true"),
+    ("nil", "nil"),
+    ("str", '"abc"'),
+    ("empty-str", '""'),
+    ("arr", "[1, 2]"),
+    ("empty-arr", "[]"),
+    ("dic", "{a: 1}"),
+    ("empty-dic", "{}"),
+    ("z-set", "Z[0~3]"),
+    ("r-set", "R[0~3)"),
+    ("fun", "(x) -> x"),
+]
+
+ABORT_SURFACE_OPS = [
+    ("say", "say {v}"),
+    ("eq-nil", "say ({v}) == nil"),
+    ("ne-nil", "say ({v}) != nil"),
+    ("eq-int", "say ({v}) == 1"),
+    ("ne-int", "say ({v}) != 1"),
+    ("not", "say not ({v})"),
+    ("or", "say ({v}) or 1"),
+    ("and", "say ({v}) and 1"),
+    ("add", "say 1 + ({v})"),
+    ("sub", "say 1 - ({v})"),
+    ("mul", "say 1 * ({v})"),
+    ("div", "say 1 / ({v})"),
+    ("mod", "say 1 % ({v})"),
+    ("lt", "say 1 < ({v})"),
+    ("le", "say 1 <= ({v})"),
+    ("gt", "say 1 > ({v})"),
+    ("ge", "say 1 >= ({v})"),
+    ("neg", "say -({v})"),
+    ("bool", "say bool({v})"),
+    ("float", "say float({v})"),
+    ("int", "say int({v})"),
+    ("size", "say size({v})"),
+    ("count", "say count({v})"),
+    ("list", "say list({v})"),
+    ("sum", "say sum({v})"),
+    ("str", "say str({v})"),
+    ("keys", "say keys({v})"),
+    ("upper", "say upper({v})"),
+    ("lower", "say lower({v})"),
+    ("trim", "say trim({v})"),
+    ("chars", "say chars({v})"),
+    ("ord", "say ord({v})"),
+    ("chr", "say chr({v})"),
+    ("sqrt", "say sqrt({v})"),
+    ("round", "say round({v})"),
+    ("has", "say has({}, {v})"),
+    ("split", 'say split({v}, ",")'),
+    ("join", "say join({v})"),
+]
+
+# The marker pair is what makes a STOP locatable: a program prints
+# "start-<op>" before the operation and "end-<op>" after it, so an operation
+# that killed the process left its start marker and no end marker.
+ABORT_SURFACE_START = "start-"
+ABORT_SURFACE_END = "end-"
+ABORT_SURFACE_CAUGHT = "caught-by-catch"
+
+
+def abort_surface(mir_tool, interp, workdir, verbose):
+    """Run the abort-surface matrix and report one summary line.
+
+    One program per (value, operation) pair.  A STOP is the route's exit
+    status 134 or -6 (SIGABRT): the conversion door's default arm aborts, and
+    abort() does not flush stdout, so a marker printed before the operation is
+    LOST -- which is why the pair is a program of its own and the exit status
+    is the evidence.  A pair the INTERPRETER stops on is not a route defect:
+    the interpreter's own fatal errors (adding two arrays is one) are fatal
+    there too, and those pairs are counted separately.
+
+    The compiles run in parallel: each lowered program is a quarter of a
+    megabyte of C, and the compile is the only expensive step."""
+    from concurrent.futures import ThreadPoolExecutor
+    problems = []
+    pairs = []
+    for vname, vsrc in ABORT_SURFACE_VALUES:
+        for oname, otmpl in ABORT_SURFACE_OPS:
+            src = otmpl.replace("{v}", vsrc)
+            pairs.append((vname, oname, src))
+    names = ["abort_%s_%s" % (v, o) for v, o, _ in pairs]
+    for n, (_v, _o, src) in zip(names, pairs):
+        Path(workdir, n + ".im").write_text(src)
+    # The interpreter first: it decides which pairs are route defects.
+    interp_rc = {}
+    interp_out = {}
+    for n, (_v, _o, src) in zip(names, pairs):
+        rc, out, _e = run([interp, "--no-mods", "run", Path(workdir, n + ".im")], workdir)
+        interp_rc[n] = rc
+        interp_out[n] = out
+    # Then the route, with the compiles in parallel.
+    def lower_and_compile(n):
+        s = Path(workdir, n + ".im")
+        c = Path(workdir, n + ".c")
+        rc_t, out_t, err_t = run([mir_tool, "translate", s, c], workdir)
+        if rc_t != 0:
+            return (n, "refused", (err_t or out_t).strip()[:160])
+        exe = Path(workdir, n + ".bin")
+        rc_c, _o, ec = run(["cc", "-O2", "-o", exe, c, "-lm"], workdir)
+        if rc_c != 0:
+            return (n, "nocompile", (ec or "").strip()[:160])
+        return (n, "ok", "")
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        lowered = list(ex.map(lower_and_compile, names))
+    route_rc = {}
+    route_out = {}
+    for n, status, detail in lowered:
+        if status == "ok":
+            rc, out, _e = run([Path(workdir, n + ".bin")], workdir)
+            route_rc[n] = rc
+            route_out[n] = out
+        else:
+            route_rc[n] = status
+    total = stops = both_stop = route_only = 0
+    lines = []
+    for n, (vname, oname, src) in zip(names, pairs):
+        irc = interp_rc[n]
+        rrc = route_rc[n]
+        if rrc == "refused":
+            problems.append("%s: the route REFUSED this pair, so the surface here was not"
+                            " measured: %s" % (n, route_rc[n]))
+            continue
+        if rrc == "nocompile":
+            problems.append("%s: the lowered program did not compile: %s" % (n, route_rc[n]))
+            continue
+        # A STOP is any non-zero exit: the route's conversion door aborts
+        # (134 / -6) and the interpreter's fatal errors (adding two arrays)
+        # exit 1.  What separates a route DEFECT from a shared refusal is
+        # whether the two sides agree, so the exit status is compared, not
+        # judged on its own.
+        istop = irc != 0
+        rstop = rrc != 0
+        if istop and rstop:
+            both_stop += 1
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=stopped|route=stopped" % (vname, oname))
+            continue
+        if rstop:
+            route_only += 1
+            stops += 1
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=answered|route=stopped|rc=%s"
+                         % (vname, oname, rrc))
+            problems.append("%s: the route STOPPED (rc=%s) where the interpreter answered --"
+                            " the route has no answer for this shape: %s"
+                            % (n, rrc, src.replace("\n", " ").strip()[:100]))
+            continue
+        if istop:
+            stops += 1
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=stopped|route=answered" % (vname, oname))
+            problems.append("%s: the interpreter STOPPED where the route answered it -- the"
+                            " two routes disagree about the same shape" % n)
+            continue
+        if interp_out[n] != route_out[n]:
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=answered|route=answered|differ=yes"
+                         % (vname, oname))
+        else:
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=answered|route=answered|differ=no"
+                         % (vname, oname))
+    for line in lines:
+        print(line)
+    print("IR-MIR-ABORT-SURFACE|pairs=%d|stop-events=%d|both-stopped=%d|route-stopped-where"
+          "-interp-answered=%d|why=the-route-has-one-number-conversion-door-and-its-default-is"
+          "-abort-so-the-matrix-asks-every-value-times-every-operation-whether-that-door-is"
+          "-ever-reached-with-no-answer-behind-it" % (len(pairs), stops, both_stop, route_only))
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", default="build")
@@ -6152,6 +6349,7 @@ def main():
             problems.extend(probs)
 
     problems.extend(wide_controls(mir_tool, interp, workdir, args.verbose))
+    problems.extend(abort_surface(mir_tool, interp, workdir, args.verbose))
 
     # ------------------------------------------------------------ MIR-only cases
     #
