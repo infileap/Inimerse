@@ -11084,3 +11084,93 @@ literal: … assign it first (z = Z[0~3]) and the materialised copy answers on b
 `python3 tools/aot_mir.test.py --build build --tool build/aot-mir` ⇒ `EXIT=0`、0 个
 problem、`mir-only 306|306`、`REFUSED-TOTAL 16|16`；中止面矩阵
 `pairs=494|stop-events=0|both-stopped=102|route-stopped-where-interp-answered=0|refused-by-name=4`。
+
+## §10.201 同一个按名拒的多参形式：错的是**元数**，不是机制（aot-mir，A 类第六十六项）
+
+§10.200 把裸 Z 区间字面量照到四个读端的情况按名拒了，但它的条件是 `argc == 1`。
+那条条件本身没有依据——读端读的是**实参栈顶**（最后一个 `OP_PUSH_REG`），跟前面还有
+几个实参无关。于是同一种形状、只因为字面量排在最后一个实参，就漏了三个错值：
+
+| 程序 | 解释器 | 路线（§10.200 之后） |
+|---|---|---|
+| `say size(1, Z[0~3])` | 4 | **nil** |
+| `say list("x", Z[0~3])` | `[0, 1, 2, 3]` | **nil** |
+| `say sum(1, 2, Z[0~3])` | 6 | **nil** |
+| `say size(1, z)`（`z = Z[0~3]`） | 4 | 4（物化副本，一直是对的） |
+
+### 一、机制：检查本来就对，只有元数条件错
+
+IR 原文（`say size(1, Z[0~3])`）：`OP_LOADK_INT r1=1` → `OP_PUSH_REG r1=1` →
+`OP_LOADK_INT r1=3` → `OP_LOADK_INT r1=4` → `OP_PUSH_REG r1=3` → `OP_PUSH_REG r1=4`
+→ `OP_SET_INTERVAL r1=2` → **`OP_PUSH_REG r1=2`** → `OP_CALL_BUILTIN r3=2`。
+
+紧跟调用之前的那条 push 仍然是**字面量本身**（`r1=2`），因为实参是一个一个压的、
+读端取栈顶。所以 §10.200 的检查（看 `insns[i-1]` 是不是 `OP_PUSH_REG` 且源寄存器带
+着标志）一个字都不用改，只要把 `argc == 1` 这个前提去掉。
+
+### 二、不能顺手放宽的那一侧
+
+字面量排在**更前面**时，它不是读端要用的那个实参：`say size(Z[0~3], 1)` 两侧都答
+`1`（读端读栈顶 = `1`）。所以「只要这段里出现过字面量就拒」是**过宽**的，会把一条
+今天对的程序拒掉。本格用判据把这条边钉住，而不是靠注释保证（见 §四）。
+
+### 三、改动
+
+`src/compilation/aot_mir.c`（+13/−1）：`if (op == OP_CALL_BUILTIN && i >= 1 && ir_insn_r3(in) == 1)`
+→ `if (op == OP_CALL_BUILTIN && i >= 1)`，并把「为什么不需要元数条件」写进那段注释。
+
+### 四、判据与两条边
+
+`tools/aot_mir.test.py`（+35/−3）：
+
+- 四条拒行 `mir_z_literal_last_arg_{size,count,list,sum}_is_refused`（一字面量排在
+  2/3 个实参的最后），why 仍是 `z-literal-reader`，一行一个读端。
+- 正向判据 `mir_z_literal_readers_are_refused_and_the_copy_is_not` 加两行：
+  `say size(1, z)`（多参 + 物化副本，两侧 4）与 `say size(Z[0~3], 1)`（字面量不在
+  读位，两侧 1）。后一行就是「过宽」那条边的哨兵。
+  `ALLOCS_EXPECT` 从 `(3, 775)` 改成实测的 `(4, 1799)`：多出来的那个 `Z[0~3]`
+  字面量让值池跨到下一档（+1024 字节块），**先量后写**，不是把旧数搬过来。
+
+读数：`mir-only 306|306`、`REFUSED-TOTAL 16|16 → 20|20`、中止面矩阵不变
+（`pairs=494|stop-events=0|both-stopped=102|route-stopped-where-interp-answered=0|refused-by-name=4`）。
+
+### 五、非对称注入（两发，各恢复重建）
+
+- **太窄**（把 `ir_insn_r3(in) == 1` 加回去）：四条新拒行全红，报
+  `the MIR route ACCEPTED a program this list exists to see refused … 258732 bytes of C`。
+- **太宽**（把「看被压的那个寄存器」改成「看任意寄存器带标志」）：正向判据红在
+  `say size(Z[0~3], 1)` 那一行（被路线拒、解释器答 1）；物化副本那几行不动（标志
+  早已被 `OP_NEW_SET` 清掉）。
+
+两发都恢复并重建，恢复后 harness `EXIT=0`、0 个 problem。
+
+### 六、边界（跨调用边界仍然没拒，以及为什么不是一句话的事）
+
+还有四个同族错值，都是「读端看不见字面量」，本格**没有**处理：
+
+- `f = (x) -> size(x)` 后 `say f(Z[0~3])`：解释器 4、路线 nil（`list` 同）。
+- 链式 `g = (y) -> size(y)`、`f = (x) -> g(x)` 后 `say f(Z[0~3])`：同样 4 / nil。
+- 字面量进容器再读元素：`q = [Z[0~3]]` 后 `size(q[0])`、`q = {"k": Z[0~3]}` 后
+  `size(q["k"])`：解释器 4、路线 nil。
+
+要按名拒它们，得把「这个寄存器此刻持着裸 Z 字面量」推过**调用边界**（参数寄存器）
+或**容器元素**（按索引的溯源）。跨调用那条在本路线里不是桩小事：`OP_CALL_VALUE` 的
+被调方是**运行时值**，`mv_callv` 在生成代码里按寄存器分发，prescan 阶段没有静态的
+被调函数；要做得靠一张「全局名 → 模块号」「寄存器 → 模块号」的追踪加不动点迭代。
+容器那条还要按索引溯源，否则 `q = [1, Z[0~3]]` 之后 `size(q[0])`（两侧都是 1，对的）
+会被误拒。两者都属于**结构改动**，不在本格。
+
+另外这两侧都有今天**已经答对**的形状（`f = (x) -> str(x)` 后 `f(Z[0~3])` 两侧都是
+`set(Z interval)`；`q = [1, Z[0~3]]` 后 `size(q[0])` 两侧都是 1），所以任何「看见字面量
+就拒」的粗规则都会把它们一起拒掉——这正是本格用判据钉住的那两条边。
+
+### 七、删除条件
+
+同 §10.200：若将来把 `set_comp_enum` 的枚举（含上限）搬进四个读端，删掉 §10.200 的
+四条 + 本格的四条共八行拒行，把正向判据改名为「读端答得出」，并给 §六 的四个形状
+补判据。
+
+### 八、本节读数（亲跑）
+
+`python3 tools/aot_mir.test.py --build build --tool build/aot-mir` ⇒ `EXIT=0`、0 个
+problem、`mir-only 306|306`、`REFUSED-TOTAL 20|20`。
