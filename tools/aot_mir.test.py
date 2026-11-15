@@ -246,7 +246,7 @@ ALLOCS_EXPECT = {
     # reads it five ways.  Two regions are the program's own (the set the
     # assignment materialises, and the list `list(z)` answers); the other
     # three reads (size, count, sum) allocate nothing.
-    "mir_z_literal_readers_are_refused_and_the_copy_is_not": (3, 775),
+    "mir_z_literal_readers_are_refused_and_the_copy_is_not": (4, 1799),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
@@ -1566,7 +1566,18 @@ say list(b)
      "say sum(z)\n"
      "say len(z)\n"
      "say str(z)\n"
-     "say z\n"),
+     "say z\n"
+     # The two rows below are what keeps the refusal from drifting WIDE: the
+     # reader uses the TOP of the argument stack (the last argument), so a
+     # literal in an EARLIER position is not the argument it reads.
+     #   size(1, z)          -- multi-argument, materialised copy: 4 on both
+     #                          sides (the multi-arg form must not become a
+     #                          hole the way the 10.200 argc==1 form was).
+     #   size(Z[0~3], 1)     -- literal NOT in the read position: the reader
+     #                          answers 1 on both sides, so flagging any
+     #                          argument instead of the top one would red it.
+     "say size(1, z)\n"
+     "say size(Z[0~3], 1)\n"),
     # A POST-VALUE-SHAPE GUARD, NOT A RED-ON-ARRIVAL CRITERION.  Nothing is
     # wrong here today: every row below already agrees with the interpreter.  It
     # exists because 10.185 proved that adding a value shape silently falsifies
@@ -5606,6 +5617,26 @@ MIR_ONLY_REFUSE = {
         "z-literal-reader"),
     "mir_z_literal_sum_is_refused": (
         'say sum(Z[0~3])\n',
+        "z-literal-reader"),
+    # 10.201: the SAME refusal, with the literal as the LAST of several
+    # arguments.  10.200 required argc==1, which left these answering nil
+    # where the interpreter answers 4 / 4 / [0, 1, 2, 3] / 6.  The reader
+    # reads the TOP of the argument stack, so the top push is still the
+    # argument it reads and the check needs no new mechanism -- only the
+    # dropped arity condition.  One row per reader again, so a red names the
+    # reader; the arity condition itself is pinned by the red it causes
+    # (restoring `== 1` reds all four).
+    "mir_z_literal_last_arg_size_is_refused": (
+        'say size(1, Z[0~3])\n',
+        "z-literal-reader"),
+    "mir_z_literal_last_arg_count_is_refused": (
+        'say count("x", Z[0~3])\n',
+        "z-literal-reader"),
+    "mir_z_literal_last_arg_list_is_refused": (
+        'say list("x", Z[0~3])\n',
+        "z-literal-reader"),
+    "mir_z_literal_last_arg_sum_is_refused": (
+        'say sum(1, 2, Z[0~3])\n',
         "z-literal-reader"),
 }
 
