@@ -5181,7 +5181,18 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                branch of mv_region_len and mv_list -- the two functions 10.188
                and 10.189 pinned.  That is moving a published algorithm into a
                cell whose subject is a refusal, so it is not done here. */
-            if (op == OP_CALL_BUILTIN && i >= 1 && ir_insn_r3(in) == 1) {
+            /* 10.201: NO arity condition.  10.200 required argc == 1 and
+               that left the multi-argument forms answering nil where the
+               interpreter answers (size(1, Z[0~3]) is 4, list("x", Z[0~3])
+               is [0, 1, 2, 3], sum(1, 2, Z[0~3]) is 6).  The reader reads
+               the TOP of the argument stack -- the last OP_PUSH_REG before
+               this call -- no matter how many arguments precede it, so the
+               check below is the same one; only the arity guard was wrong.
+               A literal in an EARLIER position is not the argument the
+               reader uses (size(Z[0~3], 1) answers 1 on both sides), and
+               that shape is pinned by the positive criterion so a check
+               that flagged any argument would red it. */
+            if (op == OP_CALL_BUILTIN && i >= 1) {
                 int32_t ix = ir_insn_r2(in);
                 const char *bn = (ix >= 0 && ix < node->string_count && node->string_pool)
                                  ? node->string_pool[ix] : NULL;
