@@ -323,6 +323,15 @@ static const char *const kMirValBlock =
 " *    mechanism yet, so mv_as_nv() stops the program.  Loud, never a number --\n"
 " *    but it is NOT the interpreter's answer, and closing it needs the\n"
 " *    exception opcodes (the C class in docs/streams/aot-mir-value.md).\n"
+" *    UPDATE (10.200): the last two sentences are no longer true.  This route\n"
+" *    HAS an exception mechanism now (mv_throw / OP_TRY_*, pinned since\n"
+" *    10.166), and arithmetic or ordering on a nil THROWS type_mismatch\n"
+" *    instead of stopping: measured, `1 + nil` and `nil < 1` give the\n"
+" *    interpreter's answer on both sides (10.199's matrix counts them among\n"
+" *    its 102 both-stopped pairs).  mv_as_nv() is still never reached with a\n"
+" *    nil -- the gates in front of it answer or throw first -- so \"Loud,\n"
+" *    never a number\" stays true; what changed is WHICH loudness: a\n"
+" *    catchable throw, not an abort.\n"
 " *  - nil as a container: INDEX_GET on nil, nil in a dict/list, nil returned\n"
 " *    from a call.  Those opcodes are outside this subset, so a nil this block\n"
 " *    cannot receive is a nil it need not define.\n"
@@ -5102,6 +5111,24 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
         const IrFunc *fn = &m->funcs[f];
         const Bytecode *node = nodes[f].node;
         int asp = 0;
+        /* THE Z-INTERVAL LITERAL TRACK (10.200).  zlit[r] is 1 while register r
+         * holds an UNMATERIALISED Z interval -- the value a bare `Z[0~3]`
+         * literal produces -- and 0 otherwise.  It is what tells the read-end
+         * refusal apart from the value-held copy, and the two answers differ:
+         * measured, `size(Z[0~3])` is 4 on the interpreter and nil on this
+         * route, while `z = Z[0~3]` followed by `size(z)` is 4 on BOTH sides,
+         * because the assignment adds OP_NEW_SET, which materialises the
+         * interval into a four-member finite set and gives the reader a
+         * component it can count (10.188, 10.189).  So the refusal has to
+         * name the LITERAL and must leave the materialised copy alone; a
+         * refusal that keyed on "the value is a Z interval" would refuse
+         * both, and the copy is answered correctly today.
+         *
+         * The flag is cleared by ANY other write to the register (the
+         * instruction's own R1 mask is consulted), so a value that merely
+         * passes through the register is not mistaken for the literal. */
+        unsigned char zlit[REG_LIMIT];
+        memset(zlit, 0, sizeof zlit);
         g_insns += fn->ninsns;
         for (int i = 0; i < fn->ninsns; i++) {
             const IrInsn *in = &fn->insns[i];
@@ -5119,6 +5146,83 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 return bad("container=%d insn=%d op=%s register r2=%d out of range", f, i, op_name(op), in->a);
             if ((mask & R3) && (in->b < 0 || in->b >= REG_LIMIT))
                 return bad("container=%d insn=%d op=%s register r3=%d out of range", f, i, op_name(op), in->b);
+            /* THE Z-LITERAL READ-END CHECK (10.200).  It sits HERE, before the
+               flag-clearing below, because the call itself writes its result
+               into r1 -- the very register the literal is in -- and that write
+               would clear the flag the check is about.
+               Four readers -- size, count, list and sum -- answer nil on this
+               route for a BARE Z interval literal, while the interpreter
+               enumerates it and answers a number, a list or a total.  Measured
+               on the interpreter: `size(Z[0~3])` is 4, `count(Z[0~3])` is 4,
+               `list(Z[0~3])` is [0, 1, 2, 3] and `sum(Z[0~3])` is 6; on this
+               route all four are nil.  The mechanism is the shape, not the
+               domain: a bare literal stays a kind-2 interval (the reader's own
+               guard, `mv_region_len`'s `if (a.type == MV_SET && mv_set_is_interval(i))
+               return 0;` and `mv_list`'s `if (mv_set_is_interval(iv)) return
+               mv_nil();`), while the assignment `z = Z[0~3]` adds OP_NEW_SET,
+               which materialises it into a four-member finite set and gives
+               the reader a component it can count (10.188, 10.189) -- so the
+               materialised copy answers 4 on BOTH sides and must not be
+               refused.
+               THE ANSWER IS NOT A FUNCTION OF THE EXPRESSION HERE, so it is
+               refused BY NAME rather than answered wrongly -- the same
+               discipline the other un-copyable shapes use (builtin-call,
+               builtin-stale-stack).  The reason names the READER, not the
+               value: the value is constructible here (the literal lowers, the
+               dump shows OP_SET_INTERVAL, and the print answers `set(Z
+               interval)` on both sides); what this route cannot do is
+               ENUMERATE the literal, so the reader is refused and the print
+               is not.
+               WHY IT IS NOT ANSWERED INSTEAD: answering it would mean copying
+               the interpreter's enumeration (src/vm/vm.c's vm_set_to_array ->
+               set_comp_enum, an index-and-lattice computation) INCLUDING its
+               10000000-element ceiling (measured: `size(Z[0~10000000])` is nil
+               on the interpreter), and it would mean changing the kind-2
+               branch of mv_region_len and mv_list -- the two functions 10.188
+               and 10.189 pinned.  That is moving a published algorithm into a
+               cell whose subject is a refusal, so it is not done here. */
+            if (op == OP_CALL_BUILTIN && i >= 1 && ir_insn_r3(in) == 1) {
+                int32_t ix = ir_insn_r2(in);
+                const char *bn = (ix >= 0 && ix < node->string_count && node->string_pool)
+                                 ? node->string_pool[ix] : NULL;
+                if (bn && (strcmp(bn, "size") == 0 || strcmp(bn, "count") == 0
+                           || strcmp(bn, "list") == 0 || strcmp(bn, "sum") == 0)) {
+                    /* The argument is the TOP of the argument stack, which is
+                       the last OP_PUSH_REG before this call (the emitter reads
+                       mvargs[asp-1], and the one argument was pushed just
+                       before). */
+                    const IrInsn *push = &fn->insns[i - 1];
+                    if (push->op == OP_PUSH_REG && push->dst >= 0 && push->dst < REG_LIMIT
+                        && zlit[push->dst]) {
+                        g_prescan_why = "z-literal-reader";
+                        return bad("container=%d insn=%d builtin '%s' cannot answer a bare Z"
+                                   " interval literal: the interpreter enumerates it (4 for"
+                                   " size(Z[0~3]), [0, 1, 2, 3] for list(Z[0~3]), 6 for"
+                                   " sum(Z[0~3])) while this route's reader answers nil for an"
+                                   " unmaterialised interval -- assign it first (z = Z[0~3])"
+                                   " and the materialised copy answers on both sides", f, i, bn);
+                    }
+                }
+            }
+            /* ANY OTHER WRITE to a register clears the Z-LITERAL flag on it
+               (10.200).  The literal is the VALUE, so anything that overwrites
+               the register ends it: OP_NEW_SET (the materialising copy -- the
+               assignment `z = Z[0~3]`), OP_MOV, a call's result, another
+               literal.  OP_SET_INTERVAL is the one writer that SETS the flag
+               instead, and it does so in its own case below; every other R1
+               writer clears it here.  This is why the refusal names the
+               literal and not "a Z interval": the materialised copy reaches
+               the same reader with the flag already cleared.
+               THE WRITER SET IS SPELLED OUT rather than read off op_regs,
+               because op_regs' R1 bit is NOT "this instruction writes r1":
+               OP_MOV's r1 is the destination (v[r1] = v[r2]) but OP_PUSH_REG's
+               r1 is the SOURCE (mvargs[asp++] = v[r1]), and both carry R1 in
+               the mask.  A mask-driven rule would therefore clear the flag on
+               the push that carries the literal -- and then the refusal would
+               never fire. */
+            if ((mask & R1) && op != OP_SET_INTERVAL && op != OP_PUSH_REG
+                && in->dst >= 0 && in->dst < REG_LIMIT)
+                zlit[in->dst] = 0;
             /* OP_CONCAT is checked here, OUTSIDE the switch, on purpose: its
                third operand is an OPERAND COUNT and not a register, so it is not
                one of the opcodes this switch exists to bound (a pool / global /
@@ -5382,6 +5486,12 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=2",
                                f, i, op_name(op), asp);
                 asp -= 2;
+                /* The literal itself is the Z-LITERAL the read-end refusal is
+                   about (10.200): a Z interval that has NOT been materialised.
+                   The R domain is not flagged: its readers answer nil on both
+                   sides already (10.186), so there is nothing to refuse. */
+                if (base && strcmp(base, "Z") == 0 && in->dst >= 0 && in->dst < REG_LIMIT)
+                    zlit[in->dst] = 1;
                 break;
             }
             case OP_LOAD_GLOBAL:
