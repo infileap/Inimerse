@@ -246,7 +246,8 @@ ALLOCS_EXPECT = {
     # reads it five ways.  Two regions are the program's own (the set the
     # assignment materialises, and the list `list(z)` answers); the other
     # three reads (size, count, sum) allocate nothing.
-    "mir_z_literal_readers_are_refused_and_the_copy_is_not": (4, 1799),
+    "mir_z_materialised_copy_answers_the_span": (4, 1799),
+    "mir_z_literal_readers_enumerate_the_span": (5, 7936),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
@@ -1558,7 +1559,11 @@ say list(b)
     # of the same value: if the refusal were too wide it would take the
     # materialised rows with it, and the case would go red on the rows that
     # are answered correctly today.
-    ("mir_z_literal_readers_are_refused_and_the_copy_is_not",
+    # The MATERIALISED copy: `z = Z[0~3]` adds OP_NEW_SET, which turns the
+    # literal into an ordinary finite set, and every reader answers it on both
+    # sides.  Renamed in 10.202 -- it used to be ...are_refused_and_the_copy_is_not,
+    # which described the state before the readers learned to enumerate.
+    ("mir_z_materialised_copy_answers_the_span",
      "z = Z[0~3]\n"
      "say size(z)\n"
      "say count(z)\n"
@@ -1578,6 +1583,43 @@ say list(b)
      #                          argument instead of the top one would red it.
      "say size(1, z)\n"
      "say size(Z[0~3], 1)\n"),
+    # 10.202: THE LITERAL ITSELF, all four readers.  A bare Z interval stays a
+    # kind-2 interval, and the readers used to answer nil for it because their
+    # own guards said "an interval has nothing to enumerate" -- true of the R
+    # domain (set_comp_enum rejects nameIdx > 23) and false of Z.  The
+    # interpreter answers by ENUMERATING (vm_set_to_array), which also explains
+    # the three nil rows: it refuses a lattice of 10,000,000 points or more
+    # rather than truncating, and it needs the bounds to fit VAL_INT.
+    ("mir_z_literal_readers_enumerate_the_span",
+     "say size(Z[0~3])\n"
+     "say count(Z[0~3])\n"
+     "say list(Z[0~3])\n"
+     "say sum(Z[0~3])\n"
+     "say size(Z[-2~2])\n"
+     "say list(Z[-2~2])\n"
+     "say sum(Z[-2~2])\n"
+     # the cap: 10,000,000 points or more is nil, never truncated
+     "say size(Z[0~10000000])\n"
+     "say list(Z[0~10000000])\n"
+     "say sum(Z[0~10000000])\n"
+     # range(1)'s bounds are int32 min..max, so the span is 4294967296 points
+     "say size(range(1))\n"
+     # THE SHAPES THE REFUSAL COULD NOT REACH, and the reason 10.202 replaced
+     # it: the flag lived in a register, so a literal crossing a CALL boundary
+     # or stored into a CONTAINER arrived at the reader with the flag gone.
+     # Answering the question at the value instead makes all of them agree
+     # without a single line of provenance tracking.  Measured on BOTH sides:
+     "f = (x) -> size(x)\n"
+     "say f(Z[0~3])\n"
+     "g = (y) -> size(y)\n"
+     "h = (x) -> g(x)\n"
+     "say h(Z[0~3])\n"
+     "q = [Z[0~3]]\n"
+     "say size(q[0])\n"
+     "r = [1, Z[0~3]]\n"
+     "say size(r[0])\n"
+     "say size(r[1])\n"),
+
     # A POST-VALUE-SHAPE GUARD, NOT A RED-ON-ARRIVAL CRITERION.  Nothing is
     # wrong here today: every row below already agrees with the interpreter.  It
     # exists because 10.185 proved that adding a value shape silently falsifies
@@ -5595,52 +5637,7 @@ MIR_ONLY_REFUSE = {
     "mir_match_single_argument_is_not_lowered": (
         'say match("abc")\n',
         "builtin-stale-stack"),
-    # THE FOUR READERS ON A BARE Z INTERVAL LITERAL (10.200).  The interpreter
-    # enumerates the literal and answers 4 / 4 / [0, 1, 2, 3] / 6; this route
-    # answers nil, because a bare literal stays a kind-2 interval and the
-    # readers' own guards refuse to enumerate one.  The assignment
-    # `z = Z[0~3]` adds OP_NEW_SET, which materialises it, and the materialised
-    # copy answers 4 on BOTH sides -- so the refusal has to name the LITERAL.
-    # Each row below is one reader, so a red says which reader moved.
-    # The positive half of the same claim is the criterion
-    # mir_z_literal_readers_are_refused_and_the_copy_is_not, which pins the
-    # materialised copy as ANSWERED -- a refusal that were too wide would take
-    # those rows with it.
-    "mir_z_literal_size_is_refused": (
-        'say size(Z[0~3])\n',
-        "z-literal-reader"),
-    "mir_z_literal_count_is_refused": (
-        'say count(Z[0~3])\n',
-        "z-literal-reader"),
-    "mir_z_literal_list_is_refused": (
-        'say list(Z[0~3])\n',
-        "z-literal-reader"),
-    "mir_z_literal_sum_is_refused": (
-        'say sum(Z[0~3])\n',
-        "z-literal-reader"),
-    # 10.201: the SAME refusal, with the literal as the LAST of several
-    # arguments.  10.200 required argc==1, which left these answering nil
-    # where the interpreter answers 4 / 4 / [0, 1, 2, 3] / 6.  The reader
-    # reads the TOP of the argument stack, so the top push is still the
-    # argument it reads and the check needs no new mechanism -- only the
-    # dropped arity condition.  One row per reader again, so a red names the
-    # reader; the arity condition itself is pinned by the red it causes
-    # (restoring `== 1` reds all four).
-    "mir_z_literal_last_arg_size_is_refused": (
-        'say size(1, Z[0~3])\n',
-        "z-literal-reader"),
-    "mir_z_literal_last_arg_count_is_refused": (
-        'say count("x", Z[0~3])\n',
-        "z-literal-reader"),
-    "mir_z_literal_last_arg_list_is_refused": (
-        'say list("x", Z[0~3])\n',
-        "z-literal-reader"),
-    "mir_z_literal_last_arg_sum_is_refused": (
-        'say sum(1, 2, Z[0~3])\n',
-        "z-literal-reader"),
-}
-
-# THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
+}# THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
 #
 # A `why=unsupported-opcode` refusal alone says "something here is not lowered";
 # the not-yet line that accompanies it names the opcodes.  Both are needed, and
@@ -6268,14 +6265,15 @@ def abort_surface(mir_tool, interp, workdir, verbose):
         if rrc == "refused":
             # A REFUSAL IS NOT A STOP.  The route refusing a shape is the
             # honest answer when it has no answer (the by-name refusals:
-            # builtin-call, builtin-stale-stack, z-literal-reader -- 10.200
-            # refused the four readers on a bare Z interval literal because
-            # this route cannot enumerate it while the interpreter can).  It
-            # says nothing about the ABORT surface, which is about the
-            # conversion door's default arm, so it is counted on its own and
-            # is not a problem.  What would be a problem is a route that
-            # STOPPED where the interpreter answered, and that is counted
-            # below.
+            # builtin-call, builtin-stale-stack).  It says nothing about the
+            # ABORT surface, which is about the conversion door's default arm,
+            # so it is counted on its own and is not a problem.  What would be
+            # a problem is a route that STOPPED where the interpreter answered,
+            # and that is counted below.
+            # UPDATE (10.202): this comment used to cite z-literal-reader as a
+            # third by-name refusal, because 10.200 refused the four readers on
+            # a bare Z interval literal.  10.202 made them ENUMERATE the span
+            # instead, so that refusal is gone and the example was dropped.
             refused_by_name += 1
             lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=answered|route=refused" % (vname, oname))
             continue
