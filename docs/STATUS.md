@@ -10963,3 +10963,124 @@ MIR_ONLY 要求两侧 stdout 逐字相同，而它们两侧都 rc=0 却输出不
 （把它从 STR 臂之后挪到 NIL 臂之后），功能完全等价但 diff 变脏、且让「本节不改
 实现」这句话不成立。正确做法是 `git checkout HEAD -- <file>` 把文件整个还原，
 再重建——**恢复注入要还原到逐字相同，不是「等价即可」**。
+
+## §10.200 裸 Z 区间字面量的四个读端被按名拒，物化副本不受影响（aot-mir，A 类第六十五项）
+
+§10.199 的中止面矩阵把这一格暴露出来：`size(Z[0~3])` 两侧读数**不同**（解释器 4，
+路线 nil），而那不是中止，是**错值**——矩阵只问「有没有停」，答不了「答得对不对」。
+人类（mellow-delta）裁定：**不补臂，按名拒**，并给两条硬要求——①拒的粒度必须能区分
+「字面量」与「变量持有」，不许连后者一起拒；②理由要写成「**读端**答不了这个形状」，
+不是「这个形状不可达」（它不是不可达，它构造得出来，只是枚举不了）。
+
+### 一、先量：同一个值，两种拼写，四种读数
+
+解释器侧（`build/inimerse --no-mods run`）与路线侧（合并树的 `build/aot-mir`）：
+
+| 拼写 | size | count | list | sum | len | str |
+|---|---|---|---|---|---|---|
+| `Z[0~3]`（字面量，直接进读端） | 解释器 4 / 路线 **nil** | 4 / **nil** | `[0, 1, 2, 3]` / **nil** | 6 / **nil** | 4 / 4 | `set(Z interval)` / 同 |
+| `z = Z[0~3]` 后读 `z`（变量持有） | 4 / 4 | 4 / 4 | `[0, 1, 2, 3]` / 同 | 6 / 6 | 4 / 4 | 同 |
+
+所以缺陷只在**直接字面量**那一列，而且只在四个读端上：`len` 与 `str`/打印两侧一直
+相同（`len` 数的是跨度，`str` 印的是域名）。
+
+**量这一格时踩到一个会得出相反结论的坑**：主树的 `build/aot-mir` 是 11-13 的旧件，
+它会对 `Z[0~3]` 回 `why=set-interval-domain`（「只收 R 区间」），拿它当证据就会得出
+「Z 集合在这条路线上不可达」。可达的是新件（11-15 之后，§10.184 起的四格把 Z 做进
+来了）：`aot-mir dump` 原文 `idx=4 OP_SET_INTERVAL r1=1 r2=50331649`，translate 通过，
+打印 `set(Z interval)`。**旧二进制不能当证据**这条，本会话已经在 §10.198 与这里各栽
+过一次。
+
+### 二、机制：差别是值的形状，不是域
+
+两种拼写的 IR 只差一条指令：
+
+- 字面量 `say size(Z[0~3])`：`OP_SET_INTERVAL r1=1` → `OP_PUSH_REG r1=1` → `OP_CALL_BUILTIN`。
+- 变量 `z = Z[0~3]`：`OP_SET_INTERVAL r1=1` → `OP_PUSH_REG r1=1` → **`OP_NEW_SET r1=1`** →
+  `OP_STORE_GLOBAL`；读端那侧再 `OP_LOAD_GLOBAL r1=1` → `OP_PUSH_REG` → `OP_CALL_BUILTIN`。
+
+`OP_SET_INTERVAL` 造的是 **kind-2 区间**，而 `OP_NEW_SET` 把区间**物化**成四个成员的
+有限集。读端自己的门正是按形状拒枚举的：`mv_region_len` 的
+`if (a.type == MV_SET && mv_set_is_interval(i)) return 0;` 与 `mv_list` 的
+`if (mv_set_is_interval(iv)) return mv_nil();`。所以物化副本能数、字面量不能——
+**同一个值，只因为有没有经过 `OP_NEW_SET`，答案就不同**。
+
+### 三、实现：prescan 里前向追踪「哪个寄存器此刻持有裸 Z 字面量」
+
+`src/compilation/aot_mir.c`（+101）：
+
+1. `prescan()` 的 per-function 头部加 `unsigned char zlit[REG_LIMIT]` 并清零。
+2. `OP_SET_INTERVAL` 分支：`base && strcmp(base, "Z") == 0 && in->dst` 合法 ⇒
+   `zlit[in->dst] = 1`。
+3. 读端检查：`op == OP_CALL_BUILTIN && i >= 1 && ir_insn_r3(in) == 1`，名字在
+   `{size, count, list, sum}` 里，且 `fn->insns[i-1]` 是 `OP_PUSH_REG` 而
+   `zlit[push->dst]` 为真 ⇒ `g_prescan_why = "z-literal-reader"`。
+4. 其余会写寄存器的指令清掉标志。
+
+三处踩坑，都写进了源码注释：
+
+- **检查必须排在清除之前**。第一版把检查放在 `case OP_CALL_BUILTIN` 里、清除放在
+  循环开头，于是**永远不触发**——因为这条 `OP_CALL_BUILTIN` 自己就写 `r1`（结果写回
+  `r1`），清除先把标志抹掉了，检查随后才跑。
+- **不能拿 `op_regs` 的 R1 位当「这条指令写 r1」**。`OP_MOV` 的 r1 是目标
+  （`v[r1] = v[r2]`），但 `OP_PUSH_REG` 的 r1 是**源**（`mvargs[asp++] = v[r1]`），
+  两者在 mask 里都带 R1。用 mask 驱动清除会把「搬运字面量的那次 push」当作写，
+  标志又被抹掉。所以清除条件显式排除 `OP_PUSH_REG`，并单独把 `OP_SET_INTERVAL`
+  排除（它是唯一「设置」而不是「清除」的写者）。
+- **只认 `argc == 1`**。多参调用的最后一个实参不是紧邻的 push，本格不解；见 §五。
+
+拒绝文案点名读端，并把出路写出来：`builtin 'size' cannot answer a bare Z interval
+literal: … assign it first (z = Z[0~3]) and the materialised copy answers on both sides`。
+
+### 四、判据：一条正向、四条拒绝，边都在
+
+`tools/aot_mir.test.py`：
+
+- 正向 `mir_z_literal_readers_are_refused_and_the_copy_is_not`：`z = Z[0~3]` 之后读
+  `size/count/list/sum/len/str/z` 七行，`ALLOCS_EXPECT` 钉 `(3, 775)`。
+- 拒绝侧四行 `mir_z_literal_{size,count,list,sum}_is_refused`，期望
+  `why=z-literal-reader`。
+
+正向那条**必须留着**：本格的主张是「两种拼写的**差**」，如果拒得太宽，物化副本也
+会被拒，而那几行今天是对的——正向判据就是用来先红的（下面的注入一证明它真的会红）。
+
+读数：`mir-only 306|306`、`IR-MIR-MIR-ONLY-REFUSED-TOTAL 16|16`、中止面矩阵
+`refused-by-name=4`。
+
+### 五、非对称注入：两发，各自红了不同的边
+
+- **太宽**（把清除关掉，让标志穿过 `OP_NEW_SET`）：物化副本也被拒 ⇒ 红**三条**判据：
+  本格的正向判据、`mir_set_interval_component_counts_its_members`、
+  `mir_domain_r_component_is_not_enumerable`（后两条也持有物化副本）。
+- **太窄**（把检查关掉）：四条拒绝行全红，报
+  `the MIR route ACCEPTED a program this list exists to see refused … it translated
+  258058 bytes of C`。
+
+两发都恢复并重建，恢复后 harness `EXIT=0`、0 个 problem。
+
+### 六、边界（没有做的事，写清楚）
+
+- **跨调用边界的字面量没拒**：`f(Z[0~3])`（`f = (x) -> size(x)`）与把字面量放进
+  容器再读元素（`[Z[0~3]]` 取元素），解释器都答 4，路线仍答 nil。translate 时看不见
+  「一个字面量跨了调用边界」，本格的追踪只在一个函数内。这是**已知缺口**，不是本格
+  的成果，也不在人类给的两条硬要求里。
+- **多参读端没做**：本格只认 `argc == 1`。`size(a, Z[0~3])` 这类形状未被拒，也未测。
+- **`len`/`str`/打印不在这一格**：它们两侧一直相同，改它们会牵动 §10.188 已钉的臂。
+- **没有搬枚举**：`sum` 与 `list` 要答出来就得复刻解释器的枚举（`set_comp_enum` 的
+  索引格点算法）**连同它的上限**——`size(Z[0~10000000])` 在解释器侧是 nil（有上限），
+  路线从不枚举。这不是「补一个臂」，是搬一个算法，且要动 §10.188/§10.189 钉住的两个
+  函数，所以本格不动。
+- **`R` 那一族**：`mir_domain_r_component_is_not_enumerable` 说的是 **component**
+  不可枚举；「R 集合整体不可枚举」是同一处的 nil，但没有单列判据。本格没有改它。
+
+### 七、删除条件
+
+若将来把 `set_comp_enum` 的枚举（含上限）搬进这条路线：删掉四条拒绝行，把正向判据
+改名为「四个读端答得出」，并给 §六 第一条（跨调用边界）补判据。在那之前，这四条
+拒绝行就是这条路线对这个形状的**答案**。
+
+### 八、本节读数（亲跑）
+
+`python3 tools/aot_mir.test.py --build build --tool build/aot-mir` ⇒ `EXIT=0`、0 个
+problem、`mir-only 306|306`、`REFUSED-TOTAL 16|16`；中止面矩阵
+`pairs=494|stop-events=0|both-stopped=102|route-stopped-where-interp-answered=0|refused-by-name=4`。
