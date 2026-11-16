@@ -11412,3 +11412,74 @@ nil、0），分配轴 `(4, 1808)`。
 **七、删除条件。** 四条判据与四处 double 空间判定同删：解释器改了区间语义、或 `set_comp_enum`
 开始枚举 R/无界成分、或 `val_is_integer` 的 9.0e18 界改变。UBSan 的 `UBSAN_CASES` 与之同留同删
 （删了它，这一类错就只剩读数去抓）。
+
+## §10.205 A Z interval's members are the integers IN it
+
+### 1. 来源
+
+§10.203 修好开端点、§10.204 修好无界端，两格钉的都是**字面量**一侧（`size`/`list`
+直接吃 `Z[..]`）。§10.204 收尾时我探了一轮拷贝侧（`a = Z(0~3]` 再读 `a`），
+发现 `a`/`b`/`c`/`d` 四块全对，第五块 `e = Z[2.5~5.5]` 不对：
+
+    interp: set(3) / 3 / [3, 4, 5] / min nil / max nil
+    route : set(4) / 4 / [2, 3, 4, 5] / min nil / max nil
+
+两端都是**分数**，内部成员是格点上的整数 3、4、5。路线用 `(long long)` 把两端截断，
+于是从前一格 2 起数出四个。
+
+### 2. 规则
+
+Z 区间的成员是**落在区间里的整数**，所以计数前先把两端snap 到格点：
+
+    first = closed(lo) ? ceil(lo) : floor(lo) + 1
+    last  = closed(hi) ? floor(hi) : ceil(hi) - 1
+    cnt   = max(0, last - first + 1)
+
+`max`/`min` 不走这条：它们扫区间找元素，从 `lo`（开则 `lo+1`）起步、步长 1.0，
+所以在 `Z[2.5~5.5]` 上扫不到任何整数，答 nil——两侧一致，这条在 §10.204 的扫描臂里
+已经成立，本格只是把它写进判据的 e 块。
+
+### 3. 判据
+
+`mir_interval_copies_keep_their_open_ends`（`tools/aot_mir.test.py`，五块 a–e、
+37 行输出），`ALLOCS_EXPECT` 钉 `(4, 3840)`（四个区域：a、b、c、d，e 由 d 之后的
+构造复用同一 region 计数，实测 4 块 3840 字节）。
+
+先红：父 `aad540a7` 上 `IR-MIR-EXEC-DIFF`，差异只在 e 块那三行；绿后
+`mir-only-cases=312|mir-only-same-as-interpreter=312`。
+
+### 4. 实现
+
+三处，同一规则：
+
+1. `mv_comp_card`（`src/compilation/aot_mir.c`，运行时前导块里）：`dfirst`/`dlast`
+   按上面的公式算，再 `(unsigned)(long long)` 进原有的 32 位环绕算术——
+   `len(Z[0~2147483647])` 仍是 0，环绕来自解释器自己的加法，不是本路线发明的。
+2. `mv_len` 的 Z 臂：同一 lattice，删掉 §10.203 的「先算跨度再 `cnt--`」两行，
+   改成「先收窄再计数」——两种写法对整数端同值，对分数端不同，这正是本格要区分的。
+3. `mv_list` 的 PASS 3：枚举起点改用 `ceil(lo)`（闭）或 `floor(lo)+1`（开），
+   与 `mv_comp_card` 数出的个数配对。
+
+### 5. 注入
+
+两发，各只红区间类判据：
+
+- **A**：把 `mv_comp_card` 的 `dfirst` 换回 `dlo`（截断）。红
+  `mir_interval_copies_keep_their_open_ends` 的 e 块与
+  `mir_z_open_ended_intervals_enumerate_their_members`——**两处都红是对的**，
+  因为后者也走 `mv_comp_card` 数成分；本案的红行数与注入前那次先红一致。
+- **B**：把 `mv_list` 的 `xbase` 换回截断。红同两条案例，但只有 `list` 行变
+  （e 块 `[2, 3, 4]`）——`size`/`len` 不动，说明枚举起点与计数是两处独立的错。
+
+### 6. 边界
+
+- R 域成分仍不可枚举（§10.191），本格不碰：`mv_comp_nonenum` 先答 -1，读端 nil。
+- 分数端只在 Z 域上有意义；R 域没有格点，`min`/`max` 答端值（§10.204 甲）。
+- `e` 块的 `min`/`max` 为 nil 不是「答不了」，是「扫不到」：起点 2.5 不在格点上。
+  这条两侧一致，但它与「分数端计数」是两条规则，别把 nil 读成「本路线不支持」。
+
+### 7. 删除条件
+
+`mir_interval_copies_keep_their_open_ends` 与 §10.203 的
+`mir_z_open_ended_intervals_enumerate_their_members` 同生共死：若将来本路线
+改成「区间在构造时物化成成员表」，这两条判据都应删除并换成物化后的形状判据。
