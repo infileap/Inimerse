@@ -6235,7 +6235,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
            an instruction as emitted by the bytes its arm appends, and an arm
            that appends nothing is refused as "emitted nothing".  A comment is
            the smallest honest thing to append. */
-        buf_str(b, "    /* declare: inert, see the prescan arm */" NL);
+        buf_fmt(b, "    /* declare: kind %d = %.17g (inert) */" NL, r1, c->node->float_pool[w2]);
         return 0;
     case OP_LOADK_FLOAT:  buf_fmt(b, "    v[%d] = mv_flt(%.17g);", r1, c->node->float_pool[w2]); return 0;
     case OP_LOADK_STRING: {
