@@ -242,6 +242,8 @@ ALLOCS_EXPECT = {
     # an arm that copied a bound into a fresh string or wrapper would land here.
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
+    # eight prints of rays: the interval objects themselves are the allocation
+    "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
     # The materialised copy (10.200): the program builds one Z interval and
     # reads it five ways.  Two regions are the program's own (the set the
     # assignment materialises, and the list `list(z)` answers); the other
@@ -1412,11 +1414,44 @@ def stderr_problems(text, case):
 # Both runs receive them (the interpreter after the script path, the MIR binary
 # as argv[1..]); without that the only measurable shape would be the empty list,
 # which no arm can fail.
+# CASES WHOSE COMPILE ALSO RUNS UBSAN.  The interval readers turn stored
+# doubles into integers, and a bound outside the range they check for used to
+# be cast first and range-checked after -- undefined behaviour that no reading
+# can pin down, because the answer changes with the compiler.  These two
+# programs are where that arithmetic lives, so their binaries are built with
+# -fsanitize=undefined and -fno-sanitize-recover=undefined: a trip kills the
+# program (nonzero exit) and prints "runtime error" on stderr, which the
+# runner reports.  Not the whole corpus: 500 UB-instrumented compiles would
+# dominate the run, and the exposure is the interval readers alone.
+UBSAN_CASES = {
+    "mir_z_open_ended_intervals_enumerate_their_members",
+    "mir_interval_bounds_are_measured_before_they_are_cast",
+}
+
 ARGV_CASES = {
     "mir_args_are_the_program_arguments": ("x", "y"),
 }
 
 MIR_ONLY = [
+    # THE BOUNDS A LONG LONG CANNOT HOLD.  A ray's omitted end arrives as the
+    # compiler's +/-1.0e308 sentinel, and a written end can be any double, so
+    # the reader must decide "outside int32" in DOUBLE space and only then
+    # cast.  Cast first and the conversion is undefined behaviour: measured on
+    # the pre-10.204 reader, the SAME program answers nil on one build and a
+    # bogus integer on another, and no reading can tell you which.  This case
+    # is compiled with UBSan precisely because the reading cannot catch it --
+    # see UBSAN_CASES.  Interpreter answers (measured): the three rays answer
+    # nil for size/list, 0 for len, and printing a bare ray says set(Z interval).
+    ("mir_interval_bounds_are_measured_before_they_are_cast", """
+say str(Z[0~])
+say size(Z[0~])
+say list(Z[0~])
+say len(Z[0~])
+say size(Z(0~])
+say size(Z[0~1e300])
+say list(Z[0~1e300])
+say len(Z[-1e300~1e300])
+"""),
     # THE ABORT SURFACE, ONE PROGRAM.  `mv_tag_to_nv` (src/compilation/aot_mir.c
     # :275-278) has three arms -- INT/FLT/BOO -- and a `default: abort()`.  That
     # abort is the shape a reader would call a gap: a value whose tag has no NV
@@ -6276,7 +6311,12 @@ def abort_surface(mir_tool, interp, workdir, verbose):
         if rc_t != 0:
             return (n, "refused", (err_t or out_t).strip()[:160])
         exe = Path(workdir, n + ".bin")
-        rc_c, _o, ec = run(["cc", "-O2", "-o", exe, c, "-lm"], workdir)
+        # The interval values go through the readers that cast bounds; only
+        # they carry UBSan (see UBSAN_CASES for why not all 494).
+        cflags = ["-O2"]
+        if n.startswith("abort_z-set_") or n.startswith("abort_r-set_"):
+            cflags += ["-fsanitize=undefined,float-cast-overflow", "-fno-sanitize-recover=all"]
+        rc_c, _o, ec = run(["cc"] + cflags + ["-o", exe, c, "-lm"], workdir)
         if rc_c != 0:
             return (n, "nocompile", (ec or "").strip()[:160])
         return (n, "ok", "")
@@ -6286,9 +6326,12 @@ def abort_surface(mir_tool, interp, workdir, verbose):
     route_out = {}
     for n, status, detail in lowered:
         if status == "ok":
-            rc, out, _e = run([Path(workdir, n + ".bin")], workdir)
+            rc, out, err = run([Path(workdir, n + ".bin")], workdir)
             route_rc[n] = rc
             route_out[n] = out
+            if "runtime error" in (err or ""):
+                problems.append("%s: UBSan caught undefined behaviour: %s"
+                                % (n, (err or "").strip().splitlines()[0][:160]))
         else:
             route_rc[n] = status
     total = stops = both_stop = route_only = refused_by_name = 0
@@ -6435,13 +6478,19 @@ def main():
         BASE_STDOUT[0] = out_i
         exe_m = Path(workdir) / (name + ".mir.exe")
         exe_a = Path(workdir) / (name + ".ast.exe")
-        rc_cm, _o, ecm = run(["cc", "-O2", "-o", exe_m, mir_c, "-lm"], workdir)
-        rc_ca, _o2, eca = run(["cc", "-O2", "-o", exe_a, ast_c, "-lm"], workdir)
+        cc_flags = ["-O2"]
+        if name in UBSAN_CASES:
+            cc_flags += ["-fsanitize=undefined,float-cast-overflow", "-fno-sanitize-recover=all"]
+        rc_cm, _o, ecm = run(["cc"] + cc_flags + ["-o", exe_m, mir_c, "-lm"], workdir)
+        rc_ca, _o2, eca = run(["cc"] + cc_flags + ["-o", exe_a, ast_c, "-lm"], workdir)
         if rc_cm != 0 or rc_ca != 0:
             problems.append("%s: cc failed (mir=%s ast=%s): %s %s"
                             % (name, rc_cm, rc_ca, (ecm or "")[:200], (eca or "")[:200]))
             continue
-        rc_rm, out_m, _e = run([exe_m], workdir)
+        rc_rm, out_m, err_m = run([exe_m], workdir)
+        if "runtime error" in (err_m or ""):
+            problems.append("%s: UBSan caught undefined behaviour: %s"
+                            % (name, (err_m or "").strip().splitlines()[0][:160]))
         rc_ra, out_a, _e2 = run([exe_a], workdir)
         same_exec = (out_m == out_i == out_a) and (rc_rm == rc_i == rc_ra)
         if not same_exec:
