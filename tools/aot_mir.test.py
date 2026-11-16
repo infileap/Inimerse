@@ -244,6 +244,7 @@ ALLOCS_EXPECT = {
     "mir_min_max_follow_the_scan_not_the_bounds": (5, 7936),
     "mir_unbounded_component_is_not_enumerable": (4, 3840),
     "mir_interval_copies_keep_their_open_ends": (4, 3840),
+    "mir_interval_membership_is_on_the_lattice": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
     # eight prints of rays: the interval objects themselves are the allocation
     "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
@@ -1749,6 +1750,23 @@ say list(b)
     # members to start from: Z[2.5~5.5] answers 3/3/[3, 4, 5] but min and max
     # are nil, because the scan starts at 2.5 and steps by 1.0 and never lands
     # on an integer -- a rule that a "just answer the bounds" arm gets wrong.
+    # The MEMBERSHIP side of the same lattice: a Z interval holds the integers
+    # in it, so a probe that is not an integer is not a member even when it sits
+    # between the ends -- 2.5 in Z[0~5] is false while 3.0 in Z[0~5] is true
+    # (3.0 IS the integer 3 -- the test is on the value, not the tag).  The R
+    # row is the contrast: R[0~5) has no lattice, so 2.5 is a member.
+    ("mir_interval_membership_is_on_the_lattice",
+     "say 2.5 in Z[0~5]\n"
+     "say 3.5 in Z[0~5]\n"
+     "say 3.0 in Z[0~5]\n"
+     "say 0.5 in Z[0~5]\n"
+     "say 5.0 in Z[0~5]\n"
+     "say 2.5 in R[0~5)\n"
+     "say 3.0 in R[0~5)\n"
+     "say 2.5 in Z(2~5]\n"
+     "say 3.5 in Z(2~5]\n"
+     "say -0.5 in Z[0~5]\n"
+     ),
     ("mir_interval_copies_keep_their_open_ends",
      "a = Z(0~3]\n"
      "say \"a\"\n"
