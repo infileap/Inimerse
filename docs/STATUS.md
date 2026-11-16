@@ -7552,6 +7552,11 @@ IR-AOT-MIR|accepted=231|same-as-interpreter=231|emittable=59|of-ops=67
 | `measurement` | 可观测量是「资源上限在第几条指令被触发」；生成的 C 的指令流不是解释器的，那个计数在这里没有对应物 | 1 |
 | `retired` | 解释器不再派发它，没有东西可以一致 | 1 |
 
+> **UPDATE (10.208)**: `measurement` 那一行现在是 **0**，`OP_DECLARE` 已被本路线发射
+> （惰性声明发成 no-op，绑定上限的那种按名拒 `why=declare-limit`）。本表的计数是
+> 2026-11-16 之前的读数；现在的读数是 `emitted=60|unemitted=7|classified=8`，见 §10.208。
+> 分类本身没被删——`measurement` 这个词仍然是对的，只是不再是 `OP_DECLARE` 的类。
+
 ### 四、读数（本树 `1be19eb`）
 
 ```
@@ -11601,4 +11606,69 @@ Z 区间的成员是**落在区间里的整数**，所以计数前先把两端sn
 
 §10.203/§10.205/§10.206 与本节同生共死。若将来区间在构造时物化成成员表，本节
 矩阵应整体重测——物化会改掉「nil 与 0 的区别」这条最容易被写错的分界。
+
+## §10.208 OP_DECLARE: the inert declarations are emitted, the binding ones are refused
+
+### 1. 来源
+
+§10.145 把 `OP_DECLARE` 归进 `measurement` 类，理由是可观测量是「资源上限在第几条
+指令被触发」，而生成的 C 的指令流不是解释器的。那句话**只对绑定上限的声明成立**。
+收尾时我量了三个声明，发现其中两个半是惰性的：
+
+    declare { vram 1 }     gui_mod.c 是唯一执行者，头less 二进制不加载 mod ⇒ 惰性
+    declare { mem 0 }      每条上限都以 `limit > 0.0` 为门 ⇒ 0 等于没声明
+    declare { threads 0 }  同上（`limit_threads > 0 && active >= limit`）
+    declare { inst 5 }     真绑定：解释器在循环中途自动退出
+
+实测（解释器，`--no-mods`）：带 `declare { vram 1 }` 与 `declare { mem 0 }` 的程序，
+输出与不带时**逐字节相同**；而 `declare { inst 5 }` 的程序打出
+`[resource limit] instructions 256 exceed declared limit 5, auto-exit.`——256 是解释器
+自己的计数刻度，不是这个程序能算出来的值。**「能发射」与「不能发射」的分界不是
+opcode，而是这个 opcode 的这个实参。**
+
+### 2. 判据
+
+- `mir_declare_inert_kinds_are_accepted`（八行：三条惰性声明 + 一段正常输出；
+  `ALLOCS_EXPECT` 钉 `(1, 256)`）。先红：父 `e0016077` 上
+  `IR-MIR-MIR-ONLY|mir=refused|why=unsupported-opcode`。
+- `mir_declare_binding_kind_is_refused`（`declare { inst 5 }` + 十万次循环），
+  进 `MIR_ONLY_REFUSE` 表，期望 `why=declare-limit`。先红：父树上
+  `why=unsupported-opcode`，与 `mir_thread_decl_never_started` 那一类一样是
+  「拒了，但拒的理由没说对」。
+
+绿后 `mir-only-cases=314|mir-only-same-as-interpreter=314`。
+
+### 3. 实现（三处）
+
+1. `op_regs`：`case OP_DECLARE: return 0;`——r1 是 KIND（0..4）、r2 是 float pool
+   下标，都不是寄存器；零掩码也是本路线对 `IR-MIR-CONSERVE` 的声明（它是被发射的，
+   不再计入 not-yet）。**没有这一行，prescan 的第一道 `op_regs < 0` 就把它当
+   not-yet 跳过，后面加的臂永远收不到它——这是本格最贵的一步。**
+2. `prescan`：kind 与值取自 `in->dst` 与 `node->float_pool[ir_insn_r2(in)]`；
+   `kind != 4 && v > 0.0` ⇒ `g_prescan_why = "declare-limit"` 并 `bad(...)`。
+3. `emit_one`：惰性声明发一行 C 注释（`/* declare: inert, see the prescan arm */`）。
+   **必须发点东西**：保守方程靠「这条臂追加了多少字节」判定是否发射，什么都不发会被
+   拒成 `emitted nothing, so the conservation equation could not see it`。
+
+### 4. 边界
+
+- `vram` 的惰性依赖「发射的二进制不加载 mod」。如果将来 MIR 生成的 C 链接了
+  gui_mod，这一格与它的判据必须同时重测——这是**环境依赖**，不是语义假设。
+- 绑定类（mem/time/inst/threads 正值）仍然按名拒；`time` 还额外不可判（挂钟），
+  就算将来能数指令也不该碰它。
+- 读数：`IR-AOT-MIR-SURFACE|declared=67|emitted=60|unemitted=7|classified=8|VERDICT|PASS`，
+  `handles=60|of=67|unknown=7`。
+
+### 5. 注入
+
+- **A**：把 `if (dkind != 4 && dv > 0.0)` 改成 `if (0)`（全都当惰性）。
+  只红 `mir_declare_binding_kind_is_refused`——绑定那个程序会被翻译、然后与解释器
+  的输出不同。
+- **B**：改成 `if (1)`（全都拒）。只红 `mir_declare_inert_kinds_are_accepted`。
+  两发互不覆盖，说明两条判据各自守着一半。
+
+### 6. 删除条件
+
+若区间/声明的构造将来带上「上限」作为程序语义（而不是解释器的执行策略），
+本节与 §10.145 的 `measurement` 类一起重写；在那之前，两处都成立。
 
