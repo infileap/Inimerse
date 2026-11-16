@@ -11483,3 +11483,63 @@ Z 区间的成员是**落在区间里的整数**，所以计数前先把两端sn
 `mir_interval_copies_keep_their_open_ends` 与 §10.203 的
 `mir_z_open_ended_intervals_enumerate_their_members` 同生共死：若将来本路线
 改成「区间在构造时物化成成员表」，这两条判据都应删除并换成物化后的形状判据。
+
+## §10.206 A Z interval's membership is on the lattice
+
+### 1. 来源
+
+§10.205 修的是**枚举**（len/size/list）在分数端上的口径。收尾时我把成员判定
+（`in`）也量了一遍，发现同一条规则缺了一半：
+
+    say 2.5 in Z[0~5]     interp false    route true
+    say 3.5 in Z[0~5]     interp false    route true
+
+2.5 落在 0 与 5 之间，路线只比较了两个端点就答 true。Z 区间装的是**整数**，
+非整数的探针不是成员。
+
+### 2. 规则
+
+**Z 域的成员判定要求探针在格点上**；R 域没有格点，任何实数都可以是成员。
+判据按**值**判定而不是按标签：`3.0 in Z[0~5]` 是 true——3.0 就是整数 3，
+`val_is_integer` 看的是数值。
+
+### 3. 判据
+
+`mir_interval_membership_is_on_the_lattice`（十行，`ALLOCS_EXPECT` 钉 `(4, 3840)`；
+四个区域是四个区间字面量，`in` 不分配）。先红：父 `f46e669a` 上
+`IR-MIR-EXEC-DIFF`，interp `F F T F T T T F F F` 对 route 前十行全 true。
+绿后 `mir-only-cases=313|mir-only-same-as-interpreter=313`。
+
+十行里每一行都有职责：两行非整数（false）、一行 3.0（true，证按值判）、
+两行端点（5.0 闭 true）、两行 R（true，证域门存在）、两行开区间端、
+一行越界（两侧 false，对照而不是缺陷）。
+
+### 4. 实现
+
+`mv_interval_has` 在两端比较之后加一行：
+
+    if ((flags & 4) && !mv_z_contains(d)) return 0;
+
+复用 §10.204(甲) 的 `mv_z_contains`（`d == (double)(long long)d` 且 `|d| < 9e18`），
+所以 3.0 通过、2.5 不通过，而且大数不会踩到 cast 的 UB。
+
+### 5. 注入
+
+- **A**：删掉这行。只红 `mir_interval_membership_is_on_the_lattice`——旧的
+  `mir_interval_membership` 五探针没有分数探针，抓不到。
+- **B**：去掉 `(flags & 4) &&` 这个域门。红**两条**：本判据的 R 行
+  （`2.5 in R[0~5)` 变 false）与旧的 `mir_interval_membership`。B 的红面更大
+  是对的——它破坏的是「R 域没有格点」这条更老的约定，旧判据本来就在守它。
+
+### 6. 边界
+
+- 本格只碰「一个区间字面量/拷贝」的 `in`；`has()` 是字典专属（§10.183 已钉）。
+- 有限集合里的普通成员（非区间成分）不受影响：它们走 `mv_eq`，不经过
+  `mv_interval_has`。
+- `Z[2.5~5.5]` 这类分数**端**同时牵动 §10.205 的计数与本节判定；两格一起才封闭。
+
+### 7. 删除条件
+
+与 §10.205 同生共死：若区间在构造时物化成成员表，成员判定自然落在表上，
+`mir_interval_membership_is_on_the_lattice` 应换成物化后的形状判据。
+
