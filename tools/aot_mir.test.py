@@ -242,6 +242,7 @@ ALLOCS_EXPECT = {
     # an arm that copied a bound into a fresh string or wrapper would land here.
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_min_max_follow_the_scan_not_the_bounds": (5, 7936),
+    "mir_unbounded_component_is_not_enumerable": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
     # eight prints of rays: the interval objects themselves are the allocation
     "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
@@ -1731,6 +1732,56 @@ say list(b)
     # INT64_MIN (it cast 1e308).  The 9.0e18 rows are the point of the arm:
     # val_is_integer is `d < 9.0e18 && d == (double)(long long)d`, so 9e18 is
     # NOT an element and the scan lands on 8999999999999998976 one ulp below.
+    # A component that set_comp_enum refuses (src/vm/vm.c:2269-2288) makes
+    # size/count/list/sum nil while len and the print fall back to the LITERAL
+    # member count.  The b block is the enumerable control; the other four are
+    # one refusal each -- an infinite end, beyond the ten-million lattice cap,
+    # past 9.0e18, and an end no VAL_INT can hold.  On the 甲 parent the route
+    # tried to ENUMERATE ten million members for the c block and did not finish
+    # inside the harness timeout, which is the shape of the defect: it did not
+    # answer wrong, it answered slowly and for the wrong reason.
+    ("mir_unbounded_component_is_not_enumerable",
+     "a = Z[0~]\n"
+     "say \"a\"\n"
+     "say a\n"
+     "say len(a)\n"
+     "say size(a)\n"
+     "say count(a)\n"
+     "say list(a)\n"
+     "say sum(a)\n"
+     "b = Z[0~3]\n"
+     "say \"b\"\n"
+     "say b\n"
+     "say len(b)\n"
+     "say size(b)\n"
+     "say count(b)\n"
+     "say list(b)\n"
+     "say sum(b)\n"
+     "c = Z[0~10000000]\n"
+     "say \"c\"\n"
+     "say c\n"
+     "say len(c)\n"
+     "say size(c)\n"
+     "say count(c)\n"
+     "say list(c)\n"
+     "say sum(c)\n"
+     "d = Z[0~1e18]\n"
+     "say \"d\"\n"
+     "say d\n"
+     "say len(d)\n"
+     "say size(d)\n"
+     "say count(d)\n"
+     "say list(d)\n"
+     "say sum(d)\n"
+     "e = Z[-1e300~0]\n"
+     "say \"e\"\n"
+     "say e\n"
+     "say len(e)\n"
+     "say size(e)\n"
+     "say count(e)\n"
+     "say list(e)\n"
+     "say sum(e)\n"
+     ),
     ("mir_min_max_follow_the_scan_not_the_bounds",
      "say max(Z[0~9999999999])\n"
      "say max(Z[0~1e18])\n"
