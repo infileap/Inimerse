@@ -11349,3 +11349,66 @@ flags 是 `6`（bit1 与 bit2 置位），若把 bit0 当上端，它该答 `[0,
 **八、删除条件。** 本节四条判据与 `mv_region_len`/`mv_list`/`mv_len` 的窗口逻辑同删——条件与
 §10.188/§10.189 相同（解释器改了区间语义或加了新域）。`mv_comp_card` 的开端减法与 `mv_list`
 PASS 3 的起点偏移与它们同删。
+
+## §10.204 `Z[0~]` 的无界端：判读在 double 空间里做，读端答 nil，min/max 走扫描
+
+**一、来源与定性。** 上一轮把无界端一格（`Z[0~]`、`Z(0~]`、`Z[0~1e300]`）量成「答错」，
+主人（mellow-delta）复核后改判为 **UB**，并把根因钉到行：`src/compilation/aot_mir.c:2740-2743`
+先 `(long long)mv_arrmem[..].fval` 再比 32 位界，于是 `(long long)1e308` 是未定义行为；我测到的
+`0`、`INT64_MIN`、`set(1)` 都只是「某种可能的 UB 结果」，换编译器/优化级别就会变。同一形状在
+`mv_list`（`:3951` 一带）、`mv_len`（`:5208` 一带）、`mv_comp_card` 的 PASS 3 也在。裁定是按四步
+重做、**一步一笔**：(0) 四处判定搬进 double 空间；(0.5) 给区间判据挂 UBSan；(甲) min/max 走扫描；
+(乙) 无界端读端答 nil。硬约束：UB 修复与无界端语义不许同一笔；§10.188/§10.189 的判据一根汗毛不动。
+
+**二、第 (0) 步：判读前移。** `2a376953`。四处统一成
+`double dlo/dhi → if (dlo < -2147483648.0 || dhi > 2147483647.0) return 0; → long long lo = (long long)dlo;`。
+**行为对有限值一个字节不变**（`size(Z[0~3])`=4、`size(Z(0~3))`=2、`size(Z[0~0])`=1、
+`len(range(1))`=0、`str(Z[0~3])`=`set(4)`），而哨兵与超界值落进确定的 `return 0`／`nil`，
+不再有 UB。变量拷贝的 `size`/`list` 仍是 0/`[]`——那是第 (乙) 步的语义，故意留出。
+
+**三、第 (0.5) 步：UB 挂进编译器。** `2e9a21a4`。读数抓不住这一类错（同一程序在老树上这次印
+`nil`、换次构建印别的），所以守卫是编译器：新增 `UBSAN_CASES`，只给两条程序
+（区间成员与新增的 `mir_interval_bounds_are_measured_before_they_are_cast`）的编译加
+`-fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all`——**`float-cast-overflow`
+不在 `-fsanitize=undefined` 里**，这正是第一次挂上却没抓住的原因；全量 500 程序不加（编译时间
+会炸），暴露面只在区间读端。runner 与 `abort_surface` 都看 stderr 的 `runtime error` 并报 problem。
+证明：把同一程序用 UBSan 编在 `2a376953^` 的读端上，退出码 1 并打
+`s0.c:2872:53: runtime error: 1e+308 is outside the range of representable values of type 'long long int'`；
+修复版 rc=0。判据本身八行读的是 `str/size/list/len` 的裸射线（解释器先量：`set(Z interval)`、nil、
+nil、0），分配轴 `(4, 1808)`。
+
+**四、第 (甲) 步：min/max 扫描，不是答边界。** `cbd9f416`。§10.185 的臂把存的 lo/hi 当整数答；
+实测解释器是**走**出来的：`set_minmax` 的 kind-2 分支（`src/vm/vm.c:2528`）与 `set_comp_minmax`
+（`:2452`）从 lo 向上一格 1.0、从 hi 向下一格 1.0，最多一百万步（`:2437`/`:2443`），
+命中后还要落在区间内；相关端无界（`lo <= -1e307` 或 `hi >= 1e307`，`:2447`/`:2459`）答 nil，
+**只有那一端**——`min(Z[0~])`=0、`max(Z[0~])`=nil。Z 的元素判定照抄 `val_is_integer`（`:1981`）
+`d < 9.0e18 && d == (double)(long long)d`，**严格小于**，所以 `max(Z[0~9e18])`=
+`8999999999999998976`（9e18 下面一个 ulp）而 `max(Z[0~9.05e18])`=nil。判据
+`mir_min_max_follow_the_scan_not_the_bounds`（28 行，分配轴 `(5, 7936)`）在父构建上红 15 行
+（老臂把 `max(Z[0~9.05e18])` 答成边界、把每个无界端答成 `INT64_MIN`）。
+两发注入各只红本案：打掉 `mv_z_contains` 的 9.0e18 界只红三行 9e18；不扫描、直接答 lo/hi 红同样
+三行加两个无界端。**R 成分答边界**：`set_comp_minmax` 从端向内走 1e-11，第一步就在 R 里，命中的值
+解释器**打印成端**（`str(max(R[0~3)))` 是 2.99999999999、`say` 印 3；`str(min(R(0~3]))` 是
+9.99…e-12、`say` 印 0），所以答端字节完全相同；这一步的差写在注释里，不藏。
+
+**五、第 (乙) 步：无界端读端答 nil。** `760b00c6`。变量拷贝把裸区间变成有限集的普通**成分**，
+枚举读端于是先问「这个成分能不能走」。`set_comp_enum`（`src/vm/vm.c:2269`）五种情况答 -1，
+本条把五种照抄：`nameIdx > 23`（R 无格点，:2270）、端点不有限（`lo <= -1e300 || hi >= 1e300`，
+:2271）、超 ±9e18（:2278）、整数域超 VAL_INT 32 位（:2279）、格点 ≥ 一千万（:2288，拒不是截）。
+**读端分裂是要点**：`size/count/list/sum` 答 nil，而 `len`/`say`/`str` 退回**字面成员数**（这里是 0），
+因为解释器自己的 `len` 就这么答。此笔之前同一程序不是答错，是**试图枚举一千万个成员**
+（`Z[0~10000000]`）在 harness 超时内跑不完——比答错更糟：一个永远不来的读数看起来像慢构建。
+判据 `mir_unbounded_component_is_not_enumerable`（40 行，值 + 标签，分配轴 `(4, 3840)`）：
+`Z[0~]`/`Z[0~1e18]`/`Z[-1e300~0]`/`Z[0~10000000]` 四块都是 `set(0)`/0/nil/nil/nil/nil，
+`b = Z[0~3]` 是可枚举对照（`set(4)`、4、4、4、`[0, 1, 2, 3]`、6）。
+
+**六、边界。** ①`[~5]` 下端无界的写法是**解析错**（`expected ']'`），只有上端无界能写，且
+`Z[0~1e300]` 与 `Z[0~]` 两种拼写都落进 `:2271`。②`min(Z(0~3])` 这类**开下端**的拷贝，
+`set_comp_minmax` 从 `lo + 1` 起走，实测答 1；本节判据只收无界端与可枚举对照，开下端的
+成分行为由 `mir_z_open_ended_intervals_enumerate_their_members` 覆盖字面量一侧，拷贝一侧未钉
+（无注入可验的独立形状）。③UB 修复只保证「判读在 double 空间、转换前已判」；**不是**
+「所有 double 都安全」——`mv_region_len` 的 `(long long)dlo` 仍只在判过界之后才执行。
+
+**七、删除条件。** 四条判据与四处 double 空间判定同删：解释器改了区间语义、或 `set_comp_enum`
+开始枚举 R/无界成分、或 `val_is_integer` 的 9.0e18 界改变。UBSan 的 `UBSAN_CASES` 与之同留同删
+（删了它，这一类错就只剩读数去抓）。
