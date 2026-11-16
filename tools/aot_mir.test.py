@@ -241,6 +241,7 @@ ALLOCS_EXPECT = {
     # the R interval and the Z interval); min/max read and allocate nothing, so
     # an arm that copied a bound into a fresh string or wrapper would land here.
     "mir_min_max_answer_only_z_intervals": (4, 3840),
+    "mir_min_max_follow_the_scan_not_the_bounds": (5, 7936),
     "mir_z_domain_readers_agree": (5, 1843),
     # eight prints of rays: the interval objects themselves are the allocation
     "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
@@ -1722,6 +1723,44 @@ say list(b)
     # nameIdx-24 skip in set_minmax is exactly this half of the rule.  A finite
     # set cannot even be written in this grammar (Z[1, 2] and Z[1 2] both fail
     # in the parser), so the Z domain is the only set shape that reaches them.
+    # min/max over an interval SCAN for an element; they do not answer the
+    # stored bounds.  Measured on the interpreter, then on the parent build
+    # (2a376953): fifteen of these twenty-eight lines differed -- the old arm
+    # returned the bounds, so max(Z[0~9.05e18]) printed 9050000000000000000
+    # where the interpreter answers nil, and every unbounded end printed
+    # INT64_MIN (it cast 1e308).  The 9.0e18 rows are the point of the arm:
+    # val_is_integer is `d < 9.0e18 && d == (double)(long long)d`, so 9e18 is
+    # NOT an element and the scan lands on 8999999999999998976 one ulp below.
+    ("mir_min_max_follow_the_scan_not_the_bounds",
+     "say max(Z[0~9999999999])\n"
+     "say max(Z[0~1e18])\n"
+     "say max(Z[0~9e18])\n"
+     "say max(Z[0~9.05e18])\n"
+     "say max(Z[0~9.2e18])\n"
+     "say max(Z[0~1e19])\n"
+     "say max(Z[0~1e300])\n"
+     "say min(Z[-3000000000~0])\n"
+     "say min(Z[-9e18~0])\n"
+     "say min(Z[-1e19~0])\n"
+     "say min(Z[-1e300~0])\n"
+     "say min(Z[0~])\n"
+     "say min(Z(0~])\n"
+     "say max(Z[0~])\n"
+     "say min(Z[0~3])\n"
+     "say max(Z[0~3])\n"
+     "say max(Z(0~3])\n"
+     "say min(Z(0~3])\n"
+     "say min(R[0~3))\n"
+     "say max(R[0~3))\n"
+     "a = Z[0~3]\n"
+     "say min(a)\n"
+     "say max(a)\n"
+     "b = Z[0~]\n"
+     "say min(b)\n"
+     "say max(b)\n"
+     "say min(range(1))\n"
+     "say max(range(1))\n"
+     ),
     ("mir_min_max_answer_only_z_intervals",
      "say min([3, 1, 2])\n"
      "say max([3, 1, 2])\n"
