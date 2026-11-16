@@ -245,6 +245,7 @@ ALLOCS_EXPECT = {
     "mir_unbounded_component_is_not_enumerable": (4, 3840),
     "mir_interval_copies_keep_their_open_ends": (4, 3840),
     "mir_interval_membership_is_on_the_lattice": (4, 3840),
+    "mir_declare_inert_kinds_are_accepted": (1, 256),
     "mir_z_domain_readers_agree": (5, 1843),
     # eight prints of rays: the interval objects themselves are the allocation
     "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
@@ -1755,6 +1756,23 @@ say list(b)
     # between the ends -- 2.5 in Z[0~5] is false while 3.0 in Z[0~5] is true
     # (3.0 IS the integer 3 -- the test is on the value, not the tag).  The R
     # row is the contrast: R[0~5) has no lattice, so 2.5 is a member.
+    # A declaration whose limit cannot bind.  The interpreter gates every
+    # ceiling on a POSITIVE value (`vm->limit_mem > 0.0 ...`), so a zero
+    # declares nothing, and `vram` is only ever enforced by gui_mod.c -- a
+    # mod the emitted binary never loads.  Measured on 3f5858c: `declare
+    # { vram 1 }` and `declare { mem 0 }` leave a program's output byte for
+    # byte unchanged, which is why this route can emit them as no-ops while
+    # the binding kinds stay refused (mir_declare_binding_kind_is_refused).
+    ("mir_declare_inert_kinds_are_accepted",
+     "declare { vram 1 }\n"
+     "declare { mem 0 }\n"
+     "declare { threads 0 }\n"
+     "s = \"abc\"\n"
+     "a = [1, 2, 3]\n"
+     "say s\n"
+     "say a\n"
+     "say len(a)\n"
+     ),
     ("mir_interval_membership_is_on_the_lattice",
      "say 2.5 in Z[0~5]\n"
      "say 3.5 in Z[0~5]\n"
@@ -5733,6 +5751,9 @@ MIR_ONLY_REFUSE = {
     # `say a[5]` grows the array (src/vm/vm.c:3721-3724) and the stored value IS
     # 9 -- so the length this pass remembered was stale, and the route refused a
     # program with a non-nil answer.  It is now a positive criterion below.
+    "mir_declare_binding_kind_is_refused": (
+        'declare { inst 5 }\ni = 0\nwhile i < 100000 { i = i + 1 }\nsay i\n',
+        "declare-limit"),
     "mir_thread_decl_never_started": (
         'thread plain_worker {\n    return 1\n}\nsay "defined-never-started"\n',
         "threads"),
