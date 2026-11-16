@@ -120,14 +120,6 @@ BOUNDARY = {
         "refuses the program at compile time when the name is not a declared "
         "thread, so no accepted program reaches it",
     ),
-    "OP_DECLARE": (
-        "measurement",
-        "src/vm/vm.c",
-        "vm->limit_inst > 0",
-        "sets a resource ceiling; the ceiling is observed by WHERE the "
-        "interpreter stops, and the emitted C's instruction count is not the "
-        "interpreter's, so the observable half has no counterpart here",
-    ),
     "OP_POP_REG": (
         "retired",
         "src/compiler/bytecode.h",

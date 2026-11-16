@@ -5048,6 +5048,15 @@ static int op_regs(int op) {
        compiler.c, STMT_WAIT: `emit(comp->curBC, OP_WAIT, r, 0, 0)`).  It reads
        no pool and no global, so unlike OP_BIND there is nothing for the pre-scan
        to range-check; whether the helper is emitted is decided by g_wait_used. */
+    /* OP_DECLARE writes no register and reads none: r1 is the KIND (0..4) and
+       r2 is a FLOAT POOL index, both plain numbers (src/compiler/compiler.c,
+       STMT_DECLARE: `emit(..., OP_DECLARE, kind, fidx, 0)`).  A register mask
+       here would have the generic loop read the pool index as a register
+       number, so the mask is zero and the operand work is the prescan arm's.
+       10.208: a zero mask is also this route's claim that the instruction is
+       emitted -- the inert kinds become a no-op, the binding kinds are refused
+       by name there. */
+    case OP_DECLARE: return 0;
     case OP_WAIT: return R1;
     default: return -1;
     }
@@ -5522,6 +5531,26 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 continue;
             }
             switch (op) {
+            case OP_DECLARE: {
+                /* A declaration sets a resource ceiling, and the interpreter
+                   gates every ceiling on a POSITIVE value (`vm->limit_mem >
+                   0.0 ...`), so a value <= 0 disables the limit and declares
+                   nothing.  `vram` never binds in the emitted binary either:
+                   gui_mod.c is its only enforcer and the binary loads no mods.
+                   Those declarations can be emitted as no-ops.  A binding one
+                   (mem/time/inst/threads with a positive value) changes WHERE
+                   the interpreter stops, and the emitted C's instruction
+                   stream is not the interpreter's, so it is refused by name. */
+                int dkind = (int)in->dst;
+                int32_t dix = ir_insn_r2(in);
+                double dv = 0.0;
+                if (dix >= 0 && dix < node->float_count && node->float_pool) dv = node->float_pool[dix];
+                if (dkind != 4 && dv > 0.0) {
+                    g_prescan_why = "declare-limit";
+                    return bad("container=%d insn=%d declaration kind %d = %.17g sets a ceiling this route cannot reproduce", f, i, dkind, dv);
+                }
+                break;
+            }
             case OP_LOADK_FLOAT: {
                 int32_t ix = ir_insn_r2(in);
                 if (ix < 0 || ix >= node->float_count)
@@ -6199,6 +6228,15 @@ static int emit_one(Ctx *c, Buf *b, int i) {
         return 0;
     }
     case OP_LOADK_BOOL:   buf_fmt(b, "    v[%d] = mv_boo(%d);", r1, w2 ? 1 : 0); return 0;
+    case OP_DECLARE:
+        /* 10.208: a declaration whose ceiling cannot bind (value <= 0, or the
+           vram kind, which only gui_mod.c enforces) is a NO-OP here.  It still
+           has to put SOMETHING in the text: the conservation equation counts
+           an instruction as emitted by the bytes its arm appends, and an arm
+           that appends nothing is refused as "emitted nothing".  A comment is
+           the smallest honest thing to append. */
+        buf_str(b, "    /* declare: inert, see the prescan arm */" NL);
+        return 0;
     case OP_LOADK_FLOAT:  buf_fmt(b, "    v[%d] = mv_flt(%.17g);", r1, c->node->float_pool[w2]); return 0;
     case OP_LOADK_STRING: {
         /* The pool string is emitted INLINE as a C string literal: the literal's
