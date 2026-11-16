@@ -243,6 +243,7 @@ ALLOCS_EXPECT = {
     "mir_min_max_answer_only_z_intervals": (4, 3840),
     "mir_min_max_follow_the_scan_not_the_bounds": (5, 7936),
     "mir_unbounded_component_is_not_enumerable": (4, 3840),
+    "mir_interval_copies_keep_their_open_ends": (4, 3840),
     "mir_z_domain_readers_agree": (5, 1843),
     # eight prints of rays: the interval objects themselves are the allocation
     "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
@@ -1740,6 +1741,53 @@ say list(b)
     # tried to ENUMERATE ten million members for the c block and did not finish
     # inside the harness timeout, which is the shape of the defect: it did not
     # answer wrong, it answered slowly and for the wrong reason.
+    # The COPY side of the open ends, which §10.203/§10.204 left to the literal
+    # side.  A variable copy turns the interval into a finite set's component and
+    # the readers fold it by the same flags: len/list/size count the members
+    # between the ends, min starts at lo + 1 for an open lower end and stops
+    # before hi for an open upper one.  The e block is the one that has no
+    # members to start from: Z[2.5~5.5] answers 3/3/[3, 4, 5] but min and max
+    # are nil, because the scan starts at 2.5 and steps by 1.0 and never lands
+    # on an integer -- a rule that a "just answer the bounds" arm gets wrong.
+    ("mir_interval_copies_keep_their_open_ends",
+     "a = Z(0~3]\n"
+     "say \"a\"\n"
+     "say a\n"
+     "say len(a)\n"
+     "say list(a)\n"
+     "say min(a)\n"
+     "say max(a)\n"
+     "say size(a)\n"
+     "b = Z[0~3)\n"
+     "say \"b\"\n"
+     "say b\n"
+     "say len(b)\n"
+     "say list(b)\n"
+     "say min(b)\n"
+     "say max(b)\n"
+     "say size(b)\n"
+     "c = Z(0~3)\n"
+     "say \"c\"\n"
+     "say c\n"
+     "say len(c)\n"
+     "say list(c)\n"
+     "say min(c)\n"
+     "say max(c)\n"
+     "d = Z[-2~2)\n"
+     "say \"d\"\n"
+     "say d\n"
+     "say len(d)\n"
+     "say list(d)\n"
+     "say min(d)\n"
+     "say max(d)\n"
+     "e = Z[2.5~5.5]\n"
+     "say \"e\"\n"
+     "say e\n"
+     "say len(e)\n"
+     "say list(e)\n"
+     "say min(e)\n"
+     "say max(e)\n"
+     ),
     ("mir_unbounded_component_is_not_enumerable",
      "a = Z[0~]\n"
      "say \"a\"\n"
