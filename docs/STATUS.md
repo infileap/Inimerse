@@ -11646,9 +11646,15 @@ opcode，而是这个 opcode 的这个实参。**
    not-yet 跳过，后面加的臂永远收不到它——这是本格最贵的一步。**
 2. `prescan`：kind 与值取自 `in->dst` 与 `node->float_pool[ir_insn_r2(in)]`；
    `kind != 4 && v > 0.0` ⇒ `g_prescan_why = "declare-limit"` 并 `bad(...)`。
-3. `emit_one`：惰性声明发一行 C 注释（`/* declare: inert, see the prescan arm */`）。
-   **必须发点东西**：保守方程靠「这条臂追加了多少字节」判定是否发射，什么都不发会被
-   拒成 `emitted nothing, so the conservation equation could not see it`。
+3. `emit_one`：惰性声明发一行 C 注释，**带上 kind 与值**
+   （`/* declare: kind %d = %.17g (inert) */`）。两件事都被工具抓住了：
+   - 保守方程靠「这条臂追加了多少字节」判定是否发射，什么都不发会被拒成
+     `emitted nothing, so the conservation equation could not see it`；
+   - `aot_mir_cover.test.py` 的**操作数检测器**要求「prescan 检查的 opcode，
+     emit_one 也要索引它的池」——第一版评论不带池下标，工具直接报
+     `prescan checks OP_DECLARE, which the emitter does not index`。带上
+     `c->node->float_pool[w2]` 后两件事同时成立，而且注释本身也把「声明了什么」
+     写进了生成的 C，比一句空注释更可读。
 
 ### 4. 边界
 
