@@ -12093,3 +12093,64 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
 ④19 条是**今天的源码**枚举出来的；接口层若新增 `refuse("…")`，账本检查会立刻红。
 
 **删除条件.** 无。
+
+## §10.218 The unreachable claims become premises that can fail
+
+**来源.** §10.217 把「路线能抛的 19 个拒绝理由」做成了账本，并给每个理由标了
+可达性：被见证的（`witnessed`）、不可达的（`unreachable`）、兜底家族的（`family`）。
+但「不可达」那一栏当时是**散文**——写在文档里的理由，人会忘，文档会过期，而
+账本自己不会知道它过期。 §10.216 里那条「`try-enters` 需要两个 try 区」的结论
+就是这种散文：它当时是对的（作为底账），但没有任何东西会在前提变化时说一声。
+
+**判据.** 账本里每个 `unreachable` 的理由必须带一条**可重算的前提**，前提破了就
+是 PROBLEM：
+
+    UNREACHABLE_PREMISES = {"unsupported-opcode": "every-opcode-has-a-mask"}
+
+    前提 every-opcode-has-a-mask：`op_regs` 与 emitter 的 `case` 标签覆盖同一组
+    opcode。 理由本身：`op_regs` 给出 -1 掩码的指令就是「还没降译」，整个程序被
+    `why=unsupported-opcode` 拒。 所以只要每个能被 emitter 遇见的 opcode 都有掩码，
+    这个理由就出门不了。
+
+**读数（亲跑）.**
+
+    IR-AOT-MIR-REFUSAL-PREMISE|why=unsupported-opcode|premise=every-opcode-has-a-mask
+      |holds=yes|op_regs and the emitter cover 60 opcodes
+    IR-AOT-MIR-SURFACE|declared=67|emitted=60|unemitted=7|classified=8|classes=3
+    IR-AOT-MIR-SURFACE-VERDICT|PASS
+
+**注入.** 把 `op_regs` 里 `OP_EQK` 的掩码去掉（发射器仍留着它的臂）⇒
+
+    IR-AOT-MIR-SURFACE-PROBLEM|the refusal ledger says why='unsupported-opcode' is
+      unreachable, but its premise (every-opcode-has-a-mask) no longer holds:
+      op_regs covers 59 opcodes and the emitter 60; only in the emitter: OP_EQK
+    IR-AOT-MIR-SURFACE-VERDICT|FAIL
+
+还原后 PASS。 自检从 11 格扩到 **14 格**，新增三格前提检查（前提成立 / 前提破了 /
+前提挂在一个被见证的理由上），证明这条检查**能说 NO**。
+
+**这一格同时改正了一条底账：§10.216 说 `try-enters` 不可达，那是错的。**
+编译器是**每个 try 语句**开一个区（`bytecode_add_try` 一个调用点，区域是
+`[tstart, tend)`），不是每个函数开一个；一个函数里两个 try 语句就有两个区，
+而 catch 块的跳转正是从区外跳进第二个区——那就是 `try-enters` 拒的形状。实测：
+
+    try { say 1 } catch { say 2 }
+    try { say 3 } catch { say 4 }
+
+    aot-mir: try-enters: container=0 insn=4 jumps INTO the try region [7,10] at 7
+    IR-MIR-REFUSED|why=try-enters
+
+所以 `try-enters` 从 `unreachable` 改成 `witnessed`，并新增语料行
+`mir_two_try_statements_refuse_the_jump_into_the_second`。 被见证的理由从 8 个变 9 个。
+
+**教训（写进文档）.** 「不可达」这种结论必须带**可重算的前提**，否则它就是散文；
+而散文里最危险的一种，是**当时对、后来错**的散文——`try-enters` 正是这种。
+
+**边界.** ①前提只覆盖被写成「可重算」的那几条；账本里其余 10 个 `unreachable`
+仍是散文（它们的理由要么需要坏容器、要么需要 OOM、要么是内部不变量）。 ②前提
+成立**不等于**理由真的出门不了：它只保证「那条检查没有可走的路」，不保证没有
+别的路径拼出同一个 `why`。 ③`unsupported-opcode` 的前提一旦破了，正确的处置是
+给 `OP_EQK` 补掩码或把它从 emitter 里拿掉，而不是改账本。 ④自检里的三格前提
+检查用的是**假的**前提检查函数，证明的是「检查会响」，不是「前提推导正确」。
+
+**删除条件.** 无。
