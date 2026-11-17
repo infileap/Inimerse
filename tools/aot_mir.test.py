@@ -5956,6 +5956,30 @@ MIR_ONLY_REFUSE = {
     "mir_two_try_statements_refuse_the_jump_into_the_second": (
         'try {\n  say 1\n} catch {\n  say 2\n}\ntry {\n  say 3\n} catch {\n  say 4\n}\n',
         "try-enters"),
+    #   function-name: two FUNCTION names fold onto one C identifier.  c_name
+    #   turns every byte outside [A-Za-z0-9_] into '_', so the two-byte UTF-8
+    #   name "a\xc3\xa9" and "a__" both become "fn_a__"
+    #   (src/compilation/aot_mir.c:5162-5180, 5234-5261) and the second loop
+    #   refuses.  The high bytes are written as real bytes: the source lexer
+    #   accepts them in an identifier and the interpreter runs the program (it
+    #   prints 1), so the refusal is a route decision, not a parse difference.
+    "mir_two_function_names_fold_onto_one_identifier": (
+        'func a\u00e9() {\n}\nfunc a__() {\n}\nsay 1\n',
+        "function-name"),
+    #   global-name: the same fold on GLOBAL names, plus the rename that is
+    #   supposed to separate the group.  The rename gives each member its own
+    #   index -- "g_a__24" for the member at index 24 -- and a source name
+    #   "a__24" sanitizes to exactly that, so the final loop (aot_mir.c:5219)
+    #   still finds two globals with one identifier.  Here the folded member
+    #   is "a\xc3\xa9" (two high bytes -> "g_a__"), renamed to "g_a___24",
+    #   and the source name "a___24" sanitizes to exactly that.  The order
+    #   matters: the colliding member must sit at the index the rename hands
+    #   out, so "a___24" is declared first and takes index 23.
+    "mir_two_global_names_fold_onto_one_identifier": (
+        'global a___24\nglobal a\u00e9\nglobal a__\n'
+        'a___24 = 1\na\u00e9 = 2\na__ = 3\n'
+        'say a___24\nsay a\u00e9\nsay a__\n',
+        "global-name"),
 }# THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
 #
 # A `why=unsupported-opcode` refusal alone says "something here is not lowered";

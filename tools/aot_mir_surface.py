@@ -186,16 +186,28 @@ REFUSAL_REASONS = {
     "set-interval-domain": "witnessed",
     "try-enters": "witnessed",
     "try-escapes": "witnessed",
+    # UPDATE (10.219): function-name and global-name were recorded as
+    # unreachable because the ledger author believed the identifier lexer only
+    # admits [A-Za-z0-9_], so a name could not be folded onto a plain ASCII
+    # one.  Measured: a high byte in a source name IS folded to '_' by
+    # c_name, so "a\xff" and "a_" both become "fn_a_" / "g_a_".  Both reasons
+    # are therefore triggerable, and both are witnessed below.
     "conservation": "unreachable",
     "container-shape": "unreachable",
     "emit-failed": "unreachable",
-    "function-name": "unreachable",
-    "global-name": "unreachable",
+    "function-name": "witnessed",
+    "global-name": "witnessed",
     "not-a-module": "unreachable",
     "out-of-memory": "unreachable",
     "threads": "witnessed",
     "unsupported-opcode": "unreachable",
-    "write-failed": "unreachable",
+    # UPDATE (10.219): write-failed is reachable, but only through the OUTPUT
+    # PATH, not through a program shape -- the route refuses when it cannot
+    # write the .c file it was told to write.  The corpus cannot express that
+    # (the case table names a program, and the harness always picks a writable
+    # path), so it is marked "reachable" instead of "witnessed": the ledger
+    # check only demands a corpus row for "witnessed".
+    "write-failed": "reachable",
 }
 
 
@@ -350,6 +362,14 @@ def refusal_ledger_problems(whys=None):
         if state == "witnessed" and why not in whys:
             problems.append("the refusal ledger says why=%r is witnessed, but "
                             "no case in the corpus names it" % why)
+    # A state the checker does not know is a silent hole: the ledger would
+    # accept "witnessedd" and check nothing about it.
+    known = {"witnessed", "reachable", "unreachable", "family"}
+    for why, state in sorted(REFUSAL_REASONS.items()):
+        if state not in known:
+            problems.append("the refusal ledger gives why=%r the state %r, which "
+                            "is not one of %s -- the state would be checked by "
+                            "nothing" % (why, state, ", ".join(sorted(known))))
     return problems
 
 
@@ -512,6 +532,8 @@ def self_check():
          {"builtin-argc"}, True),
         ("ledger-claimed-but-unwitnessed", {"builtin-argc"},
          {"builtin-argc": "witnessed"}, set(), True),
+        ("ledger-unknown-state", {"builtin-argc"},
+         {"builtin-argc": "witnessedd"}, {"builtin-argc"}, True),
     ]
     saved = dict(BOUNDARY)
     try:
