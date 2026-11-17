@@ -5783,6 +5783,14 @@ MIR_ONLY_REFUSE = {
     "mir_thread_refusal_precedes_the_binding_ceiling": (
         'declare { mem 1 }\nthread plain_worker { return 1 }\nsay "defined-never-started"\n',
         "threads"),
+    # The member-expression path is the least obviously thread-only emission
+    # site: `t.running` is compiled by a branch that only fires when the name
+    # LOOKS UP as a declared thread (compiler.c's lookup_thread), so the only
+    # way to reach it is a container that carries a thread section -- the same
+    # refusal, measured here rather than argued.
+    "mir_thread_state_property_needs_the_section": (
+        'thread w {\n    return 5\n}\nstart w()\nsay w.running\nsay w.finished\n',
+        "threads"),
     "mir_thread_result_unwrap": (
         'thread plain_worker {\n    return 11\n}\nr = thread_result("plain_worker")\nsay r\n',
         "threads"),

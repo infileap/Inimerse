@@ -11813,3 +11813,50 @@ A1 裁定。另外 `measurement` 类现在**没有行**（`OP_DECLARE` 已由 §
 届时这两条用例应当被删掉而不是改成「断言新顺序」，因为它们钉的是**旧路线的
 拒绝顺序**，不是语言语义。
 
+## §10.212 The seven thread opcodes only exist on the thread path
+
+### 1. 来源
+
+§10.145/§10.192 把 `another-thread` 那七行说成「构造上不可达」，但**每一行的发射点
+从未逐条核实**。如果其中任何一个在非线程路径上也会被发射，"构造上不可达" 就是错的。
+本节逐个查了发射点。
+
+### 2. 发射点逐个核实
+
+| opcode | 发射处（函数/语句） | 为什么离不开线程段 |
+| --- | --- | --- |
+| `OP_THREAD_START` | `start` 语句的两条编译路径 | 需要一个已声明的线程名 |
+| `OP_THREAD_CTRL` | pause / resume / stop 语句 | 同上 |
+| `OP_THREAD_JOIN` | join 语句 | 同上 |
+| `OP_THREAD_WAIT` | wait 语句 | 同上 |
+| `OP_THREAD_GOTO` | 线程体内的 goto 收尾 | 线程体只在 `thread` 定义里存在 |
+| `OP_SEND` | send 语句 | 需要线程名 |
+| `OP_THREAD_STATE` | **成员表达式** `t.running` | 名字必须先被 `lookup_thread` 查成线程 |
+
+前六行都是语句级：解析器先要看到 `thread` 定义才会给名字建线程表项。
+**只有 `OP_THREAD_STATE` 走的是表达式路径** —— 它是这一格里最值得查的一条：成员访问
+在普通程序里满地都是，只有名字被 `lookup_thread` 命中时才发这个 opcode，而命中要求
+线程表非空，也就是线程段存在。
+
+### 3. 判据
+
+新增拒绝用例 `mir_thread_state_property_needs_the_section`：
+
+    thread w {
+        return 5
+    }
+    start w()
+    say w.running
+    say w.finished
+
+解释器印 `true` / `false`（实测），本路线 `why=threads: the container carries a
+thread section, which this route does not emit`。这条把「成员表达式也不会绕出线程段」
+从论证变成了一条会跑的用例。
+
+### 4. 边界
+
+这是**静态审计 + 一条形状用例**，不是证明。它证明的是「今天这七条发射点都需要线程
+段」，不证明「编译器将来不会新增一条路径」。后者的守卫是 §10.210 的
+`CLASS_BACKING`：只要 `another-thread` 类还在，语料里就必须还有 `why=threads` 的
+拒绝用例，否则 surface 直接红。
+
