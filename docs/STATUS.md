@@ -11996,3 +11996,56 @@ thread section, which this route does not emit`。这条把「成员表达式也
 的规则单列。
 
 **删除条件.** 无。
+
+## §10.216 The refusal reasons the route can emit, and which of them are witnessed
+
+**来源.** §10.210 给 `unknown=8` 的边界表加了一层「类别必须点名语料里还在跑的拒绝
+原因」的检查，那张表点的是**类别**（`another-thread` → `threads`）。但路线本身能抛的
+拒绝原因有 19 个，其中只有 6 个在语料里被钉住。 这 13 个「能抛但没案例」的理由，
+每一个都可能是「路线在某个形状上拒了，而没人知道它为什么拒」。
+
+**判据（这一格是底账，不是新机制）.** 把路线源码里能出现的 `why` 全部枚举出来，
+逐个回答「这个理由在今天的树里能被触发吗」：
+
+- prescan 家族：`g_prescan_why` 赋值处 9 个（`builtin-argc`、`builtin-call`、
+  `builtin-stale-stack`、`declare-limit`、`illegal-operand`、`lock-unpaired`、
+  `set-interval-domain`、`try-enters`、`try-escapes`）；
+- 接口层 `refuse("…")` 10 个（`conservation`、`container-shape`、`emit-failed`、
+  `function-name`、`global-name`、`not-a-module`、`out-of-memory`、`threads`、
+  `unsupported-opcode`、`write-failed`）；
+- 并集 **19** 个，语料 `MIR_ONLY_REFUSE` 钉住 **6** 个（`builtin-call`、
+  `builtin-stale-stack`、`declare-limit`、`lock-unpaired`、`threads`、`try-escapes`）。
+
+**实测：13 个「能抛但无案例」的理由里，2 个真的可触发。**
+
+    say bit_and(1)      -> IR-MIR-REFUSED|why=builtin-argc
+    say N[0~3]          -> IR-MIR-REFUSED|why=set-interval-domain
+
+其余 11 个在今天的树里**造不出触发它们的程序**（逐个试过，脚本在
+`.scratch/why/probe*.py`，工作区外的临时目录）：
+
+- `illegal-operand` 是**兜底家族名**（`g_prescan_why` 的初值），不是一条独立的
+  检查；今天每一条会拒的路径都先把 `why` 改成具名的那一个，所以它的字符串出现
+  在源码里，却没有一个形状会带着它出门。
+- `try-enters`（跳进 try 区）需要**两个** try 区域，而编译器每个函数只开一个 ⇒
+  不可达（§10.199 的中止面矩阵踩到过同一件事：它会拒 `why=try-enters`）。
+- `unsupported-opcode` 要一个「未发射的 opcode」，而 `unknown=8` 那 8 个现在都
+  被发射了 ⇒ 今天没有形状能触发它。
+- `global-name` / `function-name` 要两个源名清洗成同一个 C 标识符，但标识符的
+  词法只允许 `[A-Za-z0-9_]` 与高位字节 ⇒ 高位字节与 `_` 混排才可能撞，而高位
+  字节标识符在 `global` 语句处就被解析器拒了 ⇒ 不可达。
+- `container-shape`（容器树与函数数不符）、`not-a-module`、`out-of-memory`、
+  `conservation`、`emit-failed`、`write-failed` 是**接口层**的理由：它们要么需要
+  一个坏掉的容器，要么需要一次 OOM，要么是**内部不变量**（发射数 + 未发射数必须
+  等于指令数），正常编译不会触发。
+
+**读数.** 这 13 个理由里，语料缺的 2 个（`builtin-argc`、`set-interval-domain`）
+已经各自能造出**最小**触发程序，所以它们不是「不可达」，而是「没被钉」。
+
+**边界.** ①这一格只回答「今天能不能触发」，不回答「以后会不会被触发」：新加一条
+prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可达性要重测。 ②
+`illegal-operand` 作为兜底家族名**永远可达**（只要有一个 `bad()` 调用没有先设
+`g_prescan_why`），但它不是一个「形状」，所以不该给它造案例。 ③语料钉住的 6 个
+理由里，`threads` 那一条有 5 个案例，其余各 1 个。
+
+**删除条件.** 无。本节是底账，不产生新的判据。
