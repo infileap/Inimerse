@@ -11957,3 +11957,42 @@ thread section, which this route does not emit`。这条把「成员表达式也
 `chr(200)` 把裸字节（0xC8）写进 stdout，harness 的文本解码抛 `UnicodeDecodeError`，
 整场比较被一个字节打断。族里一律用 `ord(chr(n))` 读回——这正是 §10.170 定下的
 「通道就是风险」：一个不可解码的字节比一个断言更贵。
+
+## §10.215 The abort matrices must agree about WHY they stopped
+
+**来源.** §10.213/§10.214 给内建中止面加了广度矩阵与分族矩阵，两条矩阵都把
+「两侧都停」记成一次一致。 但那只是退出码的一致：解释器死于 `type_mismatch`，
+路线死于它那条臂恰好抛的东西，两者都只是非零退出码，矩阵看不出来。 §10.214
+的边界里已经写了这句（「同停不说明停的原因相同」），这一格把它变成检查。
+
+**判据.** 两个矩阵都记下各自停下的原因，并要求两侧原因相同：
+
+- 原因取 `uncaught: ` 之后、第一个 `|` 之前的文本。 解释器把指令指针放在**下
+  一行**（`at ip=3 frames=0`），路线把自己的分配行 `IR-MIR-ALLOCS|...` 接到
+  同一个流上，所以两边取到的都是异常名。
+- 操作符矩阵加 `other-reason=` 计数；内建的两个矩阵加 `same-reason=` 与
+  `other-reason=`。 原因不同即为 PROBLEM，消息里点名两侧的原因。
+
+**读数（先红后绿，亲跑）.**
+
+    IR-MIR-ABORT-SURFACE|pairs=494|stop-events=0|both-stopped=102|other-reason=0
+    IR-MIR-BUILTIN-ABORT-SURFACE|calls=34|both-stopped=4|same-reason=4|other-reason=0
+    IR-MIR-BUILTIN-FAMILY-ABORT-SURFACE|calls=56|both-stopped=7|same-reason=7|other-reason=0
+
+**注入.** 把 `mv_sqrt` 的 `type_mismatch` 换成 `wrong_reason`：
+
+- 操作符矩阵 `other-reason=10`（nil/字符串/空串/数组等非数值的 sqrt 全部红）
+- 内建分族矩阵 `same-reason=5|other-reason=2`
+- PROBLEM 文案点名两侧原因：`the interpreter died of `type_mismatch`, the route
+  died of `wrong_reason``
+
+还原后三条读数全部回到 `other-reason=0`。
+
+**边界.** ①这只比较「异常名」这一层：解释器的 `type_mismatch` 与路线的
+`type_mismatch` 是否指同一件事，矩阵答不了；那是值面判据那一层的事。 ②操作符
+矩阵的 102 对「同停」里仍可能有「原因相同但内部路径不同」的对（同一个异常名
+由不同臂抛出），矩阵看不出来。 ③`same-reason` 不是「正确」的证明，它只是
+「两侧没有分歧」的证明。 ④内建矩阵里被按名拒的形状不计入停/不停，仍按 §10.213
+的规则单列。
+
+**删除条件.** 无。
