@@ -246,6 +246,7 @@ ALLOCS_EXPECT = {
     "mir_interval_copies_keep_their_open_ends": (4, 3840),
     "mir_interval_membership_is_on_the_lattice": (4, 3840),
     "mir_declare_inert_kinds_are_accepted": (1, 256),
+    "mir_declare_threads_ceiling_is_inert_without_a_thread_section": (1, 256),
     "mir_z_domain_readers_agree": (5, 1843),
     # eight prints of rays: the interval objects themselves are the allocation
     "mir_interval_bounds_are_measured_before_they_are_cast": (4, 1808),
@@ -1763,6 +1764,18 @@ say list(b)
     # { vram 1 }` and `declare { mem 0 }` leave a program's output byte for
     # byte unchanged, which is why this route can emit them as no-ops while
     # the binding kinds stay refused (mir_declare_binding_kind_is_refused).
+    # The threads ceiling is inert INSIDE the accepted region: a limit is only
+    # consulted when a task or thread is created, and a container with a thread
+    # section is refused before this pass runs (§10.197 measured that `task` and
+    # `thread` take the same refusal).  Measured on b7205763: the program below
+    # answers byte for byte what it answers without the declaration, while the
+    # route still refused it as a binding ceiling.
+    ("mir_declare_threads_ceiling_is_inert_without_a_thread_section",
+     "declare { threads 1 }\n"
+     "a = [1, 2, 3]\n"
+     "say a\n"
+     "say len(a)\n"
+     ),
     ("mir_declare_inert_kinds_are_accepted",
      "declare { vram 1 }\n"
      "declare { mem 0 }\n"
