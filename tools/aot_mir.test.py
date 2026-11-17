@@ -5770,6 +5770,19 @@ MIR_ONLY_REFUSE = {
     "mir_thread_decl_never_started": (
         'thread plain_worker {\n    return 1\n}\nsay "defined-never-started"\n',
         "threads"),
+    # THE REFUSAL'S ORDER IS A PREMISE of §10.208/§10.209's inertness claims:
+    # the thread section is refused BEFORE the declaration is analysed, so a
+    # `threads` ceiling can never be the reason a program is refused while a
+    # thread section is present.  If the two decisions swapped places, the mem
+    # case below would come back as `declare-limit` instead of `threads` --
+    # same program, different refusal, and the inertness argument would be
+    # about a path that no longer exists.
+    "mir_thread_refusal_precedes_the_threads_ceiling": (
+        'declare { threads 1 }\nthread plain_worker { return 1 }\nsay "defined-never-started"\n',
+        "threads"),
+    "mir_thread_refusal_precedes_the_binding_ceiling": (
+        'declare { mem 1 }\nthread plain_worker { return 1 }\nsay "defined-never-started"\n',
+        "threads"),
     "mir_thread_result_unwrap": (
         'thread plain_worker {\n    return 11\n}\nr = thread_result("plain_worker")\nsay r\n',
         "threads"),
