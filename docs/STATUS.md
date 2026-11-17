@@ -12049,3 +12049,47 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
 理由里，`threads` 那一条有 5 个案例，其余各 1 个。
 
 **删除条件.** 无。本节是底账，不产生新的判据。
+
+## §10.217 The two triggerable refusal reasons get witnesses, and the ledger gets a checker
+
+**来源.** §10.216 枚举出路线能抛的 19 个 `why`，语料只钉住 6 个，其中 2 个实测
+**可触发**。 「可触发但没钉」比「不可达」更糟：有一个程序会走到那条拒绝，而语料
+里没有任何东西记录它会。
+
+**判据（两行语料 + 一个检查器）.**
+
+1. 两条 `MIR_ONLY_REFUSE` 行，各钉最小触发程序：
+   - `mir_bitwise_arm_needs_two_operands`：`say bit_and(1)` ⇒ `why=builtin-argc`
+     （位运算臂从栈上读**两个**操作数；两参的 `say bit_and(1, 2)` 相反是**接受**并
+     发射的，所以这一行钉的是实参个数规则，不是那个臂）。
+   - `mir_interval_domain_is_not_r_or_z`：`say N[0~3]` ⇒ `why=set-interval-domain`
+     （消息里点名域名 `N`；这条路线只发射 R 与 Z 两种区间拼写）。
+2. 枚举本身搬进检查器：`tools/aot_mir_surface.py` 新增 `REFUSAL_REASONS`（19 条，
+   每条标注语料对它的说法：`witnessed` / `triggerable` / `unreachable` / `family`）
+   与 `route_refusal_reasons()`（从**源码**里读出能出现的 `why`：prescan 家族的
+   `g_prescan_why = "..."` 与接口层的 `refuse("...")`，注释里的词不算）。
+
+**读数（亲跑）.**
+
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_bitwise_arm_needs_two_operands|mir=refused|why=builtin-argc|expect=builtin-argc|ok=yes
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_interval_domain_is_not_r_or_z|mir=refused|why=set-interval-domain|expect=set-interval-domain|ok=yes
+    IR-AOT-MIR-SURFACE-SELFCHECK|checks=11|verdict=PASS
+    IR-AOT-MIR-SURFACE|declared=67|emitted=60|unemitted=7|classified=8|classes=3
+    IR-AOT-MIR-SURFACE-VERDICT|PASS
+
+**注入（检查器能说「不」的三种形状）.** 自检从 7 格扩到 **11 格**，新增的四格都是
+双向的：
+
+- `ledger-unlisted-source-reason`：源码能抛一个账上没列的理由 ⇒ 报「账已过期」；
+- `ledger-stale-entry`：账上列了一个源码抛不出的理由 ⇒ 同样报过期；
+- `ledger-claimed-but-unwitnessed`：账上说某理由 `witnessed` 而语料没钉 ⇒ 报出来；
+- `ledger-clean`：三者都不成立时干净。
+
+**边界.** ①`REFUSAL_REASONS` 里的 `unreachable` 是**今天的**结论（§10.216 的逐条
+测量），不是永久性质：新增一条 prescan 检查会改变可达性，那时必须重测并改这一行；
+②账本只管**名字**，不管理由的**正确性**——`builtin-argc` 该不该是这个形状的拒绝，
+由语料那一侧的值面判据管；③`illegal-operand` 标成 `family`（`g_prescan_why` 的初
+值，任何检查失败前都会被换成具名理由），它不是一个能带出门的形状，所以不钉案例；
+④19 条是**今天的源码**枚举出来的；接口层若新增 `refuse("…")`，账本检查会立刻红。
+
+**删除条件.** 无。
