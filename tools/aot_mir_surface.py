@@ -161,6 +161,43 @@ CLASS_BACKING = {
 
 CORPUS = ROOT / "tools/aot_mir.test.py"
 
+# EVERY refusal reason the route can emit, and whether the corpus witnesses it.
+#
+# §10.216 enumerated them by hand: 19 reasons, 6 of them witnessed.  Two of the
+# unwitnessed ones turned out to be triggerable, so they got rows (§10.217).
+# This table is that enumeration, kept next to the checker that consumes it, so
+# the list cannot rot while the source drifts.
+#
+# The values are what the corpus says about the reason:
+#   "witnessed"     -- at least one case in MIR_ONLY_REFUSE names it
+#   "triggerable"   -- a program reaches it, but no case names it yet
+#   "unreachable"   -- no program in today's tree can reach it (measured; the
+#                       reason for each is in STATUS.md's §10.216)
+#   "family"        -- not a reason a program can carry out of the tool: the
+#                       default value of g_prescan_why, replaced by a named
+#                       reason before any check can fail
+REFUSAL_REASONS = {
+    "builtin-argc": "witnessed",
+    "builtin-call": "witnessed",
+    "builtin-stale-stack": "witnessed",
+    "declare-limit": "witnessed",
+    "illegal-operand": "family",
+    "lock-unpaired": "witnessed",
+    "set-interval-domain": "witnessed",
+    "try-enters": "unreachable",
+    "try-escapes": "witnessed",
+    "conservation": "unreachable",
+    "container-shape": "unreachable",
+    "emit-failed": "unreachable",
+    "function-name": "unreachable",
+    "global-name": "unreachable",
+    "not-a-module": "unreachable",
+    "out-of-memory": "unreachable",
+    "threads": "witnessed",
+    "unsupported-opcode": "unreachable",
+    "write-failed": "unreachable",
+}
+
 
 def refusal_whys():
     """Every `why` string the corpus's refusal table uses, read from the AST.
@@ -187,6 +224,50 @@ def refusal_whys():
                     if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                         whys.add(elt.value)
     return whys
+
+
+def route_refusal_reasons(text=None):
+    """Every `why` string the route can put on a refusal, read from the source.
+
+    Two places put one there: the prescan family (`g_prescan_why = "..."`)
+    and the interface layer (`refuse("...")`).  Both are read by pattern, and a
+    name in a comment cannot be counted, so the prescan assignments are taken
+    from the STRING LITERALS only.
+    """
+    if text is None:
+        text = (ROOT / "src/compilation/aot_mir.c").read_text(errors="replace")
+    body = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    body = re.sub(r"//[^\n]*", " ", body)
+    reasons = set(re.findall(r'g_prescan_why\s*=\s*"([a-z-]+)"', body))
+    reasons |= set(re.findall(r'refuse\(\s*"([a-z-]+)"', body))
+    return reasons
+
+
+def refusal_ledger_problems(whys=None):
+    """The source's reasons and the table's claims must agree with the corpus.
+
+    Three checks, each able to say NO:
+
+    1. a reason the SOURCE can emit but the table does not list -- a new check
+       added without a ledger entry (this is the one that bites tomorrow);
+    2. a reason the table lists but the SOURCE cannot emit -- a stale entry;
+    3. a reason the table claims is witnessed but the CORPUS does not name.
+    """
+    if whys is None:
+        whys = refusal_whys()
+    source = route_refusal_reasons()
+    problems = []
+    for why in sorted(source - set(REFUSAL_REASONS)):
+        problems.append("the route can refuse with why=%r but the refusal "
+                        "ledger does not list it -- the ledger is stale" % why)
+    for why in sorted(set(REFUSAL_REASONS) - source):
+        problems.append("the refusal ledger lists why=%r but the route can "
+                        "never emit it -- the ledger is stale" % why)
+    for why, state in sorted(REFUSAL_REASONS.items()):
+        if state == "witnessed" and why not in whys:
+            problems.append("the refusal ledger says why=%r is witnessed, but "
+                            "no case in the corpus names it" % why)
+    return problems
 
 
 def backing_problems(whys=None):
@@ -334,6 +415,21 @@ def self_check():
         ("backed", "another-thread", {"threads"}, False),
         ("unbacked", "another-thread", {"declare-limit"}, True),
     ]
+    # Ledger cells: the refusal ledger must catch a reason the source can emit
+    # but nobody listed, a listed reason the source cannot emit, and a
+    # "witnessed" claim the corpus does not back.
+    ledger_cells = [
+        # what, source reasons, ledger reasons, corpus whys, want_problem
+        ("ledger-clean", {"builtin-argc"}, {"builtin-argc": "witnessed"},
+         {"builtin-argc"}, False),
+        ("ledger-unlisted-source-reason", {"brand-new-reason"},
+         {"builtin-argc": "witnessed"}, {"brand-new-reason"}, True),
+        ("ledger-stale-entry", {"builtin-argc"},
+         {"builtin-argc": "witnessed", "gone-reason": "unreachable"},
+         {"builtin-argc"}, True),
+        ("ledger-claimed-but-unwitnessed", {"builtin-argc"},
+         {"builtin-argc": "witnessed"}, set(), True),
+    ]
     saved = dict(BOUNDARY)
     try:
         for what, table, want_problem in cells:
@@ -358,7 +454,26 @@ def self_check():
             ok &= hit
     finally:
         BOUNDARY.clear(); BOUNDARY.update(saved)
+    # The ledger cells need a controlled SOURCE and a controlled CORPUS, so
+    # they swap both tables out and put them back.
+    saved_ledger = dict(REFUSAL_REASONS)
+    saved_source = route_refusal_reasons
+    try:
+        for what, source_reasons, ledger_reasons, corpus_whys, want_problem in ledger_cells:
+            REFUSAL_REASONS.clear()
+            REFUSAL_REASONS.update(ledger_reasons)
+            globals()["route_refusal_reasons"] = lambda text=None, _s=source_reasons: set(_s)
+            problems = refusal_ledger_problems(corpus_whys)
+            hit = bool(problems) == want_problem
+            print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+                  % (what, len(problems), "one-or-more" if want_problem else "clean",
+                     "ok" if hit else "WRONG"))
+            ok &= hit
+    finally:
+        REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger)
+        globals()["route_refusal_reasons"] = saved_source
     cells += backing_cells
+    cells += ledger_cells
     print("IR-AOT-MIR-SURFACE-SELFCHECK|checks=%d|verdict=%s"
           % (len(cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
@@ -373,7 +488,7 @@ def main():
 
     members, missing = unemitted()
     problems = (coverage_problems(members, missing) + evidence_problems()
-                + backing_problems())
+                + backing_problems() + refusal_ledger_problems())
 
     if args.report:
         for op in sorted(BOUNDARY):

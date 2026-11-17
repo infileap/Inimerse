@@ -5930,6 +5930,23 @@ MIR_ONLY_REFUSE = {
     "mir_match_single_argument_is_not_lowered": (
         'say match("abc")\n',
         "builtin-stale-stack"),
+    # §10.216 enumerated the 19 refusal reasons the route can emit and found
+    # 13 of them unwitnessed.  Two of those turned out to be TRIGGERABLE, so
+    # they are witnesses rather than dead reasons, and each gets a row here:
+    #
+    #   builtin-argc: a bitwise arm reads TWO operands off the stack, so one
+    #   argument is not a program it can answer.  Measured before the row was
+    #   written: `say bit_and(1)` is refused with why=builtin-argc, while
+    #   `say bit_and(1, 2)` is accepted and emitted.
+    "mir_bitwise_arm_needs_two_operands": (
+        'say bit_and(1)\n',
+        "builtin-argc"),
+    #   set-interval-domain: the route emits the R and Z interval spellings and
+    #   no other domain.  Measured: `say N[0~3]` is refused with
+    #   why=set-interval-domain (the message names the domain 'N').
+    "mir_interval_domain_is_not_r_or_z": (
+        'say N[0~3]\n',
+        "set-interval-domain"),
 }# THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
 #
 # A `why=unsupported-opcode` refusal alone says "something here is not lowered";
