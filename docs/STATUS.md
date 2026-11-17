@@ -11646,6 +11646,12 @@ opcode，而是这个 opcode 的这个实参。**
    not-yet 跳过，后面加的臂永远收不到它——这是本格最贵的一步。**
 2. `prescan`：kind 与值取自 `in->dst` 与 `node->float_pool[ir_insn_r2(in)]`；
    `kind != 4 && v > 0.0` ⇒ `g_prescan_why = "declare-limit"` 并 `bad(...)`。
+
+> **UPDATE (10.209)**: 上面那条规则**不够宽**。`kind == 1`（threads）的正值在
+> **本路线接受范围之内**同样是惰性的：上限只在创建 task/thread 时被查，而带线程段的
+> 容器在 prescan 之前就被按 `why=threads` 拒了。所以现在是
+> `kind ∈ {0, 2, 3} && v > 0.0` 才拒。§10.208 的判据与两发注入不变（各自仍只红
+> 自己那条），新增判据见 §10.209。
 3. `emit_one`：惰性声明发一行 C 注释，**带上 kind 与值**
    （`/* declare: kind %d = %.17g (inert) */`）。两件事都被工具抓住了：
    - 保守方程靠「这条臂追加了多少字节」判定是否发射，什么都不发会被拒成
@@ -11677,4 +11683,47 @@ opcode，而是这个 opcode 的这个实参。**
 
 若区间/声明的构造将来带上「上限」作为程序语义（而不是解释器的执行策略），
 本节与 §10.145 的 `measurement` 类一起重写；在那之前，两处都成立。
+
+## §10.209 The threads ceiling is inert inside the accepted region
+
+### 1. 来源
+
+§10.208 把「惰性声明」写成 `kind != 4 && v > 0` 才拒，也就是对 `declare { threads 1 }`
+这类程序仍然拒。但解释器里 `limit_threads` 只在**创建 task/thread** 时被查
+（`src/vm/vm.c` 的 `L_THREAD_START` 与 `vm_task_create` 两处），而带线程段的容器在本路线的 prescan 之前就按
+`why=threads` 被拒了（§10.197 实测 `task` 与 `thread` 给同一条拒绝）。所以在这个
+路线**接受**的程序里，`threads` 上限永远没有机会被查——它是惰性的。
+
+实测（`b7205763`）：`declare { threads 1 }` + 数组操作的输出与不带声明时逐字节相同，
+而路线以 `why=declare-limit: ... kind 1 = 1 sets a ceiling this route cannot reproduce`
+拒了它。**这是一次假的按名拒**：解释器能跑的程序，路线不该拒。
+
+### 2. 判据
+
+`mir_declare_threads_ceiling_is_inert_without_a_thread_section`（四行，`ALLOCS_EXPECT`
+钉 `(1, 256)`）。父树上红：`why=declare-limit`。
+
+### 3. 实现
+
+一行：
+
+    if ((dkind == 0 || dkind == 2 || dkind == 3) && dv > 0.0) {
+
+绑定类收窄到 mem / time / inst。绿后 `mir-only-cases=315|315`。
+
+### 4. 注入
+
+- **A**：把条件换回 §10.208 的 `dkind != 4 && dv > 0.0` ⇒ 只红本节这条判据。
+- **B**：改成恒假（全都当惰性）⇒ 只红 `mir_declare_binding_kind_is_refused`。
+
+### 5. 边界
+
+「threads 惰性」依赖**路线先拒线程段**这条更早的约定。若将来本路线开始发射线程，
+本节与 §10.208 的 `vram` 那一半必须同时重测——两处都是**环境/策略依赖**，
+不是语言语义。
+
+### 6. 独立证据：生成面抽查
+
+同时跑了三轮生成式对拍（`tools/aot_mir_fuzz.py`，种子 777/778/779，共 2200 个程序）：
+`diverge=0|threw=0|unsound=0`，十族全发射、无静默族。
 
