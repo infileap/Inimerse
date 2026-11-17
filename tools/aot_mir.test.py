@@ -6523,10 +6523,12 @@ def abort_surface(mir_tool, interp, workdir, verbose):
     # The interpreter first: it decides which pairs are route defects.
     interp_rc = {}
     interp_out = {}
+    interp_err = {}
     for n, (_v, _o, src) in zip(names, pairs):
-        rc, out, _e = run([interp, "--no-mods", "run", Path(workdir, n + ".im")], workdir)
+        rc, out, e = run([interp, "--no-mods", "run", Path(workdir, n + ".im")], workdir)
         interp_rc[n] = rc
         interp_out[n] = out
+        interp_err[n] = e
     # Then the route, with the compiles in parallel.
     def lower_and_compile(n):
         s = Path(workdir, n + ".im")
@@ -6548,17 +6550,20 @@ def abort_surface(mir_tool, interp, workdir, verbose):
         lowered = list(ex.map(lower_and_compile, names))
     route_rc = {}
     route_out = {}
+    route_err = {}
     for n, status, detail in lowered:
         if status == "ok":
             rc, out, err = run([Path(workdir, n + ".bin")], workdir)
             route_rc[n] = rc
             route_out[n] = out
+            route_err[n] = err
             if "runtime error" in (err or ""):
                 problems.append("%s: UBSan caught undefined behaviour: %s"
                                 % (n, (err or "").strip().splitlines()[0][:160]))
         else:
             route_rc[n] = status
     total = stops = both_stop = route_only = refused_by_name = 0
+    other_reason = 0
     lines = []
     for n, (vname, oname, src) in zip(names, pairs):
         irc = interp_rc[n]
@@ -6590,7 +6595,14 @@ def abort_surface(mir_tool, interp, workdir, verbose):
         rstop = rrc != 0
         if istop and rstop:
             both_stop += 1
-            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=stopped|route=stopped" % (vname, oname))
+            ireason, rreason = stop_reason(interp_err[n]), stop_reason(route_err[n])
+            if ireason != rreason:
+                other_reason += 1
+                problems.append("%s: both sides stopped but for DIFFERENT reasons -- the "
+                                "interpreter died of `%s`, the route died of `%s`"
+                                % (n, ireason or "<none>", rreason or "<none>"))
+            lines.append("IR-MIR-ABORT|value=%s|op=%s|interp=stopped|route=stopped"
+                         "|reason=%s" % (vname, oname, ireason or rreason or "<none>"))
             continue
         if rstop:
             route_only += 1
@@ -6615,11 +6627,11 @@ def abort_surface(mir_tool, interp, workdir, verbose):
                          % (vname, oname))
     for line in lines:
         print(line)
-    print("IR-MIR-ABORT-SURFACE|pairs=%d|stop-events=%d|both-stopped=%d|route-stopped-where"
-          "-interp-answered=%d|refused-by-name=%d|why=the-route-has-one-number-conversion-door"
+    print("IR-MIR-ABORT-SURFACE|pairs=%d|stop-events=%d|both-stopped=%d|other-reason=%d"
+          "|route-stopped-where-interp-answered=%d|refused-by-name=%d|why=the-route-has-one-number-conversion-door"
           "-and-its-default-is-abort-so-the-matrix-asks-every-value-times-every-operation-whether"
           "-that-door-is-ever-reached-with-no-answer-behind-it"
-          % (len(pairs), stops, both_stop, route_only, refused_by_name))
+          % (len(pairs), stops, both_stop, other_reason, route_only, refused_by_name))
     return problems
 
 
@@ -6759,6 +6771,23 @@ BUILTIN_FAMILY_CALLS = [
 ]
 
 
+def stop_reason(stderr):
+    """The exception name a stopped program died with, or "" if it did not die.
+
+    The route appends its allocation line to the same stream, so the reason is
+    the text between "uncaught: " and the first "|"; the interpreter puts its
+    instruction pointer on the next line, which is not part of the reason.
+    """
+    if not stderr:
+        return ""
+    for line in stderr.splitlines():
+        if "uncaught:" not in line:
+            continue
+        reason = line.split("uncaught:", 1)[1].strip()
+        return reason.split("|", 1)[0].strip()
+    return ""
+
+
 def builtin_abort_surface(mir_tool, interp, workdir, verbose, calls=None, tag="BUILTIN-ABORT"):
     calls = BUILTIN_ABORT_CALLS if calls is None else calls
     """Ask every builtin's edge case whether the two sides agree about stopping.
@@ -6776,9 +6805,10 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose, calls=None, tag="B
     for n, src in zip(names, srcs):
         Path(workdir, n + ".im").write_text(src)
     interp_rc, interp_out = {}, {}
+    interp_err = {}
     for n in names:
-        rc, out, _e = run([interp, "--no-mods", "run", Path(workdir, n + ".im")], workdir)
-        interp_rc[n], interp_out[n] = rc, out
+        rc, out, e = run([interp, "--no-mods", "run", Path(workdir, n + ".im")], workdir)
+        interp_rc[n], interp_out[n], interp_err[n] = rc, out, e
 
     def lower_and_compile(n):
         s = Path(workdir, n + ".im")
@@ -6794,15 +6824,16 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose, calls=None, tag="B
 
     with ThreadPoolExecutor(max_workers=12) as ex:
         lowered = list(ex.map(lower_and_compile, names))
-    route_rc, route_out = {}, {}
+    route_rc, route_out, route_err = {}, {}, {}
     for n, status, _detail in lowered:
         if status == "ok":
-            rc, out, _err = run([Path(workdir, n + ".bin")], workdir)
-            route_rc[n], route_out[n] = rc, out
+            rc, out, err = run([Path(workdir, n + ".bin")], workdir)
+            route_rc[n], route_out[n], route_err[n] = rc, out, err
         else:
             route_rc[n] = status
 
     both_stop = route_only = interp_only = refused_by_name = differ = 0
+    same_reason = other_reason = 0
     for n, (_label, expr) in zip(names, calls):
         rrc = route_rc[n]
         if rrc == "refused":
@@ -6816,6 +6847,15 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose, calls=None, tag="B
         istop, rstop = interp_rc[n] != 0, rrc != 0
         if istop and rstop:
             both_stop += 1
+            ireason, rreason = stop_reason(interp_err[n]), stop_reason(route_err[n])
+            if ireason == rreason:
+                same_reason += 1
+            else:
+                other_reason += 1
+                problems.append("%s: both sides stopped but for DIFFERENT reasons -- "
+                                "the interpreter died of `%s`, the route died of `%s` "
+                                "(`%s`)" % (n, ireason or "<none>", rreason or "<none>",
+                                            expr))
         elif rstop:
             route_only += 1
             problems.append("%s: the route STOPPED (rc=%s) where the interpreter answered "
@@ -6830,11 +6870,11 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose, calls=None, tag="B
         print("IR-MIR-%s|expr=%s|interp=%s|route=%s"
               % (tag, expr, "stopped" if istop else "answered",
                  "stopped" if rstop else "answered"))
-    print("IR-MIR-%s-SURFACE|calls=%d|both-stopped=%d|route-stopped-where-interp"
-          "-answered=%d|interp-stopped-where-route-answered=%d|answered-differently=%d"
-          "|refused-by-name=%d"
-          % (tag, len(calls), both_stop, route_only, interp_only, differ,
-             refused_by_name))
+    print("IR-MIR-%s-SURFACE|calls=%d|both-stopped=%d|same-reason=%d|other-reason=%d"
+          "|route-stopped-where-interp-answered=%d|interp-stopped-where-route-answered=%d"
+          "|answered-differently=%d|refused-by-name=%d"
+          % (tag, len(calls), both_stop, same_reason, other_reason, route_only,
+             interp_only, differ, refused_by_name))
     return problems
 
 
