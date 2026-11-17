@@ -5545,7 +5545,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 int32_t dix = ir_insn_r2(in);
                 double dv = 0.0;
                 if (dix >= 0 && dix < node->float_count && node->float_pool) dv = node->float_pool[dix];
-                if (dkind != 4 && dv > 0.0) {
+                if ((dkind == 0 || dkind == 2 || dkind == 3) && dv > 0.0) {   /* 10.209: kind 1 (threads) is inert here too */
                     g_prescan_why = "declare-limit";
                     return bad("container=%d insn=%d declaration kind %d = %.17g sets a ceiling this route cannot reproduce", f, i, dkind, dv);
                 }
