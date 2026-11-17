@@ -11911,3 +11911,49 @@ thread section, which this route does not emit`。这条把「成员表达式也
 - `both-stopped=4` 是两侧都停的形状（`sqrt` 负数、`sum` 非数字等），**不是**缺陷；
   它们被单独计数。
 
+## §10.214 The builtin abort surface by family
+
+### 1. 来源
+
+§10.213 的内建中止面矩阵是**广度**：每个内建一个探针。它给的是「34 个形状两侧一致」，
+不是「内建没有中止面」。缺的是**深度**——每个内建有它自己的非法参数族，而一个探针
+只碰到其中一角。
+
+### 2. 判据
+
+`BUILTIN_FAMILY_CALLS`（56 条）：按内建分族，每族若干条。`chr`/`ord`/`substr`/`index`/
+`int`/`sqrt`/`sum`/`min`/`max`/`join`/`split`/`remove`/`keys`/`has`/`round`/`float`/
+`len`/`size`/`count`/`trim`/`replace`/`startswith`/`endswith`/位运算族/`bool`/`str`/
+`match`/`range`。
+
+矩阵函数改成带参数（`calls=`、`tag=`），两次扫描共用**一份实现**，不会各自漂移。
+
+### 3. 读数
+
+    IR-MIR-BUILTIN-FAMILY-ABORT-SURFACE|calls=56|both-stopped=7
+    |route-stopped-where-interp-answered=0|interp-stopped-where-route-answered=0
+    |answered-differently=0|refused-by-name=0
+
+七条两侧同停：`sqrt(nil)`、`sqrt("x")`、`sum([1,"a"])`、`shl(1,63)`、`shl(1,64)`、
+`shr(nil,1)`、`bit_not(nil)`。其余 49 条两侧都答且**答案逐字节相同**。
+
+### 4. 注入
+
+本节是纯测试面，注入打在**族成员选择**上：把 `substr` 族的六条换成六条新形状
+（`substr("ab", 3, 1)`、`substr("ab", 1, 99)` 等），矩阵仍绿——说明这批形状对中止面
+没有新信息。这一发注入红的是**值面**而不是中止面，如实记为「族覆盖度的负结果」：
+它证明 56 条里没有哪一条是独担中止面的。
+
+### 5. 边界
+
+- 这是**每个内建的若干条**坏参数，不是它的坏参数**全集**：例如 `substr` 只有六个
+  起点/长度组合，没有穷举。
+- 「两侧同停」只说明**停**，不说明停的原因相同；`both-stopped=7` 的七条里，解释器
+  抛的错与路线抛的错可能是两种文字。
+- 矩阵比较的是 stdout 与退出码；stderr 的文字不同不算分歧。
+
+### 6. 踩坑
+
+`chr(200)` 把裸字节（0xC8）写进 stdout，harness 的文本解码抛 `UnicodeDecodeError`，
+整场比较被一个字节打断。族里一律用 `ord(chr(n))` 读回——这正是 §10.170 定下的
+「通道就是风险」：一个不可解码的字节比一个断言更贵。
