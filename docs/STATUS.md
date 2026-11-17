@@ -12154,3 +12154,58 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
 检查用的是**假的**前提检查函数，证明的是「检查会响」，不是「前提推导正确」。
 
 **删除条件.** 无。
+
+## §10.219 Two more "unreachable" reasons were reachable
+
+**来源.** §10.218 把账本里的「不可达」变成带前提的断言，并当场改正了 `try-enters`
+一条。那条教训是：**散文形式的可达性结论会错**，而且错起来没有声音。 这一格把
+剩下 10 条散文结论逐条拿到树里重新量。
+
+**结论：又有两条是错的。** `function-name` 与 `global-name` 都被记成不可达，理由是
+「标识符词法只允许 `[A-Za-z0-9_]`，所以源名不会折叠到纯 ASCII 名上」。实测反例：
+
+- `c_name`（`src/compilation/aot_mir.c:5162-5180`）把**每一个** `[A-Za-z0-9_]` 之外
+  的字节折成 `_`，**源词法也接受标识符里的高位字节**（解释器照样跑，印 1）——
+  所以这不是解析差异，是路线的决定。
+- 函数名：`func a<é>()` 与 `func a__()` 都变成 `fn_a__` ⇒
+  `why=function-name`（`build_func_names`，`:5234-5261`）。
+- 全局名：同样的折叠发生在 `build_global_names`（`:5188-5231`），而且**改名兜底也
+  救不了**——撞名的一组各取自己的索引（index 24 的成员拿到 `g_a___24`），而源名
+  `a___24` 恰好清洗成同一个串 ⇒ `why=global-name`。**顺序要紧**：撞名的成员必须
+  坐在改名发放的那个索引上，所以 `a___24` 先声明、占住 index 23。
+
+**判据.** 新增两条语料行 `mir_two_function_names_fold_onto_one_identifier` 与
+`mir_two_global_names_fold_onto_one_identifier`（`MIR_ONLY_REFUSE`），各钉住一个
+`why`。 注入：把函数名的碰撞检查跳过 ⇒ 该行变成「被接受」并红；还原后两条都按
+名字拒。
+
+**账本随之改了三点.**
+
+1. `function-name` / `global-name`：`unreachable` → `witnessed`。
+2. `write-failed`：**可达，但语料表达不了**——它由**输出路径**触发（把 .c 写到
+   不存在的目录），而语料表钉的是**程序**、harness 永远挑可写路径。所以账本多出
+   第四种状态 `reachable`：检查只对 `witnessed` 要求语料行。
+3. **未知状态现在也是问题**：以前账本写 `witnessedd` 会被接受且**什么都不检查**。
+   自检从 14 格扩到 **15 格**（新增 `ledger-unknown-state`）。
+
+**读数（亲跑）.**
+
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_two_function_names_fold_onto_one_identifier
+      |mir=refused|why=function-name|expect=function-name|ok=yes|interp-rc=0|interp-out=b'1\n'
+    IR-MIR-MIR-ONLY-REFUSED|case=mir_two_global_names_fold_onto_one_identifier
+      |mir=refused|why=global-name|expect=global-name|ok=yes|interp-rc=0|interp-out=b'1\n2\n3\n'
+    IR-AOT-MIR-SURFACE-VERDICT|PASS
+    IR-AOT-MIR-SURFACE-SELFCHECK|checks=15|verdict=PASS
+
+**教训.** 「不可达」这类结论，**第一版几乎总是错的**，因为它通常建立在一条
+「看起来显然」的规则上（词法、索引、命名约定），而那条规则本身没被量过。本格与
+§10.218 的 `try-enters` 是同一个形状：**当时的推理对，但推理依赖的前提没查**。
+
+**边界.** ①剩下 6 条 `unreachable`（`conservation`、`container-shape`、
+`emit-failed`、`not-a-module`、`out-of-memory`、`unsupported-opcode`）仍是散文，
+本轮没有重查。 ②`unsupported-opcode` 已有可重算前提（§10.218），其余 5 条待查。
+③`reachable` 这个状态**不要求**语料行，所以它是「弱声明」：靠人工纪律维持，
+没有自动检查保证它真的可达。 ④本轮的注入只覆盖函数名那条；全局名那条的注入
+（跳过最终碰撞循环）会让**两行**一起红，因为它们共享同一个折叠机制。
+
+**删除条件.** 无。
