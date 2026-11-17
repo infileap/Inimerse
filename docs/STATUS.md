@@ -11860,3 +11860,54 @@ thread section, which this route does not emit`。这条把「成员表达式也
 `CLASS_BACKING`：只要 `another-thread` 类还在，语料里就必须还有 `why=threads` 的
 拒绝用例，否则 surface 直接红。
 
+## §10.213 The builtins' abort surface, and join's separator
+
+### 1. 来源
+
+§10.199 把**转换门**的中止面做成了可复算矩阵（13 值 × 38 操作 = 494 对）。但内建是
+程序停下而没有值的**另一个**地方：`chr(200)` 越出字节范围、`substr` 越过末尾、
+`int("zz")` 不是数、`match` 的模式坏掉——每一个都可能抛或中止，取决于它落在树的哪
+一边。库里对这些**没有**同等级的可复算证据。
+
+### 2. 判据（矩阵阶段）
+
+`tools/aot_mir.test.py` 新增 `builtin_abort_surface()` 阶段与 `BUILTIN_ABORT_CALLS`
+34 条内建边界调用（一条一个程序，`say <expr>`），判据口径与转换矩阵**同一套**：
+「按名拒不是中止」；中止 = 任何非零退出；只有**两侧不一致**才算问题——路线在解释器
+答得出的形状上中止（路线没有答案），或解释器在路线答得出的形状上中止。
+
+第一次跑就抓到一处真分歧：
+
+    IR-MIR-BUILTIN-ABORT-SURFACE|calls=34|both-stopped=4|route-stopped-where-interp-answered=0
+    |interp-stopped-where-route-answered=0|answered-differently=1|refused-by-name=0
+    IR-MIR-PROBLEM|builtin_abort_join_non_string_sep: both answered, but the answers differ
+    for `join([1, 2], 3)`
+
+### 3. 真错值：join 的分隔符
+
+解释器的 `posix_core_join`（`src/runtime/runtime_posix.c`）读**最后一个实参**：
+**只有它是字符串**时才把它当分隔符，否则把它当**数组**——而 `3` 不是数组，于是答**空
+串**。路线却把非字符串分隔符当空分隔符，答 `12`。
+
+修法一行（在 `mv_join` 里、分隔符取值之前）：
+
+    if (has_sep && sepv.type != MV_STR) return mv_str_of(mv_str(""));
+
+判据 `mir_join_needs_a_string_separator`（六行，`ALLOCS_EXPECT (9, 1814)` 先量后钉）。
+
+### 4. 注入
+
+把那行去掉（分隔符退回空串）⇒ 红两处：矩阵那条 `builtin_abort_join_non_string_sep`
+与本节判据 `mir_join_needs_a_string_separator`。两处**都**红是应该的——矩阵与判据问
+的是同一个事实，矩阵是它的第二次表达。
+
+### 5. 边界
+
+- 34 条是**抽样**，不是穷举：内建的边界形状远多于 34（每个内建都有自己的越界族）。
+  这一格证明的是「这 34 个形状两侧一致」，不是「内建没有中止面」。
+- `chr(200)` 与 `chr(-1)` 两条**不能直接 `say`**：它们产出的是 0xC8 这类字节，不是文本，
+  harness 解码会炸（`UnicodeDecodeError`）。改成 `ord(chr(200))`——用 `ord` 读回来，
+  这与 §10.170 的「通道就是风险」是同一条教训。
+- `both-stopped=4` 是两侧都停的形状（`sqrt` 负数、`sum` 非数字等），**不是**缺陷；
+  它们被单独计数。
+
