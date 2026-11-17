@@ -140,6 +140,73 @@ CLASSES = {
 }
 
 
+# WHAT EACH CLASS LEANS ON, AS A CORPUS FACT.
+#
+# A class is an ARGUMENT, not a label: "another-thread" means "the route refuses
+# a thread section", which is a claim about a refusal that must be DEMONSTRATED
+# somewhere the suite actually runs.  The demonstration lives in the corpus
+# (tools/aot_mir.test.py's MIR_ONLY_REFUSE table), so each class names the `why`
+# string that table has to contain.  None means the class needs no refusal: the
+# retired row's evidence is the enum's own numbering hole, checked by needle.
+#
+# Without this check the boundary would keep saying "the route refuses a thread
+# section" after somebody deleted the case that proves it -- the row would point
+# at a real comment and a real opcode while the behaviour it describes had
+# quietly come unwired.
+CLASS_BACKING = {
+    "another-thread": "threads",
+    "measurement": "unsupported-opcode",
+    "retired": None,
+}
+
+CORPUS = ROOT / "tools/aot_mir.test.py"
+
+
+def refusal_whys():
+    """Every `why` string the corpus's refusal table uses, read from the AST.
+
+    Read as a set of strings rather than by grep so that a mention of the word
+    "threads" in a comment cannot stand in for a case that runs.
+    """
+    import ast
+    try:
+        tree = ast.parse(CORPUS.read_text(errors="replace"))
+    except (OSError, SyntaxError):
+        return set()
+    whys = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(getattr(t, "id", None) == "MIR_ONLY_REFUSE" for t in node.targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            continue
+        for value in node.value.values:
+            if isinstance(value, ast.Tuple):
+                for elt in value.elts[1:]:
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                        whys.add(elt.value)
+    return whys
+
+
+def backing_problems(whys=None):
+    """Every class in use must have its refusal reason still in the corpus."""
+    if whys is None:
+        whys = refusal_whys()
+    problems = []
+    for cls in sorted({row[0] for row in BOUNDARY.values()}):
+        need = CLASS_BACKING.get(cls)
+        if need is None:
+            continue
+        if need not in whys:
+            problems.append(
+                "class %r argues that its members are unreachable because the "
+                "route refuses them with why=%r, but no case in the corpus uses "
+                "that reason any more -- the argument is asserted, not "
+                "demonstrated" % (cls, need))
+    return problems
+
+
 def declared_opcodes(text):
     """The enum's MEMBERS, in declaration order.
 
@@ -259,6 +326,14 @@ def self_check():
             "OP_B": ("no-such-class", "src/compiler/bytecode.h", "typedef enum", "fixture"),
         }, True),
     ]
+    # Backing cells: the class in `good` is "retired", which needs no refusal.
+    # These two show the check is bidirectional -- the same table is clean when
+    # the corpus carries the reason the class names, and a problem when it does
+    # not.
+    backing_cells = [
+        ("backed", "another-thread", {"threads"}, False),
+        ("unbacked", "another-thread", {"declare-limit"}, True),
+    ]
     saved = dict(BOUNDARY)
     try:
         for what, table, want_problem in cells:
@@ -271,6 +346,19 @@ def self_check():
             ok &= hit
     finally:
         BOUNDARY.clear(); BOUNDARY.update(saved)
+    try:
+        for what, cls, whys, want_problem in backing_cells:
+            BOUNDARY.clear()
+            BOUNDARY.update({"OP_B": (cls, "src/compiler/bytecode.h", "typedef enum", "fixture")})
+            problems = backing_problems(whys)
+            hit = bool(problems) == want_problem
+            print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+                  % (what, len(problems), "one-or-more" if want_problem else "clean",
+                     "ok" if hit else "WRONG"))
+            ok &= hit
+    finally:
+        BOUNDARY.clear(); BOUNDARY.update(saved)
+    cells += backing_cells
     print("IR-AOT-MIR-SURFACE-SELFCHECK|checks=%d|verdict=%s"
           % (len(cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
@@ -284,7 +372,8 @@ def main():
         return self_check()
 
     members, missing = unemitted()
-    problems = coverage_problems(members, missing) + evidence_problems()
+    problems = (coverage_problems(members, missing) + evidence_problems()
+                + backing_problems())
 
     if args.report:
         for op in sorted(BOUNDARY):

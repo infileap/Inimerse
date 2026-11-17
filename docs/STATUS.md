@@ -11727,3 +11727,52 @@ opcode，而是这个 opcode 的这个实参。**
 同时跑了三轮生成式对拍（`tools/aot_mir_fuzz.py`，种子 777/778/779，共 2200 个程序）：
 `diverge=0|threw=0|unsound=0`，十族全发射、无静默族。
 
+## §10.210 The boundary's arguments have to be demonstrated, not asserted
+
+### 1. 来源
+
+§10.192 把 `unknown=8` 收成一张三类边界表，每一行都点名「树里还在的一个文件片段」
+作证据。但**证据片段证明不了论证**：`another-thread` 那七行真正依赖的是一句关于
+行为的断言——「本路线按名拒线程段（`why=threads`）」。那句话的证据不在
+`src/compiler/bytecode.h` 的注释里，而在**用例表**里：`mir_thread_decl_never_started`
+与 `mir_thread_result_unwrap`。两处一旦被删，边界表照样 PASS，因为它只查 needle。
+
+§10.209 的 `threads` 惰性论证依赖的是同一条拒绝。换句话说，这一类论证在库里**只有
+断言、没有守卫**。
+
+### 2. 判据（工具侧）
+
+`tools/aot_mir_surface.py` 新增 `CLASS_BACKING` 与 `backing_problems()`：
+
+    CLASS_BACKING = {"another-thread": "threads",
+                     "measurement": "unsupported-opcode",
+                     "retired": None}
+
+每个**在用**的类别声明它依赖的拒绝原因；`None` 表示不需要拒绝（`retired` 行的证据
+是 enum 的编号空洞，已由 needle 检查）。`refusal_whys()` 用 `ast` 从
+`tools/aot_mir.test.py` 的 `MIR_ONLY_REFUSE` 表里取 `why` 字符串集合——**按 AST 取
+而不是 grep**，这样一个注释里出现的 “threads” 不能冒充一个会跑的用例。
+
+自检从 5 格扩到 **7 格**：新增 `backed`（同一张表，语料带 `why=threads` ⇒ 干净）与
+`unbacked`（语料只剩 `declare-limit` ⇒ 报问题），证明这条检查是**双向**的。
+
+### 3. 注入
+
+把 `mir_thread_decl_never_started` 与 `mir_thread_result_unwrap` 两条从语料里删掉，
+`tools/aot_mir_surface.py` 立刻红：
+
+    IR-AOT-MIR-SURFACE-PROBLEM|class 'another-thread' argues that its members are
+    unreachable because the route refuses them with why='threads', but no case in
+    the corpus uses that reason any more -- the argument is asserted, not demonstrated
+    IR-AOT-MIR-SURFACE-VERDICT|FAIL
+
+还原后 PASS。**这一发注入就是本格的先红**：它证明这条检查能红，而不只是能绿。
+
+### 4. 边界
+
+`CLASS_BACKING` 是**一张会过期的断言表**。它保证「类别说的拒绝原因在语料里还在」，
+不保证「那个原因仍然不可达」——后者要靠 §10.192 的模型论证与 §10.197 的
+A1 裁定。另外 `measurement` 类现在**没有行**（`OP_DECLARE` 已由 §10.208 发射），
+条目保留是为了下一个测量型 opcode 出现时不必重新发明词表；一旦确认不会再有，
+删掉它同时要把 §10.192 的三类叙述改成二类。
+
