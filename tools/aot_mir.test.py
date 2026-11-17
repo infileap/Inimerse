@@ -537,6 +537,7 @@ ALLOCS_EXPECT = {
     #   way.
     "mir_join_every_shape_and_the_default_separator": (15, 3895),
     "mir_join_float_format_and_percent": (8, 838),
+    "mir_join_needs_a_string_separator": (9, 1814),
     # chars()/ord()/chr(): PREDICTIONS, each with its DENOMINATOR written out --
     # the discipline three wrong predictions in a row earned.  "Denominator"
     # means: which calls does this total cover, and what does one call cost.
@@ -2338,6 +2339,18 @@ say list(b)
     # mv_vts from %.17g, and the second is what proves no printf is applied to
     # element bytes (`join(["%s","%d"])` must print them verbatim; a printf-based
     # implementation prints garbage or crashes).
+    # The SEPARATOR only separates when it is a string.  Measured on
+    # 9c7c718e: join([1, 2], 3) answered "12" on the route and the empty
+    # string in the interpreter -- the interpreter reads the LAST argument as
+    # the separator only when it is a string, and a number separator is not one.
+    ("mir_join_needs_a_string_separator",
+     "say join([1, 2], 3)\n"
+     "say join([1, 2])\n"
+     "say join([1, 2], \",\")\n"
+     "say join([\"a\", \"b\"], \"-\")\n"
+     "say join([], \",\")\n"
+     "say join([1, [2, 3]], \",\")\n"
+     ),
     ("mir_join_float_format_and_percent",
      'say join([1.0, 0.1 + 0.2, 1 / 3], "-")\nsay str(0.1 + 0.2)\n'
      'say str(1 / 3)\nsay join(["%s", "%d"], "-")\nsay join(["a", "b", "c"], "::")\n'
@@ -6610,6 +6623,135 @@ def abort_surface(mir_tool, interp, workdir, verbose):
     return problems
 
 
+# THE SAME QUESTION, ASKED OF THE BUILTINS.
+#
+# The matrix above asks what the CONVERSION door does with every value, because
+# that door's default arm aborts.  A builtin is the other place a program can
+# stop without a value: `chr(200)` is past the byte range, `substr` past the
+# end, `int("zz")` is not a number, `match` with a bad pattern, and each of
+# those either throws or aborts depending on which side of the tree it lands.
+# The criterion is the same one: the two sides must AGREE about whether the
+# shape stops, and a route that stops where the interpreter answers is a defect
+# (it has no answer for a shape the language has one for).
+#
+# One program per expression, `say <expr>`, so a stop cannot take a neighbour's
+# output with it.
+BUILTIN_ABORT_CALLS = [
+    ("chr_high", "ord(chr(200))"),   # read back through ord: a raw 0xC8 is not text
+    ("chr_negative", "ord(chr(-1))"),
+    ("ord_empty", 'ord("")'),
+    ("ord_nil", "ord(nil)"),
+    ("substr_past_end", 'substr("ab", 1, 5)'),
+    ("substr_negative", 'substr("ab", -1, 2)'),
+    ("index_nonstring", "index(1, 2)"),
+    ("int_not_number", 'int("zz")'),
+    ("sqrt_negative", "sqrt(-1.0)"),
+    ("sqrt_negative_int", "sqrt(-4)"),
+    ("sum_non_numeric", 'sum(["a"])'),
+    ("min_empty", "min([])"),
+    ("max_empty", "max([])"),
+    ("join_non_string_sep", "join([1, 2], 3)"),
+    ("split_non_string", "split(1, 2)"),
+    ("remove_non_container", "remove(1, 2)"),
+    ("keys_non_dict", "keys(1)"),
+    ("has_non_dict", "has(1, 2)"),
+    ("round_non_number", 'round("x")'),
+    ("float_container", "float([1])"),
+    ("len_non_container", "len(1)"),
+    ("size_non_container", "size(1)"),
+    ("count_nil", "count(nil)"),
+    ("trim_non_string", "trim(1)"),
+    ("replace_non_string", "replace(1, 2, 3)"),
+    ("startswith_non_string", "startswith(1, 2)"),
+    ("endswith_non_string", "endswith(1, 2)"),
+    ("bit_not_non_int", 'bit_not("a")'),
+    ("shl_negative", "shl(1, -1)"),
+    ("shr_non_int", 'shr("a", 1)'),
+    ("bool_container", "bool([1])"),
+    ("str_function", "str(nil)"),
+    ("match_bad_pattern", 'match("a", "(")'),
+    ("range_non_number", 'range("ab")'),
+]
+
+
+def builtin_abort_surface(mir_tool, interp, workdir, verbose):
+    """Ask every builtin's edge case whether the two sides agree about stopping.
+
+    Same comparison as the conversion matrix: a REFUSAL is not a stop (the route
+    declining a shape says nothing about the abort surface), a STOP is any
+    non-zero exit, and only a DISAGREEMENT is a problem -- the route stopping
+    where the interpreter answered, or the interpreter stopping where the route
+    answered.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    problems = []
+    names = ["builtin_abort_%s" % n for n, _ in BUILTIN_ABORT_CALLS]
+    srcs = ["say %s\n" % expr for _n, expr in BUILTIN_ABORT_CALLS]
+    for n, src in zip(names, srcs):
+        Path(workdir, n + ".im").write_text(src)
+    interp_rc, interp_out = {}, {}
+    for n in names:
+        rc, out, _e = run([interp, "--no-mods", "run", Path(workdir, n + ".im")], workdir)
+        interp_rc[n], interp_out[n] = rc, out
+
+    def lower_and_compile(n):
+        s = Path(workdir, n + ".im")
+        c = Path(workdir, n + ".c")
+        rc_t, out_t, err_t = run([mir_tool, "translate", s, c], workdir)
+        if rc_t != 0:
+            return (n, "refused", (err_t or out_t).strip()[:160])
+        exe = Path(workdir, n + ".bin")
+        rc_c, _o, ec = run(["cc", "-O2", "-o", exe, c, "-lm"], workdir)
+        if rc_c != 0:
+            return (n, "nocompile", (ec or "").strip()[:160])
+        return (n, "ok", "")
+
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        lowered = list(ex.map(lower_and_compile, names))
+    route_rc, route_out = {}, {}
+    for n, status, _detail in lowered:
+        if status == "ok":
+            rc, out, _err = run([Path(workdir, n + ".bin")], workdir)
+            route_rc[n], route_out[n] = rc, out
+        else:
+            route_rc[n] = status
+
+    both_stop = route_only = interp_only = refused_by_name = differ = 0
+    for n, (_label, expr) in zip(names, BUILTIN_ABORT_CALLS):
+        rrc = route_rc[n]
+        if rrc == "refused":
+            refused_by_name += 1
+            print("IR-MIR-BUILTIN-ABORT|expr=%s|interp=%s|route=refused"
+                  % (expr, "stopped" if interp_rc[n] else "answered"))
+            continue
+        if rrc == "nocompile":
+            problems.append("%s: the lowered program did not compile" % n)
+            continue
+        istop, rstop = interp_rc[n] != 0, rrc != 0
+        if istop and rstop:
+            both_stop += 1
+        elif rstop:
+            route_only += 1
+            problems.append("%s: the route STOPPED (rc=%s) where the interpreter answered "
+                            "-- `%s` has an answer and the route has none" % (n, rrc, expr))
+        elif istop:
+            interp_only += 1
+            problems.append("%s: the interpreter STOPPED where the route answered -- the two "
+                            "sides disagree about `%s`" % (n, expr))
+        elif interp_out[n] != route_out[n]:
+            differ += 1
+            problems.append("%s: both answered, but the answers differ for `%s`" % (n, expr))
+        print("IR-MIR-BUILTIN-ABORT|expr=%s|interp=%s|route=%s"
+              % (expr, "stopped" if istop else "answered",
+                 "stopped" if rstop else "answered"))
+    print("IR-MIR-BUILTIN-ABORT-SURFACE|calls=%d|both-stopped=%d|route-stopped-where-interp"
+          "-answered=%d|interp-stopped-where-route-answered=%d|answered-differently=%d"
+          "|refused-by-name=%d"
+          % (len(BUILTIN_ABORT_CALLS), both_stop, route_only, interp_only, differ,
+             refused_by_name))
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", default="build")
@@ -6751,6 +6893,7 @@ def main():
 
     problems.extend(wide_controls(mir_tool, interp, workdir, args.verbose))
     problems.extend(abort_surface(mir_tool, interp, workdir, args.verbose))
+    problems.extend(builtin_abort_surface(mir_tool, interp, workdir, args.verbose))
 
     # ------------------------------------------------------------ MIR-only cases
     #
