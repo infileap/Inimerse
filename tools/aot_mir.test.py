@@ -5947,6 +5947,15 @@ MIR_ONLY_REFUSE = {
     "mir_interval_domain_is_not_r_or_z": (
         'say N[0~3]\n',
         "set-interval-domain"),
+    #   try-enters: §10.216 claimed this reason unreachable, on the belief
+    #   that the compiler opens ONE try region per function.  Measured: it
+    #   opens one per try STATEMENT, so two try statements in one function give
+    #   two regions and the catch block's jump enters the second one -- which
+    #   is exactly the jump the route refuses with why=try-enters.  So the
+    #   reason is triggerable, and this row witnesses it.
+    "mir_two_try_statements_refuse_the_jump_into_the_second": (
+        'try {\n  say 1\n} catch {\n  say 2\n}\ntry {\n  say 3\n} catch {\n  say 4\n}\n',
+        "try-enters"),
 }# THE NOT-YET SIDE TABLE, one row per refusal that is a REFUSAL-BY-OPCODE.
 #
 # A `why=unsupported-opcode` refusal alone says "something here is not lowered";

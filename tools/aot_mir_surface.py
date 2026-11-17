@@ -184,7 +184,7 @@ REFUSAL_REASONS = {
     "illegal-operand": "family",
     "lock-unpaired": "witnessed",
     "set-interval-domain": "witnessed",
-    "try-enters": "unreachable",
+    "try-enters": "witnessed",
     "try-escapes": "witnessed",
     "conservation": "unreachable",
     "container-shape": "unreachable",
@@ -241,6 +241,89 @@ def route_refusal_reasons(text=None):
     reasons = set(re.findall(r'g_prescan_why\s*=\s*"([a-z-]+)"', body))
     reasons |= set(re.findall(r'refuse\(\s*"([a-z-]+)"', body))
     return reasons
+
+
+# The reasons whose UNREACHABILITY is a fact about the TREE, not a claim about
+# one program.  Each one names a premise the checker can re-derive, so a change
+# that breaks the premise turns the claim into a PROBLEM instead of leaving a
+# stale "unreachable" in the ledger.
+#
+# §10.216 argued these by hand; §10.218 makes the argument re-runnable.
+#
+#   (try-enters used to sit here, on the claim that the compiler opens one try
+#     region per FUNCTION.  §10.218 measured that claim false: the compiler
+#     opens one region per try STATEMENT, so two try statements in one function
+#     give two regions, and the catch block's jump enters the second one.  The
+#     reason is therefore TRIGGERABLE and is witnessed by a corpus row.)
+#   unsupported-opcode: the route refuses a program holding an opcode it has
+#     no mask for.  The premise is "every opcode the emitter can meet has a
+#     mask", i.e. op_regs and the emitter's case labels cover the same set.
+UNREACHABLE_PREMISES = {
+    "unsupported-opcode": "every-opcode-has-a-mask",
+}
+
+
+def mask_premise():
+    """Does every opcode the emitter can meet have a mask?
+
+    `op_regs` decides whether an instruction is lowered at all: a mask of -1
+    means "not yet", and the program is refused with why=unsupported-opcode.
+    The premise is that op_regs and the emitter's own case labels name the same
+    opcodes -- if the emitter gained an arm without a mask (or the other way
+    round), an opcode could reach the not-yet path that the boundary table
+    believes is out of scope.
+    """
+    src = (ROOT / "src" / "compilation" / "aot_mir.c").read_text(errors="replace")
+    i = src.find("static int op_regs(int op) {")
+    if i < 0:
+        return False, "op_regs is gone from the emitter"
+    j = src.find("\n}\n", i)
+    body = src[i:j]
+    masks = set(re.findall(r"case (OP_[A-Z0-9_]+)", body))
+    arms = set(re.findall(r"case (OP_[A-Z0-9_]+)", src))
+    if masks == arms:
+        return True, "op_regs and the emitter cover %d opcodes" % len(masks)
+    return False, ("op_regs covers %d opcodes and the emitter %d; only in op_regs: %s; "
+                   "only in the emitter: %s"
+                   % (len(masks), len(arms),
+                      ", ".join(sorted(masks - arms)) or "none",
+                      ", ".join(sorted(arms - masks)) or "none"))
+
+
+PREMISE_CHECKS = {
+    "every-opcode-has-a-mask": mask_premise,
+}
+
+
+def unreachable_premise_problems():
+    """Every reason the ledger calls unreachable must still be unreachable.
+
+    A reason whose premise can be re-derived is checked here: if the premise
+    no longer holds, the reason becomes reachable and the ledger's claim is
+    stale -- and the ledger would otherwise keep saying "unreachable" over a
+    program that can now carry it.
+    """
+    problems = []
+    for why, premise_name in sorted(UNREACHABLE_PREMISES.items()):
+        state = REFUSAL_REASONS.get(why)
+        if state != "unreachable":
+            problems.append("the refusal ledger says why=%r is %r, but the "
+                            "premise %r only applies to an unreachable reason"
+                            % (why, state, premise_name))
+            continue
+        check = PREMISE_CHECKS.get(premise_name)
+        if check is None:
+            problems.append("the premise %r named for why=%r has no check"
+                            % (premise_name, why))
+            continue
+        holds, detail = check()
+        if not holds:
+            problems.append("the refusal ledger says why=%r is unreachable, but "
+                            "its premise (%s) no longer holds: %s" % (why, premise_name, detail))
+        else:
+            print("IR-AOT-MIR-REFUSAL-PREMISE|why=%s|premise=%s|holds=yes|%s"
+                  % (why, premise_name, detail))
+    return problems
 
 
 def refusal_ledger_problems(whys=None):
@@ -472,8 +555,40 @@ def self_check():
     finally:
         REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger)
         globals()["route_refusal_reasons"] = saved_source
+    # The premise cells: a reason the ledger calls unreachable must still be
+    # unreachable.  The check is asked the question directly, with the premise
+    # check swapped for one that answers NO, so the self-check proves the
+    # checker can say NO rather than only that it agrees with the tree.
+    premise_cells = [
+        ("premise-holds", {"unsupported-opcode": "unreachable"},
+         lambda: (True, "fixture holds"), False),
+        ("premise-broken", {"unsupported-opcode": "unreachable"},
+         lambda: (False, "fixture premise no longer holds"), True),
+        ("premise-on-a-witnessed-reason", {"unsupported-opcode": "witnessed"},
+         lambda: (True, "fixture holds"), True),
+    ]
+    saved_ledger2 = dict(REFUSAL_REASONS)
+    saved_checks = dict(PREMISE_CHECKS)
+    saved_unreach = dict(UNREACHABLE_PREMISES)
+    try:
+        for what, ledger_reasons, fake_check, want_problem in premise_cells:
+            REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(ledger_reasons)
+            UNREACHABLE_PREMISES.clear()
+            UNREACHABLE_PREMISES["unsupported-opcode"] = "every-opcode-has-a-mask"
+            PREMISE_CHECKS.clear(); PREMISE_CHECKS["every-opcode-has-a-mask"] = fake_check
+            problems = unreachable_premise_problems()
+            hit = bool(problems) == want_problem
+            print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+                  % (what, len(problems), "one-or-more" if want_problem else "clean",
+                     "ok" if hit else "WRONG"))
+            ok &= hit
+    finally:
+        REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger2)
+        PREMISE_CHECKS.clear(); PREMISE_CHECKS.update(saved_checks)
+        UNREACHABLE_PREMISES.clear(); UNREACHABLE_PREMISES.update(saved_unreach)
     cells += backing_cells
     cells += ledger_cells
+    cells += premise_cells
     print("IR-AOT-MIR-SURFACE-SELFCHECK|checks=%d|verdict=%s"
           % (len(cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
@@ -488,7 +603,8 @@ def main():
 
     members, missing = unemitted()
     problems = (coverage_problems(members, missing) + evidence_problems()
-                + backing_problems() + refusal_ledger_problems())
+                + backing_problems() + refusal_ledger_problems()
+                + unreachable_premise_problems())
 
     if args.report:
         for op in sorted(BOUNDARY):
