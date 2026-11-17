@@ -6674,7 +6674,93 @@ BUILTIN_ABORT_CALLS = [
 ]
 
 
-def builtin_abort_surface(mir_tool, interp, workdir, verbose):
+
+# The stage above is a breadth sweep: one shape per builtin.  These are the
+# FAMILIES -- each builtin's own illegal/edge shapes, several per builtin, so
+# the sweep can be deepened from "one probe per name" to "every name's own
+# bad-argument family".  Same comparison rule: a refusal is not a stop, a stop
+# is a non-zero exit, and only a disagreement is a problem.
+#
+# `chr` reads back through `ord` on purpose: a raw 0xC8 is not text, and a
+# byte that cannot be decoded would take the whole harness down with a
+# UnicodeDecodeError instead of reporting a disagreement (see 10.213).
+BUILTIN_FAMILY_CALLS = [
+    # chr -- the byte range
+    ("chr_255", "ord(chr(255))"),
+    ("chr_256", "ord(chr(256))"),
+    ("chr_1000", "ord(chr(1000))"),
+    ("chr_zero", "ord(chr(0))"),
+    # ord -- what is not a string
+    ("ord_int", "ord(1)"),
+    ("ord_bool", "ord(true)"),
+    # substr -- the window
+    ("substr_zero_len", 'substr("ab", 0, 0)'),
+    ("substr_inverted", 'substr("ab", 2, 1)'),
+    ("substr_start_past_end", 'substr("ab", 5, 1)'),
+    ("substr_empty_src", 'substr("", 0, 1)'),
+    ("substr_nil_src", "substr(nil, 0, 1)"),
+    ("substr_negative_len", 'substr("ab", 0, -1)'),
+    # index -- the needle
+    ("index_empty_needle", 'index("abc", "")'),
+    ("index_missing", 'index("abc", "z")'),
+    ("index_nil_src", 'index(nil, "a")'),
+    # int -- the base-16 spelling
+    ("int_empty", 'int("")'),
+    ("int_bare_0x", 'int("0x")'),
+    ("int_bad_hex", 'int("0xZZ")'),
+    ("int_true", "int(true)"),
+    # sqrt -- the negative domain
+    ("sqrt_nil", "sqrt(nil)"),
+    ("sqrt_text", 'sqrt("x")'),
+    # sum / min / max -- the empty and the mixed
+    ("sum_empty", "sum([])"),
+    ("sum_mixed", 'sum([1, "a"])'),
+    ("min_text", 'min("abc")'),
+    ("max_nil", "max(nil)"),
+    # join / split -- the separator and the source
+    ("join_nil", "join(nil)"),
+    ("join_nil_element", "join([1, nil])"),
+    ("split_empty_sep", 'split("a", "")'),
+    ("split_nil_src", 'split(nil, ",")'),
+    ("split_third_arg", 'split("a,b", ",", 3)'),
+    # remove / keys / has -- the container
+    ("remove_nil", "remove(nil, 1)"),
+    ("remove_int_element", "remove([1], 2)"),
+    ("keys_nil", "keys(nil)"),
+    ("keys_array", "keys([])"),
+    ("has_nil", "has(nil, 1)"),
+    # round / float -- the numeric coercion
+    ("round_nil", "round(nil)"),
+    ("round_three_args", "round(1, 2, 3)"),
+    ("float_text", 'float("x")'),
+    ("float_nil", "float(nil)"),
+    # len / size / count -- the region
+    ("len_nil", "len(nil)"),
+    ("size_nil", "size(nil)"),
+    ("count_text", 'count("ab")'),
+    # trim / replace -- the string
+    ("trim_nil", "trim(nil)"),
+    ("replace_nil_needle", 'replace("abc", nil, "x")'),
+    ("replace_empty_needle", 'replace("abc", "", "x")'),
+    # startswith / endswith -- the prefix
+    ("startswith_empty", 'startswith("abc", "")'),
+    ("endswith_nil", "endswith(nil, 2)"),
+    # the bit family -- the shift count
+    ("shl_63", "shl(1, 63)"),
+    ("shl_64", "shl(1, 64)"),
+    ("shr_64", "shr(1, 64)"),
+    ("shr_nil", "shr(nil, 1)"),
+    ("bit_not_nil", "bit_not(nil)"),
+    # bool / str / match / range -- the shape
+    ("bool_empty_text", 'bool("")'),
+    ("str_array", "str([1, 2])"),
+    ("match_nil", 'match(nil, "a")'),
+    ("range_nil", "range(nil)"),
+]
+
+
+def builtin_abort_surface(mir_tool, interp, workdir, verbose, calls=None, tag="BUILTIN-ABORT"):
+    calls = BUILTIN_ABORT_CALLS if calls is None else calls
     """Ask every builtin's edge case whether the two sides agree about stopping.
 
     Same comparison as the conversion matrix: a REFUSAL is not a stop (the route
@@ -6685,8 +6771,8 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose):
     """
     from concurrent.futures import ThreadPoolExecutor
     problems = []
-    names = ["builtin_abort_%s" % n for n, _ in BUILTIN_ABORT_CALLS]
-    srcs = ["say %s\n" % expr for _n, expr in BUILTIN_ABORT_CALLS]
+    names = ["%s_%s" % (tag.lower().replace("-", "_"), n) for n, _ in calls]
+    srcs = ["say %s\n" % expr for _n, expr in calls]
     for n, src in zip(names, srcs):
         Path(workdir, n + ".im").write_text(src)
     interp_rc, interp_out = {}, {}
@@ -6717,12 +6803,12 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose):
             route_rc[n] = status
 
     both_stop = route_only = interp_only = refused_by_name = differ = 0
-    for n, (_label, expr) in zip(names, BUILTIN_ABORT_CALLS):
+    for n, (_label, expr) in zip(names, calls):
         rrc = route_rc[n]
         if rrc == "refused":
             refused_by_name += 1
-            print("IR-MIR-BUILTIN-ABORT|expr=%s|interp=%s|route=refused"
-                  % (expr, "stopped" if interp_rc[n] else "answered"))
+            print("IR-MIR-%s|expr=%s|interp=%s|route=refused" % (tag,
+                     expr, "stopped" if interp_rc[n] else "answered"))
             continue
         if rrc == "nocompile":
             problems.append("%s: the lowered program did not compile" % n)
@@ -6741,13 +6827,13 @@ def builtin_abort_surface(mir_tool, interp, workdir, verbose):
         elif interp_out[n] != route_out[n]:
             differ += 1
             problems.append("%s: both answered, but the answers differ for `%s`" % (n, expr))
-        print("IR-MIR-BUILTIN-ABORT|expr=%s|interp=%s|route=%s"
-              % (expr, "stopped" if istop else "answered",
+        print("IR-MIR-%s|expr=%s|interp=%s|route=%s"
+              % (tag, expr, "stopped" if istop else "answered",
                  "stopped" if rstop else "answered"))
-    print("IR-MIR-BUILTIN-ABORT-SURFACE|calls=%d|both-stopped=%d|route-stopped-where-interp"
+    print("IR-MIR-%s-SURFACE|calls=%d|both-stopped=%d|route-stopped-where-interp"
           "-answered=%d|interp-stopped-where-route-answered=%d|answered-differently=%d"
           "|refused-by-name=%d"
-          % (len(BUILTIN_ABORT_CALLS), both_stop, route_only, interp_only, differ,
+          % (tag, len(calls), both_stop, route_only, interp_only, differ,
              refused_by_name))
     return problems
 
@@ -6894,6 +6980,8 @@ def main():
     problems.extend(wide_controls(mir_tool, interp, workdir, args.verbose))
     problems.extend(abort_surface(mir_tool, interp, workdir, args.verbose))
     problems.extend(builtin_abort_surface(mir_tool, interp, workdir, args.verbose))
+    problems.extend(builtin_abort_surface(mir_tool, interp, workdir, args.verbose,
+                                         calls=BUILTIN_FAMILY_CALLS, tag="BUILTIN-FAMILY-ABORT"))
 
     # ------------------------------------------------------------ MIR-only cases
     #
