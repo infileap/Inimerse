@@ -12119,6 +12119,13 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
     IR-AOT-MIR-SURFACE|declared=67|emitted=60|unemitted=7|classified=8|classes=3
     IR-AOT-MIR-SURFACE-VERDICT|PASS
 
+> **UPDATE (10.223)** —— 这条前提在本节之后**不再是** `unsupported-opcode` 的前提：
+> 它比较的两组集合里「文件全体 `case`」包含 `op_regs` 自己的 `case`，所以「有掩码、
+> 没臂」时两边仍然相等、检查仍然绿；它真正的红射线是「有臂、没掩码」（就是下面这次注入），
+> 而那个形状守的是 `emit-failed` 那条不变式（§10.220），不是 not-yet 路径。
+> §10.223 把 `unsupported-opcode` 换成 `every-unmasked-opcode-is-a-thread-opcode`。
+> 上面原文保留，因为这条检查本身还在跑、也仍然有意义。
+
 **注入.** 把 `op_regs` 里 `OP_EQK` 的掩码去掉（发射器仍留着它的臂）⇒
 
     IR-AOT-MIR-SURFACE-PROBLEM|the refusal ledger says why='unsupported-opcode' is
@@ -12462,3 +12469,115 @@ program that makes the compiler write an out-of-range register or an
 underflowing stack would move them to `witnessed`.  `illegal-operand` leaves
 when every check in the pre-scan names its own reason, at which point the
 default has nothing left to fall back to.
+
+## §10.223 — the unsupported-opcode premise argued a different claim
+
+### 1. Source
+
+After §10.222 the refusal ledger was `Counter({'witnessed': 12, 'invariant': 9,
+'unreachable': 1, 'reachable': 1})`.  The single `unreachable` row was
+`unsupported-opcode`, and the premise it named — `every-opcode-has-a-mask`,
+introduced by §10.218 — was the last claim in the ledger standing on a
+comparison nobody had asked what it compared.
+
+### 2. Measurement (on `6cfc1e32`)
+
+`op_regs` carries case labels for **60** of the 67 enum members; so does the
+whole emitter; the two sets are **equal**.  The **7** members with no mask are
+`OP_THREAD_START`, `OP_THREAD_CTRL`, `OP_THREAD_JOIN`, `OP_THREAD_WAIT`,
+`OP_THREAD_STATE`, `OP_SEND`, `OP_THREAD_GOTO` — exactly the seven rows the
+boundary classes `another-thread`, checked as a set equality here and not by
+eye.
+
+The second half of the argument is a corpus fact, not a source scan: a program
+carrying any of those seven must declare a thread, and `build_nodes` refuses a
+container whose `thread_count > 0` with `why=threads` **before** `prescan` runs,
+so the not-yet path is reached by no program the route accepts.  `CLASS_BACKING`
+maps `another-thread` to that reason and §10.210's `backing_problems()` requires
+the corpus to still carry a `why=threads` row.
+
+### 3. What the old premise actually compared
+
+Injected on `6cfc1e32`: add `case OP_SEND: return R1 | R2;` to `op_regs` with no
+arm anywhere else.  The check printed
+
+    IR-AOT-MIR-REFUSAL-PREMISE|why=-|premise=every-opcode-has-a-mask|holds=yes
+      |op_regs and the emitter cover 61 opcodes
+
+and the run failed on a **different** check: `the boundary classifies OP_SEND as
+unemitted, but the emitter now has a case for it -- the row is stale`.  The
+reason is structural: the comparison's second set is the case labels of the
+**whole file**, and `op_regs` is part of the file, so a mask without an arm adds
+to both sides.  The direction the check does catch — an arm without a mask —
+was §10.218's own injection (removing `OP_EQK`'s mask reds it with `only in the
+emitter: OP_EQK`), and that shape is what would let a **masked** opcode reach
+`emit_one`'s default arm, i.e. the shape `why=emit-failed` exists for (§10.220).
+
+So the premise was not wrong, it was **attached to the wrong claim**: it argued
+the emit-failed invariant, not the not-yet path.  `mask_premise`'s docstring
+claimed the "or the other way round" direction it cannot see; the docstring now
+states what the two sets are and which red belongs to which direction.
+
+### 4. What replaced it
+
+    UNREACHABLE_PREMISES = {
+        "unsupported-opcode": "every-unmasked-opcode-is-a-thread-opcode",
+    }
+
+`unmasked_thread_only_problems(members, masks, boundary)` is the factored
+question — every member without a mask must sit in a row classed
+`another-thread` — so the self-check can hand it a fixture.  The premise reads
+`op_regs`, `declared_opcodes()` and `BOUNDARY`, and prints the seven names:
+
+    IR-AOT-MIR-REFUSAL-PREMISE|why=unsupported-opcode
+      |premise=every-unmasked-opcode-is-a-thread-opcode|holds=yes
+      |7 of 67 opcodes carry no mask, and every one of them is a thread-section opcode
+
+`mask_premise` stays in `PREMISE_CHECKS` and is still **run**: every entry of
+that table is now executed whether or not a ledger row names it, and a premise
+with no row prints under `why=-` so a failure cannot be read as a change in the
+unsupported-opcode argument.
+
+Self-check 21 → **24** cells.  The three new ones keep "no mask" and
+"another-thread class" as separate facts: `unmasked-all-thread` (clean),
+`unmasked-a-class-that-can-be-reached` (a `retired` row makes it fail),
+`unmasked-a-thread-row-reclassified` (a `measurement` row makes it fail).
+
+### 5. Injections
+
+A, isolating the new premise: reclassify `OP_SEND` from `another-thread` to
+`retired` (the boundary row, nothing else) ⇒
+
+    IR-AOT-MIR-REFUSAL-PREMISE|why=-|premise=every-opcode-has-a-mask|holds=yes
+      |op_regs and the emitter cover 60 opcodes
+    IR-AOT-MIR-SURFACE-PROBLEM|the refusal ledger says why='unsupported-opcode'
+      is unreachable, but its premise (every-unmasked-opcode-is-a-thread-opcode)
+      no longer holds: the emitter has no mask for OP_SEND, and the boundary
+      classifies it as 'retired'
+
+B, isolating the structural premise: remove `case OP_MOV: return R1 | R2;` from
+`op_regs` while its arm stays ⇒ **two** problems, each naming its own premise —
+the new one (`the emitter has no mask for OP_MOV, and the boundary classifies it
+as 'nothing at all'`) and the old one (`op_regs covers 59 opcodes and the
+emitter 60; only in op_regs: none; only in the emitter: OP_MOV`).  Both reds are
+correct and the overlap is by construction: an opcode that loses its mask is
+both an arm/mask disagreement and a new unmasked opcode.
+
+Both restored; `git diff --stat` empty before the docs commit.
+
+### 6. Boundary
+
+The subset check does not prove the second half of the argument.  That a program
+carrying a thread opcode cannot be built is a fact about `build_nodes` and the
+compiler's thread registration, demonstrated by a corpus row and kept alive by
+`CLASS_BACKING`; this premise only guarantees that the set it leans on is the
+set the class covers.  A new opcode added to the enum with no mask and no
+boundary row still reds `coverage_problems`, not this premise.
+
+`mask_premise` keeps a narrower guarantee than its name suggests: it catches an
+arm without a mask, and it cannot catch a mask without an arm because `op_regs`
+is itself a case-label site.  The converse is covered by the stale-row rule.
+
+Deletion: both premises leave when the opcodes they talk about leave — if the
+route ever emits the thread section, the seven masks appear, the unmasked set
+empties, and `unsupported-opcode` moves to `invariant` or disappears.
