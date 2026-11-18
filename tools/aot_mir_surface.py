@@ -130,13 +130,43 @@ BOUNDARY = {
 }
 
 # The classes, and the one sentence that says what a reader should do with
-# each.  Asserted to be exactly the set BOUNDARY uses: a class nobody uses is a
-# class nobody can read, and a row using an undeclared class is a boundary with
-# no stated meaning.
+# each.  A row using an undeclared class is a boundary with no stated meaning;
+# a declared class with no row is a class nobody can read, and it has to be
+# NAMED as dormant rather than merely sit in the table (see DORMANT_CLASSES).
 CLASSES = {
     "another-thread": "unreachable by construction: this route accepts no thread section",
     "measurement": "the observable is a stop position, not a value",
     "retired": "the interpreter no longer dispatches it",
+}
+
+
+# CLASSES THAT HOLD NO ROW TODAY, EACH WITH THE REASON IT IS KEPT.
+#
+# The docstring above used to claim CLASSES "is exactly the set BOUNDARY uses"
+# and only the `BOUNDARY - CLASSES` direction was ever coded.  The other
+# direction was prose.  That is the failure mode this file warns about
+# elsewhere in its own words -- "an exemption nobody declared is one nobody
+# decided on", and a class nobody uses is a segment of mechanism that never
+# runs -- so the set is now asserted in BOTH directions and the unused ones are
+# listed here on purpose:
+#
+#   measurement  OP_DECLARE left this class when §10.208 emitted it, so the
+#                class has no members.  The word is still the right one for a
+#                measurement-shaped observable, and keeping the entry means the
+#                next such opcode does not have to reinvent the vocabulary.
+#                §10.210's boundary note records the same decision, together
+#                with what deleting it would cost (the three-class narrative in
+#                §10.192 becomes a two-class one).
+#
+# Deleting a class from CLASSES now reds the reverse assertion unless it is
+# removed here in the same edit, and a class added here without losing its rows
+# reds too: dormant is a claim about today's boundary, not a label to park a
+# class in.  CLASS_BACKING for a dormant class is checked as well -- an entry
+# that names a `why` the corpus has dropped is the same unfalsifiable
+# assertion whether or not any row happens to lean on it.
+DORMANT_CLASSES = {
+    "measurement": "OP_DECLARE was emitted by §10.208, so the class has no row;"
+                   " the word is kept for the next measurement-shaped observable",
 }
 
 
@@ -153,9 +183,19 @@ CLASSES = {
 # section" after somebody deleted the case that proves it -- the row would point
 # at a real comment and a real opcode while the behaviour it describes had
 # quietly come unwired.
+#
+# AN "unreachable" REASON CANNOT BE WITNESSED, so it is not a backing claim.
+# `unsupported-opcode` is state `unreachable` in REFUSAL_REASONS by §10.223's own
+# premise: no program the route accepts reaches it.  Demanding a corpus case for
+# it asks the corpus for a program that cannot exist, which is an assertion no
+# run can ever satisfy -- and `measurement` carried exactly that demand from the
+# day it lost its only row (§10.208) until the dormancy assertion below gave it
+# something to fail against.  A dormant class therefore names None: it has no
+# members, so it demonstrates nothing, and pretending otherwise is the
+# unfalsifiable shape this file exists to prevent.
 CLASS_BACKING = {
     "another-thread": "threads",
-    "measurement": "unsupported-opcode",
+    "measurement": None,
     "retired": None,
 }
 
@@ -567,7 +607,13 @@ def backing_problems(whys=None):
     if whys is None:
         whys = refusal_whys()
     problems = []
-    for cls in sorted({row[0] for row in BOUNDARY.values()}):
+    # Dormant classes are checked too: a CLASS_BACKING entry is a claim about the
+    # corpus, and it goes stale on the corpus's schedule, not on the boundary's.
+    # Skipping it would leave exactly one entry in this table unfalsifiable --
+    # the shape §10.210 flagged when it said entries are kept "so the next
+    # measurement-shaped opcode need not reinvent the vocabulary".
+    classes = {row[0] for row in BOUNDARY.values()} | set(DORMANT_CLASSES)
+    for cls in sorted(classes):
         need = CLASS_BACKING.get(cls)
         if need is None:
             continue
@@ -665,6 +711,28 @@ def coverage_problems(members, missing):
     unknown_classes = sorted({BOUNDARY[op][0] for op in BOUNDARY} - set(CLASSES))
     if unknown_classes:
         problems.append("rows use undeclared classes: %s" % ",".join(unknown_classes))
+    # The OTHER direction: a declared class no row uses.  Undeclared dormancy is
+    # how CLASSES silently becomes a museum -- the class still reads like a
+    # live vocabulary, nothing exercises it, and no check ever notices.
+    used_classes = {BOUNDARY[op][0] for op in BOUNDARY}
+    dormant_unlisted = sorted(set(CLASSES) - used_classes - set(DORMANT_CLASSES))
+    if dormant_unlisted:
+        problems.append(
+            "CLASSES declares %s but no boundary row uses it, and it is not in "
+            "DORMANT_CLASSES -- a class nobody uses is a class nobody can read, "
+            "so either give it a row or say why it is kept"
+            % ",".join(dormant_unlisted))
+    dormant_with_rows = sorted(set(DORMANT_CLASSES) & used_classes)
+    if dormant_with_rows:
+        problems.append(
+            "DORMANT_CLASSES lists %s but the boundary still uses it -- dormant "
+            "is a claim about today's rows, not a place to park a live class"
+            % ",".join(dormant_with_rows))
+    unknown_dormant = sorted(set(DORMANT_CLASSES) - set(CLASSES))
+    if unknown_dormant:
+        problems.append(
+            "DORMANT_CLASSES names %s, which is not in CLASSES"
+            % ",".join(unknown_dormant))
     return problems
 
 
@@ -699,6 +767,19 @@ def self_check():
             "OP_B": ("no-such-class", "src/compiler/bytecode.h", "typedef enum", "fixture"),
         }, True),
     ]
+    # Dormancy cells: the reverse direction of the CLASSES assertion.  Each
+    # fixture below is one edit away from an honest table, and each is a shape
+    # the checker must be able to refuse -- otherwise "declared but unused"
+    # stays prose, which is exactly how `measurement` sat unchecked.
+    dormant_cells = [
+        # name, boundary, dormant, want_problem
+        ("dormant-declared", good, {"another-thread", "measurement"}, False),
+        ("dormant-unlisted", good, {"measurement"}, True),
+        ("dormant-but-live", dict(good, **{
+            "OP_A": ("another-thread", "src/compiler/bytecode.h", "typedef enum", "fixture"),
+        }), {"another-thread", "measurement"}, True),
+        ("dormant-unknown", good, {"another-thread", "measurement", "no-such-class"}, True),
+    ]
     # Backing cells: the class in `good` is "retired", which needs no refusal.
     # These two show the check is bidirectional -- the same table is clean when
     # the corpus carries the reason the class names, and a problem when it does
@@ -725,7 +806,18 @@ def self_check():
          {"builtin-argc": "witnessedd"}, {"builtin-argc"}, True),
     ]
     saved = dict(BOUNDARY)
+    saved_dormant = dict(DORMANT_CLASSES)
     try:
+        # The coverage cells ask about the closure and attestation of the
+        # boundary, not about dormancy, so dormancy is neutralised here: every
+        # class no cell uses is declared dormant, which keeps the reverse
+        # assertion from reporting on the fixture.  Deriving the set from the
+        # cell table rather than listing it by hand means a new cell cannot
+        # silently reintroduce the interference -- a class it DOES use stays
+        # live, so a correct fixture cannot trip dormant-but-live.
+        used_in_cells = {row[0] for _, t, _ in cells for row in t.values()}
+        DORMANT_CLASSES.clear()
+        DORMANT_CLASSES.update({k: "" for k in set(CLASSES) - used_in_cells})
         for what, table, want_problem in cells:
             BOUNDARY.clear(); BOUNDARY.update(table)
             problems = coverage_problems(members, missing) + evidence_problems()
@@ -736,7 +828,26 @@ def self_check():
             ok &= hit
     finally:
         BOUNDARY.clear(); BOUNDARY.update(saved)
+        DORMANT_CLASSES.clear(); DORMANT_CLASSES.update(saved_dormant)
+    # Dormancy cells: each is one edit away from an honest table.
     try:
+        for what, table, dormant, want_problem in dormant_cells:
+            BOUNDARY.clear(); BOUNDARY.update(table)
+            DORMANT_CLASSES.clear(); DORMANT_CLASSES.update({k: "" for k in dormant})
+            problems = coverage_problems(members, missing)
+            hit = bool(problems) == want_problem
+            print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+                  % (what, len(problems), "one-or-more" if want_problem else "clean",
+                     "ok" if hit else "WRONG"))
+            ok &= hit
+    finally:
+        BOUNDARY.clear(); BOUNDARY.update(saved)
+        DORMANT_CLASSES.clear(); DORMANT_CLASSES.update(saved_dormant)
+    try:
+        # The backing cells ask about ONE class, so dormancy is neutralised: with
+        # a real dormant class still declared, every verdict here would also be
+        # reporting on that class's corpus reason, not on the fixture's.
+        DORMANT_CLASSES.clear()
         for what, cls, whys, want_problem in backing_cells:
             BOUNDARY.clear()
             BOUNDARY.update({"OP_B": (cls, "src/compiler/bytecode.h", "typedef enum", "fixture")})
@@ -748,6 +859,7 @@ def self_check():
             ok &= hit
     finally:
         BOUNDARY.clear(); BOUNDARY.update(saved)
+        DORMANT_CLASSES.clear(); DORMANT_CLASSES.update(saved_dormant)
     # The unmasked-subset premise (§10.223): "no mask" and "another-thread
     # class" are kept as separate facts, so a cell can fail on either the set
     # that loses a mask or the class that claims the wrong reason.
