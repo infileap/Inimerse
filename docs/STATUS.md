@@ -12304,3 +12304,72 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
 若将来某个理由获得了程序形状的可触发证据（像 §10.219 的 `function-name` 那样），
 把它从 `invariant` 改成 `witnessed` 并加语料行，同笔从 `INVARIANT_SITES` 删掉站点
 声明；若某个守卫被删除（`aot_mir.c` 里不再有对应 `refuse`），账本条目一并删除。
+
+## §10.221 `illegal-operand` 不是家族名，是一个程序真能带出来的理由
+
+### 一、来源
+
+§10.220 把五条「裸不可达」变成不变式义务之后，账本里只剩一个状态还挂着没被审：
+`illegal-operand`。它在 `tools/aot_mir_surface.py` 的 `REFUSAL_REASONS` 里写的是
+`family`，注释写着「不是程序能带出工具的理由：`g_prescan_why` 的默认值，在任何检查
+失败之前就被具名检查替换掉」。§10.219 与 §10.220 的教训都是「这类断言要拿树里的
+事实去验」，所以这格就去验了。
+
+### 二、实测：它有真身
+
+`say N` 直接就带出这个名字：
+
+    IR-MIR-REFUSED|why=illegal-operand|detail=container=0 insn=0 global 0 is the preset set global 'N', whose value is a set, not an NV int/float/bool -- outside this subset
+
+预设法里那 23 个全局（`N`、`Z`、`Z+`、`Z-`、`Float1`..`Float9`、`float1`..`float9`
+和一个高位字节名）存的是**集合**对象，而本子集没有能造集合的 opcode（§10.184 的
+Z 区间是另一个东西，它走 `OP_SET_INTERVAL`，不经过这些全局）。碰到它们只能按名拒。
+解释器对同一个程序印 `set(N)`（集合没有标量打印），所以拒绝是诚实的答案。
+
+**结论**：`family` 这个状态是错的。它当时的意思是「这是 `g_prescan_why` 的默认值，
+任何具名检查都会先把它换掉」——但**具名检查是按情况替换的**，不是必然替换：预设法
+这一处没有自己的名字，于是它带着**默认名**逃了出来。账本据此宣称「没有程序能带出
+这个理由」，而 `say N` 就在带。
+
+### 三、处置
+
+1. 账本：`illegal-operand` 从 `family` 改成 `witnessed`。
+2. 语料：新增 `mir_preset_set_global_is_refused`（`say N` ⇒ `why=illegal-operand`）。
+   读数：`mir=refused|why=illegal-operand|expect=illegal-operand|ok=yes`，解释器
+   `interp-out=b'set(N)\n'`、rc=0。
+3. **`family` 状态整个删掉**。`known` 集合里去掉它，于是「账本给某理由写
+   `family`」现在直接命中那条「状态是未知的 ⇒ 没有东西在检查它」的规则 ⇒ 红。
+   自检新增一格 `ledger-family-state-retired`（写 `family` ⇒ 红），自检
+   20 → **21 格**。
+
+### 四、两发注入（各只红自己那行）
+
+1. 去掉预设法那条拒绝（`if (0 && is_preset_global(gname))`）⇒ 路线**接受**了程序
+   （`IR-AOT-MIR-OK`），语料判据红：它要的是 `why=illegal-operand`，得到的是接受。
+2. 把这条拒绝改用**自己的名字**（`g_prescan_why = "preset-set-global"`）⇒ 理由变成
+   `preset-set-global`，语料判据同样红。这发注入说明这条判据盯的是**这个理由名**，
+   不是「某个拒绝」。
+
+还原后基线回到 `IR-MIR-REFUSED|why=illegal-operand|detail=... preset set global 'N' ...`，
+`git diff` 确认 `src/compilation/aot_mir.c` 逐字还原。
+
+### 五、剩下的账：`g_prescan_why` 仍是默认名
+
+源码里 `g_prescan_why` 的初值仍是 `"illegal-operand"`，而**别的**未具名检查还会用它
+（`bad(...)` 的那些返回点：寄存器越界、池索引越界、操作数个数越界……）。也就是说
+`illegal-operand` 现在同时是「预设法拒绝的名字」和「其他未具名检查的默认名」。这不
+是漏洞，但它是**下一个洞的形状**：如果哪天某个未具名的检查恰好被某个程序触发，它
+带出去的名字又会和预设法那条撞上。
+
+本格不拆它（拆它要动十几个检查点，是另一个量级的改动），但记在这里，作为下一个
+候选：**给 `g_prescan_why` 的每个默认值配一个自己的理由名**，让「默认名」不再是一
+个会被程序带出去的名字。删除条件：做完那一格，`illegal-operand` 只保留预设法那条
+含义，本节的 UPDATE 随之改写。
+
+### 六、边界
+
+- 本格证明的是「`illegal-operand` 有真身、语料能钉住它、`family` 不能留」。
+- 它**没有**证明「所有走默认名的检查都不可达」。第五节写的是那件事还没做。
+- 预设法那条拒绝在 `OP_LOAD_GLOBAL` 与 `OP_BIND` 两处都有（第二个 `is_preset_global`
+  调用点），本格的注入只动第一处（`OP_LOAD_GLOBAL`），因为语料那一行是 `say N`。
+  第二处由 `OP_BIND` 的路径覆盖，不在本格的读数里。
