@@ -12373,3 +12373,92 @@ Z 区间是另一个东西，它走 `OP_SET_INTERVAL`，不经过这些全局）
 - 预设法那条拒绝在 `OP_LOAD_GLOBAL` 与 `OP_BIND` 两处都有（第二个 `is_preset_global`
   调用点），本格的注入只动第一处（`OP_LOAD_GLOBAL`），因为语料那一行是 `say N`。
   第二处由 `OP_BIND` 的路径覆盖，不在本格的读数里。
+
+## §10.222 -- the catch-all reason gets nine names of its own
+
+### 1. Where this came from
+
+§10.221 took `illegal-operand` out of the `family` state and made it
+`witnessed`: `say N` refuses with it, and the interpreter answers `set(N)`.
+That left a question the ledger did not answer.  The name was the DEFAULT of
+`g_prescan_why`, so it was not only the preset set globals that reported
+under it -- every check in the pre-scan that did not name its own reason
+reported under it too.  A reason that a program can carry and a reason that
+only a broken emitter can reach were sharing one word.
+
+### 2. Measured: nine sites, one program-carried, eight emitter-held
+
+Instrumenting `bad()` to print the call site (`IR-MIR-BADAT|line=NNN`) and
+running the corpus over it gave the split without guessing:
+
+  nine sites reported under the default name
+    three register bounds (`register r1/r2/r3 out of range`)
+    the OP_CONCAT operand count, the container count, the OP_CALL_VALUE
+      argument count
+    the OP_CONCAT last-operand register
+    the container and OP_CALL_VALUE argument-stack underflows
+
+One of the nine is carried by a program -- the preset set globals, at the
+`OP_LOAD_GLOBAL` and `OP_BIND` sites -- and `say N` reaches it.  The other
+eight are bounds the COMPILER's own output cannot violate: it never writes an
+out-of-range register, a negative operand count or an underflowing stack.
+They are emitter invariants, and they are the guards that keep the rest of the
+route honest.
+
+### 3. Disposition
+
+Each check now names its own reason before it refuses:
+
+  `register-out-of-range`, `operand-count-out-of-range`,
+  `argument-stack-underflow`, `preset-set-global`
+
+`illegal-operand` stays as the default of `g_prescan_why` and becomes an
+`invariant` in the ledger: it is what an unnamed check falls back to, so the
+declaration of the default is the site that stops the nine named reasons from
+collapsing back into one.  The four new names are `invariant` for the same
+reason the five of §10.220 are: no program shape reaches them, only a broken
+emitter does.
+
+The corpus row `mir_preset_set_global_is_refused` now expects
+`why=preset-set-global`; the route's own answer changed with it.
+
+### 4. The probes (one per named reason)
+
+Each probe was applied to a clean tree, built, run and restored byte for byte.
+
+  `if ((mask & R1) && (in->dst < 0 || in->dst >= REG_LIMIT || 1))`
+    => `why=register-out-of-range`
+  `if (n < 0 || n >= REG_LIMIT || n >= 0)` in the container family
+    => `why=operand-count-out-of-range`
+  `if (asp < slots || asp >= 0)` in the container family
+    => `why=argument-stack-underflow`
+  `if (asp < n || asp >= 0)` at OP_CALL_VALUE
+    => `why=argument-stack-underflow`
+  `if (n < 0 || n >= REG_LIMIT || n >= 0)` at OP_CALL_VALUE
+    => `why=operand-count-out-of-range`
+
+`illegal-operand` itself fires the moment a check stops naming its reason:
+the `OP_LOAD_GLOBAL` preset-global site with the name removed gives
+`why=illegal-operand` again, which is the point of keeping it as an
+invariant rather than deleting it.
+
+### 5. Boundary
+
+The site check sees the fragment, not the guard's logic: a rewrite that keeps
+`g_prescan_why = "operand-count-out-of-range";` but changes the comparison
+would keep the ledger green while the guard changed meaning.  The probe check
+sees a line in this section, not that the line was produced on this tree.
+
+The OP_CONCAT operand-count site is NOT covered by a probe above: forcing
+`nops >= 0` did not make it fire, because the compiler folds a `+` chain into
+one OP_CONCAT whose count it derives itself, so the site is unreachable even
+by a broken emitter in this corpus.  It is named anyway -- a name that costs
+nothing now is cheaper than a catch-all that hides the nine.
+
+### 6. Deletion conditions
+
+The four new reasons leave the ledger when a corpus row can carry them: a
+program that makes the compiler write an out-of-range register or an
+underflowing stack would move them to `witnessed`.  `illegal-operand` leaves
+when every check in the pre-scan names its own reason, at which point the
+default has nothing left to fall back to.
