@@ -12209,3 +12209,98 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
 （跳过最终碰撞循环）会让**两行**一起红，因为它们共享同一个折叠机制。
 
 **删除条件.** 无。
+
+## §10.220 拒绝账本的第四种状态：不变式
+
+### 一、来源
+
+§10.219 复查 §10.216/§10.218 那 10 条 `unreachable` 结论时，抓到 `function-name` 与
+`global-name` 两条是**错的**（可触发，已改成语料里的判据）。复查完剩下的五条——
+`conservation`、`container-shape`、`emit-failed`、`not-a-module`、`out-of-memory`——
+它们仍然只有「不可达」三个字，而**没有任何一条能重算的前提**。§10.218 立的规矩是
+「`unreachable` 必须写得出可重算的前提」，但这五条既不适用那条规矩（它们不是关于
+某条指令掩码的），也没被别的规矩接住，等于挂在账本里的断言。
+
+### 二、定性：它们不是「形状不可达」，是「不变式还没破」
+
+这五条的**站点**都在发射器自己维持的不变式上，而不是某个程序形状：
+
+- `not-a-module`：`aot_mir_translate` 收到的模块指针为空、或没有容器/函数；
+- `container-shape`：`build_nodes` 返回的函数数与模块的函数数不一致；
+- `out-of-memory`：全局引用表分配失败；
+- `emit-failed`：`emit_container` 报失败；
+- `conservation`：`g_emitted + g_notyet != g_insns`，即记账等式破了。
+
+一个**程序**走不到这里——要走到，得先让发射器自己出错。所以它们既不是
+`unreachable by construction`（没有形状可论证），也不可能是 `witnessed`（语料里
+不可能有这种程序）。它们是第三种东西：**守卫**。守卫的存在价值是可被打破的；一条
+从没被看见发射过的守卫，只是一句断言。
+
+### 三、状态与两条义务
+
+账本新增状态 `invariant`（`tools/aot_mir_surface.py` 的 `REFUSAL_REASONS`），带两条
+都能重跑的义务：
+
+1. **站点在场**：`INVARIANT_SITES` 里为每条理由声明一段源码片段，片段必须还在
+   `src/compilation/aot_mir.c` 里。守卫被搬走、或改成被程序派生的值决定，片段就跟着
+   消失 ⇒ 红。
+2. **探针在场**：`docs/STATUS.md` 里必须有那条理由真正发射过的读数
+   （`IR-MIR-REFUSED|why=<理由>`）。没有探针的守卫是「谁也没见它跑过」的口号 ⇒ 红。
+
+同时**收紧**：账本里裸的 `unreachable`（既不在 `UNREACHABLE_PREMISES` 里给出前提、
+也不是 `invariant`）现在直接红——这正是这次要堵的洞。
+
+### 四、五段探针（都在 `8e513d74` 的树上做，做完逐字还原）
+
+探针程序是 `.scratch/why/p.im`（`g = 1` / `say g`），基线读数
+`IR-AOT-MIR-OK|prog=.scratch/why/p.im|out=.scratch/why/p.c`，`rc=0`、`emitted=5`。
+
+1. `not-a-module`——把入口判断改成 `if (!m || 1)`：
+
+       IR-MIR-REFUSED|why=not-a-module|detail=the module is NULL
+
+2. `container-shape`——在函数数比对前插一行 `nn = m->nfuncs + 1;`：
+
+       IR-MIR-REFUSED|why=container-shape|detail=the container tree does not match the module's function count
+
+3. `out-of-memory`——在分配判定前插一行 `g_gref = NULL;`：
+
+       IR-MIR-REFUSED|why=out-of-memory|detail=the global reference table
+
+4. `emit-failed`——在 `emit_container` 体首插一行 `if (1) return -1;`：
+
+       IR-MIR-REFUSED|why=emit-failed|detail=
+
+   （`detail` 为空是诚实的：这条守卫没有给细节，读数就照抄它的空。）
+
+5. `conservation`——在等式判定前插一行 `g_emitted -= 1;`：
+
+       IR-MIR-REFUSED|why=conservation|detail=emitted=4 not-yet=0 insns=5
+
+五次之后 `git diff` 确认 `src/compilation/aot_mir.c` 逐字还原，基线重跑回到
+`IR-AOT-MIR-OK`。**这五段读数证明的是「守卫是活代码」**：不变式一破，理由就发射。
+它不证明「不变式永远成立」——那是发射器记账的责任，不是账本的责任。
+
+### 五、自检
+
+`tools/aot_mir_surface.py --self-check` 从 15 格扩到 **20 格**，新增五格：
+`invariant-guarded`（干净）、`invariant-site-gone`（片段被搬走 ⇒ 红）、
+`invariant-probe-missing`（没探针 ⇒ 红）、`invariant-no-site-declared`（声明了
+`invariant` 却没在 `INVARIANT_SITES` 里给站点 ⇒ 红）、`bare-unreachable`（裸
+`unreachable` ⇒ 红）。末行 `checks=20|verdict=PASS`。
+
+### 六、边界
+
+- 「站点在场」检查的是**片段还在**，不是「守卫逻辑没变弱」。把 `brc != 0 ||` 改成
+  `brc < 0 ||` 而片段仍在，本检查不会察觉——那属于语料与判据该管的事。
+- 探针在场检查的是**文档里有这条理由的发射读数**，不校验那段读数是这次树上跑出来的。
+  这次的五段确实是在 `8e513d74` 上跑的；下次谁改守卫，得重跑并改写读，否则文档会
+  比树旧——这条由 §10.193 的 `UPDATE` 惯例兜着，不是本检查兜着。
+- `out-of-memory` 的探针是**手工清零指针**，不是真的分配失败；真实 OOM 的路径与
+  清零后的路径在这一点上是同一条判断，但不等价。
+
+### 七、删除条件
+
+若将来某个理由获得了程序形状的可触发证据（像 §10.219 的 `function-name` 那样），
+把它从 `invariant` 改成 `witnessed` 并加语料行，同笔从 `INVARIANT_SITES` 删掉站点
+声明；若某个守卫被删除（`aot_mir.c` 里不再有对应 `refuse`），账本条目一并删除。
