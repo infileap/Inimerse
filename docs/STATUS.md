@@ -12427,19 +12427,19 @@ The corpus row `mir_preset_set_global_is_refused` now expects
 Each probe was applied to a clean tree, built, run and restored byte for byte.
 
   `if ((mask & R1) && (in->dst < 0 || in->dst >= REG_LIMIT || 1))`
-    => `why=register-out-of-range`
+    => `IR-MIR-REFUSED|why=register-out-of-range`
   `if (n < 0 || n >= REG_LIMIT || n >= 0)` in the container family
-    => `why=operand-count-out-of-range`
+    => `IR-MIR-REFUSED|why=operand-count-out-of-range`
   `if (asp < slots || asp >= 0)` in the container family
-    => `why=argument-stack-underflow`
+    => `IR-MIR-REFUSED|why=argument-stack-underflow`
   `if (asp < n || asp >= 0)` at OP_CALL_VALUE
-    => `why=argument-stack-underflow`
+    => `IR-MIR-REFUSED|why=argument-stack-underflow`
   `if (n < 0 || n >= REG_LIMIT || n >= 0)` at OP_CALL_VALUE
-    => `why=operand-count-out-of-range`
+    => `IR-MIR-REFUSED|why=operand-count-out-of-range`
 
 `illegal-operand` itself fires the moment a check stops naming its reason:
 the `OP_LOAD_GLOBAL` preset-global site with the name removed gives
-`why=illegal-operand` again, which is the point of keeping it as an
+`IR-MIR-REFUSED|why=illegal-operand` again, which is the point of keeping it as an
 invariant rather than deleting it.
 
 ### 5. Boundary
