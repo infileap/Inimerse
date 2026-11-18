@@ -305,10 +305,18 @@ def route_refusal_reasons(text=None):
 #     give two regions, and the catch block's jump enters the second one.  The
 #     reason is therefore TRIGGERABLE and is witnessed by a corpus row.)
 #   unsupported-opcode: the route refuses a program holding an opcode it has
-#     no mask for.  The premise is "every opcode the emitter can meet has a
-#     mask", i.e. op_regs and the emitter's case labels cover the same set.
+#     no mask for.  §10.223 measured that the premise this entry used to name --
+#     "op_regs and the emitter's case labels cover the same set" -- does not
+#     argue THAT claim: two sets agreeing is what keeps a MASKED opcode out of
+#     emit_one's default arm, i.e. it is what makes emit-failed an invariant
+#     (§10.220).  The claim the ledger needs is about the UNMASKED opcodes: they
+#     are the seven the compiler emits for a thread section, and `build_nodes`
+#     refuses a thread section with why=threads before `prescan` ever reads an
+#     instruction -- so the not-yet path needs a program that cannot be built.
+#     The premise below re-derives that subset relation; the corpus backing for
+#     the class it leans on is CLASS_BACKING, checked by backing_problems().
 UNREACHABLE_PREMISES = {
-    "unsupported-opcode": "every-opcode-has-a-mask",
+    "unsupported-opcode": "every-unmasked-opcode-is-a-thread-opcode",
 }
 
 # A reason reached only by breaking an invariant the emitter keeps.  Not
@@ -377,10 +385,19 @@ def mask_premise():
 
     `op_regs` decides whether an instruction is lowered at all: a mask of -1
     means "not yet", and the program is refused with why=unsupported-opcode.
-    The premise is that op_regs and the emitter's own case labels name the same
-    opcodes -- if the emitter gained an arm without a mask (or the other way
-    round), an opcode could reach the not-yet path that the boundary table
-    believes is out of scope.
+
+    WHAT THIS ACTUALLY COMPARES, measured by an injection (§10.223): the set of
+    case labels inside `op_regs` against the set of case labels ANYWHERE in the
+    file -- and `op_regs` is part of "anywhere", so a mask added there with no
+    other arm appears in both sets and this stays green.  The direction it does
+    catch is an ARM WITHOUT A MASK (the emitter knows an opcode `op_regs` would
+    never let through).  The converse -- a mask with no arm -- is caught by
+    coverage_problems() instead, because that check counts any case label as
+    emission and calls the boundary row stale.
+
+    So this premise is narrower than its old docstring claimed, and §10.223 took
+    it out of UNREACHABLE_PREMISES for that reason: it never argued that
+    why=unsupported-opcode is unreachable.
     """
     src = (ROOT / "src" / "compilation" / "aot_mir.c").read_text(errors="replace")
     i = src.find("static int op_regs(int op) {")
@@ -399,7 +416,58 @@ def mask_premise():
                       ", ".join(sorted(arms - masks)) or "none"))
 
 
+def unmasked_thread_only_problems(members, masks, boundary):
+    """Is every opcode without a mask one of the thread-section opcodes?
+
+    Factored out of `unmasked_thread_premise` so the self-check can hand it a
+    fixture instead of the tree: a control that cannot say NO is not evidence,
+    and this has to be able to say NO independently of today's source.
+    """
+    unmasked = [op for op in members if op not in masks]
+    problems = []
+    for op in unmasked:
+        row = boundary.get(op)
+        cls = row[0] if row else None
+        if cls != "another-thread":
+            problems.append(
+                "the emitter has no mask for %s, and the boundary classifies it "
+                "as %r -- why=unsupported-opcode is only unreachable while EVERY "
+                "unmasked opcode belongs to the class the route refuses outright"
+                % (op, cls if row else "nothing at all"))
+    return unmasked, problems
+
+
+def unmasked_thread_premise():
+    """Re-derive the argument behind why=unsupported-opcode being unreachable.
+
+    (See the note above UNREACHABLE_PREMISES.)  Two facts compose: the unmasked
+    opcodes are exactly the thread-section opcodes, and a program carrying one
+    is refused with why=threads before any instruction is looked at.  This
+    checks the first half; the second is a corpus row (CLASS_BACKING).
+    """
+    src = EMITTER.read_text(errors="replace")
+    i = src.find("static int op_regs(int op) {")
+    if i < 0:
+        return False, "op_regs is gone from the emitter"
+    j = src.find("\n}\n", i)
+    masks = set(re.findall(r"case (OP_[A-Z0-9_]+)", src[i:j]))
+    members = declared_opcodes(BYTECODE_H.read_text(errors="replace"))
+    unmasked, problems = unmasked_thread_only_problems(members, masks, BOUNDARY)
+    if problems:
+        return False, problems[0]
+    return True, ("%d of %d opcodes carry no mask, and every one of them is a "
+                  "thread-section opcode (%s)"
+                  % (len(unmasked), len(members), ", ".join(unmasked)))
+
+
 PREMISE_CHECKS = {
+    # The claim the ledger's `unreachable` row leans on (§10.223).
+    "every-unmasked-opcode-is-a-thread-opcode": unmasked_thread_premise,
+    # Kept, and run even though no ledger row names it any more: it is what
+    # keeps a MASKED opcode out of the emitter's default arm, i.e. the reason
+    # why=emit-failed stays an invariant (§10.220).  §10.223 took it out of
+    # UNREACHABLE_PREMISES because it never argued the unsupported-opcode claim,
+    # and left it here because it still argues another one.
     "every-opcode-has-a-mask": mask_premise,
 }
 
@@ -440,6 +508,22 @@ def unreachable_premise_problems():
         else:
             print("IR-AOT-MIR-REFUSAL-PREMISE|why=%s|premise=%s|holds=yes|%s"
                   % (why, premise_name, detail))
+    # A premise that no ledger row names any more is still RUN: PREMISE_CHECKS
+    # is the set of structural facts this checker keeps, and one of them guards
+    # an invariant (mask/arm agreement -> emit-failed) rather than an
+    # unreachable row.  It is printed under its own name so a failure cannot be
+    # read as a change in the unsupported-opcode argument.
+    named = set(UNREACHABLE_PREMISES.values())
+    for name, check in sorted(PREMISE_CHECKS.items()):
+        if name in named:
+            continue
+        holds, detail = check()
+        if holds:
+            print("IR-AOT-MIR-REFUSAL-PREMISE|why=-|premise=%s|holds=yes|%s"
+                  % (name, detail))
+        else:
+            problems.append("the structural premise %r no longer holds: %s"
+                            % (name, detail))
     return problems
 
 
@@ -664,6 +748,26 @@ def self_check():
             ok &= hit
     finally:
         BOUNDARY.clear(); BOUNDARY.update(saved)
+    # The unmasked-subset premise (§10.223): "no mask" and "another-thread
+    # class" are kept as separate facts, so a cell can fail on either the set
+    # that loses a mask or the class that claims the wrong reason.
+    unmasked_cells = [
+        ("unmasked-all-thread", ["OP_T1", "OP_T2"], set(),
+         {"OP_T1": ("another-thread",), "OP_T2": ("another-thread",)}, False),
+        ("unmasked-a-class-that-can-be-reached", ["OP_T1", "OP_X"], set(),
+         {"OP_T1": ("another-thread",), "OP_X": ("retired",)}, True),
+        ("unmasked-a-thread-row-reclassified", ["OP_T1"], set(),
+         {"OP_T1": ("measurement",)}, True),
+    ]
+    for what, members_f, masks_f, table, want_problem in unmasked_cells:
+        _unmasked, problems = unmasked_thread_only_problems(
+            members_f, masks_f, table)
+        hit = bool(problems) == want_problem
+        print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+              % (what, len(problems), "one-or-more" if want_problem else "clean",
+                 "ok" if hit else "WRONG"))
+        ok &= hit
+
     # The ledger cells need a controlled SOURCE and a controlled CORPUS, so
     # they swap both tables out and put them back.
     saved_ledger = dict(REFUSAL_REASONS)
@@ -776,6 +880,7 @@ def self_check():
     cells += premise_cells
     cells += invariant_cells
     cells += family_cells
+    cells += unmasked_cells
     print("IR-AOT-MIR-SURFACE-SELFCHECK|checks=%d|verdict=%s"
           % (len(cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
