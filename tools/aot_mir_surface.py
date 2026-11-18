@@ -195,7 +195,25 @@ REFUSAL_REASONS = {
     # Float1..Float9, float1..float9) hold set objects and this subset cannot
     # build one, so `say N` refuses with why=illegal-operand.  The corpus row
     # mir_preset_set_global_is_refused witnesses it.
-    "illegal-operand": "witnessed",
+    # UPDATE (10.222): illegal-operand was the DEFAULT name of g_prescan_why,
+    # so every unnamed check in the pre-scan reported under it.  Nine such
+    # sites existed; each now names its own reason, and this entry is the
+    # reason for the preset set globals (N, Z, Z+, Z-, Float1..Float9,
+    # float1..float9), which hold set objects this subset cannot build.
+    # The corpus row mir_preset_set_global_is_refused witnesses it.
+    "illegal-operand": "invariant",
+    # UPDATE (10.222): the four reasons the unnamed checks now carry.  Each is
+    # a guard the emitter keeps -- the compiler never produces an out-of-range
+    # register, a negative operand count or an underflowing argument stack --
+    # so a program cannot carry them; breaking the guard makes them fire
+    # (probes in STATUS 10.222).  They are therefore invariants, not
+    # "unreachable by construction": the site is what stops them.
+    "operand-count-out-of-range": "invariant",
+    "register-out-of-range": "invariant",
+    "argument-stack-underflow": "invariant",
+    # UPDATE (10.222): the preset set globals got a name of their own, so the
+    # reason a program can actually carry is no longer the catch-all.
+    "preset-set-global": "witnessed",
     "lock-unpaired": "witnessed",
     "set-interval-domain": "witnessed",
     "try-enters": "witnessed",
@@ -309,6 +327,16 @@ INVARIANT_SITES = {
     "out-of-memory": 'if (!g_gref) { refuse("out-of-memory"',
     "emit-failed": "if (emit_container(&out, m, nodes, gnames, fnnames, 0) != 0) {",
     "conservation": "if (g_emitted + g_notyet != g_insns) {",
+    # UPDATE (10.222): the four reasons the pre-scan's formerly unnamed
+    # checks now carry.  Each site is a guard the compiler's own output can
+    # never violate, so nothing but a broken emitter reaches it.
+    "register-out-of-range": 'g_prescan_why = "register-out-of-range";',
+    "operand-count-out-of-range": 'g_prescan_why = "operand-count-out-of-range";',
+    "argument-stack-underflow": 'g_prescan_why = "argument-stack-underflow";',
+    # illegal-operand is the DEFAULT name of g_prescan_why: the site below is
+    # the declaration itself, so a check that stops naming its own reason
+    # falls back to it again.
+    "illegal-operand": 'static const char *g_prescan_why = "illegal-operand";',
 }
 PROBE_DOCS = ROOT / "docs" / "STATUS.md"
 

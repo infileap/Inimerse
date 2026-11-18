@@ -5303,12 +5303,18 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                 else g_notyet_by_op[0]++;
                 continue;
             }
-            if ((mask & R1) && (in->dst < 0 || in->dst >= REG_LIMIT))
+            if ((mask & R1) && (in->dst < 0 || in->dst >= REG_LIMIT)) {
+                g_prescan_why = "register-out-of-range";
                 return bad("container=%d insn=%d op=%s register r1=%d out of range", f, i, op_name(op), in->dst);
-            if ((mask & R2) && (in->a < 0 || in->a >= REG_LIMIT))
+            }
+            if ((mask & R2) && (in->a < 0 || in->a >= REG_LIMIT)) {
+                g_prescan_why = "register-out-of-range";
                 return bad("container=%d insn=%d op=%s register r2=%d out of range", f, i, op_name(op), in->a);
-            if ((mask & R3) && (in->b < 0 || in->b >= REG_LIMIT))
+            }
+            if ((mask & R3) && (in->b < 0 || in->b >= REG_LIMIT)) {
+                g_prescan_why = "register-out-of-range";
                 return bad("container=%d insn=%d op=%s register r3=%d out of range", f, i, op_name(op), in->b);
+            }
             /* THE Z-LITERAL READ-END CHECK (10.200).  It sits HERE, before the
                flag-clearing below, because the call itself writes its result
                into r1 -- the very register the literal is in -- and that write
@@ -5364,12 +5370,16 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                an opcode that never reads an index. */
             if (op == OP_CONCAT) {
                 int nops = in->b;
-                if (nops < 0)
+                if (nops < 0) {
+                    g_prescan_why = "operand-count-out-of-range";
                     return bad("container=%d insn=%d op=%s operand count %d is negative",
                                f, i, op_name(op), nops);
-                if (nops > 0 && in->a + nops - 1 >= REG_LIMIT)
+                }
+                if (nops > 0 && in->a + nops - 1 >= REG_LIMIT) {
+                    g_prescan_why = "operand-count-out-of-range";
                     return bad("container=%d insn=%d op=%s last operand register %d out of range "
                                "(first=%d count=%d)", f, i, op_name(op), in->a + nops - 1, in->a, nops);
+                }
             }
             /* The container family is checked HERE and not in the switch below,
                and that placement is itself a claim worth stating: every case
@@ -5409,12 +5419,16 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
             if (op == OP_NEW_ARRAY || op == OP_NEW_DICT || op == OP_NEW_SET) {
                 int n = ir_insn_r3(in);
                 int slots = (op == OP_NEW_DICT) ? 2 * n : n;
-                if (n < 0 || n >= REG_LIMIT)
+                if (n < 0 || n >= REG_LIMIT) {
+                    g_prescan_why = "operand-count-out-of-range";
                     return bad("container=%d insn=%d op=%s count %d out of range",
                                f, i, op_name(op), n);
-                if (asp < slots)
+                }
+                if (asp < slots) {
+                    g_prescan_why = "argument-stack-underflow";
                     return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d slots=%d",
                                f, i, op_name(op), asp, slots);
+                }
                 asp -= slots;
                 continue;
             }
@@ -5438,12 +5452,16 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                emitted arm passes the literal 0 instead of mvargs. */
             if (op == OP_CALL_VALUE) {
                 int n = ir_insn_r3(in);
-                if (n < 0 || n >= REG_LIMIT)
+                if (n < 0 || n >= REG_LIMIT) {
+                    g_prescan_why = "operand-count-out-of-range";
                     return bad("container=%d insn=%d op=%s argument count %d out of range",
                                f, i, op_name(op), n);
-                if (asp < n)
+                }
+                if (asp < n) {
+                    g_prescan_why = "argument-stack-underflow";
                     return bad("container=%d insn=%d op=%s argument stack underflows: asp=%d argc=%d",
                                f, i, op_name(op), asp, n);
+                }
                 asp -= n;
                 continue;
             }
@@ -5660,10 +5678,12 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d global index %d out of range (count=%d)",
                                f, i, ix, root->global_name_count);
                 const char *gname = root->global_names ? root->global_names[ix] : NULL;
-                if (is_preset_global(gname))
+                if (is_preset_global(gname)) {
+                    g_prescan_why = "preset-set-global";
                     return bad("container=%d insn=%d global %d is the preset set global '%s', whose value is a set, "
                                "not an NV int/float/bool -- outside this subset",
                                f, i, ix, gname);
+                }
                 g_gref[ix] = 1;
                 break;
             }
@@ -5679,10 +5699,12 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d global index %d out of range (count=%d)",
                                f, i, ix, root->global_name_count);
                 const char *gname = root->global_names ? root->global_names[ix] : NULL;
-                if (is_preset_global(gname))
+                if (is_preset_global(gname)) {
+                    g_prescan_why = "preset-set-global";
                     return bad("container=%d insn=%d global %d is the preset set global '%s', whose value is a set, "
                                "not an NV int/float/bool -- outside this subset",
                                f, i, ix, gname);
+                }
                 if (init < -1 || init >= REG_LIMIT)
                     return bad("container=%d insn=%d initialiser register %d out of range (-1 for none, limit=%d)",
                                f, i, init, REG_LIMIT);

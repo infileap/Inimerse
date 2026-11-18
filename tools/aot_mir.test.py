@@ -5793,7 +5793,7 @@ MIR_ONLY_REFUSE = {
     # scalar printing), so refusing is the honest answer.
     "mir_preset_set_global_is_refused": (
         'say N\n',
-        "illegal-operand"),
+        "preset-set-global"),
     "mir_thread_decl_never_started": (
         'thread plain_worker {\n    return 1\n}\nsay "defined-never-started"\n',
         "threads"),
