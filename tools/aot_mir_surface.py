@@ -192,13 +192,18 @@ REFUSAL_REASONS = {
     # one.  Measured: a high byte in a source name IS folded to '_' by
     # c_name, so "a\xff" and "a_" both become "fn_a_" / "g_a_".  Both reasons
     # are therefore triggerable, and both are witnessed below.
-    "conservation": "unreachable",
-    "container-shape": "unreachable",
-    "emit-failed": "unreachable",
+    # UPDATE (10.220): these five are not "unreachable by construction" -- an
+    # invariant the emitter keeps is what stops them, and a broken invariant
+    # makes every one of them fire (probes recorded in STATUS 10.220).  They
+    # are their own state: the site must still be in the source, and the docs
+    # must show a run that made the reason fire.
+    "conservation": "invariant",
+    "container-shape": "invariant",
+    "emit-failed": "invariant",
     "function-name": "witnessed",
     "global-name": "witnessed",
-    "not-a-module": "unreachable",
-    "out-of-memory": "unreachable",
+    "not-a-module": "invariant",
+    "out-of-memory": "invariant",
     "threads": "witnessed",
     "unsupported-opcode": "unreachable",
     # UPDATE (10.219): write-failed is reachable, but only through the OUTPUT
@@ -274,6 +279,56 @@ UNREACHABLE_PREMISES = {
     "unsupported-opcode": "every-opcode-has-a-mask",
 }
 
+# A reason reached only by breaking an invariant the emitter keeps.  Not
+# "unreachable by construction" (there is no program shape to argue about) and
+# not "witnessed" (no corpus row can exist), so it is its own state with two
+# obligations, both re-runnable:
+#
+#   1. the SITE -- the fragment below -- must still be in the source; a rewrite
+#      that moves the guard, or that lets a program-derived value decide it,
+#      takes the fragment with it;
+#   2. the docs must carry a probe whose output names the reason.  A guard
+#      nobody has ever seen fire is a claim, not a check.
+INVARIANT_SITES = {
+    "not-a-module": 'if (!m) { refuse("not-a-module"',
+    "container-shape": "if (brc != 0 || nn != m->nfuncs) {",
+    "out-of-memory": 'if (!g_gref) { refuse("out-of-memory"',
+    "emit-failed": "if (emit_container(&out, m, nodes, gnames, fnnames, 0) != 0) {",
+    "conservation": "if (g_emitted + g_notyet != g_insns) {",
+}
+PROBE_DOCS = ROOT / "docs" / "STATUS.md"
+
+
+def invariant_problems(text=None, docs=None):
+    """Every reason the ledger calls an invariant must still be guarded.
+
+    Two questions, one per obligation: is the site still where the ledger says
+    it is, and has a probe ever made this reason fire?  A reason that is
+    neither witnessed, premised nor invariant-footed is a claim with nothing
+    behind it, and that is the shape this function exists to reject.
+    """
+    if text is None:
+        text = (ROOT / "src/compilation/aot_mir.c").read_text(errors="replace")
+    if docs is None:
+        docs = PROBE_DOCS.read_text(errors="replace")
+    problems = []
+    for why, state in sorted(REFUSAL_REASONS.items()):
+        if state != "invariant":
+            continue
+        site = INVARIANT_SITES.get(why)
+        if site is None:
+            problems.append("the ledger calls why=%r an invariant, but no site "
+                            "is declared for it -- the argument has no footing" % why)
+            continue
+        if site not in text:
+            problems.append("the ledger calls why=%r an invariant, but its site "
+                            "is not in the source any more: %r" % (why, site))
+        if ("IR-MIR-REFUSED|why=" + why) not in docs:
+            problems.append("the ledger calls why=%r an invariant, but no probe "
+                            "in the docs makes it fire -- the guard is a claim "
+                            "nobody has seen run" % why)
+    return problems
+
 
 def mask_premise():
     """Does every opcode the emitter can meet have a mask?
@@ -316,6 +371,14 @@ def unreachable_premise_problems():
     program that can now carry it.
     """
     problems = []
+    # A bare "unreachable" with no premise is the shape 10.218 removed: the
+    # claim is asserted and nothing re-derives it.
+    for why, state in sorted(REFUSAL_REASONS.items()):
+        if state == "unreachable" and why not in UNREACHABLE_PREMISES:
+            problems.append("the refusal ledger calls why=%r unreachable, but no "
+                            "premise re-derives that claim -- give it one, or "
+                            "call it an invariant if a guard is what stops it"
+                            % why)
     for why, premise_name in sorted(UNREACHABLE_PREMISES.items()):
         state = REFUSAL_REASONS.get(why)
         if state != "unreachable":
@@ -364,7 +427,7 @@ def refusal_ledger_problems(whys=None):
                             "no case in the corpus names it" % why)
     # A state the checker does not know is a silent hole: the ledger would
     # accept "witnessedd" and check nothing about it.
-    known = {"witnessed", "reachable", "unreachable", "family"}
+    known = {"witnessed", "reachable", "unreachable", "invariant", "family"}
     for why, state in sorted(REFUSAL_REASONS.items()):
         if state not in known:
             problems.append("the refusal ledger gives why=%r the state %r, which "
@@ -608,9 +671,46 @@ def self_check():
         REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger2)
         PREMISE_CHECKS.clear(); PREMISE_CHECKS.update(saved_checks)
         UNREACHABLE_PREMISES.clear(); UNREACHABLE_PREMISES.update(saved_unreach)
+    # The invariant cells: a guard with no site, a site that moved, and a probe
+    # nobody ran are each a claim with nothing behind it, so each must be a
+    # problem.  The fixture source and docs are strings, not the tree, so the
+    # check is asked the question directly instead of only agreeing with HEAD.
+    invariant_cells = [
+        # what, ledger, source text, docs text, want_problem
+        ("invariant-guarded", {"conservation": "invariant"},
+         "if (g_emitted + g_notyet != g_insns) {",
+         "IR-MIR-REFUSED|why=conservation|detail=emitted=4", False),
+        ("invariant-site-gone", {"conservation": "invariant"},
+         "the guard was moved somewhere else",
+         "IR-MIR-REFUSED|why=conservation|detail=emitted=4", True),
+        ("invariant-probe-missing", {"conservation": "invariant"},
+         "if (g_emitted + g_notyet != g_insns) {", "nothing was ever run", True),
+        ("invariant-no-site-declared", {"brand-new-invariant": "invariant"},
+         "anything", "IR-MIR-REFUSED|why=brand-new-invariant", True),
+        ("bare-unreachable", {"bare-reason": "unreachable"},
+         "anything", "anything", True),
+    ]
+    saved_ledger3 = dict(REFUSAL_REASONS)
+    saved_sites = dict(INVARIANT_SITES)
+    saved_premises = dict(UNREACHABLE_PREMISES)
+    try:
+        for what, ledger_reasons, text, docs, want_problem in invariant_cells:
+            REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(ledger_reasons)
+            UNREACHABLE_PREMISES.clear()
+            problems = invariant_problems(text, docs) + unreachable_premise_problems()
+            hit = bool(problems) == want_problem
+            print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+                  % (what, len(problems), "one-or-more" if want_problem else "clean",
+                     "ok" if hit else "WRONG"))
+            ok &= hit
+    finally:
+        REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger3)
+        INVARIANT_SITES.clear(); INVARIANT_SITES.update(saved_sites)
+        UNREACHABLE_PREMISES.clear(); UNREACHABLE_PREMISES.update(saved_premises)
     cells += backing_cells
     cells += ledger_cells
     cells += premise_cells
+    cells += invariant_cells
     print("IR-AOT-MIR-SURFACE-SELFCHECK|checks=%d|verdict=%s"
           % (len(cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
@@ -626,7 +726,7 @@ def main():
     members, missing = unemitted()
     problems = (coverage_problems(members, missing) + evidence_problems()
                 + backing_problems() + refusal_ledger_problems()
-                + unreachable_premise_problems())
+                + unreachable_premise_problems() + invariant_problems())
 
     if args.report:
         for op in sorted(BOUNDARY):
