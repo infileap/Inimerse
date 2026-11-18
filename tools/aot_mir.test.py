@@ -5780,6 +5780,20 @@ MIR_ONLY_REFUSE = {
     "mir_declare_binding_kind_is_refused": (
         'declare { inst 5 }\ni = 0\nwhile i < 100000 { i = i + 1 }\nsay i\n',
         "declare-limit"),
+    # UPDATE (10.221): the ledger called why='illegal-operand' a FAMILY -- a
+    # default name that a named check replaces before anything can fail.  That
+    # was wrong: it is the reason a PROGRAM carries.  The preset set globals
+    # (N, Z, Z+, Z-, Float1..Float9, float1..float9) hold set objects, and
+    # this subset has no opcode that builds one, so touching one is refused by
+    # name.  Measured: `say N` refuses with
+    #   IR-MIR-REFUSED|why=illegal-operand|detail=container=0 insn=0 global 0
+    #   is the preset set global 'N', whose value is a set, not an NV
+    #   int/float/bool -- outside this subset
+    # and the interpreter answers nil for the same program (a set has no
+    # scalar printing), so refusing is the honest answer.
+    "mir_preset_set_global_is_refused": (
+        'say N\n',
+        "illegal-operand"),
     "mir_thread_decl_never_started": (
         'thread plain_worker {\n    return 1\n}\nsay "defined-never-started"\n',
         "threads"),

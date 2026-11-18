@@ -173,15 +173,29 @@ CORPUS = ROOT / "tools/aot_mir.test.py"
 #   "triggerable"   -- a program reaches it, but no case names it yet
 #   "unreachable"   -- no program in today's tree can reach it (measured; the
 #                       reason for each is in STATUS.md's §10.216)
-#   "family"        -- not a reason a program can carry out of the tool: the
-#                       default value of g_prescan_why, replaced by a named
-#                       reason before any check can fail
+#   "invariant"     -- reached only by breaking an invariant the emitter keeps:
+#                       the site must still be in the source and the docs must
+#                       carry a run that made it fire (see INVARIANT_SITES)
+#
+# UPDATE (10.221): the "family" state is GONE.  It stood for "the default name
+# of g_prescan_why, replaced by a named reason before any check can fail" --
+# which is an escape hatch: a check nobody named yet still refuses with a name
+# the ledger claimed no program could carry.  Measured, `say N` carries exactly
+# that name (the preset set globals).  The default is still the default in the
+# source; what changed is that the ledger no longer gets to call it
+# un-carryable.
 REFUSAL_REASONS = {
     "builtin-argc": "witnessed",
     "builtin-call": "witnessed",
     "builtin-stale-stack": "witnessed",
     "declare-limit": "witnessed",
-    "illegal-operand": "family",
+    # UPDATE (10.221): this was recorded as a FAMILY -- "the default name,
+    # replaced by a named check before anything can fail".  That was wrong: it
+    # is a reason a PROGRAM carries.  The preset set globals (N, Z, Z+, Z-,
+    # Float1..Float9, float1..float9) hold set objects and this subset cannot
+    # build one, so `say N` refuses with why=illegal-operand.  The corpus row
+    # mir_preset_set_global_is_refused witnesses it.
+    "illegal-operand": "witnessed",
     "lock-unpaired": "witnessed",
     "set-interval-domain": "witnessed",
     "try-enters": "witnessed",
@@ -427,7 +441,7 @@ def refusal_ledger_problems(whys=None):
                             "no case in the corpus names it" % why)
     # A state the checker does not know is a silent hole: the ledger would
     # accept "witnessedd" and check nothing about it.
-    known = {"witnessed", "reachable", "unreachable", "invariant", "family"}
+    known = {"witnessed", "reachable", "unreachable", "invariant"}
     for why, state in sorted(REFUSAL_REASONS.items()):
         if state not in known:
             problems.append("the refusal ledger gives why=%r the state %r, which "
@@ -707,10 +721,33 @@ def self_check():
         REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger3)
         INVARIANT_SITES.clear(); INVARIANT_SITES.update(saved_sites)
         UNREACHABLE_PREMISES.clear(); UNREACHABLE_PREMISES.update(saved_premises)
+    # The family state is retired (10.221): a ledger that says "no program can
+    # carry this name" must not be able to say it for a reason a program DOES
+    # carry.  This cell says NO to the retired spelling.
+    family_cells = [
+        ("ledger-family-state-retired", {"builtin-argc": "family"},
+         {"builtin-argc"}, True),
+    ]
+    saved_ledger4 = dict(REFUSAL_REASONS)
+    saved_source2 = route_refusal_reasons
+    try:
+        for what, ledger_reasons, corpus_whys, want_problem in family_cells:
+            REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(ledger_reasons)
+            globals()["route_refusal_reasons"] = lambda text=None, _s={"builtin-argc"}: set(_s)
+            problems = refusal_ledger_problems(corpus_whys)
+            hit = bool(problems) == want_problem
+            print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
+                  % (what, len(problems), "one-or-more" if want_problem else "clean",
+                     "ok" if hit else "WRONG"))
+            ok &= hit
+    finally:
+        REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger4)
+        globals()["route_refusal_reasons"] = saved_source2
     cells += backing_cells
     cells += ledger_cells
     cells += premise_cells
     cells += invariant_cells
+    cells += family_cells
     print("IR-AOT-MIR-SURFACE-SELFCHECK|checks=%d|verdict=%s"
           % (len(cells), "PASS" if ok else "FAIL"))
     return 0 if ok else 1
