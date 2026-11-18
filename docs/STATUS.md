@@ -12164,12 +12164,12 @@ prescan 检查会给 `illegal-operand` 家族添一个新形状，那时的可�
 **结论：又有两条是错的。** `function-name` 与 `global-name` 都被记成不可达，理由是
 「标识符词法只允许 `[A-Za-z0-9_]`，所以源名不会折叠到纯 ASCII 名上」。实测反例：
 
-- `c_name`（`src/compilation/aot_mir.c:5162-5180`）把**每一个** `[A-Za-z0-9_]` 之外
+- `c_name`（`src/compilation/aot_mir.c:5162-5180` [obs: b040d57b]）把**每一个** `[A-Za-z0-9_]` 之外
   的字节折成 `_`，**源词法也接受标识符里的高位字节**（解释器照样跑，印 1）——
   所以这不是解析差异，是路线的决定。
 - 函数名：`func a<é>()` 与 `func a__()` 都变成 `fn_a__` ⇒
-  `why=function-name`（`build_func_names`，`:5234-5261`）。
-- 全局名：同样的折叠发生在 `build_global_names`（`:5188-5231`），而且**改名兜底也
+  `why=function-name`（`build_func_names`，`:5234-5261` [obs: b040d57b]）。
+- 全局名：同样的折叠发生在 `build_global_names`（`:5188-5231` [obs: b040d57b]），而且**改名兜底也
   救不了**——撞名的一组各取自己的索引（index 24 的成员拿到 `g_a___24`），而源名
   `a___24` 恰好清洗成同一个串 ⇒ `why=global-name`。**顺序要紧**：撞名的成员必须
   坐在改名发放的那个索引上，所以 `a___24` 先声明、占住 index 23。
