@@ -12581,3 +12581,105 @@ is itself a case-label site.  The converse is covered by the stale-row rule.
 Deletion: both premises leave when the opcodes they talk about leave — if the
 route ever emits the thread section, the seven masks appear, the unmasked set
 empties, and `unsupported-opcode` moves to `invariant` or disappears.
+
+## §10.224 — the dormant class was invisible, and its backing was unfalsifiable
+
+### 1. Source
+
+§10.210 recorded that `measurement` keeps its `CLASS_BACKING` entry "so the next
+measurement-shaped opcode does not have to reinvent the vocabulary", and that the
+class has had **no row** since §10.208 emitted `OP_DECLARE`.  What neither the
+table nor the docstring said is that this made the entry **unreachable by the
+checker**: `backing_problems()` iterated `{row[0] for row in BOUNDARY.values()}`,
+so a class with no rows was never visited.
+
+The docstring on `CLASSES` claimed the stronger thing — "Asserted to be exactly
+the set BOUNDARY uses" — while only one direction was ever coded
+(`BOUNDARY - CLASSES`).  The other direction was prose.
+
+### 2. Measurement
+
+On `26489efa`:
+
+    used classes : ['another-thread', 'retired']
+    CLASS_BACKING: ['another-thread', 'measurement', 'retired']
+    backing 中未在用的: ['measurement']
+
+Feeding `backing_problems` a corpus that has lost `unsupported-opcode` returned
+`[]` — no problem — because the only class naming that reason was never visited.
+The assertion was green for a reason unrelated to its truth.
+
+Then the reverse assertion was added and run against the real corpus:
+
+    IR-AOT-MIR-SURFACE-PROBLEM|class 'measurement' argues that its members are
+    unreachable because the route refuses them with why='unsupported-opcode', but
+    no case in the corpus uses that reason any more
+
+This was **not** a made-up defect.  `unsupported-opcode` is state `unreachable`
+in `REFUSAL_REASONS` — §10.223's own premise says no accepted program reaches it,
+so a corpus case for it cannot exist.  `CLASS_BACKING["measurement"]` had been
+demanding a program that is impossible to write, and the demand had gone
+unexamined for as long as the class had no rows.
+
+### 3. What changed
+
+1. `DORMANT_CLASSES` — a class that keeps a definition with no rows must say so,
+   with the reason.  `measurement` is the only member: `OP_DECLARE` left it in
+   §10.208, and the word is kept for the next measurement-shaped observable.
+2. `coverage_problems()` now asserts the **reverse** direction, in three parts:
+   a `CLASSES` entry with no row is red unless it is listed dormant; a dormant
+   class that still has a row is red ("dormant is a claim about today's rows, not
+   a place to park a live class"); a dormant name absent from `CLASSES` is red.
+3. `backing_problems()` now visits `DORMANT_CLASSES` too.  A backing entry is a
+   claim about the corpus and goes stale on the corpus's schedule, not on the
+   boundary's.
+4. `CLASS_BACKING["measurement"] = None`, with the reason written next to it: an
+   `unreachable` reason cannot be witnessed, so it is not a backing claim.  A
+   dormant class has no members, demonstrates nothing, and demanding a case for
+   it is the unfalsifiable shape this file exists to prevent.
+
+### 4. Self-check
+
+20 → **24** cells.  Four new dormancy cells, each one edit away from an honest
+table: `dormant-declared` (clean), `dormant-unlisted` (red), `dormant-but-live`
+(red), `dormant-unknown` (red).
+
+The pre-existing cells are neutralised deliberately: the coverage cells declare
+the classes their fixture does not use as dormant (derived from the cell table
+itself, so a new cell cannot silently reintroduce the interference), and the
+backing cells clear dormancy entirely — otherwise every verdict there would also
+be reporting on `measurement`'s corpus reason rather than on the fixture's.
+
+### 5. Injections
+
+A, undeclared dormancy: empty `DORMANT_CLASSES` ⇒
+
+    IR-AOT-MIR-SURFACE-PROBLEM|CLASSES declares measurement but no boundary row
+    uses it, and it is not in DORMANT_CLASSES -- a class nobody uses is a class
+    nobody can read, so either give it a row or say why it is kept
+
+B, a dormant class that gains a row: add `OP_DECLARE` back to `BOUNDARY` as
+`measurement` ⇒ three problems, one of them exactly the intended one —
+
+    IR-AOT-MIR-SURFACE-PROBLEM|DORMANT_CLASSES lists measurement but the boundary
+    still uses it -- dormant is a claim about today's rows, not a place to park a
+    live class
+
+Both restored; `git diff --stat tools/aot_mir_surface.py` shows the file as the
+only change, and both registered invocations exit 0
+(`aot_mir_surface_regression`, `aot_mir_surface_selfcheck`).
+
+### 6. Boundary
+
+This makes dormancy **visible**; it does not make it impossible.  A class may
+still sit here with no rows — the point is that somebody has to say so, and that
+its `CLASS_BACKING` entry is now checked rather than trusted.  Whether
+`measurement` should be deleted outright (which would take §10.192's three-class
+narrative down to two) remains §10.210's open decision, unchanged by this section:
+the entry is now honest, not resolved.
+
+The reverse assertion says nothing about whether a **live** class's row is
+correct — that is §10.220's stale-row rule and §10.209's `needle` evidence.  It
+can also not see a class whose meaning sentence has gone wrong while its name is
+still in `CLASSES`; `CLASSES` values are prose for the reader, not a checked
+claim.
