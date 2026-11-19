@@ -733,6 +733,20 @@ def coverage_problems(members, missing):
         problems.append(
             "DORMANT_CLASSES names %s, which is not in CLASSES"
             % ",".join(unknown_dormant))
+    # WHY IT IS KEPT IS THE WHOLE POINT.  A dormant entry exists so that somebody
+    # has to say why a class with no rows is still here; an empty or blank reason
+    # satisfies the key without satisfying the obligation, which is the same
+    # silent museum in a new shape.  Measured on the §10.224 tree: blanking
+    # `measurement`'s reason left every check green.
+    silent_dormant = sorted(
+        cls for cls, why in DORMANT_CLASSES.items()
+        if not isinstance(why, str) or why.strip() == "")
+    if silent_dormant:
+        problems.append(
+            "DORMANT_CLASSES gives %s no reason -- keeping a class with no rows "
+            "is a decision that has to be written down, or the entry is just a "
+            "way to switch the reverse assertion off"
+            % ",".join(silent_dormant))
     return problems
 
 
@@ -779,6 +793,10 @@ def self_check():
             "OP_A": ("another-thread", "src/compiler/bytecode.h", "typedef enum", "fixture"),
         }), {"another-thread", "measurement"}, True),
         ("dormant-unknown", good, {"another-thread", "measurement", "no-such-class"}, True),
+        # A reason is the obligation, not the key.  Blanking it must red: an
+        # entry without a reason is a way to switch the reverse assertion off.
+        ("dormant-blank-reason", good, {"another-thread", "measurement"}, True,
+         {"measurement": "   "}),
     ]
     # Backing cells: the class in `good` is "retired", which needs no refusal.
     # These two show the check is bidirectional -- the same table is clean when
@@ -817,7 +835,7 @@ def self_check():
         # live, so a correct fixture cannot trip dormant-but-live.
         used_in_cells = {row[0] for _, t, _ in cells for row in t.values()}
         DORMANT_CLASSES.clear()
-        DORMANT_CLASSES.update({k: "" for k in set(CLASSES) - used_in_cells})
+        DORMANT_CLASSES.update({k: "self-check fixture" for k in set(CLASSES) - used_in_cells})
         for what, table, want_problem in cells:
             BOUNDARY.clear(); BOUNDARY.update(table)
             problems = coverage_problems(members, missing) + evidence_problems()
@@ -831,9 +849,13 @@ def self_check():
         DORMANT_CLASSES.clear(); DORMANT_CLASSES.update(saved_dormant)
     # Dormancy cells: each is one edit away from an honest table.
     try:
-        for what, table, dormant, want_problem in dormant_cells:
+        for cell in dormant_cells:
+            what, table, dormant, want_problem = cell[:4]
+            overrides = cell[4] if len(cell) > 4 else {}
             BOUNDARY.clear(); BOUNDARY.update(table)
-            DORMANT_CLASSES.clear(); DORMANT_CLASSES.update({k: "" for k in dormant})
+            DORMANT_CLASSES.clear()
+            DORMANT_CLASSES.update(
+                {k: overrides.get(k, "self-check fixture") for k in dormant})
             problems = coverage_problems(members, missing)
             hit = bool(problems) == want_problem
             print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
@@ -987,6 +1009,7 @@ def self_check():
     finally:
         REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger4)
         globals()["route_refusal_reasons"] = saved_source2
+    cells += dormant_cells
     cells += backing_cells
     cells += ledger_cells
     cells += premise_cells
