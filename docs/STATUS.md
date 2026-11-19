@@ -13649,3 +13649,84 @@ The other 5 of the 9 would need the same treatment one at a time — write the t
 program, see whether the gate still passes — and that is a per-pattern job, not a
 sweep.  Recording it here so the next session starts from "36 remain", not from
 "some were fixed".
+
+## §10.237 — the other five regexes, and what CTest's `.*` actually does
+
+### 1. Source
+
+§10.236 fixed four pass regexes and recorded its own boundary: "the other 5 of the
+9 would need the same treatment one at a time — write the trivial program, see
+whether the gate still passes".  This is that pass.
+
+### 2. The measurement that changed the question
+
+The first two candidates used `.*` between their expected values:
+
+    pipeline_runtime             "pipe one=5.*pipe two=4.*pipe arg=5.*pipe order=1"
+    finally_return_override      "8.*1.*12.*111"
+
+Reasoning from the Python default, I first recorded that CTest matches line by
+line and `.*` therefore cannot cross a newline — which would mean these two
+regexes could never match the real multi-line output and the tests were passing
+for some other reason.  That was wrong, and it was wrong in a way that a small
+experiment settles in one minute:
+
+    add_test(NAME multi COMMAND /bin/sh -c "printf '8\n1\n12\n111\n'")
+    set_tests_properties(multi PROPERTIES PASS_REGULAR_EXPRESSION "8.*1.*12.*111")
+    -> Passed
+
+CTest's `.` **does** cross newlines in `PASS_REGULAR_EXPRESSION`.  Then the two
+shapes that matter:
+
+    printf '8\ngarbage\n1\nWRONG\n12\n99\n111\n'  -> Passed   (junk between values is fine)
+    printf '111\n12\n1\n8\n'                      -> Failed   (order is still required)
+
+So `.*` buys **order only**: arbitrary text, including wrong text, may sit between
+the expected values.  That is weaker than it looks and stronger than a bare digit —
+the accurate statement is that these two asserted a *sequence of substrings*, not a
+*program's output*.
+
+### 3. What changed
+
+Both tightened from `.` to `\n`, because both programs print their values on
+consecutive lines with nothing between:
+
+    pipeline_runtime   "…one=5.*…two=4.*…arg=5.*…order=1"  ->  "…one=5\n…two=4\n…arg=5\n…order=1"
+    finally_return_override  "8.*1.*12.*111"                ->  "8\n1\n12\n111"
+
+Verified in the same fixture:
+
+    printf '8\n1\n12\n111\n'              -> Passed   (real shape)
+    printf '8\ngarbage\n1\n12\n111\n'     -> Failed   (junk now rejected)
+
+### 4. The three that needed nothing
+
+    bind_init_overflow_runtime      "initial value out of range"
+    float_precision_runtime         "float value=1.2345678901234567"
+    truthiness_single_point_runtime "truth estr:T:false:true:0:1 str:…nil:F:false:true:1:0"
+
+Each names a message or a full result value; `float_precision` pins all seventeen
+digits and `truthiness` pins the entire row per type.  A trivial program cannot
+satisfy any of them without printing that text, which is the property being
+asserted.  Left alone.
+
+### 5. Where the 9 stand
+
+    §10.236  4 weak, 3 tightened, 1 kept ("102" is the whole output)
+    §10.237  2 weak (order-only), 2 tightened
+             3 already specific
+    ---------------------------------------------------------------
+             9 audited, 5 tightened, 1 kept, 3 needed nothing
+
+### 6. Boundary
+
+The lesson worth keeping is not "`.*` is bad" but **"the cost of an assumption
+about a tool's matching semantics is one experiment"**.  I would have written a
+confident, wrong paragraph about line-by-line matching and never re-checked it; the
+fixture that settled it is six lines of CMake and one `ctest` run.  Every claim in
+§10.236 about "satisfiable by a trivial program" was established the same way — by
+running it, not by reading the pattern.
+
+What remains unmeasured is unchanged: the 31 `PASS_REGULAR_EXPRESSION`s on probe and
+driver executables were not audited, because their assertions live in their own code
+rather than in the pattern.
