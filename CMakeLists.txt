@@ -688,7 +688,7 @@ if(INIMERSE_BUILD_ENGINE)
     set(INIMERSE_PARITY_LOAD_MISSING "parity load_missing=-1")
   endif()
   set_tests_properties(posix_runtime_parity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "runtime;posix" FAIL_REGULAR_EXPRESSION "posix-runtime-parity-fail")
-  add_test(NAME gc_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "gc-ran" --shape "gc-stats-ok" --shape "thread-result-alive" --shape "closure-capture-alive" --shape "root-alive" --shape "gc-done" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
+  add_test(NAME gc_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "gc-ran\n[{]runs: [0-9]+, freed: [0-9]+, enabled: 1," --shape "\ntrue\ngc-stats-ok" --shape "thread-result-alive\n3\n" --shape "closure-capture-alive\n3\n" --shape "root-alive\n3\ngc-done" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/gc_runtime_v04.im)
   set_tests_properties(gc_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;memory;gc")
   # The constrained global is itself a GC root: the bound set has no other
   # C-side holder (the global stores the value, not the set), so it lives or dies
@@ -727,7 +727,7 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(postfix_condition_multiline_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;control-flow" FAIL_REGULAR_EXPRESSION "not-printed")
   add_test(NAME result_propagation_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "resultprop unwrapped=7.*resultprop err_is_ok=false.*resultprop err=inner" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_propagation_v04.im)
   set_tests_properties(result_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;result")
-  add_test(NAME result_finally_propagation_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finally-ran" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_finally_propagation_probe_v04.im)
+  add_test(NAME result_finally_propagation_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finally-ran\n1\n" --shape "\n13\n11111\n" --shape "cleanup\n111111\n" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/result_finally_propagation_probe_v04.im)
   set_tests_properties(result_finally_propagation_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;result" FAIL_REGULAR_EXPRESSION "inner")
   add_test(NAME try_finally_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "finally normal=101.*finally nested=100.*finally nested err=rethrow-me.*finally caught=1110" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/try_finally_v04.im)
   set_tests_properties(try_finally_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling")
@@ -739,7 +739,7 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(finally_continue_diagnostic PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;control-flow")
   add_test(NAME finally_goto_diagnostic COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/finally_control_flow.test.py $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/finally_goto_control_flow_probe_v04.im "goto is not allowed in finally")
   set_tests_properties(finally_goto_diagnostic PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;error-handling;control-flow")
-  add_test(NAME case_try_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "deep-structural-hit" --shape "nested-result-hit" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_try_v04.im)
+  add_test(NAME case_try_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "deep-structural-hit code=404" --shape "nested-result-hit first=11 code=42" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_try_v04.im)
   # `.im` -> real `.vverse`: drive the engine builtin `verse_pack` (src/mod/
   # verse_dist_mod.c) through a script and judge the artifact with the read-only
   # reference (tools/vverse_pack.js, tools/vverse_validate.js) plus the engine's
@@ -791,7 +791,7 @@ if(INIMERSE_BUILD_ENGINE)
   set_tests_properties(case_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME case_array_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_array_v04.im)
   set_tests_properties(case_array_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "30\n20")
-  add_test(NAME case_nested_patterns_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "53" --shape "nested-fallback-ok" --shape "nested-literal-ok" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_nested_patterns_v04.im)
+  add_test(NAME case_nested_patterns_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "53" --shape "nested-fallback-ok kind=ok code=42" --shape "nested-literal-ok a=1 b=2" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_nested_patterns_v04.im)
   set_tests_properties(case_nested_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME lambda_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "lambda double=42.*lambda sum2=5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/lambda_v04.im)
   add_test(NAME composition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/composition_v04.im)
@@ -808,7 +808,7 @@ if(INIMERSE_BUILD_ENGINE)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/function_thread_sandbox)
   set_tests_properties(function_thread_lifetime_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/function_thread_sandbox TIMEOUT 15 LABELS "language;functional;memory;thread")
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox)
-  add_test(NAME thread_result_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "worker-failed" --shape "release-plain" --shape "released-result-is-err" --shape "restarted-plain" --shape "release-task" --shape "restarted-task" --shape "release-running" --shape "release-finished" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_result_v04.im)
+  add_test(NAME thread_result_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "worker-failed" --shape "release-plain\ntrue\n" --shape "released-result-is-err\nfalse\n" --shape "restarted-plain\n11\n" --shape "release-task\ntrue\n" --shape "restarted-task\n9\n" --shape "release-running\nfalse\n" --shape "release-finished\ntrue\n" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_result_v04.im)
   set_tests_properties(thread_result_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox TIMEOUT 15 LABELS "language;thread;result;error-handling")
   add_test(NAME thread_await_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "thread-await-ok" -- $<TARGET_FILE:inimerse> --no-mods ${CMAKE_SOURCE_DIR}/vtest/thread_await_v04.im)
   set_tests_properties(thread_await_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/thread_runtime_sandbox TIMEOUT 30 LABELS "language;thread;result;error-handling" FAIL_REGULAR_EXPRESSION "thread-await-fail!")
@@ -2102,3 +2102,17 @@ set_tests_properties(handoff_anchor_regression PROPERTIES WORKING_DIRECTORY ${CM
 add_test(NAME handoff_anchor_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_handoff_anchors.py --self-check)
 set_tests_properties(handoff_anchor_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60 LABELS "tools;docs;regression")
+
+# The --shape clauses of the gated_run.py tests.  A clause that pins only a
+# marker word is satisfied by a program that printed the marker and computed
+# nothing, so the clause asserts nothing about the program behind it.  This
+# checker decides by mutation -- it destroys the computation and asks whether
+# the clause still matches -- and its own three controls are registered beside
+# it, because a checker that has never been shown to go red is a checker nobody
+# can quote.  Appended at the foot of the file for the reason above.
+add_test(NAME shape_assertions_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_shape_assertions.py)
+set_tests_properties(shape_assertions_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;tests;regression")
+add_test(NAME shape_assertions_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_shape_assertions.py --self-test)
+set_tests_properties(shape_assertions_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")

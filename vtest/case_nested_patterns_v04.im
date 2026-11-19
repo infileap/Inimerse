@@ -7,11 +7,11 @@ case values {
 
 case values {
     [{"kind": "bad", "data": [_, {"code": 41}]}, _]: say "wrong-pattern"
-    _: say "nested-fallback-ok"
+    _: say "nested-fallback-ok kind=" + str(values[0]["kind"]) + " code=" + str(values[0]["data"][1]["code"])
 }
 
 nested_literal = [[1, 2]]
 case nested_literal {
-    [[1, 2]]: say "nested-literal-ok"
+    [[a, b]]: say "nested-literal-ok a=" + str(a) + " b=" + str(b)
     _: say "nested-literal-miss"
 }

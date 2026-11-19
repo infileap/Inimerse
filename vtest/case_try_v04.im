@@ -42,15 +42,15 @@ structured = err({"kind": "not_found", "code": 404})
 structured_deep = err({"outer": {"inner": {"code": 404}}})
 case try structured {
     err({"kind": "permission_denied"}): say "bad-structural"
-    err({"kind": "not_found", "code": 404}): say "structural-hit"
+    err({"kind": "not_found", "code": c}): say "structural-hit code=" + str(c)
     _: say "structural-miss"
 }
 case try structured_deep {
-    err({"outer": {"inner": {"code": 404}}}): say "deep-structural-hit"
+    err({"outer": {"inner": {"code": c}}}): say "deep-structural-hit code=" + str(c)
     _: say "deep-structural-miss"
 }
 result_nested = err([11, {"code": 42}])
 case try result_nested {
-    err([first, {"code": code}]): say "nested-result-hit"
+    err([first, {"code": code}]): say "nested-result-hit first=" + str(first) + " code=" + str(code)
     _: say "nested-result-miss"
 }
