@@ -668,8 +668,23 @@ def main():
         # The verdict therefore follows the numbers, and tree drift is reported
         # as its own token -- the same split docs_headings.pin.json needed
         # (HEADINGS|pin-tree|mismatch= vs HEADINGS|stale|net=).
+        # THE CORPUS FIELDS ARE NUMBERS A READER QUOTES TOO (§10.233).
+        #
+        # `corpus.repo_accepted` / `corpus.repo_total` were read into the IR-AOT-PIN
+        # line and COMPARED IN THE PRINTING ONLY: nothing put them into
+        # numbers_match, so a pin carrying `repo_total=999` against a live 101
+        # printed `corpus-pin=0/999|corpus-now=0/101` and still exited 0.  Measured:
+        # that exact edit left numbers-match=yes and EXIT=0.
+        #
+        # They belong in the verdict for the same reason `covered` does: the pin is
+        # what a reader quotes, and a field that is printed beside a PASS reads as a
+        # checked field whether or not anything checks it.
+        stored_corpus = stored.get("corpus") or {}
+        corpus_match = (stored_corpus.get("repo_accepted", -1) == repo_accepted
+                        and stored_corpus.get("repo_total", -1) == len(repo_progs))
         numbers_match = (stored.get("covered") == len(covered)
-                         and stored.get("of") == len(OPCODES))
+                         and stored.get("of") == len(OPCODES)
+                         and corpus_match)
         tree_moved = stored.get("tree") != here
         # Before the numbers, the tree--because the numbers cannot report this
         # one: they recompute and match just as well beside a tree no ref holds.
@@ -695,6 +710,12 @@ def main():
         if not numbers_match:
             print("IR-AOT-PIN-STALE|effect=the-numbers-a-reader-would-quote-no-longer-"
                   "describe-this-tree|fix=rerun-with---pin")
+            if not corpus_match:
+                print("IR-AOT-PIN-CORPUS-STALE|pin=%s/%s|now=%d/%d|note=these-were-"
+                      "printed-beside-a-PASS-and-never-compared-before"
+                      % (stored_corpus.get("repo_accepted", "-"),
+                         stored_corpus.get("repo_total", "-"),
+                         repo_accepted, len(repo_progs)))
         if tree_problems or not numbers_match:
             return 1
 
