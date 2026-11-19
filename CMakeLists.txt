@@ -167,17 +167,17 @@ add_executable(type_registry_probe src/types/typeset.c src/types/enum.c src/type
 target_include_directories(type_registry_probe PRIVATE src/types)
 add_test(NAME type_registry_probe COMMAND type_registry_probe)
 
-# These six probes state their expectations with assert(), and assert() is a
-# no-op under -DNDEBUG -- which is exactly what CMAKE_C_FLAGS_RELEASE carries
-# (-O3 -DNDEBUG).  Compiled as-is they exit 0 no matter what the engine does,
-# so CTest reports a green test that checks nothing at all.  -UNDEBUG has to
-# come after -DNDEBUG on the command line; target_compile_options appends
-# there, whereas target_compile_definitions would not undo it.
-foreach(_asserting_probe
-    bytecode_capture_probe closure_probe typeset_probe
-    enum_probe error_types_probe type_registry_probe)
-  target_compile_options(${_asserting_probe} PRIVATE -UNDEBUG)
-endforeach()
+# Every probe target gets -UNDEBUG -- assert() is a no-op under -DNDEBUG, and
+# CMAKE_C_FLAGS_RELEASE carries -O3 -DNDEBUG, so a probe compiled as-is exits
+# 0 no matter what the engine does and CTest reports a green test that checks
+# nothing.  The list of probes is DISCOVERED, not written out: a hand-kept
+# list is a list that can be out of date, and when it is, the failure is
+# silent -- the probe's assert() is compiled out, it exits 0, and CTest
+# reports it as passed.  The rule is applied at the foot of this file, after
+# every target exists; see the block there, and docs/STATUS.md 10.239.
+#
+# The line count of this region is unchanged on purpose: docs/ cites line
+# numbers in this file, and a shift here moves every one of them.
 
 add_executable(fiber_probe src/platform/fiber.c src/platform/fiber_probe.c)
 if(NOT WIN32)
@@ -2116,3 +2116,62 @@ set_tests_properties(shape_assertions_regression PROPERTIES WORKING_DIRECTORY ${
 add_test(NAME shape_assertions_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_shape_assertions.py --self-test)
 set_tests_properties(shape_assertions_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
+
+# Give every probe target -UNDEBUG, discovered rather than listed.
+#
+# assert() is a no-op under -DNDEBUG -- which is exactly what
+# CMAKE_C_FLAGS_RELEASE carries (-O3 -DNDEBUG) -- so a probe compiled as-is
+# exits 0 no matter what the engine does, and CTest reports a green test
+# that checks nothing at all.  -UNDEBUG has to come after -DNDEBUG on the
+# command line; target_compile_options appends there, whereas
+# target_compile_definitions would not undo it.
+#
+# The block that used to sit above add_executable(fiber_probe ...) named six
+# probes by hand.  A hand-kept list is a list that can be out of date, and
+# when it is, the failure is silent: the probe's assert() is compiled out,
+# it exits 0, and CTest reports it as passed.  That was demonstrated on
+# src/types/inject_probe.c -- an assertion that could not fail, reported as
+# a passing test.  The engine's own sources contain no assert() (verified by
+# tools/check_probe_assertions.py), so this cannot turn an internal check
+# into a runtime abort for the probes that compile engine code.
+#
+# Discovery removes the list.  The BUILDSYSTEM_TARGETS directory property
+# names every target defined in this directory, and the filter below keeps
+# the ones that are probes.  A probe added tomorrow is covered by
+# construction.  (The property is spelled BUILDSYSTEM_TARGETS, not TARGETS:
+# the latter is a non-existent property and get_property() accepts it
+# silently, returning an empty list -- a guard that guards nothing.)
+#
+# -UNDEBUG must come AFTER -DNDEBUG on the command line: gcc applies the
+# last -D/-U for a macro.  target_compile_options appends to the end of the
+# command line; target_compile_definitions would not undo the -DNDEBUG that
+# CMAKE_C_FLAGS_RELEASE contributes.  tools/check_probe_assertions.py reads
+# the flags of the built tree and reads that order, so the two agree.
+#
+# This block lives at the foot of the file because it can only see targets
+# that already exist, and because a new registration here must not shift
+# the line numbers docs/ cites.
+get_property(_all_inimerse_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+             PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_probe_target ${_all_inimerse_targets})
+  if(_probe_target MATCHES "_probe$")
+    get_target_property(_probe_type ${_probe_target} TYPE)
+    if(_probe_type STREQUAL "EXECUTABLE")
+      target_compile_options(${_probe_target} PRIVATE -UNDEBUG)
+    endif()
+  endif()
+endforeach()
+
+# A probe whose assert() is compiled out exits 0 no matter what the engine
+# does, so CTest reports a green test that checks nothing at all.  This
+# checker reads the flags of the built tree and reports any probe that uses
+# assert() while NDEBUG is in effect.  Registered with its own controls for
+# the same reason as every other checker here -- one that has never been
+# shown to go red is a checker nobody can quote.  Appended at the foot of
+# the file for the reason above.
+add_test(NAME probe_assertions_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_assertions.py)
+set_tests_properties(probe_assertions_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;tests;regression")
+add_test(NAME probe_assertions_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_assertions.py --self-test)
+set_tests_properties(probe_assertions_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
