@@ -327,6 +327,46 @@ def prescan_problems(prescan_cases, indexed):
     return problems
 
 
+def pin_gap_problems(listed, declared):
+    """The opcodes NEITHER list names, and whether that gap is accounted for.
+
+    `covered_ops` and `beyond-ast-denominator` are the pin's two lists, and
+    29 + 31 = 60 of the 67 declared opcodes -- so seven are in neither.  That is
+    correct: they are the thread-section opcodes, which this route refuses by
+    construction.  What was missing is that nothing said so, and nothing would
+    have noticed if an eighth opcode quietly joined the gap -- the fraction would
+    keep printing 29/29 and the gap would widen in silence (§10.232).
+
+    The gap is allowed to be exactly the boundary's not-yet set; every name in it
+    must be a row the boundary explains.  A name in the gap with no row is an
+    opcode this route says nothing about, which is the shape this returns.
+    """
+    gap = sorted(set(declared) - set(listed))
+    unrow = sorted(name for name in gap if name not in PIN_GAP_EXPLAINED_BY)
+    problems = []
+    for name in unrow:
+        problems.append(
+            "%s is in neither covered_ops nor beyond-ast-denominator, and the "
+            "pin does not say why it is absent -- an opcode this route neither "
+            "covers nor declares out of reach" % name)
+    return problems, gap
+
+
+# Which boundary row accounts for an opcode that appears in NO pin list.  The
+# pin's two lists are about emitted/unreachable-by-the-corpus; an opcode the route
+# refuses before lowering is in neither, and the boundary is where its absence is
+# argued.  Keyed by name so a rename reds instead of silently widening the gap.
+PIN_GAP_EXPLAINED_BY = {
+    "OP_THREAD_START": "another-thread",
+    "OP_THREAD_CTRL": "another-thread",
+    "OP_THREAD_JOIN": "another-thread",
+    "OP_THREAD_WAIT": "another-thread",
+    "OP_THREAD_STATE": "another-thread",
+    "OP_SEND": "another-thread",
+    "OP_THREAD_GOTO": "another-thread",
+}
+
+
 def lowering_problems(table_ops, emitter_ops, of_ops, reported):
     """The two questions the lowering's own tables have to agree on.
 
@@ -381,6 +421,17 @@ def self_check():
            (sorted(case_ops(function_body(two, "static int op_regs(int op)") )),
             sorted(case_ops(function_body(two, "static int emit_one(")))),
            (["OP_A", "OP_B"], ["OP_A", "OP_B"]))
+    # The pin's own gap (§10.232): the opcodes in NEITHER pin list must each be
+    # explained.  Both directions, because "no problem" and "nothing checked" look
+    # the same from outside.
+    expect("a gap name the pin explains is silent",
+           pin_gap_problems(["OP_A"],
+                            ["OP_A", "OP_THREAD_START"])[0], [])
+    expect("a gap name the pin does NOT explain is caught",
+           len(pin_gap_problems(["OP_A"], ["OP_A", "OP_THREAD_START", "OP_NEW"])[0]), 1)
+    expect("the gap names are returned, not just counted",
+           pin_gap_problems(["OP_A"], ["OP_A", "OP_THREAD_START"])[1],
+           ["OP_THREAD_START"])
     expect("agreement is silent",
            lowering_problems({"OP_A", "OP_B"}, {"OP_A", "OP_B"},
                              ["OP_A", "OP_B"], {"OP_A", "OP_B"}), [])
@@ -739,6 +790,17 @@ def main():
     # printed, each with its basis, and the two tables that must agree are asked.
     lowering = lowering_problems(table_ops, emitter_ops, of_ops, emittable)
     problems.extend(lowering)
+    # THE PIN'S OWN GAP (§10.232).  29 + 31 = 60 of 67 declared opcodes; the seven
+    # in neither list are the thread-section opcodes, which this route refuses
+    # before lowering.  Nothing stated that, and an eighth name joining the gap
+    # would have widened it in silence while the fraction still read 29/29.
+    pin_gap, pin_gap_names = pin_gap_problems(covered + beyond, declared_ops())
+    problems.extend(pin_gap)
+    print("IR-AOT-MIR-PIN-GAP|declared=%d|listed=%d|gap=%d|names=%s|explained-by=%s"
+          % (len(declared_ops()), len(set(covered) | set(beyond)), len(pin_gap_names),
+             ",".join(pin_gap_names) or "none",
+             ",".join(sorted({PIN_GAP_EXPLAINED_BY.get(n, "MISSING") for n in pin_gap_names}))
+             or "none"))
     # A third list, and a third question: which opcodes' operands does ANYBODY
     # check before the generated C indexes a pool or jumps to a label?
     prescan_cases = case_ops(function_body(src, "static int prescan("))
