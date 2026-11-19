@@ -13088,3 +13088,74 @@ claim that thirteen reasons are genuinely witnessed — that is
 driven probe.  What this section buys is the thing `--report` was for: a reader
 can now see a state go empty without reading source.  It does not add a check, and
 the self-check is unchanged at 33 cells for that reason.
+
+## §10.230 — the empty side table was silent, and its consumer ran for nothing
+
+### 1. Source
+
+§10.197 deleted `MIR_ONLY_REFUSE_NOTYET`'s only row (`mir_int_container_is_refused`)
+because the loop that judged refusals never reached it — the row named a refusal by
+`why`, while the table is the not-yet OPCODE list that rides along with
+`why=unsupported-opcode`, and the two are different claims.  What §10.197 recorded
+was the deletion and the reason.  What it did not fix is the two things the
+deletion left behind, both found here.
+
+### 2. Measurement
+
+**The dead call.** The production loop said:
+
+    np = notyet_problems(got.get("notyet") or [], name)
+    if name in MIR_ONLY_REFUSE_NOTYET:
+        problems.extend(np)
+
+`notyet_problems` returns `[]` for a case the table does not name, so with an empty
+table the call is a no-op whose result is discarded — and it reads as a check that
+runs.  **A no-op and a clean answer are the same value.**
+
+**The silence.** The suite printed `IR-MIR-NOTYET-CRITERION` once per row.  With no
+rows it printed nothing, so on the §10.228 tree:
+
+    grep -c "IR-MIR-NOTYET-CRITERION" <full-suite output>  ->  0
+
+A reader of the output could not distinguish "the mechanism is armed and no case
+needs it" from "the mechanism was removed in some refactor".  This is the consumer
+half of the shape §10.229 closed on the checker side: a fact in the data that
+nothing surfaces.
+
+### 3. What changed
+
+1. `notyet_problems` is asked **only when a row exists**, so the dead call is gone
+   rather than merely harmless.
+2. The suite prints the table's state every run:
+
+       IR-MIR-NOTYET-TABLE|rows=0|cases=none|armed=no (stated here rather than
+       inferred from silence)
+
+`n=0` is printed rather than skipped, the same decision §10.229 made for the
+ledger: **an empty mechanism is a fact to state, not a fact to infer from absence.**
+
+### 4. Injections
+
+    empty table (shipped)      -> rows=0|armed=no (stated)          | VERDICT|PASS
+    one row injected           -> rows=1|armed=yes                  | VERDICT|FAIL
+                                  IR-MIR-NOTYET-CRITERION|case=...|need=(OP_X)|
+                                  missing=(OP_X)|ok=no
+
+The second run is the one that matters: the injected row made the **criterion
+actually judge** and red the verdict, which proves the mechanism behind the empty
+table is live and that this section's line reports it rather than replacing it.
+Restored; full corpus suite `IR-MIR-VERDICT|PASS|accepted=86`, `EXIT=0`.
+
+### 5. Boundary
+
+This reports the table's emptiness; it does not make the table non-empty, and it
+does not judge whether a future row's `need`/`forbid` lists are *correct* — that is
+what the row author owes, and §10.197 already showed the cost of a row nobody
+judges.  The self-check's three-way fixture remains the only thing exercising
+`notyet_problems` today, and that is stated in the source rather than implied.
+
+The five sections §10.224–§10.230 now form one chain, and this is its first
+instance on the **consumer** side rather than inside the checker: an unused class,
+a blank reason, an unused route, an orphan route, an unprinted ledger, and now an
+unprinted empty table.  Each was the same sentence — *the entry exists* being
+mistaken for *the entry says something* — one table further out from the checker.
