@@ -410,6 +410,18 @@ def invariant_problems(text=None, docs=None):
             problems.append("the ledger calls why=%r an invariant, but no site "
                             "is declared for it -- the argument has no footing" % why)
             continue
+        # A BLANK SNIPPET IS NOT A SITE.  `"" in text` and `" " in text` are both
+        # True for every file, so a fragment that is empty or whitespace would
+        # make this check pass without reading the source at all -- the same
+        # vacuous shape as a dormant entry with no reason (§10.225), one table
+        # over.  Measured on the §10.225 tree: "" and " " both passed, "\t" red
+        # only because tab-indented source happens to lack that exact run.
+        if not isinstance(site, str) or not site.strip():
+            problems.append(
+                "the ledger calls why=%r an invariant, but the site declared for "
+                "it is blank -- a snippet that matches every file proves nothing "
+                "about this one" % why)
+            continue
         if site not in text:
             problems.append("the ledger calls why=%r an invariant, but its site "
                             "is not in the source any more: %r" % (why, site))
@@ -967,6 +979,12 @@ def self_check():
          "if (g_emitted + g_notyet != g_insns) {", "nothing was ever run", True),
         ("invariant-no-site-declared", {"brand-new-invariant": "invariant"},
          "anything", "IR-MIR-REFUSED|why=brand-new-invariant", True),
+        # A blank snippet is True for every file, so it would pass without
+        # reading the source.  Same vacuous shape as a dormant entry with no
+        # reason (§10.225), one table over.
+        ("invariant-blank-site", {"conservation": "invariant"},
+         "if (g_emitted + g_notyet != g_insns) {",
+         "IR-MIR-REFUSED|why=conservation|detail=emitted=4", True, ""),
         ("bare-unreachable", {"bare-reason": "unreachable"},
          "anything", "anything", True),
     ]
@@ -974,9 +992,16 @@ def self_check():
     saved_sites = dict(INVARIANT_SITES)
     saved_premises = dict(UNREACHABLE_PREMISES)
     try:
-        for what, ledger_reasons, text, docs, want_problem in invariant_cells:
+        for cell in invariant_cells:
+            what, ledger_reasons, text, docs, want_problem = cell[:5]
+            blank_site = cell[5] if len(cell) > 5 else None
             REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(ledger_reasons)
             UNREACHABLE_PREMISES.clear()
+            if blank_site is not None:
+                INVARIANT_SITES.clear()
+                INVARIANT_SITES["conservation"] = blank_site
+            else:
+                INVARIANT_SITES.clear(); INVARIANT_SITES.update(saved_sites)
             problems = invariant_problems(text, docs) + unreachable_premise_problems()
             hit = bool(problems) == want_problem
             print("IR-AOT-MIR-SURFACE-SELFCHECK|what=%s|problems=%d|want=%s|%s"
