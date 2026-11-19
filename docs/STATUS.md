@@ -12770,3 +12770,72 @@ free-text justification has no such handle, and inventing a proxy for it would
 be the "asserted, not demonstrated" shape this file exists to prevent.  What the
 assertion does buy is narrower and real: dormancy can no longer be re-declared by
 typing nothing.
+
+## §10.226 — a snippet that matches every file proves nothing about this one
+
+### 1. Source
+
+§10.225 closed the dormant table's unread value.  The same read asked what else
+in this checker is a **declared string nobody validates**, and `INVARIANT_SITES`
+came back: every reason the ledger calls `invariant` names a source fragment that
+must still be in `src/compilation/aot_mir.c`.
+
+### 2. Measurement
+
+The check is `if site not in text`.  Python's `contains` answers True for the
+empty string against **every** string, so:
+
+    INVARIANT_SITES["not-a-module"] = ""    -> no problem
+    INVARIANT_SITES["not-a-module"] = " "   -> no problem
+    INVARIANT_SITES["not-a-module"] = "\n"  -> no problem
+
+A blank fragment silently satisfies the "the site is still there" obligation
+without the source being read at all.  `"\t"` happened to red — not by design,
+but because tab-indented source lacks that exact run.
+
+This is the vacuous-truth sibling of §10.225's unread value: there, a blank
+reason switched an obligation off; here, a blank snippet makes one unfalsifiable.
+Both are "the table has an entry" being mistaken for "the table says something".
+
+### 3. What changed
+
+`invariant_problems()` now rejects a non-`str` or blank site **before** the
+substring test:
+
+    IR-AOT-MIR-SURFACE-PROBLEM|the ledger calls why='conservation' an invariant,
+    but the site declared for it is blank -- a snippet that matches every file
+    proves nothing about this one
+
+The `continue` matters: the blank case must not fall through to `site not in
+text`, or the verdict would name a missing guard rather than a missing snippet.
+
+### 4. Self-check
+
+30 cells: `invariant-blank-site` supplies the real guard text and the real probe
+line, and blanks only the declared snippet, so the cell can only fail on the new
+assertion.  The invariant loop takes an optional sixth element for that override;
+cells without one restore the shipped `INVARIANT_SITES`, so adding this case did
+not change what the other five ask.
+
+### 5. Injections
+
+A, blank snippet on the real tree:
+
+    INVARIANT_SITES["conservation"] = ""  -> blank-site problem | FAIL
+
+B, no regression in the original direction:
+
+    INVARIANT_SITES["conservation"] = "this guard does not exist in the source"
+      -> "its site is not in the source any more" | FAIL
+
+Both restored; `--report` PASS, `--self-check` checks=30 PASS, and the printed
+count (30) equals the number of `SELFCHECK|what=` lines (30).
+
+### 6. Boundary
+
+This catches a snippet that says **nothing**; it cannot catch one that says the
+**wrong thing** — a fragment copied from a *different* guard, still present in the
+file, passes.  Closing that needs the checker to know which guard belongs to which
+reason, which is a model of `aot_mir.c`, not a presence test: the same boundary
+§10.225 recorded for reasons, one table over.  What it buys is narrow and real —
+the obligation can no longer be satisfied by declaring no snippet at all.
