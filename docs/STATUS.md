@@ -13239,3 +13239,84 @@ can see and a reviewer can question; before this section both printed nothing.
 `ALLOCS_EXPECT` (246 rows) and `ARGV_CASES` (1 row) were checked for the same
 shape and are clean: every key names a real case, and both are consulted through
 `.get(name, DEFAULT)` where the default is a criterion rather than a no-op.
+
+## §10.232 — 29 + 31 = 60 of 67, and nothing said where the seven went
+
+### 1. Source
+
+The MIR coverage pin (`tools/aot_mir_cover.pin.json`) carries two lists:
+`covered_ops` (29 opcodes this route lowers and the corpus exercises) and
+`beyond-ast-denominator` (31 it lowers that the AST route cannot reach at all).
+Both are printed, both are pinned, and `IR-AOT-MIR-VERDICT` reports
+`covered=29|of=29|missing=0`.
+
+### 2. Measurement
+
+The two lists do not partition the encoding:
+
+    29 covered + 31 beyond = 60
+    67 declared in src/compiler/bytecode.h
+
+    gap = OP_SEND, OP_THREAD_CTRL, OP_THREAD_GOTO, OP_THREAD_JOIN,
+          OP_THREAD_START, OP_THREAD_STATE, OP_THREAD_WAIT
+    (7 names, verified with the same `declared_ops()` the pin uses)
+
+The gap is **correct**: those are the thread-section opcodes, and this route
+refuses a thread section by construction (`why=threads`), so they are lowered by
+nobody and belong in neither list.  What was missing is that **nothing stated it and
+nothing would notice a change**: an eighth opcode added to the enum with no pin row
+would widen the gap silently, and the fraction would keep printing 29/29 with
+`missing=0`.
+
+That is the §10.224–§10.231 shape in yet another coordinate system — an absence that
+is right today and unguarded tomorrow.
+
+### 3. What changed
+
+`pin_gap_problems(listed, declared)` returns the gap **and** every name in it that
+`PIN_GAP_EXPLAINED_BY` does not account for.  The tree prints it every run:
+
+    IR-AOT-MIR-PIN-GAP|declared=67|listed=60|gap=7|names=OP_SEND,OP_THREAD_CTRL,...|
+    explained-by=another-thread
+
+Keyed by name rather than counted, so a rename reds instead of silently widening
+the gap; and `explained-by` prints `MISSING` for any name the table lost, which is
+visible in the reading rather than only in the failure.
+
+### 4. Injections
+
+    shipped tree                     -> gap=7, explained-by=another-thread | PASS
+    `"OP_SEND": "another-thread"` removed
+      -> gap=7, explained-by=MISSING,another-thread
+         IR-AOT-MIR-PROBLEM|OP_SEND is in neither covered_ops nor
+         beyond-ast-denominator, and the pin does not say why it is absent
+         | FAIL (EXIT=1)
+    a hypothetical `OP_BRAND_NEW` added to the declaration set
+      -> gap=8, one problem naming OP_BRAND_NEW
+
+The last one is the case this section exists for: an opcode entering the gap is now
+named, not absorbed.
+
+### 5. Self-check
+
+Three cells, in both directions (35 checks total, was 32):
+
+    a gap name the pin explains is silent                          ok
+    a gap name the pin does NOT explain is caught                   ok
+    the gap names are returned, not just counted                    ok
+
+The third matters because a function that only returned the problem count would
+pass the first two while naming nothing.
+
+### 6. Boundary
+
+This asserts that **every** unlisted opcode has an explanation in
+`PIN_GAP_EXPLAINED_BY`; it does not assert that the explanation is the **right one**
+— `OP_SEND` would pass if somebody labelled it `retired`.  The boundary checker is
+where class correctness lives (`BOUNDARY` + `CLASS_BACKING`), and this table
+deliberately repeats the class name rather than importing it, so that a drift
+between the two shows up as a diff in two files rather than hiding behind a shared
+constant.  Reconciling them automatically would be the better design and is left
+explicitly undone: it needs the cover test to read the surface checker's tables,
+which is a new dependency between two checkers that today answer different
+questions.
