@@ -84,6 +84,8 @@ Exit: 0 = no DIVERGE, no THREW, and no declared family at zero programs;
       1 = at least one of those.
 """
 import argparse
+import atexit
+import shutil
 import os
 import random
 import subprocess
@@ -522,6 +524,11 @@ def main():
     # (measured: every case came back `cannot parse '.scratch/fz/fNNN.im'`, and
     # the fuzzer reported 25 UNSOUND cases that were its own path bug).
     work = Path(args.keep_dir).resolve() if args.keep_dir else Path(tempfile.mkdtemp(prefix="aot_mir_fuzz_"))
+    # --keep-dir is an explicit request to look at the tree afterwards, so only the
+    # implicit directory is cleaned (§10.234: the same leak, three more drivers,
+    # 117 directories and 7.8 GB before the disk ran out mid-gate).
+    if not args.keep_dir:
+        atexit.register(shutil.rmtree, work, ignore_errors=True)
     work.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
 

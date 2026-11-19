@@ -85,6 +85,7 @@ Usage:
     python3 tools/aot_mir.test.py [--build build] [--max N] [--all] [--self-check] [-v]
 """
 import argparse
+import atexit
 import importlib.util
 import os
 import re
@@ -6980,7 +6981,19 @@ def main():
     if args.max:
         cases = cases[:args.max]
 
+    # THE WORKING DIRECTORY IS CLEANED UP (§10.234).
+    #
+    # It carries the generated .c files and their compiled binaries -- 288 MB on a
+    # full corpus run -- and it used to be left behind: 117 of them (7.8 GB) had
+    # accumulated in /tmp when this repository ran out of disk, and a `bash` call
+    # could not even start because the tool could not write its scratch file.
+    #
+    # Registered with atexit rather than cleaned at the single return below,
+    # because the run can also end by exception (a TimeoutExpired inside `run`, an
+    # OSError from cc) and a leak on the failure path is the leak that matters:
+    # failed runs are the ones a developer repeats.
     workdir = tempfile.mkdtemp(prefix="aot_mir_")
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     accepted = refused = differ = conserved = 0
     c_identical = c_diff = 0
     reasons = {r: 0 for r in DIFF_REASONS}

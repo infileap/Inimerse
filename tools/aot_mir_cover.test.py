@@ -50,6 +50,8 @@ Usage:
                                        [--limit N] [--self-check] [-v]
 """
 import argparse
+import atexit
+import shutil
 import hashlib
 import importlib.util
 import json
@@ -528,7 +530,9 @@ def prelude_control(interp, verbose):
     as a program of its own -- measured here, not copied into this file.  That is
     what makes 'excluded=yes' below a measurement instead of an assumption."""
     with_dir = Path(tempfile.mkdtemp(prefix="aot_mir_prelude_"))
+    atexit.register(shutil.rmtree, with_dir, ignore_errors=True)
     no_dir = Path(tempfile.mkdtemp(prefix="aot_mir_noprelude_"))
+    atexit.register(shutil.rmtree, no_dir, ignore_errors=True)
     (with_dir / "params.params").write_text(PRELUDE_TEXT)
     for d in (with_dir, no_dir):
         (d / "ctrl.im").write_text("say 1\n")
@@ -637,6 +641,7 @@ def main():
     cases = shared + mir_only
 
     workdir = Path(tempfile.mkdtemp(prefix="aot_mir_cover_"))
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     prelude_excluded = not (workdir / "params.params").exists()
     control_exact = prelude_control(interp, args.verbose)
     print("IR-AOT-PRELUDE|file=params.params|found-at=cwd|contributed=OP_LOADK_STRING|excluded=%s"
