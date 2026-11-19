@@ -386,6 +386,30 @@ INVARIANT_SITES = {
     # falls back to it again.
     "illegal-operand": 'static const char *g_prescan_why = "illegal-operand";',
 }
+
+# WHERE A "reachable" REASON IS REACHED FROM, AND WHY THE CORPUS CANNOT SAY SO.
+#
+# `reachable` was §10.219's fourth state and it shipped WITHOUT an automatic
+# check -- its own boundary note says so: "`reachable` 不要求语料行，所以它是
+# 「弱声明」：靠人工纪律维持".  Measured on the §10.226 tree, that is not a small
+# hole: reclassifying all twelve `witnessed` reasons to `reachable` left
+# refusal_ledger_problems() at zero problems.  One status word, typed twelve
+# times, removes the whole corpus-witnessing obligation and nothing notices.
+#
+# The state cannot demand a corpus row -- that is the very thing it exists to
+# say is impossible (write-failed fires on the OUTPUT path; the corpus pins a
+# program, and the harness always picks a writable one).  What it CAN demand is
+# that the reachability be pinned to something a reader can re-check: a source
+# snippet that is still there, plus the sentence saying which path reaches it.
+# A reason that wants the exemption has to name its route.
+REACHABLE_SITES = {
+    "write-failed": (
+        'if (!fp) {',
+        "the route refuses when it cannot write the .c it was told to write; the "
+        "corpus pins a program and the harness always picks a writable path, so "
+        "no case can express this",
+    ),
+}
 PROBE_DOCS = ROOT / "docs" / "STATUS.md"
 
 
@@ -611,6 +635,36 @@ def refusal_ledger_problems(whys=None):
             problems.append("the refusal ledger gives why=%r the state %r, which "
                             "is not one of %s -- the state would be checked by "
                             "nothing" % (why, state, ", ".join(sorted(known))))
+    # `reachable` is the one state that exempts a reason from the corpus, so it is
+    # the one an author reaches for when a case is hard to write.  §10.219 shipped
+    # it on manual discipline alone and said so; measured on the §10.226 tree,
+    # relabelling all twelve witnessed reasons left this function at zero
+    # problems.  It now has to name the route (REACHABLE_SITES) and the route has
+    # to still be in the source.
+    source_text = None
+    for why, state in sorted(REFUSAL_REASONS.items()):
+        if state != "reachable":
+            continue
+        declared = REACHABLE_SITES.get(why)
+        if declared is None:
+            problems.append(
+                "the refusal ledger calls why=%r reachable, which exempts it from "
+                "the corpus, but no route is declared for it -- say where it is "
+                "reached from and why no case can express it" % why)
+            continue
+        snippet, _reason = declared
+        if not isinstance(snippet, str) or not snippet.strip():
+            problems.append(
+                "the refusal ledger calls why=%r reachable, but the route declared "
+                "for it is blank -- a snippet that matches every file proves "
+                "nothing about this one" % why)
+            continue
+        if source_text is None:
+            source_text = (ROOT / "src/compilation/aot_mir.c").read_text(errors="replace")
+        if snippet not in source_text:
+            problems.append(
+                "the refusal ledger calls why=%r reachable, but its route is not in "
+                "the source any more: %r" % (why, snippet))
     return problems
 
 
@@ -834,6 +888,15 @@ def self_check():
          {"builtin-argc": "witnessed"}, set(), True),
         ("ledger-unknown-state", {"builtin-argc"},
          {"builtin-argc": "witnessedd"}, {"builtin-argc"}, True),
+        # `reachable` is the state that exempts a reason from the corpus (§10.227).
+        # Two cells: one refuses the exemption without a declared route, one
+        # accepts it when a real route is named.  The route snippet comes from the
+        # cell, because a fixture must not depend on the shipped table.
+        ("reachable-without-route", {"brand-new-reason"},
+         {"brand-new-reason": "reachable"}, set(), True),
+        ("reachable-with-route", {"brand-new-reason"},
+         {"brand-new-reason": "reachable"}, set(), False,
+         "if (!fp) {"),   # a snippet that really is in aot_mir.c
     ]
     saved = dict(BOUNDARY)
     saved_dormant = dict(DORMANT_CLASSES)
@@ -917,11 +980,18 @@ def self_check():
     # The ledger cells need a controlled SOURCE and a controlled CORPUS, so
     # they swap both tables out and put them back.
     saved_ledger = dict(REFUSAL_REASONS)
+    saved_reachable = dict(REACHABLE_SITES)
     saved_source = route_refusal_reasons
     try:
-        for what, source_reasons, ledger_reasons, corpus_whys, want_problem in ledger_cells:
+        for cell in ledger_cells:
+            what, source_reasons, ledger_reasons, corpus_whys, want_problem = cell[:5]
+            route_snippet = cell[5] if len(cell) > 5 else None
             REFUSAL_REASONS.clear()
             REFUSAL_REASONS.update(ledger_reasons)
+            REACHABLE_SITES.clear()
+            if route_snippet is not None:
+                REACHABLE_SITES[what and next(iter(ledger_reasons))] = (
+                    route_snippet, "self-check fixture route")
             globals()["route_refusal_reasons"] = lambda text=None, _s=source_reasons: set(_s)
             problems = refusal_ledger_problems(corpus_whys)
             hit = bool(problems) == want_problem
@@ -931,6 +1001,7 @@ def self_check():
             ok &= hit
     finally:
         REFUSAL_REASONS.clear(); REFUSAL_REASONS.update(saved_ledger)
+        REACHABLE_SITES.clear(); REACHABLE_SITES.update(saved_reachable)
         globals()["route_refusal_reasons"] = saved_source
     # The premise cells: a reason the ledger calls unreachable must still be
     # unreachable.  The check is asked the question directly, with the premise
