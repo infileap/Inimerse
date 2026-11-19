@@ -13973,3 +13973,191 @@ a program that computes from one that does not.  It does not decide whether the
 computation is the *right* one — a program could compute a value that is wrong
 and print it, and the clause would still be strong.  That is what the other
 half of a test does, and it is out of scope here.
+
+## §10.239 — the probes that could not fail
+
+### 1. Where the next thing was
+
+§10.238 left a boundary in writing: 141 tests carry no CTest-level assertion
+and no `--shape` clause.  §10.238 also showed that "no assertion in the
+CTest metadata" is not "no assertion" — 36 of the 86 `*_runtime` tests do
+carry an assertion, hidden in `gated_run.py`'s argv.  So the remaining 96
+tests were measured the same way: what actually runs them?
+
+The answer was 42 of them: a `build/*_probe` executable.  Those carry no
+regex and no `--shape` clause, because their assertions live in their own
+source.  Which is the right place for an assertion, and also the place where
+an assertion can be silently deleted.
+
+### 2. What `assert()` is worth in a Release build
+
+Six probes state their expectations with `assert()`:
+`bytecode_capture_probe`, `closure_probe`, `typeset_probe`, `enum_probe`,
+`error_types_probe` and `type_registry_probe`.  `assert()` is a no-op under
+`-DNDEBUG`, and `CMAKE_C_FLAGS_RELEASE` is `-O3 -DNDEBUG`.  So a probe
+compiled as-is exits 0 no matter what the engine does.
+
+The measurement, on a three-line file:
+
+    int x = 41; assert(x == 42); printf("probe: all good\n");
+
+    gcc -O2                        -> rc=134, the assertion fired
+    gcc -O2 -DNDEBUG               -> "probe: all good", rc=0
+    gcc -O2 -DNDEBUG -UNDEBUG      -> rc=134, the assertion fired
+
+The repository already knew this.  `CMakeLists.txt` carried a `foreach` that
+named those six and appended `-UNDEBUG` to each, with a comment saying that
+compiled as-is they "exit 0 no matter what the engine does".  The comment was
+right and the list was right, on the day it was written.
+
+### 3. The defect, demonstrated
+
+A list of six names is only as good as the discipline that keeps it current,
+and nothing measured it.  A seventh probe, using `assert()`, added without
+touching the list, fails in the worst way there is — silently, while looking
+like success:
+
+    src/types/inject_probe.c:
+        #include <assert.h>
+        int main(void){ int x = 41; assert(x == 42);
+                        printf("inject_probe: all good\n"); return 0; }
+    add_executable(inject_probe src/types/inject_probe.c)
+    add_test(NAME inject_probe COMMAND inject_probe)
+
+    ./build/inject_probe          -> "inject_probe: all good", rc=0
+    ctest -R ^inject_probe$       -> Passed
+
+An assertion that could not fail was reported as a passing test, and the
+probe announced its own success.  This is the same shape as §10.235's
+"the guard's existence is not the guard's coverage": the guard existed, and
+the thing it guarded was not under it.
+
+### 4. The root cause, and the fix that removes it
+
+The fix could have been to add the seventh name to the list.  The fix that
+removes the failure mode is to have no list: the probes are *discovered*.
+
+    get_property(_all_inimerse_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                 PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_probe_target ${_all_inimerse_targets})
+      if(_probe_target MATCHES "_probe$")
+        get_target_property(_probe_type ${_probe_target} TYPE)
+        if(_probe_type STREQUAL "EXECUTABLE")
+          target_compile_options(${_probe_target} PRIVATE -UNDEBUG)
+        endif()
+      endif()
+    endforeach()
+
+A probe added tomorrow is covered by construction.  The property is spelled
+`BUILDSYSTEM_TARGETS`, not `TARGETS`: the latter is not a property, and
+`get_property()` accepts a non-existent property silently, returning an
+empty list — a guard that guards nothing, discovered by the guard's own
+failure to fire.  (This file's first version used `TARGETS` and did exactly
+that; the six probes lost their `-UNDEBUG` and the checker said so.)
+
+The block sits at the foot of `CMakeLists.txt` because it can only see
+targets that already exist.
+
+Two things were checked before the block was allowed to stand.  First, the
+engine's own sources contain **no** `assert()` at all (`src/**` minus the
+probe files: 0 occurrences), so `-UNDEBUG` on a probe that compiles engine
+code cannot turn an internal check into a runtime abort.  Second, all 31
+probe tests still pass after the change.
+
+### 5. The checker
+
+`tools/check_probe_assertions.py` reads the built tree and asks one
+question: does a target that CTest runs use `assert()`, and is NDEBUG in
+effect when it was compiled?
+
+Both halves come from the build, not from the source of truth we hope is
+current:
+
+* the **effective** NDEBUG state comes from the flags the build used.
+  gcc applies the last of `-D`/`-U` for a macro, so `-O3 -DNDEBUG -std=gnu11
+  -UNDEBUG` leaves assertions ON.  Reading the *set* of flags instead of
+  their order would report the six guarded probes as broken — a false
+  positive, and a false positive that would have made the checker
+  untrustworthy on day one;
+* the **sources** of a target come from the object files the build produced,
+  because the target name need not resemble the file it compiles.
+  `src/types/registry_probe.c` is the target `type_registry_probe`; a
+  checker that matched names would have missed it in both directions.
+
+Exit codes: 0 clean, 1 a defect, 2 the build tree could not be read.  The
+third code matters: "no build to read" and "no defect found" are different
+answers, and collapsing them would make an unconfigured tree look clean.
+
+The checker's first version could not find the defect it was written for.  It
+looked for the source next to the object file; the object file is in the
+build tree and the source is in the repository.  The reverse validation —
+inject the failing probe, expect the checker to name it — is what found it,
+and it is the reason the reverse validation exists for every checker here.
+
+### 6. The controls
+
+`--self-test` runs six cases and prints
+`PROBE-ASSERT-SELFTEST-VERDICT|cases=6|red=0|verdict=PASS`: four for the
+order of `-D`/`-U` (including `-DNDEBUG -UNDEBUG -DNDEBUG`, which is
+defined, because the last one wins), and two for counting `assert()` calls
+with the comments stripped first — a probe that merely *mentions* `assert()`
+in a comment does not depend on it.
+
+The reverse validation, run on the tree this section describes:
+
+| step | result |
+|---|---|
+| inject a probe with `assert(x == 42)` where `x == 41`, no `-UNDEBUG` | flags `-O3 -DNDEBUG -std=gnu11` |
+| the checker before the fix | **found it**: `WEAK inject_probe: 1 assert() call(s) compiled with NDEBUG in effect`, exit 1 |
+| the same probe after the discovery fix | flags `-O3 -DNDEBUG -std=gnu11 -UNDEBUG` |
+| running it | `rc=134`, `Assertion 'x == 42' failed` |
+| CTest on it | **Failed (Subprocess aborted)** — where before the fix it was *Passed* |
+| the checker after the fix | 0 weak, exit 0 |
+| 31 probe tests | 31/31 pass |
+
+The third row of that table is the point of the whole section: the defect
+was not reported, it was *removed*.  A checker that only reports leaves the
+next probe to be added the same way.
+
+### 7. What landed
+
+* `CMakeLists.txt`: the six-name `foreach` is gone; every target whose name
+  ends in `_probe` and is an executable gets `-UNDEBUG`, discovered at the
+  foot of the file.
+* `tools/check_probe_assertions.py`: the checker, with its six controls.
+* `CMakeLists.txt`: two CTests, `probe_assertions_regression` and
+  `probe_assertions_selfcheck` (206 → 208).
+* `tools/gate.sh`: a new stage, `probe-assertions`, and `EXP_CTEST` 206 → 208.
+* `docs/BOARD.md`: `recon.ctest-count` 206 → 208.
+
+### 8. Two things the gate taught
+
+**The line-number ratchet is a line-count ratchet, not a line-number one.**
+The first version of this section put the discovery block in the middle of
+`CMakeLists.txt`, where the old `foreach` had been.  The gate's `line-refs`
+stage went red with `unanchored delta +72` — 129 places in `docs/` cite
+`CMakeLists.txt:NNN`, and inserting 8 lines above them moves every one.  The
+repair is to keep the *line count* of the region unchanged, not to renumber
+the citations: a citation that is rewritten to today's number is a citation
+that dies on the next edit (§10.236's lesson, again).  Moving the block to
+the foot of the file and paying for it with two lines of comment elsewhere
+in the same region brought the reading back to −6.
+
+**A stage function has to be defined before it is called.**  Moving the
+stage function to the end of `gate.sh` — the same "append at the foot"
+instinct — produced `stage_probe_assertions: command not found` and
+`exit 127`, because bash resolves a function name when the call runs, not
+when the file is read.  The append-at-the-foot rule applies to
+*registration*, not to *definition*.
+
+### 9. Boundary
+
+This checker measures whether an assertion in a probe **can fire**.  It does
+not measure whether the assertion is the *right* one: a probe can assert
+something true and useless, and this file says nothing about that.  It also
+says nothing about the 31 `PASS_REGULAR_EXPRESSION`s on probe and driver
+executables (§10.237's boundary, unchanged — their assertions live in their
+own code, and the question asked here is different).  A probe that states
+its expectations without `assert()` — a hand-written comparison, a non-zero
+return — is safe under `-DNDEBUG` precisely because it does not use
+`assert()`, and this file does not judge its comparison.
