@@ -12924,3 +12924,96 @@ pre-scan invariants.
 
 The other half of note ③ — that `reachable` gives no automatic guarantee the
 reason is really reachable — is unchanged by this section.
+
+## §10.228 — the exemption was payable, and paying it emptied the state
+
+### 1. Source
+
+§10.219 introduced the fourth ledger state, `reachable`, for `write-failed`, and
+recorded its cost in boundary note ③: the state demands no corpus row, so it is
+"靠人工纪律维持".  §10.227 attached the exemption to a declared route but said
+plainly what it had not done:
+
+> Closing that needs the checker to drive the output path (a probe that asks for
+> an unwritable target), which is a test, not a table.
+
+This section drives it.
+
+### 2. Measurement
+
+`build/aot-mir translate p.im /nonexistent-dir/out.c` on the §10.227 tree:
+
+    aot_mir: write-failed: /nonexistent-dir/out.c
+    IR-MIR-REFUSED|why=write-failed|detail=/nonexistent-dir/out.c
+
+The guard fires on a **command**, not on a source edit.  Unlike the five
+invariants of §10.222 — which needed injected source and a restore — this reason
+can be witnessed by running the shipped binary.  `reachable` was therefore not a
+permanent state of nature for it; it was an unpaid debt with a payment
+instruction attached.
+
+### 3. What changed
+
+1. **`aot_mir.test.py` drives the path** and prints
+   `IR-MIR-REFUSAL-WITNESSED|why=write-failed|probe=unwritable-output-parent|...|ok`.
+   The target is a path whose **parent does not exist** rather than a `chmod 000`
+   directory: root ignores the mode bits, so the parent test is the one that
+   cannot accidentally pass when the suite runs privileged.
+2. **The probe is part of the verdict.** `ok` now includes `wf_ok`, so a run that
+   does not drive the path cannot print PASS over it.
+3. **`DRIVEN_PROBES`** declares which reason a driven probe witnesses, and
+   `refusal_whys()` reads that declaration — statically, from the corpus source,
+   because this checker runs without a build.  The two halves compose: the table
+   without the probe is a claim, the probe without the table leaves the ledger
+   exempting something it no longer must.
+4. **`write-failed` moves `reachable` → `witnessed`.**  The fourth state now has
+   **no members**.
+
+### 4. The orphan it created, caught by the check added for it
+
+Graduating the reason left its `REACHABLE_SITES` row behind.  Measured: no check
+said a word.  `refusal_ledger_problems()` therefore gained the orphan direction:
+
+    REACHABLE_SITES declares a route for write-failed, but the ledger does not
+    call it reachable -- a route nobody reads is a claim nobody checks
+
+It fired on the tree that had just created the orphan, and the table was emptied
+with its rationale recorded.  This is the third instance of one shape (§10.224's
+unused class, §10.225's blank reason, now an unused route): **an entry nothing
+reads is a claim nobody checks.**
+
+### 5. Self-check
+
+33 cells (was 32): `reachable-orphan-route` — a ledger that calls the reason
+`witnessed` while a route is still declared for it, red.  The ledger loop takes a
+seventh element for the orphan override.
+
+### 6. Injections
+
+    probe target made writable        -> reason=- | WRONG, "the guard is not
+                                         live, or the ledger's route is wrong" | FAIL
+    DRIVEN_PROBES marker removed      -> witness disappears, ledger reports
+                                         "says why='write-failed' is witnessed, but
+                                         no case in the corpus names it" | FAIL
+    orphan route left in place        -> "a route nobody reads is a claim nobody
+                                         checks" | FAIL
+
+Reverse control and both integrity controls restored.  Full corpus suite:
+`IR-MIR-VERDICT|PASS|accepted=86`, `EXIT=0`.
+
+### 7. Boundary
+
+`reachable` is now an **empty state**, and that is the honest reading: the state
+existed for one reason, the reason turned out to be witnessable, so the state has
+no members.  It is kept — not deleted — because the next genuinely unwitnessable
+reason must still name its route, and the orphan check keeps the table from
+becoming a parking space.  Deleting it would mean the next such reason has nowhere
+to go but a lie about being `witnessed`; keeping it with zero members and an
+orphan check is the cheaper position.
+
+What this still does not do: it witnesses that the guard **fires when the path is
+unwritable**, not that the route is correct in every environment (a full disk, a
+read-only mount and a missing parent all reach the same arm; only the third is
+driven).  And `witnessed` here means "a registered test drives it", not "every
+run in every platform will" — the suite is skipped where the tool is not built,
+which is the same caveat every CTest in this file carries.
