@@ -201,6 +201,49 @@ CLASS_BACKING = {
 
 CORPUS = ROOT / "tools/aot_mir.test.py"
 
+# REASONS A DRIVEN PROBE WITNESSES, AND THE PROBE THAT DOES IT.
+#
+# The `witnessed` state used to mean one thing only: a row in MIR_ONLY_REFUSE
+# names the reason, and that row is a PROGRAM.  `write-failed` cannot be a
+# program -- it fires when the route cannot write the .c it was told to write, so
+# it lived in the fourth state `reachable`, exempt from the corpus on the
+# strength of a sentence (§10.219 note ③).  §10.228 drove it for real: hand the
+# tool an output path whose parent does not exist and the guard fires.
+#
+# That probe is not a corpus row, so it is declared here instead.  The static
+# side (this file) reads the DECLARATION; the driving side (aot_mir.test.py, the
+# same CTest) prints IR-MIR-REFUSAL-WITNESSED|why=<reason>|...|ok and fails its
+# verdict if the reason does not come back.  Neither half alone can pass: this
+# table without the probe is a claim, and the probe without this table leaves the
+# ledger exempting a reason it no longer needs to.
+DRIVEN_PROBES = {
+    "write-failed": {
+        "probe": "unwritable-output-parent",
+        "marker": '"IR-MIR-REFUSAL-WITNESSED|why=write-failed',
+        "how": "the route refuses when it cannot write the .c it was told to "
+               "write; the probe passes an output path whose PARENT does not "
+               "exist (root cannot create that either, unlike a chmod-000 dir)",
+    },
+}
+
+
+def probe_witnessed_whys(probe_name):
+    """The `why` values a driven probe declares, read from the corpus source.
+
+    Static on purpose: this checker runs without a build, so it cannot execute
+    the probe.  What it CAN do is refuse a declaration whose probe marker has
+    gone from the driving file -- that is the shape where the table keeps
+    claiming a witness nobody implements.
+    """
+    entry = DRIVEN_PROBES.get(probe_name)
+    if entry is None:
+        return set()
+    try:
+        text = CORPUS.read_text(errors="replace")
+    except OSError:
+        return set()
+    return {probe_name} if entry["marker"] in text else set()
+
 # EVERY refusal reason the route can emit, and whether the corpus witnesses it.
 #
 # §10.216 enumerated them by hand: 19 reasons, 6 of them witnessed.  Two of the
@@ -209,13 +252,21 @@ CORPUS = ROOT / "tools/aot_mir.test.py"
 # the list cannot rot while the source drifts.
 #
 # The values are what the corpus says about the reason:
-#   "witnessed"     -- at least one case in MIR_ONLY_REFUSE names it
+#   "witnessed"     -- something running this suite names it: either a case in
+#                       MIR_ONLY_REFUSE (a program) or a DRIVEN PROBE declared in
+#                       DRIVEN_PROBES (a path the corpus cannot express, §10.228)
 #   "triggerable"   -- a program reaches it, but no case names it yet
 #   "unreachable"   -- no program in today's tree can reach it (measured; the
 #                       reason for each is in STATUS.md's §10.216)
 #   "invariant"     -- reached only by breaking an invariant the emitter keeps:
 #                       the site must still be in the source and the docs must
 #                       carry a run that made it fire (see INVARIANT_SITES)
+#   "reachable"     -- the fourth state (§10.219): reachable, but no corpus row
+#                       can say so.  It has NO MEMBERS today -- its only row,
+#                       write-failed, is witnessed by a driven probe (§10.228).
+#                       The state stays because the next such reason must still
+#                       name its route in REACHABLE_SITES, and an orphan entry
+#                       there is red, so it cannot become a parking space.
 #
 # UPDATE (10.221): the "family" state is GONE.  It stood for "the default name
 # of g_prescan_why, replaced by a named reason before any check can fail" --
@@ -282,9 +333,16 @@ REFUSAL_REASONS = {
     # PATH, not through a program shape -- the route refuses when it cannot
     # write the .c file it was told to write.  The corpus cannot express that
     # (the case table names a program, and the harness always picks a writable
-    # path), so it is marked "reachable" instead of "witnessed": the ledger
-    # check only demands a corpus row for "witnessed".
-    "write-failed": "reachable",
+    # path).
+    # UPDATE (10.228): the corpus cannot, but a DRIVEN PROBE can.  Handing the
+    # tool an output path whose parent does not exist makes the guard fire, and
+    # aot_mir.test.py now prints IR-MIR-REFUSAL-WITNESSED|why=write-failed|ok for
+    # it (declared in DRIVEN_PROBES; the same CTest that runs the corpus fails
+    # its verdict if the reason does not come back).  The fourth state was
+    # introduced for a reason that turned out to be witnessable, so the row moves
+    # to "witnessed" and the `reachable` exemption it justified is retired -- the
+    # ledger no longer exempts anything.
+    "write-failed": "witnessed",
 }
 
 
@@ -312,6 +370,16 @@ def refusal_whys():
                 for elt in value.elts[1:]:
                     if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                         whys.add(elt.value)
+    # A `why` can also be witnessed by a DRIVEN probe rather than a corpus row.
+    # `write-failed` is the case that forced this (§10.228): the reason fires on
+    # the OUTPUT path, and the case table pins a program -- no row can express it.
+    # `aot_mir.test.py` therefore drives the tool with an unwritable target and
+    # prints IR-MIR-REFUSAL-WITNESSED|why=<reason>|...|ok.  Reading that line as a
+    # witness is what lets the ledger retire the `reachable` exemption on
+    # evidence instead of on trust; the probe is registered as the same CTest
+    # that already runs the corpus, so this cannot be satisfied by a comment.
+    for probe in DRIVEN_PROBES:
+        whys.update(probe_witnessed_whys(probe))
     return whys
 
 
@@ -403,12 +471,11 @@ INVARIANT_SITES = {
 # snippet that is still there, plus the sentence saying which path reaches it.
 # A reason that wants the exemption has to name its route.
 REACHABLE_SITES = {
-    "write-failed": (
-        'if (!fp) {',
-        "the route refuses when it cannot write the .c it was told to write; the "
-        "corpus pins a program and the harness always picks a writable path, so "
-        "no case can express this",
-    ),
+    # Empty by design (§10.228): write-failed was the only `reachable` row, and a
+    # driven probe now witnesses it, so the state has no members left.  The
+    # appliance stays because the STATE stays -- the next reason that genuinely
+    # cannot be witnessed still has to name its route here, and the orphan check
+    # above is what stops this table from becoming a place to park one.
 }
 PROBE_DOCS = ROOT / "docs" / "STATUS.md"
 
@@ -665,6 +732,21 @@ def refusal_ledger_problems(whys=None):
             problems.append(
                 "the refusal ledger calls why=%r reachable, but its route is not in "
                 "the source any more: %r" % (why, snippet))
+    # THE ORPHAN DIRECTION.  A reason that graduates out of `reachable` -- because
+    # a probe finally witnesses it -- leaves its REACHABLE_SITES entry behind, and
+    # an entry nothing reads is the same museum §10.224 removed from CLASSES and
+    # §10.225 refused to let a blank reason switch off.  Measured when
+    # write-failed moved to "witnessed" (§10.228): the table kept its row and no
+    # check said a word.
+    orphan_routes = sorted(
+        why for why in REACHABLE_SITES
+        if REFUSAL_REASONS.get(why) != "reachable")
+    if orphan_routes:
+        problems.append(
+            "REACHABLE_SITES declares a route for %s, but the ledger does not call "
+            "it reachable -- a route nobody reads is a claim nobody checks; delete "
+            "it when the reason graduates, or put the reason back if it has not"
+            % ",".join(orphan_routes))
     return problems
 
 
@@ -897,6 +979,10 @@ def self_check():
         ("reachable-with-route", {"brand-new-reason"},
          {"brand-new-reason": "reachable"}, set(), False,
          "if (!fp) {"),   # a snippet that really is in aot_mir.c
+        # The orphan direction (§10.228): a route left behind by a reason that
+        # graduated.  Without this the table becomes a museum of exemptions.
+        ("reachable-orphan-route", {"brand-new-reason"},
+         {"brand-new-reason": "witnessed"}, set(), True, None, "brand-new-reason"),
     ]
     saved = dict(BOUNDARY)
     saved_dormant = dict(DORMANT_CLASSES)
@@ -986,12 +1072,16 @@ def self_check():
         for cell in ledger_cells:
             what, source_reasons, ledger_reasons, corpus_whys, want_problem = cell[:5]
             route_snippet = cell[5] if len(cell) > 5 else None
+            orphan_reason = cell[6] if len(cell) > 6 else None
             REFUSAL_REASONS.clear()
             REFUSAL_REASONS.update(ledger_reasons)
             REACHABLE_SITES.clear()
             if route_snippet is not None:
                 REACHABLE_SITES[what and next(iter(ledger_reasons))] = (
                     route_snippet, "self-check fixture route")
+            if orphan_reason is not None:
+                REACHABLE_SITES[orphan_reason] = (
+                    "if (!fp) {", "self-check orphan route")
             globals()["route_refusal_reasons"] = lambda text=None, _s=source_reasons: set(_s)
             problems = refusal_ledger_problems(corpus_whys)
             hit = bool(problems) == want_problem

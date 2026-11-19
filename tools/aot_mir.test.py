@@ -88,6 +88,7 @@ import argparse
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -7234,6 +7235,46 @@ def main():
              ",".join("%s:%d" % (r, reasons[r]) for r in DIFF_REASONS),
              perturbed, perturb_fail, stdout_changes,
              mir_only_ran, mir_only_same))
+    # THE PATH-TYPE REASON, DRIVEN FOR REAL (§10.228).
+    #
+    # `write-failed` is the ledger's only `reachable` row, and `reachable` means
+    # "no corpus case can express this" -- the case table pins a PROGRAM, and the
+    # harness always picks a writable output path.  That exemption was a promise
+    # nobody ran (STATUS 10.219 boundary note ③).  It can be run: hand the tool an
+    # output path it cannot write and the guard fires.  So the reason graduates
+    # from "reachable, on trust" to "witnessed by a probe", and the same command
+    # proves the guard is live code rather than a table entry.
+    #
+    # The target must be unwritable for a reason that does not depend on the test
+    # user: a path whose PARENT does not exist cannot be created by root either,
+    # unlike a chmod-000 directory (root ignores the mode bits).
+    wf_reason, wf_detail = "", ""
+    wf_ok = False
+    wf_dir = tempfile.mkdtemp(prefix="aot_mir_wf_")
+    try:
+        wf_src = Path(wf_dir) / "p.im"
+        wf_src.write_text("say 1\n")
+        wf_out = Path(wf_dir) / "no-such-parent" / "out.c"
+        rc, out, err = run([mir_tool, "translate", wf_src, wf_out], wf_dir, timeout=120)
+        for line in (out + err).splitlines():
+            if line.startswith("IR-MIR-REFUSED|why="):
+                rest = line[len("IR-MIR-REFUSED|why="):]
+                wf_reason = rest.split("|", 1)[0]
+                wf_detail = rest.split("|detail=", 1)[1] if "|detail=" in rest else ""
+                break
+        wf_ok = wf_reason == "write-failed"
+        if not wf_ok:
+            problems.append(
+                "the ledger calls write-failed reachable on the strength of its "
+                "output-path guard, but driving that path produced why=%r instead "
+                "(%r) -- the guard is not live, or the ledger's route is wrong"
+                % (wf_reason or "<no refusal line>", (out + err).strip()[:200]))
+    finally:
+        shutil.rmtree(wf_dir, ignore_errors=True)
+    print("IR-MIR-REFUSAL-WITNESSED|why=write-failed|probe=unwritable-output-parent"
+          "|reason=%s|detail=%s|%s"
+          % (wf_reason or "-", wf_detail or "-", "ok" if wf_ok else "WRONG"))
+
     print("IR-MIR-MIR-ONLY-REFUSED-TOTAL|cases=%d|ok=%d|expect=%d"
           % (ref_ran, ref_ok, len(MIR_ONLY_REFUSE)))
     for line in unclassifiable:
@@ -7241,10 +7282,13 @@ def main():
     for line in problems:
         print("IR-MIR-PROBLEM|" + line)
 
+    # wf_ok is part of the verdict: the write-failed witness is the only evidence
+    # behind the ledger's `reachable` exemption, so a run that does not drive the
+    # path must not print PASS over it.
     ok = (differ == 0 and not problems and not unclassifiable and conserved == accepted
           and perturb_fail == 0 and stdout_changes > 0 and perturbed > 0
           and mir_only_same == len(MIR_ONLY)
-          and ref_ok == len(MIR_ONLY_REFUSE))
+          and ref_ok == len(MIR_ONLY_REFUSE) and wf_ok)
     if c_identical == 0 and c_diff > 0:
         ok = ok  # a corpus where every file differs is not itself a failure
     print("IR-MIR-VERDICT|%s|tree=%s|accepted=%d|refused=%d|differ=%d|c-identical=%d|c-diff=%d"
