@@ -13017,3 +13017,74 @@ read-only mount and a missing parent all reach the same arm; only the third is
 driven).  And `witnessed` here means "a registered test drives it", not "every
 run in every platform will" — the suite is skipped where the tool is not built,
 which is the same caveat every CTest in this file carries.
+
+## §10.229 — the ledger could empty a state and `--report` would not change a line
+
+### 1. Source
+
+§10.228 moved `write-failed` from `reachable` to `witnessed` and the fourth state
+became empty.  Every check in `aot_mir_surface.py` walks `REFUSAL_REASONS`, but
+`--report` — the surface a reader actually looks at — printed only the **boundary**
+(`IR-AOT-MIR-BOUNDARY`, `BOUNDARY-CLASS`) and the premises.  It never printed the
+ledger.
+
+### 2. Measurement
+
+On the §10.228 tree, before this section:
+
+    --report  ->  BOUNDARY (8 rows), BOUNDARY-CLASS (3 rows),
+                  REFUSAL-PREMISE (2 rows), SURFACE, VERDICT
+                  "witnessed" / "invariant" / "unreachable": 1 occurrence total,
+                  inside a premise sentence — never as a ledger row
+
+A state can therefore go from one member to none and the report is byte-identical.
+The reader's only route to "what shape is the ledger today" was to open the source
+and count.  That is the same **invisible change** shape this section series has
+been closing (§10.224 an unused class, §10.225 a blank reason, §10.227 an unused
+route, §10.228 an orphan route): the fact exists in the data and nothing surfaces
+it.
+
+### 3. What changed
+
+`--report` now prints the ledger itself, per state, with an explicit count:
+
+    IR-AOT-MIR-REFUSAL-LEDGER|state=invariant|n=9|reasons=argument-stack-underflow,...
+    IR-AOT-MIR-REFUSAL-LEDGER|state=reachable|n=0|reasons=none
+    IR-AOT-MIR-REFUSAL-LEDGER|state=unreachable|n=1|reasons=unsupported-opcode
+    IR-AOT-MIR-REFUSAL-LEDGER|state=witnessed|n=13|reasons=builtin-argc,...,write-failed
+
+`n=0` is printed rather than skipped, so an empty state is **visible instead of
+inferred**.  The state set is the union of what the ledger uses and the four known
+states, so a state that empties completely still appears — the case that motivated
+this section.
+
+The driven probes are printed too, and they read `refusal_whys()` rather than the
+table alone:
+
+    IR-AOT-MIR-REFUSAL-DRIVEN|why=write-failed|probe=unwritable-output-parent|declared
+
+### 4. Injections
+
+    DRIVEN_PROBES marker changed to a string not in the corpus
+      -> REFUSAL-DRIVEN ... |marker-missing
+         IR-AOT-MIR-SURFACE-PROBLEM|the refusal ledger says why='write-failed' is
+           witnessed, but no case in the corpus names it
+         VERDICT|FAIL
+
+Restored -> `|declared`, `VERDICT|PASS`.
+
+So the new rows are not decoration: the ledger row derives from
+`REFUSAL_REASONS`, and the driven row derives from the same `refusal_whys()`
+call the checks use.  Setting the ledger's `write-failed` back to `reachable` in
+memory makes `reachable|n=1` appear again, which is the row proving it reads the
+table rather than remembering a number.
+
+### 5. Boundary
+
+`--report` is a **reading**, not an assertion: it prints what the tables say and
+takes no position on whether they are right.  A ledger row of `n=13` is not a
+claim that thirteen reasons are genuinely witnessed — that is
+`refusal_ledger_problems()`, and it can still be satisfied only by the corpus or a
+driven probe.  What this section buys is the thing `--report` was for: a reader
+can now see a state go empty without reading source.  It does not add a check, and
+the self-check is unchanged at 33 cells for that reason.
