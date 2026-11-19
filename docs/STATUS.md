@@ -13569,3 +13569,83 @@ no longer leak, and a gate run now leaves nothing under any of the ten prefixes.
 The three instances of one sentence now span three paragraphs of the same lesson:
 an entry nothing reads (§10.224–§10.232), a resource nothing releases (§10.234), and
 a guard that covers one site of two (§10.235).
+
+## §10.236 — four regexes any program could satisfy
+
+### 1. Source
+
+§10.235's boundary said the next direction should be the gates' own assertion
+strength.  `docs/SYNTAX.md` §7.2 M13 already records one axis of it — how many
+CTests assert nothing but the exit code — and `docs/BOARD.md`'s orphan-targets row
+names the limit of that reading in passing:
+
+> 「被跑」不等于「被断言」
+
+M13 counts tests with **no** `PASS_REGULAR_EXPRESSION`.  It does not ask whether the
+ones that **have** a regex could ever fail.
+
+### 2. Measurement
+
+Taking every `add_test(NAME … COMMAND inimerse vtest/*)` that has a
+`PASS_REGULAR_EXPRESSION` and looking at the pattern itself, four are strings a
+program can satisfy without doing what the case is about:
+
+    composition_runtime          "8"        vtest/composition_v04.im
+    collection_comprehension     "102"      vtest/collection_comprehension_v04.im
+    collection_core_runtime      "1,2"      vtest/collection_core_v04.im
+    case_array_runtime           "30.*20"   vtest/case_array_v04.im
+
+Confirmed by writing the trivial program each one asks for and running it:
+
+    say 8          -> matches "8"
+    say "102"      -> matches "102"
+    say "1,2"      -> matches "1,2"
+    say "30 20"    -> matches "30.*20"
+
+None of those programs composes functions, comprehends a collection, or matches an
+array pattern.  The assertions were checks that **some digit appeared**.
+
+### 3. What changed
+
+Three of the four were tightened to the actual result sequence, using the
+multi-line output the programs already produce:
+
+    composition_runtime     "8"        -> "8\n8"
+    collection_core_runtime "1,2"      -> "3\n3\n1,2"
+    case_array_runtime      "30.*20"   -> "30\n20"
+
+`collection_comprehension`'s `"102"` was left alone: the program's only output is
+`len(selected) + 100` = `102`, so the number **is** the assertion, and requiring
+more would be requiring the test to print noise.
+
+The difference between "30.*20" and "30\n20" is the whole point: `.*` matches
+across a space, so one line `30 20` satisfied it; `\n` requires the two case arms to
+have fired as two separate `say`s, which is what `case_array_v04.im` is about.
+
+### 4. Controls, both directions
+
+    program            original regex  hardened regex
+    real program       True            True
+    trivial program    True            False
+
+Verified with Python's `re` against the real outputs (not `grep -c`, which counts
+lines and cannot answer a multi-line match question).  Full gate after the change:
+20/20 stages PASS, and the three hardened tests pass inside it.
+
+### 5. Boundary
+
+This fixes four patterns.  `CMakeLists.txt` carries **40** `PASS_REGULAR_EXPRESSION`s
+in total, **9** of them on `inimerse`-driven tests (the other 31 belong to probe and
+driver executables whose own code asserts); this section measured the 9 and names the
+4 it found weak.  The question
+"could this regex ever fail" is not decidable by inspecting the pattern — `"102"`
+is short and specific, `"8\n8"` is short and (now) specific, and a long pattern can
+still be satisfiable by an accident of module-load text.  What was measured here is
+the narrower, decidable thing: **a four-line program written by hand satisfies the
+old pattern and does not satisfy the new one**, which is the only evidence that
+separates a weakened assertion from a strong one.
+
+The other 5 of the 9 would need the same treatment one at a time — write the trivial
+program, see whether the gate still passes — and that is a per-pattern job, not a
+sweep.  Recording it here so the next session starts from "36 remain", not from
+"some were fixed".
