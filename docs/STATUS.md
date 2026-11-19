@@ -14161,3 +14161,162 @@ own code, and the question asked here is different).  A probe that states
 its expectations without `assert()` — a hand-written comparison, a non-zero
 return — is safe under `-DNDEBUG` precisely because it does not use
 `assert()`, and this file does not judge its comparison.
+
+## §10.240 — the probes that could report success instead of failure
+
+### 1. Where the next thing was
+
+§10.239 fixed the `assert()` half of "a probe that cannot fail": the six
+probes that state their expectations with `assert()` now get `-UNDEBUG` by
+discovery rather than by a list, and `tools/check_probe_assertions.py`
+measures that the guard still covers what it says it covers.
+
+That left the other half.  The 42 probe-driven tests were the answer to
+"what runs the 96 tests with no CTest-level assertion", and six of them are
+now guarded.  The other 36 state their expectations some other way, and
+that way had never been examined.
+
+### 2. The shape of the thing
+
+All 32 probe sources (`src/**/*probe*.c`) were classified by how they report
+failure:
+
+    counter-return1    13    static int failures; ... return 1;
+    assert              6    the process aborts; §10.239's subject
+    inline-nonzero      9    if (bad) return <non-zero>;  at the check
+    counter-ternary     3    return failures == 0 ? 0 : 1;
+    UNKNOWN             1    src/headless_server_probe.c
+
+The census of the mechanisms themselves: 112 `assert(` calls in 6 files,
+`assert.h` included in those 6 and nowhere else, `NDEBUG` appearing
+**0 times** anywhere in `src/`, `static_assert` 0 times.  The engine's own
+sources (`src/**` minus the probes) contain **0** `assert()`.
+
+### 3. The defect, demonstrated
+
+Three of those four shapes are honest.  The fourth is where the defect
+lives, and it is not a shape at all — it is a mistake that any of the
+shapes can contain: a failure that is detected and then not reported.
+
+    src/vm/vm_init_probe.c, failure path changed from `return 1;` to
+    `return 0;`, and src/vm/vm.c's `memset(vm, 0, sizeof(VM));` removed so
+    the probe had something to fail about.
+
+    ./build/vm_init_probe   -> 26 lines of "FAIL <field>"
+                               (prof_enabled, prof_state, hookCount,
+                               spi_subs, ..., im2d_last_scene)
+                            -> rc=0
+    ctest -R ^vm_init_probe$ -> Passed
+
+The probe reported the failure in plain sight, on stdout, one line per
+failed field.  The test reported success.  A green CTest line is a claim
+about the exit code, and the exit code was wrong.
+
+### 4. The ruler, and why it is the ruler
+
+The obvious check asks "does the source contain a non-zero return?".  That
+is a different question, and it is answered by the wrong thing: the *number*
+of `return` statements in `main` says nothing about whether any of them is
+reachable from a failure.  Six of the assert-style probes are exactly the
+shape that measure would condemn — their `main` has one `return 0;` — and
+they are perfectly able to fail, because the assert aborts first.
+
+So the question is about the exit code's *route*, not its count:
+
+    Does `main` have a path that ends in a non-zero exit, and is that path
+    the one a failure takes?
+
+`tools/check_probe_failure_paths.py` answers it by parsing the source:
+`find_main` extracts `main`'s body by brace matching, `returns_in` lists
+its return statements, `nonzero_returns` keeps the ones whose value is not
+literally 0 (so `return failures == 0 ? 0 : 1;` counts and `return 0;`
+does not), and `uses_assert` recognises a program that aborts instead.
+
+Two kinds of probe satisfy it, and both are accepted:
+
+  * a non-zero `return` reachable from `main`, or
+  * `assert()` in the program, which aborts the process before any
+    `return 0` — the same property §10.239's `-UNDEBUG` guard protects.
+
+The first version of the audit was a heuristic and it was wrong twice.  It
+looked at the two lines before each `return 0;` and called the probe
+unguarded when the guard was not there — `src/verse/eventlog_probe.c` puts
+its guard in an `if (failures) { ... return 1; }` block further up, and the
+heuristic reported it as broken.  It also missed `return failures == 0 ? 0
+: 1;` entirely, which is three probes.  Both mistakes were in the same
+direction: reporting sound probes as broken.  A checker that cries wolf
+about sound code is a checker that gets turned off.
+
+### 5. The controls
+
+Six controls, each one a claim this file makes:
+
+    a counter that is read decides the exit code        -> ok
+    a check that returns non-zero at the point of failure -> ok
+    assert() aborts, so the exit code never lies         -> ok
+    a failure that is counted but never read             -> no-exit
+    a probe whose main only returns 0                    -> no-exit
+    a non-zero return inside a comment is not a return   -> no-exit
+
+The last one is the one that matters most, because a probe source is full
+of prose about what it would do if something went wrong.  Comments are
+stripped before the search, so `/* return 1; */` is not a return.
+
+### 6. What the audit found
+
+    32 probe source(s) read, 0 without a failure exit.
+
+Zero, and that is the honest answer for this tree.  The defect above was
+found by injecting it, not by reading the tree, which is the point: the
+checker's value is that the next such mistake is caught rather than
+discovered by someone who happened to look.
+
+The reverse validation, both ways:
+
+    src/vm/vm_init_probe.c  `return 1;` -> `return 0;`
+      -> WEAK src/vm/vm_init_probe.c: main() can only report success
+         -- a failure here would still be a green test
+      -> EXIT=1
+
+    src/types/typeset_probe.c  21 `assert(` -> `(void)(`
+      -> WEAK src/types/typeset_probe.c
+      -> EXIT=1
+
+    both restored
+      -> 32 probe source(s) read, 0 without a failure exit
+      -> EXIT=0
+
+### 7. What landed
+
+`tools/check_probe_failure_paths.py`, registered in two CTests
+(`probe_failure_paths_regression`, `probe_failure_paths_selfcheck`) and as
+one gate stage (`probe-failure-paths`).  `EXP_CTEST` 208 -> 210,
+`docs/BOARD.md`'s `recon.ctest-count` 208 -> 210, in the same commit.
+
+### 8. What the gate taught
+
+The gate's `line-refs` stage is a line-count ratchet, not a line-number
+ratchet: `docs/` cites 13 distinct lines of `tools/gate.sh` and 129 lines of
+`CMakeLists.txt`, so any insertion in the cited regions invalidates every
+citation after it.  The fix is to keep those regions the same length, not
+to renumber the citations — renumbering them works until the next edit,
+which is the same trap §10.236 walked into.
+
+Two edits of this kind were needed here: one stage function, one stage
+spec, one scope string, and two CTest registrations.  Two were absorbed by
+collapsing comments that had grown verbose; the rest by putting the new
+stage specification on a line that already carried several
+specifications, which is a style this file already used.
+
+### 9. Boundary
+
+This file reads the **source**.  It cannot know whether a check that exists
+is a check that runs, nor whether the value it compares against is the
+right one.  A probe can have a perfect failure path and assert nothing
+worth asserting — that is §10.237's boundary (the 31 `PASS_REGULAR_EXPRESSION`
+expressions on probes and drivers), unchanged.
+
+And the census that produced this section counts failures reported through
+the exit code.  A probe that reports failure through some other channel
+would be counted as having no failure exit, which is the safe direction to
+be wrong in: it would be reported, not passed by accident.
