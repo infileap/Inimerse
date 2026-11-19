@@ -291,8 +291,9 @@ def main(argv: list[str]) -> int:
         for src in defect["sources"]:
             print("       the assertion lives in %s" % os.path.relpath(src, REPO_ROOT))
         print("       flags: %s" % defect["flags"])
-        print("       add it to the foreach(_asserting_probe ...) list in "
-              "CMakeLists.txt, which appends -UNDEBUG")
+        print("       CMakeLists.txt gives every target whose name ends in "
+              "_probe the -UNDEBUG it needs; this one did not get it, so the "
+              "target name or the discovery block is what to look at")
 
     print("check_probe_assertions: %d target(s) run by CTest, %d with assert() "
           "compiled out." % (len(ctest_targets(build_dir)), len(defects)))

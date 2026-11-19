@@ -2137,8 +2137,8 @@ set_tests_properties(shape_assertions_selfcheck PROPERTIES WORKING_DIRECTORY ${C
 #
 # Discovery removes the list.  The BUILDSYSTEM_TARGETS directory property
 # names every target defined in this directory, and the filter below keeps
-# the ones that are probes.  A probe added tomorrow is covered by
-# construction.  (The property is spelled BUILDSYSTEM_TARGETS, not TARGETS:
+# the ones that are probes.  A probe added tomorrow is covered by construction.
+# (The property is spelled BUILDSYSTEM_TARGETS, not TARGETS:
 # the latter is a non-existent property and get_property() accepts it
 # silently, returning an empty list -- a guard that guards nothing.)
 #
@@ -2146,11 +2146,9 @@ set_tests_properties(shape_assertions_selfcheck PROPERTIES WORKING_DIRECTORY ${C
 # last -D/-U for a macro.  target_compile_options appends to the end of the
 # command line; target_compile_definitions would not undo the -DNDEBUG that
 # CMAKE_C_FLAGS_RELEASE contributes.  tools/check_probe_assertions.py reads
-# the flags of the built tree and reads that order, so the two agree.
-#
-# This block lives at the foot of the file because it can only see targets
-# that already exist, and because a new registration here must not shift
-# the line numbers docs/ cites.
+# the flags of the built tree and reads that order, so the two agree; this
+# block lives at the foot of the file because it can only see targets that
+# already exist, and because a registration must not shift cited line numbers.
 get_property(_all_inimerse_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
              PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_probe_target ${_all_inimerse_targets})
@@ -2162,16 +2160,18 @@ foreach(_probe_target ${_all_inimerse_targets})
   endif()
 endforeach()
 
-# A probe whose assert() is compiled out exits 0 no matter what the engine
-# does, so CTest reports a green test that checks nothing at all.  This
-# checker reads the flags of the built tree and reports any probe that uses
-# assert() while NDEBUG is in effect.  Registered with its own controls for
-# the same reason as every other checker here -- one that has never been
-# shown to go red is a checker nobody can quote.  Appended at the foot of
-# the file for the reason above.
+# A probe whose assert() is compiled out (§10.239) exits 0 whatever the engine
+# does, and a probe that cannot reach a non-zero exit (§10.240) reports its
+# failure as success; CTest calls both green.  Each checker has controls.
 add_test(NAME probe_assertions_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_assertions.py)
 set_tests_properties(probe_assertions_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;tests;regression")
 add_test(NAME probe_assertions_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_assertions.py --self-test)
 set_tests_properties(probe_assertions_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
+add_test(NAME probe_failure_paths_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_failure_paths.py)
+set_tests_properties(probe_failure_paths_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;tests;regression")
+add_test(NAME probe_failure_paths_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_failure_paths.py --self-test)
+set_tests_properties(probe_failure_paths_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
