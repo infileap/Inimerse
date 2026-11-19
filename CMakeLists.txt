@@ -646,7 +646,7 @@ if(INIMERSE_BUILD_ENGINE)
   add_test(NAME collection_comprehension_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/collection_comprehension_v04.im)
   set_tests_properties(collection_comprehension_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar" PASS_REGULAR_EXPRESSION "102")
   add_test(NAME collection_core_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/collection_core_v04.im)
-  set_tests_properties(collection_core_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection" PASS_REGULAR_EXPRESSION "1,2")
+  set_tests_properties(collection_core_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;collection" PASS_REGULAR_EXPRESSION "3\n3\n1,2")
   add_test(NAME type_collection_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "typecoll x=42" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/type_collection_v04.im)
   set_tests_properties(type_collection_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;types;collection")
   # `be` was removed as a declaration keyword (docs/TYPESET_V06.md §3.1,
@@ -790,12 +790,12 @@ if(INIMERSE_BUILD_ENGINE)
   # literals, so it would pass even with the alias stuck at nil.
   set_tests_properties(case_alias_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME case_array_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/case_array_v04.im)
-  set_tests_properties(case_array_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "30.*20")
+  set_tests_properties(case_array_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure" PASS_REGULAR_EXPRESSION "30\n20")
   add_test(NAME case_nested_patterns_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "53" --shape "nested-fallback-ok" --shape "nested-literal-ok" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/case_nested_patterns_v04.im)
   set_tests_properties(case_nested_patterns_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;case;structure")
   add_test(NAME lambda_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "lambda double=42.*lambda sum2=5" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/lambda_v04.im)
   add_test(NAME composition_runtime COMMAND inimerse ${CMAKE_SOURCE_DIR}/vtest/composition_v04.im)
-  set_tests_properties(composition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "8")
+  set_tests_properties(composition_runtime PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 15 LABELS "language;syntax-sugar;functional" PASS_REGULAR_EXPRESSION "8\n8")
   add_test(NAME lambda_capture_runtime COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "lambda capture2=5.*lambda capture10=13.*lambda local=8" -- $<TARGET_FILE:inimerse> ${CMAKE_SOURCE_DIR}/vtest/lambda_capture_v04.im)
   # Renamed from lambda_capture_rejected_v04.im: bd69935 implemented captured
   # lambdas and flipped the file's expectation to the working case without
