@@ -1228,6 +1228,23 @@ def main():
             n = sum(1 for v in BOUNDARY.values() if v[0] == cls)
             print("IR-AOT-MIR-BOUNDARY-CLASS|class=%s|n=%d|meaning=%s"
                   % (cls, n, CLASSES[cls]))
+        # THE LEDGER ITSELF, which the report never printed.  Every check in this
+        # file walks REFUSAL_REASONS, and a reader asking "what is the ledger's
+        # shape today" had to read the source.  §10.228 emptied the `reachable`
+        # state and the report did not change by one line -- a state can go from
+        # one member to none and `--report` says nothing, which is the same
+        # invisible-change shape as the checks this section series has been
+        # closing.  Printed per state, with the count, so "n=0" is visible rather
+        # than inferred.
+        for state in sorted(set(REFUSAL_REASONS.values()) | {"witnessed", "reachable",
+                                                            "unreachable", "invariant"}):
+            members_of = sorted(w for w, st in REFUSAL_REASONS.items() if st == state)
+            print("IR-AOT-MIR-REFUSAL-LEDGER|state=%s|n=%d|reasons=%s"
+                  % (state, len(members_of), ",".join(members_of) or "none"))
+        for why, entry in sorted(DRIVEN_PROBES.items()):
+            print("IR-AOT-MIR-REFUSAL-DRIVEN|why=%s|probe=%s|%s"
+                  % (why, entry["probe"],
+                     "declared" if why in refusal_whys() else "marker-missing"))
     print("IR-AOT-MIR-SURFACE|declared=%d|emitted=%d|unemitted=%d|classified=%d"
           "|classes=%d" % (len(members), len(members) - len(missing), len(missing),
                            len(BOUNDARY), len(CLASSES)))
