@@ -7157,8 +7157,14 @@ def main():
         # above it says why equality is not the criterion); the exit code alone
         # cannot see a program that stopped silently, and the stdout comparison
         # cannot see which VALUE the throw carried.
-        sp = stderr_problems(er_text, name)
+        #
+        # Asked only when the table names this case (§10.231).  It used to be
+        # called unconditionally with the answer discarded unless the row existed
+        # -- the same dead call §10.230 removed from the not-yet table, here on a
+        # loop that runs 316 times for 26 rows.  stderr_problems() returns [] for
+        # an unlisted case, so a dead call and a clean answer were the same value.
         if name in STDERR_EXPECT:
+            sp = stderr_problems(er_text, name)
             problems.extend(sp)
             print("IR-MIR-STDERR|case=%s|need=(%s)|forbidden=(%s)|missing=(%s)|leaked=(%s)|ok=%s"
                   % (name, ",".join(STDERR_EXPECT[name]),
@@ -7229,6 +7235,19 @@ def main():
     # it" from "the mechanism was removed".  §10.197 deleted that table's only row
     # for being unjudged; what survived was the silence, which is the consumer half
     # of the invisible-change shape §10.229 closed on the checker side.
+    # WHICH LOOKUP TABLES ARE SPARSE, AND BY HOW MUCH (§10.231).
+    #
+    # The stderr criterion runs per MIR_ONLY case but only 26 of 316 have a row:
+    # the other 290 are correct to have none (their throws are caught, so stderr
+    # stays empty), and nothing said so.  A reader could not tell "this case has
+    # no stderr expectation because it should not" from "somebody forgot the row".
+    # The count is printed, not the judgement -- whether a sparse table is RIGHT is
+    # the row author's, and stderr_problems()'s containment predicate is what
+    # judges the rows that do exist.
+    print("IR-MIR-LOOKUP-COVERAGE|table=STDERR_EXPECT|rows=%d|mir_only_cases=%d"
+          "|uncovered=%d|note=an uncovered case asserts nothing about stderr, which"
+          " is correct when its throws are caught and is silently wrong otherwise"
+          % (len(STDERR_EXPECT), len(MIR_ONLY), len(MIR_ONLY) - len(STDERR_EXPECT)))
     print("IR-MIR-NOTYET-TABLE|rows=%d|cases=%s|armed=%s"
           % (len(MIR_ONLY_REFUSE_NOTYET),
              ",".join(sorted(MIR_ONLY_REFUSE_NOTYET)) or "none",
