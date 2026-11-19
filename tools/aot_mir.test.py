@@ -7223,6 +7223,17 @@ def main():
                  "yes" if (rc_m != 0 and why == want_why) else "no",
                  rc_i, out_i, len(out_i), out_i.hex()))
 
+    # A TABLE WITH NO ROWS MUST SAY SO (§10.230).  The not-yet criterion printed
+    # one line per row and nothing at all when the table was empty, so a reader of
+    # this suite's output could not tell "the mechanism is armed and no case needs
+    # it" from "the mechanism was removed".  §10.197 deleted that table's only row
+    # for being unjudged; what survived was the silence, which is the consumer half
+    # of the invisible-change shape §10.229 closed on the checker side.
+    print("IR-MIR-NOTYET-TABLE|rows=%d|cases=%s|armed=%s"
+          % (len(MIR_ONLY_REFUSE_NOTYET),
+             ",".join(sorted(MIR_ONLY_REFUSE_NOTYET)) or "none",
+             "yes" if MIR_ONLY_REFUSE_NOTYET
+             else "no (stated here rather than inferred from silence)"))
     print("IR-MIR-LAYOUT-ASSERT|files=%d|need=%d|files-complete=%d|missing=(%s)"
           "|basis=the-six-_Static_assert-lines-kMirValBlock-writes-into-every-generated"
           "-file-read-off-the-emitted-text"
