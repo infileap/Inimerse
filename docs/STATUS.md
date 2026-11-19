@@ -13320,3 +13320,176 @@ constant.  Reconciling them automatically would be the better design and is left
 explicitly undone: it needs the cover test to read the surface checker's tables,
 which is a new dependency between two checkers that today answer different
 questions.
+
+## §10.233 — two corpus numbers were printed beside a PASS and never compared
+
+### 1. Source
+
+`--check-pin` recomputes the measurement and compares it with
+`tools/aot_cover.pin.json`.  Its own docstring states the principle with unusual
+clarity:
+
+> a pin nobody re-runs is a constant, not a reading
+
+and the section in §10.232 established what the fields mean: `covered`/`of` are the
+numbers a reader quotes, `tree` is where they were measured, and the two questions
+must not share a verdict.
+
+### 2. Measurement
+
+The `IR-AOT-PIN` line carries two more comparisons besides the fraction:
+
+    |corpus-pin=%d/%d|corpus-now=%d/%d
+
+They were read from the stored pin and from the live corpus, **printed**, and then
+dropped.  `numbers_match` was:
+
+    stored.get("covered") == len(covered) and stored.get("of") == len(OPCODES)
+
+Injecting `corpus.repo_total = 999` into the pin on the §10.232 tree:
+
+    IR-AOT-PIN|...|corpus-pin=0/999|corpus-now=0/101|numbers-match=yes|...
+    EXIT=0
+
+The line printed the contradiction and the verdict passed over it.  That is the same
+shape §10.224–§10.232 kept finding, with one difference worth naming: those were
+entries **nothing read**; this is an entry that **was read, was printed, and was not
+judged** — which is worse, because the printing makes it look checked.
+
+### 3. What changed
+
+`corpus_match` is now part of `numbers_match`, and a failure names the two corpus
+figures separately:
+
+    IR-AOT-PIN-STALE|effect=the-numbers-a-reader-would-quote-no-longer-describe-this-tree
+    IR-AOT-PIN-CORPUS-STALE|pin=0/999|now=0/101|note=these-were-printed-beside-a-PASS-
+      and-never-compared-before
+
+Two tokens, not one: `covered`/`of` describe the fraction and `repo_accepted`/
+`repo_total` describe the corpus the route walks, and a reader fixing one should not
+have to guess which moved.
+
+### 4. Injections
+
+    shipped pin            -> corpus-pin=0/101|corpus-now=0/101|numbers-match=yes | EXIT=0
+    repo_total=999         -> corpus-pin=0/999|corpus-now=0/101|numbers-match=no
+                              + IR-AOT-PIN-CORPUS-STALE | EXIT=1
+    restored               -> EXIT=0, `git diff tools/aot_cover.pin.json` empty
+
+The same edit, before and after, is the whole evidence: it exited 0 this morning.
+
+### 5. A wrong turn, recorded
+
+This section began by suspecting `tree`: on the worktree the pin records
+`tree=a867571` with `covered=29`, while at `a867571` the file records
+`tree=48f53fd` with `covered=30`.  That looked like a pin contradicting its own tree
+until the source said otherwise:
+
+> A pin cannot name the commit that contains it (the sha is a function of the
+> content), so requiring tree == HEAD makes `match=no` the permanent state of every
+> clean tree, and a red that is always on is a red nobody reads.
+
+The chain is self-consistent — each re-measurement points at the tree before it —
+and `pin_tree.problems()` deliberately asks only whether the sha **resolves** and
+**is held by a ref**.  The suspicion was wrong; the section's actual finding came
+from reading what the line compares rather than what the field means.
+
+### 6. Boundary
+
+This puts two corpus fields into the verdict; it does not make the corpus
+representative.  `repo_accepted=0` means no repository program is accepted by this
+route today — the number is honest and the zero is the interesting reading, and
+nothing here says whether that should be non-zero.  The fraction a reader quotes is
+still `covered/of`, and `coverage-claim: none` in the pin still means what §10.232
+recorded: covering the corpus is not covering the lowering.
+
+## §10.234 — the run left 288 MB behind, and the disk ran out mid-gate
+
+### 1. Source
+
+Not a table this time.  While running `tools/gate.sh --fast` for §10.233 the gate
+died with:
+
+    bash: line 1: echo: write error: No space left on device
+
+and every subsequent `bash` call failed to **start** — the harness could not write
+its own scratch file.  The repository was at 4% of 1007 GB, so the disk was not
+full of repository.
+
+### 2. Measurement
+
+    $ du -sh /tmp
+    7.8G  /tmp
+    $ du -sh /tmp/* | sort -rh | head -4
+    288M  /tmp/aot_mir_zma4hn42
+    288M  /tmp/aot_mir_zgpxppl2
+    288M  /tmp/aot_mir_zekq3aq1
+    288M  /tmp/aot_mir_qoe83rxo
+    $ ls -d /tmp/aot_mir_* | wc -l
+    117
+
+`tools/aot_mir.test.py` creates its working directory with
+`tempfile.mkdtemp(prefix="aot_mir_")` and **never removes it**.  Each full-corpus
+run leaves the generated `.c` files and their compiled binaries behind — 288 MB —
+and 117 runs had accumulated 7.8 GB.
+
+The asymmetry that made it visible: the `write-failed` probe added in §10.228
+creates `aot_mir_wf_*` beside it and **does** clean up, with an explicit
+`finally: shutil.rmtree(...)`.  Two mkdtemps in one file, one guarded and one not.
+
+### 3. What changed
+
+    workdir = tempfile.mkdtemp(prefix="aot_mir_")
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
+
+Registered with `atexit` rather than cleaned at the single `return` at the end of
+`main()`, because the run can also end by exception — a `TimeoutExpired` inside
+`run()`, an `OSError` from `cc` — and a leak on the failure path is the leak that
+matters: those are the runs a developer repeats.
+
+### 4. Injections
+
+    fixed tree, --max 2 run       -> 0 leftovers (was 1)
+    `git stash` the fix, --max 2  -> 1 leftover, then stash pop
+    full corpus run, fixed        -> 86 accepted, EXIT=0, 0 leftovers
+
+The stash control is the one that matters: the same command left a directory
+before the change and leaves none after it.
+
+### 5. It was not one driver
+
+The first fix covered `aot_mir.test.py`.  Re-running the gate and counting again:
+
+    remnants after a clean gate run  ->  7
+
+    /tmp/aot_mir_cover_qymz4uss
+    /tmp/aot_mir_fuzz_il6lp0t3u       (x4)
+    /tmp/aot_mir_noprelude_q66nx3ta
+    /tmp/aot_mir_prelude_yn7wkm3y
+
+Three more drivers, all with `mkdtemp` and **zero** `rmtree`/`atexit` between them:
+
+    tools/aot_mir_cover.test.py   3 sites (prelude, noprelude, cover)
+    tools/aot_mir_fuzz.py         1 site
+
+All four registered with `atexit`; `aot_mir_fuzz.py` cleans only when
+`--keep-dir` was **not** given, because that flag is an explicit request to look at
+the tree afterwards.  After the change, a full gate run leaves **0**.
+
+### 6. Boundary
+
+This fixes the four drivers that were measured.  It is not a claim that every
+`mkdtemp` in this repository is now matched — that would need a check, and the
+honest statement is that the audit was "run the gate, count what is left, fix
+what appears", which converges but does not prove exhaustion.  Whether a CI
+environment would have survived 7.8 GB is a separate question and not answered
+here; a developer machine met it first.
+
+### 6. Why this counts as the same series
+
+The five sections before this one were about claims nothing read.  This one is a
+**resource** nothing released, and the reason it survived is the reason those did:
+nothing in the output said "one directory per run is being kept".  A run that
+leaves 288 MB behind and a run that leaves nothing print the same `IR-MIR-VERDICT`
+line.  The check that would have caught it is not an assertion about the corpus; it
+is that a tool's own footprint is a fact someone should be able to read.
