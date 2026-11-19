@@ -13493,3 +13493,79 @@ nothing in the output said "one directory per run is being kept".  A run that
 leaves 288 MB behind and a run that leaves nothing print the same `IR-MIR-VERDICT`
 line.  The check that would have caught it is not an assertion about the corpus; it
 is that a tool's own footprint is a fact someone should be able to read.
+
+## §10.235 — ten more directories, and one of them was guarded twice
+
+### 1. Source
+
+§10.234 fixed four drivers and closed with an honest limit: "the audit was run the
+gate, count what is left, fix what appears — it converges but does not prove
+exhaustion".  This section ran the audit again.
+
+### 2. Measurement
+
+Counting `tempfile.mkdtemp` against `rmtree`/`atexit` per file over `tools/*.py`
+found **17 assignments** outside the one file whose hits are all docstring and
+regex examples (`check_shared_tmp.py` quotes the very pattern it looks for).  Of
+those 17, ten had no cleanup at all:
+
+    ir_table_same.test.py        module-level TMP (a registered CTest)
+    wasm_mir_cover.test.py       work = mkdtemp("wasm_mir_walk_")
+    mir_wired.test.py            workdir = mkdtemp("mir-wired-")   <- see below
+    check_stage_count.py         root = mkdtemp("stage-count-selftest-")
+    dec_inimbc_outlet_probe.py   scratch = mkdtemp("dec-inimbc-")
+    dec_selfcompile_probe.py     scratch = mkdtemp("dec-selfcompile-")
+    http_large_package.test.py   tmp = mkdtemp("http_large_package.")
+    lint_expected.test.py        tmpdir = mkdtemp("lint_expected_")
+    static_counts_census.py      tmp and tmp_e (two sites)
+    vm_frame_bounds.test.py      workdir = mkdtemp("frame-bounds-")
+
+Measured before the fix: `ir_table_same.test.py` leaves **14** directories after a
+full gate run (one per CTest invocation, 276 KB each), and `mir_wired.test.py`
+leaves one.
+
+### 3. The one that looked guarded
+
+`mir_wired.test.py` already carried the correct pattern at module level:
+
+    _HARNESS_DIR = tempfile.mkdtemp(prefix="mir-wired-")
+    atexit.register(shutil.rmtree, _HARNESS_DIR, True)
+
+So a grep for `atexit` in that file said "guarded".  It was not: a **second**
+`mkdtemp` at line 314 creates a per-run directory for the 93 compiled `.inim`
+files, and nothing registered it.  After a gate run, 13 `mir-wired-*` directories
+remained while the file that created them contained the word `atexit` twice.
+
+This is the §10.225 shape applied to a resource: **the presence of a guard is not
+the coverage of a guard.**  A file-level grep answers "does this file know about
+atexit", which is not the question "is every directory it creates released".
+
+### 4. What changed
+
+All ten registered with `atexit` and `ignore_errors=True`, matching the pattern
+already used by `mir_wired.test.py`'s first directory and by §10.234's four fixes.
+`atexit` rather than a `finally`, because a run can end by exception and the leak
+on the failure path is the one a developer repeats.
+
+### 5. Controls
+
+    ir_table_same, one run          -> 14 dirs before, 0 after
+    mir_wired, one run              -> 1 dir before, 0 after
+    full gate, all ten fixed        -> 20/20 stages PASS, 0 leftovers
+                                       (checked across all ten name prefixes)
+    `git stash` the mir_wired fix   -> the 13 came back
+
+### 6. Boundary
+
+This is still not exhaustion.  What was measured is **one** shape — `mkdtemp`
+without `rmtree`/`atexit`/`TemporaryDirectory` in the same file — and it was
+measured with a grep, which cannot see a directory removed on some paths and kept
+on others, nor a `TemporaryDirectory` context that is entered and never exited.  The
+count that would prove exhaustion is "run the gate, list every entry the run
+created, subtract what it removed", which needs a filesystem sandbox this repository
+does not have.  What can be said is narrower and checked: the ten files named here
+no longer leak, and a gate run now leaves nothing under any of the ten prefixes.
+
+The three instances of one sentence now span three paragraphs of the same lesson:
+an entry nothing reads (§10.224–§10.232), a resource nothing releases (§10.234), and
+a guard that covers one site of two (§10.235).
