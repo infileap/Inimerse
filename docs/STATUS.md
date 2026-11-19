@@ -13730,3 +13730,246 @@ running it, not by reading the pattern.
 What remains unmeasured is unchanged: the 31 `PASS_REGULAR_EXPRESSION`s on probe and
 driver executables were not audited, because their assertions live in their own code
 rather than in the pattern.
+
+## §10.238 — the shape clauses, and a checker that decides by mutation
+
+### 1. Source
+
+§10.236 and §10.237 audited the CTest-level `PASS_REGULAR_EXPRESSION`s — 9 of the
+40 that `CMakeLists.txt` carries, the 9 whose subject is an `inimerse`-driven
+program.  Their boundary was explicit: *"the 31 `PASS_REGULAR_EXPRESSION`s on
+probe and driver executables were not audited, because their assertions live in
+their own code rather than in the pattern."*
+
+There was a third shape the two sections never reached, and it is larger than the
+other two.  `tools/gated_run.py` takes `--shape` clauses, and `CMakeLists.txt`
+carries them as CTest arguments, where CTest cannot see them:
+
+    add_test(NAME gc_runtime COMMAND ... gated_run.py --shape "gc-ran" --shape "gc-stats-ok" ...)
+
+`gated_run.py` asks three questions of each clause — did the program exit 0, did
+**every** clause match, and is this report itself able to satisfy the clause — and
+`shape_ok` is `matched == len(hits)`, i.e. **all**, not any.  So the assertion is
+real: a program that printed the wrong thing fails.  What it does not ask is
+whether the clause could tell two *different* programs apart.
+
+A clause of `"gc-ran"` is satisfied by a program that printed the word and
+computed nothing.  `gated_run.py` cannot see the difference, because from where
+it sits the two programs produce the same stdout.
+
+### 2. The measurement
+
+`ctest --show-only=json-v1` names 204 tests.  141 of them carry no
+`PASS_REGULAR_EXPRESSION` and no `FAIL_REGULAR_EXPRESSION` — and the tempting
+inference ("141 tests assert nothing") is wrong, because the assertion of the
+other 86 is *in the argv*, not in the CTest metadata:
+
+    ctest --show-only=json-v1
+      -> the command line of each test, `--shape` clauses included
+
+86 tests are named `*_runtime`; 36 of them look assertion-free by name and carry
+their assertions in `--shape`.  47 tests are driven by `gated_run.py`, and they
+carry **102 shape clauses** in total.
+
+The audit therefore has 102 subjects, and the question for each is: *is this clause
+satisfied by a program that computed nothing?*
+
+### 3. Why reading the clause is not enough, and reading the program is not enough either
+
+Two obvious methods both fail, and both fail for a reason worth writing down.
+
+**Write the trivial program.**  §10.236's method: print what the clause names,
+run it, see whether the clause still matches.  It settles 83 of the 102 clauses
+"yes, a trivial program satisfies this" — and that is *not* the same answer as
+"this assertion is weak".  `predbool true true false 14` is satisfied by a
+program that prints those four tokens, but the `14` is `len(s)` of a real string:
+the trivial program has to know the answer in order to print it.  The method
+proves *"this particular program can satisfy this clause"*; it cannot tell
+*"the clause names a value"*, because a value that happens to appear in the
+clause and a value the program computed look identical from the outside.
+
+**Read the program.**  `say "gc-ran"` is a marker; `say "len=" + str(len(x))` is
+a computation.  But the programs are not written in that idiom — the real gc
+program is:
+
+    say "gc-ran"
+    say gc_stats()
+    say "thread-result-alive"
+    say len(result_value(payload))
+
+Here the *computation* is in a separate `say`, and the marker is its own line.  A
+reader has to decide, per line, whether a neighbouring line supplies the value —
+and that judgement is exactly the kind that §10.224-§10.235 kept finding
+unenforceable in this repository: *"a reading is not a verdict"*.
+
+### 4. The checker, and the criterion it actually uses
+
+`tools/check_shape_assertions.py` decides by **mutation**, which turns the
+question into a causal one.  For each clause it takes the program the clause
+guards and destroys its computation:
+
+* every `say`'s computed part is replaced by a constant (`str(x)` becomes
+  `str("__MUT__")`, `captured_fn()` becomes `"__MUT__"`);
+* every line-initial `if` condition is replaced by `false`, so a guarded branch
+  stops running at all.
+
+Then it runs the mutated program and asks whether the clause still matches.
+
+    mutated program still matches the clause  ->  the clause is pinned on the marker alone  ->  WEAK
+    mutated program no longer matches            ->  the clause depends on the computation  ->  strong
+
+The second case is the one that gives the method its teeth: it is not a judgement
+about style, it is a counterexample.  A program that computes nothing and prints
+the marker passes; a program whose computation was destroyed does not.  The
+clause distinguishes them, which is the whole job of an assertion.
+
+The criterion was found by a control, not by design.  The first version mutated
+the *literal* in `say "marker"` and asked whether the clause still matched — and
+it reported **zero** weak clauses on a tree that had four.  The reason is now the
+first thing the checker does: replacing the literal makes the clause *stop*
+matching, which the naive reading took for "this clause depends on the marker,
+therefore it is strong".  The injected control
+
+    vtest/injected_weak_probe_v04.im:   say "injected-weak-marker"
+    add_test(NAME injected_weak_probe_runtime ... --shape "injected-weak-marker" ...)
+
+was not reported, and that failure is what exposed the inverted criterion.
+**The mutation has to destroy the computation, not the literal**: `say <expr>` is
+the strong form, `say "literal"` is the weak form, and a mutation that breaks
+the literal proves nothing about either.
+
+Three further corrections, each of which was a wrong answer the control caught:
+
+1. **Conditions were inverted, not disabled.**  The first condition mutation
+   replaced `!(X)` with `(X)` and `==` with `!=`.  Inverting a guard makes the
+   *guarded* branch fire when the condition is false — so `if ok { say "marker" }`
+   still printed the marker, and a strong clause was reported weak.  The fix
+   replaces the condition with `false`, so the branch does not run at all.
+2. **The call was neutralised, not the callee.**  `captured_fn()` became
+   `captured_fn("__MUT__")`, which does not break the computation: the function
+   ignores the argument.  The fix replaces the whole call with a constant, and
+   keeps `str(x)` as `str("__MUT__")` so the *shape* of the output survives.
+3. **`say` was found by a substring test.**  The check "the character after
+   `say` is not a letter" was applied to the expression with the leading space
+   already stripped, so `say stats["runs"]` was read as the identifier `say`
+   followed by `stats...` and was never recognised as a `say` at all.  The
+   program then looked as if it computed nothing, and six strong clauses were
+   reported weak.  The check belongs on the character *immediately* after the
+   keyword, before any space is skipped.
+
+`mutate_program` also has to preserve the program it mutates: a `case` branch
+puts the pattern *before* the `say` (`[pattern]: say first + code`), so the
+rewrite keeps that prefix.  Dropping it would change the program into a
+different one — and then "the clause stopped matching" would be a statement about
+a program nobody runs.
+
+### 5. What the audit found
+
+Four test groups had clauses that pinned a marker and nothing else:
+
+    gc_runtime                        6 clauses
+    result_finally_propagation_runtime  1
+    case_try_runtime                  2
+    thread_result_runtime             7
+    case_nested_patterns_runtime      2
+
+Each was confirmed by the trivial program: a program that prints those markers
+and computes nothing passes the clause.  `worker-failed` was *not* counted — it
+is the payload of a `throw` that the program catches back out of
+`result_error()`, so it is a real value, not a marker.
+
+The repair in each case is the same shape: the program prints the value the
+marker was printed with, and the clause carries that value.
+
+    vtest/gc_runtime_v04.im          say "thread-result-alive"          ->  say "thread-result-alive" ; say len(result_value(payload))
+    clause                          --shape "thread-result-alive"       ->  --shape "thread-result-alive\n3\n"
+
+Two of the programs had to change shape, because the value was not printed next
+to the marker at all:
+
+* `vtest/case_try_v04.im` printed `deep-structural-hit` on a branch that had
+  *bound* `c` from the matched pattern.  The branch now prints the bound value,
+  which is what the clause can check: `--shape "deep-structural-hit code=404"`.
+* `vtest/case_nested_patterns_v04.im` had a fallback branch that printed
+  `nested-fallback-ok` — the assertion was "the `{"kind":"bad"}` pattern did
+  **not** match", which is a true and useful thing to assert, but a marker
+  cannot carry it.  The fallback now prints the input that failed to match
+  (`kind=ok code=42`), and the literal-pattern branch prints the elements it
+  matched (`a=1 b=2`).
+
+One number in the audit is worth isolating: `case_nested_patterns_runtime` also
+has a clause `"53"`, and `53` is `11 + 42` — a real computation.  The first
+mutation tool missed it because `say first + code` cannot be replaced by a
+literal.  Replacing it with `say 0` by hand changed the output to `0`, which is
+what proved the 53 was computed rather than typed.
+
+### 6. The five clauses that are not audited, and why that is the right answer
+
+    selfhost_toolchain_parses       no .im program
+    version_runtime                 no .im program
+    errors_cli_runtime              runs a python script, not a program
+    be_removed_assign_runtime       the clause is the engine's own diagnostic (stderr)
+    be_removed_bare_runtime         the clause is the engine's own diagnostic (stderr)
+
+The last two are worth stating plainly: their clauses match **stderr**, and the
+program fails at compile time — `say` never runs.  An assertion on the engine's
+refusal is *stronger* than an assertion on the program's output, because the
+engine produced that text on its own.  They are not audited because there is
+nothing in them to audit, not because the checker gave up.
+
+### 7. What landed
+
+* `tools/check_shape_assertions.py` — the checker, with `--self-test`.
+* `CMakeLists.txt` — five groups of clauses tightened; the two programs that
+  needed to print their values changed.
+* `tools/gate.sh` — a `shape-assertions` stage (21 stages now), and the
+  `vtest/*` scope now forces it, because the strength of a clause is a property
+  of the program it guards: a program that changes can turn a strong clause weak
+  without any text in `CMakeLists.txt` moving.
+* `CMakeLists.txt` also registers the checker twice — a regression run and its
+  own self-check — because a checker that has never been shown to go red is a
+  checker nobody can quote.  That is `204 -> 206`.
+
+### 8. Two things the gate taught while this was being built
+
+**A new stage is not free, and the price is paid in line numbers.**  The first
+full gate run with this work in the tree failed two stages, `line-refs` and
+`reconciliation`, both on the same reading: `unanchored delta +17` against a
+ceiling of `+0`.  The cause was 30 lines of explanatory comment inserted into
+the *middle* of `CMakeLists.txt`, which moves 1409 line numbers, and `docs/`
+cites that file by line more than any other (129 citations over 68 distinct
+lines).  §10.236 and §10.237 had already learned this the same way — their
+`CMakeLists.txt` edits are pure replacements, and the explanation lives in the
+commit message.  Removing the comments brought the reading to `+20`; removing
+the rest brought it to **`-1`**.  The repository's own note on the subject
+(`docs/STATUS.md` §14, and `6248dfc` in the history) says it directly: append
+at the foot of the file, because appending cannot move a line that already
+exists.
+
+**The self-test is not decoration.**  The three controls are: a program that only
+prints the marker must be reported weak; a program whose computation was
+replaced by a constant must be reported weak; a program that really computes
+must **not** be reported weak.  The third one is the control that would have
+caught the inverted criterion in §4 without an injected fake test — but it only
+works because the clause is written as `n=42` (a named field) rather than `\b42\b`:
+the engine prints module-load notices on stdout, and `[mod] self-check init=42`
+contains the bare number.
+
+### 9. Boundary
+
+The audit covers the 102 `--shape` clauses of the 47 `gated_run.py`-driven
+tests.  It does not cover:
+
+* the 31 `PASS_REGULAR_EXPRESSION`s on probe and driver executables (§10.237's
+  boundary, unchanged — their assertions live in their own code);
+* the 141 tests with no CTest-level assertion and no `--shape` clause — that
+  set is 86 `*_runtime` tests plus the rest, and the audit above shows that
+  "no assertion in the CTest metadata" is not "no assertion";
+* clauses that match stderr (§6), which are stronger, not weaker, and are
+  classified as not audited rather than as weak.
+
+The method's limit is worth stating: it decides whether a clause *distinguishes*
+a program that computes from one that does not.  It does not decide whether the
+computation is the *right* one — a program could compute a value that is wrong
+and print it, and the clause would still be strong.  That is what the other
+half of a test does, and it is out of scope here.
