@@ -12839,3 +12839,88 @@ file, passes.  Closing that needs the checker to know which guard belongs to whi
 reason, which is a model of `aot_mir.c`, not a presence test: the same boundary
 §10.225 recorded for reasons, one table over.  What it buys is narrow and real —
 the obligation can no longer be satisfied by declaring no snippet at all.
+
+## §10.227 — the state that exempts a reason from the corpus had no check
+
+### 1. Source
+
+§10.219 introduced the fourth ledger state, `reachable`, for `write-failed`: the
+route refuses when it cannot write the `.c` it was told to write, the corpus pins
+a **program**, and the harness always picks a writable path — so no case can
+express it.  The same section recorded the consequence in its own boundary note:
+
+> ③`reachable` 这个状态**不要求**语料行，所以它是「弱声明」：靠人工纪律维持，
+> 没有自动检查保证它真的可达。
+
+That is a known debt, written down and never paid.  This section pays the part of
+it that can be paid without a corpus.
+
+### 2. Measurement
+
+The debt is not cosmetic.  On the §10.226 tree:
+
+    REFUSAL_REASONS["threads"] = "reachable"   -> refusal_ledger_problems: []
+    all twelve "witnessed"  ->  "reachable"    -> refusal_ledger_problems: []
+
+**Zero problems.**  One status word, typed twelve times, removes the entire
+corpus-witnessing obligation and nothing notices.  Every one of those twelve rows
+can be a lie and the ledger still says PASS.
+
+`write-failed` itself is not the problem — its two guards are real
+(`src/compilation/aot_mir.c`, the `fopen` and `fwrite` failure arms).  The problem
+is that "there is a reason I cannot witness" and "I would rather not witness this
+reason" are the same word to the checker.
+
+### 3. What changed
+
+`REACHABLE_SITES` — a reason that claims the exemption must **name the route**
+that reaches it: a source snippet plus the sentence saying why no case can
+express it.  `refusal_ledger_problems()` now refuses three shapes:
+
+    no route declared       -> "which exempts it from the corpus, but no route is
+                                declared for it"
+    blank route snippet     -> "a snippet that matches every file proves nothing
+                                about this one"
+    route gone from source  -> "its route is not in the source any more"
+
+The third is what makes the table falsifiable rather than decorative: if somebody
+deletes the `fopen` guard, `write-failed` stops being reachable and the ledger has
+to say so.
+
+### 4. Self-check
+
+32 cells (was 30): `reachable-without-route` (red) and `reachable-with-route`
+(clean, with a snippet that really is in `aot_mir.c`).  The ledger loop takes an
+optional sixth element for the route snippet and saves/restores `REACHABLE_SITES`,
+so a fixture never depends on the shipped table.
+
+One fixture mistake worth recording: the first `reachable-with-route` cell used
+`"typedef enum"`, which is **not** in `aot_mir.c`, so the clean cell failed and the
+suite went red at 32/FAIL.  The snippet has to come from the file the check reads;
+choosing one that "looks like C" was the same mistake as §10.223's stale row.
+
+### 5. Injections
+
+    real tree, route snippet broken  -> "its route is not in the source any more" | FAIL
+    threads relabelled reachable     -> "no route is declared for it" | FAIL
+    all twelve relabelled            -> 12 problems (was 0) | FAIL
+    remove write-failed's entry      -> "no route is declared" | FAIL
+    blank route snippet              -> "the route declared for it is blank" | FAIL
+
+All restored; `--report` PASS, `--self-check` checks=32 PASS, printed count equals
+the number of `SELFCHECK|what=` lines.
+
+### 6. Boundary
+
+This does **not** prove `write-failed` is reachable — nothing here runs the
+failure path.  What it proves is that the exemption is attached to a real guard
+that is still present, and that the author had to write down which path reaches
+it.  §10.219's note ③ is therefore **narrowed, not closed**: `reachable` can no
+longer be used to dodge the corpus silently, but a reason that names a genuine
+snippet and lies about why it cannot be witnessed still passes.  Closing that
+needs the checker to drive the output path (a probe that asks for an unwritable
+target), which is a test, not a table — the shape §10.222 used for the four
+pre-scan invariants.
+
+The other half of note ③ — that `reachable` gives no automatic guarantee the
+reason is really reachable — is unchanged by this section.
