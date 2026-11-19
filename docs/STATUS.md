@@ -13159,3 +13159,83 @@ instance on the **consumer** side rather than inside the checker: an unused clas
 a blank reason, an unused route, an orphan route, an unprinted ledger, and now an
 unprinted empty table.  Each was the same sentence — *the entry exists* being
 mistaken for *the entry says something* — one table further out from the checker.
+
+## §10.231 — 316 iterations asked a question only 26 could answer
+
+### 1. Source
+
+§10.230 removed one dead call from the not-yet table's consumer.  The same loop
+holds a second one, on the table next door.
+
+### 2. Measurement
+
+The production loop ran `stderr_problems` for **every** `MIR_ONLY` case and threw
+the answer away unless the case had a row:
+
+    sp = stderr_problems(er_text, name)          # called 316 times
+    if name in STDERR_EXPECT:                    # 26 rows
+        problems.extend(sp)
+
+`stderr_problems()` returns `[]` for an unlisted case, so 290 of those calls are
+no-ops whose result is discarded — and a discarded no-op is indistinguishable from
+a clean answer.  Measured on the §10.230 tree:
+
+    grep -c "IR-MIR-STDERR|" <full-suite output>   ->  26
+    MIR_ONLY cases                                 -> 316
+
+So the table covers 26 of 316, and **nothing in the output said which 290 were
+deliberately uncovered**.  That matters because "no stderr expectation" has two
+completely different causes here: the case's throws are all caught, so stderr is
+correctly empty; or somebody forgot the row, and a program could stop silently
+with every check still green.
+
+Spot-checked the seven throwing cases without a row
+(`mir_try_catches_a_throw`, `mir_try_catches_from_a_callee`, `mir_try_bare_catch`,
+`mir_finally_throw_in_skipped_block`, `mir_try_catches_a_non_string`,
+`mir_try_keeps_a_register_written_in_the_body`) —
+each wraps its throw in a `try/catch`, so an empty stderr is the correct reading
+for all seven.  The coverage is right; the **silence** about it was not.
+
+### 3. What changed
+
+1. `stderr_problems` is asked only when the table names the case, so the 290 dead
+   calls are gone rather than merely harmless.
+2. The suite states the table's sparseness every run:
+
+       IR-MIR-LOOKUP-COVERAGE|table=STDERR_EXPECT|rows=26|mir_only_cases=316|
+       uncovered=290|note=an uncovered case asserts nothing about stderr, which is
+       correct when its throws are caught and is silently wrong otherwise
+
+The line prints the **count**, not a verdict: whether a sparse table is right is
+the row author's judgement, and `stderr_problems()`'s containment predicate is what
+judges the rows that exist.
+
+### 4. Injections
+
+    shipped table                          -> rows=26|uncovered=290 | VERDICT|PASS
+    one row's expectation replaced by a
+      string that cannot appear            -> IR-MIR-STDERR|case=mir_throw_uncaught_top|
+                                              need=([THIS-STRING-CANNOT-APPEAR])|
+                                              missing=(...)  ok=no
+                                              IR-MIR-PROBLEM|... the thrown value
+                                              never reached the message the
+                                              criterion demands (got '[exception]
+                                              uncaught: boom') | VERDICT|FAIL
+
+The second is what proves the refactor kept the criterion armed: after the call
+moved inside the `if`, the 26 rows still judge and still red the verdict with the
+real stderr quoted back.  Restored; full corpus `IR-MIR-VERDICT|PASS|accepted=86`,
+`EXIT=0`.
+
+### 5. Boundary
+
+This reports coverage; it does not make coverage complete, and it deliberately does
+not try to decide whether an uncovered case *should* have a row — a program with no
+`throw` and a program whose throws are all caught are equally correct to have none,
+and only reading the program can tell them apart.  What the count buys is that the
+difference between "deliberately none" and "forgotten" is now something a reader
+can see and a reviewer can question; before this section both printed nothing.
+
+`ALLOCS_EXPECT` (246 rows) and `ARGV_CASES` (1 row) were checked for the same
+shape and are clean: every key names a real case, and both are consulted through
+`.get(name, DEFAULT)` where the default is a criterion rather than a no-op.
