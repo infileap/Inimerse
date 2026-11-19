@@ -12683,3 +12683,90 @@ correct — that is §10.220's stale-row rule and §10.209's `needle` evidence. 
 can also not see a class whose meaning sentence has gone wrong while its name is
 still in `CLASSES`; `CLASSES` values are prose for the reader, not a checked
 claim.
+
+## §10.225 — the reason is the obligation, and it was not read
+
+### 1. Source
+
+§10.224 added `DORMANT_CLASSES` so that a class with no rows has to be **named**.
+Its own boundary note finished with the honest admission that `CLASSES` values
+are prose, not a checked claim.  The same sentence is true one table over, and
+that one matters more: `DORMANT_CLASSES[str]` is the sentence somebody has to
+write to keep a rowless class alive, and nothing read it.
+
+### 2. Measurement
+
+On the §10.224 tree, with `measurement`'s reason replaced by `""`:
+
+    coverage_problems(members, missing) -> 0 problems
+
+and by `"   "`:
+
+    coverage_problems(members, missing) -> 0 problems
+
+Both green.  The dormant assertion checked that the **key** existed and never
+looked at the value, so an entry with a blank reason satisfied the obligation it
+was created to impose — the reverse assertion could be switched off by typing
+nothing.
+
+### 3. What changed
+
+`coverage_problems()` now refuses a dormant entry whose reason is not a
+non-empty, non-blank string:
+
+    IR-AOT-MIR-SURFACE-PROBLEM|DORMANT_CLASSES gives measurement no reason --
+    keeping a class with no rows is a decision that has to be written down, or
+    the entry is just a way to switch the reverse assertion off
+
+### 4. A counting defect found while fixing it
+
+`dormant_cells` was appended to the cell list that runs, but **never added to
+the `cells` total** the verdict prints:
+
+    cells += backing_cells
+    cells += ledger_cells
+    ...
+
+So `checks=24` was reporting a number that excluded the five dormancy cells that
+had just been written.  On the fixed tree the two agree:
+
+    dormancy cells run      5
+    SELFCHECK|what= lines   29
+    checks=                 29
+
+The lesson is the one this repository keeps re-learning: **a count printed next
+to a run is a claim about the run, and it has to be derived from the same list
+the run walks.**  Recomputing it by hand from a neighbouring variable is how 24
+survived a 29-cell suite.
+
+### 5. Self-check
+
+**29** cells, their count now derived from the list that runs:
+`dormant-blank-reason` (a dormant entry with a whitespace reason ⇒ red) replaced
+nothing and added one to the dormancy group, and the counting fix in §4 is what
+made the printed total say so.  The dormancy loop now accepts a per-cell
+override map, so one fixture can poison one reason without rewriting the table.
+
+The pre-existing fixtures give their reasons `"self-check fixture"` for the same
+reason the backward cells needed a real string: with the new assertion, an empty
+placeholder would red a cell that is asking about something else.
+
+### 6. Injections
+
+Both forms, on the real tree, with the shipped reason:
+
+    ""   -> DORMANT_CLASSES gives measurement no reason ... | FAIL
+    "  " -> DORMANT_CLASSES gives measurement no reason ... | FAIL
+
+Restored; `--report` PASS, `--self-check` checks=29 PASS.
+
+### 7. Boundary
+
+This checks that a reason was **written**, not that it is **true** — a plausible
+sentence that misdescribes why the class is kept still passes, exactly as
+`CLASSES` values do.  Turning either into a checked claim needs a claim the
+checker can evaluate (a refusal `why`, a corpus row, a source location); a
+free-text justification has no such handle, and inventing a proxy for it would
+be the "asserted, not demonstrated" shape this file exists to prevent.  What the
+assertion does buy is narrower and real: dormancy can no longer be re-declared by
+typing nothing.
