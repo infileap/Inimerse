@@ -27,6 +27,8 @@ Usage:
 Without --fixture every fixture in the table is checked.
 """
 
+import atexit
+import shutil
 import argparse
 import os
 import subprocess
@@ -117,6 +119,7 @@ def check_fixture(inimerse, stem, failures):
 def check_pinned(inimerse, failures):
     src, want_rc, run_rc = PINNED_SYNTAX_ERROR
     tmpdir = tempfile.mkdtemp(prefix="lint_expected_")
+    atexit.register(shutil.rmtree, tmpdir, ignore_errors=True)
     tmp = Path(tmpdir) / "syntax_error.im"
     tmp.write_text(src, encoding="utf-8")
     try:

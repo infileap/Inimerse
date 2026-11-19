@@ -27,6 +27,8 @@ Exit status is 0 only when both properties hold.  No z3: the gate has no z3,
 and a test that skips where it cannot reach the solver is not a test.
 """
 
+import atexit
+import shutil
 import argparse
 import os
 import struct
@@ -133,6 +135,7 @@ def main():
         return 2
 
     workdir = tempfile.mkdtemp(prefix="frame-bounds-")
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     reds = []
     greens = 0
     try:

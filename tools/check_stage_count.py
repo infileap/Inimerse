@@ -76,6 +76,8 @@ was "the homograph is in the bucket that is not judged".  A green produced by
 where something sits is the same failure as a constant that has no reader.
 """
 
+import atexit
+import shutil
 import os
 import re
 import subprocess
@@ -536,6 +538,7 @@ def self_test():
       * a `record` location that still spells the old number must stay GREEN.
     """
     root = tempfile.mkdtemp(prefix="stage-count-selftest-")
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
     os.makedirs(os.path.join(root, "tools"), exist_ok=True)
     os.makedirs(os.path.join(root, "docs"), exist_ok=True)
     with open(os.path.join(root, GATE_REL), "w", encoding="utf-8") as fh:

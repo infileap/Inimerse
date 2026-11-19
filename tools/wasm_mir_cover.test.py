@@ -62,6 +62,8 @@ prerequisite is missing (build first).
 
 import argparse
 import importlib.util
+import atexit
+import shutil
 import os
 import re
 import subprocess
@@ -1039,6 +1041,7 @@ def main():
     gaps = set()
     unreachable = set()
     work = tempfile.mkdtemp(prefix="wasm_mir_walk_")
+    atexit.register(shutil.rmtree, work, ignore_errors=True)   # §10.235
     # Rows, not a dict keyed on the opcode.  A dict silently drops a second form
     # of the same opcode -- which is what happened when the float form of OP_ADD
     # was added: the integer driver stopped running and no reading moved, so the

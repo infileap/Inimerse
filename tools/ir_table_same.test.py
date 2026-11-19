@@ -21,6 +21,8 @@ The cells are three groups:
     to the same program without threads, so sampling covers the counters only.
 """
 import os
+import atexit
+import shutil
 import re
 import subprocess
 import sys
@@ -96,7 +98,12 @@ def readout(text):
     return summary, splits
 
 
+# Cleaned on exit (§10.235).  Module-level, so every invocation of this file --
+# and it is a registered CTest -- left one 276 KB directory behind; a full gate run
+# leaves one per run and nothing said so.  Smaller than §10.234's 288 MB per run,
+# same shape: the artifact is kept and the verdict line looks identical either way.
 TMP = Path(tempfile.mkdtemp(prefix="ir_table_same."))
+atexit.register(shutil.rmtree, TMP, ignore_errors=True)
 
 
 def program(name, body):

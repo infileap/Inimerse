@@ -29,6 +29,8 @@ and checks TCP and UDP ended up on the *same* number (one hub, two transports).
 
 Explicit ports keep working and must still be reported verbatim.
 """
+import atexit
+import shutil
 import hashlib
 import os
 import re
@@ -173,6 +175,7 @@ def read_ports(proc, timeout=15.0):
 def main():
     engine = find_engine()
     tmp = Path(tempfile.mkdtemp(prefix="http_large_package."))
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)
     cwd = tmp / "run"
     universe = tmp / "universe"
     cwd.mkdir()

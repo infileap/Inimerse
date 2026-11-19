@@ -42,6 +42,8 @@ is kept visible in the failure message if a run stops emitting.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import argparse
 import hashlib
 import os
@@ -120,6 +122,7 @@ def main() -> int:
         return 2
 
     scratch = tempfile.mkdtemp(prefix="dec-inimbc-")
+    atexit.register(shutil.rmtree, scratch, ignore_errors=True)
     gen1 = os.path.join(scratch, "gen1.inim")
     gen2 = os.path.join(scratch, "gen2.inim")
     c_image = os.path.join(scratch, "c.inim")

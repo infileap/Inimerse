@@ -42,6 +42,8 @@ one this probe means.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import argparse
 import hashlib
 import os
@@ -122,6 +124,7 @@ def main() -> int:
         return 2
 
     scratch = tempfile.mkdtemp(prefix="dec-selfcompile-")
+    atexit.register(shutil.rmtree, scratch, ignore_errors=True)
     stage1 = os.path.join(scratch, "stage1.txt")
     stage1_again = os.path.join(scratch, "stage1-again.txt")
     stage2 = os.path.join(scratch, "stage2.txt")

@@ -311,7 +311,12 @@ def main():
             return 2
     print("MIR-WIRED|baseline=%s" % BASE)
 
+    # A SECOND directory, and this one was never cleaned (§10.235).  The atexit
+    # above guards only the module-level _HARNESS_DIR; this per-run directory
+    # carries the compiled .inim per program (93 of them) and one was kept per
+    # invocation -- 13 accumulated across gate runs before anybody counted.
     workdir = tempfile.mkdtemp(prefix="mir-wired-")
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     ims = tracked(IM_PATTERNS)
     inims = tracked(INIM_PATTERNS)
 

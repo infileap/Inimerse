@@ -65,6 +65,8 @@ merely that it found none.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import argparse
 import ast
 import os
@@ -590,6 +592,7 @@ def self_test() -> int:
                   file=sys.stderr)
 
     tmp = tempfile.mkdtemp(prefix="static-counts-")
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)
     os.makedirs(os.path.join(tmp, "tools"))
     os.makedirs(os.path.join(tmp, "docs"))
     with open(os.path.join(tmp, "tools", "gate.sh"), "w", encoding="utf-8") as fh:
@@ -665,6 +668,7 @@ def self_test() -> int:
     # census must never produce -- it is a pass about nothing, and a pass is
     # what a reader takes from it.
     tmp_e = tempfile.mkdtemp(prefix="static-counts-empty-")
+    atexit.register(shutil.rmtree, tmp_e, ignore_errors=True)
     with open(os.path.join(tmp_e, "notes.txt"), "w", encoding="utf-8") as fh:
         fh.write("the gate has 16 stages\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_e, check=True)
