@@ -14320,3 +14320,312 @@ And the census that produced this section counts failures reported through
 the exit code.  A probe that reports failure through some other channel
 would be counted as having no failure exit, which is the safe direction to
 be wrong in: it would be reported, not passed by accident.
+
+## §10.241 — the check the interpreter is allowed to delete
+
+### 1. Where the next thing was
+
+§10.240 closed the exit-code half of "a test that cannot fail".  The
+measurement that produced it also produced the next question.  Of the 99
+tests with no CTest-level assertion, 47 are `gated_run` and carry a
+`--shape` clause (§10.238), and 44 are probe-driven (§10.239, §10.240).
+What was left is the part of the suite that is written in Python.
+
+The suite's Python is not a corner of it.  `ctest --show-only=json-v1`
+lists 77 distinct `.py` files on test command lines -- `gated_run.py` alone
+is named by 85 tests -- and `tools/gate.sh` invokes 21 more directly.  The
+union is 91 scripts, and the tree under `tools/` holds 133 Python files.
+
+### 2. The shape of the thing
+
+Python lets the interpreter delete the statement a test fails on.
+
+    $ python3 -c 'import sys; print(sys.flags.optimize)'                    -> 0
+    $ PYTHONOPTIMIZE=1 python3 -c 'import sys; print(sys.flags.optimize)'   -> 1
+
+At optimize >= 1 the compiler drops every `assert` statement: the condition
+is never evaluated, the message is never raised, and the program runs on as
+if the line had not been written.  `python3 -O` does the same thing with no
+environment variable at all.
+
+A test whose only way to fail is an `assert` therefore has a second mode:
+it reports success -- exit 0, and a green CTest line -- whatever it found.
+
+### 3. The defect, demonstrated
+
+`tools/scan_tools.test.py`, one line added at the top of `main()`:
+
+    assert False, "INJECTED: this test must fail"
+
+  * `python3 tools/scan_tools.test.py` -> rc=1; `ctest -R
+    scan_tools_regression` -> **Failed**.
+  * `PYTHONOPTIMIZE=1 tools/scan_tools.test.py` -> prints `scan tools: ok`,
+    rc=0; `ctest -R scan_tools_regression` -> **Passed**.
+
+One environment variable, one defect, two verdicts -- and the green one says
+the test ran and found nothing to report.
+
+### 4. The ruler, and why it is the ruler
+
+The tempting check is "does the test unset `PYTHONOPTIMIZE`?".  That asks
+about the environment, and the environment is not the property under audit:
+`python3 -O` deletes the same statements with nothing in the environment,
+a test that runs its subject through a shell, a subprocess or a second
+interpreter is not covered by a CTest property, and a property that is
+correct today says nothing about the source anyone might add tomorrow.
+
+The property that holds or fails is a property of the *source*: does this
+file signal failure with a construct the compiler can remove?  So the
+checker reads the source -- with `ast`, not with a text search.
+
+`ast` is not a preference here.  The word `assert` appears in this
+repository in docstrings, in comments and inside string literals, and none
+of those can be deleted by a flag while all of them would be reported by a
+grep.  Measured after the rewrite: `grep -rn "^\s*assert\s" tools/*.py`
+returns exactly one hit, `tools/check_shape_assertions.py:572` [obs: 496a8a37],
+which is the English sentence "assert that the engine *refused* the
+program" inside a docstring.  The marker sits on the line of the citation
+because the checker reads them one line at a time; the pointer count on
+this line is at its ceiling, so this one is written as a record.
+
+The scope is discovered, for the same reason.  A file is a test script
+because a test runs it, not because its name ends in `.test.py`: CTest's
+command lines give 77, `tools/gate.sh` gives 21, and the union is the
+driven set.  That set is then closed over the repository modules those
+scripts import, because an `assert` in an imported module is exactly as
+strippable as one on a command line.
+
+### 5. The controls
+
+The self-test is eight sources whose answer is known, printed one line
+each:
+
+    module-level assert ................ catches
+    assert inside a function ........... catches
+    the rewrite the tree now uses ...... clean
+    the word in a docstring ............ clean
+    the word in a comment .............. clean
+    the word in a string literal ....... clean
+    an assert in an imported module .... catches
+    an assert in a script that is
+      executed rather than imported .... catches
+
+The last two exist because the ruler went green on them before it was
+right.  Reverse control, on the tree: `assert False` added to
+`tools/scan_tools.test.py` -> `WEAK tools/scan_tools.test.py: 1 assert
+statement(s)`, exit 1; restored -> exit 0.  Second reverse control, and the
+one that mattered: `assert 1 == 2` appended to `tools/cpp_scan.py` -> the
+first version of the checker printed `EXIT=0`.  `tools/cpp_scan.py` is
+never imported: `scan_tools.test.py` runs it with `subprocess.run([sys.executable,
+...])`.  Running a script is not importing it, and the import closure could
+not see it.  That control is what widened the universe to every Python file
+under `tools/`.
+
+The rewrite carries its own control.  After the rewrite, the same injection
+as §3:
+
+  * `python3 tools/scan_tools.test.py` -> rc=1
+  * `PYTHONOPTIMIZE=1 tools/scan_tools.test.py` -> rc=1
+  * `PYTHONOPTIMIZE=1 ctest -R scan_tools_regression` -> **Failed**
+
+which is the point: the same injected defect that a flag could hide now
+survives the flag.
+
+### 6. What the audit found
+
+At HEAD, from the AST: 133 Python files under `tools/`, **25** of them
+containing `assert`, **326** statements in all.
+
+    31  tools/reconnect_generation.test.py      22  tools/inim.test.py
+    31  tools/verse_pack.test.py                20  tools/eidos_desugar.test.py
+    30  tools/cli_incremental.test.py           18  tools/node_discovery.test.py
+    28  tools/economy_domain.test.py            16  tools/wasm_backend.test.py
+    27  tools/lease_handoff.test.py             15  tools/scan_tools.test.py
+
+and a long tail down to single statements in `tools/perf_compare.py`,
+`tools/aot_parity.py` and `tools/pathruler-redcontrol.py`.
+
+The rewriter took 24 of the 25.  The one it missed was
+`tools/z3bounds/reconcile_emit_dispatch.py` -- one directory down, and the
+rewriter globbed `tools/*.py`.  That file is also not driven by anything:
+it is on no CTest command line and in no `gate.sh` line.  It is in scope
+only because the widened universe is "every Python file under `tools/`",
+which is the right scope for a hazard that does not care whether a file is
+called a test.
+
+Current reading:
+
+    check_python_asserts: 93 script(s) driven by the suite, 135 file(s)
+    under tools/, 135 file(s) read including imports, 0 still asserting.
+
+93, not the 91 this section first recorded, and the whole difference is
+honest: this work put two more `.py` files on CTest command lines
+(`tools/check_python_asserts.py` and `tools/rewrite_asserts.py`, each
+behind its own registered tests), so the listing gives 79 where it gave
+77 and the union gives 93 where it gave 91.
+
+The number was 94 for a while, and the extra one was a defect in the
+reader, not in the tree.  `gate_scripts` treated any line matching
+`python3?` as an invocation, and the regex also matched the bare word
+"python" -- so the 8,299-character English sentence in `tools/gate.sh`'s
+own `EXP_CTEST` comment was read as a command line, and the 29 `.py`
+names it mentions became driven scripts.  That cost 45 gate scripts
+against the 22 the gate really runs, and moved the union by one
+(`tools/ir_spec.py`).
+
+The error was in the safe direction -- it widened the set, it never
+narrowed it, and of the 12 files only the loose reading caught, none
+contains an `assert`.  It was fixed anyway, because a scope that is wider
+by accident is a scope that cannot be quoted: the next file it swallows
+might be one nobody meant to audit, and "93" would then be a number about
+a comment.  Three things changed in `gate_scripts`:
+
+  * the interpreter name must be followed by neither a word character nor
+    `-`, so `python3-config --libs` stops being an invocation;
+  * an unquoted `#` ends the executable part of the line, quote tracking
+    so a `#` inside a string stays code;
+  * only the span after the interpreter is searched for `.py` arguments,
+    so a file named earlier on the same line is not read as an argument to
+    this invocation.
+
+Each of those three has a self-test case that goes red when it is
+removed, and the fourth has one that goes red when the lookahead is
+dropped (`python3-config`).  The first version of these controls was
+written with bait that was never created on disk, so the `isfile` filter
+downstream swallowed exactly the defect the cases existed to catch and
+all three mutations stayed green -- see §8.
+
+### 7. What landed
+
+* 25 files rewritten from `assert <cond>, <msg>` to
+  `if not (<cond>): raise AssertionError(<msg>)`.
+
+  Why that shape: it is **one line**, so it does not move any line number,
+  and 8 of these scripts are cited by `docs/` in 17 places; and `raise` is
+  not a statement an interpreter flag removes.
+
+  Rejected: a two-line `if`/`raise` (moves every cited line below it);
+  wrapping each `assert` in a `sys.flags.optimize` guard (the check is
+  still deleted, it is only deleted knowingly); unsetting `PYTHONOPTIMIZE`
+  in the gate (§4: the environment is not the property).
+
+  The rewriter is AST-driven, not a substitution.  Two text-level facts
+  made that necessary: `assert x, dl[:8]  # DWARF version 5` puts a comment
+  after the message, so the message has to come from
+  `ast.get_source_segment` and the comment has to stay where it was; and a
+  condition that spans lines has no comma at a findable place.  The
+  generated line also has to carry the indentation of the **first physical
+  line** of the statement -- taking it from the `assert` token alone
+  produces an `IndentationError` on the first multi-line case.
+
+* `tools/check_python_asserts.py`: the ruler of §4 with the controls of §5.
+  Exit 0 clean, 1 a driven file still asserts, 2 when it cannot read the
+  input.  "There is no build to list" is a different answer from "there is
+  no defect", and collapsing them is how an unconfigured tree comes to look
+  clean.
+
+* Two CTests, `python_asserts_regression` and `python_asserts_selfcheck`,
+  registered at the foot of `CMakeLists.txt`; `EXP_CTEST` 210 -> 212 and
+  `recon.ctest-count` in the same commit.
+
+* A third, `rewrite_asserts_selfcheck`: the rewriter is a tool rather than
+  a checker, but the claim the whole shape rests on is its -- that the
+  rewritten statement still fails where the `assert` no longer exists.
+  `EXP_CTEST` 212 -> 213, and the self-test measures it in a subprocess
+  under `-O` rather than arguing it.
+
+  Writing that self-test is what found the rewriter's own defect: the
+  first version rebuilt each line from the AST segment and dropped the
+  comment trailing the statement, so `assert x, dl[:8]  # DWARF version 5`
+  came back with the explanation gone.  No test could see it -- the
+  rewritten line still did the same thing -- and a silent loss in a
+  migration tool is exactly the kind that a green suite certifies.  The
+  fix reads the suffix after `end_col_offset` on the statement's last
+  physical line and re-appends it; the 25 files were then reverted and
+  rewritten again, so the tree carries no comment that the first pass
+  ate.  Measured on the result: every comment token present at `HEAD` in
+  the 25 rewritten files is still present, and the 8 assert statements
+  that carried a trailing comment at `HEAD` still carry it.
+
+* The gate stage `python-asserts`, which makes 24 registered stages.
+
+### 8. What the gate taught
+
+The line-number ratchet, a third time, and this time it says where the room
+is.  `docs/` cites `tools/gate.sh` at 14 distinct lines, the largest 768,
+and `CMakeLists.txt` at 136 citations, the largest 1362.  So the stage
+function went **after** line 768 -- the only stretch of the gate that no
+document points into -- and the two CTest registrations went at the foot of
+a file whose cited region ends 800 lines above them.  The stage
+specification went on the line that already carried several specifications,
+and the new `REQUIRED_SCOPES` row went at the end of the array, which is
+past 768.
+
+`stages_for_path` matches **every** rule rather than the first, so the new
+`tools/*.py` row can sit at the end of the table without the older
+`tools/*.test.py` row shadowing it.  That is a fact about the reader, and
+putting the row anywhere else would have been a bet on first-match-wins.
+
+The function is written as a block rather than as a one-liner like
+`stage_probe_failure_paths`, because `derived_edges` closes a function on a
+line whose first character is `}` (`/^\}/ { fn = "" }`).  A one-line
+`stage_x() { ... }` sets `fn` and never clears it, so whatever follows is
+attributed to that function.  That is read from the awk and not measured --
+the existing one-liner is followed by comments and another stage header, so
+it does no harm today -- but a stage whose body is one line is not worth
+the reading.
+
+### 8b. A control whose bait is missing is not a control
+
+The gate stage found a defect, and then the defect's own control was found
+to be fake.  `gate_scripts` was reading a comment as a command line (§6),
+so the fix came with three self-test cases.  Written as cases A, B, C, all
+three passed -- and all three passed just as happily after each of the three
+changes was reverted in turn.  A mutation sweep of the new controls was red
+in zero places.
+
+The reason was one line in the harness, not the reader: each case named a
+bait file (`tools/not_run.py`, `tools/earlier.py`, `tools/glued.py`) but
+never wrote it.  `gate_scripts` ends in an `os.path.isfile` filter, so a
+reader that reported the decoy had it silently dropped, and "not driven"
+and "driven but nonexistent" printed the same thing.  The cases were
+measuring the filter, which was not in question, instead of the regex, which
+was.
+
+After the decoys were created, three of the four controls had teeth and one
+still did not: `python3?` without the `(?![-\w])` lookahead read this tree
+identically, because `tools/gate.sh` never contains a glued
+interpreter name.  So the lookahead was, at that moment, a sentence with no
+measurement under it.  The fix was not to delete it -- `python3-config` is a
+real program, and widening a reader to "any line containing the word python"
+is what had just been repaired -- but to give it a case that fails without
+it.  Case D does: `python3-config --ldflags tools/glued.py`.
+
+The shape is the same as §5's: a rewrite that cannot fail produces a green
+tick, and a control that cannot fail produces a green control.  The
+difference is that §5's control was injected into the tree under test, and
+this one was injected into the harness that judges it -- which is one level
+further from anything a suit of green tests would notice.
+
+### 9. Boundary
+
+This reads the source.  It can say that a test's failure signalling will
+survive an interpreter flag; it cannot say the expectation is right.  A
+test that raises `AssertionError` on the happy path is a broken test this
+checker reports as clean, and 0 asserts is not 0 defects.
+
+It says nothing about the C half of the suite.  §10.239 asked whether a
+probe's `assert()` can fire at all, §10.240 whether a probe can reach a
+non-zero exit; this asks the same question about a third language.  All
+three measure "can this fail", and none of them measures "should it".
+
+And the green suite is not the evidence.  210 tests passed before the
+rewrite and 213 after it, which proves the form of the failure changed and
+not its occurrence -- that is what §5's injection control was for.  A
+rewrite that had quietly turned a failing test into a passing one would
+leave exactly the same tick pattern.
+
+The measurement also turned up a defect outside this section:
+`tools/check_stage_count.py` is red on this tree (it derives 23 stages,
+seven documents still spell 16) and nothing in the gate runs it.  That is
+§10.242's subject, not this one's.
