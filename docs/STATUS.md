@@ -15181,3 +15181,170 @@ rewrite whose own control could not fail, §10.242's checker that reddened on
 the documentation of what it looked for, and this one's comment describing a
 rule its code did not implement.  Each was found by running the thing rather
 than reading it.
+
+## §10.245 — the safety entry point that was never seen to fire
+
+### 1. Where the next thing was
+
+The three sections before this one were all about instruments that report
+success without checking: a rewrite whose control could not fail, a checker
+that reddened on the documentation of its subject, an exemption that matched
+the shape of a tree instead of a tree.  Each was found by running the thing.
+
+So this section asked the same question of the gate itself, at the one place
+the gate decides what to run:
+
+    tools/gate.sh --required-for <path>
+
+Before it answers anything it can refuse, and it refuses in thirteen places
+(`grep -c 'exit 2'` over the body of `required_for`).  Five of those were
+written for defects that had already happened to this repository:
+
+  1. a `stage_` function no registry entry names;
+  2. `derived_text_globs` reading nothing out of `check_text_integrity.py`;
+  3. `derived_edges` reading no call site at all;
+  4. a rule naming a stage no stage answers to;
+  5. a registered stage no rule of its own can reach.
+
+None of the thirteen had ever been observed firing.  That is not a suspicion --
+`grep -c "no rule matches\|requiring every stage"` over every `.py` and `.sh`
+in the tree matches one file, and it is `tools/gate.sh` itself.
+
+### 2. The shape of the thing
+
+A bash guard is `echo ... >&2; exit 2`.  A guard that has never fired and a
+guard that cannot fire produce the same output on every run: nothing.  The
+exit code is only visible to the caller on the run where the condition holds,
+and the condition is a defect, so the first run that can observe the guard is
+the run that has the defect.
+
+That is the same shape as §10.239's probes and §10.241's asserts.  The
+difference is the subject: the earlier sections asked whether a *test* could
+report failure.  This asks whether the thing that decides *which tests run*
+could refuse.
+
+### 3. What was measured, and what could not be
+
+The checker breaks the tree in the way each guard exists to catch, in a
+throwaway `git worktree`, and requires exit 2.  Four of the five fire:
+
+    FIRED  a stage function no registry entry names
+    FIRED  text-integrity's scope reads as empty
+    FIRED  the call-site table reads as empty
+    FIRED  a rule names a stage no stage answers to
+    UNMEASURABLE  a registered stage only the 'all' rules reach
+
+The fifth is **not measurable on this tree**, and that is a fact about the
+tree rather than a pass.  `own` is set by either the scope table or a derived
+call-site edge, and all 26 stages have an edge as well as a rule --
+`stage_word_refs` gets one from the `tools/check_word_refs.py` path in its own
+body.  To make a stage all-only you have to delete its implementation, which
+would be testing the case instead of the guard.  It is reported as
+UNMEASURABLE rather than deleted, because "this condition is unreachable
+today" and "this check works" are different statements.
+
+The measurement also corrected two of my own cases, which is worth recording
+because both failures looked like guard defects:
+
+  * case 1 first renamed `stage_probe_failure_paths`.  The probe path was
+    `README.md`, which no rule names, so it took the "no rule matches"
+    fallback and never consulted the function.  Then the case was rerun
+    against `docs/BOARD.md`, which does match `docs/*` -- and `docs/*` does
+    not force `probe-failure-paths` either.  The anchor had to move to
+    `stage_links`, which that path really does force.  **A case that injects
+    a defect the probe path cannot see measures the probe, not the guard.**
+  * case 2 first appended `frozenset() or frozenset((`, which leaves the
+    anchor the gate's awk keys on intact -- it injected a syntax oddity, not
+    an empty read.  Renaming one tuple was still not enough: the awk keys on
+    `TEXT_SUFFIXES` and `TEXT_NAMES` separately, so renaming one leaves the
+    other readable.
+
+### 4. The defect the measurement found
+
+Case 4 exposed this while being written:
+
+    with an EMPTY input -- a path that is clean, so `git diff` names nothing --
+    the command prints a zero-stage answer and exits 0.
+
+Checks 4 and 5 live inside loops over the changed paths, so a registry broken
+badly enough to fail on any dirty file still answers a clean tree with a
+confident `0`.  Reproduced: with a rule naming `no-such-stage` injected, a
+clean `docs/BOARD.md` gives exit 0 and the zero answer; one appended newline
+makes the same tree exit 2.
+
+This is not fixed here.  Moving the two checks out of the per-path loop is a
+behaviour change to the gate's own entry point, and the section that writes a
+checker is not the section that reorders the thing it checks.  It is named in
+the checker's docstring and here, which is the most this section can honestly
+claim.
+
+### 5. The controls
+
+The self-test's control is the one that decides whether the whole file means
+anything: **a missing anchor must not count as a firing guard**.  If the tree
+renames a function in `CASES`, every case would report "anchor appears 0
+times", and a checker that treated that as success would print five green
+lines about nothing.
+
+Measured by mutation, both red:
+
+    run_case returns True on a missing anchor
+      -> FAILED  a missing anchor must not count as the check firing
+      -> FAILED  a missing anchor must say so
+
+and one defect found in the checker itself the same way.  The first version
+copied HEAD into the worktree, so it measured the last commit:
+
+    working tree: gate.sh line 1038 `exit 2` -> `exit 0`
+    -> ctest -R required_for_regression   Passed
+
+The mutation was not in the worktree.  A checker that measures HEAD is a
+checker that reports green on an uncommitted change to the thing it audits --
+§10.241's defect in a fourth language.  `make_worktree` now copies the working
+tree's version of every file a case mutates, and the same mutation reddens:
+
+    -> ctest -R required_for_regression   ***Failed
+       SILENT  a rule names a stage no stage answers to  rc=0
+
+### 6. What landed
+
+* `tools/check_required_for.py`: 4 of 5 guards proven to fire, 1 reported
+  UNMEASURABLE with the reason, 1 defect in the gate named and not fixed.
+* Registered as two CTests (`required_for_regression`, `required_for_selfcheck`)
+  and as the gate stage `required-for`, making **26 registered stages** and
+  **217 CTests**.
+* `EXP_CTEST` 215 -> 217 and `recon.ctest-count` 215 -> 217 in the same batch.
+* The six live claims moved 25 -> 26, which `check_stage_count` demanded one
+  commit after the stage was added -- §10.242's checker doing to this section
+  exactly what it was built to do.
+
+### 7. What the gate taught
+
+Adding the stage was the cheapest part, because §10.242's checker refused to
+let it land without the six documents following.  That is the wanted cost.
+
+Two of my own instruments misfired on me in the same hour, and both would
+have been reported as guard defects by a less careful reading: a case whose
+probe path could not see its own defect, and a worktree that carried HEAD
+instead of the working tree.  In both, the correct conclusion was "my
+measurement is wrong", not "the guard is broken" -- and the only way to know
+which was to break the tree by hand first and look.
+
+### 8. Boundary
+
+Four of five is not "the five work".  It says four guards refuse the tree they
+exist to refuse; it says nothing about the three other checks that `exit 2`
+in `--required-for` and were not converted into cases, and nothing about the
+checks in the gate's main path, which this does not touch.
+
+It converts four of the thirteen `exit 2` sites into cases and measures those
+four.  The other nine are unmeasured, and the row that says UNMEASURABLE is
+one of the five, not one of the nine -- the accounting has to be kept
+straight or "4 of 5" reads like "4 of 13".
+
+It mutates `tools/gate.sh` and `tools/check_text_integrity.py` only.  A guard
+whose anchor drifts is reported as "anchor appears N times" and not as
+silence -- that is the self-test's subject -- but the case table is a list
+someone has to keep aligned with the functions, and nothing measures whether
+the list is complete.  A sixth guard added tomorrow is a guard this checker
+does not mention, and its absence looks exactly like a pass.
