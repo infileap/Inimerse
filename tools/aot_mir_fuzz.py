@@ -169,9 +169,16 @@ def audit_families(counts):
     return silent, undeclared
 
 
-def verdict_of(diverge, threw, silent, undeclared):
-    """One place decides PASS/FAIL, so the self-check measures the real rule."""
-    if diverge or threw or silent or undeclared:
+def verdict_of(diverge, threw, silent, undeclared, badcc=0):
+    """One place decides PASS/FAIL, so the self-check measures the real rule.
+
+    `badcc` is a program the tool could not compile.  It used to be printed as
+    FBADCC and then dropped on the floor: the verdict counted only the four
+    buckets that come after a successful build, so a run where 170 of 200
+    programs never linked reported PASS.  A program that cannot be built is a
+    program that was not fuzzed, and "not fuzzed" is not "agreed".
+    """
+    if diverge or threw or silent or undeclared or badcc:
         return "FAIL"
     return "PASS"
 
@@ -532,7 +539,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
 
-    ran = diverge = threw = unsound = 0
+    ran = diverge = threw = unsound = badcc = 0
     skipped_refusals = 0
     findings = []
     family_counts = {name: 0 for name in FAMILIES}
@@ -569,8 +576,20 @@ def main():
             findings.append("FUNSOUND|case=%d|why=%s" % (n, text))
             continue
         exe = work / ("f%03d.exe" % n)
-        rc_c, _o_c, e_c = run([args.cc, "-O2", "-o", exe, mir_c], work)
+        # `-lm` is not optional.  The generated C calls floor/ceil/sqrt, and
+        # without libm the link fails -- measured: 170 of 200 programs at
+        # seed 42 died in ld with `undefined reference to 'floor'`, the other
+        # 30 or so with 'ceil'.  This tool compiles its own C, so it owns the
+        # link line; every other tool in this tree that compiles MIR output
+        # passes -lm (aot_mir_cover.test.py, aot_mir.test.py four times).
+        #
+        # FBADCC is also a RED now, not a printed-and-forgotten line (§10.248).
+        # A case that could not be compiled was a case that was not run, and the
+        # verdict counted only diverge/threw/silent/undeclared -- so the tool
+        # said PASS while 85% of its programs never executed.
+        rc_c, _o_c, e_c = run([args.cc, "-O2", "-o", exe, mir_c, "-lm"], work)
         if rc_c != 0:
+            badcc += 1
             findings.append("FBADCC|case=%d|err=%s" % (n, (e_c or b"").decode("utf-8", "replace").strip().splitlines()[:1]))
             continue
         rc_r, out_r, _e_r = run([exe], work)
@@ -604,10 +623,10 @@ def main():
           % (len(FAMILIES), len(FAMILIES) - len(silent), len(silent), len(undeclared),
              ",".join(sorted(suppressed)) if suppressed else "-"))
     print("IR-AOT-MIR-FUZZ|seed=%d|count=%d|ran=%d|diverge=%d|threw=%d|unsound=%d"
-          "|refused-by-name=%d|dir=%s"
-          % (args.seed, args.count, ran, diverge, threw, unsound,
+          "|badcc=%d|refused-by-name=%d|dir=%s"
+          % (args.seed, args.count, ran, diverge, threw, unsound, badcc,
              skipped_refusals, work))
-    verdict = verdict_of(diverge, threw, silent, undeclared)
+    verdict = verdict_of(diverge, threw, silent, undeclared, badcc)
     print("IR-AOT-MIR-FUZZ-VERDICT|%s" % verdict)
     return 0 if verdict == "PASS" else 1
 
@@ -666,6 +685,16 @@ def self_check():
          "verdict=%s" % verdict_of(0, 0, [], ["ghost"])),
         ("scalar-tail-is-the-canary", clean["scalar-tail"] == 20,
          "scalar-tail=%d|of=20" % clean["scalar-tail"]),
+        # The build bucket, in the three states that make it a rule rather than
+        # a printed line.  Before §10.248 the verdict did not read this at all:
+        # 170 of 200 programs failed to link at seed 42 and the tool said PASS.
+        ("a failed build is red", verdict_of(0, 0, [], [], 1) == "FAIL",
+         "verdict=%s" % verdict_of(0, 0, [], [], 1)),
+        ("no failed build is green", verdict_of(0, 0, [], [], 0) == "PASS",
+         "verdict=%s" % verdict_of(0, 0, [], [], 0)),
+        ("a failed build does not hide a difference",
+         verdict_of(1, 0, [], [], 1) == "FAIL",
+         "verdict=%s" % verdict_of(1, 0, [], [], 1)),
     ]
     for what, hit, detail in fam_cells:
         print("IR-AOT-MIR-FUZZ-SELFCHECK|what=%s|%s|%s"
