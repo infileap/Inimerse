@@ -15348,3 +15348,148 @@ silence -- that is the self-test's subject -- but the case table is a list
 someone has to keep aligned with the functions, and nothing measures whether
 the list is complete.  A sixth guard added tomorrow is a guard this checker
 does not mention, and its absence looks exactly like a pass.
+
+## §10.246 — the guard that was silent when there was nothing to answer
+
+### 1. Where the next thing was
+
+§10.245 closed by naming a defect it had found and deliberately not fixed:
+
+    with an EMPTY input -- a path that is clean, so `git diff` names nothing --
+    the command prints a zero-stage answer and exits 0.
+
+That is a guard refusing to run on the input where its answer is "nothing to
+do", which is the run most likely to be believed.  This section fixes it.
+
+### 2. The shape of the thing
+
+The rule-table check -- "a rule that names a stage nobody answers to" -- was
+written over `picked`:
+
+    if [ "${#picked[@]}" -gt 0 ]; then
+      for sel in "${picked[@]}"; do ...
+        exit 2
+
+`picked` is the set of stages the command decided to require, which is empty
+exactly when no path was given anything to require.  So the guard's
+condition was a function of the input rather than of the table it claims to
+be checking, and `[ ${#picked[@]} -gt 0 ]` turned "there is nothing to
+answer" into "there is nothing to check".
+
+Reproduced at §10.245's tree, with `no-such-stage` appended to the `docs/*`
+rule:
+
+    clean docs/BOARD.md        -> the zero-stage answer         exit 0
+    one appended newline       -> refuse, "a rule names stage"  exit 2
+
+The same broken table, and the exit code depends on whether a file has
+trailing whitespace.
+
+### 3. What the instrumentation said, before the fix
+
+Two things in §10.245's account were wrong, and both were caught by
+instrumenting the function instead of reading it:
+
+  * It said checks 4 **and 5** live inside loops over the changed paths.
+    Check 5 does not: it loops over `STAGE_WANTED`, and with a clean input it
+    inspected all 26 stages (`reach=0 own=0` on dialect the same instrumented
+    build).  Only check 4 was gated on the input.
+  * It implied check 5 was one mutation away from firing.  It is not: `own`
+    is set by the scope table OR a derived edge, and changing the path in
+    `stage_word_refs`'s body does not remove the edge, it renames it --
+    `stage_word_refs` still gets one, from `tools/zzz_gone.py`.  Making a
+    stage all-only needs its implementation deleted, which is the same
+    UNMEASURABLE verdict §10.245 reached, for a reason §10.245 could not
+    have stated.
+
+### 4. The fix, and why it is the right one
+
+Move the check onto the rule table, where it does not depend on the input:
+
+    for rule in "${REQUIRED_SCOPES[@]}"; do
+      sels="${rule#*|}"
+      [ "$sels" = "-" ] && continue
+      [ "$sels" = "all" ] && continue
+      for sel in $sels; do ... exit 2
+
+Verified in both directions before and after:
+
+    broken table, clean input     exit 0  ->  exit 2
+    broken table, dirty input     exit 2  ->  exit 2
+    healthy tree, clean input     exit 0  ->  exit 0
+    healthy tree, dirty input     exit 0  ->  exit 0
+    healthy tree, staged          exit 0  ->  exit 0
+    healthy tree, all-path        exit 0  ->  exit 0
+
+The table is 19 selectors today and all 19 are answered, so the move
+introduces no red on a healthy tree -- measured before the edit, not after.
+
+### 5. Two more defects, both in the checker
+
+**A clean-input case that could not have existed before.** The new case
+injects the same defect and leaves the probe path untouched, so `git diff`
+names nothing.  It is the only case in the file that would have failed
+against §10.245's tree, and it is the reason the fix is pinned.
+
+**A syntax error looked exactly like a refusal.** Verifying the fix by hand,
+I reverted the change badly and produced `syntax error near unexpected token
+'done'`.  The checker reported FIRED.  Bash exits **2** on a syntax error,
+and this checker called every exit 2 a refusal -- so a mutation that breaks
+the script and a guard that refuses the tree were indistinguishable.
+
+    $ bash -c 'if then fi' >/dev/null 2>&1; echo $?
+    2
+
+Every case now carries the **message fragment** its guard is supposed to
+print, and a case counts only when exit 2 AND that message appear.  Measured
+both ways: with the message requirement removed, the syntax-error control
+reddens; with it in place, a broken script reports
+`rc=2 but NOT the guard's message`.
+
+### 6. The controls
+
+    FIRED         a stage function no registry entry names
+    FIRED         text-integrity's scope reads as empty
+    FIRED         the call-site table reads as empty
+    FIRED         a rule names a stage no stage answers to (dirty input)
+    FIRED         a rule names a stage no stage answers to (clean input)
+    UNMEASURABLE  a registered stage only the 'all' rules reach
+
+    5 of 5 measurable self-check(s) refused; 0 did not; 1 uninjectable.
+
+and the self-test now has three controls rather than one:
+
+  * a missing anchor is reported, not counted as firing;
+  * a **syntax error** is reported as the wrong message, not as firing;
+  * (both measured by mutation, both red when the code they test is removed)
+
+The second one is the first control that tests the checker's own input
+handling rather than its subject.  It was written because the defect appeared
+in my hands while verifying, not because I predicted it.
+
+### 7. What the gate taught
+
+The fix is eight lines.  Everything expensive in this section was finding
+out what the code does: two of my three beliefs about the function were
+wrong, and the instrument that settled them took five attempts to place
+correctly -- first outside the loop, then reading initialised values, then
+behind an `exit` that had already fired.
+
+That is the pattern across §10.241 through here: the defect is never in the
+line you are reading, it is in the difference between the line you are
+reading and the line that runs.
+
+### 8. Boundary
+
+This closes the clean-input hole for check 4.  Checks 5 through 13 of the
+`exit 2` sites are still not inputs to any case, and the count is unchanged
+from §10.245: five converted, thirteen present.
+
+The fix judges the rule table.  A rule whose PATTERN is wrong -- matching
+nothing, or matching everything -- is still not checked; only its selector
+list is.  `stages_for_path` answering `all` for an unmatchable pattern is
+the fallback §10.245 measured, and it is still the fallback.
+
+And the checker's case table is a list someone maintains.  A sixth guard
+added to `required_for` is a guard no case mentions, and its absence looks
+exactly like a pass.
