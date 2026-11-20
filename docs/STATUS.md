@@ -16024,3 +16024,119 @@ And the arity arm is still an arity arm.  `declared(a, b)` for two VALUES is
 nil and stays nil; only the member form, whose second argument is a slot, reads
 the table.  The two are the same opcode, and the code tells them apart by what
 the second argument means -- not by how it looks.
+
+## §10.251 — the corpus nobody compared
+
+### 1. Where the next thing was
+
+§10.250 ended with a boundary sentence that named its own weakness:
+
+    the corpus is 41 programs, and xrange_t2_v06 is the only one in the tree
+    that reads .declared in a way both routes can run, which is why the defect
+    survived -- one program, compared by nothing.
+
+That last clause was a guess, and the guess was half wrong in an interesting
+way.  Something *does* compare this route against the interpreter, byte for
+byte, on every gate run.  It just does not compare that file.
+
+### 2. What was already there, and what it covers
+
+`tools/aot_mir_cover.test.py` is the good version of the instrument:
+
+    IR-AOT-MIR-VERDICT|PASS|accepted=403|covered=29|missing=0|refused=0
+                      |same-as-interpreter=403|corpus=inline-cases:86
+                      |mir-only-cases:317
+
+Every accepted case is compared for stdout and exit status.  It is registered
+as a CTest with `PASS_REGULAR_EXPRESSION` on that verdict line.  Its corpus is
+two lists of **inline strings**: `EQUIVALENCE` from `aot_native.test.py` and
+`MIR_ONLY` from `aot_mir.test.py`.
+
+`vtest/` is not in either list.  Measured: of the 81 `.im` files there, **zero**
+have text that also appears as an inline case -- so this is not duplication, it
+is a second corpus with no reader.
+
+    81 programs
+    41 translate through the MIR route      <- compared by nothing
+    32 refused by the route (named reasons)
+     8 the compiler will not parse
+
+§10.250's defect lived in that 41.  `xrange_t2_v06.im` was the only program in
+the tree that noticed `.declared` answering nil, and it was found by a scratch
+script written by hand, not by anything the gate runs.  A boundary sentence
+that says "compared by nothing" is accurate; what it did not say is that the
+instrument to compare them already existed and only lacked the input.
+
+### 3. What landed
+
+`tools/check_mir_vtest_parity.py`: for every `vtest/*.im` the route accepts,
+translate, compile with `-lm`, run both binaries, compare stdout and exit
+status.  Same criterion `aot_mir_cover` applies, applied to the files it does
+not open.  Registered as two CTests and as the gate stage `mir-vtest-parity`,
+making **27 registered stages** and **219 CTests**.
+
+    corpus=81|translated=41|same-as-interpreter=41|differ=0|cc-failed=0
+    |refused-by-mir=32|not-parseable=8
+    |reasons=builtin-call:21,preset-set-global:3,set-interval-domain:1,threads:4,try-enters:3
+
+### 4. The control, and it is the one that matters
+
+The instrument was measured by reverting §10.250's fix and re-running it:
+
+    DIFFER  vtest/xrange_t2_v06.im   interp-rc=0 mir-rc=0 | interp=[... bad=0 ...] mir=[... bad=1 ...]
+    same-as-interpreter=40|differ=1
+    exit 1
+
+That is the defect the previous section fixed, caught by the checker this
+section added, in the file no other instrument reads.  Restored, the same run
+is 41/41 and exit 0.
+
+The self-test's control is the payload filter, in both directions: two programs
+that differ only in the engine's load notices must compare EQUAL, and a real
+one-line difference must survive.  A filter that stripped too much would report
+every program as agreeing; one that stripped too little would report every
+program as differing, because the engine prints three notice lines on stdout
+before the program's own output.  Neither failure is visible from a green run.
+
+### 5. Two defects the measurement found in itself
+
+Both were visible only because the numbers were printed rather than asserted:
+
+  * the first version reported `reasons=unknown:8`.  Eight of the 81 programs
+    are rejected by the **compiler**, not by the route -- a removed `be`
+    declaration -- so they never reach `aot-mir translate`.  Counting them as
+    "refused by the MIR route" inflates the refusal set with programs the route
+    was never offered.  They are now a class of their own, and 41 + 32 + 8 = 81
+    is checkable by a reader.
+  * the refusal reason was read off `out_t + err_t` and the first match won; a
+    line with two `why=` segments would have reported the wrong one.  It now
+    takes the first, which is what the tool prints, and the class counts are
+    printed so a shifting distribution is a visible number and not a silent
+    one.
+
+### 6. What this says about the family
+
+Nine sections of this record have gone after instruments that report success
+without checking.  This one is the first where the instrument was **correct and
+complete** and the defect was that nobody pointed it at a third of the input.
+
+That is a different failure and it is cheaper to fix -- but it is also harder to
+notice, because every reading the tree printed was true.  `aot_mir_cover` said
+403/403 and meant it; nothing said 41 were missing.
+
+### 7. Boundary
+
+This compares what the route accepts.  The 32 refusals are printed with their
+reasons and are not compared, because a refusal is not coverage -- 21 of them
+are `builtin-call`, a declared boundary this section does not touch.  A
+relaxation that made the route accept more (see §10.249's open question) would
+add programs to this comparison, which is the wanted direction.
+
+The corpus is the tree's `vtest/` directory, and it grows by someone writing a
+file there.  A pattern in `tools/` is not covered by this and is not meant to
+be: `aot_mir_cover`'s inline cases exist for shapes that are easier to state
+than to store.
+
+And the gate now has 27 stages, six of which assert a corpus.  Nothing here
+checks that those six corpora are disjoint, or that a program added to one of
+them is not silently outside the other five.
