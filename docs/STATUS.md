@@ -14629,3 +14629,237 @@ The measurement also turned up a defect outside this section:
 `tools/check_stage_count.py` is red on this tree (it derives 23 stages,
 seven documents still spell 16) and nothing in the gate runs it.  That is
 §10.242's subject, not this one's.
+
+## §10.242 — the number nobody ran
+
+### 1. Where the next thing was
+
+§10.241 ended on a defect it had measured and not fixed:
+
+    tools/check_stage_count.py is red on this tree (it derives 23 stages,
+    seven documents still spell 16) and nothing in the gate runs it.
+
+That sentence has two claims in it and they are not the same defect.  The
+first is a staleness: documents state a count that the gate no longer has.
+The second is the reason the staleness survived -- the checker that exists
+to catch exactly this is in the tree, is red, and is executed by nothing.
+
+### 2. The shape of the thing
+
+The gate derives its own stage count from `STAGE_SPECS` and prints the
+arrays' lengths (`gate: OK -- every stage passed (N/N stages ran)`).  So
+in `tools/gate.sh` the number lives in one place: add an entry, get a
+stage.  This is deliberate, and `tools/gate.sh` says so in a comment.
+
+Everywhere else the number is a **copy**.  A copy has no reader: "the
+document says 16" and "the gate has 16" are two independent strings, and
+nothing compares them.  The array's own history, read by expanding it at
+each commit that touched `tools/gate.sh` and printing `${#STAGE_SPECS[@]}`
+-- not by counting lines, which is how the first draft of this paragraph
+got it wrong (several specs share a line, so a line count says 18 where the
+array says 24):
+
+    ... 13 -> 14 -> 15 -> 16 -> 17 -> 18 -> 19 -> 20 -> 21 -> 22 -> 23 -> 24 -> 25
+
+The growth is monotone and it never went back.  The copies did not follow
+it: six documents were still at 16 when the array reached 24, and one of
+them is an instruction a reader follows ("run gate.sh, all sixteen
+stages").  Sixteen was the count at the time those sentences were typed,
+which is exactly why they read correctly.
+
+This is the same failure as §10.241's, one level up.  There, a test's
+failure signal could be deleted and the suite would still print green.
+Here, a number can stop being true and every document that states it
+keeps reading correctly.
+
+### 3. The defect, measured
+
+At the tree §10.241 left behind:
+
+    $ python3 tools/check_stage_count.py
+    MISMATCH  docs/README.md            spells 16  but tools/gate.sh derives 24
+    MISMATCH  tools/README.md           spells 16  but tools/gate.sh derives 24
+    MISMATCH  tools/README.md           spells 16  but tools/gate.sh derives 24
+    MISMATCH  docs/BOARD.md             spells 16  but tools/gate.sh derives 24
+    MISMATCH  tools/ref_substitute_guard.py  spells 16  ... derives 24
+    MISMATCH  docs/AUDIT.md             spells 16  but tools/gate.sh derives 24
+    ... 0 agree, 19 red(s).
+    check_stage_count: FAILED
+
+(the real output names a line number after each file; they are elided here
+because a line number pasted into `docs/` is a citation this tree's
+`check_line_refs` stage would then hold me to, and these six move in the
+commit that fixes them -- see §8)
+
+and the gate, asked whether it runs this:
+
+    $ grep -n 'stage_count' tools/gate.sh CMakeLists.txt
+    (no output)
+
+Nineteen reds, and the machine that would have reported them was not
+plugged in.  This is not "the checker was broken" -- it was correct.  It
+is that a correct checker nobody runs is a sentence in a file, and
+§10.241's own closing paragraph is the proof: the sentence was written,
+by the previous section, and still nothing ran the checker.
+
+### 4. The ruler, and why it is the ruler
+
+The tempting reading is "grep the docs for `16`".  That fails in both
+directions and the failures are instructive:
+
+  * It cannot tell a claim about today from a record of a run.  `docs/AUDIT.md`
+    is an append-only ledger whose own first paragraph says a number in it
+    is "the reading taken at that observation point, not today's value".
+    Nine of its lines spell a stage count, and rewriting them to 25 would
+    be falsifying a ledger, not updating it.
+  * It cannot tell the gate's stages from anything else using the word.
+    `git commit --dry-run` prints `required: N stage(s)` -- the paths a
+    change touches.  A number next to "stage" there is not a statement
+    about the gate at all.
+
+So the checker keeps a **declaration table**: each location is named by a
+pattern that must match exactly one line (a location that is gone is a
+red, not a silence), and each is classified `must-equal` (a claim about
+this tree, today) or `record` (a ledger line, exempt, and each exemption
+prints the reason it claims).  The derived side is produced by **running
+the gate's own array** (`bash -c '...array...; echo ${#STAGE_SPECS[@]}'`),
+not by a second parser -- a second parser would be one more copy, and if
+it agreed because it was copied, the comparison would be a constant
+against itself.
+
+### 5. The controls
+
+Every one of these was run, and each had to change the verdict:
+
+  * **Move the derived side.**  Bump `STAGE_SPECS` and the `must-equal`
+    locations redden as MISMATCH; the `record` locations do not.  This is
+    the self-test's whole subject.
+  * **A `locate` pattern that matches nothing.**  Run against a synthetic
+    root: it reports GONE and exit 1, not a pass.  (A `locate` that matches
+    MORE than one line also reddens -- the ledger quote did, at three, until
+    it was anchored; see §6.)
+  * **A twelfth homograph.**  Appending one more carrier -- git's
+    `required:` phrase with a literal count -- to a document reddens the
+    run.  Measured, exit 1, and the doc line that says so is itself the
+    twelfth, which is why this sentence describes the phrase instead of
+    spelling it.
+  * **A ceiling that is one too low.**  With 11 occurrences present and
+    the ceiling set to 10, the run reddens.  Both directions measured.
+
+The first two of those are the checker's own `--self-test` cases.  The
+last two were run by hand against the real tree while building the
+ceiling, and are what decided that the ceiling is a ceiling and not a
+`continue` statement dressed as one.
+
+### 6. What the audit found
+
+**The six live claims, and what they were.**
+
+    docs/README.md                 `十六个阶段：build + ctest + ...`
+    tools/README.md                `Sixteen stages; exit 0 only if all pass.`
+    tools/README.md                `all sixteen stages`
+    docs/BOARD.md                  `十六个阶段，任一失败即整体失败`
+    tools/ref_substitute_guard.py  `the sixteen stages answer ...`
+    docs/AUDIT.md                  `强制全部 16 个`
+
+All six now state 25, and `check_stage_count` reports `6 agree, 0 red(s)`.
+
+**Two that are records and were left alone in substance.**  `docs/AUDIT.md`
+has two more lines a grep would have caught: one places a proposed stage
+"after the 16th" -- a decision recorded on the day it was taken -- and one
+quotes a run's verbatim last line, `每一阶段都通过（十六分之十六）`.  The
+first was **reclassified** from `must-equal` to `record`, with the reason
+printed: it is where a stage went in the list, not how many stages the
+gate has.  The second stayed a record; only its `locate` pattern changed
+(below).
+
+**Three defects in the checker itself, found while wiring it.**
+
+  1. `spell()` could not read an English number other than "sixteen".
+     `NUM_ANY` matched `[0-9]+` and had `[Ss]ixteen` hardcoded, and `spell`
+     hardcoded the same word.  So the line that says
+     `Sixteen stages; exit 0 only if all pass.` could be corrected to
+     `Twenty-five stages` and stop being a candidate -- which is
+     indistinguishable from agreeing.  A reader that can only read the
+     number it was written for is this file's own subject, one level up.
+     Fixed by taking the words from one table that both the alternation
+     and the parser read.
+
+  2. A `locate` pattern matched **three** lines: `每一阶段都通过（` appears
+     in the ledger entry that quotes a run and in two later paragraphs
+     that discuss that entry.  A pattern that matches the prose about a
+     record is not locating the record.  Anchored on the ledger's own
+     `记录：**` marker.
+
+  3. The homograph rule reddens on the **presence** of
+     `required: N stage(s)`, which on this tree means it reddens on the
+     documents that explain the phrase -- `tools/gate.sh` twice, in the
+     comments describing the line that emits it, and `docs/AUDIT.md` nine
+     times quoting output.  Exactly one line in the tree actually prints
+     it (`echo "required: $n stage(s)  [$label]"`), and it interpolates
+     `$n`.  **This is why the checker had never been wired in: wired in,
+     it is red forever, and a stage that is red forever gets bypassed.**
+     Fixed with a ceiling of 11 in the shape `check_word_refs.py` uses --
+     it may only fall, and a twelfth is a red.
+
+### 7. What landed
+
+* The six live claims moved from 16 to 25.
+* `tools/check_stage_count.py` reads English numerals from a table
+  (`Twenty-five` -> 25), locates the ledger quote unambiguously, and
+  applies a ceiling of 11 to the homograph bucket with both directions
+  measured.
+* It is registered as two CTests (`stage_count_regression`,
+  `stage_count_selfcheck`) and as the gate stage `stage-count`, making
+  **25 registered stages** and **215 CTests**.
+* `EXP_CTEST` 213 -> 215, `recon.ctest-count` 213 -> 215, both in this
+  batch, because the registration and the number it implies go stale
+  together.
+
+### 8. What the gate taught
+
+The stage list is the gate's own output, and adding a stage to it is the
+one commit that cannot avoid touching the numbers §10.242 is about.  The
+new stage went into `STAGE_SPECS` **on the line that already carried the
+last spec** rather than on a new line: `docs/` cites the array's closing
+paren (`)` on its own line) and the `REQUIRED_SCOPES` comment region, and a
+new line above either would have moved both.  The stage function went **after** line 768, in the
+stretch no document points into, which is where §10.241 put its own.
+
+Two things about the ceiling are worth the words, because they are the
+difference between this and the `continue` statement it could have been:
+
+  * A ceiling **counts**, so the eleven are printed on every run, with
+    their file, line and text.  A reader learns that the gate's own
+    comments contain four of them and can decide what to do.  A `continue`
+    would have made them invisible and the checker would have become one
+    more instrument that reports only what it was asked.
+  * A ceiling is only one number away from a constant with extra steps.
+    What makes it a ceiling is that `above` reddens and `at` does not, and
+    both were measured by mutation before the ceiling was committed --
+    including the case where the ceiling is set one too low.
+
+### 9. Boundary
+
+This says the copies equal the derived count.  It cannot say the copies
+are in places that matter: the tree spells a number next to a stage word
+at 437 locations and only 16 are declared -- 423 undeclared.  The checker
+**prints** both numbers on every run, so the hole is a number and not a
+silence, but closing it is a separate piece of work with its own
+denominator.
+
+Both readings move when this section moves: a paragraph about stage
+counts is itself a paragraph spelling numbers next to the word "stage", so
+writing this down changed the number it records -- the first draft said 428
+because that is what the run said before the paragraph existed, and every
+later edit that spelled a count moved it again.  The declaration table
+keeps `must-equal` locations at 6 and `record` at 10, and those do not move
+with prose; the 437 does, and is a reading with a date on it, not a floor.
+
+It says nothing about whether 25 is a good number of stages.  A gate with
+25 stages that all pass is not thereby a gate that checks 25 things; §10.241's
+own boundary sentence applies unchanged.
+
+And the count is a **string** in six documents.  Making it true today does
+not make it self-updating: the next stage added to `STAGE_SPECS` reddens
+six documents and one CTest, which is the intended cost, not a defect.
