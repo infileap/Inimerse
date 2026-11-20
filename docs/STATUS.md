@@ -15747,3 +15747,140 @@ work; nothing in this section checks that 175 is the right 175, or that the
 175 that ran resemble the 25 that did not.  A fuzzer whose refusals cluster
 in one family is a fuzzer that says "no divergence" about the families it
 reaches.
+
+## §10.249 — the refusal that could not tell skipping from entering
+
+### 1. Where the next thing was
+
+§10.248 ended with a boundary it had written itself: 175 programs ran, 25 were
+refused by name, and nothing checked whether the refusals clustered in one
+family.  A fuzzer that says "no divergence" only about the families it reaches
+is saying something much narrower than its verdict sounds.
+
+That question has an answer, and the answer was cheap: the tool discarded the
+refusal's `why=` string and kept a counter (§10.248 §6).  Measuring it took
+one script.
+
+### 2. What the refusals were
+
+At seed 42, count 200: 25 refusals by name, and **all 25** were the same
+reason, `why=try-enters`.  Per family:
+
+    family            emitted  refused    ran
+    try-catch              54       25     29
+
+Every other family kept most of its programs; `try-catch` lost 46% of them.
+So the fuzzer's "no divergence" was, for that family, an answer about half of
+what it emitted -- and the tool could not say so, because it had been throwing
+the reason away.
+
+The reason is not a bug in the generator.  It is `try-enters`.
+
+### 3. The shape of the thing
+
+The MIR route refuses a program when a jump from outside a `try` region lands
+inside it:
+
+    int in_src = (j >= rs && j <= re), in_dst = (t >= rs && t <= re);
+    if (!in_src && in_dst) { why=try-enters; refuse }
+
+The rule is right and its witness is real.  Two `try` statements in one
+function put two regions next to each other, and the first one's catch block
+jumps over the second -- a jump from *inside region 1* to the start of region
+2, whose frame was never opened.  §10.218 measured that and kept the reason.
+
+But the scan cannot see whether the source was in a region at all.  It treats
+"the source is outside the region" and "the source is inside another region"
+as the same thing, and one of them is not a defect:
+
+    i = 0
+    while i < 2 { i = i + 1 }
+    try { say 1 } catch (e) { say "c" }
+
+The loop's exit jump targets the instruction right after the loop.  That
+instruction is `OP_TRY_START` -- and executing it is what *opens* the frame.
+Landing on it is indistinguishable from falling into the try.
+
+### 4. The defect, measured
+
+    $ build/inimerse --no-mods run repro.im            -> exit 0, prints -5 and 2
+    $ build/aot-mir translate repro.im out.c
+    IR-MIR-REFUSED|why=try-enters|detail=container=0 insn=6 jumps INTO the try
+      region [12,15] at 12, whose frame was never opened
+
+The interpreter runs it.  The route refuses it.  And the refusal is fragile in
+a way that names the cause:
+
+    while, then try                      -> REFUSED
+    while, one `say`, then try           -> ok
+    `if`, then try                       -> REFUSED
+    try alone                            -> ok
+    while alone                          -> ok
+
+One plain statement between the block and the try, and the same program
+translates.  The jump target moves off `rs` by one instruction and the scan is
+satisfied.  Nothing about the program's meaning changed.
+
+It is also not about reachability: `while i < 0` -- a loop that never runs --
+is refused the same way.  The scan is static, and it is reading the shape of
+the loop's exit, not its execution.
+
+### 5. What the correction attempt taught
+
+The obvious fix is `t > rs` in `in_dst`: the region's own start is where the
+frame opens, so landing there is not an entry.  That was tried, built, and
+measured against both classes:
+
+    misfire shapes refused   : 3 -> 0   (fixed, as intended)
+    witness shapes refused   : 2 -> 0   (broken, not intended)
+
+It let the witness through as well.  The witness's jump also targets `rs` --
+its target is the *second* region's start -- so "target == rs" does not
+separate the two shapes.  The property that separates them is about the
+**source**: a jump from inside an earlier region is the witness, and a jump
+from outside every region is the misfire.
+
+The change was reverted.  The compiler is untouched, and the measurement is a
+checker rather than a fix, because a relaxation whose argument has already
+been falsified once does not get to land on the second guess.
+
+### 6. What landed
+
+`tools/check_try_region_enters.py`.  It measures three classes and names them
+apart:
+
+    MISFIRE   a while before a single try            src=6  region=[12,15] target=12  interpreter_rc=ok
+    MISFIRE   an if before a single try              src=1  region=[5,8]   target=5   interpreter_rc=ok
+    MISFIRE   a never-entered while before a single try  src=6  region=[12,15] target=12  interpreter_rc=ok
+    WITNESS   two try statements in one function     src=4  region=[7,10]  target=7
+    WITNESS   a loop inside a first try, before a second try  src=14 region=[17,20] target=17
+    CORPUS    3 programs refused on a region start
+
+It is **red on this tree** and is **not registered in the gate** -- a checker
+that is red forever gets bypassed, which is §10.242's subject and this one has
+no fix to attach the green to.  That is stated here rather than left for a
+reader to discover from its absence.
+
+The self-test's control is the pattern, not the tool: a line copied from a
+real run has to parse to `(src, region_start, region_end, target)`, and
+`try-escapes` and an unrelated reason must not parse as `try-enters`.  A
+checker whose regex silently stops matching reports "no misfire" and "no
+witness" at once.
+
+### 7. Boundary
+
+This says the refusal treats two different shapes alike.  It does not say which
+relaxation is safe: `t > rs` was measured to be wrong, and a correct version
+has to distinguish the jump's SOURCE, which needs the scan to hold every
+region's span at once rather than the one being entered.  Nothing here proves
+the correct version exists.
+
+The corpus number is 3, not the whole story: 40 of 81 `vtest` programs are
+refused by this route, and 21 of those are `builtin-call` -- a declared
+boundary this section does not touch.  A program refused for a reason that is
+not a defect is fine; a program refused for a reason that IS a defect is only
+found if someone asks which reason, and this route had been discarding it.
+
+And the family number stands where §10.248 left it: `try-catch` lost 46% of its
+emit rate to this refusal, so the fuzzer's verdict for that family was always
+an answer about the half that got through.
