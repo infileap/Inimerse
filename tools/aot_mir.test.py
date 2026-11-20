@@ -260,6 +260,10 @@ ALLOCS_EXPECT = {
     "mir_z_literal_readers_enumerate_the_span": (5, 7936),
     "mir_z_open_ended_intervals_enumerate_their_members": (5, 7936),
     "mir_declared_one_arg_identity_two_args_nil": (1, 256),
+    # §10.250: three registered allocations, all freed before exit -- the set
+    # literal `[0~255]` and the two `str()` copies.  Measured on the emitted
+    # program (336 bytes), not inherited: `allocs=3|freed=3|live=0`.
+    "mir_declared_member": (3, 276),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
     # Both reads fold the component's span; nothing allocates a member table.
@@ -2784,6 +2788,17 @@ say list(b)
     ("mir_loadk_string_quotes", 'say "q\\"z \\\\ back ??= mid \u4e2d"\n'),
     ("mir_nil_vs_zero", 'say nosuchglobal == nil\nsay nosuchglobal == 0\n'),
     ("mir_nil_coalesce", 'say nosuchglobal ?? 2\n'),
+    # §10.250: `x.declared` is the set the NAME was declared with, and `nil`
+    # when it was not declared.  The route emitted mv_nil() for every
+    # two-argument `declared` call, so this program answered nil/nil here while
+    # the interpreter answered set/nil -- and `42 in x.declared` was false.
+    # Both halves are in this case: the declared variable and the undeclared
+    # one, because a fix that answered the set for both would pass the first
+    # line alone.
+    ("mir_declared_member",
+     'type Byte = [0~255]\nx: Byte = 42\ny = 42\n'
+     'say str(x.declared)\nsay str(y.declared)\n'
+     'say 42 in x.declared\nsay 42 in y.declared\n'),
     ("mir_nil_print_truthiness",
      'say nosuchglobal\nif nosuchglobal { say "T" } else { say "F" }\nsay not nosuchglobal\n'),
     ("mir_loadk_string_eq",

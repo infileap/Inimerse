@@ -6890,9 +6890,49 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                share.  Zero arguments keep the destination register's value, so
                the generic zero-argument refusal above already catches that. */
             int ac = ir_insn_r3(in);
-            if (ac >= 2)
-                buf_fmt(b, "    v[%d] = mv_nil();", r1);
-            else
+            if (ac >= 2) {
+                /* TWO ARGUMENTS IS `x.declared`: the compiler pushes the VALUE
+                   and then the global's slot (compiler.c's `.declared` arm emits
+                   OP_LOADK_INT g / OP_PUSH_REG), and the interpreter answers the
+                   set the NAME was declared with, or nil -- builtin_declared
+                   reads `vm->global_bound[gidx]` and nothing else.
+
+                   This used to emit mv_nil() for every two-argument call, so
+                   `x.declared` was nil on this route for every program, while
+                   the interpreter answered the declared set.  Measured
+                   (docs/STATUS.md 10.250) on
+                   `type Byte = [0~255] / x: Byte = 42`: interpreter
+                   `set(R interval)` and `42 in x.declared` true; this route
+                   `nil` and false.  `y = 42` (no declaration) is nil on both.
+
+                   The slot arrives as a runtime value, not a constant, so it is
+                   read out of the argument stack exactly as the interpreter
+                   reads it off its own.  `mv_bound[g]` is the same table the
+                   store guard uses, carrying the set index plus one, zero for
+                   "no bound" -- so the +1/-1 here is the interpreter's, not a
+                   second convention.
+
+                   TWO GUARDS, and both were needed:
+                   - the table's length is the global count (`mv_bound` has no
+                     `_n` companion; the interpreter's `global_bound_cap` is the
+                     same number);
+                   - the table EXISTS only when the program declares a
+                     constraint (`g_bound_used`, the switch the store guard
+                     reads).  Emitting the read without that switch named a
+                     symbol the generated file does not declare -- measured: a
+                     program with no `name: set` failed to COMPILE with
+                     `'mv_bound' undeclared`, which is worse than the nil it
+                     answered before. */
+                int nb = c->root->global_name_count > 0 ? c->root->global_name_count : 1;
+                if (!g_bound_used)
+                    buf_fmt(b, "    v[%d] = mv_nil();", r1);
+                else
+                buf_fmt(b, "    { int _g = (mvargs[asp-1].type == MV_INT) ? (int)mvargs[asp-1].ival : -1;"
+                           " if (_g >= 0 && _g < %d && mv_bound[_g])"
+                           " { v[%d].type = MV_SET; v[%d].ival = mv_bound[_g] - 1; v[%d].sval = 0; }"
+                           " else v[%d] = mv_nil(); }",
+                        nb, r1, r1, r1, r1);
+            } else
                 buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
         }
         else if (strcmp(bn, "range") == 0)
