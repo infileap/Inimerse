@@ -14988,6 +14988,29 @@ The boundary sentence in §10.242 said closing the hole needed "its own
 denominator".  This is that denominator, and its answer is that most of the
 hole should stay open.
 
+### 6b. A fourth defect, in the report rather than the rule
+
+The possessive bucket's first version printed
+
+    ...; 1 of them disagree with 25.
+    ...; 0 agree, 0 red(s).
+
+Two numbers about two different sets in one sentence.  The first counted
+every total whose number differed from the derived count, including the
+record exempted one line below it; the second counted only claims, which
+is what a red is.  The `total_reds` ledger value was the same defect one
+level down: it summed every differing total instead of every differing
+claim, so the self-test that reads it was right about `rc` and wrong about
+the number it reported.
+
+Both now name their set -- "N judged as claims, M exempt as records of the
+tree they name" -- and `total_reds` counts claims.
+
+Worth its own note because it is this section's own subject pointed at this
+section: a checker whose output contradicts itself is a checker whose
+output a reader stops reading, and §10.242's ceiling of eleven had already
+argued that a rule nobody reads is a rule nobody runs.
+
 ### 7. Boundary
 
 This judges two of 436 spelling locations.  It cannot say the other 434 are
