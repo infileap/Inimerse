@@ -15609,3 +15609,141 @@ genuinely matches no rule still requires every stage, and §10.246's boundary
 said the same thing from the other side: the rule table's SELECTOR list is
 judged, its PATTERNS are not.  A rule whose pattern is broken still lands in
 that fallback, and the fallback still answers with confidence.
+
+## §10.248 — five programs answering for two hundred
+
+### 1. Where the next thing was
+
+Six sections in a row had gone after instruments that could not report
+failure -- a rewrite's control, a checker's exemption, a gate guard, the gate's
+main path.  Each was found by running the thing rather than reading it, and by
+the sixth round that family was nearly exhausted: four inquiries this round
+came back negative, each already covered by an instrument that had been
+built for it.
+
+So this section asked the instruments' own question at a different altitude:
+not "can this test fail" but "did this tool run the cases it claims". It took
+one run.
+
+    $ python3 tools/aot_mir_fuzz.py --count 200 --seed 42
+    IR-AOT-MIR-FUZZ|seed=42|count=200|ran=5|diverge=0|threw=0|unsound=0|...
+    IR-AOT-MIR-FUZZ-VERDICT|PASS
+
+`count=200`, `ran=5`, `PASS`.
+
+### 2. The shape of the thing
+
+The differential fuzzer builds a program, translates it to C, compiles it,
+and compares the C program's output with the interpreter's.  The comparison
+is sound: the comparator has its own controls and can say DIFFER (§10.156).
+
+What it could not say is "I did not get to ask".  The compile step is the
+fifth line of the loop:
+
+    rc_c, _o_c, e_c = run([args.cc, "-O2", "-o", exe, mir_c], work)
+    if rc_c != 0:
+        findings.append("FBADCC|case=%d|err=%s" % ...)
+        continue
+
+`FBADCC` was appended to `findings`, printed, and then never read.  The
+verdict was computed from four buckets, all of which come **after** a
+successful build:
+
+    def verdict_of(diverge, threw, silent, undeclared):
+        if diverge or threw or silent or undeclared: return "FAIL"
+        return "PASS"
+
+A bucket that is appended and never counted is a bucket that does not exist,
+and this one held 85% of the run.
+
+### 3. The defect, demonstrated
+
+The compile failure itself is one missing flag.  The generated C calls
+`floor` and `ceil`; the link line did not carry `-lm`:
+
+    $ build/aot-mir translate t.im t.mir.c   -> rc=0
+    $ cc -O2 -o t.exe t.mir.c
+    /usr/bin/x86_64-linux-gnu-ld.bfd: t.mir.c:(.text+0xae4): undefined reference to `floor'
+    ... undefined reference to `ceil' ...
+    $ cc -O2 -o t.exe t.mir.c -lm            -> rc=0, runs
+
+Four other tools in this tree compile MIR output and all four pass `-lm`
+(`aot_mir_cover.test.py`, and `aot_mir.test.py` at four sites).  This one is
+the fuzzer, and it owns its own link line.
+
+Measured at seed 42, count 200:
+
+    before   ran=5     FBADCC=170   VERDICT|PASS   exit 0
+    after    ran=175   FBADCC=0     VERDICT|PASS   exit 0
+
+Same verdict, and it means two entirely different things.  Five programs
+agreeing with the interpreter is not evidence about two hundred; it is
+evidence about five.
+
+### 4. The fix, and the part that matters more than the flag
+
+Two changes, and only one of them is about `-lm`:
+
+  * the link line carries `-lm`;
+  * `badcc` is counted, printed in the summary line, and is a **red**.
+
+The second is the point.  Adding the flag alone would have restored coverage
+and left the blindness: the next build failure -- a different missing symbol,
+a compiler that changed, a generated file that stopped parsing -- would go
+back into the printed-and-forgotten bucket and the verdict would say PASS
+again.
+
+    $ # with -lm removed again, at count 40, seed 42
+    IR-AOT-MIR-FUZZ|...|ran=1|...|badcc=36|...
+    IR-AOT-MIR-FUZZ-VERDICT|FAIL          (exit 1)
+
+    $ # with -lm in place
+    IR-AOT-MIR-FUZZ|...|ran=13|...|badcc=0|...
+    IR-AOT-MIR-FUZZ-VERDICT|PASS          (exit 0)
+
+### 5. The controls
+
+Three cells in the self-check, in the three states that make a rule a rule:
+
+    a failed build is red                            verdict=FAIL  ok
+    no failed build is green                         verdict=PASS  ok
+    a failed build does not hide a difference        verdict=FAIL  ok
+
+and measured by mutation: with `badcc` removed from `verdict_of`, the first
+of those reddens and the self-check reports FAIL.  `checks=12` now, from 9.
+
+The controls are in the self-check rather than in the loop on purpose: what
+was broken is `verdict_of`, so that is what a control has to fence.  A test
+that only measured "does a build failure get printed" would have passed the
+whole time.
+
+### 6. What the audit found about the audit
+
+Two smaller things fell out of reading the tool while fixing it, and neither
+is fixed here:
+
+  * `FBADCC` kept **one line** of the linker's stderr.  That is why the defect
+    survived: the one line shown names the *object file* and the *function*,
+    never the missing symbol, so a reader saw `ld.bfd: /tmp/cc...o: in function
+    'mv_set_card'` and had nothing to act on.  The symbol is on the next line.
+  * `--count 1 --seed 42` reaches `ran=0` before the fix and `ran=1` after it,
+    and it was **FAIL in both** -- the first draft of this paragraph said the
+    old run passed, and measuring it says otherwise: with one program, eight
+    of the ten families emit nothing, and the family audit reddens on that
+    before the comparator is reached.  The build bucket was not what made a
+    single-program run look wrong.  The `count=200` run is the one where it
+    mattered, and it is the one where the old verdict was PASS.
+
+### 7. Boundary
+
+This counts build failures.  It does not say the 175 programs that ran are
+*enough*, and it does not touch the family census: `refused-by-name=25` at
+seed 42 are programs the generator produced and the translator refused by
+name, and those are counted apart from `badcc` for the same reason parse
+errors always are -- they are the generator's subject, not the comparator's.
+
+The deeper shape is unchanged.  `ran=175` is a number about the tool's own
+work; nothing in this section checks that 175 is the right 175, or that the
+175 that ran resemble the 25 that did not.  A fuzzer whose refusals cluster
+in one family is a fuzzer that says "no divergence" about the families it
+reaches.
