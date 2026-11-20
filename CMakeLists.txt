@@ -2195,3 +2195,14 @@ set_tests_properties(python_asserts_selfcheck PROPERTIES WORKING_DIRECTORY ${CMA
 add_test(NAME rewrite_asserts_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/rewrite_asserts.py --self-test)
 set_tests_properties(rewrite_asserts_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
+
+# §10.242: the gate's stage count is derived from STAGE_SPECS, and six documents
+# wrote it down as 16 while the array said 24.  The checker compares each
+# declared copy against the count derived by running the array itself, so
+# adding a stage reddens the copies instead of quietly falsifying them.
+add_test(NAME stage_count_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_stage_count.py)
+set_tests_properties(stage_count_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;tests;regression")
+add_test(NAME stage_count_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_stage_count.py --self-test)
+set_tests_properties(stage_count_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")

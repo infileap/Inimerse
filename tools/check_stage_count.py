@@ -98,14 +98,42 @@ CN_NUM = r"[〇零一二三四五六七八九十百]+"
 # `[Ss]ixteen(?:th)?` and not `[Ss]ixteenth?` -- the latter is "Sixteen" plus a
 # required `t`, so it matched "Sixteenth" and missed "Sixteen".  Three real
 # locations spell the count as the plain word and were reported UNSPELLED for it.
-NUM_ANY = r"(?:%s|[0-9]+|[Ss]ixteen(?:th)?)" % CN_NUM
+#
+# The English side used to be that one word -- hardcoded in the alternation and
+# hardcoded again in `spell`.  That made the count unreadable in English the day
+# it stopped being sixteen: `Twenty-five stages` is not the word "sixteen", so a
+# location spelling it that way was not a candidate at all, and "not a candidate"
+# and "agrees" are the same output.  A reader that can only read the number it
+# was written for is the shape this whole file is about, one level up.
+#
+# So the words come from one table, and both the alternation and the parser read
+# it.  Only the ones a stage count can plausibly be: the teens through the
+# twenties, plus the round tens, because a count of twenty-five has to be
+# spellable in the documents that state it.  `spell` rejects anything else
+# rather than guessing.
+EN_UNITS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "thirty": 30, "forty": 40,
+}
+EN_NUM_WORDS = "|".join(
+    sorted((w for w in EN_UNITS), key=len, reverse=True)
+)
+# `twenty-five`, `twenty five`, `sixteen`, `Sixteenth`.
+EN_NUM = r"(?:%s)(?:[-\s](?:%s))?(?:th)?" % (EN_NUM_WORDS, "|".join(
+    w for w in EN_UNITS if EN_UNITS[w] < 10
+))
+NUM_ANY = r"(?:%s|[0-9]+|%s)" % (CN_NUM, EN_NUM)
 
 # The number and the word that can only mean "gate stage", adjacent.  The
 # lookbehind drops the ordinal and the demonstrative -- `第一阶段`, `每一阶段`,
 # `这一阶段` name a position in a list, not how many stages there are -- and it
 # is why `每一阶段都通过（十六` read the `一` and reported the count as 1.
 N_NEAR_STAGE = re.compile(
-    r"(?<![第每这那])(?P<n>%s)\s*(?:个)?\s*(?:阶段|stages?)" % NUM_ANY
+    r"(?<![第每这那])(?P<n>%s)\s*(?:个)?\s*(?:阶段|stages?)" % NUM_ANY,
+    re.IGNORECASE,
 )
 
 # A number next to a stage word is a claim about the gate's stages -- except
@@ -121,6 +149,23 @@ N_NEAR_STAGE = re.compile(
 # definition, and the definition lands in the residual -- which is where this
 # shape was, at 12 of 15, until a control run before the work started caught it.
 GIT_INDEX_STAGE = re.compile(r"required:\s*(?:[0-9]+|\$n|N)\s+stage\(s\)")
+
+# The number of places this tree writes git's `required: N stage(s)` phrase in
+# prose.  A ceiling, in the shape check_word_refs.py uses for its own debt, and
+# for the same reason: the rule below is right (a candidate whose carrier is
+# git's phrase is not a claim about the gate), but on this tree every carrier is
+# a document TALKING about that phrase -- `tools/gate.sh` explains the line that
+# emits it, `docs/AUDIT.md` quotes its output -- and none of them prints it.  The
+# rule reddens on presence, and presence includes the explanation.
+#
+# Measured at 11 with this file on the commit that added the ceiling.  It may
+# only fall, in the commit that removes one; a twelfth is a new carrier and is
+# a red, which is the half of the rule that was ever worth having.
+#
+# What this is not: a judgement that those 11 are fine.  Two of them are in the
+# file that emits the phrase, four lines apart in one comment, and a reader who
+# wanted to know which occurrence is the emitter cannot learn it here.
+GIT_INDEX_CEILING = 11
 
 # The same word as a verb: git asking what it would stage.
 GIT_VERB_STAGE = re.compile(r"would\s+(?:[a-z]+\s+)?stage\b")
@@ -155,7 +200,16 @@ DECLARED = [
         r"强制全部 (?P<n>%s) 个" % NUM_ANY,
         None,
     ),
-    ("must-equal", "docs/AUDIT.md", r"排在第 .+ 阶段之后", None, None),
+    (
+        "record",
+        "docs/AUDIT.md",
+        r"排在第 .+ 阶段之后",
+        None,
+        "an append-only ledger entry: it records where a stage was placed in the "
+        "list on the day the decision was taken, not how many stages the gate "
+        "has now -- the placement is a fact about that decision and re-reading "
+        "it as a count of today would be reading history as a claim",
+    ),
     # --- record: a ledger line naming what the count was when written -----
     # Removed, not moved.  docs/AUDIT.md:10824 and :10832 spell the phrase
     # "sixteen BRANCHES all green", and the character they use is this tree's
@@ -195,7 +249,12 @@ DECLARED = [
     (
         "record",
         "docs/AUDIT.md",
-        r"每一阶段都通过（",
+        # Anchored on the ledger's own marker.  `每一阶段都通过（` alone matched
+        # three lines: the entry that quotes the run, and two later paragraphs
+        # that discuss that entry -- a location pattern that matches the prose
+        # about a record is not locating the record, and `expected exactly 1` is
+        # what said so.
+        r"记录：\*\* 两笔.+逐字末行是「每一阶段都通过（",
         r"每一阶段都通过（(?P<n>%s)分之" % CN_NUM,
         "an append-only ledger entry: it quotes a run's last line as it was then",
     ),
@@ -265,8 +324,19 @@ def spell(pattern, line: str):
     if re.fullmatch(CN_NUM, raw):
         return cn_to_int(raw), raw
     low = raw.lower()
-    if low in ("sixteen", "sixteenth"):
-        return 16, raw
+    # The English table, not the literal word: `Twenty-five` has to read as 25
+    # or a document that spells the count that way is a location this checker
+    # cannot read, and an unreadable location looks exactly like an agreeing one.
+    if re.fullmatch(EN_NUM, raw, re.IGNORECASE):
+        body = re.sub(r"th$", "", low)
+        parts = [p for p in re.split(r"[-\s]+", body) if p]
+        if parts and parts[0] in EN_UNITS:
+            value = EN_UNITS[parts[0]]
+            if len(parts) == 1:
+                return value, raw
+            if len(parts) == 2 and parts[1] in EN_UNITS and EN_UNITS[parts[1]] < 10:
+                return value + EN_UNITS[parts[1]], raw
+        return None, raw
     try:
         return int(raw), raw
     except ValueError:
@@ -403,6 +473,21 @@ def scan(root, derived, declared=None):
                     # the first, which makes the second look like an unrelated
                     # match.  That is how "should redden 5" was predicted for a
                     # rule that reddens 8.
+                    #
+                    # But the phrase being PRESENT is not the phrase being
+                    # PRINTED.  `tools/gate.sh` has exactly one place that emits
+                    # it -- `echo "required: $n stage(s)  [$label]"` -- and the
+                    # gate explains that line in two long comments, while
+                    # docs/AUDIT.md quotes its output nine times.  A rule that
+                    # reddens on presence therefore reddens on the documentation
+                    # of the thing it is looking for, which is a check that can
+                    # never go green and so was never wired in.
+                    #
+                    # The separator is measured, not stylistic: the emitter
+                    # interpolates `$n`, so its text spells `$n`; every prose
+                    # occurrence spells a literal number, because prose is talking
+                    # about a run.  A homograph is a literal number, and one that
+                    # interpolates is the real emitter.
                     git_spans = [g.span() for g in GIT_INDEX_STAGE.finditer(ln)]
                     for m in N_NEAR_STAGE.finditer(ln):
                         if any(s <= m.start() and m.end() <= e for s, e in git_spans):
@@ -410,7 +495,11 @@ def scan(root, derived, declared=None):
                                 "%s:%d  col=%d  %r"
                                 % (rel, i + 1, m.start(), m.group(0))
                             )
-    reds += len(homographs)
+    # The ceiling applies only to the homograph bucket: those are the tree's
+    # prose about git's phrase, and the rule cannot tell them from the emitter.
+    # A must-equal disagreement and a GONE location stay absolute.
+    if len(homographs) > GIT_INDEX_CEILING:
+        reds += len(homographs) - GIT_INDEX_CEILING
 
     ledger = {
         "derived": derived,
@@ -604,6 +693,45 @@ def self_test():
             )
     except Exception as exc:  # noqa: BLE001
         failures.append("the self-test could not measure: %s: %s" % (type(exc).__name__, exc))
+
+    # The ceiling, in three states.  A ceiling that only ever reads the number
+    # it was pinned at is a constant with extra steps: what makes it a ceiling
+    # is that `above` reddens and `at` does not, and both have to be measured or
+    # the first branch that gets deleted looks like both of them.
+    ceiling_root = tempfile.mkdtemp(prefix="stage-count-ceiling-")
+    atexit.register(shutil.rmtree, ceiling_root, ignore_errors=True)
+    ceiling_cases = []
+    for count in (GIT_INDEX_CEILING, GIT_INDEX_CEILING + 1):
+        # One root per case: two files under one root add up, and a case whose
+        # neighbours contribute to its count is a case about the sum.
+        case_root = os.path.join(ceiling_root, "case%d" % count)
+        os.makedirs(os.path.join(case_root, "tools"), exist_ok=True)
+        os.makedirs(os.path.join(case_root, "docs"), exist_ok=True)
+        with open(os.path.join(case_root, GATE_REL), "w", encoding="utf-8") as fh:
+            fh.write('STAGE_SPECS=(\n  "a|first|stage_a"\n)\n')
+        rel = "docs/stg%d.md" % count
+        with open(os.path.join(case_root, rel), "w", encoding="utf-8") as fh:
+            fh.write("".join("run said required: %d stage(s)\n" % n for n in range(count)))
+        ceiling_cases.append((count, case_root))
+    try:
+        for count, case_root in ceiling_cases:
+            cderived, _ = derive(case_root)
+            rc, lines, led = scan(case_root, cderived, [])
+            ok = (rc == 0) if count <= GIT_INDEX_CEILING else (rc == 1)
+            if not ok:
+                failures.append(
+                    "%d homograph(s) against a ceiling of %d must be rc=%d, got rc=%d"
+                    % (count, GIT_INDEX_CEILING, 0 if count <= GIT_INDEX_CEILING else 1, rc)
+                )
+            if led["homographs"] != count:
+                failures.append(
+                    "the ledger must count %d homograph(s), it counted %d"
+                    % (count, led["homographs"])
+                )
+    except Exception as exc:  # noqa: BLE001
+        failures.append(
+            "the ceiling self-test could not measure: %s: %s" % (type(exc).__name__, exc)
+        )
 
     print("check_stage_count --self-test")
     if failures:

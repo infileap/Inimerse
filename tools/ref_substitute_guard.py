@@ -93,7 +93,7 @@ Usage
     python3 tools/ref_substitute_guard.py --self-test     # build a synthetic
                                                           # offender, require red
 
-Not wired into `tools/gate.sh`: the sixteen stages answer "is this tree
+Not wired into `tools/gate.sh`: the twenty-five stages answer "is this tree
 correct", and this answers "are those tools correct".  Run it on demand.
 """
 
