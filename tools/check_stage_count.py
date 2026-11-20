@@ -190,13 +190,53 @@ GIT_INDEX_CEILING = 11
 # Precision over recall: a rule that fires on 437 lines to catch one real defect
 # teaches its reader to skip the output, which is how ceilings get raised.
 # What makes a statement of the total a RECORD rather than a claim: the sentence
-# around it names the tree it was read on.  Same discriminator check_obs_markers
-# uses -- a resolvable revision token -- plus the date form this tree writes.
-# It is not a tense whitelist: "20 stages" and "20 stages were green" are the
-# same string about a number, and only the token says which question is answered.
-HISTORICAL = re.compile(
-    r"(\b[0-9a-f]{7,40}\b|\d{4}-\d{2}-\d{2}|测得|本轮实测|当时|上一笔|下一笔提交)"
-)
+# around it names the tree it was read on.
+#
+# The first version of this got the rule from check_obs_markers and then failed
+# to copy the part that makes it a rule.  It matched the SHAPE of a revision
+# token -- seven to forty hex characters -- and a date, and the words 测得 /
+# 当时.  All three are wording, and wording is not a fact:
+#
+#     `tools/gate.sh` 的 20 个阶段全过（在 commit abc1234 上测得）
+#
+# passed, because `abc1234` has the shape.  It does not resolve in this
+# repository; nothing was measured on it.  A shape that can be typed by hand is
+# not evidence that anything was read.
+#
+# So the token has to resolve: every hex-shaped candidate in the window is put
+# through `git rev-parse --verify <tok>^{commit}`, which is the discriminator
+# check_obs_markers states and one it actually applies.  The date and the
+# Chinese words are gone.  A date bounds a reading but names no tree, and a
+# reader who wants the exemption has to name the commit -- which is the answer
+# to "which tree was this read on", not a synonym for it.
+HEX_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def _resolves_in(token: str, repo_root: str) -> bool:
+    """Does this token name a commit in the repository at repo_root?"""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "--verify", token + "^{commit}"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def record_token(window: str, repo_root: str, resolve=None):
+    """The token in this window that names a tree, or None.
+
+    `resolve` is injectable so the self-test can measure the decision procedure
+    without depending on this repository's object database -- and the resolver
+    itself is measured separately, against commits that do and do not exist.
+    """
+    resolve = resolve or (lambda tok: _resolves_in(tok, repo_root))
+    for candidate in HEX_TOKEN.findall(window):
+        if resolve(candidate):
+            return candidate
+    return None
 
 GATE_TOTAL = re.compile(
     r"(?:`?tools/gate\.sh`?\s*的|`?gate\.sh`?\s*的|门禁共(?:有)?|`?gate\.sh`?\s*共)"
@@ -419,7 +459,7 @@ def _read(path):
         return fh.read()
 
 
-def scan(root, derived, declared=None):
+def scan(root, derived, declared=None, resolve=None):
     """Return (rc, lines, ledger)."""
     declared = DECLARED if declared is None else declared
     out, reds = [], 0
@@ -564,9 +604,9 @@ def scan(root, derived, declared=None):
                         continue
                     found, raw = spell(r"(?P<n>%s)" % NUM_ANY, m.group("n"))
                     # A statement of the total is judged against today only when
-                    # nothing around it says which tree it was read on.  The
-                    # window looks BACK one non-empty line and FORWARD the
-                    # paragraph, because a heading is where the tree gets named:
+                    # nothing around it names a tree it was read on.  The window
+                    # looks BACK one non-empty line and FORWARD the paragraph,
+                    # because a heading is where the tree gets named:
                     # `**重记 pin 与门禁**（下一笔提交 85bebc4 上测得）` is the
                     # line above the paste, and without this the checker reddens
                     # a transcript for being a transcript.
@@ -575,10 +615,13 @@ def scan(root, derived, declared=None):
                         + [ln]
                         + [r.strip() for r in rows[i + 1 : i + 3]]
                     )
-                    if HISTORICAL.search(window):
-                        totals.append((rel, i + 1, found, raw, ln.strip()[:110], "record"))
+                    token = record_token(window, root, resolve)
+                    if token:
+                        totals.append(
+                            (rel, i + 1, found, raw, ln.strip()[:110], "record", token)
+                        )
                         continue
-                    totals.append((rel, i + 1, found, raw, ln.strip()[:110], "claim"))
+                    totals.append((rel, i + 1, found, raw, ln.strip()[:110], "claim", None))
                     if found != derived:
                         reds += 1
 
@@ -618,15 +661,22 @@ def scan(root, derived, declared=None):
             "of the tree they name. %d claim(s) disagree with %d."
             % (len(totals), n_claims, n_recs, ledger["total_reds"], derived)
         )
-        for rel, line, found, raw, text, kind in totals:
+        for rel, line, found, raw, text, kind, token in totals:
             mark = "ok      "
             if kind == "claim" and found != derived:
                 mark = "MISMATCH"
             elif kind == "record":
                 mark = "record  "
             out.append(
-                "  %s  %s:%d  spells %s  -- %s"
-                % (mark, rel, line, raw, text)
+                "  %s  %s:%d  spells %s  %s-- %s"
+                % (
+                    mark,
+                    rel,
+                    line,
+                    raw,
+                    ("[tree %s] " % token) if token else "",
+                    text,
+                )
             )
     out.append(
         "check_stage_count: %s derives %d stage(s); %d location(s) declared "
@@ -847,13 +897,34 @@ def self_test():
     os.makedirs(os.path.join(total_root, "docs"), exist_ok=True)
     with open(os.path.join(total_root, GATE_REL), "w", encoding="utf-8") as fh:
         fh.write('STAGE_SPECS=(\n  "a|first|stage_a"\n  "b|second|stage_b"\n)\n')
+    # The resolver is injected here on purpose.  These cases are about the
+    # DECISION -- does this window name a tree? -- and making them depend on
+    # this repository's object database would mean a case that stops measuring
+    # when a commit is garbage-collected or when the test runs on a shallow
+    # clone.  What the resolver itself does is measured separately, below, on
+    # tokens that exist and tokens that do not.
+    REAL_TOKEN = "a1b2c3d"
+    FAKE_TOKEN = "deadbee"
+
+    def resolve(tok):
+        return tok == REAL_TOKEN
+
     total_cases = [
         ("a wrong total is a claim", "docs/claim.md", "`tools/gate.sh` 的 7 个阶段全过\n", True),
         (
-            "the same total with a tree beside it is a record",
+            "the same total with a RESOLVING tree beside it is a record",
             "docs/record.md",
-            "**重记门禁**（下一笔提交 abc1234 上测得）：`tools/gate.sh` 的 7 个阶段全过\n",
+            "**重记门禁**（下一笔提交 %s 上测得）：`tools/gate.sh` 的 7 个阶段全过\n" % REAL_TOKEN,
             False,
+        ),
+        (
+            # The defect this rule was written to fix, kept as a case: a token
+            # with the SHAPE of a revision is not a tree.  `abc1234` is not a
+            # commit here, and before the resolver this line was exempt.
+            "a token that does NOT resolve does not excuse the total",
+            "docs/forged.md",
+            "**重记门禁**（下一笔提交 %s 上测得）：`tools/gate.sh` 的 7 个阶段全过\n" % FAKE_TOKEN,
+            True,
         ),
         ("a correct total is neither", "docs/right.md", "`tools/gate.sh` 的 2 个阶段\n", False),
     ]
@@ -862,7 +933,7 @@ def self_test():
         for name, rel, text, want_red in total_cases:
             with open(os.path.join(total_root, rel), "w", encoding="utf-8") as fh:
                 fh.write(text)
-            rc, lines, led = scan(total_root, tderived, [])
+            rc, lines, led = scan(total_root, tderived, [], resolve=resolve)
             got_red = rc != 0
             if got_red != want_red:
                 failures.append(
@@ -873,6 +944,29 @@ def self_test():
     except Exception as exc:  # noqa: BLE001
         failures.append(
             "the total self-test could not measure: %s: %s" % (type(exc).__name__, exc)
+        )
+
+    # The resolver, measured against the real repository rather than a stub.
+    # A checker that exempts on a shape was the defect; a self-test that only
+    # ever says yes to its own stub would be the same defect wearing a test.
+    # `HEAD` exists everywhere this runs; a 40-character run of `d` does not.
+    try:
+        head_ok = _resolves_in("HEAD", REPO_ROOT)
+        fake_ok = _resolves_in("d" * 40, REPO_ROOT)
+        if not head_ok:
+            failures.append("the resolver says HEAD does not resolve; it cannot measure")
+        if fake_ok:
+            failures.append(
+                "the resolver says a nonexistent 40-char token resolves; it is a shape test"
+            )
+        picked = record_token("（在 commit %s 上测得）" % ("d" * 40), REPO_ROOT)
+        if picked is not None:
+            failures.append(
+                "record_token accepted a shape that does not resolve: %r" % picked
+            )
+    except Exception as exc:  # noqa: BLE001
+        failures.append(
+            "the resolver self-test could not measure: %s: %s" % (type(exc).__name__, exc)
         )
 
     print("check_stage_count --self-test")
