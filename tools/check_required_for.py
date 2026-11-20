@@ -78,64 +78,52 @@ def _write(path: str, text: str) -> None:
 CASES = [
     (
         "a stage function no registry entry names",
-        [
-            # `stage_links` specifically: a docs/* path really forces `links`, so
-            # the derivation reaches this function.  Renaming
-            # `stage_probe_failure_paths` looked like the same case and was not --
-            # docs/* does not force `probe-failure-paths`, so nothing on the probe
-            # path ever looked at it.  A case that injects a defect the probe path
-            # cannot see measures the probe, not the guard.
-            (GATE_REL, "stage_links() {", "stage_links_renamed() {"),
-        ],
+        [(GATE_REL, "stage_links() {", "stage_links_renamed() {")],
+        "no registry entry names it",
     ),
     (
         "text-integrity's scope reads as empty",
         [
-            # BOTH tuples.  The gate's awk keys on each name separately, so
-            # renaming one leaves the other's globs readable and the read is not
-            # empty.  The first version of this case renamed neither (it appended
-            # a `frozenset() or`), the second renamed only TEXT_SUFFIXES, and
-            # both times the guard correctly stayed silent because there was
-            # still something to read.
             ("tools/check_text_integrity.py", "TEXT_SUFFIXES = frozenset(", "TEXT_SUFFIXES_X = frozenset("),
             ("tools/check_text_integrity.py", "TEXT_NAMES = frozenset(", "TEXT_NAMES_X = frozenset("),
         ],
+        "could not read TEXT_SUFFIXES/TEXT_NAMES",
     ),
     (
         "the call-site table reads as empty",
-        [
-            # Neuter the awk that harvests call sites, so no edge is derived.
-            (GATE_REL, "    /^stage_[a-z_]+\\(\\) *\\{/ {", "    /^stage_NEVER_MATCHES_[a-z_]+\\(\\) *\\{/ {"),
-        ],
+        [(GATE_REL, "    /^stage_[a-z_]+\\(\\) *\\{/ {", "    /^stage_NEVER_MATCHES_[a-z_]+\\(\\) *\\{/ {")],
+        "read no call site out of any stage_ function",
     ),
     (
-        "a rule names a stage no stage answers to",
+        "a rule names a stage no stage answers to (dirty input)",
         [
             (
                 GATE_REL,
                 '  "docs/*|links doc-paths line-refs release-tags obs-markers fences"',
                 '  "docs/*|links doc-paths line-refs release-tags obs-markers fences no-such-stage"',
-            ),
+            )
         ],
+        "a rule names stage 'no-such-stage'",
+    ),
+    (
+        # The same defect with NOTHING to answer for.  Before §10.246 this was
+        # silent: the rule-table check looped over the picked stages, so an
+        # empty `git diff` skipped it and the command answered zero with exit 0.
+        "a rule names a stage no stage answers to (clean input)",
+        [
+            (
+                GATE_REL,
+                '  "docs/*|links doc-paths line-refs release-tags obs-markers fences"',
+                '  "docs/*|links doc-paths line-refs release-tags obs-markers fences no-such-stage"',
+            )
+        ],
+        "a rule names stage 'no-such-stage'",
+        "clean",
     ),
     (
         "a registered stage only the 'all' rules reach",
-        [
-            # Removing the rule is not enough: `own` is set by EITHER the scope
-            # table or a derived call-site edge, and every one of the 25 stages
-            # has an edge too (`stage_word_refs` gets one from the
-            # `tools/check_word_refs.py` path in its own body).  To make a stage
-            # all-only on this tree you have to delete both, i.e. delete the
-            # stage's implementation -- a mutation that tests this case instead
-            # of the guard.
-            #
-            # So this case is recorded as UNMEASURABLE on this tree rather than
-            # deleted, because the check it covers is real and the reason it
-            # cannot fire here is a property of the tree worth writing down: on
-            # today's tree the condition is unreachable, which is the safe
-            # direction and is not the same as "the check works".
-            (GATE_REL, "THIS-CASE-IS-NOT-INJECTED", "unused"),
-        ],
+        [(GATE_REL, "THIS-CASE-IS-NOT-INJECTED", "unused")],
+        "",
         "unmeasurable",
     ),
 ]
@@ -176,8 +164,16 @@ def make_worktree(base: str) -> str:
     return path
 
 
-def run_case(wt: str, name: str, subs) -> tuple[bool, str]:
-    """Inject one defect into a fresh worktree and require exit 2."""
+def run_case(wt: str, name: str, subs, expected: str, clean: bool = False) -> tuple[bool, str]:
+    """Inject one defect into a fresh worktree and require exit 2.
+
+    `clean=True` runs the command with NOTHING to answer for -- the probe path
+    is left untouched, so `git diff` names nothing and the command has no
+    changed path to report on.  That is not a variation for its own sake: it is
+    the input on which the rule-table check used to be silent, and a guard that
+    is silent when the answer is "nothing to do" is silent on the run most
+    likely to be believed.
+    """
     # subs is [(rel, old, new), ...]: a defect can need more than one edit, and
     # a case that only half-injects it measures the half.
     originals = []
@@ -218,16 +214,27 @@ def run_case(wt: str, name: str, subs) -> tuple[bool, str]:
         dirty = os.path.join(wt, probe)
         existed = os.path.isfile(dirty)
         marker = ""
-        if existed:
+        if existed and not clean:
             marker = _read(dirty)
             _write(dirty, marker + "\n<!-- required-for case -->\n")
         args = ["bash", os.path.join(wt, GATE_REL), "--required-for", probe]
         proc = subprocess.run(args, cwd=wt, capture_output=True, text=True)
-        if existed:
+        if existed and not clean:
             _write(dirty, marker)
-        fired = proc.returncode == 2
-        detail = (proc.stderr or proc.stdout).strip().splitlines()
-        first = detail[0][:110] if detail else "(no output)"
+        # Exit 2 is not enough.  Bash itself exits 2 on a syntax error, so a
+        # mutation that breaks the script's syntax and a guard that refuses the
+        # tree both report rc=2 -- measured: reverting a change by hand produced
+        # `syntax error near unexpected token 'done'` and this checker called it
+        # FIRED.  The case must also see the message the guard is supposed to
+        # print, which is the only thing that distinguishes "refused on purpose"
+        # from "did not run".
+        both = (proc.stderr or "") + (proc.stdout or "")
+        spoke = expected in both
+        fired = proc.returncode == 2 and spoke
+        detail_lines = [ln for ln in both.strip().splitlines() if ln.strip()]
+        first = detail_lines[0][:100] if detail_lines else "(no output)"
+        if proc.returncode == 2 and not spoke:
+            return False, "rc=2 but NOT the guard's message: %s" % first
         return fired, "rc=%d  %s" % (proc.returncode, first)
     finally:
         for rel, text in originals:
@@ -240,12 +247,13 @@ def measure(repo_root: str) -> tuple[int, list[tuple[str, bool, str]]]:
     try:
         wt = make_worktree(base)
         for case in CASES:
-            name, subs = case[0], case[1]
-            if len(case) > 2 and case[2] == "unmeasurable":
+            name, subs, expected = case[0], case[1], case[2]
+            mode = case[3] if len(case) > 3 else None
+            if mode == "unmeasurable":
                 results.append((name, None, "not injectable on this tree -- see CASES"))
                 continue
             try:
-                ok, detail = run_case(wt, name, subs)
+                ok, detail = run_case(wt, name, subs, expected, clean=(mode == "clean"))
             except Exception as exc:  # noqa: BLE001
                 ok, detail = False, "could not measure: %s: %s" % (type(exc).__name__, exc)
             results.append((name, ok, detail))
@@ -271,16 +279,35 @@ def self_test() -> int:
     base = tempfile.mkdtemp(prefix="check_required_for_selftest_")
     try:
         wt = make_worktree(base)
-        name, subs = CASES[0]
+        name, subs, expected = CASES[0][0], CASES[0][1], CASES[0][2]
         # A deliberately absent anchor: the case must report that it could not
         # inject, not that the guard fired.
         bogus = [(subs[0][0], "this text is not in the file", subs[0][2])]
-        ok, detail = run_case(wt, name, bogus)
+        ok, detail = run_case(wt, name, bogus, expected)
         if ok:
             failures.append("a missing anchor must not count as the check firing")
         if "anchor appears 0 times" not in detail:
             failures.append(
                 "a missing anchor must say so, got: %s" % detail[:120]
+            )
+
+        # And the other way a case can lie: bash exits 2 on a syntax error, so
+        # a mutation that breaks the script looks exactly like a guard that
+        # refused.  Measured before this control existed: reverting a change by
+        # hand produced `syntax error near unexpected token 'done'` and the
+        # checker reported FIRED.  The expected message is the only thing that
+        # tells "refused on purpose" from "did not run".
+        name, subs, expected = CASES[0][0], CASES[0][1], CASES[0][2]
+        broken = [(subs[0][0], subs[0][1], subs[0][1][:-1] + " {{{")]
+        ok, detail = run_case(wt, name, broken, expected)
+        if ok:
+            failures.append(
+                "a syntax error (bash also exits 2) must not count as the guard firing"
+            )
+        if "NOT the guard's message" not in detail:
+            failures.append(
+                "a syntax error must be reported as the wrong message, got: %s"
+                % detail[:120]
             )
     except Exception as exc:  # noqa: BLE001
         failures.append("the self-test could not measure: %s: %s" % (type(exc).__name__, exc))

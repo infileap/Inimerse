@@ -1026,8 +1026,25 @@ required_for() {
 
   # A rule that names a stage nobody answers to has quietly stopped excusing
   # anything, or quietly started excusing the wrong thing.
-  if [ "${#picked[@]}" -gt 0 ]; then
-    for sel in "${picked[@]}"; do
+  #
+  # This reads the RULE TABLE, not the answer that was picked.  The first
+  # version looped over `picked`, and that made the check a function of the
+  # INPUT: with a clean path -- `git diff` naming nothing -- `picked` is empty,
+  # the loop body never runs, and a path table naming a stage that does not
+  # exist answers `0 stage(s)` and exits 0.  The same broken table exited 2 for
+  # any dirty file, so the guard could only be observed by the run that already
+  # had the defect.  Measured: with `no-such-stage` appended to the docs/* rule,
+  # a clean docs/BOARD.md gives exit 0; one appended newline gives exit 2.
+  #
+  # A guard that only fires when there is something to answer is a guard that
+  # is silent exactly when the answer is "nothing to do" -- which is the run
+  # most likely to be trusted.  The rule table is available before any path is
+  # read, so the check moves here, where it does not depend on the input.
+  for rule in "${REQUIRED_SCOPES[@]}"; do
+    sels="${rule#*|}"
+    [ "$sels" = "-" ] && continue
+    [ "$sels" = "all" ] && continue
+    for sel in $sels; do
       hit=0
       for path in "${STAGE_WANTED[@]}"; do
         [ "$path" = "$sel" ] && hit=1 && break
@@ -1038,7 +1055,7 @@ required_for() {
         exit 2
       fi
     done
-  fi
+  done
 
   # And the other direction: a registered stage no rule can reach is a stage
   # this command would excuse for every change there is.  Reachability counts
