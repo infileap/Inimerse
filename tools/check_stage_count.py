@@ -593,7 +593,7 @@ def scan(root, derived, declared=None):
         "undeclared": len(undeclared),
         "homographs": len(homographs),
         "totals": len(totals),
-        "total_reds": sum(1 for t in totals if t[2] != derived),
+        "total_reds": sum(1 for t in totals if t[5] == "claim" and t[2] != derived),
     }
     out.append("")
     if homographs:
@@ -610,10 +610,13 @@ def scan(root, derived, declared=None):
         )
     if totals:
         out.append("")
+        n_claims = sum(1 for t in totals if t[5] == "claim")
+        n_recs = len(totals) - n_claims
         out.append(
             "check_stage_count: %d line(s) say how many stages the gate HAS "
-            "(the possessive form); %d of them disagree with %d."
-            % (len(totals), ledger["total_reds"], derived)
+            "(the possessive form); %d judged as claims, %d exempt as records "
+            "of the tree they name. %d claim(s) disagree with %d."
+            % (len(totals), n_claims, n_recs, ledger["total_reds"], derived)
         )
         for rel, line, found, raw, text, kind in totals:
             mark = "ok      "
