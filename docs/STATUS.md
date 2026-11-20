@@ -15884,3 +15884,143 @@ found if someone asks which reason, and this route had been discarding it.
 And the family number stands where §10.248 left it: `try-catch` lost 46% of its
 emit rate to this refusal, so the fuzzer's verdict for that family was always
 an answer about the half that got through.
+
+## §10.250 — the answer that was there and never asked for
+
+### 1. Where the next thing was
+
+§10.249 ended by asking whether the `try-enters` rule could be relaxed safely,
+and the measurement said the relaxation was over-broad.  Re-reading that work
+turned up a different lead: while comparing the AOT route against the
+interpreter over the corpus, one program disagreed on the baseline -- before
+any change of mine.
+
+    vtest/xrange_t2_v06.im
+    interpreter: xrange-ok bad=0 ...
+    AOT:         xrange-ok bad=1 ... declbad-in
+
+`bad=1` came from one line of the program:
+
+    if !(42 in x.declared) { bad = bad + 1; say "declbad-in" }
+
+### 2. The defect, minimized
+
+    type Byte = [0~255]
+    x: Byte = 42
+    y = 42
+    say str(x.declared)        interpreter: set(R interval)   AOT: nil
+    say 42 in x.declared       interpreter: true              AOT: false
+    say str(y.declared)        interpreter: nil               AOT: nil
+
+`x` was declared with a constraint; `y` was not.  The interpreter answers the
+declared set for `x` and nil for `y`.  The route answered nil for both, so
+every `.declared` in every program was nil on this route.
+
+### 3. Why, and why it was invisible
+
+`x.declared` is not a field read.  The compiler emits it as a TWO-argument
+builtin call -- the value, then the global's slot:
+
+    emit(OP_PUSH_REG, a)          the value
+    emit(OP_LOADK_INT, gr, g)     the slot, -1 when the object is not a name
+    emit(OP_PUSH_REG, gr)
+    emit(OP_CALL_BUILTIN, result, "declared", 2)
+
+and the interpreter's `builtin_declared` reads `vm->global_bound[gidx]` and
+answers the set at that index, or nil.
+
+The route's arm for `declared` was:
+
+    int ac = ir_insn_r3(in);
+    if (ac >= 2) buf_fmt(b, "    v[%d] = mv_nil();", r1);
+    else         buf_fmt(b, "    v[%d] = mvargs[asp-1];", r1);
+
+Its comment says "ONE ARGUMENT IS IDENTITY, TWO OR MORE IS NIL" and cites a
+measurement: `declared(1)` is 1, `(1, 2)` is nil.  That measurement is
+correct -- for the FUNCTION.  It does not cover the MEMBER, which is the same
+opcode with the same arity and a different question.  A passing test can only
+say the arm agrees about `declared(a, b)`; nothing in the tree asked it about
+`x.declared`, and the arity table had one row for both.
+
+The route already had the table.  `mv_bound[g]` is emitted for a program that
+declares a constraint, holding the set index plus one -- the same encoding the
+interpreter's `global_bound` uses, written by the same store guard.  The
+`declared` arm simply never read it.
+
+### 4. The fix, in two parts, both measured
+
+Reading `mv_bound[g]` with `g` from the argument stack is the first part.  It
+alone broke the build:
+
+    error: 'mv_bound' undeclared (first use in this function)
+
+because the table is emitted only when `g_bound_used` is set, and a program
+with no `name: set` declaration does not set it.  The second part is that
+guard -- `if (!g_bound_used) v[r] = mv_nil();`.
+
+Both were needed, and the first one produced a COMPILE failure rather than a
+wrong answer, which is worse: the whole program stops building.
+
+### 5. The evidence
+
+The two-route comparison over the corpus, before and after:
+
+    this tree          translated=41  match=41  differ=0
+    with 10.249's relaxation applied (not landed)   translated=43  match=42  differ=1
+
+The 43-row is the reading that found the defect: §10.249's relaxation was in
+the working tree at that moment, two more programs translated, and
+`xrange_t2_v06` was the one that disagreed.  The relaxation was then reverted
+and the fix applied to the tree that is actually here, so the number a reader
+can reproduce is 41/41.  Both rows agree on the thing that matters -- with the
+fix, nothing differs.
+
+The new case, `mir_declared_member`, and it is a witness in both directions.
+With the fix reverted the route answers:
+
+    interp-out=b'set(R interval)\nnil\ntrue\nfalse\n'
+    mir-out=b'24\n25\nfalse\nfalse\n'
+
+`24` and `25` are register numbers.  The old arm fell through to the
+one-argument branch for these calls -- not nil, which is what it said it did,
+but whatever the argument stack happened to hold.  A test that had only
+checked for nil would have passed on a wrong answer.
+
+The case carries both halves: the declared variable and the undeclared one,
+because a fix that answered the set for both would pass the first line alone.
+
+### 6. What the audit found about the audit
+
+Two problems, both caught by the suite rather than by me:
+
+  * the new case failed with `'mv_bound' undeclared` -- the missing guard,
+    described above;
+  * the new case then failed the allocation criterion: `allocs=3` against a
+    default of 0.  The allocation table records, per case, what a program is
+    expected to allocate; a case absent from the table is expected to allocate
+    nothing.  It was not a leak (`freed=3, live=0`) -- three registered blocks,
+    all swept -- so the entry was recorded with the measured values rather than
+    the case being weakened to allocate nothing.
+
+An earlier draft of this section's own change was worse than that: the first
+`declared` arm I wrote named a variable that does not exist (`mv_bound_n`) and
+read `root->` inside a function whose context is `c->`.  Both were compile
+errors, which is the good outcome; the silent one would have been the table
+read with the wrong bound.
+
+### 7. Boundary
+
+This fixes one member on one route.  `.range` was already right, and the other
+member properties (`.type`, `.int`, `.float`, `.str`, `.bool`) go through
+`emit_builtin_call` with arity 1 and were not examined here.
+
+The corpus is 41 programs, and it is the corpus that exists -- a shape the
+route refuses is not compared at all.  `xrange_t2_v06` is the only program in
+the tree that reads `.declared` in a way the interpreter and the route can both
+run, which is why the defect survived: one program, and it was being compared
+by nothing.
+
+And the arity arm is still an arity arm.  `declared(a, b)` for two VALUES is
+nil and stays nil; only the member form, whose second argument is a slot, reads
+the table.  The two are the same opcode, and the code tells them apart by what
+the second argument means -- not by how it looks.
