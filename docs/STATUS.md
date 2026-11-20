@@ -15018,12 +15018,166 @@ right; it says they are not claims of this shape, and separates the one
 kind that is.
 
 A possessive with a tree marker beside it is exempt, so a wrong total
-written next to an old commit hash passes.  That is the same trade
+written next to a **resolving** commit passes.  That is the same trade
 `check_obs_markers` makes, and for the same reason: a record is allowed to
-be old, and the marker is what makes it a record.
+be old, and a token that `git rev-parse` resolves is what makes it one.
+
+The first version of this exemption did not make that trade.  It matched the
+SHAPE of a revision -- seven to forty hex characters -- plus a date and the
+words 测得 / 当时, so
+
+    the gate's 20 stages all passed (measured at commit abc1234)
+
+passed, because `abc1234` looks like a commit and is not one.  (The example
+is written in English here: this checker reads the tree it is written in, so
+spelling the possessive form out would make this paragraph a red one.)  A shape that
+can be typed by hand is not evidence that anything was read, and the comment
+above that regex already said "a resolvable revision token" -- the comment
+was right and the code was a wording whitelist beside it.  §10.244 is the
+measurement and the fix.
 
 Three of the fixes here were found by reading the tree, not by the rule
 that now guards them.  The rule would have found the `PLAN_V06.md` line and
 neither of the other two, because neither is possessive.  A rule is not a
 substitute for a reader; it is what stops the same defect from coming back
 in the shape it came back in last time.
+
+## §10.244 — the exemption that only needed the shape
+
+### 1. Where the next thing was
+
+§10.243 added one rule that judges a claim about the gate's total, and one
+exemption that lets a record through.  The exemption's comment said:
+
+    What makes a statement of the total a RECORD rather than a claim: the
+    sentence around it names the tree it was read on.  Same discriminator
+    check_obs_markers uses -- a resolvable revision token -- plus the date
+    form this tree writes.
+
+"Resolvable" is the operative word, and it is not a word the code checked.
+
+### 2. The shape of the thing
+
+The exemption was a regex:
+
+    HISTORICAL = re.compile(r"(\b[0-9a-f]{7,40}\b|\d{4}-\d{2}-\d{2}|测得|本轮实测|当时|上一笔|下一笔提交)")
+
+Three alternatives, and all three are **wording**: a run of hexadecimal
+characters, the shape of a date, and some Chinese phrases that mean "as
+measured then".  None of them is a fact about this repository.  All of them
+can be typed by hand.
+
+So the exemption did not ask "which tree was this read on".  It asked
+"does the sentence look like it names one", which is the same question as
+"does the sentence contain a long hex word", and the answer is yes for any
+hex word at all.
+
+### 3. The defect, demonstrated
+
+Appended to `docs/STATUS.md`, with a total that is wrong by five and a
+token that names nothing:
+
+    the gate's 20 stages all passed (measured at commit abc1234)
+
+  * before the fix: `rc=0`.  The line is counted as a `record`, the run
+    says `2 exempt as records of the tree they name`, and the tree it named
+    does not exist.  `git rev-parse --verify abc1234^{commit}` fails.
+  * after the fix: `rc=1`, `MISMATCH ... spells 20`, and the ledger's
+    "judged as claims / exempt as records" split moves the line into the
+    judged bucket.
+
+The same sentence with a token that DOES resolve (`59c6045`, the tree the
+neighbouring record actually quotes) stays exempt.  Both directions were
+run; both are self-test cases.
+
+### 4. The ruler, and why it is the ruler
+
+`tools/check_obs_markers.py` already states the rule this section needed:
+
+    The discriminator is not a word.  It is a revision token that
+    `git rev-parse --verify <tok>^{commit}` resolves.  ...  The marker
+    decides, not the wording.  (Tense is wording, and wording is not a
+    fact -- so it cannot be the criterion.)
+
+§10.243 read that, wrote it into a comment, and implemented the opposite.
+The comment was right; the code beside it was a wording whitelist.  A
+comment that describes the rule a function should follow is not a rule the
+function follows, and nothing in this tree checks that the two agree --
+which is the same shape as every other defect in this family, one level up.
+
+So the exemption now resolves.  Every hex-shaped candidate in the window
+goes through `git rev-parse --verify <tok>^{commit}`, and the first one
+that succeeds is the token the line is exempt under -- and it is **printed**
+on that line, so a reader can check it:
+
+    record    <the record line>  spells 20  [tree 59c6045] -- ...
+
+The date form and the Chinese phrases are gone.  A date bounds when a
+reading was taken but names no tree, and 测得 says a measurement happened
+without saying on what.  A reader who wants the exemption now has to name a
+commit, which is the answer to "which tree", not a synonym for it.
+
+### 5. The controls
+
+The exemption's own cases, in `--self-test`, with the resolver injected so
+they do not depend on this repository's object database:
+
+  * a total with a **resolving** token beside it is a record -> rc=0;
+  * the same total with a **non-resolving** token -> rc=1;
+  * a bare total with no token -> rc=1 (the `§10.243` case, kept);
+  * a correct total -> rc=0.
+
+and the resolver itself, measured against the real repository rather than a
+stub, because a self-test that only ever says yes to its own stub is the
+defect wearing a test:
+
+  * `HEAD` resolves -> the resolver can measure at all;
+  * a 40-character run of `d` does not -> it is not a shape test;
+  * `record_token` rejects a window whose only hex word is that one.
+
+Two mutations, both of which had to fail and did:
+
+    _resolves_in returns True
+      -> FAILED  the resolver says a nonexistent 40-char token resolves; it is a shape test
+      -> FAILED  record_token accepted a shape that does not resolve
+
+    record_token ignores the resolver and returns the first hex match
+      -> FAILED  a token that does NOT resolve does not excuse the total
+      -> FAILED  record_token accepted a shape that does not resolve
+
+The first of those also reddened the **pre-existing** case, which was
+written with `abc1234` as its "tree".  That case passed for a whole round
+because the exemption it was testing was fake; it failed the moment the
+exemption became real.  A green test that turns red when the rule it tests
+starts working is the test telling you what it was actually measuring.
+
+### 6. What the audit found
+
+Two lines in the whole tree are possessive totals; one is a claim
+(`PLAN_V06.md`, fixed in §10.243) and one is a record.  The record's window
+holds `59c6045`, which resolves, and it is the tree the line above it names.
+
+So the blast radius of this defect is: one exemption, one line, and a
+promise.  The promise is the part that mattered -- §10.243 wrote "a record
+is allowed to be old, and the marker is what makes it a record" as an
+argument for a trade it had not made.
+
+### 7. Boundary
+
+This judges whether the token RESOLVES, not whether it is the right token.
+A wrong total beside a real but unrelated commit hash still passes.  Closing
+that would need to know which tree a number was read on, which the sentence
+does not say -- the same boundary `check_obs_markers` has, stated so it is
+not mistaken for a guarantee.
+
+`git rev-parse` needs a repository.  Run against a tree with no history this
+exemption fails closed: no token resolves, every total is judged as a claim,
+and the run reddens.  That is the direction to fail in, and it is the
+opposite of the shape test it replaced.
+
+And the broader lesson is not about this regex.  Three times now, in three
+adjacent sections, the same defect has appeared one level up: §10.241's
+rewrite whose own control could not fail, §10.242's checker that reddened on
+the documentation of what it looked for, and this one's comment describing a
+rule its code did not implement.  Each was found by running the thing rather
+than reading it.
