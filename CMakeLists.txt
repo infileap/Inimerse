@@ -2206,3 +2206,16 @@ set_tests_properties(stage_count_regression PROPERTIES WORKING_DIRECTORY ${CMAKE
 add_test(NAME stage_count_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_stage_count.py --self-test)
 set_tests_properties(stage_count_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
+
+# §10.245: `tools/gate.sh --required-for` is the gate's own safety entry point
+# and it runs five self-checks before it answers -- each written for a defect
+# that had already happened, and none ever observed firing.  The checker
+# breaks the tree in the way each one exists to catch, in a throwaway
+# worktree, and requires a refusal.  One of the five cannot be injected on
+# this tree and is reported as such rather than counted as a pass.
+add_test(NAME required_for_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_required_for.py)
+set_tests_properties(required_for_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "tools;tests;regression")
+add_test(NAME required_for_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_required_for.py --self-test)
+set_tests_properties(required_for_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 600 LABELS "tools;tests;regression")
