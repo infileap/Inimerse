@@ -2219,3 +2219,14 @@ set_tests_properties(required_for_regression PROPERTIES WORKING_DIRECTORY ${CMAK
 add_test(NAME required_for_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_required_for.py --self-test)
 set_tests_properties(required_for_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 600 LABELS "tools;tests;regression")
+
+# §10.251: `aot_mir_cover` compares the MIR route against the interpreter byte
+# for byte over two inline-string corpora. `vtest/` is a third corpus with no
+# reader -- 41 of its 81 programs translate through that route and none of them
+# is an inline case. §10.250's defect lived in exactly one of them.
+add_test(NAME mir_vtest_parity_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_mir_vtest_parity.py)
+set_tests_properties(mir_vtest_parity_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 900 LABELS "aot;compiler;regression")
+add_test(NAME mir_vtest_parity_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_mir_vtest_parity.py --self-test)
+set_tests_properties(mir_vtest_parity_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
