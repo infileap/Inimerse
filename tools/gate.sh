@@ -937,12 +937,25 @@ required_for() {
       ;;
     worktree)
       label="worktree: the worktree and index against HEAD, plus untracked files"
-      if ! changed="$(git -C "$REPO_ROOT" diff HEAD --name-only 2>&1
-                       git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>&1)"; then
-        echo "gate: --required-for worktree: git could not read the worktree:" >&2
-        printf '%s\n' "$changed" >&2
+      # TWO commands, TWO checks.  They used to share one `$( ... )`, and a
+      # command substitution reports the status of its LAST command only -- so
+      # a `git diff HEAD` that failed (rc=128 on an unborn branch, or on a
+      # directory that is not a repository) was masked by the `ls-files` that
+      # followed it, the `if !` saw 0, and the command answered from the
+      # error text as if it were a list of changed files.  Measured with the
+      # shape alone: the output's first line is
+      # `fatal: cannot change to '/nonexistent'` and the branch ACCEPTS it.
+      if ! tracked="$(git -C "$REPO_ROOT" diff HEAD --name-only 2>&1)"; then
+        echo "gate: --required-for worktree: git could not diff the worktree against HEAD:" >&2
+        printf '%s\n' "$tracked" >&2
         exit 2
       fi
+      if ! untracked="$(git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>&1)"; then
+        echo "gate: --required-for worktree: git could not list untracked files:" >&2
+        printf '%s\n' "$untracked" >&2
+        exit 2
+      fi
+      changed="$tracked"$'\n'"$untracked"
       ;;
     *)
       if ! changed="$(git -C "$REPO_ROOT" diff --name-only "$range" 2>&1)"; then

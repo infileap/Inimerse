@@ -241,6 +241,40 @@ def run_case(wt: str, name: str, subs, expected: str, clean: bool = False) -> tu
             _write(os.path.join(wt, rel), text)
 
 
+def make_unborn_repo(base: str) -> str:
+    """A git repository with no commit, carrying the gate.
+
+    `--required-for worktree` asks `git diff HEAD`, and on a repository with no
+    HEAD that command fails with rc=128 while printing `fatal: ambiguous
+    argument 'HEAD'`.  This fixture is the only place that failure is real: in
+    this repository HEAD always exists, so no mutation of the source produces
+    the input that reaches the defect.
+    """
+    path = os.path.join(base, "unborn")
+    os.makedirs(os.path.join(path, "tools"))
+    subprocess.run(["git", "-C", path, "init", "-q"], check=True, capture_output=True)
+    for rel in (GATE_REL, "tools/check_text_integrity.py"):
+        src = os.path.join(REPO_ROOT, rel)
+        if os.path.isfile(src):
+            shutil.copyfile(src, os.path.join(path, rel))
+    return path
+
+
+def run_main_path(repo: str, args, expected: str) -> tuple[bool, str]:
+    """Run the command in a fixture and require exit 2 AND the guard's message."""
+    proc = subprocess.run(
+        ["bash", os.path.join(repo, GATE_REL)] + args,
+        cwd=repo, capture_output=True, text=True,
+    )
+    both = (proc.stderr or "") + (proc.stdout or "")
+    spoke = expected in both
+    lines = [l for l in both.strip().splitlines() if l.strip()]
+    first = lines[0][:100] if lines else "(no output)"
+    if proc.returncode == 2 and not spoke:
+        return False, "rc=2 but NOT the guard's message: %s" % first
+    return proc.returncode == 2, "rc=%d  %s" % (proc.returncode, first)
+
+
 def measure(repo_root: str) -> tuple[int, list[tuple[str, bool, str]]]:
     base = tempfile.mkdtemp(prefix="check_required_for_")
     results = []
@@ -257,6 +291,33 @@ def measure(repo_root: str) -> tuple[int, list[tuple[str, bool, str]]]:
             except Exception as exc:  # noqa: BLE001
                 ok, detail = False, "could not measure: %s: %s" % (type(exc).__name__, exc)
             results.append((name, ok, detail))
+
+        # The MAIN PATH: the branch that reads `git diff` and turns it into an
+        # answer.  §10.245 and §10.246 both declared it unmeasured; this is the
+        # measurement.  On a repository with no HEAD, `git diff HEAD` fails
+        # with rc=128 -- and the first version of that branch ran it and
+        # `ls-files` inside ONE `$( ... )`, so the substitution reported the
+        # last command's status, the `if !` saw 0, and the error text was
+        # parsed as a list of changed files.  It answered `26 stage(s)` and
+        # exited 0 on a repository it could not read at all.
+        try:
+            unborn = make_unborn_repo(base)
+            ok, detail = run_main_path(
+                unborn,
+                ["--required-for", "worktree"],
+                "could not diff the worktree against HEAD",
+            )
+            results.append(
+                ("the worktree branch refuses when git cannot diff HEAD", ok, detail)
+            )
+        except Exception as exc:  # noqa: BLE001
+            results.append(
+                (
+                    "the worktree branch refuses when git cannot diff HEAD",
+                    False,
+                    "could not measure: %s: %s" % (type(exc).__name__, exc),
+                )
+            )
     finally:
         subprocess.run(
             ["git", "-C", repo_root, "worktree", "remove", "--force",
