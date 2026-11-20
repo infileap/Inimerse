@@ -187,7 +187,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc
 python3 tools/wasm_backend.test.py   # 期望：wasm backend: ok (22 equivalence cases,
                                      #        3 rejections, 3 explicit failures, simd bench equal)
 ctest --test-dir build -R 'wasm' --output-on-failure
-bash tools/gate.sh                   # 七阶段全绿，ctest 计数不变
+bash tools/gate.sh                   # 全阶段全绿，ctest 计数不变
 
 # 单看某一类：
 inimerse compile --abi-target wasm p.im p.wasm && node tools/wasm_run.js p.wasm

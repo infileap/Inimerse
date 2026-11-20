@@ -167,6 +167,42 @@ GIT_INDEX_STAGE = re.compile(r"required:\s*(?:[0-9]+|\$n|N)\s+stage\(s\)")
 # wanted to know which occurrence is the emitter cannot learn it here.
 GIT_INDEX_CEILING = 11
 
+# The one shape of "a number next to a stage word" that is a claim about how many
+# stages the gate HAS, rather than about how many ran or how they were numbered.
+#
+# Why this is narrow on purpose.  The tree spells a number next to a stage word at
+# 437 lines and 422 of them are undeclared; a rule that judged all of them would
+# be wrong about almost all of them, and the measurement says so:
+#
+#   * 222 are inside docs/AUDIT.md, which opens by saying its numbers are "the
+#     reading at the observation point, not today's value";
+#   * 34 are pasted gate output (`20/20 stages ran`), where the number is the
+#     denominator of a run, so rewriting it would falsify a transcript;
+#   * the rest are mostly `七阶段 PASS` in a lane's acceptance record (a past
+#     event) or `--only links # 只跑一个阶段` (the count of THIS run).  Five
+#     comment-in-fence lines were tried as a bucket: four of the five were
+#     `--only` or `第 6 阶段`, i.e. correct uses of the word that the rule
+#     would have reddened.
+#
+# So the bucket is the possessive form -- "gate.sh's N stages", "the gate has N
+# stages" -- because that is the grammar of a claim about the TOTAL.  It matches
+# one line in this tree, and that line was wrong (15, while the array said 25).
+# Precision over recall: a rule that fires on 437 lines to catch one real defect
+# teaches its reader to skip the output, which is how ceilings get raised.
+# What makes a statement of the total a RECORD rather than a claim: the sentence
+# around it names the tree it was read on.  Same discriminator check_obs_markers
+# uses -- a resolvable revision token -- plus the date form this tree writes.
+# It is not a tense whitelist: "20 stages" and "20 stages were green" are the
+# same string about a number, and only the token says which question is answered.
+HISTORICAL = re.compile(
+    r"(\b[0-9a-f]{7,40}\b|\d{4}-\d{2}-\d{2}|测得|本轮实测|当时|上一笔|下一笔提交)"
+)
+
+GATE_TOTAL = re.compile(
+    r"(?:`?tools/gate\.sh`?\s*的|`?gate\.sh`?\s*的|门禁共(?:有)?|`?gate\.sh`?\s*共)"
+    r"\s*(?P<n>%s)\s*个?\s*阶段" % NUM_ANY
+)
+
 # The same word as a verb: git asking what it would stage.
 GIT_VERB_STAGE = re.compile(r"would\s+(?:[a-z]+\s+)?stage\b")
 
@@ -501,6 +537,51 @@ def scan(root, derived, declared=None):
     if len(homographs) > GIT_INDEX_CEILING:
         reds += len(homographs) - GIT_INDEX_CEILING
 
+    # The possessive bucket: a statement of the total, judged absolutely.  This
+    # is the only part of the 437-line surface this checker judges, so it is the
+    # one place the "N undeclared" number above is not the whole story.
+    totals = []
+    for sub in SCAN_ROOTS:
+        base = os.path.join(root, sub)
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [
+                d for d in dirnames if d not in (".git", "__pycache__", "node_modules")
+            ]
+            for name in filenames:
+                if not name.endswith(SCAN_SUFFIXES):
+                    continue
+                full = os.path.join(dirpath, name)
+                rel = os.path.relpath(full, root)
+                if rel == SELF_REL:
+                    continue
+                try:
+                    rows = _read(full).splitlines()
+                except OSError:
+                    continue
+                for i, ln in enumerate(rows):
+                    m = GATE_TOTAL.search(ln)
+                    if not m:
+                        continue
+                    found, raw = spell(r"(?P<n>%s)" % NUM_ANY, m.group("n"))
+                    # A statement of the total is judged against today only when
+                    # nothing around it says which tree it was read on.  The
+                    # window looks BACK one non-empty line and FORWARD the
+                    # paragraph, because a heading is where the tree gets named:
+                    # `**重记 pin 与门禁**（下一笔提交 85bebc4 上测得）` is the
+                    # line above the paste, and without this the checker reddens
+                    # a transcript for being a transcript.
+                    window = "\n".join(
+                        [rows[j].strip() for j in range(max(0, i - 2), i)]
+                        + [ln]
+                        + [r.strip() for r in rows[i + 1 : i + 3]]
+                    )
+                    if HISTORICAL.search(window):
+                        totals.append((rel, i + 1, found, raw, ln.strip()[:110], "record"))
+                        continue
+                    totals.append((rel, i + 1, found, raw, ln.strip()[:110], "claim"))
+                    if found != derived:
+                        reds += 1
+
     ledger = {
         "derived": derived,
         "declared": len(declared),
@@ -511,6 +592,8 @@ def scan(root, derived, declared=None):
         "near_stage": considered,
         "undeclared": len(undeclared),
         "homographs": len(homographs),
+        "totals": len(totals),
+        "total_reds": sum(1 for t in totals if t[2] != derived),
     }
     out.append("")
     if homographs:
@@ -525,6 +608,23 @@ def scan(root, derived, declared=None):
         out.append(
             "check_stage_count: no candidate is git's `required: N stage(s)`."
         )
+    if totals:
+        out.append("")
+        out.append(
+            "check_stage_count: %d line(s) say how many stages the gate HAS "
+            "(the possessive form); %d of them disagree with %d."
+            % (len(totals), ledger["total_reds"], derived)
+        )
+        for rel, line, found, raw, text, kind in totals:
+            mark = "ok      "
+            if kind == "claim" and found != derived:
+                mark = "MISMATCH"
+            elif kind == "record":
+                mark = "record  "
+            out.append(
+                "  %s  %s:%d  spells %s  -- %s"
+                % (mark, rel, line, raw, text)
+            )
     out.append(
         "check_stage_count: %s derives %d stage(s); %d location(s) declared "
         "(%d must-equal, %d record); %d agree, %d red(s)."
@@ -731,6 +831,45 @@ def self_test():
     except Exception as exc:  # noqa: BLE001
         failures.append(
             "the ceiling self-test could not measure: %s: %s" % (type(exc).__name__, exc)
+        )
+
+    # The possessive bucket, in the two directions that make it a rule rather
+    # than a grep: a bare wrong total reddens, and the SAME wrong total with a
+    # tree named beside it does not.  Without the second case the rule would
+    # redden every transcript in the tree, which is what the 422 undeclared
+    # locations mostly are.
+    total_root = tempfile.mkdtemp(prefix="stage-count-total-")
+    atexit.register(shutil.rmtree, total_root, ignore_errors=True)
+    os.makedirs(os.path.join(total_root, "tools"), exist_ok=True)
+    os.makedirs(os.path.join(total_root, "docs"), exist_ok=True)
+    with open(os.path.join(total_root, GATE_REL), "w", encoding="utf-8") as fh:
+        fh.write('STAGE_SPECS=(\n  "a|first|stage_a"\n  "b|second|stage_b"\n)\n')
+    total_cases = [
+        ("a wrong total is a claim", "docs/claim.md", "`tools/gate.sh` 的 7 个阶段全过\n", True),
+        (
+            "the same total with a tree beside it is a record",
+            "docs/record.md",
+            "**重记门禁**（下一笔提交 abc1234 上测得）：`tools/gate.sh` 的 7 个阶段全过\n",
+            False,
+        ),
+        ("a correct total is neither", "docs/right.md", "`tools/gate.sh` 的 2 个阶段\n", False),
+    ]
+    try:
+        tderived, _ = derive(total_root)
+        for name, rel, text, want_red in total_cases:
+            with open(os.path.join(total_root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+            rc, lines, led = scan(total_root, tderived, [])
+            got_red = rc != 0
+            if got_red != want_red:
+                failures.append(
+                    "%s: expected rc=%s, got rc=%d (ledger totals=%r)"
+                    % (name, "1" if want_red else "0", rc, led.get("total_reds"))
+                )
+            os.remove(os.path.join(total_root, rel))
+    except Exception as exc:  # noqa: BLE001
+        failures.append(
+            "the total self-test could not measure: %s: %s" % (type(exc).__name__, exc)
         )
 
     print("check_stage_count --self-test")
