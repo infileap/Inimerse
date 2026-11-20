@@ -27,7 +27,7 @@ def run_engine(engine, src_path):
 def case_globals(n):
     a = "g" * (n - 1) + "A"
     b = "g" * (n - 1) + "B"
-    assert len(a) == n
+    if not (len(a) == n): raise AssertionError
     return ("%s = 1\n%s = 2\nsay \"A=\" + str(%s)\nsay \"B=\" + str(%s)\n" % (a, b, a, b))
 
 

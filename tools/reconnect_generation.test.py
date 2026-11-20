@@ -116,7 +116,7 @@ def publish_node(engine, root, home, hub_port, endpoint_port, expires):
         'say "node=" + verse_identity_pubkey()\n', encoding="utf-8")
     rc = run_script(engine, script, home, root)
     out = rc.stdout.decode(errors="replace")
-    assert "adv=1" in out, out + rc.stderr.decode(errors="replace")
+    if not ("adv=1" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
     return out.split("node=")[1].strip().split("\n")[0]
 
 
@@ -133,7 +133,7 @@ def main():
         dir_port, node_a_port, node_b_port = (http for _proc, http, _tcp in started)
         try:
             for p in (dir_port, node_a_port, node_b_port):
-                assert wait_port(p), f"hub {p} did not start"
+                if not (wait_port(p)): raise AssertionError(f"hub {p} did not start")
             expires = str(int(time.time() * 1000) + 300000)
             node_a = publish_node(engine, root, home, dir_port, node_a_port, expires)
             node_b = publish_node(engine, root, home, dir_port, node_b_port, expires)
@@ -141,7 +141,7 @@ def main():
             # session with three committed events under generation 1
             status, auth_body = http_json(dir_port, "POST", "/session/authority", {
                 "verse": "v1", "peer": "p1", "authority": node_a})
-            assert status == 200, (status, auth_body)
+            if not (status == 200): raise AssertionError((status, auth_body))
             # /signal requires a capability token scoped to (verse, peer), and
             # /portal issues one only against the enrollment proof.
             import base64
@@ -153,7 +153,7 @@ def main():
                     hmac_mod.new(ENROLL.encode(), f"{verse}\0{peer}".encode(),
                                  hashlib.sha256).digest()).rstrip(b"=").decode()
             status, no_auth = http_json(dir_port, "POST", "/portal", {"verse": "v1", "peer": "p1"})
-            assert status == 403, (status, no_auth)
+            if not (status == 403): raise AssertionError((status, no_auth))
             # Admission is decided before the registry is inspected.  A pair with
             # no line in the table cannot even learn whether its verse exists: it
             # gets the same 403 body as a bad proof, so a stranger and a
@@ -161,46 +161,46 @@ def main():
             status, stranger = http_json(dir_port, "POST", "/portal", {
                 "verse": "v-stranger", "peer": "p1",
                 "auth": enroll_proof("v-stranger", "p1")})
-            assert status == 403, (status, stranger)
-            assert stranger == no_auth, (stranger, no_auth)
+            if not (status == 403): raise AssertionError((status, stranger))
+            if not (stranger == no_auth): raise AssertionError((stranger, no_auth))
             # An admitted pair whose verse this hub never registered is the only
             # one that reaches the registry test, and it gets the reference's 404:
             # /register is what lifts that.
             status, unreg = http_json(dir_port, "POST", "/portal", {
                 "verse": "v-unregistered", "peer": "p1",
                 "auth": enroll_proof("v-unregistered", "p1")})
-            assert status == 404, (status, unreg)
+            if not (status == 404): raise AssertionError((status, unreg))
             status, reg = http_json(dir_port, "POST", "/register",
                                     {"id": "v1", "endpoint": "127.0.0.1:9000"})
-            assert status == 200, (status, reg)
+            if not (status == 200): raise AssertionError((status, reg))
             status, portal = http_json(dir_port, "POST", "/portal", {
                 "verse": "v1", "peer": "p1", "auth": enroll_proof("v1", "p1")})
-            assert status == 200, (status, portal)
+            if not (status == 200): raise AssertionError((status, portal))
             token = re.search(r'"token":"([^"]+)"', portal).group(1)
             for seq in (1, 2, 3):
                 status, sig = http_json(dir_port, "POST", "/signal", {
                     "verse": "v1", "peer": "p1", "seq": seq, "event": f"e{seq}", "token": token})
-                assert status == 200, (status, sig)
+                if not (status == 200): raise AssertionError((status, sig))
             # an unauthenticated reattach is refused only when a bad token is
             # supplied; without one the response is explicit about auth state
             status, body = http_json(dir_port, "POST", "/session/reattach", {
                 "verse": "v1", "peer": "p1", "generation": 1, "token": "not-a-token"})
-            assert status == 403, (status, body)
+            if not (status == 403): raise AssertionError((status, body))
 
             # 1. reattach in the same generation replays from last_committed
             status, body = http_json(dir_port, "POST", "/session/reattach", {
                 "verse": "v1", "peer": "p1", "generation": 1,
                 "last_received_sequence": 3, "last_committed_sequence": 1})
-            assert status == 200, (status, body)
+            if not (status == 200): raise AssertionError((status, body))
             plan = json.loads(body)
-            assert plan["resume"] == "replay", plan
-            assert plan["replay_from"] == 2 and plan["last_applied"] == 3, plan
-            assert [e["seq"] for e in plan["replay"]] == [2, 3], plan
+            if not (plan["resume"] == "replay"): raise AssertionError(plan)
+            if not (plan["replay_from"] == 2 and plan["last_applied"] == 3): raise AssertionError(plan)
+            if not ([e["seq"] for e in plan["replay"]] == [2, 3]): raise AssertionError(plan)
 
             # 2. state is observable
             _, state = http_json(dir_port, "GET", "/session/state?verse=v1&peer=p1")
             st = json.loads(state)
-            assert st["state"] == "connected" and st["generation"] == 1, st
+            if not (st["state"] == "connected" and st["generation"] == 1): raise AssertionError(st)
 
             # 3. hand off to node B (generation 2, old tail dropped)
             status, body = http_json(dir_port, "POST", "/node/handoff", {
@@ -208,35 +208,35 @@ def main():
                 "to_authority": node_b,
                 "snapshot_hash": "22" * 32,
                 "event_tail_hash": __import__("hashlib").sha256(b"e3").hexdigest()})
-            assert status == 200 and '"ok":true' in body, (status, body)
+            if not (status == 200 and '"ok":true' in body): raise AssertionError((status, body))
 
             # 4. reattaching with the OLD generation must ask for a snapshot and
             #    reset last_applied to 0 (never replay across generations)
             status, body = http_json(dir_port, "POST", "/session/reattach", {
                 "verse": "v1", "peer": "p1", "generation": 1,
                 "last_received_sequence": 3, "last_committed_sequence": 3})
-            assert status == 200, (status, body)
+            if not (status == 200): raise AssertionError((status, body))
             plan = json.loads(body)
-            assert plan["resume"] == "snapshot_required", plan
-            assert plan["reason"] == "authority_changed", plan
-            assert plan["last_applied"] == 0, plan
-            assert plan["generation"] == 2, plan
+            if not (plan["resume"] == "snapshot_required"): raise AssertionError(plan)
+            if not (plan["reason"] == "authority_changed"): raise AssertionError(plan)
+            if not (plan["last_applied"] == 0): raise AssertionError(plan)
+            if not (plan["generation"] == 2): raise AssertionError(plan)
 
             # 5. reattaching with the NEW generation resumes with an empty tail
             status, body = http_json(dir_port, "POST", "/session/reattach", {
                 "verse": "v1", "peer": "p1", "generation": 2,
                 "last_received_sequence": 0, "last_committed_sequence": 0})
             plan = json.loads(body)
-            assert plan["resume"] == "replay" and plan["last_applied"] == 0, plan
-            assert plan["replay"] == [], plan
+            if not (plan["resume"] == "replay" and plan["last_applied"] == 0): raise AssertionError(plan)
+            if not (plan["replay"] == []): raise AssertionError(plan)
 
             # 6. idempotency gate for side-effecting requests
             status, first = http_json(dir_port, "POST", "/session/idem", {
                 "verse": "v1", "peer": "p1", "key": "settle-1"})
-            assert json.loads(first)["status"] == "new", first
+            if not (json.loads(first)["status"] == "new"): raise AssertionError(first)
             status, second = http_json(dir_port, "POST", "/session/idem", {
                 "verse": "v1", "peer": "p1", "key": "settle-1"})
-            assert json.loads(second)["status"] == "replay", second
+            if not (json.loads(second)["status"] == "replay"): raise AssertionError(second)
 
             # 7. script-space reconnect view
             script = root / "reattach.im"
@@ -253,11 +253,11 @@ def main():
                 'say "idem=" + i1 + "/" + i2\n', encoding="utf-8")
             rc = run_script(engine, script, home, root)
             out = rc.stdout.decode(errors="replace")
-            assert "resume=snapshot_required" in out, out + rc.stderr.decode(errors="replace")
-            assert "reason=authority_changed" in out, out
-            assert "last_applied=0" in out, out
-            assert "state=connected" in out and "gen=2" in out, out
-            assert "idem=new/replay" in out, out
+            if not ("resume=snapshot_required" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
+            if not ("reason=authority_changed" in out): raise AssertionError(out)
+            if not ("last_applied=0" in out): raise AssertionError(out)
+            if not ("state=connected" in out and "gen=2" in out): raise AssertionError(out)
+            if not ("idem=new/replay" in out): raise AssertionError(out)
         finally:
             for h in hubs:
                 h.terminate()

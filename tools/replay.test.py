@@ -75,33 +75,33 @@ def main():
 
         # run 1: log written, chain verifies, deterministic hash reported
         rc = run(engine, "run", "sim.im", cwd=root)
-        assert rc.returncode == 0, rc.stderr.decode(errors="replace")
+        if not (rc.returncode == 0): raise AssertionError(rc.stderr.decode(errors="replace"))
         out1 = rc.stdout.decode(errors="replace")
-        assert "verify_ok=true events=5" in out1, out1
+        if not ("verify_ok=true events=5" in out1): raise AssertionError(out1)
         h1 = out1.split("state_hash=")[1].split("\n")[0]
 
         # run 2 (fresh process): identical seed -> identical output = determinism
         rc = run(engine, "run", "sim.im", cwd=root)
         out2 = rc.stdout.decode(errors="replace")
         h2 = out2.split("state_hash=")[1].split("\n")[0]
-        assert h1 == h2, f"non-deterministic state hash: {h1} vs {h2}"
-        assert hashlib.sha256(out2.encode()).hexdigest() == hashlib.sha256(out1.encode()).hexdigest()
+        if not (h1 == h2): raise AssertionError(f"non-deterministic state hash: {h1} vs {h2}")
+        if not (hashlib.sha256(out2.encode()).hexdigest() == hashlib.sha256(out1.encode()).hexdigest()): raise AssertionError
 
         # log exists and verifies clean
         log = root / "run.elog"
-        assert log.is_file()
+        if not (log.is_file()): raise AssertionError
         rc = run(engine, "run", "verify.im", cwd=root)
-        assert rc.returncode == 0, rc.stderr.decode(errors="replace")
-        assert "ok=true count=5" in rc.stdout.decode(errors="replace"), rc.stdout
+        if not (rc.returncode == 0): raise AssertionError(rc.stderr.decode(errors="replace"))
+        if not ("ok=true count=5" in rc.stdout.decode(errors="replace")): raise AssertionError(rc.stdout)
 
         # tamper with any payload byte -> IntegrityError with chain context
         data = log.read_text(encoding="utf-8").replace('"roll":', '"roll":9', 1)
-        assert data != log.read_text(encoding="utf-8")
+        if not (data != log.read_text(encoding="utf-8")): raise AssertionError
         log.write_text(data, encoding="utf-8")
         rc = run(engine, "run", "verify.im", cwd=root)
         out = rc.stdout.decode(errors="replace")
-        assert "TAMPER: IntegrityError" in out, out
-        assert "ok=false" in out, out
+        if not ("TAMPER: IntegrityError" in out): raise AssertionError(out)
+        if not ("ok=false" in out): raise AssertionError(out)
     print("replay closure: ok")
 
 

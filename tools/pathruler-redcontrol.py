@@ -76,7 +76,7 @@ def main():
         reason.  Renaming the call keeps parens and ';' exactly where they were."""
         lines=list(lines)
         s=lines[lineno-1]
-        assert 'im_mutex_' in s, (lineno,s)
+        if not ('im_mutex_' in s): raise AssertionError((lineno,s))
         lines[lineno-1]=s.replace('im_mutex_unlock','__KILLED_unlock').replace('im_mutex_lock','__KILLED_lock')
         return lines
 

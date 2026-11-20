@@ -59,7 +59,7 @@ def upload_blob(port, pkg_id, blob):
     resp = conn.getresponse()
     resp.read()
     conn.close()
-    assert resp.status == 201, f"upload failed: {resp.status}"
+    if not (resp.status == 201): raise AssertionError(f"upload failed: {resp.status}")
 
 
 def upload_package(port, pkg):
@@ -72,7 +72,7 @@ def tcp_fetch(port, pkg_id):
     resp = conn.getresponse()
     data = resp.read()
     conn.close()
-    assert resp.status == 200, f"tcp /v/ failed: {resp.status}"
+    if not (resp.status == 200): raise AssertionError(f"tcp /v/ failed: {resp.status}")
     return data
 
 
@@ -110,14 +110,14 @@ def main():
              str(root / "hub.im")],
             cwd=root, env=env, log_path=root / "hub.log")
         try:
-            assert wait_port(http_port), "hub did not start"
+            if not (wait_port(http_port)): raise AssertionError("hub did not start")
 
             # TCP/UDP distribution must return the package file byte for byte
             upload_blob(http_port, "blobpkg", PAYLOAD)
             tcp_data = tcp_fetch(http_port, "blobpkg")
             udp_data = udp_fetch(http_port, "blobpkg")
-            assert tcp_data == PAYLOAD, f"tcp body mismatch: {tcp_data[:40]!r}"
-            assert udp_data == PAYLOAD, f"udp body mismatch: {udp_data[:40]!r}"
+            if not (tcp_data == PAYLOAD): raise AssertionError(f"tcp body mismatch: {tcp_data[:40]!r}")
+            if not (udp_data == PAYLOAD): raise AssertionError(f"udp body mismatch: {udp_data[:40]!r}")
             # a real package for the script-space client test
             upload_package(http_port, package_json())
 
@@ -134,8 +134,8 @@ def main():
                                 cwd=root, env=dict(env, HOME=str(home)),
                                 capture_output=True, timeout=60)
             out = rc.stdout.decode(errors="replace")
-            assert "http_open=1" in out, out + rc.stderr.decode(errors="replace")
-            assert "udp_open=1" in out, out + rc.stderr.decode(errors="replace")
+            if not ("http_open=1" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
+            if not ("udp_open=1" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
 
             # verse_listen starts a serving hub from script space
             server = root / "serve.im"
@@ -147,10 +147,10 @@ def main():
                                    cwd=root, env=env,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             try:
-                assert wait_port(listen_port), "verse_listen did not open the port"
+                if not (wait_port(listen_port)): raise AssertionError("verse_listen did not open the port")
                 # the serving hub answers the same dialect
                 srv_udp = udp_fetch(listen_port, "testpkg")
-                assert b'"main": "main.im"' in srv_udp, f"verse_listen udp mismatch: {srv_udp[:80]!r}"
+                if not (b'"main": "main.im"' in srv_udp): raise AssertionError(f"verse_listen udp mismatch: {srv_udp[:80]!r}")
             finally:
                 srv.terminate()
                 try:

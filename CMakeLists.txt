@@ -2175,3 +2175,23 @@ set_tests_properties(probe_failure_paths_regression PROPERTIES WORKING_DIRECTORY
 add_test(NAME probe_failure_paths_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_probe_failure_paths.py --self-test)
 set_tests_properties(probe_failure_paths_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
+
+# A Python `assert` is deleted by the compiler under PYTHONOPTIMIZE / `-O`
+# (§10.241), so a test whose only failure path is one reports success whatever
+# it found.  The checker reads the driven scripts and the modules they reach
+# with ast, which distinguishes the statement from the word.
+add_test(NAME python_asserts_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_python_asserts.py)
+set_tests_properties(python_asserts_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "tools;tests;regression")
+add_test(NAME python_asserts_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_python_asserts.py --self-test)
+set_tests_properties(python_asserts_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")
+
+# The rewriter that produced the shape above (§10.241) is a tool, not a
+# checker, but its claim is the one the shape rests on: the rewritten form
+# behaves exactly like the assert, including under `-O`, where the assert
+# does not exist at all.  Its own self-test is that claim, run in a
+# subprocess with -O, so the claim is measured rather than argued.
+add_test(NAME rewrite_asserts_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/rewrite_asserts.py --self-test)
+set_tests_properties(rewrite_asserts_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "tools;tests;regression")

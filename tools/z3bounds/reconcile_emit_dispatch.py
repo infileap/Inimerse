@@ -86,7 +86,7 @@ def strip_code(text):
             state = None
         i += 1
     res = ''.join(out)
-    assert len(res) == len(text), 'strip must preserve length'
+    if not (len(res) == len(text)): raise AssertionError('strip must preserve length')
     return res
 
 

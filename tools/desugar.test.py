@@ -40,7 +40,7 @@ def find_engine():
 
 def main():
     engine = find_engine()
-    assert engine, "inimerse engine binary not found (set INIMERSE_BIN to override, or pass it as argv[1])"
+    if not (engine): raise AssertionError("inimerse engine binary not found (set INIMERSE_BIN to override, or pass it as argv[1])")
     with tempfile.TemporaryDirectory(prefix="inimerse-desugar-") as td:
         src = Path(td) / "in.im"
         out = Path(td) / "out.im"
@@ -49,11 +49,11 @@ def main():
         rc = subprocess.run([str(engine), "--desugar", str(src), str(out)],
                             capture_output=True, text=True, encoding="utf-8",
                             errors="replace", timeout=60)
-        assert rc.returncode == 0, f"inimerse --desugar exited {rc.returncode}\n{rc.stdout}\n{rc.stderr}"
-        assert out.is_file(), f"inimerse --desugar wrote no output file\n{rc.stderr}"
+        if not (rc.returncode == 0): raise AssertionError(f"inimerse --desugar exited {rc.returncode}\n{rc.stdout}\n{rc.stderr}")
+        if not (out.is_file()): raise AssertionError(f"inimerse --desugar wrote no output file\n{rc.stderr}")
         text = out.read_text(encoding="utf-8")
         for needle in REWRITES:
-            assert needle in text, f"the desugared output is missing {needle!r}:\n{text}"
+            if not (needle in text): raise AssertionError(f"the desugared output is missing {needle!r}:\n{text}")
 
         # Negative control: the same source without --desugar must be refused.
         # If this ever starts passing, `say@target` has become core syntax and
@@ -61,8 +61,7 @@ def main():
         rc2 = subprocess.run([str(engine), "--no-mods", str(src)],
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", timeout=60)
-        assert rc2.returncode != 0, (
-            "the engine ran `say@chat` without --desugar; the rewrite is no longer "
+        if not (rc2.returncode != 0): raise AssertionError("the engine ran `say@chat` without --desugar; the rewrite is no longer "
             f"the only path\n{rc2.stdout}\n{rc2.stderr}")
 
     print("desugar tests: ok")

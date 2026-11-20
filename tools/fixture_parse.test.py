@@ -125,17 +125,13 @@ def scan(engine, fixture):
 
 def main():
     engine = find_engine()
-    assert engine, (
-        "inimerse engine binary not found (set INIMERSE_BIN to override, "
-        "or pass it as argv[1])"
-    )
+    if not (engine): raise AssertionError("inimerse engine binary not found (set INIMERSE_BIN to override, "
+        "or pass it as argv[1])")
 
     fixtures = sorted((ROOT / "vtest").glob("*.im"))
-    assert len(fixtures) >= MIN_FIXTURES, (
-        "only %d fixture(s) found under vtest/ -- expected at least %d; "
+    if not (len(fixtures) >= MIN_FIXTURES): raise AssertionError("only %d fixture(s) found under vtest/ -- expected at least %d; "
         "a scan that looks at nothing is not a passing scan"
-        % (len(fixtures), MIN_FIXTURES)
-    )
+        % (len(fixtures), MIN_FIXTURES))
 
     source = ROOT / "vtest"
     before = sorted(p.name for p in source.iterdir())

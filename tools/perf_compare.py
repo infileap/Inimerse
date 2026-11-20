@@ -74,7 +74,7 @@ def main():
     import shutil
     engine = find_engine()
     node = shutil.which("node")
-    assert node, "node required"
+    if not (node): raise AssertionError("node required")
 
     with tempfile.TemporaryDirectory(prefix="inimerse-perf-") as td:
         root = Path(td)
@@ -89,7 +89,7 @@ def main():
         # wasm MVP
         rc = subprocess.run([str(engine), "compile", "--abi-target", "wasm", "work.im", "work.wasm"],
                             cwd=root, capture_output=True)
-        assert rc.returncode == 0, rc.stderr.decode()
+        if not (rc.returncode == 0): raise AssertionError(rc.stderr.decode())
         wbase = statistics.median(timeit([node, str(HERE / "wasm_run.js"), "empty.wasm"], args.runs, root)
                                   ) if (root / "empty.wasm").exists() else 0
         if wbase == 0:
@@ -101,7 +101,7 @@ def main():
 
         # aot package
         rc = subprocess.run([str(engine), "compile", "--aot", "work.im", "work_aot.exe"], cwd=root, capture_output=True)
-        assert rc.returncode == 0, rc.stderr.decode()
+        if not (rc.returncode == 0): raise AssertionError(rc.stderr.decode())
         subprocess.run([str(engine), "compile", "--aot", "empty.im", "empty_aot.exe"], cwd=root, capture_output=True)
         abase = statistics.median(timeit([str(root / "empty_aot.exe")], args.runs, root))
         afull = statistics.median(timeit([str(root / "work_aot.exe")], args.runs, root))

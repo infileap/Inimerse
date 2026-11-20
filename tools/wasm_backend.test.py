@@ -117,66 +117,60 @@ def run(cmd, cwd, timeout=30):
 def main():
     engine = find_engine()
     node = shutil.which("node")
-    assert node, "node is required for the wasm host runner"
+    if not (node): raise AssertionError("node is required for the wasm host runner")
     with tempfile.TemporaryDirectory(prefix="inimerse-wasm-") as td:
         root = Path(td)
         for name, src in CASES:
             im = root / f"{name}.im"
             im.write_text(src, encoding="utf-8")
             rc = run([str(engine), "compile", "--abi-target", "wasm", im.name, f"{name}.wasm"], root)
-            assert rc.returncode == 0, f"{name}: compile failed: {rc.stderr.decode(errors='replace')}"
+            if not (rc.returncode == 0): raise AssertionError(f"{name}: compile failed: {rc.stderr.decode(errors='replace')}")
 
             w = run([node, str(HERE / "wasm_run.js"), f"{name}.wasm"], root)
             # --no-mods: the wasm host runs the module alone, so the
             # interpreter has to be compared without its module-load notices
             # (mods/build/build_mod.c prints one to stdout on Windows).
             i = run([str(engine), "--no-mods", "run", im.name], root)
-            assert i.returncode == 0, f"{name}: interpreter failed: {i.stderr.decode(errors='replace')}"
-            assert w.returncode == 0, f"{name}: wasm failed: {w.stderr.decode(errors='replace')}"
-            assert w.stdout == i.stdout, (
-                f"{name}: output mismatch\n wasm: {w.stdout!r}\n interp: {i.stdout!r}")
+            if not (i.returncode == 0): raise AssertionError(f"{name}: interpreter failed: {i.stderr.decode(errors='replace')}")
+            if not (w.returncode == 0): raise AssertionError(f"{name}: wasm failed: {w.stderr.decode(errors='replace')}")
+            if not (w.stdout == i.stdout): raise AssertionError(f"{name}: output mismatch\n wasm: {w.stdout!r}\n interp: {i.stdout!r}")
 
         for name, src, needle in REJECT_CASES:
             im = root / f"bad_{name}.im"
             im.write_text(src, encoding="utf-8")
             rc = run([str(engine), "compile", "--abi-target", "wasm", im.name, f"bad_{name}.wasm"], root)
-            assert rc.returncode != 0, f"{name}: expected compile-time rejection"
-            assert needle in rc.stderr.decode(errors="replace"), (
-                f"{name}: unexpected error: {rc.stderr.decode(errors='replace')}")
+            if not (rc.returncode != 0): raise AssertionError(f"{name}: expected compile-time rejection")
+            if not (needle in rc.stderr.decode(errors="replace")): raise AssertionError(f"{name}: unexpected error: {rc.stderr.decode(errors='replace')}")
 
         for name, src, needle in EXPLICIT_FAIL_CASES:
             im = root / f"one_{name}.im"
             im.write_text(src, encoding="utf-8")
             rc = run([str(engine), "compile", "--abi-target", "wasm", im.name, f"one_{name}.wasm"], root)
-            assert rc.returncode == 0, (
-                f"{name}: expected the wasm backend to accept this program: "
+            if not (rc.returncode == 0): raise AssertionError(f"{name}: expected the wasm backend to accept this program: "
                 f"{rc.stderr.decode(errors='replace')}")
             w = run([node, str(HERE / "wasm_run.js"), f"one_{name}.wasm"], root, timeout=120)
             i = run([str(engine), "--no-mods", "run", im.name], root, timeout=120)
-            assert i.returncode == 0, (
-                f"{name}: the interpreter must accept this program: "
+            if not (i.returncode == 0): raise AssertionError(f"{name}: the interpreter must accept this program: "
                 f"{i.stderr.decode(errors='replace')}")
-            assert w.returncode != 0, (
-                f"{name}: the wasm subset must refuse this program, it exited 0 with "
+            if not (w.returncode != 0): raise AssertionError(f"{name}: the wasm subset must refuse this program, it exited 0 with "
                 f"{w.stdout!r}")
-            assert needle in w.stderr.decode(errors="replace"), (
-                f"{name}: expected '{needle}' in stderr, got "
+            if not (needle in w.stderr.decode(errors="replace")): raise AssertionError(f"{name}: expected '{needle}' in stderr, got "
                 f"{w.stderr.decode(errors='replace')}")
 
         # v128 path: the exported scalar/simd loops must run and agree
         bench = root / "bench.im"
         bench.write_text("say 1\n", encoding="utf-8")
         rc = run([str(engine), "compile", "--abi-target", "wasm", bench.name, "bench.wasm"], root)
-        assert rc.returncode == 0, f"bench: compile failed: {rc.stderr.decode(errors='replace')}"
+        if not (rc.returncode == 0): raise AssertionError(f"bench: compile failed: {rc.stderr.decode(errors='replace')}")
         b = run([node, str(HERE / "wasm_run.js"), "--bench", "bench.wasm", "1000000"], root, timeout=120)
-        assert b.returncode == 0, f"bench: failed: {b.stderr.decode(errors='replace')}"
-        assert b"results equal" in b.stdout, f"bench: scalar/simd disagree: {b.stdout!r}"
+        if not (b.returncode == 0): raise AssertionError(f"bench: failed: {b.stderr.decode(errors='replace')}")
+        if not (b"results equal" in b.stdout): raise AssertionError(f"bench: scalar/simd disagree: {b.stdout!r}")
 
         if shutil.which("wasm-validate"):
             rc = run(["wasm-validate", "fib.wasm"], root)
-            assert rc.returncode == 0, "wasm-validate rejected the module"
+            if not (rc.returncode == 0): raise AssertionError("wasm-validate rejected the module")
             rc = run(["wasm-validate", "one_heap_exhausted.wasm"], root)
-            assert rc.returncode == 0, "wasm-validate rejected the array module"
+            if not (rc.returncode == 0): raise AssertionError("wasm-validate rejected the array module")
     print(f"wasm backend: ok ({len(CASES)} equivalence cases, {len(REJECT_CASES)} rejections, "
           f"{len(EXPLICIT_FAIL_CASES)} explicit failures, simd bench equal)")
 

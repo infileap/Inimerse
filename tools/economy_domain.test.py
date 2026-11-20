@@ -87,7 +87,7 @@ def declare_domain_via_script(engine, root, home, hub_port, domain, kind="utilit
         'say "issuer=" + verse_identity_pubkey()\n', encoding="utf-8")
     rc = run_script(engine, script, home, root)
     out = rc.stdout.decode(errors="replace")
-    assert "cid=" in out and len(out.split("cid=")[1].split("\n")[0].strip()) == 64, out + rc.stderr.decode(errors="replace")
+    if not ("cid=" in out and len(out.split("cid=")[1].split("\n")[0].strip()) == 64): raise AssertionError(out + rc.stderr.decode(errors="replace"))
     return out.split("cid=")[1].split("\n")[0].strip(), out.split("issuer=")[1].strip()
 
 
@@ -108,25 +108,25 @@ def main():
              str(hub_script)],
             cwd=root, env=env, log_path=root / "hub.log")
         try:
-            assert wait_port(hub_port), "hub did not start"
+            if not (wait_port(hub_port)): raise AssertionError("hub did not start")
 
             # 1. two signed currency domains in different domains
             cid_a, issuer_a = declare_domain_via_script(engine, root, home, hub_port, "alpha")
             cid_b, _ = declare_domain_via_script(engine, root, home, hub_port, "beta")
-            assert cid_a != cid_b
+            if not (cid_a != cid_b): raise AssertionError
 
             # a forged issuer signature is refused
             canon = f"gamma|{'ab'*32}|utility||coin|domain-only"
             status, body = http_json(hub_port, "POST", "/economy/domain", {
                 "domain_id": "gamma", "issuer": "ab" * 32, "value_kind": "utility",
                 "denomination": "coin", "transfer_policy": "domain-only", "signature": "cd" * 64})
-            assert status == 400 and "invalid_signature" in body, (status, body)
+            if not (status == 400 and "invalid_signature" in body): raise AssertionError((status, body))
 
             # an unknown value kind is refused: the four kinds never merge (§43.1)
             status, body = http_json(hub_port, "POST", "/economy/domain", {
                 "domain_id": "delta", "issuer": "ab" * 32, "value_kind": "crypto",
                 "denomination": "coin", "signature": "cd" * 64})
-            assert status == 400 and "invalid_value_kind" in body, (status, body)
+            if not (status == 400 and "invalid_value_kind" in body): raise AssertionError((status, body))
 
             # 2. mint requires the issuer signature (script holds the identity)
             mint_script = root / "mint.im"
@@ -138,8 +138,8 @@ def main():
                 'say "amount=" + str(b["amount"]) + " version=" + str(b["version"])\n', encoding="utf-8")
             rc = run_script(engine, mint_script, home, root)
             out = rc.stdout.decode(errors="replace")
-            assert "mint=1" in out, out + rc.stderr.decode(errors="replace")
-            assert "amount=500 version=1" in out, out
+            if not ("mint=1" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
+            if not ("amount=500 version=1" in out): raise AssertionError(out)
 
             # a mint signed by someone else fails (service account holds a
             # different identity because it never created this currency)
@@ -150,54 +150,54 @@ def main():
                 'say "forged_mint=" + str(ok)\n', encoding="utf-8")
             rc = run_script(engine, impostor, home, root)
             out = rc.stdout.decode(errors="replace")
-            assert "forged_mint=0" in out, out + rc.stderr.decode(errors="replace")
+            if not ("forged_mint=0" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
 
             # 3. in-domain settlement moves funds
             status, settle = http_json(hub_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alpha/alice", "to": "alpha/bob",
                 "amount": 200, "idempotency_key": "pay-1"})
-            assert status == 200, (status, settle)
+            if not (status == 200): raise AssertionError((status, settle))
             res = json.loads(settle)
-            assert res["status"] == "settled" and res["balance_to"] == 200, res
+            if not (res["status"] == "settled" and res["balance_to"] == 200): raise AssertionError(res)
 
             # 4. replaying the same key must not move funds again
             status, again = http_json(hub_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alpha/alice", "to": "alpha/bob",
                 "amount": 200, "idempotency_key": "pay-1"})
-            assert status == 200, (status, again)
+            if not (status == 200): raise AssertionError((status, again))
             res2 = json.loads(again)
-            assert res2["status"] == "replay", res2
-            assert res2["balance_to"] == 200, res2
+            if not (res2["status"] == "replay"): raise AssertionError(res2)
+            if not (res2["balance_to"] == 200): raise AssertionError(res2)
             _, bal = http_json(hub_port, "GET", f"/economy/balance?currency_id={cid_a}&account=alpha/bob")
-            assert json.loads(bal)["amount"] == 200, bal
+            if not (json.loads(bal)["amount"] == 200): raise AssertionError(bal)
 
             # insufficient funds are refused
             status, poor = http_json(hub_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alpha/alice", "to": "alpha/bob",
                 "amount": 100000, "idempotency_key": "pay-2"})
-            assert status == 409 and "insufficient_balance" in poor, (status, poor)
+            if not (status == 409 and "insufficient_balance" in poor): raise AssertionError((status, poor))
 
             # 5. cross-domain transfer is denied (no silent conversion)
             status, cross = http_json(hub_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alpha/alice", "to": "beta/carol",
                 "amount": 10, "idempotency_key": "cross-1"})
-            assert status == 409, (status, cross)
+            if not (status == 409): raise AssertionError((status, cross))
             denied = json.loads(cross)
-            assert denied["error"] == "cross_domain_transfer_denied", denied
-            assert "bridge" in denied["hint"], denied
+            if not (denied["error"] == "cross_domain_transfer_denied"): raise AssertionError(denied)
+            if not ("bridge" in denied["hint"]): raise AssertionError(denied)
 
             # accounts must state their domain
             status, bad_acct = http_json(hub_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alice", "to": "bob",
                 "amount": 1, "idempotency_key": "bad-1"})
-            assert status == 400 and "invalid_account_format" in bad_acct, (status, bad_acct)
+            if not (status == 400 and "invalid_account_format" in bad_acct): raise AssertionError((status, bad_acct))
 
             # 6. the audit chain recomputes cleanly (mint + transfer)
             status, audit = http_json(hub_port, "GET", f"/economy/audit?currency_id={cid_a}")
             ledger = json.loads(audit)
-            assert ledger["chain_ok"] == 1, ledger
+            if not (ledger["chain_ok"] == 1): raise AssertionError(ledger)
             kinds = [e["kind"] for e in ledger["events"]]
-            assert kinds.count("mint") == 1 and kinds.count("transfer") == 1, ledger
+            if not (kinds.count("mint") == 1 and kinds.count("transfer") == 1): raise AssertionError(ledger)
             prev = "0"
             for ev in ledger["events"]:
                 # recompute the chain exactly as the hub documents it:
@@ -205,8 +205,8 @@ def main():
                 canon = (f'{ev["seq"]}|{ev["kind"]}|{ev["currency_id"]}|{ev["from"]}|'
                          f'{ev["to"]}|{ev["amount"]}|{ev["idem"]}')
                 expect = hashlib.sha256((prev + canon).encode()).hexdigest()
-                assert ev["prev"] == prev, (ev, prev)
-                assert ev["hash"] == expect, (ev, expect)
+                if not (ev["prev"] == prev): raise AssertionError((ev, prev))
+                if not (ev["hash"] == expect): raise AssertionError((ev, expect))
                 prev = ev["hash"]
 
             # a bridge can be declared; execution is explicitly not implemented
@@ -214,12 +214,12 @@ def main():
                 "source_domain": "alpha", "target_domain": "beta",
                 "rate": "2:1", "fee": "1%", "limit": "1000",
                 "oracle": "local", "rollback_policy": "refund"})
-            assert status == 200, (status, bridge)
+            if not (status == 200): raise AssertionError((status, bridge))
             br = json.loads(bridge)
-            assert br["ok"] is True and br["execution"] == "not_implemented", br
+            if not (br["ok"] is True and br["execution"] == "not_implemented"): raise AssertionError(br)
             _, listed = http_json(hub_port, "GET", "/economy/bridge?source_domain=alpha&target_domain=beta")
             bridges = json.loads(listed)["bridges"]
-            assert len(bridges) == 1 and bridges[0]["execution"] == "not_implemented", listed
+            if not (len(bridges) == 1 and bridges[0]["execution"] == "not_implemented"): raise AssertionError(listed)
 
             # 7. script-space views
             view = root / "view.im"
@@ -231,9 +231,9 @@ def main():
                 % (hub_port, cid_a), encoding="utf-8")
             rc = run_script(engine, view, home, root)
             out = rc.stdout.decode(errors="replace")
-            assert "audit_count=2 chain_ok=1" in out, out + rc.stderr.decode(errors="replace")
+            if not ("audit_count=2 chain_ok=1" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
             # balance_to is the receiver (alice): 500 - 200 + 50 = 350
-            assert "settle_status=settled balance=350" in out, out
+            if not ("settle_status=settled balance=350" in out): raise AssertionError(out)
         except AssertionError:
             log = (root / "hub.log")
             if log.exists():

@@ -3,17 +3,17 @@ from eidos_desugar import translate
 def main():
     src = 'eidos Player { name = "eidos ed" }\n// eidos\ned = 1\n'
     out = translate(src)
-    assert out.startswith('func Player(')
-    assert '__eidos_obj["name"]' in out
-    assert '"eidos ed"' in out
-    assert '// eidos' in out
-    assert 'record = 1' in out
+    if not (out.startswith('func Player(')): raise AssertionError
+    if not ('__eidos_obj["name"]' in out): raise AssertionError
+    if not ('"eidos ed"' in out): raise AssertionError
+    if not ('// eidos' in out): raise AssertionError
+    if not ('record = 1' in out): raise AssertionError
     untouched = translate('msg = "eidos Player { not an object }"\n# eidos Fake { nope }\n')
-    assert 'msg = "eidos Player { not an object }"' in untouched
-    assert '# eidos Fake { nope }' in untouched
+    if not ('msg = "eidos Player { not an object }"' in untouched): raise AssertionError
+    if not ('# eidos Fake { nope }' in untouched): raise AssertionError
     composed = translate('h = f >> g\n# f >> g\nmsg = "f >> g"\n')
-    assert 'h = (x -> g(f(x)))' in composed
-    assert '# f >> g' in composed and '"f >> g"' in composed
+    if not ('h = (x -> g(f(x)))' in composed): raise AssertionError
+    if not ('# f >> g' in composed and '"f >> g"' in composed): raise AssertionError
     object_src = translate('''
 eidos Counter {
   value = 0
@@ -24,9 +24,9 @@ c = Counter(4)
 say c["get"]()
 say c["inc"](3)
 ''')
-    assert 'func Counter__inc(__eidos_obj, n)' in object_src
-    assert 'c = Counter(4)' in object_src
-    assert '/*' not in object_src
+    if not ('func Counter__inc(__eidos_obj, n)' in object_src): raise AssertionError
+    if not ('c = Counter(4)' in object_src): raise AssertionError
+    if not ('/*' not in object_src): raise AssertionError
     commented = translate('''
 eidos Probe {
   value = 2
@@ -39,9 +39,9 @@ eidos Probe {
 p = Probe()
 say p["inspect"](3, 4)
 ''')
-    assert '#[ value should stay text ]#' in commented
-    assert '// value should stay text' in commented
-    assert 'return __eidos_obj["value"] + a + b' in commented
+    if not ('#[ value should stay text ]#' in commented): raise AssertionError
+    if not ('// value should stay text' in commented): raise AssertionError
+    if not ('return __eidos_obj["value"] + a + b' in commented): raise AssertionError
     inherited = translate('''
 eidos Base {
   value = 1
@@ -54,15 +54,15 @@ eidos Child: Base {
 c = Child()
 say c["inc"](2)
 ''')
-    assert 'func Base__inc(__eidos_obj, n)' in inherited
-    assert 'func Child__inc(__eidos_obj, n)' in inherited
-    assert 'Base__inc(__eidos_obj, n)' in inherited
-    assert 'Child( )' not in inherited
+    if not ('func Base__inc(__eidos_obj, n)' in inherited): raise AssertionError
+    if not ('func Child__inc(__eidos_obj, n)' in inherited): raise AssertionError
+    if not ('Base__inc(__eidos_obj, n)' in inherited): raise AssertionError
+    if not ('Child( )' not in inherited): raise AssertionError
 
     try:
         translate('eidos Child: Parent + Flying { value = 1 }\n')
     except ValueError as exc:
-        assert 'mixins' in str(exc)
+        if not ('mixins' in str(exc)): raise AssertionError
     else:
         raise AssertionError('Eidos mixins must be rejected by the v0.4 subset')
     print('eidos desugar: ok')

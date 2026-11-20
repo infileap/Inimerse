@@ -163,7 +163,7 @@ def im_path_literal(path):
 def main():
     engine = find_engine()
     sample = REPO / "vtest_signed.vverse"
-    assert sample.is_file(), f"missing sample {sample}"
+    if not (sample.is_file()): raise AssertionError(f"missing sample {sample}")
     with package_tree("inimerse-pkg-") as td:
         root = Path(td)
         home = root / "home"
@@ -191,33 +191,32 @@ def main():
         (root / "sign.im").write_text(SIGN_ROUNDTRIP, encoding="utf-8")
         rc = run(engine, root / "sign.im", home, root)
         out = rc.stdout.decode(errors="replace")
-        assert "pub_len=64" in out, out + rc.stderr.decode(errors="replace")
-        assert "verify_ok=1" in out, out
-        assert "verify_tampered=0" in out, out
-        assert "pack=mypkg.vverse" in out, out + rc.stderr.decode(errors="replace")
+        if not ("pub_len=64" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
+        if not ("verify_ok=1" in out): raise AssertionError(out)
+        if not ("verify_tampered=0" in out): raise AssertionError(out)
+        if not ("pack=mypkg.vverse" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
 
         pkg_path = root / "mypkg.vverse"
-        assert pkg_path.is_file(), "verse_pack wrote no file"
-        assert pkg_path.read_bytes()[:2] == b"\x1f\x8b", (
-            "verse_pack did not write a gzip container; first bytes: %r"
+        if not (pkg_path.is_file()): raise AssertionError("verse_pack wrote no file")
+        if not (pkg_path.read_bytes()[:2] == b"\x1f\x8b"): raise AssertionError("verse_pack did not write a gzip container; first bytes: %r"
             % pkg_path.read_bytes()[:16])
         container = read_container(pkg_path)
-        assert container.get("format") == "vverse-1", container.get("format")
-        assert set(container.get("files", {})) >= set(PACKED_FILES) | {
-            "signatures/sha256.json", "assets/blob.bin"}, sorted(container.get("files", {}))
+        if not (container.get("format") == "vverse-1"): raise AssertionError(container.get("format"))
+        if not (set(container.get("files", {})) >= set(PACKED_FILES) | {
+            "signatures/sha256.json", "assets/blob.bin"}): raise AssertionError(sorted(container.get("files", {})))
 
         # the reference implementation is the judge for the container we wrote
         unpacked = root / "unpacked"
         ref = ref_unpack(pkg_path, unpacked)
-        assert ref.returncode == 0, (ref.stdout.decode(errors="replace")
+        if not (ref.returncode == 0): raise AssertionError(ref.stdout.decode(errors="replace")
                                      + ref.stderr.decode(errors="replace"))
         ref = ref_validate(unpacked)
-        assert ref.returncode == 0, (ref.stdout.decode(errors="replace")
+        if not (ref.returncode == 0): raise AssertionError(ref.stdout.decode(errors="replace")
                                      + ref.stderr.decode(errors="replace"))
         for rel in PACKED_FILES:
-            assert (unpacked / rel).is_file(), f"reference unpack lost {rel}"
-        assert (unpacked / "data.txt").read_bytes() == b"data payload\n"
-        assert (unpacked / "assets" / "blob.bin").read_bytes() == b"\x00\x01\x02blob\n"
+            if not ((unpacked / rel).is_file()): raise AssertionError(f"reference unpack lost {rel}")
+        if not ((unpacked / "data.txt").read_bytes() == b"data payload\n"): raise AssertionError
+        if not ((unpacked / "assets" / "blob.bin").read_bytes() == b"\x00\x01\x02blob\n"): raise AssertionError
 
         opener = root / "open.im"
 
@@ -225,11 +224,11 @@ def main():
         opener.write_text(OPEN_PKG.format(path=im_path_literal(pkg_path)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         out, err = rc.stdout.decode(errors="replace"), rc.stderr.decode(errors="replace")
-        assert "open=1" in out, out + err
+        if not ("open=1" in out): raise AssertionError(out + err)
         landed = home / "universe" / "mypkg"
-        assert (landed / "main.im").is_file(), f"round trip unpacked nothing under {landed}"
-        assert (landed / "data.txt").read_bytes() == b"data payload\n", "round trip lost data"
-        assert (landed / "manifest.json").is_file(), "round trip lost manifest.json"
+        if not ((landed / "main.im").is_file()): raise AssertionError(f"round trip unpacked nothing under {landed}")
+        if not ((landed / "data.txt").read_bytes() == b"data payload\n"): raise AssertionError("round trip lost data")
+        if not ((landed / "manifest.json").is_file()): raise AssertionError("round trip lost manifest.json")
 
         # 2. tampering with a file payload breaks its sha256 -> rejected
         bad = read_container(pkg_path)
@@ -240,8 +239,8 @@ def main():
         tampered.write_bytes(gzip_json(bad))
         opener.write_text(OPEN_PKG.format(path=im_path_literal(tampered)), encoding="utf-8")
         rc = run(engine, opener, home, root)
-        assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
-        assert b"digest mismatch" in rc.stderr, rc.stderr
+        if not (b"open=0" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
+        if not (b"digest mismatch" in rc.stderr): raise AssertionError(rc.stderr)
 
         # 3. the digest table IS the signature: tampering it is rejected too
         bad2 = read_container(pkg_path)
@@ -253,8 +252,8 @@ def main():
         badsig.write_bytes(gzip_json(bad2))
         opener.write_text(OPEN_PKG.format(path=im_path_literal(badsig)), encoding="utf-8")
         rc = run(engine, opener, home, root)
-        assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
-        assert b"digest mismatch" in rc.stderr, rc.stderr
+        if not (b"open=0" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
+        if not (b"digest mismatch" in rc.stderr): raise AssertionError(rc.stderr)
 
         # 3b. a container with no digest table at all is rejected
         bad3 = read_container(pkg_path)
@@ -263,8 +262,8 @@ def main():
         nosig.write_bytes(gzip_json(bad3))
         opener.write_text(OPEN_PKG.format(path=im_path_literal(nosig)), encoding="utf-8")
         rc = run(engine, opener, home, root)
-        assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
-        assert b"missing required metadata" in rc.stderr, rc.stderr
+        if not (b"open=0" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
+        if not (b"missing required metadata" in rc.stderr): raise AssertionError(rc.stderr)
 
         # 4. min_version dependency check on the legacy container: the engine
         #    version (0.5.0) is older than 9.9.9 -> rejected.  A real .vverse
@@ -276,8 +275,8 @@ def main():
         #    the engine, so it must be rejected as a dependency mismatch...
         opener.write_text(OPEN_PKG.format(path=im_path_literal(sample)), encoding="utf-8")
         rc = run(engine, opener, home, root)
-        assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
-        assert b"needs infiverse >=" in rc.stderr, rc.stderr
+        if not (b"open=0" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
+        if not (b"needs infiverse >=" in rc.stderr): raise AssertionError(rc.stderr)
 
         # ...with min_version lowered it must pass full signature verification
         # (the ed25519 signature covers file contents, not meta fields)
@@ -288,9 +287,9 @@ def main():
         opener.write_text(OPEN_PKG.format(path=im_path_literal(lowered)), encoding="utf-8")
         rc = run(engine, opener, home, root)
         out, err = rc.stdout.decode(errors="replace"), rc.stderr.decode(errors="replace")
-        assert "open=1" in out, out + err
-        assert "mismatch" not in err, err
-        assert (home / "universe" / vec_pkg["id"] / "data.txt").is_file(), "vector not unpacked"
+        if not ("open=1" in out): raise AssertionError(out + err)
+        if not ("mismatch" not in err): raise AssertionError(err)
+        if not ((home / "universe" / vec_pkg["id"] / "data.txt").is_file()): raise AssertionError("vector not unpacked")
 
         # 6. tampered content and tampered signature are both rejected
         vec_pkg["files"]["data.txt"] = "AAAA" + vec_pkg["files"]["data.txt"][4:]
@@ -298,8 +297,8 @@ def main():
         broken.write_text(json.dumps(vec_pkg), encoding="utf-8")
         opener.write_text(OPEN_PKG.format(path=im_path_literal(broken)), encoding="utf-8")
         rc = run(engine, opener, home, root)
-        assert b"open=0" in rc.stdout, rc.stdout + rc.stderr
-        assert b"mismatch" in rc.stderr, rc.stderr
+        if not (b"open=0" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
+        if not (b"mismatch" in rc.stderr): raise AssertionError(rc.stderr)
 
         # 7. RETIRED, see the module docstring: re-packing vtest_signed.vverse
         #    byte-for-byte was asserted here.  Its only producer -- the legacy

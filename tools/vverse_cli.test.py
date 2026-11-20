@@ -141,7 +141,7 @@ def main():
     engine = find_engine()
     probe = find_probe()
     node = shutil.which("node")
-    assert node, "node not found: the reference implementation is the judge here"
+    if not (node): raise AssertionError("node not found: the reference implementation is the judge here")
 
     with tempfile.TemporaryDirectory(prefix="inimerse-vverse-cli-") as td:
         root = Path(td)

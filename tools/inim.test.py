@@ -17,23 +17,23 @@ def main():
         run('add', '--package', str(dep_pkg), '-p', str(root))
         target = Path(td) / 'target'; target.mkdir(); run('install', str(pkg), '-t', str(target))
         lock = json.loads((target / 'lock.json').read_text(encoding='utf-8'))
-        assert lock['packages']['demo/app']['version'] == '0.1.0'
-        assert (target / '.inim-cache' / 'demo' / 'app' / '0.1.0' / 'src' / 'main.im').is_file()
+        if not (lock['packages']['demo/app']['version'] == '0.1.0'): raise AssertionError
+        if not ((target / '.inim-cache' / 'demo' / 'app' / '0.1.0' / 'src' / 'main.im').is_file()): raise AssertionError
         run('install', '-t', str(root))
-        assert (root / '.inim-cache' / 'other' / 'lib' / '0.1.0').is_dir()
+        if not ((root / '.inim-cache' / 'other' / 'lib' / '0.1.0').is_dir()): raise AssertionError
         dep_spec = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))['dependencies']['other/lib']
-        assert dep_spec['sha256']
+        if not (dep_spec['sha256']): raise AssertionError
         run('add', 'other/lib', '>=0.1.0 <1.0.0', '-p', str(root))
         run('doctor', str(root))
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
-        assert manifest['dependencies']['other/lib'] == '>=0.1.0 <1.0.0'
+        if not (manifest['dependencies']['other/lib'] == '>=0.1.0 <1.0.0'): raise AssertionError
         (root / 'manifest.json').write_text(json.dumps({**manifest, 'version': 'bad'}, indent=2), encoding='utf-8')
-        assert subprocess.run(CLI + ['pack', str(root), '-o', str(Path(td) / 'bad.inim')]).returncode != 0
+        if not (subprocess.run(CLI + ['pack', str(root), '-o', str(Path(td) / 'bad.inim')]).returncode != 0): raise AssertionError
         (root / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
         run('publish', '-p', str(dep_root), '-o', str(Path(td) / 'dist'))
         run('publish', '-p', str(root), '-o', str(Path(td) / 'dist'))
         index = json.loads((Path(td) / 'dist' / 'index.json').read_text(encoding='utf-8'))
-        assert index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')
+        if not (index['packages']['demo/app']['0.1.0']['file'].endswith('.inim')): raise AssertionError
         run('verify', str(Path(td) / 'dist'))
         key = Path(td) / 'registry-key.pem'
         public = Path(td) / 'registry-key.pub.pem'
@@ -43,8 +43,8 @@ def main():
         run('publish', '-p', str(root), '-o', str(signed_dist), '--signing-key', str(key))
         signed_index = json.loads((signed_dist / 'index.json').read_text(encoding='utf-8'))
         signed_item = signed_index['packages']['demo/app']['0.1.0']
-        assert signed_item['signature']['algorithm'] == 'ed25519'
-        assert signed_index['signature']['algorithm'] == 'ed25519'
+        if not (signed_item['signature']['algorithm'] == 'ed25519'): raise AssertionError
+        if not (signed_index['signature']['algorithm'] == 'ed25519'): raise AssertionError
         run('verify', str(signed_dist), '--require-signature', '--trusted-key', str(public))
         run('update', '-p', str(root), '-r', str(signed_dist),
             '--require-signature', '--trusted-key', str(public))
@@ -65,8 +65,8 @@ def main():
                        f'http://127.0.0.1:{server.server_port}'],
                 capture_output=True, text=True, encoding="utf-8", errors="replace"
             )
-            assert escaped.returncode != 0
-            assert 'package URL escapes registry' in escaped.stderr
+            if not (escaped.returncode != 0): raise AssertionError
+            if not ('package URL escapes registry' in escaped.stderr): raise AssertionError
             remote_index['packages']['other/lib']['0.1.0']['file'] = '%2e%2e/outside.inim'
             (signed_dist / 'index.json').write_text(json.dumps(remote_index), encoding='utf-8')
             encoded_escape = subprocess.run(
@@ -74,8 +74,8 @@ def main():
                        f'http://127.0.0.1:{server.server_port}'],
                 capture_output=True, text=True, encoding="utf-8", errors="replace"
             )
-            assert encoded_escape.returncode != 0
-            assert 'package URL escapes registry' in encoded_escape.stderr
+            if not (encoded_escape.returncode != 0): raise AssertionError
+            if not ('package URL escapes registry' in encoded_escape.stderr): raise AssertionError
         finally:
             (signed_dist / 'index.json').write_text(json.dumps(signed_index), encoding='utf-8')
             server.shutdown()
@@ -86,38 +86,38 @@ def main():
         # unavailable.
         run('install', '-t', str(root), '--offline')
         cached_archives = list((root / '.inim-cache' / 'archives').glob('*.inim'))
-        assert cached_archives
+        if not (cached_archives): raise AssertionError
         other_key = Path(td) / 'other-key.pem'
         other_public = Path(td) / 'other-key.pub.pem'
         run('keygen', '-o', str(other_key), '--public-output', str(other_public))
-        assert subprocess.run(
+        if not (subprocess.run(
             CLI + ['verify', str(signed_dist), '--require-signature', '--trusted-key', str(other_public)],
             capture_output=True, text=True, encoding="utf-8", errors="replace"
-        ).returncode != 0
+        ).returncode != 0): raise AssertionError
         signed_item['signature']['signature'] = 'A' * 88
         (signed_dist / 'index.json').write_text(json.dumps(signed_index), encoding='utf-8')
-        assert subprocess.run(CLI + ['verify', str(signed_dist)]).returncode != 0
+        if not (subprocess.run(CLI + ['verify', str(signed_dist)]).returncode != 0): raise AssertionError
         run('update', '-p', str(root), '-r', str(Path(td) / 'dist'))
         prev_engine = os.environ.get('INIMERSE_ENGINE_VERSION'); os.environ['INIMERSE_ENGINE_VERSION'] = '0.3.0'
-        assert subprocess.run(CLI + ['install', str(dep_pkg), '-t', str(target)]).returncode != 0
+        if not (subprocess.run(CLI + ['install', str(dep_pkg), '-t', str(target)]).returncode != 0): raise AssertionError
         if prev_engine is None: os.environ.pop('INIMERSE_ENGINE_VERSION', None)
         else: os.environ['INIMERSE_ENGINE_VERSION'] = prev_engine
         (Path(td) / 'dist' / index['packages']['demo/app']['0.1.0']['file']).write_bytes(b'tampered')
-        assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
+        if not (subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0): raise AssertionError
         malicious_index = {'index_version': 1, 'packages': {'evil': {'1.0.0': {'file': '../outside.inim', 'sha256': '0' * 64}}}}
         (Path(td) / 'dist' / 'index.json').write_text(json.dumps(malicious_index), encoding='utf-8')
-        assert subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0
+        if not (subprocess.run(CLI + ['verify', str(Path(td) / 'dist')]).returncode != 0): raise AssertionError
         run('remove', 'demo/app', '-p', str(target))
-        assert not (target / '.inim-cache' / 'demo' / 'app' / '0.1.0').exists()
+        if not (not (target / '.inim-cache' / 'demo' / 'app' / '0.1.0').exists()): raise AssertionError
         bad = Path(td) / 'bad.inim'
         with zipfile.ZipFile(bad, 'w') as z:
             z.writestr('manifest.json', '{"name":"bad","version":"1.0.0"}')
             z.writestr('../escape.txt', 'no')
-        assert subprocess.run(CLI + ['install', str(bad), '-t', str(target)]).returncode != 0
+        if not (subprocess.run(CLI + ['install', str(bad), '-t', str(target)]).returncode != 0): raise AssertionError
         bad_name = Path(td) / 'bad-name.inim'
         with zipfile.ZipFile(bad_name, 'w') as z:
             z.writestr('manifest.json', '{"name":"../escape","version":"1.0.0"}')
-        assert subprocess.run(CLI + ['install', str(bad_name), '-t', str(target)]).returncode != 0
+        if not (subprocess.run(CLI + ['install', str(bad_name), '-t', str(target)]).returncode != 0): raise AssertionError
     print('inim tests: ok')
 
 if __name__ == '__main__': main()

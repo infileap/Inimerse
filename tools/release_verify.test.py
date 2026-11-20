@@ -24,16 +24,16 @@ def main():
         (root / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
         tool = Path(__file__).with_name("release_verify.py")
         good = subprocess.run([sys.executable, str(tool), str(root), "--version", "0.4.0"], capture_output=True)
-        assert good.returncode == 0, good.stderr.decode(errors="replace")
+        if not (good.returncode == 0): raise AssertionError(good.stderr.decode(errors="replace"))
         missing_wasm = subprocess.run(
             [sys.executable, str(tool), str(root), "--version", "0.4.0", "--require-wasm"],
             capture_output=True,
         )
-        assert missing_wasm.returncode != 0
-        assert b"missing WASM probe" in missing_wasm.stderr
+        if not (missing_wasm.returncode != 0): raise AssertionError
+        if not (b"missing WASM probe" in missing_wasm.stderr): raise AssertionError
         artifacts[1].write_text("tampered", encoding="utf-8")
         bad = subprocess.run([sys.executable, str(tool), str(root), "--version", "0.4.0"], capture_output=True)
-        assert bad.returncode != 0
+        if not (bad.returncode != 0): raise AssertionError
         artifacts[1].write_bytes(b"not a zip")
         lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in artifacts]
         (root / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -41,8 +41,8 @@ def main():
             [sys.executable, str(tool), str(root), "--version", "0.4.0"],
             capture_output=True,
         )
-        assert malformed.returncode != 0
-        assert b"invalid zip archive" in malformed.stderr
+        if not (malformed.returncode != 0): raise AssertionError
+        if not (b"invalid zip archive" in malformed.stderr): raise AssertionError
         artifacts[1].write_bytes(zip_bytes)
         lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in artifacts]
         (root / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -57,7 +57,7 @@ def main():
              "--winget-dir", str(winget)],
             capture_output=True,
         )
-        assert placeholder.returncode != 0
+        if not (placeholder.returncode != 0): raise AssertionError
         (winget / "installer.yaml").write_text(
             "PackageVersion: 0.4.0\nInstallerSha256: " + "a" * 64 + "\n",
             encoding="utf-8",
@@ -67,7 +67,7 @@ def main():
              "--winget-dir", str(winget)],
             capture_output=True,
         )
-        assert ready.returncode == 0, ready.stderr.decode(errors="replace")
+        if not (ready.returncode == 0): raise AssertionError(ready.stderr.decode(errors="replace"))
 
         nonexec = root / "nonexec"
         nonexec.mkdir()
@@ -91,8 +91,8 @@ def main():
             [sys.executable, str(tool), str(nonexec), "--version", "0.4.0"],
             capture_output=True,
         )
-        assert rejected.returncode != 0
-        assert b"not executable" in rejected.stderr
+        if not (rejected.returncode != 0): raise AssertionError
+        if not (b"not executable" in rejected.stderr): raise AssertionError
     print("release verifier: ok")
 
 if __name__ == "__main__":

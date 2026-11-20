@@ -199,7 +199,7 @@ def main():
         dir_port, node_a_port, node_b_port = (http for _proc, http, _tcp in started)
         try:
             for p in (dir_port, node_a_port, node_b_port):
-                assert wait_port(p), f"hub {p} did not start"
+                if not (wait_port(p)): raise AssertionError(f"hub {p} did not start")
 
             expires = str(int(time.time() * 1000) + 300000)
             node_ids = {}
@@ -214,27 +214,27 @@ def main():
                         break
                     time.sleep(0.3)
                     rc = run_script(engine, script, home, root)
-                assert b"advertise=1" in rc.stdout, rc.stdout + rc.stderr
+                if not (b"advertise=1" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
                 node_ids[name] = rc.stdout.decode().split("node=")[1].strip().split("\n")[0]
 
             # 1. discover reports observed health (up for A/B, down for the dead
             #    endpoint); observation is asynchronous, so wait for the fact
             health = wait_for_health(dir_port, node_ids, port_of=dead_port)
-            assert health.get(node_ids["A"]) == "up", health
-            assert health.get(node_ids["B"]) == "up", health
-            assert health.get(node_ids["C"]) == "down", health
+            if not (health.get(node_ids["A"]) == "up"): raise AssertionError(health)
+            if not (health.get(node_ids["B"]) == "up"): raise AssertionError(health)
+            if not (health.get(node_ids["C"]) == "down"): raise AssertionError(health)
 
             # 2. scheduler view excludes the unhealthy node, and says so
             _, sched = http_json(dir_port, "GET", "/node/schedule")
             sched_data = json.loads(sched)
             scheduled = {n["node_id"] for n in sched_data["nodes"]}
-            assert node_ids["A"] in scheduled and node_ids["B"] in scheduled, sched_data
-            assert node_ids["C"] not in scheduled, sched_data
-            assert sched_data["excluded"]["unhealthy"] >= 1, sched_data
+            if not (node_ids["A"] in scheduled and node_ids["B"] in scheduled): raise AssertionError(sched_data)
+            if not (node_ids["C"] not in scheduled): raise AssertionError(sched_data)
+            if not (sched_data["excluded"]["unhealthy"] >= 1): raise AssertionError(sched_data)
 
             # capability filter is likewise reported
             _, sched_flt = http_json(dir_port, "GET", "/node/schedule?caps=events")
-            assert json.loads(sched_flt)["count"] >= 2, sched_flt
+            if not (json.loads(sched_flt)["count"] >= 2): raise AssertionError(sched_flt)
 
             # 3. script-space scheduler view only lists healthy nodes
             sched_script = root / "sched.im"
@@ -245,55 +245,55 @@ def main():
                 'say "health0=" + n0["health"]\n', encoding="utf-8")
             rc = run_script(engine, sched_script, home, root)
             out = rc.stdout.decode(errors="replace")
-            assert "sched_count=2" in out, out + rc.stderr.decode(errors="replace")
-            assert "health0=up" in out, out
+            if not ("sched_count=2" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
+            if not ("health0=up" in out): raise AssertionError(out)
 
             # 4. register authority on A, then hand off to B
             empty_tail = hashlib.sha256(b"").hexdigest()
             snapshot = hashlib.sha256(b"checkpoint-1").hexdigest()
             status, body = http_json(dir_port, "POST", "/session/authority", {
                 "verse": "v1", "peer": "p1", "authority": node_ids["A"]})
-            assert status == 200, (status, body)
+            if not (status == 200): raise AssertionError((status, body))
 
             status, body = http_json(dir_port, "POST", "/node/handoff", {
                 "verse": "v1", "peer": "p1", "from_authority": node_ids["A"],
                 "to_authority": node_ids["B"], "snapshot_hash": snapshot,
                 "event_tail_hash": empty_tail, "rules_version": "1"})
-            assert status == 200 and '"ok":true' in body, (status, body)
+            if not (status == 200 and '"ok":true' in body): raise AssertionError((status, body))
             result = json.loads(body)
-            assert result["generation"] == 2 and result["authority"] == node_ids["B"], result
+            if not (result["generation"] == 2 and result["authority"] == node_ids["B"]): raise AssertionError(result)
 
             _, auth = http_json(dir_port, "GET", "/session/authority?verse=v1&peer=p1")
             auth_data = json.loads(auth)
-            assert auth_data["authority"] == node_ids["B"], auth_data
-            assert auth_data["generation"] == 2, auth_data
-            assert auth_data["checkpoint"] == snapshot, auth_data
+            if not (auth_data["authority"] == node_ids["B"]): raise AssertionError(auth_data)
+            if not (auth_data["generation"] == 2): raise AssertionError(auth_data)
+            if not (auth_data["checkpoint"] == snapshot): raise AssertionError(auth_data)
 
             # 5. a mismatching event tail is refused and authority does not move
             status, body = http_json(dir_port, "POST", "/node/handoff", {
                 "verse": "v1", "peer": "p1", "from_authority": node_ids["B"],
                 "to_authority": node_ids["A"], "snapshot_hash": snapshot,
                 "event_tail_hash": "00" * 32, "rules_version": "1"})
-            assert status == 409 and "event_tail_mismatch" in body, (status, body)
+            if not (status == 409 and "event_tail_mismatch" in body): raise AssertionError((status, body))
             _, auth = http_json(dir_port, "GET", "/session/authority?verse=v1&peer=p1")
-            assert json.loads(auth)["authority"] == node_ids["B"], auth
+            if not (json.loads(auth)["authority"] == node_ids["B"]): raise AssertionError(auth)
 
             # 6. a mismatching checkpoint is refused too
             status, body = http_json(dir_port, "POST", "/node/handoff", {
                 "verse": "v1", "peer": "p1", "from_authority": node_ids["B"],
                 "to_authority": node_ids["A"], "snapshot_hash": "11" * 32,
                 "event_tail_hash": empty_tail, "rules_version": "1"})
-            assert status == 409 and "checkpoint_mismatch" in body, (status, body)
+            if not (status == 409 and "checkpoint_mismatch" in body): raise AssertionError((status, body))
 
             # 7. unhealthy and unknown targets are refused
             status, body = http_json(dir_port, "POST", "/node/handoff", {
                 "verse": "v1", "peer": "p1", "to_authority": node_ids["C"],
                 "snapshot_hash": snapshot, "event_tail_hash": empty_tail})
-            assert status == 503 and "target_unhealthy" in body, (status, body)
+            if not (status == 503 and "target_unhealthy" in body): raise AssertionError((status, body))
             status, body = http_json(dir_port, "POST", "/node/handoff", {
                 "verse": "v1", "peer": "p1", "to_authority": "ff" * 32,
                 "snapshot_hash": snapshot, "event_tail_hash": empty_tail})
-            assert status == 404 and "target_unknown" in body, (status, body)
+            if not (status == 404 and "target_unknown" in body): raise AssertionError((status, body))
 
             # 8. script-space authority read after the successful handoff
             auth_script = root / "auth.im"
@@ -303,8 +303,8 @@ def main():
                 'say "generation=" + str(a["generation"])\n', encoding="utf-8")
             rc = run_script(engine, auth_script, home, root)
             out = rc.stdout.decode(errors="replace")
-            assert f"authority={node_ids['B']}" in out, out + rc.stderr.decode(errors="replace")
-            assert "generation=2" in out, out
+            if not (f"authority={node_ids['B']}" in out): raise AssertionError(out + rc.stderr.decode(errors="replace"))
+            if not ("generation=2" in out): raise AssertionError(out)
 
             # 9. script-space handoff to A (source B), carrying the same tail
             handoff_script = root / "handoff.im"
@@ -313,10 +313,10 @@ def main():
                 f'"{node_ids["A"]}", "{snapshot}", "{empty_tail}")\n'
                 'say "handoff=" + str(r)\n', encoding="utf-8")
             rc = run_script(engine, handoff_script, home, root)
-            assert b"handoff=1" in rc.stdout, rc.stdout + rc.stderr
+            if not (b"handoff=1" in rc.stdout): raise AssertionError(rc.stdout + rc.stderr)
             _, auth = http_json(dir_port, "GET", "/session/authority?verse=v1&peer=p1")
-            assert json.loads(auth)["authority"] == node_ids["A"], auth
-            assert json.loads(auth)["generation"] == 3, auth
+            if not (json.loads(auth)["authority"] == node_ids["A"]): raise AssertionError(auth)
+            if not (json.loads(auth)["generation"] == 3): raise AssertionError(auth)
         finally:
             dead_sock.close()
             for h in hubs:

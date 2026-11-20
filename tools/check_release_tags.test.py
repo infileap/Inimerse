@@ -137,12 +137,12 @@ def drift_that_is_not_drift_is_green():
         # the pointer did not.
         f.run("git", "config", "core.abbrev", "8")
         short = f.run("git", "rev-parse", "--short", "v0.9.1").stdout.strip()
-        assert len(short) == 8, short
+        if not (len(short) == 8): raise AssertionError(short)
         record = short[:7]
         f.write_docs(record)
         rc, out = f.check()
-        assert rc == 0, "record %r resolves to v0.9.1, expected exit 0, got %d\n%s" % (record, rc, out)
-        assert "every binding agrees" in out, out
+        if not (rc == 0): raise AssertionError("record %r resolves to v0.9.1, expected exit 0, got %d\n%s" % (record, rc, out))
+        if not ("every binding agrees" in out): raise AssertionError(out)
     finally:
         f.close()
 
@@ -153,8 +153,8 @@ def record_of_a_different_commit_is_red():
     try:
         f.write_docs(f.run("git", "rev-parse", "--short", "v0.9.2").stdout.strip())
         rc, out = f.check()
-        assert rc == 1, "a record naming another commit must exit 1, got %d\n%s" % (rc, out)
-        assert "records `v0.9.1`" in out and "FAILED" in out, out
+        if not (rc == 1): raise AssertionError("a record naming another commit must exit 1, got %d\n%s" % (rc, out))
+        if not ("records `v0.9.1`" in out and "FAILED" in out): raise AssertionError(out)
     finally:
         f.close()
 
@@ -168,14 +168,14 @@ def ambiguous_abbreviation_is_red_not_widened():
         for data in (_data_a, data_b):
             p = subprocess.run(["git", "hash-object", "-w", "-t", "blob", "--stdin"],
                                input=data, cwd=f.repo, capture_output=True)
-            assert p.returncode == 0, p.stderr
+            if not (p.returncode == 0): raise AssertionError(p.stderr)
         f.write_docs(key)
         rc, out = f.check()
-        assert rc == 1, "an ambiguous record must exit 1, got %d\n%s" % (rc, out)
-        assert "records `v0.9.1` -> `%s`" % key in out, out
+        if not (rc == 1): raise AssertionError("an ambiguous record must exit 1, got %d\n%s" % (rc, out))
+        if not ("records `v0.9.1` -> `%s`" % key in out): raise AssertionError(out)
         # The fix's message names the situation; the failing comparison does not.
-        assert "does not resolve to the commit" in out, out
-        assert "ambiguous" in out, out
+        if not ("does not resolve to the commit" in out): raise AssertionError(out)
+        if not ("ambiguous" in out): raise AssertionError(out)
     finally:
         f.close()
 
@@ -186,8 +186,8 @@ def baseline_naming_an_older_tag_is_red():
     try:
         f.write_readme("0.9.1")
         rc, out = f.check()
-        assert rc == 1, "a README baseline behind the newest tag must exit 1, got %d\n%s" % (rc, out)
-        assert "0.9.1" in out and "FAILED" in out, out
+        if not (rc == 1): raise AssertionError("a README baseline behind the newest tag must exit 1, got %d\n%s" % (rc, out))
+        if not ("0.9.1" in out and "FAILED" in out): raise AssertionError(out)
     finally:
         f.close()
 

@@ -168,7 +168,7 @@ def main():
     ctrl_ratios = [r["control_ratio"] for r in rows]
     a = describe("AOT package / interpreter", aot_ratios)
     c = describe("interpreter control (same channel twice)", ctrl_ratios)
-    assert a["name"] != c["name"]
+    if not (a["name"] != c["name"]): raise AssertionError
 
     lines = [
         "## AOT package channel: is the speedup real?",

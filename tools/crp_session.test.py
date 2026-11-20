@@ -61,7 +61,7 @@ def wait_ready(port, timeout=10.0):
 def main():
     engine = find_engine()
     node = shutil.which("node")
-    assert node, "node is required for the websocket flow test"
+    if not (node): raise AssertionError("node is required for the websocket flow test")
     with tempfile.TemporaryDirectory(prefix="inimerse-crp-") as td:
         root = Path(td)
         (root / "hub.im").write_text('say "hub"\nwait 60\n', encoding="utf-8")
@@ -82,12 +82,12 @@ def main():
              "hub.im"],
             cwd=root, log_path=root / "hub.log", env=env)
         try:
-            assert wait_ready(http_port), "hub did not become ready"
+            if not (wait_ready(http_port)): raise AssertionError("hub did not become ready")
             rc = subprocess.run([node, str(HERE / "crp_session_flow.test.js"),
                                  f"ws://127.0.0.1:{http_port}"],
                                 capture_output=True, timeout=30, env=env)
-            assert rc.returncode == 0, rc.stderr.decode(errors="replace") + rc.stdout.decode(errors="replace")
-            assert b"crp session flow: ok" in rc.stdout, rc.stdout
+            if not (rc.returncode == 0): raise AssertionError(rc.stderr.decode(errors="replace") + rc.stdout.decode(errors="replace"))
+            if not (b"crp session flow: ok" in rc.stdout): raise AssertionError(rc.stdout)
         finally:
             proc.terminate()
             try:

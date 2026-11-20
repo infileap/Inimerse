@@ -161,8 +161,7 @@ def declare_domain_via_script(engine, workdir, home, hub_port, domain, kind="uti
         'say "issuer=" + verse_identity_pubkey()\n', encoding="utf-8")
     rc = run_script(engine, script, home, workdir)
     out = rc.stdout.decode(errors="replace")
-    assert "cid=" in out and len(out.split("cid=")[1].split("\n")[0].strip()) == 64, \
-        out + rc.stderr.decode(errors="replace")
+    if not ("cid=" in out and len(out.split("cid=")[1].split("\n")[0].strip()) == 64): raise AssertionError(out + rc.stderr.decode(errors="replace"))
     return out.split("cid=")[1].split("\n")[0].strip(), out.split("issuer=")[1].strip()
 
 
@@ -182,7 +181,7 @@ def mint_once(engine, workdir, home, hub_port, identity, cid, account, amount, k
 
 def mint(engine, workdir, home, hub_port, identity, cid, account, amount, key):
     out = mint_once(engine, workdir, home, hub_port, identity, cid, account, amount, key)
-    assert "mint=1" in out, out
+    if not ("mint=1" in out): raise AssertionError(out)
 
 
 def sha256_hex(text):
@@ -293,7 +292,7 @@ def main():
             proc, http_port = start_hub(engine, root / role, hub_script,
                                         root / f"{role}.log")
             hubs.append(proc)
-            assert wait_port(http_port), f"{role} hub did not start"
+            if not (wait_port(http_port)): raise AssertionError(f"{role} hub did not start")
             return http_port
 
         try:
@@ -303,19 +302,19 @@ def main():
             # ---- source hub: two signed currencies with real history ----
             cid_a, issuer_a = declare_domain_via_script(engine, work, home, src_port, "alpha")
             cid_b, issuer_b = declare_domain_via_script(engine, work, home, src_port, "beta")
-            assert cid_a != cid_b
+            if not (cid_a != cid_b): raise AssertionError
 
             mint(engine, work, home, src_port, "alpha", cid_a, "alpha/alice", "500", "mint-a")
             status, settle = http_json(src_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alpha/alice", "to": "alpha/bob",
                 "amount": 200, "idempotency_key": "pay-a1"})
-            assert status == 200 and json.loads(settle)["status"] == "settled", (status, settle)
+            if not (status == 200 and json.loads(settle)["status"] == "settled"): raise AssertionError((status, settle))
 
             mint(engine, work, home, src_port, "beta", cid_b, "beta/alice", "700", "mint-b")
             status, settle = http_json(src_port, "POST", "/economy/settle", {
                 "currency_id": cid_b, "from": "beta/alice", "to": "beta/bob",
                 "amount": 100, "idempotency_key": "pay-b1"})
-            assert status == 200 and json.loads(settle)["status"] == "settled", (status, settle)
+            if not (status == 200 and json.loads(settle)["status"] == "settled"): raise AssertionError((status, settle))
 
             # ---- 1. export of a currency that does not exist ----
             status, body = export_package(src_port, "ab" * 32)
@@ -327,7 +326,7 @@ def main():
             status, raw_a = export_package(src_port, cid_a)
             check("export live currency -> 200", status == 200, f"status={status} body={brief(raw_a)}")
             pkg_a = json.loads(raw_a) if status == 200 else {}
-            assert pkg_a, f"export of a live currency produced no package: {brief(raw_a)}"
+            if not (pkg_a): raise AssertionError(f"export of a live currency produced no package: {brief(raw_a)}")
 
             check("export declares format_version 1 / service_id local",
                   pkg_a.get("format_version") == 1 and pkg_a.get("service_id") == "local", brief(pkg_a))
@@ -355,7 +354,7 @@ def main():
                   f'claim={pkg_a["content_hash"]} calc={content_hash_of(pkg_a)}')
 
             status, raw_b = export_package(src_port, cid_b)
-            assert status == 200, (status, raw_b)
+            if not (status == 200): raise AssertionError((status, raw_b))
             pkg_b = json.loads(raw_b)
             ok_b, tail_b = links_ok(cid_b, pkg_b["ledger"])
             check("beta package chain links correctly and its tail matches",
@@ -449,9 +448,9 @@ def main():
             status, settle = http_json(src_port, "POST", "/economy/settle", {
                 "currency_id": cid_a, "from": "alpha/alice", "to": "alpha/bob",
                 "amount": 50, "idempotency_key": "pay-a2"})
-            assert status == 200 and json.loads(settle)["status"] == "settled", (status, settle)
+            if not (status == 200 and json.loads(settle)["status"] == "settled"): raise AssertionError((status, settle))
             status, raw_a2 = export_package(src_port, cid_a)
-            assert status == 200, (status, raw_a2)
+            if not (status == 200): raise AssertionError((status, raw_a2))
             pkg_a2 = json.loads(raw_a2)
             check("a later export of the same currency is a different package",
                   pkg_a2["content_hash"] != pkg_a["content_hash"]
@@ -484,7 +483,7 @@ def main():
             # package whose snapshot contradicts its own digest is still accepted
             tampered_balance = tamper_balance_amount(raw_b)
             tbal_pkg = json.loads(tampered_balance)
-            assert tbal_pkg["balances"][0]["amount"] != pkg_b["balances"][0]["amount"]
+            if not (tbal_pkg["balances"][0]["amount"] != pkg_b["balances"][0]["amount"]): raise AssertionError
             check("(premise) the edited snapshot no longer recomputes to its balances_hash",
                   balances_digest(tbal_pkg["balances"]) != pkg_b["balances_hash"],
                   f'calc={balances_digest(tbal_pkg["balances"])} claim={pkg_b["balances_hash"]}')
@@ -502,7 +501,7 @@ def main():
 
             # ---- 8. the chain must recommit to every entry it accepts ----
             t_tail = tamper_last_ledger_hash(raw_b)
-            assert json.loads(t_tail)["ledger"][-1]["hash"] != pkg_b["ledger"][-1]["hash"]
+            if not (json.loads(t_tail)["ledger"][-1]["hash"] != pkg_b["ledger"][-1]["hash"]): raise AssertionError
             status, body = post_raw(tgt_port, "/economy/import", t_tail)
             print(f"  [req ] ledger tail tamper: ledger[-1].hash="
                   f"{pkg_b['ledger'][-1]['hash'][:16]}... -> "
@@ -552,9 +551,9 @@ def main():
                   f"status={status} body={brief(body)}")
 
             # ---- 9. legal JSON whitespace must not change the verdict ----
-            assert '"ledger":[' in raw_b
+            if not ('"ledger":[' in raw_b): raise AssertionError
             spaced = raw_b.replace('"ledger":[', '"ledger": [', 1)
-            assert spaced != raw_b and json.loads(spaced) == pkg_b
+            if not (spaced != raw_b and json.loads(spaced) == pkg_b): raise AssertionError
             ws_port = start("ws")
             status, body = post_raw(ws_port, "/economy/import", spaced)
             print(f"  [req ] re-encoding: '\\\"ledger\\\":[' -> '\\\"ledger\\\": [' "

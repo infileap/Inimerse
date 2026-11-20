@@ -37,30 +37,30 @@ def main():
 
         # --- three languages from one definition ---
         r = run(str(idl), "--language", "c", "--out", str(root / "c" / "inimerse_native.h"))
-        assert r.returncode == 0, r.stderr.decode()
+        if not (r.returncode == 0): raise AssertionError(r.stderr.decode())
         c_h = (root / "c" / "inimerse_native.h").read_text(encoding="utf-8")
-        assert "int inimerse_native_add(int32_t a, int32_t b, int32_t* out);" in c_h
-        assert "const char* name, size_t name_len" in c_h  # string = UTF-8 C string + length
-        assert "int inimerse_native_fail(int32_t code);" in c_h  # error -> int
+        if not ("int inimerse_native_add(int32_t a, int32_t b, int32_t* out);" in c_h): raise AssertionError
+        if not ("const char* name, size_t name_len" in c_h): raise AssertionError  # string = UTF-8 C string + length
+        if not ("int inimerse_native_fail(int32_t code);" in c_h): raise AssertionError  # error -> int
 
         r = run(str(idl), "--language", "java", "--out", str(root / "java" / "InimerseNative.java"))
-        assert r.returncode == 0, r.stderr.decode()
+        if not (r.returncode == 0): raise AssertionError(r.stderr.decode())
         java = (root / "java" / "InimerseNative.java").read_text(encoding="utf-8")
-        assert "throw new InimerseException(rc," in java  # error -> Java exception
-        assert "int[] items" in java  # array<i32> -> int[]
-        assert "private static native void native_log" not in java
+        if not ("throw new InimerseException(rc," in java): raise AssertionError  # error -> Java exception
+        if not ("int[] items" in java): raise AssertionError  # array<i32> -> int[]
+        if not ("private static native void native_log" not in java): raise AssertionError
 
         r = run(str(idl), "--language", "python", "--out", str(root / "py" / "inimerse_native.py"))
-        assert r.returncode == 0, r.stderr.decode()
+        if not (r.returncode == 0): raise AssertionError(r.stderr.decode())
         py = (root / "py" / "inimerse_native.py").read_text(encoding="utf-8")
-        assert "raise InimerseError(rc," in py  # error -> Python exception
-        assert "class InimerseError(RuntimeError)" in py
+        if not ("raise InimerseError(rc," in py): raise AssertionError  # error -> Python exception
+        if not ("class InimerseError(RuntimeError)" in py): raise AssertionError
 
         # C header must be compilable on its own
         if shutil.which("gcc"):
             r = subprocess.run(["gcc", "-fsyntax-only", "-x", "c", str(root / "c" / "inimerse_native.h")],
                                capture_output=True)
-            assert r.returncode == 0, r.stderr.decode()
+            if not (r.returncode == 0): raise AssertionError(r.stderr.decode())
 
         # --- generation-time type checking ---
         cases = [
@@ -74,8 +74,8 @@ def main():
             bad = root / f"bad_{name.replace(' ', '_')}.def"
             bad.write_text(text, encoding="utf-8")
             r = run(str(bad), "--language", "c", "--out", str(root / "bad.out"))
-            assert r.returncode != 0, f"{name}: expected rejection"
-            assert needle in r.stderr.decode(), f"{name}: {r.stderr.decode()}"
+            if not (r.returncode != 0): raise AssertionError(f"{name}: expected rejection")
+            if not (needle in r.stderr.decode()): raise AssertionError(f"{name}: {r.stderr.decode()}")
     print("bindgen: ok")
 
 
