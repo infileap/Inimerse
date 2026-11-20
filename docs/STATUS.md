@@ -755,7 +755,7 @@ CLI 退出码（9 个，`unknown` 不得退出 0）· 互操作剖面 T0–T10 �
 ### 10.5 合并后的门禁（协调者串行执行）
 
 ```bash
-tools/gate.sh          # 九个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
+tools/gate.sh          # 二十五个阶段，串行；不要并发跑，§2.9 的端口窗口会假失败
 ```
 
 见 [BOARD.md](BOARD.md) §3 的阶段表。合并后的基线数字：**ctest 93 / 93**、economy **39 / 39**、plugin **55 / 55**、node **11 / 11**、links 与 doc-paths 均 **0 broken**。
@@ -14863,3 +14863,144 @@ own boundary sentence applies unchanged.
 And the count is a **string** in six documents.  Making it true today does
 not make it self-updating: the next stage added to `STAGE_SPECS` reddens
 six documents and one CTest, which is the intended cost, not a defect.
+
+## §10.243 — the hole the number was hiding
+
+### 1. Where the next thing was
+
+§10.242 closed with a boundary sentence and a number:
+
+    the tree spells a number next to a stage word at 437 locations and only
+    16 are declared -- 423 undeclared.  The checker **prints** both numbers
+    on every run, so the hole is a number and not a silence, but closing it
+    is a separate piece of work with its own denominator.
+
+That sentence is the shape of a promise a boundary makes and nothing keeps.
+This section is the denominator.
+
+### 2. The shape of the thing
+
+"Declare the remaining 422" was the obvious reading, and it is wrong.  The
+undeclared locations are not one kind of thing.  They are at least six, and
+only one of the six is a claim about the gate's stage count.  (The counts
+below were taken on the tree §10.242 left behind, where the total was 423;
+they are a breakdown of a reading, not a denominator that stays fixed --
+§6 has the current total and why it moves.)
+
+    222  inside docs/AUDIT.md -- a file whose own first paragraph says every
+         number in it is "the reading at the observation point, not today's
+         value".  Rewriting those to 25 falsifies a ledger.
+     60  a lane's acceptance record: `七阶段 PASS`, `完整八阶段门禁`.  A past
+         event.  The number was right when it was typed and the event has
+         not changed.
+     34  pasted gate output: `gate: OK -- every stage passed (20/20 stages
+         ran)`.  The number is the denominator of a run.  Same as above.
+     10  git's `required: N stage(s)` -- the paths a change touches, not the
+         gate's stages (§10.242's homograph, already ceilinged).
+     20  `--only links # 只跑一个阶段`, `# 门禁第 6 阶段`: the count of THIS
+         run, or an ordinal.  Both correct uses of the word.
+      5  a count in a shell comment inside a code fence.
+
+The last bucket looked like the best candidate: a comment inside a fence is
+an instruction a reader copies.  It was measured before being adopted, and
+four of the five were `--only` or `第 6 阶段` -- correct.  A rule built on
+that bucket would have fired on five lines to catch one real defect and
+taught its reader to skip the output, which is how ceilings get raised.
+
+### 3. What was actually wrong
+
+Three lines stated the total and were stale.  All three were found by
+reading, not by a rule, which is the point:
+
+    docs/STATUS.md   `tools/gate.sh  # 九个阶段，串行；不要并发跑`
+    docs/WASM.md     `bash tools/gate.sh  # 七阶段全绿，ctest 计数不变`
+    docs/PLAN_V06.md the provenance row naming the gate and a stale total
+
+The first two are comments on a command a reader copies out of the
+documentation.  The third is a provenance table saying where the plan's
+evidence comes from.  None is a ledger line, none is about a past run, and
+all three were true when they were typed -- which is exactly why they read
+correctly and why nothing but a reader could have found them.
+
+### 4. The ruler, and why this is not a grep
+
+The shape that can be judged mechanically is the **possessive**: "the
+gate's N stages", "the gate has N stages".  That is the grammar of a claim
+about the total, as opposed to "N stages ran" (a run), "第 N 阶段" (an
+ordinal) and "--only" (a subset).
+
+    GATE_TOTAL = ...  `tools/gate.sh` 的  /  门禁共(有)?  /  gate.sh 共
+                      <numeral> 个? 阶段
+
+It matches **two** lines in this tree.  One is the `PLAN_V06.md` claim above
+(wrong: 15 against 25) and one is a record inside `STATUS.md` that says in
+the line above it which commit it was measured on.  That is precision over
+recall, deliberately: a rule firing on 437 lines to catch one defect is a
+rule whose output nobody reads.
+
+The second line is why the rule is not "possessive only".  A claim about
+the total is judged against today **only when nothing around it names the
+tree it was read on** -- the same discriminator `check_obs_markers` uses, a
+revision token or a date, looked for in a small window (one line back, two
+forward) because the marker lives in a heading, not in the line.
+
+### 5. The controls
+
+Three cases in the checker's `--self-test`, plus two measured by mutation:
+
+  * **A bare wrong total reddens.**  The possessive form, spelling a number
+    that the array in the same synthetic tree does not have -> rc=1.
+  * **The same wrong total with a tree beside it does not.**  The identical
+    sentence with `（下一笔提交 abc1234 上测得）` in front -> rc=0.  Without
+    this case the rule would redden every transcript in the tree.
+  * **A correct total is neither.**  `2 个阶段` against 2 -> rc=0.
+
+and the mutations, both of which had to fail and did:
+
+    deleting `if found != derived: reds += 1`
+      -> FAILED  a wrong total is a claim: expected rc=1, got rc=0
+    replacing HISTORICAL.search(window) with False
+      -> FAILED  the same total with a tree beside it is a record: expected rc=0, got rc=1
+
+### 6. What the audit found (and what it did not)
+
+After the three fixes, the checker reads:
+
+    check_stage_count: 2 line(s) say how many stages the gate HAS (the
+    possessive form); 0 of them disagree with 25.
+    check_stage_count: 16 location(s) declared (6 must-equal, 10 record); 6 agree, 0 red(s).
+    check_stage_count: the tree spells a number next to a stage word at 443
+    location(s); 429 of them are not declared here.
+
+429, and the number is a reading with a date on it rather than a target:
+this section is itself a paragraph that spells numbers next to the word
+"stage", so each draft moved it (436 at the tree §10.242 left, 445 with the
+first version of these paragraphs, 443 after two examples were rewritten as
+prose -- the two that said the possessive form wrongly and were caught by
+the rule they were describing).  That is the honest ending of this
+section: **the number did not go to zero, and it is not supposed to.**  **The number did not go to zero, and
+it is not supposed to.**  Most of the 422 are correct as they stand: a
+ledger is allowed to record what a number was, and 60 more say what a past
+run printed.  What changed is that the part of it that IS a claim about
+today is now judged, and the part that is not is now named.
+
+The boundary sentence in §10.242 said closing the hole needed "its own
+denominator".  This is that denominator, and its answer is that most of the
+hole should stay open.
+
+### 7. Boundary
+
+This judges two of 436 spelling locations.  It cannot say the other 434 are
+right; it says they are not claims of this shape, and separates the one
+kind that is.
+
+A possessive with a tree marker beside it is exempt, so a wrong total
+written next to an old commit hash passes.  That is the same trade
+`check_obs_markers` makes, and for the same reason: a record is allowed to
+be old, and the marker is what makes it a record.
+
+Three of the fixes here were found by reading the tree, not by the rule
+that now guards them.  The rule would have found the `PLAN_V06.md` line and
+neither of the other two, because neither is possessive.  A rule is not a
+substitute for a reader; it is what stops the same defect from coming back
+in the shape it came back in last time.
