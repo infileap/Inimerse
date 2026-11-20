@@ -15493,3 +15493,119 @@ the fallback §10.245 measured, and it is still the fallback.
 And the checker's case table is a list someone maintains.  A sixth guard
 added to `required_for` is a guard no case mentions, and its absence looks
 exactly like a pass.
+
+## §10.247 — the answer made of an error message
+
+### 1. Where the next thing was
+
+§10.245 and §10.246 both wrote the same boundary sentence: the **main path**
+of `--required-for` -- the branch that reads `git diff` and turns it into an
+answer -- was not measured by any case.  Both sections had measured the
+guards around the answer and left the answer itself alone.
+
+### 2. The shape of the thing
+
+The `worktree` branch read two git commands in one substitution:
+
+    if ! changed="$(git -C "$REPO_ROOT" diff HEAD --name-only 2>&1
+                     git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>&1)"; then
+      refuse
+    fi
+
+A command substitution reports the exit status of its **last** command.  So
+`git diff HEAD` could fail with rc=128 and the `ls-files` after it succeed,
+and the `if !` would see 0.
+
+    $ bash -c 'x="$(false
+    echo ok)"; echo "rc=$? content=$x"'
+    rc=0 content=ok
+
+### 3. The defect, demonstrated
+
+The input is not hard to produce: a repository with no commit makes
+`git diff HEAD` fail.
+
+    $ git init -q unborn && cd unborn && git diff HEAD --name-only; echo $?
+    fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+    128
+
+Run against such a repository, before the fix:
+
+    exit 0
+    the full answer (all 26), as if the tree had been read
+
+After the fix, the same repository:
+
+    exit 2
+    gate: --required-for worktree: git could not diff the worktree against HEAD:
+
+So the old command answered with the **whole stage list** on a repository it
+could not read.  It did not silently answer zero -- it took the `fatal:`
+line as a path name, found no rule for it, and fell into the fail-closed
+"no rule matches; requiring every stage" branch.  The answer was wrong in
+the safe direction, and it was still an answer about a file that does not
+exist.
+
+### 4. The fix
+
+Two commands, two checks:
+
+    if ! tracked="$(git -C "$REPO_ROOT" diff HEAD --name-only 2>&1)"; then refuse; fi
+    if ! untracked="$(git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>&1)"; then refuse; fi
+    changed="$tracked"$'\n'"$untracked"
+
+The healthy tree answers exactly as before (26 stages, exit 0), which was
+checked first rather than last.
+
+### 5. The control, and it is the first one on the main path
+
+The checker grew a fixture it did not have: `make_unborn_repo` builds a
+repository with no commit and the gate inside it.  This is the one case that
+cannot be produced by mutating source -- in this repository `HEAD` always
+exists, so no edit of `tools/gate.sh` creates the input that reaches the
+defect.
+
+A/B on the same fixture, same command:
+
+    fixed      rc=2  "could not diff the worktree against HEAD"
+    reverted   rc=0  "no rule matches 'fatal: ambiguous argument 'HEAD' ..."
+
+The reverted run is reported as SILENT, with the error text quoted in the
+detail column -- the checker shows what the old code mistook for a file.
+
+    check_required_for: 6 of 6 measurable self-check(s) refused; 0 did not;
+    1 could not be injected here.
+
+### 6. What this section did not find
+
+Most of it was spent looking for something else.  Measured and closed along
+the way, all of them already covered:
+
+  * **Probes run by no CTest** -- `check_orphan_targets` already answers it
+    with the right ruler (COMMAND tokens and `$<TARGET_FILE:...>`, never the
+    test name), 39 of 39 run.
+  * **`tools/*.test.py` not registered** -- 56 of 56 are on a CTest line.
+  * **`check_*.py` run by neither CTest nor the gate** -- three looked
+    orphaned and all three are called indirectly (`check_docs_headings` by
+    `check_reconciliation`, the frozen-identity pair by their own `.test.py`).
+  * **Stage bodies that ignore their checker's exit code** -- eleven looked
+    unguarded and none is: a bash function returns its last command's status,
+    so a bare `python3 ...` at the end of a stage body is already the guard.
+    Verified with `f() { false; }; f; echo $?` -> 1.
+
+Four inquiries, four negatives, and each negative cost less than the section
+it would have become.  The fifth -- the one on the list because two earlier
+sections had named it -- was real.
+
+### 7. Boundary
+
+This covers one branch of the main path.  `staged`, the single-rev form and
+the bare-path form are still unmeasured by any case; the `worktree` branch
+was reachable because a repository without HEAD exists and can be built in a
+temp directory, and the others are not obviously constructible the same way.
+
+It fixes the masking of a failure, not the fail-closed fallback.  A path that
+genuinely matches no rule still requires every stage, and §10.246's boundary
+said the same thing from the other side: the rule table's SELECTOR list is
+judged, its PATTERNS are not.  A rule whose pattern is broken still lands in
+that fallback, and the fallback still answers with confidence.
