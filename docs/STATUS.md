@@ -17235,3 +17235,136 @@ And the wording of `unknown builtin function` is still where §10.259 left it.
 It is now clear that fixing it is not a matter of editing a string: the opcode
 that carries it is the one every unresolved call uses, by design, because the
 VM is what resolves names.
+
+## §10.261 — the example and the prose disagree
+
+### 1. Where the next thing was
+
+§10.260 closed on a table with one reader.  This round went looking for what
+that table's 62 absent names might cost, found nothing (they all translate and
+all behave), and settled on a smaller question with a real answer: the document
+that lists them.
+
+`docs/SYNTAX.md` documents `count` with a fenced block:
+
+    count(1, 2, 3)       # 3
+    count(1, 2, Z[7~9])  # 5
+    count(Z)             # nil
+    count(42)            # nil
+    count("hello")       # 5
+
+and, forty lines below it, prose that says the opposite:
+
+    只读栈顶 ... 写 count(1, 2, 3) 期待三个元素是错的，要先把集合绑到名字上
+
+Two answers, in one section, in one file.  Measured:
+
+    count(1, 2, 3)       -> nil
+    count(1, 2, Z[7~9])  -> 3
+    count(Z)             -> nil
+    count(42)            -> nil
+    count("hello")       -> 5
+
+**The block was wrong on two of its five lines and the prose was right.**  A
+reader who copies from the block never reaches the prose, and the block is what
+a reader copies.
+
+### 2. The wrong number was produced by an argument
+
+`count(1, 2, Z[7~9])` = **5** is not a typo.  It is what you get if the function
+read its FIRST argument: `1` and `2` are scalars (arity zero each in any reading)
+and `Z[7~9]` has three grid points, so a reader reasoning "sum what the arguments
+are" arrives at 5.  The measured answer is 3, because the VM reads the stack top
+and `Z[7~9]` has three points.
+
+A number that a plausible argument produces is harder to notice than a number
+that a typo produces: it does not look wrong, it looks *reasoned*.
+
+### 3. The correction
+
+The block now binds the set to a name first, carries the two wrong forms with
+their measured answers, and keeps the note that says what it used to claim:
+
+    s = 1, 2, 3
+    count(s)             # 3
+    count(Z)             # nil
+    count(42)            # nil
+    count("hello")       # 5
+    count(1, 2, 3)       # nil   -- 三个实参，只读栈顶；栈顶是 3，3 不是容器
+    count(1, 2, Z[7~9])  # 3     -- 读的是 Z[7~9] 的骨架，7~9 三个格点
+
+Every one of those six lines was then run and compared, and the whole `size`
+paragraph beside it was checked too: `size(42)`=42, `size(3.7)`=3, `size(-5)`=nil,
+`size(5,5,5)`=5, `count(7,8)`=nil, `len(9)`=9 -- the prose was accurate, which is
+why the block's error survived next to it.
+
+### 4. What landed, and why a checker rather than a promise
+
+`tools/check_doc_examples.py`: every fenced line of the form
+
+    <call>(...)   # <value>
+
+is a claim, and the claim is RUN against the engine and compared with what the
+comment says.  Six claims today, all matching.
+
+Its control is in two parts, because a parser and a comparison fail differently:
+
+  * the extraction must find a claim inside a fence, must not find a bare
+    comment, and must not find a line outside a fence;
+  * **and the comparison itself is measured** -- the first version of the
+    self-test stopped at extraction, so replacing the real `got != wanted` with
+    a constant would have left every cell green.  A control over a parser is not
+    a control over the thing that decides.
+
+Measured by mutation, both red: with the wrong value put back,
+a line in `docs/SYNTAX.md` saying `count(1, 2, Z[7~9])` is `'5'` while the engine
+answers `'3'`;
+with the comparison stubbed out, the non-matching cell reddens.
+
+Registered as two CTests and the stage `doc-examples`: **32 stages, 229 CTests**,
+with `EXP_CTEST`, `recon.ctest-count` and the seven live claims moved in the
+same batch.
+
+### 5. What the instrument does not read, stated in it
+
+Three lines in that document have the shape `say x  # expected Y` where the
+comment records what the DOCUMENT expected and the engine prints something else
+on purpose -- they are known-defect transcripts, not claims about this tree.
+They are listed by expression text in `KNOWN_TRANSCRIPTS`, so a rewrite of a
+value does not silently reclassify one.
+
+Nineteen fenced lines carry a `#`.  Six are claims this runs; of the other
+thirteen, four are `say ... -> value` transcripts (three of them listed in
+`KNOWN_TRANSCRIPTS`, the fourth being an arrow form the extractor does not
+match), two are shell commands, and seven are comments about syntax.  The counts
+are printed so "6 claims, 0 wrong" is not read as "the document's 19 comments
+were checked".
+
+### 6. What this says about the shape
+
+This is §10.254's defect at a different altitude.  That section found a refusal
+message that listed names the route did not emit; this one found a doc block
+that listed values the engine does not produce.  Both are a sentence whose
+truth nobody ran, and both survived because the surrounding prose was careful --
+the checkers and the paragraphs were right, and the list was not.
+
+The difference is what can be done about it.  §10.254's message could not be
+corrected without moving three instruments that quote it; a fenced example can
+be run, and the running is the correction.
+
+### 7. Boundary
+
+Six claims out of one document.  `docs/AUDIT.md` has recorded readings in
+fenced blocks that are transcripts of runs on other trees and must NOT be
+re-run -- that is why this checker reads `docs/SYNTAX.md` only, and widening it
+needs a per-document decision about which blocks are claims.
+
+The prose is not checked.  §10.260's numbers, §10.259's counts and this
+section's own six all agree because they were measured by hand; nothing here
+makes a paragraph true, and the paragraph that was right next to a wrong block
+is the evidence for that.
+
+And `count(1, 2, Z[7~9])` = 3 uses the skeleton of the interval.  Nothing in
+this section asked whether that is the RIGHT answer for a multi-argument call --
+only whether the document's number matches the engine's.  A wrong answer,
+documented correctly, passes this stage.
