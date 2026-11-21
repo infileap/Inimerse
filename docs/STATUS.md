@@ -16885,9 +16885,16 @@ added it, and `build` exists in `src/main.c` as a **subcommand** -- a different
 thing this table does not describe.
 
 So it was removed, not wired: there is nothing to wire it to, and a `build`
-builtin has no ruling behind it.  What that buys, measured: `func build() {
-return 7 }` now works, because the name stopped being reserved by a table entry
-with nothing behind it.
+builtin has no ruling behind it.
+
+**CORRECTION (§10.260).** That paragraph used to continue "what that buys,
+measured: `func build() { return 7 }` now works, because the name stopped being
+reserved".  Measured on the tree before the removal, it already worked:
+`lookup_func` is consulted first, so a declared function shadows a table name --
+`func sum(a) { return 99 }` answers 99 today, with `sum` still in the table.  The
+removal bought nothing observable; it removed a row whose only consumer is the
+`window` STATEMENT arm (compiler.c's one `lookup_builtin` call), which no other
+name reaches.  The row was wrong, and its wrongness had no behaviour behind it.
 
 ### 3. The characters
 
@@ -17103,3 +17110,128 @@ total unchanged.
 And the ceiling is a number, not a budget.  Nothing here says 646 is acceptable;
 it says 646 is what this tree carries and that a new one is a red.  Paying it
 down would mean rewriting prose whose original was never in this history.
+
+## §10.260 — the table with one reader
+
+### 1. Where the next thing was
+
+§10.259 closed by proposing a better repair than the wording:
+
+    the compiler could distinguish "a name I know is a builtin" from "a name I
+    cannot resolve" and emit a different opcode for the second.
+
+Going to build that meant finding where the compiler decides, and the answer
+made the proposal wrong.
+
+### 2. What the compiler's table is actually for
+
+`compiler_new` fills a table of 28 builtins with `strdup`, and there is a
+`lookup_builtin` helper beside it.  Reading every consumer:
+
+    $ grep -n "lookup_builtin(" src/compiler/compiler.c
+    428:static int lookup_builtin(...)          # the definition
+    2219:  int builtin_idx = lookup_builtin(comp, "window");   # the ONE call
+
+One call site, and the name is hard-coded.  It is the `window` STATEMENT arm.
+
+Every other call reaches `OP_CALL_BUILTIN` by NAME:
+
+    int name_idx = bytecode_add_string(comp->curBC, fname);
+    emit(comp->curBC, OP_CALL_BUILTIN, result, name_idx, expr->call.argCount);
+
+`r2` is a string-pool index, not a table index, and the VM resolves it at run
+time.  So the table does not gate anything -- measured, by deleting a row:
+
+    $ # strdup("sum") removed from compiler.c, rebuilt
+    $ inimerse --no-mods run s.im        # say str(sum([1, 2]))
+    3
+
+`sum` still works with its row gone.  And going the other way, `chr(65)` answers
+`A` while `strdup("chr")` appears zero times in `compiler.c`.
+
+### 3. The correction this section owes
+
+§10.258 said removing `build` from that table bought something:
+
+    What that buys, measured: `func build() { return 7 }` now works, because
+    the name stopped being reserved by a table entry with nothing behind it.
+
+**That was false.**  Measured on the tree before the removal:
+
+    $ git stash; rebuild
+    $ inimerse --no-mods run fb.im      # func build() { return 7 } ; say str(build())
+    7
+
+`lookup_func` is consulted first, so a declared function shadows a table name --
+`func sum(a) { return 99 }` answers 99 today, with `sum` still in the table.  The
+removal bought nothing observable.  It removed a row that was wrong, and whose
+wrongness had no behaviour behind it.
+
+The paragraph in §10.258 now carries a CORRECTION note saying exactly this,
+because the false version was written by measuring the tree *after* the change
+and reading the result as the change's effect.
+
+### 4. What the numbers are
+
+The table says 28.  The core runtime registers 84.  The intersection is
+one-directional in both senses:
+
+    in the table, not in the core runtime:  window, show_image, gui_wait,
+                                            thread_await, thread_release,
+                                            thread_result          (6)
+    in the core runtime, not in the table:  chr, atomic_get, bit_and, ...  (62)
+
+The six are GUI-mod and result-mod names an ordinary program cannot call without
+those mods; the 62 are builtins that work today and are invisible to the table.
+
+That is why the proposal in §1 is wrong: a rule of the form "require the name to
+be in the table" would refuse **41 names the corpus uses right now** (measured
+by intersecting the 62 with every `name(` in `vtest/` and `examples/`).
+
+### 5. What landed
+
+`check_builtin_registries.py` now prints the drift and says what it is:
+
+    compiler-table=28|registered=363|files=22|orphans=0
+    |registered-but-not-in-table=335|core-registered=84|core-absent-from-table=62
+
+    ... Of the 335 absent names, 62 are CORE-runtime builtins (`chr`,
+    `atomic_get`, `bit_and` ...) and 273 register only through mods, which is
+    the design.
+
+Two numbers rather than one, because they mean different things.  The 273 are
+mods loaded by name -- exactly the design.  The 62 are the drift.
+
+No stage or CTest count moved: this section corrected a claim and widened a
+reading, and changed no behaviour.
+
+### 6. What this says about the instrument
+
+`check_builtin_registries.py` was green before this section and is green after,
+correctly: it asks whether every name in the table has a registration, and they
+all do.  It never asked the reverse, and the reverse is where the drift is.
+
+That is §10.258's own subject one turn further out.  That section found a name
+the compiler emits and nothing answers; this one found that the list the name
+lived in is itself vestigial -- the compiler accepts everything, so a table row
+is neither necessary nor sufficient for a builtin to work.
+
+A green reading and a stale table can coexist for as long as nobody asks what
+the table is for.
+
+### 7. Boundary
+
+The table was not deleted or regenerated.  Deleting it would change the `window`
+statement arm's behaviour, and regenerating it from the VM registry would make
+it a copy of a thing the compiler does not need to know -- both are decisions
+about a language surface, and this section produced the measurement either
+decision would need, not the decision.
+
+The 62-name drift is printed, not judged.  A stale list is a defect only if
+something reads it; one statement arm reads it, and that arm asks for `window`,
+which the table has.
+
+And the wording of `unknown builtin function` is still where §10.259 left it.
+It is now clear that fixing it is not a matter of editing a string: the opcode
+that carries it is the one every unresolved call uses, by design, because the
+VM is what resolves names.
