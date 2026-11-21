@@ -4748,7 +4748,7 @@ static const char *const kPresetGlobals[23] = {
     "N","Z","Z+","Z-",
     "Float1","float1","Float2","float2","Float3","float3","Float4","float4",
     "Float5","float5","Float6","float6","Float7","float7","Float8","float8","Float9","float9",
-    "\xBF\xD5"
+    "\xE7\xA9\xBA"
 };
 
 static int is_preset_global(const char *name) {

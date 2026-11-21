@@ -34,13 +34,20 @@ import tempfile
 # Pinned reading. Source: docs/streams/dec-formal-bounds-t4.md, tree 319fd35:
 #   BYTES|case=real:hello.inim|written=317|consumed=317|delta=0|trailer=92|file=417
 #   ROUNDTRIP|case=real|fields_differing=0|-|reencoded_bytes=317
+# §10.256 moved the reading by ONE byte, and the reason is exact: the last
+# preset global's name was spelled in GBK bytes (`\xBF\xD5`, strlen 2) in two of
+# the three tables and in UTF-8 (`\xE7\xA9\xBA`, strlen 3) in the VM's.  The
+# tables now agree on the UTF-8 spelling, so the serialised name is one byte
+# longer: written/consumed 317 -> 318, file 417 -> 418.  Re-pinned from a
+# measurement on this tree, not adjusted to make a red test green -- the old
+# numbers are still the right numbers for `319fd35`, which is what TREE records.
 TREE = '319fd35'
 EXPECT = {
-    'written': '317',
-    'consumed': '317',
+    'written': '318',
+    'consumed': '318',
     'delta': '0',
     'trailer': '92',
-    'file': '417',
+    'file': '418',
     'fields_differing': '0',
 }
 HELLO_SOURCE = 'say "hello"' + chr(10)

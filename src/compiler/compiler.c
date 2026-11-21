@@ -2897,7 +2897,7 @@ Compiler *compiler_new(void) {
             "N","Z","Z+","Z-",
             "Float1","float1","Float2","float2","Float3","float3","Float4","float4",
             "Float5","float5","Float6","float6","Float7","float7","Float8","float8","Float9","float9",
-            "\xBF\xD5"
+            "\xE7\xA9\xBA"
         };
         for (int i = 0; i < 23; i++) {
             if (comp->globalCount >= comp->globalCap) {
