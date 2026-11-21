@@ -16593,3 +16593,145 @@ And the three tables are not the whole preset surface: the compiler also
 registers a builtin list (70+ names) in the same function, and nothing compares
 that with the VM's builtin registry.  A name the compiler knows and the VM does
 not is the same shape, one list over.
+
+## §10.256 — paying the ceiling down
+
+### 1. Where the next thing was
+
+§10.255 ended with a debt and a number:
+
+    KNOWN_DISAGREEMENTS = 4
+
+and a boundary sentence saying the fix needed its own section because it changes
+what the compiler emits.  This section is that fix, done on the evidence §10.255
+had already gathered rather than by re-running the investigation.
+
+### 2. The fix, and why it is one line in two files
+
+    src/compiler/compiler.c   "\xBF\xD5"  ->  "\xE7\xA9\xBA"
+    src/compilation/aot_mir.c "\xBF\xD5"  ->  "\xE7\xA9\xBA"
+
+`vm.c` already had the UTF-8 spelling, with the comment that GBK sources are
+transcoded at load.  The other two were the wrong half.
+
+    check_preset_tables: tables=3|all-equal=yes|problems=0
+
+and the MIR route now refuses a program for touching the preset the VM actually
+has, rather than for touching one it does not.
+
+### 3. The three things that had to move, and how each was decided
+
+**The serialised fixture.**  `vtest/params_precompiled_v06.inim` carries the
+global name table verbatim, so it cannot be hand-edited: it is regenerated with
+`inimerse buildc`.  The command is not invented -- `tools/check_inimbc_writer_half.py`
+uses the same one to build its own image.
+
+**One pinned byte count.**  `tools/check_inimbc_writer_half.py` held
+`written=317`, and the fix makes it 318 because the name's `strlen` grew by one.
+The pin moved **with its reason written beside it**, and `TREE` stays `319fd35`:
+the old numbers are still the right numbers *for that tree*, and a pin that
+silently becomes about a different tree is the defect §10.242 was written for.
+
+**The wiring baseline.**  This is the one that needed an argument.
+
+### 4. The baseline, and why moving it is not adjusting to taste
+
+`tools/mir_wired.test.py` builds the compiler at a recorded commit and requires
+that its output and the current compiler's output be byte identical.  Changing a
+preset name's encoding changes the emitted bytes of **every** program, so after
+the fix the comparison reports:
+
+    MIR-MISMATCH|file=examples/bench/cpu1.im|why=bytes-differ|base=690|wired=691
+      first-differing-byte|offset=544|base=3|wired=4
+
+93 programs, every one exactly **one byte** different, every difference at the
+same field: the global name length, `3` becoming `4`.  That is not the wiring
+changing something.  That is the thing the instrument exists to say, and it is
+not what the instrument is now saying.
+
+Moving `BASE_COMMIT` forward is the mechanical answer, and mechanically it is
+also how an instrument stops meaning anything.  So the move was made, and the
+argument for it is three facts plus one admission:
+
+  * **the wiring is untouched.**  The four files this harness builds --
+    `mir.c`, `bytecode.c`, `deps.c`, `platform.c` -- are byte identical between
+    the old baseline and the new one: `git diff --stat fdb55bb..bdb9feec --
+    <those four>` is empty.  The comparison is still the same wiring against the
+    same wiring, which is the whole claim;
+  * **the difference it now cannot see was measured first**, not waved away: 93
+    programs, one byte each, always `3 -> 4` at the name-length field;
+  * **the commit moved to is the one that made the spelling agree**, not an
+    arbitrary later tree;
+  * **and what the instrument can no longer see is written down in it**: a
+    change to a preset name's encoding after this baseline would now pass.  The
+    instrument that reads the three tables against each other is
+    `tools/check_preset_tables.py`, and the comment names it as the one that
+    should catch that.
+
+The move was then measured in both directions, because a baseline that has been
+moved is exactly the place where a test quietly stops testing:
+
+    uninjured   ctest -R mir_wired_regression   Passed
+    bytecode.h's INIM_BYTECODE_VERSION 3 -> 4    ***Failed
+    restored                                     Passed
+
+A perturbation of the CURRENT compiler still reddens it, so the assertion is
+still load-bearing.
+
+### 5. The ceiling goes to zero
+
+    KNOWN_DISAGREEMENTS = 4  ->  0
+
+A ceiling left at its first number after the debt is paid is a rule that has
+stopped being about the tree.  Measured with the ceiling at 0: reintroducing the
+GBK spelling in one file makes the checker exit 1.
+
+### 6. What the gate caught that I did not
+
+`docs/HANDOFF_INFIVERSE.md` quoted `"\xBF\xD5"` as **evidence** for the
+encoding defect, and `handoff_anchor_regression` verifies that every quote in
+that document still exists in its file.  Fixing the source removed the quote, so
+the sentence became unbacked and the test said so:
+
+    check_handoff_anchors: first missing anchor is document line 170:
+    '"\xBF\xD5"' is not in src/compiler/compiler.c. Either the file changed
+    under the sentence, or the quote was typed from memory -- both mean the
+    sentence is now unbacked.
+
+The paragraph now says the defect is fixed, keeps the UTF-8 spelling as the
+anchor it still needs, and records the byte count it cost.  The anchors went
+from 42 to 39 because two quotes about the old spelling were removed with the
+sentences that used them.
+
+That is the second time in three sections that a checker I did not write caught
+a consequence of a change I did make.  §10.253's allocation criterion was the
+first.
+
+### 7. What landed
+
+* two spellings changed;
+* `vtest/params_precompiled_v06.inim` regenerated;
+* one pin moved with its reason;
+* `BASE_COMMIT` moved with three facts and one admission written beside it;
+* the ceiling paid to zero;
+* `docs/HANDOFF_INFIVERSE.md` updated, which the gate demanded.
+
+**223 of 223 tests pass, 29 of 29 stages pass.**  No stage or CTest count moved
+in this section -- it paid a debt the instruments already had.
+
+### 8. Boundary
+
+The three tables now agree.  Nothing here says 23 is the right number of presets
+or that `空` should be one of them; the VM registers it as a nil-typed global
+while the other 22 are sets, and a program that assigns to it runs on the
+interpreter and is refused by the MIR route.  That asymmetry is now reachable
+and visible rather than hidden behind an encoding bug, and it is its own
+question.
+
+`tools/mir_wired.test.py`'s baseline is now older than nothing in particular.
+Every future change to what the compiler emits will need the same argument this
+section made, and the comment in that file says so.
+
+And the sibling list -- the compiler's builtin registry against the VM's --
+is still uncompared.  A name the compiler knows and the VM does not is the same
+shape as the one this section fixed, one list over.
