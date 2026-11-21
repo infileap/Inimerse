@@ -16238,3 +16238,121 @@ text overlap between them, and the names live in different spaces).
 And the four refusals above are allowed by reason, not by measurement.  A
 reason can be wrong and this section only re-read four of them; the rest of
 that list is §10.145's subject, not this one's.
+
+## §10.253 — the fifth name in a list of five
+
+### 1. Where the next thing was
+
+§10.250 fixed one member property on the MIR route and said plainly what it
+had not looked at:
+
+    .range was already right, and the other member properties (.type, .int,
+    .float, .str, .bool) go through emit_builtin_call with arity 1 and were
+    not examined here.
+
+That sentence was the next thing.  Measuring it took one program.
+
+### 2. What the measurement said
+
+Four of the five work.  The fifth does not, and the reason is visible in the
+compiler:
+
+    if (strcmp(memN, "type") == 0 || strcmp(memN, "int") == 0 ||
+        strcmp(memN, "float") == 0 || strcmp(memN, "str") == 0 || strcmp(memN, "bool") == 0) {
+            ...
+            int r = emit_builtin_call(comp, memN, a, 1);
+
+Five names, one arm on the compiler side, and one opcode on the route side.
+The route's allowlist carried `int`, `float`, `str` and `bool`; `type` was
+the name in the list with no emitter arm, so it fell through to
+
+    gate: ... builtin call 'type' -- this route emits len, list, size, ...
+    and no other builtin
+
+and the program was refused.
+
+    $ x = 42 ; say str(x.type)
+    interpreter: int
+    MIR route:   REFUSED, why=builtin-call
+
+There is no argument behind the refusal.  `aot_mir_surface.py` puts
+`builtin-call` in the `witnessed` class -- triggerable, not unreachable -- and
+the four sibling names were implemented without one.
+
+### 3. What the interpreter answers, read rather than guessed
+
+    int      float    string   bool     array    dict     set
+    nil      <- the one that is NOT a string
+    unknown  <- anything else, a function included
+
+`src/runtime/runtime.c`'s `builtin_type` is a switch over `Value.type`, and its
+NIL arm is `pop(vm); push_nil(vm)` -- so `n.type` is nil, not the string
+`"nil"`.  Through `str()` the two print the same; everywhere else they do not,
+and `n.type == nil` is true while `n.type == "nil"` is false.
+
+The tag values on this route are the interpreter's own (`MV_INT` is `VAL_INT`,
+and so on through the `#define` block), so `mv_type` is a table and not a
+translation.
+
+### 4. What landed
+
+`mv_type`, one arm, and `type` added to the allowlist:
+
+    static inline MirVal mv_type(MirVal a) {
+        switch (a.type) {
+            case MV_INT: return mv_str("int");
+            ... 
+            case MV_NIL: return mv_nil();   /* nil, not the string "nil" */
+            default:     return mv_str("unknown");
+        }
+    }
+
+The NIL row is the one worth writing down: a version that returned
+`mv_str("nil")` passes the obvious test (`say str(n.type)` prints `nil` in both
+cases) and breaks the property the interpreter actually has.
+
+### 5. The witness, in both directions
+
+The new case `mir_type_member_names_every_shape` names all eight types, plus
+the nil pair.  With the arm removed it reports:
+
+    interp-out=b'int\nfloat\nstring\nbool\narray\ndict\nunknown\nset\nnil\ntrue\nfalse\n'
+    mir-out=b'42\n3\n1\n0\n1\n1\n0\n2\n0\nfalse\nfalse\n'
+
+Those are **tag numbers**, not names -- the unknown builtin fell through to the
+one-argument return path and handed back the value's own type tag.  A test that
+only checked "does `say x.type` print something" would have passed on it.
+
+Two things the case had to be rewritten for, both measured against the
+interpreter rather than assumed:
+
+  * `42.type` is a **parse error** on the interpreter too (`expected ')' but
+    got 'type'`), so every shape goes through a name;
+  * `fn` is not a usable identifier (`expected 'function name' but got '='`),
+    so the closure is called `fun`.
+
+### 6. What the numbers say about the size of this
+
+Zero.  Of the 81 `vtest` programs, **not one** is refused for `type` -- the
+refusals are `ok`/`err`/`is_ok` (7, from `src/mod/result_mod.c`, correctly
+refused because the route carries no mod registry), `atomic_*` (5),
+`dict_has` (2).  Implementing this name unlocked nothing in the corpus.
+
+So this is not a coverage win.  It is a **consistency** win: the compiler
+treats five member names alike, the route implemented four, and the fifth was
+refused with a message that lists the names it does emit -- `int` among them.
+A reader who trusted that list would conclude `type` was not a member at all.
+
+### 7. Boundary
+
+This is one name.  The four siblings were already correct on every shape this
+case exercises, which is evidence that the arity-1 member path is sound and not
+that it is: no case here covers `.type` on a value read out of a container, on
+a value a function returned, or on a name that is shadowed.
+
+`aot-native` -- the other AOT route -- refuses the same program differently
+(exit 2, no MIR involvement).  That route's member support is its own subject
+and this section does not touch it.
+
+And the count is still 41 translatable of 81.  The next name that would move
+that number is `dict_has`, not another member property.
