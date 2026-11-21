@@ -16735,3 +16735,121 @@ section made, and the comment in that file says so.
 And the sibling list -- the compiler's builtin registry against the VM's --
 is still uncompared.  A name the compiler knows and the VM does not is the same
 shape as the one this section fixed, one list over.
+
+## §10.257 — the preset that is not a set
+
+### 1. Where the next thing was
+
+§10.256 ended by naming an asymmetry it had just made reachable:
+
+    the VM registers the last preset as a nil-typed global while the other 22
+    are sets, so a program assigning to it runs on the interpreter and is
+    refused by the MIR route.  That was always true; the encoding bug just made
+    it unreachable.
+
+This section took that sentence at its word and measured it.  Print first, per
+§10.256's lesson:
+
+    $ inimerse --no-mods run k.im        # 空 = 5 ; say str(空)
+    5
+    $ aot-mir translate k.im out.c
+    REFUSED, why=preset-set-global: global 22 is the preset set global '空',
+    whose value is a set, not an NV int/float/bool -- outside this subset
+
+The refusal's own words are the defect.  `空` is not a set.
+
+### 2. What the interpreter actually holds
+
+    $ say str(空) / 空 == nil / len(空) / size(空)
+    nil          true          0        nil
+
+    $ say str(Z) / Z == nil / len(Z)
+    0            false       0
+
+`空 == nil` is **true** and it is false for every other preset.  `src/vm/vm.c`
+registers twenty-two `VAL_SET` and one `VAL_NIL`, and the comment beside the
+nil one has said "kong (empty set)" since 8248e08e -- `git show
+8248e08e:src/vm/vm.c` has the same comment over the same `VAL_NIL` line.  The
+comment has never described the code under it.
+
+So the route refused a name for having a value it does not have, and the
+remedy it named -- "not an NV int/float/bool" -- does not apply: `MirVal` holds
+nil in 97 places in that same file.
+
+### 3. The fix, and the one it is not
+
+`is_preset_global` became `is_preset_set_global`, with one exclusion:
+
+    if (strcmp(name, "\xE7\xA9\xBA") == 0) return 0;   /* kong holds nil */
+
+All three call sites take the narrower question -- load, store, and the catch
+variable -- because all three carried the same reason and all three were wrong
+for the same name.
+
+The other 22 stay refused, and that is not a loss: a set-typed global seeded
+here would read as a zeroed payload, which is the defect the table was added
+for.  Measured after: `say str(Z)` still refuses, `say str(空)` does not.
+
+### 4. The witness, in both directions
+
+New case `mir_kong_is_nil_not_a_set` carries the whole shape -- read it, compare
+it against nil, take its length, then assign to it:
+
+    interpreter: nil true 0 5        MIR: identical bytes
+
+and the control is the reverted fix, which reports more than that the case
+failed:
+
+    IR-MIR-PROBLEM|mir_kong_is_nil_not_a_set: the MIR route refused a case this
+    list exists to measure: preset-set-global (aot_mir: preset-set-global:
+    container=0 insn=0 global 22 is the preset set global '空', whose value is
+    a set, not an NV int/float/bool)
+
+The message names a value that is nil as "a set".  A test that only checked the
+route accepted the case would have passed on a route that accepts everything;
+this one pins the interpreter's four answers against the emitted program's.
+
+### 5. What the gate caught, third time in four sections
+
+Renaming the function removed a quote that `docs/HANDOFF_INFIVERSE.md` used as
+evidence, and `handoff_anchor_regression` said so:
+
+    check_handoff_anchors: first missing anchor is document line 111:
+    'static int is_preset_global(const char *name) {' is not in
+    src/compilation/aot_mir.c. ... the sentence is now unbacked.
+
+The document now quotes the new name and says why it changed.  That is the
+third time an instrument I did not write caught a consequence of a change I did
+make -- §10.253's allocation criterion and §10.256's anchor check were the
+first two.  It is also the first time the consequence was **a rename**, which
+is the kind of edit nobody thinks of as changing what a document says.
+
+### 6. What this cost and what it bought
+
+Cost: one predicate, three call sites, one rename, one document line.
+
+Bought: two programs that the interpreter runs and this route rejected --
+`say str(空)`, and `空 = 5` -- no longer rejected.  Zero of the 81 `vtest`
+programs mention the name (the one file that contains the character has it in a
+Chinese comment), so the corpus number does not move: 41 of 81 still translate.
+
+That is worth saying plainly.  This section did not gain coverage; it removed a
+refusal whose stated reason was false.  A refusal has to be justified by
+something, and this one was justified by a comment that had been wrong for the
+life of the file.
+
+### 7. Boundary
+
+The interpreter's comment still says "kong (empty set)" over a `VAL_NIL` line.
+That is prose about a value in the VM, not in this route, and changing it is a
+different argument -- this section names it so the next reader does not have to
+rediscover it.
+
+`空` is now lowerable, which means the route can now be wrong about it.  It is
+pinned by one case on four answers; nothing here says those four are the whole
+of what a program can ask of a nil-typed global.
+
+And the 22 set presets are still refused wholesale.  `N`, `Z`, `Z+`, `Z-` and
+the eighteen `FloatN`/`floatN` names are a real boundary, unchanged, and
+`vtest` has three programs refused for touching `Z` -- a refusal this section
+did not touch and did not re-argue.
