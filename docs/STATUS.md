@@ -16140,3 +16140,101 @@ than to store.
 And the gate now has 27 stages, six of which assert a corpus.  Nothing here
 checks that those six corpora are disjoint, or that a program added to one of
 them is not silently outside the other five.
+
+## §10.252 — the name that is the identity
+
+### 1. Where the next thing was
+
+§10.251's boundary ended with a sentence it could not answer:
+
+    six of the 27 stages now assert a corpus, and nothing checks that those
+    corpora are disjoint, or that a program added to one of them is not
+    silently outside the other five.
+
+This section went to measure that, and the first four inquiries came back
+negative -- which is a result, and cheap enough to be worth recording before
+the fifth one that was not.
+
+### 2. The four negatives, measured
+
+  * **vtest files named by no CTest**: 4 of 81.  All four are in
+    `check_orphan_fixtures.py`'s allowed list, and their stated reasons check
+    out on inspection: `params_precompiled_v06.im` is the source of the
+    `.inim` that `params_precompiled_runtime` actually runs (both exist);
+    `eidos_object_probe_v04.im` is quoted in `docs/API.md` and asserted by
+    `tools/eidos_runtime.test.py`; `say_pair_probe_v06.im`'s output is
+    recorded verbatim in `docs/AUDIT.md`; `range_metadata_probe_v06.im` is a
+    recording with no assertion, by design.  An exemption with a stated reason
+    that survives being checked is what the allowance is for.
+  * **duplicated vtest coverage**: 0 files have more than one CTest; 77 have
+    exactly one.  No overlap to find.
+  * **the 41 MIR-translatable files and their assertion strength**: 0 of them
+    lack both a CTest-level assertion and a `--shape` clause.  §10.238's work
+    already reached this corpus.
+  * **the gate's failure report**: two stages were made to fail at once and
+    the verdict named both, with both log paths.  `run_stage` returns 0 after
+    recording a failure, so the run continues and nothing is truncated.
+
+Four inquiries, four negatives.  The family §10.246 through §10.251 lived in
+is now hard to find work in, which is itself worth knowing.
+
+### 3. The one that was not negative
+
+`tools/aot_mir_cover.test.py` concatenates two corpora and counts over the
+result:
+
+    shared  = [(n, src) for n, src, _want in mod.EQUIVALENCE]   # 86 entries
+    mir_only = load_mir_only()                                  # 317 entries
+    cases = shared + mir_only
+
+Nothing checks that the two are disjoint.  Measured today: 403 cases, **403
+distinct names**, 0 text overlap.  The invariant holds and nothing keeps it.
+
+Why it matters is not the count.  A name is the case's identity in every
+reading the tool prints -- `--limit` slices `shared`, the per-case lines name
+`case=<name>`, and a failure a reader looks up by name.  So the same name in
+both corpora is:
+
+  * if the text is identical: one program written twice, and the coverage
+    fraction moves for a reason no line names;
+  * if the text differs: **two programs under one name**, and whichever runs
+    last is the one a reader will believe they are reading.
+
+Neither is caught today, and neither would be visible from a green run.
+
+### 4. What landed
+
+`scan_names(pairs)` returns `(distinct, duplicates)`.  The main path uses it
+on the combined corpus; a duplicate is a `PROBLEM`, which fails the verdict;
+and the verdict line now reports both numbers so the invariant is a reading
+rather than a silence:
+
+    IR-AOT-MIR-VERDICT|PASS|...|accepted=403|...|distinct-names=403|duplicate-names=0
+
+Three cells in `--self-check`, because a scan that never fires reports "no
+duplicates" about any input:
+
+    distinct corpus names are silent                      ok
+    a name in both corpora is a duplicate                 ok
+    identical text under one name is still a duplicate    ok
+
+and measured by mutation: with the `if name in seen` branch replaced by
+`if False`, all three redden.  Before the mutation they are indistinguishable
+from a scan that is not called.
+
+### 5. Boundary
+
+This makes the invariant visible and enforced; it does not make the corpora
+cover anything they did not cover.  A case that is in neither corpus is still
+in neither, and a case added to `vtest/` still lands outside both inline lists
+-- that is §10.251's subject, and it has its own stage now.
+
+The three corpora are checked pairwise only where they touch: `EQUIVALENCE`
+and `MIR_ONLY` share a namespace and are now checked; `vtest/` is a third
+namespace whose identity is a file path, and a `vtest` file and an inline case
+with the same name are two different things on purpose (§10.251 measured 0
+text overlap between them, and the names live in different spaces).
+
+And the four refusals above are allowed by reason, not by measurement.  A
+reason can be wrong and this section only re-read four of them; the rest of
+that list is §10.145's subject, not this one's.
