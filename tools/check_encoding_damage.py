@@ -48,7 +48,16 @@ import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# U+FFFD: a decoder's mark for a byte sequence it could not read.
 MARK = b"\xef\xbf\xbd"
+
+# U+E000..U+F8FF: the PRIVATE USE AREA.  Nothing in this repository assigns
+# meaning to these code points, so a run of them in a comment is what is left
+# after a GBK<->UTF-8 round trip -- `查找` became `鍙\ue045煡`.  Measured: 138
+# across 6 files, and only 0 of those files carry a U+FFFD, so the first version
+# of this checker could not see any of them.
+PUA_FIRST = 0xE000
+PUA_LAST = 0xF8FF
 
 # The census this tree carries today, file -> count.  Measured, not guessed:
 # `for f in src/**/*.{c,h} ...; do printf '%s %s\n' "$(grep -c ...)" "$f"; done`
@@ -56,12 +65,20 @@ MARK = b"\xef\xbf\xbd"
 # Each of these is irrecoverable (see the docstring), so the entry is a ceiling
 # and not a to-do.  A file listed here may only LOWER.
 BASELINE = {
+    # U+FFFD only, as measured when this file was written (§10.258).
     "src/compiler/bytecode.c": 409,
     "src/parser/parser.c": 26,
-    "src/vm/vm.c": 25,
-    "src/vm/vm.h": 21,
-    "src/main.c": 15,
-    "src/mod/verse_dist_mod.c": 3,
+    # §10.259: the census now also counts PRIVATE USE AREA characters, which the
+    # first version could not see.  Four files that carried none of the old mark
+    # carry some of these, and four that carried some carry more.  These are not
+    # new damage; they are damage that was outside the old denominator.  The
+    # numbers below are measured on this tree with both kinds counted.
+    "src/compiler/compiler.c": 94,      # PUA only -- 0 U+FFFD
+    "src/vm/vm.h": 31,                  # 21 U+FFFD + 10 PUA
+    "src/vm/vm.c": 29,                  # 25 U+FFFD + 4 PUA
+    "src/main.c": 31,                   # 15 U+FFFD + 16 PUA
+    "src/compiler/compiler.h": 9,       # PUA only
+    "src/mod/verse_dist_mod.c": 8,      # 3 U+FFFD + 5 PUA
     "src/lexer/lexer.h": 3,
     "docs/AUDIT.md": 2,
     "src/runtime/runtime.c": 1,
@@ -97,6 +114,8 @@ def census(repo_root: str) -> tuple[dict, int]:
                 continue
             scanned += 1
             n = data.count(MARK)
+            text = data.decode("utf-8", "replace")
+            n += sum(1 for ch in text if PUA_FIRST <= ord(ch) <= PUA_LAST)
             if n:
                 counts[rel] = n
     if scanned == 0:
@@ -184,6 +203,24 @@ def self_test() -> int:
         counts, scanned = census(root)
         if counts.get("src/x.c") != 1:
             failures.append("a planted mark must be counted: got %r" % (counts,))
+
+        # The second kind, which the first version of this file could not see:
+        # a private-use character with no U+FFFD anywhere in the file.  Measured
+        # on the real tree -- src/compiler/compiler.c carries 94 of them and 0
+        # replacement marks, which is how they stayed invisible for a section.
+        with open(os.path.join(root, "src", "y.c"), "wb") as fh:
+            fh.write("/* \ue045 */\n".encode("utf-8"))
+        counts, _scanned = census(root)
+        if counts.get("src/y.c") != 1:
+            failures.append(
+                "a private-use character must be counted on its own: got %r" % (counts,)
+            )
+        # And a file with neither must not be reported.
+        with open(os.path.join(root, "src", "z.c"), "wb") as fh:
+            fh.write(b"/* clean */\n")
+        counts, _scanned = census(root)
+        if "src/z.c" in counts:
+            failures.append("a clean file must not be reported: got %r" % (counts,))
     finally:
         import shutil
 
@@ -201,6 +238,8 @@ def self_test() -> int:
         "a mark in an unlisted file is a red",
         "an empty census raises instead of reporting clean",
         "a planted mark is counted",
+        "a private-use character is counted with no replacement mark present",
+        "a clean file is not reported",
     ):
         print("  ok   %s" % line)
     print("check_encoding_damage: self-test OK")
@@ -237,14 +276,15 @@ def main(argv: list[str]) -> int:
     )
     if red:
         print(
-            "check_encoding_damage: new U+FFFD in a text file.  It decodes cleanly, so "
-            "every other instrument in this tree passes it."
+            "check_encoding_damage: new U+FFFD or private-use character(s) in a text "
+            "file.  Both decode cleanly, so every other instrument in this tree passes "
+            "them."
         )
         return 1
     print(
-        "check_encoding_damage: no file carries more replacement characters than the "
-        "census records.  The existing ones are irrecoverable and are a ceiling, not a "
-        "to-do list."
+        "check_encoding_damage: no file carries more U+FFFD or private-use characters "
+        "than the census records.  The existing ones are irrecoverable and are a "
+        "ceiling, not a to-do list."
     )
     return 0
 
