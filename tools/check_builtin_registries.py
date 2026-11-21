@@ -83,14 +83,22 @@ def compiler_names(repo_root: str) -> set[str]:
     return names
 
 
-def registered_names(repo_root: str) -> tuple[set[str], list[str]]:
+def registered_names(repo_root: str) -> tuple[set[str], list[str], set[str]]:
+    """(everything registered, the files read, the CORE subset).
+
+    The core subset matters: a name the core runtime registers and the compiler's
+    table omits is the drift this file reports.  A name only a mod registers is
+    the design -- the mods are loaded by name, not listed in the compiler.
+    """
     import glob as _glob
 
     files = []
+    core: set[str] = set()
     for rel in REGISTRATION_FILES:
         path = os.path.join(repo_root, rel)
         if os.path.isfile(path):
             files.append(path)
+            core |= set(REGISTRATION.findall(_read(path)))
     for pattern in REGISTRATION_GLOBS:
         files.extend(sorted(_glob.glob(os.path.join(repo_root, pattern))))
     if not files:
@@ -104,12 +112,12 @@ def registered_names(repo_root: str) -> tuple[set[str], list[str]]:
             "no `vm_register_builtin(vm, ...)` rows in %d file(s) -- the registry moved "
             "and this reader is reading nothing" % len(files)
         )
-    return names, [os.path.relpath(p, repo_root) for p in files]
+    return names, [os.path.relpath(p, repo_root) for p in files], core
 
 
 def measure(repo_root: str):
     comp = compiler_names(repo_root)
-    reg, files = registered_names(repo_root)
+    reg, files, core = registered_names(repo_root)
     orphans = sorted(comp - reg)
     # The unreachable direction, printed rather than judged: it is the design.
     mod_only = len(reg - comp)
@@ -118,12 +126,27 @@ def measure(repo_root: str):
         "naming it compiles and then fails at run time with `unknown builtin`" % name
         for name in orphans
     ]
+    # THE TABLE'S OTHER SIDE, and it is a reading rather than a red.
+    #
+    # `compiler.c`'s table is consulted in exactly ONE place -- the `window`
+    # statement arm.  An ordinary call that `lookup_func` cannot resolve becomes
+    # OP_CALL_BUILTIN by NAME and the VM resolves it at run time, so a name
+    # registered in the tree works whether or not it is in the table.  Measured:
+    # `chr(65)` answers "A" and `strdup("chr")` does not appear in compiler.c.
+    #
+    # So the table is not "the builtins this compiler accepts" -- it is a
+    # vestigial list whose only reader is one statement kind.  62 names the core
+    # runtime registers are absent from it.  That is why a rule of the form
+    # "require the name to be in the table" would be wrong: it would refuse 41
+    # names the corpus uses today.
     stats = {
         "compiler": len(comp),
         "registered": len(reg),
         "files": len(files),
         "orphans": len(orphans),
         "mod_only": mod_only,
+        "core": len(core),
+        "core_only": len(core - comp),
     }
     return (1 if problems else 0), problems, stats
 
@@ -208,14 +231,25 @@ def main(argv: list[str]) -> int:
         print("  PROBLEM  %s" % line)
     print(
         "check_builtin_registries: compiler-table=%d|registered=%d|files=%d"
-        "|orphans=%d|registered-but-not-in-table=%d"
+        "|orphans=%d|registered-but-not-in-table=%d|core-registered=%d|core-absent-from-table=%d"
         % (
             stats["compiler"],
             stats["registered"],
             stats["files"],
             stats["orphans"],
             stats["mod_only"],
+            stats["core"],
+            stats["core_only"],
         )
+    )
+    print(
+        "check_builtin_registries: the table is consulted in one place (the `window` "
+        "statement arm); an ordinary call is resolved by NAME at run time, so absence "
+        "from it is not a defect.  Of the %d absent names, %d are CORE-runtime builtins "
+        "(`chr`, `atomic_get`, `bit_and` ...) and %d register only through mods, which is "
+        "the design.  The core number is the measure of how far a vestigial list has "
+        "drifted from the registry it names."
+        % (stats["mod_only"], stats["core_only"], stats["mod_only"] - stats["core_only"])
     )
     if red:
         print(
