@@ -4751,9 +4751,30 @@ static const char *const kPresetGlobals[23] = {
     "\xE7\xA9\xBA"
 };
 
-static int is_preset_global(const char *name) {
+/* THE ONE PRESET THAT IS NOT A SET.  `空` (kong) is registered by
+   src/vm/vm.c as VAL_NIL, not VAL_SET -- the comment beside it says "empty
+   set" and has said so since 8248e08e, but the line under the comment has
+   always been `val.type = VAL_NIL`.  Measured on the interpreter:
+   `空 == nil` is true (it is false for every other preset), `len(空)` is 0,
+   `size(空)` is nil, and `空 = 5` then `str(空)` prints 5.
+
+   So the refusal reason below -- "whose value is a set, not an NV
+   int/float/bool" -- does not describe this name.  MirVal CAN hold nil
+   (mv_nil appears 97 times in this file), so the route has no reason to
+   refuse it, and refusing it made `say str(空)` a program the interpreter
+   runs and this route rejects.
+
+   The other 22 stay refused: a set-typed global seeded here would read as a
+   zeroed payload, which is the defect this table was added for.
+
+   Not fixed here: the interpreter's own comment calling it an "empty set".
+   That is prose about a value and it is not this route's to change; it is
+   named in docs/STATUS.md 10.257 so it is not lost. */
+static int is_preset_set_global(const char *name) {
+    if (!name) return 0;
+    if (strcmp(name, "\xE7\xA9\xBA") == 0) return 0;   /* kong holds nil */
     int n = (int)(sizeof kPresetGlobals / sizeof kPresetGlobals[0]);
-    for (int i = 0; i < n; i++) if (name && strcmp(name, kPresetGlobals[i]) == 0) return 1;
+    for (int i = 0; i < n; i++) if (strcmp(name, kPresetGlobals[i]) == 0) return 1;
     return 0;
 }
 static int   g_insns, g_emitted, g_notyet, g_funcs, g_regs_max;
@@ -5708,7 +5729,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d global index %d out of range (count=%d)",
                                f, i, ix, root->global_name_count);
                 const char *gname = root->global_names ? root->global_names[ix] : NULL;
-                if (is_preset_global(gname)) {
+                if (is_preset_set_global(gname)) {
                     g_prescan_why = "preset-set-global";
                     return bad("container=%d insn=%d global %d is the preset set global '%s', whose value is a set, "
                                "not an NV int/float/bool -- outside this subset",
@@ -5729,7 +5750,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     return bad("container=%d insn=%d global index %d out of range (count=%d)",
                                f, i, ix, root->global_name_count);
                 const char *gname = root->global_names ? root->global_names[ix] : NULL;
-                if (is_preset_global(gname)) {
+                if (is_preset_set_global(gname)) {
                     g_prescan_why = "preset-set-global";
                     return bad("container=%d insn=%d global %d is the preset set global '%s', whose value is a set, "
                                "not an NV int/float/bool -- outside this subset",
@@ -5782,7 +5803,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                f, i, ix, root->global_name_count);
                 if (ix >= 0) {
                     const char *gname = root->global_names ? root->global_names[ix] : NULL;
-                    if (is_preset_global(gname))
+                    if (is_preset_set_global(gname))
                         return bad("container=%d insn=%d catch variable %d is the preset set global '%s', "
                                    "whose value is a set, not an NV int/float/bool -- outside this subset",
                                    f, i, ix, gname);

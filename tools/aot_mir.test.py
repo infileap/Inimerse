@@ -269,6 +269,9 @@ ALLOCS_EXPECT = {
     # `allocs=10|freed=10|live=0|bytes=305`.  (Eleven calls, ten blocks: the
     # repeated `str(n.type)` -- nil -- allocates nothing.)
     "mir_type_member_names_every_shape": (10, 305),
+    # §10.257: three `str()` copies (nil, the length, the assigned 5), all
+    # registered and all swept.  Measured: `allocs=3|freed=3|live=0|bytes=8`.
+    "mir_kong_is_nil_not_a_set": (3, 8),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
     # Both reads fold the component's span; nothing allocates a member table.
@@ -2806,6 +2809,16 @@ say list(b)
     # nil -- where the interpreter answers NIL and not the string "nil", which
     # is the half a fix that returned "nil" would pass str() on and fail
     # everywhere else. The last two lines pin exactly that difference.
+    # §10.257: `空` (kong) is the one preset the VM registers as VAL_NIL, not
+    # VAL_SET, so the route's "whose value is a set" refusal never described it
+    # and rejecting it made `say str(空)` a program the interpreter runs.  The
+    # case carries both halves: reading it (nil), comparing it against nil
+    # (true -- false for every real preset), and its length.  A fix that let
+    # all 23 through would pass the first line and break Z, which is the
+    # neighbouring case's subject.
+    ("mir_kong_is_nil_not_a_set",
+     'say str(\u7a7a)\nsay \u7a7a == nil\nsay str(len(\u7a7a))\n'
+     '\u7a7a = 5\nsay str(\u7a7a)\n'),
     ("mir_type_member_names_every_shape",
      # Literals cannot carry a member (`42.type` is a parse error on the
      # interpreter too, measured), so every shape goes through a name.
