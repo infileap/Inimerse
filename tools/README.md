@@ -87,12 +87,12 @@ them from stepping on each other. The board and the rules are in
 
 ### `gate.sh` — the acceptance gate
 
-Twenty-nine stages; exit 0 only if all pass. A branch is mergable when this is green.
+Thirty-one stages; exit 0 only if all pass. A branch is mergable when this is green.
 Run it **serially** — two gates at once bind overlapping ports and manufacture the
 failures [docs/STATUS.md](../docs/STATUS.md) §2.9 records.
 
 ```bash
-tools/gate.sh                 # all twenty-nine stages
+tools/gate.sh                 # all thirty-one stages
 tools/gate.sh --fast          # reuse the existing build/ (skip configure)
 tools/gate.sh --only links    # one stage: build|ctest|fuzz|economy|node|plugin|oauth-loop
                               #            |ignored-credentials|links|doc-paths

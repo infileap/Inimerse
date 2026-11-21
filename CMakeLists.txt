@@ -2250,3 +2250,22 @@ set_tests_properties(preset_tables_regression PROPERTIES WORKING_DIRECTORY ${CMA
 add_test(NAME preset_tables_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_preset_tables.py --self-test)
 set_tests_properties(preset_tables_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
+
+# §10.258: a name in the compiler's builtin table and in no registry anywhere --
+# a program naming it compiles and dies at run time. Measured: `build`.
+add_test(NAME builtin_registries_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_builtin_registries.py)
+set_tests_properties(builtin_registries_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression")
+add_test(NAME builtin_registries_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_builtin_registries.py --self-test)
+set_tests_properties(builtin_registries_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "compiler;regression")
+
+# §10.258: U+FFFD is a legal character, so every instrument in this tree passes a
+# file that carries it. 508 across 12 files, all in comments, irrecoverable since
+# the first commit. This holds the per-file census and reddens on a new one.
+add_test(NAME encoding_damage_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_encoding_damage.py)
+set_tests_properties(encoding_damage_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
+add_test(NAME encoding_damage_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_encoding_damage.py --self-test)
+set_tests_properties(encoding_damage_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")

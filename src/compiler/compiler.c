@@ -2937,7 +2937,16 @@ Compiler *compiler_new(void) {
     comp->builtins[comp->builtinCount++].name = strdup("gc_now");
     comp->builtins[comp->builtinCount++].name = strdup("gc_stats");
     comp->builtins[comp->builtinCount++].name = strdup("split");
-    comp->builtins[comp->builtinCount++].name = strdup("build");
+    /* `build` was here and nowhere else.  A name in this table is one the
+       compiler will emit OP_CALL_BUILTIN for, so `x = build()` type-checked,
+       produced bytecode, and died at run time with `unknown builtin function
+       'build'` -- measured, and true under every configuration including with
+       the mods loaded.  It had no implementation in any file since it was
+       added (8248e08e) and there is a `build` SUBCOMMAND in src/main.c, which
+       is a different thing that this table does not describe.  Removed, not
+       wired: there is nothing to wire it to, and `build` as a language builtin
+       has no ruling behind it.  tools/check_builtin_registries.py is what would
+       have caught this on the day it was added. */
     comp->builtins[comp->builtinCount++].name = strdup("window");
     comp->builtins[comp->builtinCount++].name = strdup("show_image");
     comp->builtins[comp->builtinCount++].name = strdup("gui_wait");
