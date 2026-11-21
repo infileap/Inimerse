@@ -16853,3 +16853,129 @@ And the 22 set presets are still refused wholesale.  `N`, `Z`, `Z+`, `Z-` and
 the eighteen `FloatN`/`floatN` names are a real boundary, unchanged, and
 `vtest` has three programs refused for touching `Z` -- a refusal this section
 did not touch and did not re-argue.
+
+## §10.258 — two things that decode cleanly
+
+### 1. Where the next thing was
+
+§10.255 and §10.257 both closed by naming the same neighbour: the compiler's
+builtin table against the VM's registry.  This section took it, and the question
+turned out to have two halves -- one name, and 508 characters.
+
+### 2. The name
+
+The compiler holds a table of names it will emit `OP_CALL_BUILTIN` for
+(`compiler_new`, twenty-nine rows of `strdup`).  The VM holds its own registry,
+populated with `vm_register_builtin` in `runtime.c`, `runtime_posix.c` and the
+mods.  Diffing them:
+
+    compiler-table=29  registered=363  compiler-only=['build']
+
+`build` is the only name in the first set that no file registers.  Measured
+consequence, not inferred:
+
+    $ inimerse buildc bd.im bd.inim        # x = build() ; say "reached"
+    compiled: ...                           (exit 0)
+    $ inimerse --no-mods run bd.im
+    [exception] uncaught: unknown builtin function 'build'    (exit 1)
+
+It compiles and then cannot run, in every configuration including with the mods
+loaded.  It had no implementation in any file since 8248e08e, the commit that
+added it, and `build` exists in `src/main.c` as a **subcommand** -- a different
+thing this table does not describe.
+
+So it was removed, not wired: there is nothing to wire it to, and a `build`
+builtin has no ruling behind it.  What that buys, measured: `func build() {
+return 7 }` now works, because the name stopped being reserved by a table entry
+with nothing behind it.
+
+### 3. The characters
+
+The same round asked what the text-integrity stage would say about a source file
+that is damaged but still decodes.  It says nothing, and it is right to:
+
+    $ python3 -c "open('src/compiler/bytecode.c','rb').read().decode('utf-8')"
+    (no error)
+
+U+FFFD is a legal character.  A file carrying it is valid UTF-8, has no NUL, no
+fence damage, no broken link -- every instrument in this tree passes it.
+
+    scanned=529|files-with-marks=12|marks=508
+
+They are in comments: `/* ---------- \ufffd\ufffd... ---------- */`, the
+box-drawing rules, and truncated Chinese section titles -- `表达式解\ufffd?`.
+A reader sees the damage; no tool did.
+
+**It is irrecoverable.**  `git log --reverse -- src/compiler/bytecode.c` shows
+the file entering this history with the marks already in it, so the original
+bytes never existed here and no diff can restore them.  That decides what the
+instrument can be: not a repair, a census with a ceiling.
+
+### 4. Two instruments, and both had to be made able to fail
+
+`tools/check_builtin_registries.py` is deliberately **one-directional**.  335
+names register through mods and do not appear in the compiler's table; that is
+the design, and a checker demanding the two sets be equal would report 335
+problems about a working system.  It asks the question that has an answer: is
+there a name the compiler will emit that no file registers?
+
+`tools/check_encoding_damage.py` holds the per-file count.  A file that grows is
+a red; the existing 508 are a ceiling in §10.242's shape and may only fall.
+
+Neither self-test worked the first time, and the reason is one shape:
+
+**the compiled-table self-test recomputed the comparison inline instead of
+calling it.**  Replacing `elif n > base` with `elif False` in the real function
+left all five cells green.  A control that recomputes the rule is a control over
+an expression nobody runs.  The comparison was extracted into `compare(counts,
+baseline)` and the self-test calls it; with both arms disabled, two cells now
+redden.
+
+The registry checker's self-test had the same defect in a different form: it
+tested a regex against a hand-written line rather than against the file
+structure, so "a table that moved" and "a table that is empty" would have looked
+the same.  It now refuses an empty census by raising, which is a case that can
+fail.
+
+### 5. What landed
+
+* `build` removed from the compiler's table; `func build()` is an ordinary name
+  again;
+* two checkers, four CTests, two stages: **31 stages, 227 CTests**, with
+  `EXP_CTEST`, `recon.ctest-count` and the seven live claims moved in the same
+  batch;
+* 508 marks held under a ceiling of 508, per file.
+
+### 6. What the gate did not catch, and one thing to name
+
+Nothing broke this round, which after three consecutive rounds of a checker
+catching a consequence of my edit is worth saying plainly rather than
+celebrating: the two new instruments are additive and the removal was one table
+row.
+
+One defect found and **not** fixed: the runtime's message is
+`unknown builtin function '<name>'` for ANY unresolved call -- measured with
+`undefined_thing()`, which produces exactly that sentence.  The word "builtin"
+is wrong for a name that was never in any registry.  It is not fixed here
+because `vtest/unknown_builtin_v05.im` asserts the exact string (its subject is
+that a missing name does not silently return junk, which is §1.11's defect and a
+better subject than the wording).  Changing a message three instruments quote
+needs its own argument and its own batch of anchor updates, and this section
+would have been about two unrelated things.
+
+### 7. Boundary
+
+The registry checker reads `vm_register_builtin(vm, "name")` and the compiler's
+`strdup` rows.  A registration under a different call shape is invisible to it,
+and an invisibility is not an agreement -- the file count is printed so the
+denominator is visible.
+
+It says the two halves agree on **existence**, nothing about behaviour.  A
+registered builtin that answers wrongly is the runtime suites' subject; a
+compiler-visible name the MIR route cannot lower is
+`check_builtin_allowlist.py`'s.
+
+The 508 marks are held, not examined.  A file could carry one more mark and one
+fewer, inside two different files' ceilings, and this census would not see the
+swap.  Per-file was chosen because it is the smallest grain that makes a new
+mark a red; a swap across files is a shape nobody has produced yet.
