@@ -2269,3 +2269,13 @@ set_tests_properties(encoding_damage_regression PROPERTIES WORKING_DIRECTORY ${C
 add_test(NAME encoding_damage_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_encoding_damage.py --self-test)
 set_tests_properties(encoding_damage_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
+
+# §10.261: a fenced `<call> # <value>` in docs/SYNTAX.md is what a reader copies.
+# Two of them said count(1, 2, 3) is 3 and count(1, 2, Z[7~9]) is 5; measured, the
+# block was wrong on both lines while the prose below it was right.
+add_test(NAME doc_examples_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_doc_examples.py)
+set_tests_properties(doc_examples_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
+add_test(NAME doc_examples_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_doc_examples.py --self-test)
+set_tests_properties(doc_examples_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
