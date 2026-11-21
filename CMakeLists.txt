@@ -2230,3 +2230,13 @@ set_tests_properties(mir_vtest_parity_regression PROPERTIES WORKING_DIRECTORY ${
 add_test(NAME mir_vtest_parity_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_mir_vtest_parity.py --self-test)
 set_tests_properties(mir_vtest_parity_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
+
+# §10.254: the refusal message is the only evidence a reader has for what this
+# route can lower, and nothing compared it with the emitters. §10.253 found the
+# first half (`type` had an arm and no mention). Both directions are judged.
+add_test(NAME builtin_allowlist_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_builtin_allowlist.py)
+set_tests_properties(builtin_allowlist_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
+add_test(NAME builtin_allowlist_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_builtin_allowlist.py --self-test)
+set_tests_properties(builtin_allowlist_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")

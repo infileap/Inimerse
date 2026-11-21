@@ -19,7 +19,7 @@
 | 来源 | 是什么 | 口径 |
 | --- | --- | --- |
 | **A. 他本人说过的话** | `/home/sakiko/i.json`（791 条消息，其中用户 395 条）的逐条提取，去重后 **336 条**，落在 [`docs/streams/i-json-user-statements.md`](streams/i-json-user-statements.md) | 逐字、含错别字；`U###` 是**仅用户消息**的 0-based 序号，`i.json#N` 是**全部消息**的 1-based 序号 |
-| **B. 仓库自己的文档与门禁** | `docs/STATUS.md`、`docs/DECFY_DESIGN.md`、`docs/TYPESET_V06.md`、`docs/API.md`、`docs/REQUIREMENTS_ANALYSIS.md`、`tools/gate.sh` 的 27 个阶段 | 引**节号**，不引行号；行号只在本文件写作时的那个 ref 上成立 |
+| **B. 仓库自己的文档与门禁** | `docs/STATUS.md`、`docs/DECFY_DESIGN.md`、`docs/TYPESET_V06.md`、`docs/API.md`、`docs/REQUIREMENTS_ANALYSIS.md`、`tools/gate.sh` 的 28 个阶段 | 引**节号**，不引行号；行号只在本文件写作时的那个 ref 上成立 |
 | **C. 本会话的实测** | 引擎源码、`ctest`、门禁各阶段 | 给命令与读数，不给「概述」 |
 
 **三条纪律（本文自己服从）：**

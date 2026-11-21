@@ -5865,7 +5865,8 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                                " and int, substr, split, join, chars, ord, chr, index,"
                                " replace, startswith, endswith, upper, lower, trim, bit_and,"
                                " bit_or, bit_xor, bit_not, shl, shr, bool, float, round,"
-                               " sqrt, match, range, args and declared and no other builtin;"
+                               " sqrt, match, range, args, declared and type and no other"
+                               " builtin;"
                                " the registry, its capability flags and the safe-mode rule"
                                " live in the VM and the mods", f, i, bn);
                 }
