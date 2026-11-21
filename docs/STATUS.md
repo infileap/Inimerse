@@ -16979,3 +16979,127 @@ The 508 marks are held, not examined.  A file could carry one more mark and one
 fewer, inside two different files' ceilings, and this census would not see the
 swap.  Per-file was chosen because it is the smallest grain that makes a new
 mark a red; a swap across files is a shape nobody has produced yet.
+
+## §10.259 — the other kind of damage
+
+### 1. Where the next thing was
+
+§10.258 closed with a boundary that named two things: the runtime's message
+saying "unknown builtin function" for any unresolved call, and the census
+holding 508 marks without examining them.
+
+Reading the first one turned up the second.  Following
+`unknown builtin function 'build'` back to the compiler's fallback, the code
+above it is this:
+
+    /* ns 鍑芥暟鏈\ue045壘鍒帮細鍥炶惤 builtin锛堜繚鎸佹棫琛屼负锛?*/
+
+That is not a comment in a language.  It is what a GBK string looks like after a
+round trip through UTF-8, with a private-use character in the middle where a
+byte pair did not survive.
+
+### 2. What the census could not see
+
+`tools/check_encoding_damage.py` counted U+FFFD.  Private-use characters
+(U+E000..U+F8FF) are a different mark for the same kind of failure, and the
+first version did not look for them:
+
+    src/compiler/compiler.c     94 PUA    0 U+FFFD
+    src/compiler/compiler.h      9 PUA    0 U+FFFD
+
+Two files carrying visible damage and invisible to the instrument, because they
+chose the other mark.  Counted both:
+
+    U+FFFD=508   PUA=138   total=646   files=14
+
+Four files that appeared clean were never clean; four that were counted were
+undercounted.  None of this is new damage -- it is damage that was outside the
+old denominator, which is a different sentence and the census now says which.
+
+### 3. What changed, and what did not
+
+The census counts both kinds.  The baseline is re-measured with both kinds
+counted, and the comment says so:
+
+    src/compiler/compiler.c": 94,      # PUA only -- 0 U+FFFD
+
+That comment is the honest part.  Raising a baseline is how a census stops
+meaning anything, so each number carries what it is made of, and the total is
+still a ceiling that may only fall.
+
+Two controls were added, and they are the two directions that make the extension
+a measurement rather than a widening:
+
+  * a private-use character **with no replacement mark in the same file** is
+    counted -- this is the case that exists on the real tree and that the old
+    reader scored zero on;
+  * a file carrying neither is **not** reported -- because "widened the
+    denominator" and "started counting everything" look identical from a green
+    run.
+
+Measured by mutation, both red:
+
+    dropping the PUA arm            -> FAILED  a private-use character must be
+                                       counted on its own: got {'src/x.c': 1}
+    reporting every file            -> FAILED  a clean file must not be reported:
+                                       got {'src/x.c': 1, 'src/y.c': 1, 'src/z.c': 0}
+
+### 4. The verdict text had to move with it
+
+The first version printed, unconditionally:
+
+    no file carries more replacement characters than the census records
+
+which became false the moment the census counted a second kind.  It now says
+"U+FFFD or private-use characters", and the red path names both.  This is
+§10.255's defect in the small: a message that stays true-looking while the
+thing it describes changes.
+
+### 5. What was measured and not done
+
+The runtime message.  `unknown builtin function '<name>'` is what ANY unresolved
+call produces -- measured with `undefined_thing()`, `nosuchbuiltin(1)` and
+`window()`, all three identical.  The word "builtin" is wrong for a name that
+was never in any registry, and the compiler's own fallback is why: it emits
+`OP_CALL_BUILTIN` for every name it cannot resolve, so by the time the VM sees
+it, "builtin" is what the bytecode says.
+
+It is not fixed here.  `vtest/unknown_builtin_v05.im` asserts the exact string
+(its subject -- a missing name must not silently return junk -- is §1.11's and a
+better subject than the wording), and the string appears in `docs/AUDIT.md` at
+eight places, `docs/STATUS.md` at two, `docs/SYNTAX.md`,
+`docs/streams/builtin-platform-census.md`, `video-pipeline/RECORDABILITY.md` and
+the checker this section started from.  Changing a message that many instruments
+quote needs one batch that moves all of them, and this section would then be
+about two unrelated things.
+
+The better fix may not be the wording at all: the compiler could distinguish
+"a name I know is a builtin" from "a name I cannot resolve" and emit a different
+opcode for the second.  That is a change to what the compiler emits, which
+§10.256 established needs its own argument and its own baseline move.
+
+### 6. What landed
+
+* the census counts U+FFFD **and** private-use characters;
+* the baseline re-measured per file with what each number is made of;
+* two controls, both mutation-verified;
+* the verdict text covers both kinds.
+
+**227 of 227 tests pass, 31 of 31 stages pass.**  No stage or CTest count moved:
+this widened an existing instrument rather than adding one.
+
+### 7. Boundary
+
+Two marks, not all of them.  A GBK round trip can also produce a run of ordinary
+characters that read as nonsense (`鍑芥暟`) with no replacement mark and no
+private-use character at all -- that is mojibake, it needs a language model to
+detect, and this census cannot see it.  The sentence at the top of this section
+contains both kinds in one line, which is how common the pair is.
+
+The census is still per file and still blind to a swap: one mark removed in one
+file and one added in another leaves every per-file number unchanged and the
+total unchanged.
+
+And the ceiling is a number, not a budget.  Nothing here says 646 is acceptable;
+it says 646 is what this tree carries and that a new one is a red.  Paying it
+down would mean rewriting prose whose original was never in this history.
