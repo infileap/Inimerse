@@ -16356,3 +16356,111 @@ and this section does not touch it.
 
 And the count is still 41 translatable of 81.  The next name that would move
 that number is `dict_has`, not another member property.
+
+## §10.254 — the message that is the only evidence
+
+### 1. Where the next thing was
+
+§10.253 fixed one member property and then said what the fix's real shape was:
+
+    the refusal message lists the names the route emits -- `int` among them --
+    so a reader who trusted that list would conclude `type` was not a member
+    at all.
+
+Writing `type` into the list fixed one name and left the mechanism.  This
+section is the mechanism.
+
+### 2. The shape of the thing
+
+When the MIR route meets a builtin it does not emit, it refuses and prints:
+
+    builtin call 'atomic_get' -- this route emits len, list, size, count, has,
+    keys, str, sum, remove, push, pop and int, substr, split, join, chars, ord,
+    chr, index, replace, startswith, endswith, upper, lower, trim, bit_and,
+    bit_or, bit_xor, bit_not, shl, shr, bool, float, round, sqrt, match, range,
+    args, declared, type and no other builtin
+
+That sentence is the only evidence a reader has for what this route can lower.
+It is written by hand, in a source file, next to two different constructs that
+have to agree with it:
+
+  * the `!= 0` chain that decides whether a name may pass (`strcmp(bn, "X") != 0`);
+  * the `== 0` arms that emit something for it (`strcmp(bn, "X") == 0`).
+
+A name can have several arms -- `upper`, `lower` and `trim` have three each, for
+their arities -- so the arms are a SET and the message names a set.  Nothing
+compared them.  §10.253's `type` was one name falling out of that gap; the gap
+is the subject here.
+
+### 3. The two directions, and why both
+
+  * **A name the message lists with no handler.**  The reader is told a program
+    will work, and it is refused.  This is the more damaging direction because
+    of where the message is read: the tool has *already* refused, so the reader
+    is holding a list of what they could have written instead.
+  * **A handler the message omits.**  The reader works around a limitation that
+    is not there.  `type` was this one.
+
+Both are checked, because a fix that only checked the first would have left
+`type` hidden for another nine sections.
+
+### 4. The measurement
+
+    check_builtin_allowlist: message-lists=40|admitted=40|emitted=39|handled=40
+    |promised-without-handler=0|handled-but-unlisted=0
+
+Three numbers: the names in the sentence, the names the admission chain lets
+through, and the names with an emit arm.  They agree today, and this section is
+about making that agreement a reading rather than a coincidence.
+
+### 5. Four extraction attempts, which is the section's own subject
+
+The checker reads the source rather than the printed message, because the
+message is assembled by the compiler from adjacent literals and comparing it
+with itself would prove nothing.  Getting that extraction right took four tries:
+
+  1. anchor on `this route emits` -> matched the **interval-domain** refusal
+     12KB earlier and reported **567 names**;
+  2. take the first literal of the run -> reported **2**;
+  3. join the literals matched by a regex -> the first literals in the run are
+     the *whitespace between quote pairs*, so the body came out blank;
+  4. strip the quote characters, collapse the whitespace runs -- which is
+     exactly the concatenation the compiler performs.
+
+The first three each printed a red that looked like a finding and was an
+artifact of the extractor.  **Every one of them was a confident statement about
+a message the code had not read** -- the failure this whole family of sections
+is about, arrived at while building the instrument that checks for it.
+
+The `--self-test` fixture is therefore written in the real shape -- several
+adjacent literals with the source's own layout inside them -- because three of
+the four versions parsed a one-line fixture correctly and the real message
+wrongly.  Mutation: with the extraction neutered, all three cells redden.
+
+### 6. What landed
+
+`tools/check_builtin_allowlist.py`, registered as two CTests and as the stage
+`builtin-allowlist`: **28 stages, 221 CTests**, with `EXP_CTEST` and
+`recon.ctest-count` moved in the same batch and the seven live claims 27 -> 28
+because `check_stage_count` refused to let the stage land without them.
+
+The message itself was corrected in the same commit: it now ends `... declared,
+type and no other builtin`.
+
+### 7. Boundary
+
+This says the three agree.  It does not say the list is right: a name could be
+implemented, admitted, and described in the message, and still answer wrongly
+-- that is `aot_mir.test.py`'s and `aot_mir_cover`'s subject, and neither reads
+this message.
+
+It reads one message.  The same file has a second refusal whose text lists
+interval-domain spellings (`this route emits the R and Z interval spellings`),
+and that sentence was not compared with anything here.  Attempt 1 above found
+it by accident and it is why the checker anchors on the builtin message
+specifically.
+
+And the 40 names are the whole of this route's builtin surface as the source
+states it.  A builtin reached through a path that does not go through
+`OP_CALL_BUILTIN` is not in any of these three sets, which is §10.253's `.type`
+lesson one level up: what the list cannot see, the list cannot keep true.
