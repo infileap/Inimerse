@@ -16464,3 +16464,132 @@ And the 40 names are the whole of this route's builtin surface as the source
 states it.  A builtin reached through a path that does not go through
 `OP_CALL_BUILTIN` is not in any of these three sets, which is §10.253's `.type`
 lesson one level up: what the list cannot see, the list cannot keep true.
+
+## §10.255 — the name three files spell differently
+
+### 1. Where the next thing was
+
+§10.254's boundary named the next corpus question and this round went looking
+elsewhere: the compiler seeds a table of "preset" globals before it reads any
+source, and that list is written down in three files.
+
+    src/vm/vm.c                 registers them at init
+    src/compiler/compiler.c     "must match vm.c vm_init order: ... kong"
+    src/compilation/aot_mir.c   "must match vm.c vm_init order", refusing a
+                                program that touches one by name
+
+One of those comments says the tables must match.  This section asked whether
+they do.
+
+### 2. What they hold, measured the way §10.254 taught
+
+Printing each table raw, before writing any parser, is the rule this round
+started with -- and it still took three extractor revisions to read them:
+
+    vm.c         declared=24  bound=22  registers=23  last: float9, 空
+    compiler.c   declared=23  bound=23  registers=23  last: float9, (GBK)
+    aot_mir.c    declared=23  bound=n   registers=23  last: float9, (GBK)
+
+`vm.c`'s array is wider than its loop because two slots are padding, and it
+registers one more name AFTER the loop -- the `空` one, a nil-typed global
+rather than a set.  A reader that took the array, or that stopped at the loop,
+would report 24 or 22 and compare a truncated table with a whole one.
+
+The disagreement is one name, and it is an **encoding**, not a count:
+
+    vm.c    "\xE7\xA9\xBA"   UTF-8  -> 3 bytes
+    others  "\xBF\xD5"       GBK    -> 2 bytes
+
+`git show 8248e08e:src/vm/vm.c` registers the same name in UTF-8 with the
+comment "GBK sources are transcoded to UTF-8 at load".  So the GBK spelling is
+wrong wherever it appears.
+
+### 3. What it costs, measured
+
+A program whose identifier is that GBK byte pair:
+
+    $ inimerse --no-mods run k.im          -> nil, exit 0     (an ordinary global)
+    $ aot-mir translate k.im out.c         -> REFUSED, why=preset-set-global
+
+and the refusal's own reason is "whose value is a set" -- for a name the VM
+registers as nil.  Two files refuse a program for touching a preset that the
+VM spells differently.
+
+### 4. Why this section does not fix it
+
+The fix is one line in two files, and it was written and measured: with both
+spellings changed to UTF-8, the three tables agree at 23/23/23 and this
+checker goes green.
+
+It also breaks three tests, and one of them is the reason it was reverted:
+
+    params_precompiled_runtime     the .inim fixture carries the old bytes
+    selfhost_inimbc_writer_half    pinned written=317; the name is one byte longer
+    mir_wired_regression           asserts the wiring changed the emitted bytes
+                                   by nothing
+
+The third is the one that decides it.  `mir_wired` builds the pre-wiring
+compiler at a recorded commit and requires that its output and the wired
+compiler's output be **byte identical** -- that is the whole claim of the
+instrument.  Changing a preset name's encoding changes those bytes for every
+program, so the change does not break the test's mechanism; it invalidates its
+premise.  Re-pinning `BASE_COMMIT` forward is the mechanical answer and it is
+the wrong one to take as a side effect of an encoding repair: the assertion
+would then say "the wiring changes nothing, as of a commit that already
+contained this change", which is a different claim wearing the same words.
+
+So the first two tests' expectations would move by one byte each, and I did
+verify that they pass once moved.  That verification is the argument for the
+fix, not permission to ship it inside this section.
+
+### 5. What landed instead
+
+`tools/check_preset_tables.py`, registered as two CTests and as the stage
+`preset-tables`: **29 stages, 223 CTests**, with `EXP_CTEST` and
+`recon.ctest-count` moved in the same batch and the seven live claims 28 -> 29.
+
+It reads what each file **registers** -- the array sliced by that file's own
+loop bound, plus anything registered after the loop -- and compares the three
+sets.  It carries a ceiling, in §10.242's shape:
+
+    KNOWN_DISAGREEMENTS = 4
+
+with the count printed on every run and a fifth divergence a red.  The ceiling
+is honest about its own size: four lines, because one file has the name and two
+lack it, and each direction is a line.
+
+The verdict text says "the three still disagree" when they do.  The first
+version printed "the three register the same names" unconditionally, which
+turned a real disagreement into a false sentence the moment the ceiling made
+the run green -- the same defect as §10.254's message, one level down.
+
+### 6. What the extractor taught, again
+
+Three revisions before it read the tables:
+
+  1. array only -> reported 22 for `vm.c` (the loop bound) and missed the
+     post-loop registration entirely;
+  2. array plus a **fixed 1600-character window** after the loop -> swept up
+     `write_file`, `str` and `sum` from the debugger initialisation that
+     follows, and reported sixteen problems about names no preset table holds;
+  3. the window ends at the enclosing `    }` -> correct.
+
+The second is worth its sentence: a character count is not a scope, and the
+numbers it produced were large enough to look like a finding.
+
+### 7. Boundary
+
+This reports a disagreement it does not fix.  The ceiling is a debt with a
+number on it, and the number is 4.
+
+The fix needs its own section, because it is a change to what the compiler
+emits: `mir_wired`'s baseline has to move forward **with an argument**, the
+`.inim` fixture has to be regenerated with `buildc`, and `written=317` has to
+become 318 with the reason recorded.  All three of those were measured this
+round and are written above, so the next section starts from evidence rather
+than from a re-run.
+
+And the three tables are not the whole preset surface: the compiler also
+registers a builtin list (70+ names) in the same function, and nothing compares
+that with the VM's builtin registry.  A name the compiler knows and the VM does
+not is the same shape, one list over.
