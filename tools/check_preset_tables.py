@@ -52,8 +52,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Anchored on the declaration AND on that file's own loop, because the three
 # files spell the bound three different ways and the bound is half the fact.
 # The number of disagreement lines this tree carries today.  It may only FALL,
-# in the commit that removes one; a fifth is a new divergence.
-KNOWN_DISAGREEMENTS = 4
+# in the commit that removes one -- and §10.256 is that commit: the ceiling was
+# 4, the encoding fix made the three tables agree, and it is now 0.
+#
+# That is the shape the ceiling was for.  A ceiling that stays at its first
+# number after the debt is paid is a rule that has stopped being about the tree,
+# so it is lowered here rather than left as headroom for the next divergence.
+KNOWN_DISAGREEMENTS = 0
 
 TABLES = [
     ("vm.c", "src/vm/vm.c", "static const char *bn[", "};", r"for \(int i = 0; i < (\d+)"),

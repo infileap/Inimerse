@@ -19,7 +19,7 @@ What this measures, and why each set exists:
 Why the baseline is a separate binary instead of a flag: after the wiring the
 old emit() path no longer exists, so "unwired" cannot be toggled at run time
 without writing a second implementation of it -- and comparing two new things
-proves nothing.  INIMERSE_BASE must therefore be a build of fdb55bb (the commit
+proves nothing.  INIMERSE_BASE must therefore be a build of bdb9feec (the commit
 this branch is based on); when it is missing the script refuses (exit 2) rather
 than printing differ=0 for a comparison it never ran.
 
@@ -51,7 +51,31 @@ BASE = os.environ.get("INIMERSE_BASE")
 # this commit itself (bootstrap_baseline), so the reading is reproducible on a
 # machine that has only this checkout -- otherwise registering it in CTest
 # would mean either a silent skip or a permanently red stage.
-BASE_COMMIT = "fdb55bb5745fd20a151aeb0aa4e5cf4c33fd8748"
+#
+# MOVED FORWARD ONCE, and the move had to be argued rather than made (§10.256).
+# The pre-wiring commit used to be fdb55bb.  §10.256 changed one preset global's
+# spelling from GBK (2 bytes) to UTF-8 (3 bytes), which changes the emitted
+# bytes of EVERY program -- so the old baseline and the current compiler differ
+# by one byte per program, 93 of 93, all at the same field.  That is not the
+# wiring changing something, which is what this instrument exists to say.
+#
+# The evidence that the move is legitimate and not an adjustment to taste:
+#   - the four files this harness builds (mir.c, bytecode.c, deps.c,
+#     platform.c) are BYTE IDENTICAL between fdb55bb and this baseline:
+#     `git diff --stat fdb55bb..bdb9feec -- <those four>` is empty.  The
+#     comparison is therefore still between the same wiring and the same
+#     wiring;
+#   - the difference it now cannot see was measured first: 93 programs, each
+#     exactly one byte, always `3 -> 4` at the global-name length field.  A
+#     looser comparison would have hidden a real divergence in that shape too;
+#   - the commit moved TO is the one that made the spelling agree, not an
+#     arbitrary later tree.
+#
+# What this instrument can no longer see, stated plainly: a change to a preset
+# name's encoding after this baseline would now pass.  `tools/check_preset_tables.py`
+# is the instrument that reads the three tables against each other, and it is
+# the one that should.
+BASE_COMMIT = "bdb9feec2c47e3c8fd13db9bbb9729f4af183bc0"
 BASELINE_DIR = os.path.join(ROOT, "build", "p1-baseline")
 # A harness binary per PROCESS, in a directory of its own -- see the same note in
 # tools/mir_roundtrip.test.py.  Two tests sharing one fixed /tmp path is a race
@@ -297,7 +321,7 @@ def main():
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True).stdout.strip()
     print("MIR-WIRED|head=%s" % head)
-    anc = subprocess.run(["git", "merge-base", "--is-ancestor", "fdb55bb", "HEAD"],
+    anc = subprocess.run(["git", "merge-base", "--is-ancestor", "bdb9feec", "HEAD"],
                          cwd=ROOT, capture_output=True, text=True)
     print("MIR-WIRED|base-commit-is-ancestor=%s" % ("yes" if anc.returncode == 0 else "no"))
     global BASE

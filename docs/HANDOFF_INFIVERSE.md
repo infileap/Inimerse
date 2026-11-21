@@ -167,9 +167,13 @@ state: {"alive","dead","respawning"} @bits(2)
 
 - 全局名恢复有**四份**、**两种策略**：`src/vm/vm.c` 里 `if (vm->globals[i].name) free(vm->globals[i].name);` 那一处（无条件 `free`+`strdup` 替换）
   vs `src/vm/vm.c` 里 `if (!vm->globals[i].name) vm->globals[i].name = strdup(bc->global_names[i]);` 那三处（`if (!name)` 只填空槽）。同一文件、同一天；[obs: fe72f9f] 实数是 1+3 = 4 份，本节原写「三份」。
-- 预设全局的**编码不一致**：`src/compiler/compiler.c` 里 `"\xBF\xD5"` 用 **GBK**，
-  `src/vm/vm.c` 里 `strdup("\xE7\xA9\xBA")` 用 **UTF-8** 并**逐字注释解释为什么必须是 UTF-8**
-  （原因写在 `src/vm/vm.c` 里 `GBK sources are transcoded to UTF-8 at load` 这句注释里）⇒ **注释写对了、实现没跟随**。
+- ~~预设全局的**编码不一致**~~ **已修（§10.256）**：三个文件原先各写一份这份表，`src/compiler/compiler.c`
+  与 `src/compilation/aot_mir.c` 用 **GBK** 的 `"\xBF\xD5"`（2 字节），`src/vm/vm.c` 用 **UTF-8** 的
+  `strdup("\xE7\xA9\xBA")`（3 字节）并**逐字注释解释为什么必须是 UTF-8**（原因写在 `src/vm/vm.c` 里
+  `GBK sources are transcoded to UTF-8 at load` 这句注释里）⇒ 当时是「注释写对了、实现没跟随」。
+  现在三处都是 UTF-8，`tools/check_preset_tables.py` 每次门禁读一遍三张表并要求它们一致（天花板已降到 0）。
+  代价是序列化产物多一个字节：`vtest/params_precompiled_v06.inim` 用 `buildc` 重新生成，
+  `tools/check_inimbc_writer_half.py` 的 pin 从 317 移到 318。
 - `load_params`/`save_params` 有**两个东西**：CLI 路径（已修）与脚本内建（POSIX 仍注册 `posix_unsupported`，
   按平台钉在 `vtest/posix_runtime_parity_v04.im` 的 `REGISTERED, NOT RESOLVED` 那段注释里）。
 - CI 的测试枚举：`release.yml` 与 `linux-build.yml` 两份拷贝，`release.yml` 修了、另一份没修（见 §3.2）。
