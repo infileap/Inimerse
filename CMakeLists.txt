@@ -2240,3 +2240,13 @@ set_tests_properties(builtin_allowlist_regression PROPERTIES WORKING_DIRECTORY $
 add_test(NAME builtin_allowlist_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_builtin_allowlist.py --self-test)
 set_tests_properties(builtin_allowlist_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
+
+# §10.255: three files hold the preset global list and one says in a comment they
+# must match. They did not -- two spelled the last name in GBK bytes, the VM in
+# UTF-8 -- so the MIR route refused a program the interpreter runs.
+add_test(NAME preset_tables_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_preset_tables.py)
+set_tests_properties(preset_tables_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
+add_test(NAME preset_tables_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_preset_tables.py --self-test)
+set_tests_properties(preset_tables_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "aot;compiler;regression")
