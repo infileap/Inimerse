@@ -395,6 +395,26 @@ def lowering_problems(table_ops, emitter_ops, of_ops, reported):
 
 
 
+def scan_names(pairs):
+    """(name -> source, duplicates) over the combined corpus.
+
+    A NAME IS THE CASE'S IDENTITY.  The two corpora are concatenated, and
+    nothing checked that they are disjoint: today 403 cases, 403 distinct
+    names, 0 text overlap (measured).  Counting walks the list, so the same
+    name in both would be counted twice and the coverage fraction would move
+    for a reason no reading names; a duplicate with DIFFERENT text is worse,
+    because one of the two programs runs under a name that describes the other.
+    """
+    seen: dict = {}
+    duplicates: list = []
+    for name, src in pairs:
+        if name in seen:
+            duplicates.append(name)
+        else:
+            seen[name] = src
+    return seen, duplicates
+
+
 def self_check():
     """The ledger arithmetic and the two parsers, on inputs whose answer is
     known -- including inputs the ledger has to reject."""
@@ -408,6 +428,14 @@ def self_check():
             bad.append("%s: want %r got %r" % (name, want, got))
         print("aot_mir_cover self-check: %s %s" % (name, "ok" if ok else "FAIL"))
 
+    # The corpus-disjointness rule, in both directions.  Without the second
+    # cell a scan that never fires reports "no duplicates" about any input.
+    expect("distinct corpus names are silent",
+           scan_names([("a", "say 1"), ("b", "say 2")])[1], [])
+    expect("a name in both corpora is a duplicate",
+           scan_names([("a", "say 1"), ("a", "say 2")])[1], ["a"])
+    expect("identical text under one name is still a duplicate",
+           scan_names([("a", "say 1"), ("a", "say 1")])[1], ["a"])
     expect("ledger-clean", ledger(["OP_A", "OP_B"], ["OP_A"], ["OP_B"]), [])
     expect("ledger-overlap", len(ledger(["OP_A", "OP_B"], ["OP_A", "OP_B"], ["OP_B"])), 2)
     expect("ledger-sum", ledger(["OP_A", "OP_B"], ["OP_A"], []) != [], True)
@@ -638,6 +666,19 @@ def main():
     # programs in which this route lowers something the AST route cannot.  --limit
     # is a knob for the shared corpus's runtime, not for the claim.
     mir_only = load_mir_only()
+    # A NAME IS THE CASE'S IDENTITY, and the two corpora are concatenated with
+    # no check that they are disjoint.  Today they are: 403 cases, 403 distinct
+    # names, 0 text overlap (measured).  Nothing kept that true -- the counting
+    # below walks the list, so the same name in both would be counted twice and
+    # the coverage fraction would move for a reason no reading names.  A
+    # duplicate with DIFFERENT text is worse: one of the two programs runs under
+    # a name that claims to describe the other.
+    #
+    # The check is on the name set, not the text: identical text under one name
+    # is the same case written twice, and that is a duplicate too.
+    seen, duplicate_names = scan_names(
+        [(n, src) for n, src, _w in mod.EQUIVALENCE] + [(c[0], c[1]) for c in mir_only]
+    )
     cases = shared + mir_only
 
     workdir = Path(tempfile.mkdtemp(prefix="aot_mir_cover_"))
@@ -947,14 +988,22 @@ def main():
             problems.append("%s is missing and --check-pin was asked for: an absent expectation "
                             "is not a passing one" % PIN.relative_to(ROOT))
 
+    if duplicate_names:
+        problems.append(
+            "the two corpora share %d case name(s): %s -- a name is the case's "
+            "identity, so a duplicate is one program counted twice or two programs "
+            "under one name"
+            % (len(duplicate_names), ",".join(sorted(set(duplicate_names))[:6]))
+        )
     for line in problems:
         print("IR-AOT-MIR-PROBLEM|" + line)
     ok = green and pin_ok
     print("IR-AOT-MIR-VERDICT|%s|tree=%s|accepted=%d|of=%d|covered=%d|missing=%d|refused=%d"
           "|same-as-interpreter=%d|prelude-excluded=%s|beyond-ast-denominator=%d"
+          "|distinct-names=%d|duplicate-names=%d"
           % ("PASS" if ok else "FAIL", live["tree"], accepted, live["of"], len(covered),
              len(missing), refused, equivalent, "yes" if prelude_excluded else "no",
-             len(beyond)))
+             len(beyond), len(seen), len(duplicate_names)))
     return 0 if ok else 1
 
 
