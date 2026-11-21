@@ -264,6 +264,11 @@ ALLOCS_EXPECT = {
     # literal `[0~255]` and the two `str()` copies.  Measured on the emitted
     # program (336 bytes), not inherited: `allocs=3|freed=3|live=0`.
     "mir_declared_member": (3, 276),
+    # §10.253: eleven `str()` copies over eight distinct type names, all
+    # registered and all swept.  Measured on the emitted program, not assumed:
+    # `allocs=10|freed=10|live=0|bytes=305`.  (Eleven calls, ten blocks: the
+    # repeated `str(n.type)` -- nil -- allocates nothing.)
+    "mir_type_member_names_every_shape": (10, 305),
     "mir_len_counts_a_z_interval_its_bounds": (5, 3856),
     # Three regions: the two sets the program builds and the list `list(b)` answers.
     # Both reads fold the component's span; nothing allocates a member table.
@@ -2795,6 +2800,20 @@ say list(b)
     # Both halves are in this case: the declared variable and the undeclared
     # one, because a fix that answered the set for both would pass the first
     # line alone.
+    # §10.253: `x.type` was the one name in compiler.c's metadata-member list
+    # with no emitter arm here, so it was refused as an unknown builtin while
+    # int/float/str/bool all worked. Every shape is in this case, including
+    # nil -- where the interpreter answers NIL and not the string "nil", which
+    # is the half a fix that returned "nil" would pass str() on and fail
+    # everywhere else. The last two lines pin exactly that difference.
+    ("mir_type_member_names_every_shape",
+     # Literals cannot carry a member (`42.type` is a parse error on the
+     # interpreter too, measured), so every shape goes through a name.
+     'i = 42\nfv = 3.5\nsv = "s"\nbv = true\n'
+     'a = [1]\nd = {k: 1}\nfun = x -> x\nst = 1, 2\nn = nil\n'
+     'say str(i.type)\nsay str(fv.type)\nsay str(sv.type)\nsay str(bv.type)\n'
+     'say str(a.type)\nsay str(d.type)\nsay str(fun.type)\nsay str(st.type)\n'
+     'say str(n.type)\nsay n.type == nil\nsay n.type == "nil"\n'),
     ("mir_declared_member",
      'type Byte = [0~255]\nx: Byte = 42\ny = 42\n'
      'say str(x.declared)\nsay str(y.declared)\n'

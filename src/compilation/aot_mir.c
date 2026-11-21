@@ -3627,6 +3627,36 @@ static const char *const kMirValBlock =
 "   and mir_float_converts_scalars_and_zeroes_containers -- stdout BYTES and\n"
 "   rc against the interpreter, plus the ALLOCS line (both allocate nothing:\n"
 "   the conversions produce values, not buffers). */\n"
+"/* type(x) -- THE VALUE'S TYPE NAME.  Read off the interpreter, not invented\n"
+" * (src/runtime/runtime.c's builtin_type): int, float, string, bool, array,\n"
+" * dict, set, and `unknown` for the rest.  NIL IS THE ONE THAT IS NOT A\n"
+" * STRING: the interpreter's arm is `pop(vm); push_nil(vm)`, so `x.type` on\n"
+" * nil answers nil and `str(nil.type)` prints nil.  Returning the string\n"
+" * \"nil\" here would print the same thing through str() and differ\n"
+" * everywhere else -- `nil.type == nil` is true on the interpreter.\n"
+" *\n"
+" * The tag values are the interpreter's own (MV_INT is VAL_INT, etc., see the\n"
+" * #define block), so this is a table and not a translation.\n"
+" *\n"
+" * `x.type` reaches this through compiler.c's metadata-member arm, the same\n"
+" * one that emits int/float/str/bool -- and `type` was the only name in that\n"
+" * list with no arm here, so it was refused as an unknown builtin while the\n"
+" * other four worked.  MEASURED BY tools/aot_mir.test.py's\n"
+" * mir_type_member_names_every_shape. */\n"
+"static inline MirVal mv_type(MirVal a) {\n"
+"    switch (a.type) {\n"
+"        case MV_INT: return mv_str(\"int\");\n"
+"        case MV_FLT: return mv_str(\"float\");\n"
+"        case MV_STR: return mv_str(\"string\");\n"
+"        case MV_BOO: return mv_str(\"bool\");\n"
+"        case MV_ARR: return mv_str(\"array\");\n"
+"        case MV_DIC: return mv_str(\"dict\");\n"
+"        case MV_SET: return mv_str(\"set\");\n"
+"        case MV_NIL: return mv_nil();   /* nil, not the string \"nil\" */\n"
+"        default:     return mv_str(\"unknown\");\n"
+"    }\n"
+"}\n"
+"\n"
 "static inline MirVal mv_bool(MirVal a) {\n"
 "    if (a.type == MV_NIL) return mv_boo(0);\n"
 "    if (a.type == MV_INT) return mv_boo(a.ival != 0);\n"
@@ -5825,7 +5855,7 @@ static int prescan(const IrModule *m, const Node *nodes, const Bytecode *root,
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
-                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0 && strcmp(bn, "type") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
                     && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0 && strcmp(bn, "args") != 0
                     && strcmp(bn, "declared") != 0) {
@@ -6824,7 +6854,7 @@ static int emit_one(Ctx *c, Buf *b, int i) {
                     && strcmp(bn, "bit_and") != 0 && strcmp(bn, "bit_or") != 0
                     && strcmp(bn, "bit_xor") != 0 && strcmp(bn, "bit_not") != 0
                     && strcmp(bn, "shl") != 0 && strcmp(bn, "shr") != 0
-                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0
+                    && strcmp(bn, "bool") != 0 && strcmp(bn, "float") != 0 && strcmp(bn, "int") != 0 && strcmp(bn, "type") != 0
                     && strcmp(bn, "round") != 0 && strcmp(bn, "sqrt") != 0
                     && strcmp(bn, "match") != 0 && strcmp(bn, "range") != 0
                     && strcmp(bn, "args") != 0
@@ -6863,6 +6893,8 @@ static int emit_one(Ctx *c, Buf *b, int i) {
             buf_fmt(b, "    v[%d] = mv_trim(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "bool") == 0)
             buf_fmt(b, "    v[%d] = mv_bool(mvargs[asp-1]);", r1);
+        else if (strcmp(bn, "type") == 0)
+            buf_fmt(b, "    v[%d] = mv_type(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "float") == 0)
             buf_fmt(b, "    v[%d] = mv_float(mvargs[asp-1]);", r1);
         else if (strcmp(bn, "int") == 0)
