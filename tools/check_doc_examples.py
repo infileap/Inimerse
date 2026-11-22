@@ -66,7 +66,11 @@ ARROW = re.compile(r"`([^`]+)`\s*→\s*`([^`]+)`")
 # `~` is in the class because an interval subscript is a value: `a[1~2]` ->
 # `set(? interval)`.  Without it the claim was filtered as an unexecutable
 # fragment, one line above a sibling subscript that WAS run.
-EXECUTABLE = re.compile(r"^(?:say\b|[-\w.(\[\]\"', :~]+$)")
+# `)` is in the class because it was NOT: the author wrote `(` and stopped, so
+# every CALL was filtered out while every subscript passed.  `Z(1,5)` ->
+# `set(Z interval)` was skipped for that single character (§10.265).  `~` is here
+# for the same reason (§10.264): an interval subscript is a value.
+EXECUTABLE = re.compile(r"^(?:say\b|[-\w.(\[\])\"', :~]+$)")
 
 # Lines whose comment records what the document EXPECTED rather than what the
 # engine prints.  Each is a known-defect transcript, not a claim about this tree;
@@ -153,7 +157,12 @@ def arrow_claims(path: str):
             # complete program.  The first rule here matched `^say name(` and so
             # excluded BOTH -- it removed a runnable claim and left the count
             # looking clean, which is the failure mode this file is about.
-            if re.match(r"^say\s+(add|inc|dbl|g|h|f)\(", expr):
+            # A CALL to a name the document declares elsewhere is a fragment.  The
+            # first version of this rule matched `^say name(` and so excluded
+            # `say str(0x1F + 1)` too (§10.262); it is by NAME now, and `h` joins the
+            # list because adding `)` to the character class (§10.265) made two
+            # `h(...)` claims runnable that were never programs.
+            if re.match(r"^(?:say\s+)?(add|inc|dbl|g|h|f)\(", expr):
                 continue
             # A REFUSAL IS A CLAIM, and this file skipped it until §10.263.
             # `until i >= 2 { }` -> `Error: expected 'expression', but got
@@ -414,6 +423,14 @@ def self_test() -> int:
     if not EXECUTABLE.match("a[1]"):
         failures.append("a plain subscript must be executable")
 
+    # A CALL is executable.  The class had `(` and not `)`, so every call was
+    # filtered while every subscript passed -- and the verdict could not tell
+    # that from a document with fewer claims.  `Z(1,5)` -> `set(Z interval)` was
+    # skipped for one character §10.265.
+    for call in ("Z(1,5)", "h(1, 2)", "count(s)"):
+        if not EXECUTABLE.match(call):
+            failures.append("a call must be executable: %r" % call)
+
     def binder_of(line, expr):
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)", expr)
         if not m:
@@ -446,6 +463,7 @@ def self_test() -> int:
         "a diagnostic differing only by the line prefix is the same claim",
         "a diagnostic naming a different token is a different claim",
         "an interval subscript is executable",
+        "a call with both parentheses is executable",
         "a same-line binder is found, and only for its own name",
     ):
         print("  ok   %s" % line)
