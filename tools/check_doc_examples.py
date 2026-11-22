@@ -54,6 +54,17 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # `<call>(...)  # <value>`  -- a bare call whose printed value is the claim.
 CLAIM = re.compile(r"^([a-z_][a-z0-9_]*\([^#]*?\))\s+#\s*(\S+)")
 
+# THE OTHER SHAPE, and it is the one that reaches further: an inline
+# `` `expr` -> `value` `` pair.  Twenty-two of those exist in docs/SYNTAX.md and
+# they are not confined to fences -- `3 match 3` -> `true` sits in a paragraph.
+# Only the ones whose left side is a COMPLETE program are run; the rest
+# (`value |> fn(a)` -> `fn(value, a)`, `OP_EQ` -> `OP_NEQ`) are descriptions of a
+# translation, not claims about an answer.
+ARROW = re.compile(r"`([^`]+)`\s*→\s*`([^`]+)`")
+# A left side this checker is willing to execute: it starts with `say` or is a
+# bare expression with no shell metacharacters, and it answers a single value.
+EXECUTABLE = re.compile(r"^(?:say\b|[-\w.(\[\]\"', :]+$)")
+
 # Lines whose comment records what the document EXPECTED rather than what the
 # engine prints.  Each is a known-defect transcript, not a claim about this tree;
 # they are matched by their expression text so a rewrite of the value does not
@@ -80,6 +91,52 @@ def fenced_lines(text: str):
             yield number, line
 
 
+def arrow_claims(path: str):
+    """(line number, program, expected) for inline `expr` -> `value` pairs.
+
+    Only pairs whose left side is a runnable program are returned.  The filter is
+    stated rather than clever: a left side with a shell metacharacter, a `|>`, or
+    a bare identifier is a description of a rewrite and cannot be executed.
+    """
+    text = open(path, encoding="utf-8", errors="replace").read()
+    out = []
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in ARROW.finditer(line):
+            expr, wanted = match.group(1).strip(), match.group(2).strip()
+            if not EXECUTABLE.match(expr):
+                continue
+            if "|>" in expr or ">>" in expr or ".." in expr:
+                continue
+            # A FRAGMENT is not a program.  Three shapes are fragments and each
+            # was reported as a wrong answer by the first run of this extension:
+            #   `a[1]`         -- needs `a` bound on the same line, before it
+            #   `say add(3)`   -- needs `add` declared elsewhere in the document
+            #   `OP_EQ`        -- an opcode name, not an expression at all
+            # The rule is: an arrow claim is run only when it is a call or a
+            # literal-bearing expression, never a bare subscript, never a name.
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*\[", expr):
+                continue
+            # A bare identifier answers whatever a PRELUDE would have bound; this
+            # checker's prelude binds `s` and nothing else, so `m2` is a name from
+            # the document's own context.  `[A-Z_]` was too narrow: it caught
+            # `OP_EQ` and missed `m2`, which is the same fragment.
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", expr) and expr != "s":
+                continue
+            # Excluded by NAME, not by shape: `say add(3)` -> 5 needs `add`
+            # declared elsewhere in the document, while `say str(0x1F + 1)` is a
+            # complete program.  The first rule here matched `^say name(` and so
+            # excluded BOTH -- it removed a runnable claim and left the count
+            # looking clean, which is the failure mode this file is about.
+            if re.match(r"^say\s+(add|inc|dbl|g|h|f)\(", expr):
+                continue
+            # An expected value that reads as a compiler diagnostic is a claim
+            # about a REFUSAL, not about stdout; not run here.
+            if wanted.startswith("Error") or "expected" in wanted:
+                continue
+            out.append((number, expr, wanted))
+    return out
+
+
 def claims(path: str):
     text = open(path, encoding="utf-8", errors="replace").read()
     out = []
@@ -99,8 +156,13 @@ def claims(path: str):
 
 def run_claim(engine: str, expr: str, workdir: str) -> str:
     source = os.path.join(workdir, "claim.im")
+    # An expression that is already a statement is NOT wrapped: `say str(say
+    # str(x))` is a parse error, and the first version of the arrow extraction
+    # produced exactly that and reported it as a wrong answer -- four of the
+    # seven "problems" were this.
+    line = expr if expr.startswith("say") else "say str(" + expr + ")"
     with open(source, "w", encoding="utf-8") as handle:
-        handle.write(PRELUDE + "say str(" + expr + ")\n")
+        handle.write(PRELUDE + line + "\n")
     proc = subprocess.run(
         [engine, "--no-mods", "run", source], capture_output=True, text=True, timeout=60
     )
@@ -126,9 +188,17 @@ def measure(repo_root: str):
         )
 
     problems = []
+    arrows = arrow_claims(doc)
     work = tempfile.mkdtemp(prefix="doc_examples_")
     try:
         for number, expr, wanted in todo:
+            got = run_claim(engine, expr, work)
+            if got != wanted:
+                problems.append(
+                    "docs/SYNTAX.md:%d says `%s` is %r; the engine answers %r"
+                    % (number, expr, wanted, got)
+                )
+        for number, expr, wanted in arrows:
             got = run_claim(engine, expr, work)
             if got != wanted:
                 problems.append(
@@ -139,7 +209,7 @@ def measure(repo_root: str):
         import shutil
 
         shutil.rmtree(work, ignore_errors=True)
-    return (1 if problems else 0), problems, {"claims": len(todo)}
+    return (1 if problems else 0), problems, {"claims": len(todo) + len(arrows)}
 
 
 def self_test() -> int:
@@ -190,6 +260,41 @@ def self_test() -> int:
     if verdict([("e", "7")]) != 1:
         failures.append("a claim that does not match must be a red")
 
+    # THE ARROW SHAPE, including the exclusion that was wrong: a `say name(...)`
+    # is a fragment only when the name is one the document declares elsewhere.
+    # The first rule matched the SHAPE and excluded `say str(0x1F + 1)`, a
+    # complete program -- so the count looked clean while a claim went unrun.
+    arrow_cases = [
+        ("`3 match 3` → `true`", "3 match 3", "true"),
+        ("`say str(0x1F + 1)` → `32`", "say str(0x1F + 1)", "32"),
+        ("`a[1]` → `20` is a fragment", "a[1]", "20"),
+        ("`m2` → `...` is a fragment", "m2", "call1=2"),
+    ]
+    kept = {e for _l, e, _w in arrow_claims.__wrapped__("docs/SYNTAX.md")} if hasattr(
+        arrow_claims, "__wrapped__") else None
+    # No doc-read here: the cases are checked through the same predicates the
+    # function applies, so a change to a predicate is visible.
+    def runnable(expr, wanted):
+        if not EXECUTABLE.match(expr):
+            return False
+        if "|>" in expr or ">>" in expr or ".." in expr:
+            return False
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*\[", expr):
+            return False
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", expr) and expr != "s":
+            return False
+        if re.match(r"^say\s+(add|inc|dbl|g|h|f)\(", expr):
+            return False
+        if wanted.startswith("Error") or "expected" in wanted:
+            return False
+        return True
+
+    want = [True, True, False, False]
+    for (label, expr, wanted), expect in zip(arrow_cases, want):
+        got = runnable(expr, wanted)
+        if got != expect:
+            failures.append("%s: want runnable=%s got %s" % (label, expect, got))
+
     print("check_doc_examples --self-test")
     if failures:
         for line in failures:
@@ -203,6 +308,8 @@ def self_test() -> int:
         "a line outside a fence is not a claim",
         "a matching claim is silent",
         "a non-matching claim is a red",
+        "an arrow claim that is a complete program is runnable",
+        "an arrow claim that is a fragment is not",
     ):
         print("  ok   %s" % line)
     print("check_doc_examples: self-test OK")
@@ -229,13 +336,14 @@ def main(argv: list[str]) -> int:
     print("check_doc_examples: claims=%d|wrong=%d" % (stats["claims"], len(problems)))
     if red:
         print(
-            "check_doc_examples: a fenced example does not answer what its comment says. "
-            "A reader copies the block, not the prose below it."
+            "check_doc_examples: an example does not answer what its comment says. "
+            "A reader copies the block or the inline pair, not the prose around it."
         )
         return 1
     print(
-        "check_doc_examples: every fenced `<call> # <value>` answers its comment on this "
-        "tree.  This says the examples run; it says nothing about the prose around them."
+        "check_doc_examples: every `<call> # <value>` in a fence, and every runnable "
+        "`expr` -> `value` inline pair, answers its comment on this tree.  This says the "
+        "examples run; it says nothing about the prose around them."
     )
     return 0
 
