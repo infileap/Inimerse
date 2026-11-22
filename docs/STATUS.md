@@ -18006,3 +18006,115 @@ And "verified" means the reason's claim was checked, not that the exclusion is
 right.  `range_metadata_probe_v06.im` being "a recording, not a test" is a
 judgement about what a file is for; this section confirmed the file has no
 assertion, not that it should be excluded.
+
+## §10.269 — the file that does not parse is not a clean file
+
+### 1. Where the next thing was
+
+§10.268 audited the twelve entries in the seven checkers' exclusion TABLES and
+found them all sound.  Its own boundary named what that left out:
+
+    exemptions written as inline `if` conditions, `continue` statements inside
+    loops ... are not in any of those tables and were not read here.
+
+This round read them.
+
+### 2. The surface, measured
+
+    continue points across 29 checkers:      139
+    ... whose guard names a reason table:     6
+    ... that look like exclusions at all:     24
+
+The 139 are mostly loop control -- "already seen", "not a `.py`" -- and calling
+them exclusions would be the same over-counting this family keeps correcting.  A
+guard is an exclusion when it tests a property that decides whether the item is
+**judged**, and 24 of them do.
+
+### 3. What the 24 held, and the one that did not
+
+`check_shared_tmp` exempts `tempfile.mkdtemp(...)` and nothing else, and its
+mechanism was verified in both directions: a docstring that merely SAYS
+`tempfile.mkdtemp()` does not shield a shared path on the next line (red), while
+a real `mkdtemp` exempts its own argument (green).
+
+`check_shape_assertions` reports `not audited: errors_cli_runtime (no program
+file found)` -- and that is right, because the test runs `check_errors_cli.py`
+rather than an `.im` program, so there is no program to audit.
+
+`check_python_asserts` had this:
+
+    tree = _parse(current)
+    if tree is None:
+        continue
+    ...
+    lines = assert_lines(path)
+    if not lines:
+        continue
+
+`assert_lines` returns `[]` for a file that does **not parse** and for a file
+with **no asserts**, and the loop cannot tell them apart.  Measured on a fixture:
+
+    helper.py:  def f(:
+                    assert False
+    -> _parse(helper) is None
+    -> assert_lines(helper) == []
+    -> the file is read, reported as having no asserts, and the run stays green
+
+A syntax error removes a file from the audit **silently**.  That is the exact
+defect this checker exists to prevent, in the checker itself.
+
+### 4. The fix, and why it is a text scan
+
+`_parse` cannot be asked what a broken file contains, so the choice is between
+naming the file and dropping it.  `assert_shaped_text` scans the source for a
+line beginning with `assert` -- a text test, wrong in both directions (an
+`assert` inside a string, an `assert` split across lines) -- and it decides
+**only whether to name the file**, never whether the file has a defect.
+
+A named file is an `UNREADABLE` line and a non-zero exit, because "could not be
+read" and "nothing wrong" are the two answers the file's own docstring already
+separates for "no build to read".
+
+Measured after the fix, on the same fixture:
+
+    UNREADABLE tools/zz_syntax_broken.py: does not parse, and its text looks like
+    it carries an assert -- this checker cannot say whether that assert is
+    strippable, so it names the file instead of counting it as clean
+
+with exit 1; a tree with no such file exits 0.
+
+### 5. The controls
+
+Three new cells, and one of them is mutation-verified:
+
+  * a fixture written to not parse must indeed not parse, or the cell tests
+    nothing;
+  * an `assert` inside a broken file must be **seen** by the text scan -- with
+    the pattern gutted, this reddens;
+  * a broken file with **no** assert must not be named.
+
+    selftest cases 12 -> 15
+
+### 6. What this says about §10.268
+
+That section's conclusion was that the seven tables hold, and this one agrees --
+none of the twelve was wrong.  What it adds is that the tables were not the only
+place to look.  The rot was in a `continue` with no comment, in a checker nobody
+had questioned, and it was found by asking the §10.268 question one level down:
+**which items does this checker drop without saying so?**
+
+The answer was one file, in one checker, guarded by a condition that looks like
+an early exit for efficiency.
+
+### 7. Boundary
+
+One checker's parse-failure branch.  The other 23 exclusion points were read and
+look sound, but "sound" here means the reason was checked, not that the exclusion
+is right -- `check_shape_assertions` declining to audit a Python-driven test is a
+judgement about what that test is, and this section confirmed the program is
+absent rather than that the test should be exempt.
+
+`assert_shaped_text` is a text test and is used only where the AST is unavailable.
+If a file fails to parse AND has its asserts behind a construct the line scan
+misses, it is still dropped -- but it is dropped from a branch that now exists and
+is named, rather than from a branch that conflated two kinds of empty.
