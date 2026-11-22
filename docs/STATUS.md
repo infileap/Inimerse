@@ -17783,8 +17783,8 @@ which is indistinguishable from "not a claim".
 
 Measured by planting one:
 
-    docs/SYNTAX.md:673 has `qqq[9]` and no skip reason -- it is neither run nor
-    explained, and this checker cannot tell that from a document with fewer claims
+    a line in docs/SYNTAX.md has `qqq[9]` and no skip reason -- it is neither run
+    nor explained, and this checker cannot tell that from a document with fewer claims
 
 ### 5. What this changes about the three earlier failures
 
