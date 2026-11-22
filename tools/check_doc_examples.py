@@ -177,6 +177,56 @@ def arrow_claims(path: str):
     return out
 
 
+# WHY EACH SKIP, as data rather than as a comment.  §10.265 counted ten skips
+# from five characters and §10.266 tested three candidate signals for telling a
+# program from a fragment -- exit code, instruction count, bytecode size -- and
+# all three overlap completely: `Z(1,5)` (a program) and `a[1]` (a fragment) both
+# exit 0 with no output, and `f >> g` compiles to SEVEN instructions, more than
+# `say 1`'s three.  There is no cheap property to test.
+#
+# So the ten are named, each with the reason it is not run.  This table is what
+# makes the skip a reading: a new arrow that is not in it and not runnable is a
+# red, which is the rule the checker could not express about characters.
+SKIP_REASONS = {
+    "value \\|> fn(a)": "a rewriting rule, not a program",
+    "f >> g": "a rewriting rule, not a program",
+    "record score = 42, level: 3": "a statement form; its claim is about the value, not an answer",
+    "m2": "a name bound by a transcript elsewhere in the document",
+    "h(1,2)": "needs `h` declared elsewhere",
+    "h()": "needs `h` declared elsewhere",
+    "n | n > 0": "a fragment of a `case` arm; needs the enclosing `match`",
+    "say add(3)": "needs `add` declared elsewhere",
+    "OP_EQ": "an opcode name, not an expression",
+    "a1=0": "a literal inside a test assertion, quoted as evidence",
+}
+
+
+def skipped(path: str):
+    """(line number, expression, reason) for every arrow claim not run.
+
+    The reason comes from SKIP_REASONS; an expression that is neither run nor
+    named there is returned with reason None, which the checker reports as a
+    problem.  That is the rule the character class could not express.
+    """
+    text = open(path, encoding="utf-8", errors="replace").read()
+    runnable = {(n, e) for n, e, _w in arrow_claims(path)}
+    # A binder form changes the expression text, so an arrow counts as run when
+    # its LINE produced a runnable claim with that arrow as its tail.
+    run_lines = {n for n, e, _w in arrow_claims(path) if "\n" not in e}
+    out = []
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in ARROW.finditer(line):
+            expr = match.group(1).strip()
+            if (number, expr) in runnable:
+                continue
+            if "\n" in expr:
+                continue
+            if any(e.endswith("say str(" + expr + ")") for n, e, _w in arrow_claims(path) if n == number):
+                continue
+            out.append((number, expr, SKIP_REASONS.get(expr)))
+    return out
+
+
 def claims(path: str):
     text = open(path, encoding="utf-8", errors="replace").read()
     out = []
@@ -278,6 +328,16 @@ def measure(repo_root: str):
 
     problems = []
     arrows = arrow_claims(doc)
+    # EVERY SKIP MUST BE NAMED.  This is the rule the character class could not
+    # express: a claim that is not run and not explained is a red, so adding an
+    # arrow the filter cannot run forces a decision instead of a silence.
+    for number, expr, reason in skipped(doc):
+        if reason is None:
+            problems.append(
+                "docs/SYNTAX.md:%d has `%s` and no skip reason -- it is neither run nor "
+                "explained, and this checker cannot tell that from a document with fewer "
+                "claims" % (number, expr)
+            )
     work = tempfile.mkdtemp(prefix="doc_examples_")
     try:
         for number, expr, wanted in todo:
@@ -445,6 +505,20 @@ def self_test() -> int:
     if binder_of("`b = [1]`: `a[1]` -> `20`", "a[1]") is not None:
         failures.append("a binder for a DIFFERENT name must not be used")
 
+    # THE SKIP TABLE, in both directions.  §10.266 established that no cheap
+    # signal separates a program from a fragment -- exit code, instruction count
+    # and bytecode size all overlap -- so the rule is that every skip is NAMED.
+    # A named skip is silent; an unnamed one is a red.
+    if SKIP_REASONS.get("OP_EQ") is None:
+        failures.append("a named skip must carry a reason")
+    if SKIP_REASONS.get("something_that_is_not_there") is not None:
+        failures.append("an absent name must not resolve to a reason")
+    if len(SKIP_REASONS) != 10:
+        failures.append(
+            "the skip table covers %d expressions; §10.265 counted ten skips"
+            % len(SKIP_REASONS)
+        )
+
     print("check_doc_examples --self-test")
     if failures:
         for line in failures:
@@ -464,6 +538,7 @@ def self_test() -> int:
         "a diagnostic naming a different token is a different claim",
         "an interval subscript is executable",
         "a call with both parentheses is executable",
+        "every skip carries a reason, and the table has ten entries",
         "a same-line binder is found, and only for its own name",
     ):
         print("  ok   %s" % line)
