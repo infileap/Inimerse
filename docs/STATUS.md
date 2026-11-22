@@ -17707,3 +17707,115 @@ That is the section's real content.  Three times now the answer has been "a
 filter", and each time the filter was written from the examples in front of the
 author.  A verifier whose exclusions are invisible will always look cleaner than
 the document it reads.
+
+## §10.266 — the signal that does not exist
+
+### 1. Where the next thing was
+
+§10.265 closed with a proposal instead of a fix:
+
+    the next step is not another character class but a different ruler: not
+    "does this look like a program" but "does running it fail" -- replace
+    classification with execution.
+
+This section tried that, and it does not work.  The negative is the content.
+
+### 2. Three candidate signals, all measured
+
+Ten arrows are skipped.  Run each one and record what it does:
+
+    expr                    is a program   insns   rc   output lines
+    say 1                   yes            3       0    1
+    x = 1                   yes            3       0    0
+    a[1]                    fragment       4       0    0
+    m2                      fragment       2       0    0
+    OP_EQ                   fragment       2       0    0
+    a1=0                    fragment       3       0    0
+    f >> g                  fragment       7       0    0
+    Z(1,5)                  program        6       0    0
+    h(1,2)                  fragment       6       1    0
+    value |> fn(a)          fragment       -       1    0
+
+Every column overlaps.  `Z(1,5)` -- a real program whose answer is
+`set(Z interval)` -- and `a[1]` -- a fragment needing a binder -- both exit 0
+with no output and no distinguishing count.  `f >> g` compiles to **seven**
+instructions, more than `say 1`'s three.
+
+### 3. Why: a fragment is absorbed, not rejected
+
+    $ printf 'f >> g\n' > c.im ; inimerse --no-mods run c.im    -> no output, rc=0
+    $ printf 'say 1\nf >> g\nsay 2\n' > b.im ; run               -> 1, 2
+
+The fragment between two statements is **silently dropped**.  The parser accepts
+the token run, the compiler emits nothing for it, and the program is fine.
+
+`a1=0` is worse, because it is not dropped at all -- it compiles to
+
+    OP_LOADK_INT   r1=1  r2=0
+    OP_STORE_GLOBAL r1=23 r2=1
+    OP_HALT
+
+which is instruction-for-instruction the same shape as `x = 1` (only the constant
+pool index differs).  It is a valid assignment to a global named `a1`; the
+document quoted it as a literal inside a test assertion.
+
+### 4. What replaced it
+
+No cheap property separates the two sets, so the checker stops trying to compute
+one and starts **requiring the reason to be written down**:
+
+    SKIP_REASONS = {
+        "value \\|> fn(a)": "a rewriting rule, not a program",
+        "f >> g": ...,
+        "record score = 42, level: 3": ...,
+        "m2": "a name bound by a transcript elsewhere in the document",
+        "h(1,2)": "needs `h` declared elsewhere",
+        "h()": ...,
+        "n | n > 0": "a fragment of a `case` arm; needs the enclosing `match`",
+        "say add(3)": ...,
+        "OP_EQ": "an opcode name, not an expression",
+        "a1=0": "a literal inside a test assertion, quoted as evidence",
+    }
+
+An arrow that is neither runnable nor named here is a **red**.  That is the rule
+the character class could not express: the class could only say "not executable",
+which is indistinguishable from "not a claim".
+
+Measured by planting one:
+
+    docs/SYNTAX.md:673 has `qqq[9]` and no skip reason -- it is neither run nor
+    explained, and this checker cannot tell that from a document with fewer claims
+
+### 5. What this changes about the three earlier failures
+
+§10.262's `^say name(`, §10.264's `~`, §10.265's `)` were each a filter that
+silently removed a claim.  The fix each time was to widen the filter.  The fix
+this time is to make the removal **visible**: ten named skips, and an eleventh
+that must be named before it can be quiet.
+
+A character class cannot distinguish "this is not a program" from "I did not think
+of this character".  A table can, because an entry that is missing is a red.
+
+### 6. What landed
+
+    claims 24,  controls 14 -> 15
+
+One new control: the skip table has ten entries, a named skip carries a reason,
+and an absent name does not resolve to one.  No stage or CTest count moved.
+
+### 7. Boundary
+
+The ten reasons are hand-written and could be wrong.  `m2` being "a name bound by
+a transcript elsewhere" is this section's reading of the document, not a
+measurement -- and a wrong reason looks exactly like a right one here.
+
+The table also does not shrink by itself.  If a skipped claim becomes runnable --
+as `a[1]` did in §10.264 when the binder rule was added -- the entry becomes dead
+weight that nothing removes.  Only the count of run claims rises, and that number
+is printed.
+
+And the proposal in §10.265 is withdrawn rather than deferred: "replace
+classification with execution" was a good guess and it is false, and the three
+signals above are why.  A future attempt should start from "
+`a1=0` compiles to the same IR as `x = 1`" rather than from a hope about exit
+codes.
