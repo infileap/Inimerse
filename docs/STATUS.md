@@ -17612,3 +17612,98 @@ The remaining eleven include claims that are certainly true (`value |> fn(a)` ->
 document full of true statements and a document full of false ones both print
 "0 wrong" here; the difference is what got excluded, and the count of exclusions
 is the only number that says so.
+
+## §10.265 — the missing parenthesis
+
+### 1. Where the next thing was
+
+§10.264 ended with a suspicion it had not run down:
+
+    **`Z(1,5)` → `set(Z interval)`** is a runnable constructor call, filtered by
+    "is this a call"?  Worth checking separately.
+
+It was not a subtle misclassification.  The character class was
+
+    [-\w.(\[\]"', :~]
+
+and it had `(` and not `)`.
+
+### 2. What that cost
+
+`Z(1,5)` contains a `)`, so the whole expression was rejected as "not
+executable" -- and then so was every other **call** in the document, while every
+subscript passed.  That asymmetry is the tell, and it was invisible:
+
+    a[1]      -> matched   (no parenthesis)
+    Z(1,5)    -> rejected  (one closing parenthesis)
+
+The claim it hid is the interesting kind.  `docs/SYNTAX.md` says:
+
+    实测 `func Z(a,b) { return 999 }` 后 `Z(1,5)` → `set(Z interval)`，
+    函数**根本没被调用**。
+
+Measured with the function declared: `set(Z interval)`.  A syntax form shadows a
+user function of the same name, and the document records it -- and the checker
+had been skipping it for a missing bracket.
+
+### 3. Why the filter did not notice
+
+A character class is a list of characters someone thought of.  Nothing in the
+file says which characters it excludes on purpose, so `)` -- absent by
+oversight -- and `|` -- absent by design, because a pipe is a fragment marker --
+are indistinguishable to a reader and to the verifier.
+
+This is the third character-level failure in three sections (§10.264's `~`,
+§10.265's `)`) or, counted properly, the third **in one list**: the class has now
+been extended twice for reasons that each looked obvious after the fact.
+
+### 4. What was done instead of extending it again
+
+Adding `)` fixes this instance.  It does not fix the mechanism, so the section
+also enumerated what the class rejects today, over every arrow in the document:
+
+    3 |> inc >> dbl          rejected on  >  |
+    value \|> fn(a)          rejected on  >  \  |
+    f >> g                   rejected on  >
+    until i >= 2 { }         rejected on  =  >  {  }    (a refusal: runs anyway)
+    record score = 42, ...   rejected on  =
+    declare { mem64MB; ... } rejected on  ;  {  }       (a refusal: runs anyway)
+    n | n > 0                rejected on  >  |
+    a1=0                     rejected on  =
+
+Ten skips, from five characters (`> | \ = { }`), and every one is a rewrite, a
+fragment, or a refusal that runs by a different path.  That is now a reading
+rather than a hope: the question "what else does this class reject" has an
+answer, and it is ten lines.
+
+Two of the ten became runnable once `)` was added -- `h(1,2)` and `h()` -- and
+both are fragments needing an `h` the document declares elsewhere, so `h` joined
+the by-name exclusion beside `add|inc|dbl|g|f`.  That list is the one rule in
+this file that is a list of names rather than a property, and it is named as such
+in the source.
+
+### 5. What landed
+
+    claims 23 -> 24,  controls 13 -> 14
+
+One new control, mutation-verified: removing `)` from the class reddens
+`a call must be executable: 'Z(1,5)'` and the same for `h(1, 2)`.
+
+No stage or CTest count moved.
+
+### 6. Boundary
+
+Ten arrows still skipped, and the enumeration above is what each one is.  Six are
+rewrites or fragments that no filter can run; two are refusals handled on a
+different path; two are transcripts of a `case` arm that needs its enclosing
+`match`.
+
+The class is still a list of characters.  It now contains `)` and `~` because
+those were found, and the enumeration is the only thing that says what else is
+missing -- it is a reading, not a guarantee, and the next character gap will be
+found the same way this one was: by asking why a specific true claim did not run.
+
+That is the section's real content.  Three times now the answer has been "a
+filter", and each time the filter was written from the examples in front of the
+author.  A verifier whose exclusions are invisible will always look cleaner than
+the document it reads.
