@@ -17918,3 +17918,91 @@ The three corrections were found by reading each reason against its source line,
 which is what a person does and what no instrument here does.  That is why §10.266
 called the table's strength and its weakness the same thing: an entry that is
 missing is a red, and an entry that is wrong looks exactly like one that is right.
+
+## §10.268 — the exclusions held
+
+### 1. Where the next thing was
+
+§10.267 corrected three hand-written reasons inside one checker's skip table and
+closed by naming a suspicion:
+
+    four rounds, four places for the same silence, each fix moving it one level
+    deeper: a class, a table, and now the reasons inside the table.  That is
+    worth naming because it is not convergence.
+
+The question this round asked was whether the same rot is in the **other**
+instruments.  Seven checkers in this tree carry an exclusion table, twelve
+entries in all.  Every one of them holds.
+
+### 2. What was audited
+
+    check_orphan_fixtures      4 entries -- 4 verified
+    check_orphan_targets       0 entries -- the table is empty and the reading is 0/39
+    check_release_tags         4 entries -- 4 verified
+    check_word_refs            1 entry  -- baseline 87 against a measured 87
+    check_encoding_damage      1 entry  -- ceiling 646 against a measured 646
+    check_preset_tables        1 entry  -- ceiling 0 against a measured 0
+    check_ignored_credentials  1 entry  -- 3 of 3 dirs
+
+Twelve entries, twelve verifiable, and no correction.
+
+### 3. The one that nearly became a finding
+
+`check_release_tags` excludes a line in `docs/STATUS.md` as a *recollection*, and the
+printed reason says the line "**carries a record marker** AND the falsifier".
+That line contains no `[obs:]` -- so the reason looked false, and this round set
+out to correct it.
+
+It is not false.  `RECORD_MARKERS` is a tuple of seven phrases, and the line says
+**`初稿写过`** and **`当时`**; `FALSIFIER_MARKERS` includes **`失效`** and
+**`移动后`**, both present.  Measured:
+
+    record markers on 42: ['记录', '初稿写过', '曾经的', '当时']
+    falsifiers on 42:     ['失效', '移动后']
+
+The reason is exactly right and my reading of it was wrong: I checked for one
+member of a set and concluded the set was empty.  That is the same defect this
+family keeps finding, pointed at the auditor -- a check on a symbol standing in
+for a check on the thing.
+
+### 4. Why this one is worth writing down
+
+Three sections corrected something in the doc-example checker.  This section went
+looking for the same shape elsewhere and found none, and a record of a negative is
+worth its space because it stops the search from being re-run: the next reader who
+suspects `check_release_tags`'s exclusions can start from "twelve audited, twelve
+correct" instead of from the top.
+
+It also bounds §10.267's claim.  That section said the silence "moved one level
+deeper" each round, which is true of the one instrument it was working on.  It is
+not true of the instrument set: the other six hold their exclusions, and one of
+them holds a ceiling (87) that is exactly its measurement, with a comment
+explaining why it is 87 and not the 84 another instrument reports.
+
+### 5. What this says about which checker was rotten
+
+The doc-example checker was introduced by §10.261, seven sections ago and on the
+same day, and it took four rounds of corrections.  `check_release_tags`,
+`check_word_refs` and the rest are older and hold.  The difference is not age: it
+is that the young one **removes** claims from its input, and the removal is what
+kept being wrong.  A checker that only adds judgements cannot lose a claim
+silently; a checker that filters can.
+
+That is the transferable observation, and it is narrower than §10.267's.
+
+### 6. What landed
+
+Nothing.  No code, no test, no stage moved.  This section is twelve verifications
+and one measure-zero.
+
+### 7. Boundary
+
+Twelve entries is not every exclusion in the tree.  It is every entry in the
+seven checkers' top-level tables; exemptions written as inline `if` conditions,
+`continue` statements inside loops, and the `-` scope rows in `tools/gate.sh` are
+not in any of those tables and were not read here.
+
+And "verified" means the reason's claim was checked, not that the exclusion is
+right.  `range_metadata_probe_v06.im` being "a recording, not a test" is a
+judgement about what a file is for; this section confirmed the file has no
+assertion, not that it should be excluded.
