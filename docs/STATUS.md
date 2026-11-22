@@ -17368,3 +17368,143 @@ And `count(1, 2, Z[7~9])` = 3 uses the skeleton of the interval.  Nothing in
 this section asked whether that is the RIGHT answer for a multi-argument call --
 only whether the document's number matches the engine's.  A wrong answer,
 documented correctly, passes this stage.
+
+## §10.262 — the pairs outside the fences
+
+### 1. Where the next thing was
+
+§10.261's checker read fenced `<call> # <value>` lines.  `docs/SYNTAX.md` also
+carries inline `` `expr` -> `value` `` pairs in ordinary paragraphs --
+`3 match 3` -> `true` is one -- and they are the same kind of claim in the other
+shape.  Measured: 28 of them.
+
+### 2. Seven are programs, twenty-one are not
+
+    69: say str(0x1F + 1)         -> 32
+   175: 3 match 3                 -> true
+   177: 1 and 5                   -> true
+   177: 0 or 7                    -> true
+   177: not 0                     -> true
+   663: say str(undefined_var)    -> nil
+   671: say str((1, 2))           -> set(R interval)
+
+Those seven run and all seven are correct.  The other twenty-one are fragments
+(`a[1]`, `m2`, `OP_EQ`), rewrites (`value |> fn(a)` -> `fn(value, a)`), or
+refusals -- and refusals became §10.263.
+
+### 3. Three exclusion rules, each wrong once
+
+The filter that separates a program from a fragment was written three times, and
+each version failed in a way worth recording:
+
+  * **the wrap.** `run_claim` writes `say str(<expr>)`, so an expression that
+    already starts with `say` became `say str(say str(x))` -- a parse error
+    reported as four separate wrong answers.
+  * **the subscript.** `a[1]` needs `a` bound on the same line before it.  The
+    pattern that caught it was right; the one written for bare identifiers was
+    not: `[A-Z_]` caught `OP_EQ` and missed `m2`, which is the same fragment in
+    lower case.
+  * **the shape.** `say add(3)` needs a function declared elsewhere, while
+    `say str(0x1F + 1)` is a complete program.  The rule matched `^say name(` and
+    excluded **both** -- it removed a runnable claim, and the count fell from 13
+    to 10 while still printing "0 wrong".  A filter that removes a claim is
+    indistinguishable, in the verdict, from a document that never made it.
+
+The third is now excluded by NAME (`add|inc|dbl|g|h|f`) and the self-test has
+four arrow controls, one of which reverts that rule to the shape version and
+reddens `say str(0x1F + 1)` immediately.
+
+### 4. What landed
+
+claims 6 -> 13, controls 6 -> 8.  No stage or CTest count moved: this widened an
+existing instrument rather than adding one.
+
+### 5. Boundary
+
+Twenty-one of the twenty-eight are not run.  Each exclusion is a rule in the
+source with a comment saying which fragment it catches, and the arrows skipped
+are listed in this section so a reader can check the split rather than trust the
+count.
+
+The pairs describe; they do not prove.  `value |> fn(a)` -> `fn(value, a)` is a
+true statement about the language that no run in this repository establishes,
+and it is skipped rather than asserted.
+
+## §10.263 — the refusals were skipped
+
+### 1. Where the next thing was
+
+§10.262's extraction ended with one line that skipped an entire class:
+
+    # An expected value that reads as a compiler diagnostic is a claim
+    # about a REFUSAL, not about stdout; not run here.
+
+Four claims in `docs/SYNTAX.md` have that shape.  They say the parser rejects a
+construct, and they quote the message.  None had ever been run.
+
+### 2. What they say, and what the engine says
+
+    until i >= 2 { }              Error: expected 'expression', but got 'until' (type 20)   TRUE
+    declare { mem64MB; threads8 } Error: expected 'number', but got ';' (type 100)         TRUE
+    say str(1..5)                 expected '')'', but got '..'                             TRUE
+    g(x: 1)                       Error at line 2: expected '')'', but got '(' (type 93)   **FALSE**
+
+The fourth was wrong, and it had been wrong for as long as the parser has been
+changing under it:
+
+    measured now:  Error at line 1: expected '')'', but got ':' (type 99)
+
+Same construct, different token, different line, different type code.  The
+paragraph around it explains the MECHANISM (`parse_postfix` breaks on `IDENT :`
+and leaves the `(` to be mis-parsed later) and that explanation still holds; what
+changed is where it lands.  `git log -- src/parser/parser.c` shows the
+`be`-removal commits, which is the likely cause and not something this section
+needed to establish -- the claim was stale and the measurement is the correction.
+
+### 3. The one that was right still had to be checked
+
+`declare { mem64MB; threads8 }` differs from the engine by the `Error at line 1:`
+prefix and nothing else.  That is transcription: prose drops the line number.
+But a first version of the comparison accepted *prefix* matches, which treated
+
+    expected '')''          and     expected 'expression'
+
+as the same claim because both contain the word "expected".  The comparison now
+strips the `Error( at line N):` prefix and compares what remains -- the quoted
+token and the type code, which are what the sentence is about.
+
+Measured by mutation: making `_same_diagnostic` return True reddens the control
+that names a different token.
+
+### 4. Two more stale claims, found the same way
+
+The pipe/shift pair appears twice in the document, at `:179` and at `:835`, and
+both said:
+
+    3 |> inc >> dbl  ->  Error at line 4: expected '')'', but got '>>' (type 137)
+
+Measured: `Error: expected 'expression', but got '>>' (type 137)`.  The token
+(`>>`) and the type code (137) are unchanged, so the claim was *nearly* right --
+which is the shape hardest to notice.  Both are corrected, and both keep the
+mechanism sentence, which is still true.
+
+### 5. What landed
+
+claims 13 -> 21, controls 8 -> 10.  Three corrections in `docs/SYNTAX.md`, each
+carrying a dated note saying what it used to claim.
+
+The refusal path is separate from the value path on purpose: a refusal's left
+side is a program the parser must reject, so `until ... { }` and
+`declare { ... }` are exactly the shapes that must run as written -- not wrapped
+in `say str(...)`, and not filtered by "is this a call".
+
+### 6. Boundary
+
+This compares the message the engine prints with the message the document quotes.
+It says they are the same sentence, not that the sentence is a good one: the
+document's own paragraph argues that `expected ')'` "completely fails to point at
+the real problem", and this section agrees with it and checks neither.
+
+Four refusal claims out of a document that has more.  A refusal not written as an
+inline `` `expr` -> `Error ...` `` pair is invisible here, and `docs/AUDIT.md`'s
+recorded refusals are transcripts of other trees that must not be re-run.

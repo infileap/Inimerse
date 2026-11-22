@@ -176,7 +176,9 @@ $"hello {name}"
 
 **`and` / `or` 的求值结果**（2026-10-03 定案，见 `docs/AUDIT.md` §1.0）：一律产出**布尔**，并且**短路**。`1 and 5` → `true`（**不是** `5`），`0 or 7` → `true`（**不是** `7`）。这与 Python/JS 的「返回决定结果的那个操作数」不同，是本仓的**有意选择**；选它的原因是另外两个后端（AOT、wasm）本来就给布尔，而「解释器给操作数」是三者中唯一的少数派。`not` 的优先级见上表（10 级），实测 `not 0` → `true`。
 
-> **⚠ 危险**：`>>` 的循环（`:724`）在 `|>` 的循环（`:732`）**之前**且两者**顺序执行而非统一循环**，所以**两者不能混用**。实测 `3 |> inc >> dbl` → `Error at line 4: expected '')'', but got '>>' (type 137)`。见 §7.2。
+> **⚠ 危险**：`>>` 的循环（`:724`）在 `|>` 的循环（`:732`）**之前**且两者**顺序执行而非统一循环**，所以**两者不能混用**。实测 `3 |> inc >> dbl` → `Error: expected 'expression', but got '>>' (type 137)`。见 §7.2。
+（**2026-11 更正（§10.263）**：原记作 `Error at line 4: expected '')'', but got '>>' (type 137)` ——
+token 与种类码不变，报错的位置描述从「line 4 / expected '')''」变成「无行号 / expected 'expression'」。）
 
 ### 3.2 后缀运算
 
@@ -830,7 +832,8 @@ n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
 
 #### M1. `|>` 与 `>>` 不能混用，报错信息误导
 
-见 §3.1。`3 |> inc >> dbl` → `Error at line 4: expected '')'', but got '>>' (type 137)`。原因：`parse_expr:724` 与 `:732` 是两个**顺序执行**的循环而非一个统一循环。用户看到的 `expected ')'` 完全指不到真正的问题。
+见 §3.1。`3 |> inc >> dbl` → `Error: expected 'expression', but got '>>' (type 137)`。原因：`parse_expr` 里那两个循环是**顺序执行**而非一个统一循环。用户看到的这条消息完全指不到真正的问题。
+（**2026-11 更正（§10.263）**：原记作 `Error at line 4: expected '')'', but got '>>' (type 137)`；token 与种类码不变，位置描述变了。）
 
 #### M2. `->` 既是 lambda 又是类型转换
 
@@ -838,7 +841,13 @@ n1=type_mismatch n2=type_mismatch n3=type_mismatch n4=0
 
 #### M3. 命名实参不支持，报错误导
 
-实测 `g(x: 1)` → `Error at line 2: expected '')'', but got '(' (type 93)`。原因在 `parse_postfix:580`：调用解析看到 `(` 后跟 `IDENT` 再跟 `:`/`=` 就 `break`，把 `(` 留给别处，于是报错落在别处。
+实测 `g(x: 1)` → `Error at line 1: expected '')'', but got ':' (type 99)`。
+原因在 `parse_postfix`：调用解析看到 `(` 后跟 `IDENT` 再跟 `:`/`=` 就 `break`，把 `(` 留给别处，于是报错落在别处。
+
+**2026-11 更正（§10.263）**：这里原写 `Error at line 2: expected '')'', but got '(' (type 93)`，
+实测已不是那样 —— 报的 token 从 `(` 变成 `:`、位置从 line 2 变成 line 1、种类码从 93 变成 99。
+机制说明（`parse_postfix` 的 `break`）仍然成立，变的是它最后在哪个 token 上炸。
+大概率来自 `be` 构造移除那次 parser 重构；无论成因，"报错的样子"是一句活断言，而它没有读者。
 
 #### M4. 保留字作为成员名
 
