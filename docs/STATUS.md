@@ -17508,3 +17508,107 @@ the real problem", and this section agrees with it and checks neither.
 Four refusal claims out of a document that has more.  A refusal not written as an
 inline `` `expr` -> `Error ...` `` pair is invisible here, and `docs/AUDIT.md`'s
 recorded refusals are transcripts of other trees that must not be re-run.
+
+## §10.264 — two correct claims, excluded for the shape of their line
+
+### 1. Where the next thing was
+
+§10.263 closed with the lesson that had produced it:
+
+    "I excluded it" and "it is correct" are two different sentences.
+
+This section took the exclusions that remained and asked whether any of them was
+hiding a claim that could have been run.
+
+    28 arrows:  17 run,  11 skipped
+
+Two of the eleven were runnable, and both had been skipped for reasons about the
+line rather than about the claim.
+
+### 2. What was skipped, and why it was wrong
+
+The document line is:
+
+    见 §3.4。`a = [10,20,30]`：`a[1]` → `20`，`a[1~2]` → `set(? interval)`
+
+Both claims are true -- measured, `20` and `set(? interval)`.  Both were skipped:
+
+  * **`a[1]`** by the bare-subscript rule.  The rule was right that a subscript
+    needs its base; it was wrong that the base has to come from elsewhere.  The
+    line binds it: a backticked assignment immediately before the claim.  The
+    extraction now takes that binder when the name matches, and refuses it when
+    the name does not -- `b = [1]` does not bind `a[1]`.
+  * **`a[1~2]`** by a character class.  `EXECUTABLE` allowed `[]().,': ` and not
+    `~`, because `~` looks like shell syntax.  In this language it is an
+    interval: `a[1~2]` is a value.  **The sibling on the same line ran and this
+    one did not**, which from the verdict looked like a document with one claim.
+
+### 3. The second one is the interesting failure
+
+A character class is a list of what someone thought of.  `[-\w.(\[\]"', :]`
+reads as "identifiers, brackets, quotes and spaces" and is correct for every
+example the author had in front of them.  `~` was not in that list, so one of
+two adjacent claims was invisible -- and the mechanism had no way to say so.
+
+That is the same shape as §10.262's `^say name(` rule, one layer down: a filter
+written from the examples in view, whose silences are indistinguishable from a
+document that made fewer claims.
+
+### 4. Two more wrap bugs, both found by running the fix
+
+Adding the binder produced the string
+
+    a = [10,20,30]\nsay str(a[1])
+
+and `run_claim` wrapped it, because it decided by `startswith("say")`:
+`say str(a = [10,20,30] ...)` -- a parse error reported as a wrong answer.
+
+The wrap is now for a **bare expression** only: anything with a newline or an
+opening `say` is already a program.  That is the third time the wrap condition
+has been wrong (§10.262's first bullet was the same bug in the other direction).
+
+### 5. What landed
+
+    claims 21 -> 23,  controls 10 -> 13
+
+Three new controls, two of them mutation-verified:
+
+  * `a[1~2]` is executable -- deleting `~` from the class reddens it;
+  * a same-line binder is found for `a[1]`;
+  * a binder for a **different** name is not used -- `b = [1]` does not bind
+    `a[1]`, because a binder that binds the wrong thing is worse than none.
+
+No stage or CTest count moved.
+
+### 6. What is still skipped, and what it is
+
+    204: value |> fn(a)      -> fn(value, a)      a rewrite, not an answer
+    205: f >> g              -> x -> g(f(x))      a rewrite
+    436: record score = ...   -> 42               needs its own statement form
+    632: m2                  -> call1=2 ...       a name bound elsewhere
+    661: h(1,2) / h()        -> 1 / nil           needs `h` declared elsewhere
+    685: Z(1,5)              -> set(Z interval)   a constructor call, not a value
+    923: n | n > 0           -> guard-ok          a fragment of a match arm
+    943: say add(3)          -> 5                 needs `add` declared elsewhere
+   1159: OP_EQ              -> OP_NEQ            an opcode name, not a program
+   1174: a1=0               -> a1=type_mismatch  a fragment of a transcript
+
+Two of those -- `record score = 42` and `say add(3)` -- are runnable **with their
+preamble**, and the preamble exists in the document.  They are left here on
+purpose: this section took the two whose context was on the SAME LINE, because
+that is a rule, and pulling context from a heading two paragraphs above is a
+heuristic that would need its own argument.  The limit is stated rather than
+implied.
+
+### 7. Boundary
+
+Seventeen of twenty-eight.  Every exclusion is a rule in the source with a
+comment naming the fragment it catches, and this section is the evidence that
+such a rule can be wrong in a way the verdict cannot see -- twice, in two
+different mechanisms, on one line.
+
+The remaining eleven include claims that are certainly true (`value |> fn(a)` ->
+`fn(value, a)` is how the pipe lowers) and that this checker cannot run.  A
+document full of true statements and a document full of false ones both print
+"0 wrong" here; the difference is what got excluded, and the count of exclusions
+is the only number that says so.
