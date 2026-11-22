@@ -63,7 +63,10 @@ CLAIM = re.compile(r"^([a-z_][a-z0-9_]*\([^#]*?\))\s+#\s*(\S+)")
 ARROW = re.compile(r"`([^`]+)`\s*→\s*`([^`]+)`")
 # A left side this checker is willing to execute: it starts with `say` or is a
 # bare expression with no shell metacharacters, and it answers a single value.
-EXECUTABLE = re.compile(r"^(?:say\b|[-\w.(\[\]\"', :]+$)")
+# `~` is in the class because an interval subscript is a value: `a[1~2]` ->
+# `set(? interval)`.  Without it the claim was filtered as an unexecutable
+# fragment, one line above a sibling subscript that WAS run.
+EXECUTABLE = re.compile(r"^(?:say\b|[-\w.(\[\]\"', :~]+$)")
 
 # Lines whose comment records what the document EXPECTED rather than what the
 # engine prints.  Each is a known-defect transcript, not a claim about this tree;
@@ -112,6 +115,11 @@ def arrow_claims(path: str):
             if wanted.startswith("Error") or "expected" in wanted:
                 out.append((number, expr, wanted))
                 continue
+            if "\n" in expr:
+                # A binder form is already a program (the assignment, then a
+                # `say`).  Wrapping it produces `say str(a = [...] ...)`.
+                out.append((number, expr, wanted))
+                continue
             if not EXECUTABLE.match(expr):
                 continue
             if "|>" in expr or ">>" in expr or ".." in expr:
@@ -124,6 +132,15 @@ def arrow_claims(path: str):
             # The rule is: an arrow claim is run only when it is a call or a
             # literal-bearing expression, never a bare subscript, never a name.
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*\[", expr):
+                # A SUBSCRIPT is runnable when the same line binds its base:
+                # `a = [10,20,30]`: `a[1]` -> 20.  The binder is a backticked
+                # assignment earlier on the line.  Measured: without this, two
+                # correct claims in this document were skipped for a reason that
+                # was about the LINE, not about the claim.
+                base = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)", expr).group(1)
+                binder = re.search(r"`([A-Za-z_][A-Za-z0-9_]*\s*=\s*[^`]+)`", line)
+                if binder and binder.group(1).split("=")[0].strip() == base:
+                    out.append((number, binder.group(1) + "\n" + "say str(" + expr + ")", wanted))
                 continue
             # A bare identifier answers whatever a PRELUDE would have bound; this
             # checker's prelude binds `s` and nothing else, so `m2` is a name from
@@ -174,7 +191,10 @@ def run_claim(engine: str, expr: str, workdir: str) -> str:
     # str(x))` is a parse error, and the first version of the arrow extraction
     # produced exactly that and reported it as a wrong answer -- four of the
     # seven "problems" were this.
-    line = expr if expr.startswith("say") else "say str(" + expr + ")"
+    # THREE forms are already programs: an expression starting with `say`, any
+    # multi-line binder form, and anything carrying its own assignment.  The
+    # wrap is for a bare expression only.
+    line = expr if ("\n" in expr or expr.startswith("say")) else "say str(" + expr + ")"
     with open(source, "w", encoding="utf-8") as handle:
         handle.write(PRELUDE + line + "\n")
     proc = subprocess.run(
@@ -385,6 +405,29 @@ def self_test() -> int:
                 "diagnostic %r vs %r: want same=%s" % (want[:40], got[:40], expect)
             )
 
+    # THE BINDER AND THE TILDE, both of which cost a correct claim before §10.264.
+    # `a[1]` needs `a` bound on the same line; `a[1~2]` is the same shape and was
+    # filtered by a character class that did not contain `~`.  One line ran and
+    # its sibling did not, which looked like a document with one claim.
+    if not EXECUTABLE.match("a[1~2]"):
+        failures.append("an interval subscript must be executable: `~` is a value, not a shell metachar")
+    if not EXECUTABLE.match("a[1]"):
+        failures.append("a plain subscript must be executable")
+
+    def binder_of(line, expr):
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)", expr)
+        if not m:
+            return None
+        b = re.search(r"`([A-Za-z_][A-Za-z0-9_]*\s*=\s*[^`]+)`", line)
+        if b and b.group(1).split("=")[0].strip() == m.group(1):
+            return b.group(1)
+        return None
+
+    if binder_of("`a = [10,20,30]`: `a[1]` -> `20`", "a[1]") != "a = [10,20,30]":
+        failures.append("a same-line binder must be found for `a[1]`")
+    if binder_of("`b = [1]`: `a[1]` -> `20`", "a[1]") is not None:
+        failures.append("a binder for a DIFFERENT name must not be used")
+
     print("check_doc_examples --self-test")
     if failures:
         for line in failures:
@@ -402,6 +445,8 @@ def self_test() -> int:
         "an arrow claim that is a fragment is not",
         "a diagnostic differing only by the line prefix is the same claim",
         "a diagnostic naming a different token is a different claim",
+        "an interval subscript is executable",
+        "a same-line binder is found, and only for its own name",
     ):
         print("  ok   %s" % line)
     print("check_doc_examples: self-test OK")
