@@ -103,6 +103,15 @@ def arrow_claims(path: str):
     for number, line in enumerate(text.splitlines(), 1):
         for match in ARROW.finditer(line):
             expr, wanted = match.group(1).strip(), match.group(2).strip()
+            # A REFUSAL is judged before the expression filters: its left side is
+            # a program the parser must reject, so `until ... { }` and
+            # `declare { ... }` are exactly the shapes that must run.  Applying
+            # EXECUTABLE first excluded three of the four refusal claims in this
+            # document -- which is why the count stayed at 13 after the skip was
+            # removed.
+            if wanted.startswith("Error") or "expected" in wanted:
+                out.append((number, expr, wanted))
+                continue
             if not EXECUTABLE.match(expr):
                 continue
             if "|>" in expr or ">>" in expr or ".." in expr:
@@ -129,10 +138,15 @@ def arrow_claims(path: str):
             # looking clean, which is the failure mode this file is about.
             if re.match(r"^say\s+(add|inc|dbl|g|h|f)\(", expr):
                 continue
-            # An expected value that reads as a compiler diagnostic is a claim
-            # about a REFUSAL, not about stdout; not run here.
-            if wanted.startswith("Error") or "expected" in wanted:
-                continue
+            # A REFUSAL IS A CLAIM, and this file skipped it until §10.263.
+            # `until i >= 2 { }` -> `Error: expected 'expression', but got
+            # 'until' (type 20)` says the parser rejects a keyword.  That is a
+            # fact about the language and it rots exactly like a value does --
+            # measured, all four such claims in this document are still true,
+            # and nothing had been checking.
+            #
+            # The fragment filters above still apply: a refusal claim's LEFT side
+            # is a program, so `say add(3)` stays excluded on both paths.
             out.append((number, expr, wanted))
     return out
 
@@ -172,6 +186,52 @@ def run_claim(engine: str, expr: str, workdir: str) -> str:
     return out[-1].strip() if out else "<no output>"
 
 
+def _same_diagnostic(wanted: str, got: str) -> bool:
+    """Is the document's diagnostic the same claim as the engine's?
+
+    Two differences are transcription, not disagreement:
+      * the `Error at line N:` prefix -- prose drops the line number;
+      * whitespace.
+    Everything else is compared: the token quoted and the type code are the
+    claim.  The first version accepted a prefix match, which treated
+    `expected '')''` and `expected 'expression'` as the same because both
+    contain the word "expected".
+    """
+    def core(text):
+        text = text.replace("`", "").strip()
+        text = re.sub(r"^Error(?:\s+at\s+line\s+\d+)?:\s*", "", text)
+        return " ".join(text.split())
+
+    a, b = core(wanted), core(got)
+    return a == b or a in b or b in a
+
+
+def run_refusal(engine: str, program: str, workdir: str) -> tuple[bool, str]:
+    """(did it refuse, the message) for a claim that the parser rejects this.
+
+    The program is run AS WRITTEN -- no `say str(...)` wrapper -- because the
+    claim is about the parser, not about a value.  The comparison is on the
+    engine's own message, which is what the document quotes; the document's text
+    is allowed to be a PREFIX of it because prose drops the `Error at line N:`
+    and the `(type N)` suffix freely, and demanding both would be demanding a
+    transcription nobody writes.
+    """
+    source = os.path.join(workdir, "refuse.im")
+    with open(source, "w", encoding="utf-8") as handle:
+        handle.write(program + "\n")
+    proc = subprocess.run(
+        [engine, "--no-mods", "run", source], capture_output=True, text=True, timeout=60
+    )
+    text = (proc.stderr or "") + (proc.stdout or "")
+    line = ""
+    for candidate in text.splitlines():
+        if "Error" in candidate or "expected" in candidate:
+            line = candidate.strip()
+            break
+    refused = proc.returncode != 0 or bool(line)
+    return refused, line
+
+
 def measure(repo_root: str):
     engine = os.path.join(repo_root, "build", "inimerse")
     if not os.path.isfile(engine):
@@ -199,6 +259,19 @@ def measure(repo_root: str):
                     % (number, expr, wanted, got)
                 )
         for number, expr, wanted in arrows:
+            if wanted.startswith("Error") or "expected" in wanted:
+                refused, message = run_refusal(engine, expr, work)
+                if not refused:
+                    problems.append(
+                        "docs/SYNTAX.md:%d says `%s` is refused with %r; the engine accepted it"
+                        % (number, expr, wanted)
+                    )
+                elif not _same_diagnostic(wanted, message):
+                    problems.append(
+                        "docs/SYNTAX.md:%d says `%s` is refused with %r; the engine says %r"
+                        % (number, expr, wanted, message)
+                    )
+                continue
             got = run_claim(engine, expr, work)
             if got != wanted:
                 problems.append(
@@ -295,6 +368,23 @@ def self_test() -> int:
         if got != expect:
             failures.append("%s: want runnable=%s got %s" % (label, expect, got))
 
+    # THE DIAGNOSTIC COMPARISON, which is the part §10.263 added and the part a
+    # prefix match would have got wrong: `expected '')''` and
+    # `expected 'expression'` both contain the word "expected".
+    diag = [
+        ("Error: expected 'number', but got ';' (type 100)",
+         "Error at line 1: expected 'number', but got ';' (type 100)", True),
+        ("Error at line 4: expected '')'', but got '>>' (type 137)",
+         "Error: expected 'expression', but got '>>' (type 137)", False),
+        ("expected '')'', but got '..'",
+         "Error at line 2: expected '')'', but got '..' (type 103)", True),
+    ]
+    for want, got, expect in diag:
+        if _same_diagnostic(want, got) != expect:
+            failures.append(
+                "diagnostic %r vs %r: want same=%s" % (want[:40], got[:40], expect)
+            )
+
     print("check_doc_examples --self-test")
     if failures:
         for line in failures:
@@ -310,6 +400,8 @@ def self_test() -> int:
         "a non-matching claim is a red",
         "an arrow claim that is a complete program is runnable",
         "an arrow claim that is a fragment is not",
+        "a diagnostic differing only by the line prefix is the same claim",
+        "a diagnostic naming a different token is a different claim",
     ):
         print("  ok   %s" % line)
     print("check_doc_examples: self-test OK")
