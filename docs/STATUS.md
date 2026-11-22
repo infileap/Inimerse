@@ -17819,3 +17819,102 @@ classification with execution" was a good guess and it is false, and the three
 signals above are why.  A future attempt should start from "
 `a1=0` compiles to the same IR as `x = 1`" rather than from a hope about exit
 codes.
+
+## §10.267 — the reasons were wrong too
+
+### 1. Where the next thing was
+
+§10.266 ended with the honest part of its own boundary:
+
+    the ten reasons are hand-written and could be wrong.  `m2` being "a name
+    bound by a transcript elsewhere" is this section's reading of the document,
+    not a measurement -- and a wrong reason looks exactly like a right one here.
+
+This section checked them.  Three were wrong.
+
+### 2. The three
+
+**`a1=0`** -- written as "a literal inside a test assertion, quoted as
+evidence".  It is a cell of a `PASS_REGULAR_EXPRESSION`:
+
+    $ grep -n 'divergent_builtin_contract_runtime' -A2 CMakeLists.txt
+    divergent-ok i1=... c1=A c2empty=true a1=type_mismatch a2=... a4=0
+
+`a1=0` is the value that cell held **before**, which the document quotes to show
+what changed.  "A literal inside an assertion" says it is evidence; what it
+actually is, is half of a before/after.
+
+**`m2`** -- written as "a name bound by a transcript elsewhere".  The document
+says:
+
+    单独调用三次 m2 → call1=2 call2=1 call3=1
+
+That is three call results quoted together, and the claim is about the three
+differing -- so `m2` alone is not a fragment that needs a binder, it is a name
+whose **output** is being compared across calls.  The reason described the wrong
+thing.
+
+**`say add(3)`** -- written as "needs `add` declared elsewhere".  Measured:
+
+    $ grep -c 'say add(3)' vtest/lambda_capture_v04.im
+    0
+    $ grep -n 'func add' vtest/pipeline_v04.im
+    3:func add(x, y) { return x + y }
+
+The fixture the document names no longer contains that line, and the only `add`
+in the tree takes two arguments.  So the `5` has **no program left to reproduce
+it** -- it is a historical transcript of a file that was renamed and rewritten,
+which is what the surrounding sentence says.  The reason sent a reader looking
+for a declaration that does not exist.
+
+### 3. What made them checkable
+
+A reason cannot be compared with the tree the way a claim can -- "a rewriting
+rule, not a program" is not a fact about any file.  But the **symbols** a reason
+cites can be:
+
+    unbacked_reason_names(path): every backticked identifier in a reason must
+    appear in the document, as `func <name>` or as `<name>` itself.
+
+Measured on the corrected table: one hit, `("say add(3)", "add")`, which is the
+deliberate one -- the reason names a symbol **because it is absent**.  That is now
+declared in `ABSENCE_IS_THE_POINT` rather than left as an exemption a reader has
+to infer.
+
+Mutation: putting `zzz_absent` into a reason reddens
+
+    the skip reason for `value |> fn(a)` names `zzz_absent` and the document has
+    neither `func zzz_absent` nor the token -- a reason that cites a symbol
+    nobody can look up is a sentence, not a justification
+
+### 4. The shape this closes
+
+Four sections have now gone after the same instrument: a checker that silently
+removes claims.  Each round found the removal in a different place --
+§10.262 a shape rule, §10.264 a character class, §10.265 another character,
+§10.266 the absence of any signal -- and each fix moved the silence one level
+deeper: from the class, to the table, and now to the reasons **inside** the
+table.
+
+That is worth naming because it is not convergence.  The instrument keeps
+producing a new place for the same defect, and each place looks reasonable from
+the outside: a class reads as a character list, a table as a list of skips, a
+reason as an explanation.
+
+### 5. What landed
+
+    controls 15 -> 16,  three reasons corrected
+
+No stage or CTest count moved.  The reason table still has ten entries and the
+count is asserted, so a reason cannot vanish without a red.
+
+### 6. Boundary
+
+One property of a reason is now checked -- the symbols it cites resolve.  The
+rest is still prose: "a rewriting rule, not a program" could be false, and
+`unbacked_reason_names` would not know.
+
+The three corrections were found by reading each reason against its source line,
+which is what a person does and what no instrument here does.  That is why §10.266
+called the table's strength and its weakness the same thing: an entry that is
+missing is a red, and an entry that is wrong looks exactly like one that is right.
