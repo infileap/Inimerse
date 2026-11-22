@@ -191,13 +191,21 @@ SKIP_REASONS = {
     "value \\|> fn(a)": "a rewriting rule, not a program",
     "f >> g": "a rewriting rule, not a program",
     "record score = 42, level: 3": "a statement form; its claim is about the value, not an answer",
-    "m2": "a name bound by a transcript elsewhere in the document",
-    "h(1,2)": "needs `h` declared elsewhere",
-    "h()": "needs `h` declared elsewhere",
+    "m2": "not a program: `m2` is a function name whose three call results "
+          "(`call1=2 call2=1 call3=1`) are quoted together -- running `m2` alone "
+          "binds nothing, and the claim is about the three calls differing",
+    "h(1,2)": "needs `h` declared elsewhere in the document (the arity table at D4)",
+    "h()": "needs `h` declared elsewhere in the document (the arity table at D4)",
     "n | n > 0": "a fragment of a `case` arm; needs the enclosing `match`",
-    "say add(3)": "needs `add` declared elsewhere",
+    "say add(3)": "a historical transcript: it records what a fixture printed "
+                  "before that fixture was renamed and rewritten. Measured -- "
+                  "`vtest/lambda_capture_v04.im` contains no `say add(3)` today and "
+                  "the `add` in `vtest/pipeline_v04.im` takes two arguments, so the "
+                  "`5` has no program left to reproduce it",
     "OP_EQ": "an opcode name, not an expression",
-    "a1=0": "a literal inside a test assertion, quoted as evidence",
+    "a1=0": "one cell of a PASS_REGULAR_EXPRESSION, quoted to show what it changed "
+              "FROM: the CMakeLists assertion spells a1=type_mismatch and the "
+              "document's a1=0 names the value it replaced",
 }
 
 
@@ -224,6 +232,40 @@ def skipped(path: str):
             if any(e.endswith("say str(" + expr + ")") for n, e, _w in arrow_claims(path) if n == number):
                 continue
             out.append((number, expr, SKIP_REASONS.get(expr)))
+    return out
+
+
+# Reasons that name a symbol ON PURPOSE without it existing: the absence is the
+# point.  `say add(3)` is a transcript of a fixture that was renamed and
+# rewritten, and the reason says so by naming an `add` that is gone.
+ABSENCE_IS_THE_POINT = {("say add(3)", "add")}
+
+
+def unbacked_reason_names(path: str):
+    """Reasons that name a backticked symbol the document does not contain.
+
+    §10.266 admitted the ten reasons are hand-written readings.  Three of them
+    were wrong when checked (§10.267) -- `a1=0` is a cell of a
+    PASS_REGULAR_EXPRESSION rather than "a literal inside a test assertion",
+    `m2` is three call results rather than "a name bound elsewhere", and
+    `say add(3)` is a HISTORICAL transcript whose program no longer exists.
+
+    A reason cannot be compared with the tree the way a claim can, but the names
+    it cites can: a reason saying "needs `h` declared elsewhere" is checkable,
+    because either the document declares `h` or it does not.
+    """
+    text = open(path, encoding="utf-8", errors="replace").read()
+    out = []
+    for expr, reason in SKIP_REASONS.items():
+        for name in set(re.findall(r"`([a-z_][a-z0-9_]+)`", reason)):
+            if name == expr:
+                continue
+            # A declared function, or the token appearing at all.
+            if ("func " + name) in text or ("`" + name + "`") in text:
+                continue
+            if (expr, name) in ABSENCE_IS_THE_POINT:
+                continue
+            out.append((expr, name))
     return out
 
 
@@ -331,6 +373,12 @@ def measure(repo_root: str):
     # EVERY SKIP MUST BE NAMED.  This is the rule the character class could not
     # express: a claim that is not run and not explained is a red, so adding an
     # arrow the filter cannot run forces a decision instead of a silence.
+    for expr, name in unbacked_reason_names(doc):
+        problems.append(
+            "the skip reason for `%s` names `%s` and the document has neither "
+            "`func %s` nor the token -- a reason that cites a symbol nobody can "
+            "look up is a sentence, not a justification" % (expr, name, name)
+        )
     for number, expr, reason in skipped(doc):
         if reason is None:
             problems.append(
@@ -519,6 +567,17 @@ def self_test() -> int:
             % len(SKIP_REASONS)
         )
 
+    # REASON BACKING, which is what turned three hand-written reasons into
+    # corrections in §10.267.  A reason cannot be compared with the tree the way
+    # a claim can, but the SYMBOLS it cites can.
+    if unbacked_reason_names("docs/SYNTAX.md") != []:
+        failures.append(
+            "a reason names a symbol the document does not contain: %r"
+            % (unbacked_reason_names("docs/SYNTAX.md"),)
+        )
+    if ("say add(3)", "add") not in ABSENCE_IS_THE_POINT:
+        failures.append("the one deliberate absence must be declared")
+
     print("check_doc_examples --self-test")
     if failures:
         for line in failures:
@@ -539,6 +598,7 @@ def self_test() -> int:
         "an interval subscript is executable",
         "a call with both parentheses is executable",
         "every skip carries a reason, and the table has ten entries",
+        "every symbol a reason cites is in the document, or declared absent",
         "a same-line binder is found, and only for its own name",
     ):
         print("  ok   %s" % line)
