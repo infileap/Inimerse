@@ -227,6 +227,25 @@ def imported_modules(path: str, repo_root: str) -> set[str]:
     return seen
 
 
+# A file that does not parse can still be SCANNED, and the scan says whether the
+# file would have had something to report.  It is a text test and it is wrong in
+# both directions (an `assert` in a string, an `assert` split across lines), so it
+# decides only whether to NAME the file -- never whether it has a defect.
+_ASSERT_SHAPED = re.compile(r"(?m)^[ \t]*assert[ \t(]")
+
+
+def assert_shaped_text(path: str) -> bool:
+    """Does this file LOOK like it carries an assert statement?
+
+    Used only for files that do not parse, where the AST is unavailable and the
+    choice is between naming the file and dropping it silently.
+    """
+    try:
+        return bool(_ASSERT_SHAPED.search(_read(path)))
+    except OSError:
+        return False
+
+
 def assert_lines(path: str) -> list[int]:
     """Line numbers of every `assert` statement in a file.
 
@@ -256,11 +275,22 @@ def audit(repo_root: str, build_dir: str) -> tuple[list[dict], list[str], dict]:
     seen: set[str] = set()
     defects: list[dict] = []
     notes: list[str] = []
+    unreadable: list[str] = []
     for script in universe:
         for path in [script] + sorted(imported_modules(script, repo_root)):
             if path in seen:
                 continue
             seen.add(path)
+            # A FILE THAT DOES NOT PARSE IS NOT A FILE WITH NO ASSERTS.
+            # `assert_lines` returns [] for both, so a syntax error silently
+            # removed the file from the audit -- measured: a helper containing
+            # `assert False` behind a syntax error was read, reported as having
+            # no asserts, and the checker stayed green.  It is counted apart and
+            # named, because "cannot read" and "nothing wrong" are the two
+            # answers this whole file exists to keep separate.
+            if _parse(path) is None and assert_shaped_text(path):
+                unreadable.append(os.path.relpath(path, repo_root))
+                continue
             lines = assert_lines(path)
             if not lines:
                 continue
@@ -281,6 +311,7 @@ def audit(repo_root: str, build_dir: str) -> tuple[list[dict], list[str], dict]:
         "scripts outside it they reach, %d file(s) read including imports"
         % (stats["driven"], stats["tools"], stats["read"])
     )
+    stats["unreadable"] = sorted(unreadable)
     return defects, notes, stats
 
 
@@ -439,7 +470,27 @@ def self_test() -> int:
         )
     shutil.rmtree(temp, ignore_errors=True)
 
-    total = len(cases) + len(gate_cases)
+    # A FILE THAT DOES NOT PARSE IS NAMED, not counted clean (§10.269).  Both
+    # directions: the text scan has to see an assert in a broken file, and has
+    # to stay quiet on a broken file that has none.
+    broken_with = 'def f(:\n    assert False\n'
+    broken_without = 'def f(:\n    return 1\n'
+    scratch = tempfile.mkdtemp(prefix="check_python_asserts_unreadable_")
+    try:
+        p1 = os.path.join(scratch, "with.py")
+        p2 = os.path.join(scratch, "without.py")
+        open(p1, "w", encoding="utf-8").write(broken_with)
+        open(p2, "w", encoding="utf-8").write(broken_without)
+        if _parse(p1) is not None:
+            failures.append("the fixture must not parse, or it tests nothing")
+        if not assert_shaped_text(p1):
+            failures.append("an assert in a broken file must be seen by the text scan")
+        if assert_shaped_text(p2):
+            failures.append("a broken file with no assert must not be named")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+    total = len(cases) + len(gate_cases) + 3
     print(
         "PROBE-PYASSERT-SELFTEST-VERDICT|cases=%d|red=%d|verdict=%s"
         % (total, failures, "PASS" if failures == 0 else "FAIL")
@@ -472,6 +523,12 @@ def main(argv: list[str]) -> int:
         print("check_python_asserts: cannot read the input: %s" % problem)
         return 2
 
+    for rel in stats.get("unreadable", []):
+        print(
+            "UNREADABLE %s: does not parse, and its text looks like it carries an "
+            "assert -- this checker cannot say whether that assert is strippable, "
+            "so it names the file instead of counting it as clean" % rel
+        )
     for defect in defects:
         print(
             "WEAK %s: %d assert statement(s) -- a failure here would still be a "
@@ -491,7 +548,16 @@ def main(argv: list[str]) -> int:
         "under tools/, %d file(s) read including imports, %d still asserting."
         % (stats["driven"], stats["tools"], stats["read"], len(defects))
     )
-    return 1 if defects else 0
+    # A file this checker could not read is an answer of its own, and the exit
+    # code has to carry it: "0 still asserting" next to an UNREADABLE line is the
+    # same conflation the docstring separates for "no build to read".
+    unreadable = stats.get("unreadable", [])
+    if unreadable:
+        print(
+            "check_python_asserts: %d file(s) could not be parsed and look like they carry "
+            "an assert; that is not a clean answer" % len(unreadable)
+        )
+    return 1 if (defects or unreadable) else 0
 
 
 if __name__ == "__main__":
