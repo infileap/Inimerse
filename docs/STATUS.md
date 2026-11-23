@@ -18489,3 +18489,142 @@ of the 56 `own` grades), and for everything else the hold is a coincidence of
 line numbers.  Fixing that means reading the cited file's own line for the
 symbol, not for a quoted span -- a different measurement, with a different
 denominator, and therefore a different pin.
+
+## §10.272 — the code span that was two spans, or none
+
+### 1. Where the next thing was
+
+§10.271 closed with two things it did not settle.  The first of them was
+this:
+
+> the forged spans are still accepted -- 1631 doc lines have an odd number of
+> backticks, and the naive pairing manufactures strings like `**（` out of
+> the prose.
+
+This round goes after that one.
+
+### 2. The mechanism, which is not "an odd number of backticks"
+
+The span pattern is one line:
+
+    SPAN = re.compile(r"`([^`\n]+)`")
+
+It pairs backticks left to right.  That is the wrong rule, and the round's
+first measurement was the wrong rule too: **"the line has an odd number of
+backticks" is a SYMPTOM, not the cause.**  A line can have an even number of
+backticks and still be paired wrong, because a DOUBLE-backtick span -- the
+Markdown way of writing a span whose content contains a backtick -- is two
+backticks, and the naive pattern reads it as two empty spans plus whatever
+sits between them.
+
+Measured on this tree: **1572 doc lines contain a double backtick**, and 1537
+of the 1632 odd-count lines contain one.  The odd count is what the naive
+pattern does to the rest of the line; the double backtick is what it does it
+to.
+
+The line that carries the forgery in §10.271 is the proof.  Its 248
+backticks are an even number, so by the odd-count rule it is a clean line.
+It is not: it contains
+
+    markdown 链接 + 裸 `` `:421` `` / 裸号
+
+and the `` `` `` `` there is **one** code span containing `` `:421` ``.  The
+naive pattern reads it as two empty spans, so from that point on every span
+on the rest of the line is paired one position off -- and 6019 characters
+later it produces `**（`, a string no human wrote, out of the middle of a
+prose sentence.
+
+### 3. Two things go wrong at once, and both of them matter
+
+**It destroys the real spans.**  On the same line, the naive pairing swallows
+the real code spans -- including the line numbers themselves.  The spans
+`:1569`, `:421`, `:1659`, `:692` were, under the naive rule, never extracted,
+because they sit after the double-backtick run and are consumed by a span
+that started before them and ends after them.
+
+Measured over the whole tree: **32 doc lines lose 254 real spans**, and 28
+lines gain 171 spans that are spliced out of prose.  On one line in
+`docs/AUDIT.md` the naive rule drops 44 spans and keeps 96; the Markdown rule
+keeps 95 and drops 1.
+
+**It manufactures the ones that hold citations.**  A forged span is not
+harmless just because it is nonsense: if it happens to occur on line N of some
+other file the citing line names, `hold_matched` finds it there, and the
+citation is certified as held.  That is the mechanism behind the `**（` in
+§10.271.
+
+### 4. The rule, and what it does to the numbers
+
+Markdown's rule is one sentence: **a run of N backticks opens a code span
+that is closed by a run of exactly N backticks.**  A run with no matching
+closer is literal text, and so is the rest of the line.
+
+The checker now reads its spans that way (`code_spans()` in
+`tools/check_line_refs.py`).  The numbers that move:
+
+                    naive    Markdown
+    held             622         629
+    unanchored       559         552
+    own / borrowed / picked up
+                    56/65/501   57/65/507
+
+Every reference that was held before is still held: **no reference lost its
+holder**, and seven gained one.  All seven are on the one line in
+`docs/AUDIT.md` that carries the double-backtick run, and all seven were
+real spans the naive rule had eaten.
+
+**The pins do not move**, and that is worth saying out loud, because it is the
+thing that could have gone wrong.  The pins are deltas against a named base
+tree, and the base tree is read with the same rule:
+
+                      naive    Markdown
+    base unanchored     562         555
+    now unanchored      559         552
+    delta                -3          -3
+
+Both readings give -3 against a ceiling of +0.  A rule change that moved the
+delta would have needed a new pin and an argument for it; this one did not,
+and the reason is that the base tree carries the same double-backtick lines
+the working tree does -- the rule change moved both ends by the same amount.
+
+### 5. The test, and the negative control
+
+The existing test file gains three cells for the span rule:
+
+  1  a double-backtick span is ONE span -- `` `:421` `` and `` `:NNN` ``,
+     not two empty ones;
+  2  an unclosed backtick run makes the rest of the line literal, so the
+     name after it is not a span;
+  3  a line with such a run still has its OTHER spans, and the prose between
+     the backticks is not one.
+
+Cell 3 is the one that matters, because it is the one that fails in BOTH
+directions: under the old rule the real spans `docs/BOARD.md` line 145 and
+`git grep` are gone, and the prose fragments `sits here, and` and `is named,
+and` are read as spans.
+
+The negative control, measured with the exit code read directly:
+
+    old rule:  exit 1   (4 cells differ)
+    new rule:  exit 0
+
+### 6. What the round changed
+
+- `tools/check_line_refs.py`: `SPAN` is now Markdown's rule (`code_spans()`),
+  with the measurement written down where the extractor is.
+- `tools/check_line_refs.test.py`: three cells for the span rule.
+
+Nothing else moved -- the pins, the stage count and the CTest count are all
+unchanged, because the rule change did not move a denominator.
+
+### 7. What this round does not settle
+
+**A forged span is still only a span.**  The new rule stops the pairing from
+splicing prose together, but a span that really is written on the line, and
+that really occurs on line N of another file, still holds a citation.  The
+`picked up` grade is unchanged -- 507 of 629 -- and §10.271's second open
+question is untouched: **the `own` grade is still unreachable for a C
+source**, because the span mechanism reads backtick-quoted text and a line of
+C has no backticks.  Fixing that means reading the cited file's own line for
+the symbol rather than for a quoted span -- a different measurement, with a
+different denominator, and therefore a different pin.
