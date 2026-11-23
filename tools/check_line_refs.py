@@ -540,6 +540,54 @@ EXP_LINE_REFS_OFF_TARGET_MAX = int(
     os.environ.get("EXP_LINE_REFS_OFF_TARGET_MAX", "0")
 )
 
+# ---------------------------------------------------------------------------
+# The pin that asks whether a HOLD means anything.
+#
+# Every other pin in this file counts references: how many there are, how many
+# are in the explicit form, how many have no anchor at all.  None of them asks
+# whether the anchor that was found is about the line that was cited.  A hold
+# is a quoted string that occurs on line N of some file the citing line names
+# -- and the citing line of a citation usually names SEVERAL files at once
+# (a table row that names a source file, a script and a document), so the
+# quoted string can be found on line N of one of the others and be called a
+# hold.  That is a coincidence of line numbers, and it says nothing about the
+# cited line.
+#
+# The coincidence is easy to make on purpose.  Write the owner's name on line
+# N of any document, and the citation of the owner's line N is held.  The
+# checker already counted these -- `held_elsewhere` has been in the report
+# since the report existed -- and a number in a report is not a rule.
+#
+# Measured on 88b898fd: 236 of the 629 held references (37%) are held this
+# way.  Across the last 340 commits of this branch the count sits in a
+# 232-239 band, so it is a STANDING debt rather than a growing one, and it is
+# repayable: 234 of the 236 name a line the owner file actually has, so a
+# correction on either side of the citation turns the coincidence into a real
+# anchor.
+#
+# WHY THIS PIN HAS ITS OWN BASE.  The other two deltas are measured against
+# EXP_LINE_REFS_BASE, which is 2430 commits back.  Against that base this
+# reading is 354, and this tree reads 236 -- a delta of -118, and a ceiling
+# of zero would leave 118 coincidences of headroom.  Headroom that nobody
+# has to argue for is the thing a ratchet exists to refuse, so this pin
+# measures against a base of its own: fca60a25, the commit that pinned the
+# headings after §10.272, which reads 236 as well.  The delta there is +0, the
+# ceiling is +0, and the first coincidence added from here on is a red.
+#
+# A separate base is the same choice the other pins made for a different
+# reason (a base that is not behind HEAD makes the delta a comparison between
+# two trees that are not on one line), and it costs one more tree read.
+EXP_LINE_REFS_COINCIDENT_BASE = os.environ.get(
+    "EXP_LINE_REFS_COINCIDENT_BASE",
+    "fca60a25f60cad572be1b2181f2c56a933c3abb8",
+)
+# A ratchet, like the unanchored one: the ceiling only ever moves DOWN, and
+# only in the commit that pays a reference.  Raising it again needs its own
+# commit and the same kind of argument that raised the others.
+EXP_LINE_REFS_COINCIDENT_DELTA_MAX = int(
+    os.environ.get("EXP_LINE_REFS_COINCIDENT_DELTA_MAX", "0")
+)
+
 # Every writing that must still be in the input set.  A prefix scan satisfies
 # the first two and none of the others, which is exactly the failure this list
 # exists to catch.
@@ -1035,6 +1083,7 @@ def scan() -> dict:
     held_symbol = 0
     held_picked = 0
     held_rows: list[tuple] = []
+    coincident: list[tuple] = []
     held_attributed = 0
     held_no_holder = 0
     no_anchor: list[tuple] = []
@@ -1262,6 +1311,34 @@ def scan() -> dict:
                         else:
                             held_picked += 1
                         holder_file, holder_span, matched = holder_pair
+                        # A hold by a file that is NOT the owner is a
+                        # coincidence: the cited line was never checked.
+                        # `owner` is the file the number points at, and the
+                        # only file whose line N can say anything about that
+                        # number is that one.  A quoted string that occurs on
+                        # line N of some OTHER file the citing line happens to
+                        # name -- and the coincidence is easy to make, because
+                        # the citing line of a citation usually names several
+                        # files at once -- proves that the string is on that
+                        # line, and nothing about the cited one.
+                        #
+                        # This is the same fact `held_elsewhere` counts, and
+                        # it is worth saying that the checker already knew it
+                        # and reported it -- in a sentence nobody had to act
+                        # on.  A number in a report is not a rule.
+                        #
+                        # Measured on 88b898fd: 236 of the 629 held
+                        # references are held this way, and the count has been
+                        # flat in a 232-239 band across the last 340 commits
+                        # of this branch -- so it is a standing debt, not a
+                        # growing one, and it is repayable: 234 of the 236
+                        # name a line the owner file actually has, so a
+                        # correction on either side can turn the coincidence
+                        # into a real anchor.
+                        if owner is None or owner not in [
+                            token for token, _s, _m in hits
+                        ]:
+                            coincident.append((rel, lineno, number, owner))
                         _holding_lines = _lines(holder_file)
                         _holding_kind = (
                             holding_kind(_holding_lines[matched - 1])
@@ -1347,12 +1424,13 @@ def scan() -> dict:
         "held_symbol": held_symbol,
         "held_attributed": held_attributed, "held_no_holder": held_no_holder,
         "held_picked": held_picked, "held_rows": held_rows,
+        "coincident": coincident,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
         "files": files, "citations": citations,
     }
 
 
-def base_scan() -> tuple[dict, int]:
+def base_scan(base: str | None = None) -> tuple[dict, int]:
     """The same reading on the base tree, and how far behind HEAD it is.
 
     The base must be an ancestor of HEAD, or the delta compares two trees that
@@ -1360,8 +1438,14 @@ def base_scan() -> tuple[dict, int]:
     number with no subject.  A base that cannot be resolved is refused, not
     guessed: exit 2, the same answer gate.sh gives for a stage no rule reaches,
     because both are "this question cannot be answered as posed".
+
+    `base` names the tree to read.  It defaults to EXP_LINE_REFS_BASE; the
+    coincidence pin measures against a base of its own, because a base 2430
+    commits back measures a debt that this branch has already paid and would
+    leave 118 coincidences of headroom.
     """
     global TREE
+    base = base or EXP_LINE_REFS_BASE
     # Two different refusals were one sentence until now.  "There is no
     # repository here" and "the base is not behind HEAD" are not the same fact,
     # and the second one was also the text for a worktree registration pruned
@@ -1382,12 +1466,12 @@ def base_scan() -> tuple[dict, int]:
         raise SystemExit(2)
     if subprocess.run(
         ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor",
-         EXP_LINE_REFS_BASE, "HEAD"],
+         base, "HEAD"],
         capture_output=True,
     ).returncode != 0:
         _verdict_unmeasured()
         print(
-            f"check_line_refs: base {EXP_LINE_REFS_BASE} is not an ancestor of "
+            f"check_line_refs: base {base} is not an ancestor of "
             "HEAD.\n"
             "check_line_refs: the pins are deltas against that tree; a base that "
             "is not behind this one makes the delta a comparison between two "
@@ -1397,14 +1481,14 @@ def base_scan() -> tuple[dict, int]:
         )
         raise SystemExit(2)
     saved = TREE
-    TREE = Tree(EXP_LINE_REFS_BASE)
+    TREE = Tree(base)
     try:
         r = scan()
     finally:
         TREE = saved
     behind = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "rev-list", "--count",
-         f"{EXP_LINE_REFS_BASE}..HEAD"],
+         f"{base}..HEAD"],
         capture_output=True, text=True, check=True,
     ).stdout.strip()
     return r, int(behind)
@@ -1733,10 +1817,37 @@ def main() -> int:
         mis_labelled = None
     cell("mis-labelled-over-ceiling", needs_inputs, mis_labelled)
 
+    # The coincidence pin.  It has a base of its own, and the refusal says
+    # which base it measured against: a delta without its base is a number
+    # with no subject, and this file has been bitten by exactly that.
+    coinc_base, coinc_behind = base_scan(EXP_LINE_REFS_COINCIDENT_BASE)
+    coinc_delta = len(r["coincident"]) - len(coinc_base["coincident"])
+    if coinc_delta > EXP_LINE_REFS_COINCIDENT_DELTA_MAX:
+        shown = ", ".join(
+            f"{rel}:{lineno} -> {owner or '<none>'}:{number}"
+            for rel, lineno, number, owner in r["coincident"][:5]
+        )
+        coincidence = (
+            f"coincidental holds: {coinc_delta:+d} since base "
+            f"{EXP_LINE_REFS_COINCIDENT_BASE} "
+            f"({len(coinc_base['coincident'])} -> {len(r['coincident'])}), over "
+            f"the ceiling EXP_LINE_REFS_COINCIDENT_DELTA_MAX="
+            f"{EXP_LINE_REFS_COINCIDENT_DELTA_MAX:+d} -- "
+            f"{coinc_delta - EXP_LINE_REFS_COINCIDENT_DELTA_MAX} more "
+            f"reference(s) are held by a file that is NOT the owner, so the "
+            f"line they cite was never checked.  First: {shown}"
+        )
+    else:
+        coincidence = None
+    cell("coincidental-over-ceiling", needs_inputs, coincidence)
+
     print(
         f"check_line_refs: pins -- explicit delta {explicit_delta:+d} (expect "
         f"{EXP_LINE_REFS_DELTA:+d}), unanchored delta {unanchored_delta:+d} "
-        f"(ceiling {EXP_LINE_REFS_UNANCHORED_DELTA_MAX:+d})."
+        f"(ceiling {EXP_LINE_REFS_UNANCHORED_DELTA_MAX:+d}), coincidental "
+        f"delta {coinc_delta:+d} (ceiling "
+        f"{EXP_LINE_REFS_COINCIDENT_DELTA_MAX:+d}, "
+        f"{len(r['coincident'])} of {r['held']} reference(s) held)."
     )
     # worktree= counts entries and now names their contents by digest:
     # "dirty(3)" in one checkout and "dirty(2)" in another were the same logical

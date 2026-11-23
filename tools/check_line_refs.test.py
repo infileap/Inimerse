@@ -182,6 +182,23 @@ CODE_OWNER_TEXT = "\n".join(
     ]
 ) + "\n"
 
+# --- cell: a coincidence is a hold by a file that is not the owner --------
+#
+# The citing line names TWO files, and the number belongs to the second one
+# by the position rule.  The OWNER's line 7 carries no quoted text, so it
+# cannot hold the reference -- but the FIRST file's line 7 carries the
+# owner's own name, and that coincidence holds the reference.
+#
+# This is the shape 236 of the 629 held references on 88b898fd have (37%),
+# and it is the shape the coincidence pin exists to refuse.  It is easy to
+# write on purpose: put the owner's name on line N of any document.
+COINC_DOC = "docs/fix/coincidence.md"
+COINC_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`docs/fix/mentions-owner.md` is named, and `CMakeLists.txt` at `:7`.\n"
+)
+
 
 class FakeTree:
     """Just enough of Tree for scan(): four files, no git."""
@@ -384,6 +401,64 @@ def check_symbol_grade() -> int:
     return failures
 
 
+def check_coincidence_is_counted() -> int:
+    """A hold by a file that is not the owner is a coincidence, and counted.
+
+    The reference is held -- there IS a quoted string on line 7 of a file the
+    citing line names.  But the file that holds it is not the file the number
+    points into, so the line the citation means was never checked.  The
+    report said "held" and nothing else, and a number in a report is not a
+    rule.
+
+    So the coincidence is counted, and the count is what the pin reads.
+    """
+    failures = 0
+    files = {
+        COINC_DOC: COINC_DOC_TEXT,
+        OWNER_MENTION: OWNER_MENTION_TEXT,
+        SRC: SRC_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the coincidence fixture "
+              f"produced {len(rows)} held references, expected 1")
+        return 2
+    coincident = r.get("coincident")
+    if coincident is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL coincidence -- the report does "
+              "not count coincidental holds at all, so a hold by a file that "
+              "is not the owner cannot be told from a real anchor")
+        return failures
+    if len(coincident) != 1:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL coincidence -- expected 1 "
+              f"coincidental hold, got {len(coincident)}: {coincident!r}")
+    elif coincident[0][0] != COINC_DOC:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL coincidence -- the coincidence "
+              f"was reported against {coincident[0][0]!r}, expected "
+              f"{COINC_DOC!r}")
+    # The evidence, stated independently of the counter: the holder is not
+    # the owner, so the cited line was not the line that was checked.
+    row = rows[0]
+    if row[5][0] == row[3]:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL coincidence -- the reference is "
+              f"held by its owner {row[3]!r}, so it is not a coincidence and "
+              f"must not be counted as one")
+    # And the same reference must NOT be counted when the owner holds it.
+    files[OWNER_MENTION] = SRC_TEXT
+    r2 = scan_with(files)
+    if r2.get("coincident"):
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL coincidence -- a reference the "
+              f"owner holds was counted as a coincidence: "
+              f"{r2['coincident']!r}")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -426,6 +501,7 @@ def main() -> int:
     failures += check_span_rule()
     failures += check_own_needs_the_owner()
     failures += check_symbol_grade()
+    failures += check_coincidence_is_counted()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -433,7 +509,8 @@ def main() -> int:
     print("check_line_refs.test.py: OK -- every reported holder supports its "
           "reported grade, in both orders; the code spans are read the way "
           "Markdown reads them; `own` is held by the owner; a code owner "
-          "can be held by a symbol")
+          "can be held by a symbol; a hold by a file that is not the owner is "
+          "counted as a coincidence")
     return 0
 
 
